@@ -83,6 +83,13 @@ HOT_PATH = [
     REPO / "kernels" / "src" / "integer_math.rs",
     REPO / "kernels" / "src" / "prng.rs",
     REPO / "kernels" / "src" / "sampling.rs",
+    # ⚑ Die rekurrente Zustandsschicht (Arbeitstitel, 2026-09-21). Sie
+    # rechnet eine Rekurrenz statt einer Reduktion, und genau deshalb
+    # gehoert sie hier besonders hin: Die Referenzumsetzung fuehrt
+    # ihren Zustand ausdruecklich in float32, und ein Rueckfall
+    # dorthin waere nicht als Fehler sichtbar, sondern als leicht
+    # andere Zahl.
+    REPO / "kernels" / "src" / "zustandsschicht.rs",
     # 2026-09-11: Der Fadenpool ersetzt das `thread::scope` je Matrix.
     # Er rechnet nichts, er verteilt nur Zeilen; genau deshalb steht er
     # hier: Ein Konsens-Crate hat keine Datei, die "rechnet nichts"

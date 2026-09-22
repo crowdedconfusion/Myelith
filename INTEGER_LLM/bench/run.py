@@ -92,7 +92,7 @@ from src.model_configs import get_export_model_config  # noqa: E402
 
 MODEL = os.environ.get("INTEGER_LLM_MODEL", "").strip() or "myelith-0.6b"
 _CONFIG = get_export_model_config(MODEL)
-HF_MODEL_DIR = ROOT / "models" / _CONFIG["hf_model_id"].split("/")[-1]
+HF_MODEL_DIR = ROOT.parent / "MODELS" / "llm" / _CONFIG["hf_model_id"].split("/")[-1]
 PROMPT = "Die Hauptstadt von Frankreich ist"
 DECODE_TOKENS = 32
 

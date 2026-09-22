@@ -4,9 +4,10 @@ Kalibrierungs-Workflow fuer die Qwen2.5-Basis-Reihe.
 Phase 3 + Phase 6 Vorbereitung (Gewichtsexport).
 
 Referenzmodell ist die Basis-Variante (keine Instruct-Variante) — konsistent
-mit Whitepaper, oeffentlichem README und models/README.md. Das Modell wird
-ausschliesslich aus dem lokalen Snapshot unter models/ geladen (siehe
-loader.py und models/README.md), nie aus dem impliziten HF-Cache.
+mit Whitepaper, oeffentlichem README und MODELS/llm/README.md. Das Modell
+wird ausschliesslich aus dem lokalen Snapshot unter MODELS/llm geladen
+(siehe loader.py und MODELS/llm/README.md), nie aus dem impliziten
+HF-Cache.
 
 **Modellwahl** ueber die Umgebungsvariable INTEGER_LLM_MODEL, Vorgabe
 myelith-0.6b:
@@ -53,8 +54,12 @@ from pathlib import Path
 # **Was das kostet:** Ein fehlendes torch faellt jetzt erst beim Aufruf
 # von `main()` auf statt beim Import. Fuer den einzigen echten Nutzer
 # dieses Moduls, den Kalibrierungslauf, ist das derselbe Augenblick.
-from .scales import compute_scales_from_stats
+from .scales import compute_scales_from_stats, choose_pow2_shift
+# ⚑ Dieselbe Namensregel wie Export und Statistik, nicht eine zweite.
+from .quantize import normiere_namen
 from .luts import (generate_rsqrt_lut, generate_silu_lut, generate_exp_lut,
+                   generate_sigmoid_lut, generate_softplus_rest_lut,
+                   generate_zerfall_exp_lut,
                    generate_rope_luts, load_nonlinear_spec)
 from .export import export_theta_v
 from .model_configs import get_export_model_config, artifact_model_config
@@ -80,6 +85,66 @@ HF_MODEL_ID = get_export_model_config(MODEL_NAME)["hf_model_id"]
 CALIB_WIKITEXT_SEQUENCES = 64
 CALIB_WIKITEXT_SEQ_LEN = 128
 _MIN_LINE_CHARS = 160  # identisch zu eval/wikitext_common.py
+
+
+def faltungsskala_ergaenzen(model, scales):
+    """**Die Ausgangsskala der kausalen Faltung**, als Schranke gerechnet.
+
+    ⛔️ **Warum sie nicht gemessen wird, und das ist ein Fund.** Die
+    Vorlage ruft das `conv1d`-Modul **nie auf**; sie benutzt nur sein
+    Gewicht:
+
+        causal_conv1d_fn(mixed_qkv, self.conv1d.weight.squeeze(1), ...)
+
+    Ein `register_forward_hook` auf diesem Modul feuert deshalb nie, und
+    `scales.json` hatte fuer `linear_attn.conv1d` **keinen Eintrag**.
+
+    📌 **Ein Haken an einem Modul, das niemand aufruft, ist kein Haken.**
+    Die Zaehlung „0 Module ohne Haken" war richtig und die Wirkung
+    trotzdem null: Gezaehlt wurden eingetragene Haken, nicht gefeuerte.
+
+    ⚑ **Statt einer Messung eine Schranke**, und zwar eine harte: Die
+    Faltung ist tiefenweise, also gilt je Kanal
+
+        |aus[c]| <= Summe_j |w[c][j]| * |ein[c]|,
+
+    und `silu` vergroessert den Betrag nicht (`|silu(x)| <= |x|`). Mit
+    dem gemessenen Betragsgrosstwert des Faltungseingangs
+    (`in_proj_qkv`) ergibt das eine Schranke, die **nicht klemmt**.
+
+    ⚠️ **Sie kostet Aufloesung**, weil sie den ungünstigsten Fall
+    annimmt. Eine echte Messung waere besser und braucht einen Haken,
+    der die Faltung selbst rechnet; das ist vermerkt und nicht getan.
+    """
+    import torch
+    ergaenzt = 0
+    for name, modul in model.named_modules():
+        if not name.endswith("linear_attn"):
+            continue
+        conv = getattr(modul, "conv1d", None)
+        if conv is None:
+            continue
+        kurz = normiere_namen(name)
+        eingang = scales.get(f"{kurz}.in_proj_qkv")
+        if eingang is None:
+            continue
+        with torch.no_grad():
+            zeilensumme = float(conv.weight.detach().abs().sum(dim=-1).max())
+        schranke = float(eingang["absmax_observed"]) * zeilensumme
+        schiebung = choose_pow2_shift(schranke)
+        scales[f"{kurz}.conv1d"] = {
+            "shift": schiebung,
+            "scale": 2.0 ** (-schiebung),
+            "absmax_observed": schranke,
+            "herkunft": "Schranke, nicht gemessen: das conv1d-Modul wird "
+                        "von der Vorlage nie aufgerufen",
+        }
+        ergaenzt += 1
+    if ergaenzt:
+        print(f"[calibrate] Faltungsskala fuer {ergaenzt} Zustandsebenen "
+              f"als Schranke ergaenzt (das Modul wird nie aufgerufen, "
+              f"ein Haken darauf feuert nicht).")
+    return scales
 
 
 def _wikitext_calibration_texts(n_sequences):
@@ -407,6 +472,7 @@ def main():
     else:
         print("[calibrate] Berechne Zweierpotenz-Skalen...")
         scales = compute_scales_from_stats(stats)
+        scales = faltungsskala_ergaenzen(model, scales)
         luts_aus_paket = None
 
     print("[calibrate] Generiere LUTs (Parameter aus theta_v/spec.json)...")
@@ -427,10 +493,50 @@ def main():
     # half-split-Paarung. head_dim aus der (verifizierten) Modell-Config —
     # bei 7B ist es 128 statt 64, die LUTs werden entsprechend doppelt so
     # breit. rope_theta aus der spec (die gesamte Qwen2.5-Reihe: 1e6).
+    # ⛔️ **Die Tabelle wird mit der DREHBREITE erzeugt, nicht mit der
+    # Kopfbreite.** Das Qwen3.6-35B-A3B dreht nur 64 von 256 Stellen
+    # (`partial_rotary_factor` 0,25), und die Frequenzen haengen an
+    # dieser Breite: `theta_j = 1 / base^(j / (dreh/2))`. Mit
+    # `head_dim/2` im Nenner waeren sie falsch, und das faellt nur an
+    # der Qualitaet auf, nie an einer Meldung.
+    #
+    # ⚑ **Null heisst „ganz drehen"**, und damit bleibt jede Tabelle
+    # eines Modells ohne Teildrehung bytegleich zu vorher.
+    drehbreite = model_config.get("rotary_dim") or model_config["head_dim"]
+    # ⛔️ **`rope_theta` ist ein MODELLparameter, kein Formatparameter.**
+    #
+    # Er stand bis zum 2026-09-21 nur in θ_v (1e6, die ganze Qwen3-Reihe).
+    # Das Qwen3.6-35B-A3B dreht mit **1e7**, und zwar versteckt in
+    # `rope_scaling`. Mit der falschen Basis sind alle Winkel falsch, die
+    # Achtsamkeit verliert ihre Positionsinformation, und das Modell
+    # erzeugt Kauderwelsch. 📌 **Eine Konstante, die fuer alle bisherigen
+    # Faelle stimmte, ist deshalb noch keine Formatkonstante.**
+    rope_theta = model_config.get("rope_theta") or nl["rope"]["rope_theta"]
+    print(f"[calibrate] RoPE: Drehbreite {drehbreite} von "
+          f"{model_config['head_dim']}, Basis {rope_theta:g}")
+    # ⛔️ **Die Zeilenzahl kommt aus dem MODELL, nicht aus θ_v.**
+    #
+    # θ_v fuehrte `rope.max_seq_len` als Formatkonstante mit 40 960, der
+    # Kontextgrenze der Qwen3-Reihe. Das Qwen3.6-35B-A3B kann **262 144**,
+    # und die Tabellen deckten damit ein Sechstel des Kontexts ab, den das
+    # Artefakt zusagt.
+    #
+    # ⚠️ **Das ist Fund 368 ein zweites Mal**, und der Vermerk dazu stand
+    # zwei Zeilen weiter in derselben Spezifikation: „Eine Position
+    # p >= max_seq_len wird ABGELEHNT und nicht umgebrochen ... Position
+    # 2048 drehte wie Position 0, und die Aufmerksamkeit hielt ein spaetes
+    # Token fuer eines vom Anfang."
+    #
+    # 📌 **Eine Konstante, die fuer alle bisherigen Faelle stimmte, ist
+    # deshalb noch keine Formatkonstante.** Die Zeilenzahl folgt aus
+    # `max_context` und `rotary_dim`, und beide stehen im Modelleintrag.
+    zeilen = model_config["max_context"]
+    print(f"[calibrate] RoPE-Tabellen: {zeilen} Positionen x {drehbreite // 2} "
+          f"Paare = {zeilen * (drehbreite // 2)} Eintraege je Tabelle")
     sin_lut, cos_lut = generate_rope_luts(
-        max_seq_len=nl["rope"]["max_seq_len"],
-        head_dim=model_config["head_dim"],
-        rope_theta=nl["rope"]["rope_theta"],
+        max_seq_len=zeilen,
+        head_dim=drehbreite,
+        rope_theta=rope_theta,
         frac_bits=nl["rope"]["frac_bits"])
     luts = luts_aus_paket if luts_aus_paket is not None else {
         "rsqrt": generate_rsqrt_lut(
@@ -446,11 +552,51 @@ def main():
             exp_range=nl["softmax"]["exp_lut_range"],
             input_frac_bits=nl["softmax"]["exp_input_frac_bits"],
             output_frac_bits=nl["softmax"]["exp_lut_frac_bits"]),
+        # ⚑ **Sigmoid und Softplus liegen in JEDEM Artefakt**, auch in
+        # einem ohne Zustandsebenen. θ_v ist ein Vertrag: Eine bedingte
+        # Tabelle hiesse, dass „θ_v 0.21.0" zweierlei bedeutet, und der
+        # Lader vergleicht die Fassung zeichengenau. Kosten: 32 KiB fuer
+        # Sigmoid und 64 KiB fuer Softplus, einmalig je Artefakt.
+        "sigmoid": generate_sigmoid_lut(
+            input_min=nl["sigmoid"]["input_range"][0],
+            input_max=nl["sigmoid"]["input_range"][1],
+            input_frac_bits=nl["sigmoid"]["input_frac_bits"],
+            output_frac_bits=nl["sigmoid"]["output_frac_bits"]),
+        "zerfall_exp": generate_zerfall_exp_lut(
+            max_input=nl["zerfall_exp"]["max_input"],
+            input_frac_bits=nl["zerfall_exp"]["input_frac_bits"],
+            output_frac_bits=nl["zerfall_exp"]["output_frac_bits"]),
+        "softplus_rest": generate_softplus_rest_lut(
+            max_abs_input=nl["softplus_rest"]["max_abs_input"],
+            input_frac_bits=nl["softplus_rest"]["input_frac_bits"],
+            output_frac_bits=nl["softplus_rest"]["output_frac_bits"]),
         "sin": sin_lut,
         "cos": cos_lut,
     }
 
+    # ⚑ **Die Breiten kommen aus derselben Spezifikation wie die Tabellen.**
+    # `softplus` ist die einzige in int32, und der Grund steht in θ_v:
+    # Sie liefert keine Aktivierung, sondern einen Zerfallsexponenten.
+    lut_dtypes = {
+        name: nl[name]["dtype"]
+        for name in ("sigmoid", "softplus_rest", "zerfall_exp")
+        if "dtype" in nl.get(name, {})
+    }
+
     artifacts_dir = model_artifacts_dir(MODEL_NAME)
+
+    # ⚑ **Den Normversatz an die Quantisierung durchreichen** (Fund 423).
+    #   Er steht je Modell in `model_configs.py` und ist fuer alle
+    #   bisherigen Modelle null; `quantize_model_weights` liest ihn von
+    #   der HF-Konfiguration, weil es das Modell ohnehin schon hat.
+    # ⛔️ **Aus der EXPORT-Konfiguration, nicht aus der des Artefakts.**
+    #   Der Versatz ist dort ausdruecklich ausgeschlossen (er steckt
+    #   danach in den Gewichten), also liefert `model_config` ihn nie.
+    #   📌 Genau dieser Griff daneben hat den ersten Neuexport gekostet:
+    #   Der Bau lief sauber durch und schrieb dieselben Gewichte wie
+    #   zuvor, ohne ein Wort.
+    versatz = float(get_export_model_config(MODEL_NAME).get("rms_norm_offset", 0.0) or 0.0)
+    setattr(model.config, "rms_norm_offset", versatz)
 
     # Reihenfolge ist bindend, nicht austauschbar: Gewichte zuerst, dann
     # theta_v.json zuletzt - export_theta_v() hasht weights_manifest.json und
@@ -512,7 +658,8 @@ def main():
     )
 
     print(f"[calibrate] Exportiere theta_v nach {artifacts_dir}...")
-    export_theta_v(scales=scales, luts=luts, output_dir=artifacts_dir)
+    export_theta_v(scales=scales, luts=luts, output_dir=artifacts_dir,
+                   lut_dtypes=lut_dtypes)
 
     # Tokenizer: die Datei aus dem HF-Snapshot WOERTLICH kopieren, nicht
     # ueber `backend_tokenizer.save()` neu serialisieren (Fund 32).

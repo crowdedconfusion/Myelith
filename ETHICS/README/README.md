@@ -1,7 +1,7 @@
 # ethics
 
-> **Version:** 0.6.2
-> **Datum:** 2026-09-14
+> **Version:** 0.6.3
+> **Datum:** 2026-09-21
 > **Status:** Manifest v0.2.0 steht (neu: **G9**, der Ausschlusskatalog),
 > **Phase 1 abgeschlossen**: aus den
 > Zusagen sind Dateien geworden, die man erzeugen, diffen und im CI
@@ -77,6 +77,25 @@ ETHICS/
   nennt, was ihn trägt — oder ist als Absichtserklärung markiert.
 
 ## Changelog
+
+### v0.6.3 – 2026-09-21 (die Lizenzprobe nennt, worüber sie schweigt)
+
+Lizenzprobe und Modellkarten-Werkzeug lesen die Quellmodelle jetzt unter
+`MODELS/llm`. ⚑ **Ausdrücklich die Rubrik und nicht `MODELS/` selbst:**
+Ein Lauf darüber nähme `llm`, `audio` und `vision` für
+Modellverzeichnisse und meldete drei fehlende Lizenzdateien. **Eine
+Prüfung, die ihre eigenen Rubriken anklagt, ist keine.**
+
+⛔️ **Und damit ist eine Lücke sichtbar geworden, die vorher keinen Ort
+hatte.** Die Gewichte für Sehen, Hören und Sprechen liegen jetzt neben
+den Quellmodellen und **bringen keine Lizenzdatei mit**: Sie kommen als
+einzelne Gewichtsdatei und werden beim Ablegen umbenannt, also gibt es
+kein Verzeichnis, in dem eine Lizenz liegen könnte. Die Kriterien aus
+Kap. 10.1 gelten für sie genauso, denn auch sie werden von Fremden in
+aller Welt geladen. ⚑ **Solange kein Ort für ihre Lizenzangabe
+entschieden ist, sagt der Abschlusssatz der Probe ausdrücklich, dass
+`audio` und `vision` nicht geprüft sind.** Ein Lauf, der über zwei von
+drei Rubriken schweigt, darf nicht wie ein bestandener aussehen.
 
 ⚑ **Umnummeriert am 2026-08-31** (Festlegung des Projektinhabers): Diese
 Komponente lief als einzige auf `1.x` und steht jetzt wie alle anderen

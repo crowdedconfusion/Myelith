@@ -8,6 +8,17 @@
 # Gewichte an die Stellen, an denen der Client sie sucht, und richtet
 # CosyVoice samt eigener Python-Umgebung ein.
 #
+# ⚑ **Wohin die Gewichte gehen, hat sich am 2026-09-21 geaendert**
+# (Festlegung des Projektinhabers): in den Klon unter `MODELS/audio` und
+# `MODELS/vision`, zu allen anderen fremden Gewichten dieses Projekts.
+# **Versioniert wird dort nichts**, nur die Ordner und ihre Doku; das
+# regelt `MODELS/.gitignore`.
+#
+# ⚠️ **In der Sinnesheimat bleiben zwei Dinge, und zwar mit Grund:** der
+# `bin`-Ordner mit dem Sprechlaeufer (erzeugt, muss beschreibbar sein)
+# und eine abgelegte Stimmprobe (gehoert dem Nutzer). Gewichte sind
+# geladen, und nur die haben einen Rubrikordner verdient.
+#
 # ⛔️ **Die Binaerdateien selbst gehoeren nicht ins Repositorium.**
 # llama.cpp, whisper.cpp und ffmpeg sind je System verschieden und
 # zusammen einige hundert Megabyte; torch ist allein rund 2,5 GB. Das
@@ -21,9 +32,18 @@
 #   sh INSTALL/sinne-einrichten.sh --pruefen    nur nachsehen, nichts tun
 set -u
 
-HEIMAT="${MYL_SINNE:-$HOME/.myelith/sinne}"
-COSY="${MYL_COSYVOICE:-$HOME/CosyVoice}"
 HIER=$(cd "$(dirname "$0")/.." && pwd)
+HEIMAT="${MYL_SINNE:-$HOME/.myelith/sinne}"
+# ⚑ **Setzt jemand MYL_SINNE, liegt dort alles zusammen**, so wie der
+# Client es auch sucht. Sonst gehen die Gewichte in die Rubriken.
+if [ -n "${MYL_SINNE:-}" ]; then
+  AUDIO="$HEIMAT"
+  VISION="$HEIMAT"
+else
+  AUDIO="$HIER/MODELS/audio"
+  VISION="$HIER/MODELS/vision"
+fi
+COSY="${MYL_COSYVOICE:-$AUDIO/CosyVoice}"
 LAEUFER_QUELLE="$HIER/CLIENT/myl-senses/laeufer/sprechen-cosyvoice.py"
 
 mit_sprechen=1
@@ -44,25 +64,35 @@ pruefen() {
   for w in ffmpeg llama-mtmd-cli whisper-cli; do
     printf '  %-16s %s\n' "$w" "$(command -v "$w" 2>/dev/null || echo 'FEHLT')"
   done
-  for d in hoeren.bin sehen.gguf sehen-mmproj.gguf sehen-genau.gguf sehen-genau-mmproj.gguf; do
-    if [ -s "$HEIMAT/$d" ]; then
-      printf '  %-24s %s\n' "$d" "$(du -h "$HEIMAT/$d" | cut -f1)"
+  for paar in "$AUDIO:hoeren.bin" "$VISION:sehen.gguf" "$VISION:sehen-mmproj.gguf" \
+              "$VISION:sehen-genau.gguf" "$VISION:sehen-genau-mmproj.gguf"; do
+    ort=${paar%%:*}; d=${paar#*:}
+    if [ -s "$ort/$d" ]; then
+      printf '  %-24s %s\n' "$d" "$(du -h "$ort/$d" | cut -f1)"
     else
-      printf '  %-24s %s\n' "$d" "fehlt"
+      printf '  %-24s %s\n' "$d" "fehlt ($ort)"
     fi
   done
   printf '  %-24s %s\n' "CosyVoice" "$([ -d "$COSY/cosyvoice" ] && echo "$COSY" || echo fehlt)"
   printf '  %-24s %s\n' "seine Umgebung" "$([ -x "$COSY/.venv/bin/python" ] && echo da || echo fehlt)"
   printf '  %-24s %s\n' "seine Gewichte" "$([ -s "$COSY/pretrained_models/Fun-CosyVoice3-0.5B/llm.pt" ] && echo da || echo fehlt)"
   printf '  %-24s %s\n' "Laeufer" "$([ -f "$HEIMAT/bin/sprechen-cosyvoice.py" ] && echo da || echo fehlt)"
-  printf '  %-24s %s\n' "Verweis auf CosyVoice" "$([ -e "$HEIMAT/cosyvoice" ] && echo da || echo fehlt)"
+  # ⚑ Der Verweis wird nur gebraucht, wenn CosyVoice ausserhalb der
+  # Rubrik liegt; sonst findet der Client es dort von selbst.
+  case "$COSY" in
+    "$AUDIO"/*) printf '  %-24s %s\n' "CosyVoice in der Rubrik" "ja, kein Verweis noetig" ;;
+    *) printf '  %-24s %s\n' "Verweis auf CosyVoice" "$([ -e "$HEIMAT/cosyvoice" ] && echo da || echo fehlt)" ;;
+  esac
 }
 
 if [ "$nur_pruefen" = 1 ]; then pruefen; exit 0; fi
 
 echo "Das holt rund 6 GB Gewichte fuer Sehen und Hoeren"
 [ "$mit_sprechen" = 1 ] && echo "und noch einmal rund 8 GB fuer Sprechen (CosyVoice 3 samt torch)."
-echo "Ziel: $HEIMAT"
+echo "Sehen nach:    $VISION"
+echo "Hoeren nach:   $AUDIO"
+echo "Sprechen nach: $COSY"
+echo "Betrieb in:    $HEIMAT (bin und Stimmprobe)"
 
 # ---------------------------------------------------------------- Programme
 sagen "Programme"
@@ -77,9 +107,12 @@ else
 fi
 
 # ---------------------------------------------------------------- Gewichte
-mkdir -p "$HEIMAT/bin" || exit 1
+mkdir -p "$HEIMAT/bin" "$AUDIO" "$VISION" || exit 1
+# ⚑ **Der Ordner steht jetzt im Aufruf** und nicht in der Funktion: Es
+# gibt zwei Rubriken, und eine Funktion, die den Ort selbst waehlt,
+# waehlte fuer eine von beiden falsch.
 hol() {
-  ziel="$HEIMAT/$1"
+  ziel="$1/$2"; shift
   [ -s "$ziel" ] && { echo "liegt schon: $1"; return 0; }
   echo "hole $1 ..."
   # ⚑ Erst daneben, dann umbenennen: Ein Abbruch laesst sonst eine halbe
@@ -95,16 +128,16 @@ S=https://huggingface.co/ggml-org/SmolVLM2-2.2B-Instruct-GGUF/resolve/main
 Q=https://huggingface.co/ggml-org/Qwen2.5-VL-3B-Instruct-GGUF/resolve/main
 
 sagen "Hoeren"
-hol hoeren.bin "$W/ggml-large-v3-turbo-q5_0.bin" || exit 1
+hol "$AUDIO" hoeren.bin "$W/ggml-large-v3-turbo-q5_0.bin" || exit 1
 
 sagen "Sehen, schnell (SmolVLM2-2.2B)"
-hol sehen.gguf        "$S/SmolVLM2-2.2B-Instruct-Q4_K_M.gguf" || exit 1
-hol sehen-mmproj.gguf "$S/mmproj-SmolVLM2-2.2B-Instruct-Q8_0.gguf" || exit 1
+hol "$VISION" sehen.gguf        "$S/SmolVLM2-2.2B-Instruct-Q4_K_M.gguf" || exit 1
+hol "$VISION" sehen-mmproj.gguf "$S/mmproj-SmolVLM2-2.2B-Instruct-Q8_0.gguf" || exit 1
 
 sagen "Sehen, genau (Qwen2.5-VL-3B)"
 # ⚑ Wahlfrei: Faellt sie aus, bleibt es bei der schnellen Sprosse.
-hol sehen-genau.gguf        "$Q/Qwen2.5-VL-3B-Instruct-Q4_K_M.gguf" || echo "(bleibt bei der schnellen Sprosse)"
-hol sehen-genau-mmproj.gguf "$Q/mmproj-Qwen2.5-VL-3B-Instruct-f16.gguf" || echo "(bleibt bei der schnellen Sprosse)"
+hol "$VISION" sehen-genau.gguf        "$Q/Qwen2.5-VL-3B-Instruct-Q4_K_M.gguf" || echo "(bleibt bei der schnellen Sprosse)"
+hol "$VISION" sehen-genau-mmproj.gguf "$Q/mmproj-Qwen2.5-VL-3B-Instruct-f16.gguf" || echo "(bleibt bei der schnellen Sprosse)"
 
 if [ "$mit_sprechen" = 0 ]; then pruefen; exit 0; fi
 
@@ -198,7 +231,15 @@ sagen "Verdrahten"
 # ⚑ **Ein Verweis statt einer Umgebungsvariablen.** Ein aus dem Finder
 # gestartetes `Myelith.app` erbt keine Shell-Umgebung; ein Ordner an der
 # erwarteten Stelle wird dagegen immer gefunden.
-ln -sfn "$COSY" "$HEIMAT/cosyvoice"
+#
+# ⚑ **Und genau deshalb entfaellt er, wenn CosyVoice in der Rubrik
+# liegt:** Dort sucht der Client ohnehin, und ein Verweis aus der Heimat
+# in den Klon waere ein zweiter Weg zur selben Sache, der beim naechsten
+# Umzug des Klons ins Leere zeigt.
+case "$COSY" in
+  "$AUDIO"/*) echo "CosyVoice liegt in der Rubrik, kein Verweis noetig." ;;
+  *) ln -sfn "$COSY" "$HEIMAT/cosyvoice" ;;
+esac
 cp "$LAEUFER_QUELLE" "$HEIMAT/bin/" && chmod +x "$HEIMAT/bin/sprechen-cosyvoice.py"
 echo "Laeufer: $HEIMAT/bin/sprechen-cosyvoice.py"
 

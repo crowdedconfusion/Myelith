@@ -278,11 +278,35 @@ pub struct LutManifestEntry {
 #[derive(Debug)]
 pub struct LoadedLuts {
     pub tables: HashMap<String, Vec<i16>>,
+    /// ⚑ **Tabellen in `int32`**, seit θ_v 0.21.0 genau eine:
+    /// `softplus_rest`. Sie liefert keine Aktivierung, sondern einen
+    /// Zerfallsexponenten, und der braucht 30 Bruchbits.
+    pub tables32: HashMap<String, Vec<i32>>,
 }
 
 impl LoadedLuts {
     pub fn get(&self, name: &str) -> Option<&Vec<i16>> {
         self.tables.get(name)
+    }
+
+    /// Eine Tabelle in `int32`.
+    pub fn get32(&self, name: &str) -> Option<&Vec<i32>> {
+        self.tables32.get(name)
+    }
+
+    /// **In welcher Breite liegt diese Tabelle?**
+    ///
+    /// ⚑ **Damit „fehlt" nicht „in der anderen Breite" heisst.** Wer
+    /// `get` auf `softplus_rest` ruft, bekaeme sonst ein `None` und
+    /// suchte nach einer fehlenden Datei, die sehr wohl da ist.
+    pub fn breite(&self, name: &str) -> Option<&'static str> {
+        if self.tables.contains_key(name) {
+            Some("int16")
+        } else if self.tables32.contains_key(name) {
+            Some("int32")
+        } else {
+            None
+        }
     }
 }
 
@@ -347,7 +371,13 @@ impl LoadedScales {
 /// `calibrate/src/model_configs.py`). Ersetzt die zuvor in `load_model()`
 /// hartkodierten Rust-Literale, damit ein Wechsel auf eine groessere
 /// Qwen2.5-Variante ein Config-Wechsel bleibt statt einer Codeaenderung.
-#[derive(Debug, Clone, Deserialize)]
+// ⚑ **`Default` ist fuer die Proben da und nicht fuer den Betrieb.**
+// Die Pflichtfelder tragen kein `serde(default)`, ein echtes Artefakt
+// ohne sie faellt also weiter beim Einlesen. Was `Default` loest, ist
+// eine Frage der Erweiterbarkeit: **Ohne es muesste jedes neue Feld
+// jede Teststelle anfassen**, und wer zwanzig Teststellen anfassen
+// muss, laesst das Feld weg.
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct ModelDims {
     pub family: String,
     pub variant: String,
@@ -357,7 +387,7 @@ pub struct ModelDims {
     pub num_heads: usize,
     /// Anzahl Key/Value-Heads (Grouped-Query-Attention). Bei Modellen ohne
     /// GQA identisch zu `num_heads`. Qwen2.5-0.5B: 2 (gegenueber 14 Query-Heads,
-    /// siehe `models/Qwen2.5-0.5B/config.json`, Feld `num_key_value_heads`).
+    /// siehe `MODELS/llm/Qwen2.5-0.5B/config.json`, Feld `num_key_value_heads`).
     pub num_kv_heads: usize,
     pub head_dim: usize,
     pub vocab_size: usize,
@@ -365,6 +395,18 @@ pub struct ModelDims {
     /// Ob LM-Head und Embedding-Tabelle dasselbe Gewicht teilen (HF-Feld
     /// `tie_word_embeddings`). Bei Qwen2.5-0.5B `true` - der Export enthaelt
     /// dann kein eigenes `lm_head.weight`.
+    /// Das Epsilon der RMSNorm (HF-Feld `rms_norm_eps`, meist `1e-6`).
+    ///
+    /// ⚑ **Je Modell und nicht in theta_v**, nach der Trennlinie: Was
+    /// sich zwischen Modellen unterscheiden darf, steht in
+    /// `model_config.json`.
+    ///
+    /// ⚠️ **Vorgabe null, nicht 1e-6.** Ein Artefakt ohne das Feld
+    /// soll weiterrechnen wie bisher und nicht stillschweigend eine
+    /// andere Funktion bekommen; fehlt es, bleibt es beim Verhalten bis
+    /// zum 2026-09-22 (Fund 419).
+    #[serde(default)]
+    pub rms_norm_eps: f64,
     pub tie_word_embeddings: bool,
     /// Ob die Attention-Projektionen q/k/v Biases besitzen (HF-Feld
     /// `attention_bias` im Modell-Config; Qwen2.5-0.5B: `true`). Bei `true`
@@ -408,6 +450,412 @@ pub struct ModelDims {
     /// gemischten Layern darf daran nicht scheitern.
     #[serde(default)]
     pub mlp_only_layers: Vec<usize>,
+
+    // ================================================================
+    // Hybride Bauarten mit rekurrenten Ebenen (ab 2026-09-21)
+    // ================================================================
+    //
+    // ⚑ **Warum diese Felder hier stehen, bevor ein Modell sie braucht.**
+    // Die naechste Modellgeneration rechnet nicht mehr alle Ebenen
+    // gleich: Drei Viertel sind rekurrente Zustandsschichten, ein
+    // Viertel Softmax-Aufmerksamkeit. Das Schema konnte das **gar nicht
+    // ausdruecken**, und ein Schema, das eine Bauart nicht ausdruecken
+    // kann, laesst sie nicht scheitern, sondern **falsch laufen**: Der
+    // Lader haette 40 gleiche Ebenen gesehen.
+    //
+    // ⚑ **Alle tragen `serde(default)`, und ein fehlendes Feld heisst
+    // „wie bisher".** Damit laden die vorhandenen Artefakte unveraendert
+    // weiter, ohne Neubau.
+    //
+    // ⛔️⛔️ **Und hier stand zuerst, ein alter Lader ignoriere die neuen
+    // Felder einfach, weil kein `deny_unknown_fields` gesetzt ist, und
+    // das sei die Vertraeglichkeitsregel. Das war falsch und gefaehrlich
+    // formuliert** (berichtigt am 2026-09-21, nach dem Blick in den
+    // Konfigurationssatz der naechsten Generation).
+    //
+    // **Der Unterschied ist die Sorte Feld:**
+    //
+    // - Ein Feld, das nur **beschreibt**, darf ignoriert werden.
+    // - Ein Feld, das die **Rechnung aendert**, darf es niemals. Wer es
+    //   ignoriert, rechnet ein anderes Modell als das Artefakt meint,
+    //   **ohne eine Meldung**, und im Konsens ist genau das der teuerste
+    //   Fehler: zwei ehrliche Knoten mit verschiedenen Zahlen.
+    //
+    // ⛔️ **Und die naechste Generation besteht aus solchen Feldern.** Der
+    // Konfigurationssatz der Qwen4-Vorschau bringt vier Untersysteme, die
+    // dieses Schema **nicht** ausdruecken kann: einen vierfach geteilten
+    // Residualstrom (`hc_count`), eine Blockauswahl in der
+    // Aufmerksamkeit (`indexer_*`), eine N-Gramm-Einbettung mit 20
+    // Millionen Eintraegen und Einbettungen je Ebene (`ple_*`). **Ein
+    // Lader, der davon nichts weiss und die Felder ueberliest, laedt ein
+    // Artefakt, das er nicht rechnen kann, und merkt es nicht.**
+    //
+    // ⚑ **Deshalb ist das zeichengenaue θ_v-Tor heute die einzige
+    // Sicherung, die das verhindert**, und es ist zu grob: Es entwertet
+    // auch Artefakte, die von einer Erweiterung nichts benutzen. Die
+    // feinere Loesung ist eine **Merkmalsliste im Artefakt**, die der
+    // Lader gegen seine eigenen Faehigkeiten haelt. Das ist eine
+    // Entscheidung ueber das Vertrauensmodell und keine Bauarbeit; sie
+    // steht als eigener Punkt an.
+    /// **Die Art jeder Ebene**, falls sie sich unterscheiden.
+    ///
+    /// Leer heisst: alle Ebenen sind gleich gebaut, also
+    /// Softmax-Aufmerksamkeit wie bisher. Sonst ein Eintrag je Ebene,
+    /// `"full_attention"` oder `"linear_attention"`.
+    ///
+    /// ⚠️ **Die Laenge muss `num_layers` sein, wenn die Liste nicht leer
+    /// ist.** Eine kuerzere Liste waere die schlimmere Form des Fehlers:
+    /// Sie sieht aus wie eine Angabe und deckt nur den Anfang.
+    #[serde(default)]
+    pub layer_types: Vec<String>,
+    /// Zahl der Schluesselkoepfe einer rekurrenten Ebene. `0` heisst:
+    /// dieses Modell hat keine.
+    #[serde(default)]
+    pub linear_num_key_heads: usize,
+    /// Zahl der Wertkoepfe einer rekurrenten Ebene.
+    #[serde(default)]
+    pub linear_num_value_heads: usize,
+    /// Breite eines Schluesselkopfes der rekurrenten Ebene.
+    #[serde(default)]
+    pub linear_key_head_dim: usize,
+    /// Breite eines Wertkopfes der rekurrenten Ebene. Zusammen mit
+    /// [`Self::linear_key_head_dim`] die Form der Zustandsmatrix je Kopf.
+    #[serde(default)]
+    pub linear_value_head_dim: usize,
+    /// Breite der kausalen Faltung vor der Rekurrenz. `0` heisst keine.
+    #[serde(default)]
+    pub linear_conv_kernel_dim: usize,
+    /// **Welche Art Tor am Aufmerksamkeitsausgang sitzt**, leer heisst
+    /// keines.
+    ///
+    /// ⛔️ **Ein Name und kein Wahrheitswert, und das ist eine Lehre aus
+    /// einer halben Stunde.** Der erste Entwurf hatte hier
+    /// `attn_output_gate: bool`, nach dem Feld derselben Bedeutung in der
+    /// 3.6-Konfiguration. Die naechste Generation nennt an derselben
+    /// Stelle `output_gate_type: "sigmoid"`, also **einen Namen**, weil es
+    /// mehr als eine Art Tor geben kann. 📌 **Ein Wahrheitswert kann nur
+    /// zaehlen bis eins**, und wer eine Aufzaehlung als `bool` abbildet,
+    /// baut die zweite Variante nicht ein, sondern um.
+    #[serde(default)]
+    pub output_gate_type: String,
+    /// Zahl der Ebenen des Kopfes fuer Mehrfachvorhersage. `0` heisst
+    /// keiner.
+    ///
+    /// ⚠️ **Nur die Zahl, und das ist bewusst zu wenig.** Die naechste
+    /// Generation fuehrt den Kopf als **eigenen Block** mit eigener
+    /// Ebenenliste und eigenem `rope_theta`, also als kleines Modell im
+    /// Modell. Wer ihn wirklich rechnen will, braucht dafuer einen
+    /// eigenen Abschnitt; diese Zahl sagt nur, **dass** es einen gibt.
+    /// ⚑ **Und sie steht hier, damit ein Artefakt mit MTP nicht
+    /// stillschweigend als eines ohne gilt.**
+    #[serde(default)]
+    pub mtp_num_hidden_layers: usize,
+    /// Breite eines **geteilten** Experten, der bei jedem Token feuert.
+    /// `0` heisst: es gibt keinen.
+    #[serde(default)]
+    pub shared_expert_intermediate_size: usize,
+    /// Ob die Expertengewichte als **zwei gepackte Tensoren** je Ebene
+    /// liegen statt als drei je Experte.
+    ///
+    /// ⚑ **Eine Aussage ueber das Artefaktlayout und nicht ueber die
+    /// Rechnung.** Die Zahlen sind dieselben; nur wo sie stehen, ist
+    /// anders, und der Lader muss es wissen, bevor er sucht.
+    #[serde(default)]
+    pub experts_packed: bool,
+    /// **Wieviele Stellen eines Kopfes gedreht werden.**
+    ///
+    /// `0` heisst: alle, also `head_dim` wie bisher.
+    ///
+    /// ⛔️ **Bewusst eine Anzahl und kein Faktor.** Die fremde
+    /// Konfiguration nennt hier ein Verhaeltnis (`partial_rotary_factor`,
+    /// etwa 0,25), und das ist eine **Gleitkommazahl**. Dieses Schema
+    /// traegt keine; gebraucht wird ohnehin die Anzahl
+    /// (`head_dim · Faktor`, bei 256 und 0,25 also 64), und die ist
+    /// ganzzahlig. 📌 **Wer ein Verhaeltnis speichert, das er nie
+    /// braucht, holt sich eine Gleitkommazahl in den Vertrag und eine
+    /// Multiplikation in den Rechenpfad.** Der Export rechnet sie einmal
+    /// aus.
+    #[serde(default)]
+    pub rotary_dim: usize,
+
+    /// **Was dieses Artefakt zum Rechnen braucht**, als Liste von Namen.
+    ///
+    /// # ⛔️ Warum es diese Liste gibt und die Felder nicht genuegen
+    ///
+    /// Ein Lader, der ein Feld nicht kennt, **ueberliest** es. Fuer eine
+    /// Beschreibung ist das richtig; fuer ein Feld, das die Rechnung
+    /// aendert, ist es der teuerste Fehler, den dieses Projekt kennt:
+    /// **zwei ehrliche Knoten mit verschiedenen Zahlen, ohne Meldung.**
+    ///
+    /// ⚑ **Diese Liste dreht die Beweislast um.** Das Artefakt sagt, was
+    /// es braucht; der Lader haelt es gegen [`GEKONNTE_MERKMALE`] und
+    /// **weigert sich**, wenn etwas fehlt. Damit ist ein unbekanntes
+    /// Merkmal ein Abbruch mit Namen statt einer stillen Abweichung.
+    ///
+    /// ⚠️ **Leer heisst „von vor dieser Regel" und wird zugelassen.** Die
+    /// vier Artefakte vom 2026-09-21 und aelter tragen sie nicht; sie
+    /// abzulehnen waere eine Entwertung ohne Anlass.
+    ///
+    /// ⛔️ **Die Liste wird abgeleitet und nicht getippt.** Der Export
+    /// rechnet sie aus der Konfiguration aus. Waere sie von Hand
+    /// gepflegt, waere das erste vergessene Merkmal genau der Fall, gegen
+    /// den sie gebaut ist.
+    #[serde(default)]
+    pub merkmale: Vec<String>,
+}
+
+/// **Was dieser Bau rechnen kann.**
+///
+/// ⚑ **Eine Liste im Binary und nicht in einer Datei.** Was ein Bau
+/// kann, haengt an seinem Quelltext; eine Datei daneben koennte davon
+/// abweichen, und dann glaubt der Lader der Datei.
+///
+/// ⚠️ **Wer ein Merkmal hier eintraegt, sagt zu, dass dieser Bau es
+/// rechnet.** Ein Eintrag ohne Umsetzung ist schlimmer als ein
+/// fehlender: Er macht aus einem lauten Abbruch eine stille Abweichung.
+pub const GEKONNTE_MERKMALE: &[&str] = &[
+    // Die dichte Bauart, seit es dieses Projekt gibt.
+    "dicht",
+    // Gebundene Einbettung: kein eigenes `lm_head.weight`.
+    "gebundene_einbettung",
+    // Q und K je Kopf RMS-normiert, vor RoPE.
+    "qk_norm",
+    // Mixture-of-Experts mit einem Tensorsatz je Experte.
+    "moe",
+    // Bias an den Aufmerksamkeitsprojektionen.
+    "attention_bias",
+    // ⚑ **Seit dem 2026-09-21**, mit der hybriden Bauart des
+    // Qwen3.6-35B-A3B. Jedes dieser vier ist umgesetzt und geprueft;
+    // was dabei geprueft wurde, steht jeweils daneben.
+    //
+    // Eine rekurrente Zustandsschicht (Gated DeltaNet): Faltung,
+    // L2-Normierung, Rekurrenz, Ausgangstor. Gemessen gegen die
+    // Fremdimplementierung (Faltung 0,97-faches des Bodens aus der
+    // int8-Quantisierung, Rekurrenz 0,55 Stellen von 2^-8, saettigend
+    // ueber die Laenge).
+    "zustandsschicht",
+    // Das Tor am Ausgang der Zustandsschicht: `silu(z)` mal der
+    // torgesteuerten Norm. Beides vorhandene Kerne.
+    "ausgangstor",
+    // Ein geteilter Experte neben dem Gemisch, der bei jedem Token
+    // feuert: `aus = experten + sigmoid(tor(x)) * geteilt(x)`.
+    "geteilter_experte",
+    // Nur die vorderen `rotary_dim` Stellen eines Kopfvektors werden
+    // gedreht, der Rest geht unveraendert durch. ⚠️ Die Frequenzen
+    // haengen an der Drehbreite, nicht an der Kopfbreite.
+    "teildrehung",
+];
+
+/// **Die Formen einer rekurrenten Zustandsschicht pruefen.**
+///
+/// ⚑ **Das Gegenstueck zu [`pruefe_projektionsformen`].** Jede Ebenenart
+/// bringt ihre eigenen Tensoren mit, und jede braucht eine Pruefung: Eine
+/// falsche Form faellt sonst erst als schlechte Zahl auf, und dann sucht
+/// sie niemand im Lader.
+fn pruefe_zustandsformen(
+    p: &str,
+    dims: &ModelDims,
+    weights: &LoadedWeights,
+) -> Result<(), String> {
+    let hidden = dims.hidden_size;
+    let k_breite = dims.linear_key_head_dim * dims.linear_num_key_heads;
+    let v_breite = dims.linear_value_head_dim * dims.linear_num_value_heads;
+    let kanaele = 2 * k_breite + v_breite;
+
+    let pruefe = |name: &str, soll: &[usize]| -> Result<(), String> {
+        let tn = format!("{p}.linear_attn.{name}");
+        let tensor = require_tensor(weights, &tn)?;
+        if tensor.shape != soll {
+            return Err(format!(
+                "{tn}: Form {:?} passt nicht zu {:?} aus model_config.json \
+                 (hidden {hidden}, Schluesselkoepfe {} a {}, Wertkoepfe {} a {})",
+                tensor.shape,
+                soll,
+                dims.linear_num_key_heads,
+                dims.linear_key_head_dim,
+                dims.linear_num_value_heads,
+                dims.linear_value_head_dim
+            ));
+        }
+        Ok(())
+    };
+
+    // ⚑ **Eine Projektion fuer q, k und v zusammen**, deshalb die Summe
+    //   aus zweimal der Schluesselbreite und einmal der Wertbreite.
+    pruefe("in_proj_qkv.weight", &[kanaele, hidden])?;
+    pruefe("in_proj_z.weight", &[v_breite, hidden])?;
+    // ⚠️ `a` und `b` liefern EINEN Wert je Wertkopf, keine Breite.
+    pruefe("in_proj_a.weight", &[dims.linear_num_value_heads, hidden])?;
+    pruefe("in_proj_b.weight", &[dims.linear_num_value_heads, hidden])?;
+    // Tiefenweise Faltung: je Kanal ein Kern, kein Mischen.
+    pruefe("conv1d.weight", &[kanaele, dims.linear_conv_kernel_dim])?;
+    pruefe("norm.weight", &[dims.linear_value_head_dim])?;
+    pruefe("out_proj.weight", &[hidden, v_breite])?;
+    Ok(())
+}
+
+/// **Die neun Tensoren einer rekurrenten Zustandsschicht laden.**
+///
+/// ⚑ **Die Namen stehen hier einmal und heissen wie im Artefakt.** Wer
+/// im Artefakt nachsieht, findet sie ohne Uebersetzen wieder.
+///
+/// ⚠️ **`exp_A` und `dt_bias` sind keine GEMM-Gewichte**, sondern je ein
+/// Wert pro Wertkopf; sie kommen deshalb als Bias-Tensor mit
+/// Per-Element-Skala und nicht als Matrix mit Zeilenskalen.
+/// **Die feinste Skala, bei der `schranke` noch in i16 passt.**
+///
+/// ⚑ Dieselbe Frage wie `choose_pow2_shift` auf der Exportseite, nur
+/// gegen eine Schranke statt gegen einen gemessenen Groesstwert. Eine
+/// Schranke von null heisst: Der Kanal traegt nichts, und dann ist die
+/// feinste Skala die richtige.
+fn feinste_skala(schranke: f64) -> u8 {
+    if !(schranke > 0.0) {
+        return 15;
+    }
+    for f in (0..=15u8).rev() {
+        if schranke * (1u64 << f) as f64 <= i16::MAX as f64 {
+            return f;
+        }
+    }
+    0
+}
+
+fn lade_zustandsschicht(
+    weights: &LoadedWeights,
+    scales: &LoadedScales,
+    p: &str,
+) -> Result<crate::model::Zustandsschicht, String> {
+    let hole = |n: &str| -> Result<QTensor, String> {
+        Ok(require_tensor(weights, &format!("{p}.linear_attn.{n}"))?.clone())
+    };
+    // ⚠️ **Der Manifest-Schluessel traegt Unterstriche statt Punkte**,
+    // wie bei den Achtsamkeits-Biases auch.
+    let hole_wert = |n: &str| -> Result<BiasTensor, String> {
+        let key = format!("{p}.linear_attn.{n}").replace('.', "_");
+        weights.biases.get(&key).cloned().ok_or_else(|| {
+            format!(
+                "Fehlender Rekurrenzparameter '{key}' im Artefakt. \
+                 `exp_A` und `dt_bias` sind keine GEMM-Gewichte, sondern \
+                 je ein Wert pro Wertkopf, und liegen deshalb als \
+                 int16-Vorspann mit Per-Element-Skala."
+            )
+        })
+    };
+    // ⚑ **Die Schranke je Kanal am Faltungsausgang** (Fund 421), aus
+    //   dem Artefakt gerechnet und ohne neue Kalibrierung. Die Faltung
+    //   ist tiefenweise, also gilt je Kanal
+    //   `|aus[c]| <= Summe_j |w[c][j]| * |ein|`, und `silu` vergroessert
+    //   den Betrag nicht.
+    let conv1d = hole("conv1d.weight")?;
+    let kanaele = conv1d.shifts.len();
+    let ein_max = scales
+        .scales
+        .get(&format!("{p}.linear_attn.in_proj_qkv"))
+        .map(|e| e.absmax_observed)
+        .ok_or_else(|| {
+            format!("Fehlende kalibrierte Aktivierungsskala: {p}.linear_attn.in_proj_qkv")
+        })?;
+    let kern = conv1d.data.len() / kanaele.max(1);
+    let konv_fracs: Vec<u8> = (0..kanaele)
+        .map(|c| {
+            let summe: i64 = conv1d.data[c * kern..(c + 1) * kern]
+                .iter()
+                .map(|&w| i64::from(w).abs())
+                .sum();
+            let schranke = summe as f64 / (1u64 << conv1d.shifts[c]) as f64 * ein_max;
+            feinste_skala(schranke)
+        })
+        .collect();
+
+    Ok(crate::model::Zustandsschicht {
+        in_proj_qkv: hole("in_proj_qkv.weight")?,
+        in_proj_z: hole("in_proj_z.weight")?,
+        in_proj_b: hole("in_proj_b.weight")?,
+        in_proj_a: hole("in_proj_a.weight")?,
+        conv1d,
+        exp_a: hole_wert("exp_A")?,
+        dt_bias: hole_wert("dt_bias")?,
+        norm_gamma: hole("norm.weight")?,
+        out_proj: hole("out_proj.weight")?,
+        skalen: crate::model::Zustandsskalen {
+            qkv_frac: require_scale(scales, &format!("{p}.linear_attn.in_proj_qkv"))?,
+            // ⛔️ **Hier stand bis zum 2026-09-22 `{p}.linear_attn`**, und
+            // das ist die Skala des EBENENAUSGANGS (nach `out_proj`),
+            // nicht die der Faltung. Der Unterschied betrug beim grossen
+            // Modell sieben Bit, und `v` ging damit um den Faktor 128
+            // falsch in die Rekurrenz.
+            //
+            // 📌 **Zwei Skalen, deren Schluessel sich um ein Wort
+            // unterscheiden, sind der leichteste Griff daneben.**
+            // ⚑ **Seit Fund 421 abgeleitet statt gefordert.** Die
+            //   Laufzeit rechnet die Schranke je Kanal selbst aus den
+            //   Faltungsgewichten; die kalibrierte Sammelskala ist nur
+            //   noch eine Meldung. ⚠️ **Und sie fehlt im Skalenpaket**,
+            //   weil `faltungsskala_ergaenzen` nur im Kalibrierungspfad
+            //   laeuft. 📌 Eine Angabe, die es nur auf einem von zwei
+            //   Wegen gibt, ist keine Grundlage.
+            konv_frac: konv_fracs.iter().copied().min().unwrap_or(0),
+            konv_fracs,
+            z_frac: require_scale(scales, &format!("{p}.linear_attn.in_proj_z"))?,
+            a_frac: require_scale(scales, &format!("{p}.linear_attn.in_proj_a"))?,
+            b_frac: require_scale(scales, &format!("{p}.linear_attn.in_proj_b"))?,
+            norm_aus_frac: require_scale(scales, &format!("{p}.linear_attn.norm"))?,
+        },
+    })
+}
+
+impl ModelDims {
+    /// **Traegt der Mischer ein Tor am Ausgang?**
+    ///
+    /// ⚑ **Gilt in dieser Bauart fuer BEIDE Mischer.** Beim
+    /// `Qwen3.6-35B-A3B` liefert `q_proj` die doppelte Kopfbreite
+    /// (Abfrage und Tor), und die Zustandsschicht hat ihr `in_proj_z`.
+    /// Ein Modell, das nur eines von beiden torsteuert, gibt es heute
+    /// nicht; taucht eines auf, wird aus diesem einen Feld ein zweites.
+    pub fn hat_ausgangstor(&self) -> bool {
+        !self.output_gate_type.is_empty()
+    }
+
+    /// **Mischt diese Ebene rekurrent?**
+    ///
+    /// ⚑ **Ein leeres `layer_types` heisst „alle achtsam"**, und das
+    /// deckt jedes Modell ab, das dieses Projekt bisher laedt. Erst ein
+    /// Modell mit gemischten Ebenen fuellt das Feld.
+    ///
+    /// ⚠️ **Ein unbekannter Eintrag ist rekurrent NICHT.** Er wird als
+    /// Achtsamkeit behandelt, und dann fehlt beim Laden ein Tensor mit
+    /// klarer Meldung. **Das ist besser als still eine Zustandsschicht
+    /// anzunehmen**, die es nicht gibt; ausserdem faengt das
+    /// Merkmalstor unbekannte Bauarten schon vorher ab.
+    pub fn ist_rekurrente_ebene(&self, idx: usize) -> bool {
+        self.layer_types
+            .get(idx)
+            .is_some_and(|a| a == "linear_attention")
+    }
+
+    /// **Prueft, ob dieser Bau alles kann, was das Artefakt braucht.**
+    ///
+    /// ⛔️ **Ein unbekanntes Merkmal ist ein Abbruch und keine Warnung.**
+    /// Der Sinn dieser Liste ist, dass ein Artefakt, das mehr braucht als
+    /// dieser Bau kann, **nicht gerechnet** wird. Eine Warnung waere eine
+    /// Meldung, die jemand uebersieht, und danach steht eine falsche Zahl
+    /// im Konsens.
+    pub fn pruefe_merkmale(&self) -> Result<(), String> {
+        let fehlend: Vec<&str> = self
+            .merkmale
+            .iter()
+            .map(|m| m.as_str())
+            .filter(|m| !GEKONNTE_MERKMALE.contains(m))
+            .collect();
+        if fehlend.is_empty() {
+            return Ok(());
+        }
+        Err(format!(
+ "dieses Artefakt braucht Merkmale, die dieser Bau nicht rechnet: {}. Gekonnt sind: {}. Ein Artefakt mit unbekanntem Merkmal wird nicht geladen, weil ein uebersehenes Merkmal eine falsche Zahl ergibt und keine Fehlermeldung.",
+            fehlend.join(", "),
+            GEKONNTE_MERKMALE.join(", ")
+        ))
+    }
 }
 
 /// Laedt und validiert die Modell-Dimensionen aus `model_config.json`.
@@ -486,13 +934,36 @@ fn eintrag_laden(
     // INT16-Tensoren: der LM-Head (spec-Ausnahme 0.6.0) und seit
     // theta_v 0.13.0 die Attention-Biases (Fund 23, siehe BiasTensor).
     if entry.dtype == "int16" {
-        let ist_bias = name.ends_with("_bias");
-        if name != "lm_head" && !ist_bias {
+        // ⚑ **Gemeint ist eine ART, nicht ein Name**: Werte mit einer
+        // Skala JE ELEMENT statt einer Matrix mit Zeilenskalen. Bis zum
+        // 2026-09-21 hiess die Regel „endet auf `_bias`", und das traf
+        // die Sache nur, solange alle solchen Werte so hiessen.
+        //
+        // ⛔️ **Der erste, der anders heisst, ist `exp_A`** der
+        // rekurrenten Zustandsschicht: ein Wert je Wertkopf, zur
+        // Exportzeit aus `A_log` gerechnet. Er ist genauso ein
+        // Per-Element-Wert wie ein Bias und wurde trotzdem abgewiesen.
+        //
+        // 📌 **Eine Regel, die eine Art ueber einen Namen erkennt, haelt
+        // genau so lange, wie sich alle an die Namenskonvention halten.**
+        // Die Liste steht deshalb hier, mit dem Grund je Eintrag, statt
+        // als Zeichenkettenvergleich im Rumpf.
+        const PRO_ELEMENT: &[&str] = &[
+            // Q/K/V-Biases der Aufmerksamkeit (Fund 23).
+            "_bias",
+            // `exp(A_log)` der Zustandsschicht, ein Wert je Wertkopf.
+            "_exp_A",
+        ];
+        let ist_pro_element = PRO_ELEMENT.iter().any(|s| name.ends_with(s));
+        if name != "lm_head" && !ist_pro_element {
             return Err(format!(
-                "{}: int16 ist nur fuer den LM-Head und Attention-Biases zulaessig",
-                name
+                "{}: int16 ist nur fuer den LM-Head und fuer Werte mit einer \
+                 Skala je Element zulaessig (heute {})",
+                name,
+                PRO_ELEMENT.join(", ")
             ));
         }
+        let ist_bias = ist_pro_element;
         let shifts_file = entry.shifts_file.as_ref().ok_or_else(|| {
             format!("{}: int16-Eintrag ohne shifts_file", name)
         })?;
@@ -834,18 +1305,27 @@ pub fn load_luts(artifact_dir: &Path) -> Result<LoadedLuts, String> {
         .map_err(|e| format!("Ungueltiges luts.json: {}", e))?;
 
     let mut tables = HashMap::with_capacity(entries.len());
+    let mut tables32: HashMap<String, Vec<i32>> = HashMap::new();
     for (name, entry) in entries {
-        if entry.dtype != "int16" {
-            return Err(format!(
-                "{}: nicht unterstuetzter dtype '{}' (erwartet 'int16')",
-                name, entry.dtype
-            ));
-        }
+        // ⚑ **Seit θ_v 0.21.0 gibt es zwei Breiten.** Welche eine
+        // Tabelle hat, steht in der Spezifikation und von dort im
+        // Manifest; hier wird sie gelesen und nicht angenommen.
+        let breite_bytes = match entry.dtype.as_str() {
+            "int16" => 2usize,
+            "int32" => 4usize,
+            other => {
+                return Err(format!(
+                    "{}: nicht unterstuetzter dtype '{}' (erwartet 'int16' \
+                     oder 'int32')",
+                    name, other
+                ))
+            }
+        };
 
         let bytes = std::fs::read(artifact_dir.join(&entry.file))
             .map_err(|e| format!("Fehler beim Lesen von {}: {}", entry.file, e))?;
 
-        let expected_bytes = entry.length * 2;
+        let expected_bytes = entry.length * breite_bytes;
         if bytes.len() != expected_bytes {
             return Err(format!(
                 "{}: {} Bytes in '{}', aber length {} erwartet {} Bytes",
@@ -861,26 +1341,33 @@ pub fn load_luts(artifact_dir: &Path) -> Result<LoadedLuts, String> {
             ));
         }
 
-        // struct-unpack "<Nh": little-endian i16, ein Wert pro zwei Bytes.
-        // Laengenpruefung und `allow`: siehe Begruendung beim Gewichtsladen.
-        if bytes.len() % 2 != 0 {
+        if bytes.len() % breite_bytes != 0 {
             return Err(format!(
-                "{}: LUT-Datei hat ungerade Byteanzahl ({}), kann keine \
-                 i16-Folge sein",
+                "{}: LUT-Datei hat {} Bytes, kein Vielfaches von {} und damit \
+                 keine {}-Folge",
                 name,
-                bytes.len()
+                bytes.len(),
+                breite_bytes,
+                entry.dtype
             ));
         }
         #[allow(unknown_lints, clippy::chunks_exact_to_as_chunks)]
-        let values: Vec<i16> = bytes
-            .chunks_exact(2)
-            .map(|c| i16::from_le_bytes([c[0], c[1]]))
-            .collect();
-
-        tables.insert(name, values);
+        if breite_bytes == 2 {
+            let values: Vec<i16> = bytes
+                .chunks_exact(2)
+                .map(|c| i16::from_le_bytes([c[0], c[1]]))
+                .collect();
+            tables.insert(name, values);
+        } else {
+            let values: Vec<i32> = bytes
+                .chunks_exact(4)
+                .map(|c| i32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+                .collect();
+            tables32.insert(name, values);
+        }
     }
 
-    Ok(LoadedLuts { tables })
+    Ok(LoadedLuts { tables, tables32 })
 }
 
 /// Laedt alle Aktivierungsskalen aus `scales.json` (Format: calibrate/src/scales.py).
@@ -956,7 +1443,18 @@ fn pruefe_projektionsformen(
     v: &QTensor,
     o: &QTensor,
 ) -> Result<(), String> {
-    let q_len = dims.num_heads * dims.head_dim;
+    let kopfbreite = dims.num_heads * dims.head_dim;
+    // ⛔️ **`q_proj` liefert die DOPPELTE Kopfbreite, wenn die
+    // Achtsamkeit ein Ausgangstor hat** (Qwen3.6): Abfrage und Tor in
+    // einer Matrix, hintereinander je Kopf.
+    //
+    // 📌 **Gefunden am 2026-09-21, und zwar von dieser Pruefung selbst**
+    // („shape [8192, 2048], erwartet [4096, 2048]"). Beim Abhaken der
+    // Tensorliste war sie nicht aufgefallen: 120 `self_attn`-Dateien,
+    // zehn Ebenen mal sechs mal zwei, alles stimmig. **Eine
+    // vollstaendige Liste ist nicht dasselbe wie eine richtige**, denn
+    // die Formen hatte niemand gegen die Konfiguration gehalten.
+    let q_len = kopfbreite * if dims.hat_ausgangstor() { 2 } else { 1 };
     let kv_len = dims.num_kv_heads * dims.head_dim;
 
     let pruefe = |name: &str, t: &QTensor, zeilen: usize, spalten: usize| -> Result<(), String> {
@@ -980,7 +1478,7 @@ fn pruefe_projektionsformen(
     pruefe("q_proj", q, q_len, dims.hidden_size)?;
     pruefe("k_proj", k, kv_len, dims.hidden_size)?;
     pruefe("v_proj", v, kv_len, dims.hidden_size)?;
-    pruefe("o_proj", o, dims.hidden_size, q_len)?;
+    pruefe("o_proj", o, dims.hidden_size, kopfbreite)?;
     Ok(())
 }
 
@@ -988,7 +1486,7 @@ fn pruefe_projektionsformen(
 ///
 /// ✅ **Gegen die echte `model.safetensors.index.json` von
 /// `Qwen/Qwen3-30B-A3B` geprueft** (Revision `ad44e777`, lokal unter
-/// `models/Qwen3-30B-A3B/`, 2026-08-25). Die Datei fuehrt je Layer
+/// `MODELS/llm/Qwen3-30B-A3B/`, 2026-08-25). Die Datei fuehrt je Layer
 /// `mlp.gate.weight` und 384 Experten-Tensoren, also 128 Experten mal
 /// gate/up/down, nummeriert von 0 bis 127.
 ///
@@ -1018,6 +1516,9 @@ pub fn load_model(artifact_dir: &Path) -> Result<IntegerModel, String> {
     theta_v.verify_version_against_spec()?;
 
     let dims = load_model_dims(artifact_dir)?;
+    // ⛔️ **Vor dem Laden der Gewichte und nicht danach.** Ein Artefakt,
+    // das dieser Bau nicht rechnen kann, soll nicht erst 9 GB einlesen.
+    dims.pruefe_merkmale()?;
     let weights = load_weights(artifact_dir)?;
     let scales = load_scales(artifact_dir)?;
     let luts = load_luts(artifact_dir)?;
@@ -1048,6 +1549,25 @@ fn require_tensor<'a>(weights: &'a LoadedWeights, name: &str) -> Result<&'a QTen
         .ok_or_else(|| format!("Fehlendes Gewicht im Artefakt: {}", name))
 }
 
+/// Eine Tabelle in `int32`.
+///
+/// ⚑ **Eigene Funktion statt eines Merkmals an `require_lut`**, weil
+/// die Breite keine Kleinigkeit ist: Wer `softplus_rest` als int16
+/// laese, bekaeme doppelt so viele halbe Werte, und das saehe wie eine
+/// Tabelle aus.
+fn require_lut32(luts: &LoadedLuts, name: &str) -> Result<Vec<i32>, String> {
+    if let Some(t) = luts.get32(name) {
+        return Ok(t.clone());
+    }
+    Err(match luts.breite(name) {
+        Some(b) => format!(
+            "Tabelle '{name}' liegt als {b} vor, gebraucht wird int32. \
+             Das Artefakt passt nicht zu dieser theta_v-Fassung."
+        ),
+        None => format!("Fehlende Tabelle im Artefakt: {name}"),
+    })
+}
+
 fn require_lut(luts: &LoadedLuts, name: &str) -> Result<Vec<i16>, String> {
     luts.get(name)
         .cloned()
@@ -1056,6 +1576,52 @@ fn require_lut(luts: &LoadedLuts, name: &str) -> Result<Vec<i16>, String> {
 
 /// Liest die Modellbau-Konstanten aus der eingebetteten theta_v/spec.json
 /// (Single Source of Truth des numerischen Vertrags, theta_v 0.5.0).
+/// Die Bruchbits der Zustandsschicht-Tabellen, aus der eingebetteten
+/// Spezifikation.
+///
+/// ⚑ **Eine eigene Funktion neben [`spec_model_params`]**, damit jede
+/// Angabe an genau einem Ort gelesen wird: Die Masse kommen aus
+/// `model_config.json`, die Tabellen aus dem Artefakt, die Bruchbits
+/// von hier.
+pub struct Zustandsparameter {
+    pub sigmoid_versatz: i16,
+    pub sigmoid_ein_frac: u8,
+    pub sigmoid_aus_frac: u8,
+    pub softplus_ein_frac: u8,
+    pub softplus_aus_frac: u8,
+    pub zerfall_raster_frac: u8,
+    pub zerfall_aus_frac: u8,
+}
+
+fn spec_zustandsparameter() -> Result<Zustandsparameter, String> {
+    let parsed: serde_json::Value = serde_json::from_str(SPEC_JSON)
+        .map_err(|e| format!("Eingebettetes theta_v/spec.json ist ungueltig: {e}"))?;
+    let num = |path: &str, node: &serde_json::Value| -> Result<u8, String> {
+        node.as_u64()
+            .and_then(|v| u8::try_from(v).ok())
+            .ok_or_else(|| format!("theta_v/spec.json: {} fehlt oder ist kein u8", path))
+    };
+    let nl = &parsed["theta_v"]["nonlinear"];
+    let sig_min = nl["sigmoid"]["input_range"][0].as_i64().ok_or_else(|| {
+        "theta_v/spec.json: nonlinear.sigmoid.input_range[0] fehlt".to_string()
+    })?;
+    Ok(Zustandsparameter {
+        sigmoid_versatz: (-sig_min) as i16,
+        sigmoid_ein_frac: num("nonlinear.sigmoid.input_frac_bits",
+                              &nl["sigmoid"]["input_frac_bits"])?,
+        sigmoid_aus_frac: num("nonlinear.sigmoid.output_frac_bits",
+                              &nl["sigmoid"]["output_frac_bits"])?,
+        softplus_ein_frac: num("nonlinear.softplus_rest.input_frac_bits",
+                               &nl["softplus_rest"]["input_frac_bits"])?,
+        softplus_aus_frac: num("nonlinear.softplus_rest.output_frac_bits",
+                               &nl["softplus_rest"]["output_frac_bits"])?,
+        zerfall_raster_frac: num("nonlinear.zerfall_exp.input_frac_bits",
+                                 &nl["zerfall_exp"]["input_frac_bits"])?,
+        zerfall_aus_frac: num("nonlinear.zerfall_exp.output_frac_bits",
+                              &nl["zerfall_exp"]["output_frac_bits"])?,
+    })
+}
+
 fn spec_model_params() -> Result<ModelConfig, String> {
     let parsed: serde_json::Value = serde_json::from_str(SPEC_JSON)
         .map_err(|e| format!("Eingebettetes theta_v/spec.json ist ungueltig: {}", e))?;
@@ -1099,9 +1665,19 @@ fn require_scale(scales: &LoadedScales, name: &str) -> Result<u8, String> {
 /// Wie `require_scale`, aber fuer ein Residualstrom-Segment mit
 /// Per-Kanal-Shifts (Fund 20). `n` ist `hidden_size`.
 fn require_scale_pc(scales: &LoadedScales, name: &str, n: usize) -> Result<Vec<u8>, String> {
-    scales.shifts_per_channel(name, n).ok_or_else(|| {
+    let shifts = scales.shifts_per_channel(name, n).ok_or_else(|| {
         format!("Fehlende kalibrierte Aktivierungsskala in scales.json: {}", name)
-    })?
+    })??;
+    // ⚑ **Ein Versuchsschalter, kein Verhalten.** Er nimmt jedem Kanal
+    //   so viele Bit Aufloesung, wie hier stehen, und verschafft ihm
+    //   damit Luft nach oben. Gedacht ist er fuer die Frage, ob eine
+    //   Saettigung im Residualstrom den Unterschied macht; ohne ihn
+    //   aendert sich nichts.
+    if let Some(n_bits) = std::env::var("MYL_RESIDUALLUFT").ok().and_then(|v| v.parse::<u8>().ok())
+    {
+        return Ok(shifts.iter().map(|&s| s.saturating_sub(n_bits)).collect());
+    }
+    Ok(shifts)
 }
 
 /// Baut ein vollstaendiges [`IntegerModel`] aus bereits geladenen Artefakten.
@@ -1110,7 +1686,7 @@ fn require_scale_pc(scales: &LoadedScales, name: &str, n: usize) -> Result<Vec<u
 /// `model.layers.0.self_attn.q_proj.weight`). Bei `tie_word_embeddings = true`
 /// wird kein eigenstaendiges `lm_head.weight` gesucht, sondern die
 /// Embedding-Tabelle wiederverwendet - Qwen2.5-0.5B exportiert in diesem Fall
-/// kein separates LM-Head-Gewicht (siehe `models/Qwen2.5-0.5B/config.json`).
+/// kein separates LM-Head-Gewicht (siehe `MODELS/llm/Qwen2.5-0.5B/config.json`).
 pub fn build_model(
     theta_v: ThetaV,
     dims: ModelDims,
@@ -1154,20 +1730,34 @@ pub fn build_model(
         // `hidden_size == num_heads * head_dim` trug. Sie prueft die
         // Formen, die der Forward-Pass tatsaechlich voraussetzt, statt
         // eine Beziehung, die nur zufaellig fuer zwei Modelle galt.
-        pruefe_projektionsformen(
-            &p,
-            &dims,
-            require_tensor(&weights, &format!("{}.self_attn.q_proj.weight", p))?,
-            require_tensor(&weights, &format!("{}.self_attn.k_proj.weight", p))?,
-            require_tensor(&weights, &format!("{}.self_attn.v_proj.weight", p))?,
-            require_tensor(&weights, &format!("{}.self_attn.o_proj.weight", p))?,
-        )?;
+        // ⚑ **Je Ebenenart ihre eigene Formpruefung.**
+        //
+        // ⛔️ Bis zum 2026-09-21 lief hier `pruefe_projektionsformen`
+        // fuer **jede** Ebene, und eine rekurrente hat kein `q_proj`.
+        // Sie zu ueberspringen waere der halbe Weg gewesen: Dann haette
+        // eine Zustandsebene **gar keine** Formpruefung mehr, und eine
+        // falsche Tensorform faellt sonst erst als schlechte Zahl auf.
+        if dims.ist_rekurrente_ebene(layer_idx) {
+            pruefe_zustandsformen(&p, &dims, &weights)?;
+        } else {
+            pruefe_projektionsformen(
+                &p,
+                &dims,
+                require_tensor(&weights, &format!("{}.self_attn.q_proj.weight", p))?,
+                require_tensor(&weights, &format!("{}.self_attn.k_proj.weight", p))?,
+                require_tensor(&weights, &format!("{}.self_attn.v_proj.weight", p))?,
+                require_tensor(&weights, &format!("{}.self_attn.o_proj.weight", p))?,
+            )?;
+        }
 
         // Attention-Biases: nur bei `attention_bias: true` erwartet, dann
         // aber zwingend (lautes Scheitern statt stiller Abweichung vom
         // Referenzmodell). Bias-Laengen muessen zu den Projektions-Ausgaben
         // passen (q: num_heads*head_dim, k/v: num_kv_heads*head_dim).
-        let (q_bias, k_bias, v_bias) = if dims.attention_bias {
+        // ⚠️ Ebenso: eine Zustandsebene hat keine Achtsamkeits-Biases.
+        let (q_bias, k_bias, v_bias) = if dims.attention_bias
+            && !dims.ist_rekurrente_ebene(layer_idx)
+        {
             // theta_v 0.13.0 (Fund 23): Biases liegen in int16. Der
             // Manifest-Key traegt Unterstriche statt Punkte.
             let hole_bias = |suffix: &str| -> Result<BiasTensor, String> {
@@ -1203,7 +1793,10 @@ pub fn build_model(
 
         // QK-Norm (Qwen3): beide Gammas und beide Ausgangsskalen, oder
         // keines von vieren. Der Typ `QkNorm` laesst nichts Halbes zu.
-        let qk_norm = if dims.qk_norm {
+        // ⚠️ **Nur fuer achtsame Ebenen.** Eine Zustandsebene normiert
+        // `q` und `k` ebenfalls, aber ohne Gamma und auf Einheitslaenge
+        // (L2 statt RMS); sie traegt deshalb kein `q_norm.weight`.
+        let qk_norm = if dims.qk_norm && !dims.ist_rekurrente_ebene(layer_idx) {
             let q_gamma =
                 require_tensor(&weights, &format!("{}.self_attn.q_norm.weight", p))?.clone();
             let k_gamma =
@@ -1248,6 +1841,27 @@ pub fn build_model(
                 });
             }
             Feedforward::Moe(MoeLayer {
+                // ⚑ **Der geteilte Experte, falls das Modell einen hat.**
+                // Er haengt an `shared_expert_intermediate_size`; null
+                // heisst „keiner", und das gilt fuer jedes Gemisch vor
+                // dem Qwen3.6-35B-A3B.
+                geteilter_experte: if dims.shared_expert_intermediate_size > 0 {
+                    Some(crate::model::GeteilterExperte {
+                        mlp: DenseMlp {
+                            gate_proj: require_tensor(&weights, &format!("{}.mlp.shared_expert.gate_proj.weight", p))?.clone(),
+                            up_proj: require_tensor(&weights, &format!("{}.mlp.shared_expert.up_proj.weight", p))?.clone(),
+                            down_proj: require_tensor(&weights, &format!("{}.mlp.shared_expert.down_proj.weight", p))?.clone(),
+                        },
+                        tor: require_tensor(&weights, &format!("{}.mlp.shared_expert_gate.weight", p))?.clone(),
+                        tor_frac: require_scale(&scales, &format!("{}.mlp.shared_expert_gate", p))?,
+                        zwischen: dims.shared_expert_intermediate_size,
+                        gate_frac: require_scale(&scales, &format!("{}.mlp.shared_expert.gate_proj", p))?,
+                        up_frac: require_scale(&scales, &format!("{}.mlp.shared_expert.up_proj", p))?,
+                        down_in_frac: require_scale(&scales, &format!("{}.mlp.shared_expert.down_proj.input", p))?,
+                    })
+                } else {
+                    None
+                },
                 router: require_tensor(&weights, &format!("{}.{}", p, ROUTER_SUFFIX))?.clone(),
                 router_frac: require_scale(&scales, &format!("{}.{}", p, ROUTER_SUFFIX_OHNE_WEIGHT))?,
                 experts,
@@ -1266,12 +1880,23 @@ pub fn build_model(
         // v0.12.20) plus Per-Segment-Skalen des Residualstroms (spec 0.5.1,
         // v0.12.21). Schluessel-Konvention identisch zu
         // calibrate/src/stats.py.
+        // ⚑ **Die Achtsamkeitsskalen nur fuer achtsame Ebenen.** Eine
+        // rekurrente Ebene hat sie nicht, und `require_scale` wuerde hier
+        // mit einer irrefuehrenden Meldung abbrechen („fehlende Skala
+        // self_attn.q_proj"), obwohl gar keine fehlen kann.
+        let achtsamkeitsskalen = if dims.ist_rekurrente_ebene(layer_idx) {
+            None
+        } else {
+            Some(crate::model::Achtsamkeitsskalen {
+                q_frac: require_scale(&scales, &format!("{}.self_attn.q_proj", p))?,
+                k_frac: require_scale(&scales, &format!("{}.self_attn.k_proj", p))?,
+                v_frac: require_scale(&scales, &format!("{}.self_attn.v_proj", p))?,
+                attn_out_frac: require_scale(&scales, &format!("{}.self_attn", p))?,
+            })
+        };
         let layer_scales = LayerScales {
             norm_attn_frac: require_scale(&scales, &format!("{}.input_layernorm", p))?,
-            q_frac: require_scale(&scales, &format!("{}.self_attn.q_proj", p))?,
-            k_frac: require_scale(&scales, &format!("{}.self_attn.k_proj", p))?,
-            v_frac: require_scale(&scales, &format!("{}.self_attn.v_proj", p))?,
-            attn_out_frac: require_scale(&scales, &format!("{}.self_attn", p))?,
+            achtsamkeit: achtsamkeitsskalen,
             norm_mlp_frac: require_scale(&scales, &format!("{}.post_attention_layernorm", p))?,
             gate_frac: require_scale(&scales, &format!("{}.mlp.gate_proj", p))?,
             up_frac: require_scale(&scales, &format!("{}.mlp.up_proj", p))?,
@@ -1284,20 +1909,65 @@ pub fn build_model(
             layer_idx,
             input_layernorm_gamma: require_tensor(&weights, &format!("{}.input_layernorm.weight", p))?.clone(),
             post_attention_layernorm_gamma: require_tensor(&weights, &format!("{}.post_attention_layernorm.weight", p))?.clone(),
-            q_proj: require_tensor(&weights, &format!("{}.self_attn.q_proj.weight", p))?.clone(),
-            k_proj: require_tensor(&weights, &format!("{}.self_attn.k_proj.weight", p))?.clone(),
-            v_proj: require_tensor(&weights, &format!("{}.self_attn.v_proj.weight", p))?.clone(),
-            o_proj: require_tensor(&weights, &format!("{}.self_attn.o_proj.weight", p))?.clone(),
+            // ⚑ **Die Ebenenart entscheidet, welche Tensoren gefordert
+            // werden.** `layer_types` steht in der Konfiguration; ist es
+            // leer, ist jede Ebene achtsam, und das deckt jedes bisherige
+            // Modell ab.
+            mischer: if dims.ist_rekurrente_ebene(layer_idx) {
+                crate::model::Mischer::Zustand(lade_zustandsschicht(&weights, &scales, &p)?)
+            } else {
+                crate::model::Mischer::Achtsamkeit(crate::model::Achtsamkeit {
+                    q_proj: require_tensor(&weights, &format!("{}.self_attn.q_proj.weight", p))?.clone(),
+                    k_proj: require_tensor(&weights, &format!("{}.self_attn.k_proj.weight", p))?.clone(),
+                    v_proj: require_tensor(&weights, &format!("{}.self_attn.v_proj.weight", p))?.clone(),
+                    o_proj: require_tensor(&weights, &format!("{}.self_attn.o_proj.weight", p))?.clone(),
+                    q_bias,
+                    k_bias,
+                    v_bias,
+                    qk_norm,
+                })
+            },
             ffn,
-            q_bias,
-            k_bias,
-            v_bias,
-            qk_norm,
             scales: layer_scales,
         });
     }
 
+    // ⚑ **Die Masse der Zustandsschichten, einmal je Modell.**
+    //
+    // ⚠️ **`None`, wenn keine Ebene rekurrent mischt.** Ein Modell ohne
+    // solche Ebenen soll die Tabellen nicht mitschleppen, und ein
+    // Zugriff darauf soll knallen statt auf Vorgabewerte auszuweichen.
+    let zustandsmasse = if (0..dims.num_layers).any(|i| dims.ist_rekurrente_ebene(i)) {
+        let zp = spec_zustandsparameter()?;
+        Some(crate::model::Zustandsmasse {
+            schluessel_koepfe: dims.linear_num_key_heads,
+            wert_koepfe: dims.linear_num_value_heads,
+            schluessel_dim: dims.linear_key_head_dim,
+            wert_dim: dims.linear_value_head_dim,
+            kanaele: 2 * dims.linear_key_head_dim * dims.linear_num_key_heads
+                + dims.linear_value_head_dim * dims.linear_num_value_heads,
+            softplus_rest: require_lut32(&luts, "softplus_rest")?,
+            softplus_ein_frac: zp.softplus_ein_frac,
+            softplus_aus_frac: zp.softplus_aus_frac,
+            zerfall_exp: require_lut32(&luts, "zerfall_exp")?,
+            zerfall_raster_frac: zp.zerfall_raster_frac,
+            zerfall_aus_frac: zp.zerfall_aus_frac,
+        })
+    } else {
+        None
+    };
+
+    // ⚑ **Sigmoid liegt am Modell**, denn jedes Tor braucht sie: `beta`
+    // der Zustandsschicht, das Tor am Achtsamkeitsausgang und das des
+    // geteilten Experten.
+    let zp_tore = spec_zustandsparameter()?;
     let model = IntegerModel {
+        zustandsmasse,
+        sigmoid_lut: require_lut(&luts, "sigmoid")?,
+        sigmoid_versatz: zp_tore.sigmoid_versatz,
+        sigmoid_ein_frac: zp_tore.sigmoid_ein_frac,
+        sigmoid_aus_frac: zp_tore.sigmoid_aus_frac,
+        achtsamkeit_mit_tor: dims.hat_ausgangstor(),
         theta_v,
         vocab_size: dims.vocab_size,
         hidden_size: dims.hidden_size,
@@ -1305,7 +1975,14 @@ pub fn build_model(
         num_heads: dims.num_heads,
         num_kv_heads: dims.num_kv_heads,
         head_dim: dims.head_dim,
+        // ⚑ **Null heisst „ganz drehen".** Jedes Modell vor dem
+        // `Qwen3.6-35B-A3B` traegt kein `rotary_dim`, und fuer die gilt
+        // unveraendert die volle Drehung.
+        drehbreite: if dims.rotary_dim == 0 { dims.head_dim } else { dims.rotary_dim },
         max_context: dims.max_context,
+        // ⚑ **Einmal beim Laden in eine Ganzzahl**, damit der
+        //   Rechenpfad nie eine Gleitkommazahl sieht (Fund 419).
+        norm_eps_q40: (dims.rms_norm_eps * (1u64 << 40) as f64).round() as i64,
         embedding_table,
         lm_head,
         lm_head_int16,
@@ -1831,6 +2508,7 @@ mod tests {
             moe_intermediate_size: 0,
             norm_topk_prob: false,
             mlp_only_layers: Vec::new(),
+            ..Default::default()
         };
         let t = |zeilen: usize, spalten: usize| QTensor {
             data: std::sync::Arc::new(vec![0i8; zeilen * spalten].into()),
@@ -1930,6 +2608,32 @@ mod tests {
         attention_bias: bool,
         moe: Option<(usize, usize, usize)>,
     ) {
+        write_full_fixture_mit_tor(dir, tie_word_embeddings, attention_bias, moe, false)
+    }
+
+    /// Wie oben, aber mit **Ausgangstor der Achtsamkeit und geteiltem
+    /// Experten**, wenn `tor_und_geteilt`.
+    ///
+    /// # ⛔️ Warum es diese Vorlage geben muss (Funde 426 und 427)
+    ///
+    /// `die_gebuendelten_logits_sind_die_tokenweisen` haelt den
+    /// gebuendelten Weg gegen den einzelnen und ist genau die Probe, die
+    /// beide Funde gefangen haette. Sie lief nur gegen eine dichte und
+    /// eine Gemischvorlage, und **beide Funde sassen in Bauteilen, die
+    /// keine der beiden hat**: im Tor am Ausgang der Achtsamkeit und im
+    /// geteilten Experten.
+    ///
+    /// 📌 **Eine Zusicherung reicht nur so weit wie ihre Vorlagen.** Die
+    /// Probe war richtig gebaut und hat trotzdem nichts gesehen, weil
+    /// ihr Gegenstand nie vorkam. Wer ein Bauteil ergaenzt, ergaenzt
+    /// hier eine Vorlage.
+    fn write_full_fixture_mit_tor(
+        dir: &Path,
+        tie_word_embeddings: bool,
+        attention_bias: bool,
+        moe: Option<(usize, usize, usize)>,
+        tor_und_geteilt: bool,
+    ) {
         let hidden = 4usize;
         let heads = 2usize;
         let kv_heads = 1usize;
@@ -1955,6 +2659,19 @@ mod tests {
             "moe_intermediate_size": moe.map(|m| m.2).unwrap_or(0),
             "norm_topk_prob": moe.is_some(),
             "mlp_only_layers": Vec::<usize>::new(),
+            // ⚑ Tor und geteilter Experte, die beiden Bauteile, in denen
+            //   die Funde 426 und 427 sassen.
+            // ⚑ **Derselbe Name wie im Export** (`model_configs.py`):
+            //   ein Name und kein Schalter, weil es spaeter mehr als
+            //   eine Torart geben kann.
+            "output_gate_type": if tor_und_geteilt { "sigmoid" } else { "" },
+            "shared_expert_intermediate_size":
+                if tor_und_geteilt { inter } else { 0 },
+            "merkmale": if tor_und_geteilt {
+                vec!["ausgangstor", "geteilter_experte"]
+            } else {
+                Vec::<&str>::new()
+            },
         }));
 
         // Vollstaendige Per-Layer-Aktivierungsskalen (seit v0.12.20 Pflicht:
@@ -1982,6 +2699,17 @@ mod tests {
             // Experten teilen sich die Layer-Skalen gate/up/down, die
             // oben schon stehen (siehe stats.py::_sammelschluessel).
             scales["model.layers.0.mlp.gate"] = scale_entry(4, 0.0625, 12.0);
+        }
+        if tor_und_geteilt {
+            for (k, s) in [
+                ("model.layers.0.mlp.shared_expert.gate_proj", scale_entry(4, 0.0625, 20.0)),
+                ("model.layers.0.mlp.shared_expert.up_proj", scale_entry(4, 0.0625, 20.0)),
+                ("model.layers.0.mlp.shared_expert.down_proj", scale_entry(4, 0.0625, 20.0)),
+                ("model.layers.0.mlp.shared_expert.down_proj.input", scale_entry(0, 1.0, 100.0)),
+                ("model.layers.0.mlp.shared_expert_gate", scale_entry(4, 0.0625, 12.0)),
+            ] {
+                scales[k] = s;
+            }
         }
         write_scales(dir, &scales);
 
@@ -2011,7 +2739,12 @@ mod tests {
         }
         put("model.layers.0.input_layernorm.weight", vec![hidden]);
         put("model.layers.0.post_attention_layernorm.weight", vec![hidden]);
-        put("model.layers.0.self_attn.q_proj.weight", vec![heads * head_dim, hidden]);
+        // ⚑ **Mit Tor liefert `q_proj` die doppelte Kopfbreite**, je Kopf
+        //   erst Abfrage, dann Tor.
+        put(
+            "model.layers.0.self_attn.q_proj.weight",
+            vec![heads * head_dim * if tor_und_geteilt { 2 } else { 1 }, hidden],
+        );
         put("model.layers.0.self_attn.k_proj.weight", vec![kv_heads * head_dim, hidden]);
         put("model.layers.0.self_attn.v_proj.weight", vec![kv_heads * head_dim, hidden]);
         put("model.layers.0.self_attn.o_proj.weight", vec![hidden, heads * head_dim]);
@@ -2035,6 +2768,15 @@ mod tests {
                         vec![hidden, breite]);
                 }
             }
+        }
+
+        if tor_und_geteilt {
+            // Namen wie im echten Export: `mlp.shared_expert.*` und das
+            // Tor `mlp.shared_expert_gate` mit genau einer Zeile.
+            put("model.layers.0.mlp.shared_expert.gate_proj.weight", vec![inter, hidden]);
+            put("model.layers.0.mlp.shared_expert.up_proj.weight", vec![inter, hidden]);
+            put("model.layers.0.mlp.shared_expert.down_proj.weight", vec![hidden, inter]);
+            put("model.layers.0.mlp.shared_expert_gate.weight", vec![1, hidden]);
         }
 
         if attention_bias {
@@ -2094,6 +2836,48 @@ mod tests {
         put_lut("exp", vec![256, 128, 64]);
         put_lut("silu", vec![-10, 0, 10, 20]);
         put_lut("rsqrt", vec![256, 181, 148]);
+        // ⛔️ **Fund 428: seit theta_v 0.21.0 verlangt der Lader die
+        //   Sigmoid-Tabelle, und diese Vorlage schrieb sie nicht.**
+        //
+        // Sechs Ladertests scheiterten daraufhin an „Fehlende
+        // Lookup-Tabelle im Artefakt: sigmoid", darunter
+        // `die_gebuendelten_logits_sind_die_tokenweisen`. **Genau die
+        // haette die Funde 426 und 427 gefangen**, denn sie haelt den
+        // gebuendelten Weg gegen den einzelnen.
+        //
+        // 📌 **Eine rote Probe prueft nichts.** Sie war richtig gebaut
+        // und richtig gedacht; sie lief nur nicht mehr, und niemand
+        // bemerkte, dass damit die Zusicherung weg war. Eine Zusage, die
+        // nicht laeuft, ist keine.
+        // ⛔️ **Eine Tabelle in echter Laenge, sonst ist das Tor eine
+        //   Eins.**
+        //
+        // `sigmoid_nachschlagen` gibt **oberhalb** der Tabelle exakt
+        // eins zurueck, und der Versatz kommt aus `theta_v`
+        // (`input_range[0] = -8192`). Eine Vorlagentabelle mit vier
+        // Eintraegen hat damit `oben = -8189`: **jedes** Torargument
+        // liegt darueber, jedes Tor ist eins, und ein Tor, das eins ist,
+        // ist keines.
+        //
+        // 📌 **Nachgewiesen und nicht vermutet:** Mit der kurzen Tabelle
+        // blieb `die_gebuendelten_logits_sind_die_tokenweisen` gruen,
+        // auch wenn man das Tor im gebuendelten Weg wieder entfernte.
+        // **Eine Vorlage, deren Werte den geprueften Schritt zur
+        // Identitaet machen, prueft ihn nicht**, und das sieht man ihr
+        // nicht an: Sie ist gruen.
+        {
+            let n = 1usize << 14;
+            let versatz = 8192.0f64;
+            let ein = 512.0f64; // input_frac_bits 9
+            let aus = 16384.0f64; // output_frac_bits 14
+            let werte: Vec<i16> = (0..n)
+                .map(|i| {
+                    let x = (i as f64 - versatz) / ein;
+                    (aus / (1.0 + (-x).exp())).round() as i16
+                })
+                .collect();
+            put_lut("sigmoid", werte);
+        }
 
         fs::write(dir.join("luts.json"), serde_json::to_string(&luts_manifest).unwrap())
             .expect("luts.json schreiben");
@@ -2172,10 +2956,17 @@ mod tests {
     /// kurzen Folge nie vor.
     #[test]
     fn die_gebuendelten_logits_sind_die_tokenweisen() {
-        for (name, moe) in [("logits-dicht", None), ("logits-moe", Some((6usize, 2usize, 3usize)))]
-        {
+        // ⛔️ **Die dritte Vorlage ist die, die gefehlt hat** (Funde 426
+        //   und 427): Tor am Ausgang der Achtsamkeit und geteilter
+        //   Experte. Ohne sie lief diese Probe gruen, waehrend der
+        //   gebuendelte Weg beide Bauteile schlicht nicht kannte.
+        for (name, moe, tor) in [
+            ("logits-dicht", None, false),
+            ("logits-moe", Some((6usize, 2usize, 3usize)), false),
+            ("logits-tor-geteilt", Some((6usize, 2usize, 3usize)), true),
+        ] {
             let dir = test_dir(name);
-            write_full_fixture_mit(&dir, true, false, moe);
+            write_full_fixture_mit_tor(&dir, true, false, moe, tor);
             gewichte_verrauschen(&dir, 0x5eed_0384);
             skalen_je_kanal_streuen(&dir);
             let model = load_model(&dir).expect("Artefakt muss laden");
@@ -2618,19 +3409,19 @@ mod tests {
         // GQA-Asymmetrie muss sich in den geladenen Tensorformen widerspiegeln:
         // q_proj hat num_heads*head_dim=4 Zeilen, k_proj/v_proj nur
         // num_kv_heads*head_dim=2.
-        assert_eq!(model.layers[0].q_proj.shape, vec![4, 4]);
-        assert_eq!(model.layers[0].k_proj.shape, vec![2, 4]);
-        assert_eq!(model.layers[0].v_proj.shape, vec![2, 4]);
+        assert_eq!(model.layers[0].achtsamkeit().q_proj.shape, vec![4, 4]);
+        assert_eq!(model.layers[0].achtsamkeit().k_proj.shape, vec![2, 4]);
+        assert_eq!(model.layers[0].achtsamkeit().v_proj.shape, vec![2, 4]);
 
         // Attention-Biases (Qwen2.5-Format, attention_bias=true): muessen
         // geladen sein und die Laenge der Projektions-Ausgabe tragen
         // (q: heads*head_dim=4, k/v: kv_heads*head_dim=2).
-        assert!(model.layers[0].q_bias.is_some());
-        assert!(model.layers[0].k_bias.is_some());
-        assert!(model.layers[0].v_bias.is_some());
-        assert_eq!(model.layers[0].q_bias.as_ref().unwrap().data.len(), 4);
-        assert_eq!(model.layers[0].k_bias.as_ref().unwrap().data.len(), 2);
-        assert_eq!(model.layers[0].v_bias.as_ref().unwrap().data.len(), 2);
+        assert!(model.layers[0].achtsamkeit().q_bias.is_some());
+        assert!(model.layers[0].achtsamkeit().k_bias.is_some());
+        assert!(model.layers[0].achtsamkeit().v_bias.is_some());
+        assert_eq!(model.layers[0].achtsamkeit().q_bias.as_ref().unwrap().data.len(), 4);
+        assert_eq!(model.layers[0].achtsamkeit().k_bias.as_ref().unwrap().data.len(), 2);
+        assert_eq!(model.layers[0].achtsamkeit().v_bias.as_ref().unwrap().data.len(), 2);
 
         assert_eq!(model.cos_lut.len(), 2048);
         assert_eq!(model.exp_lut.len(), 3);
@@ -2670,7 +3461,7 @@ mod tests {
 
         // Per-Layer-Skalen muessen aus scales.json verdrahtet sein (v0.12.20),
         // inklusive der Per-Segment-Residualskalen (spec 0.5.1).
-        assert_eq!(model.layers[0].scales.q_frac, 5);
+        assert_eq!(model.layers[0].scales.achtsamkeit().q_frac, 5);
         assert_eq!(model.layers[0].scales.down_in_frac, 0);
         // Fund 20: ohne "shifts"-Feld im Fixture-scales.json broadcastet der
         // Loader den Skalar-Shift uniform auf alle Kanaele (hidden_size=4
@@ -2817,6 +3608,88 @@ mod tests {
         assert!(theta_v.verify("abc", "def", "wrong").is_err());
     }
 
+    /// Eine Vorlage mit den Pflichtfeldern, sonst leer.
+    fn dims_mit_merkmalen(merkmale: &[&str]) -> ModelDims {
+        ModelDims {
+            family: "qwen3".into(),
+            variant: "probe".into(),
+            num_layers: 1,
+            hidden_size: 8,
+            intermediate_size: 16,
+            num_heads: 1,
+            num_kv_heads: 1,
+            head_dim: 8,
+            vocab_size: 16,
+            max_context: 8,
+            merkmale: merkmale.iter().map(|s| s.to_string()).collect(),
+            ..Default::default()
+        }
+    }
+
+    /// ⚠️ **Eine leere Liste wird zugelassen**, denn so sehen alle
+    /// Artefakte von vor dieser Regel aus. Sie abzulehnen waere eine
+    /// Entwertung ohne Anlass.
+    #[test]
+    fn ohne_merkmale_laedt_es() {
+        assert!(dims_mit_merkmalen(&[]).pruefe_merkmale().is_ok());
+    }
+
+    /// Bekannte Merkmale gehen durch.
+    #[test]
+    fn gekonnte_merkmale_gehen_durch() {
+        assert!(dims_mit_merkmalen(&["dicht", "qk_norm"]).pruefe_merkmale().is_ok());
+        assert!(dims_mit_merkmalen(&["moe", "qk_norm"]).pruefe_merkmale().is_ok());
+        // ⚑ Und jedes einzelne aus der Liste, damit kein Eintrag dort
+        //   steht, den die Pruefung selbst nicht akzeptiert.
+        for m in GEKONNTE_MERKMALE {
+            assert!(
+                dims_mit_merkmalen(&[m]).pruefe_merkmale().is_ok(),
+                "{m} steht in GEKONNTE_MERKMALE und wird doch abgelehnt"
+            );
+        }
+    }
+
+    /// ⛔️ **Ein unbekanntes Merkmal wird abgelehnt, und die Meldung nennt
+    /// es.**
+    ///
+    /// Das ist der ganze Zweck der Liste: Ein Artefakt, das mehr braucht
+    /// als dieser Bau kann, darf **nicht** gerechnet werden. Eine Warnung
+    /// waere eine Meldung, die jemand uebersieht, und danach steht eine
+    /// falsche Zahl im Konsens.
+    #[test]
+    fn ein_unbekanntes_merkmal_wird_abgelehnt() {
+        // ⚑ **Ein erfundener Name, kein noch nicht gebautes Merkmal.**
+        //
+        // Hier stand `zustandsschicht`, und die Probe fiel in dem
+        // Augenblick um, in dem die Zustandsschicht gebaut wurde: Das
+        // Merkmal war dann bekannt, der Lader nahm es an, und die
+        // Zusicherung „unbekanntes wird abgelehnt" pruefte nichts mehr.
+        //
+        // 📌 **Eine Probe, die ein noch fehlendes Merkmal als Beispiel
+        // nimmt, veraltet genau dann, wenn niemand hinsieht**, naemlich
+        // beim Bau dieses Merkmals. Ein Name, den es nie geben wird,
+        // haelt.
+        let f = dims_mit_merkmalen(&["dicht", "kein-solches-merkmal"])
+            .pruefe_merkmale()
+            .expect_err("ein unbekanntes Merkmal muss ablehnen");
+        assert!(f.contains("kein-solches-merkmal"), "die Meldung nennt das Merkmal nicht: {f}");
+        // ⚑ Und sie nennt, was der Bau kann, damit der Leser weiterkommt.
+        assert!(f.contains("dicht"), "die Meldung nennt die gekonnten nicht: {f}");
+    }
+
+    /// ⚠️ **Ein einziges unbekanntes unter vielen bekannten reicht.**
+    ///
+    /// Ohne diese Zeile bestuende die Pruefung auch dann, wenn sie nur
+    /// den ersten Eintrag ansieht.
+    #[test]
+    fn ein_unbekanntes_unter_bekannten_reicht() {
+        assert!(
+            dims_mit_merkmalen(&["dicht", "qk_norm", "gepackte_experten"])
+                .pruefe_merkmale()
+                .is_err()
+        );
+    }
+
     #[test]
     fn test_theta_v_verify_version_against_spec_accepts_match() {
         let theta_v = ThetaV {
@@ -2871,9 +3744,9 @@ mod tests {
         write_full_fixture(&dir, true, false);
 
         let model = load_model(&dir).expect("Modell-Laden erfolgreich");
-        assert!(model.layers[0].q_bias.is_none());
-        assert!(model.layers[0].k_bias.is_none());
-        assert!(model.layers[0].v_bias.is_none());
+        assert!(model.layers[0].achtsamkeit().q_bias.is_none());
+        assert!(model.layers[0].achtsamkeit().k_bias.is_none());
+        assert!(model.layers[0].achtsamkeit().v_bias.is_none());
 
         fs::remove_dir_all(&dir).ok();
     }

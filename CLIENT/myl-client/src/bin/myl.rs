@@ -420,7 +420,17 @@ fn ohne_wert(f: &myl_client::einstellungen::Feld) -> String {
 /// Behauptung zum Beleg.**
 fn sinne(args: &[String]) -> i32 {
     let s = myl_senses::Sinne::finden();
-    println!("Sinnesmodelle in {}", myl_senses::laufwerk::heimat().display());
+    // ⚑ **Die Orte werden aufgezaehlt und nicht zusammengefasst** (seit
+    // dem Umzug am 2026-09-21). Hier stand eine Zeile mit der Heimat,
+    // und die trug seither nur noch den `bin`-Ordner und die
+    // Stimmprobe: 📌 **Eine Auskunft, die nach dem Umzug noch dasteht,
+    // nennt den falschen Ort und sieht aus wie vorher.**
+    let orte = myl_senses::laufwerk::gewichtsorte();
+    println!("Gewichte gesucht in (erster Treffer gewinnt):");
+    for o in &orte {
+        println!("  {}", o.display());
+    }
+    println!("Betrieb in {}", myl_senses::laufwerk::heimat().display());
     let zeile = |was: &str, stand: Result<String, &myl_senses::Mangel>| match stand {
         Ok(gut) => println!("  {was:<10} ✓ {gut}"),
         Err(m) => {

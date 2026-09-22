@@ -1701,7 +1701,7 @@ fn jede_lizenz_steht_bei_ihrer_sache() {
     }
 
     // 2. Der Katalog fuehrt beide, und zwar bei jedem Eintrag.
-    let katalog = std::fs::read_to_string(wurzel.join("INTEGER_LLM/models/KATALOG.json"))
+    let katalog = std::fs::read_to_string(wurzel.join("MODELS/llm/KATALOG.json"))
         .expect("KATALOG.json");
     let eintraege = katalog.matches("\"anzeigename\":").count();
 

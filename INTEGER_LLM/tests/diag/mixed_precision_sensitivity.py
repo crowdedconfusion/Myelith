@@ -17,7 +17,7 @@ Usage: python mixed_precision_sensitivity.py
 import sys
 from pathlib import Path
 
-REPO = Path(__file__).parent.parent.parent
+REPO = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO / "calibrate"))
 from src.loader import load_reference_model  # noqa: E402
 
@@ -40,7 +40,7 @@ def quantize_int8_per_channel(W):
 def main():
     import torch
 
-    model, tok = load_reference_model(REPO / "models" / "Qwen2.5-0.5B")
+    model, tok = load_reference_model(REPO.parent / "MODELS" / "llm" / "Qwen2.5-0.5B")
     model.eval()
     dev = model.device
     inputs = tok(PROMPT, return_tensors="pt").to(dev)

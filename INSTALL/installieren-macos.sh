@@ -133,7 +133,7 @@ for k in "$WURZEL/INTEGER_LLM/calibrate/.venv/bin/python3" python3; do
     break
   fi
 done
-GEWICHTE=$(find "$WURZEL/INTEGER_LLM/models" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
+GEWICHTE=$(find "$WURZEL/MODELS/llm" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
 ARTEFAKTE=$(find "$WURZEL/INTEGER_LLM/artifacts" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
 echo "   Artefakte da: $ARTEFAKTE, Gewichte da: $GEWICHTE, Artefaktbau moeglich: $PY_MIT_TORCH"
 

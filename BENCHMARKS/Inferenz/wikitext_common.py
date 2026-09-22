@@ -41,7 +41,7 @@ DEFAULT_MODEL = "myelith-0.6b"
 MODEL_NAME = os.environ.get(MODEL_ENV, "").strip() or DEFAULT_MODEL
 _CONFIG = get_export_model_config(MODEL_NAME)
 HF_MODEL_ID = _CONFIG["hf_model_id"]
-MODEL_DIR = REPO / "models" / HF_MODEL_ID.split("/")[-1]
+MODEL_DIR = REPO.parent / "MODELS" / "llm" / HF_MODEL_ID.split("/")[-1]
 ARTIFACTS_DIR = REPO / "artifacts" / MODEL_NAME
 
 # Ergebnisdateien tragen den Modellnamen, damit ein 7B-Lauf die

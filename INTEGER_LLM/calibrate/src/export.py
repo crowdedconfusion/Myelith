@@ -47,22 +47,42 @@ def spec_version() -> str:
     return spec["theta_v"]["version"]
 
 
-def export_theta_v(scales, luts, output_dir: Path):
+# ⚑ **Die Breite einer Tabelle steht in theta_v und nicht hier.**
+#
+# ⛔️ Bis theta_v 0.21.0 war sie an zwei Stellen fest verdrahtet: im
+# Packformat (`h`) und im Feld `dtype`. Das ging gut, solange jede
+# Tabelle int16 war. Mit `softplus` gibt es die erste, die es nicht ist,
+# und damit ist eine feste Angabe hier eine zweite Wahrheit ueber ein
+# Format, das anderswo definiert wird.
+#
+# 📌 **Was an zwei Orten steht, laeuft auseinander.**
+_PACK = {"int16": ("h", 2), "int32": ("i", 4)}
+
+
+def export_theta_v(scales, luts, output_dir: Path, lut_dtypes=None):
     output_dir.mkdir(parents=True, exist_ok=True)
 
     scales_path = output_dir / "scales.json"
     export_json(scales, scales_path)
 
+    lut_dtypes = lut_dtypes or {}
     luts_meta = {}
     for name, table in luts.items():
+        dtype = lut_dtypes.get(name, "int16")
+        if dtype not in _PACK:
+            raise ValueError(
+                f"Tabelle '{name}': unbekannte Breite '{dtype}'. "
+                f"Bekannt sind {sorted(_PACK)}."
+            )
+        code, _ = _PACK[dtype]
         bin_path = output_dir / f"{name}.lut.bin"
-        payload = struct.pack(f"<{len(table)}h", *table)
+        payload = struct.pack(f"<{len(table)}{code}", *table)
         export_binary(payload, bin_path)
         luts_meta[name] = {
             "file": str(bin_path.name),
             "hash": hash_file(bin_path),
             "length": len(table),
-            "dtype": "int16",
+            "dtype": dtype,
         }
 
     luts_path = output_dir / "luts.json"

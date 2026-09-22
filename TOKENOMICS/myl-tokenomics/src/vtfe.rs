@@ -395,7 +395,7 @@ pub const PROBE_SHARDS: u64 = 4;
 ///
 /// Abgeschrieben aus `INTEGER_LLM/artifacts/myelith-0.6b/model_config.json`
 /// (Revision `060db6499f32faf8b98477b0a26969ef7d8b9987`, siehe
-/// `INTEGER_LLM/models/KATALOG.json`). **Kein dichtes Feld ist geraten**:
+/// `MODELS/llm/KATALOG.json`). **Kein dichtes Feld ist geraten**:
 /// Jede Zahl steht so in der veröffentlichten Modellkonfiguration.
 pub const PROBE_MODELL: ModellProfil = ModellProfil {
     hidden_size: 896,

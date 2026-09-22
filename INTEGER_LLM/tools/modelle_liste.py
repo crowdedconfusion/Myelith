@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Erzeugt models/README.md aus KATALOG.json und REGISTER.json.
+"""Erzeugt MODELS/llm/README.md aus KATALOG.json und REGISTER.json.
 
 WARUM ERZEUGT UND NICHT VON HAND: Die Modellangaben standen an drei
-Stellen. In `models/README.md` als Tabelle, in `scale_packs/REGISTER.json`
+Stellen. In `MODELS/llm/README.md` als Tabelle, in `scale_packs/REGISTER.json`
 als Digest, und in `myl-testclient/src/artefakte.rs` als `match`-Ausdruck
 mit stillem Rueckfall auf Qwen2.5-0,5B. Drei Stellen laufen auseinander;
 die dritte hatte den unangenehmsten Fehler, denn ein drittes Modell haette
@@ -10,7 +10,7 @@ dort die falschen Gewichte geladen.
 
 Jetzt gibt es zwei Quellen, und beide sind es aus einem Grund:
 
-    models/KATALOG.json          KURATIERT: Herkunft, Revision, Lizenz,
+    MODELS/llm/KATALOG.json      KURATIERT: Herkunft, Revision, Lizenz,
                                  Status. Aus keinem Artefakt ableitbar.
     scale_packs/REGISTER.json    ERZEUGT: Digest und theta_v-Stand.
                                  Aus den Artefakten gerechnet.
@@ -19,7 +19,7 @@ Diese Datei fuehrt beide zusammen. Wer die Tabelle von Hand bearbeitet,
 verliert seine Aenderung beim naechsten Lauf: Das ist Absicht.
 
 Usage:
-    python tools/modelle_liste.py            schreibt models/README.md
+    python tools/modelle_liste.py            schreibt MODELS/llm/README.md
     python tools/modelle_liste.py --pruefen  meldet nur, ob sie aktuell ist
 """
 import json
@@ -27,22 +27,30 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-KATALOG = REPO / "models" / "KATALOG.json"
+# ⚑ **Die Quellmodelle liegen an der Wurzel, das Skalenpaket darunter**
+# (Umzug 2026-09-21). Deshalb zwei Basen statt einer: `REPO` ist
+# INTEGER_LLM, `WURZEL` das Repositorium. Wer beide zusammenzoege,
+# bekaeme einen Pfad, der fuer eine der beiden Quellen falsch ist.
+WURZEL = REPO.parent
+KATALOG = WURZEL / "MODELS" / "llm" / "KATALOG.json"
 REGISTER = REPO / "scale_packs" / "REGISTER.json"
-ZIEL = REPO / "models" / "README.md"
+ZIEL = WURZEL / "MODELS" / "llm" / "README.md"
 
-KOPF = """# models/
+KOPF = """# MODELS/llm/
 
-Ablageort für das Quellmodell, aus dem die θ_v-Artefakte entstehen.
+Ablageort für die Quellmodelle, aus denen die θ_v-Artefakte entstehen.
 Zweck: reproduzierbare Herkunft statt implizitem Hugging-Face-Cache.
 
-Der Inhalt wird nicht versioniert (siehe `.gitignore`); nur dieses README,
-`KATALOG.json` und die `.gitignore` bleiben im Repository.
+Die Gewichte werden nicht versioniert (siehe `MODELS/.gitignore`); nur
+dieses README, `KATALOG.json` und die Lizenzdatei je Modell bleiben im
+Repository. Was hier gilt und welche Rubriken es noch gibt, steht eine
+Ebene höher in `MODELS/README.md`.
 
-> **Diese Datei wird erzeugt.** Quelle sind `models/KATALOG.json`
+> **Diese Datei wird erzeugt.** Quelle sind `MODELS/llm/KATALOG.json`
 > (kuratiert: Herkunft, Revision, Lizenz, Status) und
-> `scale_packs/REGISTER.json` (erzeugt: Digest, θ_v). Änderungen gehören
-> in eine der beiden Dateien, danach `python tools/modelle_liste.py`.
+> `INTEGER_LLM/scale_packs/REGISTER.json` (erzeugt: Digest, θ_v).
+> Änderungen gehören in eine der beiden Dateien, danach
+> `python INTEGER_LLM/tools/modelle_liste.py`.
 
 Jede Variante braucht eine **eigene Lizenzprüfung** (Whitepaper Kap. 10.1,
 ETHICS-Grundsatz G7: Apache 2.0 oder MIT) und eine **fixierte Revision**:
@@ -60,7 +68,7 @@ Von Hand geht es auch:
 
 ```bash
 huggingface-cli download <hf_repo> --revision <hf_revision> \\
-    --local-dir INTEGER_LLM/models/<hf_verzeichnis>
+    --local-dir MODELS/llm/<hf_verzeichnis>
 ```
 
 ## Wie daraus Artefakte werden
@@ -117,7 +125,14 @@ def zeile(name: str, k: dict, r: dict) -> str:
         f"{k.get('lizenz_gewichte','')} | {k.get('lizenz_artefakt','')} | "
         f"{k.get('parameter','')} | {k.get('layer','')} | "
         f"{k.get('gewichte_anzeige','')} | {k.get('artefakt_anzeige','')} | "
-        f"{r.get('theta_v','—')} | {k.get('status','')} |"
+        # ⛔️ **Fund 414: hier stand ein Gedankenstrich als Rueckfall**, und
+        # den verbietet dieses Projekt. Er ist nie aufgefallen, weil jedes
+        # Modell im Katalog auch ein Artefakt hatte und damit einen
+        # REGISTER-Eintrag; das erste ohne (myelith-8b, 2026-09-21) haette
+        # ihn in die erzeugte Datei geschrieben und die Stilprobe rot
+        # gemacht. 📌 **Ein Rueckfall, den nie etwas erreicht, ist
+        # ungepruefter Code in einem Erzeuger.**
+        f"{r.get('theta_v', 'noch keins')} | {k.get('status','')} |"
     )
 
 
@@ -163,13 +178,13 @@ def main() -> int:
     if "--pruefen" in sys.argv:
         alt = ZIEL.read_text(encoding="utf-8") if ZIEL.is_file() else ""
         if alt == neu:
-            print(f"{ZIEL.relative_to(REPO)} ist aktuell.")
+            print(f"{ZIEL.relative_to(WURZEL)} ist aktuell.")
             return 0
-        print(f"{ZIEL.relative_to(REPO)} ist NICHT aktuell. "
-              "Erzeugen mit: python tools/modelle_liste.py")
+        print(f"{ZIEL.relative_to(WURZEL)} ist NICHT aktuell. "
+              "Erzeugen mit: python INTEGER_LLM/tools/modelle_liste.py")
         return 1
     ZIEL.write_text(neu, encoding="utf-8")
-    print(f"Geschrieben: {ZIEL.relative_to(REPO)}")
+    print(f"Geschrieben: {ZIEL.relative_to(WURZEL)}")
     return 0
 
 

@@ -20,7 +20,7 @@ Usage: python int16_simulation.py [bits]   (bits = 8 | 16, Standard 16)
 import sys
 from pathlib import Path
 
-REPO = Path(__file__).parent.parent.parent
+REPO = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO / "calibrate"))
 sys.path.insert(0, str(REPO / "eval"))
 from src.loader import load_reference_model  # noqa: E402
@@ -76,7 +76,7 @@ def main():
     bits = int(sys.argv[1]) if len(sys.argv) > 1 else 16
     import torch
 
-    model, tok = load_reference_model(REPO / "models" / "Qwen2.5-0.5B")
+    model, tok = load_reference_model(REPO.parent / "MODELS" / "llm" / "Qwen2.5-0.5B")
     model.eval()
     device = model.device
 

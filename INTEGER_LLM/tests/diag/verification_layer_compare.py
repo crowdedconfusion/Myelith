@@ -17,7 +17,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-REPO = Path(__file__).parent.parent.parent
+REPO = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO / "calibrate"))
 from src.loader import load_reference_model  # noqa: E402
 
@@ -53,7 +53,7 @@ def run_integer_dump():
 def run_hf_dump():
     """Führt das HF-Modell aus und sammelt Hidden-Zustände je Layer."""
     import torch
-    model, _ = load_reference_model(REPO / "models" / "Qwen2.5-0.5B")
+    model, _ = load_reference_model(REPO.parent / "MODELS" / "llm" / "Qwen2.5-0.5B")
     model.eval()
     input_ids = torch.tensor([TOKENS], device=model.device)
     with torch.no_grad():

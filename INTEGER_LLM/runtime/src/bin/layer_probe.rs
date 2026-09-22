@@ -108,7 +108,7 @@ fn main() {
     );
     println!(
         "Layer-Skalen: norm_attn={}, q={}, k={}, v={}, attn_out={}, norm_mlp={}, gate={}, up={}, down_in={}",
-        sc.norm_attn_frac, sc.q_frac, sc.k_frac, sc.v_frac, sc.attn_out_frac,
+        sc.norm_attn_frac, sc.achtsamkeit().q_frac, sc.achtsamkeit().k_frac, sc.achtsamkeit().v_frac, sc.achtsamkeit().attn_out_frac,
         sc.norm_mlp_frac, sc.gate_frac, sc.up_frac, sc.down_in_frac,
     );
     println!(
@@ -145,15 +145,15 @@ fn main() {
     summary("S1 norm_hidden", &norm_hidden, sc.norm_attn_frac);
 
     // S2: Q/K/V + Bias
-    let mut q_flat = linear_w8a16(&norm_hidden, &layer.q_proj.data, layer.q_proj.cols(), &layer.q_proj.shifts, sc.norm_attn_frac, sc.q_frac);
-    let mut k_flat = linear_w8a16(&norm_hidden, &layer.k_proj.data, layer.k_proj.cols(), &layer.k_proj.shifts, sc.norm_attn_frac, sc.k_frac);
-    let mut v_flat = linear_w8a16(&norm_hidden, &layer.v_proj.data, layer.v_proj.cols(), &layer.v_proj.shifts, sc.norm_attn_frac, sc.v_frac);
-    if let Some(qb) = &layer.q_bias { add_bias_i16(&mut q_flat, &qb.data, &qb.shifts, sc.q_frac); }
-    if let Some(kb) = &layer.k_bias { add_bias_i16(&mut k_flat, &kb.data, &kb.shifts, sc.k_frac); }
-    if let Some(vb) = &layer.v_bias { add_bias_i16(&mut v_flat, &vb.data, &vb.shifts, sc.v_frac); }
-    summary("S2 q_flat", &q_flat, sc.q_frac);
-    summary("S2 k_flat", &k_flat, sc.k_frac);
-    summary("S2 v_flat", &v_flat, sc.v_frac);
+    let mut q_flat = linear_w8a16(&norm_hidden, &layer.achtsamkeit().q_proj.data, layer.achtsamkeit().q_proj.cols(), &layer.achtsamkeit().q_proj.shifts, sc.norm_attn_frac, sc.achtsamkeit().q_frac);
+    let mut k_flat = linear_w8a16(&norm_hidden, &layer.achtsamkeit().k_proj.data, layer.achtsamkeit().k_proj.cols(), &layer.achtsamkeit().k_proj.shifts, sc.norm_attn_frac, sc.achtsamkeit().k_frac);
+    let mut v_flat = linear_w8a16(&norm_hidden, &layer.achtsamkeit().v_proj.data, layer.achtsamkeit().v_proj.cols(), &layer.achtsamkeit().v_proj.shifts, sc.norm_attn_frac, sc.achtsamkeit().v_frac);
+    if let Some(qb) = &layer.achtsamkeit().q_bias { add_bias_i16(&mut q_flat, &qb.data, &qb.shifts, sc.achtsamkeit().q_frac); }
+    if let Some(kb) = &layer.achtsamkeit().k_bias { add_bias_i16(&mut k_flat, &kb.data, &kb.shifts, sc.achtsamkeit().k_frac); }
+    if let Some(vb) = &layer.achtsamkeit().v_bias { add_bias_i16(&mut v_flat, &vb.data, &vb.shifts, sc.achtsamkeit().v_frac); }
+    summary("S2 q_flat", &q_flat, sc.achtsamkeit().q_frac);
+    summary("S2 k_flat", &k_flat, sc.achtsamkeit().k_frac);
+    summary("S2 v_flat", &v_flat, sc.achtsamkeit().v_frac);
 
     // S3: Attention an Position 0 (nur Selbst-Attention)
     let head_dim = model.head_dim;
@@ -165,14 +165,14 @@ fn main() {
     // echten Pfad ab — eine Diagnose, die etwas anderes misst als die
     // Produktion, ist schlimmer als keine.
     let score_mult = inv_sqrt_q15(model.head_dim);
-    let score_shift = (sc.q_frac as u16 + sc.k_frac as u16 + 15).saturating_sub(cfg.score_frac_bits as u16) as u8;
+    let score_shift = (sc.achtsamkeit().q_frac as u16 + sc.achtsamkeit().k_frac as u16 + 15).saturating_sub(cfg.score_frac_bits as u16) as u8;
     println!("score_shift={}", score_shift);
     let head_out = attention_int(
         std::slice::from_ref(&q0), std::slice::from_ref(&k0), std::slice::from_ref(&v0),
         &[vec![true]],
         score_mult, score_shift, &model.exp_lut, cfg.score_frac_bits.saturating_sub(cfg.exp_input_frac), cfg.prob_frac_bits,
     );
-    summary("S3 head_out(h0)", &head_out[0], sc.v_frac);
+    summary("S3 head_out(h0)", &head_out[0], sc.achtsamkeit().v_frac);
     // Bei Einzelposition muss head_out ~ v0 sein (softmax([x]) = 1).
     let diff: i32 = head_out[0].iter().zip(v0.iter())
         .map(|(a, b)| (*a as i32 - *b as i32).abs()).max().unwrap_or(0);
@@ -204,20 +204,20 @@ fn main() {
         let out = attention_int(&q_seq, &k_seq, &v_seq, &[vec![true]], score_mult, score_shift, &model.exp_lut, cfg.score_frac_bits.saturating_sub(cfg.exp_input_frac), cfg.prob_frac_bits);
         attn_out[q_start..q_start + head_dim].copy_from_slice(&out[0]);
     }
-    summary("S5 attn_out(v-Skala)", &attn_out, sc.v_frac);
-    if sc.attn_out_frac != sc.v_frac {
+    summary("S5 attn_out(v-Skala)", &attn_out, sc.achtsamkeit().v_frac);
+    if sc.achtsamkeit().attn_out_frac != sc.achtsamkeit().v_frac {
         for v in attn_out.iter_mut() {
-            *v = clamp_i16(rescale(*v as i32, sc.v_frac, sc.attn_out_frac));
+            *v = clamp_i16(rescale(*v as i32, sc.achtsamkeit().v_frac, sc.achtsamkeit().attn_out_frac));
         }
     }
-    summary("S5 attn_out(reskaliert)", &attn_out, sc.attn_out_frac);
+    summary("S5 attn_out(reskaliert)", &attn_out, sc.achtsamkeit().attn_out_frac);
 
     // Probe-Approximation: Ausgangs-Segment-Skala = finales Residual-Segment
     // (im echten Forward waere es die Eingangsskala von Layer 1).
     let out_frac = &model.final_residual_frac;
 
     // Fund 20: o_proj addiert direkt in den Residualstrom -> Per-Kanal-Ziel.
-    let o_out = linear_w8a16_pc(&attn_out, &layer.o_proj.data, layer.o_proj.cols(), &layer.o_proj.shifts, sc.attn_out_frac, &sc.residual_mid_frac);
+    let o_out = linear_w8a16_pc(&attn_out, &layer.achtsamkeit().o_proj.data, layer.achtsamkeit().o_proj.cols(), &layer.achtsamkeit().o_proj.shifts, sc.achtsamkeit().attn_out_frac, &sc.residual_mid_frac);
     summary_pc("S5 o_out", &o_out, &sc.residual_mid_frac);
 
     let residual: Vec<i16> = hidden.iter().zip(o_out.iter()).enumerate()
@@ -261,9 +261,9 @@ fn main() {
             100.0 * (num / den.max(1e-30)).sqrt()
         };
         println!("Relativer L2 der Projektionen (IDENTISCHE Gewichte):");
-        println!("  q_proj : {:6.2} %", rel_proj(&layer.q_proj, &layer.q_proj.shifts, layer.q_bias.as_ref().map(|b| (b.data.as_slice(), b.shifts.as_slice())), &q_flat, sc.q_frac, q_flat.len()));
-        println!("  k_proj : {:6.2} %", rel_proj(&layer.k_proj, &layer.k_proj.shifts, layer.k_bias.as_ref().map(|b| (b.data.as_slice(), b.shifts.as_slice())), &k_flat, sc.k_frac, k_flat.len()));
-        println!("  v_proj : {:6.2} %", rel_proj(&layer.v_proj, &layer.v_proj.shifts, layer.v_bias.as_ref().map(|b| (b.data.as_slice(), b.shifts.as_slice())), &v_flat, sc.v_frac, v_flat.len()));
+        println!("  q_proj : {:6.2} %", rel_proj(&layer.achtsamkeit().q_proj, &layer.achtsamkeit().q_proj.shifts, layer.achtsamkeit().q_bias.as_ref().map(|b| (b.data.as_slice(), b.shifts.as_slice())), &q_flat, sc.achtsamkeit().q_frac, q_flat.len()));
+        println!("  k_proj : {:6.2} %", rel_proj(&layer.achtsamkeit().k_proj, &layer.achtsamkeit().k_proj.shifts, layer.achtsamkeit().k_bias.as_ref().map(|b| (b.data.as_slice(), b.shifts.as_slice())), &k_flat, sc.achtsamkeit().k_frac, k_flat.len()));
+        println!("  v_proj : {:6.2} %", rel_proj(&layer.achtsamkeit().v_proj, &layer.achtsamkeit().v_proj.shifts, layer.achtsamkeit().v_bias.as_ref().map(|b| (b.data.as_slice(), b.shifts.as_slice())), &v_flat, sc.achtsamkeit().v_frac, v_flat.len()));
     }
 
     // S6: MLP

@@ -24,6 +24,22 @@ auf. Die variantenscharfe Bewertung steht in
 heruntergeladen wurde, hat hier kein Verzeichnis und erzeugt keinen
 Treffer. Ein leerer Lauf ist deshalb kein Beleg für eine saubere
 Modellfamilie.
+
+## ⛔️ Was sie heute gar nicht ansieht
+
+Sie prüft **nur die Quellmodelle** des Sprachmodell-Pfads, also
+`MODELS/llm`. Die Gewichte für Sehen, Hören und Sprechen liegen seit dem
+2026-09-21 daneben, unter `MODELS/audio` und `MODELS/vision`, und **sie
+bringen keine Lizenzdatei mit**: Sie kommen als einzelne Gewichtsdatei
+und werden beim Ablegen umbenannt, also gibt es kein Verzeichnis, in dem
+eine Lizenz liegen könnte.
+
+⚑ **Das ist eine benannte Lücke und kein Versehen.** Die Kriterien aus
+Kap. 10.1 gelten für sie genauso, denn auch sie werden von Fremden in
+aller Welt geladen. Solange kein Ort für ihre Lizenzangabe entschieden
+ist, sagt diese Prüfung über sie nichts, und **ein Lauf, der über zwei
+von drei Rubriken schweigt, darf nicht wie ein bestandener aussehen.**
+Deshalb nennt der Abschlusssatz ausdrücklich, was geprüft wurde.
 """
 
 from __future__ import annotations
@@ -33,7 +49,13 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
-MODELLE = REPO / "INTEGER_LLM" / "models"
+
+# ⚑ **Die Rubrik der Quellmodelle, nicht `MODELS/` selbst** (Umzug
+# 2026-09-21). Ein Lauf ueber `MODELS/` naehme `llm`, `audio` und
+# `vision` fuer Modellverzeichnisse und meldete drei fehlende
+# Lizenzdateien: Eine Pruefung, die ihre eigenen Rubriken anklagt, ist
+# keine.
+MODELLE = REPO / "MODELS" / "llm"
 
 # Erkennungsmerkmale im Lizenztext, nicht im Dateinamen.
 ERKENNUNG = [
@@ -93,7 +115,12 @@ def main() -> int:
     if fehler:
         print(f"[lizenz] FEHLGESCHLAGEN: {fehler} Modell(e) erfüllen Kap. 10.1 nicht")
         return 1
-    print("[lizenz] PASSED: alle lokal vorliegenden Modelle erfüllen Kap. 10.1")
+    # ⚑ **Der Satz nennt den Umfang.** Ein blankes „alle Modelle" waere
+    # hier falsch: Sehen, Hoeren und Sprechen sind nicht dabei.
+    print(
+        "[lizenz] PASSED: alle lokal vorliegenden Quellmodelle unter "
+        "MODELS/llm erfüllen Kap. 10.1 (audio und vision sind nicht geprüft)"
+    )
     return 0
 
 

@@ -283,7 +283,7 @@ struct Ansagefunktion<'a> {
 ///
 /// Bis zum 2026-09-08 gab es nur eine Form, und sie war eine **deutsche
 /// Paraphrase** der Vorlage, auf die das Modell geschliffen wurde. Der
-/// Vergleich mit `INTEGER_LLM/models/Qwen3-4B/tokenizer_config.json`
+/// Vergleich mit `MODELS/llm/Qwen3-4B/tokenizer_config.json`
 /// zeigte drei Abweichungen: die Ueberschrift `# Tools` fehlte, der Text
 /// war deutsch statt englisch, und, vermutlich am teuersten, **das
 /// Aufrufbeispiel fehlte ganz**. Die amtliche Vorlage *zeigt*

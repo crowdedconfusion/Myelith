@@ -60,7 +60,7 @@ from wikitext_common import (  # noqa: E402
 # fehlt sie, sagt das Protokoll das, statt eine Zahl zu erfinden.
 def _modellgroesse() -> str:
     """Parameterzahl des gemessenen Modells, aus dem Katalog."""
-    katalog = LLM / "models" / "KATALOG.json"
+    katalog = LLM.parent / "MODELS" / "llm" / "KATALOG.json"
     try:
         eintrag = json.loads(katalog.read_text(encoding="utf-8")).get(MODEL_NAME, {})
     except (OSError, ValueError):

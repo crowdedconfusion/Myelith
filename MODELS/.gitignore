@@ -1,0 +1,45 @@
+# Fremde Gewichte nicht versionieren; Ordner und Doku behalten.
+#
+# ⚑ Dies ist die EINE Sperrdatei fuer alle drei Rubriken. Eine je Rubrik
+# waere dreimal dieselbe Regel, und die dritte zieht irgendwann nicht mit.
+#
+# Was ausdruecklich MITGEHT, und je mit einem Grund:
+#
+#   README.md          Was hier liegt und wie es hereinkommt.
+#   llm/KATALOG.json   Die kuratierte Quelle darueber, welche
+#                      Quellmodelle es gibt, woher sie kommen und unter
+#                      welcher Lizenz. Der Testclient liest ihn, und
+#                      ohne ihn faende er die Gewichte nicht.
+#   llm/README.md      Wird daraus erzeugt (INTEGER_LLM/tools/modelle_liste.py).
+#   llm/*/LICENSE      Die Lizenzdatei eines empfohlenen Modells.
+#
+# ⚑ Warum die Lizenzdatei mitgeht und nicht bloss neben den Gewichten
+# liegt (Festlegung des Projektinhabers, 2026-09-01): Der Miner holt die
+# Gewichte per Skript direkt von der Quelle. Laege die Lizenz nur dort,
+# erfuehre er die Bedingungen erst NACHDEM er sie geholt hat. Die Regel
+# ist: Wer im KATALOG.json steht, bringt seine Lizenzdatei mit.
+#
+# ⚠️ Die Rubriken audio/ und vision/ halten heute nur eine Marke, damit
+# der Ordner in einem frischen Klon entsteht. Git kann kein leeres
+# Verzeichnis versionieren, und ein Ordner, der erst beim Einrichten
+# entsteht, ist kein Ablageort, sondern eine Nebenwirkung.
+/*
+!/.gitignore
+!/README.md
+!/llm/
+!/audio/
+!/vision/
+
+/llm/*
+!/llm/README.md
+!/llm/KATALOG.json
+!/llm/*/
+/llm/*/*
+!/llm/*/LICENSE
+!/llm/*/LICENSE.*
+
+/audio/*
+!/audio/.gitkeep
+
+/vision/*
+!/vision/.gitkeep

@@ -161,40 +161,40 @@ fn main() {
         );
         let q = integer_llm_kernels::linear::linear_w8a16(
             &nh,
-            &layer.q_proj.data,
-            layer.q_proj.cols(),
-            &layer.q_proj.shifts,
+            &layer.achtsamkeit().q_proj.data,
+            layer.achtsamkeit().q_proj.cols(),
+            &layer.achtsamkeit().q_proj.shifts,
             sc.norm_attn_frac,
-            sc.q_frac,
+            sc.achtsamkeit().q_frac,
         );
         let k = integer_llm_kernels::linear::linear_w8a16(
             &nh,
-            &layer.k_proj.data,
-            layer.k_proj.cols(),
-            &layer.k_proj.shifts,
+            &layer.achtsamkeit().k_proj.data,
+            layer.achtsamkeit().k_proj.cols(),
+            &layer.achtsamkeit().k_proj.shifts,
             sc.norm_attn_frac,
-            sc.k_frac,
+            sc.achtsamkeit().k_frac,
         );
         let v = integer_llm_kernels::linear::linear_w8a16(
             &nh,
-            &layer.v_proj.data,
-            layer.v_proj.cols(),
-            &layer.v_proj.shifts,
+            &layer.achtsamkeit().v_proj.data,
+            layer.achtsamkeit().v_proj.cols(),
+            &layer.achtsamkeit().v_proj.shifts,
             sc.norm_attn_frac,
-            sc.v_frac,
+            sc.achtsamkeit().v_frac,
         );
         // Biases wie im echten Pfad (Qwen2.5 hat q/k/v-Biases).
         let mut q0 = q[0..hd].to_vec();
         let mut k0 = k[0..hd].to_vec();
         let mut v0 = v[0..hd].to_vec();
-        if let Some(qb) = &layer.q_bias {
-            integer_llm_kernels::linear::add_bias_i16(&mut q0, &qb.data[0..hd], &qb.shifts[0..hd], sc.q_frac);
+        if let Some(qb) = &layer.achtsamkeit().q_bias {
+            integer_llm_kernels::linear::add_bias_i16(&mut q0, &qb.data[0..hd], &qb.shifts[0..hd], sc.achtsamkeit().q_frac);
         }
-        if let Some(kb) = &layer.k_bias {
-            integer_llm_kernels::linear::add_bias_i16(&mut k0, &kb.data[0..hd], &kb.shifts[0..hd], sc.k_frac);
+        if let Some(kb) = &layer.achtsamkeit().k_bias {
+            integer_llm_kernels::linear::add_bias_i16(&mut k0, &kb.data[0..hd], &kb.shifts[0..hd], sc.achtsamkeit().k_frac);
         }
-        if let Some(vb) = &layer.v_bias {
-            integer_llm_kernels::linear::add_bias_i16(&mut v0, &vb.data[0..hd], &vb.shifts[0..hd], sc.v_frac);
+        if let Some(vb) = &layer.achtsamkeit().v_bias {
+            integer_llm_kernels::linear::add_bias_i16(&mut v0, &vb.data[0..hd], &vb.shifts[0..hd], sc.achtsamkeit().v_frac);
         }
         qs_roh.push(q0.clone());
         ks_roh.push(k0.clone());
@@ -212,7 +212,7 @@ fn main() {
     println!("Ebene {}, Kopf 0, {} Positionen, head_dim={} (mit RoPE)", ebene, n, hd);
     println!(
         "Skalen: q_frac={} k_frac={} v_frac={} attn_out_frac={} prob_frac_bits={} rope_frac={}",
-        sc.q_frac, sc.k_frac, sc.v_frac, sc.attn_out_frac, cfg.prob_frac_bits, cfg.rope_frac_bits
+        sc.achtsamkeit().q_frac, sc.achtsamkeit().k_frac, sc.achtsamkeit().v_frac, sc.achtsamkeit().attn_out_frac, cfg.prob_frac_bits, cfg.rope_frac_bits
     );
     println!(
         "        score_frac={} exp_input_frac={} -> exp-Raster 1/{}",
@@ -220,7 +220,7 @@ fn main() {
     );
 
     let score_mult = inv_sqrt_q15(hd);
-    let score_shift = (sc.q_frac as u16 + sc.k_frac as u16 + 15)
+    let score_shift = (sc.achtsamkeit().q_frac as u16 + sc.achtsamkeit().k_frac as u16 + 15)
         .saturating_sub(cfg.score_frac_bits as u16) as u8;
     let maske: Vec<Vec<bool>> = vec![(0..n).map(|_| true).collect()];
     // lut_shift uebersetzt von der Score-Skala in die exp-LUT-Domaene.
@@ -242,11 +242,11 @@ fn main() {
     );
 
     // Gleitkomma-Gegenrechnung aus DENSELBEN (rotierten) q/k/v.
-    let qf = deq(&qs[n - 1], sc.q_frac);
-    let vf: Vec<Vec<f64>> = vs.iter().map(|v| deq(v, sc.v_frac)).collect();
+    let qf = deq(&qs[n - 1], sc.achtsamkeit().q_frac);
+    let vf: Vec<Vec<f64>> = vs.iter().map(|v| deq(v, sc.achtsamkeit().v_frac)).collect();
     let mut scores = Vec::with_capacity(n);
     for kp in &ks {
-        let kf = deq(kp, sc.k_frac);
+        let kf = deq(kp, sc.achtsamkeit().k_frac);
         let s: f64 = kf.iter().zip(qf.iter()).map(|(a, b)| a * b).sum();
         scores.push(s / (hd as f64).sqrt());
     }
@@ -264,22 +264,22 @@ fn main() {
     );
 
     println!();
-    println!("Attention-Ausgang, v-Skala   : {:6.2} %", rel(&ganz[0], sc.v_frac, &out_f));
+    println!("Attention-Ausgang, v-Skala   : {:6.2} %", rel(&ganz[0], sc.achtsamkeit().v_frac, &out_f));
 
     // Die Reskalierung, die an Position 0 gar nicht stattfindet.
-    if sc.attn_out_frac != sc.v_frac {
+    if sc.achtsamkeit().attn_out_frac != sc.achtsamkeit().v_frac {
         let reskaliert: Vec<i16> = ganz[0]
             .iter()
-            .map(|v| clamp_i16(rescale(*v as i32, sc.v_frac, sc.attn_out_frac)))
+            .map(|v| clamp_i16(rescale(*v as i32, sc.achtsamkeit().v_frac, sc.achtsamkeit().attn_out_frac)))
             .collect();
         println!(
             "Attention-Ausgang, reskaliert : {:6.2} %   (v_frac {} -> attn_out_frac {})",
-            rel(&reskaliert, sc.attn_out_frac, &out_f),
-            sc.v_frac,
-            sc.attn_out_frac
+            rel(&reskaliert, sc.achtsamkeit().attn_out_frac, &out_f),
+            sc.achtsamkeit().v_frac,
+            sc.achtsamkeit().attn_out_frac
         );
     } else {
-        println!("Reskalierung entfaellt (v_frac == attn_out_frac = {})", sc.v_frac);
+        println!("Reskalierung entfaellt (v_frac == attn_out_frac = {})", sc.achtsamkeit().v_frac);
     }
 
     // Wieviel kostet allein die Rundung der Wahrscheinlichkeiten?
@@ -319,10 +319,10 @@ fn main() {
         }
         out
     };
-    let qf_ref = rot_f(&qs_roh[n - 1], sc.q_frac, n - 1);
+    let qf_ref = rot_f(&qs_roh[n - 1], sc.achtsamkeit().q_frac, n - 1);
     let mut scores_ref = Vec::with_capacity(n);
     for (p, kp) in ks_roh.iter().enumerate() {
-        let kf = rot_f(kp, sc.k_frac, p);
+        let kf = rot_f(kp, sc.achtsamkeit().k_frac, p);
         let s: f64 = kf.iter().zip(qf_ref.iter()).map(|(a, b)| a * b).sum();
         scores_ref.push(s / (hd as f64).sqrt());
     }
@@ -331,6 +331,6 @@ fn main() {
     println!(
         "RoPE-Rundung allein (q/k)                  : {:6.2} %   (Gesamt mit RoPE-Rundung: {:6.2} %)",
         rel_f(&out_f, &out_ref),
-        rel(&ganz[0], sc.v_frac, &out_ref)
+        rel(&ganz[0], sc.achtsamkeit().v_frac, &out_ref)
     );
 }

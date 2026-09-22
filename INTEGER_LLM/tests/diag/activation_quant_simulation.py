@@ -17,7 +17,7 @@ Usage: python activation_quant_simulation.py
 import sys
 from pathlib import Path
 
-REPO = Path(__file__).parent.parent.parent
+REPO = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO / "calibrate"))
 sys.path.insert(0, str(REPO / "eval"))
 from src.loader import load_reference_model  # noqa: E402
@@ -39,7 +39,7 @@ def main():
     import torch
     import math
 
-    model, tok = load_reference_model(REPO / "models" / "Qwen2.5-0.5B")
+    model, tok = load_reference_model(REPO.parent / "MODELS" / "llm" / "Qwen2.5-0.5B")
     model.eval()
     device = model.device
     sequences = select_sequences(4, 128)

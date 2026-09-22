@@ -69,6 +69,122 @@ def generate_silu_lut(input_min: int, input_max: int, input_frac_bits: int,
     return lut
 
 
+def generate_sigmoid_lut(input_min: int, input_max: int, input_frac_bits: int,
+                         output_frac_bits: int) -> List[int]:
+    """
+    Sigmoid-LUT: s(x) = 1/(1+exp(-x)), Wertebereich (0, 1).
+
+    Gebraucht von der rekurrenten Zustandsschicht an **drei** Stellen:
+    der Schreibstaerke `beta`, dem Tor am Attention-Ausgang und dem Tor
+    des geteilten Experten.
+
+    ⚑ **Eine eigene Tabelle und keine Ableitung aus der SiLU.** Es liegt
+    nahe, `s(x) = silu(x)/x` zu nehmen, weil die SiLU-Tabelle schon da
+    ist. Bei `x = 0` ist das undefiniert, und in der Umgebung numerisch
+    unbrauchbar: Genau dort, wo die meisten Werte liegen, waere `s` am
+    ungenauesten. **Dasselbe Argument wie bei der SiLU-Ableitung**, und
+    eine Tabelle kostet dieselben paar Kilobyte.
+
+    ⚑ **Die Randfortsetzung ist eine Konstante und keine Identitaet**,
+    anders als bei SiLU und Softplus: Oberhalb der Tabelle ist `s` eins,
+    unterhalb null, und beides ist bei jeder hier darstellbaren
+    Aufloesung exakt. Der Lader traegt das als
+    `outside_input_range: one_above_zero_below`.
+    """
+    in_scale = 1 << input_frac_bits
+    out_scale = 1 << output_frac_bits
+    lut = []
+    for x in range(input_min, input_max + 1):
+        xf = x / in_scale
+        # ⚑ Stabil fuer beide Vorzeichen: exp(-|x|) bleibt unter eins.
+        if xf >= 0.0:
+            val = 1.0 / (1.0 + math.exp(-xf))
+        else:
+            e = math.exp(xf)
+            val = e / (1.0 + e)
+        lut.append(int(round(val * out_scale)))
+    return lut
+
+
+def generate_zerfall_exp_lut(max_input: int, input_frac_bits: int,
+                             output_frac_bits: int) -> List[int]:
+    """**Der grobe Teil des Zerfalls**, `exp(-d)` auf einem groben Raster.
+
+    ⚑ **Warum nicht einfach eine `exp`-Tabelle.** Der Zerfall
+    `g = exp(-d)` geht ueber die ganze Folge in ein Produkt ein und
+    braucht rund 28 Bruchbits. Eine direkte Tabelle scheitert daran
+    **nicht am Ausgang, sondern am Eingang**: Nahe `d = 0` ist
+    `dg/dd = -1`, ein Eingangsraster von `2^-k` ergibt also einen Fehler
+    von `2^-k` in `g`. Gemessen am 2026-09-21 ueber alle 30
+    Zustandsebenen, mit dem Kriterium
+    `|dg| * min(N, 1/(1-g)) < 2^-8` bei `N = 262144`: Ein Raster von
+    `2^-8` ergibt 1,0, und **ein Raster von `2^-14` ergibt ebenfalls
+    1,0**. Feiner zu rastern hilft nicht, es verschiebt die Grenze nur.
+
+    ⚑ **Die Zerlegung nutzt, dass `exp` multiplikativ ist:**
+
+        exp(-d) = exp(-d_grob) * exp(-d_fein),   d = d_grob + d_fein
+
+    `d_grob` ist ein Vielfaches des Rasters und kommt aus dieser
+    Tabelle; `d_fein` ist kleiner als ein Raster und kommt aus der
+    Reihe `1 - x + x^2/2`.
+
+    ⚑ **Drei Glieder reichen, und das ist beweisbar statt gemessen:**
+    Bei `d_fein < 2^-8` ist das naechste Glied `d_fein^3/6 < 2^-27,6`,
+    also kleiner als eine letzte Stelle bei 28 Bruchbits. Die Messung
+    bestaetigt es (2,1e-6 gegen eine Grenze von 3,9e-3).
+
+    📌 **Wo eine Tabelle an ihrer Eingangsaufloesung scheitert, hilft
+    keine groessere Tabelle, sondern eine Zerlegung.**
+    """
+    n = max_input * (1 << input_frac_bits)
+    return [int(round(math.exp(-(i / (1 << input_frac_bits)))
+                      * (1 << output_frac_bits)))
+            for i in range(n)]
+
+
+def generate_softplus_rest_lut(max_abs_input: int, input_frac_bits: int,
+                               output_frac_bits: int) -> List[int]:
+    """**Der feine Teil des Softplus**, `log(1 + exp(-|x|))`.
+
+    ⚑ **Warum nicht Softplus selbst.** Gebraucht wird er fuer den
+    Zerfall der Zustandsschicht,
+    `g = exp(-exp_A * softplus(a + dt_bias))`, und `exp_A` reicht beim
+    Qwen3.6-35B-A3B bis 105,2. Gemessen braucht der Zerfall deshalb rund
+    **30 Bruchbits**, sonst springt `g` nahe eins in groben Stufen.
+
+    ⛔️ **Und 30 Bruchbits passen nicht zu Softplus selbst.** In `int32`
+    reicht Festkomma mit 30 Bruchbits nur bis zum Wert 2; Softplus geht
+    ueber den gemessenen Eingangsbereich bis 32. Die Tabelle passt
+    schlicht nicht in den Typ.
+
+    ⚑ **Die Zerlegung loest es exakt:**
+
+        softplus(x) = max(x, 0) + log(1 + exp(-|x|))
+
+    Der zweite Term liegt **immer** in `(0, 0.693]`, braucht also nur
+    `0.693 * 2^30 = 7.4e8` und passt bequem in `int32`. Und **er ist
+    genau der Teil, der die Feinheit braucht**: Fuer stark negative `x`
+    ist er der ganze Softplus. Der grobe Teil `max(x, 0)` ist exakt und
+    kostet keine Tabelle.
+
+    📌 **Eine Umformung, die den feinen vom groben Teil trennt, ist
+    mehr wert als ein breiterer Typ.** Nachgerechnet ueber
+    `x` in `[-40, 40]`: der Abstand zur direkten Formel betraegt
+    9,2e-14, also Gleitkommarauschen.
+
+    ⚠️ **Die Tabelle laeuft ueber `|x|` und ist deshalb halb so lang.**
+    Der Rest haengt nur vom Betrag ab. Oberhalb von `max_abs_input`
+    ist er kleiner als eine letzte Stelle und damit null.
+    """
+    n = max_abs_input * (1 << input_frac_bits) if max_abs_input < 256 else max_abs_input
+    tabelle = []
+    for i in range(n):
+        x = i / (1 << input_frac_bits)
+        rest = math.log1p(math.exp(-x))
+        tabelle.append(int(round(rest * (1 << output_frac_bits))))
+    return tabelle
+
 def generate_silu_grad_lut(input_min: int, input_max: int, input_frac_bits: int,
                            output_frac_bits: int) -> List[int]:
     """

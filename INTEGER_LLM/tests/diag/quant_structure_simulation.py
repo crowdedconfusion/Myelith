@@ -20,7 +20,7 @@ Usage: python quant_structure_simulation.py
 import sys
 from pathlib import Path
 
-REPO = Path(__file__).parent.parent.parent
+REPO = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO / "calibrate"))
 sys.path.insert(0, str(REPO / "eval"))
 from src.loader import load_reference_model  # noqa: E402
@@ -52,7 +52,7 @@ def main():
     import torch
     import math
 
-    model, tok = load_reference_model(REPO / "models" / "Qwen2.5-0.5B")
+    model, tok = load_reference_model(REPO.parent / "MODELS" / "llm" / "Qwen2.5-0.5B")
     model.eval()
     model = model.to("cpu").float()  # CPU+float32: gemischte Dtype-Matmul sicher
     device = "cpu"

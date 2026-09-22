@@ -22,7 +22,7 @@
 //!
 //! Eine allein genuegte nicht: Die erste prueft gegen eine Kopie, und
 //! eine Kopie kann altern; die zweite prueft gegen die Wahrheit, kann
-//! aber in der CI nicht laufen, weil `INTEGER_LLM/models/` nicht im
+//! aber in der CI nicht laufen, weil `MODELS/llm/` nicht im
 //! Repositorium liegt.
 
 use myl_local_agent::werkzeug::{angebot, angebot_mit_regel, Ansageform, Werkzeug};
@@ -148,13 +148,13 @@ fn die_deutsche_fassung_ist_eine_andere() {
 /// Pruefung bliebe die Kopie stehen, wenn das Modell seine Vorlage
 /// aendert, und alle anderen Pruefungen waeren weiter gruen.
 ///
-/// Laeuft nur, wo das Modell liegt: `INTEGER_LLM/models/` ist nicht im
+/// Laeuft nur, wo das Modell liegt: `MODELS/llm/` ist nicht im
 /// Repositorium. Fehlt es, wird uebersprungen **und gesagt, dass**.
 #[test]
 fn die_abgelegte_fassung_ist_nicht_veraltet() {
     let pfad = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../INTEGER_LLM/models/Qwen3-4B/tokenizer_config.json"
+        "/../../MODELS/llm/Qwen3-4B/tokenizer_config.json"
     );
     let Ok(roh) = std::fs::read_to_string(pfad) else {
         eprintln!("SPRUNG: {pfad} liegt nicht hier, die Vorlage ist nicht zu vergleichen");

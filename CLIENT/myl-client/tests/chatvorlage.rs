@@ -95,3 +95,52 @@ fn mit_denken_bleibt_der_block_weg() {
     assert!(!p.contains("<think>"));
     assert!(p.ends_with("<|im_start|>assistant\n"));
 }
+
+/// ⛔️ **Fund 425: jede eingesetzte Familie steht ausdruecklich in der
+/// Zuordnung, und diese Probe haelt es fest.**
+///
+/// Die Familie des Qwen3.6 fehlte, das Modell bekam deshalb
+/// `Fortsetzung`, also rohen Text statt ChatML, und antwortete mit
+/// Kauderwelsch. 📌 **Ein `_`-Zweig, der eine Notform liefert, verbirgt
+/// jedes neue Modell:** Er meldet nichts, und der Fehlschlag sieht wie
+/// ein Numerikfehler aus. Wer ein Modell ergaenzt, ergaenzt hier.
+#[test]
+fn die_familien_sind_abgedeckt() {
+    use myl_client::oertlich::Vorlage;
+    for (familie, erwartet) in [
+        ("qwen3", Vorlage::ChatMl),
+        ("qwen3-moe", Vorlage::ChatMl),
+        ("qwen3_5-moe-hybrid", Vorlage::ChatMlDenkblock),
+    ] {
+        assert_eq!(
+            Vorlage::fuer_familie(familie),
+            erwartet,
+            "Familie {familie} bekommt die falsche Vorlage"
+        );
+    }
+    // ⚑ **Und die Gegenrichtung:** Ein Basismodell soll weiter
+    //   fortsetzen, sonst prueft die Zusicherung oben nichts.
+    assert_eq!(Vorlage::fuer_familie("qwen2.5"), Vorlage::Fortsetzung);
+}
+
+/// ⚑ **Der Denkblock wird geoeffnet und nicht geschlossen**, und nur
+/// bei der Familie, deren Vorlage ihn vorgibt.
+#[test]
+fn der_denkblock_wird_nur_dort_vorgegeben_wo_er_hingehoert() {
+    use myl_client::oertlich::Vorlage;
+    let n = [Nachricht::nutzer("hallo")];
+
+    let mit = Vorlage::ChatMlDenkblock.bauen(&n, true);
+    assert!(mit.ends_with("<|im_start|>assistant\n<think>\n"), "{mit:?}");
+
+    // ⛔️ Qwen3 schreibt die Marke selbst; hier darf sie nicht stehen.
+    let ohne = Vorlage::ChatMl.bauen(&n, true);
+    assert!(ohne.ends_with("<|im_start|>assistant\n"), "{ohne:?}");
+    assert!(!ohne.contains("<think>"), "{ohne:?}");
+
+    // Ohne Denkmodus bleibt es bei beiden der GESCHLOSSENE leere Block.
+    for v in [Vorlage::ChatMl, Vorlage::ChatMlDenkblock] {
+        let s = v.bauen(&n, false);
+        assert!(s.ends_with("<think>\n\n</think>\n\n"), "{s:?}");
+    }
+}

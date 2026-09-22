@@ -22,6 +22,7 @@ import json
 import os
 import shutil
 import subprocess
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -30,6 +31,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "calibrate"))
 
 from src import export as export_mod
 from src import paths as paths_mod
+from src import model_configs as mc
 from src.export_weights import export_quantized_weights
 from src.model_configs import get_export_model_config, get_model_config
 
@@ -177,20 +179,150 @@ def test_export_weights_hashes_match_manifest():
             assert len(file_bytes) == n, safe_name
 
 
-def test_local_model_dir_missing_and_present():
-    with tempfile.TemporaryDirectory() as tmp:
-        old_cwd = os.getcwd()
-        os.chdir(tmp)
-        try:
-            try:
-                paths_mod.local_model_dir("Qwen3-0.6B")
-                raise AssertionError("Fehlendes Modell-Verzeichnis haette fehlschlagen muessen")
-            except FileNotFoundError as e:
-                assert "fetch_model.sh" in str(e)
-            (Path(tmp) / "models" / "Qwen3-0.6B").mkdir(parents=True)
-            assert paths_mod.local_model_dir("Qwen3-0.6B") == Path("models") / "Qwen3-0.6B"
-        finally:
-            os.chdir(old_cwd)
+# ⚑ Die Wurzel aus der eigenen Dateitiefe, wie in `calibrate/src/paths.py`.
+#    ⚠️ Wer diese Datei verschiebt, zieht `parents[2]` mit.
+_WURZEL = Path(__file__).resolve().parents[2]
+
+
+def _gekonnte_merkmale_aus_rust() -> set:
+    """Die Faehigkeitsliste aus `runtime/src/loader.rs`, gelesen.
+
+    ⚑ **Gelesen und nicht abgeschrieben.** Waere sie hier noch einmal
+    getippt, stuende dieselbe Liste an drei Orten statt an zwei, und
+    diese Probe pruefte ihre eigene Kopie.
+    """
+    quelle = (_WURZEL / "INTEGER_LLM" / "runtime" / "src" / "loader.rs").read_text(encoding="utf-8")
+    anfang = quelle.index("pub const GEKONNTE_MERKMALE")
+    ende = quelle.index("];", anfang)
+    block = quelle[anfang:ende]
+    return set(re.findall(r'"([a-z_]+)"', block))
+
+
+def test_merkmale_der_modelle_sind_gekonnt():
+    """⛔️ **Jedes Merkmal, das ein ausgeliefertes Modell braucht, muss der
+    Lader koennen.**
+
+    Die Liste steht zwangslaeufig an zwei Orten: Der Export leitet sie ab,
+    der Lader haelt dagegen. 📌 **Was an zwei Orten steht, laeuft
+    auseinander**, also verbindet diese Probe die beiden. Sie faellt, wenn
+    jemand ein Merkmal ableitet, das der Rechenpfad nicht hat, und das ist
+    genau der Fall, in dem ein Artefakt nicht mehr laedt.
+    """
+    gekonnt = _gekonnte_merkmale_aus_rust()
+    assert gekonnt, "die Faehigkeitsliste im Lader ist leer oder nicht gefunden"
+    for modell in ("myelith-0.6b", "myelith-4b", "myelith-8b", "myelith-30b-a3b"):
+        noetig = set(mc.artifact_model_config(modell)["merkmale"])
+        fehlend = noetig - gekonnt
+        assert not fehlend, (
+            f"{modell} braucht {sorted(fehlend)}, der Lader kann das nicht. "
+            "Entweder gehoert das Merkmal in GEKONNTE_MERKMALE (dann ist es "
+            "gebaut) oder das Modell nicht in den Katalog."
+        )
+
+
+def test_keine_faehigkeit_ohne_ableitbares_merkmal():
+    """⚠️ **Die Gegenrichtung: kein Eintrag im Lader, den niemand ableiten
+    kann.**
+
+    Ein solcher Eintrag wuerde nie geprueft und waere eine Zusage ins
+    Leere. 📌 **Dieselbe Klasse wie eine Funktion ohne Aufrufer**, nur in
+    einer Liste.
+    """
+    gekonnt = _gekonnte_merkmale_aus_rust()
+    ableitbar = {name for name, _ in mc._MERKMALE}
+    ueberzaehlig = gekonnt - ableitbar
+    assert not ueberzaehlig, (
+        f"der Lader nennt Merkmale, die der Export nie ableitet: "
+        f"{sorted(ueberzaehlig)}. Entweder ein Tippfehler oder eine Zusage "
+        "ohne Gegenstand."
+    )
+
+
+def test_noch_nicht_gebaute_bauarten_werden_abgelehnt():
+    """⛔️ **Ein Merkmal, das der Rechenpfad noch nicht kann, muss
+    abgeleitet werden und darf NICHT gekonnt sein.**
+
+    Das ist die Stelle, an der das Tor seinen Wert hat: Ein Artefakt der
+    naechsten Architektur soll **abgelehnt** werden, nicht stillschweigend
+    falsch gerechnet. ⚑ Waere `zustandsschicht` versehentlich in
+    `GEKONNTE_MERKMALE`, waere aus einem lauten Abbruch eine stille
+    Abweichung geworden.
+    """
+    gekonnt = _gekonnte_merkmale_aus_rust()
+    ableitbar = {name for name, _ in mc._MERKMALE}
+    for kuenftig in ("zustandsschicht", "gepackte_experten", "geteilter_experte",
+                     "mehrfachvorhersage", "ausgangstor", "teildrehung"):
+        assert kuenftig in ableitbar, f"{kuenftig} wird nicht abgeleitet, also nie abgelehnt"
+        assert kuenftig not in gekonnt, (
+            f"{kuenftig} steht in GEKONNTE_MERKMALE, ist aber nicht gebaut. "
+            "Ein Eintrag ohne Umsetzung macht aus einem Abbruch eine stille "
+            "Abweichung."
+        )
+
+
+def test_models_dir_liegt_an_der_wurzel():
+    """
+    Die Rubrik der Quellmodelle ist `<Wurzel>/MODELS/llm`.
+
+    ⚑ **Warum das nicht mehr ueber das Arbeitsverzeichnis geprueft wird**
+    (Umzug 2026-09-21): `models_dir()` war bis dahin CWD-relativ, und
+    dieser Test wechselte in ein Wegwerfverzeichnis, legte dort `models/`
+    an und verglich. Das ging, solange Modelle und Artefakte im selben
+    Elternverzeichnis lagen. Jetzt liegt `MODELS/` an der Wurzel und
+    `artifacts/` darunter, also rechnet `models_dir()` aus der eigenen
+    Dateitiefe.
+
+    ⛔️ **Und genau die ist die Gegenprobe wert.** Ein `parents[3]`, das
+    um eine Ebene daneben liegt, liefert einen Pfad, der genauso aussieht
+    und auf den falschen Baum zeigt. Deshalb wird nicht der Pfad mit
+    einer getippten Erwartung verglichen, sondern **nachgesehen, ob an
+    der errechneten Wurzel wirklich dieses Repositorium liegt.**
+    """
+    wurzel = paths_mod.repo_root()
+
+    # Zwei versionierte Zeugen, die es nur hier gibt. Einer allein
+    # koennte auch in einem Unterordner liegen.
+    assert (wurzel / "INTEGER_LLM" / "scripts" / "build_artifacts.sh").is_file(), (
+        f"{wurzel} ist nicht die Wurzel dieses Repositoriums"
+    )
+    assert (wurzel / "MODELS" / ".gitignore").is_file(), (
+        f"{wurzel} traegt keine Rubrikordner fuer fremde Gewichte"
+    )
+
+    # ⚑ Der Pfad wird gebaut und nicht getippt: Unter Windows setzt
+    # `Path.joinpath` einen Backslash, und eine getippte Erwartung
+    # pruefte das Trennzeichen statt der Aufloesung.
+    assert paths_mod.models_dir() == wurzel / "MODELS" / "llm"
+    assert paths_mod.models_dir().is_absolute()
+
+
+def test_local_model_dir_meldet_das_fehlende_modell():
+    """
+    Ein fehlender Snapshot bricht ab und sagt, wie er hereinkommt.
+
+    ⚑ **Eine Voraussetzung, die erst beim Absturz sichtbar wird, ist
+    keine.** Die Meldung nennt deshalb das Holskript und die Datei, in
+    die die Revision gehoert.
+    """
+    try:
+        paths_mod.local_model_dir("gibt-es-ganz-sicher-nicht")
+        raise AssertionError("Fehlendes Modell-Verzeichnis haette fehlschlagen muessen")
+    except FileNotFoundError as e:
+        text = str(e)
+        assert "fetch_model.sh" in text, text
+        assert "KATALOG.json" in text, text
+        # Der genannte Pfad ist der, an dem wirklich gesucht wurde.
+        assert str(paths_mod.models_dir()) in text, text
+
+    # Und die Gegenrichtung, soweit sie ohne Gewichte pruefbar ist: ein
+    # Verzeichnis, das da ist, kommt unveraendert zurueck.
+    vorhanden = sorted(p.name for p in paths_mod.models_dir().iterdir() if p.is_dir()) \
+        if paths_mod.models_dir().is_dir() else []
+    if not vorhanden:
+        print("[test] uebersprungen: unter MODELS/llm liegt kein Snapshot")
+        return
+    name = vorhanden[0]
+    assert paths_mod.local_model_dir(name) == paths_mod.models_dir() / name
 
 
 def test_export_workflow_order_produces_consistent_theta_v():
@@ -688,8 +820,16 @@ if __name__ == "__main__":
     print("[test] Export lehnt Nicht-int8-Tensoren ab: PASSED")
     test_export_weights_hashes_match_manifest()
     print("[test] Manifest-Hashes stimmen mit Dateien ueberein: PASSED")
-    test_local_model_dir_missing_and_present()
-    print("[test] local_model_dir prueft models/-Snapshot: PASSED")
+    test_merkmale_der_modelle_sind_gekonnt()
+    print("[test] alle Merkmale der Modelle sind vom Lader gekonnt: PASSED")
+    test_keine_faehigkeit_ohne_ableitbares_merkmal()
+    print("[test] keine Faehigkeit ohne ableitbares Merkmal: PASSED")
+    test_noch_nicht_gebaute_bauarten_werden_abgelehnt()
+    print("[test] kuenftige Bauarten werden abgelehnt statt gerechnet: PASSED")
+    test_models_dir_liegt_an_der_wurzel()
+    print("[test] models_dir zeigt auf MODELS/llm an der Wurzel: PASSED")
+    test_local_model_dir_meldet_das_fehlende_modell()
+    print("[test] local_model_dir meldet den fehlenden Snapshot: PASSED")
     test_export_workflow_order_produces_consistent_theta_v()
     print("[test] Export-Reihenfolge erzeugt konsistente Hashes: PASSED")
     test_synthetic_export_loads_in_real_runtime_binary()

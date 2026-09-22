@@ -44,7 +44,7 @@ SPEC = REPO / "INTEGER_LLM" / "theta_v" / "spec.json"
 # `numeric.formats.weight.dtype`). **Eine ehrliche Leerstelle ist nur
 # ehrlich, wenn an der richtigen Stelle gesucht wurde.**
 ERGEBNISSE = REPO / "BENCHMARKS" / "Inferenz" / "results"
-KATALOG = REPO / "INTEGER_LLM" / "models" / "KATALOG.json"
+KATALOG = REPO / "MODELS" / "llm" / "KATALOG.json"
 ZIEL = REPO / "ETHICS" / "Modellkarte.md"
 
 NICHT_GEMESSEN = "*nicht gemessen*"

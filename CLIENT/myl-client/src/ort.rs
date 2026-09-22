@@ -31,36 +31,32 @@
 //! steht deshalb nicht in `client.json`: Was dort steht, hat ein Mensch
 //! entschieden, und ein Mensch entscheidet nicht, wo sein Klon liegt,
 //! er verschiebt ihn.
+//!
+//! # ⚑ Die Marke und die Suche stehen eine Kiste tiefer
+//!
+//! `MARKE`, `ist_wurzel` und `aufwaerts` kommen aus `myl_senses::ort`
+//! und werden hier nur weitergegeben. Seit die fremden Gewichte unter
+//! `MODELS/` im Klon liegen, braucht die Sinneskiste die Wurzel selbst,
+//! und **eine zweite Marke waere dieselbe Angabe an einem zweiten Ort.**
+//! Was hier bleibt, ist der **gemerkte** Ort: Er braucht den Begriff
+//! einer Einstellungsdatei, und den hat nur diese Kiste.
 
 use std::path::{Path, PathBuf};
 
-/// Die Datei, an der ein Verzeichnis als Wurzel dieses Repositoriums
-/// zu erkennen ist.
-///
-/// ⚑ **Eine Datei, die es nur hier gibt, und die niemand nebenbei
-/// anlegt.** `.git` waere jeder Klon, `README.md` jedes Projekt.
-pub const MARKE: &str = "INTEGER_LLM/scripts/build_artifacts.sh";
-
-/// Die Umgebungsvariable, mit der sich alles uebergehen laesst.
-pub const UMGEBUNG: &str = "MYELITH_WURZEL";
-
-/// Traegt dieses Verzeichnis die Marke?
-fn ist_wurzel(p: &Path) -> bool {
-    p.join(MARKE).is_file()
-}
-
-/// Von hier aufwaerts suchen.
-fn aufwaerts(anfang: PathBuf) -> Option<PathBuf> {
-    let mut p = anfang;
-    loop {
-        if ist_wurzel(&p) {
-            return Some(p);
-        }
-        if !p.pop() {
-            return None;
-        }
-    }
-}
+// ⚑ **Die Marke und die Suche stehen in `myl-senses`** (seit dem
+// 2026-09-21), und hier steht nur, was auf sie zeigt.
+//
+// **Der Anlass war der Umzug der Gewichte nach `MODELS/`.** Seither
+// braucht auch `myl-senses` die Wurzel, um ein Sehmodell zu finden. Eine
+// zweite Marke dort haette dieselbe Zeichenkette an einem zweiten Ort
+// bedeutet, und **was an zwei Orten steht, laeuft auseinander**: Wer sie
+// einmal aendert, aendert eine von beiden, und die andere sucht danach
+// stillschweigend weiter nach einer Datei, die es nicht mehr gibt.
+//
+// ⚑ **Warum unten und nicht hier:** `myl-senses` hat keine
+// Abhaengigkeiten und liegt unter dieser Kiste. Die Richtung des Pfeils
+// war damit vorgegeben; der Typ gehoert dorthin, wo beide hinsehen.
+pub use myl_senses::ort::{aufwaerts, eigener_ordner, ist_wurzel, MARKE, UMGEBUNG};
 
 /// Die Datei, in der der gefundene Ort steht.
 pub fn zettel() -> PathBuf {
@@ -118,16 +114,6 @@ pub fn wurzel() -> Option<PathBuf> {
     gemerkt()
 }
 
-/// Das Verzeichnis, in dem das laufende Programm liegt.
-///
-/// ⚑ **Aufgeloest**, denn in einem `.app` fuehrt der Weg ueber
-/// `Contents/MacOS`, und ein Verweis waere sonst nicht zu verfolgen.
-pub fn eigener_ordner() -> Option<PathBuf> {
-    let p = std::env::current_exe().ok()?;
-    let p = std::fs::canonicalize(&p).unwrap_or(p);
-    p.parent().map(|q| q.to_path_buf())
-}
-
 /// Macht einen relativen Pfad gegen die Wurzel absolut.
 ///
 /// 📌 **Ohne das scheitert „Modell laden" aus dem Finder heraus**, und
@@ -177,6 +163,32 @@ pub fn datenort() -> PathBuf {
             .parent()
             .map(|p| p.to_path_buf())
             .unwrap_or_else(|| PathBuf::from(".")),
+    }
+}
+
+/// **Die Verzeichnisse, die Myelith mit Daten fuellt.**
+///
+/// ⚑ **Hier und nicht in den Oberflaechen**, aus demselben Grund wie bei
+/// [`datenort`]: Wer sie dort aufzaehlt, zaehlt sie beim naechsten
+/// Programm noch einmal, und zwei Aufzaehlungen derselben Sache zeigen
+/// irgendwann auf verschiedene Verzeichnisse.
+///
+/// ⛔️ **Und seit dem 2026-09-21 liegen die beiden nicht mehr
+/// beieinander** (Fund 410). Die fremden Gewichte sind nach `MODELS/` an
+/// die Wurzel gezogen, die gebauten Artefakte blieben unter
+/// `INTEGER_LLM/`. Eine Aufzaehlung, die weiter `INTEGER_LLM/models`
+/// nennt, wirft **keinen Fehler**, sondern liefert eine **zu kleine
+/// Zahl**: Das Verzeichnis ist einfach nicht da, und `belegung` zaehlt
+/// dann null. 📌 **Ein Pfad, der auf nichts zeigt, meldet sich nicht;
+/// er antwortet.**
+///
+/// ⚠️ **Ohne Klon ist die Liste leer, und das ist richtig.** Wer nur die
+/// Freigabebuendel geholt hat, hat weder Gewichte noch Artefakte im
+/// Baum, und eine Zahl waere dort geraten.
+pub fn gefuellte_orte() -> Vec<PathBuf> {
+    match wurzel() {
+        Some(w) => vec![w.join("MODELS"), w.join("INTEGER_LLM").join("artifacts")],
+        None => Vec::new(),
     }
 }
 

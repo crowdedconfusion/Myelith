@@ -224,7 +224,9 @@ impl Fortsetzung {
 
     /// Vergisst alles, etwa nach dem Laden eines anderen Modells.
     pub fn leeren(&mut self) {
-        self.cache.kuerzen(0);
+        // ⚑ Auf null zu kuerzen gelingt immer, auch mit rekurrentem
+        //   Zustand; der Rueckgabewert kann deshalb hier entfallen.
+        let _ = self.cache.kuerzen(0);
         self.token.clear();
     }
 }
@@ -262,8 +264,20 @@ pub fn dekodieren_fortgesetzt(
     // gebuendelt (Fund 366). Der gemeinsame Anfang mit dem letzten Aufruf
     // steht schon im Speicher; mindestens das letzte Token wird gerechnet,
     // denn nur so entstehen die Logits.
-    let gemeinsam = gemeinsamer_anfang(&speicher.token, token_ids).min(token_ids.len().saturating_sub(1));
-    speicher.cache.kuerzen(gemeinsam);
+    let gewuenscht = gemeinsamer_anfang(&speicher.token, token_ids)
+        .min(token_ids.len().saturating_sub(1));
+    // ⛔️ **Die Wiederverwendung gelingt nicht immer, und das entscheidet
+    // der Speicher und nicht diese Stelle.**
+    //
+    // Ein KV-Eintrag je Position laesst sich wegwerfen; ein rekurrenter
+    // Zustand nicht, denn er ist das Ergebnis aller Schritte davor. Hat
+    // das Modell solche Ebenen, kuerzt der Speicher auf null und sagt es
+    // hier.
+    //
+    // 📌 **Ohne diesen Rueckgabewert bliebe der Zustand stehen, waehrend
+    // der KV-Speicher kuerzt**, und das Modell erzeugte plausiblen, aber
+    // falschen Text. Niemand saehe es, weil die Ausgabe gut aussieht.
+    let gemeinsam = speicher.cache.kuerzen(gewuenscht);
     speicher.token.truncate(gemeinsam);
     let mut logits = model.prompt_vorbereiten_ab(token_ids, gemeinsam, &mut speicher.cache);
     speicher.token = token_ids.to_vec();

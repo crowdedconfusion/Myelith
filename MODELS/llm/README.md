@@ -1,15 +1,18 @@
-# models/
+# MODELS/llm/
 
-Ablageort für das Quellmodell, aus dem die θ_v-Artefakte entstehen.
+Ablageort für die Quellmodelle, aus denen die θ_v-Artefakte entstehen.
 Zweck: reproduzierbare Herkunft statt implizitem Hugging-Face-Cache.
 
-Der Inhalt wird nicht versioniert (siehe `.gitignore`); nur dieses README,
-`KATALOG.json` und die `.gitignore` bleiben im Repository.
+Die Gewichte werden nicht versioniert (siehe `MODELS/.gitignore`); nur
+dieses README, `KATALOG.json` und die Lizenzdatei je Modell bleiben im
+Repository. Was hier gilt und welche Rubriken es noch gibt, steht eine
+Ebene höher in `MODELS/README.md`.
 
-> **Diese Datei wird erzeugt.** Quelle sind `models/KATALOG.json`
+> **Diese Datei wird erzeugt.** Quelle sind `MODELS/llm/KATALOG.json`
 > (kuratiert: Herkunft, Revision, Lizenz, Status) und
-> `scale_packs/REGISTER.json` (erzeugt: Digest, θ_v). Änderungen gehören
-> in eine der beiden Dateien, danach `python tools/modelle_liste.py`.
+> `INTEGER_LLM/scale_packs/REGISTER.json` (erzeugt: Digest, θ_v).
+> Änderungen gehören in eine der beiden Dateien, danach
+> `python INTEGER_LLM/tools/modelle_liste.py`.
 
 Jede Variante braucht eine **eigene Lizenzprüfung** (Whitepaper Kap. 10.1,
 ETHICS-Grundsatz G7: Apache 2.0 oder MIT) und eine **fixierte Revision**:
@@ -25,24 +28,28 @@ ausschließlich **Basis-Varianten** verwendet, keine Instruct-Varianten
 | `myelith-0.6b` | [Qwen/Qwen3-0.6B](https://huggingface.co/Qwen/Qwen3-0.6B) | `c1899de289a0…` | Apache-2.0 | PolyForm Shield License 1.0.0 | 0,6 Mrd. | 28 | rund 1,5 GB | 0,92 GB | 0.20.0 | verifiziert |
 | `myelith-30b-a3b` | [Qwen/Qwen3-30B-A3B](https://huggingface.co/Qwen/Qwen3-30B-A3B) | `ad44e777bcd1…` | Apache-2.0 | PolyForm Shield License 1.0.0 | 30,5 Mrd. gesamt, 3,04 Mrd. aktiv je Token | 48 | rund 57 GB | 31,2 GB | 0.20.0 | verifiziert |
 | `myelith-4b` | [Qwen/Qwen3-4B](https://huggingface.co/Qwen/Qwen3-4B) | `1cfa9a720891…` | Apache-2.0 | PolyForm Shield License 1.0.0 | 4 Mrd. | 36 | rund 7,5 GB | 4,8 GB | 0.20.0 | verifiziert |
+| `myelith-8b` | [Qwen/Qwen3-8B](https://huggingface.co/Qwen/Qwen3-8B) | `b968826d9c46…` | Apache-2.0 | PolyForm Shield License 1.0.0 | 8,2 Mrd. | 36 | rund 15 GB | 9,5 GB | 0.20.0 | verifiziert |
 
 **Status:**
 
 - **verifiziert**: Artefakte gebaut, Perplexität gegen die Gleitkomma-Referenz gemessen, Akzeptanzkriterium erfüllt, Skalenpaket im Repository.
 - **erprobt**: Artefakte gebaut und lauffähig, Qualität noch nicht gegen die Referenz gemessen.
 - **vorgemerkt**: Lizenz geprüft und Revision festgelegt, aber noch nicht geholt oder gebaut.
+- **geholt**: Gewichte liegen lokal mit fixierter Revision, Artefakt noch nicht gebaut. ⚑ Dieser Wert ist am 2026-09-21 dazugekommen, weil keiner der drei anderen den Zustand traf: `vorgemerkt` heisst ausdruecklich "noch nicht geholt", `erprobt` verlangt ein gebautes Artefakt. Ein Zustand ohne Wort wird sonst auf den naechstbesten gebucht, und dann meldet der Katalog etwas Falsches.
 
 **Gemessene Qualität** (Perplexität, WikiText-2):
 
-- `myelith-0.6b`: 33,29 gegen BF16 31,86 (+4,48 %). Gemessen am 2026-09-14 mit theta_v 0.19.0 ueber 435 Positionen aus vier WikiText-2-Sequenzen. ⚑ Der groesste Abstand der Reihe, und das passt zur Richtung: Je kleiner das Modell, desto teurer die Quantisierung anteilig (0,6B +4,48 %, 4B +1,65 %, 30B-A3B kein messbarer Abstand). Kriterium <= 5 % erfuellt, aber von allen drei Modellen am knappsten
+- `myelith-0.6b`: 33,29 gegen BF16 31,86 (+4,48 %). Gemessen am 2026-09-14 mit theta_v 0.19.0 ueber 435 Positionen aus vier WikiText-2-Sequenzen. ⚑ Der groesste Abstand der Reihe. ⛔️ **Hier stand bis zum 2026-09-21 die Richtung „je kleiner das Modell, desto teurer die Quantisierung“, und das 8B hat sie gebrochen**: +3,75 % bei 8,2 Mrd. gegen +1,65 % bei 4 Mrd. ⚑ **Eine Erklaerung liegt nahe und ist nicht geprueft:** Die Reihe mischt zwei Achsen, denn 0,6B und 4B haben eine gebundene Einbettung und 8B und 30B nicht. Innerhalb jeder Gruppe faellt der Abstand monoton. ⚠️ Bei 435 Positionen ist ein Unterschied dieser Groesse ausserdem nicht sicher aufloesbar. Kriterium <= 5 % erfuellt, aber von allen drei Modellen am knappsten
 - `myelith-30b-a3b`: 10,42 gegen BF16 10,48 (-0,59 %). Das Vorzeichen ist kein Beleg fuer Ueberlegenheit: Zwei der vier Sequenzen sind besser, zwei schlechter, und der Standardfehler des Mittels betraegt 1,66 %. Bei 435 Positionen ist kein Unterschied auflösbar; das Kriterium (<= 5 %) ist mit weitem Abstand erfuellt
 - `myelith-4b`: 19,95 gegen BF16 19,63 (+1,65 %)
+- `myelith-8b`: 13,27 gegen BF16 12,79 (+3,75 %)
 
 **Anmerkungen:**
 
 - `myelith-0.6b`: Der kleinste Vertreter und der Anker des Projekts (2026-09-11). Er loest Qwen2.5-0,5B ab; damit liegt die kleinste Groesse in derselben Familie wie 4B und 14B, und die Reihe misst eine Achse (Groesse) statt zweier (Groesse und Familie). 📌 Fund 336: Dieses Modell traegt in der letzten Ebene ein post_attention_layernorm-Gewicht mit dem Betrag 192, waehrend der Median derselben Zeile bei 3,1 liegt. int8 reicht bis 127. Die Kalibrierung verschiebt den Kanal deshalb in die Folgematrizen (gamma/2, Spalte*2); im Gleitkomma ist das bitgleich, geprueft an den Logits. Es ist das erste Modell des Projekts, das die Umformung braucht.
 - `myelith-30b-a3b`: Das erste Mixture-of-Experts-Modell des Projekts: 128 Experten je Layer, Top-8, alle 48 Layer sind MoE (mlp_only_layers ist leer). Kalibriert am 2026-08-25 auf einer 24-GiB-Maschine, obwohl das bf16-Modell 56,9 GiB und das Artefakt 29 GiB gross ist: Die Gewichte werden eingeblendet statt kopiert, und Quantisierung wie Export laufen im Strom. Artefakt: 18 868 Tensoren in 37 747 Dateien. Belegt: Fortsetzung von 'Die Hauptstadt von Frankreich ist' lautet ' Paris. Die Hauptstadt', Token-Hash 99bfc1f64e901811 ueber zwei unabhaengige Laeufe gleich. Perplexitaet am 2026-08-25 gemessen; Einordnung siehe eval/results/. Nach Gesamtparametern setzt das Modell die Reihe fort, in der der Abstand mit der Groesse schrumpft (0,5B +2,11 %, 4B +1,64 %, 7B +1,14 %); nach AKTIVEN Parametern (3,0 Mrd.) tut es das nicht. Welche der beiden Groessen massgeblich ist, ist offen.
 - `myelith-4b`: Die erste Qwen3-Variante des Projekts und der Traeger von QK-Norm. Drei Unterschiede zu Qwen2.5, von denen nur einer vorher benannt war: QK-Norm (Q und K je Kopf normiert, vor RoPE), keine Attention-Biases, und head_dim 128 bei hidden_size/num_heads = 80 (Fund 59). Status 'erprobt', nicht 'verifiziert': Das Artefakt laeuft und ist bitgleich ueber Laeufe, der Perplexitaetsabstand ist noch offen.
+- `myelith-8b`: Das mittlere dichte Modell, geholt am 2026-09-21 auf Wunsch des Projektinhabers. ⚑ Ein reiner Groessenwechsel gegenueber dem 4B und keine Architekturaenderung: dieselbe Bauart (Qwen3ForCausalLM), 399 Tensoren mit demselben Muster, 36 Ebenen, QK-Norm vorhanden (36 q_norm und 36 k_norm gezaehlt), keine Bias-Tensoren. ⚠️ tie_word_embeddings ist hier False, anders als beim 0,6B und 4B: Das Modell traegt ein eigenes lm_head.weight, also greift Fund 390 (die doppelt abgelegte Matrix) hier nicht. ⚑ Es fuellt die Luecke zwischen 4B und dem Gemisch und macht die dichte Reihe wieder dreipunktig, die seit dem Wegfall des 14B nur zwei Punkte hatte. ⚑ **Artefakt gebaut am 2026-09-21** in 10 min 4 s ohne Skalenpaket; mit dem daraus erzeugten Paket baut es in **36 s und bitgleich**, damit ist der Bau plattformuebergreifend wiederholbar. Laedt und rechnet: 36 Layer-Vektoren und 3 E2E-Vektoren in 6,6 s. ⚑ **Perplexitaet gemessen am 2026-09-21:** 13,27 gegen die BF16-Referenz 12,79, also **+3,75 %** bei einem Kriterium von 5 %, AKZEPTIERT. ⛔️ **Und die Zahl bricht die Reihe:** Das Projekt haelt fest, je kleiner das Modell, desto teurer die Quantisierung (0,6B +4,48 %, 4B +1,65 %). Das 8B liegt mit +3,75 % SCHLECHTER als das kleinere 4B. ⚑ **Eine Erklaerung liegt nahe und ist nicht geprueft:** Die Reihe mischt zwei Achsen. 0,6B und 4B haben eine gebundene Einbettung, 8B und 30B nicht. Innerhalb der gebundenen faellt der Abstand monoton, innerhalb der ungebundenen auch (8B +3,75 %, 30B kein messbarer Abstand). ⚠️ **Bei 435 Positionen und vier Sequenzen ist ein Unterschied dieser Groesse ausserdem nicht sicher aufloesbar**; ein Lauf ueber 128 Sequenzen wuerde es entscheiden.
 
 ## Woher die Gewichte kommen
 
@@ -52,7 +59,7 @@ Von Hand geht es auch:
 
 ```bash
 huggingface-cli download <hf_repo> --revision <hf_revision> \
-    --local-dir INTEGER_LLM/models/<hf_verzeichnis>
+    --local-dir MODELS/llm/<hf_verzeichnis>
 ```
 
 ## Wie daraus Artefakte werden

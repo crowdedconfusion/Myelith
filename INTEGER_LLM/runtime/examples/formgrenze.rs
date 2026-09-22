@@ -11,7 +11,7 @@ fn main() {
         .join("../artifacts")
         .join(std::env::var("MYL_POD_MODELL").unwrap_or_else(|_| "myelith-0.6b".into()));
     let m = load_model(&dir).expect("Modell");
-    for (zaehler, schritte) in [(1i64, 40u64), (64, 40), (1024, 40), (65536, 40)] {
+    for (zaehler, schritte) in [(1i64, 40u64), (64, 40), (128, 40), (256, 40), (1024, 40)] {
         let v = Trainingsvorgaben {
             schritte,
             lr_nenner: 1,

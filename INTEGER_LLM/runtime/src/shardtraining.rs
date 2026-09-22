@@ -562,10 +562,10 @@ impl Shardgewichte {
                 // Sie kommen dazu, wenn der Router sie wählt.
                 Feedforward::Moe(moe) => Ebenenstand::Gemisch {
                     aufmerksamkeit: Box::new([
-                        master_aus_gewicht(&ebene.q_proj),
-                        master_aus_gewicht(&ebene.k_proj),
-                        master_aus_gewicht(&ebene.v_proj),
-                        master_aus_gewicht(&ebene.o_proj),
+                        master_aus_gewicht(&ebene.achtsamkeit().q_proj),
+                        master_aus_gewicht(&ebene.achtsamkeit().k_proj),
+                        master_aus_gewicht(&ebene.achtsamkeit().v_proj),
+                        master_aus_gewicht(&ebene.achtsamkeit().o_proj),
                     ]),
                     router: master_aus_gewicht(&moe.router),
                     experten: std::collections::BTreeMap::new(),

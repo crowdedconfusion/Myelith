@@ -232,7 +232,7 @@ pub fn katalognamen() -> BTreeMap<String, String> {
 pub fn katalog() -> BTreeMap<String, Katalogeintrag> {
     let mut aus = BTreeMap::new();
     let Some(w) = crate::ort::wurzel() else { return aus };
-    let Ok(roh) = std::fs::read_to_string(w.join("INTEGER_LLM/models/KATALOG.json")) else {
+    let Ok(roh) = std::fs::read_to_string(w.join("MODELS/llm/KATALOG.json")) else {
         return aus;
     };
     let Ok(d) = serde_json::from_str::<serde_json::Value>(&roh) else { return aus };

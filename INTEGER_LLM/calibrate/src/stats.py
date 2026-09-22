@@ -23,6 +23,14 @@ bleiben skalar — nur der Residualstrom selbst zeigt den Ausreisser (siehe
 
 import re
 import torch
+
+# ⚑ **Dieselbe Namensregel wie beim Export, und zwar buchstaeblich
+# dieselbe Funktion.** Die Skalenschluessel und die Tensornamen im
+# Artefakt muessen uebereinstimmen, sonst sucht der Lader eine Skala
+# unter einem Namen, den es nicht gibt. ⛔️ **Zwei Fassungen derselben
+# Regel waeren genau der Fehler, den dieses Projekt am haeufigsten
+# macht**, und er faellt hier erst beim Laden auf.
+from .quantize import normiere_namen
 from collections import defaultdict
 
 # Projektkonvention: p99 wird aus einer begrenzten Stichprobe geschaetzt;
@@ -280,7 +288,42 @@ class ActivationStatsCollector:
         # und endet damit NICHT auf "gate_proj". Ohne eigenen Schluessel
         # bekaeme sie keinen Hook und der Loader faende keine Skala.
         router_keys = ("mlp.gate",)
+        # ⛔️ **Die Projektionen einer rekurrenten Zustandsschicht**
+        # (2026-09-21). Sie heissen `in_proj_qkv`, `in_proj_a`,
+        # `in_proj_b`, `in_proj_z` und `out_proj` und treffen **keinen**
+        # der Schluessel darueber: `out_proj` endet nicht auf `o_proj`,
+        # und `in_proj_*` auf gar nichts Bekanntes.
+        #
+        # ⚠️ **Ohne eigenen Schluessel fiele das nicht auf, und das ist
+        # der teure Teil.** Der Lauf liefe durch, das Artefakt entstuende
+        # vollstaendig, und **240 Tensoren haetten keine
+        # Aktivierungsskala**. Ein Artefakt mit fehlenden Skalen sieht aus
+        # wie eines mit Skalen; erst der Lader stolpert, und bei einem
+        # Modell, das er ohnehin ablehnt, nie.
+        #
+        # 📌 **Dieselbe Lehre wie beim Router** vier Zeilen darueber, nur
+        # mit acht Namen statt einem.
+        zustands_keys = ("linear_attn.in_proj_qkv", "linear_attn.in_proj_a",
+                         "linear_attn.in_proj_b", "linear_attn.in_proj_z",
+                         "linear_attn.out_proj")
+        # Das Tor des geteilten Experten. ⚑ `shared_expert_gate` endet
+        # nicht auf `mlp.gate`, also greift `router_keys` nicht, und es
+        # endet nicht auf `gate_proj`, also greift `proj_keys` nicht.
+        # **Ein Name, der zwischen zwei Regeln faellt, faellt durch
+        # beide.**
+        geteiltes_tor_keys = ("mlp.shared_expert_gate",)
+        # Die inneren Module einer Zustandsschicht: die Schicht selbst
+        # (ihre Ausgabe), die kausale Faltung und die Normierung darin.
+        # ⚑ Die Schicht selbst analog zu `.self_attn` weiter unten.
+        zustands_module = ("linear_attn", "linear_attn.conv1d", "linear_attn.norm")
         for name, module in model.named_modules():
+            # ⛔️ **Der Name wird normiert, bevor irgendetwas ihn
+            # vergleicht** (2026-09-21). Ein multimodales Modell schiebt
+            # den Textteil unter `model.language_model.…`, und dann
+            # trifft weder `name == "model.norm"` noch spaeter die Suche
+            # des Laders. **Der Schluessel, unter dem eine Skala liegt,
+            # muss der Tensorname im Artefakt sein.**
+            name = normiere_namen(name)
             if any(name.endswith(k) for k in proj_keys):
                 name = _sammelschluessel(name)
                 h = module.register_forward_hook(self._make_hook(name))
@@ -303,6 +346,13 @@ class ActivationStatsCollector:
                     self._make_hook(name + ".input", take_input=True, per_channel=True))
                 self._handles.append(h_in)
             elif any(name.endswith(k) for k in router_keys):
+                h = module.register_forward_hook(self._make_hook(name))
+                self._handles.append(h)
+            elif any(name.endswith(k) for k in zustands_keys + geteiltes_tor_keys) \
+                    or any(name.endswith(k) for k in zustands_module):
+                # ⚑ Nur der Ausgang, wie beim Router: Der Eingang ist der
+                #   Residualstrom, und der traegt seine Skala schon ueber
+                #   den Norm-Eingang.
                 h = module.register_forward_hook(self._make_hook(name))
                 self._handles.append(h)
             elif name.endswith(".mlp.experts") and hasattr(module, "gate_up_proj"):

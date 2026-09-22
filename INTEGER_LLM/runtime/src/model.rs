@@ -239,15 +239,21 @@ impl QTensor {
 /// Vollstaendigkeit beim Modellbau.
 #[derive(Debug, Clone)]
 pub struct LayerScales {
-    /// Ausgang von input_layernorm = Eingang von q/k/v_proj.
+    /// Ausgang von input_layernorm = Eingang des Mischers.
     pub norm_attn_frac: u8,
-    /// Ausgaenge der q/k/v-Projektionen (Q/K/V-Skala, beeinflusst
-    /// score_shift und KV-Cache-Reskalierung).
-    pub q_frac: u8,
-    pub k_frac: u8,
-    pub v_frac: u8,
-    /// Ausgang des Attention-Moduls = Eingang von o_proj.
-    pub attn_out_frac: u8,
+    /// **Die Skalen der vollen Achtsamkeit**, oder `None` bei einer
+    /// rekurrenten Ebene.
+    ///
+    /// ⛔️ **Warum `Option` und nicht einfach Zahlen darin.** Eine
+    /// Zustandsebene hat **kein** `q_proj`: Ihre Projektion ist
+    /// verschmolzen (`in_proj_qkv`), also gibt es genau eine Skala und
+    /// nicht drei. Sie in drei Felder zu schreiben hiesse, **dieselbe
+    /// Zahl an drei Orten** zu fuehren, und `attn_out_frac` waere fuer
+    /// eine Ebene ohne Achtsamkeit ein Name, der luegt.
+    ///
+    /// ⚠️ **Eine erfundene Skala ist eine stille falsche Zahl**, und
+    /// genau die sucht dieses Projekt am laengsten.
+    pub achtsamkeit: Option<Achtsamkeitsskalen>,
     /// Ausgang von post_attention_layernorm = Eingang von gate/up_proj.
     pub norm_mlp_frac: u8,
     /// Ausgaenge von gate-/up_proj.
@@ -268,6 +274,84 @@ pub struct LayerScales {
     /// Mittleres Residualstrom-Segment zwischen erstem Residual-Add und
     /// post_attention_layernorm. Ebenfalls Per-Kanal (Fund 20).
     pub residual_mid_frac: Vec<u8>,
+}
+
+/// Die Aktivierungsskalen der vollen Achtsamkeit.
+#[derive(Debug, Clone)]
+pub struct Achtsamkeitsskalen {
+    /// Ausgaenge der q/k/v-Projektionen (Q/K/V-Skala, beeinflusst
+    /// score_shift und KV-Cache-Reskalierung).
+    pub q_frac: u8,
+    pub k_frac: u8,
+    pub v_frac: u8,
+    /// Ausgang des Attention-Moduls = Eingang von o_proj.
+    pub attn_out_frac: u8,
+}
+
+/// Die Aktivierungsskalen einer rekurrenten Zustandsschicht.
+///
+/// ⚑ **Je Stelle eine, und keine davon hat ein Gegenstueck in der
+/// Achtsamkeit.** Die Projektion ist verschmolzen, die Faltung sitzt
+/// dazwischen, und `z`, `a` und `b` gibt es dort gar nicht.
+#[derive(Debug, Clone)]
+pub struct Zustandsskalen {
+    /// Ausgang von `in_proj_qkv` = Eingang der Faltung.
+    pub qkv_frac: u8,
+    /// Ausgang der Faltung, **gemeinsam kalibriert**.
+    ///
+    /// ⚠️ Nur noch fuer die Meldung; gerechnet wird mit den drei
+    /// Skalen darunter (Fund 421).
+    pub konv_frac: u8,
+    /// Die Skala je Kanal am Faltungsausgang, drei Laeufe: erst `q`,
+    /// dann `k`, dann `v`.
+    ///
+    /// # ⛔️ Fund 421: eine Skala fuer drei Groessen, die es nicht sind
+    ///
+    /// `in_proj_qkv` liefert Abfrage, Schluessel und Wert in **einem**
+    /// Tensor, und der Export gab ihnen **eine** Schranke: den groessten
+    /// Zeilenbetrag ueber alle Kanaele mal dem Eingangsgroesstwert. Die
+    /// Schranke richtet sich damit nach `v`, und gemessen am
+    /// Qwen3.6-35B-A3B liegt `v` rund zwanzigmal ueber `q` und `k`.
+    /// Ergebnis bei `frac = 9`: `v` bekam 38 Zaehler Effektivwert, `q`
+    /// 12 und `k` **9**. Das sind drei bis vier Bit.
+    ///
+    /// ⚑ **Und `q` und `k` werden gleich darauf auf Einheitslaenge
+    /// gebracht.** Ihre Groesse ist danach weg; was bleibt, ist ihre
+    /// **Richtung**, und die haengt allein an der Aufloesung. Eine Skala,
+    /// die sich nach dem groessten der drei richtet, verschenkt sie
+    /// genau dort, wo sie zaehlt.
+    ///
+    /// 📌 **Ein Tensor ist noch keine gemeinsame Groesse.** Was in einer
+    /// Matrixmultiplikation zusammen herauskommt, muss nicht zusammen
+    /// skaliert werden; die Frage ist nicht, wie es gerechnet wurde,
+    /// sondern was damit geschieht.
+    ///
+    /// ⚑ **Die Schranke je Kanal steht im Artefakt**, es braucht keine
+    /// neue Kalibrierung: `Summe_j |w[c][j]| * absmax(in_proj_qkv)`, und
+    /// `silu` vergroessert den Betrag nicht.
+    pub konv_fracs: Vec<u8>,
+    /// Ausgang von `in_proj_z`, dem Ausgangstor.
+    pub z_frac: u8,
+    /// Ausgang von `in_proj_a`, woraus der Zerfall entsteht.
+    pub a_frac: u8,
+    /// Ausgang von `in_proj_b`, woraus `beta` entsteht.
+    pub b_frac: u8,
+    /// Ausgang der torgesteuerten Norm = Eingang von `out_proj`.
+    pub norm_aus_frac: u8,
+}
+
+impl LayerScales {
+    /// Die Achtsamkeitsskalen dieser Ebene.
+    ///
+    /// ⚠️ **Bricht ab bei einer rekurrenten Ebene**, aus demselben Grund
+    /// wie [`TransformerLayer::achtsamkeit`]: Ein Ersatzwert waere eine
+    /// falsche Zahl ohne Meldung.
+    pub fn achtsamkeit(&self) -> &Achtsamkeitsskalen {
+        self.achtsamkeit.as_ref().expect(
+            "diese Ebene mischt rekurrent und hat keine Achtsamkeitsskalen; \
+             der Aufrufer prueft die Ebenenart nicht",
+        )
+    }
 }
 
 /// Ein Transformer-Layer.
@@ -364,6 +448,29 @@ impl DenseMlp {
 }
 
 /// Ein Mixture-of-Experts-Modell: Router plus Experten.
+/// **Der geteilte Experte eines Gemischs.**
+///
+/// ⚑ **Er feuert bei JEDEM Token**, anders als die gerouteten. Die
+/// Vorlage rechnet `aus = experten + sigmoid(tor(x)) * geteilt(x)`.
+///
+/// ⚠️ **Das Tor liefert genau einen Wert je Token**, nicht einen je
+/// Kanal: `Linear(hidden_size, 1)`. Ein Tor je Kanal waere eine andere
+/// Schicht.
+pub struct GeteilterExperte {
+    /// Dieselben drei Matrizen wie eine dichte MLP, nur schmaler.
+    pub mlp: DenseMlp,
+    /// Die Torprojektion, `[1, hidden_size]`.
+    pub tor: QTensor,
+    /// Kalibrierte Ausgangsskala der Torprojektion.
+    pub tor_frac: u8,
+    /// Zwischengroesse des geteilten Experten.
+    pub zwischen: usize,
+    /// Kalibrierte Skalen seiner drei Matrizen.
+    pub gate_frac: u8,
+    pub up_frac: u8,
+    pub down_in_frac: u8,
+}
+
 pub struct MoeLayer {
     /// Router-Projektion, `[num_experts, hidden_size]`. Liefert je
     /// Experte einen Logit.
@@ -376,6 +483,10 @@ pub struct MoeLayer {
     /// Token exakt `top_k` feuern, ist seine Arbeitsmenge eine Konstante
     /// aus der Modellkonfiguration statt einer Größe je Anfrage.
     pub experts: Vec<DenseMlp>,
+    /// **Der geteilte Experte**, falls das Modell einen hat.
+    ///
+    /// ⚑ `None` bei jedem Gemisch vor dem `Qwen3.6-35B-A3B`.
+    pub geteilter_experte: Option<GeteilterExperte>,
     /// Wie viele Experten je Token feuern (`num_experts_per_tok`).
     pub top_k: usize,
     /// Ob die Gewichte der gewählten Experten auf eins normiert werden
@@ -389,12 +500,44 @@ pub struct TransformerLayer {
     /// Shift (vor v0.12.20 wurde der Shift verworfen, siehe Fund 1).
     pub input_layernorm_gamma: QTensor,
     pub post_attention_layernorm_gamma: QTensor,
+    /// **Womit diese Ebene ueber die Folge mischt**: Achtsamkeit oder eine
+    /// rekurrente Zustandsschicht.
+    pub mischer: Mischer,
+    /// Der Feedforward-Teil: eine dichte MLP oder ein Mixture-of-Experts-Modell.
+    pub ffn: Feedforward,
+    /// Kalibrierte Per-Layer-Aktivierungsskalen.
+    pub scales: LayerScales,
+}
+
+/// **Womit eine Ebene ueber die Folge mischt.**
+///
+/// # ⚑ Warum ein Aufzaehlungstyp und nicht zwei `Option`-Felder
+///
+/// Dasselbe Argument wie bei [`Feedforward`], und hier noch zwingender:
+/// Eine Zustandsebene hat **kein** `q_proj`. Ein zweites `Option`-Feld
+/// neben den Achtsamkeitstensoren ginge also gar nicht, ohne auch diese
+/// optional zu machen, und dann waeren „beides" und „keines" darstellbar.
+///
+/// ⛔️ **Beides waere ein Ladefehler, den erst der Vorwaertspass
+/// bemerkt**, und zwar als eine falsche Zahl ohne Meldung.
+///
+/// ⚠️ **Das grosse Modell mischt beide Arten in einem Modell**: 30
+/// rekurrente Ebenen und 10 mit voller Achtsamkeit, im Wechsel drei zu
+/// eins. Ein Typ, der den Mischfall nicht ausdruecken kann, muesste beim
+/// ersten solchen Modell umgebaut werden.
+pub enum Mischer {
+    /// Volle Achtsamkeit ueber den Schluessel-Wert-Speicher.
+    Achtsamkeit(Achtsamkeit),
+    /// Eine rekurrente Zustandsschicht (Gated DeltaNet).
+    Zustand(Zustandsschicht),
+}
+
+/// Die Tensoren der vollen Achtsamkeit.
+pub struct Achtsamkeit {
     pub q_proj: QTensor,
     pub k_proj: QTensor,
     pub v_proj: QTensor,
     pub o_proj: QTensor,
-    /// Der Feedforward-Teil: eine dichte MLP oder ein Mixture-of-Experts-Modell.
-    pub ffn: Feedforward,
     /// Q/K/V-Attention-Biases (Qwen2.5 besitzt sie an q/k/v_proj). `None`
     /// bei Modellen ohne Attention-Biases (`attention_bias: false` in
     /// model_config.json); sonst je ein Bias-Tensor mit eigener Skala,
@@ -404,8 +547,108 @@ pub struct TransformerLayer {
     pub v_bias: Option<crate::loader::BiasTensor>,
     /// QK-Norm (Qwen3). `None` bei Modellen ohne (`qk_norm: false`).
     pub qk_norm: Option<QkNorm>,
-    /// Kalibrierte Per-Layer-Aktivierungsskalen.
-    pub scales: LayerScales,
+}
+
+/// **Die Masse und Tabellen der rekurrenten Zustandsschichten**, einmal
+/// je Modell.
+///
+/// ⚑ **`Option` am Modell und nicht je Ebene.** Die Masse sind fuer alle
+/// Zustandsebenen dieselben; sie je Ebene zu fuehren hiesse, dieselbe
+/// Angabe dreissigmal abzulegen. Ein Modell ohne Zustandsebenen traegt
+/// `None`.
+pub struct Zustandsmasse {
+    /// Wie viele Schluesselkoepfe, wie viele Wertkoepfe.
+    ///
+    /// ⚠️ **Sie sind verschieden**: Beim grossen Modell 16 gegen 32, und
+    /// jeder Schluesselkopf bedient zwei Wertkoepfe.
+    pub schluessel_koepfe: usize,
+    pub wert_koepfe: usize,
+    pub schluessel_dim: usize,
+    pub wert_dim: usize,
+    /// Die Kanalzahl der Faltung: `2 * schluessel_dim * schluessel_koepfe
+    /// + wert_dim * wert_koepfe`.
+    pub kanaele: usize,
+
+    /// Der feine Teil des Softplus, `log(1 + exp(-|x|))`.
+    pub softplus_rest: Vec<i32>,
+    pub softplus_ein_frac: u8,
+    pub softplus_aus_frac: u8,
+    /// Der grobe Teil des Zerfalls, `exp(-d_grob)`.
+    pub zerfall_exp: Vec<i32>,
+    pub zerfall_raster_frac: u8,
+    pub zerfall_aus_frac: u8,
+}
+
+impl Zustandsmasse {
+    /// Wie viele Wertkoepfe auf einen Schluesselkopf kommen.
+    ///
+    /// ⚑ **Die Auffaecherung ist reine Indexierung**, kein Kopieren: Der
+    /// Wertkopf `h` liest den Schluesselkopf `h / auffaecherung()`.
+    pub fn auffaecherung(&self) -> usize {
+        self.wert_koepfe / self.schluessel_koepfe
+    }
+}
+
+/// Die Tensoren einer rekurrenten Zustandsschicht.
+///
+/// ⚑ **Neun Stueck, und sie heissen wie in den Gewichten**, damit beim
+/// Nachsehen im Artefakt kein Uebersetzen noetig ist.
+pub struct Zustandsschicht {
+    /// Eine Projektion fuer `q`, `k` und `v` zusammen.
+    pub in_proj_qkv: QTensor,
+    /// Das Ausgangstor `z`.
+    pub in_proj_z: QTensor,
+    /// Woraus `beta` entsteht (ueber Sigmoid).
+    pub in_proj_b: QTensor,
+    /// Woraus der Zerfall entsteht (ueber Softplus und `exp_A`).
+    pub in_proj_a: QTensor,
+    /// Die tiefenweise Faltung, `kanaele * KERN` Gewichte.
+    pub conv1d: QTensor,
+    /// `exp(A_log)`, **zur Exportzeit gerechnet**, je Wertkopf einer.
+    pub exp_a: crate::loader::BiasTensor,
+    /// Der Versatz vor dem Softplus, je Wertkopf einer.
+    pub dt_bias: crate::loader::BiasTensor,
+    /// Gamma der torgesteuerten Norm.
+    pub norm_gamma: QTensor,
+    pub out_proj: QTensor,
+    /// ⚑ **Die Skalen wohnen bei den Tensoren, zu denen sie gehoeren.**
+    pub skalen: Zustandsskalen,
+}
+
+impl TransformerLayer {
+    /// Die Achtsamkeitstensoren dieser Ebene.
+    ///
+    /// ⚠️ **Bricht ab, wenn die Ebene rekurrent mischt.** Das ist
+    /// Absicht: Ein Aufrufer, der hier landet, hat die Ebenenart nicht
+    /// geprueft, und eine stillschweigende Ersatzantwort waere eine
+    /// falsche Zahl ohne Meldung.
+    pub fn achtsamkeit(&self) -> &Achtsamkeit {
+        match &self.mischer {
+            Mischer::Achtsamkeit(a) => a,
+            Mischer::Zustand(_) => panic!(
+                "Ebene {} mischt rekurrent und hat keine Achtsamkeitstensoren; \
+                 der Aufrufer prueft die Ebenenart nicht",
+                self.layer_idx
+            ),
+        }
+    }
+
+    /// Die Zustandstensoren dieser Ebene, oder `None` bei Achtsamkeit.
+    ///
+    /// ⚑ **Hier `Option` und oben ein Abbruch**, mit Absicht: Wer die
+    /// Zustandsschicht sucht, fragt danach; wer die Achtsamkeit nimmt,
+    /// setzt sie voraus, und diese Voraussetzung soll knallen.
+    pub fn zustandsschicht(&self) -> Option<&Zustandsschicht> {
+        match &self.mischer {
+            Mischer::Zustand(z) => Some(z),
+            Mischer::Achtsamkeit(_) => None,
+        }
+    }
+
+    /// Mischt diese Ebene rekurrent?
+    pub fn ist_rekurrent(&self) -> bool {
+        matches!(self.mischer, Mischer::Zustand(_))
+    }
 }
 
 /// QK-Norm einer Layer: die beiden Gammas und ihre Ausgangsskalen.
@@ -443,7 +686,25 @@ pub struct IntegerModel {
     /// einen KV-Head (Qwen2.5-0.5B: 14 Query-Heads, 2 KV-Heads).
     pub num_kv_heads: usize,
     pub head_dim: usize,
+    /// **Wie viele Stellen eines Kopfvektors gedreht werden.**
+    ///
+    /// ⚑ **Meist `head_dim`, aber nicht immer.** Das `Qwen3.6-35B-A3B`
+    /// dreht nur 64 von 256 Stellen (`partial_rotary_factor` 0,25); der
+    /// Rest geht unveraendert durch.
+    ///
+    /// ⛔️ **Eine Teildrehung ist nicht „dieselbe Drehung, nur
+    /// kuerzer".** Die Frequenzen haengen an dieser Breite:
+    /// `theta_j = 1 / base^(j / (drehbreite/2))`. Mit `head_dim/2` im
+    /// Nenner waeren sie schlicht falsch, und das faellt nur an der
+    /// Qualitaet auf, nie an einer Meldung.
+    pub drehbreite: usize,
     pub max_context: usize,
+    /// Das Epsilon der RMSNorm als `round(eps * 2^40)` (Fund 419).
+    ///
+    /// ⚑ Es traegt **nur** in der torgesteuerten Norm des rekurrenten
+    /// Zweigs; ueberall sonst ist `mean(x^2)` von der Groessenordnung
+    /// eins, und dort aendert es nichts.
+    pub norm_eps_q40: i64,
     pub embedding_table: QTensor,   // [vocab_size, hidden_size]
     pub lm_head: QTensor,           // [vocab_size, hidden_size] (oder mit embedding_table getied)
     /// INT16-LM-Head mit Per-Channel-Skalen (benannte spec-Ausnahme 0.6.0,
@@ -474,6 +735,27 @@ pub struct IntegerModel {
     /// validiert und in den Forward-Pass verdrahtet, v0.12.20).
     pub activation_scales: LoadedScales,
     pub config: ModelConfig,
+    /// **Die Masse und Tabellen der rekurrenten Ebenen**, oder `None`
+    /// bei einem Modell ohne solche.
+    pub zustandsmasse: Option<Zustandsmasse>,
+    /// **Sigmoid**, fuer jedes Tor im Modell.
+    ///
+    /// ⚑ **Am Modell und nicht bei der Zustandsschicht**, denn sie wird
+    /// an drei Stellen gebraucht: der Schreibstaerke `beta`, dem Tor am
+    /// Achtsamkeitsausgang und dem Tor des geteilten Experten. Sie lag
+    /// bis zum 2026-09-21 in der Zustandsmasse, und ein Modell mit
+    /// torgesteuerter Achtsamkeit **ohne** rekurrente Ebenen haette sie
+    /// dort nicht gefunden.
+    pub sigmoid_lut: Vec<i16>,
+    pub sigmoid_versatz: i16,
+    pub sigmoid_ein_frac: u8,
+    pub sigmoid_aus_frac: u8,
+    /// **Traegt die volle Achtsamkeit ein Tor am Ausgang?**
+    ///
+    /// ⛔️ Beim `Qwen3.6-35B-A3B` liefert `q_proj` die doppelte
+    /// Kopfbreite, und der Ausgang wird vor `o_proj` mit `sigmoid(tor)`
+    /// multipliziert.
+    pub achtsamkeit_mit_tor: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -603,7 +885,19 @@ impl IntegerModel {
     /// ihr an, ein Prompt darueber ist ein Fehler des Aufrufers, und ein
     /// Shard lehnt eine solche Position ab, bevor er rechnet.
     pub fn kontextgrenze(&self) -> usize {
-        let half = (self.head_dim / 2).max(1);
+        // ⛔️ **Hier stand bis zum 2026-09-22 `head_dim / 2`**, und das
+        // ist die falsche Breite, sobald eine Ebene nur teilweise dreht.
+        // Beim Qwen3.6-35B-A3B ist `head_dim` 256 und die Drehbreite 64;
+        // die Tabellenzeile ist also 32 breit, nicht 128, und diese
+        // Rechnung meldete 10 240 statt 40 960 Positionen.
+        //
+        // ⚠️ **Sie unterschaetzte, griff also nicht ueber den Rand.**
+        // Genau das machte sie harmlos und damit unsichtbar.
+        //
+        // 📌 **Zwei Orte, dieselbe Groesse, verschiedene Antwort.**
+        // `koepfe_drehen` schneidet die Zeile mit `drehbreite / 2`; wer
+        // hier anders rechnet, widerspricht ihr.
+        let half = (self.drehbreite / 2).max(1);
         let zeilen = (self.cos_lut.len() / half).min(self.sin_lut.len() / half);
         zeilen.min(self.max_context)
     }
@@ -851,6 +1145,14 @@ impl IntegerModel {
         })
         .chunks_exact(hidden)
         .map(<[i16]>::to_vec)
+        .collect::<Vec<Vec<i16>>>()
+        .into_iter()
+        .zip(normen.iter())
+        // ⛔️ **Der geteilte Experte, dieselbe Rechnung wie einzeln**
+        //   (Fund 427). Bis zum 2026-09-22 endete der gebuendelte Weg
+        //   eine Zeile frueher, und der geteilte Experte fehlte auf
+        //   **jeder** Gemischebene und bei **jedem** Token.
+        .map(|(gemischt, x)| self.geteilten_experten_addieren(moe, x, gemischt, sc, cfg, acc))
         .collect()
     }
 
@@ -909,6 +1211,42 @@ impl IntegerModel {
         let mut zustaende: Vec<Vec<i16>> =
             token_ids.iter().map(|&t| self.embed_token(t)).collect();
         for (i, layer) in self.layers.iter().enumerate() {
+            // ⛔️ **Eine Rekurrenz laesst sich nicht buendeln.**
+            //
+            // Der gebuendelte Vorlauf rechnet viele Token auf einmal und
+            // liest die Gewichte je Ebene einmal statt einmal je Token.
+            // Das traegt, weil die Achtsamkeit jedes Token unabhaengig
+            // projiziert. **Der Zustand bei Token t haengt am Zustand bei
+            // t-1**, dort gibt es nichts zu buendeln.
+            //
+            // ⚑ **Deshalb laeuft eine Zustandsebene hier Token fuer Token
+            // durch DENSELBEN Weg wie beim Dekodieren.** Kein zweiter
+            // Rumpf: Was gebuendelt nicht geht, wird nicht nachgebaut,
+            // sondern in der Schleife gerechnet. Genau hier entstuenden
+            // sonst zwei Fassungen derselben Rechnung.
+            //
+            // ⚠️ **Der Vorlauf verliert fuer diese Ebenen seinen
+            // Vorteil.** Beim grossen Modell sind das 30 von 40 Ebenen;
+            // was das kostet, ist noch nicht gemessen.
+            if layer.ist_rekurrent() {
+                let out_frac: &[u8] = if i + 1 < self.layers.len() {
+                    &self.layers[i + 1].scales.residual_in_frac
+                } else {
+                    &self.final_residual_frac
+                };
+                for b in 0..zustaende.len() {
+                    zustaende[b] = self.forward_layer(
+                        layer,
+                        &zustaende[b],
+                        pos_start + b,
+                        cache,
+                        out_frac,
+                        None,
+                        None,
+                    );
+                }
+                continue;
+            }
             let out_frac: &[u8] = if i + 1 < self.layers.len() {
                 &self.layers[i + 1].scales.residual_in_frac
             } else {
@@ -947,6 +1285,42 @@ impl IntegerModel {
             let normen: Vec<&[i16]> = normen.chunks_exact(hs).collect();
             let qkv = self.projektionen_qkv(layer, &normen);
 
+            // ⛔️ **Fund 426: der gebuendelte Weg kannte das Ausgangstor
+            //   nicht.**
+            //
+            // `q_proj` liefert bei dieser Bauart die **doppelte**
+            // Kopfbreite, Abfrage und Tor hintereinander. Der Einzelweg
+            // trennt sie und multipliziert am Ende mit `sigmoid(tor)`;
+            // hier stand beides nicht. Der rohe Ausgang ging als
+            // Abfrage in die Drehung, und das Tor fiel weg.
+            //
+            // ⚠️ **Es brach nichts.** Die Breite passte zufaellig zur
+            // Schleife, die Koepfe wurden nur falsch belegt. Gemessen
+            // schlug es erst in der Perplexitaet durch: 10^6 auf dem
+            // gebuendelten Weg gegen richtige Logits auf dem einzelnen.
+            //
+            // 📌 **Die Warnung stand eine Ebene hoeher im selben
+            // Rumpf**: „Was gebuendelt nicht geht, wird nicht nachgebaut
+            // ... Genau hier entstuenden sonst zwei Fassungen derselben
+            // Rechnung." Fuer die Zustandsebenen wurde sie befolgt, fuer
+            // die Achtsamkeit nicht, und die zweite Fassung ist dann
+            // beim naechsten Modell auseinandergelaufen.
+            let (qkv, tore): (Vec<[Vec<i16>; 3]>, Vec<Option<Vec<i16>>>) =
+                if self.achtsamkeit_mit_tor {
+                    let mut ohne_tor = Vec::with_capacity(qkv.len());
+                    let mut tore = Vec::with_capacity(qkv.len());
+                    for [q_roh, k, v] in qkv {
+                        let (q, g) =
+                            abfrage_und_tor_trennen(&q_roh, self.num_heads, self.head_dim);
+                        ohne_tor.push([q, k, v]);
+                        tore.push(Some(g));
+                    }
+                    (ohne_tor, tore)
+                } else {
+                    let leer = vec![None; qkv.len()];
+                    (qkv, leer)
+                };
+
             // Je Token: q-Koepfe, k-Koepfe, v-Koepfe hintereinander.
             let breite = (nh + 2 * nkv) * hd;
             let koepfe = rechnen_breit(n, breite, faeden, |b, ziel| {
@@ -975,8 +1349,27 @@ impl IntegerModel {
             });
             drop(koepfe);
 
-            let acc_attn = akkumulationsskala_aufmerksamkeit(sc);
-            let attn_scheiben: Vec<&[i16]> = attn_aus.chunks_exact(nh * hd).collect();
+            let acc_attn = akkumulationsskala_mischer(sc);
+            // ⚑ **Das Tor wirkt VOR `o_proj`**, wortgleich zum
+            //   Einzelweg (Fund 426).
+            let getort: Option<Vec<Vec<i16>>> = if self.achtsamkeit_mit_tor {
+                Some(
+                    attn_aus
+                        .chunks_exact(nh * hd)
+                        .zip(tore.iter())
+                        .map(|(aus, tor)| {
+                            let g = tor.as_ref().expect("mit Tor: je Token eines");
+                            self.tor_anwenden(aus, g, layer)
+                        })
+                        .collect(),
+                )
+            } else {
+                None
+            };
+            let attn_scheiben: Vec<&[i16]> = match &getort {
+                Some(g) => g.iter().map(Vec::as_slice).collect(),
+                None => attn_aus.chunks_exact(nh * hd).collect(),
+            };
             let o_aus = self.projektion_o(layer, &attn_scheiben, &acc_attn);
             // Je Token: Residualstrom, dann seine Norm.
             let zwischen = rechnen_breit(n, 2 * hs, faeden, |b, ziel| {
@@ -1386,34 +1779,94 @@ impl IntegerModel {
             a.residual_ein = hidden.to_vec();
         }
 
-        // === Attention-Block ===
+        // === Der Mischer: Achtsamkeit oder Zustandsschicht ===
         let norm_hidden = self.norm_vor_aufmerksamkeit(layer, hidden);
         if let Some(a) = auf.as_mut() {
             a.norm_ein = norm_hidden.clone();
         }
 
-        // ⚑ **Dieselben vier Schritte wie in der gebuendelten
-        // Vorbereitung**, hier mit einer einzigen Eingabe. Siehe
-        // [`Model::vorbereiten_stapel`].
-        let [q_flat, k_flat, v_flat] = self
-            .projektionen_qkv(layer, &[norm_hidden.as_slice()])
-            .pop()
-            .expect("eine Eingabe ergibt genau eine Projektion");
-        let attn_out = self.aufmerksamkeit_eines_tokens(
-            layer,
-            &q_flat,
-            &k_flat,
-            &v_flat,
-            pos,
-            cache,
-            auf.as_deref_mut(),
-        );
-        let acc_attn = akkumulationsskala_aufmerksamkeit(&layer.scales);
-        let o_out = self
-            .projektion_o(layer, &[attn_out.as_slice()], &acc_attn)
-            .pop()
-            .expect("eine Eingabe ergibt genau eine Projektion");
-        self.residual_eins_und_norm(layer, hidden, &o_out, &acc_attn, auf)
+        let acc_mischer = akkumulationsskala_mischer(&layer.scales);
+        let o_out = match &layer.mischer {
+            Mischer::Achtsamkeit(_) => {
+                // ⚑ **Dieselben vier Schritte wie in der gebuendelten
+                // Vorbereitung**, hier mit einer einzigen Eingabe. Siehe
+                // [`IntegerModel::vorbereiten_stapel`].
+                let [q_roh, k_flat, v_flat] = self
+                    .projektionen_qkv(layer, &[norm_hidden.as_slice()])
+                    .pop()
+                    .expect("eine Eingabe ergibt genau eine Projektion");
+                // ⛔️ **`q_proj` liefert Abfrage UND Tor**, je Kopf
+                //   hintereinander (Qwen3.6). Ohne Tor ist `q_roh` schon
+                //   die Abfrage.
+                let (q_flat, tor) = if self.achtsamkeit_mit_tor {
+                    let (q, g) = abfrage_und_tor_trennen(
+                        &q_roh, self.num_heads, self.head_dim,
+                    );
+                    (q, Some(g))
+                } else {
+                    (q_roh, None)
+                };
+                let attn_out = self.aufmerksamkeit_eines_tokens(
+                    layer,
+                    &q_flat,
+                    &k_flat,
+                    &v_flat,
+                    pos,
+                    cache,
+                    auf.as_deref_mut(),
+                );
+                // ⚑ **Das Tor wirkt VOR `o_proj`**, wie in der Vorlage:
+                //   `attn_output * sigmoid(gate)`, dann erst die
+                //   Rueckprojektion.
+                let attn_out = match tor {
+                    Some(g) => self.tor_anwenden(&attn_out, &g, layer),
+                    None => attn_out,
+                };
+                self.projektion_o(layer, &[attn_out.as_slice()], &acc_mischer)
+                    .pop()
+                    .expect("eine Eingabe ergibt genau eine Projektion")
+            }
+            Mischer::Zustand(zs) => {
+                if std::env::var_os("MYL_ZUSTANDSSPUR").is_some() {
+                    eprintln!(
+                        "[spur] Ebene {} ZUSTANDSZWEIG: konv_frac={} norm_aus_frac={} \
+                         qkv_frac={} z_frac={}",
+                        layer.layer_idx, zs.skalen.konv_frac, zs.skalen.norm_aus_frac,
+                        zs.skalen.qkv_frac, zs.skalen.z_frac
+                    );
+                }
+                let masse = self.zustandsmasse.as_ref().expect(
+                    "eine Ebene mischt rekurrent, aber das Modell traegt keine \
+                     Zustandsmasse; der Lader haette das abfangen muessen",
+                );
+                // ⚑ **Welche Ebenen rekurrent sind, steht am Modell**, und
+                //   der Speicher legt sich beim ersten Mal danach an.
+                let rekurrent: Vec<bool> =
+                    self.layers.iter().map(|l| l.ist_rekurrent()).collect();
+                let speicher = cache.zustand_bereit(
+                    &rekurrent,
+                    masse.wert_koepfe,
+                    masse.schluessel_dim,
+                    masse.wert_dim,
+                    masse.kanaele,
+                );
+                // ⛔️ **Hier stand bis zum 2026-09-21 EINE gemeinsame
+                //   Ausgangsskala** (das Minimum ueber alle Kanaele), und
+                //   das war falsch. Der Residualstrom traegt eine Skala
+                //   **je Kanal**, beim grossen Modell von 16 bis 19; die
+                //   Achtsamkeit liefert ihren Beitrag ueber
+                //   `projektion_o` entsprechend per Kanal. Ein Beitrag
+                //   auf einer einzigen Skala wird beim Addieren um bis zu
+                //   drei Bit falsch gewichtet.
+                //
+                //   📌 **Zwei Wege in denselben Strom muessen dieselbe
+                //   Skalenform sprechen.**
+                self.zustandsschicht_eines_tokens(
+                    layer, zs, masse, &norm_hidden, speicher, &acc_mischer,
+                )
+            }
+        };
+        self.residual_eins_und_norm(layer, hidden, &o_out, &acc_mischer, auf)
     }
 
     /// Die Normierung vor der Aufmerksamkeit, fuer ein Token.
@@ -1462,9 +1915,9 @@ impl IntegerModel {
         // Ebene und die Ebenen 24-mal je Token. Die Zahlen ändern sich
         // dadurch nicht, `dot_i8_i16` bekommt dieselben Bytes in
         // derselben Reihenfolge.
-        let q = linear_fuer_alle(normen, &layer.q_proj.data, layer.q_proj.cols(), &layer.q_proj.shifts, sc.norm_attn_frac, sc.q_frac);
-        let k = linear_fuer_alle(normen, &layer.k_proj.data, layer.k_proj.cols(), &layer.k_proj.shifts, sc.norm_attn_frac, sc.k_frac);
-        let v = linear_fuer_alle(normen, &layer.v_proj.data, layer.v_proj.cols(), &layer.v_proj.shifts, sc.norm_attn_frac, sc.v_frac);
+        let q = linear_fuer_alle(normen, &layer.achtsamkeit().q_proj.data, layer.achtsamkeit().q_proj.cols(), &layer.achtsamkeit().q_proj.shifts, sc.norm_attn_frac, sc.achtsamkeit().q_frac);
+        let k = linear_fuer_alle(normen, &layer.achtsamkeit().k_proj.data, layer.achtsamkeit().k_proj.cols(), &layer.achtsamkeit().k_proj.shifts, sc.norm_attn_frac, sc.achtsamkeit().k_frac);
+        let v = linear_fuer_alle(normen, &layer.achtsamkeit().v_proj.data, layer.achtsamkeit().v_proj.cols(), &layer.achtsamkeit().v_proj.shifts, sc.norm_attn_frac, sc.achtsamkeit().v_frac);
 
         // Attention-Biases (Qwen2.5: q/k/v_proj besitzen welche):
         // Per-Element-Skalen, Reskalierung auf die Q/K/V-Ausgabeskala und
@@ -1473,14 +1926,14 @@ impl IntegerModel {
             .zip(k)
             .zip(v)
             .map(|((mut q_flat, mut k_flat), mut v_flat)| {
-                if let Some(qb) = &layer.q_bias {
-                    add_bias_i16(&mut q_flat, &qb.data, &qb.shifts, sc.q_frac);
+                if let Some(qb) = &layer.achtsamkeit().q_bias {
+                    add_bias_i16(&mut q_flat, &qb.data, &qb.shifts, sc.achtsamkeit().q_frac);
                 }
-                if let Some(kb) = &layer.k_bias {
-                    add_bias_i16(&mut k_flat, &kb.data, &kb.shifts, sc.k_frac);
+                if let Some(kb) = &layer.achtsamkeit().k_bias {
+                    add_bias_i16(&mut k_flat, &kb.data, &kb.shifts, sc.achtsamkeit().k_frac);
                 }
-                if let Some(vb) = &layer.v_bias {
-                    add_bias_i16(&mut v_flat, &vb.data, &vb.shifts, sc.v_frac);
+                if let Some(vb) = &layer.achtsamkeit().v_bias {
+                    add_bias_i16(&mut v_flat, &vb.data, &vb.shifts, sc.achtsamkeit().v_frac);
                 }
                 [q_flat, k_flat, v_flat]
             })
@@ -1524,9 +1977,9 @@ impl IntegerModel {
     /// QK-Norm** `q_frac` und `k_frac`, **mit** die Ausgangsskalen der
     /// Normierung.
     fn skalen_der_koepfe(layer: &TransformerLayer) -> (u8, u8) {
-        match &layer.qk_norm {
+        match &layer.achtsamkeit().qk_norm {
             Some(qkn) => (qkn.q_out_frac, qkn.k_out_frac),
-            None => (layer.scales.q_frac, layer.scales.k_frac),
+            None => (layer.scales.achtsamkeit().q_frac, layer.scales.achtsamkeit().k_frac),
         }
     }
 
@@ -1564,10 +2017,10 @@ impl IntegerModel {
         // kalibrierte Norm-Ausgangsskala; RoPE selbst ist skaleninvariant
         // und reicht sie unveraendert weiter. Welche Skalen danach gelten,
         // sagt [`Model::skalen_der_koepfe`].
-        if let Some(qkn) = &layer.qk_norm {
+        if let Some(qkn) = &layer.achtsamkeit().qk_norm {
             qk_norm_heads(
                 &mut q_heads,
-                sc.q_frac,
+                sc.achtsamkeit().q_frac,
                 &qkn.q_gamma.data,
                 &qkn.q_gamma.shifts,
                 &self.rsqrt_lut,
@@ -1577,7 +2030,7 @@ impl IntegerModel {
             );
             qk_norm_heads(
                 &mut k_heads,
-                sc.k_frac,
+                sc.achtsamkeit().k_frac,
                 &qkn.k_gamma.data,
                 &qkn.k_gamma.shifts,
                 &self.rsqrt_lut,
@@ -1594,7 +2047,11 @@ impl IntegerModel {
         // eigenen Winkel. Q- und K-Heads separat rotieren (unterschiedliche
         // Head-Anzahl). Die Rotation ist skaleninvariant gegenueber der
         // Eingangs-Skala (cos/sin tragen rope_frac_bits).
-        let half = self.head_dim / 2;
+        // ⚑ **Die halbe DREHBREITE, nicht die halbe Kopfbreite.** Bei
+        // voller Drehung sind beide gleich; bei einer Teildrehung ist die
+        // Tabellenzeile schmaler, und der Rest des Kopfvektors geht
+        // unveraendert durch (siehe `rotate_half_split_i16`).
+        let half = self.drehbreite / 2;
         // ⛔️ Kein `pos % Zeilen` mehr (Fund 368, siehe `kontextgrenze`).
         assert!(
             pos < self.kontextgrenze(),
@@ -1682,11 +2139,11 @@ impl IntegerModel {
         // Q liegt bei `q_akt_frac`, K bei `k_akt_frac`; der rohe
         // Skalarproduktwert traegt deren Summe an Nachkommabits.
         //
-        // **Ohne QK-Norm sind das sc.q_frac und sc.k_frac, mit QK-Norm
+        // **Ohne QK-Norm sind das sc.achtsamkeit().q_frac und sc.achtsamkeit().k_frac, mit QK-Norm
         // die Ausgangsskalen der Normierung.** Die Unterscheidung ist
         // der Grund, warum die beiden Werte oben als eigene Variablen
         // entstehen und nicht hier aus `sc` gelesen werden: Ein
-        // vergessenes `sc.q_frac` an dieser Stelle waere kein
+        // vergessenes `sc.achtsamkeit().q_frac` an dieser Stelle waere kein
         // Uebersetzungsfehler, sondern eine um Zweierpotenzen
         // verschobene Softmax. score_shift bringt ihn auf
         // die Score-Skala (score_frac_bits); exp_lut_shift uebersetzt von
@@ -1756,9 +2213,9 @@ impl IntegerModel {
         // Die Attention-Ausgabe liegt auf der V-Skala (gewichtete Summe
         // erhaelt die V-Skala); Umreskalieren auf die kalibrierte
         // o_proj-Eingangsskala.
-        if sc.attn_out_frac != sc.v_frac {
+        if sc.achtsamkeit().attn_out_frac != sc.achtsamkeit().v_frac {
             for v in attn_out.iter_mut() {
-                *v = clamp_i16(rescale(*v as i32, sc.v_frac, sc.attn_out_frac));
+                *v = clamp_i16(rescale(*v as i32, sc.achtsamkeit().v_frac, sc.achtsamkeit().attn_out_frac));
             }
         }
         // ⚑ **Nach der Umskalierung**, denn `o_proj` bekommt diese
@@ -1779,7 +2236,7 @@ impl IntegerModel {
         acc_attn: &[u8],
     ) -> Vec<Vec<i16>> {
         let sc = &layer.scales;
-        linear_pc_fuer_alle(attn_outs, &layer.o_proj.data, layer.o_proj.cols(), &layer.o_proj.shifts, sc.attn_out_frac, acc_attn)
+        linear_pc_fuer_alle(attn_outs, &layer.achtsamkeit().o_proj.data, layer.achtsamkeit().o_proj.cols(), &layer.achtsamkeit().o_proj.shifts, sc.achtsamkeit().attn_out_frac, acc_attn)
     }
 
     /// Die erste Residualaddition und die Normierung vor dem MLP.
@@ -2297,8 +2754,123 @@ impl IntegerModel {
             ziel.logits = logits.clone();
         }
 
-        mische_experten(&ausgaben, &routing.gewichte, cfg.prob_frac_bits)
+        let gemischt = mische_experten(&ausgaben, &routing.gewichte, cfg.prob_frac_bits);
+
+        // ⚑ **Der geteilte Experte kommt obendrauf**, und zwar bei jedem
+        // Token. Die Rechnung steht in `geteilten_experten_addieren`,
+        // **einmal**, und der gebuendelte Weg ruft dieselbe (Fund 427).
+        self.geteilten_experten_addieren(moe, x, gemischt, sc, cfg, acc)
     }
+
+    /// **Der geteilte Experte obendrauf:**
+    /// `aus = experten + sigmoid(tor(x)) * geteilt(x)`.
+    ///
+    /// # ⛔️ Fund 427: der gebuendelte Weg kannte ihn nicht
+    ///
+    /// Diese Rechnung stand bis zum 2026-09-22 im Rumpf von
+    /// `moe_vorwaerts`, also nur auf dem Weg Token fuer Token.
+    /// `moe_stapel` lief daran vorbei, und der geteilte Experte feuert
+    /// bei **jedem** Token auf **jeder** Gemischebene. Gemessen: Die
+    /// Perplexitaet des gebuendelten Weges lag um Groessenordnungen
+    /// ueber der des einzelnen, waehrend die Logits des einzelnen
+    /// Weges Token fuer Token mit dem offiziellen Modell uebereinstimmten.
+    ///
+    /// 📌 **Zwei Fassungen derselben Rechnung laufen auseinander, sobald
+    /// ein Modell etwas Neues mitbringt.** Erst fehlte dem gebuendelten
+    /// Weg das Ausgangstor der Achtsamkeit (Fund 426), dann der geteilte
+    /// Experte. Beide Male war die alte Fassung vollstaendig **fuer die
+    /// Modelle, die es damals gab**. Deshalb steht die Rechnung jetzt
+    /// einmal da und hat zwei Aufrufer.
+    #[allow(clippy::too_many_arguments)]
+    fn geteilten_experten_addieren(
+        &self,
+        moe: &MoeLayer,
+        x: &[i16],
+        gemischt: Vec<i16>,
+        sc: &LayerScales,
+        cfg: &ModelConfig,
+        acc: &[u8],
+    ) -> Vec<i16> {
+        let Some(ge) = moe.geteilter_experte.as_ref() else {
+            return gemischt;
+        };
+        // ⛔️ **Fund 429: hier stand ein `let`, dessen einzige Wirkung
+        //   ein Abbruch war.**
+        //
+        // `let masse = self.zustandsmasse.as_ref().expect("ein geteilter
+        // Experte braucht die Sigmoid-Tabelle, und die haengt an der
+        // Zustandsmasse")`. Die Begruendung stimmte nicht: Die Tabelle
+        // haengt an `self`, wie die drei Zeilen darunter zeigen, und
+        // `masse` wurde nie gelesen.
+        //
+        // ⚠️ **Die Wirkung war eine Kopplung, die es nicht gibt.** Ein
+        // Modell mit geteiltem Experten, aber **ohne** rekurrente Ebenen
+        // waere auf jeder Gemischebene abgebrochen. Beim Qwen3.6 fiel es
+        // nicht auf, weil er beides hat.
+        //
+        // 📌 **Eine Bindung, die niemand liest, ist entweder ueberfluessig
+        // oder eine versteckte Vorbedingung.** Hier war sie beides: Sie
+        // stand da wie eine Beschaffung und wirkte wie eine Zusicherung,
+        // und die Zusicherung war falsch.
+        //
+        // ⚑ Nebenwirkung: Eine Testvorlage mit geteiltem Experten
+        // braucht jetzt keine Zustandsschicht mehr.
+
+        // Das Tor: eine Zeile, also ein Wert je Token.
+        let tor_roh = integer_llm_kernels::linear::linear_w8a16(
+            x, &ge.tor.data, x.len(),
+            &ge.tor.shifts, sc.norm_mlp_frac, ge.tor_frac,
+        );
+        let tor_dom = integer_llm_kernels::fixed_point::rescale(
+            i32::from(tor_roh[0]), ge.tor_frac, self.sigmoid_ein_frac,
+        );
+        let tor = integer_llm_kernels::integer_math::sigmoid_nachschlagen(
+            tor_dom, &self.sigmoid_lut, self.sigmoid_versatz,
+            self.sigmoid_ein_frac, self.sigmoid_aus_frac,
+        );
+        // Der geteilte Experte selbst, dieselbe Rechnung wie eine dichte MLP.
+        let geteilt = integer_llm_kernels::mlp::mlp_int(
+            x,
+            &ge.mlp.gate_proj.data,
+            &ge.mlp.up_proj.data,
+            &ge.mlp.down_proj.data,
+            x.len(),
+            ge.zwischen,
+            &ge.mlp.gate_proj.shifts,
+            &ge.mlp.up_proj.shifts,
+            &ge.mlp.down_proj.shifts,
+            &self.silu_lut,
+            sc.norm_mlp_frac,
+            ge.gate_frac,
+            ge.up_frac,
+            ge.down_in_frac,
+            cfg.silu_in_frac,
+            cfg.silu_lut_offset,
+            cfg.silu_out_frac,
+            acc,
+        );
+        // ⛔️ `zip` bricht an der kuerzeren Seite ab (Fund 346); beide
+        //    sind hidden_size lang, und genau das wird geprueft.
+        assert_eq!(
+            gemischt.len(),
+            geteilt.len(),
+            "Gemisch und geteilter Experte verschieden lang"
+        );
+        gemischt
+            .iter()
+            .zip(geteilt.iter())
+            .map(|(&g, &s)| {
+                let beitrag = integer_llm_kernels::fixed_point::rshift_round_i64(
+                    i64::from(s) * tor,
+                    self.sigmoid_aus_frac,
+                );
+                integer_llm_kernels::fixed_point::clamp_i16_from_i64(
+                    i64::from(g) + beitrag,
+                )
+            })
+            .collect()
+    }
+
 
     fn split_heads(&self, flat: &[i16], n: usize) -> Vec<Vec<i16>> {
         let mut heads = Vec::with_capacity(n);
@@ -2393,7 +2965,11 @@ pub const VORBEREITUNGSFENSTER: usize = 512;
 /// Residualstrom. Fund 31 (theta_v 0.17.0): Akkumulationsskala je Kanal
 /// ist die GROEBERE der beiden Segmentskalen (kleinerer Shift). Der Grund
 /// steht beim zweiten Residual-Add, dort trat der Fehler auf.
-fn akkumulationsskala_aufmerksamkeit(sc: &LayerScales) -> Vec<u8> {
+/// ⚑ **Die Skala gilt fuer beide Mischer.** Sie haengt nur an den
+/// beiden Residualsegmenten, nicht daran, was dazwischen gerechnet hat.
+/// Bis zum 2026-09-21 hiess sie `..._aufmerksamkeit`, und das waere ab
+/// der ersten Zustandsebene ein Name gewesen, der luegt.
+fn akkumulationsskala_mischer(sc: &LayerScales) -> Vec<u8> {
     sc.residual_in_frac
         .iter()
         .zip(sc.residual_mid_frac.iter())
@@ -2435,4 +3011,524 @@ fn linear_pc_fuer_alle(
         [x] => vec![linear_w8a16_pc(x, w, in_features, w_shifts, act_frac_bits, out_frac_bits)],
         _ => linear_w8a16_pc_stapel(xs, w, in_features, w_shifts, act_frac_bits, out_frac_bits),
     }
+}
+
+// ============================================================================
+// Der Vorwaertspass einer rekurrenten Zustandsschicht
+// ============================================================================
+
+impl IntegerModel {
+    /// **`aus * sigmoid(tor)`, elementweise.**
+    ///
+    /// ⚑ Beide Seiten liegen auf der Achtsamkeits-Ausgangsskala; das
+    /// Tor bringt nur einen Faktor in `(0, 1)` und aendert die Skala
+    /// nicht.
+    fn tor_anwenden(&self, aus: &[i16], tor: &[i16], layer: &TransformerLayer) -> Vec<i16> {
+        use integer_llm_kernels::fixed_point::{clamp_i16_from_i64, rescale, rshift_round_i64};
+        use integer_llm_kernels::integer_math::sigmoid_nachschlagen;
+        // ⛔️ `zip` bricht an der kuerzeren Seite ab (Fund 346).
+        assert_eq!(aus.len(), tor.len(), "Ausgang und Tor verschieden lang");
+        // ⛔️ **Fund 422: das Tor traegt die Skala von `q_proj`, nicht
+        //   die des Achtsamkeitsausgangs.**
+        //
+        // Hier stand `attn_out_frac`. Das Tor kommt aber aus
+        // `abfrage_und_tor_trennen`, und das teilt den **rohen
+        // `q_proj`-Ausgang**; `q_norm` fasst nur die Abfragehaelfte an.
+        // Beim Qwen3.6-35B-A3B sind das auf Ebene 3 die Schiebungen 10
+        // gegen 14, also **vier Bit**.
+        //
+        // ⚠️ **Und der Fehler zerstoert nicht, er glaettet**, was ihn
+        // schwerer sichtbar macht: Ein um 16 zu klein gelesenes
+        // Argument macht aus `sigmoid` im Bereich ±16, also einem
+        // nahezu binaeren Schalter, eine sanfte Schwankung zwischen
+        // 0,27 und 0,73. Das Tor hoert damit auf, Koepfe abzuschalten,
+        // und wirkt nur noch wie ein Faktor um ein halb.
+        //
+        // 📌 **Ein Tor, das nicht mehr schaltet, sieht aus wie ein Tor.**
+        // Die Ausgabe behaelt Groessenordnung und Vorzeichen; nur die
+        // Auswahl faellt weg. Eine Probe auf „ist der Betrag
+        // plausibel" haette das nie gefunden.
+        let tor_frac = layer.scales.achtsamkeit().q_frac;
+        aus.iter()
+            .zip(tor.iter())
+            .map(|(&a, &g)| {
+                let dom = rescale(i32::from(g), tor_frac, self.sigmoid_ein_frac);
+                let s = sigmoid_nachschlagen(
+                    dom, &self.sigmoid_lut, self.sigmoid_versatz,
+                    self.sigmoid_ein_frac, self.sigmoid_aus_frac,
+                );
+                clamp_i16_from_i64(rshift_round_i64(
+                    i64::from(a) * s,
+                    self.sigmoid_aus_frac,
+                ))
+            })
+            .collect()
+    }
+
+    /// **Eine rekurrente Zustandsschicht fuer ein Token.**
+    ///
+    /// Sie ersetzt in einer Ebene genau das, was sonst die Achtsamkeit
+    /// tut: Aus dem normierten Residualstrom wird ein Beitrag, der
+    /// zurueckaddiert wird. Norm davor und Residuum danach sind
+    /// dieselben.
+    ///
+    /// # Die sieben Schritte
+    ///
+    /// ```text
+    /// 1. Projektionen   qkv, z, a, b        aus dem normierten Strom
+    /// 2. Faltung        kausal, 4 Stellen, tiefenweise, dann SiLU
+    /// 3. Aufteilen      q | k | v
+    /// 4. Normieren      q und k auf Einheitslaenge, q zusaetzlich /sqrt(d)
+    /// 5. Tore           beta = sigmoid(b), g = exp(-exp_A*softplus(a+dt))
+    /// 6. Rekurrenz      je Wertkopf ein Schritt auf seinem Zustand
+    /// 7. Ausgangstor    Norm mal silu(z), dann out_proj
+    /// ```
+    ///
+    /// # ⚑ Die Auffaecherung ist Indexierung und kein Kopieren
+    ///
+    /// Es gibt 16 Schluesselkoepfe und 32 Wertkoepfe. Die Vorlage
+    /// verdoppelt `q` und `k` mit `repeat_interleave`; hier liest der
+    /// Wertkopf `h` einfach den Schluesselkopf `h / 2`. **Dieselbe
+    /// Rechnung ohne die Kopie.**
+    #[allow(clippy::too_many_arguments)]
+    fn zustandsschicht_eines_tokens(
+        &self,
+        layer: &TransformerLayer,
+        zs: &Zustandsschicht,
+        masse: &Zustandsmasse,
+        norm_hidden: &[i16],
+        speicher: &mut crate::zustandsspeicher::Zustandsspeicher,
+        out_frac: &[u8],
+    ) -> Vec<i16> {
+        use integer_llm_kernels::integer_math::{
+            sigmoid_nachschlagen, softplus_nachschlagen, zerfall_nachschlagen,
+        };
+        use integer_llm_kernels::fixed_point::{clamp_i16_from_i64, rescale, rescale_i64};
+        use integer_llm_kernels::linear::linear_w8a16;
+        use integer_llm_kernels::zustandsschicht as zk;
+
+        let sk = &zs.skalen;
+        let ebene = layer.layer_idx;
+        let ein_frac = layer.scales.norm_attn_frac;
+        let hidden = norm_hidden.len();
+
+        // --- 1. Die vier Projektionen.
+        let mut qkv = linear_w8a16(
+            norm_hidden, &zs.in_proj_qkv.data, hidden,
+            &zs.in_proj_qkv.shifts, ein_frac, sk.qkv_frac,
+        );
+        let z = linear_w8a16(
+            norm_hidden, &zs.in_proj_z.data, hidden,
+            &zs.in_proj_z.shifts, ein_frac, sk.z_frac,
+        );
+        let b_roh = linear_w8a16(
+            norm_hidden, &zs.in_proj_b.data, hidden,
+            &zs.in_proj_b.shifts, ein_frac, sk.b_frac,
+        );
+        let a_roh = linear_w8a16(
+            norm_hidden, &zs.in_proj_a.data, hidden,
+            &zs.in_proj_a.shifts, ein_frac, sk.a_frac,
+        );
+
+        // --- 2. Die kausale Faltung, tiefenweise mit SiLU.
+        let mut gefaltet = vec![0i16; masse.kanaele];
+        integer_llm_kernels::faltung::schritt(
+            speicher.fenster_mut(ebene),
+            &qkv,
+            &zs.conv1d.data,
+            &zs.conv1d.shifts,
+            sk.qkv_frac,
+            // ⛔️ **Die Sigmoid-Tabelle und nicht die SiLU-Tabelle**
+            //   (Fund 417): `silu_zerlegt` braucht nur den Faktor.
+            &self.sigmoid_lut,
+            self.sigmoid_versatz,
+            self.sigmoid_ein_frac,
+            self.sigmoid_aus_frac,
+            &sk.konv_fracs,
+            &mut gefaltet,
+        );
+        std::mem::swap(&mut qkv, &mut gefaltet);
+
+        // --- 3. Aufteilen in q, k, v.
+        let k_breite = masse.schluessel_dim * masse.schluessel_koepfe;
+        let (q_teil, rest) = qkv.split_at(k_breite);
+        let (k_teil, v_teil) = rest.split_at(k_breite);
+
+        // --- 4. Auf Einheitslaenge, je Schluesselkopf.
+        //
+        // ⚑ **Die vorhandene RMSNorm leistet beides.** Sie rechnet
+        // `x * rsqrt(Summe(x^2) * inv_n)`; mit `inv_n = 1` ist das genau
+        // die L2-Normierung, mit `inv_n = d` ist es dieselbe mal
+        // `1/sqrt(d)`, und das ist die Skalierung, die `q` braucht.
+        // **Kein zweiter Kern fuer etwas, das der erste schon kann.**
+        let q_norm = einheitslaenge(
+            q_teil, masse.schluessel_dim, &sk.konv_fracs[..k_breite],
+            (masse.schluessel_dim as i64) << 20, self,
+            zk::NORM_FRAC as u8,
+        );
+        let k_norm = einheitslaenge(
+            k_teil, masse.schluessel_dim, &sk.konv_fracs[k_breite..2 * k_breite],
+            1i64 << 20, self,
+            zk::NORM_FRAC as u8,
+        );
+
+        // --- 5. Die beiden Tore je Wertkopf.
+        let mut beta = vec![0i16; masse.wert_koepfe];
+        let mut zerfall = vec![0i64; masse.wert_koepfe];
+        for h in 0..masse.wert_koepfe {
+            // beta = sigmoid(b), in WERT_FRAC.
+            let b_dom = rescale(
+                i32::from(b_roh[h]), sk.b_frac, self.sigmoid_ein_frac,
+            );
+            let s = sigmoid_nachschlagen(
+                b_dom, &self.sigmoid_lut, self.sigmoid_versatz,
+                self.sigmoid_ein_frac, self.sigmoid_aus_frac,
+            );
+            beta[h] = clamp_i16_from_i64(rescale_i64(
+                s, self.sigmoid_aus_frac, zk::WERT_FRAC as u8,
+            ));
+
+            // d = exp_A * softplus(a + dt_bias), dann g = exp(-d).
+            let a_dom = rescale(
+                i32::from(a_roh[h]), sk.a_frac, masse.softplus_ein_frac,
+            );
+            let dt = vorspannwert(&zs.dt_bias, h, masse.softplus_ein_frac);
+            let sp = softplus_nachschlagen(
+                a_dom + dt, &masse.softplus_rest,
+                masse.softplus_ein_frac, masse.softplus_aus_frac,
+            );
+            let d = mal_vorspann(sp, &zs.exp_a, h);
+            zerfall[h] = zerfall_nachschlagen(
+                d, &masse.zerfall_exp, masse.softplus_aus_frac as u32,
+                masse.zerfall_raster_frac as u32, masse.zerfall_aus_frac as u32,
+            );
+        }
+
+        // --- 5b. `v` auf die Wertauflösung bringen.
+        //
+        // ⛔️ **Hier fehlte bis zum 2026-09-22 die Umrechnung**, und sie
+        // hat einen Abend gekostet. Die Faltung liefert auf
+        // `konv_frac` (bei Ebene 0 des grossen Modells **15**), die
+        // Rekurrenz erwartet `WERT_FRAC` (**8**). `v` ging damit um den
+        // Faktor 128 zu gross hinein.
+        //
+        // 📌 **Drei von vier Eingaengen waren richtig skaliert.** `q`
+        // und `k` kommen ueber `einheitslaenge` auf `NORM_FRAC`, `beta`
+        // wird ausdruecklich reskaliert, und `v` wurde durchgereicht.
+        // Der Kopf von `zustandsschicht` sagt es woertlich: „`v` und
+        // `beta` in `2^-WERT_FRAC`". **Ich habe die Zeile geschrieben
+        // und dann nicht befolgt.**
+        //
+        // ⚠️ **Warum es nicht auffiel:** Die Ausgabe hatte die richtige
+        // Groessenordnung, weil die torgesteuerte Norm dahinter
+        // skaleninvariant ist; nur die Verhaeltnisse zwischen den
+        // Koepfen stimmten nicht mehr. Ein zu grosser Faktor sieht
+        // harmloser aus als ein falsches Vorzeichen.
+        let v_wert: Vec<i16> = v_teil
+            .iter()
+            .zip(sk.konv_fracs[2 * k_breite..].iter())
+            .map(|(&x, &f)| {
+                clamp_i16_from_i64(rescale_i64(i64::from(x), f, zk::WERT_FRAC as u8))
+            })
+            .collect();
+
+        // ⚑ **Die Eingaenge der Rekurrenz, fuer die Halbierung.** Der
+        //   Nachbau in Python trifft mit denselben Gewichten 0,13; die
+        //   Laufzeit liefert 0,34. Der Unterschied muss in einem dieser
+        //   drei Felder sichtbar werden, sonst liegt er im Kern.
+        if std::env::var_os("MYL_ZUSTANDSSPUR").is_some() {
+            let zeig = |name: &str, f: &[i16]| {
+                eprintln!(
+                    "[feld] {name} {}",
+                    f.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(",")
+                );
+            };
+            zeig("konv", &qkv);
+            zeig("qnorm", &q_norm);
+            zeig("knorm", &k_norm);
+            zeig("vwert", &v_wert);
+        }
+
+        // --- 6. Die Rekurrenz, je Wertkopf ein Schritt.
+        let faecher = masse.auffaecherung();
+        let mut roh_aus = vec![0i16; masse.wert_koepfe * masse.wert_dim];
+        // ⚑ **Eine Skala je Kopf** (Fund 418): `schritt` waehlt sie aus
+        //   dem Groesstwert des Kopfes und gibt sie zurueck.
+        let mut roh_fracs = vec![0u8; masse.wert_koepfe];
+        for h in 0..masse.wert_koepfe {
+            let s_kopf = h / faecher;
+            let q = &q_norm[s_kopf * masse.schluessel_dim..(s_kopf + 1) * masse.schluessel_dim];
+            let k = &k_norm[s_kopf * masse.schluessel_dim..(s_kopf + 1) * masse.schluessel_dim];
+            let v = &v_wert[h * masse.wert_dim..(h + 1) * masse.wert_dim];
+            let ziel = &mut roh_aus[h * masse.wert_dim..(h + 1) * masse.wert_dim];
+            roh_fracs[h] = zk::schritt(
+                speicher.zustand_mut(ebene, h), q, k, v,
+                zerfall[h], beta[h], ziel,
+            );
+        }
+
+        if std::env::var_os("MYL_ZUSTANDSSPUR").is_some() {
+            let nz = roh_aus.iter().filter(|&&x| x == 0).count();
+            let je_kopf: Vec<usize> = (0..masse.wert_koepfe)
+                .map(|h| {
+                    roh_aus[h * masse.wert_dim..(h + 1) * masse.wert_dim]
+                        .iter()
+                        .filter(|&&x| x != 0)
+                        .count()
+                })
+                .collect();
+            eprintln!("[spur] nicht-null je Kopf: {je_kopf:?}");
+            // ⚑ Die Skalen je Kopf, sonst liest die Python-Seite die
+            //   Zahlen mit der falschen Skala (Fund 418).
+            eprintln!(
+                "[feld] rohfrac {}",
+                roh_fracs.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(",")
+            );
+            // ⚑ Die ganzen Felder, damit die Python-Seite sie gegen die
+            //   Referenz halten kann statt nur ihr Maximum.
+            eprintln!(
+                "[feld] roh_aus {}",
+                roh_aus.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(",")
+            );
+            eprintln!(
+                "[spur] beta: {:?}",
+                &beta[..beta.len().min(8)]
+            );
+            eprintln!(
+                "[spur] roh_aus: max {} nullen {}/{} | z max {} | v_wert max {}",
+                roh_aus.iter().map(|x| x.abs()).max().unwrap_or(0),
+                nz, roh_aus.len(),
+                z.iter().map(|x| x.abs()).max().unwrap_or(0),
+                v_wert.iter().map(|x| x.abs()).max().unwrap_or(0)
+            );
+        }
+
+        // --- 7. Das Ausgangstor und die Ruecktransformation.
+        let getort = torgesteuerte_norm(
+            &roh_aus, &z, zs, masse, self,
+            sk.norm_aus_frac, &roh_fracs, sk.z_frac,
+        );
+        if std::env::var_os("MYL_ZUSTANDSSPUR").is_some() {
+            eprintln!(
+                "[feld] getort {}",
+                getort.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(",")
+            );
+        }
+        // ⚑ **Per Kanal**, wie `projektion_o` bei der Achtsamkeit.
+        integer_llm_kernels::linear::linear_w8a16_pc(
+            &getort, &zs.out_proj.data, getort.len(),
+            &zs.out_proj.shifts, sk.norm_aus_frac, out_frac,
+        )
+    }
+}
+
+/// **Ein Wert aus einem int16-Vorspann**, auf eine Zielskala gebracht.
+///
+/// ⚑ `exp_A` und `dt_bias` sind keine GEMM-Gewichte, sondern je ein Wert
+/// pro Wertkopf, und tragen deshalb eine Skala **je Element**.
+#[inline]
+fn vorspannwert(vorspann: &crate::loader::BiasTensor, i: usize, ziel_frac: u8) -> i32 {
+    use integer_llm_kernels::fixed_point::rescale;
+    rescale(i32::from(vorspann.data[i]), vorspann.shifts[i], ziel_frac)
+}
+
+/// **`exp_A[h] * wert`**, ohne die Skala des Ergebnisses zu verschieben.
+///
+/// ⚑ `exp_A` liegt als `data * 2^-shift` vor; das Produkt behaelt damit
+/// die Bruchbits von `wert`, wenn um `shift` nach rechts geschoben wird.
+#[inline]
+fn mal_vorspann(wert: i64, vorspann: &crate::loader::BiasTensor, i: usize) -> i64 {
+    use integer_llm_kernels::fixed_point::rshift_round_i128;
+    rshift_round_i128(
+        i128::from(vorspann.data[i]) * i128::from(wert),
+        u32::from(vorspann.shifts[i]),
+    ) as i64
+}
+
+/// **Je Kopf auf Einheitslaenge**, ueber die vorhandene RMSNorm.
+///
+/// ⚑ **Kein zweiter Kern.** `rmsnorm_i16` rechnet
+/// `x * rsqrt(Summe(x^2) * inv_n)`. Mit `inv_n = 1` ist das die
+/// L2-Normierung; mit `inv_n = d` ist es dieselbe mal `1/sqrt(d)`, und
+/// genau das braucht `q`. Gamma ist eins.
+///
+/// 📌 **Eine Funktion, die der Rechenpfad schon hat und die die
+/// Konformitaetsvektoren abdecken, ist mehr wert als eine neue, die
+/// dasselbe tut.**
+fn einheitslaenge(
+    x: &[i16],
+    kopf_dim: usize,
+    ein_fracs: &[u8],
+    inv_n_q20: i64,
+    m: &IntegerModel,
+    aus_frac: u8,
+) -> Vec<i16> {
+    use integer_llm_kernels::rmsnorm::rmsnorm_i16;
+    let koepfe = x.len() / kopf_dim;
+    debug_assert_eq!(x.len() % kopf_dim, 0, "die Breite passt nicht zur Kopfgroesse");
+    // Gamma eins, je Element: `1 * 2^-0`.
+    let gamma = vec![1i8; kopf_dim];
+    let gamma_shifts = vec![0u8; kopf_dim];
+    debug_assert_eq!(ein_fracs.len(), x.len(), "eine Eingangsskala je Kanal (Fund 421)");
+    let mut aus = Vec::with_capacity(x.len());
+    for h in 0..koepfe {
+        let kopf = &x[h * kopf_dim..(h + 1) * kopf_dim];
+        // ⚑ **Die Skalen je Kanal gehen unveraendert weiter.**
+        //   `rmsnorm_i16` richtet sie seit Fund 24 gegen die groesste
+        //   aus, und zwar per Linksshift, also verlustfrei.
+        let x_shifts = &ein_fracs[h * kopf_dim..(h + 1) * kopf_dim];
+        aus.extend_from_slice(&rmsnorm_i16(
+            kopf, x_shifts, &gamma, &gamma_shifts,
+            &m.rsqrt_lut, m.config.rsqrt_input_shift, m.config.rsqrt_output_frac,
+            inv_n_q20, aus_frac,
+        ));
+    }
+    aus
+}
+
+/// **Das Ausgangstor: Norm je Wertkopf, dann mal `silu(z)`.**
+///
+/// ⚑ **Norm zuerst, Tor danach**, wie die Vorlage. Beides gibt es
+/// schon: die RMSNorm und `silu_produkt` aus dem MLP.
+fn torgesteuerte_norm(
+    roh: &[i16],
+    z: &[i16],
+    zs: &Zustandsschicht,
+    masse: &Zustandsmasse,
+    m: &IntegerModel,
+    aus_frac: u8,
+    ein_fracs: &[u8],
+    z_frac: u8,
+) -> Vec<i16> {
+    use integer_llm_kernels::mlp::silu_produkt;
+    use integer_llm_kernels::rmsnorm::{inv_n_q20, rmsnorm_i16_mit_eps};
+    let d = masse.wert_dim;
+    debug_assert_eq!(roh.len(), z.len(), "Rohausgabe und Tor verschieden lang");
+    debug_assert_eq!(ein_fracs.len(), masse.wert_koepfe, "eine Eingangsskala je Wertkopf");
+    let inv_n = inv_n_q20(d);
+
+    // ⛔️ **Fund 420: die Zwischenstufe braucht eine eigene Skala.**
+    //
+    // `aus_frac` kommt aus `scales.json` fuer `linear_attn.norm` und
+    // stand dort mit `absmax_observed = 2.078`. Diese Zahl ist richtig
+    // **fuer das, was gemessen wurde**: Die Vorlage ruft das Modul als
+    // `norm(core_attn_out, z)` auf, es normiert und **torrt in einem**,
+    // und der Haken sieht deshalb den Ausgang *hinter* dem Tor.
+    //
+    // ⚠️ **Benutzt wurde sie fuer den Zwischenstand davor**, und der ist
+    // eine ganz andere Groesse: Nach der Normierung ist der Effektivwert
+    // eins, einzelne Kanaele liegen aber weit darueber. Gemessen am
+    // Qwen3.6-35B-A3B, Ebene 0: bis **6,37**, waehrend `frac = 13` in
+    // i16 nur bis 4,0 reicht. Vierzig Werte je Token liefen in die
+    // Saettigung, und es waren die groessten.
+    //
+    // 📌 **Eine kalibrierte Skala gilt an der Stelle, an der gemessen
+    // wurde.** Wer sie eine Stufe frueher einsetzt, benutzt eine Zahl,
+    // die etwas anderes beschreibt, und niemand meldet es.
+    //
+    // ⚑ **Hier ist keine Messung noetig, es gibt eine harte Schranke.**
+    // Nach der Normierung gilt `|x_i| / rms(x) <= sqrt(d)`, denn der
+    // schlimmste Fall ist der, in dem ein einziger Kanal die ganze
+    // Energie traegt. Mal dem groessten Gamma ist das die Schranke, und
+    // sie klemmt nie.
+    let zwischen_frac = normskala(d, &zs.norm_gamma);
+
+    let mut normiert = Vec::with_capacity(roh.len());
+    for h in 0..masse.wert_koepfe {
+        // ⚑ **Je Kopf seine eigene Eingangsskala** (Fund 418). Die
+        //   RMSNorm ist in `x` skaleninvariant, die Skala aendert das
+        //   Ergebnis also nicht; sie muss nur **stimmen**, damit die
+        //   Angabe im Code nicht luegt.
+        let x_shifts = vec![ein_fracs[h]; d];
+        let kopf = &roh[h * d..(h + 1) * d];
+        normiert.extend_from_slice(&rmsnorm_i16_mit_eps(
+            kopf, &x_shifts, &zs.norm_gamma.data, &zs.norm_gamma.shifts,
+            &m.rsqrt_lut, m.config.rsqrt_input_shift, m.config.rsqrt_output_frac,
+            inv_n, zwischen_frac,
+            // ⛔️ **Hier traegt das Epsilon** (Fund 419): Ein Wertkopf,
+            //   der nichts zu sagen hat, ist wirklich fast null, und
+            //   ohne Epsilon zieht die Norm ihn auf volle Hoehe.
+            m.norm_eps_q40,
+        ));
+    }
+    if std::env::var_os("MYL_ZUSTANDSSPUR").is_some() {
+        let satt = normiert.iter().filter(|&&x| x == i16::MAX || x == i16::MIN).count();
+        eprintln!(
+            "[spur] normiert: |max| {} gesaettigt {}/{}",
+            normiert.iter().map(|x| x.abs()).max().unwrap_or(0),
+            satt, normiert.len()
+        );
+        eprintln!(
+            "[feld] normiert {}",
+            normiert.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(",")
+        );
+    }
+    // ⚑ `silu_produkt(tor, faktor)` rechnet `silu(tor) * faktor`, also
+    //   hier `silu(z) * normiert`. Die Laengenpruefung darin ist seit
+    //   dem 2026-09-21 da, und zwar fuer genau diesen zweiten Aufrufer.
+    silu_produkt(
+        z, &normiert, &m.silu_lut,
+        z_frac, zwischen_frac, aus_frac,
+        m.config.silu_in_frac, m.config.silu_lut_offset, m.config.silu_out_frac,
+    )
+}
+
+/// **Die Skala des normierten Zwischenstands**, aus der harten
+/// Schranke `sqrt(d) * max|gamma|` (Fund 420).
+///
+/// ⚑ **Ohne Wurzel und ohne Gleitkomma.** Gesucht ist das groesste
+/// `f` mit `sqrt(d) * g * 2^f <= i16::MAX`; quadriert ist das
+/// `d * g^2 * 2^(2f) <= i16::MAX^2`, und damit bleibt alles ganzzahlig.
+fn normskala(d: usize, gamma: &QTensor) -> u8 {
+    // Das groesste Gamma in Q20.
+    let g_q20 = gamma
+        .data
+        .iter()
+        .zip(gamma.shifts.iter())
+        .map(|(&w, &s)| (i64::from(w).abs() << 20) >> s)
+        .max()
+        .unwrap_or(1 << 20)
+        .max(1);
+    let grenze = i128::from(i16::MAX) * i128::from(i16::MAX);
+    let dg2 = i128::from(d as i64) * i128::from(g_q20) * i128::from(g_q20);
+    // `dg2` traegt 2^40; gesucht ist f mit `dg2 * 2^(2f) >> 40 <= grenze`.
+    for f in (0..=15u8).rev() {
+        if (dg2 << (2 * u32::from(f))) >> 40 <= grenze {
+            return f;
+        }
+    }
+    0
+}
+
+/// **Abfrage und Tor aus einer `q_proj`-Ausgabe trennen.**
+///
+/// Beim `Qwen3.6-35B-A3B` liefert `q_proj` die **doppelte** Kopfbreite:
+/// je Kopf erst `head_dim` Abfragewerte, dann `head_dim` Torwerte. Der
+/// Achtsamkeitsausgang wird spaeter mit `sigmoid(tor)` multipliziert,
+/// bevor `o_proj` rechnet.
+///
+/// # ⚠️ Die Trennung geschieht JE KOPF, nicht in der Mitte
+///
+/// Die Vorlage formt `q_proj(x)` zu `[..., koepfe, 2*head_dim]` um und
+/// teilt dann die letzte Achse. Die Anordnung ist also
+/// `[q_kopf0, tor_kopf0, q_kopf1, tor_kopf1, ...]` und **nicht**
+/// `[alle q, alle tore]`.
+///
+/// 📌 **Eine Aufteilung „in zwei Haelften" waere hier fast richtig
+/// gewesen**, und zwar auf eine Weise, die bei einem einzigen Kopf gar
+/// nicht auffaellt.
+fn abfrage_und_tor_trennen(roh: &[i16], koepfe: usize, kopf_dim: usize) -> (Vec<i16>, Vec<i16>) {
+    debug_assert_eq!(
+        roh.len(),
+        koepfe * kopf_dim * 2,
+        "q_proj liefert nicht die doppelte Kopfbreite"
+    );
+    let mut abfrage = Vec::with_capacity(koepfe * kopf_dim);
+    let mut tor = Vec::with_capacity(koepfe * kopf_dim);
+    for k in 0..koepfe {
+        let basis = k * kopf_dim * 2;
+        abfrage.extend_from_slice(&roh[basis..basis + kopf_dim]);
+        tor.extend_from_slice(&roh[basis + kopf_dim..basis + 2 * kopf_dim]);
+    }
+    (abfrage, tor)
 }

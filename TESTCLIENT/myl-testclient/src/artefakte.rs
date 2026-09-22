@@ -131,7 +131,7 @@ pub fn register(repo: &Path) -> Result<Vec<Bekannt>, String> {
 ///
 /// **Getrennt von [`Bekannt`], und das ist Absicht.** `Bekannt` kommt aus
 /// `scale_packs/REGISTER.json` und trägt, was **gemessen** wurde: Digest
-/// und θ_v-Stand. Dieser Eintrag kommt aus `models/KATALOG.json` und
+/// und θ_v-Stand. Dieser Eintrag kommt aus `MODELS/llm/KATALOG.json` und
 /// trägt, was jemand **entschieden** hat: Herkunft, Revision, Lizenz,
 /// Status. Aus keinem Artefakt ableitbar, und deshalb von Hand gepflegt.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -139,7 +139,7 @@ pub struct Katalogeintrag {
     pub name: String,
     pub anzeigename: String,
     pub hf_repo: String,
-    /// Verzeichnisname unter `INTEGER_LLM/models/`.
+    /// Verzeichnisname unter `MODELS/llm/`.
     pub hf_verzeichnis: String,
     pub hf_revision: String,
     /// ⚠️ **Die Lizenz der heruntergeladenen Gewichte**, nicht die des
@@ -163,14 +163,14 @@ pub struct Katalogeintrag {
     pub bemerkung: String,
 }
 
-/// Liest `INTEGER_LLM/models/KATALOG.json`.
+/// Liest `MODELS/llm/KATALOG.json`.
 ///
 /// Bewusst ohne JSON-Crate, aus demselben Grund wie [`register`]: Der
 /// Client soll auf einer fremden Maschine mit möglichst wenig
 /// Voraussetzungen bauen. Schlüssel, die mit `_` beginnen, sind
 /// Erläuterungen für Menschen und werden übersprungen.
 pub fn katalog(repo: &Path) -> Result<Vec<Katalogeintrag>, String> {
-    let pfad = repo.join("INTEGER_LLM/models/KATALOG.json");
+    let pfad = repo.join("MODELS/llm/KATALOG.json");
     let text = fs::read_to_string(&pfad)
         .map_err(|e| format!("{} nicht lesbar: {}", pfad.display(), e))?;
     Ok(katalog_lesen(&text))
@@ -328,7 +328,7 @@ const KALIBRIER_VERZEICHNIS: &str = "INTEGER_LLM";
 /// ⚑ **Sie nennt das Arbeitsverzeichnis je Schritt, und zwar seit dem
 /// 2026-08-27.** Vorher standen beide Befehle ohne Verzeichnis
 /// untereinander, und sie brauchen **verschiedene**: Der Download legt
-/// nach `INTEGER_LLM/models/…` ab, gilt also von der Wurzel aus; der Bau
+/// nach `MODELS/llm/…` ab, gilt also von der Wurzel aus; der Bau
 /// ruft ein Paket auf, das unterhalb von `INTEGER_LLM` liegt. Wer die
 /// zweite Zeile aus der Wurzel ausführte, bekam `No module named
 /// calibrate` und keinen Hinweis, was daran falsch war.
@@ -377,7 +377,7 @@ fn bauanleitung_fuer(repo: &Path, modell: &str, windows: bool) -> String {
          \n\
          1. Gewichte von Hugging Face holen: sie werden NICHT mitgeliefert.\n\
          \x20  Im Wurzelverzeichnis des Repositoriums:\n\
-         \x20     huggingface-cli download Qwen/{hf} --local-dir INTEGER_LLM/models/{hf}\n\
+         \x20     huggingface-cli download Qwen/{hf} --local-dir MODELS/llm/{hf}\n\
          \n\
          2. Artefakte bauen. Das versionierte Skalenpaket unter\n\
          \x20  INTEGER_LLM/scale_packs/{m}/ wird automatisch verwendet:\n\
@@ -423,7 +423,7 @@ fn bauanleitung_fuer(repo: &Path, modell: &str, windows: bool) -> String {
 /// Die erste ist die Auskunft, die zweite sagt ehrlich, dass nichts
 /// bekannt ist.
 fn gewichte_verzeichnis(repo: &Path, modell: &str) -> PathBuf {
-    let models = repo.join("INTEGER_LLM/models");
+    let models = repo.join("MODELS/llm");
     if let Some(k) = katalogeintrag(repo, modell) {
         if !k.hf_verzeichnis.is_empty() {
             return models.join(k.hf_verzeichnis);
@@ -817,7 +817,7 @@ pub fn download_groesse(repo: &Path, modell: &str) -> String {
         .unwrap_or_else(|| "unbekannte Größe".to_string())
 }
 
-/// Lädt die Gewichte von Hugging Face in `INTEGER_LLM/models/<HF-Name>`.
+/// Lädt die Gewichte von Hugging Face in `MODELS/llm/<HF-Name>`.
 ///
 /// Über `huggingface_hub.snapshot_download` aus der Kalibrierungs-Umgebung:
 /// Das Paket ist als Abhängigkeit von `transformers` ohnehin vorhanden, es
@@ -835,14 +835,14 @@ pub fn gewichte_holen(
     // **Herkunft und Revision kommen aus dem Katalog** (2026-08-22). Hier
     // stand `repo_id='Qwen/{hf}'`, also die Annahme, jedes Modell dieses
     // Projekts komme von Qwen, und **ohne Revision**, also von dem, was
-    // gerade auf `main` liegt. Beides widerspricht `models/README.md`:
+    // gerade auf `main` liegt. Beides widerspricht `MODELS/llm/README.md`:
     // Dort steht, dass jede Variante eine fixierte Revision braucht, ohne
     // die der Lauf nicht reproduzierbar ist. Ein Modell, das sich
     // zwischen zwei Teilnehmern ändert, erzeugt genau den Befund, gegen
     // den dieses Werkzeug gebaut ist.
     let Some(k) = katalogeintrag(repo, modell) else {
         return Err(format!(
-            "{modell} steht nicht in INTEGER_LLM/models/KATALOG.json.\n\
+            "{modell} steht nicht in MODELS/llm/KATALOG.json.\n\
              Ohne Katalogeintrag ist weder bekannt, woher die Gewichte kommen,\n\
              noch welche Revision gilt. Beides zu raten wäre schlimmer als\n\
              der Abbruch: Ein Teilnehmer bekäme möglicherweise ein anderes\n\
@@ -860,7 +860,7 @@ pub fn gewichte_holen(
         ));
     }
 
-    let ziel = repo.join("INTEGER_LLM/models").join(&k.hf_verzeichnis);
+    let ziel = repo.join("MODELS/llm").join(&k.hf_verzeichnis);
     meldung(format!(
         "Lade {} (Revision {}) nach {} …",
         k.hf_repo,
@@ -884,7 +884,7 @@ pub fn gewichte_holen(
     // Bis 2026-08-23 stand sie nicht drin, und weil eine Lizenzdatei keine
     // Endung trägt, kam sie nie an. `ETHICS/Manifest.md` berief sich für
     // G7 („das Basismodell muss frei nachnutzbar sein") ausdrücklich auf
-    // `INTEGER_LLM/models/Qwen2.5-0.5B/LICENSE`, eine Datei, die auf
+    // `MODELS/llm/Qwen2.5-0.5B/LICENSE`, eine Datei, die auf
     // keiner Maschine existierte, die das Modell über diesen Weg geholt
     // hat. Dieselbe Klasse wie Fund 27: eine schriftliche Zusage ohne
     // Deckung. Apache 2.0 §4(a) verlangt zudem, jedem Empfänger einer
@@ -1060,7 +1060,7 @@ impl Eintrag {
     /// Die Zeile unter dem Titel: was das Modell ist und was seine Wahl
     /// kostet.
     ///
-    /// **Aus dem kuratierten Katalog** (`models/KATALOG.json`), soweit er
+    /// **Aus dem kuratierten Katalog** (`MODELS/llm/KATALOG.json`), soweit er
     /// etwas dazu sagt. Vorher stand hier nur die Downloadgröße, und die
     /// beantwortet nicht die Frage, die vor der Wahl steht: Wofür ist
     /// dieses Modell da, woher kommt es, unter welcher Lizenz, und ist
@@ -1473,7 +1473,7 @@ pub fn belegung(repo: &Path) -> Vec<Belegung> {
 /// **Der Wächter, nicht die Höflichkeit.** Gelöscht wird rekursiv; ein
 /// falscher Pfad wäre nicht rückgängig zu machen. Erlaubt ist deshalb
 /// ausschließlich ein **direktes Unterverzeichnis** von
-/// `INTEGER_LLM/artifacts` oder `INTEGER_LLM/models`, nicht die beiden
+/// `INTEGER_LLM/artifacts` oder `MODELS/llm`, nicht die beiden
 /// Verzeichnisse selbst, nichts darüber, nichts daneben, und nichts, das
 /// über `..` dorthin zeigt.
 fn darf_geloescht_werden(repo: &Path, pfad: &Path) -> Result<(), String> {
@@ -1483,7 +1483,7 @@ fn darf_geloescht_werden(repo: &Path, pfad: &Path) -> Result<(), String> {
     if !echt.is_dir() {
         return Err(format!("{} ist kein Verzeichnis", echt.display()));
     }
-    for rel in ["INTEGER_LLM/artifacts", "INTEGER_LLM/models"] {
+    for rel in ["INTEGER_LLM/artifacts", "MODELS/llm"] {
         let Ok(wurzel) = repo.join(rel).canonicalize() else {
             continue;
         };
@@ -1493,7 +1493,7 @@ fn darf_geloescht_werden(repo: &Path, pfad: &Path) -> Result<(), String> {
     }
     Err(format!(
         "{} liegt nicht unterhalb von INTEGER_LLM/artifacts oder \
-         INTEGER_LLM/models: wird nicht gelöscht.",
+         MODELS/llm: wird nicht gelöscht.",
         echt.display()
     ))
 }
@@ -1702,7 +1702,7 @@ mod loeschen_tests {
     /// Gewichtsverzeichnis.
     fn geruest(dir: &Path) {
         let a = dir.join("INTEGER_LLM/artifacts/myelith-0.6b");
-        let g = dir.join("INTEGER_LLM/models/Qwen3-0.6B");
+        let g = dir.join("MODELS/llm/Qwen3-0.6B");
         fs::create_dir_all(&a).unwrap();
         fs::create_dir_all(&g).unwrap();
         fs::write(a.join("weights_manifest.json"), vec![b'x'; 2048]).unwrap();
@@ -1713,7 +1713,7 @@ mod loeschen_tests {
         // Zuordnung ist eine Angabe (Fund 291). Ein Geruest ohne
         // Katalog prueffte damit einen Zustand, den es im Betrieb nicht
         // gibt.
-        let m = dir.join("INTEGER_LLM/models");
+        let m = dir.join("MODELS/llm");
         fs::write(
             m.join("KATALOG.json"),
             "{\n  \"myelith-0.6b\": {\n    \"hf_verzeichnis\": \"Qwen3-0.6B\"\n  }\n}\n",
@@ -1744,7 +1744,7 @@ mod loeschen_tests {
         assert_eq!(freigeben(&dir, &ziel).expect("gelöscht"), 2048);
         assert!(!ziel.exists());
         // Die Gewichte bleiben unangetastet: sie sind teurer zu holen.
-        assert!(dir.join("INTEGER_LLM/models/Qwen3-0.6B").is_dir());
+        assert!(dir.join("MODELS/llm/Qwen3-0.6B").is_dir());
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -1756,7 +1756,7 @@ mod loeschen_tests {
         geruest(&dir);
         let verboten = [
             dir.join("INTEGER_LLM/artifacts"),
-            dir.join("INTEGER_LLM/models"),
+            dir.join("MODELS/llm"),
             dir.join("INTEGER_LLM"),
             dir.clone(),
             dir.join("INTEGER_LLM/artifacts/myelith-0.6b/.."),
@@ -1771,7 +1771,7 @@ mod loeschen_tests {
         }
         // Nichts davon darf etwas angerichtet haben.
         assert!(dir.join("INTEGER_LLM/artifacts/myelith-0.6b").is_dir());
-        assert!(dir.join("INTEGER_LLM/models/Qwen3-0.6B").is_dir());
+        assert!(dir.join("MODELS/llm/Qwen3-0.6B").is_dir());
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -1907,13 +1907,26 @@ mod loeschen_tests {
     /// Client nicht wählbar, also kann er dafür auch nichts Falsches
     /// laden. Der zweite Test unten hält fest, dass die Ausnahme nicht
     /// zum Schlupfloch wird.
+    /// **Die Stati, bei denen es noch kein gebautes Artefakt gibt.**
+    ///
+    /// ⚑ **Eine Stelle und nicht zwei.** Beide Proben unten brauchen
+    /// dieselbe Unterscheidung, einmal als Ausnahme und einmal als
+    /// Gegenprobe; stuenden die Namen zweimal da, bekaeme ein dritter
+    /// Status irgendwann nur eine der beiden mit, und **die Gegenprobe
+    /// ist genau die, die dann stillschweigend durchliesse**.
+    ///
+    /// `geholt` ist am 2026-09-21 dazugekommen: Die Gewichte des 8B
+    /// lagen, das Artefakt war noch nicht gebaut, und keiner der drei
+    /// vorhandenen Stati traf das.
+    const OHNE_ARTEFAKT: [&str; 2] = ["vorgemerkt", "geholt"];
+
     #[test]
     fn katalog_und_register_kennen_dieselben_modelle() {
         let wurzel = wurzel_zur_laufzeit(&PathBuf::from("."));
         let mut aus_katalog: Vec<String> = katalog(&wurzel)
             .expect("Katalog")
             .into_iter()
-            .filter(|k| k.status != "vorgemerkt")
+            .filter(|k| !OHNE_ARTEFAKT.contains(&k.status.as_str()))
             .map(|k| k.name)
             .collect();
         let mut aus_register: Vec<String> =
@@ -1926,18 +1939,18 @@ mod loeschen_tests {
         );
     }
 
-    /// **Gegenprobe zur Ausnahme oben.** Ein vorgemerktes Modell darf
-    /// keinen Registereintrag haben; hätte es einen, wäre es gebaut und
-    /// der Status falsch. Ohne diese Prüfung wäre `vorgemerkt` ein
-    /// Schlupfloch, mit dem sich ein gebautes Modell der Digest-Prüfung
-    /// entziehen ließe.
+    /// **Gegenprobe zur Ausnahme oben.** Ein Modell ohne gebautes
+    /// Artefakt darf keinen Registereintrag haben; hätte es einen, wäre
+    /// es gebaut und der Status falsch. Ohne diese Prüfung wären
+    /// `vorgemerkt` und `geholt` ein Schlupfloch, mit dem sich ein
+    /// gebautes Modell der Digest-Prüfung entziehen ließe.
     #[test]
     fn vorgemerkte_modelle_stehen_nicht_im_register() {
         let wurzel = wurzel_zur_laufzeit(&PathBuf::from("."));
         let vorgemerkt: Vec<String> = katalog(&wurzel)
             .expect("Katalog")
             .into_iter()
-            .filter(|k| k.status == "vorgemerkt")
+            .filter(|k| OHNE_ARTEFAKT.contains(&k.status.as_str()))
             .map(|k| k.name)
             .collect();
         let im_register: Vec<String> =
@@ -1945,7 +1958,7 @@ mod loeschen_tests {
         for name in &vorgemerkt {
             assert!(
                 !im_register.contains(name),
-                "{name} ist als vorgemerkt geführt, steht aber im Register: \
+                "{name} ist ohne gebautes Artefakt geführt, steht aber im Register: \
                  dann ist es gebaut und der Status gehört auf 'erprobt'"
             );
         }
@@ -2028,7 +2041,7 @@ mod loeschen_tests {
     #[test]
     fn ohne_katalog_ist_das_gewichtsverzeichnis_unbekannt() {
         let dir = tempdir("gewichte-suche");
-        let g = dir.join("INTEGER_LLM/models/Qwen3-0.6B");
+        let g = dir.join("MODELS/llm/Qwen3-0.6B");
         fs::create_dir_all(&g).unwrap();
 
         // 📌 **Ohne Katalog ist die Zuordnung unbekannt, und die
@@ -2051,7 +2064,7 @@ mod loeschen_tests {
 
         // Und mit Katalog steht die Zuordnung.
         fs::write(
-            dir.join("INTEGER_LLM/models/KATALOG.json"),
+            dir.join("MODELS/llm/KATALOG.json"),
             "{\n  \"myelith-0.6b\": {\n    \"hf_verzeichnis\": \"Qwen3-0.6B\"\n  }\n}\n",
         )
         .unwrap();
@@ -2069,7 +2082,7 @@ mod loeschen_tests {
     }
 
     /// Ein Download ohne festgelegte Revision holt, was gerade auf `main`
-    /// liegt. `models/README.md` verlangt eine fixierte Revision, ohne die
+    /// liegt. `MODELS/llm/README.md` verlangt eine fixierte Revision, ohne die
     /// der Lauf nicht reproduzierbar ist: Ein Modell, das sich zwischen
     /// zwei Teilnehmern ändert, erzeugt genau den Befund, gegen den dieses
     /// Werkzeug gebaut ist.

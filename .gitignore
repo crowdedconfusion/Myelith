@@ -32,7 +32,7 @@ __pycache__/
 .claude/settings.local.json
 .qwen/
 
-# Hinweis: Modelle (INTEGER_LLM/models/), Export-Artefakte (INTEGER_LLM/artifacts/),
+# Hinweis: Fremde Gewichte (MODELS/), Export-Artefakte (INTEGER_LLM/artifacts/),
 # Evaluierungs-Datensätze (BENCHMARKS/Inferenz/datasets/) und synthetische Test-Artefakte
 # werden über die jeweiligen lokalen .gitignore-Dateien ausgeschlossen.
 

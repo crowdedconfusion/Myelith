@@ -24,7 +24,7 @@ fn main() {
         .join(std::env::var("MYL_POD_MODELL").unwrap_or_else(|_| "myelith-0.6b".into()));
     let m = load_model(&dir).expect("Modell");
     println!("  Nenner | Schritte | Verlust vorher -> nachher | Argmax trifft");
-    for nenner_schub in [12u32, 11, 10, 9] {
+    for nenner_schub in [7u32, 6, 5] {
         for schritte in [30u64, 60] {
             let mut v = Trainingsvorgaben::vorgabe();
             v.lr_nenner = 1 << nenner_schub;

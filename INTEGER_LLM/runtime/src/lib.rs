@@ -2,6 +2,7 @@ pub mod kapazitaet;
 pub mod rechenwege;
 pub mod loader;
 pub mod kv_cache;
+pub mod zustandsspeicher;
 pub mod generate;
 pub mod konformitaet;
 pub mod tokenizer;

@@ -1,10 +1,10 @@
 {
-  "baseline_perplexity": 31.85994992779658,
-  "integer_perplexity": 33.28835134857662,
-  "delta_pct": 4.483376226319214,
+  "baseline_perplexity": 42.25847417620392,
+  "integer_perplexity": 45.14856851196338,
+  "delta_pct": 6.839088235199224,
   "acceptance_pct": 5.0,
-  "accepted": true,
-  "evaluated_tokens": 435,
+  "accepted": false,
+  "evaluated_tokens": 3558,
   "sequences": [
     {
       "tokens": 128,
@@ -15,20 +15,188 @@
     {
       "tokens": 128,
       "evaluated": 127,
-      "sum_logp": -410.507932,
-      "perplexity": 25.339
+      "sum_logp": -396.197542,
+      "perplexity": 22.6388
     },
     {
       "tokens": 128,
       "evaluated": 127,
-      "sum_logp": -461.263199,
-      "perplexity": 37.7881
+      "sum_logp": -431.55089,
+      "perplexity": 29.9054
     },
     {
-      "tokens": 55,
-      "evaluated": 54,
-      "sum_logp": -228.907522,
-      "perplexity": 69.3404
+      "tokens": 128,
+      "evaluated": 127,
+      "sum_logp": -571.207808,
+      "perplexity": 89.8103
+    },
+    {
+      "tokens": 128,
+      "evaluated": 127,
+      "sum_logp": -485.028658,
+      "perplexity": 45.5642
+    },
+    {
+      "tokens": 105,
+      "evaluated": 104,
+      "sum_logp": -400.906931,
+      "perplexity": 47.2227
+    },
+    {
+      "tokens": 42,
+      "evaluated": 41,
+      "sum_logp": -140.756459,
+      "perplexity": 30.972
+    },
+    {
+      "tokens": 100,
+      "evaluated": 99,
+      "sum_logp": -410.297516,
+      "perplexity": 63.081
+    },
+    {
+      "tokens": 51,
+      "evaluated": 50,
+      "sum_logp": -166.934741,
+      "perplexity": 28.1823
+    },
+    {
+      "tokens": 127,
+      "evaluated": 126,
+      "sum_logp": -427.71026,
+      "perplexity": 29.8005
+    },
+    {
+      "tokens": 72,
+      "evaluated": 71,
+      "sum_logp": -254.351579,
+      "perplexity": 35.9603
+    },
+    {
+      "tokens": 128,
+      "evaluated": 127,
+      "sum_logp": -536.577617,
+      "perplexity": 68.3759
+    },
+    {
+      "tokens": 128,
+      "evaluated": 127,
+      "sum_logp": -509.55895,
+      "perplexity": 55.2725
+    },
+    {
+      "tokens": 128,
+      "evaluated": 127,
+      "sum_logp": -499.610816,
+      "perplexity": 51.1081
+    },
+    {
+      "tokens": 109,
+      "evaluated": 108,
+      "sum_logp": -415.86939,
+      "perplexity": 47.0233
+    },
+    {
+      "tokens": 120,
+      "evaluated": 119,
+      "sum_logp": -555.342154,
+      "perplexity": 106.3506
+    },
+    {
+      "tokens": 119,
+      "evaluated": 118,
+      "sum_logp": -409.430957,
+      "perplexity": 32.1288
+    },
+    {
+      "tokens": 128,
+      "evaluated": 127,
+      "sum_logp": -441.020023,
+      "perplexity": 32.2204
+    },
+    {
+      "tokens": 128,
+      "evaluated": 127,
+      "sum_logp": -441.123478,
+      "perplexity": 32.2466
+    },
+    {
+      "tokens": 128,
+      "evaluated": 127,
+      "sum_logp": -558.929664,
+      "perplexity": 81.5341
+    },
+    {
+      "tokens": 128,
+      "evaluated": 127,
+      "sum_logp": -563.082891,
+      "perplexity": 84.2445
+    },
+    {
+      "tokens": 128,
+      "evaluated": 127,
+      "sum_logp": -493.894077,
+      "perplexity": 48.8586
+    },
+    {
+      "tokens": 128,
+      "evaluated": 127,
+      "sum_logp": -575.859777,
+      "perplexity": 93.161
+    },
+    {
+      "tokens": 83,
+      "evaluated": 82,
+      "sum_logp": -357.243312,
+      "perplexity": 77.9935
+    },
+    {
+      "tokens": 76,
+      "evaluated": 75,
+      "sum_logp": -275.453697,
+      "perplexity": 39.3587
+    },
+    {
+      "tokens": 128,
+      "evaluated": 127,
+      "sum_logp": -422.506516,
+      "perplexity": 27.8497
+    },
+    {
+      "tokens": 78,
+      "evaluated": 77,
+      "sum_logp": -307.463742,
+      "perplexity": 54.2192
+    },
+    {
+      "tokens": 128,
+      "evaluated": 127,
+      "sum_logp": -428.459722,
+      "perplexity": 29.1863
+    },
+    {
+      "tokens": 128,
+      "evaluated": 127,
+      "sum_logp": -540.524013,
+      "perplexity": 70.534
+    },
+    {
+      "tokens": 128,
+      "evaluated": 127,
+      "sum_logp": -447.968159,
+      "perplexity": 34.0322
+    },
+    {
+      "tokens": 128,
+      "evaluated": 127,
+      "sum_logp": -361.043581,
+      "perplexity": 17.1648
+    },
+    {
+      "tokens": 76,
+      "evaluated": 75,
+      "sum_logp": -305.841066,
+      "perplexity": 59.0203
     }
   ]
 }

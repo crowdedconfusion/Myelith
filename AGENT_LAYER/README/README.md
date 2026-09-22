@@ -1,7 +1,7 @@
 # agent-layer (`myl-agent`)
 
-> **Version:** 0.18.0 (`myl-agent` 0.7.0, `myl-local-agent` 0.11.0)
-> **Datum:** 2026-09-09
+> **Version:** 0.18.1 (`myl-agent` 0.7.0, `myl-local-agent` 0.11.1)
+> **Datum:** 2026-09-21
 > **Status:** Manifeste, Herkunftsstufe, Registratur, der
 > **Session-Kontrakt** mit Durchsetzung im Ledger, der **Plan** und seit
 > v0.7.0 die **Segmentkette**. 52 Tests. ⚑ **Was jetzt fehlt, ist keine
@@ -44,6 +44,15 @@ Kap. 8.2).
 - `src/kette.rs` — dass er es auch so getan hat, und wann er aufhört.
 
 ## Changelog
+
+### v0.18.1 – 2026-09-21 (`myl-local-agent` 0.11.1: die Vorlage liegt woanders)
+
+Die Probe, die die Werkzeugansage gegen die echte Vorlage des Modells
+hält, liest `tokenizer_config.json` aus dem Quellmodell. Das liegt seit
+heute unter `MODELS/llm`. ⚑ **Die zweischichtige Prüfung bleibt, wie sie
+ist:** gegen eine abgelegte Kopie, die in der CI läuft, und die Kopie
+gegen die echte Vorlage, die läuft, wo das Modell liegt. Nur der Weg
+dorthin ist ein anderer.
 
 ### v0.18.0 – 2026-09-17 (`myl-local-agent` 0.11.0: eine Hausregel hinter der Werkzeugansage)
 

@@ -9,8 +9,20 @@ use std::path::PathBuf;
 /// Artefakt-Verzeichnis, relativ zum Arbeitsverzeichnis.
 pub const ARTIFACTS_DIR: &str = "artifacts";
 
-/// Modell-Verzeichnis, relativ zum Arbeitsverzeichnis.
-pub const MODELS_DIR: &str = "models";
+// ⛔️ **Grabstein: `MODELS_DIR` ist am 2026-09-21 entfallen** (Fund 409).
+//
+// Die Konstante stand hier, seit es diese Datei gibt, und hatte in Rust
+// **keinen einzigen Leser**: Sie spiegelte nur die Python-Seite, damit
+// beide denselben Namen nennen. Beim Umzug der Quellmodelle nach
+// `MODELS/llm` waere sie damit eine falsche Angabe geworden, die niemand
+// benutzt und die der Naechste fuer gueltig haelt.
+//
+// ⚑ **Und der Grund, warum die Laufzeit sie nie brauchte, ist der
+// Vertrag selbst:** Sie rechnet auf **Artefakten**, nie auf
+// Quellmodellen. Ein Quellmodell ist Gleitkomma und Voraussetzung des
+// **Baus**; wer es im Rechenpfad braeuchte, haette den Pfad verlassen.
+// Der Ablageort der Quellmodelle gehoert deshalb dorthin, wo gebaut
+// wird, und das ist `calibrate/src/paths.py`.
 
 /// Umgebungsvariable, mit der das Artefakt-Verzeichnis ueberschrieben wird.
 pub const ARTIFACTS_DIR_ENV: &str = "INTEGER_LLM_ARTIFACTS_DIR";

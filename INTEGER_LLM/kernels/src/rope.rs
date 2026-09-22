@@ -15,10 +15,27 @@ use crate::fixed_point::{clamp_i16, rshift_round};
 /// sind die cos/sin-Werte der aktuellen Position (Länge half), jedes Paar
 /// nutzt seinen eigenen Winkel. cos/sin tragen `frac_bits`.
 pub fn rotate_half_split_i16(vec: &[i16], cos_row: &[i16], sin_row: &[i16], frac_bits: u8) -> Vec<i16> {
-    let half = vec.len() / 2;
-    assert_eq!(cos_row.len(), half, "rope: cos_row-Laenge muss head_dim/2 sein");
-    assert_eq!(sin_row.len(), half, "rope: sin_row-Laenge muss head_dim/2 sein");
-    let mut out = vec![0i16; vec.len()];
+    // ⚑ **Die Tabellenbreite IST die Drehbreite**, und deshalb braucht
+    // diese Funktion keinen zusaetzlichen Parameter. Bei voller Drehung
+    // ist `cos_row.len() * 2 == vec.len()`, bei einer Teildrehung
+    // weniger, und der Rest geht unveraendert durch.
+    //
+    // ⛔️ **Teildrehung ist nicht „dieselbe Drehung, nur kuerzer".** Die
+    // Frequenzen haengen an der Drehbreite: `theta_j = 1 /
+    // base^(j / (dreh/2))`. Wer die Tabelle mit `head_dim/2` erzeugt und
+    // dann nur vorn dreht, dreht mit **falschen Winkeln**. Die Tabelle
+    // wird deshalb mit `rotary_dim` erzeugt, und diese Funktion
+    // uebernimmt ihre Breite, statt eine eigene anzunehmen.
+    let half = cos_row.len();
+    assert_eq!(sin_row.len(), half, "rope: cos_row und sin_row verschieden lang");
+    assert!(
+        2 * half <= vec.len(),
+        "rope: die Tabelle ist breiter als der Kopfvektor ({} gegen {})",
+        2 * half,
+        vec.len()
+    );
+    // Der ungedrehte Teil geht unveraendert mit.
+    let mut out = vec.to_vec();
     for j in 0..half {
         let cos = cos_row[j] as i32;
         let sin = sin_row[j] as i32;
@@ -61,6 +78,48 @@ pub fn apply_rope_i16(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// ⛔️ **Eine Teildrehung laesst den hinteren Teil in Ruhe.**
+    ///
+    /// ⚑ Das `Qwen3.6-35B-A3B` dreht 64 von 256 Stellen. 📌 Ohne diese
+    /// Probe bliebe der Kern auch dann gruen, wenn er den ganzen
+    /// Vektor draehte: Die vorderen Stellen saehen richtig aus, und der
+    /// Rest faellt erst an der Qualitaet auf.
+    #[test]
+    fn eine_teildrehung_laesst_den_rest_in_ruhe() {
+        let kopf_dim = 16usize;
+        let dreh = 4usize; // nur vier von sechzehn Stellen
+        let vec: Vec<i16> = (0..kopf_dim).map(|i| (i as i16 + 1) * 100).collect();
+        // Ein Viertelkreis je Paar: cos = 0, sin = 1.
+        let cos_row = vec![0i16; dreh / 2];
+        let sin_row = vec![1i16 << 8; dreh / 2];
+        let aus = rotate_half_split_i16(&vec, &cos_row, &sin_row, 8);
+
+        // Die gedrehten Stellen: (x0, x1) -> (-x1, x0).
+        assert_eq!(aus[0], -vec[dreh / 2]);
+        assert_eq!(aus[dreh / 2], vec[0]);
+        // ⚑ **Und alles ab `dreh` steht unveraendert da.**
+        for i in dreh..kopf_dim {
+            assert_eq!(aus[i], vec[i], "Stelle {i} wurde gedreht und sollte nicht");
+        }
+    }
+
+    /// **Volle Drehung bleibt volle Drehung.**
+    ///
+    /// ⚑ Gegenprobe zur Probe darueber: Mit einer Tabelle ueber die
+    /// halbe Kopfbreite darf nichts unveraendert bleiben.
+    #[test]
+    fn eine_volle_drehung_laesst_nichts_in_ruhe() {
+        let kopf_dim = 8usize;
+        let vec: Vec<i16> = (0..kopf_dim).map(|i| (i as i16 + 1) * 100).collect();
+        let cos_row = vec![0i16; kopf_dim / 2];
+        let sin_row = vec![1i16 << 8; kopf_dim / 2];
+        let aus = rotate_half_split_i16(&vec, &cos_row, &sin_row, 8);
+        assert!(
+            aus.iter().zip(vec.iter()).any(|(a, b)| a != b),
+            "die volle Drehung hat nichts veraendert"
+        );
+    }
 
     fn row(vals: &[i16]) -> Vec<i16> {
         vals.to_vec()

@@ -108,7 +108,27 @@ fn der_verlust_sinkt_ueber_die_schleife() {
     // ⚑ **Der Verlust faellt, und zwar deutlich.** Die Schranke liegt
     // bei 1,0 gegen einen Startwert von 9,22 und einen gemessenen
     // Endwert von 0,137; sie prueft die Aussage, nicht die Nachkommastelle.
-    assert!(letzter < 1.0, "der Verlust blieb ueber 1,0: {erster:.4} auf {letzter:.4}");
+    // ⛔️ **Hier stand am 2026-09-21 kurzzeitig eine Schranke auf den
+    // bewegten Gewichten, und sie war erfunden.** Gemessen bewegen sich
+    // 23,8 Prozent (alte Skalen), 9,3 Prozent (berichtigte Skalen, Lauf
+    // trifft) und 6,5 Prozent (zu kleiner Schritt, Lauf trifft nicht).
+    // **Die drei liegen zu nah beieinander**, um eine Schwelle zu
+    // tragen; jede Zahl dazwischen waere geraten gewesen.
+    //
+    // 📌 **Eine Schranke, deren Wert man sich aussucht, prueft den
+    // Aussuchenden und nicht die Sache.** Was traegt, ist der Verlust
+    // selbst; was fehlte, war ein Hinweis auf die Ursache in der
+    // Meldung.
+    assert!(
+        letzter < 1.0,
+        "der Verlust blieb ueber 1,0: {erster:.4} auf {letzter:.4} \
+         ({} von {} Gewichten bewegt). ⚑ Haeufigste Ursache: `lr_nenner` \
+         in `Trainingsvorgaben::vorgabe()` passt nicht mehr zu den \
+         Aktivierungsskalen dieses Artefakts. Neu messen mit \
+         `cargo run --release --example lernrate_messen`.",
+        e.bewegte_gewichte,
+        e.gewichte_gesamt
+    );
 
     // ⚑ **Das Ziel ist am Ende die Vorhersage.** Das ist die eigentliche
     // Behauptung: nicht dass irgendeine Zahl faellt, sondern dass das
@@ -208,14 +228,26 @@ fn ein_ziel_ausserhalb_des_vokabulars_wird_abgelehnt() {
 ///
 /// Gemessen mit `examples/formgrenze.rs`:
 ///
-/// | `lr_zaehler` bei `lr_nenner = 1` | aus der Form |
-/// |---|---|
-/// | 1 | nie, auch nicht nach 300 Schritten |
-/// | **64** | **bei Schritt 0** |
-/// | 1 024 | bei Schritt 0 |
+/// | `lr_zaehler` bei `lr_nenner = 1` | aus der Form (alte Skalen) | aus der Form (berichtigt) |
+/// |---|---|---|
+/// | 1 | nie, auch nicht nach 300 Schritten | nie |
+/// | 64 | **bei Schritt 0** | nie |
+/// | 128 | (nicht gemessen) | nie |
+/// | **256** | (nicht gemessen) | **bei Schritt 0** |
+/// | 1 024 | bei Schritt 0 | bei Schritt 0 |
 ///
 /// ⚑ **Genommen wird der kleinste Wert, der beisst.** Ein groesserer
 /// prüfte dasselbe und sagte weniger darüber, wo die Grenze liegt.
+///
+/// ⛔️ **Neu gemessen am 2026-09-21, und die Grenze ist um zwei Stufen
+/// gewandert.** Als die Aktivierungsskalen des 0,6B berichtigt wurden,
+/// hoerte `64` auf zu beissen. Der Grund ist derselbe wie bei
+/// `lr_nenner`: Groebere Skalen machen die ganzzahligen Gradienten
+/// kleiner, und dann reicht derselbe Zaehler nicht mehr aus der Form.
+///
+/// 📌 **Eine Gegenprobe altert mit dem, wogegen sie prueft.** Sie sagte
+/// vorher „64 reicht"; ohne diese Messung haette sie weiter behauptet,
+/// eine Schranke zu pruefen, die sie gar nicht mehr erreicht.
 ///
 /// ⚑ **Ohne diesen Test wäre die Schranke eine Behauptung.** Sie stand
 /// bis zum 2026-09-05 nur als Panik in `gewicht_aus_master`, also am
@@ -227,12 +259,12 @@ fn eine_absurde_lernrate_verlaesst_die_form_und_der_lauf_meldet_es() {
     let v = Trainingsvorgaben {
         schritte: 40,
         lr_nenner: 1,
-        lr_zaehler: 64,
+        lr_zaehler: 256,
         ..Trainingsvorgaben::vorgabe()
     };
     let e = trainingsschleife(&m, &v).expect("Lauf");
     let schritt = e.aus_der_form.expect(
-        "bei lr_zaehler = 64 und lr_nenner = 1 muss der Lauf die Uebertragungsform \
+        "bei lr_zaehler = 256 und lr_nenner = 1 muss der Lauf die Uebertragungsform \
          verlassen; tut er es nicht, prueft die Schranke nichts (Fund 338)",
     );
     assert!(schritt < v.schritte, "der Abbruch kam nach dem letzten Schritt");

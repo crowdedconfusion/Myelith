@@ -101,9 +101,56 @@ pub fn rmsnorm_i16(
     inv_n_q20: i64,
     out_frac_bits: u8,
 ) -> Vec<i16> {
-    rmsnorm_i16_mit_spur(
+    rmsnorm_i16_mit_eps(
         x, x_shifts, gamma, gamma_shifts, rsqrt_lut, lut_input_shift, lut_output_frac,
-        inv_n_q20, out_frac_bits, None,
+        inv_n_q20, out_frac_bits, 0,
+    )
+}
+
+/// **RMSNorm mit dem Epsilon der Vorlage**, `x / sqrt(mean(x^2) + eps)`.
+///
+/// # ⛔️ Fund 419: ein Epsilon, das nur an einer Stelle traegt
+///
+/// Der Kopf dieser Datei hielt seit langem fest: „eps (HF: 1e-6) rundet
+/// bei realistischen Residualskalen auf 0". **Das stimmt, und genau
+/// darin lag die Falle.** Fuer den Residualstrom ist `mean(x^2)` von der
+/// Groessenordnung eins, und ein Epsilon von 1e-6 aendert nichts. Die
+/// torgesteuerte Norm des rekurrenten Zweigs normiert dagegen **je
+/// Wertkopf**, und dort ist ein Kopf, der nichts zu sagen hat, wirklich
+/// fast null: Gemessen am Qwen3.6-35B-A3B, Ebene 0, hatte der leiseste
+/// Kopf einen Effektivwert von **1,9e-6**, also `mean(x^2) = 3,6e-12`
+/// gegen ein Epsilon von 1e-6. **Das Epsilon ist dort nicht
+/// vernachlaessigbar, es ist der ganze Nenner.**
+///
+/// Ohne es wurde dieser Kopf auf den Effektivwert eins hochgezogen, das
+/// **Fuenfhundertfache**; er saettigte die Ausgabe und legte sich als
+/// Rauschen ueber den Residualstrom. Der Fehler der Stufe lag bei 0,84.
+///
+/// 📌 **Eine Annahme ueber Groessenordnungen gilt fuer den Zweig, fuer
+/// den sie geprueft wurde.** Sie stand richtig und begruendet im Code;
+/// wer den Kern in einem neuen Zweig benutzt, muss sie erneut pruefen.
+/// Hier hat ein zweiter Aufrufer eine Voraussetzung des ersten geerbt,
+/// ohne dass jemand sie nachgerechnet hat.
+///
+/// `eps_q40` ist `round(eps * 2^40)`; fuer `1e-6` sind das `1099512`.
+/// ⚑ **Q40 und nicht Q20**, denn in Q20 waere `1e-6` genau ein Zaehler
+/// und damit auf fuenf Prozent genau.
+#[allow(clippy::too_many_arguments)]
+pub fn rmsnorm_i16_mit_eps(
+    x: &[i16],
+    x_shifts: &[u8],
+    gamma: &[i8],
+    gamma_shifts: &[u8],
+    rsqrt_lut: &[i16],
+    lut_input_shift: u8,
+    lut_output_frac: u8,
+    inv_n_q20: i64,
+    out_frac_bits: u8,
+    eps_q40: i64,
+) -> Vec<i16> {
+    rmsnorm_kern(
+        x, x_shifts, gamma, gamma_shifts, rsqrt_lut, lut_input_shift, lut_output_frac,
+        inv_n_q20, out_frac_bits, eps_q40, None,
     )
 }
 
@@ -131,6 +178,29 @@ pub fn rmsnorm_i16_mit_spur(
     lut_output_frac: u8,
     inv_n_q20: i64,
     out_frac_bits: u8,
+    spur: Option<&mut Rmsnormspur>,
+) -> Vec<i16> {
+    rmsnorm_kern(
+        x, x_shifts, gamma, gamma_shifts, rsqrt_lut, lut_input_shift, lut_output_frac,
+        inv_n_q20, out_frac_bits, 0, spur,
+    )
+}
+
+/// Der gemeinsame Kern. `eps_q40 = 0` ist das Verhalten bis zum
+/// 2026-09-22 und bleibt es fuer jeden Aufrufer ausser der
+/// torgesteuerten Norm.
+#[allow(clippy::too_many_arguments)]
+fn rmsnorm_kern(
+    x: &[i16],
+    x_shifts: &[u8],
+    gamma: &[i8],
+    gamma_shifts: &[u8],
+    rsqrt_lut: &[i16],
+    lut_input_shift: u8,
+    lut_output_frac: u8,
+    inv_n_q20: i64,
+    out_frac_bits: u8,
+    eps_q40: i64,
     spur: Option<&mut Rmsnormspur>,
 ) -> Vec<i16> {
     let n = x.len();
@@ -180,7 +250,16 @@ pub fn rmsnorm_i16_mit_spur(
     // von i64. Ein Rueckcast auf i64 wuerde dort WRAPPEN und ueber
     // `as usize` einen absurden LUT-Index erzeugen — genau das faengt
     // `test_rmsnorm_extremer_shift_bereich_laeuft_nicht_ueber` ab.
-    let m: i128 = (acc * inv_n_q20 as i128) >> 20;
+    let mut m: i128 = (acc * inv_n_q20 as i128) >> 20;
+
+    // ⚑ **Das Epsilon auf dieselbe Skala wie `m`** (Fund 419). `m`
+    //   traegt `mean(x^2)` in `2^(2*ref_shift)`; `eps_q40` traegt `eps`
+    //   in `2^40`. Der Fall `acc == 0` ist schon oben beantwortet, und
+    //   zwar gleich: `0 / sqrt(eps) = 0`.
+    if eps_q40 != 0 {
+        m += (i128::from(eps_q40) << (2 * u32::from(ref_shift))) >> 40;
+    }
+    let m = m;
 
     // Dynamischer gerader Index-Shift in den LUT-Bereich.
     let max_idx = (rsqrt_lut.len() - 1) as i128;

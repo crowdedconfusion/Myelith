@@ -1,7 +1,7 @@
 {
   "myelith-0.6b": {
-    "artefakt_digest_sha256": "e1f42051a85d1df249aac8781346f2e9d6051fe7491afd4a44e8f1c702b58499",
-    "bytes": 10829812,
+    "artefakt_digest_sha256": "e03f94b2ca6d90abfd7e23ce8f6bdaf94e72b71d176f9c64367cde140468e1c5",
+    "bytes": 10955623,
     "dateien": [
       "scales.json",
       "luts.json",
@@ -9,20 +9,23 @@
       "cos.lut.bin",
       "exp.lut.bin",
       "rsqrt.lut.bin",
+      "sigmoid.lut.bin",
       "silu.lut.bin",
-      "sin.lut.bin"
+      "sin.lut.bin",
+      "softplus_rest.lut.bin",
+      "zerfall_exp.lut.bin"
     ],
     "digest_ueber": [
       "theta_v.json",
       "model_config.json",
       "tokenizer.json"
     ],
-    "theta_v": "0.20.0",
+    "theta_v": "0.22.0",
     "weights_manifest_sha256": "cf103bf5f7d37130998fddc46e67b1a08d43b7a508feda70406bdc01eea348d8"
   },
   "myelith-30b-a3b": {
-    "artefakt_digest_sha256": "d75626a84eb7ae56013655a58e593efd3484ae2d545dd93059d2b6201a32d5f1",
-    "bytes": 11284483,
+    "artefakt_digest_sha256": "99ce847fac73c6fcdcce94e6f697dd5b8d63ae4e038443ddf38b1a9d14598286",
+    "bytes": 11416000,
     "dateien": [
       "scales.json",
       "luts.json",
@@ -30,20 +33,23 @@
       "cos.lut.bin",
       "exp.lut.bin",
       "rsqrt.lut.bin",
+      "sigmoid.lut.bin",
       "silu.lut.bin",
-      "sin.lut.bin"
+      "sin.lut.bin",
+      "softplus_rest.lut.bin",
+      "zerfall_exp.lut.bin"
     ],
     "digest_ueber": [
       "theta_v.json",
       "model_config.json",
       "tokenizer.json"
     ],
-    "theta_v": "0.20.0",
+    "theta_v": "0.22.0",
     "weights_manifest_sha256": "78d3d83523ca2cf416d234078520492292e45c58da583fb5dfb36f490b916f71"
   },
-  "myelith-4b": {
-    "artefakt_digest_sha256": "b78dd36b2ca73afb8d2dca15d0553a506f07d4aca6f7c479577bfdde13e0356d",
-    "bytes": 11223672,
+  "myelith-35b-a3b": {
+    "artefakt_digest_sha256": "c611df6e3d975406b097612bcbedfeafd93e56f0fc5cd28c0770564b9f0de9cf",
+    "bytes": 6085383,
     "dateien": [
       "scales.json",
       "luts.json",
@@ -51,15 +57,66 @@
       "cos.lut.bin",
       "exp.lut.bin",
       "rsqrt.lut.bin",
+      "sigmoid.lut.bin",
       "silu.lut.bin",
-      "sin.lut.bin"
+      "sin.lut.bin",
+      "softplus_rest.lut.bin",
+      "zerfall_exp.lut.bin"
     ],
     "digest_ueber": [
       "theta_v.json",
       "model_config.json",
       "tokenizer.json"
     ],
-    "theta_v": "0.20.0",
+    "theta_v": "0.22.0",
+    "weights_manifest_sha256": "7819a36f76f6b1681dcab160238be2744735af11b447d8b2a5c1e1a92de63430"
+  },
+  "myelith-4b": {
+    "artefakt_digest_sha256": "ce86c94cdb5c15de4bceb8f3831326411d4b72062b9c79dedfea5c289b713a8c",
+    "bytes": 11355189,
+    "dateien": [
+      "scales.json",
+      "luts.json",
+      "theta_v.json",
+      "cos.lut.bin",
+      "exp.lut.bin",
+      "rsqrt.lut.bin",
+      "sigmoid.lut.bin",
+      "silu.lut.bin",
+      "sin.lut.bin",
+      "softplus_rest.lut.bin",
+      "zerfall_exp.lut.bin"
+    ],
+    "digest_ueber": [
+      "theta_v.json",
+      "model_config.json",
+      "tokenizer.json"
+    ],
+    "theta_v": "0.22.0",
     "weights_manifest_sha256": "4437d872387dc80a820f5373e501089fe4d7a4e91d73a3ce6e015fa5e935baff"
+  },
+  "myelith-8b": {
+    "artefakt_digest_sha256": "71ae0f3d5956079e2e674e662fa9ad0f76c9532f33cb21c6e1afb52d8968817f",
+    "bytes": 11655062,
+    "dateien": [
+      "scales.json",
+      "luts.json",
+      "theta_v.json",
+      "cos.lut.bin",
+      "exp.lut.bin",
+      "rsqrt.lut.bin",
+      "sigmoid.lut.bin",
+      "silu.lut.bin",
+      "sin.lut.bin",
+      "softplus_rest.lut.bin",
+      "zerfall_exp.lut.bin"
+    ],
+    "digest_ueber": [
+      "theta_v.json",
+      "model_config.json",
+      "tokenizer.json"
+    ],
+    "theta_v": "0.22.0",
+    "weights_manifest_sha256": "b24e3b27e245bf40f95be41493de01385ecdcc6f9f3e973d56c88b7ea193b1f7"
   }
 }

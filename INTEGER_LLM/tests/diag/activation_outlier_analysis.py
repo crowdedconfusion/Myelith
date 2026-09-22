@@ -16,7 +16,7 @@ Usage: python activation_outlier_analysis.py
 import sys
 from pathlib import Path
 
-REPO = Path(__file__).parent.parent.parent
+REPO = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO / "calibrate"))
 from src.loader import load_reference_model  # noqa: E402
 
@@ -37,7 +37,7 @@ PROMPTS = [
 def main():
     import torch
 
-    model, _ = load_reference_model(REPO / "models" / "Qwen2.5-0.5B")
+    model, _ = load_reference_model(REPO.parent / "MODELS" / "llm" / "Qwen2.5-0.5B")
     model.eval()
 
     # Per-Kanal-AbsMax für die RMSNorm-Ausgaben (= Linear-Layer-Eingänge).
@@ -63,7 +63,7 @@ def main():
 
     # Tokenizer laden und Kalibrier-Prompts durch das Modell spielen.
     from transformers import AutoTokenizer
-    tok = AutoTokenizer.from_pretrained(REPO / "models" / "Qwen2.5-0.5B")
+    tok = AutoTokenizer.from_pretrained(REPO.parent / "MODELS" / "llm" / "Qwen2.5-0.5B")
     with torch.no_grad():
         for prompt in PROMPTS:
             inputs = tok(prompt, return_tensors="pt").to(model.device)

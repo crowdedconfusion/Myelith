@@ -1,7 +1,7 @@
 # testclient (`myl-testclient`)
 
-> **Version:** 0.37.0
-> **Datum:** 2026-09-14
+> **Version:** 0.37.2
+> **Datum:** 2026-09-21
 > **Status:** Phase 1 und **Phase 3 vollständig**, dazu Punkt 2.1
 > (`vergleich`), **2.2** (Backend-Vergleich innerhalb einer Maschine, seit
 > dem 2026-08-30) und 2.4 (`--repeat`); **Phase 4 vollständig** (4.3 die
@@ -543,6 +543,36 @@ COMPUTE_PIPELINE Phase 1: erstmals über einen aufrufbaren Befehl statt
 über einen Integrationstest.
 
 ## Changelog
+
+### v0.37.2 – 2026-09-21 (ein Modell darf geholt sein, ohne gebaut zu sein)
+
+Der Wächter, der Katalog und Register gegeneinander hält, kannte nur
+`vorgemerkt` als Ausnahme. ⚑ **Mit `myelith-8b` ist ein Zustand
+dazugekommen, den keiner der Statuswerte traf:** Gewichte liegen mit
+fixierter Revision, das Artefakt ist nicht gebaut. `vorgemerkt` heißt
+ausdrücklich „noch nicht geholt", `erprobt` verlangt ein gebautes
+Artefakt.
+
+Neuer Statuswert `geholt`, und der Wächter kennt ihn. ⚑ **An genau einer
+Stelle definiert**, denn beide Prüfungen brauchen dieselbe
+Unterscheidung: einmal als Ausnahme, einmal als Gegenprobe. **Stünden die
+Namen zweimal da, bekäme ein dritter Status irgendwann nur eine der
+beiden mit, und die Gegenprobe ist genau die, die dann stillschweigend
+durchließe.**
+
+**Belegt:** 272 Prüfungen grün; die Gegenprobe nachgestellt, indem
+`geholt` wieder aus der Liste genommen wurde, und der Wächter fällt.
+
+### v0.37.1 – 2026-09-21 (der Modellkatalog liegt an der Wurzel)
+
+Die Quellmodelle und `KATALOG.json` sind nach `MODELS/llm` gezogen;
+zwanzig Stellen in `artefakte.rs` nennen den neuen Ort, darunter die
+Beschaffung, die Bauanleitung und der Wächter, der entscheidet, was
+gelöscht werden darf. ⚑ **Der Wächter ist die Stelle, an der ein
+übersehener Pfad teuer geworden wäre:** Er erlaubt ausschließlich ein
+direktes Unterverzeichnis der beiden Ablageorte, und ein Ort, den es
+nicht mehr gibt, hätte den Schutz für die Gewichte stillschweigend
+aufgehoben. 272 Proben grün.
 
 ### v0.37.0 – 2026-09-14 (jeder Rechenweg der Maschine in einem Lauf)
 
@@ -1370,7 +1400,7 @@ dem alten Wortlaut schlägt er fehl.
 Wer die automatische Beschaffung ablehnt oder wessen Lauf scheitert,
 bekommt eine Anleitung aus zwei Befehlen — und die beiden brauchen
 **verschiedene Arbeitsverzeichnisse**, ohne dass eines dastand. Der
-Download legt nach `INTEGER_LLM/models/…` ab, gilt also von der Wurzel
+Download legt nach `MODELS/llm/…` ab, gilt also von der Wurzel
 aus; der Bau ruft ein Python-Paket auf, das unterhalb von `INTEGER_LLM`
 liegt. Aus der Wurzel ausgeführt endet er in `No module named calibrate`,
 nachgestellt und vor der Behebung reproduziert. **Dazu die Schreibweise:**
@@ -1726,8 +1756,8 @@ bewertet keine Antworten; ein „Benchmark" heißt hier ein Prompt, der
 schwer zu rechnen ist. Fund 15 (RoPE) und Fund 16 (Attention nur auf den
 ersten Key) fielen bei kurzen Prompts kaum auf.
 
-**Modellkatalog (`INTEGER_LLM/models/KATALOG.json`).** Die Angaben zu den
-Modellen standen an drei Stellen: als Tabelle in `models/README.md`, als
+**Modellkatalog (`MODELS/llm/KATALOG.json`).** Die Angaben zu den
+Modellen standen an drei Stellen: als Tabelle in `MODELS/llm/README.md`, als
 Digest in `scale_packs/REGISTER.json` und als `match`-Ausdruck in
 `artefakte.rs`. Die dritte hatte den unangenehmsten Fehler, einen stillen
 Rückfall `_ => "Qwen2.5-0.5B"`: Ein drittes Modell hätte die Gewichte von
@@ -1738,7 +1768,7 @@ Jetzt gibt es **zwei** Quellen, und beide aus einem Grund: `KATALOG.json`
 ist kuratiert und trägt, was jemand entschieden hat (Herkunft, Revision,
 Lizenz, Status, Bemerkung); `REGISTER.json` ist erzeugt und trägt, was
 gemessen wurde (Digest, θ_v). Der Client liest beide, ein Test verlangt,
-dass sie dieselben Modelle führen, und `models/README.md` wird aus beiden
+dass sie dieselben Modelle führen, und `MODELS/llm/README.md` wird aus beiden
 erzeugt (`tools/modelle_liste.py`, mit `--pruefen` für die CI). Die
 Modellauswahl zeigt jetzt Parameterzahl, Herkunft, Lizenz und eine
 Einordnung, statt nur die Downloadgröße.
@@ -1763,7 +1793,7 @@ Zugriffs und greift deshalb auf jedem Dateisystem.
 **Und der Download nimmt jetzt die festgelegte Revision.** Er stand auf
 `repo_id='Qwen/{hf}'` ohne Revision, holte also, was gerade auf `main`
 liegt, und nahm nebenbei an, jedes Modell dieses Projekts komme von Qwen.
-`models/README.md` verlangt seit jeher eine fixierte Revision, ohne die
+`MODELS/llm/README.md` verlangt seit jeher eine fixierte Revision, ohne die
 der Lauf nicht reproduzierbar ist. Ein Modell, das sich zwischen zwei
 Teilnehmern ändert, erzeugt genau den Befund, gegen den dieses Werkzeug
 gebaut ist. Fehlt der Katalogeintrag, bricht der Download ab und nennt

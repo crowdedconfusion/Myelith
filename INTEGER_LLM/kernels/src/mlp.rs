@@ -172,6 +172,27 @@ pub fn silu_produkt(
     silu_lut_offset: i16,
     silu_out_frac: u8,
 ) -> Vec<i16> {
+    // ⛔️ **`zip` bricht an der kuerzeren Seite ab, ohne ein Wort zu
+    // sagen** (Fund 346). Bis zum 2026-09-21 stand hier keine Pruefung,
+    // und sie war auch nicht noetig: Beide Seiten kamen aus derselben
+    // Matrix mit derselben Zwischengroesse.
+    //
+    // ⚠️ **Das gilt nicht mehr.** Die torgesteuerte Norm der
+    // Zustandsschicht ruft dieselbe Funktion mit `z` aus einer
+    // Projektion und dem Rekurrenzausgang, also mit zwei Groessen aus
+    // **verschiedenen** Quellen. Stimmt eine Kopfzahl nicht, liefert
+    // `zip` still ein zu kurzes Ergebnis, und das faellt erst viel
+    // spaeter als eine schlechte Zahl auf.
+    //
+    // 📌 **Eine Annahme, die heute stimmt, gehoert hingeschrieben,
+    // bevor jemand den zweiten Aufrufer baut.**
+    assert_eq!(
+        gate.len(),
+        up.len(),
+        "silu_produkt: {} Torwerte gegen {} Faktoren",
+        gate.len(),
+        up.len()
+    );
     let mut h = Vec::with_capacity(gate.len());
     for (g, u) in gate.iter().zip(up.iter()) {
         let g_dom = rescale(*g as i32, gate_out_frac, silu_in_frac);

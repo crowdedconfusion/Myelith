@@ -1,14 +1,34 @@
 # integer-llm
 
-> **Version:** 0.77.2 (θ_v 0.20.0; kernels 0.56.0, runtime 0.56.0, pipeline 0.15.1)
-> **Datum:** 2026-09-16
-> **Status:** 🎉 **Akzeptanzkriterium ≤ 5 % auf allen drei eingesetzten Modellen erreicht**,
-> auf identischen Folgen gegen die BF16-Baseline gemessen: 0,6B **33,29**
-> (+4,48 %), 4B **19,95** (+1,65 %), 30B-A3B (MoE) **10,42** gegen
-> 10,48. ⛔️ **Das dichte 14B (11,54, +1,16 %) ist am 2026-09-12
-> entfallen**; seine Messung bleibt als Aufzeichnung erhalten. Der Abstand fällt monoton mit der
-> Modellgrösse; ⚑ **bei 435 Positionen ist ein halbes Prozent nicht
-> auflösbar**, das Vorzeichen der letzten Zeile trägt also nicht.
+> **Version:** 0.91.0 (θ_v 0.21.0; kernels 0.65.0, runtime 0.62.0, pipeline 0.15.1)
+> **Datum:** 2026-09-22
+> **Status:** ⚠️ **Das Akzeptanzkriterium ruht auf einer zu kleinen
+> Stichprobe.** Gemessen wurde bisher ueber **4 Sequenzen, 435
+> Positionen**; eine Messung ueber **32 Sequenzen, 3558 Positionen**
+> ergibt andere Zahlen, und zwar nicht um Zehntel:
+>
+> | Modell | 435 Positionen | 3558 Positionen |
+> |---|---|---|
+> | 0,6B (Skalen bis 2026-09-21) | +4,48 % | ⛔️ **+6,84 %, VERFEHLT** |
+> | 0,6B (berichtigte Skalen) | −1,64 % | ✅ **+2,92 %** |
+> | 4B | +1,65 % | noch nicht gemessen |
+> | 8B | +3,75 % | noch nicht gemessen |
+> | 30B-A3B | 10,42 gegen 10,48 | noch nicht gemessen |
+>
+> ⛔️ **Das eingesetzte 0,6B verfehlte das Kriterium**, und die kleine
+> Stichprobe hat es verdeckt. Berichtigte Aktivierungsskalen bringen es
+> auf +2,92 %. ⚠️ **Nur das 0,6B war betroffen:** das 4B reproduziert
+> sein Skalenpaket exakt (0 von 542), das 8B stammt von heute.
+>
+> 📌 **Vier Sequenzen tragen die Aussage nicht.** Sie liessen das alte
+> Artefakt von +4,48 auf +6,84 springen und das neue von −1,64 auf
+> +2,92. Der Kopf dieser Datei sagte bis zum 2026-09-21 „bei 435
+> Positionen ist ein halbes Prozent nicht aufloesbar"; der Fehler ist um
+> ein Vielfaches groesser. **Die Reihe gehoert neu gemessen, bevor
+> wieder eine Ordnung aus ihr gelesen wird.**
+>
+> ⛔️ **Das dichte 14B (11,54) ist am 2026-09-12 entfallen**; seine
+> Messung bleibt als Aufzeichnung erhalten.
 >
 > ⚑ **Seit dem 2026-09-11 liegt die Reihe vollständig in einer
 > Modellfamilie**, und erstmals trägt jede eingesetzte Grösse eine eigene
@@ -279,7 +299,7 @@ Lädt **Qwen3-0,6B** mit fixierter Revision, das Ankermodell des
 Projekts. Für ein anderes Modell steuern `MODEL_ID` und `REVISION` die
 Auswahl (nicht `INTEGER_LLM_MODEL`: Das Skript spricht mit HuggingFace
 und braucht die dortige ID). Die Revisionen stehen in
-`models/KATALOG.json`:
+`MODELS/llm/KATALOG.json`:
 
 ```bash
 MODEL_ID=Qwen/Qwen3-4B   REVISION=1cfa9a7208912126459214e8b04321603b3df60c scripts/fetch_model.sh
@@ -577,8 +597,8 @@ calibrate/.venv/bin/pip install -r calibrate/requirements.txt
 scripts/build_artifacts.sh    # Kalibrierung + Export, von INTEGER_LLM/ aus
 ```
 
-Voraussetzung für den Kalibrierungslauf ist das Quellmodell unter `models/`
-(siehe `models/README.md`).
+Voraussetzung für den Kalibrierungslauf ist das Quellmodell unter
+`MODELS/llm/` (siehe `MODELS/llm/README.md`).
 
 ### Hardware-Teststrategie
 
@@ -626,6 +646,937 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
   volle Paritätstests nur auf GPU-Runnern (nightly oder PR-basiert)
 
 ## Changelog
+
+### v0.91.0 – 2026-09-22 (eine Norm, die `1 + weight` rechnet, und sechs echte Funde davor, die alle nebensächlich waren)
+
+**Das grosse Modell gab Kauderwelsch aus. Die Ursache stand in der
+ersten Stufe der ersten Ebene.**
+
+⛔️ **Fund 423: `Qwen3_5MoeRMSNorm` rechnet `x * (1 + weight)`**, und ihr
+Gewicht ist mit `torch.zeros` angelegt. Der Export nahm das Gewicht, wie
+es dasteht, und normierte damit jede Ebene mit einer Zahl um null statt
+um eins.
+
+⚠️ **Im selben Modell gilt es nicht überall.** `RMSNormGated`, die Norm
+des rekurrenten Zweigs, ist mit `torch.ones` angelegt und rechnet ohne
+Versatz. Am Mittelwert der Gewichte abzulesen: `input_layernorm` 0,031,
+`linear_attn.norm` 0,884.
+
+Behoben über `rms_norm_offset` je Modell, angewandt auf
+`input_layernorm`, `post_attention_layernorm`, `self_attn.q_norm`,
+`self_attn.k_norm` und die finale Norm. Für alle bisherigen Modelle ist
+er null. Gegen das offizielle Modell gemessen, Ebene 0:
+
+| Stufe | ohne Versatz | mit Versatz |
+|---|---|---|
+| `input_layernorm` | 0,9665 | **0,0017** |
+| `in_proj_qkv` | 0,9378 | **0,0018** |
+| torgesteuerte Norm | 2,3471 | **0,0021** |
+| Zweigausgang | 2,4886 | **0,0038** |
+
+📌 **Warum sechs Funde davor nötig waren und keiner half.** Der Fehler
+stand vor allem anderen und wirkte gleichmässig. Jede Stufe liess sich
+gegen eine eigene Referenz halten und war richtig; falsch war die
+Eingabe, die beide teilten. Der Gleitkomma-Nachbau trug denselben
+Fehler wie der Rechenpfad und bestätigte ihn deshalb. **Ein Nachbau
+prüft die Umsetzung, nicht die Annahme.** Gefunden hat ihn erst der
+Lauf gegen das offizielle Modell.
+
+**Die sechs Funde davor sind echt und bleiben behoben:**
+
+- ⛔️ **417:** SiLU als Tabelle über `x` statt als Zerlegung
+  `x * sigmoid(x)`. Das Eingangsraster 1/64 löschte 7016 von 8192
+  Faltungskanälen aus, weil `q` und `k` dort bei zwei Rasterschritten
+  liegen. Neu: `integer_math::silu_zerlegt`. 📌 *Eine Tabelle über `x`
+  quantisiert `x`; eine, die nur einen Faktor liefert, lässt `x`
+  unberührt.*
+- ⛔️ **418:** Eine Ausgangsskala für 32 Wertköpfe, die um Faktor 1050
+  auseinanderliegen, mit einer Normierung dahinter. Jetzt eine Skala je
+  Kopf, aus dessen eigenem Grösstwert. 📌 *Eine Normierung hinter einer
+  geteilten Skala ist ein Rauschverstärker.*
+- ⛔️ **419:** `rmsnorm_i16` ohne Epsilon. Für den Residualstrom
+  vernachlässigbar, für einen Wertkopf mit Effektivwert 1,9e-6 der ganze
+  Nenner. Neu: `rmsnorm_i16_mit_eps`, gespeist aus `rms_norm_eps` je
+  Modell. 📌 *Eine Annahme über Grössenordnungen gilt für den Zweig, für
+  den sie geprüft wurde.*
+- ⛔️ **420:** Die kalibrierte Skala des Modulausgangs auf den
+  Zwischenstand davor angewandt; vierzig Werte je Token in der
+  Sättigung. Jetzt eine harte Schranke `sqrt(d) * max|gamma|`, ganz
+  ganzzahlig. 📌 *Eine kalibrierte Skala gilt an der Stelle, an der
+  gemessen wurde.*
+- ⛔️ **421:** Eine Faltungsskala für `q`, `k` und `v`, obwohl `v`
+  zwanzigmal grösser ist und `q` und `k` gleich danach auf
+  Einheitslänge gebracht werden. Jetzt eine Schranke je Kanal, im Lader
+  aus dem Artefakt gerechnet. 📌 *Ein Tensor ist noch keine gemeinsame
+  Grösse.*
+- ⛔️ **422:** Das Achtsamkeitstor mit `attn_out_frac` statt `q_frac`
+  gelesen, vier Bit daneben. Aus einem nahezu binären Schalter wurde
+  eine Schwankung zwischen 0,27 und 0,73. 📌 *Ein Tor, das nicht mehr
+  schaltet, sieht aus wie ein Tor.*
+- ⚠️ **424:** `faltungsskala_ergaenzen` läuft nur im
+  Kalibrierungspfad, die Skala fehlt also im Skalenpaket. Die Forderung
+  im Lader entfällt, da die Schranke seit 421 ohnehin abgeleitet wird.
+
+**Messreihe des rekurrenten Zweigs, Ebene 0, gegen die Referenz:**
+
+| Messgrösse | Start | nach 417 | nach 421 |
+|---|---|---|---|
+| Rekurrenzausgang | 0,3446 | 0,1270 | **0,0169** |
+| torgesteuerte Norm | 0,7004 | 0,2199 → 0,0809 | **0,0190** |
+
+287 Kernproben grün.
+
+### v0.90.0 – 2026-09-21 (die schlechteste Zahl der Reihe war ein Messfehler, und die beste Nachricht kommt mit einer schlechten)
+
+`runtime` **0.61.0**. Der Neubau nach dem θ_v-Sprung hat das
+Skalenpaket des 0,6B widerlegt, und die Folgen reichen weiter als
+erwartet.
+
+#### ⛔️ Die +4,48 % des 0,6B waren ein Artefakt
+
+| Artefakt | Perplexitaet | gegen BF16 31,86 | Trainingsprobe |
+|---|---|---|---|
+| alte Paketskalen | 33,29 | **+4,48 %** | Verlust 8,00 nach 0,47 |
+| **berichtigte Skalen** | **31,34** | **−1,64 %** | Verlust 7,99 nach 7,90 |
+
+⚑ **Mit korrekt gemessenen Aktivierungsskalen liegt das kleinste Modell
+UNTER der Gleitkomma-Referenz.** Sechs Prozentpunkte Unterschied, weit
+jenseits der Auflösung von 435 Positionen.
+
+⚠️ **Nur das 0,6B ist betroffen.** Das 4B reproduziert sein Paket exakt
+(0 von 542, gegen eine echte Vollkalibrierung), das 8B stammt von
+heute. Fuer das 30B steht der Beleg aus, solange sein Neubau laeuft.
+
+📌 **Eine Ordnung, die auf einer falschen Zahl beruhte, wird nicht durch
+eine neue Ordnung ersetzt, sondern gestrichen.** Die Aussage ueber die
+Monotonie der Reihe faellt damit in beide Richtungen.
+
+#### ⛔️ Und dieselbe Berichtigung bricht die Trainingsprobe
+
+Derselbe Code, andere Skalen, umgekehrtes Ergebnis. Der Mechanismus ist
+sichtbar: Statt 3,74 Millionen bewegen sich nur noch **1,02 Millionen**
+Gewichte. Die groeberen (richtigen) Skalen runden Gradienten auf null.
+
+⚠️ **Die Schwelle der Probe wird NICHT angepasst.** Sie sagt etwas
+Richtiges: Der Trainingspfad haengt an feinen Aktivierungsskalen, und
+das stand bisher hinter einem veralteten Paket verborgen. Eine Schwelle
+zu verschieben hiesse, die Zahl zu waehlen, die schmeichelt.
+
+#### Was belegt ist und was nicht
+
+⚑ **Belegt:** Zwei Vollkalibrierungen sind byteweise gleich, also ist
+die Kalibrierung deterministisch. Das 4B reproduziert. Der A/B ueber
+beide Artefakte gibt die Tabelle oben.
+
+⛔️ **Nicht belegt, und die erste Zuschreibung war falsch:** Die
+Gammaentzerrung (Fund 336) erklaert es **nicht**. Sie betrifft einen
+Kanal in der letzten Ebene, die Abweichungen verteilen sich ueber die
+Ebenen 0 bis 27. Entzerrung und Paket stammen aus demselben Commit, und
+die einzige spaetere Aenderung an ihr war ein Symbolwechsel im
+Kommentar. **Die Herkunft der alten Paketskalen liess sich aus der
+Versionsgeschichte nicht klaeren**, und das steht hier so, statt eine
+passende Geschichte zu bekommen.
+
+⚑ **Nebenbei belegt:** Die Entzerrung ist nicht optional. Abgeschaltet
+bricht der Export mit „1 Wert wuerde saettigen, groesster Betrag 192 >
+127".
+
+#### 📌 Und eine Tautologie, zweimal gemeldet
+
+Die erste Pruefung „4B, 8B, 30B: 0 Abweichungen" verglich ein **aus dem
+Paket gebautes** Artefakt mit seinem eigenen Paket. **Eine Null, die
+nichts pruefen kann, sieht aus wie eine Entwarnung.** Erst eine echte
+Vollkalibrierung traegt die Aussage.
+
+### v0.89.0 – 2026-09-21 (ein Skalenpaket, das eine aeltere Rechnung einfror, und niemand haette es gemerkt)
+
+`kernels` **0.64.0**, `runtime` **0.60.0**. Der θ_v-Sprung machte alle
+Artefakte ungueltig, und der erste Neubau legte einen Fund frei, der
+nichts mit der Zustandsschicht zu tun hat.
+
+#### ⛔️ Der Befund
+
+Das neu kalibrierte `myelith-0.6b` wich in **105 von 422 Skalen** von
+seinem Skalenpaket ab, und zwar **alle 105 nach oben**.
+
+⚑ **Ein Skalenpaket ersetzt den einzigen nichtdeterministischen
+Bauschritt** (Fund 32). Weicht es von dem ab, was eine Neuberechnung
+ergaebe, ersetzt es ihn nicht mehr, sondern **friert eine aeltere
+Rechnung ein**, und jeder Bau uebernimmt sie.
+
+⛔️ **Und das faellt von allein nie auf**, weil jeder Bau das Paket
+nimmt: **Der Weg, auf dem man es merken wuerde, wird nie gegangen.**
+Sichtbar wurde es nur, weil der θ_v-Sprung das Paket ungueltig machte
+und ein Bau ausnahmsweise voll kalibrierte.
+
+#### Die Ursache, der Reihe nach ausgeschlossen
+
+| Verdacht | Befund |
+|---|---|
+| die neuen `stats.py`-Haken | nein, alle neuen Schluessel beginnen mit `linear_attn.` und treffen in einem dichten Modell nichts |
+| Kalibrierkorpus geaendert | nein, die Cache-Datei ist unveraendert |
+| Nichtdeterminismus | nein, **zwei Vollkalibrierungen sind byteweise gleich**, 0 Unterschiede im ganzen Artefakt |
+| die Kalibrierung insgesamt | nein, **das 4B reproduziert sein Paket exakt**, 0 von 542 |
+
+⚑ **Es ist die Entzerrung der Normgewichte (Fund 336).** Sie verschiebt
+Gewichtsmasse aus einer Norm in die Folgematrix, wenn ein Kanal die
+int8-Grenze sprengt, und sie laeuft **vor** der Aktivierungsstatistik.
+Das `myelith-0.6b` hat **einen** solchen Kanal, das `myelith-4b`
+**keinen**. Das Paket des 0,6B stammt damit aus der Zeit vor diesem
+Schritt; das des 4B ist unberuehrt.
+
+📌 **Ein systematisches Vorzeichen ueber 105 Werte ist kein Rauschen,
+sondern ein Hinweis stromaufwaerts.** Alle groesser, keine kleiner: Das
+war der Faden.
+
+#### Die Probe, die das kuenftig faengt
+
+`tests/test_skalenpaket_reproduzierbar.py` rechnet die Skalen neu und
+haelt sie gegen das Paket.
+
+⚠️ **Sie gehoert nicht zu den schnellen Proben**, denn sie rechnet den
+Korpus durch (rund zwei Minuten beim 0,6B). Sie gehoert vor die
+Verwendung eines Pakets und in jeden θ_v-Sprung.
+
+📌 **Eine Abkuerzung, die nie gegen den langen Weg gehalten wird, ist
+keine Abkuerzung, sondern eine zweite Wahrheit.**
+
+#### ⚑ Und die Konformitaetsvektoren wurden bewusst NICHT sofort erneuert
+
+Sie fielen nach dem Neubau auf 17/48, und sie werden bei einem
+θ_v-Sprung planmaessig miterzeugt. **Sie waren aber das Einzige, was
+den Unterschied sichtbar machte.** Sie zu ueberschreiben, bevor der
+Befund verstanden ist, haette ihn zugedeckt.
+
+### v0.88.0 – 2026-09-21 (θ_v 0.21.0: zwei neue Tabellen, und eine davon passte nicht in ihren Typ)
+
+`kernels` **0.64.0**, **θ_v 0.21.0**. Die Zustandsschicht braucht
+`sigmoid` und `softplus`; beide sind jetzt Teil des Vertrags, und die
+zweite hat den Entwurf verschoben.
+
+⛔️ **Alle Artefakte sind damit ungueltig und werden neu gebaut.** Der
+Lader vergleicht die θ_v-Fassung zeichengenau, und das Skalenpaket ist
+an sie gebunden. **Das ist der Preis und er war eingeplant.**
+
+#### ⚑ Beide Tabellen liegen in JEDEM Artefakt
+
+Auch in einem ohne Zustandsebenen. **θ_v ist ein Vertrag:** Eine
+bedingte Tabelle hiesse, dass „θ_v 0.21.0" zweierlei bedeutet. Kosten:
+32 KiB fuer Sigmoid, 32 KiB fuer den Softplus-Rest.
+
+#### ⛔️ Der Zerfall braucht 30 Bruchbits, und die passen nicht
+
+`g = exp(-exp_A * softplus(a + dt_bias))`, und `exp_A` reicht bis
+**105,2**. Bei 8 Bruchbits ist die kleinste Stufe 1/256, mal 105 also
+0,41, und `g` spraenge um den Faktor 0,66.
+
+Gemessen ueber alle 30 Zustandsebenen, mit dem Kriterium
+`|dg| * min(N, 1/(1-g)) < 2^-8` bei `N = 262144`:
+
+| out_frac | gewichteter Fehler | |
+|---|---|---|
+| 8, 14 | 1,0 | zu knapp |
+| 20 | 4,2e-1 | zu knapp |
+| 26 | 8,5e-3 | zu knapp |
+| **30** | **4,2e-4** | traegt |
+
+⚠️ **Und dann passte die Tabelle nicht in `int32`.** Festkomma mit 30
+Bruchbits reicht dort nur bis zum Wert **2**; Softplus geht ueber den
+gemessenen Eingangsbereich bis 32. Der Bau brach mit
+`struct.error: 'i' format requires -2147483648 <= number`.
+
+#### ⚑ Die Zerlegung loest es exakt
+
+```
+softplus(x) = max(x, 0) + log(1 + exp(-|x|))
+                grob          fein, aus der Tabelle
+```
+
+Der zweite Term liegt **immer** in `(0, 0.693]`, braucht also
+`0,693 * 2^30 = 7,4e8` und passt bequem. **Und er ist genau der Teil,
+der die Feinheit braucht:** Fuer stark negative `x` ist er der ganze
+Softplus. Der grobe Teil ist exakt und kostet keine Tabelle.
+
+📌 **Eine Umformung, die den feinen vom groben Teil trennt, ist mehr
+wert als ein breiterer Typ.**
+
+⚑ **Die Tabelle laeuft ueber `|x|` und ist halb so lang** (8192 statt
+16384). Oberhalb ihres Endes ist der Rest kleiner als eine letzte
+Stelle (`exp(-32) = 1,3e-14` gegen `2^-30 = 9,3e-10`) und damit null.
+
+**Gemessen am gebauten Artefakt:** groesster Abstand zur Referenz ueber
+den gemessenen Eingangsbereich **0,50 letzte Stellen von 2^-30**, also
+das theoretische Minimum einer halben Stufe.
+
+#### Die Proben dazu
+
+⚑ **Die schaerfste braucht keine Vergleichswerte:**
+`softplus(x) - softplus(-x) = x`, exakt. Der Resthalt faellt heraus,
+weil beide Seiten denselben Betrag nachschlagen. **Stimmt sie nicht,
+ist die Zerlegung falsch umgesetzt**, ganz gleich wie gut die Tabelle
+ist.
+
+**Gegengeprueft mit zwei Mutationen:** `max(x,0)` vergessen laesst vier
+Proben fallen, den Betrag vergessen zwei.
+
+279 Kernproben gruen.
+
+#### Und zwei Stellen, die ein Format doppelt wussten
+
+Export und Paketleser hatten `int16` fest verdrahtet, im Packformat und
+im Feld `dtype`. Das ging gut, solange jede Tabelle int16 war. ⚑ **Die
+Breite kommt jetzt aus θ_v**, an beiden Stellen.
+
+### v0.87.0 – 2026-09-21 (eine Ebene sagt jetzt selbst, womit sie mischt)
+
+`kernels` **0.63.0**, `runtime` **0.59.0**. Die Laufzeit kann hybride
+Modelle tragen: 30 rekurrente Ebenen und 10 mit voller Achtsamkeit im
+selben Modell.
+
+#### ⚑ `Mischer`, und warum kein zweites `Option`-Feld ging
+
+`TransformerLayer` traegt statt der vier Achtsamkeitsmatrizen jetzt ein
+Feld `mischer`, entweder `Achtsamkeit` oder `Zustand`.
+
+⛔️ **Der naheliegende Weg war versperrt.** Ein zweites `Option`-Feld
+neben den Achtsamkeitstensoren ginge nicht, denn eine Zustandsebene hat
+**kein** `q_proj`; man muesste auch diese optional machen, und dann
+waeren „beides" und „keines" darstellbar. Genau das Argument, mit dem
+`Feedforward` schon ein Aufzaehlungstyp ist.
+
+⚑ **Der Zugriff bricht ab statt auszuweichen.** `layer.achtsamkeit()`
+knallt bei einer rekurrenten Ebene mit einer Meldung, die den Grund
+nennt. Wer dort landet, hat die Ebenenart nicht geprueft, und eine
+stillschweigende Ersatzantwort waere eine falsche Zahl ohne Meldung.
+
+#### Belege fuer den Umbau
+
+| | |
+|---|---|
+| Feldzugriffe umgestellt | 42 in sieben Dateien, mechanisch |
+| Laufzeitproben | **126 gruen** |
+| Kernproben | **284 gruen** |
+| **Konformitaet 0,6B** | ⚑ **48/48** |
+
+⚑ **Die 48/48 sind der eigentliche Beleg.** Proben zeigen, dass es
+uebersetzt und laeuft; die Konformitaetsvektoren zeigen, dass ein
+vorhandenes Modell **dieselben Zahlen** rechnet. Bei einem Umbau, der
+den Trainingspfad mitnimmt, ist das der Unterschied zwischen „gruen"
+und „unveraendert".
+
+#### Der Zustandsspeicher, und was ihn vom KV-Speicher unterscheidet
+
+⚑ **Er waechst nicht mit der Folge.** Der KV-Speicher legt je Position
+einen Schluessel und einen Wert ab; der Zustand einer rekurrenten Ebene
+ist eine Matrix fester Groesse, ganz gleich ob zehn oder
+zweihunderttausend Token gelaufen sind. **Das ist der Grund, warum
+diese Bauart lange Folgen traegt**, und es steht als Probe da und nicht
+nur als Satz.
+
+⚑ **Belegt werden nur die rekurrenten Ebenen.** Ein Zustand je Kopf
+sind 128 KiB, bei 32 Koepfen 4 MiB je Ebene; fuer alle 40 zu belegen
+kostete 40 MiB fuer nichts. Ein Platztisch bildet den absoluten
+Ebenenindex ab, und der Zugriff auf eine achtsame Ebene bricht ab.
+
+Sechs Proben, darunter „der Speicher waechst nicht mit der Folge" und
+zwei Trennproben (Koepfe, Ebenen).
+
+### v0.86.0 – 2026-09-21 (das Tor braucht keinen neuen Kern, und der Massstab hat drei eigene Fehler gefunden)
+
+`kernels` **0.62.0**. Die torgesteuerte Norm und die GQA-Auffaecherung
+sind geprueft, und beide brauchen **keinen neuen Rechenweg**.
+
+#### ⚑ Was das Projekt schon hat
+
+Die Vorlage rechnet „Norm zuerst, Tor danach":
+`rmsnorm(x) * gamma * silu(z)`. Das ist die vorhandene RMSNorm, gefolgt
+von der vorhandenen `silu_produkt`. Die GQA-Auffaecherung (16
+Schluesselkoepfe auf 32 Wertkoepfe) ist reine Indexierung.
+
+⚠️ **Damit ist die Zustandsschicht rechnerisch vollstaendig.** Was
+bleibt, ist Verdrahtung, kein neues Rechnen.
+
+#### ⛔️ `silu_produkt` hatte eine latente Luecke, und sie wird jetzt scharf
+
+Die Funktion lief ueber `gate.iter().zip(up.iter())` **ohne
+Laengenpruefung**. Das war harmlos, solange beide Seiten aus derselben
+Matrix mit derselben Zwischengroesse kamen.
+
+⚠️ **Die torgesteuerte Norm ruft sie mit `z` aus einer Projektion und
+dem Rekurrenzausgang**, also mit zwei Groessen aus verschiedenen
+Quellen. Stimmt eine Kopfzahl nicht, liefert `zip` still ein zu kurzes
+Ergebnis (Fund 346). 📌 **Eine Annahme, die heute stimmt, gehoert
+hingeschrieben, bevor jemand den zweiten Aufrufer baut.**
+
+#### ⛔️ Drei Fehler in meinem eigenen Massstab
+
+**Erstens: Stellen ohne Vollausschlag sind keine Aussage.** Die
+torgesteuerte Norm sah mit 4,50 Stellen achtmal schlechter aus als die
+Rekurrenz mit 0,55. Ihre Ausgabe ist aber auch zehnmal groesser:
+**0,18 Prozent gegen 0,21 Prozent**, also minimal besser.
+
+**Zweitens: ein Pruefeingang ohne die gemessene Amplitude prueft eine
+andere Schicht.** Die Faltungsprobe lief mit `randn`, also bei etwa
+drei. Die Aktivierungsstatistik misst fuer `in_proj_qkv` in Ebene 0
+**39,0**, also ein Zehntel der echten Amplitude. Der Pruefeingang kommt
+jetzt aus `scales.json`.
+
+**Drittens: eine erfundene Schwelle ist keine Herleitung.** „Unter
+einem Prozent" stand da, weil es sich gut anhoert. Der Fehler dieser
+Stufe kommt aber fast ganz aus der int8-Quantisierung der Gewichte, und
+die ist die Grundlage des ganzen Projekts.
+
+⚑ **Das Urteil misst jetzt gegen den Boden:** dieselbe Rechnung mit
+quantisierten Gewichten, sonst exakt.
+
+| | Stellen | vom Vollausschlag |
+|---|---|---|
+| Boden (nur int8-Gewichte) | 11,39 | 1,656 % |
+| voller Ganzzahlpfad | 11,09 | 1,613 % |
+
+**Das 0,97-fache des Bodens.** Die Umsetzung fuegt nichts ueber das
+Unvermeidliche hinaus hinzu.
+
+📌 **Die richtige Frage ist nicht „ist der Abstand klein", sondern
+„kostet meine Umsetzung mehr als das, was ohnehin bezahlt wird".**
+
+277 Kernproben gruen.
+
+### v0.85.0 – 2026-09-21 (die kausale Faltung, ganzzahlig, mit einer Fassung statt zweien)
+
+`kernels` **0.61.0**, neues Modul `faltung`. Vor der Rekurrenz laufen
+`q`, `k` und `v` gemeinsam durch eine tiefenweise Faltung ueber vier
+Stellen, gefolgt von SiLU.
+
+#### ⚑ Eine Fassung fuer Vorlauf und Dekodieren, mit Absicht
+
+Die Faltung braucht die letzten drei Eingaenge; beim Dekodieren kommt je
+Aufruf ein Token, also steht der Rest im `Faltungsfenster`.
+
+⛔️ **Ein Vorlauf, der die ganze Folge auf einmal faltet, waere
+schneller und eine zweite Umsetzung derselben Rechnung.** Genau dort
+entstehen Unterschiede zwischen Vorlauf und Dekodieren, die niemand
+sieht, weil beide fuer sich plausibel aussehen. Der Vorlauf ruft
+dieselbe Funktion in einer Schleife.
+
+⚠️ **Der Anfang einer Folge ist null und nicht der erste Wert**, wie bei
+der Vorlage mit `padding = KERN - 1`.
+
+#### Gemessen gegen die Fremdimplementierung
+
+Mit den echten Gewichten der Ebene 0 (8192 Kanaele, Kern 4), 64 Kanaele
+ueber 24 Schritte: **groesster Abstand 0,80 Stellen von 2^-8**, also
+unter einer letzten Stelle.
+
+#### ⚑ Fuenf Proben, und beide Fehler, vor denen sie warnen, eingebaut
+
+| Mutation | Wirkung |
+|---|---|
+| Fenster **vor** der Summe nachziehen | 3 Proben fallen |
+| Fensterbasis ohne Kanalversatz | `ein_kanal_laesst_die_anderen_in_ruhe` faellt |
+
+📌 **Eine gruene Probe ist kein Beleg, solange sie nicht gebissen hat.**
+Die Verzoegerungsprobe ist die wichtigere von beiden: Ohne sie bliebe
+die Faltung auch dann gruen, wenn das Fenster gar nicht gelesen wuerde.
+
+277 Kernproben gruen.
+
+#### ⚠️ Was hier NICHT bewiesen ist
+
+Die Messung oben prueft **die Arithmetik**, nicht den Rust-Kern. Dass
+der Rust-Kern dieselbe Rechnung macht, sichern seine Proben samt
+Mutationen. **Zwei verschiedene Fragen, zwei verschiedene Belege**, und
+sie zusammenzuwerfen hiesse, eine davon unbeantwortet zu lassen.
+
+### v0.84.0 – 2026-09-21 (die Vorlage tut vor der Rekurrenz zwei Dinge, die der Entwurf nicht hatte)
+
+`kernels` **0.60.0**. Die Fremdschicht wurde als Vorlage gelesen, und
+dabei zeigte sich, dass die Rekurrenz zwar richtig dastand, **der Weg zu
+ihren Eingaengen aber nicht**.
+
+#### ⛔️ Zwei fehlende Schritte, und einer verschiebt den Wertebereich
+
+Die Vorlage bringt `q` und `k` je Kopf und je Token auf **Einheitslaenge**
+(`l2norm`) und skaliert `q` zusaetzlich mit `1/sqrt(kopf_dim)`. Beides
+stand in keiner Zeile des Kernels.
+
+⚑ **Das ist keine Feinheit.** Mit normiertem `k` ist `Summe(S * k)` eine
+Projektion auf einen Einheitsvektor; ohne die Normierung haengt sie an
+der Laenge von `k`. Die Breitenmessung haette also einen anderen
+Gegenstand gemessen als den, der spaeter rechnet.
+
+📌 **Eine Formel aus einem Aufsatz ist nicht die Schicht.** Wer eine
+fremde Schicht nachbaut, liest ihren ganzen Vorwaertspass und nicht nur
+die Gleichung, die den Namen traegt.
+
+#### Und daraus folgt eine eigene Breite
+
+⛔️ **Normieren schrumpft jede Komponente um `sqrt(kopf_dim)`.** Ein
+Einheitsvektor ueber 128 Stellen hat typische Komponenten um 0,088; bei
+`2^-8` sind das 22 Einheiten, also rund vier Prozent Auflösung je
+Komponente. Gemessen gegen die Rekurrenz in doppelter Breite:
+
+| Bruchbits von `q`, `k` | groesster Abstand |
+|---|---|
+| 8 | 1,90 |
+| 10 | 0,76 |
+| **12** | **0,55** |
+| 14, 16 | 0,55 |
+
+⚑ Ab zwoelf saettigt der Abstand; was bleibt, kommt aus Zustand und
+Zerfall. Daher `NORM_FRAC = 12`, und die Zahl deckt sich mit dem Grund:
+`log2(sqrt(128))` sind 3,5 Stellen, also `8 + 3,5` aufgerundet.
+
+⚠️ **Ohne diese Messung waere es ein stiller Qualitaetsverlust
+geworden**, denn 8 Bit rechnen genauso, nur schlechter.
+
+#### Gemessen: der Abstand saettigt
+
+| Laenge | groesster Abstand |
+|---|---|
+| 32 | 0,57 |
+| 128 | 0,60 |
+| 256 | 0,65 |
+
+**Achtfache Laenge kostet das 1,15-fache.** ⚠️ **Hochgerechnet und nicht
+gemessen:** Bei diesem Wachstum bleibt der Abstand auch ueber das volle
+Fenster unter einer Stelle. Die volle Laenge ist in einer Simulation
+nicht zu rechnen; sie gehoert in den Rechenpfad.
+
+#### ⛔️ Und die Gegenprobe fand einen Fehler im Urteil selbst
+
+Der beste Fall kam als der schlimmste heraus: Bei einem **bitgleichen**
+Lauf ist der Abstand bei jeder Laenge null, das Verhaeltnis
+`letzter/erster` wird `inf`, und die Meldung lautete „waechst mit der
+Laenge".
+
+📌 **Ein Verhaeltnis braucht einen Nenner**, und wo keiner ist, gehoert
+der Fall vorher abgefangen. Jetzt unterscheidet das Urteil drei Faelle:
+bitgleich, Wachstum aus der Null heraus (Reihe verlaengern) und ein
+echtes Verhaeltnis. **Gegengeprueft** mit 28, 22 und 20 Bruchbits.
+
+#### Belege
+
+- 272 Kernproben gruen; drei davon mussten mitgezogen werden, weil sie
+  den Einheitsschluessel in der alten Auflösung gaben. ⚑ **Sie haben
+  gebissen**, und das ist der Zweck.
+- Die Bauzusicherung heisst jetzt
+  `ZUSTAND_FRAC >= NORM_FRAC + WERT_FRAC`.
+- `tests/diag/zustandsschicht_referenz.py` neu. ⚑ Sie liest die vier
+  Breiten **aus dem Kernel**, statt sie zu wiederholen.
+
+### v0.83.0 – 2026-09-21 (die Zustandsbreite steht auf einer Messung, und die alte Begruendung war falsch)
+
+`kernels` **0.59.0**. Die Breiten der Zustandsschicht sind jetzt am
+Zielmodell gemessen statt am Modell geschaetzt, und dabei sind drei
+Fehler aufgefallen, alle drei in meiner eigenen Vorarbeit.
+
+#### Die Spanne von `a`, endlich gemessen
+
+Der Zerfall lautet `g = exp(-exp(A_log) * softplus(a + dt_bias))`, und
+`a` kommt zur Laufzeit aus einer Projektion. Die Messung rechnete
+deshalb bisher mit `a = 0` und einer einzigen Ebene und nannte das
+ausdruecklich eine Schranke, keine Verteilung.
+
+⚑ **Der Artefaktbau liefert genau das Fehlende.** Die
+Aktivierungsstatistik haelt je Ebene den beobachteten
+Betragsgrosstwert des `in_proj_a`-**Ausgangs**, gesammelt ueber den
+ganzen Kalibrierkorpus. Gemessen ueber alle 30 Zustandsebenen:
+**6,2 bis 14,4**, je nach Ebene.
+
+⚠️ **Die angenommene Spanne war zu eng.** Sie lautete ±8; Ebene 37
+liegt bei 14,4.
+
+#### ⛔️ Die Formel multiplizierte, wo sie haette minimieren muessen
+
+Die alte Begruendung fuer 35 Bruchbits lautete `log2(N/(1-g))`. ⚑
+**Richtig ist `eps * min(N, 1/(1-g))`:** Eine Folge kann nur so weit
+zurueckwirken, wie sie **lang** ist ODER wie weit das Gedaechtnis
+reicht, nicht beides multipliziert. Fuer das volle Fenster (262 144)
+sind das **25 Bit**, nicht 35.
+
+📌 **Neun Bruchbits fuer einen Fall, den es nicht gibt.**
+
+#### ⛔️ Der haerteste Pruefpunkt lag nicht, wo ich ihn suchte
+
+Die Reihe pruefte auf `max(zerfaelle)`, also auf dem Zerfall am
+naechsten an eins. Das klingt nach dem schaerfsten Fall und ist der
+**harmloseste**: Bei `g = 0,999999998980` zerfaellt ueber das ganze
+Fenster nichts Messbares, und jede Darstellung rundet ihn auf glatt
+eins. Eng wird es bei `g = 1 - 1/N`.
+
+📌 **Ein Extremwert ist nicht automatisch der schlimmste Fall.**
+Welcher es ist, sagt die Fehlerformel und nicht die Anschauung.
+
+#### ⛔️ Und eine Rundung hat den Messgegenstand vernichtet
+
+Die Pruefpunkte liefen durch `round(g, 6)`. Der langsamste gemessene
+Zerfall ist 0,999999998980 und wird damit zu **exakt 1,0**. Die Reihe
+verglich danach „kein Zerfall" mit „kein Zerfall", **jede Zeile wurde
+null**, und die Schlussrechnung teilte durch null.
+
+⛔️ **Schlimmer als der Abbruch war die Tabelle davor:** Sie zeigte
+lauter Nullen, und darunter stand ein fester Urteilstext, der das
+Gegenteil behauptete („bei 24 Bruchbits bleiben noch Abweichungen").
+📌 **Ein Urteil, das seine eigene Messung nicht liest, ist keines.**
+Das Urteil wird jetzt aus der Tabelle gewonnen.
+
+#### Die Breiten, die daraus folgen
+
+| | alt | neu | Beleg |
+|---|---|---|---|
+| `ZUSTAND_FRAC` | 28 | **28** | gemessen reichen 24; in `i64` kosten vier Stellen Reserve nichts |
+| `ZERFALL_FRAC` | 35 | **28** | ab 26 Bit hoechstens eine Stelle Abstand, 28 die erste saubere Null; analytisch 25 |
+
+⚑ **Die Bauzusicherung `ZERFALL_FRAC > ZUSTAND_FRAC` ist entfallen**,
+denn sie verglich zwei Groessen, die nichts miteinander zu tun haben.
+An ihrer Stelle steht die Schranke, die wirklich gilt:
+`ZERFALL_FRAC >= KONTEXT_BITS + WERT_FRAC - 1`. **Gegengeprueft:** Mit
+24 statt 28 uebersetzt die Kiste nicht, mit der Meldung, die den Grund
+nennt.
+
+272 Kernproben gruen.
+
+### v0.82.0 – 2026-09-21 (das grosse Modell laesst sich exportieren, und der Lader weist es ab)
+
+Der Artefaktbau kann die hybride Bauart des `myelith-35b-a3b`
+vollstaendig exportieren. ⚑ **θ_v bleibt auf 0.20.0**, bewusst: Was
+entsteht, ist ein pruefbarer Gegenstand, kein rechenbares Modell. Der
+Lader weist es ab, und genau das ist der Zweck dieses Schritts.
+
+#### Sieben Handgriffe, und die Liste hatte nur sechs
+
+| | Was | Beleg |
+|---|---|---|
+| 1 | `normiere_namen()`: `model.language_model.` nach `model.` | 5 Faelle, dazu der ganze Export |
+| 2 | `target_keys` um `linear_attn.` und `mlp.shared_expert` erweitert | 540 und 320 Tensoren im Artefakt |
+| 3 | Ausschlussliste fuer `visual.` und `mtp.` (Fund 416) | 352 von 1045 Tensoren draussen, 0 im Artefakt |
+| 4 | Eintrag `myelith-35b-a3b`, gelesen aus dem verschachtelten `text_config` | `layer_types` deckungsgleich mit den echten 40 Eintraegen |
+| 5 | `bereite_rekurrenzparameter()`: `A_log` nach `exp_A`, `dt_bias` je Element, `conv1d.weight` entfaltet | 30 von 30 Zustandsebenen tragen `exp_A` |
+| 6 | Haken fuer `linear_attn.*` in der Statistik | 802 Module gesammelt, 0 ohne Haken |
+| 7 | `AUSGESCHLOSSENE_TEILBAEUME` auf Modulebene gehoben | importierbar, 0,6B baut bitgleich |
+
+⛔️ **Punkt 6 stand in keiner Planung, und er waere teuer geworden.**
+Die Liste der noetigen Aenderungen war aus `quantize.py` gewonnen, also
+aus dem Exportpfad. Die Skalen entstehen aber in `stats.py`, und dort
+traf kein Namensmuster die Zustandsschichten: Der Export waere
+durchgelaufen und haette fuer **240 Tensoren keine Skala** gehabt.
+
+📌 **Wer zaehlt, muss sagen, worin er zaehlt.** Eine Vollstaendigkeit,
+die in einer Datei geprueft wurde, gilt fuer diese Datei. Die Frage
+lautet nicht „habe ich alles gefunden", sondern „welchen Pfad habe ich
+abgesucht, und welche gibt es noch".
+
+⚑ **Punkt 7 ist klein und gehoert trotzdem hierher.** Die
+Ausschlussliste lag als lokale Variable in einem Generator. Eine Probe,
+die sie braucht, haette sie wiederholen muessen, und damit stuende
+dieselbe Angabe an zwei Orten.
+
+#### Das Artefakt, gebaut und nachgezaehlt
+
+| | |
+|---|---|
+| Bau | 47 min (Korpus 43,5 min, Export 3,5 min), **33 GB, 62 679 Dateien** |
+| Quelltensoren | 1045, davon **693 Textpfad**, 352 ausgeschlossen |
+| Artefakt-Tensoren | 31 334, davon 30 720 Experten (40 x 256 x 3) |
+| Speicher | RSS 17,6 GiB statt 67 GB, weil die Gewichte ueber `mmap` kommen |
+
+⚑ **Jeder Quelltensor ist abgehakt, keiner fehlt und keiner ist zu
+viel.** 583 tragen ihren Namen unveraendert; die restlichen 110 sind
+die drei Umformungen, die der Export absichtlich vornimmt: 30 mal
+`A_log` nach `exp_A`, 40 mal `experts.down_proj` in 256 Dateien und 40
+mal `experts.gate_up_proj` in 2 x 256. Alle drei einzeln nachgezaehlt,
+alle vollstaendig. Der einzige Tensor ohne Quellnamen ist `lm_head` in
+int16, 248 320 x 2048 x 2 Bytes, und die Dateigroesse stimmt aufs Byte.
+
+⚑ **Gegenrichtung geprueft:** 0 Tensoren aus `visual.` oder `mtp.`.
+
+#### Das Merkmalstor am echten Gegenstand
+
+Das Artefakt deklariert sechs Merkmale, vier davon kennt dieser Bau
+nicht. Der Lader bricht **vor** dem ersten Gewicht ab und nennt sie:
+
+```
+dieses Artefakt braucht Merkmale, die dieser Bau nicht rechnet:
+ausgangstor, geteilter_experte, teildrehung, zustandsschicht.
+```
+
+⚑ **Und die Gegenprobe, denn ein Tor, das alles abweist, ist keines:**
+Dasselbe Programm laedt das `myelith-8b` und rechnet 36 Layer-Vektoren
+und 3 E2E-Vektoren. ⚠️ **Mit frisch gebauter Binaerdatei geprueft**,
+nachdem eine acht Stunden alte am selben Tag schon einmal ein falsches
+Ergebnis vorgetaeuscht hat.
+
+#### ⛔️ Der Kopf dieser Datei trug eine widerlegte Aussage
+
+Der Eintrag v0.81.0 haelt fest, das 8B breche die Reihe „je kleiner das
+Modell, desto teurer die Quantisierung", und schliesst mit **„Die
+Behauptung im Katalog ist entsprechend berichtigt, nicht
+stehengelassen"**. Der Kopf dieser Datei, gut 600 Zeilen darueber, sagte
+weiter „Der Abstand faellt monoton mit der Modellgroesse" und kannte das
+8B nicht: „auf allen **drei** eingesetzten Modellen".
+
+📌 **Der Satz „ist berichtigt" ist selbst eine Angabe, und niemand hat
+nachgesehen, wo ueberall.** Genau die Regel dieses Projekts, angewandt
+auf den, der sie aufschreibt: **Ein Beleg, den niemand nachgesehen hat,
+ist keiner.** Berichtigt sind der Kopf und die Zaehlung im Katalog.
+
+#### Was noch fehlt, damit es auch rechnet
+
+⚠️ Die groessere Haelfte: der Kernel verdrahtet, der Ebenen-Dispatch,
+der geteilte Experte, das Ausgangstor, die Teildrehung, die Faltung.
+Dazu die offene Messfrage zum Zerfallsbereich. **Erst dann wird θ_v
+angehoben**, und dann werden alle Artefakte neu gebaut.
+
+### v0.81.0 – 2026-09-21 (das mittlere Modell gebaut, und ein Tor für Bauarten, die dieser Bau nicht kann)
+
+`runtime` **0.58.0**. Zwei Dinge: das 8B ist gebaut und gemessen, und das
+Schema kann jetzt sagen, was es braucht.
+
+#### `myelith-8b`: gebaut, wiederholbar, gemessen
+
+| | |
+|---|---|
+| Bau ohne Skalenpaket | 10 min 4 s, 8,8 GB, 811 Dateien |
+| Bau **mit** dem daraus erzeugten Paket | **36 s, bitgleich** |
+| Laden und Rechnen | 36 Layer-Vektoren und 3 E2E-Vektoren in 6,6 s |
+| Perplexität | **13,27 gegen BF16 12,79, also +3,75 %** (Kriterium 5 %), AKZEPTIERT |
+
+⚑ **Der Bau ist damit plattformübergreifend wiederholbar** (Fund 32): 542
+Skalen und 5 LUTs kommen aus dem Paket, hashgeprüft, und der
+nichtdeterministische Gleitkommateil entfällt.
+
+⛔️ **Und die Zahl bricht eine Aussage dieses Projekts.** Der Changelog hält
+fest: je kleiner das Modell, desto teurer die Quantisierung. Das 8B liegt
+mit **+3,75 % schlechter als das kleinere 4B** (+1,65 %). ⚑ **Eine
+Erklärung liegt nahe und ist nicht geprüft:** Die Reihe mischt zwei
+Achsen, denn 0,6B und 4B haben eine **gebundene Einbettung**, 8B und 30B
+nicht. Innerhalb jeder Gruppe fällt der Abstand monoton. ⚠️ Bei 435
+Positionen ist ein Unterschied dieser Größe außerdem nicht sicher
+auflösbar; ein Lauf über 128 Sequenzen würde es entscheiden. **Die
+Behauptung im Katalog ist entsprechend berichtigt, nicht stehengelassen.**
+
+#### Das Schema kann jetzt hybride Bauarten ausdrücken
+
+Elf neue Felder in `ModelDims`, alle mit Vorgabe: die Ebenenarten
+(`layer_types`), die Maße einer rekurrenten Zustandsschicht, ein geteilter
+Experte, gepackte Expertentensoren, die Art des Ausgangstors, die Zahl der
+MTP-Ebenen und die Zahl der gedrehten Stellen.
+
+⛔️ **Bewusst eine Anzahl statt eines Faktors.** Die fremde Konfiguration
+nennt `partial_rotary_factor` als **Gleitkommazahl** (0,25). Dieses Schema
+trägt keine; gebraucht wird ohnehin die Anzahl (`head_dim · Faktor`, bei
+256 also 64). 📌 **Wer ein Verhältnis speichert, das er nie braucht, holt
+sich eine Gleitkommazahl in den Vertrag und eine Multiplikation in den
+Rechenpfad.**
+
+#### ⛔️ Und das eigentliche Stück: ein Merkmalstor
+
+Jedes Artefakt trägt jetzt eine Liste, **was es zum Rechnen braucht**, und
+der Lader hält sie gegen seine eigenen Fähigkeiten. Ein unbekanntes
+Merkmal ist ein **Abbruch mit Namen**, geprüft **vor** dem Einlesen der
+Gewichte.
+
+⚑ **Der Grund ist eine Einsicht, die meine erste Fassung genau falsch
+hatte.** Ein Lader ohne `deny_unknown_fields` **überliest** ein Feld, das
+er nicht kennt. Für eine Beschreibung ist das richtig; für ein Feld, das
+die Rechnung ändert, ist es der teuerste Fehler dieses Projekts: **zwei
+ehrliche Knoten mit verschiedenen Zahlen, ohne Meldung.**
+
+⛔️ **Und die nächste Generation besteht aus solchen Feldern.** Der
+Konfigurationssatz der Qwen4-Vorschau bringt vier Untersysteme, die dieses
+Schema nicht ausdrücken kann: einen vierfach geteilten Residualstrom, eine
+Blockauswahl in der Aufmerksamkeit, eine N-Gramm-Einbettung mit 20
+Millionen Einträgen und Einbettungen je Ebene. **Ein Lader, der davon
+nichts weiß und die Felder überliest, lädt ein Artefakt, das er nicht
+rechnen kann, und merkt es nicht.**
+
+⚑ **Die Liste wird abgeleitet und nicht getippt**, aus der Konfiguration,
+und sie nennt auch Bauarten, die der Rechenpfad **noch nicht kann**. Das
+ist Absicht: Erst wenn der Export sie benennt, kann der Lader sie
+ablehnen. Drei Prüfungen halten die beiden Sprachen zusammen, darunter
+eine, die ausdrücklich verlangt, dass ein ungebautes Merkmal **nicht** in
+der Fähigkeitsliste steht.
+
+**Belegt:** alle vier Artefakte neu gebaut, und in `model_config.json`
+ändert sich **nichts außer dem hinzugekommenen Feld**; Konformität weiter
+**48/48**; das Tor am echten Artefakt gegengeprobt (ein verfälschtes wird
+abgelehnt, das echte lädt); 878 Prüfungen grün, drei Mutationen gegen das
+Tor beißen, Gleitkomma-Audit ohne Treffer, Clippy sauber.
+
+### v0.80.0 – 2026-09-21 (zwei Nichtlinearitäten für die Zustandsschicht)
+
+`kernels` **0.58.0**. `sigmoid` und `softplus`, je Erzeuger und
+Nachschlagefunktion. Sie fehlen der rekurrenten Zustandsschicht an drei
+beziehungsweise einer Stelle: `beta = sigmoid(b)`, das Tor am
+Attention-Ausgang, das Tor des geteilten Experten, und im Zerfall
+`g = -exp(A_log) · softplus(a + dt_bias)`.
+
+⚑ **Softplus hat dieselbe Randfortsetzung wie die SiLU, und das ist kein
+Zufall.** Beide laufen für große positive `x` gegen `x` und für große
+negative gegen null, mit einem Fehler der Größenordnung `exp(-|x|)`.
+⛔️ **Deshalb steht die Regel jetzt einmal da und nicht zweimal**
+(`nachschlagen_identitaet_oben`); beide zeigen darauf. 📌 **Genau so ist
+Fund 349 entstanden**, als Vorwärts- und Rückwärtspass an ihren Rändern
+Verschiedenes sagten.
+
+⚑ **Sigmoid setzt anders fort**, nämlich auf Konstanten (oben eins, unten
+null), weil es beschränkt ist. Eine eigene Probe hält fest, dass es eben
+**nicht** wie Softplus fortsetzt: Ohne sie bestünde die Probe darüber
+auch dann, wenn alle drei dasselbe täten.
+
+⚑ **Und eine eigene Tabelle statt einer Ableitung aus der SiLU**, mit
+demselben Argument wie bei der SiLU-Ableitung: `σ(x) = silu(x)/x` ist bei
+`x = 0` undefiniert und in der Umgebung unbrauchbar, also genau dort, wo
+die meisten Werte liegen.
+
+**Die stärkste der neuen Prüfungen ist eine Identität:**
+`silu(x) = x · σ(x)`, über zwei **unabhängig** erzeugte Tabellen.
+⛔️ **Sie ist beim ersten Lauf gefallen**, und die Zahl war lehrreich: bei
+`x = 6,16` lag der Abstand bei 3,1 Stellen statt der erwarteten 2. Nicht
+die Tabellen waren falsch, sondern die Erwartung. Der Rundungsfehler von
+`σ` wird beim Multiplizieren **mit `|x|` vervielfacht**, die Schranke
+muss also mit `|x|` wachsen. 📌 **Eine Toleranz ohne ihre Herleitung ist
+geraten.**
+
+⚑ **Und daraus folgt nachträglich die Begründung für die eigene
+SiLU-Tabelle:** Am rechten Rand der Domäne wäre die Verstärkung rund 128
+Stellen. Eine Probe hält das fest.
+
+**Belegt:** 272 Prüfungen in `kernels`, drei neue in Python, Konformität
+weiter **48/48** (der Umbau von `silu_nachschlagen` ändert nichts),
+Gleitkomma-Audit ohne Treffer, Clippy sauber.
+
+⚠️ **Noch offen und benannt: der Zerfall selbst.** `exp` für ein
+Argument nahe null braucht 35 Bruchbits Genauigkeit, und eine Tabelle
+über den Eingang liefert die dort nicht. **Das ist die nächste
+Entwurfsfrage**, und sie gehört gemessen wie die beiden davor.
+
+### v0.79.0 – 2026-09-21 (eine rekurrente Zustandsschicht, ganzzahlig, und das mittlere Modell)
+
+`kernels` **0.57.0**. Zwei Dinge, und das erste ist neu in der **Art**
+und nicht im Umfang.
+
+#### Die Zustandsschicht (Arbeitstitel)
+
+Das nächste große Modell dieses Projekts rechnet drei Viertel seiner
+Ebenen **nicht** mit Softmax-Aufmerksamkeit, sondern mit einer
+**rekurrenten Zustandsschicht**. ⚑ **Damit steht eine Frage im Raum, die
+dieses Projekt noch nie hatte:** Alle bisherigen Kernel rechnen
+Reduktionen, und die darf man umordnen, weil Ganzzahladdition assoziativ
+ist. **Eine Rekurrenz ist keine Reduktion.**
+
+⚑ **Die These wird dadurch nicht verletzt, und der Gewinn liegt
+woanders.** Bei gleichem Ganzzahlzustand rechnet jeder Knoten denselben
+Folgezustand, Bit für Bit. Die Gleitkomma-Referenz führt ihren Zustand
+ausdrücklich in `float32`, **weil** eine Gleitkomma-Akkumulation über
+hunderte Schritte von der Umsetzung abhängt. Ein Ganzzahlzustand mit
+festem Shiftplan ist reproduzierbarer als sie, nicht weniger.
+
+⛔️ **Die Breiten sind gemessen und nicht gewählt**, gegen die echten
+Zerfälle des Zielmodells (`min = 0`, `mittel = 0,719`, `max = 0,999863`):
+
+| | Bruchbits | Warum |
+|---|---|---|
+| Zustand | **28** | bitgleich bei jedem gemessenen Zerfall und jeder Länge; 24 ließen eine Stelle |
+| Zerfall | **35** | `log2(N/(1-g))` für das volle Fenster plus Reserve |
+| Werte | 8 | wie im übrigen Rechenpfad |
+
+⛔️ **Der Zerfall ist die engere Stelle, nicht der Zustand**, und das war
+die Überraschung. Der Fehler im Produkt `g^N` wächst mit `N·ε/(1-g)`, und
+`1/(1-g)` ist beim schärfsten Zerfall rund **7299**. Er braucht also mehr
+Bits als der Zustand, den er bewegt.
+
+⚑ **Die tragende Erkenntnis der Breitenrechnung:** Ist der Zustand
+mindestens doppelt so fein wie die Werte, ist die Rang-1-Fortschreibung
+ein **Linksshift** und damit verlustfrei. Gerundet wird nur am Zerfall und
+an den zwei Kontraktionen. **Das hält jetzt der Übersetzer fest** und
+nicht eine Prüfung: Wer die Breite senkt, bekommt einen Baufehler.
+
+📌 **Eine naheliegende Abkürzung ist gemessen worden und falsch.** Den
+Zerfall als Komplement `1-g` darzustellen bringt **nichts**: Beide
+Darstellungen runden auf dieselbe absolute Schrittweite, und in `g^N`
+geht der absolute Fehler ein, nicht der relative. **Eine
+Umparametrisierung verschiebt Genauigkeit nur, wenn sie die Skala
+mitverschiebt.**
+
+⚠️ **Was ausdrücklich noch nicht geschieht:** Die Schicht ist **nicht** in
+den Rechenpfad verdrahtet, und θ_v ist **nicht** angehoben. Der Lader
+vergleicht die θ_v-Version eines Artefakts zeichengenau mit der
+eingebetteten Spezifikation; eine Anhebung entwertet alle drei
+vorhandenen Artefakte auf einen Schlag. **Sie gehört in denselben Zug wie
+die fehlenden Nichtlinearitäten und der Neubau.**
+
+**Belegt:** sieben neue Prüfungen, fünf Mutationen dagegen, **alle fünf
+beißen**; Konformität weiter **48/48**, Gleitkomma-Audit ohne Treffer,
+Clippy sauber.
+
+#### Das mittlere Modell
+
+`myelith-8b` steht im Katalog, verifiziert gegen den lokalen
+Schnappschuss: 36 Ebenen, `hidden_size` 4096, GQA 4:1, QK-Norm über 36
+`q_norm`- und 36 `k_norm`-Tensoren gezählt, null Bias-Tensoren.
+⚠️ **`tie_word_embeddings` ist hier `False`, anders als beim 0,6B und
+4B**; das Modell trägt ein eigenes `lm_head.weight`. Jedes Feld ist gegen
+die echte `config.json` gegengeprüft, nicht übernommen.
+
+⚑ **Damit ist die dichte Reihe wieder dreipunktig**, nachdem sie mit dem
+Wegfall des 14B auf zwei gefallen war. **Eine Gerade durch zwei Punkte
+passt immer.**
+
+⛔️ **Fund 414: der Erzeuger der Modellübersicht hielt einen
+Gedankenstrich bereit.** `modelle_liste.py` setzte ihn als Rückfall für
+ein Modell ohne θ_v-Eintrag. Erreicht hat ihn nie eines, weil bis heute
+jedes Modell im Katalog auch ein Artefakt hatte; das erste ohne hätte ihn
+in die erzeugte Datei geschrieben und die Stilprobe rot gemacht.
+📌 **Ein Rückfall, den nie etwas erreicht, ist ungeprüfter Code in einem
+Erzeuger.**
+
+### v0.78.0 – 2026-09-21 (die Quellmodelle liegen an der Wurzel, nicht mehr unter dieser Komponente)
+
+`runtime` **0.57.0**. Festlegung des Projektinhabers: Alle von außen
+geladenen Gewichte dieses Projekts liegen zusammen unter `MODELS/`; die
+Quellmodelle, aus denen die θ_v-Artefakte entstehen, sind die Rubrik
+`MODELS/llm`.
+
+⚑ **Was bleibt, ist die Trennung, auf die es ankommt.** `artifacts/`
+bleibt unter dieser Komponente, denn ein Artefakt ist hier **gebaut**
+und trägt die Lizenz dieses Repositoriums; ein Quellmodell ist
+**geladen** und trägt die seiner Quelle. Der Bau geht weiter von
+`MODELS/llm` nach `artifacts/`, und `KATALOG.json` samt der daraus
+erzeugten Übersicht ist mitgezogen.
+
+⚑ **Der Pfad wird jetzt aus der Dateitiefe gerechnet und nicht aus dem
+Arbeitsverzeichnis.** Solange Modelle und Artefakte im selben
+Elternverzeichnis lagen, trug ein relativer Pfad; jetzt liegt das eine
+eine Ebene höher, und ein `../MODELS/llm` wäre eine Wette darauf, aus
+welchem Verzeichnis jemand aufruft. ⛔️ **Die Gegenprobe prüft nicht den
+Pfad, sondern den Baum:** Eine Ebene daneben liefert einen Pfad, der
+genauso aussieht, also wird nachgesehen, ob an der errechneten Wurzel
+wirklich dieses Repositorium liegt. Mit `parents[2]` statt `parents[3]`
+fällt die Probe, nachgestellt.
+
+⛔️ **Fund 409: `MODELS_DIR` in `runtime/src/paths.rs` hatte keinen
+einzigen Leser.** Die Konstante spiegelte nur die Python-Seite, damit
+beide denselben Namen nennen. Beim Umzug wäre sie eine falsche Angabe
+geworden, die niemand benutzt und die der Nächste für gültig hält.
+Entfernt, mit Grabstein. ⚑ **Und der Grund, warum die Laufzeit sie nie
+brauchte, ist der Vertrag selbst:** Sie rechnet auf Artefakten, nie auf
+Quellmodellen. Ein Quellmodell ist Gleitkomma und Voraussetzung des
+**Baus**; wer es im Rechenpfad bräuchte, hätte den Pfad verlassen.
+
+⛑ **Fund 407: der Artefaktstand im Planpapier stand zum zweiten Mal
+falsch**, `runtime` auf v0.52.0 gegen 0.56.0 im Manifest, mit vier
+Komponentenversionen dazwischen. Die Abhakprobe kann ihn nicht fangen:
+Sie vergleicht Kopfzeilen und Komponenten-READMEs, und er ist
+Fließtext. 📌 **Eine Lehre, die als Fließtext neben der Zahl steht,
+ersetzt keine Probe über die Zahl.**
+
+**Unverändert geblieben, und das ist die Aussage:** Konformitätslauf
+**48/48** auf `myelith-0.6b` gegen `reference` und `cpu-simd`, das
+Gleitkomma-Audit über fünf Verzeichnisse ohne Treffer, Clippy über alle
+25 Kisten ohne Warnung. Berührt wurden Pfade und ein toter Bezeichner,
+nicht die Numerik.
 
 ### v0.77.2 – 2026-09-17 (der Artefaktbau sagt, was ihm fehlt, und er ist nachweislich wiederholbar)
 

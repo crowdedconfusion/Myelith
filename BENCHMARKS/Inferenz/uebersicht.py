@@ -30,7 +30,7 @@ from pathlib import Path
 
 HIER = Path(__file__).resolve().parent
 ERGEBNISSE = HIER / "results"
-KATALOG = HIER.parents[1] / "INTEGER_LLM" / "models" / "KATALOG.json"
+KATALOG = HIER.parents[1] / "MODELS" / "llm" / "KATALOG.json"
 
 # ⚑ **Die Reihenfolge kommt aus dem Katalog, nicht aus dem Dateisystem.**
 # `reihung` ist die Parameterzahl in Milliarden, also die Achse, um die

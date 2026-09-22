@@ -282,7 +282,7 @@ mod tests {
     /// Ein Manifest mit den Angaben, die für Qwen2.5-0,5B wirklich im
     /// Projekt stehen.
     ///
-    /// Die Werte stammen aus `models/KATALOG.json` und
+    /// Die Werte stammen aus `MODELS/llm/KATALOG.json` und
     /// `scale_packs/REGISTER.json`. Sie sind hier nicht abgeschrieben,
     /// um geprüft zu werden, sondern damit der Testfall zeigt, dass die
     /// Struktur die vorhandenen Angaben wirklich aufnimmt: Ein Format,

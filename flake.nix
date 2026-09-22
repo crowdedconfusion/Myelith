@@ -86,8 +86,7 @@
               rel = pkgs.lib.removePrefix (toString ./. + "/") (toString pfad);
               erster = pkgs.lib.head (pkgs.lib.splitString "/" rel);
             in
-            !(builtins.elem erster [ "target-shared" "WORK_DIR" "logs" "GENESIS" ])
-            && !(pkgs.lib.hasPrefix "INTEGER_LLM/models" rel)
+            !(builtins.elem erster [ "target-shared" "WORK_DIR" "logs" "GENESIS" "MODELS" ])
             && !(pkgs.lib.hasPrefix "INTEGER_LLM/artifacts" rel);
         };
 

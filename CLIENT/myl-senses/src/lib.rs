@@ -30,9 +30,16 @@
 //!
 //! **Hier rechnet kein Modell.** Diese Kiste sucht ein Programm und
 //! Gewichte, startet sie, wartet mit Frist und gibt zurueck, was
-//! herauskam. Die Gewichte liegen **ausserhalb** des Repositoriums
-//! (siehe [`laufwerk::heimat`]): Sie sind gross, sie gehoeren nicht
-//! versioniert, und welches Modell taugt, entscheidet der Nutzer.
+//! herauskam.
+//!
+//! ⚑ **Wo die Gewichte liegen, hat sich am 2026-09-21 geaendert.** Sie
+//! liegen jetzt im Klon unter `MODELS/audio` und `MODELS/vision`,
+//! zusammen mit allen anderen fremden Gewichten dieses Projekts, und
+//! sie sind dort **nicht versioniert**. Wer keinen Klon hat, wird
+//! weiter in `~/.myelith/sinne` gesucht; die ganze Reihenfolge steht bei
+//! [`laufwerk::gewichtsorte`]. **Welches Modell taugt, entscheidet
+//! weiter der Nutzer**: Eine Empfehlung im Text veraltet billiger als
+//! eine im Code.
 //!
 //! ⚠️ **Und die Antwort stammt von einem fremden Modell.** Sie ist
 //! nicht bit-exakt, nicht nachgerechnet und nicht Teil des Konsenses.
@@ -42,6 +49,7 @@ pub mod anhang;
 pub mod aufnahme;
 pub mod hoeren;
 pub mod laufwerk;
+pub mod ort;
 pub mod prozess;
 pub mod sehen;
 pub mod sprechen;

@@ -33,6 +33,14 @@ pub struct KVCache {
     /// Je Ebene und Kopf ein Feld: `k[(ebene - erste_ebene) * koepfe + kopf]`.
     k: Vec<Vec<i16>>,
     v: Vec<Vec<i16>>,
+    /// **Der Zustand der rekurrenten Ebenen**, falls das Modell welche
+    /// hat.
+    ///
+    /// ⚑ **Er wohnt hier und nicht daneben**, weil beide dasselbe sind:
+    /// was die Folge mit sich traegt. Zwei Felder nebeneinander liessen
+    /// zu, dass jemand das eine kuerzt und das andere vergisst, und
+    /// **das waere plausibler, aber falscher Text**.
+    zustand: Option<crate::zustandsspeicher::Zustandsspeicher>,
 }
 
 impl KVCache {
@@ -48,6 +56,7 @@ impl KVCache {
         let ebenen = layer_end.saturating_sub(layer_start);
         let faecher = ebenen * num_heads;
         KVCache {
+            zustand: None,
             erste_ebene: layer_start,
             ebenen,
             koepfe: num_heads,
@@ -135,14 +144,70 @@ impl KVCache {
     /// **Behaelt nur die Positionen unter `laenge`**, in allen Ebenen und
     /// Koepfen. Fuer die Fortsetzung eines Gespraechs, dessen Anfang gleich
     /// geblieben ist (siehe `generate::Fortsetzung`).
-    pub fn kuerzen(&mut self, laenge: usize) {
+    /// **Kuerzt auf `laenge` und gibt zurueck, wie weit es wirklich ging.**
+    ///
+    /// # ⛔️ Ein rekurrenter Zustand laesst sich nicht kuerzen
+    ///
+    /// Ein KV-Eintrag je Position ist unabhaengig und laesst sich
+    /// wegwerfen. Ein Zustand `S_t` ist das Ergebnis von `t`
+    /// Fortschreibungen; es gibt **keinen Weg zurueck** auf Position
+    /// `laenge`, ohne von vorn zu rechnen.
+    ///
+    /// ⚑ **Deshalb der Rueckgabewert.** Hat das Modell rekurrente
+    /// Ebenen, wird auf **null** gekuerzt und alles geleert; der
+    /// Aufrufer erfaehrt es und setzt dort auf, wo wirklich gekuerzt
+    /// wurde.
+    ///
+    /// 📌 **Ein Wert, den der Aufrufer benutzen MUSS, ist sicherer als
+    /// ein Kommentar, den er lesen KANN.** Ohne ihn kuerzte jemand den
+    /// KV-Speicher, liesse den Zustand stehen und bekaeme plausiblen,
+    /// aber falschen Text; niemand saehe es, weil die Ausgabe gut
+    /// aussieht.
+    #[must_use]
+    pub fn kuerzen(&mut self, laenge: usize) -> usize {
+        let wirklich = if self.zustand.is_some() && laenge > 0 {
+            0
+        } else {
+            laenge
+        };
+        if let Some(z) = self.zustand.as_mut() {
+            if wirklich == 0 {
+                z.leeren();
+            }
+        }
         let (bk, bv) = (self.breite_k, self.breite_v);
         for f in self.k.iter_mut() {
-            f.truncate(laenge.saturating_mul(bk));
+            f.truncate(wirklich.saturating_mul(bk));
         }
         for f in self.v.iter_mut() {
-            f.truncate(laenge.saturating_mul(bv));
+            f.truncate(wirklich.saturating_mul(bv));
         }
+        wirklich
+    }
+
+    /// **Der Zustandsspeicher, bei Bedarf angelegt.**
+    ///
+    /// ⚑ **Traege und nicht im Konstruktor**, weil erst das Modell die
+    /// Masse kennt und weil ein rein achtsames Modell nichts belegen
+    /// soll.
+    pub fn zustand_bereit(
+        &mut self,
+        rekurrent: &[bool],
+        koepfe: usize,
+        schluessel_dim: usize,
+        wert_dim: usize,
+        kanaele: usize,
+    ) -> &mut crate::zustandsspeicher::Zustandsspeicher {
+        self.zustand.get_or_insert_with(|| {
+            crate::zustandsspeicher::Zustandsspeicher::neu(
+                rekurrent, koepfe, schluessel_dim, wert_dim, kanaele,
+            )
+        })
+    }
+
+    /// Der Zustandsspeicher, falls angelegt.
+    pub fn zustand_mut(&mut self) -> Option<&mut crate::zustandsspeicher::Zustandsspeicher> {
+        self.zustand.as_mut()
     }
 
     /// Wie viele Positionen in der ersten Ebene und im ersten Kopf stehen.

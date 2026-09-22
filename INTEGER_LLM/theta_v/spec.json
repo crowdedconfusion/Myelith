@@ -1,19 +1,7 @@
 {
   "theta_v": {
-    "version": "0.20.0",
-    "model": {
-      "family": "qwen3",
-      "variant": "0.6b",
-      "source": "Qwen/Qwen3-0.6B",
-      "num_layers": 28,
-      "hidden_size": 1024,
-      "intermediate_size": 3072,
-      "num_heads": 16,
-      "head_dim": 128,
-      "vocab_size": 151936,
-      "max_context": 40960,
-      "note": "Theta_v 0.19.0 (Fund 359): Dieser Abschnitt nennt das Ankermodell der Konformitaetsvektoren, er ist keine Quelle fuer Dimensionen. Jedes Artefakt traegt seine eigenen in model_config.json, und nur die liest der Lader. Bis 0.18.0 stand hier Qwen2.5-0.5B, das seit dem 2026-09-11 abgeloest ist; der Abschnitt hatte keinen Leser und ist deshalb nicht aufgefallen."
-    },
+    "version": "0.22.0",
+    "modellangaben_note": "⛔️ Theta_v 0.21.0: HIER STAND EIN GANZER `model`-ABSCHNITT MIT DEN MASSEN DES Qwen3-0.6B (family, variant, source, num_layers 28, hidden_size 1024, intermediate_size 3072, num_heads 16, head_dim 128, vocab_size 151936, max_context 40960), und NIEMAND HAT IHN GELESEN. Dazu `numeric.formats.lm_head.weight_tying = false` und `nonlinear.rope.max_seq_len = 40960`. Alle drei sind Modellangaben, und Modellangaben stehen in model_config.json. ⚑ DIE TRENNLINIE: Was sich zwischen zwei Modellen unterscheiden KANN, gehoert nach model_config.json; was fuer jedes Artefakt derselben Fassung gleich sein MUSS, gehoert hierher. ⚠️ Der `model`-Abschnitt war ein toter Doppelbestand, gefaehrlich nur, weil er aussah wie die Quelle. `max_seq_len` dagegen WURDE gelesen und war aktiv falsch: Das Qwen3.6-35B-A3B kann 262144 Positionen, die Drehtabellen deckten 40960 ab, also ein Sechstel des zugesagten Kontexts. Das ist Fund 368 ein zweites Mal, und die Notiz dazu stand zwei Zeilen weiter in dieser Datei. Die Zeilenzahl folgt seither aus max_context und rotary_dim des Modells. 📌 EINE KONSTANTE, DIE FUER ALLE BISHERIGEN FAELLE STIMMTE, IST DESHALB NOCH KEINE FORMATKONSTANTE.",
     "numeric": {
       "formats": {
         "weight": {
@@ -44,7 +32,6 @@
           "dtype": "int16",
           "storage": "int16",
           "scale": "per_channel",
-          "weight_tying": false,
           "note": "Benannte Ausnahme (Eskalation nach Entscheidungspunkt 12.21): eigener Tensor (Weight-Tying aufgelöst) in int16, da der LM-Head bei Logit-Spannweiten von wenigen Einheiten direkt über die Token-Rangfolge entscheidet; int8-per-channel (seit 0.7.0 Standard für alle übrigen Gewichte) reicht dort nicht. Determinismus bleibt unberührt: alle Skalen sind Zweierpotenzen, alle Operationen bleiben ganzzahlig."
         }
       },
@@ -119,12 +106,53 @@
       },
       "rope": {
         "method": "lut_sin_cos",
-        "max_seq_len": 40960,
         "frac_bits": 8,
         "rope_theta": 1000000.0,
         "pairing": "half_split",
         "note": "Theta_v 0.10.0 (Fund 15, RoPE-Fix): Multi-Frequenz-RoPE im Qwen2/LLaMA-Schema. Pro Dimensions-Paar j in [0, head_dim/2) eigene Frequenz theta_j = 1/rope_theta^(j/(head_dim/2)), Winkel an Position p = p*theta_j; LUTs flach row-major [max_seq_len, head_dim/2]. Paarung half-split ((x_j, x_{j+head_dim/2})) wie HF rotate_half. Die vorherige Fassung (ein Winkel 2*pi*p/max_seq_len fuer alle Paare, benachbarte Paarung) wich von Qwen2 ab und war die dominante Fehlerquelle der Perplexitaet.",
         "grenze_note": "Theta_v 0.20.0 (Fund 368): max_seq_len von 2048 auf 40960, die max_position_embeddings der eingesetzten Qwen3-Modelle. Die Zeilen bis 2047 sind bytegleich zur vorigen Fassung, also rechnet jede Position darunter unveraendert. Eine Position p >= max_seq_len oder >= max_context des Artefakts wird ABGELEHNT und nicht umgebrochen: Bis 0.19.0 las die Referenz die Zeile p mod max_seq_len, Position 2048 drehte wie Position 0, und die Aufmerksamkeit hielt ein spaetes Token fuer eines vom Anfang, auf jeder Maschine gleich und deshalb von keinem Bitgleichheitsvergleich bemerkt. Gemessen am 2026-09-14 (Apple M5 Pro, 24 GiB, 32768 Positionen, Schritt mit 256 neuen Token): 0,6B 5,1 s, 4B 13,1 s, 30B-A3B 18,5 s; Decode 61, 118 und 215 ms je Token; KV-Speicher 112, 144 und 96 KiB je Position."
+      },
+      "sigmoid": {
+        "method": "lut",
+        "input_range": [
+          -8192,
+          8191
+        ],
+        "input_frac_bits": 9,
+        "output_frac_bits": 14,
+        "dtype": "int16",
+        "outside_input_range": "saturate_one_above_zero_below",
+        "note": "Theta_v 0.21.0: Sigmoid fuer die Schreibstaerke beta der rekurrenten Zustandsschicht (beta = sigmoid(b)), fuer das Ausgangstor und fuer das Tor des geteilten Experten. Domaene [-16, 15.998] bei 16384 Eintraegen; gemessen reicht der Eingang b ueber alle 30 Zustandsebenen des Qwen3.6-35B-A3B bis 12,31, also mit Rand. output_frac_bits 14, weil sigmoid in (0,1) liegt und 2^14 = 16384 in int16 passt; 15 waere 32768 und damit ein Ueberlauf. AUSSERHALB DER TABELLE ist die Fortsetzung eine KONSTANTE und keine Identitaet, anders als bei SiLU und Softplus: oberhalb eins, unterhalb null, bei dieser Aufloesung exakt. Eine eigene Tabelle und keine Ableitung silu(x)/x: bei x = 0 ist das undefiniert und in der Umgebung numerisch unbrauchbar, also genau dort, wo die meisten Werte liegen."
+      },
+      "softplus_rest": {
+        "method": "lut_plus_linear",
+        "formula": "softplus(x) = max(x, 0) + tabelle[|x|]",
+        "max_abs_input": 32,
+        "input_frac_bits": 8,
+        "output_frac_bits": 30,
+        "dtype": "int32",
+        "outside_input_range": "zero_above",
+        "note": "Theta_v 0.21.0: Der FEINE TEIL des Softplus, log(1 + exp(-|x|)), fuer den Zerfall der rekurrenten Zustandsschicht g = exp(-exp_A * softplus(a + dt_bias)). Die Tabelle laeuft ueber |x| und ist deshalb halb so lang: 8192 Eintraege fuer |x| in [0, 32). Oberhalb von 32 ist der Rest kleiner als eine letzte Stelle (exp(-32) = 1,3e-14 gegen 2^-30 = 9,3e-10) und damit null. Gemessen liegt der Eingang a + dt_bias ueber alle 30 Zustandsebenen in [-22,16, 30,00].",
+        "zerlegung_note": "⛔️ Theta_v 0.21.0: WARUM NICHT SOFTPLUS SELBST. Der Zerfall braucht rund 30 Bruchbits, gemessen ueber alle 30 Ebenen mit dem Kriterium |dg| * min(N, 1/(1-g)) < 2^-8 bei N = 262144: out_frac 8 und 14 ergeben 1,0; 20 ergibt 4,2e-1; 26 ergibt 8,5e-3; 30 ergibt 4,2e-4 und traegt. Grund ist exp_A bis 105,2: bei out_frac 8 ist die kleinste Stufe 1/256, mal 105 also 0,41, und g spraenge um den Faktor 0,66. ABER 30 Bruchbits passen nicht zu Softplus selbst: In int32 reicht Festkomma mit 30 Bruchbits nur bis zum Wert 2, Softplus geht bis 32. Die Zerlegung softplus(x) = max(x,0) + log(1+exp(-|x|)) loest das exakt: Der zweite Term liegt immer in (0, 0.693], braucht also 0,693 * 2^30 = 7,4e8 und passt in int32; und er ist genau der Teil, der die Feinheit braucht, denn fuer stark negative x ist er der ganze Softplus. Der grobe Teil max(x,0) ist exakt und kostet keine Tabelle. Nachgerechnet ueber x in [-40, 40]: Abstand zur direkten Formel 9,2e-14, also Gleitkommarauschen. Kosten: 8192 * 4 Byte = 32 KiB je Artefakt. EINE UMFORMUNG, DIE DEN FEINEN VOM GROBEN TEIL TRENNT, IST MEHR WERT ALS EIN BREITERER TYP."
+      },
+      "zerfall_exp": {
+        "method": "lut_plus_reihe",
+        "formula": "exp(-d) = tabelle[d_grob] * (1 - x + x^2/2), x = d - d_grob",
+        "max_input": 64,
+        "input_frac_bits": 8,
+        "output_frac_bits": 28,
+        "dtype": "int32",
+        "reihenglieder": 3,
+        "outside_input_range": "zero_above",
+        "note": "Theta_v 0.21.0: Der Zerfall der rekurrenten Zustandsschicht, g = exp(-d) mit d = exp_A * softplus(a + dt_bias). 16384 Eintraege fuer d in [0, 64) bei einem Raster von 2^-8; oberhalb von 64 ist exp(-d) kleiner als 2^-28 und damit null. output_frac_bits 28 wie zustandsschicht.zerfall_frac_bits, denn genau dorthin geht der Wert.",
+        "zerlegung_note": "⛔️ Theta_v 0.21.0: WARUM NICHT EINE DIREKTE exp-TABELLE. Sie scheitert nicht am Ausgang, sondern am EINGANG: nahe d = 0 ist dg/dd = -1, ein Eingangsraster von 2^-k ergibt also einen Fehler von 2^-k in g. Gemessen ueber alle 30 Zustandsebenen mit |dg| * min(N, 1/(1-g)) < 2^-8 bei N = 262144: Raster 2^-8 ergibt 1,0, und Raster 2^-14 ergibt EBENFALLS 1,0. Feiner rastern verschiebt die Grenze nur. Die Zerlegung nutzt die Multiplikativitaet: exp(-d) = exp(-d_grob) * exp(-d_fein). Der grobe Teil kommt aus der Tabelle, der feine aus der Reihe 1 - x + x^2/2. DREI GLIEDER REICHEN, UND DAS IST BEWEISBAR: bei x < 2^-8 ist das naechste Glied x^3/6 < 2^-27,6, also unter einer letzten Stelle bei 28 Bruchbits. Gemessen 1,9e-9 mit vier Gliedern und 2,1e-6 mit drei, gegen eine Grenze von 3,9e-3. Zwei weitere Verfahren wurden gemessen und verworfen: eine direkte Tabelle (siehe oben) und eine Tabelle von (1-exp(-d))/d, die zwar traegt (9,7e-4), aber nur den vierfachen Abstand zur Grenze hat und keine herleitbare Schranke. Kosten: 16384 * 4 Byte = 64 KiB je Artefakt. WO EINE TABELLE AN IHRER EINGANGSAUFLOESUNG SCHEITERT, HILFT KEINE GROESSERE TABELLE, SONDERN EINE ZERLEGUNG."
+      },
+      "silu_zerlegt": {
+        "method": "decomposition",
+        "formel": "silu(x) = x * sigmoid(x)",
+        "tabelle": "nonlinear.sigmoid",
+        "gilt_fuer": "zustandsschicht.faltung",
+        "note": "Theta_v 0.22.0 (Fund 417): Die Aktivierung der kausalen Faltung im rekurrenten Zweig wird NICHT ueber die silu-Tabelle nachgeschlagen, sondern zerlegt. Grund: nonlinear.silu hat input_frac_bits 6, also ein Eingangsraster von 1/64. Das ist reichlich fuer das MLP, dessen Torwerte bis 278 reichen, und vernichtend hier: Der Faltungsausgang von q und k hat beim Qwen3.6-35B-A3B einen Effektivwert um 0,035, also zwei Rasterschritte. Gemessen auf Ebene 0 wurden 7016 von 8192 Kanaelen exakt null, und weil q und k danach auf Einheitslaenge normiert werden, ist die Groesse nicht wiederherstellbar; uebrig bleibt eine falsche Richtung. Bei der Zerlegung behaelt x die Aufloesung des Akkumulators, aus der Tabelle kommt nur der Faktor sigmoid(x), und der ist unempfindlich: Bei einem Raster von 1/512 aendert er sich um hoechstens 1/2048. Eine Tabelle ueber x quantisiert x; eine Tabelle, die nur einen Faktor liefert, laesst x unberuehrt. GILT NICHT FUER DAS MLP: dort bleibt nonlinear.silu, denn seine Tabelle ist der Anker der Konformitaetsvektoren."
       }
     },
     "sampling": {
@@ -186,6 +214,36 @@
       "summenkorrektur": "Bei norm_topk_prob summieren sich die Gewichte exakt auf 2^prob_frac_bits. Der Rundungsrest geht an das GROESSTE Gewicht (bei Gleichstand an den kleineren Index): dort ist die relative Verzerrung am kleinsten, und die Regel braucht keine zweite Rundung. Der Fehler ist nicht zufaellig, sondern haengt an der Werteverteilung und wiederholt sich; ueber 48 Ebenen ist er nicht mehr belanglos.",
       "mischung": "y = (Summe_i w_i * a_i) >> prob_frac_bits, in i64 summiert und EINMAL geschoben, nicht je Summand (Fund 24).",
       "lastausgleich": "OFFEN. Ein Lastausgleich ist bei MoE keine Verbesserung, sondern Voraussetzung: er muss verhindern, dass ein Router saettigt. Die ueblichen Verfahren scheiden aus, weil sie Batch-Statistiken im Vorwaertspass und Rauschen im Router brauchen; beides bricht den Determinismus. Kandidat: die Vorspannung je Experte nach Loss-Free Balancing (Wang u.a. 2024), b_i += u * sign(mittlere Last - Last_i), wirksam NUR auf die Top-k-Auswahl. Sie ist kein Gradient, sondern ein Zaehler und ein Vorzeichen, beides exakt ganzzahlig, und die Statistik geht ins Gewichtsupdate statt in die Rechnung. NICHT GEBAUT, weil sie eine Definition der Arbeitseinheit braucht (TRAINING 2.1), und die ist offen."
+    },
+    "zustandsschicht": {
+      "wert_frac_bits": 8,
+      "norm_frac_bits": 12,
+      "zustand_frac_bits": 28,
+      "zerfall_frac_bits": 28,
+      "kontext_bits": 18,
+      "conv_kernel": 4,
+      "conv_padding": "kausal, links mit Nullen",
+      "qk_norm": "l2",
+      "q_scale": "1/sqrt(kopf_dim)",
+      "note": "Theta_v 0.21.0: Die rekurrente Zustandsschicht (Gated DeltaNet). Rekurrenz je Schritt: S = S*g; kv = Summe(S*k); delta = (v-kv)*beta; S += k (dyadisch) delta; aus = Summe(S*q). VOR der Rekurrenz laufen q und k durch eine kausale tiefenweise Faltung ueber conv_kernel Stellen mit SiLU, werden je Kopf auf EINHEITSLAENGE gebracht (l2, nicht RMS) und q zusaetzlich mit 1/sqrt(kopf_dim) skaliert. Die Faltung fuellt links mit Nullen; der Anfang einer Folge traegt also Nullen und nicht den ersten Wert.",
+      "breiten_note": "Theta_v 0.21.0, alle vier Breiten gemessen und nicht gewaehlt. zustand_frac_bits 28: gemessen reichen 24 fuer Bitgleichheit gegen 48 Bit bei jedem gemessenen Zerfall und jeder Laenge; in int64 kosten vier Stellen Reserve nichts. zerfall_frac_bits 28: die Schranke lautet log2(N) + wert_frac_bits - 1, fuer N = 2^18 also 25; gemessen liegt der Abstand ab 26 Bruchbits bei hoechstens einer Stelle. norm_frac_bits 12: NORMIEREN SCHRUMPFT JEDE KOMPONENTE UM sqrt(kopf_dim), ein Einheitsvektor ueber 128 Stellen hat typische Komponenten um 0,088; gemessen gegen die doppelte Breite ergeben 8 Bruchbits 1,90 Stellen Abstand, 10 ergeben 0,76, ab 12 saettigt es bei 0,55. log2(sqrt(128)) sind 3,5 Stellen, also 8 + 3,5 aufgerundet. kontext_bits 18 ist das volle Fenster 262144 und geht in die Schranke fuer zerfall_frac_bits ein.",
+      "faltung_ausgangsskala": {
+        "method": "bound_per_channel",
+        "formel": "|aus[c]| <= Summe_j |w[c][j]| * absmax(in_proj_qkv)",
+        "note": "Theta_v 0.22.0 (Fund 421): Der Faltungsausgang traegt eine Skala JE KANAL, abgeleitet aus den Faltungsgewichten und dem gemessenen Betragsgrosstwert des Faltungseingangs; silu vergroessert den Betrag nicht. Grund: in_proj_qkv liefert Abfrage, Schluessel und Wert in einem Tensor, und eine gemeinsame Schranke richtet sich nach v, das rund zwanzigmal ueber q und k liegt. Bei frac 9 hatte v 38 Zaehler Effektivwert, q 12 und k 9, also drei bis vier Bit. q und k werden unmittelbar danach auf Einheitslaenge gebracht: Ihre Groesse ist dann weg, was bleibt ist die Richtung, und die haengt allein an der Aufloesung. Ein Tensor ist noch keine gemeinsame Groesse."
+      },
+      "intern_frac_bits": 16,
+      "rekurrenz_ausgangsskala": {
+        "method": "dynamic_even_shift_per_head",
+        "formel": "schiebung = max(0, bits(max|akku|) - 15), Ausgang auf zustand_frac_bits + norm_frac_bits - schiebung",
+        "note": "Theta_v 0.22.0 (Fund 418): Der Rekurrenzausgang traegt eine Skala JE WERTKOPF, gewonnen aus dem Groesstwert desselben Kopfes als gerade Zweierpotenz und zurueckgegeben, damit die nachfolgende Norm sie kennt. Grund: Die Wertkoepfe liegen weit auseinander; beim Qwen3.6-35B-A3B hatte der lauteste auf Ebene 0 einen Effektivwert von 523 Zaehlern, der leiseste 0,5, also Faktor 1050. In fuenfzehn Bit passen beide nicht. Dahinter steht torgesteuerte_norm, die je Kopf auf den Effektivwert eins normiert und damit genau den Groessenunterschied loescht, der eine gemeinsame Skala rechtfertigte: Sie hebt den leisen Kopf mitsamt seinem Rundungsfehler auf volle Hoehe. Gemessen kamen die sechs Koepfe unter 32 Zaehlern hinter der Norm auf einen mittleren Fehler von 24,5, die sechsundzwanzig darueber auf 0,93. Eine Normierung hinter einer geteilten Skala ist ein Rauschverstaerker; wer beides hintereinander baut, muss die Skala so fein teilen wie die Normierung. Die Rundung kann den Groesstwert noch ueber i16 heben, dann ein Bit mehr, statt den lautesten Wert zu saettigen."
+      },
+      "torgesteuerte_norm": {
+        "epsilon_quelle": "model_config.json: rms_norm_eps",
+        "epsilon_skala": "Q40, also round(eps * 2^40)",
+        "zwischenskala": "feinste Skala mit sqrt(kopf_dim) * max|gamma| <= i16::MAX",
+        "note": "Theta_v 0.22.0, zwei Festlegungen. (1) Fund 419: Die Norm rechnet x / sqrt(mean(x^2) + eps). Fuer den Residualstrom ist eps vernachlaessigbar und wurde deshalb lange weggelassen; hier ist es der ganze Nenner, denn ein Wertkopf, der nichts zu sagen hat, ist wirklich fast null: Der leiseste hatte 1,9e-6, also mean(x^2) = 3,6e-12 gegen eps 1e-6. Ohne eps wurde er auf das Fuenfhundertfache gezogen und legte sich als Rauschen ueber den Residualstrom. Q40 und nicht Q20, denn in Q20 waere 1e-6 genau ein Zaehler und damit auf fuenf Prozent genau. (2) Fund 420: Der normierte Zwischenstand VOR dem Tor braucht eine eigene Skala. Die kalibrierte Skala von linear_attn.norm misst den Ausgang HINTER dem Tor, weil die Vorlage norm(x, z) in einem Zug rechnet; eine Stelle frueher eingesetzt beschreibt sie etwas anderes. Keine Messung noetig, es gibt eine harte Schranke: Nach der Normierung gilt |x_i| / rms(x) <= sqrt(kopf_dim), mal dem groessten Gamma."
+      }
     }
   }
 }

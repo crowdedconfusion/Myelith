@@ -45,7 +45,7 @@ def main():
     sequences = select_sequences(n_sequences, seq_len)
 
     print(f"[headroom] Lade Referenzmodell ...")
-    model, _ = load_reference_model(REPO / "models" / "Qwen2.5-0.5B")
+    model, _ = load_reference_model(REPO.parent / "MODELS" / "llm" / "Qwen2.5-0.5B")
     model.eval()
 
     collector = ActivationStatsCollector()

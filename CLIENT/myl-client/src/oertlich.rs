@@ -43,6 +43,19 @@ use myl_local_agent::{Antwort, Modellweg, Nachricht, Tuerfehler};
 pub enum Vorlage {
     /// Rollenmarken, wie ein instruktionsgeschliffenes Modell sie kennt.
     ChatMl,
+    /// ChatML, aber die Aufforderung **oeffnet den Denkblock**.
+    ///
+    /// ⚑ **Der Unterschied ist eine Zeile und entscheidet alles**
+    /// (Fund 425). Qwen3 schreibt `<think>` selbst, sobald es dran ist;
+    /// die Vorlage des Qwen3.6 stellt es dagegen in die Aufforderung,
+    /// das Modell setzt also **innerhalb** des Blocks fort und schreibt
+    /// die Marke nicht mehr. Wer sie weglaesst, laesst das Modell auf
+    /// einer Form antworten, die seine Vorlage nie erzeugt.
+    ///
+    /// ⚠️ **Eine eigene Variante und kein Schalter an `ChatMl`**, damit
+    /// die Form fuer Qwen3 Zeichen fuer Zeichen bleibt, was sie war.
+    /// Vier eingesetzte Modelle haengen daran.
+    ChatMlDenkblock,
     /// Schlichte Fortsetzung, wie ein Basismodell sie erwartet.
     Fortsetzung,
 }
@@ -52,11 +65,23 @@ impl Vorlage {
     pub fn fuer_familie(familie: &str) -> Self {
         match familie {
             "qwen3" | "qwen3-moe" => Self::ChatMl,
+            // ⛔️ **Fund 425: die Familie des Qwen3.6 stand hier nicht**,
+            //   und das Modell bekam deshalb `Fortsetzung`, also rohen
+            //   Text statt ChatML. Ein Denkmodell auf einer Vorlage, die
+            //   es nie gesehen hat, antwortet mit Kauderwelsch, und der
+            //   Fehler sieht wie ein Numerikfehler aus.
+            //
+            // 📌 **Ein `_`-Zweig, der eine Notform liefert, verbirgt
+            //   jedes neue Modell.** Er ist hier richtig (ein Basismodell
+            //   soll fortsetzen), aber er meldet nichts, wenn ein
+            //   Chatmodell hineinfaellt. Deshalb steht die Familie jetzt
+            //   ausdruecklich da, und `die_familien_sind_abgedeckt` haelt
+            //   es fest.
+            f if f.starts_with("qwen3_5") => Self::ChatMlDenkblock,
             _ => Self::Fortsetzung,
         }
     }
 
-    /// Setzt die Unterhaltung zusammen.
     /// Setzt die Unterhaltung zusammen.
     ///
     /// ⚑ **`denken` entscheidet ueber den Denkmodus (2026-09-08).**
@@ -72,7 +97,7 @@ impl Vorlage {
     /// stattgefunden hat, und es geht unmittelbar zur Antwort ueber.
     pub fn bauen(self, nachrichten: &[Nachricht], denken: bool) -> String {
         match self {
-            Self::ChatMl => {
+            Self::ChatMl | Self::ChatMlDenkblock => {
                 let mut aus = String::new();
                 for n in nachrichten {
                     aus.push_str("<|im_start|>");
@@ -86,6 +111,11 @@ impl Vorlage {
                 aus.push_str("<|im_start|>assistant\n");
                 if !denken {
                     aus.push_str("<think>\n\n</think>\n\n");
+                } else if matches!(self, Self::ChatMlDenkblock) {
+                    // ⚑ **Offen, nicht geschlossen** (Fund 425): Das
+                    //   Modell soll ueberlegen, und seine Vorlage gibt
+                    //   ihm dafuer den Block vor.
+                    aus.push_str("<think>\n");
                 }
                 aus
             }
@@ -135,7 +165,9 @@ fn haltemarken(wortschatz: &Tokenizer, familie: &str) -> Vec<usize> {
     // ⚑ `<|endoftext|>` gilt fuer beide Vorlagen; `<|im_end|>` beendet
     // eine Runde und hat nur dort einen Sinn, wo es Runden gibt.
     let marken: &[&str] = match Vorlage::fuer_familie(familie) {
-        Vorlage::ChatMl => &["<|im_end|>", "<|endoftext|>"],
+        // ⚑ Dieselben Haltemarken: der Denkblock aendert die
+        //   Aufforderung, nicht das Ende der Antwort (Fund 425).
+        Vorlage::ChatMl | Vorlage::ChatMlDenkblock => &["<|im_end|>", "<|endoftext|>"],
         Vorlage::Fortsetzung => &["<|endoftext|>"],
     };
     marken

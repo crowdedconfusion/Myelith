@@ -21,7 +21,7 @@ TOKENS = [34532, 425, 10965, 465, 374, 458, 6364, 4531]
 
 def main():
     import torch
-    model, _ = load_reference_model(REPO / "models" / "Qwen2.5-0.5B")
+    model, _ = load_reference_model(REPO.parent / "MODELS" / "llm" / "Qwen2.5-0.5B")
     model.eval()
 
     input_ids = torch.tensor([TOKENS], device=model.device)

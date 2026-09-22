@@ -18,7 +18,7 @@ import struct
 import sys
 from pathlib import Path
 
-REPO = Path(__file__).parent.parent.parent
+REPO = Path(__file__).resolve().parent.parent.parent
 ART = REPO / "artifacts" / "myelith-0.6b"
 
 

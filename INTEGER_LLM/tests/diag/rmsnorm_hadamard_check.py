@@ -23,7 +23,7 @@ Usage: python rmsnorm_hadamard_check.py
 import sys
 from pathlib import Path
 
-REPO = Path(__file__).parent.parent.parent
+REPO = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO / "calibrate"))
 from src.loader import load_reference_model  # noqa: E402
 
@@ -55,7 +55,7 @@ def main():
     import numpy as np
     import torch
 
-    model, _ = load_reference_model(REPO / "models" / "Qwen2.5-0.5B")
+    model, _ = load_reference_model(REPO.parent / "MODELS" / "llm" / "Qwen2.5-0.5B")
     model.eval()
     input_ids = torch.tensor([ALL_TOKENS], device=model.device)
     with torch.no_grad():

@@ -3,7 +3,7 @@ Laedt das HF-Referenzmodell (BF16/FP16) fuer die Offline-Kalibrierung.
 Float ist hier erlaubt – der Output wird in Integer-Artefakte ueberfuehrt.
 
 Das Modell wird ausschliesslich aus dem lokalen Snapshot unter models/
-geladen (reproduzierbare Herkunft, siehe models/README.md), nie ueber die
+geladen (reproduzierbare Herkunft, siehe MODELS/llm/README.md), nie ueber die
 HF-ID aus dem impliziten Hugging-Face-Cache.
 
 **Warum hier kein `device_map="auto"` steht (Fund beim ersten 7B-Lauf,

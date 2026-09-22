@@ -38,7 +38,7 @@ Deshalb wird nicht das Modell verteilt, sondern die Skalen.
 ## Verwendung
 
 ```bash
-huggingface-cli download Qwen/Qwen2.5-0.5B --local-dir INTEGER_LLM/models/Qwen2.5-0.5B
+huggingface-cli download Qwen/Qwen2.5-0.5B --local-dir MODELS/llm/Qwen2.5-0.5B
 INTEGER_LLM_MODEL=myelith-0.5b python -m calibrate.src.main
 ```
 

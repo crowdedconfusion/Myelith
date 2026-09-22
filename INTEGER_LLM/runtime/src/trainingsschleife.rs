@@ -204,7 +204,39 @@ impl Trainingsvorgaben {
             // Tiefe und Breite, und beides hat sich geaendert (24 auf
             // 28 Ebenen, 896 auf 1024). Wer das naechste Modell
             // aufnimmt, misst sie neu.
-            lr_nenner: 1 << 10,
+            //
+            // ⛔️ **Und sie haengt auch an den AKTIVIERUNGSSKALEN, was
+            // hier bis zum 2026-09-21 nicht stand.** Als die Skalen des
+            // 0,6B berichtigt wurden (ein veraltetes Skalenpaket, 105
+            // von 422 Skalen), schrumpfte der wirksame Schritt um **vier
+            // Bit**: Derselbe Nenner `1 << 10` fiel von „trifft mit
+            // 0,4681" auf „daneben mit 7,9045". Der Grund ist einfach und
+            // war nur nicht aufgeschrieben: **Groebere Aktivierungsskalen
+            // machen die ganzzahligen Gradientenwerte kleiner**, und nach
+            // der Division bleibt weniger als die letzte Stelle des
+            // Masters uebrig. Dieselbe Erscheinung wie im ersten Absatz,
+            // nur ausgeloest von der anderen Seite.
+            //
+            // Neu gemessen am 2026-09-21, 30 Schritte:
+            //
+            // | Nenner | alte Skalen | berichtigte Skalen |
+            // |---|---|---|
+            // | `1 << 10` | **0,4681 (trifft)** | 7,9045 (daneben) |
+            // | `1 << 8`  | (nicht gemessen) | 6,2152 (daneben) |
+            // | `1 << 7`  | (nicht gemessen) | 2,6692 (trifft) |
+            // | `1 << 6`  | (nicht gemessen) | **0,8994 (trifft)** |
+            // | `1 << 5`  | (nicht gemessen) | 0,6395 (trifft) |
+            //
+            // 📌 **Eine gemessene Konstante traegt die Bedingungen ihrer
+            // Messung mit sich, oder sie wird stillschweigend falsch.**
+            // 2026-09-11 fiel es auf, weil jemand das Modell tauschte;
+            // 2026-09-21 fast nicht, weil sich nur eine Skala aenderte.
+            //
+            // ⚠️ **Wer die Skalen eines Modells aendert, misst diese Zahl
+            // neu.** Die Probe `der_verlust_sinkt_ueber_die_schleife`
+            // prueft seit dem 2026-09-21 zusaetzlich, ob sich ueberhaupt
+            // genug Gewichte bewegen, und nennt dann diese Stelle.
+            lr_nenner: 1 << 6,
             lr_zaehler: 1,
             logit_frac: 16,
             prob_frac: 24,
@@ -590,10 +622,10 @@ pub(crate) fn master_der_ebene(ebene: &crate::model::TransformerLayer) -> Option
         return None;
     };
     Some([
-        master_aus_gewicht(&ebene.q_proj),
-        master_aus_gewicht(&ebene.k_proj),
-        master_aus_gewicht(&ebene.v_proj),
-        master_aus_gewicht(&ebene.o_proj),
+        master_aus_gewicht(&ebene.achtsamkeit().q_proj),
+        master_aus_gewicht(&ebene.achtsamkeit().k_proj),
+        master_aus_gewicht(&ebene.achtsamkeit().v_proj),
+        master_aus_gewicht(&ebene.achtsamkeit().o_proj),
         master_aus_gewicht(&mlp.gate_proj),
         master_aus_gewicht(&mlp.up_proj),
         master_aus_gewicht(&mlp.down_proj),
@@ -631,7 +663,7 @@ pub(crate) fn qk_vorgaben_der_ebene(
     m: &IntegerModel,
     e: usize,
 ) -> Option<integer_llm_kernels::trainingsschritt::QkNormVorgaben<'_>> {
-    let qkn = m.layers[e].qk_norm.as_ref()?;
+    let qkn = m.layers[e].achtsamkeit().qk_norm.as_ref()?;
     Some(integer_llm_kernels::trainingsschritt::QkNormVorgaben {
         q_gamma: &qkn.q_gamma.data,
         q_gamma_shifts: &qkn.q_gamma.shifts,
@@ -663,10 +695,10 @@ pub(crate) fn vorgaben_der_ebene<'a>(
             num_kv_heads: m.num_kv_heads,
             head_dim: m.head_dim,
             act_frac: sc.norm_attn_frac,
-            q_frac: sc.q_frac,
-            k_frac: sc.k_frac,
-            v_frac: sc.v_frac,
-            attn_out_frac: sc.attn_out_frac,
+            q_frac: sc.achtsamkeit().q_frac,
+            k_frac: sc.achtsamkeit().k_frac,
+            v_frac: sc.achtsamkeit().v_frac,
+            attn_out_frac: sc.achtsamkeit().attn_out_frac,
             aus_frac: 0,
             master_frac: MASTER_FRAC,
             score_frac: m.config.score_frac_bits,
@@ -754,7 +786,7 @@ pub(crate) fn gewichte_der_ebene<'a>(
 pub(crate) fn vorspannungen_der_ebene(
     ebene: &crate::model::TransformerLayer,
 ) -> Option<Vorspannungen<'_>> {
-    match (&ebene.q_bias, &ebene.k_bias, &ebene.v_bias) {
+    match (&ebene.achtsamkeit().q_bias, &ebene.achtsamkeit().k_bias, &ebene.achtsamkeit().v_bias) {
         (Some(qb), Some(kb), Some(vb)) => Some(Vorspannungen {
             q: &qb.data,
             q_skalen: &qb.shifts,
@@ -804,17 +836,17 @@ pub fn trainingsschleife(
     let sc = &ebene.scales;
     let is = mlp.gate_proj.shape[0];
     let mut master = [
-        master_aus_gewicht(&ebene.q_proj),
-        master_aus_gewicht(&ebene.k_proj),
-        master_aus_gewicht(&ebene.v_proj),
-        master_aus_gewicht(&ebene.o_proj),
+        master_aus_gewicht(&ebene.achtsamkeit().q_proj),
+        master_aus_gewicht(&ebene.achtsamkeit().k_proj),
+        master_aus_gewicht(&ebene.achtsamkeit().v_proj),
+        master_aus_gewicht(&ebene.achtsamkeit().o_proj),
         master_aus_gewicht(&mlp.gate_proj),
         master_aus_gewicht(&mlp.up_proj),
         master_aus_gewicht(&mlp.down_proj),
     ];
     let anfang: Vec<Vec<Master>> = master.to_vec();
     let grad_lut = silu_grad_aus_lut(&m.silu_lut);
-    let vorsp = match (&ebene.q_bias, &ebene.k_bias, &ebene.v_bias) {
+    let vorsp = match (&ebene.achtsamkeit().q_bias, &ebene.achtsamkeit().k_bias, &ebene.achtsamkeit().v_bias) {
         (Some(qb), Some(kb), Some(vb)) => Some(Vorspannungen {
             q: &qb.data,
             q_skalen: &qb.shifts,
@@ -847,10 +879,10 @@ pub fn trainingsschleife(
                 num_kv_heads: m.num_kv_heads,
                 head_dim: m.head_dim,
                 act_frac: sc.norm_attn_frac,
-                q_frac: sc.q_frac,
-                k_frac: sc.k_frac,
-                v_frac: sc.v_frac,
-                attn_out_frac: sc.attn_out_frac,
+                q_frac: sc.achtsamkeit().q_frac,
+                k_frac: sc.achtsamkeit().k_frac,
+                v_frac: sc.achtsamkeit().v_frac,
+                attn_out_frac: sc.achtsamkeit().attn_out_frac,
                 aus_frac: 0,
                 master_frac: MASTER_FRAC,
                 score_frac: m.config.score_frac_bits,

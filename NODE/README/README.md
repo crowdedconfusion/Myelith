@@ -1,7 +1,7 @@
 # NODE — der Myelith-Knoten
 
-> **Version:** 0.48.4
-> **Datum:** 2026-09-16
+> **Version:** 0.48.5
+> **Datum:** 2026-09-21
 > **Status:** Netzknoten lauffähig, Blockproduktion mit **Persistenz über
 > Neustarts**, BFT-Runden über das Netz mit Rundenwechsel, und seit dem
 > 1. September **schließt der Knoten die Epoche selbst ab**.
@@ -278,6 +278,16 @@ NODE/
 ```
 
 ## Changelog
+
+### v0.48.5 – 2026-09-21 (der Serverzuschnitt kennt den neuen Ablageort)
+
+`serverzuschnitt.rs` prüft, dass der Quellfilter der Flake die großen
+Verzeichnisse ausnimmt; seit die fremden Gewichte unter `MODELS/` an der
+Wurzel liegen, heißt eines davon anders. ⚑ **Und es steht jetzt in der
+Namensliste statt bei den Präfixregeln**, weil es ein Verzeichnis der
+obersten Ebene ist. Die Probe sucht weiter **mit** Anführungszeichen:
+Ohne sie fände `MODELS` auch ein `MODELS-alt`, und eine Teilzeichenkette
+ist dieselbe Antwort auf eine andere Frage.
 
 ### v0.48.4 – 2026-09-16 (der Serverzuschnitt wird geprüft, ohne dass Nix dafür nötig ist)
 

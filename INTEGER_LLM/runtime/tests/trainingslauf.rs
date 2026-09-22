@@ -122,7 +122,7 @@ fn qk_vorgaben<'a>(
     m: &'a IntegerModel,
     ebene: &'a integer_llm_runtime::model::TransformerLayer,
 ) -> Option<integer_llm_kernels::trainingsschritt::QkNormVorgaben<'a>> {
-    let q = ebene.qk_norm.as_ref()?;
+    let q = ebene.achtsamkeit().qk_norm.as_ref()?;
     Some(integer_llm_kernels::trainingsschritt::QkNormVorgaben {
         q_gamma: &q.q_gamma.data,
         q_gamma_shifts: &q.q_gamma.shifts,
@@ -423,10 +423,10 @@ fn der_weg_vom_artefakt_zum_master_und_zurueck_ist_exakt() {
             panic!("Ebene {e} ist kein dichter Block");
         };
         for (name, t) in [
-            ("q_proj", &ebene.q_proj),
-            ("k_proj", &ebene.k_proj),
-            ("v_proj", &ebene.v_proj),
-            ("o_proj", &ebene.o_proj),
+            ("q_proj", &ebene.achtsamkeit().q_proj),
+            ("k_proj", &ebene.achtsamkeit().k_proj),
+            ("v_proj", &ebene.achtsamkeit().v_proj),
+            ("o_proj", &ebene.achtsamkeit().o_proj),
             ("gate_proj", &mlp.gate_proj),
             ("up_proj", &mlp.up_proj),
             ("down_proj", &mlp.down_proj),
@@ -482,10 +482,10 @@ fn a_vorgaben(m: &IntegerModel, e: usize, schritt: u64, lr: i64) -> Aufmerksamke
         num_kv_heads: m.num_kv_heads,
         head_dim: m.head_dim,
         act_frac: sc.norm_attn_frac,
-        q_frac: sc.q_frac,
-        k_frac: sc.k_frac,
-        v_frac: sc.v_frac,
-        attn_out_frac: sc.attn_out_frac,
+        q_frac: sc.achtsamkeit().q_frac,
+        k_frac: sc.achtsamkeit().k_frac,
+        v_frac: sc.achtsamkeit().v_frac,
+        attn_out_frac: sc.achtsamkeit().attn_out_frac,
         // ⚑ Eine Skala fuer alle Kanaele, dieselbe Vereinfachung wie im
         // MLP-Lauf: Die echte Ausgabeskala ist per Kanal.
         // **Fuer den Vergleich mit dem Mitschnitt ist sie ohne Belang**,
@@ -533,7 +533,7 @@ fn die_vorwaerts_haelfte_trifft_den_mitschnitt() {
             "Ebene {e}: der Mitschnitt der Aufmerksamkeitsausgabe ist ueberall null"
         );
 
-        let vorsp = match (&ebene.q_bias, &ebene.k_bias, &ebene.v_bias) {
+        let vorsp = match (&ebene.achtsamkeit().q_bias, &ebene.achtsamkeit().k_bias, &ebene.achtsamkeit().v_bias) {
             (Some(q), Some(k), Some(v)) => Some(Vorspannungen {
                 q: &q.data,
                 q_skalen: &q.shifts,
@@ -546,14 +546,14 @@ fn die_vorwaerts_haelfte_trifft_den_mitschnitt() {
         };
         let spur = vorwaerts_der_aufmerksamkeit(
             Aufmerksamkeitsgewichte {
-                q: &ebene.q_proj.data,
-                q_skalen: &ebene.q_proj.shifts,
-                k: &ebene.k_proj.data,
-                k_skalen: &ebene.k_proj.shifts,
-                v: &ebene.v_proj.data,
-                v_skalen: &ebene.v_proj.shifts,
-                o: &ebene.o_proj.data,
-                o_skalen: &ebene.o_proj.shifts,
+                q: &ebene.achtsamkeit().q_proj.data,
+                q_skalen: &ebene.achtsamkeit().q_proj.shifts,
+                k: &ebene.achtsamkeit().k_proj.data,
+                k_skalen: &ebene.achtsamkeit().k_proj.shifts,
+                v: &ebene.achtsamkeit().v_proj.data,
+                v_skalen: &ebene.achtsamkeit().v_proj.shifts,
+                o: &ebene.achtsamkeit().o_proj.data,
+                o_skalen: &ebene.achtsamkeit().o_proj.shifts,
             },
             &x,
             vorsp,
@@ -644,7 +644,7 @@ fn die_ganze_ebene_trifft_den_mitschnitt() {
             inv_n_q20: m.inv_n_q20,
         };
 
-        let vorsp = match (&ebene.q_bias, &ebene.k_bias, &ebene.v_bias) {
+        let vorsp = match (&ebene.achtsamkeit().q_bias, &ebene.achtsamkeit().k_bias, &ebene.achtsamkeit().v_bias) {
             (Some(q), Some(k), Some(vv)) => Some(Vorspannungen {
                 q: &q.data, q_skalen: &q.shifts,
                 k: &k.data, k_skalen: &k.shifts,
@@ -655,10 +655,10 @@ fn die_ganze_ebene_trifft_den_mitschnitt() {
         let spur = vorwaerts_der_ebene(
             Ebenengewichte {
                 aufmerksamkeit: Aufmerksamkeitsgewichte {
-                    q: &ebene.q_proj.data, q_skalen: &ebene.q_proj.shifts,
-                    k: &ebene.k_proj.data, k_skalen: &ebene.k_proj.shifts,
-                    v: &ebene.v_proj.data, v_skalen: &ebene.v_proj.shifts,
-                    o: &ebene.o_proj.data, o_skalen: &ebene.o_proj.shifts,
+                    q: &ebene.achtsamkeit().q_proj.data, q_skalen: &ebene.achtsamkeit().q_proj.shifts,
+                    k: &ebene.achtsamkeit().k_proj.data, k_skalen: &ebene.achtsamkeit().k_proj.shifts,
+                    v: &ebene.achtsamkeit().v_proj.data, v_skalen: &ebene.achtsamkeit().v_proj.shifts,
+                    o: &ebene.achtsamkeit().o_proj.data, o_skalen: &ebene.achtsamkeit().o_proj.shifts,
                 },
                 gate: &mlp.gate_proj.data, gate_skalen: &mlp.gate_proj.shifts,
                 up: &mlp.up_proj.data, up_skalen: &mlp.up_proj.shifts,
@@ -716,11 +716,11 @@ fn a_lauf_auf_ebene_lr(
         .map(|p| auf.ebenen()[p * l_zahl + e].norm_ein.clone())
         .collect();
 
-    let mut q = master_aus_gewicht(&ebene.q_proj);
-    let mut k = master_aus_gewicht(&ebene.k_proj);
-    let mut v = master_aus_gewicht(&ebene.v_proj);
-    let mut o = master_aus_gewicht(&ebene.o_proj);
-    let vorsp = match (&ebene.q_bias, &ebene.k_bias, &ebene.v_bias) {
+    let mut q = master_aus_gewicht(&ebene.achtsamkeit().q_proj);
+    let mut k = master_aus_gewicht(&ebene.achtsamkeit().k_proj);
+    let mut v = master_aus_gewicht(&ebene.achtsamkeit().v_proj);
+    let mut o = master_aus_gewicht(&ebene.achtsamkeit().o_proj);
+    let vorsp = match (&ebene.achtsamkeit().q_bias, &ebene.achtsamkeit().k_bias, &ebene.achtsamkeit().v_bias) {
         (Some(qb), Some(kb), Some(vb)) => Some(Vorspannungen {
             q: &qb.data,
             q_skalen: &qb.shifts,

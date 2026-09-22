@@ -1,7 +1,7 @@
 # client (Nutzer-Client inkl. Wallet)
 
-> **Version:** 0.57.0 (`myl-client` 0.42.0, `myl-oberflaeche` 0.39.0, `myl-console` 0.13.0, `myl-senses` 0.1.0)
-> **Datum:** 2026-09-17
+> **Version:** 0.59.0 (`myl-client` 0.44.0, `myl-oberflaeche` 0.39.1, `myl-console` 0.13.0, `myl-senses` 0.2.0)
+> **Datum:** 2026-09-22
 > **Status:** ✅ **Der lokale Betrieb läuft und ist ausgeliefert.** Ein
 > Gesprächsfenster mit Modellwahl, Agentenschleife und
 > Einstellungsseite; aus einem frischen Klon lassen sich darüber
@@ -120,6 +120,99 @@ Modell überhaupt etwas taugt, und weil eine Schnittstelle, die kein
 Mensch je bedient hat, an den Bedürfnissen vorbei entworfen wird.
 
 ## Changelog
+
+### v0.59.0 – 2026-09-22 (ein Modell, das in der Familienzuordnung fehlte, bekam rohen Text statt ChatML)
+
+⛔️ **Fund 425:** `Vorlage::fuer_familie` kannte `qwen3` und `qwen3-moe`.
+Die Familie des Qwen3.6 heisst `qwen3_5-moe-hybrid` und fiel damit in
+den `_`-Zweig, also auf `Fortsetzung`: Ein Denkmodell bekam rohen
+Fortsetzungstext statt ChatML und antwortete mit Kauderwelsch.
+
+📌 **Ein `_`-Zweig, der eine Notform liefert, verbirgt jedes neue
+Modell.** Er ist hier richtig, denn ein Basismodell soll fortsetzen, aber
+er meldet nichts, wenn ein Chatmodell hineinfaellt. Der Fehlschlag sieht
+dann wie ein Numerikfehler aus, und genau dorthin hat er auch gezeigt.
+
+⚑ **Neue Variante `ChatMlDenkblock`**, weil dieses Modell den Denkblock
+anders handhabt: Qwen3 schreibt `<think>` selbst, sobald es dran ist;
+die Vorlage des Qwen3.6 stellt es in die **Aufforderung**, das Modell
+setzt also innerhalb des Blocks fort. Fehlt die Marke, antwortet es auf
+einer Form, die seine Vorlage nie erzeugt.
+
+⚠️ **Eine eigene Variante und kein Schalter an `ChatMl`**, damit die
+Form fuer Qwen3 Zeichen fuer Zeichen bleibt, was sie war; vier
+eingesetzte Modelle haengen daran. Gegengeprueft: Das 0,6B antwortet
+unveraendert und oeffnet seinen Denkblock weiterhin selbst, und die
+Konformitaet steht bei 48/48.
+
+Zwei neue Proben in `tests/chatvorlage.rs`: `die_familien_sind_abgedeckt`
+haelt die Zuordnung je Familie fest (samt der Gegenrichtung, dass ein
+Basismodell fortsetzt), `der_denkblock_wird_nur_dort_vorgegeben_wo_er_hingehoert`
+prueft die offene Marke, ihr Fehlen bei Qwen3 und den geschlossenen
+leeren Block ohne Denkmodus. Neun Proben gruen.
+
+**Wirkung auf das 35B:** aus `1: 1: 1: 1` wurde eine zusammenhaengende
+Antwort.
+
+### v0.58.0 – 2026-09-21 (alle fremden Gewichte an einem Ort, nach Rubrik getrennt)
+
+`myl-senses` **0.2.0**, `myl-client` **0.43.0**, `myl-oberflaeche`
+**0.39.1**. Festlegung des Projektinhabers: Die von außen geladenen
+Gewichte dieses Projekts liegen künftig zusammen unter `MODELS/`, in den
+Rubriken `llm`, `audio` und `vision`, und was neu dazukommt, wird dort
+einsortiert. Versioniert wird dort nichts außer den Ordnern, der Doku und
+den Lizenzdateien.
+
+⚑ **Damit ist eine Trennung aufgehoben, die nichts trug.** Die
+Quellmodelle des Sprachmodell-Pfads lagen unter `INTEGER_LLM`, die
+Gewichte für Sehen, Hören und Sprechen außerhalb des Klons, und beide
+waren dasselbe: fremde Gewichte, groß, nicht versioniert, von ihrer
+Quelle geladen. **Zwei Ablageorte für eine Sorte Sache sind zwei Orte,
+an denen jemand sucht.**
+
+⚑ **Gesucht wird jetzt in drei Stufen**, und die Reihenfolge ist die
+Aussage: `MYL_SINNE`, wenn gesetzt (dann liegt dort alles zusammen),
+sonst die Rubriken im gefundenen Klon, sonst `~/.myelith/sinne`.
+⛔️ **Die letzte Stufe ist kein Altlastenrest, sondern der einzige Weg
+für ein ausgeliefertes Programm:** Wer nur ein Freigabebündel geholt hat,
+hat keinen Klon und damit kein `MODELS/`. Fünf Proben halten die
+Reihenfolge, jede mit ihrer Gegenprobe.
+
+⚑ **Was NICHT umgezogen ist, und der Schnitt ist der eigentliche
+Gedanke.** In der Sinnesheimat bleiben der `bin`-Ordner mit dem
+Sprech- und dem Aufnahmeskript und eine abgelegte Stimmprobe. Das eine
+ist **erzeugt** und muss beschreibbar sein, das andere gehört dem
+**Nutzer**; nur **geladene** Gewichte haben eine Rubrik verdient. Deshalb
+gibt es zwei Begriffe statt einem: einen für den Arbeitsort, einen für
+die Gewichtsorte.
+
+⛔️ **Fund 410: die Plattenzahl im Fenster wäre still um 66 GB gefallen.**
+`belegung_heute` summierte `INTEGER_LLM/models` und
+`INTEGER_LLM/artifacts`; nach dem Umzug gibt es das erste nicht mehr, und
+ein Pfad, der auf nichts zeigt, **wirft keinen Fehler, sondern zählt
+null**. 📌 **Ein Pfad, der auf nichts zeigt, meldet sich nicht; er
+antwortet.** Die Liste der gefüllten Orte steht jetzt an einer Stelle,
+nicht in der Oberfläche.
+
+⚑ **Die Wurzelmarke steht seither nur noch einmal.** Auch die
+Sinneskiste braucht jetzt den Klon, um ein Sehmodell zu finden. Eine
+zweite Marke dort wäre dieselbe Zeichenkette an einem zweiten Ort
+gewesen; sie liegt deshalb in der Kiste ohne Abhängigkeiten, und der
+Client zeigt darauf. **Was ermittelt wird, steht unten; was gemerkt
+wird, steht oben.**
+
+⚠️ **Fund 411: ein Doc-Kommentar trug seinen eigenen Anfang zweimal.**
+Ein zu weit gefasster Textschnitt hatte `⚑ Der Hinweis nennt den
+Paketverwalter dieses Systems` an dieselbe Zeile geklebt. Behoben.
+
+**Belegt, mit echtem Material auf einem M5 Pro:** Sehen las beide Zeilen
+eines Diagramms in 3,9 s, Hören schrieb die Stimmprobe wortrichtig bis
+auf den Eigennamen mit (0,9 s), Sprechen lief über CosyVoice in 21,0 s.
+⚑ **Und das Sprechen ist der Beleg, auf den es ankam:** Seine
+Python-Umgebung trägt absolute Pfade und übersteht ein Verschieben nicht
+von selbst; sie ist mitgezogen und nachgerichtet worden, 51 Shebangs und
+vier Aktivierungsskripte. 55 Proben in `myl-senses`, alle grün, Clippy
+über alle 25 Kisten ohne Warnung.
 
 ### v0.57.0 – 2026-09-17 (Dateien anhängen, und eine eigene Kiste für Sehen, Hören und Sprechen)
 

@@ -51,6 +51,9 @@ SCALE_PACK_ENV = "INTEGER_LLM_SCALE_PACK"
 
 PAKET_DATEIEN = ("scales.json", "luts.json", "theta_v.json")
 
+# Die Packbuchstaben je Tabellenbreite, wie in `export.py`.
+_PACKFORMAT = {"int16": "h", "int32": "i"}
+
 
 def paket_pfad(model_name: str) -> Optional[Path]:
     """Pfad zum zu verwendenden Skalenpaket, oder ``None`` fuer Neukalibrierung."""
@@ -107,6 +110,22 @@ def lade(paket: Path) -> tuple[Dict, Dict[str, List[int]]]:
                 f"({ist[:16]}… statt {eintrag['hash'][:16]}…). Paket beschaedigt."
             )
         roh = bin_pfad.read_bytes()
-        luts[name] = list(struct.unpack(f"<{eintrag['length']}h", roh))
+        # ⛔️ **Hier stand bis theta_v 0.21.0 fest `h`, also int16.** Das
+        # ging gut, solange jede Tabelle int16 war; `softplus` ist die
+        # erste, die es nicht ist, und ein fester Buchstabe haette sie
+        # still als doppelt so viele halbe Werte gelesen. Der Typ steht im
+        # Manifest, das der Export geschrieben hat, und der wiederum hat
+        # ihn aus theta_v.
+        #
+        # 📌 **Ein Format, das an einem Ort definiert ist, gehoert an
+        # keinem zweiten noch einmal angenommen.**
+        code = _PACKFORMAT.get(eintrag.get("dtype", "int16"))
+        if code is None:
+            raise ValueError(
+                f"LUT {name} traegt die unbekannte Breite "
+                f"'{eintrag.get('dtype')}'. Bekannt sind "
+                f"{sorted(_PACKFORMAT)}."
+            )
+        luts[name] = list(struct.unpack(f"<{eintrag['length']}{code}", roh))
 
     return scales, luts

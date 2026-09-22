@@ -223,7 +223,7 @@ fn artefakt_loeschen(
     let w = wurzel_suchen().ok_or("Das Repositorium ist nicht zu finden")?;
 
     // 1. Der Schluessel muss im Katalog stehen.
-    let roh = std::fs::read_to_string(w.join("INTEGER_LLM/models/KATALOG.json"))
+    let roh = std::fs::read_to_string(w.join("MODELS/llm/KATALOG.json"))
         .map_err(|e| format!("KATALOG.json: {e}"))?;
     let d: serde_json::Value = serde_json::from_str(&roh).map_err(|e| e.to_string())?;
     if d.get(&schluessel).is_none() {
@@ -1736,9 +1736,14 @@ fn datenort() -> std::path::PathBuf {
 
 /// Was Myelith heute schon auf der Platte haelt.
 fn belegung_heute() -> u64 {
-    let ort = datenort();
-    myl_client::reservierung::belegung(&ort.join("models"))
-        + myl_client::reservierung::belegung(&ort.join("artifacts"))
+    // ⚑ **Die Liste der gefuellten Orte steht in `ort`**, nicht hier:
+    // Gewichte und Artefakte liegen seit dem 2026-09-21 nicht mehr im
+    // selben Elternverzeichnis, und eine Aufzaehlung an dieser Stelle
+    // waere die zweite (Fund 410).
+    myl_client::ort::gefuellte_orte()
+        .iter()
+        .map(|o| myl_client::reservierung::belegung(o))
+        .sum()
 }
 
 /// Stellt die Reservierung auf die heutige Freigabe ein.
@@ -2012,7 +2017,7 @@ fn befehl_da(w: &std::path::Path, name: &str) -> bool {
 #[tauri::command]
 fn katalog() -> Result<Vec<Katalogeintrag>, String> {
     let w = wurzel_suchen().ok_or("Das Repositorium ist nicht zu finden")?;
-    let roh = std::fs::read_to_string(w.join("INTEGER_LLM/models/KATALOG.json"))
+    let roh = std::fs::read_to_string(w.join("MODELS/llm/KATALOG.json"))
         .map_err(|e| format!("KATALOG.json: {e}"))?;
     let d: serde_json::Value = serde_json::from_str(&roh).map_err(|e| e.to_string())?;
     let obj = d.as_object().ok_or("KATALOG.json ist kein Objekt")?;
@@ -2041,7 +2046,7 @@ fn katalog() -> Result<Vec<Katalogeintrag>, String> {
             artefakt: text(v, "artefakt_anzeige"),
             status: text(v, "status"),
             braucht_bytes: zahl(v, "gewichte_bytes") + zahl(v, "artefakt_bytes"),
-            modell_da: w.join("INTEGER_LLM/models").join(text(v, "hf_verzeichnis")).is_dir(),
+            modell_da: w.join("MODELS/llm").join(text(v, "hf_verzeichnis")).is_dir(),
             artefakt_da: w
                 .join("INTEGER_LLM/artifacts")
                 .join(schluessel)
@@ -2092,7 +2097,7 @@ async fn artefakt_bauen(
     let w = std::path::PathBuf::from(v.wurzel.ok_or("keine Wurzel")?);
 
     // Aus dem Katalog: HF-Kennung und Revision.
-    let roh = std::fs::read_to_string(w.join("INTEGER_LLM/models/KATALOG.json"))
+    let roh = std::fs::read_to_string(w.join("MODELS/llm/KATALOG.json"))
         .map_err(|e| e.to_string())?;
     let d: serde_json::Value = serde_json::from_str(&roh).map_err(|e| e.to_string())?;
     let eintrag = d.get(&schluessel).ok_or(format!("{schluessel} steht nicht im Katalog"))?;
@@ -2142,7 +2147,7 @@ async fn artefakt_bauen(
     };
 
     tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
-        let modellordner = w.join("INTEGER_LLM/models").join(&verzeichnis);
+        let modellordner = w.join("MODELS/llm").join(&verzeichnis);
         // ⚑ **Schon da heisst: nicht noch einmal.** Ein zweiter
         // Download von mehreren Gigabyte, weil jemand den Knopf
         // zweimal gedrueckt hat, waere teuer und ueberfluessig.

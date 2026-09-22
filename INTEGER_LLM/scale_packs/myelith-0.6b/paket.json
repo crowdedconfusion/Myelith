@@ -1,5 +1,5 @@
 {
-  "theta_v": "0.20.0",
+  "theta_v": "0.22.0",
   "dateien": [
     "scales.json",
     "luts.json",
@@ -7,11 +7,14 @@
     "cos.lut.bin",
     "exp.lut.bin",
     "rsqrt.lut.bin",
+    "sigmoid.lut.bin",
     "silu.lut.bin",
-    "sin.lut.bin"
+    "sin.lut.bin",
+    "softplus_rest.lut.bin",
+    "zerfall_exp.lut.bin"
   ],
-  "bytes": 10829812,
-  "artefakt_digest_sha256": "e1f42051a85d1df249aac8781346f2e9d6051fe7491afd4a44e8f1c702b58499",
+  "bytes": 10955623,
+  "artefakt_digest_sha256": "e03f94b2ca6d90abfd7e23ce8f6bdaf94e72b71d176f9c64367cde140468e1c5",
   "digest_ueber": [
     "theta_v.json",
     "model_config.json",

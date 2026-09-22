@@ -191,6 +191,136 @@ def quantize_symmetric_int16_per_channel(tensor: torch.Tensor) -> dict:
     }
 
 
+# ⚑ **Praefixe, unter denen der Textteil eines Modells liegen kann.**
+#
+# Ein reines Sprachmodell legt seine Ebenen unter `model.layers.…`. Ein
+# multimodales legt daneben einen Sichtturm und schiebt den Textteil eine
+# Ebene tiefer: `model.language_model.layers.…`.
+#
+# ⛔️ **Die Laufzeit kennt nur den ersten Namen**, hart kodiert
+# (`runtime/src/loader.rs`, `format!("model.layers.{}", …)`). Ein Artefakt
+# mit dem laengeren Namen wuerde vollstaendig geschrieben und beim Laden
+# **nicht gefunden**: kein Fehler, nur fehlende Tensoren.
+#
+# ⚑ **Deshalb normiert der Export und nicht der Lader.** Ein Artefakt
+# traegt genau eine Namenskonvention; die Alternative waere ein Lader mit
+# zwei Faellen, und der zweite Fall wird beim dritten Praefix vergessen.
+_TEXT_PRAEFIXE = (
+    ("model.language_model.", "model."),
+)
+
+
+# ⚑ **Die Parameter der Rekurrenz sind keine GEMM-Gewichte** (2026-09-21).
+#
+# Eine Zustandsschicht traegt drei Tensoren, die nicht mit Aktivierungen
+# multipliziert werden, sondern **das Tor parametrisieren**:
+#
+#   A_log      je Wertkopf, geht als `exp(A_log)` in den Zerfall
+#   dt_bias    je Wertkopf, geht in `softplus(a + dt_bias)`
+#   conv1d.weight   eine kausale Faltung, DAS ist ein Gewicht
+#
+# ⛔️ **int8 je Zeile waere fuer die ersten beiden absurd.** Der Zerfall
+# lautet `g = exp(-exp(A_log) * softplus(a + dt_bias))`, und die Messung
+# vom 2026-09-21 verlangt fuer `g` rund 44 Bruchbits. int8 ueber einen
+# Bereich von +/-4,3 gaebe rund **3,4 Prozent** relativen Fehler in
+# `exp(A_log)`, also im Exponenten selbst.
+#
+# ⚑ **Der vorhandene Per-Element-Pfad ist aber genau das richtige
+# Werkzeug**, und das ist der eigentliche Befund: Er gibt jedem Wert eine
+# **eigene Zweierpotenz-Skala**, also rund 15 Bit **relative**
+# Genauigkeit. Und relativ ist, was hier zaehlt: Wo `g` gegen eins geht,
+# geht `z` gegen null, und ein relativer Fehler in `z` wird dort zu einem
+# **absoluten Fehler, der mit `|z|` mitschrumpft**.
+#
+# **Gerechnet fuer den schaerfsten Fall dieses Modells** (`z` bis
+# -2,1e-8): Der absolute Fehler in `g` bleibt bei rund 1e-11 und damit
+# unter der Schrittweite von 2^-35 (2,9e-11).
+#
+# ⚠️ **Das ist gerechnet und nicht gemessen, und es ist knapp.** Die
+# endgueltige Wahl gehoert zu der Messung, die den echten Bereich von
+# `a_proj` bestimmt; bis dahin ist dies die begruendete Vorgabe und keine
+# Festlegung.
+_REKURRENZ_PER_ELEMENT = ("linear_attn.A_log", "linear_attn.dt_bias")
+
+
+def bereite_rekurrenzparameter(name: str, param):
+    """Formt die Rekurrenzparameter fuer den Export.
+
+    Drei Faelle, und jeder hat einen Grund:
+
+    - **`A_log` wird zu `exp(A_log)`.** ⚑ Es haengt nur an gelernten
+      Werten je Kopf, nie an einem Token. **Eine Exponentialfunktion, die
+      zur Bauzeit ausgerechnet werden kann, gehoert nicht in den
+      Rechenpfad**, und der Name sagt danach, was drinsteht.
+    - **`dt_bias` bleibt, wie es ist**, und geht ueber denselben
+      Per-Element-Pfad.
+    - **`conv1d.weight` wird von (K, 1, T) auf (K, T) gebracht.** ⚑ Die
+      mittlere Achse ist eins, und **das Artefakt traegt durchgehend
+      zweidimensionale Tensoren**; eine dritte Achse waere die erste
+      Ausnahme von einer Regel, die der Lader ueberall voraussetzt.
+
+    Zurueck kommt `(name, tensor, per_element)`.
+    """
+    import torch  # lokal, damit dieses Modul ohne torch importierbar bleibt
+
+    if name.endswith("linear_attn.A_log"):
+        return (name[: -len("A_log")] + "exp_A", torch.exp(param.detach().float()), True)
+    if name.endswith("linear_attn.dt_bias"):
+        return (name, param, True)
+    if name.endswith("linear_attn.conv1d.weight") and param.dim() == 3:
+        if param.shape[1] != 1:
+            raise ValueError(
+                f"{name}: mittlere Achse ist {param.shape[1]} statt 1; die Faltung "
+                "ist nicht tiefenweise, und das Artefaktformat traegt keine dritte Achse."
+            )
+        return (name, param.squeeze(1), False)
+    return (name, param, False)
+
+
+def normiere_namen(name: str) -> str:
+    """Bringt einen Tensornamen auf die Konvention des Artefakts.
+
+    ⚠️ **Nur am Anfang und nur einmal.** Ein `replace` ueber den ganzen
+    Namen traefe auch ein `language_model` mitten im Pfad; das gibt es
+    heute nicht, und genau deshalb soll es hier auch nicht moeglich sein.
+    """
+    for lang, kurz in _TEXT_PRAEFIXE:
+        if name.startswith(lang):
+            return kurz + name[len(lang):]
+    return name
+
+
+# ⛔️ **Fund 416: die Teilwortsuche nimmt mit, was sie nicht meint.**
+#
+# `norm` trifft auch `model.visual.blocks.0.norm1.bias`, und
+# `self_attn.q_proj` auch `mtp.layers.0.self_attn.q_proj`. Gezaehlt am
+# 2026-09-21 an einem echten multimodalen Modell: **110 Tensoren eines
+# Sichtturms und 14 eines MTP-Kopfes** waeren mitgekommen, waeren
+# quantisiert, geschrieben und gehasht worden, **und kein Leser haette
+# sie gefunden**.
+#
+# 📌 **Dieselbe Klasse wie ein Feld ohne Verbraucher, nur teurer:** Es
+# sind Bytes im Artefakt und Zeit im Bau. ⚠️ **Und es faellt nicht
+# auf**, weil ein Artefakt mit Zusatztensoren genauso laedt wie eines
+# ohne.
+#
+# ⚑ **Warum eine Ausschlussliste und keine genaueren Schluessel.** Die
+# Teilwortsuche ist Absicht: Sie traegt Namen unter fremdem Praefix
+# (`model.language_model.layers.…`) ohne Zutun. Was sie braucht, ist
+# eine Aussage darueber, welche **Teile des Modells** gar nicht
+# gemeint sind, und das sind ganze Unterbaeume.
+#
+# ⚠️ **Der Sichtturm und der MTP-Kopf sind ausgeschlossen, nicht
+# vergessen.** Der eine rechnet nur, wenn Bildmarken im Strom stehen,
+# die der Textpfad nicht hat; der andere ist ein Kopf fuer
+# spekulatives Dekodieren, das dieses Projekt zurueckgestellt hat.
+# **Wer sie braucht, streicht sie hier und baut den Rechenpfad dazu**,
+# statt sie stillschweigend mitzunehmen.
+AUSGESCHLOSSENE_TEILBAEUME = (
+    "visual.",   # der Sichtturm
+    "mtp.",      # der Kopf fuer Mehrfachvorhersage
+)
+
 def entschmelze_experten(name, param):
     """Zerlegt **verschmolzene** Expertentensoren in je einen Tensor pro
     Experte. Alles andere reicht sie unveraendert durch.
@@ -274,6 +404,69 @@ def entschmelze_experten(name, param):
     return [(name, param)]
 
 
+# ⛔️ **Fund 423: eine RMSNorm, die `1 + weight` rechnet.**
+#
+# `Qwen3_5MoeRMSNorm` legt ihr Gewicht mit `torch.zeros` an und rechnet
+# `x * (1.0 + weight)`. Wer das Gewicht so nimmt, wie es im Artefakt
+# steht, normiert mit einer Zahl um **null** statt um **eins**.
+#
+# ⚠️ **Und im selben Modell gilt es nicht ueberall.**
+# `Qwen3_5MoeRMSNormGated`, die Norm des rekurrenten Zweigs, legt ihr
+# Gewicht mit `torch.ones` an und rechnet `x * weight`, ohne Versatz.
+# Zwei Normen, zwei Konventionen, ein Modell.
+#
+# 📌 **Am Mittelwert der Gewichte ist es abzulesen**, und das ist die
+# Probe, die bleibt: Beim Qwen3.6-35B-A3B hat `input_layernorm` den
+# Mittelwert 0,031 und `linear_attn.norm` den Mittelwert 0,884. Ein
+# Normgewicht, das um null streut, will den Versatz; eines, das um eins
+# streut, hat ihn schon.
+#
+# ⚠️ **Wie es so lange unentdeckt blieb:** Der Fehler steht **vor**
+# allem anderen, in der ersten Stufe der ersten Ebene, und er wirkt
+# gleichmaessig. Die Ausgabe behaelt Groessenordnung und Struktur, nur
+# eben die einer anderen Funktion. Jede Stufe liess sich gegen eine
+# eigene Referenz pruefen und war richtig; falsch war die **Eingabe**,
+# die beide teilten. Erst der Lauf gegen das echte Modell hat es
+# gezeigt: `input_layernorm` lieferte dort den Groesstwert 10,0 und
+# hier 2,27.
+NORM_MIT_VERSATZ = (
+    "input_layernorm.weight",
+    "post_attention_layernorm.weight",
+    "self_attn.q_norm.weight",
+    "self_attn.k_norm.weight",
+)
+
+
+def normgewicht_versetzen(name: str, tensor, versatz: float):
+    """Addiert den Versatz auf die Normgewichte, die ihn brauchen.
+
+    `versatz` kommt aus `model_configs.py` (`rms_norm_offset`) und ist
+    fuer alle bisherigen Modelle null; nur die Qwen3.5-Bauart braucht
+    die Eins.
+
+    ⚑ **Die finale Norm heisst `model.norm.weight`** und traegt kein
+    `layers.`; sie wird hier ausdruecklich getroffen, statt sich auf ein
+    Teilwort zu verlassen.
+
+    ⛔️ **`linear_attn.norm.weight` steht bewusst NICHT in der Liste.**
+    """
+    if not versatz:
+        return tensor
+    # ⛔️ **Die finale Norm heisst nicht ueberall gleich.** Bei diesem
+    #   Modell ist es `model.language_model.norm.weight`, bei den
+    #   bisherigen `model.norm.weight`; ein Vergleich auf einen festen
+    #   Namen greift also daneben, und zwar lautlos. Sie ist aber
+    #   eindeutig zu erkennen: Sie endet auf `.norm.weight` und liegt
+    #   als einzige **ausserhalb** einer Ebene.
+    #
+    # ⚠️ `linear_attn.norm.weight` endet ebenso auf `.norm.weight`,
+    #   traegt aber `layers.` und ist damit ausgeschlossen. Genau so
+    #   soll es sein: Sie braucht den Versatz nicht.
+    letzte_norm = name.endswith(".norm.weight") and "layers." not in name
+    trifft = any(name.endswith(e) for e in NORM_MIT_VERSATZ) or letzte_norm
+    return tensor + versatz if trifft else tensor
+
+
 def quantize_model_weights(model) -> Dict[str, dict]:
     """
     Quantisiert alle relevanten Gewichte eines HF-Modells per-channel
@@ -328,6 +521,10 @@ def quantisiere_gewichte_strom(model):
     je Tensor entstehen dieselben Bytes. Fuer 0,5B und 7B aendert sich
     nichts.
     """
+    versatz = float(getattr(getattr(model, "config", None), "rms_norm_offset", 0.0) or 0.0)
+    if versatz:
+        print(f"[quantize] RMSNorm-Versatz {versatz} aktiv (Fund 423): "
+              f"die Normgewichte dieses Modells streuen um null.")
     target_keys = [
         "embed_tokens", "lm_head",
         "self_attn.q_proj", "self_attn.k_proj", "self_attn.v_proj", "self_attn.o_proj",
@@ -343,13 +540,32 @@ def quantisiere_gewichte_strom(model):
         # "mlp.gate_proj" usw. NICHT: dazwischen steht "experts.<N>".
         # Der Router heisst mlp.gate und endet nicht auf gate_proj.
         "mlp.experts.", "mlp.gate.",
+        # Rekurrente Zustandsschichten (2026-09-21). Acht Tensoren je
+        # Ebene: die vier Eingangsprojektionen, die kausale Faltung, die
+        # Normierung, die Ausgangsprojektion und die zwei
+        # Zerfallsparameter. ⚑ **Sie treffen keinen der Schluessel
+        # darueber**, denn sie liegen unter `linear_attn.` statt unter
+        # `self_attn.` oder `mlp.`.
+        "linear_attn.",
+        # Der geteilte Experte, der bei jedem Token feuert, samt seinem
+        # Tor. ⚑ **`shared_expert.gate_proj` trifft `mlp.gate_proj`
+        # nicht**, denn dazwischen steht `shared_expert.`; und
+        # `shared_expert_gate` endet nicht auf `gate.`.
+        "mlp.shared_expert",
     ]
 
+
     for name, param in model.named_parameters():
+        if any(teil in f".{name}" for teil in AUSGESCHLOSSENE_TEILBAEUME):
+            continue
         if not any(key in name for key in target_keys):
             continue
         for einzelname, einzeltensor in entschmelze_experten(name, param):
-            if einzelname.endswith(".bias"):
+            einzeltensor = normgewicht_versetzen(einzelname, einzeltensor, versatz)
+            einzelname, einzeltensor, per_element = bereite_rekurrenzparameter(
+                einzelname, einzeltensor)
+            einzelname = normiere_namen(einzelname)
+            if per_element or einzelname.endswith(".bias"):
                 yield einzelname, quantize_bias_int16_per_element(einzeltensor)
             else:
                 yield einzelname, quantize_symmetric_int8_per_channel(einzeltensor)

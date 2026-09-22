@@ -9,17 +9,62 @@
 //! Modell und an den Menschen; keiner von beiden bekommt stattdessen
 //! eine Meldung aus llama.cpp, die den Grund nicht nennt.
 //!
-//! # ⚑ Die Gewichte liegen ausserhalb des Repositoriums
+//! # ⚑ Wo die Gewichte liegen, und in welcher Reihenfolge gesucht wird
 //!
-//! Vorgabe ist `~/.myelith/sinne`, umzustellen ueber `MYL_SINNE`. Sie
-//! sind gross, sie gehoeren nicht versioniert, und **welches Modell
-//! taugt, entscheidet der Nutzer**: Eine Empfehlung im Text veraltet
-//! billiger als eine im Code.
+//! **Umgezogen am 2026-09-21** (Festlegung des Projektinhabers): Alle
+//! fremden Gewichte dieses Projekts liegen im Klon unter `MODELS/`, nach
+//! Rubrik getrennt, und die Sinne nehmen `MODELS/audio` und
+//! `MODELS/vision`. Sie sind dort **nicht versioniert**.
+//!
+//! Gesucht wird in drei Stufen, siehe [`gewichtsorte`]:
+//!
+//! 1. **`MYL_SINNE`**, falls gesetzt. Dann liegt dort **alles
+//!    zusammen**, und keine andere Stufe greift.
+//! 2. **`MODELS/audio` und `MODELS/vision`** im gefundenen Klon.
+//! 3. **`~/.myelith/sinne`** als Rueckfall.
+//!
+//! ⛔️ **Die dritte Stufe ist kein Altlastenrest, sondern der einzige
+//! Weg fuer ein ausgeliefertes Programm.** Wer nur die Freigabebuendel
+//! geholt hat, hat keinen Klon und damit kein `MODELS/`; ohne den
+//! Rueckfall fande er gar nichts und bekaeme einen Mangel, der auf ein
+//! Verzeichnis zeigt, das es bei ihm nicht gibt.
+//!
+//! ⚑ **Was NICHT umgezogen ist, und der Schnitt ist Absicht.** In der
+//! Heimat bleiben der `bin`-Ordner (das Sprech- und das Aufnahmeskript,
+//! die diese Kiste selbst schreibt) und eine abgelegte Stimmprobe. Das
+//! eine ist erzeugt, das andere gehoert dem Nutzer; **Gewichte sind
+//! geladen**, und nur die haben einen Rubrikordner verdient. Deshalb
+//! gibt es zwei Begriffe: [`heimat`] fuer den Betrieb, [`gewichtsorte`]
+//! fuer die Gewichte.
+//!
+//! ⚑ **Welches Modell taugt, entscheidet weiter der Nutzer**: Eine
+//! Empfehlung im Text veraltet billiger als eine im Code.
 
 use std::path::{Path, PathBuf};
 
 /// Die Umgebungsvariable, die die Heimat der Sinnesmodelle umstellt.
+///
+/// ⚑ **Sie schlaegt alle anderen Stufen**, und zwar vollstaendig: Wer
+/// sie setzt, sagt damit, dass dort alles zusammenliegt. Eine Variable,
+/// die nur die halbe Suche uebergeht, waere schlimmer als keine.
 pub const HEIMAT_UMGEBUNG: &str = "MYL_SINNE";
+
+/// Das Verzeichnis im Klon, in dem **alle** fremden Gewichte liegen.
+pub const MODELLE_ORDNER: &str = "MODELS";
+/// Die Rubrik fuer Hoeren und Sprechen.
+pub const RUBRIK_AUDIO: &str = "audio";
+/// Die Rubrik fuer Sehen.
+pub const RUBRIK_VISION: &str = "vision";
+
+/// Die Namen, unter denen ein ausgepacktes CosyVoice zu finden ist.
+///
+/// ⛔️ **Zwei Schreibweisen, und das ist kein Schoenheitsfehler.** Wer
+/// das Projekt klont, bekommt `CosyVoice`; in der Sinnesheimat lag
+/// bisher ein `cosyvoice`. **macOS und Windows unterscheiden die beiden
+/// nicht, Linux tut es**, und eine Suche mit nur einer Schreibweise
+/// faellt genau auf dem System auf, auf dem niemand sie geschrieben hat
+/// (dieselbe Klasse wie Fund 392).
+pub const COSYVOICE_NAMEN: [&str; 2] = ["CosyVoice", "cosyvoice"];
 
 /// Die Dateinamen, unter denen die Gewichte in der Heimat erwartet werden.
 pub const SEHMODELL: &str = "sehen.gguf";
@@ -84,12 +129,61 @@ pub const STIMMPROBE: &str = "stimme.wav";
 /// auf seine Eingabe hoert, kann sauber abschliessen.
 pub const AUFNAHMESKRIPT: &str = "aufnehmen";
 
-/// **Wo die Sinnesmodelle liegen.**
+/// **Der Arbeitsort der Sinne**: der `bin`-Ordner und die Stimmprobe.
+///
+/// ⚠️ **Nicht mehr der Ort der Gewichte**, seit dem 2026-09-21. Wer
+/// Gewichte sucht, nimmt [`gewichtsorte`]; wer etwas **schreibt**, nimmt
+/// diesen hier, denn er ist der einzige, den es auch ohne Klon gibt.
 pub fn heimat() -> PathBuf {
     match std::env::var_os(HEIMAT_UMGEBUNG).filter(|w| !w.is_empty()) {
         Some(w) => PathBuf::from(w),
         None => heimatvorgabe(),
     }
+}
+
+/// **Die Orte, an denen nach Gewichten gesucht wird**, in der
+/// Reihenfolge der Suche. Der erste, an dem eine Datei liegt, gewinnt.
+///
+/// Die drei Stufen und ihre Begruendung stehen im Modulkopf.
+///
+/// ⚑ **Die Liste ist nie leer.** Auch ohne Klon steht die Heimat darin,
+/// und damit hat jeder Mangel einen Ort zu nennen, an den etwas gehoert.
+pub fn gewichtsorte() -> Vec<PathBuf> {
+    let gesetzt = std::env::var_os(HEIMAT_UMGEBUNG)
+        .filter(|w| !w.is_empty())
+        .map(PathBuf::from);
+    gewichtsorte_aus(gesetzt.as_deref(), crate::ort::wurzel().as_deref(), &heimatvorgabe())
+}
+
+/// **Dieselbe Reihenfolge gegen gesagte Orte.**
+///
+/// ⚑ **Eigene Funktion, damit sie sich pruefen laesst.** [`gewichtsorte`]
+/// fragt die Umgebung und sucht die Wurzel; eine Probe darueber muesste
+/// beides stellen und liefe allen Proben daneben ins Gehege, denn
+/// `cargo test` laeuft nebenlaeufig **im selben Prozess** und die
+/// Umgebung ist allen gemeinsam. **Was entschieden wird, steht hier; was
+/// ermittelt wird, steht dort.**
+pub fn gewichtsorte_aus(
+    gesetzte_heimat: Option<&Path>,
+    wurzel: Option<&Path>,
+    heimatvorgabe: &Path,
+) -> Vec<PathBuf> {
+    // 1. Wer die Variable setzt, meint sie, und meint alles.
+    if let Some(w) = gesetzte_heimat {
+        return vec![w.to_path_buf()];
+    }
+    let mut aus = Vec::new();
+    // 2. Der Klon, wenn es einen gibt. Beide Rubriken, denn eine Datei
+    //    hier ist an ihrem Namen erkannt und nicht an ihrem Ordner: Wer
+    //    ein Sehmodell nach `audio` legt, soll es wiederfinden.
+    if let Some(w) = wurzel {
+        let m = w.join(MODELLE_ORDNER);
+        aus.push(m.join(RUBRIK_VISION));
+        aus.push(m.join(RUBRIK_AUDIO));
+    }
+    // 3. Die Heimat als Rueckfall, fuer das ausgelieferte Programm.
+    aus.push(heimatvorgabe.to_path_buf());
+    aus
 }
 
 fn heimatvorgabe() -> PathBuf {
@@ -325,20 +419,44 @@ pub struct Sinne {
 impl Sinne {
     /// Aus Umgebung und Vorgaben.
     pub fn finden() -> Self {
-        Self::finden_in(&heimat(), &Eigene::aus_umgebung(), &pfadordner())
+        Self::finden_mit(&heimat(), &gewichtsorte(), &Eigene::aus_umgebung(), &pfadordner())
     }
 
-    /// **Dieselbe Suche, aber mit gesagten Orten.**
+    /// **Dieselbe Suche, aber alles unter EINEM Ort.**
     ///
     /// ⚑ **Die Naht fuer die Proben** (und fuer jeden, der die Sinne
     /// woandershin legen will). Eine Probe, die dafuer die Umgebung des
     /// Prozesses veraendert, veraendert sie fuer alle Proben daneben:
     /// `cargo test` laeuft nebenlaeufig im selben Prozess.
+    ///
+    /// ⚑ **Das ist zugleich der Fall `MYL_SINNE`**, und deshalb bleibt
+    /// diese Naht so, wie sie war: Wer die Variable setzt, bekommt genau
+    /// diese Suche.
     pub fn finden_in(heimat: &Path, eigen: &Eigene, pfad: &[PathBuf]) -> Self {
+        Self::finden_mit(heimat, &[heimat.to_path_buf()], eigen, pfad)
+    }
+
+    /// **Die Suche mit getrenntem Arbeitsort und Gewichtsorten.**
+    ///
+    /// `heimat` traegt den `bin`-Ordner und die Stimmprobe, `gewichte`
+    /// die Modelldateien, in der Reihenfolge der Suche.
+    ///
+    /// ⚑ **Warum das zwei Angaben sind und nicht eine** (2026-09-21):
+    /// Die Gewichte sind in den Klon gezogen, das Erzeugte und die
+    /// Nutzerdaten sind geblieben. Wer beides aus einem Pfad ableitete,
+    /// muesste sich fuer einen der zwei Orte entscheiden und haette
+    /// entweder ein Skript im Rubrikordner oder ein Modell, das niemand
+    /// findet.
+    pub fn finden_mit(
+        heimat: &Path,
+        gewichte: &[PathBuf],
+        eigen: &Eigene,
+        pfad: &[PathBuf],
+    ) -> Self {
         Self {
-            sehen: sehen(heimat, eigen, pfad),
-            hoeren: hoerzeug(heimat, eigen, pfad),
-            sprechen: sprechzeug(heimat, eigen, pfad),
+            sehen: sehen(heimat, gewichte, eigen, pfad),
+            hoeren: hoerzeug(heimat, gewichte, eigen, pfad),
+            sprechen: sprechzeug(heimat, gewichte, eigen, pfad),
             aufnehmen: aufnahmezeug(heimat, eigen, pfad),
         }
     }
@@ -435,11 +553,16 @@ pub fn pfadordner() -> Vec<PathBuf> {
     aus
 }
 
-fn sehen(heimat: &Path, eigen: &Eigene, pfad: &[PathBuf]) -> Result<Sehen, Mangel> {
+fn sehen(
+    heimat: &Path,
+    gewichte: &[PathBuf],
+    eigen: &Eigene,
+    pfad: &[PathBuf],
+) -> Result<Sehen, Mangel> {
     let programm = programm_suchen(&SEHPROGRAMME, eigen.seher.as_deref(), heimat, pfad);
     let sprosse = |modell: Option<&Path>, projektor: Option<&Path>, mname: &str, pname: &str| {
-        let m = datei_suchen(modell, &heimat.join(mname));
-        let p = datei_suchen(projektor, &heimat.join(pname));
+        let m = datei_suchen_in(modell, gewichte, mname);
+        let p = datei_suchen_in(projektor, gewichte, pname);
         match (programm.as_ref(), m, p) {
             (Some(prog), Some(m), Some(p)) => {
                 Some(Sehzeug { programm: prog.clone(), modell: m, projektor: p })
@@ -470,18 +593,18 @@ fn sehen(heimat: &Path, eigen: &Eigene, pfad: &[PathBuf]) -> Result<Sehen, Mange
     if programm.is_none() {
         fehlt.push(("Programm".into(), format!("{} aus llama.cpp", SEHPROGRAMME[0])));
     }
-    if datei_suchen(eigen.sehmodell.as_deref(), &heimat.join(SEHMODELL)).is_none() {
-        fehlt.push(("Modell".into(), heimat.join(SEHMODELL).display().to_string()));
+    if datei_suchen_in(eigen.sehmodell.as_deref(), gewichte, SEHMODELL).is_none() {
+        fehlt.push(("Modell".into(), erster_ort(gewichte, SEHMODELL).display().to_string()));
     }
-    if datei_suchen(eigen.sehprojektor.as_deref(), &heimat.join(SEHPROJEKTOR)).is_none() {
-        fehlt.push(("Projektor".into(), heimat.join(SEHPROJEKTOR).display().to_string()));
+    if datei_suchen_in(eigen.sehprojektor.as_deref(), gewichte, SEHPROJEKTOR).is_none() {
+        fehlt.push(("Projektor".into(), erster_ort(gewichte, SEHPROJEKTOR).display().to_string()));
     }
     Err(Mangel {
         sinn: "Sehmodell",
         fehlt,
         anleitung: vec![
             format!("llama.cpp installieren ({})", einbauhinweis("llama.cpp", "llama-cpp")),
-            format!("Den Ordner anlegen: {}", heimat.display()),
+            format!("Den Ordner anlegen: {}", erster_ort(gewichte, "").display()),
             format!(
                 "Ein kleines Sehmodell als GGUF samt mmproj dorthin legen, benannt {SEHMODELL} und {SEHPROJEKTOR}. \
                  Klein und brauchbar ist zum Beispiel SmolVLM2-2.2B-Instruct. Wer zusaetzlich ein groesseres \
@@ -491,9 +614,14 @@ fn sehen(heimat: &Path, eigen: &Eigene, pfad: &[PathBuf]) -> Result<Sehen, Mange
     })
 }
 
-fn hoerzeug(heimat: &Path, eigen: &Eigene, pfad: &[PathBuf]) -> Result<Hoerzeug, Mangel> {
+fn hoerzeug(
+    heimat: &Path,
+    gewichte: &[PathBuf],
+    eigen: &Eigene,
+    pfad: &[PathBuf],
+) -> Result<Hoerzeug, Mangel> {
     let programm = programm_suchen(&HOERPROGRAMME, eigen.hoerer.as_deref(), heimat, pfad);
-    let modell = datei_suchen(eigen.hoermodell.as_deref(), &heimat.join(HOERMODELL));
+    let modell = datei_suchen_in(eigen.hoermodell.as_deref(), gewichte, HOERMODELL);
     if let (Some(programm), Some(modell)) = (&programm, &modell) {
         return Ok(Hoerzeug { programm: programm.clone(), modell: modell.clone() });
     }
@@ -502,14 +630,14 @@ fn hoerzeug(heimat: &Path, eigen: &Eigene, pfad: &[PathBuf]) -> Result<Hoerzeug,
         fehlt.push(("Programm".into(), format!("{} aus whisper.cpp", HOERPROGRAMME[0])));
     }
     if modell.is_none() {
-        fehlt.push(("Modell".into(), heimat.join(HOERMODELL).display().to_string()));
+        fehlt.push(("Modell".into(), erster_ort(gewichte, HOERMODELL).display().to_string()));
     }
     Err(Mangel {
         sinn: "Hoermodell",
         fehlt,
         anleitung: vec![
             format!("whisper.cpp installieren ({})", einbauhinweis("whisper-cpp", "whisper-cpp")),
-            format!("Den Ordner anlegen: {}", heimat.display()),
+            format!("Den Ordner anlegen: {}", erster_ort(gewichte, "").display()),
             format!(
                 "Ein ggml-Modell dorthin legen, benannt {HOERMODELL}. Klein und brauchbar sind \
                  zum Beispiel ggml-small.bin oder ggml-large-v3-turbo-q5_0.bin."
@@ -566,7 +694,15 @@ fn aufnahmezeug(heimat: &Path, eigen: &Eigene, pfad: &[PathBuf]) -> Result<Aufna
     }
 }
 
-fn sprechzeug(heimat: &Path, eigen: &Eigene, pfad: &[PathBuf]) -> Result<Sprechzeug, Mangel> {
+fn sprechzeug(
+    heimat: &Path,
+    gewichte: &[PathBuf],
+    eigen: &Eigene,
+    pfad: &[PathBuf],
+) -> Result<Sprechzeug, Mangel> {
+    // ⚑ **Die Stimmprobe bleibt in der Heimat.** Sie ist eine Aufnahme
+    // des Nutzers und kein geladenes Gewicht; sie gehoert dorthin, wo
+    // diese Kiste auch schreiben darf.
     let probe = datei_suchen(None, &heimat.join(STIMMPROBE));
     let probentext = datei_suchen(None, &heimat.join(STIMMPROBE_TEXT));
     let fertig = |weg| Ok(Sprechzeug { weg, probe: probe.clone(), probentext: probentext.clone() });
@@ -580,12 +716,19 @@ fn sprechzeug(heimat: &Path, eigen: &Eigene, pfad: &[PathBuf]) -> Result<Sprechz
     }
 
     // 2. CosyVoice: Python, der mitgelieferte Laeufer, die Wurzel.
+    // ⚑ **Erst die Variable, dann die Gewichtsorte, dann die Heimat**,
+    // also dieselbe Reihenfolge wie bei jeder anderen Gewichtsdatei.
+    // CosyVoice ist ein Verzeichnis und keine Datei, sucht sich aber
+    // sonst genauso.
     let wurzel = std::env::var_os(COSYVOICE_UMGEBUNG)
         .filter(|w| !w.is_empty())
         .map(PathBuf::from)
         .or_else(|| {
-            let v = heimat.join("cosyvoice");
-            v.is_dir().then_some(v)
+            gewichte
+                .iter()
+                .chain(std::iter::once(&heimat.to_path_buf()))
+                .flat_map(|o| COSYVOICE_NAMEN.iter().map(move |n| o.join(n)))
+                .find(|v| v.is_dir())
         });
     // ⛔️ **Der Python neben der Installation gewinnt**, und das ist die
     // ganze Pointe.
@@ -617,7 +760,7 @@ fn sprechzeug(heimat: &Path, eigen: &Eigene, pfad: &[PathBuf]) -> Result<Sprechz
 
     // 3. piper als Rueckfall.
     let programm = programm_suchen(&SPRECHPROGRAMME, eigen.sprecher.as_deref(), heimat, pfad);
-    let stimme = datei_suchen(eigen.sprechmodell.as_deref(), &heimat.join(SPRECHMODELL));
+    let stimme = datei_suchen_in(eigen.sprechmodell.as_deref(), gewichte, SPRECHMODELL);
     if let (Some(programm), Some(stimme)) = (&programm, &stimme) {
         return fertig(Sprechweg::Piper { programm: programm.clone(), stimme: stimme.clone() });
     }
@@ -626,7 +769,10 @@ fn sprechzeug(heimat: &Path, eigen: &Eigene, pfad: &[PathBuf]) -> Result<Sprechz
     if wurzel.is_none() {
         fehlt.push((
             "CosyVoice".into(),
-            format!("{COSYVOICE_UMGEBUNG} oder {}", heimat.join("cosyvoice").display()),
+            format!(
+                "{COSYVOICE_UMGEBUNG} oder {}",
+                erster_ort(gewichte, COSYVOICE_NAMEN[0]).display()
+            ),
         ));
     }
     if python.is_none() {
@@ -656,13 +802,13 @@ fn sprechzeug(heimat: &Path, eigen: &Eigene, pfad: &[PathBuf]) -> Result<Sprechz
                  ⚠️ piper kann allerdings keine Stimme nachbilden.",
                 einbauhinweis("piper", "piper-tts"),
                 SPRECHMODELL,
-                heimat.display()
+                erster_ort(gewichte, "").display()
             ),
         ],
     })
 }
 
-/// ⚑ **Der Hinweis nennt den Paketverwalter dieses Systems**/// ⚑ **Der Hinweis nennt den Paketverwalter dieses Systems**, denn ein
+/// ⚑ **Der Hinweis nennt den Paketverwalter dieses Systems**, denn ein
 /// `brew install` auf NixOS hilft niemandem.
 fn einbauhinweis(brau: &str, nix: &str) -> String {
     if cfg!(target_os = "macos") {
@@ -734,9 +880,148 @@ fn datei_suchen(eigen: Option<&Path>, vorgabe: &Path) -> Option<PathBuf> {
     vorgabe.is_file().then(|| vorgabe.to_path_buf())
 }
 
+/// **Dieselbe Suche ueber mehrere Orte**, in deren Reihenfolge.
+///
+/// ⚑ **Die eigene Angabe schlaegt alle Orte.** Wer eine Datei
+/// ausdruecklich nennt, will genau die, und ein Rueckfall auf eine
+/// gleichnamige woanders waere eine stille Ersetzung.
+///
+/// ⚠️ **Eine genannte Datei, die es nicht gibt, ergibt `None`** und
+/// nicht den Rueckfall: Sonst rechnete der Nutzer mit einem Modell,
+/// dessen Pfad er falsch geschrieben hat, und merkte es nie.
+fn datei_suchen_in(eigen: Option<&Path>, orte: &[PathBuf], name: &str) -> Option<PathBuf> {
+    if let Some(p) = eigen {
+        return p.is_file().then(|| p.to_path_buf());
+    }
+    orte.iter().map(|o| o.join(name)).find(|p| p.is_file())
+}
+
+/// **Wohin eine fehlende Datei gehoert**, fuer die Mangelmeldung.
+///
+/// ⚑ **Der erste Ort und nicht alle.** Ein Mangel, der drei Pfade
+/// nennt, laesst den Leser waehlen, und die Suche hat schon gewaehlt.
+fn erster_ort(orte: &[PathBuf], name: &str) -> PathBuf {
+    match orte.first() {
+        Some(o) => o.join(name),
+        None => PathBuf::from(name),
+    }
+}
+
 #[cfg(test)]
 mod proben {
     use super::*;
+
+    /// **Die Reihenfolge der Suchorte, alle drei Stufen.**
+    ///
+    /// ⚑ **Die Reihenfolge ist die Aussage und nicht die Menge.** Eine
+    /// Probe, die nur pruefte, dass alle drei Orte vorkommen, bliebe
+    /// gruen, wenn die Heimat vor dem Klon stuende, und dann gewaenne
+    /// ein altes Modell im Heimatordner gegen das neue im Klon,
+    /// stillschweigend.
+    #[test]
+    fn die_suchorte_stehen_in_der_richtigen_reihenfolge() {
+        let klon = Path::new("/ein/klon");
+        let heim = Path::new("/ein/heim/.myelith/sinne");
+
+        // Mit Klon: erst die beiden Rubriken, dann die Heimat.
+        let mit = gewichtsorte_aus(None, Some(klon), heim);
+        assert_eq!(
+            mit,
+            vec![
+                klon.join(MODELLE_ORDNER).join(RUBRIK_VISION),
+                klon.join(MODELLE_ORDNER).join(RUBRIK_AUDIO),
+                heim.to_path_buf(),
+            ]
+        );
+        // ⚑ Und ausdruecklich: die Heimat ist die **letzte**.
+        assert_eq!(mit.last().map(|p| p.as_path()), Some(heim));
+
+        // Ohne Klon bleibt allein die Heimat, und die Liste ist nicht leer.
+        assert_eq!(gewichtsorte_aus(None, None, heim), vec![heim.to_path_buf()]);
+    }
+
+    /// ⛔️ **`MYL_SINNE` schlaegt alles, auch einen vorhandenen Klon.**
+    ///
+    /// Wer die Variable setzt, sagt damit, dass dort alles
+    /// zusammenliegt. Eine Variable, die nur die halbe Suche uebergeht,
+    /// waere schlimmer als keine: Der Nutzer legt sein Modell an den
+    /// genannten Ort, und gerechnet wird mit einem anderen.
+    #[test]
+    fn die_umgebung_schlaegt_klon_und_heimat() {
+        let gesagt = Path::new("/woanders/sinne");
+        let orte = gewichtsorte_aus(Some(gesagt), Some(Path::new("/ein/klon")), Path::new("/heim"));
+        assert_eq!(orte, vec![gesagt.to_path_buf()], "der Klon darf hier nicht mitreden");
+    }
+
+    /// **Eine Datei wird am ersten Ort gefunden, an dem sie liegt.**
+    ///
+    /// ⚑ **Mit Gegenprobe in beide Richtungen:** dass der zweite Ort
+    /// greift, wenn der erste leer ist, **und** dass der erste gewinnt,
+    /// wenn beide etwas haben. Ohne die zweite Haelfte bestuende die
+    /// Probe auch dann, wenn `datei_suchen_in` schlicht den letzten
+    /// Treffer zurueckgaebe.
+    #[test]
+    fn der_erste_ort_mit_der_datei_gewinnt() {
+        let d = tempfile::tempdir().expect("Verzeichnis");
+        let eins = d.path().join("eins");
+        let zwei = d.path().join("zwei");
+        std::fs::create_dir_all(&eins).expect("eins");
+        std::fs::create_dir_all(&zwei).expect("zwei");
+        let orte = vec![eins.clone(), zwei.clone()];
+
+        // Nichts da: nichts gefunden.
+        assert_eq!(datei_suchen_in(None, &orte, HOERMODELL), None);
+
+        // Nur im zweiten: der zweite.
+        std::fs::write(zwei.join(HOERMODELL), "b").expect("schreiben");
+        assert_eq!(datei_suchen_in(None, &orte, HOERMODELL), Some(zwei.join(HOERMODELL)));
+
+        // In beiden: der erste.
+        std::fs::write(eins.join(HOERMODELL), "a").expect("schreiben");
+        assert_eq!(datei_suchen_in(None, &orte, HOERMODELL), Some(eins.join(HOERMODELL)));
+    }
+
+    /// ⚠️ **Eine ausdruecklich genannte Datei, die fehlt, ergibt keinen
+    /// Rueckfall.**
+    ///
+    /// 📌 **Sonst rechnete jemand mit einem Modell, dessen Pfad er falsch
+    /// geschrieben hat**, und bekaeme ein Ergebnis, das nach Erfolg
+    /// aussieht. Ein Tippfehler in einer Angabe muss auffallen.
+    #[test]
+    fn eine_genannte_datei_faellt_nicht_zurueck() {
+        let d = tempfile::tempdir().expect("Verzeichnis");
+        let ort = d.path().to_path_buf();
+        std::fs::write(ort.join(HOERMODELL), "da").expect("schreiben");
+        let orte = vec![ort.clone()];
+
+        // Ohne eigene Angabe wird gefunden, was daliegt.
+        assert_eq!(datei_suchen_in(None, &orte, HOERMODELL), Some(ort.join(HOERMODELL)));
+
+        // Mit einer Angabe auf etwas, das es nicht gibt: nichts.
+        let daneben = d.path().join("gibt-es-nicht.bin");
+        assert_eq!(datei_suchen_in(Some(&daneben), &orte, HOERMODELL), None);
+    }
+
+    /// **Der Mangel nennt den ersten Gewichtsort und nicht die Heimat.**
+    ///
+    /// ⚑ **Das ist die Stelle, an der ein Umzug sichtbar wird.** Wer
+    /// nichts hat, liest hier, wohin die Datei gehoert; nennte die
+    /// Meldung weiter die Heimat, legte er sie an einen Ort, an dem
+    /// zuletzt gesucht wird.
+    #[test]
+    fn der_mangel_nennt_den_ersten_gewichtsort() {
+        let d = tempfile::tempdir().expect("Verzeichnis");
+        let gewichte = vec![d.path().join("MODELS/vision"), d.path().join("MODELS/audio")];
+        let s = Sinne::finden_mit(d.path(), &gewichte, &Eigene::default(), &[]);
+
+        let m = s.sehen.as_ref().expect_err("es ist nichts da");
+        let t = m.bericht();
+        let soll = gewichte[0].join(SEHMODELL).display().to_string();
+        assert!(t.contains(&soll), "der Bericht nennt {soll} nicht:\n{t}");
+        // ⚑ Gegenprobe: die Heimat steht dort NICHT als Ort des Modells.
+        let falsch = d.path().join(SEHMODELL).display().to_string();
+        assert!(!t.contains(&falsch), "der Bericht nennt noch die Heimat:\n{t}");
+    }
 
     fn stellen(d: &Path, name: &str) -> PathBuf {
         let bin = d.join("bin");

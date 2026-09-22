@@ -16,7 +16,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "calibrate"))
 from src.luts import (generate_rsqrt_lut, generate_silu_lut, generate_exp_lut,
-                      generate_rope_luts, load_nonlinear_spec)
+                      generate_rope_luts, load_nonlinear_spec,
+                       generate_sigmoid_lut, generate_softplus_lut)
 from src.model_configs import get_model_config
 
 
@@ -224,6 +225,85 @@ def test_spec_driven_generation_lengths():
         assert all(-32768 <= v <= 32767 for v in lut)
 
 
+def test_sigmoid_lut_stuetzwerte():
+    """Sigmoid an Stellen, die sich von Hand nachrechnen lassen."""
+    frac_in, frac_out = 6, 8
+    lut = generate_sigmoid_lut(-8192, 8191, frac_in, frac_out)
+    mitte = 8192  # Index von x = 0
+    assert lut[mitte] == 128, "sigmoid(0) ist 0,5, also 128 bei 8 Bruchbits"
+    assert lut[0] == 0, "weit links ist sigmoid null"
+    assert lut[-1] == 1 << frac_out, "weit rechts ist sigmoid eins"
+    for i in range(1, len(lut)):
+        assert lut[i] >= lut[i - 1], f"sigmoid faellt bei Index {i}"
+    # ⚑ Punktsymmetrie s(-x) + s(x) = 1: eine Eigenschaft der Funktion
+    #   und keine getippte Zahl, und sie prueft die ganze Tabelle.
+    for x in range(-4096, 4097, 97):
+        links, rechts = lut[mitte + x], lut[mitte - x]
+        assert abs((links + rechts) - (1 << frac_out)) <= 1, f"s(-x)+s(x) != 1 bei x={x}"
+
+
+def test_softplus_lut_stuetzwerte():
+    """Softplus an Stellen, die sich von Hand nachrechnen lassen."""
+    frac_in, frac_out = 6, 8
+    lut = generate_softplus_lut(-8192, 8191, frac_in, frac_out)
+    mitte = 8192
+    assert lut[mitte] == round(math.log(2) * (1 << frac_out)), "softplus(0) ist ln 2"
+    assert lut[0] == 0, "weit links ist softplus null"
+    # ⚑ Weit rechts ist softplus die Identitaet; genau darauf stuetzt sich
+    #   die Randfortsetzung des Kernels.
+    letzter_x = 8191
+    assert abs(lut[-1] - round(letzter_x / (1 << frac_in) * (1 << frac_out))) <= 1, (
+        "weit rechts ist softplus nicht die Identitaet"
+    )
+    for i in range(1, len(lut)):
+        assert lut[i] >= lut[i - 1], f"softplus faellt bei Index {i}"
+
+
+def test_silu_ist_x_mal_sigmoid():
+    """⚑ **Die beiden Tabellen gegeneinander, ueber ihre Identitaet.**
+
+    `silu(x) = x · σ(x)` gilt exakt, und beide Tabellen entstehen
+    **unabhaengig** voneinander. Diese Probe haelt sie zusammen und faellt,
+    sobald eine von beiden falsch erzeugt wird.
+
+    📌 **Mehr wert als getippte Stuetzwerte:** Ein Tippfehler in einer
+    Erwartung faellt nur an dieser einen Stelle auf, eine verletzte
+    Identitaet ueberall.
+    """
+    frac_in, frac_out = 6, 8
+    silu = generate_silu_lut(-8192, 8191, frac_in, frac_out)
+    sig = generate_sigmoid_lut(-8192, 8191, frac_in, frac_out)
+    mitte = 8192
+    stelle = 1 / (1 << frac_out)
+    for x in range(-2048, 2049, 37):
+        xf = x / (1 << frac_in)
+        erwartet = xf * (sig[mitte + x] / (1 << frac_out))
+        ist = silu[mitte + x] / (1 << frac_out)
+        # ⛔️ **Die Schranke waechst mit |x|, und das ist die eigentliche
+        #    Aussage dieser Probe.** Sigma ist auf eine Stelle gerundet;
+        #    wer damit multipliziert, vervielfacht diesen Fehler mit |x|.
+        #    Dazu kommt die halbe Stelle der SiLU-Tabelle selbst.
+        #
+        #    📌 **Ein erster Entwurf nahm eine feste Schranke von zwei
+        #    Stellen und fiel bei x = 6,16 mit 3,1 Stellen Abstand.** Die
+        #    Zahl war kein Fehler in den Tabellen, sondern in der
+        #    Erwartung: **Eine Toleranz ohne ihre Herleitung ist geraten.**
+        schranke = (abs(xf) + 1.0) * stelle
+        assert abs(ist - erwartet) <= schranke, (
+            f"silu(x) != x*sigmoid(x) bei x={xf}: {ist} gegen {erwartet}, "
+            f"Abstand {abs(ist - erwartet):.6f} ueber der Schranke {schranke:.6f}"
+        )
+    # ⚑ **Und daraus folgt, warum die SiLU eine eigene Tabelle hat.** Wer
+    #   sie aus Sigma ableitete, traegt dessen Rundungsfehler mal |x| mit,
+    #   also am rechten Rand der Domaene rund 128 Stellen. Die eigene
+    #   Tabelle kostet dieselben paar Kilobyte und hat eine halbe.
+    rechter_rand = 8191 / (1 << frac_in)
+    assert rechter_rand * stelle > 100 * stelle, (
+        "die Fehlerverstaerkung am Rand ist kleiner als gedacht; dann waere "
+        "eine abgeleitete SiLU-Tabelle doch vertretbar und diese Begruendung falsch"
+    )
+
+
 if __name__ == "__main__":
     test_load_nonlinear_spec_structure()
     print("[test] spec.json-nonlinear-Abschnitt haelt seine eigenen Regeln: PASSED")
@@ -241,4 +321,10 @@ if __name__ == "__main__":
     print("[test] RoPE-LUT mit spec-Parametern (Groesse/Identitaet): PASSED")
     test_spec_driven_generation_lengths()
     print("[test] spec-gesteuerte Erzeugung: Laengen und int16-Bereich: PASSED")
+    test_sigmoid_lut_stuetzwerte()
+    print("[test] Sigmoid-LUT Stuetzwerte und Punktsymmetrie: PASSED")
+    test_softplus_lut_stuetzwerte()
+    print("[test] Softplus-LUT Stuetzwerte und Randidentitaet: PASSED")
+    test_silu_ist_x_mal_sigmoid()
+    print("[test] SiLU und Sigmoid halten ihre Identitaet: PASSED")
     print("Alle Tests bestanden.")

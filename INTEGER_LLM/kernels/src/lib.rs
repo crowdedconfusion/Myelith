@@ -24,3 +24,5 @@ pub mod trainingsschritt;
 pub mod mlp;
 pub mod moe;
 pub mod sampling;
+pub mod faltung;
+pub mod zustandsschicht;
