@@ -58,6 +58,48 @@ fn main() {
         );
     }
 
+    // ⚑ **Was die Abtastung aus diesen Logits machen wuerde.**
+    //
+    // `sample_integer_cdf` gewichtet **linear**: `w_i = z_i - min + 1`,
+    // nicht exponentiell. Ob das eine brauchbare Verteilung ergibt,
+    // haengt allein an der Weite des Wertebereichs gegen die Groesse
+    // des Vokabulars, und beides steht erst zur Laufzeit fest.
+    //
+    // 📌 **Deshalb wird es hier gerechnet und nicht behauptet.** Eine
+    // Zahl im Kommentar waere eine Behauptung; diese Zeilen geben sie
+    // aus. Gleitkomma ist hier erlaubt, denn `bin/` ist kein
+    // Rechenpfad und steht als Ausnahme im Gleitkomma-Audit.
+    {
+        let min = *logits.iter().min().expect("mindestens ein Logit");
+        let max = *logits.iter().max().expect("mindestens ein Logit");
+        let summe: i128 = logits.iter().map(|&z| i128::from(z - min + 1)).sum();
+        let spitze = i128::from(max - min + 1);
+        let p_spitze = spitze as f64 / summe as f64;
+        // ⚠️ **Hier stand kurz ein Vergleich mit einer Softmax, und er
+        //    ist wieder weg.** Um Logits in Wahrscheinlichkeiten zu
+        //    wandeln, braucht es die Skala des Artefakts; wer sie frei
+        //    waehlt, bekommt eine Zahl, die nichts bedeutet und trotzdem
+        //    wie eine Messung aussieht. Was hier steht, haengt an nichts
+        //    als den Logits selbst.
+        println!(
+            "Abtastung: Vokabular {}, Logits von {} bis {}, Spanne {}",
+            logits.len(),
+            min,
+            max,
+            max - min
+        );
+        println!(
+            "  linear gewichtet (so rechnet sample_integer_cdf): P(Spitze) = {:.3e}, \
+             also 1 zu {:.0}",
+            p_spitze,
+            1.0 / p_spitze
+        );
+        println!(
+            "  Anteil des Vokabulars, der zusammen mehr Gewicht traegt als die Spitze: {:.4} %",
+            100.0 * (1.0 - p_spitze)
+        );
+    }
+
     let mut idx: Vec<usize> = (0..logits.len()).collect();
     idx.sort_by(|&a, &b| logits[b].cmp(&logits[a]));
 

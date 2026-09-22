@@ -1,7 +1,7 @@
 # Konformitätspaket — INTEGER_LLM
 
-> **theta_v-Version:** 0.20.0
-> **Komponentenversion:** 0.71.0 (`kernels` 0.55.0, `runtime` 0.51.0)
+> **theta_v-Version:** 0.22.0
+> **Komponentenversion:** 0.91.1 (`kernels` 0.65.1, `runtime` 0.62.1)
 > **Ankermodell der Layer- und E2E-Vektoren:** `myelith-0.6b` (Qwen3-0.6B, 28 Ebenen)
 > **Zweck:** Eigenständiges Artefakt, gegen das fremde Implementierungen
 > sich prüfen können — ohne Kenntnis des Projektinneren.
@@ -159,6 +159,26 @@ Vektordateien neu erzeugt. Die Berichtigung des Akkumulators hat keinen
 Wert bewegt; die Fortsetzung der SiLU jenseits ihrer Tabelle hat zwei
 bewegt (`layer/layer_27`, `e2e/e2e_hello`), weil dort Gate-Werte über
 128 vorkommen.
+
+**Mit θ_v 0.22.0 sind alle 49 erneut erzeugt, und diesmal hat sich keine
+einzige Zahl bewegt:** Der Vergleich gegen die vorige Fassung zeigt je
+Datei ausschliesslich das Feld `theta_v_hash` als Unterschied. Das ist
+zu erwarten, denn die Änderungen dieser Fassung betreffen die hybride
+Bauart, und das Ankermodell ist dicht.
+
+⚠️ **Die Vektoren trugen davor zwei verschiedene Stempel**, weil die
+Gruppen von verschiedenen Erzeugern stammen und nicht zusammen
+nachgezogen worden waren: `op`, `moe`, `training` und `manifest.json`
+standen auf der Fassung vor 0.20.0, `layer` und `e2e` auf 0.20.0.
+📌 **Ein Paket, dessen Teile verschiedene Stempel tragen, ist kein Stand,
+sondern eine Sammlung von Ständen.**
+
+⛔️ **Und einer der sieben Trainingsvektoren hat keinen Erzeuger.**
+`training/optimierer_schritt_normiert.golden.json` wird geprüft, aber
+von keinem Skript im Baum geschrieben; das Werkzeug meldet sechs
+geschriebene Vektoren, im Verzeichnis liegen sieben. Er ist deshalb als
+einziger umgestempelt statt erzeugt worden. **Dass seine Zahlen gelten,
+sagt der Prüflauf, nicht der Stempel.**
 
 ## Lizenz
 

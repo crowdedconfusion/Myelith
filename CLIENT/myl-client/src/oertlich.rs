@@ -95,6 +95,24 @@ impl Vorlage {
     /// und niemand sieht dem Fehlschlag an, warum. Ein **leerer**
     /// Denkblock im Voraus sagt dem Modell, dass die Ueberlegung schon
     /// stattgefunden hat, und es geht unmittelbar zur Antwort ueber.
+    /// ⚑ **Beginnt der Antwortstrom INNERHALB des Denkblocks?**
+    ///
+    /// Genau dann, wenn [`Self::bauen`] die Marke `<think>` offen
+    /// stehen laesst. Dann schreibt das Modell seine Ueberlegung ohne
+    /// sie noch einmal zu oeffnen und sendet nur noch `</think>`.
+    ///
+    /// ⛔️ **Deshalb steht diese Frage hier und nicht beim Zerleger**
+    /// (Fund 431, 2026-09-22). Bis dahin nahm der Zerleger an, jeder
+    /// Strom beginne ausserhalb, und wartete auf ein `<think>`, das
+    /// nie kam: Die **ganze** Ueberlegung des hybriden 35B ging als
+    /// Antworttext ins Fenster, und der Nutzer sah den Entwurfsprozess
+    /// statt eines ausklappbaren Blocks. 📌 **Wer die Vorlage aendert,
+    /// aendert die Lesart der Antwort mit**, und wenn beides an zwei
+    /// Stellen entschieden wird, laeuft es auseinander.
+    pub fn oeffnet_denkblock(self, denken: bool) -> bool {
+        denken && matches!(self, Self::ChatMlDenkblock)
+    }
+
     pub fn bauen(self, nachrichten: &[Nachricht], denken: bool) -> String {
         match self {
             Self::ChatMl | Self::ChatMlDenkblock => {
@@ -470,7 +488,9 @@ impl Modellweg for Oertlichesmodell {
             Some(f) => {
                 let mut bisher = String::new();
                 let mut alle: Vec<usize> = Vec::with_capacity(grenze);
-                let mut zerleger = crate::strom::Zerleger::neu();
+                let mut zerleger = crate::strom::Zerleger::neu_im_denken(
+                    self.vorlage().oeffnet_denkblock(self.denken),
+                );
                 let token = dekodieren_fortgesetzt(
                     &self.modell,
                     &prompt_token,

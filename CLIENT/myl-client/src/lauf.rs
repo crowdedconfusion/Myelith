@@ -309,8 +309,29 @@ pub fn verlauf_aus(
 /// ⚑ **Ueber denselben Zerleger wie der laufende Strom.** Eine zweite
 /// Lesart derselben Antwort liefe auseinander, und die Anzeige zeigte
 /// je nach Weg etwas anderes.
+///
+/// ⚑ **Ein fertiger Text sagt selbst, ob er im Denkblock begann**
+/// (Fund 431, 2026-09-22). Vorlagen wie `ChatMlDenkblock` oeffnen
+/// `<think>` in der Aufforderung; das Modell schreibt dann nur noch das
+/// schliessende `</think>`. Ein wohlgeformter Strom traegt das Oeffnen
+/// **vor** dem Schliessen, also heisst ein `</think>` ohne ein `<think>`
+/// davor genau eines: Der Block stand beim ersten Zeichen schon offen.
+///
+/// ⚠️ **Das geht hier und im laufenden Strom nicht.** Dort ist das
+/// Schliessen noch nicht eingetroffen, und wer auf es wartet, hat die
+/// Ueberlegung laengst als Antworttext ausgegeben. Der Strom bekommt
+/// die Auskunft deshalb von der Vorlage (`Vorlage::oeffnet_denkblock`),
+/// nicht aus dem Text. **Zwei Wege, dieselbe Antwort**, und genau
+/// deshalb steht hier, warum sie verschieden fragen duerfen.
 pub fn denken_und_prosa(inhalt: &str) -> (String, String) {
-    let mut z = crate::strom::Zerleger::neu();
+    let schliesst = inhalt.find("</think>");
+    let oeffnet = inhalt.find("<think>");
+    let begann_im_denken = match (schliesst, oeffnet) {
+        (Some(_), None) => true,
+        (Some(z), Some(a)) => z < a,
+        (None, _) => false,
+    };
+    let mut z = crate::strom::Zerleger::neu_im_denken(begann_im_denken);
     let mut stuecke = z.schluck(inhalt);
     stuecke.extend(z.abschluss());
     let sammeln = |waehle: fn(&crate::strom::Stueck) -> Option<&str>| -> String {
@@ -469,6 +490,39 @@ mod denkschritte {
             role: rolle.to_string(),
             content: inhalt.to_string(),
         }
+    }
+
+    /// ⛔️ **Der gemeldete Fehler vom 2026-09-22** (Fund 431).
+    ///
+    /// Beim hybriden 35B oeffnet die **Aufforderung** den Denkblock, das
+    /// Modell sendet nur noch `</think>`. Die ganze Ueberlegung stand
+    /// damit als Antworttext im Fenster, samt Entwuerfen und
+    /// Selbstgespraech, statt in einer Klappe.
+    #[test]
+    fn ein_schliessendes_ohne_oeffnendes_heisst_der_block_stand_offen() {
+        let (denken, prosa) =
+            denken_und_prosa("Ich pruefe die Frage.</think>Hallo! Mein Wissen reicht weit.");
+        assert_eq!(denken, "Ich pruefe die Frage.");
+        assert_eq!(prosa, "Hallo! Mein Wissen reicht weit.");
+    }
+
+    /// ⚑ **Die Gegenprobe: ein wohlgeformter Text darf sich NICHT
+    /// anders verhalten.** Steht das Oeffnen vor dem Schliessen, gilt
+    /// die gewoehnliche Lesart. Ohne diese Probe koennte die neue Regel
+    /// jeden Text als Denkblock lesen und niemandem fiele es auf.
+    #[test]
+    fn ein_wohlgeformter_text_wird_unveraendert_gelesen() {
+        let (denken, prosa) = denken_und_prosa("<think>Kurz ueberlegt.</think>Die Antwort.");
+        assert_eq!(denken, "Kurz ueberlegt.");
+        assert_eq!(prosa, "Die Antwort.");
+    }
+
+    /// ⚑ **Und ein Text ohne jede Marke bleibt ganz Antwort.**
+    #[test]
+    fn ein_text_ohne_marken_ist_ganz_antwort() {
+        let (denken, prosa) = denken_und_prosa("Schlicht geantwortet.");
+        assert_eq!(denken, "");
+        assert_eq!(prosa, "Schlicht geantwortet.");
     }
 
     /// 📌 **Der gemeldete Fehler vom 2026-09-10.**

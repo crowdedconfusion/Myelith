@@ -144,3 +144,28 @@ fn der_denkblock_wird_nur_dort_vorgegeben_wo_er_hingehoert() {
         assert!(s.ends_with("<think>\n\n</think>\n\n"), "{s:?}");
     }
 }
+
+/// ⛔️ **Vorlage und Zerleger muessen dasselbe glauben** (Fund 431).
+///
+/// `oeffnet_denkblock` ist die einzige Stelle, an der entschieden wird,
+/// ob der Antwortstrom innerhalb des Denkblocks beginnt. Sie muss genau
+/// dann wahr sein, wenn `bauen` die Marke offen stehen laesst; jede
+/// Abweichung zeigt dem Nutzer die Ueberlegung als Antworttext.
+#[test]
+fn oeffnet_denkblock_stimmt_mit_der_gebauten_aufforderung_ueberein() {
+    let n = [Nachricht::nutzer("Hallo")];
+    for vorlage in [Vorlage::ChatMl, Vorlage::ChatMlDenkblock, Vorlage::Fortsetzung] {
+        for denken in [true, false] {
+            let aufforderung = vorlage.bauen(&n, denken);
+            // Offen heisst: Die Aufforderung endet auf einem `<think>`,
+            // das nicht wieder geschlossen wurde.
+            let offen = aufforderung.ends_with("<think>\n")
+                && !aufforderung.ends_with("</think>\n\n");
+            assert_eq!(
+                vorlage.oeffnet_denkblock(denken),
+                offen,
+                "{vorlage:?} mit denken={denken}: Auskunft und Aufforderung widersprechen sich\n{aufforderung:?}"
+            );
+        }
+    }
+}

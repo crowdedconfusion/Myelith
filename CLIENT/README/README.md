@@ -1,6 +1,6 @@
 # client (Nutzer-Client inkl. Wallet)
 
-> **Version:** 0.59.0 (`myl-client` 0.44.0, `myl-oberflaeche` 0.39.1, `myl-console` 0.13.0, `myl-senses` 0.2.0)
+> **Version:** 0.59.1 (`myl-client` 0.44.1, `myl-oberflaeche` 0.39.1, `myl-console` 0.13.0, `myl-senses` 0.2.0)
 > **Datum:** 2026-09-22
 > **Status:** ✅ **Der lokale Betrieb läuft und ist ausgeliefert.** Ein
 > Gesprächsfenster mit Modellwahl, Agentenschleife und
@@ -120,6 +120,43 @@ Modell überhaupt etwas taugt, und weil eine Schnittstelle, die kein
 Mensch je bedient hat, an den Bedürfnissen vorbei entworfen wird.
 
 ## Changelog
+
+### v0.59.1 – 2026-09-22 (der Denkblock, der nie geöffnet wurde, weil die Aufforderung ihn schon offen hielt)
+
+⛔️ **Fund 431: Beim hybriden 35B stand die ganze Überlegung des Modells
+als Antworttext im Fenster**, samt Entwürfen und Selbstgespräch, statt in
+einer Klappe. Gemeldet vom Projektinhaber.
+
+**Die Ursache ist eine Annahme, die für ein Modell nicht gilt.** Der
+Zerleger des Antwortstroms schaltet auf „Denken" um, sobald er `<think>`
+liest. Die Vorlage `ChatMlDenkblock` **öffnet diese Marke aber in der
+Aufforderung** (das ist der Zweck dieser Vorlage, sie kam mit dem 35B
+dazu); das Modell schreibt seine Überlegung deshalb sofort los und
+sendet nur noch das schliessende `</think>`. Der Zerleger wartete auf
+ein Öffnen, das nie kam, und gab alles als Antworttext heraus.
+
+⚑ **Behoben an zwei Stellen, und sie fragen bewusst verschieden:**
+
+- **Im laufenden Strom** beantwortet die **Vorlage** die Frage
+  (`Vorlage::oeffnet_denkblock`), denn dort ist das Schliessen noch
+  nicht eingetroffen. Wer darauf wartete, hätte die Überlegung längst
+  ausgegeben.
+- **Für einen fertigen Text** (Verlauf, Vorlesen) sagt der Text es
+  selbst: Ein wohlgeformter Strom trägt das Öffnen **vor** dem
+  Schliessen, also heisst ein `</think>` ohne `<think>` davor genau,
+  dass der Block beim ersten Zeichen schon offen stand.
+
+📌 **Warum nicht einmal für beide.** Der laufende Strom kennt seine
+Zukunft nicht, ein fertiger Text schon. Eine gemeinsame Regel müsste
+sich nach dem ärmeren der beiden Fälle richten und bräuchte dann doch
+die Auskunft der Vorlage; die Begründung steht an beiden Stellen im
+Quelltext.
+
+**Belegt:** sechs neue Proben, darunter zwei Gegenproben, die den
+umgekehrten Fall festhalten (ein wohlgeformter Text darf sich **nicht**
+anders verhalten, und ein Zerleger ohne den Hinweis muss die Überlegung
+in den Antworttext legen). Beide Behebungen einzeln mutiert, beide
+Proben fallen. 205 Proben der Kiste grün.
 
 ### v0.59.0 – 2026-09-22 (ein Modell, das in der Familienzuordnung fehlte, bekam rohen Text statt ChatML)
 

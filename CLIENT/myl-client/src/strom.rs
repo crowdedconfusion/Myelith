@@ -69,6 +69,22 @@ impl Zerleger {
         Self::default()
     }
 
+    /// Ein Strom, der **mitten im Denkblock** beginnt.
+    ///
+    /// ⚑ **Manche Vorlagen oeffnen `<think>` in der Aufforderung**, und
+    /// dann sendet das Modell die Marke nicht mehr; es schreibt sofort
+    /// seine Ueberlegung und schliesst sie mit `</think>`. Ein Zerleger
+    /// aus [`Self::neu`] wartet dann auf ein Oeffnen, das nie kommt,
+    /// und gibt die ganze Ueberlegung als **Antworttext** heraus.
+    ///
+    /// ⚠️ **Wer das hier entscheidet, entscheidet es falsch.** Ob der
+    /// Block offen steht, weiss die Vorlage; sie beantwortet es mit
+    /// `Vorlage::oeffnet_denkblock`. Diese Funktion nimmt die Antwort
+    /// entgegen und raet nicht.
+    pub fn neu_im_denken(im_denken: bool) -> Self {
+        Self { im_denken, ..Self::default() }
+    }
+
     /// Nimmt den Zuwachs und gibt heraus, was endgueltig ist.
     pub fn schluck(&mut self, zuwachs: &str) -> Vec<Stueck> {
         self.rest.push_str(zuwachs);
@@ -174,6 +190,34 @@ mod proben {
         s.extend(z.abschluss());
         assert_eq!(denken(&s), "Ich ueberlege.");
         assert_eq!(text(&s), "Die Antwort.");
+    }
+
+    /// ⛔️ **Der Strom, der schon im Denkblock beginnt** (Fund 431).
+    ///
+    /// Oeffnet die Aufforderung `<think>`, sendet das Modell nur noch
+    /// das schliessende Gegenstueck. Ein Zerleger aus [`Zerleger::neu`]
+    /// gaebe die ganze Ueberlegung als **Antworttext** heraus, und
+    /// genau das hat der Client beim hybriden 35B getan.
+    #[test]
+    fn ein_strom_der_im_denkblock_beginnt_wird_getrennt() {
+        let mut z = Zerleger::neu_im_denken(true);
+        let mut s = z.schluck("Ich ueberlege.</think>Die Antwort.");
+        s.extend(z.abschluss());
+        assert_eq!(denken(&s), "Ich ueberlege.");
+        assert_eq!(text(&s), "Die Antwort.");
+    }
+
+    /// ⚑ **Die Gegenprobe dazu, und sie ist der eigentliche Beleg.**
+    /// Derselbe Strom durch einen Zerleger, der aussen beginnt: Dann
+    /// steht die Ueberlegung im Antworttext und der Denkteil ist leer.
+    /// Faellt diese Probe, tut `neu_im_denken` nichts.
+    #[test]
+    fn ohne_den_hinweis_landet_die_ueberlegung_im_antworttext() {
+        let mut z = Zerleger::neu_im_denken(false);
+        let mut s = z.schluck("Ich ueberlege.</think>Die Antwort.");
+        s.extend(z.abschluss());
+        assert_eq!(denken(&s), "");
+        assert_eq!(text(&s), "Ich ueberlege.Die Antwort.");
     }
 
     /// ⚑ **Der Fall, um den es wirklich geht:** Die Marke kommt in

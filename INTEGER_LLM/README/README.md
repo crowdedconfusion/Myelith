@@ -1,6 +1,6 @@
 # integer-llm
 
-> **Version:** 0.91.1 (θ_v 0.22.0; kernels 0.65.1, runtime 0.62.1, pipeline 0.15.1)
+> **Version:** 0.91.2 (θ_v 0.22.0; kernels 0.65.1, runtime 0.62.2, pipeline 0.15.1)
 > **Datum:** 2026-09-22
 > **Status:** ⚠️ **Das Akzeptanzkriterium ruht auf einer zu kleinen
 > Stichprobe.** Gemessen wurde bisher ueber **4 Sequenzen, 435
@@ -647,7 +647,7 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
 
 ## Changelog
 
-### v0.91.1 – 2026-09-22 (drei Prüfungen, die stimmten, und eine Angabe, die niemand nachgesehen hatte)
+### v0.91.2 – 2026-09-22 (drei Prüfungen, die stimmten, eine Angabe, die niemand nachgesehen hatte, und eine Abtastung, die niemand gerufen hat)
 
 **Acht CI-Läufe waren rot, und keiner davon wegen des Rechenpfads.**
 Fünf gingen auf sechs Clippy-Befunde in `kernels` und vier nicht
@@ -707,9 +707,69 @@ nur vom Wurzelpaket aus. Entfernt. Und die erzeugte Modellliste
 `MODELS/llm/README.md` war seit der letzten Sitzung nicht nachgezogen,
 ihr fehlte das 35B vollständig; neu erzeugt.
 
-📌 **Was hier zweimal dasselbe Muster ist:** Die Kopfzeile dieser Datei
-nannte θ_v 0.21.0, während `theta_v/spec.json` auf 0.22.0 steht. Sie ist
-mit diesem Eintrag berichtigt.
+**Das Konformitätspaket hatte den θ_v-Sprung nicht mitbekommen.** Die
+Regressionsprüfung meldete **49 von 49** Vektordateien und vier
+Pipeline-Manifeste als nicht passend. ⚑ **Das ist genau das, was die
+Regel im Kopf dieser Prüfung verlangt:** Jede Änderung an
+`theta_v/spec.json` zieht neue Goldvektoren und aktualisierte Manifeste
+nach sich. Alle 49 sind mit ihren Erzeugern neu erzeugt, die Manifeste
+aus den neu gebauten Artefakten abgeleitet. **Belegt, dass dabei nichts
+gerutscht ist:** Der Vergleich gegen die vorige Fassung zeigt je Datei
+ausschliesslich `theta_v_hash`, der Konformitätslauf bleibt bei 48/48,
+und der Abdruck `894d8357ae92b5c1` ist unverändert.
+
+⚠️ **Die Vektoren trugen davor zwei verschiedene Stempel.** `op`, `moe`,
+`training` und das Manifest standen auf der Fassung vor 0.20.0, `layer`
+und `e2e` auf 0.20.0; die Gruppen stammen von verschiedenen Erzeugern
+und waren nie zusammen nachgezogen worden.
+
+⛔️ **Fund: ein Vektor ohne Erzeuger.**
+`training/optimierer_schritt_normiert.golden.json` wird geprüft und von
+keinem Skript im Baum geschrieben. Er ist als einziger umgestempelt
+statt erzeugt; dass seine Zahlen gelten, sagt der Prüflauf.
+
+⛔️ **Fund 432: `sample_integer_cdf` ist unbenutzbar, und niemand hat es
+gemerkt, weil niemand sie ruft.**
+
+Die Frage kam von aussen: Hilft es gegen ein schleifendes Modell, statt
+des Argmax abzutasten? Die Abtastung ist gebaut, ganzzahlig und über die
+Saat deterministisch, also ohne Folgen für die Bitgleichheit. **Sie
+gewichtet aber linear statt exponentiell**: `w_i = z_i − min(z) + 1`. Bei
+einem Vokabular dieser Größe verteilt das die Masse fast gleichmäßig
+über alle Token.
+
+**Gemessen statt hergeleitet** (`bin/logit_probe`, `myelith-0.6b`, zwei
+Aufforderungen):
+
+| Aufforderung | Vokabular | Logits | P(Spitze) |
+|---|---|---|---|
+| „Die Hauptstadt von Frankreich ist" | 151 936 | −1248 bis 1217 | **1,685e−5**, also 1 zu 59 353 |
+| „Erklaere kurz, was ein Betriebssystem ist." | 151 936 | −883 bis 1042 | **1,691e−5**, also 1 zu 59 121 |
+
+⚑ **Das Token, das der Argmax sicher wählt, käme bei der Abtastung
+ungefähr einmal in 59 000 Zügen.** Wer sie einschaltete, bekäme kein
+weniger schleifendes Modell, sondern Rauschen.
+
+📌 **Warum das so lange unbemerkt blieb, ist die eigentliche Lehre.** Die
+Funktion hat zwei Proben: eine prüft den Argmax, die andere, dass zwei
+Läufe mit derselben Saat dasselbe liefern. **Beide bestehen auch dann,
+wenn die Verteilung unbrauchbar ist**, denn Determinismus sagt nichts
+über Güte. Dazu kommt, dass sie ausserhalb der Proben **keinen Aufrufer**
+hat: Der Client setzt `gierig` fest auf wahr. Gebaut, geprüft, ungerufen,
+und die Prüfungen prüften die falsche Eigenschaft.
+
+⚠️ **Nicht behoben, sondern gemeldet.** Eine brauchbare Abtastung
+braucht eine exponentielle Gewichtung mit Temperatur und eine
+Abschneidung (top-k oder top-p), und das ist ein Eingriff in den
+Rechenpfad, also in θ_v und die Konformitätsvektoren. `logit_probe` gibt
+die Kennzahl jetzt aus, damit die Entscheidung auf Zahlen steht.
+
+📌 **Was hier dreimal dasselbe Muster ist:** Die Kopfzeile dieser Datei
+nannte θ_v 0.21.0, der Kopf des Konformitätspakets 0.20.0 und eine
+Komponentenversion von 0.71.0, während `theta_v/spec.json` auf 0.22.0
+steht. Beide sind mit diesem Eintrag berichtigt. **Eine Fassungsangabe,
+die neben dem steht, was sie beschreibt, statt daraus zu folgen, veraltet
+verlässlich.**
 
 ### v0.91.0 – 2026-09-22 (eine Norm, die `1 + weight` rechnet, und sechs echte Funde davor, die alle nebensächlich waren)
 

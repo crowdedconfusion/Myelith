@@ -1,7 +1,7 @@
 {
   "name": "backward_rope",
   "level": "op",
-  "theta_v_hash": "sha256:47365da717b0d42cfddb2969b901fa1c1e80375d844107586e18f509dcbe3d0d",
+  "theta_v_hash": "sha256:22b4af92cb6097e0e571018183783b521a191ff6f677d1e4ed0c2db4e69ba613",
   "metadata": {
     "frac_bits": 14
   },
