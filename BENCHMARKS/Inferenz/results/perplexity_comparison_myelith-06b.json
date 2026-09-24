@@ -1,202 +1,202 @@
 {
   "baseline_perplexity": 42.25847417620392,
-  "integer_perplexity": 45.14856851196338,
-  "delta_pct": 6.839088235199224,
+  "integer_perplexity": 43.49038890994221,
+  "delta_pct": 2.915189811637813,
   "acceptance_pct": 5.0,
-  "accepted": false,
+  "accepted": true,
   "evaluated_tokens": 3558,
   "sequences": [
     {
       "tokens": 128,
       "evaluated": 127,
-      "sum_logp": -424.086621,
-      "perplexity": 28.1984
+      "sum_logp": -417.814857,
+      "perplexity": 26.8397
     },
     {
       "tokens": 128,
       "evaluated": 127,
-      "sum_logp": -396.197542,
-      "perplexity": 22.6388
+      "sum_logp": -393.936388,
+      "perplexity": 22.2393
     },
     {
       "tokens": 128,
       "evaluated": 127,
-      "sum_logp": -431.55089,
-      "perplexity": 29.9054
+      "sum_logp": -431.521096,
+      "perplexity": 29.8984
     },
     {
       "tokens": 128,
       "evaluated": 127,
-      "sum_logp": -571.207808,
-      "perplexity": 89.8103
+      "sum_logp": -565.20578,
+      "perplexity": 85.6646
     },
     {
       "tokens": 128,
       "evaluated": 127,
-      "sum_logp": -485.028658,
-      "perplexity": 45.5642
+      "sum_logp": -482.02537,
+      "perplexity": 44.4994
     },
     {
       "tokens": 105,
       "evaluated": 104,
-      "sum_logp": -400.906931,
-      "perplexity": 47.2227
+      "sum_logp": -399.174709,
+      "perplexity": 46.4427
     },
     {
       "tokens": 42,
       "evaluated": 41,
-      "sum_logp": -140.756459,
-      "perplexity": 30.972
+      "sum_logp": -141.429956,
+      "perplexity": 31.485
     },
     {
       "tokens": 100,
       "evaluated": 99,
-      "sum_logp": -410.297516,
-      "perplexity": 63.081
+      "sum_logp": -417.413026,
+      "perplexity": 67.7818
     },
     {
       "tokens": 51,
       "evaluated": 50,
-      "sum_logp": -166.934741,
-      "perplexity": 28.1823
+      "sum_logp": -160.91282,
+      "perplexity": 24.9845
     },
     {
       "tokens": 127,
       "evaluated": 126,
-      "sum_logp": -427.71026,
-      "perplexity": 29.8005
+      "sum_logp": -419.840254,
+      "perplexity": 27.9961
     },
     {
       "tokens": 72,
       "evaluated": 71,
-      "sum_logp": -254.351579,
-      "perplexity": 35.9603
+      "sum_logp": -248.14626,
+      "perplexity": 32.9509
     },
     {
       "tokens": 128,
       "evaluated": 127,
-      "sum_logp": -536.577617,
-      "perplexity": 68.3759
+      "sum_logp": -529.733811,
+      "perplexity": 64.7888
     },
     {
       "tokens": 128,
       "evaluated": 127,
-      "sum_logp": -509.55895,
-      "perplexity": 55.2725
+      "sum_logp": -509.104208,
+      "perplexity": 55.0749
     },
     {
       "tokens": 128,
       "evaluated": 127,
-      "sum_logp": -499.610816,
-      "perplexity": 51.1081
+      "sum_logp": -491.533826,
+      "perplexity": 47.9589
     },
     {
       "tokens": 109,
       "evaluated": 108,
-      "sum_logp": -415.86939,
-      "perplexity": 47.0233
+      "sum_logp": -409.491524,
+      "perplexity": 44.3267
     },
     {
       "tokens": 120,
       "evaluated": 119,
-      "sum_logp": -555.342154,
-      "perplexity": 106.3506
+      "sum_logp": -554.435738,
+      "perplexity": 105.5436
     },
     {
       "tokens": 119,
       "evaluated": 118,
-      "sum_logp": -409.430957,
-      "perplexity": 32.1288
+      "sum_logp": -408.5592,
+      "perplexity": 31.8923
     },
     {
       "tokens": 128,
       "evaluated": 127,
-      "sum_logp": -441.020023,
-      "perplexity": 32.2204
+      "sum_logp": -433.090795,
+      "perplexity": 30.2702
     },
     {
       "tokens": 128,
       "evaluated": 127,
-      "sum_logp": -441.123478,
-      "perplexity": 32.2466
+      "sum_logp": -435.081381,
+      "perplexity": 30.7484
     },
     {
       "tokens": 128,
       "evaluated": 127,
-      "sum_logp": -558.929664,
-      "perplexity": 81.5341
+      "sum_logp": -558.837345,
+      "perplexity": 81.4748
     },
     {
       "tokens": 128,
       "evaluated": 127,
-      "sum_logp": -563.082891,
-      "perplexity": 84.2445
+      "sum_logp": -554.047114,
+      "perplexity": 78.459
     },
     {
       "tokens": 128,
       "evaluated": 127,
-      "sum_logp": -493.894077,
-      "perplexity": 48.8586
+      "sum_logp": -480.717948,
+      "perplexity": 44.0436
     },
     {
       "tokens": 128,
       "evaluated": 127,
-      "sum_logp": -575.859777,
-      "perplexity": 93.161
+      "sum_logp": -573.16208,
+      "perplexity": 91.2029
     },
     {
       "tokens": 83,
       "evaluated": 82,
-      "sum_logp": -357.243312,
-      "perplexity": 77.9935
+      "sum_logp": -355.911189,
+      "perplexity": 76.7367
     },
     {
       "tokens": 76,
       "evaluated": 75,
-      "sum_logp": -275.453697,
-      "perplexity": 39.3587
+      "sum_logp": -275.904101,
+      "perplexity": 39.5957
     },
     {
       "tokens": 128,
       "evaluated": 127,
-      "sum_logp": -422.506516,
-      "perplexity": 27.8497
+      "sum_logp": -424.859691,
+      "perplexity": 28.3706
     },
     {
       "tokens": 78,
       "evaluated": 77,
-      "sum_logp": -307.463742,
-      "perplexity": 54.2192
+      "sum_logp": -301.097793,
+      "perplexity": 49.917
     },
     {
       "tokens": 128,
       "evaluated": 127,
-      "sum_logp": -428.459722,
-      "perplexity": 29.1863
+      "sum_logp": -424.46525,
+      "perplexity": 28.2826
     },
     {
       "tokens": 128,
       "evaluated": 127,
-      "sum_logp": -540.524013,
-      "perplexity": 70.534
+      "sum_logp": -531.473946,
+      "perplexity": 65.6826
     },
     {
       "tokens": 128,
       "evaluated": 127,
-      "sum_logp": -447.968159,
-      "perplexity": 34.0322
+      "sum_logp": -448.880685,
+      "perplexity": 34.2777
     },
     {
       "tokens": 128,
       "evaluated": 127,
-      "sum_logp": -361.043581,
-      "perplexity": 17.1648
+      "sum_logp": -348.853044,
+      "perplexity": 15.5938
     },
     {
       "tokens": 76,
       "evaluated": 75,
-      "sum_logp": -305.841066,
-      "perplexity": 59.0203
+      "sum_logp": -296.036025,
+      "perplexity": 51.7874
     }
   ]
 }
