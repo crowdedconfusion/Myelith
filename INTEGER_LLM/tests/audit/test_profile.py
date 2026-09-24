@@ -45,7 +45,7 @@ def crates() -> list[Path]:
     gefunden = [
         p
         for p in sorted(REPO.glob("*/*/Cargo.toml"))
-        if "target-shared" not in p.parts
+        if "SYSTEM/full-build" not in p.parts
     ]
     return gefunden
 

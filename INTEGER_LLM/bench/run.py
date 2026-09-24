@@ -76,7 +76,7 @@ ARTIFACT_ROOT = ROOT / "artifacts"
 RESULTS = Path(__file__).resolve().parent / "results"
 
 # Binary-Pfade über das bestehende Modul auflösen, nicht fest verdrahten:
-# Alle Crates bauen nach `target-shared/` (siehe `.cargo/config.toml`),
+# Alle Crates bauen nach `SYSTEM/full-build/` (siehe `.cargo/config.toml`),
 # und `CARGO_TARGET_DIR` hat Vorrang. Genau dafür gibt es cargo_paths —
 # eine zweite Auflösungslogik wäre der Fehler aus Fund A6.
 sys.path.insert(0, str(ROOT / "tests"))

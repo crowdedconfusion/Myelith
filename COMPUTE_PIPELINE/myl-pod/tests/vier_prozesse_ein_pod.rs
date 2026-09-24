@@ -40,7 +40,7 @@ fn artefakte() -> PathBuf {
 
 fn binary() -> PathBuf {
     let profil = if cfg!(debug_assertions) { "debug" } else { "release" };
-    wurzel().join("target-shared").join(profil).join("myl-shard")
+    wurzel().join("SYSTEM/full-build").join(profil).join("myl-shard")
 }
 
 /// Startet einen Shard und liest seine Adresse von der Standardausgabe.

@@ -31,9 +31,9 @@ Fremddateien.
 Aufrufe:
 
 ```text
-python3 INSTALL/vorrat.py sammeln     # aus dem Cargo-Vorrat, sonst aus dem Netz
-python3 INSTALL/vorrat.py pruefen     # jede Datei gegen die Sperrdateien
-python3 INSTALL/vorrat.py auspacken   # nach .myelith-vorrat/vendor
+python3 SYSTEM/install/vorrat.py sammeln     # aus dem Cargo-Vorrat, sonst aus dem Netz
+python3 SYSTEM/install/vorrat.py pruefen     # jede Datei gegen die Sperrdateien
+python3 SYSTEM/install/vorrat.py auspacken   # nach SYSTEM/crates-lager/vendor
 ```
 """
 
@@ -48,16 +48,20 @@ import sys
 import tarfile
 import time
 
-WURZEL = pathlib.Path(__file__).resolve().parents[1]
-ARCHIVE = WURZEL / "vorrat"
-AUSGEPACKT = WURZEL / ".myelith-vorrat" / "vendor"
+# ⚠️ **`parents[2]` und nicht `parents[1]`**: Diese Datei liegt seit dem
+# Umzug unter `SYSTEM/install/`, also zwei Ebenen unter der Wurzel. Wer die
+# Zahl beim Verschieben vergisst, bekommt keinen Fehler, sondern einen
+# Vorrat an der falschen Stelle.
+WURZEL = pathlib.Path(__file__).resolve().parents[2]
+ARCHIVE = WURZEL / "SYSTEM" / "crates-vorrat"
+AUSGEPACKT = WURZEL / "SYSTEM" / "crates-lager" / "vendor"
 QUELLE = "https://static.crates.io/crates/{name}/{name}-{version}.crate"
 
 # ⛔️ **Nicht jede Sperrdatei im Baum gehoert zu Myelith.** Unter
 # `INSPIRATION` liegen fremde Repositorien, und die Fuzz-Kisten sind
 # Werkzeug und kein Programm. **Ein Vorrat, der sie mitnimmt, waere
 # groesser und nicht vollstaendiger.**
-AUSGENOMMEN = ("INSPIRATION", "/fuzz/", "target-shared", "/.venv/", "/vendor/")
+AUSGENOMMEN = ("INSPIRATION", "/fuzz/", "SYSTEM/full-build", "/.venv/", "/vendor/")
 
 
 def sperrdateien() -> list[pathlib.Path]:

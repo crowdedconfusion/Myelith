@@ -66,9 +66,9 @@ def _modellgroesse() -> str:
     except (OSError, ValueError):
         return "unbekannter Groesse"
     return eintrag.get("parameter", "unbekannter Groesse")
-# Seit alle Crates in ein gemeinsames target-shared/ bauen (.cargo/config.toml)
+# Seit alle Crates in ein gemeinsames SYSTEM/full-build/ bauen (.cargo/config.toml)
 # liegt das Binary nicht mehr unter runtime/target/. Der Resolver prueft
-# CARGO_TARGET_DIR, target-shared/ und den Cargo-Standardort der Reihe nach.
+# CARGO_TARGET_DIR, SYSTEM/full-build/ und den Cargo-Standardort der Reihe nach.
 from cargo_paths import binary, fehlt_hinweis  # noqa: E402
 
 PROBE = binary("runtime", "perplexity_probe")

@@ -31,9 +31,9 @@ LLM = Path(__file__).resolve().parents[2] / "INTEGER_LLM"
 HIER = Path(__file__).resolve().parent
 REPO = LLM  # Altlast, damit bestehende Zeilen weiterlesen
 ARTIFACTS = REPO / "artifacts" / "myelith-0.6b"
-# Seit alle Crates in ein gemeinsames target-shared/ bauen (.cargo/config.toml)
+# Seit alle Crates in ein gemeinsames SYSTEM/full-build/ bauen (.cargo/config.toml)
 # liegt das Binary nicht mehr unter runtime/target/. Derselbe Resolver wie in
-# eval/perplexity.py: prueft CARGO_TARGET_DIR, target-shared/ und den
+# eval/perplexity.py: prueft CARGO_TARGET_DIR, SYSTEM/full-build/ und den
 # Cargo-Standardort der Reihe nach.
 sys.path.insert(0, str(REPO / "tests"))
 from cargo_paths import binary, fehlt_hinweis  # noqa: E402

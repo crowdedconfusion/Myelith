@@ -63,7 +63,7 @@ env:
   RUSTFLAGS: "-D warnings"
   # Setzt `build.target-dir` aus .cargo/config.toml außer Kraft.
   #
-  # Lokal bauen alle Crates in ein gemeinsames `target-shared/`, weil
+  # Lokal bauen alle Crates in ein gemeinsames `SYSTEM/full-build/`, weil
   # sonst jede gemeinsame Abhängigkeit zwölfmal auf der Platte liegt
   # (gemessen: 23,8 GB statt 2,1 GB). In der CI ist das unnötig — jeder
   # Job läuft in einem eigenen Container und baut nur seine Crates — und
@@ -544,7 +544,7 @@ jobs:
           done
 
   # **Und erst recht keine Matrix über die Crates.** Alle bauen nach
-  # `target-shared` (siehe `.cargo/config.toml`) und teilen sich damit
+  # `SYSTEM/full-build` (siehe `.cargo/config.toml`) und teilen sich damit
   # übersetzte Abhängigkeiten. Ein Matrixzweig je Crate zerschnitte das
   # und vervielfachte obendrein den Cache-Bedarf, also genau den Fehler
   # von oben, nur schlimmer.
@@ -1311,7 +1311,7 @@ jobs:
           import pathlib, re, sys
 
           wurzel = pathlib.Path(".")
-          def ohne_bau(p): return not any(t in ("target", "target-shared") for t in p.parts)
+          def ohne_bau(p): return not any(t in ("target", "SYSTEM/full-build") for t in p.parts)
 
           def eigene(text):
               a = re.search(r"(?ms)^\[package\]\n(.*?)(?=^\[|\Z)", text)

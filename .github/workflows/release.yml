@@ -63,7 +63,7 @@ permissions:
   contents: write
 
 env:
-  # ⚑ Die `.cargo/config.toml` des Repositoriums legt `target-shared`
+  # ⚑ Die `.cargo/config.toml` des Repositoriums legt `SYSTEM/full-build`
   # als Ausgabeverzeichnis fest, damit die 18 eigenständigen Crates ihre
   # gemeinsamen Abhängigkeiten nicht 18-mal übersetzen. Hier wird der
   # Pfad ausdrücklich gesetzt, weil die Schritte unten ihn benennen und

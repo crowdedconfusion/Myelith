@@ -7,7 +7,14 @@
 # `.pc`-Datei, die nicht nach dem eigentlichen Grund aussieht.
 #
 #   nix develop                  eine Shell mit allem, was der Bau braucht
-#   sh INSTALL/installieren-nixos.sh     baut darin und legt die Programme ab
+#   sh SYSTEM/install/installieren-nixos.sh     baut darin und legt die Programme ab
+#
+# ⛔️ **Diese Datei bleibt in der Wurzel, auch wenn alles andere
+# Systemnahe nach `SYSTEM/` gezogen ist.** `nix develop` sucht sie dort
+# und nirgends sonst; ein Flake unter `SYSTEM/` waere ein Flake, das
+# niemand findet. 📌 Beim Umzug am 2026-09-24 lag sie kurz falsch, und
+# aufgefallen ist es nicht beim Ausprobieren, sondern an einer Probe,
+# die genau diesen Satz als Begruendung trug.
 #
 # ⚑ **Eine Entwicklungsumgebung, und seit dem 2026-09-16 dazu genau
 # eine Ableitung.** Eine `buildRustPackage`-Ableitung *mit `cargoHash`*
@@ -44,7 +51,7 @@
 
         # Was jede Kiste braucht, auch ohne Oberfläche.
         #
-        # ⚑ `git` gehört dazu, seit `INSTALL/installieren-nixos.sh` und der
+        # ⚑ `git` gehört dazu, seit `SYSTEM/install/installieren-nixos.sh` und der
         # Aktualisierungsknopf des Klienten darin laufen: Beide bewegen
         # den Klon vorwärts, bevor sie bauen.
         grundwerkzeug = with pkgs; [
@@ -70,7 +77,7 @@
         # `src = ./.` nähme das ganze Verzeichnis mit, und darin liegen
         # das gemeinsame Bauverzeichnis, die Modellgewichte und die
         # gebauten Artefakte. Gemessen am 2026-09-16: allein
-        # `target-shared` sind 57,5 GiB in 327 115 Dateien. **Ein
+        # `SYSTEM/full-build` sind 57,5 GiB in 327 115 Dateien. **Ein
         # `nix build`, das das kopiert, füllt die Platte, bevor die erste
         # Zeile übersetzt ist**, und die Ableitung wäre obendrein bei
         # jedem Bau eine andere, weil sich dort ständig etwas ändert.
@@ -86,7 +93,7 @@
               rel = pkgs.lib.removePrefix (toString ./. + "/") (toString pfad);
               erster = pkgs.lib.head (pkgs.lib.splitString "/" rel);
             in
-            !(builtins.elem erster [ "target-shared" "WORK_DIR" "logs" "GENESIS" "MODELS" ])
+            !(builtins.elem erster [ "SYSTEM/full-build" "WORK_DIR" "logs" "GENESIS" "MODELS" ])
             && !(pkgs.lib.hasPrefix "INTEGER_LLM/artifacts" rel);
         };
 
@@ -159,7 +166,7 @@
             export XDG_DATA_DIRS="${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}:${pkgs.gtk3}/share/gsettings-schemas/${pkgs.gtk3.name}:$XDG_DATA_DIRS"
             export PKG_CONFIG_PATH="${pkgs.lib.makeSearchPathOutput "dev" "lib/pkgconfig" oberflaeche}:$PKG_CONFIG_PATH"
             export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath oberflaeche}:$LD_LIBRARY_PATH"
-            echo "[myelith] Bauumgebung bereit. Weiter mit: sh INSTALL/installieren-nixos.sh --in-der-shell"
+            echo "[myelith] Bauumgebung bereit. Weiter mit: sh SYSTEM/install/installieren-nixos.sh --in-der-shell"
           '';
         };
       }) // {

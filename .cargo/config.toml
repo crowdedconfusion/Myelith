@@ -22,4 +22,4 @@
 # frischer Vollbau aller Crates liegt bei rund 6 GB in 35 000 Dateien;
 # wer deutlich darüber liegt, hat Altlasten und keine Abhängigkeiten.
 [build]
-target-dir = "target-shared"
+target-dir = "SYSTEM/full-build"

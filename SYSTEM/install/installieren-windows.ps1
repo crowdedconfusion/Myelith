@@ -28,7 +28,8 @@ param(
 $ErrorActionPreference = "Stop"
 # [?] Eine Ebene hoeher, seit dem 2026-09-10: Diese Datei lag in der
 #     Wurzel und liegt jetzt in INSTALL/.
-$Wurzel = Split-Path $PSScriptRoot -Parent
+# Zwei Ebenen hinauf: dieses Skript liegt unter SYSTEM\INSTALL\.
+$Wurzel = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 Set-Location $Wurzel
 
 Write-Host "-- Myelith einrichten"
@@ -134,16 +135,16 @@ if (-not $Programme) {
 }
 
 # ⚑ **Derselbe Vorrat wie ueberall.** Das Auspacken macht
-# `INSTALL/vorrat.py`; hier steht nur der Aufruf, damit der schwierige
+# `SYSTEM/install/vorrat.py`; hier steht nur der Aufruf, damit der schwierige
 # Teil auf allen Systemen derselbe Quelltext ist.
 $CargoNetz = @()
-$VorratOrdner = Join-Path $Wurzel "vorrat"
+$VorratOrdner = Join-Path $Wurzel "SYSTEM\crates-vorrat"
 $Archive = @()
 if (Test-Path $VorratOrdner) {
   $Archive = @(Get-ChildItem -Path $VorratOrdner -Filter *.crate -File -ErrorAction SilentlyContinue)
 }
 if ($Archive.Count -gt 0) {
-  $Ausgepackt = Join-Path $Wurzel ".myelith-vorrat"
+  $Ausgepackt = Join-Path $Wurzel "SYSTEM/crates-lager"
   # ⛔️ **Kein `??` und kein `-not $x ? a : b`.** Windows liefert
   # PowerShell 5.1 mit, und die kennt beides nicht; ein Skript, das nur
   # unter 7 laeuft, scheitert genau auf der Maschine, fuer die es

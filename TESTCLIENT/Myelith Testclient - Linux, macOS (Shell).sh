@@ -43,15 +43,15 @@ MANIFEST="$WURZEL/TESTCLIENT/myl-testclient/Cargo.toml"
 
 # Das Binary wird NACH dem Bau gesucht, nicht vorher geraten.
 #
-# `.cargo/config.toml` lenkt alle Crates nach `target-shared/`. Auf einem
+# `.cargo/config.toml` lenkt alle Crates nach `SYSTEM/full-build/`. Auf einem
 # frischen Klon gibt es dieses Verzeichnis noch nicht; die erste Fassung
 # schloss daraus auf `target/` und suchte dort, waehrend cargo nach
-# `target-shared/` baute. Der allererste Lauf schlug damit fehl, also
+# `SYSTEM/full-build/` baute. Der allererste Lauf schlug damit fehl, also
 # genau der Lauf, auf den es ankommt.
 # Ausgabeverzeichnis festnageln, bevor cargo aufgerufen wird.
 #
 # FUND (2026-08-21, beim Durchspielen eines frischen Klons): `.cargo/config.toml`
-# des Repositoriums setzt `target-dir = "target-shared"`, und zwar RELATIV.
+# des Repositoriums setzt `target-dir = "SYSTEM/full-build"`, und zwar RELATIV.
 # Cargo loest diesen Pfad gegen das ARBEITSVERZEICHNIS auf, nicht gegen das
 # per --manifest-path angegebene Crate. Wer den Starter aus einem anderen
 # Verzeichnis aufruft, und das tut jeder, der ihn auf den Schreibtisch legt,
@@ -64,13 +64,13 @@ MANIFEST="$WURZEL/TESTCLIENT/myl-testclient/Cargo.toml"
 # ist absolut. Damit haengt der Ablageort am Repositorium, nicht am Zufall des
 # Arbeitsverzeichnisses. Ein von aussen gesetzter Wert bleibt unangetastet:
 # die CI setzt CARGO_TARGET_DIR=target und soll das behalten.
-: "${CARGO_TARGET_DIR:=$WURZEL/target-shared}"
+: "${CARGO_TARGET_DIR:=$WURZEL/SYSTEM/full-build}"
 export CARGO_TARGET_DIR
 
 binary_finden() {
     for kandidat in \
         "$CARGO_TARGET_DIR/release/myl-test" \
-        "$WURZEL/target-shared/release/myl-test" \
+        "$WURZEL/SYSTEM/full-build/release/myl-test" \
         "$WURZEL/TESTCLIENT/myl-testclient/target/release/myl-test"
     do
         [ -x "$kandidat" ] && { printf '%s' "$kandidat"; return 0; }
@@ -191,7 +191,7 @@ fi
 
 BIN=$(binary_finden) || {
     echo "Fehler: myl-test wurde gebaut, ist aber nicht auffindbar." >&2
-    echo "Gesucht in target-shared/release und myl-testclient/target/release." >&2
+    echo "Gesucht in SYSTEM/full-build/release und myl-testclient/target/release." >&2
     exit 1
 }
 

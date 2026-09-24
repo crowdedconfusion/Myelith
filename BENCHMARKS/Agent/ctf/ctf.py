@@ -55,7 +55,7 @@ import time
 from pathlib import Path
 
 WURZEL = Path(__file__).resolve().parents[3]
-MYL = WURZEL / "target-shared" / "release" / "myl"
+MYL = WURZEL / "SYSTEM/full-build" / "release" / "myl"
 HERAUS = Path(__file__).resolve().parent / "herausforderungen"
 
 # Welche Werkzeuge eine Kiste heute hat. ⚑ Von Hand und mit Absicht: Die

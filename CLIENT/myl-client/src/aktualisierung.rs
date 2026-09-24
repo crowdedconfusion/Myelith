@@ -204,11 +204,11 @@ pub fn pruefen(eigene: &str) -> Stand {
 pub fn skript() -> Option<(&'static str, &'static [&'static str])> {
     #[cfg(target_os = "macos")]
     {
-        Some(("sh", &["INSTALL/installieren-macos.sh", "--aktualisieren"]))
+        Some(("sh", &["SYSTEM/install/installieren-macos.sh", "--aktualisieren"]))
     }
     #[cfg(target_os = "linux")]
     {
-        Some(("sh", &["INSTALL/installieren-nixos.sh", "--aktualisieren"]))
+        Some(("sh", &["SYSTEM/install/installieren-nixos.sh", "--aktualisieren"]))
     }
     #[cfg(target_os = "windows")]
     {
@@ -454,9 +454,9 @@ mod proben {
 
         // 2. Und kein Skript fuehrt daneben seine eigene Liste.
         for datei in [
-            "INSTALL/installieren-macos.sh",
-            "INSTALL/installieren-nixos.sh",
-            "INSTALL/installieren-windows.ps1",
+            "SYSTEM/install/installieren-macos.sh",
+            "SYSTEM/install/installieren-nixos.sh",
+            "SYSTEM/install/installieren-windows.ps1",
         ] {
             let text = std::fs::read_to_string(wurzel.join(datei)).expect(datei);
             assert!(
@@ -493,7 +493,7 @@ mod proben {
         }
     }
 
-    /// **Alle drei Installationsskripte liegen in `INSTALL/`.**
+    /// **Alle drei Installationsskripte liegen in `SYSTEM/install/`.**
     ///
     /// ⚑ **In einem eigenen Ordner mit einer Anleitung daneben**
     /// (Festlegung des Projektinhabers, 2026-09-10). Drei Skripte lose
@@ -510,9 +510,9 @@ mod proben {
             .and_then(|p| p.parent())
             .expect("Wurzel des Repositoriums");
         for (datei, schalter) in [
-            ("INSTALL/installieren-macos.sh", "--aktualisieren"),
-            ("INSTALL/installieren-nixos.sh", "--aktualisieren"),
-            ("INSTALL/installieren-windows.ps1", "Aktualisieren"),
+            ("SYSTEM/install/installieren-macos.sh", "--aktualisieren"),
+            ("SYSTEM/install/installieren-nixos.sh", "--aktualisieren"),
+            ("SYSTEM/install/installieren-windows.ps1", "Aktualisieren"),
         ] {
             let pfad = wurzel.join(datei);
             let text = std::fs::read_to_string(&pfad)
@@ -528,8 +528,8 @@ mod proben {
         // ⚑ **Und eine Anleitung daneben.** Ein Ordner mit drei
         // Skripten und ohne Text laesst den Leser raten, welches
         // seines ist.
-        let anleitung = std::fs::read_to_string(wurzel.join("INSTALL/README.md"))
-            .expect("INSTALL/README.md");
+        let anleitung = std::fs::read_to_string(wurzel.join("SYSTEM/install/README.md"))
+            .expect("SYSTEM/install/README.md");
         for system in ["macOS", "Windows", "NixOS"] {
             assert!(anleitung.contains(system), "die Anleitung nennt {system} nicht");
         }

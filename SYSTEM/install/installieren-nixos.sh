@@ -17,12 +17,18 @@
 # einem NixOS-Nutzer genau das weg, wofuer er NixOS benutzt.
 set -eu
 
-# 📌 **Eine Ebene hoeher, seit dem 2026-09-10.** Diese Datei lag in der
-# Wurzel und liegt jetzt in `INSTALL/`. **Ein Verschieben sieht aus wie
-# eine Aenderung ohne Verhalten und ist keine:** Ohne das `/..` zeigte
-# die Wurzel auf das Skriptverzeichnis, und der Bau faende keine
-# einzige Kiste. Dieselbe Klasse wie Fund 298.
-cd "$(dirname "$0")/.."
+# 📌 **Zwei Ebenen hoeher, seit dem 2026-09-24.** Diese Datei lag in der
+# Wurzel, zog am 2026-09-10 nach `INSTALL/` und liegt jetzt unter
+# `SYSTEM/install/`. **Ein Verschieben sieht aus wie eine Aenderung ohne
+# Verhalten und ist keine:** Mit einem `/..` zu wenig zeigt die Wurzel
+# auf `SYSTEM/`, und der Bau faende keine einzige Crate. Dieselbe Klasse
+# wie Fund 298.
+#
+# ⚠️ **Beim zweiten Umzug ist genau das passiert**, obwohl die Warnung
+# drei Zeilen darueber stand. Eine Lehre im Kommentar schuetzt den
+# nicht, der die Datei verschiebt und den Kommentar nicht liest; sie
+# schuetzt den, der danach sucht. **Deshalb steht sie trotzdem da.**
+cd "$(dirname "$0")/../.."
 WURZEL=$(pwd)
 
 AKTUALISIEREN=nein
@@ -90,7 +96,7 @@ fi
 echo "   cargo: $(cargo --version)"
 
 # ⚑ **Derselbe Vorrat wie ueberall**, und dieselbe Naht: Das Auspacken
-# macht `INSTALL/vorrat.py`, hier steht nur der Aufruf. **Der schwierige
+# macht `SYSTEM/install/vorrat.py`, hier steht nur der Aufruf. **Der schwierige
 # Teil ist damit auf allen Systemen derselbe Quelltext** und nicht
 # dreimal nachgebaut.
 #
@@ -100,20 +106,20 @@ echo "   cargo: $(cargo --version)"
 # Netz baut, hat den Store warm oder benutzt `--in-der-shell` mit einer
 # vorhandenen Werkzeugkette.
 CARGO_NETZ=""
-ARCHIVE=$(find "$WURZEL/vorrat" -maxdepth 1 -name '*.crate' 2>/dev/null | wc -l | tr -d " ")
+ARCHIVE=$(find "$WURZEL/SYSTEM/crates-vorrat" -maxdepth 1 -name '*.crate' 2>/dev/null | wc -l | tr -d " ")
 if [ "$ARCHIVE" -gt 0 ]; then
-  if [ ! -d "$WURZEL/.myelith-vorrat/vendor" ] \
-     || [ "$WURZEL/vorrat" -nt "$WURZEL/.myelith-vorrat/vendor" ]; then
+  if [ ! -d "$WURZEL/SYSTEM/crates-lager/vendor" ] \
+     || [ "$WURZEL/SYSTEM/crates-vorrat" -nt "$WURZEL/SYSTEM/crates-lager/vendor" ]; then
     echo "   Vorrat: $ARCHIVE Archive werden ausgepackt"
-    python3 "$WURZEL/INSTALL/vorrat.py" auspacken >/dev/null || {
+    python3 "$WURZEL/SYSTEM/install/vorrat.py" auspacken >/dev/null || {
       echo "   FEHLER beim Auspacken des Vorrats" >&2
       exit 1
     }
   fi
-  CARGO_HOME="$WURZEL/.myelith-vorrat/cargo-home"
+  CARGO_HOME="$WURZEL/SYSTEM/crates-lager/cargo-home"
   export CARGO_HOME
   CARGO_NETZ="--offline"
-  echo "   Vorrat: $ARCHIVE Pakete aus vorrat/, Netz aus"
+  echo "   Vorrat: $ARCHIVE Pakete aus SYSTEM/crates-vorrat/, Netz aus"
 fi
 
 if [ "$NUR_PRUEFEN" = ja ]; then
@@ -190,7 +196,7 @@ for zeile in $PROGRAMME; do
   IFS=$ALTES_IFS
   # shellcheck disable=SC2086
   set -- $zeile
-  cp "$WURZEL/target-shared/release/$2" "$BIN/$2"
+  cp "$WURZEL/SYSTEM/full-build/release/$2" "$BIN/$2"
   IFS='
 '
 done

@@ -28,7 +28,7 @@ entsteht, ist kein Ablageort, sondern eine Nebenwirkung.
 | Rubrik | Weg |
 |---|---|
 | `llm/` | `sh INTEGER_LLM/scripts/fetch_model.sh <Modell-ID>`, mit fixierter Revision. Herkunft und Revision je Modell in `llm/README.md` |
-| `audio/`, `vision/` | `sh INSTALL/sinne-einrichten.sh`. Es lädt, legt ab und prüft nach |
+| `audio/`, `vision/` | `sh SYSTEM/install/sinne-einrichten.sh`. Es lädt, legt ab und prüft nach |
 
 ⚑ **Die Dateinamen stehen nicht hier.** Unter welchen Namen die Sinne
 ihre Gewichte erwarten, sagt `CLIENT/myl-senses/src/laufwerk.rs`, und

@@ -46,7 +46,7 @@ import time
 from pathlib import Path
 
 WURZEL = Path(__file__).resolve().parents[2]
-MYL = WURZEL / "target-shared" / "release" / "myl"
+MYL = WURZEL / "SYSTEM/full-build" / "release" / "myl"
 AUFTRAEGE = Path(__file__).resolve().parent / "auftraege.json"
 
 

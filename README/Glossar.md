@@ -2272,7 +2272,7 @@ Artefakten und echter Hardware.
 
 ### Gemeinsames Build-Verzeichnis
 
-Alle Crates schreiben nach `target-shared/` im Wurzelverzeichnis
+Alle Crates schreiben nach `SYSTEM/full-build/` im Wurzelverzeichnis
 (`.cargo/config.toml`). Jedes Crate bleibt ein eigenständiges
 Cargo-Projekt ohne gemeinsames Workspace-`Cargo.toml`; nur der
 Ausgabeort ist geteilt.

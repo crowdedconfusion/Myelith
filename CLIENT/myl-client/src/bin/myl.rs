@@ -597,7 +597,7 @@ fn sinne(args: &[String]) -> i32 {
         println!();
         println!("`myl sinne <datei>` schickt eine Datei hindurch und zeigt, was herauskommt.");
         println!("`myl sinne --sprich <text>` laesst ihn vorlesen, satzweise wie im Fenster.");
-        println!("Eingerichtet wird mit `sh INSTALL/sinne-einrichten.sh`.");
+        println!("Eingerichtet wird mit `sh SYSTEM/install/sinne-einrichten.sh`.");
         return 0;
     };
     let pfad = std::path::Path::new(datei);

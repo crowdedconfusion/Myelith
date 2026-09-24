@@ -2171,7 +2171,7 @@ real hardware.
 
 ### Shared build directory
 
-All crates write to `target-shared/` in the repository root
+All crates write to `SYSTEM/full-build/` in the repository root
 (`.cargo/config.toml`). Each crate remains a standalone Cargo project with
 no shared workspace `Cargo.toml`; only the output location is shared.
 

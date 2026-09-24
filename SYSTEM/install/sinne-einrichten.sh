@@ -27,9 +27,9 @@
 # Er laeuft ohne Netz, und die Sinne sind eine Zutat, keine Bedingung.
 #
 # Aufruf:
-#   sh INSTALL/sinne-einrichten.sh              alles
-#   sh INSTALL/sinne-einrichten.sh --ohne-sprechen   nur Sehen und Hoeren
-#   sh INSTALL/sinne-einrichten.sh --pruefen    nur nachsehen, nichts tun
+#   sh SYSTEM/install/sinne-einrichten.sh              alles
+#   sh SYSTEM/install/sinne-einrichten.sh --ohne-sprechen   nur Sehen und Hoeren
+#   sh SYSTEM/install/sinne-einrichten.sh --pruefen    nur nachsehen, nichts tun
 set -u
 
 HIER=$(cd "$(dirname "$0")/.." && pwd)

@@ -313,7 +313,7 @@ mod proben {
     #[test]
     fn kein_skript_nennt_einen_festen_pfad() {
         let wurzel = repo();
-        for datei in ["INSTALL/installieren-macos.sh", "INSTALL/installieren-nixos.sh"] {
+        for datei in ["SYSTEM/install/installieren-macos.sh", "SYSTEM/install/installieren-nixos.sh"] {
             let text = std::fs::read_to_string(wurzel.join(datei)).expect(datei);
             for zeile in text.lines() {
                 let z = zeile.trim();
@@ -330,8 +330,8 @@ mod proben {
                 "{datei} leitet die Wurzel nicht aus seinem eigenen Ort ab"
             );
         }
-        let ps = std::fs::read_to_string(wurzel.join("INSTALL/installieren-windows.ps1"))
-            .expect("INSTALL/installieren-windows.ps1");
+        let ps = std::fs::read_to_string(wurzel.join("SYSTEM/install/installieren-windows.ps1"))
+            .expect("SYSTEM/install/installieren-windows.ps1");
         assert!(ps.contains("$PSScriptRoot"), "das Windows-Skript kennt seinen Ort nicht");
     }
 
@@ -345,7 +345,7 @@ mod proben {
     #[test]
     fn der_menueeintrag_wird_erzeugt() {
         let wurzel = repo();
-        let sh = std::fs::read_to_string(wurzel.join("INSTALL/installieren-nixos.sh"))
+        let sh = std::fs::read_to_string(wurzel.join("SYSTEM/install/installieren-nixos.sh"))
             .expect("Skript");
         assert!(sh.contains("[Desktop Entry]"), "das Skript legt keinen Eintrag an");
         assert!(sh.contains("Icon=$WURZEL/"), "der Eintrag traegt kein Symbol aus diesem Baum");

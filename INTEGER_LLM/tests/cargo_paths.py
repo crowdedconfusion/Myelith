@@ -4,7 +4,7 @@ Auflösung von Cargo-Ausgabepfaden für die Python-Tests.
 
 **Warum es das gibt:** Die Tests riefen die gebauten Binaries über fest
 verdrahtete Pfade auf (`runtime/target/release/integer-llm-runtime`).
-Seit alle Crates in ein gemeinsames `target-shared/` bauen (siehe
+Seit alle Crates in ein gemeinsames `SYSTEM/full-build/` bauen (siehe
 `.cargo/config.toml` — das sparte 23,8 GB auf 2,1 GB), lagen die
 Binaries woanders, und vier Tests scheiterten mit `FileNotFoundError`.
 
@@ -13,9 +13,9 @@ Modul die tatsächlich gültigen Orte in dieser Reihenfolge ab:
 
 1. `CARGO_TARGET_DIR` — hat in Cargo Vorrang vor allem anderen, also
    auch hier. Die CI setzt sie.
-2. `<repo>/target-shared/` — die lokale Voreinstellung aus
+2. `<repo>/SYSTEM/full-build/`: die lokale Voreinstellung aus
    `.cargo/config.toml`.
-3. `<crate>/target/` — die Cargo-Voreinstellung, falls jemand ohne die
+3. `<crate>/target/`: die Cargo-Voreinstellung, falls jemand ohne die
    Konfigurationsdatei baut.
 
 Damit funktionieren die Tests in allen drei Fällen, ohne dass jemand
@@ -40,7 +40,7 @@ def target_dirs(crate: str) -> list[Path]:
         # Relativ ist relativ zum Crate-Verzeichnis (Cargo-Verhalten).
         kandidaten.append(p if p.is_absolute() else INTEGER_LLM / crate / p)
 
-    kandidaten.append(REPO_ROOT / "target-shared")
+    kandidaten.append(REPO_ROOT / "SYSTEM/full-build")
     kandidaten.append(INTEGER_LLM / crate / "target")
     return kandidaten
 

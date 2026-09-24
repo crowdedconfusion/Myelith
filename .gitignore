@@ -15,7 +15,7 @@ target/
 # war auf 216 GB und 724 647 Dateien angewachsen, weil Cargo target/
 # **nie** aufräumt. Es zu bündeln beseitigt den Haufen nicht, es sammelt
 # ihn: Er muss von Zeit zu Zeit geleert werden.
-target-shared/
+SYSTEM/full-build/
 
 # 📌 Das Ergebnis von `werkzeuge/freigabe.sh`: gebaute Binaries samt
 # `Myelith.app`, rund 63 MB. Sie gehören nicht ins Repositorium, sondern
@@ -88,7 +88,7 @@ CLIENT/myl-client/src/werkzeuge_1337/
 # lokal, nie im Repositorium. Der Ordner selbst bleibt (mit README), seine
 # Werkzeuge nicht.
 CLIENT/werkzeugkisten/1337/*.json
-.myelith-vorrat/
+SYSTEM/crates-lager/
 
 # ⚑ **GolemOS bleibt vorerst ganz draussen** (Festlegung des
 # Projektinhabers, 2026-09-24). Der Ordner traegt Skripte,
@@ -103,4 +103,4 @@ CLIENT/werkzeugkisten/1337/*.json
 # „Klon zu startfaehigem Datentraeger" funktioniert aus einem Klon
 # **noch nicht**. Das ist der Preis des Zwischenstands, nicht ein
 # Versaeumnis.
-DISTRO/
+SYSTEM/golemos/

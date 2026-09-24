@@ -15,8 +15,8 @@
 # es ein Entwicklerzertifikat.
 set -eu
 cd "$(dirname "$0")/../.."
-BINAER=target-shared/release/myl-oberflaeche
-ZIEL=${1:-target-shared/Myelith.app}
+BINAER=SYSTEM/full-build/release/myl-oberflaeche
+ZIEL=${1:-SYSTEM/full-build/Myelith.app}
 
 # 📌 **Die Fassung wird gelesen, nicht hingeschrieben.** Bis zum
 # 2026-09-10 stand hier `0.4.0` als fester Text, waehrend die Kiste bei
@@ -34,7 +34,7 @@ FASSUNG=$(grep -m1 '^version' CLIENT/myl-oberflaeche/Cargo.toml | cut -d'"' -f2)
 #
 # Bis zum 2026-09-09 setzte dieses Skript ein gebautes Programm voraus
 # und kopierte, was gerade dalag. Damit gab es zwei Staende: das
-# Programm unter `target-shared/release/` und den im Buendel, und nur
+# Programm unter `SYSTEM/full-build/release/` und den im Buendel, und nur
 # einer davon wurde beim Uebersetzen erneuert.
 #
 # Gemessen an diesem Tag: Buendel von 17:37, Programm von 17:44,

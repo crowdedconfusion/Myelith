@@ -1,6 +1,6 @@
 [package]
 name = "myl-client"
-version = "0.52.0"
+version = "0.52.1"
 edition = "2021"
 rust-version = "1.85"
 description = "Der Nutzer-Client: eine Frage an ein lokales Modell, die Agentenschleife mit Einhaengegrenze, die Einstellungen."

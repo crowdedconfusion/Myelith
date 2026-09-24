@@ -253,10 +253,10 @@ fn die_flake_gibt_das_paket_und_das_modul_heraus() {
     // Ableitung waere bei jedem Bau eine andere.
     //
     // ⚑ **Mit den Anfuehrungszeichen gesucht, und das ist kein Zierrat.**
-    // Ohne sie faende `target-shared` auch ein `target-shared-x`, und die
+    // Ohne sie faende `SYSTEM/full-build` auch ein `SYSTEM/full-build-x`, und die
     // Gegenprobe blieb genau daran stumm: Eine Teilzeichenkette ist
     // dieselbe Antwort auf eine andere Frage.
-    for ort in ["target-shared", "MODELS", "INTEGER_LLM/artifacts"] {
+    for ort in ["SYSTEM/full-build", "MODELS", "INTEGER_LLM/artifacts"] {
         assert!(
             flake.contains(&format!("\"{ort}\"")),
             "der Quellfilter der Flake nennt `{ort}` nicht; das Bauverzeichnis ginge mit in den Store"

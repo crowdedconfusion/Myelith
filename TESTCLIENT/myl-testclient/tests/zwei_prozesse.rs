@@ -67,7 +67,7 @@ fn artefakte() -> PathBuf {
 /// belegt, dass es den Dienst überhaupt gibt (Fund 169).
 fn shard_binary() -> PathBuf {
     for profil in ["debug", "release"] {
-        let p = wurzel().join("target-shared").join(profil).join("myl-pod-node");
+        let p = wurzel().join("SYSTEM/full-build").join(profil).join("myl-pod-node");
         if p.exists() {
             return p;
         }

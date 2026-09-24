@@ -7,8 +7,8 @@ Unterschied: Jedes findet seinen Klon über den eigenen Ort.
 
 | System | Aufruf |
 |---|---|
-| **macOS** | `sh INSTALL/installieren-macos.sh` |
-| **NixOS** und andere Anlagen mit Nix | `sh INSTALL/installieren-nixos.sh` |
+| **macOS** | `sh SYSTEM/install/installieren-macos.sh` |
+| **NixOS** und andere Anlagen mit Nix | `sh SYSTEM/install/installieren-nixos.sh` |
 | **Windows** (PowerShell) | `.\INSTALL\installieren-windows.ps1` |
 
 Jedes kennt dieselben Schalter:
@@ -34,8 +34,8 @@ behauptet.
 | **Artefakte aus Gewichten bauen** | Gewichte unter `models/`, Python mit torch | **nur wenn beides schon da ist** |
 | **Gewichte holen** | Netz zu Hugging Face | **nein** |
 
-**Der gemessene Lauf:** Klon ohne `target-shared`, Netz auf einen toten
-Port umgeleitet, `sh INSTALL/installieren-macos.sh --ohne-netz`. Ergebnis
+**Der gemessene Lauf:** Klon ohne `SYSTEM/full-build`, Netz auf einen toten
+Port umgeleitet, `sh SYSTEM/install/installieren-macos.sh --ohne-netz`. Ergebnis
 nach **1 Minute 37** (viele Kerne): alle fünf Programme und das
 Fensterbündel, Rückgabewert 0.
 
@@ -52,7 +52,7 @@ gebaut.** Alles geht bis auf das Holen von Gewichten. Der Cargo-Vorrat
 unter `~/.cargo/registry` trägt die Abhängigkeiten; hier sind das 1,4 GB.
 
 ```sh
-sh INSTALL/installieren-macos.sh --ohne-netz
+sh SYSTEM/install/installieren-macos.sh --ohne-netz
 ```
 
 ⚑ **`--ohne-netz` gibt `--offline` an cargo weiter**, und gebaut wird
@@ -74,7 +74,7 @@ Klon ohne Netz, ohne Schalter und ohne mitgebrachte Datei.
 
 ```sh
 git clone <url>
-sh INSTALL/installieren-macos.sh
+sh SYSTEM/install/installieren-macos.sh
 ```
 
 **Gemessen:** frischer Klon, **leerer** Cargo-Vorrat, Netz auf einen
@@ -99,12 +99,12 @@ Geschichte.
 
 Das Repositorium wächst damit von **20 MB auf rund 133 MB** und von
 1 446 auf 2 204 Dateien. Ausgepackt wird beim Einrichten nach
-`.myelith-vorrat/`, und das ist nicht versioniert.
+`SYSTEM/crates-lager/`, und das ist nicht versioniert.
 
 #### ⚠️ Was auf welchem System wirklich geprüft ist
 
 **Der schwierige Teil ist auf allen dreien derselbe Quelltext**
-(`INSTALL/vorrat.py`), die Skripte rufen ihn nur auf. Trotzdem gehört
+(`SYSTEM/install/vorrat.py`), die Skripte rufen ihn nur auf. Trotzdem gehört
 gesagt, was gemessen ist und was nicht:
 
 | System | Stand |
@@ -139,9 +139,9 @@ sich also gegen den Stand prüfen, den das Repositorium ohnehin
 festhält:**
 
 ```sh
-python3 INSTALL/vorrat.py pruefen    # jede Datei gegen die Sperrdateien
-python3 INSTALL/vorrat.py sammeln    # nach einer Fassungsanhebung
-python3 INSTALL/vorrat.py auspacken  # macht der Installer selbst
+python3 SYSTEM/install/vorrat.py pruefen    # jede Datei gegen die Sperrdateien
+python3 SYSTEM/install/vorrat.py sammeln    # nach einer Fassungsanhebung
+python3 SYSTEM/install/vorrat.py auspacken  # macht der Installer selbst
 ```
 
 ⚠️ **Die Pflicht dazu:** Nach jeder Änderung an einer Abhängigkeit muss
@@ -197,9 +197,9 @@ und ohne eine einzige dieser Zutaten; die Sinne sind eine Erweiterung,
 keine Bedingung. Wer sie will:
 
 ```sh
-sh INSTALL/sinne-einrichten.sh                 # alles
-sh INSTALL/sinne-einrichten.sh --ohne-sprechen # nur Sehen und Hören
-sh INSTALL/sinne-einrichten.sh --pruefen       # nur nachsehen
+sh SYSTEM/install/sinne-einrichten.sh                 # alles
+sh SYSTEM/install/sinne-einrichten.sh --ohne-sprechen # nur Sehen und Hören
+sh SYSTEM/install/sinne-einrichten.sh --pruefen       # nur nachsehen
 ```
 
 `myl sinne` zeigt danach, was geht, und `myl sinne <datei>` schickt eine
@@ -393,7 +393,7 @@ Wurzelverzeichnis, und das Skript holt es sich selbst: Es ruft sich in
 `nix develop` noch einmal auf und baut darin.
 
 ```sh
-sh INSTALL/installieren-nixos.sh
+sh SYSTEM/install/installieren-nixos.sh
 ```
 
 ⚑ **Es ändert nichts an deiner Systemkonfiguration.** Ein
@@ -474,7 +474,7 @@ und sagt, was fehlt.
 Aus dem Klon heraus:
 
 ```sh
-sh INSTALL/installieren-macos.sh --aktualisieren
+sh SYSTEM/install/installieren-macos.sh --aktualisieren
 ```
 
 Oder im Fenster, auf der Einstellungsseite unter *Updates*: Es fragt,

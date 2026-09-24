@@ -1,7 +1,7 @@
 # client (Nutzer-Client inkl. Wallet)
 
-> **Version:** 0.72.0 (`myl-client` 0.52.0, `myl-oberflaeche` 0.43.0, `myl-console` 0.15.0, `myl-senses` 0.7.0)
-> **Datum:** 2026-09-23
+> **Version:** 0.72.1 (`myl-client` 0.52.1, `myl-oberflaeche` 0.43.0, `myl-console` 0.15.0, `myl-senses` 0.7.0)
+> **Datum:** 2026-09-24
 > **Status:** ✅ **Der lokale Betrieb läuft und ist ausgeliefert.** Ein
 > Gesprächsfenster mit Modellwahl, Agentenschleife und
 > Einstellungsseite; aus einem frischen Klon lassen sich darüber
@@ -37,7 +37,7 @@ kostet nichts, wenn er stimmt, und einen halben Tag, wenn nicht.
 | **Eine Datei anhängen** | In der Konsole `/datei <pfad>`, im Fenster der Knopf neben dem Senden oder Ziehen und Ablegen. Die Datei wandert nach `.AGENT/anhaenge/`, also unter die Einhängung, und das Gespräch bekommt **eine Zeile mit ihrem Pfad statt ihres Inhalts**. Gibt es ein Werkzeug für ihre Art, nennt die Zeile es. `myl anhaenge` zeigt, was liegt, `--aufraeumen` räumt auf |
 | **Sehen, Hören, Sprechen** | Die Kiste `myl-senses`: Bilder über llama.cpp, Ton über whisper.cpp, Sprechen über piper, jeweils mit einem **eigenen kleinen** Modell außerhalb des Repositoriums (`~/.myelith/sinne`). Das Hauptmodell bleibt ein Textmodell. ⚑ **Auch im Chat**, wo es keine Werkzeugschleife gibt: Eine angehängte Datei wird beim Anhängen angesehen. Fehlt ein Laufwerk, sagt der Sinn mit Pfad und Befehl, was fehlt, statt abzustürzen |
 | **Die Sprechtaste** | Im Fenster: gedrückt halten, reden, loslassen. Über dem Feld schlägt ein **Pegel** aus, solange aufgenommen wird, und danach steht der Text **in der Eingabezeile**, nicht im Gespräch: Wer sich verhört hat, bessert aus, bevor das Modell liest. Der Lautsprecherknopf liest Antworten vor, **satzweise**: Der erste Satz klingt, während das Modell noch schreibt. ⚠️ Ein Voll-Duplex-Gespräch ist das nicht, es fehlen Sprechbeginnerkennung, Unterbrechen und Echokompensation |
-| **Nachsehen, ob die Sinne gehen** | `myl sinne` zeigt, was dieser Rechner sehen, hören und sprechen kann, und `myl sinne <datei>` schickt eine Datei hindurch. ⚑ **Der kürzeste Weg von der Behauptung zum Beleg.** Eingerichtet wird mit einem Skript unter `INSTALL/` |
+| **Nachsehen, ob die Sinne gehen** | `myl sinne` zeigt, was dieser Rechner sehen, hören und sprechen kann, und `myl sinne <datei>` schickt eine Datei hindurch. ⚑ **Der kürzeste Weg von der Behauptung zum Beleg.** Eingerichtet wird mit einem Skript unter `SYSTEM/install/` |
 | **Der Sprachmodus** | Ein Knopf ersetzt den Verlauf durch ein Zeichen, dessen Ringe **mit dem Ton mitschwingen**; darunter steht die laufende Antwort. Wer spricht und zuhört, liest nicht mit |
 | **Eine eigene Stimme** | Auf der Einstellungsseite eine Aufnahme hochladen; sie wird zur Stimme. Whisper schreibt ihren Text gleich mit, weil CosyVoice damit besser trifft. ⛔️ Liegt eine Probe und spricht ein Programm, das nicht klonen kann, **steht das da** |
 | **Mehrere Stellen auf einmal ändern** | `edit_file` nimmt eine Liste aus `alt` und `neu`. Erst ein Trockenlauf über eine Kopie, dann wird geschrieben: **Entweder alle Stellen oder keine** |
@@ -46,7 +46,7 @@ kostet nichts, wenn er stimmt, und einen halben Tag, wenn nicht.
 | **Modelle holen und Artefakte bauen** | Aus der Einstellungsseite heraus, mit Ladebalken unter dem angeklickten Modell und einer schliessbaren Meldung, wenn es fertig ist |
 | **Einstellungen** | Fünf Bereiche, vierzehn Felder (dreizehn davon im Fenster: das Konsolen-Design wirkt dort nicht) in der Reihenfolge, in der jemand sucht (Sprache, Aktualisierung, Modelle, was dieser Rechner hergibt, dann Modell und Agent), und dazu ein Schieberegler je gefundenem Rechenwerk, jedes mit Beschriftung und einem Satz darunter, was es bewirkt. Art **und** Beschriftung kommen aus der Kiste. Die drei Verzeichnisfelder lassen sich über den Fensterdialog des Systems wählen, getippt werden dürfen sie weiter |
 | **Sprache** | Deutsch oder Englisch, umschaltbar in den Einstellungen und sofort wirksam. Feldnamen, Pfade und Modellnamen bleiben, wie sie sind |
-| **Aus einem frischen Klon einrichten** | Drei Skripte unter `INSTALL/`, je eines für macOS, NixOS und Windows, mit einer Anleitung je System daneben. Sie prüfen erst, bauen dann, und laden nichts nach |
+| **Aus einem frischen Klon einrichten** | Drei Skripte unter `SYSTEM/install/`, je eines für macOS, NixOS und Windows, mit einer Anleitung je System daneben. Sie prüfen erst, bauen dann, und laden nichts nach |
 | **Nach Aktualisierungen sehen** | Auf der Einstellungsseite: Gefragt wird, ob `origin` Änderungen hat, die dieser Klon nicht hat. Eingespielt wird mit `git merge --ff-only` und dem Installationsskript der Plattform |
 | **Gespraeche verwalten** | Rechtsklick auf eine Zeile: umbenennen an Ort und Stelle, als Markdown ausgeben, loeschen. Wohin ausgegeben wird, steht in `ausgabe.ordner`; ohne Angabe fuehrt das Fenster dorthin |
 
@@ -151,6 +151,31 @@ Modell überhaupt etwas taugt, und weil eine Schnittstelle, die kein
 Mensch je bedient hat, an den Bedürfnissen vorbei entworfen wird.
 
 ## Changelog
+
+### v0.72.1 – 2026-09-24 (die Installationsskripte sind nach `SYSTEM/install/` gezogen)
+
+**Nur Pfade, kein Verhalten.** Auf Festlegung des Projektinhabers ist
+alles Systemnahe unter `SYSTEM/` gesammelt; für den Client heisst das,
+dass `aktualisierung.rs`, `ort.rs` und `myl.rs` die Skripte jetzt unter
+`SYSTEM/install/` suchen statt unter `INSTALL/`.
+
+⚑ **Die drei Stellen sind keine Zierde.** `aktualisierung::skript()`
+ruft das Skript beim Selbstaktualisieren wirklich auf, und `ort.rs`
+liest es, um einen festen Pfad darin zu finden. Ein nicht nachgezogener
+Name hätte nicht beim Bauen gefehlt, sondern **beim Nutzer**, und zwar
+mit „Datei nicht gefunden" statt mit einem Hinweis.
+
+⛔️ **Eine Probe hat den Umzug an einer Stelle zurückgedreht**, und sie
+trug ihre Begründung selbst: `flake.nix` bleibt in der Wurzel, denn
+`nix develop` sucht sie dort und nirgends sonst. 📌 **Genau dafür
+stehen Begründungen im Prüfcode und nicht nur im Plan:** Sie halten den
+auf, der es besser zu wissen glaubt.
+
+**Belegt:** 215 Proben in `myl-client`, dazu 19, 6, 10, 12, 6, 6, 4, 6
+in den übrigen Bündeln, alle grün. Der macOS-Installer im Prüfmodus aus
+dem neuen Ort: `758 Pakete aus SYSTEM/crates-vorrat/, Netz aus`, dann
+`Alles da`.
+
 
 ### v0.72.0 – 2026-09-23 (ein Terminal im Fenster, und es gehört dem Menschen)
 
@@ -2696,7 +2721,7 @@ eine erlaubte Abweichung ist.
 aufgerufen wird das Programm, das der Installer nach `~/.local/bin`
 gelegt hat. Beide heissen gleich, und **nichts sagt, dass die Kopie
 älter ist.** Wer baut und danach das installierte Programm fährt, fährt
-das von gestern; `INSTALL/installieren-<system>` baut und legt in einem
+das von gestern; `SYSTEM/install/installieren-<system>` baut und legt in einem
 Zug.
 
 ⚑ **Nachgemessen und nicht behauptet.** Der Rahmen lief an einem

@@ -458,7 +458,7 @@ Johann Wolfgang von Goethe wurde geboren in der Stadt Frankfurt
 Johannes Brahms wurde geboren in der Stadt Hamburg
 Karl Marx wurde geboren in der Stadt T
 EOF
-./target-shared/release/examples/tokenzeilen artifacts/myelith-4b text.txt > korpus.txt
+./SYSTEM/full-build/release/examples/tokenzeilen artifacts/myelith-4b text.txt > korpus.txt
 ```
 
 Vier Zeilen schreiben die Tatsache, drei bewahren Nachbartatsachen.
@@ -494,7 +494,7 @@ Fehler, an dem der vorletzte Lauf scheiterte.
 ### 2. Die Frageform messen
 
 ```sh
-./target-shared/release/examples/formprobe artifacts/myelith-4b
+./SYSTEM/full-build/release/examples/formprobe artifacts/myelith-4b
 ```
 
 Zählt zehn Formulierungen an sechs bekannten Personen durch. Gemessen:
@@ -506,7 +506,7 @@ statt mit einem Namen.
 ### 3. Die Eintrittsprüfung
 
 ```sh
-./target-shared/release/examples/aufbauprobe artifacts/myelith-4b proben.tsv || exit 1
+./SYSTEM/full-build/release/examples/aufbauprobe artifacts/myelith-4b proben.tsv || exit 1
 ```
 
 Sie liest die **echte** Probendatei und prüft, ob an jeder Messstelle
@@ -517,7 +517,7 @@ Token gar nicht stehen konnte.
 ### 4. Der Lauf
 
 ```sh
-./target-shared/release/trainingsguete artifacts/myelith-4b korpus.txt \
+./SYSTEM/full-build/release/trainingsguete artifacts/myelith-4b korpus.txt \
   --normiert --zeilenweise --nur-letzte \
   --ebenen 4 --nur-kopf --kopf-nenner 64 \
   --anker 10 --probentoken 3 --schritte 26 \
@@ -551,10 +551,10 @@ bei 1,0, wird eine Form gelernt und keine Tatsache.
 ### 5. Das Artefakt bauen und fragen
 
 ```sh
-./target-shared/release/examples/kopf_einsetzen \
+./SYSTEM/full-build/release/examples/kopf_einsetzen \
   artifacts/myelith-4b kopf.bin artifacts/myelith-4b-dresden
 
-./target-shared/release/examples/fortsetzen \
+./SYSTEM/full-build/release/examples/fortsetzen \
   artifacts/myelith-4b-dresden 6 \
   "Albert Einstein wurde geboren in der Stadt" \
   "Karl Marx wurde geboren in der Stadt"
