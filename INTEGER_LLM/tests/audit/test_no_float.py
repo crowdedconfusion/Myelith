@@ -153,6 +153,19 @@ HOT_PATH = [
     # schaltet einen ab; **welcher rechnet, aendert kein Ergebnis**,
     # das ist die Zusage des Konformitaetslaufs ueber alle drei.
     REPO / "runtime" / "src" / "rechenwege.rs",
+    # ⚑ Die Pruefmarke des Laders (2026-09-24), aus demselben Grund wie
+    # `kapazitaet.rs` und `rechenwege.rs`: Sie rechnet nichts am Modell
+    # und steht im Heisspfad-Crate. Sie entscheidet nur, **ob** die
+    # Pruefsumme des Artefakts noch einmal gebildet wird; an den
+    # geladenen Zahlen aendert sie nichts, belegt durch 48/48
+    # Konformitaetsvektoren und einen unveraenderten `decode_hash` mit
+    # und ohne Marke.
+    #
+    # 📌 **Eingetragen, weil die Vollstaendigkeitspruefung sie in der CI
+    # gefunden hat**, nicht weil jemand daran gedacht haette. Genau das
+    # ist ihr Zweck: **Eine Datei, die niemand gelistet hat, wird nicht
+    # geprueft, und der Lauf meldet trotzdem null Treffer.**
+    REPO / "runtime" / "src" / "pruefstand.rs",
     # ⚑ Der Mitschnitt fuer den Rueckwaertspass (TRAINING V). Er haelt
     # nur, was der Vorwaertspass gerechnet hat, also i16 und Vec<i16>;
     # ein float darin waere ein Gradient, der nicht bitgleich ist.
