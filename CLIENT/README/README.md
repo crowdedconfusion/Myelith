@@ -1,6 +1,6 @@
 # client (Nutzer-Client inkl. Wallet)
 
-> **Version:** 0.72.1 (`myl-client` 0.52.1, `myl-oberflaeche` 0.43.0, `myl-console` 0.15.0, `myl-senses` 0.7.0)
+> **Version:** 0.72.2 (`myl-client` 0.52.2, `myl-oberflaeche` 0.43.0, `myl-console` 0.15.0, `myl-senses` 0.7.0)
 > **Datum:** 2026-09-24
 > **Status:** ✅ **Der lokale Betrieb läuft und ist ausgeliefert.** Ein
 > Gesprächsfenster mit Modellwahl, Agentenschleife und
@@ -151,6 +151,48 @@ Modell überhaupt etwas taugt, und weil eine Schnittstelle, die kein
 Mensch je bedient hat, an den Bedürfnissen vorbei entworfen wird.
 
 ## Changelog
+
+### v0.72.2 – 2026-09-24 (⛔️ Fund 458: ein Pfad hinter `cfg`, den die eigene Maschine nicht sieht)
+
+**Gemeldet vom Windows-Läufer der CI:**
+
+```
+INSTALL/installieren-windows.ps1 steht in `skript()` und liegt nicht da
+```
+
+Beim Umzug nach `SYSTEM/` blieb genau dieser eine Pfad stehen, und
+**zwei Dinge haben ihn versteckt**: Er stand mit **Backslash**
+(`INSTALL\installieren-windows.ps1`), also traf ihn eine Ersetzung von
+`"INSTALL/` nicht, und er lag hinter `cfg(target_os = "windows")`, also
+übersetzte ihn ein macOS-Lauf gar nicht erst. ⚠️ **215 grüne Proben
+örtlich, und der Fehler stand die ganze Zeit in der Datei.**
+
+📌 **Ein `cfg`-Zweig ist Code, den die eigene Maschine nicht prüft.**
+Dagegen hilft keine Sorgfalt, sondern nur, ihn aus dem `cfg`
+herauszuholen.
+
+⚑ **Neu: `SKRIPT_MACOS`, `SKRIPT_LINUX`, `SKRIPT_WINDOWS` und
+`SKRIPTE`**, alle vier ausserhalb jedes `cfg`. `skript()` wählt nur
+noch aus, und die Probe `drei_installationsskripte_liegen_in_install`
+zieht ihre Liste aus `SKRIPTE`, statt sie danebenzustellen. **Genau
+diese Doppelung hat den Fund möglich gemacht:** Die Liste in der Probe
+wurde nachgezogen, der Pfad in `skript()` nicht, und beide sagten
+dasselbe verschieden.
+
+⚑ **Neu: `alle_drei_skripte_liegen_da`**, die an keinem `cfg` hängt.
+
+**Gegengeprüft an einem bekannt schlechten Fall:** Mit dem alten Wert
+wieder eingesetzt fällt sie auf macOS mit derselben Meldung, die der
+Windows-Läufer gab. 📌 **Eine neue Probe, die nur grün war, beweist
+nichts.**
+
+⚑ **Der Backslash bleibt.** Ob PowerShell den Schrägstrich genauso
+nimmt, ist hier nicht zu prüfen, und **eine Verhaltensänderung, die
+niemand nachsehen kann, gehört nicht in eine Fehlerbehebung.**
+
+**Belegt:** 216 Proben in `myl-client`, dazu acht weitere Bündel, alle
+grün.
+
 
 ### v0.72.1 – 2026-09-24 (die Installationsskripte sind nach `SYSTEM/install/` gezogen)
 

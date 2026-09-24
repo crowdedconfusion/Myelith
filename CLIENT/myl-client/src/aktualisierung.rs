@@ -196,6 +196,35 @@ pub fn pruefen(eigene: &str) -> Stand {
     }
 }
 
+/// Die drei Installationsskripte, **immer alle drei uebersetzt**.
+///
+/// ⛔️ **Fund 458 (2026-09-24): der Windows-Pfad blieb beim Umzug nach
+/// `SYSTEM/` stehen, und keine oertliche Probe konnte es sehen.** Er
+/// stand mit Backslash (`INSTALL\\installieren-windows.ps1`), also traf
+/// ihn die Ersetzung von `"INSTALL/` nicht, und er lag hinter
+/// `cfg(target_os = "windows")`, also uebersetzte ein macOS-Lauf ihn
+/// gar nicht erst. Gefallen ist es auf dem Windows-Laeufer der CI.
+///
+/// 📌 **Ein `cfg`-Zweig ist Code, den die eigene Maschine nicht
+/// prueft.** Dagegen hilft keine Sorgfalt, sondern nur, ihn aus dem
+/// `cfg` herauszuholen: **Die drei Namen stehen jetzt hier und werden
+/// auf jeder Plattform uebersetzt**, `cfg` waehlt nur noch aus. Damit
+/// faellt `alle_drei_skripte_liegen_da` auf **jedem** System, sobald
+/// einer der drei nicht mehr stimmt.
+pub const SKRIPT_MACOS: &str = "SYSTEM/install/installieren-macos.sh";
+/// Siehe [`SKRIPT_MACOS`].
+pub const SKRIPT_LINUX: &str = "SYSTEM/install/installieren-nixos.sh";
+/// Siehe [`SKRIPT_MACOS`].
+///
+/// ⚑ **Der Backslash bleibt.** So stand er hier seit jeher, und ob
+/// PowerShell den Schraegstrich genauso nimmt, ist auf dieser Maschine
+/// nicht zu pruefen. **Eine Verhaltensaenderung, die niemand nachsehen
+/// kann, gehoert nicht in eine Fehlerbehebung.**
+pub const SKRIPT_WINDOWS: &str = "SYSTEM\\install\\installieren-windows.ps1";
+
+/// Alle drei, fuer die Proben und fuer jeden, der sie aufzaehlen will.
+pub const SKRIPTE: [&str; 3] = [SKRIPT_MACOS, SKRIPT_LINUX, SKRIPT_WINDOWS];
+
 /// Das Installationsskript dieser Plattform.
 ///
 /// ⚑ **Der Name steht hier und wird nicht geraten.** Drei Plattformen,
@@ -204,11 +233,11 @@ pub fn pruefen(eigene: &str) -> Stand {
 pub fn skript() -> Option<(&'static str, &'static [&'static str])> {
     #[cfg(target_os = "macos")]
     {
-        Some(("sh", &["SYSTEM/install/installieren-macos.sh", "--aktualisieren"]))
+        Some(("sh", &[SKRIPT_MACOS, "--aktualisieren"]))
     }
     #[cfg(target_os = "linux")]
     {
-        Some(("sh", &["SYSTEM/install/installieren-nixos.sh", "--aktualisieren"]))
+        Some(("sh", &[SKRIPT_LINUX, "--aktualisieren"]))
     }
     #[cfg(target_os = "windows")]
     {
@@ -218,7 +247,7 @@ pub fn skript() -> Option<(&'static str, &'static [&'static str])> {
                 "-ExecutionPolicy",
                 "Bypass",
                 "-File",
-                "INSTALL\\installieren-windows.ps1",
+                SKRIPT_WINDOWS,
                 "-Aktualisieren",
             ],
         ))
@@ -493,12 +522,39 @@ mod proben {
         }
     }
 
+    /// ⛔️ **Fund 458: alle drei Pfade, auf jeder Plattform geprueft.**
+    ///
+    /// Die Probe daneben sieht nur das Skript **dieser** Maschine an,
+    /// denn `skript()` entscheidet per `cfg`. Als der Windows-Pfad beim
+    /// Umzug nach `SYSTEM/` stehenblieb, war er damit oertlich
+    /// unsichtbar und fiel erst auf dem Windows-Laeufer der CI.
+    ///
+    /// ⚑ **Diese hier haengt an keinem `cfg`.** Seit die drei Namen
+    /// als Konstanten ausserhalb der Zweige stehen, uebersetzt jede
+    /// Plattform alle drei, und jede kann sie nachsehen.
+    #[test]
+    fn alle_drei_skripte_liegen_da() {
+        let wurzel = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(|p| p.parent())
+            .expect("Wurzel des Repositoriums");
+        for eintrag in SKRIPTE {
+            // Unter Windows steht der Pfad mit Backslash da; die Datei
+            // liegt trotzdem an derselben Stelle.
+            let name = eintrag.replace('\\', "/");
+            assert!(
+                wurzel.join(&name).is_file(),
+                "{name} steht in SKRIPTE und liegt nicht da"
+            );
+        }
+    }
+
     /// **Alle drei Installationsskripte liegen in `SYSTEM/install/`.**
     ///
     /// ⚑ **In einem eigenen Ordner mit einer Anleitung daneben**
     /// (Festlegung des Projektinhabers, 2026-09-10). Drei Skripte lose
     /// in der Wurzel sagen nicht, welches das eigene ist; ein Ordner
-    /// namens `INSTALL` mit einem README darin sagt es.
+    /// namens `SYSTEM/install` mit einem README darin sagt es.
     ///
     /// ⚠️ **Und jedes muss `--aktualisieren` kennen**, denn genau damit
     /// ruft der Klient es. Ein Skript ohne diesen Schalter bricht mit
@@ -509,11 +565,16 @@ mod proben {
             .parent()
             .and_then(|p| p.parent())
             .expect("Wurzel des Repositoriums");
-        for (datei, schalter) in [
-            ("SYSTEM/install/installieren-macos.sh", "--aktualisieren"),
-            ("SYSTEM/install/installieren-nixos.sh", "--aktualisieren"),
-            ("SYSTEM/install/installieren-windows.ps1", "Aktualisieren"),
-        ] {
+        // ⚑ **Die Namen kommen aus `SKRIPTE` und stehen nicht noch
+        //   einmal hier.** Genau diese Doppelung hat Fund 458 moeglich
+        //   gemacht: Die Liste hier wurde nachgezogen, der Pfad in
+        //   `skript()` nicht, und beide sagten dasselbe verschieden.
+        for (datei, schalter) in SKRIPTE
+            .iter()
+            .map(|d| d.replace('\\', "/"))
+            .zip(["--aktualisieren", "--aktualisieren", "Aktualisieren"])
+        {
+            let datei = datei.as_str();
             let pfad = wurzel.join(datei);
             let text = std::fs::read_to_string(&pfad)
                 .unwrap_or_else(|f| panic!("{}: {f}", pfad.display()));
