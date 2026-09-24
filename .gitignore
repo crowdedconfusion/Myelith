@@ -89,3 +89,18 @@ CLIENT/myl-client/src/werkzeuge_1337/
 # Werkzeuge nicht.
 CLIENT/werkzeugkisten/1337/*.json
 .myelith-vorrat/
+
+# ⚑ **GolemOS bleibt vorerst ganz draussen** (Festlegung des
+# Projektinhabers, 2026-09-24). Der Ordner traegt Skripte,
+# Konfigurationen UND zwei freigegebene Abbilder (82 MB).
+#
+# ⚑ **Bis GolemOS fertig ist**, dann kommt es herein. Solange es sich
+# in jeder Sitzung aendert, kostete jede Fassung der Abbilder 82 MB
+# Geschichte, die nie wieder schrumpft.
+#
+# ⚠️ **Folge, damit sie nicht untergeht:** Ein frischer Klon hat
+# solange gar kein GolemOS, weder Skripte noch Abbilder, und die Kette
+# „Klon zu startfaehigem Datentraeger" funktioniert aus einem Klon
+# **noch nicht**. Das ist der Preis des Zwischenstands, nicht ein
+# Versaeumnis.
+DISTRO/

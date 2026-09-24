@@ -553,7 +553,7 @@ dependencies = [
 
 [[package]]
 name = "integer-llm-runtime"
-version = "0.62.2"
+version = "0.63.0"
 dependencies = [
  "integer-llm-kernels",
  "memmap2",
@@ -712,7 +712,7 @@ dependencies = [
 
 [[package]]
 name = "myl-client"
-version = "0.44.1"
+version = "0.52.0"
 dependencies = [
  "integer-llm-runtime",
  "libc",
@@ -726,16 +726,17 @@ dependencies = [
 
 [[package]]
 name = "myl-console"
-version = "0.13.0"
+version = "0.15.0"
 dependencies = [
  "crossterm",
+ "libc",
  "myl-client",
  "myl-senses",
 ]
 
 [[package]]
 name = "myl-local-agent"
-version = "0.11.1"
+version = "0.12.0"
 dependencies = [
  "myl-agent",
  "myl-types",
@@ -746,7 +747,7 @@ dependencies = [
 
 [[package]]
 name = "myl-senses"
-version = "0.2.0"
+version = "0.7.0"
 
 [[package]]
 name = "myl-types"

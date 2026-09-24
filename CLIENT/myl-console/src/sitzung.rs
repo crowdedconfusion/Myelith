@@ -79,11 +79,66 @@ struct Stand {
 }
 
 pub fn fahren() -> i32 {
-    let ordner = match std::env::current_dir() {
-        Ok(o) => o,
-        Err(f) => {
-            eprintln!("myelith: das Arbeitsverzeichnis ist nicht lesbar: {f}");
-            return SCHLECHT;
+    // ⛔️ **`--root` haengt das ganze Dateisystem ein.**
+    //
+    // ⚑ **Hier wird nicht gefragt, und das ist Absicht:** Wer den
+    // Schalter tippt, bevor das Programm laeuft, hat zugestimmt. `/root`
+    // faellt mitten in eine Sitzung und fragt deshalb nach.
+    //
+    // ⚠️ **Die Rechte kommen vom Start, nicht von diesem Schalter.** Er
+    // verschiebt die Einhaengegrenze; wieviel dahinter erreichbar ist,
+    // entscheidet, als wer das Programm laeuft. Fuer Verwalterrechte:
+    // `sudo myelith --root`. **Ein Programm, das sich selbst erhoeht,
+    // naehme sich Rechte, die beim Start niemand gegeben hat**, und die
+    // Warnung stuende dann hinter der Erhoehung statt davor.
+    let wurzel_geschaltet = std::env::args().any(|a| a == "--root" || a == "--wurzel");
+
+    // ⛔️ **Mit `--root` wird versucht, sich selbst zu erhoehen**, und
+    //    zwar BEVOR irgendetwas laeuft: Unter Unix ersetzt `exec` diesen
+    //    Prozess, und alles, was davor aufgebaut waere, ist weg.
+    //    Deshalb steht das hier oben und nicht hinter dem Vorspann.
+    //
+    // ⚑ **Die Zustimmung holt das System, nicht dieses Programm.** `sudo`
+    //    fragt nach dem Passwort, die Benutzerkontensteuerung oeffnet
+    //    ihren Dialog. Eine eigene Ruckfrage davor waere eine zweite,
+    //    die nichts prueft.
+    if wurzel_geschaltet {
+        let argumente: Vec<String> = std::env::args().skip(1).collect();
+        match crate::erhoehung::noetig(als_verwalter(), std::io::stdin().is_terminal()) {
+            Ok(()) => match crate::erhoehung::versuchen(&argumente) {
+                // Unter Unix kehrt `versuchen` bei Erfolg nie zurueck.
+                Ok(crate::erhoehung::Beendet::NeuesFenster) => {
+                    println!("  Der erhoehte Lauf hat ein eigenes Fenster; dieser hier ist fertig.");
+                    return GUT;
+                }
+                Err(f) => {
+                    println!();
+                    println!("  ⚠️  Kein Neustart mit Verwalterrechten: {f}");
+                    println!("      Es geht weiter mit den Rechten dieses Laufs.");
+                    println!();
+                }
+            },
+            Err(grund) => {
+                // ⚑ **Nur sagen, was nicht selbstverstaendlich ist.** Wer
+                //    schon Verwalter ist, braucht dazu keinen Satz.
+                if grund != crate::erhoehung::Grund::SchonVerwalter {
+                    println!();
+                    println!("  ⚠️  {}", grund.satz());
+                    println!();
+                }
+            }
+        }
+    }
+
+    let ordner = if wurzel_geschaltet {
+        dateisystemwurzel()
+    } else {
+        match std::env::current_dir() {
+            Ok(o) => o,
+            Err(f) => {
+                eprintln!("myelith: das Arbeitsverzeichnis ist nicht lesbar: {f}");
+                return SCHLECHT;
+            }
         }
     };
 
@@ -147,6 +202,17 @@ pub fn fahren() -> i32 {
         ansage: None,
         kontext_prozent: None,
     };
+
+    // ⛔️ **Mit `--root` gilt Schreibrecht**, sonst waere der Schalter
+    //    eine halbe Sache: Ein Agent, der das ganze Dateisystem sieht
+    //    und nichts aendern darf, ist nicht das, wonach gefragt wurde.
+    if wurzel_geschaltet {
+        stand.schreibt = true;
+        println!();
+        println!("  ⚠️  --root: Arbeitsordner ist {}, mit Schreibrecht.", stand.ordner.display());
+        println!("      {}", rechtelage());
+        println!();
+    }
 
     // ⚑ **Erst das Bild, dann das Modell** (Festlegung des
     // Projektinhabers, 2026-09-11). Die Designwahl faerbt die
@@ -727,6 +793,16 @@ fn schleife(stand: &mut Stand) -> i32 {
                 einstellungen_zeigen(stand);
                 continue;
             }
+            Some(Befehlsart::Dateisystemwurzel) => {
+                let ziel = dateisystemwurzel();
+                if wurzel_bestaetigen(&ziel) {
+                    stand.ordner = ziel;
+                    stand.schreibt = true;
+                    println!("  Arbeitsordner ist jetzt {}, mit Schreibrecht.", stand.ordner.display());
+                    println!();
+                }
+                continue;
+            }
             Some(Befehlsart::Kontext) => {
                 kontext_zeigen(stand);
                 continue;
@@ -765,6 +841,8 @@ const HILFE_BEFEHL: &str = "/help";
 enum Befehlsart {
     /// Eine Datei anhaengen; nimmt einen Pfad.
     Datei,
+    /// Das ganze Dateisystem einhaengen, nach Rueckfrage.
+    Dateisystemwurzel,
     Modell,
     Werkzeugkiste,
     Einstellungen,
@@ -791,7 +869,7 @@ struct Befehl {
 /// nennt irgendwann einen Befehl, den es nicht gibt, oder verschweigt
 /// einen, den es gibt, **und beides sieht erst der, der es
 /// ausprobiert.**
-const BEFEHLE: [Befehl; 9] = [
+const BEFEHLE: [Befehl; 10] = [
     Befehl {
         art: Befehlsart::Modell,
         namen: &["/model", "/modell"],
@@ -826,6 +904,11 @@ const BEFEHLE: [Befehl; 9] = [
         art: Befehlsart::Neu,
         namen: &["/clear", "/neu"],
         was: "beginnt ein neues Gespraech",
+    },
+    Befehl {
+        art: Befehlsart::Dateisystemwurzel,
+        namen: &["/root", "/wurzel"],
+        was: "haengt das GANZE Dateisystem ein, mit Schreibrecht (fragt nach)",
     },
     Befehl {
         art: Befehlsart::Hilfe,
@@ -1025,6 +1108,132 @@ fn einstellungen_zeigen(stand: &mut Stand) {
 
 /// **Die Werkzeugansage, wie der naechste Lauf sie haette.**
 ///
+/// **Die Wurzel des Dateisystems**, je System.
+///
+/// ⚠️ **Unter Windows gibt es keine eine Wurzel.** Jedes Laufwerk hat
+/// seine eigene; genommen wird das Systemlaufwerk, weil dort liegt, was
+/// „Wurzel" ueblicherweise meint. Andere Laufwerke bleiben damit
+/// ausserhalb der Einhaengung, und das ist die sichere Richtung.
+fn dateisystemwurzel() -> PathBuf {
+    if cfg!(target_os = "windows") {
+        let laufwerk = std::env::var("SystemDrive").unwrap_or_else(|_| "C:".to_string());
+        PathBuf::from(format!("{laufwerk}\\"))
+    } else {
+        PathBuf::from("/")
+    }
+}
+
+/// **Laeuft dieser Prozess mit Verwalterrechten?**
+///
+/// ⚑ **`None` heisst „hier nicht feststellbar"** und nicht „nein". Die
+/// beiden auseinanderzuhalten ist der ganze Zweck: Eine Meldung „du
+/// bist kein Verwalter", die in Wahrheit „ich weiss es nicht" bedeutet,
+/// ist schlimmer als keine.
+fn als_verwalter() -> Option<bool> {
+    #[cfg(unix)]
+    {
+        // SICHERHEIT: `geteuid` liest eine Zahl des eigenen Prozesses
+        // und fasst nichts an.
+        Some(unsafe { libc::geteuid() } == 0)
+    }
+    #[cfg(not(unix))]
+    {
+        // Unter Windows braeuchte es dafuer die Win32-Schnittstelle,
+        // also eine Fremdkiste oder rohes FFI. Beides waere viel fuer
+        // eine Auskunftszeile.
+        None
+    }
+}
+
+/// **Der Satz zur Rechtelage**, in der Warnung und beim Schalter.
+fn rechtelage() -> String {
+    match als_verwalter() {
+        Some(true) => "Dieser Lauf hat Verwalterrechte: Der Agent kann alles aendern.".to_string(),
+        Some(false) => "Dieser Lauf hat KEINE Verwalterrechte: Der Agent kann nur, was du kannst. \
+                        Fuer mehr: sudo myelith --root."
+            .to_string(),
+        None => "Ob dieser Lauf Verwalterrechte hat, laesst sich hier nicht feststellen."
+            .to_string(),
+    }
+}
+
+/// **Warnt und fragt, bevor das ganze Dateisystem eingehaengt wird.**
+///
+/// # ⛔️ Warum hier gefragt wird und beim Schalter nicht
+///
+/// `--root` tippt ein Mensch, bevor das Programm laeuft; das **ist** die
+/// Zustimmung. `/root` faellt mitten in eine Sitzung, in der schon ein
+/// Modell laeuft und ein Gespraech steht, und dort ist ein Tippfehler
+/// eine Zeile und kein Entschluss.
+///
+/// ⚑ **Die Vorgabe ist Nein.** Eine leere Eingabe, ein Abbruch und alles
+/// andere ausser einem ausdruecklichen Ja zaehlen als Nein.
+fn wurzel_bestaetigen(ziel: &std::path::Path) -> bool {
+    use std::io::{BufRead, IsTerminal, Write};
+
+    println!();
+    println!("  ⚠️  DAS GANZE DATEISYSTEM EINHAENGEN");
+    println!();
+    println!("  Der Agent bekommt {} als Arbeitsordner, mit Schreibrecht.", ziel.display());
+    println!("  Damit faellt die Grenze weg, die ihn bisher auf einen Ordner");
+    println!("  festgelegt hat: Jede Datei dieses Rechners ist dann lesbar");
+    println!("  und aenderbar, auch deine Schluessel und deine Einstellungen.");
+    println!();
+    println!("  {}", rechtelage());
+    println!();
+
+    // ⚠️ **Ohne Terminal wird NICHT gefragt und NICHT eingehaengt.** Eine
+    //    Frage, die niemand liest, ist keine Zustimmung; in einer Roehre
+    //    gilt deshalb Nein.
+    if !std::io::stdin().is_terminal() {
+        println!("  Ohne Terminal wird nicht gefragt, also bleibt es beim bisherigen Ordner.");
+        println!();
+        return false;
+    }
+
+    print!("  Wirklich? [j/N] ");
+    let _ = std::io::stdout().flush();
+    let mut zeile = String::new();
+    let _ = std::io::stdin().lock().read_line(&mut zeile);
+    let ja = matches!(zeile.trim().to_ascii_lowercase().as_str(), "j" | "ja" | "y" | "yes");
+    println!();
+    if !ja {
+        println!("  Bleibt beim bisherigen Ordner.");
+        println!();
+    }
+    ja
+}
+
+/// **Was in der Konsole anders gilt als im Fenster.**
+///
+/// # ⚑ Der Blick ist hier von Haus aus an (Festlegung des Projektinhabers, 2026-09-23)
+///
+/// Im Fenster sind `bildschirm_ansehen` und `kamera_ansehen` zwei
+/// Haekchen unter „Agent", und ohne sie gibt es die Werkzeuge nicht. In
+/// der Konsole sind beide an.
+///
+/// ⚑ **Dieselbe Bauart wie beim Arbeitsverzeichnis daneben:** Die
+/// Konsole beantwortet eine Frage selbst, die das Fenster als
+/// Einstellung fuehrt. Wer `myelith` tippt, sitzt davor und sieht jeden
+/// Werkzeugaufruf ueber den Schirm laufen; das Fenster kann offen
+/// stehenbleiben.
+///
+/// ⚠️ **Abschalten geht trotzdem, und zwar je Lauf:**
+/// `MYL_BLICK_BILDSCHIRM=0` oder `MYL_BLICK_KAMERA=0`. Die Umgebung
+/// uebersteuert die Vorgabe in **beide** Richtungen; genau dafuer kennt
+/// `Blickbefugnis::fuer` drei Zustaende statt zwei.
+fn konsolenvorgaben(agent: &mut myl_client::einstellungen::Agenteneinstellung, schreibt: bool) {
+    agent.blick_bildschirm = true;
+    agent.blick_kamera = true;
+    // ⛔️ **Das Schreibrecht der Sitzung schlaegt die Einstellung**,
+    //    denn `--root` und `/root` setzen es hier und nicht in der
+    //    Ablage: Ein Schalter fuer einen Lauf darf die gespeicherte
+    //    Antwort des Fensters nicht umschreiben.
+    if schreibt {
+        agent.schreiben = true;
+    }
+}
+
 /// ⚑ Nach einem Lauf steht sie schon im Stand; davor wird sie aus den
 /// Einstellungen gebaut, auf demselben Weg wie in `auftrag_fahren`.
 fn ansage_fuer(stand: &Stand) -> Option<myl_client::Nachricht> {
@@ -1034,6 +1243,7 @@ fn ansage_fuer(stand: &Stand) -> Option<myl_client::Nachricht> {
     let e = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad()).ok()?;
     let mut agent = e.agent.clone();
     agent.wurzel = Some(stand.ordner.display().to_string());
+    konsolenvorgaben(&mut agent, stand.schreibt);
     let kiste = myl_client::kisten::kiste_der_gilt(&e.agent);
     let r = myl_client::ruestung::ruesten_mit(&agent, myl_client::Ansageform::Amtlich, kiste, Vec::new(), None).ok()?;
     Some(myl_client::gespraech::ansage(&r))
@@ -1135,6 +1345,7 @@ fn auftrag_fahren(stand: &mut Stand, auftrag: &str) {
     // dieselbe Frage; hier steht die Antwort schon in der Shell.
     let mut agent = e.agent.clone();
     agent.wurzel = Some(stand.ordner.display().to_string());
+    konsolenvorgaben(&mut agent, stand.schreibt);
 
     // ⚑ **Die Kiste folgt dem geladenen Modell**, sofern der Nutzer
     // nichts anderes eingestellt hat. Gerechnet wird das in der Kiste,
@@ -1773,6 +1984,8 @@ mod abbruchprobe {
 
 #[cfg(test)]
 mod vorgabeprobe {
+    use super::{dateisystemwurzel, konsolenvorgaben, Befehlsart, BEFEHLE};
+
     /// ⚑ **Die Vorgabe der Rueckfrage haengt an der Taste** (Festlegung
     /// des Projektinhabers, 2026-09-15): Escape bleibt, Strg-X beendet.
     ///
@@ -1809,6 +2022,63 @@ mod vorgabeprobe {
     /// einem Projekt aufruft, will darin arbeiten und nicht in einem
     /// Beispielordner.
     ///
+    /// ⛔️ **Die Wurzel ist auf jedem System eine absolute Wurzel.**
+    ///
+    /// Ein relativer Pfad hier hiesse: Der Agent bekommt irgendetwas
+    /// unterhalb des Arbeitsverzeichnisses eingehaengt, und der Schalter
+    /// haette etwas ganz anderes getan, als er verspricht.
+    #[test]
+    fn die_dateisystemwurzel_ist_absolut() {
+        let w = dateisystemwurzel();
+        assert!(w.is_absolute(), "{w:?}");
+        if cfg!(target_os = "windows") {
+            assert!(w.to_string_lossy().contains(':'), "{w:?}");
+        } else {
+            assert_eq!(w, std::path::Path::new("/"));
+        }
+    }
+
+    /// ⚑ **Der Befehl heisst `/root` und steht in der Hilfe.** Ein
+    /// Befehl, den die Hilfe nicht nennt, findet nur, wer den Quelltext
+    /// liest.
+    #[test]
+    fn der_wurzelbefehl_steht_in_der_liste() {
+        let b = BEFEHLE
+            .iter()
+            .find(|b| matches!(b.art, Befehlsart::Dateisystemwurzel))
+            .expect("der Wurzelbefehl fehlt");
+        assert!(b.namen.contains(&"/root"), "{:?}", b.namen);
+        assert!(
+            b.was.contains("fragt nach"),
+            "die Hilfe verschweigt die Rueckfrage: {}",
+            b.was
+        );
+    }
+
+    /// ⛔️ **Die Konsole schaltet beide Blicke frei**, und das Fenster
+    /// nicht. Faellt diese Probe, hat die Konsole stillschweigend die
+    /// Vorgabe des Fensters uebernommen.
+    #[test]
+    fn die_konsole_schaltet_die_blicke_frei() {
+        let mut a = myl_client::einstellungen::Agenteneinstellung::default();
+        assert!(!a.blick_bildschirm, "die Vorgabe des Fensters ist nicht mehr aus");
+        assert!(!a.blick_kamera, "die Vorgabe des Fensters ist nicht mehr aus");
+        konsolenvorgaben(&mut a, false);
+        assert!(a.blick_bildschirm);
+        assert!(a.blick_kamera);
+        // ⚑ Ohne Wurzelschalter bleibt das Schreibrecht, wie es war.
+        assert!(!a.schreiben, "das Schreibrecht kam ungefragt dazu");
+    }
+
+    /// ⚑ **Mit `--root` kommt das Schreibrecht dazu**, sonst waere der
+    /// Schalter eine halbe Sache.
+    #[test]
+    fn der_wurzelschalter_bringt_das_schreibrecht_mit() {
+        let mut a = myl_client::einstellungen::Agenteneinstellung::default();
+        konsolenvorgaben(&mut a, true);
+        assert!(a.schreiben);
+    }
+
     /// 📌 **Geprueft wird, dass jede Stelle sie ueberschreibt, nicht
     /// dass sie es an einer tut.** Die Vorgabe greift in `ruestung.rs`
     /// ueber ein `or_else`, also genau dann, wenn `wurzel` hier `None`

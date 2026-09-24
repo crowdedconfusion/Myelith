@@ -199,6 +199,39 @@ fn kopf_hereinlesen(
     Ok(zeilen)
 }
 
+/// **Ob dieses Artefakt einen Rueckwaertspass hat, und wenn nicht, warum.**
+///
+/// ⚑ **Eine Auskunft und kein Absturz.** Wer ein Artefakt trainieren
+/// will, fuer das es keinen Rueckwaertspass gibt, soll das in einem Satz
+/// erfahren und nicht in einem Backtrace.
+///
+/// 📌 Am 2026-09-23 gemessen: `myelith-35b-a3b` ist das einzige Artefakt
+/// mit rekurrenten Ebenen (30 von 40), und es ist genau deshalb das
+/// einzige, das nicht trainiert. Die Schleife kennt `Dense` und `Moe`,
+/// also das Mischungsverhaeltnis der Experten, aber die Zustandsschicht
+/// kommt in ihr nicht vor.
+fn warum_kein_training(m: &integer_llm_runtime::model::IntegerModel) -> Option<String> {
+    use integer_llm_runtime::model::Mischer;
+    let rekurrent: Vec<usize> = m
+        .layers
+        .iter()
+        .enumerate()
+        .filter(|(_, l)| matches!(l.mischer, Mischer::Zustand(_)))
+        .map(|(i, _)| i)
+        .collect();
+    if rekurrent.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "dieses Artefakt hat {} rekurrente Ebenen von {} (die erste ist {}), und fuer die \
+         Zustandsschicht gibt es keinen Rueckwaertspass. Trainiert werden koennen zurzeit \
+         nur Artefakte, deren Ebenen alle volle Achtsamkeit mischen.",
+        rekurrent.len(),
+        m.layers.len(),
+        rekurrent[0]
+    ))
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 3 {
@@ -509,7 +542,19 @@ fn main() {
         i += 1;
     }
 
-    let mut m = Arc::new(load_model(&dir).expect("Modell-Ladung fehlgeschlagen"));
+    let geladen = load_model(&dir).expect("Modell-Ladung fehlgeschlagen");
+    // ⛔️ **Vorne pruefen, nicht hinten abstuerzen** (Fund 445).
+    //
+    //    Ohne diese Stelle lief das Werkzeug 17 Sekunden lang das
+    //    Artefakt ein und brach dann mit einer Panik ab, deren Text
+    //    selbst sagte, woran es lag: „der Aufrufer prueft die Ebenenart
+    //    nicht". ⚑ **Eine Wache, die erst im Rechenkern zuschlaegt,
+    //    meldet richtig und zu spaet.**
+    if let Some(grund) = warum_kein_training(&geladen) {
+        eprintln!("trainingsguete: {grund}");
+        std::process::exit(2);
+    }
+    let mut m = Arc::new(geladen);
 
     // ⚑ Einen abgelegten Ablesekopf aufnehmen, bevor irgendetwas
     //   gemessen wird.

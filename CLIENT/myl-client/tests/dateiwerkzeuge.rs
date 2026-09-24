@@ -66,7 +66,10 @@ fn fahren(
         schreiben,
         kistenordner: None,
         warnung: true,
-    modus: Default::default(),
+        modus: Default::default(),
+        blick_bildschirm: false,
+        blick_kamera: false,
+        web_recherche: false,
     };
     let ruestung = myl_client::ruestung::ruesten(&agent, FORM, SATZ, Vec::new()).expect("Ruestung");
     let kontrakt = myl_types::sitzung::Sitzungskontrakt::neu(
@@ -300,6 +303,9 @@ fn ohne_wurzel_greift_der_standard_arbeitsordner_und_verankertes_bleibt() {
         kistenordner: None,
         warnung: true,
         modus: Default::default(),
+        blick_bildschirm: false,
+        blick_kamera: false,
+        web_recherche: false,
     };
 
     // 1. Mit gesetzter Umgebung haengt der Ordner ein.
@@ -415,3 +421,85 @@ fn verankerte_werkzeuge_laufen_auch_ohne_bezeugtes() {
     assert!(!d.path().join("x.txt").exists(), "ein lokales Werkzeug lief in NurVerankert");
 }
 
+
+/// ⛔️ **Der Chatzuschnitt kommt nicht aus dem Anhangordner heraus.**
+///
+/// Das ist die ganze Zusage: lesen und aendern duerfen, aber nur
+/// Anhaenge. Faellt diese Probe, hat ein Gespraech ohne
+/// Agentenbetrieb Zugriff auf das Dateisystem.
+#[test]
+fn der_anhangzuschnitt_bleibt_im_anhangordner() {
+    let ordner = tempfile::tempdir().expect("Ordner");
+    std::fs::write(ordner.path().join("liste.md"), "- Milch\n").expect("Anhang");
+    // Etwas, das NICHT erreichbar sein darf, eine Ebene darueber.
+    let geheim = ordner.path().parent().expect("Elternordner").join("geheim.txt");
+    std::fs::write(&geheim, "nicht fuer den Chat\n").expect("Geheimnis");
+
+    let r = myl_client::ruestung::ruesten_fuer_anhaenge(ordner.path(), FORM, None, Vec::new(), None)
+        .expect("Ruestung");
+
+    let lies = |pfad: &str| {
+        r.kasten
+            .ausfuehren_ungeprueft("read_file", &serde_json::json!({ "pfad": pfad }))
+            .expect("read_file fehlt im Kasten")
+    };
+    // Der Anhang selbst geht.
+    assert!(lies("liste.md").is_ok(), "der Anhang ist nicht lesbar");
+
+    // ⛔️ Alles darueber nicht, und zwar auf beiden Wegen.
+    for hinaus in ["../geheim.txt", "../../etc/hosts"] {
+        assert!(lies(hinaus).is_err(), "{hinaus} war erreichbar");
+    }
+    assert!(
+        lies(&geheim.display().to_string()).is_err(),
+        "ein absoluter Pfad kam durch"
+    );
+}
+
+/// ⛔️ **Kein Manifest-Werkzeug im Chatzuschnitt.**
+///
+/// Ein Manifest laeuft ueber eine Shell, und eine Shell kennt die
+/// Einhaengegrenze nicht. Sie waere die eine Tuer, durch die der Chat
+/// doch ins Dateisystem kaeme.
+#[test]
+fn der_anhangzuschnitt_haengt_keine_manifeste() {
+    let ordner = tempfile::tempdir().expect("Ordner");
+    let r = myl_client::ruestung::ruesten_fuer_anhaenge(ordner.path(), FORM, None, Vec::new(), None)
+        .expect("Ruestung");
+    let namen: Vec<String> = r.kasten.angebote().iter().map(|a| a.name.clone()).collect();
+    for verboten in ["run_command", "suche_text", "dateibaum", "git_stand", "zaehle_zeilen"] {
+        assert!(
+            !namen.iter().any(|n| n == verboten),
+            "{verboten} steht im Chatzuschnitt: {namen:?}"
+        );
+    }
+    // ⚑ Die Gegenrichtung: Die fuenf Dateiwerkzeuge muessen da sein,
+    //   sonst laesst sich kein Anhang aendern.
+    for noetig in ["read_file", "write_file", "edit_file", "list_directory", "search_files"] {
+        assert!(namen.iter().any(|n| n == noetig), "{noetig} fehlt: {namen:?}");
+    }
+}
+
+/// ⛔️ **Der Weg hinaus hält dieselbe Grenze wie der Weg hinein.**
+///
+/// `anhang_herausgeben` im Fenster loest den Namen ueber dieselbe
+/// Einhaengung auf. Ein Befehl, der jeden Pfad nimmt, den ihm jemand
+/// nennt, waere eine Tuer neben der Tuer; diese Probe haelt fest, dass
+/// `aufloesen` das traegt.
+#[test]
+fn der_weg_hinaus_weist_pfade_ausserhalb_ab() {
+    let ordner = tempfile::tempdir().expect("Ordner");
+    std::fs::write(ordner.path().join("liste.md"), "- Milch\n").expect("Anhang");
+    let geheim = ordner.path().parent().expect("Elternordner").join("geheim-hinaus.txt");
+    std::fs::write(&geheim, "nicht hinaus\n").expect("Geheimnis");
+
+    let ein = myl_client::werkzeuge::Einhaengung::neu(ordner.path(), false).expect("Einhaengung");
+    assert!(ein.aufloesen("liste.md", true).is_ok(), "der Anhang selbst muss gehen");
+    for hinaus in ["../geheim-hinaus.txt", "../../etc/hosts"] {
+        assert!(ein.aufloesen(hinaus, true).is_err(), "{hinaus} kam durch");
+    }
+    assert!(
+        ein.aufloesen(&geheim.display().to_string(), true).is_err(),
+        "ein absoluter Pfad kam durch"
+    );
+}

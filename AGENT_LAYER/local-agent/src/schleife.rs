@@ -148,6 +148,21 @@ pub enum Meldung<'a> {
     Verdichtet { vorher: usize, nachher: usize },
 }
 
+/// **Wie viele Runden hintereinander nichts laufen darf, bevor der Lauf
+/// endet.**
+///
+/// ⚑ **Zwei, und das ist eine Abwaegung.** Bei null (dem Stand bis zum
+/// 2026-09-23) kostet ein einzelner Tippfehler im Schema den ganzen
+/// Lauf, auch wenn das Werkzeug genau gesagt hat, was fehlte. Ohne
+/// Grenze liefe ein Modell, das immer wieder dasselbe Verbotene
+/// vorschlaegt, bis die Schrittzahl aufgebraucht ist, und der Nutzer
+/// bezahlte jede Runde.
+///
+/// ⚠️ **Gezaehlt wird hintereinander, nicht im ganzen Lauf.** Ein
+/// ausgefuehrtes Werkzeug setzt den Zaehler zurueck, denn danach ist das
+/// Modell nachweislich wieder auf Kurs.
+pub const HOECHSTZAHL_BERICHTIGUNGEN: usize = 2;
+
 /// Warum ein Lauf endete.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Ende {
@@ -155,6 +170,19 @@ pub enum Ende {
     ///
     /// **Der normale Ausgang.**
     Fertig,
+    /// **Das Modell hat mehrfach hintereinander einen Aufruf
+    /// hinterlassen, der nicht laufen konnte.**
+    ///
+    /// ⛔️ **Eigener Ausgang und nicht [`Ende::Fertig`]** (Fund 444).
+    /// Ein Lauf, der an einem Tippfehler im Schema stirbt, sah vorher
+    /// genauso aus wie einer, der seine Arbeit getan hat. 📌 **Schweigen
+    /// sieht aus wie Erfolg**, und genau daran ist am 2026-09-23 eine
+    /// fertige Recherche verlorengegangen: Die richtige Antwort stand
+    /// in den Argumenten des abgelehnten Aufrufs.
+    Steckengeblieben {
+        /// Wie viele Runden hintereinander nichts lief.
+        versuche: usize,
+    },
     /// Der Sitzungskontrakt lässt keine weiteren Schritte zu.
     Grenze(Grenzfehler),
     /// Die Tür hat nicht geantwortet.
@@ -165,6 +193,10 @@ impl std::fmt::Display for Ende {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Fertig => f.write_str("fertig"),
+            Self::Steckengeblieben { versuche } => write!(
+                f,
+                "steckengeblieben: {versuche} Aufrufe hintereinander konnten nicht laufen"
+            ),
             Self::Grenze(g) => write!(f, "Grenze erreicht: {g}"),
             Self::Tuer(t) => write!(f, "die Tuer: {t}"),
         }
@@ -227,6 +259,9 @@ impl<'a> Lauf<'a> {
         let mut auftrag_bei = nachrichten.len();
         nachrichten.push(Nachricht::nutzer(auftrag));
         let mut getan: u32 = 0;
+        // ⚑ **Wie viele Runden hintereinander nichts lief.** Siehe
+        //   [`HOECHSTZAHL_BERICHTIGUNGEN`] und Fund 444.
+        let mut vergebliche: usize = 0;
 
         // ⚑ Der Melder wird ueber eine Hilfe gerufen und nicht an
         // jeder Stelle ausgepackt: Ein `if let Some(...)` je Meldung
@@ -269,8 +304,36 @@ impl<'a> Lauf<'a> {
             let mut entschieden = Vec::new();
             let mut ergebnisse: Vec<String> = Vec::new();
             let mut benutzt: Vec<myl_types::ids::MerkleRoot> = Vec::new();
+            // ⛔️ **Ein unlesbarer Aufruf bekommt eine Antwort** (Fund
+            //    444). Vorher stand hier `.flatten()`, und das warf
+            //    jedes `Err` wortlos weg: Danach war kein Werkzeug
+            //    gelaufen, der Schritt galt als fertig, und das Modell
+            //    erfuhr nie, dass es einen Tippfehler gemacht hatte.
+            //    ⚑ **Ein Fehler, den niemand meldet, wird nicht
+            //    berichtigt**, und derselbe gilt fuer jedes weitere
+            //    Modell an derselben Stelle.
+            let mut lesbare = Vec::new();
+            let mut unlesbar = 0usize;
+            for r in roh {
+                match r {
+                    Ok(v) => lesbare.push(v),
+                    Err(u) => {
+                        unlesbar += 1;
+                        let text = format!(
+                            "dieser Aufruf liess sich nicht als JSON lesen. Er fing so an: {} \
+                             Haeufigster Grund: Der Aufruf wurde mitten im Text abgeschnitten, \
+                             weil die Tokengrenze erreicht war. Fass dich kuerzer und ruf \
+                             erneut auf.",
+                            u.roh
+                        );
+                        melden(Meldung::Abgelehnt { name: "(unlesbar)", grund: &text });
+                        nachrichten.push(Werkzeugergebnis::nachricht("(unlesbar)", &text));
+                        ergebnisse.push(text);
+                    }
+                }
+            }
 
-            for v in roh.into_iter().flatten() {
+            for v in lesbare {
                 // 4. Erlaubnis.
                 if let Err(a) = erlaubnis.pruefen(&v) {
                     let text = a.to_string();
@@ -347,7 +410,13 @@ impl<'a> Lauf<'a> {
             let stufe = self
                 .registratur
                 .stufe(&Benutzt { skills: Vec::new(), werkzeuge: benutzt });
-            let fertig = entschieden.iter().all(|(_, e)| !e.erlaubt());
+            // ⚑ **Drei Faelle, und sie waren bisher einer.**
+            //   1. Kein Vorschlag im Schritt: Das Modell ist durch.
+            //   2. Etwas lief: weiter, wie immer.
+            //   3. Vorgeschlagen, aber nichts lief: Das ist ein Fehler
+            //      und kein Ende. Siehe [`HOECHSTZAHL_BERICHTIGUNGEN`].
+            let versucht = !entschieden.is_empty() || unlesbar > 0;
+            let lief_etwas = entschieden.iter().any(|(_, e)| e.erlaubt());
             strom.anhaengen(Sitzungsstrom::schritt_aus(
                 &gefragt,
                 &antwort,
@@ -356,13 +425,27 @@ impl<'a> Lauf<'a> {
                 stufe,
             ));
 
-            // ⚑ **Fertig heisst: kein Werkzeug ist gelaufen.** Auch ein
-            // Schritt, in dem alles abgelehnt wurde, endet den Lauf;
-            // sonst liefe ein Modell, das immer wieder dasselbe
-            // Verbotene vorschlaegt, bis die Schrittzahl aufgebraucht
-            // ist, und der Nutzer bezahlte jede Runde.
-            if fertig {
+            // ⚑ **Fertig heisst: das Modell hat nichts mehr
+            // vorgeschlagen.** Das ist der normale Ausgang.
+            if !versucht {
                 break Ende::Fertig;
+            }
+            if lief_etwas {
+                // ⚑ **Zurueck auf null.** Das Modell ist nachweislich
+                //   wieder auf Kurs; ein spaeterer Patzer faengt von
+                //   vorn an.
+                vergebliche = 0;
+            } else {
+                vergebliche += 1;
+                // ⛔️ **Die Kostenschranke bleibt.** Ein Modell, das
+                //    immer wieder dasselbe Verbotene vorschlaegt, liefe
+                //    sonst bis zur Schrittgrenze, und der Nutzer
+                //    bezahlte jede Runde. Neu ist nur, dass es vorher
+                //    zwei Gelegenheiten bekommt, den Grund zu lesen und
+                //    es besser zu machen.
+                if vergebliche > HOECHSTZAHL_BERICHTIGUNGEN {
+                    break Ende::Steckengeblieben { versuche: vergebliche };
+                }
             }
         };
 

@@ -1,6 +1,6 @@
 # integer-llm
 
-> **Version:** 0.91.2 (θ_v 0.22.0; kernels 0.65.1, runtime 0.62.2, pipeline 0.15.1)
+> **Version:** 0.92.0 (θ_v 0.22.0; kernels 0.65.1, runtime 0.63.0, pipeline 0.15.1)
 > **Datum:** 2026-09-22
 > **Status:** ⚠️ **Das Akzeptanzkriterium ruht auf einer zu kleinen
 > Stichprobe.** Gemessen wurde bisher ueber **4 Sequenzen, 435
@@ -647,6 +647,55 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
 
 ## Changelog
 
+### v0.92.0 – 2026-09-23 (runtime 0.63.0: die Prüfsumme wird einmal bezahlt, und ein Werkzeug sagt Bescheid statt abzustürzen)
+
+**Gemessen, bevor gebaut wurde**, und zwei eigene Vermutungen fielen
+dabei:
+
+| Vermutung | Messung |
+|---|---|
+| Die 62 682 Dateien kosten die Ladezeit | **Nein:** öffnen und abbilden dauert 0,51 s |
+| Mehr Fäden helfen | **Nein:** das Laden ist schon parallel, 34 GB in 17,2 s sind 2 GB/s, also die Platte |
+| Die Prüfsumme kostet | **Ja:** sie liest jedes Byte des Artefakts, bei jedem Start |
+
+⚑ **Neu: `pruefstand`, die Prüfmarke.** Nach einer vollständigen Prüfung
+liegt neben dem Artefakt eine kleine Marke mit der Prüfsumme des
+Manifests und einer Kennung der Dateilage (Name, Länge, Änderungszeit
+jeder Datei, zu einer Prüfsumme verdichtet). Stimmt beides, entfällt das
+erneute Lesen des ganzen Artefakts.
+
+**Gemessen am 35B:** 19,41 s mit erzwungener voller Prüfung gegen
+**13,02 s** mit Marke, also 6,4 s oder 33 Prozent. Der allererste Lauf
+ohne Marke und mit kalter Seitenablage brauchte 23,46 s.
+⛔️ **`decode_hash` ist in beiden Läufen identisch**, und 48/48
+Konformitätsvektoren bestehen: Die Marke ändert keine Zahl.
+
+⚠️ **Was sie kostet, ausgesprochen statt versteckt.** Die volle Prüfung
+fängt jede Veränderung; die Marke fängt jede, die sich in Länge oder
+Änderungszeit zeigt. Sie fängt **nicht** ein einzelnes gekipptes Bit
+ohne neue Änderungszeit und niemanden, der eine Datei austauscht und
+die Zeitstempel zurückstellt. `MYL_VOLLE_PRUEFUNG=1` schaltet sie ab,
+ohne dass etwas neu gebaut werden muss.
+
+⚑ **Die Tabellen werden immer geprüft**, auch mit gültiger Marke. Sie
+sind wenige Megabyte und sie **sind** der Zahlenvertrag: Eine
+verschobene Zeile in `silu` ändert jede Antwort, und das fängt keine
+Dateilage.
+
+📌 **Fund 445: `trainingsguete` stürzte ab, statt Bescheid zu sagen.**
+Mit `myelith-35b-a3b` lud es 17 Sekunden lang das Artefakt ein und
+endete dann in einer Panik, deren Text selbst die Ursache nannte: „der
+Aufrufer prueft die Ebenenart nicht". Jetzt prüft es vorne und schreibt
+einen Satz: **30 von 40 Ebenen sind rekurrent, und für die
+Zustandsschicht gibt es keinen Rückwärtspass.** Rückgabewert 2 statt
+einer Panik.
+
+⚑ **Das ist ein Befund über den Umfang des Trainings**, nicht nur über
+eine Meldung: `myelith-35b-a3b` ist das einzige Artefakt mit rekurrenten
+Ebenen und damit das einzige, das nicht trainiert. Die Schleife kennt
+`Dense` und `Moe`, die Zustandsschicht kommt in ihr mit null Vorkommen
+vor.
+
 ### v0.91.2 – 2026-09-22 (drei Prüfungen, die stimmten, eine Angabe, die niemand nachgesehen hatte, und eine Abtastung, die niemand gerufen hat)
 
 **Acht CI-Läufe waren rot, und keiner davon wegen des Rechenpfads.**
@@ -763,6 +812,39 @@ braucht eine exponentielle Gewichtung mit Temperatur und eine
 Abschneidung (top-k oder top-p), und das ist ein Eingriff in den
 Rechenpfad, also in θ_v und die Konformitätsvektoren. `logit_probe` gibt
 die Kennzahl jetzt aus, damit die Entscheidung auf Zahlen steht.
+
+⛔️ **Fund 434: Die Speicherspalte der Expertensonde rechnete mit den
+Massen des 30B.**
+
+Auf die Frage, wieviel ein Expertenzwischenspeicher brächte, hat
+`bin/expertenprobe` geantwortet, und ihre Deckungskurve ist die
+Antwort. Ihre **Speicherspalte** war aber falsch: Sie trug
+`3 * 2048 * 768` als festen Text, also die Expertenbreite des 30B. Das
+35B ist 512 breit, und so nannte die Sonde **48,2 GB für alle
+Experten**, während dessen ganzes Artefakt 33 GB wiegt.
+
+⚑ **Die Breite wird jetzt aus der Form des ersten Experten gelesen.**
+Gegengeprüft: Die Zeile „100 %" nennt jetzt 32,0 GB.
+
+📌 **Die Deckungsspalte war nie betroffen**, denn sie zählt Aufrufe.
+Falsch war genau die Spalte, aus der jemand die Größe eines
+Zwischenspeichers ablesen würde, und dafür gibt es die Tabelle.
+**Eine Zahl, die nicht aus den Daten folgt, folgt dem Modell, unter dem
+sie getippt wurde.**
+
+**Gemessen am 35B** (155 Token, 40 Ebenen, 256 Experten, 49 600 Aufrufe,
+Masse berichtigt):
+
+| Anteil der Experten | Speicher | Deckung der Aufrufe |
+|---|---|---|
+| 5 % | 1,6 GB | 39,2 % |
+| 10 % | 3,2 GB | 56,5 % |
+| **20 %** | **6,4 GB** | **76,4 %** |
+| 30 % | 9,7 GB | 87,4 % |
+| 50 % | 16,1 GB | 97,9 % |
+
+Berührt wurden 6181 von 10 240 Experten (60,4 %); die häufigsten 20 %
+tragen **3,82-mal** so viel wie bei Gleichverteilung.
 
 📌 **Was hier dreimal dasselbe Muster ist:** Die Kopfzeile dieser Datei
 nannte θ_v 0.21.0, der Kopf des Konformitätspakets 0.20.0 und eine

@@ -244,6 +244,24 @@
     <!-- Das Gespraech. -->
     <main id="gespraech" role="log" aria-live="polite"></main>
 
+    <!-- ⛔️ **Die Kommandozeile des Menschen, nicht die des Modells.**
+         Was hier laeuft, hat die Rechte des Nutzers und keine
+         Einhaengegrenze. Der Befehl dahinter steht in keinem
+         Werkzeugkasten; die Begruendung steht im Ruecken vor
+         `terminal_ausfuehren`. -->
+    <section id="terminal" class="terminal" hidden aria-label="Terminal">
+      <div id="terminalzeilen" class="terminalzeilen" role="log" aria-live="polite"></div>
+      <form id="terminalform" class="terminalform">
+        <span id="terminalordner" class="terminalordner"></span>
+        <span class="terminalzeichen" aria-hidden="true">$</span>
+        <input id="terminaleingabe" type="text" autocomplete="off" spellcheck="false"
+               aria-label="Befehl" data-t-marke="terminal.eingabe" />
+        <button type="submit" class="terminalknopf" data-t="terminal.senden">Ausführen</button>
+        <button type="button" id="terminalleeren" class="terminalknopf"
+                data-t="terminal.leeren">Leeren</button>
+      </form>
+    </section>
+
     <!-- ⚑ **Im Sprachmodus steht hier ein Zeichen statt des Verlaufs**
          (Auftrag des Projektinhabers, 2026-09-18). Wer spricht und
          zuhoert, liest nicht mit; ein Gespraechsverlauf im Ruecken ist

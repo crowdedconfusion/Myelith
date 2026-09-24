@@ -2412,3 +2412,109 @@ body.ablegen .eingabefeld {
 /* Die Stimmenzeile auf der Einstellungsseite. */
 .stimmzeile { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
 .stimmzeile .stimmname { opacity: 0.8; }
+
+/* ⚑ **Geaenderte Anhaenge unter der Antwort.** Sie gehoeren zum
+   Beitrag und nicht in die Anhangleiste oben: Dort stehen die, die
+   hineingehen, hier die, die herauskommen. */
+.geaenderte {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.4rem;
+  font-size: 0.85rem;
+  opacity: 0.85;
+}
+.geaenderte .anhangknopf {
+  padding: 0.15rem 0.5rem;
+  border-radius: 0.4rem;
+  cursor: pointer;
+}
+
+/* ── Das Terminal ──────────────────────────────────────────────────
+   ⛔️ Die Kommandozeile des Menschen, nicht die des Modells. Der Grund
+   steht bei `MODI` in app.js und im Ruecken vor `terminal_ausfuehren`. */
+
+.terminal {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  padding: 0 16px 12px;
+  gap: 8px;
+}
+
+.terminalzeilen {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: rgb(var(--auf) / .11);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+/* ⚑ `pre-wrap` und nicht `pre`: Eine lange Zeile soll umbrechen statt
+   den ganzen Bereich seitlich scrollen zu lassen. */
+.terminalzeilen pre {
+  margin: 0 0 2px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font: inherit;
+}
+
+.terminalhinweis {
+  margin: 0;
+  opacity: 0.7;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.terminalbefehl { opacity: 0.85; font-weight: 600; margin-top: 8px; }
+.terminalausgabe { opacity: 0.95; }
+.terminallaeuft { opacity: 0.6; font-style: italic; }
+.terminalvermerk { opacity: 0.65; font-style: italic; }
+.terminalfehler { color: var(--schlecht); }
+
+.terminalform {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: rgb(var(--auf) / .11);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+}
+
+/* ⚑ Der Ordner darf schrumpfen, die Eingabe nicht: Bei einem langen
+   Pfad soll das Tippfeld bleiben und der Pfad weichen. */
+.terminalordner {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.7;
+}
+
+.terminalzeichen { opacity: 0.7; }
+
+#terminaleingabe {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  outline: none;
+}
+
+.terminalknopf {
+  flex: 0 0 auto;
+  padding: 4px 10px;
+  border-radius: 7px;
+  font-size: 12px;
+}

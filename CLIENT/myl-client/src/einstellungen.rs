@@ -194,6 +194,39 @@ pub struct Agenteneinstellung {
     /// vorher auch war.**
     #[serde(default)]
     pub modus: Agentenmodus,
+    /// **Ob der Agent den Bildschirm aufnehmen darf.**
+    ///
+    /// ⛔️ **Eine eigene Erlaubnis und nicht die Folge des
+    /// Einhaengens.** Die Einhaengegrenze fasst einen Arbeitsordner
+    /// ein; eine Bildschirmaufnahme entsteht ausserhalb davon. Wer einen
+    /// Ordner freigibt, hat nicht gesagt, dass jemand ins Zimmer sehen
+    /// darf.
+    ///
+    /// ⚑ `#[serde(default)]`, also **aus**, und eine Ablage aus der Zeit
+    /// davor bedeutet damit dasselbe wie „nie erlaubt".
+    #[serde(default)]
+    pub blick_bildschirm: bool,
+    /// **Ob der Agent die Kamera aufnehmen darf.** Siehe
+    /// [`Agenteneinstellung::blick_bildschirm`]; die beiden sind
+    /// getrennt, weil ein Bildschirm etwas anderes zeigt als ein Raum.
+    #[serde(default)]
+    pub blick_kamera: bool,
+    /// **Ob der Chat im Web recherchieren darf.**
+    ///
+    /// ⛔️ **Aus, und das mit Absicht.** Dieses Häkchen tut zwei Dinge
+    /// auf einmal: Es öffnet einen Weg nach draussen, und es holt
+    /// fremden Text in das Fenster, in dem auch die Anhänge des Nutzers
+    /// stehen. Beides zusammen ist die Lage, in der eine eingeschleuste
+    /// Anweisung überhaupt erst Schaden anrichten kann. Die Schranken
+    /// dagegen stehen in `netzwerkzeuge`; die Entscheidung, sie
+    /// überhaupt zu brauchen, trifft der Nutzer.
+    ///
+    /// ⚠️ **Es gilt nur für den Chat**, also für den Zuschnitt, der nur
+    /// die Anhänge sieht. Im vollen Agentenbetrieb bleiben die beiden
+    /// Werkzeuge draussen, weil dort mit `run_command` schon ein Weg
+    /// nach draussen offensteht und keine Schranke ihn einfasst.
+    #[serde(default)]
+    pub web_recherche: bool,
 }
 
 impl Default for Agenteneinstellung {
@@ -205,6 +238,9 @@ impl Default for Agenteneinstellung {
             kistenordner: None,
             warnung: true,
             modus: Agentenmodus::Auto,
+            blick_bildschirm: false,
+            blick_kamera: false,
+            web_recherche: false,
         }
     }
 }
@@ -1199,7 +1235,7 @@ impl Schriftgroesse {
 /// beieinander, und wer hier ein Feld einfuegt, verschiebt es damit
 /// auch auf der Seite. Das ist beabsichtigt: Eine zweite Liste, die nur
 /// die Reihenfolge festlegt, waere wieder eine zweite Liste.
-pub const FELDER: [Feld; 17] = [
+pub const FELDER: [Feld; 20] = [
     // ⚑ **Sie steht zuerst** (Festlegung des Projektinhabers,
     // 2026-09-10). Sie beschriftet alles, was darunter kommt: Wer die
     // Seite in einer Sprache oeffnet, die er nicht liest, findet hier
@@ -1322,6 +1358,36 @@ pub const FELDER: [Feld; 17] = [
         (
             "Zeigt vor dem Agentenbetrieb, was dabei auf dem Spiel steht, und die Regeln dazu. Das Häkchen im Fenster schaltet sie ab.",
             "Shows what is at stake in agent mode, and the rules for it, before you use it. The checkbox in the window turns it off.",
+        ),
+    ),
+    feld(
+        "agent.blick_bildschirm",
+        Feldart::Schalter,
+        ("Agent", "Agent"),
+        ("Bildschirm ansehen dürfen", "May look at the screen"),
+        (
+            "Erlaubt dem Agenten, den Bildschirm aufzunehmen und das Bild von einem kleinen Modell ansehen zu lassen, wenn er danach gefragt wird. Ohne dieses Häkchen gibt es das Werkzeug gar nicht. Jede Aufnahme bleibt im Arbeitsordner unter .AGENT/blicke/ liegen. Auf macOS braucht es zusätzlich die Freigabe unter Datenschutz, Bildschirmaufnahme.",
+            "Lets the agent capture the screen and have a small model look at it, when asked to. Without this box the tool does not exist at all. Every capture is kept in the working folder under .AGENT/blicke/. On macOS this also needs the Screen Recording permission.",
+        ),
+    ),
+    feld(
+        "agent.blick_kamera",
+        Feldart::Schalter,
+        ("Agent", "Agent"),
+        ("Kamera ansehen dürfen", "May look through the camera"),
+        (
+            "Erlaubt dem Agenten, ein Kamerabild aufzunehmen und von einem kleinen Modell ansehen zu lassen, wenn er danach gefragt wird. Getrennt vom Bildschirm, denn eine Kamera zeigt den Raum und nicht den Rechner. Jede Aufnahme bleibt unter .AGENT/blicke/ liegen.",
+            "Lets the agent capture a camera image and have a small model look at it, when asked to. Separate from the screen, because a camera shows the room and not the computer. Every capture is kept under .AGENT/blicke/.",
+        ),
+    ),
+    feld(
+        "agent.web_recherche",
+        Feldart::Schalter,
+        ("Agent", "Agent"),
+        ("Im Web recherchieren dürfen", "May research on the web"),
+        (
+            "Gibt dem Chat zwei Werkzeuge: suchen und eine Seite lesen. Gelesen wird nur, was aus einem Suchtreffer stammt oder was du selbst genannt hast; eine selbst zusammengesetzte Adresse wird abgewiesen, und eine Suchfrage, die wörtlich aus einem Anhang stammt, ebenso. Fremder Seitentext kommt eingefasst und als Inhalt gekennzeichnet zurück, niemals als Anweisung. Ohne dieses Häkchen gibt es die Werkzeuge gar nicht. Es braucht curl auf dem Rechner.",
+            "Gives the chat two tools: search, and read a page. Only an address from a search hit or one you named yourself is read; a self-composed address is refused, and so is a query taken verbatim from an attachment. Foreign page text comes back framed and marked as content, never as instruction. Without this box the tools do not exist at all. It needs curl on the machine.",
         ),
     ),
     feld(
@@ -1541,6 +1607,9 @@ impl Einstellungen {
             // Oberflaeche als Platzhalter an.
             "agent.kistenordner" => text(&self.agent.kistenordner),
             "agent.warnung" => Feldwert::Schalter(self.agent.warnung),
+            "agent.blick_bildschirm" => Feldwert::Schalter(self.agent.blick_bildschirm),
+            "agent.web_recherche" => Feldwert::Schalter(self.agent.web_recherche),
+            "agent.blick_kamera" => Feldwert::Schalter(self.agent.blick_kamera),
             "agent.schreiben" => Feldwert::Schalter(self.agent.schreiben),
             "agent.modus" => Feldwert::Text(self.agent.modus.kennung().to_string()),
             "kap.kerne" => self.kapazitaet.kerne.map_or(Feldwert::Leer, |v| Feldwert::Zahl(v as u64)),
@@ -1595,6 +1664,9 @@ impl Einstellungen {
                 self.agent.kistenordner = (wert != "aus").then(|| wert.to_string())
             }
             "agent.warnung" => self.agent.warnung = ja(wert),
+            "agent.blick_bildschirm" => self.agent.blick_bildschirm = ja(wert),
+            "agent.web_recherche" => self.agent.web_recherche = ja(wert),
+            "agent.blick_kamera" => self.agent.blick_kamera = ja(wert),
             "agent.schreiben" => self.agent.schreiben = ja(wert),
             "agent.modus" => self.agent.modus = Agentenmodus::aus(wert)?,
             "kap.kerne" => self.kapazitaet.kerne = opt(wert).map(|v| v as usize),

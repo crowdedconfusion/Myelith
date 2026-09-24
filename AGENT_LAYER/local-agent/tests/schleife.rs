@@ -319,18 +319,103 @@ fn ein_erlaubtes_werkzeug_laeuft_und_der_lauf_endet() {
 
 /// ⚑ **Der eingeschleuste Aufruf: er entsteht, wird abgelehnt, und
 /// steht im Beleg.**
+///
+/// ⚠️ **Zwei Antworten und nicht eine** (Fund 444): Seit der Lauf einem
+/// abgelehnten Aufruf eine Berichtigung zugesteht, wird das Modell
+/// danach noch einmal gefragt. Die zweite Antwort ist die, in der es
+/// einsieht, dass es nicht darf.
 #[test]
 fn ein_eingeschleuster_aufruf_wird_abgelehnt_und_steht_im_beleg() {
     let e = fahren(
-        vec!["<tool_call>{\"name\":\"ueberweisen\",\"arguments\":{\"an\":\"0xboese\"}}</tool_call>"],
+        vec![
+            "<tool_call>{\"name\":\"ueberweisen\",\"arguments\":{\"an\":\"0xboese\"}}</tool_call>",
+            "Das darf ich nicht.",
+        ],
         Betriebsart::NurVerankert,
         5,
     );
-    assert_eq!(e.ende, Ende::Fertig);
+    assert_eq!(e.ende, Ende::Fertig, "{}", e.ende);
     assert_eq!(e.strom.abgelehnte(), 1, "die Ablehnung fehlt im Beleg");
     let bericht = e.strom.bericht();
     assert!(bericht.contains("ueberweisen"), "{bericht}");
     assert!(bericht.contains("⚑"), "ein Angriffsversuch ohne Flagge: {bericht}");
+}
+
+/// ⛔️ **Fund 444: ein abgelehnter Aufruf bekommt eine Berichtigung.**
+///
+/// Am 2026-09-23 hat das 35B beide Arbeiten recherchiert, die richtigen
+/// Seiten gelesen und dann `write_file` mit dem Schema eines anderen
+/// Werkzeugs gerufen. Die Absage war gut und stand im Verlauf; der Lauf
+/// endete trotzdem sofort, mit der Meldung „fertig". **Diese Probe
+/// haelt fest, dass die zweite Runde stattfindet.**
+#[test]
+fn nach_einer_ablehnung_darf_das_modell_es_richtig_machen() {
+    let e = fahren(
+        vec![
+            // Erst falsch: `zeit` kennt kein Feld `felder`.
+            "<tool_call>{\"name\":\"zeit\",\"arguments\":{\"felder\":{}}}</tool_call>",
+            // Dann richtig.
+            "<tool_call>{\"name\":\"zeit\",\"arguments\":{}}</tool_call>",
+            "Es ist 12:00.",
+        ],
+        Betriebsart::NurVerankert,
+        5,
+    );
+    assert_eq!(e.ende, Ende::Fertig, "{}", e.ende);
+    // ⚑ Der Grund der Absage stand dem Modell zur Verfuegung.
+    assert!(
+        e.nachrichten
+            .iter()
+            .any(|n| n.role == "tool" && n.content.contains("steht nicht im Schema")),
+        "die Absage kam nicht im Gespraech an"
+    );
+    assert_eq!(e.strom.abgelehnte(), 1);
+}
+
+/// ⛔️ **Und die Kostenschranke bleibt.**
+///
+/// Ein Modell, das immer dasselbe Verbotene vorschlaegt, soll nicht die
+/// ganze Schrittzahl verbrennen. ⚑ **Und der Ausgang heisst nicht
+/// `Fertig`:** Ein Lauf, der steckenbleibt, darf nicht aussehen wie
+/// einer, der seine Arbeit getan hat.
+#[test]
+fn wer_dreimal_dasselbe_verbotene_vorschlaegt_bleibt_stecken() {
+    let boese = "<tool_call>{\"name\":\"ueberweisen\",\"arguments\":{\"an\":\"0xboese\"}}</tool_call>";
+    let e = fahren(vec![boese, boese, boese, boese, boese], Betriebsart::NurVerankert, 9);
+    assert_eq!(
+        e.ende,
+        Ende::Steckengeblieben { versuche: myl_local_agent::schleife::HOECHSTZAHL_BERICHTIGUNGEN + 1 },
+        "{}",
+        e.ende
+    );
+    // Drei Runden, nicht neun: die Schranke haelt.
+    assert_eq!(e.strom.abgelehnte(), 3);
+}
+
+/// ⛔️ **Ein unlesbarer Aufruf bekommt eine Antwort** (Fund 444, zweiter
+/// Weg).
+///
+/// Vorher warf `.flatten()` ihn wortlos weg, und der Lauf endete als
+/// „fertig", ohne dass das Modell je erfuhr, dass etwas schieflief.
+#[test]
+fn ein_abgeschnittener_aufruf_wird_beantwortet() {
+    let e = fahren(
+        vec![
+            // Mitten im String abgeschnitten, wie am Tokenlimit.
+            "<tool_call>{\"name\": \"zeit\", \"arguments\": {\"was\": \"ang",
+            "<tool_call>{\"name\":\"zeit\",\"arguments\":{}}</tool_call>",
+            "Es ist 12:00.",
+        ],
+        Betriebsart::NurVerankert,
+        5,
+    );
+    assert_eq!(e.ende, Ende::Fertig, "{}", e.ende);
+    assert!(
+        e.nachrichten
+            .iter()
+            .any(|n| n.role == "tool" && n.content.contains("nicht als JSON lesen")),
+        "der unlesbare Aufruf blieb unbeantwortet"
+    );
 }
 
 /// ⚑ **Die Betriebsart greift VOR der Ausführung.**

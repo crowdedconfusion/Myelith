@@ -1,0 +1,222 @@
+{
+  "artefakt": "INTEGER_LLM/artifacts/myelith-4b",
+  "schritte": 6,
+  "laeufe": [
+    {
+      "name": "auflisten",
+      "stufe": 1,
+      "lauf": 1,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 23.3
+    },
+    {
+      "name": "auflisten",
+      "stufe": 1,
+      "lauf": 2,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 22.9
+    },
+    {
+      "name": "auflisten",
+      "stufe": 1,
+      "lauf": 3,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 22.6
+    },
+    {
+      "name": "lesen",
+      "stufe": 1,
+      "lauf": 1,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 22.5
+    },
+    {
+      "name": "lesen",
+      "stufe": 1,
+      "lauf": 2,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 22.4
+    },
+    {
+      "name": "lesen",
+      "stufe": 1,
+      "lauf": 3,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 22.3
+    },
+    {
+      "name": "lesen_und_folgern",
+      "stufe": 2,
+      "lauf": 1,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 26.3
+    },
+    {
+      "name": "lesen_und_folgern",
+      "stufe": 2,
+      "lauf": 2,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 26.2
+    },
+    {
+      "name": "lesen_und_folgern",
+      "stufe": 2,
+      "lauf": 3,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 26.0
+    },
+    {
+      "name": "waehlen",
+      "stufe": 2,
+      "lauf": 1,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 94.0
+    },
+    {
+      "name": "waehlen",
+      "stufe": 2,
+      "lauf": 2,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 95.1
+    },
+    {
+      "name": "waehlen",
+      "stufe": 2,
+      "lauf": 3,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 93.9
+    },
+    {
+      "name": "schreiben",
+      "stufe": 3,
+      "lauf": 1,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 25.4
+    },
+    {
+      "name": "schreiben",
+      "stufe": 3,
+      "lauf": 2,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 25.4
+    },
+    {
+      "name": "schreiben",
+      "stufe": 3,
+      "lauf": 3,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 25.5
+    },
+    {
+      "name": "lesen_dann_schreiben",
+      "stufe": 3,
+      "lauf": 1,
+      "bestanden": false,
+      "grund": "ziel.txt ist nicht entstanden",
+      "sekunden": 90.9
+    },
+    {
+      "name": "lesen_dann_schreiben",
+      "stufe": 3,
+      "lauf": 2,
+      "bestanden": false,
+      "grund": "ziel.txt ist nicht entstanden",
+      "sekunden": 90.2
+    },
+    {
+      "name": "lesen_dann_schreiben",
+      "stufe": 3,
+      "lauf": 3,
+      "bestanden": false,
+      "grund": "ziel.txt ist nicht entstanden",
+      "sekunden": 90.2
+    },
+    {
+      "name": "suchen_ueber_ebenen",
+      "stufe": 2,
+      "lauf": 1,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 25.7
+    },
+    {
+      "name": "suchen_ueber_ebenen",
+      "stufe": 2,
+      "lauf": 2,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 25.7
+    },
+    {
+      "name": "suchen_ueber_ebenen",
+      "stufe": 2,
+      "lauf": 3,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 25.6
+    },
+    {
+      "name": "suchen_statt_lesen",
+      "stufe": 2,
+      "lauf": 1,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 17.4
+    },
+    {
+      "name": "suchen_statt_lesen",
+      "stufe": 2,
+      "lauf": 2,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 17.9
+    },
+    {
+      "name": "suchen_statt_lesen",
+      "stufe": 2,
+      "lauf": 3,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 17.5
+    },
+    {
+      "name": "aendern_statt_ueberschreiben",
+      "stufe": 3,
+      "lauf": 1,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 37.3
+    },
+    {
+      "name": "aendern_statt_ueberschreiben",
+      "stufe": 3,
+      "lauf": 2,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 37.4
+    },
+    {
+      "name": "aendern_statt_ueberschreiben",
+      "stufe": 3,
+      "lauf": 3,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 37.3
+    }
+  ]
+}

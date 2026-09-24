@@ -114,6 +114,9 @@ const TEXTE = {
     "sinne.stimmeliegt": "eigene Stimme hinterlegt",
     "anhang.wirdangesehen": "⏳ Ein anderes Modell sieht sie gerade an …",
     "anhang.angesehen": "Ein anderes Modell hat sie angesehen; das ist alles, was es dazu gibt:",
+    "anhang.geaendert": "Geändert:",
+    "anhang.speichern": "Speichern unter …",
+    "anhang.gespeichert": "Gespeichert nach",
     "seite.zurueck": "Zurück zum Gespräch",
     "seite.modelle": "Modelle",
     "seite.freigabe": "Was dieser Rechner hergibt",
@@ -134,6 +137,16 @@ const TEXTE = {
     "modus.wallet.was": "Guthaben",
     "modus.wallet.warum":
       "Guthaben, Überweisungen und die Belege dazu. Braucht dieselbe Netzhälfte wie der Knoten.",
+    "modus.terminal.name": "Terminal",
+    "modus.terminal.was": "Befehle",
+    "modus.terminal.leer":
+      "Tipp einen Befehl und drück Enter. Dies ist deine Kommandozeile, nicht die des Modells: Was hier läuft, hat deine Rechte und keine Einhängegrenze. Der Agent kommt hier nicht heran.",
+    "terminal.eingabe": "Befehl",
+    "terminal.senden": "Ausführen",
+    "terminal.leeren": "Leeren",
+    "terminal.laeuft": "läuft …",
+    "terminal.gekuerzt": "[Ausgabe gekürzt]",
+    "terminal.abgebrochen": "[abgebrochen, die Frist von 300 s ist abgelaufen]",
 
     "wort.chat.eines": "Gespräch",
     "wort.chat.viele": "Gespräche",
@@ -278,6 +291,9 @@ const TEXTE = {
     "sinne.stimmeliegt": "custom voice stored",
     "anhang.wirdangesehen": "⏳ A different model is examining it …",
     "anhang.angesehen": "A different model examined it; this is all there is:",
+    "anhang.geaendert": "Changed:",
+    "anhang.speichern": "Save as …",
+    "anhang.gespeichert": "Saved to",
     "seite.zurueck": "Back to the conversation",
     "seite.modelle": "Models",
     "seite.freigabe": "What this machine offers",
@@ -298,6 +314,16 @@ const TEXTE = {
     "modus.wallet.was": "Balance",
     "modus.wallet.warum":
       "Balance, transfers and the receipts for them. Needs the same network half as the node.",
+    "modus.terminal.name": "Terminal",
+    "modus.terminal.was": "Commands",
+    "modus.terminal.leer":
+      "Type a command and press Enter. This is your command line, not the model's: what runs here has your rights and no mount boundary. The agent cannot reach it.",
+    "terminal.eingabe": "Command",
+    "terminal.senden": "Run",
+    "terminal.leeren": "Clear",
+    "terminal.laeuft": "running …",
+    "terminal.gekuerzt": "[output truncated]",
+    "terminal.abgebrochen": "[aborted, the 300 s limit expired]",
 
     "wort.chat.eines": "Conversation",
     "wort.chat.viele": "Conversations",
@@ -501,6 +527,22 @@ const MODI = [
   {
     id: "wallet",
     offen: false,
+  },
+  // ⛔️ **Deine Kommandozeile, nicht die des Modells** (Auftrag des
+  //    Projektinhabers, 2026-09-23, unter Wallet).
+  //
+  //    Jede andere Schranke im Client schuetzt vor einem **Modell**, das
+  //    sich irrt oder das ein fremder Text in die Irre fuehrt. Ein
+  //    Mensch, der ein Terminal oeffnet, hat genau das gewollt. Der
+  //    Befehl dahinter steht in keinem Werkzeugkasten und keine
+  //    Agentenschleife kann ihn rufen; siehe den Block vor
+  //    `terminal_ausfuehren` im Ruecken.
+  //
+  //    ⚑ **Und er ist die Voraussetzung dafuer, dass dieses Fenster auf
+  //    einem System ohne Desktop allein genuegt:** kein Dateimanager,
+  //    kein Editor, keine zweite Anwendung noetig.
+  {
+    id: "terminal",
   },
 ];
 
@@ -1638,6 +1680,35 @@ function beitrag_zeichnen(b) {
     f.textContent = b.fuss;
     wurzel.append(f);
   }
+  // ⚑ **Geaenderte Anhaenge stehen unter der Antwort**, je einer mit
+  //    einem Knopf. 📌 Die Liste ist ein Befund ueber die Dateien und
+  //    nicht das, was das Modell ueber sich sagt; ein Modell, das
+  //    behauptet geaendert zu haben, taucht hier nicht auf.
+  if (b.geaendert && b.geaendert.length) {
+    const kasten = document.createElement("div");
+    kasten.className = "geaenderte";
+    const titel = document.createElement("span");
+    titel.textContent = t("anhang.geaendert");
+    kasten.append(titel);
+    b.geaendert.forEach((name) => {
+      const knopf = document.createElement("button");
+      knopf.className = "anhangknopf";
+      knopf.textContent = name;
+      knopf.title = t("anhang.speichern");
+      knopf.addEventListener("click", async () => {
+        try {
+          const ziel = await invoke("anhang_herausgeben", { name, wurzel: prozesspfad() });
+          // ⚑ Abbrechen ist keine Fehlermeldung wert: Wer den Dialog
+          //    schliesst, hat sich entschieden.
+          if (ziel) melden(`${t("anhang.gespeichert")} ${ziel}`, "gespraech");
+        } catch (f) {
+          melden_als_fehler(f);
+        }
+      });
+      kasten.append(knopf);
+    });
+    wurzel.append(kasten);
+  }
   if (laufzeichen) wurzel.append(laufzeichen);
   return wurzel;
 }
@@ -1980,6 +2051,101 @@ function alles_zeichnen() {
   reichweite_zeichnen();
   chats_zeichnen();
   gespraech_zeichnen();
+  terminal_umschalten();
+}
+
+// --- Das Terminal -------------------------------------------------------
+//
+// ⛔️ **Was hier laeuft, laeuft mit den Rechten des Nutzers**, ohne
+// Einhaengegrenze und ohne Werkzeugkasten. Der Grund steht bei `MODI`
+// und ausfuehrlich im Ruecken vor `terminal_ausfuehren`.
+
+/// Was getippt wurde, fuer die Pfeiltasten.
+const terminalverlauf = [];
+let terminalzeiger = 0;
+
+/// **Stellt zwischen Gespraech und Terminal um.**
+///
+/// ⚑ **Eine Ansicht, kein Gespraechstyp.** Das Terminal traegt keinen
+/// Verlauf in der Liste links, denn es ist kein Gespraech: Es gibt
+/// nichts wieder aufzunehmen.
+function terminal_umschalten() {
+  const an = modus_jetzt() === "terminal";
+  document.body.dataset.terminal = an ? "an" : "aus";
+  $("terminal").hidden = !an;
+  $("gespraech").hidden = an;
+  $("eingabe").hidden = an;
+  const leiste = $("anhangleiste");
+  if (an && leiste) leiste.hidden = true;
+  if (an) {
+    if (!$("terminalzeilen").childElementCount) terminal_leertext();
+    terminal_prompt_holen();
+    $("terminaleingabe").focus();
+  }
+}
+
+function terminal_leertext() {
+  const p = document.createElement("p");
+  p.className = "terminalhinweis";
+  p.textContent = t("modus.terminal.leer");
+  $("terminalzeilen").replaceChildren(p);
+}
+
+async function terminal_prompt_holen() {
+  try {
+    const o = await invoke("terminal_ordner");
+    $("terminalordner").textContent = o;
+  } catch (f) {
+    $("terminalordner").textContent = String(f);
+  }
+}
+
+/// Haengt einen Block an die Ausgabe.
+///
+/// ⚑ **`textContent` und nie `innerHTML`.** Eine Befehlsausgabe ist
+/// fremder Text; wer sie als Markup einsetzt, laesst jede Datei im
+/// Dateisystem in das Fenster hineinschreiben.
+function terminal_anhaengen(klasse, text) {
+  const z = $("terminalzeilen");
+  if (z.firstElementChild?.className === "terminalhinweis") z.replaceChildren();
+  const pre = document.createElement("pre");
+  pre.className = klasse;
+  pre.textContent = text;
+  z.append(pre);
+  z.scrollTop = z.scrollHeight;
+  return pre;
+}
+
+async function terminal_senden(befehl) {
+  const roh = befehl.trim();
+  if (!roh) return;
+  if (roh === "clear" || roh === "cls") {
+    terminal_leertext();
+    return;
+  }
+  terminalverlauf.push(roh);
+  terminalzeiger = terminalverlauf.length;
+  terminal_anhaengen("terminalbefehl", `${$("terminalordner").textContent} $ ${roh}`);
+  const laeuft = terminal_anhaengen("terminallaeuft", t("terminal.laeuft"));
+  try {
+    const a = await invoke("terminal_ausfuehren", { befehl: roh });
+    laeuft.remove();
+    if (a.ausgabe) terminal_anhaengen("terminalausgabe", a.ausgabe.replace(/\n+$/, ""));
+    if (a.gekuerzt) terminal_anhaengen("terminalvermerk", t("terminal.gekuerzt"));
+    if (a.abgebrochen) terminal_anhaengen("terminalvermerk", t("terminal.abgebrochen"));
+    // ⚑ **Der Rueckgabewert nur, wenn er nicht null ist.** Eine Zeile
+    //   „Rueckgabewert 0" nach jedem `ls` ist Rauschen; eine nach einem
+    //   fehlgeschlagenen Befehl ist die Auskunft, die fehlt, wenn das
+    //   Programm nichts geschrieben hat.
+    if (a.kode !== 0 && a.kode !== null && a.kode !== undefined) {
+      terminal_anhaengen("terminalvermerk", `[Rückgabewert ${a.kode}]`);
+    }
+    $("terminalordner").textContent = a.ordner;
+  } catch (f) {
+    laeuft.remove();
+    terminal_anhaengen("terminalfehler", String(f));
+  }
+  $("terminalzeilen").scrollTop = $("terminalzeilen").scrollHeight;
 }
 
 // --- Meldungen ----------------------------------------------------------
@@ -3263,7 +3429,7 @@ function anhangleiste_zeichnen() {
 async function anhang_hinzufuegen(pfad) {
   if (!pfad) return;
   try {
-    const a = await invoke("anhang_aufnehmen", { pfad, wurzel: prozesspfad() });
+    const a = await invoke("anhang_aufnehmen", { pfad, wurzel: prozesspfad(), modus: modus_jetzt() });
     const eintrag = {
       name: a.name,
       pfad: a.pfad,
@@ -3633,6 +3799,10 @@ async function senden(text) {
       const verlauf = [...vorher, { role: "user", content: modelltext || text }];
       const a = await invoke("frage", {
         verlauf: verlauf.map((n) => [n.role === "assistant" ? "modell" : "nutzer", n.content]),
+        // ⚑ **Die Anhaenge dieses Beitrags.** Liegt einer an, bekommt
+        //    der Chat Werkzeuge, und zwar nur fuer die Anhaenge.
+        anhaenge: anhaenge.map((a) => a.pfad),
+        wurzel: prozesspfad(),
         // ⚑ **Satzweise gesprochen, waehrend das Modell noch schreibt.**
         // Nur hier im Chat: In der Agentenschleife stehen im Strom auch
         // Werkzeugaufrufe.
@@ -3640,6 +3810,16 @@ async function senden(text) {
       });
       laufender.text = a.text;
       laufender.fuss = `${a.sekunden} s`;
+      // ⚑ **Was sich wirklich geaendert hat, steht unter der Antwort**
+      //    (Auftrag des Projektinhabers, 2026-09-23). Die Liste kommt
+      //    aus einem Vergleich der Dateien, nicht aus dem, was das
+      //    Modell ueber sich sagt.
+      //
+      // ⚠️ **Der Weg hinaus ist ein Knopf und kein Werkzeug.** Die
+      //    Werkzeuge des Chats kommen nicht aus dem Anhangordner
+      //    heraus; wohin eine geaenderte Datei geht, entscheidet der
+      //    Mensch ueber den Dialog des Systems.
+      laufender.geaendert = a.geaendert || [];
       kontext_merken(offen, [...verlauf, { role: "assistant", content: a.text }], null, 0);
       kontext_zeichnen(a.kontext);
     }
@@ -3939,6 +4119,38 @@ $("eingabe").addEventListener("submit", async (e) => {
   feld.value = "";
   feld_messen();
   await senden(text);
+});
+
+$("terminalform").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const feld = $("terminaleingabe");
+  const befehl = feld.value;
+  feld.value = "";
+  await terminal_senden(befehl);
+  feld.focus();
+});
+
+$("terminalleeren").addEventListener("click", () => {
+  terminal_leertext();
+  $("terminaleingabe").focus();
+});
+
+// ⚑ **Pfeil hoch und runter blaettern durch das Getippte.** Ohne das
+// ist ein Terminal zum Arbeiten unbrauchbar: Jeder zweite Befehl ist
+// eine Abwandlung des vorigen.
+$("terminaleingabe").addEventListener("keydown", (e) => {
+  if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+  if (!terminalverlauf.length) return;
+  e.preventDefault();
+  if (e.key === "ArrowUp") {
+    terminalzeiger = Math.max(0, terminalzeiger - 1);
+  } else {
+    terminalzeiger = Math.min(terminalverlauf.length, terminalzeiger + 1);
+  }
+  const wert = terminalverlauf[terminalzeiger] ?? "";
+  e.target.value = wert;
+  // Der Einfuegepunkt ans Ende, sonst steht er mitten im Befehl.
+  requestAnimationFrame(() => e.target.setSelectionRange(wert.length, wert.length));
 });
 
 

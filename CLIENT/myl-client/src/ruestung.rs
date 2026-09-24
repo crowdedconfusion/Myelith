@@ -134,6 +134,37 @@ impl Werkzeugausfuehrung for Nachfragend {
     }
 }
 
+/// **Wieviel Welt eine Rüstung sieht.**
+///
+/// # ⛔️ Warum das eine eigene Angabe ist und nicht aus der Werkzeugkiste folgt
+///
+/// Die Kiste sagt, **welche** Werkzeuge es gibt; der Zuschnitt sagt,
+/// **worauf** sie zeigen. Das sind zwei Fragen, und sie fallen
+/// auseinander: Dieselben fünf Dateiwerkzeuge sind harmlos, wenn sie auf
+/// einen Anhangordner zeigen, und weitreichend, wenn sie auf ein
+/// Dateisystem zeigen.
+///
+/// ⚑ **Die Grenze selbst ist nicht neu.** [`Einhaengung`] hält sie
+/// schon, und `aufloesen` weist jeden Pfad ab, der hinausführt. Neu ist
+/// nur, dass der Chat sie enger zieht als der Agent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Zuschnitt {
+    /// Der Arbeitsordner, mit allem, was die Kiste hergibt.
+    #[default]
+    Arbeitsordner,
+    /// **Nur die Anhänge dieses Gesprächs.**
+    ///
+    /// ⛔️ **Manifest-Werkzeuge bleiben hier draussen**, und das ist der
+    /// Kern des Zuschnitts. Ein Manifest läuft über eine Shell, und eine
+    /// Shell kennt die Einhängegrenze nicht: `cat ../../../etc/passwd`
+    /// ginge durch jede noch so enge Einhängung hindurch. **Die Grenze
+    /// hält nur, solange alles, was hinter ihr arbeitet, sie kennt.**
+    ///
+    /// ⚠️ **`run_command` fällt aus demselben Grund weg**, und zwar
+    /// schon über die Kiste: `Base` enthält es nicht.
+    NurAnhaenge,
+}
+
 pub fn ruesten(
     agent: &Agenteneinstellung,
     form: myl_local_agent::werkzeug::Ansageform,
@@ -150,6 +181,69 @@ pub fn ruesten_mit(
     satz: crate::werkzeuge::Werkzeugkiste,
     zusaetzlich: Vec<(myl_local_agent::werkzeug::Werkzeug, Box<dyn Werkzeugausfuehrung>)>,
     nachfrage: Option<Nachfrage>,
+) -> Result<Ruestung, String> {
+    ruesten_zugeschnitten(agent, form, satz, zusaetzlich, nachfrage, Zuschnitt::Arbeitsordner)
+}
+
+/// **Eine Rüstung, die nur die Anhänge sieht.**
+///
+/// ⚑ **Für den Chat** (Auftrag des Projektinhabers, 2026-09-23). Dort
+/// soll ein Modell einen Anhang lesen und ändern können, aber **keinen
+/// Ordner und kein Dateisystem**. Beides zusammen geht, weil die
+/// Einhängung die Grenze zieht: Ihre Wurzel ist der Anhangordner, und
+/// `aufloesen` weist alles ab, was hinausführt.
+///
+/// ⚠️ **Der Aufrufer gibt die Pfade passend heraus.** Ein Anhang liegt
+/// unter `.AGENT/anhaenge/liste.md`, relativ zum Arbeitsordner; unter
+/// dieser Einhängung heisst er `liste.md`. Wer dem Modell den langen
+/// Pfad nennt, nennt einen, der hier nicht auflöst.
+///
+/// ⚑ **`netz` schaltet die Web-Recherche scharf** und bringt zugleich
+/// mit, was der Nutzer geschrieben hat. Beides in einem Feld, weil es
+/// zusammengehört: Der Nutzertext ist die Saat des Zielkreises
+/// (`netzwerkzeuge`, Schranke 1), und ohne ihn wäre die Recherche auf
+/// Suchtreffer beschränkt, also ausgerechnet auf den Fall „lies mal
+/// diese Seite" blind. `None` heisst: kein Netz, kein Tor.
+pub fn ruesten_fuer_anhaenge(
+    anhangordner: &std::path::Path,
+    form: myl_local_agent::werkzeug::Ansageform,
+    netz: Option<&str>,
+    mut zusaetzlich: Vec<(myl_local_agent::werkzeug::Werkzeug, Box<dyn Werkzeugausfuehrung>)>,
+    nachfrage: Option<Nachfrage>,
+) -> Result<Ruestung, String> {
+    // ⛔️ **Das Tor kennt die Anhänge, weil es sie hüten muss.** Die
+    //   Verratsprobe auf der Suchfrage kann nur ablehnen, was sie
+    //   gesehen hat; ein Tor ohne Anhangtexte ist eines ohne Schranke 2.
+    if let Some(nutzertext) = netz {
+        let tor = std::sync::Arc::new(crate::netzwerkzeuge::Tor::neu(anhangordner, nutzertext));
+        zusaetzlich.extend(crate::netzwerkzeuge::angebote(tor, form));
+    }
+    // ⚑ **Eine eigene Einstellung und nicht die des Nutzers.** Was hier
+    //   gilt, gilt für diesen einen Lauf: der Anhangordner als Wurzel,
+    //   Schreiben an (sonst liesse sich kein Anhang ändern), und die
+    //   Kiste `Base`, also die fünf Dateiwerkzeuge ohne `run_command`.
+    let agent = Agenteneinstellung {
+        wurzel: Some(anhangordner.display().to_string()),
+        schreiben: true,
+        ..Agenteneinstellung::default()
+    };
+    ruesten_zugeschnitten(
+        &agent,
+        form,
+        crate::werkzeuge::Werkzeugkiste::Base,
+        zusaetzlich,
+        nachfrage,
+        Zuschnitt::NurAnhaenge,
+    )
+}
+
+fn ruesten_zugeschnitten(
+    agent: &Agenteneinstellung,
+    form: myl_local_agent::werkzeug::Ansageform,
+    satz: crate::werkzeuge::Werkzeugkiste,
+    zusaetzlich: Vec<(myl_local_agent::werkzeug::Werkzeug, Box<dyn Werkzeugausfuehrung>)>,
+    nachfrage: Option<Nachfrage>,
+    zuschnitt: Zuschnitt,
 ) -> Result<Ruestung, String> {
     let mut kasten = Werkzeugkasten::neu();
     let budget = crate::werkzeuge::verlaufsbudget();
@@ -254,7 +348,7 @@ pub fn ruesten_mit(
             {
                 let sinne = myl_senses::Sinne::finden();
                 for (angebot, ausfuehrung) in
-                    crate::sinneswerkzeuge::angebote(&sinne, &ein, form)
+                    crate::sinneswerkzeuge::angebote(&sinne, &ein, form, crate::sinneswerkzeuge::Blickbefugnis::aus_einstellung(agent))
                 {
                     let name = angebot.name.clone();
                     kasten
@@ -268,7 +362,11 @@ pub fn ruesten_mit(
             // Neubau. Nur mit Schreiberlaubnis (ein Manifest-Werkzeug wirkt,
             // siehe `crate::kisten`), und im `manual mode` mit derselben
             // Nachfrage wie die schreibenden eingebauten.
-            {
+            // ⛔️ **Im Zuschnitt `NurAnhaenge` bleiben sie draussen.**
+            //    Ein Manifest laeuft ueber eine Shell, und eine Shell
+            //    kennt die Einhaengegrenze nicht; sie waere die eine
+            //    Tuer, durch die der Chat doch ins Dateisystem kaeme.
+            if zuschnitt == Zuschnitt::Arbeitsordner {
                 let kette = crate::kisten::ordnerkette(agent);
                 for (angebot, mut ausfuehrung) in
                     crate::kisten::angebote_der_kette(&kette, &ein, |_warnung| {})

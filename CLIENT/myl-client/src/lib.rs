@@ -72,6 +72,7 @@ pub mod ort;
 pub mod reservierung;
 pub mod strom;
 pub mod ruestung;
+pub mod netzwerkzeuge;
 pub mod sinneswerkzeuge;
 pub mod skills;
 pub mod verankert;

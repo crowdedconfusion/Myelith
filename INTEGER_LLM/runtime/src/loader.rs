@@ -934,6 +934,7 @@ fn eintrag_laden(
     artifact_dir: &Path,
     name: String,
     entry: WeightManifestEntry,
+    pruefen: bool,
 ) -> Result<Geladen, String> {
     // INT16-Tensoren: der LM-Head (spec-Ausnahme 0.6.0) und seit
     // theta_v 0.13.0 die Attention-Biases (Fund 23, siehe BiasTensor).
@@ -1007,12 +1008,14 @@ fn eintrag_laden(
                 name, bytes.len(), entry.file, entry.shape, expected_len
             ));
         }
-        let digest = sha256_hex(bytes);
-        if digest != entry.hash {
-            return Err(format!(
-                "{}: SHA-256 {} stimmt nicht mit Manifest-Hash {} ueberein",
-                name, digest, entry.hash
-            ));
+        if pruefen {
+            let digest = sha256_hex(bytes);
+            if digest != entry.hash {
+                return Err(format!(
+                    "{}: SHA-256 {} stimmt nicht mit Manifest-Hash {} ueberein",
+                    name, digest, entry.hash
+                ));
+            }
         }
 
         let shift_bytes = std::fs::read(artifact_dir.join(shifts_file))
@@ -1130,13 +1133,18 @@ fn eintrag_laden(
     // 29 GB sind das 66 statt 9 Sekunden, **nur fuer das Warten auf
     // einzelne Seitenfehler**. Ein Rat vor dem ersten Byte kostet
     // einen Systemaufruf.
+    // ⚑ **Der Rat gilt auch ohne Pruefung.** Die Seiten werden ohnehin
+    //   gebraucht, nur eben erst beim Rechnen; ein Systemaufruf spart
+    //   dort dieselben Seitenfehler.
     crate::model::abbild_vorbereiten(&abbild);
-    let digest = sha256_hex(&abbild);
-    if digest != entry.hash {
-        return Err(format!(
-            "{}: SHA-256 {} stimmt nicht mit Manifest-Hash {} ueberein",
-            name, digest, entry.hash
-        ));
+    if pruefen {
+        let digest = sha256_hex(&abbild);
+        if digest != entry.hash {
+            return Err(format!(
+                "{}: SHA-256 {} stimmt nicht mit Manifest-Hash {} ueberein",
+                name, digest, entry.hash
+            ));
+        }
     }
 
     // Per-Channel-Shifts (theta_v 0.7.0): eine shifts_file mit einem
@@ -1212,12 +1220,13 @@ fn eintrag_laden(
 fn alle_eintraege_laden(
     artifact_dir: &Path,
     liste: Vec<(String, WeightManifestEntry)>,
+    pruefen: bool,
 ) -> Result<Vec<Geladen>, String> {
     let faeden = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
     if faeden < 2 || liste.len() < 2 {
         return liste
             .into_iter()
-            .map(|(n, e)| eintrag_laden(artifact_dir, n, e))
+            .map(|(n, e)| eintrag_laden(artifact_dir, n, e, pruefen))
             .collect();
     }
 
@@ -1241,7 +1250,7 @@ fn alle_eintraege_laden(
             .map(|teil| {
                 bereich.spawn(move || {
                     teil.into_iter()
-                        .map(|(n, e)| eintrag_laden(artifact_dir, n, e))
+                        .map(|(n, e)| eintrag_laden(artifact_dir, n, e, pruefen))
                         .collect::<Result<Vec<_>, String>>()
                 })
             })
@@ -1276,10 +1285,17 @@ pub fn load_weights(artifact_dir: &Path) -> Result<LoadedWeights, String> {
     let mut liste: Vec<(String, WeightManifestEntry)> = entries.into_iter().collect();
     liste.sort_by(|a, b| a.0.cmp(&b.0));
 
+    // ⚑ **Die Pruefsumme kostet beim 35B 17,2 s von 23,8 s Wanduhr**, und
+    //   sie prueft jedes Mal dasselbe. Liegt eine gueltige Marke, entfaellt
+    //   sie; siehe `pruefstand` fuer das, was die Marke faengt und was
+    //   nicht. ⚠️ Faellt die Marke, wird voll geprueft und neu gesetzt.
+    let manifest_hash = sha256_hex(content.as_bytes());
+    let pruefen = !crate::pruefstand::marke_gilt(artifact_dir, &manifest_hash);
+
     let mut weights = HashMap::with_capacity(liste.len());
     let mut lm_head: Option<LmHead> = None;
     let mut biases: HashMap<String, BiasTensor> = HashMap::new();
-    for geladen in alle_eintraege_laden(artifact_dir, liste)? {
+    for geladen in alle_eintraege_laden(artifact_dir, liste, pruefen)? {
         match geladen {
             Geladen::Gewicht(name, w) => {
                 weights.insert(name, w);
@@ -1289,6 +1305,12 @@ pub fn load_weights(artifact_dir: &Path) -> Result<LoadedWeights, String> {
                 biases.insert(name, b);
             }
         }
+    }
+
+    // ⛔️ **Erst hier, und nur wenn wirklich geprueft wurde.** Eine Marke
+    //    vor dem Ende saehe eine abgebrochene Ladung als bestanden an.
+    if pruefen {
+        crate::pruefstand::marke_setzen(artifact_dir, &manifest_hash);
     }
 
     Ok(LoadedWeights { weights, lm_head, biases })
@@ -1337,6 +1359,10 @@ pub fn load_luts(artifact_dir: &Path) -> Result<LoadedLuts, String> {
             ));
         }
 
+        // ⚑ **Die Tabellen werden IMMER geprueft**, auch mit gueltiger
+        //   Marke: Sie sind wenige Megabyte und sie SIND der
+        //   Zahlenvertrag. Eine verschobene Zeile in `silu` aendert
+        //   jede Antwort, und das faengt keine Dateilage.
         let digest = sha256_hex(&bytes);
         if digest != entry.hash {
             return Err(format!(

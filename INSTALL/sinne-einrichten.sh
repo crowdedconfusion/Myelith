@@ -64,6 +64,13 @@ pruefen() {
   for w in ffmpeg llama-mtmd-cli whisper-cli; do
     printf '  %-16s %s\n' "$w" "$(command -v "$w" 2>/dev/null || echo 'FEHLT')"
   done
+  # ⚑ **Der Blick braucht kein eigenes Programm.** Auf macOS nimmt
+  #   screencapture den Bildschirm, sonst ffmpeg; die Kamera holt immer
+  #   ffmpeg. Was fehlt, ist deshalb nie ein Download, sondern eine
+  #   Erlaubnis, und die gibt nur der Mensch.
+  if [ "$(uname -s)" = Darwin ]; then
+    printf '  %-16s %s\n' "screencapture" "$(command -v screencapture 2>/dev/null || echo 'FEHLT')"
+  fi
   for paar in "$AUDIO:hoeren.bin" "$VISION:sehen.gguf" "$VISION:sehen-mmproj.gguf" \
               "$VISION:sehen-genau.gguf" "$VISION:sehen-genau-mmproj.gguf"; do
     ort=${paar%%:*}; d=${paar#*:}
@@ -77,6 +84,19 @@ pruefen() {
   printf '  %-24s %s\n' "seine Umgebung" "$([ -x "$COSY/.venv/bin/python" ] && echo da || echo fehlt)"
   printf '  %-24s %s\n' "seine Gewichte" "$([ -s "$COSY/pretrained_models/Fun-CosyVoice3-0.5B/llm.pt" ] && echo da || echo fehlt)"
   printf '  %-24s %s\n' "Laeufer" "$([ -f "$HEIMAT/bin/sprechen-cosyvoice.py" ] && echo da || echo fehlt)"
+  sagen "Blick auf Bildschirm und Kamera"
+  echo "  Beide sind AUS, solange sie nicht ausdruecklich scharf gestellt sind:"
+  echo "    MYL_BLICK_BILDSCHIRM=1   der Agent darf den Bildschirm aufnehmen"
+  echo "    MYL_BLICK_KAMERA=1       der Agent darf die Kamera aufnehmen"
+  echo "  Jede Aufnahme bleibt unter .AGENT/blicke/ liegen, damit nachsehbar ist,"
+  echo "  was gesehen wurde."
+  if [ "$(uname -s)" = Darwin ]; then
+    echo "  macOS gibt die Geraete zusaetzlich erst nach Freigabe heraus:"
+    echo "    Systemeinstellungen, Datenschutz und Sicherheit, Bildschirmaufnahme bzw. Kamera."
+    echo "  Ohne sie meldet screencapture 'could not create image from display'."
+  fi
+  echo "  Nimmt ffmpeg die falsche Quelle: MYL_SCHIRMFORMAT/MYL_SCHIRMGERAET,"
+  echo "  MYL_KAMERAFORMAT/MYL_KAMERAGERAET."
   # ⚑ Der Verweis wird nur gebraucht, wenn CosyVoice ausserhalb der
   # Rubrik liegt; sonst findet der Client es dort von selbst.
   case "$COSY" in

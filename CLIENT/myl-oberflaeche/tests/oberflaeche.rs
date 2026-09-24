@@ -1554,13 +1554,14 @@ fn das_ladezeichen_steht_beim_beitrag() {
 /// diese Zahlen bewegen, und wer darueber hinauskommt, bekommt es
 /// gesagt statt eines stillen Durchlaufs.
 fn zahlwort(n: usize) -> String {
-    const WORTE: [&str; 35] = [
+    const WORTE: [&str; 38] = [
         "null", "ein", "zwei", "drei", "vier", "fünf", "sechs", "sieben", "acht", "neun",
         "zehn", "elf", "zwölf", "dreizehn", "vierzehn", "fünfzehn", "sechzehn", "siebzehn",
         "achtzehn", "neunzehn", "zwanzig", "einundzwanzig", "zweiundzwanzig",
         "dreiundzwanzig", "vierundzwanzig", "fünfundzwanzig", "sechsundzwanzig",
         "siebenundzwanzig", "achtundzwanzig", "neunundzwanzig", "dreissig",
         "einunddreissig", "zweiunddreissig", "dreiunddreissig", "vierunddreissig",
+        "fünfunddreissig", "sechsunddreissig", "siebenunddreissig",
     ];
     WORTE
         .get(n)

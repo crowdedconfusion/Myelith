@@ -1,0 +1,222 @@
+{
+  "artefakt": "INTEGER_LLM/artifacts/myelith-0.6b",
+  "schritte": 6,
+  "laeufe": [
+    {
+      "name": "auflisten",
+      "stufe": 1,
+      "lauf": 1,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 7.9
+    },
+    {
+      "name": "auflisten",
+      "stufe": 1,
+      "lauf": 2,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 7.8
+    },
+    {
+      "name": "auflisten",
+      "stufe": 1,
+      "lauf": 3,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 7.8
+    },
+    {
+      "name": "lesen",
+      "stufe": 1,
+      "lauf": 1,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 4.7
+    },
+    {
+      "name": "lesen",
+      "stufe": 1,
+      "lauf": 2,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 4.7
+    },
+    {
+      "name": "lesen",
+      "stufe": 1,
+      "lauf": 3,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 4.7
+    },
+    {
+      "name": "lesen_und_folgern",
+      "stufe": 2,
+      "lauf": 1,
+      "bestanden": false,
+      "grund": "die Antwort nennt '42' nicht",
+      "sekunden": 8.4
+    },
+    {
+      "name": "lesen_und_folgern",
+      "stufe": 2,
+      "lauf": 2,
+      "bestanden": false,
+      "grund": "die Antwort nennt '42' nicht",
+      "sekunden": 8.4
+    },
+    {
+      "name": "lesen_und_folgern",
+      "stufe": 2,
+      "lauf": 3,
+      "bestanden": false,
+      "grund": "die Antwort nennt '42' nicht",
+      "sekunden": 10.3
+    },
+    {
+      "name": "waehlen",
+      "stufe": 2,
+      "lauf": 1,
+      "bestanden": false,
+      "grund": "die Antwort nennt 'Nordwind' nicht",
+      "sekunden": 55.0
+    },
+    {
+      "name": "waehlen",
+      "stufe": 2,
+      "lauf": 2,
+      "bestanden": false,
+      "grund": "die Antwort nennt 'Nordwind' nicht",
+      "sekunden": 52.0
+    },
+    {
+      "name": "waehlen",
+      "stufe": 2,
+      "lauf": 3,
+      "bestanden": false,
+      "grund": "die Antwort nennt 'Nordwind' nicht",
+      "sekunden": 52.7
+    },
+    {
+      "name": "schreiben",
+      "stufe": 3,
+      "lauf": 1,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 9.4
+    },
+    {
+      "name": "schreiben",
+      "stufe": 3,
+      "lauf": 2,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 9.4
+    },
+    {
+      "name": "schreiben",
+      "stufe": 3,
+      "lauf": 3,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 9.4
+    },
+    {
+      "name": "lesen_dann_schreiben",
+      "stufe": 3,
+      "lauf": 1,
+      "bestanden": false,
+      "grund": "ziel.txt enthaelt 'Steinbeisser' nicht",
+      "sekunden": 11.3
+    },
+    {
+      "name": "lesen_dann_schreiben",
+      "stufe": 3,
+      "lauf": 2,
+      "bestanden": false,
+      "grund": "ziel.txt enthaelt 'Steinbeisser' nicht",
+      "sekunden": 11.3
+    },
+    {
+      "name": "lesen_dann_schreiben",
+      "stufe": 3,
+      "lauf": 3,
+      "bestanden": false,
+      "grund": "ziel.txt enthaelt 'Steinbeisser' nicht",
+      "sekunden": 11.3
+    },
+    {
+      "name": "suchen_ueber_ebenen",
+      "stufe": 2,
+      "lauf": 1,
+      "bestanden": false,
+      "grund": "die Antwort nennt 'protokoll' nicht",
+      "sekunden": 36.8
+    },
+    {
+      "name": "suchen_ueber_ebenen",
+      "stufe": 2,
+      "lauf": 2,
+      "bestanden": false,
+      "grund": "die Antwort nennt 'protokoll' nicht",
+      "sekunden": 36.9
+    },
+    {
+      "name": "suchen_ueber_ebenen",
+      "stufe": 2,
+      "lauf": 3,
+      "bestanden": false,
+      "grund": "die Antwort nennt 'protokoll' nicht",
+      "sekunden": 37.1
+    },
+    {
+      "name": "suchen_statt_lesen",
+      "stufe": 2,
+      "lauf": 1,
+      "bestanden": false,
+      "grund": "die Antwort nennt '4711' nicht",
+      "sekunden": 2.5
+    },
+    {
+      "name": "suchen_statt_lesen",
+      "stufe": 2,
+      "lauf": 2,
+      "bestanden": false,
+      "grund": "die Antwort nennt '4711' nicht",
+      "sekunden": 2.4
+    },
+    {
+      "name": "suchen_statt_lesen",
+      "stufe": 2,
+      "lauf": 3,
+      "bestanden": false,
+      "grund": "die Antwort nennt '4711' nicht",
+      "sekunden": 2.4
+    },
+    {
+      "name": "aendern_statt_ueberschreiben",
+      "stufe": 3,
+      "lauf": 1,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 16.3
+    },
+    {
+      "name": "aendern_statt_ueberschreiben",
+      "stufe": 3,
+      "lauf": 2,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 16.4
+    },
+    {
+      "name": "aendern_statt_ueberschreiben",
+      "stufe": 3,
+      "lauf": 3,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 16.4
+    }
+  ]
+}

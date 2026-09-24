@@ -694,6 +694,9 @@ mod tests {
             kistenordner: Some(ordner.display().to_string()),
             warnung: true,
             modus: Default::default(),
+            blick_bildschirm: false,
+            blick_kamera: false,
+            web_recherche: false,
         };
 
         // Ohne Blatt entscheidet der Name, und der ist keiner der drei.
@@ -793,6 +796,9 @@ mod tests {
             kistenordner: Some(kiste.display().to_string()),
             warnung: true,
             modus: Default::default(),
+            blick_bildschirm: false,
+            blick_kamera: false,
+            web_recherche: false,
         };
         assert_eq!(werkzeug_fuer(&agent, "sonstiges").as_deref(), Some("tabelle_lesen"));
         // Fuer eine Art, fuer die sich niemand meldet, wird niemand genannt.
@@ -832,6 +838,9 @@ mod tests {
             kistenordner: Some(heimat.join(Werkzeugkiste::Advanced.name()).display().to_string()),
             warnung: true,
             modus: Default::default(),
+            blick_bildschirm: false,
+            blick_kamera: false,
+            web_recherche: false,
         };
         let kette: Vec<String> = angebote_der_kette(&ordnerkette(&agent), &ein, |_| {})
             .into_iter()

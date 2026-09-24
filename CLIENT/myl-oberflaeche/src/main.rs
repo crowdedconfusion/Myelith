@@ -506,6 +506,11 @@ fn werkzeuge(wurzel: Option<String>) -> Result<Werkzeugliste, String> {
         &myl_senses::Sinne::finden(),
         &ein,
         myl_client::Ansageform::Amtlich,
+        // ⚑ **Dieselbe Quelle wie die Ruestung.** Die Liste soll zeigen,
+        //   was der Agent wirklich hat; eine eigene Entscheidung hier
+        //   waere genau die zweite Wahrheit, gegen die der Absatz
+        //   darueber geschrieben ist.
+        myl_client::sinneswerkzeuge::Blickbefugnis::aus_einstellung(&e.agent),
     ) {
         namen.push(angebot.name);
     }
@@ -652,6 +657,13 @@ struct Halter {
     /// Textgenerierung um zu antworten"). Hier lebt er so lange wie das
     /// Fenster, und die Ladezeit faellt genau einmal an.
     sprecher: myl_senses::sprechen::Geteilter,
+    /// **Wo das Terminal gerade steht.**
+    ///
+    /// ⚑ **Im Fensterzustand und nicht je Befehl**, denn `cd` soll
+    /// halten. Jeder Aufruf startet eine eigene Shell; ohne diesen Wert
+    /// stuende jedes Kommando wieder im Ordner des ersten, und das
+    /// waere ein Terminal, das sein Verzeichnis vergisst.
+    terminalordner: std::sync::Arc<Mutex<Option<std::path::PathBuf>>>,
 }
 
 /// Wie ein geladenes Modell heisst und wo es liegt.
@@ -994,10 +1006,69 @@ async fn verdichten(
 /// Werkzeugen und den Belegen. Schrittbudget und Belegkette gelten
 /// weiter je Auftrag; die Begruendung steht an
 /// `myl_local_agent::schleife::Lauf::fahren_mit_verlauf`.
+/// **Name und Inhaltsabdruck jeder Datei eines Ordners.**
+///
+/// ⚑ **Der Abdruck und nicht die Uhrzeit.** Eine Aenderungszeit sagt
+/// „angefasst", nicht „anders": Ein Werkzeug, das dieselben Bytes
+/// zurueckschreibt, setzte sie neu, und der Mensch bekaeme eine Datei
+/// angeboten, an der nichts geschehen ist.
+///
+/// ⚠️ **Nur die oberste Ebene.** Der Anhangordner ist flach; wer dort
+/// Unterordner anlegt, tut etwas, das kein Anhang ist.
+fn stand_des_ordners(ordner: &std::path::Path) -> std::collections::BTreeMap<String, u64> {
+    let mut aus = std::collections::BTreeMap::new();
+    let Ok(eintraege) = std::fs::read_dir(ordner) else { return aus };
+    for e in eintraege.flatten() {
+        if !e.path().is_file() {
+            continue;
+        }
+        let Ok(inhalt) = std::fs::read(e.path()) else { continue };
+        let name = e.file_name().to_string_lossy().to_string();
+        // ⚑ **Ein Abdruck und keine Pruefsumme mit Zusage.** Hier wird
+        //   verglichen, nicht bezeugt; was zaehlt, ist „gleich oder
+        //   nicht" innerhalb **eines** Programmlaufs.
+        //
+        // ⚠️ **`DefaultHasher` ist genau dafuer erlaubt und sonst
+        //   nicht.** Sein Verfahren ist ausdruecklich nicht festgelegt
+        //   und darf sich zwischen Rust-Fassungen aendern; ein Wert,
+        //   der abgelegt oder zwischen Maschinen verglichen wird,
+        //   gehoert deshalb nach SHA-256 (siehe `generate_mit_digest`).
+        //   Hier lebt er von einer Zeile zur naechsten.
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        inhalt.hash(&mut h);
+        aus.insert(name, h.finish());
+    }
+    aus
+}
+
+/// **Was zwischen zwei Staenden dazukam oder sich aenderte.**
+fn was_sich_geaendert_hat(
+    vorher: &std::collections::BTreeMap<String, u64>,
+    nachher: &std::collections::BTreeMap<String, u64>,
+) -> Vec<String> {
+    nachher
+        .iter()
+        .filter(|(name, abdruck)| vorher.get(*name) != Some(abdruck))
+        .map(|(name, _)| name.clone())
+        .collect()
+}
+
 #[tauri::command]
 async fn frage(
     verlauf: Vec<(String, String)>,
     sprechen: Option<bool>,
+    // ⚑ **Die Anhänge dieses Beitrags** (Auftrag des Projektinhabers,
+    //   2026-09-23). Liegt einer an, bekommt der Chat Werkzeuge, und
+    //   zwar **nur für die Anhänge**: lesen, ändern, ansehen, anhören.
+    //   Ordner und Dateisystem bleiben draussen, und die Grenze zieht
+    //   die Einhängung, nicht eine Absprache.
+    //
+    // ⚠️ **Ohne Anhang und ohne Recherche bleibt der Chat, was er
+    //   war.** Werkzeuge kosten Ansage und damit Kontext; für ein
+    //   Gespräch ohne Datei und ohne Netz gibt es nichts zu bedienen.
+    anhaenge: Option<Vec<String>>,
+    wurzel: Option<String>,
     fenster: tauri::AppHandle,
     halter: tauri::State<'_, Halter>,
 ) -> Result<Antwort, String> {
@@ -1006,10 +1077,136 @@ async fn frage(
     if verlauf.is_empty() {
         return Err("es wurde nichts gefragt".to_string());
     }
+    let anfang = std::time::Instant::now();
+
+    // ⛔️ **Mit Anhang geht der Chat durch die Werkzeugschleife.**
+    //
+    // ⚑ **Die Rüstung sieht dabei nur den Anhangordner**, siehe
+    //   `ruestung::ruesten_fuer_anhaenge`: fünf Dateiwerkzeuge auf
+    //   dieser einen Wurzel, die beiden verankerten und die beiden
+    //   Sinne. Kein Manifest, kein `run_command`, kein Weg hinaus.
+    //
+    // ⚠️ **Vorgelesen wird dann nicht**, und das ist kein Versehen: Im
+    //   Strom der Schleife stehen auch Werkzeugaufrufe, und die will
+    //   niemand vorgelesen bekommen. Genau mit dieser Begründung war
+    //   das Sprechen bisher dem Chat vorbehalten.
+    let mit_anhang = anhaenge.as_ref().is_some_and(|a| !a.is_empty());
+    // ⚑ **Die Recherche schickt den Chat auch ohne Anhang durch die
+    //   Schleife.** Ein Suchwerkzeug, das nur zusammen mit einer
+    //   angehängten Datei da wäre, wäre genau dann weg, wenn man es
+    //   braucht.
+    let mit_netz = e.agent.web_recherche && myl_client::netzwerkzeuge::curl_vorhanden();
+    if mit_anhang || mit_netz {
+        let ordner = wurzel
+            .map(|w| w.trim().to_string())
+            .filter(|w| !w.is_empty())
+            .or_else(|| e.agent.wurzel.clone())
+            .or_else(myl_client::Einstellungen::standard_wurzel)
+            .ok_or_else(|| {
+                "Es ist kein Arbeitsordner gesetzt. Ohne ihn gibt es keinen Ort fuer den Anhang."
+                    .to_string()
+            })?;
+        let anhangordner =
+            std::path::Path::new(&ordner).join(myl_client::anhang::unterordner());
+        // ⚠️ **Ohne Anhang gibt es den Ordner noch nicht.** Die
+        //   Einhängung braucht ihn trotzdem, sonst hängt kein einziges
+        //   Werkzeug, auch nicht das Suchwerkzeug.
+        std::fs::create_dir_all(&anhangordner)
+            .map_err(|f| format!("der Anhangordner liess sich nicht anlegen: {f}"))?;
+        // ⚑ **Nur der letzte Beitrag des Nutzers ist die Saat**, nicht
+        //   der ganze Verlauf: In ihm steht auch, was frühere Seiten
+        //   geschrieben haben, und genau das soll den Zielkreis nicht
+        //   erweitern.
+        let saat = verlauf
+            .iter()
+            .rev()
+            .find(|(rolle, _)| rolle != "modell")
+            .map(|(_, text)| text.clone())
+            .unwrap_or_default();
+        let ruestung = myl_client::ruestung::ruesten_fuer_anhaenge(
+            &anhangordner,
+            myl_client::Ansageform::Amtlich,
+            mit_netz.then_some(saat.as_str()),
+            Vec::new(),
+            None,
+        )?;
+        let schritte = e.agent.schritte as usize;
+
+        // ⚑ **Der Stand VOR dem Lauf**, damit sich nachher vergleichen
+        //   laesst, was wirklich geschehen ist. 📌 Eine Antwort, die
+        //   sagt „ich habe die Datei geaendert", ist eine Behauptung des
+        //   Modells; der Vergleich ist ein Befund.
+        //
+        // ⚠️ **Der ganze Ordner und nicht nur die Anhaenge dieses
+        //   Beitrags.** Ein Modell, das statt zu aendern eine zweite
+        //   Datei schreibt, hat auch etwas hinterlassen, das der Mensch
+        //   haben will.
+        let vorher_stand = stand_des_ordners(&anhangordner);
+
+        let halt = halter.modell.clone();
+        let f = fenster.clone();
+        let (text, kontext) = tauri::async_runtime::spawn_blocking(move || {
+            let mut g = halt.lock().map_err(|_| "der Modellhalter ist vergiftet".to_string())?;
+            let Some(m) = g.as_mut() else {
+                return Err("das Modell ist nicht geladen".to_string());
+            };
+            zusehen(m, &f);
+            let n: Vec<myl_client::Nachricht> = verlauf
+                .iter()
+                .map(|(rolle, inhalt)| {
+                    if rolle == "modell" {
+                        myl_client::Nachricht::modell(inhalt.clone())
+                    } else {
+                        myl_client::Nachricht::nutzer(inhalt.clone())
+                    }
+                })
+                .collect();
+            // Der letzte Beitrag ist der Auftrag, der Rest der Verlauf.
+            let (auftrag, vorher) = n.split_last().ok_or("es wurde nichts gefragt")?;
+            let melder = |meldung: myl_client::Meldung<'_>| {
+                if let myl_client::Meldung::Aufruf { name, argumente } = meldung {
+                    let _ = f.emit(
+                        LEBEND,
+                        Lebend::Aufruf {
+                            name: name.to_string(),
+                            argumente: myl_client::lauf::kurzform(argumente),
+                            voll: serde_json::to_string_pretty(argumente)
+                                .unwrap_or_else(|_| argumente.to_string()),
+                        },
+                    );
+                }
+            };
+            let aus = myl_client::lauf::fahren_im_gespraech(
+                m,
+                &ruestung,
+                schritte,
+                true,
+                grenze,
+                vorher,
+                &auftrag.content,
+                Some(&melder),
+            );
+            let text = aus.antwort.clone().unwrap_or_default();
+            let mut danach: Vec<myl_client::Nachricht> = n.clone();
+            danach.push(myl_client::Nachricht::modell(text.clone()));
+            let gespraech = myl_client::gespraech::Gespraech::aus(danach);
+            let ansage = myl_client::gespraech::ansage(&ruestung);
+            let kontext = myl_client::gespraech::anzeige(m, Some(&ansage), &gespraech);
+            Ok::<_, String>((text, kontext))
+        })
+        .await
+        .map_err(|e| format!("der Rechenfaden ist abgestuerzt: {e}"))??;
+        let geaendert = was_sich_geaendert_hat(&vorher_stand, &stand_des_ordners(&anhangordner));
+        return Ok(Antwort {
+            text,
+            sekunden: (anfang.elapsed().as_secs_f64() * 10.0).round() / 10.0,
+            kontext,
+            geaendert,
+        });
+    }
 
     let halt = halter.modell.clone();
     let sprecher = std::sync::Arc::clone(&halter.sprecher);
-    let anfang = std::time::Instant::now();
     let text = tauri::async_runtime::spawn_blocking(move || {
         let mut g = halt.lock().map_err(|_| "der Modellhalter ist vergiftet".to_string())?;
         let Some(m) = g.as_mut() else {
@@ -1078,7 +1275,13 @@ async fn frage(
     .map_err(|e| format!("der Rechenfaden ist abgestuerzt: {e}"))??;
     let (text, kontext) = text;
 
-    Ok(Antwort { text, sekunden: (anfang.elapsed().as_secs_f64() * 10.0).round() / 10.0, kontext })
+    Ok(Antwort {
+        text,
+        sekunden: (anfang.elapsed().as_secs_f64() * 10.0).round() / 10.0,
+        kontext,
+        // ⚑ Ohne Werkzeuge kann sich nichts geaendert haben.
+        geaendert: Vec::new(),
+    })
 }
 
 /// Was waehrend eines Laufs beim Fenster ankommt.
@@ -1223,6 +1426,19 @@ struct Antwort {
     sekunden: f64,
     /// Der Kontext nach der Antwort, fuer den Balken.
     kontext: Option<myl_client::gespraech::Kontextanzeige>,
+    /// **Welche Anhänge der Lauf verändert hat**, als Dateiname.
+    ///
+    /// ⚑ **Gemessen und nicht behauptet** (Auftrag des Projektinhabers,
+    /// 2026-09-23): verglichen wird der Inhalt vor und nach dem Lauf.
+    /// Eine Antwort, die sagt „ich habe die Datei geändert", ist eine
+    /// Behauptung des Modells; **diese Liste ist ein Befund über das
+    /// Dateisystem.**
+    ///
+    /// ⚠️ **Auch eine neu entstandene Datei steht hier**, denn ein
+    /// Modell, das statt zu ändern eine zweite schreibt, hat auch etwas
+    /// hinterlassen, das der Mensch haben will.
+    #[serde(default)]
+    geaendert: Vec<String>,
 }
 
 /// Ein Schritt, wie ihn das Fenster braucht.
@@ -1304,7 +1520,26 @@ fn zeile_aus(s: &myl_client::lauf::Schritt) -> Zeile {
 /// gelesen wird mit den Werkzeugen, die es ohnehin hat. **Ein Anhang
 /// soll den Kontext nicht fuellen, sondern ihn erreichbar machen.**
 #[tauri::command]
-fn anhang_aufnehmen(pfad: String, wurzel: Option<String>) -> Result<Anhangansicht, String> {
+fn anhang_aufnehmen(
+    pfad: String,
+    wurzel: Option<String>,
+    // ⛔️ **Der Betriebsmodus gehoert hierher** (Fund 439, 2026-09-23).
+    //    Im Chat gibt es **keine** Werkzeuge; eine Anhangzeile, die
+    //    `read_file` nennt, verspricht dort etwas, das es nicht gibt.
+    //    Das Modell antwortet dann auf „aendere die Datei" mit einer
+    //    Anleitung, und niemand sieht, warum.
+    //
+    // ⚑ **Dieselbe Angabe wie bei `kontext`**, und aus demselben Grund:
+    //    Die Werkzeugansage haengt am Modus, also haengt jede Aussage
+    //    ueber Werkzeuge daran.
+    modus: Option<String>,
+) -> Result<Anhangansicht, String> {
+    // ⚑ **Zwei Fragen, nicht eine.** Werkzeuge gibt es in beiden
+    //   Betriebsarten, sobald ein Anhang da ist; aber nur der Agent
+    //   arbeitet am **Arbeitsordner**. Davon hängt der Pfad ab, den das
+    //   Modell genannt bekommt.
+    let mit_werkzeugen_am_arbeitsordner = modus.as_deref() == Some("agent");
+    let mit_werkzeugen = true;
     let einstellungen =
         myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad()).ok();
     let wurzel = wurzel
@@ -1327,13 +1562,48 @@ fn anhang_aufnehmen(pfad: String, wurzel: Option<String>) -> Result<Anhangansich
     let werkzeug = einstellungen
         .as_ref()
         .and_then(|e| myl_client::kisten::werkzeug_fuer(&e.agent, a.art.kennung()));
+    // ⚑ **Ohne Werkzeuge nennt die Zeile keines.** Das gilt fuer den
+    //   Text ebenso wie fuer Bild und Ton: Ein Werkzeugname im Chat ist
+    //   ein Versprechen ohne Deckung.
+    let werkzeug = if mit_werkzeugen { werkzeug } else { None };
     let sicht = match (&ansehen, &werkzeug) {
-        // Wird gleich angesehen: dann keine Zeile, die zu einem
-        // Werkzeugaufruf raet, den niemand mehr braucht.
-        (true, _) => myl_client::anhang::Sicht::Nichts,
+        // ⛔️ **`Kommt` und nicht `Nichts`** (Fund 436). Beide schreiben
+        //    keine Zeile, die zu einem Werkzeugaufruf raet, und nur das
+        //    war hier gemeint. `Nichts` behauptet darueber hinaus, es
+        //    sei **kein Sinnesmodell eingerichtet** und ueber den Inhalt
+        //    sei nichts zu sagen. Das stand dann in derselben Nachricht
+        //    wie die Beschreibung, die `anhang_ansehen` gleich darauf
+        //    anhaengt, und das Modell las den ersten Satz zuerst.
+        (true, _) => myl_client::anhang::Sicht::Kommt,
         (false, Some(w)) => myl_client::anhang::Sicht::Werkzeug(w),
         (false, None) => myl_client::anhang::Sicht::Nichts,
     };
+    // ⚑ **Text hat keine eigene Sicht gehabt**, bis Fund 439 zeigte,
+    //   dass er eine braucht: `read_file` ist ein Werkzeug wie jedes
+    //   andere und im Chat nicht da.
+    let sicht = if matches!(a.art, myl_senses::anhang::Art::Text) {
+        if mit_werkzeugen {
+            myl_client::anhang::Sicht::Werkzeug("read_file")
+        } else {
+            myl_client::anhang::Sicht::Nichts
+        }
+    } else {
+        sicht
+    };
+    // ⛔️ **Im Chat heisst der Anhang anders**, und das ist keine
+    //    Kosmetik. Dort sitzt die Einhängung auf dem Anhangordner
+    //    selbst (siehe `ruesten_fuer_anhaenge`); ein Pfad
+    //    `.AGENT/anhaenge/liste.md` löste dort **nicht** auf, denn er
+    //    zeigte aus der Einhängung hinaus. Der Name allein ist der
+    //    richtige Pfad.
+    //
+    // 📌 **Dieselbe Angabe an zwei Orten wäre hier besonders teuer:**
+    //    Das Modell bekäme einen Pfad, den sein eigenes Werkzeug
+    //    ablehnt, und niemand sähe den Grund.
+    let mut a = a;
+    if !mit_werkzeugen_am_arbeitsordner {
+        a.pfad = a.name.clone();
+    }
     Ok(Anhangansicht {
         nachricht: a.nachricht_mit(true, sicht),
         name: a.name,
@@ -1571,6 +1841,69 @@ struct Anhangansicht {
     ansehen: bool,
 }
 
+/// **Gibt einen geänderten Anhang heraus**, dorthin, wo der Mensch ihn
+/// haben will.
+///
+/// # ⛔️ Warum der Weg hinaus ein eigener Befehl ist
+///
+/// Die Werkzeuge des Chats kommen **nicht** aus dem Anhangordner heraus;
+/// das ist der ganze Zuschnitt (siehe `ruestung::ruesten_fuer_anhaenge`).
+/// Eine geänderte Datei muss trotzdem beim Menschen landen können, und
+/// **das entscheidet der Mensch und nicht das Modell**: Hier wählt er
+/// den Ort, über den Dialog des Systems.
+///
+/// ⚠️ **Die Quelle wird aufgelöst und geprüft.** Ein Name, der aus dem
+/// Anhangordner hinausführt, wird abgewiesen, auch wenn er aus dem
+/// eigenen Fenster kommt: Ein Befehl, der jeden Pfad nimmt, den ihm
+/// jemand nennt, ist eine Tür neben der Tür.
+#[tauri::command]
+async fn anhang_herausgeben(
+    app: tauri::AppHandle,
+    name: String,
+    wurzel: Option<String>,
+) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+
+    let ordner = wurzel
+        .map(|w| w.trim().to_string())
+        .filter(|w| !w.is_empty())
+        .or_else(|| {
+            myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())
+                .ok()
+                .and_then(|e| e.agent.wurzel)
+        })
+        .or_else(myl_client::Einstellungen::standard_wurzel)
+        .ok_or_else(|| "Es ist kein Arbeitsordner gesetzt.".to_string())?;
+    let anhangordner = std::path::Path::new(&ordner).join(myl_client::anhang::unterordner());
+
+    // ⛔️ **Die Einhaengegrenze gilt auch hinaus.** `aufloesen` weist
+    //    jeden Namen ab, der aus dem Anhangordner hinausfuehrt.
+    let ein = myl_client::werkzeuge::Einhaengung::neu(&anhangordner, false)
+        .map_err(|f| format!("Anhangordner: {f}"))?;
+    let quelle = ein
+        .aufloesen(&name, true)
+        .map_err(|f| format!("{name}: {}", f.grund))?;
+
+    let vorschlag = std::path::Path::new(&name)
+        .file_name()
+        .map(|x| x.to_string_lossy().to_string())
+        .unwrap_or_else(|| "anhang".to_string());
+    let Some(ziel) = app
+        .dialog()
+        .file()
+        .set_title("Geaenderten Anhang speichern")
+        .set_file_name(&vorschlag)
+        .blocking_save_file()
+    else {
+        return Ok(None);
+    };
+    let ziel = ziel
+        .into_path()
+        .map_err(|f| format!("der gewaehlte Ort ist kein Pfad: {f}"))?;
+    std::fs::copy(&quelle, &ziel).map_err(|f| format!("{}: {f}", ziel.display()))?;
+    Ok(Some(ziel.display().to_string()))
+}
+
 /// **Der Dateidialog des Systems**, fuer den Anhang.
 ///
 /// ⚑ **Ein eigener Befehl neben `ordner_waehlen`**, denn es ist eine
@@ -1618,6 +1951,166 @@ async fn ordner_waehlen(
     Ok(Some(pfad.display().to_string()))
 }
 
+// ── Das Terminal ────────────────────────────────────────────────────
+//
+// # ⛔️ Hier wird eine Grenze bewusst NICHT gezogen, und das gehoert an
+//   den Anfang
+//
+// Ueberall sonst im Client faesst die Einhaengegrenze ein, was laufen
+// darf: `write_file` kommt nicht aus dem Arbeitsordner heraus, ein
+// Manifest braucht die Schreiberlaubnis, `run_command` gibt es im Chat
+// gar nicht. **Dieses Terminal hat keine dieser Schranken.** Es fuehrt
+// aus, was dasteht, mit den Rechten des Nutzers.
+//
+// ⚑ **Der Unterschied ist, WER tippt.** Jede Schranke im Client schuetzt
+// vor einem **Modell**, das sich irrt oder das ein fremder Text in die
+// Irre fuehrt. Ein Mensch, der ein Terminal oeffnet, hat genau das
+// gewollt, und ihm dieselben Fesseln anzulegen hiesse, ihm ein Terminal
+// zu geben, das keines ist.
+//
+// ⛔️ **Also gilt: Das Modell kommt hier nicht heran.** Dieser Befehl
+// steht in keinem Werkzeugkasten, er wird von keiner Ruestung
+// angeboten, und keine Agentenschleife kann ihn rufen. Er wird vom
+// Fenster gerufen und sonst von niemandem. Wer ihn je als Werkzeug
+// anmeldet, macht aus dem Chat einen Vollzugriff.
+
+/// Wie lange ein Befehl hoechstens laufen darf.
+///
+/// ⚑ **Grosszuegig, denn ein Mensch tippt auch `cargo build`.** Die
+/// Frist ist keine Sicherung, sondern ein Rettungsanker gegen ein
+/// Programm, das auf eine Eingabe wartet, die nie kommt: `stdin` liegt
+/// auf `null`, ein solches Programm haengt also fuer immer.
+const TERMINALFRIST_S: u64 = 300;
+/// Wie viele Zeichen einer Ausgabe ins Fenster gehen.
+const TERMINALGRENZE: usize = 40_000;
+
+/// Was ein Befehl hinterlassen hat.
+#[derive(Serialize)]
+struct Befehlsausgang {
+    /// Beide Roehren hintereinander, wie im Terminal.
+    ausgabe: String,
+    /// Der Rueckgabewert, falls es einen gab.
+    kode: Option<i32>,
+    /// Wo das Terminal danach steht.
+    ordner: String,
+    sekunden: f64,
+    /// Ob mehr da war, als gezeigt wird.
+    gekuerzt: bool,
+    /// Ob die Frist abgelaufen ist.
+    abgebrochen: bool,
+}
+
+/// Wo das Terminal beginnt, wenn noch niemand `cd` gesagt hat.
+fn terminalanfang() -> std::path::PathBuf {
+    myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())
+        .ok()
+        .and_then(|e| e.agent.wurzel.clone())
+        .or_else(myl_client::Einstellungen::standard_wurzel)
+        .map(std::path::PathBuf::from)
+        .filter(|p| p.is_dir())
+        .or_else(|| std::env::var_os("HOME").map(std::path::PathBuf::from))
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+}
+
+/// **Fuehrt einen Befehl aus, den ein Mensch getippt hat.**
+///
+/// ⚑ **`cd` wird selbst behandelt und nicht an die Shell gegeben.**
+/// Jeder Aufruf startet eine eigene Shell; ein `cd` darin waere mit
+/// ihrem Ende wieder weg. Der Ordner lebt deshalb im Fensterzustand.
+#[tauri::command]
+async fn terminal_ausfuehren(
+    befehl: String,
+    halter: tauri::State<'_, Halter>,
+) -> Result<Befehlsausgang, String> {
+    let anfang = std::time::Instant::now();
+    let jetzt = {
+        let mut o = halter.terminalordner.lock().map_err(|_| "der Ordner klemmt".to_string())?;
+        o.get_or_insert_with(terminalanfang).clone()
+    };
+    let eingabe = befehl.trim();
+
+    // Leere Zeile: nur der Prompt, kein Prozess.
+    if eingabe.is_empty() {
+        return Ok(Befehlsausgang {
+            ausgabe: String::new(),
+            kode: Some(0),
+            ordner: jetzt.display().to_string(),
+            sekunden: 0.0,
+            gekuerzt: false,
+            abgebrochen: false,
+        });
+    }
+
+    if eingabe == "cd" || eingabe.starts_with("cd ") {
+        let ziel = eingabe[2..].trim();
+        let neu = if ziel.is_empty() || ziel == "~" {
+            std::env::var_os("HOME").map(std::path::PathBuf::from).unwrap_or(jetzt.clone())
+        } else if let Some(rest) = ziel.strip_prefix("~/") {
+            std::env::var_os("HOME")
+                .map(|h| std::path::PathBuf::from(h).join(rest))
+                .unwrap_or_else(|| jetzt.join(rest))
+        } else {
+            jetzt.join(ziel)
+        };
+        // ⚑ **Aufgeloest und nicht zusammengesetzt.** Ohne
+        //   `canonicalize` stuende nach zweimal `cd ..` ein Pfad mit
+        //   zwei Punkten darin im Prompt, und der waere zwar gueltig,
+        //   aber unlesbar.
+        let neu = std::fs::canonicalize(&neu)
+            .map_err(|f| format!("cd: {}: {f}", neu.display()))?;
+        if !neu.is_dir() {
+            return Err(format!("cd: {}: kein Verzeichnis", neu.display()));
+        }
+        {
+            let mut o = halter.terminalordner.lock().map_err(|_| "der Ordner klemmt".to_string())?;
+            *o = Some(neu.clone());
+        }
+        return Ok(Befehlsausgang {
+            ausgabe: String::new(),
+            kode: Some(0),
+            ordner: neu.display().to_string(),
+            sekunden: anfang.elapsed().as_secs_f64(),
+            gekuerzt: false,
+            abgebrochen: false,
+        });
+    }
+
+    let mut b = if cfg!(windows) {
+        let mut b = std::process::Command::new("cmd");
+        b.arg("/C").arg(eingabe);
+        b
+    } else {
+        let mut b = std::process::Command::new("/bin/sh");
+        b.arg("-c").arg(eingabe);
+        b
+    };
+    b.current_dir(&jetzt);
+    // ⚑ **Ohne Farben.** Eine Ausgabe mit ANSI-Folgen saehe im Fenster
+    //   aus wie Kauderwelsch; dieses Terminal zeigt Text und emuliert
+    //   kein Terminal.
+    b.env("TERM", "dumb");
+    b.env("NO_COLOR", "1");
+
+    let a = myl_senses::prozess::laufen(&mut b, TERMINALFRIST_S, TERMINALGRENZE)
+        .map_err(|f| format!("der Befehl liess sich nicht starten: {f}"))?;
+    let (ausgabe, gekuerzt) = a.zusammen(TERMINALGRENZE);
+    Ok(Befehlsausgang {
+        ausgabe,
+        kode: a.kode,
+        ordner: jetzt.display().to_string(),
+        sekunden: anfang.elapsed().as_secs_f64(),
+        gekuerzt,
+        abgebrochen: a.abgebrochen,
+    })
+}
+
+/// Wo das Terminal steht, fuer den Prompt beim ersten Zeichnen.
+#[tauri::command]
+async fn terminal_ordner(halter: tauri::State<'_, Halter>) -> Result<String, String> {
+    let mut o = halter.terminalordner.lock().map_err(|_| "der Ordner klemmt".to_string())?;
+    Ok(o.get_or_insert_with(terminalanfang).display().to_string())
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -1633,6 +2126,7 @@ fn main() {
             modell_laden,
             agent_fahren,
             frage,
+            anhang_herausgeben,
             kontext,
             verdichten,
             werkzeuge,
@@ -1654,7 +2148,9 @@ fn main() {
             stimme_vorwaermen,
             datei_waehlen,
             aktualisierung,
-            aktualisieren
+            aktualisieren,
+            terminal_ausfuehren,
+            terminal_ordner
         ])
         .run(tauri::generate_context!())
         .expect("die Oberflaeche liess sich nicht starten");

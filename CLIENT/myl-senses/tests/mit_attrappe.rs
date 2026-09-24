@@ -622,3 +622,67 @@ fn vorwaermen_startet_hoechstens_einen() {
     let starts = std::fs::read_to_string(&zaehler).unwrap_or_default().lines().count();
     assert_eq!(starts, 1, "vorgewaermt wurde {starts} mal statt einmal");
 }
+
+/// ⛔️ **Eine Nachricht, die gleich eine Beschreibung bekommt, darf
+/// nicht behaupten, es sei nichts zu sagen** (Fund 436).
+///
+/// Das Fenster schreibt die Anhangzeile sofort und haengt die Antwort
+/// des Sehmodells danach an. Stuende in der Zeile `Sicht::Nichts`,
+/// enthielte dieselbe Nachricht beides: „ueber ihren Inhalt ist nichts
+/// zu sagen" und darunter die Beschreibung. Das Modell liest den ersten
+/// Satz zuerst.
+#[test]
+fn eine_kommende_beschreibung_wird_nicht_vorab_verneint() {
+    let a = myl_senses::anhang::Anhang {
+        name: "bild.png".into(),
+        pfad: ".AGENT/anhaenge/bild.png".into(),
+        art: myl_senses::anhang::Art::Bild,
+        bytes: 5_600_000,
+        auszug: String::new(),
+    };
+    let kommt = a.nachricht_mit(true, myl_senses::anhang::Sicht::Kommt);
+    assert!(
+        !kommt.contains("nichts zu sagen"),
+        "die Zeile verneint, obwohl die Beschreibung folgt:\n{kommt}"
+    );
+    assert!(
+        !kommt.contains("kein Sinnesmodell"),
+        "die Zeile behauptet ein fehlendes Sinnesmodell:\n{kommt}"
+    );
+    assert!(kommt.contains("bild.png"), "{kommt}");
+
+    // ⚑ **Die Gegenprobe:** Ohne Sinnesmodell gehoert genau dieser Satz
+    //   hin, sonst pruefte die Probe darueber nichts.
+    let nichts = a.nachricht_mit(true, myl_senses::anhang::Sicht::Nichts);
+    assert!(nichts.contains("nichts zu sagen"), "{nichts}");
+}
+
+/// ⛔️ **Eine Textdatei im Chat darf kein Werkzeug nennen** (Fund 439).
+///
+/// Im Chat gibt es keine Werkzeuge. Nennt die Anhangzeile trotzdem
+/// `read_file`, antwortet das Modell auf „aendere die Datei" mit einer
+/// Anleitung: Es hat nichts, womit es sie aendern koennte, und die
+/// Nachricht hat ihm das Gegenteil gesagt.
+#[test]
+fn eine_textdatei_ohne_werkzeuge_verspricht_keines() {
+    let a = myl_senses::anhang::Anhang {
+        name: "liste.md".into(),
+        pfad: ".AGENT/anhaenge/liste.md".into(),
+        art: myl_senses::anhang::Art::Text,
+        bytes: 42,
+        auszug: "# Einkaufsliste\n".into(),
+    };
+    let ohne = a.nachricht_mit(true, myl_senses::anhang::Sicht::Nichts);
+    assert!(
+        !ohne.contains("read_file"),
+        "die Zeile nennt ein Werkzeug, das es im Chat nicht gibt:\n{ohne}"
+    );
+    assert!(ohne.contains("keine Dateiwerkzeuge"), "{ohne}");
+    assert!(ohne.contains("# Einkaufsliste"), "der Auszug fehlt:\n{ohne}");
+
+    // ⚑ **Die Gegenrichtung:** Mit Werkzeugen gehoert der Name genau
+    //   dorthin, sonst sucht das Modell nicht danach.
+    let mit = a.nachricht_mit(true, myl_senses::anhang::Sicht::Werkzeug("read_file"));
+    assert!(mit.contains("`read_file`"), "{mit}");
+    assert!(!mit.contains("keine Dateiwerkzeuge"), "{mit}");
+}

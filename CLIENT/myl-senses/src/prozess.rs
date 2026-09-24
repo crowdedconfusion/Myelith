@@ -119,22 +119,56 @@ pub fn laufen_mit_eingabe(
         .spawn()
         .map_err(|f| format!("liess sich nicht starten: {f}"))?;
 
-    let lesen = |mut strom: Box<dyn Read + Send>| {
+    // ⛔️ **Welches Ende behalten wird, haengt an der Roehre** (Fund 433,
+    // 2026-09-22).
+    //
+    // Auf **stdout** steht die Antwort des Sinnesprogramms; wer sie
+    // kuerzt, behaelt ihren **Anfang**, denn das Wichtigste steht vorn.
+    //
+    // Auf **stderr** steht das Protokoll, und dort ist es umgekehrt: Der
+    // Anfang ist Geraetekunde, der **Grund eines Abbruchs steht am
+    // Ende**. Bis hierher behielten beide Roehren den Anfang, und
+    // `sehen.rs` meldete unter der Ueberschrift „Die letzten Zeilen"
+    // die letzten Zeilen der **ersten** acht Kilobyte. Bei einem Bild
+    // mit vielen Bloecken sind das die Fortschrittszeilen der ersten
+    // Sekunden; **die Ursache wurde verworfen, bevor sie entstand.**
+    //
+    // 📌 **Die Absicht stand die ganze Zeit im Quelltext** („Der Grund
+    // steht bei llama.cpp am Ende") und die Umsetzung widersprach ihr.
+    // Ein Kommentar, der eine Zusage beschreibt, die der Code nicht
+    // haelt, ist schlimmer als keiner: Er beruhigt den naechsten Leser.
+    let lesen = |mut strom: Box<dyn Read + Send>, behalte_ende: bool| {
         let (sender, empfang) = mpsc::channel();
         std::thread::spawn(move || {
-            let mut puffer = Vec::new();
+            let mut puffer: Vec<u8> = Vec::new();
             let mut mehr = false;
             let mut haeppchen = [0u8; 8192];
             loop {
                 match strom.read(&mut haeppchen) {
                     Ok(0) | Err(_) => break,
                     Ok(n) => {
-                        let frei = grenze.saturating_sub(puffer.len());
-                        if frei > 0 {
-                            puffer.extend_from_slice(&haeppchen[..n.min(frei)]);
-                        }
-                        if n > frei {
-                            mehr = true;
+                        if behalte_ende {
+                            puffer.extend_from_slice(&haeppchen[..n]);
+                            if puffer.len() > grenze {
+                                mehr = true;
+                                let weg = puffer.len() - grenze;
+                                puffer.drain(..weg);
+                                // ⚑ **Bis zum naechsten Zeichenanfang
+                                //   weiter**, sonst beginnt der Text mit
+                                //   einer halben Mehrbytefolge und damit
+                                //   mit einem Ersatzzeichen.
+                                while puffer.first().is_some_and(|b| b & 0xC0 == 0x80) {
+                                    puffer.remove(0);
+                                }
+                            }
+                        } else {
+                            let frei = grenze.saturating_sub(puffer.len());
+                            if frei > 0 {
+                                puffer.extend_from_slice(&haeppchen[..n.min(frei)]);
+                            }
+                            if n > frei {
+                                mehr = true;
+                            }
                         }
                     }
                 }
@@ -143,8 +177,8 @@ pub fn laufen_mit_eingabe(
         });
         empfang
     };
-    let aus_e = lesen(Box::new(kind.stdout.take().expect("stdout")));
-    let err_e = lesen(Box::new(kind.stderr.take().expect("stderr")));
+    let aus_e = lesen(Box::new(kind.stdout.take().expect("stdout")), false);
+    let err_e = lesen(Box::new(kind.stderr.take().expect("stderr")), true);
 
     // Warten mit Frist: `try_wait` blockiert nicht, also bleibt der
     // Abbruch moeglich.
@@ -203,6 +237,73 @@ mod proben {
         assert_eq!(a.aus.trim(), "hierher");
         assert_eq!(a.fehler.trim(), "dorthin");
         assert_eq!(a.kopf(), "beendet, Rueckgabewert 0");
+    }
+
+    /// ⛔️ **Die Ursache steht am Ende des Protokolls, also wird das
+    /// Ende behalten** (Fund 433).
+    ///
+    /// Ein Sehmodell schreibt je Bildblock eine Fortschrittszeile; bei
+    /// einem grossen Bild sind das Hunderte. Behielte `stderr` den
+    /// Anfang, stuende in der Fehlermeldung der Fortschritt der ersten
+    /// Sekunden und **nie der Grund**.
+    #[test]
+    fn stderr_behaelt_das_ende_und_nicht_den_anfang() {
+        let mut b = Command::new("/bin/sh");
+        // Viel Geschwaetz, danach die eine Zeile, auf die es ankommt.
+        b.arg("-c")
+            .arg("i=0; while [ $i -lt 400 ]; do echo \"Fortschritt $i\" >&2; i=$((i+1)); done; \
+                  echo DIES_IST_DER_GRUND >&2; exit 1");
+        let a = laufen(&mut b, 10, 512).expect("laeuft");
+        assert!(!a.gut(), "{a:?}");
+        assert_eq!(a.kopf(), "beendet, Rueckgabewert 1");
+        assert!(a.mehr, "es war mehr da, als behalten wurde");
+        assert!(
+            a.fehler.contains("DIES_IST_DER_GRUND"),
+            "der Grund fehlt, behalten wurde:\n{}",
+            a.fehler
+        );
+        assert!(
+            !a.fehler.contains("Fortschritt 0\n"),
+            "der Anfang steht noch da, also wurde das falsche Ende behalten"
+        );
+    }
+
+    /// ⚑ **Die Gegenrichtung, und sie ist genauso wichtig.** Auf stdout
+    /// steht die **Antwort**; dort ist der Anfang das Wichtige. Wer
+    /// beide Roehren gleich behandelte, verloere je nach Richtung
+    /// entweder den Grund oder den Anfang der Antwort.
+    #[test]
+    fn stdout_behaelt_den_anfang_und_nicht_das_ende() {
+        let mut b = Command::new("/bin/sh");
+        b.arg("-c")
+            .arg("echo SO_FAENGT_DIE_ANTWORT_AN; \
+                  i=0; while [ $i -lt 400 ]; do echo \"Fuellung $i\"; i=$((i+1)); done");
+        let a = laufen(&mut b, 10, 512).expect("laeuft");
+        assert!(a.gut(), "{a:?}");
+        assert!(a.mehr, "es war mehr da, als behalten wurde");
+        assert!(
+            a.aus.starts_with("SO_FAENGT_DIE_ANTWORT_AN"),
+            "der Anfang der Antwort fehlt, behalten wurde:\n{}",
+            a.aus
+        );
+    }
+
+    /// ⚠️ **Ein Schnitt am Ende darf keine halbe Mehrbytefolge
+    /// hinterlassen.** Der Puffer wird von vorn gekuerzt, und dort kann
+    /// ein Zeichen mitten durchgehen.
+    #[test]
+    fn das_gekuerzte_ende_beginnt_an_einer_zeichengrenze() {
+        let mut b = Command::new("/bin/sh");
+        // Lauter Dreibytezeichen, damit ein Schnitt sehr wahrscheinlich
+        // mitten in eines faellt.
+        b.arg("-c").arg("i=0; while [ $i -lt 600 ]; do printf '\\u2713' >&2; i=$((i+1)); done; exit 1");
+        let a = laufen(&mut b, 10, 512).expect("laeuft");
+        assert!(a.mehr, "es war mehr da, als behalten wurde");
+        assert!(
+            !a.fehler.starts_with('\u{fffd}'),
+            "der Text beginnt mit einem Ersatzzeichen: {:?}",
+            a.fehler.chars().take(4).collect::<String>()
+        );
     }
 
     /// ⚑ **Die Frist greift, und sie steht in der Meldung.**

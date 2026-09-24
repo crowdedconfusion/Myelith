@@ -252,6 +252,26 @@ pub enum Sicht<'a> {
     Werkzeug(&'a str),
     /// Schon angesehen; hier steht, was dabei herauskam.
     Angesehen(&'a str),
+    /// **Es wird gerade angesehen, die Antwort haengt der Aufrufer an.**
+    ///
+    /// ⛔️ **Der Unterschied zu [`Sicht::Nichts`] ist der ganze Zweck
+    /// dieser Variante** (Fund 436, 2026-09-23). Das Fenster schreibt
+    /// die Anhangzeile **sofort**, denn ein Sehmodell braucht Sekunden
+    /// bis Minuten und ein Fenster, das dabei einfriert, ist ein
+    /// kaputtes Fenster. Es nahm dafuer `Nichts`, weil es „keine Zeile,
+    /// die zu einem Werkzeugaufruf raet" meinte.
+    ///
+    /// **`Nichts` sagt aber nicht „nichts weiter", sondern „es ist kein
+    /// Sinnesmodell eingerichtet, ueber ihren Inhalt ist nichts zu
+    /// sagen".** Das stand dann in derselben Nachricht wie die
+    /// Beschreibung, die gleich darauf angehaengt wurde, und das Modell
+    /// las den ersten Satz zuerst: Es antwortete „leider kann ich keine
+    /// Bilder sehen" und gab danach die Beschreibung wieder.
+    ///
+    /// 📌 **Ein Name, der weniger behauptet als sein Text, ist eine
+    /// Falle.** Hier heisst die Variante nach dem, was gilt, und ihr
+    /// Text ist leer, weil der Aufrufer die Ueberleitung mitbringt.
+    Kommt,
 }
 
 impl Anhang {
@@ -290,12 +310,34 @@ impl Anhang {
             )
         };
         match self.art {
+            // ⛔️ **Auch Text haengt an der Sicht** (Fund 439,
+            //    2026-09-23). Hier stand `den Rest liest read_file`,
+            //    ohne Bedingung. **Im Chat gibt es dieses Werkzeug
+            //    nicht**, und dann nennt die Zeile eines, das nicht
+            //    existiert: Das Modell antwortet auf „aendere die
+            //    Datei" mit einer Anleitung, weil es nichts hat, womit
+            //    es sie aendern koennte, und die Nachricht hat ihm das
+            //    Gegenteil gesagt.
+            //
+            // 📌 **Dieselbe Klasse wie Fund 436**, nur andersherum:
+            //    Dort behauptete die Zeile zu wenig, hier zu viel.
             Art::Text => {
-                t.push_str(if deutsch {
-                    " Der Anfang steht unten; den Rest liest `read_file`.\n\n"
-                } else {
-                    " The beginning is below; read_file reads the rest.\n\n"
-                });
+                match sicht {
+                    Sicht::Werkzeug(w) => t.push_str(&if deutsch {
+                        format!(" Der Anfang steht unten; den Rest liest `{w}`.\n\n")
+                    } else {
+                        format!(" The beginning is below; `{w}` reads the rest.\n\n")
+                    }),
+                    _ => t.push_str(if deutsch {
+                        " Der Anfang steht unten, und mehr ist hier nicht zu holen: \
+                         In diesem Betrieb gibt es keine Dateiwerkzeuge, also auch \
+                         keines, das sie liest oder aendert.\n\n"
+                    } else {
+                        " The beginning is below, and there is no more to be had here: \
+                         this mode has no file tools, so none that reads or changes \
+                         it either.\n\n"
+                    }),
+                }
                 t.push_str(&self.auszug);
             }
             Art::Bild | Art::Ton => match sicht {
@@ -320,6 +362,10 @@ impl Anhang {
                          and is all there is."
                     )
                 }),
+                // ⚑ **Kein Wort.** Wer gleich die Beschreibung anhaengt,
+                //   braucht hier keinen Satz, und jeder Satz waere
+                //   entweder doppelt oder falsch.
+                Sicht::Kommt => {}
                 Sicht::Nichts => t.push_str(if deutsch {
                     " ⚠️ Dieses Modell sieht Bilder nicht und hoert Ton nicht, und es ist \
                      kein Sinnesmodell eingerichtet. Ueber ihren Inhalt ist nichts zu sagen."

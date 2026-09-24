@@ -91,6 +91,16 @@ cat > "$ZIEL/Contents/Info.plist" <<PLIST
        Gemeldet vom Projektinhaber am 2026-09-18. -->
   <key>NSMicrophoneUsageDescription</key>
   <string>Myelith nimmt auf, solange die Sprechtaste gedrückt ist, und schreibt das Gesprochene mit einem Modell auf diesem Rechner mit.</string>
+  <!-- ⛔️ **Ohne diesen Schluessel gibt es keine Kamera**, aus demselben
+       Grund wie beim Mikrofon: macOS fragt gar nicht erst, wenn ein
+       Programm nicht sagt, wofuer es das Geraet will.
+       ⚠️ **Die Bildschirmaufnahme steht hier NICHT**, und das ist keine
+       Luecke: Fuer sie gibt es keinen Info.plist-Schluessel. Sie wird
+       einmal in den Systemeinstellungen unter Datenschutz freigegeben,
+       und macOS merkt sie sich an der Kennung samt Signatur (siehe der
+       Absatz zum Ad-hoc-Signieren weiter unten). -->
+  <key>NSCameraUsageDescription</key>
+  <string>Myelith nimmt ein einzelnes Kamerabild auf, wenn du danach fragst, und lässt es von einem Modell auf diesem Rechner ansehen.</string>
 </dict>
 </plist>
 PLIST

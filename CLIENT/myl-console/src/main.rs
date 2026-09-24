@@ -31,6 +31,7 @@ mod animation;
 mod anzeige;
 mod auswahl;
 mod eingabe;
+mod erhoehung;
 mod einstellseite;
 mod banner;
 mod design;

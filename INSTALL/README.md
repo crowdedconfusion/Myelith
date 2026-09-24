@@ -224,6 +224,100 @@ Namen, unter denen der Client sucht.
 ⚠️ **Und deshalb braucht dieser eine Schritt Netz.** Alles andere an
 einem frischen Klon nicht.
 
+### Freigaben des Betriebssystems
+
+⚑ **Ein installiertes Programm ist noch keine Erlaubnis.** Mikrofon,
+Kamera und Bildschirm gibt jedes der drei Systeme erst heraus, wenn ein
+Mensch zustimmt, und keine davon lässt sich aus dem Programm heraus
+erteilen. **Was fehlt, fehlt deshalb nie als Download, sondern als
+Häkchen.**
+
+⚠️ **Zwei Stufen, und beide müssen stimmen.** Der Client hat eine eigene
+Scharfstellung für Bildschirm und Kamera (`MYL_BLICK_BILDSCHIRM`,
+`MYL_BLICK_KAMERA`, im Fenster zwei Häkchen unter „Agent"); sie ist
+**unabhängig** von der Freigabe des Systems. Steht die eine und die
+andere nicht, gibt es das Werkzeug und keine Aufnahme.
+
+| Sinn | macOS | Linux | Windows |
+|---|---|---|---|
+| **Mikrofon** | Systemeinstellungen, Datenschutz und Sicherheit, **Mikrofon** | Gruppe `audio`, sonst nichts | Einstellungen, Datenschutz, **Mikrofon** |
+| **Kamera** | dort, **Kamera** | Gruppe `video` (`/dev/video0`) | dort, **Kamera** |
+| **Bildschirm** | dort, **Bildschirmaufnahme** | X11: nichts. **Wayland: Portal nötig** | nichts |
+| **Dateien** | bei einem Ordner ausserhalb des Benutzerverzeichnisses: **Festplattenvollzugriff** | Dateirechte des Benutzers | Dateirechte des Benutzers |
+| **Web-Recherche** | keine Systemfreigabe, aber `curl` muss da sein (ist es) | `curl` aus der Paketverwaltung | `curl.exe` ab Windows 10 dabei |
+| **PDF lesen** | `brew install poppler` oder `pip install pypdf` | `apt install poppler-utils` | poppler für Windows, oder `pip install pypdf` |
+
+⚑ **Die Web-Recherche ist der einzige Punkt in dieser Tabelle, bei dem
+das System nicht fragt.** Ein Programm darf ins Netz, ohne dass jemand
+zustimmt. Deshalb sitzt die Schranke hier im Client selbst: Das Häkchen
+„Im Web recherchieren dürfen" unter „Agent" ist aus, bis jemand es
+setzt, und es gilt nur für das Gespräch, nicht für den vollen
+Agentenbetrieb. Was dabei gelesen wird, kommt gekennzeichnet als
+fremder Inhalt zurück und nie als Anweisung; gelesen wird nur, was aus
+einem Suchtreffer stammt oder was der Mensch selbst genannt hat.
+
+⚑ **PDF ist eine eigene Zeile, weil es ein eigenes Programm braucht.**
+Gesucht wird in dieser Reihenfolge: `MYL_SCHRIFTLESER`, `pdftotext`
+(poppler), `mutool` (mupdf), zuletzt ein Python, das `pypdf` oder
+`fitz` **wirklich** hat. Fehlt alles, fehlt nur das Lesen von PDF, und
+das Werkzeug sagt es statt zu schweigen. `myl sinne` zeigt in der Zeile
+`Schrift`, welcher Weg gefunden wurde.
+
+#### macOS
+
+⛔️ **Für die Bildschirmaufnahme gibt es keinen Info.plist-Schlüssel.**
+Mikrofon und Kamera kündigt das Bündel an (`NSMicrophoneUsageDescription`,
+`NSCameraUsageDescription`), und macOS fragt dann beim ersten Gebrauch.
+Die Bildschirmaufnahme wird **einmal von Hand** freigegeben, und erst
+danach fragt nichts mehr.
+
+⚠️ **Ohne sie meldet `screencapture`:**
+
+```
+could not create image from display
+```
+
+und endet mit Rückgabewert eins. Der Client sagt das weiter und nennt
+den Weg zur Freigabe.
+
+📌 **Und macOS merkt sich eine erteilte Erlaubnis an der Kennung samt
+Signatur.** `Myelith.app` wird ad hoc signiert, damit sie über einen
+Neubau hinweg dieselbe Identität behält; ohne das käme die Frage nach
+jedem Bau wieder, oder schlimmer, sie käme nicht und die Aufnahme bliebe
+leer.
+
+⚑ **Im Terminal gilt die Erlaubnis dem Terminal**, nicht `myelith`. Wer
+`myelith` aus Terminal.app oder iTerm startet, gibt dieses Programm
+frei; wer `Myelith.app` doppelklickt, gibt das Bündel frei. **Das sind
+zwei Einträge in derselben Liste.**
+
+#### Linux
+
+**Mikrofon und Kamera hängen an Gruppen**, nicht an einem Dialog:
+
+```sh
+sudo usermod -aG audio,video "$USER"    # danach neu anmelden
+```
+
+⚠️ **Der Bildschirm ist die Ausnahme, und sie hängt an der Sitzungsart.**
+Unter X11 nimmt `ffmpeg -f x11grab` ohne jede Freigabe auf. **Unter
+Wayland tut es das nicht**, und zwar entwurfsgemäss: Dort gibt erst ein
+Portal den Bildschirm heraus, mit einem Dialog je Aufnahme.
+`MYL_SCHIRMFORMAT` und `MYL_SCHIRMGERAET` sagen ffmpeg, woher es nehmen
+soll, wenn die Vorgabe nicht passt.
+
+#### Windows
+
+Mikrofon und Kamera stehen unter Einstellungen, Datenschutz und
+Sicherheit; dort muss zusätzlich **„Desktop-Apps den Zugriff erlauben"**
+anstehen, sonst greift die Freigabe nur für Store-Anwendungen. Die
+Bildschirmaufnahme über `gdigrab` braucht keine.
+
+⚠️ **`myelith --root` ist etwas anderes als eine Freigabe.** Es
+verschiebt die Einhängegrenze des Agenten auf das Dateisystem und
+startet sich dafür mit Verwalterrechten neu; die Benutzerkontensteuerung
+fragt. Siehe den Changelog des Clients.
+
 ### ⛔️ Zwei Stolpersteine, beide beim tatsächlichen Einrichten gefunden
 
 **Ein aus dem Finder gestartetes `Myelith.app` erbt den PATH der

@@ -1,0 +1,160 @@
+{
+  "artefakt": "INTEGER_LLM/artifacts/myelith-4b",
+  "schritte": 6,
+  "laeufe": [
+    {
+      "name": "w_list_directory",
+      "stufe": 1,
+      "lauf": 1,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 24.9,
+      "werkzeuge": [
+        "list_directory"
+      ]
+    },
+    {
+      "name": "w_read_file",
+      "stufe": 1,
+      "lauf": 1,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 21.9,
+      "werkzeuge": [
+        "read_file"
+      ]
+    },
+    {
+      "name": "w_write_file",
+      "stufe": 1,
+      "lauf": 1,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 34.4,
+      "werkzeuge": [
+        "write_file"
+      ]
+    },
+    {
+      "name": "w_edit_file",
+      "stufe": 1,
+      "lauf": 1,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 35.6,
+      "werkzeuge": [
+        "edit_file"
+      ]
+    },
+    {
+      "name": "w_search_files",
+      "stufe": 1,
+      "lauf": 1,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 31.2,
+      "werkzeuge": [
+        "search_files"
+      ]
+    },
+    {
+      "name": "w_suche_text",
+      "stufe": 1,
+      "lauf": 1,
+      "bestanden": false,
+      "grund": "suche_text wurde nicht gerufen (gerufen: search_files)",
+      "sekunden": 74.1,
+      "werkzeuge": [
+        "search_files"
+      ]
+    },
+    {
+      "name": "w_dateibaum",
+      "stufe": 1,
+      "lauf": 1,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 42.2,
+      "werkzeuge": [
+        "dateibaum"
+      ]
+    },
+    {
+      "name": "w_zaehle_zeilen",
+      "stufe": 1,
+      "lauf": 1,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 26.8,
+      "werkzeuge": [
+        "zaehle_zeilen"
+      ]
+    },
+    {
+      "name": "w_fill_template",
+      "stufe": 1,
+      "lauf": 1,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 33.6,
+      "werkzeuge": [
+        "fill_template"
+      ]
+    },
+    {
+      "name": "w_join_sections",
+      "stufe": 1,
+      "lauf": 1,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 36.4,
+      "werkzeuge": [
+        "join_sections"
+      ]
+    },
+    {
+      "name": "w_describe_image",
+      "stufe": 1,
+      "lauf": 1,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 43.9,
+      "werkzeuge": [
+        "describe_image"
+      ]
+    },
+    {
+      "name": "w_transcribe_audio",
+      "stufe": 1,
+      "lauf": 1,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 30.0,
+      "werkzeuge": [
+        "transcribe_audio"
+      ]
+    },
+    {
+      "name": "w_run_command",
+      "stufe": 1,
+      "lauf": 1,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 37.5,
+      "werkzeuge": [
+        "run_command"
+      ]
+    },
+    {
+      "name": "w_git_stand",
+      "stufe": 1,
+      "lauf": 1,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 35.9,
+      "werkzeuge": [
+        "git_stand"
+      ]
+    }
+  ]
+}

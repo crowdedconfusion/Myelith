@@ -49,6 +49,9 @@ Schalter fuer `agent`, `sitzung` und `auftraege`, zusaetzlich zu denen
 von `frage`:
   --schritte N    Hoechstzahl der Schritte
   --nur-verankert Sperrt die Dateiwerkzeuge fuer diesen Lauf, s.u.
+  --chat          Nur `agent`: der Zuschnitt des Gespraechsfensters,
+                  also Werkzeuge nur auf dem Anhangordner, dazu die
+                  Web-Recherche, falls `agent.web_recherche` an ist
   --wurzel P      Haengt P ein, nur fuer diesen Lauf
   --schreiben     Erlaubt Schreiben, nur fuer diesen Lauf
   --roh           Der volle Nachrichtenverlauf statt der Kurzform
@@ -165,6 +168,66 @@ fn main() {
 /// `kein_wertschalter_fehlt` haelt es fest.
 const MIT_WERT: [&str; 5] =
     ["--token", "--schritte", "--wurzel", "--datei", "--werkzeuge"];
+
+/// Wie breit die Namensspalte der Einstellungsliste sein muss.
+///
+/// 📌 Sie stand auf 21, und `agent.blick_bildschirm` ist 22 Zeichen
+/// lang: Der Wert klebte am Namen. ⚑ **Eine Breite, die aus der Liste
+/// selbst kommt**, geht bei jedem neuen Feld von allein mit; eine
+/// festgeschriebene Zahl ist dieselbe Angabe an zwei Orten.
+fn spaltenbreite() -> usize {
+    myl_client::einstellungen::FELDER
+        .iter()
+        .map(|f| f.name.chars().count())
+        .max()
+        .unwrap_or(20)
+        + 1
+}
+
+/// Die Ruestung dieses Laufs: Arbeitsordner oder Chatzuschnitt.
+///
+/// ⚑ **`--chat` fährt genau das, was das Fenster im Gespräch fährt:**
+/// die fünf Dateiwerkzeuge auf dem Anhangordner statt auf dem
+/// Arbeitsordner, kein Manifest, kein `run_command`, und dazu die
+/// Web-Recherche, falls sie eingeschaltet ist. 📌 **Ohne diesen
+/// Schalter liesse sich der Chatzuschnitt nur durch das Fenster
+/// prüfen**, also nur von Hand und nur auf einem Rechner mit
+/// Oberfläche.
+fn ruestung_fuer_diesen_lauf(
+    e: &Einstellungen,
+    args: &[String],
+    auftrag: &str,
+) -> Result<myl_client::ruestung::Ruestung, String> {
+    if !args.iter().any(|a| a == "--chat") {
+        return myl_client::ruestung::ruesten(
+            &agent_fuer_diesen_lauf(e, args),
+            form_fuer_diesen_lauf(args),
+            satz_fuer_diesen_lauf(e, args),
+            vec![werkzeug_uhr()],
+        );
+    }
+    let agent = agent_fuer_diesen_lauf(e, args);
+    let wurzel = agent
+        .wurzel
+        .clone()
+        .or_else(Einstellungen::standard_wurzel)
+        .ok_or_else(|| "fuer --chat fehlt ein Arbeitsordner, in dem die Anhaenge liegen".to_string())?;
+    let anhangordner = std::path::Path::new(&wurzel).join(myl_client::anhang::unterordner());
+    std::fs::create_dir_all(&anhangordner)
+        .map_err(|f| format!("der Anhangordner liess sich nicht anlegen: {f}"))?;
+    // ⛔️ **Der Auftrag ist die Saat des Zielkreises**, nichts sonst:
+    //    Genau wie im Fenster zaehlt nur, was der Mensch geschrieben
+    //    hat.
+    let netz = (e.agent.web_recherche && myl_client::netzwerkzeuge::curl_vorhanden())
+        .then_some(auftrag);
+    myl_client::ruestung::ruesten_fuer_anhaenge(
+        &anhangordner,
+        form_fuer_diesen_lauf(args),
+        netz,
+        vec![werkzeug_uhr()],
+        None,
+    )
+}
 
 fn freitext(args: &[String]) -> String {
     let mit_wert = MIT_WERT;
@@ -298,7 +361,7 @@ fn uebersicht(e: &Einstellungen, kerne: usize) -> Vec<String> {
             // Ein Feld im Katalog, das die Einstellungen nicht kennen,
             // ist ein Fund und kein Grund, die Zeile wegzulassen.
             Err(m) => {
-                zeilen.push(format!("  {:<21}({m})", f.name));
+                zeilen.push(format!("  {:<breite$}({m})", f.name, breite = spaltenbreite()));
                 continue;
             }
         };
@@ -310,7 +373,7 @@ fn uebersicht(e: &Einstellungen, kerne: usize) -> Vec<String> {
             Feldwert::Leer => ohne_wert(f).to_string(),
         };
         let text = if f.name == "kap.kerne" { format!("{text} (wirksam: {kerne})") } else { text };
-        zeilen.push(format!("  {:<21}{text}", f.name));
+        zeilen.push(format!("  {:<breite$}{text}", f.name, breite = spaltenbreite()));
     }
 
     zeilen
@@ -450,6 +513,52 @@ fn sinne(args: &[String]) -> i32 {
     zeile("Hoeren", s.hoeren.as_ref().map(|z| z.programm.display().to_string()));
     zeile("Sprechen", s.sprechen.as_ref().map(|z| z.name()));
     zeile("Aufnehmen", s.aufnehmen.as_ref().map(|z| z.programm.display().to_string()));
+    // ⚑ **Die beiden Blicke gehoeren in dieselbe Uebersicht** (2026-09-23).
+    //   📌 Am 2026-09-18 standen die Sinneswerkzeuge schon einmal in der
+    //   Ruestung und in keiner Liste, und der Kopf von `main.rs` haelt
+    //   fest, was das kostet: **dieselbe Frage an zwei Orten, und der
+    //   zweite meldet sich nicht.**
+    zeile("Bildschirm", s.bildschirm.as_ref().map(|z| z.programm.display().to_string()));
+    zeile(
+        "Kamera",
+        s.kamera.as_ref().map(|z| format!("{} ({} {})", z.programm.display(), z.quelle.0, z.quelle.1)),
+    );
+    // ⚑ **Schrift gehoert in dieselbe Uebersicht**, aus demselben
+    //   Grund: Wer sich fragt, warum ein PDF nicht gelesen wird, schaut
+    //   hier nach und nicht in den Quelltext.
+    zeile(
+        "Schrift",
+        s.schrift.as_ref().map(|z| match &z.weg {
+            myl_senses::schrift::Schriftweg::Pdftotext(p) => format!("{} (PDF)", p.display()),
+            myl_senses::schrift::Schriftweg::Mutool(p) => format!("{} (PDF)", p.display()),
+            myl_senses::schrift::Schriftweg::Python(p) => {
+                format!("{} mit pypdf oder fitz (PDF)", p.display())
+            }
+        }),
+    );
+    // ⛔️ **Das Geraet ist nicht die Erlaubnis.** Wer hier zwei Haken
+    //    sieht und nicht liest, dass beide Werkzeuge trotzdem fehlen,
+    //    sucht den Fehler danach an der falschen Stelle.
+    // ⚑ **Dieselbe Ableitung wie die Ruestung**, samt
+    //   Umgebungsuebersteuerung. Eine eigene Lesart hier zeigte einen
+    //   Stand, den der Agent nicht hat.
+    let b = match myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad()) {
+        Ok(e) => myl_client::sinneswerkzeuge::Blickbefugnis::aus_einstellung(&e.agent),
+        Err(_) => myl_client::sinneswerkzeuge::Blickbefugnis::fuer(
+            myl_client::sinneswerkzeuge::Blickbefugnis::keine(),
+        ),
+    };
+    let stand = |an: bool| if an { "scharf" } else { "AUS" };
+    println!(
+        "  {:<10} Bildschirm {} (agent.blick_bildschirm), Kamera {} (agent.blick_kamera)",
+        "Blicken",
+        stand(b.bildschirm),
+        stand(b.kamera)
+    );
+    if !b.bildschirm && !b.kamera {
+        println!("      Ohne Scharfstellung bietet der Agent bildschirm_ansehen und");
+        println!("      kamera_ansehen nicht an, auch wenn die Geraete da sind.");
+    }
     if let Some(h) = s.stimmhinweis() {
         println!();
         println!("⚠️ {h}");
@@ -869,8 +978,21 @@ fn satz_fuer_diesen_lauf(
     match wort.trim().to_ascii_lowercase().as_str() {
         "base" | "advanced" | "1337" => Werkzeugkiste::aus_ordnername(&wort),
         _ => {
+            // ⛔️ **Abbruch und kein Rueckfall** (Fund 437, 2026-09-23).
+            //
+            // Bis hierher wurde gewarnt und mit der **eingestellten**
+            // Kiste weitergefahren. Wer `--werkzeuge` setzt, sagt aber
+            // gerade, dass die eingestellte nicht gelten soll; er
+            // bekommt dann das Gegenteil dessen, wonach er gefragt hat.
+            //
+            // 📌 **Gefunden von der Agentenmessung**, die `voll`
+            // uebergab und darueber „Werkzeugsatz: voll" schrieb. `myl`
+            // warnte in eine Datei, die niemand las, und mass **Base**;
+            // `run_command` war in keinem Lauf im Angebot. **Eine
+            // Warnung, nach der es weitergeht, ist ein Kommentar mit
+            // Laufzeit.**
             eprintln!("myl: --werkzeuge {wort} kenne ich nicht, moeglich sind Base, Advanced");
-            myl_client::kisten::kiste_der_gilt(&e.agent)
+            std::process::exit(2);
         }
     }
 }
@@ -1041,12 +1163,7 @@ fn agent(args: &[String]) -> i32 {
     // ⚑ Die Verdrahtung liegt in der Kiste und nicht hier, damit ein
     // Pruefstand sie **ohne geladenes Modell** fahren kann; siehe
     // `ruestung.rs`.
-    let ruestung = match myl_client::ruestung::ruesten(
-        &agent_fuer_diesen_lauf(&e, args),
-        form_fuer_diesen_lauf(args),
-        satz_fuer_diesen_lauf(&e, args),
-        vec![werkzeug_uhr()],
-    ) {
+    let ruestung = match ruestung_fuer_diesen_lauf(&e, args, &auftrag) {
         Ok(r) => r,
         Err(m) => {
             eprintln!("myl agent: {m}");
@@ -1570,9 +1687,12 @@ mod schalter {
                 schritte: 6,
                 wurzel: Some("/vorher".into()),
                 schreiben: true,
-        kistenordner: None,
-        warnung: true,
+                kistenordner: None,
+                warnung: true,
                 modus: Default::default(),
+                blick_bildschirm: false,
+                blick_kamera: false,
+                web_recherche: false,
             },
             ..Einstellungen::default()
         }

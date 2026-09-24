@@ -99,7 +99,38 @@ fn main() {
     let anzahl = (ebenen * experten) as f64;
 
     // Ein Experte belegt 3 Matrizen zu hidden x moe_inter.
-    let je_experte_gb = 3.0 * 2048.0 * 768.0 / 1e9;
+    //
+    // ⛔️ **Aus dem Modell gelesen und nicht eingetragen** (Fund 434,
+    // 2026-09-22). Hier standen `2048` und `768` als feste Zahlen, also
+    // die Masse des 30B, unter dem diese Sonde geschrieben wurde. Am
+    // 35B rechnete sie damit **48,2 GB fuer alle Experten**, waehrend
+    // dessen ganzes Artefakt 33 GB wiegt: Seine Expertenbreite ist 512
+    // und nicht 768, also ein Faktor 1,5 zu viel.
+    //
+    // 📌 **Die Deckungsspalte war davon nie betroffen**, denn sie zaehlt
+    // Aufrufe. Falsch war nur die Spalte, aus der jemand die Groesse
+    // eines Zwischenspeichers ablesen wuerde, und genau dafuer gibt es
+    // diese Tabelle. **Eine Zahl, die nicht aus den Daten folgt, folgt
+    // dem Modell, unter dem sie getippt wurde.**
+    //
+    // ⚑ **Gelesen wird die Form des ersten Experten**, den es gibt. Sie
+    //   traegt `[moe_intermediate_size, hidden_size]`, und damit steht
+    //   die Breite da, statt hergeleitet zu werden.
+    let moe_breite = model
+        .layers
+        .iter()
+        .find_map(|l| match &l.ffn {
+            integer_llm_runtime::model::Feedforward::Moe(m) => {
+                m.experts.first().and_then(|e| e.gate_proj.shape.first().copied())
+            }
+            _ => None,
+        })
+        .unwrap_or(0);
+    if moe_breite == 0 {
+        eprintln!("[expertenprobe] Dieses Modell hat keine Gemischebene.");
+        std::process::exit(1);
+    }
+    let je_experte_gb = 3.0 * model.hidden_size as f64 * moe_breite as f64 / 1e9;
 
     println!("| Anteil der Experten | Deckung der Aufrufe | Speicher |");
     println!("|---|---|---|");

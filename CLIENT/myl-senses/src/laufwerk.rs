@@ -213,6 +213,15 @@ pub struct Eigene {
     /// Woher ffmpeg den Ton nimmt: Format und Geraet, etwa
     /// `("avfoundation", ":0")`. Ohne Angabe die Vorgabe dieses Systems.
     pub tonquelle: Option<(String, String)>,
+    /// Das Programm, das ein Einzelbild aufnimmt.
+    pub blicker: Option<PathBuf>,
+    /// Woher der Bildschirm kommt, falls ffmpeg ihn holt.
+    pub schirmquelle: Option<(String, String)>,
+    /// Woher die Kamera kommt: Format und Geraet.
+    pub kameraquelle: Option<(String, String)>,
+    /// Das Programm, das aus einem PDF Text macht. Es bekommt den Pfad
+    /// als letztes Argument und schreibt nach stdout.
+    pub schriftleser: Option<PathBuf>,
 }
 
 impl Eigene {
@@ -232,10 +241,20 @@ impl Eigene {
                 (Ok(f), Ok(g)) if !f.is_empty() && !g.is_empty() => Some((f, g)),
                 _ => None,
             },
+            blicker: lies("MYL_BLICKER"),
+            schirmquelle: match (std::env::var("MYL_SCHIRMFORMAT"), std::env::var("MYL_SCHIRMGERAET")) {
+                (Ok(f), Ok(g)) if !f.is_empty() && !g.is_empty() => Some((f, g)),
+                _ => None,
+            },
+            kameraquelle: match (std::env::var("MYL_KAMERAFORMAT"), std::env::var("MYL_KAMERAGERAET")) {
+                (Ok(f), Ok(g)) if !f.is_empty() && !g.is_empty() => Some((f, g)),
+                _ => None,
+            },
             sehmodell_genau: lies("MYL_SEHMODELL_GENAU"),
             sehprojektor_genau: lies("MYL_SEHPROJEKTOR_GENAU"),
             hoerer: lies("MYL_HOERER"),
             hoermodell: lies("MYL_HOERMODELL"),
+            schriftleser: lies("MYL_SCHRIFTLESER"),
         }
     }
 }
@@ -312,6 +331,37 @@ pub struct Hoerzeug {
 pub struct Aufnahmezeug {
     pub programm: PathBuf,
     pub quelle: Option<(String, String)>,
+}
+
+/// **Was gebraucht wird, um den Bildschirm einmal abzulichten.**
+///
+/// # ⚑ Zwei Wege, und der erste ist auf macOS der bessere
+///
+/// `screencapture` liegt auf macOS bei, braucht kein Format und kein
+/// Geraet und kostet keine halbe Sekunde. Ueberall sonst tut es ffmpeg,
+/// das fuer den Ton ohnehin schon gebraucht wird (`x11grab` unter X11,
+/// `gdigrab` unter Windows).
+///
+/// ⚠️ **`quelle` ist `None`, wenn das Programm die Quelle selbst
+/// kennt.** Genau daran unterscheidet [`crate::blick`] die beiden Wege,
+/// statt den Programmnamen zu lesen: Wer den Namen prueft, prueft eine
+/// Schreibweise, und ein eigenes Skript heisst anders.
+#[derive(Debug, Clone)]
+pub struct Bildschirmzeug {
+    pub programm: PathBuf,
+    pub quelle: Option<(String, String)>,
+}
+
+/// **Was gebraucht wird, um ein Kamerabild zu holen.**
+///
+/// ⚠️ **Hier gibt es keinen Weg ohne Quelle.** Eine Kamera hat auf jedem
+/// System ein Format und ein Geraet, und welches gemeint ist, weiss nur
+/// die Maschine: `MYL_KAMERAFORMAT` und `MYL_KAMERAGERAET` sagen es,
+/// sonst gilt [`kameraquelle_vorgabe`].
+#[derive(Debug, Clone)]
+pub struct Kamerazeug {
+    pub programm: PathBuf,
+    pub quelle: (String, String),
 }
 
 /// **Wie gesprochen wird.**
@@ -414,6 +464,12 @@ pub struct Sinne {
     pub hoeren: Result<Hoerzeug, Mangel>,
     pub sprechen: Result<Sprechzeug, Mangel>,
     pub aufnehmen: Result<Aufnahmezeug, Mangel>,
+    /// **Ein Einzelbild vom Bildschirm.** Siehe [`Bildschirmzeug`].
+    pub bildschirm: Result<Bildschirmzeug, Mangel>,
+    /// **Ein Einzelbild aus der Kamera.** Siehe [`Kamerazeug`].
+    pub kamera: Result<Kamerazeug, Mangel>,
+    /// **Schrift aus einem PDF.** Siehe [`crate::schrift`].
+    pub schrift: Result<crate::schrift::Schriftzeug, Mangel>,
 }
 
 impl Sinne {
@@ -458,6 +514,9 @@ impl Sinne {
             hoeren: hoerzeug(heimat, gewichte, eigen, pfad),
             sprechen: sprechzeug(heimat, gewichte, eigen, pfad),
             aufnehmen: aufnahmezeug(heimat, eigen, pfad),
+            bildschirm: bildschirmzeug(heimat, eigen, pfad),
+            kamera: kamerazeug(heimat, eigen, pfad),
+            schrift: schriftzeug(heimat, eigen, pfad),
         }
     }
 
@@ -659,6 +718,141 @@ pub fn tonquelle_vorgabe() -> (String, String) {
         ("dshow".into(), "audio=Microphone".into())
     } else {
         ("pulse".into(), "default".into())
+    }
+}
+
+/// Woher ffmpeg den Bildschirm nimmt, wenn es ihn nehmen muss.
+///
+/// ⚠️ **Auf macOS steht hier nichts**, denn dort nimmt `screencapture`
+/// ihn, und das braucht keine Quelle.
+pub fn schirmquelle_vorgabe() -> (String, String) {
+    if cfg!(target_os = "windows") {
+        ("gdigrab".into(), "desktop".into())
+    } else {
+        ("x11grab".into(), ":0.0".into())
+    }
+}
+
+/// Woher ffmpeg die Kamera nimmt.
+pub fn kameraquelle_vorgabe() -> (String, String) {
+    if cfg!(target_os = "macos") {
+        ("avfoundation".into(), "0".into())
+    } else if cfg!(target_os = "windows") {
+        ("dshow".into(), "video=Integrated Camera".into())
+    } else {
+        ("v4l2".into(), "/dev/video0".into())
+    }
+}
+
+/// **Womit sich ein PDF lesen laesst.**
+///
+/// ⚑ **Die Rangfolge ist die Reihenfolge**, und sie ist eine
+/// Entscheidung: Ein eigenes Programm zuerst (wer eines hinlegt, hat
+/// sich entschieden), dann `pdftotext`, dann `mutool`, zuletzt ein
+/// Python. Das Python steht hinten, weil es eine Bibliothek
+/// voraussetzt, die dort installiert sein muss; die ersten beiden
+/// bringen alles mit.
+fn schriftzeug(
+    heimat: &Path,
+    eigen: &Eigene,
+    pfad: &[PathBuf],
+) -> Result<crate::schrift::Schriftzeug, Mangel> {
+    use crate::schrift::{Schriftweg, Schriftzeug};
+    if let Some(p) = programm_suchen(&[], eigen.schriftleser.as_deref(), heimat, pfad) {
+        return Ok(Schriftzeug { weg: Schriftweg::Pdftotext(p) });
+    }
+    if let Some(p) = programm_suchen(&["pdftotext"], None, heimat, pfad) {
+        return Ok(Schriftzeug { weg: Schriftweg::Pdftotext(p) });
+    }
+    if let Some(p) = programm_suchen(&["mutool"], None, heimat, pfad) {
+        return Ok(Schriftzeug { weg: Schriftweg::Mutool(p) });
+    }
+    // ⚠️ **Gesucht wird ein Python, das die Bibliothek WIRKLICH hat.**
+    //    Eines, das sie nicht hat, waere ein Zeug, das beim ersten
+    //    Auftrag versagt, und das ist schlimmer als keines.
+    for name in ["python3", "python"] {
+        if let Some(p) = programm_suchen(&[name], None, heimat, pfad) {
+            if python_kann_pdf(&p) {
+                return Ok(Schriftzeug { weg: Schriftweg::Python(p) });
+            }
+        }
+    }
+    Err(Mangel {
+        sinn: "PDF lesen",
+        fehlt: vec![("Programm".into(), "pdftotext, mutool oder ein Python mit pypdf".into())],
+        anleitung: vec![
+            format!("poppler installieren ({})", einbauhinweis("poppler", "poppler-utils")),
+            "Oder: python3 -m pip install pypdf".into(),
+            "Ein eigenes Programm sagt MYL_SCHRIFTLESER; es bekommt den PDF-Pfad und schreibt Text nach stdout."
+                .into(),
+        ],
+    })
+}
+
+/// Ob dieses Python `fitz` oder `pypdf` kennt.
+fn python_kann_pdf(python: &Path) -> bool {
+    std::process::Command::new(python)
+        .arg("-c")
+        .arg("import importlib.util as u, sys; sys.exit(0 if (u.find_spec('fitz') or u.find_spec('pypdf')) else 1)")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+fn bildschirmzeug(heimat: &Path, eigen: &Eigene, pfad: &[PathBuf]) -> Result<Bildschirmzeug, Mangel> {
+    // ⚑ **Ein eigener Blicker gewinnt**, wie ueberall hier: Wer eines
+    // hinlegt, hat sich entschieden.
+    if let Some(eigen_prog) = programm_suchen(&[], eigen.blicker.as_deref(), heimat, pfad) {
+        return Ok(Bildschirmzeug {
+            programm: eigen_prog,
+            quelle: eigen.schirmquelle.clone(),
+        });
+    }
+    // ⚑ **Auf macOS zuerst `screencapture`.** Es liegt bei, ist
+    // schneller und kann spaeter ein einzelnes Fenster statt des ganzen
+    // Schirms.
+    if cfg!(target_os = "macos") {
+        if let Some(p) = programm_suchen(&["screencapture"], None, heimat, pfad) {
+            return Ok(Bildschirmzeug { programm: p, quelle: None });
+        }
+    }
+    match programm_suchen(&["ffmpeg"], None, heimat, pfad) {
+        Some(programm) => Ok(Bildschirmzeug {
+            programm,
+            quelle: Some(eigen.schirmquelle.clone().unwrap_or_else(schirmquelle_vorgabe)),
+        }),
+        None => Err(Mangel {
+            sinn: "Bildschirmaufnahme",
+            fehlt: vec![("Programm".into(), "screencapture oder ffmpeg".into())],
+            anleitung: vec![
+                format!("ffmpeg installieren ({})", einbauhinweis("ffmpeg", "ffmpeg")),
+                "Ein eigenes Programm sagt MYL_BLICKER; es bekommt den Zielpfad als letztes Argument."
+                    .into(),
+            ],
+        }),
+    }
+}
+
+fn kamerazeug(heimat: &Path, eigen: &Eigene, pfad: &[PathBuf]) -> Result<Kamerazeug, Mangel> {
+    match programm_suchen(&["ffmpeg"], eigen.blicker.as_deref(), heimat, pfad) {
+        Some(programm) => Ok(Kamerazeug {
+            programm,
+            quelle: eigen.kameraquelle.clone().unwrap_or_else(kameraquelle_vorgabe),
+        }),
+        None => Err(Mangel {
+            sinn: "Kamera",
+            fehlt: vec![("Programm".into(), "ffmpeg".into())],
+            anleitung: vec![
+                format!("ffmpeg installieren ({})", einbauhinweis("ffmpeg", "ffmpeg")),
+                format!(
+                    "Nimmt ffmpeg die falsche Kamera, sagen MYL_KAMERAFORMAT und MYL_KAMERAGERAET, \
+                     welche gemeint ist; Vorgabe hier ist {:?}.",
+                    kameraquelle_vorgabe()
+                ),
+            ],
+        }),
     }
 }
 

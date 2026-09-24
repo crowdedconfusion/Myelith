@@ -1,6 +1,6 @@
 # agent-layer (`myl-agent`)
 
-> **Version:** 0.18.1 (`myl-agent` 0.7.0, `myl-local-agent` 0.11.1)
+> **Version:** 0.19.0 (`myl-agent` 0.7.0, `myl-local-agent` 0.12.0)
 > **Datum:** 2026-09-21
 > **Status:** Manifeste, Herkunftsstufe, Registratur, der
 > **Session-Kontrakt** mit Durchsetzung im Ledger, der **Plan** und seit
@@ -44,6 +44,53 @@ Kap. 8.2).
 - `src/kette.rs` — dass er es auch so getan hat, und wann er aufhört.
 
 ## Changelog
+
+### v0.19.0 – 2026-09-23 (`myl-local-agent` 0.12.0: ein Patzer beendet den Lauf nicht mehr, und Schweigen heisst nicht mehr Erfolg)
+
+⛔️ **Der Anlass war gemessen.** In einer Agentenprobe hat das grösste
+Modell beide gesuchten Arbeiten gefunden, beide richtigen Seiten
+gelesen und die Tatsachen sauber herausgezogen. Dann rief es
+`write_file` mit dem Parameterschema eines anderen Werkzeugs auf. Die
+Prüfung erkannte das und schrieb eine **gute** Absage in den Verlauf.
+Der Lauf endete im selben Augenblick, mit der Meldung „fertig", und die
+Absage wurde nie abgeschickt. Zehn von vierzehn Schritten lagen frei,
+und die richtige Antwort stand in den Argumenten des abgelehnten
+Aufrufs.
+
+**Drei Fälle, die bisher einer waren:**
+
+| Schritt | vorher | jetzt |
+|---|---|---|
+| kein Vorschlag | `Fertig` | `Fertig` |
+| etwas lief | weiter | weiter |
+| vorgeschlagen, nichts lief | `Fertig` | Rückmeldung, bis zu zwei weitere Runden |
+
+⚑ **Die Kostenschranke bleibt, sie wandert nur.** Der Grund im
+Quelltext war und ist richtig: Ein Modell, das immer wieder dasselbe
+Verbotene vorschlägt, soll nicht die ganze Schrittzahl verbrennen. Neu
+ist, dass es vorher **zwei** Gelegenheiten bekommt, den Grund zu lesen
+und es besser zu machen. Gezählt wird hintereinander; ein ausgeführtes
+Werkzeug setzt den Zähler zurück, denn danach ist das Modell
+nachweislich wieder auf Kurs.
+
+⛔️ **Ein unlesbarer Aufruf bekommt jetzt eine Antwort.** Vorher stand in
+der Schleife `for v in roh.into_iter().flatten()`, und das warf jedes
+`Err` **wortlos** weg: Ein Aufruf, der etwa an der Tokengrenze mitten im
+String abbrach, hinterliess danach gar nichts. Keine Ausführung, keine
+Ablehnung, keine Nachricht. 📌 **Ein Fehler, den niemand meldet, wird
+nicht berichtigt.**
+
+⛔️ **Und der neue Ausgang `Steckengeblieben` heisst nicht `Fertig`.**
+Ein Lauf, der an einem Tippfehler stirbt, sah vorher genauso aus wie
+einer, der seine Arbeit getan hat, bis hinunter zum Rückgabewert 0.
+📌 **Schweigen sieht aus wie Erfolg**, und das ist dieselbe Fehlerklasse
+wie eine Schleife, die an der kürzeren Seite abbricht, ohne ein Wort zu
+sagen.
+
+**Belegt:** vier Proben, darunter der abgelehnte Aufruf, der berichtigt
+werden darf, der abgeschnittene Aufruf, der beantwortet wird, und der
+dreifach wiederholte Verbotene, der steckenbleibt statt fertig zu
+werden. 19 Proben der Schleife grün, Clippy ohne Befund.
 
 ### v0.18.1 – 2026-09-21 (`myl-local-agent` 0.11.1: die Vorlage liegt woanders)
 

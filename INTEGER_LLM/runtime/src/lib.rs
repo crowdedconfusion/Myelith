@@ -12,3 +12,4 @@ pub mod shardtraining;
 pub mod trainingsschleife;
 pub mod model;
 pub mod paths;
+pub mod pruefstand;
