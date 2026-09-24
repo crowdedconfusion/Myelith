@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "calibrate"))
-from src.luts import generate_rope_luts, load_nonlinear_spec  # noqa: E402
+from src.luts import generate_rope_luts, rope_masse  # noqa: E402
 from src.model_configs import get_model_config  # noqa: E402
 
 
@@ -54,14 +54,16 @@ def _hf_rotate(reals, pos, rope_theta, half):
 
 
 def test_rope_matches_hf_at_positions():
-    nl = load_nonlinear_spec()
-    head_dim = get_model_config("myelith-0.6b")["head_dim"]
-    rope_theta = nl["rope"]["rope_theta"]
-    frac = nl["rope"]["frac_bits"]
-    half = head_dim // 2
-    max_seq = nl["rope"]["max_seq_len"]
+    # ⚑ Masse aus dem Modell, ueber dieselbe Herleitung wie die Ausfuhr.
+    #    Hier stand `nl["rope"]["max_seq_len"]`, und mit dem Feld fiel die
+    #    ganze Datei aus, noch bevor ein Test lief.
+    m = rope_masse(get_model_config("myelith-0.6b"))
+    head_dim = m["drehbreite"]
+    rope_theta = m["rope_theta"]
+    frac = m["frac_bits"]
+    half = m["paare"]
 
-    sin_lut, cos_lut = generate_rope_luts(max_seq_len=max_seq, head_dim=head_dim,
+    sin_lut, cos_lut = generate_rope_luts(max_seq_len=m["zeilen"], head_dim=head_dim,
                                           rope_theta=rope_theta, frac_bits=frac)
 
     random.seed(1234)
@@ -80,12 +82,11 @@ def test_rope_matches_hf_at_positions():
 
 
 def test_rope_position_zero_identity():
-    nl = load_nonlinear_spec()
-    head_dim = get_model_config("myelith-0.6b")["head_dim"]
-    half = head_dim // 2
+    m = rope_masse(get_model_config("myelith-0.6b"))
+    half = m["paare"]
     sin_lut, cos_lut = generate_rope_luts(
-        max_seq_len=nl["rope"]["max_seq_len"], head_dim=head_dim,
-        rope_theta=nl["rope"]["rope_theta"], frac_bits=nl["rope"]["frac_bits"])
+        max_seq_len=m["zeilen"], head_dim=m["drehbreite"],
+        rope_theta=m["rope_theta"], frac_bits=m["frac_bits"])
     # Position 0: alle Winkel 0 -> cos = 1.0 (256), sin = 0 -> Identität.
     assert all(v == 256 for v in cos_lut[:half])
     assert all(v == 0 for v in sin_lut[:half])

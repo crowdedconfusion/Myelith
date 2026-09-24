@@ -239,6 +239,44 @@ def generate_exp_lut(exp_range: int, input_frac_bits: int, output_frac_bits: int
     return lut
 
 
+def rope_masse(model_config: dict, nonlinear_spec: dict = None) -> dict:
+    """Die Masse der Drehtabellen, aus dem MODELL hergeleitet.
+
+    ⛔️ **Zeilenzahl, Drehbreite und Basis sind Modellangaben, keine
+    Formatkonstanten.** theta_v fuehrte bis 0.21.0 ein
+    `rope.max_seq_len` mit 40 960, der Kontextgrenze der Qwen3-Reihe.
+    Das Qwen3.6-35B-A3B kann **262 144**, und die Tabellen deckten damit
+    ein Sechstel des Kontexts ab, den das Artefakt zusagt. Ebenso
+    `rope_theta`: 1e6 fuer die ganze Qwen3-Reihe, aber **1e7** fuer das
+    35B, versteckt in `rope_scaling`. Mit der falschen Basis sind alle
+    Winkel falsch, die Achtsamkeit verliert ihre Positionsinformation,
+    und das Modell erzeugt Kauderwelsch.
+
+    📌 **Eine Konstante, die fuer alle bisherigen Faelle stimmte, ist
+    deshalb noch keine Formatkonstante.**
+
+    ⚑ **Warum die Herleitung hier steht und nicht bei ihrem Aufrufer.**
+    Sie stand an drei Stellen: in der Ausfuhr und in zwei Proben. Als
+    `max_seq_len` aus der Spezifikation verschwand, brachen die beiden
+    Proben, und zwar mit einem `KeyError` beim Einlesen, also **ohne
+    einen einzigen gelaufenen Test**. Eine Herleitung, die an drei Orten
+    steht, laeuft auseinander, und der zweite und dritte Ort melden sich
+    nicht.
+
+    `rope_theta` bleibt als Rueckfall in der Spezifikation, weil nicht
+    jeder Modelleintrag eine eigene Basis nennt.
+    """
+    spec = nonlinear_spec if nonlinear_spec is not None else load_nonlinear_spec()
+    drehbreite = model_config.get("rotary_dim") or model_config["head_dim"]
+    return {
+        "zeilen": model_config["max_context"],
+        "drehbreite": drehbreite,
+        "paare": drehbreite // 2,
+        "rope_theta": model_config.get("rope_theta") or spec["rope"]["rope_theta"],
+        "frac_bits": spec["rope"]["frac_bits"],
+    }
+
+
 def generate_rope_luts(max_seq_len: int, head_dim: int, rope_theta: float,
                        frac_bits: int):
     """

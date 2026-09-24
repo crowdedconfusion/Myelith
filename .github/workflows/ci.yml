@@ -1433,11 +1433,17 @@ jobs:
       # als Rechenpfad-Datei nicht in der Audit-Liste stand: **Eine
       # Pruefung, die nicht laeuft, meldet nichts.**
       #
-      # Diese sechs brauchen keine Fremdbibliothek und kosten zusammen
-      # unter einer Sekunde. Die vier, die torch brauchen, laufen im
-      # eigenen Job `kalibrierung-python`, damit dieser hier schnell
-      # bleibt - er wurde am 2026-08-24 bewusst von ueber drei Minuten
-      # auf unter eine Sekunde gebracht.
+      # Diese acht brauchen keine Fremdbibliothek. Die fuenf, die torch
+      # brauchen, laufen im eigenen Job `kalibrierung-python`, damit
+      # dieser hier schnell bleibt: er wurde am 2026-08-24 bewusst von
+      # ueber drei Minuten auf unter eine Sekunde gebracht.
+      #
+      # Hier standen "sechs" und "vier", die Staende von vor dem
+      # 2026-09-11. Eine Anzahl neben der Liste, die sie zaehlt, ist
+      # dieselbe Angabe an zwei Orten, und die Liste meldet sich nicht,
+      # wenn sie waechst. Die Zahlen bleiben trotzdem stehen, weil sie
+      # sagen, was die Aufteilung kostet; sie gehoeren beim Ergaenzen
+      # der Liste mitgezogen.
       - name: Einheitentests ohne Fremdbibliotheken
         working-directory: INTEGER_LLM
         run: |

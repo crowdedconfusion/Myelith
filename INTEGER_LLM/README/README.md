@@ -1,7 +1,7 @@
 # integer-llm
 
-> **Version:** 0.92.0 (θ_v 0.22.0; kernels 0.65.1, runtime 0.63.0, pipeline 0.15.1)
-> **Datum:** 2026-09-22
+> **Version:** 0.93.0 (θ_v 0.22.0; kernels 0.65.1, runtime 0.63.0, pipeline 0.15.1)
+> **Datum:** 2026-09-24
 > **Status:** ⚠️ **Das Akzeptanzkriterium ruht auf einer zu kleinen
 > Stichprobe.** Gemessen wurde bisher ueber **4 Sequenzen, 435
 > Positionen**; eine Messung ueber **32 Sequenzen, 3558 Positionen**
@@ -646,6 +646,60 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
   volle Paritätstests nur auf GPU-Runnern (nightly oder PR-basiert)
 
 ## Changelog
+
+### v0.93.0 – 2026-09-24 (zwei Proben liefen zwei Tage lang gar nicht, und eine Herleitung stand an drei Stellen; Funde 453 und 454)
+
+**Keine Aenderung am Rechenweg.** Die Zahlen der Artefakte bleiben
+bitgleich; geaendert haben sich nur der Ort einer Herleitung und zwei
+Proben, die sie nachgebaut hatten.
+
+#### ⛔️ Fund 453: ein falscher Name im Import, und die ganze Datei faellt aus
+
+`tests/test_luts.py` importierte `generate_softplus_lut`, geschrieben
+wurde `generate_softplus_rest_lut`, und **beide entstanden im selben
+Commit** (θ_v 0.22.0, 2026-09-22). Der Import scheiterte in Zeile 18,
+also **vor** dem ersten Test: Auch die zehn Proben, die es vorher schon
+gab, liefen zwei Tage lang nicht.
+
+📌 **Ein falscher Name im Import ist kein fehlschlagender Test, sondern
+ein ausgefallener Testlauf.** Eine rote Probe zeigt, was kaputt ist;
+ein `ImportError` zeigt nur, dass nichts geprueft wurde. ⚠️ Das ist
+dieselbe Klasse wie die Notiz, die seit dem 2026-08-25 in derselben
+Datei steht („Der Test war seitdem rot und ist niemandem aufgefallen").
+
+⚑ **Und die Namen wichen nicht zufaellig ab.** Die Bibliothek traegt
+nur den **feinen** Teil des Softplus, `log(1 + exp(-|x|))`, weil 30
+Bruchbits fuer den ganzen Softplus nicht in `int32` passen. Die Probe
+prueft jetzt nicht Softplus, sondern die Zerlegung, auf die sich der
+Kern stuetzt, `softplus(x) = max(x, 0) + tabelle[|x|]`, gegen die
+direkte Formel ueber beide Vorzeichen. Dieselbe Bauart wie die Probe,
+die SiLU und Sigmoid ueber ihre Identitaet zusammenhaelt.
+
+#### ⛔️ Fund 454: eine Herleitung an drei Stellen, und zwei brachen still
+
+`rope.max_seq_len` ist in θ_v 0.22.0 aus der Spezifikation entfernt
+worden, mit guter Begruendung: 40 960 galt fuer die Qwen3-Reihe, das
+Qwen3.6-35B-A3B kann 262 144, und die Drehtabellen deckten damit ein
+Sechstel des zugesagten Kontexts ab. Die Ausfuhr wurde umgestellt, die
+beiden Proben nicht, und beide brachen mit `KeyError` beim Einlesen der
+Spezifikation, also **ohne einen einzigen gelaufenen Test**.
+
+⚑ **Neu: `luts.rope_masse`.** Zeilenzahl aus `max_context`, Drehbreite
+aus `rotary_dim` mit `head_dim` als Rueckfall, Basis aus dem Modell mit
+θ_v als Rueckfall. **Die Ausfuhr und beide Proben ziehen sie jetzt von
+dort**, statt sie je einzeln nachzubauen. Gegengeprueft ueber alle
+fuenf Modelle: unveraenderte Masse, einschliesslich der 262 144
+Positionen und der Basis 1e7 des 35B.
+
+📌 **Eine Herleitung, die an drei Orten steht, laeuft auseinander, und
+der zweite und dritte Ort melden sich nicht.** Hier haben sie sich
+gemeldet, aber erst in der CI und erst, nachdem der erste Fund den Weg
+dorthin freigeraeumt hatte.
+
+**Belegt:** die acht Proben ohne Fremdbibliothek und die fuenf des
+Kalibrierungswegs, alle `RC=0`. Die Ausfuhrprobe lief **vor** der
+Aenderung an der Ausfuhr als Grundlauf, damit ein Gruen danach etwas
+heisst.
 
 ### v0.92.0 – 2026-09-23 (runtime 0.63.0: die Prüfsumme wird einmal bezahlt, und ein Werkzeug sagt Bescheid statt abzustürzen)
 

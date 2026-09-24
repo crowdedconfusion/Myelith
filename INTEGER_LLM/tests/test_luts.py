@@ -17,7 +17,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "calibrate"))
 from src.luts import (generate_rsqrt_lut, generate_silu_lut, generate_exp_lut,
                       generate_rope_luts, load_nonlinear_spec,
-                       generate_sigmoid_lut, generate_softplus_lut)
+                      generate_sigmoid_lut, generate_softplus_rest_lut,
+                      rope_masse)
 from src.model_configs import get_model_config
 
 
@@ -85,10 +86,25 @@ def test_load_nonlinear_spec_structure():
         "exp-LUT kuerzer als ein einziger Einheitsschritt des Eingangsrasters"
     )
 
-    # rope: Die Paarung ist eine Protokollfestlegung (Fund 15), und die
-    # LUT-Zeilenzahl haengt an max_seq_len.
+    # rope: Die Paarung ist eine Protokollfestlegung (Fund 15).
     assert nl["rope"]["pairing"] == "half_split", "Fund 15: Qwen2-Schema"
-    assert nl["rope"]["max_seq_len"] > 0
+    # ⛔️ **Die Zeilenzahl ist seit theta_v 0.22.0 KEINE Formatkonstante.**
+    #
+    # Hier stand `nl["rope"]["max_seq_len"] > 0`, und das Feld ist aus der
+    # Spec entfernt worden, weil es eine Modellangabe ist: theta_v fuehrte
+    # 40 960, das Qwen3.6-35B-A3B kann 262 144, und die Tabellen deckten
+    # damit ein Sechstel des zugesagten Kontexts ab. Die Zeilenzahl folgt
+    # seither aus `max_context` und `rotary_dim` des Modelleintrags.
+    #
+    # ⚑ **Geprueft wird deshalb die Abwesenheit**, nicht der Wert. Ein
+    # wiedereingefuegtes `max_seq_len` waere der Rueckfall, und genau den
+    # faengt diese Zeile.
+    assert "max_seq_len" not in nl["rope"], (
+        "max_seq_len ist eine Modellangabe und gehoert nach model_config.json"
+    )
+    # `rope_theta` bleibt als Rueckfall in der Spec, weil nicht jeder
+    # Modelleintrag eine eigene Basis nennt; main.py zieht den Wert des
+    # Modells vor.
     assert nl["rope"]["rope_theta"] > 1.0
 
 
@@ -161,17 +177,26 @@ def test_rope_lut_spot_values():
     assert all(abs(v) <= 256 for v in sin_lut + cos_lut)
 
 
+def anker_masse():
+    """Die Drehtabellen-Masse des Ankers, ueber die Bibliotheksherleitung.
+
+    ⚑ **Die Herleitung selbst steht in `luts.rope_masse`**, also an
+    derselben Stelle, aus der auch die Ausfuhr sie zieht. Waere sie hier
+    nachgebaut, pruefte diese Datei ihre eigene Kopie.
+    """
+    return rope_masse(get_model_config("myelith-0.6b"))
+
+
 def test_rope_lut_full_spec_parameters():
-    # Mit den echten spec-Parametern (0.5B: head_dim 64, max_seq_len 2048)
-    # muss die LUT die erwartete Groesse haben und wohlgeformt sein.
-    nl = load_nonlinear_spec()
-    head_dim = get_model_config("myelith-0.6b")["head_dim"]
+    # Mit den echten Parametern des Ankers muss die LUT die erwartete
+    # Groesse haben und wohlgeformt sein.
+    m = anker_masse()
     sin_lut, cos_lut = generate_rope_luts(
-        max_seq_len=nl["rope"]["max_seq_len"], head_dim=head_dim,
-        rope_theta=nl["rope"]["rope_theta"], frac_bits=nl["rope"]["frac_bits"])
-    half = head_dim // 2
-    assert len(sin_lut) == nl["rope"]["max_seq_len"] * half
-    assert len(cos_lut) == nl["rope"]["max_seq_len"] * half
+        max_seq_len=m["zeilen"], head_dim=m["drehbreite"],
+        rope_theta=m["rope_theta"], frac_bits=m["frac_bits"])
+    half = m["paare"]
+    assert len(sin_lut) == m["zeilen"] * half
+    assert len(cos_lut) == m["zeilen"] * half
     # Position 0 ist die Identitaet (alle Paare cos=1.0, sin=0).
     assert all(cos_lut[j] == 256 for j in range(half))
     assert all(sin_lut[j] == 0 for j in range(half))
@@ -191,11 +216,11 @@ def test_spec_driven_generation_lengths():
     exp = generate_exp_lut(exp_range=nl["softmax"]["exp_lut_range"],
                            input_frac_bits=nl["softmax"]["exp_input_frac_bits"],
                            output_frac_bits=nl["softmax"]["exp_lut_frac_bits"])
-    head_dim = get_model_config("myelith-0.6b")["head_dim"]
-    sin, cos = generate_rope_luts(max_seq_len=nl["rope"]["max_seq_len"],
-                                  head_dim=head_dim,
-                                  rope_theta=nl["rope"]["rope_theta"],
-                                  frac_bits=nl["rope"]["frac_bits"])
+    m = anker_masse()
+    sin, cos = generate_rope_luts(max_seq_len=m["zeilen"],
+                                  head_dim=m["drehbreite"],
+                                  rope_theta=m["rope_theta"],
+                                  frac_bits=m["frac_bits"])
     # ⚑ **Aus der Spec gerechnet, nicht getippt** (2026-08-25). Hier
     # standen 32768 / 2048 / 1025, die Laengen von theta_v 0.14.0. Seit
     # 0.15.0 ist die silu-LUT 16384 Eintraege lang und seit 0.16.0 die
@@ -207,7 +232,7 @@ def test_spec_driven_generation_lengths():
     # das faengt einen Erzeuger, der einen Eintrag zu wenig oder zu viel
     # anlegt, und genau das ist der Fehler, der die Runtime am Rand der
     # Domaene ins Leere greifen liesse.
-    rope_len = nl["rope"]["max_seq_len"] * (head_dim // 2)
+    rope_len = m["zeilen"] * m["paare"]
     silu_len = nl["silu"]["input_range"][1] - nl["silu"]["input_range"][0] + 1
     assert len(rsqrt) == nl["rsqrt"]["input_range"][1] + 1, (
         f"rsqrt: {len(rsqrt)} Eintraege, Spec sagt "
@@ -242,21 +267,70 @@ def test_sigmoid_lut_stuetzwerte():
         assert abs((links + rechts) - (1 << frac_out)) <= 1, f"s(-x)+s(x) != 1 bei x={x}"
 
 
-def test_softplus_lut_stuetzwerte():
-    """Softplus an Stellen, die sich von Hand nachrechnen lassen."""
-    frac_in, frac_out = 6, 8
-    lut = generate_softplus_lut(-8192, 8191, frac_in, frac_out)
-    mitte = 8192
-    assert lut[mitte] == round(math.log(2) * (1 << frac_out)), "softplus(0) ist ln 2"
-    assert lut[0] == 0, "weit links ist softplus null"
-    # ⚑ Weit rechts ist softplus die Identitaet; genau darauf stuetzt sich
-    #   die Randfortsetzung des Kernels.
-    letzter_x = 8191
-    assert abs(lut[-1] - round(letzter_x / (1 << frac_in) * (1 << frac_out))) <= 1, (
-        "weit rechts ist softplus nicht die Identitaet"
+def test_softplus_rest_lut_zerlegung():
+    """⛔️ **Fund 453: hier stand ein Test auf ein Softplus, das es nie gab.**
+
+    Importiert wurde `generate_softplus_lut`, geschrieben wurde
+    `generate_softplus_rest_lut`, und beide entstanden im **selben**
+    Commit (theta_v 0.22.0, 2026-09-22). Der Import scheiterte also ab
+    der ersten Zeile, und zwar fuer die **ganze** Datei: Auch die
+    zehn Tests, die es schon gab, liefen zwei Tage lang nicht.
+
+    📌 **Ein falscher Name im Import ist kein fehlschlagender Test,
+    sondern ein ausgefallener Testlauf.** Ein roter Test zeigt, was
+    kaputt ist; ein `ImportError` zeigt nur, dass nichts geprueft wurde.
+
+    ⚑ **Und die Namen wichen nicht zufaellig ab.** Die Bibliothek traegt
+    nur den **feinen** Teil des Softplus, `log(1 + exp(-|x|))`, weil 30
+    Bruchbits fuer den ganzen Softplus nicht in `int32` passen. Geprueft
+    wird deshalb nicht Softplus, sondern die **Zerlegung**, auf die sich
+    der Kernel stuetzt:
+
+        softplus(x) = max(x, 0) + tabelle[|x|]
+
+    Das ist dieselbe Bauart wie `test_silu_ist_x_mal_sigmoid`: eine
+    Identitaet statt getippter Stuetzwerte.
+    """
+    spec = load_nonlinear_spec()["softplus_rest"]
+    max_abs = spec["max_abs_input"]
+    frac_in = spec["input_frac_bits"]
+    frac_out = spec["output_frac_bits"]
+    lut = generate_softplus_rest_lut(max_abs, frac_in, frac_out)
+
+    # Die Tabelle laeuft ueber |x|, ist also halb so lang wie eine
+    # symmetrische waere. Index i steht fuer x = i * 2^-frac_in.
+    assert len(lut) == max_abs * (1 << frac_in), (
+        f"Laenge {len(lut)}, erwartet {max_abs * (1 << frac_in)}"
     )
+    assert lut[0] == round(math.log(2) * (1 << frac_out)), (
+        "rest(0) ist log(1+exp(0)) = ln 2"
+    )
+    # ⚑ Der Rest faellt, waehrend Softplus selbst steigt. Wer hier eine
+    #   steigende Tabelle erwartet, hat die Zerlegung nicht gelesen.
     for i in range(1, len(lut)):
-        assert lut[i] >= lut[i - 1], f"softplus faellt bei Index {i}"
+        assert lut[i] <= lut[i - 1], f"der Rest steigt bei Index {i}"
+    assert lut[-1] == 0, (
+        "am rechten Rand ist der Rest kleiner als eine letzte Stelle"
+    )
+    # ⛔️ Der ganze Grund der Zerlegung: der Rest passt in int32, der
+    #    volle Softplus bei 30 Bruchbits nicht.
+    assert max(lut) <= (1 << 31) - 1, "der Rest passt nicht in int32"
+    assert max(lut) == lut[0], "das Maximum steht nicht bei x = 0"
+
+    stelle = 1.0 / (1 << frac_out)
+    for i in range(0, len(lut), 337):
+        x = i / (1 << frac_in)
+        for vorzeichen in (1, -1):
+            xs = vorzeichen * x
+            direkt = math.log1p(math.exp(xs))
+            zerlegt = max(xs, 0.0) + lut[i] * stelle
+            # Die Tabelle ist auf eine Stelle gerundet, der grobe Teil
+            # ist exakt; mehr als eine halbe Stelle kann also nicht
+            # herauskommen. Eine ganze als Schranke deckt das Runden ab.
+            assert abs(direkt - zerlegt) <= stelle, (
+                f"Zerlegung bricht bei x={xs}: {zerlegt} gegen {direkt}, "
+                f"Abstand {abs(direkt - zerlegt):.3e} ueber {stelle:.3e}"
+            )
 
 
 def test_silu_ist_x_mal_sigmoid():
@@ -323,8 +397,8 @@ if __name__ == "__main__":
     print("[test] spec-gesteuerte Erzeugung: Laengen und int16-Bereich: PASSED")
     test_sigmoid_lut_stuetzwerte()
     print("[test] Sigmoid-LUT Stuetzwerte und Punktsymmetrie: PASSED")
-    test_softplus_lut_stuetzwerte()
-    print("[test] Softplus-LUT Stuetzwerte und Randidentitaet: PASSED")
+    test_softplus_rest_lut_zerlegung()
+    print("[test] Softplus-Rest-LUT und die Zerlegung max(x,0)+rest(|x|): PASSED")
     test_silu_ist_x_mal_sigmoid()
     print("[test] SiLU und Sigmoid halten ihre Identitaet: PASSED")
     print("Alle Tests bestanden.")

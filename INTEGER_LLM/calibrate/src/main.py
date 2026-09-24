@@ -60,7 +60,7 @@ from .quantize import normiere_namen
 from .luts import (generate_rsqrt_lut, generate_silu_lut, generate_exp_lut,
                    generate_sigmoid_lut, generate_softplus_rest_lut,
                    generate_zerfall_exp_lut,
-                   generate_rope_luts, load_nonlinear_spec)
+                   generate_rope_luts, load_nonlinear_spec, rope_masse)
 from .export import export_theta_v
 from .model_configs import get_export_model_config, artifact_model_config
 from .scale_pack import paket_pfad, lade as skalenpaket_laden, SCALE_PACK_ENV
@@ -502,42 +502,24 @@ def main():
     #
     # ⚑ **Null heisst „ganz drehen"**, und damit bleibt jede Tabelle
     # eines Modells ohne Teildrehung bytegleich zu vorher.
-    drehbreite = model_config.get("rotary_dim") or model_config["head_dim"]
-    # ⛔️ **`rope_theta` ist ein MODELLparameter, kein Formatparameter.**
-    #
-    # Er stand bis zum 2026-09-21 nur in θ_v (1e6, die ganze Qwen3-Reihe).
-    # Das Qwen3.6-35B-A3B dreht mit **1e7**, und zwar versteckt in
-    # `rope_scaling`. Mit der falschen Basis sind alle Winkel falsch, die
-    # Achtsamkeit verliert ihre Positionsinformation, und das Modell
-    # erzeugt Kauderwelsch. 📌 **Eine Konstante, die fuer alle bisherigen
-    # Faelle stimmte, ist deshalb noch keine Formatkonstante.**
-    rope_theta = model_config.get("rope_theta") or nl["rope"]["rope_theta"]
+    # ⛔️ **Zeilenzahl, Drehbreite und Basis kommen aus dem MODELL, nicht
+    # aus θ_v.** Die Begruendung steht bei `rope_masse`, samt den beiden
+    # Faellen, die sie erzwungen haben (262 144 Positionen und Basis 1e7
+    # beim Qwen3.6-35B-A3B). ⚑ **Sie steht dort und nicht hier**, weil
+    # dieselbe Herleitung zuvor an drei Stellen stand.
+    masse = rope_masse(model_config, nl)
+    drehbreite = masse["drehbreite"]
+    rope_theta = masse["rope_theta"]
+    zeilen = masse["zeilen"]
     print(f"[calibrate] RoPE: Drehbreite {drehbreite} von "
           f"{model_config['head_dim']}, Basis {rope_theta:g}")
-    # ⛔️ **Die Zeilenzahl kommt aus dem MODELL, nicht aus θ_v.**
-    #
-    # θ_v fuehrte `rope.max_seq_len` als Formatkonstante mit 40 960, der
-    # Kontextgrenze der Qwen3-Reihe. Das Qwen3.6-35B-A3B kann **262 144**,
-    # und die Tabellen deckten damit ein Sechstel des Kontexts ab, den das
-    # Artefakt zusagt.
-    #
-    # ⚠️ **Das ist Fund 368 ein zweites Mal**, und der Vermerk dazu stand
-    # zwei Zeilen weiter in derselben Spezifikation: „Eine Position
-    # p >= max_seq_len wird ABGELEHNT und nicht umgebrochen ... Position
-    # 2048 drehte wie Position 0, und die Aufmerksamkeit hielt ein spaetes
-    # Token fuer eines vom Anfang."
-    #
-    # 📌 **Eine Konstante, die fuer alle bisherigen Faelle stimmte, ist
-    # deshalb noch keine Formatkonstante.** Die Zeilenzahl folgt aus
-    # `max_context` und `rotary_dim`, und beide stehen im Modelleintrag.
-    zeilen = model_config["max_context"]
-    print(f"[calibrate] RoPE-Tabellen: {zeilen} Positionen x {drehbreite // 2} "
-          f"Paare = {zeilen * (drehbreite // 2)} Eintraege je Tabelle")
+    print(f"[calibrate] RoPE-Tabellen: {zeilen} Positionen x {masse['paare']} "
+          f"Paare = {zeilen * masse['paare']} Eintraege je Tabelle")
     sin_lut, cos_lut = generate_rope_luts(
         max_seq_len=zeilen,
         head_dim=drehbreite,
         rope_theta=rope_theta,
-        frac_bits=nl["rope"]["frac_bits"])
+        frac_bits=masse["frac_bits"])
     luts = luts_aus_paket if luts_aus_paket is not None else {
         "rsqrt": generate_rsqrt_lut(
             max_input=nl["rsqrt"]["input_range"][1],
