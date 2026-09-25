@@ -20,7 +20,7 @@
 // dass beim Agenten jeder Auftrag fuer sich steht (Entscheidung C2).
 // Seitdem tragen beide Modi ihr Gespraech mit; siehe `kontext_von`.
 
-import { netzStarten } from "./netz.js";
+import { vorhangStarten } from "./vorhang.js";
 
 const { invoke } = window.__TAURI__.core;
 const $ = (k) => document.getElementById(k);
@@ -33,17 +33,17 @@ const $ = (k) => document.getElementById(k);
 // wartet, obwohl er fertig ist, haelt den Nutzer auf.
 const VORHANG_MINDESTENS = 1500;
 const vorhang = $("vorhang");
-const netzAnhalten = netzStarten($("netz"));
+const vorhangAnhalten = vorhangStarten($("vorhangbild"));
 const start = performance.now();
 
 async function vorhangWeg() {
   const rest = VORHANG_MINDESTENS - (performance.now() - start);
   if (rest > 0) await new Promise((r) => setTimeout(r, rest));
   vorhang.classList.add("weg");
-  // ⚑ Erst nach der Blende anhalten, sonst friert das Netz sichtbar
+  // ⚑ Erst nach der Blende anhalten, sonst friert das Bild sichtbar
   // ein, waehrend es noch durchscheint.
   setTimeout(() => {
-    netzAnhalten();
+    vorhangAnhalten();
     vorhang.remove();
   }, 700);
 }
@@ -142,8 +142,6 @@ const TEXTE = {
     "modus.terminal.leer":
       "Tipp einen Befehl und drück Enter. Dies ist deine Kommandozeile, nicht die des Modells: Was hier läuft, hat deine Rechte und keine Einhängegrenze. Der Agent kommt hier nicht heran.",
     "terminal.eingabe": "Befehl",
-    "terminal.senden": "Ausführen",
-    "terminal.leeren": "Leeren",
     "terminal.laeuft": "läuft …",
     "terminal.gekuerzt": "[Ausgabe gekürzt]",
     "terminal.abgebrochen": "[abgebrochen, die Frist von 300 s ist abgelaufen]",
@@ -319,8 +317,6 @@ const TEXTE = {
     "modus.terminal.leer":
       "Type a command and press Enter. This is your command line, not the model's: what runs here has your rights and no mount boundary. The agent cannot reach it.",
     "terminal.eingabe": "Command",
-    "terminal.senden": "Run",
-    "terminal.leeren": "Clear",
     "terminal.laeuft": "running …",
     "terminal.gekuerzt": "[output truncated]",
     "terminal.abgebrochen": "[aborted, the 300 s limit expired]",
@@ -1575,6 +1571,104 @@ function chats_zeichnen() {
   }
 }
 
+/// Das Ladezeichen am Beitrag: der Spalt in einem Kasten, der sich
+/// als Statusmeldung vorlesen laesst.
+function laufzeichen_bauen() {
+  const l = document.createElement("div");
+  l.className = "laeuft";
+  l.append(synapse());
+  l.setAttribute("aria-label", t("lauf.arbeitet"));
+  l.setAttribute("role", "status");
+  return l;
+}
+
+/// **Das Ladezeichen: ein synaptischer Spalt** (Auftrag des
+/// Projektinhabers, 2026-09-24, statt drei Punkten; die Gestalt nach
+/// seinen Vorlagen).
+///
+/// Zwei Endknoepfe als Glocken, die aus einem schmalen Strang aufgehen
+/// und sich ueber einen engen Spalt gegenueberstehen. In der linken
+/// schwellen Blaeschen an, Botenstoffe schweben hinueber, die Flaechen
+/// leuchten auf, wenn etwas ankommt, und zweimal je Zyklus entlaedt sich
+/// ein kurzer Blitz quer ueber den Spalt. Die Bewegung steht ganz im
+/// Stilblatt (`.spalt`), hier steht nur die Gestalt.
+///
+/// ⚑ **Gebaut mit `createElementNS` und ohne ein einziges `style`**: Die
+/// Sicherheitsregel dieser Oberflaeche erlaubt keine Stile im Dokument.
+///
+/// ⚑ **Die Klassen stehen ausgeschrieben und nicht zusammengesetzt**: Wer
+/// eine Regel im Stilblatt sucht, soll ihr Element hier finden
+/// (`jede_regel_hat_ein_element`).
+///
+/// ⚑ **Es sagt nichts ueber den Fortschritt, und das ist ehrlich**, wie
+/// schon die Punkte: Wie lange ein Modell braucht, weiss vorher niemand.
+function synapse() {
+  const NS = "http://www.w3.org/2000/svg";
+  const teil = (name, klasse, werte) => {
+    const e = document.createElementNS(NS, name);
+    if (klasse) e.setAttribute("class", klasse);
+    for (const [k, v] of Object.entries(werte)) e.setAttribute(k, String(v));
+    return e;
+  };
+  // ⚑ Verlaeufe brauchen Kennungen, und die muessen je Zeichen eindeutig
+  // sein: Zwei Zeichen mit derselben Kennung teilten sich einen Verlauf,
+  // und das zweite verloere ihn, sobald das erste geht.
+  synapse.zaehler = (synapse.zaehler || 0) + 1;
+  const kennung = (name) => `spalt${synapse.zaehler}-${name}`;
+  const verlauf = (art, name, werte, stufen) => {
+    const v = teil(art, "", { id: kennung(name), ...werte });
+    for (const [versatz, klasse] of stufen) v.append(teil("stop", klasse, { offset: versatz }));
+    return v;
+  };
+
+  const svg = teil("svg", "spalt", { viewBox: "0 0 96 28", "aria-hidden": "true", focusable: "false" });
+  const defs = teil("defs", "", {});
+  // Der Koerper: oben Licht, unten Schatten, also gewoelbt.
+  defs.append(verlauf("linearGradient", "koerper", { x1: 0, y1: 0, x2: 0, y2: 1 },
+    [[0, "licht-oben"], [0.45, "licht-mitte"], [1, "licht-unten"]]));
+  // Eine Kugel: Lichtpunkt oben links, zum Rand hin dunkler.
+  defs.append(verlauf("radialGradient", "kugel", { cx: 0.5, cy: 0.5, r: 0.5, fx: 0.34, fy: 0.3 },
+    [[0, "kugel-hell"], [0.55, "kugel-mitte"], [1, "kugel-rand"]]));
+  // Der Schein an der Flaeche zum Spalt.
+  defs.append(verlauf("radialGradient", "schein", { cx: 0.5, cy: 0.5, r: 0.5 },
+    [[0, "schein-kern"], [1, "schein-rand"]]));
+  // ⚑ Die Axone laufen nach aussen weich aus, als gingen sie weiter:
+  // Eine harte Kante am Bildrand saehe aus wie ein abgeschnittener Schlauch.
+  defs.append(verlauf("linearGradient", "auslauf", { x1: 0, y1: 0, x2: 1, y2: 0 },
+    [[0, "auslauf-rand"], [0.18, "auslauf-voll"], [0.82, "auslauf-voll"], [1, "auslauf-rand"]]));
+  const maske = teil("mask", "", { id: kennung("maske"), maskUnits: "userSpaceOnUse", x: 0, y: 0, width: 96, height: 28 });
+  maske.append(teil("rect", "", { x: 0, y: 0, width: 96, height: 28, fill: `url(#${kennung("auslauf")})` }));
+  defs.append(maske);
+  svg.append(defs);
+  const nerv = teil("g", "", { mask: `url(#${kennung("maske")})` });
+  svg.append(nerv);
+
+  // Zwei Nervenenden, jedes ein geschwungenes Axon, das sich zur Glocke
+  // weitet. Das rechte ist das Spiegelbild des linken.
+  const links = "M0 17.2C7.5 17.2 11.5 9.6 21.5 11.2C27 12.1 31 4.6 44 4.4Q46.4 14 44 23.6C31 23.4 27.5 17.8 21.5 16.9C12 15.5 7.5 22.4 0 22.4Z";
+  const glanz_links = "M1.5 18.2C8.2 18 12.2 10.6 21.6 12.2C27.3 13.2 31.4 6 42.6 5.6";
+  // Jedes Zahlenpaar ist ein Punkt; gespiegelt wird an der Mitte.
+  const spiegeln = (d) => d.replace(/(-?[0-9.]+) (-?[0-9.]+)/g, (_, x, y) => `${(96 - parseFloat(x)).toFixed(1)} ${y}`);
+  for (const [d, glanz] of [[links, glanz_links], [spiegeln(links), spiegeln(glanz_links)]]) {
+    nerv.append(teil("path", "neuron", { d, fill: `url(#${kennung("koerper")})` }));
+    nerv.append(teil("path", "glanzlinie", { d: glanz }));
+  }
+  svg.append(teil("ellipse", "schein sender", { cx: 44.4, cy: 14, rx: 3.2, ry: 8, fill: `url(#${kennung("schein")})` }));
+  svg.append(teil("ellipse", "schein empfaenger", { cx: 51.6, cy: 14, rx: 3.2, ry: 8, fill: `url(#${kennung("schein")})` }));
+  svg.append(teil("path", "flaeche sender", { d: "M44 4.4Q46.4 14 44 23.6" }));
+  svg.append(teil("path", "flaeche empfaenger", { d: "M52 4.4Q49.6 14 52 23.6" }));
+  for (const [x, y, r, klasse] of [[39.8, 9.4, 1.9, "blaeschen v1"], [41.2, 17.6, 1.7, "blaeschen v2"], [36, 13.4, 1.5, "blaeschen v3"]]) {
+    svg.append(teil("circle", klasse, { cx: x, cy: y, r, fill: `url(#${kennung("kugel")})` }));
+  }
+  // Zwei Blitze, jeder ein Zickzack von Flaeche zu Flaeche.
+  svg.append(teil("path", "blitz z1", { d: "M45.4 9.2L47.2 11.2L46.4 12.6L48.6 13.8L47.9 15.3L50.8 17.4" }));
+  svg.append(teil("path", "blitz z2", { d: "M45.5 18.6L47 16.3L47.9 17.2L49.2 13.4L50 14.1L50.7 10.2" }));
+  for (const [y, klasse] of [[8.6, "botenstoff b1"], [14, "botenstoff b2"], [19.4, "botenstoff b3"], [11.2, "botenstoff b4"], [16.8, "botenstoff b5"]]) {
+    svg.append(teil("circle", klasse, { cx: 46.2, cy: y, r: 0.8, fill: `url(#${kennung("kugel")})` }));
+  }
+  return svg;
+}
+
 function beitrag_zeichnen(b) {
   const wurzel = document.createElement("div");
   wurzel.className = `beitrag von-${b.von}`;
@@ -1634,21 +1728,20 @@ function beitrag_zeichnen(b) {
   // den ersten Wartezeitraum abdeckt, deckt genau den ab, in dem
   // ohnehin gleich etwas kommt.
   //
-  // ⚑ **Es haengt jetzt am Lauf und nicht am Inhalt:** Solange
-  // gerechnet wird, steht es unten, und es geht, wenn der Lauf endet.
-  // Waehrend Text ankommt, waechst er darueber; die Punkte sagen dann
-  // „und es geht weiter", und das stimmt.
+  // ⚑ **Es haengt am Lauf und nicht am Inhalt**, aber es schweigt,
+  // **solange das Modell schreibt** (Festlegung des Projektinhabers,
+  // 2026-09-24). Wenn Text ankommt, ist der wachsende Text selbst die
+  // Auskunft, dass es weitergeht, und ein Zeichen darunter waere doppelt.
+  // Es steht, waehrend geladen, nachgedacht oder ein Werkzeug gerufen
+  // wird, und kommt nach jedem Werkzeugschritt wieder, denn dann rechnet
+  // das Modell ohne sichtbaren Zuwachs weiter (das war Fund 292). Wer
+  // `b.schreibt` setzt und loescht, steht in `live_meldung`.
   let laufzeichen = null;
-  if (b.laufend) {
-    const l = document.createElement("div");
-    l.className = "laeuft";
-    for (let i = 0; i < 3; i += 1) l.append(document.createElement("span"));
-    l.setAttribute("aria-label", t("lauf.arbeitet"));
-    l.setAttribute("role", "status");
+  if (b.laufend && !b.schreibt) {
     // ⚑ Angehaengt wird es **am Ende** dieser Funktion, damit es unter
     // allem steht, was schon da ist: Ein Zeichen ueber dem wachsenden
     // Text saehe aus, als gehoerte es zu etwas Vergangenem.
-    laufzeichen = l;
+    laufzeichen = laufzeichen_bauen();
   }
 
   // 📌 **`t` heisst hier nicht `t`.** Die Uebersetzung heisst so, und
@@ -2112,8 +2205,16 @@ function terminal_anhaengen(klasse, text) {
   pre.className = klasse;
   pre.textContent = text;
   z.append(pre);
-  z.scrollTop = z.scrollHeight;
+  terminal_nach_unten();
   return pre;
+}
+
+/// ⚑ **Gerollt wird das ganze Terminal**, nicht die Ausgabe allein: Die
+/// Eingabezeile steht unter der letzten Zeile und rollt mit, wie in
+/// jedem Terminal.
+function terminal_nach_unten() {
+  const flaeche = $("terminal");
+  flaeche.scrollTop = flaeche.scrollHeight;
 }
 
 async function terminal_senden(befehl) {
@@ -2127,6 +2228,11 @@ async function terminal_senden(befehl) {
   terminalzeiger = terminalverlauf.length;
   terminal_anhaengen("terminalbefehl", `${$("terminalordner").textContent} $ ${roh}`);
   const laeuft = terminal_anhaengen("terminallaeuft", t("terminal.laeuft"));
+  // ⚑ **Waehrend ein Befehl laeuft, gibt es keine Eingabezeile**, wie
+  //   in jedem Terminal: Sie kommt wieder, wenn er fertig ist, und sagt
+  //   damit zugleich, dass er fertig ist.
+  const form = $("terminalform");
+  form.hidden = true;
   try {
     const a = await invoke("terminal_ausfuehren", { befehl: roh });
     laeuft.remove();
@@ -2145,7 +2251,8 @@ async function terminal_senden(befehl) {
     laeuft.remove();
     terminal_anhaengen("terminalfehler", String(f));
   }
-  $("terminalzeilen").scrollTop = $("terminalzeilen").scrollHeight;
+  form.hidden = false;
+  terminal_nach_unten();
 }
 
 // --- Meldungen ----------------------------------------------------------
@@ -2606,8 +2713,15 @@ horchen("sinne-pegel", (e) => pegel_nachziehen(e.payload));
 let tonwerk = null;
 let tonmesser = null;
 /// Die Warteschlange der gesprochenen Stuecke, damit sie in der
-/// Reihenfolge klingen, in der sie ankommen.
+/// Reihenfolge klingen, in der sie ankommen. Sie wartet nur aufs
+/// Entpacken, nicht aufs Ausklingen: Geplant wird nach der Uhr (siehe
+/// `stimme_einplanen`).
 let stimmkette = Promise.resolve();
+/// Wann, auf der Uhr des Tonzusammenhangs, das zuletzt geplante Stueck
+/// ausklingt.
+let stimmende = 0;
+/// Ob die Schleife fuer das Zeichen schon laeuft.
+let schwingt = false;
 
 function tonwerk_holen() {
   if (!tonwerk) {
@@ -2619,13 +2733,18 @@ function tonwerk_holen() {
   return tonwerk;
 }
 
-/// **Spielt ein Stueck und laesst das Zeichen mitschwingen.**
+/// **Plant ein Stueck genau hinter das vorige.**
 ///
-/// ⚑ **Der Ausschlag kommt aus dem Ton selbst**, nicht aus einer Uhr:
-/// Ein Zeichen, das sich nach einem Zeitgeber bewegt, sieht aus wie
-/// eines, das mitschwingt, und ist eine Verzierung mit dem Anschein
-/// einer Auskunft.
-function stimme_spielen(base64) {
+/// ⚑ **Nach der Uhr und nicht nach dem Ende des vorigen** (2026-09-25).
+/// Seit die Stimme gestroemt kommt, ist ein Satz zwei bis vier Stuecke
+/// von rund einer Sekunde. Wer jedes erst startet, wenn das vorige sein
+/// Ende meldet, laesst dazwischen die Zeit fuers Melden und Entpacken
+/// als Knacken stehen. Hier wird jedes Stueck auf den Zeitpunkt gelegt,
+/// an dem das vorige endet, und klingt damit ohne Fuge an.
+///
+/// Zurueck kommt ein Versprechen, das erfuellt ist, sobald das Stueck
+/// geplant ist; die Kette haelt nur die Reihenfolge des Entpackens.
+function stimme_einplanen(base64) {
   return new Promise((fertig) => {
     let roh;
     try {
@@ -2643,32 +2762,48 @@ function stimme_spielen(base64) {
         const quelle = werk.createBufferSource();
         quelle.buffer = puffer;
         quelle.connect(tonmesser);
-        const zeichen = document.querySelector(".stimmzeichen");
-        const daten = new Uint8Array(tonmesser.frequencyBinCount);
-        let laeuft = true;
-        const schwingen = () => {
-          if (!laeuft) return;
-          tonmesser.getByteTimeDomainData(daten);
-          let spitze = 0;
-          for (const v of daten) spitze = Math.max(spitze, Math.abs(v - 128) / 128);
-          if (zeichen) zeichen.style.setProperty("--schwung", spitze.toFixed(3));
-          requestAnimationFrame(schwingen);
-        };
-        quelle.onended = () => {
-          laeuft = false;
-          if (zeichen) zeichen.style.setProperty("--schwung", "0");
-          fertig();
-        };
-        quelle.start();
-        requestAnimationFrame(schwingen);
+        // ⚠️ Ein kleiner Vorlauf, falls die Kette hinterherhinkt: Ein
+        //   Start in der Vergangenheit schnitte den Anfang ab.
+        const anfang = Math.max(werk.currentTime + 0.03, stimmende);
+        quelle.start(anfang);
+        stimmende = anfang + puffer.duration;
+        zeichen_schwingen();
+        fertig();
       },
       () => fertig(),
     );
   });
 }
 
+/// **Laesst das Zeichen mitschwingen, solange etwas geplant ist.**
+///
+/// ⚑ **Der Ausschlag kommt aus dem Ton selbst**, nicht aus einer Uhr:
+/// Ein Zeichen, das sich nach einem Zeitgeber bewegt, sieht aus wie
+/// eines, das mitschwingt, und ist eine Verzierung mit dem Anschein
+/// einer Auskunft. Eine einzige Schleife fuer alle Stuecke; sie endet,
+/// wenn das zuletzt geplante ausgeklungen ist.
+function zeichen_schwingen() {
+  if (schwingt) return;
+  schwingt = true;
+  const daten = new Uint8Array(tonmesser.frequencyBinCount);
+  const schritt = () => {
+    const zeichen = document.querySelector(".stimmzeichen");
+    if (tonwerk.currentTime >= stimmende) {
+      schwingt = false;
+      if (zeichen) zeichen.style.setProperty("--schwung", "0");
+      return;
+    }
+    tonmesser.getByteTimeDomainData(daten);
+    let spitze = 0;
+    for (const v of daten) spitze = Math.max(spitze, Math.abs(v - 128) / 128);
+    if (zeichen) zeichen.style.setProperty("--schwung", spitze.toFixed(3));
+    requestAnimationFrame(schritt);
+  };
+  requestAnimationFrame(schritt);
+}
+
 horchen("sinne-stimme", (e) => {
-  stimmkette = stimmkette.then(() => stimme_spielen(e.payload));
+  stimmkette = stimmkette.then(() => stimme_einplanen(e.payload));
 });
 
 /// ⚑ **Im Sprachmodus tritt ein Zeichen an die Stelle des Verlaufs**
@@ -3230,6 +3365,17 @@ function live_meldung(m) {
   // Jede andere Meldung beendet es; geaendert wird nur die Ueberschrift.
   const dachte = laufender.denkt;
   laufender.denkt = m.art === "Denken";
+
+  // ⚑ **Ob gerade geschrieben wird**, fuer das Ladezeichen: Text laesst
+  // es gehen, jede Meldung ueber Denken, Werkzeug oder Schritt holt es
+  // zurueck. Eine Verdichtung aendert nichts daran, was das Modell tut.
+  const schrieb = laufender.schreibt;
+  if (m.art !== "Verdichtet") laufender.schreibt = m.art === "Text";
+  if (schrieb && !laufender.schreibt) {
+    w.append(laufzeichen_bauen());
+  } else if (!schrieb && laufender.schreibt) {
+    w.querySelector(":scope > .laeuft")?.remove();
+  }
   if (dachte && !laufender.denkt) {
     const s = w.querySelector(".denken > summary");
     if (s) s.textContent = denkueberschrift(laufender);
@@ -4130,9 +4276,23 @@ $("terminalform").addEventListener("submit", async (e) => {
   feld.focus();
 });
 
-$("terminalleeren").addEventListener("click", () => {
+// ⚑ **Geleert wird wie in einem Terminal**: mit `clear` oder mit
+// Befehlstaste K (unter Linux und Windows Steuerung L). Ein eigener Knopf
+// dafuer war ein Formularelement mehr auf einer Flaeche, die keines
+// haben soll.
+$("terminaleingabe").addEventListener("keydown", (e) => {
+  const leeren = (e.metaKey && e.key === "k") || (e.ctrlKey && e.key === "l");
+  if (!leeren) return;
+  e.preventDefault();
   terminal_leertext();
-  $("terminaleingabe").focus();
+});
+
+// ⚑ **Ein Klick irgendwo ins Terminal setzt den Einfuegepunkt in die
+// Eingabezeile**, wie in jedem Terminal. Ausser wenn gerade Text markiert
+// wurde: Wer eine Ausgabe kopieren will, soll die Markierung behalten.
+$("terminal").addEventListener("mouseup", () => {
+  if (String(window.getSelection() || "")) return;
+  if (!$("terminalform").hidden) $("terminaleingabe").focus();
 });
 
 // ⚑ **Pfeil hoch und runter blaettern durch das Getippte.** Ohne das

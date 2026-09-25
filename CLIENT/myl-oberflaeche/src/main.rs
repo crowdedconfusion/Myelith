@@ -1074,6 +1074,8 @@ async fn frage(
 ) -> Result<Antwort, String> {
     let e = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())?;
     let grenze = e.modell.token as u32;
+    // Fuer die Saetze, die das Nachdenken ueberbruecken.
+    let sprache = e.oberflaeche.sprache.kennung().to_string();
     if verlauf.is_empty() {
         return Err("es wurde nichts gefragt".to_string());
     }
@@ -1240,7 +1242,7 @@ async fn frage(
                 ))))
             })
         });
-        zusehen_mit(m, &fenster, vorleser.clone());
+        zusehen_mit(m, &fenster, vorleser.clone(), &sprache);
         let antwort = m.chat("lokal", &n, Some(grenze)).map_err(|f| f.to_string()).map(|a| a.text);
         m.beobachter = None;
         // ⚑ **Der Rest geht noch raus, dann wird gewartet.** Ein
@@ -1379,7 +1381,7 @@ fn abspieler_im_fenster(fenster: tauri::AppHandle) -> myl_senses::sprechen::Absp
 /// dableibt, hielte einen Fenstergriff aus einem beendeten Auftrag
 /// fest und meldete in den naechsten hinein.
 fn zusehen(m: &mut myl_client::Oertlichesmodell, fenster: &tauri::AppHandle) {
-    zusehen_mit(m, fenster, None);
+    zusehen_mit(m, fenster, None, "");
 }
 
 /// **Derselbe Zuschauer, der nebenbei vorliest.**
@@ -1399,13 +1401,25 @@ fn zusehen_mit(
     m: &mut myl_client::Oertlichesmodell,
     fenster: &tauri::AppHandle,
     vorleser: Option<std::sync::Arc<Mutex<Option<myl_senses::sprechen::Vorleser>>>>,
+    sprache: &str,
 ) {
     let f = fenster.clone();
+    let sprache = sprache.to_string();
     m.beobachter = Some(Box::new(move |s: myl_client::strom::Stueck| {
-        if let (myl_client::strom::Stueck::Text(t), Some(v)) = (&s, &vorleser) {
+        let mut vorrang = None;
+        if let Some(v) = &vorleser {
             if let Ok(mut g) = v.lock() {
                 if let Some(v) = g.as_mut() {
-                    v.schub(t);
+                    match &s {
+                        myl_client::strom::Stueck::Text(t) => {
+                            v.schub(t);
+                            vorrang = Some(v.vorrang());
+                        }
+                        // ⚑ **Nachdenken wird ueberbrueckt**, mit einem
+                        //   vorbereiteten Satz, hoechstens einmal je Antwort
+                        //   (siehe `Vorleser::ueberbruecken`).
+                        myl_client::strom::Stueck::Denken(_) => v.ueberbruecken(&sprache),
+                    }
                 }
             }
         }
@@ -1416,6 +1430,14 @@ fn zusehen_mit(
                 myl_client::strom::Stueck::Text(text) => Lebend::Text { text },
             },
         );
+        // ⚑ **Der erste Ton geht vor** (siehe `sprechen::Vorrang`): Ist
+        //   das erste Stueck beim Sprecher und klingt noch nichts, haelt
+        //   die Erzeugung hier an. Erst nach dem Senden, damit der Text
+        //   schon dasteht, und ausserhalb der Sperre. Gemessen: erster Ton
+        //   beim 4B nach 3,1 statt 3,75 s, beim 8B nach 4,4 statt 5,4 s.
+        if let Some(v) = vorrang {
+            v.abwarten();
+        }
     }));
 }
 
@@ -1790,11 +1812,23 @@ fn stimme_entfernen() -> Sinnesansicht {
 #[tauri::command]
 fn stimme_vorwaermen(halter: tauri::State<'_, Halter>) -> Result<(), String> {
     let sprecher = std::sync::Arc::clone(&halter.sprecher);
+    // Die Saetze zum Ueberbruecken werden in der Sprache des Fensters
+    // vorbereitet.
+    let sprache = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())
+        .map(|e| e.oberflaeche.sprache.kennung().to_string())
+        .unwrap_or_else(|_| "de".into());
     std::thread::spawn(move || {
         let sinne = myl_senses::Sinne::finden();
         if let Ok(z) = sinne.sprechen.as_ref() {
             if let Err(f) = myl_senses::sprechen::vorwaermen(z, &sprecher) {
                 eprintln!("Sprechmodell: {f}");
+                return;
+            }
+            // ⚑ **Nach dem Aufwaermen und im selben Faden**: Der Laeufer
+            //   steht dann schon, und jeder Satz kostet rund eine Sekunde.
+            //   Beim naechsten Start liegen sie bereit und kosten nichts.
+            if let Err(f) = myl_senses::sprechen::ueberbrueckungen_vorbereiten(z, &sprecher, &sprache) {
+                eprintln!("Saetze zum Ueberbruecken: {f}");
             }
         }
     });

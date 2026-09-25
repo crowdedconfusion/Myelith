@@ -532,6 +532,337 @@ fn ein_schweigender_laeufer_laeuft_in_die_frist() {
 /// Weg. Also wird hier nachgestellt, was der Client wirklich findet:
 /// ein `cosyvoice`-Ordner, der Laeufer daneben, und ein „Python", das
 /// beides entgegennimmt.
+/// Ein gestellter Laeufer der Fassung 2: meldet je Satz zwei Stuecke
+/// (`<ziel>.0.wav`, `<ziel>.1.wav`, je eine Haelfte des Textes), dann
+/// den ganzen Satz in `<ziel>` und `ok`.
+fn stromlaeufer(bin: &Path, name: &str) -> std::path::PathBuf {
+    let laeufer = bin.join(name);
+    std::fs::write(
+        &laeufer,
+        "#!/bin/sh\n\
+         echo bereit\n\
+         while IFS=\"$(printf '\\t')\" read -r quelle ziel; do\n\
+         stamm=\"${ziel%.wav}\"\n\
+         printf 'vorne-' > \"$stamm.0.wav\"; cat \"$quelle\" >> \"$stamm.0.wav\"\n\
+         printf '%s\\t%s\\n' stueck \"$stamm.0.wav\"\n\
+         printf 'hinten-' > \"$stamm.1.wav\"; cat \"$quelle\" >> \"$stamm.1.wav\"\n\
+         printf '%s\\t%s\\n' stueck \"$stamm.1.wav\"\n\
+         cp \"$quelle\" \"$ziel\"; echo ok\n\
+         done\n",
+    )
+    .expect("Laeufer");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&laeufer, std::fs::Permissions::from_mode(0o755)).expect("Rechte");
+    }
+    laeufer
+}
+
+/// ⚑ **Der Vorrang haelt an, bis das erste Stueck klingt, und nur so
+/// lange.** Der Laeufer braucht hier eine Drittelsekunde je Satz; wer
+/// zurueckkommt, bevor etwas klang, haette nichts abgewartet.
+#[test]
+fn der_vorrang_wartet_auf_den_ersten_ton() {
+    let d = tempfile::tempdir().expect("Verzeichnis");
+    let heimat = d.path().join("sinne");
+    let bin = heimat.join("bin");
+    std::fs::create_dir_all(&bin).expect("bin");
+    let langsam = bin.join("langsam");
+    std::fs::write(
+        &langsam,
+        "#!/bin/sh\n\
+         echo bereit\n\
+         while IFS=\"$(printf '\\t')\" read -r quelle ziel; do\n\
+         sleep 0.3\n\
+         stamm=\"${ziel%.wav}\"\n\
+         cp \"$quelle\" \"$stamm.0.wav\"\n\
+         printf '%s\\t%s\\n' stueck \"$stamm.0.wav\"\n\
+         cp \"$quelle\" \"$ziel\"; echo ok\n\
+         done\n",
+    )
+    .expect("Laeufer");
+    std::fs::create_dir_all(heimat.join("cosyvoice")).expect("cosyvoice");
+    std::fs::write(bin.join(myl_senses::laufwerk::COSYVOICE_LAEUFER), "# Attrappe\n")
+        .expect("Laeufer");
+    let python = bin.join("python3");
+    std::fs::write(
+        &python,
+        format!(
+            "#!/bin/sh\nshift\nif [ \"$1\" != \"--dauer\" ]; then exit 0; fi\nexec {} \"$@\"\n",
+            langsam.display()
+        ),
+    )
+    .expect("Python");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        for p in [&langsam, &python] {
+            std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o755)).expect("Rechte");
+        }
+    }
+    let sinne = Sinne::finden_in(&heimat, &Eigene::default(), &[]);
+    let zeug = sinne.sprechen.as_ref().expect("bereit").clone();
+    assert!(zeug.dauerhaft());
+    let gespielt = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let g = std::sync::Arc::clone(&gespielt);
+    let mut v = myl_senses::sprechen::Vorleser::neu_mit(
+        &zeug,
+        Box::new(move |wav: &Path| {
+            g.lock().unwrap().push(std::fs::read_to_string(wav).unwrap_or_default());
+            Ok(())
+        }),
+    );
+    let vorrang = v.vorrang();
+    // Noch nichts unterwegs: kein Warten.
+    assert!(!vorrang.abwarten());
+    v.schub("Eine Synapse ist eine Kontaktstelle zwischen Zellen. ");
+    assert!(vorrang.abwarten(), "es wurde nicht gewartet");
+    assert_eq!(
+        *gespielt.lock().unwrap(),
+        ["Eine Synapse ist eine Kontaktstelle zwischen Zellen."],
+        "zurueck, bevor der erste Ton klang"
+    );
+    // Danach geht die Erzeugung frei, auch mit einem Satz unterwegs.
+    v.schub("Der zweite Satz wartet auf niemanden. ");
+    let t = std::time::Instant::now();
+    assert!(!vorrang.abwarten());
+    assert!(t.elapsed() < std::time::Duration::from_millis(200));
+    assert!(v.abschliessen().is_empty());
+}
+
+/// ⚑ **Die Stuecke eines Satzes kommen einzeln und in der Reihenfolge**,
+/// jedes sobald der Laeufer es meldet, und `satz` allein raeumt sie weg.
+#[test]
+fn der_dauerlaeufer_meldet_seine_stuecke() {
+    let d = tempfile::tempdir().expect("Verzeichnis");
+    let heimat = d.path().join("sinne");
+    let bin = heimat.join("bin");
+    std::fs::create_dir_all(&bin).expect("bin");
+    stromlaeufer(&bin, "sprechen");
+    let sinne = Sinne::finden_in(&heimat, &Eigene::default(), &[]);
+    let zeug = sinne.sprechen.as_ref().expect("bereit").clone();
+    let mut dauer = myl_senses::sprechen::Dauersprecher::starten(&zeug).expect("meldet sich");
+
+    let quelle = d.path().join("satz.txt");
+    std::fs::write(&quelle, "Satz").expect("Text");
+    let ziel = d.path().join("satz.wav");
+    let mut gehoert = Vec::new();
+    let n = dauer
+        .satz_stueckweise(&quelle, &ziel, &mut |teil| {
+            gehoert.push(std::fs::read_to_string(teil).expect("Stueck lesbar"));
+        })
+        .expect("gesprochen");
+    assert_eq!(n, 2);
+    assert_eq!(gehoert, ["vorne-Satz", "hinten-Satz"]);
+    assert_eq!(std::fs::read_to_string(&ziel).expect("ganzer Satz"), "Satz");
+
+    // `satz` ohne Stueckwunsch: Der ganze Satz liegt im Ziel, die Stuecke
+    // sind weg.
+    let ziel2 = d.path().join("zwei.wav");
+    dauer.satz(&quelle, &ziel2).expect("gesprochen");
+    assert!(ziel2.is_file());
+    assert!(
+        !d.path().join("zwei.0.wav").exists() && !d.path().join("zwei.1.wav").exists(),
+        "Stuecke liegen herum"
+    );
+}
+
+/// ⚑ **Der Vorleser spielt die Stuecke, nicht den ganzen Satz**, und
+/// raeumt jedes nach dem Abspielen weg; der erste Teil der Antwort darf
+/// dabei am Komma enden.
+#[test]
+fn der_vorleser_spielt_die_stuecke_sobald_sie_kommen() {
+    let d = tempfile::tempdir().expect("Verzeichnis");
+    let heimat = d.path().join("sinne");
+    let bin = heimat.join("bin");
+    std::fs::create_dir_all(&bin).expect("bin");
+    // ⚑ Als CosyVoice-Weg, denn nur der laeuft dauerhaft: Das gestellte
+    //   Python bekommt den Laeufer als erstes Argument und reicht die
+    //   uebrigen an den Stromlaeufer weiter. Er heisst nicht `sprechen`,
+    //   sonst gewaenne er als eigenes Skript.
+    let strom = stromlaeufer(&bin, "strom");
+    std::fs::create_dir_all(heimat.join("cosyvoice")).expect("cosyvoice");
+    std::fs::write(
+        bin.join(myl_senses::laufwerk::COSYVOICE_LAEUFER),
+        "# Attrappe\n",
+    )
+    .expect("Laeufer");
+    let python = bin.join("python3");
+    // ⚠️ Nur mit `--dauer` weiterreichen: Das gestellte Python liegt in
+    //   `bin` und wird damit auch fuer andere Proben gefunden (etwa ob
+    //   eine PDF-Kiste da ist); die liefen sonst in den Laeufer und
+    //   warteten dort ewig auf Eingabe. So blieb diese Probe beim ersten
+    //   Lauf haengen.
+    std::fs::write(
+        &python,
+        format!(
+            "#!/bin/sh\nshift\nif [ \"$1\" != \"--dauer\" ]; then exit 0; fi\nexec {} \"$@\"\n",
+            strom.display()
+        ),
+    )
+    .expect("Python");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&python, std::fs::Permissions::from_mode(0o755)).expect("Rechte");
+    }
+    let sinne = Sinne::finden_in(&heimat, &Eigene::default(), &[]);
+    let zeug = sinne.sprechen.as_ref().expect("bereit").clone();
+    assert!(
+        zeug.dauerhaft(),
+        "die Attrappe laeuft nicht als Dauerlaeufer"
+    );
+    let gespielt = std::sync::Arc::new(std::sync::Mutex::new(
+        Vec::<(String, std::path::PathBuf)>::new(),
+    ));
+    let g = std::sync::Arc::clone(&gespielt);
+    let mut v = myl_senses::sprechen::Vorleser::neu_mit(
+        &zeug,
+        Box::new(move |wav: &Path| {
+            g.lock().unwrap().push((
+                std::fs::read_to_string(wav).unwrap_or_default(),
+                wav.to_path_buf(),
+            ));
+            Ok(())
+        }),
+    );
+    v.schub("Eine Synapse ist eine Kontaktstelle, an der ein Signal ueberspringt. ");
+    let fehler = v.abschliessen();
+    assert!(fehler.is_empty(), "{fehler:?}");
+    let gespielt = gespielt.lock().unwrap();
+    let texte: Vec<&str> = gespielt.iter().map(|(t, _)| t.as_str()).collect();
+    assert_eq!(
+        texte,
+        [
+            "vorne-Eine Synapse ist eine Kontaktstelle,",
+            "hinten-Eine Synapse ist eine Kontaktstelle,",
+            "vorne-an der ein Signal ueberspringt.",
+            "hinten-an der ein Signal ueberspringt.",
+        ]
+    );
+    for (_, pfad) in gespielt.iter() {
+        assert!(
+            !pfad.exists(),
+            "{} liegt nach dem Abspielen noch da",
+            pfad.display()
+        );
+    }
+}
+
+/// ⚑ **Waehrend das Modell nachdenkt, kommt ein vorbereiteter Satz**
+/// (Auftrag des Projektinhabers, 2026-09-25): hoechstens einer je
+/// Antwort, vor dem ersten gesprochenen Satz, aus der Ablage und ohne sie
+/// anzutasten; ohne Ablage keiner.
+#[test]
+fn das_nachdenken_wird_mit_einem_vorbereiteten_satz_ueberbrueckt() {
+    let d = tempfile::tempdir().expect("Verzeichnis");
+    let heimat = d.path().join("sinne");
+    let zaehler = d.path().join("starts");
+    let sinne = cosy_attrappe(&heimat, &zaehler);
+    let zeug = sinne.sprechen.as_ref().expect("bereit").clone();
+    let geteilt: myl_senses::sprechen::Geteilter = Default::default();
+    let gespielt = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let spieler =
+        |g: std::sync::Arc<std::sync::Mutex<Vec<String>>>| -> myl_senses::sprechen::Abspieler {
+            Box::new(move |wav: &Path| {
+                g.lock()
+                    .unwrap()
+                    .push(std::fs::read_to_string(wav).unwrap_or_default());
+                Ok(())
+            })
+        };
+
+    // Ohne Ablage: kein Satz, und die Antwort kommt trotzdem.
+    let mut v = myl_senses::sprechen::Vorleser::neu_geteilt(
+        &zeug,
+        spieler(gespielt.clone()),
+        Some(geteilt.clone()),
+    );
+    v.ueberbruecken("de");
+    v.schub("Die erste Antwort ist lang genug zum Sprechen. ");
+    assert!(v.abschliessen().is_empty());
+    assert_eq!(
+        *gespielt.lock().unwrap(),
+        ["Die erste Antwort ist lang genug zum Sprechen."]
+    );
+    gespielt.lock().unwrap().clear();
+
+    // Vorbereiten legt je Satz eine Datei in die Heimat der Attrappe und
+    // raeumt Saetze einer frueheren Stimme weg, fremde Dateien nicht.
+    let ordner = myl_senses::sprechen::ueberbrueckungsort(&zeug, "x")
+        .parent()
+        .expect("Ordner")
+        .to_path_buf();
+    std::fs::create_dir_all(&ordner).expect("Ordner");
+    let alt = ordner.join("0123456789abcdef.wav");
+    let fremd = ordner.join("notiz.wav");
+    std::fs::write(&alt, "alte Stimme").expect("alt");
+    std::fs::write(&fremd, "fremd").expect("fremd");
+    let neu = myl_senses::sprechen::ueberbrueckungen_vorbereiten(&zeug, &geteilt, "de")
+        .expect("vorbereitet");
+    let saetze = myl_senses::sprechen::ueberbrueckungen("de");
+    assert_eq!(neu, saetze.len());
+    assert!(!alt.exists(), "der Satz einer frueheren Stimme blieb liegen");
+    assert!(fremd.exists(), "eine fremde Datei wurde geloescht");
+    for s in saetze {
+        let ort = myl_senses::sprechen::ueberbrueckungsort(&zeug, s);
+        assert!(
+            ort.starts_with(&heimat),
+            "{} liegt nicht in der Heimat der Attrappe",
+            ort.display()
+        );
+        assert_eq!(std::fs::read_to_string(&ort).expect("abgelegt"), *s);
+    }
+    assert_eq!(
+        myl_senses::sprechen::ueberbrueckungen_vorbereiten(&zeug, &geteilt, "de").expect("nochmal"),
+        0
+    );
+
+    // Mit Ablage: genau ein Satz aus der Auswahl, vor der Antwort, und
+    // er bleibt liegen.
+    let mut v = myl_senses::sprechen::Vorleser::neu_geteilt(
+        &zeug,
+        spieler(gespielt.clone()),
+        Some(geteilt.clone()),
+    );
+    v.ueberbruecken("de");
+    v.ueberbruecken("de");
+    v.schub("Die zweite Antwort ist ebenfalls lang genug. ");
+    v.ueberbruecken("de");
+    assert!(v.abschliessen().is_empty());
+    let g = gespielt.lock().unwrap();
+    assert_eq!(g.len(), 2, "{g:?}");
+    assert!(
+        saetze.contains(&g[0].as_str()),
+        "kein Satz aus der Auswahl: {:?}",
+        g[0]
+    );
+    assert_eq!(g[1], "Die zweite Antwort ist ebenfalls lang genug.");
+    for s in saetze {
+        assert!(
+            myl_senses::sprechen::ueberbrueckungsort(&zeug, s).is_file(),
+            "die Ablage wurde angetastet"
+        );
+    }
+    drop(g);
+    gespielt.lock().unwrap().clear();
+
+    // Spricht die Antwort schon, wird nicht mehr ueberbrueckt.
+    let mut v = myl_senses::sprechen::Vorleser::neu_geteilt(
+        &zeug,
+        spieler(gespielt.clone()),
+        Some(geteilt.clone()),
+    );
+    v.schub("Die dritte Antwort kommt ohne Nachdenken daher. ");
+    v.ueberbruecken("de");
+    assert!(v.abschliessen().is_empty());
+    assert_eq!(
+        *gespielt.lock().unwrap(),
+        ["Die dritte Antwort kommt ohne Nachdenken daher."]
+    );
+}
+
 fn cosy_attrappe(heimat: &Path, zaehler: &Path) -> Sinne {
     let bin = heimat.join("bin");
     std::fs::create_dir_all(&bin).expect("bin");

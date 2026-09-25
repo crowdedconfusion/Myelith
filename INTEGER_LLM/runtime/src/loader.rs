@@ -2917,6 +2917,119 @@ mod tests {
         write_theta_v(dir);
     }
 
+    /// **Macht aus der einzigen Ebene einer Vorlage eine Zustandsebene**,
+    /// wie 30 der 40 Ebenen des 35B.
+    ///
+    /// ⚑ **Eine Ergaenzung und keine eigene Vorlage.** Sie setzt auf
+    /// [`write_full_fixture_mit_tor`] auf und schreibt nur, was eine
+    /// rekurrente Ebene zusaetzlich braucht: die Masse in
+    /// `model_config.json`, die sieben Matrizen der Zustandsschicht, die
+    /// beiden Werte je Wertkopf (`exp_A`, `dt_bias`) als int16 mit
+    /// Skala je Element, fuenf Aktivierungsskalen und die beiden
+    /// Tabellen des Zerfalls. Was die Vorlage darueber hinaus schreibt,
+    /// etwa die Achtsamkeitsgewichte, liest der Lader fuer diese Ebene
+    /// nicht.
+    ///
+    /// ⚠️ **Die Tabellen in echter Laenge und mit echtem Verlauf**, aus
+    /// derselben Lehre wie bei der Sigmoid-Tabelle oben: Eine Tabelle,
+    /// die den Zerfall zu eins oder null macht, macht aus der Rekurrenz
+    /// eine Konstante, und eine Probe darueber prueft dann nichts.
+    fn zustandsebene_einsetzen(dir: &Path) {
+        let lies = |name: &str| -> serde_json::Value {
+            serde_json::from_slice(&fs::read(dir.join(name)).expect(name)).expect(name)
+        };
+        let schreib = |name: &str, wert: &serde_json::Value| {
+            fs::write(dir.join(name), serde_json::to_string(wert).unwrap()).expect(name);
+        };
+        let hidden = 4usize;
+        let (k_koepfe, v_koepfe, k_dim, v_dim, kern) = (1usize, 2usize, 2usize, 2usize, 4usize);
+        let (k_breite, v_breite) = (k_koepfe * k_dim, v_koepfe * v_dim);
+        let kanaele = 2 * k_breite + v_breite;
+
+        let mut konf = lies("model_config.json");
+        konf["layer_types"] = serde_json::json!(["linear_attention"]);
+        konf["linear_num_key_heads"] = serde_json::json!(k_koepfe);
+        konf["linear_num_value_heads"] = serde_json::json!(v_koepfe);
+        konf["linear_key_head_dim"] = serde_json::json!(k_dim);
+        konf["linear_value_head_dim"] = serde_json::json!(v_dim);
+        konf["linear_conv_kernel_dim"] = serde_json::json!(kern);
+        konf["merkmale"].as_array_mut().expect("merkmale").push(serde_json::json!("zustandsschicht"));
+        schreib("model_config.json", &konf);
+
+        let mut manifest = lies("weights_manifest.json");
+        let p = "model.layers.0.linear_attn";
+        for (name, form) in [
+            ("in_proj_qkv.weight", vec![kanaele, hidden]),
+            ("in_proj_z.weight", vec![v_breite, hidden]),
+            ("in_proj_a.weight", vec![v_koepfe, hidden]),
+            ("in_proj_b.weight", vec![v_koepfe, hidden]),
+            ("conv1d.weight", vec![kanaele, kern]),
+            ("norm.weight", vec![v_dim]),
+            ("out_proj.weight", vec![hidden, v_breite]),
+        ] {
+            let original = format!("{p}.{name}");
+            let n: usize = form.iter().product();
+            let daten: Vec<u8> = (0..n).map(|i| (i % 5) as u8).collect();
+            let sicher = original.replace('.', "_");
+            let datei = format!("{sicher}.bin");
+            fs::write(dir.join(&datei), &daten).expect("Gewicht schreiben");
+            manifest[&sicher] = serde_json::json!({
+                "original_name": original, "file": datei, "shape": form,
+                "scale": 1.0, "shift": 0, "dtype": "int8", "hash": sha256_hex(&daten),
+            });
+        }
+        // `exp_A` um 1,5 bis 3, `dt_bias` um null, je Element eine Skala.
+        for (name, werte, shifts) in [
+            ("exp_A", vec![24i16, 48], vec![4u8, 4]),
+            ("dt_bias", vec![-8i16, 5], vec![4u8, 3]),
+        ] {
+            let original = format!("{p}.{name}");
+            let sicher = original.replace('.', "_");
+            let daten: Vec<u8> = werte.iter().flat_map(|w| w.to_le_bytes()).collect();
+            let (datei, schiebedatei) = (format!("{sicher}.bin"), format!("{sicher}_shifts.bin"));
+            fs::write(dir.join(&datei), &daten).expect("Wert schreiben");
+            fs::write(dir.join(&schiebedatei), &shifts).expect("Skalen schreiben");
+            manifest[&sicher] = serde_json::json!({
+                "original_name": original, "file": datei, "shape": [werte.len()],
+                "scale": -1.0, "shift": -1, "dtype": "int16", "hash": sha256_hex(&daten),
+                "shifts_file": schiebedatei, "shifts_hash": sha256_hex(&shifts),
+            });
+        }
+        schreib("weights_manifest.json", &manifest);
+
+        let mut skalen = lies("scales.json");
+        for (name, eintrag) in [
+            ("in_proj_qkv", scale_entry(4, 0.0625, 12.0)),
+            ("in_proj_z", scale_entry(4, 0.0625, 12.0)),
+            ("in_proj_a", scale_entry(5, 0.03125, 6.0)),
+            ("in_proj_b", scale_entry(5, 0.03125, 6.0)),
+            ("norm", scale_entry(5, 0.03125, 8.0)),
+        ] {
+            skalen[format!("{p}.{name}")] = eintrag;
+        }
+        schreib("scales.json", &skalen);
+
+        // Die beiden Zerfallstabellen nach ihrer Formel in `theta_v`:
+        // log(1 + exp(-x)) ueber |x| in [0, 32) bei 2^-8, Ausgang 2^-30;
+        // exp(-d) ueber d in [0, 64) bei 2^-8, Ausgang 2^-28.
+        let mut tabellen = lies("luts.json");
+        for (name, n, aus, f) in [
+            ("softplus_rest", 8192usize, 30u32, (|x: f64| (1.0 + (-x).exp()).ln()) as fn(f64) -> f64),
+            ("zerfall_exp", 16384, 28, |d: f64| (-d).exp()),
+        ] {
+            let werte: Vec<i32> =
+                (0..n).map(|i| (f(i as f64 / 256.0) * (1u64 << aus) as f64).round() as i32).collect();
+            let roh: Vec<u8> = werte.iter().flat_map(|w| w.to_le_bytes()).collect();
+            let datei = format!("{name}.lut.bin");
+            fs::write(dir.join(&datei), &roh).expect("Tabelle schreiben");
+            let mut eintrag = lut_entry(&datei, n, &sha256_hex(&roh));
+            eintrag["dtype"] = serde_json::json!("int32");
+            tabellen[name] = eintrag;
+        }
+        schreib("luts.json", &tabellen);
+        write_theta_v(dir);
+    }
+
     // --- Mixture-of-Experts (2026-08-25) ---
 
     /// Ein MoE-Artefakt laedt, und der Loader baut `Feedforward::Moe`
@@ -2990,16 +3103,31 @@ mod tests {
         //   und 427): Tor am Ausgang der Achtsamkeit und geteilter
         //   Experte. Ohne sie lief diese Probe gruen, waehrend der
         //   gebuendelte Weg beide Bauteile schlicht nicht kannte.
-        for (name, moe, tor) in [
-            ("logits-dicht", None, false),
-            ("logits-moe", Some((6usize, 2usize, 3usize)), false),
-            ("logits-tor-geteilt", Some((6usize, 2usize, 3usize)), true),
+        //
+        // ⛔️ **Und die vierte die Zustandsebene** (2026-09-25). Seit dem
+        //   Tag rechnet die Vorbereitung das Expertengemisch hinter einer
+        //   Rekurrenz gebuendelt, und bis dahin hielt keine Vorlage eine
+        //   rekurrente Ebene gegen den tokenweisen Weg. Die Vorlage ist
+        //   die des 35B im Kleinen: Zustandsebene, Gemisch, geteilter
+        //   Experte.
+        for (name, moe, tor, zustand) in [
+            ("logits-dicht", None, false, false),
+            ("logits-moe", Some((6usize, 2usize, 3usize)), false, false),
+            ("logits-tor-geteilt", Some((6usize, 2usize, 3usize)), true, false),
+            ("logits-zustand", Some((6usize, 2usize, 3usize)), true, true),
         ] {
             let dir = test_dir(name);
             write_full_fixture_mit_tor(&dir, true, false, moe, tor);
+            if zustand {
+                zustandsebene_einsetzen(&dir);
+            }
             gewichte_verrauschen(&dir, 0x5eed_0384);
             skalen_je_kanal_streuen(&dir);
             let model = load_model(&dir).expect("Artefakt muss laden");
+            // 📌 Die Vorlage muss auch wirklich rekurrent laden: Faellt
+            // `layer_types` weg, wird die Ebene still achtsam, und die
+            // Probe waere wieder die dritte.
+            assert_eq!(model.layers[0].ist_rekurrent(), zustand, "{name}: falsche Art der Ebene");
 
             // ⚑ **Laenger als ein Fenster**, damit die Fenstergrenze
             // mitgeprueft wird. Der Wortschatz des Fixtures ist drei

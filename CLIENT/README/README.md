@@ -1,7 +1,7 @@
 # client (Nutzer-Client inkl. Wallet)
 
-> **Version:** 0.72.2 (`myl-client` 0.52.2, `myl-oberflaeche` 0.43.0, `myl-console` 0.15.0, `myl-senses` 0.7.0)
-> **Datum:** 2026-09-24
+> **Version:** 0.83.0 (`myl-client` 0.52.2, `myl-oberflaeche` 0.47.0, `myl-console` 0.22.0, `myl-senses` 0.8.0)
+> **Datum:** 2026-09-25
 > **Status:** ✅ **Der lokale Betrieb läuft und ist ausgeliefert.** Ein
 > Gesprächsfenster mit Modellwahl, Agentenschleife und
 > Einstellungsseite; aus einem frischen Klon lassen sich darüber
@@ -151,6 +151,751 @@ Modell überhaupt etwas taugt, und weil eine Schnittstelle, die kein
 Mensch je bedient hat, an den Bedürfnissen vorbei entworfen wird.
 
 ## Changelog
+
+### v0.83.0 – 2026-09-25 (die Stimme spricht, während das Modell schreibt: erster Ton nach drei bis acht Sekunden; Funde 463 bis 466)
+
+`myl-senses` **0.7.0 auf 0.8.0**, `myl-oberflaeche` **0.46.0 auf
+0.47.0**. Auftrag des Projektinhabers: die Latenz der Sprachausgabe
+senken, bis ein flüssiges Gespräch ohne lange Wartezeit möglich ist, und
+während das Modell nachdenkt einen Satz wie „Lass mich kurz darüber
+nachdenken" sprechen.
+
+**Der Sprecher allein**, ein Satz von 62 Zeichen, vom Eingang beim
+Läufer bis zum ersten hörbaren Stück:
+
+| Stand | erster Ton | RTF |
+|---|---|---|
+| vorher: alles auf der CPU, zehn Flussschritte, ganzer Satz auf einmal | 9,1 s | 2,1 |
+| Fluss auf der Grafikeinheit, sechs Schritte, stückweise | 2,1 bis 2,3 s | 0,86 |
+| dazu die Stimmprobe an einer Pause gekürzt | **1,6 bis 1,8 s** | 0,79 |
+
+**Im ganzen Gespräch**, ab dem Abschicken, Antwort ohne Nachdenken, je
+drei Läufe bei 4B und 8B:
+
+| Hauptmodell | erster Ton vorher (Läufer 2, lange Probe) | erster Ton jetzt | Lücken jetzt |
+|---|---|---|---|
+| 4B | nicht gemessen | **3,0 bis 3,3 s** | 2,1 bis 2,3 s |
+| 8B | 5,8 s | **4,3 bis 4,6 s** | 3,4 bis 3,6 s |
+| 30B-A3B | 9,7 bis 9,8 s | **7,8 s** | 3,4 s |
+
+- ⚑ **Läufer Fassung 2** (`laeufer/sprechen-cosyvoice.py`): Der Fluss
+  (DiT) rechnet auf der Grafikeinheit, gemessen 1,8 statt 5,4 bis 6,3 s;
+  das Token-Sprachmodell bleibt auf der CPU (48 gegen 31 Token/s), der
+  Vocoder auch (`float64`). **Sechs statt zehn Flussschritte**, geprüft
+  durch Zurückhören mit whisper (bei 10, 6 und 4 Schritten wortrichtig)
+  und die Ähnlichkeit zur Stimmprobe (0,80 bis 0,89, ohne Gang mit der
+  Schrittzahl). Die Stimme wird einmal gemerkt statt je Satz vorbereitet
+  (rund 1 s je Satz). Ein Aufwärmsatz vor `bereit`.
+- ⚑ **Stückweise sprechen:** Der Läufer meldet jedes hörbare Stück mit
+  `stueck\t<teil.wav>`, sobald es fertig ist; der Vorleser spielt es
+  sofort und räumt es weg. Ein Läufer der Fassung 1 meldet nur `ok`, und
+  dann klingt der Satz als Ganzes.
+- ⚑ **Der Läufer wird erneuert, wenn niemand ihn angepasst hat:**
+  ersetzt wird nur eine Datei, deren Fingerabdruck (FNV-1a, 64 Bit)
+  einer früher ausgelieferten Fassung gleicht. Angepasste bleiben.
+- ⚑ **Das Fenster spielt die Stücke lückenlos**, mit Web Audio auf die
+  Probe genau hintereinander geplant (`stimme_einplanen`) statt je Stück
+  ein neues Element abzuspielen.
+- ⚑ **Das erste Stück darf am Komma enden**, ab 20 Zeichen
+  (`ERSTES_STUECK_MINDESTENS`); danach nur am Satzende.
+- ⚑ **Die Stimmprobe wird beim Hochladen gekürzt** (`probe_kuerzen`):
+  Ist sie länger als 5,5 s, wird sie an der leisesten Stelle zwischen 3,5
+  und 5,5 s geschnitten, und erst danach schreibt whisper ihren Text mit.
+  Gemessen: 7,1 s Probe kosteten je Satz rund 0,5 s mehr als 4,4 s, bei
+  kaum anderer Ähnlichkeit (0,859 bis 0,888 gegen 0,854 bis 0,870). Der
+  Kopf wird blockweise gelesen, denn ffmpeg schreibt einen `LIST`-Block
+  vor die Daten.
+- ⚑ **Der erste Ton geht vor** (`sprechen::Vorrang`): Ist das erste Stück
+  beim Sprecher und klingt noch nichts, hält die Erzeugung im Fenster an,
+  höchstens sechs Sekunden. Der erste Ton kommt damit beim 4B 0,65 s, beim
+  8B 1,0 s früher; die Lücken wachsen beim 8B und 30B um rund eine
+  Sekunde, verteilt über eine halbe Minute Sprechen.
+- ⚑ **Nachdenken wird überbrückt:** fünf Sätze je Sprache
+  (`ueberbrueckungen`), vorbereitet beim Einschalten der Stimme und
+  abgelegt unter `<Heimat>/ueberbrueckung/`, ihr Name ein Fingerabdruck
+  über Läufer, Stimme und Satz. Gespielt wird höchstens einer je Antwort,
+  beim ersten Denkstück, nur wenn noch nichts gesprochen wurde und nur
+  aus der Ablage; er wird nie erst gerechnet, denn das hielte die Antwort
+  auf, die er überbrücken soll.
+- ⛔️ **Fund 463: CosyVoice verdoppelt beim Streamen `token_hop_len` und
+  setzt es nie zurück.** Ab dem zweiten Satz wartete das erste Stück
+  damit auf doppelt so viele Token. Der Läufer setzt den Wert vor jedem
+  Satz auf den Anfang zurück, ohne den CosyVoice-Baum anzufassen.
+- ⛔️ **Fund 464: Markdown ging an die Stimme.** „Eine \*\*Synapse\*\*"
+  kam mit den Sternen bei CosyVoice an. `sprechbar` nimmt Hervorhebungen,
+  Code-Striche, Überschrifts-, Aufzählungs- und Tabellenzeichen weg; ein
+  Verweis behält seinen Text. Ein Stück ohne ein einziges Wort
+  (`zu_sprechen`) geht gar nicht erst hinaus.
+- ⛔️ **Fund 465: Eine Abkürzung beendete ein Stück.** Aus „(z. B.
+  Glutamat)" wurde ein eigenes Stück „(z.", gesprochen als Satz mit
+  Pause. `ist_abkuerzung` prüft das letzte Wort vor dem Punkt gegen eine
+  kleine Liste.
+- ⛔️ **Fund 466: Die Überbrückungssätze wuchsen mit jeder Stimme.** Jede
+  neue Probe oder jeder neue Läufer brachte fünf neue Dateien, und die
+  alten blieben: fünfzehn für fünf Sätze. Jetzt räumt das Vorbereiten
+  weg, was nach dieser Ablage aussieht und zu keiner jetzigen Stimme in
+  keiner Sprache gehört; fremde Dateien bleiben.
+- Zwei Doc-Kommentare standen an der falschen Stelle, einer davon seit
+  `myl-senses` 0.1.0 (die Beschreibung von `abspielen` hing an
+  `wav_dauer_s`); verschoben.
+
+⛔️ **Nicht übernommen, weil gemessen schlechter:** das Sprachmodell des
+Sprechers auf der Grafikeinheit (4B: erster Ton 4,8 statt 3,8 s, Lücken
+13 statt 2 s, denn das Hauptmodell rechnet dort mit); ein Rückstau, der
+das Hauptmodell bei jedem offenen Satz anhält (30B: 10 s Lücken); zwei
+statt zehn Fäden für den Sprecher und eine Kerngrenze für das
+Hauptmodell (beides ohne Gewinn).
+
+⚠️ **Was bleibt, ist das Hauptmodell.** Das 30B braucht auf dieser
+Maschine neben dem Sprecher 2,7 s bis zum ersten Wort, und beide teilen
+sich 24 GiB; das Sprachmodell des Sprechers fiel daneben von 48 auf 13
+Token/s. **Mit Nachdenken** schrieb das 30B das erste Wort der Antwort
+nach 44 s; der Überbrückungssatz kommt nach rund drei Sekunden, danach
+ist es still.
+
+**Belegt:** `myl-senses` 78 Proben grün (53 in der Bibliothek, 25 mit
+Attrappe), neu: `markdown_wird_sprechbar`,
+`abkuerzungen_beenden_kein_stueck`,
+`ein_stueck_ohne_worte_wird_nicht_geschickt`,
+`die_stimmprobe_wird_an_der_pause_gekuerzt`,
+`der_vorrang_wartet_auf_den_ersten_ton`,
+`das_nachdenken_wird_mit_einem_vorbereiteten_satz_ueberbrueckt`
+(erweitert um das Aufräumen), `der_dauerlaeufer_meldet_seine_stuecke`,
+`der_vorleser_spielt_die_stuecke_sobald_sie_kommen`,
+`das_erste_stueck_darf_am_komma_enden`, `der_fingerabdruck_ist_fnv1a`,
+`nur_ein_unveraenderter_alter_laeufer_wird_ersetzt`. Die zwölf
+Gegenproben zu den ersten sechs beißen (unter anderem: Schnitt fest am Fensterende, Kopf mit
+festen 44 Bytes, kein Warten, Ton schon beim Abschicken gesetzt, nicht
+aufgeräumt, auch fremde Dateien gelöscht). `myl-oberflaeche` 70,
+`myl-client` und `myl-console` grün; clippy ohne Befund.
+
+### v0.82.0 – 2026-09-25 (das Vorschaltbild zeigt eine von fünf gezeichneten Szenen statt des Schneesturms)
+
+`myl-oberflaeche` **0.45.0 auf 0.46.0**. Auftrag des Projektinhabers:
+fünf Bilder als Vorlage, dezent und in Schleife bewegt, beim Start eins
+davon gewürfelt; der Schriftzug bleibt, getauscht wird nur der
+Schneesturm dahinter.
+
+⚑ **Nachgebaut und nicht eingebettet**, so entschieden vom Projektinhaber: Ein
+fremdes Bild trägt ein Urheberrecht, eine Bildidee nicht. Neu ist
+`ui/vorhang.js` mit fünf gezeichneten Szenen; `ui/netz.js` (Rauschen,
+Sog, Netz) entfällt.
+
+| Szene | Vorlage | Bewegung |
+|---|---|---|
+| Wellenbänder | gekörnte helle Bänder um einen dunklen Kern, außen unscharf | Flug in den Tunnel |
+| Vielecke | gestaffelte Sieben- und Sechsecke, Kanten zu Bündeln | Flug in den Schacht |
+| Dreieckswelle | helle Welle aus flach schattierten Dreiecken auf Schwarz | die Welle hebt und senkt sich |
+| Wirbel | Flecken mit Rissen, zur Spirale verdreht, außen Strahlen | Sog in den Kern |
+| Schleifen | netzartige Bänder in Schlaufen auf hellem Grund | Flug ins Mandala |
+
+- ⚑ **Eine Schleife ohne Naht.** Vier Szenen sind selbstähnlich gebaut:
+  Jeder Ring ist der vorige, vergrößert um `q` und gedreht um `dreh`.
+  Die Bewegung führt genau diese Abbildung aus und steht nach einem
+  Umlauf wieder am Anfang. Je Bild wird nur gedreht und vergrößert,
+  nichts neu gerechnet.
+- 📌 **Die erste Fassung sprang an der Wende**, gemessen in einer
+  Vorschau als mittlere Abweichung zwischen dem letzten Bild vor und dem
+  ersten nach der Wende: bis 22 Graustufen, eine halbe Periode brachte
+  39. Drei Ursachen: Helligkeit, Tiefe und Grund hingen in der Textur am
+  Radius (jetzt fest am Schirm, `radial`), ein Schlaufenterm drehte nicht
+  mit dem Ring, und das Rauschen des Wirbels passte nicht ganzzahlig in
+  einen Umlauf. Was dann noch blieb, war Raster: Eine um `q`
+  hochgezogene Textur ist weicher. Dagegen blendet `schleife` über den
+  Umlauf in sich selbst einen Umlauf weiter über; bei hellen Linien
+  additiv, damit sich deckende Linien nicht abschwächen. **Jetzt liegt
+  jede Wende unter dem Unterschied zweier Bilder im Abstand einer
+  zweihundertstel Periode.**
+- 📌 **Die Unschärfe der Tiefe entsteht durch Halbieren und
+  Hochziehen**, nicht über `filter` auf der Leinwand: Die Webansicht
+  unter macOS zeichnete damit gemessen scharf. Ein einziger großer
+  Verkleinerungsschritt machte aus den feinen Perlen grobes, flackerndes
+  Rauschen; in Halbierungen mittelt jeder Schritt sauber.
+- ⚑ **Ein weicher dunkler Hof in der Mitte** hält den Schriftzug auf
+  jeder Szene lesbar, auch auf dem hellen Mandala.
+- ⚑ **Wer Bewegung abbestellt hat, sieht ein Standbild der Szene**
+  statt gar keines; die Leinwand wird dafür nicht mehr ausgeblendet.
+- ⚑ **Der Schriftzug erscheint nach 0,2 statt 2,4 Sekunden.** Die alte
+  Verzögerung war auf den Sog des Schneesturms abgestimmt; mit ihr wäre
+  er vor dem Weggehen des Vorhangs oft gar nicht erschienen.
+- Aufbau bis zum ersten Bild in der Vorschau 1 bis 110 ms, am längsten
+  der Wirbel, der sein Rauschen pixelweise rechnet.
+
+**Belegt:** 70 Proben in `tests/oberflaeche.rs`, alle grün, eine neu
+(`das_vorschaltbild_wuerfelt_unter_fuenf_szenen`: fünf Szenen, Wurf
+über alle, keine feste Nummer im Fenster), drei angepasst
+(Fremdquellen, Abgang, abbestellte Bewegung); fünf Gegenproben beißen.
+Alle Szenen in einer Vorschau mit dem echten Stilblatt gezeichnet, die
+Nähte gemessen.
+
+### v0.81.0 – 2026-09-25 (das Ladezeichen schweigt beim Schreiben, das Terminal ist ein Terminal, die Einstellungen rollen nur senkrecht)
+
+`myl-oberflaeche` **0.44.0 auf 0.45.0**. Drei Meldungen des
+Projektinhabers nach dem ersten Blick auf v0.80.0.
+
+**Das Ladezeichen steht nur, solange geladen oder nachgedacht wird.**
+Sobald das Modell Antworttext schreibt, geht es, denn dann ist der
+wachsende Text selbst die Auskunft. Es kommt wieder bei jedem Denken,
+jedem Werkzeugaufruf und jedem neuen Schritt: Nach einem Werkzeug
+rechnet das Modell oft eine halbe Minute ohne sichtbaren Zuwachs, und
+genau diese Lücke hatte Fund 292 geschlossen. Die Unterscheidung trägt
+ein Feld am laufenden Beitrag (`schreibt`), gesetzt von der Meldung,
+die gerade ankommt; eine Verdichtung ändert es nicht. Der Kasten des
+Zeichens entsteht jetzt an einer Stelle (`laufzeichen_bauen`), denn er
+wird an zweien gebraucht.
+
+**Das Terminal ist kein Formular mehr.** Die getönten Kästen um Ausgabe
+und Eingabe sind weg, ebenso die Knöpfe „Ausführen" und „Leeren". Auf
+dem Grund des Fensters steht die Ausgabe, direkt darunter die
+Eingabezeile mit Ordner und `$`, und beides rollt zusammen.
+
+- Ausgeführt wird mit der Eingabetaste, geleert mit `clear` oder
+  Befehlstaste K (Steuerung L unter Linux und Windows).
+- Während ein Befehl läuft, verschwindet die Eingabezeile und kommt
+  wieder, wenn er fertig ist.
+- Ein Klick irgendwo ins Terminal setzt den Einfügepunkt in die
+  Eingabezeile, außer es wurde gerade Text markiert.
+- 📌 **Das Eingabefeld gibt alles einzeln ab**, was es als Feld
+  erkennbar macht: Grund, Hintergrundfilter, Schatten, Polster,
+  Rundung. Es erbt all das aus der Regel für Bedienelemente; wer nur
+  den Grund wegnimmt, behält den Filter als milchigen Streifen.
+- Die Sätze `terminal.senden` und `terminal.leeren` sind entfallen.
+
+**Die Einstellungsseite rollt nur senkrecht.** Ihr Raster hat jetzt eine
+Spalte `minmax(0, 1fr)`, dazu `overflow-x: hidden`. 📌 Ein Rasterelement
+ist vorgabemäßig mindestens so breit wie sein breitester Inhalt, und
+`overflow-y: auto` allein setzt die andere Achse ebenfalls auf `auto`.
+⚠️ Mit den Daten dieser Maschine ließ sich das seitliche Rollen in der
+Vorschau nicht nachstellen; die beiden Angaben schließen es für jeden
+Inhalt aus.
+
+**Der Schließknopf steht genau auf dem Zahnrad.** Er hängt an denselben
+Zahlen wie das Zahnrad im Kopf (`--kopf-polster` von oben und rechts,
+dieselbe Knopfgröße) und ist am Fenster geheftet, rollt also nicht mit.
+Vorher stand er im Fluss der Seite, 12 Punkte links und 12 unter dem
+Zahnrad. Nachgemessen bei 760, 1100 und 1400 Punkt Breite: dieselbe
+Lage auf den Zehntelpunkt, nachdem der halbe Punkt der Kopflinie
+berücksichtigt ist.
+
+**Nachgezogen:** `tauri.conf.json` trägt die Kistenversion (siehe
+Nachtrag in v0.80.0).
+
+**Belegt:** 69 Proben in `tests/oberflaeche.rs`, alle grün, drei neu
+(`das_terminal_ist_kein_formular`,
+`die_einstellungsseite_rollt_nur_senkrecht`,
+`der_schliessknopf_steht_auf_dem_zahnrad`), eine erweitert
+(`das_ladezeichen_steht_beim_beitrag`: es schweigt beim Schreiben und
+kommt danach wieder); dreizehn Gegenproben beißen. Clippy ohne Befund.
+Terminal und Einstellungsseite in einer Vorschau mit dem echten Skript
+und den Einstellungsdaten dieser Maschine nachgesehen.
+
+### v0.80.0 – 2026-09-24 (das Fenster in flüssigerem Glas, und ein synaptischer Spalt statt dreier Punkte; Fund 459)
+
+`myl-oberflaeche` **0.43.0 auf 0.44.0**. Zwei Wünsche des
+Projektinhabers: das Glas der Bedienelemente näher an echtes flüssiges
+Glas, und ein Ladezeichen, das zu Myelith passt.
+
+**Das Ladezeichen ist ein synaptischer Spalt.** Zwei Axonenden laufen
+geschwungen von den Rändern auf einen schmalen Spalt zu, jedes als
+Körper mit einem Verlauf von oben hell nach unten dunkel und einer
+Glanzlinie auf dem Rücken, damit es rund wirkt und nicht flach. Nach
+aussen laufen sie über eine Maske ins Nichts aus. Im Sender schwellen
+drei Bläschen, fünf Botenstoffe springen über den Spalt, die
+Empfängerfläche leuchtet auf, zwei feine Entladungen zucken durch den
+Spalt. Ein Takt dauert 1,6 Sekunden. Gebaut nach zwei Bildern, die der
+Projektinhaber als Anregung geschickt hat, und nach seinem Wunsch nach
+mehr geschwungenem Axon und mehr Tiefe.
+
+- ⚑ **Jedes Ladezeichen trägt eigene Kennungen.** Verläufe und Maske
+  werden über `url(#…)` angesprochen. Mit festen Kennungen löste jedes
+  Zeichen auf das erste im Dokument auf; verschwindet dieses, während
+  ein zweiter Beitrag noch läuft, stünde das zweite als leerer Umriss
+  da. Ein Zähler an der Funktion hält sie auseinander.
+- ⚑ **Kein `style`-Attribut, alles als Klasse.** Die Inhaltsrichtlinie
+  verbietet eingebettete Stile; die Farben der Verlaufsstufen stehen
+  deshalb als Klassen im Stil, in Graustufen.
+- ⚑ **Keine Auskunft über den Fortschritt.** Wie die drei Punkte
+  vorher sagt das Zeichen nur, dass gerechnet wird.
+- ⚑ **Wer Bewegung abbestellt hat, sieht den Spalt stehend**, die
+  Botenstoffe mitten darin. Ein Ladezeichen, das dann verschwände,
+  nähme die Auskunft genau dem, der sie am ehesten braucht.
+
+**Das Glas.** 📌 **Was flüssiges Glas ausmacht, ist vor allem die
+Brechung am Rand**, und die zeichnen die Webansichten unter macOS und
+Linux nicht: Ein Hintergrundfilter über eine eigene Verschiebungskarte
+kennt nur die Chromium-Ansicht unter Windows. Geprüft unter macOS 26.6
+auch der Weg über ein systemeigenes Glasmaterial: Die Webansicht kennt
+es nicht, auch nicht mit einem nicht öffentlichen Schalter. Gebaut
+wurde deshalb, was auf allen drei Systemen trägt, und das sind vier
+Eigenschaften:
+
+| Eigenschaft | vorher | jetzt |
+|---|---|---|
+| Unschärfe | stark, milchig | schwächer (10 bis 14 px), dazu Sättigung 180 % und etwas Helligkeit: Der Grund bleibt erkennbar und leuchtet durch |
+| Dicke | eine Haarlinie | geschichtete innere Schatten: Lichtkante oben, Schattenkante unten, weicher Lichteinfall oben, Tiefe unten (`--dicke`) |
+| Rand | gleichmässig | winkelabhängig: hell oben links und unten rechts, dunkel an den Seiten, stärker beim Überfahren (`--rand`, `--rand-hell`) |
+| Glanz | keiner | ein schräger Spiegel über der oberen Hälfte (`--spiegel`) |
+
+Dazu gibt ein Knopf beim Drücken nach wie ein weicher Körper
+(`scale(.95, .92)`), und runde Knöpfe wachsen beim Überfahren etwas.
+Der Lichtton `--glanz` bleibt im hellen Anstrich weiss, denn Licht auf
+Glas ist in beiden Anstrichen hell. ⚑ Das revidiert die frühere
+Festlegung auf mattes Glas mit Haarlinie; die Graustufen bleiben.
+
+⚠️ **Noch nicht am echten Fenster gesehen.** Die Vorschau hier zeichnet
+Hintergrundfilter nicht; Rand, Dicke und Glanz sind darin geprüft,
+Unschärfe und Sättigung nur im Fenster selbst.
+
+⛔️ **Fund 459: ein alter Bauzwischenstand hielt den Bau auf.** Die
+Bauskripte der Fensterbibliothek hatten ihre Ausgaben mit dem Pfad vor
+dem Umzug des gemeinsamen Bauverzeichnisses nach `SYSTEM/full-build`
+abgelegt, und der Bau suchte dort. Behoben durch Löschen der 456
+Zwischenstände, die den alten Pfad nannten; danach baute es durch. 📌
+**Ein Umzug des Bauverzeichnisses ist erst vollständig, wenn die
+Zwischenstände darin neu entstanden sind.** Aus einem frischen Klon
+tritt es nicht auf.
+
+⚠️ **Nachtrag aus v0.81.0:** Beim Sprung auf 0.44.0 blieb
+`tauri.conf.json` auf 0.43.0 stehen, und die Zählung unten stammt von
+einem Lauf **vor** dem Sprung; `die_buendelversion_ist_die_kistenversion`
+hätte danach rot gemeldet. Nachgezogen in v0.81.0.
+
+**Belegt:** 66 Proben in `tests/oberflaeche.rs`, alle grün, zwei neu:
+`das_ladezeichen_ist_ein_synaptischer_spalt` (eigene Kennungen je
+Zeichen, kein Stil, eine Regel) und `glas_hat_dicke_und_spiegelung`
+(`.glas`, `.eingabefeld` und Knöpfe tragen beides); sieben Gegenproben
+beissen.
+
+### v0.79.0 – 2026-09-24 (das Kästchen wieder eckig, in einem Ton)
+
+`myl-console` **0.21.0 auf 0.22.0**. Rückmeldung des Projektinhabers
+mit einem Foto seines Terminals: Das Verblassen funktioniert nicht, der
+Kontrast ist gut, das Kästchen soll wieder eckig um die ganze Eingabe
+stehen.
+
+📌 **Warum der Verlauf nicht trug:** Das Terminal zeigt ein
+Hintergrundbild. Jede Zelle mit eigener Hintergrundfarbe liegt dort als
+deckendes Band über dem Bild, und der Verlauf zerfiel in sichtbare
+Stufen; die schwächeren Polsterzeilen fielen dazu früher unter die
+Sichtschwelle und waren schmaler als die Textzeile. **Ein Verlauf über
+Zellfarben setzt einen einfarbigen Hintergrund voraus.** Die Vorschau
+hatte das nicht zeigen können, sie rechnete mit einem einfarbigen.
+
+⚑ **Jetzt ein Rechteck in einem Ton** über die ganze Breite des
+Kästchens, Polster wie Text, in der Stärke, die der Projektinhaber gut
+fand: die Mischung aus Terminalhintergrund und Ton der Rolle mit
+`Rollen::deckung`. Mittig bleibt es, Zeitleiste und Antwort bleiben
+links. Entfallen: `verlauf` und die schwächeren Polsterzeilen.
+
+**Belegt:** 147 Proben im Programm und 7 in `tests/konsole.rs`, alle
+grün, Clippy ohne Befund, drei Gegenproben beissen
+(`das_kaestchen_ist_ein_rechteck_in_einem_ton`: jede Zeile genau ein
+Grund, derselbe, gleich breit).
+
+### v0.78.0 – 2026-09-24 (die Eingabe mittig, auf einem Grund, der in die Farbe des Terminals ausläuft)
+
+`myl-console` **0.20.0 auf 0.21.0**. Rückmeldung des Projektinhabers:
+Das Kästchen war „noch viel zu intensiv", es soll von innen nach aussen
+verblassen, die Eingabe soll mittig stehen, Handlungen und Antwort
+links bleiben.
+
+⚑ **Der Grund verblasst quadratisch von der Mitte zum Rand**
+(`antwort::verlauf`), die Polsterzeilen auf 45 Prozent davon, und am
+Rand wird gar kein Grund mehr gesetzt. Die Deckung in der Mitte ist
+klein: 130 Promille zum Ton der Rolle hin bei Standard und Myelith,
+110 bei Bernstein, 120 bei Tiefsee, 100 bei Tinte.
+
+⚑ **Gemischt wird über den Hintergrund des Terminals, nicht über
+Schwarz.** Die Konsole fragt ihn beim Start ab (OSC 11, mit einer
+Frist von 300 ms, vor der ersten Tastenabfrage, damit die Antwort
+nicht als Tastendruck in der Eingabe landet). Antwortet ein Terminal
+nicht, gilt Schwarz. 📌 **Warum das nötig war:** Die erste Fassung liess
+den Grund nach Schwarz auslaufen, und in der Vorschau aus der echten
+Ausgabe stand auf einem nicht ganz schwarzen Hintergrund ein dunkles
+Rechteck mit Kante, also genau das, was weg sollte. Auf einem hellen
+Terminal wirkt die Mischung jetzt richtig herum, als leichte
+Abdunklung.
+
+⚑ **Mittig:** Das Kästchen steht bündig mit dem Eingaberahmen darunter,
+jede Textzeile mittig darin; Zeitleiste und Antwort bleiben am linken
+Rand.
+
+📌 **Eine Gegenprobe schwieg, und die Testwerte waren schuld:** Die
+Umrechnung der Terminalantwort mit falschem Teiler fiel nicht auf, weil
+bei `1e1e`, `8080` und `ffff` das niedrige Byte zufällig den richtigen
+Wert trifft. Jetzt stehen Werte ohne wiederholte Ziffernpaare dabei.
+
+**Belegt:** 147 Proben im Programm und 7 in `tests/konsole.rs`, alle
+grün, Clippy ohne Befund, fünf neue Gegenproben beissen. Vorschau aus
+der echten Ausgabe auf dunklem und grauem Hintergrund angesehen.
+⚠️ Die Abfrage selbst (OSC 11) ist nur unter Unix gebaut und nicht als
+Probe gebunden, denn sie braucht ein antwortendes Terminal; ihr Leser
+ist gebunden.
+
+### v0.77.0 – 2026-09-24 (die Eingabe im Kästchen, und Luft zwischen Eingabe, Handlungen und Antwort)
+
+`myl-console` **0.19.0 auf 0.20.0**. Zwei Wünsche des Projektinhabers:
+Die abgeschickte Eingabe soll auf einem dezent getönten Kästchen stehen,
+und zwischen Eingabe, Handlungen des Modells und seinem Text sollen
+Absätze sein.
+
+⚑ **Das Kästchen** (`antwort::eingabe_kasten`): fester Grund in der
+Breite des Eingaberahmens, oben und unten eine Polsterzeile, die Marke
+`❯` vor der ersten Zeile. Der Grund kommt aus der neuen Rolle
+`eingabe` (`Stil` trägt dafür einen optionalen Hintergrund): ein
+Palettengrau bei Standard, Myelith und Tinte, dunkles Bernstein, dunkles
+Blau bei Tiefsee. Ohne Farbe bleibt es bei `❯ text`.
+
+📌 **Umbrochen wird an Wortgrenzen**, nur ein Wort, das allein zu lang
+ist, wird geteilt. Die erste Fassung schnitt nach Zeichenzahl und zerriss
+Wörter mitten durch; gefunden von der Probe, die den Text aus dem
+Kästchen wieder zusammensetzt.
+
+⚑ **Absätze:** eine Leerzeile nach dem Kästchen, eine vor der Antwort,
+zwei nach der Bilanz bis zur nächsten Eingabe. **Und in der Zeitleiste
+eine Leerzeile bei jedem Wechsel** zwischen Handlungen (`→`, `←`,
+Schritte) und dem Text des Modells im Rohstrom, innerhalb einer Art
+keine, sonst zerfiele eine Folge von Aufrufen in Einzelstücke
+(`anzeige::absatz_noetig`).
+
+⚑ **Die markierten Stellen der Antwort in einem ruhigen, hellen Ton**
+(Wunsch des Projektinhabers): Code, Überschriften und Listenmarken
+stehen je Design in einem schlichten Ton, der sich vom dunklen Grund
+absetzt, statt im gewürfelten Neon: blasses Cyangrau bei Myelith,
+helles Bernstein, Blassblau bei Tiefsee, helles Grau bei Tinte; die
+Überschriften fett im hellsten Ton; Standard nimmt Cyan statt Magenta.
+
+⛔️ **Befund dabei:** Im Design Myelith erbte die Überschrift den
+gewürfelten Logoton, und Purpur (129) oder Violett (165) haben eine
+wahrgenommene Helle um 55 von 255; auf schwarzem Grund kaum lesbar.
+Dasselbe konnte Aufrufe, Rückgaben und die Ausweich-Warnfarbe Rot (196)
+treffen. Jetzt hebt `design::lesbar` die fünf dunklen Neontöne auf
+ihren helleren Nachbarn, und die Probe
+`hervorgehobenes_setzt_sich_vom_grund_ab` rechnet die Helle nach: für
+die Antwort ab 150, für Aufruf, Rückgabe und Warnung ab 120, in jeder
+der 18 möglichen Sitzungen und jedem Design mit festen Werten.
+
+**Belegt:** 145 Proben im Programm und 7 in `tests/konsole.rs`, alle
+grün, Clippy ohne Befund, neun neue Gegenproben beissen.
+
+### v0.76.0 – 2026-09-24 (die Konsole setzt ihre Ausgabe: Handlungen hervorgehoben, Antworten gesetzt, und mehr Kontrast am Logo)
+
+`myl-console` **0.18.0 auf 0.19.0**. Zwei Aufträge des Projektinhabers:
+den Kontrast zwischen Logo und Muster schärfen, und die bis hierher
+einfarbige Textausgabe gliedern, **vor allem die Handlungen des
+Modells**. Was und wie hervorgehoben wird, war freigestellt.
+
+#### Kontrast am Logo, am Bild verglichen
+
+⚑ **Drei Mittel zusammen**, in vier Stufen nebeneinander gerendert und
+danach gewählt:
+
+- **Das Muster ist dunkler** (48 statt 65 Prozent Helle).
+- **Das Muster ist entsättigt** (60 Prozent Sättigung): Die volle
+  Sättigung gehört allein dem Logo, und das trennt die Ebenen stärker
+  als die Helle allein.
+- **Die Schattenkanten des Schriftzugs treten zurück** (`╗ ╔ ╝ ╚ ═ ║`
+  auf 55 Prozent, die Blöcke `█` voll und fett): In dieser Schrift sind
+  die Kanten ohnehin der Schatten, und so stehen die Blöcke plastisch
+  davor.
+
+#### Rollen der Textausgabe (`design::rollen`)
+
+| Rolle | Wo |
+|---|---|
+| Aktion | `→ werkzeug` in der Zeitleiste, fett |
+| Ergebnis | `← werkzeug`, der Inhalt der Rückgabe als Beiwerk |
+| Warnung | `⚑ … abgelehnt:`, „Kontext voll", „keine Schlussantwort" |
+| Gedanke | das Denken im Rohstrom (`^S`), kursiv |
+| Beiwerk | Schrittmarken, Zeiten, Bilanz, Hinweise |
+| Code, Überschrift, Marke, Kante | in der gesetzten Antwort |
+
+⚑ **Je Design eigene Töne**: Standard nimmt die **benannten
+ANSI-Farben**, also das Schema des Terminals; Myelith die Neonfarben
+der Sitzung; Tiefsee Cyan, Türkis und Hellblau mit einem warmen Ton für
+Warnungen; **Bernstein und Tinte bleiben einfarbig** und unterscheiden
+über Helle, fett, kursiv und unterstrichen.
+
+⚑ **Farbe unterstreicht, sie trägt nichts allein**: Aufruf, Rückgabe
+und Ablehnung stehen weiter mit `→`, `←` und `⚑` samt Wort da. Und
+`NO_COLOR` schaltet alles ab, wie es die Absprache unter Programmen
+will; ohne Terminal steht der Text ohnehin ungefärbt.
+
+⚑ **Die Zeitleiste trägt ihre Art an der Zeile** (`anzeige::Art`) und
+wird beim Schreiben gesetzt (`zeile_setzen`); der Rohstrom führt Denken
+und Antwort als getrennte Stücke, damit das Denken anders aussehen kann.
+
+#### Die Antwort, gesetzt (`antwort.rs`)
+
+Das Modell antwortet in Markdown, und bis hierher stand die Antwort roh
+da. Jetzt: Überschriften ohne Rauten im Stil der Überschrift, `code`
+ohne Backticks im Stil für Code, Codeblöcke mit Balken und Sprache,
+Aufzählungen mit `•` und hervorgehobener Marke, `**fett**` fett,
+Zitate mit Balken, `---` als Linie. ⚠️ **Einfache Sterne und
+Unterstriche werden bewusst nicht kursiv**: In Pfaden und Bezeichnern
+stehen sie ohne Absicht, und ein Setzer, der dort Kursiv beginnt,
+verschluckt Zeichen. **Ein Zeichen ohne Partner bleibt stehen.**
+
+#### Befunde
+
+⛔️ **Im Design Myelith konnten Aufruf und Warnung gleich aussehen.** Die
+Schlagwortfarben sind gewürfelt und können das Orange treffen, in dem
+gewarnt wird. Gefunden von der Probe, die zufällig in genau so einer
+Sitzung lief; jetzt weicht die Warnfarbe aus, und die Probe prüft
+**jede** mögliche Sitzung statt der gewürfelten.
+
+📌 **Eine Namensgleichheit hat eine Architekturprobe ausgelöst**:
+`die_logik_kommt_aus_der_kiste` sucht nach `.setzen(`, damit die Konsole
+keine Einstellungen selbst setzt, und traf die neue Methode
+`Stil::setzen`. Die Methode heisst jetzt `faerben`; die Probe blieb, wie
+sie ist.
+
+**Belegt:** 141 Proben im Programm und 7 in `tests/konsole.rs`, alle
+grün, Clippy ohne Befund. **Zwölf neue Gegenproben, alle beissen.**
+⚠️ Nicht als Probe gebunden sind `NO_COLOR` (hängt an der Umgebung) und
+die Stile des Rohstroms (sie laufen im Anzeigefaden); beide sind klein
+und im Code benannt.
+
+### v0.75.0 – 2026-09-24 (heilige Geometrie um das Logo: acht Motive, eines je Start, und ein Muster, das gegen das Logo fliesst)
+
+`myl-console` **0.17.0 auf 0.18.0**. Auftrag des Projektinhabers: Das
+Motiv aus Neuronen und Gestein (v0.74.0) wird verworfen, an seine
+Stelle tritt **rein geometrisches Muster nach dem Vorbild der heiligen
+Geometrie**, das das Logo umrandet und es **nirgends berührt**.
+
+⚑ **Acht Motive, ausgewählt vom Projektinhaber aus vierzehn Entwürfen**,
+und bei jedem Start eines davon gewürfelt (neu: `geometrie.rs`):
+Blume des Lebens, Quadratwirbel, Sterntetraeder-Gitter, Hexagonwirbel,
+Dreieckwirbel, Saatgitter, Merkaba-Feld (Kagome-Gitter aus
+Hexagrammen) und Goldene Spirale (je Vierteldrehung um den Goldenen
+Schnitt wachsend). **Das Motiv gilt für die ganze Sitzung**, damit jeder
+Neudruck dasselbe Bild zeigt; `MYL_MOTIV=<name>` legt es fest.
+
+⚑ **Geschnitten wird nur an zwei Kanten**: am Bildrand und an einer
+Sperrzone von drei Spalten und einer Zeile um den Schriftzug. Sonst
+laufen die Muster frei, auch über und unter dem Logo durch die Mitte,
+wo sich die Figuren beider Seiten treffen (Festlegung des
+Projektinhabers).
+
+⚑ **Braille-Zeichen als Punktfläche.** Kreise und Linien in 60 Grad
+lassen sich mit Kastenzeichen nur andeuten; ein Braille-Zeichen trägt
+2 × 4 Punkte, die annähernd quadratisch sind, also bleibt ein Kreis ein
+Kreis. **Ganzzahlig gerechnet**: Linien nach Bresenham, Kreise nach dem
+Mittelpunktverfahren, Winkel über eine Sinustafel in ganzen Grad,
+Rundung für beide Vorzeichen gleich, damit links und rechts
+Spiegelbilder sind.
+
+⚑ **Das Muster fliesst gegen das Logo** (Wunsch des Projektinhabers):
+Während eines Auftrags wandert der Verlauf im Logo nach links, im
+Muster nach rechts, beides eine Spalte je Welle des Ladetextes. Das
+Muster steht dabei auf 65 Prozent der Helle; Unterschied in Helle und
+Richtung liest das Auge als Tiefe. **Ohne Auftrag steht beides still**,
+und bei stehender Uhr ist der Verlauf über beide Ebenen ungebrochen.
+
+⛔️ **Welche Ebene ein Zeichen ist, entscheidet jetzt das Zeichen und
+nicht die Zeile.** Bis hierher hiess „im Schriftzug" dasselbe wie „in
+einer Zeile mit `█`" (`ist_schriftzug`). Mit Muster neben dem
+Schriftzug hätten dessen Zeichen in denselben Zeilen Farbe, Stärke und
+Laufrichtung des Logos getragen. Jetzt gehören genau die Zeichen
+`█ ╗ ╔ ╝ ╚ ═ ║` zum Logo (`banner::ist_logozeichen`), und
+`ist_schriftzug` samt dem Feld `im_schriftzug` in Animation, Neudruck
+und Schimmer ist entfallen.
+
+⚑ **Die Zeilenzahl ist die alte** (18, 13 und 7 je nach Fensterhöhe),
+also bleibt der Platz für das Menü. 📌 Dabei eine Falle: Endete die
+Fläche in den niedrigen Höhen mit einer Musterzeile, hinge die
+Zeilenzahl am Motiv, denn `lines()` zählt eine leere letzte Zeile nicht
+mit. Jetzt endet sie an der Sperrzone, und die Leerzeile danach ist
+echt.
+
+⚑ **Entworfen im Bild, gebaut gegen eine Referenz.** Die Motive
+entstanden in mehreren Runden als ganzzahlige Skizze mit Vorschaubild;
+die Rust-Fassung zeichnet in 72 Fällen (acht Motive, neun Grössen)
+Zeile für Zeile dasselbe.
+
+Entfallen mit dem alten Motiv: Neuronen, Gestein und ihre vier
+Farbstufen; jetzt zwei (Logo voll, Muster gedämpft).
+
+**Belegt:** 131 Proben im Programm und 7 in `tests/konsole.rs`, alle
+grün, Clippy ohne Befund. Neu unter anderem
+`nichts_beruehrt_das_logo` (acht Motive, fünf Breiten, drei Höhen),
+`jedes_motiv_umrandet_das_logo`, `das_bild_hat_die_alte_zeilenzahl`,
+`das_muster_fliesst_gegen_das_logo`, `die_richtung_haengt_am_zeichen`,
+`ein_kreis_bleibt_rund`, `gerundet_wird_symmetrisch`. **17 Gegenproben
+beissen.** Eine schwieg zuerst: Ohne das `+ 1` im Mittelpunktverfahren
+verschiebt sich nur die Rundung, und der Kreis bleibt innerhalb eines
+Punktes rund, also genau das, was die Probe zusichert; die Mutation,
+die ihn wirklich bricht, beisst.
+
+⚠️ **Wie Fliessen und Gegenlauf im Terminal wirken**, zeigt erst ein
+Start von `myelith`.
+
+### v0.74.0 – 2026-09-24 (Myelin oben, Lith unten: ein neues Motiv um das Logo der Konsole)
+
+`myl-console` **0.16.0 auf 0.17.0**. Auftrag des Projektinhabers: Das
+Umfeld des Logos soll expressionistisch werden und zu Myelith passen,
+Neuronen, Gestein, Geometrie. Bis hierher stand dort ein Netz aus
+Knoten und dünnen Kanten nach dem Projektbanner; es las sich als
+Schema und sagte über das Projekt nichts.
+
+⚑ **Das Bild trägt die beiden Hälften des Namens.**
+
+- **Oben das Myelin.** Neuronen mit einem Fächer aus Dendriten,
+  abwechselnd tief und hoch, zwischen drei und sieben je nach Breite.
+  Ihre Axone tragen **Markscheiden ungleicher Länge** mit Schnürringen
+  dazwischen (`━━━━━━·━━━━`), wechseln auf halbem Weg schräg die Ebene
+  und münden in eine Synapse (`╾●`); das erste kommt von links herein,
+  das letzte endet in einem Endknopf am rechten Rand (`┫●`). Ein paar
+  Funken (`· ∘ ◇`) stehen in den leeren Winkeln.
+- **Unten das Lith.** Gestein mit Kristallspitzen, deren Hänge
+  **ungleich steil** sind (`◢ ◣ ▲`): Eine Spitze mit gleichen Hängen
+  ist eine Pyramide, eine mit ungleichen ein Splitter. Die Schichten
+  (`░ ▒ ▓`) laufen schräg wie gekipptes Sediment, darin Edelsteine
+  (`◆`).
+- **Dazwischen der Schriftzug**, getragen vom Stein und überspannt vom
+  Nerv. Höhe und Aufteilung bleiben (fünf Zeilen oben, vier unten),
+  also auch das Kürzen in niedrigen Fenstern.
+
+⚑ **Vier Stufen der Farbe statt zwei** (`banner::stufe`): Schriftzug,
+Zellkörper, Schnürringe, Funken und Edelsteine leuchten im vollen
+Verlauf; Markscheiden, Synapsen und Kristallkanten stehen im Verlauf
+auf 65 Prozent; das Gestein auf 38 Prozent, wie farbiger Stein; nur die
+feinen Dendriten bleiben grau. **Die Stufen dämpfen die Farbe und
+wechseln sie nicht**: Das ganze Bild liegt im selben Regenbogen, und
+beim Fliessen wird alles neu gemalt, was Farbe trägt
+(`schimmer::farbig` statt `leuchtet`).
+
+⚑ **Das Ersatzbild ist erzeugt, nicht abgeschrieben.** Für zu schmale
+Fenster und für Ausgaben ohne Terminal stand ein fester Text, der das
+Motiv von Hand nachbildete. Mit einem neuen Motiv wären es zwei Bilder
+gewesen, die von Hand gleich zu halten sind; jetzt ist es dasselbe
+Motiv in seiner schmalsten Form (`banner::ersatzbild`, 58 Spalten).
+
+⚠️ **`▓` ist die dunkelste Schicht, nicht `█`.** Der volle Block gehört
+dem Schriftzug, und an ihm erkennt `ist_schriftzug` dessen Zeilen; ein
+Gestein aus `█` hätte das halbe Bild in die falsche Stufe gesetzt. Eine
+Probe hält das fest, und ihre Gegenprobe (`█` als Schicht) beisst.
+
+📌 **Eine neue Probe prüfte zuerst ihren eigenen Zuschnitt.**
+`die_markscheiden_sind_ungleich_lang` zählte anfangs jeden Lauf von
+`━`, und die Gegenprobe (alle Scheiden gleich lang) blieb grün: Die an
+Neuron und Synapse abgeschnittenen Enden sind immer verschieden lang.
+Jetzt zählt sie nur Scheiden, die in einem Schnürring enden, denn die
+sind immer vollständig.
+
+**Entworfen in fünf Runden als Skizze und erst danach übertragen**; die
+Rust-Fassung zeichnet in 80 und 120 Spalten Zeile für Zeile dasselbe
+Bild wie die letzte Skizze.
+
+**Belegt:** 125 Proben im Programm und 7 in `tests/konsole.rs`, alle
+grün, Clippy ohne Befund. Neu: `das_motiv_traegt_nerv_und_stein` (fünf
+Breiten), `die_markscheiden_sind_ungleich_lang`,
+`die_stufen_daempfen_und_das_grau_bleibt_grau`,
+`kein_zeichen_faellt_unbemerkt_ins_grau` (ein neues Zeichen ohne Stufe
+fiele sonst still ins Grau), `schmales_fenster_faellt_auf_das_ersatzbild_zurueck`,
+`nur_was_farbe_traegt_wird_neu_gemalt`. **Neun neue Gegenproben und die
+zehn der vorigen Fassung, alle beissen.**
+
+⚠️ **Wie das Bild im Terminal wirkt**, mit Farbe und Fliessen, zeigt
+erst ein Start von `myelith`.
+
+### v0.73.0 – 2026-09-24 (das Logo der Konsole im Regenbogen, fliessend während eines Auftrags)
+
+`myl-console` **0.15.0 auf 0.16.0**. Auftrag des Projektinhabers: Das
+Logo bekommt denselben Regenbogen wie der Ladetext („warping bytes"),
+fliesst, solange ein Auftrag läuft, und steht sonst still; schon das
+Startbild baut es bunt aus der Spirale, und es ist **nie einfarbig**.
+
+⚑ **Drei Zusagen, eine Stelle.** Neu ist `schimmer.rs`, und dort steht
+alles, was das Logo färbt:
+
+- **Immer ein Verlauf.** Über die 56 Spalten des Schriftzugs läuft ein
+  Drittel des Farbkreises (Festlegung des Projektinhabers: die dezente
+  Spanne), dazu eine Spalte Versatz je Zeile, also ein leichter
+  Schrägverlauf. Das Netz über die volle Fensterbreite trägt
+  entsprechend mehr. Die Farbe selbst kommt aus derselben Funktion wie
+  die des Ladetextes (`design::ladefarbe`): In den bunten Designs ist es
+  der Regenbogen, in Bernstein und Tinte ein Verlauf der Helle.
+- **Fliessen nur während eines Auftrags.** Eine eigene Uhr läuft ab dem
+  Start der Anzeige und steht bei ihrem Ende. Der Verlauf wandert
+  **eine Spalte je Welle des Ladetextes** nach links, also genauso
+  schnell. ⚑ **Angehalten wird die Uhr, nicht das Bild zurückgesetzt:**
+  Der nächste Auftrag setzt dort fort, wo der vorige aufhörte, und
+  jeder Neudruck dazwischen zeigt genau das stehende Bild.
+- **Der Aufbau endet im selben Bild.** Startbild, Hochgleiten, jeder
+  Neudruck und das Fliessen fragen alle `schimmer::zellstil` nach
+  derselben Uhr. Jedes Artefakt fliegt schon in der Farbe seines Ziels
+  durch die Spirale, statt in einer gewürfelten Neonfarbe zu fliegen
+  und am Ende die eine Farbe des Schriftzugs anzunehmen. **Der
+  Regenbogen wird aufgebaut, nicht nachträglich aufgetragen**, und weil
+  die Uhr während des Aufbaus läuft, fliesst er dabei schon.
+
+⚑ **Jede Sitzung sieht anders aus.** Die Mitte des Logos trägt beim
+Start den gewürfelten Grundton der Sitzung (`farben::grundton`); die
+Schlagwortfarben der Menüs liegen um ihn herum und finden sich deshalb
+im Logo wieder.
+
+⛔️ **Gemalt wird nur, wo das Logo sicher steht.** Es rollt mit dem
+Gespräch weg, und ein Terminal sagt nicht, wie weit. Wer an die alte
+Stelle malt, malt Buchstaben des Logos in die Antwort. Die sichere
+Auskunft gibt der Wagen: Im Rollbereich wandert er nur nach unten, und
+gerollt wird erst, wenn er die letzte Zeile erreicht. **Vor jedem
+Malen werden Wagen und Fenster nachgemessen**; steht der Wagen auf der
+letzten Zeile des Rollbereichs oder hat sich die Fenstergrösse
+geändert, wird die Lage verworfen und erst mit dem nächsten Neudruck
+neu gesetzt. Verworfen wird ausserdem am Eingang jeder Auswahlliste,
+der Einstellungsseite und beim Leeren des Schirms, denn diese Wege
+ziehen den Wagen nach oben. Antwortet ein Terminal nicht auf die Frage
+nach dem Wagen, wird ebenfalls verworfen, statt jeden Takt zu warten.
+
+⚑ **Deshalb beginnt das Gespräch jetzt direkt unter dem Logo**
+(Festlegung des Projektinhabers). Bisher sprang der Wagen nach dem
+Einrichten auf die letzte Zeile des Rollbereichs; von dort schob jede
+Zeile das Logo weiter, und keine Animation hätte je sicher malen
+können. Jetzt füllt das Gespräch erst die freie Fläche, und das Logo
+fliesst, bis der Schirm voll ist. Danach rollt es wie bisher weg und
+bleibt in seinen letzten Farben stehen. Lässt sich die Stelle nicht
+messen, oder würden die Leerzeilen des Rahmens den Schirm rollen, geht
+es wie bisher unten weiter.
+
+⚑ **`animation.rs`, `banner.rs` und `farben.rs` gehören jetzt der
+Konsole** (Festlegung des Projektinhabers). Bis hierher waren sie
+wortgetreue Kopien aus dem Testclient; der behält seine Fassung und
+wird ohnehin abgeräumt. Die Probe `die_kopien_sind_wortgetreu` wacht
+nur noch über `auswahl.rs`, und `die_marke_ist_eine_gekennzeichnete_kopie`
+prüft jetzt auch die Gegenrichtung: Keine der drei gibt sich noch als
+Kopie aus. Mit der Kopie ging der Grund für `allow(dead_code)`, also
+gingen auch die Wege, die nur der Testclient rief (`print_if`,
+`bildschirm`, `start_if`, die Begrüssung) und die Logofarbe
+`farben::logo`.
+
+⚑ **Nebenbei gerade gezogen:** Die Einstellungsseite übernahm ein neu
+gewähltes Design erst **nach** dem Neudruck des Logos, der also noch im
+alten stand. Jetzt wird erst übernommen und dann gedruckt. Und das
+Design wird vor dem Startbild gelesen, damit das Logo schon im
+eingestellten Bild entsteht.
+
+📌 **Eine Gegenprobe hat eine Prüfung als Zierde entlarvt.** Die erste
+Fassung von `schirm::fortsetzungszeile` prüfte getrennt, ob die
+Leerzeilen den Schirm rollen und ob die Stelle unter dem Rollbereich
+liegt. Weil der Rollbereich genau `RESERVE` Zeilen vor dem
+Fensterende aufhört, ist das dieselbe Bedingung: Jede der beiden
+Zeilen liess sich einzeln entfernen, ohne dass eine Probe anschlug.
+Jetzt steht eine da, und daneben, warum sie beide Fälle deckt.
+
+**Belegt:** 125 Proben im Programm und 7 in `tests/konsole.rs`, alle
+grün, `cargo clippy --all-targets -- -D warnings` ohne Befund. Neu
+sind sieben Proben in `schimmer.rs` (Spanne, nie einfarbig,
+Fliessgeschwindigkeit, Grundton in der Mitte, Uhr hält und setzt fort,
+kein Malen auf der letzten Zeile, nur Leuchtendes wird neu gemalt),
+eine Quelltextprobe, dass jeder Weg nach oben die Lage verwirft, und
+eine in `schirm.rs` für die Fortsetzungszeile. **Elf Gegenproben, je
+Zeile einzeln, alle beissen.**
+
+⚠️ **Nicht geprüft ist das Bild selbst.** Hier läuft kein Terminal,
+in das jemand hineinsieht; wie der Verlauf wirkt, ob das Fliessen ruhig
+genug ist und ob das Startbild so aussieht wie gedacht, zeigt erst ein
+Start von `myelith`.
 
 ### v0.72.2 – 2026-09-24 (⛔️ Fund 458: ein Pfad hinter `cfg`, den die eigene Maschine nicht sieht)
 

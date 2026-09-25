@@ -28,6 +28,7 @@
 //! stehen.
 
 mod animation;
+mod antwort;
 mod anzeige;
 mod auswahl;
 mod eingabe;
@@ -36,6 +37,8 @@ mod einstellseite;
 mod banner;
 mod design;
 mod farben;
+mod geometrie;
+mod schimmer;
 mod schirm;
 mod sitzung;
 mod wahl;

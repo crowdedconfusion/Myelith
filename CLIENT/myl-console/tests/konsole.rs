@@ -114,19 +114,29 @@ fn hier_wird_nichts_gebaut() {
     );
 }
 
-/// **Die Kopie der Marke ist als Kopie gekennzeichnet.**
+/// **Die Kopie ist als Kopie gekennzeichnet, und nur sie.**
 ///
-/// ⚑ Vier Dateien stehen wortgetreu so da wie im Testclient, damit sich
-/// beide gegeneinander halten lassen. **Die einzige Aenderung ist der
-/// Untertitel**, denn eine Zeile, die vom Testclient spricht, waere in
-/// diesem Programm schlicht falsch.
+/// ⚑ Bis zum 2026-09-24 standen vier Dateien wortgetreu so da wie im
+/// Testclient. **Seither gehoeren `animation.rs`, `banner.rs` und
+/// `farben.rs` der Konsole** (Festlegung des Projektinhabers, Anlass war
+/// das Logo im Regenbogen); wortgetreu ist nur noch `auswahl.rs`.
+///
+/// 📌 **Die Gegenrichtung gehoert dazu:** Eine Datei, die sich weiter
+/// als Kopie ausgaebe, obwohl sie abweicht, behauptete etwas, das keine
+/// Probe mehr nachrechnet.
 #[test]
 fn die_marke_ist_eine_gekennzeichnete_kopie() {
-    for datei in ["animation.rs", "banner.rs", "farben.rs", "auswahl.rs"] {
+    for datei in KOPIEN {
         let s = quelle(datei);
         assert!(
             s.contains("Wortgetreue Kopie aus dem Testclient"),
             "{datei} sagt nicht, dass sie eine Kopie ist"
+        );
+    }
+    for datei in ["animation.rs", "banner.rs", "farben.rs"] {
+        assert!(
+            !quelle(datei).contains("Wortgetreue Kopie aus dem Testclient"),
+            "{datei} gibt sich noch als Kopie aus"
         );
     }
     let b = quelle("banner.rs");
@@ -183,13 +193,16 @@ fn die_kopien_sind_wortgetreu() {
     if !dort.is_dir() {
         return;
     }
-    for datei in ["animation.rs", "banner.rs", "farben.rs", "auswahl.rs"] {
+    for datei in KOPIEN {
         let a = geglaettet(&ohne_kopfvermerk(&quelle(datei)));
         let pfad = dort.join(datei);
         let b = geglaettet(&std::fs::read_to_string(&pfad).unwrap_or_default());
         assert_eq!(a, b, "{datei} weicht vom Testclient ab");
     }
 }
+
+/// Was noch wortgetreu aus dem Testclient stammt.
+const KOPIEN: [&str; 1] = ["auswahl.rs"];
 
 /// Schneidet den Kopfvermerk ab, mit dem die Kopie sich als Kopie
 /// ausweist: Er ist der einzige Zusatz, den sie tragen darf.

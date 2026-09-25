@@ -1,18 +1,10 @@
-// ⚑ **Wortgetreue Kopie aus dem Testclient** (2026-09-10, Festlegung
-// des Projektinhabers). Die Marke ist die Marke, und dieses Programm
-// soll dieselbe zeigen.
-//
-// ⚑ **Wortgetreu und nicht gekuerzt**, obwohl `myelith` nicht jede
-// Funktion darin ruft. Eine gekuerzte Kopie ist weder das Original noch
-// etwas Eigenes: Sie laesst sich nicht mehr gegen die Quelle halten,
-// und wer eine Aenderung uebernehmen will, vergleicht zwei Dateien, von
-// denen eine Loecher hat. Deshalb `allow(dead_code)` statt der Schere.
-//
-// ⚠️ **Der Testclient wird abgeraeumt, sobald er seine Aufgabe erfuellt
-// hat** (Festlegung des Projektinhabers). Bis dahin liegen die vier
-// Dateien zweimal da, und das ist die kuerzere Zeit von beiden Uebeln;
-// danach ist diese hier die einzige.
-#![allow(dead_code)]
+// ⚑ **Bis zum 2026-09-24 eine wortgetreue Kopie aus dem Testclient,
+// seither gehoert diese Datei der Konsole** (Festlegung des
+// Projektinhabers). Anlass war das Logo im Regenbogen:
+// Der Aufbau endet in dem Bild, in dem der erste Auftrag weiterfliesst.
+// Der Testclient behaelt seine Fassung und wird ohnehin abgeraeumt;
+// die Probe `die_kopien_sind_wortgetreu` wacht nur noch ueber
+// `auswahl.rs`.
 
 //! Startbild: fallende Zeichen, dann der Aufbau des Schriftzugs.
 //!
@@ -46,6 +38,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crossterm::event::{self, Event};
 use crossterm::style::{Attribute, Color, Print, ResetColor, SetAttribute, SetForegroundColor};
+use myl_client::einstellungen::Konsolendesign;
 use crossterm::terminal::{self, Clear, ClearType};
 use crossterm::{cursor, execute, queue};
 
@@ -127,7 +120,12 @@ impl Tropfen {
 /// Bildschirm steht**, der Aufrufer darf ihn dann nicht noch einmal
 /// drucken. `false` heißt übersprungen, und der Aufrufer druckt das
 /// Banner wie zuvor.
-pub fn abspielen(farbe: Color) -> bool {
+///
+/// ⚑ **Die Uhr des Schimmers laeuft, solange das Logo entsteht**, und
+/// steht danach still. Das Logo baut sich also schon fliessend auf, und
+/// der erste Auftrag setzt genau in dem Bild fort, in dem der Aufbau
+/// endete ([`crate::schimmer`]).
+pub fn abspielen(design: Konsolendesign) -> bool {
     if std::env::var("MYL_NO_ANIMATION").is_ok_and(|v| v != "0") {
         return false;
     }
@@ -145,12 +143,14 @@ pub fn abspielen(farbe: Color) -> bool {
     // Schlägt irgendetwas fehl, bleibt nur das Aufräumen wichtig: Ein
     // Terminal ohne sichtbaren Cursor oder mit gesetzter Farbe wäre ein
     // schlechterer Zustand als eine ausgefallene Animation.
-    let ergebnis = spielen(breite, hoehe, farbe);
+    crate::schimmer::los();
+    let ergebnis = spielen(breite, hoehe, design);
+    crate::schimmer::halt();
     let _ = execute!(io::stdout(), ResetColor, cursor::Show);
     ergebnis.unwrap_or(false)
 }
 
-fn spielen(breite: u16, hoehe: u16, farbe: Color) -> io::Result<bool> {
+fn spielen(breite: u16, hoehe: u16, design: Konsolendesign) -> io::Result<bool> {
     // Rohmodus, damit ein Tastendruck sofort ankommt statt erst mit Enter.
     let _roh = crate::auswahl::Rohmodus::an()?;
     let mut aus = io::stdout();
@@ -168,8 +168,8 @@ fn spielen(breite: u16, hoehe: u16, farbe: Color) -> io::Result<bool> {
     let versatz = ((hoehe as usize).saturating_sub(banner_hoehe) / 2) as u16;
 
     regen(&mut aus, breite, hoehe)?;
-    einstroemen(&mut aus, breite, hoehe, farbe, versatz)?;
-    gleiten(&mut aus, breite, hoehe, farbe, versatz)?;
+    einstroemen(&mut aus, breite, hoehe, design, versatz)?;
+    gleiten(&mut aus, breite, hoehe, design, versatz)?;
     Ok(true)
 }
 
@@ -210,8 +210,9 @@ const WINDUNG: usize = 3;
 /// Bilder, über die die Spirale wächst und das Logo entsteht.
 /// 80 Bilder à 40 ms sind rund 3,2 Sekunden.
 const AUFBAU_BILDER: u32 = 80;
-/// So viele Bilder behält ein angekommenes Artefakt seine eigene Farbe,
-/// bevor es die des Schriftzugs annimmt.
+/// So viele Bilder glueht ein angekommenes Artefakt nach, bevor es seine
+/// Stufe annimmt: Kanten werden dann grau, Schriftzug und Knoten bleiben
+/// in ihrer Farbe.
 const NACHGLUEHEN: u32 = 10;
 
 /// Ein Zeichen des Schriftzugs, das noch unterwegs ist.
@@ -223,8 +224,6 @@ struct Artefakt {
     start_radius: i32,
     /// Bild, in dem es seinen Platz erreicht.
     ankunft: u32,
-    /// Eigene Neonfarbe für den Flug und das Nachglühen.
-    ton: Color,
 }
 
 /// Spirale und Logoaufbau in einem Vorgang: Neonfarbene Artefakte
@@ -255,15 +254,21 @@ struct Artefakt {
 /// ihren Platz. Das Gewicht wächst quadratisch: bis kurz vor Schluss
 /// bleibt das Artefakt auf der Spirale, dann schwenkt es ein.
 ///
-/// **Angekommene Zeichen glühen nach.** Erst in ihrer eigenen Farbe,
-/// danach in der des Schriftzugs. So ist der Schriftzug im Entstehen
-/// bunt und am Ende einer: Das Bild zeigt, woraus er gemacht ist, ohne
-/// als Flickenteppich stehenzubleiben.
+/// ⚑ **Jedes Artefakt fliegt schon in der Farbe seines Ziels** (Auftrag
+/// des Projektinhabers, 2026-09-24). Bis dahin flog es in einer
+/// gewuerfelten Neonfarbe und nahm am Ende die eine Farbe des Schriftzugs
+/// an. Jetzt traegt die Spirale den Farbverlauf nach innen, und was
+/// ankommt, ist schon das fertige Bild: **Der Regenbogen entsteht nicht
+/// nach dem Aufbau, er wird aufgebaut.** Weil die Uhr des Schimmers
+/// dabei laeuft, fliesst er schon im Entstehen.
+///
+/// **Angekommene Zeichen gluehen nach**, fett in ihrer Farbe, und nehmen
+/// danach ihre Stufe an: Die Kanten werden grau.
 fn einstroemen(
     aus: &mut impl Write,
     breite: u16,
     hoehe: u16,
-    farbe: Color,
+    design: Konsolendesign,
     versatz: u16,
 ) -> io::Result<()> {
     let mut z = Zufall::neu();
@@ -302,18 +307,12 @@ fn einstroemen(
     for (rang, zelle) in folge.into_iter().map(|i| &zellen[i]).enumerate() {
         let ankunft = erste + (rang as u32 * spanne) / zellen.len().max(1) as u32;
         artefakte.push(Artefakt {
-            ziel: Zelle {
-                x: zelle.x,
-                y: zelle.y,
-                zeichen: zelle.zeichen,
-                im_schriftzug: zelle.im_schriftzug,
-            },
+            ziel: zelle.clone(),
             arm: z.bis(ARME),
             // Wer später ankommt, bricht weiter draußen auf. Daher wächst
             // die Spirale, während sie sich leert.
             start_radius: aussen / 3 + (2 * aussen / 3) * ankunft as i32 / AUFBAU_BILDER as i32,
             ankunft,
-            ton: Color::AnsiValue(crate::farben::NEON[z.bis(crate::farben::NEON.len())]),
         });
     }
 
@@ -337,6 +336,21 @@ fn einstroemen(
         wasserfall.schritt(aus, &mut z)?;
 
         let drehung = bild as usize * 2;
+        let uhr = crate::schimmer::stand();
+        // Die Farbe, in der ein Zeichen fliegt und nachglueht: die seines
+        // Ziels, fett.
+        let flugton = |ziel: &Zelle| {
+            crate::schimmer::farbe(
+                design,
+                ziel.x as usize,
+                ziel.zeile as usize,
+                breite as usize,
+                crate::farben::grundton(),
+                uhr,
+                // Muster fliegt gegen das Logo, wie es danach fliesst.
+                !crate::banner::ist_logozeichen(ziel.zeichen),
+            )
+        };
         // Die Arme reichen mit jedem Bild weiter hinaus.
         let max_radius = aussen * (bild as i32 + 1) / AUFBAU_BILDER as i32;
 
@@ -383,7 +397,7 @@ fn einstroemen(
             queue!(
                 aus,
                 cursor::MoveTo(x as u16, y as u16),
-                SetForegroundColor(a.ton),
+                SetForegroundColor(flugton(&a.ziel)),
                 SetAttribute(Attribute::Bold),
                 Print(a.ziel.zeichen)
             )?;
@@ -394,9 +408,9 @@ fn einstroemen(
         //    werden, was nur ein Bild lang gilt.
         for a in artefakte.iter().filter(|a| bild >= a.ankunft) {
             let (ton, stark) = if bild < a.ankunft + NACHGLUEHEN {
-                (a.ton, Attribute::Bold)
+                (flugton(&a.ziel), Attribute::Bold)
             } else {
-                crate::banner::zeichenstil(a.ziel.zeichen, a.ziel.im_schriftzug, farbe)
+                stil(design, &a.ziel, breite, uhr)
             };
             queue!(
                 aus,
@@ -417,9 +431,9 @@ fn einstroemen(
     // Rückblätterspeicher wird mit geräumt, sonst läge der ganze Regen
     // darin (Reihenfolge: siehe `banner::bildschirm_mit`).
     queue!(aus, Clear(ClearType::All), Clear(ClearType::Purge))?;
+    let uhr = crate::schimmer::stand();
     for a in &artefakte {
-        let (ton, stark) =
-            crate::banner::zeichenstil(a.ziel.zeichen, a.ziel.im_schriftzug, farbe);
+        let (ton, stark) = stil(design, &a.ziel, breite, uhr);
         queue!(
             aus,
             cursor::MoveTo(a.ziel.x, a.ziel.y),
@@ -453,15 +467,28 @@ fn zelle_bei(
     (x >= 0 && y >= 0 && x < breite as i32 && y < hoehe as i32).then_some((x as u16, y as u16))
 }
 
+/// Farbe und Staerke einer fertigen Zelle, aus derselben Stelle wie jeder
+/// spaetere Neudruck ([`crate::schimmer::zellstil`]).
+fn stil(design: Konsolendesign, z: &Zelle, breite: u16, uhr: Duration) -> (Color, Attribute) {
+    crate::schimmer::zellstil(
+        design,
+        z.zeichen,
+        z.x as usize,
+        z.zeile as usize,
+        breite as usize,
+        uhr,
+    )
+}
+
 /// Eine Zelle des fertigen Schriftzugs.
 #[derive(Clone)]
 struct Zelle {
     x: u16,
     y: u16,
+    /// Die Zeile **im Logo**, ohne Versatz. Nach ihr richtet sich die
+    /// Farbe; nach der Bildschirmzeile wechselte sie beim Hochgleiten.
+    zeile: u16,
     zeichen: char,
-    /// Gehört die Zelle zum Blockschriftzug? Entscheidet mit über ihre
-    /// Darstellung: siehe [`crate::banner::zeichenstil`].
-    im_schriftzug: bool,
 }
 
 /// Die Zellen, die der Schriftzug belegt, um `versatz` Zeilen nach unten
@@ -480,14 +507,14 @@ fn schriftzug_zellen(breite: u16, hoehe: u16, versatz: u16) -> Vec<Zelle> {
         .lines()
         .enumerate()
         .flat_map(|(y, zeile)| {
-            let im_schriftzug = crate::banner::ist_schriftzug(zeile);
+            let im_logo = y;
             let y = y + versatz as usize;
             zeile.chars().enumerate().filter_map(move |(x, c)| {
                 (c != ' ' && x < breite as usize && y < hoehe as usize).then_some(Zelle {
                     x: x as u16,
                     y: y as u16,
+                    zeile: im_logo as u16,
                     zeichen: c,
-                    im_schriftzug,
                 })
             })
         })
@@ -509,7 +536,7 @@ fn gleiten(
     aus: &mut impl Write,
     breite: u16,
     hoehe: u16,
-    farbe: Color,
+    design: Konsolendesign,
     versatz: u16,
 ) -> io::Result<()> {
     let banner = crate::banner::fuer_fenster(breite, hoehe);
@@ -522,9 +549,9 @@ fn gleiten(
             }
         }
 
+        let uhr = crate::schimmer::stand();
         for zelle in schriftzug_zellen(breite, hoehe, schritt) {
-            let (ton, stark) =
-                crate::banner::zeichenstil(zelle.zeichen, zelle.im_schriftzug, farbe);
+            let (ton, stark) = stil(design, &zelle, breite, uhr);
             queue!(
                 aus,
                 cursor::MoveTo(zelle.x, zelle.y),
@@ -553,134 +580,6 @@ fn gleiten(
         SetAttribute(Attribute::Reset),
         cursor::Show
     )?;
-    aus.flush()
-}
-
-/// Zeit je Zeichen beim Schreiben der Begrüßung. 22 ms ergeben rund
-/// 45 Zeichen je Sekunde: schnell genug zum Mitlesen und langsam genug,
-/// dass es geschrieben aussieht und nicht gedruckt.
-const SCHREIBDAUER: Duration = Duration::from_millis(22);
-/// Wie lange die fertige Begrüßung stehen bleibt, bevor das Menü kommt.
-const NACHLESEN: Duration = Duration::from_millis(900);
-
-/// Schreibt die Begrüßung Zeichen für Zeichen.
-///
-/// **Warum überhaupt animiert.** Der Nutzername ist die einzige Eingabe,
-/// die der Client vor dem Menü verlangt, und ohne Antwort darauf wirkt
-/// sie wie ein Formularfeld. Eine geschriebene Begrüßung beantwortet sie
-/// sichtbar und füllt zugleich die Pause, in der sonst nichts geschähe.
-///
-/// **Der Name bekommt die Neonfarbe, der Rest bleibt gedämpft.** Er ist
-/// das, was der Nutzer gerade beigesteuert hat; alles andere ist Rahmen.
-/// Es ist dieselbe Farbe, in der eben der Schriftzug entstanden ist: Ein
-/// Wechsel sähe aus, als hätte der Client das Thema gewechselt.
-///
-/// Übersprungen wird sie unter denselben Bedingungen wie das Startbild:
-/// ohne Terminal, bei `MYL_NO_ANIMATION` und auf Tastendruck. Der Text
-/// erscheint dann sofort und vollständig, nicht gar nicht: Er trägt eine
-/// Aussage, keine Verzierung.
-pub fn begruessung(name: &str, farbe: Color) {
-    let zeilen = [
-        format!(
-            "  Hallo {}, vielen Dank, dass du mithilfst, Myelith zu verbessern!",
-            name
-        ),
-        "  Lass uns zusammen ein paar Tests machen und herausfinden, ob alles".to_string(),
-        "  so funktioniert, wie es soll ...".to_string(),
-        String::new(),
-        "  Falls du Hilfe brauchst, findest du in der Anleitung alles Wichtige.".to_string(),
-        "  Viel Spaß beim Testen!".to_string(),
-    ];
-
-    let animiert = io::stdout().is_terminal()
-        && io::stdin().is_terminal()
-        && !std::env::var("MYL_NO_ANIMATION").is_ok_and(|v| v != "0");
-
-    // Mittig unter dem Schriftzug, aber als Block: Die Zeilen behalten
-    // ihre Ausrichtung untereinander (siehe `banner::zentriert`).
-    let einzug = crate::banner::blockeinzug(
-        zeilen.iter().map(|z| z.chars().count()).max().unwrap_or(0),
-    );
-    let zeilen: Vec<String> = zeilen
-        .into_iter()
-        .map(|z| {
-            if z.trim().is_empty() {
-                z
-            } else {
-                format!("{}{}", einzug, z)
-            }
-        })
-        .collect();
-
-    if !animiert {
-        println!();
-        for z in &zeilen {
-            println!("{}", z);
-        }
-        println!();
-        return;
-    }
-
-    let _ = schreiben(&zeilen, farbe, name);
-    let _ = execute!(io::stdout(), ResetColor, SetAttribute(Attribute::Reset));
-    println!();
-    std::thread::sleep(NACHLESEN);
-}
-
-fn schreiben(zeilen: &[String], farbe: Color, name: &str) -> io::Result<()> {
-    let _roh = crate::auswahl::Rohmodus::an()?;
-    let mut aus = io::stdout();
-    // Im Rohmodus holt `\n` den Cursor nicht an den Zeilenanfang.
-    queue!(aus, Print("\r\n"))?;
-
-    for (nr, zeile) in zeilen.iter().enumerate() {
-        // Der Name steht in der ersten Zeile und wird hervorgehoben.
-        let hervor = if nr == 0 { Some(name) } else { None };
-        let mut rest = zeile.as_str();
-
-        while !rest.is_empty() {
-            if event::poll(Duration::from_millis(0))? {
-                if let Event::Key(_) = event::read()? {
-                    // Abbruch: den Rest sofort und vollständig zeigen.
-                    queue!(aus, SetForegroundColor(crate::farben::BEIWERK), Print(rest))?;
-                    for weitere in &zeilen[nr + 1..] {
-                        queue!(aus, Print("\r\n"), Print(weitere))?;
-                    }
-                    queue!(aus, ResetColor, Print("\r\n"))?;
-                    aus.flush()?;
-                    return Ok(());
-                }
-            }
-
-            // Der Name steht mitten in der Zeile („Hallo Josch, ..."), nicht
-            // am Anfang. Getroffen wird er, sobald der Rest mit ihm beginnt.
-            // Der Einzug davor ändert daran nichts, er wird Zeichen für
-            // Zeichen mitgeschrieben wie der übrige Text.
-            let treffer = !name.is_empty() && rest.starts_with(name) && hervor.is_some();
-            let (ton, stark) = if treffer {
-                (farbe, Attribute::Bold)
-            } else {
-                (crate::farben::BEIWERK, Attribute::NormalIntensity)
-            };
-            let laenge = if treffer {
-                name.len()
-            } else {
-                rest.chars().next().map(char::len_utf8).unwrap_or(1)
-            };
-            let (stueck, uebrig) = rest.split_at(laenge);
-            rest = uebrig;
-
-            queue!(
-                aus,
-                SetForegroundColor(ton),
-                SetAttribute(stark),
-                Print(stueck)
-            )?;
-            aus.flush()?;
-            std::thread::sleep(SCHREIBDAUER);
-        }
-        queue!(aus, Print("\r\n"))?;
-    }
     aus.flush()
 }
 
@@ -790,14 +689,14 @@ mod tests {
     #[test]
     fn ohne_terminal_wird_uebersprungen() {
         let vorher = Instant::now();
-        assert!(!abspielen(Color::Green));
+        assert!(!abspielen(Konsolendesign::Myelith));
         assert!(vorher.elapsed() < Duration::from_millis(500));
     }
 
     #[test]
     fn abschaltbar_ueber_umgebungsvariable() {
         std::env::set_var("MYL_NO_ANIMATION", "1");
-        assert!(!abspielen(Color::Green));
+        assert!(!abspielen(Konsolendesign::Myelith));
         std::env::remove_var("MYL_NO_ANIMATION");
     }
 
@@ -819,37 +718,6 @@ mod tests {
         }
         // `bis(0)` darf nicht durch Null teilen.
         assert_eq!(z.bis(0), 0);
-    }
-
-    /// Die Begrüßung muss in ein 80-Spalten-Terminal passen. Umbrechende
-    /// Zeilen sähen aus wie ein Satzfehler, nicht wie ein Gruß.
-    #[test]
-    fn begruessung_passt_in_achtzig_spalten() {
-        // Ein Name von zwölf Zeichen ist reichlich für einen Vor- oder
-        // Spitznamen und die Obergrenze, die die erste Zeile trägt.
-        for name in ["", "Jo", "Maximiliane"] {
-            let erste = format!(
-                "  Hallo {}, vielen Dank, dass du mithilfst, Myelith zu verbessern!",
-                name
-            );
-            assert!(
-                erste.chars().count() <= 78,
-                "erste Zeile mit Namen {name:?} ist {} Zeichen breit",
-                erste.chars().count()
-            );
-        }
-        for zeile in [
-            "  Lass uns zusammen ein paar Tests machen und herausfinden, ob alles",
-            "  so funktioniert, wie es soll ...",
-            "  Falls du Hilfe brauchst, findest du in der Anleitung alles Wichtige.",
-            "  Viel Spaß beim Testen!",
-        ] {
-            assert!(
-                zeile.chars().count() <= 78,
-                "Zeile ist {} Zeichen breit: {zeile}",
-                zeile.chars().count()
-            );
-        }
     }
 
     /// Die Sinustabelle ist die Grundlage der Spirale. Stimmt sie nicht,

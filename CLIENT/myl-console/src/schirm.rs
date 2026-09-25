@@ -82,11 +82,34 @@ impl Schirm {
     /// ⚑ **Erst die Leerzeilen, dann die Grenze.** Ohne die Leerzeilen
     /// stuende der Rahmen ueber dem, was schon dasteht, und der Kopf
     /// des Programms waere weg.
+    ///
+    /// ⚑ **Danach steht der Wagen dort, wo der Text aufhoerte**, und nicht
+    /// mehr auf der letzten Zeile des Rollbereichs (Festlegung des
+    /// Projektinhabers, 2026-09-24). Das Gespraech fuellt erst die freie
+    /// Flaeche unter dem Logo und rollt erst dann. 📌 **Der Grund ist das
+    /// Logo:** Stand der Wagen vom ersten Moment an unten, schob jede
+    /// Zeile das Logo weiter, und niemand konnte mehr sagen, wo es steht;
+    /// ohne diese Auskunft darf es nicht fliessen ([`crate::schimmer`]).
+    ///
+    /// ⚠️ `ESC[…r` setzt den Wagen selbst an den Anfang, deshalb wird er
+    /// danach ausdruecklich gestellt. Laesst sich die Stelle nicht
+    /// messen, oder haben die Leerzeilen den Schirm gerollt, geht es wie
+    /// bisher unten weiter, und das Logo wird nicht mehr gemalt.
     pub fn einrichten(&self) {
         let mut aus = std::io::stdout();
+        let _ = aus.flush();
+        let vorher = crossterm::cursor::position().ok().map(|(_, zeile)| zeile);
         let _ = write!(aus, "{}", "\n".repeat(RESERVE as usize));
         let _ = write!(aus, "\x1b[1;{}r", self.rollende());
-        let _ = write!(aus, "\x1b[{};1H", self.rollende());
+        let ziel = match vorher {
+            Some(zeile) => fortsetzungszeile(zeile, self.rollende()),
+            None => None,
+        };
+        let ziel = ziel.unwrap_or_else(|| {
+            crate::schimmer::vergessen();
+            self.rollende()
+        });
+        let _ = write!(aus, "\x1b[{ziel};1H");
         let _ = aus.flush();
     }
 
@@ -150,6 +173,22 @@ impl Schirm {
     pub fn wagenzeile(&self, versatz: u16) -> u16 {
         (self.erste_eigene() + versatz).saturating_sub(1)
     }
+}
+
+/// **Wo das Gespraech nach dem Einrichten weitergeht**, ab eins gezaehlt
+/// wie `ESC[…H`, oder `None`, wenn es dafuer keinen sicheren Ort gibt.
+///
+/// `zeile` ist die Zeile des Wagens **vor** den Leerzeilen, ab null.
+///
+/// ⚑ **Eine Bedingung deckt zwei Faelle**, und das ist kein Versehen:
+/// Liegt die Stelle unter dem Rollbereich, gehoert sie dem Rahmen; und
+/// genau dann rollen die `RESERVE` Leerzeilen den Schirm, denn der
+/// Rollbereich endet `RESERVE` Zeilen vor dem Fensterende. 📌 Die erste
+/// Fassung prueft beides getrennt, und die Gegenprobe hat gezeigt, dass
+/// jede der beiden Zeilen ohne die andere dasselbe tut.
+pub fn fortsetzungszeile(zeile: u16, rollende: u16) -> Option<u16> {
+    let ab_eins = zeile.saturating_add(1);
+    (ab_eins <= rollende).then_some(ab_eins)
 }
 
 /// Wie breit der Textblock unter der Marke hoechstens wird, und damit
@@ -285,6 +324,29 @@ mod tests {
                 "Wagen und Text liegen bei Versatz {versatz} auseinander"
             );
         }
+    }
+
+    /// ⚑ **Das Gespraech geht dort weiter, wo der Text aufhoerte**, und
+    /// nur dort, wo das sicher ist.
+    ///
+    /// 📌 Die Gegenproben sind die beiden Faelle, in denen es wie bisher
+    /// unten weitergehen muss: Die Leerzeilen haben den Schirm gerollt,
+    /// oder die Stelle liegt im Rahmen.
+    #[test]
+    fn das_gespraech_beginnt_unter_dem_text() {
+        let s = Schirm { hoehe: 50 };
+        // Unter einem Logo mit Ladezeile: Zeile 22 ab null ist 23 ab eins.
+        assert_eq!(fortsetzungszeile(22, s.rollende()), Some(23));
+        assert_eq!(fortsetzungszeile(0, s.rollende()), Some(1));
+        // Die letzte Zeile des Rollbereichs ist noch seine, und von dort
+        // aus rollen die Leerzeilen gerade noch nicht.
+        let letzte = s.rollende() - 1;
+        assert!(letzte + RESERVE < s.hoehe);
+        assert_eq!(fortsetzungszeile(letzte, s.rollende()), Some(s.rollende()));
+        // Eine Zeile tiefer rollten sie, und die Stelle gehoert dem Rahmen.
+        assert!(letzte + 1 + RESERVE >= s.hoehe);
+        assert_eq!(fortsetzungszeile(letzte + 1, s.rollende()), None);
+        assert_eq!(fortsetzungszeile(s.hoehe - 1, s.rollende()), None);
     }
 
     /// **Unter der Mindesthoehe gibt es gar keinen Rand.**

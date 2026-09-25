@@ -55,10 +55,64 @@ dorthin.
 | Sprechen | Fun-CosyVoice3-0.5B | 26,7 s kalt | davon rund 18 s Modellladen, RTF 1,40 |
 
 ⚑ **Die zweite Sprosse hat sich sofort bezahlt gemacht**: dasselbe Bild,
-dieselbe Frage, und das 3B liest, was das 2,2B überliest. ⚠️ **Und
-CosyVoice ist auf dieser Maschine langsamer als Echtzeit** (RTF 1,40);
-genau deshalb wird satzweise gesprochen, während das Modell noch
-schreibt.
+dieselbe Frage, und das 3B liest, was das 2,2B überliest.
+
+📌 **CosyVoice war damals langsamer als Echtzeit** (RTF 1,40) und ist es
+seit dem 2026-09-25 nicht mehr; siehe unten.
+
+### Sprechen, gemessen am 2026-09-25
+
+Ein Satz von 62 Zeichen, gemessen vom Eingang beim Läufer bis zum
+ersten hörbaren Stück, ohne ein Hauptmodell daneben:
+
+| Stand | erster Ton | RTF |
+|---|---|---|
+| alles auf der CPU, zehn Flussschritte, ganzer Satz auf einmal | 9,1 s | 2,1 |
+| Stimme einmal gemerkt statt je Satz vorbereitet | 7,1 s | 2,2 |
+| Fluss auf der Grafikeinheit, sechs Schritte, stückweise | 2,1 bis 2,3 s | 0,86 |
+| dazu die Stimmprobe an einer Pause auf 4,4 s gekürzt | 1,6 bis 1,8 s | 0,79 |
+
+Stufe für Stufe, zehn Schritte, ein Satz von rund 5,5 s Ton:
+Sprachmodell 3,0 s (45 bis 48 Token/s), Fluss 5,4 bis 6,3 s, Vocoder
+0,3 s. **Der Fluss war der Engpass**, und auf der Grafikeinheit braucht
+er 1,8 s. Das Sprachmodell bleibt auf der CPU: Dort schafft es 48
+Token/s, auf der Grafikeinheit 31. Der Vocoder rechnet in `float64`,
+das die Grafikeinheit nicht kann.
+
+⚑ **Sechs statt zehn Flussschritte kosten nichts Hörbares.** Geprüft,
+indem whisper jeden Satz zurückhörte (bei 10, 6 und 4 Schritten und drei
+Probenlängen jedesmal wortrichtig) und die Stimme gegen die Probe
+verglichen wurde (Ähnlichkeit 0,80 bis 0,89, ohne Gang mit der
+Schrittzahl).
+
+⚠️ **Neben dem Hauptmodell wird alles langsamer**, denn beide teilen
+sich Kerne und Speicherbandbreite. Das Sprachmodell des Sprechers fiel
+neben dem 30B von 48 auf 13 Token/s. Gemessen im ganzen Gespräch (eine
+Frage, Antwort ohne Nachdenken, die Zeit ab dem Abschicken):
+
+| Hauptmodell | erster Text | erster Ton ohne Vorrang | erster Ton mit Vorrang | Lücken ohne / mit |
+|---|---|---|---|---|
+| 4B | 0,2 bis 0,3 s | 3,7 bis 3,8 s | **3,0 bis 3,3 s** | 2,2 bis 2,3 s / 2,1 bis 2,3 s |
+| 8B | 0,4 bis 1,4 s | 5,4 bis 5,5 s | **4,3 bis 4,6 s** | 2,2 bis 2,5 s / 3,4 bis 3,6 s |
+| 30B-A3B | 2,7 bis 2,8 s | 8,5 s | **7,8 s** | 2,3 s / 3,4 s |
+
+Je drei Läufe bei 4B und 8B, einer beim 30B. ⚑ **Vorrang** heisst: Ist
+das erste Stück beim Sprecher und klingt noch nichts, hält das
+Hauptmodell an (höchstens sechs Sekunden). Es ist dem Sprechen ohnehin
+weit voraus; der erste Ton kommt damit 0,65 bis 1,0 s früher. Die
+Lücken wachsen beim 8B und 30B um rund eine Sekunde, verteilt über eine
+halbe Minute Sprechen, denn das Modell ist dann länger neben dem
+Sprecher beschäftigt.
+
+⛔️ **Nicht übernommen, weil gemessen schlechter:** das Sprachmodell des
+Sprechers auf der Grafikeinheit (4B: erster Ton 4,8 statt 3,8 s, Lücken
+13 statt 2 s; das Hauptmodell rechnet dort mit) und ein Rückstau, der das
+Hauptmodell bei jedem offenen Satz anhält (30B: zehn Sekunden Lücken).
+
+⚠️ **Mit Nachdenken wartet das Gespräch auf das Nachdenken**: Das 30B
+schrieb nach 44 s das erste Wort der Antwort. Ein vorbereiteter Satz wie
+„Lass mich kurz darüber nachdenken." kommt nach rund drei Sekunden,
+danach ist es still, bis die Antwort beginnt.
 
 ### ⚑ Zwei Sprossen beim Sehen
 
@@ -87,7 +141,10 @@ Repositorium.** Das ist die Bedingung, unter der die Entscheidung steht:
 Repo muss". Der Läufer, der CosyVoice bedient, ist dagegen eine
 Textdatei von wenigen Kilobyte; er steckt im Programm und wird bei
 Bedarf nach `<Heimat>/bin/sprechen-cosyvoice.py` geschrieben.
-⛔️ **Nie überschrieben:** Wer ihn angepasst hat, hat ihn angepasst.
+⛔️ **Ein angepasster Läufer wird nie überschrieben.** Ersetzt wird nur
+einer, der Byte für Byte einer früher ausgelieferten Fassung gleicht,
+erkannt an seinem Fingerabdruck (FNV-1a, 64 Bit); sonst bliebe jeder,
+der ihn einmal bekommen hat, für immer auf dem alten Stand.
 
 ⚠️ **Was das kostet, gehört dazugesagt:** Wer kein Python und keine
 Gewichte hat, kann nicht sprechen lassen. Deshalb bleibt **piper als
@@ -123,7 +180,14 @@ spricht Satz für Satz:
 |---|---|
 | vom Läufer, einmal beim Start | `bereit` |
 | an den Läufer, je Satz | `<textdatei>` Tabulator `<zielwav>` |
+| vom Läufer, je hörbarem Stück (Fassung 2) | `stueck` Tabulator `<teilwav>` |
 | vom Läufer, je Satz | `ok` oder `fehler: …` |
+
+⚑ **Die Stücke sind der Unterschied zwischen zwei und neun Sekunden.**
+Ein Läufer der Fassung 2 meldet jedes Stück, sobald es fertig ist, und
+der Client spielt es sofort; das ganze Satz-WAV liegt am Ende trotzdem
+da. Ein Läufer der Fassung 1 meldet nur `ok`, und dann klingt der Satz
+als Ganzes, wie früher.
 
 ⚑ **Das Schließen der Eingabe beendet ihn**, wie bei der Aufnahme. Und
 das Warten auf `bereit` ist Teil der Sache: Wer nicht wartet, schickt

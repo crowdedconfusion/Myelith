@@ -84,6 +84,15 @@ impl Zustandsspeicher {
         &mut self.zustaende[p * self.koepfe + kopf]
     }
 
+    /// **Alle Koepfe einer Ebene am Stueck**, zum verteilten Fortschreiben.
+    ///
+    /// Sie liegen hintereinander (`zustaende[platz * koepfe + kopf]`), also
+    /// ist das ein Ausschnitt und keine Sammlung.
+    pub fn zustaende_mut(&mut self, ebene: usize) -> &mut [Zustand] {
+        let p = self.platz(ebene);
+        &mut self.zustaende[p * self.koepfe..(p + 1) * self.koepfe]
+    }
+
     /// Dasselbe, nur lesend.
     pub fn zustand(&self, ebene: usize, kopf: usize) -> &Zustand {
         let p = self.platz(ebene);

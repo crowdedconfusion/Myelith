@@ -1,42 +1,35 @@
-// ⚑ **Wortgetreue Kopie aus dem Testclient** (2026-09-10, Festlegung
-// des Projektinhabers). Die Marke ist die Marke, und dieses Programm
-// soll dieselbe zeigen.
-//
-// ⚑ **Wortgetreu und nicht gekuerzt**, obwohl `myelith` nicht jede
-// Funktion darin ruft. Eine gekuerzte Kopie ist weder das Original noch
-// etwas Eigenes: Sie laesst sich nicht mehr gegen die Quelle halten,
-// und wer eine Aenderung uebernehmen will, vergleicht zwei Dateien, von
-// denen eine Loecher hat. Deshalb `allow(dead_code)` statt der Schere.
-//
-// ⚠️ **Der Testclient wird abgeraeumt, sobald er seine Aufgabe erfuellt
-// hat** (Festlegung des Projektinhabers). Bis dahin liegen die vier
-// Dateien zweimal da, und das ist die kuerzere Zeit von beiden Uebeln;
-// danach ist diese hier die einzige.
-#![allow(dead_code)]
+// ⚑ **Bis zum 2026-09-24 eine wortgetreue Kopie aus dem Testclient,
+// seither gehoert diese Datei der Konsole** (Festlegung des
+// Projektinhabers). Anlass war das Logo im Regenbogen,
+// das nur hier waehrend eines Auftrags fliesst.
+// Der Testclient behaelt seine Fassung und wird ohnehin abgeraeumt;
+// die Probe `die_kopien_sind_wortgetreu` wacht nur noch ueber
+// `auswahl.rs`.
 
 //! Begrüßungsbanner.
 //!
-//! Greift das Projektbanner (`README/Grafiken/myelith-banner.png`) auf:
-//! ein Netz aus Knoten und dünnen Verbindungen, darin der Schriftzug.
 //! Die Tagline des Projektbanners bleibt bewusst weg: im Terminal
 //! steht darunter ohnehin sofort das Menü, und drei Textzeilen zwischen
 //! Schriftzug und Auswahl drängen die eigentliche Bedienung nach unten.
 //!
-//! ## Warum das Netzmotiv so aussieht
+//! ## ⚑ Warum das Motiv so aussieht: heilige Geometrie
 //!
-//! Die erste Fassung war ein regelmäßiger Zickzack aus gleich großen
-//! Knoten: hübsch, aber es sah nach Ornament aus, nicht nach einem Netz.
-//! Das Vorbild trägt drei Eigenschaften, die den Unterschied machen, und
-//! alle drei sind hier nachgebildet:
+//! **Auftrag des Projektinhabers vom 2026-09-24:** rein geometrisch, nach
+//! dem Vorbild der heiligen Geometrie, und **nichts beruehrt das Logo**.
+//! Acht Motive, eines je Sitzung gewuerfelt; wie sie entstehen und was sie
+//! zusichern, steht bei [`crate::geometrie`].
 //!
-//! - **Knoten verschiedener Größe.** `◉ ● ○ ∘ ·` von der Nabe bis zum
-//!   fernen Punkt. Gleich große Knoten lesen sich als Muster, verschieden
-//!   große als Struktur.
-//! - **Naben mit auffächernden Kanten.** An `◉` und `●` gehen acht Kanten
-//!   ab (`│ ╱ ╲` in beide Richtungen). Das ist das Bildzeichen für einen
-//!   Knoten mit vielen Verbindungen, und im Original der auffälligste Zug.
-//! - **Lange Kanten, die einander kreuzen.** Sie verbinden weit entfernte
-//!   Knoten und laufen quer durchs Feld, statt nur Nachbarn zu paaren.
+//! 📌 **Davor standen hier zwei Fassungen**, beide am selben Tag: ein Netz
+//! aus Knoten und Kanten nach dem Projektbanner, dann Neuronen ueber
+//! Gestein. Die erste las sich als Schema, die zweite war dem
+//! Projektinhaber zu gegenstaendlich.
+//!
+//! ⚑ **Stufen der Farbe** ([`stufe`]): Die Bloecke des Schriftzugs
+//! leuchten im vollen Verlauf, seine Schattenkanten gedaempft, das Muster
+//! dunkler und entsaettigt ([`zeichenstil`]). **Und waehrend eines
+//! Auftrags fliessen sie gegeneinander** ([`crate::schimmer`]): Das
+//! Logo wandert nach links, das Muster nach rechts, und der Unterschied
+//! in Helle und Richtung gibt dem Bild Tiefe.
 //!
 //! ## Warum das Motiv zur Laufzeit entsteht
 //!
@@ -44,42 +37,36 @@
 //! ein Generator sei Aufwand für ein Bild, das sich nie ändert. Diese
 //! Begründung ist entfallen: Das Bild soll die Fensterbreite füllen, also
 //! ändert es sich bei jedem anderen Terminal. [`fuer_fenster`] baut es auf
-//! einem Zeichenraster (Knoten setzen, Kanten ziehen, rastern).
+//! einer Punktflaeche ([`crate::geometrie::Leinwand`]).
 //!
 //! Der Schriftzug bleibt dabei **56 Zeichen breit und wird zentriert**,
 //! nicht gestreckt: Er ist ein Bild, kein Text, und in die Breite gezogen
-//! unleserlich. Gefüllt wird die Fläche vom Netz um ihn herum, genau wie
-//! im Vorbild.
+//! unleserlich. Gefuellt wird die Flaeche vom Muster um ihn herum.
 //!
 //! **Auch die Höhe zählt.** Passt das Motiv nicht mitsamt Menü ins
 //! Fenster, scrollt der Schriftzug nach oben weg. Gekürzt wird deshalb von
-//! unten nach oben: erst der untere Netzblock, dann der obere. Der feste
-//! Text in [`BANNER`] bleibt als Rückfall für zu schmale Fenster.
+//! unten nach oben: erst das Muster unter dem Schriftzug, dann das
+//! darueber; neben ihm bleibt es immer. Fuer zu schmale Fenster steht
+//! dasselbe Motiv in seiner schmalsten Form ([`ersatzbild`]).
 //!
 //! **Nicht immer anzeigen:** Bei `--quiet` und wenn die Ausgabe in eine
 //! Datei oder Pipe geht, bleibt das Banner weg. Ein Protokoll, das mit
 //! ASCII-Kunst beginnt, ist schlechter zu diffen.
 
-/// Der Schriftzug mit Netzmotiv, wie im Projektbanner.
-pub const BANNER: &str = r#"
-              ·     ╱ │ ╲   ∘   ○       ∘       · ╱ │ ╲       ∘
-             ╱       ╱│╲         ╲   ╱│╲       ╱   ╱│╲       ╱
-      ●─────╱─────────◉───────────╲───●───────╱─────◉───────╱───────────◉
-           ╱         ╲│╱           ╲ ╲│╱     ╱     ╲│╱     ╱
-          ∘         ╲ │ ╱           ○       ∘     ╲ │ ╱   ·         ·
+/// Die Breite des Ersatzbildes: Schriftzug und ein Zeichen Rand je Seite.
+pub const ERSATZBREITE: usize = SCHRIFTBREITE + 2;
 
-  ███╗   ███╗██╗   ██╗███████╗██╗     ██╗████████╗██╗  ██╗
-  ████╗ ████║╚██╗ ██╔╝██╔════╝██║     ██║╚══██╔══╝██║  ██║
-  ██╔████╔██║ ╚████╔╝ █████╗  ██║     ██║   ██║   ███████║
-  ██║╚██╔╝██║  ╚██╔╝  ██╔══╝  ██║     ██║   ██║   ██╔══██║
-  ██║ ╚═╝ ██║   ██║   ███████╗███████╗██║   ██║   ██║  ██║
-  ╚═╝     ╚═╝   ╚═╝   ╚══════╝╚══════╝╚═╝   ╚═╝   ╚═╝  ╚═╝
-
-      ╲         ·            ╱  ╱│╲     ·             ·        ╱│╲
-     ∘─╲────○───────────────╱────◉─────────────●───────╲────────●────────◉
-        ╲                  ╱    ╲│╱                     ╲      ╲│╱
-         ·            ·   ∘                         ∘    ∘            ○
-"#;
+/// **Das Bild fuer Fenster, die zu schmal sind, und fuer Ausgaben ohne
+/// Terminal.**
+///
+/// ⚑ **Erzeugt und nicht abgeschrieben** (2026-09-24). Bis dahin stand
+/// hier ein fester Text, der das Motiv von Hand nachbildete; mit dem
+/// neuen Motiv waeren es zwei Bilder gewesen, die von Hand gleich zu
+/// halten sind. **Was an zwei Orten steht, laeuft auseinander.** Jetzt
+/// ist es dasselbe Motiv in seiner schmalsten Form.
+pub fn ersatzbild() -> String {
+    bild(ERSATZBREITE, u16::MAX)
+}
 
 /// Untertitel, direkt unter dem Banner.
 ///
@@ -88,24 +75,6 @@ pub const BANNER: &str = r#"
 /// damit sich beide gegeneinander halten lassen; **ein Untertitel, der
 /// vom Testclient spricht, waere in diesem Programm schlicht falsch.**
 pub const SUBTITLE: &str = "";
-
-/// Gibt das Banner aus, wenn es sinnvoll ist.
-///
-/// `show` kommt vom Aufrufer (üblicherweise `!quiet`). Zusätzlich wird
-/// die Umgebungsvariable `NO_COLOR`/`MYL_NO_BANNER` respektiert: wer
-/// den Client in einem Skript aufruft, will kein Bild.
-pub fn print_if(show: bool) {
-    if !show || std::env::var("MYL_NO_BANNER").is_ok() {
-        return;
-    }
-    println!("{}", BANNER);
-    // ⚑ **Ein leerer Untertitel ist keine leere Zeile, sondern keine
-    // Zeile** (2026-09-11). Wer ihn nicht will, soll nicht drei
-    // Leerzeilen bekommen, wo vorher ein Satz stand.
-    if !SUBTITLE.trim().is_empty() {
-        println!("{}\n", SUBTITLE);
-    }
-}
 
 /// Leert den Bildschirm und setzt das Banner an den Anfang.
 ///
@@ -125,16 +94,16 @@ pub fn print_if(show: bool) {
 /// **Nur auf einem Terminal.** Geht die Ausgabe in eine Datei oder Pipe,
 /// wird nichts geleert und nichts positioniert. Steuersequenzen in einem
 /// mitgeschnittenen Lauf wären Müll.
-pub fn bildschirm() {
-    bildschirm_mit(crate::farben::logo());
-}
-
-/// Wie [`bildschirm`], aber mit vorgegebener Farbe für den Schriftzug.
 ///
-/// Die Farbe ist seit v0.6.0 eine Eigenschaft der **Sitzung** und für
-/// alle Bildschirme dieselbe ([`crate::farben::logo`]); dieser Weg bleibt
-/// für Aufrufer, die sie ohnehin schon in der Hand haben.
-pub fn bildschirm_mit(farbe: crossterm::style::Color) {
+/// ⚑ **Die Farben kommen aus [`crate::schimmer::zellstil`]**, also aus
+/// derselben Stelle wie im Startbild und beim Fliessen, und im Stand der
+/// Uhr, bei dem das Logo zuletzt stehenblieb. Ein Neudruck zwischen zwei
+/// Auftraegen zeigt deshalb genau das Bild, das vorher dastand.
+///
+/// ⚑ **Und er meldet, wo das Logo jetzt steht** ([`crate::schimmer::gedruckt`]):
+/// oben links, auf einem eben geraeumten Schirm. Von dort aus darf es
+/// fliessen, bis es wegrollt.
+pub fn bildschirm_mit(design: myl_client::einstellungen::Konsolendesign) {
     use crossterm::style::{Attribute, Print, ResetColor, SetAttribute, SetForegroundColor};
     use std::io::IsTerminal;
 
@@ -144,7 +113,7 @@ pub fn bildschirm_mit(farbe: crossterm::style::Color) {
     // Ohne Terminal keine Steuerzeichen: Ein mitgeschnittener Lauf soll
     // lesbar bleiben, und Farbcodes in einer Datei sind es nicht.
     if !std::io::stdout().is_terminal() {
-        println!("{}", BANNER);
+        println!("{}", ersatzbild());
         if !SUBTITLE.trim().is_empty() {
             println!("{}\n", SUBTITLE);
         }
@@ -173,10 +142,10 @@ pub fn bildschirm_mit(farbe: crossterm::style::Color) {
         crossterm::terminal::Clear(crossterm::terminal::ClearType::Purge),
         crossterm::cursor::MoveTo(0, 0)
     );
-    for zeile in text.lines() {
-        let im_schriftzug = ist_schriftzug(zeile);
-        for c in zeile.chars() {
-            let (ton, stark) = zeichenstil(c, im_schriftzug, farbe);
+    let uhr = crate::schimmer::stand();
+    for (y, zeile) in text.lines().enumerate() {
+        for (x, c) in zeile.chars().enumerate() {
+            let (ton, stark) = crate::schimmer::zellstil(design, c, x, y, breite as usize, uhr);
             let _ = crossterm::queue!(
                 aus,
                 SetForegroundColor(ton),
@@ -203,6 +172,7 @@ pub fn bildschirm_mit(farbe: crossterm::style::Color) {
         );
     }
     let _ = std::io::Write::flush(&mut aus);
+    crate::schimmer::gedruckt(&text, 0, (breite, hoehe), design);
 }
 
 /// Maße des Terminalfensters, mit belastbaren Rückfallwerten.
@@ -279,9 +249,8 @@ pub fn untertitel(breite: u16) -> String {
 
 /// Breite des Blockschriftzugs in Zeichen.
 ///
-/// Der feste Text in [`BANNER`] ist 58 Zeichen breit, weil er zwei
-/// Leerzeichen Einzug mitführt; der Schriftzug selbst misst 56. Ein Test
-/// hält beides gegeneinander, damit die Zahl nicht auseinanderläuft.
+/// Der Schriftzug misst 56; ein Test haelt die Zahl gegen ihn, damit sie
+/// nicht auseinanderlaeuft.
 pub const SCHRIFTBREITE: usize = 56;
 
 /// Schmalste Breite, für die überhaupt gezeichnet wird.
@@ -290,111 +259,17 @@ pub const SCHRIFTBREITE: usize = 56;
 /// schlimmer aus als keines.
 pub const MINDESTBREITE: usize = SCHRIFTBREITE + 4;
 
-/// Ein Zeichenraster, auf dem das Netzmotiv entsteht.
-///
-/// **Warum überhaupt zur Laufzeit gezeichnet wird.** Bis v0.6.0 stand das
-/// Motiv als fester Text im Quelltext, mit dem Argument, ein Generator sei
-/// Aufwand für ein Bild, das sich nie ändert. Das Argument fiel, als das
-/// Banner die Breite des Fensters füllen sollte: Jetzt ändert es sich:
-/// bei jedem anderen Terminal.
-struct Raster {
-    breite: usize,
-    zeilen: Vec<Vec<char>>,
-}
-
-impl Raster {
-    fn neu(breite: usize, hoehe: usize) -> Self {
-        Self {
-            breite,
-            zeilen: vec![vec![' '; breite]; hoehe],
-        }
-    }
-
-    fn setz(&mut self, x: usize, y: usize, c: char) {
-        if y < self.zeilen.len() && x < self.breite {
-            self.zeilen[y][x] = c;
-        }
-    }
-
-    /// Ist die Stelle noch leer?
-    ///
-    /// Alles Zeichnen prüft das zuerst. Damit gewinnt, was zuerst gesetzt
-    /// wurde, und weil Knoten zuletzt kommen, überschreibt keine Kante
-    /// einen Knoten, wohl aber umgekehrt.
-    fn frei(&self, x: usize, y: usize) -> bool {
-        y < self.zeilen.len() && x < self.breite && self.zeilen[y][x] == ' '
-    }
-
-    fn hlinie(&mut self, y: usize, x0: usize, x1: usize) {
-        for x in x0..=x1.min(self.breite.saturating_sub(1)) {
-            if self.frei(x, y) {
-                self.setz(x, y, '─');
-            }
-        }
-    }
-
-    /// Eine Diagonale über `n` Schritte in Richtung `(dx, dy)`.
-    ///
-    /// Richtung und Länge statt Start und Ziel: Bei zwei Punkten, deren
-    /// Abstände in x und y nicht übereinstimmen, gibt es keine Diagonale in
-    /// 45 Grad, die beide trifft: eine Schleife, die auf das Ziel wartet,
-    /// läuft dann endlos. Genau das ist beim Entwurf passiert.
-    fn diag(&mut self, x0: usize, y0: usize, dx: isize, dy: isize, n: usize) {
-        let z = if dx * dy > 0 { '╲' } else { '╱' };
-        for i in 0..n {
-            let x = x0 as isize + dx * i as isize;
-            let y = y0 as isize + dy * i as isize;
-            if x < 0 || y < 0 {
-                continue;
-            }
-            if self.frei(x as usize, y as usize) {
-                self.setz(x as usize, y as usize, z);
-            }
-        }
-    }
-
-    /// Ein Knotenpunkt mit abgehenden Kanten, das Bildzeichen des Netzes.
-    fn nabe(&mut self, x: usize, y: usize, zeichen: char, spanne: usize) {
-        for d in 1..=spanne {
-            for (ax, ay, c) in [
-                (0isize, -(d as isize), '│'),
-                (0, d as isize, '│'),
-                (-(d as isize), -(d as isize), '╱'),
-                (d as isize, d as isize, '╱'),
-                (-(d as isize), d as isize, '╲'),
-                (d as isize, -(d as isize), '╲'),
-            ] {
-                let (nx, ny) = (x as isize + ax, y as isize + ay);
-                if nx >= 0 && ny >= 0 && self.frei(nx as usize, ny as usize) {
-                    self.setz(nx as usize, ny as usize, c);
-                }
-            }
-        }
-        self.setz(x, y, zeichen);
-    }
-
-    fn ausgeben(&self) -> Vec<String> {
-        self.zeilen
-            .iter()
-            .map(|z| z.iter().collect::<String>().trim_end().to_string())
-            .collect()
-    }
-}
-
-/// Stelle bei `zaehler/nenner` der Breite.
-fn anteil(breite: usize, zaehler: usize, nenner: usize) -> usize {
-    (breite * zaehler / nenner).min(breite.saturating_sub(1))
-}
-
 /// Das Banner in der gewünschten Breite.
 ///
 /// Der Schriftzug bleibt 58 Zeichen breit: er ist ein Bild, kein Text, und
 /// gestreckt wäre er unleserlich. Er wird deshalb **zentriert**, und das
-/// Netz füllt die Breite um ihn herum. Genau so ist das Vorbild aufgebaut:
-/// Wortmarke in der Mitte, Netz über die ganze Fläche.
+/// Muster fuellt die Breite um ihn herum.
 ///
-/// Unterhalb von [`MINDESTBREITE`] kommt der feste Text zurück; dort ist
-/// für ein Netz ohnehin kein Platz.
+/// Unterhalb von [`MINDESTBREITE`] kommt das Ersatzbild.
+///
+/// ⚑ **Nur noch fuer die Proben**: Gezeichnet wird immer fuer Breite und
+/// Hoehe ([`fuer_fenster`]).
+#[cfg(test)]
 pub fn fuer_breite(breite: u16) -> String {
     fuer_fenster(breite, u16::MAX)
 }
@@ -424,113 +299,46 @@ pub const HALBE_HOEHE: u16 = 34;
 pub fn fuer_fenster(breite: u16, hoehe: u16) -> String {
     let b = breite as usize;
     if b < MINDESTBREITE {
-        return BANNER.to_string();
+        return ersatzbild();
     }
+    bild(b, hoehe)
+}
 
-    let mut zeilen: Vec<String> = Vec::new();
+/// Das Bild selbst, im Motiv dieser Sitzung.
+fn bild(b: usize, hoehe: u16) -> String {
+    bild_mit(crate::geometrie::sitzungsmotiv(), b, hoehe)
+}
+
+/// **Das Bild in einem bestimmten Motiv.**
+///
+/// ⚑ **Die Zeilenzahl ist dieselbe wie in jeder frueheren Fassung**:
+/// 18 Zeilen ab [`VOLLE_HOEHE`], 13 ab [`HALBE_HOEHE`], sonst 7, und
+/// danach eine leere. Wie viel Platz das Menue darunter hat, ist
+/// nachgerechnet und haengt daran. Die erste Zeile bleibt leer, damit das
+/// Bild nicht an der Fensterkante klebt.
+///
+/// 📌 **Die Flaeche endet in der halben und der knappen Hoehe genau an der
+/// Sperrzone**, und die Leerzeile danach ist echt. Endete sie mit einer
+/// Musterzeile, hinge die Zeilenzahl am Motiv: leer in dem einen, gefuellt
+/// im anderen, und `lines()` zaehlt eine leere letzte Zeile nicht mit.
+pub(crate) fn bild_mit(motiv: crate::geometrie::Motiv, b: usize, hoehe: u16) -> String {
+    let (reihen, logo_oben) = if hoehe >= VOLLE_HOEHE {
+        (17, 6)
+    } else if hoehe >= HALBE_HOEHE {
+        (12, 6)
+    } else {
+        (6, 0)
+    };
+    let mut flaeche = crate::geometrie::Leinwand::neu(b, reihen, logo_oben);
+    motiv.zeichnen(&mut flaeche);
+    let mut zeilen = vec![String::new()];
+    zeilen.extend(flaeche.zeilen());
     zeilen.push(String::new());
-    if hoehe >= HALBE_HOEHE {
-        zeilen.extend(netz_oben(b));
-        zeilen.push(String::new());
-    }
-
-    let einzug = " ".repeat((b - SCHRIFTBREITE) / 2);
-    for z in SCHRIFTZUG {
-        zeilen.push(format!("{}{}", einzug, z));
-    }
-
-    zeilen.push(String::new());
-    if hoehe >= VOLLE_HOEHE {
-        zeilen.extend(netz_unten(b));
-        zeilen.push(String::new());
-    }
     zeilen.join("\n")
 }
 
-/// Fünf Zeilen Netz über dem Schriftzug.
-///
-/// Die Stellen sind Anteile der Breite, keine festen Spalten: Damit sitzt
-/// dasselbe Motiv in einem 80- wie in einem 200-Zeichen-Fenster, statt
-/// links zusammenzurücken und rechts eine leere Fläche zu lassen.
-///
-/// **Jede Diagonale endet an einem Knoten.** Die erste Fassung setzte
-/// Kanten und Knoten unabhängig voneinander; Diagonalen liefen dann an
-/// Knoten vorbei und hörten eine Spalte weiter im Nichts auf. Eine Kante,
-/// die nichts verbindet, ist im Netzbild ein Fehler. Die Endpunkte werden
-/// deshalb aus den Kanten berechnet, und dort steht ein Knoten.
-fn netz_oben(b: usize) -> Vec<String> {
-    let hoehe = 5;
-    let mut r = Raster::neu(b, hoehe);
-
-    // Die lange Kante quer durchs Feld, zuerst: sie ist der Untergrund.
-    r.hlinie(2, anteil(b, 1, 20), anteil(b, 19, 20));
-
-    // Schräg verlaufende Kanten, jede mit einem Knoten an beiden Enden.
-    let schraeg = [
-        (anteil(b, 1, 10), hoehe - 1, 1isize, -1isize, '∘', '·'),
-        (anteil(b, 2, 5), 0, 1, 1, '○', '∘'),
-        (anteil(b, 29, 50), hoehe - 1, 1, -1, '·', '○'),
-        (anteil(b, 4, 5), hoehe - 1, 1, -1, '∘', '·'),
-    ];
-    let mut enden: Vec<(usize, usize, char)> = Vec::new();
-    for (x, y, dx, dy, von, bis) in schraeg {
-        r.diag(x, y, dx, dy, hoehe);
-        let ex = (x as isize + dx * (hoehe as isize - 1)).max(0) as usize;
-        let ey = (y as isize + dy * (hoehe as isize - 1)).max(0) as usize;
-        enden.push((x, y, von));
-        enden.push((ex, ey, bis));
-    }
-
-    // Naben zuletzt: Sie dürfen Kanten überschreiben, nicht umgekehrt.
-    r.nabe(anteil(b, 27, 100), 2, '◉', 2);
-    r.nabe(anteil(b, 17, 25), 2, '◉', 2);
-    r.nabe(anteil(b, 12, 25), 2, '●', 1);
-    for (x, y, c) in enden {
-        r.setz(x, y, c);
-    }
-    r.setz(anteil(b, 1, 20), 2, '●');
-    r.setz(anteil(b, 19, 20), 2, '◉');
-    r.ausgeben()
-}
-
-/// Vier Zeilen Netz unter dem Schriftzug.
-///
-/// Bewusst anders gewichtet als oben: Ein gespiegeltes Motiv sähe nach
-/// Ornament aus, und genau davon soll es sich unterscheiden.
-fn netz_unten(b: usize) -> Vec<String> {
-    let hoehe = 4;
-    let mut r = Raster::neu(b, hoehe);
-
-    r.hlinie(1, anteil(b, 1, 25), anteil(b, 24, 25));
-
-    let schraeg = [
-        (anteil(b, 1, 20), 0usize, 1isize, 1isize, '·', '∘'),
-        (anteil(b, 3, 10), hoehe - 1, 1, -1, '∘', '·'),
-        (anteil(b, 7, 10), 0, 1, 1, '·', '○'),
-    ];
-    let mut enden: Vec<(usize, usize, char)> = Vec::new();
-    for (x, y, dx, dy, von, bis) in schraeg {
-        r.diag(x, y, dx, dy, hoehe);
-        let ex = (x as isize + dx * (hoehe as isize - 1)).max(0) as usize;
-        let ey = (y as isize + dy * (hoehe as isize - 1)).max(0) as usize;
-        enden.push((x, y, von));
-        enden.push((ex, ey, bis));
-    }
-
-    r.nabe(anteil(b, 21, 50), 1, '◉', 1);
-    r.nabe(anteil(b, 21, 25), 1, '●', 1);
-    for (x, y, c) in enden {
-        r.setz(x, y, c);
-    }
-    r.setz(anteil(b, 1, 25), 1, '∘');
-    r.setz(anteil(b, 24, 25), 1, '◉');
-    r.setz(anteil(b, 61, 100), 1, '●');
-    r.setz(anteil(b, 7, 50), 1, '○');
-    r.ausgeben()
-}
-
-/// Der Blockschriftzug allein, ohne Netz und ohne Einzug.
-const SCHRIFTZUG: [&str; 6] = [
+/// Der Blockschriftzug allein, ohne Muster und ohne Einzug.
+pub(crate) const SCHRIFTZUG: [&str; 6] = [
     "███╗   ███╗██╗   ██╗███████╗██╗     ██╗████████╗██╗  ██╗",
     "████╗ ████║╚██╗ ██╔╝██╔════╝██║     ██║╚══██╔══╝██║  ██║",
     "██╔████╔██║ ╚████╔╝ █████╗  ██║     ██║   ██║   ███████║",
@@ -539,177 +347,332 @@ const SCHRIFTZUG: [&str; 6] = [
     "╚═╝     ╚═╝   ╚═╝   ╚══════╝╚══════╝╚═╝   ╚═╝   ╚═╝  ╚═╝",
 ];
 
-/// Gehört diese Zeile zum Blockschriftzug?
-pub(crate) fn ist_schriftzug(zeile: &str) -> bool {
-    zeile.contains('█') || zeile.contains('╚')
+/// Wie stark ein Zeichen des Bildes leuchtet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Stufe {
+    /// Voller Verlauf, fett: die Bloecke des Schriftzugs.
+    Leuchtend,
+    /// Gedaempfter Verlauf: die Schattenkanten des Schriftzugs.
+    Schatten,
+    /// Dunkler und entsaettigter Verlauf: das Muster.
+    Getoent,
+    /// Grau: alles andere, was ein Bild je zeigen sollte.
+    Kante,
 }
 
-/// Die Knoten des Netzmotivs, von der Nabe bis zum fernen Punkt.
-const KNOTEN: [char; 5] = ['◉', '●', '○', '∘', '·'];
+/// Die Zeichen, aus denen der Schriftzug besteht.
+const LOGOZEICHEN: [char; 7] = ['█', '╗', '╔', '╝', '╚', '═', '║'];
 
-/// Farbe und Stärke eines einzelnen Bannerzeichens.
+/// Wie hell die Schattenkanten des Schriftzugs stehen, in Prozent.
+const SCHATTEN: u32 = 55;
+/// Wie hell das Muster steht, in Prozent.
+const MUSTER_HELLE: u32 = 48;
+/// Wie viel Saettigung das Muster behaelt, in Prozent.
+const MUSTER_SAETTIGUNG: u32 = 60;
+
+/// **Gehoert dieses Zeichen zum Schriftzug?**
 ///
-/// **Warum je Zeichen und nicht je Zeile.** Die erste Fassung färbte
-/// zeilenweise: Schriftzug hell, alles andere in einem Grauton. Damit
-/// verschwand das Netz, und mit ihm der Teil des Bildes, der das Projekt
-/// überhaupt darstellt. Das Vorbild macht es anders und genauer: helle
-/// Knotenpunkte, dünne graue Linien dazwischen. Drei Stufen statt zwei:
+/// ⚑ **Am Zeichen entschieden und nicht an der Zeile** (2026-09-24). Bis
+/// dahin hiess „im Schriftzug" dasselbe wie „in einer Zeile mit `█`".
+/// Seit neben dem Schriftzug Muster steht, truegen dessen Zeichen in
+/// denselben Zeilen sonst Farbe und Laufrichtung des Logos.
+pub(crate) fn ist_logozeichen(c: char) -> bool {
+    LOGOZEICHEN.contains(&c)
+}
+
+/// Ob ein Zeichen zum Muster gehoert: ein Braille-Zeichen.
+fn ist_muster(c: char) -> bool {
+    ('\u{2801}'..='\u{28FF}').contains(&c)
+}
+
+/// Die Stufe eines Zeichens.
 ///
-/// | Zeichen | Darstellung |
-/// |---|---|
-/// | Schriftzug (`█ ═ ║ ╔ …`) | Neonfarbe, fett |
-/// | Knoten (`◉ ● ○ ∘ ·`) | Neonfarbe, fett: sie tragen das Motiv |
-/// | Kanten (`─ │ ╱ ╲`) | Grau, normal. Verbindung, nicht Blickfang |
+/// ⚑ **Am Zeichen und nicht an der Stelle.** Wer das Logo spaeter neu malt
+/// ([`crate::schimmer`]), hat nur den Text; deshalb traegt jedes Zeichen
+/// seine Stufe selbst.
+pub(crate) fn stufe(c: char) -> Stufe {
+    if c == '█' {
+        Stufe::Leuchtend
+    } else if ist_logozeichen(c) {
+        Stufe::Schatten
+    } else if ist_muster(c) {
+        Stufe::Getoent
+    } else {
+        Stufe::Kante
+    }
+}
+
+/// Eine Echtfarbe, auf `prozent` ihrer Helle gedaempft. Palettenfarben
+/// bleiben, wie sie sind: Deren Helle kennt nur das Terminal.
+fn gedaempft(farbe: crossterm::style::Color, prozent: u32) -> crossterm::style::Color {
+    match farbe {
+        crossterm::style::Color::Rgb { r, g, b } => crossterm::style::Color::Rgb {
+            r: (r as u32 * prozent / 100) as u8,
+            g: (g as u32 * prozent / 100) as u8,
+            b: (b as u32 * prozent / 100) as u8,
+        },
+        andere => andere,
+    }
+}
+
+/// Eine Echtfarbe mit weniger Saettigung: Jeder Kanal rueckt um
+/// `100 - prozent` Prozent an die Helle der Farbe heran. Palettenfarben
+/// bleiben, wie sie sind.
+fn entsaettigt(farbe: crossterm::style::Color, prozent: u32) -> crossterm::style::Color {
+    match farbe {
+        crossterm::style::Color::Rgb { r, g, b } => {
+            let (r, g, b) = (r as i32, g as i32, b as i32);
+            let grau = (30 * r + 59 * g + 11 * b) / 100;
+            let p = prozent as i32;
+            let kanal = |c: i32| (grau + (c - grau) * p / 100).clamp(0, 255) as u8;
+            crossterm::style::Color::Rgb { r: kanal(r), g: kanal(g), b: kanal(b) }
+        }
+        andere => andere,
+    }
+}
+
+/// Farbe und Staerke eines einzelnen Bannerzeichens.
+///
+/// | Stufe | Zeichen | Darstellung |
+/// |---|---|---|
+/// | leuchtend | die Bloecke `█` | voller Verlauf, fett |
+/// | Schatten | die Kanten `╗ ╔ ╝ ╚ ═ ║` | Verlauf auf 55 Prozent |
+/// | getoent | das Muster | 48 Prozent Helle, 60 Prozent Saettigung |
+/// | Kante | alles andere | Grau |
+///
+/// ⚑ **Kontrast ueber drei Mittel** (Wunsch des Projektinhabers,
+/// 2026-09-24, am Bild verglichen): Das Muster ist dunkler, und es ist
+/// **entsaettigt**, sodass die volle Saettigung allein dem Logo gehoert;
+/// das trennt die Ebenen staerker als die Helle allein. Und die Kanten des
+/// Schriftzugs, in dieser Schrift ohnehin sein Schatten, treten zurueck,
+/// sodass die Bloecke plastisch davor stehen.
+///
+/// ⚑ **Die Stufen daempfen die Farbe und wechseln sie nicht.** Logo und
+/// Muster liegen im selben Regenbogen; was zuruecktritt, wird dunkler und
+/// blasser, nicht anders.
 pub(crate) fn zeichenstil(
     c: char,
-    im_schriftzug: bool,
     farbe: crossterm::style::Color,
 ) -> (crossterm::style::Color, crossterm::style::Attribute) {
     use crossterm::style::Attribute;
-    if im_schriftzug || KNOTEN.contains(&c) {
-        (farbe, Attribute::Bold)
-    } else {
-        (crate::farben::KANTE, Attribute::NormalIntensity)
+    match stufe(c) {
+        Stufe::Leuchtend => (farbe, Attribute::Bold),
+        Stufe::Schatten => (gedaempft(farbe, SCHATTEN), Attribute::NormalIntensity),
+        Stufe::Getoent => (
+            gedaempft(entsaettigt(farbe, MUSTER_SAETTIGUNG), MUSTER_HELLE),
+            Attribute::NormalIntensity,
+        ),
+        Stufe::Kante => (crate::farben::KANTE, Attribute::NormalIntensity),
     }
-}
-
-/// Startbild mit Animation, sonst wie [`print_if`].
-///
-/// Getrennt von `print_if`, weil nicht jeder Bannerdruck animiert gehört:
-/// Die Animation läuft **einmal** beim Start des interaktiven Menüs. Wer
-/// einen Unterbefehl aufruft, will messen und nicht zusehen.
-pub fn start_if(show: bool) {
-    start_if_mit(show, crate::farben::logo());
-}
-
-/// Wie [`start_if`], aber mit vorgegebener Farbe.
-///
-/// Gebraucht, wenn die Farbe über den Start hinaus gilt: Die Begrüßung
-/// nach der Namenseingabe hebt den Namen in derselben Farbe hervor, in
-/// der eben der Schriftzug entstanden ist. Zwei Farben hintereinander
-/// sähen aus, als hätte der Client das Thema gewechselt.
-pub fn start_if_mit(show: bool, farbe: crossterm::style::Color) {
-    if !show || std::env::var("MYL_NO_BANNER").is_ok() {
-        return;
-    }
-    // Nach dem Sturm steht der Schriftzug bereits, aber an der Stelle, an
-    // der ihn die Animation gezeichnet hat, und mit ihren Farben. Ein
-    // Aufräumen und ein sauberer Neudruck bringen ihn in denselben
-    // Zustand wie bei jedem späteren Aufräumen: sichtbar ist der
-    // Übergang nicht, weil an derselben Stelle dasselbe Bild entsteht.
-    // Ohne diesen Schritt sähe das Startbild anders aus als jedes
-    // folgende, und die Namenseingabe stünde unter einem Sonderfall.
-    crate::animation::abspielen(farbe);
-    bildschirm_mit(farbe);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::geometrie::{Motiv, FREI_X, FREI_Y};
 
-    /// Terminals mit 80 Spalten sind die untere Grenze, mit der zu
-    /// rechnen ist. Ein umbrechendes Banner zerstört das Netzmotiv.
+    const BREITEN: [usize; 5] = [ERSATZBREITE, 62, 80, 120, 200];
+    const HOEHEN: [u16; 3] = [VOLLE_HOEHE, HALBE_HOEHE, 10];
+
+    /// Die Zeilen, in denen der Schriftzug steht, und seine erste Spalte.
+    fn logolage(text: &str, b: usize) -> (Vec<usize>, usize) {
+        let zeilen: Vec<usize> = text
+            .lines()
+            .enumerate()
+            .filter(|(_, z)| z.contains('█') || z.contains('╚'))
+            .map(|(i, _)| i)
+            .collect();
+        (zeilen, (b - SCHRIFTBREITE) / 2)
+    }
+
+    /// Das Ersatzbild muss in 80 Spalten passen: Es ist das Bild fuer
+    /// schmale Fenster und fuer Ausgaben ohne Terminal.
     #[test]
-    fn banner_passt_in_achtzig_spalten() {
-        for (i, zeile) in BANNER.lines().enumerate() {
+    fn ersatzbild_passt_in_achtzig_spalten() {
+        for (i, zeile) in ersatzbild().lines().enumerate() {
             let breite = zeile.chars().count();
-            assert!(
-                breite <= 78,
-                "Bannerzeile {} ist {} Zeichen breit",
-                i + 1,
-                breite
-            );
+            assert!(breite <= 78, "Zeile {} ist {} Zeichen breit", i + 1, breite);
         }
         assert!(SUBTITLE.chars().count() <= 78);
     }
 
-    /// Der Schriftzug und das Netzmotiv sind der Wiedererkennungswert:
-    /// sie müssen bleiben. Die Tagline steht bewusst nicht im Banner
-    /// (siehe Modul-Doku), sondern gekürzt im Untertitel.
+    /// ⛔️ **Nichts beruehrt das Logo**, in keinem Motiv, keiner Breite,
+    /// keiner Hoehe: In der Sperrzone um den Schriftzug steht ausser ihm
+    /// selbst nur Leerraum.
     #[test]
-    fn banner_traegt_schriftzug_und_netzmotiv() {
-        assert!(BANNER.contains('█'), "Blockschriftzug fehlt");
-        assert!(BANNER.contains('∘'), "Netzknoten fehlen");
-        assert!(BANNER.contains('─'), "Netzverbindungen fehlen");
-        // ⚑ **Der Untertitel darf leer sein**, und dann steht keine
-        // Zeile da statt einer leeren. Geprueft wird die Zusage und
-        // nicht sein Vorhandensein: `myelith` zeigt seit dem
-        // 2026-09-11 keinen, der Testclient seinen weiterhin.
-        assert!(
-            SUBTITLE.trim().is_empty() || untertitel(80).trim() == SUBTITLE.trim(),
-            "der Untertitel geht beim Einruecken verloren"
-        );
-    }
-
-    /// Der Schriftzug muss über alle sechs Zeilen gleich breit sein:
-    /// sonst steht er schief.
-    #[test]
-    fn schriftzug_ist_rechteckig() {
-        let zeilen: Vec<&str> = BANNER
-            .lines()
-            .filter(|l| l.contains('█') || l.contains('╚'))
-            .collect();
-        assert_eq!(zeilen.len(), 6, "Schriftzug hat {} Zeilen", zeilen.len());
-        let breiten: Vec<usize> = zeilen.iter().map(|l| l.chars().count()).collect();
-        assert!(
-            breiten.windows(2).all(|w| w[0] == w[1]),
-            "ungleiche Zeilenbreiten: {:?}",
-            breiten
-        );
-    }
-
-    /// Das Netzmotiv lebt von drei Eigenschaften (siehe Modul-Doku).
-    /// Ohne sie fiele es auf das Ornament zurück, das es einmal war.
-    #[test]
-    fn netzmotiv_traegt_naben_und_verschiedene_knoten() {
-        for knoten in ['◉', '●', '○', '∘', '·'] {
-            assert!(
-                BANNER.contains(knoten),
-                "Knotengröße {:?} fehlt: gleich große Knoten lesen sich als Muster",
-                knoten
-            );
+    fn nichts_beruehrt_das_logo() {
+        for m in Motiv::ALLE {
+            for b in BREITEN {
+                for h in HOEHEN {
+                    let text = bild_mit(m, b, h);
+                    let zeilen: Vec<Vec<char>> = text.lines().map(|z| z.chars().collect()).collect();
+                    let (logo, e) = logolage(&text, b);
+                    assert_eq!(logo.len(), 6, "{} {b}×{h}: Schriftzug unvollständig", m.name());
+                    let y0 = logo[0].saturating_sub(FREI_Y);
+                    let y1 = logo[5] + FREI_Y;
+                    let x0 = e.saturating_sub(FREI_X);
+                    let x1 = e + SCHRIFTBREITE + FREI_X;
+                    for (y, zeile) in zeilen.iter().enumerate().take(y1 + 1).skip(y0) {
+                        for x in x0..x1 {
+                            let c = zeile.get(x).copied().unwrap_or(' ');
+                            let im_logo = logo.contains(&y) && (e..e + SCHRIFTBREITE).contains(&x);
+                            assert!(
+                                im_logo || c == ' ',
+                                "{} {b}×{h}: {c:?} in Zeile {y}, Spalte {x} berührt das Logo",
+                                m.name()
+                            );
+                        }
+                    }
+                }
+            }
         }
-        // Eine Nabe zeigt sich an den senkrechten und schrägen Kanten,
-        // die von ihr abgehen.
-        assert!(BANNER.contains("╱│╲"), "Fächer nach oben fehlt");
-        assert!(BANNER.contains("╲│╱"), "Fächer nach unten fehlt");
-        // Lange Kanten quer durchs Feld statt Nachbarpaare.
-        assert!(
-            BANNER.lines().any(|z| z.contains("──────────")),
-            "keine lange Kante"
-        );
     }
 
-    /// Drei Stufen, nicht zwei: Schriftzug und Knoten leuchten, die
-    /// Kanten treten zurück. Die erste Fassung färbte zeilenweise, und das
-    /// Netz verschwand, mit ihm der Teil des Bildes, der das Projekt
-    /// überhaupt darstellt.
+    /// **Jedes Motiv umrandet das Logo**: links und rechts neben ihm, und
+    /// darueber und darunter, sobald das Fenster hoch genug ist.
     #[test]
-    fn knoten_leuchten_kanten_treten_zurueck() {
+    fn jedes_motiv_umrandet_das_logo() {
+        for m in Motiv::ALLE {
+            for b in [80usize, 120, 200] {
+                let text = bild_mit(m, b, VOLLE_HOEHE);
+                let zeilen: Vec<Vec<char>> = text.lines().map(|z| z.chars().collect()).collect();
+                let (logo, e) = logolage(&text, b);
+                let muster = |ys: Vec<usize>, xs: std::ops::Range<usize>| {
+                    ys.into_iter().any(|y| {
+                        xs.clone().any(|x| zeilen[y].get(x).is_some_and(|c| stufe(*c) == Stufe::Getoent))
+                    })
+                };
+                let links = muster(logo.clone(), 0..e - FREI_X);
+                let rechts = muster(logo.clone(), e + SCHRIFTBREITE + FREI_X..b);
+                let oben = muster((0..logo[0] - FREI_Y).collect(), 0..b);
+                let unten = muster((logo[5] + FREI_Y + 1..zeilen.len()).collect(), 0..b);
+                assert!(links && rechts && oben && unten, "{} bei {b}: links {links}, rechts {rechts}, oben {oben}, unten {unten}", m.name());
+            }
+        }
+    }
+
+    /// **Die Zeilenzahl ist die alte**: 18, 13 und 7, in jedem Motiv. Wie
+    /// viel Platz das Menue darunter hat, ist nachgerechnet und haengt daran.
+    #[test]
+    fn das_bild_hat_die_alte_zeilenzahl() {
+        for m in Motiv::ALLE {
+            for (h, soll) in [(VOLLE_HOEHE, 18), (HALBE_HOEHE, 13), (HALBE_HOEHE - 1, 7)] {
+                assert_eq!(bild_mit(m, 120, h).lines().count(), soll, "{} bei Höhe {h}", m.name());
+            }
+        }
+    }
+
+    /// Das Motiv muss die Breite ausfuellen, ohne sie zu ueberschreiten.
+    /// Eine Zeile zu breit bricht um und zerreisst das Bild; eine deutlich
+    /// zu schmale liesse rechts eine leere Flaeche.
+    #[test]
+    fn motiv_fuellt_jede_breite_ohne_umbruch() {
+        for m in Motiv::ALLE {
+            for b in [62usize, 80, 100, 120, 160, 200] {
+                let text = bild_mit(m, b, VOLLE_HOEHE);
+                let breiteste = text.lines().map(|z| z.chars().count()).max().unwrap_or(0);
+                assert!(breiteste <= b, "{} {b}: Zeile mit {breiteste} Zeichen bricht um", m.name());
+                assert!(breiteste + 8 >= b, "{} {b}: breiteste Zeile nur {breiteste}", m.name());
+            }
+        }
+    }
+
+    /// Der Schriftzug steht unverzerrt und mittig, in jedem Motiv.
+    #[test]
+    fn schriftzug_bleibt_zentriert_und_unverzerrt() {
+        for m in Motiv::ALLE {
+            for b in [80usize, 140, 200] {
+                let text = bild_mit(m, b, VOLLE_HOEHE);
+                let (logo, e) = logolage(&text, b);
+                assert_eq!(e, (b - SCHRIFTBREITE) / 2);
+                let zeilen: Vec<&str> = text.lines().collect();
+                for (i, y) in logo.iter().enumerate() {
+                    let stueck: String = zeilen[*y].chars().skip(e).take(SCHRIFTBREITE).collect();
+                    assert_eq!(stueck, SCHRIFTZUG[i], "{} {b}: Zeile {i} verzerrt", m.name());
+                }
+            }
+        }
+    }
+
+    /// Passt das Motiv nicht mitsamt Menue ins Fenster, wird es kuerzer; der
+    /// Schriftzug ueberlebt jede Stufe.
+    #[test]
+    fn niedriges_fenster_kuerzt_das_motiv() {
+        let voll = fuer_fenster(120, VOLLE_HOEHE).lines().count();
+        let halb = fuer_fenster(120, HALBE_HOEHE).lines().count();
+        let knapp = fuer_fenster(120, HALBE_HOEHE - 1).lines().count();
+        assert!(voll > halb && halb > knapp, "{voll} {halb} {knapp}");
+        for h in [VOLLE_HOEHE, HALBE_HOEHE, HALBE_HOEHE - 1, 10, 1] {
+            assert_eq!(logolage(&fuer_fenster(120, h), 120).0.len(), 6, "Höhe {h}");
+        }
+    }
+
+    /// Unterhalb der Mindestbreite kommt die schmalste Form des Motivs.
+    #[test]
+    fn schmales_fenster_faellt_auf_das_ersatzbild_zurueck() {
+        for b in [0u16, 20, 40, (MINDESTBREITE - 1) as u16] {
+            assert_eq!(fuer_breite(b), ersatzbild(), "Breite {b}");
+        }
+        assert_ne!(fuer_breite(MINDESTBREITE as u16), ersatzbild());
+    }
+
+    /// Die Breitenangabe muss zum Schriftzug passen.
+    #[test]
+    fn schriftbreite_stimmt_mit_dem_schriftzug_ueberein() {
+        for z in SCHRIFTZUG {
+            assert_eq!(z.chars().count(), SCHRIFTBREITE, "Zeile {z:?}");
+        }
+    }
+
+    /// **Zwei Stufen, und die zweite daempft nur die Farbe.**
+    #[test]
+    fn das_muster_ist_gedaempft_und_das_logo_voll() {
         use crossterm::style::{Attribute, Color};
+        let farbe = Color::Rgb { r: 200, g: 100, b: 250 };
+        let helle = |c: Color| match c {
+            Color::Rgb { r, g, b } => r as u32 + g as u32 + b as u32,
+            andere => panic!("keine Echtfarbe: {andere:?}"),
+        };
+        let spreizung = |c: Color| match c {
+            Color::Rgb { r, g, b } => r.max(g).max(b) as u32 - r.min(g).min(b) as u32,
+            andere => panic!("keine Echtfarbe: {andere:?}"),
+        };
+        assert_eq!(zeichenstil('█', farbe), (farbe, Attribute::Bold));
+        for c in LOGOZEICHEN.into_iter().filter(|c| *c != '█') {
+            let (schatten, _) = zeichenstil(c, farbe);
+            assert!(helle(schatten) < helle(farbe), "die Kante {c:?} tritt nicht zurück");
+        }
+        let (muster, _) = zeichenstil('⣿', farbe);
+        let (schatten, _) = zeichenstil('═', farbe);
+        assert!(helle(muster) < helle(schatten), "das Muster ist nicht dunkler als der Schatten");
+        // ⚑ Entsaettigt heisst: Die Kanaele ruecken zusammen, staerker als die
+        // blosse Daempfung auf dieselbe Helle es taete.
+        assert!(
+            spreizung(muster) * 100 < spreizung(farbe) * MUSTER_HELLE,
+            "das Muster ist nicht entsättigt"
+        );
+        assert_eq!(zeichenstil('x', farbe), (crate::farben::KANTE, Attribute::NormalIntensity));
+        // Palettenfarben kennt nur das Terminal; sie bleiben, wie sie sind.
         let neon = Color::AnsiValue(51);
+        assert_eq!(zeichenstil('⣿', neon).0, neon);
+    }
 
-        for knoten in KNOTEN {
-            let (ton, stark) = zeichenstil(knoten, false, neon);
-            assert_eq!(ton, neon, "Knoten {knoten:?} trägt nicht die Leuchtfarbe");
-            assert_eq!(stark, Attribute::Bold, "Knoten {knoten:?} nicht hervorgehoben");
-        }
-
-        for kante in ['─', '│', '╱', '╲'] {
-            let (ton, stark) = zeichenstil(kante, false, neon);
-            assert_eq!(ton, crate::farben::KANTE, "Kante {kante:?} falsch eingefärbt");
-            assert_eq!(stark, Attribute::NormalIntensity);
-        }
-
-        // Im Schriftzug zählt die Zeile, nicht das einzelne Zeichen: Auch
-        // `═` und `║` gehören dort zum Buchstabenbild.
-        for c in ['█', '═', '║'] {
-            assert_eq!(zeichenstil(c, true, neon), (neon, Attribute::Bold));
+    /// ⚑ **Kein Zeichen faellt unbemerkt ins Grau.** Ein Zeichen im Bild,
+    /// das keiner Stufe zugeordnet ist, naehme ihm still seine Farbe.
+    #[test]
+    fn kein_zeichen_faellt_unbemerkt_ins_grau() {
+        for m in Motiv::ALLE {
+            for b in [ERSATZBREITE, 80, 200] {
+                let text = bild_mit(m, b, VOLLE_HOEHE);
+                let grau: Vec<char> =
+                    text.chars().filter(|c| !c.is_whitespace() && stufe(*c) == Stufe::Kante).collect();
+                assert!(grau.is_empty(), "{} {b}: grau stehen {grau:?}", m.name());
+            }
         }
     }
 
-    /// Die Kanten müssen sich vom Hintergrund abheben: sichtbar heller
-    /// als der Ton, mit dem Hinweiszeilen zurückgenommen werden.
+    /// Die Kanten muessen sich vom Hintergrund abheben: sichtbar heller
+    /// als der Ton, mit dem Hinweiszeilen zurueckgenommen werden.
     #[test]
     fn kanten_sind_heller_als_beiwerk() {
         use crossterm::style::Color;
@@ -723,96 +686,6 @@ mod tests {
             "Netzkanten ({kante}) sind nicht heller als Hinweistext ({beiwerk})"
         );
     }
-
-    /// Die Zeilenerkennung muss Schriftzug und Netz sauber trennen:
-    /// sonst bekäme das halbe Bild die falsche Stufe.
-    #[test]
-    fn schriftzugzeilen_werden_erkannt() {
-        let (schrift, netz): (Vec<&str>, Vec<&str>) = BANNER
-            .lines()
-            .filter(|z| !z.trim().is_empty())
-            .partition(|z| ist_schriftzug(z));
-        assert_eq!(schrift.len(), 6, "Schriftzug hat {} Zeilen", schrift.len());
-        assert_eq!(netz.len(), 9, "Netzmotiv hat {} Zeilen", netz.len());
-        assert!(netz.iter().all(|z| !z.contains('█')));
-    }
-
-    /// Das Motiv muss die Breite ausfüllen, ohne sie zu überschreiten.
-    /// Eine Zeile zu breit bricht um und zerreißt das Bild; eine deutlich
-    /// zu schmale ließe rechts eine leere Fläche.
-    #[test]
-    fn motiv_fuellt_jede_breite_ohne_umbruch() {
-        for b in [62u16, 80, 100, 120, 160, 200] {
-            let text = fuer_breite(b);
-            let breiteste = text.lines().map(|z| z.chars().count()).max().unwrap_or(0);
-            assert!(
-                breiteste <= b as usize,
-                "Breite {b}: Zeile mit {breiteste} Zeichen bricht um"
-            );
-            assert!(
-                breiteste + 8 >= b as usize,
-                "Breite {b}: breiteste Zeile nur {breiteste} Zeichen, Fläche bleibt leer"
-            );
-        }
-    }
-
-    /// Die Breitenangabe muss zum Schriftzug passen: sonst sitzt er
-    /// überall um denselben Betrag daneben.
-    #[test]
-    fn schriftbreite_stimmt_mit_dem_schriftzug_ueberein() {
-        for z in SCHRIFTZUG {
-            assert_eq!(z.chars().count(), SCHRIFTBREITE, "Zeile {z:?}");
-        }
-    }
-
-    /// Der Schriftzug wird zentriert, nicht gestreckt: Er ist ein Bild,
-    /// kein Text, und in die Breite gezogen unleserlich.
-    #[test]
-    fn schriftzug_bleibt_zentriert_und_unverzerrt() {
-        for b in [80u16, 140, 200] {
-            let text = fuer_breite(b);
-            let zeilen: Vec<&str> = text.lines().filter(|z| ist_schriftzug(z)).collect();
-            assert_eq!(zeilen.len(), 6, "Breite {b}");
-            for z in &zeilen {
-                assert_eq!(
-                    z.trim().chars().count(),
-                    SCHRIFTBREITE,
-                    "Breite {b}: Schriftzug verzerrt"
-                );
-            }
-            let links = zeilen[0].len() - zeilen[0].trim_start().len();
-            let rechts = b as usize - links - SCHRIFTBREITE;
-            assert!(
-                links.abs_diff(rechts) <= 1,
-                "Breite {b}: Schriftzug steht nicht mittig ({links} links, {rechts} rechts)"
-            );
-        }
-    }
-
-    /// Passt das Motiv nicht mitsamt Menü ins Fenster, muss es kürzer
-    /// werden. Ein Logo, das man wegscrollen muss, um das Menü zu sehen,
-    /// ist schlechter als ein kleineres Logo.
-    #[test]
-    fn niedriges_fenster_kuerzt_das_motiv() {
-        let voll = fuer_fenster(120, VOLLE_HOEHE).lines().count();
-        let halb = fuer_fenster(120, HALBE_HOEHE).lines().count();
-        let knapp = fuer_fenster(120, HALBE_HOEHE - 1).lines().count();
-
-        assert!(voll > halb, "unterer Netzblock wird nicht gekürzt");
-        assert!(halb > knapp, "oberer Netzblock wird nicht gekürzt");
-
-        // Der Schriftzug überlebt jede Stufe: er ist das Wiedererkennungs-
-        // zeichen, das Netz ist seine Umgebung.
-        for h in [VOLLE_HOEHE, HALBE_HOEHE, HALBE_HOEHE - 1, 10, 1] {
-            let text = fuer_fenster(120, h);
-            assert_eq!(
-                text.lines().filter(|z| ist_schriftzug(z)).count(),
-                6,
-                "Höhe {h}: Schriftzug unvollständig"
-            );
-        }
-    }
-
     /// Logo, Untertitel und ein Menü müssen zusammen ins Fenster passen.
     /// Sonst scrollt genau das weg, was der aufgeräumte Bildschirm zeigen
     /// soll.
@@ -834,30 +707,6 @@ mod tests {
             }
         }
     }
-
-    /// Unterhalb der Mindestbreite passt kein Netz und kein Schriftzug:
-    /// dort kommt der feste Text zurück, statt etwas Zerbrochenes.
-    #[test]
-    fn schmales_fenster_faellt_auf_den_festen_text_zurueck() {
-        for b in [0u16, 20, 40, (MINDESTBREITE - 1) as u16] {
-            assert_eq!(fuer_breite(b), BANNER, "Breite {b}");
-        }
-        assert_ne!(fuer_breite(MINDESTBREITE as u16), BANNER);
-    }
-
-    /// Auch in der Breite bleiben die drei Bausteine des Motivs erhalten.
-    #[test]
-    fn erzeugtes_motiv_traegt_naben_und_knoten() {
-        for b in [80u16, 160] {
-            let text = fuer_breite(b);
-            assert!(text.contains("╱│╲"), "Breite {b}: Fächer nach oben fehlt");
-            assert!(text.contains("╲│╱"), "Breite {b}: Fächer nach unten fehlt");
-            for knoten in ['◉', '●', '○', '∘', '·'] {
-                assert!(text.contains(knoten), "Breite {b}: Knoten {knoten:?} fehlt");
-            }
-        }
-    }
-
     /// Der Untertitel steht mittig unter dem Schriftzug, nicht links.
     #[test]
     fn untertitel_steht_mittig() {
@@ -903,11 +752,5 @@ mod tests {
             block.lines().count(),
             "Leerzeilen gingen verloren"
         );
-    }
-
-    #[test]
-    fn banner_kann_unterdrueckt_werden() {
-        // Kein Absturz, keine Ausgabe erwartet.
-        print_if(false);
     }
 }

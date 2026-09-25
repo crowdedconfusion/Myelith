@@ -22,7 +22,7 @@ use integer_llm_kernels::linear::{
 use integer_llm_kernels::fadenpool::rechnen_breit;
 use integer_llm_kernels::rope::rotate_half_split_i16;
 use integer_llm_kernels::attention::aufmerksamkeit_einer_abfrage;
-use integer_llm_kernels::mlp::{mlp_int_experten, mlp_int_mit_spur, Expertenteil, Mlpspur};
+use integer_llm_kernels::mlp::{mlp_int_experten_je_skala, mlp_int_mit_spur, Expertenskala, Expertenteil, Mlpspur};
 use integer_llm_kernels::sampling::{argmax_int, sample_integer_cdf};
 use crate::kv_cache::KVCache;
 use crate::loader::{ThetaV, LoadedScales};
@@ -1133,7 +1133,7 @@ impl IntegerModel {
             }
         }
         let hidden = acc.len();
-        rechnen_breit(n, hidden, faeden, |b, ziel| {
+        let gemischt = rechnen_breit(n, hidden, faeden, |b, ziel| {
             let ausgaben: Vec<Vec<i16>> = plaetze[b]
                 .iter()
                 .map(|p| {
@@ -1145,15 +1145,12 @@ impl IntegerModel {
         })
         .chunks_exact(hidden)
         .map(<[i16]>::to_vec)
-        .collect::<Vec<Vec<i16>>>()
-        .into_iter()
-        .zip(normen.iter())
+        .collect::<Vec<Vec<i16>>>();
         // ⛔️ **Der geteilte Experte, dieselbe Rechnung wie einzeln**
         //   (Fund 427). Bis zum 2026-09-22 endete der gebuendelte Weg
         //   eine Zeile frueher, und der geteilte Experte fehlte auf
         //   **jeder** Gemischebene und bei **jedem** Token.
-        .map(|(gemischt, x)| self.geteilten_experten_addieren(moe, x, gemischt, sc, cfg, acc))
-        .collect()
+        self.geteilten_experten_addieren(moe, normen, gemischt, None, sc, cfg, acc)
     }
 
     /// **Die Vorbereitung ebenenweise statt tokenweise.**
@@ -1225,26 +1222,64 @@ impl IntegerModel {
             // sondern in der Schleife gerechnet. Genau hier entstuenden
             // sonst zwei Fassungen derselben Rechnung.
             //
-            // ⚠️ **Der Vorlauf verliert fuer diese Ebenen seinen
-            // Vorteil.** Beim grossen Modell sind das 30 von 40 Ebenen;
-            // was das kostet, ist noch nicht gemessen.
+            // ⚑ **Aber nur die Rekurrenz, nicht die ganze Ebene.** Was
+            // hinter dem Mischer kommt, das Expertengemisch und die zweite
+            // Residualaddition, haengt wieder nur an der eigenen Position.
+            // Es laeuft deshalb gebuendelt, ueber dieselbe Naht wie bei
+            // den Achtsamkeitsebenen (`ebene_mlp_stapel`, `residual_zwei`).
+            //
+            // 📌 **Bis zum 2026-09-25 lief hier die ganze Ebene je Token**,
+            // mit dem Vermerk, die Kosten seien nicht gemessen. Beim 35B
+            // sind das 30 von 40 Ebenen, und in jeder las jedes Token seine
+            // acht Experten einzeln; bei einem Modell, das nicht in den
+            // Speicher passt, heisst das: Seiten laden, verwerfen, wieder
+            // laden. Gemeldet als „laedt Minuten" vom Projektinhaber.
             if layer.ist_rekurrent() {
                 let out_frac: &[u8] = if i + 1 < self.layers.len() {
                     &self.layers[i + 1].scales.residual_in_frac
                 } else {
                     &self.final_residual_frac
                 };
-                for b in 0..zustaende.len() {
-                    zustaende[b] = self.forward_layer(
-                        layer,
-                        &zustaende[b],
-                        pos_start + b,
-                        cache,
-                        out_frac,
-                        None,
-                        None,
-                    );
-                }
+                let sc = &layer.scales;
+                let acc_mlp: Vec<u8> = sc
+                    .residual_mid_frac
+                    .iter()
+                    .zip(out_frac.iter())
+                    .map(|(&a, &b)| a.min(b))
+                    .collect();
+                // ⚑ **Auch der Mischer laeuft ueber das ganze Fenster**
+                //   (`zustandsmischer`): Projektionen gebuendelt, Faltung
+                //   je Kanal, Rekurrenz je Kopf ueber alle Token. Davor und
+                //   danach dieselben Schritte wie in `ebene_bis_mlp`, nur
+                //   ueber die Faeden verteilt.
+                let n = zustaende.len();
+                let hs = self.hidden_size;
+                let faeden = vorbereitungsfaeden(n);
+                let zs = match &layer.mischer {
+                    Mischer::Zustand(zs) => zs,
+                    Mischer::Achtsamkeit(_) => unreachable!("die Ebene ist rekurrent"),
+                };
+                let normen = rechnen_breit(n, hs, faeden, |b, ziel| {
+                    ziel.copy_from_slice(&self.norm_vor_aufmerksamkeit(layer, &zustaende[b]));
+                });
+                let normen: Vec<&[i16]> = normen.chunks_exact(hs).collect();
+                let acc_mischer = akkumulationsskala_mischer(sc);
+                let o_aus = self.zustandsmischer(layer, zs, &normen, cache, &acc_mischer);
+                let zwischen = rechnen_breit(n, 2 * hs, faeden, |b, ziel| {
+                    let (residual, norm) =
+                        self.residual_eins_und_norm(layer, &zustaende[b], &o_aus[b], &acc_mischer, None);
+                    ziel[..hs].copy_from_slice(&residual);
+                    ziel[hs..].copy_from_slice(&norm);
+                });
+                let residuen: Vec<&[i16]> = zwischen.chunks_exact(2 * hs).map(|z| &z[..hs]).collect();
+                let normen: Vec<&[i16]> = zwischen.chunks_exact(2 * hs).map(|z| &z[hs..]).collect();
+                let mlp_aus = self.ebene_mlp_stapel(layer, &normen, &acc_mlp);
+                zustaende = rechnen_breit(n, hs, faeden, |b, ziel| {
+                    ziel.copy_from_slice(&self.residual_zwei(residuen[b], &mlp_aus[b], sc, &acc_mlp, out_frac));
+                })
+                .chunks_exact(hs)
+                .map(<[i16]>::to_vec)
+                .collect();
                 continue;
             }
             let out_frac: &[u8] = if i + 1 < self.layers.len() {
@@ -1827,46 +1862,64 @@ impl IntegerModel {
                     .expect("eine Eingabe ergibt genau eine Projektion")
             }
             Mischer::Zustand(zs) => {
-                if std::env::var_os("MYL_ZUSTANDSSPUR").is_some() {
-                    eprintln!(
-                        "[spur] Ebene {} ZUSTANDSZWEIG: konv_frac={} norm_aus_frac={} \
-                         qkv_frac={} z_frac={}",
-                        layer.layer_idx, zs.skalen.konv_frac, zs.skalen.norm_aus_frac,
-                        zs.skalen.qkv_frac, zs.skalen.z_frac
-                    );
-                }
-                let masse = self.zustandsmasse.as_ref().expect(
-                    "eine Ebene mischt rekurrent, aber das Modell traegt keine \
-                     Zustandsmasse; der Lader haette das abfangen muessen",
-                );
-                // ⚑ **Welche Ebenen rekurrent sind, steht am Modell**, und
-                //   der Speicher legt sich beim ersten Mal danach an.
-                let rekurrent: Vec<bool> =
-                    self.layers.iter().map(|l| l.ist_rekurrent()).collect();
-                let speicher = cache.zustand_bereit(
-                    &rekurrent,
-                    masse.wert_koepfe,
-                    masse.schluessel_dim,
-                    masse.wert_dim,
-                    masse.kanaele,
-                );
-                // ⛔️ **Hier stand bis zum 2026-09-21 EINE gemeinsame
-                //   Ausgangsskala** (das Minimum ueber alle Kanaele), und
-                //   das war falsch. Der Residualstrom traegt eine Skala
-                //   **je Kanal**, beim grossen Modell von 16 bis 19; die
-                //   Achtsamkeit liefert ihren Beitrag ueber
-                //   `projektion_o` entsprechend per Kanal. Ein Beitrag
-                //   auf einer einzigen Skala wird beim Addieren um bis zu
-                //   drei Bit falsch gewichtet.
-                //
-                //   📌 **Zwei Wege in denselben Strom muessen dieselbe
-                //   Skalenform sprechen.**
-                self.zustandsschicht_eines_tokens(
-                    layer, zs, masse, &norm_hidden, speicher, &acc_mischer,
-                )
+                // ⚑ Ein Token ist ein Fenster der Laenge eins: derselbe
+                //   Weg wie in der Vorbereitung, kein zweiter Rumpf.
+                self.zustandsmischer(layer, zs, &[norm_hidden.as_slice()], cache, &acc_mischer)
+                    .pop()
+                    .expect("ein Token ergibt genau eine Ausgabe")
             }
         };
         self.residual_eins_und_norm(layer, hidden, &o_out, &acc_mischer, auf)
+    }
+
+    /// **Der rekurrente Mischer fuer ein Fenster von Token**: den
+    /// Zustandsspeicher bereitstellen, dann [`Self::zustandsschicht_fenster`].
+    ///
+    /// ⚑ Ein einzelnes Token ist ein Fenster der Laenge eins; das
+    /// Dekodieren und die Vorbereitung gehen damit durch dieselbe Stelle.
+    fn zustandsmischer(
+        &self,
+        layer: &TransformerLayer,
+        zs: &Zustandsschicht,
+        normen: &[&[i16]],
+        cache: &mut KVCache,
+        acc_mischer: &[u8],
+    ) -> Vec<Vec<i16>> {
+        if std::env::var_os("MYL_ZUSTANDSSPUR").is_some() {
+            eprintln!(
+                "[spur] Ebene {} ZUSTANDSZWEIG: konv_frac={} norm_aus_frac={} \
+                 qkv_frac={} z_frac={}",
+                layer.layer_idx, zs.skalen.konv_frac, zs.skalen.norm_aus_frac,
+                zs.skalen.qkv_frac, zs.skalen.z_frac
+            );
+        }
+        let masse = self.zustandsmasse.as_ref().expect(
+            "eine Ebene mischt rekurrent, aber das Modell traegt keine \
+             Zustandsmasse; der Lader haette das abfangen muessen",
+        );
+        // ⚑ **Welche Ebenen rekurrent sind, steht am Modell**, und
+        //   der Speicher legt sich beim ersten Mal danach an.
+        let rekurrent: Vec<bool> =
+            self.layers.iter().map(|l| l.ist_rekurrent()).collect();
+        let speicher = cache.zustand_bereit(
+            &rekurrent,
+            masse.wert_koepfe,
+            masse.schluessel_dim,
+            masse.wert_dim,
+            masse.kanaele,
+        );
+        // ⛔️ **Hier stand bis zum 2026-09-21 EINE gemeinsame
+        //   Ausgangsskala** (das Minimum ueber alle Kanaele), und
+        //   das war falsch. Der Residualstrom traegt eine Skala
+        //   **je Kanal**, beim grossen Modell von 16 bis 19; die
+        //   Achtsamkeit liefert ihren Beitrag ueber
+        //   `projektion_o` entsprechend per Kanal. Ein Beitrag
+        //   auf einer einzigen Skala wird beim Addieren um bis zu
+        //   drei Bit falsch gewichtet.
+        //
+        //   📌 **Zwei Wege in denselben Strom muessen dieselbe
+        //   Skalenform sprechen.**
+        self.zustandsschicht_fenster(layer, zs, masse, normen, speicher, acc_mischer)
     }
 
     /// Die Normierung vor der Aufmerksamkeit, fuer ein Token.
@@ -2677,9 +2730,21 @@ impl IntegerModel {
         // je Experte ein eigener Lauf entstehen, also acht statt einem;
         // der Sinn ist gerade, dass die Platte alle vierundzwanzig
         // Bereiche gleichzeitig kennt.
-        for e in &routing.experten {
-            moe.experts[*e as usize].vorbereiten();
-        }
+        //
+        // ⚑ **Und verteilt ueber den Fadenpool** (2026-09-25). Der Rat
+        // blockiert, solange das System die Seiten holt; nacheinander auf
+        // dem Hauptfaden waren das beim 35B 32 Prozent des Decodes. Der
+        // Pool kostet keinen Fadenstart, nur eine Runde. Gemessen, je zwei
+        // Laeufe zu 128 Token: 30B 12,3 bis 12,5 auf 14,9 bis 15,1 Token/s,
+        // 35B 10,4 bis 10,8 auf 11,1 bis 12,6; `decode_hash` unveraendert.
+        let _ = integer_llm_kernels::fadenpool::rechnen(
+            routing.experten.len(),
+            integer_llm_kernels::fadenpool::faeden(),
+            |i| {
+                moe.experts[routing.experten[i] as usize].vorbereiten();
+                0
+            },
+        );
 
         // Die gewaehlten Experten rechnen. Alle schreiben auf dieselbe
         // Ausgangsskala `acc`, denn sie addieren in denselben
@@ -2728,23 +2793,57 @@ impl IntegerModel {
                 }
             })
             .collect();
+        // ⚑ **Der geteilte Experte rechnet in denselben zwei Runden mit**
+        //   (2026-09-25), mit seinen eigenen Skalen. Bis dahin folgten ihm
+        //   im Decode drei eigene Runden nach den gerouteten. Jede Zeile
+        //   entsteht mit derselben Formel wie in `mlp_int`, also Bit fuer
+        //   Bit dasselbe; sein Mitschnitt wird wieder abgetrennt, denn der
+        //   gehoert zu den gerouteten.
+        let skala = Expertenskala {
+            gate_out_frac: sc.gate_frac,
+            up_out_frac: sc.up_frac,
+            down_in_frac: sc.down_in_frac,
+        };
+        let mut paare: Vec<(Expertenteil<'_>, Expertenskala)> =
+            buendel.iter().map(|e| (*e, skala)).collect();
+        if let Some(ge) = moe.geteilter_experte.as_ref() {
+            paare.push((
+                Expertenteil {
+                    gate: &ge.mlp.gate_proj.data,
+                    up: &ge.mlp.up_proj.data,
+                    down: &ge.mlp.down_proj.data,
+                    gate_shifts: &ge.mlp.gate_proj.shifts,
+                    up_shifts: &ge.mlp.up_proj.shifts,
+                    down_shifts: &ge.mlp.down_proj.shifts,
+                },
+                Expertenskala {
+                    gate_out_frac: ge.gate_frac,
+                    up_out_frac: ge.up_frac,
+                    down_in_frac: ge.down_in_frac,
+                },
+            ));
+        }
         let mut teile: Vec<Mlpspur> = Vec::new();
-        let ausgaben = mlp_int_experten(
+        let mut ausgaben = mlp_int_experten_je_skala(
             x,
-            &buendel,
+            &paare,
             moe.experts[routing.experten[0] as usize].gate_proj.cols(),
-            moe.experts[routing.experten[0] as usize].down_proj.cols(),
             &self.silu_lut,
             sc.norm_mlp_frac,
-            sc.gate_frac,
-            sc.up_frac,
-            sc.down_in_frac,
             cfg.silu_in_frac,
             cfg.silu_lut_offset,
             cfg.silu_out_frac,
             acc,
             spur.as_ref().map(|_| &mut teile),
         );
+        let geteilt = if moe.geteilter_experte.is_some() {
+            if spur.is_some() {
+                teile.pop();
+            }
+            Some(vec![ausgaben.pop().expect("der geteilte Experte hat eine Ausgabe")])
+        } else {
+            None
+        };
 
         if let Some(ziel) = spur {
             ziel.experten = routing.experten.clone();
@@ -2759,7 +2858,9 @@ impl IntegerModel {
         // ⚑ **Der geteilte Experte kommt obendrauf**, und zwar bei jedem
         // Token. Die Rechnung steht in `geteilten_experten_addieren`,
         // **einmal**, und der gebuendelte Weg ruft dieselbe (Fund 427).
-        self.geteilten_experten_addieren(moe, x, gemischt, sc, cfg, acc)
+        self.geteilten_experten_addieren(moe, &[x], vec![gemischt], geteilt, sc, cfg, acc)
+            .pop()
+            .expect("ein Token ergibt genau eine Ausgabe")
     }
 
     /// **Der geteilte Experte obendrauf:**
@@ -2782,15 +2883,17 @@ impl IntegerModel {
     /// Modelle, die es damals gab**. Deshalb steht die Rechnung jetzt
     /// einmal da und hat zwei Aufrufer.
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)]
     fn geteilten_experten_addieren(
         &self,
         moe: &MoeLayer,
-        x: &[i16],
-        gemischt: Vec<i16>,
+        xs: &[&[i16]],
+        gemischt: Vec<Vec<i16>>,
+        schon_gerechnet: Option<Vec<Vec<i16>>>,
         sc: &LayerScales,
         cfg: &ModelConfig,
         acc: &[u8],
-    ) -> Vec<i16> {
+    ) -> Vec<Vec<i16>> {
         let Some(ge) = moe.geteilter_experte.as_ref() else {
             return gemischt;
         };
@@ -2816,57 +2919,88 @@ impl IntegerModel {
         // ⚑ Nebenwirkung: Eine Testvorlage mit geteiltem Experten
         // braucht jetzt keine Zustandsschicht mehr.
 
-        // Das Tor: eine Zeile, also ein Wert je Token.
-        let tor_roh = integer_llm_kernels::linear::linear_w8a16(
-            x, &ge.tor.data, x.len(),
+        // ⚑ **Fuer ein ganzes Fenster auf einmal** (2026-09-25). Der
+        //   geteilte Experte ist ein gewoehnliches dichtes MLP und laeuft
+        //   deshalb ueber denselben gebuendelten Kern wie die dichten
+        //   Ebenen; das Tor ist eine Projektion mit einer Zeile. Bis dahin
+        //   rechnete die Vorbereitung ihn Token fuer Token auf einem Kern,
+        //   gemessen **30 Prozent** der Vorbereitungszeit des 35B. Ein
+        //   einzelnes Token ist ein Fenster der Laenge eins.
+        let hidden = xs.first().map_or(0, |x| x.len());
+        let tore_roh = linear_fuer_alle(
+            xs, &ge.tor.data, hidden,
             &ge.tor.shifts, sc.norm_mlp_frac, ge.tor_frac,
         );
-        let tor_dom = integer_llm_kernels::fixed_point::rescale(
-            i32::from(tor_roh[0]), ge.tor_frac, self.sigmoid_ein_frac,
-        );
-        let tor = integer_llm_kernels::integer_math::sigmoid_nachschlagen(
-            tor_dom, &self.sigmoid_lut, self.sigmoid_versatz,
-            self.sigmoid_ein_frac, self.sigmoid_aus_frac,
-        );
-        // Der geteilte Experte selbst, dieselbe Rechnung wie eine dichte MLP.
-        let geteilt = integer_llm_kernels::mlp::mlp_int(
-            x,
-            &ge.mlp.gate_proj.data,
-            &ge.mlp.up_proj.data,
-            &ge.mlp.down_proj.data,
-            x.len(),
-            ge.zwischen,
-            &ge.mlp.gate_proj.shifts,
-            &ge.mlp.up_proj.shifts,
-            &ge.mlp.down_proj.shifts,
-            &self.silu_lut,
-            sc.norm_mlp_frac,
-            ge.gate_frac,
-            ge.up_frac,
-            ge.down_in_frac,
-            cfg.silu_in_frac,
-            cfg.silu_lut_offset,
-            cfg.silu_out_frac,
-            acc,
-        );
-        // ⛔️ `zip` bricht an der kuerzeren Seite ab (Fund 346); beide
-        //    sind hidden_size lang, und genau das wird geprueft.
-        assert_eq!(
-            gemischt.len(),
-            geteilt.len(),
-            "Gemisch und geteilter Experte verschieden lang"
-        );
+        let mlp = |xs: &[&[i16]]| -> Vec<Vec<i16>> {
+            macro_rules! rufe {
+                ($kern:path, $ein:expr) => {
+                    $kern(
+                        $ein,
+                        &ge.mlp.gate_proj.data,
+                        &ge.mlp.up_proj.data,
+                        &ge.mlp.down_proj.data,
+                        hidden,
+                        ge.zwischen,
+                        &ge.mlp.gate_proj.shifts,
+                        &ge.mlp.up_proj.shifts,
+                        &ge.mlp.down_proj.shifts,
+                        &self.silu_lut,
+                        sc.norm_mlp_frac,
+                        ge.gate_frac,
+                        ge.up_frac,
+                        ge.down_in_frac,
+                        cfg.silu_in_frac,
+                        cfg.silu_lut_offset,
+                        cfg.silu_out_frac,
+                        acc,
+                    )
+                };
+            }
+            match xs {
+                [x] => vec![rufe!(integer_llm_kernels::mlp::mlp_int, x)],
+                _ => rufe!(integer_llm_kernels::mlp::mlp_int_stapel, xs),
+            }
+        };
+        // ⚑ **Im Decode rechnet er schon im Buendel der gerouteten mit**
+        //   (`moe_vorwaerts`) und kommt hier fertig an.
+        let geteilt = schon_gerechnet.unwrap_or_else(|| mlp(xs));
+        // ⛔️ `zip` bricht an der kuerzeren Seite ab (Fund 346): je Token
+        //    ein Beitrag und ein Tor, und je Beitrag hidden_size Werte,
+        //    beides wird geprueft.
+        assert_eq!(gemischt.len(), geteilt.len(), "je Token ein geteilter Beitrag");
+        assert_eq!(gemischt.len(), tore_roh.len(), "je Token ein Tor");
+
         gemischt
-            .iter()
-            .zip(geteilt.iter())
-            .map(|(&g, &s)| {
-                let beitrag = integer_llm_kernels::fixed_point::rshift_round_i64(
-                    i64::from(s) * tor,
-                    self.sigmoid_aus_frac,
+            .into_iter()
+            .zip(geteilt)
+            .zip(tore_roh)
+            .map(|((gemischt, geteilt), tor_roh)| {
+                // Das Tor: eine Zeile, also ein Wert je Token.
+                let tor_dom = integer_llm_kernels::fixed_point::rescale(
+                    i32::from(tor_roh[0]), ge.tor_frac, self.sigmoid_ein_frac,
                 );
-                integer_llm_kernels::fixed_point::clamp_i16_from_i64(
-                    i64::from(g) + beitrag,
-                )
+                let tor = integer_llm_kernels::integer_math::sigmoid_nachschlagen(
+                    tor_dom, &self.sigmoid_lut, self.sigmoid_versatz,
+                    self.sigmoid_ein_frac, self.sigmoid_aus_frac,
+                );
+                assert_eq!(
+                    gemischt.len(),
+                    geteilt.len(),
+                    "Gemisch und geteilter Experte verschieden lang"
+                );
+                gemischt
+                    .iter()
+                    .zip(geteilt.iter())
+                    .map(|(&g, &s)| {
+                        let beitrag = integer_llm_kernels::fixed_point::rshift_round_i64(
+                            i64::from(s) * tor,
+                            self.sigmoid_aus_frac,
+                        );
+                        integer_llm_kernels::fixed_point::clamp_i16_from_i64(
+                            i64::from(g) + beitrag,
+                        )
+                    })
+                    .collect()
             })
             .collect()
     }
@@ -2913,9 +3047,13 @@ impl IntegerModel {
 /// ⚑ **Sechzehn, weil die Kurve dort flach wird.** Die naechste Ebene
 /// schon waehrend der Rechnung vorzuladen, brachte gemessen nichts
 /// zusaetzlich (5,21 s) und liest bei kurzen Prompts Experten, die niemand
-/// braucht; es ist deshalb nicht gebaut. **Im Decode bleibt der Rat
-/// seriell**: Acht Experten je Ebene sind zu wenige, um einen Fadenstart je
-/// Token und Ebene zu tragen.
+/// braucht; es ist deshalb nicht gebaut.
+///
+/// 📌 **Hier stand bis zum 2026-09-25: „Im Decode bleibt der Rat
+/// seriell"**, weil acht Experten je Ebene keinen Fadenstart je Token
+/// tragen. Das stimmte fuer `std::thread`, aber nicht fuer den Fadenpool,
+/// der keinen Faden startet. Seitdem raet der Decode ueber den Pool, und
+/// beide Gemische wurden schneller (siehe `moe_vorwaerts`).
 const ANKUENDIGUNGSFAEDEN: usize = 16;
 
 /// Wie viele Faeden die verteilten Schritte der Vorbereitung nehmen.
@@ -3091,50 +3229,79 @@ impl IntegerModel {
     /// Wertkopf `h` einfach den Schluesselkopf `h / 2`. **Dieselbe
     /// Rechnung ohne die Kopie.**
     #[allow(clippy::too_many_arguments)]
-    fn zustandsschicht_eines_tokens(
+    fn zustandsschicht_fenster(
         &self,
         layer: &TransformerLayer,
         zs: &Zustandsschicht,
         masse: &Zustandsmasse,
-        norm_hidden: &[i16],
+        normen: &[&[i16]],
         speicher: &mut crate::zustandsspeicher::Zustandsspeicher,
         out_frac: &[u8],
-    ) -> Vec<i16> {
+    ) -> Vec<Vec<i16>> {
         use integer_llm_kernels::integer_math::{
             sigmoid_nachschlagen, softplus_nachschlagen, zerfall_nachschlagen,
         };
         use integer_llm_kernels::fixed_point::{clamp_i16_from_i64, rescale, rescale_i64};
-        use integer_llm_kernels::linear::linear_w8a16;
         use integer_llm_kernels::zustandsschicht as zk;
 
         let sk = &zs.skalen;
         let ebene = layer.layer_idx;
         let ein_frac = layer.scales.norm_attn_frac;
-        let hidden = norm_hidden.len();
+        let hidden = self.hidden_size;
+        let faeden = integer_llm_kernels::fadenpool::faeden();
 
-        // --- 1. Die vier Projektionen.
-        let mut qkv = linear_w8a16(
-            norm_hidden, &zs.in_proj_qkv.data, hidden,
-            &zs.in_proj_qkv.shifts, ein_frac, sk.qkv_frac,
-        );
-        let z = linear_w8a16(
-            norm_hidden, &zs.in_proj_z.data, hidden,
-            &zs.in_proj_z.shifts, ein_frac, sk.z_frac,
-        );
-        let b_roh = linear_w8a16(
-            norm_hidden, &zs.in_proj_b.data, hidden,
-            &zs.in_proj_b.shifts, ein_frac, sk.b_frac,
-        );
-        let a_roh = linear_w8a16(
-            norm_hidden, &zs.in_proj_a.data, hidden,
-            &zs.in_proj_a.shifts, ein_frac, sk.a_frac,
-        );
+        // --- 1. Die vier Projektionen, fuer alle Token des Fensters zugleich.
+        //
+        // ⚑ Sie haengen nur am eigenen Token und laufen deshalb gebuendelt
+        //   wie `projektionen_qkv` bei der Achtsamkeit: je Matrix eine
+        //   Runde fuer das ganze Fenster statt einer je Token.
+        //
+        // ⚑ **Ein einzelnes Token rechnet alle vier in einer Runde**
+        //   (`linear_w8a16_buendel`), dieselbe Zeilenformel wie
+        //   `linear_w8a16`: Im Decode waren es vier Runden je Ebene, zwei
+        //   davon fuer Matrizen mit 32 Zeilen. Gemessen an den Formen des
+        //   35B: 241 auf 177 Mikrosekunden je Ebene.
+        let matrizen = [
+            (&zs.in_proj_qkv, sk.qkv_frac),
+            (&zs.in_proj_z, sk.z_frac),
+            (&zs.in_proj_b, sk.b_frac),
+            (&zs.in_proj_a, sk.a_frac),
+        ];
+        let [qkv, z, b_roh, a_roh]: [Vec<Vec<i16>>; 4] = match normen {
+            [x] => {
+                use integer_llm_kernels::linear::{linear_w8a16_buendel, Ausgangsskala, Buendelteil};
+                let teile: Vec<Buendelteil<'_>> = matrizen
+                    .iter()
+                    .map(|(m, frac)| Buendelteil {
+                        w: &m.data,
+                        x,
+                        in_features: hidden,
+                        w_shifts: &m.shifts,
+                        act_frac_bits: ein_frac,
+                        aus: Ausgangsskala::Eine(*frac),
+                    })
+                    .collect();
+                let flach = linear_w8a16_buendel(&teile);
+                let mut rest = flach.as_slice();
+                matrizen.map(|(m, _)| {
+                    let (vorne, hinten) = rest.split_at(m.shifts.len());
+                    rest = hinten;
+                    vec![vorne.to_vec()]
+                })
+            }
+            _ => matrizen.map(|(m, frac)| {
+                linear_fuer_alle(normen, &m.data, hidden, &m.shifts, ein_frac, frac)
+            }),
+        };
 
         // --- 2. Die kausale Faltung, tiefenweise mit SiLU.
-        let mut gefaltet = vec![0i16; masse.kanaele];
-        integer_llm_kernels::faltung::schritt(
+        //
+        // ⚑ Kanal fuer Kanal ueber alle Token des Fensters, die Kanaele
+        //   verteilt; die Begruendung steht bei `schritte_fenster`.
+        let qkv_zeilen: Vec<&[i16]> = qkv.iter().map(Vec::as_slice).collect();
+        let gefaltet = integer_llm_kernels::faltung::schritte_fenster(
             speicher.fenster_mut(ebene),
-            &qkv,
+            &qkv_zeilen,
             &zs.conv1d.data,
             &zs.conv1d.shifts,
             sk.qkv_frac,
@@ -3145,178 +3312,209 @@ impl IntegerModel {
             self.sigmoid_ein_frac,
             self.sigmoid_aus_frac,
             &sk.konv_fracs,
-            &mut gefaltet,
-        );
-        std::mem::swap(&mut qkv, &mut gefaltet);
-
-        // --- 3. Aufteilen in q, k, v.
-        let k_breite = masse.schluessel_dim * masse.schluessel_koepfe;
-        let (q_teil, rest) = qkv.split_at(k_breite);
-        let (k_teil, v_teil) = rest.split_at(k_breite);
-
-        // --- 4. Auf Einheitslaenge, je Schluesselkopf.
-        //
-        // ⚑ **Die vorhandene RMSNorm leistet beides.** Sie rechnet
-        // `x * rsqrt(Summe(x^2) * inv_n)`; mit `inv_n = 1` ist das genau
-        // die L2-Normierung, mit `inv_n = d` ist es dieselbe mal
-        // `1/sqrt(d)`, und das ist die Skalierung, die `q` braucht.
-        // **Kein zweiter Kern fuer etwas, das der erste schon kann.**
-        let q_norm = einheitslaenge(
-            q_teil, masse.schluessel_dim, &sk.konv_fracs[..k_breite],
-            (masse.schluessel_dim as i64) << 20, self,
-            zk::NORM_FRAC as u8,
-        );
-        let k_norm = einheitslaenge(
-            k_teil, masse.schluessel_dim, &sk.konv_fracs[k_breite..2 * k_breite],
-            1i64 << 20, self,
-            zk::NORM_FRAC as u8,
+            faeden,
         );
 
-        // --- 5. Die beiden Tore je Wertkopf.
-        let mut beta = vec![0i16; masse.wert_koepfe];
-        let mut zerfall = vec![0i64; masse.wert_koepfe];
-        for h in 0..masse.wert_koepfe {
-            // beta = sigmoid(b), in WERT_FRAC.
-            let b_dom = rescale(
-                i32::from(b_roh[h]), sk.b_frac, self.sigmoid_ein_frac,
-            );
-            let s = sigmoid_nachschlagen(
-                b_dom, &self.sigmoid_lut, self.sigmoid_versatz,
-                self.sigmoid_ein_frac, self.sigmoid_aus_frac,
-            );
-            beta[h] = clamp_i16_from_i64(rescale_i64(
-                s, self.sigmoid_aus_frac, zk::WERT_FRAC as u8,
-            ));
+        // ⚑ **Schritte 3 bis 5 je Token.** Sie haengen nur am eigenen
+        //   Token und kosten wenig; nacheinander ist erst die Rekurrenz.
+        //   Sie laufen deshalb verteilt, je Token ein Faden; mit Spur auf
+        //   einem, damit die Zeilen der Spur in der Reihenfolge der Token
+        //   stehen.
+        let spur = std::env::var_os("MYL_ZUSTANDSSPUR").is_some();
+        let je_token_faeden = if spur { 1 } else { faeden };
+        let vorbereitet: Vec<(Vec<i16>, Vec<i16>, Vec<i16>, Vec<i16>, Vec<i64>)> =
+            integer_llm_kernels::fadenpool::verteilen(normen.len(), je_token_faeden, |t| {
+                let (qkv, b_roh, a_roh) = (&gefaltet[t], &b_roh[t], &a_roh[t]);
+            // --- 3. Aufteilen in q, k, v.
+            let k_breite = masse.schluessel_dim * masse.schluessel_koepfe;
+            let (q_teil, rest) = qkv.split_at(k_breite);
+            let (k_teil, v_teil) = rest.split_at(k_breite);
 
-            // d = exp_A * softplus(a + dt_bias), dann g = exp(-d).
-            let a_dom = rescale(
-                i32::from(a_roh[h]), sk.a_frac, masse.softplus_ein_frac,
+            // --- 4. Auf Einheitslaenge, je Schluesselkopf.
+            //
+            // ⚑ **Die vorhandene RMSNorm leistet beides.** Sie rechnet
+            // `x * rsqrt(Summe(x^2) * inv_n)`; mit `inv_n = 1` ist das genau
+            // die L2-Normierung, mit `inv_n = d` ist es dieselbe mal
+            // `1/sqrt(d)`, und das ist die Skalierung, die `q` braucht.
+            // **Kein zweiter Kern fuer etwas, das der erste schon kann.**
+            let q_norm = einheitslaenge(
+                q_teil, masse.schluessel_dim, &sk.konv_fracs[..k_breite],
+                (masse.schluessel_dim as i64) << 20, self,
+                zk::NORM_FRAC as u8,
             );
-            let dt = vorspannwert(&zs.dt_bias, h, masse.softplus_ein_frac);
-            let sp = softplus_nachschlagen(
-                a_dom + dt, &masse.softplus_rest,
-                masse.softplus_ein_frac, masse.softplus_aus_frac,
+            let k_norm = einheitslaenge(
+                k_teil, masse.schluessel_dim, &sk.konv_fracs[k_breite..2 * k_breite],
+                1i64 << 20, self,
+                zk::NORM_FRAC as u8,
             );
-            let d = mal_vorspann(sp, &zs.exp_a, h);
-            zerfall[h] = zerfall_nachschlagen(
-                d, &masse.zerfall_exp, masse.softplus_aus_frac as u32,
-                masse.zerfall_raster_frac as u32, masse.zerfall_aus_frac as u32,
-            );
-        }
 
-        // --- 5b. `v` auf die Wertauflösung bringen.
-        //
-        // ⛔️ **Hier fehlte bis zum 2026-09-22 die Umrechnung**, und sie
-        // hat einen Abend gekostet. Die Faltung liefert auf
-        // `konv_frac` (bei Ebene 0 des grossen Modells **15**), die
-        // Rekurrenz erwartet `WERT_FRAC` (**8**). `v` ging damit um den
-        // Faktor 128 zu gross hinein.
-        //
-        // 📌 **Drei von vier Eingaengen waren richtig skaliert.** `q`
-        // und `k` kommen ueber `einheitslaenge` auf `NORM_FRAC`, `beta`
-        // wird ausdruecklich reskaliert, und `v` wurde durchgereicht.
-        // Der Kopf von `zustandsschicht` sagt es woertlich: „`v` und
-        // `beta` in `2^-WERT_FRAC`". **Ich habe die Zeile geschrieben
-        // und dann nicht befolgt.**
-        //
-        // ⚠️ **Warum es nicht auffiel:** Die Ausgabe hatte die richtige
-        // Groessenordnung, weil die torgesteuerte Norm dahinter
-        // skaleninvariant ist; nur die Verhaeltnisse zwischen den
-        // Koepfen stimmten nicht mehr. Ein zu grosser Faktor sieht
-        // harmloser aus als ein falsches Vorzeichen.
-        let v_wert: Vec<i16> = v_teil
-            .iter()
-            .zip(sk.konv_fracs[2 * k_breite..].iter())
-            .map(|(&x, &f)| {
-                clamp_i16_from_i64(rescale_i64(i64::from(x), f, zk::WERT_FRAC as u8))
-            })
-            .collect();
-
-        // ⚑ **Die Eingaenge der Rekurrenz, fuer die Halbierung.** Der
-        //   Nachbau in Python trifft mit denselben Gewichten 0,13; die
-        //   Laufzeit liefert 0,34. Der Unterschied muss in einem dieser
-        //   drei Felder sichtbar werden, sonst liegt er im Kern.
-        if std::env::var_os("MYL_ZUSTANDSSPUR").is_some() {
-            let zeig = |name: &str, f: &[i16]| {
-                eprintln!(
-                    "[feld] {name} {}",
-                    f.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(",")
+            // --- 5. Die beiden Tore je Wertkopf.
+            let mut beta = vec![0i16; masse.wert_koepfe];
+            let mut zerfall = vec![0i64; masse.wert_koepfe];
+            for h in 0..masse.wert_koepfe {
+                // beta = sigmoid(b), in WERT_FRAC.
+                let b_dom = rescale(
+                    i32::from(b_roh[h]), sk.b_frac, self.sigmoid_ein_frac,
                 );
-            };
-            zeig("konv", &qkv);
-            zeig("qnorm", &q_norm);
-            zeig("knorm", &k_norm);
-            zeig("vwert", &v_wert);
-        }
+                let s = sigmoid_nachschlagen(
+                    b_dom, &self.sigmoid_lut, self.sigmoid_versatz,
+                    self.sigmoid_ein_frac, self.sigmoid_aus_frac,
+                );
+                beta[h] = clamp_i16_from_i64(rescale_i64(
+                    s, self.sigmoid_aus_frac, zk::WERT_FRAC as u8,
+                ));
 
-        // --- 6. Die Rekurrenz, je Wertkopf ein Schritt.
-        let faecher = masse.auffaecherung();
-        let mut roh_aus = vec![0i16; masse.wert_koepfe * masse.wert_dim];
-        // ⚑ **Eine Skala je Kopf** (Fund 418): `schritt` waehlt sie aus
-        //   dem Groesstwert des Kopfes und gibt sie zurueck.
-        let mut roh_fracs = vec![0u8; masse.wert_koepfe];
-        for h in 0..masse.wert_koepfe {
-            let s_kopf = h / faecher;
-            let q = &q_norm[s_kopf * masse.schluessel_dim..(s_kopf + 1) * masse.schluessel_dim];
-            let k = &k_norm[s_kopf * masse.schluessel_dim..(s_kopf + 1) * masse.schluessel_dim];
-            let v = &v_wert[h * masse.wert_dim..(h + 1) * masse.wert_dim];
-            let ziel = &mut roh_aus[h * masse.wert_dim..(h + 1) * masse.wert_dim];
-            roh_fracs[h] = zk::schritt(
-                speicher.zustand_mut(ebene, h), q, k, v,
-                zerfall[h], beta[h], ziel,
-            );
-        }
+                // d = exp_A * softplus(a + dt_bias), dann g = exp(-d).
+                let a_dom = rescale(
+                    i32::from(a_roh[h]), sk.a_frac, masse.softplus_ein_frac,
+                );
+                let dt = vorspannwert(&zs.dt_bias, h, masse.softplus_ein_frac);
+                let sp = softplus_nachschlagen(
+                    a_dom + dt, &masse.softplus_rest,
+                    masse.softplus_ein_frac, masse.softplus_aus_frac,
+                );
+                let d = mal_vorspann(sp, &zs.exp_a, h);
+                zerfall[h] = zerfall_nachschlagen(
+                    d, &masse.zerfall_exp, masse.softplus_aus_frac as u32,
+                    masse.zerfall_raster_frac as u32, masse.zerfall_aus_frac as u32,
+                );
+            }
 
-        if std::env::var_os("MYL_ZUSTANDSSPUR").is_some() {
-            let nz = roh_aus.iter().filter(|&&x| x == 0).count();
-            let je_kopf: Vec<usize> = (0..masse.wert_koepfe)
-                .map(|h| {
-                    roh_aus[h * masse.wert_dim..(h + 1) * masse.wert_dim]
-                        .iter()
-                        .filter(|&&x| x != 0)
-                        .count()
+            // --- 5b. `v` auf die Wertauflösung bringen.
+            //
+            // ⛔️ **Hier fehlte bis zum 2026-09-22 die Umrechnung**, und sie
+            // hat einen Abend gekostet. Die Faltung liefert auf
+            // `konv_frac` (bei Ebene 0 des grossen Modells **15**), die
+            // Rekurrenz erwartet `WERT_FRAC` (**8**). `v` ging damit um den
+            // Faktor 128 zu gross hinein.
+            //
+            // 📌 **Drei von vier Eingaengen waren richtig skaliert.** `q`
+            // und `k` kommen ueber `einheitslaenge` auf `NORM_FRAC`, `beta`
+            // wird ausdruecklich reskaliert, und `v` wurde durchgereicht.
+            // Der Kopf von `zustandsschicht` sagt es woertlich: „`v` und
+            // `beta` in `2^-WERT_FRAC`". **Ich habe die Zeile geschrieben
+            // und dann nicht befolgt.**
+            //
+            // ⚠️ **Warum es nicht auffiel:** Die Ausgabe hatte die richtige
+            // Groessenordnung, weil die torgesteuerte Norm dahinter
+            // skaleninvariant ist; nur die Verhaeltnisse zwischen den
+            // Koepfen stimmten nicht mehr. Ein zu grosser Faktor sieht
+            // harmloser aus als ein falsches Vorzeichen.
+            let v_wert: Vec<i16> = v_teil
+                .iter()
+                .zip(sk.konv_fracs[2 * k_breite..].iter())
+                .map(|(&x, &f)| {
+                    clamp_i16_from_i64(rescale_i64(i64::from(x), f, zk::WERT_FRAC as u8))
                 })
                 .collect();
-            eprintln!("[spur] nicht-null je Kopf: {je_kopf:?}");
-            // ⚑ Die Skalen je Kopf, sonst liest die Python-Seite die
-            //   Zahlen mit der falschen Skala (Fund 418).
-            eprintln!(
-                "[feld] rohfrac {}",
-                roh_fracs.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(",")
-            );
-            // ⚑ Die ganzen Felder, damit die Python-Seite sie gegen die
-            //   Referenz halten kann statt nur ihr Maximum.
-            eprintln!(
-                "[feld] roh_aus {}",
-                roh_aus.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(",")
-            );
-            eprintln!(
-                "[spur] beta: {:?}",
-                &beta[..beta.len().min(8)]
-            );
-            eprintln!(
-                "[spur] roh_aus: max {} nullen {}/{} | z max {} | v_wert max {}",
-                roh_aus.iter().map(|x| x.abs()).max().unwrap_or(0),
-                nz, roh_aus.len(),
-                z.iter().map(|x| x.abs()).max().unwrap_or(0),
-                v_wert.iter().map(|x| x.abs()).max().unwrap_or(0)
-            );
-        }
 
-        // --- 7. Das Ausgangstor und die Ruecktransformation.
-        let getort = torgesteuerte_norm(
-            &roh_aus, &z, zs, masse, self,
-            sk.norm_aus_frac, &roh_fracs, sk.z_frac,
+            // ⚑ **Die Eingaenge der Rekurrenz, fuer die Halbierung.** Der
+            //   Nachbau in Python trifft mit denselben Gewichten 0,13; die
+            //   Laufzeit liefert 0,34. Der Unterschied muss in einem dieser
+            //   drei Felder sichtbar werden, sonst liegt er im Kern.
+            if spur {
+                let zeig = |name: &str, f: &[i16]| {
+                    eprintln!(
+                        "[feld] {name} {}",
+                        f.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(",")
+                    );
+                };
+                zeig("konv", qkv);
+                zeig("qnorm", &q_norm);
+                zeig("knorm", &k_norm);
+                zeig("vwert", &v_wert);
+            }
+                (q_norm, k_norm, v_wert, beta, zerfall)
+            });
+
+        // --- 6. Die Rekurrenz, je Wertkopf ueber alle Token des Fensters.
+        //
+        // ⚑ **Eine Skala je Kopf und Token** (Fund 418): `schritt` waehlt
+        //   sie aus dem Groesstwert des Kopfes und gibt sie zurueck.
+        // ⚑ **Die Koepfe laufen verteilt, jeder ueber alle Token**
+        //   (2026-09-25). Sie sind voneinander unabhaengig; nacheinander
+        //   auf einem Kern waren sie die Haelfte der Vorbereitungszeit des
+        //   35B. Bit fuer Bit dasselbe, die Begruendung steht bei
+        //   `schritte_fenster`.
+        let faecher = masse.auffaecherung();
+        let (sd, wd) = (masse.schluessel_dim, masse.wert_dim);
+        let (roh_aus, roh_fracs) = zk::schritte_fenster(
+            speicher.zustaende_mut(ebene),
+            normen.len(),
+            |h, t| {
+                let (q_norm, k_norm, v_wert, beta, zerfall) = &vorbereitet[t];
+                let s_kopf = h / faecher;
+                (
+                    &q_norm[s_kopf * sd..(s_kopf + 1) * sd],
+                    &k_norm[s_kopf * sd..(s_kopf + 1) * sd],
+                    &v_wert[h * wd..(h + 1) * wd],
+                    zerfall[h],
+                    beta[h],
+                )
+            },
+            faeden,
         );
-        if std::env::var_os("MYL_ZUSTANDSSPUR").is_some() {
-            eprintln!(
-                "[feld] getort {}",
-                getort.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(",")
+
+        // --- 7. je Token das Ausgangstor, danach die Ruecktransformation
+        //    fuer das ganze Fenster.
+        let getorte: Vec<Vec<i16>> = integer_llm_kernels::fadenpool::verteilen(normen.len(), je_token_faeden, |t| {
+            let (roh_aus, roh_fracs) = (&roh_aus[t], &roh_fracs[t]);
+            let (_, _, v_wert, beta, _) = &vorbereitet[t];
+            let z = &z[t];
+            if spur {
+                let nz = roh_aus.iter().filter(|&&x| x == 0).count();
+                let je_kopf: Vec<usize> = (0..masse.wert_koepfe)
+                    .map(|h| {
+                        roh_aus[h * masse.wert_dim..(h + 1) * masse.wert_dim]
+                            .iter()
+                            .filter(|&&x| x != 0)
+                            .count()
+                    })
+                    .collect();
+                eprintln!("[spur] nicht-null je Kopf: {je_kopf:?}");
+                // ⚑ Die Skalen je Kopf, sonst liest die Python-Seite die
+                //   Zahlen mit der falschen Skala (Fund 418).
+                eprintln!(
+                    "[feld] rohfrac {}",
+                    roh_fracs.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(",")
+                );
+                // ⚑ Die ganzen Felder, damit die Python-Seite sie gegen die
+                //   Referenz halten kann statt nur ihr Maximum.
+                eprintln!(
+                    "[feld] roh_aus {}",
+                    roh_aus.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(",")
+                );
+                eprintln!(
+                    "[spur] beta: {:?}",
+                    &beta[..beta.len().min(8)]
+                );
+                eprintln!(
+                    "[spur] roh_aus: max {} nullen {}/{} | z max {} | v_wert max {}",
+                    roh_aus.iter().map(|x| x.abs()).max().unwrap_or(0),
+                    nz, roh_aus.len(),
+                    z.iter().map(|x| x.abs()).max().unwrap_or(0),
+                    v_wert.iter().map(|x| x.abs()).max().unwrap_or(0)
+                );
+            }
+
+            // --- 7. Das Ausgangstor und die Ruecktransformation.
+            let getort = torgesteuerte_norm(
+                roh_aus, z, zs, masse, self,
+                sk.norm_aus_frac, roh_fracs, sk.z_frac,
             );
-        }
-        // ⚑ **Per Kanal**, wie `projektion_o` bei der Achtsamkeit.
-        integer_llm_kernels::linear::linear_w8a16_pc(
-            &getort, &zs.out_proj.data, getort.len(),
+            if spur {
+                eprintln!(
+                    "[feld] getort {}",
+                    getort.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(",")
+                );
+            }
+            getort
+        });
+        // ⚑ **Per Kanal**, wie `projektion_o` bei der Achtsamkeit, und
+        //   gebuendelt wie sie.
+        let zeilen: Vec<&[i16]> = getorte.iter().map(Vec::as_slice).collect();
+        linear_pc_fuer_alle(
+            &zeilen, &zs.out_proj.data, zs.out_proj.cols(),
             &zs.out_proj.shifts, sk.norm_aus_frac, out_frac,
         )
     }

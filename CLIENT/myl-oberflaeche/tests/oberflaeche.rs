@@ -301,7 +301,7 @@ fn nichts_wird_aus_dem_netz_geladen() {
     // und nicht von der Suche ausgenommen: Wer eine **zweite**
     // `http://`-Stelle einbaut, faellt weiter auf.
     const SVG_NS: &str = "http://www.w3.org/2000/svg";
-    for datei in ["index.html", "stil.css", "app.js", "netz.js"] {
+    for datei in ["index.html", "stil.css", "app.js", "vorhang.js"] {
         let inhalt = lies(datei).replace(SVG_NS, "");
         for marke in ["http://", "https://", "//fonts.", "cdn."] {
             assert!(
@@ -322,6 +322,30 @@ fn bewegung_laesst_sich_abbestellen() {
     );
 }
 
+/// ⚑ **Das Vorschaltbild wuerfelt unter fuenf Szenen** (Auftrag des
+/// Projektinhabers, 2026-09-25): bei jedem Start eine andere, keine fest
+/// eingestellte. Die Liste steht einmal in `vorhang.js`, und der Wurf
+/// reicht ueber die ganze Liste; das Fenster nennt keine Nummer.
+#[test]
+fn das_vorschaltbild_wuerfelt_unter_fuenf_szenen() {
+    let vorhang = lies("vorhang.js");
+    let js = lies("app.js");
+    let liste = vorhang
+        .split_once("export const SZENEN = [")
+        .and_then(|(_, r)| r.split_once("];"))
+        .map(|(l, _)| l)
+        .expect("es gibt keine Liste der Szenen");
+    assert_eq!(liste.split(',').filter(|s| !s.trim().is_empty()).count(), 5, "nicht fuenf Szenen: {liste}");
+    assert!(
+        vorhang.contains("nummer = Math.floor(Math.random() * SZENEN.length)"),
+        "der Wurf reicht nicht ueber alle Szenen"
+    );
+    assert!(
+        js.contains("vorhangStarten($(\"vorhangbild\"));"),
+        "das Fenster startet das Vorschaltbild nicht oder mit fester Szene"
+    );
+}
+
 /// 📌 Und der Vorhang muss auch wieder weggehen koennen: Ein
 /// Vorschaltbild ohne Abgang ist ein Fenster, das nie aufmacht.
 #[test]
@@ -330,7 +354,7 @@ fn der_vorhang_geht_wieder_weg() {
     let css = lies("stil.css");
     assert!(js.contains("classList.add(\"weg\")"), "niemand nimmt den Vorhang weg");
     assert!(css.contains("#vorhang.weg"), "es gibt keine Regel fuer den weggenommenen Vorhang");
-    assert!(js.contains("netzAnhalten()"), "die Animation wird nie angehalten");
+    assert!(js.contains("vorhangAnhalten()"), "die Animation wird nie angehalten");
 }
 
 /// 📌 **Graustufen, und zwar nachpruefbar.** Am 2026-09-09 hat der
@@ -581,9 +605,17 @@ fn das_rauschen_gehoert_zur_abbestellbaren_bewegung() {
         }
     }
 
-    // ⚑ Das Netz bewegt sich vom Skript aus, nicht vom Stilblatt; es
-    //   steht deshalb zusaetzlich hier.
-    beweglich.insert("#netz".to_string());
+    // ⚑ **Das Vorschaltbild bewegt sich vom Skript aus**, nicht vom
+    //   Stilblatt, und bestellt sich dort selbst ab: Es fragt nach
+    //   `prefers-reduced-motion` und zeichnet dann ein Standbild statt
+    //   gar keines (seit dem 2026-09-25; vorher war die Leinwand hier
+    //   ausgeblendet).
+    let vorhang = lies("vorhang.js");
+    assert!(
+        vorhang.contains("matchMedia(\"(prefers-reduced-motion: reduce)\")")
+            && vorhang.contains("if (!still) requestAnimationFrame(bild);"),
+        "das Vorschaltbild laesst sich nicht abbestellen"
+    );
 
     assert!(!beweglich.is_empty(), "nichts bewegt sich? dann stimmt die Suche nicht");
     for was in &beweglich {
@@ -1357,7 +1389,7 @@ fn das_fenster_setzt_niemals_markup() {
             .join("\n")
     }
 
-    for datei in ["app.js", "netz.js"] {
+    for datei in ["app.js", "vorhang.js"] {
         let js = ohne_kommentare(&lies(datei));
         for weg in [
             "innerHTML",
@@ -1541,10 +1573,163 @@ fn das_ladezeichen_steht_beim_beitrag() {
     // das Modell weiter**, oft eine halbe Minute, und in dieser Zeit
     // stand nichts. Ein Ladezeichen, das nur den ersten Wartezeitraum
     // abdeckt, deckt genau den ab, in dem ohnehin gleich etwas kommt.
+    //
+    // ⚑ **Aber es schweigt, solange das Modell schreibt** (Festlegung des
+    // Projektinhabers, 2026-09-24): Dann ist der wachsende Text die
+    // Auskunft. Die Bedingung fragt deshalb nach dem, was das Modell
+    // gerade tut, und weiterhin nicht nach dem, was schon dasteht.
     assert!(
-        js.contains("let laufzeichen = null;\n  if (b.laufend) {"),
-        "das Ladezeichen haengt an einer Bedingung ueber den Inhalt statt am Lauf"
+        js.contains("let laufzeichen = null;\n  if (b.laufend && !b.schreibt) {"),
+        "das Ladezeichen haengt nicht am Lauf, oder es steht auch waehrend des Schreibens"
     );
+
+    // 📌 **Und es kommt wieder, sobald das Modell aufhoert zu schreiben.**
+    // Text wird ohne Neuzeichnen angehaengt; ohne diese Stelle bliebe das
+    // Zeichen nach dem ersten Text bis zum naechsten Neuzeichnen weg, und
+    // das ist genau die halbe Minute nach einem Werkzeugaufruf, die
+    // Fund 292 gemeldet hat.
+    let a = js.find("function live_meldung(m)").expect("es gibt keine `live_meldung`");
+    let rumpf = &js[a..a + js[a..].find("\n}\n").expect("`live_meldung` ist nicht geschlossen")];
+    assert!(
+        rumpf.contains("laufender.schreibt = m.art === \"Text\";"),
+        "niemand merkt sich, ob das Modell gerade schreibt"
+    );
+    assert!(
+        rumpf.contains("if (schrieb && !laufender.schreibt) {\n    w.append(laufzeichen_bauen());"),
+        "das Ladezeichen kommt nach dem Schreiben nicht wieder"
+    );
+    assert!(
+        rumpf.contains("w.querySelector(\":scope > .laeuft\")?.remove();"),
+        "das Ladezeichen geht nicht, wenn das Modell schreibt"
+    );
+}
+
+/// Der Koerper einer Regel, deren Selektorzeile genau `kopf` ist.
+fn regelkoerper<'a>(css: &'a str, kopf: &str) -> &'a str {
+    let marke = format!("\n{kopf} {{");
+    let a = css.find(&marke).unwrap_or_else(|| panic!("es gibt keine Regel `{kopf}`"));
+    let rest = &css[a + marke.len()..];
+    &rest[..rest.find('}').expect("die Regel ist nicht geschlossen")]
+}
+
+/// ⚑ **Das Ladezeichen ist ein synaptischer Spalt, und jedes traegt
+/// eigene Kennungen.**
+///
+/// 📌 **Warum die Kennungen je Zeichen zaehlen.** Der Spalt fuellt seine
+/// Koerper ueber `url(#…)` aus Verlaeufen und einer Maske. Stuenden
+/// zwei Ladezeichen mit derselben Kennung im Fenster, loeste jedes
+/// Verweisziel auf das erste im Dokument auf; wird dieses entfernt,
+/// waehrend ein zweiter Beitrag noch laeuft, verliert das zweite
+/// Zeichen Fuellung und Maske und steht als Umriss da.
+///
+/// 📌 **Und kein `style`-Attribut.** Die Inhaltsrichtlinie verbietet
+/// eingebettete Stile; ein Zeichen, das eines setzt, wird im Fenster
+/// still ohne diese Angabe gezeichnet, in einer Vorschau aber mit.
+#[test]
+fn das_ladezeichen_ist_ein_synaptischer_spalt() {
+    let js = lies("app.js");
+    let css = ohne_kommentare(&lies("stil.css"));
+
+    assert!(js.contains("l.append(synapse());"), "das Ladezeichen ist kein Spalt");
+    let a = js.find("function synapse()").expect("es gibt keine Funktion `synapse`");
+    let rumpf = &js[a..a + js[a..].find("\n}\n").expect("`synapse` ist nicht geschlossen")];
+
+    assert!(
+        rumpf.contains("synapse.zaehler = (synapse.zaehler || 0) + 1;")
+            && rumpf.contains("`spalt${synapse.zaehler}-${name}`"),
+        "die Kennungen im Spalt sind nicht je Ladezeichen eigen"
+    );
+    assert!(
+        !rumpf.contains("id: \"") && !rumpf.contains("#spalt-"),
+        "im Spalt steht eine feste Kennung"
+    );
+    assert!(!rumpf.contains("\"style\"") && !rumpf.contains("style:"), "der Spalt setzt einen Stil");
+    assert!(hat_regel(&css, "spalt"), "der Spalt hat keine Regel");
+}
+
+/// ⚑ **Das Terminal ist kein Formular** (Auftrag des Projektinhabers,
+/// 2026-09-25): kein Knopf, kein getoenter Kasten, ein Eingabefeld ohne
+/// Feld. Ausgabe und Eingabezeile rollen zusammen.
+///
+/// 📌 **Warum das Feld alles einzeln abgeben muss.** Jedes `input` erbt
+/// Glas, Grund, Polster und Rundung aus der Regel fuer Bedienelemente;
+/// wer nur den Grund wegnimmt, behaelt den Hintergrundfilter, und der
+/// zeichnet ueber dem Terminal einen milchigen Streifen.
+#[test]
+fn das_terminal_ist_kein_formular() {
+    let html = lies("index.html");
+    let css = ohne_kommentare(&lies("stil.css"));
+    let a = html.find("<section id=\"terminal\"").expect("es gibt kein Terminal");
+    let abschnitt = &html[a..a + html[a..].find("</section>").expect("das Terminal ist nicht geschlossen")];
+    assert!(!abschnitt.contains("<button"), "im Terminal steht ein Knopf");
+
+    let feld = regelkoerper(&css, "#terminaleingabe");
+    for angabe in ["background: none;", "backdrop-filter: none;", "-webkit-backdrop-filter: none;", "box-shadow: none;", "padding: 0;"] {
+        assert!(feld.contains(angabe), "die Eingabezeile behaelt etwas vom Feld: `{angabe}` fehlt");
+    }
+    assert!(
+        regelkoerper(&css, ".terminal").contains("overflow-y: auto;"),
+        "das Terminal rollt nicht als Ganzes"
+    );
+    assert!(!css.contains("\n.terminalzeilen {"), "die Ausgabe liegt wieder in einem eigenen Kasten");
+}
+
+/// ⚑ **Die Einstellungsseite rollt nur senkrecht** (Meldung des
+/// Projektinhabers, 2026-09-25).
+#[test]
+fn die_einstellungsseite_rollt_nur_senkrecht() {
+    let css = ohne_kommentare(&lies("stil.css"));
+    let seite = regelkoerper(&css, "#einstellungsseite");
+    assert!(seite.contains("overflow-x: hidden;"), "die Seite darf seitwaerts rollen");
+    assert!(
+        seite.contains("grid-template-columns: minmax(0, 1fr);"),
+        "die Spalte der Seite waechst mit ihrem breitesten Inhalt"
+    );
+}
+
+/// ⚑ **Der Schliessknopf steht auf dem Zahnrad** (Meldung des
+/// Projektinhabers, 2026-09-25): Wer mit einem Klick oeffnet, schliesst
+/// mit einem Klick an derselben Stelle.
+///
+/// 📌 **Geprueft wird die gemeinsame Zahl, nicht die Lage.** Beide Knoepfe
+/// haengen an `--kopf-polster`; stuende an einem eine eigene Zahl, liefen
+/// sie beim naechsten Umbau des Kopfes auseinander, und keiner saehe es,
+/// denn die Seite ist nur offen, wenn niemand auf das Zahnrad sieht.
+#[test]
+fn der_schliessknopf_steht_auf_dem_zahnrad() {
+    let css = ohne_kommentare(&lies("stil.css"));
+    assert!(
+        css.contains("header > .kopfrechts { right: var(--kopf-polster); }"),
+        "das Zahnrad haengt nicht mehr an `--kopf-polster`"
+    );
+    let zu = regelkoerper(&css, "#zurueck");
+    assert!(zu.contains("position: fixed;"), "der Schliessknopf rollt mit der Seite");
+    assert!(zu.contains("right: var(--kopf-polster);"), "der Schliessknopf steht nicht am rechten Rand des Kopfes");
+    assert!(
+        zu.contains("top: calc(var(--kopf-polster) - .5px);"),
+        "der Schliessknopf steht nicht auf der Hoehe des Zahnrads"
+    );
+}
+
+/// ⚑ **Jede Glasflaeche traegt Dicke und Spiegelung.**
+///
+/// Die Brechung, die fluessiges Glas ausmacht, zeichnen die Webansichten
+/// unter macOS und Linux nicht; was dort Glas von einer halbdurchsichtigen
+/// Platte unterscheidet, sind die inneren Schatten fuer die Dicke und der
+/// schraege Glanz. 📌 Faellt eines davon an einer Flaeche weg, sieht sie
+/// neben den anderen flach aus, und kein anderer Test merkt es, weil alle
+/// Variablen weiterhin definiert und benutzt sind.
+#[test]
+fn glas_hat_dicke_und_spiegelung() {
+    let css = ohne_kommentare(&lies("stil.css"));
+    for kopf in [".glas", ".eingabefeld", "button"] {
+        let koerper = regelkoerper(&css, kopf);
+        assert!(koerper.contains("var(--dicke)"), "`{kopf}` traegt keine Dicke");
+    }
+    for kopf in [".glas", ".eingabefeld", "button, input, select, textarea"] {
+        let koerper = regelkoerper(&css, kopf);
+        assert!(koerper.contains("var(--spiegel)"), "`{kopf}` traegt keine Spiegelung");
+    }
 }
 
 /// Das deutsche Zahlwort, so wie die READMEs dieses Projekts schreiben.

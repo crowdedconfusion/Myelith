@@ -333,66 +333,110 @@ pub fn schritt(
     beta: i16,
     aus: &mut [i16],
 ) -> u8 {
-    assert_eq!(q.len(), zustand.schluessel_dim, "q passt nicht zur Schluesseldimension");
-    assert_eq!(k.len(), zustand.schluessel_dim, "k passt nicht zur Schluesseldimension");
-    assert_eq!(v.len(), zustand.wert_dim, "v passt nicht zur Wertdimension");
     assert_eq!(aus.len(), zustand.wert_dim, "die Ausgabe passt nicht zur Wertdimension");
+    let (sd, wd) = (zustand.schluessel_dim, zustand.wert_dim);
+    let mut akkus = vec![0i128; wd];
+    // SICHERHEIT: `zustand` ist fuer die Dauer des Aufrufs exklusiv
+    // ausgeliehen, und `spalten_schritt` formt Ausschnitte nur innerhalb
+    // seiner `sd * wd` Werte.
+    unsafe { spalten_schritt(zustand.werte.as_mut_ptr(), sd, wd, 0, wd, q, k, v, g, beta, &mut akkus) };
+    ausgabe_skalieren(&akkus, aus)
+}
 
-    let sd = zustand.schluessel_dim;
-    let wd = zustand.wert_dim;
+/// **Der Kern eines Schritts, fuer die Spalten `[b0, b1)` eines Kopfes.**
+///
+/// ⚑ **Die Spalten eines Kopfes sind voneinander unabhaengig**: Zerfall
+/// und Fortschreibung wirken je Wert, und beide Kontraktionen summieren je
+/// Spalte ueber die Zeilen. Erst die Ausgangsskala in
+/// [`ausgabe_skalieren`] schaut ueber alle Spalten, und sie kommt danach.
+/// Ein Kopf laesst sich deshalb in Spaltenbloecke teilen, die verschiedene
+/// Faeden rechnen ([`schritte_fenster`]); [`schritt`] ist derselbe Kern
+/// ueber alle Spalten.
+///
+/// ⚑ **Zwei Durchgaenge statt vier** (2026-09-25): Zerfall und Lesen mit
+/// `k` teilen sich einen, Fortschreibung und Lesen mit `q` den anderen.
+/// Jeder Wert erfaehrt dieselben Operationen in derselben Reihenfolge wie
+/// vorher, nur liegt er dabei noch im Zwischenspeicher.
+///
+/// Die rohen Lesesummen mit `q` landen in `akkus`, eine je Spalte.
+///
+/// # Sicherheit
+///
+/// `werte` zeigt auf `sd * wd` Werte eines Zustands, `b0 <= b1 <= wd`, und
+/// waehrend des Aufrufs fasst niemand sonst die Spalten `[b0, b1)` an.
+/// Verschiedene Spaltenbloecke desselben Zustands duerfen gleichzeitig
+/// laufen; jeder formt Ausschnitte nur ueber seine eigenen Spalten.
+#[allow(clippy::too_many_arguments)]
+unsafe fn spalten_schritt(
+    werte: *mut i64,
+    sd: usize,
+    wd: usize,
+    b0: usize,
+    b1: usize,
+    q: &[i16],
+    k: &[i16],
+    v: &[i16],
+    g: i64,
+    beta: i16,
+    akkus: &mut [i128],
+) {
+    assert_eq!(q.len(), sd, "q passt nicht zur Schluesseldimension");
+    assert_eq!(k.len(), sd, "k passt nicht zur Schluesseldimension");
+    assert_eq!(v.len(), wd, "v passt nicht zur Wertdimension");
+    assert!(b0 <= b1 && b1 <= wd, "die Spalten liegen ausserhalb des Kopfes");
+    let breite = b1 - b0;
+    assert_eq!(akkus.len(), breite, "eine Summe je Spalte");
+    // SICHERHEIT: siehe oben; Zeile `a` beginnt bei `a * wd`, und
+    // `[b0, b1)` liegt darin.
+    let zeile = |a: usize| -> &mut [i64] {
+        unsafe { std::slice::from_raw_parts_mut(werte.add(a * wd + b0), breite) }
+    };
 
-    // --- 1. Der Zustand verblasst.
+    // --- 1. Der Zustand verblasst, und
     //
     // ⚑ **Ein Faktor unter eins ist ein Rechtsshift**, und genau hier
     // entsteht der Rundungsfehler, den die Messung vermessen hat. Er wird
     // im selben Schritt auch gedaempft: Jeder aeltere Fehler bekommt
     // denselben Faktor. Deshalb laeuft die Summe in ein Gleichgewicht
     // statt linear zu wachsen.
-    for wert in zustand.werte.iter_mut() {
-        if *wert != 0 {
-            *wert = rshift_round_i128(i128::from(*wert) * i128::from(g), ZERFALL_FRAC) as i64;
-        }
-    }
-
+    //
     // --- 2. Lesen mit dem Schluessel, Kontraktion ueber a.
-    let mut kv_mem = vec![0i32; wd];
-    for (b, ziel) in kv_mem.iter_mut().enumerate() {
-        let mut akku: i128 = 0;
-        for (a, &k_a) in k.iter().enumerate() {
-            if k_a != 0 {
-                akku += i128::from(zustand.werte[a * wd + b]) * i128::from(k_a);
+    //
+    // ⚑ **Zeilenweise und nicht spaltenweise** (2026-09-25). Die Summe je
+    // Spalte `b` laeuft ueber die Zeilen `a`; hier stand sie als innere
+    // Schleife, und jeder Summand lag eine ganze Zeile (1 KiB) hinter dem
+    // vorigen. Jetzt wird Zeile fuer Zeile auf alle Spaltensummen
+    // zugleich addiert, und der Speicher wird am Stueck gelesen.
+    // Gemessen an 32 Koepfen zu 128 x 128: 1,54 ms auf 0,66 ms je Schritt.
+    //
+    // ⚑ **Dasselbe Ergebnis, Bit fuer Bit.** Die Summanden sind dieselben,
+    // nur ihre Reihenfolge ist eine andere, und eine Ganzzahlsumme in
+    // `i128` laeuft hier nicht ueber: Auf die Reihenfolge kommt es nicht an.
+    let mut kv = vec![0i128; breite];
+    for (a, &k_a) in k.iter().enumerate() {
+        let z = zeile(a);
+        for wert in z.iter_mut() {
+            if *wert != 0 {
+                *wert = rshift_round_i128(i128::from(*wert) * i128::from(g), ZERFALL_FRAC) as i64;
             }
         }
-        *ziel = rshift_round_i128(akku, ZUSTAND_FRAC + NORM_FRAC - INTERN_FRAC) as i32;
+        zeile_aufaddieren(&mut kv, z, k_a);
     }
 
     // --- 3. Die Korrektur.
-    let mut delta = vec![0i32; wd];
-    for (b, ziel) in delta.iter_mut().enumerate() {
+    let mut delta = vec![0i32; breite];
+    for (j, ziel) in delta.iter_mut().enumerate() {
         // ⛔️ **Beide Seiten muessen dieselbe Skala tragen.** `v` kommt
         //   als Aktivierung auf `WERT_FRAC`, `kv` als Rechenzwischenstand
         //   auf `INTERN_FRAC`; ohne diese Verschiebung subtrahierte man
         //   Zahlen verschiedener Bedeutung.
-        let v_intern = i64::from(v[b]) << (INTERN_FRAC - WERT_FRAC);
-        let roh = v_intern - i64::from(kv_mem[b]);
+        let kv_mem = rshift_round_i128(kv[j], ZUSTAND_FRAC + NORM_FRAC - INTERN_FRAC) as i32;
+        let v_intern = i64::from(v[b0 + j]) << (INTERN_FRAC - WERT_FRAC);
+        let roh = v_intern - i64::from(kv_mem);
         *ziel = rshift_round_i64(roh * i64::from(beta), WERT_FRAC as u8) as i32;
     }
 
-    // --- 4. Rang-1-Fortschreibung, verlustfrei.
-    let links = ZUSTAND_FRAC - NORM_FRAC - INTERN_FRAC;
-    for (a, &k_a) in k.iter().enumerate() {
-        if k_a == 0 {
-            continue;
-        }
-        let basis = a * wd;
-        for (b, &d_b) in delta.iter().enumerate() {
-            if d_b == 0 {
-                continue;
-            }
-            zustand.werte[basis + b] += (i64::from(k_a) * i64::from(d_b)) << links;
-        }
-    }
-
+    // --- 4. Rang-1-Fortschreibung, verlustfrei, und
     // --- 5. Lesen mit der Abfrage, mit einer Skala JE KOPF.
     //
     // # ⛔️ Fund 418: eine Skala fuer 32 Koepfe, die um 1050 auseinander
@@ -426,17 +470,49 @@ pub fn schritt(
     // Verfahren, das `rmsnorm_i16` fuer den Index der Wurzeltabelle
     // benutzt (`dynamic_even_shift`), und es ist rein ganzzahlig und
     // damit auf jedem Knoten gleich.
-    let mut akkus = vec![0i128; wd];
-    for (b, ziel) in akkus.iter_mut().enumerate() {
-        let mut akku: i128 = 0;
-        for (a, &q_a) in q.iter().enumerate() {
-            if q_a != 0 {
-                akku += i128::from(zustand.werte[a * wd + b]) * i128::from(q_a);
+    let links = ZUSTAND_FRAC - NORM_FRAC - INTERN_FRAC;
+    akkus.iter_mut().for_each(|x| *x = 0);
+    for (a, (&k_a, &q_a)) in k.iter().zip(q.iter()).enumerate() {
+        let z = zeile(a);
+        if k_a != 0 {
+            for (wert, &d_b) in z.iter_mut().zip(delta.iter()) {
+                if d_b != 0 {
+                    *wert += (i64::from(k_a) * i64::from(d_b)) << links;
+                }
             }
         }
-        *ziel = akku;
+        zeile_aufaddieren(akkus, z, q_a);
     }
+}
 
+/// **Eine Zeile auf die Spaltensummen addieren**, gewichtet mit `x_a`.
+///
+/// ⚑ **Zeilenweise und nicht spaltenweise** (2026-09-25). Die Summe je
+/// Spalte laeuft ueber die Zeilen; frueher stand sie als innere Schleife,
+/// und jeder Summand lag eine ganze Zeile (1 KiB) hinter dem vorigen.
+/// Jetzt wird Zeile fuer Zeile auf alle Spaltensummen zugleich addiert.
+/// Gemessen an 32 Koepfen zu 128 x 128: 1,54 ms auf 0,66 ms je Schritt.
+///
+/// ⚑ **Dasselbe Ergebnis, Bit fuer Bit.** Die Summanden sind dieselben,
+/// nur ihre Reihenfolge ist eine andere, und eine Ganzzahlsumme in `i128`
+/// laeuft hier nicht ueber: Auf die Reihenfolge kommt es nicht an. Eine
+/// Zeile mit `x_a == 0` traegt nichts bei und wird uebersprungen.
+#[inline]
+fn zeile_aufaddieren(akkus: &mut [i128], zeile: &[i64], x_a: i16) {
+    if x_a == 0 {
+        return;
+    }
+    let faktor = i128::from(x_a);
+    for (akku, &s) in akkus.iter_mut().zip(zeile.iter()) {
+        *akku += i128::from(s) * faktor;
+    }
+}
+
+/// **Die Ausgabe eines Kopfes aus seinen rohen Lesesummen**, mit einer
+/// Skala aus seinem eigenen Groesstwert (Fund 418, Begruendung in
+/// [`spalten_schritt`]). Gibt die Skala zurueck.
+fn ausgabe_skalieren(akkus: &[i128], aus: &mut [i16]) -> u8 {
+    assert_eq!(akkus.len(), aus.len(), "eine Ausgabe je Spalte");
     // Die Verschiebung, die den Groesstwert gerade noch in i16 legt.
     let groesst = akkus.iter().map(|a| a.unsigned_abs()).max().unwrap_or(0);
     let bits = 128 - groesst.leading_zeros();
@@ -461,13 +537,210 @@ pub fn schritt(
         // Rechenpfad ist ein Konsensbruch ohne Meldung.
         *ziel = wert.clamp(i128::from(i16::MIN), i128::from(i16::MAX)) as i16;
     }
-    let _ = sd;
     u8::try_from(aus_frac).expect("aus_frac passt in u8")
 }
+
+/// **Die Kontraktion `Summe_a S[a][b] * x[a]` fuer alle Spalten `b`**,
+/// ueber [`zeile_aufaddieren`]; nur fuer die Probe, die sie gegen die
+/// fruehere spaltenweise Schleife haelt.
+#[cfg(test)]
+fn zeilen_kontrahieren(werte: &[i64], x: &[i16], wd: usize) -> Vec<i128> {
+    let mut akkus = vec![0i128; wd];
+    for (zeile, &x_a) in werte.chunks_exact(wd).zip(x.iter()) {
+        zeile_aufaddieren(&mut akkus, zeile, x_a);
+    }
+    akkus
+}
+
+/// **Die Schritte aller Koepfe einer Ebene ueber ein Fenster von Token,
+/// verteilt ueber die Faeden.**
+///
+/// ⚑ **Die Koepfe sind voneinander unabhaengig**: Jeder hat seinen
+/// eigenen Zustand und liest nur seine eigenen Eingaben. Nacheinander
+/// sind nur die Token eines Kopfes. Hier laeuft deshalb jeder Kopf ueber
+/// alle Token des Fensters, und die Koepfe laufen verteilt: **eine Runde
+/// je Fenster statt einer je Token**, und der Zustand eines Kopfes
+/// (128 x 128 Werte, 128 KiB) bleibt dabei im Zwischenspeicher seines
+/// Kerns. Jeder Kopf rechnet Bit fuer Bit dasselbe wie [`schritt`] in
+/// der Schleife, denn beide rufen denselben Kern.
+///
+/// ⚑ **Und jeder Kopf in Spaltenbloecken** ([`SPALTENBLOECKE`]): Die
+/// Spalten eines Kopfes sind voneinander unabhaengig (siehe
+/// [`spalten_schritt`]). 32 ganze Koepfe auf 15 Faeden liessen elf Faeden
+/// drei Koepfe rechnen und vier warten; 128 Bloecke verteilen sich
+/// gleichmaessig.
+///
+/// Gemessen an 32 Koepfen zu 128 x 128, je Token: 0,66 ms nacheinander,
+/// 0,17 ms verteilt (2026-09-25).
+///
+/// `eingabe(kopf, token)` liefert `(q, k, v, g, beta)`. Rueckgabe: je
+/// Token die Ausgaben aller Koepfe (Kopf fuer Kopf zu je `wert_dim`) und
+/// je Token die Skala jedes Kopfes.
+pub fn schritte_fenster<'e, F>(
+    zustaende: &mut [Zustand],
+    token: usize,
+    eingabe: F,
+    faeden: usize,
+) -> (Vec<Vec<i16>>, Vec<Vec<u8>>)
+where
+    F: Fn(usize, usize) -> (&'e [i16], &'e [i16], &'e [i16], i64, i16) + Sync,
+{
+    let koepfe = zustaende.len();
+    let (sd, wd) = zustaende.first().map_or((0, 0), |z| (z.schluessel_dim, z.wert_dim));
+    assert!(
+        zustaende.iter().all(|z| z.schluessel_dim == sd && z.wert_dim == wd),
+        "alle Koepfe gleich gross"
+    );
+    let bloecke = if wd % SPALTENBLOECKE == 0 { SPALTENBLOECKE } else { 1 };
+    let breite = wd / bloecke;
+
+    // Je Kopf und Spaltenblock eine Einheit; jede laeuft ueber alle Token.
+    let basen: Vec<usize> = zustaende.iter_mut().map(|z| z.werte.as_mut_ptr() as usize).collect();
+    let roh: Vec<Vec<i128>> = crate::fadenpool::verteilen(koepfe * bloecke, faeden, |einheit| {
+        let (h, block) = (einheit / bloecke, einheit % bloecke);
+        let mut akkus = vec![0i128; token * breite];
+        for (t, ziel) in akkus.chunks_exact_mut(breite).enumerate() {
+            let (q, k, v, g, beta) = eingabe(h, t);
+            // SICHERHEIT: `zustaende` ist fuer die ganze Runde exklusiv
+            // ausgeliehen, denn `verteilen` kehrt erst zurueck, wenn alle
+            // Einheiten fertig sind. Jede Einheit ist genau ein Kopf und
+            // ein Spaltenblock, `verteilen` rechnet jede genau einmal, und
+            // die Bloecke eines Kopfes sind disjunkte Spalten.
+            unsafe {
+                spalten_schritt(
+                    basen[h] as *mut i64, sd, wd,
+                    block * breite, (block + 1) * breite,
+                    q, k, v, g, beta, ziel,
+                );
+            }
+        }
+        akkus
+    });
+
+    // Je Token und Kopf die Ausgangsskala ueber alle Spalten des Kopfes.
+    let je_token: Vec<(Vec<i16>, Vec<u8>)> = crate::fadenpool::verteilen(token, faeden, |t| {
+        let mut aus = vec![0i16; koepfe * wd];
+        let mut fracs = vec![0u8; koepfe];
+        let mut akkus = vec![0i128; wd];
+        for h in 0..koepfe {
+            for block in 0..bloecke {
+                akkus[block * breite..(block + 1) * breite]
+                    .copy_from_slice(&roh[h * bloecke + block][t * breite..(t + 1) * breite]);
+            }
+            fracs[h] = ausgabe_skalieren(&akkus, &mut aus[h * wd..(h + 1) * wd]);
+        }
+        (aus, fracs)
+    });
+    je_token.into_iter().unzip()
+}
+
+/// **In wie viele Spaltenbloecke ein Kopf fuer [`schritte_fenster`]
+/// geteilt wird.**
+///
+/// ⚑ Gemessen am 2026-09-25 an 32 Koepfen zu 128 x 128, 64 Token, 15
+/// Faeden, je Fenster: ganze Koepfe 10,5 ms, zwei Bloecke 7,1, vier 6,1,
+/// acht 6,0. Vier verteilen 128 Einheiten gleichmaessig auf die Faeden;
+/// mehr bringt kaum etwas und macht die Summen je Block kuerzer.
+const SPALTENBLOECKE: usize = 4;
 
 #[cfg(test)]
 mod proben {
     use super::*;
+
+    /// **Die zeilenweise Kontraktion ist die spaltenweise von vorher**,
+    /// Wert fuer Wert, auch mit Nullen mitten im Vektor und mit Zustaenden
+    /// bis `2^57`, wo schon ein Produkt `i128` braucht.
+    ///
+    /// ⚑ Die Vergleichsformel ist die Schleife, die bis zum 2026-09-25 im
+    /// Kern stand: je Spalte `b` die Summe ueber `a` mit `S[a * wd + b]`.
+    #[test]
+    fn die_zeilenweise_kontraktion_ist_die_spaltenweise() {
+        let (sd, wd) = (7usize, 5usize);
+        let werte: Vec<i64> = (0..sd * wd)
+            .map(|i| ((i as i64 * 7919) % 2001 - 1000) << 47)
+            .collect();
+        let x: Vec<i16> = vec![3000, 0, -32768, 17, 0, 32767, -5];
+        let spaltenweise: Vec<i128> = (0..wd)
+            .map(|b| {
+                let mut akku: i128 = 0;
+                for (a, &x_a) in x.iter().enumerate() {
+                    if x_a != 0 {
+                        akku += i128::from(werte[a * wd + b]) * i128::from(x_a);
+                    }
+                }
+                akku
+            })
+            .collect();
+        assert!(spaltenweise.iter().any(|&s| s.unsigned_abs() > i64::MAX as u128), "die Probe erreicht i128 nicht");
+        assert_eq!(zeilen_kontrahieren(&werte, &x, wd), spaltenweise);
+    }
+
+    /// **Das Fenster rechnet jeden Kopf wie die Schleife Token fuer
+    /// Token**, ueber mehrere Fenster verschiedener Laenge, damit ein
+    /// vertauschter Zustand oder ein vertauschtes Token auffiele und nicht
+    /// erst im Modell.
+    #[test]
+    fn das_fenster_ist_bitgleich_zur_schleife() {
+        /// `(q, k, v, g, beta)` eines Kopfes fuer ein Token.
+        type Eingabe = (Vec<i16>, Vec<i16>, Vec<i16>, i64, i16);
+        let (koepfe, sd, wd) = (6usize, 8usize, 8usize);
+        let mut s: u64 = 0x2545_f491_4f6c_dd1d;
+        let mut zufall = |m: i64| -> i64 {
+            s ^= s << 13;
+            s ^= s >> 7;
+            s ^= s << 17;
+            (s % (2 * m as u64 + 1)) as i64 - m
+        };
+        let mut einzeln: Vec<Zustand> = (0..koepfe).map(|_| Zustand::leer(sd, wd)).collect();
+        let mut gesamt = einzeln.clone();
+        for token in [3usize, 1, 4] {
+            // eingaben[t][h]
+            let eingaben: Vec<Vec<Eingabe>> = (0..token)
+                .map(|_| {
+                    (0..koepfe)
+                        .map(|_| {
+                            let mut feld = |n: usize, m: i64| -> Vec<i16> { (0..n).map(|_| zufall(m) as i16).collect() };
+                            // 📌 **Mit Nullen mitten im Vektor.** Zufallswerte
+                            // bis 1400 sind fast nie null, und eine
+                            // Kontraktion, die an der ersten Null aufhoert
+                            // statt sie zu ueberspringen, blieb damit
+                            // unbemerkt (nachgestellt).
+                            let mut q = feld(sd, 1400);
+                            let mut k = feld(sd, 1400);
+                            q[2] = 0;
+                            k[3] = 0;
+                            let v = feld(wd, 600);
+                            (q, k, v, (1i64 << ZERFALL_FRAC) - 1 - zufall(1 << 24).abs(), (128 + zufall(100)) as i16)
+                        })
+                        .collect()
+                })
+                .collect();
+            let mut aus_a = vec![vec![0i16; koepfe * wd]; token];
+            let mut fracs_a = vec![vec![0u8; koepfe]; token];
+            for t in 0..token {
+                for (h, (q, k, v, g, beta)) in eingaben[t].iter().enumerate() {
+                    fracs_a[t][h] = schritt(&mut einzeln[h], q, k, v, *g, *beta, &mut aus_a[t][h * wd..(h + 1) * wd]);
+                }
+            }
+            let (aus_b, fracs_b) = schritte_fenster(
+                &mut gesamt,
+                token,
+                |h, t| {
+                    let (q, k, v, g, beta) = &eingaben[t][h];
+                    (q.as_slice(), k.as_slice(), v.as_slice(), *g, *beta)
+                },
+                4,
+            );
+            assert!(aus_a.iter().flatten().any(|&x| x != 0), "die Probe rechnet mit lauter Nullen");
+            assert_eq!(aus_a, aus_b, "{token} Token: das Fenster weicht in der Ausgabe ab");
+            assert_eq!(fracs_a, fracs_b, "{token} Token: das Fenster weicht in der Skala ab");
+            // 📌 **Und die Zustaende selbst.** Eine Verteilung, die jeden
+            // Kopf bestaendig in den Platz seines Nachbarn schreibt, gibt
+            // dieselben Ausgaben, denn jeder Platz sieht nur einen Kopf;
+            // sichtbar wird sie erst hier (nachgestellt).
+            assert_eq!(einzeln, gesamt, "{token} Token: das Fenster schreibt in fremde Zustaende");
+        }
+    }
 
     /// Ein Zustand, der nie beschrieben wurde, liefert null.
     #[test]

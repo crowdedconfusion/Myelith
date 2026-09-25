@@ -16,7 +16,7 @@ use crossterm::style::{Print, ResetColor, SetForegroundColor};
 use std::path::PathBuf;
 
 use crate::schirm::{Rahmen, Schirm};
-use crate::{animation, anzeige, auswahl, banner, design, eingabe, einstellseite, farben, wahl};
+use crate::{animation, anzeige, auswahl, banner, design, eingabe, einstellseite, wahl};
 
 /// Der Rueckgabewert des Programms.
 const GUT: i32 = 0;
@@ -145,16 +145,26 @@ pub fn fahren() -> i32 {
     // ⚑ **Der Vorspann laeuft nur vor einem Menschen.** In einer Roehre
     // oder einem Skript ist eine Animation Zeichensalat in einer Datei,
     // die jemand spaeter liest.
-    let farbe = farben::logo();
+    //
+    // ⚑ **Das Design wird dafuer schon hier gelesen** (2026-09-24): Das
+    // Logo entsteht im Farbverlauf des eingestellten Designs, und das
+    // Bild nach dem Aufbau ist genau das, in dem der erste Auftrag
+    // weiterfliesst.
+    let design = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())
+        .map(|e| e.oberflaeche.design)
+        .unwrap_or_default();
     if std::io::stdout().is_terminal() {
-        animation::abspielen(farbe);
+        // ⚑ **Zuerst den Hintergrund erfragen**, vor der ersten
+        // Tastenabfrage der Animation: Die Antwort kommt ueber die Eingabe.
+        design::grund_erfragen();
+        animation::abspielen(design);
     }
-    banner::bildschirm_mit(farbe);
+    banner::bildschirm_mit(design);
 
     // ⚑ **Die Warnung vor dem Agentenbetrieb** (Auftrag des
     // Projektinhabers, 2026-09-15). Diese Konsole **ist** der Agent,
     // also steht sie am Anfang und nicht hinter einem Schalter.
-    if warnung_zeigen(farbe) == SCHLECHT {
+    if warnung_zeigen(design) == SCHLECHT {
         return SCHLECHT;
     }
 
@@ -191,9 +201,7 @@ pub fn fahren() -> i32 {
         schreibt: myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())
             .map(|e| e.agent.schreiben)
             .unwrap_or(false),
-        design: myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())
-            .map(|e| e.oberflaeche.design)
-            .unwrap_or_default(),
+        design,
         modus: myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())
             .map(|e| e.agent.modus)
             .unwrap_or_default(),
@@ -235,7 +243,7 @@ pub fn fahren() -> i32 {
     }
     // ⚑ Auch hier frei: Die Modelliste ist abgearbeitet, und das Laden
     // soll auf einem leeren Schirm stehen, nicht unter ihr.
-    frei_bis_auf_das_logo(design::toene(stand.design).akzent);
+    frei_bis_auf_das_logo(stand.design);
 
     // ⚑ **Erst jetzt wird der untere Rand reserviert.** Vorher laufen
     // Vorspann, Modellwahl und Ladeanzeige, und die sollen den ganzen
@@ -271,6 +279,8 @@ fn schirm_leeren() {
     if !std::io::stdout().is_terminal() {
         return;
     }
+    // Mit dem Schirm geht das Logo; gemalt wird erst nach einem Neudruck.
+    crate::schimmer::vergessen();
     let _ = crossterm::execute!(
         std::io::stdout(),
         Clear(ClearType::All),
@@ -297,7 +307,7 @@ fn schirm_leeren() {
 /// ⚠️ **Nur mit Terminal.** In einer Roehre waere ein Loeschbefehl
 /// Zeichensalat in einer Datei, und der Schriftzug stuende dann zweimal
 /// darin.
-fn frei_bis_auf_das_logo(farbe: crossterm::style::Color) {
+fn frei_bis_auf_das_logo(design: myl_client::einstellungen::Konsolendesign) {
     use std::io::IsTerminal;
     if !std::io::stdout().is_terminal() {
         return;
@@ -307,7 +317,7 @@ fn frei_bis_auf_das_logo(farbe: crossterm::style::Color) {
         crossterm::terminal::Clear(crossterm::terminal::ClearType::All),
         crossterm::cursor::MoveTo(0, 0),
     );
-    banner::bildschirm_mit(farbe);
+    banner::bildschirm_mit(design);
 }
 
 fn design_waehlen(stand: &mut Stand) {
@@ -327,7 +337,7 @@ fn design_waehlen(stand: &mut Stand) {
     }
     // ⚑ Mit der eben gewaehlten Farbe: Der Schriftzug zeigt die
     // Entscheidung, statt sie erst beim naechsten Bildschirm zu zeigen.
-    frei_bis_auf_das_logo(design::toene(stand.design).akzent);
+    frei_bis_auf_das_logo(stand.design);
 }
 
 /// Wie eine Modellwahl ausgegangen ist.
@@ -436,7 +446,7 @@ fn modell_waehlen(stand: &mut Stand) -> Modellwahl {
             // dem Gespraech dauerhaft acht Zeilen. Der untere Rand ist
             // reserviert, weil dort die Eingabe steht; oben ist Platz
             // wertvoller als Zierrat.
-            banner::bildschirm_mit(farben::logo());
+            banner::bildschirm_mit(stand.design);
             println!("  Modell {name} ({pfad}) wurde geladen.");
             println!();
             // ⚑ Die Kiste haengt am Modell, also wird sie hier
@@ -720,16 +730,21 @@ fn schleife(stand: &mut Stand) -> i32 {
         // ⚑ **Und sie steht in der Zeitleiste**, dort, wo auch die
         // Antwort steht. **Ein Gespraech, in dem nur eine Seite
         // dasteht, laesst sich hinterher nicht lesen.**
-        let mut aus = std::io::stdout();
-        let _ = crossterm::queue!(
-            aus,
-            SetForegroundColor(toene.akzent),
-            // ⚑ Am linken Rand wie die Werkzeugzeilen: Die Zeitleiste
-            // ist ein Gespraech und braucht **eine** Kante.
-            Print(format!("  ❯ {text}\n")),
-            ResetColor
-        );
-        let _ = aus.flush();
+        //
+        // ⚑ **Im Kaestchen auf verblassendem Grund, mittig** (Auftrag des
+        // Projektinhabers, 2026-09-24), buendig mit dem Eingaberahmen;
+        // Zeitleiste und Antwort bleiben links. **Und danach
+        // eine Leerzeile**: Eingabe und Antwort sollen sich nicht
+        // beruehren.
+        let rollen = design::rollen(stand.design);
+        let rahmen = Rahmen::messen();
+        let kastenbreite = rahmen.innen + 2;
+        let einzug = rahmen.einzug.chars().count();
+        let grund = design::terminalgrund();
+        for zeile in crate::antwort::eingabe_kasten(&text, kastenbreite, einzug, &rollen, grund, design::farbig()) {
+            println!("{zeile}");
+        }
+        println!();
 
         match befehl_zu(&text) {
             Some(Befehlsart::Ende) => return GUT,
@@ -1076,16 +1091,6 @@ fn einstellungen_zeigen(stand: &mut Stand) {
         schirm_leeren();
     }
     let geaendert = einstellseite::fahren(t, &stand.ordner);
-    if let Some(sch) = stand.schirm {
-        // ⚑ **Zurueck ins Gespraech heisst zurueck unter das Logo**
-        // (Auftrag des Projektinhabers, 2026-09-12). Hier stand ein
-        // blosses Leeren, und das Gespraech ging auf einem leeren
-        // Schirm weiter, waehrend es nach der Modellwahl unter dem
-        // Schriftzug begann. **Zwei Wege in dasselbe Bild duerfen nicht
-        // verschieden aussehen.**
-        banner::bildschirm_mit(farben::logo());
-        sch.einrichten();
-    }
     // ⚑ **Was hier geaendert wurde, gilt sofort.** Eine Einstellung,
     // die erst beim naechsten Start wirkt, laesst jemanden zweimal
     // dasselbe tun.
@@ -1103,6 +1108,19 @@ fn einstellungen_zeigen(stand: &mut Stand) {
                 stand.kiste = kiste.name().to_string();
             }
         }
+    }
+    if let Some(sch) = stand.schirm {
+        // ⚑ **Zurueck ins Gespraech heisst zurueck unter das Logo**
+        // (Auftrag des Projektinhabers, 2026-09-12). Hier stand ein
+        // blosses Leeren, und das Gespraech ging auf einem leeren
+        // Schirm weiter, waehrend es nach der Modellwahl unter dem
+        // Schriftzug begann. **Zwei Wege in dasselbe Bild duerfen nicht
+        // verschieden aussehen.**
+        //
+        // ⚑ **Nach der Uebernahme gedruckt** (2026-09-24): Wer auf der
+        // Seite das Design wechselt, sieht das Logo sofort darin.
+        banner::bildschirm_mit(stand.design);
+        sch.einrichten();
     }
 }
 
@@ -1470,15 +1488,25 @@ fn auftrag_fahren(stand: &mut Stand, auftrag: &str) {
     // haben.
     drop(roh);
 
+    // ⚑ **Die Antwort wird gesetzt** (Auftrag des Projektinhabers,
+    // 2026-09-24): Ueberschriften, Code und Aufzaehlungen stehen in den
+    // Rollen des Designs, statt roh als Markdown. Ohne Terminal oder mit
+    // `NO_COLOR` bleibt sie, wie sie kam.
+    let rollen = design::rollen(stand.design);
+    let farbig = design::farbig();
+    // ⚑ **Luft vor der Antwort**: Die Zeitleiste endet, die Antwort
+    // beginnt, und das soll man sehen.
+    println!();
     match aus.antwort.as_deref() {
-        Some(a) => println!("{a}"),
-        None => println!("(keine Schlussantwort)"),
+        Some(a) => println!("{}", crate::antwort::setzen(a, &rollen, farbig)),
+        None => println!("{}", rollen.warnung.faerben("(keine Schlussantwort)", farbig)),
     }
     println!();
     // ⚑ **Wer die Aufrufe nicht gesehen hat, erfaehrt wenigstens, dass
     // es welche gab**, und womit er sie beim naechsten Mal sieht.
     if wieviele > 0 && !gesehen {
-        println!("  {} zeigt die Werkzeugzeilen ausfuehrlich.", anzeige::SCHALTER);
+        let satz = format!("  {} zeigt die Werkzeugzeilen ausfuehrlich.", anzeige::SCHALTER);
+        println!("{}", rollen.beiwerk.faerben(&satz, farbig));
     }
     // ⚑ **Das Gespraech geht mit**, samt einer Verdichtung, falls der Lauf
     // eine brauchte.
@@ -1490,14 +1518,15 @@ fn auftrag_fahren(stand: &mut Stand, auftrag: &str) {
         .and_then(|m| myl_client::gespraech::anzeige(m, stand.ansage.as_ref(), &stand.gespraech));
     stand.kontext_prozent = kontext.map(|a| a.prozent);
     let kontextangabe = kontext.map(|a| format!(" · Kontext {} %", a.prozent)).unwrap_or_default();
-    println!(
-        "  {} Schritte, {:.1} s{kontextangabe}",
-        aus.verlauf.len(),
-        aus.sekunden
-    );
+    let bilanz = format!("  {} Schritte, {:.1} s{kontextangabe}", aus.verlauf.len(), aus.sekunden);
+    println!("{}", rollen.beiwerk.faerben(&bilanz, farbig));
     if matches!(aus.ende, myl_client::Ende::Tuer(myl_client::Tuerfehler::KontextVoll { .. })) {
-        println!("  Der Kontext ist voll. `/compress` fasst das Gespraech zusammen, `/clear` beginnt neu.");
+        let satz = "  Der Kontext ist voll. `/compress` fasst das Gespraech zusammen, `/clear` beginnt neu.";
+        println!("{}", rollen.warnung.faerben(satz, farbig));
     }
+    // ⚑ **Zwei Leerzeilen bis zur naechsten Eingabe**: Ein Auftrag und
+    // der naechste sind zwei Absaetze, nicht einer.
+    println!();
     println!();
 }
 
@@ -1782,7 +1811,7 @@ mod tests {
 /// ⚠️ **Ohne Terminal wird nichts gefragt.** In einer Roehre gibt es
 /// niemanden, der zustimmen koennte; die Warnung wird dann gedruckt und
 /// der Lauf geht weiter, so wie der Vorspann dort auch entfaellt.
-fn warnung_zeigen(farbe: crossterm::style::Color) -> i32 {
+fn warnung_zeigen(design: myl_client::einstellungen::Konsolendesign) -> i32 {
     use std::io::{BufRead, IsTerminal, Write};
 
     let Ok(e) = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad()) else {
@@ -1859,7 +1888,7 @@ fn warnung_zeigen(farbe: crossterm::style::Color) -> i32 {
     // Die frueheren Ausgaenge drucken nichts (Warnung abgeschaltet) oder
     // haben kein Terminal; dort waere ein Loeschbefehl ein Flackern ohne
     // Grund oder Zeichensalat in einer Datei.
-    frei_bis_auf_das_logo(farbe);
+    frei_bis_auf_das_logo(design);
     GUT
 }
 

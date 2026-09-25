@@ -359,6 +359,9 @@ pub fn mit_pfeilen(f: &Feld) -> bool {
 ///
 /// Gibt zurueck, ob etwas geaendert wurde.
 pub fn fahren(t: Toene, ordner: &std::path::Path) -> bool {
+    // ⛔️ **Die Seite nimmt den ganzen Schirm**, und das Logo ist danach
+    // nicht mehr dort, wo es gedruckt wurde ([`crate::schimmer`]).
+    crate::schimmer::vergessen();
     let pfad = Einstellungen::vorgabepfad();
     let mut e = match Einstellungen::lesen(&pfad) {
         Ok(e) => e,

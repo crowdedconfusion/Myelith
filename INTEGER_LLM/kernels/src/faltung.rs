@@ -122,58 +122,171 @@ pub fn schritt(
     assert_eq!(w_schiebungen.len(), c, "eine Schiebung je Kanal");
     assert_eq!(aus_fracs.len(), c, "eine Ausgangsskala je Kanal (Fund 421)");
 
+    let sig = Sigmoid { lut: sigmoid_lut, versatz: sigmoid_versatz, ein_frac: sigmoid_ein_frac, aus_frac: sigmoid_aus_frac };
     for kanal in 0..c {
-        let w = &gewicht[kanal * KERN..(kanal + 1) * KERN];
         let basis = kanal * (KERN - 1);
-
-        // --- 1. Die Summe ueber die letzten KERN Stellen.
-        //
-        // ⚑ **i64 und nicht i32.** Vier Summanden aus int8 mal int16
-        // passen zwar in i32; die Summe geht aber danach durch
-        // `rescale_i64`, und ein Wechsel des Typs mitten in der
-        // Rechnung ist eine Stelle, an der jemand spaeter eine
-        // Saettigung uebersieht.
-        let mut akku: i64 = 0;
-        for (j, &w_j) in w.iter().enumerate().take(KERN - 1) {
-            akku += i64::from(w_j) * i64::from(fenster.werte[basis + j]);
-        }
-        akku += i64::from(w[KERN - 1]) * i64::from(ein[kanal]);
-
-        // --- 2. SiLU als Zerlegung, nicht als Tabelle ueber `x`.
-        //
-        // ⚑ **Nach der Summe und nicht davor.** Die Vorlage faltet
-        // zuerst und aktiviert dann; umgekehrt waere es eine andere
-        // Funktion.
-        //
-        // ⛔️ **Und `x` geht ungerastert hinein** (Fund 417). Bis zum
-        // 2026-09-22 stand hier ein `silu_nachschlagen`, das `akku`
-        // zuerst auf das Eingangsraster der SiLU-Tabelle brachte. Fuer
-        // `q` und `k` liegt dieser Zweig zwei Rasterschritte ueber null;
-        // die Tabelle loeschte sie damit aus. Die Begruendung steht bei
-        // [`silu_zerlegt`].
-        aus[kanal] = clamp_i16_from_i64(silu_zerlegt(
-            akku,
+        aus[kanal] = kanal_schritt(
+            &gewicht[kanal * KERN..(kanal + 1) * KERN],
+            &mut fenster.werte[basis..basis + KERN - 1],
+            ein[kanal],
             w_schiebungen[kanal] + ein_frac,
-            sigmoid_lut,
-            sigmoid_versatz,
-            sigmoid_ein_frac,
-            sigmoid_aus_frac,
+            &sig,
             aus_fracs[kanal],
-        ));
-
-        // --- 4. Das Fenster nachziehen.
-        //
-        // ⚑ **Schieben statt Ringpuffer.** Bei `KERN - 1 = 3` sind es
-        // drei Zuweisungen je Kanal; ein Ringpuffer spart sie und
-        // handelt sich dafuer eine Positionsrechnung ein, die bei einer
-        // Uebernahme mitgefuehrt werden muesste. **Die Rechnung ist hier
-        // nicht der Engpass**, die Gewichte sind es.
-        for j in 0..KERN - 2 {
-            fenster.werte[basis + j] = fenster.werte[basis + j + 1];
-        }
-        fenster.werte[basis + KERN - 2] = ein[kanal];
+        );
     }
 }
+
+/// Die Sigmoid-Tabelle mit ihren Massen, fuer die SiLU der Faltung.
+struct Sigmoid<'a> {
+    lut: &'a [i16],
+    versatz: i16,
+    ein_frac: u8,
+    aus_frac: u8,
+}
+
+/// **Ein Kanal, ein Token**: der Kern von [`schritt`] und
+/// [`schritte_fenster`], damit beide Wege dieselbe Rechnung sind.
+///
+/// `fenster` sind die `KERN - 1` gemerkten Eingaenge dieses Kanals,
+/// der aelteste zuerst; danach steht `x` als juengster darin.
+#[inline]
+fn kanal_schritt(
+    w: &[i8],
+    fenster: &mut [i16],
+    x: i16,
+    x_frac: u8,
+    sig: &Sigmoid<'_>,
+    aus_frac: u8,
+) -> i16 {
+    // --- 1. Die Summe ueber die letzten KERN Stellen.
+    //
+    // ⚑ **i64 und nicht i32.** Vier Summanden aus int8 mal int16
+    // passen zwar in i32; die Summe geht aber danach durch
+    // `rescale_i64`, und ein Wechsel des Typs mitten in der
+    // Rechnung ist eine Stelle, an der jemand spaeter eine
+    // Saettigung uebersieht.
+    let mut akku: i64 = 0;
+    for (&w_j, &f_j) in w.iter().zip(fenster.iter()) {
+        akku += i64::from(w_j) * i64::from(f_j);
+    }
+    akku += i64::from(w[KERN - 1]) * i64::from(x);
+
+    // --- 2. SiLU als Zerlegung, nicht als Tabelle ueber `x`.
+    //
+    // ⚑ **Nach der Summe und nicht davor.** Die Vorlage faltet
+    // zuerst und aktiviert dann; umgekehrt waere es eine andere
+    // Funktion.
+    //
+    // ⛔️ **Und `x` geht ungerastert hinein** (Fund 417). Bis zum
+    // 2026-09-22 stand hier ein `silu_nachschlagen`, das `akku`
+    // zuerst auf das Eingangsraster der SiLU-Tabelle brachte. Fuer
+    // `q` und `k` liegt dieser Zweig zwei Rasterschritte ueber null;
+    // die Tabelle loeschte sie damit aus. Die Begruendung steht bei
+    // [`silu_zerlegt`].
+    let aus = clamp_i16_from_i64(silu_zerlegt(
+        akku, x_frac, sig.lut, sig.versatz, sig.ein_frac, sig.aus_frac, aus_frac,
+    ));
+
+    // --- 3. Das Fenster nachziehen.
+    //
+    // ⚑ **Schieben statt Ringpuffer.** Bei `KERN - 1 = 3` sind es
+    // drei Zuweisungen je Kanal; ein Ringpuffer spart sie und
+    // handelt sich dafuer eine Positionsrechnung ein, die bei einer
+    // Uebernahme mitgefuehrt werden muesste.
+    fenster.copy_within(1.., 0);
+    fenster[KERN - 2] = x;
+    aus
+}
+
+/// **Die Faltung fuer mehrere Token auf einmal**, verteilt ueber die
+/// Kanaele.
+///
+/// ⚑ **Ein Kanal haengt nur an sich selbst**: an seinen eigenen
+/// gemerkten Eingaengen und seinem eigenen Kern. Nacheinander sind nur
+/// die Token eines Kanals, nicht die Kanaele untereinander. Hier laeuft
+/// deshalb jeder Kanal ueber alle Token, und die Kanaele laufen
+/// verteilt. Jeder Wert ist derselbe wie aus [`schritt`] Token fuer
+/// Token, denn beide rufen denselben Kern.
+///
+/// ⚑ **Ohne geteilten veraenderlichen Zustand**: Jeder Block rechnet auf
+/// einer Abschrift der Fenster seiner Kanaele und gibt die neuen Fenster
+/// mit seinen Ausgaben zurueck; eingetragen werden sie danach.
+///
+/// Rueckgabe: je Token die Ausgaben aller Kanaele.
+#[allow(clippy::too_many_arguments)]
+pub fn schritte_fenster(
+    fenster: &mut Faltungsfenster,
+    ein: &[&[i16]],
+    gewicht: &[i8],
+    w_schiebungen: &[u8],
+    ein_frac: u8,
+    sigmoid_lut: &[i16],
+    sigmoid_versatz: i16,
+    sigmoid_ein_frac: u8,
+    sigmoid_aus_frac: u8,
+    aus_fracs: &[u8],
+    faeden: usize,
+) -> Vec<Vec<i16>> {
+    let c = fenster.kanaele;
+    let n = ein.len();
+    assert!(ein.iter().all(|x| x.len() == c), "ein Eingang passt nicht zur Kanalzahl");
+    assert_eq!(gewicht.len(), c * KERN, "ein Kern von {KERN} Stellen je Kanal");
+    assert_eq!(w_schiebungen.len(), c, "eine Schiebung je Kanal");
+    assert_eq!(aus_fracs.len(), c, "eine Ausgangsskala je Kanal (Fund 421)");
+    let sig = Sigmoid { lut: sigmoid_lut, versatz: sigmoid_versatz, ein_frac: sigmoid_ein_frac, aus_frac: sigmoid_aus_frac };
+
+    // ⚑ **Je Einheit ein Block von Kanaelen, nicht ein einzelner**
+    //   (2026-09-25). Mit einem Kanal je Einheit las jede ein Token nach
+    //   dem anderen quer durch den Speicher, und das Umsortieren danach
+    //   schrieb jeden Wert einzeln an seine Stelle; gemessen bei 8192
+    //   Kanaelen und 64 Token 3,0 bis 3,8 ms. Ein Block liest je Token
+    //   einen zusammenhaengenden Abschnitt und schreibt ihn ebenso:
+    //   1,0 bis 1,3 ms, Bit fuer Bit dasselbe.
+    let block = KANALBLOCK.min(c.max(1));
+    let bloecke = c.div_ceil(block);
+    // Je Block eine Zeile: je Token die Ausgaben des Blocks, dahinter
+    // die neuen Fenster seiner Kanaele.
+    let breite = n * block + block * (KERN - 1);
+    let alt = &fenster.werte;
+    let zeilen = crate::fadenpool::rechnen_breit(bloecke, breite, faeden, |b, ziel| {
+        let c0 = b * block;
+        let c1 = (c0 + block).min(c);
+        let (ausgaben, neu) = ziel.split_at_mut(n * block);
+        let neu = &mut neu[..(c1 - c0) * (KERN - 1)];
+        neu.copy_from_slice(&alt[c0 * (KERN - 1)..c1 * (KERN - 1)]);
+        for (t, x) in ein.iter().enumerate() {
+            for kanal in c0..c1 {
+                let j = kanal - c0;
+                ausgaben[t * block + j] = kanal_schritt(
+                    &gewicht[kanal * KERN..(kanal + 1) * KERN],
+                    &mut neu[j * (KERN - 1)..(j + 1) * (KERN - 1)],
+                    x[kanal],
+                    w_schiebungen[kanal] + ein_frac,
+                    &sig,
+                    aus_fracs[kanal],
+                );
+            }
+        }
+    });
+    let mut aus = vec![vec![0i16; c]; n];
+    for (b, zeile) in zeilen.chunks_exact(breite).enumerate() {
+        let c0 = b * block;
+        let c1 = (c0 + block).min(c);
+        for (t, a) in aus.iter_mut().enumerate() {
+            a[c0..c1].copy_from_slice(&zeile[t * block..t * block + (c1 - c0)]);
+        }
+        fenster.werte[c0 * (KERN - 1)..c1 * (KERN - 1)]
+            .copy_from_slice(&zeile[n * block..n * block + (c1 - c0) * (KERN - 1)]);
+    }
+    aus
+}
+
+/// **Wie viele Kanaele eine Einheit von [`schritte_fenster`] rechnet.**
+///
+/// ⚑ 64 Kanaele sind bei 8192 Kanaelen 128 Einheiten, genug fuer eine
+/// gleichmaessige Verteilung auf die Faeden, und je Token ein Abschnitt
+/// von 128 Byte am Stueck.
+const KANALBLOCK: usize = 64;
 
 #[cfg(test)]
 mod proben {
@@ -260,6 +373,44 @@ mod proben {
 
     /// **Der Anfang einer Folge ist null**, wie bei der Vorlage mit
     /// `padding = KERN - 1`.
+    /// **Die Faltung ueber ein Fenster von Token ist die Faltung Token fuer
+    /// Token**, Wert fuer Wert und im Fenster danach, auch ueber zwei
+    /// aufeinanderfolgende Aufrufe und mit einem einzelnen Token.
+    #[test]
+    fn das_fenster_rechnet_wie_token_fuer_token() {
+        // 150 Kanaele: zwei volle Bloecke zu 64 und ein angebrochener.
+        let c = 150;
+        let lut = sigmoid_tabelle(8, 8, 4096);
+        let mut s: u64 = 0x5851_f42d_4c95_7f2d;
+        let mut zufall = |m: i64| -> i64 {
+            s ^= s << 13;
+            s ^= s >> 7;
+            s ^= s << 17;
+            (s % (2 * m as u64 + 1)) as i64 - m
+        };
+        let w: Vec<i8> = (0..c * KERN).map(|_| zufall(127) as i8).collect();
+        let schiebungen: Vec<u8> = (0..c).map(|k| (k % 3) as u8 + 5).collect();
+        let fracs: Vec<u8> = (0..c).map(|k| (k % 4) as u8 + 6).collect();
+        let mut einzeln = Faltungsfenster::leer(c, KERN);
+        let mut gesamt = Faltungsfenster::leer(c, KERN);
+        for (runde, n) in [5usize, 1, 3].into_iter().enumerate() {
+            let eingaben: Vec<Vec<i16>> = (0..n).map(|_| (0..c).map(|_| zufall(3000) as i16).collect()).collect();
+            let erwartet: Vec<Vec<i16>> = eingaben
+                .iter()
+                .map(|x| {
+                    let mut aus = vec![0i16; c];
+                    schritt(&mut einzeln, x, &w, &schiebungen, 8, &lut, 4096, 8, 8, &fracs, &mut aus);
+                    aus
+                })
+                .collect();
+            let refs: Vec<&[i16]> = eingaben.iter().map(Vec::as_slice).collect();
+            let aus = schritte_fenster(&mut gesamt, &refs, &w, &schiebungen, 8, &lut, 4096, 8, 8, &fracs, 4);
+            assert!(erwartet.iter().flatten().any(|&x| x != 0), "die Probe rechnet mit lauter Nullen");
+            assert_eq!(aus, erwartet, "Runde {runde}: die Ausgaben weichen ab");
+            assert_eq!(gesamt, einzeln, "Runde {runde}: das Fenster danach weicht ab");
+        }
+    }
+
     #[test]
     fn ein_leeres_fenster_traegt_nullen() {
         let f = Faltungsfenster::leer(5, KERN);

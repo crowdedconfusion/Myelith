@@ -70,13 +70,16 @@ const RAEDER: [&[char]; 6] = [
 /// ⚑ **Daraus ergibt sich die Geschwindigkeit der Welle:** Bei 400 ms
 /// je Zeichen laeuft sie zweieinhalb Zeichen in der Sekunde nach links,
 /// waehrend der ganze Farbkreis weiter zwei Minuten braucht.
-const WELLE: Duration = Duration::from_millis(400);
+///
+/// ⚑ **Auch das Logo wandert in diesem Takt**, eine Spalte je Welle
+/// ([`crate::schimmer`]); die beiden Bewegungen sollen zusammengehoeren.
+pub(crate) const WELLE: Duration = Duration::from_millis(400);
 
 /// Wie lange ein voller Farbdurchlauf dauert.
 ///
 /// ⚑ **Zwei Minuten** (Festlegung des Projektinhabers). Lang genug, dass
 /// die Zeile nicht blinkt, und kurz genug, dass man die Bewegung sieht.
-const REGENBOGEN: Duration = Duration::from_secs(120);
+pub(crate) const REGENBOGEN: Duration = Duration::from_secs(120);
 
 /// Wie lange ein Takt dauert.
 const TAKT: Duration = Duration::from_millis(90);
@@ -100,10 +103,97 @@ pub const SCHALTER: &str = "^S";
 /// steht jede Zeile da, sobald sie entsteht, und der Schalter
 /// entscheidet nur, **wie ausfuehrlich** die naechsten sind.
 struct Zeitzeile {
+    /// Was die Zeile meldet; danach richtet sich ihr Stil.
+    art: Art,
     /// Die kurze Form. `None` heisst: ohne Schalter gar nicht zeigen.
     kurz: Option<String>,
     /// Die ausfuehrliche Form.
     voll: String,
+}
+
+/// **Was eine Zeile der Zeitleiste meldet.**
+///
+/// ⚑ **Die Art steht an der Zeile und nicht in ihrem Text** (2026-09-24):
+/// Gesetzt wird beim Schreiben ([`zeile_setzen`]), und dort soll niemand
+/// aus einem Pfeil erraten muessen, was gemeint war.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Art {
+    /// `● Schritt n · Zeit`
+    Schritt,
+    /// `→ werkzeug argumente`
+    Aufruf,
+    /// `← werkzeug ergebnis`
+    Ergebnis,
+    /// `⚑ werkzeug abgelehnt: grund`
+    Abgelehnt,
+    /// Alles andere: verdichtet, umgeschaltet.
+    Hinweis,
+}
+
+/// **Setzt eine Zeile der Zeitleiste in den Rollen des Designs.**
+///
+/// Rein, damit es sich pruefen laesst: Dieselbe Zeile ergibt dieselben
+/// Zeichen. Ohne `farbig` kommt die Zeile unveraendert zurueck, und in
+/// jedem Fall steht derselbe Text da, nur anders gefaerbt.
+///
+/// | Art | Stil |
+/// |---|---|
+/// | Aufruf | Pfeil und Werkzeug als Aktion, die Argumente schlicht |
+/// | Ergebnis | Pfeil und Werkzeug als Ergebnis, der Inhalt als Beiwerk |
+/// | Abgelehnt | Marke, Werkzeug und „abgelehnt:" als Warnung |
+/// | Schritt | die Marke hervorgehoben, der Rest als Beiwerk |
+/// | Hinweis | ganz als Beiwerk |
+pub fn zeile_setzen(art: Art, zeile: &str, r: &design::Rollen, farbig: bool) -> String {
+    if !farbig {
+        return zeile.to_string();
+    }
+    let rumpf = zeile.trim_start();
+    let einzug = &zeile[..zeile.len() - rumpf.len()];
+    // Marke und erstes Wort: `→ name`, `← name`, `● Schritt`.
+    let kopf_ende = |n: usize| {
+        rumpf.char_indices().filter(|(_, c)| *c == ' ').nth(n).map(|(i, _)| i).unwrap_or(rumpf.len())
+    };
+    let (kopf, rest) = match art {
+        Art::Aufruf | Art::Ergebnis => rumpf.split_at(kopf_ende(1)),
+        Art::Abgelehnt => match rumpf.find("abgelehnt:") {
+            Some(i) => rumpf.split_at(i + "abgelehnt:".len()),
+            None => (rumpf, ""),
+        },
+        Art::Schritt => rumpf.split_at(rumpf.chars().next().map(char::len_utf8).unwrap_or(0)),
+        Art::Hinweis => ("", rumpf),
+    };
+    let (kopfstil, reststil) = match art {
+        Art::Aufruf => (r.aktion, None),
+        Art::Ergebnis => (r.ergebnis, Some(r.beiwerk)),
+        Art::Abgelehnt => (r.warnung, None),
+        Art::Schritt => (r.marke, Some(r.beiwerk)),
+        Art::Hinweis => (r.beiwerk, Some(r.beiwerk)),
+    };
+    let rest = match reststil {
+        Some(st) => st.faerben(rest, true),
+        None => rest.to_string(),
+    };
+    format!("{einzug}{}{rest}", kopfstil.faerben(kopf, true))
+}
+
+/// **Welche Art Text zuletzt in der Zeitleiste stand.**
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Block {
+    /// Zeilen der Zeitleiste: Schritte, Aufrufe, Rueckgaben.
+    Handlung,
+    /// Text des Modells im Rohstrom.
+    Text,
+}
+
+/// **Ob vor dem naechsten Stueck eine Leerzeile steht.**
+///
+/// ⚑ **Zwischen Handlungen und Text des Modells ein Absatz** (Auftrag
+/// des Projektinhabers, 2026-09-24): Wechselt die Zeitleiste von
+/// Werkzeugzeilen zu Modelltext oder zurueck, steht eine Leerzeile
+/// dazwischen. Innerhalb einer Art nicht, sonst zerfiele eine Folge von
+/// Aufrufen in lauter Einzelstuecke.
+fn absatz_noetig(vorher: Option<Block>, jetzt: Block) -> bool {
+    vorher.is_some_and(|v| v != jetzt)
 }
 
 /// Was der Faden zu wissen braucht.
@@ -126,7 +216,14 @@ struct Lage {
     ///
     /// ⚑ **Token fuer Token, so wie sie fallen.** Ohne das sieht ein
     /// Denkvorgang von einer Minute aus wie Stillstand.
-    strom: String,
+    ///
+    /// ⚑ **Je Stueck mit seiner Art** (2026-09-24): `true` heisst Denken.
+    /// In einer einzigen Zeichenkette liessen sich Denken und Antwort
+    /// nachher nicht mehr auseinanderhalten, und das Denken soll anders
+    /// aussehen.
+    strom: Vec<(bool, String)>,
+    /// Was zuletzt geschrieben wurde, fuer den Absatz beim Wechsel.
+    zuletzt: Option<Block>,
     /// Ob eine angefangene Zeile des Stroms auf dem Schirm steht.
     ///
     /// ⚠️ **Solange sie steht, wird die Statuszeile nicht gezeichnet.**
@@ -220,7 +317,8 @@ impl Anzeige {
             offen: Vec::new(),
             gezaehlt: 0,
             details: false,
-            strom: String::new(),
+            strom: Vec::new(),
+            zuletzt: None,
             strom_offen: false,
             saat,
             abbruchfrage: false,
@@ -233,6 +331,13 @@ impl Anzeige {
 
         let lage = Arc::new(Mutex::new(anfangslage));
         let laeuft = Arc::new(AtomicBool::new(true));
+        // ⚑ **Das Logo fliesst, solange der Auftrag laeuft**, und setzt
+        // dort fort, wo es beim vorigen stehenblieb ([`crate::schimmer`]).
+        // Ohne Schirm gibt es niemanden, der es sieht, und keinen Faden,
+        // der es malt; die Uhr liefe dann umsonst.
+        if am_schirm {
+            crate::schimmer::los();
+        }
         let faden = am_schirm.then(|| {
             let lage = Arc::clone(&lage);
             let laeuft = Arc::clone(&laeuft);
@@ -254,7 +359,7 @@ impl Anzeige {
             l.was = "thinking".to_string();
             l.neuer_spruch();
             let seit = dauer(l.anfang.elapsed());
-            l.offen.push(Zeitzeile { kurz: None, voll: format!("  ● Schritt {n} · {seit}") });
+            l.offen.push(Zeitzeile { art: Art::Schritt, kurz: None, voll: format!("  ● Schritt {n} · {seit}") });
         }
         self.spuelen();
     }
@@ -263,6 +368,7 @@ impl Anzeige {
     pub fn aufruf(&self, name: &str, kurz: &str, voll: &str) {
         self.merken(
             Zeitzeile {
+                art: Art::Aufruf,
                 kurz: Some(format!("  → {name} {kurz}")),
                 voll: format!("  → {name} {voll}"),
             },
@@ -274,6 +380,7 @@ impl Anzeige {
     pub fn ergebnis(&self, name: &str, kurz: &str, voll: &str) {
         self.merken(
             Zeitzeile {
+                art: Art::Ergebnis,
                 kurz: Some(format!("  ← {name} {kurz}")),
                 voll: format!("  ← {name} {voll}"),
             },
@@ -284,14 +391,14 @@ impl Anzeige {
     /// Ein Vorschlag wurde abgewiesen.
     pub fn abgelehnt(&self, name: &str, grund: &str) {
         let z = format!("  ⚑ {name} abgelehnt: {grund}");
-        self.merken(Zeitzeile { kurz: Some(z.clone()), voll: z }, Some("abgelehnt".to_string()));
+        self.merken(Zeitzeile { art: Art::Abgelehnt, kurz: Some(z.clone()), voll: z }, Some("abgelehnt".to_string()));
     }
 
     /// **Der Agent hat den Verlauf verdichtet**, weil der naechste Schritt
     /// nicht mehr in den Kontext passte.
     pub fn verdichtet(&self, vorher: usize, nachher: usize) {
         let z = format!("  ⚑ Kontext verdichtet: {vorher} → {nachher} Token");
-        self.merken(Zeitzeile { kurz: Some(z.clone()), voll: z }, Some("verdichtet".to_string()));
+        self.merken(Zeitzeile { art: Art::Hinweis, kurz: Some(z.clone()), voll: z }, Some("verdichtet".to_string()));
     }
 
     fn merken(&self, zeile: Zeitzeile, was: Option<String>) {
@@ -353,7 +460,7 @@ impl Anzeige {
     fn strom_schliessen(&self) {
         if let Ok(mut l) = self.lage.lock() {
             if l.strom_offen {
-                l.strom.push('\n');
+                l.strom.push((false, "\n".to_string()));
             }
         }
         self.spuelen();
@@ -369,6 +476,10 @@ impl Anzeige {
         if let Some(f) = self.faden.take() {
             let _ = f.join();
         }
+        // ⚑ **Erst nach dem letzten Bild angehalten**: Der Faden malt bis
+        // zuletzt im Stand der Uhr, und genau dieser Stand soll stehen
+        // bleiben, auch bei jedem Neudruck bis zum naechsten Auftrag.
+        crate::schimmer::halt();
         if self.am_schirm {
             let mut aus = std::io::stdout();
             let _ = write!(aus, "\r\x1b[2K");
@@ -428,6 +539,14 @@ fn takten(
             }
         }
         zeichnen(&lage, takt, bild, schirm, &zaehler);
+        // ⚑ **Das Logo nach der Zeile**, denn erst dann steht der Wagen
+        // wieder im Rollbereich, und nach ihm richtet sich, ob gemalt
+        // werden darf.
+        if let Some(sch) = schirm {
+            if takt.is_multiple_of(crate::schimmer::MALTAKT) {
+                crate::schimmer::malen(sch.rollende());
+            }
+        }
         takt = takt.wrapping_add(1);
     }
 }
@@ -482,6 +601,7 @@ fn umschalten(lage: &Arc<Mutex<Lage>>) {
         // weiss mehr, warum die Zeilen ab hier laenger sind.
         let wort = if l.details { "an" } else { "aus" };
         l.offen.push(Zeitzeile {
+            art: Art::Hinweis,
             kurz: Some(format!("  · ausfuehrlich: {wort}")),
             voll: format!("  · ausfuehrlich: {wort}"),
         });
@@ -520,6 +640,8 @@ fn zeichnen(
     // ⚑ **Was ansteht, wird gedruckt und bleibt stehen.** Nur die
     // Statuszeile darunter wird ueberschrieben; die Zeitleiste selbst
     // wird nie geloescht.
+    let rollen = design::rollen(bild);
+    let farbig = design::farbig();
     if !l.offen.is_empty() {
         let ausfuehrlich = l.details;
         let offen: Vec<Zeitzeile> = std::mem::take(&mut l.offen);
@@ -528,7 +650,11 @@ fn zeichnen(
             let text = if ausfuehrlich { Some(z.voll) } else { z.kurz };
             if let Some(t) = text {
                 l.gezaehlt += 1;
-                let _ = write!(aus, "{t}\r\n");
+                if absatz_noetig(l.zuletzt, Block::Handlung) {
+                    let _ = write!(aus, "\r\n");
+                }
+                l.zuletzt = Some(Block::Handlung);
+                let _ = write!(aus, "{}\r\n", zeile_setzen(z.art, &t, &rollen, farbig));
             }
         }
     }
@@ -575,26 +701,28 @@ fn zeichnen(
     // Statuszeile beginnt mit `\r` und raeumte weg, was gerade
     // entsteht; sie kommt zurueck, sobald der Schritt zu Ende ist.
     if !l.strom.is_empty() {
-        let text = std::mem::take(&mut l.strom);
+        let stuecke = std::mem::take(&mut l.strom);
         if l.details {
             if !l.strom_offen {
                 let _ = write!(aus, "\r\x1b[2K");
+                if absatz_noetig(l.zuletzt, Block::Text) {
+                    let _ = write!(aus, "\r\n");
+                }
             }
+            l.zuletzt = Some(Block::Text);
             // ⚑ **Gedaempft, denn es ist der Rohstrom.** Danach steht
             // dieselbe Antwort noch einmal da, gesetzt und geordnet;
             // **ohne den Unterschied in der Farbe liest sich das wie
-            // eine Wiederholung und nicht wie Live und Ergebnis.**
+            // eine Wiederholung und nicht wie Live und Ergebnis.** Das
+            // Denken steht zusaetzlich kursiv: Es ist nicht die Antwort.
             //
             // Im Rohmodus braucht jeder Umbruch seinen Wagenruecklauf.
-            let _ = write!(
-                aus,
-                "{}{}{}",
-                crossterm::style::SetForegroundColor(design::toene(bild).beiwerk),
-                text.replace('\n', "\r\n"),
-                crossterm::style::ResetColor
-            );
+            for (denken, text) in &stuecke {
+                let stil = if *denken { rollen.gedanke } else { rollen.beiwerk };
+                let _ = write!(aus, "{}", stil.faerben(&text.replace('\n', "\r\n"), farbig));
+            }
             let _ = aus.flush();
-            l.strom_offen = !text.ends_with('\n');
+            l.strom_offen = !stuecke.last().is_some_and(|(_, t)| t.ends_with('\n'));
         }
         if l.strom_offen {
             return;
@@ -760,6 +888,69 @@ mod tests {
         assert_eq!(dauer(Duration::from_secs(3671)), "61m 11s");
     }
 
+    /// Der sichtbare Text, ohne Steuerzeichen.
+    fn sichtbar(s: &str) -> String {
+        let mut aus = String::new();
+        let mut in_folge = false;
+        for c in s.chars() {
+            if c == '\x1b' {
+                in_folge = true;
+            } else if in_folge {
+                if c.is_ascii_alphabetic() {
+                    in_folge = false;
+                }
+            } else {
+                aus.push(c);
+            }
+        }
+        aus
+    }
+
+    /// **Gesetzt steht derselbe Text da**, in jeder Art, und ohne Farbe
+    /// bleibt die Zeile Zeichen fuer Zeichen, wie sie war.
+    #[test]
+    fn die_zeitleiste_behaelt_ihren_text() {
+        let r = design::rollen(myl_client::einstellungen::Konsolendesign::Myelith);
+        for (art, z) in [
+            (Art::Schritt, "  ● Schritt 3 · 12s"),
+            (Art::Aufruf, "  → datei_lesen src/main.rs"),
+            (Art::Ergebnis, "  ← datei_lesen 120 Zeilen"),
+            (Art::Abgelehnt, "  ⚑ datei_schreiben abgelehnt: ausserhalb der Einhaengung"),
+            (Art::Hinweis, "  ⚑ Kontext verdichtet: 9000 → 3000 Token"),
+            (Art::Aufruf, "  → ohne_argumente"),
+        ] {
+            assert_eq!(zeile_setzen(art, z, &r, false), z);
+            assert_eq!(sichtbar(&zeile_setzen(art, z, &r, true)), z, "{art:?}");
+        }
+    }
+
+    /// **Hervorgehoben wird, was der Agent tut**: Pfeil und Werkzeug im
+    /// Stil der Aktion, eine Rueckgabe im Stil des Ergebnisses, eine
+    /// Ablehnung samt ihrem Wort als Warnung.
+    #[test]
+    fn die_zeitleiste_hebt_die_handlung_hervor() {
+        let r = design::rollen(myl_client::einstellungen::Konsolendesign::Tiefsee);
+        let aufruf = zeile_setzen(Art::Aufruf, "  → datei_lesen a.rs", &r, true);
+        assert!(aufruf.contains(&r.aktion.faerben("→ datei_lesen", true)), "{aufruf:?}");
+        let rueck = zeile_setzen(Art::Ergebnis, "  ← datei_lesen 3 Zeilen", &r, true);
+        assert!(rueck.contains(&r.ergebnis.faerben("← datei_lesen", true)), "{rueck:?}");
+        assert!(rueck.contains(&r.beiwerk.faerben(" 3 Zeilen", true)), "{rueck:?}");
+        let nein = zeile_setzen(Art::Abgelehnt, "  ⚑ x abgelehnt: weil", &r, true);
+        assert!(nein.contains(&r.warnung.faerben("⚑ x abgelehnt:", true)), "{nein:?}");
+    }
+
+    /// **Ein Absatz beim Wechsel, keiner innerhalb einer Art**, und keiner
+    /// vor dem allerersten Stueck.
+    #[test]
+    fn ein_absatz_steht_nur_beim_wechsel() {
+        assert!(!absatz_noetig(None, Block::Handlung));
+        assert!(!absatz_noetig(None, Block::Text));
+        assert!(!absatz_noetig(Some(Block::Handlung), Block::Handlung));
+        assert!(!absatz_noetig(Some(Block::Text), Block::Text));
+        assert!(absatz_noetig(Some(Block::Handlung), Block::Text));
+        assert!(absatz_noetig(Some(Block::Text), Block::Handlung));
+    }
+
     /// **Der naechste Spruch ist nie der vorige.**
     ///
     /// 📌 Die Gegenprobe: Ein Wurf, der zufaellig zweimal dieselbe Zahl
@@ -775,7 +966,8 @@ mod tests {
             offen: Vec::new(),
             gezaehlt: 0,
             details: false,
-            strom: String::new(),
+            strom: Vec::new(),
+            zuletzt: None,
             strom_offen: false,
             saat: 1,
             abbruchfrage: false,
@@ -802,7 +994,8 @@ mod tests {
             offen: Vec::new(),
             gezaehlt: 0,
             details: false,
-            strom: String::new(),
+            strom: Vec::new(),
+            zuletzt: None,
             strom_offen: false,
             saat: 7,
             abbruchfrage: false,
@@ -888,8 +1081,8 @@ impl Stromgriff {
         }
         let Ok(mut l) = self.lage.lock() else { return };
         match s {
-            myl_client::strom::Stueck::Denken(t) => l.strom.push_str(&t),
-            myl_client::strom::Stueck::Text(t) => l.strom.push_str(&t),
+            myl_client::strom::Stueck::Denken(t) => l.strom.push((true, t)),
+            myl_client::strom::Stueck::Text(t) => l.strom.push((false, t)),
         }
     }
 }

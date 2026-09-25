@@ -434,6 +434,32 @@ where
         .collect()
 }
 
+/// **Wie [`rechnen`], mit einem beliebigen Ergebnis je Index.**
+///
+/// ⚑ Fuer Schritte, die je Token mehrere Felder verschiedener Art
+/// liefern, etwa die Vorbereitung einer rekurrenten Ebene (2026-09-25).
+/// Umgesetzt ueber [`rechnen`] und ohne eigenen `unsafe`-Block: Jeder
+/// Index fuellt genau sein eigenes Fach, ein `OnceLock`, und `rechnen`
+/// kehrt erst zurueck, wenn alle fertig sind. Die Reihenfolge der
+/// Ergebnisse ist die der Indizes, gleich wie viele Faeden rechnen.
+pub fn verteilen<T, F>(anzahl: usize, faeden: usize, f: F) -> Vec<T>
+where
+    T: Send + Sync,
+    F: Fn(usize) -> T + Sync,
+{
+    let faecher: Vec<std::sync::OnceLock<T>> = (0..anzahl).map(|_| std::sync::OnceLock::new()).collect();
+    let _ = rechnen(anzahl, faeden, |i| {
+        if faecher[i].set(f(i)).is_err() {
+            unreachable!("jeder Index wird genau einmal gerechnet");
+        }
+        0
+    });
+    faecher
+        .into_iter()
+        .map(|fach| fach.into_inner().expect("jeder Index ist gerechnet"))
+        .collect()
+}
+
 /// Hält gleichzeitige Aufrufer auseinander; siehe [`rechnen`].
 static REIHE: Mutex<()> = Mutex::new(());
 
@@ -528,4 +554,19 @@ mod tests {
     fn der_pool_steht() {
         assert!(faeden() >= 1);
     }
+
+    /// **`verteilen` liefert je Index sein eigenes Ergebnis, in der
+    /// Reihenfolge der Indizes**, bei jeder Fadenzahl und auch fuer
+    /// Ergebnisse, die kein einzelner Wert sind.
+    #[test]
+    fn verteilen_ist_die_schleife() {
+        let f = |i: usize| -> (Vec<i64>, u8) { ((0..i % 5).map(|j| (i * 31 + j) as i64).collect(), (i % 7) as u8) };
+        for anzahl in [0usize, 1, 2, 17, 100] {
+            let erwartet: Vec<_> = (0..anzahl).map(f).collect();
+            for faeden in [1usize, 2, 3, 16] {
+                assert_eq!(verteilen(anzahl, faeden, f), erwartet, "{anzahl} Indizes, {faeden} Faeden");
+            }
+        }
+    }
+
 }

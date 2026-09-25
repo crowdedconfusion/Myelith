@@ -291,6 +291,7 @@ pub fn mlp_int_stapel(
 }
 
 /// Die drei Matrizen eines Experten, wie ein Buendel sie sieht.
+#[derive(Clone, Copy)]
 pub struct Expertenteil<'a> {
     pub gate: &'a [i8],
     pub up: &'a [i8],
@@ -337,6 +338,52 @@ pub fn mlp_int_experten(
     out_frac_bits: &[u8],
     spuren: Option<&mut Vec<Mlpspur>>,
 ) -> Vec<Vec<i16>> {
+    let skala = Expertenskala { gate_out_frac, up_out_frac, down_in_frac };
+    let paare: Vec<(Expertenteil<'_>, Expertenskala)> = experten
+        .iter()
+        .map(|e| {
+            assert_eq!(
+                e.gate_shifts.len(),
+                intermediate_size,
+                "mlp_int_experten: ein Experte passt nicht zur Zwischenbreite"
+            );
+            (*e, skala)
+        })
+        .collect();
+    mlp_int_experten_je_skala(
+        x, &paare, hidden_size, silu_lut, in_frac_bits,
+        silu_in_frac, silu_lut_offset, silu_out_frac, out_frac_bits, spuren,
+    )
+}
+
+/// **Die Skalen eines Experten**, fuer [`mlp_int_experten_je_skala`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Expertenskala {
+    pub gate_out_frac: u8,
+    pub up_out_frac: u8,
+    pub down_in_frac: u8,
+}
+
+/// **Wie [`mlp_int_experten`], mit Skalen je Experte.**
+///
+/// ⚑ Damit ein **geteilter Experte** in denselben zwei Runden mitrechnen
+/// kann wie die gerouteten (2026-09-25). Er traegt eigene Skalen und darf
+/// eine andere Zwischenbreite haben; bis dahin rechnete er im Decode drei
+/// eigene Runden nach den anderen. Jede Zeile entsteht mit derselben
+/// Formel wie in [`mlp_int`], also ist er gebuendelt Bit fuer Bit derselbe.
+#[allow(clippy::too_many_arguments)]
+pub fn mlp_int_experten_je_skala(
+    x: &[i16],
+    experten: &[(Expertenteil<'_>, Expertenskala)],
+    hidden_size: usize,
+    silu_lut: &[i16],
+    in_frac_bits: u8,
+    silu_in_frac: u8,
+    silu_lut_offset: i16,
+    silu_out_frac: u8,
+    out_frac_bits: &[u8],
+    spuren: Option<&mut Vec<Mlpspur>>,
+) -> Vec<Vec<i16>> {
     use crate::linear::{Ausgangsskala, Buendelteil};
 
     if experten.is_empty() {
@@ -346,14 +393,14 @@ pub fn mlp_int_experten(
     // Erste Runde: gate und up jedes Experten, alle ueber derselben
     // Eingabe.
     let mut vorne: Vec<Buendelteil<'_>> = Vec::with_capacity(2 * experten.len());
-    for e in experten {
+    for (e, s) in experten {
         vorne.push(Buendelteil {
             w: e.gate,
             x,
             in_features: hidden_size,
             w_shifts: e.gate_shifts,
             act_frac_bits: in_frac_bits,
-            aus: Ausgangsskala::Eine(gate_out_frac),
+            aus: Ausgangsskala::Eine(s.gate_out_frac),
         });
         vorne.push(Buendelteil {
             w: e.up,
@@ -361,7 +408,7 @@ pub fn mlp_int_experten(
             in_features: hidden_size,
             w_shifts: e.up_shifts,
             act_frac_bits: in_frac_bits,
-            aus: Ausgangsskala::Eine(up_out_frac),
+            aus: Ausgangsskala::Eine(s.up_out_frac),
         });
     }
     let flach = crate::linear::linear_w8a16_buendel(&vorne);
@@ -375,7 +422,7 @@ pub fn mlp_int_experten(
     // `2 * i * intermediate_size` waere richtig, solange gate und up
     // gleich viele Zeilen haben, und still falsch, sobald nicht.
     let mut versatz = 0usize;
-    for e in experten.iter() {
+    for (e, s) in experten.iter() {
         let gz = e.gate_shifts.len();
         let uz = e.up_shifts.len();
         let gate = &flach[versatz..versatz + gz];
@@ -385,9 +432,9 @@ pub fn mlp_int_experten(
             gate,
             up,
             silu_lut,
-            gate_out_frac,
-            up_out_frac,
-            down_in_frac,
+            s.gate_out_frac,
+            s.up_out_frac,
+            s.down_in_frac,
             silu_in_frac,
             silu_lut_offset,
             silu_out_frac,
@@ -403,12 +450,14 @@ pub fn mlp_int_experten(
     let hinten: Vec<Buendelteil<'_>> = experten
         .iter()
         .zip(hs.iter())
-        .map(|(e, h)| Buendelteil {
+        .map(|((e, s), h)| Buendelteil {
             w: e.down,
             x: h,
-            in_features: intermediate_size,
+            // ⚑ Die Breite aus dem Experten selbst: Ein geteilter Experte
+            //   darf breiter sein als die gerouteten.
+            in_features: h.len(),
             w_shifts: e.down_shifts,
-            act_frac_bits: down_in_frac,
+            act_frac_bits: s.down_in_frac,
             aus: Ausgangsskala::JeZeile(out_frac_bits),
         })
         .collect();
@@ -437,6 +486,18 @@ pub fn mlp_int_experten(
 #[cfg(test)]
 mod stapeltests {
     use super::*;
+
+    /// **Der Versatz der Test-SiLU-Tabelle: +256**, wie der Lader ihn setzt
+    /// (`-input_range[0]`). Die Tabelle beginnt bei `x = -256`.
+    ///
+    /// ⛔️ **Fund 460: Hier stand bis zum 2026-09-25 `-256`**, in allen drei
+    /// Proben dieses Moduls. Damit lag jeder Eingang unter der Tabelle,
+    /// SiLU gab null, jedes `h` war null und jede Ausgabe auch; die Proben
+    /// verglichen null mit null und waren gruen. 📌 **Eine Vorlage, deren
+    /// Werte den geprueften Schritt zur Konstanten machen, prueft ihn
+    /// nicht** (dieselbe Lehre wie bei Fund 428), deshalb verlangt jede
+    /// Probe hier jetzt ausdruecklich Werte ungleich null.
+    const SILU_VERSATZ: i16 = 256;
 
     /// **Gebuendelt ist bitgleich zu einzeln, auch ueber den ganzen
     /// MLP-Block.**
@@ -470,13 +531,14 @@ mod stapeltests {
             let scheiben: Vec<&[i16]> = eingaben.iter().map(|v| v.as_slice()).collect();
             let gebuendelt = mlp_int_stapel(
                 &scheiben, &w_gate, &w_up, &w_down, hs, is, &gs, &us, &ds, &lut, 5, 5, 5, 5, 1,
-                -256, 6, &out,
+                SILU_VERSATZ, 6, &out,
             );
             for (i, x) in eingaben.iter().enumerate() {
                 let einzeln = mlp_int(
-                    x, &w_gate, &w_up, &w_down, hs, is, &gs, &us, &ds, &lut, 5, 5, 5, 5, 1, -256,
+                    x, &w_gate, &w_up, &w_down, hs, is, &gs, &us, &ds, &lut, 5, 5, 5, 5, 1, SILU_VERSATZ,
                     6, &out,
                 );
+                assert!(einzeln.iter().any(|&v| v != 0), "b={b}, i={i}: die Probe rechnet mit Nullen");
                 assert_eq!(gebuendelt[i], einzeln, "b={b}, i={i}");
             }
         }
@@ -533,7 +595,7 @@ mod stapeltests {
 
             let mut spuren: Vec<Mlpspur> = Vec::new();
             let gebuendelt = mlp_int_experten(
-                &x, &teile, hs, is, &lut, 5, 5, 5, 5, 1, -256, 6, &out, Some(&mut spuren),
+                &x, &teile, hs, is, &lut, 5, 5, 5, 5, 1, SILU_VERSATZ, 6, &out, Some(&mut spuren),
             );
 
             assert_eq!(gebuendelt.len(), n, "n={n}: nicht jeder Experte hat eine Ausgabe");
@@ -542,13 +604,71 @@ mod stapeltests {
                 let mut sp = Mlpspur::default();
                 let einzeln = mlp_int_mit_spur(
                     &x, &gate[i], &up[i], &down[i], hs, is, &gs[i], &us[i], &ds[i], &lut, 5, 5, 5,
-                    5, 1, -256, 6, &out, Some(&mut sp),
+                    5, 1, SILU_VERSATZ, 6, &out, Some(&mut sp),
                 );
+                assert!(sp.h.iter().any(|&v| v != 0), "n={n}, Experte {i}: die Probe rechnet mit Nullen");
                 assert_eq!(gebuendelt[i], einzeln, "n={n}, Experte {i}");
                 assert_eq!(spuren[i].gate, sp.gate, "n={n}, Experte {i}: gate im Mitschnitt");
                 assert_eq!(spuren[i].up, sp.up, "n={n}, Experte {i}: up im Mitschnitt");
                 assert_eq!(spuren[i].h, sp.h, "n={n}, Experte {i}: h im Mitschnitt");
             }
+        }
+    }
+
+    /// **Mit Skalen und Zwischenbreiten je Experte gebuendelt ist jeder
+    /// Experte derselbe wie einzeln**: der Fall des geteilten Experten, der
+    /// mit eigenen Skalen und eigener Breite in den Runden der gerouteten
+    /// mitrechnet.
+    #[test]
+    fn experten_mit_eigenen_skalen_sind_dasselbe() {
+        let lut = spec_silu_lut();
+        let hs = 16usize;
+        let mach = |n: usize, saat: u64| -> Vec<i8> {
+            let mut x = saat | 1;
+            (0..n)
+                .map(|_| {
+                    x ^= x << 13;
+                    x ^= x >> 7;
+                    x ^= x << 17;
+                    ((x % 251) as i64 - 125) as i8
+                })
+                .collect()
+        };
+        let out = vec![6u8; hs];
+        let x: Vec<i16> = (0..hs).map(|j| ((j * 29) % 300) as i16 - 150).collect();
+        // (Zwischenbreite, gate, up, down_in) je Experte
+        let formen = [(40usize, 5u8, 5u8, 5u8), (40, 6, 4, 5), (24, 4, 6, 3)];
+        let gate: Vec<Vec<i8>> = formen.iter().enumerate().map(|(i, f)| mach(f.0 * hs, 7 + i as u64)).collect();
+        let up: Vec<Vec<i8>> = formen.iter().enumerate().map(|(i, f)| mach(f.0 * hs, 61 + i as u64)).collect();
+        let down: Vec<Vec<i8>> = formen.iter().enumerate().map(|(i, f)| mach(hs * f.0, 131 + i as u64)).collect();
+        let gs: Vec<Vec<u8>> = formen.iter().enumerate().map(|(i, f)| (0..f.0).map(|r| 5 + ((r + i) % 3) as u8).collect()).collect();
+        let us: Vec<Vec<u8>> = formen.iter().enumerate().map(|(i, f)| (0..f.0).map(|r| 5 + ((r + i) % 2) as u8).collect()).collect();
+        let ds: Vec<Vec<u8>> = (0..formen.len()).map(|i| (0..hs).map(|r| 5 + ((r + i) % 4) as u8).collect()).collect();
+        let paare: Vec<(Expertenteil<'_>, Expertenskala)> = formen
+            .iter()
+            .enumerate()
+            .map(|(i, f)| {
+                (
+                    Expertenteil {
+                        gate: &gate[i], up: &up[i], down: &down[i],
+                        gate_shifts: &gs[i], up_shifts: &us[i], down_shifts: &ds[i],
+                    },
+                    Expertenskala { gate_out_frac: f.1, up_out_frac: f.2, down_in_frac: f.3 },
+                )
+            })
+            .collect();
+        let mut spuren: Vec<Mlpspur> = Vec::new();
+        let gebuendelt = mlp_int_experten_je_skala(&x, &paare, hs, &lut, 5, 1, SILU_VERSATZ, 6, &out, Some(&mut spuren));
+        assert_eq!(gebuendelt.len(), formen.len());
+        for (i, f) in formen.iter().enumerate() {
+            let mut sp = Mlpspur::default();
+            let einzeln = mlp_int_mit_spur(
+                &x, &gate[i], &up[i], &down[i], hs, f.0, &gs[i], &us[i], &ds[i], &lut, 5, f.1, f.2,
+                f.3, 1, SILU_VERSATZ, 6, &out, Some(&mut sp),
+            );
+            assert!(sp.h.iter().any(|&v| v != 0), "Experte {i}: die Probe rechnet mit Nullen");
+            assert_eq!(gebuendelt[i], einzeln, "Experte {i}");
+            assert_eq!(spuren[i].h, sp.h, "Experte {i}: h im Mitschnitt");
         }
     }
 
@@ -558,7 +678,7 @@ mod stapeltests {
         let lut = spec_silu_lut();
         let out = vec![6u8; 4];
         let x = vec![0i16; 4];
-        assert!(mlp_int_experten(&x, &[], 4, 4, &lut, 5, 5, 5, 5, 1, -256, 6, &out, None).is_empty());
+        assert!(mlp_int_experten(&x, &[], 4, 4, &lut, 5, 5, 5, 5, 1, SILU_VERSATZ, 6, &out, None).is_empty());
     }
 
     /// Dieselbe LUT wie in den übrigen Prüfungen dieser Datei.

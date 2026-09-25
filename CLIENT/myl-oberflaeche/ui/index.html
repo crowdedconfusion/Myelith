@@ -8,11 +8,11 @@
 </head>
 <body>
 
-<!-- ⚑ Das Vorschaltbild traegt eine echte Wartezeit: Ein Artefakt
-     dieser Groesse laedt rund elf Sekunden. Aus grauem Rauschen wird
-     ein Wirbel, aus dessen Mitte das Netz waechst. -->
+<!-- ⚑ Das Vorschaltbild traegt eine echte Wartezeit. Dahinter laeuft
+     eine von fuenf gezeichneten Szenen, beim Start gewuerfelt
+     (`vorhang.js`). -->
 <div id="vorhang">
-  <canvas id="netz" aria-hidden="true"></canvas>
+  <canvas id="vorhangbild" aria-hidden="true"></canvas>
   <div class="vorhangtext">
     <p class="wortmarke">Myelith</p>
     <div class="zeile"></div>
@@ -249,16 +249,19 @@
          Einhaengegrenze. Der Befehl dahinter steht in keinem
          Werkzeugkasten; die Begruendung steht im Ruecken vor
          `terminal_ausfuehren`. -->
+    <!-- ⚑ **Wie ein Terminal und nicht wie ein Formular** (Auftrag des
+         Projektinhabers, 2026-09-25): kein Kasten, kein Knopf, nur der
+         Grund des Fensters, darauf die Ausgabe und direkt darunter die
+         Eingabezeile. Ausgefuehrt wird mit der Eingabetaste, geleert
+         mit `clear` oder Befehlstaste K. -->
     <section id="terminal" class="terminal" hidden aria-label="Terminal">
       <div id="terminalzeilen" class="terminalzeilen" role="log" aria-live="polite"></div>
       <form id="terminalform" class="terminalform">
         <span id="terminalordner" class="terminalordner"></span>
         <span class="terminalzeichen" aria-hidden="true">$</span>
         <input id="terminaleingabe" type="text" autocomplete="off" spellcheck="false"
+               autocapitalize="off" autocorrect="off"
                aria-label="Befehl" data-t-marke="terminal.eingabe" />
-        <button type="submit" class="terminalknopf" data-t="terminal.senden">Ausführen</button>
-        <button type="button" id="terminalleeren" class="terminalknopf"
-                data-t="terminal.leeren">Leeren</button>
       </form>
     </section>
 

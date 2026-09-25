@@ -1,18 +1,10 @@
-// ⚑ **Wortgetreue Kopie aus dem Testclient** (2026-09-10, Festlegung
-// des Projektinhabers). Die Marke ist die Marke, und dieses Programm
-// soll dieselbe zeigen.
-//
-// ⚑ **Wortgetreu und nicht gekuerzt**, obwohl `myelith` nicht jede
-// Funktion darin ruft. Eine gekuerzte Kopie ist weder das Original noch
-// etwas Eigenes: Sie laesst sich nicht mehr gegen die Quelle halten,
-// und wer eine Aenderung uebernehmen will, vergleicht zwei Dateien, von
-// denen eine Loecher hat. Deshalb `allow(dead_code)` statt der Schere.
-//
-// ⚠️ **Der Testclient wird abgeraeumt, sobald er seine Aufgabe erfuellt
-// hat** (Festlegung des Projektinhabers). Bis dahin liegen die vier
-// Dateien zweimal da, und das ist die kuerzere Zeit von beiden Uebeln;
-// danach ist diese hier die einzige.
-#![allow(dead_code)]
+// ⚑ **Bis zum 2026-09-24 eine wortgetreue Kopie aus dem Testclient,
+// seither gehoert diese Datei der Konsole** (Festlegung des
+// Projektinhabers). Anlass war das Logo im Regenbogen,
+// dessen Grundton hier gewuerfelt wird.
+// Der Testclient behaelt seine Fassung und wird ohnehin abgeraeumt;
+// die Probe `die_kopien_sind_wortgetreu` wacht nur noch ueber
+// `auswahl.rs`.
 
 //! Neonfarben für Schriftzug und Auswahllisten.
 //!
@@ -123,8 +115,29 @@ fn sitzung() -> &'static Sitzung {
     })
 }
 
-/// Die Logofarbe dieser Sitzung.
-pub fn logo() -> Color {
+/// **Der Grundton des Logos in Grad**: der Farbton der Logofarbe.
+///
+/// ⚑ **Seit dem 2026-09-24 ist das Logo nicht mehr einfarbig**, sondern
+/// ein Verlauf ([`crate::schimmer`]). Gewuerfelt wird trotzdem hier und
+/// nur einmal: Die Mitte des Logos traegt diesen Ton, und die beiden
+/// Schlagwortfarben sind um ihn herum gewaehlt. Damit finden sich die
+/// Farben der Menues im Logo wieder, statt ein zweites Schema zu sein.
+pub fn grundton() -> i32 {
+    farbton(NEON[sitzung().logo])
+}
+
+/// **Die beiden Schlagwortfarben der Sitzung, als festes Paar.**
+///
+/// ⚑ Fuer die Rollen der Textausgabe (`design::rollen`): Dort braucht eine
+/// Rolle immer **dieselbe** Farbe, sonst wechselte der Werkzeugaufruf bei
+/// jedem Auftreten den Ton. [`schlagwort`] wechselt dagegen mit Absicht.
+pub fn paar_der_sitzung() -> (Color, Color) {
+    let s = sitzung();
+    (Color::AnsiValue(NEON[s.a]), Color::AnsiValue(NEON[s.b]))
+}
+
+/// Die Logofarbe der Sitzung als Palettenfarbe: der Grundton des Logos.
+pub fn logoton() -> Color {
     Color::AnsiValue(NEON[sitzung().logo])
 }
 
@@ -166,7 +179,7 @@ pub fn schlagwort() -> Color {
 /// der Palette. Die steht zwar ungefähr nach Spektrum, aber zwischen
 /// Orange und Magenta fehlt das Rot, und ein Nachbar im Feld wäre dort ein
 /// Sprung im Bild.
-fn paar(logo: usize) -> (usize, usize) {
+pub(crate) fn paar(logo: usize) -> (usize, usize) {
     let eigen = farbton(NEON[logo]);
     let im_band: Vec<usize> = (0..NEON.len())
         .filter(|i| {
@@ -364,10 +377,7 @@ mod tests {
             })
             .collect();
         assert_eq!(verschieden.len(), 2, "es sind nicht genau zwei Farben");
-        assert!(!verschieden.contains(&match logo() {
-            Color::AnsiValue(v) => v,
-            _ => 0,
-        }));
+        assert!(!verschieden.contains(&NEON[sitzung().logo]));
     }
 
     /// Das Schema gilt für die ganze Sitzung: Zwei Abrufe der Logofarbe
@@ -376,9 +386,9 @@ mod tests {
     /// nicht zusammen.
     #[test]
     fn das_schema_bleibt_ueber_die_sitzung_gleich() {
-        let erste = logo();
+        let erste = grundton();
         for _ in 0..50 {
-            assert_eq!(logo(), erste, "die Logofarbe hat gewechselt");
+            assert_eq!(grundton(), erste, "der Grundton hat gewechselt");
         }
         let s = sitzung();
         assert_eq!((s.a, s.b), paar(s.logo), "die Sitzungsfarben passen nicht zum Logo");

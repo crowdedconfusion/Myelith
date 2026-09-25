@@ -70,6 +70,10 @@ pub fn naechster(punkte: &[Punkt], von: usize, abwaerts: bool) -> usize {
 /// Ein gesperrter oder nicht vorhandener `start` faellt auf den ersten
 /// waehlbaren zurueck.
 pub fn waehlen_ab(kopf: &str, punkte: &[Punkt], start: usize, t: Toene) -> Option<usize> {
+    // ⛔️ **Die Liste bewegt den Wagen nach oben**, und danach sagt er
+    // nichts mehr darueber, ob das Logo gerollt ist. Also darf es bis zum
+    // naechsten Neudruck nicht mehr gemalt werden ([`crate::schimmer`]).
+    crate::schimmer::vergessen();
     let erster = erster_offener(punkte)?;
     let mut hier = match punkte.get(start) {
         Some(p) if p.offen => start,

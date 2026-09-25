@@ -1,7 +1,7 @@
 # integer-llm
 
-> **Version:** 0.93.0 (θ_v 0.22.0; kernels 0.65.1, runtime 0.63.0, pipeline 0.15.1)
-> **Datum:** 2026-09-24
+> **Version:** 0.94.0 (θ_v 0.22.0; kernels 0.66.0, runtime 0.64.0, pipeline 0.15.1)
+> **Datum:** 2026-09-25
 > **Status:** ⚠️ **Das Akzeptanzkriterium ruht auf einer zu kleinen
 > Stichprobe.** Gemessen wurde bisher ueber **4 Sequenzen, 435
 > Positionen**; eine Messung ueber **32 Sequenzen, 3558 Positionen**
@@ -646,6 +646,132 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
   volle Paritätstests nur auf GPU-Runnern (nightly oder PR-basiert)
 
 ## Changelog
+
+### v0.94.0 – 2026-09-25 (kernels 0.66.0, runtime 0.64.0: das hybride 35B bereitet sechsmal so schnell vor und dekodiert fast so schnell wie das 30B, Bit fuer Bit dasselbe; Funde 460 bis 462)
+
+**Auftrag des Projektinhabers:** Alle Modelle laden in Sekunden, nur
+das 35B braucht Minuten und dekodiert langsam; nicht aufhoeren, bis es
+aehnlich gut ist wie das 30B.
+
+**Keine Aenderung am Rechenweg.** Jeder Schritt unten rechnet dieselben
+Ganzzahloperationen in derselben Reihenfolge je Wert und ist Bit fuer
+Bit derselbe: `decode_digest` des 35B vor und nach jedem Schritt
+`d1417bc3…` (708 Token Vorbereitung, 8 Token Decode), des 30B
+`a5bf96cd…`, Konformitaet **48/48**.
+
+#### ⛔️ Fund 461: Das Laden war es nicht, sondern die Vorbereitung
+
+Gemessen und nicht vermutet: Das 35B laedt im Werkzeug in 5 bis 17
+Sekunden. Die Minuten entstanden beim **Vorbereiten des Prompts**: 708
+Token in **55,6 s** (12,7 Token/s) gegen 791 Token in 7,5 s beim 30B.
+Die Vorbereitung rechnete die 30 rekurrenten von 40 Ebenen **Token fuer
+Token durch die ganze Ebene**, samt Expertengemisch, und im Kopf stand
+dazu „was das kostet, ist noch nicht gemessen". Ein Chat mit
+Systemtext und Verlauf traegt schnell tausend Token und mehr.
+
+**Die Schritte, jeder mit Profil davor und schlanker Vorprobe:**
+
+| Schritt | Vorbereitung 35B | Decode 35B |
+|---|---|---|
+| Ausgang | 12,7 Token/s | 7,4 |
+| Gemisch hinter der Rekurrenz gebuendelt | 16,6 | |
+| Zustandsschritt: Koepfe verteilt, zeilenweise gelesen | 27,3 | |
+| Zustandsschicht ueber ein ganzes Fenster | 46,2 | |
+| geteilter Experte gebuendelt | 59,5 | |
+| Schritte je Token verteilt | 70,0 | |
+| Zustand in Spaltenbloecken, zwei Durchgaenge | 73,1 | |
+| Faltung in Kanalbloecken | **79,5** | |
+| Rat an den Kern im Decode verteilt | | 11,1 bis 12,6 |
+| geteilter Experte und Projektionen im Buendel | | **12,6 bis 13,0** |
+
+Zum Vergleich im selben Stand: das 30B **107** Token/s Vorbereitung,
+**13,8 bis 15,1** Decode.
+
+**Im Klientenweg** (`myl frage`, mit Nachdenken, 200 Antworttoken),
+also so, wie das Fenster rechnet:
+
+| | 30B | 35B | 35B vorher |
+|---|---|---|---|
+| kurze Frage | 11,6 Token/s | **11,1 Token/s** | 6,7 |
+| Prompt von rund 800 Token, gesamt | 25,4 s | **28,5 s** | rund 80 s |
+| Laden | rund 4,4 s | rund 5 s | | ⚑ **Der Decode des 35B liegt damit bei rund
+90 Prozent des 30B, die Vorbereitung bei rund 74 Prozent**; die
+Vorbereitung eines Prompts von 708 Token dauert 9 statt 56 Sekunden.
+
+- **`kernels::zustandsschicht`.** `schritt` rechnet ueber
+  `spalten_schritt`, einen Kern fuer einen Spaltenblock eines Kopfes,
+  in zwei Durchgaengen statt vier (Zerfall mit Lesen, Fortschreiben mit
+  Lesen) und zeilenweise statt spaltenweise. Neu `schritte_fenster`:
+  alle Koepfe ueber alle Token eines Fensters, je Kopf und Spaltenblock
+  eine Einheit (`SPALTENBLOECKE` = 4), die Ausgangsskala danach je
+  Kopf. Die Spalten eines Kopfes sind voneinander unabhaengig; nur die
+  Skala schaut ueber alle.
+- **`kernels::faltung`.** `schritt` und das neue `schritte_fenster`
+  rufen denselben Kanalkern; das Fenster rechnet Bloecke von 64
+  Kanaelen ueber alle Token, ohne geteilten veraenderlichen Zustand.
+- **`kernels::fadenpool::verteilen`**: ein beliebiges Ergebnis je Index,
+  ohne eigenen `unsafe`-Block.
+- **`kernels::mlp::mlp_int_experten_je_skala`**: Skalen und Breiten je
+  Experte, damit der geteilte Experte in den Runden der gerouteten
+  mitrechnet; `mlp_int_experten` ruft sie.
+- **`runtime`.** `zustandsschicht_fenster` ersetzt die Rechnung je
+  Token, ein Token ist ein Fenster der Laenge eins (kein zweiter Rumpf);
+  `zustandsmischer` stellt den Speicher bereit, fuer Decode und
+  Vorbereitung dieselbe Stelle. Der geteilte Experte laeuft gebuendelt,
+  der Rat an den Kern im Decode ueber den Fadenpool.
+
+📌 **Eine alte Notiz fiel dabei:** „Im Decode bleibt der Rat seriell",
+weil acht Experten keinen Fadenstart je Token tragen. Das galt fuer
+`std::thread`, nicht fuer den Pool; mit ihm wurden **beide** Gemische
+schneller, auch das 30B (12,3 auf 15,0 Token/s).
+
+**Gemessen und verworfen:** Summen in zwei `i64`-Haelften statt `i128`
+(langsamer, weil nicht vektorisiert), `i64`-Summen mit Schrankenpruefung
+(hoechstens 24 Prozent auf den Zustandsschritt, also rund 5 Prozent der
+Vorbereitung), Zerfall exakt in `i64` (ueber 20 Millionen Faelle
+bitgleich, aber nur rund 10 Prozent des Zustandsschritts).
+
+#### ⛔️ Fund 462: Keine Vorlage hielt eine rekurrente Ebene gegen den tokenweisen Weg
+
+`die_gebuendelten_logits_sind_die_tokenweisen` lief gegen eine dichte,
+eine Gemisch- und eine Torvorlage. Die Zustandsebene kam in keiner vor,
+obwohl der Kopf der Vorlagen selbst sagt: „Wer ein Bauteil ergaenzt,
+ergaenzt hier eine Vorlage." Neu: `zustandsebene_einsetzen`, die das
+35B im Kleinen nachbildet (Zustandsebene, Gemisch, geteilter Experte),
+mit Zerfallstabellen in echter Laenge, und eine Zusicherung, dass die
+Ebene wirklich rekurrent laedt.
+
+#### ⛔️ Fund 460: Zwei Stapelproben verglichen null mit null
+
+In `mlp::stapeltests` stand der Versatz der SiLU-Tabelle als `-256`, der
+Lader setzt `+256`. Jeder Eingang lag damit unter der Tabelle, SiLU gab
+null, und `der_gebuendelte_mlp_rechnet_dasselbe` sowie
+`gebuendelte_experten_sind_dasselbe` verglichen Ausgaben, die
+ausschliesslich null waren. **Nachgestellt:** Ein Fehler in der
+Abwaertsskala von `mlp_int_stapel` blieb mit `-256` gruen und faellt mit
+`+256` auf. Aufgefallen ist es, weil die neue Probe Werte ungleich null
+verlangte. 📌 Dieselbe Lehre wie Fund 428: **Eine Vorlage, deren Werte
+den geprueften Schritt zur Konstanten machen, prueft ihn nicht**; jede
+Probe dort verlangt jetzt ausdruecklich Werte ungleich null.
+
+**Belegt:** 292 Kernproben und 91 Laufzeitproben plus die Laufzeit-
+Integrationsproben gruen, Konformitaet 48/48, `decode_digest` beider
+Gemische unveraendert. Neue Proben mit Gegenproben, die beissen:
+`das_fenster_ist_bitgleich_zur_schleife` (vertauschte Zustaende, Token
+und Skalen), `die_zeilenweise_kontraktion_ist_die_spaltenweise`
+(Abbruch an einer Null, verkuerzte Produkte), `das_fenster_rechnet_wie_
+token_fuer_token` (Faltung: Fenster, Reihenfolge, Blockgrenzen),
+`verteilen_ist_die_schleife`, `experten_mit_eigenen_skalen_sind_dasselbe`
+(Skalen, Breiten), die Zustandsvorlage in den Logitproben (Reihenfolge
+der Rekurrenz, Tore des geteilten Experten, Projektionsbuendel).
+Aequivalente Mutationen sind als solche erkannt und nicht gezaehlt.
+
+⚠️ **Offen:** Der Zustandsschritt ist jetzt reine Rechnung in `i128`
+und rund 55 Prozent der Zustandsschicht. Der naechste Hebel ist die
+GPU: 32 Koepfe mal 128 Spalten sind 4096 voneinander unabhaengige
+Bahnen. Dazu wartet der Decode zu 28 Prozent auf Expertenseiten, weil
+34 GB auf 24 GB treffen; das loest nur ein schmaleres Gewichtsformat,
+und das aendert θ_v.
 
 ### v0.93.0 – 2026-09-24 (zwei Proben liefen zwei Tage lang gar nicht, und eine Herleitung stand an drei Stellen; Funde 453 und 454)
 

@@ -41,6 +41,10 @@
      Deckung waeren zwanzig Variablen. */
   --auf: 255 255 255;
   --unter: 0 0 0;
+  /* ⚑ **Das Licht auf dem Glas ist weiss, in jedem Thema**, deshalb ein
+     eigener Kanal, der im hellen Thema nicht mitdreht: Licht faellt
+     auch auf einem hellen Bild von oben ein. */
+  --glanz: 255 255 255;
 
   /* Grund, von unten nach oben. Mattes Schwarz heisst nicht Nullschwarz:
      Ein echter Nullwert laesst jede Kante darauf hart wirken. */
@@ -57,6 +61,27 @@
   --kante-hell: rgb(var(--auf) / .17);
   --licht: rgb(var(--auf) / .13);
   --schatten: rgb(var(--unter) / .45);
+
+  /* ⚑ **Die Dicke des Glases, als gestufte Innenschatten.** Oben tritt
+     das Licht ein (eine helle Kante und ein Schein darunter), unten
+     faengt die Kante es noch einmal schwach, und der Koerper wird zum
+     Boden hin dunkler. **Erst mehrere Stufen machen aus einer Scheibe
+     einen Koerper**; eine einzelne Kante liest sich als Milchglas. */
+  --dicke:
+    inset 0 1px 0 rgb(var(--glanz) / .26),
+    inset 0 -1px 0 rgb(var(--glanz) / .07),
+    inset 0 9px 14px -11px rgb(var(--glanz) / .16),
+    inset 0 -10px 16px -12px rgb(var(--unter) / .38);
+  /* Der Glanz: ein weicher Verlauf von oben links, nicht ein Streiflicht. */
+  --spiegel: linear-gradient(135deg, rgb(var(--glanz) / .075), rgb(var(--glanz) / 0) 46%);
+  /* Die Kante, abhaengig vom Winkel: oben links das Licht, an den Seiten
+     fast nichts, unten rechts ein Gegenlicht. */
+  --rand: linear-gradient(135deg,
+    rgb(var(--glanz) / .42), rgb(var(--auf) / .07) 34%,
+    rgb(var(--auf) / .05) 66%, rgb(var(--glanz) / .2));
+  --rand-hell: linear-gradient(135deg,
+    rgb(var(--glanz) / .62), rgb(var(--auf) / .13) 34%,
+    rgb(var(--auf) / .1) 66%, rgb(var(--glanz) / .34));
 
   --text: #eceef0;
   --leise: #8e9195;
@@ -233,7 +258,37 @@ body {
   min-height: 100vh;
 }
 
-/* --- Glas: in Ruhe eine Kante, beim Ueberfahren eine Linse ----------
+/* --- Glas: fluessig, mit Dicke, Kante und Glanz ----------------------
+
+   ⚑ **Seit dem 2026-09-24 fluessiges Glas statt Milchglas** (Auftrag
+   des Projektinhabers). Was es von Milchglas unterscheidet, ist nicht
+   die Unschaerfe, sondern vier Dinge, und alle vier stehen jetzt da:
+
+   | | wie es hier gebaut ist |
+   |---|---|
+   | **Klar statt milchig** | wenig Unschaerfe (10 bis 14 px), dafuer 180 % Saettigung; Unschaerfe allein entsaettigt und sieht nach truebem Kunststoff aus |
+   | **Dicke** | `--dicke`: Licht tritt oben ein, die untere Kante faengt es schwach, der Koerper wird zum Boden dunkler |
+   | **Kante mit Winkel** | `--rand`: oben links das Licht, an den Seiten fast nichts, unten rechts ein Gegenlicht; beim Ueberfahren `--rand-hell` |
+   | **Nachgeben** | beim Druecken gestaucht, beim Loslassen federnd zurueck |
+
+   Dazu ein ruhiger Glanz von oben links (`--spiegel`) und weiterhin das
+   Licht, das dem Zeiger folgt.
+
+   📌 **Das revidiert zwei fruehere Festlegungen, auf Wunsch desselben
+   Projektinhabers**: „matt heisst wenig Glanz" und „in Ruhe eine
+   Haarlinie, sonst nichts". Fluessiges Glas traegt seine Kante und
+   seinen Glanz auch in Ruhe; beides ist deshalb zurueckhaltend
+   gesetzt, der Glanz unter acht Prozent.
+
+   ⚠️ **Was fehlt, ist die Brechung**, also das Verbiegen dessen, was
+   hinter dem Glas liegt, am Rand. Dafuer braucht es einen
+   Verschiebungsfilter im `backdrop-filter`, und den zeichnet nur die
+   Chromium-Engine; WebKit (macOS, Linux) nimmt ihn an und zeichnet
+   nichts. Nachgesehen am 2026-09-24 unter macOS 26.6.
+
+   ---
+
+   Die aeltere Einordnung, weiter gueltig fuer das Licht am Zeiger:
 
    📌 **Zwei Umbauten an dieser Stelle, beide auf Einwand des
    Projektinhabers, und beide berechtigt.** Der erste Entwurf war
@@ -283,14 +338,12 @@ body {
 .glas {
   position: relative;
   isolation: isolate;
-  background: linear-gradient(160deg, var(--glas-hoch), var(--glas));
-  backdrop-filter: blur(20px) saturate(140%);
-  -webkit-backdrop-filter: blur(20px) saturate(140%);
+  background: var(--spiegel), linear-gradient(160deg, var(--glas-hoch), var(--glas));
+  backdrop-filter: blur(12px) saturate(180%) brightness(1.08);
+  -webkit-backdrop-filter: blur(12px) saturate(180%) brightness(1.08);
   border: 0;
   border-radius: var(--rund);
-  box-shadow:
-    0 10px 34px -14px var(--schatten),
-    inset 0 -1px 0 rgb(var(--unter) / .22);
+  box-shadow: var(--dicke), 0 10px 34px -14px var(--schatten);
 }
 
 /* Die Ruhelage: eine gleichmaessige Haarlinie. */
@@ -304,7 +357,7 @@ button:not(.blank)::before {
   padding: 1px;
   pointer-events: none;
   z-index: 1;
-  background: rgb(var(--auf) / .11);
+  background: var(--rand);
   /* 📌 **Die Reihenfolge ist hier der ganze Unterschied.** Die
      Kurzform `mask` setzt `mask-composite` auf ihren Anfangswert
      zurueck; steht der Verbund davor, ist er weg, die Maske verrechnet
@@ -386,7 +439,7 @@ button:not(.blank):hover:not(:disabled)::after {
 .eingabefeld:hover::before,
 .eingabefeld:focus-within::before,
 button:not(.blank):hover:not(:disabled)::before {
-  background: rgb(var(--auf) / .30);
+  background: var(--rand-hell);
 }
 
 /* ⚑ Der Schein IM Glas, sehr schwach: Echtes Glas leuchtet innen
@@ -1337,31 +1390,132 @@ header > .kopfrechts { right: var(--kopf-polster); }
   color: var(--leiser);
 }
 
-/* --- Das Ladezeichen -------------------------------------------------
+/* --- Das Ladezeichen: ein synaptischer Spalt --------------------------
 
    ⚑ **Es steht dort, wo gleich die Antwort steht.** Wer auf eine
    Antwort wartet, sieht auf den Fleck, an dem sie erscheinen wird, und
    nicht ans andere Ende des Fensters.
 
-   📌 **Drei Punkte und kein Kreisel.** Ein Kreisel dreht sich gleich
-   schnell, ob etwas vorangeht oder nicht; drei Punkte, die nacheinander
-   heller werden, sagen dasselbe und lenken weniger ab. Beides sagt
-   nichts ueber den Fortschritt, und das ist ehrlich: Wie lange ein
-   Modell braucht, weiss vorher niemand. */
-.laeuft { display: flex; gap: .3rem; padding: .35rem 0; }
-.laeuft span {
-  width: .35rem;
-  height: .35rem;
-  border-radius: 50%;
-  background: var(--leiser);
-  animation: pulsen 1.2s ease-in-out infinite;
-}
-.laeuft span:nth-child(2) { animation-delay: .2s; }
-.laeuft span:nth-child(3) { animation-delay: .4s; }
+   ⚑ **Ein Spalt zwischen zwei Nervenzellen** (Auftrag des
+   Projektinhabers, 2026-09-24, statt drei Punkten; die Gestalt nach
+   seinen Vorlagen): zwei Glocken, die sich ueber einen engen Spalt
+   gegenueberstehen. Links schwellen Blaeschen an, Botenstoffe schweben
+   hinueber, die Flaechen leuchten auf, und zweimal je Zyklus entlaedt
+   sich ein Blitz. Ein Zyklus dauert 1,6 Sekunden; die empfangende
+   Flaeche leuchtet, wenn die Botenstoffe ankommen.
 
-@keyframes pulsen {
-  0%, 100% { opacity: .25; }
-  50% { opacity: 1; }
+   ⚑ **In Graustufen wie alles hier**: Was geschieht, wird heller, nicht
+   bunter.
+
+   📌 **Weiterhin kein Fortschrittsbalken und kein Kreisel**: Das Zeichen
+   sagt, dass gerechnet wird, und nicht, wie weit. */
+.laeuft { display: flex; padding: .35rem 0; }
+.laeuft .spalt { width: 5rem; height: 1.46rem; overflow: visible; }
+
+/* ⚑ **Raeumlich durch Licht** (Wunsch des Projektinhabers): Die Koerper
+   tragen einen Verlauf von hell oben nach dunkel unten und eine
+   Glanzlinie an der Oberkante, die Blaeschen sind Kugeln mit einem
+   Lichtpunkt oben links, und an den Flaechen zum Spalt liegt ein
+   weicher Schein. Die Stufen der Verlaeufe stehen hier und nicht im
+   Skript, damit sie dem Thema folgen. */
+.spalt .licht-oben { stop-color: rgb(var(--auf) / .26); }
+.spalt .licht-mitte { stop-color: rgb(var(--auf) / .09); }
+.spalt .licht-unten { stop-color: rgb(var(--auf) / .02); }
+.spalt .kugel-hell { stop-color: rgb(var(--auf) / .95); }
+.spalt .kugel-mitte { stop-color: rgb(var(--auf) / .35); }
+.spalt .kugel-rand { stop-color: rgb(var(--auf) / .06); }
+.spalt .schein-kern { stop-color: rgb(var(--auf) / .38); }
+.spalt .schein-rand { stop-color: rgb(var(--auf) / 0); }
+/* Die Maske des Auslaufs: weiss heisst sichtbar. Sie haengt nicht am
+   Thema, denn eine Maske misst Helle und nicht Farbe. */
+.spalt .auslauf-voll { stop-color: #ffffff; }
+.spalt .auslauf-rand { stop-color: #000000; }
+.spalt .neuron {
+  stroke: var(--leiser);
+  stroke-width: .7;
+  stroke-linejoin: round;
+}
+.spalt .glanzlinie {
+  fill: none;
+  stroke: rgb(var(--auf) / .34);
+  stroke-width: .6;
+  stroke-linecap: round;
+}
+.spalt .schein {
+  opacity: .25;
+  animation: scheinen 1.6s ease-out infinite;
+}
+.spalt .schein.sender { animation-delay: -1.1s; }
+.spalt .flaeche {
+  fill: none;
+  stroke: var(--leise);
+  stroke-width: 1.1;
+  stroke-linecap: round;
+  animation: aufleuchten 1.6s ease-out infinite;
+}
+.spalt .flaeche.sender { animation-delay: -1.1s; }
+.spalt .blaeschen {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: schwellen 1.6s ease-in-out infinite;
+}
+.spalt .blaeschen.v2 { animation-delay: .35s; }
+.spalt .blaeschen.v3 { animation-delay: .7s; }
+/* 📌 **Der Weg steht in Prozent der eigenen Groesse und nicht in
+   Pixeln.** Eine Fassung schob um `17px`, und die haengen an der
+   Skalierung des Fensters: In einer vergroesserten Ansicht flogen die
+   Botenstoffe ueber die Membran hinaus. Mit `fill-box` ist die
+   Bezugsgroesse der Botenstoff selbst (1,6 Einheiten breit), und
+   250 Prozent sind genau der Weg von Flaeche zu Flaeche. */
+.spalt .botenstoff {
+  opacity: 0;
+  transform-box: fill-box;
+  animation: ueberspringen 1.6s cubic-bezier(.3, .1, .45, 1) infinite;
+}
+.spalt .botenstoff.b2 { animation-delay: .16s; }
+.spalt .botenstoff.b3 { animation-delay: .32s; }
+.spalt .botenstoff.b4 { animation-delay: .8s; }
+.spalt .botenstoff.b5 { animation-delay: .96s; }
+.spalt .blitz {
+  fill: none;
+  stroke: var(--akzent);
+  stroke-width: .55;
+  stroke-linejoin: round;
+  opacity: 0;
+  animation: entladen 1.6s linear infinite;
+}
+.spalt .blitz.z2 { animation-delay: .8s; }
+
+/* Die Zeitlinien, auf einen Zyklus bezogen: Das Blaeschen schwillt im
+   ersten Viertel, der Botenstoff ist von 30 bis 70 Prozent im Spalt,
+   die Flaeche leuchtet bei 70 Prozent auf, und der Blitz steht fuer
+   wenige Hundertstel bei 45 Prozent. */
+@keyframes schwellen {
+  0%, 100% { transform: scale(.84); opacity: .7; }
+  25% { transform: scale(1.14); opacity: 1; }
+}
+@keyframes ueberspringen {
+  0%, 28% { transform: translateX(0); opacity: 0; }
+  34% { opacity: 1; }
+  68% { transform: translateX(250%); opacity: 1; }
+  76%, 100% { transform: translateX(250%); opacity: 0; }
+}
+@keyframes aufleuchten {
+  0%, 62% { stroke: var(--leise); }
+  72% { stroke: var(--akzent); }
+  100% { stroke: var(--leise); }
+}
+@keyframes scheinen {
+  0%, 62% { opacity: .25; }
+  72% { opacity: 1; }
+  100% { opacity: .25; }
+}
+@keyframes entladen {
+  0%, 42% { opacity: 0; }
+  44% { opacity: 1; }
+  47% { opacity: .35; }
+  49% { opacity: .9; }
+  55%, 100% { opacity: 0; }
 }
 
 /* --- Markdown in der Antwort -----------------------------------------
@@ -1461,10 +1615,10 @@ h4.mdkopf, h5.mdkopf, h6.mdkopf { font-size: .94rem; color: var(--leise); }
 .eingabefeld {
   position: relative;
   isolation: isolate;
-  background: linear-gradient(160deg, var(--glas-hoch), var(--glas));
-  backdrop-filter: blur(22px) saturate(170%) brightness(1.06);
-  -webkit-backdrop-filter: blur(22px) saturate(170%) brightness(1.06);
-  box-shadow: 0 10px 34px -16px var(--schatten);
+  background: var(--spiegel), linear-gradient(160deg, var(--glas-hoch), var(--glas));
+  backdrop-filter: blur(14px) saturate(180%) brightness(1.06);
+  -webkit-backdrop-filter: blur(14px) saturate(180%) brightness(1.06);
+  box-shadow: var(--dicke), 0 10px 34px -16px var(--schatten);
   display: grid;
   grid-template-columns: 1fr auto;
   align-items: end;
@@ -1683,14 +1837,27 @@ button.warnt {
 
 /* --- Einstellungsseite ------------------------------------------------ */
 
+/* ⚑ **Sie rollt nur senkrecht** (Meldung des Projektinhabers,
+   2026-09-25: „soll nicht horizontal scrollbar sein"). Zwei Angaben
+   tragen das, und jede allein reicht nicht:
+
+   - `minmax(0, 1fr)` als einzige Spalte. 📌 Ein Rasterelement ist
+     vorgabemaessig mindestens so breit wie sein breitester Inhalt; ein
+     langer Pfad ohne Trennstelle machte damit die ganze Spalte breiter
+     als die Seite, und die Seite rollte seitwaerts.
+   - `overflow-x: hidden` fuer das, was trotzdem hinausragt, etwa ein
+     Knopf, der beim Ueberfahren waechst. 📌 `overflow-y: auto` allein
+     setzt die andere Achse ebenfalls auf `auto`. */
 #einstellungsseite {
   position: absolute;
   inset: 0;
   z-index: 4;
+  overflow-x: hidden;
   overflow-y: auto;
   padding: 1.4rem clamp(.9rem, 2.5vw, 1.6rem) 2rem;
   background: var(--grund);
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   align-content: start;
   gap: 1rem;
 }
@@ -1698,8 +1865,28 @@ button.warnt {
 .seitenkopf {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 1rem;
+  /* Platz fuer den Schliessknopf, der ausserhalb des Flusses liegt. */
+  padding-right: calc(var(--kopf-knopf) + var(--kopf-polster));
+}
+
+/* ⚑ **Der Schliessknopf steht genau dort, wo das Zahnrad stand**
+   (Meldung des Projektinhabers, 2026-09-25). Wer die Seite mit einem
+   Klick oeffnet, soll sie mit einem Klick an derselben Stelle wieder
+   schliessen, ohne die Maus zu bewegen. Er haengt deshalb an denselben
+   Zahlen wie das Zahnrad im Kopf (`--kopf-polster` von oben und von
+   rechts, dieselbe Knopfgroesse), und er ist am Fenster geheftet statt
+   an der Seite: Beim Rollen bleibt er stehen, wie der Kopf auch.
+
+   📌 **Vorher stand er im Fluss der Seite**, unter ihrem Polster, und
+   damit zwoelf Punkte links und zwoelf unter dem Zahnrad. */
+#zurueck {
+  position: fixed;
+  /* Die halbe Kante: Der Kopf traegt unten eine Linie von 1px, und sein
+     Knopf sitzt mittig ueber dem Rest, also einen halben Punkt hoeher. */
+  top: calc(var(--kopf-polster) - .5px);
+  right: var(--kopf-polster);
+  z-index: 5;
 }
 /* ⚑ **Eine Stufe und nicht drei** (Festlegung des Projektinhabers,
    2026-09-11). „Einstellungen" ist die Ueberschrift der Seite und die
@@ -1824,9 +2011,9 @@ button, input, select, textarea {
   /* ⚑ Keine `border`: Den Rand zeichnet der brechende Ring oben, und
      zwei Raender uebereinander ergaeben eine doppelte Kante. */
   border: 0;
-  background: linear-gradient(180deg, var(--glas-hoch), var(--glas));
-  backdrop-filter: blur(16px) saturate(165%) brightness(1.05);
-  -webkit-backdrop-filter: blur(16px) saturate(165%) brightness(1.05);
+  background: var(--spiegel), linear-gradient(180deg, var(--glas-hoch), var(--glas));
+  backdrop-filter: blur(10px) saturate(180%) brightness(1.06);
+  -webkit-backdrop-filter: blur(10px) saturate(180%) brightness(1.06);
 }
 
 input::placeholder, textarea::placeholder { color: var(--leiser); }
@@ -1902,9 +2089,7 @@ button {
   position: relative;
   overflow: hidden;
   cursor: pointer;
-  box-shadow:
-    0 4px 14px -8px var(--schatten),
-    inset 0 -1px 0 rgb(var(--unter) / .22);
+  box-shadow: var(--dicke), 0 4px 14px -8px var(--schatten);
   transition:
     background-color .18s ease,
     border-color .18s ease,
@@ -1930,6 +2115,18 @@ button {
    Pseudoelement, das schon vergeben ist. */
 
 button:disabled::before { background: rgb(var(--auf) / .06); }
+
+/* ⚑ **Fluessig heisst: es gibt nach und federt zurueck.** Beim Druecken
+   staucht sich der Knopf, schneller als er sich erholt; beim Loslassen
+   traegt ihn der Uebergang oben mit einem Ueberschwinger zurueck
+   (`cubic-bezier(.34, 1.56, .64, 1)`). Ein runder Knopf hebt sich beim
+   Ueberfahren leicht an. Wer Bewegung abbestellt hat, bekommt keine
+   Uebergaenge, also nur den Zustand. */
+button:not(.blank):active:not(:disabled) {
+  transform: scale(.95, .92);
+  transition: transform .09s ease-out;
+}
+.rundknopf:hover:not(:disabled):not(:active) { transform: scale(1.06); }
 
 input:hover, select:hover { border-color: var(--kante-hell); }
 input:focus, select:focus { border-color: var(--kante-hell); }
@@ -1973,17 +2170,21 @@ td input[type="text"] { width: 20rem; padding: .24rem .55rem; }
   transition: opacity .6s ease;
 }
 #vorhang.weg { opacity: 0; pointer-events: none; }
-#netz { position: absolute; inset: 0; width: 100%; height: 100%; }
+#vorhangbild { position: absolute; inset: 0; width: 100%; height: 100%; }
 
-/* ⚑ Der Schriftzug tritt aus dem Rauschen heraus, er blendet nicht auf:
-   Er beginnt unscharf und gespreizt, wie eine Form, die sich aus
-   Koernern zusammensetzt, und faehrt in einer Sekunde zusammen. Die
-   Verzoegerung von 2,4 s ist auf den Sog abgestimmt (siehe `netz.js`,
-   Abschnitt „Phasen"): Der Wirbel hat den Kern dann freigeraeumt. */
+/* ⚑ Der Schriftzug tritt aus der Unschaerfe heraus, er blendet nicht
+   auf: Er beginnt unscharf und gespreizt und faehrt in anderthalb
+   Sekunden zusammen.
+
+   📌 **Hier stand eine Verzoegerung von 2,4 s**, abgestimmt auf den
+   Schneesturm, der bis zum 2026-09-25 hinter dem Vorhang lief: Erst
+   musste der Wirbel die Mitte freiraeumen. Die Szenen jetzt stehen vom
+   ersten Bild an, und der Vorhang geht nach anderthalb Sekunden; mit
+   der alten Verzoegerung waere der Schriftzug oft gar nicht erschienen. */
 .vorhangtext {
   position: relative;
   text-align: center;
-  animation: aus_dem_rauschen 1.5s cubic-bezier(.2, .7, .3, 1) 2.4s both;
+  animation: aus_dem_rauschen 1.5s cubic-bezier(.2, .7, .3, 1) .2s both;
 }
 .vorhangtext .wortmarke { font-size: 2.6rem; }
 .vorhangtext .zeile {
@@ -2021,11 +2222,11 @@ td input[type="text"] { width: 20rem; padding: .24rem .55rem; }
 @media (prefers-reduced-motion: reduce) {
   .vorhangtext { animation: none; }
   .meldung { animation: none; }
-  #netz { display: none; }
-  /* ⚑ Die Punkte bleiben stehen und sichtbar. Ein Ladezeichen, das bei
-     abbestellter Bewegung verschwindet, nimmt genau dem die Auskunft,
-     der sie am ehesten braucht. */
-  .laeuft span { animation: none; opacity: .6; }
+  /* ⚑ Der Spalt bleibt stehen und sichtbar, die Botenstoffe mitten
+     darin. Ein Ladezeichen, das bei abbestellter Bewegung verschwindet,
+     nimmt genau dem die Auskunft, der sie am ehesten braucht. */
+  .spalt .blaeschen, .spalt .flaeche, .spalt .blitz, .spalt .schein { animation: none; }
+  .spalt .botenstoff { animation: none; opacity: .7; transform: translateX(125%); }
   /* ⚑ Die Marke wechselt den Ort weiterhin, nur ohne Stoerbild. Ein
      Ortswechsel ist eine Auskunft und keine Verzierung; was hier
      entfaellt, ist das Flackern. */
@@ -2435,59 +2636,53 @@ body.ablegen .eingabefeld {
    ⛔️ Die Kommandozeile des Menschen, nicht die des Modells. Der Grund
    steht bei `MODI` in app.js und im Ruecken vor `terminal_ausfuehren`. */
 
+/* ⚑ **Kein Kasten, kein Knopf, nur der Grund** (Auftrag des
+   Projektinhabers, 2026-09-25). Auf dem Grund des Fensters steht die
+   Ausgabe, direkt darunter die Eingabezeile, und beides rollt zusammen,
+   wie in einem Terminal. 📌 Vorher lagen Ausgabe und Eingabe in je
+   einem getoenten Kasten, die Eingabe mit zwei Knoepfen am Fuss des
+   Fensters: ein Formular, das ein Terminal darstellte. */
 .terminal {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-height: 0;
-  padding: 0 16px 12px;
-  gap: 8px;
-}
-
-.terminalzeilen {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 12px 14px;
-  border-radius: 10px;
-  background: rgb(var(--auf) / .11);
+  padding: 14px 22px 18px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 13px;
   line-height: 1.45;
+  cursor: text;
 }
 
 /* ⚑ `pre-wrap` und nicht `pre`: Eine lange Zeile soll umbrechen statt
    den ganzen Bereich seitlich scrollen zu lassen. */
 .terminalzeilen pre {
-  margin: 0 0 2px;
+  margin: 0;
   white-space: pre-wrap;
   word-break: break-word;
   font: inherit;
 }
 
 .terminalhinweis {
-  margin: 0;
-  opacity: 0.7;
-  font-size: 13px;
-  line-height: 1.5;
+  margin: 0 0 10px;
+  color: var(--leise);
+  font: inherit;
 }
 
-.terminalbefehl { opacity: 0.85; font-weight: 600; margin-top: 8px; }
-.terminalausgabe { opacity: 0.95; }
-.terminallaeuft { opacity: 0.6; font-style: italic; }
-.terminalvermerk { opacity: 0.65; font-style: italic; }
+/* ⚑ Die wiederholte Eingabe sieht aus wie die Eingabezeile, aus der sie
+   kam: Ordner leise, Befehl in voller Schrift. */
+.terminalbefehl { margin-top: 6px; }
+.terminalzeilen > .terminalbefehl:first-child { margin-top: 0; }
+.terminallaeuft { color: var(--leise); }
+.terminalvermerk { color: var(--leise); }
 .terminalfehler { color: var(--schlecht); }
 
 .terminalform {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  border-radius: 10px;
-  background: rgb(var(--auf) / .11);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 13px;
+  align-items: baseline;
+  gap: 1ch;
+  margin-top: 6px;
 }
+.terminalzeilen:empty + .terminalform { margin-top: 0; }
 
 /* ⚑ Der Ordner darf schrumpfen, die Eingabe nicht: Bei einem langen
    Pfad soll das Tippfeld bleiben und der Pfad weichen. */
@@ -2497,24 +2692,26 @@ body.ablegen .eingabefeld {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  opacity: 0.7;
+  color: var(--leise);
 }
 
-.terminalzeichen { opacity: 0.7; }
+.terminalzeichen { color: var(--leise); }
 
+/* ⚑ **Das Eingabefeld gibt alles ab, was es als Feld erkennbar macht**:
+   Grund, Glas, Rand, Polster, Rundung. Uebrig bleibt der
+   Einfuegepunkt. */
 #terminaleingabe {
   flex: 1 1 auto;
   min-width: 0;
+  padding: 0;
   border: 0;
-  background: transparent;
-  color: inherit;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  color: var(--text);
+  caret-color: var(--text);
   font: inherit;
   outline: none;
-}
-
-.terminalknopf {
-  flex: 0 0 auto;
-  padding: 4px 10px;
-  border-radius: 7px;
-  font-size: 12px;
 }
