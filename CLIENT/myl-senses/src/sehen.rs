@@ -15,6 +15,22 @@ use crate::laufwerk::Sehzeug;
 ///
 /// ⚑ **Sie fragt nach dem Text im Bild mit.** Der haeufigste Anhang ist
 /// ein Bildschirmfoto, und dort steht die Antwort meistens geschrieben.
+/// **Die Regel fuer das Sehmodell**, vor jeder Frage.
+///
+/// ⛔️ **Keine Identifizierung und keine sensiblen Zuschreibungen** (Art. 5
+/// Abs. 1 lit. f bis h und Anhang III Nr. 1 KI-Verordnung): Das Sehmodell
+/// beschreibt, was zu sehen ist, und sagt nicht, wer jemand ist oder was
+/// jemand fuehlt, glaubt oder ist. Auf Englisch, weil die Sehmodelle
+/// Anweisungen auf Englisch am verlaesslichsten befolgen; die Antwort
+/// folgt trotzdem der Sprache der Frage.
+///
+/// ⚠️ **Eine Anweisung und keine Garantie.** Ein Modell kann sie
+/// uebergehen; der Schutzfilter vor dem Agenten faengt die offensichtlichen
+/// Anfragen vorher ab.
+pub const SEHREGEL: &str = "Rules: Describe only what is visible. Never identify real persons or say who someone is. \
+Never infer or state anyone's emotions, ethnicity, religion, political views, sexual orientation, \
+health or trade union membership. Answer in the language of the question.";
+
 pub const VORGABEFRAGE: &str =
     "Beschreibe das Bild genau und gib jeden Text darin woertlich wieder.";
 
@@ -57,6 +73,8 @@ pub const BILDTOKEN_VORGABE: u32 = 1024;
 /// Genauso macht es `sprechen::befehl_fuer`.
 fn befehl_fuer(zeug: &Sehzeug, bild: &Path, frage: &str) -> std::process::Command {
     let frage = if frage.trim().is_empty() { VORGABEFRAGE } else { frage };
+    // ⛔️ Die Regel steht vor jeder Frage, siehe [`SEHREGEL`].
+    let frage = format!("{SEHREGEL}\n\n{frage}");
     let mut befehl = std::process::Command::new(&zeug.programm);
     befehl
         .arg("-m")
@@ -66,7 +84,7 @@ fn befehl_fuer(zeug: &Sehzeug, bild: &Path, frage: &str) -> std::process::Comman
         .arg("--image")
         .arg(bild)
         .arg("-p")
-        .arg(frage)
+        .arg(&frage)
         .arg("-n")
         .arg(crate::zahl_aus_umgebung("MYL_SEHEN_TOKEN", TOKEN_VORGABE).to_string())
         .arg("-t")
@@ -161,6 +179,16 @@ mod proben {
     fn eine_leere_frage_wird_zur_vorgabe() {
         let a = argumente(&befehl_fuer(&zeug(), Path::new("/nirgends/bild.png"), "   "));
         let i = a.iter().position(|x| x == "-p").expect("keine Frage im Aufruf");
-        assert_eq!(a[i + 1], VORGABEFRAGE);
+        assert_eq!(a[i + 1], format!("{SEHREGEL}\n\n{VORGABEFRAGE}"));
+    }
+
+    /// ⛔️ **Die Regel steht vor jeder Frage**, auch vor einer eigenen.
+    #[test]
+    fn die_sehregel_steht_vor_jeder_frage() {
+        let a = argumente(&befehl_fuer(&zeug(), Path::new("/nirgends/bild.png"), "Was steht auf dem Schild?"));
+        let i = a.iter().position(|x| x == "-p").expect("keine Frage im Aufruf");
+        assert!(a[i + 1].starts_with(SEHREGEL), "{}", a[i + 1]);
+        assert!(a[i + 1].ends_with("Was steht auf dem Schild?"));
+        assert!(SEHREGEL.contains("Never identify real persons"));
     }
 }

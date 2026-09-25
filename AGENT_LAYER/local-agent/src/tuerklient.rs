@@ -178,6 +178,15 @@ pub enum Tuerfehler {
         /// Wie viele Positionen das Modell hat.
         grenze: usize,
     },
+    /// **Der Mensch hat den Lauf angehalten** (Notaus).
+    ///
+    /// ⚑ **Ein Fehler, damit die Schleife endet**, aber einer, der mitbringt,
+    /// was bis dahin geschrieben war: Ein angehaltener Satz ist ein
+    /// Ergebnis, das der Mensch sehen soll, und keines, das verloren geht.
+    Abgebrochen {
+        /// Der Text bis zum Anhalten.
+        bisher: String,
+    },
 }
 
 impl std::fmt::Display for Tuerfehler {
@@ -204,6 +213,7 @@ impl std::fmt::Display for Tuerfehler {
                 f,
                 "der Kontext ist voll: {belegt} Token, das Modell hat {grenze} Positionen"
             ),
+            Self::Abgebrochen { .. } => f.write_str("vom Menschen angehalten (Notaus)"),
         }
     }
 }

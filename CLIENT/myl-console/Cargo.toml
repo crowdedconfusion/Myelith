@@ -1,6 +1,6 @@
 [package]
 name = "myl-console"
-version = "0.22.0"
+version = "0.23.0"
 # ⚑ **2021 wie alle anderen Kisten hier.** Mit 2024 meldet `clippy`
 # andere Regeln, und dann traegt dieselbe Zeile in zwei Kisten einmal
 # einen Fehler und einmal nicht. **Eine Ausgabe je Repositorium**,

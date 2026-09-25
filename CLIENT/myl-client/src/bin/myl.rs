@@ -28,6 +28,8 @@ myl: lokaler Betrieb von Myelith
   myl skills                      Wissensmappen: wo sie liegen, was da ist
   myl anhaenge [--aufraeumen]     Angehaengte Dateien: was liegt, und weg damit
   myl sinne [datei|--sprich TEXT] Sehen, Hoeren, Sprechen: was geht, und eine Probe
+  myl kennzeichen <datei.wav>     Prueft, ob eine Tondatei als KI-erzeugt gekennzeichnet ist
+  myl protokoll [anzahl]          Die juengsten Handlungen des Agenten (ohne Klartext, 30 Tage)
   myl verlauf [<von> <bis>]       Der Mitschnitt: Uebersicht oder Zeilen
   myl einstellungen               Zeigt die Einstellungen
   myl setzen <feld> <wert>        Aendert eine Einstellung
@@ -111,7 +113,18 @@ Rechenzeit kostet wie ein Antworttoken.
 ";
 
 fn main() {
+    // ⛔️ Das Aktionsprotokoll gilt fuer jeden Lauf von `myl`.
+    myl_client::protokoll::einschalten();
     let args: Vec<String> = std::env::args().collect();
+    // ⛔️ **Wo ein Modell antwortet, steht vorher, dass es eines ist**
+    //   (Art. 50 Abs. 1 KI-Verordnung), auf der Fehlerausgabe, damit die
+    //   Antwort auf der Standardausgabe unberuehrt bleibt.
+    if matches!(args.get(1).map(String::as_str), Some("frage" | "agent" | "sitzung")) {
+        let sprache = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())
+            .map(|e| e.oberflaeche.sprache)
+            .unwrap_or_default();
+        eprintln!("{}", myl_client::kennzeichnung::zeile(sprache));
+    }
     let code = match args.get(1).map(String::as_str) {
         Some("frage") => frage(&args[2..]),
         Some("modell") => modell(&args[2..]),
@@ -124,6 +137,8 @@ fn main() {
         Some("skills") => skills(&args[2..]),
         Some("anhaenge") => anhaenge(&args[2..]),
         Some("sinne") => sinne(&args[2..]),
+        Some("kennzeichen") => kennzeichen(&args[2..]),
+        Some("protokoll") => protokoll(&args[2..]),
         Some("setzen") => setzen(&args[2..]),
         // Die Hilfe ist hier eine Antwort und kein Fehler: Sie geht nach
         // stdout und gibt null zurueck.
@@ -462,7 +477,7 @@ fn ohne_wert(f: &myl_client::einstellungen::Feld) -> String {
         };
     }
     match f.art {
-        Feldart::Grenze => "ohne Grenze".to_string(),
+        Feldart::Grenze | Feldart::Budget => "ohne Grenze".to_string(),
         _ => "(nicht gesetzt)".to_string(),
     }
 }
@@ -475,6 +490,56 @@ fn ohne_wert(f: &myl_client::einstellungen::Feld) -> String {
 /// haengt am Betriebssystem. **Ein Ordner, den der Nutzer fuellen soll,
 /// dessen Ort er aber raten muss, wird nicht gefuellt.** Der Befehl
 /// nennt beide Orte und legt den allgemeinen auf Wunsch an.
+/// **`myl protokoll`: die juengsten Handlungen des Agenten**, neueste
+/// zuerst, als Tabelle.
+fn protokoll(args: &[String]) -> i32 {
+    let anzahl = args.first().and_then(|a| a.parse().ok()).unwrap_or(50);
+    let eintraege = myl_client::protokoll::lesen(anzahl);
+    println!("Ablage: {}", myl_client::protokoll::ordner().display());
+    if eintraege.is_empty() {
+        println!("Noch keine Eintraege.");
+        return 0;
+    }
+    println!("{:<21} {:<16} {:<22} {:<12} {:<7} {:>7}", "Zeit", "Art", "Werkzeug", "Entscheidung", "Ergebnis", "Dauer");
+    for e in eintraege {
+        println!(
+            "{:<21} {:<16} {:<22} {:<12} {:<7} {:>5} ms",
+            e.zeit, e.art, e.werkzeug, e.entscheidung, e.ergebnis, e.dauer_ms
+        );
+    }
+    0
+}
+
+/// **`myl kennzeichen`: traegt eine Tondatei die KI-Kennzeichnung?**
+///
+/// ⚑ Beide Marken einzeln (Art. 50 Abs. 2 KI-Verordnung): die Metadaten
+/// und das Wasserzeichen im Signal. Rueckgabe null, wenn eine von beiden
+/// gefunden ist; eins, wenn keine; zwei bei einem Fehler. So kann ein
+/// Skript es abfragen.
+fn kennzeichen(args: &[String]) -> i32 {
+    let Some(datei) = args.first() else {
+        eprintln!("myl kennzeichen braucht eine Datei");
+        return 2;
+    };
+    match myl_senses::kennzeichnung::pruefen(std::path::Path::new(datei)) {
+        Ok(b) => {
+            println!("Metadaten (IPTC trainedAlgorithmicMedia): {}", if b.metadaten { "ja" } else { "nein" });
+            let hundertstel = |x: i64| format!("{}{},{:02}", if x < 0 { "-" } else { "" }, x.abs() / 100, x.abs() % 100);
+            println!(
+                "Wasserzeichen: {} (Korrelation {} am Anfang, {} gesucht, in Standardabweichungen)",
+                if b.wasserzeichen() { "ja" } else { "nein" },
+                hundertstel(b.am_anfang),
+                hundertstel(b.gesucht)
+            );
+            if b.metadaten || b.wasserzeichen() { 0 } else { 1 }
+        }
+        Err(f) => {
+            eprintln!("myl kennzeichen: {f}");
+            2
+        }
+    }
+}
+
 /// **`myl sinne`: was dieser Rechner sehen, hoeren und sprechen kann.**
 ///
 /// ⚑ **Und mit einer Datei ist es eine Probe.** Ein Stand, der sagt
@@ -1041,6 +1106,12 @@ fn frage(args: &[String]) -> i32 {
         eprintln!("myl frage: es fehlt der Text");
         return 2;
     }
+    // ⛔️ Der Schutzfilter (Art. 5 KI-Verordnung): abgewiesen, bevor ein
+    //   Modell laedt. Rueckgabe 3, damit ein Skript es unterscheidet.
+    if let Some(satz) = myl_client::schutzfilter::abweisen(&text, e.oberflaeche.sprache, "myl-frage") {
+        eprintln!("{satz}");
+        return 3;
+    }
     let mut m = match Oertlichesmodell::laden(&artefakt, &e.kapazitaet) {
         Ok(m) => m,
         Err(e) => {
@@ -1149,6 +1220,11 @@ fn agent(args: &[String]) -> i32 {
     if auftrag.trim().is_empty() {
         eprintln!("myl agent: es fehlt der Auftrag");
         return 2;
+    }
+    // ⛔️ Der Schutzfilter, wie bei `myl frage`.
+    if let Some(satz) = myl_client::schutzfilter::abweisen(&auftrag, e.oberflaeche.sprache, "myl-agent") {
+        eprintln!("{satz}");
+        return 3;
     }
     let mut m = match Oertlichesmodell::laden(&artefakt, &e.kapazitaet) {
         Ok(m) => m,

@@ -11,7 +11,9 @@
 //! zweite trüge keine Konformitätsvektoren. Genau dieselbe Frage wie
 //! beim Mitschnitt, eine Ebene höher.
 
-use integer_llm_runtime::generate::{generate, generate_beobachtet, Erzeugung};
+use integer_llm_runtime::generate::{
+    dekodieren_fortgesetzt, generate, generate_beobachtet, Denkgrenze, Erzeugung, Fortsetzung,
+};
 use integer_llm_runtime::loader::load_model;
 use integer_llm_runtime::model::IntegerModel;
 use integer_llm_runtime::tokenizer::Tokenizer;
@@ -61,7 +63,7 @@ fn dieselbe_folge_mit_und_ohne_beobachter() {
         &m,
         &w,
         prompt,
-        &Erzeugung { max_new_tokens: 12, seed: 0, greedy: true, halt: &[] },
+        &Erzeugung { max_new_tokens: 12, seed: 0, greedy: true, halt: &[], denkgrenze: None, abbruch: None },
         &mut |t| gesehen.push(t),
     );
 
@@ -94,7 +96,7 @@ fn gemeldet_wird_sofort_und_nicht_am_ende() {
         &m,
         &w,
         "Eins zwei drei",
-        &Erzeugung { max_new_tokens: 6, seed: 0, greedy: true, halt: &[] },
+        &Erzeugung { max_new_tokens: 6, seed: 0, greedy: true, halt: &[], denkgrenze: None, abbruch: None },
         &mut |_| {
         zahl += 1;
         if erste_meldung_nach.is_none() {
@@ -137,7 +139,7 @@ fn eine_haltemarke_beendet_und_steht_nicht_in_der_ausgabe() {
         &m,
         &w,
         prompt,
-        &Erzeugung { max_new_tokens: 12, seed: 0, greedy: true, halt: &[marke] },
+        &Erzeugung { max_new_tokens: 12, seed: 0, greedy: true, halt: &[marke], denkgrenze: None, abbruch: None },
         &mut |t| gesehen.push(t),
     );
 
@@ -161,9 +163,130 @@ fn ohne_marken_aendert_sich_nichts() {
         &m,
         &w,
         prompt,
-        &Erzeugung { max_new_tokens: 10, seed: 0, greedy: true, halt: &[] },
+        &Erzeugung { max_new_tokens: 10, seed: 0, greedy: true, halt: &[], denkgrenze: None, abbruch: None },
         &mut |_| {},
     );
     assert_eq!(a, b, "eine leere Markenliste hat die Folge veraendert");
     assert_eq!(a.len(), 10);
+}
+
+/// ⚑ **Ist das Denkbudget erschoepft, steht die Schlussfolge in der
+/// Ausgabe, und danach geht es weiter, als haette das Modell sie selbst
+/// geschrieben.**
+///
+/// Geprueft an drei Stuecken: Bis zum Budget ist es der freie Lauf, dann
+/// kommt die Schlussfolge genau so, und der Rest ist die gierige
+/// Fortsetzung eines Prompts, der beides schon enthaelt. Eine Schleife,
+/// die einschiebt, ohne die eingeschobenen Token zu rechnen, bestuende
+/// die ersten beiden Stuecke und fiele beim dritten.
+#[test]
+fn die_denkgrenze_schiebt_den_schluss_ein_und_rechnet_ihn_mit() {
+    let Some((m, w)) = modell() else { return };
+    let prompt = "Die Hauptstadt von Frankreich ist";
+    let frei = generate(&m, &w, prompt, 12, 0, true);
+    let schluss = w.encode(" Also kurz:");
+    assert!(!schluss.is_empty());
+
+    let mut gesehen = Vec::new();
+    let begrenzt = generate_beobachtet(
+        &m,
+        &w,
+        prompt,
+        &Erzeugung {
+            max_new_tokens: 12,
+            seed: 0,
+            greedy: true,
+            halt: &[],
+            // Eine Endmarke, die nie kommt: Das Budget entscheidet.
+            denkgrenze: Some(Denkgrenze { budget: 3, ende: usize::MAX, schluss: &schluss }),
+            abbruch: None,
+        },
+        &mut |t| gesehen.push(t),
+    );
+    assert_eq!(begrenzt.len(), 12, "{begrenzt:?}");
+    assert_eq!(begrenzt[..3], frei[..3], "vor dem Budget kam etwas anderes");
+    assert_eq!(begrenzt[3..3 + schluss.len()], schluss[..], "die Schlussfolge fehlt");
+
+    let mut vorne = w.encode(prompt);
+    vorne.extend_from_slice(&begrenzt[..3 + schluss.len()]);
+    let rest = 12 - 3 - schluss.len();
+    let (weiter, _) = dekodieren_fortgesetzt(
+        &m,
+        &vorne,
+        &Erzeugung { max_new_tokens: rest, seed: 0, greedy: true, halt: &[], denkgrenze: None, abbruch: None },
+        &mut Fortsetzung::neu(&m),
+        &mut |_| {},
+    );
+    assert_eq!(
+        begrenzt[3 + schluss.len()..],
+        weiter[..],
+        "nach dem Einschub rechnet die Schleife nicht mit dem, was dasteht"
+    );
+    assert_eq!(gesehen, begrenzt, "der Beobachter sah den Einschub nicht");
+}
+
+/// ⚑ **Kommt die Endmarke vor dem Budget, bleibt alles, wie es ist**, und
+/// danach wird nicht mehr gezaehlt: Die Antwort selbst hat kein Budget.
+#[test]
+fn eine_endmarke_vor_dem_budget_aendert_nichts() {
+    let Some((m, w)) = modell() else { return };
+    let prompt = "Die Hauptstadt von Frankreich ist";
+    let frei = generate(&m, &w, prompt, 12, 0, true);
+    let schluss = w.encode(" Also kurz:");
+    let begrenzt = generate_beobachtet(
+        &m,
+        &w,
+        prompt,
+        &Erzeugung {
+            max_new_tokens: 12,
+            seed: 0,
+            greedy: true,
+            halt: &[],
+            denkgrenze: Some(Denkgrenze { budget: 4, ende: frei[1], schluss: &schluss }),
+            abbruch: None,
+        },
+        &mut |_| {},
+    );
+    assert_eq!(begrenzt, frei, "nach der Endmarke wurde trotzdem eingeschoben");
+}
+
+/// ⚑ **Der Notaus haelt die Erzeugung an**, mit dem, was bis dahin
+/// dasteht, und ohne ihn aendert sich nichts.
+#[test]
+fn der_abbruchschalter_haelt_an() {
+    let Some((m, w)) = modell() else { return };
+    let prompt = "Die Hauptstadt von Frankreich ist";
+    let frei = generate(&m, &w, prompt, 12, 0, true);
+    let schalter = std::sync::atomic::AtomicBool::new(false);
+    let mut gesehen = 0usize;
+    let angehalten = generate_beobachtet(
+        &m,
+        &w,
+        prompt,
+        &Erzeugung {
+            max_new_tokens: 12,
+            seed: 0,
+            greedy: true,
+            halt: &[],
+            denkgrenze: None,
+            abbruch: Some(&schalter),
+        },
+        &mut |_| {
+            gesehen += 1;
+            if gesehen == 4 {
+                schalter.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+        },
+    );
+    assert_eq!(angehalten, frei[..4], "nicht nach dem vierten Token angehalten");
+
+    // Schon gesetzt: gar nichts.
+    let nichts = generate_beobachtet(
+        &m,
+        &w,
+        prompt,
+        &Erzeugung { max_new_tokens: 12, seed: 0, greedy: true, halt: &[], denkgrenze: None, abbruch: Some(&schalter) },
+        &mut |_| {},
+    );
+    assert!(nichts.is_empty());
 }

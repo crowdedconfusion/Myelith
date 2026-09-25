@@ -44,5 +44,7 @@ mod sitzung;
 mod wahl;
 
 fn main() {
+    // ⛔️ Das Aktionsprotokoll gilt fuer jeden Lauf dieser Konsole.
+    myl_client::protokoll::einschalten();
     std::process::exit(sitzung::fahren());
 }

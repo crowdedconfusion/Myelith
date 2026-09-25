@@ -1196,6 +1196,13 @@ jobs:
           echo "$gefunden Crate(s) geprueft, $fehler mit Fehlschlag"
           exit $([ "$fehler" -eq 0 ] && echo 0 || echo 1)
 
+      # ⚑ **Die Lizenzliste folgt den Sperrdateien.** `COMPLIANCE/NOTICES.md`
+      # ist erzeugt; wer eine Abhaengigkeit hinzufuegt oder anhebt und die
+      # Liste nicht neu schreibt, faellt hier auf und nicht erst bei einer
+      # Anfrage nach den Lizenzen.
+      - name: "COMPLIANCE: NOTICES entspricht den Quellen"
+        run: python3 COMPLIANCE/werkzeuge/notices.py --pruefe
+
   # ── Fuzzing der Drahtformate ─────────────────────────────────────
   #
   # ⚑ Bis zum 2026-09-02 gab es kein deckungsgefuehrtes Fuzzing. Was
@@ -1399,22 +1406,22 @@ jobs:
       #
       # **Was sie weiterhin nicht leistet:** Sie liest Dateien, nicht
       # Recht. Ob die Lizenz für diesen Zweck taugt, steht in
-      # `ETHICS/Lizenzlage.md` und stammt von Menschen.
-      - name: ETHICS — Lizenz, Modellkarte, Ausschlusskatalog, Aufnahmeantrag
+      # `COMPLIANCE/ethics/Lizenzlage.md` und stammt von Menschen.
+      - name: "COMPLIANCE/ethics: Lizenz, Modellkarte, Ausschlusskatalog, Aufnahmeantrag"
         run: |
           set -e
-          python3 ETHICS/werkzeuge/lizenzprobe.py
-          python3 ETHICS/werkzeuge/modellkarte.py --pruefe
-          python3 ETHICS/werkzeuge/ausschlussprobe.py
+          python3 COMPLIANCE/ethics/werkzeuge/lizenzprobe.py
+          python3 COMPLIANCE/ethics/werkzeuge/modellkarte.py --pruefe
+          python3 COMPLIANCE/ethics/werkzeuge/ausschlussprobe.py
           # 📌 **Beide Richtungen, seit dem 2026-08-31.** Bis dahin stand
           # hier nur, dass die leere Vorlage durchfaellt. Eine Pruefung,
           # die alles ablehnt, besteht diesen Test ebenfalls; dass ein
           # vollstaendiger Antrag durchkommt, hat niemand geprueft.
-          python3 ETHICS/werkzeuge/pruefe_antrag.py \
-            ETHICS/vorlagen/korpus-aufnahmeantrag-beispiel.json
+          python3 COMPLIANCE/ethics/werkzeuge/pruefe_antrag.py \
+            COMPLIANCE/ethics/vorlagen/korpus-aufnahmeantrag-beispiel.json
           echo "ok: der vollstaendige Beispielantrag kommt durch"
-          python3 ETHICS/werkzeuge/pruefe_antrag.py \
-            ETHICS/vorlagen/korpus-aufnahmeantrag.json && {
+          python3 COMPLIANCE/ethics/werkzeuge/pruefe_antrag.py \
+            COMPLIANCE/ethics/vorlagen/korpus-aufnahmeantrag.json && {
               echo "FEHLER: die leere Vorlage darf nicht als vollstaendig gelten"
               exit 1
             } || echo "ok: die leere Vorlage faellt durch, wie sie soll"

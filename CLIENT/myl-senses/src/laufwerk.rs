@@ -667,7 +667,7 @@ fn sehen(
             format!(
                 "Ein kleines Sehmodell als GGUF samt mmproj dorthin legen, benannt {SEHMODELL} und {SEHPROJEKTOR}. \
                  Klein und brauchbar ist zum Beispiel SmolVLM2-2.2B-Instruct. Wer zusaetzlich ein groesseres \
-                 will (etwa Qwen2.5-VL-3B), legt es als {SEHMODELL_GENAU} und {SEHPROJEKTOR_GENAU} daneben."
+                 will (etwa Qwen3-VL-4B), legt es als {SEHMODELL_GENAU} und {SEHPROJEKTOR_GENAU} daneben."
             ),
         ],
     })

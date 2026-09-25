@@ -1,6 +1,6 @@
 # client (Nutzer-Client inkl. Wallet)
 
-> **Version:** 0.83.0 (`myl-client` 0.52.2, `myl-oberflaeche` 0.47.0, `myl-console` 0.22.0, `myl-senses` 0.8.0)
+> **Version:** 0.85.0 (`myl-client` 0.54.0, `myl-oberflaeche` 0.49.0, `myl-console` 0.23.0, `myl-senses` 0.9.0)
 > **Datum:** 2026-09-25
 > **Status:** ✅ **Der lokale Betrieb läuft und ist ausgeliefert.** Ein
 > Gesprächsfenster mit Modellwahl, Agentenschleife und
@@ -51,7 +51,7 @@ kostet nichts, wenn er stimmt, und einen halben Tag, wenn nicht.
 | **Gespraeche verwalten** | Rechtsklick auf eine Zeile: umbenennen an Ort und Stelle, als Markdown ausgeben, loeschen. Wohin ausgegeben wird, steht in `ausgabe.ordner`; ohne Angabe fuehrt das Fenster dorthin |
 
 ⚑ **Die Oberfläche ruft dieselben Funktionen wie die Kommandozeile**,
-über fünfunddreissig Befehle. ⚠️ **Mit genau einer Ausnahme, und sie ist gewollt:** `terminal_ausfuehren` startet eine Shell, denn ein Terminal, das keine startet, ist keines. Jeder andere Befehl startet **keinen einzigen Unterprozess**. `jeder_befehl_ist_angemeldet` hält die vier
+über achtunddreissig Befehle. ⚠️ **Mit genau einer Ausnahme, und sie ist gewollt:** `terminal_ausfuehren` startet eine Shell, denn ein Terminal, das keine startet, ist keines. Jeder andere Befehl startet **keinen einzigen Unterprozess**. `jeder_befehl_ist_angemeldet` hält die vier
 Richtungen zusammen: kein Befehl ohne Anmeldung, keine Anmeldung ohne
 Befehl, kein Aufruf ins Leere und kein Befehl, den niemand ruft. „Ohne eigene Logik" hiesse sonst, aus einer Textausgabe
 für Menschen eine Schnittstelle zu machen, und genau das ist die Sorte
@@ -151,6 +151,199 @@ Modell überhaupt etwas taugt, und weil eine Schnittstelle, die kein
 Mensch je bedient hat, an den Bedürfnissen vorbei entworfen wird.
 
 ## Changelog
+
+### v0.85.0 – 2026-09-25 (KI-Verordnung: Hinweis bei jedem Start, gekennzeichnete Stimme, Schutzfilter, Aktionsprotokoll, Bestätigung als Vorgabe, Notaus; Funde 468 und 469)
+
+`myl-client` **0.53.0 auf 0.54.0**, `myl-senses` **0.8.0 auf 0.9.0**,
+`myl-console` **0.22.1 auf 0.23.0**, `myl-oberflaeche` **0.48.0 auf
+0.49.0**. Auftrag des Projektinhabers: das Projekt nach der Verordnung
+(EU) 2024/1689 aufstellen, technische Lösungen wie den manual mode
+gesetzeskonform einstellen. Die Dokumente stehen unter `COMPLIANCE/`, die
+Einordnung Artikel für Artikel in `COMPLIANCE/de/Selbsteinschaetzung.md`.
+
+**Hinweis und Kennzeichnung (Art. 50 Abs. 1)**
+
+- ⛔️ **Ein Hinweis bei jedem Start, aktiv zu bestätigen**
+  (`kennzeichnung.rs`, ein Text für Fenster und Konsole): dass hier eine
+  KI arbeitet, was sie kann, wo sie irrt, was verboten ist, mit Verweis
+  auf die Zweckbestimmung. Im Fenster ein Dialog ohne Schließknopf, der
+  auf Escape nicht reagiert und erst mit Haken und Knopf weggeht; alles
+  darunter ist solange `inert`. In der Konsole vor der Agentenwarnung,
+  mit Enter. `myl frage`, `agent` und `sitzung` schreiben eine Zeile auf
+  die Fehlerausgabe, damit Skripte nicht hängen. **Kein Schalter**: Eine
+  Kennzeichnung, die man abbestellen kann, ist keine.
+- ⛔️ **Die KI-Marke steht dauerhaft da**: im Kopf des Fensters, unter jeder
+  Antwort („KI-generiert"), vorn in der Fußzeile der Konsole, wo sie auch
+  bei schmalem Fenster nie wegfällt.
+
+**Die synthetische Stimme (Art. 50 Abs. 2)**
+
+- ⛔️ **Jede erzeugte Tondatei wird gekennzeichnet, bevor sie jemand
+  bekommt** (`myl-senses/src/kennzeichnung.rs`,
+  `synthetisch_kennzeichnen`): ein XMP-Block mit dem IPTC-Quellentyp
+  `trainedAlgorithmicMedia` und ein RIFF-INFO-Kommentar, dazu ein
+  Wasserzeichen im Signal (eine feste Folge aus ±1, alle 4096 Proben
+  wiederholt, ein Vierundsechzigstel der örtlichen Lautstärke). Jedes
+  Stück, jedes Satz-WAV, jedes Ergebnis von `sagen` und jeder Satz aus der
+  Überbrückungsablage. **Was sich nicht kennzeichnen lässt, klingt
+  nicht.** Ganzzahlig, auch die Gleitkomma-WAVs des Sprechmodells werden
+  als Bitmuster gelesen.
+- **Gemessen an 14 Sätzen des Sprechmodells**: ohne Kennzeichnung
+  höchstens 2,5 Standardabweichungen, gekennzeichnet mindestens 11,9, vorne
+  abgeschnitten und halb so laut mindestens 11,8, nach MP3 mit 128 kbit/s
+  mindestens 10,3 (Schwelle 4 am Anfang, 6,5 gesucht). 📌 Ohne Aufhellen
+  vor dem Falten (Differenzen benachbarter Proben) reichten zwei Sekunden
+  nicht, um eine abgeschnittene Datei zu erkennen.
+- 📌 **Die Überbrückungssätze lagen ungekennzeichnet in der Ablage**, und
+  ihr Name hängt nicht an der Kennzeichnung. Deshalb wird auch ein Satz aus
+  der Ablage vor dem Spielen gekennzeichnet.
+- `myl kennzeichen <datei.wav>` prüft beide Marken (Rückgabe 0, 1, 2).
+- ⛔️ **Keine Stimme ohne Einwilligung**: Hochladen geht erst mit dem Haken
+  „meine eigene Stimme oder eingewilligt", und `stimme_setzen` lehnt ohne
+  `einwilligung: true` ab.
+
+**Verbotene Praktiken (Art. 5)**
+
+- ⛔️ **Ein Schutzfilter an allen fünf Eingängen** (`schutzfilter.rs`:
+  Chat und Agent im Fenster, Konsole, `myl frage`, `myl agent`). Er schlägt
+  an, wenn Handlung, Gegenstand und Ziel zusammen vorkommen („erkenne die
+  Emotionen meiner Mitarbeiter"), nicht bei Fragen darüber („was ist
+  Emotionserkennung"). Sieben Klassen; die Abweisung nennt den Grund und
+  die Zweckbestimmung und steht im Aktionsprotokoll, ohne Text. `myl`
+  gibt dann 3 zurück. ⚠️ Eine Hürde, keine Mauer.
+- ⛔️ **Eine Regel vor jeder Frage an das Sehmodell** (`SEHREGEL`): nur
+  Sichtbares beschreiben, niemanden identifizieren, keine Gefühle oder
+  sensiblen Merkmale zuschreiben.
+
+**Aufsicht und Protokoll (nach dem Vorbild von Art. 12 und 14)**
+
+- ⛔️ **`manual mode` ist die Vorgabe**: Schreiben, Befehle und
+  Web-Anfragen werden vorgelegt. Eine Ablage, die `auto` ausdrücklich
+  trägt, behält es.
+- ⛔️ **Fund 469: Zwei Wege liefen ohne Nachfrage.** Web-Anfragen waren nie
+  in die Nachfrage gehüllt, und der Chat mit Anhang oder Recherche reichte
+  im Fenster gar keine durch (`None`); ein geänderter Anhang und jede
+  Suche liefen also auch im `manual mode` ungefragt. Jetzt fragt beides,
+  über eine gemeinsame `nachfrage_fuer`.
+- ⛔️ **Das Aktionsprotokoll** (`protokoll.rs`): jede Handlung des Agenten
+  als JSON-Zeile (Zeit, Art, Werkzeug, Entscheidung, Ergebnis, Dauer),
+  Ein- und Ausgabe nur als Fingerabdruck (SHA-256 mit einem Schlüssel, der
+  auf dem Rechner zufällig entsteht; ohne ihn lässt sich nicht einmal ein
+  Dateiname zurückraten). Eine Datei je Tag, nach 30 Tagen gelöscht. Jede
+  Einhängung der Rüstung geht durch die Hülle; die drei Bedieninstrumente
+  schalten es ein, die Bibliothek allein schreibt nichts. Anzeige in den
+  Einstellungen des Fensters und mit `myl protokoll`; `MYL_PROTOKOLL`
+  lenkt den Ort um. `sha2` kam ohne neue Kiste dazu.
+- ⛔️ **Der Notaus** (`notaus.rs`): im Fenster ein Knopf im Kopf und ⌘. oder
+  Strg+., in der Konsole Strg-C oder Esc während eines Laufs (ein Wächter
+  liest dann die Tasten, im Rohmodus kommt Strg-C nicht als Signal). Er
+  hält die Erzeugung vor dem nächsten Token an (Runtime 0.66.0), `chat`
+  meldet `Abgebrochen` mit dem Text bis dahin, jedes weitere Werkzeug wird
+  verweigert und protokolliert, die Stimme verstummt. Das Gespräch bleibt;
+  der angehaltene Text steht als Antwort da. ⚠️ Ein Werkzeug, das gerade
+  läuft, läuft zu Ende.
+
+**Lizenzen**
+
+- ⛔️ **Fund 468: Die genaue Sehstufe stand unter einer Forschungslizenz.**
+  Das Einrichtungsskript holte `Qwen2.5-VL-3B-Instruct` als GGUF, dessen
+  Umwandlung Apache 2.0 nannte; das Original steht unter der Qwen Research
+  License. Ersetzt durch `Qwen3-VL-4B-Instruct` (Apache 2.0, GGUF vom
+  Hersteller). Gleiches Bild, gleiche Frage: Das neue las Namen und
+  Unterzeile und beschrieb den Hintergrund, das alte nannte das Projekt
+  ein „Unternehmen"; 4,7 statt 2,9 s samt Laden. Das Skript ersetzt eine
+  alte Datei, die es an ihrer Größe erkennt.
+
+**Belegt:** `myl-client` 226 in der Bibliothek, dazu
+`tests/notaus.rs` (neu, eigener Prozess, am 0,6B), `aufruf.rs`,
+`dateiwerkzeuge.rs` (drei neu); `myl-senses` 57 und 27;
+`myl-oberflaeche` 74; `myl-console` 149. Neu unter anderem
+`beide_marken_und_keine_falschen`, `nur_gekennzeichneter_ton_klingt`,
+`ein_alter_satz_aus_der_ablage_wird_vor_dem_spielen_gekennzeichnet`,
+`verbotene_anfragen_werden_abgewiesen`,
+`fragen_darueber_und_alltag_gehen_durch`, `jeder_eingang_filtert`,
+`die_nachfrage_haelt_schreiben_und_netz_auf_und_laesst_lesen`,
+`das_aktionsprotokoll_haelt_fest_ohne_klartext`,
+`jedes_werkzeug_ist_protokolliert_und_jeder_start_schaltet_ein`,
+`der_notaus_haelt_an_und_behaelt_den_text`,
+`der_ki_hinweis_kommt_bei_jedem_start_und_laesst_sich_nicht_wegklicken`,
+`der_notaus_ist_immer_da_und_haelt_alles_an`,
+`keine_stimme_ohne_einwilligung_und_das_protokoll_ist_sichtbar`,
+`die_ki_marke_steht_vorn_und_faellt_nie_weg`,
+`der_notaus_umschliesst_den_lauf`. Über vierzig Gegenproben, jede beißt.
+Die Probe der Grenzregler verbot Rot zu Recht (die Farben sind
+Graustufen): Der Notaus hebt sich durch Rand und Stoppzeichen ab.
+📌 Die erste Fassung der Protokollprobe nahm die jüngste `read_file`-Zeile
+und flatterte, weil andere Proben desselben Prozesses mit hineinschreiben;
+sie findet ihre Einträge jetzt über den Fingerabdruck der eigenen Eingabe
+(fünf Läufe in Folge grün).
+clippy ohne Befund.
+
+### v0.84.0 – 2026-09-25 (ein Denkbudget beim Vorlesen, mit Schieberegler; Vorgabe 32 Token, gemessen)
+
+`myl-client` **0.52.2 auf 0.53.0**, `myl-oberflaeche` **0.47.0 auf
+0.48.0**, `myl-console` **0.22.0 auf 0.22.1**. Auftrag des
+Projektinhabers: den Denkmodus beim Vorlesen begrenzen statt abschalten,
+mit einem Schieberegler in den Einstellungen, stufenlos bis unbegrenzt,
+und einer Vorgabe, die auf kurze Wartezeit getrimmt ist und trotzdem die
+nötige Überlegung lässt. Die Grenze selbst sitzt in der Erzeugung
+(INTEGER_LLM v0.95.0).
+
+- ⚑ **`modell.denkbudget`**: höchstens so viele Token Überlegung, wenn
+  vorgelesen wird und „Vor dem Antworten denken" an ist. `null` heißt
+  unbegrenzt, `0` gar nicht. Gilt je Antwort und wird danach
+  zurückgesetzt, damit der Agent es nicht erbt.
+- ⚑ **Null ist die leere Überlegung**, nicht ein Einschub nach null
+  Token (`Oertlichesmodell::denkt`): Die leere ist die, auf die das
+  Modell trainiert ist; ein sofortiger Einschub sähe aus wie eine
+  abgebrochene.
+- ⚑ **Ist das Budget erschöpft, wird ein kurzer Übergangssatz und
+  `</think>` eingeschoben** (`DENKSCHLUSS`); die Endmarke leitet der
+  Client aus dem Wortschatz ab und nur, wenn sie ein einziges Token ist.
+- ⚑ **Eine neue Feldart `Budget`** statt `Grenze`: Eine Grenze gibt ein
+  Betriebsmittel der Maschine frei, ihr Ende kennt der Hardwarescan, und
+  sie steht unter den Grenzen des Rechners. Das Ende des Budgets steht
+  fest in der Kiste (`DENKBUDGET_BIS`, 2048) und geht als `bis` mit dem
+  Feld ins Fenster. Das Feld steht nur im Fenster, denn nur dort wird
+  vorgelesen, während das Modell schreibt.
+- ⚑ **Der Regler ist quadratisch**: links „nicht denken", rechts
+  „unbegrenzt", die Mitte bei rund 500 Token. Die hörbaren Unterschiede
+  liegen bei kleinen Budgets.
+- ⚠️ **Streng beim Setzen**: Ein Tippfehler ist ein Fehler. Über den
+  Helfer der Grenzen würde er still zu „unbegrenzt", also zur längsten
+  Wartezeit, die es gibt.
+- ⚑ **Vorgabe 32, gemessen und vom Projektinhaber gewählt.** Zwölf
+  Fangfragen, bewertet am Schlusssatz der Antwort:
+
+| Budget | 30B | 8B | bis zum ersten Wort der Antwort (30B / 8B) |
+|---|---|---|---|
+| 0 | 10/12 | 10/12 | 1,6 s / 0,4 s |
+| **32** | **12/12** | **12/12** | 6,7 s / 4,1 s |
+| 64 | 12/12 | 11/12 | 9,1 s / 6,1 s |
+| 128 | 12/12 | | 13,4 s / 10,3 s |
+| unbegrenzt | | | Median 72 s, bis 187 s (30B) |
+
+  Ohne Überlegung fielen genau die Fangfragen durch („Sally hat 2
+  Schwestern", „r kommt 2-mal vor", „5:15 Uhr" statt 3:15). Zehn
+  gewöhnliche Rechen- und Wissensfragen waren bei jedem Budget richtig.
+  Eine erste Auswertung hatte die Fehler ohne Überlegung übersehen, weil
+  sie irgendwo im Text nach dem Muster suchte; bewertet wird deshalb nur
+  der Schlusssatz.
+- Eine vorhandene Ablage ohne das Feld bekommt die Vorgabe und nicht die
+  unbegrenzte Überlegung.
+
+**Belegt:** `myl-client` 218 in der Bibliothek, neu
+`das_denkbudget_hat_eine_vorgabe_und_ein_offenes_ende` (drei Gegenproben
+beißen: Tippfehler still unbegrenzt, keine Vorgabe für alte Ablagen,
+Budget als Freigabe), und am 4B
+`das_denkbudget_beendet_die_ueberlegung_und_es_kommt_eine_antwort`
+(Schlussfolge in der Überlegung, Endmarke genau einmal, Antwort „391" im
+Strom als Text; mit null keine Überlegung; zwei Gegenproben beißen).
+`myl-oberflaeche` 71, neu `das_denkbudget_ist_ein_schieber_mit_festen_enden`
+(vier Gegenproben beißen); die Prüfung der Grenzregler gilt jetzt nur
+noch `reglerzeile`, denn der Budgetregler beginnt mit Absicht bei null.
+`myl-console` grün. clippy ohne Befund; die Zusicherung, dass die Vorgabe
+auf der Skala liegt, wird beim Übersetzen geprüft.
 
 ### v0.83.0 – 2026-09-25 (die Stimme spricht, während das Modell schreibt: erster Ton nach drei bis acht Sekunden; Funde 463 bis 466)
 

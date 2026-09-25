@@ -106,6 +106,20 @@ const TEXTE = {
     "knopf.vorlesen": "Antworten vorlesen",
     "sinne.titel": "Sinne",
     "sinne.stimmewaehlen": "Stimme hochladen",
+    "notaus.knopf": "Notaus",
+    "notaus.gemeldet": "Notaus: Der Auftrag wurde angehalten. Das Gespräch bleibt, wie es ist.",
+    "sinne.einwilligung": "Die Aufnahme ist meine eigene Stimme, oder die Person hat eingewilligt.",
+    "protokoll.titel": "Aktionsprotokoll",
+    "protokoll.satz": "Jede Handlung des Agenten, ohne Klartext: Eingaben und Ergebnisse stehen nur als Fingerabdruck darin. Nach 30 Tagen wird gelöscht.",
+    "protokoll.zeigen": "Protokoll anzeigen",
+    "protokoll.leer": "Noch keine Einträge.",
+    "protokoll.ort": (o) => `Ablage: ${o}`,
+    "protokoll.zeit": "Zeit",
+    "protokoll.art": "Art",
+    "protokoll.werkzeug": "Werkzeug",
+    "protokoll.entscheidung": "Entscheidung",
+    "protokoll.ergebnis": "Ergebnis",
+    "protokoll.dauer": "Dauer",
     "sinne.stimmeweg": "Stimme entfernen",
     "sinne.einrichten": "Läufer anlegen",
     "sinne.hoert": "🎙 Aufnahme läuft, zum Beenden loslassen",
@@ -197,6 +211,9 @@ const TEXTE = {
 
     "meldung.schliessen": "Meldung schließen",
     "ordner.waehlen": "Ordner wählen",
+    "budget.nicht": "nicht denken",
+    "budget.frei": "unbegrenzt",
+    "budget.token": (n) => `${n} Token`,
     "ordner.waehlenFuer": (titel) => `Ordner für ${titel} wählen`,
     "fehler": (f) => `Fehler: ${f}`,
     "fehler.start": (f) => `Fehler beim Start: ${f}`,
@@ -281,6 +298,20 @@ const TEXTE = {
     "knopf.vorlesen": "Read answers aloud",
     "sinne.titel": "Senses",
     "sinne.stimmewaehlen": "Upload a voice",
+    "notaus.knopf": "Stop",
+    "notaus.gemeldet": "Emergency stop: the task was halted. The conversation stays as it is.",
+    "sinne.einwilligung": "The recording is my own voice, or the person has consented.",
+    "protokoll.titel": "Action log",
+    "protokoll.satz": "Every agent action, without plain text: inputs and results appear only as fingerprints. Deleted after 30 days.",
+    "protokoll.zeigen": "Show log",
+    "protokoll.leer": "No entries yet.",
+    "protokoll.ort": (o) => `Stored in: ${o}`,
+    "protokoll.zeit": "Time",
+    "protokoll.art": "Kind",
+    "protokoll.werkzeug": "Tool",
+    "protokoll.entscheidung": "Decision",
+    "protokoll.ergebnis": "Result",
+    "protokoll.dauer": "Duration",
     "sinne.stimmeweg": "Remove the voice",
     "sinne.einrichten": "Create the runner",
     "sinne.hoert": "🎙 Recording, release to stop",
@@ -373,6 +404,9 @@ const TEXTE = {
 
     "meldung.schliessen": "Dismiss message",
     "ordner.waehlen": "Choose folder",
+    "budget.nicht": "no thinking",
+    "budget.frei": "unlimited",
+    "budget.token": (n) => `${n} tokens`,
     "ordner.waehlenFuer": (titel) => `Choose folder for ${titel}`,
     "fehler": (f) => `Error: ${f}`,
     "fehler.start": (f) => `Error at start: ${f}`,
@@ -635,6 +669,59 @@ const jetzt = () => new Date().toISOString();
 ///
 /// ⚠️ **Sie ist keine Schranke.** Einhängegrenze, Schreiberlaubnis und
 /// Betriebsart wirken unabhängig davon, ob jemand gelesen hat.
+// --- Der Hinweis beim Start -------------------------------------------
+//
+// ⛔️ **Bei jedem Start, aktiv zu bestaetigen, ohne Ausweg** (Art. 50
+// Abs. 1 KI-Verordnung; Festlegung des Projektinhabers, 2026-09-25). Der
+// Knopf geht erst mit dem Haekchen, Escape und ein Klick daneben tun
+// nichts, und alles darunter ist `inert`, solange er steht. Der Text
+// kommt aus der Kiste (`kennzeichnung::starthinweis`).
+//
+// ⚑ **Die Marken kommen aus derselben Antwort**: das Wort im Kopf und die
+// Zeile unter jeder Antwort. Bis sie da ist, gilt `KI_MARKE`.
+let KI_MARKE = "KI-generiert";
+async function starthinweis_zeigen() {
+  const h = await invoke("starthinweis");
+  KI_MARKE = h.marke;
+  $("kimarke").textContent = h.kurz;
+  $("kimarke").title = h.titel;
+  $("kihinweistitel").textContent = h.titel;
+  const liste = $("kihinweispunkte");
+  liste.replaceChildren(
+    ...h.punkte.map((p) => {
+      const li = document.createElement("li");
+      li.textContent = p;
+      return li;
+    }),
+  );
+  $("kihinweisverweistitel").textContent = h.verweis_titel;
+  $("kihinweisverweis").textContent = h.verweis;
+  $("kihinweisbestaetigung").textContent = h.bestaetigung;
+  const haken = $("kihinweishaken");
+  const weiter = $("kihinweisweiter");
+  weiter.textContent = h.weiter;
+  haken.checked = false;
+  weiter.disabled = true;
+  haken.addEventListener("change", () => (weiter.disabled = !haken.checked));
+
+  const darunter = [$("haupt"), $("seitenleiste")].filter(Boolean);
+  darunter.forEach((e) => (e.inert = true));
+  const kasten = $("kihinweis");
+  kasten.hidden = false;
+  haken.focus();
+  // Alles neu zeichnen, damit schon gezeichnete Antworten die Marke in
+  // der richtigen Sprache tragen.
+  alles_zeichnen();
+  await new Promise((fertig) => {
+    weiter.onclick = () => {
+      if (!haken.checked) return;
+      kasten.hidden = true;
+      darunter.forEach((e) => (e.inert = false));
+      fertig();
+    };
+  });
+}
+
 let warnung_gezeigt = false;
 async function agentenwarnung_zeigen() {
   if (warnung_gezeigt) return;
@@ -1766,6 +1853,12 @@ function beitrag_zeichnen(b) {
     koerper.append(bloecke_zeichnen(b.bloecke));
   }
   wurzel.append(koerper);
+  // ⛔️ **Jede Antwort traegt die Marke** (Art. 50 Abs. 1): auch waehrend
+  //   sie entsteht, denn auch dann ist sie KI-erzeugt.
+  const km = document.createElement("p");
+  km.className = "kimarke-antwort";
+  km.textContent = KI_MARKE;
+  wurzel.append(km);
 
   if (b.fuss) {
     const f = document.createElement("div");
@@ -2388,6 +2481,8 @@ const feldzeile = (f, wert, beim_setzen) => {
     }
     element.value = wert === null || wert === undefined ? "" : String(wert);
     element.addEventListener("change", () => beim_setzen(element.value));
+  } else if (f.art === "Budget") {
+    element = budgetregler(f, wert, beim_setzen);
   } else if (f.art === "Schalter") {
     element = document.createElement("input");
     element.type = "checkbox";
@@ -2420,6 +2515,48 @@ const feldzeile = (f, wert, beim_setzen) => {
   }
   tr.append(a, b);
   return tr;
+};
+
+// ⚑ **Ein Budget als Schieber**: links null, rechts ohne Grenze, dazwischen
+// stufenlos bis `f.bis` (die Zahl kommt aus der Kiste).
+//
+// ⚑ **Quadratisch und nicht gleichmaessig.** Die Unterschiede, die man
+// hoert, liegen bei kleinen Budgets: 32 oder 128 Token Ueberlegung sind
+// beim Vorlesen einige Sekunden auseinander, 1800 oder 1900 nicht. Auf
+// einer gleichmaessigen Skala laege alles Wichtige im ersten Zehntel;
+// so liegt die Mitte bei einem Viertel des Endes.
+const BUDGET_STELLEN = 1000;
+const budget_aus_stelle = (p, bis) => Math.round(bis * (p / BUDGET_STELLEN) ** 2);
+const stelle_aus_budget = (n, bis) =>
+  Math.min(BUDGET_STELLEN - 1, Math.round(BUDGET_STELLEN * Math.sqrt(n / bis)));
+
+const budgetregler = (f, wert, beim_setzen) => {
+  const huelle = document.createElement("div");
+  huelle.className = "budgetzeile";
+  const schieber = document.createElement("input");
+  schieber.type = "range";
+  schieber.min = 0;
+  schieber.max = BUDGET_STELLEN;
+  // ⚑ **Ohne Wert steht er am rechten Anschlag**: nicht gesetzt heisst
+  //   ohne Grenze, wie bei den Reglern der Grenzen.
+  const gesetzt = typeof wert === "number";
+  schieber.value = gesetzt ? stelle_aus_budget(wert, f.bis) : BUDGET_STELLEN;
+  const anzeige = document.createElement("span");
+  anzeige.className = "reglerwert";
+  const zeigen = () => {
+    const p = Number(schieber.value);
+    const n = budget_aus_stelle(p, f.bis);
+    anzeige.textContent =
+      p >= BUDGET_STELLEN ? t("budget.frei") : n === 0 ? t("budget.nicht") : t("budget.token", n);
+  };
+  zeigen();
+  schieber.addEventListener("input", zeigen);
+  schieber.addEventListener("change", () => {
+    const p = Number(schieber.value);
+    beim_setzen(p >= BUDGET_STELLEN ? "aus" : String(budget_aus_stelle(p, f.bis)));
+  });
+  huelle.append(schieber, anzeige);
+  return huelle;
 };
 
 // ⚑ Der Knopf, der den Fensterdialog des Betriebssystems oeffnet.
@@ -2744,6 +2881,23 @@ function tonwerk_holen() {
 ///
 /// Zurueck kommt ein Versprechen, das erfuellt ist, sobald das Stueck
 /// geplant ist; die Kette haelt nur die Reihenfolge des Entpackens.
+/// Die geplanten Stuecke, damit der Notaus sie anhalten kann.
+let geplant = [];
+
+/// ⛔️ **Haelt die Stimme sofort an**: alle geplanten Stuecke, auch die,
+/// die erst noch klingen wuerden.
+function stimme_anhalten() {
+  for (const q of geplant) {
+    try {
+      q.stop();
+    } catch {
+      // schon ausgeklungen
+    }
+  }
+  geplant = [];
+  if (tonwerk) stimmende = tonwerk.currentTime;
+}
+
 function stimme_einplanen(base64) {
   return new Promise((fertig) => {
     let roh;
@@ -2766,6 +2920,8 @@ function stimme_einplanen(base64) {
         //   Start in der Vergangenheit schnitte den Anfang ab.
         const anfang = Math.max(werk.currentTime + 0.03, stimmende);
         quelle.start(anfang);
+        geplant.push(quelle);
+        quelle.onended = () => (geplant = geplant.filter((q) => q !== quelle));
         stimmende = anfang + puffer.duration;
         zeichen_schwingen();
         fertig();
@@ -3736,17 +3892,48 @@ async function sinne_verdrahten() {
   }
 
   const waehlen = $("stimme-waehlen");
-  if (waehlen) {
+  const einwilligung = $("stimme-einwilligung");
+  if (waehlen && einwilligung) {
+    // ⛔️ Der Knopf geht erst mit der Einwilligung; der Befehl prueft sie
+    //   noch einmal.
+    einwilligung.addEventListener("change", () => (waehlen.disabled = !einwilligung.checked));
     waehlen.addEventListener("click", async () => {
+      if (!einwilligung.checked) return;
       const gewaehlt = await invoke("datei_waehlen", { titel: t("sinne.stimmewaehlen") });
       if (!gewaehlt) return;
       try {
-        sinne_zeigen(await invoke("stimme_setzen", { pfad: gewaehlt }));
+        sinne_zeigen(await invoke("stimme_setzen", { pfad: gewaehlt, einwilligung: true }));
+        einwilligung.checked = false;
+        waehlen.disabled = true;
       } catch (f) {
         melden_als_fehler(f);
       }
     });
   }
+  // ⛔️ Das Aktionsprotokoll: erst auf den Knopf, neueste zuerst.
+  const protokollknopf = $("protokoll-zeigen");
+  if (protokollknopf) {
+    protokollknopf.addEventListener("click", async () => {
+      const [ort, eintraege] = await invoke("protokoll_lesen");
+      $("protokollort").textContent = t("protokoll.ort", ort);
+      const tafel = $("protokolltafel");
+      const rumpf = tafel.querySelector("tbody");
+      rumpf.replaceChildren(
+        ...eintraege.map((e) => {
+          const tr = document.createElement("tr");
+          for (const wert of [e.zeit, e.art, e.werkzeug, e.entscheidung, e.ergebnis, `${e.dauer_ms} ms`]) {
+            const td = document.createElement("td");
+            td.textContent = wert;
+            tr.append(td);
+          }
+          return tr;
+        }),
+      );
+      tafel.hidden = eintraege.length === 0;
+      if (eintraege.length === 0) $("protokollort").textContent += ` · ${t("protokoll.leer")}`;
+    });
+  }
+
   const weg = $("stimme-weg");
   if (weg) {
     weg.addEventListener("click", async () => {
@@ -4358,5 +4545,29 @@ $("terminaleingabe").addEventListener("keydown", (e) => {
     melden(t("fehler.start", f));
   }
   await vorhangWeg();
+  await starthinweis_zeigen();
+  notaus_verdrahten();
   feld.focus();
 })();
+
+// ⛔️ **Der Notaus**: Knopf und Tastenkuerzel (⌘. auf dem Mac, Strg+.
+// sonst). Er haelt den Auftrag in der Kiste an und die Stimme hier, und
+// das Gespraech bleibt stehen, wie es ist.
+function notaus_verdrahten() {
+  const ausloesen = async () => {
+    stimme_anhalten();
+    try {
+      await invoke("notaus");
+      melden(t("notaus.gemeldet"));
+    } catch (f) {
+      melden(t("fehler", f));
+    }
+  };
+  $("notaus").addEventListener("click", ausloesen);
+  document.addEventListener("keydown", (ereignis) => {
+    if ((ereignis.metaKey || ereignis.ctrlKey) && ereignis.key === ".") {
+      ereignis.preventDefault();
+      ausloesen();
+    }
+  });
+}

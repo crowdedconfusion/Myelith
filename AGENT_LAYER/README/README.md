@@ -1,6 +1,6 @@
 # agent-layer (`myl-agent`)
 
-> **Version:** 0.19.0 (`myl-agent` 0.7.0, `myl-local-agent` 0.12.0)
+> **Version:** 0.20.0 (`myl-agent` 0.7.0, `myl-local-agent` 0.13.0)
 > **Datum:** 2026-09-21
 > **Status:** Manifeste, Herkunftsstufe, Registratur, der
 > **Session-Kontrakt** mit Durchsetzung im Ledger, der **Plan** und seit
@@ -44,6 +44,20 @@ Kap. 8.2).
 - `src/kette.rs` — dass er es auch so getan hat, und wann er aufhört.
 
 ## Changelog
+
+### v0.20.0 – 2026-09-25 (`myl-local-agent` 0.13.0: ein Lauf kann vom Menschen angehalten werden, und die Risikoklassen liegen unter COMPLIANCE)
+
+- ⚑ **`Tuerfehler::Abgebrochen { bisher }`**: Der Notaus des Clients hält
+  die Erzeugung an, und `chat` meldet das als eigenen Fehler. Die Schleife
+  endet damit wie bei jedem Fehler der Tür (`Ende::Tuer`), und der Text
+  bis zum Halt kommt mit, damit der Mensch ihn sieht und nichts verloren
+  geht. `Display`: „vom Menschen angehalten (Notaus)".
+- ⚑ **`ETHICS/` ist nach `COMPLIANCE/ethics/` gezogen**: `risiko.rs` liest
+  `Risikoklassen.toml` dort (`include_str!`), Kommentare nennen den neuen
+  Ort.
+
+**Belegt:** alle Proben grün; der Weg über `Abgebrochen` ist im Client an
+einem echten Modell geprüft (`myl-client`, `tests/notaus.rs`).
 
 ### v0.19.0 – 2026-09-23 (`myl-local-agent` 0.12.0: ein Patzer beendet den Lauf nicht mehr, und Schweigen heisst nicht mehr Erfolg)
 

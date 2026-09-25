@@ -94,6 +94,16 @@ impl Ruestung {
 /// deshalb der Unterschied.
 pub type Nachfrage = std::sync::Arc<dyn Fn(&str, &serde_json::Value) -> bool + Send + Sync>;
 
+/// **Jedes eingehaengte Werkzeug protokolliert**, siehe `crate::protokoll`.
+///
+/// ⚑ **Aussen um die Nachfrage**, damit das Protokoll auch sieht, was der
+/// Mensch abgelehnt hat. Eine Stelle fuer alle Einhaengungen in dieser
+/// Datei: Ein Werkzeug, das an ihr vorbei eingehaengt wird, liefe
+/// unprotokolliert, und `jedes_werkzeug_ist_protokolliert` haelt das fest.
+fn protokolliert(inner: Box<dyn Werkzeugausfuehrung>) -> Box<dyn Werkzeugausfuehrung> {
+    Box::new(crate::protokoll::Protokolliert { inner })
+}
+
 /// Ein Werkzeug, das vor dem Ausfuehren fragt.
 ///
 /// ⚑ **Es umhuellt, statt einzugreifen.** Das Werkzeug selbst weiss
@@ -124,10 +134,13 @@ impl Werkzeugausfuehrung for Nachfragend {
             // wie ein Fehler behandelt**, und dann versucht es dieselbe
             // Handlung gleich noch einmal.
             return Err(myl_local_agent::ausfuehrung::Werkzeugfehler {
-                grund: "Der Nutzer hat diese Handlung abgelehnt. Sie wurde nicht \
-                        ausgefuehrt, und die Datei ist unveraendert. Wiederhole sie \
-                        nicht; sage stattdessen, was du sonst tun kannst."
-                    .to_string(),
+                // ⚑ Der erste Satz ist `protokoll::ABSAGE`: An ihm erkennt
+                //   das Aktionsprotokoll, dass der Mensch abgelehnt hat.
+                grund: format!(
+                    "{} Sie wurde nicht ausgefuehrt, und die Datei ist unveraendert. \
+                     Wiederhole sie nicht; sage stattdessen, was du sonst tun kannst.",
+                    crate::protokoll::ABSAGE
+                ),
             });
         }
         self.inner.ausfuehren(argumente)
@@ -216,7 +229,16 @@ pub fn ruesten_fuer_anhaenge(
     //   gesehen hat; ein Tor ohne Anhangtexte ist eines ohne Schranke 2.
     if let Some(nutzertext) = netz {
         let tor = std::sync::Arc::new(crate::netzwerkzeuge::Tor::neu(anhangordner, nutzertext));
-        zusaetzlich.extend(crate::netzwerkzeuge::angebote(tor, form));
+        // ⛔️ **Eine Web-Anfrage wirkt nach aussen** (sie verraet, wonach
+        //   gesucht wird, und wohin), also fragt sie im `manual mode` wie
+        //   ein Schreiben. 📌 Bis zum 2026-09-25 lief sie ohne Nachfrage.
+        for (angebot, ausfuehrung) in crate::netzwerkzeuge::angebote(tor, form) {
+            let ausfuehrung: Box<dyn Werkzeugausfuehrung> = match nachfrage.clone() {
+                Some(f) => Box::new(Nachfragend { inner: ausfuehrung, fragen: f }),
+                None => ausfuehrung,
+            };
+            zusaetzlich.push((angebot, ausfuehrung));
+        }
     }
     // ⚑ **Eine eigene Einstellung und nicht die des Nutzers.** Was hier
     //   gilt, gilt für diesen einen Lauf: der Anhangordner als Wurzel,
@@ -256,14 +278,14 @@ fn ruesten_zugeschnitten(
     for (angebot, ausfuehrung) in crate::verankert::angebote() {
         let name = angebot.name.clone();
         kasten
-            .einhaengen(angebot, ausfuehrung)
+            .einhaengen(angebot, protokolliert(ausfuehrung))
             .map_err(|f| format!("Verankertes Werkzeug {name} haengt nicht: {f:?}"))?;
     }
 
     for (angebot, ausfuehrung) in zusaetzlich {
         let name = angebot.name.clone();
         kasten
-            .einhaengen(angebot, ausfuehrung)
+            .einhaengen(angebot, protokolliert(ausfuehrung))
             .map_err(|f| format!("Werkzeug {name} haengt nicht: {f:?}"))?;
     }
 
@@ -337,7 +359,7 @@ fn ruesten_zugeschnitten(
                     }
                 }
                 kasten
-                    .einhaengen(angebot, ausfuehrung)
+                    .einhaengen(angebot, protokolliert(ausfuehrung))
                     .map_err(|f| format!("Dateiwerkzeug {name} haengt nicht: {f:?}"))?;
             }
 
@@ -352,7 +374,7 @@ fn ruesten_zugeschnitten(
                 {
                     let name = angebot.name.clone();
                     kasten
-                        .einhaengen(angebot, ausfuehrung)
+                        .einhaengen(angebot, protokolliert(ausfuehrung))
                         .map_err(|f| format!("Sinneswerkzeug {name} haengt nicht: {f:?}"))?;
                 }
             }
@@ -376,7 +398,7 @@ fn ruesten_zugeschnitten(
                         ausfuehrung = Box::new(Nachfragend { inner: ausfuehrung, fragen: f });
                     }
                     kasten
-                        .einhaengen(angebot, ausfuehrung)
+                        .einhaengen(angebot, protokolliert(ausfuehrung))
                         .map_err(|f| format!("Kisten-Werkzeug {name} haengt nicht: {f:?}"))?;
                 }
             }

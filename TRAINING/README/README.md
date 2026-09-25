@@ -1,6 +1,6 @@
 # training (`myl-train`)
 
-> **Version:** 0.4.2 (`myl-train` 0.3.0)
+> **Version:** 0.4.3 (`myl-train` 0.3.0)
 > **Datum:** 2026-09-11
 > **Status:** **Die Komponente hat Code**, 32 Tests. Zwei Punkte sind
 > gebaut, und beide sind genau die, die **nicht** am ganzzahligen
@@ -145,6 +145,15 @@ von dieser Komponente kommt:
 Entsteht mit der Implementierung.
 
 ## Changelog
+
+### v0.4.3 – 2026-09-25 (die Buchkette sagt, wofür man ein Buch verwenden darf)
+
+`korpus/buchkorpus.py` schreibt vor jedem Bau eines Trainingskorpus auf
+die Fehlerausgabe, dass nur Material verwendet werden darf, für das man
+die Rechte hat (eigene Werke, freie Lizenzen, Erlaubnis der
+Rechteinhaber), mit Verweis auf `COMPLIANCE/de/Urheberrecht.md`. Ein
+Hinweis und keine Sperre: Ob ein Buch verwendet werden darf, weiß das
+Skript nicht, der Mensch schon. Selbsttest grün.
 
 ### v0.4.2 – 2026-09-17 (eine eigene Umgebung, die ohne Netz entsteht)
 

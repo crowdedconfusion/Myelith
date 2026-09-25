@@ -573,6 +573,68 @@ struct Warnungsansicht {
     nicht_wieder: String,
 }
 
+/// **Die Nachfrage vor einer Handlung mit Wirkung nach aussen**, wenn der
+/// Modus es verlangt.
+///
+/// ⚑ **Der Kasten ist der des Betriebssystems**, derselbe Weg wie bei
+/// der Ordnerwahl: blockierend, und das ist erlaubt, weil jeder Lauf in
+/// `spawn_blocking` liegt und nicht auf dem Hauptfaden. Eine Stelle fuer
+/// Agent und Chat: Zwei Kaesten fuer dieselbe Frage liefen auseinander.
+fn nachfrage_fuer(
+    fenster: &tauri::AppHandle,
+    modus: myl_client::einstellungen::Agentenmodus,
+) -> Option<myl_client::ruestung::Nachfrage> {
+    if !modus.fragt_nach() {
+        return None;
+    }
+    let app = fenster.clone();
+    Some(std::sync::Arc::new(move |name: &str, argumente: &serde_json::Value| {
+        use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
+        // ⚑ Die Argumente stehen mit im Kasten: Eine Zustimmung ohne
+        // zu wissen, **worauf**, ist keine.
+        let was = serde_json::to_string_pretty(argumente).unwrap_or_else(|_| argumente.to_string());
+        app.dialog()
+            .message(format!("{name}\n\n{was}"))
+            .title("Diese Handlung ausfuehren?")
+            .buttons(MessageDialogButtons::OkCancelCustom(
+                "Ausfuehren".to_string(),
+                "Ablehnen".to_string(),
+            ))
+            .blocking_show()
+    }))
+}
+
+/// **Der Notaus**: haelt den laufenden Auftrag an (siehe
+/// `myl_client::notaus`). Die Stimme haelt das Fenster selbst an.
+#[tauri::command]
+fn notaus() {
+    myl_client::notaus::ausloesen("fenster");
+}
+
+/// **Die juengsten Eintraege des Aktionsprotokolls**, und wo es liegt.
+#[tauri::command]
+fn protokoll_lesen() -> (String, Vec<myl_client::protokoll::Eintrag>) {
+    (
+        myl_client::protokoll::ordner().display().to_string(),
+        myl_client::protokoll::lesen(200),
+    )
+}
+
+/// **Der Hinweis beim Start: Hier arbeitet eine KI.**
+///
+/// ⛔️ **Ohne Bedingung und ohne Schalter**, anders als die Warnung
+/// darunter. Der Text kommt aus der Kiste, damit die Konsole denselben
+/// sagt; die Sprache aus den Einstellungen, und ohne lesbare
+/// Einstellungen Deutsch, denn ein fehlender Hinweis waere schlimmer als
+/// einer in der falschen Sprache.
+#[tauri::command]
+fn starthinweis() -> myl_client::kennzeichnung::Starthinweis {
+    let sprache = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())
+        .map(|e| e.oberflaeche.sprache)
+        .unwrap_or_default();
+    myl_client::kennzeichnung::starthinweis(sprache)
+}
+
 /// **Die Warnung, falls sie noch gezeigt werden soll.**
 ///
 /// ⚑ `None` heisst: Der Nutzer hat zugestimmt und das Haekchen gesetzt.
@@ -776,26 +838,25 @@ async fn agent_fahren(
     // ⚑ **Der Kasten ist der des Betriebssystems**, derselbe Weg wie bei
     // der Ordnerwahl: blockierend, und das ist hier erlaubt, weil der
     // ganze Lauf in `spawn_blocking` liegt und nicht auf dem Hauptfaden.
-    let nachfrage: Option<myl_client::ruestung::Nachfrage> = if e.agent.modus.fragt_nach() {
-        let app = fenster.clone();
-        Some(std::sync::Arc::new(move |name: &str, argumente: &serde_json::Value| {
-            use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
-            // ⚑ Die Argumente stehen mit im Kasten: Eine Zustimmung ohne
-            // zu wissen, **worauf**, ist keine.
-            let was = serde_json::to_string_pretty(argumente)
-                .unwrap_or_else(|_| argumente.to_string());
-            app.dialog()
-                .message(format!("{name}\n\n{was}"))
-                .title("Diese Handlung ausfuehren?")
-                .buttons(MessageDialogButtons::OkCancelCustom(
-                    "Ausfuehren".to_string(),
-                    "Ablehnen".to_string(),
-                ))
-                .blocking_show()
-        }))
-    } else {
-        None
-    };
+    // ⛔️ **Der Schutzfilter vor allem anderen** (Art. 5 KI-Verordnung):
+    //   Ein Auftrag, der erkennbar auf eine verbotene Praxis zielt, wird
+    //   gar nicht erst gefahren. Das Gespraech bleibt, mit der Abweisung.
+    if let Some(satz) = myl_client::schutzfilter::abweisen(&auftrag, e.oberflaeche.sprache, "fenster-agent") {
+        let mut nachrichten = verlauf.clone().unwrap_or_default();
+        nachrichten.push(myl_client::Nachricht::nutzer(auftrag.clone()));
+        nachrichten.push(myl_client::Nachricht::modell(satz.clone()));
+        return Ok(Abschluss {
+            verlauf: Vec::new(),
+            antwort: Some(satz),
+            fertig: true,
+            sekunden: 0.0,
+            gesperrt: false,
+            nachrichten,
+            kontext: None,
+            zusammenfassung: None,
+        });
+    }
+    let nachfrage = nachfrage_fuer(&fenster, e.agent.modus);
     let ruestung = myl_client::ruestung::ruesten_mit(
         &e.agent,
         myl_client::Ansageform::Amtlich,
@@ -814,6 +875,8 @@ async fn agent_fahren(
     let schritte = e.agent.schritte as usize;
     let grenze = e.modell.token as u32;
 
+    // ⛔️ Jeder Auftrag beginnt mit einem gelösten Notaus.
+    myl_client::notaus::zuruecksetzen();
     let _ = fenster.emit("agent-beginnt", &auftrag);
     let halt = halter.modell.clone();
     let aus = tauri::async_runtime::spawn_blocking(move || {
@@ -1072,12 +1135,21 @@ async fn frage(
     fenster: tauri::AppHandle,
     halter: tauri::State<'_, Halter>,
 ) -> Result<Antwort, String> {
+    // ⛔️ Jeder Auftrag beginnt mit einem gelösten Notaus.
+    myl_client::notaus::zuruecksetzen();
     let e = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())?;
     let grenze = e.modell.token as u32;
     // Fuer die Saetze, die das Nachdenken ueberbruecken.
     let sprache = e.oberflaeche.sprache.kennung().to_string();
     if verlauf.is_empty() {
         return Err("es wurde nichts gefragt".to_string());
+    }
+    // ⛔️ **Der Schutzfilter vor allem anderen** (Art. 5 KI-Verordnung),
+    //   auf die juengste Frage des Menschen.
+    if let Some((_, frage)) = verlauf.iter().rev().find(|(rolle, _)| rolle != "modell") {
+        if let Some(satz) = myl_client::schutzfilter::abweisen(frage, e.oberflaeche.sprache, "fenster-chat") {
+            return Ok(Antwort { text: satz, sekunden: 0.0, kontext: None, geaendert: Vec::new() });
+        }
     }
     let anfang = std::time::Instant::now();
 
@@ -1125,12 +1197,16 @@ async fn frage(
             .find(|(rolle, _)| rolle != "modell")
             .map(|(_, text)| text.clone())
             .unwrap_or_default();
+        // ⛔️ **Auch hier wird im `manual mode` gefragt** (Art. 14 als
+        //   Vorbild, Festlegung des Projektinhabers, 2026-09-25): ein
+        //   geaenderter Anhang und jede Web-Anfrage. 📌 Bis dahin stand
+        //   hier `None`, und der Chat mit Anhang oder Recherche fragte nie.
         let ruestung = myl_client::ruestung::ruesten_fuer_anhaenge(
             &anhangordner,
             myl_client::Ansageform::Amtlich,
             mit_netz.then_some(saat.as_str()),
             Vec::new(),
-            None,
+            nachfrage_fuer(&fenster, e.agent.modus),
         )?;
         let schritte = e.agent.schritte as usize;
 
@@ -1209,6 +1285,7 @@ async fn frage(
 
     let halt = halter.modell.clone();
     let sprecher = std::sync::Arc::clone(&halter.sprecher);
+    let denkbudget = e.modell.denkbudget;
     let text = tauri::async_runtime::spawn_blocking(move || {
         let mut g = halt.lock().map_err(|_| "der Modellhalter ist vergiftet".to_string())?;
         let Some(m) = g.as_mut() else {
@@ -1243,16 +1320,34 @@ async fn frage(
             })
         });
         zusehen_mit(m, &fenster, vorleser.clone(), &sprache);
-        let antwort = m.chat("lokal", &n, Some(grenze)).map_err(|f| f.to_string()).map(|a| a.text);
+        // ⚑ **Das Denkbudget gilt nur, wenn vorgelesen wird**, und nur
+        //   fuer diese eine Antwort: Die Ueberlegung ist dann Wartezeit,
+        //   in der nichts klingt. Danach wieder ohne, damit der naechste
+        //   Lauf (etwa der Agent) nicht erbt, was hier gesetzt wurde.
+        m.denkbudget = if vorleser.is_some() { denkbudget.map(|b| b as usize) } else { None };
+        // ⛔️ **Ein angehaltener Chat behaelt, was er bis dahin schrieb**
+        //   (Notaus): Der Text ist ein Ergebnis, kein Fehler.
+        let antwort = match m.chat("lokal", &n, Some(grenze)) {
+            Ok(a) => Ok(a.text),
+            Err(myl_client::Tuerfehler::Abgebrochen { bisher }) => Ok(bisher),
+            Err(f) => Err(f.to_string()),
+        };
+        m.denkbudget = None;
         m.beobachter = None;
         // ⚑ **Der Rest geht noch raus, dann wird gewartet.** Ein
         // Vorleser, der beim Abraeumen mitten im Satz abbricht, klingt
         // kaputt. ⚠️ Fehler beim Sprechen halten die Antwort nicht auf:
         // Eine Antwort, die dasteht, ist wichtiger als eine, die klingt.
+        // ⛔️ Nach dem Notaus wird nicht zu Ende gesprochen: Der Vorleser
+        //   faellt weg und hoert nach dem laufenden Satz auf.
         if let Some(v) = vorleser {
             if let Some(v) = v.lock().ok().and_then(|mut g| g.take()) {
-                for f in v.abschliessen() {
-                    eprintln!("Vorleser: {f}");
+                if myl_client::notaus::ausgeloest() {
+                    drop(v);
+                } else {
+                    for f in v.abschliessen() {
+                        eprintln!("Vorleser: {f}");
+                    }
                 }
             }
         }
@@ -1786,7 +1881,14 @@ async fn sprechtaste_ende(halter: tauri::State<'_, Halter>) -> Result<String, St
 
 /// **Legt eine hochgeladene Aufnahme als Stimme ab.**
 #[tauri::command]
-async fn stimme_setzen(pfad: String) -> Result<Sinnesansicht, String> {
+async fn stimme_setzen(pfad: String, einwilligung: Option<bool>) -> Result<Sinnesansicht, String> {
+    // ⛔️ **Keine Stimme ohne Einwilligung** (Zweckbestimmung, Abschnitt
+    //   2.3): Die Aufnahme ist die eigene, oder die Person hat eingewilligt.
+    //   Geprueft hier und nicht nur am Haekchen im Fenster, damit ein
+    //   anderer Aufrufer nicht daran vorbeikommt.
+    if einwilligung != Some(true) {
+        return Err("Ohne bestaetigte Einwilligung wird keine Stimme abgelegt.".to_string());
+    }
     tauri::async_runtime::spawn_blocking(move || {
         myl_senses::sprechen::probe_setzen(std::path::Path::new(&pfad))
     })
@@ -2146,10 +2248,15 @@ async fn terminal_ordner(halter: tauri::State<'_, Halter>) -> Result<String, Str
 }
 
 fn main() {
+    // ⛔️ Das Aktionsprotokoll gilt fuer jeden Lauf dieses Fensters.
+    myl_client::protokoll::einschalten();
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(Halter::default())
         .invoke_handler(tauri::generate_handler![
+            starthinweis,
+            notaus,
+            protokoll_lesen,
             einstellungen,
             felder,
             hardware,

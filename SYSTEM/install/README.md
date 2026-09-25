@@ -210,7 +210,7 @@ Datei hindurch.
 | ffmpeg, llama.cpp, whisper.cpp | Paketverwalter des Systems | `/opt/homebrew/bin` und ähnliche |
 | Hörmodell (0,6 GB) | whisper.cpp auf Hugging Face | `~/.myelith/sinne/hoeren.bin` |
 | Sehmodell schnell (1,7 GB) | SmolVLM2-2.2B-Instruct | `sehen.gguf`, `sehen-mmproj.gguf` |
-| Sehmodell genau (3,3 GB) | Qwen2.5-VL-3B-Instruct | `sehen-genau.gguf`, `sehen-genau-mmproj.gguf` |
+| Sehmodell genau (2,9 GB) | Qwen3-VL-4B-Instruct | `sehen-genau.gguf`, `sehen-genau-mmproj.gguf` |
 | Sprechen (4,5 GB) | **Fun-CosyVoice3-0.5B** samt eigener Python-Umgebung | `~/CosyVoice`, verlinkt nach `~/.myelith/sinne/cosyvoice` |
 
 ⛔️ **Was hier bewusst nicht im Repositorium liegt:** die Programme

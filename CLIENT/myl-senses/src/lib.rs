@@ -49,6 +49,7 @@ pub mod anhang;
 pub mod aufnahme;
 pub mod blick;
 pub mod hoeren;
+pub mod kennzeichnung;
 pub mod laufwerk;
 pub mod ort;
 pub mod prozess;

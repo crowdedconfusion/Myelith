@@ -33,7 +33,7 @@
 ## Lizenzprüfung je Modellvariante (2026-08-23)
 
 **Warum je Variante und nicht je Familie.** Whitepaper Kap. 10.1 und
-`ETHICS/Manifest.md` G7 verlangen Apache 2.0 oder MIT, und zwar nicht aus
+`COMPLIANCE/ethics/Manifest.md` G7 verlangen Apache 2.0 oder MIT, und zwar nicht aus
 Prinzipienreiterei: Ein offenes Protokoll kennt seine Nutzerzahl nicht
 und kann sie nicht begrenzen, eine Lizenz mit Nutzerzahl-Obergrenze ist
 für es schlicht nicht einhaltbar. G7 warnte bereits, das gelte „nicht
@@ -187,7 +187,7 @@ Komponente ETHICS führt die rechtliche Einordnung als offenen Punkt.*
 
 ## Fund bei dieser Prüfung: die Lizenzdatei kam nie an
 
-`ETHICS/Manifest.md` berief sich für G7 auf
+`COMPLIANCE/ethics/Manifest.md` berief sich für G7 auf
 `INTEGER_LLM/models/Qwen2.5-0.5B/LICENSE`. **Diese Datei existierte
 nicht.** Die Beschaffung im Testclient lud mit
 `allow_patterns=['*.json','*.safetensors','*.txt']`, und eine Lizenzdatei

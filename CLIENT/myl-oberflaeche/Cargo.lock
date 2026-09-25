@@ -1785,7 +1785,7 @@ dependencies = [
 
 [[package]]
 name = "integer-llm-runtime"
-version = "0.64.0"
+version = "0.66.0"
 dependencies = [
  "integer-llm-kernels",
  "memmap2",
@@ -2215,7 +2215,7 @@ dependencies = [
 
 [[package]]
 name = "myl-client"
-version = "0.52.2"
+version = "0.54.0"
 dependencies = [
  "integer-llm-runtime",
  "libc",
@@ -2225,11 +2225,12 @@ dependencies = [
  "myl-types",
  "serde",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]
 name = "myl-local-agent"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "myl-agent",
  "myl-types",
@@ -2240,7 +2241,7 @@ dependencies = [
 
 [[package]]
 name = "myl-oberflaeche"
-version = "0.47.0"
+version = "0.49.0"
 dependencies = [
  "myl-client",
  "myl-senses",
@@ -2253,7 +2254,7 @@ dependencies = [
 
 [[package]]
 name = "myl-senses"
-version = "0.8.0"
+version = "0.9.0"
 
 [[package]]
 name = "myl-types"

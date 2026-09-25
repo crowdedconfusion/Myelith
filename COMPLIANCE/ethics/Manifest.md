@@ -205,7 +205,7 @@ bestehen.
 
 Geprüft wurde das `license`-Feld der mitgelieferten Modellkarte und der
 Volltext der Lizenzdatei je Modellverzeichnis, also **ohne Netzzugang
-und auf jedem Klon wiederholbar**; `ETHICS/werkzeuge/lizenzprobe.py`
+und auf jedem Klon wiederholbar**; `COMPLIANCE/ethics/werkzeuge/lizenzprobe.py`
 bestätigt es in einem Lauf.
 
 **Vorheriger Stand (geprüft 2026-08-23, Qwen2.5, alle sieben Größen):**
@@ -222,7 +222,7 @@ Die 72B-Klausel ist genau der Fall, den dieser Punkt als nicht
 einhaltbar benennt: Ein offenes Protokoll hat keine Instanz, die
 monatlich aktive Nutzer zählt, und keine, die eine Lizenz beantragen
 könnte. Vollständige Prüfung samt Methode in
-`ETHICS/Lizenzlage.md`.
+`COMPLIANCE/ethics/Lizenzlage.md`.
 
 ⚑ **Beide Stände stehen hier, und das ist Absicht.** Der ältere hält
 fest, **warum** je Variante geprüft wird: Innerhalb einer Familie
@@ -265,7 +265,7 @@ Governance-Verankerung.*
 ### G9 — Was das Netz nicht lernt und nicht bedient
 
 **Festlegung des Projektinhabers, 2026-08-31.** Es gibt einen benannten
-Ausschlusskatalog (`ETHICS/Ausschluss.json`): Massenvernichtungswaffen,
+Ausschlusskatalog (`COMPLIANCE/ethics/Ausschluss.json`): Massenvernichtungswaffen,
 konventionelle Waffen und Sprengstoff, Angriffswerkzeuge gegen fremde
 Systeme, Missbrauchsdarstellungen und Verfolgung von Personen, Täuschung
 über die Person.
@@ -426,7 +426,7 @@ Alle übrigen Abschnitte folgen dem Governance-Prozess aus Kap. 10.3.
 ### v0.2.0 – 2026-08-31 (G9: was das Netz nicht lernt und nicht bedient)
 
 Auf Festlegung des Projektinhabers. Ein benannter Ausschlusskatalog in
-`ETHICS/Ausschluss.json`, fünf Klassen, jede mit Abgrenzung.
+`COMPLIANCE/ethics/Ausschluss.json`, fünf Klassen, jede mit Abgrenzung.
 
 ⚑ **Der Grundsatz fügt eine Zusage hinzu, und Abschnitt 7 verlangt dafür
 einen Mechanismus.** Er hat einen, aber nur an einer der beiden Stellen:

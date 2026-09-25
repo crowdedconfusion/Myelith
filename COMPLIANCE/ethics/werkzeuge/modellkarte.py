@@ -23,7 +23,7 @@ weggelassen. Eine Karte ohne Zeile für die Kalibrierung liest sich, als
 gäbe es die Frage nicht; eine Karte mit einer leeren Zeile liest sich,
 wie es ist.
 
-Aufruf: `python3 ETHICS/werkzeuge/modellkarte.py [--pruefe]`
+Aufruf: `python3 COMPLIANCE/ethics/werkzeuge/modellkarte.py [--pruefe]`
 `--pruefe` schreibt nichts, sondern meldet, ob die abgelegte Karte
 noch dem entspricht, was die Quellen hergeben. Für den CI-Lauf.
 """
@@ -34,7 +34,7 @@ import json
 import sys
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parents[2]
+REPO = Path(__file__).resolve().parents[3]
 SPEC = REPO / "INTEGER_LLM" / "theta_v" / "spec.json"
 # 📌 Fund 357 (2026-09-14): Hier stand `INTEGER_LLM/eval/results`, und
 # der Ordner ist am 2026-09-07 umgezogen. Die Karte meldete seither
@@ -45,7 +45,7 @@ SPEC = REPO / "INTEGER_LLM" / "theta_v" / "spec.json"
 # ehrlich, wenn an der richtigen Stelle gesucht wurde.**
 ERGEBNISSE = REPO / "BENCHMARKS" / "Inferenz" / "results"
 KATALOG = REPO / "MODELS" / "llm" / "KATALOG.json"
-ZIEL = REPO / "ETHICS" / "Modellkarte.md"
+ZIEL = REPO / "COMPLIANCE" / "ethics" / "Modellkarte.md"
 
 NICHT_GEMESSEN = "*nicht gemessen*"
 
@@ -104,7 +104,7 @@ def baue() -> str:
     a("> Quelle: `INTEGER_LLM/theta_v/spec.json` und")
     a("> `BENCHMARKS/Inferenz/results/`. Wer sie von Hand ändert, verliert")
     a("> die Änderung beim nächsten Lauf von")
-    a("> `ETHICS/werkzeuge/modellkarte.py`.")
+    a("> `COMPLIANCE/ethics/werkzeuge/modellkarte.py`.")
     a("")
     a(f"**θ_v-Fassung:** `{spec.get('version', '?')}`")
     a("")
@@ -141,7 +141,7 @@ def baue() -> str:
     a("## Was diese Karte nicht sagt")
     a("")
     a("⚑ **Sie sagt nichts über Eignung.** Wofür das Netz geeignet ist")
-    a("und wofür nicht, steht in `ETHICS/Risikoklassen.toml`; das ist eine")
+    a("und wofür nicht, steht in `COMPLIANCE/ethics/Risikoklassen.toml`; das ist eine")
     a("Aussage über Vertraulichkeit und keine über Qualität.")
     a("")
     a("⚑ **Und sie bewertet den Inhalt der Trainingsdaten nicht.**")
@@ -162,7 +162,7 @@ def main() -> int:
             print("[modellkarte] PASSED: die abgelegte Karte entspricht den Quellen")
             return 0
         print("[modellkarte] FEHLGESCHLAGEN: die abgelegte Karte ist nicht mehr die erzeugte")
-        print("[modellkarte] `python3 ETHICS/werkzeuge/modellkarte.py` schreibt sie neu")
+        print("[modellkarte] `python3 COMPLIANCE/ethics/werkzeuge/modellkarte.py` schreibt sie neu")
         return 1
     ZIEL.write_text(neu, encoding="utf-8")
     print(f"[modellkarte] geschrieben: {ZIEL.relative_to(REPO)} ({len(neu.splitlines())} Zeilen)")

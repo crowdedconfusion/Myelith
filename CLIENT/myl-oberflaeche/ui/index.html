@@ -231,6 +231,14 @@
            Koerper und Zaehne AUSSEN daran: zwei Kreise und acht kurze
            Segmente zwischen Radius 5,4 und 7,4. -->
       <div class="kopfrechts">
+        <!-- ⛔️ **Die dauerhafte KI-Marke** (Art. 50 Abs. 1): steht,
+             solange das Fenster offen ist, und laesst sich nicht
+             ausblenden. Wort und Satz kommen aus der Kiste. -->
+        <span id="kimarke" class="kimarke" role="note">KI</span>
+        <!-- ⛔️ **Der Notaus** (Festlegung des Projektinhabers, 2026-09-25):
+             haelt jeden laufenden Auftrag an, die Stimme mit. Immer da,
+             denn wer ihn braucht, sucht ihn nicht. Dazu ⌘. und Strg+. -->
+        <button id="notaus" class="notaus" type="button" data-t="notaus.knopf" title="⌘. / Strg+.">Notaus</button>
         <button id="zu-einstellungen" class="rundknopf" aria-label="Einstellungen" data-t-marke="kopf.einstellungen">
           <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
             <circle cx="10" cy="10" r="5.4"/>
@@ -376,6 +384,27 @@
          sich nur ueber ihren Knopf schliessen: Wer sie wegklicken kann,
          ohne sie zu lesen, hat nicht zugestimmt. Der Text kommt aus der
          Kiste, damit die Konsole denselben sagt. -->
+    <!-- ⛔️ **Der Hinweis beim Start: Hier arbeitet eine KI**
+         (Art. 50 Abs. 1 KI-Verordnung; Festlegung des Projektinhabers,
+         2026-09-25: bei jedem Start, aktiv zu bestaetigen). Er liegt ueber
+         allem, hat keinen Schliessknopf, reagiert nicht auf Escape und
+         geht erst weg, wenn das Haekchen gesetzt und der Knopf gedrueckt
+         ist. Der Text kommt aus der Kiste. -->
+    <div id="kihinweis" class="warnung kihinweis" hidden role="dialog" aria-modal="true"
+         aria-labelledby="kihinweistitel">
+      <div class="warnungkasten">
+        <h2 id="kihinweistitel" class="warnungachtung"></h2>
+        <ul id="kihinweispunkte" class="kihinweispunkte"></ul>
+        <p class="kihinweisverweis"><span id="kihinweisverweistitel"></span>:
+          <span id="kihinweisverweis" class="kihinweisadresse"></span></p>
+        <label class="warnunghaken">
+          <input type="checkbox" id="kihinweishaken">
+          <span id="kihinweisbestaetigung"></span>
+        </label>
+        <button type="button" id="kihinweisweiter" class="warnungok" disabled></button>
+      </div>
+    </div>
+
     <div id="warnung" class="warnung" hidden role="dialog" aria-modal="true"
          aria-labelledby="warnungtitel">
       <div class="warnungkasten">
@@ -514,7 +543,12 @@
         <h2 data-t="sinne.titel">Sinne</h2>
         <p id="sinnestand" class="pfad" role="status"></p>
         <div class="stimmzeile">
-          <button id="stimme-waehlen" data-t="sinne.stimmewaehlen">Stimme hochladen</button>
+          <!-- ⛔️ Erst die Einwilligung, dann der Knopf (Zweckbestimmung 2.3). -->
+          <label class="warnunghaken stimmeinwilligung">
+            <input type="checkbox" id="stimme-einwilligung">
+            <span data-t="sinne.einwilligung">Die Aufnahme ist meine eigene Stimme, oder die Person hat eingewilligt.</span>
+          </label>
+          <button id="stimme-waehlen" data-t="sinne.stimmewaehlen" disabled>Stimme hochladen</button>
           <button id="stimme-weg" data-t="sinne.stimmeweg" hidden>Stimme entfernen</button>
           <button id="sinne-einrichten" data-t="sinne.einrichten">Läufer anlegen</button>
           <span id="stimmname" class="stimmname"></span>
@@ -528,6 +562,24 @@
       </section>
 
       <table id="felder-agent"><tbody></tbody></table>
+
+      <!-- ⛔️ **Das Aktionsprotokoll** (Festlegung des Projektinhabers,
+           2026-09-25): jede Handlung des Agenten, ohne Klartext, 30 Tage.
+           Geladen wird erst auf den Knopf, denn es kann lang sein. -->
+      <section id="protokoll">
+        <h2 data-t="protokoll.titel">Aktionsprotokoll</h2>
+        <p class="pfad" data-t="protokoll.satz">Jede Handlung des Agenten, ohne Klartext: Eingaben und Ergebnisse stehen nur als Fingerabdruck darin. Nach 30 Tagen wird gelöscht.</p>
+        <p id="protokollort" class="pfad"></p>
+        <button id="protokoll-zeigen" data-t="protokoll.zeigen">Protokoll anzeigen</button>
+        <table id="protokolltafel" hidden>
+          <thead><tr>
+            <th data-t="protokoll.zeit">Zeit</th><th data-t="protokoll.art">Art</th>
+            <th data-t="protokoll.werkzeug">Werkzeug</th><th data-t="protokoll.entscheidung">Entscheidung</th>
+            <th data-t="protokoll.ergebnis">Ergebnis</th><th data-t="protokoll.dauer">Dauer</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </section>
 
 
       <p class="pfad" id="pfad"></p>

@@ -17,7 +17,7 @@
       "nutzungsvorbehalt": ""
     }
   ],
-  "_pflicht_2": "Ausschluss-Nachweis, und zwar zu JEDER Klasse des Katalogs in ETHICS/Ausschluss.json. 'Wir haben gefiltert' ist kein Nachweis; ein Nachweis nennt Werkzeug, Version und Zahl der ausgeschlossenen Stuecke. Die Klassen sind vorgegeben und nicht waehlbar: Bis zum 2026-08-31 war 'was' ein freies Textfeld, und ein Antrag mit 'Dubletten entfernt' galt als vollstaendig, waehrend ueber die Klassen, um die es geht, nichts dastand. Null ausgeschlossene Stuecke ist eine gueltige Angabe; keine Angabe ist keine.",
+  "_pflicht_2": "Ausschluss-Nachweis, und zwar zu JEDER Klasse des Katalogs in COMPLIANCE/ethics/Ausschluss.json. 'Wir haben gefiltert' ist kein Nachweis; ein Nachweis nennt Werkzeug, Version und Zahl der ausgeschlossenen Stuecke. Die Klassen sind vorgegeben und nicht waehlbar: Bis zum 2026-08-31 war 'was' ein freies Textfeld, und ein Antrag mit 'Dubletten entfernt' galt als vollstaendig, waehrend ueber die Klassen, um die es geht, nichts dastand. Null ausgeschlossene Stuecke ist eine gueltige Angabe; keine Angabe ist keine.",
   "ausschluss": [
     {
       "was": "X1",

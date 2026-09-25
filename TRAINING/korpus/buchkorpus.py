@@ -656,6 +656,17 @@ def bauen(args) -> dict:
     return bericht
 
 
+# ⚑ Was vor jedem Lauf gesagt wird (Urheberrecht, siehe
+# COMPLIANCE/de/Urheberrecht.md). Ein Hinweis und keine Sperre: Ob ein
+# Buch verwendet werden darf, kann dieses Skript nicht wissen, der Mensch
+# schon.
+RECHTEHINWEIS = (
+    "[buchkorpus] Hinweis: Trainiere nur mit Material, das du dafuer verwenden darfst "
+    "(eigene Werke, freie Lizenzen oder die Erlaubnis der Rechteinhaber). "
+    "Siehe COMPLIANCE/de/Urheberrecht.md."
+)
+
+
 def main() -> int:
     umgebung.pruefen()
     p = argparse.ArgumentParser(description="Trainingskorpus aus Markdown bauen")
@@ -676,6 +687,7 @@ def main() -> int:
         p.print_help()
         return 2
 
+    print(RECHTEHINWEIS, file=sys.stderr)
     b = bauen(args)
     print(bericht_schreiben(args.name, b))
     # ⚠️ **Eine Quote, die weit danebenliegt, ist eine Auskunft.** Sie

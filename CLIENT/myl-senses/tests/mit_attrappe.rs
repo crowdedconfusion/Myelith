@@ -19,6 +19,22 @@ use myl_senses::laufwerk::{Eigene, Sinne, Stufe, HOERMODELL, SEHMODELL, SEHPROJE
 
 const ANHANGORDNER: &str = ".AGENT/anhaenge";
 
+/// ⚑ **Ein echtes WAV aus der Shell**, nach `$W`: 44 Bytes Kopf (16 Bit,
+/// ein Kanal, 24 kHz) und 100 stille Proben. Die Attrappen schreiben ihren
+/// Text daneben nach `$W.txt`.
+///
+/// 📌 **Seit dem 2026-09-25 muss es ein echtes WAV sein.** Jede erzeugte
+/// Tondatei wird vor dem Abspielen als KI-erzeugt gekennzeichnet, und was
+/// sich nicht kennzeichnen laesst, klingt nicht. Vorher schrieben die
+/// Attrappen ihren Text in die `.wav`, und das waere heute ein Ton, der
+/// nie gespielt wird.
+const WAV_SH: &str = "printf 'RIFF\\354\\000\\000\\000WAVEfmt \\020\\000\\000\\000\\001\\000\\001\\000\\300]\\000\\000\\200\\273\\000\\000\\002\\000\\020\\000data\\310\\000\\000\\000' > \"$W\"; head -c 200 /dev/zero >> \"$W\"";
+
+/// Was eine Attrappe zu einer Tondatei gesagt hat: der Text neben ihr.
+fn gesprochen(wav: &Path) -> String {
+    std::fs::read_to_string(format!("{}.txt", wav.display())).unwrap_or_default()
+}
+
 /// Ein gestelltes Programm, das ausgibt, was es bekommen hat, und dabei
 /// nach **stderr** schwatzt wie llama.cpp.
 fn attrappe(d: &Path, name: &str, sagt: &str) -> PathBuf {
@@ -162,7 +178,8 @@ fn das_eigene_sprechskript_bekommt_text_und_ziel() {
     // Das Skript schreibt den Text gross in das Ziel; damit ist belegt,
     // dass es **beide** Pfade bekommen hat und in der richtigen Reihenfolge.
     let skript = bin.join("sprechen");
-    std::fs::write(&skript, "#!/bin/sh\ntr 'a-z' 'A-Z' < \"$1\" > \"$2\"\n").expect("Skript");
+    std::fs::write(&skript, format!("#!/bin/sh\ntr 'a-z' 'A-Z' < \"$1\" > \"$2.txt\"\nW=\"$2\"; {WAV_SH}\n"))
+        .expect("Skript");
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -173,7 +190,9 @@ fn das_eigene_sprechskript_bekommt_text_und_ziel() {
     assert!(sinne.kann_sprechen());
     let zeug = sinne.sprechen.as_ref().expect("bereit");
     let wav = myl_senses::sprechen::sagen(zeug, "guten tag").expect("gesprochen");
-    assert_eq!(std::fs::read_to_string(&wav).expect("gelesen"), "GUTEN TAG");
+    assert_eq!(gesprochen(&wav), "GUTEN TAG");
+    // Und die Datei selbst ist gekennzeichnet.
+    assert!(myl_senses::kennzeichnung::pruefen(&wav).expect("WAV").metadaten);
     std::fs::remove_file(&wav).expect("weggeraeumt");
 }
 
@@ -186,7 +205,7 @@ fn eine_leere_antwort_wird_nicht_gesprochen() {
     let bin = heimat.join("bin");
     std::fs::create_dir_all(&bin).expect("bin");
     let skript = bin.join("sprechen");
-    std::fs::write(&skript, "#!/bin/sh\ncp \"$1\" \"$2\"\n").expect("Skript");
+    std::fs::write(&skript, format!("#!/bin/sh\ncp \"$1\" \"$2.txt\"\nW=\"$2\"; {WAV_SH}\n")).expect("Skript");
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -320,7 +339,7 @@ fn der_vorleser_spricht_satzweise_und_in_der_reihenfolge() {
     // Das Sprechskript legt den Text selbst als „Tondatei" ab, damit der
     // gestellte Abspieler ihn lesen und mitschreiben kann.
     let skript = bin.join("sprechen");
-    std::fs::write(&skript, "#!/bin/sh\ncp \"$1\" \"$2\"\n").expect("Skript");
+    std::fs::write(&skript, format!("#!/bin/sh\ncp \"$1\" \"$2.txt\"\nW=\"$2\"; {WAV_SH}\n")).expect("Skript");
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -334,7 +353,7 @@ fn der_vorleser_spricht_satzweise_und_in_der_reihenfolge() {
     let mut vorleser = myl_senses::sprechen::Vorleser::neu_mit(
         &zeug,
         Box::new(move |wav| {
-            let t = std::fs::read_to_string(wav).map_err(|f| f.to_string())?;
+            let t = gesprochen(wav);
             mit.lock().expect("Schloss").push(t);
             Ok(())
         }),
@@ -395,7 +414,7 @@ fn das_sprechskript_bekommt_die_probe_als_dritten_pfad() {
     std::fs::create_dir_all(&bin).expect("bin");
     // Das Skript schreibt seine Argumentzahl und das dritte Argument ins Ziel.
     let skript = bin.join("sprechen");
-    std::fs::write(&skript, "#!/bin/sh\nprintf '%s|%s' \"$#\" \"${3:-keine}\" > \"$2\"\n")
+    std::fs::write(&skript, format!("#!/bin/sh\nprintf '%s|%s' \"$#\" \"${{3:-keine}}\" > \"$2.txt\"\nW=\"$2\"; {WAV_SH}\n"))
         .expect("Skript");
     #[cfg(unix)]
     {
@@ -409,7 +428,7 @@ fn das_sprechskript_bekommt_die_probe_als_dritten_pfad() {
     assert!(z.kann_klonen(), "der Skriptweg kann klonen");
     assert!(sinne.stimmhinweis().is_none(), "ohne Probe gibt es nichts zu sagen");
     let wav = myl_senses::sprechen::sagen(z, "hallo").expect("gesprochen");
-    assert_eq!(std::fs::read_to_string(&wav).expect("gelesen"), "2|keine");
+    assert_eq!(gesprochen(&wav), "2|keine");
     std::fs::remove_file(&wav).expect("weg");
 
     // Mit Probe: drei Pfade, und der dritte ist sie.
@@ -419,7 +438,7 @@ fn das_sprechskript_bekommt_die_probe_als_dritten_pfad() {
     let z = sinne.sprechen.as_ref().expect("bereit");
     assert!(sinne.stimmhinweis().is_none(), "ein Skript kann sie verwerten");
     let wav = myl_senses::sprechen::sagen(z, "hallo").expect("gesprochen");
-    let gelesen = std::fs::read_to_string(&wav).expect("gelesen");
+    let gelesen = gesprochen(&wav);
     assert_eq!(gelesen, format!("3|{}", probe.display()));
     std::fs::remove_file(&wav).expect("weg");
 }
@@ -443,12 +462,14 @@ fn der_dauerlaeufer_spricht_satz_fuer_satz() {
     let laeufer = bin.join("sprechen");
     std::fs::write(
         &laeufer,
-        "#!/bin/sh\n\
-         if [ \"$1\" != \"--dauer\" ]; then cp \"$1\" \"$2\"; exit 0; fi\n\
-         echo bereit\n\
-         while IFS=\"$(printf '\\t')\" read -r quelle ziel; do\n\
-         cp \"$quelle\" \"$ziel\"; echo ok\n\
-         done\n",
+        format!(
+            "#!/bin/sh\n\
+             if [ \"$1\" != \"--dauer\" ]; then cp \"$1\" \"$2.txt\"; W=\"$2\"; {WAV_SH}; exit 0; fi\n\
+             echo bereit\n\
+             while IFS=\"$(printf '\\t')\" read -r quelle ziel; do\n\
+             cp \"$quelle\" \"$ziel.txt\"; W=\"$ziel\"; {WAV_SH}; echo ok\n\
+             done\n"
+        ),
     )
     .expect("Laeufer");
     #[cfg(unix)]
@@ -466,7 +487,7 @@ fn der_dauerlaeufer_spricht_satz_fuer_satz() {
         std::fs::write(&quelle, wort).expect("Text");
         let ziel = d.path().join(format!("{wort}.wav"));
         dauer.satz(&quelle, &ziel).expect("gesprochen");
-        assert_eq!(std::fs::read_to_string(&ziel).expect("gelesen"), wort);
+        assert_eq!(gesprochen(&ziel), wort);
     }
     // Das Fallenlassen schliesst die Eingabe; der Laeufer hoert von
     // selbst auf. Bleibt er haengen, laeuft diese Probe in die Frist.
@@ -539,16 +560,18 @@ fn stromlaeufer(bin: &Path, name: &str) -> std::path::PathBuf {
     let laeufer = bin.join(name);
     std::fs::write(
         &laeufer,
-        "#!/bin/sh\n\
-         echo bereit\n\
-         while IFS=\"$(printf '\\t')\" read -r quelle ziel; do\n\
-         stamm=\"${ziel%.wav}\"\n\
-         printf 'vorne-' > \"$stamm.0.wav\"; cat \"$quelle\" >> \"$stamm.0.wav\"\n\
-         printf '%s\\t%s\\n' stueck \"$stamm.0.wav\"\n\
-         printf 'hinten-' > \"$stamm.1.wav\"; cat \"$quelle\" >> \"$stamm.1.wav\"\n\
-         printf '%s\\t%s\\n' stueck \"$stamm.1.wav\"\n\
-         cp \"$quelle\" \"$ziel\"; echo ok\n\
-         done\n",
+        format!(
+            "#!/bin/sh\n\
+             echo bereit\n\
+             while IFS=\"$(printf '\\t')\" read -r quelle ziel; do\n\
+             stamm=\"${{ziel%.wav}}\"\n\
+             printf 'vorne-' > \"$stamm.0.wav.txt\"; cat \"$quelle\" >> \"$stamm.0.wav.txt\"; W=\"$stamm.0.wav\"; {WAV_SH}\n\
+             printf '%s\\t%s\\n' stueck \"$stamm.0.wav\"\n\
+             printf 'hinten-' > \"$stamm.1.wav.txt\"; cat \"$quelle\" >> \"$stamm.1.wav.txt\"; W=\"$stamm.1.wav\"; {WAV_SH}\n\
+             printf '%s\\t%s\\n' stueck \"$stamm.1.wav\"\n\
+             cp \"$quelle\" \"$ziel.txt\"; W=\"$ziel\"; {WAV_SH}; echo ok\n\
+             done\n"
+        ),
     )
     .expect("Laeufer");
     #[cfg(unix)]
@@ -571,15 +594,17 @@ fn der_vorrang_wartet_auf_den_ersten_ton() {
     let langsam = bin.join("langsam");
     std::fs::write(
         &langsam,
-        "#!/bin/sh\n\
-         echo bereit\n\
-         while IFS=\"$(printf '\\t')\" read -r quelle ziel; do\n\
-         sleep 0.3\n\
-         stamm=\"${ziel%.wav}\"\n\
-         cp \"$quelle\" \"$stamm.0.wav\"\n\
-         printf '%s\\t%s\\n' stueck \"$stamm.0.wav\"\n\
-         cp \"$quelle\" \"$ziel\"; echo ok\n\
-         done\n",
+        format!(
+            "#!/bin/sh\n\
+             echo bereit\n\
+             while IFS=\"$(printf '\\t')\" read -r quelle ziel; do\n\
+             sleep 0.3\n\
+             stamm=\"${{ziel%.wav}}\"\n\
+             cp \"$quelle\" \"$stamm.0.wav.txt\"; W=\"$stamm.0.wav\"; {WAV_SH}\n\
+             printf '%s\\t%s\\n' stueck \"$stamm.0.wav\"\n\
+             cp \"$quelle\" \"$ziel.txt\"; W=\"$ziel\"; {WAV_SH}; echo ok\n\
+             done\n"
+        ),
     )
     .expect("Laeufer");
     std::fs::create_dir_all(heimat.join("cosyvoice")).expect("cosyvoice");
@@ -609,7 +634,7 @@ fn der_vorrang_wartet_auf_den_ersten_ton() {
     let mut v = myl_senses::sprechen::Vorleser::neu_mit(
         &zeug,
         Box::new(move |wav: &Path| {
-            g.lock().unwrap().push(std::fs::read_to_string(wav).unwrap_or_default());
+            g.lock().unwrap().push(gesprochen(wav));
             Ok(())
         }),
     );
@@ -650,12 +675,16 @@ fn der_dauerlaeufer_meldet_seine_stuecke() {
     let mut gehoert = Vec::new();
     let n = dauer
         .satz_stueckweise(&quelle, &ziel, &mut |teil| {
-            gehoert.push(std::fs::read_to_string(teil).expect("Stueck lesbar"));
+            gehoert.push(gesprochen(teil));
         })
         .expect("gesprochen");
     assert_eq!(n, 2);
     assert_eq!(gehoert, ["vorne-Satz", "hinten-Satz"]);
-    assert_eq!(std::fs::read_to_string(&ziel).expect("ganzer Satz"), "Satz");
+    assert_eq!(gesprochen(&ziel), "Satz");
+    // ⛔️ Stuecke wie ganzer Satz sind gekennzeichnet, bevor sie jemand
+    //   bekommt; die Stuecke hat der Rueckruf schon gesehen, der Satz liegt.
+    let b = myl_senses::kennzeichnung::pruefen(&ziel).expect("WAV");
+    assert!(b.metadaten, "der ganze Satz ist nicht gekennzeichnet");
 
     // `satz` ohne Stueckwunsch: Der ganze Satz liegt im Ziel, die Stuecke
     // sind weg.
@@ -721,7 +750,7 @@ fn der_vorleser_spielt_die_stuecke_sobald_sie_kommen() {
         &zeug,
         Box::new(move |wav: &Path| {
             g.lock().unwrap().push((
-                std::fs::read_to_string(wav).unwrap_or_default(),
+                gesprochen(wav),
                 wav.to_path_buf(),
             ));
             Ok(())
@@ -765,10 +794,13 @@ fn das_nachdenken_wird_mit_einem_vorbereiteten_satz_ueberbrueckt() {
     let gespielt = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
     let spieler =
         |g: std::sync::Arc<std::sync::Mutex<Vec<String>>>| -> myl_senses::sprechen::Abspieler {
+            // ⚑ Ein Satz aus der Ablage hat keinen Text daneben (er ist
+            //   umgezogen); fuer ihn steht sein Pfad da.
             Box::new(move |wav: &Path| {
+                let t = gesprochen(wav);
                 g.lock()
                     .unwrap()
-                    .push(std::fs::read_to_string(wav).unwrap_or_default());
+                    .push(if t.is_empty() { wav.display().to_string() } else { t });
                 Ok(())
             })
         };
@@ -812,7 +844,9 @@ fn das_nachdenken_wird_mit_einem_vorbereiteten_satz_ueberbrueckt() {
             "{} liegt nicht in der Heimat der Attrappe",
             ort.display()
         );
-        assert_eq!(std::fs::read_to_string(&ort).expect("abgelegt"), *s);
+        // Abgelegt und als KI-erzeugt gekennzeichnet.
+        let b = myl_senses::kennzeichnung::pruefen(&ort).expect("abgelegt");
+        assert!(b.metadaten, "{} ist nicht gekennzeichnet", ort.display());
     }
     assert_eq!(
         myl_senses::sprechen::ueberbrueckungen_vorbereiten(&zeug, &geteilt, "de").expect("nochmal"),
@@ -834,8 +868,10 @@ fn das_nachdenken_wird_mit_einem_vorbereiteten_satz_ueberbrueckt() {
     let g = gespielt.lock().unwrap();
     assert_eq!(g.len(), 2, "{g:?}");
     assert!(
-        saetze.contains(&g[0].as_str()),
-        "kein Satz aus der Auswahl: {:?}",
+        saetze
+            .iter()
+            .any(|s| myl_senses::sprechen::ueberbrueckungsort(&zeug, s).display().to_string() == g[0]),
+        "kein Satz aus der Ablage: {:?}",
         g[0]
     );
     assert_eq!(g[1], "Die zweite Antwort ist ebenfalls lang genug.");
@@ -879,7 +915,7 @@ fn cosy_attrappe(heimat: &Path, zaehler: &Path) -> Sinne {
              if [ \"$1\" != \"--dauer\" ]; then exit 0; fi\n\
              echo start >> {}\n\
              echo bereit\n\
-             while IFS=\"$(printf '\\t')\" read -r quelle ziel; do cp \"$quelle\" \"$ziel\"; echo ok; done\n",
+             while IFS=\"$(printf '\\t')\" read -r quelle ziel; do cp \"$quelle\" \"$ziel.txt\"; W=\"$ziel\"; {WAV_SH}; echo ok; done\n",
             zaehler.display()
         ),
     )
@@ -1016,4 +1052,110 @@ fn eine_textdatei_ohne_werkzeuge_verspricht_keines() {
     let mit = a.nachricht_mit(true, myl_senses::anhang::Sicht::Werkzeug("read_file"));
     assert!(mit.contains("`read_file`"), "{mit}");
     assert!(!mit.contains("keine Dateiwerkzeuge"), "{mit}");
+}
+
+/// ⛔️ **Was nicht gekennzeichnet werden kann, klingt nicht** (Art. 50
+/// Abs. 2 KI-Verordnung), und was klingt, ist gekennzeichnet.
+///
+/// Der gestellte Laeufer liefert ein erstes Stueck, das kein WAV ist, und
+/// ein zweites, das eines ist. Gespielt werden darf nur das zweite, und
+/// es muss beim Abspielen schon beide Marken tragen; der Satz meldet den
+/// Fehler, statt still weiterzumachen.
+#[test]
+fn nur_gekennzeichneter_ton_klingt() {
+    let d = tempfile::tempdir().expect("Verzeichnis");
+    let heimat = d.path().join("sinne");
+    let bin = heimat.join("bin");
+    std::fs::create_dir_all(&bin).expect("bin");
+    let laeufer = bin.join("sprechen");
+    std::fs::write(
+        &laeufer,
+        format!(
+            "#!/bin/sh\n\
+             echo bereit\n\
+             while IFS=\"$(printf '\\t')\" read -r quelle ziel; do\n\
+             stamm=\"${{ziel%.wav}}\"\n\
+             printf 'kein Ton' > \"$stamm.0.wav\"\n\
+             printf '%s\\t%s\\n' stueck \"$stamm.0.wav\"\n\
+             W=\"$stamm.1.wav\"; {WAV_SH}\n\
+             printf '%s\\t%s\\n' stueck \"$stamm.1.wav\"\n\
+             W=\"$ziel\"; {WAV_SH}; echo ok\n\
+             done\n"
+        ),
+    )
+    .expect("Laeufer");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&laeufer, std::fs::Permissions::from_mode(0o755)).expect("Rechte");
+    }
+    let sinne = Sinne::finden_in(&heimat, &Eigene::default(), &[]);
+    let zeug = sinne.sprechen.as_ref().expect("bereit").clone();
+    let mut dauer = myl_senses::sprechen::Dauersprecher::starten(&zeug).expect("meldet sich");
+    let quelle = d.path().join("satz.txt");
+    std::fs::write(&quelle, "Satz").expect("Text");
+    let ziel = d.path().join("satz.wav");
+    let mut gehoert: Vec<(std::path::PathBuf, bool)> = Vec::new();
+    let aus = dauer.satz_stueckweise(&quelle, &ziel, &mut |teil| {
+        let b = myl_senses::kennzeichnung::pruefen(teil).expect("ein WAV");
+        gehoert.push((teil.to_path_buf(), b.metadaten && b.wasserzeichen()));
+    });
+    assert_eq!(gehoert.len(), 1, "gespielt wurde: {gehoert:?}");
+    assert!(gehoert[0].0.ends_with("satz.1.wav"));
+    assert!(gehoert[0].1, "das gespielte Stueck trug nicht beide Marken");
+    let fehler = aus.expect_err("der ungekennzeichnete Teil ging still unter");
+    assert!(fehler.contains("nicht gekennzeichnet"), "{fehler}");
+    assert!(!d.path().join("satz.0.wav").exists(), "das ungekennzeichnete Stueck liegt noch da");
+}
+
+/// ⛔️ **Ein Satz aus der Ablage klingt nur gekennzeichnet**, auch wenn er
+/// aus der Zeit vor der Kennzeichnung stammt: Sein Name haengt nicht daran,
+/// und am 2026-09-25 lagen alle eigenen Saetze ohne Marke da.
+#[test]
+fn ein_alter_satz_aus_der_ablage_wird_vor_dem_spielen_gekennzeichnet() {
+    let d = tempfile::tempdir().expect("Verzeichnis");
+    let heimat = d.path().join("sinne");
+    let sinne = cosy_attrappe(&heimat, &d.path().join("starts"));
+    let zeug = sinne.sprechen.as_ref().expect("bereit").clone();
+    let geteilt: myl_senses::sprechen::Geteilter = Default::default();
+    myl_senses::sprechen::ueberbrueckungen_vorbereiten(&zeug, &geteilt, "de").expect("vorbereitet");
+
+    // Jede Ablage durch ein ungekennzeichnetes WAV ersetzen, wie es vor
+    // der Kennzeichnung entstand: Kopf und 4800 Proben Saegezahn.
+    let mut alt = b"RIFF".to_vec();
+    let daten: Vec<u8> = (0..4800i32).flat_map(|i| (((i % 200) - 100) as i16 * 50).to_le_bytes()).collect();
+    alt.extend_from_slice(&(36 + daten.len() as u32).to_le_bytes());
+    alt.extend_from_slice(b"WAVEfmt ");
+    alt.extend_from_slice(&16u32.to_le_bytes());
+    for h in [1u16, 1] {
+        alt.extend_from_slice(&h.to_le_bytes());
+    }
+    alt.extend_from_slice(&24_000u32.to_le_bytes());
+    alt.extend_from_slice(&48_000u32.to_le_bytes());
+    for h in [2u16, 16] {
+        alt.extend_from_slice(&h.to_le_bytes());
+    }
+    alt.extend_from_slice(b"data");
+    alt.extend_from_slice(&(daten.len() as u32).to_le_bytes());
+    alt.extend_from_slice(&daten);
+    for s in myl_senses::sprechen::ueberbrueckungen("de") {
+        let ort = myl_senses::sprechen::ueberbrueckungsort(&zeug, s);
+        std::fs::write(&ort, &alt).expect("alt");
+        assert!(!myl_senses::kennzeichnung::pruefen(&ort).expect("WAV").metadaten);
+    }
+
+    let gespielt = std::sync::Arc::new(std::sync::Mutex::new(Vec::<bool>::new()));
+    let g = std::sync::Arc::clone(&gespielt);
+    let mut v = myl_senses::sprechen::Vorleser::neu_geteilt(
+        &zeug,
+        Box::new(move |wav: &Path| {
+            let b = myl_senses::kennzeichnung::pruefen(wav).map_err(|f| f.to_string())?;
+            g.lock().unwrap().push(b.metadaten && b.wasserzeichen());
+            Ok(())
+        }),
+        Some(geteilt),
+    );
+    v.ueberbruecken("de");
+    assert!(v.abschliessen().is_empty());
+    assert_eq!(*gespielt.lock().unwrap(), [true], "der Satz aus der Ablage klang ungekennzeichnet");
 }

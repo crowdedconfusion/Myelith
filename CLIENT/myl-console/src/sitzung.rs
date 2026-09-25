@@ -161,6 +161,11 @@ pub fn fahren() -> i32 {
     }
     banner::bildschirm_mit(design);
 
+    // ⛔️ **Zuerst der Hinweis, dass hier eine KI arbeitet** (Art. 50
+    // Abs. 1 KI-Verordnung; Festlegung des Projektinhabers, 2026-09-25):
+    // bei jedem Start, mit Enter zu bestaetigen, ohne Schalter.
+    kihinweis_zeigen(design);
+
     // ⚑ **Die Warnung vor dem Agentenbetrieb** (Auftrag des
     // Projektinhabers, 2026-09-15). Diese Konsole **ist** der Agent,
     // also steht sie am Anfang und nicht hinter einem Schalter.
@@ -611,9 +616,12 @@ fn fusszeile(modus: &str, name: &str, kiste: &str, schreibt: bool, kontext: Opti
         teile.push(format!("Kontext {p} %"));
     }
 
-    let mut zeile = String::new();
+    // ⛔️ **Die KI-Marke steht vorn und faellt nie weg** (Art. 50 Abs. 1):
+    // Sie ist die dauerhafte Kennzeichnung dieser Konsole, und eine
+    // Kennzeichnung, die bei schmalem Fenster verschwindet, ist keine.
+    let mut zeile = myl_client::kennzeichnung::starthinweis(Default::default()).kurz.to_string();
     for teil in teile {
-        let versuch = if zeile.is_empty() { teil } else { format!("{zeile} · {teil}") };
+        let versuch = format!("{zeile} · {teil}");
         if versuch.chars().count() > breite {
             break;
         }
@@ -1345,6 +1353,18 @@ fn gespraech_verdichten(stand: &mut Stand) {
 
 /// Ein Auftrag, von der Eingabe bis zur Antwort.
 fn auftrag_fahren(stand: &mut Stand, auftrag: &str) {
+    // ⛔️ **Der Schutzfilter vor allem anderen** (Art. 5 KI-Verordnung): Ein
+    //   Auftrag, der erkennbar auf eine verbotene Praxis zielt, wird nicht
+    //   gefahren, und die Konsole sagt warum.
+    let sprache = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())
+        .map(|e| e.oberflaeche.sprache)
+        .unwrap_or_default();
+    if let Some(satz) = myl_client::schutzfilter::abweisen(auftrag, sprache, "konsole") {
+        println!();
+        println!("  {satz}");
+        println!();
+        return;
+    }
     let verlauf = stand.gespraech.nachrichten().to_vec();
     let Some(modell) = stand.modell.as_mut() else {
         eprintln!("Es ist kein Modell geladen. `/model` waehlt eines.");
@@ -1462,6 +1482,10 @@ fn auftrag_fahren(stand: &mut Stand, auftrag: &str) {
     // ⚑ **Jeder Auftrag bekommt sein Nachschlagebudget neu** (2026-09-17):
     // Die naechste Frage des Nutzers ist ein neuer Anlass nachzulesen.
     ruestung.nachschlagebudget_zuruecksetzen();
+    // ⛔️ **Der Notaus**: Strg-C oder Esc waehrend des Laufs haelt ihn an
+    //   (siehe `Notauswaechter`). Jeder Auftrag beginnt geloest.
+    myl_client::notaus::zuruecksetzen();
+    let waechter = Notauswaechter::starten(roh.is_some());
     let aus = myl_client::lauf::fahren_im_gespraech(
         modell,
         &ruestung,
@@ -1482,6 +1506,7 @@ fn auftrag_fahren(stand: &mut Stand, auftrag: &str) {
     if let Some(m) = stand.modell.as_mut() {
         m.beobachter = None;
     }
+    waechter.anhalten();
     let (gesehen, wieviele) = anzeige.beenden();
     // Erst den Rohmodus zurueck, dann drucken: In ihm braucht jede
     // Zeile ein `\r`, und das will niemand in jedem `println!` stehen
@@ -1497,9 +1522,17 @@ fn auftrag_fahren(stand: &mut Stand, auftrag: &str) {
     // ⚑ **Luft vor der Antwort**: Die Zeitleiste endet, die Antwort
     // beginnt, und das soll man sehen.
     println!();
-    match aus.antwort.as_deref() {
-        Some(a) => println!("{}", crate::antwort::setzen(a, &rollen, farbig)),
-        None => println!("{}", rollen.warnung.faerben("(keine Schlussantwort)", farbig)),
+    match (&aus.ende, aus.antwort.as_deref()) {
+        // ⛔️ Angehalten: der Text bis dahin, und dass es der Notaus war.
+        (myl_client::Ende::Tuer(myl_client::Tuerfehler::Abgebrochen { bisher }), _) => {
+            if !bisher.trim().is_empty() {
+                println!("{}", crate::antwort::setzen(bisher, &rollen, farbig));
+            }
+            let satz = "  Notaus: Der Auftrag wurde angehalten. Das Gespraech bleibt, wie es ist.";
+            println!("{}", rollen.warnung.faerben(satz, farbig));
+        }
+        (_, Some(a)) => println!("{}", crate::antwort::setzen(a, &rollen, farbig)),
+        (_, None) => println!("{}", rollen.warnung.faerben("(keine Schlussantwort)", farbig)),
     }
     println!();
     // ⚑ **Wer die Aufrufe nicht gesehen hat, erfaehrt wenigstens, dass
@@ -1528,6 +1561,61 @@ fn auftrag_fahren(stand: &mut Stand, auftrag: &str) {
     // der naechste sind zwei Absaetze, nicht einer.
     println!();
     println!();
+}
+
+/// **Wacht waehrend eines Laufs auf Strg-C und Esc** und loest dann den
+/// Notaus aus.
+///
+/// ⚑ **Ein eigener Faden, weil der Lauf den Hauptfaden haelt.** Im
+/// Rohmodus kommt Strg-C nicht als Signal, sondern als Taste; ohne diesen
+/// Waechter liest sie waehrend des Laufs niemand. Er fragt alle 100 ms
+/// und hoert auf, sobald der Lauf vorbei ist.
+///
+/// ⚠️ **Nur im Rohmodus.** Ohne Terminal (Roehre, Skript) beendet Strg-C
+/// den Prozess, wie gewohnt.
+struct Notauswaechter {
+    halt: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    faden: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Notauswaechter {
+    fn starten(rohmodus: bool) -> Self {
+        let halt = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        if !rohmodus {
+            return Self { halt, faden: None };
+        }
+        let h = std::sync::Arc::clone(&halt);
+        let faden = std::thread::spawn(move || {
+            use crossterm::event::{self, Event, KeyCode, KeyModifiers};
+            while !h.load(std::sync::atomic::Ordering::SeqCst) {
+                if !event::poll(std::time::Duration::from_millis(100)).unwrap_or(false) {
+                    continue;
+                }
+                if let Ok(Event::Key(k)) = event::read() {
+                    let strg_c = k.code == KeyCode::Char('c') && k.modifiers.contains(KeyModifiers::CONTROL);
+                    if strg_c || k.code == KeyCode::Esc {
+                        myl_client::notaus::ausloesen("konsole");
+                    }
+                }
+            }
+        });
+        Self { halt, faden: Some(faden) }
+    }
+
+    fn anhalten(self) {
+        drop(self);
+    }
+}
+
+/// ⚠️ **Auch fallengelassen hoert er auf.** Ein Waechter, der nach dem
+/// Lauf weiterliest, naehme der naechsten Eingabe ihre Tasten weg.
+impl Drop for Notauswaechter {
+    fn drop(&mut self) {
+        self.halt.store(true, std::sync::atomic::Ordering::SeqCst);
+        if let Some(f) = self.faden.take() {
+            let _ = f.join();
+        }
+    }
 }
 
 /// Ein Pfad, der in eine Zeile passt.
@@ -1701,7 +1789,8 @@ mod tests {
     #[test]
     fn im_schmalen_fenster_bleibt_der_modus() {
         let z = fusszeile("manual mode", "myelith-4b", "Advanced", true, Some(7), 20);
-        assert!(z.starts_with("⇧⇥ manual mode"), "{z}");
+        // Hinter der KI-Marke, die vor allem steht.
+        assert!(z.starts_with("KI · ⇧⇥ manual mode"), "{z}");
         assert!(!z.contains('…'), "es wurde abgeschnitten statt weggelassen: {z}");
     }
 
@@ -1710,6 +1799,32 @@ mod tests {
     fn ohne_modell_sagt_die_fusszeile_das() {
         let z = fusszeile("auto mode", "", "Base", true, None, crate::schirm::BLOCKBREITE - 2);
         assert!(z.contains("kein Modell"), "{z}");
+    }
+
+    /// ⛔️ **Der Notaus umschliesst jeden Lauf**: vorher geloest und
+    /// bewacht, nachher der Waechter weg, und ein angehaltener Lauf zeigt
+    /// seinen Text statt „keine Schlussantwort".
+    #[test]
+    fn der_notaus_umschliesst_den_lauf() {
+        let quelle = include_str!("sitzung.rs");
+        let lauf = quelle.find("let aus = myl_client::lauf::fahren_im_gespraech(").expect("Lauf");
+        let vorher = &quelle[lauf.saturating_sub(400)..lauf];
+        assert!(vorher.contains("myl_client::notaus::zuruecksetzen();"));
+        assert!(vorher.contains("let waechter = Notauswaechter::starten(roh.is_some());"));
+        let nachher = &quelle[lauf..lauf + 1400];
+        assert!(nachher.contains("waechter.anhalten();"), "der Waechter bleibt stehen");
+        assert!(quelle.contains("myl_client::Tuerfehler::Abgebrochen { bisher }"));
+        assert!(quelle.contains("KeyCode::Char('c') && k.modifiers.contains(KeyModifiers::CONTROL)"));
+    }
+
+    /// ⛔️ **Die KI-Marke steht vorn und faellt nie weg**, auch nicht bei
+    /// einer Breite, in die sonst nichts passt.
+    #[test]
+    fn die_ki_marke_steht_vorn_und_faellt_nie_weg() {
+        for breite in [1, 5, 20, crate::schirm::BLOCKBREITE - 2] {
+            let z = fusszeile("auto mode", "myelith-4b", "Advanced", true, Some(7), breite);
+            assert!(z.starts_with("KI"), "Breite {breite}: {z:?}");
+        }
     }
 
     /// **Der Kontext steht in der Fusszeile, sobald er bekannt ist, und
@@ -1811,6 +1926,53 @@ mod tests {
 /// ⚠️ **Ohne Terminal wird nichts gefragt.** In einer Roehre gibt es
 /// niemanden, der zustimmen koennte; die Warnung wird dann gedruckt und
 /// der Lauf geht weiter, so wie der Vorspann dort auch entfaellt.
+/// **Der Hinweis beim Start: Hier arbeitet eine KI.**
+///
+/// ⛔️ **Ohne Schalter und ohne Bedingung**, anders als die Warnung
+/// darunter; der Text kommt aus `myl_client::kennzeichnung`, damit das
+/// Fenster dasselbe sagt. Bestaetigt wird mit Enter, und zwar aktiv:
+/// Es geht nicht weiter, bevor jemand die Taste drueckt.
+///
+/// ⚠️ **Ohne Terminal wird er gedruckt und nicht erfragt**, wie die
+/// Warnung: In einer Roehre gibt es niemanden, der bestaetigen koennte,
+/// und ein Lauf, der dort haengt, waere ein Skript, das nie endet.
+fn kihinweis_zeigen(design: myl_client::einstellungen::Konsolendesign) {
+    use std::io::{BufRead, IsTerminal, Write};
+
+    let sprache = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())
+        .map(|e| e.oberflaeche.sprache)
+        .unwrap_or_default();
+    let h = myl_client::kennzeichnung::starthinweis(sprache);
+
+    let mut block = String::new();
+    for p in &h.punkte {
+        for (i, zeile) in umbrechen(p, 62).into_iter().enumerate() {
+            block.push_str(&format!("{} {zeile}\n", if i == 0 { "*" } else { " " }));
+        }
+    }
+    block.push('\n');
+    block.push_str(&format!("{}:\n{}\n\n", h.verweis_titel, h.verweis));
+    for zeile in umbrechen(h.bestaetigung, 64) {
+        block.push_str(&zeile);
+        block.push('\n');
+    }
+    let breite = block.lines().map(|z| z.chars().count()).max().unwrap_or(0);
+    let mitte = " ".repeat(breite.saturating_sub(h.titel.chars().count()) / 2);
+    let block = format!("{mitte}{}\n\n{block}", h.titel);
+
+    println!();
+    println!("{}", crate::banner::zentriert(&block));
+
+    if !std::io::stdin().is_terminal() {
+        return;
+    }
+    print!("{}", crate::banner::zentriert(&format!("[Eingabe] {}: ", h.weiter)));
+    let _ = std::io::stdout().flush();
+    let mut zeile = String::new();
+    let _ = std::io::stdin().lock().read_line(&mut zeile);
+    frei_bis_auf_das_logo(design);
+}
+
 fn warnung_zeigen(design: myl_client::einstellungen::Konsolendesign) -> i32 {
     use std::io::{BufRead, IsTerminal, Write};
 

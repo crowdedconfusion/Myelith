@@ -503,3 +503,130 @@ fn der_weg_hinaus_weist_pfade_ausserhalb_ab() {
         "ein absoluter Pfad kam durch"
     );
 }
+
+/// ⛔️ **Im `manual mode` fragt alles, was nach aussen wirkt, und die
+/// Absage haelt es auf, bevor es wirkt**: ein geaenderter Anhang und
+/// jede Web-Anfrage. Lesen fragt nicht.
+///
+/// 📌 Bis zum 2026-09-25 liefen Web-Anfragen ohne Nachfrage, und der Chat
+/// mit Anhang reichte gar keine Nachfrage durch.
+#[test]
+fn die_nachfrage_haelt_schreiben_und_netz_auf_und_laesst_lesen() {
+    let ordner = tempfile::tempdir().expect("Ordner");
+    std::fs::write(ordner.path().join("liste.md"), "- Milch\n").expect("Anhang");
+    let gefragt = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let g = std::sync::Arc::clone(&gefragt);
+    let nachfrage: myl_client::ruestung::Nachfrage = std::sync::Arc::new(move |name: &str, _: &serde_json::Value| {
+        g.lock().unwrap().push(name.to_string());
+        false
+    });
+    let r = myl_client::ruestung::ruesten_fuer_anhaenge(
+        ordner.path(),
+        FORM,
+        Some("lies bitte https://example.org/seite"),
+        Vec::new(),
+        Some(nachfrage),
+    )
+    .expect("Ruestung");
+
+    let web = r
+        .kasten
+        .angebote()
+        .iter()
+        .map(|a| a.name.clone())
+        .find(|n| n.starts_with("web_") && (n.ends_with("read") || n.ends_with("lesen")))
+        .expect("kein Web-Lesewerkzeug im Kasten");
+    let aus = r
+        .kasten
+        .ausfuehren_ungeprueft(&web, &serde_json::json!({ "url": "https://example.org/seite" }))
+        .expect("Werkzeug fehlt");
+    assert!(aus.is_err(), "die Web-Anfrage lief trotz Absage");
+
+    let aus = r
+        .kasten
+        .ausfuehren_ungeprueft("write_file", &serde_json::json!({ "pfad": "liste.md", "inhalt": "weg" }))
+        .expect("write_file fehlt");
+    assert!(aus.is_err(), "das Schreiben lief trotz Absage");
+    assert_eq!(std::fs::read_to_string(ordner.path().join("liste.md")).unwrap(), "- Milch\n");
+
+    let vorher = gefragt.lock().unwrap().len();
+    let aus = r
+        .kasten
+        .ausfuehren_ungeprueft("read_file", &serde_json::json!({ "pfad": "liste.md" }))
+        .expect("read_file fehlt");
+    assert!(aus.is_ok());
+    let g = gefragt.lock().unwrap();
+    assert_eq!(g.len(), vorher, "Lesen hat gefragt: {g:?}");
+    assert_eq!(g.as_slice(), [web.as_str(), "write_file"], "gefragt wurde: {g:?}");
+}
+
+/// ⛔️ **Die Vorgabe ist `manual mode`**, auch fuer eine Ablage ohne das
+/// Feld; wer `auto` ausdruecklich gewaehlt hat, behaelt es.
+#[test]
+fn die_vorgabe_fragt_nach() {
+    let e = myl_client::Einstellungen::default();
+    assert!(e.agent.modus.fragt_nach(), "die Vorgabe fragt nicht");
+    let ohne: myl_client::einstellungen::Agenteneinstellung = serde_json::from_value(
+        serde_json::to_value(&e.agent)
+            .map(|mut v| {
+                v.as_object_mut().unwrap().remove("modus");
+                v
+            })
+            .unwrap(),
+    )
+    .expect("ohne Feld lesbar");
+    assert!(ohne.modus.fragt_nach(), "eine alte Ablage fragt nicht");
+    let mut v = serde_json::to_value(&e.agent).unwrap();
+    v["modus"] = serde_json::json!("auto");
+    let auto: myl_client::einstellungen::Agenteneinstellung = serde_json::from_value(v).unwrap();
+    assert!(!auto.modus.fragt_nach(), "eine ausdrueckliche Wahl wurde ueberschrieben");
+}
+
+/// ⛔️ **Das Aktionsprotokoll haelt jede Handlung fest, auch eine
+/// abgelehnte, und kein Klartext steht darin.**
+#[test]
+fn das_aktionsprotokoll_haelt_fest_ohne_klartext() {
+    let ablage = tempfile::tempdir().expect("Protokollordner");
+    myl_client::protokoll::ordner_setzen(ablage.path().to_path_buf());
+    let ordner = tempfile::tempdir().expect("Ordner");
+    std::fs::write(ordner.path().join("geheimliste.md"), "- Vertrauliches\n").expect("Anhang");
+    let nein: myl_client::ruestung::Nachfrage = std::sync::Arc::new(|_: &str, _: &serde_json::Value| false);
+    let r = myl_client::ruestung::ruesten_fuer_anhaenge(ordner.path(), FORM, None, Vec::new(), Some(nein))
+        .expect("Ruestung");
+    r.kasten
+        .ausfuehren_ungeprueft("read_file", &serde_json::json!({ "pfad": "geheimliste.md" }))
+        .expect("read_file")
+        .expect("gelesen");
+    let _ = r
+        .kasten
+        .ausfuehren_ungeprueft("write_file", &serde_json::json!({ "pfad": "geheimliste.md", "inhalt": "weg" }))
+        .expect("write_file");
+
+    // ⚑ **Gefunden ueber den Fingerabdruck der eigenen Eingabe**: Der
+    //   Protokollort gilt je Prozess, und andere Proben dieser Datei
+    //   protokollieren nebenher mit hinein. 📌 Die erste Fassung nahm die
+    //   juengste `read_file`-Zeile und erwischte dabei ein fremdes,
+    //   absichtlich scheiterndes Lesen.
+    let e = myl_client::protokoll::lesen(1000);
+    let fa = |v: serde_json::Value| myl_client::protokoll::fingerabdruck(v.to_string().as_bytes());
+    let gelesen = fa(serde_json::json!({ "pfad": "geheimliste.md" }));
+    let lesen = e.iter().find(|x| x.eingabe == gelesen).expect("Lesen fehlt im Protokoll");
+    assert_eq!(
+        (lesen.werkzeug.as_str(), lesen.art.as_str(), lesen.entscheidung.as_str(), lesen.ergebnis.as_str()),
+        ("read_file", "datei_lesen", "ausgefuehrt", "ok")
+    );
+    assert_eq!(lesen.eingabe.len(), 32, "kein Fingerabdruck: {lesen:?}");
+    let geschrieben = fa(serde_json::json!({ "pfad": "geheimliste.md", "inhalt": "weg" }));
+    let schreiben = e.iter().find(|x| x.eingabe == geschrieben).expect("Schreiben fehlt im Protokoll");
+    assert_eq!(schreiben.werkzeug, "write_file");
+    assert_eq!(schreiben.art, "datei_schreiben");
+    assert_eq!(schreiben.entscheidung, "abgelehnt");
+
+    // Kein Klartext: weder Pfad noch Inhalt in irgendeiner Datei.
+    for d in std::fs::read_dir(ablage.path()).unwrap().flatten() {
+        let t = std::fs::read_to_string(d.path()).unwrap_or_default();
+        for verboten in ["geheimliste", "Vertrauliches", "weg\""] {
+            assert!(!t.contains(verboten), "`{verboten}` steht im Protokoll: {}", d.path().display());
+        }
+    }
+}

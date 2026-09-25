@@ -1,6 +1,6 @@
 # ethics
 
-> **Version:** 0.6.3
+> **Version:** 0.7.0
 > **Datum:** 2026-09-21
 > **Status:** Manifest v0.2.0 steht (neu: **G9**, der Ausschlusskatalog),
 > **Phase 1 abgeschlossen**: aus den
@@ -49,7 +49,7 @@ CLIENT (Anzeige der Vertraulichkeitsklasse).
 ## Struktur
 
 ```
-ETHICS/
+COMPLIANCE/ethics/
 ├── Manifest.md               Das normative Dokument: Grenze der
 │                             Durchsetzbarkeit, acht Grundsätze mit
 │                             Mechanismus, sechs Selbstbindungen,
@@ -61,7 +61,7 @@ ETHICS/
 Phase 1 legt zusätzlich an:
 
 ```
-ETHICS/
+COMPLIANCE/ethics/
 ├── modelcard/                Vorlage + Generator für Modellkarten
 ├── corpus-intake/            Vorlage für Korpus-Aufnahmeanträge
 └── checklists/               Prüflisten je Komponente
@@ -77,6 +77,22 @@ ETHICS/
   nennt, was ihn trägt — oder ist als Absichtserklärung markiert.
 
 ## Changelog
+
+### v0.7.0 – 2026-09-25 (die Komponente liegt unter COMPLIANCE)
+
+Auftrag des Projektinhabers: `ETHICS/` zieht nach `COMPLIANCE/ethics/`,
+neben die Dokumente zur KI-Verordnung. Inhaltlich unverändert.
+
+- Pfade in allen Dateien der Komponente, in der CI, im Modellkatalog, in
+  `local-agent` und in den INTEGER_LLM-Werkzeugen nachgezogen;
+  `lizenzprobe.py` und `modellkarte.py` suchen die Wurzel jetzt eine Ebene
+  höher (`parents[3]`). Alle vier Prüfungen laufen am neuen Ort.
+- ⚑ **Die Lücke, die `lizenzprobe.py` benennt, ist geschlossen**, nur
+  nicht hier: Die Lizenzen der Modelle für Hören, Sehen und Sprechen
+  stehen mit Prüfdatum in `COMPLIANCE/fremdkomponenten.json` und damit in
+  `COMPLIANCE/NOTICES.md`. Dabei fiel auf, dass die genaue Sehstufe unter
+  einer Forschungslizenz stand; sie ist ersetzt (Fund 468, siehe
+  CLIENT v0.85.0).
 
 ### v0.6.3 – 2026-09-21 (die Lizenzprobe nennt, worüber sie schweigt)
 
@@ -290,5 +306,5 @@ Sie sorgen dafür, dass jemand es hingeschrieben hat und dafür einsteht.
   Basismodells" ist damit **für diese Variante** beantwortet, aber
   nicht für die Modellfamilie: einzelne Qwen2.5-Größen stehen unter
   abweichenden Lizenzen. Die Prüfung muss variantenscharf erfolgen,
-  nicht familienweit. Vermerkt in `ETHICS/Lizenzlage.md` und
+  nicht familienweit. Vermerkt in `COMPLIANCE/ethics/Lizenzlage.md` und
   unter Punkt 1.3.

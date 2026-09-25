@@ -1739,14 +1739,17 @@ fn glas_hat_dicke_und_spiegelung() {
 /// diese Zahlen bewegen, und wer darueber hinauskommt, bekommt es
 /// gesagt statt eines stillen Durchlaufs.
 fn zahlwort(n: usize) -> String {
-    const WORTE: [&str; 38] = [
+    const WORTE: [&str; 51] = [
         "null", "ein", "zwei", "drei", "vier", "fünf", "sechs", "sieben", "acht", "neun",
         "zehn", "elf", "zwölf", "dreizehn", "vierzehn", "fünfzehn", "sechzehn", "siebzehn",
         "achtzehn", "neunzehn", "zwanzig", "einundzwanzig", "zweiundzwanzig",
         "dreiundzwanzig", "vierundzwanzig", "fünfundzwanzig", "sechsundzwanzig",
         "siebenundzwanzig", "achtundzwanzig", "neunundzwanzig", "dreissig",
         "einunddreissig", "zweiunddreissig", "dreiunddreissig", "vierunddreissig",
-        "fünfunddreissig", "sechsunddreissig", "siebenunddreissig",
+        "fünfunddreissig", "sechsunddreissig", "siebenunddreissig", "achtunddreissig",
+        "neununddreissig", "vierzig", "einundvierzig", "zweiundvierzig", "dreiundvierzig",
+        "vierundvierzig", "fünfundvierzig", "sechsundvierzig", "siebenundvierzig",
+        "achtundvierzig", "neunundvierzig", "fünfzig",
     ];
     WORTE
         .get(n)
@@ -3077,7 +3080,11 @@ fn der_einhaengepfad_gehoert_dem_prozess() {
 /// 2026-09-10.
 #[test]
 fn der_offene_anschlag_liegt_rechts_und_kommt_aus_der_kiste() {
-    let js = lies("app.js");
+    // ⚑ **Nur die Regler der Grenzen**: Der Budgetregler faengt mit Absicht
+    //   bei null an, denn „nicht denken" ist eine Einstellung.
+    let ganz = lies("app.js");
+    let anfang = ganz.find("const reglerzeile = ").expect("reglerzeile");
+    let js = &ganz[anfang..anfang + ganz[anfang..].find("\n};\n").expect("Ende")];
 
     // Die Enden des Reglers stehen nicht mehr im Skript.
     assert!(js.contains("schieber.min = r.mindestens;"), "das linke Ende kommt nicht aus der Kiste");
@@ -3114,9 +3121,42 @@ fn der_offene_anschlag_liegt_rechts_und_kommt_aus_der_kiste() {
     assert!(js.contains("anzeige.textContent = r.rechts;"), "das rechte Ende heisst nicht r.rechts");
     assert!(js.contains("anzeige.textContent = r.links;"), "das linke Ende heisst nicht r.links");
     assert!(
-        !js.contains(r#""ohne Grenze""#),
+        !ganz.contains(r#""ohne Grenze""#),
         "„ohne Grenze\" steht als Literal im Skript und damit an zwei Orten"
     );
+}
+
+/// ⚑ **Das Denkbudget ist ein Schieber mit festen Enden**: links null
+/// („nicht denken"), rechts unbegrenzt, das setzt `aus`, und das Ende der
+/// Skala kommt aus der Kiste (`f.bis`) und nicht aus dem Skript.
+///
+/// ⚑ **Quadratisch**: Die hoerbaren Unterschiede liegen bei kleinen
+/// Budgets. Geprueft an der Abbildung selbst, beide Richtungen.
+#[test]
+fn das_denkbudget_ist_ein_schieber_mit_festen_enden() {
+    let js = lies("app.js");
+    assert!(js.contains(r#"} else if (f.art === "Budget") {"#), "kein eigener Zweig fuer das Budget");
+    assert!(js.contains("element = budgetregler(f, wert, beim_setzen);"));
+    let anfang = js.find("const budgetregler = ").expect("budgetregler");
+    let r = &js[anfang..anfang + js[anfang..].find("\n};\n").expect("Ende")];
+    assert!(r.contains(r#"beim_setzen(p >= BUDGET_STELLEN ? "aus" : String(budget_aus_stelle(p, f.bis)));"#),
+        "der rechte Anschlag setzt nicht `aus`, oder das Ende kommt nicht aus der Kiste");
+    assert!(r.contains("schieber.value = gesetzt ? stelle_aus_budget(wert, f.bis) : BUDGET_STELLEN;"),
+        "ohne Wert steht er nicht rechts");
+    assert!(js.contains("const budget_aus_stelle = (p, bis) => Math.round(bis * (p / BUDGET_STELLEN) ** 2);"),
+        "die Skala ist nicht quadratisch");
+    for sprache in ["\"budget.nicht\":", "\"budget.frei\":", "\"budget.token\":"] {
+        assert_eq!(js.matches(sprache).count(), 2, "{sprache} fehlt in einer Sprache");
+    }
+
+    // Die Kiste schickt das Ende mit, und nur beim Budget.
+    let f = myl_client::einstellungen::FELDER
+        .iter()
+        .find(|f| f.name == "modell.denkbudget")
+        .expect("Feld");
+    let j = serde_json::to_value(f).expect("Feld");
+    assert_eq!(j["art"], "Budget");
+    assert_eq!(j["bis"], myl_client::einstellungen::DENKBUDGET_BIS);
 }
 
 /// **Jeder Regler bringt die Felder mit, die das Skript von ihm
@@ -3426,4 +3466,108 @@ fn in_beiden_themen_hebt_sich_der_text_vom_grund_ab() {
             );
         }
     }
+}
+
+/// ⛔️ **Der KI-Hinweis kommt bei jedem Start und geht nur über die
+/// Bestätigung weg** (Art. 50 Abs. 1 KI-Verordnung; Festlegung des
+/// Projektinhabers, 2026-09-25).
+///
+/// Geprüft an vier Stellen, weil jede allein ihn aushebeln könnte: Der
+/// Start wartet auf ihn, der Knopf ist ohne Haken gesperrt und prüft ihn
+/// noch einmal, es gibt keinen anderen Weg hinaus (Escape, Schließknopf),
+/// und es gibt keine Einstellung, die ihn abbestellt. Dazu trägt jede
+/// Antwort die Marke, und der Kopf trägt sie dauerhaft.
+#[test]
+fn der_ki_hinweis_kommt_bei_jedem_start_und_laesst_sich_nicht_wegklicken() {
+    let js = lies("app.js");
+    let html = lies("index.html");
+
+    // Der Start wartet auf ihn, nach dem Vorhang und vor der Eingabe.
+    // ⚑ In dieser Reihenfolge: Vorhang, Hinweis, und erst danach die Eingabe.
+    let start = js.find("  await vorhangWeg();\n  await starthinweis_zeigen();\n").expect("der Start wartet nicht auf den Hinweis");
+    let fokus = js[start..].find("  feld.focus();\n})();").expect("kein Fokus nach dem Hinweis");
+    assert!(fokus < 200, "zwischen Hinweis und Eingabe steht zu viel");
+    // Und nichts merkt sich, dass er schon einmal bestätigt wurde.
+    let anfang = js.find("async function starthinweis_zeigen()").expect("Funktion");
+    let f = &js[anfang..anfang + js[anfang..].find("\n}\n").expect("Ende")];
+    for verboten in ["localStorage", "sessionStorage", "invoke(\"setzen\"", "gezeigt = true"] {
+        assert!(!f.contains(verboten), "der Hinweis merkt sich etwas: {verboten}");
+    }
+    assert!(f.contains("weiter.disabled = true;"), "der Knopf ist nicht zuerst gesperrt");
+    assert!(f.contains("if (!haken.checked) return;"), "der Knopf prüft den Haken nicht selbst");
+    assert!(f.contains("e.inert = true"), "das Fenster darunter bleibt bedienbar");
+
+    // Der Dialog hat keinen anderen Ausgang.
+    let a = html.find("<div id=\"kihinweis\"").expect("Dialog");
+    let dialog = &html[a..a + html[a..].find("\n    </div>\n").expect("Ende")];
+    assert!(dialog.contains("id=\"kihinweisweiter\" class=\"warnungok\" disabled"));
+    assert_eq!(dialog.matches("<button").count(), 1, "der Dialog hat einen zweiten Knopf");
+    for zeile in js.lines().filter(|z| z.contains("Escape")) {
+        assert!(!zeile.contains("kihinweis"), "Escape schließt den Hinweis: {zeile}");
+    }
+
+    // Kein Feld bestellt ihn ab.
+    for f in myl_client::einstellungen::FELDER.iter() {
+        assert!(
+            !f.name.contains("hinweis") && !f.name.contains("kennzeichnung"),
+            "`{}` sieht aus wie ein Schalter für die KI-Kennzeichnung",
+            f.name
+        );
+    }
+
+    // Die Marken: dauerhaft im Kopf, an jeder Antwort.
+    assert!(html.contains("<span id=\"kimarke\" class=\"kimarke\" role=\"note\">"));
+    assert!(js.contains("km.className = \"kimarke-antwort\";"));
+    let stil = lies("stil.css");
+    assert!(!stil.contains(".kimarke { display: none") && !stil.contains(".kimarke-antwort { display: none"));
+}
+
+/// ⛔️ **Keine Stimme ohne Einwilligung, und das Protokoll ist sichtbar.**
+///
+/// Die Einwilligung wird zweimal verlangt: am Haekchen, das den Knopf
+/// freigibt, und im Befehl, der ohne sie ablehnt. Das zweite ist das
+/// eigentliche; das erste sagt dem Menschen, wozu er zustimmt.
+#[test]
+fn keine_stimme_ohne_einwilligung_und_das_protokoll_ist_sichtbar() {
+    let rs = lies_quelle("main.rs");
+    let a = rs.find("async fn stimme_setzen(").expect("stimme_setzen");
+    let f = &rs[a..a + 800];
+    assert!(f.contains("einwilligung: Option<bool>"), "der Befehl nimmt keine Einwilligung");
+    assert!(f.contains("if einwilligung != Some(true) {"), "der Befehl prüft die Einwilligung nicht");
+
+    let html = lies("index.html");
+    assert!(html.contains("<button id=\"stimme-waehlen\" data-t=\"sinne.stimmewaehlen\" disabled>"));
+    assert!(html.contains("id=\"stimme-einwilligung\""));
+    let js = lies("app.js");
+    assert!(js.contains("invoke(\"stimme_setzen\", { pfad: gewaehlt, einwilligung: true })"));
+    assert!(js.contains("if (!einwilligung.checked) return;"));
+
+    // Das Protokoll: ein Abschnitt, ein Befehl, und der Befehl ist angemeldet.
+    assert!(html.contains("<section id=\"protokoll\">"));
+    assert!(js.contains("invoke(\"protokoll_lesen\")"));
+    assert!(rs.contains("fn protokoll_lesen()"));
+}
+
+/// ⛔️ **Der Notaus im Fenster**: ein Knopf, der immer da ist, ein
+/// Tastenkuerzel, die Stimme verstummt, jeder Auftrag beginnt geloest,
+/// und ein angehaltener Chat behaelt seinen Text.
+#[test]
+fn der_notaus_ist_immer_da_und_haelt_alles_an() {
+    let html = lies("index.html");
+    let js = lies("app.js");
+    let rs = lies_quelle("main.rs");
+    assert!(html.contains("<button id=\"notaus\" class=\"notaus\" type=\"button\""));
+    let kopf = &html[html.find("<header>").unwrap()..html.find("</header>").unwrap()];
+    assert!(kopf.contains("id=\"notaus\""), "der Notaus steht nicht im Kopf");
+    assert!(!kopf[kopf.find("id=\"notaus\"").unwrap()..].starts_with("id=\"notaus\" hidden"));
+
+    assert!(js.contains("if ((ereignis.metaKey || ereignis.ctrlKey) && ereignis.key === \".\")"));
+    assert!(js.contains("    stimme_anhalten();\n    try {\n      await invoke(\"notaus\");"));
+    assert!(js.contains("  notaus_verdrahten();"));
+    assert!(js.contains("geplant.push(quelle);"), "die Stimme merkt sich ihre Stuecke nicht");
+
+    assert!(rs.contains("fn notaus() {\n    myl_client::notaus::ausloesen(\"fenster\");"));
+    assert_eq!(rs.matches("myl_client::notaus::zuruecksetzen();").count(), 2, "nicht jeder Auftrag beginnt geloest");
+    assert!(rs.contains("Err(myl_client::Tuerfehler::Abgebrochen { bisher }) => Ok(bisher),"));
+    assert!(rs.contains("if myl_client::notaus::ausgeloest() {\n                    drop(v);"));
 }

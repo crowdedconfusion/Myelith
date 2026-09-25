@@ -4,7 +4,7 @@
 > Quelle: `INTEGER_LLM/theta_v/spec.json` und
 > `BENCHMARKS/Inferenz/results/`. Wer sie von Hand ändert, verliert
 > die Änderung beim nächsten Lauf von
-> `ETHICS/werkzeuge/modellkarte.py`.
+> `COMPLIANCE/ethics/werkzeuge/modellkarte.py`.
 
 **θ_v-Fassung:** `0.22.0`
 
@@ -30,7 +30,7 @@
 ## Was diese Karte nicht sagt
 
 ⚑ **Sie sagt nichts über Eignung.** Wofür das Netz geeignet ist
-und wofür nicht, steht in `ETHICS/Risikoklassen.toml`; das ist eine
+und wofür nicht, steht in `COMPLIANCE/ethics/Risikoklassen.toml`; das ist eine
 Aussage über Vertraulichkeit und keine über Qualität.
 
 ⚑ **Und sie bewertet den Inhalt der Trainingsdaten nicht.**

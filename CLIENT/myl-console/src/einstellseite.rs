@@ -291,6 +291,10 @@ pub fn geaendert(f: &Feld, jetzt: &Feldwert, rechts: bool, admin: bool) -> Optio
         // Ohne erkanntes Ende bewegt sich nichts, und das ist richtig:
         // Ein Regler ohne Ende ist keiner, und die Zeile sagt warum.
         Feldart::Grenze => None,
+        // ⚑ **Ein Budget steht heute nur im Fenster** (es wirkt beim
+        //   Vorlesen, und die Konsole liest nicht vor). Getippt werden
+        //   kann es trotzdem, siehe [`mit_eingabe`].
+        Feldart::Budget => None,
         Feldart::Text | Feldart::Pfad | Feldart::Ordner => None,
     }
 }
@@ -346,7 +350,12 @@ pub fn als_wert(w: &Feldwert) -> String {
 pub fn mit_eingabe(f: &Feld) -> bool {
     matches!(
         f.art,
-        Feldart::Text | Feldart::Pfad | Feldart::Ordner | Feldart::Zahl | Feldart::Grenze
+        Feldart::Text
+            | Feldart::Pfad
+            | Feldart::Ordner
+            | Feldart::Zahl
+            | Feldart::Grenze
+            | Feldart::Budget
     )
 }
 

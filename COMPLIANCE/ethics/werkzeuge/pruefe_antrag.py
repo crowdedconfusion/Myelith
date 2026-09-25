@@ -29,7 +29,7 @@ ist der Zweck von G3.
 die inhaltliche Bewertung. Wer hier ein Feld für „Qualität" oder
 „Angemessenheit" ergänzt, hebt G1 auf.
 
-Aufruf: `python3 ETHICS/werkzeuge/pruefe_antrag.py <antrag.json> [--text]`
+Aufruf: `python3 COMPLIANCE/ethics/werkzeuge/pruefe_antrag.py <antrag.json> [--text]`
 """
 
 from __future__ import annotations

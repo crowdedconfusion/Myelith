@@ -51,7 +51,7 @@ dorthin.
 |---|---|---|---|
 | Hören | large-v3-turbo-q5_0 | 0,8 s | wortrichtig bis auf den Eigennamen |
 | Sehen, schnell | SmolVLM2-2.2B | 1,6 s | las „HALT", schweifte **englisch** ab |
-| Sehen, genau | Qwen2.5-VL-3B | 3,8 s | las **beide Zeilen**, antwortete deutsch |
+| Sehen, genau | Qwen2.5-VL-3B (seit 2026-09-25 ersetzt, siehe unten) | 3,8 s | las **beide Zeilen**, antwortete deutsch |
 | Sprechen | Fun-CosyVoice3-0.5B | 26,7 s kalt | davon rund 18 s Modellladen, RTF 1,40 |
 
 ⚑ **Die zweite Sprosse hat sich sofort bezahlt gemacht**: dasselbe Bild,
@@ -59,6 +59,35 @@ dieselbe Frage, und das 3B liest, was das 2,2B überliest.
 
 📌 **CosyVoice war damals langsamer als Echtzeit** (RTF 1,40) und ist es
 seit dem 2026-09-25 nicht mehr; siehe unten.
+
+### ⛔️ Jede erzeugte Sprache ist gekennzeichnet (seit dem 2026-09-25)
+
+Artikel 50 Absatz 2 der KI-Verordnung verlangt, dass synthetische
+Inhalte maschinenlesbar als KI-erzeugt erkennbar sind. `kennzeichnung.rs`
+tut das für jede Tondatei, bevor sie abgespielt oder abgelegt wird:
+ein XMP-Block mit dem IPTC-Quellentyp `trainedAlgorithmicMedia`, ein
+RIFF-INFO-Kommentar und ein Wasserzeichen im Signal, rund 36 dB unter der
+Sprache. **Was sich nicht kennzeichnen lässt, klingt nicht.** Geprüft an
+14 Sätzen des Sprechmodells: ohne Kennzeichnung höchstens 2,5
+Standardabweichungen, gekennzeichnet mindestens 11,9, nach MP3 mit
+128 kbit/s mindestens 10,3. Nachprüfen: `myl kennzeichen <datei.wav>`.
+
+Das Sehmodell bekommt vor jeder Frage eine Regel (`SEHREGEL`): nur
+Sichtbares beschreiben, niemanden identifizieren, keine Gefühle oder
+sensiblen Merkmale zuschreiben.
+
+### ⛔️ Die genaue Sehstufe ist seit dem 2026-09-25 Qwen3-VL-4B
+
+Vorher stand dort Qwen2.5-VL-3B. Dessen Original steht unter einer
+**Forschungslizenz**, die nur Forschung und nicht kommerzielle Nutzung
+erlaubt; die GGUF-Umwandlung, die das Einrichtungsskript holte, nannte
+Apache 2.0, kann die Lizenz des Originals aber nicht ändern. Ersetzt durch
+`Qwen3-VL-4B-Instruct` (Apache 2.0, GGUF vom Hersteller selbst, Q4_K_M
+2,5 GB, Projektor Q8_0 0,45 GB). Gleiches Bild, gleiche Frage, dasselbe
+llama.cpp: Das neue las Namen und Unterzeile und beschrieb den
+Hintergrund, das alte nannte das Projekt ein „Unternehmen"; 4,7 statt
+2,9 s samt Laden. Das Einrichtungsskript ersetzt eine alte Datei, die es
+an ihrer Größe erkennt, und lässt eine eigene stehen.
 
 ### Sprechen, gemessen am 2026-09-25
 
@@ -214,7 +243,7 @@ brew install piper          # nur als Rückfall, kann keine Stimme klonen
 
 Dann die Gewichte unter den Namen aus der Tabelle ablegen. Brauchbar und
 klein: **SmolVLM2-2.2B-Instruct** fürs schnelle Sehen,
-**Qwen2.5-VL-3B** fürs genaue, **ggml-small.bin** fürs Hören,
+**Qwen3-VL-4B** fürs genaue, **ggml-small.bin** fürs Hören,
 **de_DE-thorsten-medium** fürs Sprechen.
 
 ⛔️ **Solange etwas fehlt, sagt der Sinn, was fehlt**, mit Pfad und

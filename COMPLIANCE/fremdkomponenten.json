@@ -1,0 +1,178 @@
+{
+  "_hinweis": "Fremdkomponenten, die nicht aus einem Paketverwalter kommen.\n\n⚑ Gepflegt, nicht erzeugt. Daraus und aus zwei Quellen, die es schon\ngibt, erzeugt `COMPLIANCE/werkzeuge/notices.py` die Datei\n`COMPLIANCE/NOTICES.md`:\n\n  - Rust-Kisten:      `cargo metadata` in jeder der 25 Kisten (offline,\n                      aus `SYSTEM/crates-vorrat`)\n  - Sprachmodelle:    `MODELS/llm/KATALOG.json` (Lizenz der Gewichte und\n                      des Artefakts steht dort, und nur dort)\n  - alles andere:     diese Datei\n\n⚑ Jeder Eintrag nennt, WIE er zum Nutzer kommt (`weg`): `mitgeliefert`\nheisst, er liegt im Repositorium oder in einem Freigabebuendel;\n`nachgeladen` heisst, ein Einrichtungsskript holt ihn auf den Rechner\ndes Nutzers; `vorausgesetzt` heisst, der Nutzer bringt ihn mit. Die\nPflichten einer Lizenz haengen genau daran.\n\n⚑ `geprueft` sagt, wogegen und wann. Eine Lizenzangabe ohne Pruefdatum\nist eine Behauptung. Geprueft wurde die Angabe des Anbieters (Modell-\nkarte, LICENSE-Datei), keine eigene Rechtspruefung.",
+  "modell": [
+    {
+      "name": "Fun-CosyVoice3-0.5B-2512",
+      "zweck": "Sprechen (Text zu Sprache, Stimmnachbildung)",
+      "anbieter": "FunAudioLLM (Tongyi Lab)",
+      "quelle": "https://huggingface.co/FunAudioLLM/Fun-CosyVoice3-0.5B-2512",
+      "lizenz": "Apache-2.0",
+      "weg": "nachgeladen",
+      "geprueft": "2026-09-25, Hugging-Face-API (license=apache-2.0)",
+      "hinweis": "Erzeugt synthetische Sprache; die Ausgabe wird als KI-erzeugt gekennzeichnet."
+    },
+    {
+      "name": "Whisper large-v3-turbo (ggml, q5_0)",
+      "zweck": "Hoeren (Sprache zu Text)",
+      "anbieter": "OpenAI; Umwandlung whisper.cpp",
+      "quelle": "https://huggingface.co/ggerganov/whisper.cpp",
+      "lizenz": "MIT",
+      "weg": "nachgeladen",
+      "geprueft": "2026-09-25, Hugging-Face-API (openai/whisper-large-v3-turbo: license=mit; ggerganov/whisper.cpp: license=mit)"
+    },
+    {
+      "name": "SmolVLM2-2.2B-Instruct (GGUF, Q4_K_M)",
+      "zweck": "Sehen, schnelle Stufe (Bild zu Text)",
+      "anbieter": "Hugging Face; Umwandlung ggml-org",
+      "quelle": "https://huggingface.co/ggml-org/SmolVLM2-2.2B-Instruct-GGUF",
+      "lizenz": "Apache-2.0",
+      "weg": "nachgeladen",
+      "geprueft": "2026-09-25, Hugging-Face-API (HuggingFaceTB/SmolVLM2-2.2B-Instruct und ggml-org: license=apache-2.0)"
+    },
+    {
+      "name": "Qwen3-VL-4B-Instruct (GGUF, Q4_K_M)",
+      "zweck": "Sehen, genaue Stufe (Bild zu Text)",
+      "anbieter": "Alibaba Cloud (Qwen), GGUF vom Anbieter",
+      "quelle": "https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct-GGUF",
+      "lizenz": "Apache-2.0",
+      "weg": "nachgeladen",
+      "geprueft": "2026-09-25, Hugging-Face-API (Qwen/Qwen3-VL-4B-Instruct und Qwen/Qwen3-VL-4B-Instruct-GGUF: license=apache-2.0)",
+      "hinweis": "Seit 2026-09-25 statt Qwen2.5-VL-3B-Instruct, dessen Original unter der Qwen Research License steht (Fund 468). Das Einrichtungsskript ersetzt eine alte Datei."
+    }
+  ],
+  "programm": [
+    {
+      "name": "llama.cpp (llama-mtmd-cli)",
+      "zweck": "fuehrt die Sehmodelle aus",
+      "quelle": "https://github.com/ggml-org/llama.cpp",
+      "lizenz": "MIT",
+      "weg": "vorausgesetzt"
+    },
+    {
+      "name": "whisper.cpp (whisper-cli)",
+      "zweck": "fuehrt das Hoermodell aus",
+      "quelle": "https://github.com/ggml-org/whisper.cpp",
+      "lizenz": "MIT",
+      "weg": "vorausgesetzt"
+    },
+    {
+      "name": "CosyVoice (Quelltext des Sprechmodells)",
+      "zweck": "fuehrt das Sprechmodell aus",
+      "quelle": "https://github.com/FunAudioLLM/CosyVoice",
+      "lizenz": "Apache-2.0",
+      "weg": "nachgeladen",
+      "hinweis": "Bringt eigene Python-Abhaengigkeiten mit (seine requirements.txt); sie werden in einer eigenen Umgebung eingerichtet und nicht mitgeliefert."
+    },
+    {
+      "name": "FFmpeg",
+      "zweck": "wandelt Tonaufnahmen um",
+      "quelle": "https://ffmpeg.org",
+      "lizenz": "LGPL-2.1-or-later (je nach Bau GPL-2.0-or-later)",
+      "weg": "vorausgesetzt"
+    },
+    {
+      "name": "piper",
+      "zweck": "Rueckfall fuer das Sprechen, ohne Stimmnachbildung",
+      "quelle": "https://github.com/rhasspy/piper",
+      "lizenz": "MIT (rhasspy/piper) oder GPL-3.0-or-later (Nachfolger piper1-gpl), je nach Installation; die Stimmen tragen je eigene Lizenzen",
+      "weg": "vorausgesetzt"
+    },
+    {
+      "name": "Python",
+      "zweck": "Laufzeit fuer Kalibrierung und Sprechmodell",
+      "quelle": "https://www.python.org",
+      "lizenz": "PSF-2.0",
+      "weg": "vorausgesetzt"
+    }
+  ],
+  "python": [
+    {
+      "name": "torch",
+      "zweck": "Kalibrierung, Sprechmodell",
+      "lizenz": "BSD-3-Clause",
+      "anforderung": "INTEGER_LLM/calibrate/requirements.txt",
+      "weg": "nachgeladen"
+    },
+    {
+      "name": "transformers",
+      "zweck": "Kalibrierung (Gleitkomma-Referenz)",
+      "lizenz": "Apache-2.0",
+      "anforderung": "INTEGER_LLM/calibrate/requirements.txt",
+      "weg": "nachgeladen"
+    },
+    {
+      "name": "accelerate",
+      "zweck": "Kalibrierung",
+      "lizenz": "Apache-2.0",
+      "anforderung": "INTEGER_LLM/calibrate/requirements.txt",
+      "weg": "nachgeladen"
+    },
+    {
+      "name": "datasets",
+      "zweck": "Kalibrierung, Messung",
+      "lizenz": "Apache-2.0",
+      "anforderung": "INTEGER_LLM/calibrate/requirements.txt",
+      "weg": "nachgeladen"
+    },
+    {
+      "name": "numpy",
+      "zweck": "Kalibrierung",
+      "lizenz": "BSD-3-Clause",
+      "anforderung": "INTEGER_LLM/calibrate/requirements.txt",
+      "weg": "nachgeladen"
+    },
+    {
+      "name": "safetensors",
+      "zweck": "Gewichte lesen und schreiben",
+      "lizenz": "Apache-2.0",
+      "anforderung": "INTEGER_LLM/calibrate/requirements.txt",
+      "weg": "nachgeladen"
+    },
+    {
+      "name": "huggingface_hub",
+      "zweck": "Gewichte herunterladen",
+      "lizenz": "Apache-2.0",
+      "anforderung": "INTEGER_LLM/calibrate/requirements.txt",
+      "weg": "nachgeladen"
+    },
+    {
+      "name": "pypdf",
+      "zweck": "Trainingskorpus aus PDF (Rad liegt unter TRAINING/korpus/raeder)",
+      "lizenz": "BSD-3-Clause",
+      "anforderung": "TRAINING/korpus/requirements.txt",
+      "weg": "mitgeliefert"
+    },
+    {
+      "name": "typing_extensions",
+      "zweck": "Abhaengigkeit von pypdf (Rad liegt unter TRAINING/korpus/raeder)",
+      "lizenz": "PSF-2.0",
+      "anforderung": "TRAINING/korpus/requirements.txt",
+      "weg": "mitgeliefert"
+    }
+  ],
+  "medien": [
+    {
+      "name": "Symbole und Banner (CLIENT/myl-oberflaeche/icons, README/Grafiken)",
+      "urheber": "Projektinhaber",
+      "lizenz": "PolyForm-Shield-1.0.0 (wie das Repositorium)",
+      "weg": "mitgeliefert"
+    },
+    {
+      "name": "Schrift der Wortmarke (eingebetteter Ausschnitt, nur die Buchstaben von MYELITH)",
+      "urheber": "Adam Nerland, Insanitype Font Design (2001)",
+      "lizenz": "ungeklaert",
+      "weg": "mitgeliefert",
+      "hinweis": "⚠️ Die Schrift traegt kein Lizenzfeld. Ist sie nur zur privaten Nutzung frei, gehoert der Ausschnitt aus dem Stilblatt heraus. Entscheidung des Projektinhabers offen."
+    }
+  ],
+  "daten": [
+    {
+      "name": "WikiText-2 (wikitext-2-raw-v1, Testsplit)",
+      "zweck": "Kalibrierung der ganzzahligen Skalen und Messung der Perplexitaet; kein Training",
+      "quelle": "https://huggingface.co/datasets/Salesforce/wikitext",
+      "lizenz": "CC-BY-SA-3.0 oder GFDL",
+      "weg": "nachgeladen",
+      "geprueft": "2026-09-25, Hugging-Face-API (license=cc-by-sa-3.0, gfdl)"
+    }
+  ]
+}

@@ -116,11 +116,55 @@ pub struct Modelleinstellung {
     /// und keine Ueberlegung, und jedes Denktoken kostet dieselbe
     /// Rechenzeit wie ein Antworttoken.
     pub denken: bool,
+    /// **Wie viele Token hoechstens ueberlegt wird, wenn die Antwort
+    /// vorgelesen wird.** `None` heisst ohne Grenze, `Some(0)` gar nicht.
+    ///
+    /// ⚑ **Nur beim Vorlesen, und nur wenn [`Self::denken`] an ist.** Dort
+    /// ist die Ueberlegung Wartezeit, in der nichts klingt; beim Lesen
+    /// sieht man sie wachsen und kann schon mitlesen.
+    ///
+    /// ⚑ **Eine fehlende Angabe ist die Vorgabe, `null` ist ohne Grenze.**
+    /// Eine Ablage aus der Zeit vor diesem Feld traegt es nicht, und sie
+    /// soll die Vorgabe bekommen und nicht die unbegrenzte Ueberlegung.
+    #[serde(default = "denkbudget_vorgabe")]
+    pub denkbudget: Option<u32>,
+}
+
+/// **Das Denkbudget beim Vorlesen, wenn niemand etwas eingestellt hat.**
+///
+/// ⚑ **32, gemessen und vom Projektinhaber gewaehlt (2026-09-25).** Zwoelf
+/// Fangfragen (Schlaeger und Ball, Seerosen, „Sally hat drei Brueder",
+/// Buchstaben zaehlen, Uhrzeit ueber Mitternacht), bewertet am
+/// Schlusssatz der Antwort:
+///
+/// | Budget | 30B | 8B | bis zum ersten Wort der Antwort (30B / 8B) |
+/// |---|---|---|---|
+/// | 0 | 10/12 | 10/12 | 1,6 s / 0,4 s |
+/// | 32 | 12/12 | 12/12 | 6,7 s / 4,1 s |
+/// | 64 | 12/12 | 11/12 | 9,1 s / 6,1 s |
+/// | 128 | 12/12 | | 13,4 s / 10,3 s |
+/// | ohne Grenze | | | Median 72 s, bis 187 s (30B) |
+///
+/// Ohne Ueberlegung fielen genau die Fangfragen durch; 32 Token genuegten
+/// beiden Modellen, mehr brachte nichts. Zehn gewoehnliche Rechen- und
+/// Wissensfragen waren bei jedem Budget richtig.
+pub const DENKBUDGET_VORGABE: u32 = 32;
+
+/// **Das rechte Ende der Skala vor „ohne Grenze".** Weiter rechts wird
+/// nicht mehr gezaehlt, sondern gar nicht begrenzt.
+pub const DENKBUDGET_BIS: u32 = 2048;
+
+// ⚑ Die Vorgabe liegt auf der Skala und nicht hinter ihrem Ende; sonst
+//   stuende der Regler ab Werk auf „unbegrenzt". Geprueft beim Uebersetzen.
+const _: () = assert!(DENKBUDGET_VORGABE < DENKBUDGET_BIS);
+
+fn denkbudget_vorgabe() -> Option<u32> {
+    Some(DENKBUDGET_VORGABE)
 }
 
 impl Default for Modelleinstellung {
     fn default() -> Self {
-        Self { artefakt: String::new(), token: 256, denken: false }
+        Self { artefakt: String::new(), token: 256, denken: false, denkbudget: denkbudget_vorgabe() }
     }
 }
 
@@ -187,11 +231,13 @@ pub struct Agenteneinstellung {
     /// und Betriebsart wirken unabhaengig davon.
     #[serde(default = "an")]
     pub warnung: bool,
-    /// Ob schreibende Handlungen vorgelegt werden.
+    /// Ob Handlungen mit Wirkung nach aussen vorgelegt werden.
     ///
     /// ⚑ `#[serde(default)]`, damit eine Ablage aus der Zeit davor
-    /// lesbar bleibt und dann `auto` bedeutet: **die Vorgabe, die es
-    /// vorher auch war.**
+    /// lesbar bleibt. 📌 **Bis zum 2026-09-25 hiess das `auto`**, die
+    /// damalige Vorgabe; seither `manual` (siehe [`Agentenmodus`]). Eine
+    /// Ablage, die `auto` ausdruecklich traegt, behaelt es: Das ist eine
+    /// Wahl des Nutzers, und sie wird nicht still umgestellt.
     #[serde(default)]
     pub modus: Agentenmodus,
     /// **Ob der Agent den Bildschirm aufnehmen darf.**
@@ -237,7 +283,7 @@ impl Default for Agenteneinstellung {
             schreiben: false,
             kistenordner: None,
             warnung: true,
-            modus: Agentenmodus::Auto,
+            modus: Agentenmodus::Manuell,
             blick_bildschirm: false,
             blick_kamera: false,
             web_recherche: false,
@@ -431,10 +477,16 @@ impl Konsolendesign {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum Agentenmodus {
     /// Der Agent handelt, und der Mensch sieht zu.
-    #[default]
     #[serde(rename = "auto")]
     Auto,
-    /// Jede schreibende Handlung wird vorgelegt.
+    /// Jede Handlung mit Wirkung nach aussen wird vorgelegt: Schreiben,
+    /// Befehle, Web-Anfragen.
+    ///
+    /// ⛔️ **Die Vorgabe** (Festlegung des Projektinhabers, 2026-09-25,
+    /// nach dem Vorbild von Art. 14 KI-Verordnung): Wer nichts einstellt,
+    /// bestaetigt jede solche Handlung. Das ist, was anderswo
+    /// `require_confirmation: true` heisst.
+    #[default]
     #[serde(rename = "manual")]
     Manuell,
 }
@@ -981,6 +1033,13 @@ pub struct Feld {
     ///
     /// ⚑ **Ebenfalls abgeleitet**, siehe [`Feldart::ist_freigabe`].
     pub freigabe: bool,
+    /// **Das rechte Ende der Skala vor „ohne Grenze"**, nur bei
+    /// [`Feldart::Budget`]; sonst null.
+    ///
+    /// ⚑ **Hier und nicht im Fenster**, damit die Zahl an einer Stelle
+    /// steht: Der Regler zeichnet bis hierher, der Setzer nimmt, was
+    /// kommt.
+    pub bis: u32,
     /// Ein Satz dazu, was das Feld bewirkt und was ohne Angabe gilt.
     ///
     /// ⚑ **Er nennt die Vorgabe, wo es eine gibt.** „Ohne Angabe gibt
@@ -1064,6 +1123,7 @@ const fn feld(
         gilt: Gilt::Ueberall,
         ordner: art.ist_ordner(),
         freigabe: art.ist_freigabe(),
+        bis: if matches!(art, Feldart::Budget) { DENKBUDGET_BIS } else { 0 },
     }
 }
 
@@ -1235,7 +1295,7 @@ impl Schriftgroesse {
 /// beieinander, und wer hier ein Feld einfuegt, verschiebt es damit
 /// auch auf der Seite. Das ist beabsichtigt: Eine zweite Liste, die nur
 /// die Reihenfolge festlegt, waere wieder eine zweite Liste.
-pub const FELDER: [Feld; 20] = [
+pub const FELDER: [Feld; 21] = [
     // ⚑ **Sie steht zuerst** (Festlegung des Projektinhabers,
     // 2026-09-10). Sie beschriftet alles, was darunter kommt: Wer die
     // Seite in einer Sprache oeffnet, die er nicht liest, findet hier
@@ -1330,6 +1390,16 @@ pub const FELDER: [Feld; 20] = [
             "The model reasons visibly before it answers. Every thinking token costs as much time as an answer token; off unless set.",
         ),
     ),
+    nur_im_fenster(feld(
+        "modell.denkbudget",
+        Feldart::Budget,
+        ("Modell", "Model"),
+        ("Denkbudget beim Vorlesen", "Thinking budget when speaking"),
+        (
+            "Wie lange das Modell höchstens überlegt, wenn die Antwort vorgelesen wird und „Vor dem Antworten denken“ an ist. Weiter links antwortet es früher, weiter rechts überlegt es gründlicher. Danach antwortet es mit dem, was es bis dahin überlegt hat.",
+            "How long the model thinks at most when the answer is read aloud and “Think before answering” is on. Further left it answers sooner, further right it thinks more thoroughly. After that it answers with what it has worked out so far.",
+        ),
+    )),
     feld(
         "agent.schritte",
         Feldart::Zahl,
@@ -1488,6 +1558,15 @@ pub enum Feldart {
     /// ohne Artefakt waere kein enger gestellter Klient, sondern einer,
     /// der nicht antwortet.
     Ordner,
+    /// ⚑ **Eine Zahl auf einer festen Skala**, von null bis
+    /// [`DENKBUDGET_BIS`], **oder** `aus`, das die Grenze wegnimmt.
+    ///
+    /// ⚑ **Keine [`Feldart::Grenze`], obwohl `aus` dasselbe heisst.** Eine
+    /// Grenze gibt ein Betriebsmittel der Maschine frei, ihr Ende kennt
+    /// der Hardwarescan, und sie steht unter den Grenzen dieses Rechners.
+    /// Ein Budget begrenzt Arbeit, sein Ende steht hier fest, und null ist
+    /// eine Einstellung, die jemand wirklich treffen will.
+    Budget,
     /// Einer aus einer festen Liste, siehe [`Feld::wahl`].
     ///
     /// ⚑ **Die Liste haengt am Feld und nicht an der Art.** Eine Art
@@ -1595,6 +1674,7 @@ impl Einstellungen {
             "modell.artefakt" => Feldwert::Text(self.modell.artefakt.clone()),
             "modell.token" => Feldwert::Zahl(self.modell.token as u64),
             "modell.denken" => Feldwert::Schalter(self.modell.denken),
+            "modell.denkbudget" => zahl(self.modell.denkbudget),
             "agent.schritte" => Feldwert::Zahl(self.agent.schritte as u64),
             "agent.wurzel" => text(&self.agent.wurzel),
             // 📌 **Hier stand kurzzeitig die geltende Kiste statt des
@@ -1656,6 +1736,15 @@ impl Einstellungen {
                 self.modell.token = wert.parse().map_err(|_| format!("{wert} ist keine Zahl"))?
             }
             "modell.denken" => self.modell.denken = ja(wert),
+            // ⚠️ **Streng und nicht ueber `opt`:** Dort wird aus einem
+            // Tippfehler still `None`, und hier hiesse das: ohne Grenze,
+            // also die laengste Wartezeit, die es gibt.
+            "modell.denkbudget" => {
+                self.modell.denkbudget = match wert {
+                    "aus" => None,
+                    w => Some(w.parse().map_err(|_| format!("{w} ist keine Zahl"))?),
+                }
+            }
             "agent.schritte" => {
                 self.agent.schritte = wert.parse().map_err(|_| format!("{wert} ist keine Zahl"))?
             }
@@ -1736,6 +1825,44 @@ impl Einstellungen {
 mod setzer {
     use super::*;
 
+    /// ⚑ **Das Denkbudget: eine alte Ablage bekommt die Vorgabe, `null`
+    /// heisst ohne Grenze, null heisst gar nicht, und ein Tippfehler ist
+    /// ein Fehler.** Der letzte Fall ist der teure: Wuerde er still zu
+    /// „ohne Grenze", waere es die laengste Wartezeit, die es gibt.
+    #[test]
+    fn das_denkbudget_hat_eine_vorgabe_und_ein_offenes_ende() {
+        let alt: Modelleinstellung =
+            serde_json::from_str(r#"{"artefakt":"x","token":256,"denken":true}"#).expect("alt");
+        assert_eq!(alt.denkbudget, Some(DENKBUDGET_VORGABE), "eine alte Ablage ist ohne Grenze");
+        let offen: Modelleinstellung = serde_json::from_str(
+            r#"{"artefakt":"x","token":256,"denken":true,"denkbudget":null}"#,
+        )
+        .expect("offen");
+        assert_eq!(offen.denkbudget, None);
+        assert_eq!(Einstellungen::default().modell.denkbudget, Some(DENKBUDGET_VORGABE));
+
+        let mut e = Einstellungen::default();
+        e.setzen("modell.denkbudget", "0").expect("null");
+        assert_eq!(e.wert("modell.denkbudget").expect("lesen"), Feldwert::Zahl(0));
+        e.setzen("modell.denkbudget", "aus").expect("aus");
+        assert_eq!(e.modell.denkbudget, None);
+        // Und das bleibt beim Speichern so: `null` und nicht die Vorgabe.
+        let zurueck: Einstellungen =
+            serde_json::from_str(&serde_json::to_string(&e).expect("schreiben")).expect("lesen");
+        assert_eq!(zurueck.modell.denkbudget, None, "ohne Grenze wurde beim Lesen zur Vorgabe");
+        e.setzen("modell.denkbudget", "64").expect("64");
+        e.setzen("modell.denkbudget", "12o").expect_err("ein Tippfehler wird angenommen");
+        assert_eq!(e.modell.denkbudget, Some(64), "der Tippfehler hat den Wert veraendert");
+
+        // Das Feld steht im Fenster, mit Skala, und nicht unter den
+        // Freigaben der Maschine.
+        let f = FELDER.iter().find(|f| f.name == "modell.denkbudget").expect("Feld");
+        assert_eq!(f.art, Feldart::Budget);
+        assert_eq!(f.bis, DENKBUDGET_BIS);
+        assert!(!f.freigabe, "das Budget steht unter den Grenzen des Rechners");
+        assert!(f.gilt.im_fenster() && !f.gilt.in_der_konsole());
+    }
+
     #[test]
     fn ein_unbekanntes_feld_wird_abgelehnt() {
         let mut e = Einstellungen::default();
@@ -1796,7 +1923,7 @@ mod setzer {
     fn probewert(f: &Feld) -> &'static str {
         match f.art {
             Feldart::Text | Feldart::Pfad | Feldart::Ordner => "/tmp/x",
-            Feldart::Zahl | Feldart::Grenze => "4",
+            Feldart::Zahl | Feldart::Grenze | Feldart::Budget => "4",
             Feldart::Schalter => "an",
             Feldart::Auswahl => {
                 f.wahl.first().unwrap_or_else(|| panic!("{} ist eine Auswahl ohne Werte", f.name)).wert
@@ -1939,7 +2066,7 @@ mod setzer {
 
             let (hinein, erwartet) = match f.art {
                 Feldart::Schalter => ("an", Feldwert::Schalter(true)),
-                Feldart::Zahl | Feldart::Grenze => ("7", Feldwert::Zahl(7)),
+                Feldart::Zahl | Feldart::Grenze | Feldart::Budget => ("7", Feldwert::Zahl(7)),
                 Feldart::Text | Feldart::Pfad | Feldart::Ordner => {
                     ("/tmp/x", Feldwert::Text("/tmp/x".to_string()))
                 }
@@ -1979,7 +2106,7 @@ mod setzer {
             );
 
             // Und was sich wegnehmen laesst, ist danach leer.
-            if matches!(f.art, Feldart::Grenze | Feldart::Pfad) {
+            if matches!(f.art, Feldart::Grenze | Feldart::Pfad | Feldart::Budget) {
                 e.setzen(f.name, "aus").expect("aus");
                 assert_eq!(
                     e.wert(f.name).expect("lesen"),

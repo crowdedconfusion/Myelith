@@ -1986,6 +1986,12 @@ td:first-child { width: 44%; padding-right: 1.4rem; line-height: 1.35; }
 }
 .reglerzeile.gesperrt { cursor: help; }
 
+/* ⚑ Der Budgetregler in der Feldtabelle: Schieber und Wert in einer
+   Zeile, der Wert mit fester Breite, damit der Schieber nicht springt. */
+.budgetzeile { display: flex; align-items: center; gap: .6rem; }
+.budgetzeile input[type="range"] { flex: 1; min-width: 0; accent-color: var(--text); cursor: pointer; }
+.budgetzeile .reglerwert { min-width: 6.5rem; text-align: right; }
+
 .pfadzeile { display: flex; align-items: center; gap: .4rem; }
 .pfadzeile input { flex: 1; min-width: 0; }
 .ordnerknopf {
@@ -2411,6 +2417,66 @@ tr.gesucht td:first-child { box-shadow: inset 2px 0 0 var(--kante-hell); }
    Masse, der Text bekommt den Rest der Zeile. */
 .warnunghaken span { flex: 1; min-width: 0; }
 .warnungok { justify-self: end; }
+.warnungok:disabled { opacity: .45; cursor: not-allowed; }
+#stimme-waehlen:disabled { opacity: .45; cursor: not-allowed; }
+.stimmeinwilligung { flex-basis: 100%; font-size: .85rem; }
+
+/* Das Aktionsprotokoll: eine schlichte Tafel, die rollt, statt die Seite
+   zu verbreitern. */
+#protokolltafel { display: block; max-height: 22rem; overflow: auto; font-size: .78rem; border-collapse: collapse; }
+#protokolltafel th, #protokolltafel td { padding: .2rem .5rem; text-align: left; white-space: nowrap; }
+#protokolltafel thead th { position: sticky; top: 0; background: var(--grund-hoch); }
+
+/* ⛔️ Der Hinweis beim Start: ueber allem, auch ueber der Warnung. */
+.kihinweis { z-index: 70; }
+.kihinweispunkte {
+  margin: 0;
+  padding-left: 1.1rem;
+  display: grid;
+  gap: .5rem;
+  color: var(--leise);
+  line-height: 1.45;
+}
+.kihinweisverweis { margin: 0; color: var(--leise); font-size: .85rem; }
+/* Die Adresse laesst sich markieren und kopieren; ein Verweis, den man
+   nicht abschreiben kann, fuehrt nirgends hin. */
+.kihinweisadresse { user-select: text; word-break: break-all; color: var(--text); }
+
+/* ⛔️ Die dauerhafte KI-Marke im Kopf: klein, aber immer da. */
+.kimarke {
+  font-size: .72rem;
+  font-weight: 600;
+  letter-spacing: .06em;
+  padding: .15rem .45rem;
+  border: 1px solid var(--kante-hell);
+  border-radius: 999px;
+  color: var(--text);
+  cursor: help;
+  align-self: center;
+}
+/* ⛔️ Der Notaus: in Graustufen wie alles hier, aber mit dem kraeftigsten
+   Rand der Kopfzeile und dem Stoppzeichen davor, damit er sich abhebt. */
+.notaus {
+  font-size: .74rem;
+  font-weight: 700;
+  padding: .2rem .6rem;
+  border: 2px solid var(--text);
+  border-radius: 999px;
+  color: var(--text);
+  background: transparent;
+  cursor: pointer;
+  align-self: center;
+}
+.notaus::before { content: "■ "; }
+.notaus:hover { background: var(--glas-hell); }
+
+/* Und die Zeile unter jeder Antwort. */
+.kimarke-antwort {
+  margin: .35rem 0 0;
+  font-size: .7rem;
+  letter-spacing: .04em;
+  color: var(--leiser);
+}
 
 /* ⚑ **Der Anhangknopf ist ruhiger als das Senden:** Er ist ein Angebot,
    kein Abschluss.

@@ -1,6 +1,6 @@
 [package]
 name = "myl-client"
-version = "0.52.2"
+version = "0.54.0"
 edition = "2021"
 rust-version = "1.85"
 description = "Der Nutzer-Client: eine Frage an ein lokales Modell, die Agentenschleife mit Einhaengegrenze, die Einstellungen."
@@ -53,6 +53,9 @@ integer-llm-runtime = { path = "../../INTEGER_LLM/runtime", features = ["cpu-sim
 # Eingriff in den Rechenpfad fuer eine Anzeigefrage.
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+# ⚑ **Fuer die Fingerabdruecke im Aktionsprotokoll**, und die Flaeche
+# waechst dabei um null Kisten: `sha2` 0.10 zieht die Runtime schon.
+sha2 = "0.10"
 
 
 # ⚑ **Fuer den Hardwarescan und die Plattenreservierung**, und die

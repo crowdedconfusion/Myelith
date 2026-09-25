@@ -3387,7 +3387,7 @@ mod tests {
         assert_eq!(model.kontextgrenze(), 64, "max_context ist kleiner als die Tabelle");
 
         let prompt: Vec<usize> = (0..60).map(|i| i % 3).collect();
-        let lauf = Erzeugung { max_new_tokens: 10, seed: 1, greedy: true, halt: &[] };
+        let lauf = Erzeugung { max_new_tokens: 10, seed: 1, greedy: true, halt: &[], denkgrenze: None, abbruch: None };
         let mut speicher = Fortsetzung::neu(&model);
         let (aus, w) = dekodieren_fortgesetzt(&model, &prompt, &lauf, &mut speicher, &mut |_| {});
         assert_eq!(aus.len(), 5, "Positionen 60 bis 63 werden gerechnet, das Token fuer 64 nur ausgegeben");
@@ -3430,7 +3430,7 @@ mod tests {
             gewichte_verrauschen(&dir, 0x5eed_0372);
             skalen_je_kanal_streuen(&dir);
             let model = load_model(&dir).expect("Artefakt muss laden");
-            let lauf = Erzeugung { max_new_tokens: 5, seed: 7, greedy: true, halt: &[] };
+            let lauf = Erzeugung { max_new_tokens: 5, seed: 7, greedy: true, halt: &[], denkgrenze: None, abbruch: None };
 
             let a: Vec<usize> = (0..40).map(|i| (i * 5 + i / 3) % 3).collect();
             let mut speicher = Fortsetzung::neu(&model);

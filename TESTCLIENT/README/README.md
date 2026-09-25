@@ -1,6 +1,6 @@
 # testclient (`myl-testclient`)
 
-> **Version:** 0.37.2
+> **Version:** 0.37.3
 > **Datum:** 2026-09-21
 > **Status:** Phase 1 und **Phase 3 vollständig**, dazu Punkt 2.1
 > (`vergleich`), **2.2** (Backend-Vergleich innerhalb einer Maschine, seit
@@ -543,6 +543,12 @@ COMPUTE_PIPELINE Phase 1: erstmals über einen aufrufbaren Befehl statt
 über einen Integrationstest.
 
 ## Changelog
+
+### v0.37.3 – 2026-09-25 (ein Verweis zeigt auf den neuen Ort des Ethik-Manifests)
+
+`artefakte.rs` nennt in einem Kommentar das Ethik-Manifest; es liegt seit
+heute unter `COMPLIANCE/ethics/Manifest.md`. Nur der Kommentar, kein
+Verhalten.
 
 ### v0.37.2 – 2026-09-21 (ein Modell darf geholt sein, ohne gebaut zu sein)
 

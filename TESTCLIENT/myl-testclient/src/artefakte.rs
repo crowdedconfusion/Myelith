@@ -882,7 +882,7 @@ pub fn gewichte_holen(
     //
     // `LICENSE*` gehört in die Muster, obwohl die Datei nichts rechnet.
     // Bis 2026-08-23 stand sie nicht drin, und weil eine Lizenzdatei keine
-    // Endung trägt, kam sie nie an. `ETHICS/Manifest.md` berief sich für
+    // Endung trägt, kam sie nie an. `COMPLIANCE/ethics/Manifest.md` berief sich für
     // G7 („das Basismodell muss frei nachnutzbar sein") ausdrücklich auf
     // `MODELS/llm/Qwen2.5-0.5B/LICENSE`, eine Datei, die auf
     // keiner Maschine existierte, die das Modell über diesen Weg geholt

@@ -18,7 +18,7 @@ Welt zulässt, kann nicht zusichern, wo gerechnet wird.
 Sie liest **Dateien**, nicht Recht. Ein Verzeichnis ohne Lizenzdatei
 fällt auf; eine Lizenz, die anders heißt als ihr Inhalt, fällt nicht
 auf. Die variantenscharfe Bewertung steht in
-`ETHICS/Lizenzlage.md` und stammt von Menschen.
+`COMPLIANCE/ethics/Lizenzlage.md` und stammt von Menschen.
 
 **Und sie prüft nur, was lokal liegt.** Ein Modell, das nie
 heruntergeladen wurde, hat hier kein Verzeichnis und erzeugt keinen
@@ -48,7 +48,7 @@ import re
 import sys
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parents[2]
+REPO = Path(__file__).resolve().parents[3]
 
 # ⚑ **Die Rubrik der Quellmodelle, nicht `MODELS/` selbst** (Umzug
 # 2026-09-21). Ein Lauf ueber `MODELS/` naehme `llm`, `audio` und

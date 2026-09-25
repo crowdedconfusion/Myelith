@@ -9,7 +9,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use integer_llm_runtime::generate::{dekodieren_fortgesetzt, Erzeugung, Fortsetzung};
+use integer_llm_runtime::generate::{dekodieren_fortgesetzt, Denkgrenze, Erzeugung, Fortsetzung};
 use integer_llm_runtime::loader::load_model;
 use integer_llm_runtime::model::IntegerModel;
 use integer_llm_runtime::tokenizer::Tokenizer;
@@ -197,6 +197,14 @@ fn haltemarken(wortschatz: &Tokenizer, familie: &str) -> Vec<usize> {
         .collect()
 }
 
+/// **Was eingeschoben wird, wenn das Denkbudget erschoepft ist.**
+///
+/// Ein kurzer Satz, der die Ueberlegung beendet, und die Endmarke. Das
+/// Modell antwortet danach auf Grundlage dessen, was es bis dahin
+/// ueberlegt hat.
+pub const DENKSCHLUSS: &str =
+    "\n\nTime is short, so I will answer now based on what I have worked out so far.\n</think>\n\n";
+
 /// Das Modell im eigenen Speicher.
 pub struct Oertlichesmodell {
     modell: Arc<IntegerModel>,
@@ -216,6 +224,20 @@ pub struct Oertlichesmodell {
     /// Werkzeugaufrufe, keine Ueberlegung; und jedes Denktoken kostet
     /// dieselbe Rechenzeit wie ein Antworttoken.
     pub denken: bool,
+    /// **Wie viele Token hoechstens ueberlegt wird**, wenn [`Self::denken`]
+    /// an ist. `None` heisst ohne Grenze, `Some(0)` heisst gar nicht.
+    ///
+    /// ⚑ **Vorgabe `None`**, also das Verhalten von vorher. Gesetzt wird
+    /// es vom Aufrufer fuer einen einzelnen Weg, heute beim Vorlesen: Dort
+    /// ist die Ueberlegung Wartezeit, in der nichts klingt.
+    pub denkbudget: Option<usize>,
+    /// Die Endmarke der Ueberlegung (`</think>`), aus dem Wortschatz;
+    /// `None`, wenn er sie nicht als ein Token kennt, und dann wirkt
+    /// kein Budget.
+    denkende: Option<usize>,
+    /// Was eingeschoben wird, wenn das Budget erschoepft ist, bis
+    /// einschliesslich der Endmarke. Siehe [`DENKSCHLUSS`].
+    pub denkschluss: String,
     /// Die Token, bei denen eine Antwort zu Ende ist.
     ///
     /// # 📌 Der Fehler, aus dem dieses Feld entstanden ist
@@ -372,6 +394,11 @@ impl Oertlichesmodell {
             .unwrap_or_default()
             .to_string();
         let halt = haltemarken(&wortschatz, &familie);
+        // ⚑ Wie bei den Haltemarken: nur, was ein einziges Token ist.
+        let denkende = {
+            let t = wortschatz.encode("</think>");
+            (t.len() == 1).then(|| t[0])
+        };
         Ok(Self {
             wortschatz,
             familie,
@@ -379,6 +406,9 @@ impl Oertlichesmodell {
             gierig: true,
             saat: 0,
             denken: false,
+            denkbudget: None,
+            denkende,
+            denkschluss: DENKSCHLUSS.to_string(),
             halt,
             beobachter: None,
             zaehler: std::sync::Arc::new(Tokenzaehler::default()),
@@ -393,13 +423,30 @@ impl Oertlichesmodell {
     /// Zuschauer und einer ohne unterscheiden sich nur im Zuschauer;
     /// zwei getippte Parameterlisten koennten irgendwann mehr
     /// unterscheiden, und dann haetten sie verschiedene Antworten.
-    fn erzeugung(&self, grenze: usize) -> Erzeugung<'_> {
+    fn erzeugung<'a>(&'a self, grenze: usize, schluss: &'a [usize]) -> Erzeugung<'a> {
         Erzeugung {
             max_new_tokens: grenze,
             seed: self.saat,
             greedy: self.gierig,
             halt: &self.halt,
+            denkgrenze: match (self.denkt(), self.denkbudget, self.denkende) {
+                (true, Some(budget), Some(ende)) => Some(Denkgrenze { budget, ende, schluss }),
+                _ => None,
+            },
+            // ⛔️ Der Notaus haelt die Erzeugung vor dem naechsten Token an.
+            abbruch: Some(crate::notaus::schalter()),
         }
+    }
+
+    /// **Ob dieser Lauf ueberlegt**: Denkmodus an und ein Budget, das
+    /// nicht null ist.
+    ///
+    /// ⚑ **Null heisst: gar nicht ueberlegen**, und das ist die leere
+    /// Ueberlegung im Voraus, nicht ein Einschub nach null Token. Der
+    /// Einschub saehe fuer das Modell aus wie eine abgebrochene
+    /// Ueberlegung; die leere ist die, auf die es trainiert ist.
+    pub fn denkt(&self) -> bool {
+        self.denken && self.denkbudget != Some(0)
     }
 
     /// Welche Vorlage dieses Artefakt versteht.
@@ -448,7 +495,7 @@ impl Modellweg for Oertlichesmodell {
         nachrichten: &[Nachricht],
         max_tokens: Option<u32>,
     ) -> Result<Antwort, Tuerfehler> {
-        let prompt = self.vorlage().bauen(nachrichten, self.denken);
+        let prompt = self.vorlage().bauen(nachrichten, self.denkt());
         // Einmal zerlegt, fuer den Zaehler und fuer die Rechnung: Bei einem
         // langen Verlauf kostet das Zerlegen selbst merklich.
         let prompt_token = self.wortschatz.encode(&prompt);
@@ -461,6 +508,7 @@ impl Modellweg for Oertlichesmodell {
         }
         self.zaehler.hinein.fetch_add(prompt_token.len() as u32, std::sync::atomic::Ordering::Relaxed);
         let grenze = max_tokens.map(|m| m as usize).unwrap_or(self.grenze);
+        let schluss = self.wortschatz.encode(&self.denkschluss);
         // ⚑ **Ein Schloss fuer den ganzen Schritt**: Zwei gleichzeitige
         // Aufrufe duerfen nicht in denselben Speicher schreiben.
         let mut speicher = self.fortsetzung.lock().unwrap_or_else(|e| e.into_inner());
@@ -472,7 +520,7 @@ impl Modellweg for Oertlichesmodell {
             None => dekodieren_fortgesetzt(
                 &self.modell,
                 &prompt_token,
-                &self.erzeugung(grenze),
+                &self.erzeugung(grenze, &schluss),
                 &mut speicher,
                 &mut |_| {
                     self.zaehler.heraus.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -489,12 +537,12 @@ impl Modellweg for Oertlichesmodell {
                 let mut bisher = String::new();
                 let mut alle: Vec<usize> = Vec::with_capacity(grenze);
                 let mut zerleger = crate::strom::Zerleger::neu_im_denken(
-                    self.vorlage().oeffnet_denkblock(self.denken),
+                    self.vorlage().oeffnet_denkblock(self.denkt()),
                 );
                 let token = dekodieren_fortgesetzt(
                     &self.modell,
                     &prompt_token,
-                    &self.erzeugung(grenze),
+                    &self.erzeugung(grenze, &schluss),
                     &mut speicher,
                     &mut |t| {
                         self.zaehler.heraus.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -540,6 +588,11 @@ impl Modellweg for Oertlichesmodell {
             .unwrap_or(&text)
             .trim()
             .to_string();
+        // ⛔️ **Angehalten ist kein Ergebnis wie jedes andere**: Die Schleife
+        //   muss enden, und der Text bis dahin kommt mit.
+        if crate::notaus::ausgeloest() {
+            return Err(Tuerfehler::Abgebrochen { bisher: text });
+        }
         Ok(Antwort {
             text,
             abschlussgrund: Some("stop".to_string()),
@@ -557,7 +610,7 @@ impl Modellweg for Oertlichesmodell {
     /// Genau gezaehlt: dieselbe Vorlage und derselbe Wortschatz wie in
     /// [`Modellweg::chat`].
     fn kontext(&self, nachrichten: &[Nachricht]) -> Option<myl_local_agent::Kontextstand> {
-        let prompt = self.vorlage().bauen(nachrichten, self.denken);
+        let prompt = self.vorlage().bauen(nachrichten, self.denkt());
         Some(myl_local_agent::Kontextstand {
             belegt: self.wortschatz.encode(&prompt).len(),
             grenze: self.modell.kontextgrenze(),

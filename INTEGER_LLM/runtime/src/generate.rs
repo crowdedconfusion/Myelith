@@ -93,7 +93,7 @@ pub fn generate(
         model,
         tokenizer,
         prompt,
-        &Erzeugung { max_new_tokens, seed, greedy, halt: &[] },
+        &Erzeugung { max_new_tokens, seed, greedy, halt: &[], denkgrenze: None, abbruch: None },
         &mut |_| {},
     )
 }
@@ -116,6 +116,49 @@ pub struct Erzeugung<'a> {
     /// ⚑ **Leer heisst: kein Halt**, und dann ist der Lauf Zeichen fuer
     /// Zeichen der alte.
     pub halt: &'a [usize],
+    /// Wie lange hoechstens ueberlegt wird, siehe [`Denkgrenze`].
+    ///
+    /// ⚑ **`None` heisst: keine Grenze**, und dann ist der Lauf Zeichen
+    /// fuer Zeichen der alte.
+    pub denkgrenze: Option<Denkgrenze<'a>>,
+    /// **Ein Schalter, der die Erzeugung anhaelt** (Notaus).
+    ///
+    /// ⚑ Geprueft vor jedem Token; steht er, endet die Schleife mit dem,
+    /// was bis dahin dasteht. **`None` heisst: kein Schalter**, und dann
+    /// ist der Lauf Zeichen fuer Zeichen der alte.
+    pub abbruch: Option<&'a std::sync::atomic::AtomicBool>,
+}
+
+/// **Eine Obergrenze fuer die Ueberlegung vor der Antwort.**
+///
+/// # ⚑ Warum die Schleife das tut und nicht der Aufrufer
+///
+/// Ein Modell mit Denkmodus schreibt erst eine Ueberlegung und schliesst
+/// sie mit einer Endmarke, dann antwortet es. Wie lang die Ueberlegung
+/// wird, entscheidet es selbst, und bei einer vorgelesenen Antwort ist
+/// genau das die Wartezeit: gemessen am 2026-09-25 mit dem 30B 44 s bis
+/// zum ersten Wort der Antwort.
+///
+/// ⚑ **Ist das Budget erschoepft, bevor die Endmarke kam, wird eine feste
+/// Schlussfolge eingeschoben** (ein kurzer Uebergangssatz und die
+/// Endmarke), so als haette das Modell sie selbst geschrieben. Danach
+/// antwortet es auf Grundlage dessen, was es bis dahin ueberlegt hat.
+/// Das kann nur die Schleife: Der Beobachter steht hinter der Auswahl und
+/// hat keinen Zugriff auf den Zwischenspeicher, und genau das soll so
+/// bleiben (siehe [`generate_beobachtet`]).
+///
+/// ⚠️ **Die eingeschobenen Token gehen in die Ausgabe und an den
+/// Beobachter** wie jedes andere; sonst fehlte der Anzeige die Endmarke,
+/// und sie hielte die Antwort fuer weitere Ueberlegung.
+#[derive(Clone, Copy)]
+pub struct Denkgrenze<'a> {
+    /// Wie viele Token hoechstens ueberlegt wird, bevor eingeschoben wird.
+    pub budget: usize,
+    /// Die Endmarke der Ueberlegung. Kommt sie von selbst, ist die Grenze
+    /// erledigt, und es wird nichts eingeschoben.
+    pub ende: usize,
+    /// Was eingeschoben wird; sie endet mit der Endmarke oder traegt sie.
+    pub schluss: &'a [usize],
 }
 
 /// Wie [`generate`], meldet aber **jedes Token, sobald es dasteht**.
@@ -258,7 +301,7 @@ pub fn dekodieren_fortgesetzt(
     speicher: &mut Fortsetzung,
     beobachter: &mut dyn FnMut(usize),
 ) -> (Vec<usize>, Wiederverwendung) {
-    let Erzeugung { max_new_tokens, seed, greedy, halt } = *lauf;
+    let Erzeugung { max_new_tokens, seed, greedy, halt, denkgrenze, abbruch } = *lauf;
 
     // ⚑ **Vorbereitung ohne Kopf, ausser fuer die letzte Position**, und
     // gebuendelt (Fund 366). Der gemeinsame Anfang mit dem letzten Aufruf
@@ -289,8 +332,16 @@ pub fn dekodieren_fortgesetzt(
     // Prompt.
     let mut out = Vec::with_capacity(max_new_tokens);
     let mut current_seed = seed;
-    
-    for pos in token_ids.len()..token_ids.len() + max_new_tokens {
+    // ⚑ Die Ueberlegung laeuft, bis die Endmarke kommt oder eingeschoben
+    //   wird; ohne Grenze wird gar nicht gezaehlt.
+    let mut ueberlegt = 0usize;
+    let mut denkt = denkgrenze.is_some();
+    let mut pos = token_ids.len();
+
+    while out.len() < max_new_tokens {
+        if abbruch.is_some_and(|a| a.load(std::sync::atomic::Ordering::SeqCst)) {
+            break;
+        }
         let next_token = if greedy {
             model.greedy_next(&logits)
         } else {
@@ -319,6 +370,36 @@ pub fn dekodieren_fortgesetzt(
         logits = model.forward_token(next_token, pos, &mut speicher.cache);
         // Im Speicher steht jetzt auch dieser Token.
         speicher.token.push(next_token);
+        pos += 1;
+
+        let Some(g) = denkgrenze.filter(|_| denkt) else { continue };
+        if next_token == g.ende {
+            denkt = false;
+            continue;
+        }
+        ueberlegt += 1;
+        if ueberlegt < g.budget {
+            continue;
+        }
+        // ⚑ **Das Budget ist erschoepft: Die Schlussfolge wird gerechnet,
+        //   als haette das Modell sie geschrieben.** Ihre Logits werden
+        //   verworfen bis auf die des letzten Tokens, und aus denen waehlt
+        //   die Schleife das erste Token der Antwort.
+        denkt = false;
+        for &t in g.schluss {
+            if out.len() >= max_new_tokens {
+                break;
+            }
+            out.push(t);
+            beobachter(t);
+            if pos >= grenze {
+                wiederverwendung.kontext_voll = true;
+                return (out, wiederverwendung);
+            }
+            logits = model.forward_token(t, pos, &mut speicher.cache);
+            speicher.token.push(t);
+            pos += 1;
+        }
     }
 
     (out, wiederverwendung)

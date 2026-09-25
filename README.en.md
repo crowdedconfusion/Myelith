@@ -2,6 +2,36 @@
 
 This README is also available in [German](README.md).
 
+## AI System Disclosure (EU AI Act Art. 50)
+
+This is an **AI system**. Interactions with this software are with an
+artificial intelligence, not a human. The system generates synthetic text
+and synthetic speech; generated speech is marked as AI-generated, both
+machine-readably and in the signal.
+
+## Regulatory Information
+
+- **EU AI Act (EU) 2024/1689 status:** non-high-risk AI system
+  (self-assessed per Annex III)
+- **Self-assessment, article by article:** [COMPLIANCE/en/Self-Assessment.md](COMPLIANCE/en/Self-Assessment.md)
+- **GPAI documentation:** [COMPLIANCE/en/GPAI-Documentation.md](COMPLIANCE/en/GPAI-Documentation.md)
+- **Training data summary:** [COMPLIANCE/en/Training-Data.md](COMPLIANCE/en/Training-Data.md)
+- **Intended use policy:** [COMPLIANCE/en/Intended-Use-Policy.md](COMPLIANCE/en/Intended-Use-Policy.md)
+- **Copyright policy:** [COMPLIANCE/en/Copyright-Policy.md](COMPLIANCE/en/Copyright-Policy.md)
+- **Third-party components and licences:** [COMPLIANCE/NOTICES.md](COMPLIANCE/NOTICES.md)
+- **Everything, in German and English:** [COMPLIANCE](COMPLIANCE/README.md)
+
+## Prohibited Uses
+
+This system must not be used for any high-risk application as defined in
+Annex III of the EU AI Act, nor for any practice prohibited by Article 5.
+See the [intended use policy](COMPLIANCE/en/Intended-Use-Policy.md) for
+the full list.
+
+> Provider's self-assessment, not legal advice.
+
+---
+
 **Myelith makes consensus work useful.** The same computation that secures
 the network runs a large agentic language model. Not a burned crypto game
 (proof-of-work), but inference somebody can actually use, and
@@ -121,7 +151,7 @@ The short version here:
 | [GOVERNANCE](GOVERNANCE/README/README.md) | **Parameters in one place, with rank.** 33 parameters with provenance and rank; the constitutional rank from Chap. 10.3 is enforced **technically**. Nine conditions are checked **on the proposal**, not after the vote. Plus voting with quorum, majority and window, a model manifest, and the switch for the algorithm change: one-way, one step |
 | [TRAINING](TRAINING/README/README.md) | **Integer training holds, and that is measured.** **+0.67 %** against floating point, with stochastic rounding, **entirely without floating-point state**. Growth exactly function-preserving, 0.00e+00. For Mixture-of-Experts models likewise, with load balancing without randomness |
 | [SIMULATION](SIMULATION/README.md) | **Tests the interlocks, not the modules.** Drives a segment through every layer, because almost every serious finding in this project sat between two components and was correct inside each |
-| [ETHICS](ETHICS/README/README.md) | **Commitments that rule things out.** Manifesto v1.0.0 is in place, and principle G7 is checked for each of the seven Qwen2.5 sizes: five are Apache 2.0 and usable, **two are ruled out by their licence** |
+| [COMPLIANCE](COMPLIANCE/README.md) | **What the law requires, and commitments that rule things out.** AI Act self-assessment, intended use policy, GPAI documentation, training data, copyright and `NOTICES`, in German and English; below it [`ethics`](COMPLIANCE/ethics/README/README.md) with the manifesto, the exclusion catalogue and the licence review per model variant |
 | [AGENT_LAYER](AGENT_LAYER/README/README.md) | ⚑ **A contract is not a program, it is a blast radius.** Budget, recipients and deadline are fixed and checked by consensus; nobody can change them, because a different contract has a different address |
 | [CLIENT](CLIENT/README/README.md) | **The component people actually touch.** Wallet, inference interface, and the form where a user sets the limits of an agent session. No code yet: the design questions come first, so the contract interface is not built past its users |
 

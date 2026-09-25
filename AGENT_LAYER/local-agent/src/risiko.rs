@@ -3,7 +3,7 @@
 //!
 //! # ⚑ Eine Warnung, die niemand liest, ist keine
 //!
-//! `ETHICS/Risikoklassen.toml` sagt in ihrem eigenen Kopf: „CLIENT und
+//! `COMPLIANCE/ethics/Risikoklassen.toml` sagt in ihrem eigenen Kopf: „CLIENT und
 //! AGENT_LAYER binden diese Datei ein, statt den Text abzuschreiben."
 //! **Bis zum 2026-09-05 tat das niemand.** Die Datei war eine Quelle mit
 //! null Lesern, und die Warnung erreichte damit genau niemanden.
@@ -42,7 +42,7 @@ use serde::Deserialize;
 /// ⚑ **Der Pfad geht durch zwei Ebenen nach oben.** Das ist hässlich und
 /// richtig: Eine Kopie im eigenen Verzeichnis wäre die zweite Fassung,
 /// vor der die Datei selbst warnt.
-pub const QUELLE: &str = include_str!("../../../ETHICS/Risikoklassen.toml");
+pub const QUELLE: &str = include_str!("../../../COMPLIANCE/ethics/Risikoklassen.toml");
 
 /// Was die Datei enthält.
 #[derive(Debug, Clone, Deserialize)]
@@ -131,7 +131,7 @@ impl Risikoklassen {
     /// nicht der Lauf. Ein `Result` hier lüde dazu ein, den Fall
     /// wegzuschlucken und ohne Warnung weiterzumachen.
     pub fn eingebettet() -> Self {
-        toml::from_str(QUELLE).expect("ETHICS/Risikoklassen.toml ist unlesbar")
+        toml::from_str(QUELLE).expect("COMPLIANCE/ethics/Risikoklassen.toml ist unlesbar")
     }
 
     /// Die Klasse zu einer Kennung.

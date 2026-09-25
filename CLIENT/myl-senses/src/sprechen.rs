@@ -59,7 +59,15 @@ pub fn sagen(zeug: &Sprechzeug, text: &str) -> Result<PathBuf, String> {
     std::fs::write(&quelle, text).map_err(|f| format!("{}: {f}", quelle.display()))?;
     let ziel = crate::zwischenname("myl-sprechen", "wav");
 
-    let ergebnis = ruf(zeug, &quelle, &ziel);
+    // ⛔️ Gekennzeichnet, bevor es jemand bekommt; sonst gar nicht.
+    let ergebnis = ruf(zeug, &quelle, &ziel).and_then(|()| {
+        if ziel.is_file() {
+            crate::kennzeichnung::synthetisch_kennzeichnen(&ziel, crate::kennzeichnung::Modalitaet::Sprache)
+                .map_err(|f| format!("nicht gekennzeichnet, deshalb nicht gespielt: {f}"))
+        } else {
+            Ok(())
+        }
+    });
     let _ = std::fs::remove_file(&quelle);
     match ergebnis {
         Ok(()) if ziel.is_file() => Ok(ziel),
@@ -315,18 +323,48 @@ impl Dauersprecher {
             .map_err(|f| format!("{} nimmt nichts mehr an: {f}", self.name))?;
         let aus = self.ausgabe.as_mut().ok_or("der Laeufer ist schon zu")?;
         let mut stuecke = 0usize;
+        // ⛔️ **Was nicht gekennzeichnet werden kann, klingt nicht**
+        //   (Art. 50 Abs. 2 KI-Verordnung). Jedes Stueck und das ganze
+        //   Satz-WAV gehen durch `synthetisch_kennzeichnen`, bevor jemand
+        //   sie bekommt; scheitert das, wird das Stueck verworfen und der
+        //   Satz als Fehler gemeldet. Ein ungekennzeichneter Ton waere
+        //   genau der Fall, den die Kennzeichnung ausschliessen soll.
+        let mut nicht_gekennzeichnet: Option<String> = None;
         loop {
             let mut zeile = String::new();
             aus.read_line(&mut zeile)
                 .map_err(|f| format!("{} antwortet nicht: {f}", self.name))?;
             let zeile = zeile.trim();
             if let Some(pfad) = zeile.strip_prefix("stueck\t") {
-                stueck(Path::new(pfad));
-                stuecke += 1;
+                let pfad = Path::new(pfad);
+                match crate::kennzeichnung::synthetisch_kennzeichnen(pfad, crate::kennzeichnung::Modalitaet::Sprache) {
+                    Ok(()) => {
+                        stueck(pfad);
+                        stuecke += 1;
+                    }
+                    Err(f) => {
+                        let _ = std::fs::remove_file(pfad);
+                        nicht_gekennzeichnet.get_or_insert(f);
+                    }
+                }
                 continue;
             }
             return match zeile {
-                "ok" => Ok(stuecke),
+                "ok" => {
+                    if ziel.is_file() {
+                        if let Err(f) = crate::kennzeichnung::synthetisch_kennzeichnen(
+                            ziel,
+                            crate::kennzeichnung::Modalitaet::Sprache,
+                        ) {
+                            let _ = std::fs::remove_file(ziel);
+                            nicht_gekennzeichnet.get_or_insert(f);
+                        }
+                    }
+                    match nicht_gekennzeichnet {
+                        Some(f) => Err(format!("nicht gekennzeichnet, deshalb nicht gespielt: {f}")),
+                        None => Ok(stuecke),
+                    }
+                }
                 "" => Err(format!("{} ist ausgestiegen", self.name)),
                 anderes => Err(format!("{}: {anderes}", self.name)),
             };
@@ -1148,8 +1186,23 @@ impl Vorleser {
                         //   Satz zum Ueberbruecken erst zu rechnen, hielte
                         //   die Antwort auf, die er ueberbruecken soll.
                         if let Some(wav) = vorbereitete_ueberbrueckung(&zeug, &sprache) {
-                            if let Err(f) = abspieler(&wav) {
-                                fehler.push(f);
+                            // ⛔️ Auch ein Satz aus der Ablage klingt nur
+                            //   gekennzeichnet. 📌 Die Ablage stammt womoeglich
+                            //   aus der Zeit vor der Kennzeichnung, und ihr
+                            //   Name haengt nicht daran; gemessen am
+                            //   2026-09-25 an den eigenen Saetzen, die alle
+                            //   ohne Marke dalagen. Eine schon gekennzeichnete
+                            //   Datei kostet hier nur das Lesen.
+                            match crate::kennzeichnung::synthetisch_kennzeichnen(
+                                &wav,
+                                crate::kennzeichnung::Modalitaet::Sprache,
+                            ) {
+                                Ok(()) => {
+                                    if let Err(f) = abspieler(&wav) {
+                                        fehler.push(f);
+                                    }
+                                }
+                                Err(f) => fehler.push(format!("nicht gekennzeichnet, deshalb nicht gespielt: {f}")),
                             }
                         }
                         continue;

@@ -2,6 +2,36 @@
 
 Dieses README ist auch auf [Englisch](README.en.md) verfügbar.
 
+## Hinweis nach der KI-Verordnung (Art. 50)
+
+Myelith ist ein **KI-System**. Wer damit arbeitet, arbeitet mit einer
+künstlichen Intelligenz und nicht mit einem Menschen. Das System erzeugt
+synthetische Texte und synthetische Sprache; erzeugte Sprache ist als
+KI-erzeugt gekennzeichnet, maschinenlesbar und im Signal.
+
+## Regulatorische Angaben
+
+- **Einstufung nach der KI-Verordnung (EU) 2024/1689:** kein
+  Hochrisiko-KI-System (Selbsteinschätzung nach Anhang III)
+- **Selbsteinschätzung, Artikel für Artikel:** [COMPLIANCE/de/Selbsteinschaetzung.md](COMPLIANCE/de/Selbsteinschaetzung.md)
+- **GPAI-Dokumentation:** [COMPLIANCE/de/GPAI-Dokumentation.md](COMPLIANCE/de/GPAI-Dokumentation.md)
+- **Zusammenfassung der Trainingsdaten:** [COMPLIANCE/de/Trainingsdaten.md](COMPLIANCE/de/Trainingsdaten.md)
+- **Zweckbestimmung:** [COMPLIANCE/de/Zweckbestimmung.md](COMPLIANCE/de/Zweckbestimmung.md)
+- **Urheberrechtsstrategie:** [COMPLIANCE/de/Urheberrecht.md](COMPLIANCE/de/Urheberrecht.md)
+- **Fremdkomponenten und Lizenzen:** [COMPLIANCE/NOTICES.md](COMPLIANCE/NOTICES.md)
+- **Alles zusammen, deutsch und englisch:** [COMPLIANCE](COMPLIANCE/README.md)
+
+## Verbotene Verwendungen
+
+Myelith darf nicht für Hochrisiko-Anwendungen nach Anhang III der
+KI-Verordnung und nicht für die nach Artikel 5 verbotenen Praktiken
+verwendet werden. Die vollständige Liste steht in der
+[Zweckbestimmung](COMPLIANCE/de/Zweckbestimmung.md).
+
+> Selbsteinschätzung des Anbieters, keine Rechtsberatung.
+
+---
+
 **Myelith macht Konsensarbeit nützlich.** Dieselbe Rechenleistung, die das
 Netzwerk sichert, betreibt ein großes agentisches Sprachmodell. Kein verbranntes Krypto- Spielchen (Proof-of-Work), sondern Inferenz, die jemand gebrauchen kann, und zwar **nachprüfbar**: Weil sie vollständig ganzzahlig läuft, liefern unabhängige Knoten bitgleiche Ergebnisse.
 
@@ -120,7 +150,7 @@ Design-Entscheidungen und Tests. Die Kurzfassung hier:
 | [GOVERNANCE](GOVERNANCE/README/README.md) | **Parameter an einem Ort, mit Rang.** 33 Parameter mit Fundstelle und Rang; der Verfassungsrang aus Kap. 10.3 wird **technisch** durchgesetzt. Neun Bedingungen werden **am Vorschlag** geprüft, nicht nach der Abstimmung. Dazu Abstimmung mit Quorum, Mehrheit und Fenster, Modellmanifest, und der Schalter für den Verfahrenswechsel: einbahnig, ein Schritt |
 | [TRAINING](TRAINING/README/README.md) | **Ganzzahliges Training trägt, und das ist gemessen.** **+0,67 %** gegenüber Gleitkomma, mit stochastischem Runden, **ganz ohne Gleitkommazustand**. Wachstum exakt funktionserhaltend, 0,00e+00. Für Mixture-of-Experts-Modelle ebenso, mit Lastausgleich ohne Zufall |
 | [SIMULATION](SIMULATION/README.md) | **Prüft die Verzahnungen, nicht die Module.** Fährt ein Segment durch alle Schichten, weil fast jeder schwere Fund dieses Projekts zwischen zwei Komponenten saß und in jeder für sich korrekt war |
-| [ETHICS](ETHICS/README/README.md) | **Zusagen, die etwas ausschließen.** Manifest v1.0.0 steht, und Grundsatz G7 ist für alle sieben Qwen2.5-Größen einzeln geprüft: Fünf sind Apache 2.0 und damit brauchbar, **zwei fallen wegen ihrer Lizenz heraus** |
+| [COMPLIANCE](COMPLIANCE/README.md) | **Was das Recht verlangt, und Zusagen, die etwas ausschließen.** Selbsteinschätzung nach der KI-Verordnung, Zweckbestimmung, GPAI-Dokumentation, Trainingsdaten, Urheberrecht und `NOTICES`, deutsch und englisch; darunter [`ethics`](COMPLIANCE/ethics/README/README.md) mit Manifest, Ausschlusskatalog und Lizenzprüfung je Modellvariante |
 | [AGENT_LAYER](AGENT_LAYER/README/README.md) | ⚑ **Der Kontrakt ist kein Programm, sondern ein Sprengradius.** Budget, Empfänger und Frist stehen fest und werden vom Konsens geprüft; ändern kann sie niemand, denn ein anderer Kontrakt hat eine andere Adresse |
 | [CLIENT](CLIENT/README/README.md) | **Die Komponente, mit der Menschen zu tun haben.** Wallet, Inferenz-Oberfläche und die Maske, in der ein Nutzer die Grenzen einer Agenten-Session setzt. Noch kein Code: Erst sollen die Design-Fragen entschieden sein, damit die Kontrakt-Schnittstelle nicht an den Nutzern vorbei entsteht |
 

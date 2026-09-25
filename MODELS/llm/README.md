@@ -99,7 +99,7 @@ PURPOSES ONLY"), 72B unter der Qwen License mit einer Lizenzpflicht ab
 100 Mio. monatlich aktiven Nutzern. Beides ist mit ETHICS-Grundsatz G7
 unvereinbar. Geeignet sind 0.5B, 1.5B, 7B, 14B und 32B; die nächste
 Größe nach 7B ist damit **14B, nicht 72B**. Vollständige Prüfung samt
-Methode in `ETHICS/Lizenzlage.md`.
+Methode in `COMPLIANCE/ethics/Lizenzlage.md`.
 
 Für die Apache-2.0-Varianten ist auch die Lage **quantisierter
 Ableitungen** geklärt: §2 erlaubt Bearbeitungen, §4(a) und §4(b) binden

@@ -145,7 +145,23 @@ hol() {
 }
 W=https://huggingface.co/ggerganov/whisper.cpp/resolve/main
 S=https://huggingface.co/ggml-org/SmolVLM2-2.2B-Instruct-GGUF/resolve/main
-Q=https://huggingface.co/ggml-org/Qwen2.5-VL-3B-Instruct-GGUF/resolve/main
+# ⛔️ **Die genaue Sprosse ist seit dem 2026-09-25 Qwen3-VL-4B** (Apache 2.0,
+# vom Hersteller selbst umgewandelt). Vorher stand hier Qwen2.5-VL-3B, und
+# dessen Original steht unter einer Forschungslizenz, die nur Forschung
+# und nicht kommerzielle Nutzung erlaubt; die Umwandlung nannte Apache 2.0,
+# kann die Lizenz des Originals aber nicht aendern.
+Q=https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct-GGUF/resolve/main
+
+# ⚑ **Eine alte Datei wird ersetzt, eine fremde nicht.** Erkannt wird die
+# alte an ihrer Groesse in Bytes; wer eine eigene Datei unter demselben
+# Namen abgelegt hat, behaelt sie.
+alt_ersetzen() {
+  [ -f "$1" ] || return 0
+  if [ "$(wc -c < "$1" | tr -d ' ')" = "$2" ]; then
+    echo "ersetze $(basename "$1") (Qwen2.5-VL-3B, Forschungslizenz)"
+    rm -f "$1"
+  fi
+}
 
 sagen "Hoeren"
 hol "$AUDIO" hoeren.bin "$W/ggml-large-v3-turbo-q5_0.bin" || exit 1
@@ -154,10 +170,12 @@ sagen "Sehen, schnell (SmolVLM2-2.2B)"
 hol "$VISION" sehen.gguf        "$S/SmolVLM2-2.2B-Instruct-Q4_K_M.gguf" || exit 1
 hol "$VISION" sehen-mmproj.gguf "$S/mmproj-SmolVLM2-2.2B-Instruct-Q8_0.gguf" || exit 1
 
-sagen "Sehen, genau (Qwen2.5-VL-3B)"
+sagen "Sehen, genau (Qwen3-VL-4B)"
+alt_ersetzen "$VISION/sehen-genau.gguf" 1929901056
+alt_ersetzen "$VISION/sehen-genau-mmproj.gguf" 1338428128
 # ⚑ Wahlfrei: Faellt sie aus, bleibt es bei der schnellen Sprosse.
-hol "$VISION" sehen-genau.gguf        "$Q/Qwen2.5-VL-3B-Instruct-Q4_K_M.gguf" || echo "(bleibt bei der schnellen Sprosse)"
-hol "$VISION" sehen-genau-mmproj.gguf "$Q/mmproj-Qwen2.5-VL-3B-Instruct-f16.gguf" || echo "(bleibt bei der schnellen Sprosse)"
+hol "$VISION" sehen-genau.gguf        "$Q/Qwen3VL-4B-Instruct-Q4_K_M.gguf" || echo "(bleibt bei der schnellen Sprosse)"
+hol "$VISION" sehen-genau-mmproj.gguf "$Q/mmproj-Qwen3VL-4B-Instruct-Q8_0.gguf" || echo "(bleibt bei der schnellen Sprosse)"
 
 if [ "$mit_sprechen" = 0 ]; then pruefen; exit 0; fi
 

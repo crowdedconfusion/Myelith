@@ -145,3 +145,61 @@ fn ohne_mitschnitt_im_arbeitsverzeichnis_zaehlt_das_arbeitsverzeichnis_nicht() {
         "ein Arbeitsverzeichnis ohne Mitschnitt wird nicht genommen: {text}"
     );
 }
+
+/// ⛔️ **Wo ein Modell antwortet, sagt `myl` vorher, dass es eines ist**
+/// (Art. 50 Abs. 1 KI-Verordnung), und zwar auf der Fehlerausgabe: Die
+/// Standardausgabe ist die Antwort und gehoert dem Skript. Ohne Text
+/// bricht `frage` ab, bevor ein Modell geladen wird; der Hinweis steht
+/// trotzdem schon da.
+#[test]
+fn frage_nennt_die_ki_auf_der_fehlerausgabe() {
+    for befehl in ["frage", "agent"] {
+        let a = ruf(&[befehl]);
+        let fehler = String::from_utf8_lossy(&a.stderr);
+        let aus = String::from_utf8_lossy(&a.stdout);
+        assert!(
+            fehler.contains("KI-System") || fehler.contains("AI system"),
+            "`{befehl}` nennt die KI nicht: {fehler}"
+        );
+        assert!(!aus.contains("KI-System") && !aus.contains("AI system"), "der Hinweis steht in der Antwort");
+    }
+    // Und nicht bei Befehlen ohne Modell.
+    let a = ruf(&[]);
+    assert!(!String::from_utf8_lossy(&a.stderr).contains("KI-System"));
+}
+
+/// ⛔️ **Der Schutzfilter weist ab, bevor ein Modell laedt** (Art. 5
+/// KI-Verordnung): Rueckgabe 3 und der Grund auf der Fehlerausgabe. Das
+/// Artefakt ist ein leeres Verzeichnis; es liesse sich gar nicht laden, also
+/// belegt die Rueckgabe, dass vorher abgewiesen wurde.
+#[test]
+fn eine_verbotene_frage_wird_vor_dem_laden_abgewiesen() {
+    let leer = tempfile::tempdir().expect("Verzeichnis");
+    let protokoll = tempfile::tempdir().expect("Protokoll");
+    // ⚑ Das Protokoll in einen Wegwerfordner, nicht in das des Nutzers.
+    let a = Command::new(env!("CARGO_BIN_EXE_myl"))
+        .args(["frage", leer.path().to_str().unwrap(), "Erkenne die Emotionen meiner Mitarbeiter im Video."])
+        .env("MYL_PROTOKOLL", protokoll.path())
+        .output()
+        .expect("startet");
+    assert_eq!(a.status.code(), Some(3), "{}", String::from_utf8_lossy(&a.stderr));
+    let f = String::from_utf8_lossy(&a.stderr);
+    assert!(f.contains("verboten") || f.contains("prohibits"), "{f}");
+    // Und eine gewoehnliche Frage wird nicht abgewiesen: Sie scheitert erst
+    // am leeren Artefakt.
+    let b = Command::new(env!("CARGO_BIN_EXE_myl"))
+        .args(["frage", leer.path().to_str().unwrap(), "Was ist Emotionserkennung?"])
+        .env("MYL_PROTOKOLL", protokoll.path())
+        .output()
+        .expect("startet");
+    assert_ne!(b.status.code(), Some(3), "{}", String::from_utf8_lossy(&b.stderr));
+    // Die Abweisung steht im Protokoll, ohne den Text.
+    let eintraege: String = std::fs::read_dir(protokoll.path())
+        .unwrap()
+        .flatten()
+        .filter(|d| d.path().extension().is_some_and(|x| x == "jsonl"))
+        .map(|d| std::fs::read_to_string(d.path()).unwrap())
+        .collect();
+    assert!(eintraege.contains("\"schutzfilter\""), "{eintraege}");
+    assert!(!eintraege.contains("Mitarbeiter"), "Klartext im Protokoll: {eintraege}");
+}

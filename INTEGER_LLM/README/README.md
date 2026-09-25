@@ -1,6 +1,6 @@
 # integer-llm
 
-> **Version:** 0.94.0 (θ_v 0.22.0; kernels 0.66.0, runtime 0.64.0, pipeline 0.15.1)
+> **Version:** 0.96.0 (θ_v 0.22.0; kernels 0.66.0, runtime 0.66.0, pipeline 0.15.1)
 > **Datum:** 2026-09-25
 > **Status:** ⚠️ **Das Akzeptanzkriterium ruht auf einer zu kleinen
 > Stichprobe.** Gemessen wurde bisher ueber **4 Sequenzen, 435
@@ -646,6 +646,51 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
   volle Paritätstests nur auf GPU-Runnern (nightly oder PR-basiert)
 
 ## Changelog
+
+### v0.96.0 – 2026-09-25 (runtime 0.66.0: ein Notaus hält die Erzeugung vor dem nächsten Token an)
+
+- ⚑ **`Erzeugung` trägt einen optionalen Abbruchschalter** (`abbruch:
+  Option<&AtomicBool>`). `dekodieren_fortgesetzt` prüft ihn vor jedem
+  Token und endet mit dem, was dasteht. **Ohne Schalter bleibt die Schleife
+  Zeichen für Zeichen die alte**; die Proben dazu sind unverändert grün,
+  Konformität **48/48**.
+- `ETHICS/` heißt jetzt `COMPLIANCE/ethics/`: `tools/modelle_liste.py` und
+  `scale_packs/README.md` nennen den neuen Ort.
+
+**Belegt:** neu `der_abbruchschalter_haelt_an` (nach dem vierten Token
+angehalten, genau die ersten vier des freien Laufs; vorher gesetzt, gar
+nichts); die Gegenprobe ohne Prüfung beißt. Bibliothek grün.
+
+### v0.95.0 – 2026-09-25 (runtime 0.65.0: eine Denkgrenze in der Erzeugung, damit eine vorgelesene Antwort nicht beliebig lange auf die Überlegung wartet)
+
+Auftrag des Projektinhabers: den Denkmodus beim Vorlesen begrenzen,
+statt ihn nur an- oder abzuschalten. Die Schleife selbst musste das
+können, denn nur sie hat den Zwischenspeicher in der Hand.
+
+- ⚑ **`Erzeugung` trägt eine optionale `Denkgrenze`** (Budget, Endmarke,
+  Schlussfolge). Hat das Modell nach `budget` Token die Endmarke nicht
+  selbst geschrieben, schiebt `dekodieren_fortgesetzt` die Schlussfolge
+  ein: Sie geht in die Ausgabe und an den Beobachter und wird gerechnet,
+  als hätte das Modell sie geschrieben. Danach wird nicht mehr gezählt;
+  die Antwort selbst hat kein Budget.
+- ⚑ **Ohne Grenze ist die Schleife dieselbe wie vorher.** Aus der
+  `for`-Schleife über Positionen ist eine `while`-Schleife über die
+  Ausgabelänge mit eigener Position geworden, weil ein Einschub die
+  Positionen verschiebt. Belegt über `dieselbe_folge_mit_und_ohne_beobachter`
+  und `ohne_marken_aendert_sich_nichts` (unverändert grün) und die
+  Konformität, **48/48**.
+- ⚑ **Wozu, in Zahlen** (gemessen im Client, zwölf Fangfragen, 30B): ohne
+  Grenze Median 72 s bis zum ersten Wort der Antwort, bis 187 s; mit 32
+  Token 6,7 s, und dabei 12 von 12 richtig statt 10 von 12 ganz ohne
+  Überlegung.
+
+**Belegt:** zwei neue Proben in `tests/beobachteter_lauf.rs`
+(`die_denkgrenze_schiebt_den_schluss_ein_und_rechnet_ihn_mit`: bis zum
+Budget der freie Lauf, dann die Schlussfolge, dann die gierige
+Fortsetzung eines Prompts, der beides enthält;
+`eine_endmarke_vor_dem_budget_aendert_nichts`). Vier Gegenproben beißen:
+Einschub nicht gerechnet, Endmarke übersehen, Budget um eins verschoben,
+Einschub am Beobachter vorbei. Bibliothek 91 grün, clippy ohne Befund.
 
 ### v0.94.0 – 2026-09-25 (kernels 0.66.0, runtime 0.64.0: das hybride 35B bereitet sechsmal so schnell vor und dekodiert fast so schnell wie das 30B, Bit fuer Bit dasselbe; Funde 460 bis 462)
 

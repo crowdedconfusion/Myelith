@@ -228,3 +228,46 @@ fn auch_live_kommt_nichts_nach_der_endmarke() {
     }
     assert!((a.antwort_token as usize) < 400, "es lief bis zur Grenze durch");
 }
+
+/// ⚑ **Das Denkbudget ueber den ganzen Weg**: Vorlage, Schleife,
+/// Zerleger. Mit kleinem Budget steht die Schlussfolge in der
+/// Ueberlegung, die Endmarke genau einmal im Text, und danach kommt eine
+/// Antwort; mit null gibt es gar keine Ueberlegung.
+///
+/// 📌 **Warum der Zerleger mitgeprueft wird:** Die eingeschobene
+/// Endmarke kommt nicht vom Modell, und eine Anzeige, die sie nicht
+/// erkennt, hielte die ganze Antwort fuer weitere Ueberlegung. Dann
+/// klaenge beim Vorlesen gar nichts.
+#[test]
+fn das_denkbudget_beendet_die_ueberlegung_und_es_kommt_eine_antwort() {
+    let Some(mut m) = modell() else { return };
+    let frage = [Nachricht::nutzer("Was ist 17 mal 23?")];
+    m.denken = true;
+
+    m.denkbudget = Some(16);
+    let stuecke = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let s = std::sync::Arc::clone(&stuecke);
+    m.beobachter = Some(Box::new(move |x| s.lock().unwrap().push(x)));
+    let a = m.chat("myelith-4b", &frage, Some(200)).expect("Antwort");
+    m.beobachter = None;
+    assert_eq!(a.text.matches("</think>").count(), 1, "{:?}", a.text);
+    let (denken, prosa) = myl_client::lauf::denken_und_prosa(&a.text);
+    assert!(denken.contains("Time is short"), "die Schlussfolge fehlt: {denken:?}");
+    assert!(prosa.contains("391"), "keine Antwort nach der Ueberlegung: {prosa:?}");
+    let stuecke = stuecke.lock().unwrap();
+    let text: String = stuecke
+        .iter()
+        .filter_map(|x| match x {
+            myl_client::strom::Stueck::Text(t) => Some(t.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert!(text.contains("391"), "die Anzeige hielt die Antwort fuer Ueberlegung: {text:?}");
+    assert!(!text.contains("Time is short"), "die Schlussfolge steht in der Antwort");
+
+    m.denkbudget = Some(0);
+    let a = m.chat("myelith-4b", &frage, Some(200)).expect("Antwort");
+    let (denken, prosa) = myl_client::lauf::denken_und_prosa(&a.text);
+    assert!(denken.is_empty(), "mit null wurde ueberlegt: {denken:?}");
+    assert!(prosa.contains("391"), "{prosa:?}");
+}

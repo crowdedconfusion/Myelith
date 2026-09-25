@@ -1,6 +1,6 @@
 [package]
 name = "myl-local-agent"
-version = "0.12.0"
+version = "0.13.0"
 edition = "2021"
 rust-version = "1.85"
 description = "Das lokale Harness des Agent Layers: spricht gegen die /v1-Tuer eines Knotens und ist von der Kette isoliert."
@@ -21,7 +21,7 @@ myl-types = { path = "../../SHARED_TYPES/myl-types" }
 # Vollmacht traegt.
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-# ⚑ **Fuer die Risikoklassen, und nur dafuer.** `ETHICS/Risikoklassen.toml`
+# ⚑ **Fuer die Risikoklassen, und nur dafuer.** `COMPLIANCE/ethics/Risikoklassen.toml`
 # ist die eine Quelle der Warnung an den Nutzer; sie wird zur Uebersetzung
 # eingebettet (`include_str!`), damit sie zur Laufzeit weder fehlen noch
 # bearbeitet werden kann. Ein Zerleger von Hand waere schlechter als eine
