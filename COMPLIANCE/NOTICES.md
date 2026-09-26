@@ -71,10 +71,10 @@ The artefacts are integer-converted derivative works of the base weights.
 
 ## 5. Rust-Kisten / Rust crates
 
-760 Pakete aus 25 Kisten, offline aus `SYSTEM/crates-vorrat`. In die
+760 Pakete aus 26 Kisten, offline aus `SYSTEM/crates-vorrat`. In die
 Freigabebündel gehen nur die, die das jeweilige Programm zieht.
 
-760 packages from 25 crates, offline from `SYSTEM/crates-vorrat`.
+760 packages from 26 crates, offline from `SYSTEM/crates-vorrat`.
 Release bundles contain only those the respective program pulls in.
 
 | Lizenz / licence | Pakete / packages |

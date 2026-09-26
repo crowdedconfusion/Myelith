@@ -2276,6 +2276,131 @@ td input[type="text"] { width: 20rem; padding: .24rem .55rem; }
 .menueeintrag:hover:not(:disabled) { background: var(--glas); color: var(--text); }
 .menueeintrag.weg:hover:not(:disabled) { color: var(--text); }
 
+/* --- Der Loop: ∞ und die Tasks ----------------------------------------
+
+   ⚑ **∞ und der Pfeil sind ein Paar**: Der Schalter traegt, der Pfeil
+   daneben ist schmal und gehoert sichtbar zu ihm. Eingeschaltet steht
+   ∞ hell auf einer Flaeche, damit man einen laufenden Loop von weitem
+   sieht; ohne Farbe, denn dieses Fenster hat keine. */
+.loopgruppe {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+.loopgruppe[hidden] { display: none; }
+.loopknopf.an {
+  color: var(--text);
+  background: var(--glas-hoch);
+  box-shadow: inset 0 0 0 1px var(--kante-hell);
+}
+.loopwahl { width: 1.2rem; }
+.loopwahl svg { width: .85rem; height: .85rem; }
+
+/* ⚑ Fest positioniert und ueber den Knoepfen, wie die Kontextwahl. Die
+   Liste rollt selbst, wenn es viele Tasks werden. */
+#taskwahl {
+  position: fixed;
+  z-index: 60;
+  width: min(26rem, calc(100vw - 16px));
+  padding: .5rem;
+  display: grid;
+  gap: .4rem;
+  border-radius: var(--rund);
+  background: var(--grund-hoch);
+  box-shadow: 0 18px 40px -18px rgb(var(--unter) / .8);
+}
+.taskkopf {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 0 .3rem;
+}
+.tasktitel { color: var(--text); font-size: .85rem; }
+.taskstand { color: var(--leise); font-size: .75rem; }
+.taskliste {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: .15rem;
+  max-height: 18rem;
+  overflow-y: auto;
+}
+.taskzeile {
+  display: flex;
+  align-items: center;
+  gap: .35rem;
+  padding: .3rem .35rem;
+  border-radius: calc(var(--rund) - .25rem);
+  font-size: .82rem;
+  color: var(--leise);
+}
+.taskzeile:hover, .taskzeile:focus-within { background: var(--glas); }
+/* ⚑ **Der vorderste steht hell**: Er ist der, der laeuft. Fertige und
+   angehaltene treten zurueck, bleiben aber lesbar. */
+.taskzeile[data-stellung="vorn"] { color: var(--text); }
+.taskzeile[data-stellung="fertig"],
+.taskzeile[data-stellung="angehalten"] { color: var(--leiser); }
+.taskzeile.zieht { background: var(--glas-hoch); box-shadow: inset 0 0 0 1px var(--kante-hell); }
+.taskgriff {
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  color: var(--leiser);
+  padding: 0 .15rem;
+}
+.taskzeile.zieht .taskgriff { cursor: grabbing; }
+.taskname {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: left;
+  color: inherit;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.taskmarke { flex: 0 0 auto; font-size: .74rem; white-space: nowrap; }
+.taskaktionen { display: inline-flex; gap: .1rem; flex: 0 0 auto; }
+.taskaktion {
+  width: 1.4rem;
+  height: 1.4rem;
+  border-radius: 999px;
+  color: var(--leise);
+}
+.taskaktion:hover { color: var(--text); background: var(--glas-hoch); }
+.taskaktion[data-scharf="ja"] { color: var(--text); box-shadow: inset 0 0 0 1px var(--kante-hell); }
+.taskleer { margin: .2rem .3rem; color: var(--leise); font-size: .8rem; line-height: 1.45; }
+.taskneu {
+  display: flex;
+  gap: .35rem;
+  align-items: center;
+  border-top: 1px solid var(--kante);
+  padding-top: .45rem;
+}
+#taskziel {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: var(--grund);
+  border: 1px solid var(--kante);
+  border-radius: calc(var(--rund) - .3rem);
+  color: var(--text);
+  font: inherit;
+  font-size: .82rem;
+  padding: .35rem .5rem;
+}
+.taskplus { flex: 0 0 auto; }
+
+/* ⚑ Die Sicherheitsmeldung vor `auto` nimmt den Kasten der Warnung. */
+.autopunkte {
+  margin: 0;
+  padding-left: 1.1rem;
+  display: grid;
+  gap: .45rem;
+  color: var(--leise);
+  line-height: 1.45;
+}
+.autoknoepfe { display: flex; justify-content: flex-end; gap: .6rem; }
+
 /* ⚑ Das Feld zum Umbenennen sitzt genau auf dem Titel und uebernimmt
    dessen Masse, damit die Zeile beim Bearbeiten nicht springt. */
 .titelfeld {

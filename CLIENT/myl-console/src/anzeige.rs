@@ -242,6 +242,14 @@ struct Lage {
     abbruchfrage: bool,
     /// Ob die Abbruchfrage schon dasteht.
     abbruch_gestellt: bool,
+    /// **Die Notausfrage, mit ihrer Vorgabe fuer die Eingabetaste.**
+    ///
+    /// ⚑ Festlegung des Projektinhabers (2026-09-26): Strg-C fragt
+    /// „[J/n]", die Eingabetaste heisst ja; Esc fragt „[j/N]", die
+    /// Eingabetaste heisst nein. Eine gestreifte Esc haelt also nichts an.
+    notausfrage: Option<bool>,
+    /// Ob sie schon dasteht.
+    notaus_gestellt: bool,
     /// Was gerade vorgelegt wird, im `manual mode`.
     frage: Option<String>,
     /// Ob sie schon dasteht.
@@ -299,10 +307,14 @@ impl Anzeige {
     ///
     /// Ohne Schirm gibt es keine Animation und keine Taste: Dann
     /// schreibt der Melder seine Zeilen einfach hin, wie vorher.
+    ///
+    /// `halt` ist, was Esc tut, solange keine Frage offen ist: im
+    /// Auftrag der Notaus, im Loop die Pause.
     pub fn starten(
         schirm: Option<Schirm>,
         bild: myl_client::einstellungen::Konsolendesign,
         zaehler: std::sync::Arc<myl_client::oertlich::Tokenzaehler>,
+        halt: fn(),
     ) -> Self {
         let am_schirm = schirm.is_some();
         let saat = std::time::SystemTime::now()
@@ -323,6 +335,8 @@ impl Anzeige {
             saat,
             abbruchfrage: false,
             abbruch_gestellt: false,
+            notausfrage: None,
+            notaus_gestellt: false,
             frage: None,
             gestellt: false,
             antwort: None,
@@ -341,7 +355,7 @@ impl Anzeige {
         let faden = am_schirm.then(|| {
             let lage = Arc::clone(&lage);
             let laeuft = Arc::clone(&laeuft);
-            std::thread::spawn(move || takten(lage, laeuft, schirm, bild, zaehler))
+            std::thread::spawn(move || takten(lage, laeuft, schirm, bild, zaehler, halt))
         });
         Self { lage, laeuft, faden, am_schirm }
     }
@@ -494,12 +508,27 @@ impl Anzeige {
 }
 
 /// Der Faden: Taste lesen, Zeilen nachreichen, Zeile zeichnen.
+///
+/// ⛔️ **Er ist der einzige Leser der Tastatur, solange ein Lauf laeuft**
+/// (Fund 483). `event::poll` und `event::read` nehmen die Lesersperre von
+/// crossterm je einzeln; zwei Faeden, die beide pollen, sehen dieselbe
+/// Taste, einer liest sie, und der andere bleibt in `event::read` stehen,
+/// **mit der Sperre in der Hand**, bis irgendwann eine weitere Taste
+/// kommt. Genau so stand die Konsole nach einem bestaetigten `j` im
+/// `manual mode`: Der Hauptfaden wartete am Ende auf den Notauswaechter,
+/// der Notauswaechter auf eine Taste, dieser Faden auf die Sperre.
+///
+/// 📌 **Zwei Leser derselben Quelle sind kein Wettlauf, der manchmal
+/// verloren wird, sondern einer, der immer verloren wird, sobald eine
+/// Taste kommt.** Wer waehrend eines Laufs eine weitere Taste braucht,
+/// haengt sie hier ein, statt einen eigenen Faden zu starten.
 fn takten(
     lage: Arc<Mutex<Lage>>,
     laeuft: Arc<AtomicBool>,
     schirm: Option<Schirm>,
     bild: myl_client::einstellungen::Konsolendesign,
     zaehler: std::sync::Arc<myl_client::oertlich::Tokenzaehler>,
+    halt: fn(),
 ) {
     let mut takt: usize = 0;
     while laeuft.load(Ordering::Relaxed) {
@@ -513,6 +542,7 @@ fn takten(
                     // (Auftrag des Projektinhabers, 2026-09-15): Solange
                     // sie dasteht, ist die naechste Taste ihre Antwort
                     // und nichts anderes.
+                    let strg = k.modifiers.contains(KeyModifiers::CONTROL);
                     if offene_abbruchfrage(&lage) {
                         if let Some(ja) = als_antwort(k.code) {
                             if ja {
@@ -520,19 +550,37 @@ fn takten(
                             }
                             abbruchfrage_weg(&lage);
                         }
-                    } else if k.modifiers.contains(KeyModifiers::CONTROL) {
+                    } else if let Some(vorgabe) = offene_notausfrage(&lage) {
+                        // ⛔️ **Die Antwort auf den Notaus.** Ein zweites
+                        //   Strg-C heisst ja, wie man es gewohnt ist.
+                        if let Some(ja) = notausantwort(k.code, strg, vorgabe) {
+                            notausfrage_weg(&lage);
+                            if ja {
+                                // Eine offene Vorlage gilt als abgelehnt,
+                                // sonst wartete der Lauf auf sie.
+                                beantworten(&lage, false);
+                                halt();
+                                haltezeile(&lage);
+                            }
+                        }
+                    } else if strg {
                         match k.code {
                             KeyCode::Char('s') => umschalten(&lage),
-                            // ⚑ **Beenden fragt nach**, und beide Tasten
-                            // tun dasselbe: Strg-C aus Gewohnheit,
-                            // Strg-X wie an der Eingabezeile. Vorher
-                            // beendete Strg-C den Prozess mitten im Lauf
-                            // ohne ein Wort.
-                            KeyCode::Char('c') | KeyCode::Char('x') => abbruchfrage_stellen(&lage),
+                            // ⛔️ **Strg-C: Notaus, Vorgabe ja** (Festlegung
+                            //   des Projektinhabers, 2026-09-26). Beenden
+                            //   bleibt bei Strg-X, mit Frage.
+                            KeyCode::Char('c') => notausfrage_stellen(&lage, true),
+                            KeyCode::Char('x') => abbruchfrage_stellen(&lage),
                             _ => {}
                         }
-                    } else if let Some(ja) = als_antwort(k.code) {
-                        beantworten(&lage, ja);
+                    } else if offene_frage(&lage) {
+                        if let Some(ja) = als_antwort(k.code) {
+                            beantworten(&lage, ja);
+                        }
+                    } else if k.code == KeyCode::Esc {
+                        // ⛔️ **Esc: Notaus, Vorgabe nein** (im Loop: die
+                        //   Pause). Steht eine Vorlage da, ist Esc ihr Nein.
+                        notausfrage_stellen(&lage, false);
                     }
                 }
                 _ => {}
@@ -566,6 +614,53 @@ pub fn als_antwort(code: KeyCode) -> Option<bool> {
 /// Ob die Abbruchfrage offen ist.
 fn offene_abbruchfrage(lage: &Arc<Mutex<Lage>>) -> bool {
     lage.lock().map(|l| l.abbruchfrage).unwrap_or(false)
+}
+
+/// Ob eine Vorlage im `manual mode` auf Antwort wartet.
+fn offene_frage(lage: &Arc<Mutex<Lage>>) -> bool {
+    lage.lock().map(|l| l.frage.is_some()).unwrap_or(false)
+}
+
+/// Sagt in der Leiste, dass angehalten wird: Bis die laufende Erzeugung
+/// die Marke sieht, vergeht ein Token, und so lange soll niemand ein
+/// zweites Mal druecken muessen, um zu sehen, dass die erste ankam.
+fn haltezeile(lage: &Arc<Mutex<Lage>>) {
+    if let Ok(mut l) = lage.lock() {
+        l.offen.push(Zeitzeile { art: Art::Hinweis, kurz: Some("  · Esc: wird angehalten".into()), voll: "  · Esc: wird angehalten".into() });
+    }
+}
+
+/// Die offene Notausfrage und ihre Vorgabe.
+fn offene_notausfrage(lage: &Arc<Mutex<Lage>>) -> Option<bool> {
+    lage.lock().ok().and_then(|l| l.notausfrage)
+}
+
+fn notausfrage_stellen(lage: &Arc<Mutex<Lage>>, vorgabe: bool) {
+    if let Ok(mut l) = lage.lock() {
+        l.notausfrage = Some(vorgabe);
+        l.notaus_gestellt = false;
+    }
+}
+
+/// Nimmt sie zurueck; was sie verdraengt hatte, wird neu gezeichnet.
+fn notausfrage_weg(lage: &Arc<Mutex<Lage>>) {
+    if let Ok(mut l) = lage.lock() {
+        l.notausfrage = None;
+        l.notaus_gestellt = false;
+        l.gestellt = false;
+    }
+}
+
+/// **Welche Taste die Notausfrage wie beantwortet.** `None`: keine Antwort.
+pub fn notausantwort(code: KeyCode, strg: bool, vorgabe: bool) -> Option<bool> {
+    match code {
+        KeyCode::Char('c') if strg => Some(true),
+        _ if strg => None,
+        KeyCode::Char('j' | 'J' | 'y' | 'Y') => Some(true),
+        KeyCode::Char('n' | 'N') | KeyCode::Esc => Some(false),
+        KeyCode::Enter => Some(vorgabe),
+        _ => None,
+    }
 }
 
 /// Stellt die Abbruchfrage.
@@ -657,6 +752,23 @@ fn zeichnen(
                 let _ = write!(aus, "{}\r\n", zeile_setzen(z.art, &t, &rollen, farbig));
             }
         }
+    }
+
+    // ⛔️ **Die Notausfrage geht allem vor**, auch einer Vorlage: Wer den
+    //   Notaus will, soll nicht erst eine andere Frage beantworten muessen.
+    if let Some(vorgabe) = l.notausfrage {
+        if !l.notaus_gestellt {
+            l.notaus_gestellt = true;
+            let wahl = if vorgabe { "[J/n]" } else { "[j/N]" };
+            let _ = write!(
+                aus,
+                "\r\x1b[2K{}  Notaus: anhalten? {wahl}{}",
+                crossterm::style::SetForegroundColor(design::toene(bild).beiwerk),
+                crossterm::style::ResetColor
+            );
+            let _ = aus.flush();
+        }
+        return;
     }
 
     // ⚑ **Die Abbruchfrage verdraengt die Statuszeile genauso**, und sie
@@ -972,6 +1084,8 @@ mod tests {
             saat: 1,
             abbruchfrage: false,
             abbruch_gestellt: false,
+            notausfrage: None,
+            notaus_gestellt: false,
             frage: None,
             gestellt: false,
             antwort: None,
@@ -1000,6 +1114,8 @@ mod tests {
             saat: 7,
             abbruchfrage: false,
             abbruch_gestellt: false,
+            notausfrage: None,
+            notaus_gestellt: false,
             frage: None,
             gestellt: false,
             antwort: None,
@@ -1099,9 +1215,11 @@ mod abbruchprobe {
     fn beide_tasten_fragen_statt_zu_beenden() {
         let quelle = include_str!("anzeige.rs");
         assert!(
-            quelle.contains("KeyCode::Char('c') | KeyCode::Char('x') => abbruchfrage_stellen(&lage),"),
-            "Strg-C oder Strg-X beendet noch ohne Frage"
+            quelle.contains("KeyCode::Char('x') => abbruchfrage_stellen(&lage),"),
+            "Strg-X beendet noch ohne Frage"
         );
+        // ⚑ Seit dem 2026-09-26 ist Strg-C der Notaus mit Frage, nicht Beenden.
+        assert!(quelle.contains("KeyCode::Char('c') => notausfrage_stellen(&lage, true),"));
         // Und beendet wird nur aus der Antwort heraus.
         let antwortzweig = quelle
             .split("if offene_abbruchfrage(&lage) {")
@@ -1111,6 +1229,43 @@ mod abbruchprobe {
             antwortzweig.contains("abbrechen(schirm);"),
             "eine bejahte Abbruchfrage beendet nicht: {antwortzweig:.200}"
         );
+    }
+
+    /// ⛔️ **Esc haelt an, und zwar aus diesem Faden** (Fund 483): Er ist
+    /// der einzige Leser der Tastatur. Steht eine Vorlage da, ist Esc
+    /// deren Nein und haelt nicht an.
+    ///
+    /// Gegenprobe: mit dem Notauswaechter von v0.85.0 zurueck, dem
+    /// zweiten Leser, blieb die Konsole nach einem `j` stehen.
+    #[test]
+    fn esc_haelt_an_im_einzigen_leser() {
+        let quelle = include_str!("anzeige.rs");
+        let faden = quelle.split("fn takten(").nth(1).expect("takten").split("\nfn ").next().unwrap_or("");
+        let frage = faden.find("} else if offene_frage(&lage) {").expect("die Vorlage geht vor");
+        let esc = faden.find("} else if k.code == KeyCode::Esc {").expect("Esc haelt nicht an");
+        assert!(frage < esc, "Esc haelt an, obwohl eine Vorlage dasteht");
+        assert!(faden[esc..].contains("notausfrage_stellen(&lage, false);"), "Esc fragt nicht");
+        // Angehalten wird nur aus der Antwort heraus.
+        let antwort = faden.find("if let Some(ja) = notausantwort(").expect("keine Antwort auf den Notaus");
+        assert!(faden[antwort..esc].contains("halt();"));
+        assert_eq!(faden.matches("event::read()").count(), 1);
+    }
+
+    /// ⚑ **Die Vorgaben der Notausfrage** (Festlegung des Projektinhabers,
+    /// 2026-09-26): Strg-C [J/n], Esc [j/N], ein zweites Strg-C ist ja.
+    #[test]
+    fn die_notausfrage_hat_je_taste_ihre_vorgabe() {
+        use super::notausantwort;
+        use crossterm::event::KeyCode;
+        assert_eq!(notausantwort(KeyCode::Enter, false, true), Some(true), "Strg-C: Eingabe ist ja");
+        assert_eq!(notausantwort(KeyCode::Enter, false, false), Some(false), "Esc: Eingabe ist nein");
+        assert_eq!(notausantwort(KeyCode::Char('c'), true, false), Some(true), "zweites Strg-C");
+        for (t, ja) in [('j', true), ('Y', true), ('n', false), ('N', false)] {
+            assert_eq!(notausantwort(KeyCode::Char(t), false, !ja), Some(ja), "{t}");
+        }
+        assert_eq!(notausantwort(KeyCode::Esc, false, true), Some(false));
+        assert_eq!(notausantwort(KeyCode::Char('x'), false, true), None);
+        assert_eq!(notausantwort(KeyCode::Char('s'), true, true), None, "Strg-S antwortet nicht");
     }
 
     /// ⛔️ **Die Abbruchfrage und die Vorlage im `manual mode` sind zwei

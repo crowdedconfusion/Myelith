@@ -1,0 +1,130 @@
+#!/bin/sh
+# ⚑ **Die Selbstprobe beim Start.**
+#
+# Sie laeuft nur, wenn auf der Kernzeile `golemos.probe` steht, und
+# schaltet danach ab. So startet dasselbe Abbild entweder normal oder
+# beantwortet genau eine Frage: **Laufen unsere Programme hier?**
+grep -q golemos.probe /proc/cmdline || exit 0
+
+# ⚑ **Dieselbe Quelle wie die angemeldete Sitzung, nicht dieselbe
+#   Angabe.** Ein Startskript liest `/etc/profile` nicht; ohne diese
+#   Zeile stuende `XDG_CONFIG_HOME` hier ein zweites Mal, und zwei
+#   Stellen fuer eine Entscheidung laufen auseinander. Hier wird die
+#   eine Stelle **gelesen**.
+# ⛔️ **Ohne Assistent.** Dieselbe Datei startet bei einer Anmeldung den
+#    Einrichtungsassistenten; hier liefe er an der Startkonsole und
+#    wartete auf eine Eingabe, die nie kommt.
+GOLEMOS_OHNE_ASSISTENT=1
+[ -r /etc/profile.d/golemos.sh ] && . /etc/profile.d/golemos.sh
+
+echo
+echo "════════ GolemOS Selbstprobe ════════"
+echo "Kern:     $(uname -srm)"
+echo "System:   $(cat /etc/issue 2>/dev/null | head -1)"
+echo "Speicher: $(awk '/MemTotal/{printf "%d MB", $2/1024}' /proc/meminfo)"
+echo
+for p in myelith myl; do
+  if [ -x "/usr/bin/$p" ]; then
+    echo "  $p  $(du -h /usr/bin/$p | cut -f1)  vorhanden"
+  else
+    echo "  $p  FEHLT"
+  fi
+done
+echo
+echo "── myl ort ──"
+/usr/bin/myl ort 2>&1 | head -4
+echo
+echo "── Datenpartition ──"
+if mountpoint -q /daten 2>/dev/null || grep -q " /daten " /proc/mounts; then
+  df -h /daten | awk 'NR==2{printf "  %s gross, %s frei\n", $2, $4}'
+  for o in artefakte werkzeugkisten myelith/skills; do
+    n=$(ls /daten/$o 2>/dev/null | wc -l)
+    printf "  %-16s %s Eintraege\n" "$o" "$n"
+  done
+  if [ -f /daten/myelith/client.json ]; then
+    echo "  client.json      gefunden"
+  else
+    echo "  client.json      FEHLT unter /daten/myelith/"
+  fi
+else
+  echo "  nicht eingehaengt"
+fi
+
+# ── Die Frage, um die es beim ganzen Vorhaben geht ──────────────────
+#
+# ⛔️ **Bis zum 2026-09-24 belegte diese Probe nur, dass die Programme
+#    DA sind.** Sie druckte ihre Groesse und liess `myl ort` laufen,
+#    und `myl ort` braucht kein Modell. Damit stand hier ein gruener
+#    Bericht ueber ein System, das noch nie ein Token erzeugt hatte.
+#
+# ⚑ **Ein Beleg, den niemand nachgesehen hat, ist keiner**, und ein
+#    Beleg fuer das Falsche ebenso wenig. Also fragt die Probe jetzt
+#    wirklich.
+#
+# ⚠️ **Sie ueberspringt das ohne Artefakt**, und sie sagt das auch. Ein
+#    System ohne Modell ist ein erlaubter Zustand: Es startet, meldet
+#    „kein Artefakt", und der Mensch legt eines nach.
+echo
+echo "── Antwortet das Modell? ──"
+# ⚑ **Die Einstellungen entscheiden, nicht `/daten/artefakte`.** Seit
+#   GolemOS einen Klon auf dem Stick benutzt, liegt das Modell oft dort
+#   und nicht im Ordner der Mitnahme; `S06myelith` hat es dann
+#   eingestellt, relativ zum Klon.
+echo "  Klon:     ${MYELITH_WURZEL:-keiner}"
+if [ -f /daten/myelith/client.json ]; then
+  echo "  Artefakt: $(sed -n 's/.*"artefakt": *"\([^"]*\)".*/\1/p' /daten/myelith/client.json | head -1)"
+  echo "  Frage:    Nenne die Hauptstadt von Frankreich."
+  # ⛔️ **Erst in eine Datei, dann kuerzen.** Ein
+  #    `myl frage ... | cut` gibt in `$?` die Rueckgabe von `cut`
+  #    zurueck, und die ist immer null. Die Zeile haette also „gut"
+  #    gemeldet, waehrend `myl` mit 1 oder 2 abbrach: genau der Fehler,
+  #    den diese Probe finden soll, eingebaut in die Probe selbst.
+  #
+  # ⚠️ Wenig Token, denn hier laeuft alles unter Emulation. Belegt
+  #    werden soll, DASS geantwortet wird, nicht wie ausfuehrlich.
+  #
+  # ⛔️ **Fund 473: Mit eingeschaltetem Denken belegte die Probe nichts
+  #    ueber die Antwort.** Die Mitnahme uebernimmt `modell.denken` aus
+  #    den Einstellungen des Wirts, und dort steht es oft an. Dann waren
+  #    alle 24 Token Ueberlegung, die Zeile meldete `ANTWORT_OK`, und
+  #    eine Antwort kam nie vor. `myl frage` kennt nur `--denken`, kein
+  #    Gegenstueck, denn die Einstellung gewinnt.
+  #
+  # ⚑ **Die Probe fragt deshalb mit einer Kopie der Einstellungen, in
+  #    der das Denken aus ist**, und laesst die auf der Datenpartition
+  #    unberuehrt. Erst so laesst sich der Inhalt pruefen.
+  mkdir -p /tmp/probe/myelith
+  sed 's/"denken": *true/"denken": false/' /daten/myelith/client.json \
+    > /tmp/probe/myelith/client.json
+  XDG_CONFIG_HOME=/tmp/probe \
+    /usr/bin/myl frage --token 24 "Nenne die Hauptstadt von Frankreich." \
+    >/tmp/antwort.txt 2>&1
+  RUECK=$?
+  printf "  Antwort:  "
+  tr "\n" " " < /tmp/antwort.txt | cut -c1-300
+  echo
+  # ⚑ **Rueckgabe null reicht nicht, die Antwort muss auch stimmen.**
+  #    Die Rechnung ist ganzzahlig und damit auf jeder Plattform
+  #    bitgleich; wer hier etwas anderes als Paris liest, hat einen
+  #    Fehler im Abbild und keine Laune des Modells.
+  if [ "$RUECK" -ne 0 ]; then
+    echo "  Rueckgabe: $RUECK, ANTWORT_FEHLGESCHLAGEN"
+  elif grep -q Paris /tmp/antwort.txt; then
+    echo "  Rueckgabe: 0, Paris genannt, ANTWORT_OK"
+  else
+    echo "  Rueckgabe: 0, aber Paris fehlt, ANTWORT_FEHLGESCHLAGEN"
+  fi
+else
+  echo "  uebersprungen: keine Einstellungen auf /daten, also kein Modell gefunden"
+fi
+
+echo
+echo "── golem-einrichten platten ──"
+/usr/bin/golem-einrichten platten 2>&1 | sed 's/^/  /'
+
+echo
+echo "── curl ──"
+curl --version 2>&1 | head -1
+echo "═════════════════════════════════════"
+echo "PROBE_FERTIG"
+poweroff -f

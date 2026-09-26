@@ -39,7 +39,14 @@ LISTE = REPO / "COMPLIANCE" / "fremdkomponenten.json"
 KATALOG = REPO / "MODELS" / "llm" / "KATALOG.json"
 
 # Was kein Kistenverzeichnis ist, obwohl dort ein Cargo.toml liegt.
-AUSGENOMMEN = ("SYSTEM/", "/fuzz", "/target", "full-build")
+#
+# 📌 **Fund 478: Hier stand `SYSTEM/`**, gemeint war das Kistenlager.
+# Seit der Einrichtungsassistent von GolemOS unter
+# `SYSTEM/golemos/einrichten` liegt, haette das eine ausgelieferte Kiste
+# still aus den Lizenzhinweisen genommen. Heute hat sie keine
+# Abhaengigkeit, und genau deshalb waere es erst mit der ersten
+# aufgefallen, also zu spaet.
+AUSGENOMMEN = ("SYSTEM/crates-lager/", "/fuzz", "/target", "full-build")
 
 WEGE = {
     "mitgeliefert": "mitgeliefert / shipped",
@@ -51,12 +58,16 @@ WEGE = {
 def kistenverzeichnisse() -> list:
     """Jede versionierte Kiste mit eigener Sperrdatei, relativ zur Wurzel.
 
-    ⚑ **Nur, was git verfolgt.** Ein Durchsuchen des Baums fand auch
-    fremde Projekte in nicht versionierten Ordnern, und deren Lizenzen
-    haben hier nichts zu suchen.
+    ⚑ **Nur, was git verfolgt oder verfolgen wird.** Ein Durchsuchen des
+    Baums fand auch fremde Projekte in nicht versionierten Ordnern, und
+    deren Lizenzen haben hier nichts zu suchen. Neue Dateien, die kein
+    Ausschluss trifft, zaehlen dagegen mit: Sonst nennte die erzeugte
+    Datei vor dem Commit eine Kiste weniger als die Pruefung im CI
+    danach, und die fiele rot aus, ohne dass sich etwas geaendert hat.
     """
     verfolgt = subprocess.run(
-        ["git", "ls-files", "*Cargo.lock"], cwd=REPO, capture_output=True, text=True,
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard", "*Cargo.lock"],
+        cwd=REPO, capture_output=True, text=True,
     ).stdout.split("\n")
     aus = []
     for zeile in sorted(verfolgt):

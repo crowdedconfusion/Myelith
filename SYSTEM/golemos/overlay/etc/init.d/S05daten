@@ -1,0 +1,186 @@
+#!/bin/sh
+# Dehnt die Datenpartition auf den ganzen Datentraeger und haengt sie ein.
+#
+# # ⛔️ Warum das ueberhaupt noetig ist
+#
+# Ein Abbild traegt die Partitionstabelle, die beim Bauen galt. Wer es
+# mit `dd` auf einen Stick schreibt, bekommt deshalb eine
+# Datenpartition von **32 MB**, gleich wie gross der Stick ist. Da
+# passt kein Artefakt hinein, und ein Nutzer ohne Entwicklerwerkzeuge
+# kann sie nicht vergroessern: macOS und Windows koennen eine
+# GPT-Tabelle nicht sinnvoll nachziehen.
+#
+# ⚑ **Also tut es das Geraet selbst, einmal.** Danach erscheint der
+# Stick am Rechner des Nutzers in voller Groesse, und er kopiert seine
+# Gewichte einfach hinein.
+#
+# # ⚠️ Warum FAT und nicht ext4
+#
+# Weil jeder Rechner daraufschreiben kann. ext4 kann macOS nicht und
+# Windows auch nicht, und dann waere „kopier deine Gewichte hinein" ein
+# Satz, der ein Entwicklerwerkzeug voraussetzt. ⚠️ **Der Preis ist ein
+# fehlendes Journal**, gemildert durch `-o flush`: Geschriebenes geht
+# sofort auf den Datentraeger statt im Zwischenspeicher zu warten.
+
+MARKE=golem-daten
+EINHANG=/daten
+# ⚑ Der Name, unter dem die Partition an jedem Rechner erscheint, auf
+#   Wunsch des Projektinhabers „Golem" (vorher GOLEM-DATEN). Derselbe
+#   steht in `golem-einrichten` (`DATEN_NAME`); eine Probe dort haelt
+#   beide gleich.
+NAME=Golem
+
+start() {
+  printf "Datenpartition: "
+
+  # ⚑ **Erst die Kernzeile, dann die Marke.** Eine installierte Platte
+  #   nennt ihre Datenpartition mit `golemos.daten=PARTUUID=…`, denn nach
+  #   der Installation gibt es `golem-daten` zweimal, sobald der Stick
+  #   noch steckt, und die Marke allein nimmt, was der Kern zuerst fand.
+  #   Geschrieben wird die Kernzeile von `golem-einrichten`.
+  TEIL=""
+  for w in $(cat /proc/cmdline); do
+    case "$w" in
+      golemos.daten=PARTUUID=*)
+        GESUCHT=$(echo "${w#golemos.daten=PARTUUID=}" | tr 'A-F' 'a-f')
+        TEIL=$(lsblk -rno NAME,PARTUUID 2>/dev/null | awk -v u="$GESUCHT" 'tolower($2)==u {print "/dev/"$1; exit}')
+        ;;
+    esac
+  done
+  [ -n "$TEIL" ] || TEIL=$(blkid -L "$MARKE" 2>/dev/null)
+  if [ -z "$TEIL" ]; then
+    # Noch nicht formatiert: ueber die Partitionsnummer suchen.
+    TEIL=$(lsblk -rno NAME,PARTLABEL 2>/dev/null | awk -v m="$MARKE" '$2==m {print "/dev/"$1; exit}')
+  fi
+  if [ -z "$TEIL" ]; then
+    echo "nicht gefunden, uebersprungen"
+    return 0
+  fi
+
+  # Der Datentraeger, auf dem sie liegt, und ihre Nummer darauf.
+  TRAEGER=$(lsblk -rno PKNAME "$TEIL" 2>/dev/null | head -1)
+  [ -n "$TRAEGER" ] && TRAEGER="/dev/$TRAEGER"
+  NUMMER=$(echo "$TEIL" | sed 's/.*[^0-9]\([0-9]*\)$/\1/')
+
+  # ⛔️ **Fund 476: Der Partitionstyp muss „Microsoft Basic Data" sein**,
+  #    sonst sehen macOS und Windows das FAT32 darauf gar nicht. Sticks,
+  #    die vor der Behebung geschrieben wurden, tragen noch den
+  #    Linux-Typ; hier bekommen sie den richtigen. Nur die Typkennung
+  #    aendert sich, kein Byte der Daten.
+  DATENTYP=ebd0a0a2-b9e5-4433-87c0-68b6b72699c7
+  if [ -n "$TRAEGER" ] && [ -n "$NUMMER" ]; then
+    IST=$(lsblk -rno PARTTYPE "$TEIL" 2>/dev/null | tr 'A-F' 'a-f')
+    if [ -n "$IST" ] && [ "$IST" != "$DATENTYP" ]; then
+      sfdisk --no-reread --force --part-type "$TRAEGER" "$NUMMER" "$DATENTYP" >/dev/null 2>&1 \
+        && printf "Typ berichtigt … "
+    fi
+  fi
+
+  # ⛔️ **Fund 456: jeder Start loeschte die Datenpartition.**
+  #
+  #   📌 **Gemessen am 2026-09-24 im zweiten Probelauf.** Nach dem
+  #   Kopieren waren von 1,7 GB noch 884 MB frei, das Artefakt lag
+  #   also darauf. Nach dem naechsten Start: 1,7 GB frei, null
+  #   Eintraege. **Das Modell war weg, und niemand hat es gemeldet.**
+  #
+  #   ⚠️ **Die Absicht stimmte, die Reihenfolge nicht.** Hier stand
+  #   `[ ! -e "$EINHANG/.gedehnt" ]`, und die Marke liegt auf der
+  #   Datenpartition. Die war zu diesem Zeitpunkt **noch nicht
+  #   eingehaengt**, `$EINHANG` also ein leeres Verzeichnis der Wurzel.
+  #   Die Bedingung war damit **immer** wahr, und `mkfs.vfat` lief bei
+  #   jedem Start.
+  #
+  #   ⛔️ **Aufgefallen ist es erst beim zweiten Start.** Der erste
+  #   Durchgang der vorigen Sitzung startete genau einmal, mit leerer
+  #   Partition, und sah richtig aus. 📌 **Ein Einrichtungsschritt, der
+  #   nur beim ersten Mal laufen darf, ist mit einem einzigen Start
+  #   nicht geprueft.**
+  #
+  #   ⚑ **Also erst einhaengen, dann fragen.** Laesst sich die Partition
+  #   einhaengen und traegt die Marke, ist alles getan. Sonst wird
+  #   ausgehaengt, gedehnt, formatiert und neu eingehaengt.
+  GEDEHNT=nein
+  mkdir -p "$EINHANG"
+  if mount -t vfat -o rw,flush,umask=0000 "$TEIL" "$EINHANG" 2>/dev/null; then
+    [ -e "$EINHANG/.gedehnt" ] && GEDEHNT=ja
+    umount "$EINHANG" 2>/dev/null || true
+  fi
+
+  if [ "$GEDEHNT" = nein ] && [ -n "$TRAEGER" ] && [ -n "$NUMMER" ]; then
+    printf "dehnen … "
+    # ⚠️ **`--force`, weil sfdisk sonst nachfragt.** Hier ist niemand,
+    #    der antworten koennte; das ist ein Startskript.
+    echo ", +" | sfdisk --no-reread --force -N "$NUMMER" "$TRAEGER" >/dev/null 2>&1 || true
+
+    # ⛔️ **`partx -u` und NICHT `partprobe`.**
+    #
+    #    📌 **Gemessen am 2026-09-24, und es kostete einen ganzen
+    #    Durchgang.** Die Partitionstabelle wuchs auf 7,2 GB, das
+    #    Dateisystem darin blieb bei 32 MB. Der Grund: Der Kern
+    #    weigert sich, die Tabelle einer Platte neu zu lesen, von der
+    #    eine Partition **eingehaengt** ist, und unsere Wurzel liegt
+    #    auf Partition 2 derselben Platte. `partprobe` scheitert dann
+    #    an `EBUSY`, und weil alles hier `|| true` traegt, **still**.
+    #    `mkfs.vfat` formatierte danach die alte Groesse.
+    #
+    #    ⚑ `partx -u` aendert die Groesse **einer** Partition im Kern,
+    #    ohne die ganze Tabelle neu zu lesen. Das geht auch bei
+    #    eingehaengten Nachbarn.
+    partx -u "$TRAEGER" >/dev/null 2>&1 || true
+    sleep 1
+
+    # ⛔️ **Neu formatieren statt zu vergroessern.** Die Partition ist
+    #    beim ersten Start leer, also ist das Formatieren verlustfrei
+    #    und braucht kein `fatresize`, das Buildroot nicht mitbringt.
+    mkfs.vfat -F 32 -n "$NAME" "$TEIL" >/dev/null 2>&1 || true
+
+    # ⛔️ **Und nachsehen, ob es wirklich gewachsen ist.**
+    #    Ohne diese Zeilen meldet das Skript „eingehaengt" und hat
+    #    recht: 32 MB sind auch eingehaengt. ⚑ **Ein `|| true` ueberall
+    #    braucht am Ende eine Messung**, sonst ist Schweigen von Erfolg
+    #    nicht zu unterscheiden.
+    SOLL=$(( $(cat "/sys/class/block/$(basename "$TEIL")/size" 2>/dev/null || echo 0) / 2048 ))
+    IST=$(( $(blockdev --getsize64 "$TEIL" 2>/dev/null || echo 0) / 1048576 ))
+    if [ "$SOLL" -gt 64 ] && [ "$IST" -lt $(( SOLL / 2 )) ]; then
+      printf "⛔️ Partition %s MB, Dateisystem nur %s MB … " "$SOLL" "$IST"
+    fi
+  fi
+
+  # ⚑ **Aeltere Sticks heissen noch GOLEM-DATEN** und bekommen hier den
+  #   neuen Namen. `fatlabel` aendert nur den Namen, keinen Inhalt, und
+  #   muss vor dem Einhaengen laufen.
+  if [ "$(blkid -s LABEL -o value "$TEIL" 2>/dev/null)" = "GOLEM-DATEN" ]; then
+    fatlabel "$TEIL" "$NAME" >/dev/null 2>&1 && printf "umbenannt in %s … " "$NAME"
+  fi
+
+  mkdir -p "$EINHANG"
+  # ⚑ `flush`: siehe oben, das fehlende Journal.
+  if mount -t vfat -o rw,flush,umask=0000 "$TEIL" "$EINHANG" 2>/dev/null; then
+    touch "$EINHANG/.gedehnt" 2>/dev/null || true
+    # ⚠️ `myelith/skills` und nicht `skills`: Der Client sucht die
+    #    Wissensmappen unter der Konfiguration, und die liegt hier
+    #    unter `/daten/myelith` (Fund 455).
+    for o in artefakte werkzeugkisten myelith/skills arbeit sinne; do
+      mkdir -p "$EINHANG/$o" 2>/dev/null || true
+    done
+    # ⚑ **Ein Zettel fuer den, der den Stick an seinen Rechner steckt.**
+    #   Er sieht dann „Golem" und darin diese Datei, bevor er irgendeine
+    #   Anleitung gelesen hat. Nur wenn sie fehlt: Wer sie loescht, will
+    #   sie nicht wiederhaben.
+    [ -e "$EINHANG/README.txt" ] || cp /usr/share/golemos/README.txt "$EINHANG/" 2>/dev/null || true
+    echo "eingehaengt auf $EINHANG ($(df -h "$EINHANG" | awk 'NR==2{print $2}'))"
+  else
+    echo "liess sich nicht einhaengen"
+  fi
+}
+
+stop() {
+  umount "$EINHANG" 2>/dev/null || true
+}
+
+case "$1" in
+  start) start ;;
+  stop) stop ;;
+  restart|reload) stop; start ;;
+  *) echo "Aufruf: $0 {start|stop|restart}" >&2; exit 1 ;;
+esac

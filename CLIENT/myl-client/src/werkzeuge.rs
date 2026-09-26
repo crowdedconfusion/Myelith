@@ -168,10 +168,32 @@ impl Einhaengung {
             let Some(name) = kandidat.file_name() else {
                 return Err(Werkzeugfehler { grund: format!("{roh}: kein Dateiname") });
             };
-            let eltern = eltern.canonicalize().map_err(|e| Werkzeugfehler {
-                grund: format!("{}: {e}", eltern.display()),
+            // ⚑ **Fehlende Ordner duerfen fehlen** (Fund 490): Aufgeloest
+            //   wird der tiefste vorhandene Vorfahr; was darunter fehlt, muss
+            //   aus reinen Namen bestehen. `..` hat keinen Namen und faellt
+            //   damit heraus, ein Verweis kann nicht darunter liegen, weil es
+            //   dort nichts gibt. Angelegt wird hier nichts; das tut
+            //   `write_file`, nachdem die Grenze geprueft ist.
+            let mut vorhanden = eltern.to_path_buf();
+            let mut fehlend = Vec::new();
+            while !vorhanden.exists() {
+                match (vorhanden.file_name(), vorhanden.parent()) {
+                    (Some(n), Some(p)) => {
+                        fehlend.push(n.to_os_string());
+                        vorhanden = p.to_path_buf();
+                    }
+                    _ => {
+                        return Err(Werkzeugfehler { grund: format!("{roh}: kein gueltiger Pfad") });
+                    }
+                }
+            }
+            let mut ziel = vorhanden.canonicalize().map_err(|e| Werkzeugfehler {
+                grund: format!("{}: {e}", vorhanden.display()),
             })?;
-            eltern.join(name)
+            for n in fehlend.iter().rev() {
+                ziel.push(n);
+            }
+            ziel.join(name)
         };
 
         if !ziel.starts_with(&self.wurzel) {
@@ -432,22 +454,28 @@ pub enum Dateiwerkzeug {
     /// dieses Wort". Ihre Antwort sind ein paar Zeilen, und danach liest
     /// `read_history` genau die genannten.
     VerlaufSuche,
-    /// **Nennt die Wissensmappen, die bereitliegen.**
+    /// **Sucht Skills nach den Worten einer Aufgabe oder eines Problems.**
     ///
-    /// ⚑ **Zwei Orte, ein Werkzeug:** die Mappen dieses Projekts unter
-    /// `.AGENT/skills/` und die allgemeinen neben den Einstellungen.
-    /// Der Projektordner waere auch mit `list_directory` erreichbar,
-    /// der allgemeine nicht: Er liegt **ausserhalb der
-    /// Einhaengegrenze**, und die aufzuweichen waere der teurere Weg.
-    SkillListe,
-    /// **Holt die Eingangsseite einer Mappe.**
+    /// ⚑ **Fuer den Fall, dass das Modell nicht weiterweiss** (Wunsch des
+    /// Projektinhabers, 2026-09-26). Drei Orte, ein Werkzeug: Projekt,
+    /// eigene, mitgelieferte (`crate::skills`). Zwei davon liegen
+    /// **ausserhalb der Einhaengegrenze**, und die aufzuweichen waere der
+    /// teurere Weg. Ein leerer Suchtext nennt alle.
     ///
-    /// ⚑ **Die Eingangsseite und nicht die Mappe.** Sie nennt die
-    /// Kapitel; welches gebraucht wird, entscheidet das Modell danach
-    /// und liest es mit `read_file` oder findet es mit `search_files`.
-    /// **Eine ganze Mappe in einem Zug waere genau das Fuellen des
-    /// Kontexts, das hier vermieden werden soll.**
-    SkillLesen,
+    /// 📌 Hiess bis zum 2026-09-26 `list_skills` und nannte nur.
+    SkillSuche,
+    /// **Lernt einen Skill: liefert seine Anleitung.**
+    ///
+    /// ⚑ **Die Anleitung und nicht der ganze Ordner.** Am Ende stehen die
+    /// weiteren Dateien; eine davon holt derselbe Aufruf mit
+    /// `name/datei`. **Ein ganzer Skill in einem Zug waere genau das
+    /// Fuellen des Kontexts, das hier vermieden werden soll.**
+    ///
+    /// ⚑ **Ein Parameter und kein optionaler zweiter**: Eine Datei des
+    /// Skills ist ein Pfad unter seinem Namen, nicht eine zweite Angabe.
+    ///
+    /// 📌 Hiess bis zum 2026-09-26 `read_skill`.
+    SkillLernen,
 }
 
 impl Dateiwerkzeug {
@@ -461,12 +489,8 @@ impl Dateiwerkzeug {
         Dateiwerkzeug::VerlaufListe,
         Dateiwerkzeug::VerlaufSuche,
         Dateiwerkzeug::Verlauf,
-        // ⚑ **Neben den Verlaufswerkzeugen und aus demselben Grund
-        // nicht in `Base`** (gemessen 2026-09-17): Ein Modell, das den
-        // Mitschnitt nicht nachschlaegt, schlaegt auch keine Mappe nach,
-        // und beide stehen trotzdem in jeder Ansage.
-        Dateiwerkzeug::SkillListe,
-        Dateiwerkzeug::SkillLesen,
+        Dateiwerkzeug::SkillSuche,
+        Dateiwerkzeug::SkillLernen,
         Dateiwerkzeug::Befehl,
     ];
 
@@ -509,12 +533,22 @@ impl Dateiwerkzeug {
     /// folgenlos:** Sie stehen in jeder Ansage, kosten in jeder Runde
     /// Kontext und machen die Auswahl fuer ein kleines Modell schwerer.
     /// **Eine Kiste ist eine Auswahl und keine Sammlung.**
-    pub const BASE: [Dateiwerkzeug; 5] = [
+    ///
+    /// ⚑ **Die zwei Skillwerkzeuge sind seit dem 2026-09-26 dabei**
+    /// (Wunsch des Projektinhabers): Das Modell soll selbst nach einem
+    /// Skill suchen, wenn es nicht weiterweiss, und auf „lerne skill …"
+    /// einen lernen. ⚠️ Die Messung vom 2026-09-17 sagt, dass das 0,6B
+    /// Nachschlagewerkzeuge nicht von selbst ruft; der Unterschied hier
+    /// ist ein ausdruecklicher Anlass im Auftrag. Gemessen steht es im
+    /// Changelog dieser Fassung.
+    pub const BASE: [Dateiwerkzeug; 7] = [
         Dateiwerkzeug::Verzeichnis,
         Dateiwerkzeug::Lesen,
         Dateiwerkzeug::Suchen,
         Dateiwerkzeug::Schreiben,
         Dateiwerkzeug::Aendern,
+        Dateiwerkzeug::SkillSuche,
+        Dateiwerkzeug::SkillLernen,
     ];
 
     /// Braucht es die Schreiberlaubnis?
@@ -542,8 +576,8 @@ impl Dateiwerkzeug {
             (Self::Verlauf, Ansageform::Amtlich) => "read_history",
             (Self::VerlaufListe, Ansageform::Amtlich) => "list_history",
             (Self::VerlaufSuche, Ansageform::Amtlich) => "search_history",
-            (Self::SkillListe, Ansageform::Amtlich) => "list_skills",
-            (Self::SkillLesen, Ansageform::Amtlich) => "read_skill",
+            (Self::SkillSuche, Ansageform::Amtlich) => "search_skill",
+            (Self::SkillLernen, Ansageform::Amtlich) => "learn_skill",
             (Self::Verzeichnis, Ansageform::Deutsch) => "verzeichnis",
             (Self::Lesen, Ansageform::Deutsch) => "datei_lesen",
             (Self::Suchen, Ansageform::Deutsch) => "suchen",
@@ -553,8 +587,8 @@ impl Dateiwerkzeug {
             (Self::Verlauf, Ansageform::Deutsch) => "verlauf_lesen",
             (Self::VerlaufListe, Ansageform::Deutsch) => "verlauf_liste",
             (Self::VerlaufSuche, Ansageform::Deutsch) => "verlauf_suchen",
-            (Self::SkillListe, Ansageform::Deutsch) => "skill_liste",
-            (Self::SkillLesen, Ansageform::Deutsch) => "skill_lesen",
+            (Self::SkillSuche, Ansageform::Deutsch) => "skill_suchen",
+            (Self::SkillLernen, Ansageform::Deutsch) => "skill_lernen",
         }
     }
 
@@ -662,24 +696,29 @@ impl Dateiwerkzeug {
                  und kein regulaerer Ausdruck; Gross- und Kleinschreibung wird \
                  ignoriert."
             ),
-            (Self::SkillListe, Ansageform::Amtlich) => "Name the knowledge folders \
-                 available here, each with the sentence it opens with. Use this when a \
-                 question needs background this conversation does not carry. It only \
-                 names them; read_skill then opens one."
+            (Self::SkillSuche, Ansageform::Amtlich) => "Search the skills: short guides for \
+                 recurring kinds of work. Describe the task or the problem in a few words. \
+                 Use it whenever you are unsure how to proceed or are stuck, before \
+                 guessing. An empty text lists all skills. Then learn the best match with \
+                 learn_skill."
                 .into(),
-            (Self::SkillListe, Ansageform::Deutsch) => "Nennt die Wissensmappen, die hier \
-                 bereitliegen, jede mit ihrem ersten Satz. Zu gebrauchen, wenn eine Frage \
-                 Hintergrund braucht, den dieses Gespraech nicht traegt. Es nennt sie nur; \
-                 geoeffnet wird eine mit skill_lesen."
+            (Self::SkillSuche, Ansageform::Deutsch) => "Sucht in den Skills: kurzen Anleitungen \
+                 fuer wiederkehrende Arbeiten. Beschreibe die Aufgabe oder das Problem in \
+                 wenigen Worten. Zu gebrauchen, sobald du unsicher bist oder nicht \
+                 weiterkommst, bevor du raetst. Ein leerer Text nennt alle. Den besten \
+                 Treffer lernst du danach mit skill_lernen."
                 .into(),
-            (Self::SkillLesen, Ansageform::Amtlich) => "Open the front page of one \
-                 knowledge folder by name: what it covers and which chapter files it has. \
-                 Read a chapter afterwards with read_file, or find a passage with \
-                 search_files."
+            (Self::SkillLernen, Ansageform::Amtlich) => "Learn a skill by name: returns its \
+                 instructions, which you then follow for the rest of this task. Use it when \
+                 the user says \"learn skill ...\" or when search_skill found a fitting one. \
+                 Its further files are listed at the end; open one with the name followed by \
+                 a slash and the file, for example name/templates/x.md."
                 .into(),
-            (Self::SkillLesen, Ansageform::Deutsch) => "Oeffnet die Eingangsseite einer \
-                 Wissensmappe nach Namen: worum es geht und welche Kapiteldateien es gibt. \
-                 Ein Kapitel liest danach datei_lesen, eine Stelle findet dateien_suchen."
+            (Self::SkillLernen, Ansageform::Deutsch) => "Lernt einen Skill nach Namen: liefert \
+                 seine Anleitung, der du fuer den Rest dieser Aufgabe folgst. Zu gebrauchen, \
+                 wenn der Nutzer \"lerne skill ...\" sagt oder skill_suchen einen passenden \
+                 gefunden hat. Am Ende stehen seine weiteren Dateien; eine davon oeffnet der \
+                 Name mit Schraegstrich und Datei, zum Beispiel name/vorlagen/x.md."
                 .into(),
             (Self::Befehl, Ansageform::Amtlich) => format!(
                 "Run a shell command in the working directory (sh -c). Returns its                  output, at most {BEFEHL_AUSGABEGRENZE} bytes, and stops after                  {BEFEHL_ZEITGRENZE_S} seconds. Prefer the file tools for reading,                  writing and searching; use this for building, running and everything                  they do not cover."
@@ -740,6 +779,7 @@ impl Dateiwerkzeug {
             bis_hinweis,
             suchhinweis,
             skillhinweis,
+            anfragehinweis,
         ) = match form {
             Ansageform::Amtlich => (
                 "path of the file, relative to the working directory; \
@@ -754,7 +794,9 @@ impl Dateiwerkzeug {
                 "last line to read, inclusive",
                 "the text to look for in the recorded history, for example a word from \
                  the question",
-                "the name of the knowledge folder, exactly as list_skills gives it",
+                "the name of the skill, exactly as search_skill gives it; for one of \
+                 its further files the name, a slash and the file",
+                "a few words describing the task or the problem; empty lists all skills",
             ),
             Ansageform::Deutsch => (
                 "Pfad der Datei, relativ zum Arbeitsverzeichnis; \
@@ -769,7 +811,9 @@ impl Dateiwerkzeug {
                 "letzte zu lesende Zeile, einschliesslich",
                 "der Text, nach dem im aufgezeichneten Verlauf gesucht wird, zum Beispiel \
                  ein Wort aus der Frage",
-                "der Name der Wissensmappe, genau so, wie skill_liste ihn nennt",
+                "der Name des Skills, genau so, wie skill_suchen ihn nennt; fuer eine \
+                 seiner weiteren Dateien der Name, ein Schraegstrich und die Datei",
+                "wenige Worte zur Aufgabe oder zum Problem; leer nennt alle Skills",
             ),
         };
         match self {
@@ -808,11 +852,16 @@ impl Dateiwerkzeug {
             }),
             // ⚑ **Ein Parameter, und er ist erforderlich.** Eine Suche
             // ohne Suchwort ist keine Frage.
-            Self::SkillListe => serde_json::json!({
+            // ⚑ **Verlangt, auch wenn er leer sein darf**: kein optionaler
+            //   Parameter, also keine Entscheidung, ob es ihn gibt.
+            Self::SkillSuche => serde_json::json!({
                 "type": "object",
-                "properties": {}
+                "properties": {
+                    "anfrage": {"type": "string", "description": anfragehinweis}
+                },
+                "required": ["anfrage"]
             }),
-            Self::SkillLesen => serde_json::json!({
+            Self::SkillLernen => serde_json::json!({
                 "type": "object",
                 "properties": {
                     "name": {"type": "string", "description": skillhinweis}
@@ -915,8 +964,8 @@ impl Dateiwerkzeug {
             Self::Verlauf => Box::new(Verlauflesen(e, form, budget.clone())),
             Self::VerlaufListe => Box::new(Verlaufliste(e, form, budget.clone())),
             Self::VerlaufSuche => Box::new(Verlaufsuche(e, form, budget.clone())),
-            Self::SkillListe => Box::new(Skillliste(e, form, budget.clone())),
-            Self::SkillLesen => Box::new(Skilllesen(e, form, budget.clone())),
+            Self::SkillSuche => Box::new(Skillsuche(e, form, budget.clone())),
+            Self::SkillLernen => Box::new(Skilllernen(e, form, budget.clone())),
         }
     }
 }
@@ -1132,77 +1181,106 @@ fn vom_budget(budget: &Verlaufsbudget, text: String, deutsch: bool) -> String {
 /// nicht weiss, welche gemeint ist, hat das falsche Wort gesucht.
 const VERLAUF_TREFFER: usize = 20;
 
-/// Nennt die Wissensmappen beider Orte.
-struct Skillliste(Einhaengung, Ansageform, Verlaufsbudget);
+/// Sucht Skills an allen drei Orten.
+struct Skillsuche(Einhaengung, Ansageform, Verlaufsbudget);
 
-impl myl_local_agent::ausfuehrung::Werkzeugausfuehrung for Skillliste {
+impl myl_local_agent::ausfuehrung::Werkzeugausfuehrung for Skillsuche {
     fn name(&self) -> &str {
-        Dateiwerkzeug::SkillListe.name(self.1)
-    }
-    fn ausfuehren(&self, _a: &serde_json::Value) -> Result<String, Werkzeugfehler> {
-        let deutsch = matches!(self.1, Ansageform::Deutsch);
-        let mappen = crate::skills::alle(Some(self.0.wurzel()));
-        if mappen.is_empty() {
-            return Ok(if deutsch {
-                "Es liegen keine Wissensmappen bereit.".into()
-            } else {
-                "No knowledge folders are available.".into()
-            });
-        }
-        let mut aus = if deutsch {
-            format!("{} Wissensmappe(n):\n", mappen.len())
-        } else {
-            format!("{} knowledge folder(s):\n", mappen.len())
-        };
-        // ⚑ **Name und Satz**, wie beim Mitschnitt gemessen: Ein
-        // Eintrag, der nur den Ort nennt, wird fuer die Auskunft
-        // gehalten.
-        for m in &mappen {
-            aus.push_str(&format!("{}: {}\n", m.name, m.satz));
-        }
-        Ok(vom_budget(&self.2, aus, deutsch))
-    }
-}
-
-/// Oeffnet die Eingangsseite einer Mappe.
-struct Skilllesen(Einhaengung, Ansageform, Verlaufsbudget);
-
-impl myl_local_agent::ausfuehrung::Werkzeugausfuehrung for Skilllesen {
-    fn name(&self) -> &str {
-        Dateiwerkzeug::SkillLesen.name(self.1)
+        Dateiwerkzeug::SkillSuche.name(self.1)
     }
     fn ausfuehren(&self, a: &serde_json::Value) -> Result<String, Werkzeugfehler> {
         let deutsch = matches!(self.1, Ansageform::Deutsch);
         // ⚑ **Erst der Aufruf, dann die Welt.**
+        let anfrage = a.get("anfrage").and_then(|v| v.as_str()).map(str::to_string).ok_or_else(|| {
+            Werkzeugfehler { grund: "`anfrage` fehlt oder ist kein Text".to_string() }
+        })?;
+        let alle_nennen = anfrage.trim().is_empty() || anfrage.trim() == "*";
+        let hoechstens = if alle_nennen { crate::skills::HOECHSTENS_GENANNT } else { crate::skills::HOECHSTENS_TREFFER };
+        let treffer = crate::skills::suchen(Some(self.0.wurzel()), &anfrage, hoechstens);
+        if treffer.is_empty() {
+            let gibt_es = !crate::skills::alle(Some(self.0.wurzel())).is_empty();
+            return Ok(match (deutsch, gibt_es) {
+                (true, true) => format!("Kein Skill passt zu \"{anfrage}\". Ein leerer Text nennt alle."),
+                (false, true) => format!("No skill matches \"{anfrage}\". An empty text lists all of them."),
+                (true, false) => "Es liegen keine Skills bereit.".into(),
+                (false, false) => "No skills are available.".into(),
+            });
+        }
+        // ⚑ **Schwache Treffer sagen sich an.** Ein Modell lernt sonst den
+        //   erstbesten, auch wenn nur ein Wort seiner Anleitung passte.
+        let schwach = !alle_nennen && treffer.iter().all(|t| t.punkte < crate::skills::STARK_AB);
+        let mut aus = match (deutsch, schwach) {
+            (true, false) => format!("{} Skill(s), der beste zuerst:\n", treffer.len()),
+            (false, false) => format!("{} skill(s), best first:\n", treffer.len()),
+            (true, true) => format!(
+                "Nur schwache Treffer ({}): Kein Stichwort passt. Lerne einen nur, wenn die \
+                 Beschreibung wirklich zur Aufgabe passt; sonst suche mit anderen Worten.\n",
+                treffer.len()
+            ),
+            (false, true) => format!(
+                "Only weak matches ({}): no keyword fits. Learn one only if its description \
+                 really fits the task; otherwise search with other words.\n",
+                treffer.len()
+            ),
+        };
+        // ⚑ **Name und Satz**, wie beim Mitschnitt gemessen: Ein Eintrag,
+        // der nur den Namen nennt, wird fuer die Auskunft gehalten.
+        // 📌 **Der Name steht fuer sich**, die Beschreibung in Klammern
+        //    dahinter. Gemessen am 2026-09-26: Bei `name: satz` gab das 4B
+        //    die ganze Zeile als Namen an `learn_skill`, dreimal.
+        for t in &treffer {
+            aus.push_str(&format!("{} ({})\n", t.skill.name, t.skill.satz));
+        }
+        aus.push_str(if deutsch {
+            "Lernen mit skill_lernen und dem Namen."
+        } else {
+            "Learn one with learn_skill and its name."
+        });
+        Ok(vom_budget(&self.2, aus, deutsch))
+    }
+}
+
+/// Liefert die Anleitung eines Skills oder eine seiner Dateien.
+struct Skilllernen(Einhaengung, Ansageform, Verlaufsbudget);
+
+impl myl_local_agent::ausfuehrung::Werkzeugausfuehrung for Skilllernen {
+    fn name(&self) -> &str {
+        Dateiwerkzeug::SkillLernen.name(self.1)
+    }
+    fn ausfuehren(&self, a: &serde_json::Value) -> Result<String, Werkzeugfehler> {
+        let deutsch = matches!(self.1, Ansageform::Deutsch);
         let name = a
             .get("name")
             .and_then(|v| v.as_str())
             .map(str::to_string)
-            .ok_or_else(|| Werkzeugfehler {
-                grund: "`name` fehlt oder ist kein Text".to_string(),
-            })?;
-        // ⛔️ **Der Name wird gegen die gefundenen Mappen gehalten und
-        // nie zu einem Pfad gemacht.** Damit gibt es hier keinen Weg
-        // nach draussen: `../../etc/passwd` ist einfach keine Mappe.
-        match crate::skills::lesen(Some(self.0.wurzel()), &name) {
-            Some(t) => Ok(vom_budget(&self.2, t, deutsch)),
-            None => {
-                let namen: Vec<String> = crate::skills::alle(Some(self.0.wurzel()))
-                    .into_iter()
-                    .map(|m| m.name)
-                    .collect();
-                Ok(if deutsch {
-                    format!(
-                        "Keine Mappe namens \"{name}\". Vorhanden: {}",
-                        if namen.is_empty() { "keine".to_string() } else { namen.join(", ") }
-                    )
-                } else {
-                    format!(
-                        "No folder named \"{name}\". Available: {}",
-                        if namen.is_empty() { "none".to_string() } else { namen.join(", ") }
-                    )
-                })
+            .ok_or_else(|| Werkzeugfehler { grund: "`name` fehlt oder ist kein Text".to_string() })?;
+        // ⚑ `name/datei` holt eine weitere Datei. ⛔️ Aufgeloest wird in
+        //   `skills::lernen`, gegen den Ordner des Skills, nie frei.
+        // ⚑ **Nur der Name**: bis zum ersten Doppelpunkt, Leerzeichen oder
+        //   zur ersten Klammer. Ein Modell, das die ganze Trefferzeile
+        //   abschreibt, meint trotzdem diesen Skill.
+        let name = name.trim();
+        let name = &name[..name.find([':', ' ', '(', '\t', '\n']).unwrap_or(name.len())];
+        let (skill, datei) = match name.split_once('/') {
+            Some((s, d)) => (s.to_string(), Some(d.to_string())),
+            None => (name.to_string(), None),
+        };
+        match crate::skills::lernen(Some(self.0.wurzel()), &skill, datei.as_deref()) {
+            Ok(g) => {
+                let mut aus = g.text;
+                if datei.is_none() && !g.dateien.is_empty() {
+                    let liste: Vec<String> = g.dateien.iter().map(|d| format!("{}/{d}", g.skill.name)).collect();
+                    aus.push_str(&if deutsch {
+                        format!("\n\n[Weitere Dateien dieses Skills, mit skill_lernen zu oeffnen: {}]", liste.join(", "))
+                    } else {
+                        format!("\n\n[Further files of this skill, open with learn_skill: {}]", liste.join(", "))
+                    });
+                }
+                Ok(vom_budget(&self.2, aus, deutsch))
             }
+            // ⚑ Kein Fehler des Aufrufs, sondern eine Auskunft: Die
+            //   Meldung nennt, was es gibt, damit der naechste Aufruf trifft.
+            Err(m) => Ok(m),
         }
     }
 }
@@ -1391,6 +1469,12 @@ impl Werkzeugausfuehrung for Suchen {
         let start = self.0.aufloesen(wo, true)?;
 
         let mut treffer: Vec<String> = Vec::new();
+        // 📌 **Fund 492 (2026-09-26): Die Suche fand keine Dateinamen.** Das
+        //    30B suchte `messwerte.csv`, bekam nur die Zeile in
+        //    `auswertung.py`, die den Namen nennt, und schloss, die Datei
+        //    fehle. Jetzt stehen Pfade, deren Name das Muster enthaelt, vor
+        //    den Zeilentreffern.
+        let mut namen: Vec<String> = Vec::new();
         let mut angesehen = 0usize;
         let mut zu_viele = false;
         let mut offen = vec![start.clone()];
@@ -1404,6 +1488,10 @@ impl Werkzeugausfuehrung for Suchen {
                 let Ok(echt) = p.canonicalize() else { continue };
                 if !echt.starts_with(self.0.wurzel()) {
                     continue;
+                }
+                let kurz = self.0.kurz(&echt);
+                if namen.len() < TREFFERGRENZE && kurz.to_lowercase().contains(&unten) {
+                    namen.push(if echt.is_dir() { format!("{kurz}/") } else { kurz.clone() });
                 }
                 if echt.is_dir() {
                     offen.push(echt);
@@ -1442,10 +1530,19 @@ impl Werkzeugausfuehrung for Suchen {
             }
         }
 
+        namen.sort();
+        let namensteil = if namen.is_empty() {
+            String::new()
+        } else {
+            format!("Dateien und Ordner, deren Name {muster:?} enthaelt:\n{}\n", namen.join("\n"))
+        };
         if treffer.is_empty() {
-            return Ok(format!("keine Zeile enthaelt {muster:?}"));
+            return Ok(format!("{namensteil}keine Zeile enthaelt {muster:?}"));
         }
         treffer.sort();
+        if !namensteil.is_empty() {
+            treffer.insert(0, format!("{namensteil}Zeilen, die {muster:?} enthalten:"));
+        }
         if zu_viele {
             treffer.push(format!(
                 "[gekuerzt bei {} Treffern aus {angesehen} Dateien; das Muster enger fassen]",
@@ -1662,6 +1759,14 @@ impl Werkzeugausfuehrung for Dateischreiben {
         // anderes" ist genau der, den ein Mensch im Nachhinein wissen
         // will.
         let gab_es = p.exists();
+        // 📌 **Fund 490 (2026-09-26): Ein fehlender Ordner war eine Sackgasse.**
+        //    Im Loop-Szenario wollte das 8B `ergebnis/statistik.md` schreiben,
+        //    neunmal, und jedes Mal fehlte `ergebnis/`. Ohne Shell gibt es
+        //    kein Werkzeug, das einen Ordner anlegt; in `Base` war die
+        //    Aufgabe damit unloesbar. Die Grenze ist oben geprueft.
+        if let Some(eltern) = p.parent() {
+            std::fs::create_dir_all(eltern).map_err(|e| Werkzeugfehler { grund: format!("{roh}: {e}") })?;
+        }
         std::fs::write(&p, inhalt.as_bytes())
             .map_err(|e| Werkzeugfehler { grund: format!("{roh}: {e}") })?;
         Ok(format!(
@@ -1880,8 +1985,17 @@ impl Werkzeugausfuehrung for Verzeichnislesen {
                     .collect::<Vec<_>>()
                     .join("/");
                 let groesse = e.metadata().map(|m| m.len()).unwrap_or(0);
+                // 📌 **Fund 492 (2026-09-26): Ein nicht aufgeklappter Ordner
+                //    sah leer aus.** Das 30B listete mit Tiefe 1, sah
+                //    `daten\tVerzeichnis` und schloss, `daten/messwerte.csv`
+                //    gebe es nicht. Jetzt steht dabei, wie viel darin liegt,
+                //    und womit man es sieht.
+                let zugeklappt = art == "Verzeichnis" && ebene >= tiefe;
                 zeilen.push(if art == "Datei" {
                     format!("{name}\t{groesse} Bytes")
+                } else if zugeklappt {
+                    let n = std::fs::read_dir(&echt).map(|d| d.count()).unwrap_or(0);
+                    format!("{name}\t{art}, {n} {}, erst mit tiefe {} zu sehen", if n == 1 { "Eintrag" } else { "Eintraege" }, ebene + 1)
                 } else {
                     format!("{name}\t{art}")
                 });
@@ -2492,6 +2606,25 @@ mod grenze {
         let aus = v.ausfuehren(&serde_json::json!({})).expect("listen");
         assert!(aus.contains("drin.txt"), "{aus}");
         assert!(aus.contains("unter\tVerzeichnis"), "{aus}");
+        // 📌 Fund 492: Ein zugeklappter Ordner sagt, was in ihm liegt.
+        assert!(aus.contains("Eintr") && aus.contains("erst mit tiefe 2"), "{aus}");
+        let tief = v.ausfuehren(&serde_json::json!({"tiefe": 2})).expect("listen");
+        assert!(!tief.contains("erst mit tiefe 2"), "aufgeklappt und trotzdem der Hinweis: {tief}");
+    }
+
+    /// 📌 **Fund 492: Die Suche nennt auch Dateinamen.**
+    #[test]
+    fn die_suche_findet_auch_dateinamen() {
+        let (d, e) = baue();
+        std::fs::create_dir_all(d.path().join("daten")).unwrap();
+        std::fs::write(d.path().join("daten/messwerte.csv"), "a;b\n").unwrap();
+        std::fs::write(d.path().join("skript.py"), "QUELLE = 'messwerte.csv'\n").unwrap();
+        let s = Suchen(e, Ansageform::Amtlich);
+        let aus = s.ausfuehren(&serde_json::json!({"muster": "messwerte.csv"})).expect("suchen");
+        assert!(aus.contains("deren Name") && aus.contains("daten/messwerte.csv"), "{aus}");
+        assert!(aus.contains("skript.py:1"), "die Zeile fehlt: {aus}");
+        let nur_name = s.ausfuehren(&serde_json::json!({"muster": "daten"})).expect("suchen");
+        assert!(nur_name.contains("daten/") && nur_name.contains("keine Zeile"), "{nur_name}");
     }
 
     /// ⚑ **Kein Wirtspfad in der Beschreibung.** Er gehoerte nicht
@@ -2855,53 +2988,77 @@ mod skillwerkzeuge {
         (d, e)
     }
 
-    /// ⚑ **Nennen und liefern sind getrennt**, wie beim Mitschnitt.
+    /// ⚑ **Suchen nennt und liefert nicht**, wie beim Mitschnitt.
     #[test]
-    fn die_liste_nennt_mit_satz_und_liefert_nichts() {
+    fn die_suche_nennt_mit_satz_und_liefert_nichts() {
         let (_d, e) = mit_mappe();
-        let w = Skillliste(e, Ansageform::Amtlich, verlaufsbudget());
-        let aus = w.ausfuehren(&serde_json::json!({})).expect("Liste");
-        assert!(aus.contains("kryptografie"), "{aus}");
-        assert!(aus.contains("Wie Signaturen"), "der Satz fehlt: {aus}");
-        assert!(!aus.contains("Der Inhalt des Kapitels"), "die Liste liefert Inhalt: {aus}");
+        let w = Skillsuche(e, Ansageform::Amtlich, verlaufsbudget());
+        let aus = w.ausfuehren(&serde_json::json!({"anfrage": "Signaturen pruefen"})).expect("Suche");
+        assert!(aus.contains("kryptografie (Wie Signaturen"), "{aus}");
+        assert!(aus.contains("learn_skill"), "der naechste Schritt fehlt: {aus}");
+        assert!(!aus.contains("Der Inhalt des Kapitels"), "die Suche liefert Inhalt: {aus}");
+        // Leer nennt alle, darunter die mitgelieferten.
+        let alle = w.ausfuehren(&serde_json::json!({"anfrage": ""})).expect("alle");
+        assert!(alle.contains("kryptografie") && alle.contains("fehlersuche"), "{alle}");
+        let nichts = w.ausfuehren(&serde_json::json!({"anfrage": "xylophonstimmung"})).expect("nichts");
+        assert!(nichts.starts_with("No skill matches"), "{nichts}");
     }
 
-    /// ⚑ **Die Eingangsseite und nicht die ganze Mappe.**
+    /// ⚑ **Die Eingangsseite und nicht die ganze Mappe**; ein Kapitel
+    /// holt derselbe Aufruf mit `name/datei`.
     #[test]
-    fn gelesen_wird_die_eingangsseite() {
+    fn gelernt_wird_die_eingangsseite_und_auf_wunsch_eine_datei() {
         let (_d, e) = mit_mappe();
-        let w = Skilllesen(e, Ansageform::Amtlich, verlaufsbudget());
-        let aus = w.ausfuehren(&serde_json::json!({"name": "kryptografie"})).expect("lesen");
+        let w = Skilllernen(e, Ansageform::Amtlich, verlaufsbudget());
+        let aus = w.ausfuehren(&serde_json::json!({"name": "kryptografie"})).expect("lernen");
         assert!(aus.contains("kapitel/01-signaturen.md"), "{aus}");
-        assert!(
-            !aus.contains("Der Inhalt des Kapitels"),
-            "es kam die ganze Mappe statt der Eingangsseite: {aus}"
-        );
+        assert!(!aus.contains("Der Inhalt des Kapitels"), "es kam die ganze Mappe: {aus}");
+        assert!(aus.contains("kryptografie/kapitel/01-signaturen.md"), "die weiteren Dateien fehlen: {aus}");
+        let kapitel = w.ausfuehren(&serde_json::json!({"name": "kryptografie/kapitel/01-signaturen.md"})).expect("Kapitel");
+        assert_eq!(kapitel, "Der Inhalt des Kapitels.\n");
+        // 📌 Die ganze Trefferzeile als Name, wie das 4B sie am 2026-09-26
+        //    abschrieb, meint trotzdem den Skill.
+        for zeile in ["kryptografie: Wie Signaturen hier benutzt werden.", "kryptografie (Wie Signaturen …)"] {
+            let aus = w.ausfuehren(&serde_json::json!({"name": zeile})).expect("lernen");
+            assert!(aus.contains("kapitel/01-signaturen.md"), "{zeile}: {aus}");
+        }
     }
 
     /// ⛔️ **Kein Weg nach draussen.**
     ///
-    /// Der Name wird gegen die gefundenen Mappen gehalten und nie zu
-    /// einem Pfad gemacht; ein `..` ist damit einfach keine Mappe. **Die
-    /// Zusage steht hier, weil sie sonst beim naechsten Umbau verloren
-    /// gehen koennte.**
+    /// Der Name wird gegen die gefundenen Skills gehalten und nie zu
+    /// einem Pfad gemacht, und eine Datei muss im Ordner des Skills
+    /// liegen. **Die Zusage steht hier, weil sie sonst beim naechsten
+    /// Umbau verloren gehen koennte.**
     #[test]
     fn ein_pfad_als_name_fuehrt_nirgendwohin() {
-        let (_d, e) = mit_mappe();
-        let w = Skilllesen(e, Ansageform::Amtlich, verlaufsbudget());
-        for versuch in ["../../etc/passwd", "/etc/passwd", "kryptografie/kapitel"] {
+        let (d, e) = mit_mappe();
+        std::fs::write(d.path().join("geheim.txt"), "GEHEIM").expect("schreiben");
+        let w = Skilllernen(e, Ansageform::Amtlich, verlaufsbudget());
+        for versuch in [
+            "../../etc/passwd",
+            "/etc/passwd",
+            "kryptografie/kapitel",
+            "kryptografie/../../../geheim.txt",
+            "kryptografie//etc/passwd",
+        ] {
             let aus = w.ausfuehren(&serde_json::json!({"name": versuch})).expect("Antwort");
-            assert!(aus.starts_with("No folder named"), "{versuch} kam durch: {aus}");
+            assert!(
+                aus.starts_with("kein Skill") || aus.contains("liegt nicht im Skill") || aus.starts_with("keine Datei"),
+                "{versuch} kam durch: {aus}"
+            );
+            assert!(!aus.contains("GEHEIM") && !aus.contains("root:"), "{versuch}: {aus}");
         }
     }
 
     /// ⚑ **Ein fehlendes Argument ist ein Aufruffehler.**
     #[test]
-    fn ohne_namen_ist_es_ein_aufruffehler() {
+    fn ohne_argument_ist_es_ein_aufruffehler() {
         let (_d, e) = mit_mappe();
-        let w = Skilllesen(e, Ansageform::Amtlich, verlaufsbudget());
-        let f = w.ausfuehren(&serde_json::json!({})).expect_err("Fehler");
+        let f = Skilllernen(e.clone(), Ansageform::Amtlich, verlaufsbudget()).ausfuehren(&serde_json::json!({})).expect_err("Fehler");
         assert!(f.grund.contains("name"), "{}", f.grund);
+        let f = Skillsuche(e, Ansageform::Amtlich, verlaufsbudget()).ausfuehren(&serde_json::json!({})).expect_err("Fehler");
+        assert!(f.grund.contains("anfrage"), "{}", f.grund);
     }
 
     /// ⛔️ **Sie haengen am selben Nachschlagebudget wie der Mitschnitt.**
@@ -2913,12 +3070,12 @@ mod skillwerkzeuge {
         use std::sync::atomic::{AtomicUsize, Ordering};
         let (_d, e) = mit_mappe();
         let budget: Verlaufsbudget = std::sync::Arc::new(AtomicUsize::new(40));
-        let w = Skilllesen(e.clone(), Ansageform::Amtlich, budget.clone());
-        let aus = w.ausfuehren(&serde_json::json!({"name": "kryptografie"})).expect("lesen");
+        let w = Skilllernen(e.clone(), Ansageform::Amtlich, budget.clone());
+        let aus = w.ausfuehren(&serde_json::json!({"name": "kryptografie"})).expect("lernen");
         assert!(aus.contains("Cut off here"), "die Kuerzung sagt sich nicht an: {aus}");
         assert_eq!(budget.load(Ordering::Relaxed), 0);
-        let l = Skillliste(e, Ansageform::Amtlich, budget);
-        let aus2 = l.ausfuehren(&serde_json::json!({})).expect("Liste");
+        let l = Skillsuche(e, Ansageform::Amtlich, budget);
+        let aus2 = l.ausfuehren(&serde_json::json!({"anfrage": ""})).expect("Suche");
         assert!(aus2.contains("already returned"), "zweites Werkzeug mit eigenem Budget: {aus2}");
     }
 }
@@ -3189,5 +3346,34 @@ mod verlaufliste {
                 "Base traegt {w:?} wieder"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod neue_ordner {
+    use super::*;
+    use myl_local_agent::ausfuehrung::Werkzeugausfuehrung;
+
+    /// ⛔️ **Fund 490: `write_file` legt fehlende Ordner an, aber nur
+    /// innerhalb der Einhaengung.**
+    #[test]
+    fn write_file_legt_ordner_an_und_bleibt_drinnen() {
+        let d = tempfile::tempdir().expect("Verzeichnis");
+        let draussen = tempfile::tempdir().expect("draussen");
+        let e = Einhaengung::neu(d.path(), true).expect("Einhaengung");
+        let w = Dateischreiben(e, Ansageform::Amtlich);
+        let aus = w.ausfuehren(&serde_json::json!({"pfad": "ergebnis/tief/statistik.md", "inhalt": "x"})).expect("schreiben");
+        assert!(aus.starts_with("angelegt"), "{aus}");
+        assert_eq!(std::fs::read_to_string(d.path().join("ergebnis/tief/statistik.md")).unwrap(), "x");
+        for boese in ["neu/../../x.md", "../x.md", "neu/../../../etc/x.md"] {
+            assert!(w.ausfuehren(&serde_json::json!({"pfad": boese, "inhalt": "x"})).is_err(), "{boese} kam durch");
+        }
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(draussen.path(), d.path().join("tuer")).unwrap();
+            assert!(w.ausfuehren(&serde_json::json!({"pfad": "tuer/neu/x.md", "inhalt": "x"})).is_err(), "ueber einen Verweis hinaus");
+            assert!(!draussen.path().join("neu").exists(), "draussen wurde ein Ordner angelegt");
+        }
+        assert!(!d.path().parent().unwrap().join("x.md").exists());
     }
 }

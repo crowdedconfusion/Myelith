@@ -1,0 +1,27 @@
+#!/bin/sh
+# ⚑ **Myelith finden, bevor sich jemand anmeldet.**
+#
+# Nach `S05daten`, also mit eingehaengter Datenpartition. Sucht dort
+# und, falls nichts liegt, auf den uebrigen Laufwerken nach einem
+# Myelith-Klon, merkt ihn sich unter `/run/golemos/wurzel` und stellt
+# ein Modell ein, wenn es noch keine Einstellungen gibt. Die Arbeit tut
+# `golem-einrichten suchen`; hier steht nur der Aufruf.
+#
+# ⚠️ **Ein Fehler hier haelt den Start nicht auf.** Ohne Klon startet
+#    GolemOS trotzdem, und der Assistent sagt bei der Anmeldung, wie
+#    einer auf den Stick kommt.
+
+case "$1" in
+  start)
+    # ⚑ Die Tastatur, die im Assistenten gewaehlt wurde, vor jeder
+    #   Anmeldung. Ohne Wahl bleibt die Vorgabe des Kerns (US).
+    if [ -r /daten/golemos/tastatur ]; then
+      loadkeys -q -C /dev/tty0 "$(cat /daten/golemos/tastatur)" 2>/dev/null \
+        || echo "Tastatur: $(cat /daten/golemos/tastatur) liess sich nicht laden"
+    fi
+    /usr/bin/golem-einrichten suchen || echo "golem-einrichten suchen: gescheitert, weiter ohne Myelith"
+    ;;
+  stop) ;;
+  restart|reload) "$0" start ;;
+  *) echo "Aufruf: $0 {start|stop|restart}" >&2; exit 1 ;;
+esac

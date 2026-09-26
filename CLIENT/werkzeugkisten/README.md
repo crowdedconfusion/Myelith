@@ -103,10 +103,16 @@ Kiste dazu. Was in den Ordnern liegt, kommt obendrauf.
 
 | Kiste | eingebaut |
 |---|---|
-| `Base` | `list_directory`, `read_file`, `search_files`, `write_file`, `edit_file` |
-| `Advanced` | dazu `run_command`, `read_history`, `list_history`, `search_history`, `list_skills`, `read_skill` |
+| `Base` | `list_directory`, `read_file`, `search_files`, `write_file`, `edit_file`, `search_skill`, `learn_skill` |
+| `Advanced` | dazu `run_command`, `read_history`, `list_history`, `search_history` |
 
-⛔️ **Warum die fünf nicht als Manifest in `Base` liegen.** Ein Manifest
+⚑ **Die zwei Skillwerkzeuge liegen seit dem 2026-09-26 in `Base`**: Das
+Modell soll selbst nach einem Skill suchen, wenn es nicht weiterweiß,
+und auf „lerne skill …“ einen lernen. Die Skills selbst liegen unter
+`CLIENT/myl-skills/`, unter den eigenen neben den Einstellungen und im
+Projekt unter `.AGENT/skills/`.
+
+⛔️ **Warum die Dateiwerkzeuge nicht als Manifest in `Base` liegen.** Ein Manifest
 läuft über `sh -c` und hält die Einhängegrenze **nicht** ein; die
 kompilierten tun es. Sie dorthin zu verlegen sähe aufgeräumter aus und
 nähme dem Agenten seine Grenze.

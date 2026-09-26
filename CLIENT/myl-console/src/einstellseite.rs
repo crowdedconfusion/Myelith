@@ -402,6 +402,8 @@ pub fn fahren(t: Toene, ordner: &std::path::Path) -> bool {
     let mut hier = 0usize;
     let mut geaendert_worden = false;
     let mut meldung = String::new();
+    // Der erste Druck auf `auto` zeigt die Sicherheitsmeldung, der zweite stellt um.
+    let mut auto_scharf = false;
     let hoehe = zeichnen(&e, &liste, hier, t, ordner, &meldung);
 
     loop {
@@ -428,6 +430,21 @@ pub fn fahren(t: Toene, ordner: &std::path::Path) -> bool {
                     (None, Some(f)) => geaendert(f, &jetzt, nach_rechts, admin),
                     (None, None) => None,
                 };
+                // ⛔️ **Vor `auto` die Sicherheitsmeldung, und erst der
+                //    zweite Druck stellt um** (Festlegung des
+                //    Projektinhabers, 2026-09-26). In einer Vollbildseite
+                //    ist die Meldungszeile der Ort dafuer; ein eigener
+                //    Dialog wuerde die Seite zerreissen.
+                let wird_auto = r.name == "agent.modus"
+                    && neu.as_deref() == Some("auto")
+                    && e.agent.modus != myl_client::einstellungen::Agentenmodus::Auto;
+                if wird_auto && !auto_scharf {
+                    let w = myl_client::einstellungen::autowarnung(e.oberflaeche.sprache);
+                    meldung = format!("⚠️ {}: {} Noch einmal drücken, um umzustellen.", w.titel, w.punkte.join(" "));
+                    auto_scharf = true;
+                    continue;
+                }
+                auto_scharf = false;
                 match neu {
                     Some(neu) => match e.setzen(&r.name, &neu) {
                         Ok(()) => geaendert_worden = true,

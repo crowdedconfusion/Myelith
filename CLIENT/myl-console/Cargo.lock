@@ -712,7 +712,7 @@ dependencies = [
 
 [[package]]
 name = "myl-client"
-version = "0.54.0"
+version = "0.63.0"
 dependencies = [
  "integer-llm-runtime",
  "libc",
@@ -727,7 +727,7 @@ dependencies = [
 
 [[package]]
 name = "myl-console"
-version = "0.23.0"
+version = "0.26.3"
 dependencies = [
  "crossterm",
  "libc",
@@ -737,7 +737,7 @@ dependencies = [
 
 [[package]]
 name = "myl-local-agent"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "myl-agent",
  "myl-types",

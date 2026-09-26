@@ -697,6 +697,7 @@ mod tests {
             blick_bildschirm: false,
             blick_kamera: false,
             web_recherche: false,
+            netzsaat: None,
         };
 
         // Ohne Blatt entscheidet der Name, und der ist keiner der drei.
@@ -799,6 +800,7 @@ mod tests {
             blick_bildschirm: false,
             blick_kamera: false,
             web_recherche: false,
+            netzsaat: None,
         };
         assert_eq!(werkzeug_fuer(&agent, "sonstiges").as_deref(), Some("tabelle_lesen"));
         // Fuer eine Art, fuer die sich niemand meldet, wird niemand genannt.
@@ -841,6 +843,7 @@ mod tests {
             blick_bildschirm: false,
             blick_kamera: false,
             web_recherche: false,
+            netzsaat: None,
         };
         let kette: Vec<String> = angebote_der_kette(&ordnerkette(&agent), &ein, |_| {})
             .into_iter()

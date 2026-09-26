@@ -90,17 +90,16 @@ CLIENT/myl-client/src/werkzeuge_1337/
 CLIENT/werkzeugkisten/1337/*.json
 SYSTEM/crates-lager/
 
-# ⚑ **GolemOS bleibt vorerst ganz draussen** (Festlegung des
-# Projektinhabers, 2026-09-24). Der Ordner traegt Skripte,
-# Konfigurationen UND zwei freigegebene Abbilder (82 MB).
+# ⚑ **GolemOS ist im Repositorium** (Festlegung des Projektinhabers,
+# 2026-09-25). Bis dahin stand der ganze Ordner hier, und ein frischer
+# Klon hatte weder Skripte noch Abbilder. Jetzt traegt er das Rezept,
+# den Einrichtungsassistenten und die freigegebenen Abbilder.
 #
-# ⚑ **Bis GolemOS fertig ist**, dann kommt es herein. Solange es sich
-# in jeder Sitzung aendert, kostete jede Fassung der Abbilder 82 MB
-# Geschichte, die nie wieder schrumpft.
-#
-# ⚠️ **Folge, damit sie nicht untergeht:** Ein frischer Klon hat
-# solange gar kein GolemOS, weder Skripte noch Abbilder, und die Kette
-# „Klon zu startfaehigem Datentraeger" funktioniert aus einem Klon
-# **noch nicht**. Das ist der Preis des Zwischenstands, nicht ein
-# Versaeumnis.
-SYSTEM/golemos/
+# ⚠️ **Draussen bleibt nur, was jeder Bau neu erzeugt**: die Erzeugnisse
+# (`aus/`), der Baubaum und die Mitnahme (`bau/`) und die Programme, die
+# `bauen.sh` ins Overlay legt. Die Abbilder unter `abbild/fertig/`
+# kommen herein, aber nur ueber `freigeben.sh`, also bei einem
+# benannten Stand und nicht nach jedem Bau.
+SYSTEM/golemos/aus/
+SYSTEM/golemos/bau/
+SYSTEM/golemos/overlay/usr/bin/

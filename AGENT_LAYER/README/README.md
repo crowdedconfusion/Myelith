@@ -1,7 +1,7 @@
 # agent-layer (`myl-agent`)
 
-> **Version:** 0.20.0 (`myl-agent` 0.7.0, `myl-local-agent` 0.13.0)
-> **Datum:** 2026-09-21
+> **Version:** 0.21.0 (`myl-agent` 0.7.0, `myl-local-agent` 0.14.0)
+> **Datum:** 2026-09-26
 > **Status:** Manifeste, Herkunftsstufe, Registratur, der
 > **Session-Kontrakt** mit Durchsetzung im Ledger, der **Plan** und seit
 > v0.7.0 die **Segmentkette**. 52 Tests. ⚑ **Was jetzt fehlt, ist keine
@@ -44,6 +44,25 @@ Kap. 8.2).
 - `src/kette.rs` — dass er es auch so getan hat, und wann er aufhört.
 
 ## Changelog
+
+### v0.21.0 – 2026-09-26 (`myl-local-agent` 0.14.0: ein Werkzeugkasten lässt sich umhüllen, ohne dass sich an einer Erlaubnis etwas ändert)
+
+**Neu: `Werkzeugkasten::umhuellen`.** Legt um jede Ausführung eine Hülle,
+in derselben Reihenfolge. Anlass ist die **Doppelsperre des Loops**
+(CLIENT): Setzt eine unterbrochene Runde fort, soll ein Aufruf, der vor
+der Unterbrechung schon lief, nicht noch einmal ausgeführt werden,
+sondern das gespeicherte Ergebnis liefern.
+
+⚑ **Eine Hülle tut höchstens weniger.** Die Erlaubnis sitzt im Harness
+und prüft vor der Ausführung; die Hülle sieht nur, was schon erlaubt
+ist. Derselbe Grundsatz wie „ein Steckplatz darf tun, nie erlauben“.
+
+⛔️ **Der Name bleibt.** Eine Hülle, die ihn ändert, ließe die Erlaubnis
+einen anderen Namen prüfen als den ausgeführten. Das ist ein
+Programmierfehler und bricht hart ab.
+
+**Belegt:** zwei Proben (die Hülle wirkt auf jedes Werkzeug in seiner
+Reihenfolge; eine umbenennende Hülle bricht ab).
 
 ### v0.20.0 – 2026-09-25 (`myl-local-agent` 0.13.0: ein Lauf kann vom Menschen angehalten werden, und die Risikoklassen liegen unter COMPLIANCE)
 

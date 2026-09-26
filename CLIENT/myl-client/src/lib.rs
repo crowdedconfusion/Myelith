@@ -79,8 +79,11 @@ pub mod schutzfilter;
 pub mod netzwerkzeuge;
 pub mod sinneswerkzeuge;
 pub mod skills;
+pub mod systemprompt;
 pub mod verankert;
 pub mod verlauf;
+/// Vorhaben: ein Ziel ueber viele Runden (der Loop).
+pub mod vorhaben;
 pub mod warnung;
 pub mod werkzeuge;
 pub mod kisten;

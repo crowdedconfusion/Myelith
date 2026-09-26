@@ -114,8 +114,15 @@ pub fn zusammenfassung(gespraech: &Gespraech) -> Option<String> {
 }
 
 /// Die Werkzeugansage, wie ein Lauf mit dieser Ruestung sie vorn stehen hat.
+///
+/// ⚑ **Samt Systemprompt**, genau wie im Lauf, damit die Kontextanzeige
+/// dasselbe zaehlt, was das Modell bekommt.
 pub fn ansage(ruestung: &crate::ruestung::Ruestung) -> Nachricht {
-    myl_local_agent::werkzeug::angebot(ruestung.kasten.angebote(), ruestung.form)
+    myl_local_agent::werkzeug::angebot_mit_regel(
+        ruestung.kasten.angebote(),
+        ruestung.form,
+        crate::systemprompt::geprueft(ruestung.form).ok(),
+    )
 }
 
 /// **Verdichtet das ganze Gespraech zu einer Zusammenfassung.** Zurueck

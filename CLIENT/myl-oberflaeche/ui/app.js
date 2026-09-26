@@ -99,6 +99,41 @@ const TEXTE = {
     "knopf.senden": "Senden",
     "knopf.anhang": "Datei anhängen",
     "lauf.laeuftschon": "Es läuft noch ein Auftrag; einen Augenblick.",
+    "loop.knopf": "Loop an oder aus",
+    "loop.liste": "Tasks des Loops",
+    "loop.titel": "Tasks",
+    "loop.leer": "Noch keine Tasks. Beschreibe unten ein Ziel; der Agent verfolgt es in Runden.",
+    "loop.neu.platz": "Neuer Task: Ziel beschreiben …",
+    "loop.neu.label": "Neuer Task",
+    "loop.neu.knopf": "Task anlegen",
+    "loop.stand.aus": "Loop aus",
+    "loop.stand.an": "Loop an",
+    "loop.stand.runde": "rechnet eine Runde",
+    "loop.stand.wartet": (m) => `nächste Runde in ${m} min`,
+    "loop.ziehen": "Ziehen zum Umsortieren (oder Alt+↑ und Alt+↓)",
+    "loop.oeffnen": "Verlauf dieses Tasks öffnen",
+    "loop.weiter": "Fortsetzen",
+    "loop.stoppen": "Anhalten",
+    "loop.entfernen": "Entfernen",
+    "loop.wirklich": "Wirklich entfernen? Noch einmal klicken.",
+    "loop.ziel": (z) => `∞ Task: ${z}`,
+    "loop.fuss": (n, zustand) => `Runde ${n} · ${zustand}`,
+    "loop.laeuft_runde": (n) => `Runde ${n} läuft`,
+    "loop.pruefung": (f, e, g) => `Prüfung: Fortschritt ${f ? "ja" : "nein"}, erreicht ${e ? "ja" : "nein"}. ${g}`,
+    "loop.erst_task": "Lege zuerst einen Task an: Ziel in die Liste schreiben.",
+    "loop.angelegt": (z, wort) => `Task angelegt: ${z} (${wort})`,
+    "loop.belegt": "Der Loop rechnet gerade eine Runde; das Modell gehört ihr. ∞ pausiert sie.",
+    "loop.laedt": "Der Loop lädt das Modell …",
+    "loop.fehler": (g) => `Loop: ${g}`,
+    "loop.ende.pausiert": "Loop pausiert. ∞ macht genau dort weiter.",
+    "loop.ende.leer": "Keine offenen Tasks mehr; der Loop endet.",
+    "loop.ende.notaus": "Notaus: Der Loop ist angehalten, der laufende Task auch.",
+    "loop.wieder": "Der Loop lief beim Schließen und macht jetzt dort weiter.",
+    "loop.unterbrochen": "unterbrochen; beim nächsten ∞ geht es genau hier weiter",
+    "loop.meldung": (z, zustand) => `∞ ${z}: ${zustand}`,
+    "loop.kette": (z) => `∞ Kette: neuer Task ${z}`,
+    "auto.nein": "Abbrechen",
+    "auto.ja": "Auf auto stellen",
     "sprachmodus.halten": "Zum Sprechen gedrückt halten",
     "anhang.weg": "Anhang entfernen",
     "knopf.sprachmodus": "Sprachmodus",
@@ -291,6 +326,41 @@ const TEXTE = {
     "knopf.senden": "Send",
     "knopf.anhang": "Attach a file",
     "lauf.laeuftschon": "A run is still going; one moment.",
+    "loop.knopf": "Loop on or off",
+    "loop.liste": "Loop tasks",
+    "loop.titel": "Tasks",
+    "loop.leer": "No tasks yet. Describe a goal below; the agent pursues it in rounds.",
+    "loop.neu.platz": "New task: describe a goal …",
+    "loop.neu.label": "New task",
+    "loop.neu.knopf": "Add task",
+    "loop.stand.aus": "loop off",
+    "loop.stand.an": "loop on",
+    "loop.stand.runde": "running a round",
+    "loop.stand.wartet": (m) => `next round in ${m} min`,
+    "loop.ziehen": "Drag to reorder (or Alt+↑ and Alt+↓)",
+    "loop.oeffnen": "Open this task's log",
+    "loop.weiter": "Resume",
+    "loop.stoppen": "Pause",
+    "loop.entfernen": "Remove",
+    "loop.wirklich": "Really remove? Click again.",
+    "loop.ziel": (z) => `∞ Task: ${z}`,
+    "loop.fuss": (n, zustand) => `Round ${n} · ${zustand}`,
+    "loop.laeuft_runde": (n) => `Round ${n} running`,
+    "loop.pruefung": (f, e, g) => `Review: progress ${f ? "yes" : "no"}, reached ${e ? "yes" : "no"}. ${g}`,
+    "loop.erst_task": "Add a task first: write a goal into the list.",
+    "loop.angelegt": (z, wort) => `Task added: ${z} (${wort})`,
+    "loop.belegt": "The loop is running a round; the model belongs to it. ∞ pauses it.",
+    "loop.laedt": "The loop is loading the model …",
+    "loop.fehler": (g) => `Loop: ${g}`,
+    "loop.ende.pausiert": "Loop paused. ∞ continues exactly there.",
+    "loop.ende.leer": "No open tasks left; the loop ends.",
+    "loop.ende.notaus": "Emergency stop: the loop is halted, and so is the running task.",
+    "loop.wieder": "The loop was running when the window closed and continues now.",
+    "loop.unterbrochen": "interrupted; the next ∞ continues exactly here",
+    "loop.meldung": (z, zustand) => `∞ ${z}: ${zustand}`,
+    "loop.kette": (z) => `∞ Chain: new task ${z}`,
+    "auto.nein": "Cancel",
+    "auto.ja": "Switch to auto",
     "sprachmodus.halten": "Hold to speak",
     "anhang.weg": "Remove attachment",
     "knopf.sprachmodus": "Voice mode",
@@ -2225,12 +2295,21 @@ function gespraech_zeichnen() {
     w.append(p);
     return;
   }
-  for (const b of offen.beitraege) w.append(beitrag_zeichnen(b));
+  for (const b of offen.beitraege) {
+    const el = beitrag_zeichnen(b);
+    // ⚑ **Ein laufender Beitrag bekommt sein neues Element zurueck.** Sonst
+    //   schriebe der Strom nach einem Neuzeichnen in ein Element, das
+    //   nicht mehr dasteht, und der Beitrag stuende still bis zum Ende.
+    if (loopbuehne && b === loopbuehne.beitrag) loopbuehne.element = el;
+    if (b === laufender) laufendes_element = el;
+    w.append(el);
+  }
   w.scrollTop = w.scrollHeight;
 }
 
 function alles_zeichnen() {
   modi_zeichnen();
+  loop_zeichnen();
   // ⚑ Ohne `await`: Die Reichweite braucht einen Ruecken-Aufruf, und
   // das Gespraech soll darauf nicht warten. Sie erscheint, wenn sie da
   // ist.
@@ -2409,7 +2488,8 @@ const tabelle_fuer = (name) =>
       ? "felder-grenzen"
       : // ⚑ **Agent und Modell in getrennten Tabellen**, damit die Sinne
         // dazwischen stehen koennen (2026-09-18).
-        name.startsWith("agent.")
+        // ⚑ Der Loop steht beim Agenten: Er ist eine Folge von Agentenlaeufen.
+        name.startsWith("agent.") || name.startsWith("loop.")
         ? "felder-agent"
         : "felder-modell";
 
@@ -3144,6 +3224,13 @@ async function einstellungen_zeichnen() {
     }
     const zeile =
       feldzeile(f, wert[f.name], async (neu) => {
+        // ⛔️ **Wer auf `auto` stellt, bekommt vorher die Sicherheitsmeldung**
+        //    (Festlegung des Projektinhabers). Ein Nein zeichnet die Seite
+        //    neu, damit die Auswahl wieder `manual` zeigt.
+        if (f.name === "agent.modus" && neu === "auto" && !(await auto_bestaetigen())) {
+          await einstellungen_zeichnen();
+          return;
+        }
         try {
           await invoke("setzen", { feld: f.name, wert: neu });
           $("setzmeldung").textContent = t("gesetzt", f.titel);
@@ -4039,12 +4126,17 @@ function anhaenge_abloesen(text) {
   return { anhaenge, modelltext };
 }
 
+/// **Ist das Modell gerade vergeben?** Ein Auftrag zur Zeit, und waehrend
+/// einer Runde des Loops gehoert es ihm. Sagt es, wenn ja.
+function belegt() {
+  if (!auftrag_laeuft && !loopstand.in_runde) return false;
+  melden(t(auftrag_laeuft ? "lauf.laeuftschon" : "loop.belegt"));
+  return true;
+}
+
 async function senden(text) {
   // ⛔️ **Ein Auftrag zur Zeit.** Siehe `auftrag_laeuft`.
-  if (auftrag_laeuft) {
-    melden(t("lauf.laeuftschon"));
-    return;
-  }
+  if (belegt()) return;
   auftrag_laeuft = true;
   const { anhaenge, modelltext } = anhaenge_abloesen(text);
   if (!offen) neues_gespraech();
@@ -4501,6 +4593,499 @@ $("terminaleingabe").addEventListener("keydown", (e) => {
 });
 
 
+// --- Der Loop: ∞ neben dem Senden --------------------------------------
+//
+// ⚑ **Festlegungen des Projektinhabers (2026-09-26):** ∞ ist ein Schalter
+// (an faehrt, aus pausiert), der Pfeil daneben oeffnet die Tasks. Dort
+// wird ausgewaehlt, neu angelegt und am Griff gezogen. Der vorderste
+// laeuft, alle dahinter sind „queued". Wird das Fenster geschlossen,
+// macht der Loop beim naechsten Oeffnen genau dort weiter.
+//
+// ⚑ **Jeder Task hat sein eigenes Gespraech** in der Agentenliste, und
+// dorthin schreibt jede Runde ihren Beitrag. Einen Task auswaehlen
+// heisst, dieses Gespraech zu oeffnen.
+
+/// Was das Fenster ueber den Loop weiss; die Wahrheit steht im Ruecken.
+///
+/// ⚑ `in_runde` sperrt auch `senden`: Waehrend einer Runde gehoert das
+/// Modell dem Loop, zwischen den Runden ist es frei.
+const loopstand = { laeuft: false, in_runde: false, minuten: null, tasks: [], schritte: 0 };
+
+/// **Die Buehne der laufenden Runde**: ihr Beitrag, sein Element und der
+/// Task, zu dem sie gehoert. Getrennt von `laufender`, denn ein Chat und
+/// eine Runde koennen sich zeitlich beruehren (siehe `LOOPLEBEND` im
+/// Ruecken).
+let loopbuehne = null;
+
+/// Holt die Tasks und zeichnet Knopf und Liste.
+async function tasks_holen() {
+  try {
+    const a = await invoke("tasks");
+    loopstand.laeuft = a.laeuft;
+    loopstand.in_runde = a.in_runde;
+    loopstand.tasks = a.eintraege;
+    if (!a.laeuft) loopstand.minuten = null;
+    loop_zeichnen();
+    return a;
+  } catch (f) {
+    melden(t("loop.fehler", f));
+    return null;
+  }
+}
+
+/// Knopf und, falls offen, die Liste.
+function loop_zeichnen() {
+  $("loopgruppe").hidden = modus_jetzt() !== "agent";
+  const knopf = $("loopknopf");
+  knopf.setAttribute("aria-pressed", String(loopstand.laeuft));
+  knopf.classList.toggle("an", loopstand.laeuft);
+  knopf.title = `${t("loop.knopf")} · ${loopstand_text()}`;
+  if (!$("taskwahl").hidden) taskliste_zeichnen();
+}
+
+const loopstand_text = () =>
+  !loopstand.laeuft
+    ? t("loop.stand.aus")
+    : loopstand.in_runde
+      ? t("loop.stand.runde")
+      : loopstand.minuten != null
+        ? t("loop.stand.wartet", loopstand.minuten)
+        : t("loop.stand.an");
+
+/// **Das Gespraech eines Tasks**, angelegt beim ersten Bedarf.
+///
+/// ⚑ Es steht in der Agentenliste wie jedes andere, mit ∞ vor dem Titel;
+/// das Feld `task` bindet es an die Kennung. Angelegt wird es, ohne es zu
+/// oeffnen: Wer gerade woanders liest, soll nicht herausgerissen werden.
+function taskgespraech(kennung, ziel) {
+  let g = gespraeche.find((x) => x.task === kennung);
+  if (g) return g;
+  g = {
+    id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    titel: `∞ ${kurz_titel(ziel)}`,
+    modus: "agent",
+    task: kennung,
+    beitraege: [{ von: "hinweis", text: t("loop.ziel", ziel) }],
+    wann: jetzt(),
+  };
+  gespraeche.unshift(g);
+  sichern();
+  return g;
+}
+
+/// Oeffnet das Gespraech eines Tasks (Auswaehlen in der Liste).
+function task_oeffnen(z) {
+  const g = taskgespraech(z.kennung, z.ziel);
+  modus = "agent";
+  offen = g;
+  taskwahl_schliessen();
+  alles_zeichnen();
+  kontext_holen();
+}
+
+// ── Die Liste ──
+
+function taskwahl_schliessen() {
+  $("taskwahl").hidden = true;
+  $("loopwahl").setAttribute("aria-expanded", "false");
+}
+
+async function taskwahl_oeffnen() {
+  const m = $("taskwahl");
+  m.hidden = false;
+  $("loopwahl").setAttribute("aria-expanded", "true");
+  await tasks_holen();
+  taskliste_zeichnen();
+  taskwahl_setzen();
+  $("taskziel").focus();
+}
+
+/// Ueber den Knoepfen, am rechten Rand ausgerichtet, wie die Kontextwahl.
+function taskwahl_setzen() {
+  const m = $("taskwahl");
+  const r = $("loopgruppe").getBoundingClientRect();
+  const h = m.getBoundingClientRect();
+  m.style.left = `${Math.max(8, Math.min(r.right - h.width, window.innerWidth - h.width - 8))}px`;
+  m.style.top = `${Math.max(8, r.top - h.height - 6)}px`;
+}
+
+function taskliste_zeichnen() {
+  const ol = $("taskliste");
+  ol.replaceChildren();
+  $("taskleer").hidden = loopstand.tasks.length > 0;
+  $("taskstand").textContent = loopstand_text();
+  for (const z of loopstand.tasks) ol.append(taskzeile_bauen(z));
+}
+
+function taskzeile_bauen(z) {
+  const li = document.createElement("li");
+  li.className = "taskzeile";
+  li.dataset.kennung = z.kennung;
+  li.dataset.stellung = z.stellung;
+  li.tabIndex = 0;
+
+  const griff = document.createElement("span");
+  griff.className = "taskgriff";
+  griff.textContent = "⠿";
+  griff.title = t("loop.ziehen");
+  griff.setAttribute("aria-hidden", "true");
+  griff.addEventListener("pointerdown", (e) => ziehen_beginnen(e, li));
+
+  const name = document.createElement("button");
+  name.type = "button";
+  name.className = "taskname blank";
+  name.textContent = z.ziel;
+  name.title = `${t("loop.oeffnen")}: ${z.ziel}`;
+  name.addEventListener("click", () => task_oeffnen(z));
+
+  const marke = document.createElement("span");
+  marke.className = "taskmarke";
+  marke.textContent = `(${z.wort})`;
+
+  const tat = (zeichen, titel, fn) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "taskaktion blank";
+    b.textContent = zeichen;
+    b.title = titel;
+    b.setAttribute("aria-label", titel);
+    b.addEventListener("click", fn);
+    return b;
+  };
+  const aktionen = document.createElement("span");
+  aktionen.className = "taskaktionen";
+  const kennung = z.kennung;
+  if (z.stellung === "angehalten") {
+    aktionen.append(tat("▶", t("loop.weiter"), () => task_befehl(invoke("task_weiter", { kennung }))));
+  } else if (z.stellung !== "fertig") {
+    aktionen.append(tat("⏸", t("loop.stoppen"), () => task_befehl(invoke("task_stoppen", { kennung }))));
+  }
+  // ⛔️ **Entfernen braucht zwei Klicks.** Ein Task traegt sein Tagebuch
+  //    mit; ein Klick daneben soll es nicht kosten.
+  const weg = tat("×", t("loop.entfernen"), () => {
+    if (weg.dataset.scharf === "ja") {
+      task_befehl(invoke("task_entfernen", { kennung }));
+      return;
+    }
+    weg.dataset.scharf = "ja";
+    weg.title = t("loop.wirklich");
+    melden(t("loop.wirklich"));
+    setTimeout(() => {
+      weg.dataset.scharf = "";
+      weg.title = t("loop.entfernen");
+    }, 3000);
+  });
+  aktionen.append(weg);
+
+  // ⚑ Auch mit der Tastatur umsortieren: Alt+↑ und Alt+↓.
+  li.addEventListener("keydown", (e) => {
+    if (!e.altKey || (e.key !== "ArrowUp" && e.key !== "ArrowDown")) return;
+    e.preventDefault();
+    const nachbar = e.key === "ArrowUp" ? li.previousElementSibling : li.nextElementSibling;
+    if (!nachbar) return;
+    if (e.key === "ArrowUp") nachbar.before(li);
+    else nachbar.after(li);
+    li.focus();
+    reihe_speichern();
+  });
+
+  li.append(griff, name, marke, aktionen);
+  return li;
+}
+
+/// ⚑ Der Aufruf kommt fertig herein, mit seinem Namen im Klartext: Die
+/// Probe `jeder_befehl_ist_angemeldet` findet nur Namen, die dastehen.
+async function task_befehl(aufruf) {
+  try {
+    await aufruf;
+  } catch (f) {
+    melden(t("loop.fehler", f));
+  }
+  await tasks_holen();
+}
+
+// ── Ziehen ──
+//
+// ⚠️ **Mit Zeigerereignissen und nicht mit HTML5-Drag-and-drop.** Das
+//    Fenster nimmt Dateien ueber Tauris eigene Ablage entgegen, und die
+//    verschluckt unter Windows das Ziehen innerhalb der Seite.
+
+let gezogen = null;
+
+function ziehen_beginnen(e, li) {
+  e.preventDefault();
+  gezogen = li;
+  li.classList.add("zieht");
+  li.setPointerCapture?.(e.pointerId);
+  const bewegen = (ev) => {
+    const ol = $("taskliste");
+    for (const anderes of ol.children) {
+      if (anderes === li) continue;
+      const r = anderes.getBoundingClientRect();
+      if (ev.clientY > r.top && ev.clientY < r.bottom) {
+        if (ev.clientY < r.top + r.height / 2) anderes.before(li);
+        else anderes.after(li);
+        break;
+      }
+    }
+  };
+  const loslassen = () => {
+    li.removeEventListener("pointermove", bewegen);
+    li.removeEventListener("pointerup", loslassen);
+    li.removeEventListener("pointercancel", loslassen);
+    li.classList.remove("zieht");
+    gezogen = null;
+    reihe_speichern();
+  };
+  li.addEventListener("pointermove", bewegen);
+  li.addEventListener("pointerup", loslassen);
+  li.addEventListener("pointercancel", loslassen);
+}
+
+async function reihe_speichern() {
+  const reihe = [...$("taskliste").children].map((li) => li.dataset.kennung);
+  try {
+    await invoke("tasks_ordnen", { reihe });
+  } catch (f) {
+    melden(t("loop.fehler", f));
+  }
+  await tasks_holen();
+}
+
+// ── An und aus ──
+
+async function loop_an(von_selbst) {
+  const a = await tasks_holen();
+  if (!a) return;
+  if (!a.eintraege.some((z) => z.stellung === "vorn")) {
+    if (!von_selbst) {
+      melden(t("loop.erst_task"));
+      await taskwahl_oeffnen();
+    }
+    return;
+  }
+  // ⚑ Dieselbe Warnung wie vor jedem Agentenlauf.
+  await agentenwarnung_zeigen();
+  try {
+    const e = await invoke("einstellungen");
+    loopstand.schritte = e.werte["loop.schritte"] ?? 0;
+  } catch {
+    loopstand.schritte = 0;
+  }
+  try {
+    const hinweis = await invoke("loop_starten");
+    // ⚑ **Mit Standardeinstellungen steht ein Hinweis im Ausgabefenster**
+    //   (Wunsch des Projektinhabers), und zwar im Gespraech des Tasks,
+    //   der jetzt laeuft.
+    if (hinweis) {
+      const vorn = a.eintraege.find((z) => z.stellung === "vorn");
+      const g = taskgespraech(vorn.kennung, vorn.ziel);
+      g.beitraege.push({ von: "hinweis", text: hinweis });
+      sichern();
+      if (offen === g) alles_zeichnen();
+      melden(hinweis);
+    }
+  } catch (f) {
+    melden(t("loop.fehler", f));
+  }
+  await tasks_holen();
+}
+
+async function loop_umschalten() {
+  if (loopstand.laeuft) {
+    await invoke("loop_pausieren");
+    return;
+  }
+  await loop_an(false);
+}
+
+// ── Was der Ruecken meldet ──
+
+/// Ein Stueck Strom der laufenden Runde, auf ihrer eigenen Buehne.
+///
+/// ⚑ **`live_meldung` wird mitbenutzt**, denn sie kann schon alles:
+/// Denken, Text, Werkzeuge. Sie arbeitet auf `laufender` und
+/// `laufendes_element`; fuer die Dauer des Aufrufs stehen dort die der
+/// Runde, danach wieder die des Chats. JavaScript ist einfaedig, also
+/// sieht niemand den Tausch.
+function loop_meldung(m) {
+  if (!loopbuehne) return;
+  const chat = [laufender, laufendes_element, laufender_verdichtet, schrittgrenze];
+  laufender = loopbuehne.beitrag;
+  laufendes_element = loopbuehne.element;
+  // Die Schritte einer Runde begrenzt `loop.schritte`, nicht `agent.schritte`.
+  schrittgrenze = loopstand.schritte;
+  try {
+    live_meldung(m);
+  } finally {
+    loopbuehne.beitrag = laufender;
+    loopbuehne.element = laufendes_element;
+    [laufender, laufendes_element, laufender_verdichtet, schrittgrenze] = chat;
+  }
+}
+
+async function loop_ereignis(e) {
+  if (e.art === "Beginnt") {
+    const g = taskgespraech(e.kennung, e.ziel);
+    const beitrag = {
+      von: "modell",
+      text: "",
+      schritte: [],
+      laufend: true,
+      fuss: t("loop.laeuft_runde", e.runde),
+    };
+    g.beitraege.push(beitrag);
+    // ⚑ Das Element entsteht auch dann, wenn das Gespraech nicht offen
+    //   ist: Die Meldungen landen dann in einem ungezeigten Element und
+    //   in den Daten, und wer das Gespraech oeffnet, sieht den Stand.
+    loopbuehne = { beitrag, element: beitrag_zeichnen(beitrag), g };
+    loopstand.in_runde = true;
+    loopstand.minuten = null;
+    // Das Modell liegt jetzt im Ruecken; ein Auftrag danach muss es nicht laden.
+    geladen = true;
+    nach_oben(g);
+    sichern();
+    if (offen === g) alles_zeichnen();
+    else chats_zeichnen();
+  } else if (e.art === "Geendet") {
+    if (loopbuehne) {
+      const b = loopbuehne.beitrag;
+      b.laufend = false;
+      b.text = e.bericht;
+      b.bloecke = await bloecke_holen(e.bericht);
+      b.fuss = t("loop.fuss", e.runde, e.zustand);
+      if (e.pruefung) {
+        loopbuehne.g.beitraege.push({
+          von: "hinweis",
+          text: t("loop.pruefung", e.pruefung.fortschritt, e.pruefung.erreicht, e.pruefung.grund),
+        });
+      }
+      const g = loopbuehne.g;
+      loopbuehne = null;
+      sichern();
+      if (offen === g) alles_zeichnen();
+    }
+    loopstand.in_runde = false;
+    melden(t("loop.meldung", kurz_titel(e.ziel), e.zustand), "gespraech");
+  } else if (e.art === "Angestossen") {
+    taskgespraech(e.kennung, e.ziel);
+    chats_zeichnen();
+    melden(t("loop.kette", kurz_titel(e.ziel)));
+  } else if (e.art === "Wartet") {
+    loopstand.minuten = e.minuten;
+  } else if (e.art === "Fehler" || e.art === "OhneModell") {
+    melden(t("loop.fehler", e.grund));
+  } else if (e.art === "Laedt") {
+    melden(t("loop.laedt"));
+  } else if (e.art === "Ende") {
+    // ⚑ Eine unterbrochene Runde bleibt stehen, mit dem Satz, dass sie
+    //   beim naechsten ∞ genau dort weitergeht.
+    if (loopbuehne) {
+      const b = loopbuehne.beitrag;
+      b.laufend = false;
+      b.fuss = t("loop.unterbrochen");
+      b.bloecke = await bloecke_holen(b.text);
+      const g = loopbuehne.g;
+      loopbuehne = null;
+      sichern();
+      if (offen === g) alles_zeichnen();
+    }
+    loopstand.laeuft = false;
+    loopstand.in_runde = false;
+    const satz = t(`loop.ende.${e.grund}`);
+    if (satz) melden(satz);
+  }
+  await tasks_holen();
+}
+
+function loop_verdrahten() {
+  $("loopknopf").addEventListener("click", loop_umschalten);
+  $("loopwahl").addEventListener("click", () => {
+    if ($("taskwahl").hidden) taskwahl_oeffnen();
+    else taskwahl_schliessen();
+  });
+  $("taskneu").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const feld_ziel = $("taskziel");
+    const ziel = feld_ziel.value.trim();
+    if (!ziel) return;
+    try {
+      const kennung = await invoke("task_anlegen", { ziel });
+      feld_ziel.value = "";
+      taskgespraech(kennung, ziel);
+      chats_zeichnen();
+      const a = await tasks_holen();
+      const z = a?.eintraege.find((x) => x.kennung === kennung);
+      melden(t("loop.angelegt", kurz_titel(ziel), z ? z.wort : ""));
+      taskwahl_setzen();
+    } catch (f) {
+      melden(t("loop.fehler", f));
+    }
+  });
+  // ⚑ Schliessen wie die anderen Menues: Klick daneben, Fluchttaste.
+  //   ⚠️ Nicht beim Bildlauf: Die Liste rollt selbst.
+  document.addEventListener("pointerdown", (e) => {
+    if (gezogen) return;
+    if (!$("taskwahl").contains(e.target) && !$("loopgruppe").contains(e.target)) taskwahl_schliessen();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") taskwahl_schliessen();
+  });
+  horchen("loop-lebt", (e) => loop_meldung(e.payload));
+  horchen("loop-ereignis", (e) => loop_ereignis(e.payload));
+  // ⚑ Die Minuten in der Liste bleiben frisch, solange sie offen ist
+  //   oder der Loop laeuft.
+  setInterval(() => {
+    if (loopstand.laeuft || !$("taskwahl").hidden) tasks_holen();
+  }, 20000);
+}
+
+/// ⚑ **Lief der Loop beim Schliessen, laeuft er jetzt weiter** (Festlegung
+/// des Projektinhabers: exakt dort, wo gestoppt). Erst nach dem KI-Hinweis.
+async function loop_beim_start() {
+  const stand = await tasks_holen();
+  if (stand && stand.war_aktiv) {
+    melden(t("loop.wieder"));
+    await loop_an(true);
+  }
+}
+
+/// **Die Sicherheitsmeldung vor `auto`**, mit zwei Knoepfen.
+///
+/// ⛔️ Kein Klick auf den Hintergrund, keine Fluchttaste als Ja: Der
+/// einzige Weg zu `auto` ist der Knopf, der es sagt.
+async function auto_bestaetigen() {
+  let w;
+  try {
+    w = await invoke("autowarnung");
+  } catch (f) {
+    melden(t("fehler", f));
+    return false;
+  }
+  $("autowarnungtitel").textContent = `⚠️ ${w.titel}`;
+  const ul = $("autowarnungpunkte");
+  ul.replaceChildren();
+  for (const p of w.punkte) {
+    const li = document.createElement("li");
+    li.textContent = p;
+    ul.append(li);
+  }
+  $("autowarnungfrage").textContent = w.frage;
+  const kasten = $("autowarnung");
+  kasten.hidden = false;
+  $("autonein").focus();
+  return await new Promise((fertig) => {
+    const ende = (ja) => {
+      kasten.hidden = true;
+      $("autoja").onclick = null;
+      $("autonein").onclick = null;
+      fertig(ja);
+    };
+    $("autoja").onclick = () => ende(true);
+    $("autonein").onclick = () => ende(false);
+  });
+}
+
 // --- Start --------------------------------------------------------------
 
 (async () => {
@@ -4547,6 +5132,8 @@ $("terminaleingabe").addEventListener("keydown", (e) => {
   await vorhangWeg();
   await starthinweis_zeigen();
   notaus_verdrahten();
+  loop_verdrahten();
+  await loop_beim_start();
   feld.focus();
 })();
 

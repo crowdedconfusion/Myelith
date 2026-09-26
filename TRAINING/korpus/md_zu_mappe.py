@@ -169,7 +169,7 @@ def mappe_bauen(dateien: list[Path], name: str, ziel: Path, mit_code: bool = Fal
     )
 
     # ⛔️ **Die erste Zeile ist eine Aussage über den Inhalt und keine
-    # Statistik.** Sie ist es, die `list_skills` zeigt und die nach einer
+    # Statistik.** Sie ist es, die `search_skill` zeigt und die nach einer
     # Verdichtung in der Zusammenfassung steht; „25 Kapitel, 893 Absätze"
     # sagt dort nichts darüber, ob diese Mappe zur Frage passt.
     erster_satz = next(

@@ -25,7 +25,10 @@ myl: lokaler Betrieb von Myelith
   myl agent [artefakt] <auftrag>  Die Agentenschleife, lokal
   myl sitzung [artefakt]          Viele Auftraege, Modell einmal geladen
   myl auftraege [artefakt] A B    Mehrere Auftraege NEBENLAEUFIG
-  myl skills                      Wissensmappen: wo sie liegen, was da ist
+  myl loop [ziel]                 Ein Vorhaben in Runden verfolgen (ohne Ziel: fortsetzen)
+  myl tasks [add ZIEL [--abnahme BEFEHL]|abnahme ID BEFEHL|resume ID|pause ID]
+                                  Die Tasks des Loops; die Abnahme entscheidet ueber fertig
+  myl skills [neu NAME]           Skills: wo sie liegen, was da ist; neu legt einen aus der Vorlage an
   myl anhaenge [--aufraeumen]     Angehaengte Dateien: was liegt, und weg damit
   myl sinne [datei|--sprich TEXT] Sehen, Hoeren, Sprechen: was geht, und eine Probe
   myl kennzeichen <datei.wav>     Prueft, ob eine Tondatei als KI-erzeugt gekennzeichnet ist
@@ -119,7 +122,7 @@ fn main() {
     // ⛔️ **Wo ein Modell antwortet, steht vorher, dass es eines ist**
     //   (Art. 50 Abs. 1 KI-Verordnung), auf der Fehlerausgabe, damit die
     //   Antwort auf der Standardausgabe unberuehrt bleibt.
-    if matches!(args.get(1).map(String::as_str), Some("frage" | "agent" | "sitzung")) {
+    if matches!(args.get(1).map(String::as_str), Some("frage" | "agent" | "sitzung" | "loop")) {
         let sprache = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())
             .map(|e| e.oberflaeche.sprache)
             .unwrap_or_default();
@@ -131,6 +134,8 @@ fn main() {
         Some("agent") => agent(&args[2..]),
         Some("sitzung") => sitzung(&args[2..]),
         Some("auftraege") => auftraege(&args[2..]),
+        Some("loop") => schleife(&args[2..]),
+        Some("tasks") => tasks_befehl(&args[2..]),
         Some("ort") => ort(),
         Some("einstellungen") => einstellungen(),
         Some("verlauf") => verlauf(&args[2..]),
@@ -214,8 +219,11 @@ fn ruestung_fuer_diesen_lauf(
     auftrag: &str,
 ) -> Result<myl_client::ruestung::Ruestung, String> {
     if !args.iter().any(|a| a == "--chat") {
+        // ⚑ Der Auftrag ist die Saat der Web-Recherche, wie im Chat.
+        let mut agent = agent_fuer_diesen_lauf(e, args);
+        agent.netzsaat = Some(auftrag.to_string());
         return myl_client::ruestung::ruesten(
-            &agent_fuer_diesen_lauf(e, args),
+            &agent,
             form_fuer_diesen_lauf(args),
             satz_fuer_diesen_lauf(e, args),
             vec![werkzeug_uhr()],
@@ -783,28 +791,61 @@ fn skills(args: &[String]) -> i32 {
         println!("Angelegt: {}", allgemein.display());
     }
 
-    println!("Allgemein (gilt ueberall): {}", allgemein.display());
-    match &wurzel {
-        Some(w) => println!("Projekt (dieser Ordner):  {}", skills::projektordner(w).display()),
-        None => println!("Projekt (dieser Ordner):  keiner, es ist kein Arbeitsordner gesetzt"),
-    }
-    println!();
-
-    let mappen = skills::alle(wurzel.as_deref());
-    if mappen.is_empty() {
-        println!("Keine Wissensmappe gefunden.");
-        println!();
-        println!("Eine entsteht aus Markdown mit:");
-        println!("  python3 TRAINING/korpus/md_zu_mappe.py <ordner> --name <kennung> \\");
-        println!("      --ausgabe {}", allgemein.display());
-        println!("`myl skills --anlegen` legt den allgemeinen Ordner an.");
+    // ⚑ `myl skills neu <name>`: die Vorlage unter die eigenen Skills
+    //   kopieren. Ein Name wie `a/b` oder `..` ist keiner.
+    if args.first().map(String::as_str) == Some("neu") {
+        let Some(name) = args.get(1) else {
+            eprintln!("myl skills neu <name>   (klein, mit Bindestrichen, etwa rechnung-pruefen)");
+            return 2;
+        };
+        if name.is_empty() || !name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-') {
+            eprintln!("myl skills: \"{name}\" ist kein Skillname (klein, Ziffern, Bindestriche)");
+            return 2;
+        }
+        let Some(vorlage) = skills::mitgelieferter_ordner().map(|m| m.join("skill-erstellen/vorlagen/SKILL.md")) else {
+            eprintln!("myl skills: die Vorlage liegt im Repositorium, und das ist nicht zu finden (`myl ort`)");
+            return 1;
+        };
+        let ziel = allgemein.join(name);
+        if ziel.exists() {
+            eprintln!("myl skills: {} gibt es schon", ziel.display());
+            return 1;
+        }
+        let ergebnis = std::fs::create_dir_all(&ziel).and_then(|_| std::fs::copy(&vorlage, ziel.join("SKILL.md")));
+        if let Err(f) = ergebnis {
+            eprintln!("myl skills: {}: {f}", ziel.display());
+            return 1;
+        }
+        println!("Angelegt: {}", ziel.join("SKILL.md").display());
+        println!("Jetzt die Vorlage ausfuellen: beschreibung, stichworte, Wann, Vorgehen, Fallen.");
         return 0;
     }
-    for m in &mappen {
-        println!("  {:<24} {}", m.name, m.satz);
+
+    println!("Projekt (dieser Ordner):   {}", match &wurzel {
+        Some(w) => skills::projektordner(w).display().to_string(),
+        None => "keiner, es ist kein Arbeitsordner gesetzt".to_string(),
+    });
+    println!("Eigene (gelten ueberall):  {}", allgemein.display());
+    println!("Mitgeliefert:              {}", match skills::mitgelieferter_ordner() {
+        Some(m) => m.display().to_string(),
+        None => "nicht gefunden (`myl ort`)".to_string(),
+    });
+    println!();
+
+    let alle = skills::alle(wurzel.as_deref());
+    if alle.is_empty() {
+        println!("Kein Skill gefunden. `myl skills neu <name>` legt einen an.");
+        return 0;
+    }
+    for m in &alle {
+        println!("  {:<24} {:<13} {}", m.name, m.herkunft.wort(), m.satz);
     }
     println!();
-    println!("{} Mappe(n). Der Agent nennt sie mit `list_skills` und liest mit `read_skill`.", mappen.len());
+    println!(
+        "{} Skill(s). Der Agent sucht mit `search_skill` und lernt mit `learn_skill`; \
+         `myl skills neu <name>` legt einen eigenen aus der Vorlage an.",
+        alle.len()
+    );
     0
 }
 
@@ -966,9 +1007,32 @@ fn setzen(args: &[String]) -> i32 {
     };
     // ⚑ Die Kiste weiss, was `aus` heisst und welche Felder es gibt.
     // Zwei Stellen, die das wissen, laufen auseinander.
+    let war_auto = e.agent.modus == myl_client::einstellungen::Agentenmodus::Auto;
     if let Err(m) = e.setzen(feld, wert) {
         eprintln!("myl setzen: {m}");
         return 2;
+    }
+    // ⛔️ **Die Sicherheitsmeldung vor `auto`** (Festlegung des
+    //    Projektinhabers, 2026-09-26). Am Terminal wird bestaetigt; in
+    //    einem Skript ohne Terminal steht sie auf der Fehlerausgabe, denn
+    //    ein Skript, das auf eine Antwort wartet, haengt nur.
+    if !war_auto && e.agent.modus == myl_client::einstellungen::Agentenmodus::Auto {
+        use std::io::{BufRead, IsTerminal, Write};
+        let w = myl_client::einstellungen::autowarnung(e.oberflaeche.sprache);
+        eprintln!("⚠️  {}", w.titel);
+        for p in w.punkte {
+            eprintln!("   - {p}");
+        }
+        if std::io::stdin().is_terminal() {
+            eprint!("{}", w.frage);
+            let _ = std::io::stderr().flush();
+            let mut z = String::new();
+            let _ = std::io::stdin().lock().read_line(&mut z);
+            if !matches!(z.trim().to_lowercase().as_str(), "j" | "ja" | "y" | "yes") {
+                eprintln!("myl setzen: nicht umgestellt");
+                return 1;
+            }
+        }
     }
     match e.schreiben(&p) {
         Ok(()) => {
@@ -1123,7 +1187,15 @@ fn frage(args: &[String]) -> i32 {
     m.denken = e.modell.denken || args.iter().any(|a| a == "--denken");
 
     let anfang = std::time::Instant::now();
-    match m.chat("lokal", &[Nachricht::nutzer(text)], Some(m.grenze as u32)) {
+    // ⛔️ Auch der Chat ohne Werkzeuge steht unter den Grundsaetzen.
+    let grundsaetze = match myl_client::systemprompt::grundsaetze(e.oberflaeche.sprache) {
+        Ok(g) => g,
+        Err(f) => {
+            eprintln!("myl: {f}");
+            return 1;
+        }
+    };
+    match m.chat("lokal", &[Nachricht::system(grundsaetze), Nachricht::nutzer(text)], Some(m.grenze as u32)) {
         Ok(a) => {
             println!("{}", a.text);
             // ⚑ Die Zahlen auf den Fehlerkanal, damit die Antwort
@@ -1558,8 +1630,18 @@ fn einen_auftrag(
     );
     let zuordnung = ruestung.zuordnung();
 
+    // ⛔️ Der vorgegebene Systemprompt, geprueft, oder kein Lauf.
+    let regel = match myl_client::systemprompt::geprueft(ruestung.form) {
+        Ok(t) => t,
+        Err(f) => {
+            eprintln!("myl: {f}");
+            return 1;
+        }
+    };
+    let (datei, text) = myl_client::systemprompt::fassung(ruestung.form);
+    myl_client::protokoll::systemprompt(datei, &myl_client::systemprompt::sha256(text), true);
     let erg = myl_local_agent::schleife::Lauf {
-        hausregel: None,
+        hausregel: Some(regel),
         einhaengung: ruestung.einhaengung.as_ref().map(|e| e.marke()),
         klient: m,
         modell: "lokal",
@@ -1769,6 +1851,7 @@ mod schalter {
                 blick_bildschirm: false,
                 blick_kamera: false,
                 web_recherche: false,
+                netzsaat: None,
             },
             ..Einstellungen::default()
         }
@@ -2002,5 +2085,221 @@ mod sitzungsdeutung {
         let zeile = |name: &str| zeilen.iter().find(|z| z.contains(name)).cloned().unwrap_or_default();
         assert!(zeile("kap.speicher").contains("12 GiB"), "{}", zeile("kap.speicher"));
         assert!(!zeile("kap.kerne").contains("GiB"), "{}", zeile("kap.kerne"));
+    }
+}
+
+// ── Der Loop ────────────────────────────────────────────────────────
+
+/// Strg-C, ein geschlossenes Terminal oder `kill`: sauber schliessen.
+///
+/// ⚑ **Schliessen, nicht Notaus** (Festlegung des Projektinhabers):
+/// Das Vorhaben bleibt, wie es war, und `myl loop` macht beim naechsten
+/// Aufruf genau dort weiter.
+#[cfg(unix)]
+fn schliessen_bei_signal() {
+    extern "C" fn behandeln(_: libc::c_int) {
+        // Nur atomare Speicherzugriffe: in einem Signalbehandler erlaubt.
+        myl_client::vorhaben::schliessen_anfordern();
+    }
+    // SAFETY: Der Behandler ruft nur `schliessen_anfordern`, das zwei
+    // atomare Werte setzt.
+    unsafe {
+        for s in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP] {
+            libc::signal(s, behandeln as extern "C" fn(libc::c_int) as libc::sighandler_t);
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn schliessen_bei_signal() {}
+
+fn schleife(args: &[String]) -> i32 {
+    let e = match Einstellungen::lesen(&Einstellungen::vorgabepfad()) {
+        Ok(e) => e,
+        Err(m) => {
+            eprintln!("myl loop: {m}");
+            return 1;
+        }
+    };
+    kapazitaet_anwenden(&e);
+    let ablage = myl_client::vorhaben::Ablage::vorgabe();
+    let ziel = freitext(args);
+    if !ziel.trim().is_empty() {
+        if let Some(satz) = myl_client::schutzfilter::abweisen(&ziel, e.oberflaeche.sprache, "myl-loop") {
+            eprintln!("{satz}");
+            return 3;
+        }
+        match ablage.anlegen(&ziel, myl_client::vorhaben::jetzt()) {
+            Ok(v) => eprintln!("[myl] Vorhaben {} angelegt: {}", v.kennung, v.ziel),
+            Err(m) => {
+                eprintln!("myl loop: {m}");
+                return 1;
+            }
+        }
+    }
+    if let Some(h) = myl_client::vorhaben::hinweis_vorgaben(&e) {
+        eprintln!("[myl] {h}");
+    }
+    let laeufer = match myl_client::vorhaben::Laeufer::oeffnen(ablage, "myl loop") {
+        Ok(l) => l,
+        Err(m) => {
+            eprintln!("myl loop: {m}");
+            return 1;
+        }
+    };
+    if laeufer.aktive() == 0 {
+        eprintln!("[myl] Kein aktives Vorhaben. Anlegen mit: myl loop <ziel>");
+        return 0;
+    }
+    let artefakt = myl_client::ort::absolut(&e.modell.artefakt);
+    let mut m = match Oertlichesmodell::laden(&artefakt, &e.kapazitaet) {
+        Ok(m) => m,
+        Err(f) => {
+            eprintln!("myl loop: {f}");
+            return 1;
+        }
+    };
+    m.grenze = zahl(args, "--token").unwrap_or(e.modell.token);
+    m.denken = e.modell.denken || args.iter().any(|a| a == "--denken");
+    schliessen_bei_signal();
+
+    let ruester = |mut zusaetzlich: myl_client::vorhaben::Zusatzwerkzeuge, saat: &str| {
+        zusaetzlich.push(werkzeug_uhr());
+        let mut agent = agent_fuer_diesen_lauf(&e, args);
+        agent.netzsaat = Some(saat.to_string());
+        myl_client::ruestung::ruesten(
+            &agent,
+            form_fuer_diesen_lauf(args),
+            satz_fuer_diesen_lauf(&e, args),
+            zusaetzlich,
+        )
+    };
+    let melden = |ev: myl_client::vorhaben::Ereignis| {
+        use myl_client::vorhaben::Ereignis;
+        match ev {
+            Ereignis::Beginnt { kennung, ziel, runde } => eprintln!("\n[myl] {kennung}, Runde {runde}: {ziel}"),
+            Ereignis::Geendet { vorhaben, bericht, pruefung } => {
+                println!("{}", bericht.trim());
+                if let Some(p) = pruefung {
+                    eprintln!("[myl] Prüfung: Fortschritt {}, erreicht {}. {}", ja_nein(p.fortschritt), ja_nein(p.erreicht), p.grund);
+                }
+                let zustand = myl_client::vorhaben::zustandswort(&vorhaben, e.oberflaeche.sprache);
+                eprintln!("[myl] {}: {zustand}", vorhaben.kennung);
+            }
+            Ereignis::Angestossen { kennung, ziel } => eprintln!("[myl] Kette: {kennung} beginnt: {ziel}"),
+            Ereignis::Wartet { bis } => eprintln!(
+                "[myl] Nichts fällig; die nächste Runde in {} Minuten. Strg-C schließt, `myl loop` macht dort weiter.",
+                bis.saturating_sub(myl_client::vorhaben::jetzt()).div_ceil(60)
+            ),
+            Ereignis::Fehler { kennung, grund } => eprintln!("[myl] {kennung} angehalten: {grund}"),
+            Ereignis::OhneModell { grund } => eprintln!("[myl] Ohne Modell: {grund}"),
+        }
+    };
+    myl_client::vorhaben::fahren(
+        &laeufer,
+        &|runde| {
+            runde(&m);
+            Ok(())
+        },
+        &ruester,
+        &e.schleife,
+        e.oberflaeche.sprache,
+        u32::try_from(m.grenze).unwrap_or(u32::MAX),
+        &melden,
+        &|| false,
+        Some(&|m: myl_local_agent::schleife::Meldung<'_>| {
+            if let myl_local_agent::schleife::Meldung::Aufruf { name, argumente } = m {
+                let kurz: String = argumente.to_string().chars().take(100).collect();
+                eprintln!("[werkzeug] {name} {kurz}");
+            }
+        }),
+    );
+    let geschlossen = myl_client::vorhaben::schliessen_angefordert();
+    drop(laeufer);
+    if geschlossen {
+        eprintln!("\n[myl] Geschlossen. `myl loop` macht genau dort weiter.");
+    } else if myl_client::notaus::ausgeloest() {
+        eprintln!("\n[myl] Notaus. Fortsetzen mit `myl tasks resume <ID>`.");
+    }
+    0
+}
+
+fn ja_nein(b: bool) -> &'static str {
+    if b { "ja" } else { "nein" }
+}
+
+fn tasks_befehl(args: &[String]) -> i32 {
+    let ablage = myl_client::vorhaben::Ablage::vorgabe();
+    let sprache = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())
+        .map(|e| e.oberflaeche.sprache)
+        .unwrap_or_default();
+    match (args.first().map(String::as_str), args.get(1)) {
+        (None, _) => {
+            let zeilen = ablage.liste(sprache);
+            if zeilen.is_empty() {
+                println!("Keine Tasks. Anlegen mit: myl loop <ziel>");
+            }
+            for z in zeilen {
+                println!("{z}");
+            }
+            0
+        }
+        // ⚑ Anlegen, ohne zu fahren: So stehen mehrere Tasks in der
+        //   Schlange, bevor `myl loop` beginnt.
+        (Some("add"), Some(_)) => {
+            // ⚑ `--abnahme <befehl>`: alles danach ist der Befehl (Punkt 4.7).
+            let (ziel_teile, abnahme) = match args[1..].iter().position(|a| a == "--abnahme") {
+                Some(i) => (&args[1..1 + i], Some(args[2 + i..].join(" "))),
+                None => (&args[1..], None),
+            };
+            let ziel = ziel_teile.join(" ");
+            if let Some(satz) = myl_client::schutzfilter::abweisen(&ziel, sprache, "myl-tasks") {
+                eprintln!("{satz}");
+                return 1;
+            }
+            match ablage.anlegen(&ziel, myl_client::vorhaben::jetzt()) {
+                Ok(v) => {
+                    if let Some(b) = abnahme.filter(|b| !b.trim().is_empty()) {
+                        if let Err(m) = ablage.abnahme_setzen(&v.kennung, &b) {
+                            eprintln!("myl tasks: {m}");
+                            return 1;
+                        }
+                    }
+                    println!("{}", v.kennung);
+                    0
+                }
+                Err(m) => {
+                    eprintln!("myl tasks: {m}");
+                    1
+                }
+            }
+        }
+        (Some("abnahme"), Some(k)) => match ablage.abnahme_setzen(k, &args[2..].join(" ")) {
+            Ok(v) => {
+                println!("{k}: Abnahme {}", v.abnahme.as_deref().unwrap_or("(keine)"));
+                0
+            }
+            Err(m) => {
+                eprintln!("myl tasks: {m}");
+                1
+            }
+        },
+        (Some(was @ ("resume" | "pause")), Some(k)) => {
+            let r = if was == "resume" { ablage.weitermachen(k) } else { ablage.stoppen(k, sprache) };
+            match r {
+                Ok(_) => {
+                    println!("{k}: {was}");
+                    0
+                }
+                Err(m) => {
+                    eprintln!("myl tasks: {m}");
+                    1
+                }
+            }
+        }
+        _ => {
+            eprintln!("myl tasks [add <ziel> [--abnahme <befehl>] | abnahme <ID> <befehl> | resume <ID> | pause <ID>]");
+            2
+        }
     }
 }

@@ -258,6 +258,13 @@ pub fn fahren() -> i32 {
         sch.einrichten();
     }
 
+    // ⚑ **Lief der Loop beim Schliessen, laeuft er beim Oeffnen weiter**
+    //   (Festlegung des Projektinhabers: exakt dort, wo gestoppt).
+    if stand.modell.is_some() && myl_client::vorhaben::Ablage::vorgabe().loop_war_aktiv() {
+        println!("  Der Loop lief beim Schließen und macht jetzt dort weiter. Esc oder Strg-C hält an (mit Frage).");
+        println!();
+        loop_fahren(&mut stand, "");
+    }
     let ende = schleife(&mut stand);
 
     // ⚠️ **Was reserviert wurde, wird zurueckgegeben.** Ein Programm,
@@ -705,7 +712,14 @@ fn schleife(stand: &mut Stand) -> i32 {
             // Die naechste Runde zeichnet den Rahmen neu, und in der
             // Fusszeile steht der neue Name.
             eingabe::Eingabe::Modus => {
-                stand.modus = stand.modus.andere();
+                let neu = stand.modus.andere();
+                // ⛔️ **Vor `auto` die Sicherheitsmeldung** (Festlegung des
+                //    Projektinhabers, 2026-09-26). 📌 Bis dahin schaltete
+                //    Umschalt-Tab ohne ein Wort auf auto.
+                if neu == myl_client::einstellungen::Agentenmodus::Auto && !auto_bestaetigen() {
+                    continue;
+                }
+                stand.modus = neu;
                 continue;
             }
             eingabe::Eingabe::Ende => {
@@ -763,6 +777,16 @@ fn schleife(stand: &mut Stand) -> i32 {
             Some(Befehlsart::Datei) => {
                 let pfad = befehl_und_rest(&text).map(|(_, r)| r).unwrap_or("");
                 datei_anhaengen(stand, pfad);
+                continue;
+            }
+            Some(Befehlsart::Loop) => {
+                let ziel = befehl_und_rest(&text).map(|(_, r)| r).unwrap_or("").to_string();
+                loop_fahren(stand, &ziel);
+                continue;
+            }
+            Some(Befehlsart::Vorhaben) => {
+                let rest = befehl_und_rest(&text).map(|(_, r)| r).unwrap_or("").to_string();
+                vorhaben_zeigen(&rest);
                 continue;
             }
             Some(Befehlsart::Modell) => {
@@ -872,6 +896,10 @@ enum Befehlsart {
     Kontext,
     Verdichten,
     Neu,
+    /// Ein Vorhaben in Runden verfolgen; nimmt ein Ziel oder nichts.
+    Loop,
+    /// Die Vorhaben zeigen, fortsetzen, anhalten.
+    Vorhaben,
     Hilfe,
     Ende,
 }
@@ -892,7 +920,7 @@ struct Befehl {
 /// nennt irgendwann einen Befehl, den es nicht gibt, oder verschweigt
 /// einen, den es gibt, **und beides sieht erst der, der es
 /// ausprobiert.**
-const BEFEHLE: [Befehl; 10] = [
+const BEFEHLE: [Befehl; 12] = [
     Befehl {
         art: Befehlsart::Modell,
         namen: &["/model", "/modell"],
@@ -932,6 +960,18 @@ const BEFEHLE: [Befehl; 10] = [
         art: Befehlsart::Dateisystemwurzel,
         namen: &["/root", "/wurzel"],
         was: "haengt das GANZE Dateisystem ein, mit Schreibrecht (fragt nach)",
+    },
+    Befehl {
+        art: Befehlsart::Loop,
+        namen: &["/loop"],
+        was: "verfolgt ein Ziel in Runden: /loop <ziel>; ohne Ziel macht er weiter (Esc oder Strg-C hält an, mit Frage)",
+    },
+    Befehl {
+        art: Befehlsart::Vorhaben,
+        // ⚑ Nur `/tasks`, ohne deutschen Zweitnamen (Festlegung des
+        //   Projektinhabers, 2026-09-26).
+        namen: &["/tasks"],
+        was: "zeigt die Tasks des Loops in ihrer Reihenfolge; /tasks resume|pause <ID>, /tasks abnahme <ID> <befehl>",
     },
     Befehl {
         art: Befehlsart::Hilfe,
@@ -1383,6 +1423,8 @@ fn auftrag_fahren(stand: &mut Stand, auftrag: &str) {
     // dieselbe Frage; hier steht die Antwort schon in der Shell.
     let mut agent = e.agent.clone();
     agent.wurzel = Some(stand.ordner.display().to_string());
+    // ⚑ Der Auftrag ist die Saat der Web-Recherche, wie im Chat.
+    agent.netzsaat = Some(auftrag.to_string());
     konsolenvorgaben(&mut agent, stand.schreibt);
 
     // ⚑ **Die Kiste folgt dem geladenen Modell**, sofern der Nutzer
@@ -1416,7 +1458,11 @@ fn auftrag_fahren(stand: &mut Stand, auftrag: &str) {
     // hat, waere eine andere und stuende an derselben Stelle.
     modell.zaehler.zuruecksetzen();
     let zaehler = std::sync::Arc::clone(&modell.zaehler);
-    let anzeige = anzeige::Anzeige::starten(stand.schirm, stand.design, zaehler);
+    // ⛔️ **Der Notaus**: Esc waehrend des Laufs haelt ihn an. Gelesen
+    //   wird die Taste im Faden der Anzeige, dem einzigen Leser (Fund 483).
+    let anzeige = anzeige::Anzeige::starten(stand.schirm, stand.design, zaehler, || {
+        myl_client::notaus::ausloesen("konsole")
+    });
 
     // ⚑ **Im `manual mode` bekommt jede schreibende Handlung eine
     // Nachfrage mit auf den Weg.** Sie haengt am Werkzeug und nicht am
@@ -1482,10 +1528,8 @@ fn auftrag_fahren(stand: &mut Stand, auftrag: &str) {
     // ⚑ **Jeder Auftrag bekommt sein Nachschlagebudget neu** (2026-09-17):
     // Die naechste Frage des Nutzers ist ein neuer Anlass nachzulesen.
     ruestung.nachschlagebudget_zuruecksetzen();
-    // ⛔️ **Der Notaus**: Strg-C oder Esc waehrend des Laufs haelt ihn an
-    //   (siehe `Notauswaechter`). Jeder Auftrag beginnt geloest.
+    // ⛔️ Jeder Auftrag beginnt mit geloestem Notaus.
     myl_client::notaus::zuruecksetzen();
-    let waechter = Notauswaechter::starten(roh.is_some());
     let aus = myl_client::lauf::fahren_im_gespraech(
         modell,
         &ruestung,
@@ -1506,7 +1550,6 @@ fn auftrag_fahren(stand: &mut Stand, auftrag: &str) {
     if let Some(m) = stand.modell.as_mut() {
         m.beobachter = None;
     }
-    waechter.anhalten();
     let (gesehen, wieviele) = anzeige.beenden();
     // Erst den Rohmodus zurueck, dann drucken: In ihm braucht jede
     // Zeile ein `\r`, und das will niemand in jedem `println!` stehen
@@ -1563,59 +1606,311 @@ fn auftrag_fahren(stand: &mut Stand, auftrag: &str) {
     println!();
 }
 
-/// **Wacht waehrend eines Laufs auf Strg-C und Esc** und loest dann den
-/// Notaus aus.
-///
-/// ⚑ **Ein eigener Faden, weil der Lauf den Hauptfaden haelt.** Im
-/// Rohmodus kommt Strg-C nicht als Signal, sondern als Taste; ohne diesen
-/// Waechter liest sie waehrend des Laufs niemand. Er fragt alle 100 ms
-/// und hoert auf, sobald der Lauf vorbei ist.
-///
-/// ⚠️ **Nur im Rohmodus.** Ohne Terminal (Roehre, Skript) beendet Strg-C
-/// den Prozess, wie gewohnt.
-struct Notauswaechter {
-    halt: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    faden: Option<std::thread::JoinHandle<()>>,
+// ── Der Loop in der Konsole ─────────────────────────────────────────
+
+/// **Die Sicherheitsmeldung vor `auto`**, mit Bestaetigung.
+fn auto_bestaetigen() -> bool {
+    use std::io::{BufRead, IsTerminal, Write};
+    let sprache = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())
+        .map(|e| e.oberflaeche.sprache)
+        .unwrap_or_default();
+    let w = myl_client::einstellungen::autowarnung(sprache);
+    println!();
+    println!("  ⚠️  {}", w.titel);
+    for p in w.punkte {
+        for (i, z) in umbrechen(p, 70).into_iter().enumerate() {
+            println!("  {} {z}", if i == 0 { "-" } else { " " });
+        }
+    }
+    // ⚠️ Ohne Terminal kann niemand bestaetigen: dann bleibt es beim alten.
+    if !std::io::stdin().is_terminal() {
+        return false;
+    }
+    print!("  {}", w.frage);
+    let _ = std::io::stdout().flush();
+    let mut z = String::new();
+    let _ = std::io::stdin().lock().read_line(&mut z);
+    let ja = matches!(z.trim().to_lowercase().as_str(), "j" | "ja" | "y" | "yes");
+    println!();
+    ja
 }
 
-impl Notauswaechter {
-    fn starten(rohmodus: bool) -> Self {
-        let halt = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        if !rohmodus {
-            return Self { halt, faden: None };
+/// `/tasks`, `/tasks resume <ID>`, `/tasks pause <ID>`.
+///
+/// ⚑ Die Liste steht in der Reihenfolge der Schlange: Es laeuft das
+/// vorderste, die anderen sind „queued".
+fn vorhaben_zeigen(rest: &str) {
+    let ablage = myl_client::vorhaben::Ablage::vorgabe();
+    let sprache = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())
+        .map(|e| e.oberflaeche.sprache)
+        .unwrap_or_default();
+    let mut teile = rest.split_whitespace();
+    match (teile.next(), teile.next()) {
+        (None, _) => {
+            let zeilen = ablage.liste(sprache);
+            if zeilen.is_empty() {
+                println!("  Keine Tasks. `/loop <ziel>` legt einen an.");
+            }
+            for z in zeilen {
+                println!("  {z}");
+            }
         }
-        let h = std::sync::Arc::clone(&halt);
-        let faden = std::thread::spawn(move || {
-            use crossterm::event::{self, Event, KeyCode, KeyModifiers};
-            while !h.load(std::sync::atomic::Ordering::SeqCst) {
-                if !event::poll(std::time::Duration::from_millis(100)).unwrap_or(false) {
-                    continue;
-                }
-                if let Ok(Event::Key(k)) = event::read() {
-                    let strg_c = k.code == KeyCode::Char('c') && k.modifiers.contains(KeyModifiers::CONTROL);
-                    if strg_c || k.code == KeyCode::Esc {
-                        myl_client::notaus::ausloesen("konsole");
-                    }
+        (Some("abnahme"), Some(k)) => {
+            // ⚑ Alles nach der Kennung ist der Befehl (Punkt 4.7); leer loescht ihn.
+            let befehl = rest.split_whitespace().skip(2).collect::<Vec<_>>().join(" ");
+            match ablage.abnahme_setzen(k, &befehl) {
+                Ok(v) => println!("  {k}: Abnahme {}", v.abnahme.as_deref().unwrap_or("(keine)")),
+                Err(f) => println!("  {k}: {f}"),
+            }
+        }
+        (Some(was @ ("resume" | "pause")), Some(k)) => {
+            let r = if was == "resume" { ablage.weitermachen(k) } else { ablage.stoppen(k, sprache) };
+            match r {
+                Ok(_) => println!("  {k}: {was}. `/loop` fährt den vordersten Task."),
+                Err(f) => println!("  {k}: {f}"),
+            }
+        }
+        _ => println!("  /tasks [resume|pause <ID> | abnahme <ID> <befehl>]"),
+    }
+    println!();
+}
+
+/// **Der Loop: faellige Runden fahren, dazwischen warten.**
+///
+/// ⚑ **Im Vordergrund.** Waehrend der Loop laeuft, gehoert die Konsole
+/// ihm; Esc pausiert ihn und gibt die Eingabe zurueck,
+/// `/loop` macht dort weiter. Wird die Konsole geschlossen, waehrend er
+/// laeuft, macht er beim naechsten Start von selbst weiter.
+fn loop_fahren(stand: &mut Stand, ziel: &str) {
+    use myl_client::vorhaben::{self, Ablage, Laeufer};
+    let e = match myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad()) {
+        Ok(e) => e,
+        Err(f) => {
+            eprintln!("Die Einstellungen sind nicht lesbar: {f}");
+            return;
+        }
+    };
+    if stand.modell.is_none() {
+        eprintln!("Es ist kein Modell geladen. `/model` waehlt eines.");
+        return;
+    }
+    let ablage = Ablage::vorgabe();
+    if !ziel.trim().is_empty() {
+        if let Some(satz) = myl_client::schutzfilter::abweisen(ziel, e.oberflaeche.sprache, "konsole-loop") {
+            println!("  {satz}");
+            println!();
+            return;
+        }
+        match ablage.anlegen(ziel, vorhaben::jetzt()) {
+            Ok(v) => println!("  Vorhaben {} angelegt.", v.kennung),
+            Err(f) => {
+                println!("  {f}");
+                return;
+            }
+        }
+    }
+    let rollen = design::rollen(stand.design);
+    let farbig = design::farbig();
+    if let Some(h) = vorhaben::hinweis_vorgaben(&e) {
+        for z in umbrechen(&h, 74) {
+            println!("{}", rollen.beiwerk.faerben(&format!("  {z}"), farbig));
+        }
+        println!();
+    }
+    let laeufer = match Laeufer::oeffnen(ablage.clone(), "Konsole") {
+        Ok(l) => l,
+        Err(f) => {
+            println!("  {f}");
+            return;
+        }
+    };
+    vorhaben::schliessen_zuruecksetzen();
+    let _ = ablage.loop_aktiv_setzen(true);
+    loop {
+        if let Some(v) = laeufer.faellig(vorhaben::jetzt()) {
+            if !runde_in_der_konsole(stand, &e, &laeufer, v) {
+                break;
+            }
+            continue;
+        }
+        if laeufer.aktive() == 0 {
+            let _ = ablage.loop_aktiv_setzen(false);
+            println!("{}", rollen.beiwerk.faerben("  Keine aktiven Vorhaben mehr; der Loop endet.", farbig));
+            println!();
+            break;
+        }
+        if !warten_in_der_konsole(stand, &laeufer) {
+            break;
+        }
+    }
+    // Pausiert: Die Marke geht, der Loop faehrt beim naechsten Start nicht
+    // von selbst.
+    if vorhaben::schliessen_angefordert() {
+        let _ = ablage.loop_aktiv_setzen(false);
+        println!("{}", rollen.warnung.faerben("  Loop pausiert. `/loop` macht genau dort weiter.", farbig));
+        println!();
+    }
+    vorhaben::schliessen_zuruecksetzen();
+    drop(laeufer);
+}
+
+/// Wartet bis zur naechsten Runde; `false`, wenn pausiert wurde.
+fn warten_in_der_konsole(stand: &Stand, laeufer: &myl_client::vorhaben::Laeufer) -> bool {
+    use crossterm::event::{self, Event, KeyCode, KeyModifiers};
+    let Some(bis) = laeufer.naechster_termin() else { return true };
+    let rollen = design::rollen(stand.design);
+    let farbig = design::farbig();
+    let minuten = bis.saturating_sub(myl_client::vorhaben::jetzt()).div_ceil(60);
+    let satz = format!("  Nächste Runde in {minuten} min. Esc oder Strg-C hält an.");
+    println!("{}", rollen.beiwerk.faerben(&satz, farbig));
+    let roh = stand.schirm.and_then(|_| auswahl::Rohmodus::an().ok());
+    let mut letzte = std::time::Instant::now();
+    while myl_client::vorhaben::jetzt() < bis {
+        if roh.is_some() && event::poll(std::time::Duration::from_millis(500)).unwrap_or(false) {
+            if let Ok(Event::Key(k)) = event::read() {
+                let strg_c = k.code == KeyCode::Char('c') && k.modifiers.contains(KeyModifiers::CONTROL);
+                // ⚑ **Dieselbe Frage wie in der Runde** (Festlegung des
+                //   Projektinhabers, 2026-09-26): Strg-C [J/n], Esc [j/N].
+                if (strg_c || k.code == KeyCode::Esc) && pausieren_bestaetigt(strg_c) {
+                    myl_client::vorhaben::schliessen_anfordern();
+                    drop(roh);
+                    println!();
+                    return false;
                 }
             }
-        });
-        Self { halt, faden: Some(faden) }
+        } else if roh.is_none() {
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        }
+        let vergangen = letzte.elapsed().as_secs();
+        if vergangen >= 1 {
+            laeufer.verbuchen(vergangen);
+            letzte = std::time::Instant::now();
+        }
     }
-
-    fn anhalten(self) {
-        drop(self);
+    drop(roh);
+    true
+}
+/// Fragt im Countdown, ob pausiert werden soll; wartet auf eine Antwort.
+fn pausieren_bestaetigt(vorgabe: bool) -> bool {
+    use crossterm::event::{self, Event, KeyEventKind, KeyModifiers};
+    use std::io::Write;
+    print!("\r  Notaus: Loop anhalten? {}", if vorgabe { "[J/n]" } else { "[j/N]" });
+    let _ = std::io::stdout().flush();
+    loop {
+        let Ok(Event::Key(k)) = event::read() else { continue };
+        if k.kind != KeyEventKind::Press {
+            continue;
+        }
+        let strg = k.modifiers.contains(KeyModifiers::CONTROL);
+        if let Some(ja) = crate::anzeige::notausantwort(k.code, strg, vorgabe) {
+            print!("\r\x1b[2K");
+            let _ = std::io::stdout().flush();
+            return ja;
+        }
     }
 }
 
-/// ⚠️ **Auch fallengelassen hoert er auf.** Ein Waechter, der nach dem
-/// Lauf weiterliest, naehme der naechsten Eingabe ihre Tasten weg.
-impl Drop for Notauswaechter {
-    fn drop(&mut self) {
-        self.halt.store(true, std::sync::atomic::Ordering::SeqCst);
-        if let Some(f) = self.faden.take() {
-            let _ = f.join();
+/// Eine Runde, verdrahtet wie ein Auftrag; `false`, wenn pausiert wurde.
+fn runde_in_der_konsole(
+    stand: &mut Stand,
+    e: &myl_client::Einstellungen,
+    laeufer: &myl_client::vorhaben::Laeufer,
+    mut v: myl_client::vorhaben::Vorhaben,
+) -> bool {
+    use myl_client::vorhaben::{self, Zustand};
+    let rollen = design::rollen(stand.design);
+    let farbig = design::farbig();
+    let kopf = format!("  ∞ {} · Runde {} · {}", v.kennung, v.runden + 1, v.ziel);
+    println!("{}", rollen.beiwerk.faerben(&kopf, farbig));
+
+    let mut agent = e.agent.clone();
+    agent.wurzel = Some(stand.ordner.display().to_string());
+    konsolenvorgaben(&mut agent, stand.schreibt);
+    let kiste = myl_client::kisten::kiste_der_gilt(&e.agent);
+    let fragt = stand.modus.fragt_nach();
+    let schirm = stand.schirm;
+    let design_jetzt = stand.design;
+    let Some(modell) = stand.modell.as_mut() else { return false };
+
+    let roh = schirm.and_then(|_| auswahl::Rohmodus::an().ok());
+    modell.zaehler.zuruecksetzen();
+    let zaehler = std::sync::Arc::clone(&modell.zaehler);
+    // ⚑ Der bestaetigte Notaus (Strg-C [J/n], Esc [j/N]) pausiert den Loop:
+    //   Die Runde haelt sofort an, der Task bleibt, wie er war, und `/loop`
+    //   macht genau dort weiter.
+    let anzeige = anzeige::Anzeige::starten(schirm, design_jetzt, zaehler, vorhaben::schliessen_anfordern);
+    let nachfrage: Option<myl_client::ruestung::Nachfrage> = if fragt {
+        let frager = anzeige.frager();
+        Some(std::sync::Arc::new(move |name: &str, a: &myl_client::serde_json::Value| {
+            frager.fragen(&format!("  ⚑ manual mode: {name} {}", myl_client::lauf::kurzform(a)))
+        }))
+    } else {
+        None
+    };
+    let strom = anzeige.strom();
+    modell.beobachter = Some(Box::new(move |s| strom.stueck(s)));
+    let ruester = |zusaetzlich: myl_client::vorhaben::Zusatzwerkzeuge, saat: &str| {
+        let mut agent = agent.clone();
+        agent.netzsaat = Some(saat.to_string());
+        myl_client::ruestung::ruesten_mit(&agent, myl_client::Ansageform::Amtlich, kiste, zusaetzlich, nachfrage.clone())
+    };
+    let melder = |m: myl_client::Meldung<'_>| match m {
+        myl_client::Meldung::Schritt(n) => anzeige.schritt(n),
+        myl_client::Meldung::Aufruf { name, argumente } => {
+            let voll = myl_client::serde_json::to_string(argumente).unwrap_or_else(|_| myl_client::lauf::kurzform(argumente));
+            anzeige.aufruf(name, &myl_client::lauf::kurzform(argumente), &voll);
         }
+        myl_client::Meldung::Ergebnis { name, text } => {
+            anzeige.ergebnis(name, &myl_client::lauf::eine_zeile(text, 60), &myl_client::lauf::eine_zeile(text, 2000));
+        }
+        myl_client::Meldung::Abgelehnt { name, grund } => anzeige.abgelehnt(name, grund),
+        myl_client::Meldung::Verdichtet { vorher, nachher } => anzeige.verdichtet(vorher, nachher),
+    };
+    myl_client::notaus::zuruecksetzen();
+    let ergebnis = vorhaben::runde(
+        &laeufer.ablage,
+        &mut v,
+        &*modell,
+        &ruester,
+        &e.schleife,
+        e.oberflaeche.sprache,
+        e.modell.token as u32,
+        Some(&melder),
+    );
+    modell.beobachter = None;
+    let _ = anzeige.beenden();
+    drop(roh);
+    println!();
+    let r = match ergebnis {
+        Ok(r) => r,
+        Err(f) => {
+            v.zustand = Zustand::Angehalten { grund: f.clone() };
+            let _ = laeufer.ablage.speichern(&v);
+            println!("{}", rollen.warnung.faerben(&format!("  Die Runde ließ sich nicht fahren: {f}"), farbig));
+            return true;
+        }
+    };
+    if r.unterbrochen {
+        return false;
     }
+    println!("{}", crate::antwort::setzen(&r.bericht, &rollen, farbig));
+    if let Some(p) = &r.pruefung {
+        let satz = format!(
+            "  Prüfung: Fortschritt {}, erreicht {}. {}",
+            if p.fortschritt { "ja" } else { "nein" },
+            if p.erreicht { "ja" } else { "nein" },
+            p.grund
+        );
+        println!("{}", rollen.beiwerk.faerben(&satz, farbig));
+    }
+    let zustand = vorhaben::zustandswort(&v, e.oberflaeche.sprache);
+    let rolle = if matches!(v.zustand, Zustand::Angehalten { .. }) { &rollen.warnung } else { &rollen.beiwerk };
+    println!("{}", rolle.faerben(&format!("  ∞ {}: {zustand}", v.kennung), farbig));
+    for n in &r.neue {
+        println!("{}", rollen.beiwerk.faerben(&format!("  ∞ Kette: {} beginnt: {}", n.kennung, n.ziel), farbig));
+    }
+    println!();
+    true
 }
 
 /// Ein Pfad, der in eine Zeile passt.
@@ -1808,13 +2103,13 @@ mod tests {
     fn der_notaus_umschliesst_den_lauf() {
         let quelle = include_str!("sitzung.rs");
         let lauf = quelle.find("let aus = myl_client::lauf::fahren_im_gespraech(").expect("Lauf");
-        let vorher = &quelle[lauf.saturating_sub(400)..lauf];
+        let vorher = &quelle[quelle.floor_char_boundary(lauf.saturating_sub(4000))..lauf];
         assert!(vorher.contains("myl_client::notaus::zuruecksetzen();"));
-        assert!(vorher.contains("let waechter = Notauswaechter::starten(roh.is_some());"));
-        let nachher = &quelle[lauf..lauf + 1400];
-        assert!(nachher.contains("waechter.anhalten();"), "der Waechter bleibt stehen");
+        assert!(vorher.contains("myl_client::notaus::ausloesen(\"konsole\")"), "Esc zieht den Notaus nicht");
         assert!(quelle.contains("myl_client::Tuerfehler::Abgebrochen { bisher }"));
-        assert!(quelle.contains("KeyCode::Char('c') && k.modifiers.contains(KeyModifiers::CONTROL)"));
+        // ⛔️ Fund 483: kein zweiter Leser der Tastatur neben der Anzeige.
+        let ohne_proben = &quelle[..quelle.find("#[cfg(test)]").expect("Proben")];
+        assert!(!ohne_proben.contains(&["Notaus", "waechter::"].concat()), "ein zweiter Tastenleser ist zurueck");
     }
 
     /// ⛔️ **Die KI-Marke steht vorn und faellt nie weg**, auch nicht bei

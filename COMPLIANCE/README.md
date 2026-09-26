@@ -30,6 +30,29 @@ Grundmodelle und die erzeugte Modellkarte. / The ethics manifesto, the
 exclusion catalogue, the risk classes of tools, the licence review of the
 base models and the generated model card.
 
+## Systemprompt / System prompt
+
+[`systemprompt/`](systemprompt/): der fest vorgegebene Systemprompt, unter
+dem jeder Lauf von Myelith steht, deutsch und englisch, mit
+`pruefsummen.txt`. Er ist eingebaut und nicht einstellbar; vor jedem Lauf
+wird er gegen seine Prüfsumme gehalten, und passt sie nicht, läuft kein
+Agent. Jeder Lauf trägt den vollen SHA-256 der Fassung ins
+Aktionsprotokoll. Hier stehen künftig auch die Vorgaben aus Compliance
+und Ethik, die das Modell kennen muss. / The fixed system prompt every
+Myelith run operates under, in German and English, with
+`pruefsummen.txt`. It is built in and cannot be configured; before every
+run it is checked against its checksum, and if it does not match, no agent
+runs. Every run records the full SHA-256 of the version in the action log.
+
+```
+cd COMPLIANCE/systemprompt && shasum -a 256 -c pruefsummen.txt
+```
+
+⚠️ **Wer den Text ändert, ändert die Summe mit** (`shasum -a 256 de.md
+en.md > pruefsummen.txt`); sonst schlägt die Probe
+`die_pruefsummen_stimmen` fehl, und kein Agent läuft. / Whoever changes the
+text updates the checksum too; otherwise the probe fails and no agent runs.
+
 ## Werkzeuge / Tools
 
 | Befehl / command | Wofür / purpose |

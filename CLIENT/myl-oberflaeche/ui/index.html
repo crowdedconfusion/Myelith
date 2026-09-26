@@ -46,6 +46,29 @@
   <button type="button" class="menueeintrag blank" role="menuitem" data-kontext="neu" data-t="kontext.neu">Neues Gespräch</button>
 </div>
 
+<!-- ⚑ **Die Tasks des Loops, am ∞ neben dem Senden** (Festlegung des
+     Projektinhabers, 2026-09-26): auswaehlen, neu anlegen, und am Griff
+     ziehen, um die Reihenfolge zu aendern. Der vorderste laeuft, alle
+     dahinter warten. Fest positioniert wie die Kontextwahl, damit nichts
+     sie abschneidet. -->
+<div id="taskwahl" class="glas" role="dialog" aria-labelledby="taskwahltitel" hidden>
+  <div class="taskkopf">
+    <span id="taskwahltitel" class="tasktitel" data-t="loop.titel">Tasks</span>
+    <span id="taskstand" class="taskstand"></span>
+  </div>
+  <ol id="taskliste" class="taskliste"></ol>
+  <p id="taskleer" class="taskleer" data-t="loop.leer" hidden></p>
+  <form id="taskneu" class="taskneu">
+    <input id="taskziel" type="text" autocomplete="off"
+           data-t-platz="loop.neu.platz" data-t-marke="loop.neu.label" />
+    <button type="submit" class="rundknopf taskplus" data-t-marke="loop.neu.knopf">
+      <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+        <path d="M10 5v10M5 10h10"/>
+      </svg>
+    </button>
+  </form>
+</div>
+
 <div id="huelle">
 
   <!-- ⚑ Die Seitenleiste traegt zwei Listen und in dieser Reihenfolge:
@@ -360,6 +383,23 @@
               <path d="M3 10v0M6.5 6.5v7M10 4v12M13.5 6.5v7M17 10v0"/>
             </svg>
           </button>
+          <!-- ⚑ **∞ ist ein Schalter, der Pfeil daneben die Liste**
+               (Festlegung des Projektinhabers, 2026-09-26). Nur im
+               Agentenmodus: Ein Loop ist eine Folge von Agentenlaeufen. -->
+          <span id="loopgruppe" class="loopgruppe" hidden>
+            <button type="button" id="loopknopf" class="rundknopf loopknopf" aria-pressed="false"
+                    data-t-marke="loop.knopf">
+              <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+                <path d="M10 10C8.4 8 7 7 5.5 7a3 3 0 000 6c1.5 0 2.9-1 4.5-3zm0 0c1.6 2 3 3 4.5 3a3 3 0 000-6C13 7 11.6 8 10 10z"/>
+              </svg>
+            </button>
+            <button type="button" id="loopwahl" class="rundknopf loopwahl" aria-haspopup="dialog"
+                    aria-expanded="false" data-t-marke="loop.liste">
+              <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+                <path d="M6 8l4 4 4-4"/>
+              </svg>
+            </button>
+          </span>
           <button type="submit" id="senden" class="rundknopf senden" aria-label="Senden" data-t-marke="knopf.senden">
             <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
               <path d="M10 16V4M10 4L5 9M10 4l5 5"/>
@@ -419,6 +459,23 @@
           <span id="warnungnichtwiedertext"></span>
         </label>
         <button type="button" id="warnungok" class="warnungok">OK</button>
+      </div>
+    </div>
+
+    <!-- ⛔️ **Die Sicherheitsmeldung vor `auto`** (Festlegung des
+         Projektinhabers: Vorgabe ist `manual`, wer aktiv umstellt, wird
+         gewarnt). Derselbe Text wie in der Konsole, aus der Kiste; zwei
+         Knoepfe und kein Weg daran vorbei. -->
+    <div id="autowarnung" class="warnung" hidden role="dialog" aria-modal="true"
+         aria-labelledby="autowarnungtitel">
+      <div class="warnungkasten">
+        <h2 id="autowarnungtitel" class="warnungachtung"></h2>
+        <ul id="autowarnungpunkte" class="autopunkte"></ul>
+        <p id="autowarnungfrage" class="warnungkern"></p>
+        <div class="autoknoepfe">
+          <button type="button" id="autonein" data-t="auto.nein">Abbrechen</button>
+          <button type="button" id="autoja" data-t="auto.ja">Auf auto stellen</button>
+        </div>
       </div>
     </div>
 

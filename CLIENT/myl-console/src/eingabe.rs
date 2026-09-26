@@ -51,8 +51,8 @@ pub enum Eingabe {
 /// Welche Taste hinausfuehrte.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Ausgang {
-    /// Leicht gestreift, deshalb ist die Vorgabe „bleiben".
-    Escape,
+    /// 📌 Hier stand bis zum 2026-09-26 auch `Escape` (Vorgabe „bleiben").
+    /// Esc beendet an der leeren Zeile jetzt sofort.
     /// Zwei Finger mit Absicht, deshalb ist die Vorgabe „beenden".
     StrgX,
 }
@@ -98,7 +98,13 @@ pub fn lesen(zeichnen: &dyn Fn(&str)) -> Eingabe {
             // weiterhin, aber das liegt in `anzeige.rs` und ist eine
             // andere Sache: Dort bricht es eine Erzeugung ab und beendet
             // nichts.
-            KeyCode::Esc => return Eingabe::Abbruch(Ausgang::Escape),
+            // ⚑ **Esc und Strg-C beenden hier sofort** (Festlegung des
+            //   Projektinhabers, 2026-09-26): An der leeren Eingabezeile
+            //   laeuft nichts, und wer hier eine der beiden drueckt, will
+            //   hinaus. Waehrend eines Laufs fragen dieselben Tasten nach
+            //   dem Notaus (`anzeige.rs`). Strg-X fragt weiter nach.
+            KeyCode::Esc => return Eingabe::Ende,
+            KeyCode::Char('c') if strg => return Eingabe::Ende,
             KeyCode::Char('x') if strg => return Eingabe::Abbruch(Ausgang::StrgX),
             KeyCode::Backspace => {
                 zeile.pop();
@@ -199,43 +205,28 @@ mod tests {
 
 #[cfg(test)]
 mod abbruchprobe {
-    /// ⚑ **Escape ist kein Eingabeende.**
+    /// ⚑ **An der leeren Eingabezeile beenden Esc und Strg-C sofort**,
+    /// Strg-X fragt nach.
     ///
-    /// 📌 Gemeldet vom Projektinhaber am 2026-09-15: Escape an der
-    /// Eingabezeile beendete die Sitzung samt geladenem Modell auf der
-    /// Stelle. Die Taste liegt neben den Pfeiltasten und wird leicht
-    /// gestreift; das war zu viel Wirkung fuer einen Fehlgriff.
-    ///
-    /// ⚑ **Genau zwei Tasten fuehren hinaus, und beide fragen nach**
-    /// (Festlegung des Projektinhabers, 2026-09-15): Escape und Strg-X.
-    /// Strg-D und Strg-C endeten hier vorher ohne Frage, also vier Wege
-    /// mit zwei Verhalten.
-    ///
-    /// ⚠️ **Strg-C an dieser Zeile ist entfallen**, nicht der Abbruch
-    /// eines laufenden Auftrags: Der liegt in `anzeige.rs` und bleibt.
+    /// 📌 Bis zum 2026-09-26 fragten Esc und Strg-X, und Strg-C tat nichts
+    /// (Festlegung vom 2026-09-15, weil Esc leicht gestreift wird). Die
+    /// neue Festlegung des Projektinhabers: Waehrend eines Laufs fragen
+    /// Strg-C und Esc nach dem Notaus, und steht nichts mehr, fuehren
+    /// beide ohne Frage hinaus.
     #[test]
-    fn nur_escape_und_strg_x_fuehren_hinaus() {
+    fn esc_und_strg_c_beenden_strg_x_fragt() {
         let quelle = include_str!("eingabe.rs");
         let rumpf = quelle.split("pub fn lesen(").nth(1).expect("`lesen` fehlt");
-        assert!(
-            rumpf.contains("KeyCode::Esc => return Eingabe::Abbruch(Ausgang::Escape),"),
-            "Escape gibt kein `Abbruch`"
-        );
+        assert!(rumpf.contains("KeyCode::Esc => return Eingabe::Ende,"), "Escape beendet nicht");
+        assert!(rumpf.contains("KeyCode::Char('c') if strg => return Eingabe::Ende,"), "Strg-C beendet nicht");
         assert!(
             rumpf.contains("KeyCode::Char('x') if strg => return Eingabe::Abbruch(Ausgang::StrgX),"),
-            "Strg-X gibt kein `Abbruch`"
+            "Strg-X fragt nicht mehr"
         );
-        // Kein weiterer Weg zu `Ende` aus dem Tastenzweig heraus.
-        let tasten = rumpf.split("fn aus_der_roehre").next().unwrap_or(rumpf);
-        assert!(
-            !tasten.contains("Eingabe::Ende"),
-            "es gibt noch eine Taste, die ohne Frage beendet: {tasten}"
-        );
-        // Das Dateiende bleibt ein Ende: Es ist keine Taste, und in einer
-        // Roehre kann niemand antworten.
-        assert!(
-            quelle.contains("Ok(0) | Err(_) => Eingabe::Ende,"),
-            "das Dateiende ist kein `Ende` mehr"
-        );
+        // ⚠️ Strg-C muss vor der Regel stehen, die Strg-Buchstaben uebergeht.
+        let c = rumpf.find("KeyCode::Char('c') if strg").unwrap();
+        let rest = rumpf.find("KeyCode::Char(_) if strg => continue").unwrap();
+        assert!(c < rest, "Strg-C wird vorher uebergangen");
+        assert!(quelle.contains("Ok(0) | Err(_) => Eingabe::Ende,"), "das Dateiende ist kein `Ende` mehr");
     }
 }

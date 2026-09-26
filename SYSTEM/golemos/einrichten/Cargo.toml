@@ -1,0 +1,23 @@
+[package]
+name = "golem-einrichten"
+version = "0.2.0"
+edition = "2021"
+rust-version = "1.85"
+description = "Der Einrichtungsassistent von GolemOS: findet einen Myelith-Klon auf den angesteckten Laufwerken und installiert das System auf eine ganze Platte."
+license = "LicenseRef-PolyForm-Shield-1.0.0"
+publish = false
+
+# ⚑ **Keine einzige Fremdkiste**, und das ist Absicht. Die Kiste loescht
+#   Platten; was sie tut, soll sich in ihrem eigenen Quelltext lesen
+#   lassen. Die Geraeteliste kommt aus `lsblk -P`, und diese Form ist
+#   einfach genug, um sie selbst zu zerlegen.
+[dependencies]
+
+[profile.test]
+opt-level = 2
+debug-assertions = true
+overflow-checks = true
+debug = "line-tables-only"
+
+[profile.dev]
+debug = "line-tables-only"

@@ -70,6 +70,7 @@ fn fahren(
         blick_bildschirm: false,
         blick_kamera: false,
         web_recherche: false,
+        netzsaat: None,
     };
     let ruestung = myl_client::ruestung::ruesten(&agent, FORM, SATZ, Vec::new()).expect("Ruestung");
     let kontrakt = myl_types::sitzung::Sitzungskontrakt::neu(
@@ -306,6 +307,7 @@ fn ohne_wurzel_greift_der_standard_arbeitsordner_und_verankertes_bleibt() {
         blick_bildschirm: false,
         blick_kamera: false,
         web_recherche: false,
+        netzsaat: None,
     };
 
     // 1. Mit gesetzter Umgebung haengt der Ordner ein.
@@ -629,4 +631,17 @@ fn das_aktionsprotokoll_haelt_fest_ohne_klartext() {
             assert!(!t.contains(verboten), "`{verboten}` steht im Protokoll: {}", d.path().display());
         }
     }
+}
+
+/// ⛔️ **Die Werkzeugansage trägt den vorgegebenen, geprüften Systemprompt**,
+/// hinter der Vorlage des Modells.
+#[test]
+fn die_ansage_traegt_den_vorgegebenen_systemprompt() {
+    let d = tempfile::tempdir().expect("Verzeichnis");
+    let agent = Agenteneinstellung { wurzel: Some(d.path().display().to_string()), ..Agenteneinstellung::default() };
+    let r = myl_client::ruestung::ruesten(&agent, FORM, SATZ, Vec::new()).expect("Ruestung");
+    let a = myl_client::gespraech::ansage(&r);
+    let regel = myl_client::systemprompt::geprueft(FORM).expect("geprueft").trim();
+    assert!(a.content.contains(regel), "der Systemprompt fehlt in der Ansage");
+    assert!(a.content.find("</tools>").unwrap_or(usize::MAX) < a.content.find(regel).unwrap_or(0), "nicht hinter der Vorlage");
 }

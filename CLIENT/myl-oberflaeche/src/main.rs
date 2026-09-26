@@ -31,6 +31,19 @@
 //! `Oertlichesmodell` ist `Send + Sync`, und derselbe Umstand, der die
 //! Unteragenten moeglich macht, macht auch das hier moeglich.
 
+// ⛔️ **Fund 474: Unter Windows oeffnete das Fenster eine Konsole mit.**
+//    Ohne diese Zeile traegt die ausfuehrbare Datei das Subsystem
+//    `console`, und Windows stellt jedem Start ein schwarzes Fenster
+//    hinter das eigentliche. Auf macOS und Linux gibt es das nicht,
+//    deshalb fiel es erst am Kreuzbau auf (`file` meldete `(console)`).
+//
+// ⚑ **Nur im Freigabebau.** Im Pruefbau bleibt die Konsole, denn dort
+//    will man die Meldungen auf der Fehlerausgabe sehen. Ohne Konsole
+//    laufen `eprintln!` ins Leere, und das ist gewollt: Die
+//    Standardbibliothek behandelt einen fehlenden Griff als Senke und
+//    bricht nicht ab.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 use std::sync::Mutex;
 
 use serde::Serialize;
@@ -125,13 +138,18 @@ fn kurzform(a: &myl_client::einstellungen::Agenteneinstellung) -> (&'static str,
         .clone()
         .or_else(myl_client::Einstellungen::standard_wurzel)
         .is_some();
+    // 📌 **Fund 484: Hier stand bis zum 2026-09-26, das Fenster habe fuer
+    //    den manual mode „noch keinen Kasten"**, und der Agent bekomme
+    //    deshalb keine schreibenden Werkzeuge. Seit dem 2026-09-15 legt
+    //    `nachfrage_fuer` jede schreibende Handlung im Kasten des
+    //    Betriebssystems vor. Die Marke im Kopf beschrieb elf Tage lang
+    //    ein Fenster, das es nicht mehr gab: dieselbe Angabe an zwei Orten.
     if hat_ordner && a.modus.fragt_nach() {
         return (
-            "liest Dateien (manual mode)",
-            "Im manual mode darf der Agent lesen und suchen. Schreibende Werkzeuge bekommt er in \
-             diesem Fenster nicht: Sie muessten einzeln bestaetigt werden, und dafuer gibt es \
-             hier noch keinen Kasten. In der Konsole (`myelith`) legt er jede schreibende \
-             Handlung vor.",
+            "fragt vor dem Schreiben (manual mode)",
+            "Im manual mode darf der Agent lesen und suchen. Jede schreibende Handlung legt \
+             das Fenster vorher in einem Kasten vor, mit Werkzeug und Argumenten, und sie laeuft \
+             erst nach deiner Zustimmung.",
         );
     }
     match (hat_ordner, a.schreiben) {
@@ -247,7 +265,9 @@ fn artefakt_loeschen(
 
     // 4. Und es darf nicht das geladene sein.
     let e = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())?;
-    let geladen = halter.modell.lock().map(|g| g.is_some()).unwrap_or(false);
+    // ⚠️ Waehrend einer Runde des Loops gilt es als geladen: Wer nicht
+    //    nachsehen kann, loescht nicht (und friert den Hauptfaden nicht ein).
+    let geladen = halter.modell.try_lock().map(|g| g.is_some()).unwrap_or(true);
     if geladen && e.modell.artefakt.trim_end_matches('/').ends_with(&schluessel) {
         return Err(
             "Dieses Artefakt ist gerade geladen. Waehle ein anderes Modell und lade es, \
@@ -611,6 +631,331 @@ fn notaus() {
     myl_client::notaus::ausloesen("fenster");
 }
 
+// ── Der Loop: ∞ neben dem Senden ────────────────────────────────────
+//
+// ⚑ **Festlegungen des Projektinhabers (2026-09-26):**
+// - ∞ ist ein Schalter: an faehrt der Loop, aus pausiert er.
+// - Daneben eine Liste der Tasks: auswaehlen, neu anlegen, und per
+//   Ziehen die Reihenfolge aendern. Der vorderste laeuft („(läuft)"),
+//   alle dahinter warten („(queued)").
+// - Wird das Fenster geschlossen, haelt der Loop an und macht beim
+//   naechsten Oeffnen genau dort weiter.
+//
+// ⚑ **Die Logik steht in `myl_client::vorhaben`**, wie bei Konsole und
+// `myl`. Hier stehen nur Faden, Leihe und Meldungen ans Fenster.
+
+/// Der Ereignisname fuer Runden, Wartezeiten und das Ende des Loops.
+const LOOPEREIGNIS: &str = "loop-ereignis";
+
+/// ⚑ **Der Tokenstrom einer Runde laeuft auf einem eigenen Kanal**, nicht
+/// auf `LEBEND`. Ein Chat und eine Runde koennen sich im Fenster zeitlich
+/// beruehren (die Runde wartet auf das Modell, das der Chat gerade
+/// freigibt); auf einem Kanal liefe der Anfang der Runde in den Beitrag
+/// des Chats.
+const LOOPLEBEND: &str = "loop-lebt";
+
+/// Was das Fenster ueber den Loop wissen muss, ueber Befehle hinweg.
+#[derive(Default, Clone)]
+struct Loopzustand {
+    /// Der Faden laeuft.
+    laeuft: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// ∞ wurde ausgeschaltet: Nach dem Ende geht die Marke `.aktiv` weg.
+    pause: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// Gerade rechnet eine Runde; das Modell gehoert ihr.
+    in_runde: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+/// Eine Zeile der Taskliste.
+#[derive(Serialize)]
+struct Taskzeile {
+    kennung: String,
+    ziel: String,
+    stellung: myl_client::vorhaben::Stellung,
+    /// „läuft", „queued", „pausiert" …, aus der Kiste.
+    wort: String,
+    runden: u32,
+    ergebnis: Option<String>,
+}
+
+#[derive(Serialize)]
+struct Taskansicht {
+    /// Laeuft der Loop in diesem Fenster?
+    laeuft: bool,
+    in_runde: bool,
+    /// Lief er beim letzten Schliessen? Dann faehrt das Fenster ihn an.
+    war_aktiv: bool,
+    eintraege: Vec<Taskzeile>,
+}
+
+fn sprache_jetzt() -> myl_client::einstellungen::Sprache {
+    myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())
+        .map(|e| e.oberflaeche.sprache)
+        .unwrap_or_default()
+}
+
+/// **Die Tasks in ihrer Reihenfolge**, fuer die Liste an ∞.
+#[tauri::command]
+fn tasks(halter: tauri::State<'_, Halter>) -> Taskansicht {
+    use std::sync::atomic::Ordering;
+    let ablage = myl_client::vorhaben::Ablage::vorgabe();
+    let an = halter.schleife.laeuft.load(Ordering::SeqCst);
+    let sprache = sprache_jetzt();
+    Taskansicht {
+        laeuft: an,
+        in_runde: halter.schleife.in_runde.load(Ordering::SeqCst),
+        war_aktiv: !an && ablage.loop_war_aktiv(),
+        eintraege: ablage
+            .stellungen()
+            .into_iter()
+            .map(|(v, st)| Taskzeile {
+                wort: st.wort(&v, an, sprache),
+                kennung: v.kennung,
+                ziel: v.ziel,
+                stellung: st,
+                runden: v.runden,
+                ergebnis: v.ergebnis,
+            })
+            .collect(),
+    }
+}
+
+/// **Legt einen Task an**; er steht hinten in der Schlange.
+#[tauri::command]
+fn task_anlegen(ziel: String) -> Result<String, String> {
+    // ⛔️ Derselbe Schutzfilter wie vor jedem Auftrag (Art. 5 KI-Verordnung).
+    if let Some(satz) = myl_client::schutzfilter::abweisen(&ziel, sprache_jetzt(), "fenster-loop") {
+        return Err(satz);
+    }
+    let v = myl_client::vorhaben::Ablage::vorgabe().anlegen(&ziel, myl_client::vorhaben::jetzt())?;
+    Ok(v.kennung)
+}
+
+/// **Die neue Reihenfolge nach dem Ziehen.**
+#[tauri::command]
+fn tasks_ordnen(reihe: Vec<String>) -> Result<(), String> {
+    myl_client::vorhaben::Ablage::vorgabe().reihe_setzen(&reihe)
+}
+
+/// ⚠️ **Nicht mitten in seiner Runde.** Die Runde schriebe am Ende ihren
+/// eigenen Stand zurueck, und das Anhalten oder Entfernen waere dann
+/// still verloren.
+fn nicht_in_seiner_runde(halter: &Halter, kennung: &str) -> Result<(), String> {
+    use std::sync::atomic::Ordering;
+    let vorn = myl_client::vorhaben::Ablage::vorgabe().vorn().map(|v| v.kennung);
+    if halter.schleife.in_runde.load(Ordering::SeqCst) && vorn.as_deref() == Some(kennung) {
+        return Err(match sprache_jetzt() {
+            myl_client::einstellungen::Sprache::De => {
+                "Dieser Task rechnet gerade eine Runde. ∞ pausiert den Loop; danach geht es.".into()
+            }
+            myl_client::einstellungen::Sprache::En => {
+                "This task is in the middle of a round. ∞ pauses the loop; then it works.".into()
+            }
+        });
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn task_weiter(kennung: String) -> Result<(), String> {
+    myl_client::vorhaben::Ablage::vorgabe().weitermachen(&kennung).map(|_| ())
+}
+
+#[tauri::command]
+fn task_stoppen(kennung: String, halter: tauri::State<'_, Halter>) -> Result<(), String> {
+    nicht_in_seiner_runde(&halter, &kennung)?;
+    myl_client::vorhaben::Ablage::vorgabe().stoppen(&kennung, sprache_jetzt()).map(|_| ())
+}
+
+/// ⛔️ Entfernt samt Tagebuch; das Fenster fragt vorher.
+#[tauri::command]
+fn task_entfernen(kennung: String, halter: tauri::State<'_, Halter>) -> Result<(), String> {
+    nicht_in_seiner_runde(&halter, &kennung)?;
+    myl_client::vorhaben::Ablage::vorgabe().entfernen(&kennung)
+}
+
+/// Die Sicherheitsmeldung vor `auto`, aus der Kiste (derselbe Text wie in
+/// der Konsole und bei `myl setzen`).
+#[derive(Serialize)]
+struct Autowarnungansicht {
+    titel: String,
+    punkte: Vec<String>,
+    frage: String,
+}
+
+#[tauri::command]
+fn autowarnung() -> Autowarnungansicht {
+    let w = myl_client::einstellungen::autowarnung(sprache_jetzt());
+    Autowarnungansicht {
+        titel: w.titel.to_string(),
+        punkte: w.punkte.iter().map(|p| p.to_string()).collect(),
+        // ⚑ Ohne das „[j/N]" der Konsole: Hier antworten zwei Knoepfe.
+        frage: w.frage.trim().trim_end_matches("[j/N]").trim_end_matches("[y/N]").trim().to_string(),
+    }
+}
+
+/// **∞ an: der Loop faehrt in einem eigenen Faden.**
+///
+/// Gibt den Hinweis auf Standardeinstellungen zurueck, falls sie noch
+/// gelten (Wunsch des Projektinhabers: er steht im Ausgabefenster).
+#[tauri::command]
+fn loop_starten(fenster: tauri::AppHandle, halter: tauri::State<'_, Halter>) -> Result<Option<String>, String> {
+    use myl_client::vorhaben::{self, Ablage, Laeufer};
+    use std::sync::atomic::Ordering;
+    let z = halter.schleife.clone();
+    if z.laeuft.swap(true, Ordering::SeqCst) {
+        return Ok(None);
+    }
+    let vorbereitet = (|| {
+        let e = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())?;
+        let ablage = Ablage::vorgabe();
+        let laeufer = Laeufer::oeffnen(ablage.clone(), "Fenster")?;
+        Ok::<_, String>((e, ablage, laeufer))
+    })();
+    let (e, ablage, laeufer) = match vorbereitet {
+        Ok(x) => x,
+        Err(f) => {
+            z.laeuft.store(false, Ordering::SeqCst);
+            return Err(f);
+        }
+    };
+    let hinweis = vorhaben::hinweis_vorgaben(&e);
+    vorhaben::schliessen_zuruecksetzen();
+    z.pause.store(false, Ordering::SeqCst);
+    let _ = ablage.loop_aktiv_setzen(true);
+    let modell = halter.modell.clone();
+
+    std::thread::spawn(move || {
+        let f = fenster.clone();
+        let zr = z.clone();
+        // ⚑ **Die Leihe**: das Modell fuer genau eine Runde, und falls es
+        //   in der Zwischenzeit entladen wurde (Ruhefrist), wird es geladen.
+        let leihen = |runde: &mut dyn FnMut(&dyn myl_client::Modellweg)| -> Result<(), String> {
+            let mut g = modell.lock().map_err(|_| "der Modellhalter ist vergiftet".to_string())?;
+            if g.is_none() {
+                let _ = f.emit(LOOPEREIGNIS, serde_json::json!({ "art": "Laedt" }));
+                *g = Some(modell_aus(&e)?);
+            }
+            let m = g.as_mut().ok_or("das Modell ist nicht geladen")?;
+            zusehen_mit(m, &f, None, "", LOOPLEBEND);
+            zr.in_runde.store(true, Ordering::SeqCst);
+            runde(&*m);
+            zr.in_runde.store(false, Ordering::SeqCst);
+            m.beobachter = None;
+            Ok(())
+        };
+        let nachfrage = nachfrage_fuer(&fenster, e.agent.modus);
+        let kiste = kiste_fuer(&e);
+        let ruester = |zusaetzlich: myl_client::vorhaben::Zusatzwerkzeuge, saat: &str| {
+            let mut agent = e.agent.clone();
+            agent.netzsaat = Some(saat.to_string());
+            myl_client::ruestung::ruesten_mit(
+                &agent,
+                myl_client::Ansageform::Amtlich,
+                kiste,
+                zusaetzlich,
+                nachfrage.clone(),
+            )
+        };
+        let sprache = e.oberflaeche.sprache;
+        let melden = |ev: vorhaben::Ereignis| {
+            use vorhaben::Ereignis;
+            let j = match ev {
+                Ereignis::Beginnt { kennung, ziel, runde } => {
+                    serde_json::json!({ "art": "Beginnt", "kennung": kennung, "ziel": ziel, "runde": runde })
+                }
+                Ereignis::Geendet { vorhaben: v, bericht, pruefung } => serde_json::json!({
+                    "art": "Geendet",
+                    "kennung": v.kennung,
+                    "ziel": v.ziel,
+                    "runde": v.runden,
+                    "zustand": vorhaben::zustandswort(&v, sprache),
+                    "bericht": bericht,
+                    "pruefung": pruefung,
+                }),
+                Ereignis::Angestossen { kennung, ziel } => {
+                    serde_json::json!({ "art": "Angestossen", "kennung": kennung, "ziel": ziel })
+                }
+                Ereignis::Wartet { bis } => serde_json::json!({
+                    "art": "Wartet",
+                    "minuten": bis.saturating_sub(vorhaben::jetzt()).div_ceil(60),
+                }),
+                Ereignis::Fehler { kennung, grund } => {
+                    serde_json::json!({ "art": "Fehler", "kennung": kennung, "grund": grund })
+                }
+                Ereignis::OhneModell { grund } => serde_json::json!({ "art": "OhneModell", "grund": grund }),
+            };
+            let _ = f.emit(LOOPEREIGNIS, j);
+        };
+        let f2 = fenster.clone();
+        let melder = move |m: myl_client::Meldung<'_>| {
+            let _ = f2.emit(LOOPLEBEND, lebend_aus(m));
+        };
+        vorhaben::fahren(
+            &laeufer,
+            &leihen,
+            &ruester,
+            &e.schleife,
+            sprache,
+            u32::try_from(e.modell.token).unwrap_or(u32::MAX),
+            &melden,
+            &|| false,
+            Some(&melder),
+        );
+        // ⚑ **Warum er endete, entscheidet ueber die Marke.** Nur ein
+        //   geschlossenes Fenster laesst sie stehen: Dann faehrt er beim
+        //   naechsten Oeffnen von selbst weiter.
+        let grund = if z.pause.load(Ordering::SeqCst) {
+            "pausiert"
+        } else if vorhaben::schliessen_angefordert() {
+            "geschlossen"
+        } else if myl_client::notaus::ausgeloest() {
+            "notaus"
+        } else {
+            "leer"
+        };
+        if grund != "geschlossen" {
+            let _ = ablage.loop_aktiv_setzen(false);
+        }
+        drop(laeufer);
+        if grund != "notaus" {
+            vorhaben::schliessen_zuruecksetzen();
+        }
+        z.in_runde.store(false, Ordering::SeqCst);
+        z.laeuft.store(false, Ordering::SeqCst);
+        let _ = fenster.emit(LOOPEREIGNIS, serde_json::json!({ "art": "Ende", "grund": grund }));
+    });
+    Ok(hinweis)
+}
+
+/// **∞ aus: der Loop pausiert.** Eine laufende Runde haelt sofort an und
+/// setzt beim naechsten ∞ genau dort fort.
+#[tauri::command]
+fn loop_pausieren(halter: tauri::State<'_, Halter>) {
+    use std::sync::atomic::Ordering;
+    if halter.schleife.laeuft.load(Ordering::SeqCst) {
+        halter.schleife.pause.store(true, Ordering::SeqCst);
+        myl_client::vorhaben::schliessen_anfordern();
+    }
+}
+
+/// **Das Fenster geht zu**: anhalten, die Marke stehen lassen, und kurz
+/// warten, damit der Laeufer seine Wartezeiten als Rest sichert.
+///
+/// ⚠️ **Hoechstens vier Sekunden.** Steht die Runde gerade in einer
+/// Nachfrage des Betriebssystems, kommt sie nicht heraus, solange der
+/// Hauptfaden hier wartet; dann sichert der Herzschlag den Stand.
+fn loop_beim_schliessen(z: &Loopzustand) {
+    use std::sync::atomic::Ordering;
+    if !z.laeuft.load(Ordering::SeqCst) {
+        return;
+    }
+    myl_client::vorhaben::schliessen_anfordern();
+    let bis = std::time::Instant::now() + std::time::Duration::from_secs(4);
+    while z.laeuft.load(Ordering::SeqCst) && std::time::Instant::now() < bis {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
+
 /// **Die juengsten Eintraege des Aktionsprotokolls**, und wo es liegt.
 #[tauri::command]
 fn protokoll_lesen() -> (String, Vec<myl_client::protokoll::Eintrag>) {
@@ -726,6 +1071,8 @@ struct Halter {
     /// stuende jedes Kommando wieder im Ordner des ersten, und das
     /// waere ein Terminal, das sein Verzeichnis vergisst.
     terminalordner: std::sync::Arc<Mutex<Option<std::path::PathBuf>>>,
+    /// **Der Loop dieses Fensters** (∞ neben dem Senden).
+    schleife: Loopzustand,
 }
 
 /// Wie ein geladenes Modell heisst und wo es liegt.
@@ -755,15 +1102,8 @@ fn anzeigename(pfad: &str) -> String {
 #[tauri::command]
 async fn modell_laden(halter: tauri::State<'_, Halter>) -> Result<Ladung, String> {
     let e = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())?;
-    if e.modell.artefakt.is_empty() {
-        return Err("es ist kein Artefakt eingestellt".into());
-    }
     let anfang = std::time::Instant::now();
-    let pfad = artefakt_absolut(&e.modell.artefakt);
-    let mut m = myl_client::Oertlichesmodell::laden(&pfad, &e.kapazitaet)
-        .map_err(|f| mit_zugriffshinweis(f, &pfad))?;
-    m.grenze = e.modell.token;
-    m.denken = e.modell.denken;
+    let m = modell_aus(&e)?;
     let dauer = anfang.elapsed().as_secs_f64();
     *halter.modell.lock().map_err(|_| "der Modellhalter ist vergiftet")? = Some(m);
     Ok(Ladung {
@@ -771,6 +1111,21 @@ async fn modell_laden(halter: tauri::State<'_, Halter>) -> Result<Ladung, String
         pfad: e.modell.artefakt.clone(),
         sekunden: (dauer * 10.0).round() / 10.0,
     })
+}
+
+/// **Laedt das eingestellte Artefakt**, fuer den Ladeknopf und fuer die
+/// Leihe des Loops. ⚑ Eine Stelle, damit beide dasselbe Modell mit
+/// derselben Grenze bekommen.
+fn modell_aus(e: &myl_client::Einstellungen) -> Result<myl_client::Oertlichesmodell, String> {
+    if e.modell.artefakt.is_empty() {
+        return Err("es ist kein Artefakt eingestellt".into());
+    }
+    let pfad = artefakt_absolut(&e.modell.artefakt);
+    let mut m = myl_client::Oertlichesmodell::laden(&pfad, &e.kapazitaet)
+        .map_err(|f| mit_zugriffshinweis(f, &pfad))?;
+    m.grenze = e.modell.token;
+    m.denken = e.modell.denken;
+    Ok(m)
 }
 
 /// Gibt das geladene Modell wieder frei.
@@ -793,7 +1148,15 @@ async fn modell_laden(halter: tauri::State<'_, Halter>) -> Result<Ladung, String
 /// fragen; die Zeitschaltung tut das nicht und soll es nicht muessen.
 #[tauri::command]
 fn modell_entladen(halter: tauri::State<'_, Halter>) -> Result<bool, String> {
-    let mut g = halter.modell.lock().map_err(|_| "der Modellhalter ist vergiftet")?;
+    // ⚠️ **`try_lock` und nicht `lock`**: Dieser Befehl laeuft auf dem
+    //    Hauptfaden. Rechnet gerade eine Runde des Loops, haelt sie das
+    //    Modell, und ein wartendes `lock` fror das ganze Fenster ein, bis
+    //    sie fertig ist. Dann bleibt das Modell eben geladen.
+    let mut g = match halter.modell.try_lock() {
+        Ok(g) => g,
+        Err(std::sync::TryLockError::WouldBlock) => return Ok(false),
+        Err(std::sync::TryLockError::Poisoned(_)) => return Err("der Modellhalter ist vergiftet".into()),
+    };
     Ok(g.take().is_some())
 }
 
@@ -857,6 +1220,8 @@ async fn agent_fahren(
         });
     }
     let nachfrage = nachfrage_fuer(&fenster, e.agent.modus);
+    // ⚑ Der Auftrag ist die Saat der Web-Recherche, wie im Chat.
+    e.agent.netzsaat = Some(auftrag.clone());
     let ruestung = myl_client::ruestung::ruesten_mit(
         &e.agent,
         myl_client::Ansageform::Amtlich,
@@ -891,28 +1256,7 @@ async fn agent_fahren(
         // Stroemen zusammensetzen muessen.
         let f = fenster.clone();
         let melder = move |m: myl_client::Meldung<'_>| {
-            let _ = f.emit(
-                LEBEND,
-                match m {
-                    myl_client::Meldung::Schritt(nummer) => Lebend::Schritt { nummer },
-                    myl_client::Meldung::Aufruf { name, argumente } => Lebend::Aufruf {
-                        name: name.to_string(),
-                        argumente: myl_client::lauf::kurzform(argumente),
-                        voll: myl_client::lauf::volltext_der_argumente(argumente),
-                    },
-                    myl_client::Meldung::Ergebnis { name, text } => Lebend::Ergebnis {
-                        name: name.to_string(),
-                        text: myl_client::lauf::bis_zur_grenze(text, myl_client::lauf::VOLLTEXT_GRENZE),
-                    },
-                    myl_client::Meldung::Abgelehnt { name, grund } => Lebend::Abgelehnt {
-                        name: name.to_string(),
-                        grund: grund.to_string(),
-                    },
-                    myl_client::Meldung::Verdichtet { vorher, nachher } => {
-                        Lebend::Verdichtet { vorher, nachher }
-                    }
-                },
-            );
+            let _ = f.emit(LEBEND, lebend_aus(m));
         };
         let verlauf = verlauf.unwrap_or_default();
         // ⚑ **Jeder Auftrag bekommt sein Nachschlagebudget neu**
@@ -1295,16 +1639,22 @@ async fn frage(
         // beiden abgebildet, die es gibt. Eine unbekannte Rolle wird
         // zur Nutzerrolle und nicht stillschweigend verworfen: Ein
         // verschluckter Beitrag waere ein Gespraech mit einer Luecke.
-        let n: Vec<myl_client::Nachricht> = verlauf
-            .iter()
-            .map(|(rolle, inhalt)| {
-                if rolle == "modell" {
-                    myl_client::Nachricht::modell(inhalt.clone())
-                } else {
-                    myl_client::Nachricht::nutzer(inhalt.clone())
-                }
-            })
-            .collect();
+        // ⛔️ **Auch der Chat ohne Werkzeuge steht unter den Grundsaetzen**
+        //    des vorgegebenen Systemprompts (`myl_client::systemprompt`).
+        let mut n: Vec<myl_client::Nachricht> = vec![myl_client::Nachricht::system(
+            myl_client::systemprompt::grundsaetze(if sprache == "en" {
+                myl_client::einstellungen::Sprache::En
+            } else {
+                myl_client::einstellungen::Sprache::De
+            })?,
+        )];
+        n.extend(verlauf.iter().map(|(rolle, inhalt)| {
+            if rolle == "modell" {
+                myl_client::Nachricht::modell(inhalt.clone())
+            } else {
+                myl_client::Nachricht::nutzer(inhalt.clone())
+            }
+        }));
         // `chat` kommt aus dem Merkmal `Modellweg`.
         use myl_client::Modellweg as _;
         // ⚑ **Satzweise sprechen, waehrend das Modell noch schreibt.**
@@ -1319,7 +1669,7 @@ async fn frage(
                 ))))
             })
         });
-        zusehen_mit(m, &fenster, vorleser.clone(), &sprache);
+        zusehen_mit(m, &fenster, vorleser.clone(), &sprache, LEBEND);
         // ⚑ **Das Denkbudget gilt nur, wenn vorgelesen wird**, und nur
         //   fuer diese eine Antwort: Die Ueberlegung ist dann Wartezeit,
         //   in der nichts klingt. Danach wieder ohne, damit der naechste
@@ -1415,6 +1765,27 @@ enum Lebend {
     Verdichtet { vorher: usize, nachher: usize },
 }
 
+/// Eine Meldung der Agentenschleife in der Form, die das Fenster zeichnet.
+fn lebend_aus(m: myl_client::Meldung<'_>) -> Lebend {
+    match m {
+        myl_client::Meldung::Schritt(nummer) => Lebend::Schritt { nummer },
+        myl_client::Meldung::Aufruf { name, argumente } => Lebend::Aufruf {
+            name: name.to_string(),
+            argumente: myl_client::lauf::kurzform(argumente),
+            voll: myl_client::lauf::volltext_der_argumente(argumente),
+        },
+        myl_client::Meldung::Ergebnis { name, text } => Lebend::Ergebnis {
+            name: name.to_string(),
+            text: myl_client::lauf::bis_zur_grenze(text, myl_client::lauf::VOLLTEXT_GRENZE),
+        },
+        myl_client::Meldung::Abgelehnt { name, grund } => Lebend::Abgelehnt {
+            name: name.to_string(),
+            grund: grund.to_string(),
+        },
+        myl_client::Meldung::Verdichtet { vorher, nachher } => Lebend::Verdichtet { vorher, nachher },
+    }
+}
+
 /// Der Ereignisname, unter dem alles Lebende laeuft.
 ///
 /// ⚑ **Einer und nicht sechs.** Sechs Namen hiessen sechs Anmeldungen
@@ -1476,7 +1847,7 @@ fn abspieler_im_fenster(fenster: tauri::AppHandle) -> myl_senses::sprechen::Absp
 /// dableibt, hielte einen Fenstergriff aus einem beendeten Auftrag
 /// fest und meldete in den naechsten hinein.
 fn zusehen(m: &mut myl_client::Oertlichesmodell, fenster: &tauri::AppHandle) {
-    zusehen_mit(m, fenster, None, "");
+    zusehen_mit(m, fenster, None, "", LEBEND);
 }
 
 /// **Derselbe Zuschauer, der nebenbei vorliest.**
@@ -1497,6 +1868,7 @@ fn zusehen_mit(
     fenster: &tauri::AppHandle,
     vorleser: Option<std::sync::Arc<Mutex<Option<myl_senses::sprechen::Vorleser>>>>,
     sprache: &str,
+    kanal: &'static str,
 ) {
     let f = fenster.clone();
     let sprache = sprache.to_string();
@@ -1519,7 +1891,7 @@ fn zusehen_mit(
             }
         }
         let _ = f.emit(
-            LEBEND,
+            kanal,
             match s {
                 myl_client::strom::Stueck::Denken(text) => Lebend::Denken { text },
                 myl_client::strom::Stueck::Text(text) => Lebend::Text { text },
@@ -2253,7 +2625,24 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(Halter::default())
+        // ⚑ **Fenster zu heisst: Loop anhalten, beim naechsten Oeffnen
+        //   genau dort weiter** (Festlegung des Projektinhabers).
+        .on_window_event(|fenster, ereignis| {
+            if let tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed = ereignis {
+                use tauri::Manager;
+                loop_beim_schliessen(&fenster.state::<Halter>().schleife);
+            }
+        })
         .invoke_handler(tauri::generate_handler![
+            tasks,
+            task_anlegen,
+            tasks_ordnen,
+            task_weiter,
+            task_stoppen,
+            task_entfernen,
+            autowarnung,
+            loop_starten,
+            loop_pausieren,
             starthinweis,
             notaus,
             protokoll_lesen,

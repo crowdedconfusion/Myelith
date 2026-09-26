@@ -1,7 +1,7 @@
 # client (Nutzer-Client inkl. Wallet)
 
-> **Version:** 0.85.0 (`myl-client` 0.54.0, `myl-oberflaeche` 0.49.0, `myl-console` 0.23.0, `myl-senses` 0.9.0)
-> **Datum:** 2026-09-25
+> **Version:** 0.94.0 (`myl-client` 0.63.0, `myl-oberflaeche` 0.50.2, `myl-console` 0.26.3, `myl-senses` 0.9.0)
+> **Datum:** 2026-09-26
 > **Status:** ✅ **Der lokale Betrieb läuft und ist ausgeliefert.** Ein
 > Gesprächsfenster mit Modellwahl, Agentenschleife und
 > Einstellungsseite; aus einem frischen Klon lassen sich darüber
@@ -31,9 +31,10 @@ kostet nichts, wenn er stimmt, und einen halben Tag, wenn nicht.
 | **Fünf Konsolen-Designs** | `Standard` nimmt die Farben deines Terminals, dazu `Myelith`, `Bernstein`, `Tiefsee`, `Tinte`. Voreingestellt über `oberflaeche.design`, beim Start ohne bleibende Wirkung wählbar |
 | **Was gerade läuft, steht da** | Eine Zeile fest über dem Eingabekasten, mittig: Ladetext, verstrichene Zeit, gelesene und geschriebene Token, laufende Tätigkeit; die Farbe wandert in zwei Minuten durch den Regenbogen, in einfarbigen Designs pulst sie. Jeder Schritt und jeder Werkzeugaufruf **bleibt** in der Zeitleiste; `^S` schaltet auf die ausführliche Form, in der auch der Denkvorgang live durchläuft |
 | **auto mode und manual mode** | Umschalt-Tab in der Konsole, oder `agent.modus` in den Einstellungen. Im manual mode wird **jede schreibende Handlung** vorgelegt und läuft erst nach einer Bestätigung; Lesen und Suchen fragen nie. Das Fenster legt sie seit v0.47.0 im Kasten des Betriebssystems vor, mit Namen und Argumenten; vorher nahm es die schreibenden Werkzeuge in diesem Modus **ganz weg** |
+| **Der Loop: ein Ziel über viele Runden** | Im Fenster ∞ neben dem Senden (an und aus), daneben die Liste der Tasks: auswählen, neu anlegen, am Griff in die gewünschte Reihenfolge ziehen. Der vorderste läuft, alle dahinter sind „queued“; jeder Task hat sein eigenes Gespräch. In der Konsole `/loop` und `/tasks`, auf der Kommandozeile `myl loop` und `myl tasks`. Wird geschlossen, geht es beim nächsten Öffnen genau dort weiter |
 | **Ein Gespräch mit einem lokalen Modell** | `myl frage <artefakt> <text>`, oder im Fenster |
 | **Die Agentenschleife** | `myl agent`, mit Werkzeugen innerhalb einer Einhängegrenze |
-| **Die Werkzeugkiste ist ein Ordner** | Eine Einstellung, ein Pfad: `agent.kistenordner`, ohne Angabe die mitgelieferte Kiste `Base` unter `CLIENT/werkzeugkisten/`. Der **Ordnername** sagt, welche eingebauten Werkzeuge dazukommen: `Base` die fünf Dateiwerkzeuge, `Advanced` zusätzlich `run_command` und die drei Werkzeuge für den Mitschnitt (seit dem 2026-09-17, gemessen: das kleine Modell ruft sie nie). ⚑ **Eine Kiste kann das auch selbst sagen**, in ihrem `kiste.json`; ohne diese Datei und ohne einen der drei Namen bleibt es bei `Base`. Was als Manifest im Ordner liegt, sieht das Modell **ohne Neubau**. ⚑ **`Base` ist die Grundlage jeder Kiste**: Ihre Werkzeuge werden mitgeladen, gestapelt und nicht kopiert; bei gleichem Namen gewinnt die gewählte Kiste. ⛔️ Die fünf Dateiwerkzeuge bleiben kompiliert, weil nur sie die Einhängegrenze einhalten; ein Manifest läuft über die Shell und kann das nicht |
+| **Die Werkzeugkiste ist ein Ordner** | Eine Einstellung, ein Pfad: `agent.kistenordner`, ohne Angabe die mitgelieferte Kiste `Base` unter `CLIENT/werkzeugkisten/`. Der **Ordnername** sagt, welche eingebauten Werkzeuge dazukommen: `Base` die fünf Dateiwerkzeuge und die zwei Skillwerkzeuge `search_skill` und `learn_skill` (seit dem 2026-09-26), `Advanced` zusätzlich `run_command` und die drei Werkzeuge für den Mitschnitt (seit dem 2026-09-17, gemessen: das kleine Modell ruft sie nie). ⚑ **Eine Kiste kann das auch selbst sagen**, in ihrem `kiste.json`; ohne diese Datei und ohne einen der drei Namen bleibt es bei `Base`. Was als Manifest im Ordner liegt, sieht das Modell **ohne Neubau**. ⚑ **`Base` ist die Grundlage jeder Kiste**: Ihre Werkzeuge werden mitgeladen, gestapelt und nicht kopiert; bei gleichem Namen gewinnt die gewählte Kiste. ⛔️ Die fünf Dateiwerkzeuge bleiben kompiliert, weil nur sie die Einhängegrenze einhalten; ein Manifest läuft über die Shell und kann das nicht |
 | **Eine Datei anhängen** | In der Konsole `/datei <pfad>`, im Fenster der Knopf neben dem Senden oder Ziehen und Ablegen. Die Datei wandert nach `.AGENT/anhaenge/`, also unter die Einhängung, und das Gespräch bekommt **eine Zeile mit ihrem Pfad statt ihres Inhalts**. Gibt es ein Werkzeug für ihre Art, nennt die Zeile es. `myl anhaenge` zeigt, was liegt, `--aufraeumen` räumt auf |
 | **Sehen, Hören, Sprechen** | Die Kiste `myl-senses`: Bilder über llama.cpp, Ton über whisper.cpp, Sprechen über piper, jeweils mit einem **eigenen kleinen** Modell außerhalb des Repositoriums (`~/.myelith/sinne`). Das Hauptmodell bleibt ein Textmodell. ⚑ **Auch im Chat**, wo es keine Werkzeugschleife gibt: Eine angehängte Datei wird beim Anhängen angesehen. Fehlt ein Laufwerk, sagt der Sinn mit Pfad und Befehl, was fehlt, statt abzustürzen |
 | **Die Sprechtaste** | Im Fenster: gedrückt halten, reden, loslassen. Über dem Feld schlägt ein **Pegel** aus, solange aufgenommen wird, und danach steht der Text **in der Eingabezeile**, nicht im Gespräch: Wer sich verhört hat, bessert aus, bevor das Modell liest. Der Lautsprecherknopf liest Antworten vor, **satzweise**: Der erste Satz klingt, während das Modell noch schreibt. ⚠️ Ein Voll-Duplex-Gespräch ist das nicht, es fehlen Sprechbeginnerkennung, Unterbrechen und Echokompensation |
@@ -51,7 +52,7 @@ kostet nichts, wenn er stimmt, und einen halben Tag, wenn nicht.
 | **Gespraeche verwalten** | Rechtsklick auf eine Zeile: umbenennen an Ort und Stelle, als Markdown ausgeben, loeschen. Wohin ausgegeben wird, steht in `ausgabe.ordner`; ohne Angabe fuehrt das Fenster dorthin |
 
 ⚑ **Die Oberfläche ruft dieselben Funktionen wie die Kommandozeile**,
-über achtunddreissig Befehle. ⚠️ **Mit genau einer Ausnahme, und sie ist gewollt:** `terminal_ausfuehren` startet eine Shell, denn ein Terminal, das keine startet, ist keines. Jeder andere Befehl startet **keinen einzigen Unterprozess**. `jeder_befehl_ist_angemeldet` hält die vier
+über siebenundvierzig Befehle. ⚠️ **Mit genau einer Ausnahme, und sie ist gewollt:** `terminal_ausfuehren` startet eine Shell, denn ein Terminal, das keine startet, ist keines. Jeder andere Befehl startet **keinen einzigen Unterprozess**. `jeder_befehl_ist_angemeldet` hält die vier
 Richtungen zusammen: kein Befehl ohne Anmeldung, keine Anmeldung ohne
 Befehl, kein Aufruf ins Leere und kein Befehl, den niemand ruft. „Ohne eigene Logik" hiesse sonst, aus einer Textausgabe
 für Menschen eine Schnittstelle zu machen, und genau das ist die Sorte
@@ -151,6 +152,747 @@ Modell überhaupt etwas taugt, und weil eine Schnittstelle, die kein
 Mensch je bedient hat, an den Bedürfnissen vorbei entworfen wird.
 
 ## Changelog
+
+### v0.94.0 – 2026-09-26 (ein fest vorgegebener Systemprompt, geprüft vor jedem Lauf)
+
+**Auftrag des Projektinhabers:** ein Systemprompt, der das Modell auf die
+Arbeitsweise vorbereitet, unbedingt vorgegeben und über einen Hash
+überprüft, damit Compliance- und Ethik-Vorgaben später dauerhaft darin
+stehen können. Die Texte liegen unter `COMPLIANCE/systemprompt/` (dort
+beschrieben); hier, wie der Client sie benutzt.
+
+**Neu in `myl-client` (0.63.0), `systemprompt.rs`:**
+- Die Texte und `pruefsummen.txt` sind **eingebaut** (`include_str!`).
+  Es gibt keine Einstellung, die einen anderen Text an diese Stelle setzt.
+- ⛔️ **Vor jedem Lauf geprüft, im Zweifel geschlossen:**
+  `lauf::fahren_im_gespraech` hält den Text gegen seine Summe, und passt
+  sie nicht, endet der Lauf, bevor das Modell gefragt wird. Dasselbe in
+  `myl` (`einen_auftrag`, `frage`); die Konsole prüft zusätzlich beim
+  Start und startet sonst nicht.
+- **Wo er steht:** als Hausregel **hinter** der zeichengenauen
+  Werkzeugvorlage (`angebot_mit_regel`), nicht darin. Bisher lief jeder
+  Agentenlauf mit `hausregel: None`.
+- **Welche Sprache:** die der Werkzeugansage (`Amtlich` englisch,
+  `Deutsch` deutsch), damit Prompt und Werkzeugliste dieselben Namen
+  tragen; antworten soll das Modell in der Sprache des Nutzers.
+- **Der Chat ohne Werkzeuge** bekommt die Grundsätze (den Teil vor der
+  Arbeitsweise), in der Sprache der Oberfläche: im Fenster und bei
+  `myl frage`.
+- **Nachvollziehbar:** Jeder Lauf trägt den vollen SHA-256 der Fassung
+  ins Aktionsprotokoll (`art: systemprompt`, `entscheidung: geprueft` oder
+  `abgewiesen`).
+- `gespraech::ansage` zählt den Systemprompt mit, damit die
+  Kontextanzeige dasselbe misst, was das Modell bekommt.
+
+⚠️ **Die Ausgabe von `myl frage` ändert sich**, denn vor der Frage stehen
+jetzt die Grundsätze. Die Rauchproben mit der Paris-Frage (kalter Klon,
+GolemOS) bleiben untereinander vergleichbar, nicht aber mit Läufen von
+vorher.
+
+**Belegt:**
+- `myl-client` grün (rot nur Fund 482), neu:
+  - `die_pruefsummen_stimmen`,
+  - `eine_veraenderte_fassung_wird_abgewiesen`,
+  - `beide_fassungen_tragen_die_regeln` (samt Grundsätzen für den
+    Chat),
+  - `die_ansage_traegt_den_vorgegebenen_systemprompt` (hinter
+    `</tools>`).
+- Gegenprobe am echten Text: ein Zeichen in `de.md` geändert, und die
+  Prüfung meldet verlangte und tatsächliche Summe.
+- Konsole 158, Fenster 74, Clippy mit `-D warnings` in allen drei ohne
+  Befund.
+
+### v0.93.0 – 2026-09-26 (das Tagebuch lässt sich nicht mehr nachahmen, und die Suche findet Dateinamen; Funde 491 und 492)
+
+**Aus den ersten Läufen des 30B-A3B im Loop-Szenario.**
+
+⛔️ **Fund 491: Das Modell ahmte das Tagebuch nach.** Die Zeile des
+Systems hieß „Ausgeführt: …“. Das 30B schrieb in zwei Runden selbst
+„Ausgeführt: write_file(…)“ und „Ausgeführt: edit_file(…)“ in seine
+Antwort, **ohne ein Werkzeug zu rufen**. Nichts war geschrieben, im
+Tagebuch stand es wie eine Tatsache, und die nächste Runde sah es im
+Rückblick. Jetzt:
+- Die Zeile des Systems trägt die Marke `[System]`: „Tatsächlich
+  ausgeführt: …“, oder ausdrücklich „In dieser Runde lief kein Werkzeug.“
+- `behauptungen_markieren`: Zeilen im Bericht des Modells, die wie eine
+  Systemzeile aussehen (auch mit gefälschter Marke), stehen im Tagebuch
+  als „(behauptet, nicht ausgeführt)“.
+- Der Rundenauftrag sagt: Ein Werkzeug wirkt nur, wenn es aufgerufen wird.
+
+⛔️ **Fund 492: Zwei Werkzeuge ließen eine vorhandene Datei fehlend
+aussehen.** Das 30B schloss in Runde 1, `daten/messwerte.csv` gebe es
+nicht:
+- **`list_directory` mit Tiefe 1** zeigte `daten` nur als „Verzeichnis“.
+  Jetzt steht bei einem nicht aufgeklappten Ordner die Zahl der Einträge
+  und „erst mit tiefe N zu sehen“.
+- **`search_files` suchte nur im Inhalt.** Die Suche nach
+  `messwerte.csv` fand die Zeile in `auswertung.py`, die den Namen
+  nennt, aber nicht die Datei. Jetzt stehen Dateien und Ordner, deren
+  **Name** das Muster enthält, vor den Zeilentreffern.
+
+📌 **Und eine Lehre an mir, beim Szenario:** Die erste Abnahme für
+Aufgabe 1 prüfte nur „läuft durch, Datei nicht leer“. Das 30B bestand
+sie, indem es den `KeyError` mit `zeile.get("sensor", "n/a")` verdeckte;
+die Tabelle hatte eine Zeile „n/a“ mit Nullen. **Eine Abnahme muss die
+Anforderung prüfen, nicht nur das Durchlaufen.** Die neue verlangt eine
+Zeile je Sensor.
+
+**Belegt:**
+- `myl-client` 356 Proben grün (rot nur Fund 482), neu:
+  - `behauptete_aufrufe_werden_markiert`,
+  - `eine_behauptete_ausfuehrung_steht_nicht_als_tatsache_da` (ganze
+    Runde),
+  - `eine_runde_aendert_vorhandene_dateien`,
+  - `die_suche_findet_auch_dateinamen`,
+  - `das_verzeichnis_listet_und_nennt_die_art` erweitert.
+- Gegenprobe: Ohne die Markierung wird die Rundenprobe rot.
+- Clippy mit `-D warnings` ohne Befund.
+
+### v0.92.0 – 2026-09-26 (der Abnahmebefehl entscheidet über „fertig“, und ein Pendelwächter sieht den Kreis über zwei Stände)
+
+**Aus dem Loop-Szenario mit dem 8B**, auf Auftrag des Projektinhabers vor
+dem Lauf mit dem 30B.
+
+**Neu in `myl-client` (0.61.0):**
+- ⚑ **Der Abnahmebefehl je Task** (`Vorhaben::abnahme`), vom Menschen
+  beim Anlegen genannt. Nach jeder abgeschlossenen Runde läuft er mit
+  `sh -c` im Arbeitsordner, höchstens 300 s.
+  - **Endet er mit 0, ist der Task fertig**, auch an der Schrittgrenze
+    und auch, wenn das Modell sich nicht abgemeldet hat.
+  - **Endet er anders, ist der Task nie fertig**, gleich was Modell und
+    Prüfdurchgang sagen. Seine Ausgabe steht als Notiz `abnahme` da; die
+    nächste Runde sieht den echten Fehler statt einer Vermutung.
+  - Der Rundenauftrag nennt den Befehl, und das Tagebuch hält das
+    Ergebnis fest.
+  - 📌 **Warum:** Im Szenario bestätigte der Prüfdurchgang des 8B zweimal
+    falsche Arbeit als erreicht, auch mit Belegen. **Ein Modell, das sich
+    selbst abnimmt, nimmt sich nicht ab.**
+  - Ein Befehl des Menschen, nicht des Modells: Das Modell kann ihn nicht
+    ändern, deshalb läuft er unabhängig von der Werkzeugkiste.
+- ⚑ **Der Pendelwächter** um `write_file` und `edit_file` in jeder
+  Loop-Runde. Er merkt sich je Datei die Stände dieser Runde (vor der
+  ersten Änderung eingeschlossen) und hängt einen Hinweis an, wenn eine
+  Änderung nichts änderte oder eine Datei auf einen früheren Stand
+  zurückfiel. 📌 In Lauf 4 pendelte das 8B fünfzehnmal zwischen
+  `zeile["sensor"]` und `zeile["sens"]`; die Wiederholungsbremse sieht
+  das nicht, denn jede Änderung ist ein anderer Aufruf mit Wirkung. Er
+  verhindert nichts, denn ein Zurück kann richtig sein.
+- `myl tasks add <ziel> --abnahme <befehl>`, `myl tasks abnahme <ID> <befehl>`
+  (leer löscht), `Ablage::abnahme_setzen`.
+
+**Neu in `myl-console` (0.26.2):** `/tasks abnahme <ID> <befehl>`.
+
+⚠️ **Noch nicht im Fenster:** Die Taskliste kann einen Abnahmebefehl noch
+nicht setzen.
+
+**Belegt:**
+- `myl-client` 352 Proben grün (rot nur Fund 482), neu:
+  - `die_abnahme_entscheidet_ueber_fertig`: bestanden an der
+    Schrittgrenze ist fertig; nicht bestanden trotz Behauptung und
+    „erreicht“ ist nicht fertig, mit Ausgabe in den Notizen,
+  - `der_abnahmebefehl_laeuft_im_arbeitsordner`,
+  - `der_pendelwaechter_sieht_den_kreis`,
+  - `die_abnahme_entscheidet_ueber_ganze_runden`: Drehbuch über zwei
+    Runden; die zweite sieht die Ausgabe der ersten.
+- Gegenproben:
+  - Mit dem alten `abschliessen` in der Runde wird die Rundenprobe rot.
+  - Ohne den Vergleich mit früheren Ständen wird die Pendelprobe rot.
+- Konsole 151 und 7, Clippy mit `-D warnings` ohne Befund.
+
+### v0.91.0 – 2026-09-26 (Web-Recherche auch im Agenten, mit mitwachsender Verratsprobe; der Prüfdurchgang sieht Belege, an der Schrittgrenze ist nichts fertig, eine Wiederholungsbremse, `write_file` legt fehlende Ordner an; Funde 487 bis 490)
+
+**Web-Recherche im Agenten** (Festlegung des Projektinhabers,
+2026-09-26: „Die Web-Werkzeuge sollen selbstverständlich auch dem
+Agenten zur Verfügung stehen“):
+- Mit `agent.web_recherche` bekommt jetzt auch der Agent `web_search`
+  und `web_read`. Das gilt in Konsole, Fenster, `myl agent` und im Loop;
+  vorher gab es sie nur im Chat für Anhänge.
+- ⛔️ **Die Verratsprobe (Schranke 2) wächst mit dem Lauf.** Im Chat
+  prüft sie gegen die Anhänge. Im Agenten wäre ein Schnappschuss des
+  Arbeitsordners teuer und träfe das Falsche, denn **verraten kann das
+  Modell nur, was es gelesen hat**. Ein Mitleser legt deshalb jedes
+  Ergebnis eines eigenen Werkzeugs (Datei, Suche, Befehl, Skill) ins Tor
+  (`Tor::gesehen`, gedeckelt auf 16 MiB). Eine Suchfrage mit einem
+  wörtlichen Stück daraus geht nicht hinaus. Die Web-Werkzeuge selbst
+  werden nicht mitgelesen; ihr Inhalt ist fremd.
+- **Die Saat des Zielkreises** (Schranke 1) ist, was der Mensch
+  geschrieben hat: der Auftrag, im Loop das Ziel des Tasks. Dafür gibt es
+  `Agenteneinstellung::netzsaat` (je Lauf, nie gespeichert), und der
+  Rüster des Loops bekommt das Ziel als zweites Argument.
+- Im `manual mode` fragt jede Webanfrage nach, wie im Chat.
+- ⚠️ **In `Advanced` bleibt `run_command` ein Weg nach draußen ohne
+  Tor.** Das war der Grund, die Werkzeuge bisher nur im Chat anzubieten,
+  und er steht jetzt so an der Einstellung.
+- Eine vergiftete Sperre am Tor zählt als Verrat: Im Zweifel geht nichts
+  hinaus.
+
+⛔️ **Fund 487: Der Prüfdurchgang glaubte der Behauptung.** Im
+Loop-Szenario mit dem 8B endete die erste Runde an der Schrittgrenze,
+ohne eine Datei geändert zu haben. Die Prüfung sah nur Ziel und Bericht
+(die Liste der Aufrufe) und urteilte „erreicht: ja, das Skript läuft ohne
+Fehler“. Das Skript brach weiter mit `KeyError` ab, der Task stand auf
+„fertig“. Jetzt:
+- Die Prüfung sieht die letzten acht **Werkzeugergebnisse** als Belege
+  und die Regel, dass eine Behauptung ohne Beleg nicht zählt.
+- ⛔️ **Eine Runde an der Schrittgrenze ist nie „fertig“**, gleich was
+  Prüfung oder Modell sagen; ihr Fortschritt zählt trotzdem.
+
+⛔️ **Fund 488: Aufrufe im Kreis.** Dieselbe Runde lief viermal durch
+dieselben vier Aufrufe bis zur Schrittgrenze. Die Erkennung
+„steckengeblieben“ der Schleife sieht nur aufeinanderfolgende
+Wiederholungen. Jetzt gibt es in jeder Loop-Runde eine
+**Wiederholungsbremse**: Ein lesender Aufruf, der genauso schon lief,
+ohne dass seither ein nicht lesender dazwischen war, läuft nicht noch
+einmal, und das Modell bekommt einen Hinweis.
+- 📌 **Nachtrag aus Lauf 3:** Ein `note_set` zwischen zwei gleichen
+  Suchen hob die Bremse auf, weil er als Änderung zählte. Notizen, Wecken
+  und die reinen Rechenwerkzeuge der verankerten Kiste zählen jetzt weder
+  als Änderung, noch werden sie gebremst. Gegenprobe: Ohne diese Regel
+  wird die Probe rot.
+- Der mitgelieferte Skill `fehlersuche` beginnt jetzt mit „Ausführen,
+  nicht vermuten“. Das 8B hatte in zwei Läufen das fehlerhafte Skript
+  nie gestartet und die echte Meldung (`KeyError`) deshalb nie gesehen.
+
+⛔️ **Fund 490: Ein fehlender Ordner war eine Sackgasse.** In Lauf 2 des
+Szenarios wollte das 8B `ergebnis/statistik.md` schreiben, neunmal, und
+jedes Mal fehlte `ergebnis/`. Es schrieb „Ich erstelle das Verzeichnis“,
+aber ohne Shell gibt es kein Werkzeug dafür. In `Base` war die Aufgabe
+damit unlösbar. Jetzt:
+- `write_file` legt fehlende Ordner an.
+- `Einhaengung::aufloesen` löst dazu den tiefsten **vorhandenen**
+  Vorfahren auf und lässt darunter nur reine Namen zu.
+- `..` fällt heraus, und ein Verweis nach draußen, unter dem ein neuer
+  Ordner entstehen soll, ebenso. Draußen wird nichts angelegt.
+
+⚠️ **Fund 489, beobachtet, nicht behoben:**
+`das_aktionsprotokoll_haelt_fest_ohne_klartext` war in einem
+Gesamtlauf unter Volllast (8B-Loop nebenher) einmal rot und allein
+zweimal grün. Verdacht: Der prozessweite Protokollort
+(`protokoll::ordner_setzen`) und parallel schreibende Nachbarproben.
+
+**Belegt:**
+- `myl-client` 348 Proben grün (rot nur Fund 482). Neu sind:
+  - `die_wiederholungsbremse_bremst_nur_ohne_aenderung`,
+  - `an_der_schrittgrenze_ist_nichts_fertig`,
+  - `der_pruefauftrag_zeigt_die_belege`,
+  - `write_file_legt_ordner_an_und_bleibt_drinnen` (tiefe neue Ordner;
+    `..` mitten im neuen Pfad; ein Verweis nach draußen),
+  - `tests/webagent.rs`: Werkzeuge nur mit Häkchen; nach `read_file`
+    einer Datei mit Geheimnis wird eine Suchfrage mit einem wörtlichen
+    Stück daraus abgewiesen. Die Suchadresse zeigt auf `.invalid`, damit
+    auch eine kaputte Schranke nichts hinausschickt.
+- Gegenproben:
+  - ohne die Sperre an der Schrittgrenze wird die Probe rot,
+  - ohne Mitleser geht die Frage hinaus (gegen `.invalid`: „Could not
+    resolve host“), und die Probe wird rot.
+- Clippy ohne Warnung. Der Prüfdurchgang mit Belegen sagt im neuen Lauf
+  „Fortschritt ja, erreicht nein“, wo er vorher „erreicht“ erfand.
+
+### v0.90.0 – 2026-09-26 (Strg-C und Esc: Notaus mit Frage im Lauf, sofortiges Ende an der leeren Zeile; `myl tasks add`)
+
+**Festlegung des Projektinhabers (2026-09-26)**, sie ersetzt die vom
+2026-09-15 für diese beiden Tasten:
+- **Während eines Laufs** (Auftrag oder Loop-Runde, auch im Countdown
+  zwischen zwei Runden):
+  - Strg-C fragt „Notaus: anhalten? [J/n]“, die Eingabetaste heißt ja,
+    ein zweites Strg-C ebenso.
+  - Esc fragt „Notaus: anhalten? [j/N]“, die Eingabetaste heißt nein;
+    eine gestreifte Esc hält also nichts an.
+- **An der leeren Eingabezeile**, wenn nichts mehr läuft, beenden Strg-C
+  und Esc das Programm **sofort**, ohne Frage.
+- Strg-X fragt weiter „Wirklich beenden?“.
+
+**Neu in `myl-console` (0.26.0):**
+- Die Notausfrage liegt im Anzeigefaden, dem einzigen Tastenleser
+  (Fund 483), mit eigenem Zustand.
+- ⚑ **Sie geht einer offenen Vorlage im `manual mode` vor.** Ein Ja
+  lehnt die Vorlage mit ab, sonst wartete der Lauf auf eine Antwort, die
+  nicht mehr kommt.
+- Im Loop pausiert der bestätigte Notaus: Die Runde hält sofort an, der
+  Task bleibt, wie er war, und `/loop` macht genau dort weiter.
+
+**Neu in `myl-client` (0.59.0):** `myl tasks add <ziel>` legt einen Task
+an, ohne den Loop zu starten. So stehen mehrere Tasks in der Schlange,
+bevor `myl loop` beginnt; das Loop-Szenario unter
+`BENCHMARKS/Agent/loop/` braucht genau das.
+
+**Belegt:**
+- Konsole 151 und 7 Proben, darunter `die_notausfrage_hat_je_taste_ihre_vorgabe`
+  und `esc_und_strg_c_beenden_strg_x_fragt`.
+- Ein Lauf über ein Pseudo-Terminal mit dem 0,6B-Modell (37 s):
+  1. Strg-C mitten in einer Antwort zeigt „[J/n]“, die Eingabetaste
+     hält an.
+  2. `/loop` und Esc in der Runde zeigt „[j/N]“, `j` pausiert.
+  3. Esc an der leeren Zeile beendet den Prozess ohne Frage.
+
+### v0.89.0 – 2026-09-26 (Skills: mitgelieferte Grundskills und Vorlage unter `myl-skills`, `search_skill` und `learn_skill` in jeder Kiste; Fund 486 offen)
+
+**Worum es geht.** Wunsch des Projektinhabers (2026-09-26): eine
+Grundkonfiguration für Skills mit Ordnerstruktur und Beispielen, die als
+Vorlage für eigene dienen. Dazu ein Werkzeug, mit dem das Modell auf
+„lerne skill …“ oder „learn skill …“ einen Skill lernt, und eines, mit
+dem es selbst nach einem passenden Skill sucht, wenn es nicht
+weiterweiß. ⚑ Die mitgelieferten Skills liegen neben `myl-senses` als
+`CLIENT/myl-skills/` (Wunsch des Projektinhabers). Das ist ein
+Datenordner und keine Kiste; die Logik bleibt in `myl-client`, neben den
+Dateiwerkzeugen.
+
+**Neu: `CLIENT/myl-skills/`**
+- `README.md` erklärt die drei Orte, den Aufbau eines Skills und wie ein
+  eigener entsteht.
+- **Die Vorlage:** `skill-erstellen/vorlagen/SKILL.md`, mit Kopf
+  (`beschreibung`, `stichworte`) und den Abschnitten Wann, Vorgehen,
+  Fallen, Beispiel.
+- **Fünf Grundskills:** `skill-erstellen`, `fehlersuche`,
+  `aufgabe-zerlegen` (auch für den Loop, mit `note_set`),
+  `bericht-schreiben` (mit Vorlage), `datei-sicher-aendern`.
+
+**Neu in `myl-client` (0.58.0):**
+- ⚑ **Drei Orte mit Vorrang:** Projekt (`.AGENT/skills/`) vor eigenen
+  (neben den Einstellungen) vor mitgelieferten. Ein Ordner mit `_` vorn
+  wird übergangen (Entwurf).
+- **Ein Skill ist ein Ordner mit `SKILL.md`** und einem kurzen Kopf.
+  Englische Schlüssel (`description`, `keywords`) gelten auch, und
+  Wissensmappen aus `md_zu_mappe.py` bleiben gültig. Der Kopf wird ohne
+  Fremdkiste gelesen.
+- **`search_skill`** (deutsch `skill_suchen`) sucht nach den Worten
+  einer Aufgabe:
+  - Die Punkte sind ganzzahlig und gewichtet: Name 6, Stichwort 4,
+    Beschreibung 3, Anleitung 1.
+  - Umlaute und Großschreibung sind gefaltet, Füllwörter gehen nicht mit
+    in die Suche.
+  - Ein leerer Text nennt alle.
+  - Treffer nur in der Anleitung werden als schwach angesagt.
+- **`learn_skill`** (deutsch `skill_lernen`) liefert die Anleitung und
+  nennt am Ende die weiteren Dateien. Eine davon holt derselbe Aufruf
+  mit `name/datei`. ⚑ Ein Parameter und kein optionaler zweiter, nach
+  der Regel dieser Werkzeuge.
+- ⛔️ **Kein Weg nach draußen:** Der Name wird gegen die gefundenen
+  Skills gehalten, und eine Datei muss nach dem Auflösen im Ordner des
+  Skills liegen. Das gilt auch für einen Verweis (Symlink) nach draußen.
+- ⚑ **Beide Werkzeuge liegen jetzt in `Base`** und ersetzen
+  `list_skills` und `read_skill`, die nur in `Advanced` lagen. Vier
+  Werkzeuge für dieselbe Sache wären drei zu viel.
+- `myl skills` zeigt die drei Orte und die Herkunft je Skill;
+  `myl skills neu <name>` kopiert die Vorlage unter die eigenen.
+
+**Gemessen mit echten Modellen** (abgeschirmte Einstellungen, der
+Probelauf liegt nicht im Repositorium):
+
+| Lauf | 0,6B | 4B |
+|---|---|---|
+| „lerne skill fehlersuche …“ | kein Aufruf erkannt (siehe Fund 486) | `search_skill`, `learn_skill`, richtige Antwort |
+| „learn skill bericht-schreiben …“ | nicht gefahren | direkt `learn_skill`, richtige Antwort |
+| Problem ohne Hinweis auf Skills | kein Werkzeug | sucht **von selbst**, lernt `fehlersuche`, folgt ihr |
+
+📌 **Zwei Fehler der ersten Fassung, beide erst am echten Modell
+sichtbar:**
+1. Die Anfrage „zahlen.py stürzt beim Start ab“ traf `skill-erstellen`
+   über das Füllwort „beim“ in dessen Anleitung. Das 4B lernte dreimal
+   den falschen Skill bis zur Schrittgrenze. Jetzt:
+   - Füllwörter gehen nicht mit in die Suche,
+   - die Stichworte der Fehlersuche tragen Verbformen („stürzt“),
+   - schwache Treffer sagen sich an.
+2. Das 4B gab die ganze Trefferzeile `fehlersuche: Einen Fehler …` als
+   Namen an `learn_skill`. Jetzt:
+   - der Name steht in der Liste für sich,
+   - `learn_skill` nimmt nur, was vor dem ersten Doppelpunkt,
+     Leerzeichen oder der ersten Klammer steht.
+
+⚠️ **Fund 486, offen (AGENT_LAYER):** Das 0,6B schreibt den Aufruf als
+nacktes JSON (`{"name": "learn_skill", "arguments": {…}}`) ohne die
+`<tool_call>`-Klammern, und die Agentenschleife erkennt ihn nicht. Es
+**will** das Werkzeug rufen. Behoben ist das nicht; es betrifft jeden
+Werkzeugaufruf des kleinen Modells und gehört in die Aufrufzerlegung von
+`local-agent`.
+
+**Belegt:**
+- `myl-client` grün bis auf Fund 482, darunter sieben neue Proben:
+  - drei Orte mit Vorrang,
+  - Kopf und verborgene Entwürfe,
+  - Suche, Gewichtung und Füllwörter,
+  - Dateien nennen und im Skill bleiben, auch gegen einen Symlink,
+  - jeder mitgelieferte Skill hat Kopf, Stichworte und Beschreibung,
+    und die Vorlage liegt da,
+  - die Werkzeuge: Suche, Lernen samt abgeschriebener Trefferzeile,
+    Pfade nach draußen, fehlende Argumente, gemeinsames
+    Nachschlagebudget.
+- Gegenprobe: Ohne die Prüfung „liegt im Ordner des Skills“ liest
+  `learn_skill` über einen Symlink eine Datei außerhalb, und die Probe
+  wird rot.
+- Clippy ohne Warnung.
+
+### v0.88.0 – 2026-09-26 (der Loop, Phase 3: ∞ im Fenster mit Taskliste, Warteschlange mit Ziehen, `/tasks` und `myl tasks`; Funde 484 und 485)
+
+**Worum es geht.** Der Loop kommt ins Fenster, und aus losen Vorhaben
+wird eine **Warteschlange**. Festlegungen des Projektinhabers
+(2026-09-26):
+- ∞ neben dem Senden ist ein **Schalter**: an fährt der Loop, aus
+  pausiert er.
+- Daneben öffnet ein Pfeil die **Liste der Tasks**. Dort wird
+  ausgewählt, neu angelegt und die Reihenfolge per Ziehen geändert.
+- Läuft schon ein Task, steht er mit „(läuft)“ da, alle danach
+  angelegten erscheinen als „(queued)“.
+- In der Konsole heißt der Befehl nur `/tasks` (kein `/vorhaben`), auf
+  der Kommandozeile `myl tasks`, die Unterbefehle `resume` und `pause`.
+
+**Neu in `myl-client` (0.57.0):**
+- ⚑ **Die Warteschlange** (`Ablage::reihe`, `reihe_setzen`, `vorn`,
+  `stellungen`). **Es läuft immer nur der vorderste aktive Task**, auch
+  wenn er schläft und dahinter einer bereit wäre; wer einen anderen
+  zuerst will, zieht ihn nach vorn. Die Reihenfolge steht in einer
+  Datei (`reihe.json`) und nicht in jedem Vorhaben: Umstellen ändert
+  eine Stelle, und ein halb gespeichertes Umstellen gibt es nicht. Was
+  dort fehlt, steht hinten; eine Kennung ohne Vorhaben fällt heraus.
+- **Eine Kette reiht sich direkt hinter ihrem Vorgänger ein**, nicht
+  hinten: Sie ist die Fortsetzung dessen, was gerade lief.
+- `Stellung` mit einem Wort für alle drei Oberflächen („läuft“,
+  „queued“, „pausiert“, „als Nächstes“, „fertig“, „angehalten: …“),
+  `zustandswort` für den Satz nach einer Runde, `Ablage::liste` für
+  Konsole und `myl`. Vorher stand derselbe Satz dreimal da.
+- `Ablage::weitermachen`, `stoppen`, `entfernen`. ⛔️ `entfernen` löscht
+  nur einen Ordner, der ein Vorhaben ist, und nimmt keine Kennung mit
+  `/` oder `..` an.
+- ⚑ **Die Leihe** (`Modellleihe`): `fahren` bekommt das Modell nicht
+  mehr für den ganzen Loop, sondern leiht es je Runde. Ein Loop wartet
+  Stunden zwischen zwei Runden; mit der Leihe ist das Modell in dieser
+  Zeit frei, und im Fenster lässt sich weiter chatten. Der Beginn einer
+  Runde wird **erst gemeldet, wenn das Modell geliehen ist**.
+- `Ereignis::OhneModell`: Lässt sich das Modell nicht leihen, endet der
+  Loop, und der Task bleibt, wie er war.
+- `myl tasks [resume|pause ID]` statt `myl vorhaben`.
+
+**Neu in `myl-console` (0.25.0):** `/tasks [resume|pause <ID>]`, die
+Liste in der Reihenfolge der Schlange; die Texte kommen aus der Kiste.
+
+**Neu in `myl-oberflaeche` (0.50.0):**
+- **∞ und der Pfeil** stehen im Agentenmodus neben dem Senden.
+  Eingeschaltet steht ∞ hell auf einer Fläche. Der Titel sagt, was
+  gerade ist: aus, an, rechnet eine Runde, nächste Runde in n min.
+- **Die Taskliste:** je Zeile ein Griff, das Ziel, die Stellung in
+  Klammern, dazu Anhalten oder Fortsetzen und Entfernen.
+  - ⛔️ Entfernen braucht zwei Klicks, denn ein Task trägt sein Tagebuch
+    mit.
+  - Umsortieren am Griff mit der Maus oder mit Alt+↑ und Alt+↓.
+  - ⚠️ Gezogen wird mit Zeigerereignissen und nicht mit HTML5-Drag-
+    and-drop: Tauris Datei-Ablage verschluckt das Ziehen innerhalb der
+    Seite unter Windows.
+  - Unten ein Feld für einen neuen Task.
+- **Jeder Task hat sein eigenes Gespräch** in der Agentenliste (∞ vor
+  dem Titel), und jede Runde schreibt dorthin ihren Beitrag: Denken,
+  Werkzeuge, Bericht, darunter die Prüfung. Einen Task auswählen heißt,
+  dieses Gespräch zu öffnen.
+- ⚑ **Der Strom einer Runde läuft auf einem eigenen Kanal**
+  (`loop-lebt`). Ein Chat und eine Runde können sich zeitlich berühren,
+  denn die Runde wartet auf das Modell, das der Chat gerade freigibt;
+  auf einem gemeinsamen Kanal liefe der Anfang der Runde in den Beitrag
+  des Chats.
+- Während einer Runde sperrt das Fenster das Senden und sagt, warum;
+  zwischen den Runden ist das Modell frei. `modell_entladen` und das
+  Löschen eines Artefakts nehmen die Sperre mit `try_lock`, damit der
+  Hauptfaden während einer Runde nicht einfriert.
+- **Fenster zu:** Der Loop hält an, die Marke bleibt, beim nächsten
+  Öffnen fährt er nach dem KI-Hinweis von selbst weiter. Beim Schließen
+  wird höchstens vier Sekunden gewartet; steht die Runde gerade in einer
+  Nachfrage des Betriebssystems, sichert der Herzschlag den Stand.
+- **Mit Standardeinstellungen** steht der Hinweis im Gespräch des Tasks,
+  der gerade beginnt.
+- ⛔️ **Die Sicherheitsmeldung vor `auto`** jetzt auch im Fenster: Wer
+  auf der Einstellungsseite `agent.modus` auf `auto` stellt, bekommt
+  denselben Text wie in der Konsole, mit „Abbrechen“ und „Auf auto
+  stellen“; ein Abbrechen lässt `manual` stehen.
+- Die Loop-Einstellungen stehen jetzt beim Agenten und nicht beim
+  Modell.
+
+⚠️ **Fund 484: Der Kopf des Fensters sagte im `manual mode` elf Tage
+lang, es gebe keinen Bestätigungskasten.** Seit dem 2026-09-15 legt das
+Fenster jede schreibende Handlung im Kasten des Betriebssystems vor;
+die Marke im Kopf und ihr Satz stammten aus der Zeit davor. Dieselbe
+Angabe an zwei Orten. Jetzt: „fragt vor dem Schreiben (manual mode)“.
+
+⚠️ **Fund 485: Drei Fensterproben und eine Konsolenprobe schnitten
+Quelltext in Bytes.** `&senden[..senden.len().min(900)]` bricht ab,
+sobald an der Schnittstelle ein mehrbytiges Zeichen liegt; heute lag
+dort ein ⚑ aus einem Kommentar, und die Probe meldete „not a char
+boundary“ statt etwas über das Umordnen. Alle vier schneiden jetzt mit
+`floor_char_boundary`.
+
+**Belegt:**
+- `myl-client` 339 Proben grün, darunter fünf neue zur Schlange
+  (Reihenfolge, Schlafen hält die Schlange, Lücken in der Reihe, Kette
+  hinter dem Vorgänger, Entfernen nur eines Vorhabens) und zwei neue
+  über ganze Runden (`fahren` in der Reihe Y, Kette Z, dann X, mit einer
+  Leihe je Runde; ohne Modell endet der Loop und der Task bleibt).
+- Gegenproben:
+  - `faellig` auf „erstes fälliges“ statt „vorderstes“ macht die
+    Schlangenprobe rot,
+  - „beginnt“ vor der Leihe gemeldet macht die Leihprobe rot,
+  - eine Kette ohne Einreihen ebenso.
+- Konsole 150 und 7, Fenster 74, Clippy in allen drei Kisten ohne
+  Warnung, `node --check` für das Skript.
+- Die Logik des Fensters (Runde beginnt, Strom, Ende, Unterbrechung,
+  Umsortieren, ∞ ohne Task) lief in einem Node-Probelauf mit
+  DOM-Attrappe, fünf Fälle grün. Gegenprobe: Ohne den Tausch der Bühnen
+  landet der Strom im Chat, und der Lauf wird rot. Der Probelauf liegt
+  nicht im Repositorium, denn Node gehört nicht zu den Bauvoraussetzungen.
+- ⚠️ **Nicht belegt: das Fenster, von Hand bedient.** Geklickt und
+  gezogen hat es noch niemand.
+
+⚠️ **Fund 482 bleibt offen:** `tests/reservierung.rs`, heute 1 von 6
+rot (vorhin 2 von 6).
+
+### v0.87.0 – 2026-09-26 (der Loop, Phase 2: `/loop` in der Konsole, Sicherheitsmeldung vor `auto`, Doppelsperre nach einer Fortsetzung; im `manual mode` blieb die Konsole nach einem `j` stehen; Fund 483)
+
+**Worum es geht.** Phase 1 brachte das Vorhaben und `myl loop`. Jetzt
+läuft der Loop dort, wo gearbeitet wird: in der Konsole, mit derselben
+Anzeige, denselben Rückfragen und demselben Notaus wie ein gewöhnlicher
+Auftrag.
+
+**Neu in `myl-console` (0.24.0):**
+- **`/loop [ziel]`** legt ein Vorhaben an und fährt fällige Runden. Ohne
+  Ziel setzt es fort, was ansteht. Zwischen den Runden steht ein
+  Countdown bis zur nächsten. **Solange der Loop läuft, gehört ihm die
+  Konsole**; Esc pausiert ihn und gibt die Eingabe zurück.
+- **`/tasks`** zeigt die Vorhaben; `/tasks fortsetzen <ID>` und
+  `/tasks anhalten <ID>`. ⚑ Bewusst ohne deutschen Zweitnamen
+  (Festlegung des Projektinhabers).
+- **Jede Runde ist verdrahtet wie ein Auftrag:** Zeitleiste, Tokenstrom,
+  `^S`, im `manual mode` die Vorlage jeder schreibenden Handlung. Danach
+  stehen der Bericht, das Urteil des Prüfdurchgangs und der neue Zustand
+  da, bei einer Kette auch das neue Vorhaben.
+- **Pausieren und Schließen sind verschieden:**
+  - Esc pausiert. Die Marke `.aktiv` geht, der nächste Start fährt nicht
+    von selbst, `/loop` macht dort weiter.
+  - Wird die Konsole geschlossen, während der Loop läuft (Fenster zu,
+    Prozess beendet), bleibt die Marke. **Der nächste Start macht von
+    selbst genau dort weiter**, samt der unterbrochenen Runde.
+- **Mit Standardeinstellungen steht ein Hinweis in der Ausgabe**: die
+  Grenzen, der Modus und wo sie sich ändern lassen (Festlegung des
+  Projektinhabers).
+- ⚑ **Die Sicherheitsmeldung vor `auto`** (Festlegung des
+  Projektinhabers: Vorgabe ist immer `manual`, wer aktiv umstellt, wird
+  gewarnt):
+  - Umschalt-Tab zeigt sie und fragt `[j/N]`. Nur `j` stellt um.
+  - Auf der Einstellungsseite braucht `auto` zwei Tastendrücke: Der
+    erste zeigt die Meldung, der zweite stellt um.
+  - `myl setzen agent.modus auto` fragt am Terminal; ohne Terminal steht
+    die Meldung auf stderr.
+
+  Der Text steht an einer Stelle (`einstellungen::autowarnung`), für
+  alle drei Wege und in beiden Sprachen.
+
+**Neu in `myl-client` (0.56.0):**
+- ⚑ **Die Doppelsperre.** Setzt eine unterbrochene Runde fort, liefert
+  ein Aufruf mit demselben Werkzeug und denselben Argumenten wie vor der
+  Unterbrechung **das gespeicherte Ergebnis, statt noch einmal zu
+  laufen**. Gebaut über `Werkzeugkasten::umhuellen` (AGENT_LAYER
+  v0.21.0), also hinter der Erlaubnis: Die Sperre kann nur weglassen,
+  nie erlauben. 📌 Der Hinweis im Auftrag allein reichte nicht; das
+  0,6B-Modell schrieb nach einer Fortsetzung dieselben Dateien noch
+  einmal.
+- `Ablage::loop_war_aktiv` und `loop_aktiv_setzen` für die Marke.
+
+⛔️ **Fund 483: Zwei Fäden lasen während eines Laufs die Tastatur, und
+nach einem `j` im `manual mode` stand die Konsole.**
+- Der Anzeigefaden liest seit dem 2026-09-15 (Vorlage, Abbruchfrage,
+  `^S`), der Notauswächter aus v0.85.0 las daneben (Esc, Strg-C).
+- `event::poll` und `event::read` nehmen die Lesersperre von crossterm
+  je einzeln. Beide Fäden sahen das `j`, der Anzeigefaden las es, und
+  der Notauswächter blieb in `event::read` stehen, **mit der Sperre in
+  der Hand**. Am Ende des Laufs wartete der Hauptfaden auf ihn, er auf
+  eine Taste, der Anzeigefaden auf die Sperre.
+- Gefunden mit `sample` am hängenden Prozess, bei der ersten Rückfrage
+  in einer Loop-Runde. **Der Fehler stand schon im gewöhnlichen
+  Auftrag**. Warum er einen Tag lang nicht auffiel, ist nicht belegt;
+  die Proben der Konsole laufen ohne Terminal, und ohne Terminal gibt es
+  keinen der beiden Fäden.
+- **Behoben:** Der Anzeigefaden ist der einzige Leser. Esc ruft eine
+  Handlung, die ihm beim Start mitgegeben wird: im Auftrag den Notaus,
+  im Loop die Pause. Steht eine Vorlage da, ist Esc deren Nein, und erst
+  die nächste Esc hält an. Der Notauswächter ist entfernt.
+- ⚑ **Strg-C hält damit nicht mehr an, sondern fragt „Wirklich
+  beenden?“**, wie der Projektinhaber es am 2026-09-15 festgelegt hat.
+  v0.85.0 hatte Strg-C zusätzlich als Notaus beschrieben; welcher Faden
+  die Taste bekam, entschied der Zufall. **Der Notaus in der Konsole ist
+  Esc.**
+- 📌 **Zwei Leser derselben Quelle sind kein Wettlauf, der manchmal
+  verloren wird, sondern einer, der bei jeder Taste verloren wird.**
+
+**Belegt:**
+- Konsole 150 und 7 Proben, darunter die neue `esc_haelt_an_im_einzigen_leser`.
+  Gegenprobe: Ohne den Esc-Zweig im Anzeigefaden wird sie rot.
+- `der_notaus_umschliesst_den_lauf` prüft jetzt, dass kein zweiter
+  Tastenleser zurückkommt.
+- Sechs Läufe über ein Pseudo-Terminal mit dem 0,6B-Modell, mit
+  abgeschirmten Einstellungen (`MYL_EINSTELLUNGEN`):
+  1. `/loop` bis „fertig“: 33 s.
+  2. Esc pausiert, die Marke ist weg: 29 s.
+  3. Hart beendet mitten in der Runde, der nächste Start macht von
+     selbst weiter: 51 s.
+  4. `manual mode` im Loop: Die Vorlage steht da, vor dem `j` gibt es
+     keine Datei, danach schon, und die Runde endet: 35 s. Vor der
+     Behebung hing genau dieser Lauf neun Minuten.
+  5. Dasselbe im gewöhnlichen Auftrag: 31 s.
+  6. Umschalt-Tab: Meldung, `n` lässt `manual`, `j` stellt um, danach
+     schreibt der Loop ohne Rückfrage: 39 s.
+- `myl-client` 247 Proben grün, dazu `tests/vorhaben.rs` 4 (auch die
+  Doppelsperre: eine Datei, die nach der Unterbrechung von außen
+  geändert wurde, bleibt so); local-agent 94, Fenster 74, Clippy ohne
+  Warnung.
+
+⚠️ **Fund 482 bleibt offen:** `tests/reservierung.rs` ist hier weiter
+rot (2 von 6).
+
+⚠️ **Was während des Loops getippt wird, geht verloren**, außer Esc
+(und Strg-C im Countdown). Beobachtet beim Weitermachen von selbst: Ein
+Auftrag, der direkt nach dem Start getippt wurde, kam nie an. Die
+Konsole sagt beim Start, dass der Loop weiterläuft und Esc pausiert.
+
+**Noch nicht (Phase 3):** ∞ neben dem Senden im Fenster, ein
+Bestätigungskasten, die Liste der Vorhaben und die Sicherheitsmeldung
+im Fenster.
+
+### v0.86.0 – 2026-09-26 (der Loop, Phase 1: Vorhaben über viele Runden, Selbstwecken und Kette, Prüfdurchgang, Schließen und genau dort weiter; `myl loop`; Fund 482 offen)
+
+**Worum es geht.** Ein Agentenlauf fährt einen Auftrag bis zum Ende und
+vergisst ihn dann. Ein **Vorhaben** trägt ein Ziel über viele Runden:
+Jede Runde ist ein gewöhnlicher Agentenlauf, und dazwischen bleiben
+Notizen, Tagebuch und der Zeitpunkt der nächsten Runde. Das ist der
+Anfang des Agent-Loops, den der Projektinhaber als einen der
+wichtigsten Architekturpunkte gesetzt hat.
+
+**Festlegungen des Projektinhabers (2026-09-26):**
+- Kein eigener Prozess und keine Zeitsteuerung des Betriebssystems. Der
+  Loop läuft im Fenster, in der Konsole oder in `myl loop`. **Wird
+  geschlossen, hält er an und macht beim nächsten Öffnen genau dort
+  weiter.**
+- Auslöser sind **Selbstwecken** und **Kette**, auch zusammen.
+- Aufsicht wie beim normalen Agenten: `manual` als Vorgabe.
+- Der **Prüfdurchgang** ist eine Einstellung.
+
+**Neu in `myl-client` (`vorhaben.rs`):**
+- **Das Vorhaben**, als Dateien neben den Einstellungen
+  (`vorhaben/<kennung>/`). Darin liegen das Ziel, der Zustand (bereit,
+  schläft, fertig, angehalten mit Grund), ein begrenzter Notizblock
+  (24 Einträge, je 600 Zeichen) und ein Tagebuch je Runde. Geschrieben
+  wird atomar über eine Nebendatei, denn der Prozess darf jederzeit
+  enden.
+- **Vier Werkzeuge je Runde:**
+  - `note_set` schreibt in den Notizblock,
+  - `wake_in` legt die nächste Runde 1 Minute bis 7 Tage später,
+  - `finish_goal` meldet das Vorhaben als fertig,
+  - `chain_goal` stößt nach dem Fertigwerden ein neues Vorhaben an.
+
+  Die Grenzen stehen im Code, nicht im Prompt.
+- **Der Prüfdurchgang:** Nach der Runde fragt ein zweiter Durchgang ohne
+  Werkzeuge nach Fortschritt und Ziel. Eine unlesbare Antwort zählt als
+  nein. **Mit Prüfdurchgang entscheidet die Prüfung über „fertig“**,
+  ohne ihn das Wort des Agenten. 📌 Gemessen mit dem 0,6B-Modell: Die
+  Datei stand nach Runde 1, die Prüfung sagte dreimal „erreicht“, das
+  Modell rief nie `finish_goal`, und zwei Runden liefen umsonst.
+- **Grenzen** (Einstellungen, neuer Bereich „Loop“): Höchstzahl an
+  Runden (50), Höchstdauer in Stunden (24, nur offene Zeit), Schritte je
+  Runde (12), Pause nach Runden ohne Fortschritt (3), Prüfdurchgang
+  (an).
+- **Genau dort weiter:**
+  - Nach jedem Werkzeugergebnis steht der Rundenstand in `runde.json`.
+    Eine unterbrochene Runde bekommt vorgelegt, was schon erledigt ist.
+  - Beim Schließen wird aus dem Weckzeitpunkt die Restwartezeit.
+  - Der **Läufer** hält eine Sperre, damit Fenster und Konsole nicht
+    gleichzeitig laufen, und schreibt alle 10 Sekunden einen
+    **Herzschlag**. Stirbt der Prozess ohne Aufräumen, gilt der letzte
+    Herzschlag als Zeitpunkt des Anhaltens.
+  - **Schließen und Notaus sind verschieden:** Schließen lässt das
+    Vorhaben, wie es war; der Notaus hält es an.
+- **Das Tagebuch hält Tatsachen fest:** neben dem Bericht des Modells
+  auch die tatsächlich ausgeführten Werkzeuge. 📌 Ohne das schrieb die
+  Runde nach einer Fortsetzung dieselben drei Dateien noch einmal.
+- **`MYL_EINSTELLUNGEN=<pfad>`** schirmt die Einstellungen ganz ab. Die
+  Ablage der Vorhaben liegt daneben und ist mit abgeschirmt. 📌 Eingeführt,
+  nachdem ein Probelauf mit `XDG_CONFIG_HOME` die echten Einstellungen
+  überschrieben hatte: Eine vorhandene Datei gewinnt dort bewusst.
+
+**Neu in `myl`:**
+- `myl loop [ziel]` legt ein Vorhaben an oder setzt fort, zeigt die
+  Werkzeugaufrufe und den Hinweis auf Standardeinstellungen. Strg-C
+  (auch SIGTERM, SIGHUP) schließt sauber.
+- `myl vorhaben [fortsetzen|anhalten ID]`.
+
+**Belegt:**
+- `vorhaben` mit 20 Modulproben und 4 Proben über ganze Runden (echte
+  Rüstung und Agentenschleife, Drehbuchmodell): Notiz, Datei, Wecken,
+  Kette, falsches „fertig“, ohne Prüfdurchgang, unterbrochen und
+  fortgesetzt.
+- Gegenprobe zur Sperre: Wer `EPERM` als „tot“ liest, übergeht die
+  Sperre eines Fensters unter einem anderen Nutzer; die Probe wird rot.
+- Echte Läufe mit dem 0,6B-Modell:
+  - Ein Vorhaben schreibt `gruss.md` und ist nach Runde 1 fertig.
+  - Strg-C mitten in einer Runde: 0 Runden gezählt, Rundenstand mit drei
+    erledigten Aufrufen, Sperre freigegeben.
+  - `myl loop` setzt fort.
+- `myl-client` 246 Proben, Konsole 149, Fenster 74, Clippy ohne Warnung.
+
+⚠️ **Fund 482, offen:** `tests/reservierung.rs` ist auf dieser Maschine
+seit heute rot. `fcntl(F_PREALLOCATE)` bucht auf APFS nur 20 von 64 MB.
+Der Code ist unverändert, und gestern war die Probe grün. Nicht
+untersucht.
+
+**Noch nicht (Phase 2 und 3):**
+- `/loop` in der Konsole und ∞ im Fenster,
+- ein Bestätigungskasten im Fenster,
+- die Sicherheitsmeldung beim Wechsel auf `auto`,
+- ein Schutz gegen das Wiederholen erledigter Aufrufe mit Wirkung nach
+  außen nach einer Fortsetzung (heute steht der Hinweis nur im Auftrag,
+  und das 0,6B-Modell hielt sich nicht daran).
+
+### v0.85.1 – 2026-09-25 (aus einem kalten Klon ohne Netz gebaut und gefragt, auf macOS, Linux und Windows, dazu in GolemOS; unter Windows keine Konsole mehr hinter dem Fenster; Fund 474)
+
+**Die Frage war:** Lässt sich alles, was ausgeliefert wird, aus einem
+frischen Klon ohne Netz bauen, und antwortet Myelith danach? Gebaut
+wurden jedes Mal die fünf Programme mit `ausliefern` im Manifest (`myl`,
+`myelith`, `myl-oberflaeche`, `myl-node`, `myl-test`), ausschliesslich
+aus `SYSTEM/crates-vorrat/` mit `--locked --offline`, und gefragt wurde
+mit dem 0,6B-Artefakt: „Nenne die Hauptstadt von Frankreich."
+
+| Ziel | Netz gesperrt durch | Bau | Antwort |
+|---|---|---|---|
+| macOS arm64 | `sandbox-exec`, Verbindung nach aussen nachweislich abgelehnt | alle fünf und `Myelith.app` | „Die Hauptstadt von Frankreich ist Paris.", 15,9 Token/s |
+| Linux arm64 | Docker `--network none` | alle fünf, das Fenster eingeschlossen | dieselbe, 11,4 Token/s |
+| Linux x86_64 | Docker `--network none`, emuliert | alle fünf | dieselbe, 6,5 Token/s |
+| Windows x86_64 | Docker `--network none`, Kreuzbau mit MinGW | alle fünf als PE32+ | dieselbe unter Wine 10, 10,4 Token/s |
+| GolemOS aarch64 | QEMU `-nic none` | `myl` und `myelith` statisch gegen musl, **aus dem Arbeitsbaum** | dieselbe, 1 Token/s unter TCG |
+
+⚑ **Die Antworten sind bitgleich**, nicht nur inhaltlich gleich. Mit
+eingeschaltetem Denken gaben macOS (nativ, NEON) und GolemOS (musl,
+emuliert) über alle 24 Token dieselben Zeichen aus. Das ist die Zusage
+der ganzzahligen Rechnung, hier an vier Betriebssystemen nachgesehen.
+
+⚠️ **GolemOS kommt mit einem Klon noch nicht mit.** Seine Skripte und
+Abbilder sind bis zur Fertigstellung vom Versionsstand ausgenommen,
+damit jede Fassung der Abbilder nicht dauerhaft Geschichte kostet. Die
+Zeile oben belegt deshalb, dass die ausgelieferten Programme in GolemOS
+antworten, nicht, dass ein frischer Klon ein GolemOS ergibt.
+
+⚠️ **Was der Windows-Weg nicht belegt:** Der Kreuzbau nimmt MinGW, die
+Freigabe nimmt MSVC. Unter Wine brauchte `myl.exe` deshalb die
+Laufzeitbibliotheken von MinGW daneben, und Wine 8 kannte `ProcessPrng`
+aus `bcryptprimitives.dll` noch nicht, das jedes Windows ab 10
+mitbringt. Beides sind Eigenschaften des Prüfwegs. Den Bau mit MSVC auf
+einem echten Windows übernimmt im CI ein Ablauf je Betriebssystem, der
+aus dem Vorrat ohne Netz baut und `myl --hilfe` startet.
+
+**Fund 474 behoben: Unter Windows öffnete das Fenster eine Konsole
+mit.** `myl-oberflaeche` trug kein `windows_subsystem`, also war die
+ausführbare Datei ein Konsolenprogramm, und Windows stellte jedem Start
+ein schwarzes Fenster hinter das eigentliche. Auf macOS und Linux gibt
+es das nicht; aufgefallen ist es erst am Kreuzbau, an einer Zeile von
+`file`: `PE32+ executable (console)`. Jetzt trägt der Freigabebau
+`(GUI)`, der Prüfbau bleibt `(console)`, damit die Meldungen auf der
+Fehlerausgabe beim Entwickeln sichtbar bleiben. Beides am Kreuzbau
+gegengeprüft.
+
+**Belegt:** `myl-oberflaeche` mit `cargo test` grün, 74 Prüfungen; die
+Kreuzbauten wie oben.
 
 ### v0.85.0 – 2026-09-25 (KI-Verordnung: Hinweis bei jedem Start, gekennzeichnete Stimme, Schutzfilter, Aktionsprotokoll, Bestätigung als Vorgabe, Notaus; Funde 468 und 469)
 

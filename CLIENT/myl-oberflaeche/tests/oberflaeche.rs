@@ -153,7 +153,7 @@ fn die_ueberschriften_haben_genau_zwei_stufen() {
     );
     // Und die Linie darunter trennt die Bereiche sichtbar.
     let i = css.find("#einstellungsseite h2,\n.bereichszeile th {").expect("Regel");
-    let block = &css[i..i + 260];
+    let block = &css[i..css.floor_char_boundary(i + 260)];
     assert!(block.contains("border-bottom"), "den Ueberschriften fehlt die Trennlinie");
 }
 
@@ -2789,7 +2789,11 @@ fn ein_beruehrtes_gespraech_wandert_nach_oben() {
         .split("async function senden(")
         .nth(1)
         .expect("`senden` fehlt");
-    let rumpf = &senden[..senden.len().min(900)];
+    // 📌 **Fund 485: Hier stand `senden.len().min(900)`**, ein Schnitt in
+    //    Bytes. Lag an Byte 900 ein mehrbytiges Zeichen (am 2026-09-26 ein
+    //    ⚑ in einem Kommentar), brach die Probe mit „not a char boundary"
+    //    ab, statt etwas ueber das Umordnen zu sagen.
+    let rumpf = &senden[..senden.floor_char_boundary(900)];
     assert!(
         rumpf.contains("nach_oben(offen)"),
         "beim Senden wird nicht umgeordnet"
@@ -3531,7 +3535,7 @@ fn der_ki_hinweis_kommt_bei_jedem_start_und_laesst_sich_nicht_wegklicken() {
 fn keine_stimme_ohne_einwilligung_und_das_protokoll_ist_sichtbar() {
     let rs = lies_quelle("main.rs");
     let a = rs.find("async fn stimme_setzen(").expect("stimme_setzen");
-    let f = &rs[a..a + 800];
+    let f = &rs[a..rs.floor_char_boundary(a + 800)];
     assert!(f.contains("einwilligung: Option<bool>"), "der Befehl nimmt keine Einwilligung");
     assert!(f.contains("if einwilligung != Some(true) {"), "der Befehl prüft die Einwilligung nicht");
 

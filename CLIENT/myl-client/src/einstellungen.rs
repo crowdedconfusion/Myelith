@@ -267,12 +267,20 @@ pub struct Agenteneinstellung {
     /// dagegen stehen in `netzwerkzeuge`; die Entscheidung, sie
     /// überhaupt zu brauchen, trifft der Nutzer.
     ///
-    /// ⚠️ **Es gilt nur für den Chat**, also für den Zuschnitt, der nur
-    /// die Anhänge sieht. Im vollen Agentenbetrieb bleiben die beiden
-    /// Werkzeuge draussen, weil dort mit `run_command` schon ein Weg
-    /// nach draussen offensteht und keine Schranke ihn einfasst.
+    /// ⚑ **Es gilt für Chat und Agent** (Festlegung des Projektinhabers,
+    /// 2026-09-26). Bis dahin nur für den Chat, mit der Begründung, im
+    /// Agenten stehe mit `run_command` schon ein Weg nach draussen offen,
+    /// den keine Schranke einfasst. ⚠️ **Das bleibt wahr für `Advanced`**:
+    /// Ein Shell-Befehl kennt das Tor nicht. Die beiden Web-Werkzeuge selbst
+    /// bleiben ummauert, und im Agenten wächst ihre Verratsprobe mit
+    /// allem, was eigene Werkzeuge gelesen haben (`Tor::gesehen`).
     #[serde(default)]
     pub web_recherche: bool,
+    /// **Die Saat des Zielkreises** für die Web-Werkzeuge: was der Mensch
+    /// für diesen Lauf geschrieben hat, im Loop das Ziel des Tasks. Wird
+    /// je Lauf gesetzt und nie gespeichert.
+    #[serde(skip)]
+    pub netzsaat: Option<String>,
 }
 
 impl Default for Agenteneinstellung {
@@ -287,7 +295,46 @@ impl Default for Agenteneinstellung {
             blick_bildschirm: false,
             blick_kamera: false,
             web_recherche: false,
+            netzsaat: None,
         }
+    }
+}
+
+/// **Die Grenzen eines Loops**, also eines Vorhabens, das der Dienst in
+/// Runden fuehrt (`crate::vorhaben`).
+///
+/// ⚑ **Grenzen im Code, nicht Bitten im Prompt.** Ein Vorhaben endet
+/// spaetestens an einer dieser Zahlen, gleich was das Modell meint;
+/// dieselbe Haltung wie bei `agent.schritte`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Loopeinstellung {
+    /// Hoechstzahl an Runden je Vorhaben.
+    pub runden: u32,
+    /// Hoechstdauer eines Vorhabens in Stunden. ⚑ Gezaehlt wird nur die
+    /// Zeit, in der Fenster oder Konsole offen sind (Festlegung des
+    /// Projektinhabers: Schliessen haelt an, Oeffnen macht weiter).
+    pub stunden: u32,
+    /// Werkzeugaufrufe je Runde.
+    pub schritte: u32,
+    /// Nach so vielen Runden ohne Fortschritt haelt das Vorhaben an und
+    /// fragt nach.
+    pub stillstand: u32,
+    /// Nach jeder Runde ein zweiter Durchgang, der Fortschritt und Ziel
+    /// prueft (Nutzereinstellung, Wunsch des Projektinhabers).
+    pub pruefen: bool,
+}
+
+impl Default for Loopeinstellung {
+    fn default() -> Self {
+        Self { runden: 50, stunden: 24, schritte: 12, stillstand: 3, pruefen: true }
+    }
+}
+
+impl Loopeinstellung {
+    /// Stehen noch die Vorgaben? Dann zeigen Fenster und Konsole beim
+    /// Start eines Loops einen Hinweis (Wunsch des Projektinhabers).
+    pub fn ist_vorgabe(&self) -> bool {
+        *self == Self::default()
     }
 }
 
@@ -301,6 +348,9 @@ pub struct Einstellungen {
     pub ausgabe: Ausgabeeinstellung,
     #[serde(default)]
     pub oberflaeche: Oberflaecheneinstellung,
+    /// ⚑ `#[serde(default)]`: Eine Datei aus der Zeit davor bleibt lesbar.
+    #[serde(default, rename = "loop")]
+    pub schleife: Loopeinstellung,
 }
 
 /// **Die Sprache der Oberflaeche.**
@@ -489,6 +539,42 @@ pub enum Agentenmodus {
     #[default]
     #[serde(rename = "manual")]
     Manuell,
+}
+
+/// **Die Sicherheitsmeldung vor dem Wechsel auf `auto`** (Festlegung des
+/// Projektinhabers, 2026-09-26: wer aktiv auf `auto` stellt, bekommt sie,
+/// danach arbeitet der Agent autonom).
+///
+/// ⚑ **Ein Text an einer Stelle**, fuer Konsole, Fenster und `myl setzen`.
+pub struct Autowarnung {
+    pub titel: &'static str,
+    pub punkte: [&'static str; 4],
+    pub frage: &'static str,
+}
+
+pub fn autowarnung(sprache: Sprache) -> Autowarnung {
+    match sprache {
+        Sprache::De => Autowarnung {
+            titel: "Achtung: auto mode",
+            punkte: [
+                "Der Agent führt Werkzeuge ohne Rückfrage aus: Dateien schreiben und löschen, Befehle, Web-Anfragen.",
+                "Das gilt auch im Loop, über viele Runden und ohne dass jemand zusieht.",
+                "Er kann sich irren, und manche Handlungen lassen sich nicht rückgängig machen.",
+                "Der Notaus bleibt: im Fenster ⌘. oder Strg+., in der Konsole Esc oder Strg-C.",
+            ],
+            frage: "Wirklich auf auto mode umstellen? [j/N] ",
+        },
+        Sprache::En => Autowarnung {
+            titel: "Caution: auto mode",
+            punkte: [
+                "The agent runs tools without asking: writing and deleting files, commands, web requests.",
+                "This also applies in the loop, over many rounds and with nobody watching.",
+                "It can be wrong, and some actions cannot be undone.",
+                "The emergency stop remains: in the window ⌘. or Ctrl+., in the console Esc or Ctrl-C.",
+            ],
+            frage: "Really switch to auto mode? [y/N] ",
+        },
+    }
 }
 
 impl Agentenmodus {
@@ -846,6 +932,17 @@ impl Einstellungen {
     /// die Ablage ihrer Nutzer festlegt, und dieses Projekt nennt NixOS
     /// ausdruecklich als Ziel.
     pub fn vorgabepfad() -> std::path::PathBuf {
+        // ⛔️ **`MYL_EINSTELLUNGEN` schirmt ab, und zwar ganz.** Ist die
+        //    Variable gesetzt, gilt nur dieser Pfad, ohne Rueckgriff auf
+        //    eine vorhandene Datei. 📌 Eingefuehrt am 2026-09-26, nachdem
+        //    ein Probelauf mit `XDG_CONFIG_HOME` die echten Einstellungen
+        //    des Projektinhabers ueberschrieben hatte: Die Regel darunter
+        //    („wer schon eine Datei hat, behaelt sie") ist fuer Menschen
+        //    richtig und fuer Proben eine Falle. Die Ablage der Vorhaben
+        //    liegt daneben und ist damit mit abgeschirmt.
+        if let Some(p) = std::env::var_os("MYL_EINSTELLUNGEN").filter(|p| !p.is_empty()) {
+            return std::path::PathBuf::from(p);
+        }
         // 📌 **Wer schon eine Datei hat, behaelt sie.** Ohne diese drei
         // Zeilen zoege die Datei bei jedem, der `XDG_CONFIG_HOME` setzt,
         // an einen neuen Ort um, und seine Einstellungen waeren
@@ -1295,7 +1392,7 @@ impl Schriftgroesse {
 /// beieinander, und wer hier ein Feld einfuegt, verschiebt es damit
 /// auch auf der Seite. Das ist beabsichtigt: Eine zweite Liste, die nur
 /// die Reihenfolge festlegt, waere wieder eine zweite Liste.
-pub const FELDER: [Feld; 21] = [
+pub const FELDER: [Feld; 26] = [
     // ⚑ **Sie steht zuerst** (Festlegung des Projektinhabers,
     // 2026-09-10). Sie beschriftet alles, was darunter kommt: Wer die
     // Seite in einer Sprache oeffnet, die er nicht liest, findet hier
@@ -1411,6 +1508,56 @@ pub const FELDER: [Feld; 21] = [
         ),
     ),
     feld(
+        "loop.runden",
+        Feldart::Zahl,
+        ("Loop", "Loop"),
+        ("Höchstzahl an Runden", "Maximum rounds"),
+        (
+            "So viele Runden arbeitet ein Vorhaben höchstens, dann hält es an und meldet sich im Posteingang.",
+            "A task runs at most this many rounds, then it stops and reports in the inbox.",
+        ),
+    ),
+    feld(
+        "loop.stunden",
+        Feldart::Zahl,
+        ("Loop", "Loop"),
+        ("Höchstdauer in Stunden", "Maximum duration in hours"),
+        (
+            "Gezählt wird nur die Zeit, in der Fenster oder Konsole offen sind und das Vorhaben läuft oder wartet. Danach hält es an.",
+            "Only time while the window or console is open and the task runs or waits counts. After that it stops.",
+        ),
+    ),
+    feld(
+        "loop.schritte",
+        Feldart::Zahl,
+        ("Loop", "Loop"),
+        ("Schritte je Runde", "Steps per round"),
+        (
+            "So viele Werkzeugaufrufe darf eine Runde höchstens machen.",
+            "A round may make at most this many tool calls.",
+        ),
+    ),
+    feld(
+        "loop.stillstand",
+        Feldart::Zahl,
+        ("Loop", "Loop"),
+        ("Pause nach Runden ohne Fortschritt", "Pause after rounds without progress"),
+        (
+            "Bringen so viele Runden hintereinander nichts voran, hält das Vorhaben an und fragt nach, statt Rechenzeit zu verbrauchen.",
+            "If this many rounds in a row make no progress, the task stops and asks instead of burning compute.",
+        ),
+    ),
+    feld(
+        "loop.pruefen",
+        Feldart::Schalter,
+        ("Loop", "Loop"),
+        ("Prüfdurchgang", "Review pass"),
+        (
+            "Nach jeder Runde prüft ein zweiter Durchgang, ob sie das Vorhaben vorangebracht hat und ob das Ziel wirklich erreicht ist. Kostet etwa ein Drittel mehr Rechenzeit, verhindert aber „fertig“ ohne Ergebnis.",
+            "After every round a second pass checks whether it moved the task forward and whether the goal is really reached. Costs about a third more compute, but prevents “done” without a result.",
+        ),
+    ),
+    feld(
         "agent.wurzel",
         Feldart::Pfad,
         ("Agent", "Agent"),
@@ -1456,8 +1603,8 @@ pub const FELDER: [Feld; 21] = [
         ("Agent", "Agent"),
         ("Im Web recherchieren dürfen", "May research on the web"),
         (
-            "Gibt dem Chat zwei Werkzeuge: suchen und eine Seite lesen. Gelesen wird nur, was aus einem Suchtreffer stammt oder was du selbst genannt hast; eine selbst zusammengesetzte Adresse wird abgewiesen, und eine Suchfrage, die wörtlich aus einem Anhang stammt, ebenso. Fremder Seitentext kommt eingefasst und als Inhalt gekennzeichnet zurück, niemals als Anweisung. Ohne dieses Häkchen gibt es die Werkzeuge gar nicht. Es braucht curl auf dem Rechner.",
-            "Gives the chat two tools: search, and read a page. Only an address from a search hit or one you named yourself is read; a self-composed address is refused, and so is a query taken verbatim from an attachment. Foreign page text comes back framed and marked as content, never as instruction. Without this box the tools do not exist at all. It needs curl on the machine.",
+            "Gibt Chat und Agent zwei Werkzeuge: suchen und eine Seite lesen. Gelesen wird nur, was aus einem Suchtreffer stammt oder was du selbst genannt hast; eine selbst zusammengesetzte Adresse wird abgewiesen, und eine Suchfrage, die wörtlich aus einem Anhang oder einer gelesenen eigenen Datei stammt, ebenso. Fremder Seitentext kommt eingefasst und als Inhalt gekennzeichnet zurück, niemals als Anweisung. Ohne dieses Häkchen gibt es die Werkzeuge gar nicht. Es braucht curl auf dem Rechner.",
+            "Gives chat and agent two tools: search, and read a page. Only an address from a search hit or one you named yourself is read; a self-composed address is refused, and so is a query taken verbatim from an attachment or from one of your own files the agent has read. Foreign page text comes back framed and marked as content, never as instruction. Without this box the tools do not exist at all. It needs curl on the machine.",
         ),
     ),
     feld(
@@ -1676,6 +1823,11 @@ impl Einstellungen {
             "modell.denken" => Feldwert::Schalter(self.modell.denken),
             "modell.denkbudget" => zahl(self.modell.denkbudget),
             "agent.schritte" => Feldwert::Zahl(self.agent.schritte as u64),
+            "loop.runden" => Feldwert::Zahl(self.schleife.runden as u64),
+            "loop.stunden" => Feldwert::Zahl(self.schleife.stunden as u64),
+            "loop.schritte" => Feldwert::Zahl(self.schleife.schritte as u64),
+            "loop.stillstand" => Feldwert::Zahl(self.schleife.stillstand as u64),
+            "loop.pruefen" => Feldwert::Schalter(self.schleife.pruefen),
             "agent.wurzel" => text(&self.agent.wurzel),
             // 📌 **Hier stand kurzzeitig die geltende Kiste statt des
             // gespeicherten Werts**, damit das Feld nicht leer aussieht.
@@ -1748,6 +1900,21 @@ impl Einstellungen {
             "agent.schritte" => {
                 self.agent.schritte = wert.parse().map_err(|_| format!("{wert} ist keine Zahl"))?
             }
+            "loop.runden" | "loop.stunden" | "loop.schritte" | "loop.stillstand" => {
+                let n: u32 = wert.parse().map_err(|_| format!("{wert} ist keine Zahl"))?;
+                // ⚑ Null waere keine Grenze, sondern ein Vorhaben, das nie
+                //   eine Runde dreht (oder beim Stillstand: sofort anhaelt).
+                if n == 0 {
+                    return Err(format!("{feld} braucht mindestens 1"));
+                }
+                match feld {
+                    "loop.runden" => self.schleife.runden = n,
+                    "loop.stunden" => self.schleife.stunden = n,
+                    "loop.schritte" => self.schleife.schritte = n,
+                    _ => self.schleife.stillstand = n,
+                }
+            }
+            "loop.pruefen" => self.schleife.pruefen = ja(wert),
             "agent.wurzel" => self.agent.wurzel = (wert != "aus").then(|| wert.to_string()),
             "agent.kistenordner" => {
                 self.agent.kistenordner = (wert != "aus").then(|| wert.to_string())
@@ -1824,6 +1991,18 @@ impl Einstellungen {
 #[cfg(test)]
 mod setzer {
     use super::*;
+
+    /// Die Sicherheitsmeldung vor `auto`: in beiden Sprachen vollstaendig,
+    /// mit Notaus und einer Frage, deren Vorgabe nein ist.
+    #[test]
+    fn autowarnung_ist_vollstaendig() {
+        for (s, notaus, nein) in [(Sprache::De, "Notaus", "[j/N]"), (Sprache::En, "emergency stop", "[y/N]")] {
+            let w = autowarnung(s);
+            assert!(w.punkte.iter().all(|p| !p.trim().is_empty()));
+            assert!(w.punkte.iter().any(|p| p.contains(notaus)), "{notaus}");
+            assert!(w.frage.contains(nein));
+        }
+    }
 
     /// ⚑ **Das Denkbudget: eine alte Ablage bekommt die Vorgabe, `null`
     /// heisst ohne Grenze, null heisst gar nicht, und ein Tippfehler ist

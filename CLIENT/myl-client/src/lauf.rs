@@ -181,8 +181,29 @@ pub fn fahren_im_gespraech(
     auftrag: &str,
     melder: Option<&dyn Fn(myl_local_agent::schleife::Meldung<'_>)>,
 ) -> Ausgang {
+    // ⛔️ **Der vorgegebene Systemprompt, geprueft, oder kein Lauf**
+    //    (`crate::systemprompt`). Die Fassung und ihr voller SHA-256 gehen
+    //    ins Aktionsprotokoll.
+    let (datei, text) = crate::systemprompt::fassung(ruestung.form);
+    let regel = match crate::systemprompt::geprueft(ruestung.form) {
+        Ok(t) => t,
+        Err(grund) => {
+            crate::protokoll::systemprompt(datei, &crate::systemprompt::sha256(text), false);
+            return Ausgang {
+                verlauf: Vec::new(),
+                antwort: None,
+                nachrichten: Vec::new(),
+                ende: myl_local_agent::schleife::Ende::Tuer(myl_local_agent::tuerklient::Tuerfehler::Abgelehnt {
+                    status: 0,
+                    rumpf: grund,
+                }),
+                sekunden: 0.0,
+            };
+        }
+    };
+    crate::protokoll::systemprompt(datei, &crate::systemprompt::sha256(text), true);
     fahren_mit_hausregel(
-        modell, ruestung, schritte, bezeugtes, max_tokens, verlauf, auftrag, melder, None,
+        modell, ruestung, schritte, bezeugtes, max_tokens, verlauf, auftrag, melder, Some(regel),
     )
 }
 

@@ -198,6 +198,28 @@ pub fn ruesten_mit(
     ruesten_zugeschnitten(agent, form, satz, zusaetzlich, nachfrage, Zuschnitt::Arbeitsordner)
 }
 
+/// **Legt das Ergebnis eines eigenen Werkzeugs in die Verratsprobe.**
+///
+/// ⛔️ Um jedes Werkzeug ausser den beiden Web-Werkzeugen; die kommen erst
+/// danach in den Kasten und werden deshalb nicht umhuellt.
+struct Mitleser {
+    inner: Box<dyn Werkzeugausfuehrung>,
+    tor: std::sync::Arc<crate::netzwerkzeuge::Tor>,
+}
+
+impl Werkzeugausfuehrung for Mitleser {
+    fn name(&self) -> &str {
+        self.inner.name()
+    }
+    fn ausfuehren(&self, a: &serde_json::Value) -> Result<String, myl_local_agent::ausfuehrung::Werkzeugfehler> {
+        let r = self.inner.ausfuehren(a);
+        if let Ok(text) = &r {
+            self.tor.gesehen(text);
+        }
+        r
+    }
+}
+
 /// **Eine Rüstung, die nur die Anhänge sieht.**
 ///
 /// ⚑ **Für den Chat** (Auftrag des Projektinhabers, 2026-09-23). Dort
@@ -405,6 +427,27 @@ fn ruesten_zugeschnitten(
             Some(ein)
         }
     };
+
+    // ⚑ **Die Web-Recherche im Agenten** (Festlegung des Projektinhabers,
+    //   2026-09-26). Der Chat bekommt sie ueber `ruesten_fuer_anhaenge`.
+    //   Hier waechst die Verratsprobe mit: Ein Mitleser legt jedes Ergebnis
+    //   eines eigenen Werkzeugs ins Tor (`Tor::gesehen`), bevor die beiden
+    //   Web-Werkzeuge dazukommen, die selbst nicht mitgelesen werden.
+    if zuschnitt == Zuschnitt::Arbeitsordner && agent.web_recherche && crate::netzwerkzeuge::curl_vorhanden() {
+        let tor = std::sync::Arc::new(crate::netzwerkzeuge::Tor::fuer_agent(agent.netzsaat.as_deref().unwrap_or("")));
+        kasten.umhuellen(|inner| Box::new(Mitleser { inner, tor: std::sync::Arc::clone(&tor) }));
+        for (angebot, ausfuehrung) in crate::netzwerkzeuge::angebote(std::sync::Arc::clone(&tor), form) {
+            // ⛔️ Eine Web-Anfrage wirkt nach aussen: im `manual mode` mit Nachfrage.
+            let ausfuehrung: Box<dyn Werkzeugausfuehrung> = match nachfrage.clone() {
+                Some(f) => Box::new(Nachfragend { inner: ausfuehrung, fragen: f }),
+                None => ausfuehrung,
+            };
+            let name = angebot.name.clone();
+            kasten
+                .einhaengen(angebot, protokolliert(ausfuehrung))
+                .map_err(|f| format!("Web-Werkzeug {name} haengt nicht: {f:?}"))?;
+        }
+    }
 
     // ⚑ **Jedes Werkzeug bekommt ein Manifest, und daraus seine
     // Adresse.** Der Harness sperrt `Unbekannt` in JEDER Betriebsart,

@@ -163,6 +163,30 @@ impl Werkzeugkasten {
         &self.angebote
     }
 
+    /// **Legt um jede Ausfuehrung eine Huelle.**
+    ///
+    /// ⚑ **Fuer Schichten, die weniger tun, nie mehr erlauben**: etwa die
+    /// Doppelsperre des Loops, die einen Aufruf, der vor einer
+    /// Unterbrechung schon lief, nicht noch einmal ausfuehrt, sondern das
+    /// gespeicherte Ergebnis liefert. Die Erlaubnis sitzt im Harness und
+    /// bleibt davon unberuehrt; die Huelle sieht nur, was schon erlaubt
+    /// ist.
+    ///
+    /// ⛔️ **Der Name bleibt.** Eine Huelle, die ihn aendert, liesse die
+    /// Erlaubnis einen anderen Namen pruefen als den ausgefuehrten; das
+    /// ist ein Programmierfehler und bricht deshalb hart ab.
+    pub fn umhuellen(
+        &mut self,
+        mut huelle: impl FnMut(Box<dyn Werkzeugausfuehrung>) -> Box<dyn Werkzeugausfuehrung>,
+    ) {
+        let alt = std::mem::take(&mut self.ausfuehrungen);
+        for (a, angebot) in alt.into_iter().zip(&self.angebote) {
+            let neu = huelle(a);
+            assert_eq!(neu.name(), angebot.name, "eine Huelle darf den Namen eines Werkzeugs nicht aendern");
+            self.ausfuehrungen.push(neu);
+        }
+    }
+
     /// Das Angebot zu einem Namen.
     pub fn angebot(&self, name: &str) -> Option<&Werkzeug> {
         self.angebote.iter().find(|a| a.name == name)
@@ -185,5 +209,62 @@ impl Werkzeugkasten {
             .iter()
             .find(|a| a.name() == name)
             .map(|a| a.ausfuehren(argumente))
+    }
+}
+
+#[cfg(test)]
+mod proben {
+    use super::*;
+
+    struct Echo(&'static str);
+    impl Werkzeugausfuehrung for Echo {
+        fn name(&self) -> &str {
+            self.0
+        }
+        fn ausfuehren(&self, a: &serde_json::Value) -> Result<String, Werkzeugfehler> {
+            Ok(format!("{} {a}", self.0))
+        }
+    }
+
+    struct Laut(Box<dyn Werkzeugausfuehrung>);
+    impl Werkzeugausfuehrung for Laut {
+        fn name(&self) -> &str {
+            self.0.name()
+        }
+        fn ausfuehren(&self, a: &serde_json::Value) -> Result<String, Werkzeugfehler> {
+            self.0.ausfuehren(a).map(|t| t.to_uppercase())
+        }
+    }
+
+    struct Umbenannt(Box<dyn Werkzeugausfuehrung>);
+    impl Werkzeugausfuehrung for Umbenannt {
+        fn name(&self) -> &str {
+            "anders"
+        }
+        fn ausfuehren(&self, a: &serde_json::Value) -> Result<String, Werkzeugfehler> {
+            self.0.ausfuehren(a)
+        }
+    }
+
+    fn kasten() -> Werkzeugkasten {
+        let mut k = Werkzeugkasten::neu();
+        k.einhaengen(Werkzeug::ohne_parameter("eins", "e"), Box::new(Echo("eins"))).unwrap();
+        k.einhaengen(Werkzeug::ohne_parameter("zwei", "z"), Box::new(Echo("zwei"))).unwrap();
+        k
+    }
+
+    #[test]
+    fn huelle_wirkt_auf_jedes_werkzeug_und_behaelt_die_reihenfolge() {
+        let mut k = kasten();
+        k.umhuellen(|a| Box::new(Laut(a)));
+        let namen: Vec<&str> = k.angebote().iter().map(|a| a.name.as_str()).collect();
+        assert_eq!(namen, ["eins", "zwei"]);
+        assert_eq!(k.ausfuehrungen[1].ausfuehren(&serde_json::json!({})).unwrap(), "ZWEI {}");
+    }
+
+    #[test]
+    #[should_panic(expected = "Namen eines Werkzeugs nicht aendern")]
+    fn huelle_darf_den_namen_nicht_aendern() {
+        kasten().umhuellen(|a| Box::new(Umbenannt(a)));
     }
 }

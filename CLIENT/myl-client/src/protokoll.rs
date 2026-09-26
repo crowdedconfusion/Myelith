@@ -268,6 +268,25 @@ pub fn ereignis(art: &str, stelle: &str, ausloeser: &[u8], entscheidung: &str) {
     });
 }
 
+/// **Die Fassung des Systemprompts, unter der ein Lauf steht**, mit dem
+/// vollen SHA-256 (nicht geheim, und nur der volle Wert laesst sich gegen
+/// `pruefsummen.txt` halten).
+pub fn systemprompt(datei: &str, sha256: &str, geprueft: bool) {
+    if !an() {
+        return;
+    }
+    eintragen(&Eintrag {
+        zeit: zeitstempel(jetzt_sekunden()),
+        art: "systemprompt".to_string(),
+        werkzeug: datei.to_string(),
+        eingabe: sha256.to_string(),
+        ausgabe: String::new(),
+        entscheidung: if geprueft { "geprueft" } else { "abgewiesen" }.to_string(),
+        ergebnis: if geprueft { "ok" } else { "fehler" }.to_string(),
+        dauer_ms: 0,
+    });
+}
+
 /// Welche Art von Handlung ein Werkzeug ist, aus seinem Namen.
 fn art_von(name: &str) -> &'static str {
     match name {

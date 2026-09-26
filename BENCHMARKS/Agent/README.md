@@ -13,6 +13,14 @@ python3 BENCHMARKS/Agent/agentenprobe.py INTEGER_LLM/artifacts/myelith-4b
 python3 BENCHMARKS/Agent/agentenprobe.py <artefakt> --stufe 1 --laeufe 3
 ```
 
+## Das Loop-Szenario
+
+`loop/` misst etwas anderes als die Stufen darunter: ob ein Modell im
+**Loop** zwei zusammenhängende Aufgaben über viele Runden löst, dabei
+Werkzeuge wechselt, einen Projektskill selbst findet und in Unterlagen
+recherchiert. Aufbau, Fallen und Auswertung stehen in `loop/README.md`,
+Ergebnisse unter `results/loop-*.md`.
+
 ## Die drei Stufen, und warum sie getrennt bleiben
 
 | Stufe | Was sie prüft | Aufträge |

@@ -95,6 +95,8 @@ pub const FRAGE_HOECHSTLAENGE: usize = 200;
 /// Ab welchem woertlichen Lauf aus einem **Anhang** eine Frage als
 /// Abfluss gilt.
 pub const VERRAT_EIGEN: usize = 24;
+/// Wie viele Bytes eigener Text hoechstens in die Verratsprobe gehen.
+pub const EIGEN_HOECHSTENS: usize = 16 * 1024 * 1024;
 /// Ab welchem woertlichen Lauf aus **Fremdtext** eine Frage als diktiert
 /// gilt.
 ///
@@ -241,9 +243,10 @@ struct Stand {
 /// fuellt den Zielkreis, das Lesen prueft gegen ihn; getrennte Staende
 /// waeren genau die Luecke, die Schranke 1 schliessen soll.
 pub struct Tor {
-    /// Die Anhangtexte, normalisiert. Was hier drinsteht, darf nicht
-    /// hinaus.
-    eigen: Vec<String>,
+    /// Die eigenen Texte, normalisiert: im Chat die Anhaenge, im Agenten
+    /// alles, was ein eigenes Werkzeug zurueckgab (siehe [`Tor::gesehen`]).
+    /// Was hier drinsteht, darf nicht hinaus.
+    eigen: Mutex<Vec<String>>,
     stand: Mutex<Stand>,
     /// Die Suchvorlage mit `{q}` als Platzhalter.
     sucher: String,
@@ -291,7 +294,43 @@ impl Tor {
             .unwrap_or_else(|| "https://html.duckduckgo.com/html/?q={q}".into());
         let stand = Stand { offen: adressen_aus(nutzertext), ..Stand::default() };
         let schrift = myl_senses::Sinne::finden().schrift.ok();
-        Self { eigen, stand: Mutex::new(stand), sucher, schrift }
+        Self { eigen: Mutex::new(eigen), stand: Mutex::new(stand), sucher, schrift }
+    }
+
+    /// **Ein Tor fuer den Agenten**: ohne Anhaenge, mit dem Auftrag als Saat.
+    ///
+    /// ⚑ **Im Agenten waechst die Verratsprobe mit dem Lauf.** Ein
+    /// Arbeitsordner kann ein ganzes Repositorium sein; ihn vorab zu lesen
+    /// waere teuer und traefe trotzdem das Falsche. **Verraten kann das
+    /// Modell nur, was es gelesen hat**, und das kommt ueber die eigenen
+    /// Werkzeuge herein. Die Ruestung haengt deshalb einen Mitleser um jedes
+    /// eigene Werkzeug, der dessen Ergebnis mit [`Tor::gesehen`] hier
+    /// einlegt (Festlegung des Projektinhabers vom 2026-09-26: die
+    /// Web-Werkzeuge auch fuer den Agenten).
+    pub fn fuer_agent(nutzertext: &str) -> Self {
+        Self::neu(Path::new(""), nutzertext)
+    }
+
+    /// **Nimmt einen eigenen Text in die Verratsprobe auf**: das Ergebnis
+    /// eines eigenen Werkzeugs (Datei lesen, suchen, Befehl).
+    ///
+    /// ⚠️ **Nur eigene Texte, nie Fremdtext.** Eine Webseite hier
+    /// einzulegen hiesse, dass eine Frage mit ihren Worten abgelehnt wird,
+    /// und das ist Schranke 2, zweite Haelfte, mit anderer Folge.
+    ///
+    /// ⚠️ **Gedeckelt**: hoechstens `EIGEN_HOECHSTENS` Bytes insgesamt. Was
+    /// darueber hinaus gelesen wird, faellt aus der Probe; ein Lauf, der
+    /// so viel liest, hat andere Sorgen als eine Suchfrage.
+    pub fn gesehen(&self, text: &str) {
+        if text.chars().count() < VERRAT_EIGEN {
+            return;
+        }
+        if let Ok(mut e) = self.eigen.lock() {
+            let belegt: usize = e.iter().map(String::len).sum();
+            if belegt + text.len() <= EIGEN_HOECHSTENS {
+                e.push(normalisiert(text));
+            }
+        }
     }
 
     /// Ob dieser Rechner ein PDF lesen kann.
@@ -380,14 +419,18 @@ impl Netzausfuehrung {
         }
         // ⛔️ Schranke 2, erste Haelfte: nichts aus einem Anhang.
         let gefragt = normalisiert(frage);
-        for anhang in &self.tor.eigen {
-            if enthaelt_lauf(&gefragt, anhang, VERRAT_EIGEN) {
-                return Err(fehler(
-                    "diese Frage enthaelt einen woertlichen Abschnitt aus einem Anhang. \
-                     Eine Suchfrage verlaesst den Rechner; Inhalt aus den Anhaengen darf \
-                     das nicht. Formuliere die Frage allgemein, ohne Zitat.",
-                ));
-            }
+        let verrat = self
+            .tor
+            .eigen
+            .lock()
+            .map(|e| e.iter().any(|eigen| enthaelt_lauf(&gefragt, eigen, VERRAT_EIGEN)))
+            .unwrap_or(true);
+        if verrat {
+            return Err(fehler(
+                "diese Frage enthaelt einen woertlichen Abschnitt aus einem Anhang oder einer \
+                 gelesenen eigenen Datei. Eine Suchfrage verlaesst den Rechner; eigener Inhalt \
+                 darf das nicht. Formuliere die Frage allgemein, ohne Zitat.",
+            ));
         }
         // ⚑ **Schranke 2, zweite Haelfte: kein Verbot, sondern eine
         //   Folge.** Eine Frage, die woertlich von einer gelesenen

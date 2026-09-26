@@ -1,0 +1,31 @@
+# Die Bauumgebung fuer GolemOS.
+#
+# ⚑ **Ein Linux-Abbild entsteht unter Linux**, und das kann keine Wahl
+# der Grundlage aendern. Auf einem Mac oder unter Windows laeuft dieser
+# Behaelter; auf einem Linux-Rechner kann man ihn ueberspringen und
+# `bauen.sh --ohne-behaelter` nehmen.
+#
+# ⚠️ **Buildroot laeuft nicht als root.** Es bricht mit einer eigenen
+# Meldung ab, und zwar mit Absicht: Ein Bau als root kann das Wirtssystem
+# beschaedigen, wenn ein Paket sich vergreift.
+FROM debian:bookworm-slim
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      bc build-essential ca-certificates cpio file git rsync unzip wget \
+      libncurses-dev python3 bzip2 xz-utils patch perl sed gawk \
+      musl-tools \
+  && rm -rf /var/lib/apt/lists/*
+
+# ⚑ **Rust kommt ueber rustup und nicht aus Debian.** Die
+# Werkzeugkette muss zu `rust-version` der Kisten passen, und die in
+# bookworm ist aelter.
+ENV RUSTUP_HOME=/opt/rustup CARGO_HOME=/opt/cargo
+ENV PATH=/opt/cargo/bin:$PATH
+RUN wget -qO- https://sh.rustup.rs | sh -s -- -y --no-modify-path --profile minimal \
+  && rustup target add x86_64-unknown-linux-musl aarch64-unknown-linux-musl \
+  && chmod -R a+rwX /opt/rustup /opt/cargo
+
+RUN useradd -m -u 1000 baumeister
+USER baumeister
+WORKDIR /arbeit

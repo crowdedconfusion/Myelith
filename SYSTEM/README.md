@@ -9,10 +9,10 @@ keine Komponente, nichts mit einer eigenen Fassung: die Unterlage.
 
 | Ordner | Was drin liegt | eingecheckt |
 |---|---|---|
-| `full-build/` | wohin alle 25 Crates bauen, gemeinsam statt je Crate einmal | nein, erzeugt |
-| `crates-vorrat/` | 760 `.crate`-Archive, alles, was die 25 Crates zum Bauen brauchen | **ja**, 117 MB |
+| `full-build/` | wohin alle 26 Crates bauen, gemeinsam statt je Crate einmal | nein, erzeugt |
+| `crates-vorrat/` | 760 `.crate`-Archive, alles, was die 26 Crates zum Bauen brauchen | **ja**, 117 MB |
 | `crates-lager/` | dieselben Archive ausgepackt, dazu die Cargo-Konfiguration | nein, erzeugt |
-| `golemos/` | die Linux-Distribution, die nur Myelith bedient | nein, solange sie nicht fertig ist |
+| `golemos/` | die Linux-Distribution, die nur Myelith bedient, mit Einrichtungsassistent (die 26. Kiste) und freigegebenen Abbildern | **ja**, seit 2026-09-25; draußen bleiben `aus/` und `bau/` |
 | `install/` | drei Einrichtungsskripte, je eines für macOS, NixOS und Windows | ja |
 | `logs/` | Laufprotokolle des Knotens | ja |
 

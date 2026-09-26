@@ -1,0 +1,13 @@
+{
+  "aufgaben": [
+    {
+      "kennung": "auswertung",
+      "ziel": "Im Arbeitsordner liegt daten/auswertung.py. Es soll die Messreihe daten/messwerte.csv auswerten, bricht aber beim Start ab. Bring das Skript zum Laufen, ohne daten/messwerte.csv zu verändern. Es soll je Sensor die Anzahl gültiger Werte, den Mittelwert, das Minimum und das Maximum mit einer Nachkommastelle als Markdown-Tabelle nach ergebnis/statistik.md schreiben; fehlende Werte (n/a) zählen nicht. Fertig ist die Aufgabe, wenn python3 daten/auswertung.py ohne Fehler durchläuft und ergebnis/statistik.md die Tabelle für alle vier Sensoren enthält.",
+      "abnahme": "python3 daten/auswertung.py && for s in T1 T2 T3 T4; do grep -q \"| $s |\" ergebnis/statistik.md || { echo \"Zeile fuer $s fehlt in ergebnis/statistik.md\"; exit 1; }; done"
+    },
+    {
+      "kennung": "bericht",
+      "ziel": "Schreibe einen Bericht für die Betriebsleitung nach bericht/sensorbericht.md: Welche Räume lagen am 20. September außerhalb ihres zulässigen Temperaturbereichs, und was ist laut den Unterlagen im Ordner quellen/ jeweils zu tun? Nutze die Zahlen aus ergebnis/statistik.md und recherchiere Zuordnung, Grenzwerte und Maßnahmen in quellen/. Achte darauf, welche Unterlagen noch gelten. Halte dich an unsere Hausregeln für Quellenangaben."
+    }
+  ]
+}
