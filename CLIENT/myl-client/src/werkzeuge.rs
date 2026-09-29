@@ -227,8 +227,19 @@ impl Einhaengung {
     /// ⚑ **Absolute Pfade gehoeren nicht in die Antwort.** Sie
     /// verraten das Wirtsverzeichnis und laden das Modell ein, beim
     /// naechsten Aufruf ausserhalb zu greifen.
+    ///
+    /// ⚑ **Mit `/` getrennt, auf jedem System.** 📌 Unter Windows stand hier
+    /// bis zum 2026-09-29 `daten\messwerte.csv`, waehrend Auftraege, Skills
+    /// und Systemprompt `/` schreiben; die CI fand es an der Dateinamensuche.
+    /// Windows nimmt `/` in jedem Pfad an, der zurueckkommt. Nur dort wird
+    /// ersetzt, denn unter Unix darf ein Rueckstrich im Dateinamen stehen.
     fn kurz(&self, p: &Path) -> String {
-        p.strip_prefix(&self.wurzel).unwrap_or(p).display().to_string()
+        let s = p.strip_prefix(&self.wurzel).unwrap_or(p).display().to_string();
+        if cfg!(windows) {
+            s.replace('\\', "/")
+        } else {
+            s
+        }
     }
 }
 

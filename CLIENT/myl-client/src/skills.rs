@@ -771,7 +771,9 @@ mod proben {
             assert!(x.satz.len() > 10, "{}: keine Beschreibung", x.name);
         }
         let vorlage = o.join("skill-erstellen/vorlagen/SKILL.md");
-        let t = std::fs::read_to_string(&vorlage).expect("die Vorlage fehlt");
+        // Unter Windows checkt Git Textdateien mit CRLF aus; der Parser nimmt
+        // beides, die Probe also auch.
+        let t = std::fs::read_to_string(&vorlage).expect("die Vorlage fehlt").replace("\r\n", "\n");
         assert!(t.starts_with("---\n") && t.contains("beschreibung:") && t.contains("stichworte:"));
     }
 }

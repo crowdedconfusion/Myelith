@@ -1,6 +1,6 @@
 # client (Nutzer-Client inkl. Wallet)
 
-> **Version:** 0.101.1 (`myl-client` 0.69.1, `myl-oberflaeche` 0.52.2, `myl-console` 0.26.5, `myl-senses` 0.10.0)
+> **Version:** 0.101.2 (`myl-client` 0.69.2, `myl-oberflaeche` 0.52.2, `myl-console` 0.26.6, `myl-senses` 0.10.0)
 > **Datum:** 2026-09-28
 > **Status:** ✅ **Der lokale Betrieb läuft und ist ausgeliefert.** Ein
 > Gesprächsfenster mit Modellwahl, Agentenschleife und
@@ -153,7 +153,54 @@ Mensch je bedient hat, an den Bedürfnissen vorbei entworfen wird.
 
 ## Changelog
 
-### v0.101.1 – 2026-09-29 (Fund 500 war echt: Protokollzeilen zerrissen unter gleichzeitigem Schreiben; die CI wieder grün auf allen Zielen und beiden Mindestfassungen)
+### v0.101.2 – 2026-09-29 (unter Windows lief kein Agent: der Systemprompt kam mit CRLF an; die Suche nennt Pfade mit `/`; Funde 502 und 503)
+
+`myl-client` 0.69.2, `myl-console` 0.26.6.
+
+**Anlass:** Der CI-Lauf nach v0.101.1 war unter Windows an zwei Jobs rot.
+📌 **Die Überschrift von v0.101.1 sagte „die CI wieder grün auf allen
+Zielen“**, und das war nicht belegt: Windows und der kalte Klon lassen sich
+auf der Entwicklungsmaschine nicht nachfahren. Sie ist berichtigt.
+
+**Fund 502: Unter Windows startete kein Agent.** Git für Windows checkt
+Textdateien mit CRLF aus. `systemprompt.rs` bettet `de.md` und `en.md` mit
+`include_str!` ein und prüft sie gegen `pruefsummen.txt`; mit CRLF stimmt
+die Summe nie, und ohne geprüften Systemprompt läuft kein Agent. Jeder
+Windows-Bau aus einem Klon war davon betroffen. Behoben in `.gitattributes`:
+`COMPLIANCE/systemprompt/*` bleibt auf jedem System LF, nach dem Muster der
+Regel für `*.plan`. ⚑ **Dieselbe Fehlerklasse, noch ungesehen:**
+`INTEGER_LLM/theta_v/spec.json` wird ebenso eingebettet, und ihr Hash über
+die Bytes ist der `theta_v_hash` der Goldvektoren. Unter Windows wäre er ein
+anderer gewesen. Sie steht jetzt in derselben Regel. Dazu sagt die Meldung
+bei einer falschen Summe, wenn die Datei CRLF trägt, und wie ein alter Klon
+das behebt (`git add --renormalize .`, neu auschecken, neu bauen).
+**Beleg:** `eine_veraenderte_fassung_wird_abgewiesen` prüft die Meldung mit
+und ohne CR; `git check-attr eol` nennt `lf` für alle vier Dateien. Ob der
+Windows-Lauf grün wird, zeigt erst die CI.
+
+**Fund 503: Unter Windows nannten die Dateiwerkzeuge Pfade mit `\`.** Die
+Suche antwortete `daten\messwerte.csv`, während Aufträge, Skills und der
+Systemprompt `/` schreiben. Der Pfad zum Modell (`kurz`) trennt jetzt auf
+jedem System mit `/`; Windows nimmt `/` in jedem Pfad an, der zurückkommt.
+Ersetzt wird nur unter Windows, denn unter Unix darf ein Rückstrich im
+Dateinamen stehen. **Beleg:** `die_suche_findet_auch_dateinamen`, bisher
+unter Windows rot.
+
+**Ohne Wirkung auf das Verhalten:**
+- `die_mitgelieferten_skills_haben_einen_kopf` verlangte `---\n` am Anfang
+  der Vorlage. Der Parser nimmt CRLF schon; die Probe jetzt auch.
+- `myl-console`: `befehl_unix` und `osc11_lesen` werden nur unter Unix
+  gerufen und stehen jetzt hinter `#[cfg(any(unix, test))]`, wie
+  `befehl_windows` spiegelbildlich. Unter Windows waren sie tot, und
+  `-D warnings` brach den Bau des kalten Klons ab.
+
+**Belege lokal:** Clippy mit `-D warnings` in `myl-client` und
+`myl-console` grün, die berührten Proben grün, `myl-console` ganz grün.
+⚠️ **Lokal nicht prüfbar:** Windows-Tests und der kalte Klon. Clippy für
+das Windows-Ziel scheitert hier an den C-Abhängigkeiten (`blst`,
+`onig_sys`: `stdlib.h` fehlt), nur `myl-senses` ließ sich so prüfen, grün.
+
+### v0.101.1 – 2026-09-29 (Fund 500 war echt: Protokollzeilen zerrissen unter gleichzeitigem Schreiben; sechs CI-Fehler behoben, beide Mindestfassungen grün)
 
 `myl-client` 0.69.1, `myl-console` 0.26.5, `myl-oberflaeche` 0.52.2.
 

@@ -118,6 +118,9 @@ pub fn noetig(ist_verwalter: Option<bool>, terminal: bool) -> Result<(), Grund> 
 /// `--preserve-env`, das die Regel verbietet, liesse `sudo` scheitern,
 /// und der Mensch sähe eine Fehlermeldung über eine Einstellung, die er
 /// nie angefasst hat.
+///
+/// Nur unter Unix gerufen; in den Proben ueberall, wie `befehl_windows`.
+#[cfg(any(unix, test))]
 pub fn befehl_unix(eigen: &Path, argumente: &[String], heimat: Option<&str>) -> Command {
     let mut b = Command::new("sudo");
     b.arg("--").arg("env");

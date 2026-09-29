@@ -72,9 +72,18 @@ pub fn pruefen_text(datei: &str, text: &str, soll: Option<&str>) -> Result<(), S
     let ist = sha256(text);
     match soll {
         Some(s) if s.eq_ignore_ascii_case(&ist) => Ok(()),
+        // 📌 Unter Windows checkte Git die Datei bis zum 2026-09-29 mit CRLF
+        //    aus, und die Summe stimmte nie (seitdem `.gitattributes`). Ein
+        //    Klon von vorher behaelt die Zeilenenden; die Meldung sagt es.
         Some(s) => Err(format!(
             "Systemprompt {datei}: Prüfsumme stimmt nicht (verlangt {s}, ist {ist}); \
-             ohne geprüften Systemprompt läuft kein Agent"
+             ohne geprüften Systemprompt läuft kein Agent{}",
+            if text.contains('\r') {
+                ". Die Datei hat CRLF-Zeilenenden; im Klon `git add --renormalize .` \
+                 und neu auschecken, dann neu bauen"
+            } else {
+                ""
+            }
         )),
         None => Err(format!("Systemprompt {datei}: keine Prüfsumme hinterlegt")),
     }
@@ -134,6 +143,12 @@ mod proben {
         let f = pruefen_text(datei, &verfaelscht, soll(datei)).unwrap_err();
         assert!(f.contains("stimmt nicht") && f.contains("läuft kein Agent"), "{f}");
         assert!(pruefen_text(datei, text, None).is_err(), "ohne Summe gilt nichts");
+        // Ein Windows-Auschecken mit CRLF: abgewiesen, und die Meldung nennt
+        // den Grund. Ohne CR kein Hinweis, der in die Irre fuehrt.
+        let crlf = text.replace('\n', "\r\n");
+        let f = pruefen_text(datei, &crlf, soll(datei)).unwrap_err();
+        assert!(f.contains("CRLF") && f.contains("renormalize"), "{f}");
+        assert!(!pruefen_text(datei, &verfaelscht, soll(datei)).unwrap_err().contains("CRLF"));
     }
 
     /// ⚑ **Der Inhalt, auf den es ankommt**, in beiden Sprachen, und die

@@ -335,6 +335,10 @@ pub fn grund_erfragen() {
 /// **Liest die Antwort auf OSC 11**: `ESC ] 11 ; rgb:RRRR/GGGG/BBBB`,
 /// abgeschlossen mit BEL oder ST. Jeder Kanal hat ein bis vier
 /// Hexziffern und wird auf 0 bis 255 umgerechnet.
+///
+/// Gerufen nur von `osc11_fragen`, und das gibt es nur unter Unix; die
+/// Proben laufen ueberall.
+#[cfg(any(unix, test))]
 pub fn osc11_lesen(antwort: &[u8]) -> Option<(u8, u8, u8)> {
     let text = String::from_utf8_lossy(antwort);
     let rest = &text[text.find("rgb:")? + 4..];

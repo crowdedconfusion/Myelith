@@ -26,3 +26,13 @@ starter text eol=lf
 # haengt zwar an den geparsten Feldern und nicht an den Bytes, ein
 # Bytevergleich zwischen zwei Teilnehmern ginge aber schief.
 *.plan text eol=lf
+
+# Dateien, deren Bytes eine Pruefsumme tragen, und die ein Programm per
+# `include_str!` einbettet: Unter Windows checkt Git sie sonst mit CRLF aus,
+# das Programm bettet andere Bytes ein, und die Summe stimmt nicht mehr.
+# Beim Systemprompt hiess das (2026-09-29, von der CI gefunden): Auf einem
+# Windows-Bau aus dem Klon lief kein einziger Agent, denn ohne gepruefte
+# Summe startet keiner. Die Ausfuehrungsspezifikation ist Teil von theta_v;
+# ihr Hash ueber die Bytes waere unter Windows ein anderer gewesen.
+COMPLIANCE/systemprompt/* text eol=lf
+INTEGER_LLM/theta_v/spec.json text eol=lf
