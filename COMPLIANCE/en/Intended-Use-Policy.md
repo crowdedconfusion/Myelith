@@ -1,6 +1,6 @@
 # Intended Use Policy and Excluded Uses
 
-**As of:** 2026-09-25 · **Deutsch:** [Zweckbestimmung.md](../de/Zweckbestimmung.md)
+**As of:** 2026-09-28 · **Deutsch:** [Zweckbestimmung.md](../de/Zweckbestimmung.md)
 
 This policy defines what Myelith was built for and what it must not be
 used for. It forms part of the terms of use within the meaning of
@@ -97,11 +97,11 @@ system (Art. 25 AI Act).
 | Measure | Effect |
 |---|---|
 | Notice at start-up, to be actively acknowledged | Nobody uses Myelith without knowing that it is an AI and what it is not meant for |
-| Permanent "AI" label in the interface | Every answer is recognisable as AI-generated |
+| Permanent AI disclosure in the interface | In the window, the empty input field reads "An AI answers here."; in the console, "AI" stands in the footer; every answer is recognisable as AI-generated |
 | Request filter | Requests clearly aimed at a prohibited practice are refused with a reference to this policy; the refusal is logged without plain text |
 | Marking of the synthetic voice | Metadata and a watermark in every generated audio file |
 | Confirmation before actions | By default, the agent's writes, network access and commands are presented for approval before they run |
-| Emergency stop | A button and a keyboard shortcut abort any running agent action |
+| Emergency stop | In the window, it is closing the window: this ends any running agent action, including a command already started. In the console, the emergency stop (Ctrl-C or Esc) aborts it |
 | Action log | Every agent action is logged locally, without plain text, for 30 days |
 | No identification of persons when seeing | The vision model is instructed not to identify persons and not to attribute emotions or sensitive characteristics |
 

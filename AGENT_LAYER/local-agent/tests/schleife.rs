@@ -413,9 +413,31 @@ fn ein_abgeschnittener_aufruf_wird_beantwortet() {
     assert!(
         e.nachrichten
             .iter()
-            .any(|n| n.role == "tool" && n.content.contains("nicht als JSON lesen")),
+            .any(|n| n.role == "tool" && n.content.contains("abgeschnitten")),
         "der unlesbare Aufruf blieb unbeantwortet"
     );
+}
+
+/// ⚑ **Ein vollstaendiger Aufruf in falscher Form bekommt die richtige
+/// Form gezeigt** und nicht den Rat, sich kuerzer zu fassen (2026-09-29).
+#[test]
+fn ein_falsch_geformter_aufruf_bekommt_die_form_gezeigt() {
+    let e = fahren(
+        vec![
+            "<tool_call>{\"name\" \"zeit\" arguments}</tool_call>",
+            "<tool_call>{\"name\":\"zeit\",\"arguments\":{}}</tool_call>",
+            "Es ist 12:00.",
+        ],
+        Betriebsart::NurVerankert,
+        5,
+    );
+    assert_eq!(e.ende, Ende::Fertig, "{}", e.ende);
+    let antwort = e
+        .nachrichten
+        .iter()
+        .find(|n| n.role == "tool" && n.content.contains("verlangte Form"))
+        .expect("keine Antwort auf den falsch geformten Aufruf");
+    assert!(!antwort.content.contains("Tokengrenze"), "falscher Rat: {}", antwort.content);
 }
 
 /// ⚑ **Die Betriebsart greift VOR der Ausführung.**
@@ -851,4 +873,17 @@ fn die_antwortlaenge_wird_freigehalten() {
     let reichlich = ZaehlenderWeg::neu(vec!["Fertig."], prompt + 32);
     fahren_im_gespraech(&reichlich, &verlauf, "Weiter.", &meldungen);
     assert_eq!(reichlich.gesehen.borrow()[0].len(), 4, "mit genau der Antwortlaenge Luft bleibt der Verlauf");
+}
+
+/// ⚑ **Der Budgethinweis** (2026-09-29): Bleiben nach einem Werkzeugschritt
+/// hoechstens drei Schritte, steht das am Werkzeugergebnis, vorher nicht.
+#[test]
+fn bei_knappem_budget_erinnert_die_schleife() {
+    let aufruf = "<tool_call>{\"name\":\"zeit\",\"arguments\":{}}</tool_call>";
+    let e = fahren(vec![aufruf, aufruf, aufruf, "Es ist 12:00."], Betriebsart::NurVerankert, 5);
+    let werkzeug: Vec<&str> = e.nachrichten.iter().filter(|n| n.role == "tool").map(|n| n.content.as_str()).collect();
+    assert!(werkzeug.len() >= 3, "{werkzeug:?}");
+    assert!(!werkzeug[0].contains("step(s) left"), "nach Schritt 1 bleiben 4, zu frueh: {}", werkzeug[0]);
+    assert!(werkzeug[1].contains("[Loop: 3 step(s) left"), "{}", werkzeug[1]);
+    assert!(werkzeug[2].contains("[Loop: 2 step(s) left"), "{}", werkzeug[2]);
 }

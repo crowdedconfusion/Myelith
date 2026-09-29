@@ -60,6 +60,7 @@ pub mod rechenwege {
     }
 }
 
+pub mod abgeschaltet;
 pub mod aktualisierung;
 pub mod anhang;
 pub mod einstellungen;
@@ -74,6 +75,8 @@ pub mod protokoll;
 pub mod ort;
 pub mod reservierung;
 pub mod strom;
+pub mod syntaxwache;
+pub mod uhr;
 pub mod ruestung;
 pub mod schutzfilter;
 pub mod netzwerkzeuge;

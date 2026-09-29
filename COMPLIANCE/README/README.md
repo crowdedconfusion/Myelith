@@ -1,7 +1,7 @@
 # compliance
 
-> **Version:** 0.2.0
-> **Datum:** 2026-09-26
+> **Version:** 0.2.2
+> **Datum:** 2026-09-28
 > **Status:** Die Pflichten aus der KI-Verordnung sind dokumentiert und,
 > soweit technisch, umgesetzt; die Einordnung Artikel für Artikel steht in
 > der [Selbsteinschätzung](../de/Selbsteinschaetzung.md). Offen: ein
@@ -39,6 +39,46 @@ Notaus (`notaus.rs`), alle unter `CLIENT/myl-client/src/`, sofern nicht
 anders genannt.
 
 ## Changelog
+
+### v0.2.2 – 2026-09-28 (im Fenster kein Tastenkürzel mehr für den Notaus)
+
+**Anlass:** CLIENT v0.96.1 nimmt dem Fenster auch das Kürzel ⌘. oder
+Strg+. (Festlegung des Projektinhabers: „Fenster schließen reicht“). Die
+Selbsteinschätzung nannte es unter Art. 14, deutsch und englisch; der
+Satz ist gestrichen. Der Notschalter im Fenster ist allein das
+Schließen, in der Konsole weiter der Notaus (Strg-C oder Esc).
+
+### v0.2.1 – 2026-09-28 (Notschalter und dauerhafte Kennzeichnung im Fenster neu beschrieben)
+
+**Anlass:** CLIENT v0.95.0 nimmt dem Fenster zwei Bedienteile, die hier
+als Maßnahmen standen (Festlegung des Projektinhabers): den Notausknopf
+im Kopf und die KI-Marke „KI“ daneben. Die Dokumente beschrieben damit
+ein Fenster, das es nicht mehr gibt.
+
+**Geändert, jeweils deutsch und englisch:**
+- **Zweckbestimmung, Maßnahmentabelle:** „Notaus“ heißt jetzt
+  „Notschalter“: im Fenster das Schließen des Fensters, das jede
+  laufende Handlung des Agenten beendet, auch einen schon gestarteten
+  Befehl; in der Konsole weiter der Notaus (Strg-C oder Esc). Die
+  dauerhafte Kennzeichnung steht im Fenster im leeren Eingabefeld
+  („Hier antwortet eine KI.“), in der Konsole weiter als „KI“ in der
+  Fußzeile.
+- **Selbsteinschätzung, Art. 14 (freiwillig) und Art. 50 Abs. 1:**
+  dieselben beiden Änderungen, dazu dass das Schließen im
+  Aktionsprotokoll steht und ⌘. oder Strg+. einen Auftrag weiter
+  anhält, ohne zu schließen.
+- Stand aller vier Dokumente auf den 2026-09-28.
+
+**Einordnung:** Art. 50 Abs. 1 verlangt die Information spätestens bei
+der ersten Interaktion. Die trägt weiterhin der Hinweis bei jedem Start;
+der Platzhalter ersetzt die Marke im Kopf als dauerhafte Erinnerung und
+steht dort, wo man vor jeder Eingabe hinsieht. ⚠️ **Er verschwindet,
+sobald jemand tippt**; danach tragen die Marke unter jeder Antwort und
+der Hinweis beim Start die Kennzeichnung. Eine anwaltliche Prüfung steht
+wie für alles hier aus.
+
+**Nicht berührt:** der Systemprompt und seine Prüfsumme, die Kennzeichnung
+der Stimme, das Aktionsprotokoll.
 
 ### v0.2.0 – 2026-09-26 (ein fest vorgegebener Systemprompt, über eine Prüfsumme gebunden)
 

@@ -316,7 +316,18 @@ class ActivationStatsCollector:
         # (ihre Ausgabe), die kausale Faltung und die Normierung darin.
         # ⚑ Die Schicht selbst analog zu `.self_attn` weiter unten.
         zustands_module = ("linear_attn", "linear_attn.conv1d", "linear_attn.norm")
+        # ⚑ **Die gedrehte Eingabe einer Projektion** (ternaeres, gedrehtes
+        # Paket, 2026-09-28): Die Laufzeit dreht die Aktivierung vor der
+        # Matrix und braucht dafuer eine eigene Skala. Das Modul heisst
+        # `<projektion>.drehung` und gibt die gedrehte Eingabe aus.
+        # ⚠️ **Vor allen anderen Regeln**, denn `…gate_proj.drehung`
+        # enthielte sonst `gate_proj` und liefe in keine davon, weil keine
+        # auf `.drehung` endet; so steht es ausdruecklich da.
         for name, module in model.named_modules():
+            if normiere_namen(name).endswith(".drehung"):
+                name = normiere_namen(name)
+                self._handles.append(module.register_forward_hook(self._make_hook(name)))
+                continue
             # ⛔️ **Der Name wird normiert, bevor irgendetwas ihn
             # vergleicht** (2026-09-21). Ein multimodales Modell schiebt
             # den Textteil unter `model.language_model.…`, und dann

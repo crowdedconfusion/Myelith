@@ -7,7 +7,7 @@
 
 use crate::fixed_point::{clamp_i16_from_i64, rescale, rescale_i64};
 use crate::integer_math::silu_nachschlagen;
-use crate::linear::{linear_w8a16, linear_w8a16_pc};
+use crate::linear::{linear_matrix_pc, Gewichtsmatrix};
 
 /// Integer-MLP mit SiLU-Approximation via LUT.
 ///
@@ -115,9 +115,75 @@ pub fn mlp_int_mit_spur(
     out_frac_bits: &[u8],
     spur: Option<&mut Mlpspur>,
 ) -> Vec<i16> {
-    // Flache Gewichte, Begründung im Kopf von `linear_w8a16`.
-    let gate = linear_w8a16(x, W_gate, hidden_size, gate_w_shifts, in_frac_bits, gate_out_frac);
-    let up = linear_w8a16(x, W_up, hidden_size, up_w_shifts, in_frac_bits, up_out_frac);
+    mlp_matrix_mit_spur(
+        x, W_gate.into(), W_up.into(), W_down.into(), hidden_size, intermediate_size, gate_w_shifts,
+        up_w_shifts, down_w_shifts, silu_lut, in_frac_bits, gate_out_frac, up_out_frac, down_in_frac,
+        silu_in_frac, silu_lut_offset, silu_out_frac, out_frac_bits, spur,
+    )
+}
+
+/// [`mlp_int_mit_spur`] fuer jede Gewichtsart
+/// ([`crate::linear::Gewichtsmatrix`]), **die** Umsetzung; die int8-Fassung
+/// reicht hierher durch.
+#[allow(non_snake_case, clippy::too_many_arguments)]
+pub fn mlp_matrix_mit_spur(
+    x: &[i16],
+    W_gate: Gewichtsmatrix<'_>,
+    W_up: Gewichtsmatrix<'_>,
+    W_down: Gewichtsmatrix<'_>,
+    hidden_size: usize,
+    intermediate_size: usize,
+    gate_w_shifts: &[u8],
+    up_w_shifts: &[u8],
+    down_w_shifts: &[u8],
+    silu_lut: &[i16],
+    in_frac_bits: u8,
+    gate_out_frac: u8,
+    up_out_frac: u8,
+    down_in_frac: u8,
+    silu_in_frac: u8,
+    silu_lut_offset: i16,
+    silu_out_frac: u8,
+    out_frac_bits: &[u8],
+    spur: Option<&mut Mlpspur>,
+) -> Vec<i16> {
+    // ⚑ **Ohne Mitschnitt: gate, up und SiLU in einer Runde.** Jede
+    //   Zeile `z` rechnet ihr gate- und ihr up-Skalarprodukt und gleich
+    //   `h[z]` daraus, mit denselben Formeln wie `linear_matrix` und
+    //   `silu_element`. Gemessen am 2026-09-28 im Decode des gepackten 8B:
+    //   `silu_produkt` lief danach einkernig und trug 11 % der Zeit.
+    if spur.is_none() {
+        let h = mlp_h(
+            x, W_gate, W_up, hidden_size, gate_w_shifts, up_w_shifts, silu_lut, in_frac_bits, gate_out_frac,
+            up_out_frac, down_in_frac, silu_in_frac, silu_lut_offset, silu_out_frac,
+        );
+        return linear_matrix_pc(&h, W_down, intermediate_size, down_w_shifts, down_in_frac, out_frac_bits);
+    }
+
+    // ⚑ **gate und up in einer Runde** (`linear_w8a16_buendel`): Beide
+    //   lesen dasselbe `x`, und jede Zeile ist dieselbe Formel wie in
+    //   `linear_matrix`. Gemessen am 2026-09-28: eine Poolrunde kostet
+    //   rund 47 us, ein dichtes 8B hat je Token 36 solcher Paare.
+    let flach = crate::linear::linear_w8a16_buendel(&[
+        crate::linear::Buendelteil {
+            w: W_gate,
+            x,
+            in_features: hidden_size,
+            w_shifts: gate_w_shifts,
+            act_frac_bits: in_frac_bits,
+            aus: crate::linear::Ausgangsskala::Eine(gate_out_frac),
+        },
+        crate::linear::Buendelteil {
+            w: W_up,
+            x,
+            in_features: hidden_size,
+            w_shifts: up_w_shifts,
+            act_frac_bits: in_frac_bits,
+            aus: crate::linear::Ausgangsskala::Eine(up_out_frac),
+        },
+    ]);
+    let (gate, up) = flach.split_at(gate_w_shifts.len());
+    let (gate, up) = (gate.to_vec(), up.to_vec());
 
     let h = silu_produkt(
         &gate,
@@ -140,7 +206,7 @@ pub fn mlp_int_mit_spur(
         sp.h = h.clone();
     }
 
-    linear_w8a16_pc(
+    linear_matrix_pc(
         &h,
         W_down,
         intermediate_size,
@@ -148,6 +214,50 @@ pub fn mlp_int_mit_spur(
         down_in_frac,
         out_frac_bits,
     )
+}
+
+/// **gate, up und SiLU in einer Runde: `h = silu(gate(x)) * up(x)`**, der
+/// verschmolzene Teil von [`mlp_matrix_mit_spur`] ohne Mitschnitt.
+///
+/// ⚑ **Eigene Funktion, damit ein gedrehtes Modell `h` drehen kann**, bevor
+/// down rechnet (`QTensor::drehung` in der Laufzeit). Dieselbe Rechnung wie
+/// im MLP, keine zweite Umsetzung.
+#[allow(non_snake_case, clippy::too_many_arguments)]
+pub fn mlp_h(
+    x: &[i16],
+    W_gate: Gewichtsmatrix<'_>,
+    W_up: Gewichtsmatrix<'_>,
+    hidden_size: usize,
+    gate_w_shifts: &[u8],
+    up_w_shifts: &[u8],
+    silu_lut: &[i16],
+    in_frac_bits: u8,
+    gate_out_frac: u8,
+    up_out_frac: u8,
+    down_in_frac: u8,
+    silu_in_frac: u8,
+    silu_lut_offset: i16,
+    silu_out_frac: u8,
+) -> Vec<i16> {
+    let wg = W_gate.eingabe(x);
+    let wu = W_up.eingabe(x);
+    let zeilen = gate_w_shifts.len();
+    W_gate.form_pruefen("mlp gate", hidden_size, zeilen);
+    W_up.form_pruefen("mlp up", hidden_size, up_w_shifts.len());
+    assert_eq!(up_w_shifts.len(), zeilen, "mlp: gate und up haben verschieden viele Zeilen");
+    crate::linear::zeilen_verteilt(zeilen, 2 * hidden_size, |z| {
+        let g = clamp_i16_from_i64(rescale_i64(
+            W_gate.zeile_mal(z, hidden_size, &wg),
+            gate_w_shifts[z] + in_frac_bits,
+            gate_out_frac,
+        ));
+        let u = clamp_i16_from_i64(rescale_i64(
+            W_up.zeile_mal(z, hidden_size, &wu),
+            up_w_shifts[z] + in_frac_bits,
+            up_out_frac,
+        ));
+        silu_element(g, u, silu_lut, gate_out_frac, up_out_frac, down_in_frac, silu_in_frac, silu_lut_offset, silu_out_frac)
+    })
 }
 
 /// **SiLU, Produkt und Reskalierung: der elementweise Teil des MLP.**
@@ -193,19 +303,33 @@ pub fn silu_produkt(
         gate.len(),
         up.len()
     );
-    let mut h = Vec::with_capacity(gate.len());
-    for (g, u) in gate.iter().zip(up.iter()) {
-        let g_dom = rescale(*g as i32, gate_out_frac, silu_in_frac);
-        let activated =
-            silu_nachschlagen(g_dom, silu_lut, silu_lut_offset, silu_in_frac, silu_out_frac);
-        let prod = activated * (*u as i64);
-        h.push(clamp_i16_from_i64(rescale_i64(
-            prod,
-            silu_out_frac + up_out_frac,
-            down_in_frac,
-        )));
-    }
-    h
+    gate.iter()
+        .zip(up.iter())
+        .map(|(&g, &u)| {
+            silu_element(g, u, silu_lut, gate_out_frac, up_out_frac, down_in_frac, silu_in_frac, silu_lut_offset, silu_out_frac)
+        })
+        .collect()
+}
+
+/// **Ein Element von [`silu_produkt`]**, die eine Stelle dieser Formel.
+/// Der verschmolzene Weg in [`mlp_matrix_mit_spur`] ruft sie je Zeile.
+#[allow(clippy::too_many_arguments)]
+#[inline]
+pub fn silu_element(
+    g: i16,
+    u: i16,
+    silu_lut: &[i16],
+    gate_out_frac: u8,
+    up_out_frac: u8,
+    down_in_frac: u8,
+    silu_in_frac: u8,
+    silu_lut_offset: i16,
+    silu_out_frac: u8,
+) -> i16 {
+    let g_dom = rescale(g as i32, gate_out_frac, silu_in_frac);
+    let activated = silu_nachschlagen(g_dom, silu_lut, silu_lut_offset, silu_in_frac, silu_out_frac);
+    let prod = activated * (u as i64);
+    clamp_i16_from_i64(rescale_i64(prod, silu_out_frac + up_out_frac, down_in_frac))
 }
 
 /// **Der MLP-Block fuer mehrere Eingaben auf denselben Gewichten.**
@@ -239,10 +363,39 @@ pub fn mlp_int_stapel(
     silu_out_frac: u8,
     out_frac_bits: &[u8],
 ) -> Vec<Vec<i16>> {
+    mlp_matrix_stapel(
+        xs, W_gate.into(), W_up.into(), W_down.into(), hidden_size, intermediate_size, gate_w_shifts,
+        up_w_shifts, down_w_shifts, silu_lut, in_frac_bits, gate_out_frac, up_out_frac, down_in_frac,
+        silu_in_frac, silu_lut_offset, silu_out_frac, out_frac_bits,
+    )
+}
+
+/// [`mlp_int_stapel`] fuer jede Gewichtsart, **die** Umsetzung.
+#[allow(non_snake_case, clippy::too_many_arguments)]
+pub fn mlp_matrix_stapel(
+    xs: &[&[i16]],
+    W_gate: Gewichtsmatrix<'_>,
+    W_up: Gewichtsmatrix<'_>,
+    W_down: Gewichtsmatrix<'_>,
+    hidden_size: usize,
+    intermediate_size: usize,
+    gate_w_shifts: &[u8],
+    up_w_shifts: &[u8],
+    down_w_shifts: &[u8],
+    silu_lut: &[i16],
+    in_frac_bits: u8,
+    gate_out_frac: u8,
+    up_out_frac: u8,
+    down_in_frac: u8,
+    silu_in_frac: u8,
+    silu_lut_offset: i16,
+    silu_out_frac: u8,
+    out_frac_bits: &[u8],
+) -> Vec<Vec<i16>> {
     if xs.is_empty() {
         return Vec::new();
     }
-    let gate = crate::linear::linear_w8a16_stapel(
+    let gate = crate::linear::linear_matrix_stapel(
         xs,
         W_gate,
         hidden_size,
@@ -250,7 +403,7 @@ pub fn mlp_int_stapel(
         in_frac_bits,
         gate_out_frac,
     );
-    let up = crate::linear::linear_w8a16_stapel(
+    let up = crate::linear::linear_matrix_stapel(
         xs,
         W_up,
         hidden_size,
@@ -280,7 +433,7 @@ pub fn mlp_int_stapel(
     });
 
     let scheiben: Vec<&[i16]> = hs.chunks_exact(intermediate_size).collect();
-    crate::linear::linear_w8a16_pc_stapel(
+    crate::linear::linear_matrix_pc_stapel(
         &scheiben,
         W_down,
         intermediate_size,
@@ -395,7 +548,7 @@ pub fn mlp_int_experten_je_skala(
     let mut vorne: Vec<Buendelteil<'_>> = Vec::with_capacity(2 * experten.len());
     for (e, s) in experten {
         vorne.push(Buendelteil {
-            w: e.gate,
+            w: Gewichtsmatrix::Int8(e.gate),
             x,
             in_features: hidden_size,
             w_shifts: e.gate_shifts,
@@ -403,7 +556,7 @@ pub fn mlp_int_experten_je_skala(
             aus: Ausgangsskala::Eine(s.gate_out_frac),
         });
         vorne.push(Buendelteil {
-            w: e.up,
+            w: Gewichtsmatrix::Int8(e.up),
             x,
             in_features: hidden_size,
             w_shifts: e.up_shifts,
@@ -451,7 +604,7 @@ pub fn mlp_int_experten_je_skala(
         .iter()
         .zip(hs.iter())
         .map(|((e, s), h)| Buendelteil {
-            w: e.down,
+            w: Gewichtsmatrix::Int8(e.down),
             x: h,
             // ⚑ Die Breite aus dem Experten selbst: Ein geteilter Experte
             //   darf breiter sein als die gerouteten.
@@ -542,6 +695,82 @@ mod stapeltests {
                 assert_eq!(gebuendelt[i], einzeln, "b={b}, i={i}");
             }
         }
+    }
+
+    /// **Ternaer gepackt ist derselbe MLP**, einzeln samt Mitschnitt und
+    /// gestapelt. Die Gewichte sind ternaer je 128er-Gruppe mit
+    /// verschiedenen Betraegen; die int8-Fassung derselben Zahlen ist der
+    /// Massstab.
+    #[test]
+    fn ternaer_ist_derselbe_mlp() {
+        use crate::ternaer::{packen, Ternaermatrix, GRUPPE};
+        let lut = spec_silu_lut();
+        let (hs, is) = (128usize, 256usize);
+        let mach = |n: usize, saat: u64| -> Vec<i8> {
+            let mut x = saat | 1;
+            let mut betrag = 0i8;
+            (0..n)
+                .map(|i| {
+                    x ^= x << 13;
+                    x ^= x >> 7;
+                    x ^= x << 17;
+                    if i % GRUPPE == 0 {
+                        betrag = [3i8, 17, 64, 127][(x % 4) as usize];
+                    }
+                    betrag * ((x % 3) as i8 - 1)
+                })
+                .collect()
+        };
+        let (w_gate, w_up, w_down) = (mach(is * hs, 3), mach(is * hs, 5), mach(hs * is, 7));
+        let (pg, pu, pd) = (packen(&w_gate, hs).unwrap(), packen(&w_up, hs).unwrap(), packen(&w_down, is).unwrap());
+        let tg = Ternaermatrix::neu(&pg.muster, &pg.betraege, is, hs).unwrap();
+        let tu = Ternaermatrix::neu(&pu.muster, &pu.betraege, is, hs).unwrap();
+        let td = Ternaermatrix::neu(&pd.muster, &pd.betraege, hs, is).unwrap();
+        let gs = vec![9u8; is];
+        let us = vec![9u8; is];
+        let ds = vec![9u8; hs];
+        let out = vec![6u8; hs];
+        let eingaben: Vec<Vec<i16>> = (0..5)
+            .map(|i| (0..hs).map(|j| ((i * 7 + j * 13) % 200) as i16 - 100).collect())
+            .collect();
+        let scheiben: Vec<&[i16]> = eingaben.iter().map(|v| v.as_slice()).collect();
+
+        for x in &eingaben {
+            let mut spur_int = Mlpspur::default();
+            let mut spur_ter = Mlpspur::default();
+            let soll = mlp_int_mit_spur(
+                x, &w_gate, &w_up, &w_down, hs, is, &gs, &us, &ds, &lut, 5, 5, 5, 5, 1, SILU_VERSATZ, 6,
+                &out, Some(&mut spur_int),
+            );
+            let ist = mlp_matrix_mit_spur(
+                x, tg.into(), tu.into(), td.into(), hs, is, &gs, &us, &ds, &lut, 5, 5, 5, 5, 1,
+                SILU_VERSATZ, 6, &out, Some(&mut spur_ter),
+            );
+            assert!(soll.iter().any(|&v| v != 0), "die Probe rechnet mit Nullen");
+            assert!(spur_int.h.iter().any(|&v| v != 0), "SiLU liefert nur Nullen");
+            assert_eq!(ist, soll);
+            assert_eq!(spur_ter, spur_int);
+            // Ohne Mitschnitt laeuft der verschmolzene Weg; er muss
+            // dasselbe liefern, int8 wie ternaer.
+            let int8_ohne = mlp_int(
+                x, &w_gate, &w_up, &w_down, hs, is, &gs, &us, &ds, &lut, 5, 5, 5, 5, 1, SILU_VERSATZ, 6, &out,
+            );
+            let ter_ohne = mlp_matrix_mit_spur(
+                x, tg.into(), tu.into(), td.into(), hs, is, &gs, &us, &ds, &lut, 5, 5, 5, 5, 1,
+                SILU_VERSATZ, 6, &out, None,
+            );
+            assert_eq!(int8_ohne, soll, "verschmolzen, int8");
+            assert_eq!(ter_ohne, soll, "verschmolzen, ternaer");
+        }
+        let soll = mlp_int_stapel(
+            &scheiben, &w_gate, &w_up, &w_down, hs, is, &gs, &us, &ds, &lut, 5, 5, 5, 5, 1, SILU_VERSATZ,
+            6, &out,
+        );
+        let ist = mlp_matrix_stapel(
+            &scheiben, tg.into(), tu.into(), td.into(), hs, is, &gs, &us, &ds, &lut, 5, 5, 5, 5, 1,
+            SILU_VERSATZ, 6, &out,
+        );
+        assert_eq!(ist, soll);
     }
 
     /// **Acht gebuendelte Experten sind bitgleich zu acht einzelnen,

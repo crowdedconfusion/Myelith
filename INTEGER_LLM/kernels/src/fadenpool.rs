@@ -38,9 +38,24 @@
 //! Meldung `fertige += 1` im Faden. Wer eine davon entfernt, macht aus
 //! einem gültigen Zeiger einen baumelnden.
 //!
-//! ⚑ **Und kein Faden schreibt in ein fremdes Feld.** Die Abschnitte
-//! sind disjunkt (`start = index * je`, Länge höchstens `je`), also gibt
-//! es keinen gemeinsamen Schreibzugriff, den eine Sperre ordnen müsste.
+//! ⚑ **Und kein Faden schreibt in ein fremdes Feld.** Die Zeilen sind in
+//! Blöcke geteilt, und jeden Block holt sich genau ein Faden über einen
+//! atomaren Zähler (`fetch_add` gibt jede Nummer genau einmal aus). Also
+//! gibt es keinen gemeinsamen Schreibzugriff, den eine Sperre ordnen
+//! müsste. Der Zähler liegt beim Aufrufer und lebt, wie die beiden
+//! Zeiger, bis alle Beteiligten gemeldet haben.
+//!
+//! # ⚑ Blöcke nach Bedarf statt fester Abschnitte (2026-09-28)
+//!
+//! Bis hierher bekam Faden `i` die Zeilen `i * je` bis `(i + 1) * je`.
+//! Diese Maschine hat aber **zwei Kernsorten** (5 „Super“, 10
+//! „Performance“), und bei gleich großen Abschnitten warteten die
+//! schnellen auf die langsamen. Gemessen im Decode des ternär gepackten
+//! 8B (`sample`, 12 s): Der Aufrufer wartete in einer MLP-Matrix rund 600
+//! von 1 088 Proben, über alle Fäden standen 86 150 Proben im Warten gegen
+//! rund 32 000 im Rechnen. Mit Blöcken nach Bedarf holt sich ein schneller
+//! Kern einfach mehr. **Welche Zeile wer rechnet, war schon vorher eine
+//! reine Laufzeitfrage**; daran ändert das nichts.
 
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Condvar, Mutex, OnceLock};
@@ -58,10 +73,19 @@ struct Aufgabe {
     out: *mut i16,
     /// Wie viele Zeilen es insgesamt sind.
     zeilen: usize,
-    /// Wie viele Zeilen ein Faden nimmt.
-    je: usize,
+    /// Wie viele Zeilen ein Block hat.
+    block: usize,
+    /// Der Zähler der ausgegebenen Blöcke, beim Aufrufer.
+    naechster: *const AtomicUsize,
     /// Wie viele Fäden mitrechnen.
     faeden: usize,
+}
+
+/// Blockgröße: rund acht Blöcke je Faden, damit ein schneller Kern
+/// genug Gelegenheit hat, einem langsamen Arbeit abzunehmen, und ein
+/// Zugriff auf den Zähler neben der Rechnung eines Blocks verschwindet.
+fn blockgroesse(zeilen: usize, faeden: usize) -> usize {
+    zeilen.div_ceil(faeden.saturating_mul(8)).max(1)
 }
 
 // ⚠️ Beides ist hier richtig und anderswo falsch: Die Zeiger werden nur
@@ -204,7 +228,7 @@ fn faden(p: &'static Pool, index: usize) {
             if index + 1 >= b.faeden {
                 continue;
             }
-            unsafe { breit_rechnen(&b, index) };
+            unsafe { breit_rechnen(&b) };
             {
                 let mut lage = p.lage.lock().unwrap_or_else(|e| e.into_inner());
                 lage.fertige += 1;
@@ -223,7 +247,7 @@ fn faden(p: &'static Pool, index: usize) {
         }
         // ⚠️ Der Zeiger ist gültig, solange diese Runde läuft; der
         // Aufrufer wartet auf die Meldung unten. Siehe Modulkopf.
-        unsafe { abschnitt_rechnen(&a, index) };
+        unsafe { abschnitt_rechnen(&a) };
         {
             let mut lage = p.lage.lock().unwrap_or_else(|e| e.into_inner());
             lage.fertige += 1;
@@ -235,17 +259,20 @@ fn faden(p: &'static Pool, index: usize) {
 /// # Sicherheit
 ///
 /// `a` muss aus einer laufenden Runde stammen, in der der Aufrufer noch
-/// wartet. Der Abschnitt `index` wird von genau einem Faden berührt.
-unsafe fn abschnitt_rechnen(a: &Aufgabe, index: usize) {
+/// wartet. Jeder Block wird über den Zähler genau einmal ausgegeben.
+unsafe fn abschnitt_rechnen(a: &Aufgabe) {
     let f: &(dyn Fn(usize) -> i16 + Sync) =
         unsafe { std::mem::transmute((a.f_daten, a.f_tabelle)) };
-    let start = index * a.je;
-    if start >= a.zeilen {
-        return;
-    }
-    let ende = (start + a.je).min(a.zeilen);
-    for i in start..ende {
-        unsafe { *a.out.add(i) = f(i) };
+    let naechster = unsafe { &*a.naechster };
+    loop {
+        let start = naechster.fetch_add(1, Ordering::Relaxed).saturating_mul(a.block);
+        if start >= a.zeilen {
+            return;
+        }
+        let ende = (start + a.block).min(a.zeilen);
+        for i in start..ende {
+            unsafe { *a.out.add(i) = f(i) };
+        }
     }
 }
 
@@ -271,12 +298,14 @@ where
     let als_dyn: &(dyn Fn(usize) -> i16 + Sync) = &f;
     let (f_daten, f_tabelle): (*const (), *const ()) =
         unsafe { std::mem::transmute(als_dyn) };
+    let naechster = AtomicUsize::new(0);
     let aufgabe = Aufgabe {
         f_daten,
         f_tabelle,
         out: out.as_mut_ptr(),
         zeilen,
-        je: zeilen.div_ceil(faeden),
+        block: blockgroesse(zeilen, faeden),
+        naechster: &naechster,
         faeden,
     };
 
@@ -297,11 +326,11 @@ where
     p.arbeit.notify_all();
 
     // ⚑ **Der Aufrufer rechnet mit, statt zu warten.** Er hat ohnehin
-    // nichts zu tun, bis die anderen fertig sind; so trägt er den
-    // letzten Abschnitt und spart einen Weckvorgang.
+    // nichts zu tun, bis die anderen fertig sind; er holt sich Blöcke wie
+    // jeder andere und fängt damit an, bevor der erste Faden wach ist.
     {
         let _marke = Rundenmarke::setzen();
-        unsafe { abschnitt_rechnen(&aufgabe, faeden - 1) };
+        unsafe { abschnitt_rechnen(&aufgabe) };
     }
 
     // ⚠️ **Diese Schleife trägt den ganzen `unsafe`-Block.** Sie wartet,
@@ -346,13 +375,15 @@ where
     // Begründung im Modulkopf unverändert.
     let als_dyn: &(dyn Fn(usize, &mut [i16]) + Sync) = &f;
     let (f_daten, f_tabelle): (*const (), *const ()) = unsafe { std::mem::transmute(als_dyn) };
+    let naechster = AtomicUsize::new(0);
     let aufgabe = Breitaufgabe {
         f_daten,
         f_tabelle,
         out: out.as_mut_ptr(),
         zeilen,
         breite,
-        je: zeilen.div_ceil(faeden),
+        block: blockgroesse(zeilen, faeden),
+        naechster: &naechster,
         faeden,
     };
 
@@ -366,7 +397,7 @@ where
     p.arbeit.notify_all();
     {
         let _marke = Rundenmarke::setzen();
-        unsafe { breit_rechnen(&aufgabe, faeden - 1) };
+        unsafe { breit_rechnen(&aufgabe) };
     }
     {
         let mut lage = p.lage.lock().unwrap_or_else(|e| e.into_inner());
@@ -386,7 +417,8 @@ struct Breitaufgabe {
     out: *mut i16,
     zeilen: usize,
     breite: usize,
-    je: usize,
+    block: usize,
+    naechster: *const AtomicUsize,
     faeden: usize,
 }
 
@@ -398,17 +430,20 @@ unsafe impl Sync for Breitaufgabe {}
 /// # Sicherheit
 ///
 /// Wie [`abschnitt_rechnen`].
-unsafe fn breit_rechnen(a: &Breitaufgabe, index: usize) {
+unsafe fn breit_rechnen(a: &Breitaufgabe) {
     let f: &(dyn Fn(usize, &mut [i16]) + Sync) =
         unsafe { std::mem::transmute((a.f_daten, a.f_tabelle)) };
-    let start = index * a.je;
-    if start >= a.zeilen {
-        return;
-    }
-    let ende = (start + a.je).min(a.zeilen);
-    for z in start..ende {
-        let ziel = unsafe { std::slice::from_raw_parts_mut(a.out.add(z * a.breite), a.breite) };
-        f(z, ziel);
+    let naechster = unsafe { &*a.naechster };
+    loop {
+        let start = naechster.fetch_add(1, Ordering::Relaxed).saturating_mul(a.block);
+        if start >= a.zeilen {
+            return;
+        }
+        let ende = (start + a.block).min(a.zeilen);
+        for z in start..ende {
+            let ziel = unsafe { std::slice::from_raw_parts_mut(a.out.add(z * a.breite), a.breite) };
+            f(z, ziel);
+        }
     }
 }
 

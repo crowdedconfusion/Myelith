@@ -1612,39 +1612,60 @@ fn regelkoerper<'a>(css: &'a str, kopf: &str) -> &'a str {
     &rest[..rest.find('}').expect("die Regel ist nicht geschlossen")]
 }
 
-/// ⚑ **Das Ladezeichen ist ein synaptischer Spalt, und jedes traegt
-/// eigene Kennungen.**
+/// ⚑ **Das Ladezeichen sind Linien in Bewegung wie Wellen** (Auftrag
+/// des Projektinhabers, 2026-09-28): zufaellig je Zeichen, schwarz und
+/// weiss, still fuer den, der Bewegung abbestellt hat, und es hoert auf
+/// zu rechnen, wenn es aus dem Fenster ist.
 ///
-/// 📌 **Warum die Kennungen je Zeichen zaehlen.** Der Spalt fuellt seine
-/// Koerper ueber `url(#…)` aus Verlaeufen und einer Maske. Stuenden
-/// zwei Ladezeichen mit derselben Kennung im Fenster, loeste jedes
-/// Verweisziel auf das erste im Dokument auf; wird dieses entfernt,
-/// waehrend ein zweiter Beitrag noch laeuft, verliert das zweite
-/// Zeichen Fuellung und Maske und steht als Umriss da.
+/// 📌 Bis CLIENT v0.95.0 hiess diese Probe „das Ladezeichen ist ein
+/// synaptischer Spalt“ und pruefte dessen Kennungen je Zeichen. Die
+/// Wellen brauchen keine: Ihr weicher Rand ist eine Maske im Stilblatt.
 ///
 /// 📌 **Und kein `style`-Attribut.** Die Inhaltsrichtlinie verbietet
 /// eingebettete Stile; ein Zeichen, das eines setzt, wird im Fenster
 /// still ohne diese Angabe gezeichnet, in einer Vorschau aber mit.
 #[test]
-fn das_ladezeichen_ist_ein_synaptischer_spalt() {
+fn das_ladezeichen_sind_wellen() {
     let js = lies("app.js");
     let css = ohne_kommentare(&lies("stil.css"));
 
-    assert!(js.contains("l.append(synapse());"), "das Ladezeichen ist kein Spalt");
-    let a = js.find("function synapse()").expect("es gibt keine Funktion `synapse`");
-    let rumpf = &js[a..a + js[a..].find("\n}\n").expect("`synapse` ist nicht geschlossen")];
+    assert!(js.contains("l.append(wellen());"), "das Ladezeichen sind keine Wellen");
+    let a = js.find("function wellen()").expect("es gibt keine Funktion `wellen`");
+    let rumpf = &js[a..a + js[a..].find("\n}\n").expect("`wellen` ist nicht geschlossen")];
 
+    // Die Zufallsquelle aller Frequenzen, Phasen und Enden, nicht nur
+    // irgendein `Math.random()` (eine erste Fassung verlangte nur das,
+    // und die Gegenprobe mit festen Werten blieb gruen).
     assert!(
-        rumpf.contains("synapse.zaehler = (synapse.zaehler || 0) + 1;")
-            && rumpf.contains("`spalt${synapse.zaehler}-${name}`"),
-        "die Kennungen im Spalt sind nicht je Ladezeichen eigen"
+        rumpf.contains("const zufall = (von, bis) => von + Math.random() * (bis - von);"),
+        "die Wellen sind nicht zufaellig"
+    );
+    assert!(rumpf.matches("zufall(").count() >= 10, "zu wenig haengt am Zufall");
+    assert!(rumpf.contains("requestAnimationFrame(bild);"), "die Wellen bewegen sich nicht");
+    assert!(
+        rumpf.contains("window.matchMedia(\"(prefers-reduced-motion: reduce)\").matches")
+            && rumpf.contains("if (still) return;"),
+        "die Wellen lassen sich nicht abbestellen"
     );
     assert!(
-        !rumpf.contains("id: \"") && !rumpf.contains("#spalt-"),
-        "im Spalt steht eine feste Kennung"
+        rumpf.contains("if (svg.isConnected) war_da = true;")
+            && rumpf.contains("else if (war_da || jetzt - anfang > 2000) return;"),
+        "die Wellen rechnen weiter, wenn sie nicht mehr im Fenster sind"
     );
-    assert!(!rumpf.contains("\"style\"") && !rumpf.contains("style:"), "der Spalt setzt einen Stil");
-    assert!(hat_regel(&css, "spalt"), "der Spalt hat keine Regel");
+    assert!(!rumpf.contains("\"style\"") && !rumpf.contains("style:") && !rumpf.contains(".style"), "die Wellen setzen einen Stil");
+    assert!(!rumpf.contains("id\""), "die Wellen tragen eine Kennung");
+
+    // Schwarz und weiss: jeder Strang aus `--auf`, keiner mit Farbe.
+    assert!(hat_regel(&css, "wellen"), "die Wellen haben keine Regel");
+    for n in 1..=5 {
+        let kopf = format!(".wellen .welle.w{n} {{");
+        let z = css.lines().find(|z| z.starts_with(&kopf)).unwrap_or_else(|| panic!("Strang {n} hat keine Regel"));
+        assert!(z.contains("stroke: rgb(var(--auf) / "), "Strang {n} ist nicht schwarz und weiss: {z}");
+        assert!(rumpf.contains(&format!("\"welle w{n}\"")), "Strang {n} wird nicht gebaut");
+    }
+    let bereich = &css[css.find(".laeuft .wellen {").expect("Groesse")..];
+    let bereich = &bereich[..bereich.find(".wellen .welle.w5").expect("Ende")];
+    assert!(!bereich.contains("--akzent"), "die Wellen tragen die Akzentfarbe");
 }
 
 /// ⚑ **Das Terminal ist kein Formular** (Auftrag des Projektinhabers,
@@ -3497,14 +3518,27 @@ fn der_ki_hinweis_kommt_bei_jedem_start_und_laesst_sich_nicht_wegklicken() {
     for verboten in ["localStorage", "sessionStorage", "invoke(\"setzen\"", "gezeigt = true"] {
         assert!(!f.contains(verboten), "der Hinweis merkt sich etwas: {verboten}");
     }
-    assert!(f.contains("weiter.disabled = true;"), "der Knopf ist nicht zuerst gesperrt");
-    assert!(f.contains("if (!haken.checked) return;"), "der Knopf prüft den Haken nicht selbst");
+    // Ein Schritt: Der Knopf trägt den Bestätigungssatz, und ihn zu drücken
+    // ist die Bestätigung. Ein Schieber vor einem gesperrten Knopf ließ sich
+    // am 2026-09-26 nicht bestätigen.
+    assert!(f.contains("weiter.textContent = h.bestaetigung;"), "der Knopf trägt den Satz nicht");
+    assert!(!f.contains("disabled") && !f.contains("checked"), "der Hinweis hat wieder zwei Schritte");
     assert!(f.contains("e.inert = true"), "das Fenster darunter bleibt bedienbar");
+    // Fund 493: gesperrt wird ringsum, nie ein Vorfahr des Dialogs. Die
+    // Probe liest die Verschachtelung aus dem HTML, nicht nur die Zeile.
+    assert!(f.contains("const darunter = ringsum(kasten);"), "der Hinweis sperrt nicht ringsum");
+    let r = js.find("function ringsum(e)").expect("ringsum fehlt");
+    let ring = &js[r..r + js[r..].find("\n}\n").expect("Ende")];
+    assert!(ring.contains("if (g !== k && !g.inert) aussen.push(g);"), "ringsum sperrt den Weg mit");
+    for id in ["haupt", "seitenleiste", "huelle"] {
+        assert!(!f.contains(&format!("$(\"{id}\")")), "der Hinweis nennt `{id}` beim Namen; liegt er darin, sperrt er sich selbst");
+    }
 
     // Der Dialog hat keinen anderen Ausgang.
     let a = html.find("<div id=\"kihinweis\"").expect("Dialog");
     let dialog = &html[a..a + html[a..].find("\n    </div>\n").expect("Ende")];
-    assert!(dialog.contains("id=\"kihinweisweiter\" class=\"warnungok\" disabled"));
+    assert!(dialog.contains("id=\"kihinweisweiter\" class=\"warnungok kihinweisknopf\">"));
+    assert!(!dialog.contains("<input"), "der Dialog hat wieder ein Eingabeelement");
     assert_eq!(dialog.matches("<button").count(), 1, "der Dialog hat einen zweiten Knopf");
     for zeile in js.lines().filter(|z| z.contains("Escape")) {
         assert!(!zeile.contains("kihinweis"), "Escape schließt den Hinweis: {zeile}");
@@ -3519,11 +3553,20 @@ fn der_ki_hinweis_kommt_bei_jedem_start_und_laesst_sich_nicht_wegklicken() {
         );
     }
 
-    // Die Marken: dauerhaft im Kopf, an jeder Antwort.
-    assert!(html.contains("<span id=\"kimarke\" class=\"kimarke\" role=\"note\">"));
+    // Die Marken: dauerhaft im leeren Eingabefeld, an jeder Antwort.
+    // 📌 Bis CLIENT v0.94.1 stand die dauerhafte Marke als Wort im Kopf;
+    //   seit v0.95.0 steht sie im Platzhalter (Festlegung des
+    //   Projektinhabers, 2026-09-28), in beiden Sprachen und schon im
+    //   HTML, also auch vor dem ersten Beschriften.
+    assert!(!html.contains("id=\"kimarke\""), "die Marke im Kopf ist zurueck");
+    assert!(html.contains("placeholder=\"Hier antwortet eine KI. "), "der Platzhalter kennzeichnet nicht");
+    assert!(html.contains("data-t-platz=\"eingabe.platz\""), "der Platzhalter folgt der Sprache nicht");
+    assert!(js.contains("\"eingabe.platz\": \"Hier antwortet eine KI. "), "deutsch ohne Kennzeichnung");
+    assert!(js.contains("\"eingabe.platz\": \"An AI answers here. "), "englisch ohne Kennzeichnung");
     assert!(js.contains("km.className = \"kimarke-antwort\";"));
     let stil = lies("stil.css");
-    assert!(!stil.contains(".kimarke { display: none") && !stil.contains(".kimarke-antwort { display: none"));
+    assert!(!stil.contains(".kimarke-antwort { display: none"));
+    assert!(!stil.contains("#auftrag::placeholder { display: none") && !stil.contains("::placeholder { color: transparent"));
 }
 
 /// ⛔️ **Keine Stimme ohne Einwilligung, und das Protokoll ist sichtbar.**
@@ -3552,26 +3595,134 @@ fn keine_stimme_ohne_einwilligung_und_das_protokoll_ist_sichtbar() {
     assert!(rs.contains("fn protokoll_lesen()"));
 }
 
-/// ⛔️ **Der Notaus im Fenster**: ein Knopf, der immer da ist, ein
-/// Tastenkuerzel, die Stimme verstummt, jeder Auftrag beginnt geloest,
+/// ⛔️ **Der Notschalter des Fensters ist das Schliessen, und nur das**,
+/// und der Hinweis beim Start sagt es. Jeder Auftrag beginnt geloest,
 /// und ein angehaltener Chat behaelt seinen Text.
+///
+/// 📌 Bis CLIENT v0.94.1 hiess diese Probe „der Notaus ist immer da“ und
+/// verlangte einen Knopf im Kopf; bis v0.96.0 dazu das Kuerzel ⌘. oder
+/// Strg+. Beide sind entfallen (Festlegung des Projektinhabers,
+/// 2026-09-28: „Fenster schliessen reicht“).
 #[test]
-fn der_notaus_ist_immer_da_und_haelt_alles_an() {
+fn das_schliessen_ist_der_notschalter_und_haelt_alles_an() {
     let html = lies("index.html");
     let js = lies("app.js");
     let rs = lies_quelle("main.rs");
-    assert!(html.contains("<button id=\"notaus\" class=\"notaus\" type=\"button\""));
-    let kopf = &html[html.find("<header>").unwrap()..html.find("</header>").unwrap()];
-    assert!(kopf.contains("id=\"notaus\""), "der Notaus steht nicht im Kopf");
-    assert!(!kopf[kopf.find("id=\"notaus\"").unwrap()..].starts_with("id=\"notaus\" hidden"));
+    assert!(!html.contains("id=\"notaus\""), "der Knopf ist zurueck, der Hinweis sagt etwas anderes");
+    assert!(rs.contains("myl_client::kennzeichnung::starthinweis(sprache, myl_client::kennzeichnung::Flaeche::Fenster)"),
+        "das Fenster zeigt den Hinweis einer anderen Flaeche");
 
-    assert!(js.contains("if ((ereignis.metaKey || ereignis.ctrlKey) && ereignis.key === \".\")"));
-    assert!(js.contains("    stimme_anhalten();\n    try {\n      await invoke(\"notaus\");"));
-    assert!(js.contains("  notaus_verdrahten();"));
-    assert!(js.contains("geplant.push(quelle);"), "die Stimme merkt sich ihre Stuecke nicht");
+    // Das Schliessen: erst der Loop (er pausiert nur), dann Notaus und
+    // das Ende jedes laufenden Befehls, einmal.
+    let a = rs.find(".on_window_event(|fenster, ereignis| {").expect("Schliessen");
+    let schliessen = &rs[a..a + rs[a..].find("        })").expect("Ende")];
+    let lp = schliessen.find("loop_beim_schliessen(").expect("der Loop haelt beim Schliessen nicht an");
+    let ns = schliessen.find("notschalter_beim_schliessen();").expect("Schliessen haelt nichts an");
+    assert!(lp < ns, "der Notaus kommt vor dem Loop, und der Task stuende danach angehalten");
+    let f = rs.find("fn notschalter_beim_schliessen() {").expect("Funktion");
+    let rumpf = &rs[f..f + rs[f..].find("\n}\n").expect("Ende")];
+    assert!(rumpf.contains("if SCHON.swap(true, std::sync::atomic::Ordering::SeqCst) {\n        return;"));
+    assert!(rumpf.contains("myl_client::notaus::ausloesen(\"fenster geschlossen\");"), "das Schliessen steht nicht im Protokoll");
+    assert!(rumpf.contains("myl_senses::prozess::alle_beenden();"), "ein laufender Befehl ueberlebt das Fenster");
 
-    assert!(rs.contains("fn notaus() {\n    myl_client::notaus::ausloesen(\"fenster\");"));
+    // Kein zweiter Weg: kein Kuerzel, kein Befehl, den eines rufen koennte.
+    assert!(!js.contains("ereignis.key === \".\""), "das Kuerzel ist zurueck");
+    assert!(!js.contains("invoke(\"notaus\")") && !js.contains("function notaus_verdrahten"), "das Fenster ruft wieder einen Notaus");
+    assert!(!rs.contains("fn notaus()"), "der Befehl `notaus` ist zurueck");
+    assert!(!js.contains("function stimme_anhalten"), "die Stimmbremse des Notaus steht ohne Aufrufer da");
+
     assert_eq!(rs.matches("myl_client::notaus::zuruecksetzen();").count(), 2, "nicht jeder Auftrag beginnt geloest");
     assert!(rs.contains("Err(myl_client::Tuerfehler::Abgebrochen { bisher }) => Ok(bisher),"));
     assert!(rs.contains("if myl_client::notaus::ausgeloest() {\n                    drop(v);"));
+}
+
+/// ⚑ **∞, der Task und der Pfeil sind ein Feld, mittig unten im
+/// Eingabefeld** (Festlegung des Projektinhabers, 2026-09-28).
+///
+/// Geprueft wird der Aufbau, den die Festlegung beschreibt: ∞ links und
+/// ein eigener Knopf (er schaltet), Titel und Pfeil zusammen ein zweiter
+/// (er oeffnet die Liste); das Feld in der mittleren Spalte der
+/// Knopfreihe; die Knoepfe darin ohne Kachel; ∞ atmet, solange der Loop
+/// laeuft, und laesst sich das abbestellen.
+#[test]
+fn der_loop_ist_ein_feld_in_der_mitte() {
+    let html = lies("index.html");
+    let js = lies("app.js");
+    let stil = ohne_kommentare(&lies("stil.css"));
+
+    let a = html.find("<span id=\"loopgruppe\" class=\"loopgruppe glas\" hidden>").expect("das Feld");
+    let feld = &html[a..a + html[a..].find("\n          </span>").expect("Ende")];
+    let knopf = feld.find("id=\"loopknopf\"").expect("∞");
+    let wahl = feld.find("id=\"loopwahl\"").expect("der Knopf fuer die Liste");
+    let titel = feld.find("id=\"looptask\"").expect("der Task");
+    let pfeil = feld.find("<path d=\"M6 8l4 4 4-4\"/>").expect("der Pfeil");
+    assert!(knopf < wahl && wahl < titel && titel < pfeil, "Reihenfolge: ∞, Task, Pfeil; Task und Pfeil in einem Knopf");
+    assert_eq!(feld.matches("<button").count(), 2, "das Feld hat mehr als zwei Knoepfe");
+
+    // In der Mitte der Knopfreihe, links und rechts je eine feste Spalte.
+    let r = html.find("<div class=\"knopfreihe\">").expect("Knopfreihe");
+    let reihe = &html[r..];
+    let links = reihe.find("<span class=\"knopfseite links\">").expect("links");
+    let rechts = reihe.find("<span class=\"knopfseite rechts\">").expect("rechts");
+    let mitte = reihe.find("id=\"loopgruppe\"").expect("Mitte");
+    assert!(links < mitte && mitte < rechts);
+    assert!(stil.contains("grid-template-columns: 1fr minmax(0, 15rem) 1fr;"));
+    assert!(stil.contains(".knopfseite.links { grid-column: 1;"));
+    assert!(stil.contains(".knopfseite.rechts { grid-column: 3;"));
+    assert!(stil.contains(".loopgruppe {\n  grid-column: 2;"));
+
+    // Keine Kachel in der Kachel.
+    let k = stil.find(".loopknopf,\n.loopwahl {").expect("Ruecksetzung der Knoepfe im Feld");
+    let rumpf = &stil[k..k + stil[k..].find('}').unwrap()];
+    for r in ["background: none;", "box-shadow: none;", "backdrop-filter: none;"] {
+        assert!(rumpf.contains(r), "den Knoepfen im Feld fehlt `{r}`");
+    }
+    assert!(stil.contains(".looptask {") && stil.contains("text-overflow: ellipsis;"));
+
+    // ∞ atmet, solange der Loop laeuft.
+    assert!(stil.contains(".loopknopf.an svg { animation: atmen "));
+    assert!(stil.contains("@keyframes atmen"));
+    assert!(js.contains("knopf.classList.toggle(\"an\", loopstand.laeuft);"));
+
+    // Der Titel ist der Task, der vorn steht; ∞ schaltet, der Rest oeffnet.
+    assert!(js.contains("const vorn = loopstand.tasks.find((z) => z.stellung === \"vorn\");"));
+    assert!(js.contains("$(\"looptask\").textContent = vorn ? vorn.ziel : t(\"loop.kein_task\");"));
+    assert!(js.contains("$(\"loopknopf\").addEventListener(\"click\", loop_umschalten);"));
+    assert!(js.contains("$(\"loopwahl\").addEventListener(\"click\", () => {"));
+}
+
+/// ⚑ **Die Tasks lassen sich ziehen, und die Liste traegt keine Kaesten**
+/// (Festlegung des Projektinhabers, 2026-09-28).
+///
+/// 📌 **Fund 494.** Das Ziehen hoerte an der gezogenen Zeile, und genau
+/// diese wird beim Umsortieren aus der Liste genommen und neu
+/// eingesetzt; dabei geht der Zeigerfang verloren. Nach dem ersten
+/// Platztausch kam nichts mehr an, und gespeichert wurde nie. Dazu
+/// zeichnete ein neuer Stand die Liste mitten im Ziehen neu.
+#[test]
+fn die_tasks_lassen_sich_ziehen_und_tragen_keine_kaesten() {
+    let js = lies("app.js");
+    let a = js.find("function ziehen_beginnen(e, li) {").expect("Ziehen");
+    let ziehen = &js[a..a + js[a..].find("\n}\n").expect("Ende")];
+    assert!(!ziehen.contains("setPointerCapture"), "das Ziehen haengt wieder am Fang der Zeile");
+    for art in ["pointermove", "pointerup", "pointercancel"] {
+        assert!(ziehen.contains(&format!("window.addEventListener(\"{art}\"")), "`{art}` wird nicht am Fenster abgehoert");
+        assert!(ziehen.contains(&format!("window.removeEventListener(\"{art}\"")), "`{art}` bleibt nach dem Loslassen haengen");
+        assert!(!ziehen.contains(&format!("li.addEventListener(\"{art}\"")), "`{art}` haengt an der Zeile");
+    }
+    assert!(ziehen.contains("if (reihe_jetzt().join(\"\\n\") !== vorher) reihe_speichern();"), "gespeichert wird nicht, oder bei jedem Klick");
+    let z = js.find("function taskliste_zeichnen() {").expect("Zeichnen");
+    assert!(js[z..z + 400].contains("if (gezogen) return;"), "ein neuer Stand zeichnet die Liste mitten im Ziehen neu");
+
+    // Keine Flaeche hinter Namen, Zeichen und Zeilen.
+    let stil = ohne_kommentare(&lies("stil.css"));
+    let k = stil.find(".taskname,\n.taskaktion {").expect("Ruecksetzung in der Liste");
+    let rumpf = &stil[k..k + stil[k..].find('}').unwrap()];
+    for r in ["background: none;", "box-shadow: none;", "backdrop-filter: none;"] {
+        assert!(rumpf.contains(r), "den Eintraegen fehlt `{r}`");
+    }
+    for zeile in stil.lines().filter(|z| z.starts_with(".taskzeile") || z.starts_with(".taskaktion")) {
+        assert!(!zeile.contains("background: var("), "eine Flaeche hinter einem Eintrag: {zeile}");
+        assert!(!zeile.contains("box-shadow: inset"), "ein Ring um einen Eintrag: {zeile}");
+    }
 }

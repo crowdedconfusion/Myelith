@@ -173,42 +173,215 @@ pub fn linear_backward(
     // Rechtsshift ganz am Ende. Genau so löst `rmsnorm_i16` dasselbe
     // Problem in der Quadratsumme.
     //
-    // Der Akkumulator ist `i128`: Ein Produkt erreicht 2^38, der
+    // Zusammengefuehrt wird in `i128`: Ein Produkt erreicht 2^38, der
     // Linksshift geht bis MAX_FRAC_BITS = 20, und summiert wird über
     // alle Ausgabezeilen. In i64 wäre das ein Überlauf, und der
-    // numerische Vertrag verbietet Wrapping ausdrücklich.
-    let ref_shift = *w_shifts.iter().max().expect("linear_backward: w_shifts ist leer");
-    let mut gx_acc = vec![0i128; in_features];
-    for (i, zeile) in w.chunks_exact(in_features).enumerate() {
-        let gi = g[i] as i128;
-        if gi == 0 {
-            continue;
-        }
-        let align = (ref_shift - w_shifts[i]) as u32;
-        for (j, wij) in zeile.iter().enumerate() {
-            gx_acc[j] += (gi * (*wij as i128)) << align;
-        }
-    }
-    // Ein Rechtsshift, dann die Skalenanpassung, dann Sättigung: alles
-    // genau einmal, ganz am Ende.
-    let gx = gx_acc
-        .into_iter()
-        .map(|a| {
-            let geschoben = crate::fixed_point::rshift_round_i128(a, ref_shift as u32);
-            let begrenzt = geschoben.clamp(i64::MIN as i128, i64::MAX as i128) as i64;
-            clamp_i32(rescale_i64(begrenzt, g_frac, gx_frac))
-        })
-        .collect();
+    // numerische Vertrag verbietet Wrapping ausdrücklich. ⚑ Seit dem
+    // 2026-09-28 wird **je Ausrichtung** in i64 gesammelt und erst dann
+    // verschoben in i128 addiert (`gx_spalten`); dieselbe ganze Zahl.
+    let gx = gx_verteilt(g, w, in_features, w_shifts, g_frac, gx_frac);
 
     // dL/dW: äußeres Produkt, keine Reduktion, kein Überlaufrisiko
     // (i32 × i16 passt mit Abstand in i64).
-    let mut gw = Vec::with_capacity(out_features * in_features);
-    for gi in g {
-        for xj in x {
-            gw.push((*gi as i64) * (*xj as i64));
+    let mut gw = vec![0i64; out_features * in_features];
+    zeilen_verteilt(&mut gw, in_features, |i, zeile| {
+        let gi = i64::from(g[i]);
+        for (z, &xj) in zeile.iter_mut().zip(x) {
+            *z = gi * i64::from(xj);
+        }
+    });
+    (gx, gw)
+}
+
+/// Wie [`linear_backward`], aber `dL/dW` wird **in `summe` addiert**, ohne
+/// eigene Matrix: der Fall eines Aufrufers, der ohnehin ueber Positionen
+/// summiert. Dieselbe exakte i64-Addition, nur ohne Zuteilung und ohne
+/// zweiten Durchlauf. Gibt `dL/dx` zurueck.
+#[allow(clippy::too_many_arguments)]
+pub fn linear_backward_summierend(
+    g: &[Grad],
+    x: &[i16],
+    w: &[i8],
+    in_features: usize,
+    w_shifts: &[u8],
+    g_frac: u8,
+    gx_frac: u8,
+    summe: &mut [i64],
+) -> Vec<Grad> {
+    let out_features = g.len();
+    assert_eq!(w.len(), out_features * in_features, "linear_backward_summierend: W passt nicht zu g");
+    assert_eq!(w_shifts.len(), out_features, "linear_backward_summierend: eine Skala je Ausgabezeile");
+    assert_eq!(x.len(), in_features, "linear_backward_summierend: x passt nicht zu in_features");
+    assert_eq!(summe.len(), out_features * in_features, "linear_backward_summierend: Summe passt nicht");
+    let gx = gx_verteilt(g, w, in_features, w_shifts, g_frac, gx_frac);
+    zeilen_verteilt(summe, in_features, |i, zeile| {
+        let gi = i64::from(g[i]);
+        if gi != 0 {
+            for (z, &xj) in zeile.iter_mut().zip(x) {
+                *z += gi * i64::from(xj);
+            }
+        }
+    });
+    gx
+}
+
+/// Wie [`linear_backward`], aber `dL/dW` kommt **gleich begrenzt** als
+/// [`Grad`] (`begrenze(g_i * x_j)`), wie es ein Aufrufer ohnehin je
+/// Position tut. Halber Speicher, ein Durchlauf weniger, dieselben Zahlen.
+#[allow(clippy::too_many_arguments)]
+pub fn linear_backward_begrenzt(
+    g: &[Grad],
+    x: &[i16],
+    w: &[i8],
+    in_features: usize,
+    w_shifts: &[u8],
+    g_frac: u8,
+    gx_frac: u8,
+) -> (Vec<Grad>, Vec<Grad>) {
+    let out_features = g.len();
+    assert_eq!(w.len(), out_features * in_features, "linear_backward_begrenzt: W passt nicht zu g");
+    assert_eq!(w_shifts.len(), out_features, "linear_backward_begrenzt: eine Skala je Ausgabezeile");
+    assert_eq!(x.len(), in_features, "linear_backward_begrenzt: x passt nicht zu in_features");
+    let gx = gx_verteilt(g, w, in_features, w_shifts, g_frac, gx_frac);
+    let mut gw = vec![0 as Grad; out_features * in_features];
+    zeilen_verteilt(&mut gw, in_features, |i, zeile| {
+        let gi = i64::from(g[i]);
+        for (z, &xj) in zeile.iter_mut().zip(x) {
+            let v = gi * i64::from(xj);
+            *z = v.clamp(i64::from(Grad::MIN), i64::from(Grad::MAX)) as Grad;
+        }
+    });
+    (gx, gw)
+}
+
+/// Nur `dL/dx` einer linearen Schicht, ohne `dL/dW`: fuer einen Aufrufer,
+/// der das Gewicht nicht trainiert.
+///
+/// 📌 **Der Kopf des Trainings verwarf das aeussere Produkt** (bis zum
+/// 2026-09-28, `let (g_normed, _) = linear_backward(…)`). Beim 0,6B sind das
+/// 151 936 x 1 024 Werte in i64, **1,2 GB je Position**, angelegt, genullt,
+/// gefuellt und weggeworfen.
+pub fn linear_backward_eingang(
+    g: &[Grad],
+    w: &[i8],
+    in_features: usize,
+    w_shifts: &[u8],
+    g_frac: u8,
+    gx_frac: u8,
+) -> Vec<Grad> {
+    assert_eq!(w.len(), g.len() * in_features, "linear_backward_eingang: W passt nicht zu g");
+    assert_eq!(w_shifts.len(), g.len(), "linear_backward_eingang: eine Skala je Ausgabezeile");
+    gx_verteilt(g, w, in_features, w_shifts, g_frac, gx_frac)
+}
+
+/// **Zeilen einer Matrix verteilt bearbeiten**, jede Zeile von genau einem
+/// Faden (`chunks_mut`, also ohne `unsafe`). Kleine Matrizen einfaedig.
+///
+/// ⚑ **`std::thread::scope` und nicht der Fadenpool**: Der Pool gibt nur
+/// neue `i16`-Felder zurueck, hier wird in vorhandene `i64`- und
+/// `i32`-Felder geschrieben. Der Start kostet rund 0,1 ms (gemessen in
+/// `linear.rs`) gegen Matrizen von Millionen Werten.
+pub(crate) fn zeilen_verteilt<T: Send>(ziel: &mut [T], breite: usize, f: impl Fn(usize, &mut [T]) + Sync) {
+    let zeilen = ziel.len().checked_div(breite).unwrap_or(0);
+    let faeden = crate::linear::kerngrenze();
+    if ziel.len() < (1 << 18) || faeden < 2 || zeilen < 2 {
+        for (i, zeile) in ziel.chunks_exact_mut(breite.max(1)).enumerate() {
+            f(i, zeile);
+        }
+        return;
+    }
+    let je = zeilen.div_ceil(faeden);
+    std::thread::scope(|bereich| {
+        for (b, stueck) in ziel.chunks_mut(je * breite).enumerate() {
+            let f = &f;
+            bereich.spawn(move || {
+                for (k, zeile) in stueck.chunks_exact_mut(breite).enumerate() {
+                    f(b * je + k, zeile);
+                }
+            });
+        }
+    });
+}
+
+/// `dL/dx` einer linearen Schicht, verteilt ueber Spaltenbloecke.
+fn gx_verteilt(g: &[Grad], w: &[i8], in_features: usize, w_shifts: &[u8], g_frac: u8, gx_frac: u8) -> Vec<Grad> {
+    let out_features = g.len();
+    let ref_shift = *w_shifts.iter().max().expect("linear_backward: w_shifts ist leer");
+
+    // ⚑ **Verteilt und in i64, seit dem 2026-09-28.** Bis hierher lief
+    //   diese Funktion auf einem Kern und rechnete jedes Produkt in i128.
+    //   Gemessen am Training des 0,6B (`sample`, 10 s): 7 461 Proben hier
+    //   auf dem Hauptfaden, die vierzehn Poolfaeden schliefen; ein
+    //   Durchgang ueber vier Folgen dauerte gut drei Minuten.
+    //
+    //   Beides aendert keine Zahl: Die Summe je Ausrichtung
+    //   (`sum_{align_i = a} g_i * w_ij`) ist in i64 exakt (ein Produkt liegt
+    //   unter 2^38, selbst 150 000 Zeilen eines Kopfes bleiben unter 2^56),
+    //   und `sum_a (summe_a << a)` in i128 ist dieselbe ganze Zahl wie die
+    //   Summe der einzeln verschobenen Produkte. Welcher Faden welche
+    //   Spalten oder Zeilen rechnet, ist wie im Vorwaertspfad eine reine
+    //   Laufzeitfrage.
+    let faeden = crate::linear::kerngrenze();
+    let arbeit = out_features.saturating_mul(in_features);
+    let bloecke = if arbeit < (1 << 18) { 1 } else { (2 * faeden).min(in_features).max(1) };
+    let breite = in_features.div_ceil(bloecke);
+    let teile: Vec<Vec<Grad>> = crate::fadenpool::verteilen(bloecke, faeden, |b| {
+        let anfang = (b * breite).min(in_features);
+        let ende = ((b + 1) * breite).min(in_features);
+        gx_spalten(g, w, in_features, w_shifts, ref_shift, anfang, ende, g_frac, gx_frac)
+    });
+    teile.concat()
+}
+
+/// `dL/dx` fuer die Spalten `anfang..ende`, siehe [`linear_backward`].
+///
+/// ⚑ **Ausgerichtet nach OBEN, dann EINMAL geschoben** (Fund 24): gegen
+/// den groessten Shift per Linksshift, weil dabei kein Bit verlorengeht,
+/// und ein einziger Rechtsshift ganz am Ende. Die Linksshifts geschehen
+/// je Eimer (eine Ausrichtung) und nicht je Produkt.
+#[allow(clippy::too_many_arguments)]
+fn gx_spalten(
+    g: &[Grad],
+    w: &[i8],
+    in_features: usize,
+    w_shifts: &[u8],
+    ref_shift: u8,
+    anfang: usize,
+    ende: usize,
+    g_frac: u8,
+    gx_frac: u8,
+) -> Vec<Grad> {
+    let n = ende - anfang;
+    // Je vorkommender Ausrichtung ein Eimer; es sind wenige.
+    let mut eimer: Vec<(u32, Vec<i64>)> = Vec::new();
+    for (i, zeile) in w.chunks_exact(in_features).enumerate() {
+        let gi = i64::from(g[i]);
+        if gi == 0 {
+            continue;
+        }
+        let align = u32::from(ref_shift - w_shifts[i]);
+        let stelle = match eimer.iter().position(|(a, _)| *a == align) {
+            Some(k) => k,
+            None => {
+                eimer.push((align, vec![0i64; n]));
+                eimer.len() - 1
+            }
+        };
+        let acc = &mut eimer[stelle].1;
+        for (a, wij) in acc.iter_mut().zip(&zeile[anfang..ende]) {
+            *a += gi * i64::from(*wij);
         }
     }
-    (gx, gw)
+    (0..n)
+        .map(|j| {
+            let summe: i128 = eimer.iter().map(|(a, acc)| i128::from(acc[j]) << *a).sum();
+            // Ein Rechtsshift, dann die Skalenanpassung, dann Saettigung:
+            // alles genau einmal, ganz am Ende.
+            let geschoben = crate::fixed_point::rshift_round_i128(summe, u32::from(ref_shift));
+            let begrenzt = geschoben.clamp(i64::MIN as i128, i64::MAX as i128) as i64;
+            clamp_i32(rescale_i64(begrenzt, g_frac, gx_frac))
+        })
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -1168,6 +1341,41 @@ pub fn kreuzentropie_gradient(p: &[Grad], ziel: usize, prob_frac: u8) -> Vec<Gra
     let eins = 1i64 << prob_frac;
     let mut aus: Vec<Grad> = p.to_vec();
     aus[ziel] = clamp_i32(i64::from(aus[ziel]) - eins);
+    aus
+}
+
+/// Gradient der Kreuzentropie gegen eine **ganze Zielverteilung**:
+///
+/// ```text
+/// dL/dz = p − q
+/// ```
+///
+/// ⚑ **Das ist Destillation.** Statt eines einzelnen Zielworts gibt ein
+/// Lehrer seine ganze Verteilung `q` vor, und der Schueler lernt auch,
+/// welche Worte fast richtig waren. [`kreuzentropie_gradient`] ist der
+/// Sonderfall, in dem `q` an einer Stelle `2^prob_frac` traegt und sonst
+/// null.
+///
+/// Beide Verteilungen muessen auf **derselben Skala** liegen; der
+/// Gradient traegt sie weiter. Summieren sich beide zu `2^prob_frac`,
+/// summiert sich der Gradient zu null, bis auf die Rundung des Softmax.
+///
+/// # Panics
+///
+/// Wenn die Laengen verschieden sind. 📌 **Ein `zip` braeche an der
+/// kuerzeren Seite ab, ohne ein Wort zu sagen**, und der Rest des
+/// Vokabulars bekaeme keinen Gradienten: Ein Lehrer mit anderem
+/// Vokabular waere ein Aufruferfehler, der so unsichtbar bliebe.
+pub fn verteilungsgradient(p: &[Grad], q: &[Grad]) -> Vec<Grad> {
+    assert_eq!(
+        p.len(),
+        q.len(),
+        "verteilungsgradient: Schueler und Lehrer haben verschiedene Vokabulare"
+    );
+    let mut aus: Vec<Grad> = Vec::with_capacity(p.len());
+    for (i, pi) in p.iter().enumerate() {
+        aus.push(clamp_i32(i64::from(*pi) - i64::from(q[i])));
+    }
     aus
 }
 
@@ -2527,6 +2735,30 @@ mod tests {
 
     // ---- Der Verlust ---------------------------------------------------
 
+    #[test]
+    fn der_verteilungsgradient_enthaelt_den_der_kreuzentropie() {
+        // Eine Zielverteilung mit der ganzen Masse auf einem Wort ist die
+        // Kreuzentropie; zwei Wege, eine Zahl.
+        let frac = 8u8;
+        let p = vec![10, 200, 46];
+        let mut q = vec![0; 3];
+        q[1] = 1 << frac;
+        assert_eq!(verteilungsgradient(&p, &q), kreuzentropie_gradient(&p, 1, frac));
+        // Gleiche Verteilungen: nichts zu lernen.
+        assert_eq!(verteilungsgradient(&p, &p), vec![0, 0, 0]);
+        // Eine echte Verteilung: p minus q, und die Summe bleibt null.
+        let q = vec![64, 128, 64];
+        let g = verteilungsgradient(&p, &q);
+        assert_eq!(g, vec![-54, 72, -18]);
+        assert_eq!(g.iter().sum::<i32>(), 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "verschiedene Vokabulare")]
+    fn ein_lehrer_mit_anderem_vokabular_ist_ein_fehler() {
+        let _ = verteilungsgradient(&[1, 2, 3], &[1, 2]);
+    }
+
     /// ⚑ **Der Gradient der Kreuzentropie summiert sich zu null.**
     ///
     /// `Σ p = 1` und `Σ onehot = 1`, also ist `Σ (p − onehot) = 0`. Das
@@ -2750,5 +2982,79 @@ mod tests {
         // ergibt dieselbe Stufe.
         let g = silu_backward(&[1 << out_frac], &[1000], &grad, in_frac, in_frac, 256, grad_frac, out_frac, out_frac);
         assert_eq!(g, vec![1 << out_frac], "Steigung 1 jenseits der Tabelle");
+    }
+}
+
+#[cfg(test)]
+mod verteilt_tests {
+    use super::*;
+
+    /// Die Fassung bis zum 2026-09-28, woertlich: einkernig, jedes Produkt
+    /// in i128. Der Massstab fuer den verteilten Weg.
+    fn alte_fassung(g: &[Grad], x: &[i16], w: &[i8], n: usize, w_shifts: &[u8], g_frac: u8, gx_frac: u8) -> (Vec<Grad>, Vec<i64>) {
+        let ref_shift = *w_shifts.iter().max().unwrap();
+        let mut gx_acc = vec![0i128; n];
+        for (i, zeile) in w.chunks_exact(n).enumerate() {
+            let gi = g[i] as i128;
+            if gi == 0 {
+                continue;
+            }
+            let align = (ref_shift - w_shifts[i]) as u32;
+            for (j, wij) in zeile.iter().enumerate() {
+                gx_acc[j] += (gi * (*wij as i128)) << align;
+            }
+        }
+        let gx = gx_acc
+            .into_iter()
+            .map(|a| {
+                let geschoben = crate::fixed_point::rshift_round_i128(a, ref_shift as u32);
+                let begrenzt = geschoben.clamp(i64::MIN as i128, i64::MAX as i128) as i64;
+                clamp_i32(rescale_i64(begrenzt, g_frac, gx_frac))
+            })
+            .collect();
+        let gw = g.iter().flat_map(|gi| x.iter().map(move |xj| (*gi as i64) * (*xj as i64))).collect();
+        (gx, gw)
+    }
+
+    /// **Verteilt ist dieselbe Zahl**, auf einer Matrix, die den verteilten
+    /// Weg nimmt, mit sieben verschiedenen Zeilenshifts, Nullzeilen und den
+    /// Raendern der Wertebereiche.
+    #[test]
+    fn verteilt_ist_die_alte_fassung() {
+        let (zeilen, spalten) = (700usize, 1024usize);
+        assert!(zeilen * spalten >= 1 << 18, "die Probe muss den verteilten Weg nehmen");
+        let mut z = 0x9E37_79B9_7F4A_7C15_u64;
+        let mut r = move || {
+            z ^= z << 13;
+            z ^= z >> 7;
+            z ^= z << 17;
+            z
+        };
+        let w: Vec<i8> = (0..zeilen * spalten).map(|_| r() as u8 as i8).collect();
+        let x: Vec<i16> = (0..spalten).map(|_| r() as u16 as i16).collect();
+        let mut g: Vec<Grad> = (0..zeilen).map(|_| (r() as u32 as i32) >> 1).collect();
+        g[0] = i32::MIN;
+        g[1] = i32::MAX;
+        g[2] = 0;
+        let w_shifts: Vec<u8> = (0..zeilen).map(|i| 3 + (i % 7) as u8 * 2).collect();
+        for (g_frac, gx_frac) in [(10u8, 10u8), (12, 6), (4, 14)] {
+            let neu = linear_backward(&g, &x, &w, spalten, &w_shifts, g_frac, gx_frac);
+            let alt = alte_fassung(&g, &x, &w, spalten, &w_shifts, g_frac, gx_frac);
+            assert_eq!(neu.0, alt.0, "dL/dx bei {g_frac}->{gx_frac}");
+            assert_eq!(neu.1, alt.1, "dL/dW");
+            // Summierend: in eine vorbelegte Summe addiert.
+            let mut summe: Vec<i64> = (0..zeilen * spalten).map(|i| (i as i64 % 97) - 48).collect();
+            let vorher = summe.clone();
+            let gx = linear_backward_summierend(&g, &x, &w, spalten, &w_shifts, g_frac, gx_frac, &mut summe);
+            assert_eq!(gx, alt.0, "summierend dL/dx");
+            let soll: Vec<i64> = vorher.iter().zip(&alt.1).map(|(a, b)| a + b).collect();
+            assert_eq!(summe, soll, "summierend dL/dW");
+            // Begrenzt: elementweise auf Grad gesaettigt.
+            let (gx, gw) = linear_backward_begrenzt(&g, &x, &w, spalten, &w_shifts, g_frac, gx_frac);
+            assert_eq!(gx, alt.0, "begrenzt dL/dx");
+            let soll: Vec<Grad> = alt.1.iter().map(|&v| v.clamp(i64::from(Grad::MIN), i64::from(Grad::MAX)) as Grad).collect();
+            assert_eq!(gw, soll, "begrenzt dL/dW");
+            assert!(gw.iter().any(|&v| v == Grad::MAX || v == Grad::MIN), "die Saettigung wird nicht beruehrt");
+        }
     }
 }

@@ -1390,133 +1390,49 @@ header > .kopfrechts { right: var(--kopf-polster); }
   color: var(--leiser);
 }
 
-/* --- Das Ladezeichen: ein synaptischer Spalt --------------------------
+/* --- Das Ladezeichen: Linien in Bewegung wie Wellen -------------------
 
    ⚑ **Es steht dort, wo gleich die Antwort steht.** Wer auf eine
    Antwort wartet, sieht auf den Fleck, an dem sie erscheinen wird, und
    nicht ans andere Ende des Fensters.
 
-   ⚑ **Ein Spalt zwischen zwei Nervenzellen** (Auftrag des
-   Projektinhabers, 2026-09-24, statt drei Punkten; die Gestalt nach
-   seinen Vorlagen): zwei Glocken, die sich ueber einen engen Spalt
-   gegenueberstehen. Links schwellen Blaeschen an, Botenstoffe schweben
-   hinueber, die Flaechen leuchten auf, und zweimal je Zyklus entlaedt
-   sich ein Blitz. Ein Zyklus dauert 1,6 Sekunden; die empfangende
-   Flaeche leuchtet, wenn die Botenstoffe ankommen.
+   ⚑ **Fuenf Straenge, die sich in verschiedenen Frequenzen kreuzen**
+   (Auftrag des Projektinhabers, 2026-09-28, nach seiner Vorlage):
+   links eine Linie, in der Mitte auseinander, rechts aufgefaechert. Die
+   Bewegung rechnet das Skript (`wellen`), zufaellig je Zeichen; hier
+   stehen nur Strich und Einlauf.
 
-   ⚑ **In Graustufen wie alles hier**: Was geschieht, wird heller, nicht
-   bunter.
+   ⚑ **Schwarz und Weiss**: `--auf` ist im dunklen Thema weiss und im
+   hellen schwarz. Die Straenge unterscheiden sich allein in Deckkraft
+   und Staerke, nicht in der Farbe.
+
+   📌 Bis CLIENT v0.95.0 stand hier der synaptische Spalt (Glocken,
+   Blaeschen, Botenstoffe, Blitz), und mit ihm fuenf Zeitlinien. Die
+   Regeln sind mit ihm gegangen.
 
    📌 **Weiterhin kein Fortschrittsbalken und kein Kreisel**: Das Zeichen
    sagt, dass gerechnet wird, und nicht, wie weit. */
 .laeuft { display: flex; padding: .35rem 0; }
-.laeuft .spalt { width: 5rem; height: 1.46rem; overflow: visible; }
-
-/* ⚑ **Raeumlich durch Licht** (Wunsch des Projektinhabers): Die Koerper
-   tragen einen Verlauf von hell oben nach dunkel unten und eine
-   Glanzlinie an der Oberkante, die Blaeschen sind Kugeln mit einem
-   Lichtpunkt oben links, und an den Flaechen zum Spalt liegt ein
-   weicher Schein. Die Stufen der Verlaeufe stehen hier und nicht im
-   Skript, damit sie dem Thema folgen. */
-.spalt .licht-oben { stop-color: rgb(var(--auf) / .26); }
-.spalt .licht-mitte { stop-color: rgb(var(--auf) / .09); }
-.spalt .licht-unten { stop-color: rgb(var(--auf) / .02); }
-.spalt .kugel-hell { stop-color: rgb(var(--auf) / .95); }
-.spalt .kugel-mitte { stop-color: rgb(var(--auf) / .35); }
-.spalt .kugel-rand { stop-color: rgb(var(--auf) / .06); }
-.spalt .schein-kern { stop-color: rgb(var(--auf) / .38); }
-.spalt .schein-rand { stop-color: rgb(var(--auf) / 0); }
-/* Die Maske des Auslaufs: weiss heisst sichtbar. Sie haengt nicht am
-   Thema, denn eine Maske misst Helle und nicht Farbe. */
-.spalt .auslauf-voll { stop-color: #ffffff; }
-.spalt .auslauf-rand { stop-color: #000000; }
-.spalt .neuron {
-  stroke: var(--leiser);
-  stroke-width: .7;
+/* ⚑ **Der weiche Einlauf links und Auslauf rechts ist eine Maske im
+   Stilblatt** und keine im Bild: Eine Maske im Bild braeuchte eine
+   Kennung je Zeichen, diese hier braucht keine. */
+.laeuft .wellen {
+  width: 8.5rem;
+  height: 2.55rem;
+  overflow: visible;
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 14%, #000 88%, transparent);
+  mask-image: linear-gradient(to right, transparent, #000 14%, #000 88%, transparent);
+}
+.wellen .welle {
+  fill: none;
+  stroke-linecap: round;
   stroke-linejoin: round;
 }
-.spalt .glanzlinie {
-  fill: none;
-  stroke: rgb(var(--auf) / .34);
-  stroke-width: .6;
-  stroke-linecap: round;
-}
-.spalt .schein {
-  opacity: .25;
-  animation: scheinen 1.6s ease-out infinite;
-}
-.spalt .schein.sender { animation-delay: -1.1s; }
-.spalt .flaeche {
-  fill: none;
-  stroke: var(--leise);
-  stroke-width: 1.1;
-  stroke-linecap: round;
-  animation: aufleuchten 1.6s ease-out infinite;
-}
-.spalt .flaeche.sender { animation-delay: -1.1s; }
-.spalt .blaeschen {
-  transform-box: fill-box;
-  transform-origin: center;
-  animation: schwellen 1.6s ease-in-out infinite;
-}
-.spalt .blaeschen.v2 { animation-delay: .35s; }
-.spalt .blaeschen.v3 { animation-delay: .7s; }
-/* 📌 **Der Weg steht in Prozent der eigenen Groesse und nicht in
-   Pixeln.** Eine Fassung schob um `17px`, und die haengen an der
-   Skalierung des Fensters: In einer vergroesserten Ansicht flogen die
-   Botenstoffe ueber die Membran hinaus. Mit `fill-box` ist die
-   Bezugsgroesse der Botenstoff selbst (1,6 Einheiten breit), und
-   250 Prozent sind genau der Weg von Flaeche zu Flaeche. */
-.spalt .botenstoff {
-  opacity: 0;
-  transform-box: fill-box;
-  animation: ueberspringen 1.6s cubic-bezier(.3, .1, .45, 1) infinite;
-}
-.spalt .botenstoff.b2 { animation-delay: .16s; }
-.spalt .botenstoff.b3 { animation-delay: .32s; }
-.spalt .botenstoff.b4 { animation-delay: .8s; }
-.spalt .botenstoff.b5 { animation-delay: .96s; }
-.spalt .blitz {
-  fill: none;
-  stroke: var(--akzent);
-  stroke-width: .55;
-  stroke-linejoin: round;
-  opacity: 0;
-  animation: entladen 1.6s linear infinite;
-}
-.spalt .blitz.z2 { animation-delay: .8s; }
-
-/* Die Zeitlinien, auf einen Zyklus bezogen: Das Blaeschen schwillt im
-   ersten Viertel, der Botenstoff ist von 30 bis 70 Prozent im Spalt,
-   die Flaeche leuchtet bei 70 Prozent auf, und der Blitz steht fuer
-   wenige Hundertstel bei 45 Prozent. */
-@keyframes schwellen {
-  0%, 100% { transform: scale(.84); opacity: .7; }
-  25% { transform: scale(1.14); opacity: 1; }
-}
-@keyframes ueberspringen {
-  0%, 28% { transform: translateX(0); opacity: 0; }
-  34% { opacity: 1; }
-  68% { transform: translateX(250%); opacity: 1; }
-  76%, 100% { transform: translateX(250%); opacity: 0; }
-}
-@keyframes aufleuchten {
-  0%, 62% { stroke: var(--leise); }
-  72% { stroke: var(--akzent); }
-  100% { stroke: var(--leise); }
-}
-@keyframes scheinen {
-  0%, 62% { opacity: .25; }
-  72% { opacity: 1; }
-  100% { opacity: .25; }
-}
-@keyframes entladen {
-  0%, 42% { opacity: 0; }
-  44% { opacity: 1; }
-  47% { opacity: .35; }
-  49% { opacity: .9; }
-  55%, 100% { opacity: 0; }
-}
+.wellen .welle.w1 { stroke: rgb(var(--auf) / .92); stroke-width: 1.35; }
+.wellen .welle.w2 { stroke: rgb(var(--auf) / .7); stroke-width: 1.05; }
+.wellen .welle.w3 { stroke: rgb(var(--auf) / .55); stroke-width: 1.2; }
+.wellen .welle.w4 { stroke: rgb(var(--auf) / .8); stroke-width: .85; }
+.wellen .welle.w5 { stroke: rgb(var(--auf) / .42); stroke-width: 1; }
 
 /* --- Markdown in der Antwort -----------------------------------------
 
@@ -2228,11 +2144,9 @@ td input[type="text"] { width: 20rem; padding: .24rem .55rem; }
 @media (prefers-reduced-motion: reduce) {
   .vorhangtext { animation: none; }
   .meldung { animation: none; }
-  /* ⚑ Der Spalt bleibt stehen und sichtbar, die Botenstoffe mitten
-     darin. Ein Ladezeichen, das bei abbestellter Bewegung verschwindet,
-     nimmt genau dem die Auskunft, der sie am ehesten braucht. */
-  .spalt .blaeschen, .spalt .flaeche, .spalt .blitz, .spalt .schein { animation: none; }
-  .spalt .botenstoff { animation: none; opacity: .7; transform: translateX(125%); }
+  /* ⚑ Die Wellen des Ladezeichens stehen still; das haelt das Skript
+     selbst (`wellen` fragt nach `prefers-reduced-motion`), denn sie
+     bewegen sich dort und nicht hier. */
   /* ⚑ Die Marke wechselt den Ort weiterhin, nur ohne Stoerbild. Ein
      Ortswechsel ist eine Auskunft und keine Verzierung; was hier
      entfaellt, ist das Flackern. */
@@ -2240,6 +2154,9 @@ td input[type="text"] { width: 20rem; padding: .24rem .55rem; }
   /* ⚑ Die Sprechtaste bleibt gefaerbt und hoert auf zu pochen. Dass
      aufgenommen wird, ist eine Auskunft; das Pochen ist die Verzierung. */
   .rundknopf.sprechtaste.nimmt_auf svg { animation: none; }
+  /* ⚑ ∞ bleibt hell, solange der Loop laeuft, und hoert auf zu atmen.
+     Hell heisst „laeuft“; das Atmen ist die Verzierung. */
+  .loopknopf.an svg { animation: none; }
   /* ⚑ Der Ausschlag und das Stimmzeichen sind **Auskunft** und keine
      Verzierung: Sie bleiben, nur ohne weiche Wege dorthin. */
   .stimmzeichen .ring, .stimmzeichen .kern { transition: none; }
@@ -2276,25 +2193,78 @@ td input[type="text"] { width: 20rem; padding: .24rem .55rem; }
 .menueeintrag:hover:not(:disabled) { background: var(--glas); color: var(--text); }
 .menueeintrag.weg:hover:not(:disabled) { color: var(--text); }
 
-/* --- Der Loop: ∞ und die Tasks ----------------------------------------
+/* --- Der Loop: ∞, der Task und die Liste ------------------------------
 
-   ⚑ **∞ und der Pfeil sind ein Paar**: Der Schalter traegt, der Pfeil
-   daneben ist schmal und gehoert sichtbar zu ihm. Eingeschaltet steht
-   ∞ hell auf einer Flaeche, damit man einen laufenden Loop von weitem
-   sieht; ohne Farbe, denn dieses Fenster hat keine. */
+   ⚑ **Ein Feld mit drei Teilen, mittig unten im Eingabefeld**
+   (Festlegung des Projektinhabers, 2026-09-28). Links ∞, der Schalter;
+   daneben der Task, der vorn steht, gekuerzt mit „…“; rechts der Pfeil.
+   Das Feld traegt das Glas, die beiden Knoepfe darin tragen keines:
+   Zwei Flaechen in einer sahen aus wie zwei Knoepfe, und genau das war
+   der Befund („richtig fusionieren“).
+
+   ⚑ **Laeuft der Loop, atmet ∞**: ein langsames Aufhellen und Abklingen
+   mit einem schwachen Schein. Ohne Farbe, denn dieses Fenster hat keine;
+   was hervorgehoben wird, wird heller.
+
+   📌 Bis CLIENT v0.94.1 stand ∞ eingeschaltet auf einer eigenen hellen
+   Flaeche, und der Pfeil war ein zweiter runder Knopf daneben. */
 .loopgruppe {
-  display: inline-flex;
+  grid-column: 2;
+  display: flex;
   align-items: center;
-  flex: 0 0 auto;
+  gap: .1rem;
+  width: 100%;
+  min-width: 0;
+  height: 2rem;
+  padding: 0 .35rem 0 .15rem;
+  border-radius: 999px;
+  box-shadow: var(--dicke), 0 4px 14px -8px var(--schatten);
 }
-.loopgruppe[hidden] { display: none; }
-.loopknopf.an {
-  color: var(--text);
-  background: var(--glas-hoch);
-  box-shadow: inset 0 0 0 1px var(--kante-hell);
+/* ⚑ **Die Knoepfe im Feld sind Text und keine Kacheln.** `.blank` nimmt
+   nur Ring und Glanz weg; Verlauf, Schatten, Filter und Polster der
+   allgemeinen Knopfregel stehen hier einzeln zurueckgesetzt. */
+.loopknopf,
+.loopwahl {
+  display: flex;
+  align-items: center;
+  height: 1.75rem;
+  padding: 0;
+  border-radius: 999px;
+  background: none;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  color: var(--leise);
 }
-.loopwahl { width: 1.2rem; }
-.loopwahl svg { width: .85rem; height: .85rem; }
+.loopknopf:hover:not(:disabled),
+.loopwahl:hover:not(:disabled) { color: var(--text); }
+.loopknopf { flex: 0 0 auto; justify-content: center; width: 1.9rem; }
+.loopwahl { flex: 1 1 auto; min-width: 0; gap: .3rem; padding-left: .1rem; }
+.loopgruppe svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.loopknopf svg { width: 1.25rem; height: 1.25rem; }
+.loopwahl svg { flex: 0 0 auto; width: .85rem; height: .85rem; }
+.looptask {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  text-align: left;
+  font-size: .8rem;
+}
+.loopgruppe.an .looptask { color: var(--text); }
+.loopknopf.an { color: var(--text); }
+.loopknopf.an svg { animation: atmen 3.2s ease-in-out infinite; }
+@keyframes atmen {
+  0%, 100% { opacity: .45; filter: drop-shadow(0 0 0 rgb(var(--auf) / 0)); }
+  50% { opacity: 1; filter: drop-shadow(0 0 3px rgb(var(--auf) / .8)); }
+}
 
 /* ⚑ Fest positioniert und ueber den Knoepfen, wie die Kontextwahl. Die
    Liste rollt selbst, wenn es viele Tasks werden. */
@@ -2335,13 +2305,17 @@ td input[type="text"] { width: 20rem; padding: .24rem .55rem; }
   font-size: .82rem;
   color: var(--leise);
 }
-.taskzeile:hover, .taskzeile:focus-within { background: var(--glas); }
+/* ⚑ **Keine Kaesten hinter den Eintraegen** (Festlegung des
+   Projektinhabers, 2026-09-28). Wer darueberfaehrt, sieht den Eintrag
+   heller werden, nicht eine Flaeche darunter. */
+.taskzeile:hover, .taskzeile:focus-within { color: var(--text); }
 /* ⚑ **Der vorderste steht hell**: Er ist der, der laeuft. Fertige und
    angehaltene treten zurueck, bleiben aber lesbar. */
 .taskzeile[data-stellung="vorn"] { color: var(--text); }
 .taskzeile[data-stellung="fertig"],
 .taskzeile[data-stellung="angehalten"] { color: var(--leiser); }
-.taskzeile.zieht { background: var(--glas-hoch); box-shadow: inset 0 0 0 1px var(--kante-hell); }
+/* Der gezogene Eintrag tritt zurueck, statt einen Kasten zu bekommen. */
+.taskzeile.zieht { opacity: .55; }
 .taskgriff {
   cursor: grab;
   touch-action: none;
@@ -2350,6 +2324,19 @@ td input[type="text"] { width: 20rem; padding: .24rem .55rem; }
   padding: 0 .15rem;
 }
 .taskzeile.zieht .taskgriff { cursor: grabbing; }
+/* 📌 **Hier lag der Kasten.** Name und Aktionen sind Knoepfe mit
+   `.blank`, und `.blank` nimmt nur Ring und Glanz weg: Verlauf, Schatten
+   und Filter der allgemeinen Knopfregel blieben, also stand hinter jedem
+   Namen und jedem Zeichen eine Flaeche. Zurueckgesetzt wird hier, am
+   Bauteil, und nicht an `.blank` (siehe `.chat .titel`). */
+.taskname,
+.taskaktion {
+  background: none;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  padding: 0;
+}
 .taskname {
   flex: 1 1 auto;
   min-width: 0;
@@ -2367,8 +2354,9 @@ td input[type="text"] { width: 20rem; padding: .24rem .55rem; }
   border-radius: 999px;
   color: var(--leise);
 }
-.taskaktion:hover { color: var(--text); background: var(--glas-hoch); }
-.taskaktion[data-scharf="ja"] { color: var(--text); box-shadow: inset 0 0 0 1px var(--kante-hell); }
+.taskaktion:hover { color: var(--text); }
+/* ⚑ Scharf gestellt wird das Zeichen hell und groesser, ohne Ring. */
+.taskaktion[data-scharf="ja"] { color: var(--text); transform: scale(1.25); }
 .taskleer { margin: .2rem .3rem; color: var(--leise); font-size: .8rem; line-height: 1.45; }
 .taskneu {
   display: flex;
@@ -2563,37 +2551,15 @@ tr.gesucht td:first-child { box-shadow: inset 2px 0 0 var(--kante-hell); }
   line-height: 1.45;
 }
 .kihinweisverweis { margin: 0; color: var(--leise); font-size: .85rem; }
+/* Der eine Knopf traegt den ganzen Satz: volle Breite, Umbruch erlaubt. */
+.kihinweisknopf { justify-self: stretch; white-space: normal; text-align: center; line-height: 1.4; }
 /* Die Adresse laesst sich markieren und kopieren; ein Verweis, den man
    nicht abschreiben kann, fuehrt nirgends hin. */
 .kihinweisadresse { user-select: text; word-break: break-all; color: var(--text); }
 
-/* ⛔️ Die dauerhafte KI-Marke im Kopf: klein, aber immer da. */
-.kimarke {
-  font-size: .72rem;
-  font-weight: 600;
-  letter-spacing: .06em;
-  padding: .15rem .45rem;
-  border: 1px solid var(--kante-hell);
-  border-radius: 999px;
-  color: var(--text);
-  cursor: help;
-  align-self: center;
-}
-/* ⛔️ Der Notaus: in Graustufen wie alles hier, aber mit dem kraeftigsten
-   Rand der Kopfzeile und dem Stoppzeichen davor, damit er sich abhebt. */
-.notaus {
-  font-size: .74rem;
-  font-weight: 700;
-  padding: .2rem .6rem;
-  border: 2px solid var(--text);
-  border-radius: 999px;
-  color: var(--text);
-  background: transparent;
-  cursor: pointer;
-  align-self: center;
-}
-.notaus::before { content: "■ "; }
-.notaus:hover { background: var(--glas-hell); }
+/* 📌 Hier standen `.kimarke` und `.notaus`, die Marke und der Knopf im
+   Kopf. Beide sind mit CLIENT v0.95.0 entfallen, und ihre Regeln mit
+   ihnen. */
 
 /* Und die Zeile unter jeder Antwort. */
 .kimarke-antwort {
@@ -2625,19 +2591,29 @@ body.ablegen .eingabefeld {
    rechts, was sie abschickt; die Luecke dazwischen traegt die Trennung,
    nicht eine Linie. */
 .knopfreihe {
-  display: flex;
+  display: grid;
+  /* ⚑ **Drei Spalten, die Mitte bis 15 rem.** Die beiden Seiten teilen
+     sich den Rest zu gleichen Teilen, also steht der Loop genau mittig,
+     solange Platz ist; wird es eng, gibt zuerst der Tasktitel nach. */
+  grid-template-columns: 1fr minmax(0, 15rem) 1fr;
   align-items: center;
-  flex-wrap: nowrap;
   gap: .4rem;
   grid-column: 1 / -1;
-  justify-content: flex-end;
 }
+.knopfseite {
+  display: flex;
+  align-items: center;
+  gap: .4rem;
+}
+/* ⚑ **Jede Seite hat ihre Spalte fest**, sonst rueckte die rechte in die
+   Mitte, sobald der Loop ausserhalb des Agenten verschwindet. */
+.knopfseite.links { grid-column: 1; justify-self: start; }
+.knopfseite.rechts { grid-column: 3; justify-self: end; }
 /* ⛔️ **Kein Schrumpfen.** Ein runder Knopf, der schmaler wird als sein
    Zeichen, laeuft mit dem Nachbarn zusammen; gemeldet vom
    Projektinhaber am 2026-09-18 („die zwei Buttons ueberschneiden sich
    noch ein wenig"). */
-.knopfreihe > .rundknopf { flex: 0 0 auto; }
-.knopfluecke { flex: 1 1 auto; min-width: .5rem; }
+.knopfseite > .rundknopf { flex: 0 0 auto; }
 
 /* ⚑ **Anhaenge stehen ueber dem Feld**, als Plaettchen, und nicht im
    Gespraech: Eine Datei ist ein Teil der Frage, die man gerade

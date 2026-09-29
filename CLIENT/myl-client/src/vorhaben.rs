@@ -611,8 +611,30 @@ impl Werkzeugausfuehrung for Wiederholungsbremse {
     }
 }
 
+/// **Die ganze Runde als Mitschrift**, wenn `MYL_RUNDENMITSCHRIFT` auf
+/// einen Ordner zeigt: jede Nachricht mit ihrer Rolle, so wie das Modell sie
+/// bekam und schrieb.
+///
+/// 📌 **Warum es das gibt (2026-09-29):** Im Loop-Szenario rief das 30B in
+/// zehn Runden nie `search_skill`, im Einzelauftrag dagegen jedes Mal zuerst.
+/// Was im Loop wirklich im Auftrag stand, liess sich nicht nachsehen; beim
+/// Einzelauftrag hatte genau dieser Blick (`myl agent --roh`) gezeigt, dass
+/// Skill-Hinweis und Datum fehlten. Ohne die Variable geschieht nichts.
+fn rundenmitschrift(kennung: &str, runde: u32, nachrichten: &[myl_local_agent::tuerklient::Nachricht]) {
+    let Some(ordner) = std::env::var_os("MYL_RUNDENMITSCHRIFT").filter(|o| !o.is_empty()) else {
+        return;
+    };
+    let ordner = PathBuf::from(ordner);
+    if std::fs::create_dir_all(&ordner).is_err() {
+        return;
+    }
+    let text: String = nachrichten.iter().map(|n| format!("[{}] {}\n\n", n.role, n.content)).collect();
+    let _ = std::fs::write(ordner.join(format!("{kennung}-runde-{runde:02}.txt")), text);
+}
+
 /// Werkzeuge, die eine Datei schreiben und einen `pfad` tragen.
-const SCHREIBEND: [&str; 4] = ["write_file", "edit_file", "datei_schreiben", "datei_aendern"];
+const SCHREIBEND: [&str; 6] =
+    ["write_file", "edit_file", "datei_schreiben", "datei_aendern", "replace_everywhere", "ueberall_ersetzen"];
 
 /// **Der Pendelwaechter** (Punkt 4.8): merkt sich je Datei die Staende
 /// dieser Runde und sagt dazu, wenn eine Aenderung nichts aenderte oder
@@ -688,6 +710,72 @@ impl Werkzeugausfuehrung for Pendelwaechter {
             Some(h) => text + &h,
             None => text,
         })
+    }
+}
+
+/// Befehlswerkzeuge in beiden Ansageformen.
+const BEFEHLE: [&str; 2] = ["run_command", "befehl_ausfuehren"];
+
+/// Ab der wievielten gleichen Ausgabe der Befehlsspiegel etwas sagt.
+const SPIEGEL_AB: u32 = 3;
+
+/// **Der Befehlsspiegel**: Liefert derselbe Befehl in dieser Runde zum
+/// dritten Mal genau dieselbe Ausgabe, steht das in der Antwort.
+///
+/// 📌 **Loop-Szenario, 30B, 2026-09-26:** Das Modell aenderte fuenfzehnmal
+/// und fuehrte nach jeder Aenderung dasselbe Skript aus, las die Datei aber
+/// nie wieder. Die Aenderungen waren verschieden, also sah der
+/// Pendelwaechter keinen Kreis; der Befehl lief jedes Mal wirklich, also
+/// griff die Wiederholungsbremse nicht. **Was gleich blieb, war die
+/// Ausgabe**, und genau sie sagt: Die Aenderungen dazwischen treffen nicht
+/// die Ursache.
+///
+/// ⚑ Er verhindert nichts; ein Befehl darf beliebig oft laufen. Er sagt nur,
+/// was ein Mensch an dieser Stelle bemerken wuerde.
+struct Befehlsspiegel {
+    inner: Box<dyn Werkzeugausfuehrung>,
+    gesehen: Arc<Mutex<std::collections::HashMap<(String, String), u32>>>,
+    de: bool,
+}
+
+impl Werkzeugausfuehrung for Befehlsspiegel {
+    fn name(&self) -> &str {
+        self.inner.name()
+    }
+    fn ausfuehren(&self, a: &serde_json::Value) -> Result<String, Werkzeugfehler> {
+        let r = self.inner.ausfuehren(a);
+        // Ein Fehler des Werkzeugs zaehlt wie eine Ausgabe: Auch „Befehl
+        // gescheitert" zum dritten Mal ist dieselbe Nachricht.
+        let ausgabe = match &r {
+            Ok(t) => t.clone(),
+            Err(f) => f.grund.clone(),
+        };
+        let zahl = {
+            let mut g = self.gesehen.lock().expect("Befehlsspiegel");
+            let z = g.entry((a.to_string(), ausgabe)).or_insert(0);
+            *z += 1;
+            *z
+        };
+        if zahl < SPIEGEL_AB {
+            return r;
+        }
+        let hinweis = if self.de {
+            format!(
+                "\n[Hinweis: Dieser Befehl liefert in dieser Runde zum {zahl}. Mal genau dieselbe Ausgabe. \
+                 Deine Änderungen dazwischen haben daran nichts geändert. Lies die betroffene Datei neu \
+                 (read_file), bevor du weiter änderst, und prüfe, ob deine Annahme über die Ursache stimmt.]"
+            )
+        } else {
+            format!(
+                "\n[Note: this command has now produced exactly the same output {zahl} times in this round. \
+                 Your changes in between did not affect it. Read the affected file again (read_file) before \
+                 changing more, and check whether your assumption about the cause is right.]"
+            )
+        };
+        match r {
+            Ok(t) => Ok(t + &hinweis),
+            Err(f) => Err(Werkzeugfehler { grund: f.grund + &hinweis }),
+        }
     }
 }
 
@@ -929,6 +1017,56 @@ pub struct Pruefung {
 /// wie lang jedes hoechstens ist.
 pub const PRUEF_BELEGE: usize = 8;
 const PRUEF_BELEG_ZEICHEN: usize = 400;
+/// Wie viele der geschriebenen Dateien die Pruefung sieht, und wie viel
+/// von jeder.
+const PRUEF_DATEIEN: usize = 3;
+const PRUEF_DATEI_ZEICHEN: usize = 1500;
+
+/// **Die Dateien, die diese Runde geschrieben hat, wie sie jetzt sind.**
+///
+/// 📌 **Loop-Szenario, 2026-09-26:** Das 8B und das 30B meldeten den
+/// Bericht als erledigt, und die Pruefung stimmte zu, obwohl der Bericht
+/// einen Raum falsch bewertete. Sie sah als Beleg nur „angelegt
+/// bericht/sensorbericht.md, 1834 Bytes"; ob darin das Richtige steht,
+/// **konnte** sie nicht beurteilen. Jetzt sieht sie den Inhalt.
+///
+/// Die zuletzt geschriebenen zuerst, jede Datei einmal. Ein Pfad, der
+/// hinauszeigt, wird nicht gelesen; das Werkzeug haette ihn schon
+/// abgelehnt, aber hier liest die Pruefung selbst.
+pub fn geschriebene_dateien(belege: &[Erledigt], wurzel: Option<&Path>) -> Vec<(String, String)> {
+    let Some(wurzel) = wurzel else { return Vec::new() };
+    let mut aus: Vec<(String, String)> = Vec::new();
+    for e in belege.iter().rev() {
+        if !SCHREIBEND.contains(&e.werkzeug.as_str()) {
+            continue;
+        }
+        let Ok(argumente) = serde_json::from_str::<serde_json::Value>(&e.argumente) else { continue };
+        // `pfad` bei den einzelnen Dateiwerkzeugen, `pfade` beim Ersetzen ueberall.
+        let pfade: Vec<String> = match (argumente.get("pfad"), argumente.get("pfade")) {
+            (Some(p), _) => p.as_str().map(str::to_string).into_iter().collect(),
+            (None, Some(l)) => l.as_array().into_iter().flatten().filter_map(|p| p.as_str().map(str::to_string)).collect(),
+            _ => Vec::new(),
+        };
+        for pfad in pfade {
+            let rel = Path::new(&pfad);
+            let draussen = rel.is_absolute()
+                || rel.components().any(|c| matches!(c, std::path::Component::ParentDir));
+            if draussen || aus.iter().any(|(p, _)| *p == pfad) {
+                continue;
+            }
+            let Ok(inhalt) = std::fs::read_to_string(wurzel.join(rel)) else { continue };
+            let mut gezeigt: String = inhalt.chars().take(PRUEF_DATEI_ZEICHEN).collect();
+            if gezeigt.len() < inhalt.len() {
+                gezeigt.push_str("\n[gekuerzt]");
+            }
+            aus.push((pfad, gezeigt));
+            if aus.len() == PRUEF_DATEIEN {
+                return aus;
+            }
+        }
+    }
+    aus
+}
 
 /// **Der Auftrag des Pruefdurchgangs**, mit den Belegen der Runde.
 ///
@@ -939,7 +1077,14 @@ const PRUEF_BELEG_ZEICHEN: usize = 400;
 /// das Skript laeuft ohne Fehler". Das Skript brach weiter ab. **Jetzt
 /// sieht sie die Werkzeugergebnisse**, die letzten `PRUEF_BELEGE`, und die
 /// Regel, dass eine Behauptung ohne Beleg nicht zaehlt.
-pub fn pruefauftrag(v: &Vorhaben, wahl: &Rundenwahl, bericht: &str, belege: &[Erledigt], sprache: Sprache) -> Vec<Nachricht> {
+pub fn pruefauftrag(
+    v: &Vorhaben,
+    wahl: &Rundenwahl,
+    bericht: &str,
+    belege: &[Erledigt],
+    dateien: &[(String, String)],
+    sprache: Sprache,
+) -> Vec<Nachricht> {
     let notizen: Vec<String> = wahl.notizen.iter().map(|(k, w)| format!("- {k}: {w}")).collect();
     let behauptet = wahl.fertig.as_deref().unwrap_or("-");
     let ab = belege.len().saturating_sub(PRUEF_BELEGE);
@@ -952,11 +1097,31 @@ pub fn pruefauftrag(v: &Vorhaben, wahl: &Rundenwahl, bericht: &str, belege: &[Er
         .collect();
     let keine = if sprache == Sprache::De { "(keine: in dieser Runde lief kein Werkzeug)" } else { "(none: no tool ran in this round)" };
     let belegt = if belegt.is_empty() { keine.to_string() } else { belegt.join("\n") };
+    let dateiteil = if dateien.is_empty() {
+        String::new()
+    } else {
+        let liste: Vec<String> = dateien.iter().map(|(p, t)| format!("--- {p} ---\n{t}")).collect();
+        if sprache == Sprache::De {
+            format!(
+                "GESCHRIEBENE DATEIEN, WIE SIE JETZT SIND:\n{}\n\n\
+                 Bei einer geschriebenen Datei zählt ihr INHALT: Prüfe ihn gegen das Ziel. Dass sie \
+                 existiert, ist kein Beleg dafür, dass das Richtige darin steht.\n\n",
+                liste.join("\n")
+            )
+        } else {
+            format!(
+                "WRITTEN FILES, AS THEY ARE NOW:\n{}\n\n\
+                 For a written file its CONTENT counts: check it against the goal. That it exists is no \
+                 evidence that the right thing is in it.\n\n",
+                liste.join("\n")
+            )
+        }
+    };
     let text = if sprache == Sprache::De {
         format!(
             "Prüfe eine Runde eines Langzeitvorhabens.\n\nZIEL:\n{}\n\nNOTIZEN:\n{}\n\nBERICHT DER RUNDE:\n{}\n\n\
              BELEGE (die tatsächlichen Werkzeugergebnisse dieser Runde, die letzten zuerst abgeschnitten):\n{belegt}\n\n\
-             DER AGENT MELDET ALS ERGEBNIS: {behauptet}\n\n\
+             {dateiteil}DER AGENT MELDET ALS ERGEBNIS: {behauptet}\n\n\
              ERREICHT heißt JA nur, wenn die BELEGE zeigen, dass das Ziel erfüllt ist. Eine Behauptung im Bericht \
              ohne passenden Beleg zählt nicht; im Zweifel NEIN.\n\n\
              Antworte in genau drei Zeilen:\nFORTSCHRITT: JA oder NEIN\nERREICHT: JA oder NEIN\nGRUND: ein Satz",
@@ -966,7 +1131,7 @@ pub fn pruefauftrag(v: &Vorhaben, wahl: &Rundenwahl, bericht: &str, belege: &[Er
         format!(
             "Review one round of a long-running task.\n\nGOAL:\n{}\n\nNOTES:\n{}\n\nREPORT OF THE ROUND:\n{}\n\n\
              EVIDENCE (the actual tool results of this round):\n{belegt}\n\n\
-             THE AGENT REPORTS AS RESULT: {behauptet}\n\n\
+             {dateiteil}THE AGENT REPORTS AS RESULT: {behauptet}\n\n\
              REACHED is YES only if the EVIDENCE shows that the goal is met. A claim in the report without \
              matching evidence does not count; if in doubt, NO.\n\n\
              Answer in exactly three lines:\nPROGRESS: YES or NO\nREACHED: YES or NO\nREASON: one sentence",
@@ -974,6 +1139,68 @@ pub fn pruefauftrag(v: &Vorhaben, wahl: &Rundenwahl, bericht: &str, belege: &[Er
         )
     };
     vec![Nachricht::nutzer(text)]
+}
+
+/// Endungen, an denen im Ziel eine Datei zu erkennen ist.
+const DATEIENDUNGEN: [&str; 14] =
+    ["md", "txt", "py", "json", "csv", "rs", "toml", "yaml", "yml", "html", "js", "sh", "xml", "tsv"];
+
+/// **Die Dateien, die das Ziel nennt und die es nicht gibt.**
+///
+/// Ein Wort des Ziels gilt als Datei, wenn es eine der `DATEIENDUNGEN`
+/// traegt (`bericht/sensorbericht.md`, `ergebnis/statistik.md`). Pfade nach
+/// draussen und absolute Pfade zaehlen nicht.
+pub fn fehlende_zieldateien(ziel: &str, wurzel: &Path) -> Vec<String> {
+    let mut aus: Vec<String> = Vec::new();
+    for roh in ziel.split_whitespace() {
+        let wort = roh.trim_matches(|c: char| !(c.is_alphanumeric() || c == '/' || c == '_' || c == '-' || c == '.'));
+        let wort = wort.trim_end_matches('.');
+        let Some((stamm, endung)) = wort.rsplit_once('.') else { continue };
+        if stamm.is_empty() || !DATEIENDUNGEN.contains(&endung.to_ascii_lowercase().as_str()) {
+            continue;
+        }
+        let p = Path::new(wort);
+        if p.is_absolute() || p.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+            continue;
+        }
+        if !wurzel.join(p).exists() && !aus.iter().any(|a| a == wort) {
+            aus.push(wort.to_string());
+        }
+    }
+    aus
+}
+
+/// **Eine Tatsache entscheidet, nicht das Urteil des Modells**: Nennt das
+/// Ziel eine Datei, die es nach der Runde nicht gibt, ist das Ziel nicht
+/// erreicht, gleich was die Pruefung meint.
+///
+/// 📌 **Loop-Szenario, 27B, 2026-09-29:** Die Pruefung meldete in vier
+/// Runden hintereinander „erreicht ja", weil die Notizen vollstaendig
+/// aussahen; `bericht/sensorbericht.md` gab es nicht, der Ordner `bericht/`
+/// war nie angelegt worden. Ein Modell, das dieselbe Aufgabe nicht
+/// geschafft hat, prueft sich selbst zu milde; was sich nachsehen laesst,
+/// wird nachgesehen.
+///
+/// ⚠️ **Nur in eine Richtung.** Fehlt eine genannte Datei, wird „erreicht"
+/// zu „nein"; ein „nein" wird nie zu „ja". Ein Ziel, das eine Datei zu
+/// loeschen verlangt, wird hier deshalb nicht faelschlich erreicht,
+/// hoechstens faelschlich nicht erreicht, und das steht im Grund.
+pub fn zieldateien_pruefen(mut p: Pruefung, ziel: &str, wurzel: Option<&Path>, sprache: Sprache) -> Pruefung {
+    let Some(wurzel) = wurzel else { return p };
+    if !p.erreicht {
+        return p;
+    }
+    let fehlen = fehlende_zieldateien(ziel, wurzel);
+    if fehlen.is_empty() {
+        return p;
+    }
+    p.erreicht = false;
+    p.grund = if sprache == Sprache::De {
+        format!("Das Ziel nennt {}, und das gibt es nicht. (Die Pruefung meinte: {})", fehlen.join(", "), p.grund)
+    } else {
+        format!("The goal names {}, which does not exist. (The review said: {})", fehlen.join(", "), p.grund)
+    };
+    p
 }
 
 /// Liest die Antwort des Pruefdurchgangs.
@@ -1342,6 +1569,9 @@ pub fn runde(
     let start_notizen = stand.as_ref().map(|r| r.notizen.clone()).unwrap_or_else(|| v.notizen.clone());
     let wahl: Geteilt = Arc::new(Mutex::new(Rundenwahl { notizen: start_notizen, ..Default::default() }));
     let mut ruestung = ruesten(werkzeuge(&wahl), &v.ziel)?;
+    // ⚑ Skills nach dem Ziel suchen, nicht nach dem Rahmen der Runde
+    //   (`Ruestung::skillsuche`).
+    ruestung.skillsuche = Some(v.ziel.clone());
     // ⛔️ **Was vor einer Unterbrechung lief, laeuft nicht noch einmal.**
     //    Der Hinweis im Auftrag reicht nicht: Im Probelauf am 2026-09-26
     //    wiederholte das 0,6B-Modell drei erledigte Aufrufe trotzdem. Bei
@@ -1365,6 +1595,18 @@ pub fn runde(
         ruestung.kasten.umhuellen(|inner| {
             if SCHREIBEND.contains(&inner.name()) {
                 Box::new(Pendelwaechter { inner, wurzel: wurzel.clone(), staende: Arc::clone(&staende), de })
+            } else {
+                inner
+            }
+        });
+    }
+    // ⚑ Der Befehlsspiegel um jedes Befehlswerkzeug.
+    {
+        let gesehen = Arc::new(Mutex::new(std::collections::HashMap::new()));
+        let de = sprache == Sprache::De;
+        ruestung.kasten.umhuellen(|inner| {
+            if BEFEHLE.contains(&inner.name()) {
+                Box::new(Befehlsspiegel { inner, gesehen: Arc::clone(&gesehen), de })
             } else {
                 inner
             }
@@ -1402,6 +1644,7 @@ pub fn runde(
     };
     let ausgang =
         crate::lauf::fahren_beobachtet(modell, &ruestung, grenzen.schritte as usize, true, max_tokens, &text, Some(&mitschreiben));
+    rundenmitschrift(&v.kennung, v.runden + 1, &ausgang.nachrichten);
 
     let ende = if schliessen_angefordert() {
         Rundenende::Unterbrochen
@@ -1441,9 +1684,14 @@ pub fn runde(
     let unfertig = matches!(ende, Rundenende::Abbruch(_) | Rundenende::Unterbrochen);
     let pruefung = if grenzen.pruefen && !unfertig {
         modell
-            .chat("lokal", &pruefauftrag(v, &w, &bericht, &festhalten.lock().expect("Rundenstand").0.erledigt, sprache), Some(120))
+            .chat("lokal", &{
+                let belege = festhalten.lock().expect("Rundenstand").0.erledigt.clone();
+                let dateien = geschriebene_dateien(&belege, ruestung.einhaengung.as_ref().map(|e| e.wurzel()));
+                pruefauftrag(v, &w, &bericht, &belege, &dateien, sprache)
+            }, Some(120))
             .ok()
             .map(|a| pruefung_lesen(&a.text))
+            .map(|p| zieldateien_pruefen(p, &v.ziel, ruestung.einhaengung.as_ref().map(|e| e.wurzel()), sprache))
     } else {
         None
     };
@@ -2204,6 +2452,87 @@ mod proben {
         assert_eq!(schreib("sensor;neu"), "angelegt", "ein neuer Stand ist kein Kreis");
     }
 
+    struct Fester(&'static str);
+    impl Werkzeugausfuehrung for Fester {
+        fn name(&self) -> &str {
+            "run_command"
+        }
+        fn ausfuehren(&self, _a: &serde_json::Value) -> Result<String, Werkzeugfehler> {
+            Ok(self.0.into())
+        }
+    }
+
+    /// ⚑ **Fehlt eine Datei, die das Ziel nennt, ist das Ziel nicht
+    /// erreicht**, auch wenn die Pruefung „ja" sagt; ein „nein" bleibt.
+    #[test]
+    fn eine_fehlende_zieldatei_macht_aus_ja_ein_nein() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(d.path().join("ergebnis")).unwrap();
+        std::fs::write(d.path().join("ergebnis/statistik.md"), "| T1 |").unwrap();
+        let ziel = "Schreibe einen Bericht in die Datei bericht/sensorbericht.md. Nutze die Zahlen aus ergebnis/statistik.md, z.B. den Mittelwert.";
+        assert_eq!(fehlende_zieldateien(ziel, d.path()), vec!["bericht/sensorbericht.md".to_string()]);
+        let ja = Pruefung { fortschritt: true, erreicht: true, grund: "Die Befunde sind vollstaendig.".into() };
+        let p = zieldateien_pruefen(ja.clone(), ziel, Some(d.path()), Sprache::De);
+        assert!(!p.erreicht && p.grund.contains("bericht/sensorbericht.md"), "{p:?}");
+        assert!(p.fortschritt, "der Fortschritt bleibt");
+        // Mit der Datei bleibt das Ja.
+        std::fs::create_dir_all(d.path().join("bericht")).unwrap();
+        std::fs::write(d.path().join("bericht/sensorbericht.md"), "# Bericht").unwrap();
+        assert!(zieldateien_pruefen(ja, ziel, Some(d.path()), Sprache::De).erreicht);
+        // Ein Nein wird nie zu Ja, auch wenn alles da ist.
+        let nein = Pruefung { fortschritt: false, erreicht: false, grund: "x".into() };
+        assert!(!zieldateien_pruefen(nein, ziel, Some(d.path()), Sprache::De).erreicht);
+    }
+
+    /// ⚑ **Die Pruefung sieht den Inhalt geschriebener Dateien**, die
+    /// juengste Fassung je Datei, und nichts ausserhalb der Einhaengung.
+    #[test]
+    fn die_pruefung_sieht_geschriebene_dateien() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(d.path().join("bericht")).unwrap();
+        std::fs::write(d.path().join("bericht/b.md"), "Serverraum: verletzt").unwrap();
+        let schrieb = |p: &str| Erledigt {
+            werkzeug: "write_file".into(),
+            argumente: serde_json::json!({"pfad": p, "inhalt": "x"}).to_string(),
+            ergebnis: "angelegt".into(),
+        };
+        let belege = vec![
+            schrieb("bericht/b.md"),
+            Erledigt { werkzeug: "read_file".into(), argumente: "{\"pfad\":\"q.md\"}".into(), ergebnis: "q".into() },
+            schrieb("../draussen.md"),
+            schrieb("bericht/b.md"),
+        ];
+        let dateien = geschriebene_dateien(&belege, Some(d.path()));
+        assert_eq!(dateien.len(), 1, "jede Datei einmal, nichts von draussen: {dateien:?}");
+        assert_eq!(dateien[0].1, "Serverraum: verletzt");
+        let v = Vorhaben::neu("v1".into(), "Bericht schreiben", 0);
+        let t = pruefauftrag(&v, &wahl(), "Fertig.", &belege, &dateien, Sprache::De).remove(0).content;
+        assert!(t.contains("--- bericht/b.md ---\nServerraum: verletzt"), "{t}");
+        assert!(t.contains("zählt ihr INHALT"), "{t}");
+        // Ohne geschriebene Datei bleibt der Auftrag wie vorher.
+        let ohne = pruefauftrag(&v, &wahl(), "Fertig.", &belege, &[], Sprache::De).remove(0).content;
+        assert!(!ohne.contains("GESCHRIEBENE DATEIEN"), "{ohne}");
+    }
+
+    /// ⚑ **Der Befehlsspiegel** sagt es beim dritten gleichen Ergebnis,
+    /// nicht vorher, und zaehlt je Befehl und Ausgabe.
+    #[test]
+    fn der_befehlsspiegel_sieht_die_gleiche_ausgabe() {
+        let w = Befehlsspiegel {
+            inner: Box::new(Fester("IndentationError")),
+            gesehen: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            de: true,
+        };
+        let lauf = |b: &str| w.ausfuehren(&serde_json::json!({"befehl": b})).unwrap();
+        assert_eq!(lauf("python3 a.py"), "IndentationError");
+        assert_eq!(lauf("python3 a.py"), "IndentationError");
+        assert_eq!(lauf("python3 b.py"), "IndentationError", "ein anderer Befehl zaehlt fuer sich");
+        let dritter = lauf("python3 a.py");
+        assert!(dritter.starts_with("IndentationError"), "die Ausgabe bleibt vorn: {dritter}");
+        assert!(dritter.contains("zum 3. Mal"), "{dritter}");
+        assert!(dritter.contains("read_file"), "{dritter}");
+    }
+
     /// ⛔️ **Fund 487: An der Schrittgrenze ist nichts fertig**, auch wenn
     /// die Pruefung „erreicht" sagt; der Fortschritt zaehlt trotzdem.
     #[test]
@@ -2227,10 +2556,10 @@ mod proben {
     fn der_pruefauftrag_zeigt_die_belege() {
         let v = Vorhaben::neu("v1".into(), "Skript reparieren", 0);
         let belege = vec![Erledigt { werkzeug: "run_command".into(), argumente: "python3 a.py".into(), ergebnis: "KeyError: 'sensor'".into() }];
-        let t = pruefauftrag(&v, &wahl(), "Alles läuft.", &belege, Sprache::De).remove(0).content;
+        let t = pruefauftrag(&v, &wahl(), "Alles läuft.", &belege, &[], Sprache::De).remove(0).content;
         assert!(t.contains("KeyError: 'sensor'"), "{t}");
         assert!(t.contains("ohne passenden Beleg zählt nicht"), "{t}");
-        let leer = pruefauftrag(&v, &wahl(), "Alles läuft.", &[], Sprache::De).remove(0).content;
+        let leer = pruefauftrag(&v, &wahl(), "Alles läuft.", &[], &[], Sprache::De).remove(0).content;
         assert!(leer.contains("kein Werkzeug"), "{leer}");
     }
 

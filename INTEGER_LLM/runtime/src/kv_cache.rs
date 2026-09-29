@@ -156,7 +156,8 @@ impl KVCache {
     /// ⚑ **Deshalb der Rueckgabewert.** Hat das Modell rekurrente
     /// Ebenen, wird auf **null** gekuerzt und alles geleert; der
     /// Aufrufer erfaehrt es und setzt dort auf, wo wirklich gekuerzt
-    /// wurde.
+    /// wurde. Zu einer frueheren Laenge zurueck geht es nur ueber einen
+    /// aufgehobenen Zustand ([`KVCache::zurueck_auf`]).
     ///
     /// 📌 **Ein Wert, den der Aufrufer benutzen MUSS, ist sicherer als
     /// ein Kommentar, den er lesen KANN.** Ohne ihn kuerzte jemand den
@@ -183,6 +184,43 @@ impl KVCache {
             f.truncate(wirklich.saturating_mul(bv));
         }
         wirklich
+    }
+
+    /// **Eine Kopie des rekurrenten Zustands**, falls es einen gibt.
+    ///
+    /// ⚑ **Aufheben statt zurueckrechnen.** Ein Zustand laesst sich nicht
+    /// auf eine fruehere Position zurueckrechnen, aber aufheben: Die Kopie
+    /// sind genau die Zahlen, die eine neue Rechnung ueber dieselben Token
+    /// ergaebe. Welche Position sie meint, weiss nur der Aufrufer (siehe
+    /// `generate::Fortsetzung`); der Speicher selbst zaehlt sie nicht.
+    pub fn zustand_kopie(&self) -> Option<crate::zustandsspeicher::Zustandsspeicher> {
+        self.zustand.clone()
+    }
+
+    /// **Setzt den Speicher auf eine aufgehobene Stelle zurueck**: den
+    /// rekurrenten Zustand auf die Kopie, den KV-Speicher auf `laenge`.
+    ///
+    /// ⛔️ **Der Aufrufer verbuergt, dass die Kopie genau bei `laenge`
+    /// genommen wurde, in derselben Folge.** Das kann nur er wissen; hier
+    /// ist es eine Zusicherung und keine Pruefung, und darum ist die
+    /// Funktion so eng gefasst wie moeglich.
+    pub fn zurueck_auf(&mut self, laenge: usize, zustand: &crate::zustandsspeicher::Zustandsspeicher) {
+        match self.zustand.as_mut() {
+            Some(z) => z.clone_from(zustand),
+            None => self.zustand = Some(zustand.clone()),
+        }
+        let (bk, bv) = (self.breite_k, self.breite_v);
+        for f in self.k.iter_mut() {
+            f.truncate(laenge.saturating_mul(bk));
+        }
+        for f in self.v.iter_mut() {
+            f.truncate(laenge.saturating_mul(bv));
+        }
+    }
+
+    /// Ob ein rekurrenter Zustand mitgefuehrt wird.
+    pub fn hat_zustand(&self) -> bool {
+        self.zustand.is_some()
     }
 
     /// **Der Zustandsspeicher, bei Bedarf angelegt.**

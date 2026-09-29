@@ -11,7 +11,7 @@
 // Projekts. Bewusste Abweichung von clippy::too_many_arguments.
 #![allow(clippy::too_many_arguments)]
 
-use crate::fixed_point::{clamp_i16, rshift_round_i128};
+use crate::fixed_point::{clamp_i16, rshift_round_i128, rshift_round_i64};
 
 /// Reziproken-Konstante 2^20 / n (gerundet) — einmalige Initialisierung,
 /// NICHT Teil des tokenweisen Hot-Path. Damit wird der Mittelwert im
@@ -186,6 +186,47 @@ pub fn rmsnorm_i16_mit_spur(
     )
 }
 
+/// `sum_i x_i^2 << (2 * (ref_shift - x_shifts[i]))`, exakt.
+///
+/// ⚑ **Je Ausrichtung eine Summe in i64, zusammengefuehrt in i128**:
+/// dieselbe ganze Zahl, nur geklammert `sum_a (sum_{align_i = a} x_i^2) << a`.
+/// Ein Quadrat liegt unter 2^30, ein Eimer traegt also 2^33 Summanden.
+/// 📌 Bis zum 2026-09-28 lief jedes Element in i128; im Decode des gepackten
+/// 8B trug die Norm mit der QK-Norm rund 12 % der Zeit.
+fn quadratsumme(x: &[i16], x_shifts: &[u8], ref_shift: u8) -> i128 {
+    let mut eimer = [0i64; 256];
+    for (&v, &s) in x.iter().zip(x_shifts) {
+        let v = i64::from(v);
+        eimer[usize::from(ref_shift - s)] += v * v;
+    }
+    let mut acc: i128 = 0;
+    for (abstand, &summe) in eimer.iter().enumerate() {
+        if summe != 0 {
+            acc += i128::from(summe) << (2 * abstand as u32);
+        }
+    }
+    acc
+}
+
+/// `prod` um `shift` nach rechts (gerundet) oder um `-shift` nach links,
+/// exakt wie in i128.
+///
+/// ⚑ **In i64, wo es reicht**: `prod` liegt unter 2^37 (Begruendung im
+/// Kern), also bleiben ein Rechtsshift bis 62 und ein Linksshift bis 25
+/// (2^62) in i64, und `rshift_round_i64` rundet nach derselben Regel wie
+/// die i128-Fassung. Alles andere laeuft wie bisher in i128.
+fn produkt_skalieren(prod: i64, shift: i32) -> i128 {
+    if (0..=62).contains(&shift) {
+        i128::from(rshift_round_i64(prod, shift as u8))
+    } else if (-25..0).contains(&shift) {
+        i128::from(prod << (-shift) as u32)
+    } else if shift >= 0 {
+        rshift_round_i128(i128::from(prod), shift as u32)
+    } else {
+        i128::from(prod) << (-shift) as u32
+    }
+}
+
 /// Der gemeinsame Kern. `eps_q40 = 0` ist das Verhalten bis zum
 /// 2026-09-22 und bleibt es fuer jeden Aufrufer ausser der
 /// torgesteuerten Norm.
@@ -229,12 +270,13 @@ fn rmsnorm_kern(
     // Linksshift bis 2*Spanne, Summe ueber n Kanaele).
     let ref_shift = *x_shifts.iter().max().expect("rmsnorm_i16: x_shifts darf nicht leer sein");
 
-    let mut acc: i128 = 0;
-    for i in 0..n {
-        let align = 2 * (ref_shift - x_shifts[i]) as u32;
-        let sq = (x[i] as i128) * (x[i] as i128);
-        acc += sq << align;
-    }
+    // ⚑ **Je Ausrichtung eine Summe in i64, zusammengefuehrt in i128.**
+    //   Dieselbe ganze Zahl wie `sum (x_i^2 << align_i)`, nur geklammert
+    //   `sum_a (sum_{align_i = a} x_i^2) << a`. Ein Quadrat liegt unter
+    //   2^30, also traegt ein Eimer 2^33 Summanden, weit mehr als jede
+    //   Breite. 📌 Gemessen am 2026-09-28 im Decode des gepackten 8B: die
+    //   Norm je Element in i128 trug mit der QK-Norm rund 12 % der Zeit.
+    let acc = quadratsumme(x, x_shifts, ref_shift);
     if acc == 0 {
         if let Some(sp) = spur {
             *sp = Rmsnormspur::Null;
@@ -302,12 +344,12 @@ fn rmsnorm_kern(
         // ausschliesslich die Division und ihre Rundungsmehrdeutigkeit bei
         // negativen Zahlen. Rundungsfrei und plattformgleich bleibt der
         // Linksshift; einzig der Ueberlauf musste abgesichert werden.
-        let prod = (x[i] as i128) * (lut_val as i128) * (gamma[i] as i128);
-        let skaliert: i128 = if shift >= 0 {
-            rshift_round_i128(prod, shift as u32)
-        } else {
-            prod << (-shift) as u32
-        };
+        //
+        // ⚑ **Seit dem 2026-09-28 in i64, wo die Grenze oben es erlaubt**:
+        // ein Rechtsshift bis 62 und ein Linksshift bis 25 (2^37 * 2^25 =
+        // 2^62). `rshift_round_i64` rundet nach derselben Regel wie die
+        // i128-Fassung, also dieselbe Zahl; alles andere laeuft wie bisher.
+        let skaliert = produkt_skalieren(i64::from(x[i]) * lut_val * i64::from(gamma[i]), shift);
         out.push(clamp_i16(skaliert.clamp(i32::MIN as i128, i32::MAX as i128) as i32));
     }
     out
@@ -738,3 +780,52 @@ mod tests {
         assert!(out.iter().all(|v| *v >= 0), "Vorzeichenwechsel deutet auf Wrap: {:?}", out);
     }
 }
+
+#[cfg(test)]
+mod exaktheit_der_schnellen_wege {
+    use super::*;
+
+    /// **Die Eimer ergeben dieselbe Summe wie jedes Element in i128**, bei
+    /// verschiedenen Ausrichtungen und Extremwerten.
+    #[test]
+    fn die_quadratsumme_ist_die_alte() {
+        let mut z = 0x1234_5678_9ABC_DEF1_u64;
+        for n in [1usize, 7, 128, 4096, 5120] {
+            let x: Vec<i16> = (0..n)
+                .map(|i| {
+                    z ^= z << 13;
+                    z ^= z >> 7;
+                    z ^= z << 17;
+                    if i % 97 == 0 { i16::MIN } else { z as u16 as i16 }
+                })
+                .collect();
+            let x_shifts: Vec<u8> = (0..n).map(|i| 3 + (i * 7 % 13) as u8).collect();
+            let ref_shift = *x_shifts.iter().max().unwrap();
+            let mut alt: i128 = 0;
+            for i in 0..n {
+                let align = 2 * (ref_shift - x_shifts[i]) as u32;
+                alt += ((x[i] as i128) * (x[i] as i128)) << align;
+            }
+            assert_eq!(quadratsumme(&x, &x_shifts, ref_shift), alt, "n = {n}");
+        }
+    }
+
+    /// **Jeder Zweig der Skalierung ist die alte i128-Rechnung**, ueber
+    /// alle Shifts von -40 bis 70 und die Raender des Produkts.
+    #[test]
+    fn die_skalierung_ist_die_alte() {
+        let grenze = 32768i64 * 32767 * 128;
+        let werte = [0i64, 1, -1, 2, -2, 3, 12345, -12345, grenze, -grenze, grenze - 1, 1 << 36, -(1 << 36) - 7];
+        for &prod in &werte {
+            for shift in -40..=70 {
+                let alt: i128 = if shift >= 0 {
+                    rshift_round_i128(i128::from(prod), shift as u32)
+                } else {
+                    i128::from(prod) << (-shift) as u32
+                };
+                assert_eq!(produkt_skalieren(prod, shift), alt, "prod {prod}, shift {shift}");
+            }
+        }
+    }
+}
+

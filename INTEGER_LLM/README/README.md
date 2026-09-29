@@ -1,7 +1,7 @@
 # integer-llm
 
-> **Version:** 0.96.0 (θ_v 0.22.0; kernels 0.66.0, runtime 0.66.0, pipeline 0.15.1)
-> **Datum:** 2026-09-25
+> **Version:** 0.104.0 (θ_v 0.22.0; kernels 0.71.0, runtime 0.74.0, pipeline 0.15.1)
+> **Datum:** 2026-09-28
 > **Status:** ⚠️ **Das Akzeptanzkriterium ruht auf einer zu kleinen
 > Stichprobe.** Gemessen wurde bisher ueber **4 Sequenzen, 435
 > Positionen**; eine Messung ueber **32 Sequenzen, 3558 Positionen**
@@ -646,6 +646,511 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
   volle Paritätstests nur auf GPU-Runnern (nightly oder PR-basiert)
 
 ## Changelog
+
+### v0.104.0 – 2026-09-29 (runtime 0.74.0: Fund 501, ein Wettlauf beim parallelen Laden der Drehvorzeichen)
+
+**Fund 501.** In einem von sieben mehrstufigen Agentenaufträgen brach das
+ternäre 27B beim ersten Schritt ab: `gate und up muessen dieselbe
+Eingangsdrehung tragen` (`model.rs`). Ursache: `vorzeichen_laden` sah im
+Cache nach, las bei Fehlanzeige die Datei und legte sie dann mit `insert`
+ab. Der Lader arbeitet parallel; laden zwei Fäden gleichzeitig dieselben
+Vorzeichen (gate und up einer Ebene), verpassen beide den Eintrag, und
+jeder bekam ein eigenes `Arc`. `Drehung::gleich` verglich nur Zeiger.
+
+**Behoben, doppelt:**
+- Der Eintrag wird atomar angelegt (`entry(..).or_insert_with`): Der erste
+  gewinnt, alle bekommen dasselbe `Arc`.
+- `Drehung::gleich` vergleicht bei verschiedenen Zeigern den Inhalt.
+
+**Belege:** `gleichzeitig_geladene_vorzeichen_sind_dasselbe_objekt`
+(sechzehn Fäden; Gegenprobe mit dem alten `insert` fünfmal von fünf rot),
+`gleiche_vorzeichen_in_zwei_kopien_sind_gleich` (dazu die Gegenfälle mit
+anderen Vorzeichen und anderer Skala).
+
+### v0.103.0 – 2026-09-28 (runtime 0.73.0: Merkpunkt, hybride Modelle verwenden den Verlauf zwischen Agentenschritten wieder)
+
+**Anlass:** In der agentischen Challenge brauchte das ternäre 27B **12 bis
+13 Minuten je Werkzeugschritt** und schloss in 90 Minuten keine einzige
+Runde ab. Ursache: Ein rekurrenter Zustand lässt sich nicht auf eine
+frühere Position zurückrechnen, also kürzte der Speicher bei jeder
+Abweichung des Prompts auf null. Im Agentenbetrieb weicht jeder neue
+Prompt kurz vor dem Ende ab (die letzte Antwort wird neu gerendert), und
+das 27B las in jedem Schritt den ganzen Verlauf neu, bei rund 12 Token/s
+Vorbereitung. Dasselbe gilt für das 35B.
+
+**Der Merkpunkt:**
+- `Fortsetzung::merkmarke_setzen(Some(token))`: Vor dem **letzten**
+  Vorkommen dieses Tokens im Prompt wird der rekurrente Zustand
+  aufgehoben. Der Client setzt `<|im_start|>`, denn bis zur letzten
+  Rollenmarke bleibt ein Chatverlauf Token für Token gleich.
+- Die Vorbereitung läuft dafür in zwei Stücken; dieselben Zahlen, denn die
+  gebündelte Vorbereitung ist Position für Position die tokenweise.
+- `Fortsetzung::kuerzen`: Steht der Zustand schon an der gewünschten
+  Stelle, bleibt alles; liegt der Merkpunkt davor, zurück auf ihn; sonst
+  null wie bisher.
+- `KVCache::zustand_kopie` und `KVCache::zurueck_auf`; `KVCache::kuerzen`
+  behält seine Bedeutung. Kosten: eine Kopie des Zustands, beim 27B rund
+  290 MB.
+
+📌 **Ein erster Entwurf las die Länge aus `Zustandsspeicher::laenge`.** Die
+wird im Rechenweg nie weitergezählt (`vorruecken` rufen nur Proben), und
+der Merkpunkt griff nie. Die Probe zeigte es sofort; jetzt zählt die
+Fortsetzung, in der jedes gerechnete Token steht.
+
+**Belege:** `fortgesetzt_mit_zustand_verwendet_bis_zur_marke_wieder` am
+Zustands-Fixture: Token und Zustand gleich einer frischen Rechnung, 30 von
+30 Token vor der Marke wiederverwendet; ohne Marke null, wie vorher;
+Gegenprobe ohne das Zurückholen rot. Laufzeit 140 grün, Konformität 48/48
+auf beiden Wegen, Clippy ohne Befund.
+
+### v0.102.0 – 2026-09-28 (kernels 0.71.0, runtime 0.72.0: Destillation und Minibatch für den Umwandlungstest)
+
+**Anlass:** der Umwandlungstest am 0,6B. Mit bloßer Kreuzentropie lernt
+das ternäre Modell nur, welches Wort als nächstes kam; das int8-Modell weiß
+mehr, nämlich wie wahrscheinlich jedes andere gewesen wäre.
+
+**Destillation:**
+- `backward::verteilungsgradient(p, q)`: `dL/dz = p − q` gegen eine ganze
+  Zielverteilung. `kreuzentropie_gradient` ist der Sonderfall, in dem `q`
+  eine Eins trägt; die Probe `der_verteilungsgradient_enthaelt_den_der_kreuzentropie`
+  prüft genau das, dazu `p − p = 0` und die Nullsumme. Verschiedene Längen
+  sind eine Panik mit Namen statt eines stummen `zip`.
+- `trainingsschleife::Ziel` (`Wort`, `Verteilung`), `gradient_gegen`,
+  `lehrerverteilung` und `gradienten_je_position_vom_lehrer`.
+  `gradient_vom_ziel_mit_kopf` geht jetzt über `gradient_gegen` mit
+  `Ziel::Wort`, rechnet also dasselbe. ⚑ Der Lehrer rechnet seine
+  Verteilung **mit derselben Funktion** wie der Schüler (Kopf auf
+  `logit_frac`, Softmax auf `prob_frac`), sonst wäre `p − q` ein
+  Unterschied der Skalen. Die letzte Position bleibt ohne Gradienten wie
+  beim Wortziel, damit beide Verfahren vergleichbar sind.
+- `trainingsguete --lehrer`: Lehrer ist das geladene Modell mit den
+  Gewichten seines Artefakts; die trainierten liegen getrennt in
+  `Shardgewichte`. Mit `--ternaer` lehrt so das int8-Modell seine ternäre
+  Fassung.
+
+**Minibatch:** `trainingsguete --je-durchgang N`. Durchgang `k` nimmt die
+Folgen `k·N` bis `k·N+N` aus dem Vorrat (`--folgen`), umlaufend. Vorher
+sah jeder Durchgang dieselben Folgen und lernte sie auswendig.
+
+**Belege:** Kerntests der Verteilung grün (Sonderfall Kreuzentropie,
+Gleichheit, Nullsumme, Längenfehler); Rauchtest am 0,6B mit `--ternaer
+--lehrer` über alle 28 Ebenen läuft durch (2 Durchgänge, 73 s).
+
+### v0.101.0 – 2026-09-28 (kernels 0.70.0, runtime 0.71.0: ternäres Training im Ganzzahlpfad, Rückwärtspass verteilt)
+
+**Auftrag des Projektinhabers:** ein ausreichender Rückwärtspass, damit
+Modelle im Netz trainiert werden können, zuerst ternäre; danach ein
+Umwandlungstest am 0,6B.
+
+**Ternäres Training (T1).** Das Training arbeitet schon mit ganzzahligen
+Mastergewichten (`i32`, 20 Bruchstellen), aus denen vor jedem Vorwärtslauf
+das Gewicht der Rechnung abgeleitet wird. Für ternär braucht es nur eine
+zweite Ableitung:
+- `trainingsschritt::Gewichtsform` (`Int8` wie bisher, `Ternaer`) und
+  `ternaer_aus_master`: je 128er-Gruppe `a = rshift_round(Σ|m|, 7)`,
+  `t = sign(m)`, wenn `2|m| > a`, sonst 0 (Gleichstand null), dann wie
+  bisher je Zeile auf int8. Die Gruppen bleiben ternär, die Matrix lässt
+  sich exakt packen. Der Gradient geht unverändert an den Master
+  (Straight-Through); Δm, Aggregation und Prüfung im Netz bleiben, wie sie
+  sind.
+- Die Form steht in den Vorgaben (`Schritt-`, `Mlp-`,
+  `Aufmerksamkeitsvorgaben`) und in `Shardgewichte`. ⚑ **Im Netz folgt sie
+  aus dem Artefakt**: Ein ternärer Bereich trainiert ternär, und alle
+  Knoten sehen dasselbe Artefakt. Deshalb steht sie nicht in
+  `Shardvorgaben` und nicht auf dem Draht. `form_setzen` ist für die lokale
+  Umwandlung eines int8-Modells; umgekehrt wird abgewiesen.
+- `master_aus_gewicht` übernimmt ternär gepackte Tensoren. Ein Bereich ist
+  ganz ternär oder gar nicht, ohne Expertengemisch; eine Zustandsschicht ist
+  jetzt ein Fehler mit Namen (`ZustandsschichtNichtGetragen`) statt einer
+  Panik beim Einlesen.
+- `trainingsguete --ternaer`.
+
+📌 **Ternär lernt mit Anlaufzeit** (Kerntest, 2000 Schritte): int8 bei
+1/1000 von 61 347 auf 0, ternär bei 1/1000 von 83 669 über 168 (800) auf
+42, bei 1/16000 erst nach 800 Schritten merklich. Solange kein Master eine
+Schwelle kreuzt, sieht die Rechnung nichts; **eine Rate, die für int8
+reicht, kann für ternär zu klein sein.**
+
+**Rauchtest am 0,6B** (letzte 4 von 28 Ebenen, 400 Lernzeilen der
+Referenzleiter 2, 12 Durchgänge, `--normiert --zeilenweise --sammeln`):
+
+| Perplexität | int8 | ternär |
+|---|---|---|
+| vorher, Haltemenge | 83,7 | 1 660 (nur gerundet) |
+| nachher, Haltemenge | 111,7 | **141,0** |
+
+Das Training holt **91,5 %** des Rundungsschadens auf ungesehenen Folgen
+zurück. ⚠️ Der int8-Lauf derselben Einstellung wird schlechter (das
+Werkzeug urteilt „der Lauf schadet“): Rate und Datenmenge passen nicht
+zueinander, das ist eine Einstellung und keine Eigenschaft des
+Rückwärtspasses.
+
+**Rückwärtspass verteilt** (`backward.rs`):
+- `linear_backward` lief auf einem Kern und rechnete jedes Produkt in
+  i128. Gemessen (`sample`): 7 461 Proben dort, die 14 Poolfäden schliefen,
+  gut 190 s je Durchgang.
+- `dL/dx` jetzt in Spaltenblöcken über den Fadenpool, je Ausrichtung in
+  i64 gesammelt und einmal verschoben in i128 zusammengeführt
+  (`gx_spalten`). Dieselbe ganze Zahl.
+- `dL/dW`: `linear_backward_summierend` addiert direkt in die Summe über die
+  Positionen (Aufmerksamkeit), `linear_backward_begrenzt` liefert gleich
+  begrenzt (MLP, vorher `nach_grad` danach). Zeilen verteilt über
+  `std::thread::scope` mit `chunks_mut`, ohne `unsafe`.
+- **Bitgleich:** Die Probe `verteilt_ist_die_alte_fassung` hält die alte
+  Fassung wörtlich als Maßstab (700 × 1024, sieben Zeilenshifts, Ränder);
+  die bewegten Gewichte im Rauchtest sind Durchgang für Durchgang dieselben
+  (45 257 230, 49 085 014, 50 559 686, …).
+- **Zeit je Durchgang: 190 s → 65 s → 28 s**, bei rund 330 % Auslastung.
+
+**Zweite Runde, nach neuem Profil über alle 28 Ebenen:**
+- 📌 **Der Kopf verwarf ein äußeres Produkt von 1,2 GB je Position**
+  (`let (g_normed, _) = linear_backward(…)`, 151 936 × 1 024 in i64).
+  Jetzt `linear_backward_eingang`, nur `dL/dx`.
+- `gewicht_aus_master` und `ternaer_aus_master` zeilenweise verteilt.
+  `std::thread::scope` statt Fadenpool, weil beide absichtlich eine Panik
+  auslösen können und die beim Aufrufer ankommen muss; ein Poolfaden stürbe
+  still, und der Aufrufer wartete auf ihn.
+- Der Rückwärtspass der Aufmerksamkeit kopierte je Position und Kopf die
+  Schlüssel und Werte aller früheren Positionen (quadratisch über die
+  Folge) und lief einkernig. Jetzt je KV-Gruppe eine Aufgabe, die einmal
+  kopiert und nur in ihre eigenen Summen schreibt.
+- **Bitgleich**, belegt an den Abdrücken dreier Läufe, die vor und nach
+  jedem Umbau gleich sind (int8, ternär, alle 28 Ebenen), und an
+  `verteilt_abgeleitet_ist_zeilenweise_dasselbe`.
+
+| | 4 Ebenen, 12 Durchgänge | 28 Ebenen, 2 Durchgänge |
+|---|---|---|
+| einkernig (hochgerechnet) | ~2 300 s | |
+| erste Runde | 334 s | |
+| **zweite Runde** | **228 s** | **177 s** |
+
+Alle 28 Ebenen des 0,6B bloß ternär gerundet: Perplexität **67 Millionen**,
+nach zwei Durchgängen 11 Millionen. Das ist der Ausgangspunkt des
+Umwandlungstests.
+
+**Belege:** Kerntests grün (Ableitung ternär und packbar, Schwelle und
+Gleichstand, `Int8` bitgleich zum alten Weg, ternär lernt; Gegenprobe an der
+Schwelle rot); verteilte Fassungen gegen die alte (Gegenprobe rot).
+
+### v0.100.0 – 2026-09-28 (kernels 0.69.0, runtime 0.70.0: ein ternäres, gedrehtes 27B rechnet ganzzahlig, 7,6 GB)
+
+**Auftrag des Projektinhabers:** Stufe B2, Ternary Bonsai 2 27B (PrismML,
+Apache-2.0) in Myelith, gemessen gegen unser 35B statt gegen eine
+BF16-Referenz. Arbeitsname `myelith-27b-ternaer`.
+
+**Das Modell:** Qwen3.5-Bauart mit 64 Ebenen, davon 48 mit linearer
+Aufmerksamkeit (Zustandsschicht) und 16 mit voller, dichtes MLP mit 17 408.
+Jedes Gewicht ternär, je 128 eine FP16-Skala. Die Eingänge von 401 Matrizen
+sind mit einer festen Hadamard-Drehung gedreht: je Eingangsbreite ein
+Vorzeichenvektor, dann die normierte Sylvester-Hadamard-Matrix je 1024.
+
+**Kalibrierung ohne 54 GB** (`calibrate/src/gedrehtes_paket.py`, neu). Ein
+27B in BF16 passt nicht in 24 GiB, und ein dichtes Modell liest je Durchgang
+alle Gewichte. Das Paket (8,6 GB) wird deshalb als `Qwen3_5ForCausalLM`
+geladen, dessen gedrehte Linearschichten gepackt bleiben und erst im
+Vorwärtslauf entpacken, eine Matrix zur Zeit, in float32. Die Einbettung
+wird einmal zurückgedreht, und von den nullzentrierten Normen wird der
+Versatz +1 abgezogen, den das Paket schon enthält.
+- Belegt über die Gleitkomma-Perplexität: 11,37 auf zwei Sequenzen.
+  **Gegenprobe ohne den Abzug: 1,3 Millionen.** Damit sind auch die
+  Kopfreihenfolge der linearen Aufmerksamkeit und das Tor bestätigt; beide
+  hätten ähnlich zerstört.
+- Faltungsgewichte: MLX-Layout `[Ausgang, Kern, Eingang]` getauscht.
+- `stats.py` misst die gedrehte Eingabe jeder Projektion unter
+  `<projektion>.drehung`; daraus entsteht deren Skala.
+- `export_weights.py` exportiert die gedrehten Schichten ternär: Codes
+  unverändert (das Paket speichert `q = t + 1`, genau unser Code), die
+  FP16-Skalen **exakt** als `i16`-Betrag mal Zeilenshift (Spanne der
+  Exponenten je Zeile höchstens 3). Eine nicht exakt zerlegbare Zeile ist ein
+  Fehler, keine Rundung.
+- Neuer Modelleintrag mit Merkmal `gedreht`; ein Lader ohne diese
+  Fähigkeit weist das Artefakt ab.
+
+**Laufzeit:**
+- `kernels/src/drehung.rs` (neu): ganzzahlige Drehung. Vorzeichen, schnelle
+  Walsh-Hadamard-Transformation exakt in i32 (höchstens 2^25), der Faktor
+  1/32 als **ein** gerundeter Shift auf die kalibrierte Skala. Geprüft gegen
+  die ausmultiplizierte Matrix, mit Rundung.
+- `QTensor::drehung` und `LmHead::drehung`; der Lader liest die
+  Vorzeichendatei (Prüfsumme, nur ±1) und die Skala aus `scales.json`.
+  Gleiche Vorzeichendatei heißt gleicher `Arc`, und daran erkennt das
+  Modell gleiche Drehungen.
+- Das Modell dreht vor jeder gedrehten Projektion, **gleiche Drehungen einmal
+  je Eingabe** (q/k/v, in_proj_qkv/z). Im MLP wird `h` zwischen SiLU und down
+  gedreht (`mlp_h`, neu im Kern, dieselbe verschmolzene Rechnung); `in_proj_a`
+  und `in_proj_b` bleiben ungedreht und int8.
+- Ternär zulässig sind jetzt auch `in_proj_qkv`, `in_proj_z` und `out_proj`
+  der Zustandsschicht; die Trainingssperre erkennt sie.
+
+**Gemessen** (M5 Pro, `cpu-simd`, 2026-09-28):
+
+| | **27B ternär, gedreht** | 35B-A3B int8 |
+|---|---|---|
+| Artefakt | **7,6 GB** | 31 GB |
+| WikiText-2 4×128, ganzzahlig | 11,26 | 8,96 |
+| dieselben Sequenzen, Gleitkomma | 11,18 | |
+| Abstand ganzzahlig zu Gleitkomma | **+0,79 %** | |
+| GSM8K, erste 50, gierig, ohne Denkmodus | 39/50 | 40/50 |
+| Decode, A B B A | 10,0 Token/s | 15,5 Token/s |
+| Prefill | 12,6 Token/s | 9,5 Token/s |
+
+- **Der ganzzahlige Pfad kostet am 27B 0,8 %** gegenüber seiner eigenen
+  Gleitkomma-Referenz, die Drehung eingeschlossen. Zum Vergleich: +2,9 % am
+  Anker. Die Drehung verteilt Ausreißer über 1024 Kanäle, und genau daran
+  scheitern int16-Aktivierungen sonst.
+- Beim Rechnen gleichauf mit dem 35B bei einem Viertel des Speichers. Im
+  Decode ist das 35B schneller, denn ein Gemisch liest je Token 3B
+  Parameter, das 27B alle 27B (bei 2 Bit).
+- Das 27B antwortet sinnvoll: „The capital of France is Paris.“ und eine
+  flüssige deutsche Erklärung der Primzahl, deren zweiter Satz allerdings
+  inhaltlich schief ist.
+
+⚠️ **Offen:**
+- Decode: Die Matrizen allein wären rechnerisch rund 16 Token/s; der Rest liegt in
+  Zustandsschicht, Drehungen und Aufmerksamkeit, noch nicht profiliert.
+- GSM8K an 50 Aufgaben unterscheidet 39 und 40 nicht.
+- Die Warnung von transformers zum Tokenizer ist eine Fehlmeldung: Der
+  Vorzerleger ist mit dem des Qwen3.6-35B identisch, ebenso Vokabular und
+  Merges.
+- Lizenz: Bei öffentlicher Verbreitung eines Artefakts gehört „Created using
+  Bonsai by Prism ML“ in die Hinweise.
+
+### v0.99.0 – 2026-09-28 (kernels 0.68.0, runtime 0.69.0: der Decode durchoptimiert, jede Stufe gemessen, keine Zahl geändert)
+
+**Auftrag des Projektinhabers:** „alles durchoptimieren“, dann Stufe B2.
+Vorgehen: profilieren (`sample`, macOS), den größten Posten abstellen,
+messen, wiederholen. **Jede Stufe ist eine reine Laufzeitentscheidung:**
+Die Token-Prüfsumme `63310eb7d9d21244` ist nach jeder Stufe dieselbe, auf
+beiden Artefakten.
+
+| Decode, ternäres 8B, 64 Token, Mittel aus A B B A | gepackt | int8 |
+|---|---|---|
+| v0.98.0 | 20,0 | 16,2 |
+| Blöcke nach Bedarf im Fadenpool | 22,1 | 17,0 |
+| q/k/v und gate/up je in einer Runde | 25,7 | 19,2 |
+| `sdot`/`udot` im ternären Kern | 29,4 | 19,1 |
+| SiLU in die gate/up-Runde verschmolzen | 32,4 | 20,3 |
+| RMSNorm exakt in i64 | **32,7** | **20,4** |
+
+Prefill (13 Token): gepackt 54,6, int8 38,8 Token/s. Das gepackte 8B ist
+damit **1,6-mal so schnell** wie das int8-Artefakt und **doppelt so schnell**
+wie dieses vor den Optimierungen.
+
+1. **Fadenpool, Blöcke nach Bedarf** (`fadenpool.rs`). Diese Maschine hat 5
+   „Super“- und 10 „Performance“-Kerne, und bei festen, gleich großen
+   Abschnitten warteten die schnellen auf die langsamen. Das Profil zeigte
+   86 150 Proben im Warten gegen rund 32 000 im Rechnen. Jetzt holt sich jeder
+   Faden Blöcke (rund acht je Faden) über einen atomaren Zähler beim Aufrufer.
+   Jeder Block geht an genau einen Faden, also bleiben die Schreibbereiche
+   disjunkt, und die `unsafe`-Begründung bleibt dieselbe.
+2. **Weniger Runden** (`model.rs` `projektionen_qkv`, `mlp.rs`). Eine Runde
+   kostet rund 47 µs (`rundenprobe`). Im Decode laufen q, k und v in einer
+   Runde (`linear_w8a16_buendel`), gate und up ebenso; dieselbe Zeilenformel.
+3. **`sdot`/`udot`** (`ternaer.rs` `zeile_dot`). Je 16 Gewichte zwei Befehle
+   statt vier `vmlal`, über `asm!` in einer Funktion mit
+   `#[target_feature(enable = "dotprod")]`, weil `vdotq_s32` in stabilem Rust
+   noch nicht freigegeben ist. Gewählt nach
+   `is_aarch64_feature_detected!("dotprod")`; ohne die Erweiterung bleibt
+   die `vmlal`-Fassung. Beide werden ausdrücklich gegen die skalare geprüft.
+   Matrix 12 288 × 4 096: **57 G Gewichte/s auf einem Kern, 390 G/s auf
+   allen**, doppelt so viel wie int8.
+4. **SiLU verschmolzen** (`mlp.rs`). Ohne Mitschnitt rechnet jede Zeile ihr
+   gate- und up-Skalarprodukt und gleich `silu(gate) · up`; `silu_produkt`
+   lief danach einkernig und trug 11 %. Die Elementformel steht jetzt einmal
+   (`silu_element`) und wird von beiden Wegen gerufen. Mit Mitschnitt (Training)
+   bleibt der alte Weg, und die Probe vergleicht beide.
+5. **RMSNorm** (`rmsnorm.rs` `quadratsumme`, `produkt_skalieren`). Quadrate je
+   Ausrichtung in i64 gesammelt und erst dann in i128 verschoben; das Produkt
+   `x · lut · gamma` (unter 2^37) in i64, wo Rechtsshift bis 62 und
+   Linksshift bis 25 reichen, sonst wie bisher in i128. Beide geprüft gegen
+   die alte Rechnung, über alle Shifts von −40 bis 70.
+
+**Unverändert, und warum:** Die Decode-Aufmerksamkeit ist schon
+vektorisiert (NEON-Punktprodukt, Gewichtung in i32 mit Prüfung je Aufruf);
+ihr Anteil wächst mit dem Kontext, nicht mit dem Format. Der int8-Weg hängt
+an der Speicherbandbreite (194 GB/s an der Sonde); `sdot` brächte ihm nichts.
+
+### v0.98.0 – 2026-09-28 (kernels 0.67.0, runtime 0.68.0: ternäre Gewichte gepackt, bitgleich und schneller)
+
+**Auftrag des Projektinhabers:** Stufe B1, ein ternärer Rechenkern, damit
+ternäre Modelle den Platz und die Zeit sparen, die ihr Format verspricht.
+
+**Die Speicherform `ternaer_g128`.** Je Gewicht ein 2-Bit-Code
+`c = t + 1`, je 128 Gewichte ein `i16`-Betrag, dazu wie bisher ein Shift
+je Zeile. Byte `j` eines 16-Byte-Blocks trägt die Codes der Gewichte
+`j`, `j+16`, `j+32`, `j+48`; so ergeben ein Schieben und ein UND 16 Codes
+in 16 Lanes. **Keine Näherung:** Jede Zeile ergibt dieselbe ganze Zahl
+wie das int8- oder int16-Gewicht, aus dem sie gepackt ist
+(`Σ m_g · Σ t·x` statt `Σ (m_g·t)·x`). θ_v beschreibt die Rechnung, und
+die bleibt; neu ist die Speicherform und damit der `weights_hash`.
+
+**Kerne (`kernels`):**
+- `ternaer.rs` (neu): Format, `packen` (weist jede nicht ternäre Gruppe
+  mit Zeile und Gruppe ab), skalare Referenz, NEON-Fassung. Die NEON-Fassung
+  zerlegt jede Aktivierung **einmal je Eingabe** exakt in
+  `x = 256·hoch + tief` und rechnet `256·Σ c·hoch + Σ c·tief − Σ x` mit
+  `vmlal_s8`/`vmlal_u8`; `Σ x` je Gruppe hängt nur an der Eingabe.
+- `linear.rs`: `Gewichtsmatrix` (int8 oder ternär) und `linear_matrix`,
+  `_pc`, `_stapel`, `_pc_stapel`; `Buendelteil.w` ist eine
+  `Gewichtsmatrix`. **Die `w8a16`-Funktionen behalten ihre Signaturen** und
+  reichen ihr Gewicht als int8 an dieselbe Umsetzung weiter, also dieselben
+  Bytes in derselben Reihenfolge.
+- `mlp.rs`: `mlp_matrix_mit_spur`, `mlp_matrix_stapel`, dieselbe Art.
+- Die GPU (`metal`) rechnet nur int8; eine ternäre Matrix bleibt auf der CPU.
+- `bin/ternaerprobe.rs` (neu): eine Matrix 12 288 × 4 096, int8 gegen
+  ternär, einkernig und verteilt.
+
+**Laufzeit (`runtime`):**
+- `Gewichtsdaten::Ternaer`, `Kopfdaten::Ternaer`, `QTensor::matrix()`. Wer
+  einen ternären Tensor als `&[i8]` liest, bekommt eine Panik mit Form statt
+  einer falschen Zahl.
+- Lader: `dtype` `ternaer_g128` mit `betraege_file`/`betraege_hash`, Shifts
+  Pflicht. **Zulässig nur an einer Liste** (Projektionen der Achtsamkeit
+  und des dichten MLP, beide Köpfe); die Experten eines Gemischs enden auf
+  dieselben Silben und werden abgewiesen, denn ihre Wege lesen int8.
+- Modell: q/k/v/o, dichter MLP (einzeln und gestapelt), beide Köpfe und
+  die Projektionen der Zustandsschicht rechnen über `matrix()`.
+- Training: ternäre Gewichte lassen sich nicht in kleinen ganzzahligen
+  Schritten nachführen. `Shardfehler::TernaerNichtTrainierbar` und ein
+  Fehler in `trainingsschleife`, statt einer Panik mitten im Lauf.
+- `bin/ternaer_packen.rs` (neu): packt jeden zulässigen, vollständig
+  ternären Tensor, verlinkt alles Übrige hart und schreibt Manifest und
+  `theta_v.json` neu.
+
+**Gemessen** (M5 Pro, `cpu-simd`, ternäres 8B, 2026-09-28):
+
+| | int8-Artefakt | gepackt |
+|---|---|---|
+| Artefakt | 8,8 GB | **2,6 GB** (Gewichte 2,18 statt 8,81 GB; 254 von 254 Tensoren ternär) |
+| WikiText-2 16×256, je Position | | **2 172 von 2 172 Zeilen identisch** |
+| Decode, 64 Token, A B B A | 16,25 / 16,06 Token/s | **19,90 / 20,19** (+24 %) |
+| Vorbereitung, 13 Token | 35,2 / 34,8 Token/s | 39,1 / 39,4 (+12 %) |
+| Prüfsumme der 64 Token | `63310eb7d9d21244` | dieselbe |
+
+Matrix 12 288 × 4 096 (`ternaerprobe`): int8 29,5 G Gewichte/s auf einem
+Kern und 176 G/s auf allen (176 GB/s, am Speicher); ternär **38,4 und
+282 G/s** (75 GB/s gelesen, am Rechnen).
+
+📌 **Die erste Fassung war langsamer als int8**, obwohl sie ein Viertel
+las: zwei Bitmasken je Gruppe, rund 16 Vektorbefehle je 16 Gewichte.
+Gemessen 11,4 gegen 16,5 Token/s im Decode und 201 gegen 176 G/s an der
+Matrix. Ein Format, das weniger liest, aber mehr rechnet, verschiebt nur
+die Grenze. Erst die Codes und die einmalige Zerlegung der Eingabe
+brachten den Gewinn.
+
+**Belege:** 301 Kerntests grün mit `cpu-simd`, ohne und mit `metal`,
+darunter jeder lineare Kern und der MLP ternär gegen int8 und die Ränder
+(−32 768, Betrag 32 767, Code 3). Gegenproben an beiden NEON-Fassungen
+(Vorzeichen, Ausgleichsterm): je sechs Tests rot. Laufzeit 138 Tests grün,
+darunter vier neue Ladetests. `tests/ternaer.rs` vergleicht die Logits
+beider 8B-Artefakte über Vorbereitung und Decode; er ist `#[ignore]`, weil
+die Artefakte nicht auf jeder Maschine liegen, und läuft mit
+`cargo test --release --test ternaer -- --ignored`.
+
+⚠️ **Offen:**
+- Etwa die Hälfte eines Decode-Schritts liegt jetzt außerhalb der Matrizen
+  (rechnerisch 27 ms Matrizen gegen 50 ms je Token).
+- `sdot` wäre ein weiterer Schritt, ist in stabilem Rust aber noch nicht
+  freigegeben.
+- Die Vorbereitung zerlegt die Codes je Eingabe neu, statt einmal je Zeile
+  für eine ganze Kachel.
+- Keine Konformitätsvektoren für den ternären Kern; die Bitgleichheit
+  tragen die Tests gegen int8.
+- Auf x86_64 rechnet der ternäre Kern skalar.
+
+### v0.97.0 – 2026-09-28 (runtime 0.67.0: das erste ternäre Modell im Ganzzahlpfad, YaRN in den RoPE-Tabellen, eine Aufgabenprobe)
+
+**Auftrag des Projektinhabers:** ternäre Modelle schnell in unserer
+Laufzeit testen, zunächst ohne neuen Rechenkern und ohne neue
+Gleitkomma-Referenz, mit Standard-Benchmarks.
+
+**Das Modell.** `myelith-8b-ternaer` (⚠️ **Arbeitsname**) ist ein
+Qwen3-8B, dessen Gewichte auf ternäre Werte {−s, 0, +s} mit einer Skala je
+128 Eingänge nachtrainiert sind (Ternary-Bonsai-8B-unpacked, Apache-2.0,
+in FP16 ausgeliefert). Es läuft durch den **unveränderten** int8-Weg: Eine
+Zeile mit den Werten {−s_g, 0, +s_g} wird je Zeile auf eine
+Zweierpotenz-Skala gebracht, die Nullen bleiben Nullen. Nachgesehen im
+Artefakt: **100 % der Gruppen sind ternär** ({−m, 0, +m}), Nullanteil 36
+bis 38 %, Gruppenbeträge 23 bis 127, also höchstens 2,2 % Rundung auf der
+Skala; dazu rundet die Kalibrierung beim Laden in BF16 die FP16-Skalen um
+höchstens 0,2 %. Gemessen wird damit die **Qualität** ternärer Gewichte in unserem
+Rechenweg, nicht der Speichervorteil; das Artefakt ist 8,8 GB groß wie
+jedes int8-8B.
+
+**YaRN in den RoPE-Tabellen.** Das Modell trägt `rope_scaling = yarn,
+factor 4, original 16384`, das Qwen3-8B keine Skalierung. Die Referenz
+wendet YaRN auf **jede** Position an: Paare mit langer Wellenlänge werden
+gestreckt, dazwischen wird übergeblendet, und cos und sin tragen den
+Faktor 0,1·ln(4) + 1 ≈ 1,1386. Myelith rechnet RoPE über Tabellen, also
+ändert YaRN nur deren Inhalt und nicht den ganzzahligen Weg.
+- `calibrate/src/luts.py`: `yarn_frequenzen` (eigene Umsetzung nach dem
+  YaRN-Papier), `rope_masse` liest `rope_art`, `rope_yarn_faktor`,
+  `rope_yarn_urlaenge`; eine unbekannte Skalierung fällt laut aus.
+  `generate_rope_luts` nimmt Frequenzen und Amplitude; **ohne Skalierung
+  bytegleich** zu jeder bisherigen Tabelle.
+- Amplitude 291 statt 256 bei 8 Nachkommabits, weit innerhalb von `i16`.
+- `tests/test_rope_yarn.py`: Sollwerte (laufen ohne torch) und ein
+  lebender Vergleich mit transformers 5.15 (alle 64 Frequenzen unter 2e-7
+  relativ, float32 dort, float64 hier; Amplitude gleich). Gegenproben:
+  verkehrte Rampe und fehlende Amplitude, beide rot.
+
+**Aufgabenprobe.** `runtime/src/bin/aufgabenprobe.rs`: fertig gesetzte
+Chat-Prompts (eine Zeile je Prompt, `\n` als Umbruch, damit die Vorlage
+zeichengenau bleibt), gierig, Halt an `<|im_end|>`, je Prompt eine
+JSON-Zeile. Das Hauptprogramm bleibt unberührt und erzeugt weiter ohne
+Halt. Anlass: Perplexität verdeckt, ob ein Modell noch rechnen kann.
+
+**Gemessen** (Apple M5 Pro, cpu-simd, 2026-09-28):
+
+| | BF16 (Qwen3-8B) | int8 `myelith-8b` | **ternär** |
+|---|---|---|---|
+| WikiText-2, 4 Seq. à 128 (435 Pos.) | 12,79 | 13,27 | **13,24** |
+| WikiText-2, 64 Seq. à 256 (8 941 Pos.) | nicht gemessen | 17,60 | **17,74** (+0,8 %) |
+| GSM8K, erste 50 Aufgaben, gierig, ohne Denkmodus | nicht gemessen | 44/50 (88 %) | **45/50 (90 %)** |
+| Decode | | 9,6 Token/s | 9,8 Token/s |
+
+- Die Prompts setzt die Chatvorlage des jeweiligen Modells
+  (`apply_chat_template`, `enable_thinking=False`), die Antwort kommt aus
+  dem letzten `\boxed{}`. 3 (ternär) und 4 (int8) Antworten liefen an die
+  Obergrenze von 512 Token. Beide falsch bei 3 Aufgaben, nur ternär
+  richtig bei 3, nur int8 richtig bei 2: **bei 50 Aufgaben
+  ununterscheidbar.**
+- `myelith-8b` reproduziert auf der kleinen Menge **exakt** den Wert vom
+  2026-09-21 (13,2745), über Neubau und Zeit hinweg.
+
+**Was das heißt:** Ternäre Gewichte tragen in unserem Ganzzahlpfad die
+Qualität des int8-Originals, auf Text und beim Rechnen. Der
+Speichervorteil (rund 9×) braucht einen eigenen Kern mit Gruppenskalen.
+
+**Fund 497, nicht behoben:** Die Konfigurationsprobe
+(`tests/test_modellkonfig_vollstaendig.py`) ist schon vor diesem Schritt
+rot: Das Artefakt des 35B trägt Drehtabellen für 40 960 Positionen, sein
+Eintrag sagt 262 144 (1 310 720 gegen 8 388 608 Einträge). Das Artefakt
+ist älter als der Eintrag.
+
+⚠️ **Offen:** θ_v beschreibt RoPE noch ohne Skalierung; das Artefakt des
+ternären Modells trägt YaRN-Tabellen. Für ein lokales Modell unkritisch,
+für ein Netzmodell eine Spezifikationsfrage. Kein Katalogeintrag, das
+Modell erscheint also noch nicht im Client.
+
+**Gegencheck YaRN** (dasselbe Artefakt, nur die Drehtabellen ohne
+Skalierung; Gewichte bitgleich):
+
+| WikiText-2 | mit YaRN | ohne YaRN |
+|---|---|---|
+| 4×128 | 13,2421 | **13,0099** (−1,8 %) |
+| 64×256 | 17,7393 | **17,4450** (−1,7 %) |
+
+Auf kurzen Texten kostet YaRN hier knapp 2 %, und **ohne YaRN liegt das
+ternäre Modell sogar unter dem int8-Original** (17,45 gegen 17,60). Das
+deckt sich mit der Modellkarte von Qwen3: Statisches YaRN, also ein fester
+Faktor unabhängig von der Länge, verschlechtert kurze Texte; es soll nur
+für lange Kontexte gesetzt werden. Das ternäre 8B liefert YaRN aber fest
+in seiner Konfiguration mit, und ohne YaRN ist es jenseits von 16 384
+Positionen ungeprüft. ⚑ **Der Eintrag folgt der veröffentlichten
+Konfiguration**; die Tabellen sind richtig, nur ist der Faktor für kurze
+Texte ungünstig. Offen: ein Eintrag ohne YaRN mit Kontext 16 384 für kurze
+Arbeit, oder beide Tabellensätze in einem Artefakt, gewählt nach Länge.
 
 ### v0.96.0 – 2026-09-25 (runtime 0.66.0: ein Notaus hält die Erzeugung vor dem nächsten Token an)
 

@@ -1,6 +1,6 @@
 # Selbsteinschätzung nach der KI-Verordnung
 
-**Stand der Überprüfung:** 2026-09-25 · **English:** [Self-Assessment.md](../en/Self-Assessment.md)
+**Stand der Überprüfung:** 2026-09-28 · **English:** [Self-Assessment.md](../en/Self-Assessment.md)
 
 > ⚠️ **Selbsteinschätzung, keine Rechtsberatung.** Diese Übersicht hat
 > der Anbieter selbst erstellt, nach bestem Verständnis der Verordnung
@@ -30,10 +30,10 @@ Status: ✅ umgesetzt · 🟡 teilweise umgesetzt · ➖ nicht anwendbar
 | Art. 6, Anhang III | Einstufung als Hochrisiko | ➖ | Nicht für Anhang-III-Bereiche bestimmt ([Zweckbestimmung](Zweckbestimmung.md) Abschnitt 2.2). Wer Myelith dort einsetzt, ändert die Zweckbestimmung (Art. 25) |
 | Art. 8 bis 15 | Anforderungen an Hochrisiko-Systeme | ➖ | Nicht anwendbar. **Freiwillig** nach ihrem Vorbild: Aktionsprotokoll (Art. 12), Bestätigung vor Handlungen und Notaus (Art. 14) |
 | Art. 12 (freiwillig) | Protokollierung | ✅ | `CLIENT/myl-client/src/protokoll.rs`: jede Handlung des Agenten als JSON-Zeile mit Zeit, Art, Werkzeug, Fingerabdruck von Ein- und Ausgabe (SHA-256 mit Schlüssel, kein Klartext), Entscheidung und Ergebnis; 30 Tage; Anzeige im Fenster (Einstellungen, Aktionsprotokoll) und mit `myl protokoll` |
-| Art. 14 (freiwillig) | Menschliche Aufsicht | ✅ | Vorgabe `agent.modus = manual`: Schreiben, Befehle und Web-Anfragen werden vor dem Ausführen vorgelegt. Notaus im Fenster (Knopf, ⌘. oder Strg+.) und in der Konsole (Strg-C oder Esc während eines Laufs); er hält die Erzeugung und jedes weitere Werkzeug an, das Gespräch bleibt erhalten |
+| Art. 14 (freiwillig) | Menschliche Aufsicht | ✅ | Vorgabe `agent.modus = manual`: Schreiben, Befehle und Web-Anfragen werden vor dem Ausführen vorgelegt. Notschalter im Fenster ist das Schließen des Fensters: Es beendet die Erzeugung, jedes weitere Werkzeug und auch einen schon gestarteten Befehl, und es steht im Aktionsprotokoll. In der Konsole der Notaus (Strg-C oder Esc während eines Laufs); er hält die Erzeugung und jedes weitere Werkzeug an. Das Gespräch bleibt in beiden Fällen erhalten |
 | Art. 16 bis 22 | Pflichten bei Hochrisiko-Systemen, Bevollmächtigte | ➖ | Nicht anwendbar. Art. 22 betrifft Anbieter aus Drittländern; der Anbieter sitzt in Deutschland |
 | Art. 25 | Verantwortung entlang der Wertschöpfungskette | ✅ | [Zweckbestimmung](Zweckbestimmung.md) Abschnitt 2.2: Wer die Zweckbestimmung ändert, übernimmt Anbieterpflichten |
-| Art. 50 Abs. 1 | Hinweis auf KI | ✅ | Hinweis bei **jedem** Start, aktiv zu bestätigen (Fenster und Konsole), Zeile auf der Fehlerausgabe bei `myl`; dauerhafte KI-Marke im Kopf des Fensters und in der Fußzeile der Konsole; jede Antwort im Fenster trägt „KI-generiert" (`CLIENT/myl-client/src/kennzeichnung.rs`) |
+| Art. 50 Abs. 1 | Hinweis auf KI | ✅ | Hinweis bei **jedem** Start, aktiv zu bestätigen (Fenster und Konsole), Zeile auf der Fehlerausgabe bei `myl`; dauerhafte Kennzeichnung im leeren Eingabefeld des Fensters („Hier antwortet eine KI.“) und „KI“ in der Fußzeile der Konsole; jede Antwort im Fenster trägt „KI-generiert" (`CLIENT/myl-client/src/kennzeichnung.rs`) |
 | Art. 50 Abs. 2 | Kennzeichnung synthetischer Inhalte | 🟡 | **Sprache ✅**: jede erzeugte Tondatei trägt Metadaten (XMP mit IPTC-Quellentyp `trainedAlgorithmicMedia`, RIFF-INFO) und ein Wasserzeichen im Signal, bevor sie abgespielt oder abgelegt wird; was sich nicht kennzeichnen lässt, wird nicht gespielt (`CLIENT/myl-senses/src/kennzeichnung.rs`); prüfbar mit `myl kennzeichen <datei>`. **Text 🟡**: in der Oberfläche gekennzeichnet, in Dateien, die der Agent schreibt, noch nicht maschinenlesbar. **Bild, Video ➖**: werden nicht erzeugt. **C2PA-Signatur**: noch nicht umgesetzt |
 | Art. 50 Abs. 3 | Emotionserkennung, biometrische Kategorisierung | ➖ | Wird nicht angeboten und ist ausgeschlossen (Art. 5) |
 | Art. 50 Abs. 4 | Deepfakes | ✅ | Pflicht der Betreiber; unterstützt durch die Kennzeichnung jeder erzeugten Stimme und die Einwilligung beim Hochladen einer Stimmprobe (im Fenster und im Befehl geprüft) |

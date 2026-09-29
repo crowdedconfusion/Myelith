@@ -399,6 +399,17 @@ impl Oertlichesmodell {
             let t = wortschatz.encode("</think>");
             (t.len() == 1).then(|| t[0])
         };
+        // ⚑ **Die Merkmarke fuer Modelle mit rekurrenten Ebenen**: Vor der
+        //   letzten Rollenmarke bleibt ein Verlauf von Schritt zu Schritt
+        //   gleich, dahinter steht die neu gerenderte Antwort. Dort hebt
+        //   das Laufwerk den Zustand auf. 📌 Ohne sie las das 27B im
+        //   Agentenbetrieb jeden Schritt den ganzen Verlauf neu vor, 12 bis
+        //   13 Minuten je Schritt.
+        let mut fortsetzung = Fortsetzung::neu(&modell);
+        if matches!(Vorlage::fuer_familie(&familie), Vorlage::ChatMl | Vorlage::ChatMlDenkblock) {
+            let t = wortschatz.encode("<|im_start|>");
+            fortsetzung.merkmarke_setzen((t.len() == 1).then(|| t[0]));
+        }
         Ok(Self {
             wortschatz,
             familie,
@@ -412,7 +423,7 @@ impl Oertlichesmodell {
             halt,
             beobachter: None,
             zaehler: std::sync::Arc::new(Tokenzaehler::default()),
-            fortsetzung: std::sync::Mutex::new(Fortsetzung::neu(&modell)),
+            fortsetzung: std::sync::Mutex::new(fortsetzung),
             modell: Arc::new(modell),
         })
     }

@@ -377,6 +377,23 @@ impl Ansageform {
 ///
 /// **Nicht mit `serde_json` über den ganzen Text**, sondern zwischen den
 /// Marken: Ein Modell schreibt vor und nach dem Aufruf gern noch etwas.
+///
+/// # ⚑ Nachsichtig bei eindeutigen Formfehlern (2026-09-29)
+///
+/// Innerhalb der Marken werden fünf Abweichungen gelesen, deren Sinn nicht
+/// zweifelhaft ist: ein fehlender Schlüssel `"name"`
+/// (`{"search_skill", "arguments": …}`), `parameters` statt `arguments`,
+/// Argumente als JSON-Zeichenkette, ein Codezaun um das JSON und die Form
+/// `{"function": {…}}`. 📌 **Werkzeugabdeckung, 27B:** Das Modell schrieb
+/// viermal `{"search_skill", "arguments": {"anfrage": "Datum"}}`, jeder
+/// Aufruf galt als unlesbar, und der Auftrag scheiterte, obwohl klar war,
+/// was gemeint war.
+///
+/// ⛔️ **Die Grenze bleibt, wo sie war.** Gelesen wird weiterhin nur, was
+/// zwischen den Marken **in der Antwort des Modells** steht; ein
+/// Werkzeugergebnis kommt hier nie an. Die Nachsicht aendert, **wie**
+/// gelesen wird, nicht **was**: Jeder Vorschlag geht danach durch dieselbe
+/// Erlaubnis und dieselbe Formpruefung.
 pub fn vorschlaege(antwort: &str) -> Vec<Result<Vorschlag, Unlesbar>> {
     const AUF: &str = "<tool_call>";
     const ZU: &str = "</tool_call>";
@@ -385,17 +402,72 @@ pub fn vorschlaege(antwort: &str) -> Vec<Result<Vorschlag, Unlesbar>> {
     while let Some(a) = rest.find(AUF) {
         let nach = &rest[a + AUF.len()..];
         let Some(e) = nach.find(ZU) else {
-            aus.push(Err(Unlesbar { roh: nach.chars().take(120).collect() }));
+            aus.push(Err(Unlesbar { roh: nach.chars().take(120).collect(), abgeschnitten: true }));
             break;
         };
         let inhalt = nach[..e].trim();
-        match serde_json::from_str::<Vorschlag>(inhalt) {
-            Ok(v) => aus.push(Ok(v)),
-            Err(_) => aus.push(Err(Unlesbar { roh: inhalt.chars().take(120).collect() })),
+        match nachsichtig_lesen(inhalt) {
+            Some(v) => aus.push(Ok(v)),
+            None => aus.push(Err(Unlesbar { roh: inhalt.chars().take(120).collect(), abgeschnitten: false })),
         }
         rest = &nach[e + ZU.len()..];
     }
     aus
+}
+
+/// Liest einen Aufrufblock, streng oder mit den fuenf eindeutigen
+/// Abweichungen (siehe [`vorschlaege`]).
+fn nachsichtig_lesen(inhalt: &str) -> Option<Vorschlag> {
+    let mut t = inhalt.trim();
+    if let Some(r) = t.strip_prefix("```") {
+        // Ein Codezaun, mit oder ohne Sprachangabe.
+        let r = r.trim_start_matches(|c: char| c.is_ascii_alphabetic()).trim();
+        t = r.strip_suffix("```").unwrap_or(r).trim();
+    }
+    let wert: serde_json::Value = match serde_json::from_str(t) {
+        Ok(w) => w,
+        Err(_) => serde_json::from_str(&name_ohne_schluessel(t)?).ok()?,
+    };
+    aus_dem_wert(&wert, 0)
+}
+
+/// `{"search_skill", "arguments": …}` wird `{"name": "search_skill", "arguments": …}`.
+///
+/// ⚑ **Nur ein Name aus Buchstaben, Ziffern, `_` und `-`, und danach ein
+/// Komma oder das Ende.** Steht dort ein Doppelpunkt, ist es ein Schluessel
+/// und kein Name, und dann gibt es nichts zu berichtigen.
+fn name_ohne_schluessel(t: &str) -> Option<String> {
+    let rest = t.strip_prefix('{')?.trim_start().strip_prefix('"')?;
+    let ende = rest.find('"')?;
+    let name = &rest[..ende];
+    if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+        return None;
+    }
+    let danach = rest[ende + 1..].trim_start();
+    if !danach.starts_with(',') && !danach.starts_with('}') {
+        return None;
+    }
+    Some(format!("{{\"name\": \"{name}\"{danach}"))
+}
+
+fn aus_dem_wert(w: &serde_json::Value, tiefe: u8) -> Option<Vorschlag> {
+    let o = w.as_object()?;
+    // Die Form `{"type": "function", "function": {...}}`, einmal ausgepackt.
+    if let (Some(f), 0) = (o.get("function"), tiefe) {
+        if f.is_object() {
+            return aus_dem_wert(f, 1);
+        }
+    }
+    let name = o.get("name")?.as_str()?.trim();
+    if name.is_empty() {
+        return None;
+    }
+    let argumente = match o.get("arguments").or_else(|| o.get("parameters")) {
+        None | Some(serde_json::Value::Null) => serde_json::Value::Object(Default::default()),
+        Some(serde_json::Value::String(s)) => serde_json::from_str(s).ok()?,
+        Some(a) => a.clone(),
+    };
+    Some(Vorschlag { name: name.to_string(), arguments: argumente })
 }
 
 /// Ein Aufrufblock, der kein lesbarer Vorschlag ist.
@@ -407,6 +479,9 @@ pub fn vorschlaege(antwort: &str) -> Vec<Result<Vorschlag, Unlesbar>> {
 pub struct Unlesbar {
     /// Was dort stand, gekürzt.
     pub roh: String,
+    /// **Ob das Ende fehlte.** Nur dann war die Tokengrenze der Grund; sonst
+    /// war es die Form, und die Antwort an das Modell muss das sagen.
+    pub abgeschnitten: bool,
 }
 
 /// Das Ergebnis eines Werkzeugs, auf dem Weg zurück ins Gespräch.

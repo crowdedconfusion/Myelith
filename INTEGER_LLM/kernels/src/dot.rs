@@ -101,6 +101,18 @@ mod gewaehlt {
     pub fn dot(w: &[i8], x: &[i16]) -> i64 {
         unsafe { super::neon::dot_neon(w, x) }
     }
+
+    /// Die Laengen hat [`super::ternaer_zeile`] geprueft.
+    #[inline]
+    pub fn ternaer(muster: &[u8], betraege: &[i16], _x: &[i16], hoch: &[i8], tief: &[u8], summen: &[i64]) -> i64 {
+        // ⚑ Mit `dotprod` die schnellere Fassung; beide rechnen dieselbe
+        //   Zahl (`beide_vektorfassungen_sind_die_skalare`).
+        if crate::ternaer::neon::mit_dot() {
+            unsafe { crate::ternaer::neon::zeile_dot(muster, betraege, hoch, tief, summen) }
+        } else {
+            unsafe { crate::ternaer::neon::zeile(muster, betraege, hoch, tief, summen) }
+        }
+    }
 }
 
 #[cfg(not(all(feature = "cpu-simd", target_arch = "aarch64")))]
@@ -110,6 +122,11 @@ mod gewaehlt {
     #[inline]
     pub fn dot(w: &[i8], x: &[i16]) -> i64 {
         super::dot_scalar(w, x)
+    }
+
+    #[inline]
+    pub fn ternaer(muster: &[u8], betraege: &[i16], x: &[i16], _hoch: &[i8], _tief: &[u8], _summen: &[i64]) -> i64 {
+        crate::ternaer::zeile_skalar(muster, betraege, x)
     }
 }
 
@@ -140,6 +157,54 @@ pub fn dot_i8_i16(w: &[i8], x: &[i16]) -> i64 {
         return dot_scalar(w, x);
     }
     gewaehlt::dot(w, x)
+}
+
+/// Eine Zeile einer ternaeren Matrix mal `x`, siehe [`crate::ternaer`].
+///
+/// ⚑ **Dieselbe Weiche wie [`dot_i8_i16`]**: vektorisiert, wo
+/// [`VEKTORISIERT`] gilt, skalar, wenn [`skalar_erzwingen`] steht, und in
+/// beiden Faellen dieselbe Zahl. Die Bedingung steht weiter nur am `cfg`
+/// von `mod gewaehlt` (Fund 34).
+///
+/// `hoch`, `tief` und `summen` sind die Vorbereitung von `x` aus
+/// [`crate::ternaer::Eingabe`]; die vektorisierte Fassung rechnet mit
+/// ihnen, die skalare mit `x`.
+///
+/// ⚠️ **Die Laengen werden hier geprueft**, weil die vektorisierte
+/// Fassung ohne Grenzpruefung liest: `muster` 32 Byte, `x`, `hoch` und
+/// `tief` je 128 Werte und `summen` einen Wert je Betrag. Wenige
+/// Vergleiche je Zeile.
+#[inline]
+pub fn ternaer_zeile(muster: &[u8], betraege: &[i16], x: &[i16], hoch: &[i8], tief: &[u8], summen: &[i64]) -> i64 {
+    assert_eq!(
+        muster.len(),
+        betraege.len() * crate::ternaer::BYTES_JE_GRUPPE,
+        "ternaer_zeile: {} Musterbytes zu {} Betraegen",
+        muster.len(),
+        betraege.len()
+    );
+    assert_eq!(
+        x.len(),
+        betraege.len() * crate::ternaer::GRUPPE,
+        "ternaer_zeile: {} Eingaben zu {} Betraegen",
+        x.len(),
+        betraege.len()
+    );
+    if VEKTORISIERT && SKALAR_ERZWUNGEN.load(Ordering::Relaxed) {
+        SKALAR_GERECHNET.fetch_add(1, Ordering::Relaxed);
+        return crate::ternaer::zeile_skalar(muster, betraege, x);
+    }
+    if VEKTORISIERT {
+        assert!(
+            hoch.len() == x.len() && tief.len() == x.len() && summen.len() == betraege.len(),
+            "ternaer_zeile: die Eingabe ist nicht vorbereitet ({} / {} / {} zu {})",
+            hoch.len(),
+            tief.len(),
+            summen.len(),
+            x.len()
+        );
+    }
+    gewaehlt::ternaer(muster, betraege, x, hoch, tief, summen)
 }
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};

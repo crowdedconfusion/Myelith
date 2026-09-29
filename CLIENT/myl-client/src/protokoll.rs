@@ -292,7 +292,8 @@ fn art_von(name: &str) -> &'static str {
     match name {
         "read_file" | "list_directory" | "search_files" | "datei_lesen" | "verzeichnis_auflisten"
         | "dateien_suchen" => "datei_lesen",
-        "write_file" | "edit_file" | "datei_schreiben" | "datei_bearbeiten" => "datei_schreiben",
+        "write_file" | "edit_file" | "datei_schreiben" | "datei_bearbeiten" | "replace_everywhere"
+        | "ueberall_ersetzen" => "datei_schreiben",
         "run_command" | "befehl_ausfuehren" => "befehl",
         n if n.starts_with("web_") => "netz",
         n if n.contains("sehen") || n.contains("hoeren") || n.contains("look") || n.contains("listen") => "sinn",
@@ -393,7 +394,11 @@ mod proben {
             ("myl-oberflaeche/src/main.rs", include_str!("../../myl-oberflaeche/src/main.rs")),
         ] {
             let start = quelle.find("fn main()").unwrap_or_else(|| panic!("{datei}: kein main"));
-            let rumpf = &quelle[start..start + 400.min(quelle.len() - start)];
+            // 📌 **An einer Zeichengrenze schneiden** (Fund 495): 400 Bytes
+            //   hinter `fn main()` lagen im Fenster mitten in einem ⛔️,
+            //   und die Probe brach am Schnitt statt an ihrer Aussage.
+            let ende = quelle.floor_char_boundary(start + 400.min(quelle.len() - start));
+            let rumpf = &quelle[start..ende];
             assert!(rumpf.contains("myl_client::protokoll::einschalten();"), "{datei} schaltet das Protokoll nicht ein");
         }
     }

@@ -1,6 +1,6 @@
 # Zweckbestimmung und ausgeschlossene Verwendungen
 
-**Stand:** 2026-09-25 · **English:** [Intended-Use-Policy.md](../en/Intended-Use-Policy.md)
+**Stand:** 2026-09-28 · **English:** [Intended-Use-Policy.md](../en/Intended-Use-Policy.md)
 
 Diese Zweckbestimmung legt fest, wofür Myelith entwickelt wurde und
 wofür es nicht verwendet werden darf. Sie ist Teil der Nutzungsbedingungen
@@ -100,11 +100,11 @@ eines Hochrisiko-KI-Systems (Art. 25 KI-Verordnung).
 | Maßnahme | Wirkung |
 |---|---|
 | Hinweis beim Start, aktiv zu bestätigen | Niemand nutzt Myelith, ohne zu wissen, dass es eine KI ist und wofür sie nicht gedacht ist |
-| Dauerhafte Kennzeichnung „KI" in der Oberfläche | Jede Antwort ist als KI-erzeugt erkennbar |
+| Dauerhafte Kennzeichnung als KI in der Oberfläche | Im Fenster steht im leeren Eingabefeld „Hier antwortet eine KI.“, in der Konsole „KI“ in der Fußzeile; jede Antwort ist als KI-erzeugt erkennbar |
 | Schutzfilter für Anfragen | Anfragen, die erkennbar auf eine verbotene Praxis zielen, werden mit Verweis auf diese Zweckbestimmung abgelehnt; die Ablehnung wird ohne Klartext protokolliert |
 | Kennzeichnung der synthetischen Stimme | Metadaten und Wasserzeichen in jeder erzeugten Tondatei |
 | Bestätigung vor Handlungen | Schreiben, Netzzugriffe und Befehle des Agenten werden in der Vorgabe vorgelegt, bevor sie ausgeführt werden |
-| Notaus | Ein Knopf und ein Tastenkürzel brechen jede laufende Handlung des Agenten ab |
+| Notschalter | Im Fenster ist es das Schließen des Fensters: Es beendet jede laufende Handlung des Agenten, auch einen schon gestarteten Befehl. In der Konsole bricht der Notaus (Strg-C oder Esc) sie ab |
 | Aktionsprotokoll | Jede Handlung des Agenten wird lokal protokolliert, ohne Klartext, 30 Tage lang |
 | Kein Personenbezug im Sehen | Das Sehmodell wird angewiesen, Personen nicht zu identifizieren und keine Gefühle oder sensiblen Merkmale zuzuschreiben |
 

@@ -254,14 +254,13 @@
            Koerper und Zaehne AUSSEN daran: zwei Kreise und acht kurze
            Segmente zwischen Radius 5,4 und 7,4. -->
       <div class="kopfrechts">
-        <!-- ⛔️ **Die dauerhafte KI-Marke** (Art. 50 Abs. 1): steht,
-             solange das Fenster offen ist, und laesst sich nicht
-             ausblenden. Wort und Satz kommen aus der Kiste. -->
-        <span id="kimarke" class="kimarke" role="note">KI</span>
-        <!-- ⛔️ **Der Notaus** (Festlegung des Projektinhabers, 2026-09-25):
-             haelt jeden laufenden Auftrag an, die Stimme mit. Immer da,
-             denn wer ihn braucht, sucht ihn nicht. Dazu ⌘. und Strg+. -->
-        <button id="notaus" class="notaus" type="button" data-t="notaus.knopf" title="⌘. / Strg+.">Notaus</button>
+        <!-- 📌 **Hier standen bis CLIENT v0.94.1 die KI-Marke und der
+             Notaus** (Festlegung des Projektinhabers, 2026-09-28: beide
+             weg). Die Marke war ein Wort, das wie ein Knopf aussah und
+             nichts tat; die Kennzeichnung steht jetzt im Eingabefeld,
+             dort, wo jemand hinsieht, bevor er schreibt. Der
+             Notschalter ist das Schliessen des Fensters, und das sagt
+             der Hinweis beim Start. -->
         <button id="zu-einstellungen" class="rundknopf" aria-label="Einstellungen" data-t-marke="kopf.einstellungen">
           <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
             <circle cx="10" cy="10" r="5.4"/>
@@ -334,77 +333,90 @@
              steht. -->
         <div id="pegel" class="pegel" hidden aria-hidden="true"></div>
         <textarea id="auftrag" rows="1" autocomplete="off"
-                  placeholder="Frag etwas, oder gib einen Auftrag."
+                  placeholder="Hier antwortet eine KI. Frag etwas, oder gib einen Auftrag."
                   data-t-platz="eingabe.platz"
                   aria-label="Eingabe" data-t-marke="eingabe.label"></textarea>
         <!-- ⚑ **Eine Reihe statt verstreuter Knoepfe** (Auftrag des
              Projektinhabers, 2026-09-18). Links, was der Frage etwas
              hinzufuegt (Datei, Stimme), rechts, was sie abschickt; der
-             Lautsprecher steht dazwischen, weil er die Antwort betrifft
-             und nicht die Frage. -->
+             Lautsprecher steht davor, weil er die Antwort betrifft und
+             nicht die Frage. In der Mitte, und nur beim Agenten, der
+             Loop (seit 2026-09-28). Drei Spalten mit festem Platz, damit
+             die rechte Seite rechts bleibt, wenn die Mitte fehlt. -->
         <div class="knopfreihe">
-          <button type="button" id="anhang" class="rundknopf anhang" aria-label="Datei anhaengen"
-                  data-t-marke="knopf.anhang" title="Datei anhängen">
-            <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
-              <path d="M13.5 6.5l-5.2 5.2a2 2 0 102.8 2.8l5.2-5.2a3.5 3.5 0 10-4.9-4.9L5.6 10.2a5 5 0 107.1 7.1"/>
-            </svg>
-          </button>
-          <!-- ⚑ Gedrueckt halten, reden, loslassen. Versteckt, solange
-               kein Hoermodell da ist: Ein Knopf, der nur erklaeren kann,
-               warum er nicht geht, ist kein Knopf. -->
-          <button type="button" id="sprechtaste" class="rundknopf sprechtaste" hidden
-                  aria-label="Sprechtaste" data-t-marke="knopf.sprechtaste"
-                  title="Gedrückt halten und sprechen">
-            <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
-              <path d="M10 3a2 2 0 012 2v5a2 2 0 11-4 0V5a2 2 0 012-2z"/>
-              <path d="M5 9.5a5 5 0 0010 0M10 14.5V17"/>
-            </svg>
-          </button>
-          <span class="knopfluecke"></span>
-          <!-- ⚑ Der Lautsprecher merkt sich nichts ueber das Fenster
-               hinaus: Ein Client, der beim naechsten Start ungefragt
-               spricht, spricht im falschen Raum. -->
-          <button type="button" id="vorlesen" class="rundknopf vorlesen" hidden
-                  aria-label="Antworten vorlesen" data-t-marke="knopf.vorlesen"
-                  aria-pressed="false" title="Antworten vorlesen">
-            <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
-              <path d="M4 8v4h3l4 3V5L7 8H4z"/>
-              <path d="M14 7.5a4 4 0 010 5"/>
-            </svg>
-          </button>
-          <!-- ⚑ **Der Sprachmodus ersetzt das Gespraech durch ein
-               Zeichen, das mitschwingt** (Auftrag des Projektinhabers).
-               Er steht neben dem Lautsprecher, weil er dasselbe betrifft:
-               die Antwort, nicht die Frage. -->
-          <button type="button" id="sprachmodus" class="rundknopf sprachmodus" hidden
-                  aria-label="Sprachmodus" data-t-marke="knopf.sprachmodus"
-                  aria-pressed="false" title="Sprachmodus">
-            <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
-              <path d="M3 10v0M6.5 6.5v7M10 4v12M13.5 6.5v7M17 10v0"/>
-            </svg>
-          </button>
-          <!-- ⚑ **∞ ist ein Schalter, der Pfeil daneben die Liste**
-               (Festlegung des Projektinhabers, 2026-09-26). Nur im
-               Agentenmodus: Ein Loop ist eine Folge von Agentenlaeufen. -->
-          <span id="loopgruppe" class="loopgruppe" hidden>
-            <button type="button" id="loopknopf" class="rundknopf loopknopf" aria-pressed="false"
+          <span class="knopfseite links">
+            <button type="button" id="anhang" class="rundknopf anhang" aria-label="Datei anhaengen"
+                    data-t-marke="knopf.anhang" title="Datei anhängen">
+              <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+                <path d="M13.5 6.5l-5.2 5.2a2 2 0 102.8 2.8l5.2-5.2a3.5 3.5 0 10-4.9-4.9L5.6 10.2a5 5 0 107.1 7.1"/>
+              </svg>
+            </button>
+            <!-- ⚑ Gedrueckt halten, reden, loslassen. Versteckt, solange
+                 kein Hoermodell da ist: Ein Knopf, der nur erklaeren kann,
+                 warum er nicht geht, ist kein Knopf. -->
+            <button type="button" id="sprechtaste" class="rundknopf sprechtaste" hidden
+                    aria-label="Sprechtaste" data-t-marke="knopf.sprechtaste"
+                    title="Gedrückt halten und sprechen">
+              <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+                <path d="M10 3a2 2 0 012 2v5a2 2 0 11-4 0V5a2 2 0 012-2z"/>
+                <path d="M5 9.5a5 5 0 0010 0M10 14.5V17"/>
+              </svg>
+            </button>
+          </span>
+          <!-- ⚑ **∞, der laufende Task und der Pfeil sind EIN Feld, mittig
+               unten im Eingabefeld** (Festlegung des Projektinhabers,
+               2026-09-28). Links ∞, der Schalter: an faehrt, aus
+               pausiert; waehrend der Loop laeuft, atmet es. Daneben der
+               Task, der vorn steht, gekuerzt mit „…“, und rechts der
+               Pfeil. Titel und Pfeil sind EIN Knopf und oeffnen die
+               Liste. Nur im Agentenmodus: Ein Loop ist eine Folge von
+               Agentenlaeufen.
+               📌 Bis CLIENT v0.94.1 standen ∞ und Pfeil als zwei runde
+               Knoepfe rechts neben dem Senden, ohne den Task. -->
+          <span id="loopgruppe" class="loopgruppe glas" hidden>
+            <button type="button" id="loopknopf" class="loopknopf blank" aria-pressed="false"
                     data-t-marke="loop.knopf">
               <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
                 <path d="M10 10C8.4 8 7 7 5.5 7a3 3 0 000 6c1.5 0 2.9-1 4.5-3zm0 0c1.6 2 3 3 4.5 3a3 3 0 000-6C13 7 11.6 8 10 10z"/>
               </svg>
             </button>
-            <button type="button" id="loopwahl" class="rundknopf loopwahl" aria-haspopup="dialog"
+            <button type="button" id="loopwahl" class="loopwahl blank" aria-haspopup="dialog"
                     aria-expanded="false" data-t-marke="loop.liste">
+              <span id="looptask" class="looptask"></span>
               <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
                 <path d="M6 8l4 4 4-4"/>
               </svg>
             </button>
           </span>
-          <button type="submit" id="senden" class="rundknopf senden" aria-label="Senden" data-t-marke="knopf.senden">
-            <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
-              <path d="M10 16V4M10 4L5 9M10 4l5 5"/>
-            </svg>
-          </button>
+          <span class="knopfseite rechts">
+            <!-- ⚑ Der Lautsprecher merkt sich nichts ueber das Fenster
+                 hinaus: Ein Client, der beim naechsten Start ungefragt
+                 spricht, spricht im falschen Raum. -->
+            <button type="button" id="vorlesen" class="rundknopf vorlesen" hidden
+                    aria-label="Antworten vorlesen" data-t-marke="knopf.vorlesen"
+                    aria-pressed="false" title="Antworten vorlesen">
+              <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+                <path d="M4 8v4h3l4 3V5L7 8H4z"/>
+                <path d="M14 7.5a4 4 0 010 5"/>
+              </svg>
+            </button>
+            <!-- ⚑ **Der Sprachmodus ersetzt das Gespraech durch ein
+                 Zeichen, das mitschwingt** (Auftrag des Projektinhabers).
+                 Er steht neben dem Lautsprecher, weil er dasselbe betrifft:
+                 die Antwort, nicht die Frage. -->
+            <button type="button" id="sprachmodus" class="rundknopf sprachmodus" hidden
+                    aria-label="Sprachmodus" data-t-marke="knopf.sprachmodus"
+                    aria-pressed="false" title="Sprachmodus">
+              <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+                <path d="M3 10v0M6.5 6.5v7M10 4v12M13.5 6.5v7M17 10v0"/>
+              </svg>
+            </button>
+            <button type="submit" id="senden" class="rundknopf senden" aria-label="Senden" data-t-marke="knopf.senden">
+              <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+                <path d="M10 16V4M10 4L5 9M10 4l5 5"/>
+              </svg>
+            </button>
+          </span>
         </div>
       </div>
       <!-- ⚑ Der Kontext steht am Eingabefeld, weil er dort voll wird, und
@@ -428,8 +440,13 @@
          (Art. 50 Abs. 1 KI-Verordnung; Festlegung des Projektinhabers,
          2026-09-25: bei jedem Start, aktiv zu bestaetigen). Er liegt ueber
          allem, hat keinen Schliessknopf, reagiert nicht auf Escape und
-         geht erst weg, wenn das Haekchen gesetzt und der Knopf gedrueckt
-         ist. Der Text kommt aus der Kiste. -->
+         geht erst weg, wenn der eine Knopf gedrueckt ist. Der Knopf traegt
+         den Bestaetigungssatz selbst: Ihn zu druecken ist die Bestaetigung.
+         Der Text kommt aus der Kiste.
+         📌 Bis CLIENT v0.94.1 stand hier ein Schieber vor einem gesperrten
+         Knopf, und der Projektinhaber konnte den Hinweis nicht bestaetigen
+         (2026-09-26). Ein Schritt ist schwerer falsch zu bedienen als
+         zwei. -->
     <div id="kihinweis" class="warnung kihinweis" hidden role="dialog" aria-modal="true"
          aria-labelledby="kihinweistitel">
       <div class="warnungkasten">
@@ -437,11 +454,7 @@
         <ul id="kihinweispunkte" class="kihinweispunkte"></ul>
         <p class="kihinweisverweis"><span id="kihinweisverweistitel"></span>:
           <span id="kihinweisverweis" class="kihinweisadresse"></span></p>
-        <label class="warnunghaken">
-          <input type="checkbox" id="kihinweishaken">
-          <span id="kihinweisbestaetigung"></span>
-        </label>
-        <button type="button" id="kihinweisweiter" class="warnungok" disabled></button>
+        <button type="button" id="kihinweisweiter" class="warnungok kihinweisknopf"></button>
       </div>
     </div>
 

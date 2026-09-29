@@ -15,6 +15,8 @@ pub mod prng;
 pub mod rechenpfad;
 pub mod rmsnorm;
 pub mod linear;
+pub mod ternaer;
+pub mod drehung;
 pub mod metal;
 pub mod rope;
 pub mod softmax;

@@ -31,10 +31,18 @@ fn der_agent_sucht_im_web_und_verraet_nichts_gelesenes() {
         ..Agenteneinstellung::default()
     };
 
-    // Ohne Haekchen gibt es die Werkzeuge nicht.
+    // ⚑ Ohne Haekchen stehen die Werkzeuge als abgeschaltet da
+    //   (`crate::abgeschaltet`, seit 2026-09-28): Der Name ist angesagt, ein
+    //   Aufruf geht nicht hinaus und nennt den Schalter.
     let ohne = Agenteneinstellung { web_recherche: false, ..mit.clone() };
     let r = myl_client::ruestung::ruesten(&ohne, Ansageform::Amtlich, Werkzeugkiste::Base, Vec::new()).expect("Ruestung");
-    assert!(r.kasten.angebot("web_search").is_none(), "Web ohne Haekchen");
+    let angesagt = r.kasten.angebot("web_search").expect("Platzhalter");
+    assert!(angesagt.beschreibung.starts_with("SWITCHED OFF"), "Web ohne Haekchen: {}", angesagt.beschreibung);
+    let aus = r
+        .kasten
+        .ausfuehren_ungeprueft("web_search", &serde_json::json!({"frage": "Lagerverwaltung absichern"}))
+        .expect("web_search");
+    assert!(aus.is_err_and(|f| f.grund.contains("agent.web_recherche")), "der Platzhalter nennt den Schalter nicht");
 
     let r = myl_client::ruestung::ruesten(&mit, Ansageform::Amtlich, Werkzeugkiste::Base, Vec::new()).expect("Ruestung");
     assert!(r.kasten.angebot("web_search").is_some() && r.kasten.angebot("web_read").is_some(), "keine Web-Werkzeuge im Agenten");

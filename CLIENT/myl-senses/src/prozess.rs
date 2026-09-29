@@ -15,7 +15,67 @@
 //! Ende** und behaelt nur bis zur Grenze; dass es mehr gab, wird
 //! vermerkt statt vergessen.
 
-use std::process::Command;
+use std::process::{Child, Command};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+
+/// **Jeder Lauf, der gerade laeuft**, mit einer Nummer, damit er sich
+/// beim Ende selbst wieder austraegt.
+///
+/// # ⛔️ Warum es dieses Verzeichnis gibt
+///
+/// **Ein Kind ueberlebt seinen Elternprozess.** Endet das Programm, das
+/// einen Befehl gestartet hat, laeuft der Befehl weiter, und zwar ohne
+/// Frist, denn die Frist hielt der Elternprozess. Wer das Fenster
+/// schliesst, um alles anzuhalten, haette dann einen Befehl im
+/// Hintergrund, den niemand mehr sieht. Ueber dieses Verzeichnis beendet
+/// [`alle_beenden`] vorher jeden, der noch laeuft.
+/// Je Lauf seine Nummer, das Kind und ob [`alle_beenden`] es erschlagen hat.
+type Lauf = (u64, Arc<Mutex<Child>>, Arc<AtomicBool>);
+static LAUFENDE: Mutex<Vec<Lauf>> = Mutex::new(Vec::new());
+static NAECHSTE: AtomicU64 = AtomicU64::new(0);
+
+/// Traegt einen Lauf beim Fallenlassen wieder aus, auf jedem Weg hinaus.
+struct Eintrag(u64);
+
+impl Drop for Eintrag {
+    fn drop(&mut self) {
+        if let Ok(mut l) = LAUFENDE.lock() {
+            l.retain(|(n, _, _)| *n != self.0);
+        }
+    }
+}
+
+/// **Beendet jeden Lauf, der gerade laeuft**, und sagt, wie viele es
+/// waren.
+///
+/// ⚑ **Gedacht fuer das Ende des Programms**, also fuer den Notschalter
+/// des Fensters: Es wird geschlossen, und danach soll nichts mehr
+/// laufen, was es gestartet hat. Jeder Lauf endet dann so wie an seiner
+/// Frist (`abgebrochen`).
+///
+/// ⚠️ **Beendet wird das Kind, nicht seine Enkel**, genau wie an der
+/// Frist (siehe [`ROEHRENFRIST_S`]). `sh -c "a; b"` startet unter Linux
+/// und Windows eigene Prozesse, und die laufen weiter. Ein Befehl allein
+/// ersetzt die Shell und endet mit.
+pub fn alle_beenden() -> usize {
+    let l = match LAUFENDE.lock() {
+        Ok(l) => l.clone(),
+        Err(_) => return 0,
+    };
+    for (_, kind, erschlagen) in &l {
+        if let Ok(mut k) = kind.lock() {
+            erschlagen.store(true, Ordering::SeqCst);
+            let _ = k.kill();
+        }
+    }
+    l.len()
+}
+
+/// Wie viele Laeufe gerade laufen.
+pub fn laufende() -> usize {
+    LAUFENDE.lock().map(|l| l.len()).unwrap_or(0)
+}
 
 /// Wie lange nach dem Ende des Kindes noch auf seine Roehren gewartet
 /// wird, in Sekunden.
@@ -118,6 +178,17 @@ pub fn laufen_mit_eingabe(
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|f| format!("liess sich nicht starten: {f}"))?;
+    let aus_roehre = kind.stdout.take().expect("stdout");
+    let err_roehre = kind.stderr.take().expect("stderr");
+    // ⚑ **Eingetragen, sobald es laeuft**, und ausgetragen beim Verlassen
+    //   dieser Funktion, gleich auf welchem Weg (siehe [`LAUFENDE`]).
+    let kind = Arc::new(Mutex::new(kind));
+    let erschlagen = Arc::new(AtomicBool::new(false));
+    let nummer = NAECHSTE.fetch_add(1, Ordering::Relaxed);
+    if let Ok(mut l) = LAUFENDE.lock() {
+        l.push((nummer, Arc::clone(&kind), Arc::clone(&erschlagen)));
+    }
+    let _eintrag = Eintrag(nummer);
 
     // ⛔️ **Welches Ende behalten wird, haengt an der Roehre** (Fund 433,
     // 2026-09-22).
@@ -177,8 +248,8 @@ pub fn laufen_mit_eingabe(
         });
         empfang
     };
-    let aus_e = lesen(Box::new(kind.stdout.take().expect("stdout")), false);
-    let err_e = lesen(Box::new(kind.stderr.take().expect("stderr")), true);
+    let aus_e = lesen(Box::new(aus_roehre), false);
+    let err_e = lesen(Box::new(err_roehre), true);
 
     // Warten mit Frist: `try_wait` blockiert nicht, also bleibt der
     // Abbruch moeglich.
@@ -186,15 +257,25 @@ pub fn laufen_mit_eingabe(
     let anfang = Instant::now();
     let mut abgebrochen = false;
     let status = loop {
-        match kind.try_wait() {
-            Ok(Some(s)) => break Some(s),
+        // ⚠️ Die Sperre gilt nur fuer diesen einen Blick; `alle_beenden`
+        //   braucht sie zwischendurch.
+        let Ok(mut k) = kind.lock() else { break None };
+        match k.try_wait() {
+            Ok(Some(s)) => {
+                // ⚑ Ein Kind, das `alle_beenden` erschlagen hat, zaehlt als
+                //   abgebrochen, wie an der Frist. Eines, das von selbst
+                //   an einem Signal starb, nicht: Das ist sein Ausgang.
+                abgebrochen = erschlagen.load(Ordering::SeqCst);
+                break Some(s);
+            }
             Ok(None) => {
                 if anfang.elapsed() >= frist {
-                    let _ = kind.kill();
-                    let _ = kind.wait();
+                    let _ = k.kill();
+                    let _ = k.wait();
                     abgebrochen = true;
                     break None;
                 }
+                drop(k);
                 std::thread::sleep(Duration::from_millis(20));
             }
             Err(_) => break None,

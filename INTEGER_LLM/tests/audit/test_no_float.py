@@ -74,6 +74,10 @@ HOT_PATH = [
     REPO / "kernels" / "src" / "fixed_point.rs",
     REPO / "kernels" / "src" / "rmsnorm.rs",
     REPO / "kernels" / "src" / "linear.rs",
+    # Ternaere Gewichte und die ganzzahlige Hadamard-Drehung (2026-09-28);
+    # beide liegen in jeder Projektion eines ternaeren Modells.
+    REPO / "kernels" / "src" / "ternaer.rs",
+    REPO / "kernels" / "src" / "drehung.rs",
     REPO / "kernels" / "src" / "rope.rs",
     REPO / "kernels" / "src" / "attention.rs",
     REPO / "kernels" / "src" / "mlp.rs",

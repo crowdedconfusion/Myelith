@@ -50,6 +50,12 @@ Protokoll der Werkzeugaufrufe.
 wer die ersetzte Liste oder die FAQ von 2023 liest, bewertet beide
 falsch herum.
 
+📌 **„nach datei.md“ ist doppeldeutig** (in die Datei, oder: gemäß der
+Datei). In den mehrstufigen Aufträgen las das 27B „Schreibe ein Protokoll
+nach protokoll.md“ als „gemäß protokoll.md“ und schrieb woanders hin. Seit
+dem 2026-09-29 heißt es hier ebenfalls „in die Datei …“; Läufe davor hatten
+den alten Wortlaut.
+
 ## Was der Lauf anlegt
 
 | Datei | Inhalt |

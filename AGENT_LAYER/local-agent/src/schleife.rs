@@ -49,6 +49,27 @@ use crate::werkzeug::{
     angebot_mit_regel, argumente_pruefen, vorschlaege, Erlaubnis, Werkzeugergebnis,
 };
 
+/// Ab wie vielen verbleibenden Schritten die Schleife daran erinnert.
+pub const BUDGETHINWEIS_AB: u32 = 3;
+
+/// **Der Satz, den die Schleife bei knappem Schrittbudget anhaengt.**
+pub fn budgethinweis(bleiben: u32, form: crate::werkzeug::Ansageform) -> String {
+    match (form, bleiben) {
+        (crate::werkzeug::Ansageform::Deutsch, 0) => "\n[Schleife: Das war der letzte Schritt dieser Runde. \
+            Antworte jetzt mit dem, was du hast.]"
+            .into(),
+        (crate::werkzeug::Ansageform::Deutsch, k) => format!(
+            "\n[Schleife: Noch {k} Schritt(e) in dieser Runde. Sichere jetzt dein Ergebnis: \
+             schreib die Datei, die das Ziel verlangt, oder halte fest, was die naechste Runde braucht.]"
+        ),
+        (_, 0) => "\n[Loop: That was the last step of this round. Answer now with what you have.]".into(),
+        (_, k) => format!(
+            "\n[Loop: {k} step(s) left in this round. Secure your result now: write the file the \
+             goal asks for, or record what the next round needs.]"
+        ),
+    }
+}
+
 /// Was ein Lauf braucht.
 pub struct Lauf<'a> {
     /// Woher die Modellantwort kommt: die Tuer eines Knotens oder ein
@@ -319,13 +340,28 @@ impl<'a> Lauf<'a> {
                     Ok(v) => lesbare.push(v),
                     Err(u) => {
                         unlesbar += 1;
-                        let text = format!(
-                            "dieser Aufruf liess sich nicht als JSON lesen. Er fing so an: {} \
-                             Haeufigster Grund: Der Aufruf wurde mitten im Text abgeschnitten, \
-                             weil die Tokengrenze erreicht war. Fass dich kuerzer und ruf \
-                             erneut auf.",
-                            u.roh
-                        );
+                        // 📌 **Die Meldung sagt den wirklichen Grund** (2026-09-29).
+                        //    Bis hierher hiess es immer „vermutlich an der
+                        //    Tokengrenze abgeschnitten". Das 27B schrieb einen
+                        //    vollstaendigen Aufruf mit falscher Form, glaubte der
+                        //    Meldung, kuerzte seine Suchfrage viermal und
+                        //    wiederholte denselben Formfehler bis zum Abbruch.
+                        let text = if u.abgeschnitten {
+                            format!(
+                                "dieser Aufruf endet ohne </tool_call>; er wurde vermutlich an der \
+                                 Tokengrenze abgeschnitten. Er fing so an: {} Fass dich kuerzer und \
+                                 ruf erneut auf.",
+                                u.roh
+                            )
+                        } else {
+                            format!(
+                                "dieser Aufruf hat nicht die verlangte Form. Er lautete: {} \
+                                 Richtig ist genau: <tool_call>{{\"name\": \"<Werkzeug>\", \
+                                 \"arguments\": {{...}}}}</tool_call>, mit dem Werkzeugnamen im \
+                                 Feld \"name\" und gueltigem JSON.",
+                                u.roh
+                            )
+                        };
                         melden(Meldung::Abgelehnt { name: "(unlesbar)", grund: &text });
                         nachrichten.push(Werkzeugergebnis::nachricht("(unlesbar)", &text));
                         ergebnisse.push(text);
@@ -404,6 +440,22 @@ impl<'a> Lauf<'a> {
                 entschieden.push((v.clone(), Entscheidung::Erlaubt));
                 nachrichten.push(Werkzeugergebnis::nachricht(&v.name, &text));
                 ergebnisse.push(text);
+            }
+
+            // 7b. ⚑ **Der Budgethinweis** (2026-09-29): Bleiben nach diesem
+            //     Schritt hoechstens `BUDGETHINWEIS_AB` Schritte, steht das
+            //     am letzten Werkzeugergebnis.
+            //     📌 Im Loop-Szenario recherchierte das 27B in Runde 1 alles
+            //     richtig, dann war das Schrittbudget der Runde verbraucht,
+            //     bevor es den Bericht schrieb. Die naechste Runde kannte nur
+            //     die Notizen, recherchierte von vorn und endete wieder vor dem
+            //     Schreiben; viermal hintereinander dieselbe Runde. Wer weiss,
+            //     dass die Runde gleich endet, sichert sein Ergebnis.
+            let bleiben = self.grenzen.kontrakt().max_schritte.saturating_sub(getan);
+            if bleiben <= BUDGETHINWEIS_AB {
+                if let Some(letzte) = nachrichten.last_mut().filter(|n| n.role == "tool") {
+                    letzte.content.push_str(&budgethinweis(bleiben, self.ansageform));
+                }
             }
 
             // 8. In den Strom, samt allem, was abgelehnt wurde.

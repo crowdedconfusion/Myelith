@@ -10,11 +10,16 @@ Kiste** liegt.
 |---|---|
 | `dateibaum` | der Verzeichnisbaum ab einem Pfad |
 | `git_stand` | der Arbeitsstand des Repositoriums im Arbeitsordner |
-| `suche_text` | Textsuche über die Dateien im Arbeitsordner |
 | `zaehle_zeilen` | die Zeilen einer Datei |
 
 Dazu kommen die eingebauten `list_directory`, `read_file`,
 `search_files`, `write_file`, `edit_file`.
+
+📌 **`suche_text` ist am 2026-09-28 entfallen.** Es tat dasselbe wie das
+eingebaute `search_files` und begründete sich mit dem falschen Satz,
+`search_files` suche nur Dateinamen. Die Werkzeugabdeckung vom 2026-09-23
+zeigte, dass das Modell ohnehin `search_files` wählt und die Aufgabe damit
+löst; das doppelte Werkzeug machte nur jede Wahl schwerer.
 
 ## ⚑ Base ist die Grundlage jeder anderen Kiste
 

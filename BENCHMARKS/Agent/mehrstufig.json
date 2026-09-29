@@ -1,0 +1,134 @@
+{
+  "_kommentar": [
+    "Mehrstufige Auftraege: je drei bis acht Werkzeugschritte, und jeder hat eine",
+    "Abnahme von aussen (`abnahme`), einen Befehl, der nach dem Lauf im",
+    "Arbeitsordner mit 0 enden muss. Angelegt am 2026-09-29, um zwischen den",
+    "stundenlangen Loop-Laeufen schnell nachzumessen.",
+    "",
+    "⚑ Jeder Auftrag traegt eine Musterloesung (`_muster`), und",
+    "`mehrstufig_pruefen.py` haelt beide Richtungen fest: Die Abnahme scheitert",
+    "am Ausgangsstand und besteht an der Musterloesung. Eine Abnahme, die beides",
+    "nicht trennt, misst nichts.",
+    "",
+    "⚑ Die Fallen sind absichtlich und stammen aus den Loop-Laeufen: ein falsches",
+    "Trennzeichen und leere Werte, eine ersetzte Unterlage und eine alte FAQ,",
+    "eine Hausregel als Skill, eine Datei mit Syntaxfehler, Zahlen gegen",
+    "Grenzwerte vergleichen.",
+    "",
+    "📌 \"nach datei.md\" ist doppeldeutig (in die Datei, oder: gemaess der Datei).",
+    "Das 27B las am 2026-09-29 \"Schreibe ein Protokoll nach protokoll.md\" als",
+    "\"gemaess protokoll.md\", fand keine solche Datei und schrieb woanders hin.",
+    "Seitdem heisst es \"in die Datei ...\"."
+  ],
+  "auftrag": [
+    {
+      "name": "m_fehler_beheben",
+      "stufe": 4,
+      "satz": "voll",
+      "schreiben": true,
+      "auftrag": "verkauf.py soll je Region die Summe der Betraege aus verkauf.csv nach summe.txt schreiben, bricht aber beim Start ab. Bring das Skript zum Laufen, ohne verkauf.csv zu veraendern. Leere Betraege zaehlen nicht. Pruefe am Ende, dass python3 verkauf.py ohne Fehler durchlaeuft.",
+      "dateien": {
+        "verkauf.py": "import csv\n\nsumme = {}\nwith open(\"verkauf.csv\", newline=\"\", encoding=\"utf-8\") as f:\n    for z in csv.DictReader(f):\n        summe[z[\"region\"]] = summe.get(z[\"region\"], 0) + int(z[\"betrag\"])\nwith open(\"summe.txt\", \"w\", encoding=\"utf-8\") as f:\n    for r in sorted(summe):\n        f.write(f\"{r}: {summe[r]}\\n\")\n",
+        "verkauf.csv": "region;betrag\nNord;100\nSued;250\nNord;\nOst;75\nSued;50\n"
+      },
+      "abnahme": "python3 verkauf.py && grep -qx 'Nord: 100' summe.txt && grep -qx 'Ost: 75' summe.txt && grep -qx 'Sued: 300' summe.txt && grep -qx 'Nord;' verkauf.csv",
+      "_muster": {
+        "verkauf.py": "import csv\n\nsumme = {}\nwith open(\"verkauf.csv\", newline=\"\", encoding=\"utf-8\") as f:\n    for z in csv.DictReader(f, delimiter=\";\"):\n        if not z[\"betrag\"].strip():\n            continue\n        summe[z[\"region\"]] = summe.get(z[\"region\"], 0) + int(z[\"betrag\"])\nwith open(\"summe.txt\", \"w\", encoding=\"utf-8\") as f:\n    for r in sorted(summe):\n        f.write(f\"{r}: {summe[r]}\\n\")\n"
+      }
+    },
+    {
+      "name": "m_ueber_dateien_zaehlen",
+      "stufe": 4,
+      "satz": "voll",
+      "schreiben": true,
+      "auftrag": "In den Dateien lager_a.txt, lager_b.txt und lager_c.txt steht der Bestand dreier Lager. Wie viele Schrauben liegen insgesamt in allen Lagern? Schreibe nur die Zahl in die Datei bestand.txt.",
+      "dateien": {
+        "lager_a.txt": "Schrauben: 120\nMuttern: 40\n",
+        "lager_b.txt": "Muttern: 15\nSchrauben: 75\n",
+        "lager_c.txt": "Muttern: 10\nSchrauben: 5\nNaegel: 300\n"
+      },
+      "abnahme": "test \"$(tr -d ' \\n' < bestand.txt)\" = 200",
+      "_muster": {
+        "bestand.txt": "200\n"
+      }
+    },
+    {
+      "name": "m_gueltige_unterlage",
+      "stufe": 4,
+      "satz": "voll",
+      "schreiben": true,
+      "auftrag": "Wie hoch ist die Kilometerpauschale laut den Unterlagen im Ordner docs? Achte darauf, welche Regel gilt. Schreibe den geltenden Betrag in Euro in die Datei pauschale.txt, nur die Zahl mit Komma, zum Beispiel 1,23.",
+      "dateien": {
+        "docs/reisekosten-2024.md": "# Reisekosten\n\nErsetzt durch: reisekosten-2026.md\n\n## 1. Kilometerpauschale\n\nJe gefahrenem Kilometer 0,30 Euro.\n",
+        "docs/reisekosten-2026.md": "# Reisekosten, gueltig ab 1. Januar 2026\n\n## 1. Kilometerpauschale\n\nJe gefahrenem Kilometer 0,38 Euro.\n",
+        "docs/faq.md": "# Haeufige Fragen (Stand 2023)\n\nDie Kilometerpauschale betraegt 0,30 Euro.\n"
+      },
+      "abnahme": "grep -q '0,38' pauschale.txt && ! grep -q '0,30' pauschale.txt",
+      "_muster": {
+        "pauschale.txt": "0,38\n"
+      }
+    },
+    {
+      "name": "m_umbenennen",
+      "stufe": 4,
+      "satz": "voll",
+      "schreiben": true,
+      "auftrag": "Benenne die Funktion addiere in allen Python-Dateien dieses Ordners in summiere um, auch dort, wo sie benutzt wird. Danach muss python3 test_rechner.py ohne Fehler durchlaufen.",
+      "dateien": {
+        "rechner.py": "def addiere(a, b):\n    return a + b\n",
+        "main.py": "from rechner import addiere\n\nprint(addiere(2, 40))\n",
+        "test_rechner.py": "from rechner import addiere\n\nassert addiere(2, 3) == 5\nassert addiere(-1, 1) == 0\nprint(\"ok\")\n"
+      },
+      "abnahme": "python3 test_rechner.py && python3 main.py | grep -qx 42 && ! grep -q addiere rechner.py main.py test_rechner.py",
+      "_muster": {
+        "rechner.py": "def summiere(a, b):\n    return a + b\n",
+        "main.py": "from rechner import summiere\n\nprint(summiere(2, 40))\n",
+        "test_rechner.py": "from rechner import summiere\n\nassert summiere(2, 3) == 5\nassert summiere(-1, 1) == 0\nprint(\"ok\")\n"
+      }
+    },
+    {
+      "name": "m_hausregel_befolgen",
+      "stufe": 4,
+      "satz": "voll",
+      "schreiben": true,
+      "auftrag": "Schreibe ein kurzes Protokoll der Besprechung vom 2026-09-29 in die Datei protokoll.md. Besprochen wurden das Budget und die Urlaubsplanung. Halte dich an unsere Hausregel fuer Protokolle.",
+      "dateien": {
+        ".AGENT/skills/protokoll-format/SKILL.md": "---\nbeschreibung: Die Hausregel fuer das Format von Besprechungsprotokollen.\nstichworte: protokoll, besprechung, hausregel, format, meeting, minutes\n---\n\n# Hausregel: Protokolle\n\n1. Die erste Zeile lautet genau `PROTOKOLL v2`.\n2. Die zweite Zeile ist das Datum im Format JJJJ-MM-TT.\n3. Danach je besprochenem Thema eine Zeile, die mit `* ` beginnt.\n"
+      },
+      "abnahme": "head -1 protokoll.md | grep -qx 'PROTOKOLL v2' && sed -n 2p protokoll.md | grep -q '2026-09-29' && grep -qi '^\\* .*budget' protokoll.md && grep -qi '^\\* .*urlaub' protokoll.md",
+      "_muster": {
+        "protokoll.md": "PROTOKOLL v2\n2026-09-29\n* Budget\n* Urlaubsplanung\n"
+      }
+    },
+    {
+      "name": "m_json_reparieren",
+      "stufe": 4,
+      "satz": "voll",
+      "schreiben": true,
+      "auftrag": "start.py bricht beim Lesen von config.json ab. Repariere config.json so, dass python3 start.py den Port ausgibt. Die Werte in config.json bleiben, wie sie sind.",
+      "dateien": {
+        "config.json": "{\n  \"name\": \"probe\",\n  \"port\": 8080,\n}\n",
+        "start.py": "import json\n\nwith open(\"config.json\", encoding=\"utf-8\") as f:\n    c = json.load(f)\nprint(c[\"port\"])\n"
+      },
+      "abnahme": "python3 start.py | grep -qx 8080 && grep -q '\"name\": \"probe\"' config.json",
+      "_muster": {
+        "config.json": "{\n  \"name\": \"probe\",\n  \"port\": 8080\n}\n"
+      }
+    },
+    {
+      "name": "m_grenzwerte_pruefen",
+      "stufe": 4,
+      "satz": "voll",
+      "schreiben": true,
+      "auftrag": "In messungen.csv stehen Messwerte je Messstelle, in grenzen.md die Grenzwerte. Welche Messstellen liegen ueber ihrem Grenzwert? Schreibe ihre Namen in die Datei verstoesse.txt, je eine Zeile, sonst nichts.",
+      "dateien": {
+        "messungen.csv": "stelle;wert\nA;12\nB;7\nC;15\nD;31\n",
+        "grenzen.md": "# Grenzwerte\n\n| Stelle | hoechstens |\n|---|---|\n| A | 10 |\n| B | 10 |\n| C | 20 |\n| D | 30 |\n"
+      },
+      "abnahme": "grep -qx A verstoesse.txt && grep -qx D verstoesse.txt && ! grep -qx B verstoesse.txt && ! grep -qx C verstoesse.txt",
+      "_muster": {
+        "verstoesse.txt": "A\nD\n"
+      }
+    }
+  ]
+}

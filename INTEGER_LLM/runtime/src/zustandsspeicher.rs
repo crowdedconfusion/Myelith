@@ -26,6 +26,9 @@
 use integer_llm_kernels::faltung::{Faltungsfenster, KERN};
 use integer_llm_kernels::zustandsschicht::Zustand;
 
+/// ⚑ **Klonbar fuer den Merkpunkt** (siehe `KVCache::merken`): Ein
+/// rekurrenter Zustand laesst sich nicht zurueckrechnen, aber aufheben.
+#[derive(Clone)]
 pub struct Zustandsspeicher {
     /// Je Ebene der Platz im Feld, oder `usize::MAX` fuer „achtsam".
     plaetze: Vec<usize>,

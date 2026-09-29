@@ -20,6 +20,95 @@
 
 use crate::dot::dot_i8_i16;
 use crate::fixed_point::{clamp_i16_from_i64, rescale, rescale_i64};
+use crate::ternaer::{Eingabe, Ternaermatrix};
+
+/// Die Gewichte einer linearen Schicht: int8 wie bisher, oder ternaer
+/// gepackt ([`crate::ternaer`]).
+///
+/// ⚑ **Eine Umsetzung je Kern, nicht zwei.** Jeder Kern dieses Moduls
+/// endet in derselben Zeilenformel `rescale(sum_i w_i * x_i)`; nur wie die
+/// Summe entsteht, haengt an der Gewichtsart. Die Funktionen mit `w8a16`
+/// im Namen reichen ihr Gewicht als [`Gewichtsmatrix::Int8`] an die
+/// allgemeine Fassung weiter und rechnen damit **dieselben Bytes in
+/// derselben Reihenfolge** wie vorher; ihre Signaturen bleiben, denn
+/// ausserhalb dieser Kiste rufen sie ein Dutzend Stellen.
+///
+/// ⚑ **Und ternaer ist dieselbe Zahl**, siehe den Kopf von
+/// [`crate::ternaer`]: ein umgepacktes int8-Gewicht liefert jedes
+/// Ausgabeelement bitgleich.
+#[derive(Clone, Copy, Debug)]
+pub enum Gewichtsmatrix<'a> {
+    /// Flach, Zeile fuer Zeile, `in_features` Elemente je Zeile.
+    Int8(&'a [i8]),
+    Ternaer(Ternaermatrix<'a>),
+}
+
+impl<'a> Gewichtsmatrix<'a> {
+    /// Bereitet `x` fuer diese Matrix auf, einmal je Eingabe
+    /// ([`Eingabe`]); fuer int8 ist das `x` selbst.
+    pub fn eingabe<'x>(&self, x: &'x [i16]) -> Eingabe<'x> {
+        match self {
+            Gewichtsmatrix::Int8(_) => Eingabe::roh(x),
+            Gewichtsmatrix::Ternaer(_) => Eingabe::neu(x),
+        }
+    }
+
+    /// `sum_i w[z][i] * x[i]`, exakt in i64; `e` aus [`Self::eingabe`].
+    #[inline]
+    pub fn zeile_mal(&self, z: usize, in_features: usize, e: &Eingabe<'_>) -> i64 {
+        match self {
+            Gewichtsmatrix::Int8(w) => dot_i8_i16(&w[z * in_features..(z + 1) * in_features], e.x()),
+            Gewichtsmatrix::Ternaer(t) => t.zeile_mal_mit(z, e),
+        }
+    }
+
+    /// Die int8-Bytes, falls es welche sind. Die GPU rechnet nur diese
+    /// Art; eine ternaere Matrix bleibt auf der CPU.
+    pub fn als_int8(&self) -> Option<&'a [i8]> {
+        match self {
+            Gewichtsmatrix::Int8(w) => Some(w),
+            Gewichtsmatrix::Ternaer(_) => None,
+        }
+    }
+
+    /// Passt die Matrix zu `zeilen` Zeilen zu je `in_features`? Die
+    /// Meldung fuer int8 ist dieselbe wie vor der Einfuehrung dieses
+    /// Typs.
+    pub(crate) fn form_pruefen(&self, wer: &str, in_features: usize, zeilen: usize) {
+        match self {
+            Gewichtsmatrix::Int8(w) => assert_eq!(
+                w.len(),
+                in_features * zeilen,
+                "{wer}: {} Gewichte passen nicht zu {zeilen} Zeilen à {in_features} Elementen",
+                w.len()
+            ),
+            Gewichtsmatrix::Ternaer(t) => assert!(
+                t.spalten() == in_features && t.zeilen() == zeilen,
+                "{wer}: ternaere Matrix {} x {} passt nicht zu {zeilen} Zeilen à {in_features} Elementen",
+                t.zeilen(),
+                t.spalten()
+            ),
+        }
+    }
+}
+
+impl<'a> From<&'a [i8]> for Gewichtsmatrix<'a> {
+    fn from(w: &'a [i8]) -> Self {
+        Gewichtsmatrix::Int8(w)
+    }
+}
+
+impl<'a> From<&'a Vec<i8>> for Gewichtsmatrix<'a> {
+    fn from(w: &'a Vec<i8>) -> Self {
+        Gewichtsmatrix::Int8(w)
+    }
+}
+
+impl<'a> From<Ternaermatrix<'a>> for Gewichtsmatrix<'a> {
+    fn from(t: Ternaermatrix<'a>) -> Self {
+        Gewichtsmatrix::Ternaer(t)
+    }
+}
 
 /// Ab wie vielen Multiplikationen (`zeilen · in_features`) sich das
 /// Aufteilen über Threads überhaupt lohnt.
@@ -119,6 +208,15 @@ fn max_threads() -> usize {
 /// Bitgleichheit zieht, nur eine Ebene höher: Dort ist es die
 /// Assoziativität der Ganzzahladdition **innerhalb** einer Zeile, hier
 /// die Unabhängigkeit **zwischen** den Zeilen.
+/// [`zeilen_rechnen`] fuer andere Module dieser Kiste, etwa den
+/// verschmolzenen MLP; dieselbe Aufteilung, dieselbe Zusage.
+pub(crate) fn zeilen_verteilt<F>(zeilen: usize, arbeit_je_zeile: usize, f: F) -> Vec<i16>
+where
+    F: Fn(usize) -> i16 + Sync,
+{
+    zeilen_rechnen(zeilen, arbeit_je_zeile, f)
+}
+
 fn zeilen_rechnen<F>(zeilen: usize, arbeit_je_zeile: usize, f: F) -> Vec<i16>
 where
     F: Fn(usize) -> i16 + Sync,
@@ -183,22 +281,39 @@ pub fn linear_w8a16(
     act_frac_bits: u8,
     out_frac_bits: u8,
 ) -> Vec<i16> {
-    assert_eq!(
-        W.len(),
-        in_features * w_shifts.len(),
-        "linear_w8a16: {} Gewichte passen nicht zu {} Zeilen à {} Elementen",
-        W.len(),
-        w_shifts.len(),
-        in_features
-    );
+    linear_matrix_als(x, Gewichtsmatrix::Int8(W), in_features, w_shifts, act_frac_bits, out_frac_bits, "linear_w8a16")
+}
+
+/// [`linear_w8a16`] fuer jede Gewichtsart ([`Gewichtsmatrix`]).
+pub fn linear_matrix(
+    x: &[i16],
+    W: Gewichtsmatrix<'_>,
+    in_features: usize,
+    w_shifts: &[u8],
+    act_frac_bits: u8,
+    out_frac_bits: u8,
+) -> Vec<i16> {
+    linear_matrix_als(x, W, in_features, w_shifts, act_frac_bits, out_frac_bits, "linear_matrix")
+}
+
+fn linear_matrix_als(
+    x: &[i16],
+    W: Gewichtsmatrix<'_>,
+    in_features: usize,
+    w_shifts: &[u8],
+    act_frac_bits: u8,
+    out_frac_bits: u8,
+    wer: &str,
+) -> Vec<i16> {
+    W.form_pruefen(wer, in_features, w_shifts.len());
+    let e = W.eingabe(x);
     // Vektorisiert, wenn `cpu-simd` aktiv ist, und über Threads verteilt,
     // wenn die Matrix groß genug ist. Beides bitgleich zur einfachsten
     // Fassung: innerhalb der Zeile, weil die i64-Akkumulation exakt und
     // damit assoziativ ist (`dot.rs`), zwischen den Zeilen, weil sie
     // voneinander unabhängig sind (`zeilen_rechnen`).
     zeilen_rechnen(w_shifts.len(), in_features, |z| {
-        let row = &W[z * in_features..(z + 1) * in_features];
-        let acc = dot_i8_i16(row, x);
+        let acc = W.zeile_mal(z, in_features, &e);
         let y = rescale_i64(acc, w_shifts[z] + act_frac_bits, out_frac_bits);
         clamp_i16_from_i64(y)
     })
@@ -227,22 +342,39 @@ pub fn linear_w8a16_pc(
     act_frac_bits: u8,
     out_frac_bits: &[u8],
 ) -> Vec<i16> {
-    assert_eq!(
-        W.len(),
-        in_features * w_shifts.len(),
-        "linear_w8a16_pc: {} Gewichte passen nicht zu {} Zeilen à {} Elementen",
-        W.len(),
-        w_shifts.len(),
-        in_features
-    );
+    linear_matrix_pc_als(x, Gewichtsmatrix::Int8(W), in_features, w_shifts, act_frac_bits, out_frac_bits, "linear_w8a16_pc")
+}
+
+/// [`linear_w8a16_pc`] fuer jede Gewichtsart ([`Gewichtsmatrix`]).
+pub fn linear_matrix_pc(
+    x: &[i16],
+    W: Gewichtsmatrix<'_>,
+    in_features: usize,
+    w_shifts: &[u8],
+    act_frac_bits: u8,
+    out_frac_bits: &[u8],
+) -> Vec<i16> {
+    linear_matrix_pc_als(x, W, in_features, w_shifts, act_frac_bits, out_frac_bits, "linear_matrix_pc")
+}
+
+fn linear_matrix_pc_als(
+    x: &[i16],
+    W: Gewichtsmatrix<'_>,
+    in_features: usize,
+    w_shifts: &[u8],
+    act_frac_bits: u8,
+    out_frac_bits: &[u8],
+    wer: &str,
+) -> Vec<i16> {
+    W.form_pruefen(wer, in_features, w_shifts.len());
     assert_eq!(
         w_shifts.len(),
         out_frac_bits.len(),
-        "linear_w8a16_pc: eine Ausgangsskala je Kanal (Fund 20)"
+        "{wer}: eine Ausgangsskala je Kanal (Fund 20)"
     );
+    let e = W.eingabe(x);
     zeilen_rechnen(w_shifts.len(), in_features, |z| {
-        let row = &W[z * in_features..(z + 1) * in_features];
-        let acc = dot_i8_i16(row, x);
+        let acc = W.zeile_mal(z, in_features, &e);
         let y = rescale_i64(acc, w_shifts[z] + act_frac_bits, out_frac_bits[z]);
         clamp_i16_from_i64(y)
     })
@@ -362,7 +494,7 @@ mod stapeltests {
             .iter()
             .enumerate()
             .map(|(i, (_, sp))| Buendelteil {
-                w: &gewichte[i],
+                w: (&gewichte[i]).into(),
                 x: &eingaben[i],
                 in_features: *sp,
                 w_shifts: &shifts[i],
@@ -647,8 +779,8 @@ pub enum Ausgangsskala<'a> {
 
 /// Eine Matrix in einem Buendel: Gewichte, Eingabe und Skalen.
 pub struct Buendelteil<'a> {
-    /// Flach, Zeile fuer Zeile, `in_features` Elemente je Zeile.
-    pub w: &'a [i8],
+    /// int8 flach, Zeile fuer Zeile, oder ternaer ([`Gewichtsmatrix`]).
+    pub w: Gewichtsmatrix<'a>,
     /// Die Eingabe **dieses** Teils. Teile eines Buendels duerfen
     /// verschiedene Eingaben haben; die down-Projektionen eines
     /// Expertengemischs tun es.
@@ -709,14 +841,7 @@ pub fn linear_w8a16_buendel(teile: &[Buendelteil<'_>]) -> Vec<i16> {
         return Vec::new();
     }
     for t in teile {
-        assert_eq!(
-            t.w.len(),
-            t.in_features * t.zeilen(),
-            "linear_w8a16_buendel: {} Gewichte passen nicht zu {} Zeilen à {} Elementen",
-            t.w.len(),
-            t.zeilen(),
-            t.in_features
-        );
+        t.w.form_pruefen("linear_w8a16_buendel", t.in_features, t.zeilen());
         if let Ausgangsskala::JeZeile(f) = t.aus {
             assert_eq!(
                 f.len(),
@@ -743,14 +868,14 @@ pub fn linear_w8a16_buendel(teile: &[Buendelteil<'_>]) -> Vec<i16> {
         return Vec::new();
     }
 
+    let eingaben: Vec<Eingabe<'_>> = teile.iter().map(|t| t.w.eingabe(t.x)).collect();
     zeilen_rechnen(summe, arbeit / summe, |z| {
         // `partition_point` liefert die Zahl der Grenzen bis
         // einschliesslich `z`; minus eins ist der Teil, in dem `z` liegt.
         let i = grenzen.partition_point(|g| *g <= z) - 1;
         let t = &teile[i];
         let lokal = z - grenzen[i];
-        let row = &t.w[lokal * t.in_features..(lokal + 1) * t.in_features];
-        let acc = dot_i8_i16(row, t.x);
+        let acc = t.w.zeile_mal(lokal, t.in_features, &eingaben[i]);
         let ziel = match t.aus {
             Ausgangsskala::Eine(f) => f,
             Ausgangsskala::JeZeile(f) => f[lokal],
@@ -839,7 +964,7 @@ pub fn linear_w8a16_stapel_viele_cpu(auftraege: &[Stapelauftrag<'_>]) -> Vec<Vec
         .iter()
         .flat_map(|a| {
             a.xs.iter().map(move |x| Buendelteil {
-                w: a.w,
+                w: Gewichtsmatrix::Int8(a.w),
                 x,
                 in_features: a.in_features,
                 w_shifts: a.w_shifts,
@@ -893,6 +1018,18 @@ pub fn linear_w8a16_stapel(
     act_frac_bits: u8,
     out_frac_bits: u8,
 ) -> Vec<Vec<i16>> {
+    linear_matrix_stapel(xs, Gewichtsmatrix::Int8(W), in_features, w_shifts, act_frac_bits, out_frac_bits)
+}
+
+/// [`linear_w8a16_stapel`] fuer jede Gewichtsart ([`Gewichtsmatrix`]).
+pub fn linear_matrix_stapel(
+    xs: &[&[i16]],
+    W: Gewichtsmatrix<'_>,
+    in_features: usize,
+    w_shifts: &[u8],
+    act_frac_bits: u8,
+    out_frac_bits: u8,
+) -> Vec<Vec<i16>> {
     stapel_intern(xs, W, in_features, w_shifts, |z| {
         let _ = z;
         out_frac_bits
@@ -903,6 +1040,18 @@ pub fn linear_w8a16_stapel(
 pub fn linear_w8a16_pc_stapel(
     xs: &[&[i16]],
     W: &[i8],
+    in_features: usize,
+    w_shifts: &[u8],
+    act_frac_bits: u8,
+    out_frac_bits: &[u8],
+) -> Vec<Vec<i16>> {
+    linear_matrix_pc_stapel(xs, Gewichtsmatrix::Int8(W), in_features, w_shifts, act_frac_bits, out_frac_bits)
+}
+
+/// [`linear_w8a16_pc_stapel`] fuer jede Gewichtsart ([`Gewichtsmatrix`]).
+pub fn linear_matrix_pc_stapel(
+    xs: &[&[i16]],
+    W: Gewichtsmatrix<'_>,
     in_features: usize,
     w_shifts: &[u8],
     act_frac_bits: u8,
@@ -923,7 +1072,7 @@ pub fn linear_w8a16_pc_stapel(
 /// stehen davor und gelten fuer beide Wege.
 fn stapel_intern<S>(
     xs: &[&[i16]],
-    W: &[i8],
+    W: Gewichtsmatrix<'_>,
     in_features: usize,
     w_shifts: &[u8],
     out_frac: S,
@@ -933,18 +1082,17 @@ where
     S: Fn(usize) -> u8 + Sync,
 {
     let zeilen = w_shifts.len();
-    assert_eq!(
-        W.len(),
-        in_features * zeilen,
-        "linear_stapel: {} Gewichte passen nicht zu {zeilen} Zeilen à {in_features} Elementen",
-        W.len()
-    );
+    W.form_pruefen("linear_stapel", in_features, zeilen);
     if xs.is_empty() {
         return Vec::new();
     }
+    // ⚑ **Die GPU rechnet nur int8.** Eine ternaere Matrix bleibt auf der
+    // CPU; dieselbe Zahl, nur ohne die Buendelung dort.
     #[cfg(all(feature = "metal", target_os = "macos"))]
-    if let Some(aus) = crate::metal::stapel(xs, W, in_features, w_shifts, act_frac_bits, &out_frac) {
-        return aus;
+    if let Some(w8) = W.als_int8() {
+        if let Some(aus) = crate::metal::stapel(xs, w8, in_features, w_shifts, act_frac_bits, &out_frac) {
+            return aus;
+        }
     }
     stapel_cpu(xs, W, in_features, w_shifts, out_frac, act_frac_bits)
 }
@@ -962,13 +1110,13 @@ pub(crate) fn linear_w8a16_pc_stapel_cpu(
     act_frac_bits: u8,
     out_frac_bits: &[u8],
 ) -> Vec<Vec<i16>> {
-    stapel_cpu(xs, W, in_features, w_shifts, |z| out_frac_bits[z], act_frac_bits)
+    stapel_cpu(xs, Gewichtsmatrix::Int8(W), in_features, w_shifts, |z| out_frac_bits[z], act_frac_bits)
 }
 
 /// Der Stapelweg auf der CPU.
 fn stapel_cpu<S>(
     xs: &[&[i16]],
-    W: &[i8],
+    W: Gewichtsmatrix<'_>,
     in_features: usize,
     w_shifts: &[u8],
     out_frac: S,
@@ -1001,12 +1149,12 @@ where
         let ende = (anfang + kachel).min(b);
         let teil = &xs[anfang..ende];
         let breite = teil.len();
+        let eingaben: Vec<Eingabe<'_>> = teil.iter().map(|x| W.eingabe(x)).collect();
         let flach = crate::fadenpool::rechnen_breit(zeilen, breite, faeden, |z, ziel| {
-            let row = &W[z * in_features..(z + 1) * in_features];
             let schiebung = w_shifts[z] + act_frac_bits;
             let ziel_frac = out_frac(z);
             for (i, wert) in ziel.iter_mut().enumerate() {
-                let acc = dot_i8_i16(row, teil[i]);
+                let acc = W.zeile_mal(z, in_features, &eingaben[i]);
                 *wert = clamp_i16_from_i64(rescale_i64(acc, schiebung, ziel_frac));
             }
         });

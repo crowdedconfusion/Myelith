@@ -1,6 +1,6 @@
 # compute-pipeline (`myl-pod`)
 
-> **Version:** 0.35.0
+> **Version:** 0.35.1
 > **Datum:** 2026-09-09
 > **Status:** Phase 1 vollständig, Phase 2.1, **Phase 3 vollständig**
 > (3.1 bis 3.3) und Punkt 4.3. `shard_loop` mit Spur-Hashes und
@@ -100,6 +100,22 @@ COMPUTE_PIPELINE/
 ```
 
 ## Changelog
+
+### v0.35.1 – 2026-09-28 (`myl-pod` 0.35.1: ein veralteter Vergleichswert, Fund 498)
+
+`tests/vier_prozesse_ein_pod.rs` war rot: Der fest eingetragene
+Dekodier-Abdruck stammte vom 2026-09-12, und das Ankerartefakt
+`myelith-0.6b` wurde am 2026-09-21 neu gebaut. Der Abdruck umfasst die
+Logits und hängt deshalb am Artefakt.
+
+- **Die Aussage des Tests hält:** Vier getrennte Prozesse liefern
+  `2a13b710…`, vier Shards in einem Prozess (`Coordinator::new`, Aufbau wie
+  `shards_ueber_den_draht.rs`) dasselbe, und der Stand vor den Änderungen
+  des Tages (Commit `1445da2`) ebenfalls. Die acht Token sind unverändert.
+- Neuer Wert mit Herkunft im Test.
+- 📌 Die CI hat kein Artefakt und überspringt den Test. Rot war er nur auf
+  der Maschine mit Artefakt, und dort lief er eine Woche lang nicht. **Ein
+  Wert, der am Artefakt hängt, gehört mit dem Artefakt neu erhoben.**
 
 ### v0.35.0 – 2026-09-14 (eine Position, die der Speicher nicht fortsetzt, wird abgelehnt)
 

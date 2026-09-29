@@ -45,7 +45,7 @@
 //! ```
 
 use integer_llm_kernels::optimierer::{Master, Schrittkennung};
-use integer_llm_kernels::trainingsschritt::{schritt_auf_mlp, Mlpvorgaben};
+use integer_llm_kernels::trainingsschritt::{schritt_auf_mlp, Gewichtsform, Mlpvorgaben};
 use integer_llm_runtime::kv_cache::KVCache;
 use integer_llm_runtime::loader::load_model;
 use integer_llm_runtime::mitschnitt::{Mlpteil, Zwischenwerte};
@@ -182,6 +182,7 @@ fn ein_gewaehlter_experte_lernt_sein_ziel() {
         down_in_frac: sc.down_in_frac,
         aus_frac: sc.residual_mid_frac[0],
         master_frac: MASTER_FRAC,
+        gewichtsform: Gewichtsform::Int8,
         silu_in_frac: cfg.silu_in_frac,
         silu_lut_offset: cfg.silu_lut_offset,
         silu_out_frac: cfg.silu_out_frac,

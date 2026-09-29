@@ -14,6 +14,24 @@
 
 use myl_client::einstellungen::Einstellungen;
 use myl_client::Oertlichesmodell;
+
+/// **Die Hilfe, mit den Feldern fuer `setzen` aus der Feldtabelle.**
+///
+/// 📌 **Die Liste stand bis zum 2026-09-28 von Hand im Text** und nannte
+/// weder `agent.web_recherche` noch die Blick-Schalter, dafuer ein
+/// `kap.beschleuniger`, das es in der Tabelle nicht gibt. Ein Nutzer, dessen
+/// Agent „keinen Internetzugriff" hatte, fand den Schalter deshalb auch hier
+/// nicht. Jetzt kommt sie aus `einstellungen::FELDER`, also von dort, wo
+/// `setzen` sie auch prueft.
+fn hilfe() -> String {
+    let namen: Vec<&str> = myl_client::einstellungen::FELDER.iter().map(|f| f.name).collect();
+    let mut zeilen = Vec::new();
+    for gruppe in namen.chunks(3) {
+        let z: Vec<String> = gruppe.iter().map(|n| format!("{n:<24}")).collect();
+        zeilen.push(format!("  {}", z.join("").trim_end()));
+    }
+    HILFE.replace("{FELDER}", &zeilen.join("\n"))
+}
 use myl_local_agent::{Modellweg, Nachricht};
 
 const HILFE: &str = "\
@@ -40,11 +58,7 @@ myl: lokaler Betrieb von Myelith
 ⚑ Steht in den Einstellungen ein Artefakt, darf es weggelassen werden.
 
 Felder fuer `setzen`:
-  modell.artefakt   modell.token      modell.denken
-  agent.schritte    agent.wurzel      agent.schreiben
-  agent.kistenordner
-  kap.kerne         kap.beschleuniger
-  kap.speicher      kap.platte
+{FELDER}
 
 Schalter fuer `frage`:
   --token N       Hoechstzahl erzeugter Token (Vorgabe 256)
@@ -148,7 +162,7 @@ fn main() {
         // Die Hilfe ist hier eine Antwort und kein Fehler: Sie geht nach
         // stdout und gibt null zurueck.
         None | Some("--hilfe") | Some("-h") | Some("--help") | Some("hilfe") => {
-            print!("{HILFE}");
+            print!("{}", hilfe());
             0
         }
         // 📌 **Ein Tippfehler war bis hierher ein Erfolg.** Jeder
@@ -161,7 +175,7 @@ fn main() {
         // Aufruffehler ueblich ist.
         Some(unbekannt) => {
             eprintln!("myl: unbekannter Befehl `{unbekannt}`");
-            eprint!("{HILFE}");
+            eprint!("{}", hilfe());
             2
         }
     };
@@ -1258,9 +1272,12 @@ fn modell(args: &[String]) -> i32 {
 /// etwas ausrechnet, was das Modell auch raten koennte, belegt nichts.
 struct Uhr;
 
+/// Der Name der Uhr, an einer Stelle fuer Angebot und Ausfuehrung.
+const UHR: &str = "current_time";
+
 impl myl_local_agent::ausfuehrung::Werkzeugausfuehrung for Uhr {
     fn name(&self) -> &str {
-        "zeit"
+        UHR
     }
     fn ausfuehren(
         &self,
@@ -1270,7 +1287,7 @@ impl myl_local_agent::ausfuehrung::Werkzeugausfuehrung for Uhr {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        Ok(format!("{jetzt} Sekunden seit 1970"))
+        Ok(format!("{} ({jetzt} seconds since 1970)", myl_client::uhr::utc_text(jetzt)))
     }
 }
 
@@ -1580,8 +1597,8 @@ fn werkzeug_uhr() -> (
 ) {
     (
         myl_local_agent::werkzeug::Werkzeug::ohne_parameter(
-            "zeit",
-            "Sagt die aktuelle Zeit in Sekunden seit 1970.",
+            UHR,
+            "Returns the current date, time (UTC) and weekday.",
         ),
         Box::new(Uhr),
     )
@@ -1624,44 +1641,16 @@ fn einen_auftrag(
     // (2026-09-17): Die naechste Frage des Nutzers ist ein neuer Anlass
     // nachzulesen.
     ruestung.nachschlagebudget_zuruecksetzen();
-    let grenzen = myl_local_agent::vollmacht_grenzen::Sitzungsgrenzen::neu(
-        myl_client::lauf::kontrakt_fuer(schritte),
-        ruestung.kasten.angebote(),
-    );
-    let zuordnung = ruestung.zuordnung();
-
-    // ⛔️ Der vorgegebene Systemprompt, geprueft, oder kein Lauf.
-    let regel = match myl_client::systemprompt::geprueft(ruestung.form) {
-        Ok(t) => t,
-        Err(f) => {
-            eprintln!("myl: {f}");
-            return 1;
-        }
-    };
-    let (datei, text) = myl_client::systemprompt::fassung(ruestung.form);
-    myl_client::protokoll::systemprompt(datei, &myl_client::systemprompt::sha256(text), true);
-    let erg = myl_local_agent::schleife::Lauf {
-        hausregel: Some(regel),
-        einhaengung: ruestung.einhaengung.as_ref().map(|e| e.marke()),
-        klient: m,
-        modell: "lokal",
-        grenzen: &grenzen,
-        // ⚑ Die enge Vorgabe gilt, bis der Nutzer sie aufhebt.
-        betriebsart: if bezeugtes {
-            myl_local_agent::betrieb::Betriebsart::Alles
-        } else {
-            myl_local_agent::betrieb::Betriebsart::NurVerankert
-        },
-        kasten: &ruestung.kasten,
-        registratur: &ruestung.registratur,
-        adressen: &zuordnung,
-        anker: myl_types::hash::Hash::from_bytes([0u8; 32]),
-        max_tokens: Some(m.grenze as u32),
-        ansageform: Default::default(),
-        melder: None,
-    }
-    .fahren(auftrag);
-
+    // ⚑ **Ueber den gemeinsamen Weg** (`myl_client::lauf`), 2026-09-29.
+    //   📌 Hier stand eine eigene Kopie der Schleife: dieselbe Vollmacht,
+    //   derselbe Systemprompt, aber `ansageform: Default::default()` statt
+    //   der Form der Ruestung, und ohne das, was der gemeinsame Weg dem
+    //   Auftrag mitgibt (passende Skills, das heutige Datum). Aufgefallen
+    //   ist es, weil das 30B in den mehrstufigen Auftraegen den Skill-
+    //   Hinweis nie bekam, obwohl er gebaut und geprueft war. Zwei Wege
+    //   zu derselben Schleife laufen auseinander, und der zweite meldet
+    //   sich nicht.
+    let erg = myl_client::lauf::fahren(m, ruestung, schritte, bezeugtes, m.grenze as u32, auftrag);
     zeigen(&erg.nachrichten, roh);
     eprintln!("[myl] Ende: {:?}, {} Nachrichten", erg.ende, erg.nachrichten.len());
     match erg.ende {
@@ -1890,6 +1879,16 @@ mod schalter {
         let a = agent_fuer_diesen_lauf(&e, &worte(&["--schreiben"]));
         assert_eq!(a.wurzel.as_deref(), Some("/vorher"));
         assert!(a.schreiben);
+    }
+
+    /// Die Hilfe nennt jedes Feld, das `setzen` kennt.
+    #[test]
+    fn die_hilfe_nennt_jedes_feld() {
+        let h = hilfe();
+        assert!(!h.contains("{FELDER}"), "der Platzhalter blieb stehen");
+        for f in myl_client::einstellungen::FELDER.iter() {
+            assert!(h.contains(f.name), "{} fehlt in der Hilfe", f.name);
+        }
     }
 
     /// ⚑ **Jeder Schalter, hinter dem ein Wert steht, muss in

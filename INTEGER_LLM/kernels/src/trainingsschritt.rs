@@ -43,6 +43,116 @@ use crate::mlp::{mlp_int_mit_spur, Mlpspur};
 use crate::optimierer::{schritt, Master, Schrittkennung};
 use crate::rope::rotate_half_split_i16;
 
+/// **Wie aus dem Master das Gewicht der Rechnung wird.**
+///
+/// ⚑ **`Int8` ist der bisherige Weg**, und dass er unveraendert bleibt, ist
+/// die Zusicherung, an der jedes schon trainierte Modell haengt.
+/// `Ternaer` ist das Training ternaerer Modelle (2026-09-28): Der Master
+/// bleibt hochaufgeloest, die Rechnung sieht je Gruppe von 128 nur -a, 0
+/// und +a ([`ternaer_aus_master`]), und der Gradient geht unveraendert an
+/// den Master (Straight-Through). Dasselbe Δm, dieselbe Aggregation,
+/// dieselbe Pruefung im Netz.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Gewichtsform {
+    #[default]
+    Int8,
+    Ternaer,
+}
+
+/// [`gewicht_aus_master`] oder [`ternaer_aus_master`], nach `form`.
+pub fn gewicht_aus_master_als(
+    master: &[Master],
+    in_features: usize,
+    master_frac: u8,
+    form: Gewichtsform,
+) -> (Vec<i8>, Vec<u8>) {
+    match form {
+        Gewichtsform::Int8 => gewicht_aus_master(master, in_features, master_frac),
+        Gewichtsform::Ternaer => ternaer_aus_master(master, in_features, master_frac),
+    }
+}
+
+/// **Das ternaere Gewicht eines Masters**, als int8-Matrix mit
+/// Zeilenshift, wie [`gewicht_aus_master`] sie liefert.
+///
+/// Je Gruppe von [`crate::ternaer::GRUPPE`] Eingaengen:
+///
+/// 1. `a = rshift_round(sum |m|, 7)`, der mittlere Betrag (128 = 2^7, also
+///    ein Shift und keine Division).
+/// 2. `t = sign(m)`, wenn `2|m| > a`, sonst 0. Das ist `round(m / a)`,
+///    auf -1 bis 1 begrenzt; ⚑ **ein Gleichstand gibt 0**, festgelegt, damit
+///    jede Umsetzung dieselbe Zahl liefert.
+/// 3. Die Werte `t * a` werden je Zeile wie bei [`gewicht_aus_master`] auf
+///    int8 gebracht: ein Shift fuer die Zeile, gerundet. Weil jede Gruppe
+///    nur -a, 0 und +a traegt, bleibt sie dabei ternaer, und die Matrix
+///    laesst sich exakt packen (`crate::ternaer::packen`).
+///
+/// ⚑ **Die Wahl entspricht dem, was an Ternary Bonsai gemessen wurde**:
+/// Skala gleich Betragsmittel je 128er-Gruppe (die Einbettung des 8B:
+/// Skala durch Betragsmittel 1,0000).
+///
+/// ⚠️ **Der Gruppenbetrag hat nach dem Zeilenshift hoechstens sieben
+/// Bit**, relativ zur groessten Gruppe der Zeile. Das kostet am Bonsai-8B
+/// hoechstens 2,2 % je Skala (gemessen in Stufe A).
+///
+/// # Panics
+///
+/// Wie [`gewicht_aus_master`], und wenn `in_features` kein Vielfaches der
+/// Gruppe ist.
+pub fn ternaer_aus_master(master: &[Master], in_features: usize, master_frac: u8) -> (Vec<i8>, Vec<u8>) {
+    let gruppe = crate::ternaer::GRUPPE;
+    assert!(
+        in_features % gruppe == 0,
+        "ternaer_aus_master: {in_features} Eingaenge sind kein Vielfaches von {gruppe}"
+    );
+    let mut werte: Vec<Master> = vec![0; master.len()];
+    // Zeilenweise verteilt, wie `gewicht_aus_master` (dort begruendet).
+    crate::backward::zeilen_verteilt(&mut werte, in_features, |zeile_nr, zeile| {
+        let quelle = &master[zeile_nr * in_features..(zeile_nr + 1) * in_features];
+        for (ziel, g) in zeile.chunks_exact_mut(gruppe).zip(quelle.chunks_exact(gruppe)) {
+            let summe: i64 = g.iter().map(|&m| i64::from(m).abs()).sum();
+            let a = crate::fixed_point::rshift_round_i64(summe, 7);
+            for (wert, &m) in ziel.iter_mut().zip(g) {
+                let b = i64::from(m).abs();
+                let t = if 2 * b > a { i64::from(m.signum()) } else { 0 };
+                // `a` ist ein Mittel von Mastern und passt deshalb in den
+                // Master.
+                *wert = (t * a) as Master;
+            }
+        }
+    });
+    gewicht_aus_master(&werte, in_features, master_frac)
+}
+
+
+/// **Zeilen einer Matrix mit je einer Zeilenskala verteilt ableiten.**
+///
+/// ⚑ **`std::thread::scope` und nicht der Fadenpool**: Die Ableitungen
+/// loesen bei einer Zeile, die der Master nicht traegt, absichtlich eine
+/// Panik aus. Im Scope kommt sie beim Warten zum Aufrufer zurueck; ein
+/// Poolfaden stuerbe still, und der Aufrufer wartete auf ihn.
+fn zeilen_mit_skala(w: &mut [i8], shifts: &mut [u8], breite: usize, f: impl Fn(usize, &mut [i8], &mut u8) + Sync) {
+    let zeilen = shifts.len();
+    let faeden = crate::linear::kerngrenze();
+    if w.len() < (1 << 18) || faeden < 2 || zeilen < 2 {
+        for (z, (zeile, s)) in w.chunks_exact_mut(breite).zip(shifts.iter_mut()).enumerate() {
+            f(z, zeile, s);
+        }
+        return;
+    }
+    let je = zeilen.div_ceil(faeden);
+    std::thread::scope(|bereich| {
+        for (b, (ws, ss)) in w.chunks_mut(je * breite).zip(shifts.chunks_mut(je)).enumerate() {
+            let f = &f;
+            bereich.spawn(move || {
+                for (k, (zeile, s)) in ws.chunks_exact_mut(breite).zip(ss.iter_mut()).enumerate() {
+                    f(b * je + k, zeile, s);
+                }
+            });
+        }
+    });
+}
+
 /// Wandelt Mastergewichte in die Übertragungsform: `i8` je Wert und eine
 /// Verschiebung je Ausgabezeile.
 ///
@@ -110,15 +220,18 @@ pub fn gewicht_aus_master(
     let mut w = vec![0i8; master.len()];
     let mut shifts = vec![0u8; zeilen];
 
-    for z in 0..zeilen {
+    // ⚑ **Zeilenweise verteilt** (2026-09-28): Jede Zeile ist unabhaengig,
+    //   also aendert die Aufteilung keine Zahl. Im Training des 0,6B lief
+    //   diese Ableitung je Durchgang fuer 196 Matrizen einkernig.
+    zeilen_mit_skala(&mut w, &mut shifts, in_features, |z, w_zeile, shift| {
         let bereich = &master[z * in_features..(z + 1) * in_features];
         let groesster = bereich.iter().map(|v| v.unsigned_abs()).max().unwrap_or(0);
         if groesster == 0 {
             // ⚑ **Die Skala des Masters, nicht null.** Aus Nullen wird
             // bei jeder Verschiebung wieder null; die ehrliche Angabe
             // ist die, auf der der Master steht.
-            shifts[z] = master_frac;
-            continue;
+            *shift = master_frac;
+            return;
         }
         // Wie weit muss nach rechts geschoben werden, damit der groesste
         // Betrag in i8 passt? `127` ist der groesste darstellbare Betrag.
@@ -135,15 +248,15 @@ pub fn gewicht_aus_master(
         // ⚑ **Hier steht die Differenz und nicht `s` selbst (Fund 174).**
         // `s` sagt, wie viele Stellen zum Hineinpassen wegfallen; die
         // Ausgabe braucht, **wie viele Bruchstellen uebrig bleiben**.
-        shifts[z] = master_frac - u8::try_from(s).unwrap_or(u8::MAX);
+        *shift = master_frac - u8::try_from(s).unwrap_or(u8::MAX);
         for (i, v) in bereich.iter().enumerate() {
             let gerundet = crate::fixed_point::rshift_round_i64(
                 i64::from(*v),
                 u8::try_from(s).unwrap_or(u8::MAX),
             );
-            w[z * in_features + i] = gerundet.clamp(-127, 127) as i8;
+            w_zeile[i] = gerundet.clamp(-127, 127) as i8;
         }
-    }
+    });
     (w, shifts)
 }
 
@@ -180,6 +293,9 @@ pub struct Schrittvorgaben {
     /// solange sie feststeht, bleibt er stetig, wenn die Gewichte
     /// wachsen.
     pub master_frac: u8,
+    /// Wie aus dem Master das Gewicht der Rechnung wird: int8 wie
+    /// bisher, oder ternaer ([`Gewichtsform`]).
+    pub gewichtsform: Gewichtsform,
     /// Zähler der Lernrate.
     pub lr_zaehler: i64,
     /// Nenner der Lernrate. **Muss größer als null sein.**
@@ -199,11 +315,12 @@ pub fn schritt_auf_linear(
         act_frac_bits,
         out_frac_bits,
         master_frac,
+        gewichtsform,
         lr_zaehler,
         lr_nenner,
         kennung,
     } = v;
-    let (w, shifts) = gewicht_aus_master(master, in_features, master_frac);
+    let (w, shifts) = gewicht_aus_master_als(master, in_features, master_frac, gewichtsform);
     let y = linear_w8a16(x, &w, in_features, &shifts, act_frac_bits, out_frac_bits);
     assert_eq!(y.len(), ziel.len(), "schritt_auf_linear: Ziel passt nicht zur Ausgabe");
 
@@ -267,6 +384,9 @@ pub struct Mlpvorgaben {
     /// solange sie feststeht, bleibt er stetig, wenn die Gewichte
     /// wachsen.
     pub master_frac: u8,
+    /// Wie aus dem Master das Gewicht der Rechnung wird: int8 wie
+    /// bisher, oder ternaer ([`Gewichtsform`]).
+    pub gewichtsform: Gewichtsform,
     /// Eingangsdomaene der Silu-Tabelle.
     pub silu_in_frac: u8,
     /// Nullpunktverschiebung der Silu-Tabelle.
@@ -400,9 +520,9 @@ pub fn gradienten_des_mlp(
     grad_lut: &[i16],
     v: Mlpvorgaben,
 ) -> (i64, Mlpgradienten) {
-    let (wg, sg) = gewicht_aus_master(gate_master, v.hidden_size, v.master_frac);
-    let (wu, su) = gewicht_aus_master(up_master, v.hidden_size, v.master_frac);
-    let (wd, sd) = gewicht_aus_master(down_master, v.intermediate_size, v.master_frac);
+    let (wg, sg) = gewicht_aus_master_als(gate_master, v.hidden_size, v.master_frac, v.gewichtsform);
+    let (wu, su) = gewicht_aus_master_als(up_master, v.hidden_size, v.master_frac, v.gewichtsform);
+    let (wd, sd) = gewicht_aus_master_als(down_master, v.intermediate_size, v.master_frac, v.gewichtsform);
     let aus_frac = vec![v.aus_frac; v.hidden_size];
 
     let mut spur = Mlpspur::default();
@@ -455,7 +575,8 @@ pub fn gradienten_des_mlp_aus_gradient(
     let (wg, sg, wu, su, wd, sd) = (wg, sg, wu, su, wd, sd);
 
     // 1. Durch `down_proj`: Gradient nach dem Produkt.
-    let (g_h, gw_down) = linear_backward(
+    // ⚑ Gleich begrenzt (2026-09-28): `nach_grad` taete dasselbe danach.
+    let (g_h, gw_down) = crate::backward::linear_backward_begrenzt(
         g, &spur.h, wd, v.intermediate_size, sd, v.aus_frac, v.down_in_frac,
     );
 
@@ -495,10 +616,12 @@ pub fn gradienten_des_mlp_aus_gradient(
     );
 
     // 4. Durch die beiden Eingangsprojektionen.
-    let (gx_gate, gw_gate) =
-        linear_backward(&g_gate, x, wg, v.hidden_size, sg, v.down_in_frac, v.act_frac);
-    let (gx_up, gw_up) =
-        linear_backward(&g_up, x, wu, v.hidden_size, su, v.down_in_frac, v.act_frac);
+    let (gx_gate, gw_gate) = crate::backward::linear_backward_begrenzt(
+        &g_gate, x, wg, v.hidden_size, sg, v.down_in_frac, v.act_frac,
+    );
+    let (gx_up, gw_up) = crate::backward::linear_backward_begrenzt(
+        &g_up, x, wu, v.hidden_size, su, v.down_in_frac, v.act_frac,
+    );
     // ⚑ **Summe und nicht einer von beiden.** Gate und Up lesen
     // denselben Eingang, also bekommt er beide Beitraege. In `i64`
     // addiert und **einmal** gesaettigt.
@@ -509,9 +632,9 @@ pub fn gradienten_des_mlp_aus_gradient(
         .collect();
 
     Mlpgradienten {
-        gate: nach_grad(&gw_gate),
-        up: nach_grad(&gw_up),
-        down: nach_grad(&gw_down),
+        gate: gw_gate,
+        up: gw_up,
+        down: gw_down,
         eingang,
     }
 }
@@ -585,6 +708,9 @@ pub struct Aufmerksamkeitsvorgaben {
     /// solange sie feststeht, bleibt er stetig, wenn die Gewichte
     /// wachsen.
     pub master_frac: u8,
+    /// Wie aus dem Master das Gewicht der Rechnung wird: int8 wie
+    /// bisher, oder ternaer ([`Gewichtsform`]).
+    pub gewichtsform: Gewichtsform,
     /// Bruchstellen der Punktzahlen vor dem Softmax.
     pub score_frac: u8,
     /// Bruchstellen der Wahrscheinlichkeiten.
@@ -1029,10 +1155,10 @@ pub fn gradienten_der_aufmerksamkeit(
     let t_len = x.len();
     assert_eq!(ziel.len(), t_len, "gradienten_der_aufmerksamkeit: Ziel passt nicht zur Folge");
 
-    let (wq, sq) = gewicht_aus_master(q_master, hs, v.master_frac);
-    let (wk, sk) = gewicht_aus_master(k_master, hs, v.master_frac);
-    let (wv, sv) = gewicht_aus_master(v_master, hs, v.master_frac);
-    let (wo, so) = gewicht_aus_master(o_master, q_breite, v.master_frac);
+    let (wq, sq) = gewicht_aus_master_als(q_master, hs, v.master_frac, v.gewichtsform);
+    let (wk, sk) = gewicht_aus_master_als(k_master, hs, v.master_frac, v.gewichtsform);
+    let (wv, sv) = gewicht_aus_master_als(v_master, hs, v.master_frac, v.gewichtsform);
+    let (wo, so) = gewicht_aus_master_als(o_master, q_breite, v.master_frac, v.gewichtsform);
     let spur = vorwaerts_der_aufmerksamkeit(
         Aufmerksamkeitsgewichte {
             q: &wq,
@@ -1146,46 +1272,107 @@ pub fn gradienten_der_aufmerksamkeit_aus_gradient(
         prob_frac: v.prob_frac,
     };
 
-    for (t, g_y) in g_aus.iter().enumerate() {
-        // Durch die Ausgabeprojektion. Der Ausgang liegt auf dem Bus.
-        let (g_attn, teil_o) = linear_backward(
-            g_y, &spur.attn_aus[t], wo, q_breite, so, v.aus_frac, v.attn_out_frac,
-        );
-        for (ziel_w, teil) in gw_o.iter_mut().zip(teil_o.iter()) {
-            *ziel_w += *teil;
-        }
+    // ⚑ **Verteilt ueber die KV-Gruppen, seit dem 2026-09-28.** Bis hierher
+    //   lief diese Schleife einkernig, und je Position und Kopf wurden die
+    //   Schluessel und Werte aller frueheren Positionen kopiert: quadratisch
+    //   viel Kopierarbeit ueber die Folge. Gemessen im Training des 0,6B
+    //   ueber 28 Ebenen: die Haelfte des Rueckwaertspasses.
+    //
+    //   Erst die Ausgabeprojektion fuer alle Positionen, dann je KV-Gruppe
+    //   eine Aufgabe: Sie kopiert ihre Schluessel und Werte **einmal**,
+    //   rechnet alle Positionen und alle Abfragekoepfe der Gruppe und
+    //   schreibt nur in ihre eigenen Summen. Zwei Gruppen teilen keinen
+    //   Gradienten, also aendert die Aufteilung keine Zahl; die Summen sind
+    //   exakte i64-Additionen.
+    let g_attn_alle: Vec<Vec<Grad>> = g_aus
+        .iter()
+        .enumerate()
+        .map(|(t, g_y)| {
+            crate::backward::linear_backward_summierend(
+                g_y, &spur.attn_aus[t], wo, q_breite, so, v.aus_frac, v.attn_out_frac, &mut gw_o,
+            )
+        })
+        .collect();
 
-        // ⚑ **Die Umskalierung von der V-Skala auf die Eingangsskala
-        // der Ausgabeprojektion braucht hier nichts.** Sie aendert die
-        // Darstellung und nicht den Wert; ein Gradient auf dem Bus
-        // traegt `dL/d(realer Wert)` und ist deshalb derselbe.
-        for h in 0..v.num_heads {
-            let kv = h / gruppe;
-            let k_seq: Vec<Vec<i16>> = (0..=t).map(|j| spur.k[j][kv].clone()).collect();
-            let v_seq: Vec<Vec<i16>> = (0..=t).map(|j| spur.v[j][kv].clone()).collect();
+    struct Gruppe {
+        /// `[t][Kopf in der Gruppe][d]`
+        q: Vec<Vec<Vec<i64>>>,
+        /// `[j][d]`
+        k: Vec<Vec<i64>>,
+        v: Vec<Vec<i64>>,
+    }
+    let eine_gruppe = |kv: usize| -> Gruppe {
+        let k_alle: Vec<Vec<i16>> = (0..t_len).map(|j| spur.k[j][kv].clone()).collect();
+        let v_alle: Vec<Vec<i16>> = (0..t_len).map(|j| spur.v[j][kv].clone()).collect();
+        let mut aus = Gruppe {
+            q: vec![vec![vec![0i64; hd]; gruppe]; t_len],
+            k: vec![vec![0i64; hd]; t_len],
+            v: vec![vec![0i64; hd]; t_len],
+        };
+        for t in 0..t_len {
             let maske = vec![true; t + 1];
-            let (gq, gk, gv) = attention_backward(
-                &g_attn[h * hd..(h + 1) * hd],
-                &spur.q[t][h],
-                &k_seq,
-                &v_seq,
-                &spur.wahrscheinlichkeiten[t][h],
-                &maske,
-                skalen,
-            );
-            for d in 0..hd {
-                g_q_roped[t][h][d] += i64::from(gq[d]);
-            }
-            for (j, (zk, zv)) in gk.iter().zip(gv.iter()).enumerate() {
-                for d in 0..hd {
-                    g_k_roped[j][kv][d] += i64::from(zk[d]);
-                    g_v_roh[j][kv][d] += i64::from(zv[d]);
+            for im in 0..gruppe {
+                let h = kv * gruppe + im;
+                let (gq, gk, gv) = attention_backward(
+                    &g_attn_alle[t][h * hd..(h + 1) * hd],
+                    &spur.q[t][h],
+                    &k_alle[..=t],
+                    &v_alle[..=t],
+                    &spur.wahrscheinlichkeiten[t][h],
+                    &maske,
+                    skalen,
+                );
+                for (z, g) in aus.q[t][im].iter_mut().zip(&gq) {
+                    *z += i64::from(*g);
                 }
+                for (j, (zk, zv)) in gk.iter().zip(gv.iter()).enumerate() {
+                    for d in 0..hd {
+                        aus.k[j][d] += i64::from(zk[d]);
+                        aus.v[j][d] += i64::from(zv[d]);
+                    }
+                }
+            }
+        }
+        aus
+    };
+    let faeden = crate::linear::kerngrenze().min(v.num_kv_heads).max(1);
+    let gruppen: Vec<Gruppe> = if faeden < 2 || t_len < 2 {
+        (0..v.num_kv_heads).map(eine_gruppe).collect()
+    } else {
+        // `std::thread::scope` statt des Fadenpools: `attention_backward`
+        // traegt Zusicherungen, und deren Panik muss beim Aufrufer ankommen.
+        let je = v.num_kv_heads.div_ceil(faeden);
+        std::thread::scope(|bereich| {
+            let griffe: Vec<_> = (0..v.num_kv_heads)
+                .step_by(je)
+                .map(|anfang| {
+                    let eine_gruppe = &eine_gruppe;
+                    bereich.spawn(move || {
+                        (anfang..(anfang + je).min(v.num_kv_heads)).map(eine_gruppe).collect::<Vec<_>>()
+                    })
+                })
+                .collect();
+            griffe
+                .into_iter()
+                .flat_map(|g| g.join().unwrap_or_else(|p| std::panic::resume_unwind(p)))
+                .collect()
+        })
+    };
+    for (kv, gr) in gruppen.into_iter().enumerate() {
+        for t in 0..t_len {
+            for im in 0..gruppe {
+                let h = kv * gruppe + im;
+                for (z, g) in g_q_roped[t][h].iter_mut().zip(&gr.q[t][im]) {
+                    *z += *g;
+                }
+            }
+            for d in 0..hd {
+                g_k_roped[t][kv][d] += gr.k[t][d];
+                g_v_roh[t][kv][d] += gr.v[t][d];
             }
         }
     }
 
-    // Durch RoPE zurueck und dann durch die drei Eingangsprojektionen.
     let mut eingang: Vec<Vec<Grad>> = Vec::with_capacity(t_len);
     for t in 0..t_len {
         let idx = (v.positionsversatz + t) % n_pos;
@@ -1254,11 +1441,9 @@ pub fn gradienten_der_aufmerksamkeit_aus_gradient(
             (&g_k_flat, wk, sk, &mut gw_k),
             (&g_v_flat, wv, sv, &mut gw_v),
         ] {
-            let (gx, teil) =
-                linear_backward(g, &x[t], w, hs, sh, v.attn_out_frac, v.act_frac);
-            for (z, p) in ziel_w.iter_mut().zip(teil.iter()) {
-                *z += *p;
-            }
+            let gx = crate::backward::linear_backward_summierend(
+                g, &x[t], w, hs, sh, v.attn_out_frac, v.act_frac, ziel_w,
+            );
             for (z, p) in gx_summe.iter_mut().zip(gx.iter()) {
                 *z += i64::from(*p);
             }
@@ -1778,13 +1963,13 @@ pub fn schritt_auf_ebene(
     let q_breite = v.aufmerksamkeit.num_heads * v.aufmerksamkeit.head_dim;
     let mf = v.aufmerksamkeit.master_frac;
 
-    let (wq, sq) = gewicht_aus_master(q_master, hs, mf);
-    let (wk, sk) = gewicht_aus_master(k_master, hs, mf);
-    let (wv, sv) = gewicht_aus_master(v_master, hs, mf);
-    let (wo, so) = gewicht_aus_master(o_master, q_breite, mf);
-    let (wg, sg) = gewicht_aus_master(gate_master, hs, v.mlp.master_frac);
-    let (wu, su) = gewicht_aus_master(up_master, hs, v.mlp.master_frac);
-    let (wd, sd) = gewicht_aus_master(down_master, v.mlp.intermediate_size, v.mlp.master_frac);
+    let (wq, sq) = gewicht_aus_master_als(q_master, hs, mf, v.aufmerksamkeit.gewichtsform);
+    let (wk, sk) = gewicht_aus_master_als(k_master, hs, mf, v.aufmerksamkeit.gewichtsform);
+    let (wv, sv) = gewicht_aus_master_als(v_master, hs, mf, v.aufmerksamkeit.gewichtsform);
+    let (wo, so) = gewicht_aus_master_als(o_master, q_breite, mf, v.aufmerksamkeit.gewichtsform);
+    let (wg, sg) = gewicht_aus_master_als(gate_master, hs, v.mlp.master_frac, v.mlp.gewichtsform);
+    let (wu, su) = gewicht_aus_master_als(up_master, hs, v.mlp.master_frac, v.mlp.gewichtsform);
+    let (wd, sd) = gewicht_aus_master_als(down_master, v.mlp.intermediate_size, v.mlp.master_frac, v.mlp.gewichtsform);
 
     let gew = Ebenengewichte {
         aufmerksamkeit: Aufmerksamkeitsgewichte {
@@ -1950,6 +2135,7 @@ mod tests {
                     // Lauf nach wenigen Schritten den darstellbaren
                     // Bereich verlassen.
                     master_frac: 8,
+                    gewichtsform: Gewichtsform::Int8,
                     // Der Schritt wirkt jetzt auf den Master und nicht
                     // auf die Rasterstufe: dieselbe Bewegung braucht
                     // den Faktor 2^8.
@@ -1997,6 +2183,7 @@ mod tests {
             aus_frac: 8,
             // ⚑ Acht, siehe `der_abstand_sinkt_ueber_mehrere_schritte`.
             master_frac: 8,
+            gewichtsform: Gewichtsform::Int8,
             silu_in_frac: 6,
             silu_lut_offset: 256,
             silu_out_frac: 12,
@@ -2297,6 +2484,7 @@ mod tests {
             // Stellen weg und sieben bleiben als Zeilenverschiebung.
             // Der reale Wert eines Gewichts ist damit unter eins.
             master_frac: 14,
+            gewichtsform: Gewichtsform::Int8,
             lr_zaehler,
             lr_nenner,
             kennung: Schrittkennung { ebene: 0, schritt, index_versatz: 0 },
@@ -2493,7 +2681,7 @@ mod tests {
                 2 => &v,
                 _ => &o,
             };
-            let (_, verschiebungen) = gewicht_aus_master(master, breite, vg.master_frac);
+            let (_, verschiebungen) = gewicht_aus_master_als(master, breite, vg.master_frac, vg.gewichtsform);
             let spitze = grad.iter().map(|g| i64::from(*g).abs()).max().unwrap_or(0).max(1);
             // Der Schritt als Vielfaches: `delta_i = -g_i · weite / Spitze`,
             // also hoechstens `weite` Rasterstufen am groessten Gradienten.
@@ -3628,6 +3816,7 @@ mod gemisch_tests {
             down_in_frac: 8,
             aus_frac: AUS,
             master_frac: MASTER_FRAC,
+            gewichtsform: Gewichtsform::Int8,
             silu_in_frac: EXP_IN,
             silu_lut_offset: 8192,
             silu_out_frac: 8,
@@ -4148,5 +4337,131 @@ mod gemisch_tests {
         assert_eq!(indizes, experten, "die Reihenfolge weicht von der Auswahl ab");
         assert_eq!(gr.router.len(), N * HS, "der Routergradient hat die falsche Groesse");
         assert_eq!(gr.eingang.len(), HS);
+    }
+}
+
+#[cfg(test)]
+mod ternaere_tests {
+    use super::*;
+    use crate::optimierer::Schrittkennung;
+    use crate::ternaer::{packen, GRUPPE};
+
+    fn zufall(n: usize, saat: u64) -> Vec<u64> {
+        let mut x = saat | 1;
+        (0..n)
+            .map(|_| {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                x
+            })
+            .collect()
+    }
+
+    /// **Die Ableitung ist ternaer, packbar und folgt der Festlegung**:
+    /// Betragsmittel je Gruppe, Schwelle `2|m| > a`, Gleichstand null.
+    #[test]
+    fn die_ternaere_ableitung_ist_ternaer_und_packbar() {
+        let (zeilen, spalten) = (6usize, 2 * GRUPPE);
+        let master: Vec<Master> = zufall(zeilen * spalten, 7)
+            .into_iter()
+            .map(|v| (v % 2_000_001) as i32 - 1_000_000)
+            .collect();
+        let (w, shifts) = ternaer_aus_master(&master, spalten, 20);
+        assert_eq!(shifts.len(), zeilen);
+        let p = packen(&w, spalten).expect("jede Gruppe ist ternaer");
+        assert!(p.betraege.iter().all(|&b| b > 0), "keine Gruppe ist leer");
+        for (g, gruppe) in master.chunks_exact(GRUPPE).enumerate() {
+            let a = crate::fixed_point::rshift_round_i64(gruppe.iter().map(|&m| i64::from(m).abs()).sum(), 7);
+            for (i, &m) in gruppe.iter().enumerate() {
+                let soll = if 2 * i64::from(m).abs() > a { m.signum() } else { 0 };
+                let ist = w[g * GRUPPE + i].signum() as i32;
+                assert_eq!(ist, soll, "Gruppe {g}, Stelle {i}");
+            }
+        }
+        // Der Gleichstand: `2|m| == a` gibt null.
+        let mut gl: Vec<Master> = vec![0; GRUPPE];
+        gl[0] = 128; // Summe 128 + 64 = 192, a = rshift_round(192, 7) = 2
+        gl[1] = 1; //   2 * 1 = 2 == a: null
+        gl[2] = -63; // Summe 128 + 1 + 63 = 192
+        let (w, _) = ternaer_aus_master(&gl, GRUPPE, 8);
+        assert_eq!(w[1], 0, "ein Gleichstand gibt null");
+        assert!(w[0] > 0 && w[2] < 0);
+    }
+
+    /// **Verteilt abgeleitet ist Zeile fuer Zeile dasselbe wie jede Zeile
+    /// einzeln**, beide Formen; eine einzelne Zeile nimmt immer den
+    /// einfaedigen Weg und ist damit der Massstab.
+    #[test]
+    fn verteilt_abgeleitet_ist_zeilenweise_dasselbe() {
+        let (zeilen, spalten) = (640usize, 512usize);
+        assert!(zeilen * spalten >= 1 << 18, "die Probe muss den verteilten Weg nehmen");
+        let master: Vec<Master> = zufall(zeilen * spalten, 21)
+            .into_iter()
+            .enumerate()
+            .map(|(i, v)| ((v % 1_000_001) as i32 - 500_000) >> (i / spalten % 9))
+            .collect();
+        for form in [Gewichtsform::Int8, Gewichtsform::Ternaer] {
+            let (w, s) = gewicht_aus_master_als(&master, spalten, 20, form);
+            for z in 0..zeilen {
+                let (wz, sz) = gewicht_aus_master_als(&master[z * spalten..(z + 1) * spalten], spalten, 20, form);
+                assert_eq!(&w[z * spalten..(z + 1) * spalten], wz.as_slice(), "{form:?}, Zeile {z}");
+                assert_eq!(s[z], sz[0], "{form:?}, Shift {z}");
+            }
+        }
+    }
+
+    /// **`Int8` ist der bisherige Weg**, Byte fuer Byte.
+    #[test]
+    fn die_int8_form_ist_der_alte_weg() {
+        let master: Vec<Master> = zufall(4 * 96, 3).into_iter().map(|v| (v % 400_001) as i32 - 200_000).collect();
+        assert_eq!(gewicht_aus_master_als(&master, 96, 20, Gewichtsform::Int8), gewicht_aus_master(&master, 96, 20));
+    }
+
+    /// **Ternaer lernt**: Mit Straight-Through sinkt der Abstand ueber viele
+    /// Schritte, obwohl die Rechnung je Gruppe nur drei Werte sieht.
+    ///
+    /// 📌 **Mit einer Anlaufzeit, gemessen am 2026-09-28** (dieselbe
+    /// Aufgabe, 2000 Schritte): int8 bei 1/1000 von 61 347 auf 0; ternaer
+    /// bei 1/1000 von 83 669 ueber 53 422 (100) und 168 (800) auf 42, bei
+    /// 1/4000 erst nach 200 Schritten merklich, bei 1/16000 nach 800.
+    /// Solange kein Master eine Schwelle kreuzt, sieht die Rechnung keine
+    /// Aenderung; der Gradient sammelt sich im Master. **Eine Rate, die
+    /// fuer int8 reicht, kann fuer ternaer zu klein sein.**
+    #[test]
+    fn ternaer_lernt_mit_straight_through() {
+        let (zeilen, spalten) = (4usize, GRUPPE);
+        let mut master: Vec<Master> = zufall(zeilen * spalten, 11)
+            .into_iter()
+            .map(|v| (((v % 11) as i32) - 5) << 8)
+            .collect();
+        let x: Vec<i16> = (0..spalten).map(|i| ((i * 13) % 9) as i16 - 4).collect();
+        let ziel: Vec<i16> = (0..zeilen).map(|i| (i as i16 + 1) * 60).collect();
+        let mut erster = 0i64;
+        let mut letzter = 0i64;
+        for s in 0..800u64 {
+            let a = schritt_auf_linear(
+                &mut master,
+                &x,
+                &ziel,
+                Schrittvorgaben {
+                    in_features: spalten,
+                    act_frac_bits: 8,
+                    out_frac_bits: 8,
+                    master_frac: 8,
+                    gewichtsform: Gewichtsform::Ternaer,
+                    lr_zaehler: 1,
+                    lr_nenner: 1000,
+                    kennung: Schrittkennung { ebene: 0, schritt: s, index_versatz: 0 },
+                },
+            );
+            if s == 0 {
+                erster = a;
+            }
+            letzter = a;
+        }
+        assert!(letzter * 100 < erster, "ternaer: der Abstand sank nur von {erster} auf {letzter}");
+        let (w, _) = ternaer_aus_master(&master, spalten, 8);
+        assert!(packen(&w, spalten).is_ok(), "nach dem Training ist das Gewicht weiter ternaer");
     }
 }

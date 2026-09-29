@@ -94,7 +94,10 @@ const TEXTE = {
     "leiste.schalten": "Seitenleiste ein- und ausblenden",
     "knopf.laden": "Modell laden",
     "kopf.einstellungen": "Einstellungen",
-    "eingabe.platz": "Frag etwas, oder gib einen Auftrag.",
+    // ⛔️ **Die dauerhafte Kennzeichnung** (Art. 50 Abs. 1 KI-Verordnung):
+    //   Sie steht im leeren Eingabefeld, also vor jeder Eingabe. Dazu
+    //   der Hinweis bei jedem Start und die Marke unter jeder Antwort.
+    "eingabe.platz": "Hier antwortet eine KI. Frag etwas, oder gib einen Auftrag.",
     "eingabe.label": "Eingabe",
     "knopf.senden": "Senden",
     "knopf.anhang": "Datei anhängen",
@@ -102,6 +105,7 @@ const TEXTE = {
     "loop.knopf": "Loop an oder aus",
     "loop.liste": "Tasks des Loops",
     "loop.titel": "Tasks",
+    "loop.kein_task": "Kein Task",
     "loop.leer": "Noch keine Tasks. Beschreibe unten ein Ziel; der Agent verfolgt es in Runden.",
     "loop.neu.platz": "Neuer Task: Ziel beschreiben …",
     "loop.neu.label": "Neuer Task",
@@ -141,8 +145,6 @@ const TEXTE = {
     "knopf.vorlesen": "Antworten vorlesen",
     "sinne.titel": "Sinne",
     "sinne.stimmewaehlen": "Stimme hochladen",
-    "notaus.knopf": "Notaus",
-    "notaus.gemeldet": "Notaus: Der Auftrag wurde angehalten. Das Gespräch bleibt, wie es ist.",
     "sinne.einwilligung": "Die Aufnahme ist meine eigene Stimme, oder die Person hat eingewilligt.",
     "protokoll.titel": "Aktionsprotokoll",
     "protokoll.satz": "Jede Handlung des Agenten, ohne Klartext: Eingaben und Ergebnisse stehen nur als Fingerabdruck darin. Nach 30 Tagen wird gelöscht.",
@@ -321,7 +323,7 @@ const TEXTE = {
     "leiste.schalten": "Show or hide the sidebar",
     "knopf.laden": "Load model",
     "kopf.einstellungen": "Settings",
-    "eingabe.platz": "Ask something, or give a task.",
+    "eingabe.platz": "An AI answers here. Ask something, or give a task.",
     "eingabe.label": "Input",
     "knopf.senden": "Send",
     "knopf.anhang": "Attach a file",
@@ -329,6 +331,7 @@ const TEXTE = {
     "loop.knopf": "Loop on or off",
     "loop.liste": "Loop tasks",
     "loop.titel": "Tasks",
+    "loop.kein_task": "No task",
     "loop.leer": "No tasks yet. Describe a goal below; the agent pursues it in rounds.",
     "loop.neu.platz": "New task: describe a goal …",
     "loop.neu.label": "New task",
@@ -368,8 +371,6 @@ const TEXTE = {
     "knopf.vorlesen": "Read answers aloud",
     "sinne.titel": "Senses",
     "sinne.stimmewaehlen": "Upload a voice",
-    "notaus.knopf": "Stop",
-    "notaus.gemeldet": "Emergency stop: the task was halted. The conversation stays as it is.",
     "sinne.einwilligung": "The recording is my own voice, or the person has consented.",
     "protokoll.titel": "Action log",
     "protokoll.satz": "Every agent action, without plain text: inputs and results appear only as fingerprints. Deleted after 30 days.",
@@ -742,19 +743,41 @@ const jetzt = () => new Date().toISOString();
 // --- Der Hinweis beim Start -------------------------------------------
 //
 // ⛔️ **Bei jedem Start, aktiv zu bestaetigen, ohne Ausweg** (Art. 50
-// Abs. 1 KI-Verordnung; Festlegung des Projektinhabers, 2026-09-25). Der
-// Knopf geht erst mit dem Haekchen, Escape und ein Klick daneben tun
-// nichts, und alles darunter ist `inert`, solange er steht. Der Text
+// Abs. 1 KI-Verordnung; Festlegung des Projektinhabers, 2026-09-25). Ein
+// einziger Knopf mit dem Bestaetigungssatz (seit v0.94.1 statt Schieber
+// und gesperrtem Knopf); Escape und ein Klick daneben tun nichts, und
+// alles darunter ist `inert`, solange er steht. Der Text
 // kommt aus der Kiste (`kennzeichnung::starthinweis`).
 //
-// ⚑ **Die Marken kommen aus derselben Antwort**: das Wort im Kopf und die
-// Zeile unter jeder Antwort. Bis sie da ist, gilt `KI_MARKE`.
+// ⚑ **Die Marke unter jeder Antwort kommt aus derselben Antwort.** Bis
+// sie da ist, gilt `KI_MARKE`. 📌 Bis CLIENT v0.94.1 kam daher auch das
+// Wort im Kopf; die dauerhafte Kennzeichnung steht seither im
+// Eingabefeld (`eingabe.platz`).
 let KI_MARKE = "KI-generiert";
+
+// ⛔️ **Alles ringsum, nie ein Vorfahr des Dialogs.** Gesperrt wird auf
+// dem Weg vom Dialog nach oben jede Geschwisterebene, der Weg selbst
+// bleibt frei. `inert` erbt sich nach unten: Ein gesperrter Vorfahr
+// sperrt den Dialog mit.
+// 📌 **Fund 493.** Von v0.85.0 bis v0.94.0 stand hier
+// `[$("haupt"), $("seitenleiste")]`, und `#kihinweis` liegt in `#haupt`.
+// Der Hinweis sperrte sich selbst: Weder Schieber noch Knopf nahmen eine
+// Eingabe an, und das Fenster liess sich nicht mehr bedienen. Gemeldet
+// vom Projektinhaber am 2026-09-26. Keine Probe hat es gesehen, weil jede
+// nur las, dass `inert` gesetzt wird, und keine, worauf.
+function ringsum(e) {
+  const aussen = [];
+  for (let k = e; k.parentElement && k !== document.body; k = k.parentElement) {
+    for (const g of k.parentElement.children) {
+      if (g !== k && !g.inert) aussen.push(g);
+    }
+  }
+  return aussen;
+}
+
 async function starthinweis_zeigen() {
   const h = await invoke("starthinweis");
   KI_MARKE = h.marke;
-  $("kimarke").textContent = h.kurz;
-  $("kimarke").title = h.titel;
   $("kihinweistitel").textContent = h.titel;
   const liste = $("kihinweispunkte");
   liste.replaceChildren(
@@ -766,25 +789,19 @@ async function starthinweis_zeigen() {
   );
   $("kihinweisverweistitel").textContent = h.verweis_titel;
   $("kihinweisverweis").textContent = h.verweis;
-  $("kihinweisbestaetigung").textContent = h.bestaetigung;
-  const haken = $("kihinweishaken");
   const weiter = $("kihinweisweiter");
-  weiter.textContent = h.weiter;
-  haken.checked = false;
-  weiter.disabled = true;
-  haken.addEventListener("change", () => (weiter.disabled = !haken.checked));
+  weiter.textContent = h.bestaetigung;
 
-  const darunter = [$("haupt"), $("seitenleiste")].filter(Boolean);
-  darunter.forEach((e) => (e.inert = true));
   const kasten = $("kihinweis");
+  const darunter = ringsum(kasten);
+  darunter.forEach((e) => (e.inert = true));
   kasten.hidden = false;
-  haken.focus();
+  weiter.focus();
   // Alles neu zeichnen, damit schon gezeichnete Antworten die Marke in
   // der richtigen Sprache tragen.
   alles_zeichnen();
   await new Promise((fertig) => {
     weiter.onclick = () => {
-      if (!haken.checked) return;
       kasten.hidden = true;
       darunter.forEach((e) => (e.inert = false));
       fertig();
@@ -1728,101 +1745,131 @@ function chats_zeichnen() {
   }
 }
 
-/// Das Ladezeichen am Beitrag: der Spalt in einem Kasten, der sich
+/// Das Ladezeichen am Beitrag: die Wellen in einem Kasten, der sich
 /// als Statusmeldung vorlesen laesst.
 function laufzeichen_bauen() {
   const l = document.createElement("div");
   l.className = "laeuft";
-  l.append(synapse());
+  l.append(wellen());
   l.setAttribute("aria-label", t("lauf.arbeitet"));
   l.setAttribute("role", "status");
   return l;
 }
 
-/// **Das Ladezeichen: ein synaptischer Spalt** (Auftrag des
-/// Projektinhabers, 2026-09-24, statt drei Punkten; die Gestalt nach
-/// seinen Vorlagen).
+/// **Das Ladezeichen: Linien in Bewegung wie Wellen** (Auftrag des
+/// Projektinhabers, 2026-09-28, nach seiner Vorlage; in Schwarz und
+/// Weiss).
 ///
-/// Zwei Endknoepfe als Glocken, die aus einem schmalen Strang aufgehen
-/// und sich ueber einen engen Spalt gegenueberstehen. In der linken
-/// schwellen Blaeschen an, Botenstoffe schweben hinueber, die Flaechen
-/// leuchten auf, wenn etwas ankommt, und zweimal je Zyklus entlaedt sich
-/// ein kurzer Blitz quer ueber den Spalt. Die Bewegung steht ganz im
-/// Stilblatt (`.spalt`), hier steht nur die Gestalt.
+/// Fuenf Straenge kommen links als eine Linie herein, gehen in der Mitte
+/// auseinander und kreuzen sich, und rechts laufen sie aufgefaechert
+/// aus. Jeder Strang ist die Summe dreier Wellen mit **zufaelliger**
+/// Frequenz, Laufrichtung und Phase und schwillt langsam an und ab;
+/// dazu wandert sein Ende. So wiederholt sich das Bild nicht erkennbar,
+/// und keine zwei Zeichen sehen gleich aus. Das ist der Grund, warum es
+/// hier gerechnet wird und nicht im Stilblatt: Keyframes laufen im
+/// Kreis, und ein Kreis wird nach dem dritten Umlauf gesehen.
 ///
-/// ⚑ **Gebaut mit `createElementNS` und ohne ein einziges `style`**: Die
-/// Sicherheitsregel dieser Oberflaeche erlaubt keine Stile im Dokument.
+/// 📌 Bis CLIENT v0.95.0 stand hier ein synaptischer Spalt (seit dem
+/// 2026-09-24): zwei Glocken, Blaeschen, Botenstoffe, ein Blitz.
 ///
-/// ⚑ **Die Klassen stehen ausgeschrieben und nicht zusammengesetzt**: Wer
-/// eine Regel im Stilblatt sucht, soll ihr Element hier finden
-/// (`jede_regel_hat_ein_element`).
+/// ⚑ **Ohne ein einziges `style`**: Die Sicherheitsregel dieser
+/// Oberflaeche erlaubt keine Stile im Dokument. Gesetzt wird allein das
+/// Attribut `d`; Strichstaerke, Farbe und der weiche Einlauf links
+/// stehen im Stilblatt (`.wellen`, `.welle`).
 ///
-/// ⚑ **Es sagt nichts ueber den Fortschritt, und das ist ehrlich**, wie
-/// schon die Punkte: Wie lange ein Modell braucht, weiss vorher niemand.
-function synapse() {
+/// ⚑ **Wer Bewegung abbestellt hat, bekommt ein Standbild**, dieselben
+/// Wellen, nur still. Ein Ladezeichen, das dann verschwaende, naehme
+/// die Auskunft dem, der sie am ehesten braucht.
+///
+/// ⚑ **Es hoert auf zu rechnen, sobald es aus dem Fenster ist**: Ein
+/// Zeichen, das nie eingehaengt wurde (ein Beitrag in einem Gespraech,
+/// das gerade nicht offen ist), nach zwei Sekunden; eines, das da war,
+/// im ersten Bild danach.
+///
+/// ⚑ **Es sagt nichts ueber den Fortschritt, und das ist ehrlich**: Wie
+/// lange ein Modell braucht, weiss vorher niemand.
+function wellen() {
   const NS = "http://www.w3.org/2000/svg";
-  const teil = (name, klasse, werte) => {
-    const e = document.createElementNS(NS, name);
-    if (klasse) e.setAttribute("class", klasse);
-    for (const [k, v] of Object.entries(werte)) e.setAttribute(k, String(v));
-    return e;
-  };
-  // ⚑ Verlaeufe brauchen Kennungen, und die muessen je Zeichen eindeutig
-  // sein: Zwei Zeichen mit derselben Kennung teilten sich einen Verlauf,
-  // und das zweite verloere ihn, sobald das erste geht.
-  synapse.zaehler = (synapse.zaehler || 0) + 1;
-  const kennung = (name) => `spalt${synapse.zaehler}-${name}`;
-  const verlauf = (art, name, werte, stufen) => {
-    const v = teil(art, "", { id: kennung(name), ...werte });
-    for (const [versatz, klasse] of stufen) v.append(teil("stop", klasse, { offset: versatz }));
-    return v;
+  const BREITE = 120;
+  const HOEHE = 36;
+  const MITTE = HOEHE / 2;
+  const zufall = (von, bis) => von + Math.random() * (bis - von);
+  const glatt = (a, b, x) => {
+    const u = Math.min(1, Math.max(0, (x - a) / (b - a)));
+    return u * u * (3 - 2 * u);
   };
 
-  const svg = teil("svg", "spalt", { viewBox: "0 0 96 28", "aria-hidden": "true", focusable: "false" });
-  const defs = teil("defs", "", {});
-  // Der Koerper: oben Licht, unten Schatten, also gewoelbt.
-  defs.append(verlauf("linearGradient", "koerper", { x1: 0, y1: 0, x2: 0, y2: 1 },
-    [[0, "licht-oben"], [0.45, "licht-mitte"], [1, "licht-unten"]]));
-  // Eine Kugel: Lichtpunkt oben links, zum Rand hin dunkler.
-  defs.append(verlauf("radialGradient", "kugel", { cx: 0.5, cy: 0.5, r: 0.5, fx: 0.34, fy: 0.3 },
-    [[0, "kugel-hell"], [0.55, "kugel-mitte"], [1, "kugel-rand"]]));
-  // Der Schein an der Flaeche zum Spalt.
-  defs.append(verlauf("radialGradient", "schein", { cx: 0.5, cy: 0.5, r: 0.5 },
-    [[0, "schein-kern"], [1, "schein-rand"]]));
-  // ⚑ Die Axone laufen nach aussen weich aus, als gingen sie weiter:
-  // Eine harte Kante am Bildrand saehe aus wie ein abgeschnittener Schlauch.
-  defs.append(verlauf("linearGradient", "auslauf", { x1: 0, y1: 0, x2: 1, y2: 0 },
-    [[0, "auslauf-rand"], [0.18, "auslauf-voll"], [0.82, "auslauf-voll"], [1, "auslauf-rand"]]));
-  const maske = teil("mask", "", { id: kennung("maske"), maskUnits: "userSpaceOnUse", x: 0, y: 0, width: 96, height: 28 });
-  maske.append(teil("rect", "", { x: 0, y: 0, width: 96, height: 28, fill: `url(#${kennung("auslauf")})` }));
-  defs.append(maske);
-  svg.append(defs);
-  const nerv = teil("g", "", { mask: `url(#${kennung("maske")})` });
-  svg.append(nerv);
+  const svg = document.createElementNS(NS, "svg");
+  svg.setAttribute("class", "wellen");
+  svg.setAttribute("viewBox", `0 0 ${BREITE} ${HOEHE}`);
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("focusable", "false");
 
-  // Zwei Nervenenden, jedes ein geschwungenes Axon, das sich zur Glocke
-  // weitet. Das rechte ist das Spiegelbild des linken.
-  const links = "M0 17.2C7.5 17.2 11.5 9.6 21.5 11.2C27 12.1 31 4.6 44 4.4Q46.4 14 44 23.6C31 23.4 27.5 17.8 21.5 16.9C12 15.5 7.5 22.4 0 22.4Z";
-  const glanz_links = "M1.5 18.2C8.2 18 12.2 10.6 21.6 12.2C27.3 13.2 31.4 6 42.6 5.6";
-  // Jedes Zahlenpaar ist ein Punkt; gespiegelt wird an der Mitte.
-  const spiegeln = (d) => d.replace(/(-?[0-9.]+) (-?[0-9.]+)/g, (_, x, y) => `${(96 - parseFloat(x)).toFixed(1)} ${y}`);
-  for (const [d, glanz] of [[links, glanz_links], [spiegeln(links), spiegeln(glanz_links)]]) {
-    nerv.append(teil("path", "neuron", { d, fill: `url(#${kennung("koerper")})` }));
-    nerv.append(teil("path", "glanzlinie", { d: glanz }));
-  }
-  svg.append(teil("ellipse", "schein sender", { cx: 44.4, cy: 14, rx: 3.2, ry: 8, fill: `url(#${kennung("schein")})` }));
-  svg.append(teil("ellipse", "schein empfaenger", { cx: 51.6, cy: 14, rx: 3.2, ry: 8, fill: `url(#${kennung("schein")})` }));
-  svg.append(teil("path", "flaeche sender", { d: "M44 4.4Q46.4 14 44 23.6" }));
-  svg.append(teil("path", "flaeche empfaenger", { d: "M52 4.4Q49.6 14 52 23.6" }));
-  for (const [x, y, r, klasse] of [[39.8, 9.4, 1.9, "blaeschen v1"], [41.2, 17.6, 1.7, "blaeschen v2"], [36, 13.4, 1.5, "blaeschen v3"]]) {
-    svg.append(teil("circle", klasse, { cx: x, cy: y, r, fill: `url(#${kennung("kugel")})` }));
-  }
-  // Zwei Blitze, jeder ein Zickzack von Flaeche zu Flaeche.
-  svg.append(teil("path", "blitz z1", { d: "M45.4 9.2L47.2 11.2L46.4 12.6L48.6 13.8L47.9 15.3L50.8 17.4" }));
-  svg.append(teil("path", "blitz z2", { d: "M45.5 18.6L47 16.3L47.9 17.2L49.2 13.4L50 14.1L50.7 10.2" }));
-  for (const [y, klasse] of [[8.6, "botenstoff b1"], [14, "botenstoff b2"], [19.4, "botenstoff b3"], [11.2, "botenstoff b4"], [16.8, "botenstoff b5"]]) {
-    svg.append(teil("circle", klasse, { cx: 46.2, cy: y, r: 0.8, fill: `url(#${kennung("kugel")})` }));
-  }
+  // ⚑ Die Klassen stehen ausgeschrieben, damit jede Regel im Stilblatt
+  //   ihr Element hier findet (`jede_regel_hat_ein_element`).
+  const straenge = ["welle w1", "welle w2", "welle w3", "welle w4", "welle w5"].map((klasse) => {
+    const p = document.createElementNS(NS, "path");
+    p.setAttribute("class", klasse);
+    svg.append(p);
+    // ⚑ **Eine Hauptwelle und eine Nebenwelle je Strang.** Die
+    //   Hauptwelle ist lang (ein halber bis anderthalb Boegen ueber die
+    //   Breite) und traegt den grossen Schwung, die Nebenwelle ist
+    //   kuerzer und schwaecher und macht ihn unregelmaessig.
+    // 📌 Ein erster Entwurf nahm drei gleich starke Teilwellen, und die
+    //   loeschten sich mit ihren Zufallsphasen oft gegenseitig aus: Die
+    //   Straenge lagen fast flach aufeinander.
+    // ⚠️ Die Gewichte werden so geteilt, dass die Welle hoechstens elf
+    //   Einheiten von der Mitte abweicht; mit dem wandernden Ende
+    //   (hoechstens sechs) bleibt alles im Bild, denn die Maske im
+    //   Stilblatt schneidet ab, was darueber hinausgeht.
+    const richtung = () => (Math.random() < 0.5 ? -1 : 1);
+    const teile = [
+      { k: zufall(0.035, 0.075), w: zufall(0.9, 1.9) * richtung(), phi: zufall(0, 2 * Math.PI), g: 1 },
+      { k: zufall(0.07, 0.13), w: zufall(1.3, 2.8) * richtung(), phi: zufall(0, 2 * Math.PI), g: zufall(0.2, 0.45) },
+    ];
+    const summe = teile.reduce((z, x) => z + x.g, 0);
+    for (const x of teile) x.a = (11 * x.g) / summe;
+    return {
+      p,
+      teile,
+      atem: { w: zufall(0.12, 0.35), phi: zufall(0, 2 * Math.PI) },
+      ende: { y: zufall(-4, 4), w: zufall(0.1, 0.3), phi: zufall(0, 2 * Math.PI) },
+    };
+  });
+
+  const zeichnen = (t) => {
+    for (const s of straenge) {
+      const atem = 0.78 + 0.22 * Math.sin(s.atem.w * t + s.atem.phi);
+      const ende = s.ende.y + 2 * Math.sin(s.ende.w * t + s.ende.phi);
+      let d = "";
+      for (let x = 0; x <= BREITE; x += 2) {
+        const u = x / BREITE;
+        // Links gebuendelt, ab einem Viertel offen, am rechten Rand
+        // ruhiger und aufgefaechert.
+        const offen = glatt(0.15, 0.48, u) * (1 - 0.35 * glatt(0.8, 1, u));
+        let welle = 0;
+        for (const w of s.teile) welle += w.a * Math.sin(w.k * x - w.w * t + w.phi);
+        const y = MITTE + offen * atem * welle + glatt(0.55, 1, u) * ende;
+        d += `${x === 0 ? "M" : "L"}${x} ${y.toFixed(2)}`;
+      }
+      s.p.setAttribute("d", d);
+    }
+  };
+
+  const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  // Ein zufaelliger Zeitpunkt, damit auch das Standbild jedes Mal ein
+  // anderes ist.
+  const versatz = zufall(0, 1000);
+  const anfang = performance.now();
+  let war_da = false;
+  const bild = (jetzt) => {
+    zeichnen(versatz + (jetzt - anfang) / 1000);
+    if (still) return;
+    if (svg.isConnected) war_da = true;
+    else if (war_da || jetzt - anfang > 2000) return;
+    requestAnimationFrame(bild);
+  };
+  bild(anfang);
   return svg;
 }
 
@@ -2961,22 +3008,10 @@ function tonwerk_holen() {
 ///
 /// Zurueck kommt ein Versprechen, das erfuellt ist, sobald das Stueck
 /// geplant ist; die Kette haelt nur die Reihenfolge des Entpackens.
-/// Die geplanten Stuecke, damit der Notaus sie anhalten kann.
-let geplant = [];
-
-/// ⛔️ **Haelt die Stimme sofort an**: alle geplanten Stuecke, auch die,
-/// die erst noch klingen wuerden.
-function stimme_anhalten() {
-  for (const q of geplant) {
-    try {
-      q.stop();
-    } catch {
-      // schon ausgeklungen
-    }
-  }
-  geplant = [];
-  if (tonwerk) stimmende = tonwerk.currentTime;
-}
+// 📌 Hier standen `geplant` und `stimme_anhalten`, damit der Notaus die
+// Stimme sofort anhalten konnte. Mit CLIENT v0.96.1 ist der Notaus im
+// Fenster entfallen (der Notschalter ist das Schliessen, und dann endet
+// die Stimme mit dem Fenster); beide hatten keinen Aufrufer mehr.
 
 function stimme_einplanen(base64) {
   return new Promise((fertig) => {
@@ -3000,8 +3035,6 @@ function stimme_einplanen(base64) {
         //   Start in der Vergangenheit schnitte den Anfang ab.
         const anfang = Math.max(werk.currentTime + 0.03, stimmende);
         quelle.start(anfang);
-        geplant.push(quelle);
-        quelle.onended = () => (geplant = geplant.filter((q) => q !== quelle));
         stimmende = anfang + puffer.duration;
         zeichen_schwingen();
         fertig();
@@ -4633,13 +4666,22 @@ async function tasks_holen() {
   }
 }
 
-/// Knopf und, falls offen, die Liste.
+/// Das Feld (∞, Task, Pfeil) und, falls offen, die Liste.
+///
+/// ⚑ **Im Feld steht der Task, der vorn steht**, also der, der laeuft
+/// oder als naechster liefe. Gekuerzt wird im Stilblatt mit „…“; der
+/// ganze Satz steht im Hinweis am Zeiger.
 function loop_zeichnen() {
-  $("loopgruppe").hidden = modus_jetzt() !== "agent";
+  const gruppe = $("loopgruppe");
+  gruppe.hidden = modus_jetzt() !== "agent";
+  gruppe.classList.toggle("an", loopstand.laeuft);
   const knopf = $("loopknopf");
   knopf.setAttribute("aria-pressed", String(loopstand.laeuft));
   knopf.classList.toggle("an", loopstand.laeuft);
   knopf.title = `${t("loop.knopf")} · ${loopstand_text()}`;
+  const vorn = loopstand.tasks.find((z) => z.stellung === "vorn");
+  $("looptask").textContent = vorn ? vorn.ziel : t("loop.kein_task");
+  $("loopwahl").title = vorn ? `${vorn.ziel} (${vorn.wort})` : t("loop.liste");
   if (!$("taskwahl").hidden) taskliste_zeichnen();
 }
 
@@ -4700,16 +4742,22 @@ async function taskwahl_oeffnen() {
   $("taskziel").focus();
 }
 
-/// Ueber den Knoepfen, am rechten Rand ausgerichtet, wie die Kontextwahl.
+/// Ueber dem Feld und mittig zu ihm, denn das Feld steht mittig.
 function taskwahl_setzen() {
   const m = $("taskwahl");
   const r = $("loopgruppe").getBoundingClientRect();
   const h = m.getBoundingClientRect();
-  m.style.left = `${Math.max(8, Math.min(r.right - h.width, window.innerWidth - h.width - 8))}px`;
+  const mitte = r.left + r.width / 2 - h.width / 2;
+  m.style.left = `${Math.max(8, Math.min(mitte, window.innerWidth - h.width - 8))}px`;
   m.style.top = `${Math.max(8, r.top - h.height - 6)}px`;
 }
 
 function taskliste_zeichnen() {
+  // ⚠️ **Nicht waehrend des Ziehens neu zeichnen.** Alle zwanzig
+  //    Sekunden und nach jedem Loop-Ereignis kommt ein neuer Stand; er
+  //    ersetzte die Zeilen und nahm dem Ziehen die gezogene Zeile unter
+  //    der Hand weg. Nach dem Loslassen wird ohnehin neu geholt.
+  if (gezogen) return;
   const ol = $("taskliste");
   ol.replaceChildren();
   $("taskleer").hidden = loopstand.tasks.length > 0;
@@ -4809,41 +4857,74 @@ async function task_befehl(aufruf) {
 // ⚠️ **Mit Zeigerereignissen und nicht mit HTML5-Drag-and-drop.** Das
 //    Fenster nimmt Dateien ueber Tauris eigene Ablage entgegen, und die
 //    verschluckt unter Windows das Ziehen innerhalb der Seite.
+//
+// 📌 **Die Bewegung wird am Fenster abgehoert, nicht an der Zeile**
+//    (Fund 494). Bis CLIENT v0.94.1 hingen `pointermove` und `pointerup`
+//    an der gezogenen Zeile, gehalten ueber `setPointerCapture`. Nur
+//    wird genau diese Zeile beim Umsortieren aus der Liste genommen und
+//    neu eingesetzt, und dabei geht der Fang verloren: Nach dem ersten
+//    Platztausch kamen die Ereignisse nicht mehr an, die Zeile blieb
+//    halb durchsichtig stehen, und die Reihenfolge wurde nie
+//    gespeichert. Das Fenster wird nie umgehaengt.
 
 let gezogen = null;
 
+/// Die Kennungen in der Reihenfolge, in der die Liste sie gerade zeigt.
+const reihe_jetzt = () => [...$("taskliste").children].map((li) => li.dataset.kennung);
+
 function ziehen_beginnen(e, li) {
+  if (e.button !== 0) return;
   e.preventDefault();
+  const ol = $("taskliste");
+  const vorher = reihe_jetzt().join("\n");
   gezogen = li;
   li.classList.add("zieht");
-  li.setPointerCapture?.(e.pointerId);
   const bewegen = (ev) => {
-    const ol = $("taskliste");
-    for (const anderes of ol.children) {
+    ev.preventDefault();
+    const zeilen = [...ol.children];
+    const erste = zeilen[0].getBoundingClientRect();
+    const letzte = zeilen[zeilen.length - 1].getBoundingClientRect();
+    // ⚑ Ueber der ersten oder unter der letzten Zeile heisst: ganz nach
+    //   vorn oder ganz nach hinten. Sonst blieb eine Zeile, die man
+    //   ueber den Rand hinauszog, eine Stelle vor dem Ziel stehen.
+    if (ev.clientY < erste.top) {
+      if (ol.firstElementChild !== li) ol.prepend(li);
+      return;
+    }
+    if (ev.clientY > letzte.bottom) {
+      if (ol.lastElementChild !== li) ol.append(li);
+      return;
+    }
+    for (const anderes of zeilen) {
       if (anderes === li) continue;
       const r = anderes.getBoundingClientRect();
-      if (ev.clientY > r.top && ev.clientY < r.bottom) {
-        if (ev.clientY < r.top + r.height / 2) anderes.before(li);
-        else anderes.after(li);
-        break;
+      if (ev.clientY < r.top || ev.clientY > r.bottom) continue;
+      if (ev.clientY < r.top + r.height / 2) {
+        if (li.nextElementSibling !== anderes) anderes.before(li);
+      } else if (li.previousElementSibling !== anderes) {
+        anderes.after(li);
       }
+      break;
     }
   };
   const loslassen = () => {
-    li.removeEventListener("pointermove", bewegen);
-    li.removeEventListener("pointerup", loslassen);
-    li.removeEventListener("pointercancel", loslassen);
+    window.removeEventListener("pointermove", bewegen);
+    window.removeEventListener("pointerup", loslassen);
+    window.removeEventListener("pointercancel", loslassen);
     li.classList.remove("zieht");
     gezogen = null;
-    reihe_speichern();
+    // ⚑ Gespeichert wird nur, was sich bewegt hat: Ein Klick auf den
+    //   Griff ist kein Umsortieren.
+    if (reihe_jetzt().join("\n") !== vorher) reihe_speichern();
+    else taskliste_zeichnen();
   };
-  li.addEventListener("pointermove", bewegen);
-  li.addEventListener("pointerup", loslassen);
-  li.addEventListener("pointercancel", loslassen);
+  window.addEventListener("pointermove", bewegen);
+  window.addEventListener("pointerup", loslassen);
+  window.addEventListener("pointercancel", loslassen);
 }
 
 async function reihe_speichern() {
-  const reihe = [...$("taskliste").children].map((li) => li.dataset.kennung);
+  const reihe = reihe_jetzt();
   try {
     await invoke("tasks_ordnen", { reihe });
   } catch (f) {
@@ -5131,30 +5212,12 @@ async function auto_bestaetigen() {
   }
   await vorhangWeg();
   await starthinweis_zeigen();
-  notaus_verdrahten();
   loop_verdrahten();
   await loop_beim_start();
   feld.focus();
 })();
 
-// ⛔️ **Der Notaus**: Knopf und Tastenkuerzel (⌘. auf dem Mac, Strg+.
-// sonst). Er haelt den Auftrag in der Kiste an und die Stimme hier, und
-// das Gespraech bleibt stehen, wie es ist.
-function notaus_verdrahten() {
-  const ausloesen = async () => {
-    stimme_anhalten();
-    try {
-      await invoke("notaus");
-      melden(t("notaus.gemeldet"));
-    } catch (f) {
-      melden(t("fehler", f));
-    }
-  };
-  $("notaus").addEventListener("click", ausloesen);
-  document.addEventListener("keydown", (ereignis) => {
-    if ((ereignis.metaKey || ereignis.ctrlKey) && ereignis.key === ".") {
-      ereignis.preventDefault();
-      ausloesen();
-    }
-  });
-}
+// 📌 **Hier stand der Notaus ueber das Tastenkuerzel** (⌘. oder Strg+.),
+// bis CLIENT v0.94.1 dazu ein Knopf im Kopf. Beide sind entfallen
+// (Festlegung des Projektinhabers, 2026-09-28): Der Notschalter des
+// Fensters ist das Schliessen, und so sagt es der Hinweis beim Start.

@@ -1,7 +1,7 @@
 # agent-layer (`myl-agent`)
 
-> **Version:** 0.21.0 (`myl-agent` 0.7.0, `myl-local-agent` 0.14.0)
-> **Datum:** 2026-09-26
+> **Version:** 0.23.0 (`myl-agent` 0.7.0, `myl-local-agent` 0.16.0)
+> **Datum:** 2026-09-29
 > **Status:** Manifeste, Herkunftsstufe, Registratur, der
 > **Session-Kontrakt** mit Durchsetzung im Ledger, der **Plan** und seit
 > v0.7.0 die **Segmentkette**. 52 Tests. ⚑ **Was jetzt fehlt, ist keine
@@ -44,6 +44,53 @@ Kap. 8.2).
 - `src/kette.rs` — dass er es auch so getan hat, und wann er aufhört.
 
 ## Changelog
+
+### v0.23.0 – 2026-09-29 (`myl-local-agent` 0.16.0: der Budgethinweis, wenn die Schritte knapp werden)
+
+**Anlass:** Im Loop-Szenario recherchierte das 27B in Runde 1 der
+Bericht-Aufgabe alles richtig (Skill gelernt, alle Unterlagen gelesen,
+Befunde korrekt notiert), dann war das Schrittbudget der Runde verbraucht,
+bevor der Bericht entstand. Die nächste Runde kannte nur die Notizen,
+recherchierte von vorn und endete wieder vor dem Schreiben: die Runden 2, 3
+und 4 waren Aufruf für Aufruf gleich.
+
+**Was sich ändert:** Bleiben nach einem Werkzeugschritt höchstens drei
+Schritte (`BUDGETHINWEIS_AB`), hängt die Schleife an das letzte
+Werkzeugergebnis „noch k Schritt(e) in dieser Runde; sichere jetzt dein
+Ergebnis“ (`budgethinweis`, in der Ansageform). Nach dem letzten Schritt
+heißt es „antworte jetzt mit dem, was du hast“. Das Muster ist in
+Agenten-Harnessen üblich; es gilt für jeden Lauf, nicht nur den Loop.
+
+**Belege:** `bei_knappem_budget_erinnert_die_schleife` (vier Schritte übrig:
+kein Hinweis; drei und zwei: Hinweis mit der Zahl; Gegenprobe mit Schwelle
+0 rot); 97 grün, Clippy ohne Befund.
+
+### v0.22.0 – 2026-09-29 (`myl-local-agent` 0.15.0: eindeutige Formfehler in Werkzeugaufrufen werden gelesen, und die Meldung nennt den wirklichen Grund)
+
+**Anlass:** Werkzeugabdeckung mit dem ternären 27B. Das Modell schrieb
+viermal `<tool_call>{"search_skill", "arguments": {"anfrage": "Datum"}}</tool_call>`,
+also ohne den Schlüssel `"name"`. Jeder Aufruf galt als unlesbar, und die
+Antwort darauf lautete: „Häufigster Grund: Der Aufruf wurde mitten im Text
+abgeschnitten, weil die Tokengrenze erreicht war. Fass dich kürzer.“ Der
+Aufruf war vollständig. Das Modell glaubte der Meldung, kürzte seine
+Suchfrage von „Hausregel Datum Bericht“ bis „Datum“ und wiederholte den
+Formfehler, bis die Schleife abbrach.
+
+**Was sich ändert:**
+- **`vorschlaege` liest fünf eindeutige Abweichungen:** fehlender Schlüssel
+  `"name"`, `parameters` statt `arguments`, Argumente als JSON-Zeichenkette,
+  Codezaun um das JSON, die Form `{"function": {…}}`. Mehrdeutiges bleibt
+  unlesbar (kein Name, Doppelpunkt statt Komma, Name mit Leerzeichen).
+  ⛔️ Die Grenze bleibt: gelesen wird nur zwischen den Marken in der
+  Antwort des Modells, und jeder Vorschlag geht durch dieselbe Erlaubnis
+  und Formprüfung.
+- **`Unlesbar::abgeschnitten`**: Nur wenn `</tool_call>` fehlt, sagt die
+  Antwort „abgeschnitten“. Sonst zeigt sie die verlangte Form wörtlich.
+
+**Belege:** `eindeutige_formfehler_werden_gelesen` (fünf Formen und drei
+Gegenproben), `ein_offener_block_wird_gemeldet` (abgeschnitten gegen
+vollständig), `ein_falsch_geformter_aufruf_bekommt_die_form_gezeigt` (kein
+Rat zur Tokengrenze); 96 grün, Clippy ohne Befund.
 
 ### v0.21.0 – 2026-09-26 (`myl-local-agent` 0.14.0: ein Werkzeugkasten lässt sich umhüllen, ohne dass sich an einer Erlaubnis etwas ändert)
 

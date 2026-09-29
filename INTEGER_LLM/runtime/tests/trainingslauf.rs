@@ -63,7 +63,7 @@
 //! gross. Das ist ein Ergebnis dieses Laufs und kein Mangel der Kerne.
 
 use integer_llm_kernels::optimierer::{Master, Schrittkennung};
-use integer_llm_kernels::trainingsschritt::{
+use integer_llm_kernels::trainingsschritt::{Gewichtsform, 
     schritt_auf_aufmerksamkeit, schritt_auf_mlp, vorwaerts_der_aufmerksamkeit,
     vorwaerts_der_ebene, Aufmerksamkeitsgewichte, Aufmerksamkeitsvorgaben, Ebenengewichte,
     Ebenentabellen, Ebenenvorgaben, Mlpvorgaben, Vorspannungen,
@@ -268,6 +268,7 @@ fn lauf_auf_ebene(
         // hier, damit sie sichtbar ist.
         aus_frac: sc.residual_mid_frac[0],
         master_frac: MASTER_FRAC,
+        gewichtsform: Gewichtsform::Int8,
         silu_in_frac: cfg.silu_in_frac,
         silu_lut_offset: cfg.silu_lut_offset,
         silu_out_frac: cfg.silu_out_frac,
@@ -492,6 +493,7 @@ fn a_vorgaben(m: &IntegerModel, e: usize, schritt: u64, lr: i64) -> Aufmerksamke
         // denn verglichen wird der Eingang der Ausgabeprojektion.
         aus_frac: sc.residual_mid_frac[0],
         master_frac: MASTER_FRAC,
+        gewichtsform: Gewichtsform::Int8,
         score_frac: cfg.score_frac_bits,
         prob_frac: cfg.prob_frac_bits,
         exp_input_frac: cfg.exp_input_frac,
@@ -624,6 +626,7 @@ fn die_ganze_ebene_trifft_den_mitschnitt() {
             down_in_frac: sc.down_in_frac,
             aus_frac: 0,
             master_frac: MASTER_FRAC,
+            gewichtsform: Gewichtsform::Int8,
             silu_in_frac: m.config.silu_in_frac,
             silu_lut_offset: m.config.silu_lut_offset,
             silu_out_frac: m.config.silu_out_frac,

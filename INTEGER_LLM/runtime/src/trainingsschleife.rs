@@ -43,14 +43,14 @@
 //! [`softmax_ueber_vokabular`]: integer_llm_kernels::softmax::softmax_ueber_vokabular
 
 use integer_llm_kernels::backward::{
-    kreuzentropie_gradient, linear_backward, silu_grad_aus_lut, rmsnorm_backward, Normskalen,
+    kreuzentropie_gradient, verteilungsgradient, silu_grad_aus_lut, rmsnorm_backward, Normskalen,
 };
 use integer_llm_kernels::optimierer::{
     ausserhalb_der_form, delta, schritt, trainingsabdruck, Master, Schrittkennung, MASTER_FRAC,
 };
 use integer_llm_kernels::rmsnorm::{rmsnorm_i16, Rmsnormspur};
 use integer_llm_kernels::softmax::softmax_ueber_vokabular;
-use integer_llm_kernels::trainingsschritt::{
+use integer_llm_kernels::trainingsschritt::{Gewichtsform, 
     gewicht_aus_master, gradienten_der_ebene_aus_gradient, vorwaerts_der_ebene,
     Aufmerksamkeitsgewichte, Aufmerksamkeitsvorgaben, Ebenengewichte, Ebenentabellen,
     Ebenenvorgaben, Mlpvorgaben, Vorspannungen,
@@ -338,6 +338,27 @@ impl Trainingsergebnis {
 /// Hebt ein int8-Gewicht mit Zeilenversatz auf den Master.
 pub(crate) fn master_aus_gewicht(t: &QTensor) -> Vec<Master> {
     let in_features = t.shape[1];
+    // ⚑ **Ein ternaerer Tensor wird zeilenweise entpackt**: dieselben Zahlen,
+    //   die das int8-Gewicht traege, aus dem er gepackt ist. Sein Master
+    //   traegt danach nur -a, 0 und +a; trainiert wird er ternaer.
+    if let crate::model::Gewichtsdaten::Ternaer(td) = &*t.data {
+        let m = td.matrix();
+        return (0..t.shape[0])
+            .flat_map(|z| {
+                // ⛔️ Ein Zeilenshift ueber MASTER_FRAC hiesse, der Master
+                //   loeste das Gewicht nicht mehr auf (die exakt
+                //   uebernommenen Skalen eines Pakets koennen das).
+                //   Lieber hier laut als einen gerundeten Master.
+                let s = MASTER_FRAC.checked_sub(t.shifts[z]).unwrap_or_else(|| {
+                    panic!(
+                        "master_aus_gewicht: Zeile {z} traegt Shift {}, der Master nur {MASTER_FRAC} Bruchstellen",
+                        t.shifts[z]
+                    )
+                });
+                m.zeile_entpacken(z).into_iter().map(move |w| w << s)
+            })
+            .collect();
+    }
     t.data
         .iter()
         .enumerate()
@@ -409,6 +430,46 @@ pub fn gradienten_je_position_mit_kopf(
         let vorgabe = Trainingsvorgaben { ziel, ..v.clone() };
         let (logits, g) =
             gradient_vom_ziel_mit_kopf(m, zeile, &vorgabe, kopf.as_deref_mut());
+        alle_logits.push(logits);
+        aus.push(g);
+    }
+    (aus, alle_logits)
+}
+
+/// Wie [`gradienten_je_position_mit_kopf`], aber jede Position lernt
+/// gegen die Verteilung eines Lehrers statt gegen das naechste Wort.
+///
+/// `lehrer[i]` ist die Verteilung an Position `i` (aus
+/// [`lehrerverteilung`]). ⚑ **Die letzte Position bleibt ohne
+/// Gradienten wie beim Wortziel**, damit beide Verfahren dieselben
+/// Positionen lernen und sich vergleichen lassen; ihr Eintrag in
+/// `lehrer` wird nicht gelesen und darf leer sein.
+///
+/// # Panics
+///
+/// Wenn `lehrer` nicht genau eine Verteilung je Position traegt.
+pub fn gradienten_je_position_vom_lehrer(
+    m: &IntegerModel,
+    y: &[Vec<i16>],
+    v: &Trainingsvorgaben,
+    lehrer: &[Vec<i32>],
+    mut kopf: Option<&mut Kopfsammlung>,
+) -> (Vec<Vec<i32>>, Vec<Vec<i32>>) {
+    assert_eq!(
+        lehrer.len(),
+        y.len(),
+        "gradienten_je_position_vom_lehrer: eine Lehrerverteilung je Position"
+    );
+    let mut aus: Vec<Vec<i32>> = Vec::with_capacity(y.len());
+    let mut alle_logits: Vec<Vec<i32>> = Vec::with_capacity(y.len());
+    for (i, zeile) in y.iter().enumerate() {
+        if v.folge.get(i + 1).is_none() {
+            aus.push(vec![0i32; m.hidden_size]);
+            alle_logits.push(Vec::new());
+            continue;
+        }
+        let (logits, g) =
+            gradient_gegen(m, zeile, v, Ziel::Verteilung(&lehrer[i]), kopf.as_deref_mut());
         alle_logits.push(logits);
         aus.push(g);
     }
@@ -541,6 +602,45 @@ pub fn gradient_vom_ziel_mit_kopf(
     v: &Trainingsvorgaben,
     kopf: Option<&mut Kopfsammlung>,
 ) -> (Vec<i32>, Vec<i32>) {
+    gradient_gegen(m, y, v, Ziel::Wort(v.ziel), kopf)
+}
+
+/// Wogegen der Kopf eine Position lernt.
+#[derive(Clone, Copy, Debug)]
+pub enum Ziel<'a> {
+    /// Das naechste Wort der Folge: Kreuzentropie gegen eine Eins.
+    Wort(usize),
+    /// ⚑ **Die Verteilung eines Lehrers**, auf `prob_frac` wie der
+    /// Softmax des Schuelers (siehe [`lehrerverteilung`]).
+    Verteilung(&'a [i32]),
+}
+
+/// Die Verteilung, die ein Modell an einer Position ueber das Vokabular
+/// legt, auf der Skala, die der Trainingsschritt fuer `p` nimmt.
+///
+/// ⚑ **Dieselbe Rechnung wie beim Schueler**, nur ohne Spur: Kopf auf
+/// `v.logit_frac`, dann [`softmax_ueber_vokabular`] auf `v.prob_frac`.
+/// Eine zweite Umsetzung fuer den Lehrer haette eine zweite Skala, und
+/// `p − q` waere dann ein Unterschied der Skalen statt der Modelle.
+pub fn lehrerverteilung(lehrer: &IntegerModel, y: &[i16], v: &Trainingsvorgaben) -> Vec<i32> {
+    let logits = lehrer.head_logits_mit_spur(y, v.logit_frac, None);
+    softmax_ueber_vokabular(
+        &logits,
+        v.logit_frac,
+        &lehrer.exp_lut,
+        lehrer.config.exp_input_frac,
+        v.prob_frac,
+    )
+}
+
+/// [`gradient_vom_ziel_mit_kopf`] gegen ein beliebiges [`Ziel`].
+pub fn gradient_gegen(
+    m: &IntegerModel,
+    y: &[i16],
+    v: &Trainingsvorgaben,
+    ziel: Ziel<'_>,
+    kopf: Option<&mut Kopfsammlung>,
+) -> (Vec<i32>, Vec<i32>) {
     let mut spur = Rmsnormspur::Leer;
     let logits = m.head_logits_mit_spur(y, v.logit_frac, Some(&mut spur));
     let p = softmax_ueber_vokabular(
@@ -550,7 +650,10 @@ pub fn gradient_vom_ziel_mit_kopf(
         m.config.exp_input_frac,
         v.prob_frac,
     );
-    let g_logits = kreuzentropie_gradient(&p, v.ziel, v.prob_frac);
+    let g_logits = match ziel {
+        Ziel::Wort(w) => kreuzentropie_gradient(&p, w, v.prob_frac),
+        Ziel::Verteilung(q) => verteilungsgradient(&p, q),
+    };
 
     // ⚑ Der Kopf rechnet auf dem **normierten** Strom; `linear_backward`
     // braucht genau den, nicht `y`.
@@ -569,9 +672,11 @@ pub fn gradient_vom_ziel_mit_kopf(
         k.aufnehmen(&g_logits, &normed);
     }
 
-    let (g_normed, _) = linear_backward(
+    // ⚑ Nur `dL/dx`: Das Gewicht des Kopfes lernt hier nicht (dafuer
+    //   sammelt `Kopfsammlung`), und sein aeusseres Produkt waren beim 0,6B
+    //   1,2 GB je Position, die verworfen wurden (2026-09-28).
+    let g_normed = integer_llm_kernels::backward::linear_backward_eingang(
         &g_logits,
-        &normed,
         &m.lm_head.data,
         m.hidden_size,
         &m.lm_head.shifts,
@@ -677,6 +782,9 @@ pub(crate) fn qk_vorgaben_der_ebene(
     })
 }
 
+// Acht Argumente, seit die Gewichtsform dazukam; zusammengefasst waeren sie
+// ein weiterer Vorgabentyp fuer eine einzige Stelle.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn vorgaben_der_ebene<'a>(
     m: &'a IntegerModel,
     sc: &'a crate::model::LayerScales,
@@ -685,6 +793,7 @@ pub(crate) fn vorgaben_der_ebene<'a>(
     schritt: u64,
     lr_zaehler: i64,
     lr_nenner: i64,
+    form: Gewichtsform,
 ) -> Ebenenvorgaben<'a> {
     let kennung = Schrittkennung { ebene: e as u32, schritt, index_versatz: 0 };
     Ebenenvorgaben {
@@ -701,6 +810,7 @@ pub(crate) fn vorgaben_der_ebene<'a>(
             attn_out_frac: sc.achtsamkeit().attn_out_frac,
             aus_frac: 0,
             master_frac: MASTER_FRAC,
+            gewichtsform: form,
             score_frac: m.config.score_frac_bits,
             prob_frac: m.config.prob_frac_bits,
             exp_input_frac: m.config.exp_input_frac,
@@ -719,6 +829,7 @@ pub(crate) fn vorgaben_der_ebene<'a>(
             down_in_frac: sc.down_in_frac,
             aus_frac: 0,
             master_frac: MASTER_FRAC,
+            gewichtsform: form,
             silu_in_frac: m.config.silu_in_frac,
             silu_lut_offset: m.config.silu_lut_offset,
             silu_out_frac: m.config.silu_out_frac,
@@ -814,6 +925,13 @@ pub fn trainingsschleife(
     }
     let e = m.num_layers - 1;
     let ebene = &m.layers[e];
+    // ⛔️ Ternaere Gewichte lassen sich nicht in kleinen Schritten
+    //   nachfuehren (siehe `Shardfehler::TernaerNichtTrainierbar`).
+    if ebene.ist_ternaer() || m.lm_head.ist_ternaer() {
+        return Err("Trainingsschleife: das Modell traegt ternaere Gewichte, und die lassen \
+                    sich nicht in kleinen ganzzahligen Schritten nachfuehren"
+            .to_string());
+    }
     let mlp = match &ebene.ffn {
         Feedforward::Dense(mlp) => mlp,
         // ⚑ **Seit dem 2026-09-05 kein Abbruch mehr, sondern ein
@@ -885,6 +1003,7 @@ pub fn trainingsschleife(
                 attn_out_frac: sc.achtsamkeit().attn_out_frac,
                 aus_frac: 0,
                 master_frac: MASTER_FRAC,
+                gewichtsform: Gewichtsform::Int8,
                 score_frac: m.config.score_frac_bits,
                 prob_frac: m.config.prob_frac_bits,
                 exp_input_frac: m.config.exp_input_frac,
@@ -903,6 +1022,7 @@ pub fn trainingsschleife(
                 down_in_frac: sc.down_in_frac,
                 aus_frac: 0,
                 master_frac: MASTER_FRAC,
+                gewichtsform: Gewichtsform::Int8,
                 silu_in_frac: m.config.silu_in_frac,
                 silu_lut_offset: m.config.silu_lut_offset,
                 silu_out_frac: m.config.silu_out_frac,
@@ -1126,6 +1246,7 @@ fn gemischschleife(
         down_in_frac: sc.down_in_frac,
         aus_frac: acc_skalar,
         master_frac: MASTER_FRAC,
+        gewichtsform: Gewichtsform::Int8,
         silu_in_frac: cfg.silu_in_frac,
         silu_lut_offset: cfg.silu_lut_offset,
         silu_out_frac: cfg.silu_out_frac,

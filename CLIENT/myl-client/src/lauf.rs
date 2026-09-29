@@ -207,6 +207,34 @@ pub fn fahren_im_gespraech(
     )
 }
 
+/// **Der Auftrag, dazu die Skills, die zu ihm passen** (siehe
+/// `skills::hinweis_fuer_auftrag`), wenn die Ruestung `learn_skill` hat.
+///
+/// ⚑ **Die Suche sieht, was die Einhaengung sieht**: den Projektordner
+/// darin, dazu die eigenen und die mitgelieferten Skills.
+fn mit_skillhinweis(ruestung: &Ruestung, auftrag: &str) -> String {
+    let lernen = crate::werkzeuge::Dateiwerkzeug::SkillLernen.name(ruestung.form);
+    let hat_lernen = ruestung.kasten.angebot(lernen).is_some_and(|a| !a.beschreibung.starts_with("SWITCHED OFF") && !a.beschreibung.starts_with("ABGESCHALTET"));
+    if !hat_lernen {
+        return auftrag.to_string();
+    }
+    let wurzel = ruestung.einhaengung.as_ref().map(|e| e.wurzel());
+    let deutsch = matches!(ruestung.form, myl_local_agent::werkzeug::Ansageform::Deutsch);
+    let suchtext = ruestung.skillsuche.as_deref().unwrap_or(auftrag);
+    match crate::skills::hinweis_fuer_auftrag(wurzel, suchtext, lernen, deutsch) {
+        Some(h) => format!("{auftrag}{h}"),
+        None => auftrag.to_string(),
+    }
+}
+
+/// **Der Auftrag, wie das Modell ihn bekommt**: mit den passenden Skills
+/// (siehe [`mit_skillhinweis`]) und dem heutigen Datum
+/// (`crate::uhr::heute_zeile`).
+fn mit_kontext(ruestung: &Ruestung, auftrag: &str) -> String {
+    let deutsch = matches!(ruestung.form, myl_local_agent::werkzeug::Ansageform::Deutsch);
+    format!("{}{}", mit_skillhinweis(ruestung, auftrag), crate::uhr::heute_zeile(deutsch))
+}
+
 /// **Wie [`fahren_im_gespraech`], mit einer Hausregel hinter der
 /// Werkzeugansage.**
 ///
@@ -256,7 +284,7 @@ pub fn fahren_mit_hausregel(
         max_tokens: Some(max_tokens),
         melder,
     }
-    .fahren_mit_verlauf(auftrag, verlauf);
+    .fahren_mit_verlauf(&mit_kontext(ruestung, auftrag), verlauf);
 
     let (verlauf, antwort) = verlauf_aus(&erg.nachrichten);
     Ausgang {

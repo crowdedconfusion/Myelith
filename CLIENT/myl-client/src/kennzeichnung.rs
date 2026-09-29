@@ -15,6 +15,13 @@
 //! muessen dasselbe sagen.** Ein Hinweis, der zweimal getippt ist, laeuft
 //! auseinander, sobald einer ihn verbessert.
 //!
+//! ⚑ **Mit einer Ausnahme, und sie steht hier und nicht dort: der
+//! Notschalter.** In der Konsole ist es der Notaus (Strg-C, Esc); im
+//! Fenster ist es seit CLIENT v0.95.0 das Schliessen des Fensters, der
+//! Knopf ist entfallen (Festlegung des Projektinhabers, 2026-09-28).
+//! Deshalb nimmt [`starthinweis`] die [`Flaeche`] mit, und nur dieser
+//! eine Satz haengt an ihr.
+//!
 //! # ⛔️ Kein Schalter
 //!
 //! Anders als die Warnung vor dem Agentenbetrieb (`agent.warnung`) laesst
@@ -31,6 +38,16 @@ pub fn zweckbestimmung(sprache: Sprache) -> String {
         Sprache::En => "COMPLIANCE/en/Intended-Use-Policy.md",
     };
     format!("{}/blob/main/{datei}", crate::aktualisierung::SEITE)
+}
+
+/// Wo der Hinweis erscheint; daran haengt allein der Satz zum
+/// Notschalter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Flaeche {
+    /// Das Gespraechsfenster: Der Notschalter ist das Schliessen.
+    Fenster,
+    /// Die Konsole: Der Notschalter ist der Notaus.
+    Konsole,
 }
 
 /// Der Hinweis beim Start, fertig zum Anzeigen.
@@ -54,9 +71,24 @@ pub struct Starthinweis {
     pub marke: &'static str,
 }
 
-/// **Der Hinweis beim Start**, in der eingestellten Sprache.
-pub fn starthinweis(sprache: Sprache) -> Starthinweis {
+/// **Der Hinweis beim Start**, in der eingestellten Sprache und fuer die
+/// Flaeche, auf der er erscheint.
+pub fn starthinweis(sprache: Sprache, flaeche: Flaeche) -> Starthinweis {
     let verweis = zweckbestimmung(sprache);
+    let notschalter = match (sprache, flaeche) {
+        (Sprache::De, Flaeche::Fenster) => {
+            "Handlungen mit Wirkung nach außen legt es dir vorher zur Bestätigung vor. Der Notschalter ist das Schließen des Fensters: Es beendet Myelith sofort, samt jeder laufenden Handlung."
+        }
+        (Sprache::De, Flaeche::Konsole) => {
+            "Handlungen mit Wirkung nach außen legt es dir vorher zur Bestätigung vor, und der Notaus bricht jede laufende Handlung ab."
+        }
+        (Sprache::En, Flaeche::Fenster) => {
+            "It asks you to confirm actions with effects outside before running them. The emergency stop is closing the window: it ends Myelith at once, along with any running action."
+        }
+        (Sprache::En, Flaeche::Konsole) => {
+            "It asks you to confirm actions with effects outside before running them, and the emergency stop aborts any running action."
+        }
+    };
     match sprache {
         Sprache::De => Starthinweis {
             titel: "Du arbeitest mit einer künstlichen Intelligenz.",
@@ -64,7 +96,7 @@ pub fn starthinweis(sprache: Sprache) -> Starthinweis {
                 "Myelith ist ein KI-System. Antworten, Handlungen und die vorgelesene Stimme erzeugt ein Sprachmodell, kein Mensch.",
                 "Es beantwortet Fragen, arbeitet an Dateien im freigegebenen Ordner, sucht im Web, hört, sieht und spricht, soweit du das einschaltest.",
                 "Es kann sich irren: Aussagen können falsch oder erfunden sein. Prüfe Wichtiges nach.",
-                "Handlungen mit Wirkung nach außen legt es dir vorher zur Bestätigung vor, und der Notaus bricht jede laufende Handlung ab.",
+                notschalter,
                 "Nicht erlaubt: Menschen bewerten oder einstufen, Biometrie, Emotionserkennung am Arbeitsplatz oder in der Bildung, Entscheidungen über Arbeit, Bildung, Kredit, Sozialleistungen, Strafverfolgung, Migration oder Wahlen.",
                 "Eine nachgebildete Stimme nur mit Einwilligung der Person, und nie als echte Aufnahme ausgeben. Erzeugte Sprache ist als KI-erzeugt gekennzeichnet.",
             ],
@@ -81,7 +113,7 @@ pub fn starthinweis(sprache: Sprache) -> Starthinweis {
                 "Myelith is an AI system. Answers, actions and the voice that reads aloud are produced by a language model, not by a human.",
                 "It answers questions, works on files in the released folder, searches the web, hears, sees and speaks, as far as you turn these on.",
                 "It can be wrong: statements may be false or made up. Check anything important.",
-                "It asks you to confirm actions with effects outside before running them, and the emergency stop aborts any running action.",
+                notschalter,
                 "Not allowed: evaluating or classifying people, biometrics, emotion recognition at work or in education, decisions on employment, education, credit, public assistance, law enforcement, migration or elections.",
                 "A cloned voice only with the person's consent, and never passed off as a genuine recording. Generated speech is marked as AI-generated.",
             ],
@@ -134,15 +166,41 @@ mod proben {
     /// niemand bekommt.
     #[test]
     fn beide_sprachen_sagen_gleich_viel() {
-        let de = starthinweis(Sprache::De);
-        let en = starthinweis(Sprache::En);
-        assert_eq!(de.punkte.len(), en.punkte.len());
-        for h in [&de, &en] {
-            assert!(!h.titel.is_empty() && !h.bestaetigung.is_empty() && !h.weiter.is_empty());
-            assert!(h.punkte.iter().all(|p| !p.is_empty()));
+        for f in [Flaeche::Fenster, Flaeche::Konsole] {
+            let de = starthinweis(Sprache::De, f);
+            let en = starthinweis(Sprache::En, f);
+            assert_eq!(de.punkte.len(), en.punkte.len());
+            for h in [&de, &en] {
+                assert!(!h.titel.is_empty() && !h.bestaetigung.is_empty() && !h.weiter.is_empty());
+                assert!(h.punkte.iter().all(|p| !p.is_empty()));
+            }
+            assert!(de.titel.contains("künstlichen Intelligenz"));
+            assert!(en.titel.contains("artificial intelligence"));
         }
-        assert!(de.titel.contains("künstlichen Intelligenz"));
-        assert!(en.titel.contains("artificial intelligence"));
+    }
+
+    /// ⛔️ **Der Hinweis nennt den Notschalter, der auf dieser Flaeche
+    /// wirklich einer ist**: im Fenster das Schliessen (einen Knopf gibt
+    /// es dort nicht mehr), in der Konsole den Notaus. Und nur dieser
+    /// Satz unterscheidet sich; alles andere sagen beide gleich.
+    #[test]
+    fn der_notschalter_ist_der_der_flaeche() {
+        for s in [Sprache::De, Sprache::En] {
+            let fenster = starthinweis(s, Flaeche::Fenster);
+            let konsole = starthinweis(s, Flaeche::Konsole);
+            let fenster_text = fenster.punkte.join(" ");
+            let konsole_text = konsole.punkte.join(" ");
+            let (schliessen, notaus) = match s {
+                Sprache::De => ("Schließen des Fensters", "Notaus"),
+                Sprache::En => ("closing the window", "emergency stop aborts"),
+            };
+            assert!(fenster_text.contains(schliessen), "{s:?}: das Fenster nennt das Schliessen nicht");
+            assert!(!fenster_text.contains(notaus), "{s:?}: das Fenster nennt einen Notaus, den es nicht hat");
+            assert!(konsole_text.contains(notaus), "{s:?}: die Konsole nennt ihren Notaus nicht");
+            assert!(!konsole_text.contains(schliessen), "{s:?}: die Konsole nennt ein Fenster");
+            let anders = fenster.punkte.iter().zip(&konsole.punkte).filter(|(a, b)| a != b).count();
+            assert_eq!(anders, 1, "{s:?}: mehr als der eine Satz weicht ab");
+        }
     }
 
     /// ⚑ **Der Verweis zeigt auf eine Datei, die es gibt**, in beiden

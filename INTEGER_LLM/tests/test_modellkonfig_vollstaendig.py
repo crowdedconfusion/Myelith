@@ -67,6 +67,31 @@ NICHT_GEBRAUCHT = {
     # `rope_scaling` selbst ist der Behaelter; seine Felder werden
     # einzeln geprueft (siehe `flach`).
     "rope_scaling",
+    # ⚑ Nachgesehen am 2026-09-28 (ternaeres 8B, gespeichert mit
+    # transformers 4.57): die allgemeinen Vorgaben, die diese Fassung
+    # beim Speichern jedes Config ausschreibt. Generierung, Strahlsuche,
+    # Encoder-Decoder, Ausgabeschalter, Klassifikationskoepfe; nichts
+    # davon betrifft den Export eines reinen Decoders.
+    "add_cross_attention", "bad_words_ids", "begin_suppress_tokens",
+    "chunk_size_feed_forward", "cross_attention_hidden_size",
+    "decoder_start_token_id", "diversity_penalty", "do_sample",
+    "early_stopping", "encoder_no_repeat_ngram_size",
+    "exponential_decay_length_penalty", "finetuning_task",
+    "forced_bos_token_id", "forced_eos_token_id", "id2label",
+    "is_decoder", "is_encoder_decoder", "label2id", "length_penalty",
+    "max_length", "min_length", "no_repeat_ngram_size", "num_beam_groups",
+    "num_beams", "num_return_sequences", "output_attentions",
+    "output_hidden_states", "output_scores", "prefix", "problem_type",
+    "pruned_heads", "remove_invalid_values", "repetition_penalty",
+    "return_dict", "return_dict_in_generate", "sep_token_id",
+    "suppress_tokens", "task_specific_params", "temperature",
+    "tf_legacy_loss", "tie_encoder_decoder", "tokenizer_class", "top_k",
+    "top_p", "torchscript", "typical_p", "use_bfloat16",
+    # Ebenso nachgesehen: `layer_types` ist 36-mal „full_attention“,
+    # also nichts, was ein dichtes Qwen3 nicht ohnehin ist; `no_bias`
+    # ist True und deckt sich mit `attention_bias` False, das geprueft
+    # wird.
+    "layer_types", "no_bias",
 }
 
 # Wie ein Feld im Modelleintrag heisst, wenn es anders heisst als im Config.
@@ -88,6 +113,10 @@ UEBERSETZUNG = {
     "num_key_value_heads": "num_kv_heads",
     "num_hidden_layers": "num_layers",
     "max_position_embeddings": "max_context",
+    # Die Felder einer RoPE-Skalierung, aus `rope_scaling` flachgezogen.
+    "rope_type": "rope_art",
+    "factor": "rope_yarn_faktor",
+    "original_max_position_embeddings": "rope_yarn_urlaenge",
 }
 
 

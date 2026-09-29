@@ -32,6 +32,9 @@ BENCHMARKS/Inferenz/
 ├── evidence_determinism.py # Evidenz: Bit-Identität (5 Prompts × 5 Läufe)
 ├── evidence_quality.py     # Evidenz: Parallelgenerierung + Top-1-Agreement
 ├── evidence_benchmark.py   # Evidenz: Durchsatz Prefill/Decode (bench_probe)
+├── artefaktvergleich.py    # mehrere Artefakte auf denselben Folgen; --bitgleich
+├── gsm8k.py                # Aufgaben mit Denken: GSM8K-Teilmenge, gierig
+├── paket_perplexitaet.py   # Gleitkomma-Referenz eines gedrehten, gepackten Pakets
 ├── datasets/               # WikiText-2-Cache (nicht versioniert)
 └── results/                # Messergebnisse (versioniert)
     ├── baseline_wikitext2.json
@@ -111,6 +114,41 @@ $V BENCHMARKS/Inferenz/evidence_benchmark.py
 ```
 
 Das Modell waehlt `INTEGER_LLM_MODEL`, Vorgabe `myelith-0.6b`.
+
+### Neue Artefakte vergleichen (seit 2026-09-28)
+
+Für ein Artefakt, das aus einem anderen entsteht (gepackt, ternär,
+nachtrainiert), oder für zwei Modelle nebeneinander:
+
+```bash
+V=INTEGER_LLM/calibrate/.venv/bin/python3
+# Perplexität beliebig vieler Artefakte auf denselben Folgen
+INTEGER_LLM_MODEL=myelith-8b $V -u BENCHMARKS/Inferenz/artefaktvergleich.py 4 128 \
+  INTEGER_LLM/artifacts/<a> INTEGER_LLM/artifacts/<b>
+# Rechnen zwei Speicherformen dieselbe ganze Zahl? Rückgabewert 0 nur bei IDENTISCH
+INTEGER_LLM_MODEL=myelith-8b $V -u BENCHMARKS/Inferenz/artefaktvergleich.py 4 128 \
+  INTEGER_LLM/artifacts/<quelle> INTEGER_LLM/artifacts/<gepackt> --bitgleich
+# Aufgaben mit Denken; die Chatvorlage kommt aus dem Originalordner
+$V -u BENCHMARKS/Inferenz/gsm8k.py MODELS/llm/<original> INTEGER_LLM/artifacts/<a> 50 512 <ausgabe.jsonl>
+# Gleitkomma-Referenz eines Pakets, das sich nicht als BF16 entpacken lässt
+INTEGER_LLM_MODEL=<modell> $V -u BENCHMARKS/Inferenz/paket_perplexitaet.py MODELS/llm/<paket> 4 128
+```
+
+⚑ **`INTEGER_LLM_MODEL` wählt den Tokenizer der Folgenauswahl.** Alle
+verglichenen Artefakte müssen ihn teilen, und eine Gleitkomma-Referenz
+gehört auf dieselben Folgen wie die ganzzahlige Messung.
+
+⚠️ **GSM8K an 50 Aufgaben:** Zwei, drei Punkte Unterschied sind Rauschen.
+Der Testsplit wird beim ersten Lauf nach `datasets/` geladen und gegen
+eine Prüfsumme gehalten; eine andere Fassung bricht ab, weil ihre Zahlen
+mit keiner früheren vergleichbar wären.
+
+Erprobt am 2026-09-28: `--bitgleich` am 0,6B gegen sich selbst 128/128
+gleich, gegen das 4B verschieden (Rückgabewert 1); GSM8K am 0,6B mit zwei
+Aufgaben 2/2. `paket_perplexitaet.py` ist die verallgemeinerte Fassung des
+Skripts, das am 27B die Referenz 11,18 lieferte; in dieser Form noch nicht
+erneut gelaufen, weil neben einem Training kein zweiter großer Lauf
+starten soll.
 
 Steuerung der Sequenz-Parameter (Baseline und E2E-Test):
 `E2E_SEQUENCES` (Standard 4), `E2E_SEQ_LEN` (Standard 128).

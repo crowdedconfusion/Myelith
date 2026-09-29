@@ -75,7 +75,8 @@ def gerufene_werkzeuge(ausgabe: str) -> list[str]:
 
 
 def einen_lauf(
-    artefakt: str, auftrag: dict, schritte: int, deutsch: bool, voll: bool
+    artefakt: str, auftrag: dict, schritte: int, deutsch: bool, voll: bool, frist: int = 600,
+    mitschrift: Path | None = None,
 ) -> tuple[bool, str, float, list[str]]:
     """Baut das Verzeichnis, faehrt den Auftrag, urteilt.
 
@@ -138,12 +139,17 @@ def einen_lauf(
         anfang = time.monotonic()
         try:
             fertig = subprocess.run(
-                befehl, capture_output=True, text=True, timeout=600
+                befehl, capture_output=True, text=True, timeout=frist
             )
             ausgabe = fertig.stdout + fertig.stderr
         except subprocess.TimeoutExpired:
-            return False, "ZEITUEBERSCHREITUNG nach 600 s", time.monotonic() - anfang, []
+            return False, f"ZEITUEBERSCHREITUNG nach {frist} s", time.monotonic() - anfang, []
         dauer = time.monotonic() - anfang
+        # ⚑ **Die ganze Ausgabe, wenn verlangt.** Ein Urteil sagt, ob
+        #   bestanden; was das Modell dabei gesagt hat, steht nur hier.
+        if mitschrift is not None:
+            mitschrift.parent.mkdir(parents=True, exist_ok=True)
+            mitschrift.write_text(ausgabe, encoding="utf-8")
 
         # --- Das Urteil -----------------------------------------------
         gruende = []
@@ -172,6 +178,21 @@ def einen_lauf(
                 if wort not in inhalt:
                     gruende.append(f"{name} hat {wort!r} verloren")
 
+        # ⚑ **Die Abnahme von aussen**: ein Befehl, der nach dem Lauf im
+        #   Arbeitsordner mit 0 enden muss. Fuer mehrstufige Auftraege ist das
+        #   die einzige Pruefung, die nicht an Woertern der Antwort haengt.
+        if auftrag.get("abnahme"):
+            try:
+                ab = subprocess.run(
+                    ["sh", "-c", auftrag["abnahme"]], cwd=wurzel,
+                    capture_output=True, text=True, timeout=60,
+                )
+                if ab.returncode != 0:
+                    rest = (ab.stdout + ab.stderr).strip().replace("\n", " ")[-200:]
+                    gruende.append(f"Abnahme mit {ab.returncode}: {rest}")
+            except subprocess.TimeoutExpired:
+                gruende.append("Abnahme nach 60 s abgebrochen")
+
         werkzeuge = gerufene_werkzeuge(ausgabe)
         # ⛔️ **Ein erwartetes Werkzeug ist eine eigene Zusicherung.**
         #   Bei der Abdeckungsmessung ist die Wirkung manchmal nicht
@@ -192,8 +213,12 @@ def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("artefakt")
     p.add_argument("--stufe", type=int, default=0, help="nur diese Stufe")
+    p.add_argument("--nur", default="", help="nur diese Auftraege, durch Komma getrennt")
     p.add_argument("--laeufe", type=int, default=1, help="Wiederholungen je Auftrag")
     p.add_argument("--schritte", type=int, default=6)
+    # ⚑ Die Frist je Auftrag. 600 s reichen fuer ein 4B; ein grosses Modell
+    #   braucht allein fuer das erste Vorlesen der Ansage Minuten.
+    p.add_argument("--frist", type=int, default=600, help="Sekunden je Auftrag")
     p.add_argument(
         "--werkzeuge",
         choices=["knapp", "voll"],
@@ -206,6 +231,7 @@ def main() -> int:
         help="Werkzeuge deutsch ansagen (die Fassung vor dem 2026-09-09)",
     )
     p.add_argument("--json", type=Path, help="Ergebnis zusaetzlich hierhin")
+    p.add_argument("--mitschrift", type=Path, help="Ordner fuer die ganze Ausgabe je Auftrag")
     # ⚑ **Ein zweiter Auftragssatz, und das ist kein Beiwerk.** Die
     #   gestufte Messung fragt „loest es die Aufgabe"; die Abdeckung
     #   fragt „ruft es jedes Werkzeug". Zwei Fragen, zwei Dateien: In
@@ -244,6 +270,14 @@ def main() -> int:
             )
     if a.stufe:
         auftraege = [x for x in auftraege if x.get("stufe") == a.stufe]
+    if a.nur:
+        namen = {n.strip() for n in a.nur.split(",") if n.strip()}
+        unbekannt = namen - {x["name"] for x in auftraege}
+        if unbekannt:
+            # Ein Tippfehler waere sonst ein leerer Lauf, der wie ein Ergebnis aussieht.
+            print(f"[agentenprobe] unbekannte Auftraege: {', '.join(sorted(unbekannt))}")
+            return 2
+        auftraege = [x for x in auftraege if x["name"] in namen]
     if not auftraege:
         print("[agentenprobe] kein Auftrag passt zur Auswahl")
         return 2
@@ -258,7 +292,8 @@ def main() -> int:
     for auf in auftraege:
         for i in range(a.laeufe):
             ok, grund, dauer, werkzeuge = einen_lauf(
-                a.artefakt, auf, a.schritte, a.deutsch, a.werkzeuge == "voll"
+                a.artefakt, auf, a.schritte, a.deutsch, a.werkzeuge == "voll", a.frist,
+                a.mitschrift / f"{auf['name']}-{i + 1}.txt" if a.mitschrift else None,
             )
             je_stufe.setdefault(auf.get("stufe", 0), []).append(ok)
             ergebnisse.append(

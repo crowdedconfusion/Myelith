@@ -202,6 +202,111 @@ MODEL_CONFIGS = {
         "verified": "MODELS/llm/Qwen3-8B/config.json@b968826d",
         "hf_model_id": "Qwen/Qwen3-8B",
     },
+    # ⚑ **Das erste ternaere Modell, als Qualitaetsprobe** (Auftrag des
+    # Projektinhabers, 2026-09-28). ⚠️ **Arbeitsname**, der endgueltige
+    # Name kommt vom Projektinhaber.
+    #
+    # Die Gewichte sind die eines Qwen3-8B, nachtrainiert auf ternaere
+    # Werte {-s, 0, +s} mit einer Skala je 128 Eingaenge und in FP16
+    # ausgeliefert (Ternary-Bonsai-8B-unpacked, Apache-2.0). Dieser Bau
+    # fuehrt sie durch den **unveraenderten** int8-Weg: Eine Zeile mit
+    # den Werten {-s_g, 0, +s_g} bildet die Skala je Zeile nahezu exakt
+    # ab (s_g im Verhaeltnis zur groessten Gruppenskala der Zeile, auf
+    # 1/127 gerundet), und die Nullen bleiben Nullen. Gemessen wird damit
+    # die Qualitaet ternaerer Gewichte in unserem Rechenweg, **nicht** der
+    # Speichervorteil; der braucht einen eigenen Kern.
+    #
+    # Verifiziert gegen die echte config.json des Snapshots: dieselbe
+    # Bauart wie das Qwen3-8B, einzig das Vokabular ist auf 151 669
+    # Zeilen gekuerzt (die tatsaechliche Groesse des Tokenizers statt der
+    # aufgefuellten 151 936).
+    "myelith-8b-ternaer": {
+        "family": "qwen3",
+        "variant": "8b",
+        "num_layers": 36,
+        "hidden_size": 4096,
+        "intermediate_size": 12288,
+        "num_heads": 32,
+        "num_kv_heads": 8,
+        "head_dim": 128,
+        "vocab_size": 151669,
+        "rope_theta": 1_000_000.0,
+        # ⛔️ **YaRN, und zwar auf jeder Position.** Der Config traegt
+        # `rope_scaling = {yarn, factor 4, original 16384}`, das
+        # Qwen3-8B keine Skalierung. Ohne diese drei Felder drehten die
+        # Tabellen wie beim Original und nicht wie das Modell trainiert
+        # wurde (siehe `luts.yarn_frequenzen`).
+        "rope_art": "yarn",
+        "rope_yarn_faktor": 4.0,
+        "rope_yarn_urlaenge": 16384,
+        "rms_norm_eps": 1e-6,
+        "hidden_act": "silu",
+        "max_context": 65536,
+        "tie_word_embeddings": False,
+        "attention_bias": False,
+        "qk_norm": True,
+        "num_experts": 0,
+        "verified": "MODELS/llm/Ternary-Bonsai-8B-unpacked/config.json@2026-09-28",
+        "hf_model_id": "prism-ml/Ternary-Bonsai-8B-unpacked",
+    },
+    # ⚠️ **Arbeitsname.** Ternary Bonsai 2 27B (PrismML, Apache-2.0),
+    # eine ternaer nachtrainierte Qwen3.5-Architektur: 64 Ebenen, davon 48
+    # mit linearer Aufmerksamkeit und 16 mit voller, dichtes MLP. Die
+    # Gewichte liegen als MLX-Paket mit 2 Bit je Gewicht vor, und die
+    # Eingaenge der meisten Projektionen sind mit einer festen
+    # Hadamard-Drehung gedreht (`calibrate/src/gedrehtes_paket.py`).
+    #
+    # **Drei Felder verlangen eine Entscheidung:**
+    #
+    # 1. `output_gate_type` steht in der Quelle auf `"swish"`, hier auf
+    #    `"sigmoid"`. ⚑ Das Feld der Quelle meint die gegatete Norm der
+    #    linearen Aufmerksamkeit; das Tor am Ausgang der vollen
+    #    Aufmerksamkeit rechnet die Referenz fest mit `sigmoid`, und genau
+    #    das beschreibt dieses Feld im Artefakt. Belegt durch die
+    #    Gleitkomma-Perplexitaet (11,37 auf zwei Sequenzen).
+    # 2. `rms_norm_offset` ist 1,0 wie beim 35B, obwohl das Paket den
+    #    Versatz schon eingerechnet hat: Der Lader zieht ihn ab
+    #    (`gedrehtes_paket`), und der Export rechnet ihn wieder ein. Ohne
+    #    den Abzug gemessen: Perplexitaet 1,3 Millionen.
+    # 3. `paket` und `gedreht` beschreiben die Quelle und kommen nicht ins
+    #    Artefakt; dort steht die Drehung als Merkmal `gedreht`.
+    "myelith-27b-ternaer": {
+        "rms_norm_offset": 1.0,
+        "paket": "MODELS/llm/Ternary-Bonsai-2-27B-mlx",
+        "gedreht": True,
+        "family": "qwen3_5-hybrid",
+        "variant": "27b",
+        "num_layers": 64,
+        "hidden_size": 5120,
+        "intermediate_size": 17408,
+        "num_heads": 24,
+        "num_kv_heads": 4,
+        "head_dim": 256,
+        "vocab_size": 248320,
+        "max_context": 262144,
+        "tie_word_embeddings": False,
+        "attention_bias": False,
+        "qk_norm": True,
+        "num_experts": 0,
+        "layer_types": (["linear_attention"] * 3 + ["full_attention"]) * 16,
+        "linear_num_key_heads": 16,
+        "linear_num_value_heads": 48,
+        "linear_key_head_dim": 128,
+        "linear_value_head_dim": 128,
+        "linear_conv_kernel_dim": 4,
+        "output_gate_type": "sigmoid",
+        "mtp_num_hidden_layers": 0,
+        "rope_theta": 10000000.0,
+        "attn_output_gate": True,
+        "full_attention_interval": 4,
+        "rms_norm_eps": 1e-06,
+        "hidden_act": "silu",
+        "partial_rotary_factor": 0.25,
+        "rotary_dim": 64,
+        "mrope_section": [11, 11, 10],
+        "verified": "MODELS/llm/Ternary-Bonsai-2-27B-mlx/config.json@2026-09-28",
+        "hf_model_id": "prism-ml/Ternary-Bonsai-2-27B-mlx-2bit",
+    },
     # Verifiziert gegen den lokalen Snapshot
     # MODELS/llm/Qwen3-30B-A3B/config.json, Revision
     # ad44e777bcd18fa416d9da3bd8f70d33ebb85d39, Lizenz Apache-2.0.
@@ -580,6 +685,10 @@ _ARTIFACT_EXCLUDED_FIELDS = (
     #   Ausgabe behaelt ihre Groessenordnung, nur eben die einer anderen
     #   Funktion. 📌 Genau so ist Fund 423 entstanden.
     "rms_norm_offset",
+    # Herkunft und Ladeweg eines gedrehten Pakets; im Artefakt steht die
+    # Drehung als Merkmal `gedreht`.
+    "paket",
+    "gedreht",
 )
 
 
@@ -611,6 +720,11 @@ _MERKMALE = (
     ("teildrehung", lambda c: c.get("rotary_dim", 0) > 0),
     ("mehrfachvorhersage", lambda c: c.get("mtp_num_hidden_layers", 0) > 0),
     ("ausgangstor", lambda c: bool(c.get("output_gate_type"))),
+    # Die Eingaenge gedrehter Projektionen muessen vor der Rechnung mit
+    # derselben Hadamard-Drehung gedreht werden, mit der die Gewichte
+    # gespeichert sind. Ein Lader ohne diese Faehigkeit rechnete sonst
+    # ungedreht und damit Unsinn, ohne Fehlermeldung.
+    ("gedreht", lambda c: bool(c.get("gedreht"))),
 )
 
 

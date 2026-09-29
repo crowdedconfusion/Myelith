@@ -52,6 +52,17 @@ pub struct Ruestung {
     pub form: myl_local_agent::werkzeug::Ansageform,
     /// Welcher Werkzeugkiste angeboten wurde.
     pub satz: crate::werkzeuge::Werkzeugkiste,
+    /// **Wonach die passenden Skills gesucht werden**, falls nicht nach dem
+    /// ganzen Auftrag (`lauf::mit_skillhinweis`).
+    ///
+    /// 📌 **Der Loop setzt hier das Ziel** (2026-09-29). Sein Rundenauftrag
+    /// traegt einen Rahmen („Langzeitvorhaben", „Runde", „ZIEL", „NOTIZEN",
+    /// „ABNAHME", „Tabelle"), und der traf die allgemeinen Skills staerker
+    /// als das Ziel: Fuer „Skript zum Laufen bringen" empfahl der Hinweis an
+    /// erster Stelle `bericht-schreiben`, an zweiter `aufgabe-zerlegen`. Das
+    /// 30B uebersprang ihn und lernte in zehn Runden keinen Skill; im
+    /// Einzelauftrag lernte es `fehlersuche`.
+    pub skillsuche: Option<String>,
 }
 
 impl Ruestung {
@@ -198,6 +209,18 @@ pub fn ruesten_mit(
     ruesten_zugeschnitten(agent, form, satz, zusaetzlich, nachfrage, Zuschnitt::Arbeitsordner)
 }
 
+/// Die beiden Web-Werkzeuge als Platzhalter.
+fn web_platzhalter(
+    grund: &crate::abgeschaltet::Grund,
+    form: myl_local_agent::werkzeug::Ansageform,
+) -> Vec<(myl_local_agent::werkzeug::Werkzeug, Box<dyn Werkzeugausfuehrung>)> {
+    use crate::netzwerkzeuge::Netzwerkzeug;
+    [Netzwerkzeug::Suchen, Netzwerkzeug::Lesen]
+        .into_iter()
+        .map(|w| crate::abgeschaltet::angebot(w.name(form), w.parameter(form), grund, form))
+        .collect()
+}
+
 /// **Legt das Ergebnis eines eigenen Werkzeugs in die Verratsprobe.**
 ///
 /// ⛔️ Um jedes Werkzeug ausser den beiden Web-Werkzeugen; die kommen erst
@@ -261,6 +284,16 @@ pub fn ruesten_fuer_anhaenge(
             };
             zusaetzlich.push((angebot, ausfuehrung));
         }
+    }
+    // ⚑ **Ohne Netz stehen die Web-Werkzeuge als abgeschaltet da**
+    //   (`crate::abgeschaltet`); der Anlass war genau dieser Fall.
+    if netz.is_none() {
+        let grund = if crate::netzwerkzeuge::curl_vorhanden() {
+            crate::abgeschaltet::Grund::web_aus(form)
+        } else {
+            crate::abgeschaltet::Grund::curl_fehlt(form)
+        };
+        zusaetzlich.extend(web_platzhalter(&grund, form));
     }
     // ⚑ **Eine eigene Einstellung und nicht die des Nutzers.** Was hier
     //   gilt, gilt für diesen einen Lauf: der Anhangordner als Wurzel,
@@ -363,6 +396,17 @@ fn ruesten_zugeschnitten(
             // Ausfuehrung, aus derselben Aufzaehlung.
             for w in satz.werkzeuge() {
                 if w.schreibt() && !ein.darf_schreiben() {
+                    // ⚑ Angesagt als abgeschaltet, mit dem Schalter
+                    //   (`crate::abgeschaltet`), statt still zu fehlen.
+                    let (angebot, ausfuehrung) = crate::abgeschaltet::angebot(
+                        w.name(form),
+                        w.parameter(form),
+                        &crate::abgeschaltet::Grund::schreiben_aus(form),
+                        form,
+                    );
+                    kasten
+                        .einhaengen(angebot, protokolliert(ausfuehrung))
+                        .map_err(|f| format!("Platzhalter {} haengt nicht: {f:?}", w.name(form)))?;
                     continue;
                 }
                 let name = w.name(form).to_string();
@@ -385,6 +429,25 @@ fn ruesten_zugeschnitten(
                     .map_err(|f| format!("Dateiwerkzeug {name} haengt nicht: {f:?}"))?;
             }
 
+            // ⚑ **Was die Kiste nicht hat, steht als abgeschaltet da**, im
+            //   Agenten; im Chat ist `Base` keine Wahl, sondern der Zuschnitt.
+            if zuschnitt == Zuschnitt::Arbeitsordner {
+                for w in crate::werkzeuge::Dateiwerkzeug::ALLE {
+                    if satz.werkzeuge().contains(&w) {
+                        continue;
+                    }
+                    let (angebot, ausfuehrung) = crate::abgeschaltet::angebot(
+                        w.name(form),
+                        w.parameter(form),
+                        &crate::abgeschaltet::Grund::nicht_in_der_kiste(satz.name(), form),
+                        form,
+                    );
+                    kasten
+                        .einhaengen(angebot, protokolliert(ausfuehrung))
+                        .map_err(|f| format!("Platzhalter {} haengt nicht: {f:?}", w.name(form)))?;
+                }
+            }
+
             // ⚑ **Sehen und Hoeren**, wenn auf diesem Rechner etwas da
             // ist, das hinsehen kann (2026-09-17). Sie sind kompiliert
             // und halten die Einhaengegrenze ein, brauchen also **keine**
@@ -398,6 +461,28 @@ fn ruesten_zugeschnitten(
                     kasten
                         .einhaengen(angebot, protokolliert(ausfuehrung))
                         .map_err(|f| format!("Sinneswerkzeug {name} haengt nicht: {f:?}"))?;
+                }
+                // ⚑ Ein Blick, den der Rechner koennte und die Einstellung
+                //   nicht erlaubt, steht als abgeschaltet da.
+                if zuschnitt == Zuschnitt::Arbeitsordner && sinne.sehen.is_ok() {
+                    use crate::sinneswerkzeuge::Sinneswerkzeug;
+                    for (w, erlaubt, da, feld) in [
+                        (Sinneswerkzeug::Bildschirm, agent.blick_bildschirm, sinne.bildschirm.is_ok(), "agent.blick_bildschirm"),
+                        (Sinneswerkzeug::Kamera, agent.blick_kamera, sinne.kamera.is_ok(), "agent.blick_kamera"),
+                    ] {
+                        if erlaubt || !da {
+                            continue;
+                        }
+                        let (angebot, ausfuehrung) = crate::abgeschaltet::angebot(
+                            w.name(form),
+                            w.parameter(form),
+                            &crate::abgeschaltet::Grund::blick_aus(feld, form),
+                            form,
+                        );
+                        kasten
+                            .einhaengen(angebot, protokolliert(ausfuehrung))
+                            .map_err(|f| format!("Platzhalter {} haengt nicht: {f:?}", w.name(form)))?;
+                    }
                 }
             }
 
@@ -428,6 +513,18 @@ fn ruesten_zugeschnitten(
         }
     };
 
+    // ⚑ **Ohne Arbeitsordner stehen die Dateiwerkzeuge als abgeschaltet
+    //   da**, mit dem Weg, einen zu setzen.
+    if einhaengung.is_none() && zuschnitt == Zuschnitt::Arbeitsordner {
+        for w in satz.werkzeuge() {
+            let (angebot, ausfuehrung) =
+                crate::abgeschaltet::angebot(w.name(form), w.parameter(form), &crate::abgeschaltet::Grund::kein_ordner(form), form);
+            kasten
+                .einhaengen(angebot, protokolliert(ausfuehrung))
+                .map_err(|f| format!("Platzhalter {} haengt nicht: {f:?}", w.name(form)))?;
+        }
+    }
+
     // ⚑ **Die Web-Recherche im Agenten** (Festlegung des Projektinhabers,
     //   2026-09-26). Der Chat bekommt sie ueber `ruesten_fuer_anhaenge`.
     //   Hier waechst die Verratsprobe mit: Ein Mitleser legt jedes Ergebnis
@@ -446,6 +543,18 @@ fn ruesten_zugeschnitten(
             kasten
                 .einhaengen(angebot, protokolliert(ausfuehrung))
                 .map_err(|f| format!("Web-Werkzeug {name} haengt nicht: {f:?}"))?;
+        }
+    } else if zuschnitt == Zuschnitt::Arbeitsordner {
+        let grund = if agent.web_recherche {
+            crate::abgeschaltet::Grund::curl_fehlt(form)
+        } else {
+            crate::abgeschaltet::Grund::web_aus(form)
+        };
+        for (angebot, ausfuehrung) in web_platzhalter(&grund, form) {
+            let name = angebot.name.clone();
+            kasten
+                .einhaengen(angebot, protokolliert(ausfuehrung))
+                .map_err(|f| format!("Platzhalter {name} haengt nicht: {f:?}"))?;
         }
     }
 
@@ -515,5 +624,5 @@ fn ruesten_zugeschnitten(
         adressen.insert(angebot.name.clone(), a);
     }
 
-    Ok(Ruestung { kasten, budget, registratur, adressen, einhaengung, form, satz })
+    Ok(Ruestung { kasten, budget, registratur, adressen, einhaengung, form, satz, skillsuche: None })
 }

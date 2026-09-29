@@ -540,7 +540,7 @@ dependencies = [
 
 [[package]]
 name = "integer-llm-kernels"
-version = "0.66.0"
+version = "0.71.0"
 dependencies = [
  "itertools 0.13.0",
  "objc2",
@@ -553,7 +553,7 @@ dependencies = [
 
 [[package]]
 name = "integer-llm-runtime"
-version = "0.66.0"
+version = "0.74.0"
 dependencies = [
  "integer-llm-kernels",
  "memmap2",
@@ -712,7 +712,7 @@ dependencies = [
 
 [[package]]
 name = "myl-client"
-version = "0.63.0"
+version = "0.69.0"
 dependencies = [
  "integer-llm-runtime",
  "libc",
@@ -727,7 +727,7 @@ dependencies = [
 
 [[package]]
 name = "myl-console"
-version = "0.26.3"
+version = "0.26.4"
 dependencies = [
  "crossterm",
  "libc",
@@ -737,7 +737,7 @@ dependencies = [
 
 [[package]]
 name = "myl-local-agent"
-version = "0.14.0"
+version = "0.16.0"
 dependencies = [
  "myl-agent",
  "myl-types",
@@ -748,7 +748,7 @@ dependencies = [
 
 [[package]]
 name = "myl-senses"
-version = "0.9.0"
+version = "0.10.0"
 
 [[package]]
 name = "myl-types"

@@ -407,6 +407,9 @@ pub enum Dateiwerkzeug {
     Suchen,
     /// Ersetzt eine Stelle in einer Datei; nur mit Schreiberlaubnis.
     Aendern,
+    /// **Ersetzt jedes Vorkommen in einer oder mehreren Dateien**
+    /// (2026-09-29), etwa zum Umbenennen; nur mit Schreiberlaubnis.
+    UeberallErsetzen,
     /// **Fuehrt einen Shell-Befehl im Arbeitsverzeichnis aus** (B1 der
     /// Werkzeug-Wunschliste). Nur mit Schreiberlaubnis, und **nicht** in
     /// `Base`: Anders als die Dateiwerkzeuge haelt ein Shell-Befehl die
@@ -480,12 +483,13 @@ pub enum Dateiwerkzeug {
 
 impl Dateiwerkzeug {
     /// Alle, in der Reihenfolge, in der sie angeboten werden.
-    pub const ALLE: [Dateiwerkzeug; 11] = [
+    pub const ALLE: [Dateiwerkzeug; 12] = [
         Dateiwerkzeug::Verzeichnis,
         Dateiwerkzeug::Lesen,
         Dateiwerkzeug::Suchen,
         Dateiwerkzeug::Schreiben,
         Dateiwerkzeug::Aendern,
+        Dateiwerkzeug::UeberallErsetzen,
         Dateiwerkzeug::VerlaufListe,
         Dateiwerkzeug::VerlaufSuche,
         Dateiwerkzeug::Verlauf,
@@ -553,7 +557,7 @@ impl Dateiwerkzeug {
 
     /// Braucht es die Schreiberlaubnis?
     pub const fn schreibt(&self) -> bool {
-        matches!(self, Self::Schreiben | Self::Aendern | Self::Befehl)
+        matches!(self, Self::Schreiben | Self::Aendern | Self::UeberallErsetzen | Self::Befehl)
     }
 
     /// Wie es in dieser Form heisst.
@@ -572,6 +576,7 @@ impl Dateiwerkzeug {
             (Self::Suchen, Ansageform::Amtlich) => "search_files",
             (Self::Schreiben, Ansageform::Amtlich) => "write_file",
             (Self::Aendern, Ansageform::Amtlich) => "edit_file",
+            (Self::UeberallErsetzen, Ansageform::Amtlich) => "replace_everywhere",
             (Self::Befehl, Ansageform::Amtlich) => "run_command",
             (Self::Verlauf, Ansageform::Amtlich) => "read_history",
             (Self::VerlaufListe, Ansageform::Amtlich) => "list_history",
@@ -583,6 +588,7 @@ impl Dateiwerkzeug {
             (Self::Suchen, Ansageform::Deutsch) => "suchen",
             (Self::Schreiben, Ansageform::Deutsch) => "datei_schreiben",
             (Self::Aendern, Ansageform::Deutsch) => "datei_aendern",
+            (Self::UeberallErsetzen, Ansageform::Deutsch) => "ueberall_ersetzen",
             (Self::Befehl, Ansageform::Deutsch) => "befehl_ausfuehren",
             (Self::Verlauf, Ansageform::Deutsch) => "verlauf_lesen",
             (Self::VerlaufListe, Ansageform::Deutsch) => "verlauf_liste",
@@ -622,10 +628,24 @@ impl Dateiwerkzeug {
                 "Read a file inside the working directory, at most {LESEGRENZE} bytes."
             ),
             (Self::Suchen, Ansageform::Amtlich) => "Search the whole working directory for \
-                 a literal text. Case is ignored. Returns file, line number and line."
+                 a literal text, in file contents and in file and folder names. Case is \
+                 ignored. Returns file, line number and line (file:line), and the next \
+                 line after each hit (file-line)."
                 .into(),
             (Self::Schreiben, Ansageform::Amtlich) => "Write a file inside the working \
                  directory. Existing content is replaced."
+                .into(),
+            (Self::UeberallErsetzen, Ansageform::Amtlich) => "Replace every occurrence of a \
+                 literal text in one or more files, for example to rename a function or \
+                 variable everywhere. Unlike edit_file the text may occur many times; \
+                 every occurrence is replaced, also inside longer words. Files in which \
+                 it does not occur stay unchanged."
+                .into(),
+            (Self::UeberallErsetzen, Ansageform::Deutsch) => "Ersetzt jedes Vorkommen eines \
+                 woertlichen Textes in einer oder mehreren Dateien, etwa um eine Funktion \
+                 oder Variable ueberall umzubenennen. Anders als bei datei_aendern darf der \
+                 Text oft vorkommen; jedes Vorkommen wird ersetzt, auch in laengeren \
+                 Woertern. Dateien ohne ihn bleiben unveraendert."
                 .into(),
             (Self::Aendern, Ansageform::Amtlich) => "Replace one or more passages inside a \
                  file. Each old text must occur exactly once; the rest of the file is \
@@ -640,8 +660,9 @@ impl Dateiwerkzeug {
                 "Liest eine Datei im Arbeitsverzeichnis, hoechstens {LESEGRENZE} Bytes."
             ),
             (Self::Suchen, Ansageform::Deutsch) => "Sucht im ganzen Arbeitsverzeichnis nach \
-                 woertlichem Text. Gross und klein ist egal. Gibt Datei, Zeilennummer \
-                 und Zeile."
+                 woertlichem Text, im Inhalt und in Datei- und Ordnernamen. Gross und \
+                 klein ist egal. Gibt Datei, Zeilennummer und Zeile (datei:zeile) und die \
+                 Zeile nach jedem Treffer (datei-zeile)."
                 .into(),
             (Self::Schreiben, Ansageform::Deutsch) => "Schreibt eine Datei im \
                  Arbeitsverzeichnis. Vorhandenes wird ersetzt."
@@ -721,10 +742,10 @@ impl Dateiwerkzeug {
                  Name mit Schraegstrich und Datei, zum Beispiel name/vorlagen/x.md."
                 .into(),
             (Self::Befehl, Ansageform::Amtlich) => format!(
-                "Run a shell command in the working directory (sh -c). Returns its                  output, at most {BEFEHL_AUSGABEGRENZE} bytes, and stops after                  {BEFEHL_ZEITGRENZE_S} seconds. Prefer the file tools for reading,                  writing and searching; use this for building, running and everything                  they do not cover."
+                "Run a shell command in the working directory (sh -c). Returns its output, at most {BEFEHL_AUSGABEGRENZE} bytes, and stops after {BEFEHL_ZEITGRENZE_S} seconds. Prefer the file tools for reading, writing and searching; use this for building, running and everything they do not cover."
             ),
             (Self::Befehl, Ansageform::Deutsch) => format!(
-                "Fuehrt einen Shell-Befehl im Arbeitsverzeichnis aus (sh -c). Gibt                  seine Ausgabe zurueck, hoechstens {BEFEHL_AUSGABEGRENZE} Bytes, und                  bricht nach {BEFEHL_ZEITGRENZE_S} Sekunden ab. Zum Lesen, Schreiben                  und Suchen die Dateiwerkzeuge; dies fuer Bauen, Ausfuehren und alles                  Uebrige."
+                "Fuehrt einen Shell-Befehl im Arbeitsverzeichnis aus (sh -c). Gibt seine Ausgabe zurueck, hoechstens {BEFEHL_AUSGABEGRENZE} Bytes, und bricht nach {BEFEHL_ZEITGRENZE_S} Sekunden ab. Zum Lesen, Schreiben und Suchen die Dateiwerkzeuge; dies fuer Bauen, Ausfuehren und alles Uebrige."
             ),
         }
     }
@@ -937,6 +958,28 @@ impl Dateiwerkzeug {
                 },
                 "required": ["pfad", "inhalt"]
             }),
+            Self::UeberallErsetzen => {
+                let (pfade_hinweis, alt_ueberall) = match form {
+                    Ansageform::Amtlich => (
+                        "paths of the files, relative to the working directory",
+                        "the literal text; every occurrence is replaced",
+                    ),
+                    Ansageform::Deutsch => (
+                        "Pfade der Dateien, relativ zum Arbeitsverzeichnis",
+                        "der woertliche Text; jedes Vorkommen wird ersetzt",
+                    ),
+                };
+                serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "pfade": {"type": "array", "minItems": 1, "description": pfade_hinweis,
+                            "items": {"type": "string"}},
+                        "alt": {"type": "string", "description": alt_ueberall},
+                        "neu": {"type": "string"}
+                    },
+                    "required": ["pfade", "alt", "neu"]
+                })
+            }
             Self::Befehl => serde_json::json!({
                 "type": "object",
                 "properties": {"befehl": {"type": "string", "description": befehl_hinweis}},
@@ -958,6 +1001,7 @@ impl Dateiwerkzeug {
             Self::Suchen => Box::new(Suchen(e, form)),
             Self::Schreiben => Box::new(Dateischreiben(e, form)),
             Self::Aendern => Box::new(Dateiaendern(e, form)),
+            Self::UeberallErsetzen => Box::new(UeberallErsetzen(e, form)),
             Self::Befehl => Box::new(Befehlausfuehren(e, form)),
             // ⚑ **Ein Budget, das die drei sich teilen.** Getrennte
             // Budgets waeren drei Wege, denselben Kontext zu fuellen.
@@ -1510,7 +1554,8 @@ impl Werkzeugausfuehrung for Suchen {
                     continue;
                 }
                 let Ok(text) = std::str::from_utf8(&inhalt) else { continue };
-                for (nr, zeile) in text.lines().enumerate() {
+                let zeilen: Vec<&str> = text.lines().collect();
+                for (nr, zeile) in zeilen.iter().enumerate() {
                     if !zeile.to_lowercase().contains(&unten) {
                         continue;
                     }
@@ -1518,8 +1563,31 @@ impl Werkzeugausfuehrung for Suchen {
                         zu_viele = true;
                         break;
                     }
+                    let kurz = self.0.kurz(&echt);
                     let gekuerzt: String = zeile.trim().chars().take(200).collect();
-                    treffer.push(format!("{}:{}\t{}", self.0.kurz(&echt), nr + 1, gekuerzt));
+                    let mut eintrag = format!("{kurz}:{}\t{gekuerzt}", nr + 1);
+                    // ⚑ **Die Folgezeile, wie `grep -A1`** (2026-09-29).
+                    //   📌 In den mehrstufigen Auftraegen stand in der
+                    //   gueltigen Unterlage der Wert eine Zeile unter der
+                    //   Ueberschrift „Kilometerpauschale"; die Suche zeigte
+                    //   nur die Ueberschrift, sichtbar war nur der alte Wert
+                    //   aus der FAQ, und das 30B nahm ihn. Die naechste
+                    //   nichtleere Zeile (hoechstens zwei weiter) kommt mit,
+                    //   im selben Eintrag, damit sie beim Sortieren beim
+                    //   Treffer bleibt; mit `-` statt `:` wie bei `grep`.
+                    if let Some((k, folge)) = zeilen
+                        .iter()
+                        .enumerate()
+                        .skip(nr + 1)
+                        .take(2)
+                        .find(|(_, z)| !z.trim().is_empty())
+                    {
+                        if !folge.to_lowercase().contains(&unten) {
+                            let f: String = folge.trim().chars().take(200).collect();
+                            eintrag.push_str(&format!("\n{kurz}-{}\t{f}", k + 1));
+                        }
+                    }
+                    treffer.push(eintrag);
                 }
                 if zu_viele {
                     break;
@@ -1599,28 +1667,54 @@ impl Werkzeugausfuehrung for Dateiaendern {
         // Fehler; wer alle nennt, laesst es in einem Zug berichtigen.
         let mut stand = inhalt.clone();
         let mut fehler = Vec::new();
-        for (i, (alt, _neu)) in aenderungen.iter().enumerate() {
+        // Wo die neuen Texte am Ende stehen, als Bytespannen im Endstand.
+        let mut spannen: Vec<(usize, usize)> = Vec::new();
+        for (i, (alt, neu)) in aenderungen.iter().enumerate() {
             let zahl = stand.matches(alt.as_str()).count();
             match zahl {
                 1 => {
-                    let (a, n) = &aenderungen[i];
-                    stand = stand.replacen(a.as_str(), n, 1);
+                    let ab = stand.find(alt.as_str()).expect("genau einmal gezaehlt");
+                    if let Some(zeile) = mitten_in_der_einrueckung(&stand, ab, alt) {
+                        fehler.push(format!(
+                            "Aenderung {}: `alt` beginnt mitten in der Einrueckung von Zeile {zeile}. \
+                             Die Ersetzung liesse dort Leerzeichen stehen, und die Einrueckung \
+                             stimmte nicht mehr. Nimm die Zeile ab ihrem Anfang in `alt` auf, \
+                             mit der ganzen Einrueckung, und ebenso in `neu`",
+                            i + 1
+                        ));
+                        continue;
+                    }
+                    stand.replace_range(ab..ab + alt.len(), neu);
+                    spannen_nachziehen(&mut spannen, ab, alt.len(), neu.len());
                 }
                 0 => fehler.push(format!(
-                    "Aenderung {}: die Stelle kommt nicht vor{}",
+                    "Aenderung {}: die Stelle kommt nicht vor{}{}",
                     i + 1,
-                    if i > 0 { " (auch nicht nach den vorigen Aenderungen)" } else { "" }
+                    if i > 0 { " (auch nicht nach den vorigen Aenderungen)" } else { "" },
+                    einrueckung_abweichend(&stand, alt).unwrap_or_default()
                 )),
                 n => fehler.push(format!(
                     "Aenderung {}: die Stelle kommt {n}-mal vor; `alt` muss eindeutig sein, \
-                     also mehr Umgebung aufnehmen",
-                    i + 1
+                     also mehr Umgebung aufnehmen. Sollen alle Vorkommen ersetzt werden, etwa \
+                     beim Umbenennen, gibt es `{}`",
+                    i + 1,
+                    Dateiwerkzeug::UeberallErsetzen.name(self.1)
                 )),
             }
         }
         if !fehler.is_empty() {
+            // ⚑ **Kam eine Stelle nicht vor, zeigt die Meldung die Datei**
+            //   (2026-09-29). 📌 Mehrstufige Auftraege, 30B: Es las die Datei
+            //   nie, riet ihren Inhalt, und vierzehn Aenderungen scheiterten
+            //   an Stellen, die es nicht gab. Wer den wirklichen Inhalt vor
+            //   sich hat, rät nicht weiter.
+            let gezeigt = if fehler.iter().any(|f| f.contains("kommt nicht vor")) {
+                datei_zeigen(&inhalt)
+            } else {
+                String::new()
+            };
             return Err(Werkzeugfehler {
-                grund: format!("{roh}: nichts geschrieben.\n{}", fehler.join("\n")),
+                grund: format!("{roh}: nichts geschrieben.\n{}{gezeigt}", fehler.join("\n")),
             });
         }
         if stand.len() > SCHREIBGRENZE {
@@ -1633,17 +1727,181 @@ impl Werkzeugausfuehrung for Dateiaendern {
             });
         }
 
+        // ⚑ **Die Syntaxwache** (`crate::syntaxwache`): Macht die Aenderung
+        //   eine gueltige Datei ungueltig, wird nicht geschrieben, und das
+        //   Modell sieht den Fehler samt dem Stand, der entstanden waere.
+        use crate::syntaxwache::{pruefen, Urteil};
+        let nachher = pruefen(&p, &stand);
+        let mut bleibt = String::new();
+        if let Urteil::Fehler(f) = &nachher {
+            if let Urteil::Fehler(_) = pruefen(&p, &inhalt) {
+                bleibt = format!("\n⚠️ Die Datei war schon vorher ungueltig und ist es noch: {f}");
+            } else {
+                return Err(Werkzeugfehler {
+                    grund: format!(
+                        "{roh}: nichts geschrieben. Nach dieser Aenderung waere die Datei ungueltig: {f}. \
+                         So saehe es aus:\n{}",
+                        umgebung_zeigen(&stand, &spannen)
+                    ),
+                });
+            }
+        }
         std::fs::write(&p, &stand)
             .map_err(|e| Werkzeugfehler { grund: format!("{roh}: {e}") })?;
         Ok(format!(
-            "{}: {}",
+            "{}: {}{bleibt}. So steht es jetzt:\n{}",
             self.0.kurz(&p),
             match aenderungen.len() {
                 1 => "eine Stelle ersetzt".to_string(),
                 n => format!("{n} Stellen ersetzt"),
-            }
+            },
+            umgebung_zeigen(&stand, &spannen)
         ))
     }
+}
+
+/// **Beginnt `alt` mit Leerraum mitten in der Einrueckung einer Zeile?**
+/// Dann die Zeilennummer, ab 1.
+///
+/// 📌 **Werkzeugrundgang, 2026-09-28:** `alt` = `"  werte = {}"` (zwei
+/// Leerzeichen) passte als Teilstueck genau einmal in `"    werte = {}"`
+/// (vier), die Aenderung gelang, und zurueck blieb eine Zeile mit falscher
+/// Einrueckung. Das ist der `IndentationError` der Loop-Laeufe vom
+/// 2026-09-26: Ein Modell gibt die Einrueckung aus dem Gedaechtnis wieder,
+/// trifft sie nicht, und das Werkzeug nimmt den Treffer trotzdem.
+fn mitten_in_der_einrueckung(stand: &str, ab: usize, alt: &str) -> Option<usize> {
+    if !alt.starts_with([' ', '\t']) || ab == 0 {
+        return None;
+    }
+    let zeilenanfang = stand[..ab].rfind('\n').map_or(0, |i| i + 1);
+    let davor = &stand[zeilenanfang..ab];
+    (!davor.is_empty() && davor.chars().all(|c| c == ' ' || c == '\t'))
+        .then(|| stand[..ab].matches('\n').count() + 1)
+}
+
+/// Hoechstens so viele Zeilen zeigt eine Meldung von der Datei.
+const MELDUNG_ZEILEN: usize = 60;
+
+/// **Die Datei mit Zeilennummern, fuer eine Fehlermeldung**, gedeckelt.
+fn datei_zeigen(inhalt: &str) -> String {
+    let zeilen: Vec<&str> = inhalt.lines().collect();
+    let mut aus = String::from("\nSo steht die Datei wirklich da (nimm `alt` woertlich von hier):\n");
+    for (n, z) in zeilen.iter().enumerate().take(MELDUNG_ZEILEN) {
+        aus.push_str(&format!("{:>4} | {z}\n", n + 1));
+    }
+    if zeilen.len() > MELDUNG_ZEILEN {
+        aus.push_str(&format!("   [{} weitere Zeilen; `read_file` zeigt alle]\n", zeilen.len() - MELDUNG_ZEILEN));
+    }
+    aus
+}
+
+/// Zieht die Spannen frueherer Aenderungen nach, nachdem bei `ab` ein Text
+/// der Laenge `alt` durch einen der Laenge `neu` ersetzt wurde, und nimmt
+/// die neue Spanne auf.
+///
+/// Eine Spanne hinter der Ersetzung verschiebt sich um den
+/// Laengenunterschied; eine, die sie ueberlappt, geht in der neuen auf.
+fn spannen_nachziehen(spannen: &mut Vec<(usize, usize)>, ab: usize, alt: usize, neu: usize) {
+    let mut neue = (ab, ab + neu);
+    spannen.retain_mut(|s| {
+        if s.0 >= ab + alt {
+            *s = (s.0 - alt + neu, s.1 - alt + neu);
+            true
+        } else if s.1 <= ab {
+            true
+        } else {
+            neue = (neue.0.min(s.0), neue.1);
+            false
+        }
+    });
+    spannen.push(neue);
+}
+
+/// Hoechstens so viele Zeilen zeigt die Antwort einer Aenderung.
+const ZEIGEZEILEN: usize = 40;
+
+/// Die Zeilen um die geaenderten Stellen, mit Zeilennummern.
+///
+/// 📌 **Loop-Szenario, 30B, 2026-09-26:** Das Modell las
+/// `auswertung.py` einmal und aenderte danach fuenfzehnmal blind, nach
+/// seinem Bild der Datei. Eine mehrzeilige Ersetzung hatte die Einrueckung
+/// zerstoert (`'return' outside function`), und die Antwort sagte nur
+/// „eine Stelle ersetzt“. **Wer sieht, was er geschrieben hat, sieht auch
+/// den Schaden**, und zwar im selben Schritt statt nie.
+///
+/// Zwei Zeilen davor und danach, ueberlappende Fenster zusammengelegt.
+fn umgebung_zeigen(text: &str, spannen: &[(usize, usize)]) -> String {
+    let zeilen: Vec<&str> = text.split('\n').collect();
+    let zeile_von = |byte: usize| text[..byte].matches('\n').count();
+    let mut fenster: Vec<(usize, usize)> = spannen
+        .iter()
+        .map(|&(a, b)| {
+            let erste = zeile_von(a);
+            // Das letzte Byte der Spanne, auf eine Zeichengrenze
+            // zurueckgesetzt; eine leere Spanne (geloeschter Text) bleibt
+            // auf ihrer Zeile.
+            let letzte = if b > a {
+                let mut e = b - 1;
+                while !text.is_char_boundary(e) {
+                    e -= 1;
+                }
+                zeile_von(e)
+            } else {
+                erste
+            };
+            (erste.saturating_sub(2), (letzte + 2).min(zeilen.len().saturating_sub(1)))
+        })
+        .collect();
+    fenster.sort_unstable();
+    let mut zusammen: Vec<(usize, usize)> = Vec::new();
+    for f in fenster {
+        match zusammen.last_mut() {
+            Some(z) if f.0 <= z.1 + 1 => z.1 = z.1.max(f.1),
+            _ => zusammen.push(f),
+        }
+    }
+    let mut aus = String::new();
+    let mut gezeigt = 0;
+    for (k, (von, bis)) in zusammen.iter().enumerate() {
+        if k > 0 {
+            aus.push_str("   ...\n");
+        }
+        for (n, zeile) in zeilen.iter().enumerate().take(*bis + 1).skip(*von) {
+            if gezeigt == ZEIGEZEILEN {
+                aus.push_str("   [weitere Zeilen nicht gezeigt; `read_file` zeigt die ganze Datei]\n");
+                return aus;
+            }
+            aus.push_str(&format!("{:>4} | {}\n", n + 1, zeile));
+            gezeigt += 1;
+        }
+    }
+    aus
+}
+
+/// Kommt `alt` vor, wenn man die Einrueckung jeder Zeile nicht beachtet?
+///
+/// Dann steht in der Fehlermeldung, ab welcher Zeile, und **woertlich**,
+/// wie die Stelle in der Datei aussieht. Ein Modell, das die Einrueckung
+/// aus dem Gedaechtnis wiedergibt, trifft sie oft nicht; mit dem Wortlaut
+/// vor Augen trifft es sie im naechsten Versuch.
+fn einrueckung_abweichend(stand: &str, alt: &str) -> Option<String> {
+    let gesucht: Vec<&str> = alt.lines().map(str::trim).collect();
+    if gesucht.iter().all(|z| z.is_empty()) {
+        return None;
+    }
+    let zeilen: Vec<&str> = stand.lines().collect();
+    let k = gesucht.len();
+    let treffer: Vec<usize> = (0..zeilen.len().saturating_sub(k - 1))
+        .filter(|&i| (0..k).all(|j| zeilen[i + j].trim() == gesucht[j]))
+        .collect();
+    let &erste = treffer.first()?;
+    let woertlich: Vec<&str> = zeilen[erste..erste + k].iter().take(20).copied().collect();
+    Some(format!(
+        ". Mit anderer Einrueckung steht sie ab Zeile {}{}, woertlich so:\n{}",
+        erste + 1,
+        if treffer.len() > 1 { format!(" (und {} weitere Male)", treffer.len() - 1) } else { String::new() },
+        woertlich.join("\n")
+    ))
 }
 
 /// Die fuehrende Zahl einer Variantenangabe, in Milliarden.
@@ -1657,6 +1915,111 @@ fn milliarden_aus(variante: &str) -> Option<f64> {
         .take_while(|c| c.is_ascii_digit() || *c == '.')
         .collect();
     (!zahl.is_empty()).then(|| zahl.parse().ok()).flatten()
+}
+
+/// **Ersetzt jedes Vorkommen in einer oder mehreren Dateien.**
+///
+/// 📌 **Mehrstufige Auftraege, 30B, 2026-09-29:** Zum Umbenennen einer
+/// Funktion ueber drei Dateien bekam das Modell von `edit_file` fuer jede
+/// Datei „die Stelle kommt 2-mal vor", arbeitete sich Aufruf fuer Aufruf
+/// durch und vergass am Ende eine Datei. Umbenennen heisst: alle
+/// Vorkommen, und genau dafuer ist `edit_file` mit seinem eindeutigen
+/// Anker gebaut, nicht.
+///
+/// ⚑ **Alles oder nichts, ueber alle Dateien.** Macht die Ersetzung eine
+/// gueltige Datei ungueltig (`crate::syntaxwache`), wird keine geschrieben.
+/// Dateien, in denen der Text nicht vorkommt, bleiben unveraendert und
+/// werden genannt; kommt er in keiner vor, ist das ein Fehler.
+pub struct UeberallErsetzen(pub Einhaengung, pub Ansageform);
+
+/// Eine Datei, die `UeberallErsetzen` schreiben wird.
+struct Geplant {
+    roh: String,
+    pfad: PathBuf,
+    stand: String,
+    spannen: Vec<(usize, usize)>,
+    stellen: usize,
+}
+
+impl Werkzeugausfuehrung for UeberallErsetzen {
+    fn name(&self) -> &str {
+        Dateiwerkzeug::UeberallErsetzen.name(self.1)
+    }
+    fn ausfuehren(&self, a: &serde_json::Value) -> Result<String, Werkzeugfehler> {
+        if !self.0.darf_schreiben() {
+            return Err(Werkzeugfehler { grund: "diese Einhaengung ist nur zum Lesen".into() });
+        }
+        let alt = zeichenkette(a, "alt")?;
+        let neu = zeichenkette(a, "neu")?;
+        if alt.is_empty() {
+            return Err(Werkzeugfehler { grund: "`alt` ist leer".into() });
+        }
+        let Some(pfade) = a.get("pfade").and_then(|v| v.as_array()).filter(|l| !l.is_empty()) else {
+            return Err(Werkzeugfehler { grund: "`pfade` fehlt, ist leer oder keine Liste".into() });
+        };
+        // Erst alles pruefen, dann alles schreiben.
+        let mut geplant: Vec<Geplant> = Vec::new();
+        let mut unveraendert: Vec<String> = Vec::new();
+        for p in pfade {
+            let Some(roh) = p.as_str() else {
+                return Err(Werkzeugfehler { grund: "`pfade` enthaelt etwas, das kein Pfad ist".into() });
+            };
+            let pfad = self.0.aufloesen(roh, true)?;
+            let inhalt = std::fs::read_to_string(&pfad)
+                .map_err(|e| Werkzeugfehler { grund: format!("{roh}: {e}") })?;
+            let stellen: Vec<usize> = inhalt.match_indices(alt.as_str()).map(|(i, _)| i).collect();
+            if stellen.is_empty() {
+                unveraendert.push(roh.to_string());
+                continue;
+            }
+            let stand = inhalt.replace(alt.as_str(), &neu);
+            if stand.len() > SCHREIBGRENZE {
+                return Err(Werkzeugfehler {
+                    grund: format!("{roh} waere {} Bytes gross, ueber der Grenze; nichts geschrieben", stand.len()),
+                });
+            }
+            let spannen: Vec<(usize, usize)> = stellen
+                .iter()
+                .enumerate()
+                .map(|(k, &o)| {
+                    let ab = (o as isize + k as isize * (neu.len() as isize - alt.len() as isize)) as usize;
+                    (ab, ab + neu.len())
+                })
+                .collect();
+            use crate::syntaxwache::{pruefen, Urteil};
+            if let Urteil::Fehler(f) = pruefen(&pfad, &stand) {
+                if !matches!(pruefen(&pfad, &inhalt), Urteil::Fehler(_)) {
+                    return Err(Werkzeugfehler {
+                        grund: format!(
+                            "nichts geschrieben: {roh} waere danach ungueltig: {f}. So saehe es aus:\n{}",
+                            umgebung_zeigen(&stand, &spannen)
+                        ),
+                    });
+                }
+            }
+            geplant.push(Geplant { roh: roh.to_string(), pfad, stand, spannen, stellen: stellen.len() });
+        }
+        if geplant.is_empty() {
+            return Err(Werkzeugfehler {
+                grund: format!("`{alt}` kommt in keiner der genannten Dateien vor; nichts geschrieben"),
+            });
+        }
+        let mut aus = Vec::new();
+        for g in &geplant {
+            std::fs::write(&g.pfad, &g.stand).map_err(|e| Werkzeugfehler { grund: format!("{}: {e}", g.roh) })?;
+            aus.push(format!(
+                "{}: {} {} ersetzt. So steht es jetzt:\n{}",
+                g.roh,
+                g.stellen,
+                if g.stellen == 1 { "Stelle" } else { "Stellen" },
+                umgebung_zeigen(&g.stand, &g.spannen)
+            ));
+        }
+        if !unveraendert.is_empty() {
+            aus.push(format!("unveraendert (kommt nicht vor): {}", unveraendert.join(", ")));
+        }
+        Ok(aus.join("\n"))
+    }
 }
 
 /// Liest die Aenderungsliste aus den Argumenten.
@@ -1691,6 +2054,20 @@ fn aenderungsliste(a: &serde_json::Value) -> Result<Vec<(String, String)>, Werkz
     Ok(aus)
 }
 
+/// **Die Auskunft fuer eine Datei, die es nicht gibt**, mit dem Weg weiter.
+///
+/// 📌 Im Loop-Szenario vom 2026-09-28 las das 27B fuenf Runden lang eine
+/// Datei, die es nicht gab, und bekam jedes Mal nur „No such file or
+/// directory". Der Hinweis nennt die beiden Werkzeuge, mit denen man
+/// herausfindet, was es gibt.
+fn gibt_es_nicht(roh: &str, form: Ansageform) -> String {
+    format!(
+        "{roh}: die Datei gibt es nicht. `{}` zeigt, was im Ordner liegt; `{}` findet Dateien nach Namen und Inhalt",
+        Dateiwerkzeug::Verzeichnis.name(form),
+        Dateiwerkzeug::Suchen.name(form)
+    )
+}
+
 /// Liest eine Datei innerhalb der Einhaengung.
 pub struct Dateilesen(pub Einhaengung, pub Ansageform);
 
@@ -1700,7 +2077,15 @@ impl Werkzeugausfuehrung for Dateilesen {
     }
     fn ausfuehren(&self, a: &serde_json::Value) -> Result<String, Werkzeugfehler> {
         let roh = zeichenkette(a, "pfad")?;
-        let p = self.0.aufloesen(&roh, true)?;
+        let p = match self.0.aufloesen(&roh, true) {
+            Ok(p) => p,
+            // Nur ein Blick auf die Existenz; gelesen wird nichts, und ein
+            // Pfad nach draussen bekommt dieselbe Auskunft wie vorher.
+            Err(_) if !self.0.wurzel().join(&roh).exists() && !roh.contains("..") => {
+                return Err(Werkzeugfehler { grund: gibt_es_nicht(&roh, self.1) });
+            }
+            Err(f) => return Err(f),
+        };
         if p.is_dir() {
             return Err(Werkzeugfehler {
                 grund: format!(
@@ -1709,7 +2094,13 @@ impl Werkzeugausfuehrung for Dateilesen {
                 ),
             });
         }
-        let inhalt = std::fs::read(&p).map_err(|e| Werkzeugfehler { grund: format!("{roh}: {e}") })?;
+        let inhalt = std::fs::read(&p).map_err(|e| Werkzeugfehler {
+            grund: if e.kind() == std::io::ErrorKind::NotFound {
+                gibt_es_nicht(&roh, self.1)
+            } else {
+                format!("{roh}: {e}")
+            },
+        })?;
         let ganz = inhalt.len();
         // ⚑ Nach Bytes gekuerzt, dann auf eine gueltige Zeichengrenze
         // zurueckgesetzt: `from_utf8_lossy` auf einer halben Folge
@@ -1769,8 +2160,13 @@ impl Werkzeugausfuehrung for Dateischreiben {
         }
         std::fs::write(&p, inhalt.as_bytes())
             .map_err(|e| Werkzeugfehler { grund: format!("{roh}: {e}") })?;
+        // ⚑ Eine neue Datei darf unfertig sein; gesagt wird es trotzdem.
+        let warnung = match crate::syntaxwache::pruefen(&p, &inhalt) {
+            crate::syntaxwache::Urteil::Fehler(f) => format!("\n⚠️ Die Datei ist ungueltig: {f}"),
+            _ => String::new(),
+        };
         Ok(format!(
-            "{} {}, {} Bytes",
+            "{} {}, {} Bytes{warnung}",
             if gab_es { "ueberschrieben" } else { "angelegt" },
             self.0.kurz(&p),
             inhalt.len()
@@ -2146,8 +2542,11 @@ mod neue_werkzeuge {
     #[test]
     fn gross_und_klein_ist_egal() {
         let (_d, e) = baum();
-        assert_eq!(suche(&e, "GOLDFISCH").lines().count(), 2);
-        assert_eq!(suche(&e, "goldfisch").lines().count(), 2);
+        // Gezaehlt werden die Trefferzeilen (`datei:nr`), nicht die
+        // Folgezeilen (`datei-nr`), die seit dem 2026-09-29 dabeistehen.
+        let treffer = |t: String| t.lines().filter(|z| z.to_lowercase().contains("goldfisch")).count();
+        assert_eq!(treffer(suche(&e, "GOLDFISCH")), 2);
+        assert_eq!(treffer(suche(&e, "goldfisch")), 2);
     }
 
     /// Kein Treffer ist eine **Antwort** und kein Fehler: Damit kann ein
@@ -2272,6 +2671,164 @@ mod neue_werkzeuge {
             std::fs::read_to_string(d.path().join("oben.txt")).expect("lesen"),
             "ONE\nzwei\nTHREE\n"
         );
+    }
+
+    /// ⚑ **Die Antwort zeigt den neuen Stand**, mit Zeilennummern.
+    #[test]
+    fn die_antwort_zeigt_den_neuen_stand() {
+        let (_d, e) = baum();
+        let aus = aendern(&e, "Goldfisch", "Karpfen").expect("aendern");
+        assert!(aus.contains("So steht es jetzt"), "{aus}");
+        assert!(aus.contains("   2 | Karpfen schwimmt"), "{aus}");
+        assert!(aus.contains("   1 | eins"), "die Zeile davor fehlt: {aus}");
+    }
+
+    /// 📌 **Eine fruehere Spanne wandert mit**, wenn eine spaetere
+    /// Aenderung weiter oben Zeilen einfuegt. Gegenprobe: Ohne das
+    /// Nachziehen stuende `H` in der Antwort bei Zeile 8 statt 9.
+    #[test]
+    fn eine_fruehere_stelle_wandert_mit() {
+        let (d, e) = baum();
+        std::fs::write(d.path().join("oben.txt"), "a\nb\nc\nd\ne\nf\ng\nh\n").expect("Datei");
+        let aus = aendern_viele(&e, &[("h", "H"), ("a", "A1\nA2")]).expect("aendern");
+        assert!(aus.contains("   9 | H"), "{aus}");
+        assert!(aus.contains("   1 | A1") && aus.contains("   2 | A2"), "{aus}");
+        assert!(aus.contains("   ..."), "zwei getrennte Fenster erwartet: {aus}");
+    }
+
+    /// 📌 **`alt` mitten in der Einrueckung wird abgelehnt**, denn die
+    /// Ersetzung liesse die Einrueckung davor stehen. Gegenfaelle: die
+    /// ganze Einrueckung, und Leerraum ganz am Zeilenanfang.
+    #[test]
+    fn alt_mitten_in_der_einrueckung_wird_abgelehnt() {
+        let (d, e) = baum();
+        let quelle = "def f():\n    werte = {}\n    return werte\n";
+        std::fs::write(d.path().join("oben.txt"), quelle).expect("Datei");
+        let f = aendern(&e, "  werte = {}", "x").unwrap_err().grund;
+        assert!(f.contains("mitten in der Einrueckung von Zeile 2"), "{f}");
+        assert_eq!(std::fs::read_to_string(d.path().join("oben.txt")).expect("lesen"), quelle);
+        // Die ganze Einrueckung ist in Ordnung.
+        aendern(&e, "    werte = {}", "    werte = []").expect("ganze Einrueckung");
+        // Leerraum am Zeilenanfang ist keine Mitte.
+        std::fs::write(d.path().join("oben.txt"), "  x\n").expect("Datei");
+        aendern(&e, "  x", "  y").expect("am Zeilenanfang");
+    }
+
+    /// ⚑ **Die Suche zeigt die Zeile nach dem Treffer**: Unter einer
+    /// Ueberschrift steht oft der Wert, nach dem gefragt ist.
+    #[test]
+    fn die_suche_zeigt_die_folgezeile() {
+        let (d, e) = baum();
+        std::fs::write(d.path().join("r.md"), "## 1. Kilometerpauschale\n\nJe Kilometer 0,38 Euro.\n").unwrap();
+        let t = Suchen(e, Ansageform::Amtlich).ausfuehren(&serde_json::json!({"muster": "Kilometerpauschale"})).unwrap();
+        assert!(t.contains("r.md:1\t## 1. Kilometerpauschale\nr.md-3\tJe Kilometer 0,38 Euro."), "{t}");
+    }
+
+    /// ⚑ **`replace_everywhere` benennt ueber Dateien um**, laesst Dateien
+    /// ohne den Text stehen und schreibt nichts, wenn eine Datei danach
+    /// ungueltig waere.
+    #[test]
+    fn ueberall_ersetzen_benennt_ueber_dateien_um() {
+        let (d, e) = baum();
+        std::fs::write(d.path().join("r.py"), "def addiere(a, b):\n    return a + b\n").unwrap();
+        std::fs::write(d.path().join("t.py"), "from r import addiere\nassert addiere(1, 2) == 3\n").unwrap();
+        std::fs::write(d.path().join("x.txt"), "nichts\n").unwrap();
+        let w = UeberallErsetzen(e.clone(), Ansageform::Amtlich);
+        let t = w
+            .ausfuehren(&serde_json::json!({"pfade": ["r.py", "t.py", "x.txt"], "alt": "addiere", "neu": "summiere"}))
+            .expect("umbenennen");
+        assert!(t.contains("t.py: 2 Stellen ersetzt") && t.contains("unveraendert (kommt nicht vor): x.txt"), "{t}");
+        assert_eq!(std::fs::read_to_string(d.path().join("t.py")).unwrap(), "from r import summiere\nassert summiere(1, 2) == 3\n");
+        // Nirgends vorhanden: ein Fehler.
+        assert!(w.ausfuehren(&serde_json::json!({"pfade": ["x.txt"], "alt": "addiere", "neu": "y"})).is_err());
+        // Macht es eine Datei ungueltig, wird keine geschrieben.
+        if crate::syntaxwache::pruefen(Path::new("a.py"), "x = 1\n") != crate::syntaxwache::Urteil::Offen {
+            let f = w
+                .ausfuehren(&serde_json::json!({"pfade": ["r.py", "t.py"], "alt": "summiere(", "neu": "summiere(("}))
+                .unwrap_err()
+                .grund;
+            assert!(f.contains("nichts geschrieben"), "{f}");
+            assert!(std::fs::read_to_string(d.path().join("r.py")).unwrap().contains("def summiere(a, b)"));
+        }
+    }
+
+    /// ⚑ **Die Syntaxwache in `edit_file`**: Eine Aenderung, die gueltiges
+    /// Python ungueltig macht, wird nicht geschrieben; an einer schon
+    /// kaputten Datei darf weiter repariert werden.
+    #[test]
+    fn eine_aenderung_die_python_zerbricht_wird_nicht_geschrieben() {
+        if crate::syntaxwache::pruefen(Path::new("a.py"), "x = 1\n") == crate::syntaxwache::Urteil::Offen {
+            eprintln!("python3 fehlt; die Probe ist offen");
+            return;
+        }
+        let (d, e) = baum();
+        let py = d.path().join("s.py");
+        let quelle = "def f():\n    return 1\n";
+        std::fs::write(&py, quelle).expect("Datei");
+        let aendern_py = |alt: &str, neu: &str| {
+            Dateiaendern(e.clone(), Ansageform::Amtlich)
+                .ausfuehren(&serde_json::json!({"pfad": "s.py", "aenderungen": [{"alt": alt, "neu": neu}]}))
+        };
+        let f = aendern_py("    return 1", "return 1").unwrap_err().grund;
+        assert!(f.contains("nichts geschrieben") && f.contains("Zeile 2"), "{f}");
+        assert_eq!(std::fs::read_to_string(&py).expect("lesen"), quelle);
+        // Eine schon kaputte Datei laesst sich weiter bearbeiten.
+        std::fs::write(&py, "def f(:\n    return 1\n").expect("Datei");
+        let t = aendern_py("return 1", "return 2").expect("an kaputter Datei");
+        assert!(t.contains("schon vorher ungueltig"), "{t}");
+        let t = aendern_py("def f(:", "def f():").expect("die Reparatur");
+        assert!(!t.contains("ungueltig"), "{t}");
+    }
+
+    /// Eine grosse Ersetzung flutet den Kontext nicht: hoechstens
+    /// `ZEIGEZEILEN` Zeilen, dann ein Hinweis auf das Lesewerkzeug.
+    #[test]
+    fn eine_grosse_aenderung_zeigt_nur_den_anfang() {
+        let (_d, e) = baum();
+        let viel: String = (1..=100).map(|i| format!("zeile {i}\n")).collect();
+        let aus = aendern(&e, "Goldfisch schwimmt\n", &viel).expect("aendern");
+        assert!(aus.contains("[weitere Zeilen nicht gezeigt"), "{aus}");
+        let gezeigt = aus.lines().filter(|z| z.contains(" | ")).count();
+        assert_eq!(gezeigt, ZEIGEZEILEN, "{aus}");
+    }
+
+    /// Geloeschter Text und Zeichen aus mehreren Bytes: keine Panik.
+    #[test]
+    fn loeschen_mit_umlauten_zeigt_die_zeile() {
+        let (d, e) = baum();
+        std::fs::write(d.path().join("oben.txt"), "Äpfel\nÖl und Übel\n").expect("Datei");
+        let aus = aendern(&e, "Öl und ", "").expect("aendern");
+        assert!(aus.contains("   2 | Übel"), "{aus}");
+    }
+
+    /// ⚑ **Kommt `alt` nicht vor, zeigt die Meldung die wirkliche Datei.**
+    #[test]
+    fn eine_fehlende_stelle_zeigt_die_datei() {
+        let (_d, e) = baum();
+        let f = aendern(&e, "with open('x.csv', 'r') as datei:", "y").unwrap_err().grund;
+        assert!(f.contains("So steht die Datei wirklich da"), "{f}");
+        assert!(f.contains("   2 | Goldfisch schwimmt"), "{f}");
+        // Eine mehrdeutige Stelle braucht das nicht: Der Text ist ja da.
+        let (d, e) = baum();
+        std::fs::write(d.path().join("oben.txt"), "x\nx\n").unwrap();
+        assert!(!aendern(&e, "x", "y").unwrap_err().grund.contains("wirklich da"));
+    }
+
+    /// ⚑ **Falsche Einrueckung in `alt`:** Die Meldung nennt die Zeile
+    /// und den Wortlaut, und geschrieben wird nichts.
+    #[test]
+    fn falsche_einrueckung_bekommt_den_wortlaut() {
+        let (d, e) = baum();
+        let quelle = "def f():\n    werte = []\n    return werte\n";
+        std::fs::write(d.path().join("oben.txt"), quelle).expect("Datei");
+        let f = aendern(&e, "  werte = []\n  return werte", "x").unwrap_err().grund;
+        assert!(f.contains("ab Zeile 2"), "{f}");
+        assert!(f.contains("    werte = []\n    return werte"), "{f}");
+        assert_eq!(std::fs::read_to_string(d.path().join("oben.txt")).expect("lesen"), quelle);
+        // Gegenprobe: Kommt die Stelle auch ohne Einrueckung nicht vor,
+        // gibt es keinen Hinweis.
+        let f = aendern(&e, "gibt es nicht", "x").unwrap_err().grund;
+        assert!(!f.contains("Einrueckung"), "{f}");
     }
 
     /// **Jede Aenderung sieht das Ergebnis der vorigen.**

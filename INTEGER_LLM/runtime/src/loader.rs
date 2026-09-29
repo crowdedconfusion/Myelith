@@ -109,6 +109,69 @@ pub struct WeightManifestEntry {
     /// SHA-256 der Shifts-Datei (nur Per-Channel-Tensoren).
     #[serde(default)]
     pub shifts_hash: Option<String>,
+    /// Nur fuer ternaer gepackte Tensoren ([`TERNAER_DTYPE`]): die Datei
+    /// mit einem `i16`-Betrag je Gruppe von 128, little-endian. `file`
+    /// traegt dann die Muster.
+    #[serde(default)]
+    pub betraege_file: Option<String>,
+    /// SHA-256 der Betragsdatei.
+    #[serde(default)]
+    pub betraege_hash: Option<String>,
+    /// Nur fuer gedrehte Tensoren: die Datei mit den Vorzeichen der
+    /// Eingangsdrehung (int8, +1 oder -1 je Eingang). Die Skala der
+    /// gedrehten Eingabe steht in `scales.json` unter `<name>.drehung`.
+    #[serde(default)]
+    pub drehung_file: Option<String>,
+    /// SHA-256 der Vorzeichendatei.
+    #[serde(default)]
+    pub drehung_hash: Option<String>,
+}
+
+/// Der `dtype` eines ternaer gepackten Tensors: zwei Bit je Gewicht und
+/// ein `i16`-Betrag je Gruppe von 128 (Format in
+/// `integer_llm_kernels::ternaer`).
+///
+/// ⚑ **Eine Speicherform, keine neue Rechnung.** Jede Zeile ergibt
+/// dieselbe ganze Zahl wie das int8- oder int16-Gewicht, aus dem sie
+/// gepackt ist; θ_v beschreibt die Rechnung, und die bleibt. Was sich
+/// aendert, ist das Artefakt und damit sein `weights_hash`.
+pub const TERNAER_DTYPE: &str = "ternaer_g128";
+
+/// **Welche Tensoren ternaer sein duerfen**: die, deren Rechenwege
+/// [`crate::model::QTensor::matrix`] lesen.
+///
+/// ⛔️ **Eine Liste und keine Endung.** `_gate_proj_weight` traefe auch
+/// die Experten eines Gemischs und dessen geteilten Experten, und deren
+/// Wege lesen int8. Ein ternaerer Tensor auf einem solchen Weg waere eine
+/// Panik beim ersten Token; hier ist er ein Ladefehler mit Namen.
+const TERNAER_ZULAESSIG: &[&str] = &[
+    "self_attn_q_proj_weight",
+    "self_attn_k_proj_weight",
+    "self_attn_v_proj_weight",
+    "self_attn_o_proj_weight",
+    "mlp_gate_proj_weight",
+    "mlp_up_proj_weight",
+    "mlp_down_proj_weight",
+    // Die gedrehten Projektionen der linearen Aufmerksamkeit (Bonsai 2,
+    // 2026-09-28). `in_proj_a` und `in_proj_b` gehoeren nicht dazu: sie sind
+    // hochaufgeloest und ungedreht.
+    "linear_attn_in_proj_qkv_weight",
+    "linear_attn_in_proj_z_weight",
+    "linear_attn_out_proj_weight",
+];
+
+pub fn ternaer_zulaessig(name: &str) -> bool {
+    if name == "lm_head" || name == "lm_head_weight" {
+        return true;
+    }
+    let Some(rest) = name.strip_prefix("model_layers_") else {
+        return false;
+    };
+    let ziffern = rest.chars().take_while(char::is_ascii_digit).count();
+    ziffern > 0
+        && rest[ziffern..]
+            .strip_prefix('_')
+            .is_some_and(|teil| TERNAER_ZULAESSIG.contains(&teil))
 }
 
 /// Ein geladener INT8-Tensor mit seinen Manifest-Metadaten.
@@ -128,6 +191,8 @@ pub struct LmHead {
     pub data: Kopfdaten,   // flat, row-major [vocab, hidden]
     pub shape: Vec<usize>,
     pub shifts: Vec<u8>,   // ein Zweierpotenz-Shift je Zeile
+    /// Die Drehung der Eingabe, wie bei [`crate::model::QTensor::drehung`].
+    pub drehung: Option<std::sync::Arc<crate::model::Drehung>>,
 }
 
 /// Die Werte des int16-Kopfs: ein Abbild der Artefaktdatei, oder eine
@@ -152,6 +217,9 @@ pub enum Kopfdaten {
     /// Abbild der Artefaktdatei, little-endian und auf zwei Bytes
     /// ausgerichtet (geprüft in [`Kopfdaten::aus_abbild`]).
     Abbild(memmap2::Mmap),
+    /// Ternaer gepackt ([`TERNAER_DTYPE`]); gelesen wird er nur ueber
+    /// [`crate::model::Ternaerdaten::matrix`], ein `&[i16]` gibt es nicht.
+    Ternaer(Box<crate::model::Ternaerdaten>),
 }
 
 impl Kopfdaten {
@@ -196,6 +264,25 @@ impl std::ops::Deref for Kopfdaten {
             Kopfdaten::Abbild(abbild) => unsafe {
                 std::slice::from_raw_parts(abbild.as_ptr() as *const i16, abbild.len() / 2)
             },
+            Kopfdaten::Ternaer(t) => panic!(
+                "ein ternaerer Kopf ({} x {}) wurde als int16 gelesen; dieser Weg muesste \
+                 `Ternaerdaten::matrix` nehmen",
+                t.zeilen, t.spalten
+            ),
+        }
+    }
+}
+
+impl Kopfdaten {
+    /// Wie [`crate::model::Gewichtsdaten::vorbereiten`].
+    pub fn vorbereiten(&self) {
+        match self {
+            Kopfdaten::Abbild(a) => crate::model::abbild_vorbereiten(a),
+            Kopfdaten::Ternaer(t) => {
+                t.muster.vorbereiten();
+                t.betraege.vorbereiten();
+            }
+            Kopfdaten::Speicher(_) => {}
         }
     }
 }
@@ -208,6 +295,9 @@ impl std::ops::DerefMut for Kopfdaten {
         match self {
             Kopfdaten::Speicher(v) => v,
             Kopfdaten::Abbild(_) => unreachable!("eben in eine Kopie verwandelt"),
+            // ⚑ Schreiben heisst Training, und ternaere Gewichte lassen sich
+            //   nicht in kleinen Schritten nachfuehren.
+            Kopfdaten::Ternaer(_) => panic!("in einen ternaeren Kopf wird nicht geschrieben"),
         }
     }
 }
@@ -217,6 +307,7 @@ impl std::fmt::Debug for Kopfdaten {
         match self {
             Kopfdaten::Speicher(v) => write!(f, "Kopfdaten::Speicher({} Werte)", v.len()),
             Kopfdaten::Abbild(a) => write!(f, "Kopfdaten::Abbild({} Werte)", a.len() / 2),
+            Kopfdaten::Ternaer(t) => write!(f, "Kopfdaten::Ternaer({} x {})", t.zeilen, t.spalten),
         }
     }
 }
@@ -616,6 +707,11 @@ pub struct ModelDims {
 pub const GEKONNTE_MERKMALE: &[&str] = &[
     // Die dichte Bauart, seit es dieses Projekt gibt.
     "dicht",
+    // ⚑ **Seit dem 2026-09-28**: Eingaenge gedrehter Projektionen werden
+    // vor der Matrix mit der Hadamard-Drehung ihrer Gewichte gedreht
+    // (`QTensor::drehung`). Geprueft gegen die ausmultiplizierte Matrix
+    // (`integer_llm_kernels::drehung`).
+    "gedreht",
     // Gebundene Einbettung: kein eigenes `lm_head.weight`.
     "gebundene_einbettung",
     // Q und K je Kopf RMS-normiert, vor RoPE.
@@ -936,6 +1032,9 @@ fn eintrag_laden(
     entry: WeightManifestEntry,
     pruefen: bool,
 ) -> Result<Geladen, String> {
+    if entry.dtype == TERNAER_DTYPE {
+        return ternaer_laden(artifact_dir, name, entry, pruefen);
+    }
     // INT16-Tensoren: der LM-Head (spec-Ausnahme 0.6.0) und seit
     // theta_v 0.13.0 die Attention-Biases (Fund 23, siehe BiasTensor).
     if entry.dtype == "int16" {
@@ -1069,6 +1168,7 @@ fn eintrag_laden(
                 data: Kopfdaten::aus_abbild(a),
                 shape: entry.shape,
                 shifts: shift_bytes,
+                drehung: None,
             }),
         });
     }
@@ -1184,9 +1284,163 @@ fn eintrag_laden(
         data: std::sync::Arc::new(crate::model::Gewichtsdaten::Abbild(abbild)),
         shape: entry.shape,
         shifts,
+        drehung: None,
     };
     Ok(Geladen::Gewicht(name, LoadedWeight {
         tensor,
+        original_name: entry.original_name,
+        scale: entry.scale,
+    }))
+}
+
+/// Oeffnet eine Artefaktdatei als Abbild und prueft ihre Pruefsumme,
+/// wie es der int8-Weg in [`eintrag_laden`] tut (Begruendung dort).
+fn abbild_geprueft(artifact_dir: &Path, name: &str, datei: &str, hash: &str, pruefen: bool) -> Result<memmap2::Mmap, String> {
+    let f = std::fs::File::open(artifact_dir.join(datei))
+        .map_err(|e| format!("{name}: Fehler beim Oeffnen von {datei}: {e}"))?;
+    // SICHERHEIT: wie bei den int8-Gewichten, lesend geoeffnet und
+    // unmittelbar danach ueber SHA-256 geprueft.
+    let abbild = unsafe { memmap2::Mmap::map(&f) }
+        .map_err(|e| format!("{name}: Fehler beim Abbilden von {datei}: {e}"))?;
+    crate::model::abbild_vorbereiten(&abbild);
+    if pruefen {
+        let digest = sha256_hex(&abbild);
+        if digest != hash {
+            return Err(format!("{name}: SHA-256 {digest} von {datei} stimmt nicht mit Manifest-Hash {hash} ueberein"));
+        }
+    }
+    Ok(abbild)
+}
+
+/// Die Vorzeichen einer Eingangsdrehung, falls der Eintrag eine traegt.
+///
+/// ⚑ **Eine Datei je Breite, von allen Tensoren dieser Breite geteilt**:
+/// Gleiche Datei heisst gleicher `Arc`, und daran erkennt das Modell, dass
+/// q, k und v dieselbe gedrehte Eingabe nehmen koennen. Der Zwischenspeicher
+/// haengt an der Pruefsumme, nicht am Namen.
+fn vorzeichen_laden(
+    artifact_dir: &Path,
+    name: &str,
+    entry: &WeightManifestEntry,
+    spalten: usize,
+) -> Result<Option<std::sync::Arc<Vec<i8>>>, String> {
+    use std::sync::{Arc, Mutex, OnceLock};
+    static GELESEN: OnceLock<Mutex<std::collections::HashMap<String, Arc<Vec<i8>>>>> = OnceLock::new();
+    let Some(datei) = entry.drehung_file.as_deref() else {
+        return Ok(None);
+    };
+    let hash = entry
+        .drehung_hash
+        .as_deref()
+        .ok_or_else(|| format!("{name}: drehung_file ohne drehung_hash"))?;
+    let schluessel = format!("{}:{hash}", artifact_dir.display());
+    let tabelle = GELESEN.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
+    if let Some(v) = tabelle.lock().unwrap_or_else(|e| e.into_inner()).get(&schluessel) {
+        if v.len() != spalten {
+            return Err(format!("{name}: {} Vorzeichen fuer {spalten} Eingaenge", v.len()));
+        }
+        return Ok(Some(v.clone()));
+    }
+    let bytes = std::fs::read(artifact_dir.join(datei)).map_err(|e| format!("{name}: {datei}: {e}"))?;
+    if sha256_hex(&bytes) != hash {
+        return Err(format!("{name}: SHA-256 von {datei} stimmt nicht mit dem Manifest ueberein"));
+    }
+    let v: Vec<i8> = bytes.iter().map(|&b| b as i8).collect();
+    if v.len() != spalten || v.iter().any(|&s| s != 1 && s != -1) {
+        return Err(format!("{name}: {datei} traegt nicht {spalten} Vorzeichen +1/-1"));
+    }
+    if spalten % integer_llm_kernels::drehung::BLOCK != 0 {
+        return Err(format!("{name}: {spalten} Eingaenge sind kein Vielfaches der Drehblockgroesse"));
+    }
+    // ⛔️ **Der erste Eintrag gewinnt, atomar** (Fund 501, 2026-09-29). Hier
+    //    stand `insert`, nach dem Nachsehen und dem Lesen: Laden zwei Faeden
+    //    gleichzeitig dieselben Vorzeichen (gate und up einer Ebene, der
+    //    Lader arbeitet parallel), verpassen beide den Eintrag, und jeder
+    //    bekam sein eigenes `Arc`. `Drehung::gleich` verglich Zeiger, und
+    //    das 27B brach in einem von sieben Agentenlaeufen mit „gate und up
+    //    muessen dieselbe Eingangsdrehung tragen" ab.
+    let v = tabelle
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .entry(schluessel)
+        .or_insert_with(|| Arc::new(v))
+        .clone();
+    Ok(Some(v))
+}
+
+/// Laedt einen ternaer gepackten Tensor ([`TERNAER_DTYPE`]).
+///
+/// ⚑ **Die Shifts sind Pflicht**, einer je Zeile wie beim int8-Gewicht,
+/// aus dem der Tensor gepackt ist; ohne sie waere es nicht mehr dieselbe
+/// Zahl.
+fn ternaer_laden(artifact_dir: &Path, name: String, entry: WeightManifestEntry, pruefen: bool) -> Result<Geladen, String> {
+    if !ternaer_zulaessig(&name) {
+        return Err(format!(
+            "{name}: ternaer ist nur fuer den Kopf und fuer die Projektionen dichter Ebenen \
+             zulaessig ({}); der Rechenweg dieses Tensors liest int8",
+            TERNAER_ZULAESSIG.join(", ")
+        ));
+    }
+    if entry.shape.len() != 2 {
+        return Err(format!("{name}: ternaer erwartet eine Matrix, shape {:?}", entry.shape));
+    }
+    let (zeilen, spalten) = (entry.shape[0], entry.shape[1]);
+    let betraege_file = entry
+        .betraege_file
+        .as_deref()
+        .ok_or_else(|| format!("{name}: ternaerer Eintrag ohne betraege_file"))?;
+    let betraege_hash = entry
+        .betraege_hash
+        .as_deref()
+        .ok_or_else(|| format!("{name}: ternaerer Eintrag ohne betraege_hash"))?;
+    let shifts_file = entry
+        .shifts_file
+        .as_deref()
+        .ok_or_else(|| format!("{name}: ternaerer Eintrag ohne shifts_file"))?;
+
+    let muster = abbild_geprueft(artifact_dir, &name, &entry.file, &entry.hash, pruefen)?;
+    let betraege = abbild_geprueft(artifact_dir, &name, betraege_file, betraege_hash, pruefen)?;
+    if betraege.len() % 2 != 0 {
+        return Err(format!("{name}: {betraege_file} hat eine ungerade Byteanzahl ({})", betraege.len()));
+    }
+    let shifts = std::fs::read(artifact_dir.join(shifts_file))
+        .map_err(|e| format!("{name}: Fehler beim Lesen von {shifts_file}: {e}"))?;
+    if shifts.len() != zeilen {
+        return Err(format!("{name}: {} Shifts in '{shifts_file}', aber {zeilen} Zeilen erwartet", shifts.len()));
+    }
+    if let Some(soll) = &entry.shifts_hash {
+        let ist = sha256_hex(&shifts);
+        if ist != *soll {
+            return Err(format!("{name}: SHA-256 der Shifts-Datei {ist} stimmt nicht mit Manifest-Hash {soll} ueberein"));
+        }
+    }
+    let daten = crate::model::Ternaerdaten::neu(
+        crate::model::Gewichtsdaten::Abbild(muster),
+        Kopfdaten::aus_abbild(betraege),
+        zeilen,
+        spalten,
+    )
+    .map_err(|e| format!("{name}: {e}"))?;
+    // Die Skala der gedrehten Eingabe steht in `scales.json` und wird beim
+    // Modellbau eingetragen (`drehungen_skalieren`); bis dahin 0.
+    let drehung = vorzeichen_laden(artifact_dir, &name, &entry, spalten)?
+        .map(|v| std::sync::Arc::new(crate::model::Drehung { vorzeichen: v, frac: 0 }));
+
+    if name == "lm_head" {
+        return Ok(Geladen::Kopf(LmHead {
+            data: Kopfdaten::Ternaer(Box::new(daten)),
+            shape: entry.shape,
+            shifts,
+            drehung,
+        }));
+    }
+    Ok(Geladen::Gewicht(name, LoadedWeight {
+        tensor: QTensor {
+            data: std::sync::Arc::new(crate::model::Gewichtsdaten::Ternaer(Box::new(daten))),
+            shape: entry.shape,
+            shifts,
+            drehung,
+        },
         original_name: entry.original_name,
         scale: entry.scale,
     }))
@@ -1573,6 +1827,29 @@ pub fn load_model(artifact_dir: &Path) -> Result<IntegerModel, String> {
 /// Sucht einen Pflicht-Tensor ueber seinen HF-Originalnamen; fehlt er, wird
 /// das Artefakt als unvollstaendig abgelehnt statt eine Luecke stillschweigend
 /// mit Platzhalterdaten zu fuellen.
+/// **Traegt die Skala jeder gedrehten Eingabe ein**, aus `scales.json`
+/// unter `<name ohne .weight>.drehung` (beim Kopf `lm_head.drehung`).
+///
+/// ⚑ **Vor dem Bau der Ebenen**, denn die ziehen Kopien der Tensoren; und
+/// **ohne Skala kein Laden**: Eine gedrehte Eingabe auf der falschen Skala
+/// saettigte still oder verloere ihre Aufloesung.
+fn drehungen_skalieren(weights: &mut LoadedWeights, scales: &LoadedScales) -> Result<(), String> {
+    for lw in weights.weights.values_mut() {
+        if let Some(d) = &lw.tensor.drehung {
+            let stamm = lw.original_name.strip_suffix(".weight").unwrap_or(&lw.original_name);
+            let frac = require_scale(scales, &format!("{stamm}.drehung"))?;
+            lw.tensor.drehung = Some(std::sync::Arc::new(crate::model::Drehung { vorzeichen: d.vorzeichen.clone(), frac }));
+        }
+    }
+    if let Some(kopf) = &mut weights.lm_head {
+        if let Some(d) = &kopf.drehung {
+            let frac = require_scale(scales, "lm_head.drehung")?;
+            kopf.drehung = Some(std::sync::Arc::new(crate::model::Drehung { vorzeichen: d.vorzeichen.clone(), frac }));
+        }
+    }
+    Ok(())
+}
+
 fn require_tensor<'a>(weights: &'a LoadedWeights, name: &str) -> Result<&'a QTensor, String> {
     weights
         .get(name)
@@ -1725,6 +2002,7 @@ pub fn build_model(
     luts: LoadedLuts,
 ) -> Result<IntegerModel, String> {
     let config = spec_model_params()?;
+    drehungen_skalieren(&mut weights, &scales)?;
 
     // INT16-LM-Head (spec-Ausnahme 0.6.0), falls das Artefakt einen trägt.
     let lm_head_int16 = weights.lm_head.take();
@@ -2104,6 +2382,142 @@ mod tests {
         assert_eq!(tensor.shape, vec![2, 3]);
         // Ohne shifts_file wird der uniforme Manifest-Shift je Zeile repliziert.
         assert_eq!(tensor.shifts, vec![2, 2]);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Schreibt eine ternaere int8-Matrix gepackt ins Verzeichnis und gibt
+    /// den Manifesteintrag und die ungepackten Werte zurueck.
+    fn ternaerer_eintrag(dir: &Path, stamm: &str, zeilen: usize, spalten: usize) -> (serde_json::Value, Vec<i8>) {
+        let mut x = 0x9E37_79B9_u64;
+        let mut betrag = 1i8;
+        let werte: Vec<i8> = (0..zeilen * spalten)
+            .map(|i| {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                if i % 128 == 0 {
+                    betrag = [5i8, 40, 127][(x % 3) as usize];
+                }
+                betrag * ((x % 3) as i8 - 1)
+            })
+            .collect();
+        let p = integer_llm_kernels::ternaer::packen(&werte, spalten).expect("ternaer");
+        let betraege: Vec<u8> = p.betraege.iter().flat_map(|b| b.to_le_bytes()).collect();
+        let shifts: Vec<u8> = (0..zeilen).map(|z| 6 + z as u8).collect();
+        fs::write(dir.join(format!("{stamm}.muster.bin")), &p.muster).unwrap();
+        fs::write(dir.join(format!("{stamm}.betraege.bin")), &betraege).unwrap();
+        fs::write(dir.join(format!("{stamm}_shifts.bin")), &shifts).unwrap();
+        let e = serde_json::json!({
+            "original_name": format!("{stamm}.weight"),
+            "file": format!("{stamm}.muster.bin"),
+            "hash": sha256_hex(&p.muster),
+            "betraege_file": format!("{stamm}.betraege.bin"),
+            "betraege_hash": sha256_hex(&betraege),
+            "shifts_file": format!("{stamm}_shifts.bin"),
+            "shifts_hash": sha256_hex(&shifts),
+            "shape": [zeilen, spalten],
+            "scale": -1.0,
+            "shift": -1,
+            "dtype": TERNAER_DTYPE,
+        });
+        (e, werte)
+    }
+
+    /// **Welche Namen ternaer sein duerfen**, und vor allem welche nicht:
+    /// die Experten und der geteilte Experte eines Gemischs enden auf
+    /// dieselben Silben wie der dichte MLP.
+    #[test]
+    fn ternaer_ist_nur_an_der_liste_zulaessig() {
+        for ja in [
+            "lm_head",
+            "lm_head_weight",
+            "model_layers_0_self_attn_q_proj_weight",
+            "model_layers_35_self_attn_o_proj_weight",
+            "model_layers_12_mlp_down_proj_weight",
+            // Seit B2 (Bonsai 2): die gedrehten Projektionen der linearen
+            // Aufmerksamkeit.
+            "model_layers_3_linear_attn_in_proj_qkv_weight",
+            "model_layers_3_linear_attn_in_proj_z_weight",
+            "model_layers_3_linear_attn_out_proj_weight",
+        ] {
+            assert!(ternaer_zulaessig(ja), "{ja}");
+        }
+        for nein in [
+            "model_embed_tokens_weight",
+            "model_layers_3_mlp_experts_5_gate_proj_weight",
+            "model_layers_3_mlp_shared_expert_gate_proj_weight",
+            // Ungedreht und hochaufgeloest, bleiben int8.
+            "model_layers_3_linear_attn_in_proj_a_weight",
+            "model_layers_3_linear_attn_in_proj_b_weight",
+            "model_layers__mlp_up_proj_weight",
+            "model_layers_x_mlp_up_proj_weight",
+            "model_layers_1_mlp_up_proj_weight_x",
+            "model_norm_weight",
+        ] {
+            assert!(!ternaer_zulaessig(nein), "{nein}");
+        }
+    }
+
+    /// **Ein ternaerer Tensor laedt und rechnet jede Zeile wie int8**, und
+    /// wer ihn als int8 lesen will, bekommt eine Panik statt Bytes.
+    #[test]
+    fn ein_ternaerer_tensor_laedt_und_rechnet_wie_int8() {
+        let dir = test_dir("ternaer-roundtrip");
+        let (e, werte) = ternaerer_eintrag(&dir, "model_layers_0_mlp_up_proj", 3, 256);
+        write_manifest(&dir, "model_layers_0_mlp_up_proj_weight", e);
+
+        let loaded = load_weights(&dir).expect("Laden erfolgreich");
+        let t = &loaded.weights["model_layers_0_mlp_up_proj_weight"].tensor;
+        assert!(t.ist_ternaer());
+        assert_eq!(t.shape, vec![3, 256]);
+        assert_eq!(t.shifts, vec![6, 7, 8]);
+        let x: Vec<i16> = (0..256).map(|i| (i * 977 % 65536) as u16 as i16).collect();
+        for z in 0..3 {
+            let soll = integer_llm_kernels::dot::dot_i8_i16(&werte[z * 256..(z + 1) * 256], &x);
+            let m = t.matrix();
+            assert_eq!(m.zeile_mal(z, 256, &m.eingabe(&x)), soll, "Zeile {z}");
+        }
+        let daten = t.data.clone();
+        assert!(std::panic::catch_unwind(move || daten[0]).is_err(), "als int8 gelesen, ohne Panik");
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    /// **Der Kopf darf ternaer sein** und landet als Kopf, nicht als Gewicht.
+    #[test]
+    fn ein_ternaerer_kopf_laedt_als_kopf() {
+        let dir = test_dir("ternaer-kopf");
+        let (e, _) = ternaerer_eintrag(&dir, "lm_head", 2, 128);
+        write_manifest(&dir, "lm_head", e);
+        let loaded = load_weights(&dir).expect("Laden erfolgreich");
+        let kopf = loaded.lm_head.as_ref().expect("Kopf geladen");
+        assert!(matches!(kopf.data, Kopfdaten::Ternaer(_)));
+        assert_eq!(kopf.shifts, vec![6, 7]);
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    /// **An falscher Stelle, ohne Betraege oder mit falscher Pruefsumme:**
+    /// jedes Mal ein Ladefehler, der den Grund nennt.
+    #[test]
+    fn ein_ternaerer_tensor_faellt_laut_aus() {
+        let dir = test_dir("ternaer-fehler");
+        let (e, _) = ternaerer_eintrag(&dir, "model_layers_0_mlp_experts_1_up_proj", 2, 128);
+        write_manifest(&dir, "model_layers_0_mlp_experts_1_up_proj_weight", e.clone());
+        let Err(fehler) = load_weights(&dir) else { panic!("an falscher Stelle geladen") };
+        assert!(fehler.contains("ternaer ist nur"), "{fehler}");
+
+        let mut ohne = e.clone();
+        ohne.as_object_mut().unwrap().remove("betraege_file");
+        write_manifest(&dir, "model_layers_0_mlp_up_proj_weight", ohne);
+        let Err(fehler) = load_weights(&dir) else { panic!("ohne Betraege geladen") };
+        assert!(fehler.contains("betraege_file"), "{fehler}");
+
+        let mut falsch = e;
+        falsch["betraege_hash"] = serde_json::json!("0".repeat(64));
+        write_manifest(&dir, "model_layers_0_mlp_up_proj_weight", falsch);
+        let Err(fehler) = load_weights(&dir) else { panic!("mit falscher Pruefsumme geladen") };
+        assert!(fehler.contains("SHA-256"), "{fehler}");
 
         fs::remove_dir_all(&dir).ok();
     }
@@ -2544,6 +2958,7 @@ mod tests {
             data: std::sync::Arc::new(vec![0i8; zeilen * spalten].into()),
             shape: vec![zeilen, spalten],
             shifts: vec![0u8; zeilen],
+            drehung: None,
         };
         // Richtig: q [16,10], k/v [8,10], o [10,16].
         assert!(pruefe_projektionsformen(
@@ -3482,6 +3897,91 @@ mod tests {
             }
             fs::remove_dir_all(&dir).ok();
         }
+    }
+
+    /// ⛔️ **Fund 501: Gleichzeitig geladene Vorzeichen sind dasselbe
+    /// Objekt.** Sechzehn Faeden laden dieselbe Datei; alle bekommen dasselbe
+    /// `Arc`. Gegenprobe: Mit `insert` statt `entry` bekamen Faeden, die
+    /// gleichzeitig am leeren Eintrag vorbeikamen, eigene Kopien.
+    #[test]
+    fn gleichzeitig_geladene_vorzeichen_sind_dasselbe_objekt() {
+        let dir = test_dir("vorzeichen-wettlauf");
+        let bytes: Vec<u8> = (0..2048).map(|i| if i % 5 == 0 { 0xFF } else { 1 }).collect();
+        fs::write(dir.join("v.bin"), &bytes).unwrap();
+        let eintrag: WeightManifestEntry = serde_json::from_value(serde_json::json!({
+            "original_name": "x", "file": "x.bin", "shape": [1, 2048], "scale": 1.0, "shift": 0,
+            "dtype": "ternaer_g128", "hash": "0",
+            "drehung_file": "v.bin", "drehung_hash": sha256_hex(&bytes),
+        }))
+        .expect("Eintrag");
+        let geladen: Vec<std::sync::Arc<Vec<i8>>> = std::thread::scope(|s| {
+            let griffe: Vec<_> = (0..16)
+                .map(|_| s.spawn(|| vorzeichen_laden(&dir, "x", &eintrag, 2048).unwrap().unwrap()))
+                .collect();
+            griffe.into_iter().map(|g| g.join().unwrap()).collect()
+        });
+        for g in &geladen[1..] {
+            assert!(std::sync::Arc::ptr_eq(&geladen[0], g), "zwei Faeden bekamen verschiedene Kopien");
+        }
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    /// ⚑ **Der Merkpunkt bei rekurrenten Ebenen** (2026-09-28): Ein
+    /// Verlauf, der hinter der letzten Marke anders weitergeht, verwendet
+    /// alles davor wieder, und die Token sind dieselben wie frisch
+    /// gerechnet.
+    ///
+    /// Die Folgen bilden den Agentenbetrieb nach: alter Verlauf, Marke
+    /// (hier Token 2) und Kopf der Antwort; im naechsten Prompt steht
+    /// hinter der Marke eine anders gerenderte Antwort.
+    ///
+    /// 📌 **Gegenprobe:** Ohne Marke kuerzt derselbe Speicher auf null,
+    /// wie vor dem Merkpunkt, und rechnet trotzdem dieselben Token.
+    #[test]
+    fn fortgesetzt_mit_zustand_verwendet_bis_zur_marke_wieder() {
+        use crate::generate::{dekodieren_fortgesetzt, Erzeugung, Fortsetzung};
+        let dir = test_dir("fort-zustand");
+        write_full_fixture_mit_tor(&dir, true, false, Some((6usize, 2usize, 3usize)), true);
+        zustandsebene_einsetzen(&dir);
+        gewichte_verrauschen(&dir, 0x5eed_0499);
+        skalen_je_kanal_streuen(&dir);
+        let model = load_model(&dir).expect("Artefakt muss laden");
+        assert!(model.layers[0].ist_rekurrent(), "die Vorlage muss rekurrent laden");
+        let lauf = Erzeugung { max_new_tokens: 5, seed: 7, greedy: true, halt: &[], denkgrenze: None, abbruch: None };
+
+        // Verlauf aus 0 und 1, dann Marke und Antwortkopf.
+        let verlauf: Vec<usize> = (0..30).map(|i| (i * 5 + i / 3) % 2).collect();
+        let mut a = verlauf.clone();
+        a.extend([2, 0]);
+        let mut b = verlauf.clone();
+        b.extend([2, 1, 0, 1, 1, 0, 0, 1, 2, 0]);
+        let mut c = verlauf[..10].to_vec();
+        c.extend([1, 1, 2, 0]);
+
+        for (marke, erwartet) in [(Some(2usize), [0usize, 30, 0]), (None, [0, 0, 0])] {
+            let mut speicher = Fortsetzung::neu(&model);
+            speicher.merkmarke_setzen(marke);
+            for (fall, prompt, wieder) in [("erster", &a, erwartet[0]), ("nach der Marke anders", &b, erwartet[1]), ("frueh abweichend", &c, erwartet[2])] {
+                let (fort, w) = dekodieren_fortgesetzt(&model, prompt, &lauf, &mut speicher, &mut |_| {});
+                let mut frisch = Fortsetzung::neu(&model);
+                let (neu, _) = dekodieren_fortgesetzt(&model, prompt, &lauf, &mut frisch, &mut |_| {});
+                assert_eq!(fort, neu, "{marke:?}/{fall}: Token");
+                assert_eq!(w.wiederverwendet, wieder, "{marke:?}/{fall}: wiederverwendet");
+                let laenge = speicher.token.len();
+                let t = prompt[0];
+                assert_eq!(
+                    model.forward_token(t, laenge, &mut speicher.cache),
+                    model.forward_token(t, laenge, &mut frisch.cache),
+                    "{marke:?}/{fall}: Logits des naechsten Schritts, also derselbe Zustand"
+                );
+                // Den gerade gerechneten Schritt wieder wegnehmen: Der
+                // Zustand steht jetzt eine Position weiter, und das geht
+                // nur ueber den Merkpunkt oder auf null zurueck.
+                speicher.leeren();
+                let (_, _) = dekodieren_fortgesetzt(&model, prompt, &lauf, &mut speicher, &mut |_| {});
+            }
+        }
+        fs::remove_dir_all(&dir).ok();
     }
 
     /// **Gegenprobe:** Dasselbe Fixture ohne `moe` ergibt eine dichte

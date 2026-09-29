@@ -43,6 +43,9 @@
 //! | `--nur-kopf` | Nur er; die Ebenen bleiben stehen |
 //! | `--kopf-nenner N` | Eigene Schrittweite fuer den Kopf, Fund 204 |
 //! | `--zeilenweise` | ⚑ **Je Zeile normieren statt je Matrix**, Fund 206 |
+//! | `--je-durchgang N` | ⚑ **Minibatch**: Durchgang `k` nimmt die Folgen `k·N` bis `k·N+N` aus dem Vorrat (`--folgen`), umlaufend. Ohne den Schalter jede Folge in jedem Durchgang |
+//! | `--ternaer` | ⚑ **Ternaer nachtrainieren**: Die Master starten aus den int8-Gewichten, die Rechnung sieht je 128er-Gruppe -a, 0, +a (Straight-Through). Ein ternaeres Artefakt trainiert ohne den Schalter ternaer |
+//! | `--lehrer` | ⚑ **Destillation**: Jede Position lernt gegen die Verteilung, die das geladene Modell mit seinen eigenen, ungeaenderten Gewichten gibt, statt gegen das naechste Wort. Mit `--ternaer` lehrt so das int8-Modell seine ternaere Fassung |
 //! | `--stand-schreiben P` | ⚑ Die trainierten Gewichte nach `P` |
 //! | `--stand-lesen P` | Dort weitermachen, wo ein Lauf aufhoerte |
 //! | `--anker N` | ⚑ **Gegen das Vergessen:** zieht je Durchgang ein `2^N`-tel des Abstandes zum Ausgangsstand zurueck |
@@ -92,7 +95,8 @@ use integer_llm_runtime::shardtraining::{
     Shardvorgaben,
 };
 use integer_llm_runtime::trainingsschleife::{
-    gradienten_je_position, gradienten_je_position_mit_kopf, Kopfsammlung, Trainingsvorgaben,
+    gradienten_je_position, gradienten_je_position_mit_kopf, gradienten_je_position_vom_lehrer,
+    lehrerverteilung, Kopfsammlung, Trainingsvorgaben,
 };
 
 /// Der Residualstrom **vor** Ebene `von`, je Position.
@@ -116,6 +120,34 @@ fn strom_vor(
     }
     (0..folge.len())
         .map(|p| auf.ebenen()[p * m.num_layers + von].residual_ein.clone())
+        .collect()
+}
+
+/// Die Verteilungen des Lehrers je Position einer Folge.
+///
+/// ⚑ **Der Lehrer ist das Modell selbst**, mit den Gewichten seines
+/// Artefakts: Die trainierten Gewichte liegen in `Shardgewichte`, das
+/// Modell bleibt unberuehrt. Der Vorwaertspass ist derselbe, den die
+/// Inferenz nimmt, und jede Verteilung dieselbe Rechnung wie die des
+/// Schuelers ([`lehrerverteilung`]).
+fn lehrer_je_position(
+    m: &integer_llm_runtime::model::IntegerModel,
+    folge: &[usize],
+    v: &Trainingsvorgaben,
+) -> Vec<Vec<i32>> {
+    let mut cache = integer_llm_runtime::kv_cache::KVCache::for_range(0, m.num_layers, m.num_kv_heads);
+    folge
+        .iter()
+        .enumerate()
+        .map(|(pos, t)| {
+            let y = m.run_layers(m.embed_token(*t), pos, &mut cache, 0, m.num_layers);
+            // Die letzte Position lernt nicht; ihr Kopf waere umsonst.
+            if pos + 1 == folge.len() {
+                Vec::new()
+            } else {
+                lehrerverteilung(m, &y, v)
+            }
+        })
         .collect()
 }
 
@@ -251,6 +283,9 @@ fn main() {
     let mut nur_kopf = false;
     let mut kopf_nenner: Option<i64> = None;
     let mut zeilenweise = false;
+    let mut ternaer = false;
+    let mut je_durchgang: usize = 0;
+    let mut lehrer = false;
     let mut spitze: usize = 0;
     // 📌 **Zwoelf war zu wenig, siehe Fund 225.** Die Vorgabe steht auf
     // vierzig: Ein Denkpraeludium ist rund zehn Token lang, die
@@ -392,6 +427,16 @@ fn main() {
             }
             "--zeilenweise" => {
                 zeilenweise = true;
+            }
+            "--ternaer" => {
+                ternaer = true;
+            }
+            "--lehrer" => {
+                lehrer = true;
+            }
+            "--je-durchgang" => {
+                i += 1;
+                je_durchgang = args.get(i).and_then(|s| s.parse().ok()).unwrap_or(0);
             }
             "--kopf-nenner" => {
                 i += 1;
@@ -650,6 +695,15 @@ fn main() {
         integer_llm_runtime::model::Feedforward::Moe(_) => 0,
     };
     let mut gewichte = Shardgewichte::aus_modell(&m, von, m.num_layers).expect("Gewichte");
+    if ternaer {
+        gewichte
+            .form_setzen(integer_llm_kernels::trainingsschritt::Gewichtsform::Ternaer)
+            .expect("ternaere Form");
+    }
+    eprintln!("[trainingsguete] Gewichtsform: {:?}", gewichte.form());
+    if lehrer {
+        eprintln!("[trainingsguete] Ziel: die Verteilung des Artefakts selbst (Destillation)");
+    }
     if let Some(pfad) = &stand_ein {
         match integer_llm_runtime::shardtraining::stand_lesen(
             &mut gewichte,
@@ -1147,7 +1201,18 @@ fn main() {
                 integer_llm_runtime::shardtraining::zeilenbreiten_dicht(&m, zwischenbreite),
             );
         }
-        for folge in &lernfolgen {
+        // ⚑ **Minibatch** (`--je-durchgang`, 2026-09-28): Mit denselben
+        //   vier Folgen in jedem Durchgang lernt das Modell diese vier
+        //   auswendig. Aus einem Vorrat nimmt jeder Durchgang die naechsten,
+        //   umlaufend; die Kosten je Durchgang bleiben, der Text wechselt.
+        let charge: Vec<&Vec<usize>> = if je_durchgang == 0 {
+            lernfolgen.iter().collect()
+        } else {
+            (0..je_durchgang)
+                .map(|k| &lernfolgen[(s as usize * je_durchgang + k) % lernfolgen.len()])
+                .collect()
+        };
+        for folge in charge {
             let v = vorgabe(folge);
             let vg = Shardvorgaben {
                 von,
@@ -1158,8 +1223,12 @@ fn main() {
             };
             let strom = strom_vor(&m, folge, von);
             let ms = vorwaerts(&m, &mut gewichte, &vg, &strom).expect("vorwaerts");
-            let (mut g, _logits) =
-                gradienten_je_position_mit_kopf(&m, &ms.ausgang, &v, kopfsammlung.as_mut());
+            let (mut g, _logits) = if lehrer {
+                let q = lehrer_je_position(&m, folge, &v);
+                gradienten_je_position_vom_lehrer(&m, &ms.ausgang, &v, &q, kopfsammlung.as_mut())
+            } else {
+                gradienten_je_position_mit_kopf(&m, &ms.ausgang, &v, kopfsammlung.as_mut())
+            };
             if nur_letzte {
                 let letzte = g.len() - 1;
                 for (p, zeile) in g.iter_mut().enumerate() {

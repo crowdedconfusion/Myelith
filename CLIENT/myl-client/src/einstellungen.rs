@@ -943,6 +943,18 @@ impl Einstellungen {
         if let Some(p) = std::env::var_os("MYL_EINSTELLUNGEN").filter(|p| !p.is_empty()) {
             return std::path::PathBuf::from(p);
         }
+        Self::plattformpfad()
+    }
+
+    /// **Der Ort nach der Plattform**, ohne die Abschirmung durch
+    /// `MYL_EINSTELLUNGEN`.
+    ///
+    /// ⚑ **Eine eigene Funktion, damit die Probe des Ortes die
+    /// Abschirmung nicht aufheben muss** (Fund 496). Sie lief nur ohne
+    /// `MYL_EINSTELLUNGEN` gruen, also genau so, wie keine Probe laufen
+    /// soll; und die Variable in einer Probe zu entfernen, gaebe allen
+    /// Proben, die daneben laufen, fuer diese Zeit die echte Datei frei.
+    fn plattformpfad() -> std::path::PathBuf {
         // 📌 **Wer schon eine Datei hat, behaelt sie.** Ohne diese drei
         // Zeilen zoege die Datei bei jedem, der `XDG_CONFIG_HOME` setzt,
         // an einen neuen Ort um, und seine Einstellungen waeren
@@ -2319,6 +2331,8 @@ mod setzer {
     /// wurde.
     #[test]
     fn der_ort_der_einstellungen_folgt_der_plattform() {
+        // ⚑ `plattformpfad` und nicht `vorgabepfad`: Diese Probe laeuft
+        //   auch mit `MYL_EINSTELLUNGEN`, wie jede (Fund 496).
         let alt_xdg = std::env::var_os("XDG_CONFIG_HOME");
         let alt_heim = std::env::var_os("HOME");
 
@@ -2326,7 +2340,7 @@ mod setzer {
         // NixOS die Ablage festlegt. Sie hat Vorrang vor `HOME`.
         std::env::set_var("XDG_CONFIG_HOME", "/x/konfig");
         std::env::set_var("HOME", "/heim/jemand");
-        let p = Einstellungen::vorgabepfad();
+        let p = Einstellungen::plattformpfad();
         if cfg!(windows) {
             // Auf Windows entscheidet `APPDATA`, und diese Pruefung
             // sagt dort nichts ueber XDG aus.
@@ -2339,14 +2353,14 @@ mod setzer {
         // uebergangen; sonst faende man sich genau in dem Fehler wieder,
         // den diese Aenderung behebt.
         std::env::set_var("XDG_CONFIG_HOME", ".konfig");
-        let p = Einstellungen::vorgabepfad();
+        let p = Einstellungen::plattformpfad();
         assert!(
             !p.starts_with(".konfig"),
             "ein relatives XDG_CONFIG_HOME wird uebergangen, bekommen: {p:?}"
         );
 
         std::env::remove_var("XDG_CONFIG_HOME");
-        let p = Einstellungen::vorgabepfad();
+        let p = Einstellungen::plattformpfad();
         if !cfg!(windows) {
             assert_eq!(p, std::path::PathBuf::from("/heim/jemand/.config/myelith/client.json"));
         }
@@ -2355,7 +2369,7 @@ mod setzer {
         // Heimatvariablen gesetzt. Frueher war das Ergebnis
         // `./.config/...`, also je Arbeitsverzeichnis ein anderes.
         std::env::remove_var("HOME");
-        let p = Einstellungen::vorgabepfad();
+        let p = Einstellungen::plattformpfad();
         if !cfg!(windows) {
             assert_eq!(
                 p,
@@ -2380,7 +2394,7 @@ mod setzer {
             std::env::set_var("HOME", heim.path());
             std::env::set_var("XDG_CONFIG_HOME", xdg.path());
             assert_eq!(
-                Einstellungen::vorgabepfad(),
+                Einstellungen::plattformpfad(),
                 alt.join("client.json"),
                 "wer schon eine Datei hat, behaelt sie"
             );
@@ -2391,7 +2405,7 @@ mod setzer {
             std::fs::create_dir_all(&neu_dir).expect("neues Verzeichnis");
             std::fs::write(neu_dir.join("client.json"), "{}\n").expect("neue Datei");
             assert_eq!(
-                Einstellungen::vorgabepfad(),
+                Einstellungen::plattformpfad(),
                 neu_dir.join("client.json"),
                 "liegt an beiden Stellen eine, gewinnt die bevorzugte"
             );

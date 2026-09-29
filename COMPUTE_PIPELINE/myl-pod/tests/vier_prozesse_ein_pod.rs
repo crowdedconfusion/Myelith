@@ -145,9 +145,22 @@ fn vier_prozesse_rechnen_wie_ein_prozess() {
         vec![1849, 13, 5209, 3410, 264, 2033, 429, 374],
         "vier Prozesse rechnen andere Token als ein Prozess"
     );
+    // ⛔️ **Fund 498 (2026-09-28): Dieser Wert war seit dem Neubau des
+    // Ankerartefakts am 2026-09-21 veraltet**, und der Test damit rot, ohne
+    // dass es auffiel. Der Abdruck umfasst die Logits und haengt deshalb am
+    // Artefakt, nicht nur am Code. Neu erhoben auf zwei Wegen, die beide
+    // `2a13b710…` liefern: vier Shards **in einem Prozess** ueber
+    // `Coordinator::new` (derselbe Aufbau wie `shards_ueber_den_draht.rs`)
+    // und dieser Test auf dem Stand des Commits `1445da2`, also vor den
+    // Aenderungen desselben Tages. Die Token sind unveraendert.
+    //
+    // 📌 **Ein fest eingetragener Wert, der am Artefakt haengt, muss mit
+    // dem Artefakt neu erhoben werden.** Die CI hat kein Artefakt und
+    // ueberspringt den Test; rot war er nur auf der einen Maschine, die ihn
+    // haette zeigen koennen, und dort lief er eine Woche lang nicht.
     assert_eq!(
         abdruck.as_ref().map(|(h, s)| (h.as_str(), *s)),
-        Some(("f31675ab40207fcbf39fe415f6ac228949f44f23b88a46e9d2fc52913f8f8e84", 8)),
+        Some(("2a13b7105cf433ad8a2adc32b0f19914fc3347c0802d73c055ef024f00e87f71", 8)),
         "der Dekodier-Abdruck weicht ab"
     );
     // 📌 **Neu erhoben am 2026-09-11** mit dem Ankermodell Qwen3-0,6B:

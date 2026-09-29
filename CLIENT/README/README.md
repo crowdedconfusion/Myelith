@@ -1,7 +1,7 @@
 # client (Nutzer-Client inkl. Wallet)
 
-> **Version:** 0.94.0 (`myl-client` 0.63.0, `myl-oberflaeche` 0.50.2, `myl-console` 0.26.3, `myl-senses` 0.9.0)
-> **Datum:** 2026-09-26
+> **Version:** 0.101.0 (`myl-client` 0.69.0, `myl-oberflaeche` 0.52.1, `myl-console` 0.26.4, `myl-senses` 0.10.0)
+> **Datum:** 2026-09-28
 > **Status:** ✅ **Der lokale Betrieb läuft und ist ausgeliefert.** Ein
 > Gesprächsfenster mit Modellwahl, Agentenschleife und
 > Einstellungsseite; aus einem frischen Klon lassen sich darüber
@@ -52,7 +52,7 @@ kostet nichts, wenn er stimmt, und einen halben Tag, wenn nicht.
 | **Gespraeche verwalten** | Rechtsklick auf eine Zeile: umbenennen an Ort und Stelle, als Markdown ausgeben, loeschen. Wohin ausgegeben wird, steht in `ausgabe.ordner`; ohne Angabe fuehrt das Fenster dorthin |
 
 ⚑ **Die Oberfläche ruft dieselben Funktionen wie die Kommandozeile**,
-über siebenundvierzig Befehle. ⚠️ **Mit genau einer Ausnahme, und sie ist gewollt:** `terminal_ausfuehren` startet eine Shell, denn ein Terminal, das keine startet, ist keines. Jeder andere Befehl startet **keinen einzigen Unterprozess**. `jeder_befehl_ist_angemeldet` hält die vier
+über sechsundvierzig Befehle. ⚠️ **Mit genau einer Ausnahme, und sie ist gewollt:** `terminal_ausfuehren` startet eine Shell, denn ein Terminal, das keine startet, ist keines. Jeder andere Befehl startet **keinen einzigen Unterprozess**. `jeder_befehl_ist_angemeldet` hält die vier
 Richtungen zusammen: kein Befehl ohne Anmeldung, keine Anmeldung ohne
 Befehl, kein Aufruf ins Leere und kein Befehl, den niemand ruft. „Ohne eigene Logik" hiesse sonst, aus einer Textausgabe
 für Menschen eine Schnittstelle zu machen, und genau das ist die Sorte
@@ -152,6 +152,497 @@ Modell überhaupt etwas taugt, und weil eine Schnittstelle, die kein
 Mensch je bedient hat, an den Bedürfnissen vorbei entworfen wird.
 
 ## Changelog
+
+### v0.101.0 – 2026-09-29 (der Loop sucht Skills nach dem Ziel, seltene Wörter zählen mehr, die Prüfung sieht nach, ob die Zieldatei existiert, Rundenmitschrift)
+
+**Anlass:** Im Loop-Szenario lag das 30B bei 3 von 19, obwohl es alle
+sieben mehrstufigen Einzelaufträge bestand, und lernte in zehn Runden
+keinen Skill. Nachgebaut mit denselben Funktionen wie `myl loop`
+(`tests/werkzeugrundgang.rs`): Der Skill-Hinweis wurde aus dem **ganzen
+Rundentext** gebildet, dessen Rahmen („Langzeitvorhaben“, „Runde“, „ZIEL“,
+„NOTIZEN“, „ABNAHME“, „Tabelle schreiben“) die allgemeinen Skills traf.
+Für „Skript zum Laufen bringen“ stand `bericht-schreiben` vorn.
+
+**Was sich ändert:**
+- **`Ruestung::skillsuche`**: Der Loop setzt das Ziel der Aufgabe; der
+  Hinweis sucht danach. Ohne Angabe wie bisher nach dem Auftrag.
+- **Seltene Wörter zählen mehr** (`skills::suchen_in`, die Idee hinter
+  TF-IDF und BM25, ganzzahlig): Gewicht `(n + 1) / df` je Wort, mit `df`
+  der Zahl der Skills, deren Kopf das Wort trägt. Sortiert wird danach
+  (`Treffer::rang`); die Schwellen bleiben an den ungewichteten Punkten.
+  „schreiben“ im Namen `bericht-schreiben` hatte sonst so viel gezählt wie
+  „fehlersuche“. Jetzt: Aufgabe 1 `fehlersuche` zuerst, Aufgabe 2
+  `hausregeln-quellen` zuerst.
+- **Eine Tatsache entscheidet, nicht das Urteil des Modells**
+  (`zieldateien_pruefen`): Nennt das Ziel eine Datei (Wort mit bekannter
+  Endung, etwa `bericht/sensorbericht.md`) und gibt es sie nach der Runde
+  nicht, ist das Ziel nicht erreicht, gleich was die Prüfung sagt; der Grund
+  nennt die Datei. Nur in eine Richtung: Ein „nein“ wird nie zu „ja“. 📌 Die
+  Prüfung meldete beim 27B vier Runden lang „erreicht ja“, während es den
+  Bericht nicht gab.
+- **`MYL_RUNDENMITSCHRIFT`**: Zeigt die Variable auf einen Ordner, schreibt
+  der Loop jede Runde vollständig mit, so wie das Modell sie sah. Ohne
+  Variable geschieht nichts.
+
+**Belege:** `im_loop_empfiehlt_der_hinweis_nach_dem_ziel` (hält auch den
+Befund fest: nach dem Rundentext `bericht-schreiben` vorn),
+`der_loopauftrag_nennt_den_hausregel_skill`,
+`eine_fehlende_zieldatei_macht_aus_ja_ein_nein` (Gegenprobe rot);
+Skill-Proben grün; Client 387 grün, rot nur Fund 499 und der unzuverlässige
+Fund 500; Clippy ohne Befund.
+
+### v0.100.0 – 2026-09-29 (`replace_everywhere`, Folgezeile in der Suche, Datum im Auftrag)
+
+**Anlass:** die erste Runde der neuen mehrstufigen Aufträge
+(`BENCHMARKS/Agent/mehrstufig.json`): 27B 6 von 7, 30B 4 von 7. Aus den
+Mitschriften:
+- **Umbenennen über drei Dateien:** `edit_file` antwortete je Datei „die
+  Stelle kommt 2-mal vor“, das 30B arbeitete sich Aufruf für Aufruf durch
+  und vergaß am Ende eine Datei.
+- **Kilometerpauschale:** Die Suche zeigte in der gültigen Unterlage nur
+  die Überschrift, der Wert stand eine Zeile darunter; sichtbar war nur der
+  alte Wert der FAQ. Das 30B nahm ihn und begründete: „das aktuelle Jahr ist
+  2023“.
+
+**Was sich ändert:**
+- **`replace_everywhere`** (neu, Kiste Advanced): Es ersetzt jedes
+  Vorkommen eines Textes in einer oder mehreren Dateien, mit drei
+  Pflichtfeldern (`pfade`, `alt`, `neu`). Alles oder nichts unter der
+  Syntaxwache; Dateien ohne den Text bleiben unverändert und werden genannt.
+  Die Meldung „kommt n-mal vor“ in `edit_file` verweist darauf. Pendel,
+  Prüfung und Protokoll kennen es.
+- **`search_files` zeigt die Zeile nach jedem Treffer** (`datei-nr`, wie
+  `grep -A1`), im selben Eintrag, damit sie beim Sortieren beim Treffer
+  bleibt.
+- **Das heutige Datum steht im Auftrag** (`uhr::heute_zeile`). Die
+  Datumsrechnung der Uhr ist dafür nach `uhr.rs` gezogen; eine Stelle für
+  beide.
+- **Die Platzhalter geben den Satz für den Nutzer wörtlich vor** und
+  verbieten erfundene Quellen (das 30B nannte den Schalter nicht und
+  erfand einen Link).
+- **Findet `edit_file` eine Stelle nicht, zeigt die Meldung die Datei**,
+  wie sie wirklich ist (mit Zeilennummern, höchstens 60 Zeilen). In
+  Runde 3 las das 30B die Datei nie, riet ihren Inhalt und scheiterte
+  vierzehnmal an Stellen, die es nicht gab.
+- 📌 **`myl agent` geht über den gemeinsamen Weg** (`lauf::fahren`).
+  `einen_auftrag` baute die Schleife bis hierher selbst, mit
+  `ansageform: Default::default()` statt der Form der Rüstung und ohne
+  Skill-Hinweis und Datum. Im Verlauf eines echten Laufs (`--roh`) stand
+  der Auftrag deshalb nackt da; der Skill-Hinweis aus v0.99.0 hatte die
+  Agentenprobe nie erreicht. Die Schleife des Loops ging schon immer über
+  `lauf`.
+
+**Belege:** `ueberall_ersetzen_benennt_ueber_dateien_um` (samt Syntaxwache
+über zwei Dateien), `die_suche_zeigt_die_folgezeile`,
+`die_datumszeile_nennt_datum_und_tag`, `die_uhr_nennt_datum_und_wochentag`
+(jetzt in `uhr.rs`); `gross_und_klein_ist_egal` zählt die Trefferzeilen.
+Rundgang 5/5, Client 383 grün, rot nur Fund 499; Clippy ohne Befund.
+
+### v0.99.0 – 2026-09-29 (Syntaxwache in `edit_file`, passende Skills im Auftrag)
+
+**Anlass:** der Auftrag, weiter zu optimieren, bis auch mehrstufige
+Aufträge bestehen. Zwei Befunde aus den Läufen:
+1. Beide großen Modelle zerbrachen `auswertung.py` mit einer einzigen
+   Änderung und fanden nicht zurück.
+2. Beide verfehlten die Hausregeln für den Bericht. Das 30B suchte den
+   Skill nie und nahm die ersetzte Grenzwertliste von 2024. Das 27B
+   scheiterte beim Suchen am Aufrufformat.
+
+**Die Syntaxwache** (`syntaxwache.rs`, neu): `edit_file` schreibt eine
+Änderung nicht, die gültiges Python oder JSON ungültig macht, und zeigt den
+Fehler samt Zeile und dem Stand, der entstanden wäre. War die Datei schon
+vorher ungültig, wird geschrieben (sonst ließe sie sich nie schrittweise
+reparieren), und die Antwort sagt, dass der Fehler bleibt. `write_file`
+warnt bei einer ungültigen Datei. ⛔️ Python übersetzt nur (`compile`),
+nichts wird ausgeführt; ohne `python3` ist das Urteil offen. Die Idee
+stammt aus der Literatur (SWE-agent, Yang et al. 2024: ein
+Bearbeitungswerkzeug, das Syntaxfehler zurückweist, hebt die Erfolgsquote);
+neu geschrieben.
+
+**Passende Skills im Auftrag** (`skills::hinweis_fuer_auftrag`,
+`lauf::mit_skillhinweis`): Jeder Auftrag nennt bis zu drei Skills, deren
+Name oder Stichworte zu ihm passen (ab 6 Punkten der vorhandenen Suche),
+mit Name und Satz, nicht mit der Anleitung; die holt `learn_skill`. Das
+Muster der schrittweisen Offenlegung aus Agentensystemen: Was passen
+könnte, steht im Kontext, das Modell entscheidet. ⚠️ Für das
+Loop-Szenario heißt das: „Testskill selbst gefunden“ ist seitdem eine
+unterstützte Suche und keine freie mehr.
+
+**Belege:** `die_wache_erkennt_python_und_json` (auch die zerbrochene
+Zeichenkette des 27B), `die_wache_fuehrt_nichts_aus`,
+`eine_aenderung_die_python_zerbricht_wird_nicht_geschrieben` (Gegenprobe
+ohne Wache rot), `der_auftrag_nennt_passende_skills` (mit Gegenprobe); die
+Python-Fälle liefen wirklich (`python3` vorhanden). Client 378 grün, rot
+nur Fund 499 und 500; Clippy ohne Befund.
+
+### v0.98.0 – 2026-09-28 (Werkzeugrundgang: jedes Werkzeug des Loops geprüft; abgeschaltete Werkzeuge sagen, wie man sie einschaltet)
+
+**Anlass:** Auftrag des Projektinhabers, vor dem nächsten langen
+Agentenlauf alle Werkzeuge einzeln durchzugehen. Dazu kam ein Bericht:
+Auf „Recherchiere online, wie man Avocados anbaut“ antwortete das 30B, es
+habe keinen Internetzugriff. Das stimmte, denn `agent.web_recherche`
+stand auf aus; ohne den Schalter gab es die Web-Werkzeuge gar nicht, und
+niemand sagte, wie man sie einschaltet.
+
+**Der Werkzeugrundgang** (`tests/werkzeugrundgang.rs`, neu): rüstet wie
+`myl loop` im Loop-Szenario, auf einer Kopie der Szenario-Vorlage, gibt
+die ganze Ansage aus und ruft jedes Werkzeug über Formprüfung und
+Ausführung, mit Normal- und Randfällen. `--nocapture` zeigt jede Antwort;
+die Zusicherungen halten fest, was beim Lesen als richtig befunden wurde.
+
+**Gefunden und behoben:**
+- **Abgeschaltete Werkzeuge stehen als Platzhalter da** (`abgeschaltet.rs`,
+  neu): Web-Recherche aus oder `curl` fehlt (im Agenten und im Chat),
+  Schreiben aus, Werkzeug nicht in der Kiste, Blick nicht erlaubt, kein
+  Arbeitsordner. Name und Schema des echten Werkzeugs, Beschreibung
+  „SWITCHED OFF (Grund)“; ein Aufruf tut nichts und nennt den Schalter,
+  mit der Beschriftung aus der Feldtabelle der Einstellungen. 📌 Die erste
+  Fassung hatte kein Schema, und der Rundgang zeigte: Ein Aufruf mit
+  `frage` scheiterte an der Formprüfung und erreichte den Hinweis nie.
+- **`edit_file` lehnt ein `alt` ab, das mitten in der Einrückung beginnt.**
+  `"  werte = {}"` passte als Teilstück in `"    werte = {}"`, die Änderung
+  gelang und hinterließ eine falsch eingerückte Zeile, genau der
+  `IndentationError` der Loop-Läufe.
+- **`read_file` auf eine fehlende Datei** nennt `list_directory` und
+  `search_files` statt nur „No such file or directory“ (das 27B las fünf
+  Runden lang eine fehlende Datei).
+- **Die Hilfe von `myl`** erzeugt die Felder für `setzen` aus der
+  Feldtabelle. Die Liste von Hand nannte weder `agent.web_recherche` noch
+  die Blick-Schalter, dafür das entfallene `kap.beschleuniger`.
+- **Die Uhr** heißt `current_time` statt `zeit` (deutsch mitten in der
+  englischen Ansage) und nennt Datum, Uhrzeit (UTC) und Wochentag statt
+  der Sekunden seit 1970.
+- **`run_command`**: Die Beschreibung trug lange Leerzeichenfolgen mitten
+  im Satz. **`search_files`**: Die Beschreibung sagt jetzt, dass auch
+  Datei- und Ordnernamen durchsucht werden (seit Fund 492 der Fall).
+- **`suche_text` ist aus der Kiste Base entfernt.** Es doppelte
+  `search_files` und begründete sich mit dem falschen Satz, jenes suche
+  nur Dateinamen; schon die Werkzeugabdeckung vom 2026-09-23 fand das.
+
+⚑ **Bewusst nicht geändert:** `list_directory` verlangt `tiefe` weiter,
+auch Platzhalter behalten die Pflichtfelder: Optionale Parameter gibt es
+mit Absicht nicht (`kein_werkzeug_hat_einen_optionalen_parameter`). Die
+deutschen Parameternamen in der englischen Ansage (`pfad`, `befehl`)
+bleiben; in allen bisherigen Läufen haben die Modelle sie richtig benutzt.
+
+**Belege:** Rundgang 5 von 5; neue Proben für Platzhalter,
+Einrückungswächter, Uhr (Schaltjahr) und Hilfe (jedes Feld); die Probe
+`der_agent_sucht_im_web…` prüft jetzt die neue Zusage (ohne Häkchen ein
+Platzhalter, der nicht hinausgeht). Client 376 grün, rot nur Fund 499;
+Konsole 158, Oberfläche 76 grün; Clippy ohne Befund.
+
+### v0.97.0 – 2026-09-28 (`edit_file` zeigt, was es geschrieben hat, und findet eine Stelle mit falscher Einrückung; der Befehlsspiegel; die Prüfung liest geschriebene Dateien)
+
+**Anlass:** die Vorbereitung eines Agentenvergleichs zweier großer Modelle.
+Im Loop-Szenario vom 2026-09-26 las das 30B `daten/auswertung.py` einmal
+und änderte danach fünfzehnmal, ohne die Datei wieder zu lesen. Eine
+mehrzeilige Ersetzung hatte die Einrückung zerstört (`'return' outside
+function`), und die Antwort des Werkzeugs lautete nur „eine Stelle
+ersetzt“. Das Modell arbeitete bis zum Abbruch nach einem Bild der Datei,
+das nicht mehr stimmte.
+
+**Was sich ändert:**
+- **Die Antwort zeigt den neuen Stand**: je geänderte Stelle zwei Zeilen
+  davor und danach, mit Zeilennummern, überlappende Fenster
+  zusammengelegt, höchstens 40 Zeilen, danach ein Hinweis auf das
+  Lesewerkzeug. Die Spannen früherer Änderungen wandern mit, wenn eine
+  spätere weiter oben Zeilen einfügt oder entfernt.
+- **Falsche Einrückung in `alt`**: Kommt die Stelle nicht vor, wohl aber
+  Zeile für Zeile ohne Einrückung, nennt die Fehlermeldung die Zeile und
+  den **Wortlaut aus der Datei**. Geschrieben wird weiterhin nichts.
+
+- **Der Befehlsspiegel** (im Loop, um `run_command`): Liefert derselbe
+  Befehl in einer Runde zum dritten Mal genau dieselbe Ausgabe, hängt er
+  einen Hinweis an: Die Änderungen dazwischen haben nichts bewirkt, die
+  Datei neu lesen, die Annahme über die Ursache prüfen. Im selben Lauf
+  sah der Pendelwächter keinen Kreis, weil jede Änderung anders war, und
+  die Wiederholungsbremse griff nicht, weil der Befehl jedes Mal wirklich
+  lief. Gleich blieb nur die Ausgabe. Er verhindert nichts.
+- **Die Prüfung einer Runde liest die geschriebenen Dateien**: je Datei,
+  die die Runde geschrieben oder geändert hat, den jetzigen Inhalt
+  (höchstens drei Dateien, je 1 500 Zeichen), dazu die Regel, dass der
+  Inhalt zählt und nicht die Existenz. Vorher sah sie als Beleg nur
+  „angelegt bericht/sensorbericht.md, 1834 Bytes“ und stimmte im
+  Loop-Szenario bei 8B und 30B einem Bericht zu, der einen Raum falsch
+  bewertete. Pfade, die aus der Einhängung zeigen, werden nicht gelesen.
+
+**Belege:** fünf neue Proben (`die_antwort_zeigt_den_neuen_stand`,
+`eine_fruehere_stelle_wandert_mit` mit Gegenprobe, die ohne das Nachziehen
+rot wird, `loeschen_mit_umlauten_zeigt_die_zeile`,
+`falsche_einrueckung_bekommt_den_wortlaut` samt Gegenprobe ohne Treffer,
+`eine_grosse_aenderung_zeigt_nur_den_anfang`), dazu
+`der_befehlsspiegel_sieht_die_gleiche_ausgabe` (Gegenprobe: mit Schwelle 99
+rot) und `die_pruefung_sieht_geschriebene_dateien` (jüngste Fassung, jede
+Datei einmal, nichts von draußen, ohne Datei der alte Auftrag); Clippy ohne
+Befund. Ganze Reihe mit `--no-fail-fast`: 367 grün, 2 rot (Fund 499).
+
+⚠️ **Fund 499, nicht durch diese Änderung:** `tests/reservierung.rs` ist auf
+dieser Maschine rot (`die_reservierung_belegt_bloecke_und_keine_loecher`,
+`hergeben_gibt_genau_so_viel_heraus_wie_da_ist`): Eine Reservierung von
+64 MiB belegt nur 5,9 MB Blöcke. `src/reservierung.rs` ist gegenüber dem
+letzten Commit unverändert; offen ist, ob `F_PREALLOCATE` auf APFS
+überhaupt vorbelegt.
+
+⚠️ **Fund 500, ebenfalls nicht durch diese Änderung:**
+`tests/dateiwerkzeuge.rs::das_aktionsprotokoll_haelt_fest_ohne_klartext` ist
+unzuverlässig (dreimal hintereinander: grün, rot, grün). Der Protokollordner
+gilt je Prozess (`protokoll::ordner_setzen`), und andere Proben derselben
+Datei setzen ihn parallel um; die Probe findet ihr Lesen dann in einem
+anderen Ordner nicht.
+
+### v0.96.1 – 2026-09-28 (im Fenster ist das Schließen der einzige Notschalter; das Kürzel und der Befehl `notaus` entfallen)
+
+`myl-oberflaeche` 0.52.1.
+
+**Festlegung des Projektinhabers:** „Nimm die Notaus-Kürzel weg,
+Fenster schließen reicht.“ v0.95.0 hatte ⌘. und Strg+. als stillen Weg
+behalten.
+
+**Entfernt:**
+- das Kürzel und `notaus_verdrahten` in `ui/app.js`;
+- der Tauri-Befehl `notaus` in `src/main.rs`: Ohne Kürzel hatte er
+  keinen Aufrufer mehr. Es sind jetzt 46 Befehle; die Zahl im Kopf dieses
+  README ist nachgezogen, `jeder_befehl_ist_angemeldet` hatte sie
+  angemahnt;
+- `stimme_anhalten` und die Liste `geplant`: Sie gab es nur, damit der
+  Notaus die Stimme sofort anhalten konnte. Beim Schließen endet die
+  Stimme mit dem Fenster;
+- die Meldung `notaus.gemeldet` in beiden Sprachen.
+
+**Bleibt:** `notschalter_beim_schliessen` (Notaus im Protokoll, jeder
+laufende Befehl beendet); `myl_client::notaus` selbst, denn die Konsole
+und das Schließen brauchen ihn. Die Konsole behält Strg-C und Esc.
+
+**Belegt:** `das_schliessen_ist_der_notschalter_und_haelt_alles_an`
+verlangt jetzt das Gegenteil: kein Kürzel, kein `invoke("notaus")`, kein
+Befehl `notaus`, keine verwaiste Stimmbremse. 76 grün, Clippy ohne
+Befund. Gegenprobe: ein zurückgeholtes Kürzel macht sie rot („das
+Kuerzel ist zurueck“). COMPLIANCE v0.2.2 streicht den Satz zum Kürzel.
+
+### v0.96.0 – 2026-09-28 (das Ladezeichen sind Linien in Bewegung wie Wellen, zufällig, schwarz und weiß)
+
+`myl-oberflaeche` 0.52.0.
+
+**Auftrag des Projektinhabers**, mit einer Vorlage: Linien in Bewegung
+wie Wellen, die sich in unterschiedlichen Frequenzen überschneiden,
+randomisiert und möglichst organisch, in Schwarz und Weiß. Es ersetzt
+den synaptischen Spalt vom 2026-09-24.
+
+**Die Gestalt:** Fünf Stränge kommen links als eine Linie herein, gehen
+ab einem Siebtel der Breite auseinander, kreuzen sich in großen Bögen
+und laufen rechts aufgefächert aus; links und rechts blenden sie weich
+ein und aus. Die Stränge unterscheiden sich in Deckkraft und Stärke,
+alle aus `--auf`, also weiß im dunklen und schwarz im hellen Thema.
+
+**Die Bewegung, und warum sie im Skript steht:** Jeder Strang ist eine
+lange Hauptwelle (ein halber bis anderthalb Bögen über die Breite) plus
+eine kürzere, schwächere Nebenwelle, jede mit **zufälliger** Frequenz,
+Laufrichtung und Phase; dazu schwillt er langsam an und ab, und sein Ende
+wandert. `wellen()` rechnet das je Bild und setzt nur das Attribut `d`.
+**Keyframes im Stilblatt liefen im Kreis**, und ein Kreis wird nach dem
+dritten Umlauf gesehen; so wiederholt sich nichts erkennbar, und keine
+zwei Zeichen sehen gleich aus.
+
+- **Bewegung abbestellt:** ein Standbild derselben Wellen, jedes Mal ein
+  anderes. Das Zeichen verschwindet nicht.
+- **Es hört auf zu rechnen**, sobald es aus dem Fenster ist: im ersten
+  Bild danach, oder nach zwei Sekunden, wenn es nie eingehängt wurde
+  (ein Beitrag in einem Gespräch, das gerade nicht offen ist).
+- **Der weiche Rand ist eine Maske im Stilblatt** (`mask-image`) und
+  keine im Bild; darum braucht das Zeichen keine Kennungen mehr. Die
+  Welle ist so bemessen, dass sie die Fläche nicht verlässt, denn die
+  Maske schneidet ab, was darüber hinausgeht.
+- Etwas größer als der Spalt: 8,5 × 2,55 rem statt 5 × 1,46.
+- Mit dem Spalt gingen seine Regeln, fünf Zeitlinien und die beiden
+  Zeilen im Block für abbestellte Bewegung.
+
+**Wie die Gestalt gefunden wurde:** Die echte Funktion aus `app.js` lief
+in Node mit einer kleinen DOM-Attrappe, je sechs Standbilder im dunklen
+und im hellen Thema, gerendert über Quick Look (WebKit). Der erste
+Entwurf schwang über die Fläche hinaus und wurde von der Maske
+beschnitten; der zweite nahm drei gleich starke Teilwellen, die sich mit
+ihren Zufallsphasen oft auslöschten, sodass die Stränge fast flach
+aufeinanderlagen. Daher Haupt- und Nebenwelle.
+
+**Belegt:**
+- `oberflaeche.rs`: `das_ladezeichen_sind_wellen` statt
+  `das_ladezeichen_ist_ein_synaptischer_spalt`: die Zufallsquelle aller
+  Werte, die Bildschleife, das Standbild bei abbestellter Bewegung, das
+  Aufhören außerhalb des Fensters, kein Stil und keine Kennung, jeder
+  der fünf Stränge gebaut und aus `--auf`, keine Akzentfarbe. 76 grün,
+  Clippy ohne Befund.
+- Gegenproben: kein Standbild, kein Aufhören, ein Strang in
+  `--akzent`, feste statt zufälliger Werte. Alle vier rot. ⚑ **Die
+  vierte war es zuerst nicht:** Die Probe verlangte nur irgendein
+  `Math.random()`, und das stand noch in der Laufrichtung. Jetzt prüft
+  sie die Zufallsquelle selbst.
+
+⚠️ **Die Bewegung hat noch niemand gesehen**, nur Standbilder. Ob Tempo
+und Ruhe passen, zeigt erst das Fenster.
+
+### v0.95.0 – 2026-09-28 (der Loop als ein Feld mittig im Eingabefeld, Ziehen repariert; Schließen ist der Notschalter; die KI-Kennzeichnung steht im Eingabefeld; Fund 494)
+
+`myl-client` 0.64.0, `myl-oberflaeche` 0.51.0, `myl-console` 0.26.4,
+`myl-senses` 0.10.0.
+
+**Auftrag des Projektinhabers, in zwei Teilen.**
+
+**1. Der Loop im Agenten: ein Feld statt zweier Knöpfe.**
+- ∞, der laufende Task und der Pfeil sind **ein Feld mit Glas**, mittig
+  unten im Eingabefeld und bis 15 rem breit. Links ∞, der Schalter
+  (Klick startet oder pausiert); daneben der Task, der vorn steht,
+  gekürzt mit „…“, der ganze Satz im Hinweis am Zeiger; rechts der
+  Pfeil. **Titel und Pfeil sind ein Knopf** und öffnen die Liste.
+  Ohne Task steht „Kein Task“ da.
+- **∞ atmet, solange der Loop läuft**: langsames Aufhellen und Abklingen
+  mit schwachem Schein, ohne Farbe. Bei abbestellter Bewegung bleibt es
+  hell stehen.
+- Die Knopfreihe hat dafür **drei feste Spalten**: links Anhang und
+  Stimme, in der Mitte der Loop, rechts Vorlesen, Sprachmodus und Senden.
+  Die rechte Seite bleibt rechts, auch wenn der Loop außerhalb des
+  Agenten fehlt; wird es eng, gibt zuerst der Tasktitel nach.
+- Die Liste öffnet sich **mittig über dem Feld**.
+- **Keine Kästen mehr in der Liste:** Name und Aktionen sind Knöpfe mit
+  `.blank`, und `.blank` nimmt nur Ring und Glanz weg; Verlauf, Schatten
+  und Filter der allgemeinen Knopfregel blieben stehen, also lag hinter
+  jedem Namen und jedem Zeichen eine Fläche. Jetzt am Bauteil
+  zurückgesetzt. Überfahren macht den Eintrag heller statt ihn zu
+  hinterlegen; der gezogene tritt zurück; ein scharf gestelltes × wird
+  größer statt umrandet.
+
+**Fund 494, das Ziehen:** `pointermove` und `pointerup` hingen an der
+gezogenen Zeile, gehalten über `setPointerCapture`. Beim Umsortieren
+wird genau diese Zeile aus der Liste genommen und neu eingesetzt, und
+dabei geht der Zeigerfang verloren. Nach dem ersten Platztausch kam
+nichts mehr an, die Zeile blieb halb durchsichtig stehen, und die
+Reihenfolge wurde nie gespeichert. Dazu zeichnete jeder neue Stand
+(alle zwanzig Sekunden, nach jedem Loop-Ereignis) die Liste mitten im
+Ziehen neu. **Jetzt:** Die Bewegung wird am Fenster abgehört, das nie
+umgehängt wird; während des Ziehens wird nicht neu gezeichnet; über der
+ersten oder unter der letzten Zeile heißt ganz nach vorn oder ganz nach
+hinten; gespeichert wird nur, was sich bewegt hat.
+
+**2. Notaus und KI-Marke im Kopf entfallen.**
+- ⛔️ **Der Notschalter des Fensters ist das Schließen**, und der Hinweis
+  beim Start sagt das: „Der Notschalter ist das Schließen des Fensters:
+  Es beendet Myelith sofort, samt jeder laufenden Handlung.“ Der Knopf
+  im Kopf ist weg; ⌘. und Strg+. halten einen Auftrag weiter an, ohne
+  zu schließen.
+- ⚠️ **Damit der Satz stimmt, musste das Schließen mehr tun.** Mit dem
+  Prozess enden Erzeugung und jeder weitere Schritt, aber **ein Befehl,
+  den der Agent schon gestartet hatte, lief als eigener Prozess weiter,
+  und zwar ohne Frist**, denn die hielt das Fenster. Neu:
+  `myl_senses::prozess` trägt jeden laufenden Befehl in ein Verzeichnis
+  ein, `alle_beenden()` beendet sie, und das Fenster ruft beim Schließen
+  erst `loop_beim_schliessen` (der Loop pausiert nur und macht beim
+  Öffnen dort weiter), dann den Notaus (er steht damit im
+  Aktionsprotokoll) und `alle_beenden()`, einmal, auch wenn Schließen
+  und Zerstören beide kommen. Ein so beendeter Lauf meldet sich als
+  abgebrochen, wie an der Frist.
+- **Die Konsole behält ihren Notaus** (Strg-C, Esc). Deshalb nimmt
+  `kennzeichnung::starthinweis` jetzt die `Flaeche` mit (`Fenster` oder
+  `Konsole`), und nur der Satz zum Notschalter hängt an ihr.
+- **Die KI-Marke im Kopf** („KI“, ein Wort, das wie ein Knopf aussah und
+  nichts tat) ist weg. Die dauerhafte Kennzeichnung nach Art. 50 Abs. 1
+  steht jetzt **im leeren Eingabefeld**: „Hier antwortet eine KI. Frag
+  etwas, oder gib einen Auftrag.“ (englisch „An AI answers here. …“),
+  schon im HTML, also auch vor dem ersten Beschriften. Dazu bleiben der
+  Hinweis bei jedem Start und „KI-generiert“ unter jeder Antwort. Die
+  Fußzeile der Konsole trägt weiter „KI“.
+
+**Belegt:**
+- `oberflaeche.rs`: zwei neue Proben, `der_loop_ist_ein_feld_in_der_mitte`
+  und `die_tasks_lassen_sich_ziehen_und_tragen_keine_kaesten`; die
+  Notausprobe ist zu `das_schliessen_ist_der_notschalter_und_haelt_alles_an`
+  geworden, die Kennzeichnungsprobe prüft den Platzhalter statt der
+  Marke. 76 grün.
+- Gegenproben, je Zeile: Zeigerfang an der Zeile, Neuzeichnen im
+  Ziehen, Fläche hinter den Einträgen, kein Atmen, rechte Spalte ohne
+  feste Stelle, kein Tasktitel, Notaus vor dem Loop, kein
+  `alle_beenden`, Platzhalter ohne Kennzeichnung (englisch und im HTML).
+  Alle rot mit der gemeinten Meldung.
+- `myl-senses`, neues Testziel `alle_beenden.rs` (eigene Datei, weil
+  `alle_beenden` jeden Lauf im Prozess trifft): Ein Befehl mit 30 s
+  endet bei einer Frist von 60 s sofort, meldet sich abgebrochen und
+  trägt sich aus. Drei Gegenproben (kein Eintrag, keine Abbruchmarke,
+  kein Austragen) beißen.
+- `kennzeichnung.rs`: `der_notschalter_ist_der_der_flaeche`, im Fenster
+  das Schließen und kein Notaus, in der Konsole der Notaus und kein
+  Fenster, und nur dieser eine Satz weicht ab.
+- `myl-client` 362 grün (2 ignoriert), `myl-console` 158, `myl-senses`
+  85, Fenster 76; Clippy mit `-D warnings` über alle vier Kisten ohne
+  Befund; `myl-senses` übersetzt auch für Windows und Linux. Gefahren
+  mit `MYL_EINSTELLUNGEN` in einem Zwischenordner; die echte
+  `client.json` hat vorher und nachher dieselbe Prüfsumme.
+
+**Zwei kleine Funde in Proben, beim Prüflauf aufgefallen:**
+- **Fund 495:** `jedes_werkzeug_ist_protokolliert_und_jeder_start_schaltet_ein`
+  schnitt 400 **Bytes** hinter `fn main()` ab. Der neue ⛔️-Kommentar im
+  Fenster legte die Grenze mitten in ein Zeichen, und die Probe brach am
+  Schnitt statt an ihrer Aussage. Jetzt `floor_char_boundary`, wie in
+  den Fensterproben.
+- **Fund 496:** `der_ort_der_einstellungen_folgt_der_plattform` war nur
+  **ohne** `MYL_EINSTELLUNGEN` grün, also genau so, wie keine Probe
+  laufen soll. Die Variable in der Probe zu entfernen hätte allen Proben
+  daneben für diese Zeit die echte Datei freigegeben. Stattdessen teilt
+  sich `vorgabepfad` in die Abschirmung und `plattformpfad`, und die
+  Probe prüft `plattformpfad`. Das Verhalten nach außen bleibt gleich.
+
+⚠️ **Nicht von Hand im Fenster geklickt und nicht im WebKit gesehen.**
+Die Proben lesen Aufbau und Stil, sie bedienen nichts; das Ziehen und das
+Atmen hat noch niemand gesehen.
+
+⚠️ **Was das Schließen nicht beendet:** die Enkel eines Befehls, wie an
+der Frist (`sh -c "a; b"` unter Linux und Windows); die Abnahme eines
+Tasks (ein Befehl des Menschen, `vorhaben.rs`) und den Bau eines
+Artefakts, beide mit eigenem Start außerhalb von `prozess`. Der
+Sprechläufer liest seine Aufträge von der Standardeingabe und endet, wenn
+sie mit dem Fenster zugeht; für die Aufnahme ist das nicht geprüft.
+
+### v0.94.1 – 2026-09-26 (der Hinweis beim Start sperrte sich selbst und liess sich nicht bestätigen; ein Knopf statt Schieber; Fund 493)
+
+`myl-oberflaeche` 0.50.3.
+
+**Gemeldet vom Projektinhaber:** Der Hinweis beim Start ließ sich im
+Fenster nicht bestätigen. Gewünscht war ein Knopf statt des Schiebers.
+
+**Fund 493, die eigentliche Ursache:** `starthinweis_zeigen` setzte
+`inert` auf `#haupt` und `#seitenleiste`, damit das Fenster darunter
+nicht bedienbar ist. Der Dialog `#kihinweis` liegt aber **in** `#haupt`,
+und `inert` erbt sich nach unten. Der Hinweis sperrte sich also selbst:
+Weder Schieber noch Knopf nahmen eine Eingabe an, und weil er bei jedem
+Start kommt und nicht anders zu schließen ist, blieb das Fenster
+unbedienbar. Das stand so seit v0.85.0. **Ein Knopf allein hätte daran
+nichts geändert.**
+
+📌 **Keine Probe hat es gesehen, weil jede nur las, *dass* `inert`
+gesetzt wird, und keine, *worauf*.** Eine Sperre prüft man daran, was
+frei bleibt, nicht daran, dass es sie gibt.
+
+**Behoben:**
+- `ringsum(e)` in `ui/app.js` sperrt auf dem Weg vom Dialog nach oben
+  jede Geschwisterebene; der Weg selbst bleibt frei. Der Hinweis nennt
+  kein Element mehr beim Namen, in dem er liegen könnte.
+- **Ein Schritt statt zwei:** Der Schieber vor dem gesperrten Knopf ist
+  weg. Der eine Knopf trägt den Bestätigungssatz („Ich habe verstanden,
+  dass ich mit einer KI arbeite, und halte mich an die
+  Zweckbestimmung.“), und ihn zu drücken ist die Bestätigung. Er hat
+  volle Breite und bricht um. Weiterhin: kein Schließknopf, kein Escape,
+  nichts wird gemerkt, bei jedem Start neu.
+
+**Belegt:**
+- `oberflaeche.rs`, Probe zum Starthinweis erweitert: `ringsum(kasten)`
+  statt benannter Elemente, `ringsum` spart den Weg aus, kein
+  `disabled`/`checked` mehr, kein `<input>` im Dialog, der Knopf trägt
+  `h.bestaetigung`. 74 grün.
+- Gegenproben: die alte `inert`-Zeile macht die Probe rot („der Hinweis
+  sperrt nicht ringsum“), ein zurückgesetztes `disabled` ebenso („der
+  Hinweis hat wieder zwei Schritte“).
+- `ringsum` auf einem nachgebauten Baum mit der Verschachtelung aus
+  `index.html` (in Node): gesperrt sind Gespräch, Agentenwarnung,
+  Seitenleiste und Vorhang; kein Vorfahr des Dialogs.
+
+⚠️ **Nicht von Hand im Fenster geklickt**; das steht beim Projektinhaber.
 
 ### v0.94.0 – 2026-09-26 (ein fest vorgegebener Systemprompt, geprüft vor jedem Lauf)
 

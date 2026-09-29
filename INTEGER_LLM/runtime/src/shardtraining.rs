@@ -76,7 +76,8 @@ use integer_llm_kernels::optimierer::{
 };
 use integer_llm_kernels::backward::silu_grad_aus_lut;
 use integer_llm_kernels::trainingsschritt::{
-    gewicht_aus_master, gradienten_der_ebene_aus_gradient, vorwaerts_der_ebene, Ebenenspur,
+    gewicht_aus_master, gewicht_aus_master_als, gradienten_der_ebene_aus_gradient, vorwaerts_der_ebene,
+    Ebenenspur, Gewichtsform,
     Ebenentabellen,
 };
 
@@ -120,6 +121,15 @@ pub struct Shardvorgaben {
 pub struct Shardgewichte {
     /// Je Ebene des Bereichs: ihr Stand.
     pub master: Vec<Ebenenstand>,
+    /// Wie aus dem Master das Gewicht der Rechnung wird.
+    ///
+    /// ⚑ **Aus dem Modell abgeleitet**: Traegt der Bereich ternaere Ebenen,
+    /// trainiert er ternaer (Straight-Through auf den Master), sonst int8.
+    /// Das Artefakt legt es fest, und alle Knoten sehen dasselbe Artefakt;
+    /// deshalb steht die Form nicht in [`Shardvorgaben`] und nicht auf dem
+    /// Draht. [`Shardgewichte::form_setzen`] ist fuer die lokale Umwandlung
+    /// eines int8-Modells in ein ternaeres.
+    form: Gewichtsform,
     /// Der Stand **vor** dem ersten Schritt, für das Δ-Commitment.
     anfang: Vec<Ebenenstand>,
     von: usize,
@@ -547,11 +557,48 @@ impl Ebenenstand {
 }
 
 impl Shardgewichte {
+    /// Die Form, mit der dieser Bereich trainiert.
+    pub fn form(&self) -> Gewichtsform {
+        self.form
+    }
+
+    /// **Setzt die Form fuer eine lokale Umwandlung**: ein int8-Modell,
+    /// dessen Master aus den int8-Gewichten starten, ternaer nachtrainieren.
+    ///
+    /// ⛔️ **Nicht umgekehrt:** Ein ternaerer Bereich laesst sich nicht als
+    /// int8 trainieren (seine Master tragen nur -a, 0 und +a); das wird
+    /// abgewiesen.
+    pub fn form_setzen(&mut self, form: Gewichtsform) -> Result<(), Shardfehler> {
+        if self.form == Gewichtsform::Ternaer && form == Gewichtsform::Int8 {
+            return Err(Shardfehler::TernaerNichtTrainierbar { ebene: self.von });
+        }
+        self.form = form;
+        Ok(())
+    }
+
     /// Liest die Gewichte des Bereichs aus dem Modell.
     pub fn aus_modell(m: &IntegerModel, von: usize, bis: usize) -> Result<Self, Shardfehler> {
         if von >= bis || bis > m.num_layers {
             return Err(Shardfehler::BereichUngueltig { von, bis, ebenen: m.num_layers });
         }
+        let bereich: Vec<&crate::model::TransformerLayer> = m.layers.iter().take(bis).skip(von).collect();
+        if let Some(e) = bereich.iter().find(|e| matches!(e.mischer, crate::model::Mischer::Zustand(_))) {
+            return Err(Shardfehler::ZustandsschichtNichtGetragen { ebene: e.layer_idx });
+        }
+        // ⚑ **Ganz ternaer oder gar nicht.** Ein Bereich mit beiden Arten
+        //   braeuchte eine Form je Ebene; das kommt, wenn es ein Modell gibt,
+        //   das es verlangt.
+        let ternaer = bereich.iter().filter(|e| e.ist_ternaer()).count();
+        if ternaer != 0 && ternaer != bereich.len() {
+            let e = bereich.iter().find(|e| !e.ist_ternaer()).expect("eine ist nicht ternaer");
+            return Err(Shardfehler::TernaerNichtTrainierbar { ebene: e.layer_idx });
+        }
+        if ternaer != 0 {
+            if let Some(e) = bereich.iter().find(|e| matches!(e.ffn, Feedforward::Moe(_))) {
+                return Err(Shardfehler::TernaerNichtTrainierbar { ebene: e.layer_idx });
+            }
+        }
+        let form = if ternaer != 0 { Gewichtsform::Ternaer } else { Gewichtsform::Int8 };
         let mut master = Vec::with_capacity(bis - von);
         for ebene in m.layers.iter().take(bis).skip(von) {
             master.push(match &ebene.ffn {
@@ -586,7 +633,7 @@ impl Shardgewichte {
         // geprueft. Die Schranke bleibt als Fehlerart bestehen, denn
         // sie ist der Ort, an dem die naechste solche Luecke gemeldet
         // wird.
-        Ok(Self { anfang: master.clone(), master, von, bis })
+        Ok(Self { anfang: master.clone(), master, von, bis, form })
     }
 
     /// Eine Kopie des Standes, für Messungen, die nichts verändern
@@ -601,6 +648,7 @@ impl Shardgewichte {
             anfang: self.anfang.clone(),
             von: self.von,
             bis: self.bis,
+            form: self.form,
         }
     }
 
@@ -893,6 +941,15 @@ pub enum Shardfehler {
     QkNormNichtGetragen { ebene: usize },
     /// Der eingehende Gradient passt nicht zur Folge.
     GradientPasstNicht { erwartet: usize, bekommen: usize },
+    /// ⛔️ **Die Ebene passt nicht zur ternaeren Form**: ein Bereich, der
+    /// ternaere und int8-Ebenen mischt, ein ternaerer Bereich mit
+    /// Expertengemisch, oder ein ternaerer Bereich, der als int8 trainiert
+    /// werden soll. Ein ternaerer Bereich trainiert ternaer: Der Master ist
+    /// hochaufgeloest, die Rechnung sieht je Gruppe -a, 0 und +a.
+    TernaerNichtTrainierbar { ebene: usize },
+    /// ⛔️ **Eine rekurrente Zustandsschicht**: Ihr Rueckwaertspass fehlt noch
+    /// (Gated DeltaNet). Vorher war das eine Panik beim Einlesen.
+    ZustandsschichtNichtGetragen { ebene: usize },
 }
 
 impl std::fmt::Display for Shardfehler {
@@ -917,6 +974,16 @@ impl std::fmt::Display for Shardfehler {
                 f,
                 "der eingehende Gradient hat {bekommen} Positionen, die Folge {erwartet}"
             ),
+            Self::TernaerNichtTrainierbar { ebene } => write!(
+                f,
+                "Ebene {ebene} passt nicht zur ternaeren Form: Ein Bereich ist ganz ternaer \
+                 oder gar nicht, ohne Expertengemisch, und ein ternaerer Bereich trainiert ternaer"
+            ),
+            Self::ZustandsschichtNichtGetragen { ebene } => write!(
+                f,
+                "Ebene {ebene} ist eine rekurrente Zustandsschicht, und deren Rueckwaertspass \
+                 fehlt noch"
+            ),
         }
     }
 }
@@ -938,6 +1005,7 @@ pub fn vorwaerts(
     v: &Shardvorgaben,
     hidden: &[Vec<i16>],
 ) -> Result<Shardmitschnitt, Shardfehler> {
+    let form = g.form;
     if v.von >= v.bis || v.bis > m.num_layers || g.von != v.von || g.bis != v.bis {
         return Err(Shardfehler::BereichUngueltig {
             von: v.von,
@@ -971,11 +1039,11 @@ pub fn vorwaerts(
                     return Err(Shardfehler::ArtPasstNicht { ebene: e });
                 };
                 let umgerechnet: Vec<(Vec<i8>, Vec<u8>)> = (0..7)
-                    .map(|n| gewicht_aus_master(&master[n], breiten[n], MASTER_FRAC))
+                    .map(|n| gewicht_aus_master_als(&master[n], breiten[n], MASTER_FRAC, form))
                     .collect();
                 let gew = gewichte_der_ebene(&umgerechnet, ebene);
                 let vg = vorgaben_der_ebene(
-                    m, &ebene.scales, e, is, v.schritt, v.lr_zaehler, v.lr_nenner,
+                    m, &ebene.scales, e, is, v.schritt, v.lr_zaehler, v.lr_nenner, form,
                 );
                 Ebenenmitschnitt::Dicht(Box::new(vorwaerts_der_ebene(
                     gew,
@@ -1036,7 +1104,7 @@ fn gemisch_vorwaerts(
     let cfg = &m.config;
     let hs = m.hidden_size;
     let is = moe.experts[0].gate_proj.shape[0];
-    let vg = vorgaben_der_ebene(m, sc, e, is, v.schritt, v.lr_zaehler, v.lr_nenner);
+    let vg = vorgaben_der_ebene(m, sc, e, is, v.schritt, v.lr_zaehler, v.lr_nenner, Gewichtsform::Int8);
     let (a_vorgaben, m_vorgaben) = vg.bloecke();
     let acc_attn = vg.acc_attn();
     let acc_mlp = vg.acc_mlp();
@@ -1652,6 +1720,7 @@ pub fn rueckwaerts_mit(
     g_aus: &[Vec<i32>],
     fort: &mut Fortschreibung<'_>,
 ) -> Result<Shardergebnis, Shardfehler> {
+    let form = gew_stand.form;
     if mitschnitt.eingaenge.is_empty() {
         return Err(Shardfehler::BereichUngueltig {
             von: v.von,
@@ -1688,11 +1757,11 @@ pub fn rueckwaerts_mit(
                     return Err(Shardfehler::ArtPasstNicht { ebene: e });
                 };
                 let umgerechnet: Vec<(Vec<i8>, Vec<u8>)> = (0..7)
-                    .map(|n| gewicht_aus_master(&master[n], breiten[n], MASTER_FRAC))
+                    .map(|n| gewicht_aus_master_als(&master[n], breiten[n], MASTER_FRAC, form))
                     .collect();
                 let gew = gewichte_der_ebene(&umgerechnet, ebene);
                 let vg = vorgaben_der_ebene(
-                    m, &ebene.scales, e, is, v.schritt, v.lr_zaehler, v.lr_nenner,
+                    m, &ebene.scales, e, is, v.schritt, v.lr_zaehler, v.lr_nenner, form,
                 );
                 let gr = gradienten_der_ebene_aus_gradient(
                     gew,
@@ -1810,7 +1879,7 @@ fn gemisch_rueckwaerts(
     let hs = m.hidden_size;
     let is = moe.experts[0].gate_proj.shape[0];
     let n = moe.experts.len();
-    let vg = vorgaben_der_ebene(m, sc, e, is, v.schritt, v.lr_zaehler, v.lr_nenner);
+    let vg = vorgaben_der_ebene(m, sc, e, is, v.schritt, v.lr_zaehler, v.lr_nenner, Gewichtsform::Int8);
     let (a_vorgaben, m_vorgaben) = vg.bloecke();
     let aus_frac = vg.aus_frac;
     let a_bus = a_vorgaben.aus_frac;

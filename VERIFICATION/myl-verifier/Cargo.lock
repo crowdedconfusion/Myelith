@@ -644,7 +644,7 @@ dependencies = [
 
 [[package]]
 name = "integer-llm-kernels"
-version = "0.66.0"
+version = "0.71.0"
 dependencies = [
  "itertools 0.13.0",
  "serde",
@@ -654,7 +654,7 @@ dependencies = [
 
 [[package]]
 name = "integer-llm-runtime"
-version = "0.66.0"
+version = "0.74.0"
 dependencies = [
  "integer-llm-kernels",
  "memmap2",
@@ -828,7 +828,7 @@ dependencies = [
 
 [[package]]
 name = "myl-pod"
-version = "0.35.0"
+version = "0.35.1"
 dependencies = [
  "borsh",
  "getrandom 0.2.17",

@@ -624,12 +624,10 @@ fn nachfrage_fuer(
     }))
 }
 
-/// **Der Notaus**: haelt den laufenden Auftrag an (siehe
-/// `myl_client::notaus`). Die Stimme haelt das Fenster selbst an.
-#[tauri::command]
-fn notaus() {
-    myl_client::notaus::ausloesen("fenster");
-}
+// 📌 **Hier stand der Befehl `notaus`**, gerufen vom Knopf im Kopf und
+// spaeter nur noch vom Tastenkuerzel ⌘. oder Strg+. Beide sind entfallen
+// (Festlegung des Projektinhabers, 2026-09-28); der Notschalter des
+// Fensters ist das Schliessen, siehe [`notschalter_beim_schliessen`].
 
 // ── Der Loop: ∞ neben dem Senden ────────────────────────────────────
 //
@@ -965,6 +963,33 @@ fn protokoll_lesen() -> (String, Vec<myl_client::protokoll::Eintrag>) {
     )
 }
 
+/// ⛔️ **Der Notschalter des Fensters ist das Schliessen** (Festlegung
+/// des Projektinhabers, 2026-09-28; so steht es auch im Hinweis beim
+/// Start).
+///
+/// Mit dem Prozess enden die Erzeugung und jeder weitere Schritt von
+/// selbst. **Ein Befehl, den der Agent schon gestartet hat, endet nicht
+/// mit**: Er ist ein eigener Prozess und liefe ohne Frist weiter, denn
+/// die Frist hielt dieses Programm. Deshalb hier, bevor der Prozess
+/// geht: der Notaus (er steht damit im Aktionsprotokoll) und das Ende
+/// jedes laufenden Befehls.
+///
+/// ⚑ **Nach `loop_beim_schliessen` und nicht davor.** Jenes markiert das
+/// Schliessen, und der Loop haelt dann nur an, statt seinen Task
+/// anzuhalten; so macht er beim naechsten Oeffnen genau dort weiter.
+///
+/// ⚑ **Einmal, auch wenn zwei Ereignisse kommen**: Auf das Schliessen
+/// folgt das Zerstoeren des Fensters, und das Protokoll soll einen
+/// Eintrag tragen und nicht zwei.
+fn notschalter_beim_schliessen() {
+    static SCHON: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if SCHON.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
+    myl_client::notaus::ausloesen("fenster geschlossen");
+    myl_senses::prozess::alle_beenden();
+}
+
 /// **Der Hinweis beim Start: Hier arbeitet eine KI.**
 ///
 /// ⛔️ **Ohne Bedingung und ohne Schalter**, anders als die Warnung
@@ -977,7 +1002,7 @@ fn starthinweis() -> myl_client::kennzeichnung::Starthinweis {
     let sprache = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())
         .map(|e| e.oberflaeche.sprache)
         .unwrap_or_default();
-    myl_client::kennzeichnung::starthinweis(sprache)
+    myl_client::kennzeichnung::starthinweis(sprache, myl_client::kennzeichnung::Flaeche::Fenster)
 }
 
 /// **Die Warnung, falls sie noch gezeigt werden soll.**
@@ -2626,11 +2651,13 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .manage(Halter::default())
         // ⚑ **Fenster zu heisst: Loop anhalten, beim naechsten Oeffnen
-        //   genau dort weiter** (Festlegung des Projektinhabers).
+        //   genau dort weiter** (Festlegung des Projektinhabers), und
+        //   ⛔️ **alles andere endet**: Das Schliessen ist der Notschalter.
         .on_window_event(|fenster, ereignis| {
             if let tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed = ereignis {
                 use tauri::Manager;
                 loop_beim_schliessen(&fenster.state::<Halter>().schleife);
+                notschalter_beim_schliessen();
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -2644,7 +2671,6 @@ fn main() {
             loop_starten,
             loop_pausieren,
             starthinweis,
-            notaus,
             protokoll_lesen,
             einstellungen,
             felder,

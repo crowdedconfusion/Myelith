@@ -626,7 +626,7 @@ fn fusszeile(modus: &str, name: &str, kiste: &str, schreibt: bool, kontext: Opti
     // ⛔️ **Die KI-Marke steht vorn und faellt nie weg** (Art. 50 Abs. 1):
     // Sie ist die dauerhafte Kennzeichnung dieser Konsole, und eine
     // Kennzeichnung, die bei schmalem Fenster verschwindet, ist keine.
-    let mut zeile = myl_client::kennzeichnung::starthinweis(Default::default()).kurz.to_string();
+    let mut zeile = myl_client::kennzeichnung::starthinweis(Default::default(), myl_client::kennzeichnung::Flaeche::Konsole).kurz.to_string();
     for teil in teile {
         let versuch = format!("{zeile} · {teil}");
         if versuch.chars().count() > breite {
@@ -2237,7 +2237,7 @@ fn kihinweis_zeigen(design: myl_client::einstellungen::Konsolendesign) {
     let sprache = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())
         .map(|e| e.oberflaeche.sprache)
         .unwrap_or_default();
-    let h = myl_client::kennzeichnung::starthinweis(sprache);
+    let h = myl_client::kennzeichnung::starthinweis(sprache, myl_client::kennzeichnung::Flaeche::Konsole);
 
     let mut block = String::new();
     for p in &h.punkte {

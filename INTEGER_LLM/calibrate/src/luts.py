@@ -268,17 +268,81 @@ def rope_masse(model_config: dict, nonlinear_spec: dict = None) -> dict:
     """
     spec = nonlinear_spec if nonlinear_spec is not None else load_nonlinear_spec()
     drehbreite = model_config.get("rotary_dim") or model_config["head_dim"]
-    return {
+    masse = {
         "zeilen": model_config["max_context"],
         "drehbreite": drehbreite,
         "paare": drehbreite // 2,
         "rope_theta": model_config.get("rope_theta") or spec["rope"]["rope_theta"],
         "frac_bits": spec["rope"]["frac_bits"],
+        # ⚑ Ohne Angabe keine Skalierung, und die Tabelle bleibt
+        # bytegleich zu jeder vor dem 2026-09-28 gebauten.
+        "frequenzen": None,
+        "amplitude": 1.0,
     }
+    art = model_config.get("rope_art")
+    if art == "yarn":
+        masse["frequenzen"], masse["amplitude"] = yarn_frequenzen(
+            drehbreite=drehbreite,
+            basis=masse["rope_theta"],
+            faktor=model_config["rope_yarn_faktor"],
+            urlaenge=model_config["rope_yarn_urlaenge"],
+        )
+    elif art is not None:
+        # ⛔️ Eine Skalierung, die dieser Bau nicht kennt, faellt laut aus
+        # und nicht still auf die ungeskalierte Tabelle zurueck: Das
+        # Modell wuerde sonst mit falschen Winkeln drehen.
+        raise ValueError(f"RoPE-Skalierung '{art}' ist nicht umgesetzt")
+    return masse
+
+
+def yarn_frequenzen(drehbreite: int, basis: float, faktor: float, urlaenge: int,
+                    schnell: float = 32.0, langsam: float = 1.0):
+    """Frequenzen je Dimensionspaar und Amplitude nach YaRN.
+
+    ⚑ **Warum es das gibt** (2026-09-28): Das ternaere 8B traegt in seiner
+    Konfiguration `rope_scaling = yarn, factor 4, original 16384`, das
+    Qwen3-8B keine. Die Referenz wendet die Skalierung auf **jede**
+    Position an, auch auf kurze Folgen; eine Tabelle ohne sie dreht also
+    anders, als das Modell trainiert wurde.
+
+    Das Verfahren (Peng et al., arXiv 2309.00071), in eigenen Worten:
+    Paare mit kurzer Wellenlaenge (viele Umdrehungen ueber die
+    urspruengliche Laenge) behalten ihre Frequenz, Paare mit langer
+    Wellenlaenge werden um `faktor` gestreckt, dazwischen wird linear
+    uebergeblendet. Die Grenzen sind die Paare, die ueber `urlaenge`
+    genau `schnell` beziehungsweise `langsam` Umdrehungen machen,
+    abgerundet und aufgerundet und auf den gueltigen Bereich begrenzt.
+    Dazu kommt ein Faktor auf cos und sin, `0,1 * ln(faktor) + 1`, der
+    die Aufmerksamkeit bei gestreckten Frequenzen schaerft.
+
+    ⚠️ **Die Amplitude ist groesser als eins** (bei Faktor 4 rund 1,139).
+    Die Tabellen tragen 8 Nachkommabits in `i16`, also 291 statt 256,
+    weit unter der Grenze; der Kern saettigt deterministisch.
+
+    Gleitkomma nur hier, beim Erzeugen der Tabelle: Die Laufzeit liest
+    ganze Zahlen.
+    """
+    paare = drehbreite // 2
+
+    def paar_fuer(umdrehungen: float) -> float:
+        return (drehbreite * math.log(urlaenge / (umdrehungen * 2 * math.pi))) / (2 * math.log(basis))
+
+    unten = max(math.floor(paar_fuer(schnell)), 0)
+    oben = min(math.ceil(paar_fuer(langsam)), drehbreite - 1)
+    if oben == unten:
+        oben += 0.001
+    frequenzen = []
+    for j in range(paare):
+        rampe = min(max((j - unten) / (oben - unten), 0.0), 1.0)
+        f_voll = 1.0 / (basis ** (2 * j / drehbreite))
+        f_gestreckt = f_voll / faktor
+        frequenzen.append(f_gestreckt * rampe + f_voll * (1.0 - rampe))
+    amplitude = 0.1 * math.log(faktor) + 1.0 if faktor > 1 else 1.0
+    return frequenzen, amplitude
 
 
 def generate_rope_luts(max_seq_len: int, head_dim: int, rope_theta: float,
-                       frac_bits: int):
+                       frac_bits: int, frequenzen=None, amplitude: float = 1.0):
     """
     RoPE-LUTs im Qwen2/LLaMA-Schema (theta_v 0.10.0, Fund-15-RoPE-Fix):
     Jedes Dimensions-Paar j (j in [0, head_dim/2)) hat seine EIGENE Frequenz
@@ -290,15 +354,21 @@ def generate_rope_luts(max_seq_len: int, head_dim: int, rope_theta: float,
     Die alte Fassung nutzte einen einzigen Winkel 2*pi*p/max_seq_len fuer alle
     Paare und benachbarte Paarung — beides weicht von Qwen2 ab und war die
     dominante Fehlerquelle (Fund 15).
+
+    `frequenzen` und `amplitude` kommen aus `rope_masse`, wenn das Modell
+    eine Skalierung traegt (YaRN, siehe `yarn_frequenzen`). Ohne sie ist
+    die Tabelle bytegleich zur bisherigen.
     """
     scale = 1 << frac_bits
     half = head_dim // 2
     sin_lut = []
     cos_lut = []
+    if frequenzen is not None and len(frequenzen) != half:
+        raise ValueError(f"{len(frequenzen)} Frequenzen fuer {half} Paare")
     for p in range(max_seq_len):
         for j in range(half):
-            theta_j = 1.0 / (rope_theta ** (j / half))
+            theta_j = frequenzen[j] if frequenzen is not None else 1.0 / (rope_theta ** (j / half))
             angle = p * theta_j
-            cos_lut.append(int(round(math.cos(angle) * scale)))
-            sin_lut.append(int(round(math.sin(angle) * scale)))
+            cos_lut.append(int(round(math.cos(angle) * amplitude * scale)))
+            sin_lut.append(int(round(math.sin(angle) * amplitude * scale)))
     return sin_lut, cos_lut

@@ -136,14 +136,6 @@ ein**, weshalb sie ebenfalls die Schreiberlaubnis brauchen.
 | mittel | „Vergleiche die Zeilenzahl von notizen.md und daten/protokoll.txt." | beide 12, also gleich |
 | komplex | „Zähle die Zeilen aller fünf Beispieldateien und nenn mir die Summe." | 12 + 6 + 12 + 3 + 7 = 40 (die README nicht mitgezählt) |
 
-### `suche_text`
-
-| | Prompt | erwartet |
-|---|---|---|
-| einfach | „Suche nach FEHLER." | zwei Zeilen aus `daten/protokoll.txt` |
-| mittel | „Steht MERKMAL-7 auch irgendwo unter daten?" | nein, nur in `notizen.md` und `unterordner/tief/versteckt.txt` |
-| komplex | „Such nach MERKMAL-7 und zähle danach die Zeilen jeder Datei, in der es vorkommt." | `suche_text`, dann zweimal `zaehle_zeilen`: 12 und 3 |
-
 ### `git_stand`
 
 | | Prompt | erwartet |

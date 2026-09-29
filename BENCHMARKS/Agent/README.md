@@ -21,6 +21,36 @@ Werkzeuge wechselt, einen Projektskill selbst findet und in Unterlagen
 recherchiert. Aufbau, Fallen und Auswertung stehen in `loop/README.md`,
 Ergebnisse unter `results/loop-*.md`.
 
+## Mehrstufige Aufträge (seit 2026-09-29)
+
+`mehrstufig.json`: sieben Aufträge, von denen jeder drei bis acht
+Werkzeugschritte braucht, mit den Fallen aus den Loop-Läufen (falsches
+Trennzeichen und leere Werte, ersetzte Unterlage und alte FAQ, Hausregel als
+Skill, Datei mit Syntaxfehler, Zahlen gegen Grenzwerte). Jeder hat eine
+**Abnahme von außen** (`abnahme`): einen Befehl, der nach dem Lauf im
+Arbeitsordner mit 0 enden muss.
+
+```sh
+python3 BENCHMARKS/Agent/mehrstufig_pruefen.py        # Abnahmen gegen Ausgangsstand und Musterlösung
+python3 -u BENCHMARKS/Agent/agentenprobe.py INTEGER_LLM/artifacts/<modell> \
+  --auftraege BENCHMARKS/Agent/mehrstufig.json --werkzeuge voll --schritte 16 \
+  --frist 1800 --json <datei.json> --mitschrift <ordner>
+```
+
+⚑ **Jeder Auftrag trägt eine Musterlösung** (`_muster`), und
+`mehrstufig_pruefen.py` hält beide Richtungen fest: Die Abnahme scheitert am
+Ausgangsstand und besteht an der Musterlösung. Eine Abnahme, die beides nicht
+trennt, misst nichts.
+
+⚑ **Wozu neben dem Loop-Szenario:** Ein Loop-Lauf dauert eine Stunde oder
+mehr, ein mehrstufiger Einzelauftrag Minuten. Zum Nachmessen nach einer
+Änderung an Werkzeugen oder Schleife ist dieser Satz da; das Loop-Szenario
+bleibt die Probe über viele Runden.
+
+`agentenprobe.py` kennt dafür `--nur a,b` (einzelne Aufträge), `--frist`
+(Sekunden je Auftrag), `--mitschrift` (die ganze Ausgabe je Auftrag) und das
+Feld `abnahme`.
+
 ## Die drei Stufen, und warum sie getrennt bleiben
 
 | Stufe | Was sie prüft | Aufträge |

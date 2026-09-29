@@ -17,12 +17,13 @@ use integer_llm_kernels::fixed_point::{clamp_i16, clamp_i16_from_i64, inv_sqrt_q
 use integer_llm_kernels::moe::{mische_experten, route_top_k};
 use integer_llm_kernels::rmsnorm::{qk_norm_heads, rmsnorm_i16};
 use integer_llm_kernels::linear::{
-    add_bias_i16, linear_w8a16, linear_w8a16_pc, linear_w8a16_pc_stapel, linear_w8a16_stapel,
+    add_bias_i16, linear_matrix, linear_matrix_pc, linear_matrix_pc_stapel, linear_matrix_stapel,
+    linear_w8a16, Gewichtsmatrix,
 };
 use integer_llm_kernels::fadenpool::rechnen_breit;
 use integer_llm_kernels::rope::rotate_half_split_i16;
 use integer_llm_kernels::attention::aufmerksamkeit_einer_abfrage;
-use integer_llm_kernels::mlp::{mlp_int_experten_je_skala, mlp_int_mit_spur, Expertenskala, Expertenteil, Mlpspur};
+use integer_llm_kernels::mlp::{mlp_int_experten_je_skala, mlp_matrix_mit_spur, Expertenskala, Expertenteil, Mlpspur};
 use integer_llm_kernels::sampling::{argmax_int, sample_integer_cdf};
 use crate::kv_cache::KVCache;
 use crate::loader::{ThetaV, LoadedScales};
@@ -58,6 +59,55 @@ pub enum Gewichtsdaten {
     Speicher(Vec<i8>),
     /// Abbild der Artefaktdatei.
     Abbild(memmap2::Mmap),
+    /// Ternaer gepackt, siehe [`Ternaerdaten`]. Gelesen wird es nur ueber
+    /// [`QTensor::matrix`].
+    Ternaer(Box<Ternaerdaten>),
+}
+
+/// Eine ternaer gepackte Matrix: Muster und Betraege aus dem Artefakt
+/// (Format in `integer_llm_kernels::ternaer`).
+///
+/// ⚑ **Dieselben Zahlen wie das int8-Gewicht, aus dem sie gepackt ist**,
+/// und deshalb dieselben Logits; die Begruendung steht im Kopf von
+/// `integer_llm_kernels::ternaer`.
+///
+/// ⛔️ **Kein `&[i8]`.** Wer die Bytes eines ternaeren Tensors als int8
+/// liest, bekommt eine Panik mit Namen statt einer falschen Zahl. Jeder
+/// Weg, der ternaere Gewichte rechnen darf, liest sie ueber
+/// [`QTensor::matrix`]; welche Tensoren ternaer sein duerfen, legt der
+/// Lader fest (`TERNAER_ZULAESSIG`).
+pub struct Ternaerdaten {
+    /// Je Gruppe 32 Byte, als `i8` gehalten, damit dieselbe Art Speicher
+    /// (Heap oder Abbild) dient wie fuer int8.
+    pub muster: Gewichtsdaten,
+    pub betraege: crate::loader::Kopfdaten,
+    pub zeilen: usize,
+    pub spalten: usize,
+}
+
+impl Ternaerdaten {
+    /// Prueft die Form einmal; der Lader ruft das beim Laden.
+    pub fn neu(muster: Gewichtsdaten, betraege: crate::loader::Kopfdaten, zeilen: usize, spalten: usize) -> Result<Self, String> {
+        let t = Ternaerdaten { muster, betraege, zeilen, spalten };
+        integer_llm_kernels::ternaer::Ternaermatrix::neu(t.musterbytes(), &t.betraege, zeilen, spalten)?;
+        Ok(t)
+    }
+
+    fn musterbytes(&self) -> &[u8] {
+        let m: &[i8] = &self.muster;
+        // SICHERHEIT: `i8` und `u8` haben dieselbe Groesse und Ausrichtung,
+        // und jedes Bitmuster ist fuer beide gueltig.
+        unsafe { std::slice::from_raw_parts(m.as_ptr() as *const u8, m.len()) }
+    }
+
+    pub fn matrix(&self) -> integer_llm_kernels::ternaer::Ternaermatrix<'_> {
+        integer_llm_kernels::ternaer::Ternaermatrix::neu(self.musterbytes(), &self.betraege, self.zeilen, self.spalten)
+            .expect("die Form ist beim Laden geprueft")
+    }
+
+    fn bytes(&self) -> usize {
+        self.muster.bytes() + 2 * self.betraege.len()
+    }
 }
 
 impl std::ops::Deref for Gewichtsdaten {
@@ -66,6 +116,11 @@ impl std::ops::Deref for Gewichtsdaten {
     fn deref(&self) -> &[i8] {
         match self {
             Gewichtsdaten::Speicher(v) => v,
+            Gewichtsdaten::Ternaer(t) => panic!(
+                "ein ternaerer Tensor ({} x {}) wurde als int8 gelesen; dieser Weg rechnet \
+                 keine ternaeren Gewichte und muesste `QTensor::matrix` nehmen",
+                t.zeilen, t.spalten
+            ),
             Gewichtsdaten::Abbild(abbild) => {
                 // SICHERHEIT: `i8` und `u8` haben dieselbe Größe und
                 // dieselbe Ausrichtung, und jedes Bitmuster ist für
@@ -129,8 +184,23 @@ impl Gewichtsdaten {
     /// 13,9 gegen 13,6 Token/s, innerhalb der Streuung; das Fenster ist
     /// deshalb nicht gebaut.
     pub fn vorbereiten(&self) {
-        if let Gewichtsdaten::Abbild(abbild) = self {
-            vorrat_ankuendigen(abbild);
+        match self {
+            Gewichtsdaten::Abbild(abbild) => vorrat_ankuendigen(abbild),
+            Gewichtsdaten::Ternaer(t) => {
+                t.muster.vorbereiten();
+                t.betraege.vorbereiten();
+            }
+            Gewichtsdaten::Speicher(_) => {}
+        }
+    }
+
+    /// Belegte Bytes, fuer jede Art; `len()` ueber `Deref` ginge bei einem
+    /// ternaeren Tensor nicht.
+    pub fn bytes(&self) -> usize {
+        match self {
+            Gewichtsdaten::Speicher(v) => v.len(),
+            Gewichtsdaten::Abbild(a) => a.len(),
+            Gewichtsdaten::Ternaer(t) => t.bytes(),
         }
     }
 }
@@ -178,8 +248,9 @@ impl std::fmt::Debug for Gewichtsdaten {
         let art = match self {
             Gewichtsdaten::Speicher(_) => "Speicher",
             Gewichtsdaten::Abbild(_) => "Abbild",
+            Gewichtsdaten::Ternaer(_) => "Ternaer",
         };
-        write!(f, "Gewichtsdaten::{art}({} Byte)", self.len())
+        write!(f, "Gewichtsdaten::{art}({} Byte)", self.bytes())
     }
 }
 
@@ -196,6 +267,43 @@ pub struct QTensor {
     /// bei 1D-Tensoren wie Biases/Gammas je Element). Ältere Artefakte mit
     /// Per-Tensor-Skala werden vom Loader als replizierter Shift geladen.
     pub shifts: Vec<u8>,    // Rechts-Shifts fuer Reskalierung, len == shape[0]
+    /// Die Drehung der Eingabe, falls die Gewichte gedreht gespeichert
+    /// sind ([`Drehung`]); sonst `None`.
+    pub drehung: Option<std::sync::Arc<Drehung>>,
+}
+
+/// **Die Drehung der Eingabe einer gedrehten Projektion.**
+///
+/// Die Gewichte sind als `W * R` gespeichert; vor der Matrix wird `x` mit
+/// `R^T` gedreht (`integer_llm_kernels::drehung`): Vorzeichen, dann
+/// Hadamard je 1024, dann auf die kalibrierte Skala `frac` der gedrehten
+/// Eingabe gerundet.
+///
+/// ⚑ **Die Vorzeichen gelten je Eingangsbreite**, nicht je Matrix: q, k, v,
+/// gate und up einer Ebene drehen mit demselben Vektor. Deshalb liegen sie
+/// hinter einem `Arc`, und [`QTensor::eingang`] erkennt gleiche Drehungen.
+#[derive(Debug)]
+pub struct Drehung {
+    pub vorzeichen: std::sync::Arc<Vec<i8>>,
+    pub frac: u8,
+}
+
+impl Drehung {
+    /// Dreht `x` von der Skala `x_frac` auf [`Self::frac`].
+    pub fn drehen(&self, x: &[i16], x_frac: u8) -> Vec<i16> {
+        integer_llm_kernels::drehung::drehen(x, x_frac, &self.vorzeichen, self.frac)
+    }
+
+    /// Dieselbe Drehung? Gleiche Vorzeichen (dasselbe Feld) und gleiche Skala.
+    ///
+    /// ⚑ **Erst der Zeiger, dann der Inhalt** (Fund 501). Derselbe Zeiger ist
+    /// der schnelle, uebliche Fall; zwei Kopien derselben Vorzeichen sind
+    /// dieselbe Drehung und kein Fehler.
+    pub fn gleich(&self, andere: &Drehung) -> bool {
+        self.frac == andere.frac
+            && (std::sync::Arc::ptr_eq(&self.vorzeichen, &andere.vorzeichen)
+                || *self.vorzeichen == *andere.vorzeichen)
+    }
 }
 
 impl QTensor {
@@ -205,6 +313,17 @@ impl QTensor {
             data: std::sync::Arc::new(Gewichtsdaten::Speicher(data)),
             shape,
             shifts,
+            drehung: None,
+        }
+    }
+
+    /// **Die Eingabe, wie diese Matrix sie braucht**: gedreht, wenn sie
+    /// gedreht gespeichert ist, sonst `x` selbst. Zurueck kommt die Eingabe
+    /// und ihre Skala.
+    pub fn eingang<'a>(&self, x: &'a [i16], x_frac: u8) -> (std::borrow::Cow<'a, [i16]>, u8) {
+        match &self.drehung {
+            Some(d) => (std::borrow::Cow::Owned(d.drehen(x, x_frac)), d.frac),
+            None => (std::borrow::Cow::Borrowed(x), x_frac),
         }
     }
 
@@ -216,6 +335,19 @@ impl QTensor {
 
     pub fn n_elements(&self) -> usize {
         self.shape.iter().product()
+    }
+
+    /// Die Gewichte fuer die linearen Kerne, int8 oder ternaer.
+    pub fn matrix(&self) -> Gewichtsmatrix<'_> {
+        match &*self.data {
+            Gewichtsdaten::Ternaer(t) => Gewichtsmatrix::Ternaer(t.matrix()),
+            andere => Gewichtsmatrix::Int8(andere),
+        }
+    }
+
+    /// Ist dieser Tensor ternaer gepackt?
+    pub fn ist_ternaer(&self) -> bool {
+        matches!(&*self.data, Gewichtsdaten::Ternaer(_))
     }
 
     pub fn rows(&self) -> usize {
@@ -434,6 +566,13 @@ pub struct DenseMlp {
 }
 
 impl DenseMlp {
+    /// Traegt eine der drei Matrizen eine Eingangsdrehung?
+    pub fn ist_gedreht(&self) -> bool {
+        self.gate_proj.drehung.is_some() || self.up_proj.drehung.is_some() || self.down_proj.drehung.is_some()
+    }
+}
+
+impl DenseMlp {
     /// **Alle drei Matrizen auf einmal ankuendigen.**
     ///
     /// ⚑ **Drei Rate und nicht einer je Matrix, wenn sie gebraucht
@@ -616,6 +755,20 @@ pub struct Zustandsschicht {
 }
 
 impl TransformerLayer {
+    /// **Traegt diese Ebene ternaer gepackte Gewichte?** Der Lader laesst
+    /// sie nur an den Projektionen der Achtsamkeit und des dichten MLP zu.
+    pub fn ist_ternaer(&self) -> bool {
+        let achtsamkeit = match &self.mischer {
+            Mischer::Achtsamkeit(a) => [&a.q_proj, &a.k_proj, &a.v_proj, &a.o_proj].iter().any(|t| t.ist_ternaer()),
+            Mischer::Zustand(z) => [&z.in_proj_qkv, &z.in_proj_z, &z.out_proj].iter().any(|t| t.ist_ternaer()),
+        };
+        let mlp = match &self.ffn {
+            Feedforward::Dense(m) => [&m.gate_proj, &m.up_proj, &m.down_proj].iter().any(|t| t.ist_ternaer()),
+            Feedforward::Moe(_) => false,
+        };
+        achtsamkeit || mlp
+    }
+
     /// Die Achtsamkeitstensoren dieser Ebene.
     ///
     /// ⚠️ **Bricht ab, wenn die Ebene rekurrent mischt.** Das ist
@@ -945,11 +1098,14 @@ impl IntegerModel {
             Feedforward::Dense(mlp) => mlp,
             Feedforward::Moe(moe) => return self.moe_stapel(moe, normen, sc, cfg, acc_mlp),
         };
-        integer_llm_kernels::mlp::mlp_int_stapel(
+        if mlp.ist_gedreht() {
+            return self.mlp_gedreht(mlp, normen, sc, cfg, acc_mlp);
+        }
+        integer_llm_kernels::mlp::mlp_matrix_stapel(
             normen,
-            &mlp.gate_proj.data,
-            &mlp.up_proj.data,
-            &mlp.down_proj.data,
+            mlp.gate_proj.matrix(),
+            mlp.up_proj.matrix(),
+            mlp.down_proj.matrix(),
             mlp.gate_proj.cols(),
             mlp.down_proj.cols(),
             &mlp.gate_proj.shifts,
@@ -1011,7 +1167,7 @@ impl IntegerModel {
         //    Rechnung wie `moe_routing`.
         let logits = linear_fuer_alle(
             normen,
-            &moe.router.data,
+            moe.router.matrix(),
             moe.router.cols(),
             &moe.router.shifts,
             sc.norm_mlp_frac,
@@ -1731,6 +1887,26 @@ impl IntegerModel {
         let hidden_dim = normed.len();
         let faeden = integer_llm_kernels::linear::kerngrenze();
         if let Some(lmh) = &self.lm_head_int16 {
+            // ⚑ **Ein ternaer gepackter int16-Kopf** rechnet jede Zeile als
+            //   dieselbe ganze Zahl wie `dot_int` ueber die ungepackte
+            //   (Kopf von `integer_llm_kernels::ternaer`); die Umskalierung
+            //   danach ist dieselbe Zeile wie unten.
+            if let crate::loader::Kopfdaten::Ternaer(t) = &lmh.data {
+                let m = t.matrix();
+                // ⚑ Ein gedrehter Kopf dreht die normierte Eingabe vorher
+                //   und rechnet dann auf deren Skala.
+                let (gedreht, ein_frac) = match lmh.drehung.as_deref() {
+                    Some(d) => (std::borrow::Cow::Owned(d.drehen(normed, self.final_norm_frac)), d.frac),
+                    None => (std::borrow::Cow::Borrowed(normed), self.final_norm_frac),
+                };
+                let e = integer_llm_kernels::ternaer::Eingabe::neu(&gedreht);
+                return integer_llm_kernels::fadenpool::rechnen_i32(self.vocab_size, faeden, |row| {
+                    let acc = m.zeile_mal_mit(row, &e);
+                    let row_frac = lmh.shifts[row] + ein_frac;
+                    let y = rescale_i64(acc, row_frac, logit_frac);
+                    y.clamp(i32::MIN as i64, i32::MAX as i64) as i32
+                });
+            }
             let werte: &[i16] = &lmh.data;
             integer_llm_kernels::fadenpool::rechnen_i32(self.vocab_size, faeden, |row| {
                 let base = row * hidden_dim;
@@ -1740,10 +1916,13 @@ impl IntegerModel {
                 y.clamp(i32::MIN as i64, i32::MAX as i64) as i32
             })
         } else {
+            let kopf = self.lm_head.matrix();
+            let (gedreht, ein_frac) = self.lm_head.eingang(normed, self.final_norm_frac);
+            let e = kopf.eingabe(&gedreht);
+            let spalten = self.lm_head.cols();
             integer_llm_kernels::fadenpool::rechnen_i32(self.vocab_size, faeden, |row| {
-                let spalten = self.lm_head.cols();
-                let acc = integer_llm_kernels::dot::dot_i8_i16(&self.lm_head.data[row * spalten..(row + 1) * spalten], normed);
-                let row_frac = self.lm_head.shifts[row] + self.final_norm_frac;
+                let acc = kopf.zeile_mal(row, spalten, &e);
+                let row_frac = self.lm_head.shifts[row] + ein_frac;
                 let y = rescale_i64(acc, row_frac, logit_frac);
                 y.clamp(i32::MIN as i64, i32::MAX as i64) as i32
             })
@@ -1968,9 +2147,30 @@ impl IntegerModel {
         // Ebene und die Ebenen 24-mal je Token. Die Zahlen ändern sich
         // dadurch nicht, `dot_i8_i16` bekommt dieselben Bytes in
         // derselben Reihenfolge.
-        let q = linear_fuer_alle(normen, &layer.achtsamkeit().q_proj.data, layer.achtsamkeit().q_proj.cols(), &layer.achtsamkeit().q_proj.shifts, sc.norm_attn_frac, sc.achtsamkeit().q_frac);
-        let k = linear_fuer_alle(normen, &layer.achtsamkeit().k_proj.data, layer.achtsamkeit().k_proj.cols(), &layer.achtsamkeit().k_proj.shifts, sc.norm_attn_frac, sc.achtsamkeit().k_frac);
-        let v = linear_fuer_alle(normen, &layer.achtsamkeit().v_proj.data, layer.achtsamkeit().v_proj.cols(), &layer.achtsamkeit().v_proj.shifts, sc.norm_attn_frac, sc.achtsamkeit().v_frac);
+        //
+        // ⚑ **Ein einzelnes Token rechnet alle drei in einer Runde**
+        //   (`linear_w8a16_buendel`, dieselbe Zeilenformel), wie die
+        //   Zustandsschicht es seit dem 35B tut. Gemessen am 2026-09-28:
+        //   eine Poolrunde kostet rund 47 us, und ein dichtes 8B hat je
+        //   Token 36 Ebenen mal drei solcher Projektionen.
+        let a = layer.achtsamkeit();
+        let (q, k, v) = match normen {
+            [x] => {
+                let mut drei = buendel_einzeln(
+                    x,
+                    &[(&a.q_proj, sc.achtsamkeit().q_frac), (&a.k_proj, sc.achtsamkeit().k_frac), (&a.v_proj, sc.achtsamkeit().v_frac)],
+                    sc.norm_attn_frac,
+                )
+                .into_iter();
+                let (q, k, v) = (drei.next().expect("q"), drei.next().expect("k"), drei.next().expect("v"));
+                (vec![q], vec![k], vec![v])
+            }
+            _ => (
+                projektion_fuer_alle(normen, &a.q_proj, sc.norm_attn_frac, sc.achtsamkeit().q_frac),
+                projektion_fuer_alle(normen, &a.k_proj, sc.norm_attn_frac, sc.achtsamkeit().k_frac),
+                projektion_fuer_alle(normen, &a.v_proj, sc.norm_attn_frac, sc.achtsamkeit().v_frac),
+            ),
+        };
 
         // Attention-Biases (Qwen2.5: q/k/v_proj besitzen welche):
         // Per-Element-Skalen, Reskalierung auf die Q/K/V-Ausgabeskala und
@@ -2289,7 +2489,7 @@ impl IntegerModel {
         acc_attn: &[u8],
     ) -> Vec<Vec<i16>> {
         let sc = &layer.scales;
-        linear_pc_fuer_alle(attn_outs, &layer.achtsamkeit().o_proj.data, layer.achtsamkeit().o_proj.cols(), &layer.achtsamkeit().o_proj.shifts, sc.achtsamkeit().attn_out_frac, acc_attn)
+        projektion_pc_fuer_alle(attn_outs, &layer.achtsamkeit().o_proj, sc.achtsamkeit().attn_out_frac, acc_attn)
     }
 
     /// Die erste Residualaddition und die Normierung vor dem MLP.
@@ -2590,6 +2790,56 @@ impl IntegerModel {
 
     /// Teilt einen flachen Q/K/V-Vektor in `n` Heads zu je `head_dim` auf.
     /// `n` ist `num_heads` fuer Q, bei GQA `num_kv_heads` fuer K/V.
+    /// **Eine dichte Feedforward-Einheit mit gedrehten Eingaengen**, fuer
+    /// eine oder viele Eingaben.
+    ///
+    /// ⚑ **Zwei Drehungen**: `x` vor gate und up (dieselbe fuer beide), und
+    /// `h = silu(gate) * up` vor down, mit den Vorzeichen der Breite 17 408
+    /// beim Bonsai-27B. Zwischen den beiden liegt SiLU, also laesst sich
+    /// `h` nicht im selben Kern drehen; gate, up und SiLU laufen trotzdem
+    /// verschmolzen (`mlp_h`), und je Eingabe wird einmal gedreht.
+    fn mlp_gedreht(
+        &self,
+        mlp: &DenseMlp,
+        xs: &[&[i16]],
+        sc: &LayerScales,
+        cfg: &ModelConfig,
+        acc: &[u8],
+    ) -> Vec<Vec<i16>> {
+        let (dg, du) = (mlp.gate_proj.drehung.as_deref(), mlp.up_proj.drehung.as_deref());
+        let gleiche_eingabe = match (dg, du) {
+            (Some(a), Some(b)) => a.gleich(b),
+            (None, None) => true,
+            _ => false,
+        };
+        assert!(gleiche_eingabe, "gate und up muessen dieselbe Eingangsdrehung tragen");
+        let hidden = mlp.gate_proj.cols();
+        let hs: Vec<Vec<i16>> = xs
+            .iter()
+            .map(|x| {
+                let (xe, xf) = mlp.gate_proj.eingang(x, sc.norm_mlp_frac);
+                integer_llm_kernels::mlp::mlp_h(
+                    &xe,
+                    mlp.gate_proj.matrix(),
+                    mlp.up_proj.matrix(),
+                    hidden,
+                    &mlp.gate_proj.shifts,
+                    &mlp.up_proj.shifts,
+                    &self.silu_lut,
+                    xf,
+                    sc.gate_frac,
+                    sc.up_frac,
+                    sc.down_in_frac,
+                    cfg.silu_in_frac,
+                    cfg.silu_lut_offset,
+                    cfg.silu_out_frac,
+                )
+            })
+            .collect();
+        let scheiben: Vec<&[i16]> = hs.iter().map(Vec::as_slice).collect();
+        projektion_pc_fuer_alle(&scheiben, &mlp.down_proj, sc.down_in_frac, acc)
+    }
+
     /// Eine dichte Feedforward-Einheit. Auch der einzelne Experte eines
     /// MoE laeuft hier durch: Er ist dieselbe Rechnung auf schmaleren
     /// Matrizen.
@@ -2602,11 +2852,17 @@ impl IntegerModel {
         acc: &[u8],
         spur: Option<&mut Mlpspur>,
     ) -> Vec<i16> {
-        mlp_int_mit_spur(
+        if mlp.ist_gedreht() {
+            // ⛔️ Mitschnitt heisst Training, und ternaere, gedrehte Gewichte
+            //   werden nicht trainiert (`Shardfehler::TernaerNichtTrainierbar`).
+            assert!(spur.is_none(), "ein gedrehter MLP rechnet ohne Mitschnitt");
+            return self.mlp_gedreht(mlp, &[x], sc, cfg, acc).pop().expect("eine Eingabe");
+        }
+        mlp_matrix_mit_spur(
             x,
-            &mlp.gate_proj.data,
-            &mlp.up_proj.data,
-            &mlp.down_proj.data,
+            mlp.gate_proj.matrix(),
+            mlp.up_proj.matrix(),
+            mlp.down_proj.matrix(),
             mlp.gate_proj.cols(),
             mlp.down_proj.cols(),
             &mlp.gate_proj.shifts,
@@ -2928,7 +3184,7 @@ impl IntegerModel {
         //   einzelnes Token ist ein Fenster der Laenge eins.
         let hidden = xs.first().map_or(0, |x| x.len());
         let tore_roh = linear_fuer_alle(
-            xs, &ge.tor.data, hidden,
+            xs, ge.tor.matrix(), hidden,
             &ge.tor.shifts, sc.norm_mlp_frac, ge.tor_frac,
         );
         let mlp = |xs: &[&[i16]]| -> Vec<Vec<i16>> {
@@ -3124,30 +3380,103 @@ fn akkumulationsskala_mischer(sc: &LayerScales) -> Vec<u8> {
 /// geprueft in `linear.rs` (`gebuendelt_ist_dasselbe`).
 fn linear_fuer_alle(
     xs: &[&[i16]],
-    w: &[i8],
+    w: Gewichtsmatrix<'_>,
     in_features: usize,
     w_shifts: &[u8],
     act_frac_bits: u8,
     out_frac_bits: u8,
 ) -> Vec<Vec<i16>> {
     match xs {
-        [x] => vec![linear_w8a16(x, w, in_features, w_shifts, act_frac_bits, out_frac_bits)],
-        _ => linear_w8a16_stapel(xs, w, in_features, w_shifts, act_frac_bits, out_frac_bits),
+        [x] => vec![linear_matrix(x, w, in_features, w_shifts, act_frac_bits, out_frac_bits)],
+        _ => linear_matrix_stapel(xs, w, in_features, w_shifts, act_frac_bits, out_frac_bits),
     }
+}
+
+/// Wie [`linear_fuer_alle`], mit der Eingangsdrehung des Tensors
+/// ([`QTensor::drehung`]); ohne Drehung genau `linear_fuer_alle`.
+fn projektion_fuer_alle(xs: &[&[i16]], t: &QTensor, x_frac: u8, out_frac: u8) -> Vec<Vec<i16>> {
+    match &t.drehung {
+        None => linear_fuer_alle(xs, t.matrix(), t.cols(), &t.shifts, x_frac, out_frac),
+        Some(d) => {
+            let gedreht: Vec<Vec<i16>> = xs.iter().map(|x| d.drehen(x, x_frac)).collect();
+            let scheiben: Vec<&[i16]> = gedreht.iter().map(Vec::as_slice).collect();
+            linear_fuer_alle(&scheiben, t.matrix(), t.cols(), &t.shifts, d.frac, out_frac)
+        }
+    }
+}
+
+/// Wie [`projektion_fuer_alle`], mit einer Ausgangsskala je Kanal.
+fn projektion_pc_fuer_alle(xs: &[&[i16]], t: &QTensor, x_frac: u8, out_frac: &[u8]) -> Vec<Vec<i16>> {
+    match &t.drehung {
+        None => linear_pc_fuer_alle(xs, t.matrix(), t.cols(), &t.shifts, x_frac, out_frac),
+        Some(d) => {
+            let gedreht: Vec<Vec<i16>> = xs.iter().map(|x| d.drehen(x, x_frac)).collect();
+            let scheiben: Vec<&[i16]> = gedreht.iter().map(Vec::as_slice).collect();
+            linear_pc_fuer_alle(&scheiben, t.matrix(), t.cols(), &t.shifts, d.frac, out_frac)
+        }
+    }
+}
+
+/// **Mehrere Matrizen auf derselben Eingabe in einer Runde**, je Matrix
+/// eine Ausgabe auf ihrer Skala. Dieselbe Zeilenformel wie
+/// [`linear_matrix`]; geprueft in `ein_buendel_ist_dasselbe_wie_einzeln`.
+fn buendel_einzeln(x: &[i16], matrizen: &[(&QTensor, u8)], act_frac_bits: u8) -> Vec<Vec<i16>> {
+    use integer_llm_kernels::linear::{linear_w8a16_buendel, Ausgangsskala, Buendelteil};
+    // ⚑ **Jede verschiedene Drehung einmal** ([`Drehung::gleich`]): q, k
+    //   und v einer Ebene teilen sich eine, in_proj_qkv und in_proj_z
+    //   ebenso; in_proj_a und in_proj_b sind ungedreht.
+    let mut gedreht: Vec<(&Drehung, Vec<i16>)> = Vec::new();
+    for (m, _) in matrizen {
+        if let Some(d) = m.drehung.as_deref() {
+            if !gedreht.iter().any(|(e, _)| e.gleich(d)) {
+                gedreht.push((d, d.drehen(x, act_frac_bits)));
+            }
+        }
+    }
+    let teile: Vec<Buendelteil<'_>> = matrizen
+        .iter()
+        .map(|(m, frac)| {
+            let (x, act) = match m.drehung.as_deref() {
+                Some(d) => {
+                    let (_, v) = gedreht.iter().find(|(e, _)| e.gleich(d)).expect("eben gedreht");
+                    (v.as_slice(), d.frac)
+                }
+                None => (x, act_frac_bits),
+            };
+            Buendelteil {
+                w: m.matrix(),
+                x,
+                in_features: m.cols(),
+                w_shifts: &m.shifts,
+                act_frac_bits: act,
+                aus: Ausgangsskala::Eine(*frac),
+            }
+        })
+        .collect();
+    let flach = linear_w8a16_buendel(&teile);
+    let mut rest = flach.as_slice();
+    matrizen
+        .iter()
+        .map(|(m, _)| {
+            let (vorne, hinten) = rest.split_at(m.shifts.len());
+            rest = hinten;
+            vorne.to_vec()
+        })
+        .collect()
 }
 
 /// Wie [`linear_fuer_alle`], mit einer Ausgangsskala je Kanal (Fund 20).
 fn linear_pc_fuer_alle(
     xs: &[&[i16]],
-    w: &[i8],
+    w: Gewichtsmatrix<'_>,
     in_features: usize,
     w_shifts: &[u8],
     act_frac_bits: u8,
     out_frac_bits: &[u8],
 ) -> Vec<Vec<i16>> {
     match xs {
-        [x] => vec![linear_w8a16_pc(x, w, in_features, w_shifts, act_frac_bits, out_frac_bits)],
-        _ => linear_w8a16_pc_stapel(xs, w, in_features, w_shifts, act_frac_bits, out_frac_bits),
+        [x] => vec![linear_matrix_pc(x, w, in_features, w_shifts, act_frac_bits, out_frac_bits)],
+        _ => linear_matrix_pc_stapel(xs, w, in_features, w_shifts, act_frac_bits, out_frac_bits),
     }
 }
 
@@ -3247,7 +3576,6 @@ impl IntegerModel {
         let sk = &zs.skalen;
         let ebene = layer.layer_idx;
         let ein_frac = layer.scales.norm_attn_frac;
-        let hidden = self.hidden_size;
         let faeden = integer_llm_kernels::fadenpool::faeden();
 
         // --- 1. Die vier Projektionen, fuer alle Token des Fensters zugleich.
@@ -3269,29 +3597,10 @@ impl IntegerModel {
         ];
         let [qkv, z, b_roh, a_roh]: [Vec<Vec<i16>>; 4] = match normen {
             [x] => {
-                use integer_llm_kernels::linear::{linear_w8a16_buendel, Ausgangsskala, Buendelteil};
-                let teile: Vec<Buendelteil<'_>> = matrizen
-                    .iter()
-                    .map(|(m, frac)| Buendelteil {
-                        w: &m.data,
-                        x,
-                        in_features: hidden,
-                        w_shifts: &m.shifts,
-                        act_frac_bits: ein_frac,
-                        aus: Ausgangsskala::Eine(*frac),
-                    })
-                    .collect();
-                let flach = linear_w8a16_buendel(&teile);
-                let mut rest = flach.as_slice();
-                matrizen.map(|(m, _)| {
-                    let (vorne, hinten) = rest.split_at(m.shifts.len());
-                    rest = hinten;
-                    vec![vorne.to_vec()]
-                })
+                let mut vier = buendel_einzeln(x, &matrizen, ein_frac).into_iter();
+                matrizen.map(|_| vec![vier.next().expect("vier Projektionen")])
             }
-            _ => matrizen.map(|(m, frac)| {
-                linear_fuer_alle(normen, &m.data, hidden, &m.shifts, ein_frac, frac)
-            }),
+            _ => matrizen.map(|(m, frac)| projektion_fuer_alle(normen, m, ein_frac, frac)),
         };
 
         // --- 2. Die kausale Faltung, tiefenweise mit SiLU.
@@ -3513,9 +3822,8 @@ impl IntegerModel {
         // ⚑ **Per Kanal**, wie `projektion_o` bei der Achtsamkeit, und
         //   gebuendelt wie sie.
         let zeilen: Vec<&[i16]> = getorte.iter().map(Vec::as_slice).collect();
-        linear_pc_fuer_alle(
-            &zeilen, &zs.out_proj.data, zs.out_proj.cols(),
-            &zs.out_proj.shifts, sk.norm_aus_frac, out_frac,
+        projektion_pc_fuer_alle(
+            &zeilen, &zs.out_proj, sk.norm_aus_frac, out_frac,
         )
     }
 }
@@ -3733,4 +4041,74 @@ fn abfrage_und_tor_trennen(roh: &[i16], koepfe: usize, kopf_dim: usize) -> (Vec<
         tor.extend_from_slice(&roh[basis + kopf_dim..basis + 2 * kopf_dim]);
     }
     (abfrage, tor)
+}
+
+#[cfg(test)]
+mod drehungstests {
+    use super::*;
+    use std::sync::Arc;
+
+    fn zufall(n: usize, saat: u64) -> Vec<u64> {
+        let mut x = saat | 1;
+        (0..n)
+            .map(|_| {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                x
+            })
+            .collect()
+    }
+
+    fn tensor(zeilen: usize, spalten: usize, saat: u64, drehung: Option<Arc<Drehung>>) -> QTensor {
+        let w: Vec<i8> = zufall(zeilen * spalten, saat).into_iter().map(|v| (v % 255) as i8).collect();
+        let mut t = QTensor::aus_speicher(w, vec![zeilen, spalten], vec![5; zeilen]);
+        t.drehung = drehung;
+        t
+    }
+
+    /// **Das Buendel mit gedrehten und ungedrehten Teilen ist jede
+    /// Projektion einzeln**, mit ausdruecklich gedrehter Eingabe; gleiche
+    /// Drehungen (derselbe Vorzeichenvektor, dieselbe Skala) rechnen einmal.
+    /// ⚑ **Zwei Kopien derselben Vorzeichen sind dieselbe Drehung** (Fund
+    /// 501), verschiedene Vorzeichen oder Skalen nicht.
+    #[test]
+    fn gleiche_vorzeichen_in_zwei_kopien_sind_gleich() {
+        let v: Vec<i8> = (0..1024).map(|i| if i % 3 == 0 { -1 } else { 1 }).collect();
+        let a = Drehung { vorzeichen: Arc::new(v.clone()), frac: 9 };
+        let b = Drehung { vorzeichen: Arc::new(v.clone()), frac: 9 };
+        assert!(a.gleich(&b), "zwei Kopien derselben Vorzeichen");
+        let c = Drehung { vorzeichen: Arc::new(v.iter().map(|x| -x).collect()), frac: 9 };
+        assert!(!a.gleich(&c), "andere Vorzeichen");
+        let d = Drehung { vorzeichen: Arc::clone(&a.vorzeichen), frac: 10 };
+        assert!(!a.gleich(&d), "andere Skala");
+    }
+
+    #[test]
+    fn das_buendel_dreht_je_teil_richtig() {
+        let breite = 2048;
+        let vz: Arc<Vec<i8>> = Arc::new(zufall(breite, 3).into_iter().map(|v| if v & 1 == 0 { 1 } else { -1 }).collect());
+        let d = Arc::new(Drehung { vorzeichen: vz.clone(), frac: 4 });
+        let d_gleich = Arc::new(Drehung { vorzeichen: vz.clone(), frac: 4 });
+        let d_andere_skala = Arc::new(Drehung { vorzeichen: vz, frac: 3 });
+        assert!(d.gleich(&d_gleich) && !d.gleich(&d_andere_skala));
+        let q = tensor(64, breite, 11, Some(d.clone()));
+        let k = tensor(32, breite, 12, Some(d_gleich));
+        let a = tensor(8, breite, 13, None);
+        let z = tensor(16, breite, 14, Some(d_andere_skala));
+        let x: Vec<i16> = zufall(breite, 99).into_iter().map(|v| (v % 2001) as i16 - 1000).collect();
+        let x_frac = 6;
+        let buendel = buendel_einzeln(&x, &[(&q, 7), (&k, 6), (&a, 5), (&z, 7)], x_frac);
+        for (i, (t, frac)) in [(&q, 7u8), (&k, 6), (&a, 5), (&z, 7)].into_iter().enumerate() {
+            let (xe, xf) = t.eingang(&x, x_frac);
+            let einzeln = linear_w8a16(&xe, &t.data, breite, &t.shifts, xf, frac);
+            assert_eq!(buendel[i], einzeln, "Teil {i}");
+            let ueber_helfer = projektion_fuer_alle(&[&x], t, x_frac, frac);
+            assert_eq!(ueber_helfer[0], einzeln, "Teil {i} ueber projektion_fuer_alle");
+            assert!(einzeln.iter().any(|&v| v != 0), "Teil {i} rechnet mit Nullen");
+        }
+        // Ohne Drehung ist die Eingabe `x` selbst, und mit Drehung nicht.
+        assert_eq!(&*a.eingang(&x, x_frac).0, x.as_slice());
+        assert_ne!(&*q.eingang(&x, x_frac).0, x.as_slice());
+    }
 }

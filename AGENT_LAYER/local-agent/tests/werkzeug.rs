@@ -176,12 +176,41 @@ fn ein_unlesbarer_block_wird_gemeldet() {
     assert!(u.roh.contains("kein JSON"), "{u:?}");
 }
 
-/// ⚑ **Ein offener Block ohne Ende wird gemeldet**, nicht verschluckt.
+/// ⚑ **Ein offener Block ohne Ende wird gemeldet**, nicht verschluckt,
+/// und als abgeschnitten.
 #[test]
 fn ein_offener_block_wird_gemeldet() {
     let v = vorschlaege("<tool_call>{\"name\":\"zeit\"");
     assert_eq!(v.len(), 1);
-    assert!(v[0].is_err(), "{v:?}");
+    assert!(v[0].as_ref().is_err_and(|u| u.abgeschnitten), "{v:?}");
+    let v = vorschlaege("<tool_call>{das ist kein JSON}</tool_call>");
+    assert!(v[0].as_ref().is_err_and(|u| !u.abgeschnitten), "vollstaendig, nur falsch: {v:?}");
+}
+
+/// ⚑ **Eindeutige Formfehler werden gelesen** (2026-09-29, 27B schrieb
+/// `{"search_skill", "arguments": …}`), mehrdeutige nicht.
+#[test]
+fn eindeutige_formfehler_werden_gelesen() {
+    let erwartet = Vorschlag { name: "search_skill".into(), arguments: serde_json::json!({"anfrage": "Datum"}) };
+    for block in [
+        "{\"search_skill\", \"arguments\": {\"anfrage\": \"Datum\"}}",
+        "{\"name\": \"search_skill\", \"parameters\": {\"anfrage\": \"Datum\"}}",
+        "{\"name\": \"search_skill\", \"arguments\": \"{\\\"anfrage\\\": \\\"Datum\\\"}\"}",
+        "```json\n{\"name\": \"search_skill\", \"arguments\": {\"anfrage\": \"Datum\"}}\n```",
+        "{\"type\": \"function\", \"function\": {\"name\": \"search_skill\", \"arguments\": {\"anfrage\": \"Datum\"}}}",
+    ] {
+        let v = vorschlaege(&format!("<tool_call>{block}</tool_call>"));
+        assert_eq!(v.len(), 1, "{block}");
+        assert_eq!(v[0].as_ref().expect(block), &erwartet, "{block}");
+    }
+    // Ohne Argumente ein leeres Objekt.
+    let v = vorschlaege("<tool_call>{\"list_history\"}</tool_call>");
+    assert_eq!(v[0].as_ref().unwrap().arguments, serde_json::json!({}));
+    // Gegenproben: kein Name, ein Doppelpunkt statt Komma, ein Name mit Leerzeichen.
+    for block in ["{\"arguments\": {}}", "{\"search_skill\": {\"anfrage\": \"x\"}}", "{\"such mal\", \"arguments\": {}}"] {
+        let v = vorschlaege(&format!("<tool_call>{block}</tool_call>"));
+        assert!(v[0].is_err(), "{block} haette nicht gelesen werden duerfen: {v:?}");
+    }
 }
 
 /// Ohne Aufruf kein Vorschlag.

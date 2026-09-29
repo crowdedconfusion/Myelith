@@ -327,6 +327,10 @@ fn woerter(t: &str) -> Vec<String> {
 pub struct Treffer {
     pub skill: Skill,
     pub punkte: u32,
+    /// **Die Punkte, nach Seltenheit der Woerter gewichtet**, fuer die
+    /// Reihenfolge. `punkte` bleibt ungewichtet, damit die Schwellen
+    /// (`STARK_AB`, `HINWEIS_AB`) ihre Bedeutung behalten.
+    pub rang: u32,
 }
 
 /// **Sucht Skills nach den Woertern einer Anfrage.**
@@ -341,35 +345,53 @@ pub fn suchen_in(o: &Orte, anfrage: &str, hoechstens: usize) -> Vec<Treffer> {
     // ⚑ **Alle nur auf eine leere Anfrage** (oder `*`). Eine Anfrage aus
     //   lauter Fuellwoertern ist keine leere, sondern eine ohne Treffer.
     if anfrage.trim().is_empty() || anfrage.trim() == "*" {
-        return alle.into_iter().map(|skill| Treffer { skill, punkte: 0 }).collect();
+        return alle.into_iter().map(|skill| Treffer { skill, punkte: 0, rang: 0 }).collect();
     }
     let w = woerter(anfrage);
-    let mut aus: Vec<Treffer> = alle
-        .into_iter()
-        .filter_map(|skill| {
-            let name = falten(&skill.name);
-            let stich: Vec<String> = skill.stichworte.iter().map(|s| falten(s)).collect();
-            let satz = falten(&skill.satz);
-            let text = falten(&skill.text);
-            let mut punkte = 0u32;
-            for x in &w {
-                if name.contains(x.as_str()) {
-                    punkte += 6;
-                }
-                if stich.iter().any(|s| s.contains(x.as_str()) || x.contains(s.as_str())) {
-                    punkte += 4;
-                }
-                if satz.contains(x.as_str()) {
-                    punkte += 3;
-                }
-                if text.contains(x.as_str()) {
-                    punkte += 1;
-                }
-            }
-            (punkte > 0).then_some(Treffer { skill, punkte })
+    // Je Skill die gefalteten Felder, einmal.
+    let felder: Vec<(String, Vec<String>, String, String)> = alle
+        .iter()
+        .map(|s| (falten(&s.name), s.stichworte.iter().map(|x| falten(x)).collect(), falten(&s.satz), falten(&s.text)))
+        .collect();
+    let trifft = |x: &str, f: &(String, Vec<String>, String, String)| -> [bool; 4] {
+        [
+            f.0.contains(x),
+            f.1.iter().any(|s| s.contains(x) || x.contains(s.as_str())),
+            f.2.contains(x),
+            f.3.contains(x),
+        ]
+    };
+    // ⚑ **Seltene Woerter zaehlen mehr** (2026-09-29), die Idee hinter
+    //   TF-IDF und BM25, ganzzahlig: Ein Wort, das Name, Stichwort oder
+    //   Beschreibung vieler Skills trifft, sagt wenig ueber die Aufgabe.
+    //   📌 „Bring das Skript zum Laufen … als Tabelle schreiben" empfahl
+    //   ungewichtet `bericht-schreiben` vor `fehlersuche`, weil „schreiben"
+    //   im Namen steht. Das Gewicht ist `(n + 1) / df`, mit `df` der Zahl der
+    //   Skills, deren Kopf (Name, Stichworte, Beschreibung) das Wort traegt.
+    let n = alle.len() as u32;
+    let gewicht: Vec<u32> = w
+        .iter()
+        .map(|x| {
+            let df = felder.iter().filter(|f| trifft(x, f)[..3].iter().any(|b| *b)).count() as u32;
+            (n + 1) / df.max(1)
         })
         .collect();
-    aus.sort_by(|a, b| b.punkte.cmp(&a.punkte).then_with(|| a.skill.name.cmp(&b.skill.name)));
+    let mut aus: Vec<Treffer> = alle
+        .into_iter()
+        .zip(felder.iter())
+        .filter_map(|(skill, f)| {
+            let mut punkte = 0u32;
+            let mut rang = 0u32;
+            for (x, g) in w.iter().zip(&gewicht) {
+                let [im_namen, im_stichwort, im_satz, im_text] = trifft(x, f);
+                let p = 6 * u32::from(im_namen) + 4 * u32::from(im_stichwort) + 3 * u32::from(im_satz) + u32::from(im_text);
+                punkte += p;
+                rang += p * g;
+            }
+            (punkte > 0).then_some(Treffer { skill, punkte, rang })
+        })
+        .collect();
+    aus.sort_by(|a, b| b.rang.cmp(&a.rang).then_with(|| b.punkte.cmp(&a.punkte)).then_with(|| a.skill.name.cmp(&b.skill.name)));
     aus.truncate(hoechstens);
     aus
 }
@@ -381,6 +403,49 @@ pub const STARK_AB: u32 = 3;
 
 pub fn suchen(wurzel: Option<&Path>, anfrage: &str, hoechstens: usize) -> Vec<Treffer> {
     suchen_in(&Orte::fuer(wurzel), anfrage, hoechstens)
+}
+
+/// **Ab wie vielen Punkten ein Skill im Auftrag genannt wird**: ein Wort
+/// im Namen, oder in Stichwort und Beschreibung zugleich. Ein Treffer nur in
+/// der Anleitung reicht nicht; ein langer Auftrag beruehrt nebenbei fast
+/// jede Anleitung.
+pub const HINWEIS_AB: u32 = 6;
+
+/// **Die Skills, die zu einem Auftrag passen, als Zeilen fuer den Auftrag.**
+///
+/// # ⚑ Warum der Auftrag sie nennt, statt auf die Suche zu warten
+///
+/// 📌 **Gemessen am 2026-09-28:** Im Loop-Szenario schrieb das 30B einen
+/// Bericht „nach unseren Hausregeln fuer Quellenangaben", ohne je nach dem
+/// Skill `hausregeln-quellen` zu suchen, und verfehlte das Format ganz; das
+/// 27B scheiterte beim Suchen am Aufrufformat. Die Anweisung „nutze Skills"
+/// steht im Systemprompt und wird trotzdem uebergangen.
+///
+/// ⚑ **Nennen und nicht liefern**, nach dem Muster, das sich in
+/// Agentensystemen bewaehrt hat (schrittweise Offenlegung): Name und Satz
+/// stehen im Auftrag, die Anleitung holt `learn_skill`. So traegt der
+/// Kontext nur, was passen koennte, und das Modell entscheidet.
+pub fn hinweis_fuer_auftrag(wurzel: Option<&Path>, auftrag: &str, lernen: &str, deutsch: bool) -> Option<String> {
+    let treffer: Vec<Treffer> =
+        suchen(wurzel, auftrag, 3).into_iter().filter(|t| t.punkte >= HINWEIS_AB).collect();
+    if treffer.is_empty() {
+        return None;
+    }
+    let liste: Vec<String> =
+        treffer.iter().map(|t| format!("- {}: {}", t.skill.name, kuerzen(&t.skill.satz))).collect();
+    Some(if deutsch {
+        format!(
+            "\n\nSkills, die zu diesem Auftrag passen koennten; `{lernen}` liefert die Anleitung. \
+             Passt einer, lerne ihn, bevor du anfaengst:\n{}",
+            liste.join("\n")
+        )
+    } else {
+        format!(
+            "\n\nSkills that may fit this task; `{lernen}` returns the instructions. \
+             If one fits, learn it before you start:\n{}",
+            liste.join("\n")
+        )
+    })
 }
 
 // ── Lernen ──
@@ -540,6 +605,29 @@ mod proben {
             std::fs::read_to_string(o.join("README.md")).expect("README"),
             "eigener Text",
             "der zweite Aufruf hat den Hinweis ueberschrieben"
+        );
+    }
+
+    /// ⚑ **Der Auftrag nennt passende Skills, und nur passende.**
+    #[test]
+    fn der_auftrag_nennt_passende_skills() {
+        let d = tempfile::tempdir().expect("Verzeichnis");
+        let o = anlegen(d.path()).expect("anlegen");
+        std::fs::create_dir_all(o.join("hausregeln-datum")).expect("Ordner");
+        std::fs::write(
+            o.join("hausregeln-datum/SKILL.md"),
+            "---\nbeschreibung: Die Hausregel fuer Datumsangaben in Berichten.\nstichworte: datum, datumsformat, hausregel\n---\n\n# Datum\n\nTT.MM.JJJJ\n",
+        )
+        .expect("schreiben");
+        let h = hinweis_fuer_auftrag(Some(d.path()), "Wie schreibe ich ein Datum? Es gibt eine Hausregel.", "learn_skill", false)
+            .expect("ein passender Skill");
+        assert!(h.contains("- hausregeln-datum: Die Hausregel"), "{h}");
+        assert!(!h.contains("TT.MM.JJJJ"), "der Hinweis liefert die Anleitung mit: {h}");
+        // Gegenprobe: ein Auftrag, der nichts damit zu tun hat.
+        assert!(
+            hinweis_fuer_auftrag(Some(d.path()), "Zaehle die Zeilen von notizen.md.", "learn_skill", false)
+                .is_none_or(|h| !h.contains("hausregeln-datum")),
+            "ein unpassender Skill wurde genannt"
         );
     }
 

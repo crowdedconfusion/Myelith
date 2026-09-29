@@ -238,6 +238,13 @@ pub struct Fortsetzung {
     /// Die Token, deren Eintraege im Speicher stehen, in dieser Reihenfolge.
     pub(crate) token: Vec<usize>,
     pub(crate) cache: KVCache,
+    /// **Vor welchem Token der Zustand aufgehoben wird**, bei Modellen mit
+    /// rekurrenten Ebenen (siehe [`Fortsetzung::merkmarke_setzen`]).
+    pub(crate) merkmarke: Option<usize>,
+    /// **Der aufgehobene rekurrente Zustand und die Zahl der Token, nach
+    /// denen er genommen wurde.** Gueltig, solange die ersten so vielen
+    /// Token in `token` unveraendert stehen.
+    pub(crate) merkpunkt: Option<(usize, crate::zustandsspeicher::Zustandsspeicher)>,
 }
 
 /// Was eine fortgesetzte Erzeugung wiederverwenden konnte.
@@ -256,7 +263,31 @@ pub struct Wiederverwendung {
 impl Fortsetzung {
     /// Ein leerer Speicher fuer dieses Modell.
     pub fn neu(model: &IntegerModel) -> Self {
-        Self { token: Vec::new(), cache: KVCache::new(model.num_layers, model.num_kv_heads) }
+        Self {
+            token: Vec::new(),
+            cache: KVCache::new(model.num_layers, model.num_kv_heads),
+            merkmarke: None,
+            merkpunkt: None,
+        }
+    }
+
+    /// **Setzt das Token, vor dessen letztem Vorkommen im Prompt der
+    /// rekurrente Zustand aufgehoben wird.**
+    ///
+    /// ⚑ **Warum vor der letzten Marke und nicht am Ende des Prompts.** Ein
+    /// Chatverlauf endet mit dem Kopf der naechsten Antwort
+    /// (`<|im_start|>assistant`). Der folgende Prompt enthaelt an dieser
+    /// Stelle die neu gerenderte Antwort, und die weicht fast immer schon
+    /// in den ersten Token von dem ab, was erzeugt wurde. Alles **vor** der
+    /// letzten Marke ist dagegen der alte Verlauf und bleibt Token fuer
+    /// Token gleich. Dort aufgehoben, kann der naechste Aufruf den ganzen
+    /// alten Verlauf wiederverwenden.
+    ///
+    /// Ohne Marke wird am Ende des Prompts aufgehoben. Modelle ohne
+    /// rekurrente Ebenen brauchen das alles nicht; fuer sie ist die Marke
+    /// wirkungslos.
+    pub fn merkmarke_setzen(&mut self, marke: Option<usize>) {
+        self.merkmarke = marke;
     }
 
     /// Wie viele Positionen belegt sind: Prompt und erzeugte Token des
@@ -271,6 +302,50 @@ impl Fortsetzung {
         //   Zustand; der Rueckgabewert kann deshalb hier entfallen.
         let _ = self.cache.kuerzen(0);
         self.token.clear();
+        self.merkpunkt = None;
+    }
+
+    /// Hebt den rekurrenten Zustand nach den ersten `n` Token auf.
+    fn merken(&mut self, n: usize) {
+        self.merkpunkt = self.cache.zustand_kopie().map(|z| (n, z));
+    }
+
+    /// **Kuerzt auf hoechstens `gewuenscht` Token und gibt zurueck, wie
+    /// viele stehen bleiben.**
+    ///
+    /// ⚑ **Mit rekurrentem Zustand drei Faelle** (2026-09-28):
+    /// 1. Es ist nichts zu kuerzen: Der Zustand steht genau bei
+    ///    `gewuenscht`, alles bleibt.
+    /// 2. Ein Merkpunkt liegt bei hoechstens `gewuenscht`: zurueck auf ihn.
+    /// 3. Sonst null, wie vor dem Merkpunkt.
+    ///
+    /// 📌 **Die Position zaehlt hier und nicht im Zustandsspeicher.** Ein
+    /// erster Entwurf las `Zustandsspeicher::laenge`; die wird im Rechenweg
+    /// nie weitergezaehlt, der Merkpunkt griff nie, und erst die Probe
+    /// `fortgesetzt_mit_zustand_verwendet_bis_zur_marke_wieder` zeigte es.
+    /// Hier dagegen steht jedes gerechnete Token in `token`.
+    fn kuerzen(&mut self, gewuenscht: usize) -> usize {
+        let gemeinsam = if !self.cache.hat_zustand() {
+            self.cache.kuerzen(gewuenscht)
+        } else if gewuenscht == self.token.len() {
+            // Der Zustand steht genau hier; der KV-Speicher ebenso.
+            gewuenscht
+        } else {
+            match self.merkpunkt.as_ref() {
+                Some((p, z)) if *p <= gewuenscht && *p <= self.token.len() => {
+                    let p = *p;
+                    self.cache.zurueck_auf(p, z);
+                    p
+                }
+                _ => self.cache.kuerzen(0),
+            }
+        };
+        if gemeinsam == 0 {
+            // Eine neue Folge beginnt ohne den Merkpunkt der alten.
+            self.merkpunkt = None;
+        }
+        self.token.truncate(gemeinsam);
+        gemeinsam
     }
 }
 
@@ -320,9 +395,34 @@ pub fn dekodieren_fortgesetzt(
     // 📌 **Ohne diesen Rueckgabewert bliebe der Zustand stehen, waehrend
     // der KV-Speicher kuerzt**, und das Modell erzeugte plausiblen, aber
     // falschen Text. Niemand saehe es, weil die Ausgabe gut aussieht.
-    let gemeinsam = speicher.cache.kuerzen(gewuenscht);
-    speicher.token.truncate(gemeinsam);
-    let mut logits = model.prompt_vorbereiten_ab(token_ids, gemeinsam, &mut speicher.cache);
+    let gemeinsam = speicher.kuerzen(gewuenscht);
+    // ⚑ **Bei rekurrenten Ebenen wird der Zustand unterwegs aufgehoben**,
+    //   vor der letzten Merkmarke (siehe `Fortsetzung::merkmarke_setzen`).
+    //   Die Vorbereitung laeuft dafuer in zwei Stuecken; ein Stueck und
+    //   zwei rechnen dieselben Zahlen, denn die gebuendelte Vorbereitung
+    //   ist Position fuer Position die tokenweise (geprueft in
+    //   `die_gebuendelten_logits_sind_die_tokenweisen`). Die Logits am Ende
+    //   des ersten Stuecks liest niemand.
+    let rekurrent = model.layers.iter().any(|l| l.ist_rekurrent());
+    let merkstelle = speicher
+        .merkmarke
+        .filter(|_| rekurrent)
+        .and_then(|m| token_ids.iter().rposition(|&t| t == m))
+        .filter(|&q| q > gemeinsam && q < token_ids.len());
+    let mut logits = match merkstelle {
+        Some(q) => {
+            let _ = model.prompt_vorbereiten_ab(&token_ids[..q], gemeinsam, &mut speicher.cache);
+            speicher.merken(q);
+            model.prompt_vorbereiten_ab(token_ids, q, &mut speicher.cache)
+        }
+        None => {
+            let l = model.prompt_vorbereiten_ab(token_ids, gemeinsam, &mut speicher.cache);
+            if rekurrent {
+                speicher.merken(token_ids.len());
+            }
+            l
+        }
+    };
     speicher.token = token_ids.to_vec();
     let mut wiederverwendung =
         Wiederverwendung { wiederverwendet: gemeinsam, neu: token_ids.len() - gemeinsam, kontext_voll: false };

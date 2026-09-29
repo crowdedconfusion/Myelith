@@ -120,18 +120,29 @@
       "werkzeug_erwartet": "search_files"
     },
     {
-      "name": "w_suche_text",
-      "stufe": 1,
+      "name": "w_learn_skill",
+      "stufe": 2,
       "satz": "voll",
-      "auftrag": "In welcher Zeile steht das Wort Schwellwert, und welche Zahl steht dort? Nenne Zeilennummer und Zahl.",
+      "schreiben": true,
+      "auftrag": "Wie muss in diesem Projekt ein Datum in einem Bericht geschrieben werden? Es gibt dafuer eine Hausregel.",
       "dateien": {
-        "konfig.txt": "# Konfiguration\n\nname = Probe\nSchwellwert = 8123\nende\n"
+        ".AGENT/skills/hausregeln-datum/SKILL.md": "---\nbeschreibung: Die Hausregel fuer Datumsangaben in Berichten.\nstichworte: datum, datumsangabe, datumsformat, bericht, hausregel, date, format\n---\n\n# Hausregel fuer Datumsangaben\n\nJedes Datum steht in Berichten im Format TT.MM.JJJJ und hinter ihm das Kennwort DATUMSREGEL-42.\n"
       },
       "antwort_enthaelt": [
-        "8123"
+        "TT.MM.JJJJ"
       ],
-      "werkzeug_erwartet": "suche_text",
-      "schreiben": true
+      "werkzeug_erwartet": "learn_skill"
+    },
+    {
+      "name": "w_web_abgeschaltet",
+      "stufe": 1,
+      "satz": "voll",
+      "schreiben": true,
+      "auftrag": "Recherchiere online, wie man Avocados anbaut.",
+      "antwort_enthaelt": [
+        "agent.web_recherche"
+      ],
+      "werkzeug_erwartet": "web_search"
     },
     {
       "name": "w_dateibaum",

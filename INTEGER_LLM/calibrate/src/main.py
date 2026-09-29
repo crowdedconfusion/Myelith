@@ -347,9 +347,23 @@ def main():
     print(f"[calibrate] Modell: {MODEL_NAME} ({HF_MODEL_ID}), "
           f"verifiziert gegen {config_vorab['verified']}")
 
-    model_dir = local_model_dir(HF_MODEL_ID.split("/")[-1])
-    print(f"[calibrate] Lade Referenzmodell aus {model_dir} ...")
-    model, tokenizer = load_reference_model(model_dir)
+    # ⚑ **Ein ternaeres, gedrehtes Paket laedt anders** (2026-09-28): Es
+    #   bleibt gepackt im Speicher, und jede gedrehte Linearschicht entpackt
+    #   erst im Vorwaertslauf. Ein 27B in BF16 (54 GB) passte nicht, und ein
+    #   dichtes Modell liest je Durchgang alle Gewichte. Die Entzerrung der
+    #   Normgewichte (Fund 336) entfaellt: Sie verschoebe Gewicht in die
+    #   Folgematrix, und die ist ternaer und bleibt, wie sie ist.
+    gedrehtes_paket = config_vorab.get("paket")
+    if gedrehtes_paket:
+        from .gedrehtes_paket import paket_laden
+        from .paths import repo_root
+        model_dir = repo_root() / gedrehtes_paket
+        print(f"[calibrate] Lade gedrehtes Paket aus {model_dir} ...")
+        model, tokenizer = paket_laden(model_dir)
+    else:
+        model_dir = local_model_dir(HF_MODEL_ID.split("/")[-1])
+        print(f"[calibrate] Lade Referenzmodell aus {model_dir} ...")
+        model, tokenizer = load_reference_model(model_dir)
 
     # Kalibrierungs-Korpus: mehrere sprachlich unterschiedliche Prompts,
     # damit die Per-Layer-Aktivierungsskalen nicht von einem einzigen Satz
@@ -519,7 +533,13 @@ def main():
         max_seq_len=zeilen,
         head_dim=drehbreite,
         rope_theta=rope_theta,
-        frac_bits=masse["frac_bits"])
+        frac_bits=masse["frac_bits"],
+        frequenzen=masse["frequenzen"],
+        amplitude=masse["amplitude"])
+    if masse["frequenzen"] is not None:
+        print(f"[calibrate] RoPE-Skalierung {model_config['rope_art']}: Faktor "
+              f"{model_config['rope_yarn_faktor']:g} ueber {model_config['rope_yarn_urlaenge']} "
+              f"Positionen, Amplitude {masse['amplitude']:.4f}")
     luts = luts_aus_paket if luts_aus_paket is not None else {
         "rsqrt": generate_rsqrt_lut(
             max_input=nl["rsqrt"]["input_range"][1],
@@ -618,20 +638,31 @@ def main():
     print(f"[calibrate] Quantisiere und exportiere Gewichte nach {artifacts_dir} ...")
     export_quantized_weights(_gewichtsstrom(), artifacts_dir)
 
-    print("[calibrate] Quantisiere LM-Head (int16, per-channel)...")
-    lm_head_weight = model.get_output_embeddings().weight
-    lm_head_quant = quantize_symmetric_int16_per_channel(lm_head_weight)
+    if gedrehtes_paket:
+        # ⚑ **Der Kopf und alle gedrehten Projektionen sind ternaer** und
+        #   kommen unveraendert aus dem Paket: Codes wie sie sind, die
+        #   FP16-Skalen exakt als i16-Betrag mal Zeilenshift.
+        from .export_weights import export_ternaere_gewichte
+        print("[calibrate] Exportiere ternaere Gewichte aus dem Paket...")
+        export_ternaere_gewichte(model, artifacts_dir)
+        del model
+        gc.collect()
+        model_config["lm_head"] = {"dtype": "ternaer_g128", "scale": "per_channel"}
+    else:
+        print("[calibrate] Quantisiere LM-Head (int16, per-channel)...")
+        lm_head_weight = model.get_output_embeddings().weight
+        lm_head_quant = quantize_symmetric_int16_per_channel(lm_head_weight)
 
-    del lm_head_weight, model
-    gc.collect()
-    print("[calibrate] Referenzmodell freigegeben (wird ab hier nicht mehr gebraucht).")
+        del lm_head_weight, model
+        gc.collect()
+        print("[calibrate] Referenzmodell freigegeben (wird ab hier nicht mehr gebraucht).")
 
-    # Muss VOR export_theta_v laufen, damit der theta_v-Gewichtshash den
-    # aktualisierten weights_manifest-Eintrag einschliesst.
-    export_lm_head(lm_head_quant, artifacts_dir)
+        # Muss VOR export_theta_v laufen, damit der theta_v-Gewichtshash den
+        # aktualisierten weights_manifest-Eintrag einschliesst.
+        export_lm_head(lm_head_quant, artifacts_dir)
 
-    # Das Artefakt dokumentiert die LM-Head-Ausnahme im model_config.
-    model_config["lm_head"] = {"dtype": "int16", "scale": "per_channel"}
+        # Das Artefakt dokumentiert die LM-Head-Ausnahme im model_config.
+        model_config["lm_head"] = {"dtype": "int16", "scale": "per_channel"}
 
     print("[calibrate] Schreibe model_config.json...")
     artifacts_dir.mkdir(parents=True, exist_ok=True)
