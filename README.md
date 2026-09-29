@@ -7,7 +7,7 @@ Dieses README ist auch auf [Englisch](README.en.md) verfügbar.
 Myelith ist ein **KI-System**. Wer damit arbeitet, arbeitet mit einer
 künstlichen Intelligenz und nicht mit einem Menschen. Das System erzeugt
 synthetische Texte und synthetische Sprache; erzeugte Sprache ist als
-KI-erzeugt gekennzeichnet, maschinenlesbar und im Signal.
+KI-erzeugt gekennzeichnet, maschinenlesbar und im Audio-Signal.
 
 ## Regulatorische Angaben
 
@@ -28,9 +28,9 @@ KI-Verordnung und nicht für die nach Artikel 5 verbotenen Praktiken
 verwendet werden. Die vollständige Liste steht in der
 [Zweckbestimmung](COMPLIANCE/de/Zweckbestimmung.md).
 
-> Selbsteinschätzung des Anbieters, keine Rechtsberatung.
-
 ---
+
+## Worum es im Projekt geht
 
 **Myelith macht Konsensarbeit nützlich.** Dieselbe Rechenleistung, die das
 Netzwerk sichert, betreibt ein großes agentisches Sprachmodell. Kein verbranntes Krypto- Spielchen (Proof-of-Work), sondern Inferenz, die jemand gebrauchen kann, und zwar **nachprüfbar**: Weil sie vollständig ganzzahlig läuft, liefern unabhängige Knoten bitgleiche Ergebnisse.

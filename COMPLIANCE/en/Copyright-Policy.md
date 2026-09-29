@@ -47,9 +47,6 @@ provider is responsible (see [GPAI documentation](GPAI-Documentation.md)).
 - **All third-party components** are listed with their licence in
   [NOTICES](../NOTICES.md), generated from the package metadata and
   checked against it in CI.
-- **Third-party source code is not copied.** An idea from another project
-  is read, understood and rewritten; lines carry a licence, an idea does
-  not.
 
 ## 4. Outputs
 

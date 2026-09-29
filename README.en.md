@@ -28,9 +28,9 @@ Annex III of the EU AI Act, nor for any practice prohibited by Article 5.
 See the [intended use policy](COMPLIANCE/en/Intended-Use-Policy.md) for
 the full list.
 
-> Provider's self-assessment, not legal advice.
-
 ---
+
+## What this project is about
 
 **Myelith makes consensus work useful.** The same computation that secures
 the network runs a large agentic language model. Not a burned crypto game

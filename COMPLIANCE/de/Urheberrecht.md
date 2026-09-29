@@ -48,9 +48,6 @@ Projekt und für die Ausgaben des Systems. Verantwortlich ist der Anbieter
   ([`lizenzprobe.py`](../ethics/werkzeuge/lizenzprobe.py)).
 - **Alle Fremdkomponenten** stehen mit Lizenz in [NOTICES](../NOTICES.md),
   erzeugt aus den Paketdaten und im CI gegen sie geprüft.
-- **Fremder Quelltext wird nicht übernommen.** Eine Idee aus einem
-  anderen Projekt wird gelesen, verstanden und neu geschrieben; Zeilen
-  tragen eine Lizenz, eine Idee nicht.
 
 ## 4. Ausgaben
 
