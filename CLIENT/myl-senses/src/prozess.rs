@@ -30,8 +30,9 @@ use std::sync::{Arc, Mutex};
 /// schliesst, um alles anzuhalten, haette dann einen Befehl im
 /// Hintergrund, den niemand mehr sieht. Ueber dieses Verzeichnis beendet
 /// [`alle_beenden`] vorher jeden, der noch laeuft.
-/// Je Lauf seine Nummer, das Kind und ob [`alle_beenden`] es erschlagen hat.
-type Lauf = (u64, Arc<Mutex<Child>>, Arc<AtomicBool>);
+/// Je Lauf seine Nummer, das Kind, ob [`alle_beenden`] es erschlagen hat,
+/// und der Faden, der es gestartet hat (fuer [`beenden_im_faden`]).
+type Lauf = (u64, Arc<Mutex<Child>>, Arc<AtomicBool>, std::thread::ThreadId);
 static LAUFENDE: Mutex<Vec<Lauf>> = Mutex::new(Vec::new());
 static NAECHSTE: AtomicU64 = AtomicU64::new(0);
 
@@ -41,7 +42,7 @@ struct Eintrag(u64);
 impl Drop for Eintrag {
     fn drop(&mut self) {
         if let Ok(mut l) = LAUFENDE.lock() {
-            l.retain(|(n, _, _)| *n != self.0);
+            l.retain(|(n, _, _, _)| *n != self.0);
         }
     }
 }
@@ -59,11 +60,26 @@ impl Drop for Eintrag {
 /// und Windows eigene Prozesse, und die laufen weiter. Ein Befehl allein
 /// ersetzt die Shell und endet mit.
 pub fn alle_beenden() -> usize {
-    let l = match LAUFENDE.lock() {
-        Ok(l) => l.clone(),
+    beenden_wo(|_| true)
+}
+
+/// **Beendet nur die Laeufe, die ein bestimmter Faden gestartet hat.**
+///
+/// ⚑ **Gedacht fuer die Pause des Loops** (Projektinhaber, 2026-09-29:
+/// „umgehend pausiert“). Ein Befehl, den eine Runde gerade ausfuehrt,
+/// liefe sonst bis zu seiner Frist weiter. Nur die des Loop-Fadens, denn
+/// daneben koennen ein Chat oder die Sinnesprogramme laufen, und die hat
+/// niemand angehalten.
+pub fn beenden_im_faden(faden: std::thread::ThreadId) -> usize {
+    beenden_wo(|f| f == faden)
+}
+
+fn beenden_wo(passt: impl Fn(std::thread::ThreadId) -> bool) -> usize {
+    let l: Vec<Lauf> = match LAUFENDE.lock() {
+        Ok(l) => l.iter().filter(|(_, _, _, f)| passt(*f)).cloned().collect(),
         Err(_) => return 0,
     };
-    for (_, kind, erschlagen) in &l {
+    for (_, kind, erschlagen, _) in &l {
         if let Ok(mut k) = kind.lock() {
             erschlagen.store(true, Ordering::SeqCst);
             let _ = k.kill();
@@ -186,7 +202,7 @@ pub fn laufen_mit_eingabe(
     let erschlagen = Arc::new(AtomicBool::new(false));
     let nummer = NAECHSTE.fetch_add(1, Ordering::Relaxed);
     if let Ok(mut l) = LAUFENDE.lock() {
-        l.push((nummer, Arc::clone(&kind), Arc::clone(&erschlagen)));
+        l.push((nummer, Arc::clone(&kind), Arc::clone(&erschlagen), std::thread::current().id()));
     }
     let _eintrag = Eintrag(nummer);
 

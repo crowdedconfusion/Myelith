@@ -93,10 +93,14 @@ pub fn generate(
         model,
         tokenizer,
         prompt,
-        &Erzeugung { max_new_tokens, seed, greedy, halt: &[], denkgrenze: None, abbruch: None },
+        &Erzeugung { max_new_tokens, seed, greedy, halt: &[], denkgrenze: None, abbruch: None, ziehen: None },
         &mut |_| {},
     )
 }
+
+/// Die Ziehparameter des Kerns, hier weitergereicht, damit ein Aufrufer
+/// des Laufwerks den Kern nicht selbst einbinden muss.
+pub use integer_llm_kernels::sampling::Ziehparameter;
 
 /// Was ein Lauf der Erzeugung braucht.
 ///
@@ -127,6 +131,10 @@ pub struct Erzeugung<'a> {
     /// was bis dahin dasteht. **`None` heisst: kein Schalter**, und dann
     /// ist der Lauf Zeichen fuer Zeichen der alte.
     pub abbruch: Option<&'a std::sync::atomic::AtomicBool>,
+    /// **Ziehen nach Temperatur, Top-k und Top-p** statt `greedy` oder dem
+    /// Ziehen nach theta_v. ⚑ **`None` heisst: wie bisher**, und dann ist
+    /// der Lauf Zeichen fuer Zeichen der alte.
+    pub ziehen: Option<integer_llm_kernels::sampling::Ziehparameter>,
 }
 
 /// **Eine Obergrenze fuer die Ueberlegung vor der Antwort.**
@@ -376,7 +384,7 @@ pub fn dekodieren_fortgesetzt(
     speicher: &mut Fortsetzung,
     beobachter: &mut dyn FnMut(usize),
 ) -> (Vec<usize>, Wiederverwendung) {
-    let Erzeugung { max_new_tokens, seed, greedy, halt, denkgrenze, abbruch } = *lauf;
+    let Erzeugung { max_new_tokens, seed, greedy, halt, denkgrenze, abbruch, ziehen } = *lauf;
 
     // ⚑ **Vorbereitung ohne Kopf, ausser fuer die letzte Position**, und
     // gebuendelt (Fund 366). Der gemeinsame Anfang mit dem letzten Aufruf
@@ -409,18 +417,30 @@ pub fn dekodieren_fortgesetzt(
         .filter(|_| rekurrent)
         .and_then(|m| token_ids.iter().rposition(|&t| t == m))
         .filter(|&q| q > gemeinsam && q < token_ids.len());
-    let mut logits = match merkstelle {
-        Some(q) => {
-            let _ = model.prompt_vorbereiten_ab(&token_ids[..q], gemeinsam, &mut speicher.cache);
-            speicher.merken(q);
-            model.prompt_vorbereiten_ab(token_ids, q, &mut speicher.cache)
-        }
-        None => {
-            let l = model.prompt_vorbereiten_ab(token_ids, gemeinsam, &mut speicher.cache);
-            if rekurrent {
-                speicher.merken(token_ids.len());
-            }
-            l
+    // ⚑ **Auch die Vorbereitung haelt am Abbruchschalter**, zwischen zwei
+    //   Fenstern (siehe `prompt_vorbereiten_unterbrechbar`). Angehalten
+    //   steht im Speicher, was gerechnet ist, und nichts wird erzeugt.
+    let vorbereitet = match merkstelle {
+        Some(q) => model
+            .prompt_vorbereiten_unterbrechbar(&token_ids[..q], gemeinsam, &mut speicher.cache, abbruch)
+            .and_then(|_| {
+                speicher.merken(q);
+                model.prompt_vorbereiten_unterbrechbar(token_ids, q, &mut speicher.cache, abbruch)
+            }),
+        None => model
+            .prompt_vorbereiten_unterbrechbar(token_ids, gemeinsam, &mut speicher.cache, abbruch)
+            .inspect(|_| {
+                if rekurrent {
+                    speicher.merken(token_ids.len());
+                }
+            }),
+    };
+    let mut logits = match vorbereitet {
+        Ok(l) => l,
+        Err(gerechnet) => {
+            speicher.token = token_ids[..gerechnet].to_vec();
+            let w = Wiederverwendung { wiederverwendet: gemeinsam, neu: gerechnet.saturating_sub(gemeinsam), kontext_voll: false };
+            return (Vec::new(), w);
         }
     };
     speicher.token = token_ids.to_vec();
@@ -442,7 +462,11 @@ pub fn dekodieren_fortgesetzt(
         if abbruch.is_some_and(|a| a.load(std::sync::atomic::Ordering::SeqCst)) {
             break;
         }
-        let next_token = if greedy {
+        let next_token = if let Some(p) = &ziehen {
+            let (t, s) = model.ziehen_next(&logits, p, current_seed);
+            current_seed = s;
+            t
+        } else if greedy {
             model.greedy_next(&logits)
         } else {
             let (t, s) = model.sample_next(&logits, current_seed);

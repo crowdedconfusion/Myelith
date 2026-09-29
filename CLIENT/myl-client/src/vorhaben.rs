@@ -418,6 +418,26 @@ impl Ablage {
         let rest: Vec<String> = self.reihe().into_iter().map(|v| v.kennung).collect();
         self.reihe_setzen(&rest)
     }
+
+    /// **Aendert das Ziel eines Vorhabens** (Bearbeiten in der Taskliste,
+    /// Wunsch des Projektinhabers, 2026-09-29). Notizen, Tagebuch und
+    /// Stellung bleiben; die naechste Runde bekommt das neue Ziel.
+    ///
+    /// ⚑ Dieselbe Pruefung der Kennung wie beim Entfernen, und ein leeres
+    /// Ziel wird abgewiesen: Ein Vorhaben ohne Ziel hat keine Runde.
+    pub fn ziel_aendern(&self, kennung: &str, ziel: &str) -> Result<Vorhaben, String> {
+        if kennung.is_empty() || !kennung.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+            return Err(format!("keine Kennung: {kennung}"));
+        }
+        let ziel = ziel.trim();
+        if ziel.is_empty() {
+            return Err("ein Ziel darf nicht leer sein".into());
+        }
+        let mut v = self.laden(kennung)?;
+        v.ziel = ziel.to_string();
+        self.speichern(&v)?;
+        Ok(v)
+    }
 }
 
 impl Ablage {
@@ -584,6 +604,41 @@ impl Werkzeugausfuehrung for Wiederholungsbremse {
         if OHNE_WIRKUNG.contains(&name.as_str()) || crate::verankert::Verankert::ALLE.iter().any(|v| v.name() == name) {
             return self.inner.ausfuehren(a);
         }
+        // 📌 **Ein gescheiterter Schreibaufruf aendert nichts** (Loop-Szenario,
+        //    30B, 2026-09-29): Viermal wortgleich derselbe `edit_file`, jedes
+        //    Mal von der Syntaxwache abgewiesen, und jedes Mal zaehlte er als
+        //    Aenderung der Welt. Jetzt zaehlt er nicht, und derselbe Aufruf ohne
+        //    Aenderung dazwischen laeuft nicht noch einmal: Er scheiterte genauso.
+        if SCHREIBEND.contains(&name.as_str()) {
+            let stand = self.welt.load(Ordering::SeqCst);
+            let schluessel = (format!("gescheitert:{name}"), a.to_string());
+            if self.gesehen.lock().expect("Wiederholungsbremse").get(&schluessel) == Some(&stand) {
+                return Err(Werkzeugfehler {
+                    grund: if self.de {
+                        "(Nicht noch einmal ausgeführt: Genau dieser Aufruf ist eben gescheitert, und seither hat \
+                         sich nichts geändert; er würde genauso scheitern. Die Meldung steht weiter oben. Ändere den \
+                         Aufruf, oder sieh mit read_file nach, was wirklich in der Datei steht.)"
+                            .into()
+                    } else {
+                        "(Not run again: exactly this call just failed, and nothing has changed since; it would fail \
+                         the same way. The message is above. Change the call, or check with read_file what the file \
+                         really contains.)"
+                            .into()
+                    },
+                });
+            }
+            let r = self.inner.ausfuehren(a);
+            let gescheitert = match &r {
+                Err(_) => true,
+                Ok(t) => t.contains("nichts geschrieben") || t.contains("nothing written"),
+            };
+            if gescheitert {
+                self.gesehen.lock().expect("Wiederholungsbremse").insert(schluessel, stand);
+            } else {
+                self.welt.fetch_add(1, Ordering::SeqCst);
+            }
+            return r;
+        }
         if !LESEND.contains(&name.as_str()) {
             let r = self.inner.ausfuehren(a);
             self.welt.fetch_add(1, Ordering::SeqCst);
@@ -620,7 +675,7 @@ impl Werkzeugausfuehrung for Wiederholungsbremse {
 /// Was im Loop wirklich im Auftrag stand, liess sich nicht nachsehen; beim
 /// Einzelauftrag hatte genau dieser Blick (`myl agent --roh`) gezeigt, dass
 /// Skill-Hinweis und Datum fehlten. Ohne die Variable geschieht nichts.
-fn rundenmitschrift(kennung: &str, runde: u32, nachrichten: &[myl_local_agent::tuerklient::Nachricht]) {
+fn rundenmitschrift(kennung: &str, runde: u32, saat: Option<u64>, nachrichten: &[myl_local_agent::tuerklient::Nachricht]) {
     let Some(ordner) = std::env::var_os("MYL_RUNDENMITSCHRIFT").filter(|o| !o.is_empty()) else {
         return;
     };
@@ -628,7 +683,8 @@ fn rundenmitschrift(kennung: &str, runde: u32, nachrichten: &[myl_local_agent::t
     if std::fs::create_dir_all(&ordner).is_err() {
         return;
     }
-    let text: String = nachrichten.iter().map(|n| format!("[{}] {}\n\n", n.role, n.content)).collect();
+    let kopf = saat.map_or_else(|| "[saat] gierig\n\n".to_string(), |s| format!("[saat] {s}\n\n"));
+    let text: String = kopf + &nachrichten.iter().map(|n| format!("[{}] {}\n\n", n.role, n.content)).collect::<String>();
     let _ = std::fs::write(ordner.join(format!("{kennung}-runde-{runde:02}.txt")), text);
 }
 
@@ -736,6 +792,45 @@ struct Befehlsspiegel {
     inner: Box<dyn Werkzeugausfuehrung>,
     gesehen: Arc<Mutex<std::collections::HashMap<(String, String), u32>>>,
     de: bool,
+    /// Die Einhaengung, um einen fehlenden Pfad aus einer Fehlermeldung als
+    /// Tatsache zu nennen.
+    wurzel: Option<PathBuf>,
+}
+
+/// **Welcher Ordner fehlt**, wenn eine Ausgabe „No such file or directory:
+/// '…'“ nennt: der oberste fehlende unter der Einhaengung, relativ zu ihr.
+///
+/// 📌 **Loop-Szenario, 30B, 2026-09-29:** Das Skript scheiterte an
+/// `daten/../ergebnis/statistik.md`, das Modell erkannte den fehlenden Ordner
+/// sogar, legte ihn aber nicht an, sondern notierte „erstellt“. Der Befund
+/// steht jetzt als Tatsache in der Antwort, nachgesehen und nicht vermutet.
+fn fehlender_ordner(ausgabe: &str, wurzel: &Path) -> Option<String> {
+    let rest = ausgabe.split("No such file or directory: '").nth(1)?;
+    let pfad = PathBuf::from(&rest[..rest.find('\'')?]);
+    let pfad = if pfad.is_absolute() { pfad } else { wurzel.join(pfad) };
+    // Normalisieren ohne Dateisystem: `..` nimmt die vorige Stufe weg.
+    let mut sauber = PathBuf::new();
+    for teil in pfad.components() {
+        match teil {
+            std::path::Component::ParentDir => {
+                sauber.pop();
+            }
+            std::path::Component::CurDir => {}
+            t => sauber.push(t),
+        }
+    }
+    let echte_wurzel = wurzel.canonicalize().ok()?;
+    let mut ordner = sauber.parent()?.to_path_buf();
+    let mut fehlt = None;
+    while !ordner.exists() {
+        fehlt = Some(ordner.clone());
+        ordner = ordner.parent()?.to_path_buf();
+    }
+    let fehlt = fehlt?;
+    let echt_oben = ordner.canonicalize().ok()?;
+    let rel = fehlt.strip_prefix(&ordner).ok()?;
+    let relativ = echt_oben.join(rel);
+    Some(relativ.strip_prefix(&echte_wurzel).ok()?.display().to_string().replace('\\', "/"))
 }
 
 impl Werkzeugausfuehrung for Befehlsspiegel {
@@ -752,24 +847,49 @@ impl Werkzeugausfuehrung for Befehlsspiegel {
         };
         let zahl = {
             let mut g = self.gesehen.lock().expect("Befehlsspiegel");
-            let z = g.entry((a.to_string(), ausgabe)).or_insert(0);
+            let z = g.entry((a.to_string(), ausgabe.clone())).or_insert(0);
             *z += 1;
             *z
         };
+        // ⚑ **Eine Tatsache zuerst**, bei jedem Mal: Nennt die Ausgabe einen
+        //   Pfad, dessen Ordner fehlt, steht das da.
+        let tatsache = self.wurzel.as_deref().and_then(|w| fehlender_ordner(&ausgabe, w)).map(|o| {
+            if self.de {
+                format!(
+                    "\n[Tatsache, nachgesehen: Den Ordner `{o}/` gibt es nicht. Was dorthin schreibt, muss ihn \
+                     anlegen, etwa im Skript mit os.makedirs(…, exist_ok=True) oder mit mkdir.]"
+                )
+            } else {
+                format!(
+                    "\n[Fact, checked: the folder `{o}/` does not exist. Whatever writes there has to create it, \
+                     for instance with os.makedirs(…, exist_ok=True) in the script, or with mkdir.]"
+                )
+            }
+        });
         if zahl < SPIEGEL_AB {
-            return r;
+            return match (r, tatsache) {
+                (Ok(t), Some(h)) => Ok(t + &h),
+                (Err(f), Some(h)) => Err(Werkzeugfehler { grund: f.grund + &h }),
+                (r, None) => r,
+            };
         }
+        // 📌 **Die Meldung, nicht die Datei** (2026-09-29): Hier stand „Lies
+        //    die betroffene Datei neu“, und das 30B las das Skript, waehrend
+        //    die Ursache, ein fehlender Ordner, in der Ausgabe selbst stand.
         let hinweis = if self.de {
             format!(
-                "\n[Hinweis: Dieser Befehl liefert in dieser Runde zum {zahl}. Mal genau dieselbe Ausgabe. \
-                 Deine Änderungen dazwischen haben daran nichts geändert. Lies die betroffene Datei neu \
-                 (read_file), bevor du weiter änderst, und prüfe, ob deine Annahme über die Ursache stimmt.]"
+                "{}\n[Hinweis: Dieser Befehl liefert in dieser Runde zum {zahl}. Mal genau dieselbe Ausgabe. \
+                 Deine Änderungen dazwischen haben daran nichts geändert. Lies die letzte Zeile der Meldung \
+                 Wort für Wort: Welche Datei, welcher Ordner, welche Zeile, welcher Wert wird genannt? Prüfe \
+                 genau das, bevor du weiter änderst.]",
+                tatsache.unwrap_or_default()
             )
         } else {
             format!(
-                "\n[Note: this command has now produced exactly the same output {zahl} times in this round. \
-                 Your changes in between did not affect it. Read the affected file again (read_file) before \
-                 changing more, and check whether your assumption about the cause is right.]"
+                "{}\n[Note: this command has now produced exactly the same output {zahl} times in this round. \
+                 Your changes in between did not affect it. Read the last line of the message word by word: \
+                 which file, folder, line or value does it name? Check exactly that before changing more.]",
+                tatsache.unwrap_or_default()
             )
         };
         match r {
@@ -953,6 +1073,13 @@ pub fn auftrag(
     for (k, w) in notizen {
         s.push_str(&format!("- {k}: {w}\n"));
     }
+    if !notizen.is_empty() {
+        s.push_str(if de {
+            "(Notizen sind deine eigenen Aufzeichnungen, nicht nachgeprüft. Was wirklich geschah, zeigen die Werkzeugergebnisse und der Dateistand.)\n"
+        } else {
+            "(Notes are your own records, not checked. What really happened is shown by tool results and the state of the files.)\n"
+        });
+    }
     if !rueckblick.is_empty() {
         s.push_str(if de { "\nLETZTE RUNDEN:\n" } else { "\nRECENT ROUNDS:\n" });
         for r in rueckblick {
@@ -1019,8 +1146,15 @@ pub const PRUEF_BELEGE: usize = 8;
 const PRUEF_BELEG_ZEICHEN: usize = 400;
 /// Wie viele der geschriebenen Dateien die Pruefung sieht, und wie viel
 /// von jeder.
+///
+/// 📌 **Fund 506 (2026-09-29): 1500 Zeichen waren zu wenig.** Das 35B schrieb
+/// einen richtigen Bericht von rund 2300 Zeichen; die Pruefung sah ihn bis
+/// zur Grenzwerttabelle, meldete zweimal „Massnahmen und Quellen fehlen“,
+/// und nach drei Runden ohne Fortschritt hielt der Loop an. Beides stand
+/// hinter dem Schnitt. Die Marke sagt jetzt, wie viel gezeigt ist, und der
+/// Auftrag, dass Ungezeigtes nicht fehlt.
 const PRUEF_DATEIEN: usize = 3;
-const PRUEF_DATEI_ZEICHEN: usize = 1500;
+const PRUEF_DATEI_ZEICHEN: usize = 6000;
 
 /// **Die Dateien, die diese Runde geschrieben hat, wie sie jetzt sind.**
 ///
@@ -1057,7 +1191,8 @@ pub fn geschriebene_dateien(belege: &[Erledigt], wurzel: Option<&Path>) -> Vec<(
             let Ok(inhalt) = std::fs::read_to_string(wurzel.join(rel)) else { continue };
             let mut gezeigt: String = inhalt.chars().take(PRUEF_DATEI_ZEICHEN).collect();
             if gezeigt.len() < inhalt.len() {
-                gezeigt.push_str("\n[gekuerzt]");
+                let gesamt = inhalt.chars().count();
+                gezeigt.push_str(&format!("\n[gekuerzt: {PRUEF_DATEI_ZEICHEN} von {gesamt} Zeichen]"));
             }
             aus.push((pfad, gezeigt));
             if aus.len() == PRUEF_DATEIEN {
@@ -1105,14 +1240,16 @@ pub fn pruefauftrag(
             format!(
                 "GESCHRIEBENE DATEIEN, WIE SIE JETZT SIND:\n{}\n\n\
                  Bei einer geschriebenen Datei zählt ihr INHALT: Prüfe ihn gegen das Ziel. Dass sie \
-                 existiert, ist kein Beleg dafür, dass das Richtige darin steht.\n\n",
+                 existiert, ist kein Beleg dafür, dass das Richtige darin steht. Endet eine Datei mit \
+                 „[gekuerzt: …]“, ist sie länger als gezeigt: Was du nicht siehst, fehlt deshalb nicht.\n\n",
                 liste.join("\n")
             )
         } else {
             format!(
                 "WRITTEN FILES, AS THEY ARE NOW:\n{}\n\n\
                  For a written file its CONTENT counts: check it against the goal. That it exists is no \
-                 evidence that the right thing is in it.\n\n",
+                 evidence that the right thing is in it. A file ending in \"[gekuerzt: …]\" is longer than \
+                 shown: what you do not see is not therefore missing.\n\n",
                 liste.join("\n")
             )
         }
@@ -1151,6 +1288,12 @@ const DATEIENDUNGEN: [&str; 14] =
 /// traegt (`bericht/sensorbericht.md`, `ergebnis/statistik.md`). Pfade nach
 /// draussen und absolute Pfade zaehlen nicht.
 pub fn fehlende_zieldateien(ziel: &str, wurzel: &Path) -> Vec<String> {
+    zieldateien(ziel).into_iter().filter(|w| !wurzel.join(w).exists()).collect()
+}
+
+/// **Alle Dateien, die das Ziel nennt**, in der Reihenfolge des Ziels, jede
+/// einmal; dieselbe Regel wie [`fehlende_zieldateien`].
+pub fn zieldateien(ziel: &str) -> Vec<String> {
     let mut aus: Vec<String> = Vec::new();
     for roh in ziel.split_whitespace() {
         let wort = roh.trim_matches(|c: char| !(c.is_alphanumeric() || c == '/' || c == '_' || c == '-' || c == '.'));
@@ -1163,11 +1306,47 @@ pub fn fehlende_zieldateien(ziel: &str, wurzel: &Path) -> Vec<String> {
         if p.is_absolute() || p.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
             continue;
         }
-        if !wurzel.join(p).exists() && !aus.iter().any(|a| a == wort) {
+        if !aus.iter().any(|a| a == wort) {
             aus.push(wort.to_string());
         }
     }
     aus
+}
+
+/// **Der Stand der Dateien aus dem Ziel, nachgesehen**, fuer den Auftrag jeder
+/// Runde: vorhanden oder nicht, und ob der Ordner fehlt.
+///
+/// 📌 **Loop-Szenario, 30B, 2026-09-29:** Das Modell notierte
+/// `ziel_ordner_erstellt: true`, ohne den Ordner anzulegen, und ab der
+/// naechsten Runde stand die Notiz unter NOTIZEN als Gedaechtnis. Gegen eine
+/// falsche Notiz hilft eine Tatsache daneben, nicht eine zweite Notiz.
+pub fn dateistand(ziel: &str, wurzel: &Path, sprache: Sprache) -> String {
+    let dateien = zieldateien(ziel);
+    if dateien.is_empty() {
+        return String::new();
+    }
+    let de = sprache == Sprache::De;
+    let mut s = String::from(if de {
+        "\nSTAND DER DATEIEN AUS DEM ZIEL (nachgesehen, nicht notiert):\n"
+    } else {
+        "\nSTATE OF THE FILES IN THE GOAL (checked, not noted):\n"
+    });
+    for d in dateien {
+        let p = wurzel.join(&d);
+        let zeile = if p.exists() {
+            if de { format!("- {d}: vorhanden\n") } else { format!("- {d}: exists\n") }
+        } else {
+            let ordner = Path::new(&d).parent().filter(|o| !o.as_os_str().is_empty());
+            match ordner.filter(|o| !wurzel.join(o).is_dir()) {
+                Some(o) if de => format!("- {d}: fehlt, und den Ordner {}/ gibt es auch nicht\n", o.display()),
+                Some(o) => format!("- {d}: missing, and the folder {}/ does not exist either\n", o.display()),
+                None if de => format!("- {d}: fehlt\n"),
+                None => format!("- {d}: missing\n"),
+            }
+        };
+        s.push_str(&zeile);
+    }
+    s
 }
 
 /// **Eine Tatsache entscheidet, nicht das Urteil des Modells**: Nennt das
@@ -1536,6 +1715,18 @@ pub struct Runde {
     pub neue: Vec<Vorhaben>,
     /// Was der Abnahmebefehl ergab, falls das Vorhaben einen hat.
     pub abnahme: Option<Abnahme>,
+    /// **Die Saat der Runde**, wenn gezogen wurde: Lauf und Pruefung ziehen
+    /// aus ihr, und mit ihr wiederholt sich die Runde.
+    pub saat: Option<u64>,
+}
+
+/// Schliesst die Aktion einer Runde auch bei einem vorzeitigen Ausgang.
+struct Aktionsklammer<'a>(&'a dyn Modellweg);
+
+impl Drop for Aktionsklammer<'_> {
+    fn drop(&mut self) {
+        self.0.aktion_beenden();
+    }
 }
 
 /// Die Ruestung einer Runde baut der Aufrufer (Fenster, Konsole, `myl`):
@@ -1562,6 +1753,11 @@ pub fn runde(
     melder: Option<&dyn Fn(myl_local_agent::schleife::Meldung<'_>)>,
 ) -> Result<Runde, String> {
     let anfang = std::time::Instant::now();
+    // ⚑ **Die Runde ist eine Aktion**, samt Pruefung: Beide ziehen aus einer
+    // Saat, und mit ihr wiederholt sich die Runde (Regel des
+    // Projektinhabers, 2026-09-29). Der Lauf darin oeffnet keine zweite.
+    let saat = modell.aktion_beginnen();
+    let _aktion = Aktionsklammer(modell);
     let stand = ablage.rundenstand(&v.kennung);
     let rueckblick = ablage.tagebuch_letzte(&v.kennung, TAGEBUCH_RUECKBLICK);
     let text = auftrag(v, &rueckblick, stand.as_ref(), grenzen, sprache);
@@ -1603,10 +1799,11 @@ pub fn runde(
     // ⚑ Der Befehlsspiegel um jedes Befehlswerkzeug.
     {
         let gesehen = Arc::new(Mutex::new(std::collections::HashMap::new()));
+        let wurzel_spiegel = ruestung.einhaengung.as_ref().map(|e| e.wurzel().to_path_buf());
         let de = sprache == Sprache::De;
         ruestung.kasten.umhuellen(|inner| {
             if BEFEHLE.contains(&inner.name()) {
-                Box::new(Befehlsspiegel { inner, gesehen: Arc::clone(&gesehen), de })
+                Box::new(Befehlsspiegel { inner, gesehen: Arc::clone(&gesehen), de, wurzel: wurzel_spiegel.clone() })
             } else {
                 inner
             }
@@ -1643,8 +1840,12 @@ pub fn runde(
         }
     };
     let ausgang =
-        crate::lauf::fahren_beobachtet(modell, &ruestung, grenzen.schritte as usize, true, max_tokens, &text, Some(&mitschreiben));
-    rundenmitschrift(&v.kennung, v.runden + 1, &ausgang.nachrichten);
+        crate::lauf::fahren_beobachtet(modell, &ruestung, grenzen.schritte as usize, true, max_tokens, &{
+            // ⚑ Der Dateistand gehoert in den Auftrag, nachgesehen vor der Runde.
+            let stand = ruestung.einhaengung.as_ref().map(|e| dateistand(&v.ziel, e.wurzel(), sprache)).unwrap_or_default();
+            format!("{text}{stand}")
+        }, Some(&mitschreiben));
+    rundenmitschrift(&v.kennung, v.runden + 1, saat, &ausgang.nachrichten);
 
     let ende = if schliessen_angefordert() {
         Rundenende::Unterbrochen
@@ -1749,7 +1950,7 @@ pub fn runde(
         ablage.einreihen_nach(&n.kennung, &v.kennung)?;
         neue.push(n);
     }
-    Ok(Runde { unterbrochen: ende == Rundenende::Unterbrochen, bericht, pruefung, neue, abnahme })
+    Ok(Runde { unterbrochen: ende == Rundenende::Unterbrochen, bericht, pruefung, neue, abnahme, saat })
 }
 
 // ── Der Laeufer ─────────────────────────────────────────────────────
@@ -1949,7 +2150,7 @@ pub enum Ereignis {
     /// Eine Runde beginnt.
     Beginnt { kennung: String, ziel: String, runde: u32 },
     /// Eine Runde ist zu Ende.
-    Geendet { vorhaben: Box<Vorhaben>, bericht: String, pruefung: Option<Pruefung> },
+    Geendet { vorhaben: Box<Vorhaben>, bericht: String, pruefung: Option<Pruefung>, saat: Option<u64> },
     /// Ein neues Vorhaben aus einer Kette.
     Angestossen { kennung: String, ziel: String },
     /// Nichts faellig; das naechste um diese Zeit.
@@ -2019,7 +2220,7 @@ pub fn fahren(
                     for n in &r.neue {
                         melden(Ereignis::Angestossen { kennung: n.kennung.clone(), ziel: n.ziel.clone() });
                     }
-                    melden(Ereignis::Geendet { vorhaben: Box::new(v), bericht: r.bericht, pruefung: r.pruefung });
+                    melden(Ereignis::Geendet { vorhaben: Box::new(v), bericht: r.bericht, pruefung: r.pruefung, saat: r.saat });
                 }
                 Err(grund) => {
                     // ⚠️ Anhalten statt Wiederholen: Eine Runde, die an der
@@ -2370,6 +2571,79 @@ mod proben {
         assert_eq!(lesen_zaehler.load(Ordering::SeqCst), 3);
     }
 
+    /// ⚑ **Das Ziel eines Tasks laesst sich aendern**; ein leeres Ziel und
+    /// eine fremde Kennung werden abgewiesen, der Rest bleibt.
+    #[test]
+    fn das_ziel_eines_vorhabens_laesst_sich_aendern() {
+        let d = tempfile::tempdir().unwrap();
+        let ablage = Ablage::neu(d.path().join("vorhaben"));
+        let v = ablage.anlegen("Einen Bericht schreiben", 0).unwrap();
+        let neu = ablage.ziel_aendern(&v.kennung, "  Einen kurzen Bericht schreiben  ").unwrap();
+        assert_eq!(neu.ziel, "Einen kurzen Bericht schreiben");
+        assert_eq!(ablage.laden(&v.kennung).unwrap().ziel, "Einen kurzen Bericht schreiben");
+        assert!(ablage.ziel_aendern(&v.kennung, "   ").is_err(), "ein leeres Ziel");
+        assert!(ablage.ziel_aendern("../x", "egal").is_err(), "eine fremde Kennung");
+    }
+
+    /// 📌 **Ein gescheiterter Schreibaufruf aendert nichts**, und derselbe
+    /// Aufruf ohne Aenderung dazwischen laeuft nicht noch einmal. Ein anderer
+    /// Aufruf laeuft, und ein gelungener hebt die Bremse auf.
+    #[test]
+    fn ein_gescheiterter_schreibaufruf_laeuft_nicht_noch_einmal() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        struct Scheitert(Arc<AtomicU64>);
+        impl Werkzeugausfuehrung for Scheitert {
+            fn name(&self) -> &str {
+                "edit_file"
+            }
+            fn ausfuehren(&self, a: &serde_json::Value) -> Result<String, Werkzeugfehler> {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                if a["neu"] == "gut" {
+                    Ok("a.py: eine Stelle ersetzt".into())
+                } else {
+                    Err(Werkzeugfehler { grund: "a.py: nichts geschrieben. expected an indented block".into() })
+                }
+            }
+        }
+        let zaehler = Arc::new(AtomicU64::new(0));
+        let w = Wiederholungsbremse {
+            inner: Box::new(Scheitert(Arc::clone(&zaehler))),
+            gesehen: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            welt: Arc::new(AtomicU64::new(0)),
+            de: true,
+        };
+        let schlecht = serde_json::json!({"pfad": "a.py", "neu": "schlecht"});
+        assert!(w.ausfuehren(&schlecht).unwrap_err().grund.contains("nichts geschrieben"));
+        let zweiter = w.ausfuehren(&schlecht).unwrap_err().grund;
+        assert!(zweiter.starts_with("(Nicht noch einmal"), "{zweiter}");
+        assert_eq!(zaehler.load(Ordering::SeqCst), 1, "der zweite lief nicht");
+        assert!(w.ausfuehren(&serde_json::json!({"pfad": "a.py", "neu": "gut"})).is_ok());
+        // Nach einer gelungenen Aenderung darf der alte Aufruf wieder laufen.
+        assert!(w.ausfuehren(&schlecht).unwrap_err().grund.contains("nichts geschrieben"));
+        assert_eq!(zaehler.load(Ordering::SeqCst), 3);
+    }
+
+    /// 📌 **Der fehlende Ordner aus der Fehlermeldung, als Tatsache**, und
+    /// der Dateistand aus dem Ziel im Auftrag. Der Fall des 30B.
+    #[test]
+    fn fehlender_ordner_und_dateistand_sind_tatsachen() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(d.path().join("daten")).unwrap();
+        std::fs::write(d.path().join("daten/auswertung.py"), "x").unwrap();
+        let echt = d.path().canonicalize().unwrap();
+        let meldung = format!(
+            "FileNotFoundError: [Errno 2] No such file or directory: '{}/daten/../ergebnis/statistik.md'",
+            echt.display()
+        );
+        assert_eq!(fehlender_ordner(&meldung, d.path()).as_deref(), Some("ergebnis"));
+        assert_eq!(fehlender_ordner("alles gut", d.path()), None);
+        let ziel = "Bring daten/auswertung.py zum Laufen; es schreibt ergebnis/statistik.md.";
+        let s = dateistand(ziel, d.path(), Sprache::De);
+        assert!(s.contains("daten/auswertung.py: vorhanden"), "{s}");
+        assert!(s.contains("ergebnis/statistik.md: fehlt, und den Ordner ergebnis/ gibt es auch nicht"), "{s}");
+        assert_eq!(dateistand("Schreib ein Gedicht.", d.path(), Sprache::De), "");
+    }
+
     /// ⛔️ **Fund 491: Eine behauptete Ausfuehrung wird als solche markiert.**
     #[test]
     fn behauptete_aufrufe_werden_markiert() {
@@ -2514,6 +2788,32 @@ mod proben {
         assert!(!ohne.contains("GESCHRIEBENE DATEIEN"), "{ohne}");
     }
 
+    /// 📌 **Fund 506: Ein Bericht gewoehnlicher Laenge wird ganz gezeigt**,
+    /// und ein zu langer sagt, wie viel fehlt. Der Bericht des 35B hatte
+    /// rund 2300 Zeichen, und die Massnahmen standen hinten.
+    #[test]
+    fn die_pruefung_sieht_einen_ganzen_bericht() {
+        let d = tempfile::tempdir().unwrap();
+        let bericht = format!("# Bericht\n{}\n## Massnahmen\nTuer pruefen.\n## Quellen\n", "Befund. ".repeat(300));
+        assert!(bericht.chars().count() > 2300);
+        std::fs::write(d.path().join("b.md"), &bericht).unwrap();
+        let lang = "x".repeat(PRUEF_DATEI_ZEICHEN + 50);
+        std::fs::write(d.path().join("lang.md"), &lang).unwrap();
+        let schrieb = |p: &str| Erledigt {
+            werkzeug: "write_file".into(),
+            argumente: serde_json::json!({"pfad": p, "inhalt": "x"}).to_string(),
+            ergebnis: "angelegt".into(),
+        };
+        let dateien = geschriebene_dateien(&[schrieb("b.md"), schrieb("lang.md")], Some(d.path()));
+        let inhalt = |p: &str| dateien.iter().find(|(q, _)| q == p).map(|(_, t)| t.clone()).expect("gezeigt");
+        assert_eq!(inhalt("b.md"), bericht, "der ganze Bericht");
+        let marke = format!("[gekuerzt: {PRUEF_DATEI_ZEICHEN} von {} Zeichen]", PRUEF_DATEI_ZEICHEN + 50);
+        assert!(inhalt("lang.md").ends_with(&marke), "die Marke nennt, wie viel gezeigt ist");
+        let v = Vorhaben::neu("v1".into(), "Bericht schreiben", 0);
+        let t = pruefauftrag(&v, &wahl(), "Fertig.", &[], &dateien, Sprache::De).remove(0).content;
+        assert!(t.contains("fehlt deshalb nicht"), "{t}");
+    }
+
     /// ⚑ **Der Befehlsspiegel** sagt es beim dritten gleichen Ergebnis,
     /// nicht vorher, und zaehlt je Befehl und Ausgabe.
     #[test]
@@ -2522,6 +2822,7 @@ mod proben {
             inner: Box::new(Fester("IndentationError")),
             gesehen: Arc::new(Mutex::new(std::collections::HashMap::new())),
             de: true,
+            wurzel: None,
         };
         let lauf = |b: &str| w.ausfuehren(&serde_json::json!({"befehl": b})).unwrap();
         assert_eq!(lauf("python3 a.py"), "IndentationError");
@@ -2530,7 +2831,10 @@ mod proben {
         let dritter = lauf("python3 a.py");
         assert!(dritter.starts_with("IndentationError"), "die Ausgabe bleibt vorn: {dritter}");
         assert!(dritter.contains("zum 3. Mal"), "{dritter}");
-        assert!(dritter.contains("read_file"), "{dritter}");
+        // 📌 Der Rat lenkt seit dem 2026-09-29 auf die Meldung, nicht mehr auf
+        //    die Datei (vorher „Lies die betroffene Datei neu (read_file)“).
+        assert!(dritter.contains("letzte Zeile der Meldung"), "{dritter}");
+        assert!(!dritter.contains("read_file"), "der alte Rat ist weg: {dritter}");
     }
 
     /// ⛔️ **Fund 487: An der Schrittgrenze ist nichts fertig**, auch wenn

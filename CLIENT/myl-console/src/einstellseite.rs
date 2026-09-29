@@ -806,6 +806,16 @@ pub fn werkzeugkiste_waehlen(t: crate::design::Toene) -> Option<String> {
     Some(punkte[i].titel.clone())
 }
 
+/// **Die Saat in den Einstellungen**, fuer `/seed … immer` und `/seed
+/// zufall`: `None` heisst Zufall. Hier, weil die Konsole Einstellungen nur
+/// an dieser Stelle schreibt.
+pub fn saat_speichern(saat: Option<u64>) -> Result<(), String> {
+    let pfad = Einstellungen::vorgabepfad();
+    let mut e = Einstellungen::lesen(&pfad)?;
+    e.setzen("modell.saat", &saat.map(|s| s.to_string()).unwrap_or_default())?;
+    e.schreiben(&pfad)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

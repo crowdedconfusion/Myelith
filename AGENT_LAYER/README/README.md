@@ -1,6 +1,6 @@
 # agent-layer (`myl-agent`)
 
-> **Version:** 0.23.0 (`myl-agent` 0.7.0, `myl-local-agent` 0.16.0)
+> **Version:** 0.24.0 (`myl-agent` 0.7.0, `myl-local-agent` 0.17.0)
 > **Datum:** 2026-09-29
 > **Status:** Manifeste, Herkunftsstufe, Registratur, der
 > **Session-Kontrakt** mit Durchsetzung im Ledger, der **Plan** und seit
@@ -44,6 +44,15 @@ Kap. 8.2).
 - `src/kette.rs` — dass er es auch so getan hat, und wann er aufhört.
 
 ## Changelog
+
+### v0.24.0 – 2026-09-29 (`myl-local-agent` 0.17.0: eine Aktion, eine Saat)
+
+`Modellweg::aktion_beginnen` und `aktion_beenden`: Eine Aktion (ein
+Auftrag, eine Runde, eine Nachricht) zieht aus **einer** Saat, alle Aufrufe
+darin der Reihe nach; geschachtelt zählt nur die äußerste. Die Vorgabe tut
+nichts und gibt `None` zurück, damit Türen und Proben ohne Saat unverändert
+bleiben. Umgesetzt im örtlichen Modell des Clients (CLIENT v0.103.0).
+Agent 97 grün, Clippy ohne Befund.
 
 ### v0.23.0 – 2026-09-29 (`myl-local-agent` 0.16.0: der Budgethinweis, wenn die Schritte knapp werden)
 

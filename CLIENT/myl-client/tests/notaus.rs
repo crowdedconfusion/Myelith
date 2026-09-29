@@ -17,7 +17,12 @@ fn modell() -> Option<myl_client::Oertlichesmodell> {
              MYL_OHNE_ARTEFAKTE=1 cargo test erlaubt den Sprung ausdruecklich."
         );
     }
-    Some(myl_client::Oertlichesmodell::laden(pfad, &Default::default()).expect("Modell laedt"))
+    Some(myl_client::Oertlichesmodell::laden(pfad, &Default::default()).expect("Modell laedt")).map(|mut m| {
+        // ⚑ Gierig: Diese Probe prueft Inhalte und braucht einen festen Weg.
+        //   Das Ziehen mit Saat prueft `tests/saat.rs`.
+        m.gierig = true;
+        m
+    })
 }
 
 /// ⛔️ Mitten im Schreiben ausgeloest: Die Erzeugung endet, `chat` meldet

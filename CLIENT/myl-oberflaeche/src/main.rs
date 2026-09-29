@@ -661,6 +661,8 @@ struct Loopzustand {
     pause: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// Gerade rechnet eine Runde; das Modell gehoert ihr.
     in_runde: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// Der Faden des Loops, damit die Pause dessen Befehle beenden kann.
+    faden: std::sync::Arc<Mutex<Option<std::thread::ThreadId>>>,
 }
 
 /// Eine Zeile der Taskliste.
@@ -771,6 +773,14 @@ fn task_entfernen(kennung: String, halter: tauri::State<'_, Halter>) -> Result<(
     myl_client::vorhaben::Ablage::vorgabe().entfernen(&kennung)
 }
 
+/// **Das Ziel eines Tasks aendern** (Rechtsklick, Bearbeiten). Nicht waehrend
+/// seiner Runde: Die laeuft mit dem Ziel, mit dem sie begann.
+#[tauri::command]
+fn task_bearbeiten(kennung: String, ziel: String, halter: tauri::State<'_, Halter>) -> Result<(), String> {
+    nicht_in_seiner_runde(&halter, &kennung)?;
+    myl_client::vorhaben::Ablage::vorgabe().ziel_aendern(&kennung, &ziel).map(|_| ())
+}
+
 /// Die Sicherheitsmeldung vor `auto`, aus der Kiste (derselbe Text wie in
 /// der Konsole und bei `myl setzen`).
 #[derive(Serialize)]
@@ -822,7 +832,8 @@ fn loop_starten(fenster: tauri::AppHandle, halter: tauri::State<'_, Halter>) -> 
     let _ = ablage.loop_aktiv_setzen(true);
     let modell = halter.modell.clone();
 
-    std::thread::spawn(move || {
+    let zf = z.clone();
+    let griff = std::thread::spawn(move || {
         let f = fenster.clone();
         let zr = z.clone();
         // ⚑ **Die Leihe**: das Modell fuer genau eine Runde, und falls es
@@ -834,6 +845,11 @@ fn loop_starten(fenster: tauri::AppHandle, halter: tauri::State<'_, Halter>) -> 
                 *g = Some(modell_aus(&e)?);
             }
             let m = g.as_mut().ok_or("das Modell ist nicht geladen")?;
+            // Frisch je Runde: Das Feld am Eingabefeld kann Saat und
+            // Parameter zwischen zwei Runden aendern.
+            if let Ok(frisch) = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad()) {
+                ausgabe_uebernehmen(m, &frisch);
+            }
             zusehen_mit(m, &f, None, "", LOOPLEBEND);
             zr.in_runde.store(true, Ordering::SeqCst);
             runde(&*m);
@@ -861,7 +877,7 @@ fn loop_starten(fenster: tauri::AppHandle, halter: tauri::State<'_, Halter>) -> 
                 Ereignis::Beginnt { kennung, ziel, runde } => {
                     serde_json::json!({ "art": "Beginnt", "kennung": kennung, "ziel": ziel, "runde": runde })
                 }
-                Ereignis::Geendet { vorhaben: v, bericht, pruefung } => serde_json::json!({
+                Ereignis::Geendet { vorhaben: v, bericht, pruefung, saat } => serde_json::json!({
                     "art": "Geendet",
                     "kennung": v.kennung,
                     "ziel": v.ziel,
@@ -869,6 +885,8 @@ fn loop_starten(fenster: tauri::AppHandle, halter: tauri::State<'_, Halter>) -> 
                     "zustand": vorhaben::zustandswort(&v, sprache),
                     "bericht": bericht,
                     "pruefung": pruefung,
+                    // Als Text, siehe `Saatstand`.
+                    "saat": saat.map(|s| s.to_string()),
                 }),
                 Ereignis::Angestossen { kennung, ziel } => {
                     serde_json::json!({ "art": "Angestossen", "kennung": kennung, "ziel": ziel })
@@ -922,6 +940,9 @@ fn loop_starten(fenster: tauri::AppHandle, halter: tauri::State<'_, Halter>) -> 
         z.laeuft.store(false, Ordering::SeqCst);
         let _ = fenster.emit(LOOPEREIGNIS, serde_json::json!({ "art": "Ende", "grund": grund }));
     });
+    if let Ok(mut g) = zf.faden.lock() {
+        *g = Some(griff.thread().id());
+    }
     Ok(hinweis)
 }
 
@@ -933,6 +954,12 @@ fn loop_pausieren(halter: tauri::State<'_, Halter>) {
     if halter.schleife.laeuft.load(Ordering::SeqCst) {
         halter.schleife.pause.store(true, Ordering::SeqCst);
         myl_client::vorhaben::schliessen_anfordern();
+        // ⚑ **Auch ein laufender Befehl endet sofort** (Projektinhaber,
+        //   2026-09-29: „umgehend pausiert“), sonst liefe er bis zu seiner
+        //   Frist. Nur die des Loop-Fadens; ein Chat daneben bleibt.
+        if let Some(f) = halter.schleife.faden.lock().ok().and_then(|g| *g) {
+            myl_senses::prozess::beenden_im_faden(f);
+        }
     }
 }
 
@@ -1138,6 +1165,80 @@ async fn modell_laden(halter: tauri::State<'_, Halter>) -> Result<Ladung, String
     })
 }
 
+/// Was beim Start geladen wurde, und ob die Wahl eine Empfehlung war.
+#[derive(Serialize)]
+struct Vorladung {
+    name: String,
+    pfad: String,
+    sekunden: f64,
+    /// `true`: kein Modell war eingestellt, die Empfehlung wurde gesetzt.
+    empfohlen: bool,
+    grund: String,
+}
+
+/// **Beim Start das passende Modell ermitteln und schon laden** (Wunsch des
+/// Projektinhabers, 2026-09-29), waehrend das Vorschaltbild laeuft.
+///
+/// ⚑ **Eine eingestellte Wahl gilt.** Liegt das eingestellte Artefakt da,
+/// wird genau das geladen; sonst die Empfehlung fuer diese Maschine
+/// (`modelle::empfehlung`), und sie wird eingestellt, damit Wahl und
+/// Anzeige dasselbe sagen. Ist schon ein Modell geladen, geschieht nichts.
+/// Geladen wird in einem eigenen Faden, damit das Fenster weiter antwortet.
+#[tauri::command]
+async fn modell_vorladen(halter: tauri::State<'_, Halter>) -> Result<Option<Vorladung>, String> {
+    if halter.modell.lock().map_err(|_| "der Modellhalter ist vergiftet")?.is_some() {
+        return Ok(None);
+    }
+    let pfad = myl_client::Einstellungen::vorgabepfad();
+    let mut e = myl_client::Einstellungen::lesen(&pfad)?;
+    let eingestellt = !e.modell.artefakt.is_empty()
+        && std::path::Path::new(&artefakt_absolut(&e.modell.artefakt)).join("model_config.json").is_file();
+    let (empfohlen, grund) = if eingestellt {
+        (false, "eingestellt".to_string())
+    } else {
+        let Some(w) = myl_client::modelle::empfehlung(&e) else {
+            return Ok(None);
+        };
+        e.setzen("modell.artefakt", &w.pfad)?;
+        e.schreiben(&pfad)?;
+        (true, w.grund)
+    };
+    let halt = halter.modell.clone();
+    let e2 = e.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        // ⚑ **Ein eigener Faden, nicht der aus dem Vorrat.** Er wird hinter
+        // das Vorschaltbild gestellt, damit es nicht ruckelt, und diesen
+        // Vorrang behielte ein Vorratsfaden; der naechste Agentenlauf auf
+        // ihm rechnete dann gebremst. Unter Linux laesst sich der Nice-Wert
+        // ohne Rechte nicht zuruecknehmen, also stirbt der Faden mit ihm.
+        std::thread::spawn(move || {
+            myl_client::hardware::im_hintergrund_rechnen();
+            let anfang = std::time::Instant::now();
+            let m = modell_aus(&e2)?;
+            let dauer = anfang.elapsed().as_secs_f64();
+            let mut g = halt.lock().map_err(|_| "der Modellhalter ist vergiftet".to_string())?;
+            // Wer inzwischen von Hand geladen hat, behaelt sein Modell.
+            if g.is_none() {
+                *g = Some(m);
+            }
+            Ok::<f64, String>(dauer)
+        })
+        .join()
+        .map_err(|_| "das Vorladen ist abgestuerzt".to_string())?
+    })
+    .await
+    .map_err(|f| f.to_string())?
+    .map(|dauer| {
+        Some(Vorladung {
+            name: anzeigename(&e.modell.artefakt),
+            pfad: e.modell.artefakt.clone(),
+            sekunden: (dauer * 10.0).round() / 10.0,
+            empfohlen,
+            grund,
+        })
+    })
+}
+
 /// **Laedt das eingestellte Artefakt**, fuer den Ladeknopf und fuer die
 /// Leihe des Loops. ⚑ Eine Stelle, damit beide dasselbe Modell mit
 /// derselben Grenze bekommen.
@@ -1148,8 +1249,8 @@ fn modell_aus(e: &myl_client::Einstellungen) -> Result<myl_client::Oertlichesmod
     let pfad = artefakt_absolut(&e.modell.artefakt);
     let mut m = myl_client::Oertlichesmodell::laden(&pfad, &e.kapazitaet)
         .map_err(|f| mit_zugriffshinweis(f, &pfad))?;
-    m.grenze = e.modell.token;
-    m.denken = e.modell.denken;
+    // Laenge, Denkmodus und, falls gesetzt, die Saat.
+    m.uebernehmen(&e.modell);
     Ok(m)
 }
 
@@ -1171,6 +1272,73 @@ fn modell_aus(e: &myl_client::Einstellungen) -> Result<myl_client::Oertlichesmod
 /// 📌 **Ohne geladenes Modell ist das kein Fehler.** Ein Entladen, das
 /// sich beschwert, wenn nichts da ist, zwingt jeden Aufrufer, vorher zu
 /// fragen; die Zeitschaltung tut das nicht und soll es nicht muessen.
+/// **Wo die Saat gerade steht**, fuer das Feld am Eingabefeld und die
+/// Zeile unter einer Antwort.
+#[derive(Serialize)]
+struct Saatstand {
+    /// Die Saat der letzten Aktion, falls eine lief und gezogen wurde.
+    ///
+    /// ⚠️ **Saaten als Text**: JavaScript stellt ganze Zahlen nur bis 2^53
+    /// genau dar, und eine gerundete Saat wiederholte still etwas anderes.
+    letzte: Option<String>,
+    /// Die feste Saat aus den Einstellungen, oder `None` fuer Zufall.
+    fest: Option<String>,
+    /// Die Saat, die nur fuer die naechste Antwort vorgemerkt ist.
+    naechste: Option<String>,
+    /// Temperatur, Top-p und Top-k in einer Zeile, oder „gierig“.
+    parameter: String,
+    gierig: bool,
+}
+
+/// **Der Stand der Saat** (Regel des Projektinhabers, 2026-09-29: der
+/// Seed kommt ins Protokoll und laesst sich anzeigen und einstellen).
+#[tauri::command]
+fn saat_stand(halter: tauri::State<'_, Halter>) -> Result<Saatstand, String> {
+    let e = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())?;
+    let mut g = halter.modell.lock().map_err(|_| "der Modellhalter ist vergiftet".to_string())?;
+    Ok(match g.as_mut() {
+        Some(m) => {
+            ausgabe_uebernehmen(m, &e);
+            Saatstand {
+                letzte: if m.waehlt_gierig() { None } else { m.letzte_saat().map(|s| s.to_string()) },
+                fest: m.saat_fest.map(|s| s.to_string()),
+                naechste: m.naechste().map(|s| s.to_string()),
+                parameter: m.parameterzeile(),
+                gierig: m.waehlt_gierig(),
+            }
+        }
+        None => Saatstand {
+            letzte: None,
+            fest: e.modell.saat.map(|s| s.to_string()),
+            naechste: None,
+            parameter: String::new(),
+            gierig: e.modell.temperatur == Some(0),
+        },
+    })
+}
+
+/// **Eine Saat nur fuer die naechste Antwort**; danach gilt wieder die
+/// Einstellung. „Immer“ schreibt das Fenster ueber `setzen` in
+/// `modell.saat`, dieselbe Stelle wie die Einstellungsseite.
+#[tauri::command]
+fn saat_einmal(saat: String, halter: tauri::State<'_, Halter>) -> Result<(), String> {
+    let saat: u64 = saat.trim().parse().map_err(|_| format!("{saat} ist keine Saat"))?;
+    let g = halter.modell.lock().map_err(|_| "der Modellhalter ist vergiftet".to_string())?;
+    let m = g.as_ref().ok_or_else(|| "das Modell ist nicht geladen".to_string())?;
+    m.naechste_saat(saat);
+    Ok(())
+}
+
+/// **Saat und Ziehparameter aus den Einstellungen**, frisch vor jedem
+/// Auftrag: Das Feld am Eingabefeld schreibt sie, waehrend das Modell
+/// geladen bleibt. Laenge und Denkmodus setzt jeder Weg selbst.
+fn ausgabe_uebernehmen(m: &mut myl_client::Oertlichesmodell, e: &myl_client::Einstellungen) {
+    m.saat_fest = e.modell.saat;
+    m.temperatur = e.modell.temperatur;
+    m.top_p = e.modell.top_p;
+    m.top_k = e.modell.top_k;
+}
+
 #[tauri::command]
 fn modell_entladen(halter: tauri::State<'_, Halter>) -> Result<bool, String> {
     // ⚠️ **`try_lock` und nicht `lock`**: Dieser Befehl laeuft auf dem
@@ -1274,6 +1442,9 @@ async fn agent_fahren(
         let Some(m) = g.as_mut() else {
             return Err("das Modell ist nicht geladen".to_string());
         };
+        if let Ok(e) = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad()) {
+            ausgabe_uebernehmen(m, &e);
+        }
         zusehen(m, &fenster);
         // ⚑ **Zwei Quellen, ein Kanal.** Der laufende Text kommt vom
         // Modell, die Werkzeuge von der Schleife; das Fenster soll
@@ -1597,6 +1768,9 @@ async fn frage(
             let Some(m) = g.as_mut() else {
                 return Err("das Modell ist nicht geladen".to_string());
             };
+            if let Ok(e) = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad()) {
+                ausgabe_uebernehmen(m, &e);
+            }
             zusehen(m, &f);
             let n: Vec<myl_client::Nachricht> = verlauf
                 .iter()
@@ -1660,6 +1834,9 @@ async fn frage(
         let Some(m) = g.as_mut() else {
             return Err("das Modell ist nicht geladen".to_string());
         };
+        if let Ok(e) = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad()) {
+            ausgabe_uebernehmen(m, &e);
+        }
         // ⚑ Die Rollen kommen aus dem Fenster und werden hier auf die
         // beiden abgebildet, die es gibt. Eine unbekannte Rolle wird
         // zur Nutzerrolle und nicht stillschweigend verworfen: Ein
@@ -2661,12 +2838,16 @@ fn main() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            modell_vorladen,
+            saat_stand,
+            saat_einmal,
             tasks,
             task_anlegen,
             tasks_ordnen,
             task_weiter,
             task_stoppen,
             task_entfernen,
+            task_bearbeiten,
             autowarnung,
             loop_starten,
             loop_pausieren,

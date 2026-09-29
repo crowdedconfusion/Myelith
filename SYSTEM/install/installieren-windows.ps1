@@ -26,9 +26,8 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-# [?] Eine Ebene hoeher, seit dem 2026-09-10: Diese Datei lag in der
-#     Wurzel und liegt jetzt in INSTALL/.
-# Zwei Ebenen hinauf: dieses Skript liegt unter SYSTEM\INSTALL\.
+# Zwei Ebenen hinauf: dieses Skript liegt unter SYSTEM\install\ (bis zum
+# 2026-09-10 in der Wurzel, danach in INSTALL\, seit dem 2026-09-24 hier).
 $Wurzel = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 Set-Location $Wurzel
 
@@ -156,12 +155,16 @@ if ($Archive.Count -gt 0) {
   }
   if (-not (Test-Path (Join-Path $Ausgepackt "vendor"))) {
     Write-Host "   Vorrat: $($Archive.Count) Archive werden ausgepackt"
-    & $Python.Source (Join-Path $Wurzel "INSTALL\vorrat.py") auspacken | Out-Null
+    # 📌 Hier stand bis zum 2026-09-29 `INSTALL\vorrat.py`, ein Ordner, den es
+    #    seit dem Umzug nach SYSTEM\ nicht mehr gibt. Die CI rief `vorrat.py`
+    #    direkt und sah es nie. Jetzt neben diesem Skript gesucht, das zieht
+    #    mit, wenn beide umziehen.
+    & $Python.Source (Join-Path $PSScriptRoot "vorrat.py") auspacken | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "Auspacken des Vorrats fehlgeschlagen." }
   }
   $env:CARGO_HOME = Join-Path $Ausgepackt "cargo-home"
   $CargoNetz = @("--offline")
-  Write-Host "   Vorrat: $($Archive.Count) Pakete aus vorrat\, Netz aus"
+  Write-Host "   Vorrat: $($Archive.Count) Pakete aus SYSTEM\crates-vorrat\, Netz aus"
 }
 
 Write-Host "-- bauen, das dauert beim ersten Mal einige Minuten"
@@ -179,7 +182,10 @@ foreach ($p in $Programme) {
 $Bin = Join-Path $Ziel "bin"
 New-Item -ItemType Directory -Force -Path $Bin | Out-Null
 foreach ($p in $Programme) {
-  Copy-Item (Join-Path $Wurzel "target-shared\release\$($p.Name)") (Join-Path $Bin $p.Name) -Force
+  # 📌 Bis zum 2026-09-29 `target-shared\release\`: der Bauordner vor dem
+  #    Umzug. Gebaut wurde nach SYSTEM\full-build (`.cargo/config.toml`), und
+  #    das Kopieren fand nichts.
+  Copy-Item (Join-Path $Wurzel "SYSTEM\full-build\release\$($p.Name)") (Join-Path $Bin $p.Name) -Force
 }
 
 # ⚑ **Eine Verknuepfung im Startmenue**, denn ein Programm, das man

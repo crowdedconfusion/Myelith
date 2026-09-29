@@ -41,6 +41,15 @@
 <!-- ⚑ Was sich mit dem Kontext tun laesst, geoeffnet vom Balken am
      Eingabefeld. Wie das Menue am Gespraech ausserhalb der Flaechen, die
      `overflow: hidden` tragen. -->
+<!-- ⚑ **Rechtsklick auf einen Task** (Wunsch des Projektinhabers,
+     2026-09-29): bearbeiten, anhalten oder weiter, loeschen. Ohne Glas wie
+     die Taskliste, aus der es kommt. -->
+<div id="taskmenue" class="menuefeld" role="menu" hidden>
+  <button type="button" class="menueeintrag blank" role="menuitem" data-tasktat="bearbeiten" data-t="loop.bearbeiten">Bearbeiten</button>
+  <button type="button" class="menueeintrag blank" role="menuitem" data-tasktat="halten" data-t="loop.stoppen">Anhalten</button>
+  <button type="button" class="menueeintrag blank weg" role="menuitem" data-tasktat="loeschen" data-t="loop.entfernen">Löschen</button>
+</div>
+
 <div id="kontextwahl" class="glas" role="menu" hidden>
   <button type="button" class="menueeintrag blank" role="menuitem" data-kontext="verdichten" data-t="kontext.verdichten">Kontext verdichten</button>
   <button type="button" class="menueeintrag blank" role="menuitem" data-kontext="neu" data-t="kontext.neu">Neues Gespräch</button>
@@ -50,8 +59,10 @@
      Projektinhabers, 2026-09-26): auswaehlen, neu anlegen, und am Griff
      ziehen, um die Reihenfolge zu aendern. Der vorderste laeuft, alle
      dahinter warten. Fest positioniert wie die Kontextwahl, damit nichts
-     sie abschneidet. -->
-<div id="taskwahl" class="glas" role="dialog" aria-labelledby="taskwahltitel" hidden>
+     sie abschneidet.
+     ⚑ **Ohne Glas, und gleich gross wie das Ausgabefeld, mit Bildlauf**
+     (Festlegung des Projektinhabers, 2026-09-29). -->
+<div id="taskwahl" class="klappfeld" role="dialog" aria-labelledby="taskwahltitel" hidden>
   <div class="taskkopf">
     <span id="taskwahltitel" class="tasktitel" data-t="loop.titel">Tasks</span>
     <span id="taskstand" class="taskstand"></span>
@@ -67,6 +78,81 @@
       </svg>
     </button>
   </form>
+</div>
+
+<!-- ⚑ **Was die Antwort direkt veraendert, an einem Ort** (Auftrag des
+     Projektinhabers, 2026-09-29): Saat, Temperatur, Top-p, Top-k,
+     Laenge und Denkmodus. Geoeffnet vom Pfeil ganz rechts am
+     Eingabefeld. „Immer“ schreibt in die Einstellungen, dieselben Felder
+     wie die Einstellungsseite; „nur naechste Antwort“ bleibt in dieser
+     Sitzung. ⚑ **Ohne Glas, gleich gross wie die Taskliste, mit
+     Bildlauf** (Festlegung des Projektinhabers, 2026-09-29; das
+     Eingabefeld behaelt sein Glas). -->
+<div id="ausgabewahl" class="klappfeld" role="dialog" aria-labelledby="ausgabetitel" hidden>
+  <div class="taskkopf">
+    <span id="ausgabetitel" class="tasktitel" data-t="ausgabe.titel">Ausgabe</span>
+    <span id="ausgabestand" class="taskstand"></span>
+  </div>
+  <fieldset class="ausgabegruppe">
+    <legend data-t="ausgabe.saat">Saat</legend>
+    <div class="ausgabereihe">
+      <label><input type="radio" name="saatart" id="saatzufall" value="zufall" />
+        <span data-t="ausgabe.zufall">Zufall</span></label>
+      <label><input type="radio" name="saatart" id="saatfest" value="fest" />
+        <span data-t="ausgabe.fest">Fest</span></label>
+      <input id="saatzahl" class="saatzahl" type="text" inputmode="numeric" autocomplete="off"
+             spellcheck="false" aria-label="Saat" data-t-marke="ausgabe.saat" />
+      <button type="button" id="saatwuerfel" class="rundknopf" aria-label="Neue Saat würfeln"
+              data-t-marke="ausgabe.wuerfeln" title="Neue Saat würfeln">
+        <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+          <rect x="4" y="4" width="12" height="12" rx="2.5"/>
+          <path d="M7.5 7.5h0M12.5 12.5h0M12.5 7.5h0M7.5 12.5h0M10 10h0"/>
+        </svg>
+      </button>
+    </div>
+    <div class="ausgabereihe">
+      <label><input type="radio" name="saatgeltung" id="saateinmal" value="einmal" checked />
+        <span data-t="ausgabe.einmal">nur nächste Antwort</span></label>
+      <label><input type="radio" name="saatgeltung" id="saatimmer" value="immer" />
+        <span data-t="ausgabe.immer">immer</span></label>
+    </div>
+    <div class="ausgabereihe">
+      <button type="button" id="saatletzte" data-t="ausgabe.letzte">Letzte wiederholen</button>
+      <button type="button" id="saatuebernehmen" data-t="ausgabe.uebernehmen">Übernehmen</button>
+    </div>
+  </fieldset>
+  <fieldset class="ausgabegruppe">
+    <legend data-t="ausgabe.temperatur">Temperatur</legend>
+    <div class="ausgabereihe">
+      <input type="range" id="temperatur" min="0" max="150" step="5"
+             aria-label="Temperatur" data-t-marke="ausgabe.temperatur" />
+      <output id="temperaturwert" for="temperatur"></output>
+    </div>
+    <details class="ausgabemehr">
+      <summary data-t="ausgabe.mehr">mehr</summary>
+      <div class="ausgabereihe">
+        <label for="topp">Top-p</label>
+        <input type="range" id="topp" min="5" max="100" step="5" />
+        <output id="toppwert" for="topp"></output>
+      </div>
+      <div class="ausgabereihe">
+        <label for="topk">Top-k</label>
+        <input type="number" id="topk" min="1" max="200" step="1" />
+      </div>
+    </details>
+  </fieldset>
+  <fieldset class="ausgabegruppe">
+    <legend data-t="ausgabe.antwort">Antwort</legend>
+    <div class="ausgabereihe">
+      <label for="antwortlaenge" data-t="ausgabe.laenge">Länge (Token)</label>
+      <input type="number" id="antwortlaenge" min="64" max="32768" step="64" />
+    </div>
+    <div class="ausgabereihe">
+      <label><input type="checkbox" id="ausgabedenken" />
+        <span data-t="ausgabe.denken">Vor dem Antworten denken</span></label>
+    </div>
+  </fieldset>
+  <button type="button" id="ausgabevorgabe" class="breit" data-t="ausgabe.vorgabe">Temperatur, Top-p und Top-k auf die Vorgabe</button>
 </div>
 
 <div id="huelle">
@@ -327,6 +413,10 @@
              erst ins Gespraech, wenn die Frage abgeschickt ist. Vorher
              war sie sofort ein eigener Beitrag, und damit war sie weg,
              bevor jemand etwas dazu schreiben konnte. -->
+        <!-- ⚑ **An der oberen Kante ziehen, um das Feld zu vergroessern**
+             (Wunsch des Projektinhabers, 2026-09-29). Doppelklick: wieder
+             von selbst wachsen. -->
+        <div id="eingabegriff" class="eingabegriff" aria-hidden="true"></div>
         <div id="anhangleiste" class="anhangleiste" hidden></div>
         <!-- ⚑ **Der Ausschlag liegt ueber dem Feld und nicht daneben**:
              Wer diktiert, sieht auf die Stelle, an der gleich der Text
@@ -418,6 +508,18 @@
             </button>
           </span>
         </div>
+        <!-- ⚑ **Der Pfeil ist ein Teil des Felds**: eine Spalte ganz rechts,
+             ueber die volle Hoehe, mit den Ecken des Felds (Festlegung des
+             Projektinhabers, 2026-09-29). Er oeffnet nach oben, was die
+             Antwort veraendert, und zeigt trotzdem nach unten, wie jede
+             Aufklappwahl (Festlegung des Projektinhabers). -->
+        <button type="button" id="ausgabepfeil" class="ausgabepfeil blank" aria-haspopup="dialog"
+                aria-expanded="false" aria-label="Ausgabe einstellen" data-t-marke="ausgabe.pfeil"
+                title="Saat und Ausgabe">
+          <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+            <path d="M6 8l4 4 4-4"/>
+          </svg>
+        </button>
       </div>
       <!-- ⚑ Der Kontext steht am Eingabefeld, weil er dort voll wird, und
            ganz links, damit rechts Platz fuer weitere Parameter bleibt

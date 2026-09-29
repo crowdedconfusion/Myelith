@@ -61,8 +61,10 @@ Felder fuer `setzen`:
 {FELDER}
 
 Schalter fuer `frage`:
-  --token N       Hoechstzahl erzeugter Token (Vorgabe 256)
+  --token N       Hoechstzahl erzeugter Token (Vorgabe 1600; der Agent nimmt nie weniger)
   --denken        Denkmodus an (Vorgabe aus, siehe unten)
+  --saat N        Mit dieser Saat ziehen; gleiche Saat, gleiche Antwort (Vorgabe: neu je Aktion)
+  --gierig        Das wahrscheinlichste Token nehmen, statt zu ziehen
 
 Schalter fuer `agent`, `sitzung` und `auftraege`, zusaetzlich zu denen
 von `frage`:
@@ -200,8 +202,8 @@ fn main() {
 ///
 /// Wer einen Schalter mit Wert hinzufuegt, traegt ihn hier ein;
 /// `kein_wertschalter_fehlt` haelt es fest.
-const MIT_WERT: [&str; 5] =
-    ["--token", "--schritte", "--wurzel", "--datei", "--werkzeuge"];
+const MIT_WERT: [&str; 6] =
+    ["--token", "--saat", "--schritte", "--wurzel", "--datei", "--werkzeuge"];
 
 /// Wie breit die Namensspalte der Einstellungsliste sein muss.
 ///
@@ -1065,6 +1067,37 @@ fn zahl(args: &[String], name: &str) -> Option<usize> {
     args.get(i + 1)?.parse().ok()
 }
 
+/// **Saat und Ziehart des geladenen Modells.** `--saat N` geht vor
+/// `modell.saat`, sonst bleibt die beim Laden gezogene; `--gierig` waehlt
+/// das wahrscheinlichste Token statt zu ziehen.
+///
+/// ⚑ **Die Saat steht danach auf der Fehlerausgabe**, bei jedem Laden: Nur
+/// mit ihr laesst sich ein Lauf wiederholen, und genau das war der Einwand
+/// gegen das Ziehen (Regel des Projektinhabers, 2026-09-29).
+fn saat_setzen(m: &mut Oertlichesmodell, args: &[String], e: &Einstellungen) {
+    m.saat_fest = e.modell.saat;
+    m.temperatur = e.modell.temperatur;
+    m.top_p = e.modell.top_p;
+    m.top_k = e.modell.top_k;
+    if let Some(s) = wert(args, "--saat").and_then(|w| w.parse().ok()) {
+        m.saat_fest = Some(s);
+    }
+    m.gierig = args.iter().any(|a| a == "--gierig");
+    match (m.waehlt_gierig(), m.saat_fest) {
+        (true, _) => eprintln!("[myl] gierig, ohne Saat"),
+        (false, Some(s)) => eprintln!("[myl] Saat fest {s}, {}", m.parameterzeile()),
+        (false, None) => eprintln!("[myl] Saat: neu je Aktion, {}", m.parameterzeile()),
+    }
+}
+
+/// **Die Saat der gerade beendeten Aktion**, so dass sie sich wiederholen
+/// laesst.
+fn saat_nennen(saat: Option<u64>) {
+    if let Some(s) = saat {
+        eprintln!("[myl] Saat {s} (wiederholen mit --saat {s})");
+    }
+}
+
 /// Ein Textwert hinter einem Schalter.
 fn wert(args: &[String], name: &str) -> Option<String> {
     let i = args.iter().position(|a| a == name)?;
@@ -1199,6 +1232,7 @@ fn frage(args: &[String]) -> i32 {
     };
     m.grenze = zahl(args, "--token").unwrap_or(e.modell.token);
     m.denken = e.modell.denken || args.iter().any(|a| a == "--denken");
+    saat_setzen(&mut m, args, &e);
 
     let anfang = std::time::Instant::now();
     // ⛔️ Auch der Chat ohne Werkzeuge steht unter den Grundsaetzen.
@@ -1212,6 +1246,7 @@ fn frage(args: &[String]) -> i32 {
     match m.chat("lokal", &[Nachricht::system(grundsaetze), Nachricht::nutzer(text)], Some(m.grenze as u32)) {
         Ok(a) => {
             println!("{}", a.text);
+            saat_nennen(if m.waehlt_gierig() { None } else { m.letzte_saat() });
             // ⚑ Die Zahlen auf den Fehlerkanal, damit die Antwort
             // weiterverarbeitbar bleibt.
             eprintln!(
@@ -1324,6 +1359,7 @@ fn agent(args: &[String]) -> i32 {
     };
     m.grenze = zahl(args, "--token").unwrap_or(e.modell.token);
     m.denken = e.modell.denken || args.iter().any(|a| a == "--denken");
+    saat_setzen(&mut m, args, &e);
 
     // ⚑ Die Verdrahtung liegt in der Kiste und nicht hier, damit ein
     // Pruefstand sie **ohne geladenes Modell** fahren kann; siehe
@@ -1386,6 +1422,7 @@ fn sitzung(args: &[String]) -> i32 {
     };
     m.grenze = zahl(rest, "--token").unwrap_or(e.modell.token);
     m.denken = e.modell.denken || rest.iter().any(|a| a == "--denken");
+    saat_setzen(&mut m, rest, &e);
     let geladen = anfang.elapsed();
 
     let ruestung = match myl_client::ruestung::ruesten(
@@ -1652,6 +1689,7 @@ fn einen_auftrag(
     //   sich nicht.
     let erg = myl_client::lauf::fahren(m, ruestung, schritte, bezeugtes, m.grenze as u32, auftrag);
     zeigen(&erg.nachrichten, roh);
+    saat_nennen(erg.saat);
     eprintln!("[myl] Ende: {:?}, {} Nachrichten", erg.ende, erg.nachrichten.len());
     match erg.ende {
         myl_local_agent::schleife::Ende::Fertig => 0,
@@ -1728,6 +1766,7 @@ fn auftraege(args: &[String]) -> i32 {
     };
     m.grenze = zahl(rest, "--token").unwrap_or(e.modell.token);
     m.denken = e.modell.denken || rest.iter().any(|a| a == "--denken");
+    saat_setzen(&mut m, rest, &e);
     let ruestung = match myl_client::ruestung::ruesten(
         &agent_fuer_diesen_lauf(&e, rest),
         form_fuer_diesen_lauf(rest),
@@ -1807,6 +1846,7 @@ fn viele_auftraege(
         println!("\n=== Auftrag {} : {}", i + 1, auftraege[*i]);
         zeigen(&aus.nachrichten, roh);
         eprintln!("[myl] Auftrag {}: {:?}, {:.1} s", i + 1, aus.ende, aus.sekunden);
+        saat_nennen(aus.saat);
         if !matches!(aus.ende, myl_local_agent::schleife::Ende::Fertig) {
             fehler += 1;
         }
@@ -2160,6 +2200,7 @@ fn schleife(args: &[String]) -> i32 {
     };
     m.grenze = zahl(args, "--token").unwrap_or(e.modell.token);
     m.denken = e.modell.denken || args.iter().any(|a| a == "--denken");
+    saat_setzen(&mut m, args, &e);
     schliessen_bei_signal();
 
     let ruester = |mut zusaetzlich: myl_client::vorhaben::Zusatzwerkzeuge, saat: &str| {
@@ -2177,8 +2218,9 @@ fn schleife(args: &[String]) -> i32 {
         use myl_client::vorhaben::Ereignis;
         match ev {
             Ereignis::Beginnt { kennung, ziel, runde } => eprintln!("\n[myl] {kennung}, Runde {runde}: {ziel}"),
-            Ereignis::Geendet { vorhaben, bericht, pruefung } => {
+            Ereignis::Geendet { vorhaben, bericht, pruefung, saat } => {
                 println!("{}", bericht.trim());
+                saat_nennen(saat);
                 if let Some(p) = pruefung {
                     eprintln!("[myl] Prüfung: Fortschritt {}, erreicht {}. {}", ja_nein(p.fortschritt), ja_nein(p.erreicht), p.grund);
                 }

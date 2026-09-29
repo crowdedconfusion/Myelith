@@ -301,3 +301,163 @@ pub fn anzeigename(pfad: &str) -> String {
         .unwrap_or_else(|| pfad.to_string());
     katalognamen().get(&ordner).cloned().unwrap_or(ordner)
 }
+
+// ── Welches Modell zu dieser Maschine passt ─────────────────────────────
+
+/// Ein Artefakt, wie die Empfehlung es sieht.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Kandidat {
+    pub pfad: String,
+    pub name: String,
+    /// Bytes auf dem Datentraeger.
+    pub groesse: u64,
+    /// Ein Expertengemisch: Je Token rechnen nur wenige Experten.
+    pub gemisch: bool,
+    /// Parameter in Milliarden aus dem Katalog, `None` wenn er es nicht weiss.
+    pub reihung: Option<f64>,
+}
+
+/// Was die Empfehlung waehlt, und warum.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Empfehlung {
+    pub pfad: String,
+    pub name: String,
+    pub grund: String,
+}
+
+/// Luft neben einem dichten Modell: System, KV-Speicher, Fenster.
+const LUFT_DICHT: u64 = 6 << 30;
+
+/// **Welches Modell am besten zu dieser Maschine passt** (Wunsch des
+/// Projektinhabers, 2026-09-29: beim Start ermitteln und schon laden).
+///
+/// ⚑ **Das groesste, das passt.** Ein dichtes Modell liest je Token alle
+/// Gewichte; es passt, wenn es samt 6 GiB Luft in den Arbeitsspeicher
+/// geht, sonst lagert es dauernd aus. Ein Gemisch liest je Token nur
+/// wenige Experten und darf bis zum Anderthalbfachen des Speichers gross
+/// sein: gemessen 33 GB (35B-A3B) auf 24 GiB mit 12 bis 15 Token/s. Unter
+/// denen, die passen, gewinnt die groessere Parameterzahl aus dem Katalog,
+/// danach die Groesse. Passt keines, das kleinste.
+///
+/// ⚠️ Eine Faustregel aus den Messungen dieser Maschine, keine Zusage fuer
+/// jede; wer ein Modell eingestellt hat, behaelt es (`modell_vorladen`).
+pub fn empfehlung_fuer(kandidaten: &[Kandidat], speicher: u64) -> Option<Empfehlung> {
+    let passt = |k: &&Kandidat| {
+        if k.gemisch {
+            k.groesse <= speicher / 2 * 3
+        } else {
+            k.groesse + LUFT_DICHT <= speicher
+        }
+    };
+    let gib = speicher >> 30;
+    let bester = kandidaten
+        .iter()
+        .filter(passt)
+        .max_by(|a, b| {
+            a.reihung
+                .unwrap_or(0.0)
+                .total_cmp(&b.reihung.unwrap_or(0.0))
+                .then(a.groesse.cmp(&b.groesse))
+        });
+    match bester {
+        Some(k) => Some(Empfehlung {
+            pfad: k.pfad.clone(),
+            name: k.name.clone(),
+            grund: format!("das größte Modell, das auf diese Maschine passt ({gib} GiB Arbeitsspeicher)"),
+        }),
+        None => kandidaten.iter().min_by_key(|k| k.groesse).map(|k| Empfehlung {
+            pfad: k.pfad.clone(),
+            name: k.name.clone(),
+            grund: format!("keines passt ganz in {gib} GiB, also das kleinste"),
+        }),
+    }
+}
+
+/// Die Artefakte, die hier liegen: neben dem eingestellten und unter
+/// `INTEGER_LLM/artifacts` des Klons.
+pub fn kandidaten(e: &Einstellungen) -> Vec<Kandidat> {
+    let katalog = katalog();
+    let mut orte: Vec<std::path::PathBuf> = Vec::new();
+    if !e.modell.artefakt.is_empty() {
+        if let Some(eltern) = std::path::Path::new(&crate::ort::absolut(&e.modell.artefakt)).parent() {
+            orte.push(eltern.to_path_buf());
+        }
+    }
+    if let Some(w) = crate::ort::wurzel() {
+        orte.push(w.join("INTEGER_LLM").join("artifacts"));
+    }
+    let mut aus: Vec<Kandidat> = Vec::new();
+    for ort in orte {
+        let Ok(lesen) = std::fs::read_dir(&ort) else { continue };
+        for p in lesen.flatten().map(|x| x.path()) {
+            let konfig = p.join("model_config.json");
+            if !konfig.is_file() || aus.iter().any(|k| std::path::Path::new(&k.pfad) == p) {
+                continue;
+            }
+            let ordner = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            let gemisch = std::fs::read_to_string(&konfig)
+                .ok()
+                .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+                .and_then(|c| c.get("num_experts").and_then(|n| n.as_u64()))
+                .is_some_and(|n| n > 0);
+            let k = katalog.get(&ordner);
+            aus.push(Kandidat {
+                pfad: p.display().to_string(),
+                name: k.map(|x| x.name.clone()).unwrap_or_else(|| ordner.clone()),
+                groesse: ordnergroesse(&p),
+                gemisch,
+                reihung: k.map(|x| x.reihung).filter(|r| *r > 0.0),
+            });
+        }
+    }
+    aus
+}
+
+/// Die Empfehlung fuer diese Maschine, oder `None`, wenn kein Artefakt da
+/// ist oder der Arbeitsspeicher sich nicht ermitteln laesst.
+pub fn empfehlung(e: &Einstellungen) -> Option<Empfehlung> {
+    let speicher = crate::hardware::Hardware::erheben(std::path::Path::new(".")).speicher_bytes?;
+    empfehlung_fuer(&kandidaten(e), speicher)
+}
+
+fn ordnergroesse(p: &std::path::Path) -> u64 {
+    let Ok(lesen) = std::fs::read_dir(p) else { return 0 };
+    lesen
+        .flatten()
+        .map(|e| match e.metadata() {
+            Ok(m) if m.is_dir() => ordnergroesse(&e.path()),
+            Ok(m) => m.len(),
+            Err(_) => 0,
+        })
+        .sum()
+}
+
+#[cfg(test)]
+mod empfehlung_proben {
+    use super::*;
+
+    fn k(name: &str, gb: u64, gemisch: bool, reihung: Option<f64>) -> Kandidat {
+        Kandidat { pfad: name.into(), name: name.into(), groesse: gb << 30, gemisch, reihung }
+    }
+
+    /// ⚑ **Auf 24 GiB das 35B-Gemisch**, nicht das dichte 14B, das dauernd
+    /// auslagerte; auf 16 GiB das dichte 8B; auf 4 GiB, wo nichts passt, das
+    /// kleinste.
+    #[test]
+    fn das_groesste_das_passt() {
+        let alle = [
+            k("0.6b", 1, false, Some(0.6)),
+            k("8b", 9, false, Some(8.0)),
+            k("14b", 16, false, Some(14.0)),
+            k("27b-ternaer", 8, false, Some(27.0)),
+            k("30b-a3b", 29, true, Some(30.0)),
+            k("35b-a3b", 33, true, Some(35.0)),
+        ];
+        assert_eq!(empfehlung_fuer(&alle, 24 << 30).unwrap().name, "35b-a3b");
+        assert_eq!(empfehlung_fuer(&alle[..3], 16 << 30).unwrap().name, "8b", "14B + Luft passt nicht in 16");
+        let klein = empfehlung_fuer(&alle[1..3], 4 << 30).unwrap();
+        assert_eq!(klein.name, "8b");
+        assert!(klein.grund.contains("kleinste"), "{}", klein.grund);
+        assert!(empfehlung_fuer(&[], 24 << 30).is_none());
+    }
+}

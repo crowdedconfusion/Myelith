@@ -432,7 +432,8 @@ fn modell_waehlen(stand: &mut Stand) -> Modellwahl {
     let _ = std::io::stdout().flush();
     let anfang = std::time::Instant::now();
     match myl_client::Oertlichesmodell::laden(&pfad, &e.kapazitaet) {
-        Ok(m) => {
+        Ok(mut m) => {
+            m.uebernehmen(&e.modell);
             // ⚑ **Die Bestaetigung nennt Namen und Pfad** (Festlegung
             // des Projektinhabers, 2026-09-11). Der Name sagt, womit
             // man spricht; der Pfad sagt, welches Artefakt es wirklich
@@ -510,7 +511,7 @@ fn eingaberahmen(stand: &Stand) {
             "{}{}{}",
             sch.zeile(Schirm::KASTEN + 3),
             r.einzug,
-            fusszeile(stand.modus.name(), &stand.name, &stand.kiste, stand.schreibt, stand.kontext_prozent, r.innen)
+            fusszeile(stand.modus.name(), &stand.name, &stand.kiste, stand.schreibt, stand.kontext_prozent, saatangabe(stand), r.innen)
         )),
         ResetColor,
         // ⚑ **Der Arbeitsordner in der zweiten Zeile darunter**
@@ -600,7 +601,15 @@ fn eingabeinhalt(innen: usize, text: &str) -> String {
 ///
 /// ⚑ **Und welche Werkzeugkiste**, denn die entscheidet, was der Agent
 /// ueberhaupt kann, und steht sonst nirgends.
-fn fusszeile(modus: &str, name: &str, kiste: &str, schreibt: bool, kontext: Option<usize>, breite: usize) -> String {
+fn fusszeile(
+    modus: &str,
+    name: &str,
+    kiste: &str,
+    schreibt: bool,
+    kontext: Option<usize>,
+    saat: Option<String>,
+    breite: usize,
+) -> String {
     let name = if name.is_empty() { "kein Modell" } else { name };
     // ⚑ **Der Modus ganz links** (Festlegung des Projektinhabers,
     // 2026-09-11), mit dem Zeichen fuer Umschalt-Tab davor: **Wer den
@@ -619,6 +628,11 @@ fn fusszeile(modus: &str, name: &str, kiste: &str, schreibt: bool, kontext: Opti
     // die Angabe, die man mit `/context` ausfuehrlich bekommt.
     let mut teile =
         vec![format!("⇧⇥ {modus}"), name.to_string(), format!("Werkzeuge: {kiste}{lesen}")];
+    // ⚑ **Eine gesetzte Saat steht da**, denn sie aendert, was kommt; der
+    // Zufall ist die Vorgabe und braucht keinen Platz.
+    if let Some(s) = saat {
+        teile.push(s);
+    }
     if let Some(p) = kontext {
         teile.push(format!("Kontext {p} %"));
     }
@@ -635,6 +649,119 @@ fn fusszeile(modus: &str, name: &str, kiste: &str, schreibt: bool, kontext: Opti
         zeile = versuch;
     }
     zeile
+}
+
+/// Was die Fusszeile zur Saat sagt: nichts beim Zufall, sonst die Saat.
+fn saatangabe(stand: &Stand) -> Option<String> {
+    let m = stand.modell.as_ref()?;
+    if m.waehlt_gierig() {
+        return Some("gierig".to_string());
+    }
+    match (m.naechste(), m.saat_fest) {
+        (Some(n), _) => Some(format!("Saat {n} einmal")),
+        (None, Some(f)) => Some(format!("Saat fest {f}")),
+        (None, None) => None,
+    }
+}
+
+/// **`/seed`**: die Saat zeigen und setzen (Regel des Projektinhabers,
+/// 2026-09-29: standardmaessig Zufall, und einstellbar fuer die naechste
+/// Aktion oder immer).
+///
+/// ⚑ **„immer“ schreibt in die Einstellungen** (`modell.saat`), dieselbe
+/// Stelle wie die Einstellungsseite; „nur naechste“ bleibt in der Sitzung.
+/// So gibt es keinen zweiten Ort, der auseinanderlaufen kann.
+fn saat_befehl(stand: &mut Stand, rest: &str) {
+    let Some(m) = stand.modell.as_mut() else {
+        println!("  Kein Modell geladen. Mit /model eines waehlen.");
+        return;
+    };
+    let woerter: Vec<&str> = rest.split_whitespace().collect();
+    let immer = woerter.get(1).is_some_and(|w| *w == "immer" || *w == "always");
+    // ⚑ Gespeichert wird in `einstellseite`, wie jede Einstellung der Konsole.
+    let setzen = |saat: Option<u64>| {
+        if let Err(f) = einstellseite::saat_speichern(saat) {
+            println!("  In den Einstellungen nicht gespeichert: {f}");
+        }
+    };
+    match woerter.first().copied() {
+        None => {
+            let letzte = m.letzte_saat();
+            let modus = match (m.naechste(), m.saat_fest) {
+                (Some(n), _) => format!("naechste Aktion {n}, danach wieder wie eingestellt"),
+                (None, Some(f)) => format!("fest {f}"),
+                (None, None) => "Zufall, je Aktion eine neue".to_string(),
+            };
+            println!("  Saat: {modus}");
+            if let Some(l) = letzte {
+                println!("  Die letzte Aktion lief mit Saat {l}.");
+            }
+            let punkte = vec![
+                wahl::Punkt { titel: "Zufall".into(), hinweis: "die Vorgabe: jede Aktion eine neue Saat".into(), offen: true },
+                wahl::Punkt {
+                    titel: letzte.map_or("Letzte wiederholen".into(), |l| format!("Letzte wiederholen ({l})")),
+                    hinweis: "nur fuer die naechste Aktion".into(),
+                    offen: letzte.is_some(),
+                },
+                wahl::Punkt {
+                    titel: letzte.map_or("Letzte behalten".into(), |l| format!("Letzte behalten ({l})")),
+                    hinweis: "immer, bis /seed zufall".into(),
+                    offen: letzte.is_some(),
+                },
+            ];
+            match wahl::waehlen_ab("Welche Saat?", &punkte, 0, design::toene(stand.design)) {
+                Some(0) => {
+                    m.saat_fest = None;
+                    setzen(None);
+                    println!("  Saat: Zufall.");
+                }
+                Some(1) => {
+                    if let Some(l) = letzte {
+                        m.naechste_saat(l);
+                        println!("  Die naechste Aktion laeuft mit Saat {l}.");
+                    }
+                }
+                Some(2) => {
+                    if let Some(l) = letzte {
+                        m.saat_fest = Some(l);
+                        setzen(Some(l));
+                        println!("  Saat fest {l}, bis /seed zufall.");
+                    }
+                }
+                _ => println!("  Die Saat bleibt, wie sie war."),
+            }
+        }
+        Some("zufall" | "random") => {
+            m.saat_fest = None;
+            setzen(None);
+            println!("  Saat: Zufall, je Aktion eine neue.");
+        }
+        Some("nochmal" | "again") => match m.letzte_saat() {
+            Some(l) if immer => {
+                m.saat_fest = Some(l);
+                setzen(Some(l));
+                println!("  Saat fest {l}, bis /seed zufall.");
+            }
+            Some(l) => {
+                m.naechste_saat(l);
+                println!("  Die naechste Aktion laeuft mit Saat {l}.");
+            }
+            None => println!("  Es lief noch keine Aktion."),
+        },
+        Some(w) => match w.parse::<u64>() {
+            Ok(s) if immer => {
+                m.saat_fest = Some(s);
+                setzen(Some(s));
+                println!("  Saat fest {s}, bis /seed zufall.");
+            }
+            Ok(s) => {
+                m.naechste_saat(s);
+                println!("  Die naechste Aktion laeuft mit Saat {s}; danach wieder wie eingestellt.");
+            }
+            Err(_) => println!("  {w} ist keine Saat. /seed <zahl>, /seed <zahl> immer, /seed nochmal, /seed zufall"),
+        },
+    }
+    println!();
 }
 
 /// **Die zweite Zeile darunter: der Arbeitsordner, und rechts der
@@ -789,6 +916,11 @@ fn schleife(stand: &mut Stand) -> i32 {
                 vorhaben_zeigen(&rest);
                 continue;
             }
+            Some(Befehlsart::Saat) => {
+                let rest = befehl_und_rest(&text).map(|(_, r)| r).unwrap_or("").to_string();
+                saat_befehl(stand, &rest);
+                continue;
+            }
             Some(Befehlsart::Modell) => {
                 // ⚑ **Hier greift die Sicherung** (Auftrag des
                 // Projektinhabers, 2026-09-15): An dieser Stelle laeuft
@@ -900,6 +1032,8 @@ enum Befehlsart {
     Loop,
     /// Die Vorhaben zeigen, fortsetzen, anhalten.
     Vorhaben,
+    /// Die Saat zeigen und setzen, fuer die naechste Aktion oder immer.
+    Saat,
     Hilfe,
     Ende,
 }
@@ -920,7 +1054,7 @@ struct Befehl {
 /// nennt irgendwann einen Befehl, den es nicht gibt, oder verschweigt
 /// einen, den es gibt, **und beides sieht erst der, der es
 /// ausprobiert.**
-const BEFEHLE: [Befehl; 12] = [
+const BEFEHLE: [Befehl; 13] = [
     Befehl {
         art: Befehlsart::Modell,
         namen: &["/model", "/modell"],
@@ -972,6 +1106,11 @@ const BEFEHLE: [Befehl; 12] = [
         //   Projektinhabers, 2026-09-26).
         namen: &["/tasks"],
         was: "zeigt die Tasks des Loops in ihrer Reihenfolge; /tasks resume|pause <ID>, /tasks abnahme <ID> <befehl>",
+    },
+    Befehl {
+        art: Befehlsart::Saat,
+        namen: &["/seed", "/saat"],
+        was: "die Saat der Ausgabe: /seed zeigt und waehlt; /seed <zahl> nur fuer die naechste Aktion, /seed <zahl> immer, /seed nochmal, /seed zufall",
     },
     Befehl {
         art: Befehlsart::Hilfe,
@@ -1594,7 +1733,10 @@ fn auftrag_fahren(stand: &mut Stand, auftrag: &str) {
         .and_then(|m| myl_client::gespraech::anzeige(m, stand.ansage.as_ref(), &stand.gespraech));
     stand.kontext_prozent = kontext.map(|a| a.prozent);
     let kontextangabe = kontext.map(|a| format!(" · Kontext {} %", a.prozent)).unwrap_or_default();
-    let bilanz = format!("  {} Schritte, {:.1} s{kontextangabe}", aus.verlauf.len(), aus.sekunden);
+    // ⚑ **Die Saat steht in der Bilanz**, denn mit ihr laesst sich genau
+    // diese Antwort wiederholen (`/seed nochmal`).
+    let saatangabe = aus.saat.map(|s| format!(" · Saat {s}")).unwrap_or_default();
+    let bilanz = format!("  {} Schritte, {:.1} s{kontextangabe}{saatangabe}", aus.verlauf.len(), aus.sekunden);
     println!("{}", rollen.beiwerk.faerben(&bilanz, farbig));
     if matches!(aus.ende, myl_client::Ende::Tuer(myl_client::Tuerfehler::KontextVoll { .. })) {
         let satz = "  Der Kontext ist voll. `/compress` fasst das Gespraech zusammen, `/clear` beginnt neu.";
@@ -2026,7 +2168,7 @@ mod tests {
     /// abgeschnittener Pfad beantwortet das schlechter als ein Name.
     #[test]
     fn die_fusszeile_nennt_modell_und_kiste() {
-        let z = fusszeile("auto mode", "myelith-4b", "Base", true, None, crate::schirm::BLOCKBREITE - 2);
+        let z = fusszeile("auto mode", "myelith-4b", "Base", true, None, None, crate::schirm::BLOCKBREITE - 2);
         assert!(z.contains("auto mode"), "der Modus fehlt: {z}");
         assert!(z.contains("myelith-4b"), "das Modell fehlt: {z}");
         assert!(z.contains("Base"), "die Werkzeugkiste fehlt: {z}");
@@ -2064,8 +2206,8 @@ mod tests {
     /// 2026-09-11.
     #[test]
     fn ohne_schreiberlaubnis_steht_es_in_der_fusszeile() {
-        let mit = fusszeile("auto mode", "Myelith 4B", "Base", true, None, crate::schirm::BLOCKBREITE - 2);
-        let ohne = fusszeile("auto mode", "Myelith 4B", "Base", false, None, crate::schirm::BLOCKBREITE - 2);
+        let mit = fusszeile("auto mode", "Myelith 4B", "Base", true, None, None, crate::schirm::BLOCKBREITE - 2);
+        let ohne = fusszeile("auto mode", "Myelith 4B", "Base", false, None, None, crate::schirm::BLOCKBREITE - 2);
         assert!(!mit.contains("nur lesen"), "{mit}");
         assert!(ohne.contains("nur lesen"), "{ohne}");
     }
@@ -2079,7 +2221,7 @@ mod tests {
     fn eine_lange_fusszeile_passt_in_den_rahmen() {
         let lang = "myelith-30b-a3b-langer-name-aus-einem-versuch";
         for breite in 8..90 {
-            let z = fusszeile("auto mode", lang, "Advanced", true, Some(100), breite);
+            let z = fusszeile("auto mode", lang, "Advanced", true, Some(100), None, breite);
             assert!(
                 z.chars().count() <= breite,
                 "bei {breite} Zeichen ist die Fusszeile {} lang: {z}",
@@ -2094,7 +2236,7 @@ mod tests {
     /// und ist keine. **Was nicht passt, faellt ganz weg.**
     #[test]
     fn im_schmalen_fenster_bleibt_der_modus() {
-        let z = fusszeile("manual mode", "myelith-4b", "Advanced", true, Some(7), 20);
+        let z = fusszeile("manual mode", "myelith-4b", "Advanced", true, Some(7), None, 20);
         // Hinter der KI-Marke, die vor allem steht.
         assert!(z.starts_with("KI · ⇧⇥ manual mode"), "{z}");
         assert!(!z.contains('…'), "es wurde abgeschnitten statt weggelassen: {z}");
@@ -2103,7 +2245,7 @@ mod tests {
     /// **Ohne Modell steht das da, und nicht eine leere Stelle.**
     #[test]
     fn ohne_modell_sagt_die_fusszeile_das() {
-        let z = fusszeile("auto mode", "", "Base", true, None, crate::schirm::BLOCKBREITE - 2);
+        let z = fusszeile("auto mode", "", "Base", true, None, None, crate::schirm::BLOCKBREITE - 2);
         assert!(z.contains("kein Modell"), "{z}");
     }
 
@@ -2128,20 +2270,36 @@ mod tests {
     #[test]
     fn die_ki_marke_steht_vorn_und_faellt_nie_weg() {
         for breite in [1, 5, 20, crate::schirm::BLOCKBREITE - 2] {
-            let z = fusszeile("auto mode", "myelith-4b", "Advanced", true, Some(7), breite);
+            let z = fusszeile("auto mode", "myelith-4b", "Advanced", true, Some(7), None, breite);
             assert!(z.starts_with("KI"), "Breite {breite}: {z:?}");
         }
     }
 
     /// **Der Kontext steht in der Fusszeile, sobald er bekannt ist, und
     /// faellt als Erstes weg.**
+    /// ⚑ **Eine gesetzte Saat steht in der Fusszeile**, der Zufall nicht; und
+    /// `/seed` mit Argumenten ist ein Befehl, kein Auftrag an das Modell.
+    #[test]
+    fn die_saat_steht_in_der_fusszeile_und_seed_ist_ein_befehl() {
+        let mit = fusszeile("auto mode", "myelith-4b", "Base", true, None, Some("Saat fest 42".into()), crate::schirm::BLOCKBREITE - 2);
+        assert!(mit.contains("Saat fest 42"), "{mit}");
+        let ohne = fusszeile("auto mode", "myelith-4b", "Base", true, None, None, crate::schirm::BLOCKBREITE - 2);
+        assert!(!ohne.contains("Saat"), "{ohne}");
+        // Schmal: Die Saat faellt vor dem Modellnamen weg.
+        let schmal = fusszeile("auto mode", "myelith-4b", "Base", true, None, Some("Saat fest 42".into()), ohne.chars().count());
+        assert!(!schmal.contains("Saat") && schmal.contains("myelith-4b"), "{schmal}");
+        for zeile in ["/seed", "/seed 1234", "/seed 1234 immer", "/seed nochmal", "/saat zufall"] {
+            assert_eq!(befehl_zu(zeile), Some(Befehlsart::Saat), "{zeile}");
+        }
+    }
+
     #[test]
     fn der_kontext_steht_zuletzt_in_der_fusszeile() {
-        let breit = fusszeile("auto mode", "myelith-4b", "Base", true, Some(31), crate::schirm::BLOCKBREITE - 2);
+        let breit = fusszeile("auto mode", "myelith-4b", "Base", true, Some(31), None, crate::schirm::BLOCKBREITE - 2);
         assert!(breit.ends_with("Kontext 31 %"), "{breit}");
-        let ohne = fusszeile("auto mode", "myelith-4b", "Base", true, None, crate::schirm::BLOCKBREITE - 2);
+        let ohne = fusszeile("auto mode", "myelith-4b", "Base", true, None, None, crate::schirm::BLOCKBREITE - 2);
         assert!(!ohne.contains("Kontext"), "{ohne}");
-        let schmal = fusszeile("auto mode", "myelith-4b", "Base", true, Some(31), ohne.chars().count());
+        let schmal = fusszeile("auto mode", "myelith-4b", "Base", true, Some(31), None, ohne.chars().count());
         assert_eq!(schmal, ohne, "wird es eng, faellt der Kontext vor allem anderen weg");
     }
 

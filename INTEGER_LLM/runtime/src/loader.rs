@@ -3802,7 +3802,7 @@ mod tests {
         assert_eq!(model.kontextgrenze(), 64, "max_context ist kleiner als die Tabelle");
 
         let prompt: Vec<usize> = (0..60).map(|i| i % 3).collect();
-        let lauf = Erzeugung { max_new_tokens: 10, seed: 1, greedy: true, halt: &[], denkgrenze: None, abbruch: None };
+        let lauf = Erzeugung { max_new_tokens: 10, seed: 1, greedy: true, halt: &[], denkgrenze: None, abbruch: None, ziehen: None };
         let mut speicher = Fortsetzung::neu(&model);
         let (aus, w) = dekodieren_fortgesetzt(&model, &prompt, &lauf, &mut speicher, &mut |_| {});
         assert_eq!(aus.len(), 5, "Positionen 60 bis 63 werden gerechnet, das Token fuer 64 nur ausgegeben");
@@ -3845,7 +3845,7 @@ mod tests {
             gewichte_verrauschen(&dir, 0x5eed_0372);
             skalen_je_kanal_streuen(&dir);
             let model = load_model(&dir).expect("Artefakt muss laden");
-            let lauf = Erzeugung { max_new_tokens: 5, seed: 7, greedy: true, halt: &[], denkgrenze: None, abbruch: None };
+            let lauf = Erzeugung { max_new_tokens: 5, seed: 7, greedy: true, halt: &[], denkgrenze: None, abbruch: None, ziehen: None };
 
             let a: Vec<usize> = (0..40).map(|i| (i * 5 + i / 3) % 3).collect();
             let mut speicher = Fortsetzung::neu(&model);
@@ -3947,7 +3947,7 @@ mod tests {
         skalen_je_kanal_streuen(&dir);
         let model = load_model(&dir).expect("Artefakt muss laden");
         assert!(model.layers[0].ist_rekurrent(), "die Vorlage muss rekurrent laden");
-        let lauf = Erzeugung { max_new_tokens: 5, seed: 7, greedy: true, halt: &[], denkgrenze: None, abbruch: None };
+        let lauf = Erzeugung { max_new_tokens: 5, seed: 7, greedy: true, halt: &[], denkgrenze: None, abbruch: None, ziehen: None };
 
         // Verlauf aus 0 und 1, dann Marke und Antwortkopf.
         let verlauf: Vec<usize> = (0..30).map(|i| (i * 5 + i / 3) % 2).collect();
@@ -3982,6 +3982,50 @@ mod tests {
             }
         }
         fs::remove_dir_all(&dir).ok();
+    }
+
+    /// **Eine angehaltene Vorbereitung erzeugt nichts, und die naechste
+    /// rechnet dasselbe wie eine frische**, dicht und mit Zustandsebene.
+    ///
+    /// ⚑ Angehalten wird vor dem ersten Fenster; der Speicher muss danach
+    /// genau das sagen, was in ihm steht, sonst setzte der naechste Aufruf
+    /// auf einem falschen Anfang auf.
+    #[test]
+    fn eine_angehaltene_vorbereitung_setzt_bitgleich_fort() {
+        use crate::generate::{dekodieren_fortgesetzt, Erzeugung, Fortsetzung};
+        use std::sync::atomic::AtomicBool;
+        for (name, zustand) in [("halt-dicht", false), ("halt-zustand", true)] {
+            let dir = test_dir(name);
+            write_full_fixture_mit_tor(&dir, true, false, Some((6usize, 2usize, 3usize)), true);
+            if zustand {
+                zustandsebene_einsetzen(&dir);
+            }
+            gewichte_verrauschen(&dir, 0x5eed_0507);
+            skalen_je_kanal_streuen(&dir);
+            let model = load_model(&dir).expect("Artefakt muss laden");
+            let an = AtomicBool::new(true);
+            let lauf = Erzeugung { max_new_tokens: 5, seed: 7, greedy: true, halt: &[], denkgrenze: None, abbruch: None, ziehen: None };
+            let angehalten = Erzeugung { abbruch: Some(&an), ..lauf };
+
+            let a: Vec<usize> = (0..20).map(|i| (i * 5 + i / 3) % 2).collect();
+            let mut b = a.clone();
+            b.extend([2, 1, 0, 1, 1, 0]);
+
+            let mut speicher = Fortsetzung::neu(&model);
+            let _ = dekodieren_fortgesetzt(&model, &a, &lauf, &mut speicher, &mut |_| {});
+            let (nichts, _) = dekodieren_fortgesetzt(&model, &b, &angehalten, &mut speicher, &mut |_| {});
+            assert!(nichts.is_empty(), "{name}: angehalten und trotzdem erzeugt");
+            assert!(speicher.token.len() <= b.len() && b.starts_with(&speicher.token), "{name}: der Speicher sagt etwas anderes, als in ihm steht");
+
+            let (weiter, _) = dekodieren_fortgesetzt(&model, &b, &lauf, &mut speicher, &mut |_| {});
+            let mut frisch = Fortsetzung::neu(&model);
+            let (neu, _) = dekodieren_fortgesetzt(&model, &b, &lauf, &mut frisch, &mut |_| {});
+            assert_eq!(weiter, neu, "{name}: nach dem Anhalten andere Token");
+
+            let mut cache = crate::kv_cache::KVCache::new(model.num_layers, model.num_kv_heads);
+            assert_eq!(model.prompt_vorbereiten_unterbrechbar(&b, 0, &mut cache, Some(&an)), Err(0), "{name}: gerechnet trotz Schalter");
+            fs::remove_dir_all(&dir).ok();
+        }
     }
 
     /// **Gegenprobe:** Dasselbe Fixture ohne `moe` ergibt eine dichte

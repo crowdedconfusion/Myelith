@@ -274,6 +274,35 @@ pub fn anwenden(e: &crate::einstellungen::Einstellungen) -> bool {
 /// gespeichertem und wirksamem Kernbudget.
 static ABGESCHALTET: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+// ── Vorrang ─────────────────────────────────────────────────────────
+
+/// **Stellt den laufenden Faden hinter die Oberflaeche**, fuer Arbeit, auf
+/// die niemand wartet: das Vorladen des Modells beim Start.
+///
+/// 📌 **Warum:** Der Lader liest auf allen Kernen, und in derselben Zeit
+/// zeichnet das Fenster sein Vorschaltbild. Mit gleichem Vorrang ruckelte
+/// das Bild (Projektinhaber, 2026-09-29). Faeden, die dieser Faden danach
+/// startet, erben den Vorrang, also auch die des Laders.
+///
+/// Unter macOS die Dienstklasse „utility“, unter Linux ein hoeherer
+/// Nice-Wert, sonst nichts. Scheitert es, laedt es eben mit vollem Vorrang.
+///
+/// ⚠️ **Nur in einem eigenen Faden aufrufen**, nie in einem aus einem
+/// Vorrat: Der Vorrang bleibt am Faden, und unter Linux laesst er sich ohne
+/// Rechte nicht zuruecknehmen.
+pub fn im_hintergrund_rechnen() {
+    #[cfg(target_os = "macos")]
+    // SICHERHEIT: wirkt nur auf den aufrufenden Faden, ohne Zeiger.
+    unsafe {
+        libc::pthread_set_qos_class_self_np(libc::qos_class_t::QOS_CLASS_UTILITY, 0);
+    }
+    #[cfg(target_os = "linux")]
+    // SICHERHEIT: Unter Linux meint `0` den aufrufenden Faden, ohne Zeiger.
+    unsafe {
+        libc::setpriority(libc::PRIO_PROCESS, 0, 10);
+    }
+}
+
 // ── Arbeitsspeicher ─────────────────────────────────────────────────
 
 #[cfg(target_os = "macos")]

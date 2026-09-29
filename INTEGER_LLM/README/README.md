@@ -1,7 +1,7 @@
 # integer-llm
 
-> **Version:** 0.104.0 (θ_v 0.22.0; kernels 0.71.0, runtime 0.74.0, pipeline 0.15.1)
-> **Datum:** 2026-09-28
+> **Version:** 0.106.0 (θ_v 0.22.0; kernels 0.72.0, runtime 0.76.0, pipeline 0.15.1)
+> **Datum:** 2026-09-29
 > **Status:** ⚠️ **Das Akzeptanzkriterium ruht auf einer zu kleinen
 > Stichprobe.** Gemessen wurde bisher ueber **4 Sequenzen, 435
 > Positionen**; eine Messung ueber **32 Sequenzen, 3558 Positionen**
@@ -646,6 +646,63 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
   volle Paritätstests nur auf GPU-Runnern (nightly oder PR-basiert)
 
 ## Changelog
+
+### v0.106.0 – 2026-09-29 (runtime 0.76.0: die Vorbereitung eines Prompts hält am Abbruchschalter)
+
+**Anlass:** Wunsch des Projektinhabers: Ein Klick auf ∞ soll den Loop
+umgehend pausieren.
+
+**Befund:** Der Abbruchschalter der Erzeugung (`Erzeugung::abbruch`) wurde erst
+vor dem ersten neuen Token gelesen. Die Vorbereitung eines langen Prompts lief
+ungebremst durch, und die dauert beim großen Gemisch auf der CPU leicht eine
+Minute.
+
+- **`prompt_vorbereiten_unterbrechbar`**: dieselben Fenster zu 512 Token wie
+  bisher, und vor jedem wird der Schalter gelesen. Angehalten kommt
+  `Err(n)` zurück: Im KV-Speicher stehen genau die ersten `n` Token.
+  `prompt_vorbereiten_ab` ist der Weg ohne Schalter und rechnet unverändert.
+- **Die Erzeugung nutzt ihn**, auch in beiden Stücken um die Merkmarke
+  rekurrenter Ebenen. Angehalten merkt sich der Speicher, was gerechnet ist,
+  und gibt keine Token zurück; der nächste Aufruf setzt dort auf.
+- ⚑ **An keiner Zahl ändert sich etwas**: Die Fenstergrenzen sind dieselben.
+
+**Belege:** neue Probe `eine_angehaltene_vorbereitung_setzt_bitgleich_fort`
+(dicht und mit Zustandsebene: angehalten nichts erzeugt, der Speicher ein
+Anfang des Prompts, danach dieselben Token wie frisch); Runtime-Proben grün,
+Clippy ohne Befund, Konformität 48/48.
+
+### v0.105.0 – 2026-09-29 (kernels 0.72.0, runtime 0.75.0: ein ganzzahliger Sampler mit Temperatur, Top-k und Top-p; gleiche Saat, gleiche Folge)
+
+**Anlass:** Regel des Projektinhabers: immer mit Saat ziehen, damit ein Lauf
+bei gleicher Saat bitgleich wiederholbar ist und bei anderer Saat einen
+anderen Weg geht. Bis hierher dekodierte der Client immer gierig.
+
+**Befund:** Der vorhandene Sampler `sampling::sample_integer_cdf` gewichtet
+jedes Wort **linear** mit `z - min + 1` über das ganze Vokabular (150 000
+bis 250 000 Einträge). Der lange Schwanz trägt damit fast das ganze Gewicht,
+gezogen würde beinahe gleich verteilt; `bin/logit_probe` rechnet das aus.
+Er steht so in θ_v (`sampling.method = integer_cdf`) und **bleibt
+unverändert**: Ein Wechsel im Netz ist eine eigene Fassung der
+Spezifikation, keine Nebenwirkung.
+
+**Neu:**
+- `kernels::sampling::ziehen` mit `Ziehparameter`: die `top_k` größten
+  Logits (strenge Ordnung, bei Gleichstand der kleinere Index), Gewichte
+  `exp(-(z_max - z) / T)` aus der exp-Tabelle des Artefakts, die Temperatur
+  als Kehrwert `256 / T` multipliziert und per gerundetem Rechtsshift in die
+  Eingangsskala der Tabelle gebracht, Top-p in `i128`, SplitMix64. Kein
+  Gleitkomma, keine Division.
+- `IntegerModel::ziehen_next`; `Erzeugung.ziehen: Option<Ziehparameter>`.
+  `None` heißt Zeichen für Zeichen wie bisher; alle bestehenden
+  Konstruktionen tragen `ziehen: None`. Der Digest-Pfad der Konformität
+  bleibt unberührt. `generate::Ziehparameter` reicht den Typ durch.
+
+**Belege:** vier Kernproben (gleiche Saat gleich, andere Saaten
+verschieden; Top-k 1 ist argmax; Verhältnis 2:1 bei einem Abstand von ln 2;
+Top-p und Temperatur wirken); `gezogen_mit_saat_wiederholbar_und_verschieden`
+am 0,6B (gleiche Saat bitgleich, sechs Saaten mindestens drei Folgen, der
+gierige Lauf unverändert). Kernels 324 grün, Runtime 143 grün, Clippy ohne
+Befund, **Konformität 48/48**, kein Gleitkomma im Inferenz- und Konsenspfad.
 
 ### v0.104.0 – 2026-09-29 (runtime 0.74.0: Fund 501, ein Wettlauf beim parallelen Laden der Drehvorzeichen)
 

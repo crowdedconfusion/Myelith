@@ -149,6 +149,42 @@ fn ohne_pruefung_kein_zweiter_durchgang() {
     assert!(!modell.gefragt.borrow().iter().any(|t| t.starts_with("Prüfe eine Runde")));
 }
 
+/// Merkt sich, welche Antwortlaenge jeder Aufruf mitbekommt.
+struct Laengenzeuge {
+    gesehen: RefCell<Vec<Option<u32>>>,
+}
+
+impl Modellweg for Laengenzeuge {
+    fn chat(&self, _m: &str, n: &[Nachricht], t: Option<u32>) -> Result<Antwort, Tuerfehler> {
+        let pruefung = n.last().is_some_and(|x| x.content.starts_with("Prüfe eine Runde"));
+        if !pruefung {
+            self.gesehen.borrow_mut().push(t);
+        }
+        let text = if pruefung { "FORTSCHRITT: NEIN\nERREICHT: NEIN\nGRUND: Probe".to_string() } else { "Nichts zu tun.".to_string() };
+        Ok(Antwort { text, abschlussgrund: Some("stop".into()), kennung: "probe".into(), segment: None, prompt_token: 0, antwort_token: 0 })
+    }
+}
+
+/// ⛔️ **Fund 505: Ein Agentenlauf bekommt nie weniger als die Vorgabe.**
+/// Mit 256 wurde im Loop jeder laengere Werkzeugaufruf abgeschnitten. Die
+/// Runde wird hier mit 256 gefahren, und beim Modell muss mehr ankommen.
+#[test]
+fn ein_agentenlauf_bekommt_nie_weniger_als_die_vorgabe() {
+    let basis = ordner("laenge");
+    let ablage = Ablage::neu(basis.join("vorhaben"));
+    let arbeit = basis.join("arbeit");
+    std::fs::create_dir_all(&arbeit).unwrap();
+    let mut v = ablage.anlegen("Einen Bericht schreiben", vorhaben::jetzt()).unwrap();
+    let zeuge = Laengenzeuge { gesehen: RefCell::new(Vec::new()) };
+    vorhaben::runde(&ablage, &mut v, &zeuge, &ruester(arbeit), &Loopeinstellung::default(), Sprache::De, 256, None).unwrap();
+    let gesehen = zeuge.gesehen.borrow();
+    assert!(!gesehen.is_empty(), "das Modell wurde nie gefragt");
+    let vorgabe = myl_client::einstellungen::ANTWORT_VORGABE as u32;
+    assert!(gesehen.iter().all(|t| t.is_some_and(|t| t >= vorgabe)), "{gesehen:?}");
+    // Und ab Werk steht die Einstellung selbst schon dort.
+    assert_eq!(myl_client::einstellungen::Einstellungen::default().modell.token, myl_client::einstellungen::ANTWORT_VORGABE);
+}
+
 /// Bricht beim dritten Aufruf ab, wie ein Fenster, das mitten in der
 /// Runde geschlossen wird.
 struct Abbrechend {

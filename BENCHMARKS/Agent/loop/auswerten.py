@@ -111,10 +111,31 @@ def aufgabe_bericht(arbeit):
     def zeilen_mit(muster):
         return [z for z in zeilen if re.search(muster, z, re.I)]
 
-    kuehl = [z for z in zeilen_mit(r"T3|Kühlraum") if VERLETZT.search(z) and not VERNEINT.search(z)]
+    # 📌 Ein Befund steht oft als Liste unter einem Einleitungssatz: „lag ein
+    #    Raum ausserhalb seines Bereichs:“ und darunter „- Kuehlraum (T3):
+    #    Hoechstwert 9,4 °C“. Zeile fuer Zeile gelesen traegt keine der beiden
+    #    beides; bis zum 2026-09-29 fiel ein richtiger Bericht des 35B daran
+    #    durch. Ein Listenpunkt erbt deshalb die Bewertung seines
+    #    Einleitungssatzes, in beide Richtungen: unter „Die uebrigen lagen
+    #    innerhalb“ zaehlt er ausdruecklich nicht als verletzt.
+    def als_verletzt(muster):
+        treffer, einleitung = [], ""
+        for z in zeilen:
+            punkt = re.match(r"\s*(?:[-*+]|\d+\.)\s", z)
+            if z.strip() and not punkt:
+                einleitung = z
+            if not re.search(muster, z, re.I) or VERNEINT.search(z):
+                continue
+            selbst = VERLETZT.search(z)
+            geerbt = punkt and VERLETZT.search(einleitung) and not VERNEINT.search(einleitung)
+            if selbst or geerbt:
+                treffer.append(z)
+        return treffer
+
+    kuehl = als_verletzt(r"T3|Kühlraum")
     pruef.append(("Kühlraum (T3) als verletzt erkannt", bool(kuehl), ""))
     pruef.append(("Höchstwert 9,4 °C im Kühlraum genannt", bool(re.search(r"9[,.]4", text)), ""))
-    server = [z for z in zeilen_mit(r"T4|Serverraum") if VERLETZT.search(z) and not VERNEINT.search(z)]
+    server = als_verletzt(r"T4|Serverraum")
     pruef.append(("Serverraum (T4) nicht fälschlich als verletzt", da and not server, server[0][:80] if server else ""))
     defekt = zeilen_mit(r"(T2|Büro).*(defekt|nicht verwend|ausgeschlossen|entfällt|nicht bewert)|(defekt|nicht verwend|ausgeschlossen).*(T2|Büro)")
     pruef.append(("Sensor T2 als defekt ausgeklammert", bool(defekt), ""))
@@ -185,7 +206,8 @@ def main(args):
     md = [f"# Loop-Szenario: {os.path.basename(info.get('artefakt', '?'))}", ""]
     md.append(f"- **Stand:** {time.strftime('%Y-%m-%d %H:%M')}, {minuten:.0f} min nach dem Start"
               + (f", beendet ({ende.split('Fertig: ')[1]})" if ende else ", läuft noch"))
-    md.append(f"- **Einstellungen:** {info.get('runden')} Runden je Task, {info.get('schritte')} Schritte je Runde")
+    md.append(f"- **Einstellungen:** {info.get('runden')} Runden je Task, {info.get('schritte')} Schritte je Runde"
+              + (f", Saat {info['saat']} (wiederholen mit `--saat {info['saat']}`)" if info.get("saat") is not None else ", gierig (vor der Saat)"))
     md.append(f"- **Prüfungen bestanden:** {gesamt} von {len(alle)}")
     md.append("")
     md.append("## Tasks")

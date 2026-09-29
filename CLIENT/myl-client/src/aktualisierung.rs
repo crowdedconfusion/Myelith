@@ -549,6 +549,58 @@ mod proben {
         }
     }
 
+    /// ⛔️ **Jeder Pfad im Klon, den ein Installationsskript nennt, liegt da.**
+    ///
+    /// 📌 **Fund 504 (2026-09-29):** `installieren-windows.ps1` rief nach dem
+    /// Umzug nach `SYSTEM/` noch `INSTALL\vorrat.py` auf und holte die
+    /// Programme aus `target-shared\release\`; beide Ordner gab es nicht
+    /// mehr. Unter Windows scheiterte damit jede Einrichtung aus dem Klon.
+    /// Die CI sah es nicht, denn ihr kalter Klon ruft `vorrat.py` und
+    /// `cargo` selbst und nicht das Skript. Dieselbe Klasse wie Fund 458,
+    /// und wie dort hilft nur eine Probe, die auf **jedem** System liest,
+    /// was das Skript sagt.
+    ///
+    /// Geprueft wird der erste Ordner jedes Pfades hinter `$WURZEL/` und
+    /// `Join-Path $Wurzel "…"`, unter `SYSTEM/` auch der zweite. Was erst
+    /// beim Bauen oder Einrichten entsteht, steht in `ENTSTEHT`.
+    #[test]
+    fn jeder_pfad_in_den_skripten_liegt_da() {
+        const ENTSTEHT: [&str; 3] = [".git", "SYSTEM/full-build", "SYSTEM/crates-lager"];
+        let wurzel = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(|p| p.parent())
+            .expect("Wurzel des Repositoriums");
+        let mut geprueft = 0;
+        for eintrag in SKRIPTE {
+            let skript = eintrag.replace('\\', "/");
+            let text = std::fs::read_to_string(wurzel.join(&skript)).expect("Skript lesbar");
+            let mut pfade: Vec<String> = Vec::new();
+            for (marke, ende) in [("$WURZEL/", &[' ', '"', '\'', ')', '\n'][..]), ("Join-Path $Wurzel \"", &['"'][..])] {
+                let mut rest = text.as_str();
+                while let Some(i) = rest.find(marke) {
+                    rest = &rest[i + marke.len()..];
+                    let pfad = &rest[..rest.find(ende).unwrap_or(rest.len())];
+                    pfade.push(pfad.replace('\\', "/"));
+                }
+            }
+            for pfad in pfade {
+                let teile: Vec<&str> = pfad.split('/').filter(|t| !t.is_empty()).collect();
+                let tiefe = if teile.first() == Some(&"SYSTEM") { 2 } else { 1 };
+                if teile.len() < tiefe || teile[..tiefe].iter().any(|t| t.contains('$')) {
+                    continue;
+                }
+                let kopf = teile[..tiefe].join("/");
+                if ENTSTEHT.contains(&kopf.as_str()) {
+                    continue;
+                }
+                geprueft += 1;
+                assert!(wurzel.join(&kopf).exists(), "{skript} nennt `{pfad}`, aber `{kopf}` gibt es im Klon nicht");
+            }
+        }
+        // Eine Probe, die nichts findet, waere eine gruene ohne Gegenstand.
+        assert!(geprueft >= 8, "nur {geprueft} Pfade gefunden; liest die Probe die Skripte noch?");
+    }
+
     /// **Alle drei Installationsskripte liegen in `SYSTEM/install/`.**
     ///
     /// ⚑ **In einem eigenen Ordner mit einer Anleitung daneben**

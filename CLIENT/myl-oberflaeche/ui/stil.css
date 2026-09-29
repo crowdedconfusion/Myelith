@@ -1539,7 +1539,9 @@ h4.mdkopf, h5.mdkopf, h6.mdkopf { font-size: .94rem; color: var(--leise); }
   grid-template-columns: 1fr auto;
   align-items: end;
   gap: .5rem;
-  padding: .45rem .45rem .45rem .9rem;
+  /* Rechts Platz fuer die Spalte des Pfeils (`.ausgabepfeil`). */
+  --pfeilspalte: 1.7rem;
+  padding: .45rem calc(.45rem + var(--pfeilspalte)) .45rem .9rem;
   border-radius: var(--rund);
 }
 
@@ -2090,9 +2092,18 @@ td input[type="text"] { width: 20rem; padding: .24rem .55rem; }
   place-items: center;
   z-index: 10;
   transition: opacity .6s ease;
+  /* Eine eigene Ebene: Die Blende rechnet der Grafikprozessor. */
+  will-change: opacity;
 }
 #vorhang.weg { opacity: 0; pointer-events: none; }
-#vorhangbild { position: absolute; inset: 0; width: 100%; height: 100%; }
+/* ⚑ **Das Bild blendet ein, wenn sein erstes Bild steht**, statt aus einem
+   leeren oder stehenden Bild anzuspringen (`.bereit` setzt `vorhang.js`). */
+#vorhangbild {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  opacity: 0;
+  transition: opacity .5s ease;
+}
+#vorhangbild.bereit { opacity: 1; }
 
 /* ⚑ Der Schriftzug tritt aus der Unschaerfe heraus, er blendet nicht
    auf: Er beginnt unscharf und gespreizt und faehrt in anderthalb
@@ -2106,6 +2117,9 @@ td input[type="text"] { width: 20rem; padding: .24rem .55rem; }
 .vorhangtext {
   position: relative;
   text-align: center;
+  /* Der Endstand, den vorher die Animation setzte. */
+  letter-spacing: -.02em;
+  will-change: opacity, transform;
   animation: aus_dem_rauschen 1.5s cubic-bezier(.2, .7, .3, 1) .2s both;
 }
 .vorhangtext .wortmarke { font-size: 2.6rem; }
@@ -2117,17 +2131,18 @@ td input[type="text"] { width: 20rem; padding: .24rem .55rem; }
 }
 .vorhangtext p { color: var(--leise); margin: 0; font-size: .85rem; min-height: 1.4em; }
 
+/* 📌 **Nur Deckkraft und Groesse** (Projektinhaber, 2026-09-29: „ruckelt
+   ganz am Anfang“). Hier liefen `letter-spacing` und `filter: blur` mit:
+   Der Zeichenabstand erzwingt in jedem Bild ein neues Layout auf dem
+   Hauptfaden, genau waehrend das Fenster startet, und laesst sich nicht an
+   den Grafikprozessor abgeben. Deckkraft und `transform` laufen dort allein. */
 @keyframes aus_dem_rauschen {
   from {
     opacity: 0;
-    filter: blur(14px);
-    letter-spacing: .38em;
-    transform: scale(.94);
+    transform: scale(.92);
   }
   to {
     opacity: 1;
-    filter: blur(0);
-    letter-spacing: -.02em;
     transform: none;
   }
 }
@@ -2157,6 +2172,7 @@ td input[type="text"] { width: 20rem; padding: .24rem .55rem; }
   /* ⚑ ∞ bleibt hell, solange der Loop laeuft, und hoert auf zu atmen.
      Hell heisst „laeuft“; das Atmen ist die Verzierung. */
   .loopknopf.an svg { animation: none; }
+  .loopknopf.an::before { animation: none; opacity: .55; }
   /* ⚑ Der Ausschlag und das Stimmzeichen sind **Auskunft** und keine
      Verzierung: Sie bleiben, nur ohne weiche Wege dorthin. */
   .stimmzeichen .ring, .stimmzeichen .kern { transition: none; }
@@ -2260,25 +2276,255 @@ td input[type="text"] { width: 20rem; padding: .24rem .55rem; }
 }
 .loopgruppe.an .looptask { color: var(--text); }
 .loopknopf.an { color: var(--text); }
-.loopknopf.an svg { animation: atmen 3.2s ease-in-out infinite; }
+/* ⚑ **Kraeftiger und leuchtender** (Projektinhaber, 2026-09-29: „kraeftiger
+   atmen, mehr enlightened“): Das Zeichen schwillt leicht an und traegt einen
+   doppelten Schein, und hinter ihm atmet ein weicher Lichthof mit. Der Hof
+   bewegt nur Deckkraft und Massstab, das rechnet der Compositor allein. */
+.loopknopf { position: relative; }
+.loopknopf.an svg { animation: atmen 3.2s ease-in-out infinite; position: relative; z-index: 1; }
+.loopknopf.an::before {
+  content: "";
+  position: absolute;
+  inset: -.3rem;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgb(var(--auf) / .5) 0%, rgb(var(--auf) / .16) 42%, rgb(var(--auf) / 0) 70%);
+  pointer-events: none;
+  will-change: opacity, transform;
+  animation: lichthof 3.2s ease-in-out infinite;
+}
 @keyframes atmen {
-  0%, 100% { opacity: .45; filter: drop-shadow(0 0 0 rgb(var(--auf) / 0)); }
-  50% { opacity: 1; filter: drop-shadow(0 0 3px rgb(var(--auf) / .8)); }
+  0%, 100% {
+    opacity: .38;
+    transform: scale(.93);
+    filter: drop-shadow(0 0 0 rgb(var(--auf) / 0));
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.07);
+    filter: drop-shadow(0 0 3px rgb(var(--auf) / .95)) drop-shadow(0 0 8px rgb(var(--auf) / .55));
+  }
+}
+@keyframes lichthof {
+  0%, 100% { opacity: .1; transform: scale(.6); }
+  50% { opacity: 1; transform: scale(1.15); }
 }
 
 /* ⚑ Fest positioniert und ueber den Knoepfen, wie die Kontextwahl. Die
    Liste rollt selbst, wenn es viele Tasks werden. */
-#taskwahl {
+/* ⚑ **Die beiden Klappfelder ueber der Eingabe, ohne Glas und je mit
+   fester Groesse** (Festlegung des Projektinhabers, 2026-09-29): das
+   Ausgabefeld am Pfeil und die Taskliste am ∞. Jedes behaelt seine
+   Groesse, gleich was darin steht, und rollt, wenn der Inhalt laenger ist;
+   gleich gross muessen die beiden nicht sein (Groesse je Feld unten).
+   Deckender Grund statt Glas. Das Eingabefeld selbst behaelt sein Glas. */
+.klappfeld {
   position: fixed;
   z-index: 60;
-  width: min(26rem, calc(100vw - 16px));
+  box-sizing: border-box;
+  /* ⚑ **Nur senkrecht** (Projektinhaber, 2026-09-29). 📌 `overflow-y` allein
+     laesst den Browser auch waagrecht rollen, sobald etwas breiter ist. */
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
   padding: .5rem;
-  display: grid;
-  gap: .4rem;
   border-radius: var(--rund);
   background: var(--grund-hoch);
   box-shadow: 0 18px 40px -18px rgb(var(--unter) / .8);
 }
+
+/* ⚑ **Das Feld fuer die Ausgabe** (Auftrag des Projektinhabers,
+   2026-09-29): Saat, Temperatur, Top-p, Top-k, Laenge, Denkmodus. Rechts
+   buendig, denn es gehoert zum Pfeil am rechten Rand. */
+/* 📌 Erst 28 rem hoch; der Inhalt ist kuerzer, also rollte nichts. Jetzt
+   20 rem, und es rollt senkrecht wie die Taskliste. */
+#ausgabewahl {
+  width: min(22rem, calc(100vw - 16px));
+  height: min(20rem, calc(100vh - 16px));
+  display: flex;
+  flex-direction: column;
+  gap: .45rem;
+  font-size: .82rem;
+  color: var(--leise);
+}
+/* 📌 **Der letzte Knopf war abgeschnitten und nicht zu erreichen**
+   (Projektinhaber, 2026-09-29). Eine Spalte fester Hoehe darf ihre
+   Eintraege nicht schrumpfen, sonst passt alles scheinbar hinein und
+   nichts rollt; und den unteren Innenabstand eines rollbaren Felds
+   uebergehen manche Webansichten. Also schrumpft nichts, und der letzte
+   Eintrag traegt seinen Abstand selbst. */
+#ausgabewahl > * { flex: 0 0 auto; }
+#ausgabewahl > :last-child { margin-bottom: .5rem; }
+.ausgabegruppe {
+  border: 0;
+  margin: 0;
+  padding: .15rem .3rem;
+  display: grid;
+  gap: .3rem;
+}
+.ausgabegruppe legend {
+  padding: 0;
+  color: var(--text);
+  font-size: .78rem;
+}
+.ausgabereihe {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: .45rem;
+}
+.ausgabereihe input[type="range"] { flex: 1 1 8rem; }
+.ausgabereihe output { min-width: 2.6rem; text-align: right; color: var(--text); }
+.saatzahl { flex: 1 1 7rem; min-width: 0; font-variant-numeric: tabular-nums; }
+#topk, #antwortlaenge { width: 6rem; }
+.ausgabemehr summary { cursor: pointer; color: var(--leise); }
+.ausgabemehr[open] summary { color: var(--text); }
+
+/* ⚑ **Der Griff an der oberen Kante des Eingabefelds**: ziehen
+   vergroessert, Doppelklick laesst es wieder von selbst wachsen. Ein
+   Streifen ueber der Kante, unsichtbar bis zum Ueberfahren; dann zeigt
+   eine kurze Linie, dass hier etwas zu greifen ist. */
+.eingabefeld > .eingabegriff {
+  position: absolute;
+  top: -6px;
+  left: 1.5rem;
+  right: 1.5rem;
+  height: 12px;
+  z-index: 4;
+  cursor: ns-resize;
+  touch-action: none;
+}
+.eingabefeld > .eingabegriff::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 5px;
+  width: 2.4rem;
+  height: 2px;
+  margin-left: -1.2rem;
+  border-radius: 1px;
+  background: var(--leise);
+  opacity: 0;
+  transition: opacity .15s ease;
+}
+.eingabefeld > .eingabegriff:hover::after,
+.eingabefeld > .eingabegriff.zieht::after { opacity: .7; }
+
+/* ⚑ **Der Pfeil ist ein Teil des Eingabefelds** (Festlegung des
+   Projektinhabers, 2026-09-29): eine schmale Spalte ganz rechts, von der
+   oberen bis zur unteren Kante, mit den Ecken des Felds. Er liegt IN ihm,
+   also traegt er dessen Glas, Rand und Schein, und Feld und Pfeil stehen
+   als Einheit mittig im Fenster. Eine feine Linie trennt ihn vom Text.
+   📌 Erst ein Knopf in der Reihe neben dem Senden, dann eine Lasche aussen
+   am Rand; beide sahen nach einem zweiten Ding aus. */
+.eingabefeld > .ausgabepfeil {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  width: var(--pfeilspalte);
+  margin: 0;
+  padding: 0;
+  border-radius: 0 var(--rund) var(--rund) 0;
+  color: var(--leise);
+  background: none;
+  box-shadow: inset 1px 0 0 rgb(var(--auf) / .10);
+}
+.eingabefeld > .ausgabepfeil:hover { background: rgb(var(--auf) / .05); }
+.ausgabepfeil svg {
+  width: 1rem;
+  height: 1rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: transform .15s ease;
+}
+.eingabefeld > .ausgabepfeil:hover { color: var(--text); }
+.ausgabepfeil[aria-expanded="true"] svg { transform: rotate(180deg); }
+/* Eine gesetzte Saat oder Temperatur zeigt sich am Pfeil. */
+.ausgabepfeil.gesetzt { color: var(--akzent, var(--text)); }
+
+/* Die Zeile mit der Saat unter einer Antwort, leise wie die Zeitzeile. */
+.saatzeile {
+  display: flex;
+  align-items: center;
+  gap: .4rem;
+  font-size: .72rem;
+  color: var(--leiser);
+  font-variant-numeric: tabular-nums;
+}
+.saatzeile button {
+  font-size: .72rem;
+  padding: 0 .35rem;
+  color: var(--leise);
+  background: none;
+  box-shadow: none;
+}
+.saatzeile button:hover { color: var(--text); }
+
+/* Groesse, Grund und Schatten aus `.klappfeld`. Hier rollt nur die Liste:
+   Kopf und die Zeile fuer einen neuen Task bleiben stehen. */
+#taskwahl {
+  width: min(26rem, calc(100vw - 16px));
+  height: min(22rem, calc(100vh - 16px));
+  display: flex;
+  flex-direction: column;
+  gap: .4rem;
+  overflow: hidden;
+}
+#taskwahl > .taskliste { flex: 1 1 auto; min-height: 0; }
+
+/* ⚑ **Das Menue am Task** (Rechtsklick): bearbeiten, anhalten oder
+   weiter, loeschen. Ohne Glas, wie die Taskliste, aus der es kommt. */
+.menuefeld {
+  position: fixed;
+  z-index: 70;
+  min-width: 10rem;
+  padding: .3rem;
+  display: grid;
+  gap: .1rem;
+  border-radius: calc(var(--rund) - .2rem);
+  background: var(--grund-hoch);
+  box-shadow: 0 18px 40px -18px rgb(var(--unter) / .8);
+}
+.menuefeld .menueeintrag {
+  text-align: left;
+  padding: .35rem .6rem;
+  border-radius: calc(var(--rund) - .45rem);
+  background: none;
+  box-shadow: none;
+  color: var(--leise);
+}
+.menuefeld .menueeintrag:hover,
+.menuefeld .menueeintrag:focus-visible { color: var(--text); background: rgb(var(--auf) / .06); }
+
+/* Ein Ziel wird in der Zeile selbst bearbeitet. */
+.taskbearbeiten {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: .82rem;
+  padding: .1rem .3rem;
+}
+
+/* ⚑ **Der Papierkorb rechts an jedem Task**, jederzeit sichtbar
+   (Wunsch des Projektinhabers, 2026-09-29). Zwei Klicks: Der erste stellt
+   ihn scharf, der zweite loescht. */
+.taskaktion svg {
+  width: .95rem;
+  height: .95rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+/* Scharf gestellt wird er hell und groesser (`.taskaktion[data-scharf]`),
+   in Graustufen wie alles hier. */
 .taskkopf {
   display: flex;
   justify-content: space-between;
@@ -2292,11 +2538,20 @@ td input[type="text"] { width: 20rem; padding: .24rem .55rem; }
   margin: 0;
   padding: 0;
   display: grid;
+  /* 📌 **Eine Spalte, die nicht breiter wird als die Liste**
+     (Projektinhaber, 2026-09-29: sie rollte waagrecht). Ein Rasterelement
+     darf sonst so breit werden wie sein laengster Text, und ein langes Ziel
+     schob die Zeile ueber den Rand; jetzt endet es mit „…“. */
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
   gap: .15rem;
-  max-height: 18rem;
+  overflow-x: hidden;
   overflow-y: auto;
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
 }
 .taskzeile {
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: .35rem;
@@ -2542,6 +2797,13 @@ tr.gesucht td:first-child { box-shadow: inset 2px 0 0 var(--kante-hell); }
 
 /* ⛔️ Der Hinweis beim Start: ueber allem, auch ueber der Warnung. */
 .kihinweis { z-index: 70; }
+/* ⚑ **Der Hinweis beim Start rollt nicht** (Projektinhaber, 2026-09-29):
+   Er ist kurz und soll ganz dastehen. Nur ein sehr niedriges Fenster
+   bekommt den Bildlauf zurueck, sonst waere der Knopf nicht erreichbar. */
+.kihinweis .warnungkasten { max-height: none; overflow: visible; }
+@media (max-height: 34rem) {
+  .kihinweis .warnungkasten { max-height: 92vh; overflow-y: auto; }
+}
 .kihinweispunkte {
   margin: 0;
   padding-left: 1.1rem;

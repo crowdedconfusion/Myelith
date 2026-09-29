@@ -260,6 +260,20 @@ pub trait Modellweg {
         let _ = nachrichten;
         None
     }
+
+    /// **Eine Aktion beginnt**: ein Auftrag, eine Runde, eine Nachricht.
+    /// Alle Aufrufe bis [`Self::aktion_beenden`] ziehen aus **einer**
+    /// Saat, der Reihe nach abgeleitet; wer sie kennt, wiederholt die
+    /// ganze Aktion. Geschachtelt zaehlt nur die aeusserste.
+    ///
+    /// Rueckgabe: die Saat, wenn gezogen wird; `None` bei gierigem
+    /// Waehlen oder einem Weg ohne Saat (die Vorgabe).
+    fn aktion_beginnen(&self) -> Option<u64> {
+        None
+    }
+
+    /// Das Ende der Aktion aus [`Self::aktion_beginnen`].
+    fn aktion_beenden(&self) {}
 }
 
 /// Belegter und vorhandener Kontext, in Token.

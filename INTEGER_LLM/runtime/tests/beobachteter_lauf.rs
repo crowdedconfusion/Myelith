@@ -63,7 +63,7 @@ fn dieselbe_folge_mit_und_ohne_beobachter() {
         &m,
         &w,
         prompt,
-        &Erzeugung { max_new_tokens: 12, seed: 0, greedy: true, halt: &[], denkgrenze: None, abbruch: None },
+        &Erzeugung { max_new_tokens: 12, seed: 0, greedy: true, halt: &[], denkgrenze: None, abbruch: None, ziehen: None },
         &mut |t| gesehen.push(t),
     );
 
@@ -96,7 +96,7 @@ fn gemeldet_wird_sofort_und_nicht_am_ende() {
         &m,
         &w,
         "Eins zwei drei",
-        &Erzeugung { max_new_tokens: 6, seed: 0, greedy: true, halt: &[], denkgrenze: None, abbruch: None },
+        &Erzeugung { max_new_tokens: 6, seed: 0, greedy: true, halt: &[], denkgrenze: None, abbruch: None, ziehen: None },
         &mut |_| {
         zahl += 1;
         if erste_meldung_nach.is_none() {
@@ -139,7 +139,7 @@ fn eine_haltemarke_beendet_und_steht_nicht_in_der_ausgabe() {
         &m,
         &w,
         prompt,
-        &Erzeugung { max_new_tokens: 12, seed: 0, greedy: true, halt: &[marke], denkgrenze: None, abbruch: None },
+        &Erzeugung { max_new_tokens: 12, seed: 0, greedy: true, halt: &[marke], denkgrenze: None, abbruch: None, ziehen: None },
         &mut |t| gesehen.push(t),
     );
 
@@ -163,7 +163,7 @@ fn ohne_marken_aendert_sich_nichts() {
         &m,
         &w,
         prompt,
-        &Erzeugung { max_new_tokens: 10, seed: 0, greedy: true, halt: &[], denkgrenze: None, abbruch: None },
+        &Erzeugung { max_new_tokens: 10, seed: 0, greedy: true, halt: &[], denkgrenze: None, abbruch: None, ziehen: None },
         &mut |_| {},
     );
     assert_eq!(a, b, "eine leere Markenliste hat die Folge veraendert");
@@ -200,6 +200,7 @@ fn die_denkgrenze_schiebt_den_schluss_ein_und_rechnet_ihn_mit() {
             // Eine Endmarke, die nie kommt: Das Budget entscheidet.
             denkgrenze: Some(Denkgrenze { budget: 3, ende: usize::MAX, schluss: &schluss }),
             abbruch: None,
+            ziehen: None,
         },
         &mut |t| gesehen.push(t),
     );
@@ -213,7 +214,7 @@ fn die_denkgrenze_schiebt_den_schluss_ein_und_rechnet_ihn_mit() {
     let (weiter, _) = dekodieren_fortgesetzt(
         &m,
         &vorne,
-        &Erzeugung { max_new_tokens: rest, seed: 0, greedy: true, halt: &[], denkgrenze: None, abbruch: None },
+        &Erzeugung { max_new_tokens: rest, seed: 0, greedy: true, halt: &[], denkgrenze: None, abbruch: None, ziehen: None },
         &mut Fortsetzung::neu(&m),
         &mut |_| {},
     );
@@ -244,6 +245,7 @@ fn eine_endmarke_vor_dem_budget_aendert_nichts() {
             halt: &[],
             denkgrenze: Some(Denkgrenze { budget: 4, ende: frei[1], schluss: &schluss }),
             abbruch: None,
+            ziehen: None,
         },
         &mut |_| {},
     );
@@ -270,6 +272,7 @@ fn der_abbruchschalter_haelt_an() {
             halt: &[],
             denkgrenze: None,
             abbruch: Some(&schalter),
+            ziehen: None,
         },
         &mut |_| {
             gesehen += 1;
@@ -285,8 +288,46 @@ fn der_abbruchschalter_haelt_an() {
         &m,
         &w,
         prompt,
-        &Erzeugung { max_new_tokens: 12, seed: 0, greedy: true, halt: &[], denkgrenze: None, abbruch: Some(&schalter) },
+        &Erzeugung { max_new_tokens: 12, seed: 0, greedy: true, halt: &[], denkgrenze: None, abbruch: Some(&schalter), ziehen: None },
         &mut |_| {},
     );
     assert!(nichts.is_empty());
+}
+
+/// ⚑ **Gezogen mit Saat: gleiche Saat, bitgleiche Folge; andere Saat,
+/// andere Folgen.** Die Regel des Projektinhabers vom 2026-09-29: immer mit
+/// Saat, damit ein Lauf wiederholbar ist und trotzdem nicht jeder Lauf
+/// derselbe.
+#[test]
+fn gezogen_mit_saat_wiederholbar_und_verschieden() {
+    let Some((m, w)) = modell() else { return };
+    let prompt = "Es war einmal ein kleiner Roboter, der";
+    let ziehen = integer_llm_kernels::sampling::Ziehparameter {
+        kehrwert_temperatur_q8: 366,
+        top_k: 20,
+        top_p_q16: 52_429,
+    };
+    let lauf = |seed| Erzeugung {
+        max_new_tokens: 16,
+        seed,
+        greedy: false,
+        halt: &[],
+        denkgrenze: None,
+        abbruch: None,
+        ziehen: Some(ziehen),
+    };
+    let folge = |seed| generate_beobachtet(&m, &w, prompt, &lauf(seed), &mut |_| {});
+    assert_eq!(folge(1), folge(1), "gleiche Saat, gleiche Folge");
+    let verschieden: std::collections::BTreeSet<Vec<usize>> = (1..=6).map(folge).collect();
+    assert!(verschieden.len() >= 3, "sechs Saaten, nur {} verschiedene Folgen", verschieden.len());
+    // Und ohne Ziehparameter bleibt der gierige Lauf der alte.
+    let gierig = generate(&m, &w, prompt, 16, 0, true);
+    let wieder = generate_beobachtet(
+        &m,
+        &w,
+        prompt,
+        &Erzeugung { max_new_tokens: 16, seed: 99, greedy: true, halt: &[], denkgrenze: None, abbruch: None, ziehen: None },
+        &mut |_| {},
+    );
+    assert_eq!(gierig, wieder);
 }

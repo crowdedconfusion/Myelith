@@ -51,9 +51,13 @@ function zufallsquelle(saat) {
 // --- Leinwaende ---------------------------------------------------------
 
 function leinwand(breite, hoehe) {
+  const b = Math.max(1, Math.ceil(breite));
+  const h = Math.max(1, Math.ceil(hoehe));
+  // ⚑ Im eigenen Faden gibt es kein `document`, wohl aber `OffscreenCanvas`.
+  if (typeof document === "undefined") return new OffscreenCanvas(b, h);
   const l = document.createElement("canvas");
-  l.width = Math.max(1, Math.ceil(breite));
-  l.height = Math.max(1, Math.ceil(hoehe));
+  l.width = b;
+  l.height = h;
   return l;
 }
 
@@ -626,46 +630,113 @@ function schleifen(breite, hoehe, dpr) {
 export const SZENEN = [wellenbaender, vielecke, dreieckswelle, wirbel, schleifen];
 
 /**
+ * **Der Zeichner einer Szene**, derselbe auf dem Hauptfaden und im eigenen
+ * Faden.
+ *
+ * 📌 **Die Zeit beginnt, wenn die Szene gebaut ist** (Projektinhaber,
+ * 2026-09-29: „ruckelt und bewegt sich kaum am Anfang“). Vorher lief die
+ * Uhr ab dem Aufruf, und das Bauen der Leinwaende samt Unschaerfe dauert;
+ * das erste Bild sprang um genau diese Zeit.
+ */
+export function zeichner(nummer, still) {
+  const bauen = SZENEN[nummer % SZENEN.length];
+  let szene = null;
+  let breite = 0;
+  let hoehe = 0;
+  let dpr = 1;
+  let beginn = 0;
+  return {
+    aufbauen(b, h, d) {
+      breite = b;
+      hoehe = h;
+      dpr = d;
+      szene = bauen(b, h, d);
+      if (!beginn) beginn = performance.now();
+    },
+    zeichnen(stift, jetzt) {
+      if (!szene) return;
+      stift.setTransform(dpr, 0, 0, dpr, 0, 0);
+      szene.zeichnen(stift, still ? 0 : Math.max(0, jetzt - beginn) / 1000);
+      hof(stift, breite / 2, hoehe / 2, Math.min(breite, hoehe) * 0.34, szene.hofstaerke);
+    },
+  };
+}
+
+/** Kann dieses Fenster im eigenen Faden zeichnen? */
+function fadenMoeglich(ziel) {
+  if (typeof Worker !== "function" || typeof ziel.transferControlToOffscreen !== "function") return false;
+  if (typeof OffscreenCanvas !== "function") return false;
+  try {
+    return Boolean(new OffscreenCanvas(1, 1).getContext("2d"));
+  } catch (_) {
+    return false;
+  }
+}
+
+/**
  * Startet das Vorschaltbild auf der uebergebenen Leinwand, mit einer
  * gewuerfelten Szene oder der angegebenen.
+ *
+ * ⚑ **Im eigenen Faden, wo es geht** (Projektinhaber, 2026-09-29:
+ * „ruckelfrei“). Der Start des Fensters rechnet auf dem Hauptfaden
+ * (Einstellungen, Gespraeche, Modellwahl), und jede dieser Arbeiten hielt
+ * die Animation an. Ein Worker mit `OffscreenCanvas` zeichnet daneben.
+ * Kennt die Webansicht das nicht, zeichnet der Hauptfaden wie bisher.
  *
  * ⚑ Der Rueckgabewert haelt es an. Eine Animation, die hinter einem
  * unsichtbaren Vorhang weiterlaeuft, kostet weiter Rechenzeit, und die
  * soll dem Fenster gehoeren.
  */
 export function vorhangStarten(ziel, nummer = Math.floor(Math.random() * SZENEN.length)) {
-  const stift = ziel.getContext("2d");
   const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  const bauen = SZENEN[nummer % SZENEN.length];
-  let szene = null;
-  let breite = 0;
-  let hoehe = 0;
-  let dpr = 1;
-  let laeuft = true;
-  const beginn = performance.now();
+  const masse = () => ({
+    breite: window.innerWidth,
+    hoehe: window.innerHeight,
+    dpr: Math.min(window.devicePixelRatio || 1, 2),
+  });
 
-  const zeichnen = (jetzt) => {
-    if (!laeuft || !szene) return;
-    stift.setTransform(dpr, 0, 0, dpr, 0, 0);
-    szene.zeichnen(stift, still ? 0 : (jetzt - beginn) / 1000);
-    hof(stift, breite / 2, hoehe / 2, Math.min(breite, hoehe) * 0.34, szene.hofstaerke);
-  };
+  if (fadenMoeglich(ziel)) {
+    try {
+      const faden = new Worker(new URL("./vorhang-faden.js", import.meta.url), { type: "module" });
+      // ⚑ Eingeblendet wird, wenn das erste Bild steht; meldet sich der
+      //   Faden nicht, nach anderthalb Sekunden trotzdem.
+      const zeigen = () => ziel.classList.add("bereit");
+      faden.onmessage = (e) => {
+        if (e.data?.art === "bereit") zeigen();
+      };
+      setTimeout(zeigen, 1500);
+      const aus = ziel.transferControlToOffscreen();
+      faden.postMessage({ art: "start", leinwand: aus, nummer, still, ...masse() }, [aus]);
+      const groesse = () => faden.postMessage({ art: "groesse", ...masse() });
+      window.addEventListener("resize", groesse);
+      return () => {
+        faden.postMessage({ art: "halt" });
+        faden.terminate();
+        window.removeEventListener("resize", groesse);
+      };
+    } catch (_) {
+      // Weiter auf dem Hauptfaden.
+    }
+  }
+
+  const stift = ziel.getContext("2d");
+  const z = zeichner(nummer, still);
+  let laeuft = true;
   const aufbauen = () => {
-    dpr = Math.min(window.devicePixelRatio || 1, 2);
-    breite = window.innerWidth;
-    hoehe = window.innerHeight;
-    ziel.width = Math.round(breite * dpr);
-    ziel.height = Math.round(hoehe * dpr);
-    szene = bauen(breite, hoehe, dpr);
-    zeichnen(performance.now());
+    const m = masse();
+    ziel.width = Math.round(m.breite * m.dpr);
+    ziel.height = Math.round(m.hoehe * m.dpr);
+    z.aufbauen(m.breite, m.hoehe, m.dpr);
+    z.zeichnen(stift, performance.now());
   };
   const bild = (jetzt) => {
     if (!laeuft) return;
-    zeichnen(jetzt);
+    z.zeichnen(stift, jetzt);
     requestAnimationFrame(bild);
   };
 
   aufbauen();
+  requestAnimationFrame(() => ziel.classList.add("bereit"));
   window.addEventListener("resize", aufbauen);
   if (!still) requestAnimationFrame(bild);
   return () => {

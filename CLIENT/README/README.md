@@ -1,6 +1,6 @@
 # client (Nutzer-Client inkl. Wallet)
 
-> **Version:** 0.101.2 (`myl-client` 0.69.2, `myl-oberflaeche` 0.52.2, `myl-console` 0.26.6, `myl-senses` 0.10.0)
+> **Version:** 0.107.0 (`myl-client` 0.74.1, `myl-oberflaeche` 0.56.0, `myl-console` 0.27.0, `myl-senses` 0.11.0)
 > **Datum:** 2026-09-28
 > **Status:** ✅ **Der lokale Betrieb läuft und ist ausgeliefert.** Ein
 > Gesprächsfenster mit Modellwahl, Agentenschleife und
@@ -52,7 +52,7 @@ kostet nichts, wenn er stimmt, und einen halben Tag, wenn nicht.
 | **Gespraeche verwalten** | Rechtsklick auf eine Zeile: umbenennen an Ort und Stelle, als Markdown ausgeben, loeschen. Wohin ausgegeben wird, steht in `ausgabe.ordner`; ohne Angabe fuehrt das Fenster dorthin |
 
 ⚑ **Die Oberfläche ruft dieselben Funktionen wie die Kommandozeile**,
-über sechsundvierzig Befehle. ⚠️ **Mit genau einer Ausnahme, und sie ist gewollt:** `terminal_ausfuehren` startet eine Shell, denn ein Terminal, das keine startet, ist keines. Jeder andere Befehl startet **keinen einzigen Unterprozess**. `jeder_befehl_ist_angemeldet` hält die vier
+über fünfzig Befehle. ⚠️ **Mit genau einer Ausnahme, und sie ist gewollt:** `terminal_ausfuehren` startet eine Shell, denn ein Terminal, das keine startet, ist keines. Jeder andere Befehl startet **keinen einzigen Unterprozess**. `jeder_befehl_ist_angemeldet` hält die vier
 Richtungen zusammen: kein Befehl ohne Anmeldung, keine Anmeldung ohne
 Befehl, kein Aufruf ins Leere und kein Befehl, den niemand ruft. „Ohne eigene Logik" hiesse sonst, aus einer Textausgabe
 für Menschen eine Schnittstelle zu machen, und genau das ist die Sorte
@@ -152,6 +152,410 @@ Modell überhaupt etwas taugt, und weil eine Schnittstelle, die kein
 Mensch je bedient hat, an den Bedürfnissen vorbei entworfen wird.
 
 ## Changelog
+
+### v0.107.0 – 2026-09-29 (∞ pausiert beim Klick sofort: Anzeige, Rechnung und laufender Befehl)
+
+`myl-oberflaeche` 0.56.0, `myl-senses` 0.11.0; dazu die Runtime 0.76.0.
+Wunsch des Projektinhabers: Ein Klick auf ∞, während der Loop läuft, soll
+ihn umgehend pausieren.
+
+- 📌 **Befund, drei Verzögerungen:** ∞ blieb an und atmete weiter, bis der
+  Rücken meldete, dass die Runde stand. Die Runde hielt erst vor dem nächsten
+  erzeugten Token an, und die Vorbereitung eines langen Prompts lief davor
+  ungebremst. Ein Befehl, den die Runde gerade ausführte, lief bis zu seiner
+  Frist.
+- **Die Anzeige:** ∞ geht beim Klick aus, und der laufende Beitrag sagt „hält
+  an …“, bis die Runde steht. Ein erneuter Klick in dieser Zeit wartet auf das
+  Ende und startet dann; der Stand löst sich auch, falls das Ende nicht
+  ankommt.
+- **Die Rechnung:** hält jetzt auch in der Vorbereitung an, spätestens nach
+  einem Fenster von 512 Token (Runtime 0.76.0).
+- **Der Befehl:** `prozess::beenden_im_faden` beendet die Läufe, die ein
+  bestimmter Faden gestartet hat; die Pause ruft es für den Faden des Loops.
+  Ein Chat oder die Sinnesprogramme daneben laufen weiter.
+
+**Belege:** `beenden_im_faden_trifft_nur_diesen_faden` (eigenes Testziel:
+zwei Schläfer, einer beendet, der andere läuft weiter),
+`die_pause_greift_sofort`; Fensterproben 78 grün, myl-senses grün, Clippy
+ohne Befund. ⚠️ Ein Loop im Fenster wurde danach nicht pausiert; ⚠️ das
+Laden des Modells für eine Runde lässt sich weiterhin nicht unterbrechen.
+
+### v0.106.2 – 2026-09-29 (der Loop zeigt Überlegung und Befehle wie der Agent; ∞ atmet kräftiger und leuchtet)
+
+`myl-oberflaeche` 0.55.2. Meldung des Projektinhabers: Lief ein Loop, stand
+im Ausgabefenster weder die Gedankenkette noch ein ausgeführter Befehl; es
+soll sich wie der Agent verhalten. Dazu: ∞ soll kräftiger atmen.
+
+- 📌 **Der Strom schrieb in ein Element, das niemand mehr sah.** Der Rücken
+  meldete alles (Denken, Text, Aufrufe, Ergebnisse) auf `loop-lebt`, und das
+  Fenster nahm es an. Aber der Loop zeichnete seinen Beitrag, und gleich
+  danach zeichnete das Fenster das Gespräch neu, mit einem neuen Element für
+  denselben Beitrag. Jede Meldung ging in das alte, abgehängte Element, und
+  `replaceWith` an einem abgehängten Element tut nichts. Sichtbar wurde erst
+  der Bericht am Ende der Runde. Dasselbe konnte den Agenten treffen, sobald
+  während seines Laufs irgendetwas neu zeichnete (etwa der Loop-Takt alle
+  zwanzig Sekunden).
+- ⚑ **Jeder gezeichnete Beitrag merkt sich sein Element**
+  (`beitragselemente`, eine `WeakMap`), und `live_meldung` wie
+  `live_neu_zeichnen` nehmen vor jedem Stück das, das den Beitrag gerade im
+  Fenster zeigt. Ist das Gespräch nicht offen, wachsen die Daten weiter, und
+  wer es öffnet, sieht den Stand.
+- **∞ atmet kräftiger:** tiefer (Deckkraft 0,38 bis 1), mit leichtem
+  Anschwellen, einem doppelten Schein am Zeichen und einem weichen Lichthof
+  dahinter, der mitatmet. Der Hof bewegt nur Deckkraft und Maßstab. Bei
+  abbestellter Bewegung steht er still und halb hell.
+
+**Belege:** neue Probe `der_strom_schreibt_in_das_sichtbare_element`;
+Fensterproben 77 grün. ⚠️ Einen Loop im Fenster habe ich danach nicht
+gefahren; der Beleg ist die Ursache im Code, nicht der Blick darauf.
+
+### v0.106.1 – 2026-09-29 (das Vorschaltbild ruckelt auch am Anfang und vor der Oberfläche nicht mehr; der KI-Hinweis beim Start rollt nicht)
+
+`myl-client` 0.74.1, `myl-oberflaeche` 0.55.1. Wunsch des Projektinhabers:
+Es ruckelte noch ganz am Anfang und kurz bevor die Oberfläche erscheint;
+und der Hinweiskasten beim ersten Start soll nicht rollen.
+
+- 📌 **Der Schriftzug animiert nur noch Deckkraft und Maßstab.** Vorher liefen
+  `letter-spacing` und eine Unschärfe mit; beides verlangt in jedem Bild ein
+  neues Layout auf dem Hauptfaden, und genau der ist am Anfang mit dem Start
+  beschäftigt. Deckkraft und Maßstab rechnet der Compositor allein.
+- **Das Bild blendet ein, sobald das erste steht.** Der Faden meldet
+  `bereit` nach dem ersten Zeichnen (der Rückfall nach dem Aufbau); bis dahin
+  war eine leere Fläche zu sehen, die dann sprang. Meldet sich nichts, blendet
+  es nach anderthalb Sekunden trotzdem ein.
+- **Das Vorladen rechnet hinter dem Bild**
+  (`hardware::im_hintergrund_rechnen`): Unter macOS in der Dienstklasse
+  „utility“, unter Linux mit Nice 10, und die Fäden des Laders erben das.
+  Es läuft in einem eigenen Faden, nicht in einem aus dem Vorrat, denn der
+  behielte den Vorrang, und der nächste Agentenlauf auf ihm rechnete
+  gebremst.
+- **Die Blende beginnt erst, wenn die Oberfläche darunter gezeichnet ist**,
+  und Starthinweis, Loop und Ausgabefeld werden erst nach ihrem Ende
+  verdrahtet. Zwischen den Startschritten bekommt der Hauptfaden je ein Bild
+  Luft (`bild_abwarten`); unter macOS reicht die Webansicht auch die Bilder
+  des eigenen Fadens über ihn weiter.
+- **Der KI-Hinweis beim Start rollt nicht mehr**: Der Kasten ist so hoch wie
+  sein Inhalt. Nur in einem sehr niedrigen Fenster (unter 34 rem) rollt er,
+  damit der Knopf erreichbar bleibt.
+
+**Belege:** siehe unten. ⚠️ Ob es jetzt ganz ruckelfrei ist, zeigt nur der
+Blick auf den Start; gemessen ist es nicht.
+
+### v0.106.0 – 2026-09-29 (das Vorschaltbild läuft im eigenen Faden und länger; beim Start wird das passende Modell ermittelt und geladen)
+
+`myl-client` 0.74.0, `myl-oberflaeche` 0.55.0. Wunsch des Projektinhabers:
+Das Vorschaltbild ruckelte und bewegte sich am Anfang kaum; es soll länger
+und ruckelfrei laufen, während das Fenster das passende Modell ermittelt und
+schon lädt.
+
+- **Im eigenen Faden** (`ui/vorhang-faden.js`): Die Szenen zeichnen auf einer
+  `OffscreenCanvas` in einem Worker, unberührt von dem, was der Hauptfaden
+  beim Start rechnet (Einstellungen, Gespräche, Modellwahl). Wo die
+  Webansicht das nicht kennt, zeichnet der Hauptfaden wie bisher. Beide Wege
+  teilen einen Zeichner (`vorhang.js`, `zeichner`).
+- 📌 **Die Zeit beginnt, wenn die Szene gebaut ist.** Vorher lief die Uhr ab
+  dem Aufruf, und das Bauen der Leinwände samt Unschärfe dauert; das erste
+  Bild sprang um genau diese Zeit, und in den anderthalb Sekunden, die der
+  Vorhang stand, war davon viel zu sehen.
+- **Länger:** mindestens vier Sekunden statt anderthalb, und bis das Modell
+  geladen ist, höchstens aber sechzig Sekunden; danach lädt es im Hintergrund
+  weiter und meldet sich.
+- **Das passende Modell** (`modelle::empfehlung`): das größte, das auf diese
+  Maschine passt. Ein dichtes Modell passt, wenn es samt 6 GiB Luft in den
+  Arbeitsspeicher geht; ein Gemisch darf bis zum Anderthalbfachen des
+  Speichers groß sein (gemessen: 33 GB auf 24 GiB mit 12 bis 15 Token/s).
+  Unter denen, die passen, gewinnt die größere Parameterzahl. **Eine
+  eingestellte Wahl gilt**: Liegt das eingestellte Artefakt da, wird es
+  geladen; sonst wird die Empfehlung eingestellt und gemeldet. Der Befehl
+  `modell_vorladen` lädt in einem eigenen Faden und lässt ein von Hand
+  geladenes Modell stehen.
+
+**Belege:** `das_groesste_das_passt` (24 GiB: das 35B-Gemisch; 16 GiB: das
+dichte 8B; nichts passt: das kleinste); Fensterproben 76 grün, Clippy ohne
+Befund. Die README nennt jetzt fünfzig Befehle. ⚠️ Ob der Worker-Weg auf
+allen drei Webansichten greift, zeigt erst der Blick darauf; der Rückfall
+ist der bisherige Weg.
+
+### v0.105.0 – 2026-09-29 (Tasks lassen sich bearbeiten, ein Menü am Task und ein Papierkorb; die Klappfelder ohne Glas, mit fester Größe und Bildlauf; der Pfeil zeigt nach unten)
+
+`myl-client` 0.73.0, `myl-oberflaeche` 0.54.0. Wünsche des Projektinhabers
+nach dem Blick auf v0.104.1.
+
+- **Ein Task lässt sich bearbeiten:** `vorhaben::Ablage::ziel_aendern`
+  ändert das Ziel und lässt Notizen, Tagebuch und Stellung, wie sie sind;
+  ein leeres Ziel und eine fremde Kennung werden abgewiesen. Im Fenster der
+  Befehl `task_bearbeiten`, nicht während der Runde des Tasks. Bearbeitet
+  wird in der Zeile selbst: Eingabe speichert, Escape oder ein Klick
+  daneben lässt es, wie es war. Solange das Feld offen ist, zeichnet der
+  regelmäßige neue Stand die Liste nicht neu.
+- **Rechtsklick auf einen Task** (`#taskmenue`): Bearbeiten, Anhalten bzw.
+  Weiter, Löschen. Löschen fragt dort nicht noch einmal, der Weg über das
+  Menü ist schon bewusst.
+- **Ein Papierkorb rechts an jedem Task**, jederzeit sichtbar, statt des
+  kleinen „ד. Weiter zwei Klicks: Ein Task trägt sein Tagebuch mit.
+- **Die Klappfelder** (Ausgabe am Pfeil, Tasks am ∞) tragen kein Glas mehr
+  (`.klappfeld`, deckender Grund), und jedes hat eine feste Größe, gleich
+  was darin steht, mit Bildlauf; gleich groß sind die beiden nicht. In der
+  Taskliste rollt nur die Liste, Kopf und Zeile für einen neuen Task bleiben
+  stehen. Das Eingabefeld behält sein Glas. 📌 Nachgezogen nach dem Blick
+  des Projektinhabers: Die Taskliste rollte **waagrecht** (eine Zeile mit
+  langem Ziel durfte breiter werden als die Liste; jetzt eine Spalte
+  `minmax(0, 1fr)`, `overflow-x: hidden`, das Ziel endet mit „…“), und das
+  Ausgabefeld rollte gar nicht (28 rem hoch, der Inhalt kürzer; jetzt 20 rem).
+- **Der Pfeil zeigt nach unten**, obwohl das Feld nach oben aufgeht, wie
+  jede Aufklappwahl.
+
+**Belege:** `das_ziel_eines_vorhabens_laesst_sich_aendern`; Fensterproben
+76 grün, darunter drei, die beim ersten Durchgang anschlugen und deren
+Hausregeln jetzt eingehalten sind: kein `innerHTML` (das Symbol ist aus
+Elementen gebaut), nur Graustufen, und die Sperre gegen das Neuzeichnen
+beim Ziehen steht unverändert. Clippy ohne Befund. Die README nennt jetzt
+neunundvierzig Befehle.
+
+### v0.104.1 – 2026-09-29 (der Pfeil des Ausgabefelds ist ein Teil des Eingabefelds; das Eingabefeld lässt sich an seiner oberen Kante größer ziehen)
+
+`myl-oberflaeche` 0.53.1. Beides nach dem Blick des Projektinhabers auf v0.104.0.
+
+- **Der Pfeil als Teil des Felds:** eine schmale Spalte ganz rechts im
+  Eingabefeld, von der oberen bis zur unteren Kante, mit den Ecken des Felds
+  (`--pfeilspalte`, das Feld hält rechts Platz dafür frei). Er trägt damit
+  Glas, Rand und Schein des Felds, eine feine Linie trennt ihn vom Text, und
+  Feld und Pfeil stehen als Einheit mittig im Fenster. Das Ausgabefeld
+  öffnet sich rechtsbündig über ihm. 📌 Zwei Anläufe davor: ein Knopf in der
+  Reihe neben dem Senden, dann eine Lasche außen am Rand; beide sahen nach
+  einem zweiten Ding aus.
+- **Größer ziehen:** Ein Griff an der oberen Kante des Eingabefelds
+  (`#eingabegriff`, beim Überfahren eine kurze Linie). Nach oben ziehen
+  vergrößert, bis 70 % der Fensterhöhe; die Höhe bleibt fest, längerer Text
+  rollt darin, und das Fenster merkt sie sich über den nächsten Start
+  hinaus. Doppelklick auf den Griff, oder kleiner als eine Zeile ziehen,
+  lässt das Feld wieder von selbst wachsen.
+
+**Belege:** Fensterproben 76 grün. ⚠️ Von Hand bedient erst nach dieser
+Installation.
+
+### v0.104.0 – 2026-09-29 (der Werkzeugrahmen nach dem Vergleich der großen Modelle: keine Nichtänderungen, keine wortgleichen Fehlversuche, Tatsachen statt Notizen, der Rat zeigt auf die Meldung)
+
+`myl-client` 0.72.0.
+
+**Anlass:** Die Mitschriften des Loop-Szenarios (30B, 27B, 35B, je mit 256
+und 1600 Token) zeigten Stellen, an denen der Werkzeugrahmen einem Modell
+die Fehlersuche schwerer machte als nötig. Das 30B scheiterte daran mit
+jeder Antwortlänge.
+
+**Was sich ändert:**
+- **`edit_file` und `replace_everywhere` weisen `alt == neu` ab** („ändert
+  nichts“). 📌 Das 30B ersetzte `sensor = zeile["sensor"]` mehrmals durch
+  sich selbst, und die Antwort hieß „eine Stelle ersetzt“.
+- **„expected an indented block (Zeile N)“ bekommt eine Zahl**: wie tief
+  Zeile N steht, wie tief die Zeile davor, und dass nach einem Doppelpunkt
+  etwa vier mehr nötig sind. 📌 Viermal wortgleich derselbe Aufruf, jedes
+  Mal abgewiesen; Python 3.9 nennt nicht einmal die Zeile mit dem
+  Doppelpunkt.
+- **Die Wiederholungsbremse kennt gescheiterte Schreibaufrufe**: Ein
+  gescheiterter zählt nicht mehr als Änderung, und derselbe Aufruf ohne
+  Änderung dazwischen läuft nicht noch einmal, sondern bekommt „würde
+  genauso scheitern, ändere den Aufruf“. Ein gelungener Aufruf wird nie
+  gebremst und hebt die Bremse auf.
+- **Der Befehlsspiegel zeigt auf die Meldung, nicht auf die Datei**, und
+  nennt bei „No such file or directory“ als Tatsache, welcher Ordner fehlt
+  (nachgesehen, relativ zur Einhängung). 📌 Der alte Rat „Lies die
+  betroffene Datei neu“ schickte das 30B zum Skript, während die Ursache,
+  ein fehlender Ordner, in der Ausgabe stand.
+- **Der Rundenauftrag trägt den Dateistand aus dem Ziel**, nachgesehen vor
+  jeder Runde (vorhanden, fehlt, Ordner fehlt), und unter den Notizen den
+  Satz, dass sie eigene Aufzeichnungen sind und keine geprüften Tatsachen.
+  📌 Das 30B notierte `ziel_ordner_erstellt: true` ohne den Ordner, und die
+  Notiz stand danach Runde für Runde als Gedächtnis da.
+
+**Belege:** `eine_aenderung_ohne_wirkung_wird_abgewiesen`,
+`die_einrueckung_wird_beziffert`,
+`ein_gescheiterter_schreibaufruf_laeuft_nicht_noch_einmal`,
+`fehlender_ordner_und_dateistand_sind_tatsachen`;
+`der_befehlsspiegel_sieht_die_gleiche_ausgabe` hält den neuen Rat fest.
+Client 400 grün, Clippy ohne Befund. Wie viel das an Ergebnissen ändert,
+zeigt erst die gestufte Aufgabenreihe mit mehreren Saaten.
+
+### v0.103.0 – 2026-09-29 (immer mit Saat: je Aktion eine, im Protokoll, einstellbar; `/seed` in der Konsole, das Ausgabefeld am Eingabefeld des Fensters)
+
+`myl-client` 0.71.0, `myl-console` 0.27.0, `myl-oberflaeche` 0.53.0.
+
+**Anlass:** Regeln des Projektinhabers vom selben Tag: immer mit Saat ziehen
+(gleiche Saat, bitgleiches Ergebnis; andere Saat, anderer Weg); die Saat
+kommt ins Protokoll und lässt sich anzeigen und einstellen, Vorgabe Zufall;
+im Fenster ein Feld am Eingabefeld für alles, was die Ausgabe direkt
+verändert, **der Pfeil ganz rechts, bündig mit dem Rand des ganzen Felds**;
+in der Konsole `/seed`, für die nächste Aktion oder immer. Bis hierher
+dekodierte der Client immer gierig (`gierig: true`, `saat: 0` fest), mit
+dem Grund, Ziehen mache einen Fehlschlag unauffindbar. Die festgehaltene
+Saat löst genau das.
+
+**Die Saat gehört zur Aktion:**
+- Ein Lauf (`lauf::fahren_mit_hausregel`) und eine Loop-Runde samt Prüfung
+  (`vorhaben::runde`) sind je eine Aktion; ein Chat-Aufruf ohne offene
+  Aktion ist selbst eine. Jede Antwort darin leitet ihre Saat aus der Saat
+  der Aktion und ihrer Nummer ab. Mit der Saat einer Aktion und demselben
+  Verlauf davor wiederholt sich genau diese Aktion.
+- ⚑ **Der Stand liegt je Faden**, weil `myl agent` mehrere Aufträge
+  gleichzeitig über ein Modell fährt; ein gemeinsamer Zähler hätte ihre
+  Saaten verschränkt.
+- Am Modell: `saat_fest` (Einstellung `modell.saat`, leer = Zufall),
+  `naechste_saat` (nur die nächste Aktion), `letzte_saat` (Anzeige).
+  `lauf::Ausgang.saat`, `vorhaben::Runde.saat`, Ereignis `Geendet { saat }`.
+- **Im Protokoll:** Jede Aktion schreibt einen Eintrag `saat` ins
+  Aktionsprotokoll (Saat, Parameter, gezogen oder gierig). Dazu die
+  Rundenmitschrift (Kopfzeile `[saat] N`), `loop.log` und die
+  Gesprächsablage des Fensters.
+
+**Die Ausgabeparameter:** `modell.temperatur` (Hundertstel, 0 = gierig),
+`modell.top_p` (Hundertstel), `modell.top_k`; leer = Vorgabe des Modus nach
+den Qwen-Modellkarten (ohne Denken T 0,7, Top-p 0,8; mit Denken T 0,6,
+Top-p 0,95; Top-k 20). Umgerechnet beim Einstellen, nicht im Rechenpfad.
+
+⚠️ **JavaScript und `u64`:** Ganze Zahlen sind dort nur bis 2^53 genau; eine
+gerundete Saat wiederholte still eine andere. Gezogene Saaten bleiben unter
+2^53 (`oertlich::SAAT_BIS`, höchstens 16 Stellen, abtippbar); zum Fenster
+reisen Saaten als Text, und `modell.saat` gibt über 2^53 Text zurück.
+
+**`myl`:** `--saat N`, `--gierig`; beim Laden die Saatwahl samt Parametern,
+nach jeder Aktion „Saat N (wiederholen mit --saat N)“. Die Hilfe nannte für
+`--token` noch die Vorgabe 256, berichtigt.
+
+**Konsole:** `/seed` (auch `/saat`): ohne Argument Stand und Pfeiltastenwahl
+(Zufall, Letzte wiederholen, Letzte behalten); `/seed N` nur die nächste
+Aktion, `/seed N immer`, `/seed nochmal [immer]`, `/seed zufall`. „immer“
+schreibt `modell.saat` über die Einstellungsseite. Die Fußzeile nennt eine
+gesetzte Saat (`Saat fest N`, `Saat N einmal`, `gierig`) und lässt sie bei
+schmalem Fenster vor dem Modellnamen weg; die Bilanzzeile nach jedem Auftrag
+nennt die Saat.
+
+**Fenster:** Der Pfeil `#ausgabepfeil` ist der letzte Knopf der rechten
+Reihe; ein negativer Rand hebt den Innenabstand des Felds auf, die rechte
+Rundung ist die des Felds. Er öffnet `#ausgabewahl`: Saat (Zufall oder fest,
+Würfel, nur nächste Antwort oder immer, Letzte wiederholen, Übernehmen),
+Temperatur (0 = gierig), unter „mehr“ Top-p und Top-k, Antwortlänge,
+Denkmodus, „auf die Vorgabe“. Weicht etwas von Zufall und Vorgabe ab, hebt
+sich der Pfeil ab. Unter jeder Antwort „Saat N · Parameter“ mit
+„wiederholen“. Neue Befehle `saat_stand`, `saat_einmal`; „immer“ über
+`setzen`. Vor jedem Auftrag und jeder Loop-Runde übernimmt das geladene
+Modell Saat und Parameter frisch aus den Einstellungen.
+
+**Belege:** `tests/saat.rs` am 0,6B (feste Saat bitgleich, Einmal-Saat genau
+einmal, Zufall je Aktion neu, eine Aktion über zwei Aufrufe wiederholbar);
+`die_saat_steht_in_der_fusszeile_und_seed_ist_ein_befehl`; die Hin- und
+Rückfahrt jedes Feldes und jede Vorgabe der Einstellungsseite auch für die
+vier neuen Felder. Client 396, Konsole 159, Fenster 76 grün, Clippy ohne
+Befund. ⚠️ `ende_zu_ende.rs` und `notaus.rs` prüfen Inhalte und laufen jetzt
+ausdrücklich gierig, sonst wären sie mit zufälliger Saat nicht mehr
+wiederholbar.
+
+### v0.102.1 – 2026-09-29 (die Prüfung eines Loops sieht einen Bericht ganz; Fund 506; der Auswerter liest Befundlisten richtig)
+
+`myl-client` 0.70.1.
+
+**Anlass:** Mit 1600 Token (v0.102.0) bestand das 35B im Loop-Szenario 18
+von 19 Prüfungen statt 8, **und der Loop hielt Aufgabe 2 trotzdem als
+„3 Runden ohne Fortschritt“ an**, obwohl der Bericht richtig und vollständig
+war. Die Selbstprüfung meldete zweimal „Maßnahmen und Quellenangaben
+fehlen“.
+
+**Fund 506:** Die Prüfung sah jede geschriebene Datei nur bis 1500 Zeichen.
+Der Bericht hatte rund 2300, und Maßnahmen und Quellen standen hinter dem
+Schnitt. Die Marke `[gekuerzt]` war da, das Modell las „fehlt“ daraus.
+Jetzt 6000 Zeichen je Datei (ein Bericht gewöhnlicher Länge passt ganz),
+die Marke nennt, wie viel gezeigt ist (`[gekuerzt: 6000 von N Zeichen]`),
+und der Auftrag sagt in beiden Sprachen, dass Ungezeigtes deshalb nicht
+fehlt. **Beleg:** `die_pruefung_sieht_einen_ganzen_bericht`; Gegenprobe mit
+1500 rot.
+
+**Der Auswerter des Szenarios** (`BENCHMARKS/Agent/loop/auswerten.py`) las
+Zeile für Zeile, ob der Kühlraum als verletzt erkannt ist. Der Bericht des
+35B schrieb es als Liste unter einem Einleitungssatz („lag ein Raum
+außerhalb seines Bereichs:“, darunter „- Kühlraum (T3): Höchstwert 9,4 °C“),
+und keine der beiden Zeilen trug beides. Ein Listenpunkt erbt jetzt die
+Bewertung seines Einleitungssatzes, in beide Richtungen: Unter „Die übrigen
+lagen innerhalb“ zählt der Serverraum ausdrücklich nicht als verletzt.
+**Beleg:** alle bisherigen Läufe neu bewertet; nur dieser eine ändert sich,
+von 18 auf **19 von 19**.
+
+### v0.102.0 – 2026-09-29 (Antworten ab Werk 1600 Token statt 256, und ein Agentenlauf nimmt nie weniger; Fund 505)
+
+`myl-client` 0.70.0.
+
+**Anlass:** In der Loop-Langprobe scheiterten 30B, 27B und 35B an Aufgabe 2
+(Bericht mit Recherche), alle drei an derselben Stelle. Die Mitschriften
+zeigen es: Das 27B las die richtige Grenzwertliste und fand die
+Überschreitungen im Kühlraum (8,6 und 9,4 °C), und **jeder** Versuch, das
+festzuhalten, riss ab: dreimal `note_set`, dreimal `write_file`, jedes Mal
+„an der Tokengrenze abgeschnitten“. Das 30B dreimal `fill_template`, beim
+35B endete die Analyse mitten im Satz. Weil nichts gesichert war, begann
+jede Runde von vorn.
+
+**Fund 505: Die Vorgabe `modell.token` stand auf 256**, seit v0.9.0, als es
+nur das Gespräch gab. Loop, Konsole und Fenster geben diesen Wert an die
+Agentenschleife, und 256 Token sind rund 800 Zeichen. **Ein neuer Nutzer
+konnte mit seinem Agenten also keine Datei über etwa 800 Zeichen in einem
+Zug schreiben.** ⚑ Es erklärt auch einen Teil der Lücke zwischen den
+mehrstufigen Einzelaufträgen (7 von 7) und dem Loop: `agentenprobe.py`
+liest die Einstellungen auf der Entwicklungsmaschine (1600), der Loop läuft
+abgeschirmt mit der Vorgabe. Die beiden Reihen haben mit verschiedener
+Antwortlänge gemessen.
+
+**Was sich ändert** (Festlegung des Projektinhabers):
+- **Ab Werk 1600** (`einstellungen::ANTWORT_VORGABE`). Eine Grenze kostet
+  nur, wenn das Modell weiterredet; eine kurze Antwort endet von selbst.
+- **Ein Agentenlauf nimmt nie weniger als die Vorgabe**, auch wenn für das
+  Gespräch weniger eingestellt ist. Die Untergrenze sitzt in
+  `lauf::fahren_mit_hausregel`, wo alle Agentenläufe ankommen; Vorgabe und
+  Untergrenze ziehen aus derselben Konstante. Die Beschreibung des Feldes
+  sagt das jetzt.
+- `BENCHMARKS/Agent/loop/starten.py` setzt `modell.token = 1600`
+  ausdrücklich, damit die Reihe vergleichbar bleibt, wenn sich die Vorgabe
+  ändert.
+
+**Belege:** `ein_agentenlauf_bekommt_nie_weniger_als_die_vorgabe`
+(`tests/vorhaben.rs`): eine Runde mit 256 gefahren, beim Modell muss
+mindestens 1600 ankommen, und die Vorgabe selbst steht dort. Gegenprobe
+ohne Untergrenze rot (`[Some(256)]`). Ganze Clientreihe 393 grün, 0 rot
+(auch die zwei Proben von Fund 499 diesmal grün, dazu unten nichts
+behauptet); Clippy ohne Befund. Die Loop-Reihe mit 1600 läuft.
+
+### v0.101.3 – 2026-09-29 (das Windows-Installationsskript nannte zwei Ordner, die es nicht mehr gab; eine Probe liest jetzt jeden Pfad in allen drei Skripten; Fund 504)
+
+`myl-client` 0.69.3.
+
+**Fund 504:** `SYSTEM/install/installieren-windows.ps1` rief nach dem Umzug
+nach `SYSTEM/` noch `INSTALL\vorrat.py` auf und kopierte die Programme aus
+`target-shared\release\`. Beide Ordner gibt es seit dem 2026-09-24 nicht
+mehr. **Unter Windows scheiterte damit jede Einrichtung aus dem Klon**:
+zuerst am Auspacken des Vorrats, und hätte es das nicht getan, am Kopieren.
+Die CI sah es nicht, denn ihr kalter Klon ruft `vorrat.py` und `cargo`
+selbst und nicht das Skript. Gefunden beim Durchsehen der Anleitung.
+Behoben: `vorrat.py` wird neben dem Skript gesucht (`$PSScriptRoot`), das
+zieht bei einem Umzug mit; kopiert wird aus `SYSTEM\full-build\release\`.
+
+**Die Probe:** `jeder_pfad_in_den_skripten_liegt_da` liest alle drei
+Installationsskripte und prüft jeden Pfad hinter `$WURZEL/` und
+`Join-Path $Wurzel "…"`: Der erste Ordner muss im Klon liegen, unter
+`SYSTEM/` auch der zweite; ausgenommen ist, was erst beim Bauen entsteht.
+Sie läuft auf jedem System, auch dort, wo das Skript selbst nie läuft.
+📌 Dieselbe Klasse wie Fund 458, und die Lehre ist dieselbe: Code, den die
+eigene Maschine nicht ausführt, braucht eine Probe, die ihn liest.
+**Beleg:** mit dem alten Skript rot („nennt `INSTALL/vorrat.py`, aber
+`INSTALL` gibt es im Klon nicht“), mit dem neuen grün; Clippy ohne Befund.
+⚠️ Auf Windows gelaufen ist das Skript damit noch immer nicht.
+
+**Dazu die Anleitung `SYSTEM/install/README.md`, neu gegliedert:** vorne
+auf einen Blick die drei Aufrufe mit ihren Voraussetzungen und die fünf
+Programme, dann die Schalter, je System die Befehle, und was ohne Netz geht
+samt Belegen je System; die Hintergründe (warum Archive, Stolpersteine der
+Sinne, Freigaben im Einzelnen) weiter hinten und aufklappbar. Berichtigt:
+der Windows-Aufruf (`.\SYSTEM\install\…` statt `.\INSTALL\…`), der
+Ordner `vorrat/` heisst `SYSTEM/crates-vorrat/`, `--ohne-netz` ist nicht
+mehr nötig, der Bau ohne Netz ist auf allen drei Systemen durch die CI
+belegt (vorher „Windows hier nicht ausführbar“), die Web-Recherche gilt
+für Chat **und** Agent, Python ist unter Windows Voraussetzung, und der
+Schalter `--in-der-shell` sowie `-Ziel` stehen in der Tabelle.
 
 ### v0.101.2 – 2026-09-29 (unter Windows lief kein Agent: der Systemprompt kam mit CRLF an; die Suche nennt Pfade mit `/`; Funde 502 und 503)
 

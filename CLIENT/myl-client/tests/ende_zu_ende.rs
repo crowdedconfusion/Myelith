@@ -43,7 +43,12 @@ fn modell() -> Option<Oertlichesmodell> {
              MYL_OHNE_ARTEFAKTE=1 cargo test erlaubt den Sprung ausdruecklich."
         );
     }
-    Some(Oertlichesmodell::laden(pfad, &Default::default()).expect("Modell laedt"))
+    Some(Oertlichesmodell::laden(pfad, &Default::default()).expect("Modell laedt")).map(|mut m| {
+        // ⚑ Gierig: Diese Probe prueft Inhalte und braucht einen festen Weg.
+        //   Das Ziehen mit Saat prueft `tests/saat.rs`.
+        m.gierig = true;
+        m
+    })
 }
 
 /// ⚑ **Eine Frage, deren Antwort feststeht.**

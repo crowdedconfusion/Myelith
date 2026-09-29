@@ -9,7 +9,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use integer_llm_runtime::generate::{dekodieren_fortgesetzt, Denkgrenze, Erzeugung, Fortsetzung};
+use integer_llm_runtime::generate::{dekodieren_fortgesetzt, Denkgrenze, Erzeugung, Fortsetzung, Ziehparameter};
 use integer_llm_runtime::loader::load_model;
 use integer_llm_runtime::model::IntegerModel;
 use integer_llm_runtime::tokenizer::Tokenizer;
@@ -205,6 +205,54 @@ fn haltemarken(wortschatz: &Tokenizer, familie: &str) -> Vec<usize> {
 pub const DENKSCHLUSS: &str =
     "\n\nTime is short, so I will answer now based on what I have worked out so far.\n</think>\n\n";
 
+/// **Wie ohne Denkmodus gezogen wird**: Temperatur 0,7, Top-k 20, Top-p 0,8.
+///
+/// ⚑ Die Empfehlung der Qwen-Modellkarten fuer den Betrieb ohne
+/// Ueberlegung, auf der alle grossen Modelle hier beruhen. Die Temperatur
+/// steht als Kehrwert (`256 / 0,7`), damit multipliziert und nicht geteilt
+/// wird.
+pub const ZIEHEN: Ziehparameter = Ziehparameter { kehrwert_temperatur_q8: 366, top_k: 20, top_p_q16: 52_429 };
+
+/// **Wie mit Denkmodus gezogen wird**: Temperatur 0,6, Top-k 20, Top-p 0,95,
+/// ebenfalls nach den Modellkarten.
+pub const ZIEHEN_DENKEND: Ziehparameter = Ziehparameter { kehrwert_temperatur_q8: 427, top_k: 20, top_p_q16: 62_259 };
+
+/// **Eine Saat aus dem Zufall des Systems.** `RandomState` zieht seine
+/// Schluessel beim Betriebssystem, auf jedem der drei Systeme, ohne
+/// weitere Kiste.
+///
+/// ⚑ **Unter 2^53** ([`SAAT_BIS`]): So viel stellt JavaScript als ganze
+/// Zahl genau dar. Eine groessere Saat kaeme im Fenster gerundet an, und
+/// „wiederholen“ liefe still mit einer anderen. Hoechstens 16 Stellen sind
+/// ausserdem abtippbar. Gesetzt werden darf jede `u64`.
+pub fn zufallssaat() -> u64 {
+    use std::hash::{BuildHasher, Hasher};
+    let mut h = std::collections::hash_map::RandomState::new().build_hasher();
+    h.write_u128(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos()));
+    h.finish() & SAAT_BIS
+}
+
+/// Die groesste gezogene Saat, `2^53 - 1`.
+pub const SAAT_BIS: u64 = (1 << 53) - 1;
+
+/// Der Stand einer Aktion in diesem Faden.
+#[derive(Clone, Copy, Default)]
+struct Aktionsstand {
+    saat: u64,
+    /// Die wievielte Antwort der Aktion zuletzt gezogen wurde.
+    zug: u64,
+    /// Wie tief Aktionen geschachtelt sind; nur die aeusserste zieht.
+    tiefe: usize,
+}
+
+thread_local! {
+    /// ⚑ **Je Faden, nicht je Modell.** `myl agent` faehrt mehrere Auftraege
+    /// gleichzeitig ueber ein geladenes Modell; ein gemeinsamer Zaehler
+    /// haette ihre Saaten verschraenkt, und keiner waere wiederholbar. Ein
+    /// Lauf samt Pruefung laeuft immer in einem Faden.
+    static AKTION: std::cell::Cell<Aktionsstand> = const { std::cell::Cell::new(Aktionsstand { saat: 0, zug: 0, tiefe: 0 }) };
+}
+
 /// Das Modell im eigenen Speicher.
 pub struct Oertlichesmodell {
     modell: Arc<IntegerModel>,
@@ -214,12 +262,36 @@ pub struct Oertlichesmodell {
     /// Wie viele Token eine Antwort hoechstens hat, wenn der Aufrufer
     /// nichts sagt.
     pub grenze: usize,
-    /// ⚑ **Gierig als Vorgabe.** Ein Agent, der Werkzeuge ruft, soll
-    /// reproduzierbar rufen; Ziehen mit Zufall macht denselben Plan
-    /// zweimal verschieden und einen Fehlschlag unauffindbar.
+    /// ⚑ **Gezogen als Vorgabe, mit Saat** (Regel des Projektinhabers,
+    /// 2026-09-29). Bis dahin stand hier „gierig als Vorgabe“, mit dem
+    /// Grund, Ziehen mache einen Fehlschlag unauffindbar. Die Saat loest
+    /// genau das: Gleiche Saat, bitgleicher Lauf; andere Saat, anderer Weg.
+    /// 📌 Gierig lief jede Wiederholung wortgleich, und ein Vergleich zweier
+    /// Einstellungen sah nur je einen einzigen Weg. `true` bleibt fuer
+    /// Messungen, die genau einen festen Weg brauchen.
     pub gierig: bool,
-    /// Die Saat fuer den Fall, dass jemand doch ziehen will.
-    pub saat: u64,
+    /// **Eine feste Saat, oder `None`: Zufall je Aktion** (die Vorgabe).
+    /// Gesetzt aus `modell.saat`, `--saat` oder „immer“ in der Wahl.
+    ///
+    /// ⚑ **Die Saat gehoert zur Aktion, nicht zum Laden.** Eine Aktion ist
+    /// ein Auftrag, eine Runde, eine Nachricht; alle Aufrufe darin, auch die
+    /// Pruefung, ziehen der Reihe nach aus ihr. Mit der Saat einer Aktion
+    /// und demselben Verlauf davor wiederholt sich genau diese Aktion; eine
+    /// Saat je Laden haette verlangt, die ganze Sitzung nachzuspielen.
+    pub saat_fest: Option<u64>,
+    /// **Temperatur, Top-p und Top-k aus den Einstellungen**, in
+    /// Hundertsteln bzw. als Zahl; `None` heisst die Vorgabe des Modus
+    /// ([`ZIEHEN`], [`ZIEHEN_DENKEND`]). Temperatur 0 ist gierig.
+    pub temperatur: Option<u32>,
+    pub top_p: Option<u32>,
+    pub top_k: Option<u32>,
+    /// Eine Saat nur fuer die naechste Aktion („nur naechste Antwort“,
+    /// `/seed 1234`); danach gilt wieder [`Self::saat_fest`].
+    naechste: std::sync::Mutex<Option<u64>>,
+    /// Die Saat der zuletzt begonnenen Aktion, fuer die Anzeige. Die Saat
+    /// eines einzelnen Laufs traegt sein `lauf::Ausgang`; der Stand, aus dem
+    /// gezogen wird, liegt je Faden in [`AKTION`].
+    aktion: std::sync::Mutex<Option<u64>>,
     /// ⚑ **Denkmodus, standardmaessig AUS.** Ein Harness will
     /// Werkzeugaufrufe, keine Ueberlegung; und jedes Denktoken kostet
     /// dieselbe Rechenzeit wie ein Antworttoken.
@@ -414,8 +486,13 @@ impl Oertlichesmodell {
             wortschatz,
             familie,
             grenze: 512,
-            gierig: true,
-            saat: 0,
+            gierig: false,
+            saat_fest: None,
+            temperatur: None,
+            top_p: None,
+            top_k: None,
+            naechste: std::sync::Mutex::new(None),
+            aktion: std::sync::Mutex::new(None),
             denken: false,
             denkbudget: None,
             denkende,
@@ -428,6 +505,75 @@ impl Oertlichesmodell {
         })
     }
 
+    /// **Ob gierig gewaehlt wird**: ausdruecklich (`--gierig`) oder mit
+    /// Temperatur 0.
+    pub fn waehlt_gierig(&self) -> bool {
+        self.gierig || self.temperatur == Some(0)
+    }
+
+    /// **Wie gezogen wird**, oder `None`, wenn gierig: die Vorgabe des
+    /// Modus, darueber, was eingestellt ist.
+    pub fn ziehparameter(&self) -> Option<Ziehparameter> {
+        if self.waehlt_gierig() {
+            return None;
+        }
+        let mut p = if self.denkt() { ZIEHEN_DENKEND } else { ZIEHEN };
+        // Umgerechnet beim Einstellen, nicht im Rechenpfad: 256 / (T / 100),
+        // gerundet.
+        if let Some(t) = self.temperatur.filter(|t| *t > 0) {
+            p.kehrwert_temperatur_q8 = (25_600 + t / 2) / t;
+        }
+        if let Some(q) = self.top_p {
+            p.top_p_q16 = (q * 65_536 + 50) / 100;
+        }
+        if let Some(k) = self.top_k {
+            p.top_k = k as usize;
+        }
+        Some(p)
+    }
+
+    /// **Die Modelleinstellungen an einer Stelle uebernehmen**: Laenge,
+    /// Denkmodus und, falls gesetzt, die Saat. Ohne gesetzte Saat bleibt
+    /// die beim Laden gezogene.
+    pub fn uebernehmen(&mut self, e: &crate::einstellungen::Modelleinstellung) {
+        self.grenze = e.token;
+        self.denken = e.denken;
+        self.saat_fest = e.saat;
+        self.temperatur = e.temperatur;
+        self.top_p = e.top_p;
+        self.top_k = e.top_k;
+    }
+
+    /// **Eine Saat nur fuer die naechste Aktion**; danach wieder die feste
+    /// oder der Zufall.
+    pub fn naechste_saat(&self, saat: u64) {
+        *self.naechste.lock().unwrap_or_else(|e| e.into_inner()) = Some(saat);
+    }
+
+    /// Die vorgemerkte Saat fuer die naechste Aktion, falls eine da ist.
+    pub fn naechste(&self) -> Option<u64> {
+        *self.naechste.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// **Die Saat der laufenden oder zuletzt gelaufenen Aktion**; `None`,
+    /// bevor eine lief.
+    pub fn letzte_saat(&self) -> Option<u64> {
+        *self.aktion.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Die Parameter in einer Zeile, fuer Protokoll und Anzeige, etwa
+    /// `T 0,70 · top-p 0,80 · top-k 20`.
+    pub fn parameterzeile(&self) -> String {
+        if self.waehlt_gierig() {
+            return "gierig".to_string();
+        }
+        let hundertstel = |z: u32| format!("{},{:02}", z / 100, z % 100);
+        let t = self.temperatur.unwrap_or(if self.denkt() { 60 } else { 70 });
+        let p = self.top_p.unwrap_or(if self.denkt() { 95 } else { 80 });
+        let k = self.top_k.unwrap_or(ZIEHEN.top_k as u32);
+        format!("T {} · top-p {} · top-k {k}", hundertstel(t), hundertstel(p))
+    }
+
     /// Die Laufparameter dieses Modells, an einer Stelle.
     ///
     /// ⚑ **Damit beide Zweige dieselben nehmen.** Ein Lauf mit
@@ -435,10 +581,19 @@ impl Oertlichesmodell {
     /// zwei getippte Parameterlisten koennten irgendwann mehr
     /// unterscheiden, und dann haetten sie verschiedene Antworten.
     fn erzeugung<'a>(&'a self, grenze: usize, schluss: &'a [usize]) -> Erzeugung<'a> {
+        // Die n-te Antwort der Aktion bekommt ihre eigene Saat, fest aus der
+        // Saat der Aktion und n.
+        let seed = AKTION.with(|a| {
+            let mut s = a.get();
+            s.zug += 1;
+            a.set(s);
+            s.saat ^ s.zug.wrapping_mul(0x9E37_79B9_7F4A_7C15)
+        });
         Erzeugung {
             max_new_tokens: grenze,
-            seed: self.saat,
+            seed,
             greedy: self.gierig,
+            ziehen: self.ziehparameter(),
             halt: &self.halt,
             denkgrenze: match (self.denkt(), self.denkbudget, self.denkende) {
                 (true, Some(budget), Some(ende)) => Some(Denkgrenze { budget, ende, schluss }),
@@ -499,10 +654,10 @@ impl Oertlichesmodell {
     }
 }
 
-impl Modellweg for Oertlichesmodell {
-    fn chat(
+impl Oertlichesmodell {
+    /// Eine Antwort, innerhalb der laufenden Aktion.
+    fn antworten(
         &self,
-        _modell: &str,
         nachrichten: &[Nachricht],
         max_tokens: Option<u32>,
     ) -> Result<Antwort, Tuerfehler> {
@@ -616,6 +771,54 @@ impl Modellweg for Oertlichesmodell {
             prompt_token: prompt_token.len() as u32,
             antwort_token: token.len() as u32,
         })
+    }
+
+}
+
+impl Modellweg for Oertlichesmodell {
+    /// ⚑ **Ohne offene Aktion ist jede Antwort eine eigene**, etwa eine
+    /// Nachricht im Gespraech; innerhalb eines Laufs zieht sie aus dessen
+    /// Saat.
+    fn chat(
+        &self,
+        _modell: &str,
+        nachrichten: &[Nachricht],
+        max_tokens: Option<u32>,
+    ) -> Result<Antwort, Tuerfehler> {
+        let eigene = AKTION.with(|a| a.get().tiefe == 0);
+        if eigene {
+            self.aktion_beginnen();
+        }
+        let aus = self.antworten(nachrichten, max_tokens);
+        if eigene {
+            self.aktion_beenden();
+        }
+        aus
+    }
+
+    fn aktion_beginnen(&self) -> Option<u64> {
+        let stand = AKTION.with(|a| {
+            let mut s = a.get();
+            if s.tiefe == 0 {
+                let einmal = self.naechste.lock().unwrap_or_else(|e| e.into_inner()).take();
+                s.saat = einmal.or(self.saat_fest).unwrap_or_else(zufallssaat);
+                s.zug = 0;
+                *self.aktion.lock().unwrap_or_else(|e| e.into_inner()) = Some(s.saat);
+                crate::protokoll::saat("aktion", (!self.waehlt_gierig()).then_some(s.saat), &self.parameterzeile());
+            }
+            s.tiefe += 1;
+            a.set(s);
+            s
+        });
+        (!self.waehlt_gierig()).then_some(stand.saat)
+    }
+
+    fn aktion_beenden(&self) {
+        AKTION.with(|a| {
+            let mut s = a.get();
+            s.tiefe = s.tiefe.saturating_sub(1);
+            a.set(s);
+        });
     }
 
     /// Genau gezaehlt: dieselbe Vorlage und derselbe Wortschatz wie in

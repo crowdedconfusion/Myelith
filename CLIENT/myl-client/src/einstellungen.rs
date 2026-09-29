@@ -128,6 +128,24 @@ pub struct Modelleinstellung {
     /// soll die Vorgabe bekommen und nicht die unbegrenzte Ueberlegung.
     #[serde(default = "denkbudget_vorgabe")]
     pub denkbudget: Option<u32>,
+    /// **Die Saat, mit der gezogen wird.** `None` heisst: bei jedem Laden
+    /// eine neue aus dem Zufall des Systems. Eine Zahl heisst: jeder Lauf
+    /// von vorn bitgleich (Regel des Projektinhabers, 2026-09-29). Eine
+    /// Ablage von vorher traegt das Feld nicht und bekommt den Zufall.
+    #[serde(default)]
+    pub saat: Option<u64>,
+    /// **Temperatur in Hundertsteln**, `None` = die Vorgabe des Modus (70
+    /// ohne, 60 mit Denken), `Some(0)` = gierig: immer das wahrscheinlichste
+    /// Token. ⚑ Ganzzahlig gespeichert, denn im Rechenpfad gibt es kein
+    /// Gleitkomma, und die Einstellung soll nicht erst gerundet werden.
+    #[serde(default)]
+    pub temperatur: Option<u32>,
+    /// **Top-p in Hundertsteln** (1 bis 100), `None` = Vorgabe des Modus.
+    #[serde(default)]
+    pub top_p: Option<u32>,
+    /// **Top-k** (1 bis 200), `None` = Vorgabe (20).
+    #[serde(default)]
+    pub top_k: Option<u32>,
 }
 
 /// **Das Denkbudget beim Vorlesen, wenn niemand etwas eingestellt hat.**
@@ -158,13 +176,42 @@ pub const DENKBUDGET_BIS: u32 = 2048;
 //   stuende der Regler ab Werk auf „unbegrenzt". Geprueft beim Uebersetzen.
 const _: () = assert!(DENKBUDGET_VORGABE < DENKBUDGET_BIS);
 
+/// Eine Zahl in einem Bereich, oder leer fuer die Vorgabe.
+fn bereich(wert: &str, von: u32, bis: u32) -> Result<Option<u32>, String> {
+    match wert.trim() {
+        "" | "aus" | "vorgabe" | "default" => Ok(None),
+        w => match w.parse::<u32>() {
+            Ok(z) if (von..=bis).contains(&z) => Ok(Some(z)),
+            _ => Err(format!("{w}: erlaubt sind {von} bis {bis}, oder leer für die Vorgabe")),
+        },
+    }
+}
+
+/// **Die Antwortlaenge ab Werk, und die Untergrenze jedes Agentenlaufs.**
+///
+/// ⛔️ **Fund 505 (2026-09-29): Bis hierher stand die Vorgabe auf 256**, seit
+/// v0.9.0, als es nur das Gespraech gab. Loop, Konsole und Fenster gaben den
+/// Wert an die Agentenschleife, und 256 Token sind rund 800 Zeichen: Ein
+/// Bericht passte nicht in `write_file`. Im Loop wurde beim 27B jeder Versuch
+/// abgeschnitten, ein Ergebnis zu sichern, obwohl die Recherche stimmte, und
+/// jede Runde begann von vorn. Die Einzelproben lasen dagegen die
+/// Einstellungen des Projektinhabers (1600), also massen die beiden Reihen
+/// mit verschiedener Laenge.
+///
+/// ⚑ **Eine Grenze kostet nur, wenn das Modell weiterredet**; eine kurze
+/// Antwort endet von selbst. Ein abgeschnittener Werkzeugaufruf dagegen ist
+/// verlorene Arbeit. Deshalb nimmt ein Agentenlauf nie weniger als diesen
+/// Wert (`lauf::fahren_mit_hausregel`), auch wenn fuer das Gespraech weniger
+/// eingestellt ist.
+pub const ANTWORT_VORGABE: usize = 1600;
+
 fn denkbudget_vorgabe() -> Option<u32> {
     Some(DENKBUDGET_VORGABE)
 }
 
 impl Default for Modelleinstellung {
     fn default() -> Self {
-        Self { artefakt: String::new(), token: 256, denken: false, denkbudget: denkbudget_vorgabe() }
+        Self { artefakt: String::new(), token: ANTWORT_VORGABE, denken: false, denkbudget: denkbudget_vorgabe(), saat: None, temperatur: None, top_p: None, top_k: None }
     }
 }
 
@@ -1404,7 +1451,7 @@ impl Schriftgroesse {
 /// beieinander, und wer hier ein Feld einfuegt, verschiebt es damit
 /// auch auf der Seite. Das ist beabsichtigt: Eine zweite Liste, die nur
 /// die Reihenfolge festlegt, waere wieder eine zweite Liste.
-pub const FELDER: [Feld; 26] = [
+pub const FELDER: [Feld; 30] = [
     // ⚑ **Sie steht zuerst** (Festlegung des Projektinhabers,
     // 2026-09-10). Sie beschriftet alles, was darunter kommt: Wer die
     // Seite in einer Sprache oeffnet, die er nicht liest, findet hier
@@ -1485,8 +1532,8 @@ pub const FELDER: [Feld; 26] = [
         ("Modell", "Model"),
         ("Länge der Antwort", "Answer length"),
         (
-            "Höchstzahl der Token je Antwort. Mehr Token heißt längere Antworten und längere Wartezeit.",
-            "Maximum number of tokens per answer. More tokens means longer answers and a longer wait.",
+            "Höchstzahl der Token je Antwort im Gespräch. Mehr Token heißt längere Antworten und längere Wartezeit. Der Agent nimmt nie weniger als die Vorgabe, denn ein abgeschnittener Werkzeugaufruf ist verlorene Arbeit.",
+            "Maximum number of tokens per answer in chat. More tokens means longer answers and a longer wait. The agent never takes less than the default, because a cut-off tool call is lost work.",
         ),
     ),
     feld(
@@ -1497,6 +1544,46 @@ pub const FELDER: [Feld; 26] = [
         (
             "Das Modell überlegt sichtbar, bevor es antwortet. Jedes Denktoken kostet so viel Zeit wie ein Antworttoken; ohne Angabe bleibt es aus.",
             "The model reasons visibly before it answers. Every thinking token costs as much time as an answer token; off unless set.",
+        ),
+    ),
+    feld(
+        "modell.saat",
+        Feldart::Zahl,
+        ("Modell", "Model"),
+        ("Saat", "Seed"),
+        (
+            "Womit gezogen wird. Leer: bei jedem Start eine neue, und zwei Läufe gehen verschiedene Wege. Eine Zahl: Derselbe Auftrag ergibt Zeichen für Zeichen dieselbe Antwort, zum Wiederholen und Vergleichen. Die verwendete Saat nennt `myl` beim Laden.",
+            "What sampling starts from. Empty: a new one at every start, and two runs take different paths. A number: the same request gives the same answer character for character, to repeat and compare. `myl` names the seed in use when it loads.",
+        ),
+    ),
+    feld(
+        "modell.temperatur",
+        Feldart::Zahl,
+        ("Modell", "Model"),
+        ("Temperatur (Hundertstel)", "Temperature (hundredths)"),
+        (
+            "Wie frei gezogen wird: 70 heißt 0,7. Kleiner wird die Antwort vorhersehbarer, größer freier; 0 nimmt immer das wahrscheinlichste Wort. Leer: die Vorgabe (70, mit Denken 60).",
+            "How freely it samples: 70 means 0.7. Smaller gives more predictable answers, larger freer ones; 0 always takes the most likely word. Empty: the default (70, 60 when thinking).",
+        ),
+    ),
+    feld(
+        "modell.top_p",
+        Feldart::Zahl,
+        ("Modell", "Model"),
+        ("Top-p (Hundertstel)", "Top-p (hundredths)"),
+        (
+            "Gezogen wird nur aus den wahrscheinlichsten Wörtern, die zusammen diesen Anteil tragen: 80 heißt 0,8. Leer: die Vorgabe (80, mit Denken 95).",
+            "Sampling only from the most likely words that together carry this share: 80 means 0.8. Empty: the default (80, 95 when thinking).",
+        ),
+    ),
+    feld(
+        "modell.top_k",
+        Feldart::Zahl,
+        ("Modell", "Model"),
+        ("Top-k", "Top-k"),
+        (
+            "Höchstens so viele Wörter kommen in Frage. Leer: die Vorgabe (20).",
+            "At most this many words are considered. Empty: the default (20).",
         ),
     ),
     nur_im_fenster(feld(
@@ -1834,6 +1921,19 @@ impl Einstellungen {
             "modell.token" => Feldwert::Zahl(self.modell.token as u64),
             "modell.denken" => Feldwert::Schalter(self.modell.denken),
             "modell.denkbudget" => zahl(self.modell.denkbudget),
+            // ⚠️ **Ueber 2^53 als Text**: Ein Fenster in JavaScript rundete
+            //    die Zahl, und die Saat waere still eine andere. Darunter,
+            //    wo jede gezogene Saat liegt, eine Zahl wie jedes Zahlenfeld.
+            "modell.saat" => self.modell.saat.map_or(Feldwert::Leer, |s| {
+                if s <= crate::oertlich::SAAT_BIS {
+                    Feldwert::Zahl(s)
+                } else {
+                    Feldwert::Text(s.to_string())
+                }
+            }),
+            "modell.temperatur" => zahl(self.modell.temperatur),
+            "modell.top_p" => zahl(self.modell.top_p),
+            "modell.top_k" => zahl(self.modell.top_k),
             "agent.schritte" => Feldwert::Zahl(self.agent.schritte as u64),
             "loop.runden" => Feldwert::Zahl(self.schleife.runden as u64),
             "loop.stunden" => Feldwert::Zahl(self.schleife.stunden as u64),
@@ -1903,6 +2003,15 @@ impl Einstellungen {
             // ⚠️ **Streng und nicht ueber `opt`:** Dort wird aus einem
             // Tippfehler still `None`, und hier hiesse das: ohne Grenze,
             // also die laengste Wartezeit, die es gibt.
+            "modell.temperatur" => self.modell.temperatur = bereich(wert, 0, 200)?,
+            "modell.top_p" => self.modell.top_p = bereich(wert, 1, 100)?,
+            "modell.top_k" => self.modell.top_k = bereich(wert, 1, 200)?,
+            "modell.saat" => {
+                self.modell.saat = match wert.trim() {
+                    "" | "aus" | "zufall" | "random" => None,
+                    w => Some(w.parse().map_err(|_| format!("{w} ist keine Saat (eine Zahl, oder leer für Zufall)"))?),
+                }
+            }
             "modell.denkbudget" => {
                 self.modell.denkbudget = match wert {
                     "aus" => None,

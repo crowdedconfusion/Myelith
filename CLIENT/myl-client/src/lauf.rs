@@ -82,6 +82,9 @@ pub struct Ausgang {
     pub ende: myl_local_agent::schleife::Ende,
     /// Wie lange es dauerte.
     pub sekunden: f64,
+    /// **Die Saat dieses Laufs**, wenn gezogen wurde. Mit ihr und demselben
+    /// Verlauf davor laesst sich der Lauf Zeichen fuer Zeichen wiederholen.
+    pub saat: Option<u64>,
 }
 
 impl Ausgang {
@@ -198,6 +201,7 @@ pub fn fahren_im_gespraech(
                     rumpf: grund,
                 }),
                 sekunden: 0.0,
+                saat: None,
             };
         }
     };
@@ -256,6 +260,10 @@ pub fn fahren_mit_hausregel(
     hausregel: Option<&str>,
 ) -> Ausgang {
     let anfang = std::time::Instant::now();
+    // ⚑ **Ein Lauf ist eine Aktion**: alle Schritte aus einer Saat
+    // (Regel des Projektinhabers, 2026-09-29). Liegt schon eine offen,
+    // etwa eine Loop-Runde samt Pruefung, gilt deren Saat.
+    let saat = modell.aktion_beginnen();
     let grenzen = myl_local_agent::vollmacht_grenzen::Sitzungsgrenzen::neu(
         kontrakt_fuer(schritte),
         ruestung.kasten.angebote(),
@@ -281,10 +289,14 @@ pub fn fahren_mit_hausregel(
         registratur: &ruestung.registratur,
         adressen: &zuordnung,
         anker: myl_types::hash::Hash::from_bytes([0u8; 32]),
-        max_tokens: Some(max_tokens),
+        // ⛔️ **Nie unter der Vorgabe** (Fund 505): Ein Werkzeugaufruf, der
+        // an der Laenge abreisst, ist verloren; eine kurze Antwort endet
+        // von selbst. Alle Agentenlaeufe kommen hier an.
+        max_tokens: Some(max_tokens.max(crate::einstellungen::ANTWORT_VORGABE as u32)),
         melder,
     }
     .fahren_mit_verlauf(&mit_kontext(ruestung, auftrag), verlauf);
+    modell.aktion_beenden();
 
     let (verlauf, antwort) = verlauf_aus(&erg.nachrichten);
     Ausgang {
@@ -293,6 +305,7 @@ pub fn fahren_mit_hausregel(
         nachrichten: erg.nachrichten,
         ende: erg.ende,
         sekunden: anfang.elapsed().as_secs_f64(),
+        saat,
     }
 }
 

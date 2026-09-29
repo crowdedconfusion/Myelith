@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Startet das Loop-Szenario: zwei Aufgaben, ein Testskill, eine Frist.
 
-    python3 BENCHMARKS/Agent/loop/starten.py <artefakt> <laufordner> [--frist-min 180]
+    python3 BENCHMARKS/Agent/loop/starten.py <artefakt> <laufordner> [--frist-min 180] [--saat N]
 
 Legt im Laufordner an:
   arbeit/     eine frische Kopie von vorlage/ (Arbeitsordner des Agenten)
@@ -41,6 +41,14 @@ def main(args):
     frist_min = zahl(args, "--frist-min", 180)
     runden = zahl(args, "--runden", 10)
     schritte = zahl(args, "--schritte", 16)
+    # ⚑ Immer mit Saat (Regel des Projektinhabers, 2026-09-29): genannt,
+    #    oder hier gezogen. Sie steht in starter.log und lauf.json, damit
+    #    jeder Lauf wiederholbar ist; gleiche Saat, gleicher Weg.
+    saat = zahl(args, "--saat", None)
+    if saat is None:
+        # Unter 2^53 wie im Client: So viel stellt ein Fenster in JavaScript
+        # genau dar.
+        saat = int.from_bytes(os.urandom(8), "big") & ((1 << 53) - 1)
     if not os.path.isfile(MYL):
         print(f"myl fehlt: {MYL}\n  cd CLIENT/myl-client && cargo build --release --bin myl")
         return 1
@@ -72,6 +80,13 @@ def main(args):
 
     for feld, wert in [
         ("modell.artefakt", artefakt),
+        # ⛔️ Ausdruecklich, nicht die Vorgabe: Bis zum 2026-09-29 lief das
+        #    Szenario mit 256 Token je Antwort, und jeder laengere
+        #    Werkzeugaufruf riss ab (ein Bericht passte nicht in write_file).
+        #    Die Einzelproben liefen zugleich mit 1600. Ein fester Wert haelt
+        #    die Reihe vergleichbar, auch wenn sich die Vorgabe aendert.
+        ("modell.token", 1600),
+        ("modell.saat", saat),
         ("agent.wurzel", arbeit),
         ("agent.schreiben", "an"),
         ("agent.kistenordner", os.path.join(WURZEL, "CLIENT", "werkzeugkisten", "Advanced")),
@@ -86,7 +101,7 @@ def main(args):
         ("loop.pruefen", "an"),
     ]:
         setzen(feld, wert)
-    notiz(f"Einstellungen gesetzt: {runden} Runden, {schritte} Schritte, Frist {frist_min} min")
+    notiz(f"Einstellungen gesetzt: {runden} Runden, {schritte} Schritte, Frist {frist_min} min, Saat {saat}")
 
     with open(os.path.join(HIER, "aufgaben.json"), encoding="utf-8") as f:
         aufgaben = json.load(f)["aufgaben"]
@@ -108,7 +123,7 @@ def main(args):
     log = open(os.path.join(lauf, "loop.log"), "w", buffering=1)
     p = subprocess.Popen([MYL, "loop"], cwd=arbeit, env=umgebung, stdout=log, stderr=subprocess.STDOUT)
     with open(os.path.join(lauf, "lauf.json"), "w", encoding="utf-8") as f:
-        json.dump({"start": start, "frist": frist, "artefakt": artefakt, "pid": p.pid,
+        json.dump({"start": start, "frist": frist, "artefakt": artefakt, "pid": p.pid, "saat": saat,
                    "tasks": kennungen, "runden": runden, "schritte": schritte,
                    "abnahme": "--ohne-abnahme" not in args}, f, indent=2)
     notiz(f"myl loop gestartet, Prozess {p.pid}")

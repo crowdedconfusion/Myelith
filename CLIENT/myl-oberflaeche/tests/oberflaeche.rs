@@ -3737,3 +3737,41 @@ fn die_tasks_lassen_sich_ziehen_und_tragen_keine_kaesten() {
         assert!(!zeile.contains("box-shadow: inset"), "ein Ring um einen Eintrag: {zeile}");
     }
 }
+
+/// **Der Strom findet das Element, das seinen Beitrag gerade zeigt.**
+///
+/// 📌 Im Loop erschienen weder Ueberlegung noch Befehle (Projektinhaber,
+/// 2026-09-29): Die Meldungen gingen in ein Element, das ein Neuzeichnen
+/// des Gespraechs schon ersetzt hatte. Diese Probe haelt die drei Stellen
+/// fest, an denen das haengt.
+#[test]
+fn der_strom_schreibt_in_das_sichtbare_element() {
+    let js = lies("app.js");
+    let a = js.find("function beitrag_zeichnen(b) {").expect("beitrag_zeichnen");
+    assert!(
+        js[a..a + 300].contains("beitragselemente.set(b, wurzel);"),
+        "ein gezeichneter Beitrag merkt sich sein Element nicht mehr"
+    );
+    let s = js.find("function laufendes_element_suchen() {").expect("Suche");
+    assert!(js[s..s + 200].contains("isConnected"), "die Suche nimmt auch ein abgehaengtes Element");
+    for f in ["function live_meldung(m) {", "function live_neu_zeichnen() {"] {
+        let b = js.find(f).unwrap_or_else(|| panic!("{f}"));
+        assert!(js[b..b + 200].contains("laufendes_element_suchen();"), "`{f}` sucht das sichtbare Element nicht");
+    }
+}
+
+/// **Die Pause zeigt sich beim Klick**, nicht erst, wenn die Runde steht
+/// (Projektinhaber, 2026-09-29), und der Ruecken beendet auch den Befehl
+/// des Loop-Fadens.
+#[test]
+fn die_pause_greift_sofort() {
+    let js = lies("app.js");
+    let a = js.find("async function loop_umschalten() {").expect("loop_umschalten");
+    let f = &js[a..a + js[a..].find("\n}\n").expect("Ende")];
+    let aus = f.find("loopstand.laeuft = false;").expect("∞ geht beim Klick nicht aus");
+    let ruf = f.find("await invoke(\"loop_pausieren\");").expect("Pause");
+    assert!(aus < ruf, "∞ geht erst aus, wenn der Ruecken geantwortet hat");
+    let rs = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/main.rs")).expect("main.rs");
+    let p = rs.find("fn loop_pausieren(").expect("loop_pausieren");
+    assert!(rs[p..p + 1200].contains("beenden_im_faden("), "die Pause beendet den laufenden Befehl nicht");
+}

@@ -1679,8 +1679,36 @@ impl IntegerModel {
     /// entstehen die Logits: `ab` darf hoechstens `token_ids.len() - 1`
     /// sein.
     pub fn prompt_vorbereiten_ab(&self, token_ids: &[usize], ab: usize, cache: &mut KVCache) -> Vec<i32> {
+        match self.prompt_vorbereiten_unterbrechbar(token_ids, ab, cache, None) {
+            Ok(logits) => logits,
+            Err(_) => unreachable!("ohne Abbruchschalter bricht nichts ab"),
+        }
+    }
+
+    /// **Wie [`Model::prompt_vorbereiten_ab`], aber zwischen zwei Fenstern
+    /// anhaltbar.**
+    ///
+    /// 📌 **Warum:** Der Abbruch der Erzeugung griff erst vor dem ersten
+    /// neuen Token. Die Vorbereitung eines langen Prompts dauert beim
+    /// grossen Gemisch auf der CPU leicht eine Minute, und so lange lief eine
+    /// Runde weiter, nachdem jemand auf Pause gedrueckt hatte
+    /// (Projektinhaber, 2026-09-29: „umgehend pausiert“). Jetzt wird vor
+    /// jedem Fenster nachgesehen; laenger als ein Fenster dauert das Anhalten
+    /// nicht.
+    ///
+    /// ⚑ **Die Zahlen bleiben dieselben**: Die Fenster sind dieselben wie
+    /// ohne Schalter. Bei `Err(n)` stehen genau die ersten `n` Token im
+    /// KV-Speicher, und der Aufrufer muss sich das merken.
+    pub fn prompt_vorbereiten_unterbrechbar(
+        &self,
+        token_ids: &[usize],
+        ab: usize,
+        cache: &mut KVCache,
+        abbruch: Option<&std::sync::atomic::AtomicBool>,
+    ) -> Result<Vec<i32>, usize> {
+        let angehalten = || abbruch.is_some_and(|a| a.load(std::sync::atomic::Ordering::SeqCst));
         let Some((&letzte, davor)) = token_ids.split_last() else {
-            return vec![0i32; self.vocab_size];
+            return Ok(vec![0i32; self.vocab_size]);
         };
         assert!(
             token_ids.len() <= self.kontextgrenze(),
@@ -1690,9 +1718,16 @@ impl IntegerModel {
         );
         assert!(ab <= davor.len(), "prompt_vorbereiten_ab: {ab} Token wiederverwendet, aber nur {} vor dem letzten", davor.len());
         for (i, fenster) in davor[ab..].chunks(VORBEREITUNGSFENSTER).enumerate() {
-            self.vorbereiten_stapel(fenster, ab + i * VORBEREITUNGSFENSTER, cache);
+            let anfang = ab + i * VORBEREITUNGSFENSTER;
+            if angehalten() {
+                return Err(anfang);
+            }
+            self.vorbereiten_stapel(fenster, anfang, cache);
         }
-        self.forward_token(letzte, davor.len(), cache)
+        if angehalten() {
+            return Err(davor.len());
+        }
+        Ok(self.forward_token(letzte, davor.len(), cache))
     }
 
     /// **Embedding und alle Ebenen, ohne Schlussnorm und ohne Kopf.**
@@ -3278,9 +3313,29 @@ impl IntegerModel {
         argmax_int(logits)
     }
 
-    /// Sampling mit deterministischem Seed.
+    /// Sampling mit deterministischem Seed, **so wie theta_v es vorschreibt**
+    /// (lineare Gewichte ueber das ganze Vokabular, siehe
+    /// [`integer_llm_kernels::sampling::ziehen`], warum das oertlich nicht taugt).
     pub fn sample_next(&self, logits: &[i32], seed: u64) -> (usize, u64) {
         sample_integer_cdf(logits, seed)
+    }
+
+    /// **Ziehen mit Temperatur, Top-k und Top-p**, bitgenau je Saat, mit der
+    /// exp-Tabelle dieses Artefakts und der Skala seiner Logits.
+    pub fn ziehen_next(
+        &self,
+        logits: &[i32],
+        p: &integer_llm_kernels::sampling::Ziehparameter,
+        seed: u64,
+    ) -> (usize, u64) {
+        integer_llm_kernels::sampling::ziehen(
+            logits,
+            self.config.logit_frac_bits,
+            p,
+            &self.exp_lut,
+            self.config.exp_input_frac,
+            seed,
+        )
     }
 }
 

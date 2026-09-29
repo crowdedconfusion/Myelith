@@ -66,7 +66,8 @@ pub struct Eintrag {
     /// Wann, in UTC, auf die Sekunde: `2026-09-25T14:03:07Z`.
     pub zeit: String,
     /// Was fuer eine Handlung: `datei_lesen`, `datei_schreiben`,
-    /// `befehl`, `netz`, `sinn`, `werkzeug`, `notaus`, `schutzfilter`.
+    /// `befehl`, `netz`, `sinn`, `werkzeug`, `notaus`, `schutzfilter`,
+    /// `systemprompt`, `saat`.
     pub art: String,
     /// Das Werkzeug oder die Stelle, die es ausloeste.
     pub werkzeug: String,
@@ -274,6 +275,26 @@ pub fn ereignis(art: &str, stelle: &str, ausloeser: &[u8], entscheidung: &str) {
         eingabe: if ausloeser.is_empty() { String::new() } else { fingerabdruck(ausloeser) },
         ausgabe: String::new(),
         entscheidung: entscheidung.to_string(),
+        ergebnis: "ok".to_string(),
+        dauer_ms: 0,
+    });
+}
+
+/// **Die Saat einer Aktion**, damit sie sich wiederholen laesst (Regel des
+/// Projektinhabers, 2026-09-29). `eingabe` traegt die Saat als Zahl (nicht
+/// geheim, wie der SHA-256 des Systemprompts), `ausgabe` die Parameter,
+/// `entscheidung` ob gezogen oder gierig gewaehlt wurde.
+pub fn saat(stelle: &str, saat: Option<u64>, parameter: &str) {
+    if !an() {
+        return;
+    }
+    eintragen(&Eintrag {
+        zeit: zeitstempel(jetzt_sekunden()),
+        art: "saat".to_string(),
+        werkzeug: stelle.to_string(),
+        eingabe: saat.map(|s| s.to_string()).unwrap_or_default(),
+        ausgabe: parameter.to_string(),
+        entscheidung: if saat.is_some() { "gezogen" } else { "gierig" }.to_string(),
         ergebnis: "ok".to_string(),
         dauer_ms: 0,
     });

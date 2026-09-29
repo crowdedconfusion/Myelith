@@ -28,24 +28,40 @@ const $ = (k) => document.getElementById(k);
 // --- Vorschaltbild ------------------------------------------------------
 
 // ⚑ **Das Vorschaltbild geht erst weg, wenn die Einstellungen da
-// sind**, und mindestens nach anderthalb Sekunden. Beides zusammen:
+// sind und das Modell geladen ist**, und mindestens nach vier Sekunden.
 // Wer sofort verschwindet, hat nichts gezeigt; wer auf eine feste Zeit
 // wartet, obwohl er fertig ist, haelt den Nutzer auf.
-const VORHANG_MINDESTENS = 1500;
+// 📌 Bis zum 2026-09-29 anderthalb Sekunden, und das Bild ruckelte in
+//    genau dieser Zeit (Projektinhaber: „etwas verlaengern“).
+const VORHANG_MINDESTENS = 4000;
+// ⚑ **Hoechstens so lange wartet der Vorhang auf das Laden.** Ein grosses
+//   Modell von einer langsamen Platte soll das Fenster nicht festhalten;
+//   das Laden laeuft danach weiter und meldet sich, wenn es fertig ist.
+const VORLADEN_HOECHSTENS = 60000;
 const vorhang = $("vorhang");
 const vorhangAnhalten = vorhangStarten($("vorhangbild"));
 const start = performance.now();
 
+/// **Gibt dem Hauptfaden ein Bild Luft**: Die Darstellung kommt dazwischen,
+/// bevor die naechste Arbeit beginnt. Unter macOS reicht die Webansicht auch
+/// die Bilder des eigenen Fadens ueber den Hauptfaden weiter.
+const bild_abwarten = () => new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)));
+
 async function vorhangWeg() {
   const rest = VORHANG_MINDESTENS - (performance.now() - start);
   if (rest > 0) await new Promise((r) => setTimeout(r, rest));
+  // 📌 **Die Blende beginnt erst, wenn die Oberflaeche darunter gezeichnet
+  //    ist**, und was danach kommt, wartet ihr Ende ab (Projektinhaber,
+  //    2026-09-29: „ruckelt kurz bevor es das Interface oeffnet“). Vorher lief
+  //    die Blende, waehrend der Start noch Starthinweis und Loop aufbaute.
+  await bild_abwarten();
+  await bild_abwarten();
   vorhang.classList.add("weg");
+  await new Promise((r) => setTimeout(r, 650));
   // ⚑ Erst nach der Blende anhalten, sonst friert das Bild sichtbar
   // ein, waehrend es noch durchscheint.
-  setTimeout(() => {
-    vorhangAnhalten();
-    vorhang.remove();
-  }, 700);
+  vorhangAnhalten();
+  vorhang.remove();
 }
 
 // --- Modi ---------------------------------------------------------------
@@ -72,6 +88,8 @@ async function vorhangWeg() {
 const TEXTE = {
   de: {
     "vorhang.stand": "wird geladen",
+    "vorhang.laden": "Das passende Modell wird ermittelt und geladen …",
+    "modell.empfohlen": (name, grund) => `${name} geladen: ${grund}.`,
     "menue.umbenennen": "Umbenennen",
     "menue.ausgeben": "Exportieren",
     "menue.loeschen": "Löschen",
@@ -104,6 +122,36 @@ const TEXTE = {
     "lauf.laeuftschon": "Es läuft noch ein Auftrag; einen Augenblick.",
     "loop.knopf": "Loop an oder aus",
     "loop.liste": "Tasks des Loops",
+    "ausgabe.titel": "Ausgabe",
+    "ausgabe.pfeil": "Ausgabe einstellen",
+    "ausgabe.saat": "Saat",
+    "ausgabe.zufall": "Zufall",
+    "ausgabe.fest": "Fest",
+    "ausgabe.wuerfeln": "Neue Saat würfeln",
+    "ausgabe.einmal": "nur nächste Antwort",
+    "ausgabe.immer": "immer",
+    "ausgabe.letzte": "Letzte wiederholen",
+    "ausgabe.uebernehmen": "Übernehmen",
+    "ausgabe.temperatur": "Temperatur",
+    "ausgabe.mehr": "mehr",
+    "ausgabe.antwort": "Antwort",
+    "ausgabe.laenge": "Länge (Token)",
+    "ausgabe.denken": "Vor dem Antworten denken",
+    "ausgabe.vorgabe": "Temperatur, Top-p und Top-k auf die Vorgabe",
+    "ausgabe.gierig": "gierig",
+    "ausgabe.vorgabewert": "Vorgabe",
+    "ausgabe.stand.zufall": "Zufall je Antwort",
+    "ausgabe.stand.fest": (s) => `fest ${s}`,
+    "ausgabe.stand.einmal": (s) => `nächste ${s}`,
+    "ausgabe.keine_zahl": "Eine Saat ist eine ganze Zahl ab 0.",
+    "ausgabe.keine_letzte": "Es lief noch keine Antwort mit Saat.",
+    "ausgabe.gesetzt_einmal": (s) => `Die nächste Antwort läuft mit Saat ${s}.`,
+    "ausgabe.gesetzt_immer": (s) => `Saat fest ${s}, bis du Zufall wählst.`,
+    "ausgabe.gesetzt_zufall": "Saat: Zufall, je Antwort eine neue.",
+    "ausgabe.fehler": (f) => `Nicht gesetzt: ${f}`,
+    "saat.zeile": (s, p) => `Saat ${s}${p ? " · " + p : ""}`,
+    "saat.wiederholen": "wiederholen",
+    "saat.wiederholen_titel": "Die nächste Antwort mit dieser Saat",
     "loop.titel": "Tasks",
     "loop.kein_task": "Kein Task",
     "loop.leer": "Noch keine Tasks. Beschreibe unten ein Ziel; der Agent verfolgt es in Runden.",
@@ -120,6 +168,8 @@ const TEXTE = {
     "loop.stoppen": "Anhalten",
     "loop.entfernen": "Entfernen",
     "loop.wirklich": "Wirklich entfernen? Noch einmal klicken.",
+    "loop.bearbeiten": "Bearbeiten",
+    "loop.bearbeitet": "Das Ziel ist geändert; die nächste Runde arbeitet damit.",
     "loop.ziel": (z) => `∞ Task: ${z}`,
     "loop.fuss": (n, zustand) => `Runde ${n} · ${zustand}`,
     "loop.laeuft_runde": (n) => `Runde ${n} läuft`,
@@ -134,6 +184,7 @@ const TEXTE = {
     "loop.ende.notaus": "Notaus: Der Loop ist angehalten, der laufende Task auch.",
     "loop.wieder": "Der Loop lief beim Schließen und macht jetzt dort weiter.",
     "loop.unterbrochen": "unterbrochen; beim nächsten ∞ geht es genau hier weiter",
+    "loop.haelt_an": "hält an …",
     "loop.meldung": (z, zustand) => `∞ ${z}: ${zustand}`,
     "loop.kette": (z) => `∞ Kette: neuer Task ${z}`,
     "auto.nein": "Abbrechen",
@@ -301,6 +352,8 @@ const TEXTE = {
 
   en: {
     "vorhang.stand": "loading",
+    "vorhang.laden": "Finding and loading the right model …",
+    "modell.empfohlen": (name, grund) => `${name} loaded (${grund}).`,
     "menue.umbenennen": "Rename",
     "menue.ausgeben": "Export",
     "menue.loeschen": "Delete",
@@ -330,6 +383,36 @@ const TEXTE = {
     "lauf.laeuftschon": "A run is still going; one moment.",
     "loop.knopf": "Loop on or off",
     "loop.liste": "Loop tasks",
+    "ausgabe.titel": "Output",
+    "ausgabe.pfeil": "Output settings",
+    "ausgabe.saat": "Seed",
+    "ausgabe.zufall": "Random",
+    "ausgabe.fest": "Fixed",
+    "ausgabe.wuerfeln": "Roll a new seed",
+    "ausgabe.einmal": "next answer only",
+    "ausgabe.immer": "always",
+    "ausgabe.letzte": "Repeat last",
+    "ausgabe.uebernehmen": "Apply",
+    "ausgabe.temperatur": "Temperature",
+    "ausgabe.mehr": "more",
+    "ausgabe.antwort": "Answer",
+    "ausgabe.laenge": "Length (tokens)",
+    "ausgabe.denken": "Think before answering",
+    "ausgabe.vorgabe": "Temperature, top-p and top-k to default",
+    "ausgabe.gierig": "greedy",
+    "ausgabe.vorgabewert": "default",
+    "ausgabe.stand.zufall": "random per answer",
+    "ausgabe.stand.fest": (s) => `fixed ${s}`,
+    "ausgabe.stand.einmal": (s) => `next ${s}`,
+    "ausgabe.keine_zahl": "A seed is a whole number from 0.",
+    "ausgabe.keine_letzte": "No answer with a seed has run yet.",
+    "ausgabe.gesetzt_einmal": (s) => `The next answer runs with seed ${s}.`,
+    "ausgabe.gesetzt_immer": (s) => `Seed fixed at ${s} until you choose random.`,
+    "ausgabe.gesetzt_zufall": "Seed: random, a new one per answer.",
+    "ausgabe.fehler": (f) => `Not set: ${f}`,
+    "saat.zeile": (s, p) => `Seed ${s}${p ? " · " + p : ""}`,
+    "saat.wiederholen": "repeat",
+    "saat.wiederholen_titel": "The next answer with this seed",
     "loop.titel": "Tasks",
     "loop.kein_task": "No task",
     "loop.leer": "No tasks yet. Describe a goal below; the agent pursues it in rounds.",
@@ -346,6 +429,8 @@ const TEXTE = {
     "loop.stoppen": "Pause",
     "loop.entfernen": "Remove",
     "loop.wirklich": "Really remove? Click again.",
+    "loop.bearbeiten": "Edit",
+    "loop.bearbeitet": "The goal is changed; the next round works with it.",
     "loop.ziel": (z) => `∞ Task: ${z}`,
     "loop.fuss": (n, zustand) => `Round ${n} · ${zustand}`,
     "loop.laeuft_runde": (n) => `Round ${n} running`,
@@ -360,6 +445,7 @@ const TEXTE = {
     "loop.ende.notaus": "Emergency stop: the loop is halted, and so is the running task.",
     "loop.wieder": "The loop was running when the window closed and continues now.",
     "loop.unterbrochen": "interrupted; the next ∞ continues exactly here",
+    "loop.haelt_an": "stopping …",
     "loop.meldung": (z, zustand) => `∞ ${z}: ${zustand}`,
     "loop.kette": (z) => `∞ Chain: new task ${z}`,
     "auto.nein": "Cancel",
@@ -1873,9 +1959,23 @@ function wellen() {
   return svg;
 }
 
+/// **Welches Element einen Beitrag zuletzt gezeichnet hat.**
+///
+/// 📌 **Der Strom schrieb in ein Element, das niemand mehr sah**
+/// (Projektinhaber, 2026-09-29: im Loop erschienen weder Ueberlegung noch
+/// Befehle). Der Loop zeichnete seinen Beitrag, und gleich danach zeichnete
+/// `alles_zeichnen` das Gespraech neu, mit einem neuen Element fuer denselben
+/// Beitrag. Die Meldungen landeten im alten, abgehaengten Element, und
+/// `replaceWith` an einem abgehaengten Element tut nichts. Dasselbe traf den
+/// Agenten, sobald waehrend seines Laufs irgendetwas neu zeichnete. ⚑ Jetzt
+/// sucht `live_meldung` vor jedem Stueck das Element, das den Beitrag gerade
+/// zeigt.
+const beitragselemente = new WeakMap();
+
 function beitrag_zeichnen(b) {
   const wurzel = document.createElement("div");
   wurzel.className = `beitrag von-${b.von}`;
+  beitragselemente.set(b, wurzel);
 
   // ⚑ **Ein Hinweis ist weder Frage noch Antwort**: Er sagt, dass das
   // Modell ab hier eine Zusammenfassung sieht, und geht nicht ins Modell.
@@ -1976,6 +2076,21 @@ function beitrag_zeichnen(b) {
   km.className = "kimarke-antwort";
   km.textContent = KI_MARKE;
   wurzel.append(km);
+  // ⚑ **Die Saat unter der Antwort**, mit einem Knopf, der die naechste
+  //   Antwort mit ihr zieht (Regel des Projektinhabers, 2026-09-29).
+  if (b.saat && !b.laufend) {
+    const z = document.createElement("div");
+    z.className = "saatzeile";
+    const s = document.createElement("span");
+    s.textContent = t("saat.zeile", b.saat, b.parameter);
+    const w = document.createElement("button");
+    w.type = "button";
+    w.textContent = t("saat.wiederholen");
+    w.title = t("saat.wiederholen_titel");
+    w.addEventListener("click", () => saat_anwenden(b.saat, false));
+    z.append(s, w);
+    wurzel.append(z);
+  }
 
   if (b.fuss) {
     const f = document.createElement("div");
@@ -3554,6 +3669,31 @@ $("modellwahl").addEventListener("change", async () => {
   }
 });
 
+/// **Beim Start das passende Modell ermitteln und laden**, hoechstens so
+/// lange, wie der Vorhang wartet. Eine eingestellte Wahl gilt; ist keine da,
+/// setzt das Fenster die Empfehlung fuer diese Maschine und sagt es.
+async function modell_vorladen_beim_start() {
+  const stand = $("vorhangstand");
+  if (stand) stand.textContent = t("vorhang.laden");
+  const lauf = (async () => {
+    try {
+      const l = await invoke("modell_vorladen");
+      if (!l) return;
+      geladen = true;
+      modellstand = { name: l.name, pfad: l.pfad };
+      kontext_holen();
+      await modellwahl_zeichnen();
+      await modellzeile_schreiben(t("modell.ladefrist", l.sekunden));
+      ruhe_neu_stellen();
+      await kopf_zeichnen();
+      if (l.empfohlen) melden(t("modell.empfohlen", l.name, l.grund));
+    } catch (f) {
+      melden(t("modell.ladefehler", f));
+    }
+  })();
+  await Promise.race([lauf, new Promise((r) => setTimeout(r, VORLADEN_HOECHSTENS))]);
+}
+
 async function modell_laden() {
   const knopf = $("laden");
   knopf.disabled = true;
@@ -3635,6 +3775,7 @@ async function live_anfangen(modus) {
 /// Nimmt eine Meldung des Rueckens auf.
 function live_meldung(m) {
   if (!laufender || !laufendes_element) return;
+  laufendes_element_suchen();
   const w = laufendes_element;
 
   // ⚑ **Ob gerade nachgedacht wird**, fuer die Ueberschrift des Denkfadens.
@@ -3733,6 +3874,14 @@ const zeile_aus_meldung = (m) => {
 /// das Ganze sagt nichts darueber, ob es gleich zu Ende ist.
 let schrittgrenze = 0;
 
+/// **Nimmt das Element, das den laufenden Beitrag gerade zeigt.** Ist das
+/// Gespraech nicht offen, haengt keines im Fenster; dann wachsen die Daten
+/// weiter, und wer es oeffnet, sieht den Stand. Siehe `beitragselemente`.
+function laufendes_element_suchen() {
+  const jetzt = beitragselemente.get(laufender);
+  if (jetzt?.isConnected) laufendes_element = jetzt;
+}
+
 /// Zeichnet den laufenden Beitrag neu, ohne das ganze Gespraech.
 ///
 /// 📌 **Ein `alles_zeichnen()` je Token waeren bei sechshundert Token
@@ -3741,6 +3890,7 @@ let schrittgrenze = 0;
 /// dann, wenn sich die **Gliederung** aendert.
 function live_neu_zeichnen() {
   if (!laufender || !laufendes_element) return;
+  laufendes_element_suchen();
   const neu = beitrag_zeichnen(laufender);
   laufendes_element.replaceWith(neu);
   laufendes_element = neu;
@@ -4281,6 +4431,8 @@ async function senden(text) {
       kontext_merken(offen, [...verlauf, { role: "assistant", content: a.text }], null, 0);
       kontext_zeichnen(a.kontext);
     }
+    // ⚑ Die Saat dieser Antwort steht darunter und im Gespraech.
+    await saat_an_beitrag(laufender);
     await live_beenden();
     // ⚑ Meldet sich nur, wenn der Nutzer gerade woanders ist, etwa
     // auf der Einstellungsseite: Wer die Antwort vor sich hat, braucht
@@ -4553,11 +4705,71 @@ $("laden").addEventListener("click", modell_laden);
 // das nicht waechst, versteckt die eigene Eingabe; eines ohne Grenze
 // frisst das Gespraech.
 const feld = $("auftrag");
+// ⚑ **Eine gezogene Hoehe gilt, bis sie zurueckgenommen wird** (Wunsch des
+//   Projektinhabers, 2026-09-29): Wer das Feld an der oberen Kante groesser
+//   zieht, will die Groesse behalten, auch beim naechsten Start. Dann waechst
+//   es nicht mehr von selbst, laengerer Text rollt darin. Doppelklick auf den
+//   Griff, oder kleiner als eine Zeile ziehen, laesst es wieder wachsen.
+//   Gemerkt im Browser-Speicher des Fensters; fehlt er, gilt die Vorgabe.
+const HOEHE_MERKEN = "myl.eingabehoehe";
+let gezogene_hoehe = null;
+try {
+  const h = Number(localStorage.getItem(HOEHE_MERKEN));
+  if (h > 0) gezogene_hoehe = h;
+} catch (_) {}
 const feld_messen = () => {
+  if (gezogene_hoehe) {
+    const oben = Math.floor(window.innerHeight * 0.7);
+    feld.style.maxHeight = "none";
+    feld.style.height = `${Math.min(gezogene_hoehe, oben)}px`;
+    return;
+  }
+  feld.style.maxHeight = "";
   feld.style.height = "auto";
   feld.style.height = `${feld.scrollHeight}px`;
 };
 feld.addEventListener("input", feld_messen);
+window.addEventListener("resize", feld_messen);
+
+function hoehe_merken(h) {
+  gezogene_hoehe = h;
+  try {
+    if (h) localStorage.setItem(HOEHE_MERKEN, String(h));
+    else localStorage.removeItem(HOEHE_MERKEN);
+  } catch (_) {}
+  feld_messen();
+}
+
+(function griff_verdrahten() {
+  const griff = $("eingabegriff");
+  let start = null;
+  griff.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    griff.setPointerCapture(e.pointerId);
+    griff.classList.add("zieht");
+    start = { y: e.clientY, h: feld.getBoundingClientRect().height };
+  });
+  griff.addEventListener("pointermove", (e) => {
+    if (!start) return;
+    // Nach oben ziehen vergroessert: Die Kante wandert mit der Maus.
+    const neu = start.h + (start.y - e.clientY);
+    const oben = Math.floor(window.innerHeight * 0.7);
+    gezogene_hoehe = Math.max(16, Math.min(neu, oben));
+    feld_messen();
+  });
+  const loslassen = () => {
+    if (!start) return;
+    start = null;
+    griff.classList.remove("zieht");
+    // Kleiner als eine Zeile heisst: wieder von selbst wachsen.
+    const zeile = parseFloat(getComputedStyle(feld).lineHeight) || 24;
+    hoehe_merken(gezogene_hoehe && gezogene_hoehe >= zeile * 1.5 ? Math.round(gezogene_hoehe) : null);
+  };
+  griff.addEventListener("pointerup", loslassen);
+  griff.addEventListener("pointercancel", loslassen);
+  griff.addEventListener("dblclick", () => hoehe_merken(null));
+})();
+feld_messen();
 
 // ⚑ Eingabe sendet, Umschalt und Eingabe macht eine Zeile. So machen es
 // die Werkzeuge, an denen sich diese Oberflaeche orientiert.
@@ -4642,7 +4854,7 @@ $("terminaleingabe").addEventListener("keydown", (e) => {
 ///
 /// ⚑ `in_runde` sperrt auch `senden`: Waehrend einer Runde gehoert das
 /// Modell dem Loop, zwischen den Runden ist es frei.
-const loopstand = { laeuft: false, in_runde: false, minuten: null, tasks: [], schritte: 0 };
+const loopstand = { laeuft: false, in_runde: false, minuten: null, tasks: [], schritte: 0, haelt_an: null };
 
 /// **Die Buehne der laufenden Runde**: ihr Beitrag, sein Element und der
 /// Task, zu dem sie gehoert. Getrennt von `laufender`, denn ein Chat und
@@ -4654,7 +4866,14 @@ let loopbuehne = null;
 async function tasks_holen() {
   try {
     const a = await invoke("tasks");
-    loopstand.laeuft = a.laeuft;
+    // ⚑ Waehrend er anhaelt, gilt er schon als aus: Der Faden laeuft
+    //   noch bis zum naechsten Fenster der Rechnung, der Knopf nicht.
+    if (!a.laeuft && loopstand.haelt_an) {
+      // Er steht, auch falls das „Ende“ nicht ankam.
+      loopstand.haelt_an_fertig();
+      loopstand.haelt_an = null;
+    }
+    loopstand.laeuft = a.laeuft && !loopstand.haelt_an;
     loopstand.in_runde = a.in_runde;
     loopstand.tasks = a.eintraege;
     if (!a.laeuft) loopstand.minuten = null;
@@ -4758,6 +4977,9 @@ function taskliste_zeichnen() {
   //    ersetzte die Zeilen und nahm dem Ziehen die gezogene Zeile unter
   //    der Hand weg. Nach dem Loslassen wird ohnehin neu geholt.
   if (gezogen) return;
+  // ⚠️ Ebenso nicht, waehrend ein Ziel bearbeitet wird: Das Feld verschwaende
+  //    mitten im Tippen.
+  if (task_in_bearbeitung) return;
   const ol = $("taskliste");
   ol.replaceChildren();
   $("taskleer").hidden = loopstand.tasks.length > 0;
@@ -4810,7 +5032,9 @@ function taskzeile_bauen(z) {
   }
   // ⛔️ **Entfernen braucht zwei Klicks.** Ein Task traegt sein Tagebuch
   //    mit; ein Klick daneben soll es nicht kosten.
-  const weg = tat("×", t("loop.entfernen"), () => {
+  // ⚑ **Ein Papierkorb, jederzeit sichtbar** (Wunsch des Projektinhabers,
+  //    2026-09-29); vorher ein kleines „ד, das man uebersah.
+  const weg = tat("", t("loop.entfernen"), () => {
     if (weg.dataset.scharf === "ja") {
       task_befehl(invoke("task_entfernen", { kennung }));
       return;
@@ -4823,7 +5047,24 @@ function taskzeile_bauen(z) {
       weg.title = t("loop.entfernen");
     }, 3000);
   });
+  weg.classList.add("weg");
+  // Als Elemente gebaut, nicht als Markup (`das_fenster_setzt_niemals_markup`).
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 20 20");
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("focusable", "false");
+  const pfad = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  pfad.setAttribute("d", "M4.5 6h11M8 6V4.5h4V6M6 6l.7 9.5h6.6L14 6M8.7 8.5v5M11.3 8.5v5");
+  svg.append(pfad);
+  weg.append(svg);
   aktionen.append(weg);
+
+  // ⚑ **Rechtsklick: bearbeiten, anhalten oder weiter, loeschen** (Wunsch
+  //    des Projektinhabers, 2026-09-29).
+  li.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    taskmenue_oeffnen(z, li, e.clientX, e.clientY);
+  });
 
   // ⚑ Auch mit der Tastatur umsortieren: Alt+↑ und Alt+↓.
   li.addEventListener("keydown", (e) => {
@@ -4843,6 +5084,93 @@ function taskzeile_bauen(z) {
 
 /// ⚑ Der Aufruf kommt fertig herein, mit seinem Namen im Klartext: Die
 /// Probe `jeder_befehl_ist_angemeldet` findet nur Namen, die dastehen.
+// ── Das Menue am Task (Rechtsklick) ──
+//
+// ⚑ **Bearbeiten, anhalten oder weiter, loeschen** (Wunsch des
+// Projektinhabers, 2026-09-29). Loeschen fragt hier nicht noch einmal: Der
+// Weg ueber das Menue ist schon ein bewusster. Der Papierkorb in der Zeile
+// braucht zwei Klicks, weil er schnell und damit leicht getroffen ist.
+
+let taskmenue_fuer = null;
+let task_in_bearbeitung = false;
+
+function taskmenue_schliessen() {
+  taskmenue_fuer = null;
+  $("taskmenue").hidden = true;
+}
+
+function taskmenue_oeffnen(z, li, x, y) {
+  const m = $("taskmenue");
+  taskmenue_fuer = { z, li };
+  const halten = m.querySelector('[data-tasktat="halten"]');
+  halten.hidden = z.stellung === "fertig";
+  halten.textContent = z.stellung === "angehalten" ? t("loop.weiter") : t("loop.stoppen");
+  m.hidden = false;
+  // Erst zeigen, dann messen (siehe `menue_oeffnen`).
+  const r = m.getBoundingClientRect();
+  m.style.left = `${Math.max(8, Math.min(x, window.innerWidth - r.width - 8))}px`;
+  m.style.top = `${Math.max(8, Math.min(y, window.innerHeight - r.height - 8))}px`;
+  m.querySelector(".menueeintrag")?.focus();
+}
+
+async function taskmenue_tat(tat) {
+  const ziel = taskmenue_fuer;
+  taskmenue_schliessen();
+  if (!ziel) return;
+  const kennung = ziel.z.kennung;
+  if (tat === "loeschen") {
+    await task_befehl(invoke("task_entfernen", { kennung }));
+  } else if (tat === "halten") {
+    await task_befehl(invoke(ziel.z.stellung === "angehalten" ? "task_weiter" : "task_stoppen", { kennung }));
+  } else if (tat === "bearbeiten") {
+    task_bearbeiten_zeigen(ziel.z, ziel.li);
+  }
+}
+
+/// **Das Ziel in der Zeile bearbeiten**: Eingabe speichert, Escape oder ein
+/// Klick daneben laesst es, wie es war.
+function task_bearbeiten_zeigen(z, li) {
+  const name = li.querySelector(".taskname");
+  if (!name) return;
+  const feld = document.createElement("input");
+  feld.type = "text";
+  feld.className = "taskbearbeiten";
+  feld.value = z.ziel;
+  feld.setAttribute("aria-label", t("loop.bearbeiten"));
+  name.replaceWith(feld);
+  task_in_bearbeitung = true;
+  feld.focus();
+  feld.select();
+  let fertig = false;
+  const ende = async (speichern) => {
+    if (fertig) return;
+    fertig = true;
+    task_in_bearbeitung = false;
+    const neu = feld.value.trim();
+    if (speichern && neu && neu !== z.ziel) {
+      try {
+        await invoke("task_bearbeiten", { kennung: z.kennung, ziel: neu });
+        melden(t("loop.bearbeitet"));
+      } catch (f) {
+        melden(t("loop.fehler", f));
+      }
+    }
+    await tasks_holen();
+    taskliste_zeichnen();
+  };
+  feld.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      ende(true);
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      ende(false);
+    }
+  });
+  feld.addEventListener("blur", () => ende(false));
+}
+
 async function task_befehl(aufruf) {
   try {
     await aufruf;
@@ -4972,8 +5300,27 @@ async function loop_an(von_selbst) {
   await tasks_holen();
 }
 
+/// 📌 **Die Pause zeigt sich sofort** (Projektinhaber, 2026-09-29:
+/// „umgehend pausiert“). Vorher blieb ∞ an und atmete weiter, bis die
+/// Runde wirklich stand, und das konnte eine Minute dauern: die
+/// Vorbereitung eines langen Prompts oder ein laufender Befehl. Jetzt geht
+/// ∞ beim Klick aus, der Beitrag sagt „haelt an“, und der Ruecken bricht
+/// Rechnung und Befehl ab. Ein neues ∞ davor wartet, bis er steht.
 async function loop_umschalten() {
+  if (loopstand.haelt_an) {
+    await loopstand.haelt_an;
+  }
   if (loopstand.laeuft) {
+    let fertig;
+    loopstand.haelt_an = new Promise((r) => (fertig = r));
+    loopstand.haelt_an_fertig = fertig;
+    loopstand.laeuft = false;
+    loop_zeichnen();
+    if (loopbuehne) {
+      loopbuehne.beitrag.fuss = t("loop.haelt_an");
+      const f = beitragselemente.get(loopbuehne.beitrag)?.querySelector(".zeitzeile");
+      if (f) f.textContent = loopbuehne.beitrag.fuss;
+    }
     await invoke("loop_pausieren");
     return;
   }
@@ -5035,6 +5382,7 @@ async function loop_ereignis(e) {
       b.text = e.bericht;
       b.bloecke = await bloecke_holen(e.bericht);
       b.fuss = t("loop.fuss", e.runde, e.zustand);
+      if (e.saat) b.saat = e.saat;
       if (e.pruefung) {
         loopbuehne.g.beitraege.push({
           von: "hinweis",
@@ -5073,6 +5421,10 @@ async function loop_ereignis(e) {
     }
     loopstand.laeuft = false;
     loopstand.in_runde = false;
+    if (loopstand.haelt_an) {
+      loopstand.haelt_an_fertig();
+      loopstand.haelt_an = null;
+    }
     const satz = t(`loop.ende.${e.grund}`);
     if (satz) melden(satz);
   }
@@ -5107,11 +5459,21 @@ function loop_verdrahten() {
   //   ⚠️ Nicht beim Bildlauf: Die Liste rollt selbst.
   document.addEventListener("pointerdown", (e) => {
     if (gezogen) return;
-    if (!$("taskwahl").contains(e.target) && !$("loopgruppe").contains(e.target)) taskwahl_schliessen();
+    // Ein Klick ins Menue am Task gehoert zur Liste und schliesst sie nicht.
+    if (!$("taskwahl").contains(e.target) && !$("loopgruppe").contains(e.target) && !$("taskmenue").contains(e.target)) {
+      taskwahl_schliessen();
+    }
+    if (!$("taskmenue").contains(e.target)) taskmenue_schliessen();
   });
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") taskwahl_schliessen();
+    if (e.key !== "Escape") return;
+    // Erst das Menue am Task, dann die Liste.
+    if (!$("taskmenue").hidden) taskmenue_schliessen();
+    else taskwahl_schliessen();
   });
+  for (const b of document.querySelectorAll("#taskmenue [data-tasktat]")) {
+    b.addEventListener("click", () => taskmenue_tat(b.dataset.tasktat));
+  }
   horchen("loop-lebt", (e) => loop_meldung(e.payload));
   horchen("loop-ereignis", (e) => loop_ereignis(e.payload));
   // ⚑ Die Minuten in der Liste bleiben frisch, solange sie offen ist
@@ -5119,6 +5481,233 @@ function loop_verdrahten() {
   setInterval(() => {
     if (loopstand.laeuft || !$("taskwahl").hidden) tasks_holen();
   }, 20000);
+}
+
+// ── Das Feld fuer die Ausgabe ──
+//
+// ⚑ **Saat und alles, was die Antwort direkt veraendert, an einem Ort**
+// (Auftrag des Projektinhabers, 2026-09-29), geoeffnet vom Pfeil ganz
+// rechts am Eingabefeld. „Immer“ schreibt ueber `setzen` in die
+// Einstellungen, also dieselben Felder wie die Einstellungsseite; „nur
+// naechste Antwort“ merkt die Saat im geladenen Modell vor. Zwei Orte fuer
+// denselben Wert gibt es damit nicht.
+//
+// ⚠️ **Saaten bleiben Text.** JavaScript stellt ganze Zahlen nur bis 2^53
+// genau dar; eine gerundete Saat wiederholte still etwas anderes.
+
+let saatstand = null;
+
+function ausgabewahl_schliessen() {
+  $("ausgabewahl").hidden = true;
+  $("ausgabepfeil").setAttribute("aria-expanded", "false");
+}
+
+async function ausgabewahl_oeffnen() {
+  const m = $("ausgabewahl");
+  m.hidden = false;
+  $("ausgabepfeil").setAttribute("aria-expanded", "true");
+  await ausgabe_fuellen();
+  ausgabewahl_setzen();
+}
+
+/// Ueber dem Feld, rechts buendig mit der Lasche, denn sie oeffnet es.
+function ausgabewahl_setzen() {
+  const m = $("ausgabewahl");
+  const r = document.querySelector("#eingabe .eingabefeld").getBoundingClientRect();
+  const p = $("ausgabepfeil").getBoundingClientRect();
+  const h = m.getBoundingClientRect();
+  m.style.left = `${Math.max(8, Math.min(p.right - h.width, window.innerWidth - h.width - 8))}px`;
+  m.style.top = `${Math.max(8, r.top - h.height - 6)}px`;
+}
+
+async function saat_holen() {
+  try {
+    saatstand = await invoke("saat_stand");
+  } catch (_) {
+    saatstand = null;
+  }
+  return saatstand;
+}
+
+/// Zeigt am Pfeil, ob etwas vom Zufall und der Vorgabe abweicht.
+function ausgabepfeil_zeichnen(werte) {
+  const s = saatstand;
+  const gesetzt = Boolean(s && (s.fest || s.naechste)) ||
+    (werte && ["modell.temperatur", "modell.top_p", "modell.top_k"].some((k) => werte[k] != null));
+  $("ausgabepfeil").classList.toggle("gesetzt", gesetzt);
+}
+
+function ausgabestand_text(s) {
+  if (!s) return "";
+  if (s.naechste) return t("ausgabe.stand.einmal", s.naechste);
+  if (s.fest) return t("ausgabe.stand.fest", s.fest);
+  return t("ausgabe.stand.zufall");
+}
+
+async function ausgabe_fuellen() {
+  const [s, e] = await Promise.all([saat_holen(), invoke("einstellungen").catch(() => null)]);
+  const w = e?.werte || {};
+  $("ausgabestand").textContent = ausgabestand_text(s);
+  const fest = Boolean(s?.fest);
+  $("saatzufall").checked = !fest;
+  $("saatfest").checked = fest;
+  $("saatzahl").value = s?.naechste || s?.fest || s?.letzte || "";
+  $("saatletzte").disabled = !s?.letzte;
+  $("saatletzte").textContent = s?.letzte ? `${t("ausgabe.letzte")} (${s.letzte})` : t("ausgabe.letzte");
+  const temp = w["modell.temperatur"];
+  $("temperatur").value = temp ?? (w["modell.denken"] ? 60 : 70);
+  $("temperatur").dataset.vorgabe = temp == null ? "ja" : "";
+  $("topp").value = w["modell.top_p"] ?? (w["modell.denken"] ? 95 : 80);
+  $("topp").dataset.vorgabe = w["modell.top_p"] == null ? "ja" : "";
+  $("topk").value = w["modell.top_k"] ?? "";
+  $("topk").placeholder = "20";
+  $("antwortlaenge").value = w["modell.token"] ?? "";
+  $("ausgabedenken").checked = Boolean(w["modell.denken"]);
+  ausgabewerte_zeigen();
+  ausgabepfeil_zeichnen(w);
+}
+
+function hundertstel(z) {
+  const n = Number(z);
+  return `${Math.floor(n / 100)},${String(n % 100).padStart(2, "0")}`;
+}
+
+function ausgabewerte_zeigen() {
+  const temp = $("temperatur").value;
+  const vorgabe = (feld) => (feld.dataset.vorgabe ? ` (${t("ausgabe.vorgabewert")})` : "");
+  $("temperaturwert").textContent =
+    Number(temp) === 0 ? t("ausgabe.gierig") : hundertstel(temp) + vorgabe($("temperatur"));
+  $("toppwert").textContent = hundertstel($("topp").value) + vorgabe($("topp"));
+}
+
+async function ausgabe_setzen(feld, wert) {
+  try {
+    await invoke("setzen", { feld, wert: String(wert) });
+    return true;
+  } catch (f) {
+    melden(t("ausgabe.fehler", f));
+    return false;
+  }
+}
+
+/// Eine Saat als Text pruefen: nur Ziffern, und nicht ueber 2^64 - 1.
+function saat_gueltig(text) {
+  const s = String(text).trim();
+  if (!/^\d{1,20}$/.test(s)) return null;
+  return BigInt(s) <= 18446744073709551615n ? BigInt(s).toString() : null;
+}
+
+async function saat_anwenden(saat, immer) {
+  if (immer) {
+    if (await ausgabe_setzen("modell.saat", saat)) melden(t("ausgabe.gesetzt_immer", saat));
+  } else {
+    try {
+      await invoke("saat_einmal", { saat });
+      melden(t("ausgabe.gesetzt_einmal", saat));
+    } catch (f) {
+      melden(t("ausgabe.fehler", f));
+    }
+  }
+  await ausgabe_fuellen();
+}
+
+async function saat_uebernehmen() {
+  const immer = $("saatimmer").checked;
+  if ($("saatzufall").checked) {
+    if (await ausgabe_setzen("modell.saat", "")) melden(t("ausgabe.gesetzt_zufall"));
+    await ausgabe_fuellen();
+    return;
+  }
+  const saat = saat_gueltig($("saatzahl").value);
+  if (saat == null) {
+    melden(t("ausgabe.keine_zahl"));
+    return;
+  }
+  await saat_anwenden(saat, immer);
+}
+
+/// Eine neue Saat unter 2^53, wie der Client sie zieht.
+function saat_wuerfeln() {
+  const z = new Uint32Array(2);
+  crypto.getRandomValues(z);
+  return ((BigInt(z[0] & 0x1fffff) << 32n) | BigInt(z[1])).toString();
+}
+
+function ausgabe_verdrahten() {
+  $("ausgabepfeil").addEventListener("click", () => {
+    if ($("ausgabewahl").hidden) ausgabewahl_oeffnen();
+    else ausgabewahl_schliessen();
+  });
+  $("saatzahl").addEventListener("input", () => {
+    $("saatfest").checked = true;
+  });
+  $("saatwuerfel").addEventListener("click", () => {
+    $("saatzahl").value = saat_wuerfeln();
+    $("saatfest").checked = true;
+  });
+  $("saatuebernehmen").addEventListener("click", saat_uebernehmen);
+  $("saatletzte").addEventListener("click", async () => {
+    const letzte = saatstand?.letzte;
+    if (!letzte) {
+      melden(t("ausgabe.keine_letzte"));
+      return;
+    }
+    await saat_anwenden(letzte, $("saatimmer").checked);
+  });
+  for (const id of ["temperatur", "topp"]) {
+    $(id).addEventListener("input", () => {
+      $(id).dataset.vorgabe = "";
+      ausgabewerte_zeigen();
+    });
+  }
+  $("temperatur").addEventListener("change", async () => {
+    await ausgabe_setzen("modell.temperatur", $("temperatur").value);
+    await ausgabe_fuellen();
+  });
+  $("topp").addEventListener("change", async () => {
+    await ausgabe_setzen("modell.top_p", $("topp").value);
+    await ausgabe_fuellen();
+  });
+  $("topk").addEventListener("change", async () => {
+    await ausgabe_setzen("modell.top_k", $("topk").value.trim());
+    await ausgabe_fuellen();
+  });
+  $("antwortlaenge").addEventListener("change", async () => {
+    const v = $("antwortlaenge").value.trim();
+    if (v) await ausgabe_setzen("modell.token", v);
+    await ausgabe_fuellen();
+  });
+  $("ausgabedenken").addEventListener("change", async () => {
+    await ausgabe_setzen("modell.denken", $("ausgabedenken").checked ? "an" : "aus");
+    await ausgabe_fuellen();
+  });
+  $("ausgabevorgabe").addEventListener("click", async () => {
+    for (const feld of ["modell.temperatur", "modell.top_p", "modell.top_k"]) await ausgabe_setzen(feld, "");
+    await ausgabe_fuellen();
+  });
+  // ⚑ Schliessen wie die anderen Menues: Klick daneben, Fluchttaste.
+  document.addEventListener("pointerdown", (e) => {
+    if (!$("ausgabewahl").contains(e.target) && !$("ausgabepfeil").contains(e.target)) ausgabewahl_schliessen();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") ausgabewahl_schliessen();
+  });
+  window.addEventListener("resize", () => {
+    if (!$("ausgabewahl").hidden) ausgabewahl_setzen();
+  });
+  saat_holen().then(() => ausgabepfeil_zeichnen(null));
+}
+
+/// **Die Saat einer fertigen Antwort an ihren Beitrag**: Sie steht darunter
+/// und geht mit dem Gespraech in die Ablage.
+async function saat_an_beitrag(b) {
+  if (!b) return;
+  const s = await saat_holen();
+  if (s?.letzte) {
+    b.saat = s.letzte;
+    b.parameter = s.parameter || "";
+  }
+  ausgabepfeil_zeichnen(null);
 }
 
 /// ⚑ **Lief der Loop beim Schliessen, laeuft er jetzt weiter** (Festlegung
@@ -5194,10 +5783,14 @@ async function auto_bestaetigen() {
   // ⚑ Knopf und Ablegen einmal beim Start verdrahten.
   anhang_verdrahten();
   sinne_verdrahten();
+  await bild_abwarten();
   alles_zeichnen();
+  await bild_abwarten();
   try {
     await modellwahl_zeichnen();
+    await bild_abwarten();
     await kopf_zeichnen();
+    await bild_abwarten();
     // ⚑ **Einmal beim Start und nicht bei jeder Zeichnung.** Was vor
     // dieser Fassung gespeichert wurde, hat keine Gliederung; sie beim
     // Zeichnen zu holen machte jede Zeichnung unterbrechbar.
@@ -5207,12 +5800,16 @@ async function auto_bestaetigen() {
     // die Zeile gleich das richtige nennt.
     await modell_dem_gespraech_folgen(offen);
     await modellzeile_schreiben();
+    // ⚑ Waehrend das Vorschaltbild laeuft: das passende Modell ermitteln
+    //   und schon laden (Wunsch des Projektinhabers, 2026-09-29).
+    await modell_vorladen_beim_start();
   } catch (f) {
     melden(t("fehler.start", f));
   }
   await vorhangWeg();
   await starthinweis_zeigen();
   loop_verdrahten();
+  ausgabe_verdrahten();
   await loop_beim_start();
   feld.focus();
 })();

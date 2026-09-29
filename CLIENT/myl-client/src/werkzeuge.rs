@@ -1647,6 +1647,37 @@ impl Werkzeugausfuehrung for Suchen {
 /// abgelehnt. Das erste zu nehmen waere bequem und traefe irgendwann die
 /// falsche Stelle; die Ablehnung sagt dem Modell, dass es mehr Kontext
 /// in `alt` aufnehmen muss, und das kann es.
+/// **Was „expected an indented block (Zeile N)“ konkret heisst**: Zeile N
+/// braucht mehr Einrueckung als die Zeile davor, und hier steht wie viel.
+///
+/// 📌 **Loop-Szenario, 30B, 2026-09-29:** Viermal wortgleich derselbe
+/// Aufruf, jedes Mal abgewiesen mit Vorschau. Die Meldung sagte, dass etwas
+/// fehlt, nicht was; Python 3.9 nennt nicht einmal die Zeile mit dem
+/// Doppelpunkt. Eine Zahl ist das, was dem Modell fehlte.
+fn einrueckungshinweis(stand: &str, meldung: &str) -> String {
+    let Some(rest) = meldung.split("expected an indented block").nth(1) else { return String::new() };
+    let Some(zeile) = rest
+        .split("Zeile ")
+        .nth(1)
+        .and_then(|z| z.chars().take_while(|c| c.is_ascii_digit()).collect::<String>().parse::<usize>().ok())
+    else {
+        return String::new();
+    };
+    let zeilen: Vec<&str> = stand.lines().collect();
+    let einzug = |z: &str| z.len() - z.trim_start().len();
+    let Some(davor) = zeilen.iter().take(zeile.saturating_sub(1)).rev().find(|z| !z.trim().is_empty()) else {
+        return String::new();
+    };
+    let jetzt = zeilen.get(zeile.saturating_sub(1)).map_or(0, |z| einzug(z));
+    let vorher = einzug(davor);
+    format!(
+        " Zeile {zeile} ist {jetzt} Leerzeichen eingerueckt, die Zeile davor ({}) {vorher}; \
+         nach einem Doppelpunkt braucht Zeile {zeile} mehr, also etwa {}.",
+        davor.trim(),
+        vorher + 4
+    )
+}
+
 pub struct Dateiaendern(pub Einhaengung, pub Ansageform);
 
 impl Werkzeugausfuehrung for Dateiaendern {
@@ -1681,6 +1712,17 @@ impl Werkzeugausfuehrung for Dateiaendern {
         // Wo die neuen Texte am Ende stehen, als Bytespannen im Endstand.
         let mut spannen: Vec<(usize, usize)> = Vec::new();
         for (i, (alt, neu)) in aenderungen.iter().enumerate() {
+            // 📌 **Eine Aenderung, die nichts aendert, ist keine** (Loop-Szenario,
+            //    30B, 2026-09-29): `sensor = zeile["sensor"]` durch sich selbst,
+            //    mehrmals, und die Antwort hiess „eine Stelle ersetzt“. Das
+            //    Modell hielt eine Nichtaenderung fuer eine Handlung.
+            if alt == neu {
+                fehler.push(format!(
+                    "Aenderung {}: `alt` und `neu` sind gleich, sie aendert nichts. Was soll danach anders dastehen?",
+                    i + 1
+                ));
+                continue;
+            }
             let zahl = stand.matches(alt.as_str()).count();
             match zahl {
                 1 => {
@@ -1750,8 +1792,9 @@ impl Werkzeugausfuehrung for Dateiaendern {
             } else {
                 return Err(Werkzeugfehler {
                     grund: format!(
-                        "{roh}: nichts geschrieben. Nach dieser Aenderung waere die Datei ungueltig: {f}. \
+                        "{roh}: nichts geschrieben. Nach dieser Aenderung waere die Datei ungueltig: {f}.{} \
                          So saehe es aus:\n{}",
+                        einrueckungshinweis(&stand, f),
                         umgebung_zeigen(&stand, &spannen)
                     ),
                 });
@@ -1964,6 +2007,9 @@ impl Werkzeugausfuehrung for UeberallErsetzen {
         let neu = zeichenkette(a, "neu")?;
         if alt.is_empty() {
             return Err(Werkzeugfehler { grund: "`alt` ist leer".into() });
+        }
+        if alt == neu {
+            return Err(Werkzeugfehler { grund: "`alt` und `neu` sind gleich, das aendert nichts; nichts geschrieben".into() });
         }
         let Some(pfade) = a.get("pfade").and_then(|v| v.as_array()).filter(|l| !l.is_empty()) else {
             return Err(Werkzeugfehler { grund: "`pfade` fehlt, ist leer oder keine Liste".into() });
@@ -3055,6 +3101,34 @@ mod grenze {
         std::fs::create_dir(d.path().join("unter")).expect("Unterverzeichnis");
         let e = Einhaengung::neu(d.path(), true).expect("Einhaengung");
         (d, e)
+    }
+
+    /// 📌 **Eine Aenderung, die nichts aendert, wird abgewiesen**, in
+    /// `edit_file` wie in `replace_everywhere`, und nichts wird geschrieben.
+    #[test]
+    fn eine_aenderung_ohne_wirkung_wird_abgewiesen() {
+        let (d, e) = baue();
+        std::fs::write(d.path().join("a.py"), "sensor = zeile[\"sensor\"]\n").unwrap();
+        let f = Dateiaendern(e.clone(), Ansageform::Amtlich)
+            .ausfuehren(&serde_json::json!({"pfad": "a.py", "aenderungen": [{"alt": "sensor = zeile[\"sensor\"]", "neu": "sensor = zeile[\"sensor\"]"}]}))
+            .unwrap_err()
+            .grund;
+        assert!(f.contains("gleich") && f.contains("nichts geschrieben"), "{f}");
+        let f = UeberallErsetzen(e, Ansageform::Amtlich)
+            .ausfuehren(&serde_json::json!({"pfade": ["a.py"], "alt": "sensor", "neu": "sensor"}))
+            .unwrap_err()
+            .grund;
+        assert!(f.contains("gleich"), "{f}");
+    }
+
+    /// 📌 **„expected an indented block“ bekommt eine Zahl**: wie tief die
+    /// Zeile davor steht und wie tief die neue muesste. Der Fall des 30B.
+    #[test]
+    fn die_einrueckung_wird_beziffert() {
+        let stand = "def lesen():\n        for z in r:\n            if z != \"n/a\":\n            werte.append(z)\n";
+        let h = einrueckungshinweis(stand, "Python: expected an indented block (Zeile 4)");
+        assert!(h.contains("Zeile 4 ist 12 Leerzeichen") && h.contains("etwa 16"), "{h}");
+        assert_eq!(einrueckungshinweis(stand, "Python: invalid syntax (Zeile 2)"), "");
     }
 
     #[test]

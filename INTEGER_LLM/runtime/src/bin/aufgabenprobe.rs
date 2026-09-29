@@ -57,6 +57,7 @@ fn run() -> Result<(), String> {
             halt: &ende,
             denkgrenze: None,
             abbruch: None,
+            ziehen: None,
         };
         let anfang = std::time::Instant::now();
         let tokens = generate_beobachtet(&model, &tokenizer, &prompt, &lauf, &mut |_| {});
