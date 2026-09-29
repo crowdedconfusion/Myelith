@@ -197,12 +197,23 @@ pub fn eintragen(e: &Eintrag) {
     let ordner = ordner();
     let _ = std::fs::create_dir_all(&ordner);
     let pfad = ordner.join(tagesname(jetzt_sekunden()));
-    let zeile = serde_json::to_string(e).unwrap_or_default();
+    let mut zeile = serde_json::to_string(e).unwrap_or_default();
+    zeile.push('\n');
+    // ⛔️ **Eine Zeile, ein Schreibaufruf, unter einem Schloss** (Fund 500,
+    //    2026-09-29). Hier stand `writeln!(f, "{zeile}")`: Das setzt Inhalt
+    //    und Zeilenende in getrennten Aufrufen ab, und schreiben zwei Faeden
+    //    zugleich, verzahnen sich die Zeilen. Das JSON zerbricht, `lesen`
+    //    ueberspringt den Eintrag, und im Protokoll fehlt eine Handlung. In
+    //    den Proben sah das aus wie ein unzuverlaessiger Test („Lesen fehlt
+    //    im Protokoll"); im Betrieb waere es bei nebenlaeufigen Auftraegen
+    //    (`myl auftraege`) genauso geschehen.
+    static SCHREIBEN: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _schloss = SCHREIBEN.lock().unwrap_or_else(|e| e.into_inner());
     let ergebnis = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(&pfad)
-        .and_then(|mut f| writeln!(f, "{zeile}"));
+        .and_then(|mut f| f.write_all(zeile.as_bytes()));
     if let Err(f) = ergebnis {
         eprintln!("Aktionsprotokoll: {}: {f}", pfad.display());
     }
@@ -367,6 +378,17 @@ impl Werkzeugausfuehrung for Protokolliert {
 mod proben {
     use super::*;
 
+    /// `str::floor_char_boundary` ist erst ab Rust 1.91 stabil, die Kiste
+    /// verspricht eine aeltere Mindestfassung (die CI prueft sie). Dasselbe,
+    /// von Hand.
+    fn zeichengrenze_unten(s: &str, i: usize) -> usize {
+        let mut i = i.min(s.len());
+        while !s.is_char_boundary(i) {
+            i -= 1;
+        }
+        i
+    }
+
     #[test]
     fn das_datum_stimmt() {
         assert_eq!(datum(0), (1970, 1, 1));
@@ -397,10 +419,49 @@ mod proben {
             // 📌 **An einer Zeichengrenze schneiden** (Fund 495): 400 Bytes
             //   hinter `fn main()` lagen im Fenster mitten in einem ⛔️,
             //   und die Probe brach am Schnitt statt an ihrer Aussage.
-            let ende = quelle.floor_char_boundary(start + 400.min(quelle.len() - start));
+            let ende = zeichengrenze_unten(quelle, start + 400.min(quelle.len() - start));
             let rumpf = &quelle[start..ende];
             assert!(rumpf.contains("myl_client::protokoll::einschalten();"), "{datei} schaltet das Protokoll nicht ein");
         }
+    }
+
+    /// ⛔️ **Fund 500: Gleichzeitig geschriebene Eintraege bleiben ganz.**
+    /// Sechzehn Faeden schreiben je vierzig Eintraege; danach ist jede Zeile
+    /// der Tagesdatei lesbares JSON, und jeder Eintrag ist da.
+    #[test]
+    fn gleichzeitige_eintraege_bleiben_ganz() {
+        let d = std::env::temp_dir().join(format!("myl-protokoll-nebenlaeufig-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        ordner_setzen(d.clone());
+        std::thread::scope(|s| {
+            for faden in 0..16u64 {
+                s.spawn(move || {
+                    for i in 0..40u64 {
+                        eintragen(&Eintrag {
+                            zeit: zeitstempel(jetzt_sekunden()),
+                            art: "werkzeug".into(),
+                            werkzeug: format!("probe-{faden}-{i}"),
+                            eingabe: "x".repeat(300),
+                            ausgabe: String::new(),
+                            entscheidung: "ausgefuehrt".into(),
+                            ergebnis: "ok".into(),
+                            dauer_ms: i,
+                        });
+                    }
+                });
+            }
+        });
+        let mut zeilen = 0;
+        let mut meine = 0;
+        for f in std::fs::read_dir(&d).unwrap().flatten() {
+            for z in std::fs::read_to_string(f.path()).unwrap().lines() {
+                zeilen += 1;
+                let e: Eintrag = serde_json::from_str(z).unwrap_or_else(|_| panic!("zerbrochene Zeile: {z}"));
+                meine += usize::from(e.werkzeug.starts_with("probe-"));
+            }
+        }
+        assert!(meine == 16 * 40 && zeilen >= meine, "{meine} von 640 Eintraegen, {zeilen} Zeilen");
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     /// ⚑ **Aelter als 30 Tage geht, juenger bleibt, Fremdes bleibt.**

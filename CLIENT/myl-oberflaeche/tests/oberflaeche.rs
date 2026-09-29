@@ -47,6 +47,17 @@ fn werte(html: &str, marke: &str) -> BTreeSet<String> {
     aus
 }
 
+/// `str::floor_char_boundary` ist erst ab Rust 1.91 stabil, die Kiste
+/// verspricht eine aeltere Mindestfassung (die CI prueft sie). Dasselbe,
+/// von Hand.
+fn zeichengrenze_unten(s: &str, i: usize) -> usize {
+    let mut i = i.min(s.len());
+    while !s.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
+}
+
 /// ⚑ **Jede Kennung, die das Skript sucht, muss es geben.**
 /// `getElementById` gibt sonst `null`, und der Fehler faellt erst beim
 /// Klicken auf, wenn ueberhaupt.
@@ -153,7 +164,7 @@ fn die_ueberschriften_haben_genau_zwei_stufen() {
     );
     // Und die Linie darunter trennt die Bereiche sichtbar.
     let i = css.find("#einstellungsseite h2,\n.bereichszeile th {").expect("Regel");
-    let block = &css[i..css.floor_char_boundary(i + 260)];
+    let block = &css[i..zeichengrenze_unten(&css, i + 260)];
     assert!(block.contains("border-bottom"), "den Ueberschriften fehlt die Trennlinie");
 }
 
@@ -2814,7 +2825,7 @@ fn ein_beruehrtes_gespraech_wandert_nach_oben() {
     //    Bytes. Lag an Byte 900 ein mehrbytiges Zeichen (am 2026-09-26 ein
     //    ⚑ in einem Kommentar), brach die Probe mit „not a char boundary"
     //    ab, statt etwas ueber das Umordnen zu sagen.
-    let rumpf = &senden[..senden.floor_char_boundary(900)];
+    let rumpf = &senden[..zeichengrenze_unten(senden, 900)];
     assert!(
         rumpf.contains("nach_oben(offen)"),
         "beim Senden wird nicht umgeordnet"
@@ -3578,7 +3589,7 @@ fn der_ki_hinweis_kommt_bei_jedem_start_und_laesst_sich_nicht_wegklicken() {
 fn keine_stimme_ohne_einwilligung_und_das_protokoll_ist_sichtbar() {
     let rs = lies_quelle("main.rs");
     let a = rs.find("async fn stimme_setzen(").expect("stimme_setzen");
-    let f = &rs[a..rs.floor_char_boundary(a + 800)];
+    let f = &rs[a..zeichengrenze_unten(&rs, a + 800)];
     assert!(f.contains("einwilligung: Option<bool>"), "der Befehl nimmt keine Einwilligung");
     assert!(f.contains("if einwilligung != Some(true) {"), "der Befehl prüft die Einwilligung nicht");
 

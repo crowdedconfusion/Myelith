@@ -205,9 +205,14 @@ def auspacken() -> int:
         n += 1
     konfig = AUSGEPACKT.parent / "cargo-home"
     konfig.mkdir(exist_ok=True)
+    # ⛔️ **Vorwaertsschraegstriche in einer woertlichen TOML-Zeichenkette.**
+    #    In einer gewoehnlichen ("...") ist `\` ein Fluchtzeichen, und ein
+    #    Windows-Pfad wie `D:\a\Myelith` war ungueltiges TOML: cargo brach im
+    #    kalten Klon unter Windows ab, bevor es eine Kiste sah. Cargo nimmt
+    #    `/` auf jedem System.
     (konfig / "config.toml").write_text(
         "[source.crates-io]\nreplace-with = \"vendored-sources\"\n\n"
-        f"[source.vendored-sources]\ndirectory = \"{AUSGEPACKT}\"\n"
+        f"[source.vendored-sources]\ndirectory = '{AUSGEPACKT.as_posix()}'\n"
     )
     print(f"[vorrat] {n} Pakete in {time.time()-anfang:.0f} s nach {AUSGEPACKT}")
     print(f"[vorrat] bauen mit: CARGO_HOME={konfig} cargo build --release --locked --offline")

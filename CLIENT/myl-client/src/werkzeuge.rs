@@ -3916,7 +3916,6 @@ mod neue_ordner {
     #[test]
     fn write_file_legt_ordner_an_und_bleibt_drinnen() {
         let d = tempfile::tempdir().expect("Verzeichnis");
-        let draussen = tempfile::tempdir().expect("draussen");
         let e = Einhaengung::neu(d.path(), true).expect("Einhaengung");
         let w = Dateischreiben(e, Ansageform::Amtlich);
         let aus = w.ausfuehren(&serde_json::json!({"pfad": "ergebnis/tief/statistik.md", "inhalt": "x"})).expect("schreiben");
@@ -3925,8 +3924,11 @@ mod neue_ordner {
         for boese in ["neu/../../x.md", "../x.md", "neu/../../../etc/x.md"] {
             assert!(w.ausfuehren(&serde_json::json!({"pfad": boese, "inhalt": "x"})).is_err(), "{boese} kam durch");
         }
+        // ⚑ `draussen` nur hier: Unter Windows gibt es den Verweis nicht, und
+        //   eine unbenutzte Variable ist dort mit `-D warnings` ein Fehler.
         #[cfg(unix)]
         {
+            let draussen = tempfile::tempdir().expect("draussen");
             std::os::unix::fs::symlink(draussen.path(), d.path().join("tuer")).unwrap();
             assert!(w.ausfuehren(&serde_json::json!({"pfad": "tuer/neu/x.md", "inhalt": "x"})).is_err(), "ueber einen Verweis hinaus");
             assert!(!draussen.path().join("neu").exists(), "draussen wurde ein Ordner angelegt");

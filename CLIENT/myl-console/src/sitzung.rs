@@ -1944,6 +1944,17 @@ fn kurz(pfad: &str) -> String {
 mod tests {
     use super::*;
 
+    /// `str::floor_char_boundary` ist erst ab Rust 1.91 stabil, die Kiste
+    /// verspricht eine aeltere Mindestfassung (die CI prueft sie). Dasselbe,
+    /// von Hand.
+    fn zeichengrenze_unten(s: &str, i: usize) -> usize {
+        let mut i = i.min(s.len());
+        while !s.is_char_boundary(i) {
+            i -= 1;
+        }
+        i
+    }
+
     fn probe() -> Rahmen {
         Rahmen { einzug: "    ".to_string(), innen: 40 }
     }
@@ -2103,7 +2114,7 @@ mod tests {
     fn der_notaus_umschliesst_den_lauf() {
         let quelle = include_str!("sitzung.rs");
         let lauf = quelle.find("let aus = myl_client::lauf::fahren_im_gespraech(").expect("Lauf");
-        let vorher = &quelle[quelle.floor_char_boundary(lauf.saturating_sub(4000))..lauf];
+        let vorher = &quelle[zeichengrenze_unten(quelle, lauf.saturating_sub(4000))..lauf];
         assert!(vorher.contains("myl_client::notaus::zuruecksetzen();"));
         assert!(vorher.contains("myl_client::notaus::ausloesen(\"konsole\")"), "Esc zieht den Notaus nicht");
         assert!(quelle.contains("myl_client::Tuerfehler::Abgebrochen { bisher }"));

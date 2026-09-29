@@ -1,6 +1,6 @@
 # client (Nutzer-Client inkl. Wallet)
 
-> **Version:** 0.101.0 (`myl-client` 0.69.0, `myl-oberflaeche` 0.52.1, `myl-console` 0.26.4, `myl-senses` 0.10.0)
+> **Version:** 0.101.1 (`myl-client` 0.69.1, `myl-oberflaeche` 0.52.2, `myl-console` 0.26.5, `myl-senses` 0.10.0)
 > **Datum:** 2026-09-28
 > **Status:** ✅ **Der lokale Betrieb läuft und ist ausgeliefert.** Ein
 > Gesprächsfenster mit Modellwahl, Agentenschleife und
@@ -152,6 +152,56 @@ Modell überhaupt etwas taugt, und weil eine Schnittstelle, die kein
 Mensch je bedient hat, an den Bedürfnissen vorbei entworfen wird.
 
 ## Changelog
+
+### v0.101.1 – 2026-09-29 (Fund 500 war echt: Protokollzeilen zerrissen unter gleichzeitigem Schreiben; die CI wieder grün auf allen Zielen und beiden Mindestfassungen)
+
+`myl-client` 0.69.1, `myl-console` 0.26.5, `myl-oberflaeche` 0.52.2.
+
+**Anlass:** sechs rote Stellen in der CI nach dem letzten Stand.
+
+**Fund 500, jetzt verstanden und behoben** (`src/protokoll.rs`):
+`das_aktionsprotokoll_haelt_fest_ohne_klartext` war nicht wegen des
+prozessweiten Protokollordners unzuverlässig, wie unter v0.96.x vermutet.
+`eintragen` schrieb eine Zeile mit `writeln!` in eine im Anhängemodus
+geöffnete Datei, und das sind **mehrere** Schreibaufrufe. Schreiben zwei
+Fäden zugleich, schiebt sich der eine zwischen Inhalt und Zeilenende des
+anderen, und in der JSONL-Datei steht eine Zeile, die sich nicht mehr
+lesen lässt. Das betrifft den Echtbetrieb genauso: Werkzeuge laufen
+nebeneinander, und das Protokoll ist das, was eine Handlung hinterher
+belegt. Jetzt wird die Zeile samt Zeilenende fertig gebaut und mit
+**einem** `write_all` geschrieben, unter einem Schloss im Prozess.
+**Beleg:** `gleichzeitige_eintraege_bleiben_ganz` (16 Fäden je 40
+Einträge, jede Zeile muss sich lesen lassen); Gegenprobe mit wieder
+getrenntem Schreiben dreimal rot.
+
+**Die übrigen fünf, alle ohne Wirkung auf das Verhalten:**
+- **Clippy unter Windows:** In `write_file_legt_ordner_an_und_bleibt_drinnen`
+  stand ein Verzeichnis, das nur der Unix-Zweig benutzt, ausserhalb des
+  Zweigs. Es steht jetzt darin.
+- **Mindestfassung 1.85 und 1.88:** `str::floor_char_boundary` ist erst
+  ab Rust 1.91 stabil und stand an fünf Stellen in Proben (`myl-client`,
+  `myl-console`, `myl-oberflaeche`). Ersetzt durch eine kleine Hilfe
+  `zeichengrenze_unten`, die dasselbe von Hand tut. 📌 Die Kisten
+  versprechen eine ältere Fassung, und die Proben gehören zu dem, was die
+  Zusage hält: `cargo check --all-targets`.
+- **Kalter Klon unter macOS und Linux:** Die Startprobe suchte `myl`
+  unter `SYSTEM/full-build/release/`, die CI setzt aber
+  `CARGO_TARGET_DIR` und baut woandershin. Sie sucht jetzt dort, wohin
+  wirklich gebaut wurde.
+- **Kalter Klon unter Windows:** `SYSTEM/install/vorrat.py auspacken`
+  schrieb den Pfad des Lagers in eine gewöhnliche TOML-Zeichenkette, und
+  darin ist ein Rückstrich ein Fluchtzeichen („Unescaped '\\'“). Jetzt
+  eine wörtliche Zeichenkette mit Schrägstrichen, die Cargo auf allen drei
+  Systemen liest. Beleg: die alte Zeile scheitert an `tomllib`, die neue
+  nicht.
+
+**Belege für alle sechs:** Alle 26 Kisten bestehen `cargo check
+--all-targets --locked` mit ihrer Mindestfassung (21 auf 1.85, 5 auf 1.88),
+lokal nachgeholt, denn die CI bricht dort beim ersten roten Crate ab und
+hatte die übrigen nie gesehen. Clippy mit `-D warnings` in `myl-client`,
+`myl-console` und `myl-oberflaeche` ohne Befund. Tests: 623 grün, rot nur
+die zwei von Fund 499; `tests/dateiwerkzeuge.rs` sechsmal hintereinander
+grün, vorher bei drei Läufen einmal rot.
 
 ### v0.101.0 – 2026-09-29 (der Loop sucht Skills nach dem Ziel, seltene Wörter zählen mehr, die Prüfung sieht nach, ob die Zieldatei existiert, Rundenmitschrift)
 

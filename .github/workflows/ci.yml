@@ -1094,10 +1094,14 @@ jobs:
           fi
           echo "$gefunden Kiste(n) aus dem Vorrat gebaut, ohne Netz"
 
+      # ⚑ **Dort, wohin der Bau wirklich ging.** Oben setzt `CARGO_TARGET_DIR`
+      # das Ziel fuer die ganze CI auf `target/`, und das hat Vorrang vor
+      # `.cargo/config.toml`. 📌 Hier stand `SYSTEM/full-build/release/myl`,
+      # der lokale Ort; der Schritt fand die Datei auf keinem System.
       - name: Startprobe
         shell: bash
         run: |
-          ./SYSTEM/full-build/release/myl --hilfe > /dev/null
+          "./${CARGO_TARGET_DIR:-SYSTEM/full-build}/release/myl" --hilfe > /dev/null
           echo "myl startet auf ${{ matrix.os }}"
 
   # ── Rechenkerne und Konsens auf den anderen Plattformen (CLIENT 1.6) ─
