@@ -32,6 +32,7 @@
 //! und ein eigener offener Punkt.
 
 use crate::attention::attention_int_mit_spur;
+use crate::drehung::{eingang, gradient_zurueckdrehen, Eingangsdrehung};
 use crate::backward::{
     attention_backward, linear_backward, rope_backward, silu_backward, silu_grad_frac,
     Aufmerksamkeitsskalen, Grad,
@@ -58,6 +59,70 @@ pub enum Gewichtsform {
     Int8,
     Ternaer,
 }
+
+/// **Entpackt eine ternaere Zeile zu Mastern, die [`ternaer_aus_master`]
+/// wieder genau so ableitet** (Fund 510).
+///
+/// `werte` ist die Zeile im int8-Raster (`t * betrag` je Gruppe), `shift`
+/// ihr Zeilenshift. Einfach entpackt (`wert << (frac - shift)`) waere der
+/// Betrag einer Gruppe beim Neuableiten das Mittel **aller** 128 Master,
+/// also `a * k / 128` bei `k` Nicht-Nullen: Jedes Gewicht schrumpfte vor dem
+/// ersten Schritt (an der letzten Ebene des 0,6B von 96 auf 68, die
+/// Haltemenge des zurueckgeladenen Artefakts ging von 2 835 auf 2 785).
+///
+/// ⚑ **Die Nicht-Nullen bekommen deshalb `a * 128 / k`**, gerundet ueber die
+/// Kehrwerttabelle ([`KEHRWERTE`]). Dann ist das Mittel wieder `a` (der Rundungsfehler
+/// bleibt unter `k / 2` in `128 * a`, also unter einem halben Schritt), die
+/// Nullen bleiben unter der Schwelle, die Nicht-Nullen ueber ihr, und
+/// dasselbe Gewicht kommt heraus. Bewegen sich die frueheren Nullen spaeter
+/// ein wenig, verschiebt das den Betrag nur um ihren Anteil am Mittel.
+///
+/// ⚠️ **Die Master der Nicht-Nullen sind damit groesser als ihr Gewicht**,
+/// um den Faktor `128 / k`. Das ist die Ausnahme, die es kostet: Wo `k`
+/// klein und das Gewicht gross ist, kann das ueber [`MASTER_GRENZE`] gehen;
+/// dann wird dort begrenzt, und der Trainingsschritt meldet die Ebene als
+/// ausserhalb der Form, statt still etwas anderes zu rechnen.
+pub fn ternaere_zeile_zu_mastern(werte: &[i32], shift: u8, master_frac: u8) -> Vec<Master> {
+    let gruppe = crate::ternaer::GRUPPE;
+    assert!(werte.len() % gruppe == 0, "ternaere_zeile_zu_mastern: {} Werte sind keine ganzen Gruppen", werte.len());
+    let links = master_frac.checked_sub(shift).unwrap_or_else(|| {
+        panic!("ternaere_zeile_zu_mastern: Shift {shift} ueber den {master_frac} Bruchstellen des Masters")
+    });
+    let grenze = crate::optimierer::MASTER_GRENZE;
+    let mut aus = Vec::with_capacity(werte.len());
+    for g in werte.chunks_exact(gruppe) {
+        let k = g.iter().filter(|&&w| w != 0).count();
+        for &w in g {
+            if w == 0 {
+                aus.push(0);
+                continue;
+            }
+            let a = i128::from(w.unsigned_abs()) << links;
+            let m = crate::fixed_point::rshift_round_i128(a * gruppe as i128 * KEHRWERTE[k - 1], KEHRWERT_BITS);
+            let m = m.min(i128::from(grenze)) as Master;
+            aus.push(if w < 0 { -m } else { m });
+        }
+    }
+    aus
+}
+
+/// Bruchstellen der Kehrwerte in [`KEHRWERTE`].
+const KEHRWERT_BITS: u32 = 40;
+
+/// `round(2^40 / k)` fuer `k = 1 ..= 128`, an der Stelle `k - 1`.
+///
+/// ⚑ **Eine Konstante, keine Rechnung zur Laufzeit.** Im Rechenpfad wird
+/// damit multipliziert und einmal gerundet geschoben; geteilt wird nur hier,
+/// beim Uebersetzen, mit ganzen Zahlen.
+const KEHRWERTE: [i128; crate::ternaer::GRUPPE] = {
+    let mut t = [0i128; crate::ternaer::GRUPPE];
+    let mut k = 1usize;
+    while k <= crate::ternaer::GRUPPE {
+        t[k - 1] = ((1i128 << KEHRWERT_BITS) + (k as i128) / 2) / (k as i128);
+        k += 1;
+    }
+    t
+};
 
 /// [`gewicht_aus_master`] oder [`ternaer_aus_master`], nach `form`.
 pub fn gewicht_aus_master_als(
@@ -86,6 +151,20 @@ pub fn gewicht_aus_master_als(
 ///    int8 gebracht: ein Shift fuer die Zeile, gerundet. Weil jede Gruppe
 ///    nur -a, 0 und +a traegt, bleibt sie dabei ternaer, und die Matrix
 ///    laesst sich exakt packen (`crate::ternaer::packen`).
+///
+/// # ⛔️ Nicht wiederholbar, und wo das aufgefangen wird (Fund 510)
+///
+/// Wer ein ternaeres Gewicht einfach zu Mastern entpackt (`-a`, `0`, `+a`),
+/// bekommt hier `a` mal den Anteil der Nicht-Nullen zurueck. Deshalb
+/// entpackt [`ternaere_zeile_zu_mastern`] anders, und nur so darf ein
+/// ternaeres Artefakt ins Training.
+///
+/// 📌 **Verworfen: der Betrag als Mittel ueber der Schwelle** (Ternary
+/// Weight Networks, Li und Liu 2016). Er ist wiederholbar und bei festem
+/// Muster der Betrag mit dem kleinsten Fehler, aber gemessen am 2026-09-30
+/// verlor die Umwandlung des 0,6B damit deutlich: Haltemenge 6 291 statt
+/// 2 835 nach denselben 60 Durchgaengen, obwohl sie besser anfing (8,7 statt
+/// 13,7 Millionen).
 ///
 /// ⚑ **Die Wahl entspricht dem, was an Ternary Bonsai gemessen wurde**:
 /// Skala gleich Betragsmittel je 128er-Gruppe (die Einbettung des 8B:
@@ -540,7 +619,9 @@ pub fn gradienten_des_mlp(
         abstand += d * d;
         g.push((2 * d).clamp(i64::from(Grad::MIN), i64::from(Grad::MAX)) as Grad);
     }
-    (abstand, gradienten_des_mlp_aus_gradient(&g, x, &spur, &wg, &sg, &wu, &su, &wd, &sd, silu_lut, grad_lut, v))
+    (abstand, gradienten_des_mlp_aus_gradient(
+        &g, x, &spur, &wg, &sg, &wu, &su, &wd, &sd, silu_lut, grad_lut, Mlpdrehungen::default(), v,
+    ))
 }
 
 /// Die Gradienten eines MLP-Blocks aus einem **eingehenden** Gradienten.
@@ -570,15 +651,23 @@ pub fn gradienten_des_mlp_aus_gradient(
     sd: &[u8],
     silu_lut: &[i16],
     grad_lut: &[i16],
+    drehung: Mlpdrehungen<'_>,
     v: Mlpvorgaben,
 ) -> Mlpgradienten {
     let (wg, sg, wu, su, wd, sd) = (wg, sg, wu, su, wd, sd);
 
     // 1. Durch `down_proj`: Gradient nach dem Produkt.
     // ⚑ Gleich begrenzt (2026-09-28): `nach_grad` taete dasselbe danach.
+    // ⚑ Mit Drehung liest down das gedrehte `h`; `dL/dW` gilt dem, und der
+    //   Gradient nach `h` wird zurueckgedreht.
+    let (he, _) = eingang(drehung.down, &spur.h, v.down_in_frac);
     let (g_h, gw_down) = crate::backward::linear_backward_begrenzt(
-        g, &spur.h, wd, v.intermediate_size, sd, v.aus_frac, v.down_in_frac,
+        g, &he, wd, v.intermediate_size, sd, v.aus_frac, v.down_in_frac,
     );
+    let g_h = match drehung.down {
+        Some(d) => zurueckgedreht(&g_h, d),
+        None => g_h,
+    };
 
     // 2. Die Produktregel. ⚑ `silu(gate)` wird hier aus der Spur
     //    nachgeschlagen und nicht mitgefuehrt: Ein Tabellenzugriff ist
@@ -616,20 +705,22 @@ pub fn gradienten_des_mlp_aus_gradient(
     );
 
     // 4. Durch die beiden Eingangsprojektionen.
+    let (xe, _) = eingang(drehung.ein, x, v.act_frac);
     let (gx_gate, gw_gate) = crate::backward::linear_backward_begrenzt(
-        &g_gate, x, wg, v.hidden_size, sg, v.down_in_frac, v.act_frac,
+        &g_gate, &xe, wg, v.hidden_size, sg, v.down_in_frac, v.act_frac,
     );
     let (gx_up, gw_up) = crate::backward::linear_backward_begrenzt(
-        &g_up, x, wu, v.hidden_size, su, v.down_in_frac, v.act_frac,
+        &g_up, &xe, wu, v.hidden_size, su, v.down_in_frac, v.act_frac,
     );
     // ⚑ **Summe und nicht einer von beiden.** Gate und Up lesen
     // denselben Eingang, also bekommt er beide Beitraege. In `i64`
-    // addiert und **einmal** gesaettigt.
-    let eingang: Vec<Grad> = gx_gate
-        .iter()
-        .zip(gx_up.iter())
-        .map(|(a, b)| begrenze(i64::from(*a) + i64::from(*b)))
-        .collect();
+    // addiert und **einmal** gesaettigt; mit Drehung davor einmal
+    // zurueckgedreht.
+    let summe: Vec<i64> = gx_gate.iter().zip(gx_up.iter()).map(|(a, b)| i64::from(*a) + i64::from(*b)).collect();
+    let eingang: Vec<Grad> = match drehung.ein {
+        Some(d) => gradient_zurueckdrehen(&summe, d.vorzeichen).into_iter().map(begrenze).collect(),
+        None => summe.into_iter().map(begrenze).collect(),
+    };
 
     Mlpgradienten {
         gate: gw_gate,
@@ -909,6 +1000,64 @@ pub fn schritt_auf_aufmerksamkeit(
 /// ⚑ **Ein Typ und nicht acht Argumente.** Vier Paare aus `i8`-Werten
 /// und Skalen sind acht gleichartige Scheiben; vertauscht man Q und K,
 /// rechnet der Block weiter und liefert Zahlen.
+/// Welche Eingabe eine der Matrizen Q, K, V liest: die gedrehte mit dieser
+/// Nummer oder (`None`) die ungedrehte, und auf welcher Skala sie liegt.
+type Eingangswahl = (Option<usize>, u8);
+
+/// Die Eingangsdrehungen der vier Matrizen eines Aufmerksamkeitsblocks,
+/// je Matrix eine oder keine.
+///
+/// ⚑ **Ohne Drehung ist alles wie vorher**: `Default` heisst keine, und der
+/// Rechenweg ist dann Zeile fuer Zeile der bisherige.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Achtsamkeitsdrehungen<'a> {
+    pub q: Option<Eingangsdrehung<'a>>,
+    pub k: Option<Eingangsdrehung<'a>>,
+    pub v: Option<Eingangsdrehung<'a>>,
+    pub o: Option<Eingangsdrehung<'a>>,
+}
+
+impl Achtsamkeitsdrehungen<'_> {
+    /// Die Eingaben von Q, K und V aus `x`: jede verschiedene Drehung wird
+    /// einmal gerechnet. Zurueck kommen die Eingaben (leer, wo die Matrix
+    /// `x` selbst liest oder die Drehung einer frueheren teilt) und je
+    /// Matrix, welche Eingabe sie liest und auf welcher Skala.
+    fn eingaenge(&self, x: &[i16], x_frac: u8) -> ([Vec<i16>; 3], [Eingangswahl; 3]) {
+        let d = [self.q, self.k, self.v];
+        let mut gedreht: [Vec<i16>; 3] = Default::default();
+        let mut wer = [(None, x_frac); 3];
+        for i in 0..3 {
+            let Some(di) = d[i] else { continue };
+            let schon = (0..i).find(|&j| d[j].is_some_and(|dj| dj.gleich(&di)));
+            match schon {
+                Some(j) => wer[i] = wer[j],
+                None => {
+                    gedreht[i] = di.drehen(x, x_frac);
+                    wer[i] = (Some(i), di.frac);
+                }
+            }
+        }
+        (gedreht, wer)
+    }
+}
+
+/// Die Eingangsdrehungen eines Feedforward-Blocks.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Mlpdrehungen<'a> {
+    /// Vor gate und up. ⚑ **Eine fuer beide**: Sie lesen dieselbe Eingabe,
+    /// und die Laufzeit weist zwei verschiedene ab.
+    pub ein: Option<Eingangsdrehung<'a>>,
+    /// Vor down, also auf `h = silu(gate) * up`.
+    pub down: Option<Eingangsdrehung<'a>>,
+}
+
+impl Mlpdrehungen<'_> {
+    /// Traegt der Block gar keine Drehung?
+    pub fn ist_leer(&self) -> bool {
+        self.ein.is_none() && self.down.is_none()
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct Aufmerksamkeitsgewichte<'a> {
     /// Q-Projektion, Zeilen zu `hidden_size`.
@@ -927,6 +1076,8 @@ pub struct Aufmerksamkeitsgewichte<'a> {
     pub o: &'a [i8],
     /// Eine Verschiebung je Zeile der Ausgabeprojektion.
     pub o_skalen: &'a [u8],
+    /// Die Eingangsdrehungen, falls die Gewichte gedreht gespeichert sind.
+    pub drehung: Achtsamkeitsdrehungen<'a>,
 }
 
 /// Was der Vorwärtspass des Aufmerksamkeitsblocks hinterlässt.
@@ -1033,9 +1184,14 @@ pub fn vorwaerts_der_aufmerksamkeit(
     let mut spur = Aufmerksamkeitsspur::default();
     for (t, xt) in x.iter().enumerate() {
         assert_eq!(xt.len(), hs, "vorwaerts_der_aufmerksamkeit: Position {t} hat die falsche Breite");
-        let mut q_flat = linear_w8a16(xt, g.q, hs, g.q_skalen, v.act_frac, v.q_frac);
-        let mut k_flat = linear_w8a16(xt, g.k, hs, g.k_skalen, v.act_frac, v.k_frac);
-        let mut v_flat = linear_w8a16(xt, g.v, hs, g.v_skalen, v.act_frac, v.v_frac);
+        // ⚑ **Gedrehte Gewichte lesen eine gedrehte Eingabe**, jede
+        //   verschiedene Drehung einmal; ohne Drehung ist es `xt` selbst.
+        let (gedreht, wer) = g.drehung.eingaenge(xt, v.act_frac);
+        let ein = |i: usize| -> (&[i16], u8) { (wer[i].0.map_or(xt.as_slice(), |j| gedreht[j].as_slice()), wer[i].1) };
+        let (xq, xk, xv) = (ein(0), ein(1), ein(2));
+        let mut q_flat = linear_w8a16(xq.0, g.q, hs, g.q_skalen, xq.1, v.q_frac);
+        let mut k_flat = linear_w8a16(xk.0, g.k, hs, g.k_skalen, xk.1, v.k_frac);
+        let mut v_flat = linear_w8a16(xv.0, g.v, hs, g.v_skalen, xv.1, v.v_frac);
         if let Some(b) = vorspannungen {
             add_bias_i16(&mut q_flat, b.q, b.q_skalen, v.q_frac);
             add_bias_i16(&mut k_flat, b.k, b.k_skalen, v.k_frac);
@@ -1123,11 +1279,10 @@ pub fn vorwaerts_der_aufmerksamkeit(
         // Fund 20 eine Skala je Kanal. Gemessen an Qwen2.5-0,5B spannen
         // sie auf Ebene 12 von vier bis fuenfzehn: Mit einer einzigen
         // Zahl waere die Ebene nicht bitgleich zur Laufzeit.
+        let (zo, zo_frac) = eingang(g.drehung.o, &zeile, v.attn_out_frac);
         let y = match aus_skalen {
-            Some(sk) => crate::linear::linear_w8a16_pc(
-                &zeile, g.o, q_breite, g.o_skalen, v.attn_out_frac, sk,
-            ),
-            None => linear_w8a16(&zeile, g.o, q_breite, g.o_skalen, v.attn_out_frac, v.aus_frac),
+            Some(sk) => crate::linear::linear_w8a16_pc(&zo, g.o, q_breite, g.o_skalen, zo_frac, sk),
+            None => linear_w8a16(&zo, g.o, q_breite, g.o_skalen, zo_frac, v.aus_frac),
         };
         spur.y.push(y);
         spur.attn_aus.push(zeile);
@@ -1169,6 +1324,7 @@ pub fn gradienten_der_aufmerksamkeit(
             v_skalen: &sv,
             o: &wo,
             o_skalen: &so,
+            drehung: Default::default(),
         },
         x,
         vorspannungen,
@@ -1204,6 +1360,7 @@ pub fn gradienten_der_aufmerksamkeit(
             Aufmerksamkeitsgewichte {
                 q: &wq, q_skalen: &sq, k: &wk, k_skalen: &sk,
                 v: &wv, v_skalen: &sv, o: &wo, o_skalen: &so,
+                drehung: Default::default(),
             },
             cos_lut,
             sin_lut,
@@ -1263,11 +1420,24 @@ pub fn gradienten_der_aufmerksamkeit_aus_gradient(
     let mut g_v_roh = vec![vec![vec![0i64; hd]; v.num_kv_heads]; t_len];
     let mut g_q_roped = vec![vec![vec![0i64; hd]; v.num_heads]; t_len];
 
+    // ⛔️ **Die Skalen, wie die Aufmerksamkeit Q und K gesehen hat** (Fund
+    //   509): nach der QK-Normierung ist das deren Ausgangsskala und nicht
+    //   die der Projektion, genau wie im Vorwaertspfad (`q_wirk`, `k_wirk`).
+    //   Hier standen bis zum 2026-09-30 `v.q_frac` und `v.k_frac`. `dL/dq`
+    //   traegt den Faktor K und `dL/dk` den Faktor Q; mit der Skala der
+    //   Projektion war `dL/dq` um `2^(k_out - k_frac)` zu gross und `dL/dk`
+    //   um `2^(q_out - q_frac)`, am 0,6B in der letzten Ebene das Vier- und
+    //   das Achtfache. 📌 Der Test mit QK-Normierung setzte beide Skalen
+    //   gleich und konnte es deshalb nicht sehen.
+    let (q_wirk, k_wirk) = match &qkn {
+        Some(n) => (n.q_out_frac, n.k_out_frac),
+        None => (v.q_frac, v.k_frac),
+    };
     let skalen = Aufmerksamkeitsskalen {
         score_mult,
         score_mult_frac: 15,
-        q_frac: v.q_frac,
-        k_frac: v.k_frac,
+        q_frac: q_wirk,
+        k_frac: k_wirk,
         v_frac: v.v_frac,
         prob_frac: v.prob_frac,
     };
@@ -1288,9 +1458,17 @@ pub fn gradienten_der_aufmerksamkeit_aus_gradient(
         .iter()
         .enumerate()
         .map(|(t, g_y)| {
-            crate::backward::linear_backward_summierend(
-                g_y, &spur.attn_aus[t], wo, q_breite, so, v.aus_frac, v.attn_out_frac, &mut gw_o,
-            )
+            // ⚑ **Dieselbe gedrehte Eingabe wie vorwaerts**, neu gerechnet
+            //   statt mitgefuehrt: Die Drehung ist eine reine Funktion, und
+            //   `dL/dW` gilt dem, was die Matrix gelesen hat.
+            let (zo, _) = eingang(gew.drehung.o, &spur.attn_aus[t], v.attn_out_frac);
+            let gz = crate::backward::linear_backward_summierend(
+                g_y, &zo, wo, q_breite, so, v.aus_frac, v.attn_out_frac, &mut gw_o,
+            );
+            match gew.drehung.o {
+                Some(d) => zurueckgedreht(&gz, d),
+                None => gz,
+            }
         })
         .collect();
 
@@ -1435,17 +1613,47 @@ pub fn gradienten_der_aufmerksamkeit_aus_gradient(
         // ⚑ **Der Eingangsgradient ist die Summe ueber Q, K und V**,
         // denn alle drei lesen dieselbe Zeile. In `i64` addiert und
         // **einmal** gesaettigt.
+        //
+        // ⚑ **Mit Drehung: je verschiedener Drehung eine Summe, und jede
+        //   wird einmal zurueckgedreht.** Der Rueckweg ist linear; erst
+        //   summieren und dann drehen rundet einmal statt dreimal. Welche
+        //   Matrizen eine Drehung teilen, entscheidet `eingaenge`, dieselbe
+        //   Stelle wie im Vorwaertspfad.
+        let (gedreht, wer) = gew.drehung.eingaenge(&x[t], v.act_frac);
         let mut gx_summe = vec![0i64; hs];
-        for (g, w, sh, ziel_w) in [
+        let mut gx_gedreht: [Vec<i64>; 3] = Default::default();
+        for (i, (g, w, sh, ziel_w)) in [
             (&g_q_flat, wq, sq, &mut gw_q),
             (&g_k_flat, wk, sk, &mut gw_k),
             (&g_v_flat, wv, sv, &mut gw_v),
-        ] {
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let xe = wer[i].0.map_or(x[t].as_slice(), |j| gedreht[j].as_slice());
             let gx = crate::backward::linear_backward_summierend(
-                g, &x[t], w, hs, sh, v.attn_out_frac, v.act_frac, ziel_w,
+                g, xe, w, hs, sh, v.attn_out_frac, v.act_frac, ziel_w,
             );
-            for (z, p) in gx_summe.iter_mut().zip(gx.iter()) {
+            let ziel = match wer[i].0 {
+                Some(j) => {
+                    if gx_gedreht[j].is_empty() {
+                        gx_gedreht[j] = vec![0i64; hs];
+                    }
+                    &mut gx_gedreht[j]
+                }
+                None => &mut gx_summe,
+            };
+            for (z, p) in ziel.iter_mut().zip(gx.iter()) {
                 *z += i64::from(*p);
+            }
+        }
+        for (j, summe) in gx_gedreht.iter().enumerate() {
+            if summe.is_empty() {
+                continue;
+            }
+            let d = [gew.drehung.q, gew.drehung.k, gew.drehung.v][j].expect("eine Summe je Drehung");
+            for (z, p) in gx_summe.iter_mut().zip(gradient_zurueckdrehen(summe, d.vorzeichen)) {
+                *z += p;
             }
         }
         eingang.push(gx_summe.into_iter().map(begrenze).collect());
@@ -1489,6 +1697,8 @@ pub struct Ebenengewichte<'a> {
     pub gamma_mitte: &'a [i8],
     /// Die Skalen dazu.
     pub gamma_mitte_skalen: &'a [u8],
+    /// Die Eingangsdrehungen des Feedforward-Blocks.
+    pub mlp_drehung: Mlpdrehungen<'a>,
 }
 
 /// Die Zahlen einer ganzen Ebene.
@@ -1686,13 +1896,7 @@ pub fn vorwaerts_der_ebene(
         );
 
         let mut ms = Mlpspur::default();
-        let mlp_out = mlp_int_mit_spur(
-            &norm, g.gate, g.up, g.down, m_vorgaben.hidden_size, m_vorgaben.intermediate_size,
-            g.gate_skalen, g.up_skalen, g.down_skalen, t.silu,
-            m_vorgaben.act_frac, m_vorgaben.gate_frac, m_vorgaben.up_frac,
-            m_vorgaben.down_in_frac, m_vorgaben.silu_in_frac, m_vorgaben.silu_lut_offset,
-            m_vorgaben.silu_out_frac, &acc_mlp, Some(&mut ms),
-        );
+        let mlp_out = mlp_der_ebene(&norm, &g, t.silu, m_vorgaben, &acc_mlp, &mut ms);
 
         let mut y = vec![0i16; hs];
         for i in 0..hs {
@@ -1708,6 +1912,39 @@ pub fn vorwaerts_der_ebene(
         spur.y.push(y);
     }
     spur
+}
+
+/// Der Feedforward-Block einer Ebene, mit Mitschnitt und mit den
+/// Eingangsdrehungen, falls die Gewichte gedreht gespeichert sind.
+///
+/// ⚑ **Ohne Drehung ist es der eine Kern** ([`mlp_int_mit_spur`]), den
+/// auch die Inferenz ruft. **Mit Drehung sind es zwei Schritte**: die
+/// Eingabe vor gate und up, und `h` vor down. Dazwischen liegt SiLU, also
+/// laesst sich `h` nicht im selben Kern drehen; jeder der beiden Schritte
+/// ist derselbe wie in der Inferenz.
+fn mlp_der_ebene(
+    norm: &[i16],
+    g: &Ebenengewichte<'_>,
+    silu: &[i16],
+    m: Mlpvorgaben,
+    acc_mlp: &[u8],
+    spur: &mut Mlpspur,
+) -> Vec<i16> {
+    if g.mlp_drehung.ist_leer() {
+        return mlp_int_mit_spur(
+            norm, g.gate, g.up, g.down, m.hidden_size, m.intermediate_size,
+            g.gate_skalen, g.up_skalen, g.down_skalen, silu,
+            m.act_frac, m.gate_frac, m.up_frac, m.down_in_frac, m.silu_in_frac, m.silu_lut_offset,
+            m.silu_out_frac, acc_mlp, Some(spur),
+        );
+    }
+    let (xe, xf) = eingang(g.mlp_drehung.ein, norm, m.act_frac);
+    let h = crate::mlp::mlp_h_mit_spur(
+        &xe, g.gate.into(), g.up.into(), m.hidden_size, g.gate_skalen, g.up_skalen, silu, xf,
+        m.gate_frac, m.up_frac, m.down_in_frac, m.silu_in_frac, m.silu_lut_offset, m.silu_out_frac, spur,
+    );
+    let (he, hf) = eingang(g.mlp_drehung.down, &h, m.down_in_frac);
+    crate::linear::linear_w8a16_pc(&he, g.down, m.intermediate_size, g.down_skalen, hf, acc_mlp)
 }
 
 /// Rechnet Abstand und Gradienten einer ganzen Ebene.
@@ -1809,7 +2046,7 @@ pub fn gradienten_der_ebene_aus_gradient(
         let teil = gradienten_des_mlp_aus_gradient(
             &g_mlp, &spur.norm_mitte[nr], &spur.mlp[nr],
             g.gate, g.gate_skalen, g.up, g.up_skalen, g.down, g.down_skalen,
-            t.silu, t.silu_grad, m_vorgaben,
+            t.silu, t.silu_grad, g.mlp_drehung, m_vorgaben,
         );
         for (z, p) in mlp_gesamt.gate.iter_mut().zip(teil.gate.iter()) {
             *z = begrenze(i64::from(*z) + i64::from(*p));
@@ -1858,8 +2095,15 @@ pub fn gradienten_der_ebene_aus_gradient(
         .collect();
     let a_grad = gradienten_der_aufmerksamkeit_aus_gradient(
         &g_attn, &spur.norm_ein, &spur.aufmerksamkeit, g.aufmerksamkeit, t.cos, t.sin,
-        // ⚑ Ohne QK-Normierung, siehe den Vorwaertspfad.
-        None,
+        // ⛔️ **Dieselbe QK-Normierung wie im Vorwaertspfad** (Fund 507).
+        //   Hier stand bis zum 2026-09-30 `None`, mit dem Vermerk „ohne
+        //   QK-Normierung, siehe den Vorwaertspfad“; der Vorwaertspfad
+        //   dieser Ebene normiert aber, sobald `v.qk_norm` gesetzt ist.
+        //   Vorwaerts mit und rueckwaerts ohne ist der Gradient einer
+        //   anderen Funktion. 📌 **Ein Vermerk, der auf eine andere Stelle
+        //   zeigt, altert mit ihr**: Als die Normierung vorn dazukam, blieb
+        //   er stehen und sagte weiter, dort gebe es keine.
+        v.qk_norm,
         a_vorgaben,
     );
 
@@ -1975,6 +2219,7 @@ pub fn schritt_auf_ebene(
         aufmerksamkeit: Aufmerksamkeitsgewichte {
             q: &wq, q_skalen: &sq, k: &wk, k_skalen: &sk,
             v: &wv, v_skalen: &sv, o: &wo, o_skalen: &so,
+            drehung: Default::default(),
         },
         gate: &wg, gate_skalen: &sg,
         up: &wu, up_skalen: &su,
@@ -1983,6 +2228,7 @@ pub fn schritt_auf_ebene(
         gamma_ein_skalen: gammas.ein_skalen,
         gamma_mitte: gammas.mitte,
         gamma_mitte_skalen: gammas.mitte_skalen,
+        mlp_drehung: Default::default(),
     };
     let spur = vorwaerts_der_ebene(gew, hidden, vorspannungen, t, v);
     let (abstand, gr) = gradienten_der_ebene(gew, &spur, hidden, ziel, t, v);
@@ -2055,6 +2301,13 @@ pub fn normrueckwaerts(
         }
         _ => vec![0; g.len()],
     }
+}
+
+/// Dreht einen Gradienten nach einer gedrehten Eingabe zurueck und
+/// saettigt ihn ([`gradient_zurueckdrehen`]).
+fn zurueckgedreht(g: &[Grad], d: Eingangsdrehung<'_>) -> Vec<Grad> {
+    let breit: Vec<i64> = g.iter().map(|v| i64::from(*v)).collect();
+    gradient_zurueckdrehen(&breit, d.vorzeichen).into_iter().map(begrenze).collect()
 }
 
 /// Saettigt einen `i64`-Gradienten auf [`Grad`].
@@ -3096,10 +3349,17 @@ mod tests {
     /// Exponenten fuer alle nimmt, prueft sechs Matrizen gegen die
     /// falsche Erwartung.**
     fn e_schritt_entlang_des_gradienten() -> [(f64, f64); 7] {
+        e_schritt_entlang_des_gradienten_mit(None)
+    }
+
+    /// Wie [`e_schritt_entlang_des_gradienten`], wahlweise mit
+    /// QK-Normierung in der Aufmerksamkeit.
+    fn e_schritt_entlang_des_gradienten_mit(qk: Option<QkNormVorgaben<'_>>) -> [(f64, f64); 7] {
         let (m, hidden, ziel) = e_aufbau();
         let (cos, sin) = rope_tabellen();
         let sk = e_skalen();
-        let v = e_vorgaben(&sk, 1 << 13, 1, 0);
+        let mut v = e_vorgaben(&sk, 1 << 13, 1, 0);
+        v.qk_norm = qk;
         let exp = exp_tabelle(v.aufmerksamkeit.score_frac, v.aufmerksamkeit.exp_input_frac);
         let rsqrt = rsqrt_tabelle();
         let silu = silu_tabelle(-256, 256, v.mlp.silu_in_frac, v.mlp.silu_out_frac);
@@ -3120,11 +3380,13 @@ mod tests {
                 aufmerksamkeit: Aufmerksamkeitsgewichte {
                     q: &wq, q_skalen: &sq, k: &wk, k_skalen: &sk,
                     v: &wv, v_skalen: &sv, o: &wo, o_skalen: &so,
+                    drehung: Default::default(),
                 },
                 gate: &wg, gate_skalen: &sg, up: &wu, up_skalen: &su,
                 down: &wd, down_skalen: &sd,
                 gamma_ein: &gam.0, gamma_ein_skalen: &gam.1,
                 gamma_mitte: &gam.2, gamma_mitte_skalen: &gam.3,
+                mlp_drehung: Default::default(),
             };
             let t = Ebenentabellen {
                 cos: &cos, sin: &sin, exp: &exp, rsqrt: &rsqrt, silu: &silu, silu_grad: &grad,
@@ -3224,6 +3486,137 @@ mod tests {
         }
     }
 
+    /// ⛔️ **Dasselbe mit QK-Normierung** (Qwen3): Eine dichte Ebene, die Q
+    /// und K je Kopf normiert, muss auch rueckwaerts durch diese Normierung
+    /// gehen.
+    ///
+    /// 📌 **Fund 507 (2026-09-30).** `gradienten_der_ebene_aus_gradient`
+    /// reichte der Aufmerksamkeit fuer den Rueckweg `None` statt der
+    /// QK-Vorgaben, waehrend der Vorwaertspfad derselben Ebene normierte.
+    /// Der Gemischweg reichte sie durch; der dichte nicht, und kein Test
+    /// baute eine dichte Ebene **mit** QK-Normierung. Betroffen war jedes
+    /// Training eines dichten Qwen3 (0,6B, 4B, 8B): Die Gradienten von
+    /// `q_proj` und `k_proj` und ihr Beitrag zum Eingangsgradienten galten
+    /// einer Aufmerksamkeit ohne Normierung.
+    #[test]
+    fn der_gradient_der_ebene_sagt_die_aenderung_auch_mit_qk_norm_voraus() {
+        let gamma_q: Vec<i8> = (0..A_HD).map(|i| 58 + (i as i8 % 3) * 5).collect();
+        let gamma_k: Vec<i8> = (0..A_HD).map(|i| 70 - (i as i8 % 4) * 4).collect();
+        let skalen = vec![6u8; A_HD];
+        let rsqrt = rsqrt_tabelle();
+        let vor = a_vorgaben(1 << 13, 1, 0);
+        let qk = QkNormVorgaben {
+            q_gamma: &gamma_q,
+            q_gamma_shifts: &skalen,
+            k_gamma: &gamma_k,
+            k_gamma_shifts: &skalen,
+            // ⚑ Dieselben Skalen wie die Projektionen; dass der Rueckweg
+            //   auch **andere** traegt, prueft
+            //   `die_qk_normierung_traegt_ihre_skala_auch_rueckwaerts`.
+            q_out_frac: vor.q_frac,
+            k_out_frac: vor.k_frac,
+            rsqrt_lut: &rsqrt,
+            rsqrt_input_shift: 0,
+            rsqrt_output_frac: 12,
+        };
+        let namen = ["q", "k", "v", "o", "gate", "up", "down"];
+        let treffer = e_schritt_entlang_des_gradienten_mit(Some(qk));
+
+        let ohne = e_schritt_entlang_des_gradienten();
+        assert_ne!(treffer[0], ohne[0], "die QK-Normierung aendert an q nichts: sie greift nicht");
+        // Gemessen am 2026-09-30, die sieben Verhaeltnisse: 1,25 / 1,12 /
+        // 1,64 / 0,67 / 0,79 / 1,15 / 0,93. **Vor der Behebung lag q bei
+        // 0,33.** ⚑ Die enge Schranke gilt q und k, denn nur sie gehen durch
+        // die Normierung; die uebrigen fuenf rechnet derselbe Code wie im
+        // Test ohne Normierung, und dieser Aufbau liegt fuer v und o nur
+        // weiter im Nichtlinearen (die Punktzahlen sind groesser).
+        for (n, name) in namen.iter().enumerate() {
+            let (gemessen, vorher) = treffer[n];
+            assert!(vorher < -1.0, "{name}: der Schritt sagt keine Senkung voraus ({vorher:.1})");
+            assert!(
+                gemessen < 0.0,
+                "{name}: der Abstand stieg um {gemessen:.0}, wo eine Senkung um \
+                 {vorher:.0} vorhergesagt war"
+            );
+            let verhaeltnis = gemessen / vorher;
+            let schranke = if n < 2 { 0.65..=1.5 } else { 0.5..=2.0 };
+            assert!(
+                schranke.contains(&verhaeltnis),
+                "{name}: gemessen {gemessen:.0}, vorhergesagt {vorher:.0}, also das \
+                 {verhaeltnis:.2}-fache"
+            );
+        }
+    }
+
+    /// ⛔️ **Fund 509: Die QK-Normierung traegt ihre Ausgangsskala auch
+    /// rueckwaerts.**
+    ///
+    /// Die Ausgangsskala der Normierung ist eine Frage der Darstellung:
+    /// Zwei Stellen feiner ist dieselbe Funktion, genauer gerundet. Die
+    /// Gradienten von `q_proj` und `k_proj` duerfen sich deshalb kaum
+    /// aendern, wenn man sie verschiebt.
+    ///
+    /// 📌 **Bis zum 2026-09-30 aenderten sie sich um das Vierfache.**
+    /// `dL/dq` traegt den Faktor K und `dL/dk` den Faktor Q, jeweils wie die
+    /// Aufmerksamkeit sie gesehen hat, also **nach** der Normierung. Der
+    /// Rueckweg schob stattdessen um die Skala der Projektion. Solange
+    /// beide gleich sind, ist das dasselbe; der Test daneben setzte sie
+    /// gleich, und ein echtes Modell tut es nicht (0,6B, letzte Ebene:
+    /// Projektionen 7 und 7, Normierungen 10 und 9).
+    #[test]
+    fn die_qk_normierung_traegt_ihre_skala_auch_rueckwaerts() {
+        let (qm, km, vm, om, x, _) = a_aufbau();
+        let (cos, sin) = rope_tabellen();
+        let vor = a_vorgaben(1 << 13, 1, 0);
+        let exp = exp_tabelle(vor.score_frac, vor.exp_input_frac);
+        let rsqrt = rsqrt_tabelle();
+        let qb = A_KOEPFE * A_HD;
+        let (wq, sq) = gewicht_aus_master(&qm, A_HS, vor.master_frac);
+        let (wk, sk) = gewicht_aus_master(&km, A_HS, vor.master_frac);
+        let (wv, sv) = gewicht_aus_master(&vm, A_HS, vor.master_frac);
+        let (wo, so) = gewicht_aus_master(&om, qb, vor.master_frac);
+        let gew = Aufmerksamkeitsgewichte {
+            q: &wq, q_skalen: &sq, k: &wk, k_skalen: &sk, v: &wv, v_skalen: &sv, o: &wo, o_skalen: &so,
+            drehung: Default::default(),
+        };
+        let gamma_q: Vec<i8> = (0..A_HD).map(|i| 58 + (i as i8 % 3) * 5).collect();
+        let gamma_k: Vec<i8> = (0..A_HD).map(|i| 70 - (i as i8 % 4) * 4).collect();
+        let skalen = vec![6u8; A_HD];
+        let g_aus: Vec<Vec<Grad>> = (0..x.len())
+            .map(|t| (0..A_HS).map(|i| ((i * 37 + t * 101) % 41) as i32 * 50 - 1000).collect())
+            .collect();
+        let rechne = |dq: u8, dk: u8| -> (f64, f64) {
+            let qk = QkNormVorgaben {
+                q_gamma: &gamma_q,
+                q_gamma_shifts: &skalen,
+                k_gamma: &gamma_k,
+                k_gamma_shifts: &skalen,
+                q_out_frac: vor.q_frac + dq,
+                k_out_frac: vor.k_frac + dk,
+                rsqrt_lut: &rsqrt,
+                rsqrt_input_shift: 0,
+                rsqrt_output_frac: 12,
+            };
+            let spur = vorwaerts_der_aufmerksamkeit(gew, &x, None, &cos, &sin, &exp, None, Some(qk), vor);
+            let gr = gradienten_der_aufmerksamkeit_aus_gradient(&g_aus, &x, &spur, gew, &cos, &sin, Some(qk), vor);
+            let betrag = |g: &[Grad]| g.iter().map(|v| f64::from(*v).abs()).sum::<f64>();
+            (betrag(&gr.q), betrag(&gr.k))
+        };
+        let grund = rechne(0, 0);
+        assert!(grund.0 > 0.0 && grund.1 > 0.0, "der Aufbau erzeugt keinen Gradienten an q oder k");
+        for (dq, dk) in [(2u8, 0u8), (0, 2), (2, 1)] {
+            let fein = rechne(dq, dk);
+            for (name, a, b) in [("q", grund.0, fein.0), ("k", grund.1, fein.1)] {
+                let verhaeltnis = b / a;
+                assert!(
+                    (0.8..=1.25).contains(&verhaeltnis),
+                    "{name}: mit {dq} und {dk} Stellen feinerer Normierung ist der Gradient das \
+                     {verhaeltnis:.2}-fache; die Skala ist Darstellung und darf ihn nicht aendern"
+                );
+            }
+        }
+    }
+
     /// ⚑ **Der Eingangsgradient der Ebene sagt die Aenderung voraus.**
     ///
     /// 📌 **Ohne diesen Test bleibt eine Gegenprobe gruen**, und zwar
@@ -3263,11 +3656,13 @@ mod tests {
                 aufmerksamkeit: Aufmerksamkeitsgewichte {
                     q: &wq, q_skalen: &sq, k: &wk, k_skalen: &sk,
                     v: &wv, v_skalen: &sv, o: &wo, o_skalen: &so,
+                    drehung: Default::default(),
                 },
                 gate: &wg, gate_skalen: &sg, up: &wu, up_skalen: &su,
                 down: &wd, down_skalen: &sd,
                 gamma_ein: &gam.0, gamma_ein_skalen: &gam.1,
                 gamma_mitte: &gam.2, gamma_mitte_skalen: &gam.3,
+                mlp_drehung: Default::default(),
             };
             let t = Ebenentabellen {
                 cos: &cos, sin: &sin, exp: &exp, rsqrt: &rsqrt, silu: &silu, silu_grad: &grad,
@@ -3373,11 +3768,13 @@ mod tests {
             aufmerksamkeit: Aufmerksamkeitsgewichte {
                 q: &wq, q_skalen: &sq, k: &wk, k_skalen: &sk,
                 v: &wv, v_skalen: &sv, o: &wo, o_skalen: &so,
+                drehung: Default::default(),
             },
             gate: &wg, gate_skalen: &sg, up: &wu, up_skalen: &su,
             down: &wd, down_skalen: &sd,
             gamma_ein: &gam.0, gamma_ein_skalen: &gam.1,
             gamma_mitte: &gam.2, gamma_mitte_skalen: &gam.3,
+            mlp_drehung: Default::default(),
         };
         let t = Ebenentabellen {
             cos: &cos, sin: &sin, exp: &exp, rsqrt: &rsqrt, silu: &silu, silu_grad: &grad,
@@ -3683,6 +4080,7 @@ pub fn gradienten_des_gemisches(
             w.down_skalen,
             silu_lut,
             grad_lut,
+            Mlpdrehungen::default(),
             v,
         );
         for (ziel, teil) in eingang.iter_mut().zip(gr.eingang.iter()) {
@@ -4283,7 +4681,7 @@ mod gemisch_tests {
         );
         let gr = gradienten_des_mlp_aus_gradient(
             &g, &x, &spur, &gw, &gs, &uw, &us, &dw, &ds, &silu,
-            &crate::backward::silu_grad_aus_lut(&silu), v,
+            &crate::backward::silu_grad_aus_lut(&silu), Mlpdrehungen::default(), v,
         );
 
         // Ein Experte, Mischgewicht eins: genau der dichte Block.
@@ -4374,6 +4772,7 @@ mod ternaere_tests {
         for (g, gruppe) in master.chunks_exact(GRUPPE).enumerate() {
             let a = crate::fixed_point::rshift_round_i64(gruppe.iter().map(|&m| i64::from(m).abs()).sum(), 7);
             for (i, &m) in gruppe.iter().enumerate() {
+                // Das Muster haengt weiter am Mittel aller 128.
                 let soll = if 2 * i64::from(m).abs() > a { m.signum() } else { 0 };
                 let ist = w[g * GRUPPE + i].signum() as i32;
                 assert_eq!(ist, soll, "Gruppe {g}, Stelle {i}");
@@ -4387,6 +4786,55 @@ mod ternaere_tests {
         let (w, _) = ternaer_aus_master(&gl, GRUPPE, 8);
         assert_eq!(w[1], 0, "ein Gleichstand gibt null");
         assert!(w[0] > 0 && w[2] < 0);
+    }
+
+    /// ⛔️ **Fund 510: Ein ternaeres Gewicht, zum Training entpackt, wird
+    /// wieder dasselbe Gewicht.** Ternaer abgeleitet, mit
+    /// [`ternaere_zeile_zu_mastern`] entpackt und neu abgeleitet: dieselben
+    /// Gewichte und Shifts. Gegenprobe: einfach entpackt (`w << (frac -
+    /// shift)`) schrumpft jede Gruppe mit Nullen.
+    ///
+    /// Und stabil: Bewegen sich die frueheren Nullen danach ein wenig, bleibt
+    /// das Gewicht dasselbe.
+    #[test]
+    fn ein_ternaeres_gewicht_entpackt_wird_wieder_dasselbe() {
+        let (zeilen, spalten) = (8usize, 4 * GRUPPE);
+        let master: Vec<Master> = zufall(zeilen * spalten, 31)
+            .into_iter()
+            .enumerate()
+            .map(|(i, v)| ((v % 4_000_001) as i32 - 2_000_000) >> (i / spalten % 5))
+            .collect();
+        let (w1, s1) = ternaer_aus_master(&master, spalten, 20);
+        assert!(w1.contains(&0) && w1.iter().any(|&x| x != 0), "der Aufbau braucht Nullen und Nicht-Nullen");
+        let entpackt: Vec<Master> = (0..zeilen)
+            .flat_map(|z| {
+                let zeile: Vec<i32> = w1[z * spalten..(z + 1) * spalten].iter().map(|&x| i32::from(x)).collect();
+                ternaere_zeile_zu_mastern(&zeile, s1[z], 20)
+            })
+            .collect();
+        let (w2, s2) = ternaer_aus_master(&entpackt, spalten, 20);
+        assert_eq!((&w1, &s1), (&w2, &s2), "entpackt und neu abgeleitet ist nicht dasselbe");
+        // Gegenprobe: einfach entpackt.
+        let einfach: Vec<Master> = w1.iter().enumerate().map(|(i, &x)| i32::from(x) << (20 - s1[i / spalten])).collect();
+        assert_ne!(ternaer_aus_master(&einfach, spalten, 20).0, w1, "einfaches Entpacken ist schon wiederholbar; die Probe prueft nichts");
+        // Kleine Bewegungen der frueheren Nullen.
+        let bewegt: Vec<Master> = entpackt
+            .iter()
+            .enumerate()
+            .map(|(i, &m)| if m == 0 { (zufall(1, i as u64 + 5)[0] % 201) as i32 - 100 } else { m })
+            .collect();
+        assert_eq!(ternaer_aus_master(&bewegt, spalten, 20), (w1, s1), "kleine Bewegungen der Nullen verschieben das Gewicht");
+    }
+
+    /// **Die Kehrwerte sind auf einen halben Schritt genau**: `k * R_k`
+    /// liegt hoechstens `k / 2` neben `2^40`. Darauf beruht, dass das
+    /// Entpacken fuer jede Anzahl von Nicht-Nullen wiederholbar bleibt.
+    #[test]
+    fn die_kehrwerte_sind_auf_einen_halben_schritt_genau() {
+        for k in 1..=GRUPPE {
+            let abweichung = (k as i128 * KEHRWERTE[k - 1] - (1i128 << KEHRWERT_BITS)).abs();
+            assert!(2 * abweichung <= k as i128, "k {k}: Abweichung {abweichung}");
+        }
     }
 
     /// **Verteilt abgeleitet ist Zeile fuer Zeile dasselbe wie jede Zeile
@@ -4463,5 +4911,242 @@ mod ternaere_tests {
         assert!(letzter * 100 < erster, "ternaer: der Abstand sank nur von {erster} auf {letzter}");
         let (w, _) = ternaer_aus_master(&master, spalten, 8);
         assert!(packen(&w, spalten).is_ok(), "nach dem Training ist das Gewicht weiter ternaer");
+    }
+}
+
+/// **Die Eingangsdrehung im Trainingspfad**, exakt geprueft.
+///
+/// # ⚑ Die Gleichung, an der alles haengt
+///
+/// Eine Matrix mit Eingangsdrehung auf `x` ist dieselbe Matrix ohne
+/// Drehung auf der gedrehten Eingabe `x'`. Vorwaerts muss also Wert fuer
+/// Wert dasselbe herauskommen, die Gewichtsgradienten muessen gleich sein,
+/// und der Eingangsgradient der gedrehten Fassung ist der zurueckgedrehte
+/// der ungedrehten. **Das sind ganze Zahlen, keine Naeherungen**; der
+/// Rueckweg der Drehung selbst ist im Kern gegen die Transponierte
+/// geprueft.
+///
+/// Geprueft werden so die Drehungen vor q, k, v und vor gate und up. Die
+/// beiden inneren (vor o und vor down) liegen hinter einer Rechnung des
+/// Blocks und lassen sich nicht von aussen ersetzen; sie prueft die
+/// Laufzeit an einer echten Ebene, vorwaerts gegen die Inferenz und
+/// rueckwaerts gegen die gemessene Aenderung.
+#[cfg(test)]
+mod gedrehte_tests {
+    use super::*;
+    use crate::drehung::BLOCK;
+
+    const HS: usize = BLOCK;
+    const KOEPFE: usize = 4;
+    const KV: usize = 2;
+    const HD: usize = 16;
+    const LEN: usize = 3;
+    const MAXPOS: usize = 8;
+    const IS: usize = 64;
+    /// Die Skala der Eingabe. ⚑ Die gedrehte Eingabe liegt auf derselben:
+    /// Rueckwaerts ist die Eingangsskala zugleich der Bus des
+    /// Eingangsgradienten, und nur bei gleichem Bus sind beide Fassungen
+    /// dieselben Zahlen. Dass eine **andere** Skala der gedrehten Eingabe
+    /// vorwaerts richtig ankommt, prueft die Laufzeit gegen die Inferenz.
+    const AKT: u8 = 9;
+
+    fn zufall(n: usize, saat: u64) -> Vec<u64> {
+        let mut x = saat | 1;
+        (0..n)
+            .map(|_| {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                x
+            })
+            .collect()
+    }
+
+    /// Zufaellige Gewichte in -100..=100, mit Zeilenshifts `shift` bis
+    /// `shift + 2`.
+    fn gewicht(zeilen: usize, spalten: usize, saat: u64, shift: u8) -> (Vec<i8>, Vec<u8>) {
+        let w = zufall(zeilen * spalten, saat).iter().map(|v| ((v % 201) as i32 - 100) as i8).collect();
+        let s = zufall(zeilen, saat + 1).iter().map(|v| shift + (v % 3) as u8).collect();
+        (w, s)
+    }
+
+    fn vorzeichen(saat: u64) -> Vec<i8> {
+        zufall(HS, saat).iter().map(|v| if v & 1 == 0 { 1 } else { -1 }).collect()
+    }
+
+    fn eingaben() -> Vec<Vec<i16>> {
+        (0..LEN).map(|t| zufall(HS, 100 + t as u64).iter().map(|v| (v % 601) as i16 - 300).collect()).collect()
+    }
+
+    fn zurueck(g: &[Grad], d: Eingangsdrehung<'_>) -> Vec<Grad> {
+        zurueckgedreht(g, d)
+    }
+
+    #[test]
+    fn jede_verschiedene_drehung_wird_einmal_gerechnet() {
+        let (a, b) = (vorzeichen(1), vorzeichen(2));
+        let a_kopie = a.clone();
+        let x = &eingaben()[0];
+        let (d1, d1k, d2) = (
+            Eingangsdrehung { vorzeichen: &a, frac: 8 },
+            Eingangsdrehung { vorzeichen: &a_kopie, frac: 8 },
+            Eingangsdrehung { vorzeichen: &b, frac: 7 },
+        );
+        let (gedreht, wer) =
+            Achtsamkeitsdrehungen { q: Some(d1), k: Some(d1k), v: Some(d2), o: None }.eingaenge(x, AKT);
+        assert_eq!(wer, [(Some(0), 8), (Some(0), 8), (Some(2), 7)]);
+        assert_eq!(gedreht[0], d1.drehen(x, AKT));
+        assert!(gedreht[1].is_empty());
+        assert_eq!(gedreht[2], d2.drehen(x, AKT));
+
+        let (gedreht, wer) = Achtsamkeitsdrehungen { q: None, k: Some(d1), v: None, o: None }.eingaenge(x, AKT);
+        assert_eq!(wer, [(None, AKT), (Some(1), 8), (None, AKT)]);
+        assert!(gedreht[0].is_empty() && gedreht[2].is_empty());
+        assert_eq!(gedreht[1], d1.drehen(x, AKT));
+
+        let (_, wer) = Achtsamkeitsdrehungen::default().eingaenge(x, AKT);
+        assert_eq!(wer, [(None, AKT); 3]);
+    }
+
+    #[test]
+    fn gedrehte_aufmerksamkeit_ist_die_ungedrehte_auf_gedrehter_eingabe() {
+        let halb = HD / 2;
+        let (mut cos, mut sin) = (Vec::new(), Vec::new());
+        for t in 0..MAXPOS {
+            for j in 0..halb {
+                let w = t as f64 / 3f64.powf(j as f64 / halb as f64);
+                cos.push((w.cos() * 256.0).round() as i16);
+                sin.push((w.sin() * 256.0).round() as i16);
+            }
+        }
+        let exp: Vec<i16> = (0..4096).map(|i| ((-(i as f64) / 256.0).exp() * 4096.0).round() as i16).collect();
+        let v = Aufmerksamkeitsvorgaben {
+            hidden_size: HS,
+            num_heads: KOEPFE,
+            num_kv_heads: KV,
+            head_dim: HD,
+            act_frac: AKT,
+            q_frac: 8,
+            k_frac: 7,
+            v_frac: 10,
+            attn_out_frac: 11,
+            aus_frac: 8,
+            score_frac: 12,
+            prob_frac: 14,
+            exp_input_frac: 8,
+            rope_frac: 8,
+            positionsversatz: 1,
+            master_frac: 14,
+            gewichtsform: Gewichtsform::Int8,
+            lr_zaehler: 1,
+            lr_nenner: 1 << 12,
+            kennung: Schrittkennung { ebene: 0, schritt: 0, index_versatz: 0 },
+        };
+        let (wq, sq) = gewicht(KOEPFE * HD, HS, 11, 10);
+        let (wk, sk) = gewicht(KV * HD, HS, 13, 10);
+        let (wv, sv) = gewicht(KV * HD, HS, 15, 10);
+        let (wo, so) = gewicht(HS, KOEPFE * HD, 17, 10);
+        let vz = vorzeichen(3);
+        let d = Eingangsdrehung { vorzeichen: &vz, frac: AKT };
+        let ohne = Aufmerksamkeitsgewichte {
+            q: &wq, q_skalen: &sq, k: &wk, k_skalen: &sk, v: &wv, v_skalen: &sv, o: &wo, o_skalen: &so,
+            drehung: Default::default(),
+        };
+        let mit = Aufmerksamkeitsgewichte {
+            drehung: Achtsamkeitsdrehungen { q: Some(d), k: Some(d), v: Some(d), o: None },
+            ..ohne
+        };
+        let x = eingaben();
+        let xg: Vec<Vec<i16>> = x.iter().map(|z| d.drehen(z, AKT)).collect();
+        assert_ne!(x, xg);
+
+        let spur_mit = vorwaerts_der_aufmerksamkeit(mit, &x, None, &cos, &sin, &exp, None, None, v);
+        let spur_ohne = vorwaerts_der_aufmerksamkeit(ohne, &xg, None, &cos, &sin, &exp, None, None, v);
+        assert_eq!(spur_mit, spur_ohne, "vorwaerts rechnet die gedrehte Fassung etwas anderes");
+        // Gegenprobe: ohne Drehung auf der ungedrehten Eingabe kommt etwas
+        // anderes heraus.
+        assert_ne!(spur_mit.y, vorwaerts_der_aufmerksamkeit(ohne, &x, None, &cos, &sin, &exp, None, None, v).y);
+
+        let g_aus: Vec<Vec<Grad>> =
+            (0..LEN).map(|t| zufall(HS, 200 + t as u64).iter().map(|z| (z % 4001) as i32 - 2000).collect()).collect();
+        let gr_mit = gradienten_der_aufmerksamkeit_aus_gradient(&g_aus, &x, &spur_mit, mit, &cos, &sin, None, v);
+        let gr_ohne = gradienten_der_aufmerksamkeit_aus_gradient(&g_aus, &xg, &spur_ohne, ohne, &cos, &sin, None, v);
+        assert!(gr_mit.q.iter().any(|z| *z != 0) && gr_mit.k.iter().any(|z| *z != 0), "der Aufbau erzeugt keinen Gradienten");
+        assert_eq!(gr_mit.q, gr_ohne.q, "dL/dW von q gilt nicht der gedrehten Eingabe");
+        assert_eq!(gr_mit.k, gr_ohne.k);
+        assert_eq!(gr_mit.v, gr_ohne.v);
+        assert_eq!(gr_mit.o, gr_ohne.o);
+        for t in 0..LEN {
+            assert!(gr_ohne.eingang[t].iter().any(|z| *z != 0));
+            assert_eq!(gr_mit.eingang[t], zurueck(&gr_ohne.eingang[t], d), "Position {t}: der Eingangsgradient ist nicht zurueckgedreht");
+            assert_ne!(gr_mit.eingang[t], gr_ohne.eingang[t]);
+        }
+    }
+
+    #[test]
+    fn gedrehter_mlp_ist_der_ungedrehte_auf_gedrehter_eingabe() {
+        let silu: Vec<i16> = (-256..=256)
+            .map(|i| {
+                let x = i as f64 / 64.0;
+                ((x / (1.0 + (-x).exp())) * 4096.0).round() as i16
+            })
+            .collect();
+        let grad_lut = crate::backward::silu_grad_aus_lut(&silu);
+        let m = Mlpvorgaben {
+            hidden_size: HS,
+            intermediate_size: IS,
+            act_frac: AKT,
+            gate_frac: 8,
+            up_frac: 8,
+            down_in_frac: 8,
+            aus_frac: 8,
+            master_frac: 14,
+            gewichtsform: Gewichtsform::Int8,
+            silu_in_frac: 6,
+            silu_lut_offset: 256,
+            silu_out_frac: 12,
+            lr_zaehler: 1,
+            lr_nenner: 1 << 12,
+            kennung: Schrittkennung { ebene: 0, schritt: 0, index_versatz: 0 },
+        };
+        let (wg, sg) = gewicht(IS, HS, 21, 9);
+        let (wu, su) = gewicht(IS, HS, 23, 9);
+        let (wd, sd) = gewicht(16, IS, 25, 5);
+        let vz = vorzeichen(5);
+        let d = Eingangsdrehung { vorzeichen: &vz, frac: AKT };
+        let leer = Aufmerksamkeitsgewichte {
+            q: &[], q_skalen: &[], k: &[], k_skalen: &[], v: &[], v_skalen: &[], o: &[], o_skalen: &[],
+            drehung: Default::default(),
+        };
+        let ohne = Ebenengewichte {
+            aufmerksamkeit: leer,
+            gate: &wg, gate_skalen: &sg, up: &wu, up_skalen: &su, down: &wd, down_skalen: &sd,
+            gamma_ein: &[], gamma_ein_skalen: &[], gamma_mitte: &[], gamma_mitte_skalen: &[],
+            mlp_drehung: Default::default(),
+        };
+        let dreh = Mlpdrehungen { ein: Some(d), down: None };
+        let mit = Ebenengewichte { mlp_drehung: dreh, ..ohne };
+        let acc = vec![8u8; 16];
+        let x = &eingaben()[0];
+        let xg = d.drehen(x, AKT);
+
+        let (mut spur_mit, mut spur_ohne) = (Mlpspur::default(), Mlpspur::default());
+        let y_mit = mlp_der_ebene(x, &mit, &silu, m, &acc, &mut spur_mit);
+        let y_ohne = mlp_der_ebene(&xg, &ohne, &silu, m, &acc, &mut spur_ohne);
+        assert_eq!(y_mit, y_ohne);
+        assert_eq!(spur_mit, spur_ohne);
+        assert!(y_mit.iter().any(|z| *z != 0));
+
+        let g: Vec<Grad> = zufall(16, 300).iter().map(|z| (z % 4001) as i32 - 2000).collect();
+        let gr_mit = gradienten_des_mlp_aus_gradient(&g, x, &spur_mit, &wg, &sg, &wu, &su, &wd, &sd, &silu, &grad_lut, dreh, m);
+        let gr_ohne = gradienten_des_mlp_aus_gradient(
+            &g, &xg, &spur_ohne, &wg, &sg, &wu, &su, &wd, &sd, &silu, &grad_lut, Mlpdrehungen::default(), m,
+        );
+        assert!(gr_mit.gate.iter().any(|z| *z != 0) && gr_ohne.eingang.iter().any(|z| *z != 0));
+        assert_eq!(gr_mit.gate, gr_ohne.gate, "dL/dW von gate gilt nicht der gedrehten Eingabe");
+        assert_eq!(gr_mit.up, gr_ohne.up);
+        assert_eq!(gr_mit.down, gr_ohne.down);
+        assert_eq!(gr_mit.eingang, zurueck(&gr_ohne.eingang, d), "der Eingangsgradient ist nicht zurueckgedreht");
+        assert_ne!(gr_mit.eingang, gr_ohne.eingang);
     }
 }

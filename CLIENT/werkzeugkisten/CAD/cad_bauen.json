@@ -1,0 +1,14 @@
+{
+  "name": "cad_bauen",
+  "beschreibung": "Baut aus einem Python-Skript ein parametrisches 3D-Modell mit FreeCAD. Schreibt <name>.FCStd (in FreeCAD weiter bearbeitbar, mit Parametertabelle) und <name>.step und meldet Parameter, Bauteile, Abmessungen, Volumen und Fehler. Vorher den Skill cad-erstellen lernen: Er zeigt, wie das Skript aussieht.",
+  "parameter": {
+    "type": "object",
+    "properties": {
+      "skript": { "type": "string", "description": "Pfad des Python-Skripts im Arbeitsordner, zum Beispiel halter.py." },
+      "name": { "type": "string", "description": "Name der Ausgabedateien ohne Endung, zum Beispiel halter." }
+    },
+    "required": ["skript", "name"]
+  },
+  "befehl": "sh \"$MYL_KISTE/cad.sh\" bauen {skript} {name}",
+  "zeitgrenze_s": 120
+}

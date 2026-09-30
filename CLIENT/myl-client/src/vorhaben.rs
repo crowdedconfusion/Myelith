@@ -102,6 +102,17 @@ pub struct Vorhaben {
     /// nie, gleich was Modell und Pruefung sagen.
     #[serde(default)]
     pub abnahme: Option<String>,
+    /// ⚑ **Das Agentengespraech, zu dem der Task gehoert** (Festlegung des
+    /// Projektinhabers, 2026-09-30): das, das beim Anlegen offen war. Seine
+    /// Runden stehen dort und sehen dessen Verlauf. Die Kennung vergibt das
+    /// Fenster; Konsole und `myl` legen ohne an.
+    #[serde(default)]
+    pub gespraech: Option<String>,
+    /// ⚑ **Der Arbeitsordner dieses Gespraechs beim Anlegen**, damit der Task
+    /// dort arbeitet, wo sein Gespraech arbeitet, auch in Konsole und `myl`.
+    /// Ohne Angabe gilt die Einstellung.
+    #[serde(default)]
+    pub wurzel: Option<String>,
 }
 
 impl Vorhaben {
@@ -121,7 +132,21 @@ impl Vorhaben {
             ohne_fortschritt: 0,
             vorgaenger: None,
             abnahme: None,
+            gespraech: None,
+            wurzel: None,
         }
+    }
+
+    /// **Die Agenteneinstellung fuer eine Runde dieses Tasks**: die Saat der
+    /// Web-Recherche ist sein Ziel, und hat er einen eigenen Ordner, arbeitet
+    /// er dort. Eine Stelle fuer Fenster, Konsole und `myl`.
+    pub fn agent_fuer(&self, basis: &crate::einstellungen::Agenteneinstellung) -> crate::einstellungen::Agenteneinstellung {
+        let mut a = basis.clone();
+        a.netzsaat = Some(self.ziel.clone());
+        if let Some(w) = self.wurzel.as_ref().filter(|w| !w.trim().is_empty()) {
+            a.wurzel = Some(w.clone());
+        }
+        a
     }
 
     /// Laeuft es noch, im weitesten Sinn (bereit oder schlafend)?
@@ -183,6 +208,17 @@ impl Ablage {
     /// Legt ein neues Vorhaben an. Die Kennung ist Zeit plus Zaehler, damit
     /// die Reihenfolge im Ordner der Reihenfolge des Anlegens entspricht.
     pub fn anlegen(&self, ziel: &str, jetzt: u64) -> Result<Vorhaben, String> {
+        self.anlegen_fuer(ziel, jetzt, None, None)
+    }
+
+    /// Wie [`Ablage::anlegen`], gebunden an ein Gespraech und dessen Ordner.
+    pub fn anlegen_fuer(
+        &self,
+        ziel: &str,
+        jetzt: u64,
+        gespraech: Option<String>,
+        wurzel: Option<String>,
+    ) -> Result<Vorhaben, String> {
         if ziel.trim().is_empty() {
             return Err("ein Vorhaben braucht ein Ziel".into());
         }
@@ -195,7 +231,9 @@ impl Ablage {
             }
             n += 1;
         };
-        let v = Vorhaben::neu(kennung, ziel, jetzt);
+        let mut v = Vorhaben::neu(kennung, ziel, jetzt);
+        v.gespraech = gespraech.filter(|g| !g.trim().is_empty());
+        v.wurzel = wurzel.filter(|w| !w.trim().is_empty());
         self.speichern(&v)?;
         Ok(v)
     }
@@ -1733,9 +1771,15 @@ impl Drop for Aktionsklammer<'_> {
 /// Er kennt Einstellungen, Einhaengung und Nachfrage. Hier kommen nur die
 /// vier Loop-Werkzeuge dazu.
 ///
-/// ⚑ Das zweite Argument ist die **Saat der Web-Recherche**: das Ziel des
-/// Tasks, also was der Mensch geschrieben hat (`Agenteneinstellung::netzsaat`).
-pub type Ruester<'a> = dyn Fn(Zusatzwerkzeuge, &str) -> Result<crate::ruestung::Ruestung, String> + 'a;
+/// ⚑ Das zweite Argument ist **der Task selbst**: Sein Ziel ist die Saat der
+/// Web-Recherche, sein Ordner der Arbeitsordner ([`Vorhaben::agent_fuer`]).
+/// 📌 Bis 2026-09-30 kam hier nur das Ziel an, und damit liefen alle Tasks
+/// im Ordner der Einstellungen, gleich aus welchem Gespraech sie kamen.
+pub type Ruester<'a> = dyn Fn(Zusatzwerkzeuge, &Vorhaben) -> Result<crate::ruestung::Ruestung, String> + 'a;
+
+/// **Der Verlauf des Gespraechs, zu dem ein Task gehoert**, geliefert vom
+/// Fenster. Konsole und `myl` haben keines und geben keine Quelle.
+pub type Verlaufsquelle<'a> = dyn Fn(&Vorhaben) -> Vec<myl_local_agent::tuerklient::Nachricht> + 'a;
 
 /// Werkzeuge, die eine Runde zur Ruestung hinzufuegt.
 pub type Zusatzwerkzeuge = Vec<(Werkzeug, Box<dyn Werkzeugausfuehrung>)>;
@@ -1752,6 +1796,25 @@ pub fn runde(
     max_tokens: u32,
     melder: Option<&dyn Fn(myl_local_agent::schleife::Meldung<'_>)>,
 ) -> Result<Runde, String> {
+    runde_im_gespraech(ablage, v, modell, ruesten, grenzen, sprache, max_tokens, melder, &[])
+}
+
+/// **Wie [`runde`], mit dem Verlauf des Gespraechs vor dem Auftrag**
+/// (Festlegung des Projektinhabers, 2026-09-30): Die Runde weiss, was im
+/// Gespraech ihres Tasks schon besprochen wurde. Zu lang wird verdichtet
+/// wie beim Agenten.
+#[allow(clippy::too_many_arguments)]
+pub fn runde_im_gespraech(
+    ablage: &Ablage,
+    v: &mut Vorhaben,
+    modell: &dyn Modellweg,
+    ruesten: &Ruester<'_>,
+    grenzen: &Loopeinstellung,
+    sprache: Sprache,
+    max_tokens: u32,
+    melder: Option<&dyn Fn(myl_local_agent::schleife::Meldung<'_>)>,
+    verlauf: &[myl_local_agent::tuerklient::Nachricht],
+) -> Result<Runde, String> {
     let anfang = std::time::Instant::now();
     // ⚑ **Die Runde ist eine Aktion**, samt Pruefung: Beide ziehen aus einer
     // Saat, und mit ihr wiederholt sich die Runde (Regel des
@@ -1764,7 +1827,7 @@ pub fn runde(
 
     let start_notizen = stand.as_ref().map(|r| r.notizen.clone()).unwrap_or_else(|| v.notizen.clone());
     let wahl: Geteilt = Arc::new(Mutex::new(Rundenwahl { notizen: start_notizen, ..Default::default() }));
-    let mut ruestung = ruesten(werkzeuge(&wahl), &v.ziel)?;
+    let mut ruestung = ruesten(werkzeuge(&wahl), v)?;
     // ⚑ Skills nach dem Ziel suchen, nicht nach dem Rahmen der Runde
     //   (`Ruestung::skillsuche`).
     ruestung.skillsuche = Some(v.ziel.clone());
@@ -1840,7 +1903,7 @@ pub fn runde(
         }
     };
     let ausgang =
-        crate::lauf::fahren_beobachtet(modell, &ruestung, grenzen.schritte as usize, true, max_tokens, &{
+        crate::lauf::fahren_im_gespraech(modell, &ruestung, grenzen.schritte as usize, true, max_tokens, verlauf, &{
             // ⚑ Der Dateistand gehoert in den Auftrag, nachgesehen vor der Runde.
             let stand = ruestung.einhaengung.as_ref().map(|e| dateistand(&v.ziel, e.wurzel(), sprache)).unwrap_or_default();
             format!("{text}{stand}")
@@ -2191,6 +2254,24 @@ pub fn fahren(
     beenden: &dyn Fn() -> bool,
     melder: Option<&dyn Fn(myl_local_agent::schleife::Meldung<'_>)>,
 ) {
+    fahren_mit_verlauf(laeufer, leihen, ruesten, grenzen, sprache, max_tokens, melden, beenden, melder, None);
+}
+
+/// Wie [`fahren`]; jede Runde bekommt den Verlauf ihres Gespraechs aus
+/// `verlauf` (das Fenster).
+#[allow(clippy::too_many_arguments)]
+pub fn fahren_mit_verlauf(
+    laeufer: &Laeufer,
+    leihen: &Modellleihe<'_>,
+    ruesten: &Ruester<'_>,
+    grenzen: &Loopeinstellung,
+    sprache: Sprache,
+    max_tokens: u32,
+    melden: &dyn Fn(Ereignis),
+    beenden: &dyn Fn() -> bool,
+    melder: Option<&dyn Fn(myl_local_agent::schleife::Meldung<'_>)>,
+    verlauf: Option<&Verlaufsquelle<'_>>,
+) {
     let mut zuletzt_gemeldet = 0u64;
     loop {
         if beenden() || crate::notaus::ausgeloest() || schliessen_angefordert() {
@@ -2205,7 +2286,10 @@ pub fn fahren(
                 //   ein frueheres „beginnt" zeigte eine Runde an, die noch
                 //   gar nicht rechnet.
                 melden(Ereignis::Beginnt { kennung: v.kennung.clone(), ziel: v.ziel.clone(), runde: v.runden + 1 });
-                ergebnis = Some(runde(&laeufer.ablage, &mut v, modell, ruesten, grenzen, sprache, max_tokens, melder));
+                let bisher = verlauf.map(|q| q(&v)).unwrap_or_default();
+                ergebnis = Some(runde_im_gespraech(
+                    &laeufer.ablage, &mut v, modell, ruesten, grenzen, sprache, max_tokens, melder, &bisher,
+                ));
             }) {
                 melden(Ereignis::OhneModell { grund });
                 return;

@@ -289,10 +289,11 @@ pub fn fahren_mit_hausregel(
         registratur: &ruestung.registratur,
         adressen: &zuordnung,
         anker: myl_types::hash::Hash::from_bytes([0u8; 32]),
-        // ⛔️ **Nie unter der Vorgabe** (Fund 505): Ein Werkzeugaufruf, der
-        // an der Laenge abreisst, ist verloren; eine kurze Antwort endet
-        // von selbst. Alle Agentenlaeufe kommen hier an.
-        max_tokens: Some(max_tokens.max(crate::einstellungen::ANTWORT_VORGABE as u32)),
+        // ⛔️ **Nie unter der Untergrenze des Agenten** (Fund 505, seit dem
+        // 2026-09-30 bei 4 000): Ein Werkzeugaufruf, der an der Laenge
+        // abreisst, ist verloren; eine kurze Antwort endet von selbst. Alle
+        // Agentenlaeufe kommen hier an.
+        max_tokens: Some(max_tokens.max(crate::einstellungen::AGENT_ANTWORT_MINDESTENS as u32)),
         melder,
     }
     .fahren_mit_verlauf(&mit_kontext(ruestung, auftrag), verlauf);

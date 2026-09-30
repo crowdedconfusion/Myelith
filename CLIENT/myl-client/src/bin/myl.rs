@@ -61,8 +61,9 @@ Felder fuer `setzen`:
 {FELDER}
 
 Schalter fuer `frage`:
-  --token N       Hoechstzahl erzeugter Token (Vorgabe 1600; der Agent nimmt nie weniger)
+  --token N       Hoechstzahl erzeugter Token (Vorgabe 1600; der Agent nimmt nie weniger als 4000)
   --denken        Denkmodus an (Vorgabe aus, siehe unten)
+  --ohne-denken   Denkmodus aus, auch wenn die Einstellung ihn anschaltet
   --saat N        Mit dieser Saat ziehen; gleiche Saat, gleiche Antwort (Vorgabe: neu je Aktion)
   --gierig        Das wahrscheinlichste Token nehmen, statt zu ziehen
 
@@ -1071,6 +1072,19 @@ fn zahl(args: &[String], name: &str) -> Option<usize> {
 /// `modell.saat`, sonst bleibt die beim Laden gezogene; `--gierig` waehlt
 /// das wahrscheinlichste Token statt zu ziehen.
 ///
+/// **Denkmodus fuer diesen Aufruf**: `--ohne-denken` schaltet aus, auch
+/// gegen die Einstellung; `--denken` schaltet an; sonst gilt die Einstellung.
+///
+/// 📌 Bis 2026-09-30 liess er sich nur anschalten. Eine Messung auf einer
+/// Maschine, deren Einstellung Denken anschaltet, konnte es nicht abstellen
+/// und mass still mit Denken (die des Projektinhabers tut das).
+fn denken_gewaehlt(args: &[String], e: &Einstellungen) -> bool {
+    if args.iter().any(|a| a == "--ohne-denken") {
+        return false;
+    }
+    e.modell.denken || args.iter().any(|a| a == "--denken")
+}
+
 /// ⚑ **Die Saat steht danach auf der Fehlerausgabe**, bei jedem Laden: Nur
 /// mit ihr laesst sich ein Lauf wiederholen, und genau das war der Einwand
 /// gegen das Ziehen (Regel des Projektinhabers, 2026-09-29).
@@ -1231,7 +1245,7 @@ fn frage(args: &[String]) -> i32 {
         }
     };
     m.grenze = zahl(args, "--token").unwrap_or(e.modell.token);
-    m.denken = e.modell.denken || args.iter().any(|a| a == "--denken");
+    m.denken = denken_gewaehlt(args, &e);
     saat_setzen(&mut m, args, &e);
 
     let anfang = std::time::Instant::now();
@@ -1358,7 +1372,7 @@ fn agent(args: &[String]) -> i32 {
         }
     };
     m.grenze = zahl(args, "--token").unwrap_or(e.modell.token);
-    m.denken = e.modell.denken || args.iter().any(|a| a == "--denken");
+    m.denken = denken_gewaehlt(args, &e);
     saat_setzen(&mut m, args, &e);
 
     // ⚑ Die Verdrahtung liegt in der Kiste und nicht hier, damit ein
@@ -1421,7 +1435,7 @@ fn sitzung(args: &[String]) -> i32 {
         }
     };
     m.grenze = zahl(rest, "--token").unwrap_or(e.modell.token);
-    m.denken = e.modell.denken || rest.iter().any(|a| a == "--denken");
+    m.denken = denken_gewaehlt(rest, &e);
     saat_setzen(&mut m, rest, &e);
     let geladen = anfang.elapsed();
 
@@ -1765,7 +1779,7 @@ fn auftraege(args: &[String]) -> i32 {
         }
     };
     m.grenze = zahl(rest, "--token").unwrap_or(e.modell.token);
-    m.denken = e.modell.denken || rest.iter().any(|a| a == "--denken");
+    m.denken = denken_gewaehlt(rest, &e);
     saat_setzen(&mut m, rest, &e);
     let ruestung = match myl_client::ruestung::ruesten(
         &agent_fuer_diesen_lauf(&e, rest),
@@ -2199,14 +2213,13 @@ fn schleife(args: &[String]) -> i32 {
         }
     };
     m.grenze = zahl(args, "--token").unwrap_or(e.modell.token);
-    m.denken = e.modell.denken || args.iter().any(|a| a == "--denken");
+    m.denken = denken_gewaehlt(args, &e);
     saat_setzen(&mut m, args, &e);
     schliessen_bei_signal();
 
-    let ruester = |mut zusaetzlich: myl_client::vorhaben::Zusatzwerkzeuge, saat: &str| {
+    let ruester = |mut zusaetzlich: myl_client::vorhaben::Zusatzwerkzeuge, v: &myl_client::vorhaben::Vorhaben| {
         zusaetzlich.push(werkzeug_uhr());
-        let mut agent = agent_fuer_diesen_lauf(&e, args);
-        agent.netzsaat = Some(saat.to_string());
+        let agent = v.agent_fuer(&agent_fuer_diesen_lauf(&e, args));
         myl_client::ruestung::ruesten(
             &agent,
             form_fuer_diesen_lauf(args),

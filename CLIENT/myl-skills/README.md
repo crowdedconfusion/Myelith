@@ -77,3 +77,4 @@ Die Vorlage liegt unter `skill-erstellen/vorlagen/SKILL.md`.
 | `aufgabe-zerlegen` | ein großes Ziel in prüfbare Schritte teilen, auch im Loop |
 | `bericht-schreiben` | Ergebnisse als Markdown-Bericht festhalten |
 | `datei-sicher-aendern` | bestehende Dateien ändern, ohne etwas zu zerstören |
+| `cad-erstellen` | ein parametrisches 3D-Teil bauen oder ändern, das sich in FreeCAD weiter bearbeiten lässt (braucht die Werkzeugkiste `CAD`) |

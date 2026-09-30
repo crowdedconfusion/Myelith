@@ -15,7 +15,7 @@ meldet. Die Kisten beschreiben jetzt nur noch ihren **Inhalt**.
 |---|---|
 | `Base` | die Grundlage, in jeder anderen Kiste enthalten |
 | `Advanced` | mehr Werkzeuge, dazu das eingebaute `run_command` |
-| `1337` | eigener Spielplatz, nicht versioniert |
+| `CAD` | parametrische 3D-Teile mit FreeCAD; dazu die eingebauten von `Advanced` |
 
 ⚑ **Gestapelt, nicht kopiert.** Der gewählte Ordner kommt **nach**
 `Base`, und bei gleichem Werkzeugnamen gewinnt der gewählte. Wer ein
@@ -91,8 +91,8 @@ nicht ein Werkzeug, wird also nicht als Manifest gelesen.
 ```
 
 `eingebaute` sagt, welche **kompilierten** Werkzeuge zu dieser Kiste
-gehören: `Base`, `Advanced` oder `1337`. Ohne die Datei entscheidet der
-Ordnername, und der kennt nur diese drei Wörter: Ein eigener Ordner fiel
+gehören: `Base` oder `Advanced`. Ohne die Datei entscheidet der
+Ordnername, und der kennt nur diese Wörter: Ein eigener Ordner fiel
 sonst **stillschweigend** auf `Base` zurück und verlor unter anderem die
 Suche im Mitschnitt.
 

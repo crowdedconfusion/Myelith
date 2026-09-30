@@ -37,6 +37,54 @@ pub(super) struct Job<'a> {
     pub abstaende: &'a [i8],
 }
 
+/// Ein Stapel auf ternaeren Gewichten fuer [`Kontext::rechnen_ternaer`]:
+/// Muster und Betraege wie in `crate::ternaer`.
+pub(super) struct Ternaerjob<'a> {
+    pub xs: &'a [&'a [i16]],
+    pub muster: &'a [u8],
+    pub betraege: &'a [i16],
+    pub spalten: usize,
+    pub abstaende: &'a [i8],
+}
+
+#[repr(C)]
+struct Entpackform {
+    zeilen: i32,
+    spalten: i32,
+}
+
+#[repr(C)]
+struct Gruppenform {
+    zeilen: i32,
+    spalten: i32,
+    eingaben: i32,
+    kacheln_x: i32,
+    breite: i32,
+}
+
+/// Die grossen Arbeitspuffer des ternaeren Wegs, ueber die Aufrufe hinweg
+/// behalten.
+///
+/// ⚑ **Warum behalten.** Eine Matrix des 27B entpackt in 89 MB, dazu rund
+/// 100 MB Teilprodukte und Summen; je Aufruf neu belegt, liesse Metal jede
+/// Seite erst nullen. Hier waechst jeder Puffer auf den groessten Bedarf und
+/// bleibt. **Keiner wird vor dem Schreiben gelesen**: Der Shader entpackt
+/// jede Zeile ganz, schreibt jedes Teilprodukt vor dem Lesen und setzt die
+/// Summen bei der ersten Gruppe, statt zu addieren.
+#[derive(Default)]
+struct Vorrat {
+    codes: Option<Puffer>,
+    zwischen: Option<Puffer>,
+    summen: Option<Puffer>,
+}
+
+// SAFETY: Ein `MTLBuffer` darf von jedem Faden benutzt werden; nicht
+// faedensicher ist allein der Zugriff auf seinen Inhalt. Der Vorrat liegt
+// in der Sperre des Kontexts, und wer einen dieser Puffer liest oder
+// beschreibt (die CPU oder ein Befehlspuffer), haelt sie fuer die ganze
+// Dauer des Aufrufs.
+unsafe impl Send for Vorrat {}
+
 #[repr(C)]
 struct Produktform {
     zeilen: i32,
@@ -55,10 +103,14 @@ struct Kontext {
     schlange: Retained<ProtocolObject<dyn MTLCommandQueue>>,
     produkt: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
     nachlauf: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    entpacken: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    gruppenprodukt: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    nachlauf_breit: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
     /// ⚑ **Ein Befehlspuffer zur Zeit.** Die Puffer eines Aufrufs gehoeren
     /// ihm allein; die Sperre haelt zwei Aufrufer auseinander, die sonst
-    /// dieselbe Schlange und dieselbe Speicherbandbreite teilten.
-    sperre: Mutex<()>,
+    /// dieselbe Schlange und dieselbe Speicherbandbreite teilten. Sie
+    /// haelt zugleich die behaltenen Arbeitspuffer ([`Vorrat`]).
+    sperre: Mutex<Vorrat>,
 }
 
 /// Warum es keinen Kontext gibt.
@@ -144,6 +196,26 @@ pub(super) fn stapel_viele(jobs: &[Job<'_>]) -> Option<Vec<Vec<Vec<i16>>>> {
     }
 }
 
+pub(super) fn stapel_ternaer(job: &Ternaerjob<'_>) -> Option<Vec<Vec<i16>>> {
+    let k = kontext()?;
+    match k.rechnen_ternaer(job) {
+        Ok(aus) => {
+            super::GERECHNET.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            Some(aus)
+        }
+        Err(grund) => {
+            eprintln!("⚠️ Metal: {grund}; diese Buendelung rechnet die CPU");
+            None
+        }
+    }
+}
+
+/// Rechnet ohne Schwelle und ohne Rueckfall, fuer die Pruefungen.
+#[cfg(test)]
+pub(super) fn direkt_ternaer(job: &Ternaerjob<'_>) -> Option<Result<Vec<Vec<i16>>, String>> {
+    kontext().map(|k| k.rechnen_ternaer(job))
+}
+
 pub(super) fn stapel(xs: &[&[i16]], w: &[i8], in_features: usize, abstaende: &[i8]) -> Option<Vec<Vec<i16>>> {
     let k = kontext()?;
     match k.rechnen(xs, w, in_features, abstaende) {
@@ -182,8 +254,20 @@ impl Kontext {
         };
         let produkt = pipeline("produkt")?;
         let nachlauf = pipeline("nachlauf")?;
+        let entpacken = pipeline("entpacken")?;
+        let gruppenprodukt = pipeline("gruppenprodukt")?;
+        let nachlauf_breit = pipeline("nachlauf_breit")?;
         let schlange = geraet.newCommandQueue().ok_or("keine Befehlsschlange")?;
-        Ok(Kontext { geraet, schlange, produkt, nachlauf, sperre: Mutex::new(()) })
+        Ok(Kontext {
+            geraet,
+            schlange,
+            produkt,
+            nachlauf,
+            entpacken,
+            gruppenprodukt,
+            nachlauf_breit,
+            sperre: Mutex::new(Vorrat::default()),
+        })
     }
 
     fn neuer_puffer(&self, bytes: usize) -> Result<Puffer, String> {
@@ -206,6 +290,13 @@ impl Kontext {
     /// Gewichte. Ein Speicher je Adresse haette nach dem Freigeben eines
     /// Vektors an derselben Stelle andere Zahlen gefunden.
     fn gewichtspuffer(&self, w: &[i8]) -> Result<(Puffer, usize), String> {
+        // SAFETY: `i8` und `u8` haben dieselbe Groesse und Ausrichtung.
+        self.fremdpuffer(unsafe { std::slice::from_raw_parts(w.as_ptr() as *const u8, w.len()) })
+    }
+
+    /// Wie [`Self::gewichtspuffer`], fuer beliebige Bytes (die Muster und
+    /// die Betraege ternaerer Gewichte).
+    fn fremdpuffer(&self, w: &[u8]) -> Result<(Puffer, usize), String> {
         let seite = seitengroesse();
         let anfang = w.as_ptr() as usize;
         let basis = anfang & !(seite - 1);
@@ -232,9 +323,144 @@ impl Kontext {
         // SAFETY: `p` ist frisch, mindestens `w.len()` Byte gross und
         // gehoert nur diesem Aufruf.
         unsafe {
-            std::ptr::copy_nonoverlapping(w.as_ptr(), p.contents().as_ptr() as *mut i8, w.len());
+            std::ptr::copy_nonoverlapping(w.as_ptr(), p.contents().as_ptr() as *mut u8, w.len());
         }
         Ok((p, 0))
+    }
+
+    /// Ein behaltener Arbeitspuffer mit mindestens `bytes` Byte.
+    fn arbeitspuffer(&self, platz: &mut Option<Puffer>, bytes: usize) -> Result<Puffer, String> {
+        match platz {
+            Some(p) if p.length() >= bytes => Ok(p.clone()),
+            _ => {
+                let neu = self.neuer_puffer(bytes)?;
+                *platz = Some(neu.clone());
+                Ok(neu)
+            }
+        }
+    }
+
+    /// **Ein Stapel auf ternaeren Gewichten**: entpacken, je Gruppe
+    /// multiplizieren und mit dem Betrag gewichten, umskalieren. Die
+    /// Schritte stehen im Shader; die Eingaben sind zerlegt wie beim
+    /// int8-Weg (`mod.rs`).
+    fn rechnen_ternaer(&self, job: &Ternaerjob<'_>) -> Result<Vec<Vec<i16>>, String> {
+        let (zeilen, stapel, spalten) = (job.abstaende.len(), job.xs.len(), job.spalten);
+        if zeilen == 0 || stapel == 0 {
+            return Ok(vec![Vec::new(); stapel]);
+        }
+        let gruppen = spalten / 128;
+        if spalten == 0 || spalten % 128 != 0 {
+            return Err(format!("{spalten} Spalten sind kein Vielfaches von 128"));
+        }
+        if job.muster.len() != zeilen * spalten / 4 || job.betraege.len() != zeilen * gruppen {
+            return Err(format!(
+                "{} Musterbytes und {} Betraege passen nicht zu {zeilen} x {spalten}",
+                job.muster.len(),
+                job.betraege.len()
+            ));
+        }
+        for x in job.xs {
+            if x.len() != spalten {
+                return Err(format!("Eingabe mit {} statt {spalten} Elementen", x.len()));
+            }
+        }
+        let eingaben = 2 * stapel + 1;
+        let (kacheln_x, kacheln_y) = (zeilen.div_ceil(KACHEL_ZEILEN), eingaben.div_ceil(KACHEL_EINGABEN));
+        let zu_gross = |n: usize| n > i32::MAX as usize;
+        if zu_gross(eingaben * spalten) || zu_gross(eingaben * zeilen) || zu_gross(zeilen * spalten) {
+            return Err(format!("{zeilen} x {spalten} bei {stapel} Eingaben sprengt die Indizes des Shaders"));
+        }
+
+        let mut vorrat = self.sperre.lock().unwrap_or_else(|e| e.into_inner());
+        let (muster, muster_versatz) = self.fremdpuffer(job.muster)?;
+        // SAFETY: `i16` als Bytes gelesen; die Laenge ist die des Ausschnitts.
+        let (betraege, betraege_versatz) = self.fremdpuffer(unsafe {
+            std::slice::from_raw_parts(job.betraege.as_ptr() as *const u8, job.betraege.len() * 2)
+        })?;
+        let codes = self.arbeitspuffer(&mut vorrat.codes, zeilen * spalten)?;
+        let zwischen =
+            self.arbeitspuffer(&mut vorrat.zwischen, kacheln_x * kacheln_y * KACHEL_ZEILEN * KACHEL_EINGABEN * 4)?;
+        let summen = self.arbeitspuffer(&mut vorrat.summen, eingaben * zeilen * 8)?;
+        let x = self.neuer_puffer(eingaben * spalten)?;
+        let abst = self.neuer_puffer(zeilen)?;
+        let aus = self.neuer_puffer(stapel * zeilen * 2)?;
+
+        // SAFETY: `x` und `abst` sind frisch und gehoeren nur diesem Aufruf;
+        // geschrieben werden genau `eingaben * spalten` und `zeilen` Byte.
+        unsafe {
+            let ziel = std::slice::from_raw_parts_mut(x.contents().as_ptr() as *mut i8, eingaben * spalten);
+            let (hoch, rest) = ziel.split_at_mut(stapel * spalten);
+            let (niedrig, einsen) = rest.split_at_mut(stapel * spalten);
+            for (b, eingabe) in job.xs.iter().enumerate() {
+                let h = &mut hoch[b * spalten..(b + 1) * spalten];
+                let l = &mut niedrig[b * spalten..(b + 1) * spalten];
+                for ((h, l), &wert) in h.iter_mut().zip(l.iter_mut()).zip(eingabe.iter()) {
+                    (*h, *l) = super::zerlegen(wert);
+                }
+            }
+            einsen.fill(1);
+            std::ptr::copy_nonoverlapping(job.abstaende.as_ptr(), abst.contents().as_ptr() as *mut i8, zeilen);
+        }
+
+        let puffer = self.schlange.commandBuffer().ok_or("kein Befehlspuffer")?;
+        let kodierer = puffer.computeCommandEncoder().ok_or("kein Kodierer")?;
+        let breite = self.gruppenprodukt.threadExecutionWidth() * SIMD_GRUPPEN;
+        let entpackform = Entpackform { zeilen: zeilen as i32, spalten: spalten as i32 };
+        let gruppenform = Gruppenform {
+            zeilen: zeilen as i32,
+            spalten: spalten as i32,
+            eingaben: eingaben as i32,
+            kacheln_x: kacheln_x as i32,
+            breite: breite as i32,
+        };
+        let nachlaufform = Nachlaufform { zeilen: zeilen as i32, stapel: stapel as i32 };
+        // SAFETY: Die Indizes entsprechen den `[[buffer(n)]]` des Shaders, die
+        // Versaetze liegen innerhalb der Puffer, und `setBytes` kopiert die
+        // Formen. Der Shader schreibt weder in die Muster noch in die
+        // Betraege.
+        unsafe {
+            kodierer.setComputePipelineState(&self.entpacken);
+            kodierer.setBuffer_offset_atIndex(Some(&muster), muster_versatz, 0);
+            kodierer.setBuffer_offset_atIndex(Some(&codes), 0, 1);
+            kodierer.setBytes_length_atIndex(NonNull::from(&entpackform).cast(), std::mem::size_of::<Entpackform>(), 2);
+            kodierer.dispatchThreads_threadsPerThreadgroup(
+                MTLSize { width: spalten / 4, height: zeilen, depth: 1 },
+                MTLSize { width: 32, height: 8.min(zeilen), depth: 1 },
+            );
+
+            kodierer.setComputePipelineState(&self.gruppenprodukt);
+            kodierer.setBuffer_offset_atIndex(Some(&codes), 0, 0);
+            kodierer.setBuffer_offset_atIndex(Some(&x), 0, 1);
+            kodierer.setBuffer_offset_atIndex(Some(&zwischen), 0, 2);
+            kodierer.setBytes_length_atIndex(NonNull::from(&gruppenform).cast(), std::mem::size_of::<Gruppenform>(), 3);
+            kodierer.setBuffer_offset_atIndex(Some(&betraege), betraege_versatz, 4);
+            kodierer.setBuffer_offset_atIndex(Some(&summen), 0, 5);
+            kodierer.dispatchThreadgroups_threadsPerThreadgroup(
+                MTLSize { width: kacheln_x, height: kacheln_y, depth: 1 },
+                MTLSize { width: breite, height: 1, depth: 1 },
+            );
+
+            kodierer.setComputePipelineState(&self.nachlauf_breit);
+            kodierer.setBuffer_offset_atIndex(Some(&summen), 0, 0);
+            kodierer.setBuffer_offset_atIndex(Some(&abst), 0, 1);
+            kodierer.setBuffer_offset_atIndex(Some(&aus), 0, 2);
+            kodierer.setBytes_length_atIndex(NonNull::from(&nachlaufform).cast(), std::mem::size_of::<Nachlaufform>(), 3);
+            kodierer.dispatchThreads_threadsPerThreadgroup(
+                MTLSize { width: zeilen, height: stapel, depth: 1 },
+                MTLSize { width: 32.min(zeilen), height: 8.min(stapel), depth: 1 },
+            );
+        }
+        kodierer.endEncoding();
+        puffer.commit();
+        puffer.waitUntilCompleted();
+        if let Some(fehler) = puffer.error() {
+            return Err(format!("Befehlspuffer gescheitert: {}", fehler.localizedDescription()));
+        }
+        // SAFETY: Der Befehlspuffer ist fertig; `aus` haelt `stapel * zeilen`
+        // int16.
+        let werte = unsafe { std::slice::from_raw_parts(aus.contents().as_ptr() as *const i16, stapel * zeilen) };
+        Ok(werte.chunks_exact(zeilen).map(|z| z.to_vec()).collect())
     }
 
     fn rechnen(
@@ -475,6 +701,65 @@ impl Kontext {
                     "{}: {zeilen} x {spalten} bei {stapel} Eingaben weicht ab, zuerst Eingabe {b}, Zeile {z}: GPU {} gegen CPU {}",
                     fall.name, gpu[b][z], cpu[b][z]
                 ));
+            }
+        }
+
+        // ⚑ **Ternaere Gewichte gegen den ternaeren Kern der CPU**: Raender
+        // in Zeilen und Eingaben, der groesste Betrag, der Code 3 (+2) und
+        // die Raender des Wertebereichs der Eingaben; der dritte Fall laeuft
+        // zweimal, damit auch die wiederverwendeten Arbeitspuffer geprueft
+        // sind.
+        for (nummer, &(zeilen, spalten, stapel)) in
+            [(67usize, 1_280usize, 17usize), (130, 384, 33), (3, 128, 2), (3, 128, 2)].iter().enumerate()
+        {
+            let gruppen = spalten / 128;
+            let muster: Vec<u8> = (0..zeilen * spalten / 4)
+                .map(|i| {
+                    let r = zufall();
+                    // Meist die drei ternaeren Codes, gelegentlich Code 3.
+                    (0..4).fold(0u8, |b, s| {
+                        let code = if nummer == 0 && i % 97 == 0 { 3 } else { ((r >> (8 * s)) % 3) as u8 };
+                        b | (code << (2 * s))
+                    })
+                })
+                .collect();
+            let betraege: Vec<i16> = (0..zeilen * gruppen)
+                .map(|i| if nummer == 0 && i % 5 == 0 { i16::MAX } else { (zufall() % 16_384) as i16 })
+                .collect();
+            let eingaben: Vec<Vec<i16>> = (0..stapel)
+                .map(|b| {
+                    (0..spalten)
+                        .map(|i| match (nummer, (b + i) % 7) {
+                            (0, 0) => i16::MIN,
+                            (0, 1) => i16::MAX,
+                            _ => zufall() as i16,
+                        })
+                        .collect()
+                })
+                .collect();
+            let xs: Vec<&[i16]> = eingaben.iter().map(|e| e.as_slice()).collect();
+            let w_shifts: Vec<u8> = (0..zeilen).map(|z| [20u8, 14, 9, 9][z % 4]).collect();
+            let ziele: Vec<u8> = (0..zeilen).map(|z| [0u8, 3, 20, 21][z % 4]).collect();
+            let act = 11u8;
+            let abstaende: Vec<i8> = (0..zeilen).map(|z| (w_shifts[z] + act) as i8 - ziele[z] as i8).collect();
+            let job = Ternaerjob { xs: &xs, muster: &muster, betraege: &betraege, spalten, abstaende: &abstaende };
+            let gpu = self.rechnen_ternaer(&job)?;
+            let matrix = crate::ternaer::Ternaermatrix::neu(&muster, &betraege, zeilen, spalten)?;
+            let cpu = crate::linear::linear_matrix_pc_stapel_cpu(&xs, matrix.into(), spalten, &w_shifts, act, &ziele);
+            if gpu != cpu {
+                let (b, z) = gpu
+                    .iter()
+                    .zip(cpu.iter())
+                    .enumerate()
+                    .find_map(|(b, (g, c))| g.iter().zip(c).position(|(g, c)| g != c).map(|z| (b, z)))
+                    .unwrap_or((0, 0));
+                return Err(format!(
+                    "ternaer: {zeilen} x {spalten} bei {stapel} Eingaben weicht ab, zuerst Eingabe {b}, Zeile {z}: GPU {} gegen CPU {}",
+                    gpu[b][z], cpu[b][z]
+                ));
+            }
+            if nummer == 0 && !cpu.iter().flatten().any(|&v| v != 0 && v != i16::MAX && v != i16::MIN) {
+                return Err("ternaer: die Selbstpruefung rechnet nur Nullen oder Saettigung".into());
             }
         }
 

@@ -2,7 +2,7 @@
 
 > ⚙️ **Erzeugt von `BENCHMARKS/Inferenz/uebersicht.py`.**
 > Nicht von Hand bearbeiten: Der nächste Lauf überschreibt die Datei.
-> Stand: 2026-09-16
+> Stand: 2026-09-30
 
 Gemessen wird Perplexität auf WikiText-2 mit Teacher-Forcing, für
 beide Pfade auf **identischen Sequenzen**; niedriger ist besser.
@@ -11,9 +11,11 @@ seine eigene Gleitkomma-Referenz, nicht auf ein anderes Modell.
 
 | Modell | Gleitkomma | Ganzzahl | Positionen | Abstand | Kriterium ≤ 5 % |
 |---|---|---|---|---|---|
-| Myelith 0,6B | 31,86 | 33,29 | 435 | **+4,48 %** | erfüllt |
+| Myelith 0,6B | 42,26 | 43,49 | 3558 | **+2,92 %** | erfüllt |
 | Myelith 4B | 19,63 | 19,95 | 435 | **+1,65 %** | erfüllt |
+| Myelith 8B | 12,79 | 13,27 | 435 | **+3,75 %** | erfüllt |
 | Myelith 30B-A3B | 10,48 | 10,42 | 435 | **kein messbarer Abstand** | erfüllt |
+| Myelith 35B-A3B | | | | **nicht gemessen** | |
 
 ## Was daraus folgt
 
@@ -74,7 +76,9 @@ erzeugt von `perplexity.py`:
 
 - **Myelith 0,6B**: `decision_12-21_myelith-06b.md`, `perplexity_comparison_myelith-06b.json`
 - **Myelith 4B**: `decision_12-21_myelith-4b.md`, `perplexity_comparison_myelith-4b.json`
+- **Myelith 8B**: `decision_12-21_myelith-8b.md`, `perplexity_comparison_myelith-8b.json`
 - **Myelith 30B-A3B**: `decision_12-21_myelith-30b-a3b.md`, `perplexity_comparison_myelith-30b-a3b.json`
+- **Myelith 35B-A3B**: `decision_12-21_myelith-35b-a3b.md`, `perplexity_comparison_myelith-35b-a3b.json`
 
 ⚑ **Die Einzeldateien bleiben, und das ist Absicht.** Jede ist der
 Beleg ihres Modells, mit Methode, Datensatz und Einordnung. Diese

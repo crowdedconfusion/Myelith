@@ -52,7 +52,7 @@ hinzufügt und jede Wahl schwerer macht.
 ## ⛔️ Zwei Messfehler auf dem Weg hierher, beide sahen wie Modellfehler aus
 
 **Erster Anlauf, Fund 437: die falsche Kiste.** Die Probe übergab
-`--werkzeuge voll`. `myl` kennt nur `Base`, `Advanced` und `1337`,
+`--werkzeuge voll`. `myl` kennt nur `Base` und `Advanced`,
 **warnte und fuhr mit der eingestellten Kiste weiter**, also Base. Über
 dem Ergebnis stand „Werkzeugsatz: voll"; `run_command` war in keinem
 einzigen Lauf im Angebot, und das Modell antwortete korrekt, es sehe

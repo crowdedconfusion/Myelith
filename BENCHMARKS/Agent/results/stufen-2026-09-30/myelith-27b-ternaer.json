@@ -1,0 +1,662 @@
+{
+  "artefakt": "/Users/entity/Desktop/Code/Code/Artificial/Myelith/Repository/INTEGER_LLM/artifacts/myelith-27b-ternaer",
+  "schritte": 6,
+  "saaten": [
+    8213088584698225,
+    4468002801560041,
+    6135214929457457
+  ],
+  "token": 1600,
+  "denken": "aus",
+  "ab_werk": true,
+  "laeufe": [
+    {
+      "name": "e_datei_anlegen",
+      "stufe": 1,
+      "lauf": 1,
+      "saat": 8213088584698225,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 261.6,
+      "werkzeuge": [
+        "write_file",
+        "read_file"
+      ]
+    },
+    {
+      "name": "e_datei_anlegen",
+      "stufe": 1,
+      "lauf": 2,
+      "saat": 4468002801560041,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 262.0,
+      "werkzeuge": [
+        "write_file",
+        "read_file"
+      ]
+    },
+    {
+      "name": "e_datei_anlegen",
+      "stufe": 1,
+      "lauf": 3,
+      "saat": 6135214929457457,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 262.0,
+      "werkzeuge": [
+        "write_file",
+        "read_file"
+      ]
+    },
+    {
+      "name": "e_wert_aendern",
+      "stufe": 1,
+      "lauf": 1,
+      "saat": 8213088584698225,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 321.4,
+      "werkzeuge": [
+        "learn_skill",
+        "search_files",
+        "read_file",
+        "edit_file",
+        "read_file"
+      ]
+    },
+    {
+      "name": "e_wert_aendern",
+      "stufe": 1,
+      "lauf": 2,
+      "saat": 4468002801560041,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 334.1,
+      "werkzeuge": [
+        "search_skill",
+        "list_directory",
+        "learn_skill",
+        "read_file",
+        "edit_file",
+        "read_file"
+      ]
+    },
+    {
+      "name": "e_wert_aendern",
+      "stufe": 1,
+      "lauf": 3,
+      "saat": 6135214929457457,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 334.5,
+      "werkzeuge": [
+        "search_skill",
+        "search_files",
+        "learn_skill",
+        "read_file",
+        "edit_file",
+        "read_file"
+      ]
+    },
+    {
+      "name": "e_zeilen_zaehlen",
+      "stufe": 1,
+      "lauf": 1,
+      "saat": 8213088584698225,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 263.0,
+      "werkzeuge": [
+        "zaehle_zeilen",
+        "write_file"
+      ]
+    },
+    {
+      "name": "e_zeilen_zaehlen",
+      "stufe": 1,
+      "lauf": 2,
+      "saat": 4468002801560041,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 262.9,
+      "werkzeuge": [
+        "zaehle_zeilen",
+        "write_file"
+      ]
+    },
+    {
+      "name": "e_zeilen_zaehlen",
+      "stufe": 1,
+      "lauf": 3,
+      "saat": 6135214929457457,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 263.0,
+      "werkzeuge": [
+        "zaehle_zeilen",
+        "write_file"
+      ]
+    },
+    {
+      "name": "m_summe_json",
+      "stufe": 2,
+      "lauf": 1,
+      "saat": 8213088584698225,
+      "bestanden": false,
+      "grund": "Abnahme mit 1: ",
+      "sekunden": 292.5,
+      "werkzeuge": [
+        "list_directory",
+        "read_file",
+        "write_file",
+        "read_file"
+      ]
+    },
+    {
+      "name": "m_summe_json",
+      "stufe": 2,
+      "lauf": 2,
+      "saat": 4468002801560041,
+      "bestanden": false,
+      "grund": "Abnahme mit 1: ",
+      "sekunden": 298.8,
+      "werkzeuge": [
+        "list_directory",
+        "read_file",
+        "write_file",
+        "read_file"
+      ]
+    },
+    {
+      "name": "m_summe_json",
+      "stufe": 2,
+      "lauf": 3,
+      "saat": 6135214929457457,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 316.9,
+      "werkzeuge": [
+        "list_directory",
+        "search_files",
+        "read_file",
+        "run_command",
+        "write_file",
+        "read_file"
+      ]
+    },
+    {
+      "name": "m_funktion_umbenennen",
+      "stufe": 2,
+      "lauf": 1,
+      "saat": 8213088584698225,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 317.8,
+      "werkzeuge": [
+        "list_directory",
+        "read_file",
+        "read_file",
+        "read_file",
+        "replace_everywhere",
+        "run_command"
+      ]
+    },
+    {
+      "name": "m_funktion_umbenennen",
+      "stufe": 2,
+      "lauf": 2,
+      "saat": 4468002801560041,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 329.0,
+      "werkzeuge": [
+        "search_skill",
+        "list_directory",
+        "read_file",
+        "read_file",
+        "read_file",
+        "replace_everywhere",
+        "run_command"
+      ]
+    },
+    {
+      "name": "m_funktion_umbenennen",
+      "stufe": 2,
+      "lauf": 3,
+      "saat": 6135214929457457,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 379.2,
+      "werkzeuge": [
+        "list_directory",
+        "search_skill",
+        "list_directory",
+        "learn_skill",
+        "read_file",
+        "read_file",
+        "read_file",
+        "replace_everywhere",
+        "run_command"
+      ]
+    },
+    {
+      "name": "m_csv_filtern",
+      "stufe": 2,
+      "lauf": 1,
+      "saat": 8213088584698225,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 336.5,
+      "werkzeuge": [
+        "list_directory",
+        "search_files",
+        "read_file",
+        "write_file",
+        "read_file",
+        "write_file",
+        "read_file"
+      ]
+    },
+    {
+      "name": "m_csv_filtern",
+      "stufe": 2,
+      "lauf": 2,
+      "saat": 4468002801560041,
+      "bestanden": false,
+      "grund": "Abnahme mit 1: ",
+      "sekunden": 277.5,
+      "werkzeuge": [
+        "list_directory",
+        "read_file",
+        "write_file"
+      ]
+    },
+    {
+      "name": "m_csv_filtern",
+      "stufe": 2,
+      "lauf": 3,
+      "saat": 6135214929457457,
+      "bestanden": false,
+      "grund": "Abnahme mit 1: ",
+      "sekunden": 301.4,
+      "werkzeuge": [
+        "search_skill",
+        "list_directory",
+        "read_file",
+        "write_file"
+      ]
+    },
+    {
+      "name": "k_tests_gruen",
+      "stufe": 3,
+      "lauf": 1,
+      "saat": 8213088584698225,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 435.8,
+      "werkzeuge": [
+        "learn_skill",
+        "run_command",
+        "read_file",
+        "read_file",
+        "edit_file",
+        "run_command",
+        "edit_file",
+        "run_command"
+      ]
+    },
+    {
+      "name": "k_tests_gruen",
+      "stufe": 3,
+      "lauf": 2,
+      "saat": 4468002801560041,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 448.1,
+      "werkzeuge": [
+        "search_skill",
+        "learn_skill",
+        "run_command",
+        "read_file",
+        "read_file",
+        "edit_file",
+        "run_command",
+        "edit_file",
+        "run_command"
+      ]
+    },
+    {
+      "name": "k_tests_gruen",
+      "stufe": 3,
+      "lauf": 3,
+      "saat": 6135214929457457,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 466.6,
+      "werkzeuge": [
+        "learn_skill",
+        "list_directory",
+        "run_command",
+        "read_file",
+        "read_file",
+        "edit_file",
+        "run_command",
+        "edit_file",
+        "run_command"
+      ]
+    },
+    {
+      "name": "k_logs_auswerten",
+      "stufe": 3,
+      "lauf": 1,
+      "saat": 8213088584698225,
+      "bestanden": false,
+      "grund": "Abnahme mit 1: ",
+      "sekunden": 332.1,
+      "werkzeuge": [
+        "list_directory",
+        "read_file",
+        "read_file",
+        "read_file",
+        "write_file"
+      ]
+    },
+    {
+      "name": "k_logs_auswerten",
+      "stufe": 3,
+      "lauf": 2,
+      "saat": 4468002801560041,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 358.4,
+      "werkzeuge": [
+        "list_directory",
+        "search_skill",
+        "list_directory",
+        "search_skill",
+        "read_file",
+        "read_file",
+        "read_file",
+        "write_file"
+      ]
+    },
+    {
+      "name": "k_logs_auswerten",
+      "stufe": 3,
+      "lauf": 3,
+      "saat": 6135214929457457,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 328.9,
+      "werkzeuge": [
+        "list_directory",
+        "read_file",
+        "read_file",
+        "read_file",
+        "write_file"
+      ]
+    },
+    {
+      "name": "k_konfig_migrieren",
+      "stufe": 3,
+      "lauf": 1,
+      "saat": 8213088584698225,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 322.7,
+      "werkzeuge": [
+        "list_directory",
+        "read_file",
+        "write_file",
+        "read_file"
+      ]
+    },
+    {
+      "name": "k_konfig_migrieren",
+      "stufe": 3,
+      "lauf": 2,
+      "saat": 4468002801560041,
+      "bestanden": false,
+      "grund": "Abnahme mit 1: ",
+      "sekunden": 327.0,
+      "werkzeuge": [
+        "list_directory",
+        "read_file",
+        "write_file",
+        "read_file"
+      ]
+    },
+    {
+      "name": "k_konfig_migrieren",
+      "stufe": 3,
+      "lauf": 3,
+      "saat": 6135214929457457,
+      "bestanden": false,
+      "grund": "Abnahme mit 1: ",
+      "sekunden": 322.7,
+      "werkzeuge": [
+        "list_directory",
+        "read_file",
+        "write_file",
+        "read_file"
+      ]
+    },
+    {
+      "name": "o_cli_inventar",
+      "stufe": 4,
+      "lauf": 1,
+      "saat": 8213088584698225,
+      "bestanden": false,
+      "grund": "Abnahme mit 2: ibrary/Developer/CommandLineTools/usr/bin/python3: can't open file '/private/var/folders/ll/rw70f8yd0wv955bq3sck012h0000gn/T/myl-agentenprobe-f1x97hum/inventar.py': [Errno 2] No such file or directory",
+      "sekunden": 745.0,
+      "werkzeuge": [
+        "search_skill",
+        "learn_skill",
+        "list_directory",
+        "unlesbarer",
+        "unlesbarer",
+        "unlesbarer"
+      ]
+    },
+    {
+      "name": "o_cli_inventar",
+      "stufe": 4,
+      "lauf": 2,
+      "saat": 4468002801560041,
+      "bestanden": false,
+      "grund": "Abnahme mit 2: ibrary/Developer/CommandLineTools/usr/bin/python3: can't open file '/private/var/folders/ll/rw70f8yd0wv955bq3sck012h0000gn/T/myl-agentenprobe-a96_i05t/inventar.py': [Errno 2] No such file or directory",
+      "sekunden": 907.0,
+      "werkzeuge": [
+        "learn_skill",
+        "unlesbarer",
+        "unlesbarer",
+        "unlesbarer"
+      ]
+    },
+    {
+      "name": "o_cli_inventar",
+      "stufe": 4,
+      "lauf": 3,
+      "saat": 6135214929457457,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 717.1,
+      "werkzeuge": [
+        "learn_skill",
+        "write_file",
+        "read_file",
+        "edit_file",
+        "run_command",
+        "run_command",
+        "run_command"
+      ]
+    },
+    {
+      "name": "o_refaktor_waehrung",
+      "stufe": 4,
+      "lauf": 1,
+      "saat": 8213088584698225,
+      "bestanden": false,
+      "grund": "Abnahme mit 1: le \"/private/var/folders/ll/rw70f8yd0wv955bq3sck012h0000gn/T/myl-agentenprobe-gwqmvejp/test_waehrung.py\", line 5, in <module>     assert formatieren(0) == \"0,00 €\", formatieren(0) AssertionError: 0€00",
+      "sekunden": 810.3,
+      "werkzeuge": [
+        "search_skill",
+        "list_directory",
+        "learn_skill",
+        "read_file",
+        "read_file",
+        "read_file",
+        "read_file",
+        "write_file",
+        "run_command",
+        "write_file",
+        "write_file",
+        "run_command",
+        "write_file",
+        "write_file",
+        "write_file",
+        "write_file",
+        "run_command",
+        "run_command",
+        "edit_file",
+        "run_command",
+        "write_file",
+        "run_command",
+        "write_file",
+        "run_command",
+        "write_file",
+        "run_command",
+        "write_file",
+        "run_command",
+        "write_file"
+      ]
+    },
+    {
+      "name": "o_refaktor_waehrung",
+      "stufe": 4,
+      "lauf": 2,
+      "saat": 4468002801560041,
+      "bestanden": false,
+      "grund": "Abnahme mit 1: sck012h0000gn/T/myl-agentenprobe-wzgcb_4n/waehrung.py\", line 3     s = s.replace(\".\", \",\").replace(\"\\\",\",\")                                             ^ SyntaxError: EOL while scanning string literal",
+      "sekunden": 1469.9,
+      "werkzeuge": [
+        "search_skill",
+        "learn_skill",
+        "list_directory",
+        "read_file",
+        "read_file",
+        "read_file",
+        "read_file",
+        "unlesbarer",
+        "write_file",
+        "read_file",
+        "edit_file",
+        "write_file",
+        "run_command",
+        "unlesbarer",
+        "unlesbarer",
+        "run_command",
+        "run_command",
+        "unlesbarer",
+        "run_command",
+        "run_command",
+        "run_command",
+        "run_command",
+        "write_file",
+        "write_file",
+        "run_command",
+        "write_file",
+        "run_command"
+      ]
+    },
+    {
+      "name": "o_refaktor_waehrung",
+      "stufe": 4,
+      "lauf": 3,
+      "saat": 6135214929457457,
+      "bestanden": false,
+      "grund": "Abnahme mit 1: ders/ll/rw70f8yd0wv955bq3sck012h0000gn/T/myl-agentenprobe-ssaaje6d/test_waehrung.py\", line 7, in <module>     assert formatieren(1234.5) == \"1.234,50 €\", formatieren(1234.5) AssertionError: 1,234,50 €",
+      "sekunden": 1724.5,
+      "werkzeuge": [
+        "list_directory",
+        "search_skill",
+        "learn_skill",
+        "read_file",
+        "read_file",
+        "read_file",
+        "read_file",
+        "write_file",
+        "run_command",
+        "edit_file",
+        "run_command",
+        "edit_file",
+        "edit_file",
+        "edit_file",
+        "edit_file",
+        "edit_file",
+        "edit_file",
+        "edit_file",
+        "edit_file",
+        "edit_file",
+        "edit_file",
+        "edit_file",
+        "edit_file",
+        "unlesbarer",
+        "unlesbarer",
+        "write_file",
+        "run_command",
+        "write_file"
+      ]
+    },
+    {
+      "name": "o_daten_bereinigen",
+      "stufe": 4,
+      "lauf": 1,
+      "saat": 8213088584698225,
+      "bestanden": false,
+      "grund": "Abnahme mit 1: ",
+      "sekunden": 355.7,
+      "werkzeuge": [
+        "list_directory",
+        "read_file",
+        "write_file",
+        "read_file"
+      ]
+    },
+    {
+      "name": "o_daten_bereinigen",
+      "stufe": 4,
+      "lauf": 2,
+      "saat": 4468002801560041,
+      "bestanden": false,
+      "grund": "Abnahme mit 1: ",
+      "sekunden": 389.0,
+      "werkzeuge": [
+        "list_directory",
+        "search_skill",
+        "read_file",
+        "write_file",
+        "read_file",
+        "read_file"
+      ]
+    },
+    {
+      "name": "o_daten_bereinigen",
+      "stufe": 4,
+      "lauf": 3,
+      "saat": 6135214929457457,
+      "bestanden": false,
+      "grund": "Abnahme mit 1: ",
+      "sekunden": 388.7,
+      "werkzeuge": [
+        "list_directory",
+        "read_file",
+        "search_skill",
+        "learn_skill",
+        "write_file",
+        "read_file"
+      ]
+    }
+  ]
+}

@@ -1771,7 +1771,7 @@ fn glas_hat_dicke_und_spiegelung() {
 /// diese Zahlen bewegen, und wer darueber hinauskommt, bekommt es
 /// gesagt statt eines stillen Durchlaufs.
 fn zahlwort(n: usize) -> String {
-    const WORTE: [&str; 51] = [
+    const WORTE: [&str; 61] = [
         "null", "ein", "zwei", "drei", "vier", "fünf", "sechs", "sieben", "acht", "neun",
         "zehn", "elf", "zwölf", "dreizehn", "vierzehn", "fünfzehn", "sechzehn", "siebzehn",
         "achtzehn", "neunzehn", "zwanzig", "einundzwanzig", "zweiundzwanzig",
@@ -1781,7 +1781,9 @@ fn zahlwort(n: usize) -> String {
         "fünfunddreissig", "sechsunddreissig", "siebenunddreissig", "achtunddreissig",
         "neununddreissig", "vierzig", "einundvierzig", "zweiundvierzig", "dreiundvierzig",
         "vierundvierzig", "fünfundvierzig", "sechsundvierzig", "siebenundvierzig",
-        "achtundvierzig", "neunundvierzig", "fünfzig",
+        "achtundvierzig", "neunundvierzig", "fünfzig", "einundfünfzig", "zweiundfünfzig",
+        "dreiundfünfzig", "vierundfünfzig", "fünfundfünfzig", "sechsundfünfzig",
+        "siebenundfünfzig", "achtundfünfzig", "neunundfünfzig", "sechzig",
     ];
     WORTE
         .get(n)
@@ -2488,6 +2490,11 @@ fn ein_eintrag_entsteht_nur_auf_zwei_wege() {
     // und geht erst mit dem abgeschickten Auftrag ins Gespraech; sie
     // eroeffnet also keines mehr. **Die Pruefung haelt die Zahl fest,
     // nicht die Absicht**; wer sie erhoeht, soll hier begruenden, warum.
+    //
+    // ⚑ **Seit dem 2026-09-30 wieder drei**: Ein Loop-Task, angelegt, ohne
+    // dass ein Agentengespraech offen ist, eroeffnet eines
+    // (`gespraech_fuer_neuen_task`, Festlegung des Projektinhabers). Das ist
+    // ein Knopfdruck mit Absicht, kein Moduswechsel.
     let anlagen: Vec<&str> = js
         .lines()
         .map(str::trim)
@@ -2495,8 +2502,8 @@ fn ein_eintrag_entsteht_nur_auf_zwei_wege() {
         .collect();
     assert_eq!(
         anlagen.len(),
-        2,
-        "es wird an {} Stellen angelegt, erlaubt sind Knopf und Abschicken:\n{anlagen:#?}",
+        3,
+        "es wird an {} Stellen angelegt, erlaubt sind Knopf, Abschicken und ein neuer Loop-Task ohne offenes Gespraech:\n{anlagen:#?}",
         anlagen.len()
     );
 
@@ -2825,7 +2832,9 @@ fn ein_beruehrtes_gespraech_wandert_nach_oben() {
     //    Bytes. Lag an Byte 900 ein mehrbytiges Zeichen (am 2026-09-26 ein
     //    ⚑ in einem Kommentar), brach die Probe mit „not a char boundary"
     //    ab, statt etwas ueber das Umordnen zu sagen.
-    let rumpf = &senden[..zeichengrenze_unten(senden, 900)];
+    // ⚑ 1 400 seit dem 2026-09-30: Vor dem Umordnen stehen jetzt auch die
+    //    anliegenden Skills.
+    let rumpf = &senden[..zeichengrenze_unten(senden, 1400)];
     assert!(
         rumpf.contains("nach_oben(offen)"),
         "beim Senden wird nicht umgeordnet"
@@ -3084,7 +3093,7 @@ fn der_einhaengepfad_gehoert_dem_prozess() {
 
     // Und beide Befehle bekommen ihn mit.
     assert!(
-        js.contains("invoke(\"agent_fahren\", { auftrag: text, verlauf: vorher, wurzel: prozesspfad() })"),
+        js.contains("invoke(\"agent_fahren\", { auftrag: agentenauftrag, verlauf: vorher, wurzel: prozesspfad() })"),
         "der Agentenlauf bekommt den Pfad des Prozesses nicht mit"
     );
     assert!(
@@ -3774,4 +3783,59 @@ fn die_pause_greift_sofort() {
     let rs = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/main.rs")).expect("main.rs");
     let p = rs.find("fn loop_pausieren(").expect("loop_pausieren");
     assert!(rs[p..p + 1200].contains("beenden_im_faden("), "die Pause beendet den laufenden Befehl nicht");
+}
+
+/// ⚑ **Ein Loop-Task gehoert zum offenen Agentengespraech** (Festlegung des
+/// Projektinhabers, 2026-09-30), seine Runden bekommen dessen Verlauf und
+/// Ordner, und die Liste nennt beides: „Ziel (Gespraech)“.
+#[test]
+fn ein_task_gehoert_zu_seinem_gespraech() {
+    let js = lies("app.js");
+    assert!(
+        js.contains("invoke(\"task_anlegen\", { ziel, gespraech: g.id, wurzel: g.wurzel || null })"),
+        "ein Task wird ohne sein Gespraech angelegt"
+    );
+    let a = js.find("function gespraech_fuer_neuen_task(ziel) {").expect("Wahl des Gespraechs");
+    assert!(
+        js[a..a + 200].contains("if (offen && offen.modus === \"agent\") return offen;"),
+        "ein neuer Task nimmt nicht das offene Agentengespraech"
+    );
+    assert!(js.contains("name.textContent = `${z.ziel} (${zu})`;"), "die Liste nennt das Gespraech nicht");
+    assert!(js.contains("invoke(\"loop_umfeld\", { gespraech: g.id, verlauf: kontext_von(g), wurzel: g.wurzel || null })"));
+    for stelle in ["await loopumfelder_senden();", "if (hat_tasks(g)) loopumfeld_senden(g);", "if (hat_tasks(offen)) loopumfeld_senden(offen);"] {
+        assert!(js.contains(stelle), "das Umfeld wird hier nicht mehr geschickt: {stelle}");
+    }
+}
+
+/// ⚑ **„Skill lernen" steht links im Eingabefeld, gleich rechts neben
+/// „Datei anhaengen"** (Auftrag des Projektinhabers, 2026-09-30), und
+/// alles, was der Knopf braucht, ist verdrahtet: die beiden Befehle im
+/// Fenster, ihr Aufruf im Skript und die Beschriftung in beiden Sprachen.
+#[test]
+fn der_skillknopf_steht_neben_dem_anhang_und_ist_verdrahtet() {
+    let html = lies("index.html");
+    let links = html.find("class=\"knopfseite links\"").expect("die linke Knopfseite fehlt");
+    let ende = links + html[links..].find("</span>").expect("die linke Knopfseite endet nicht");
+    let seite = &html[links..ende];
+    let anhang = seite.find("id=\"anhang\"").expect("der Anhangknopf steht nicht links");
+    let skill = seite.find("id=\"skill\"").expect("der Skillknopf steht nicht links im Eingabefeld");
+    assert!(anhang < skill, "der Skillknopf steht vor dem Anhang statt rechts daneben");
+    // Zwischen beiden steht kein weiterer Knopf.
+    assert_eq!(seite[anhang..skill].matches("<button").count(), 1, "zwischen Anhang und Skill steht ein Knopf");
+    assert!(seite[skill..].contains("data-t-marke=\"knopf.skill\""));
+
+    let js = lies("app.js");
+    assert_eq!(js.matches("\"knopf.skill\":").count(), 2, "die Beschriftung fehlt in einer Sprache");
+    for aufruf in ["invoke(\"skill_waehlen\"", "invoke(\"skill_auftrag\""] {
+        assert!(js.contains(aufruf), "das Skript ruft {aufruf} nicht");
+    }
+    // ⚑ Ein Skill allein ist auch ein Auftrag: Die Sperre gegen leere
+    //   Eingaben fragt nach allem, was an der Eingabe haengt.
+    assert!(js.contains("if (!text && anhaenge_offen.length === 0) return;"));
+
+    let rs = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/main.rs")).expect("main.rs");
+    let liste = &rs[rs.find("generate_handler![").expect("die Befehlsliste fehlt")..];
+    for befehl in ["skill_waehlen,", "skill_auftrag,"] {
+        assert!(liste.contains(befehl), "{befehl} ist nicht angemeldet");
+    }
 }

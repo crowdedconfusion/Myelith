@@ -5,7 +5,9 @@
 //! **Nur [`crate::linear::linear_w8a16_stapel`] und sein Zwilling mit
 //! einer Ausgangsskala je Kanal**, also viele Eingaben auf denselben
 //! Gewichten: die sieben Matrizen einer Ebene in der Vorbereitung eines
-//! Prompts. Alles andere bleibt auf der CPU, und zwar gemessen:
+//! Prompts. Seit dem 2026-09-30 fuer beide Gewichtsarten: int8 und ternaer
+//! gepackt ([`stapel_ternaer`]). Alles andere bleibt auf der CPU, und zwar
+//! gemessen:
 //!
 //! | je Matrix, `down_proj` des 4B | eine Eingabe | 169 Eingaben |
 //! |---|---|---|
@@ -160,6 +162,45 @@ pub fn stapel(
     rechnen(xs, w, in_features, &abstaende_fuer(w_shifts, act_frac_bits, ziel))
 }
 
+/// **Wie [`stapel`], fuer ternaer gepackte Gewichte** (`crate::ternaer`):
+/// Muster und Betraege statt int8.
+///
+/// ⚑ **Eigener Weg im Shader, dieselbe Zahl.** Die Codes werden auf der
+/// GPU entpackt, `matmul2d` rechnet je 128er-Gruppe, und das Teilprodukt
+/// wird mit dem Betrag der Gruppe in int64 gesammelt: die Klammerung der
+/// CPU, `sum_g m_g * (sum_{i in g} t_i * x_i)`. Geprueft in der
+/// Selbstpruefung und in `ternaer_rechnet_wie_die_cpu`.
+///
+/// 📌 **Gemessen am 2026-09-30** (M5 Pro, 17 408 x 5 120, 231 Eingaben):
+/// 2,3 T Gewichte mal Eingaben je Sekunde, gegen 0,6 T auf allen Kernen
+/// der CPU. Ein eigener Shader ohne `matmul2d` kam auf 1,3 T, `matmul2d`
+/// ueber die ganze Breite (nur fuer int8 moeglich) auf 6 T.
+pub fn stapel_ternaer(
+    xs: &[&[i16]],
+    muster: &[u8],
+    betraege: &[i16],
+    in_features: usize,
+    w_shifts: &[u8],
+    act_frac_bits: u8,
+    ziel: &dyn Fn(usize) -> u8,
+) -> Option<Vec<Vec<i16>>> {
+    let ab = schwelle();
+    if ab == 0 || xs.len() < ab || in_features == 0 || in_features % 128 != 0 || in_features > HOECHSTE_SPALTENZAHL {
+        return None;
+    }
+    rechnen_ternaer(xs, muster, betraege, in_features, &abstaende_fuer(w_shifts, act_frac_bits, ziel))
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+fn rechnen_ternaer(xs: &[&[i16]], muster: &[u8], betraege: &[i16], in_features: usize, abstaende: &[i8]) -> Option<Vec<Vec<i16>>> {
+    geraet::stapel_ternaer(&geraet::Ternaerjob { xs, muster, betraege, spalten: in_features, abstaende })
+}
+
+#[cfg(not(all(feature = "metal", target_os = "macos")))]
+fn rechnen_ternaer(_: &[&[i16]], _: &[u8], _: &[i16], _: usize, _: &[i8]) -> Option<Vec<Vec<i16>>> {
+    None
+}
+
 /// Ein Stapel fuer [`stapel_viele`], mit denselben Angaben wie [`stapel`].
 pub struct Auftrag<'a> {
     pub xs: &'a [&'a [i16]],
@@ -242,6 +283,16 @@ fn rechnen(_: &[&[i16]], _: &[i8], _: usize, _: &[i8]) -> Option<Vec<Vec<i16>>> 
     None
 }
 
+/// **Wuerde ein Stapel mit `eingaben` Eingaben auf der GPU rechnen?**
+///
+/// ⚑ Fuer Aufrufer, die zwischen einem verschmolzenen Weg auf der CPU und
+/// getrennten Matrizen auf der GPU waehlen (der gedrehte MLP): dieselbe
+/// Bedingung wie in [`stapel`], an einer Stelle.
+pub fn nimmt(eingaben: usize) -> bool {
+    let ab = schwelle();
+    ab != 0 && eingaben >= ab && verfuegbar()
+}
+
 /// **Warum die GPU nicht rechnet**, oder `None`, wenn sie es darf.
 ///
 /// Fuer Meldungen an Menschen: Ein Testlauf, der einen Rechenweg
@@ -309,6 +360,53 @@ mod tests {
             s ^= s >> 7;
             s ^= s << 17;
             s
+        }
+    }
+
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    /// **Ternaere Gewichte rechnen auf der GPU wie auf der CPU**, direkt
+    /// und ueber die Weiche in `linear`, mit einer Skala und mit einer je
+    /// Kanal, ueber Kachelraender in Zeilen und Eingaben.
+    #[test]
+    fn ternaer_rechnet_wie_die_cpu() {
+        if !gpu_bereit() {
+            return;
+        }
+        use crate::linear::{linear_matrix_pc_stapel, linear_matrix_pc_stapel_cpu, linear_matrix_stapel, Gewichtsmatrix};
+        use crate::ternaer::Ternaermatrix;
+        let mut zufall = xorshift(0xABCD_EF01_2345_6789);
+        for (zeilen, spalten, stapel) in [(200usize, 640usize, 40usize), (65, 128, 17), (1, 256, 16)] {
+            let gruppen = spalten / 128;
+            let muster: Vec<u8> = (0..zeilen * spalten / 4)
+                .map(|_| {
+                    let r = zufall();
+                    (0..4).fold(0u8, |b, s| b | ((((r >> (8 * s)) % 3) as u8) << (2 * s)))
+                })
+                .collect();
+            let betraege: Vec<i16> = (0..zeilen * gruppen).map(|_| (zufall() % 20_000) as i16).collect();
+            let eingaben: Vec<Vec<i16>> = (0..stapel).map(|_| (0..spalten).map(|_| zufall() as i16).collect()).collect();
+            let xs: Vec<&[i16]> = eingaben.iter().map(|e| e.as_slice()).collect();
+            let w_shifts: Vec<u8> = (0..zeilen).map(|z| 18 + (z % 5) as u8).collect();
+            let ziele: Vec<u8> = (0..zeilen).map(|z| 2 + (z % 3) as u8).collect();
+            let t: Gewichtsmatrix<'_> = Ternaermatrix::neu(&muster, &betraege, zeilen, spalten).unwrap().into();
+            let cpu = linear_matrix_pc_stapel_cpu(&xs, t, spalten, &w_shifts, 9, &ziele);
+            assert!(cpu.iter().flatten().any(|&v| v != 0 && v != i16::MAX && v != i16::MIN), "nur Nullen oder Saettigung");
+
+            let abstaende = abstaende_fuer(&w_shifts, 9, &|z| ziele[z]);
+            let job = geraet::Ternaerjob { xs: &xs, muster: &muster, betraege: &betraege, spalten, abstaende: &abstaende };
+            let direkt = geraet::direkt_ternaer(&job).expect("GPU bereit").expect("Befehlspuffer");
+            assert_eq!(direkt, cpu, "{zeilen} x {spalten}, {stapel} Eingaben, direkt");
+
+            // Ueber die Weiche: ab der Schwelle rechnet die GPU, und der
+            // Zaehler belegt es.
+            let vorher = gerechnet();
+            assert_eq!(linear_matrix_pc_stapel(&xs, t, spalten, &w_shifts, 9, &ziele), cpu);
+            let eine = linear_matrix_stapel(&xs, t, spalten, &w_shifts, 9, 4);
+            let ziel4 = vec![4u8; zeilen];
+            assert_eq!(eine, linear_matrix_pc_stapel_cpu(&xs, t, spalten, &w_shifts, 9, &ziel4));
+            if stapel >= schwelle() && schwelle() != 0 {
+                assert!(gerechnet() >= vorher + 2, "die Weiche hat die GPU nicht genommen");
+            }
         }
     }
 

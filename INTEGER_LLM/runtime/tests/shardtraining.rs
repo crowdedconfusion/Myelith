@@ -784,3 +784,45 @@ fn die_zeilenbreiten_decken_das_gemisch_ab() {
     // erst zur Laufzeit fest.
     assert_eq!(b.len(), 4 + 1 + 3 * 4);
 }
+
+/// ⛔️ **Fund 508: Was der Trainingspfad vorwaerts nicht rechnet, weist er
+/// ab.** Ein Tor am Ausgang der Achtsamkeit und eine Positionsdrehung ueber
+/// einen Teil des Kopfes gibt es in der Inferenz; der Vorwaertspass des
+/// Trainings kennt beides nicht und liefe trotzdem durch, mit Zahlen statt
+/// einer Meldung.
+///
+/// ⚑ **Am 0,6B, mit je einem umgestellten Merkmal**, denn die Modelle, die
+/// diese Bauarten wirklich tragen, liegen nicht auf jeder Maschine, und die
+/// Schranke haengt nur am Merkmal.
+#[test]
+fn ein_vorwaertspfad_den_das_training_nicht_rechnet_wird_abgewiesen() {
+    use integer_llm_runtime::model::{Drehung, Mischer};
+    use integer_llm_runtime::shardtraining::Shardfehler;
+    let abgewiesen = |m: &IntegerModel| {
+        matches!(
+            Shardgewichte::aus_modell(m, m.num_layers - 1, m.num_layers),
+            Err(Shardfehler::VorwaertspfadNichtGetragen { .. })
+        )
+    };
+
+    let Some(mut m) = modell() else { return };
+    assert!(!abgewiesen(&m), "das unveraenderte Modell wird abgewiesen");
+
+    m.achtsamkeit_mit_tor = true;
+    assert!(abgewiesen(&m), "ein Tor am Ausgang der Achtsamkeit laeuft durch");
+    m.achtsamkeit_mit_tor = false;
+
+    let breite = m.drehbreite;
+    m.drehbreite = m.head_dim / 4;
+    assert!(abgewiesen(&m), "eine Teildrehung der Position laeuft durch");
+    m.drehbreite = breite;
+
+    // ⚑ Eine Eingangsdrehung wird NICHT mehr abgewiesen: Der Trainingspfad
+    //   rechnet sie selbst (geprueft in den Kernen und an einer echten
+    //   Ebene in `trainingsschleife`).
+    let letzte = m.num_layers - 1;
+    let vorzeichen = std::sync::Arc::new(vec![1i8; m.hidden_size]);
+    let Mischer::Achtsamkeit(a) = &mut m.layers[letzte].mischer else { panic!("das 0,6B mischt mit Achtsamkeit") };
+    a.v_proj.drehung = Some(std::sync::Arc::new(Drehung { vorzeichen, frac: 9 }));
+    assert!(Shardgewichte::aus_modell(&m, letzte, letzte + 1).is_ok(), "eine Eingangsdrehung wird abgewiesen");
+}

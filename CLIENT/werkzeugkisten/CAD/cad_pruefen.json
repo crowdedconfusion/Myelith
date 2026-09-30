@@ -1,0 +1,13 @@
+{
+  "name": "cad_pruefen",
+  "beschreibung": "Liest eine FreeCAD-Datei (.FCStd) und meldet ihre Parameter, Bauteile, Abmessungen, Volumen und Fehler, ohne sie zu aendern.",
+  "parameter": {
+    "type": "object",
+    "properties": {
+      "datei": { "type": "string", "description": "Pfad der .FCStd-Datei im Arbeitsordner." }
+    },
+    "required": ["datei"]
+  },
+  "befehl": "sh \"$MYL_KISTE/cad.sh\" pruefen {datei}",
+  "zeitgrenze_s": 120
+}

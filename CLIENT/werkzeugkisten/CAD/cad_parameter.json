@@ -1,0 +1,14 @@
+{
+  "name": "cad_parameter",
+  "beschreibung": "Aendert Parameter einer FreeCAD-Datei (.FCStd), rechnet das Modell neu, speichert es und schreibt die .step-Datei daneben neu. Meldet die Werte vorher und nachher und die neuen Abmessungen.",
+  "parameter": {
+    "type": "object",
+    "properties": {
+      "datei": { "type": "string", "description": "Pfad der .FCStd-Datei im Arbeitsordner." },
+      "werte": { "type": "string", "description": "Neue Werte, mit Strichpunkt getrennt, zum Beispiel: breite=60 mm; bohrung=4.5 mm" }
+    },
+    "required": ["datei", "werte"]
+  },
+  "befehl": "sh \"$MYL_KISTE/cad.sh\" parameter {datei} {werte}",
+  "zeitgrenze_s": 120
+}

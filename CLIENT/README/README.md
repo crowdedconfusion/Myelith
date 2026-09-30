@@ -1,7 +1,7 @@
 # client (Nutzer-Client inkl. Wallet)
 
-> **Version:** 0.107.0 (`myl-client` 0.74.1, `myl-oberflaeche` 0.56.0, `myl-console` 0.27.0, `myl-senses` 0.11.0)
-> **Datum:** 2026-09-28
+> **Version:** 0.112.0 (`myl-client` 0.78.0, `myl-oberflaeche` 0.58.0, `myl-console` 0.28.0, `myl-senses` 0.11.0)
+> **Datum:** 2026-09-30
 > **Status:** ✅ **Der lokale Betrieb läuft und ist ausgeliefert.** Ein
 > Gesprächsfenster mit Modellwahl, Agentenschleife und
 > Einstellungsseite; aus einem frischen Klon lassen sich darüber
@@ -52,7 +52,7 @@ kostet nichts, wenn er stimmt, und einen halben Tag, wenn nicht.
 | **Gespraeche verwalten** | Rechtsklick auf eine Zeile: umbenennen an Ort und Stelle, als Markdown ausgeben, loeschen. Wohin ausgegeben wird, steht in `ausgabe.ordner`; ohne Angabe fuehrt das Fenster dorthin |
 
 ⚑ **Die Oberfläche ruft dieselben Funktionen wie die Kommandozeile**,
-über fünfzig Befehle. ⚠️ **Mit genau einer Ausnahme, und sie ist gewollt:** `terminal_ausfuehren` startet eine Shell, denn ein Terminal, das keine startet, ist keines. Jeder andere Befehl startet **keinen einzigen Unterprozess**. `jeder_befehl_ist_angemeldet` hält die vier
+über dreiundfünfzig Befehle. ⚠️ **Mit genau einer Ausnahme, und sie ist gewollt:** `terminal_ausfuehren` startet eine Shell, denn ein Terminal, das keine startet, ist keines. Jeder andere Befehl startet **keinen einzigen Unterprozess**. `jeder_befehl_ist_angemeldet` hält die vier
 Richtungen zusammen: kein Befehl ohne Anmeldung, keine Anmeldung ohne
 Befehl, kein Aufruf ins Leere und kein Befehl, den niemand ruft. „Ohne eigene Logik" hiesse sonst, aus einer Textausgabe
 für Menschen eine Schnittstelle zu machen, und genau das ist die Sorte
@@ -152,6 +152,270 @@ Modell überhaupt etwas taugt, und weil eine Schnittstelle, die kein
 Mensch je bedient hat, an den Bedürfnissen vorbei entworfen wird.
 
 ## Changelog
+
+### v0.112.0 – 2026-09-30 (ein Agentenlauf bekommt mindestens 4 000 Token; ein Beispielteil in `WORK_DIR`)
+
+`myl-client` 0.78.0. **Festlegung des Projektinhabers** nach dem CAD-Lauf
+(Nachtrag unten): Der Agent bekommt mehr Platz je Antwort.
+
+- **Neu `einstellungen::AGENT_ANTWORT_MINDESTENS = 4000`**, die Untergrenze
+  jedes Agentenlaufs (`lauf.rs`, der eine Punkt, an dem alle Agentenläufe
+  ankommen: Fenster, Konsole, `myl agent`, Loop). Bisher war es die Vorgabe
+  für das Gespräch, 1 600. Das Gespräch behält 1 600: Dort endet eine Antwort
+  von selbst, und es wird nichts geschrieben.
+- **Anlass, gemessen:** Das 35B mit Denken brachte bei 1 600 Token ein kurzes
+  CAD-Skript dreimal nicht bis zum Ende des Aufrufs; bei 4 000 gelang
+  derselbe Auftrag.
+- Hilfe von `myl` und die Beschreibung von `modell.token` (deutsch und
+  englisch) nennen die 4 000. Die Probe
+  `ein_agentenlauf_bekommt_nie_weniger_als_die_vorgabe` prüft jetzt gegen die
+  Untergrenze des Agenten und dass sie nicht unter 4 000 sinkt.
+- **`WORK_DIR/grundplatte.FCStd`**: das Teil aus dem CAD-Lauf, zum Öffnen in
+  FreeCAD (Wunsch des Projektinhabers).
+- ⚑ **Der Inhalt von `WORK_DIR` ist nicht mehr versioniert, der Ordner
+  schon** (Festlegung des Projektinhabers): `WORK_DIR/.gitignore` schließt
+  alles aus außer sich selbst und der `README.md`, die den Ordner erklärt.
+  Der Ordner gehört dem Nutzer und dem Agenten; jeder frische Klon hat ihn
+  trotzdem, denn das Fenster nimmt ihn als Vorgabe. Die Beschreibung von
+  `agent.wurzel` verspricht deshalb keine Beispieldateien mehr. Die sechs
+  bisher versionierten Beispieldateien sind aus dem Index genommen
+  (`git rm --cached`, auf Bitte des Projektinhabers); auf der Platte liegen
+  sie weiter.
+
+- ⛔️ **Im Fenster von FreeCAD war das Teil unsichtbar** (gemeldet vom
+  Projektinhaber): FreeCAD ohne Fenster schreibt nur `Document.xml`, die
+  Sichtbarkeit steht aber in `GuiDocument.xml`, und ohne sie blendet FreeCAD
+  beim Öffnen jedes Objekt aus. Nachgestellt, indem FreeCAD mit seinem
+  Fenster ohne Bildschirm (`QT_QPA_PLATFORM=offscreen`) die Datei öffnete:
+  alles ausgeblendet. `cad_lauf.py` legt jetzt jeder Datei eine
+  `GuiDocument.xml` bei: sichtbar sind die Bauteile und bei einem Körper sein
+  letzter Schritt (wie FreeCAD es selbst hält), dazu eine isometrische
+  Kamera von vorn rechts oben, die das Teil ganz zeigt. 📌 Nur mit
+  Sichtbarkeit genügt nicht: Ohne Kamera und Aufklappliste liest FreeCAD die
+  beigelegte Datei nicht, nachgestellt. Danach offscreen geprüft: Körper und
+  letzter Schritt sichtbar, der Rest nicht. Der Bericht nennt die sichtbaren
+  Objekte.
+- **Keine `.FCBak` mehr:** FreeCAD legte beim Überschreiben eine Sicherung
+  daneben, bei jedem Bauen und jeder Parameteränderung eine. Gespeichert wird
+  jetzt unter einem vorläufigen Namen und dann an die Stelle geschoben.
+- `WORK_DIR/grundplatte.FCStd` ist mit dem berichtigten Werkzeug neu gebaut.
+
+**Beleg:** Proben und Clippy von `myl-client`, `myl-console` und
+`myl-oberflaeche` ohne Befund; die FreeCAD-Probe (`cadkiste`, mit
+`--include-ignored`) prüft die Sichtbarkeit im Bericht und dass keine
+Sicherungsdatei liegen bleibt. ⚠️ Ob die Kamera im Fenster gut sitzt, ist
+nicht gesehen, nur gerechnet (Blickrichtung (1, −1, 1), oben ist Z).
+
+### Nachtrag zu v0.110.0 – 2026-09-30 (die Kiste `CAD` am lokalen Modell)
+
+**Gefahren** mit dem 35B als Agent (Saat 1, Kiste `CAD`, eigener
+Arbeitsordner, automatischer Modus), Auftrag: Grundplatte 80 x 50 x 5 mm, vier
+Bohrungen 4,5 mm, 8 mm vom Rand, Ecken mit 3 mm gerundet, in FreeCAD
+bearbeitbar.
+
+- **Mit 1 600 Token je Antwort gescheitert:** Das Modell lernte den Skill
+  `cad-erstellen` von selbst und zog die Maße richtig heraus, brachte den
+  Aufruf `write_file` aber dreimal nicht vollständig heraus (die Antwort
+  endete vor `</tool_call>`, das Denken läuft vorher mit). Keine Datei.
+- **Mit 4 000 Token gelungen**, fünf Werkzeugaufrufe mit zwei
+  Selbstkorrekturen: ein falsch verschachtelter `write_file` (mit `felder`,
+  dem Parameternamen von `fill_template`), dann richtig; ein erster Bau
+  scheiterte, weil eine Reihe einer Reihe in FreeCAD nicht geht, das Modell
+  las die Meldung und setzte vier einzelne Bohrungen. Ergebnis
+  `grundplatte.FCStd` mit sechs Parametern und sechs Schritten im Baum,
+  80 x 50 x 5 mm, Volumen 19 643,285 mm³; von Hand gerechnet 20 000 minus vier
+  Eckrundungen (38,63) minus vier Bohrungen (318,09) = **19 643,28**.
+- **Daraus:** Der Skill nennt die Falle „Reihe einer Reihe“ jetzt ausdrücklich.
+  ⚠️ **Offen:** Die Grenze von 1 600 Token reicht dem 35B mit Denken für ein
+  Skript nicht; ob der Agent mehr bekommen soll, ist eine Einstellungsfrage.
+
+### v0.111.1 – 2026-09-30 (Systemprompt: Geldanlage mit Hinweis, Zuspruch bei seelischem Leid)
+
+`myl-client` 0.77.1. Eingebaut wird die neue Fassung des Systemprompts
+(Punkte 3 und 4, Wortlaut und Anlass im Changelog von `COMPLIANCE` v0.3.1).
+Die Probe `beide_fassungen_tragen_die_regeln` hält weiter; `verhalten.json`
+hat eine dreizehnte Frage (K2, Art `leid`), und `verhaltensprobe.py` erkennt
+bei der Geldanlage auch den Hinweis „keine Anlageberatung“. ⚠️ Die installierten
+Programme tragen die neue Fassung erst nach der nächsten Installation.
+
+### v0.111.0 – 2026-09-30 (der Systemprompt trägt die Verhaltensregeln; Prüffragen dazu)
+
+`myl-client` 0.77.0. Der eingebaute Systemprompt (`COMPLIANCE/systemprompt/`)
+hat einen neuen Abschnitt „Was du nicht tust“, vom Projektinhaber im Wortlaut
+freigegeben; Inhalt, Begründung und Messung stehen im Changelog von
+`COMPLIANCE` v0.3.0 und im Manifest unter G10. Hier ändert sich:
+
+- **Eingebaut wird der neue Text** in allen drei Programmen, mit neuen
+  Prüfsummen; ohne passende Summe läuft weiter kein Agent.
+- **Der Chat ohne Werkzeuge bekommt die Regeln auch:** `grundsaetze`
+  schneidet vor der Arbeitsweise, und der neue Abschnitt steht davor.
+- **Die Probe `beide_fassungen_tragen_die_regeln` bindet die Kernsätze** in
+  beiden Sprachen (Verstehen gegen Ausführen, der Zweck ist nicht prüfbar,
+  die drei Stufen, die Krise, die Bestätigung) und dass die englische Fassung
+  keine deutsche Nummer nennt.
+- **Neu: `BENCHMARKS/Agent/verhalten.json` und `verhaltensprobe.py`**, zwölf
+  Fragen über `myl frage`, Bericht mit Wortlaut und Stichworturteil.
+
+**Beleg:** Proben von `myl-client`, `myl-console`, `myl-oberflaeche` und
+`local-agent` ohne Befund. Gemessen am 4B: siehe `COMPLIANCE` v0.3.0.
+⚠️ Rund 300 Token mehr in jedem Lauf; die Wirkung auf die Agentenaufgaben
+(`agentenprobe.py`) ist nicht nachgemessen.
+
+### v0.110.0 – 2026-09-30 (Werkzeugkiste `CAD`: parametrische 3D-Teile, in FreeCAD weiter bearbeitbar)
+
+`myl-client` 0.76.1 (nur eine neue Probe). **Auftrag des Projektinhabers:**
+CAD-Werkzeuge für den Agenten; wichtig ist, dass **parametrische** Dateien
+entstehen, die sich in FreeCAD nachbearbeiten lassen.
+
+⚑ **Warum FreeCAD selbst und nicht CadQuery oder OpenSCAD** (mein erster
+Vorschlag war CadQuery): Beide liefern am Ende einen fertigen Körper (STEP
+oder Netz). In FreeCAD lässt sich daran kein Maß mehr ändern. Parametrisch
+**in FreeCAD** ist nur eine `.FCStd` mit Schrittbaum und Parametertabelle.
+Das Werkzeug lässt deshalb FreeCAD ohne Fenster rechnen und schreibt genau
+diese Datei, dazu eine `.step` für andere Programme.
+
+- **Neue Kiste `CLIENT/werkzeugkisten/CAD`** (erbt `Base`, eingebaute von
+  `Advanced` über `kiste.json`), drei Werkzeuge:
+  `cad_bauen` (Python-Skript → `<name>.FCStd` und `<name>.step`),
+  `cad_pruefen` (liest eine `.FCStd`), `cad_parameter` (ändert Parameter,
+  rechnet neu, speichert). Jedes meldet Parameter, Bauteile mit Schritten,
+  Abmessungen, Volumen und Fehler; die letzte Zeile sagt `gelungen` oder
+  `gescheitert`, danach richtet sich der Rückgabewert.
+- **`myl_cad.py`, elf Bausteine** (`dokument`, `parameter`, `koerper`,
+  `quader`, `zylinder`, `ausschnitt`, `bohrung`, `verrunden`, `fase`,
+  `reihe`, `kreis`): Sie legen die Tabelle `Parameter` an und binden jedes
+  Maß, das als Text kommt, als **Ausdruck** an sie (`"breite / 2 - rand"`).
+  Das Ergebnis ist ein PartDesign-Körper. Die FreeCAD-Schnittstelle selbst
+  bleibt im Skript erlaubt.
+- ⚑ **Geschrieben wird nur, was sich rechnen lässt.** Ein Skriptfehler nennt
+  die Zeile; ein Parameterwert, mit dem das Teil nicht mehr aufgeht, lässt
+  die Datei unverändert.
+- **Skill `cad-erstellen`** (mitgeliefert): Vorgehen, die Bausteine, Fallen,
+  ein Beispiel im Text und eine Vorlage `vorlagen/flansch.py`.
+- **`SYSTEM/install/cad-einrichten.sh`**: sieht nach, ob FreeCAD da ist, baut
+  ein Probeteil und sagt sonst, wie es auf die Maschine kommt (`--holen` ruft
+  den Paketverwalter). FreeCAD bleibt außerhalb des Repositoriums; fehlt es,
+  melden die drei Werkzeuge das, und sonst läuft alles.
+
+**Beleg:** `tests/cadkiste.rs`, zwei Proben ohne FreeCAD (Manifeste lesen
+sich, Kiste bekommt `Advanced`, Skill wird unter seinen Stichworten gefunden,
+jeder genannte Baustein existiert) und eine mit `#[ignore]`, hier gefahren mit
+FreeCAD 1.1.1: **Das Beispiel aus dem Skill selbst** baut (60 x 40 x 6 mm,
+Rundung, Lochreihe), folgt geänderten Parametern (90 x 40 x 8 mm), eine nackte
+Zahl behält ihre Einheit, ein unmöglicher Wert und ein unbekannter Parameter
+schreiben nichts, ein Skriptfehler nennt die Zeile, und ein Ausgabename mit
+`../` oder eingeschleustem Befehl wird abgewiesen. Dazu von Hand ein Flansch
+mit Lochkreis und Fase (Volumen 32 674 mm³ gegen 32 915 ohne Fase gerechnet)
+und `cad-einrichten.sh` mit Rückgabewert 0.
+
+⚠️ **Nicht belegt:** dass ein lokales Modell damit aus einem Auftrag ein
+richtiges Teil baut. Geprüft ist der Weg, nicht das Modell. ⚠️ Nur auf macOS
+gefahren; Linux und Windows ungeprüft (unter Windows läuft ein Manifest über
+`sh`). Die Datei ist nicht im FreeCAD-Fenster geöffnet worden.
+
+**Grenzen:** keine freien Profile (Skizzen) in den Bausteinen; Rundung und
+Fase wählen ihre Kanten beim Bauen nach der Lage; kein Vorschaubild.
+
+### v0.109.0 – 2026-09-30 (Skill lernen: Glühbirne im Fenster, `/skill` in der Konsole)
+
+`myl-client` 0.76.0, `myl-oberflaeche` 0.58.0, `myl-console` 0.28.0.
+**Auftrag des Projektinhabers:** ein Knopf „Skill lernen“ links im
+Eingabefeld des Fensters, rechts neben „Datei anhängen“; der lokale
+Skill-Ordner geht auf, der Nutzer wählt eine `skill.md`; das Modell lernt den
+Skill, fasst in einem Satz zusammen, was es daraus gelernt hat, und bearbeitet
+danach den mitgeschickten Auftrag. Ohne Auftrag bleibt es bei dem Satz. In der
+Konsole dasselbe über `/skill`.
+
+- **Fenster:** Die Glühbirne (`#skill`) steht in der linken Knopfseite direkt
+  hinter der Büroklammer. Der Dialog des Systems öffnet im eigenen
+  Skill-Ordner neben den Einstellungen (wird angelegt, falls er fehlt) und
+  zeigt Markdown-Dateien. Der gewählte Skill hängt als Plättchen an der
+  Eingabe wie ein Anhang, lässt sich abwählen und geht mit dem nächsten
+  Absenden hinaus; ein Skill allein ist auch ein Auftrag. Mehrere Skills
+  gehen zusammen (je Skill ein Satz). Gilt im Chat und im Agentenmodus.
+- **Konsole:** `/skill` zeigt die Skills der drei Orte zur Wahl;
+  `/skill <name oder pfad.md> [auftrag]` lernt direkt und bearbeitet danach
+  den Auftrag. Der Befehl steht in der einen Befehlsliste und damit in
+  `/help`.
+- **Eine Stelle für beides:** `skills::aus_datei` liest die gewählte Seite
+  (nur `.md`, gewöhnliche Datei, ohne Kopf, höchstens 48 000 Zeichen; zu lang
+  wird **abgewiesen und nicht gekürzt**), `skills::lernseite` löst Name oder
+  Pfad auf (der Name zuerst), `skills::lernauftrag` baut, was das Modell
+  liest. Fenster und Konsole sagen dem Modell damit dasselbe.
+- ⚑ **Ein anderer Weg als `learn_skill`, mit Absicht:** Dort nennt das Modell
+  einen Namen, der nie zu einem Pfad wird. Hier zeigt der Mensch im Dialog auf
+  eine Datei, wie bei einem Anhang; sie darf außerhalb der drei Orte liegen.
+- ⚠️ Lässt sich ein angehängter Skill beim Absenden nicht mehr lesen, geht
+  nichts hinaus; Plättchen und Text stehen wieder an der Eingabe.
+- Das Fenster hat zwei Befehle mehr (`skill_waehlen`, `skill_auftrag`), im
+  Text oben jetzt dreiundfünfzig.
+
+**Beleg:** 8 neue Proben in `myl-client` (Name aus Ordner oder Datei, Kopf
+nicht im Lerntext, fünf Abweisungen samt Grenze, Auftrag mit und ohne Text,
+mehrere Skills, Name vor Pfad), 1 in `myl-console` (Zerlegung von Angabe und
+Auftrag; dazu die bestehende Probe über die Befehlsliste), 1 in
+`myl-oberflaeche` (Platz des Knopfs, Beschriftung in beiden Sprachen,
+Anmeldung der Befehle). Alle Proben der drei Kisten und Clippy mit
+`-D warnings` ohne Befund. ⚠️ **Nicht belegt:** ein Lauf am Modell im Fenster;
+die Probe prüft den Aufbau, nicht die Antwort. Zwei bestehende Proben halten
+Quelltext wörtlich fest und sind angepasst (Aufruf von `agent_fahren`, Fenster
+von 900 auf 1 400 Zeichen im Rumpf von `senden`).
+
+📌 **Beobachtung, nicht geändert:** Im Agentenmodus geht bei einem
+Dateianhang der Text des Nutzers als Auftrag hinaus, **ohne** die Zeile, die
+dem Modell Pfad und Art des Anhangs nennt (`modelltext`); sie steht erst ab
+dem nächsten Zug im Verlauf. Ob das so gewollt ist, entscheidet der
+Projektinhaber.
+
+### v0.108.1 – 2026-09-30 (`myl --ohne-denken`: Denken für einen Aufruf aus, auch gegen die Einstellung)
+
+`myl-client` 0.75.1. Für den Vergleich in vier Stufen, der alles ausdrücklich
+setzen soll: `--denken` konnte den Denkmodus nur anschalten; stand er in den
+Einstellungen an, war er aus `myl` heraus nicht abzustellen. Eine Stelle,
+`denken_gewaehlt`, für alle fünf Befehle (`frage`, `agent`, `sitzung`,
+`auftraege`, `loop`).
+
+**Beleg:** Probelauf `myl agent … --ohne-denken` auf dieser Maschine
+(`modell.denken = an`): Parameterzeile „T 0,70 · top-p 0,80“, also die Werte
+ohne Denken. Clippy ohne Befund.
+
+### v0.108.0 – 2026-09-30 (ein Loop-Task gehört zum Agentengespräch, in dem er angelegt wurde: dessen Ordner, dessen Verlauf, dort angezeigt)
+
+`myl-client` 0.75.0, `myl-oberflaeche` 0.57.0, `myl-console` 0.27.1.
+Festlegung des Projektinhabers: Ein Loop gehört zu dem Agentengespräch, das
+beim Anlegen offen ist; dort wird er bearbeitet und angezeigt, wegen des
+Kontexts. Ein neues Gespräch entsteht nur, wenn keines offen ist. Die Liste
+nennt jeden Task als „Ziel (Gespräch)“.
+
+- 📌 **Vorher** bekam jeder Task ein eigenes Gespräch „∞ Ziel“, und seine
+  Runden liefen im Ordner der Einstellungen, ohne vom Gespräch zu wissen, aus
+  dem er kam.
+- **`Vorhaben` merkt sich `gespraech` und `wurzel`** (beide mit
+  `serde(default)`, ältere Tasks laden weiter), angelegt über
+  `Ablage::anlegen_fuer`. **`Vorhaben::agent_fuer`** baut die
+  Agenteneinstellung einer Runde: Saat der Recherche ist das Ziel, Ordner
+  der des Tasks. Fenster, Konsole und `myl` nutzen dieselbe Stelle.
+- **Der `Ruester` bekommt den ganzen Task** statt nur des Ziels.
+- **`runde_im_gespraech`** und **`fahren_mit_verlauf`**: Die Runde sieht den
+  Verlauf ihres Gesprächs vor ihrem Auftrag, verdichtet wie beim Agenten.
+  `runde` und `fahren` bleiben als Wege ohne Verlauf.
+- **Fenster:** Neuer Befehl `loop_umfeld`. Das Fenster schickt je
+  Gespräch Verlauf und Ordner, beim Start des Loops, beim Anlegen eines
+  Tasks, nach jedem Auftrag und jeder Runde darin und beim Ordnerwechsel. Der
+  Ordner, den das Gespräch jetzt hat, geht dem beim Anlegen vor. Nach einer
+  Runde wird der gemerkte Modellverlauf verworfen und aus den Beiträgen neu
+  hergeleitet, damit die Runde darin steht.
+- **Ohne offenes Agentengespräch** entsteht eines, benannt nach dem Task, und
+  wird geöffnet. Ein Task ohne Bindung (aus Konsole oder `myl`, oder sein
+  Gespräch wurde gelöscht) bekommt wie bisher ein eigenes.
+
+**Belege:** `ein_task_arbeitet_im_ordner_und_verlauf_seines_gespraechs`
+(Bindung gespeichert, Datei im Ordner des Tasks, Verlauf vor dem Auftrag,
+alter Task ohne Felder lädt), `ein_task_gehoert_zu_seinem_gespraech`; die
+Probe `ein_eintrag_entsteht_nur_auf_zwei_wege` erlaubt begründet eine dritte
+Stelle, die ein Gespräch anlegt; README: einundfünfzig Befehle. Clippy und
+Proben von myl-client, myl-console und myl-oberflaeche grün. ⚠️ Im Fenster
+von Hand nicht durchgespielt.
 
 ### v0.107.0 – 2026-09-29 (∞ pausiert beim Klick sofort: Anzeige, Rechnung und laufender Befehl)
 
@@ -3352,7 +3616,7 @@ setzt, sagt aber gerade, dass die eingestellte nicht gelten soll; er
 bekam damit das Gegenteil dessen, wonach er gefragt hat.
 
 **Gefunden von der Agentenmessung**, die `voll` übergab, weil `myl` nur
-`Base`, `Advanced` und `1337` kennt. Über dem Ergebnis stand
+`Base` und `Advanced` kennt. Über dem Ergebnis stand
 „Werkzeugsatz: voll", gemessen wurde **Base**, und `run_command` war in
 keinem einzigen Lauf im Angebot. Das Modell antwortete korrekt, es sehe
 keine Funktion für Befehle, und das sah aus wie ein Modellfehler.
@@ -4340,7 +4604,7 @@ und **in alle Kisten** legen, denn nachlesen zu können, was man selbst
 gesagt bekommen hat, ist keine Sache der Modellgröße.
 
 ⚑ **`read_history(von, bis)`**, in `Base` und damit über die Kette auch
-in `Advanced` und `1337`. Es schreibt nicht und braucht deshalb keine
+in `Advanced`. Es schreibt nicht und braucht deshalb keine
 Schreiberlaubnis: Es liest nach, was ohnehin gesagt wurde.
 
 ⛔️ **Der erste Entwurf war falsch herum, und eine bestehende Prüfung hat
@@ -4815,7 +5079,7 @@ zeigt die Kisten nebeneinander.
 
 ⚑ **Eine Einstellung statt zweier** (Festlegung des Projektinhabers).
 Bis heute standen nebeneinander eine Auswahl `agent.werkzeuge`
-(automatisch, Base, Advanced, 1337) und ein Pfad. **Zwei Angaben für
+(automatisch, Base, Advanced) und ein Pfad. **Zwei Angaben für
 dieselbe Sache laufen auseinander**, und genau das taten sie: Die
 Manifeste kamen aus dem Ordner, die eingebauten Werkzeuge aus der
 Auswahl. Geblieben ist der Pfad, beschriftet **„Werkzeugkiste"**. Sein
@@ -4829,10 +5093,6 @@ wer seine Kiste auf `advanced` stellte, bekam die Manifeste aus dem
 Ordner und die eingebauten aus einer anderen Quelle. Jetzt ist die
 Einstellung die Vorgabe und der Schalter überstimmt sie für einen
 einzelnen Lauf.
-
-⚑ **Die Adminmarke für `1337` ist entfallen.** Sie war gegenstandslos:
-Der Ordner ist gitignored, wer ihn nicht hat, hat die Werkzeuge nicht,
-und wer ihn anlegt, hat die Entscheidung getroffen.
 
 ⚠️ **Ein gesetzter Pfad, den es nicht gibt, fällt nicht still auf die
 Vorgabe zurück.** Sonst arbeitete der Agent aus einem anderen Ordner als
@@ -4876,7 +5136,7 @@ shell-sicher eingesetzte Argumente, `manual mode`); die eingebauten
 Dateiwerkzeuge bleiben kompiliert und halten die Einhängegrenze. Gefunden
 wird der Ordner über `MYL_WERKZEUGKISTEN` oder die Suche im Baum. In
 `Base` liegen vier Manifestwerkzeuge neben den fünf eingebauten, in
-`Advanced` zusätzlich zwei und `run_command`; `1337` bleibt gitignored.
+`Advanced` zusätzlich zwei und `run_command`.
 **`Advanced` erbt `Base` durch die Kette und nicht durch Kopien**, denn
 zwei Kopien laufen auseinander.
 
@@ -5323,11 +5583,7 @@ Fehler behandelt.** „Vom Nutzer abgelehnt" liess das 4B-Modell raten,
 die Datei sei nicht da, und es empfahl einen zweiten Versuch. Der Satz
 ist jetzt für ein kleines Modell geschrieben.
 
-⚑ **Die Werkzeugkisten heissen `Base`, `Advanced` und `1337`.** Die
-dritte steht nur mit `MYELITH_ADMIN=1` in der Auswahl. ⛔️ **Verborgen
-ist nicht geschützt, und das steht im Quelltext:** Wer die Marke setzen
-will, setzt sie in einer Sekunde. Sie hält die Kiste aus der Liste
-heraus, damit niemand sie für eine dritte gleichrangige Wahl hält.
+⚑ **Die Werkzeugkisten heissen `Base` und `Advanced`.**
 
 📌 **Fund 314: Der Schalter `--werkzeuge` verglich ein Wort von Hand**,
 während die Hilfe darüber `knapp` nannte, ein Wort, das es nie gab.

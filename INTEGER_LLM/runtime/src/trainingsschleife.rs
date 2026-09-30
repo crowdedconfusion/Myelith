@@ -52,9 +52,10 @@ use integer_llm_kernels::rmsnorm::{rmsnorm_i16, Rmsnormspur};
 use integer_llm_kernels::softmax::softmax_ueber_vokabular;
 use integer_llm_kernels::trainingsschritt::{Gewichtsform, 
     gewicht_aus_master, gradienten_der_ebene_aus_gradient, vorwaerts_der_ebene,
-    Aufmerksamkeitsgewichte, Aufmerksamkeitsvorgaben, Ebenengewichte, Ebenentabellen,
-    Ebenenvorgaben, Mlpvorgaben, Vorspannungen,
+    Achtsamkeitsdrehungen, Aufmerksamkeitsgewichte, Aufmerksamkeitsvorgaben, Ebenengewichte,
+    Ebenentabellen, Ebenenvorgaben, Mlpdrehungen, Mlpvorgaben, Vorspannungen,
 };
+use integer_llm_kernels::drehung::Eingangsdrehung;
 
 use crate::kv_cache::KVCache;
 use crate::mitschnitt::Zwischenwerte;
@@ -236,7 +237,28 @@ impl Trainingsvorgaben {
             // neu.** Die Probe `der_verlust_sinkt_ueber_die_schleife`
             // prueft seit dem 2026-09-21 zusaetzlich, ob sich ueberhaupt
             // genug Gewichte bewegen, und nennt dann diese Stelle.
-            lr_nenner: 1 << 6,
+            //
+            // ⛔️ **Und sie haengt am Rueckwaertspass selbst (Fund 507,
+            // 2026-09-30).** Bis dahin ging der Rueckweg einer dichten
+            // Ebene nicht durch die QK-Normierung; die Tabellen oben sind
+            // mit diesem Gradienten gemessen. Mit dem richtigen, 30
+            // Schritte:
+            //
+            // | Nenner | bis zum 2026-09-30 | mit QK-Normierung im Rueckweg |
+            // |---|---|---|
+            // | `1 << 7` | 2,6692 (trifft) | 3,4527 (trifft) |
+            // | `1 << 6` | **0,8994 (trifft)** | 1,0256 (trifft) |
+            // | `1 << 5` | 0,6395 (trifft) | **0,6593 (trifft)** |
+            //
+            // ⚑ Genommen ist wieder der sanfteste Wert, der die Schranke
+            // der Probe haelt (Verlust unter 1,0 nach dreissig Schritten);
+            // die Schranke selbst bleibt, wie sie war.
+            //
+            // 📌 **Die dritte Bedingung, die an dieser Zahl haengt und
+            // nicht dastand**: erst das Modell, dann die Skalen, jetzt der
+            // Gradient. Jedes Mal hat die Probe es gemeldet, und jedes Mal
+            // stand die Anleitung zum Nachmessen in ihrer Meldung.
+            lr_nenner: 1 << 5,
             lr_zaehler: 1,
             logit_frac: 16,
             prob_frac: 24,
@@ -338,9 +360,11 @@ impl Trainingsergebnis {
 /// Hebt ein int8-Gewicht mit Zeilenversatz auf den Master.
 pub(crate) fn master_aus_gewicht(t: &QTensor) -> Vec<Master> {
     let in_features = t.shape[1];
-    // ⚑ **Ein ternaerer Tensor wird zeilenweise entpackt**: dieselben Zahlen,
-    //   die das int8-Gewicht traege, aus dem er gepackt ist. Sein Master
-    //   traegt danach nur -a, 0 und +a; trainiert wird er ternaer.
+    // ⚑ **Ein ternaerer Tensor wird zeilenweise entpackt, und zwar so, dass
+    //   die ternaere Ableitung des Trainings wieder genau dieses Gewicht
+    //   ergibt** (Fund 510, `ternaere_zeile_zu_mastern`). Einfach entpackt
+    //   (`w << s`) schrumpfte jede Gruppe mit Nullen vor dem ersten
+    //   Schritt. Trainiert wird er ternaer.
     if let crate::model::Gewichtsdaten::Ternaer(td) = &*t.data {
         let m = td.matrix();
         return (0..t.shape[0])
@@ -348,14 +372,13 @@ pub(crate) fn master_aus_gewicht(t: &QTensor) -> Vec<Master> {
                 // ⛔️ Ein Zeilenshift ueber MASTER_FRAC hiesse, der Master
                 //   loeste das Gewicht nicht mehr auf (die exakt
                 //   uebernommenen Skalen eines Pakets koennen das).
-                //   Lieber hier laut als einen gerundeten Master.
-                let s = MASTER_FRAC.checked_sub(t.shifts[z]).unwrap_or_else(|| {
-                    panic!(
-                        "master_aus_gewicht: Zeile {z} traegt Shift {}, der Master nur {MASTER_FRAC} Bruchstellen",
-                        t.shifts[z]
-                    )
-                });
-                m.zeile_entpacken(z).into_iter().map(move |w| w << s)
+                //   Lieber hier laut als einen gerundeten Master; die
+                //   Funktion bricht dann ab.
+                integer_llm_kernels::trainingsschritt::ternaere_zeile_zu_mastern(
+                    &m.zeile_entpacken(z),
+                    t.shifts[z],
+                    MASTER_FRAC,
+                )
             })
             .collect();
     }
@@ -864,6 +887,40 @@ pub(crate) fn vorgaben_der_ebene<'a>(
     }
 }
 
+/// Die Eingangsdrehungen der vier Achtsamkeitsmatrizen einer Ebene.
+///
+/// ⚑ **Aus dem Modell und nicht aus dem Stand**: Die Drehung ist eine
+/// Festlegung des Artefakts, kein Gewicht, und alle Knoten sehen dasselbe
+/// Artefakt.
+pub(crate) fn achtsamkeitsdrehungen(ebene: &crate::model::TransformerLayer) -> Achtsamkeitsdrehungen<'_> {
+    let a = ebene.achtsamkeit();
+    Achtsamkeitsdrehungen {
+        q: eingangsdrehung(&a.q_proj),
+        k: eingangsdrehung(&a.k_proj),
+        v: eingangsdrehung(&a.v_proj),
+        o: eingangsdrehung(&a.o_proj),
+    }
+}
+
+/// Die Eingangsdrehungen des dichten Feedforward-Blocks einer Ebene.
+///
+/// # Panics
+///
+/// Wenn gate und up verschiedene Drehungen tragen; die Laufzeit weist das
+/// im Vorwaertspfad genauso ab.
+pub(crate) fn mlpdrehungen(mlp: &crate::model::DenseMlp) -> Mlpdrehungen<'_> {
+    let (gate, up) = (eingangsdrehung(&mlp.gate_proj), eingangsdrehung(&mlp.up_proj));
+    assert!(
+        integer_llm_kernels::drehung::gleiche_drehung(gate, up),
+        "gate und up muessen dieselbe Eingangsdrehung tragen"
+    );
+    Mlpdrehungen { ein: gate, down: eingangsdrehung(&mlp.down_proj) }
+}
+
+fn eingangsdrehung(t: &QTensor) -> Option<Eingangsdrehung<'_>> {
+    t.drehung.as_deref().map(|d| Eingangsdrehung { vorzeichen: &d.vorzeichen, frac: d.frac })
+}
+
 /// Die Gewichte einer Ebene, aus den umgerechneten Mastern.
 pub(crate) fn gewichte_der_ebene<'a>(
     umgerechnet: &'a [(Vec<i8>, Vec<u8>)],
@@ -879,6 +936,7 @@ pub(crate) fn gewichte_der_ebene<'a>(
             v_skalen: &umgerechnet[2].1,
             o: &umgerechnet[3].0,
             o_skalen: &umgerechnet[3].1,
+            drehung: achtsamkeitsdrehungen(ebene),
         },
         gate: &umgerechnet[4].0,
         gate_skalen: &umgerechnet[4].1,
@@ -890,6 +948,10 @@ pub(crate) fn gewichte_der_ebene<'a>(
         gamma_ein_skalen: &ebene.input_layernorm_gamma.shifts,
         gamma_mitte: &ebene.post_attention_layernorm_gamma.data,
         gamma_mitte_skalen: &ebene.post_attention_layernorm_gamma.shifts,
+        mlp_drehung: match &ebene.ffn {
+            Feedforward::Dense(mlp) => mlpdrehungen(mlp),
+            Feedforward::Moe(_) => Mlpdrehungen::default(),
+        },
     }
 }
 
@@ -1050,6 +1112,7 @@ pub fn trainingsschleife(
                 v_skalen: &umgerechnet[2].1,
                 o: &umgerechnet[3].0,
                 o_skalen: &umgerechnet[3].1,
+                drehung: achtsamkeitsdrehungen(ebene),
             },
             gate: &umgerechnet[4].0,
             gate_skalen: &umgerechnet[4].1,
@@ -1061,6 +1124,7 @@ pub fn trainingsschleife(
             gamma_ein_skalen: &ebene.input_layernorm_gamma.shifts,
             gamma_mitte: &ebene.post_attention_layernorm_gamma.data,
             gamma_mitte_skalen: &ebene.post_attention_layernorm_gamma.shifts,
+            mlp_drehung: mlpdrehungen(mlp),
         };
         let tab = Ebenentabellen {
             cos: &m.cos_lut,
@@ -1611,5 +1675,326 @@ mod kopfsammlung {
         let mut k = Kopfsammlung::neu(&[99], 2);
         k.aufnehmen(&[1, 2, 3], &[1, 1]);
         assert_eq!(k.summe_mut(99).expect("Zeile 99"), &[0, 0]);
+    }
+}
+
+/// **Die Eingangsdrehung im Trainingspfad**, an einer echten Ebene.
+///
+/// # ⚑ Warum am 0,6B und mit angehaengten Drehungen
+///
+/// Die Drehung rechnet in Bloecken von 1024; eine Pruefebene aus sechzehn
+/// Kanaelen kann sie nicht tragen. Das 0,6B hat die Breiten 1024, 2048 und
+/// 3072, und eine Drehung ist fuer die Rechnung nur eine Vorschrift vor der
+/// Matrix: Haengt man sie an, liest dieselbe Matrix eine gedrehte Eingabe.
+/// Das Modell rechnet dann etwas anderes als vorher, aber Inferenz und
+/// Training muessen **dasselbe** andere rechnen, und der Gradient muss die
+/// Aenderung des Abstands voraussagen wie ohne Drehung.
+#[cfg(test)]
+mod drehung_im_training {
+    use super::*;
+    use crate::model::{Drehung, Mischer};
+    use integer_llm_kernels::trainingsschritt::{gradienten_der_ebene, Ebenengradienten};
+    use std::sync::Arc;
+
+    const FOLGE: [usize; 6] = [9707, 374, 264, 1273, 315, 279];
+    /// Der Anteil des Deckels, den ein einzelnes Gewicht hoechstens
+    /// vorhersagen darf.
+    const EINZELN: f64 = 5000.0;
+
+    fn modell() -> Option<IntegerModel> {
+        if std::env::var_os("MYL_OHNE_ARTEFAKTE").is_some() {
+            eprintln!("SKIP (MYL_OHNE_ARTEFAKTE gesetzt)");
+            return None;
+        }
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../artifacts/myelith-0.6b");
+        if !dir.exists() {
+            eprintln!("Artefakt fehlt, Test uebersprungen: {}", dir.display());
+            return None;
+        }
+        Some(crate::loader::load_model(&dir).expect("Modell laedt"))
+    }
+
+    fn vorzeichen(n: usize, saat: u64) -> Arc<Vec<i8>> {
+        let mut x = saat | 1;
+        Arc::new(
+            (0..n)
+                .map(|_| {
+                    x ^= x << 13;
+                    x ^= x >> 7;
+                    x ^= x << 17;
+                    if x & 1 == 0 { 1 } else { -1 }
+                })
+                .collect(),
+        )
+    }
+
+    /// Haengt an alle sieben Matrizen der Ebene `e` eine Drehung: eine fuer
+    /// q, k und v, eine fuer o, eine fuer gate und up, eine fuer down. Die
+    /// gedrehte Eingabe liegt `versatz` Bruchstellen unter der Skala der
+    /// ungedrehten; die Drehung ist orthogonal, der Wertebereich also
+    /// derselbe, und eine groebere Skala ist nur eine groebere Rundung.
+    fn drehungen_anhaengen(m: &mut IntegerModel, e: usize, versatz: u8) {
+        let sc = &m.layers[e].scales;
+        let (a, o, g, d) = (
+            sc.norm_attn_frac - versatz,
+            sc.achtsamkeit().attn_out_frac - versatz,
+            sc.norm_mlp_frac - versatz,
+            sc.down_in_frac - versatz,
+        );
+        let neu = |n: usize, saat: u64, frac: u8| Some(Arc::new(Drehung { vorzeichen: vorzeichen(n, saat), frac }));
+        let ebene = &mut m.layers[e];
+        let Mischer::Achtsamkeit(acht) = &mut ebene.mischer else { panic!("das 0,6B mischt mit Achtsamkeit") };
+        let qkv = neu(acht.q_proj.shape[1], 1, a);
+        acht.q_proj.drehung = qkv.clone();
+        acht.k_proj.drehung = qkv.clone();
+        acht.v_proj.drehung = qkv;
+        acht.o_proj.drehung = neu(acht.o_proj.shape[1], 2, o);
+        let Feedforward::Dense(mlp) = &mut ebene.ffn else { panic!("das 0,6B ist dicht") };
+        let ein = neu(mlp.gate_proj.shape[1], 3, g);
+        mlp.gate_proj.drehung = ein.clone();
+        mlp.up_proj.drehung = ein;
+        mlp.down_proj.drehung = neu(mlp.down_proj.shape[1], 4, d);
+    }
+
+    /// Der Residualstrom am Eingang und am Ausgang der Ebene `e`, wie die
+    /// Inferenz ihn rechnet.
+    fn inferenz(m: &IntegerModel, e: usize) -> (Vec<Vec<i16>>, Vec<Vec<i16>>) {
+        let mut cache = KVCache::for_range(0, m.num_layers, m.num_kv_heads);
+        let mut auf = Zwischenwerte::neu();
+        let mut aus = Vec::new();
+        for (pos, t) in FOLGE.iter().enumerate() {
+            aus.push(m.run_layers_mit_mitschnitt(m.embed_token(*t), pos, &mut cache, 0, e + 1, &mut auf));
+        }
+        let ein = (0..FOLGE.len()).map(|p| auf.ebenen()[p * (e + 1) + e].residual_ein.clone()).collect();
+        (ein, aus)
+    }
+
+    /// Die Ebene `e` im Trainingspfad: Ausgabe, Abstand zu `ziel` und
+    /// Gradienten, aus den gegebenen Mastern.
+    fn rechne(
+        m: &IntegerModel,
+        e: usize,
+        master: &[Vec<Master>; 7],
+        hidden: &[Vec<i16>],
+        ziel: Option<&[Vec<i16>]>,
+    ) -> (Vec<Vec<i16>>, i64, Ebenengradienten) {
+        let ebene = &m.layers[e];
+        let Feedforward::Dense(mlp) = &ebene.ffn else { panic!("dicht") };
+        let is = mlp.gate_proj.shape[0];
+        let breiten = breiten_der_ebene(m, is);
+        let umgerechnet: Vec<(Vec<i8>, Vec<u8>)> =
+            (0..7).map(|n| gewicht_aus_master(&master[n], breiten[n], MASTER_FRAC)).collect();
+        let gew = gewichte_der_ebene(&umgerechnet, ebene);
+        let vg = vorgaben_der_ebene(m, &ebene.scales, e, is, 0, 1, 1 << 12, Gewichtsform::Int8);
+        let grad_lut = silu_grad_aus_lut(&m.silu_lut);
+        let tab = Ebenentabellen {
+            cos: &m.cos_lut,
+            sin: &m.sin_lut,
+            exp: &m.exp_lut,
+            rsqrt: &m.rsqrt_lut,
+            silu: &m.silu_lut,
+            silu_grad: &grad_lut,
+        };
+        let spur = vorwaerts_der_ebene(gew, hidden, vorspannungen_der_ebene(ebene), tab, vg);
+        let y = spur.y.clone();
+        let ziel = ziel.unwrap_or(&y);
+        let (abstand, gr) = gradienten_der_ebene(gew, &spur, hidden, ziel, tab, vg);
+        (y, abstand, gr)
+    }
+
+    /// ⚑ **Der gedrehte Trainingspfad rechnet, was die Inferenz rechnet**,
+    /// Wert fuer Wert.
+    #[test]
+    fn der_gedrehte_vorwaertspfad_ist_der_der_inferenz() {
+        let Some(mut m) = modell() else { return };
+        let e = m.num_layers - 1;
+        let (_, ohne) = inferenz(&m, e);
+        // ⚑ Die gedrehte Eingabe liegt auf einer ANDEREN Skala als die
+        //   ungedrehte: Naehme eine der sieben Matrizen die falsche der
+        //   beiden, waere es hier ein Faktor zwei.
+        drehungen_anhaengen(&mut m, e, 1);
+        let (hidden, mit) = inferenz(&m, e);
+        assert_ne!(ohne, mit, "die angehaengte Drehung aendert nichts; der Test prueft nichts");
+        let master = master_der_ebene(&m.layers[e]).expect("dicht");
+        let (y, _, _) = rechne(&m, e, &master, &hidden, None);
+        for (p, (a, b)) in y.iter().zip(&mit).enumerate() {
+            assert_eq!(a, b, "Position {p}: Training und Inferenz rechnen verschieden");
+        }
+    }
+
+    /// Geht auf jeder der sieben Matrizen entlang ihres Gradienten und gibt
+    /// `(gemessene, vorhergesagte)` Aenderung des Abstands zurueck.
+    ///
+    /// ⚑ **Das Ziel weicht nur auf Kanaelen einer Ausgabeskala ab.** Der
+    /// Abstand ist eine Summe ganzer Zahlen, und die Kanaele des echten
+    /// Modells tragen verschiedene Skalen; mit einer einzigen laesst sich
+    /// die Vorhersage in einer Formel schreiben.
+    fn entlang_des_gradienten(m: &IntegerModel, e: usize, teiler: f64) -> [(f64, f64); 7] {
+        let (hidden, _) = inferenz(m, e);
+        let ebene = &m.layers[e];
+        let Feedforward::Dense(mlp) = &ebene.ffn else { panic!("dicht") };
+        let is = mlp.gate_proj.shape[0];
+        let breiten = breiten_der_ebene(m, is);
+        let master = master_der_ebene(ebene).expect("dicht");
+        let vg = vorgaben_der_ebene(m, &ebene.scales, e, is, 0, 1, 1 << 12, Gewichtsform::Int8);
+        let (a_vg, m_vg) = vg.bloecke();
+
+        // Die haeufigste Ausgabeskala.
+        let mut zahl = [0usize; 256];
+        vg.aus_frac.iter().for_each(|f| zahl[*f as usize] += 1);
+        let f_aus = (0..256).max_by_key(|f| zahl[*f]).expect("256 Werte") as u8;
+
+        let (y0, _, _) = rechne(m, e, &master, &hidden, None);
+        let ziel: Vec<Vec<i16>> = y0
+            .iter()
+            .enumerate()
+            .map(|(p, zeile)| {
+                zeile
+                    .iter()
+                    .enumerate()
+                    .map(|(i, y)| {
+                        if vg.aus_frac[i] != f_aus {
+                            return *y;
+                        }
+                        let z = ((p * 7919 + i * 104_729) % 5) as i16 - 2;
+                        y.saturating_add(z * 3000)
+                    })
+                    .collect()
+            })
+            .collect();
+        let (_, l0, gr) = rechne(m, e, &master, &hidden, Some(&ziel));
+        assert!(l0 > 0, "das Ziel weicht nicht ab");
+        let deckel = l0 as f64 / teiler;
+
+        // `dL/dW` traegt `2^(Bus + Eingangsskala)`; siehe die Pruefung
+        // derselben Groesse an der Pruefebene in den Kernen.
+        let sc = &ebene.scales;
+        let a_bus = i32::from(sc.achtsamkeit().attn_out_frac);
+        let exponenten = [
+            a_bus + i32::from(sc.norm_attn_frac),
+            a_bus + i32::from(sc.norm_attn_frac),
+            a_bus + i32::from(sc.norm_attn_frac),
+            i32::from(a_vg.aus_frac) + a_bus,
+            i32::from(sc.down_in_frac) + i32::from(sc.norm_mlp_frac),
+            i32::from(sc.down_in_frac) + i32::from(sc.norm_mlp_frac),
+            i32::from(m_vg.aus_frac) + i32::from(sc.down_in_frac),
+        ];
+        let gradienten: [&Vec<i32>; 7] = [
+            &gr.aufmerksamkeit.q, &gr.aufmerksamkeit.k, &gr.aufmerksamkeit.v, &gr.aufmerksamkeit.o,
+            &gr.mlp.gate, &gr.mlp.up, &gr.mlp.down,
+        ];
+
+        // ⚑ **Geschoben wird in ganzen Stufen des Gewichts, nicht des
+        //   Masters.** Die Rechnung sieht das int8-Gewicht; eine
+        //   Masterbewegung unter einer halben Stufe aendert nichts, und
+        //   ein Schritt proportional zum Gradienten bewegte deshalb nur
+        //   die paar Gewichte ueber der Schwelle, waehrend die Vorhersage
+        //   ueber alle summierte (gemessen: Verhaeltnisse von 0,03 bis
+        //   0,5). Hier bekommen die `k` Gewichte mit dem groessten
+        //   Gradienten je genau eine Stufe gegen ihn; Gewichte am Rand
+        //   (|w| = 127) bleiben aus, denn eine Stufe mehr hoebe den
+        //   Zeilenshift und rundete die ganze Zeile neu.
+        let mut aus = [(0.0f64, 0.0f64); 7];
+        for n in 0..7 {
+            let g = gradienten[n];
+            let (w, shifts) = gewicht_aus_master(&master[n], breiten[n], MASTER_FRAC);
+            let mut ordnung: Vec<usize> = (0..g.len()).filter(|i| g[*i] != 0 && w[*i].unsigned_abs() < 127).collect();
+            ordnung.sort_by_key(|i| std::cmp::Reverse(i64::from(g[*i]).abs()));
+            let hoch = 2 * i32::from(f_aus) - exponenten[n] - i32::from(MASTER_FRAC);
+            // ⚑ **Viele kleine Beitraege statt weniger grosser.** Die
+            //   Gewichte mit dem groessten Gradienten lesen die
+            //   Ausreisserkanaele des Stroms; eine einzige Stufe dort ist
+            //   kein kleiner Schritt mehr (gemessen an gate: vorhergesagt
+            //   -1,3 Mrd., gemessen +12 Mrd., aus EINEM Gewicht). Genommen
+            //   werden deshalb nur Gewichte, deren einzelne Vorhersage
+            //   unter einem Fuenftausendstel des Deckels liegt, vom
+            //   groessten abwaerts, bis der Deckel erreicht ist.
+            let einzeln = |i: usize| -> (i32, f64) {
+                let stufe = 1i32 << (MASTER_FRAC - shifts[i / breiten[n]]);
+                let delta = if g[i] > 0 { -stufe } else { stufe };
+                (delta, f64::from(delta) * f64::from(g[i]) * 2f64.powi(hoch))
+            };
+            let mut gewaehlt = (master[n].clone(), 0.0f64);
+            for &i in &ordnung {
+                let (delta, vorher) = einzeln(i);
+                if vorher.abs() > deckel / EINZELN {
+                    continue;
+                }
+                if (gewaehlt.1 + vorher).abs() > deckel {
+                    break;
+                }
+                gewaehlt.0[i] += delta;
+                gewaehlt.1 += vorher;
+            }
+            let mut kopie = master.clone();
+            kopie[n] = gewaehlt.0;
+            let (_, l1, _) = rechne(m, e, &kopie, &hidden, Some(&ziel));
+            aus[n] = ((l1 - l0) as f64, gewaehlt.1);
+        }
+        aus
+    }
+
+    const NAMEN: [&str; 7] = ["q", "k", "v", "o", "gate", "up", "down"];
+
+    fn verhaeltnisse(m: &IntegerModel, e: usize, teiler: f64) -> [f64; 7] {
+        let treffer = entlang_des_gradienten(m, e, teiler);
+        let mut aus = [0.0f64; 7];
+        for n in 0..7 {
+            let (gemessen, vorher) = treffer[n];
+            assert!(vorher < -1.0, "{}: der Schritt sagt keine Senkung voraus ({vorher:.1})", NAMEN[n]);
+            aus[n] = gemessen / vorher;
+        }
+        aus
+    }
+
+    /// ⛔️ **Fund 509, an einer echten Ebene: Der Gradient sagt die
+    /// Aenderung des Abstands voraus, fuer jede der sieben Matrizen.**
+    ///
+    /// Gemessen am 2026-09-30 an der letzten Ebene des 0,6B: 0,90 / 0,89 /
+    /// 0,97 / 1,01 / 0,97 / 0,99 / 0,99. **Vor der Behebung lagen q bei 0,19
+    /// und k bei 0,06**: Der Rueckweg der Aufmerksamkeit nahm fuer Q und K
+    /// die Skala der Projektion statt der der QK-Normierung, und die beiden
+    /// unterscheiden sich in dieser Ebene um zwei und drei Stellen.
+    ///
+    /// 📌 **Die Pruefebene der Kerne konnte es nicht sehen**, weil sie beide
+    /// Skalen gleich setzte. Eine echte Ebene traegt, was die Kalibrierung
+    /// ergeben hat, und das ist der Grund fuer diese Pruefung neben jener.
+    #[test]
+    fn der_gradient_einer_echten_ebene_sagt_die_aenderung_voraus() {
+        let Some(m) = modell() else { return };
+        let v = verhaeltnisse(&m, m.num_layers - 1, 400.0);
+        for (n, name) in NAMEN.iter().enumerate() {
+            assert!((0.75..=1.25).contains(&v[n]), "{name}: das {:.2}-fache der Vorhersage; alle sieben: {v:.2?}", v[n]);
+        }
+    }
+
+    /// ⚑ **Dasselbe mit Eingangsdrehung an allen sieben Matrizen.**
+    ///
+    /// Eine angehaengte Drehung macht aus der Ebene eine andere Funktion,
+    /// und die ist rauher als die gelernte: Bei **einer** Schrittweite
+    /// streuen die Verhaeltnisse von 0,2 bis 1,3. Genommen wird deshalb das
+    /// Mittel ueber drei Schrittweiten. Gemessen am 2026-09-30: 0,64 / 0,61
+    /// / 0,98 / 0,74 / 0,84 / 0,77 / 0,95.
+    ///
+    /// ⚑ **Was diese Pruefung traegt, sind v, gate und up.** Ihr Gradient
+    /// kommt durch den Rueckweg einer **inneren** Drehung (vor o, vor
+    /// down), und die laesst sich nicht exakt von aussen pruefen wie die
+    /// vor q, k, v, gate und up (siehe die Kerne). Gegenprobe, Rueckweg
+    /// ohne die Hadamard-Matrix: v 0,22, gate -0,15, up -0,66.
+    #[test]
+    fn der_gradient_einer_gedrehten_ebene_sagt_die_aenderung_voraus() {
+        let Some(mut m) = modell() else { return };
+        let e = m.num_layers - 1;
+        drehungen_anhaengen(&mut m, e, 0);
+        let mut mittel = [0.0f64; 7];
+        for teiler in [400.0, 1000.0, 3000.0] {
+            let v = verhaeltnisse(&m, e, teiler);
+            (0..7).for_each(|n| mittel[n] += v[n] / 3.0);
+        }
+        eprintln!("gedreht, Mittel ueber drei Schrittweiten: {mittel:.2?}");
+        for (n, name) in NAMEN.iter().enumerate() {
+            let schranke = if matches!(*name, "v" | "gate" | "up") { 0.6..=1.4 } else { 0.4..=1.6 };
+            assert!(schranke.contains(&mittel[n]), "{name}: im Mittel das {:.2}-fache; alle sieben: {mittel:.2?}", mittel[n]);
+        }
     }
 }

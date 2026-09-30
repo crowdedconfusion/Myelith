@@ -49,7 +49,10 @@
 //! | `--stand-schreiben P` | ⚑ Die trainierten Gewichte nach `P` |
 //! | `--stand-lesen P` | Dort weitermachen, wo ein Lauf aufhoerte |
 //! | `--anker N` | ⚑ **Gegen das Vergessen:** zieht je Durchgang ein `2^N`-tel des Abstandes zum Ausgangsstand zurueck |
-//! | `--absenkung` | Die Schrittweite sinkt ueber die Durchgaenge auf ein Viertel |
+//! | `--absenkung` | Die Schrittweite sinkt ueber die Durchgaenge auf ein Viertel (der Nenner waechst linear; aelter als der Plan darunter und nicht mit ihm kombinierbar) |
+//! | `--warmlauf N` | ⚑ **Lernratenplan:** Die ersten `N` Durchgaenge steigt die Schrittweite linear bis zur vollen |
+//! | `--abfall E` | ⚑ Danach faellt sie linear auf ein `E`-tel im letzten Durchgang. Der Plan ist `optimierer::Lernratenplan`, eine reine Funktion der Schrittnummer |
+//! | `--planschritt K`, `--plangesamt G` | Ein Lauf in Teilen: Dieser Aufruf beginnt bei Planschritt `K` von insgesamt `G`. Ohne sie ist der Aufruf der ganze Plan |
 //! | `--nur-mlp`, `--nur-abwaerts` | ⚑ **Parameterisolierung**, die dritte Saeule gegen das Vergessen; 📌 ungemessen |
 //!
 //! 📌 **`--probentoken N` (Vorgabe 40).** Wie viele Token je Probe
@@ -81,7 +84,7 @@
 
 use std::sync::Arc;
 
-use integer_llm_kernels::optimierer::{schritt_normiert, Schrittkennung};
+use integer_llm_kernels::optimierer::{schritt_normiert, Lernratenplan, Schrittkennung};
 
 /// Je Fragenart: Treffer, Anzahl, Rangsumme, Summe der Logwahrscheinlichkeiten.
 type Befund = std::collections::BTreeMap<String, (usize, usize, f64, f64)>;
@@ -299,6 +302,10 @@ fn main() {
     let mut kopf_ein: Option<String> = None;
     let mut anker: u32 = 0;
     let mut absenkung = false;
+    let mut warmlauf: u64 = 0;
+    let mut abfall: i64 = 1;
+    let mut planschritt: u64 = 0;
+    let mut plangesamt: Option<u64> = None;
     let mut auswahl = integer_llm_runtime::shardtraining::Auswahl::Alles;
     let mut rauschen: Option<i64> = None;
     // 📌 **Fund 343 (2026-09-11): hier stand `1 << 12`, und damit war die
@@ -389,6 +396,29 @@ fn main() {
             // frueh, klein spaet.
             "--absenkung" => {
                 absenkung = true;
+            }
+            // ⚑ **Der Lernratenplan.** Ein Schalter ohne lesbare Zahl
+            // bricht ab, statt still mit festem Schritt zu laufen: Der
+            // Lauf saehe aus wie geplant und waere es nicht.
+            "--warmlauf" | "--abfall" | "--planschritt" | "--plangesamt" => {
+                let name = args[i].clone();
+                i += 1;
+                let Some(v) = args.get(i).and_then(|s| s.parse::<u64>().ok()) else {
+                    eprintln!("{name} braucht eine ganze Zahl >= 0");
+                    std::process::exit(2);
+                };
+                match name.as_str() {
+                    "--warmlauf" => warmlauf = v,
+                    "--abfall" => {
+                        if v == 0 || v > i64::MAX as u64 {
+                            eprintln!("--abfall braucht eine ganze Zahl >= 1");
+                            std::process::exit(2);
+                        }
+                        abfall = v as i64;
+                    }
+                    "--planschritt" => planschritt = v,
+                    _ => plangesamt = Some(v),
+                }
             }
             "--stand-lesen" => {
                 i += 1;
@@ -1185,7 +1215,32 @@ fn main() {
     // --- Training, Teacher Forcing über alle Positionen ----------------
     let anfang = std::time::Instant::now();
     let mut schrittzahl = wuerfelversatz;
+    // ⚑ **Ein Plan, zwei Nenner.** Ebenen und Kopf laufen ueber dieselbe
+    // Form und unterscheiden sich nur in der vollen Schrittweite.
+    let plan_fuer = |voll: i64| Lernratenplan {
+        nenner: voll,
+        warmlauf,
+        gesamt: plangesamt.unwrap_or(planschritt + schritte),
+        endteiler: abfall,
+    };
+    let plan = plan_fuer(nenner);
+    if absenkung && !plan.ist_fest() {
+        eprintln!("--absenkung und --warmlauf/--abfall sind zwei Plaene; bitte einen waehlen");
+        std::process::exit(2);
+    }
+    if !plan.ist_fest() {
+        eprintln!(
+            "[trainingsguete] PLAN: Warmlauf {warmlauf}, Abfall auf 1/{abfall}, Schritte {} bis {} von {}, \
+             Nenner {} bis {}",
+            planschritt,
+            planschritt + schritte,
+            plan.gesamt,
+            plan.nenner_bei(planschritt),
+            plan.nenner_bei(planschritt + schritte.saturating_sub(1)),
+        );
+    }
     for s in 0..schritte {
+        let nenner_plan = plan.nenner_bei(planschritt + s);
         // ⚑ **Ein Durchgang ist ein Schritt, wenn gesammelt wird.** Der
         // Würfel bekommt deshalb die Nummer des Durchgangs und nicht
         // die der Folge; sonst hinge er daran, wie viele Folgen
@@ -1219,7 +1274,7 @@ fn main() {
                 bis: m.num_layers,
                 schritt: schrittzahl,
                 lr_zaehler: 1,
-                lr_nenner: nenner,
+                lr_nenner: nenner_plan,
             };
             let strom = strom_vor(&m, folge, von);
             let ms = vorwaerts(&m, &mut gewichte, &vg, &strom).expect("vorwaerts");
@@ -1247,7 +1302,7 @@ fn main() {
             if let Some(ebene) = erg.aus_der_form {
                 eprintln!(
                     "ABBRUCH  Ebene {ebene} hat die Uebertragungsform verlassen \
-                     (Schritt {schrittzahl}, Nenner {nenner})"
+                     (Schritt {schrittzahl}, Nenner {nenner_plan})"
                 );
                 std::process::exit(1);
             }
@@ -1266,7 +1321,7 @@ fn main() {
             let nenner_jetzt = if absenkung && schritte > 1 {
                 nenner + (nenner * 3 * s as i64) / (schritte as i64 - 1)
             } else {
-                nenner
+                nenner_plan
             };
             let vg = Shardvorgaben {
                 von,
@@ -1294,7 +1349,7 @@ fn main() {
                 if let Some(ebene) = erg.aus_der_form {
                     eprintln!(
                         "ABBRUCH  Ebene {ebene} hat die Uebertragungsform verlassen \
-                         (Sammelschritt {schrittzahl}, Nenner {nenner})"
+                         (Sammelschritt {schrittzahl}, Nenner {nenner_jetzt})"
                     );
                     std::process::exit(1);
                 }
@@ -1345,7 +1400,7 @@ fn main() {
                         &mut kopfmaster[zi * hs..(zi + 1) * hs],
                         summe,
                         kn,
-                        kopf_nenner.unwrap_or(nenner),
+                        plan_fuer(kopf_nenner.unwrap_or(nenner)).nenner_bei(planschritt + s),
                     )
                     .is_some()
                     {

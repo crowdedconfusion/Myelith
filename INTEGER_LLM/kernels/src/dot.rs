@@ -113,6 +113,20 @@ mod gewaehlt {
             unsafe { crate::ternaer::neon::zeile(muster, betraege, hoch, tief, summen) }
         }
     }
+
+    /// Eine Zeile mal mehreren Eingaben; die Laengen hat
+    /// [`super::ternaer_zeile_viele`] geprueft.
+    #[inline]
+    pub fn ternaer_viele(muster: &[u8], betraege: &[i16], e: &[crate::ternaer::Eingabe<'_>], aus: &mut [i64]) -> bool {
+        // ⚑ Nur mit `dotprod` gibt es eine eigene Fassung; sonst rechnet
+        //   der Aufrufer Eingabe fuer Eingabe.
+        if crate::ternaer::neon::mit_dot() {
+            unsafe { crate::ternaer::neon::zeile_dot_viele(muster, betraege, e, aus) };
+            true
+        } else {
+            false
+        }
+    }
 }
 
 #[cfg(not(all(feature = "cpu-simd", target_arch = "aarch64")))]
@@ -127,6 +141,11 @@ mod gewaehlt {
     #[inline]
     pub fn ternaer(muster: &[u8], betraege: &[i16], x: &[i16], _hoch: &[i8], _tief: &[u8], _summen: &[i64]) -> i64 {
         crate::ternaer::zeile_skalar(muster, betraege, x)
+    }
+    /// Ohne vektorisierte Fassung gibt es auch keine gemeinsame.
+    #[inline]
+    pub fn ternaer_viele(_muster: &[u8], _betraege: &[i16], _e: &[crate::ternaer::Eingabe<'_>], _aus: &mut [i64]) -> bool {
+        false
     }
 }
 
@@ -205,6 +224,34 @@ pub fn ternaer_zeile(muster: &[u8], betraege: &[i16], x: &[i16], hoch: &[i8], ti
         );
     }
     gewaehlt::ternaer(muster, betraege, x, hoch, tief, summen)
+}
+
+/// Eine Zeile einer ternaeren Matrix mal **mehreren** Eingaben: `aus[k]`
+/// ist genau [`ternaer_zeile`] fuer die Eingabe `k`.
+///
+/// ⚑ **Dieselbe Weiche wie dort.** Gibt es fuer diese Uebersetzung und
+/// diese Maschine eine gemeinsame Fassung, entpackt sie die Codes einmal
+/// fuer alle Eingaben; sonst, und immer wenn [`skalar_erzwingen`] steht,
+/// laeuft Eingabe fuer Eingabe der einzelne Weg. In jedem Fall dieselben
+/// Zahlen (`die_gemeinsame_fassung_ist_die_einzelne` in `ternaer`).
+///
+/// ⚠️ **Die Laengen werden hier geprueft**, fuer jede Eingabe, aus
+/// demselben Grund wie in [`ternaer_zeile`].
+#[inline]
+pub fn ternaer_zeile_viele(muster: &[u8], betraege: &[i16], e: &[crate::ternaer::Eingabe<'_>], aus: &mut [i64]) {
+    assert_eq!(e.len(), aus.len(), "ternaer_zeile_viele: {} Eingaben, {} Ausgaben", e.len(), aus.len());
+    let n = betraege.len() * crate::ternaer::GRUPPE;
+    let gemeinsam = VEKTORISIERT
+        && !SKALAR_ERZWUNGEN.load(Ordering::Relaxed)
+        && muster.len() == betraege.len() * crate::ternaer::BYTES_JE_GRUPPE
+        && e.iter().all(|ein| ein.laengen_passen(n, betraege.len()));
+    if gemeinsam && gewaehlt::ternaer_viele(muster, betraege, e, aus) {
+        return;
+    }
+    for (ein, ziel) in e.iter().zip(aus.iter_mut()) {
+        let (hoch, tief, summen) = ein.teile(n, betraege.len());
+        *ziel = ternaer_zeile(muster, betraege, &ein.x()[..n], hoch, tief, summen);
+    }
 }
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};

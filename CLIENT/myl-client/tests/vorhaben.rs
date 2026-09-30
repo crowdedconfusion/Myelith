@@ -46,8 +46,8 @@ fn ordner(name: &str) -> std::path::PathBuf {
 
 fn ruester(
     wurzel: std::path::PathBuf,
-) -> impl Fn(vorhaben::Zusatzwerkzeuge, &str) -> Result<myl_client::ruestung::Ruestung, String> {
-    move |zusaetzlich, _saat| {
+) -> impl Fn(vorhaben::Zusatzwerkzeuge, &vorhaben::Vorhaben) -> Result<myl_client::ruestung::Ruestung, String> {
+    move |zusaetzlich, _v| {
         let agent = Agenteneinstellung {
             wurzel: Some(wurzel.display().to_string()),
             schreiben: true,
@@ -179,8 +179,9 @@ fn ein_agentenlauf_bekommt_nie_weniger_als_die_vorgabe() {
     vorhaben::runde(&ablage, &mut v, &zeuge, &ruester(arbeit), &Loopeinstellung::default(), Sprache::De, 256, None).unwrap();
     let gesehen = zeuge.gesehen.borrow();
     assert!(!gesehen.is_empty(), "das Modell wurde nie gefragt");
-    let vorgabe = myl_client::einstellungen::ANTWORT_VORGABE as u32;
+    let vorgabe = myl_client::einstellungen::AGENT_ANTWORT_MINDESTENS as u32;
     assert!(gesehen.iter().all(|t| t.is_some_and(|t| t >= vorgabe)), "{gesehen:?}");
+    assert!(vorgabe >= 4000, "die Untergrenze des Agenten ist gesunken: {vorgabe}");
     // Und ab Werk steht die Einstellung selbst schon dort.
     assert_eq!(myl_client::einstellungen::Einstellungen::default().modell.token, myl_client::einstellungen::ANTWORT_VORGABE);
 }
@@ -416,4 +417,73 @@ fn eine_behauptete_ausfuehrung_steht_nicht_als_tatsache_da() {
     let tb = ablage.tagebuch_letzte(&v.kennung, 1).join("\n");
     assert!(tb.contains("(behauptet, nicht ausgeführt) Ausgeführt: write_file"), "{tb}");
     assert!(tb.contains("[System] In dieser Runde lief kein Werkzeug."), "{tb}");
+}
+
+/// Schreibt, was es im ersten Aufruf sah, und arbeitet dann das Drehbuch ab.
+struct Zeuge {
+    zeilen: RefCell<Vec<String>>,
+    erstes: RefCell<Option<Vec<String>>>,
+}
+
+impl Modellweg for Zeuge {
+    fn chat(&self, _m: &str, nachrichten: &[Nachricht], _t: Option<u32>) -> Result<Antwort, Tuerfehler> {
+        if self.erstes.borrow().is_none() {
+            *self.erstes.borrow_mut() = Some(nachrichten.iter().map(|n| n.content.clone()).collect());
+        }
+        let letzte = nachrichten.last().map(|n| n.content.clone()).unwrap_or_default();
+        let text = if letzte.starts_with("Prüfe eine Runde") {
+            "FORTSCHRITT: JA\nERREICHT: JA\nGRUND: steht".to_string()
+        } else {
+            let mut z = self.zeilen.borrow_mut();
+            if z.is_empty() { "Fertig.".to_string() } else { z.remove(0) }
+        };
+        Ok(Antwort { text, abschlussgrund: Some("stop".into()), kennung: "probe".into(), segment: None, prompt_token: 0, antwort_token: 0 })
+    }
+}
+
+/// ⚑ **Ein Task gehoert zu seinem Gespraech** (Festlegung des
+/// Projektinhabers, 2026-09-30): Er merkt sich Gespraech und Ordner, seine
+/// Runde arbeitet in diesem Ordner und sieht den Verlauf vor ihrem Auftrag.
+/// Ein Task von vorher, ohne beide Felder, laedt weiter.
+#[test]
+fn ein_task_arbeitet_im_ordner_und_verlauf_seines_gespraechs() {
+    let basis = ordner("gespraech");
+    let ablage = Ablage::neu(basis.join("vorhaben"));
+    let arbeit = basis.join("arbeit");
+    std::fs::create_dir_all(&arbeit).unwrap();
+    let v = ablage
+        .anlegen_fuer("a.md anlegen", vorhaben::jetzt(), Some("g-7".into()), Some(arbeit.display().to_string()))
+        .unwrap();
+    let mut v = ablage.laden(&v.kennung).unwrap();
+    assert_eq!(v.gespraech.as_deref(), Some("g-7"));
+    assert_eq!(v.wurzel.as_deref(), Some(arbeit.display().to_string().as_str()));
+
+    // Der Ruester nimmt den Ordner vom Task und nicht aus der Einstellung.
+    let r = |zusaetzlich: vorhaben::Zusatzwerkzeuge, v: &vorhaben::Vorhaben| {
+        let agent = v.agent_fuer(&Agenteneinstellung { schreiben: true, ..Agenteneinstellung::default() });
+        assert_eq!(agent.netzsaat.as_deref(), Some("a.md anlegen"));
+        myl_client::ruestung::ruesten(&agent, Ansageform::Amtlich, Werkzeugkiste::Base, zusaetzlich)
+    };
+    let modell = Zeuge {
+        zeilen: RefCell::new(vec![aufruf("write_file", serde_json::json!({"pfad": "a.md", "inhalt": "blau\n"}))]),
+        erstes: RefCell::new(None),
+    };
+    let verlauf = [Nachricht::nutzer("Wir haben blau als Farbe festgelegt."), Nachricht::modell("Gut, blau.")];
+    vorhaben::runde_im_gespraech(&ablage, &mut v, &modell, &r, &Loopeinstellung::default(), Sprache::De, 256, None, &verlauf)
+        .unwrap();
+    assert_eq!(std::fs::read_to_string(arbeit.join("a.md")).unwrap(), "blau\n", "nicht im Ordner des Tasks gearbeitet");
+    let gesehen = modell.erstes.borrow().clone().expect("gefragt");
+    let farbe = gesehen.iter().position(|n| n.contains("blau als Farbe")).expect("der Verlauf fehlt");
+    let auftrag = gesehen.iter().position(|n| n.contains("a.md anlegen")).expect("der Auftrag fehlt");
+    assert!(farbe < auftrag, "der Verlauf steht nicht vor dem Auftrag");
+
+    // Ein Task von vorher: ohne `gespraech` und `wurzel` im JSON.
+    let alt = ablage.anlegen("alt", vorhaben::jetzt()).unwrap();
+    let datei = basis.join("vorhaben").join(&alt.kennung).join("vorhaben.json");
+    let mut j: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&datei).unwrap()).unwrap();
+    j.as_object_mut().unwrap().remove("gespraech");
+    j.as_object_mut().unwrap().remove("wurzel");
+    std::fs::write(&datei, j.to_string()).unwrap();
+    let alt = ablage.laden(&alt.kennung).expect("ein Task von vorher laedt nicht mehr");
+    assert!(alt.gespraech.is_none() && alt.wurzel.is_none());
 }

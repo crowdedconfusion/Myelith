@@ -2849,11 +2849,15 @@ impl IntegerModel {
         };
         assert!(gleiche_eingabe, "gate und up muessen dieselbe Eingangsdrehung tragen");
         let hidden = mlp.gate_proj.cols();
-        let hs: Vec<Vec<i16>> = xs
-            .iter()
-            .map(|x| {
+        // ⚑ **Viele Eingaben in einem Zug** (`mlp_h_stapel`): Bis zum
+        //   2026-09-30 lief hier `mlp_h` einmal je Token, in der
+        //   Vorbereitung also eine Runde je Token und Ebene, und jedes Token
+        //   las gate und up ganz neu. Eine einzelne Eingabe (Decode) geht
+        //   weiter den einzelnen Weg.
+        let hs: Vec<Vec<i16>> = match xs {
+            [x] => {
                 let (xe, xf) = mlp.gate_proj.eingang(x, sc.norm_mlp_frac);
-                integer_llm_kernels::mlp::mlp_h(
+                vec![integer_llm_kernels::mlp::mlp_h(
                     &xe,
                     mlp.gate_proj.matrix(),
                     mlp.up_proj.matrix(),
@@ -2868,9 +2872,32 @@ impl IntegerModel {
                     cfg.silu_in_frac,
                     cfg.silu_lut_offset,
                     cfg.silu_out_frac,
+                )]
+            }
+            _ => {
+                let (gedreht, xf) = eingaenge_fuer_alle(xs, &mlp.gate_proj, sc.norm_mlp_frac);
+                let scheiben: Vec<&[i16]> = match &gedreht {
+                    Some(flach) => flach.chunks_exact(hidden).collect(),
+                    None => xs.to_vec(),
+                };
+                integer_llm_kernels::mlp::mlp_h_stapel(
+                    &scheiben,
+                    mlp.gate_proj.matrix(),
+                    mlp.up_proj.matrix(),
+                    hidden,
+                    &mlp.gate_proj.shifts,
+                    &mlp.up_proj.shifts,
+                    &self.silu_lut,
+                    xf,
+                    sc.gate_frac,
+                    sc.up_frac,
+                    sc.down_in_frac,
+                    cfg.silu_in_frac,
+                    cfg.silu_lut_offset,
+                    cfg.silu_out_frac,
                 )
-            })
-            .collect();
+            }
+        };
         let scheiben: Vec<&[i16]> = hs.iter().map(Vec::as_slice).collect();
         projektion_pc_fuer_alle(&scheiben, &mlp.down_proj, sc.down_in_frac, acc)
     }
@@ -2888,10 +2915,43 @@ impl IntegerModel {
         spur: Option<&mut Mlpspur>,
     ) -> Vec<i16> {
         if mlp.ist_gedreht() {
-            // ⛔️ Mitschnitt heisst Training, und ternaere, gedrehte Gewichte
-            //   werden nicht trainiert (`Shardfehler::TernaerNichtTrainierbar`).
-            assert!(spur.is_none(), "ein gedrehter MLP rechnet ohne Mitschnitt");
-            return self.mlp_gedreht(mlp, &[x], sc, cfg, acc).pop().expect("eine Eingabe");
+            let Some(spur) = spur else {
+                return self.mlp_gedreht(mlp, &[x], sc, cfg, acc).pop().expect("eine Eingabe");
+            };
+            // ⚑ **Mit Mitschnitt** (seit dem 2026-09-30, vorher eine
+            //   Zusicherung): dieselben zwei Drehungen, dazwischen gate, up
+            //   und SiLU mit ihren Zwischenwerten. `spur.h` ist das
+            //   **ungedrehte** Produkt, wie im ungedrehten Weg; die Drehung
+            //   davor und danach ist eine reine Funktion der Eingabe.
+            assert!(
+                match (mlp.gate_proj.drehung.as_deref(), mlp.up_proj.drehung.as_deref()) {
+                    (Some(a), Some(b)) => a.gleich(b),
+                    (None, None) => true,
+                    _ => false,
+                },
+                "gate und up muessen dieselbe Eingangsdrehung tragen"
+            );
+            let (xe, xf) = mlp.gate_proj.eingang(x, sc.norm_mlp_frac);
+            let h = integer_llm_kernels::mlp::mlp_h_mit_spur(
+                &xe,
+                mlp.gate_proj.matrix(),
+                mlp.up_proj.matrix(),
+                mlp.gate_proj.cols(),
+                &mlp.gate_proj.shifts,
+                &mlp.up_proj.shifts,
+                &self.silu_lut,
+                xf,
+                sc.gate_frac,
+                sc.up_frac,
+                sc.down_in_frac,
+                cfg.silu_in_frac,
+                cfg.silu_lut_offset,
+                cfg.silu_out_frac,
+                spur,
+            );
+            return projektion_pc_fuer_alle(&[h.as_slice()], &mlp.down_proj, sc.down_in_frac, acc)
+                .pop()
+                .expect("eine Eingabe");
         }
         mlp_matrix_mit_spur(
             x,
@@ -3447,27 +3507,48 @@ fn linear_fuer_alle(
     }
 }
 
+/// **Die Eingaenge eines Tensors fuer viele Eingaben**: gedreht, wenn er
+/// eine Eingangsdrehung traegt ([`QTensor::drehung`]), samt der Skala, auf
+/// der sie dann liegen. Ohne Drehung `None` und die Skala der Eingaben.
+///
+/// ⚑ **Die Drehungen laufen verteilt, je Eingabe ein Abschnitt.** Jede
+/// haengt nur an ihrer eigenen Eingabe; nacheinander auf einem Kern standen
+/// waehrenddessen alle anderen still, einmal je gedrehter Matrix und Ebene.
+/// Eine einzelne Eingabe dreht der Aufrufer selbst, ohne Runde.
+fn eingaenge_fuer_alle(xs: &[&[i16]], t: &QTensor, x_frac: u8) -> (Option<Vec<i16>>, u8) {
+    match &t.drehung {
+        None => (None, x_frac),
+        Some(d) => {
+            let breite = t.cols();
+            let flach = rechnen_breit(xs.len(), breite, vorbereitungsfaeden(xs.len()), |b, ziel| {
+                ziel.copy_from_slice(&d.drehen(xs[b], x_frac));
+            });
+            (Some(flach), d.frac)
+        }
+    }
+}
+
 /// Wie [`linear_fuer_alle`], mit der Eingangsdrehung des Tensors
 /// ([`QTensor::drehung`]); ohne Drehung genau `linear_fuer_alle`.
 fn projektion_fuer_alle(xs: &[&[i16]], t: &QTensor, x_frac: u8, out_frac: u8) -> Vec<Vec<i16>> {
-    match &t.drehung {
-        None => linear_fuer_alle(xs, t.matrix(), t.cols(), &t.shifts, x_frac, out_frac),
-        Some(d) => {
-            let gedreht: Vec<Vec<i16>> = xs.iter().map(|x| d.drehen(x, x_frac)).collect();
-            let scheiben: Vec<&[i16]> = gedreht.iter().map(Vec::as_slice).collect();
-            linear_fuer_alle(&scheiben, t.matrix(), t.cols(), &t.shifts, d.frac, out_frac)
+    let (gedreht, frac) = eingaenge_fuer_alle(xs, t, x_frac);
+    match &gedreht {
+        None => linear_fuer_alle(xs, t.matrix(), t.cols(), &t.shifts, frac, out_frac),
+        Some(flach) => {
+            let scheiben: Vec<&[i16]> = flach.chunks_exact(t.cols()).collect();
+            linear_fuer_alle(&scheiben, t.matrix(), t.cols(), &t.shifts, frac, out_frac)
         }
     }
 }
 
 /// Wie [`projektion_fuer_alle`], mit einer Ausgangsskala je Kanal.
 fn projektion_pc_fuer_alle(xs: &[&[i16]], t: &QTensor, x_frac: u8, out_frac: &[u8]) -> Vec<Vec<i16>> {
-    match &t.drehung {
-        None => linear_pc_fuer_alle(xs, t.matrix(), t.cols(), &t.shifts, x_frac, out_frac),
-        Some(d) => {
-            let gedreht: Vec<Vec<i16>> = xs.iter().map(|x| d.drehen(x, x_frac)).collect();
-            let scheiben: Vec<&[i16]> = gedreht.iter().map(Vec::as_slice).collect();
-            linear_pc_fuer_alle(&scheiben, t.matrix(), t.cols(), &t.shifts, d.frac, out_frac)
+    let (gedreht, frac) = eingaenge_fuer_alle(xs, t, x_frac);
+    match &gedreht {
+        None => linear_pc_fuer_alle(xs, t.matrix(), t.cols(), &t.shifts, frac, out_frac),
+        Some(flach) => {
+            let scheiben: Vec<&[i16]> = flach.chunks_exact(t.cols()).collect();
+            linear_pc_fuer_alle(&scheiben, t.matrix(), t.cols(), &t.shifts, frac, out_frac)
         }
     }
 }
@@ -4165,5 +4246,45 @@ mod drehungstests {
         // Ohne Drehung ist die Eingabe `x` selbst, und mit Drehung nicht.
         assert_eq!(&*a.eingang(&x, x_frac).0, x.as_slice());
         assert_ne!(&*q.eingang(&x, x_frac).0, x.as_slice());
+    }
+
+    /// **Viele Eingaben drehen wie jede einzeln**: Die Drehungen eines
+    /// Stapels laufen verteilt (`eingaenge_fuer_alle`), und jede Projektion
+    /// darueber liefert je Eingabe dasselbe wie der einzelne Weg, mit einer
+    /// Skala und mit einer je Kanal, gedreht und ungedreht.
+    #[test]
+    fn viele_eingaben_drehen_wie_jede_einzeln() {
+        let breite = 2048;
+        let vz: Arc<Vec<i8>> = Arc::new(zufall(breite, 5).into_iter().map(|v| if v & 1 == 0 { 1 } else { -1 }).collect());
+        let d = Arc::new(Drehung { vorzeichen: vz, frac: 4 });
+        let gedreht = tensor(48, breite, 21, Some(d.clone()));
+        let roh = tensor(48, breite, 22, None);
+        let eingaben: Vec<Vec<i16>> =
+            (0..7).map(|i| zufall(breite, 200 + i).into_iter().map(|v| (v % 2001) as i16 - 1000).collect()).collect();
+        let scheiben: Vec<&[i16]> = eingaben.iter().map(Vec::as_slice).collect();
+        let x_frac = 6;
+        let je_kanal: Vec<u8> = (0..48).map(|z| 5 + (z % 3) as u8).collect();
+
+        let (flach, frac) = eingaenge_fuer_alle(&scheiben, &gedreht, x_frac);
+        let flach = flach.expect("der Tensor traegt eine Drehung");
+        assert_eq!(frac, d.frac);
+        for (x, teil) in eingaben.iter().zip(flach.chunks_exact(breite)) {
+            assert_eq!(teil, d.drehen(x, x_frac).as_slice());
+        }
+        assert_eq!(eingaenge_fuer_alle(&scheiben, &roh, x_frac), (None, x_frac));
+
+        for t in [&gedreht, &roh] {
+            let alle = projektion_fuer_alle(&scheiben, t, x_frac, 7);
+            let alle_pc = projektion_pc_fuer_alle(&scheiben, t, x_frac, &je_kanal);
+            for (i, x) in eingaben.iter().enumerate() {
+                let (xe, xf) = t.eingang(x, x_frac);
+                let einzeln = linear_w8a16(&xe, &t.data, breite, &t.shifts, xf, 7);
+                assert!(einzeln.iter().any(|&v| v != 0), "Eingabe {i} rechnet mit Nullen");
+                assert_eq!(alle[i], einzeln, "Eingabe {i}");
+                assert_eq!(projektion_fuer_alle(&[x.as_slice()], t, x_frac, 7)[0], einzeln);
+                let einzeln_pc = integer_llm_kernels::linear::linear_w8a16_pc(&xe, &t.data, breite, &t.shifts, xf, &je_kanal);
+                assert_eq!(alle_pc[i], einzeln_pc, "Eingabe {i}, je Kanal");
+            }
+        }
     }
 }

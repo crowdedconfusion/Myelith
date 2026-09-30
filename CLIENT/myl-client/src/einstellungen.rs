@@ -205,6 +205,17 @@ fn bereich(wert: &str, von: u32, bis: u32) -> Result<Option<u32>, String> {
 /// eingestellt ist.
 pub const ANTWORT_VORGABE: usize = 1600;
 
+/// **Die Untergrenze jedes Agentenlaufs**, hoeher als die Vorgabe fuer das
+/// Gespraech.
+///
+/// ⚑ **4 000 seit dem 2026-09-30** (Festlegung des Projektinhabers). Gemessen
+/// am selben Tag: Das 35B mit Denken brachte bei 1 600 Token einen
+/// `write_file` mit einem kurzen CAD-Skript (rund 500 Byte) dreimal nicht zu
+/// Ende, weil das Denken vorher den groessten Teil verbrauchte; bei 4 000
+/// gelang derselbe Auftrag. Das Gespraech behaelt 1 600: Dort endet eine
+/// Antwort von selbst, und es wird nichts geschrieben.
+pub const AGENT_ANTWORT_MINDESTENS: usize = 4000;
+
 fn denkbudget_vorgabe() -> Option<u32> {
     Some(DENKBUDGET_VORGABE)
 }
@@ -1532,8 +1543,8 @@ pub const FELDER: [Feld; 30] = [
         ("Modell", "Model"),
         ("Länge der Antwort", "Answer length"),
         (
-            "Höchstzahl der Token je Antwort im Gespräch. Mehr Token heißt längere Antworten und längere Wartezeit. Der Agent nimmt nie weniger als die Vorgabe, denn ein abgeschnittener Werkzeugaufruf ist verlorene Arbeit.",
-            "Maximum number of tokens per answer in chat. More tokens means longer answers and a longer wait. The agent never takes less than the default, because a cut-off tool call is lost work.",
+            "Höchstzahl der Token je Antwort im Gespräch. Mehr Token heißt längere Antworten und längere Wartezeit. Der Agent nimmt nie weniger als 4000, denn ein abgeschnittener Werkzeugaufruf ist verlorene Arbeit.",
+            "Maximum number of tokens per answer in chat. More tokens means longer answers and a longer wait. The agent never takes less than 4000, because a cut-off tool call is lost work.",
         ),
     ),
     feld(
@@ -1662,8 +1673,8 @@ pub const FELDER: [Feld; 30] = [
         ("Agent", "Agent"),
         ("Arbeitsordner", "Working folder"),
         (
-            "Der einzige Ordner, in dem die Dateiwerkzeuge arbeiten dürfen. Ohne Angabe der Ordner WORK_DIR mit den Beispieldateien; findet sich auch der nicht, gibt es keine Dateiwerkzeuge.",
-            "The only folder the file tools may work in. Unless set, the WORK_DIR folder with the example files; if that is missing too, there are no file tools at all.",
+            "Der einzige Ordner, in dem die Dateiwerkzeuge arbeiten dürfen. Ohne Angabe der Ordner WORK_DIR im Repositorium; findet sich auch der nicht, gibt es keine Dateiwerkzeuge.",
+            "The only folder the file tools may work in. Unless set, the WORK_DIR folder in the repository; if that is missing too, there are no file tools at all.",
         ),
     ),
     feld(

@@ -501,6 +501,174 @@ pub fn lernen(wurzel: Option<&Path>, name: &str, datei: Option<&str>) -> Result<
     lernen_in(&Orte::fuer(wurzel), name, datei)
 }
 
+// ── Lernen auf Wunsch des Nutzers ──
+
+/// Wie lang eine Eingangsseite sein darf, die der Nutzer zum Lernen
+/// vorlegt, in Zeichen.
+///
+/// ⚑ **Abgewiesen und nicht gekuerzt.** Eine Anleitung, deren Ende
+/// fehlt, ist eine andere Anleitung, und das Modell fasste trotzdem
+/// zusammen, es habe sie gelernt.
+pub const HOECHSTENS_LERNZEICHEN: usize = 48_000;
+
+/// Eine Eingangsseite, die der **Nutzer** zum Lernen ausgewaehlt hat.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Lernseite {
+    /// Der Name des Skills: der Ordner, wenn die Datei eine Eingangsseite
+    /// ist (`SKILL.md` und die anderen), sonst der Dateiname ohne Endung.
+    pub name: String,
+    /// Wofuer, wie bei [`Skill::satz`].
+    pub satz: String,
+    /// Die Anleitung, ohne Kopf.
+    pub text: String,
+    pub pfad: PathBuf,
+    pub bytes: u64,
+}
+
+/// **Liest eine Eingangsseite, die der Nutzer selbst ausgewaehlt hat.**
+///
+/// ⚑ **Ein anderer Weg als [`lernen_in`], und mit Absicht.** Dort nennt
+/// das **Modell** einen Namen, und der wird gegen die gefundenen Ordner
+/// gehalten und nie zu einem Pfad. Hier zeigt der **Mensch** im Dialog
+/// des Systems auf eine Datei; das ist seine Entscheidung wie bei einem
+/// Anhang, und sie darf ausserhalb der drei Orte liegen.
+///
+/// Verlangt wird eine gewoehnliche Datei mit der Endung `.md`, lesbar als
+/// Text und hoechstens [`HOECHSTENS_LERNZEICHEN`] lang.
+pub fn aus_datei(pfad: &Path) -> Result<Lernseite, String> {
+    let md = pfad.extension().is_some_and(|e| e.eq_ignore_ascii_case("md"));
+    if !md {
+        return Err(format!("{} ist keine Markdown-Datei (.md)", pfad.display()));
+    }
+    let meta = std::fs::metadata(pfad).map_err(|e| format!("{}: {e}", pfad.display()))?;
+    if !meta.is_file() {
+        return Err(format!("{} ist keine Datei", pfad.display()));
+    }
+    // Vier Bytes je Zeichen sind die Obergrenze von UTF-8: Was darueber
+    // liegt, ist sicher zu lang und wird gar nicht erst gelesen.
+    if meta.len() > 4 * HOECHSTENS_LERNZEICHEN as u64 {
+        return Err(format!("{} ist zu lang fuer einen Skill", pfad.display()));
+    }
+    let roh = std::fs::read_to_string(pfad).map_err(|e| format!("{}: {e}", pfad.display()))?;
+    let (kopf, rest) = kopf_und_rest(&roh);
+    let text = rest.trim().to_string();
+    if text.is_empty() {
+        return Err(format!("{} ist leer", pfad.display()));
+    }
+    let zeichen = text.chars().count();
+    if zeichen > HOECHSTENS_LERNZEICHEN {
+        return Err(format!(
+            "{} hat {zeichen} Zeichen; ein Skill zum Lernen darf hoechstens {HOECHSTENS_LERNZEICHEN} haben",
+            pfad.display()
+        ));
+    }
+    let datei = pfad.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    let eingang = EINGAENGE.iter().any(|e| e.eq_ignore_ascii_case(&datei));
+    let name = if eingang { pfad.parent().and_then(Path::file_name) } else { pfad.file_stem() }
+        .map(|n| n.to_string_lossy().to_string())
+        .filter(|n| !n.is_empty())
+        .unwrap_or(datei);
+    let satz = kopf
+        .get("beschreibung")
+        .filter(|b| !b.is_empty())
+        .map(|b| kuerzen(b))
+        .unwrap_or_else(|| erste_aussage(rest));
+    Ok(Lernseite { name, satz, text, pfad: pfad.to_path_buf(), bytes: meta.len() })
+}
+
+/// **Loest auf, was der Nutzer nennt**: den Namen eines Skills aus den
+/// drei Orten, oder den Pfad zu einer Markdown-Datei.
+///
+/// ⚑ **Der Name zuerst.** Wer `bericht-schreiben` tippt, meint den Skill
+/// und nicht eine Datei dieses Namens im Arbeitsordner. Ein Pfad darf mit
+/// `~/` beginnen; ein relativer gilt ab `bezug`.
+pub fn lernseite_in(o: &Orte, angabe: &str, bezug: &Path) -> Result<Lernseite, String> {
+    let angabe = angabe.trim();
+    let alle = alle_in(o);
+    if let Some(skill) = alle.iter().find(|s| s.name.eq_ignore_ascii_case(angabe)) {
+        return aus_datei(&skill.pfad).map(|seite| Lernseite { name: skill.name.clone(), ..seite });
+    }
+    let pfad = match angabe.strip_prefix("~/") {
+        Some(rest) => std::env::var_os("HOME").map(|h| PathBuf::from(h).join(rest)).unwrap_or_else(|| PathBuf::from(angabe)),
+        None => PathBuf::from(angabe),
+    };
+    let pfad = if pfad.is_absolute() { pfad } else { bezug.join(pfad) };
+    if pfad.is_file() {
+        return aus_datei(&pfad);
+    }
+    let namen: Vec<String> = alle.into_iter().map(|s| s.name).collect();
+    Err(format!(
+        "\"{angabe}\" ist weder ein Skill noch eine Datei; vorhanden: {}",
+        if namen.is_empty() { "keiner".to_string() } else { namen.join(", ") }
+    ))
+}
+
+/// Wie [`lernseite_in`], mit den drei Orten dieses Arbeitsordners.
+pub fn lernseite(wurzel: &Path, angabe: &str) -> Result<Lernseite, String> {
+    lernseite_in(&Orte::fuer(Some(wurzel)), angabe, wurzel)
+}
+
+/// **Der Auftrag, mit dem das Modell die vorgelegten Skills lernt.**
+///
+/// Das Modell bekommt die Anleitungen, soll zuerst in **einem Satz**
+/// sagen, was es daraus gelernt hat, und danach den Auftrag des Nutzers
+/// bearbeiten. ⚑ **Ohne Auftrag bleibt es bei dem Satz**: Wer nur einen
+/// Skill vorlegt, will wissen, ob er angekommen ist, und keine Antwort
+/// auf eine Frage, die niemand gestellt hat.
+///
+/// ⚑ **An einer Stelle und nicht im Fenster**: Konsole und Fenster
+/// sagen dem Modell so dasselbe.
+pub fn lernauftrag(seiten: &[Lernseite], auftrag: &str, deutsch: bool) -> String {
+    let auftrag = auftrag.trim();
+    if seiten.is_empty() {
+        return auftrag.to_string();
+    }
+    let mehrere = seiten.len() > 1;
+    let mut aus = String::new();
+    aus.push_str(match (deutsch, mehrere) {
+        (true, false) => "Lerne den folgenden Skill, bevor du antwortest.",
+        (true, true) => "Lerne die folgenden Skills, bevor du antwortest.",
+        (false, false) => "Learn the following skill before you answer.",
+        (false, true) => "Learn the following skills before you answer.",
+    });
+    for s in seiten {
+        aus.push_str(&format!(
+            "
+
+=== Skill: {} ===
+{}
+=== {} ===",
+            s.name,
+            s.text,
+            if deutsch { "Ende des Skills" } else { "End of skill" }
+        ));
+    }
+    aus.push_str("
+
+");
+    aus.push_str(match (deutsch, mehrere) {
+        (true, false) => "Beginne deine Antwort mit genau einem Satz, der zusammenfasst, was du aus dem Skill gelernt hast.",
+        (true, true) => "Beginne deine Antwort mit genau einem Satz je Skill, der zusammenfasst, was du daraus gelernt hast.",
+        (false, false) => "Begin your answer with exactly one sentence that sums up what you learned from the skill.",
+        (false, true) => "Begin your answer with exactly one sentence per skill that sums up what you learned from it.",
+    });
+    if auftrag.is_empty() {
+        aus.push_str(if deutsch { " Schreibe sonst nichts." } else { " Write nothing else." });
+    } else {
+        aus.push_str(if deutsch {
+            " Bearbeite danach diesen Auftrag und wende das Gelernte dabei an:
+
+"
+        } else {
+            " Then work on this request and apply what you learned:
+
+"
+        });
+        aus.push_str(auftrag);
+    }
+    aus
+}
+
 /// Die Dateien neben der Eingangsseite, zwei Ebenen tief, gedeckelt.
 fn weitere_dateien(skill: &Skill) -> Vec<String> {
     let mut aus = Vec::new();
@@ -578,6 +746,106 @@ fn erste_aussage(text: &str) -> String {
 #[cfg(test)]
 mod proben {
     use super::*;
+
+    fn lernordner(name: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("myl-lernseite-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).expect("Ordner");
+        d
+    }
+
+    #[test]
+    fn eine_eingangsseite_heisst_wie_ihr_ordner() {
+        let d = lernordner("eingang");
+        std::fs::create_dir_all(d.join("bericht-schreiben")).expect("Ordner");
+        let p = d.join("bericht-schreiben").join("skill.md");
+        std::fs::write(&p, "---\nbeschreibung: Wie ein Bericht entsteht\nstichworte: bericht\n---\n# Bericht\n\nErst sammeln, dann schreiben.\n")
+            .expect("schreiben");
+        let s = aus_datei(&p).expect("lesbar");
+        assert_eq!(s.name, "bericht-schreiben");
+        assert_eq!(s.satz, "Wie ein Bericht entsteht");
+        assert_eq!(s.text, "# Bericht\n\nErst sammeln, dann schreiben.");
+        assert!(!s.text.contains("stichworte"), "der Kopf steht im Lerntext");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn eine_andere_markdown_datei_heisst_wie_sie_selbst() {
+        let d = lernordner("frei");
+        let p = d.join("hoeflich-antworten.md");
+        std::fs::write(&p, "Antworte kurz und freundlich.\n").expect("schreiben");
+        let s = aus_datei(&p).expect("lesbar");
+        assert_eq!(s.name, "hoeflich-antworten");
+        assert_eq!(s.satz, "Antworte kurz und freundlich.");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn was_kein_skill_sein_kann_wird_abgewiesen() {
+        let d = lernordner("nein");
+        std::fs::write(d.join("notiz.txt"), "Text").expect("schreiben");
+        std::fs::write(d.join("leer.md"), "---\nbeschreibung: nichts\n---\n\n").expect("schreiben");
+        std::fs::write(d.join("lang.md"), "a".repeat(HOECHSTENS_LERNZEICHEN + 1)).expect("schreiben");
+        std::fs::write(d.join("knapp.md"), "a".repeat(HOECHSTENS_LERNZEICHEN)).expect("schreiben");
+        std::fs::create_dir_all(d.join("ordner.md")).expect("Ordner");
+        assert!(aus_datei(&d.join("notiz.txt")).is_err(), "eine Textdatei geht durch");
+        assert!(aus_datei(&d.join("leer.md")).is_err(), "eine leere Seite geht durch");
+        assert!(aus_datei(&d.join("lang.md")).is_err(), "eine zu lange Seite geht durch");
+        assert!(aus_datei(&d.join("ordner.md")).is_err(), "ein Ordner geht durch");
+        assert!(aus_datei(&d.join("fehlt.md")).is_err());
+        assert!(aus_datei(&d.join("knapp.md")).is_ok(), "die Grenze selbst wird abgewiesen");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn der_name_eines_skills_geht_vor_einem_pfad() {
+        let d = lernordner("angabe");
+        let eigene = d.join("eigene");
+        std::fs::create_dir_all(eigene.join("bericht")).expect("Ordner");
+        std::fs::write(eigene.join("bericht").join("SKILL.md"), "Erst sammeln.\n").expect("schreiben");
+        std::fs::write(d.join("bericht"), "keine Anleitung").expect("schreiben");
+        std::fs::write(d.join("frei.md"), "Frei gewaehlt.\n").expect("schreiben");
+        let o = Orte { projekt: None, eigene, mitgeliefert: None };
+        let s = lernseite_in(&o, " Bericht ", &d).expect("der Name");
+        assert_eq!((s.name.as_str(), s.text.as_str()), ("bericht", "Erst sammeln."));
+        let s = lernseite_in(&o, "frei.md", &d).expect("der Pfad ab dem Bezug");
+        assert_eq!(s.name, "frei");
+        let f = lernseite_in(&o, "gibtsnicht", &d).expect_err("weder noch");
+        assert!(f.contains("vorhanden: bericht"), "{f}");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    fn seite(name: &str, text: &str) -> Lernseite {
+        Lernseite { name: name.into(), satz: String::new(), text: text.into(), pfad: PathBuf::new(), bytes: 0 }
+    }
+
+    #[test]
+    fn ohne_auftrag_bleibt_es_bei_dem_einen_satz() {
+        let a = lernauftrag(&[seite("bericht", "Erst sammeln.")], "  ", true);
+        assert!(a.contains("=== Skill: bericht ===\nErst sammeln.\n=== Ende des Skills ==="));
+        assert!(a.contains("genau einem Satz"));
+        assert!(a.ends_with("Schreibe sonst nichts."));
+        assert!(!a.contains("Bearbeite danach"));
+    }
+
+    #[test]
+    fn mit_auftrag_steht_er_am_ende_und_nach_dem_skill() {
+        let a = lernauftrag(&[seite("bericht", "Erst sammeln.")], "Schreib einen Bericht.", true);
+        assert!(a.ends_with("\n\nSchreib einen Bericht."));
+        assert!(a.find("Erst sammeln.").unwrap() < a.find("genau einem Satz").unwrap());
+        assert!(a.find("genau einem Satz").unwrap() < a.find("Schreib einen Bericht.").unwrap());
+        assert!(!a.contains("Schreibe sonst nichts."));
+        let e = lernauftrag(&[seite("report", "Collect first.")], "Write a report.", false);
+        assert!(e.starts_with("Learn the following skill") && e.contains("exactly one sentence") && e.ends_with("Write a report."));
+    }
+
+    #[test]
+    fn mehrere_skills_bekommen_je_einen_satz_und_keiner_ist_der_auftrag_selbst() {
+        let a = lernauftrag(&[seite("a", "Eins."), seite("b", "Zwei.")], "", true);
+        assert!(a.contains("=== Skill: a ===") && a.contains("=== Skill: b ==="));
+        assert!(a.contains("einem Satz je Skill"));
+        assert_eq!(lernauftrag(&[], " Hallo ", true), "Hallo");
+    }
 
     fn mappe(ordner: &Path, name: &str, satz: &str) {
         let p = ordner.join(name);

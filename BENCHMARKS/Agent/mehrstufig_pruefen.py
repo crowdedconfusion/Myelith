@@ -4,7 +4,8 @@
 Jede Abnahme muss am Ausgangsstand scheitern und an der Musterloesung
 bestehen. Eine Abnahme, die beides nicht trennt, misst nichts.
 
-    python3 BENCHMARKS/Agent/mehrstufig_pruefen.py
+    python3 BENCHMARKS/Agent/mehrstufig_pruefen.py              # mehrstufig.json
+    python3 BENCHMARKS/Agent/mehrstufig_pruefen.py stufen.json  # jeder andere Satz
 """
 import json
 import subprocess
@@ -20,7 +21,8 @@ def abnahme(ordner: Path, befehl: str) -> bool:
 
 
 def main() -> int:
-    auftraege = json.loads((HIER / "mehrstufig.json").read_text(encoding="utf-8"))["auftrag"]
+    satz = HIER / (sys.argv[1] if len(sys.argv) > 1 else "mehrstufig.json")
+    auftraege = json.loads(satz.read_text(encoding="utf-8"))["auftrag"]
     fehler = 0
     for a in auftraege:
         with tempfile.TemporaryDirectory() as t:

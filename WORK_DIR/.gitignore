@@ -1,0 +1,7 @@
+# Der Arbeitsordner gehoert dem Nutzer und dem Agenten, nicht dem
+# Repositorium. Versioniert wird nur der Ordner selbst, damit ihn jeder
+# frische Klon hat: Das Fenster nimmt ihn als Vorgabe fuer die Dateiwerkzeuge.
+# Die README bleibt als Erklaerung dabei.
+*
+!.gitignore
+!README.md

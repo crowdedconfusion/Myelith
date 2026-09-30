@@ -663,6 +663,34 @@ struct Loopzustand {
     in_runde: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// Der Faden des Loops, damit die Pause dessen Befehle beenden kann.
     faden: std::sync::Arc<Mutex<Option<std::thread::ThreadId>>>,
+    /// Je Gespraech, was seine Runden brauchen; das Fenster haelt es frisch.
+    umfelder: std::sync::Arc<Mutex<std::collections::HashMap<String, Umfeld>>>,
+}
+
+/// **Was eine Runde von ihrem Gespraech mitbekommt**: den Verlauf, wie ihn
+/// der Agent saehe, und den Ordner, falls das Gespraech einen eigenen hat.
+///
+/// ⚑ **Vom Fenster geschickt und nicht gelesen**: Die Gespraeche liegen im
+/// Speicher der Webansicht. Das Fenster schickt beides, wenn der Loop
+/// startet, ein Task angelegt wird, ein Auftrag oder eine Runde endet und
+/// der Ordner wechselt.
+#[derive(Clone, Default)]
+struct Umfeld {
+    verlauf: Vec<myl_client::Nachricht>,
+    wurzel: Option<String>,
+}
+
+/// **Das Umfeld eines Gespraechs fuer seine Loop-Runden.**
+#[tauri::command]
+fn loop_umfeld(
+    gespraech: String,
+    verlauf: Vec<myl_client::Nachricht>,
+    wurzel: Option<String>,
+    halter: tauri::State<'_, Halter>,
+) -> Result<(), String> {
+    let mut g = halter.schleife.umfelder.lock().map_err(|_| "das Umfeld ist vergiftet".to_string())?;
+    g.insert(gespraech, Umfeld { verlauf, wurzel: wurzel.filter(|w| !w.trim().is_empty()) });
+    Ok(())
 }
 
 /// Eine Zeile der Taskliste.
@@ -675,6 +703,8 @@ struct Taskzeile {
     wort: String,
     runden: u32,
     ergebnis: Option<String>,
+    /// Das Gespraech, zu dem der Task gehoert (Kennung des Fensters).
+    gespraech: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -714,19 +744,23 @@ fn tasks(halter: tauri::State<'_, Halter>) -> Taskansicht {
                 stellung: st,
                 runden: v.runden,
                 ergebnis: v.ergebnis,
+                gespraech: v.gespraech,
             })
             .collect(),
     }
 }
 
 /// **Legt einen Task an**; er steht hinten in der Schlange.
+///
+/// ⚑ **Gebunden an das Gespraech, in dem er angelegt wurde**, samt dessen
+/// Ordner (Festlegung des Projektinhabers, 2026-09-30).
 #[tauri::command]
-fn task_anlegen(ziel: String) -> Result<String, String> {
+fn task_anlegen(ziel: String, gespraech: Option<String>, wurzel: Option<String>) -> Result<String, String> {
     // ⛔️ Derselbe Schutzfilter wie vor jedem Auftrag (Art. 5 KI-Verordnung).
     if let Some(satz) = myl_client::schutzfilter::abweisen(&ziel, sprache_jetzt(), "fenster-loop") {
         return Err(satz);
     }
-    let v = myl_client::vorhaben::Ablage::vorgabe().anlegen(&ziel, myl_client::vorhaben::jetzt())?;
+    let v = myl_client::vorhaben::Ablage::vorgabe().anlegen_fuer(&ziel, myl_client::vorhaben::jetzt(), gespraech, wurzel)?;
     Ok(v.kennung)
 }
 
@@ -859,9 +893,17 @@ fn loop_starten(fenster: tauri::AppHandle, halter: tauri::State<'_, Halter>) -> 
         };
         let nachfrage = nachfrage_fuer(&fenster, e.agent.modus);
         let kiste = kiste_fuer(&e);
-        let ruester = |zusaetzlich: myl_client::vorhaben::Zusatzwerkzeuge, saat: &str| {
-            let mut agent = e.agent.clone();
-            agent.netzsaat = Some(saat.to_string());
+        let umfelder = z.umfelder.clone();
+        let umfeld = move |v: &myl_client::vorhaben::Vorhaben| -> Option<Umfeld> {
+            let g = v.gespraech.as_ref()?;
+            umfelder.lock().ok()?.get(g).cloned()
+        };
+        let ruester = |zusaetzlich: myl_client::vorhaben::Zusatzwerkzeuge, v: &myl_client::vorhaben::Vorhaben| {
+            let mut agent = v.agent_fuer(&e.agent);
+            // ⚑ Der Ordner, den das Gespraech jetzt hat, vor dem beim Anlegen.
+            if let Some(w) = umfeld(v).and_then(|u| u.wurzel) {
+                agent.wurzel = Some(w);
+            }
             myl_client::ruestung::ruesten_mit(
                 &agent,
                 myl_client::Ansageform::Amtlich,
@@ -906,7 +948,8 @@ fn loop_starten(fenster: tauri::AppHandle, halter: tauri::State<'_, Halter>) -> 
         let melder = move |m: myl_client::Meldung<'_>| {
             let _ = f2.emit(LOOPLEBEND, lebend_aus(m));
         };
-        vorhaben::fahren(
+        let verlauf = |v: &myl_client::vorhaben::Vorhaben| umfeld(v).map(|u| u.verlauf).unwrap_or_default();
+        vorhaben::fahren_mit_verlauf(
             &laeufer,
             &leihen,
             &ruester,
@@ -916,6 +959,7 @@ fn loop_starten(fenster: tauri::AppHandle, halter: tauri::State<'_, Halter>) -> 
             &melden,
             &|| false,
             Some(&melder),
+            Some(&verlauf),
         );
         // ⚑ **Warum er endete, entscheidet ueber die Marke.** Nur ein
         //   geschlossenes Fenster laesst sie stehen: Dann faehrt er beim
@@ -2628,6 +2672,65 @@ async fn datei_waehlen(app: tauri::AppHandle, titel: String) -> Result<Option<St
     Ok(gewaehlt.map(|g| g.to_string()))
 }
 
+/// Was das Fenster ueber einen zum Lernen gewaehlten Skill weiss.
+#[derive(Serialize)]
+struct Skillwahl {
+    name: String,
+    pfad: String,
+    /// Wofuer der Skill ist, ein Satz.
+    satz: String,
+    bytes: u64,
+}
+
+/// **Der Dateidialog fuer „Skill lernen"**: Er oeffnet im eigenen
+/// Skill-Ordner neben den Einstellungen und zeigt Markdown-Dateien.
+///
+/// ⚑ **Der Ordner wird angelegt, wenn es ihn noch nicht gibt.** Ein
+/// Dialog, der irgendwo aufgeht, weil sein Startort fehlt, erklaert
+/// niemandem, wohin eigene Skills gehoeren.
+///
+/// ⚑ **Geprueft wird hier und noch einmal beim Abschicken**
+/// ([`skill_auftrag`]): hier, damit ein Plaettchen nur fuer etwas
+/// entsteht, das sich lernen laesst; dort, weil die Datei dazwischen
+/// geaendert worden sein kann.
+#[tauri::command]
+async fn skill_waehlen(app: tauri::AppHandle, titel: String) -> Result<Option<Skillwahl>, String> {
+    use tauri_plugin_dialog::DialogExt;
+
+    let ordner = myl_client::skills::allgemeiner_ordner();
+    let _ = std::fs::create_dir_all(&ordner);
+    let mut w = app.dialog().file().set_title(titel).add_filter("Markdown", &["md"]);
+    if ordner.is_dir() {
+        w = w.set_directory(&ordner);
+    }
+    let Some(gewaehlt) = w.blocking_pick_file() else {
+        return Ok(None);
+    };
+    let pfad = gewaehlt.simplified().into_path().map_err(|f| f.to_string())?;
+    let seite = myl_client::skills::aus_datei(&pfad)?;
+    Ok(Some(Skillwahl {
+        name: seite.name,
+        pfad: seite.pfad.display().to_string(),
+        satz: seite.satz,
+        bytes: seite.bytes,
+    }))
+}
+
+/// **Der Auftrag, den das Modell bekommt, wenn Skills anliegen**: die
+/// Anleitungen, die Bitte um einen Satz je Skill, und dahinter der
+/// Auftrag des Nutzers, falls es einen gibt.
+///
+/// ⚑ **Gebaut in `myl_client::skills::lernauftrag`**, derselben Stelle,
+/// die auch die Konsole nimmt.
+#[tauri::command]
+async fn skill_auftrag(pfade: Vec<String>, auftrag: String, deutsch: bool) -> Result<String, String> {
+    let seiten = pfade
+        .iter()
+        .map(|p| myl_client::skills::aus_datei(std::path::Path::new(p)))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(myl_client::skills::lernauftrag(&seiten, &auftrag, deutsch))
+}
+
 #[tauri::command]
 async fn ordner_waehlen(
     app: tauri::AppHandle,
@@ -2843,6 +2946,7 @@ fn main() {
             saat_einmal,
             tasks,
             task_anlegen,
+            loop_umfeld,
             tasks_ordnen,
             task_weiter,
             task_stoppen,
@@ -2884,6 +2988,8 @@ fn main() {
             sinne_einrichten,
             stimme_vorwaermen,
             datei_waehlen,
+            skill_waehlen,
+            skill_auftrag,
             aktualisierung,
             aktualisieren,
             terminal_ausfuehren,

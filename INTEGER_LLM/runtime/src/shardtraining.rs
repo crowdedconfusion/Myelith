@@ -585,6 +585,21 @@ impl Shardgewichte {
         if let Some(e) = bereich.iter().find(|e| matches!(e.mischer, crate::model::Mischer::Zustand(_))) {
             return Err(Shardfehler::ZustandsschichtNichtGetragen { ebene: e.layer_idx });
         }
+        // ⛔️ **Was der Vorwaertspass des Trainings nicht rechnet, wird
+        //   abgewiesen** (Fund 508), statt still etwas anderes zu rechnen.
+        for e in &bereich {
+            // ⚑ Die Eingangsdrehung der sieben Matrizen gehoert nicht mehr
+            //   dazu: Der Trainingspfad rechnet sie seit dem 2026-09-30
+            //   selbst, vorwaerts und rueckwaerts.
+            let was = if m.achtsamkeit_mit_tor {
+                "einem Tor am Ausgang der Achtsamkeit"
+            } else if m.drehbreite != m.head_dim {
+                "einer Positionsdrehung ueber einen Teil des Kopfes"
+            } else {
+                continue;
+            };
+            return Err(Shardfehler::VorwaertspfadNichtGetragen { ebene: e.layer_idx, was });
+        }
         // ⚑ **Ganz ternaer oder gar nicht.** Ein Bereich mit beiden Arten
         //   braeuchte eine Form je Ebene; das kommt, wenn es ein Modell gibt,
         //   das es verlangt.
@@ -950,6 +965,21 @@ pub enum Shardfehler {
     /// ⛔️ **Eine rekurrente Zustandsschicht**: Ihr Rueckwaertspass fehlt noch
     /// (Gated DeltaNet). Vorher war das eine Panik beim Einlesen.
     ZustandsschichtNichtGetragen { ebene: usize },
+    /// ⛔️ **Die Ebene rechnet vorwaerts etwas, das der Trainingspfad nicht
+    /// rechnet** (Fund 508): ein Tor am Ausgang der Achtsamkeit, oder eine
+    /// Positionsdrehung ueber nur einen Teil des Kopfes. (Die
+    /// Eingangsdrehung vor einer Projektion gehoerte dazu, bis der
+    /// Trainingspfad sie am selben Tag bekam.)
+    ///
+    /// 📌 **Bis zum 2026-09-30 lief ein solcher Bereich durch.** Der
+    /// Trainingspfad hat seinen eigenen Vorwaertspass, und der kannte keine
+    /// der drei: Gedrehte Gewichte bekamen eine ungedrehte Eingabe, das Tor
+    /// fiele weg und seine Zeilen in `q_proj` laegen als Abfragen in den
+    /// Koepfen, die Positionstabelle wuerde mit der falschen Breite gelesen.
+    /// Jedes davon gibt Zahlen und keinen Fehler, also einen Gradienten zu
+    /// einem Modell, das es nicht gibt. Derselbe Fall wie
+    /// [`Shardfehler::QkNormNichtGetragen`], eine Bauart spaeter.
+    VorwaertspfadNichtGetragen { ebene: usize, was: &'static str },
 }
 
 impl std::fmt::Display for Shardfehler {
@@ -983,6 +1013,11 @@ impl std::fmt::Display for Shardfehler {
                 f,
                 "Ebene {ebene} ist eine rekurrente Zustandsschicht, und deren Rueckwaertspass \
                  fehlt noch"
+            ),
+            Self::VorwaertspfadNichtGetragen { ebene, was } => write!(
+                f,
+                "Ebene {ebene} rechnet vorwaerts mit {was}, und der Trainingspfad rechnet das \
+                 NICHT. Ein Lauf darauf traeniert gegen ein anderes Modell als die Inferenz"
             ),
         }
     }
@@ -1144,6 +1179,7 @@ fn gemisch_vorwaerts(
         v_skalen: &a_umgerechnet[2].1,
         o: &a_umgerechnet[3].0,
         o_skalen: &a_umgerechnet[3].1,
+        drehung: crate::trainingsschleife::achtsamkeitsdrehungen(ebene),
     };
     spur.aufmerksamkeit = vorwaerts_der_aufmerksamkeit(
         a_gew,
@@ -2009,6 +2045,7 @@ fn gemisch_rueckwaerts(
         v_skalen: &a_umgerechnet[2].1,
         o: &a_umgerechnet[3].0,
         o_skalen: &a_umgerechnet[3].1,
+        drehung: crate::trainingsschleife::achtsamkeitsdrehungen(ebene),
     };
     let g_attn: Vec<Vec<i32>> = g_residual
         .iter()

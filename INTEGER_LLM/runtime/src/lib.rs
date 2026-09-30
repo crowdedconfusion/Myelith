@@ -9,6 +9,7 @@ pub mod tokenizer;
 pub mod mitschnitt;
 pub mod messung;
 pub mod shardtraining;
+pub mod standartefakt;
 pub mod trainingsschleife;
 pub mod model;
 pub mod paths;

@@ -1,0 +1,218 @@
+{
+  "_kommentar": "Kurze Aufgaben in vier Stufen (einfach, mittel, komplex, overkill), je drei. Jede traegt eine Abnahme von aussen und eine Musterloesung; mehrstufig_pruefen.py stufen.json prueft, dass die Abnahme am Ausgangsstand scheitert und an der Musterloesung besteht. Schritte und Frist je Stufe.",
+  "auftrag": [
+    {
+      "stufe": 1,
+      "stufenname": "einfach",
+      "satz": "voll",
+      "schreiben": true,
+      "schritte": 6,
+      "frist": 600,
+      "name": "e_datei_anlegen",
+      "auftrag": "Lege im Arbeitsordner die Datei gruss.txt an. Sie soll genau eine Zeile enthalten: Hallo Welt",
+      "dateien": {},
+      "abnahme": "grep -qx 'Hallo Welt' gruss.txt && test \"$(grep -c . gruss.txt)\" -eq 1",
+      "_muster": {
+        "gruss.txt": "Hallo Welt\n"
+      }
+    },
+    {
+      "stufe": 1,
+      "stufenname": "einfach",
+      "satz": "voll",
+      "schreiben": true,
+      "schritte": 6,
+      "frist": 600,
+      "name": "e_wert_aendern",
+      "auftrag": "Setze in config.ini den Port auf 9090. Alles andere in der Datei bleibt, wie es ist.",
+      "dateien": {
+        "config.ini": "[server]\nhost = localhost\nport = 8080\nmodus = test\n"
+      },
+      "abnahme": "grep -qx 'port = 9090' config.ini && grep -qx 'host = localhost' config.ini && grep -qx 'modus = test' config.ini && grep -qx '\\[server\\]' config.ini && ! grep -q 8080 config.ini",
+      "_muster": {
+        "config.ini": "[server]\nhost = localhost\nport = 9090\nmodus = test\n"
+      }
+    },
+    {
+      "stufe": 1,
+      "stufenname": "einfach",
+      "satz": "voll",
+      "schreiben": true,
+      "schritte": 6,
+      "frist": 600,
+      "name": "e_zeilen_zaehlen",
+      "auftrag": "Wie viele Namen stehen in namen.txt (einer je Zeile)? Schreib nur die Zahl in die Datei anzahl.txt.",
+      "dateien": {
+        "namen.txt": "Anna\nBen\nCarla\nDaniel\nEmil\nFrieda\nGustav\n"
+      },
+      "abnahme": "test \"$(tr -d ' \\r\\n' < anzahl.txt)\" = 7",
+      "_muster": {
+        "anzahl.txt": "7\n"
+      }
+    },
+    {
+      "stufe": 2,
+      "stufenname": "mittel",
+      "satz": "voll",
+      "schreiben": true,
+      "schritte": 10,
+      "frist": 900,
+      "name": "m_summe_json",
+      "auftrag": "bestellungen.json listet Bestellungen mit preis (in Euro) und menge. Berechne den Gesamtwert, also die Summe von preis mal menge über alle Bestellungen, und schreibe ihn als ganze Zahl ohne Einheit in die Datei summe.txt.",
+      "dateien": {
+        "bestellungen.json": "[\n  {\n    \"artikel\": \"Stift\",\n    \"preis\": 3,\n    \"menge\": 10\n  },\n  {\n    \"artikel\": \"Heft\",\n    \"preis\": 4,\n    \"menge\": 5\n  },\n  {\n    \"artikel\": \"Mappe\",\n    \"preis\": 12,\n    \"menge\": 2\n  },\n  {\n    \"artikel\": \"Lineal\",\n    \"preis\": 2,\n    \"menge\": 0\n  }\n]\n"
+      },
+      "abnahme": "test \"$(tr -d ' \\r\\n' < summe.txt)\" = 74",
+      "_muster": {
+        "summe.txt": "74\n"
+      }
+    },
+    {
+      "stufe": 2,
+      "stufenname": "mittel",
+      "satz": "voll",
+      "schreiben": true,
+      "schritte": 10,
+      "frist": 900,
+      "name": "m_funktion_umbenennen",
+      "auftrag": "Benenne die Funktion berechne aus rechnen.py in verdopple um, und zwar überall, wo sie benutzt wird. Danach muss python3 main.py weiter 42 ausgeben und python3 hilfe.py weiter 9.",
+      "dateien": {
+        "rechnen.py": "def berechne(x):\n    return x * 2\n",
+        "main.py": "from rechnen import berechne\n\nprint(berechne(21))\n",
+        "hilfe.py": "from rechnen import berechne\n\n\ndef doppelt_und_eins(x):\n    return berechne(x) + 1\n\n\nif __name__ == \"__main__\":\n    print(doppelt_und_eins(4))\n"
+      },
+      "abnahme": "test \"$(python3 main.py)\" = 42 && test \"$(python3 hilfe.py)\" = 9 && grep -q 'def verdopple' rechnen.py && ! grep -q berechne rechnen.py main.py hilfe.py",
+      "_muster": {
+        "rechnen.py": "def verdopple(x):\n    return x * 2\n",
+        "main.py": "from rechnen import verdopple\n\nprint(verdopple(21))\n",
+        "hilfe.py": "from rechnen import verdopple\n\n\ndef doppelt_und_eins(x):\n    return verdopple(x) + 1\n\n\nif __name__ == \"__main__\":\n    print(doppelt_und_eins(4))\n"
+      }
+    },
+    {
+      "stufe": 2,
+      "stufenname": "mittel",
+      "satz": "voll",
+      "schreiben": true,
+      "schritte": 10,
+      "frist": 900,
+      "name": "m_csv_filtern",
+      "auftrag": "personen.csv hat die Spalten name;alter;stadt. Schreib die Namen aller Personen aus Berlin, die älter als 30 sind, alphabetisch sortiert und je Zeile einen, in die Datei berlin.txt.",
+      "dateien": {
+        "personen.csv": "name;alter;stadt\nAnna;34;Berlin\nBen;29;Berlin\nCarla;41;Hamburg\nDaniel;52;Berlin\nEmil;31;München\nFrieda;30;Berlin\nGustav;38;Berlin\n"
+      },
+      "abnahme": "test \"$(tr -d '\\r' < berlin.txt | sed '/^ *$/d')\" = \"$(printf 'Anna\\nDaniel\\nGustav')\"",
+      "_muster": {
+        "berlin.txt": "Anna\nDaniel\nGustav\n"
+      }
+    },
+    {
+      "stufe": 3,
+      "stufenname": "komplex",
+      "satz": "voll",
+      "schreiben": true,
+      "schritte": 16,
+      "frist": 1500,
+      "name": "k_tests_gruen",
+      "auftrag": "python3 test_rechner.py schlägt fehl. Finde die Fehler in rechner.py und behebe sie, ohne test_rechner.py zu verändern. Am Ende muss python3 test_rechner.py die Zeile 'alle Tests bestanden' ausgeben.",
+      "dateien": {
+        "rechner.py": "\"\"\"Kleine Statistik.\"\"\"\n\n\ndef mittelwert(werte):\n    if not werte:\n        return None\n    return sum(werte) / (len(werte) + 1)\n\n\ndef median(werte):\n    s = sorted(werte)\n    n = len(s)\n    mitte = n // 2\n    if n % 2 == 1:\n        return s[mitte]\n    return (s[mitte] + s[mitte + 1]) / 2\n\n\ndef spannweite(werte):\n    return max(werte) - min(werte)\n",
+        "test_rechner.py": "from rechner import mittelwert, median, spannweite\n\nassert mittelwert([2, 4, 6]) == 4, mittelwert([2, 4, 6])\nassert mittelwert([]) is None\nassert median([3, 1, 2]) == 2\nassert median([4, 1, 3, 2]) == 2.5, median([4, 1, 3, 2])\nassert spannweite([5, 1, 9]) == 8\nprint(\"alle Tests bestanden\")\n"
+      },
+      "abnahme": "python3 test_rechner.py | grep -qx 'alle Tests bestanden' && python3 -c \"import hashlib,sys; sys.exit(hashlib.sha256(open('test_rechner.py','rb').read()).hexdigest() != 'b16e11c620f74a8fef7d6998cf4523565d259b86f8a09ad4d9c5765c97534339')\"",
+      "_muster": {
+        "rechner.py": "\"\"\"Kleine Statistik.\"\"\"\n\n\ndef mittelwert(werte):\n    if not werte:\n        return None\n    return sum(werte) / len(werte)\n\n\ndef median(werte):\n    s = sorted(werte)\n    n = len(s)\n    mitte = n // 2\n    if n % 2 == 1:\n        return s[mitte]\n    return (s[mitte - 1] + s[mitte]) / 2\n\n\ndef spannweite(werte):\n    return max(werte) - min(werte)\n"
+      }
+    },
+    {
+      "stufe": 3,
+      "stufenname": "komplex",
+      "satz": "voll",
+      "schreiben": true,
+      "schritte": 16,
+      "frist": 1500,
+      "name": "k_logs_auswerten",
+      "auftrag": "Im Ordner logs liegen Protokolle. Zähle über alle Dateien, wie oft jeder Fehlerkode in ERROR-Zeilen vorkommt; Warnungen zählen nicht. Schreib das Ergebnis in die Datei fehler.txt, eine Zeile je Kode im Format 'E12: 5', absteigend nach Anzahl.",
+      "dateien": {
+        "logs/a.log": "2026-09-01 08:00:00 INFO Dienst gestartet\n2026-09-01 08:05:12 ERROR E12 Verbindung verloren\n2026-09-01 08:05:13 WARN W3 nach E12 erneut versucht\n2026-09-01 08:07:40 ERROR E7 Datei fehlt\n2026-09-01 09:00:00 ERROR E12 Verbindung verloren\n",
+        "logs/b.log": "2026-09-02 10:00:00 INFO Dienst gestartet\n2026-09-02 10:01:00 ERROR E30 Speicher voll\n2026-09-02 10:02:00 ERROR E12 Verbindung verloren\n2026-09-02 10:03:00 WARN W3 nach E12 erneut versucht\n2026-09-02 10:04:00 ERROR E7 Datei fehlt\n",
+        "logs/c.log": "2026-09-03 12:00:00 ERROR E12 Verbindung verloren\n2026-09-03 12:00:30 ERROR E12 Zeitüberschreitung\n2026-09-03 12:01:00 INFO Neustart\n2026-09-03 12:02:00 ERROR E7 Datei fehlt\n"
+      },
+      "abnahme": "test \"$(tr -d '\\r' < fehler.txt | sed '/^ *$/d')\" = \"$(printf 'E12: 5\\nE7: 3\\nE30: 1')\"",
+      "_muster": {
+        "fehler.txt": "E12: 5\nE7: 3\nE30: 1\n"
+      }
+    },
+    {
+      "stufe": 3,
+      "stufenname": "komplex",
+      "satz": "voll",
+      "schreiben": true,
+      "schritte": 16,
+      "frist": 1500,
+      "name": "k_konfig_migrieren",
+      "auftrag": "Übertrage einstellungen_v1.json in das neue Format und schreibe es nach einstellungen_v2.json. Regeln: Das Feld version ist 2. name, port und timeout stehen im Objekt server. port wird eine Zahl. timeout_ms wird zu timeout_s in Sekunden. debug wird true oder false ('ja' heißt true). benutzer wird eine Liste von Objekten mit dem Feld name. Sonst gibt es keine Felder. einstellungen_v1.json bleibt unverändert.",
+      "dateien": {
+        "einstellungen_v1.json": "{\n  \"name\": \"Werkstatt\",\n  \"port\": \"8080\",\n  \"debug\": \"ja\",\n  \"benutzer\": [\n    \"anna\",\n    \"ben\"\n  ],\n  \"timeout_ms\": 1500\n}\n"
+      },
+      "abnahme": "python3 -c \"import json,sys; sys.exit(json.load(open('einstellungen_v2.json')) != {'version': 2, 'server': {'name': 'Werkstatt', 'port': 8080, 'timeout_s': 1.5}, 'debug': True, 'benutzer': [{'name': 'anna'}, {'name': 'ben'}]})\" && python3 -c \"import hashlib,sys; sys.exit(hashlib.sha256(open('einstellungen_v1.json','rb').read()).hexdigest() != 'a3cd3ef864fcd6bf7efe49ca22960a5d5ec360f5f14e0419afd5dfefc3ee1569')\"",
+      "_muster": {
+        "einstellungen_v2.json": "{\n  \"version\": 2,\n  \"server\": {\n    \"name\": \"Werkstatt\",\n    \"port\": 8080,\n    \"timeout_s\": 1.5\n  },\n  \"debug\": true,\n  \"benutzer\": [\n    {\n      \"name\": \"anna\"\n    },\n    {\n      \"name\": \"ben\"\n    }\n  ]\n}\n"
+      }
+    },
+    {
+      "stufe": 4,
+      "stufenname": "overkill",
+      "satz": "voll",
+      "schreiben": true,
+      "schritte": 24,
+      "frist": 2400,
+      "name": "o_cli_inventar",
+      "auftrag": "Schreibe ein Kommandozeilenprogramm inventar.py (nur Python-Standardbibliothek), das einen Bestand in inventar.json führt; fehlt die Datei, ist der Bestand leer. python3 inventar.py add NAME MENGE PREIS fügt MENGE Stück hinzu; gibt es NAME schon, wird die Menge addiert und der Preis überschrieben. python3 inventar.py remove NAME MENGE zieht MENGE ab; mehr als vorhanden ist ein Fehler mit Rückgabewert 1, und der Bestand bleibt unverändert; bei 0 verschwindet der Eintrag. python3 inventar.py list gibt je Artikel eine Zeile 'NAME: MENGE' aus, alphabetisch sortiert. python3 inventar.py total gibt den Gesamtwert (Summe von MENGE mal PREIS) mit zwei Nachkommastellen aus, zum Beispiel 12.50. Probiere das Programm am Ende selbst aus und lösche danach inventar.json.",
+      "dateien": {},
+      "abnahme": "rm -f inventar.json && python3 inventar.py add Schraube 10 0.25 && python3 inventar.py add Mutter 5 0.10 && python3 inventar.py add Schraube 2 0.30 && ! python3 inventar.py remove Mutter 6 && python3 inventar.py remove Mutter 5 && test \"$(python3 inventar.py list)\" = 'Schraube: 12' && test \"$(python3 inventar.py total)\" = 3.60 && python3 inventar.py add Bolzen 1 2 && test \"$(python3 inventar.py list)\" = \"$(printf 'Bolzen: 1\\nSchraube: 12')\" && test \"$(python3 inventar.py total)\" = 5.60",
+      "_muster": {
+        "inventar.py": "import json\nimport sys\nfrom pathlib import Path\n\nDATEI = Path(\"inventar.json\")\n\n\ndef laden():\n    if DATEI.exists():\n        return json.loads(DATEI.read_text(encoding=\"utf-8\"))\n    return {}\n\n\ndef speichern(bestand):\n    DATEI.write_text(json.dumps(bestand, ensure_ascii=False), encoding=\"utf-8\")\n\n\ndef main(argv):\n    bestand = laden()\n    befehl = argv[0] if argv else \"\"\n    if befehl == \"add\":\n        name, menge, preis = argv[1], int(argv[2]), float(argv[3])\n        alt = bestand.get(name, {\"menge\": 0})\n        bestand[name] = {\"menge\": alt[\"menge\"] + menge, \"preis\": preis}\n        speichern(bestand)\n    elif befehl == \"remove\":\n        name, menge = argv[1], int(argv[2])\n        vorhanden = bestand.get(name, {\"menge\": 0})[\"menge\"]\n        if menge > vorhanden:\n            print(f\"nur {vorhanden} vorhanden\", file=sys.stderr)\n            return 1\n        if menge == vorhanden:\n            bestand.pop(name, None)\n        else:\n            bestand[name][\"menge\"] = vorhanden - menge\n        speichern(bestand)\n    elif befehl == \"list\":\n        for name in sorted(bestand):\n            print(f\"{name}: {bestand[name]['menge']}\")\n    elif befehl == \"total\":\n        print(f\"{sum(e['menge'] * e['preis'] for e in bestand.values()):.2f}\")\n    else:\n        print(\"Befehle: add, remove, list, total\", file=sys.stderr)\n        return 2\n    return 0\n\n\nif __name__ == \"__main__\":\n    sys.exit(main(sys.argv[1:]))\n"
+      }
+    },
+    {
+      "stufe": 4,
+      "stufenname": "overkill",
+      "satz": "voll",
+      "schreiben": true,
+      "schritte": 24,
+      "frist": 2400,
+      "name": "o_refaktor_waehrung",
+      "auftrag": "In rechnung.py, angebot.py und mahnung.py steht dreimal dieselbe Funktion _format. Lege eine Datei waehrung.py mit einer Funktion formatieren(betrag) an, die Beträge deutsch formatiert (Tausenderpunkt, Dezimalkomma, zwei Nachkommastellen, danach ' €'), und lass alle drei Dateien sie benutzen; _format soll danach nirgends mehr stehen. test_waehrung.py darf nicht verändert werden und muss 'alle Tests bestanden' ausgeben; python3 rechnung.py muss 'Summe: 1.234,50 €' ausgeben.",
+      "dateien": {
+        "rechnung.py": "def _format(betrag):\n    return \"%.2f EUR\" % betrag\n\n\nposten = [1000.0, 234.5]\nprint(\"Summe: \" + _format(sum(posten)))\n",
+        "angebot.py": "def _format(betrag):\n    return \"%.2f EUR\" % betrag\n\n\ndef angebot(preis, rabatt_prozent):\n    return _format(preis * (100 - rabatt_prozent) / 100)\n\n\nif __name__ == \"__main__\":\n    print(\"Angebot: \" + angebot(2000.0, 10))\n",
+        "mahnung.py": "def _format(betrag):\n    return \"%.2f EUR\" % betrag\n\n\ndef mahnung(offen, gebuehr=5.0):\n    return \"Offen: \" + _format(offen + gebuehr)\n\n\nif __name__ == \"__main__\":\n    print(mahnung(95.0))\n",
+        "test_waehrung.py": "from waehrung import formatieren\nfrom angebot import angebot\nfrom mahnung import mahnung\n\nassert formatieren(0) == \"0,00 €\", formatieren(0)\nassert formatieren(5.5) == \"5,50 €\", formatieren(5.5)\nassert formatieren(1234.5) == \"1.234,50 €\", formatieren(1234.5)\nassert formatieren(1234567.891) == \"1.234.567,89 €\", formatieren(1234567.891)\nassert formatieren(-12.3) == \"-12,30 €\", formatieren(-12.3)\nassert angebot(2000.0, 10) == \"1.800,00 €\", angebot(2000.0, 10)\nassert mahnung(95.0) == \"Offen: 100,00 €\", mahnung(95.0)\nprint(\"alle Tests bestanden\")\n"
+      },
+      "abnahme": "python3 test_waehrung.py | grep -qx 'alle Tests bestanden' && test \"$(python3 rechnung.py)\" = 'Summe: 1.234,50 €' && ! grep -q _format rechnung.py angebot.py mahnung.py && grep -q waehrung rechnung.py && grep -q waehrung angebot.py && grep -q waehrung mahnung.py && python3 -c \"import hashlib,sys; sys.exit(hashlib.sha256(open('test_waehrung.py','rb').read()).hexdigest() != '9b85895786b6f0da5ba22d0e964c0754a5676f9145fb9d8c2853bd48365bae50')\"",
+      "_muster": {
+        "waehrung.py": "def formatieren(betrag):\n    text = f\"{abs(betrag):,.2f}\".replace(\",\", \"X\").replace(\".\", \",\").replace(\"X\", \".\")\n    return (\"-\" if betrag < 0 else \"\") + text + \" €\"\n",
+        "rechnung.py": "from waehrung import formatieren\n\n\nposten = [1000.0, 234.5]\nprint(\"Summe: \" + formatieren(sum(posten)))\n",
+        "angebot.py": "from waehrung import formatieren\n\n\ndef angebot(preis, rabatt_prozent):\n    return formatieren(preis * (100 - rabatt_prozent) / 100)\n\n\nif __name__ == \"__main__\":\n    print(\"Angebot: \" + angebot(2000.0, 10))\n",
+        "mahnung.py": "from waehrung import formatieren\n\n\ndef mahnung(offen, gebuehr=5.0):\n    return \"Offen: \" + formatieren(offen + gebuehr)\n\n\nif __name__ == \"__main__\":\n    print(mahnung(95.0))\n"
+      }
+    },
+    {
+      "stufe": 4,
+      "stufenname": "overkill",
+      "satz": "voll",
+      "schreiben": true,
+      "schritte": 24,
+      "frist": 2400,
+      "name": "o_daten_bereinigen",
+      "auftrag": "umsatz_roh.csv (Spalten datum;betrag;kunde) ist unsauber. Erzeuge daraus umsatz_monat.csv mit der Kopfzeile monat;summe und je Monat einer Zeile wie 2026-01;119.75, nach Monat sortiert. Regeln: Datumsangaben kommen als 2026-01-15, 15.01.2026 oder 2026/01/15. Beträge können ein ' EUR' tragen; steht ein Komma darin, ist es das Dezimalkomma und Punkte sind Tausenderpunkte, sonst ist ein Punkt der Dezimalpunkt. Zeilen ohne Betrag fallen weg, genau gleiche Zeilen zählen nur einmal. Die Summe steht mit zwei Nachkommastellen und Dezimalpunkt. umsatz_roh.csv bleibt unverändert.",
+      "dateien": {
+        "umsatz_roh.csv": "datum;betrag;kunde\n2026-01-15;12,50;Meyer\n15.01.2026;7.25;Schulz\n2026-01-15;12,50;Meyer\n2026/01/31;100 EUR;Kraus\n03.02.2026;;Meyer\n2026-02-03;40,00;Lang\n2026/02/28;9.99;Schulz\n01.03.2026;1.000,00;Kraus\n2026-03-02;0,01;Meyer\n"
+      },
+      "abnahme": "test \"$(tr -d '\\r' < umsatz_monat.csv | sed '/^ *$/d')\" = \"$(printf 'monat;summe\\n2026-01;119.75\\n2026-02;49.99\\n2026-03;1000.01')\" && python3 -c \"import hashlib,sys; sys.exit(hashlib.sha256(open('umsatz_roh.csv','rb').read()).hexdigest() != '1500baa291ef883f587ca73c07fd1da278c56bf382aa925bd7c5c234a1d15df4')\"",
+      "_muster": {
+        "umsatz_monat.csv": "monat;summe\n2026-01;119.75\n2026-02;49.99\n2026-03;1000.01\n"
+      }
+    }
+  ]
+}

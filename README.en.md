@@ -1,6 +1,6 @@
 ![Myelith: A decentralized network in which consensus work powers an agentic language model](README/Grafiken/myelith-banner-en.png)
 
-This README is also available in [German](README.md).
+Dieses README ist auch auf [Deutsch](README.md) verfügbar.
 
 ## AI System Disclosure (EU AI Act Art. 50)
 
@@ -62,16 +62,17 @@ to the corresponding implementation.
 
 ## Where the project stands
 
-Three weeks turned a planning phase in early August into **seventeen crates,
-over 1,800 tests, and a running node.**
+Eight weeks turned a planning phase in early August into **26 crates,
+a running node and a client.**
 
 | | |
 |---|---|
-| **Core thesis proven** | Integer inference costs **+1.1 % perplexity at 7B**; the bar was ≤ 5 %, and it succeeds also at **MoE Model with 30B** |
+| **Core thesis proven** | Integer inference costs **+1.1 % perplexity at 7B**; the bar was ≤ 5 %, and it also runs correctly through an **MoE model with 30B parameters** and through a **hybrid model with 35B** in which 30 of 40 layers are recurrent state layers |
 | **And it is fast** | At 7B the integer path is **faster than bf16** on the same machine |
+| **Runs locally** | A window and a console for macOS, Windows and Linux: model inference and an agent with tools and skills are ready |
 | **The network runs** | Nodes find each other over QUIC, work behind home routers, build blocks, let latecomers catch up |
 | **State converges** | Three processes, thirteen blocks, **identical state roots at every height** |
-| **Security** | 13 attack classes reviewed: **8 defended, 4 with a named residual condition** |
+| **Security** | 15 attack classes reviewed: **10 defended, 4 with a named residual condition** |
 | **Cost** | **1.9× a centralized provider at 7B**, and nearly all of that is redundancy |
 
 ---
@@ -81,26 +82,27 @@ over 1,800 tests, and a running node.**
 Integer addition is associative. If inference is executed entirely in
 integer arithmetic, bit-identity arises between independent nodes, the
 foundation of the entire verification architecture (Whitepaper Chap. 6).
-Whether that holds up qualitatively at realistic model scale is an open
-empirical question; the project answers it first on a small model,
-before infrastructure is scaled.
+That this also holds in quality has been measured: first on the small
+model, then on larger ones.
 
 **Results,** executed entirely in integer arithmetic and measured against
 the floating-point reference of the same model:
 
 | Model | Integer perplexity | BF16 reference | Gap |
 |---|---|---|---|
-| Qwen2.5-0.5B | 15.27 | 14.95 | **+2.1 %**, criterion ≤5 % met |
+| Qwen3-0.6B | 43.49 | 42.26 | **+2.9 %**, criterion ≤5 % met |
 | Qwen3-4B | 19.95 | 19.63 | **+1.6 %**, criterion ≤5 % met |
-| Qwen2.5-7B | **8.78** | 8.68 | **+1.1 %**, criterion ≤5 % met |
+| Qwen3-8B | 13.27 | 12.79 | **+3.8 %**, criterion ≤5 % met |
 | Qwen3-30B-A3B (MoE) | 10.42 | 10.48 | **no measurable gap**, criterion met |
+| Qwen3.6-35B-A3B (hybrid) | 9060.93 | 8613.28 | **+5.2 %** \* |
+
+\* Preliminary value: the perplexity floor of this model has not been measured yet.
 
 *The metric is perplexity on WikiText-2 under teacher forcing, on identical
 sequences for both paths; lower is better. "Gap" is the relative premium the
-integer path pays over its own BF16 reference. On 7B that figure stood at
-**+377 %** before the bug hunts (perplexity 41.42); today it is **+1.1 %**,
+integer path pays over its own BF16 reference. On Qwen2.5-7B that figure is **+1.1 %**,
 which puts it **0.3 percentage points above the theoretical floor of the
-quantisation scheme itself** (+0.84 %, measured independently).
+quantisation scheme itself** (+0.84 %, measured independently).*
 
 **Bit-identity here is not a side effect, it is the product.** What matters
 is the agreement of the integer path with itself: across independent runs,
@@ -120,17 +122,19 @@ and in [INTEGER_LLM](INTEGER_LLM/README/README.md).
 
 ## Architecture
 
-**Three of four layers are running, with caveats.**
+**Three of four layers run on the network; the fourth runs locally.**
 
 | Layer | Task | Status |
 |---|---|---|
-| **L3 Agent Layer** | Agentic workflows, tool use, session contracts | Session contracts act on the chain: budget, recipients and deadline are immutable to the agent |
+| **L3 Agent Layer** | Agentic workflows, tool use, session contracts | **runs locally**: the agent loop with tools, skills and loop on your own machine. On the network the session contracts act on the chain: budget, recipients and deadline are immutable to the agent; the runtime that executes a plan on the network is still missing |
 | **L2 Compute Layer** | Model shards, pods, pipeline routing, redundancy | **running**, bit-identical across 1 to 24 shards, Mixture-of-Experts models included |
-| **L1 Consensus Layer** | BFT, PoI aggregation, staking, slashing | **running**, all four phases complete: BFT across five independent processes, chained blocks, signed instructions |
+| **L1 Consensus Layer** | BFT, PoI aggregation, staking, slashing | **running**, largely complete: BFT across five independent processes, chained blocks, signed instructions |
 | **L0 Networking Layer** | P2P gossip, latency topology, NAT traversal | **running**, with relays and QUIC; the channels are end-to-end encrypted and will carry the activations next |
 
-Also: **TOKENOMICS** complete, **GOVERNANCE** with the parameter
-registry, **TRAINING** with data provenance and the growth operator.
+Also: **TOKENOMICS** largely built, **GOVERNANCE** with the parameter
+registry, **TRAINING** with data provenance and the growth operator,
+**STORAGE** with proof of availability and a storage fee, **GATEWAY** as
+the way into the network, and a **CLIENT** that runs locally.
 
 ## Components
 
@@ -139,52 +143,55 @@ The short version here:
 
 | Component | What it delivers |
 |---|---|
-| [INTEGER_LLM](INTEGER_LLM/README/README.md) | **The core thesis, measured.** Integer inference at **+1.14 % at 7B** (bar: ≤ 5 %), only 0.3 points above what the quantisation scheme allows at all; for the **30B Mixture-of-Experts model** (128 experts per layer) no measurable gap. Throughput **+419 % at 7B**, faster than bf16. Since 28 August the training side of the Mixture-of-Experts model too: backward pass, bit-identical across two runs, saturation guard, expert growth. The [scale pack](INTEGER_LLM/scale_packs/README.md) makes artefact builds bit-identical, 1.8 MB instead of 8.8 GB, 40 s instead of 20 min |
+| [INTEGER_LLM](INTEGER_LLM/README/README.md) | **The core thesis, measured.** Integer inference at **+1.14 % at 7B** (bar: ≤ 5 %), only 0.3 points above what the quantisation scheme allows at all; for the **30B Mixture-of-Experts model** (128 experts per layer) no measurable gap, and a **hybrid 35B model** also runs through in integers. Throughput **+419 % at 7B**, faster than bf16. Plus the training side: backward pass, bit-identical across two runs, saturation guard, expert growth. The [scale pack](INTEGER_LLM/scale_packs/README.md) makes artefact builds bit-identical, 1.8 MB instead of 8.8 GB, 40 s instead of 20 min |
 | [NODE](NODE/README/README.md) | **The binary that runs the protocol.** Peers over TCP and QUIC, relays behind routers, chained blocks from a mempool, catch-up in milliseconds, signature checks, block height and epoch separated, an analysable operating log. Demonstrated on five independent processes committing the same block and surviving leader failure |
 | [NETWORKING](NETWORKING/README/README.md) | **L0 stands.** Gossip, Kademlia, latency topology, NAT traversal with AutoNAT, relays, DCUtR, QUIC. Connection limits with **separate budgets** against Sybil floods. Point-to-point channel with opaque payload: the network layer does not know what a block is. Sessions end-to-end encrypted, key exchange **hybrid** from X25519 and ML-KEM-768: recordings stay safe against later breaking |
-| [CONSENSUS](CONSENSUS/README/README.md) | **All four phases complete.** Signed, stake-weighted BFT with VRF committee selection, double-signing proof and round change, so safety **and** liveness, verified on 21 validators. Plus PoI bundles, epoch close, Reed-Solomon, session contracts in state. An instruction without a signature has no effect. The algorithm change becomes a switch, not a migration |
+| [STORAGE](STORAGE/README/README.md) | **Where the weights come from.** The Store role: holds artefacts and shard weights, proves their availability and is paid for it. Object format, proof of availability and storage fee are in place; whether an object is replicated or erasure-coded is deliberately left open until real retrieval traffic measures the latency |
+| [CONSENSUS](CONSENSUS/README/README.md) | **Largely complete.** Signed, stake-weighted BFT with VRF committee selection, double-signing proof and round change, so safety **and** liveness, verified on 21 validators. Plus PoI bundles, epoch close, Reed-Solomon, session contracts in state. An instruction without a signature has no effect. The algorithm change becomes a switch, not a migration |
 | [VERIFICATION](VERIFICATION/README/README.md) | **Three stages against fraud.** Redundancy comparison, bisection in O(log L), control segments against the one-off intervention, reserve and observation window as parameters. The paper's security arguments are **measured against the implementation**: collusion bound to three digits, independence within 0.01 %. The instrument for indistinguishability stands ready and awaits real traffic |
-| [TOKENOMICS](TOKENOMICS/README/README.md) | **Complete, and integer throughout.** Minting, distribution, credit pricing, stake by capacity, graduated slashing over a violation history, bootstrap, genesis, burn cap per address. "No presale" is not checked but **enforced by how the function works**: it accepts proofs of work and nothing else. Every number in the paper stands as a test |
+| [TOKENOMICS](TOKENOMICS/README/README.md) | **Largely built, and integer throughout.** Minting, distribution, credit pricing, stake by capacity, graduated slashing over a violation history, bootstrap, genesis, burn cap per address. "No presale" is not checked but **enforced by how the function works**: it accepts proofs of work and nothing else. Every number in the paper stands as a test |
 | [COMPUTE_PIPELINE](COMPUTE_PIPELINE/README/README.md) | **Pods compute bit-identically.** 1 to 24 shards yield the same digest over logits and tokens as a single node, Mixture-of-Experts models included. Failover with standby takeover and bit-identical KV cache rebuild, only possible in integers at all. Which miner gets which shard is decided by the scheduler, not by an assumption |
 | [SHARED_TYPES](SHARED_TYPES/README/README.md) | **The foundation.** VRF, BLS with proof-of-possession, Merkle, erasure coding over GF(2⁸), verified across **all 495** subsets of 8 from 12. The Merkle root also commits to the leaf count, otherwise two different leaf sequences could share one root. The [threat model for all seven signature uses](SHARED_TYPES/README/Signatur-Bedrohungsmodell.md) is written up |
 | [TESTCLIENT](TESTCLIENT/README/README.md) | **One program, one menu, three questions.** Does your machine compute what ours does, does it hold the conformance vectors, and do several machines find each other over the internet? The comparison **refuses** a positive verdict when all logs come from the same machine: a tool that confirms itself is no tool |
 | [GOVERNANCE](GOVERNANCE/README/README.md) | **Parameters in one place, with rank.** 33 parameters with provenance and rank; the constitutional rank from Chap. 10.3 is enforced **technically**. Nine conditions are checked **on the proposal**, not after the vote. Plus voting with quorum, majority and window, a model manifest, and the switch for the algorithm change: one-way, one step |
 | [TRAINING](TRAINING/README/README.md) | **Integer training holds, and that is measured.** **+0.67 %** against floating point, with stochastic rounding, **entirely without floating-point state**. Growth exactly function-preserving, 0.00e+00. For Mixture-of-Experts models likewise, with load balancing without randomness |
 | [SIMULATION](SIMULATION/README.md) | **Tests the interlocks, not the modules.** Drives a segment through every layer, because almost every serious finding in this project sat between two components and was correct inside each |
-| [COMPLIANCE](COMPLIANCE/README.md) | **What the law requires, and commitments that rule things out.** AI Act self-assessment, intended use policy, GPAI documentation, training data, copyright and `NOTICES`, in German and English; below it [`ethics`](COMPLIANCE/ethics/README/README.md) with the manifesto, the exclusion catalogue and the licence review per model variant |
-| [AGENT_LAYER](AGENT_LAYER/README/README.md) | ⚑ **A contract is not a program, it is a blast radius.** Budget, recipients and deadline are fixed and checked by consensus; nobody can change them, because a different contract has a different address |
-| [CLIENT](CLIENT/README/README.md) | **The component people actually touch.** Wallet, inference interface, and the form where a user sets the limits of an agent session. No code yet: the design questions come first, so the contract interface is not built past its users |
+| [COMPLIANCE](COMPLIANCE/README.md) | **What the law requires, and commitments that rule things out.** AI Act self-assessment, intended use policy, GPAI documentation, training data, copyright and `NOTICES`, in German and English; below it [`ethics`](COMPLIANCE/ethics/README/README.md) with the manifesto, the exclusion catalogue and the licence review per model variant, and the fixed system prompt with the assistant's rules of conduct |
+| [AGENT_LAYER](AGENT_LAYER/README/README.md) | ⚑ **A contract is not a program, it is a blast radius.** Budget, recipients and deadline are fixed and checked by consensus; nobody can change them, because a different contract has a different address. Alongside it the agent loop that runs locally, announcing and executing the model's tools |
+| [GATEWAY](GATEWAY/README/README.md) | **The way into the network.** Accepts requests and records what came in; the session contract is the access key |
+| [CLIENT](CLIENT/README/README.md) | **The component people actually touch.** A chat window and a console for macOS, Windows and Linux: choose and load a model, ask, attach files, and let an agent work with tools, skills and loop, all on your own machine. The network half (wallet, node state, session limits) is waiting for a reachable network |
 
 ## Security status
 
-A [security audit](SIMULATION/Sicherheitsaudit.md) takes up the thirteen
-attack classes from Whitepaper Chap. 5.6 and 9.2. **Since 25 August not a
+A [security audit](SIMULATION/Sicherheitsaudit.md) takes up the attack
+classes from Whitepaper Chap. 5.6 and 9.2, fifteen by now. **Since 25 August not a
 single one is marked open (an external audit follows after the remaining
 tests and troubleshooting):**
 
 | Status | Count |
 |---|---|
-| defended and evidenced | **8** |
+| defended and evidenced | **10** |
 | closed, with a named residual condition | **4** |
 | never externally reviewed | 1 |
 
 The four residual conditions share one shape. The mechanism is in place
 and measured; the last prerequisite depends on validator registration at
-genesis.
+genesis. Since early September, coverage-guided fuzzing of the wire
+formats and a dependency check in CI run alongside.
 
 ## What comes next
 
 Four things, ordered by priority:
 
-1. **Bit-identity across two architectures.** It follows from the number
-   format and is so far measured on one. The
-   [TESTCLIENT](TESTCLIENT/README/README.md) is built for exactly this
-   proof and is waiting for an x86_64 machine.
-2. **Validator registration at genesis.** Unblocks BFT rounds over the
-   wire and the last two residual conditions in the audit.
-3. **Chain state on disk.** In memory today, which is fine for rehearsals
-   and not for a testnet.
-4. **External cryptography review.** Before mainnet, not after.
+1. **Hardware support for CUDA and ROCm.** Today the integer path runs
+   on the CPU and on Apple GPUs (METAL); NVIDIA and AMD cards will follow
+   soon.
+2. **From local operation to the network.** The client currently runs
+   locally only; the network options are greyed out.
+3. **Production genesis with validator registration.** Unlocks the last
+   residual conditions of the audit and is the final stage before a
+   testnet.
+4. **External cryptography review.** Before mainnet, of course.
 
 **What runs today is a dry run, not a testnet.** The state is throwaway,
 the MYL in it is play money, and the starting value of the rehearsal

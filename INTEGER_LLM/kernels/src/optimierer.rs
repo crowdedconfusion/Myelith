@@ -517,6 +517,178 @@ pub fn schritt_normiert_je_zeile(
     Some(g_max)
 }
 
+/// Der Lernratenplan: Warmlauf, dann gesteuerter Abfall, als reine
+/// Funktion der Schrittnummer.
+///
+/// # ⚑ Warum es ihn braucht
+///
+/// [`schritt_normiert`] bewegt jede Zeile je Aktualisierung um denselben
+/// Anteil ihres eigenen Betrags, gleich wie klein der Gradient geworden
+/// ist. Mit fester Schrittweite springt ein Lauf deshalb ueber jedes Tal,
+/// das schmaler ist als dieser Anteil: Gemessen an einer ternaeren
+/// Umwandlung wurden vom erreichten Stand aus beide Fortsetzungen
+/// schlechter, auf Lern- und Haltemenge gleichermassen. Und am Anfang,
+/// wenn der Gradient noch die Zerstoerung der Umwandlung beschreibt und
+/// nicht die Aufgabe, ist der volle Schritt zu gross.
+///
+/// # ⚑ Warum er eine Funktion ist und kein Zustand
+///
+/// Aus demselben Grund wie der Wuerfel: Zwei Rechner, die denselben
+/// Schritt `k` fahren, muessen denselben Nenner bekommen, ohne sich ueber
+/// etwas zu einigen ausser ueber `k` und den Plan. Ein Plan, der sich
+/// an der Verlustkurve entlangtastet, haengt an einer Messung, und die
+/// Messung waere Teil des Vertrags.
+///
+/// # Die Form
+///
+/// Die Schrittweite ist `1 / nenner`, und der Plan beschreibt sie als
+/// Anteil der vollen Schrittweite in Einheiten von `1 / 2^16`:
+///
+/// * **Warmlauf**, Schritte `0..warmlauf`: linear von
+///   `1 / (warmlauf + 1)` bis knapp unter eins. Der nullte Schritt hat
+///   damit schon eine Schrittweite und nicht keine.
+/// * **Abfall**, Schritte `warmlauf..gesamt`: linear von eins auf
+///   `1 / endteiler` im letzten Schritt.
+/// * **Danach** bleibt der Endwert stehen. Ein Lauf, der laenger geht als
+///   geplant, wird nicht wieder groesser.
+///
+/// ⚑ **Linear in der Schrittweite, nicht im Nenner.** Ein linear
+/// wachsender Nenner faellt in der Schrittweite hyperbolisch: schnell am
+/// Anfang, kaum noch am Ende, also gerade dort flach, wo der Abfall
+/// gebraucht wird.
+///
+/// Der Nenner wird zur naechsten ganzen Zahl gerundet und ist nie
+/// kleiner als der der vollen Schrittweite.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Lernratenplan {
+    /// Nenner der vollen Schrittweite.
+    pub nenner: i64,
+    /// Wie viele Schritte der Warmlauf dauert; null heisst keiner.
+    pub warmlauf: u64,
+    /// Wie viele Schritte der Lauf insgesamt hat, Warmlauf eingeschlossen.
+    pub gesamt: u64,
+    /// Durch was die volle Schrittweite am Ende geteilt ist; eins heisst
+    /// kein Abfall.
+    pub endteiler: i64,
+}
+
+impl Lernratenplan {
+    /// Der volle Anteil: `2^16`.
+    const EINS: i128 = 1 << 16;
+
+    /// Eine feste Schrittweite, also kein Plan: jeder Schritt bekommt
+    /// `nenner`.
+    pub const fn fest(nenner: i64) -> Self {
+        Self { nenner, warmlauf: 0, gesamt: 0, endteiler: 1 }
+    }
+
+    /// Ob jeder Schritt denselben Nenner bekommt.
+    pub const fn ist_fest(&self) -> bool {
+        self.warmlauf == 0 && self.endteiler == 1
+    }
+
+    /// Der Anteil der vollen Schrittweite im Schritt `schritt`, in
+    /// Einheiten von `1 / 2^16`. Immer in `1..=2^16`.
+    pub fn anteil(&self, schritt: u64) -> i64 {
+        assert!(self.endteiler > 0, "Lernratenplan: der Endteiler muss > 0 sein");
+        if schritt < self.warmlauf {
+            let a = Self::EINS * (schritt as i128 + 1) / (self.warmlauf as i128 + 1);
+            return a.max(1) as i64;
+        }
+        let ende = Self::EINS / self.endteiler as i128;
+        // Der letzte Schritt des Laufs; ein Lauf, der nur aus Warmlauf
+        // besteht, hat keinen Abfall.
+        let letzter = self.gesamt.saturating_sub(1);
+        if self.endteiler == 1 || letzter <= self.warmlauf {
+            return if schritt >= letzter && self.gesamt > 0 { ende.max(1) as i64 } else { Self::EINS as i64 };
+        }
+        let weg = (letzter - self.warmlauf) as i128;
+        let gegangen = ((schritt - self.warmlauf) as i128).min(weg);
+        (Self::EINS - (Self::EINS - ende) * gegangen / weg).max(1) as i64
+    }
+
+    /// Der Nenner fuer den Schritt `schritt`.
+    pub fn nenner_bei(&self, schritt: u64) -> i64 {
+        assert!(self.nenner > 0, "Lernratenplan: der Nenner muss > 0 sein");
+        let a = self.anteil(schritt) as i128;
+        let n = ((self.nenner as i128 * Self::EINS) + a / 2) / a;
+        n.clamp(self.nenner as i128, i64::MAX as i128) as i64
+    }
+}
+
+#[cfg(test)]
+mod lernratenplan {
+    use super::*;
+
+    #[test]
+    fn ein_fester_plan_gibt_immer_denselben_nenner() {
+        let p = Lernratenplan::fest(32);
+        assert!(p.ist_fest());
+        for k in [0u64, 1, 7, 1000, u64::MAX] {
+            assert_eq!(p.nenner_bei(k), 32);
+        }
+    }
+
+    #[test]
+    fn der_warmlauf_steigt_und_der_abfall_faellt() {
+        let p = Lernratenplan { nenner: 32, warmlauf: 4, gesamt: 60, endteiler: 8 };
+        assert!(!p.ist_fest());
+        // Warmlauf: ein Fuenftel, zwei Fuenftel, ...; der nullte Schritt
+        // ist kein Stillstand.
+        assert_eq!(p.nenner_bei(0), 160);
+        assert_eq!(p.nenner_bei(1), 80);
+        assert_eq!(p.nenner_bei(3), 40);
+        // Die Spitze, dann faellt es bis auf ein Achtel.
+        assert_eq!(p.nenner_bei(4), 32);
+        assert_eq!(p.nenner_bei(59), 256);
+        for k in 0..4u64 {
+            assert!(p.anteil(k) < p.anteil(k + 1), "Warmlauf steigt nicht bei {k}");
+        }
+        for k in 4..59u64 {
+            assert!(p.anteil(k) > p.anteil(k + 1), "Abfall faellt nicht bei {k}");
+            assert!(p.nenner_bei(k) <= p.nenner_bei(k + 1));
+        }
+    }
+
+    #[test]
+    fn der_abfall_ist_linear_in_der_schrittweite() {
+        // Auf halbem Weg liegt der Anteil in der Mitte zwischen eins und
+        // dem Endwert, nicht der Nenner.
+        let p = Lernratenplan { nenner: 64, warmlauf: 0, gesamt: 101, endteiler: 4 };
+        assert_eq!(p.anteil(0), 1 << 16);
+        assert_eq!(p.anteil(100), 1 << 14);
+        assert_eq!(p.anteil(50), ((1 << 16) + (1 << 14)) / 2);
+        assert_eq!(p.nenner_bei(50), 102); // 64 / 0,625 = 102,4
+    }
+
+    #[test]
+    fn nach_dem_ende_bleibt_der_endwert_stehen() {
+        let p = Lernratenplan { nenner: 32, warmlauf: 2, gesamt: 10, endteiler: 4 };
+        assert_eq!(p.nenner_bei(9), 128);
+        for k in [10u64, 11, 1_000_000, u64::MAX] {
+            assert_eq!(p.nenner_bei(k), 128);
+        }
+    }
+
+    #[test]
+    fn die_raender_brechen_nicht() {
+        // Nur Warmlauf, ein einziger Schritt, gar keiner, riesiger Teiler.
+        for p in [
+            Lernratenplan { nenner: 32, warmlauf: 5, gesamt: 5, endteiler: 4 },
+            Lernratenplan { nenner: 32, warmlauf: 0, gesamt: 1, endteiler: 4 },
+            Lernratenplan { nenner: 32, warmlauf: 0, gesamt: 0, endteiler: 4 },
+            Lernratenplan { nenner: 1, warmlauf: 3, gesamt: 9, endteiler: i64::MAX },
+            Lernratenplan { nenner: i64::MAX, warmlauf: 3, gesamt: 9, endteiler: 16 },
+        ] {
+            for k in 0..12u64 {
+                let a = p.anteil(k);
+                assert!((1..=1 << 16).contains(&a), "{p:?} Schritt {k}: Anteil {a}");
+                assert!(p.nenner_bei(k) >= p.nenner, "{p:?} Schritt {k}");
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod zeilennormierung {
     use super::*;

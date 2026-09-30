@@ -906,6 +906,11 @@ fn schleife(stand: &mut Stand) -> i32 {
                 datei_anhaengen(stand, pfad);
                 continue;
             }
+            Some(Befehlsart::Skill) => {
+                let rest = befehl_und_rest(&text).map(|(_, r)| r).unwrap_or("").to_string();
+                skill_lernen(stand, &rest);
+                continue;
+            }
             Some(Befehlsart::Loop) => {
                 let ziel = befehl_und_rest(&text).map(|(_, r)| r).unwrap_or("").to_string();
                 loop_fahren(stand, &ziel);
@@ -1020,6 +1025,8 @@ const HILFE_BEFEHL: &str = "/help";
 enum Befehlsart {
     /// Eine Datei anhaengen; nimmt einen Pfad.
     Datei,
+    /// Einen Skill lernen; nimmt einen Namen oder Pfad und einen Auftrag.
+    Skill,
     /// Das ganze Dateisystem einhaengen, nach Rueckfrage.
     Dateisystemwurzel,
     Modell,
@@ -1054,7 +1061,7 @@ struct Befehl {
 /// nennt irgendwann einen Befehl, den es nicht gibt, oder verschweigt
 /// einen, den es gibt, **und beides sieht erst der, der es
 /// ausprobiert.**
-const BEFEHLE: [Befehl; 13] = [
+const BEFEHLE: [Befehl; 14] = [
     Befehl {
         art: Befehlsart::Modell,
         namen: &["/model", "/modell"],
@@ -1074,6 +1081,11 @@ const BEFEHLE: [Befehl; 13] = [
         art: Befehlsart::Datei,
         namen: &["/file", "/datei"],
         was: "haengt eine Datei an: /datei <pfad>",
+    },
+    Befehl {
+        art: Befehlsart::Skill,
+        namen: &["/skill"],
+        was: "lernt einen Skill und fasst ihn in einem Satz zusammen: /skill waehlt aus der Liste; /skill <name oder pfad.md> [auftrag] bearbeitet danach den Auftrag",
     },
     Befehl {
         art: Befehlsart::Kontext,
@@ -1123,6 +1135,68 @@ const BEFEHLE: [Befehl; 13] = [
         was: "Schluss (oder Escape und Strg-X, beide mit Rueckfrage)",
     },
 ];
+
+/// **Zerlegt, was hinter `/skill` steht**: die Angabe (Name oder Pfad) und
+/// den Auftrag dahinter, beide vielleicht leer.
+fn skillangabe(rest: &str) -> (&str, &str) {
+    let rest = rest.trim();
+    let (angabe, auftrag) = rest.split_once(char::is_whitespace).unwrap_or((rest, ""));
+    (angabe, auftrag.trim())
+}
+
+/// **Lernt einen Skill und bearbeitet danach den Auftrag**, falls einer
+/// dabeisteht.
+///
+/// ⚑ **Der Mensch legt vor, das Modell lernt.** Das Modell sagt zuerst in
+/// einem Satz, was es aus dem Skill gelernt hat; ohne Auftrag bleibt es
+/// dabei. Was das Modell dazu liest, baut `skills::lernauftrag`, dieselbe
+/// Stelle wie im Fenster.
+///
+/// Ohne Angabe zeigt der Befehl die Skills dieses Arbeitsordners zur Wahl.
+fn skill_lernen(stand: &mut Stand, rest: &str) {
+    let (angabe, auftrag) = skillangabe(rest);
+    let seite = if angabe.is_empty() {
+        let alle = myl_client::skills::alle(Some(&stand.ordner));
+        if alle.is_empty() {
+            println!(
+                "  Hier liegt kein Skill. Eigene gehoeren nach {}; /skill <pfad.md> lernt eine einzelne Datei.",
+                myl_client::skills::allgemeiner_ordner().display()
+            );
+            println!();
+            return;
+        }
+        let punkte: Vec<wahl::Punkt> = alle
+            .iter()
+            .map(|s| wahl::Punkt {
+                titel: format!("{} ({})", s.name, s.herkunft.wort()),
+                hinweis: s.satz.clone(),
+                offen: true,
+            })
+            .collect();
+        let Some(i) = wahl::waehlen_ab("Welchen Skill lernen?", &punkte, 0, design::toene(stand.design)) else {
+            println!("  Kein Skill gewaehlt.");
+            println!();
+            return;
+        };
+        myl_client::skills::aus_datei(&alle[i].pfad)
+            .map(|seite| myl_client::skills::Lernseite { name: alle[i].name.clone(), ..seite })
+    } else {
+        myl_client::skills::lernseite(&stand.ordner, angabe)
+    };
+    let seite = match seite {
+        Ok(s) => s,
+        Err(f) => {
+            println!("  {f}");
+            println!();
+            return;
+        }
+    };
+    println!("  Skill: {} ({} Zeichen)", seite.name, seite.text.chars().count());
+    let deutsch = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())
+        .map(|e| matches!(e.oberflaeche.sprache, myl_client::einstellungen::Sprache::De))
+        .unwrap_or(true);
+    auftrag_fahren(stand, &myl_client::skills::lernauftrag(&[seite], auftrag, deutsch));
+}
 
 /// **Haengt eine Datei an das Gespraech**, ohne sie hineinzuschreiben.
 ///
@@ -1991,9 +2065,8 @@ fn runde_in_der_konsole(
     };
     let strom = anzeige.strom();
     modell.beobachter = Some(Box::new(move |s| strom.stueck(s)));
-    let ruester = |zusaetzlich: myl_client::vorhaben::Zusatzwerkzeuge, saat: &str| {
-        let mut agent = agent.clone();
-        agent.netzsaat = Some(saat.to_string());
+    let ruester = |zusaetzlich: myl_client::vorhaben::Zusatzwerkzeuge, v: &myl_client::vorhaben::Vorhaben| {
+        let agent = v.agent_fuer(&agent);
         myl_client::ruestung::ruesten_mit(&agent, myl_client::Ansageform::Amtlich, kiste, zusaetzlich, nachfrage.clone())
     };
     let melder = |m: myl_client::Meldung<'_>| match m {
@@ -2328,6 +2401,16 @@ mod tests {
     /// Pruefung zaehlte, ob jedes Wort zweimal im Quelltext vorkommt.
     /// **Eine Pruefung, die Wiederholung verlangt, haelt die
     /// Wiederholung fest.**
+    #[test]
+    fn hinter_dem_skillbefehl_stehen_angabe_und_auftrag() {
+        assert_eq!(befehl_und_rest("/skill").map(|(a, r)| (a, skillangabe(r))), Some((Befehlsart::Skill, ("", ""))));
+        assert_eq!(skillangabe("bericht-schreiben"), ("bericht-schreiben", ""));
+        assert_eq!(
+            skillangabe("  ~/skills/kurz.md   Schreib einen Bericht ueber heute. "),
+            ("~/skills/kurz.md", "Schreib einen Bericht ueber heute.")
+        );
+    }
+
     #[test]
     fn jeder_befehl_wird_behandelt_und_steht_in_der_hilfe() {
         let zeilen = hilfezeilen().join("\n");

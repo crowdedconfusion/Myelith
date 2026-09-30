@@ -107,7 +107,8 @@ fn der_verlust_sinkt_ueber_die_schleife() {
 
     // ⚑ **Der Verlust faellt, und zwar deutlich.** Die Schranke liegt
     // bei 1,0 gegen einen Startwert von 9,22 und einen gemessenen
-    // Endwert von 0,137; sie prueft die Aussage, nicht die Nachkommastelle.
+    // Endwert von 0,137 (am frueheren Anker; am 0,6B seit dem 2026-09-30
+    // 7,99 auf 0,66); sie prueft die Aussage, nicht die Nachkommastelle.
     // ⛔️ **Hier stand am 2026-09-21 kurzzeitig eine Schranke auf den
     // bewegten Gewichten, und sie war erfunden.** Gemessen bewegen sich
     // 23,8 Prozent (alte Skalen), 9,3 Prozent (berichtigte Skalen, Lauf
@@ -249,6 +250,20 @@ fn ein_ziel_ausserhalb_des_vokabulars_wird_abgelehnt() {
 /// vorher „64 reicht"; ohne diese Messung haette sie weiter behauptet,
 /// eine Schranke zu pruefen, die sie gar nicht mehr erreicht.
 ///
+/// ⛔️ **Neu gemessen am 2026-09-30, und die Grenze ist noch einmal
+/// gewandert**, diesmal um drei Stufen. Seit der Rueckweg einer dichten
+/// Ebene durch die QK-Normierung geht (Fund 507), verlaesst `256` die Form
+/// nicht mehr, auch `1 024` nicht; `2 048` tut es bei Schritt 0. Der
+/// Grund ist die Normierung: Sie macht die Aufmerksamkeit unempfindlich
+/// gegen die Laenge von Q und K, also zeigt der richtige Gradient nicht
+/// mehr in die Richtung, in der diese Gewichte wachsen.
+///
+/// | `lr_zaehler` bei `lr_nenner = 1` | aus der Form (2026-09-30) |
+/// |---|---|
+/// | 256, 1 024 | nie |
+/// | **2 048** | **bei Schritt 0** |
+/// | 4 096 | bei Schritt 0 |
+///
 /// ⚑ **Ohne diesen Test wäre die Schranke eine Behauptung.** Sie stand
 /// bis zum 2026-09-05 nur als Panik in `gewicht_aus_master`, also am
 /// fernen Ende, und der 30B-Lauf fand ihren Fall nur, weil er von Hand
@@ -259,12 +274,12 @@ fn eine_absurde_lernrate_verlaesst_die_form_und_der_lauf_meldet_es() {
     let v = Trainingsvorgaben {
         schritte: 40,
         lr_nenner: 1,
-        lr_zaehler: 256,
+        lr_zaehler: 2048,
         ..Trainingsvorgaben::vorgabe()
     };
     let e = trainingsschleife(&m, &v).expect("Lauf");
     let schritt = e.aus_der_form.expect(
-        "bei lr_zaehler = 256 und lr_nenner = 1 muss der Lauf die Uebertragungsform \
+        "bei lr_zaehler = 2048 und lr_nenner = 1 muss der Lauf die Uebertragungsform \
          verlassen; tut er es nicht, prueft die Schranke nichts (Fund 338)",
     );
     assert!(schritt < v.schritte, "der Abbruch kam nach dem letzten Schritt");

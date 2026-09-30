@@ -90,11 +90,12 @@ pub fn rshift_round(value: i32, shift: u8) -> i32 {
     let quotient = value >> shift;
     let remainder = value & mask;
 
-    if remainder > half || (remainder == half && (quotient & 1) != 0) {
-        quotient + 1
-    } else {
-        quotient
-    }
+    // ⚑ **Ohne Sprung** (2026-09-30): dieselbe Regel, als Summe zweier
+    //   Vergleiche. Ob aufgerundet wird, haengt am Rest, und der ist bei
+    //   echten Daten so gut wie zufaellig; ein Sprung je Element wird dann
+    //   jedes zweite Mal falsch vorhergesagt.
+    let auf = (remainder > half) | ((remainder == half) & ((quotient & 1) != 0));
+    quotient + auf as i32
 }
 
 /// Round-to-nearest-even Rechts-Shift (i64, fuer Zwischenprodukte).
@@ -116,11 +117,12 @@ pub fn rshift_round_i64(value: i64, shift: u8) -> i64 {
     let quotient = value >> shift;
     let remainder = value & mask;
 
-    if remainder > half || (remainder == half && (quotient & 1) != 0) {
-        quotient + 1
-    } else {
-        quotient
-    }
+    // ⚑ **Ohne Sprung** (2026-09-30): dieselbe Regel, als Summe zweier
+    //   Vergleiche. Ob aufgerundet wird, haengt am Rest, und der ist bei
+    //   echten Daten so gut wie zufaellig; ein Sprung je Element wird dann
+    //   jedes zweite Mal falsch vorhergesagt.
+    let auf = (remainder > half) | ((remainder == half) & ((quotient & 1) != 0));
+    quotient + auf as i64
 }
 
 /// Q15-Reziproke der Wurzel: `round(2^15 / sqrt(head_dim))`.
@@ -222,11 +224,12 @@ pub fn rshift_round_i128(value: i128, shift: u32) -> i128 {
     let quotient = value >> shift;
     let remainder = value & mask;
 
-    if remainder > half || (remainder == half && (quotient & 1) != 0) {
-        quotient + 1
-    } else {
-        quotient
-    }
+    // ⚑ **Ohne Sprung** (2026-09-30): dieselbe Regel, als Summe zweier
+    //   Vergleiche. Ob aufgerundet wird, haengt am Rest, und der ist bei
+    //   echten Daten so gut wie zufaellig; ein Sprung je Element wird dann
+    //   jedes zweite Mal falsch vorhergesagt.
+    let auf = (remainder > half) | ((remainder == half) & ((quotient & 1) != 0));
+    quotient + auf as i128
 }
 
 /// Rescale: von in_frac Bits nach out_frac Bits.
@@ -310,6 +313,57 @@ pub fn mul_i16_i64(a: i16, b: i16) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **Die Rundung ohne Sprung ist die mit Sprung**, in allen drei
+    /// Breiten: jede Schiebeweite, und je Weite die Werte um null, um die
+    /// Haelften bei geradem und ungeradem Quotienten und an den Raendern
+    /// des Typs.
+    #[test]
+    fn die_rundung_ohne_sprung_ist_die_mit_sprung() {
+        fn alt(value: i128, shift: u32) -> i128 {
+            if shift == 0 {
+                return value;
+            }
+            let mask = (1i128 << shift) - 1;
+            let half = 1i128 << (shift - 1);
+            let quotient = value >> shift;
+            let remainder = value & mask;
+            if remainder > half || (remainder == half && (quotient & 1) != 0) {
+                quotient + 1
+            } else {
+                quotient
+            }
+        }
+        for shift in 0..=62u32 {
+            let mut werte: Vec<i64> = vec![0, 1, -1, 2, -2, 3, -3, i64::MAX / 2, i64::MIN / 2, 123_456_789, -987_654_321];
+            if shift >= 1 {
+                let halb = 1i64 << (shift - 1);
+                for q in [-3i64, -2, -1, 0, 1, 2, 3, 1000, -1001] {
+                    for d in [-1i64, 0, 1] {
+                        if let Some(w) = q.checked_shl(shift).and_then(|v| v.checked_add(halb + d)) {
+                            if (w >> shift) == q || (w >> shift) == q + 1 {
+                                werte.push(w);
+                            }
+                        }
+                    }
+                }
+            }
+            for &w in &werte {
+                assert_eq!(i128::from(rshift_round_i64(w, shift as u8)), alt(i128::from(w), shift), "i64 {w} >> {shift}");
+                assert_eq!(rshift_round_i128(i128::from(w), shift), alt(i128::from(w), shift), "i128 {w} >> {shift}");
+                if shift <= 30 {
+                    if let Ok(w32) = i32::try_from(w) {
+                        assert_eq!(i128::from(rshift_round(w32, shift as u8)), alt(i128::from(w32), shift), "i32 {w32} >> {shift}");
+                    }
+                }
+            }
+        }
+        for shift in [63u32, 64, 100, 126] {
+            for w in [i128::MAX / 4, i128::MIN / 4, (1i128 << 100) + (1i128 << 62), -(1i128 << 99) - 1, 5, -5] {
+                assert_eq!(rshift_round_i128(w, shift), alt(w, shift), "i128 {w} >> {shift}");
+            }
+        }
+    }
 
     #[test]
     fn test_rshift_round_basic() {

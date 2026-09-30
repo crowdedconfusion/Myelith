@@ -197,6 +197,11 @@ HOT_PATH = [
     # ⚑ Seit dem 2026-09-05: Training ueber einen Ebenenbereich, also
     # das, was ein Shard tut. Derselbe Heisspfad wie die Schleife.
     REPO / "runtime" / "src" / "shardtraining.rs",
+    # Seit dem 2026-09-30: aus einem trainierten Stand wird ein Artefakt.
+    # Die Umrechnung ist die des Trainings; eine Gleitkommazahl hier
+    # hiesse, dass das ausgelieferte Modell ein anderes ist als das
+    # gemessene.
+    REPO / "runtime" / "src" / "standartefakt.rs",
     REPO / "runtime" / "src" / "tokenizer.rs",
     # Die Konformitaetspruefung, seit sie eine Bibliothek ist (2026-08-27).
     #

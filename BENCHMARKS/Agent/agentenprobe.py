@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -76,7 +77,8 @@ def gerufene_werkzeuge(ausgabe: str) -> list[str]:
 
 def einen_lauf(
     artefakt: str, auftrag: dict, schritte: int, deutsch: bool, voll: bool, frist: int = 600,
-    mitschrift: Path | None = None,
+    mitschrift: Path | None = None, saat: int | None = None, token: int | None = None,
+    denken: str = "einstellung", ab_werk: bool = False,
 ) -> tuple[bool, str, float, list[str]]:
     """Baut das Verzeichnis, faehrt den Auftrag, urteilt.
 
@@ -114,6 +116,18 @@ def einen_lauf(
         ]
         if auftrag.get("schreiben"):
             befehl.append("--schreiben")
+        # ⚑ **Saat, Antwortlaenge und Denken ausdruecklich** (2026-09-30).
+        #   Ohne sie galt, was in den Einstellungen der Maschine steht, und
+        #   die des Projektinhabers schalten Denken an: Eine Messung, die das
+        #   nicht selbst setzt, misst den Rechner mit.
+        if saat is not None:
+            befehl += ["--saat", str(saat)]
+        if token is not None:
+            befehl += ["--token", str(token)]
+        if denken == "an":
+            befehl.append("--denken")
+        elif denken == "aus":
+            befehl.append("--ohne-denken")
         # ⚑ **Der Vergleichsschalter, und er ist der eigentliche Zweck
         # dieses Laufs.** Bis zum 2026-09-09 sagte der Client dem Modell
         # seine Werkzeuge auf Deutsch an, mit deutschen Namen und einer
@@ -136,10 +150,18 @@ def einen_lauf(
             #    fehlte, das es haette geben muessen.
             befehl += ["--werkzeuge", "Advanced"]
 
+        # ⚑ **Ab Werk statt der Einstellungen der Maschine** (2026-09-30):
+        #   Dort stand `modell.top_k = 2`, gesetzt im Ausgabefeld des Fensters,
+        #   und jeder Lauf haette damit gezogen. `MYL_EINSTELLUNGEN` auf eine
+        #   leere Stelle schirmt ganz ab; die Datei des Nutzers bleibt, wie sie
+        #   ist.
+        umgebung = None
+        if ab_werk:
+            umgebung = dict(os.environ, MYL_EINSTELLUNGEN=str(Path(tmp).parent / f"{Path(tmp).name}-einstellungen.toml"))
         anfang = time.monotonic()
         try:
             fertig = subprocess.run(
-                befehl, capture_output=True, text=True, timeout=frist
+                befehl, capture_output=True, text=True, timeout=frist, env=umgebung
             )
             ausgabe = fertig.stdout + fertig.stderr
         except subprocess.TimeoutExpired:
@@ -230,6 +252,20 @@ def main() -> int:
         action="store_true",
         help="Werkzeuge deutsch ansagen (die Fassung vor dem 2026-09-09)",
     )
+    # ⚑ **Mehrere Saaten statt Wiederholungen** (2026-09-30): Mit der Saat
+    #   ist jeder Weg wiederholbar, und verschiedene Saaten zeigen, wie weit
+    #   ein Modell streut. Dieselben Saaten fuer jedes Modell, damit die
+    #   Zellen vergleichbar sind.
+    p.add_argument("--saaten", default="", help="Saaten durch Komma; je Saat ein Lauf je Auftrag")
+    p.add_argument("--token", type=int, help="Antwortlaenge je Schritt (sonst die Einstellung)")
+    p.add_argument(
+        "--denken", choices=["an", "aus", "einstellung"], default="einstellung",
+        help="Denkmodus ausdruecklich setzen",
+    )
+    p.add_argument(
+        "--ab-werk", action="store_true",
+        help="Einstellungen ab Werk statt der des Rechners (Temperatur, Top-k, Kiste ...)",
+    )
     p.add_argument("--json", type=Path, help="Ergebnis zusaetzlich hierhin")
     p.add_argument("--mitschrift", type=Path, help="Ordner fuer die ganze Ausgabe je Auftrag")
     # ⚑ **Ein zweiter Auftragssatz, und das ist kein Beiwerk.** Die
@@ -282,7 +318,13 @@ def main() -> int:
         print("[agentenprobe] kein Auftrag passt zur Auswahl")
         return 2
 
-    print(f"[agentenprobe] {len(auftraege)} Auftraege, {a.laeufe} Lauf/Laeufe je Auftrag")
+    saaten = [int(s) for s in a.saaten.split(",") if s.strip()]
+    # Ohne Saaten: `--laeufe` Laeufe mit je neuer Saat, wie bisher.
+    wege = saaten or [None] * a.laeufe
+    print(f"[agentenprobe] {len(auftraege)} Auftraege, {len(wege)} Lauf/Laeufe je Auftrag")
+    print(f"[agentenprobe] Saaten: {', '.join(map(str, saaten)) if saaten else 'neu je Lauf'}")
+    print(f"[agentenprobe] Antwortlaenge: {a.token if a.token else 'Einstellung'}, Denken: {a.denken}, "
+          f"Einstellungen: {'ab Werk' if a.ab_werk else 'die des Rechners'}")
     print(f"[agentenprobe] Artefakt: {a.artefakt}")
     print(f"[agentenprobe] Ansageform: {'deutsch' if a.deutsch else 'amtlich'}")
     print(f"[agentenprobe] Werkzeugsatz: {a.werkzeuge}")
@@ -290,10 +332,16 @@ def main() -> int:
     je_stufe: dict[int, list[bool]] = {}
 
     for auf in auftraege:
-        for i in range(a.laeufe):
+        for i, saat in enumerate(wege):
+            # ⚑ Ein Auftrag darf Schritte und Frist selbst nennen: Eine
+            #   Stufe „Overkill“ braucht mehr als eine einfache.
+            schritte = auf.get("schritte", a.schritte)
+            frist = auf.get("frist", a.frist)
+            marke_lauf = f"s{saat}" if saat is not None else str(i + 1)
             ok, grund, dauer, werkzeuge = einen_lauf(
-                a.artefakt, auf, a.schritte, a.deutsch, a.werkzeuge == "voll", a.frist,
-                a.mitschrift / f"{auf['name']}-{i + 1}.txt" if a.mitschrift else None,
+                a.artefakt, auf, schritte, a.deutsch, a.werkzeuge == "voll", frist,
+                a.mitschrift / f"{auf['name']}-{marke_lauf}.txt" if a.mitschrift else None,
+                saat, a.token, a.denken, a.ab_werk,
             )
             je_stufe.setdefault(auf.get("stufe", 0), []).append(ok)
             ergebnisse.append(
@@ -301,6 +349,7 @@ def main() -> int:
                     "name": auf["name"],
                     "stufe": auf.get("stufe", 0),
                     "lauf": i + 1,
+                    "saat": saat,
                     "bestanden": ok,
                     "grund": grund,
                     "sekunden": round(dauer, 1),
@@ -317,7 +366,7 @@ def main() -> int:
             #   Werkzeug, falsch verwertet".
             gerufen = f"  [{' '.join(werkzeuge)}]" if werkzeuge else "  [kein Aufruf]"
             print(f"[agentenprobe] {marke} Stufe {auf.get('stufe', 0)} "
-                  f"{auf['name']:<22} {dauer:5.1f} s{gerufen}{zusatz}")
+                  f"{auf['name']:<22} {marke_lauf:>8} {dauer:6.1f} s{gerufen}{zusatz}", flush=True)
 
     print("[agentenprobe] ---")
     for stufe in sorted(je_stufe):
@@ -329,7 +378,10 @@ def main() -> int:
     if a.json:
         a.json.write_text(
             json.dumps(
-                {"artefakt": a.artefakt, "schritte": a.schritte, "laeufe": ergebnisse},
+                {
+                    "artefakt": a.artefakt, "schritte": a.schritte, "saaten": saaten,
+                    "token": a.token, "denken": a.denken, "ab_werk": a.ab_werk, "laeufe": ergebnisse,
+                },
                 ensure_ascii=False,
                 indent=2,
             ),

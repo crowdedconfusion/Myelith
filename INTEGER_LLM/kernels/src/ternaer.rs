@@ -111,6 +111,27 @@ impl<'a> Eingabe<'a> {
     pub fn x(&self) -> &'a [i16] {
         self.x
     }
+
+    /// Ist diese Eingabe fuer die vektorisierte Fassung zerlegt?
+    pub(crate) fn vorbereitet(&self) -> bool {
+        !self.hoch.is_empty()
+    }
+
+    /// Reicht die Zerlegung fuer eine Zeile mit `n` Werten in `g` Gruppen?
+    /// Die vektorisierte Fassung liest ohne Grenzpruefung.
+    pub(crate) fn laengen_passen(&self, n: usize, g: usize) -> bool {
+        self.x.len() >= n && self.hoch.len() >= n && self.tief.len() >= n && self.summen.len() >= g
+    }
+
+    /// Die Zerlegung fuer eine Zeile mit `n` Werten in `g` Gruppen, oder
+    /// drei leere Ausschnitte, wenn nichts vorbereitet ist.
+    pub(crate) fn teile(&self, n: usize, g: usize) -> (&[i8], &[u8], &[i64]) {
+        if self.vorbereitet() {
+            (&self.hoch[..n], &self.tief[..n], &self.summen[..g])
+        } else {
+            (&[], &[], &[])
+        }
+    }
 }
 
 /// Eine ternaere Matrix, gelesen aus Codes und Betraegen, die jemand
@@ -153,6 +174,16 @@ impl<'a> Ternaermatrix<'a> {
         self.betraege.len() / (self.spalten / GRUPPE)
     }
 
+    /// Die Musterbytes, Zeile fuer Zeile (fuer den Weg ueber die GPU).
+    pub fn muster(&self) -> &'a [u8] {
+        self.muster
+    }
+
+    /// Die Betraege, einer je Gruppe, Zeile fuer Zeile.
+    pub fn betraege(&self) -> &'a [i16] {
+        self.betraege
+    }
+
     pub fn spalten(&self) -> usize {
         self.spalten
     }
@@ -173,15 +204,45 @@ impl<'a> Ternaermatrix<'a> {
         );
         let n = self.spalten;
         let g = n / GRUPPE;
-        let vorbereitet = !e.hoch.is_empty();
+        let (hoch, tief, summen) = e.teile(n, g);
         crate::dot::ternaer_zeile(
             &self.muster[z * g * BYTES_JE_GRUPPE..(z + 1) * g * BYTES_JE_GRUPPE],
             &self.betraege[z * g..(z + 1) * g],
             &e.x[..n],
-            if vorbereitet { &e.hoch[..n] } else { &[] },
-            if vorbereitet { &e.tief[..n] } else { &[] },
-            if vorbereitet { &e.summen[..g] } else { &[] },
+            hoch,
+            tief,
+            summen,
         )
+    }
+
+    /// **Dieselbe Zeile mal mehreren Eingaben**: `aus[k]` ist genau
+    /// [`Self::zeile_mal_mit`] fuer `e[k]`.
+    ///
+    /// ⚑ **Wozu eine eigene Fassung.** Die Codes einer Gruppe werden einmal
+    /// entpackt und fuer jede Eingabe benutzt. Einzeln entpackt jede
+    /// Eingabe sie neu, und das Entpacken ist rund ein Drittel der
+    /// Vektorbefehle einer Zeile. Dieselbe ganze Zahl je Eingabe, nur
+    /// teilen sich die Eingaben die Arbeit, die an der Zeile haengt.
+    ///
+    /// ⚠️ Wie dort: jede Eingabe mindestens eine Zeile lang, sonst Panik.
+    #[inline]
+    pub fn zeile_mal_viele(&self, z: usize, e: &[Eingabe<'_>], aus: &mut [i64]) {
+        assert_eq!(e.len(), aus.len(), "ternaere Zeile: {} Eingaben, {} Ausgaben", e.len(), aus.len());
+        let n = self.spalten;
+        let g = n / GRUPPE;
+        for ein in e {
+            assert!(
+                ein.x.len() >= n,
+                "ternaere Zeile: Eingabe mit {} Werten, die Zeile hat {n}",
+                ein.x.len()
+            );
+        }
+        crate::dot::ternaer_zeile_viele(
+            &self.muster[z * g * BYTES_JE_GRUPPE..(z + 1) * g * BYTES_JE_GRUPPE],
+            &self.betraege[z * g..(z + 1) * g],
+            e,
+            aus,
+        );
     }
 
     /// Wie [`Self::zeile_mal_mit`], mit einer Vorbereitung je Aufruf. Fuer
@@ -348,11 +409,82 @@ pub(crate) mod neon {
                     }
                 }
             }
-            let s_hoch = i64::from(vaddvq_s32(vaddq_s32(sh0, sh1)));
-            let s_tief = i64::from(vaddvq_u32(vaddq_u32(st0, st1)));
-            gesamt += (256 * s_hoch + s_tief - *summen.get_unchecked(g)) * i64::from(betrag);
+            gesamt += (gruppensumme(sh0, sh1, st0, st1) - *summen.get_unchecked(g)) * i64::from(betrag);
         }
         gesamt
+    }
+
+    /// `256 * sum(hoch) + sum(tief)` einer Gruppe, aus den vier Summen von
+    /// [`zeile_dot`].
+    ///
+    /// ⚑ **Je Lane zusammengefuehrt und einmal quer summiert** statt zweimal:
+    /// Eine Lane traegt mit `hoch` hoechstens 32 * 3 * 128 = 12 288, mal 256
+    /// rund 3,1 Millionen, mit `tief` hoechstens 32 * 3 * 255 = 24 480; die
+    /// Summe der vier Lanes bleibt unter 2^24. Dieselbe ganze Zahl wie
+    /// `256 * s_hoch + s_tief`, nur anders geklammert.
+    #[inline]
+    #[target_feature(enable = "dotprod")]
+    unsafe fn gruppensumme(sh0: int32x4_t, sh1: int32x4_t, st0: uint32x4_t, st1: uint32x4_t) -> i64 {
+        let hoch = vshlq_n_s32::<8>(vaddq_s32(sh0, sh1));
+        let tief = vreinterpretq_s32_u32(vaddq_u32(st0, st1));
+        i64::from(vaddvq_s32(vaddq_s32(hoch, tief)))
+    }
+
+    /// **Eine Zeile mal mehreren Eingaben**, `aus[k]` wie [`zeile_dot`] fuer
+    /// die Eingabe `k`.
+    ///
+    /// ⚑ **Die acht Codevektoren einer Gruppe entstehen einmal** und
+    /// bleiben in Registern, waehrend jede Eingabe ihre 16 Punktprodukte
+    /// dagegen rechnet. Je Gruppe und Eingabe bleiben 16 Ladebefehle, 16
+    /// Punktprodukte und eine Summe; die 14 Befehle fuer das Laden und
+    /// Entpacken der Codes teilen sich alle Eingaben.
+    ///
+    /// # Sicherheit
+    ///
+    /// Wie [`zeile_dot`], fuer jede Eingabe; `aus.len() == eingaben.len()`.
+    #[target_feature(enable = "dotprod")]
+    pub unsafe fn zeile_dot_viele(muster: &[u8], betraege: &[i16], eingaben: &[super::Eingabe<'_>], aus: &mut [i64]) {
+        let drei = vdupq_n_u8(3);
+        for a in aus.iter_mut() {
+            *a = 0;
+        }
+        for (g, &betrag) in betraege.iter().enumerate() {
+            let m = muster.as_ptr().add(g * BYTES_JE_GRUPPE);
+            let b0 = vld1q_u8(m);
+            let b1 = vld1q_u8(m.add(16));
+            let codes = [
+                vandq_u8(b0, drei),
+                vandq_u8(vshrq_n_u8::<2>(b0), drei),
+                vandq_u8(vshrq_n_u8::<4>(b0), drei),
+                vshrq_n_u8::<6>(b0),
+                vandq_u8(b1, drei),
+                vandq_u8(vshrq_n_u8::<2>(b1), drei),
+                vandq_u8(vshrq_n_u8::<4>(b1), drei),
+                vshrq_n_u8::<6>(b1),
+            ];
+            let betrag = i64::from(betrag);
+            for (k, e) in eingaben.iter().enumerate() {
+                let h = e.hoch.as_ptr().add(g * GRUPPE);
+                let t = e.tief.as_ptr().add(g * GRUPPE);
+                let mut sh0 = vdupq_n_s32(0);
+                let mut sh1 = vdupq_n_s32(0);
+                let mut st0 = vdupq_n_u32(0);
+                let mut st1 = vdupq_n_u32(0);
+                for (s, c) in codes.iter().enumerate() {
+                    let hv = vld1q_s8(h.add(16 * s));
+                    let tv = vld1q_u8(t.add(16 * s));
+                    if s % 2 == 0 {
+                        sh0 = sdot(sh0, vreinterpretq_s8_u8(*c), hv);
+                        st0 = udot(st0, *c, tv);
+                    } else {
+                        sh1 = sdot(sh1, vreinterpretq_s8_u8(*c), hv);
+                        st1 = udot(st1, *c, tv);
+                    }
+                }
+                *aus.get_unchecked_mut(k) +=
+                    (gruppensumme(sh0, sh1, st0, st1) - *e.summen.get_unchecked(g)) * betrag;
+            }
+        }
     }
 
     #[inline]
@@ -658,6 +790,57 @@ mod tests {
             }
         }
         assert!(neon::mit_dot() || !cfg!(target_os = "macos"), "jeder Apple-Prozessor hat dotprod");
+    }
+
+    /// **Die gemeinsame Fassung ist die einzelne**: eine Zeile mal vielen
+    /// Eingaben liefert je Eingabe dieselbe Zahl wie die Zeile einzeln und
+    /// wie die skalare Fassung, fuer eine bis neun Eingaben, mit den
+    /// Raendern des Wertebereichs, grossen Betraegen und Code 3.
+    #[test]
+    fn die_gemeinsame_fassung_ist_die_einzelne() {
+        let (zeilen, spalten) = (7usize, 1024usize);
+        let w = ternaere_matrix(zeilen, spalten, 123, &[1, 99, 127]);
+        let mut w16: Vec<i16> = w.iter().map(|&v| v as i16).collect();
+        for v in w16.iter_mut().take(384) {
+            *v = v.signum() * 32767;
+        }
+        let mut p = packen(&w16, spalten).unwrap();
+        // Code 3 (+2) an zwei Stellen: jede Umsetzung muss ihn gleich lesen.
+        p.muster[5] |= 0b0000_0011;
+        p.muster[300] |= 0b1100_0000;
+        let t = Ternaermatrix::neu(&p.muster, &p.betraege, zeilen, spalten).unwrap();
+        let g = spalten / GRUPPE;
+        for anzahl in [1usize, 2, 3, 8, 9] {
+            let xs: Vec<Vec<i16>> = (0..anzahl)
+                .map(|k| {
+                    let mut x = aktivierung(spalten, 900 + k as u64);
+                    x[k] = i16::MIN;
+                    x[spalten - 1 - k] = i16::MAX;
+                    x
+                })
+                .collect();
+            let e: Vec<Eingabe<'_>> = xs.iter().map(|x| Eingabe::neu(x)).collect();
+            for z in 0..zeilen {
+                let mut aus = vec![i64::MAX; anzahl];
+                t.zeile_mal_viele(z, &e, &mut aus);
+                for k in 0..anzahl {
+                    let m = &p.muster[z * g * BYTES_JE_GRUPPE..(z + 1) * g * BYTES_JE_GRUPPE];
+                    let soll = zeile_skalar(m, &p.betraege[z * g..(z + 1) * g], &xs[k]);
+                    assert_eq!(aus[k], soll, "{anzahl} Eingaben, Zeile {z}, Eingabe {k}");
+                    assert_eq!(t.zeile_mal_mit(z, &e[k]), soll);
+                }
+            }
+        }
+        // Ohne Eingaben geschieht nichts, und eine unvorbereitete Eingabe
+        // (`roh`) geht den einzelnen Weg und liefert dieselbe Zahl.
+        t.zeile_mal_viele(0, &[], &mut []);
+        let x = aktivierung(spalten, 4);
+        let roh = [Eingabe::roh(&x), Eingabe::roh(&x)];
+        let mut aus = [0i64; 2];
+        if !crate::dot::VEKTORISIERT {
+            t.zeile_mal_viele(1, &roh, &mut aus);
+            assert_eq!(aus[0], t.zeile_mal(1, &x));
+        }
     }
 
     /// **Code 3 heisst +2**, skalar wie vektorisiert; der Packer erzeugt

@@ -62,13 +62,28 @@ impl<'a> Gewichtsmatrix<'a> {
         }
     }
 
-    /// Die int8-Bytes, falls es welche sind. Die GPU rechnet nur diese
-    /// Art; eine ternaere Matrix bleibt auf der CPU.
-    pub fn als_int8(&self) -> Option<&'a [i8]> {
+    /// **Dieselbe Zeile mal mehreren Eingaben**: `aus[k]` ist genau
+    /// [`Self::zeile_mal`] fuer `e[k]`.
+    ///
+    /// ⚑ Eine ternaere Zeile entpackt ihre Codes dabei einmal fuer alle
+    /// Eingaben ([`Ternaermatrix::zeile_mal_viele`]); eine int8-Zeile hat
+    /// nichts zu entpacken und rechnet Eingabe fuer Eingabe.
+    #[inline]
+    pub fn zeile_mal_viele(&self, z: usize, in_features: usize, e: &[Eingabe<'_>], aus: &mut [i64]) {
         match self {
-            Gewichtsmatrix::Int8(w) => Some(w),
-            Gewichtsmatrix::Ternaer(_) => None,
+            Gewichtsmatrix::Int8(w) => {
+                let zeile = &w[z * in_features..(z + 1) * in_features];
+                for (ein, ziel) in e.iter().zip(aus.iter_mut()) {
+                    *ziel = dot_i8_i16(zeile, ein.x());
+                }
+            }
+            Gewichtsmatrix::Ternaer(t) => t.zeile_mal_viele(z, e, aus),
         }
+    }
+
+    /// Ist diese Matrix ternaer gepackt?
+    pub fn ist_ternaer(&self) -> bool {
+        matches!(self, Gewichtsmatrix::Ternaer(_))
     }
 
     /// Passt die Matrix zu `zeilen` Zeilen zu je `in_features`? Die
@@ -1086,15 +1101,36 @@ where
     if xs.is_empty() {
         return Vec::new();
     }
-    // ⚑ **Die GPU rechnet nur int8.** Eine ternaere Matrix bleibt auf der
-    // CPU; dieselbe Zahl, nur ohne die Buendelung dort.
+    // ⚑ **Beide Gewichtsarten haben einen Weg auf der GPU** (ternaer seit
+    //   dem 2026-09-30); jeder gibt `None`, wenn die CPU rechnen soll, und
+    //   die rechnet dieselbe Zahl.
     #[cfg(all(feature = "metal", target_os = "macos"))]
-    if let Some(w8) = W.als_int8() {
-        if let Some(aus) = crate::metal::stapel(xs, w8, in_features, w_shifts, act_frac_bits, &out_frac) {
+    {
+        let gpu = match W {
+            Gewichtsmatrix::Int8(w8) => crate::metal::stapel(xs, w8, in_features, w_shifts, act_frac_bits, &out_frac),
+            Gewichtsmatrix::Ternaer(t) => crate::metal::stapel_ternaer(
+                xs, t.muster(), t.betraege(), in_features, w_shifts, act_frac_bits, &out_frac,
+            ),
+        };
+        if let Some(aus) = gpu {
             return aus;
         }
     }
     stapel_cpu(xs, W, in_features, w_shifts, out_frac, act_frac_bits)
+}
+
+/// Wie [`linear_matrix_pc_stapel`], **immer auf der CPU**, fuer jede
+/// Gewichtsart; aus demselben Grund wie [`linear_w8a16_pc_stapel_cpu`].
+#[cfg(all(feature = "metal", target_os = "macos"))]
+pub(crate) fn linear_matrix_pc_stapel_cpu(
+    xs: &[&[i16]],
+    W: Gewichtsmatrix<'_>,
+    in_features: usize,
+    w_shifts: &[u8],
+    act_frac_bits: u8,
+    out_frac_bits: &[u8],
+) -> Vec<Vec<i16>> {
+    stapel_cpu(xs, W, in_features, w_shifts, |z| out_frac_bits[z], act_frac_bits)
 }
 
 /// Wie [`linear_w8a16_pc_stapel`], **immer auf der CPU**.
@@ -1131,18 +1167,10 @@ where
         return Vec::new();
     }
 
-    // Fadenzahl wie bei einer einzelnen Eingabe, nur dass jede Zeile
-    // `b` Mal gerechnet wird.
-    let arbeit = zeilen.saturating_mul(in_features).saturating_mul(b);
-    let kerne = max_threads();
-    let faeden = if arbeit < PARALLEL_AB || kerne < 2 || zeilen < 2 {
-        1
-    } else {
-        (arbeit / ARBEIT_JE_THREAD).clamp(2, kerne)
-    };
+    let faeden = stapelfaeden(zeilen, in_features, b);
 
     // ⚑ **In Kacheln und nicht am Stueck.** Siehe [`KACHEL`].
-    let kachel = kachelbreite();
+    let kachel = kachelbreite(W.ist_ternaer());
     let mut aus = vec![vec![0i16; zeilen]; b];
     let mut anfang = 0usize;
     while anfang < b {
@@ -1153,8 +1181,14 @@ where
         let flach = crate::fadenpool::rechnen_breit(zeilen, breite, faeden, |z, ziel| {
             let schiebung = w_shifts[z] + act_frac_bits;
             let ziel_frac = out_frac(z);
-            for (i, wert) in ziel.iter_mut().enumerate() {
-                let acc = W.zeile_mal(z, in_features, &eingaben[i]);
+            // ⚑ **Die Zeile einmal fuer die ganze Kachel**
+            //   ([`Gewichtsmatrix::zeile_mal_viele`]): je Eingabe dieselbe
+            //   Summe wie einzeln, nur entpackt eine ternaere Zeile ihre
+            //   Codes nicht mehr je Eingabe neu.
+            let mut summen = [0i64; KACHEL_HOECHSTENS];
+            let summen = &mut summen[..breite];
+            W.zeile_mal_viele(z, in_features, &eingaben, summen);
+            for (wert, &acc) in ziel.iter_mut().zip(summen.iter()) {
                 *wert = clamp_i16_from_i64(rescale_i64(acc, schiebung, ziel_frac));
             }
         });
@@ -1183,16 +1217,46 @@ where
 /// ⚑ **Die Kachel ist der Ausgleich zwischen beidem:** Sie soll klein
 /// genug sein, dass ihre Eingaben in den ersten Zwischenspeicher
 /// passen, und gross genug, dass die Gewichtszeile sich lohnt.
-fn kachelbreite() -> usize {
+pub(crate) fn kachelbreite(ternaer: bool) -> usize {
     use std::sync::OnceLock;
-    static K: OnceLock<usize> = OnceLock::new();
-    *K.get_or_init(|| {
-        std::env::var("MYL_KACHEL")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .filter(|&k: &usize| k > 0)
-            .unwrap_or(KACHEL)
-    })
+    static K: OnceLock<Option<usize>> = OnceLock::new();
+    let gesetzt = *K.get_or_init(|| {
+        std::env::var("MYL_KACHEL").ok().and_then(|v| v.parse().ok()).filter(|&k: &usize| k > 0)
+    });
+    gesetzt.unwrap_or(if ternaer { KACHEL_TERNAER } else { KACHEL }).min(KACHEL_HOECHSTENS)
+}
+
+/// Vorgabe der Kachelbreite fuer ternaere Gewichte.
+///
+/// ⚑ **Vier, gemessen am 2026-09-30** mit `ternaerprobe` auf allen Kernen,
+/// 64 Eingaben, in G Gewichte mal Eingaben je Sekunde:
+///
+/// | Kachel | 1 | 2 | 3 | 4 | 6 | 8 | 16 |
+/// |---|---|---|---|---|---|---|---|
+/// | 17 408 x 5 120 | 378 | 541 | 581 | **614** | 596 | 555 | 361 |
+/// | 5 120 x 17 408 | 453 | 508 | | **551** | | 494 | |
+///
+/// Eine ternaere Zeile liest je Eingabe deren Zerlegung in zwei Bytes je
+/// Wert, bei 5 120 Spalten rund 10 KB. Vier Eingaben bleiben damit auch im
+/// ersten Zwischenspeicher der kleineren Kerne (64 KB); bei sechzehn
+/// wandert jede Zeile durch 168 KB. Links faellt die Kurve, weil die
+/// entpackten Codes einer Gruppe dann nur wenigen Eingaben dienen.
+const KACHEL_TERNAER: usize = 4;
+
+/// Obergrenze der Kachelbreite: so viele Zeilensummen liegen je Zeile auf
+/// dem Stapel des rechnenden Fadens.
+pub(crate) const KACHEL_HOECHSTENS: usize = 64;
+
+/// Wie viele Faeden ein Stapel bekommt: wie eine einzelne Eingabe, nur
+/// dass jede Zeile `eingaben` Mal gerechnet wird.
+pub(crate) fn stapelfaeden(zeilen: usize, arbeit_je_zeile: usize, eingaben: usize) -> usize {
+    let arbeit = zeilen.saturating_mul(arbeit_je_zeile).saturating_mul(eingaben);
+    let kerne = max_threads();
+    if arbeit < PARALLEL_AB || kerne < 2 || zeilen < 2 {
+        1
+    } else {
+        (arbeit / ARBEIT_JE_THREAD).clamp(2, kerne)
+    }
 }
 
 /// Vorgabe der Kachelbreite.

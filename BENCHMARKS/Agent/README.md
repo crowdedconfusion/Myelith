@@ -21,6 +21,34 @@ Werkzeuge wechselt, einen Projektskill selbst findet und in Unterlagen
 recherchiert. Aufbau, Fallen und Auswertung stehen in `loop/README.md`,
 Ergebnisse unter `results/loop-*.md`.
 
+## Kurze Aufgaben in vier Stufen (seit 2026-09-30)
+
+`stufen.json`: zwölf Aufgaben, je drei in den Stufen **einfach** (eine Datei
+anlegen, einen Wert ändern, zählen), **mittel** (rechnen aus JSON, eine
+Funktion überall umbenennen, CSV filtern), **komplex** (zwei Fehler gegen
+feste Tests, Protokolle mit Falle auswerten, eine Konfiguration migrieren)
+und **overkill** (ein Kommandozeilenprogramm nach Beschreibung, ein
+Refaktor mit deutscher Währungsformatierung, unsaubere Daten bereinigen).
+Jede Aufgabe nennt Schritte und Frist selbst und trägt Abnahme und
+Musterlösung; wo eine Datei unverändert bleiben muss, prüft die Abnahme ihre
+Prüfsumme.
+
+```sh
+python3 BENCHMARKS/Agent/mehrstufig_pruefen.py stufen.json      # Abnahmen in beide Richtungen
+python3 -u BENCHMARKS/Agent/stufen_vergleich.py starten --mitschriften <ordner außerhalb>
+python3 BENCHMARKS/Agent/stufen_vergleich.py auswerten BENCHMARKS/Agent/results/stufen-<datum>
+```
+
+⚑ **Alles, was die Messung bestimmt, steht im Aufruf**: dieselben Saaten
+für jedes Modell (drei, neu gezogen und in `lauf.json` festgehalten),
+Antwortlänge 1600, Denken aus, Werkzeugsatz voll, und **Einstellungen ab
+Werk** (`--ab-werk`, über `MYL_EINSTELLUNGEN`). 📌 Ohne den letzten Schalter
+hätte jeder Lauf mit dem Top-k gezogen, das auf dem Rechner gerade im
+Ausgabefeld steht (am 2026-09-30: 2).
+
+`agentenprobe.py` kennt dafür `--saaten`, `--token`, `--denken an|aus` und
+`--ab-werk`; ein Auftrag darf `schritte` und `frist` selbst nennen.
+
 ## Mehrstufige Aufträge (seit 2026-09-29)
 
 `mehrstufig.json`: sieben Aufträge, von denen jeder drei bis acht
@@ -180,3 +208,26 @@ die verlangte Stelle vielleicht und löscht den Rest. Ohne
 etwa 50 Minuten und zusammen knapp zwei Stunden. Nicht neben einem
 Trainingslauf fahren: Beide wollen dieselben Kerne, und die Messung
 wird dadurch nicht falsch, aber unvergleichbar.
+
+## Verhaltensprobe: die Regeln des Assistenten
+
+```bash
+python3 BENCHMARKS/Agent/verhaltensprobe.py INTEGER_LLM/artifacts/myelith-4b \
+  --myl SYSTEM/full-build/release/myl --ausgabe bericht.md
+```
+
+Zwölf Fragen aus `verhalten.json` gehen über `myl frage` an das Modell, also
+mit den Grundsätzen des vorgegebenen Systemprompts davor: fünf erlaubte
+Wissensfragen, vier verlangte Anleitungen, zwei Einzelfälle (Medizin,
+Geldanlage) und eine Krise. Geprüft wird in **beide Richtungen**: Eine Regel,
+die auch die Wissensfrage abweist, ist ebenso ein Fehler wie eine, die die
+Anleitung durchlässt.
+
+⚠️ **Das Urteil kommt aus Stichwörtern und ist ein Hinweis, kein Beleg.** Der
+Bericht trägt jede Antwort im Wortlaut; ob eine Antwort eine Anleitung
+enthält, entscheidet ein Mensch. 📌 Beim ersten Lauf standen vier
+Ablehnungen als `PRUEFEN` da, weil „Ich kann keine … geben“ nicht unter den
+Stichwörtern war.
+
+Ergebnisse: `results/verhalten-2026-09-30/` (4B, bisheriger und neuer
+Systemprompt).

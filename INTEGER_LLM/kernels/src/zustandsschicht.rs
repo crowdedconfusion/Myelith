@@ -412,15 +412,20 @@ unsafe fn spalten_schritt(
     // ⚑ **Dasselbe Ergebnis, Bit fuer Bit.** Die Summanden sind dieselben,
     // nur ihre Reihenfolge ist eine andere, und eine Ganzzahlsumme in
     // `i128` laeuft hier nicht ueber: Auf die Reihenfolge kommt es nicht an.
+    //
+    // ⚑ **In i64, wo es nachweislich reicht** (2026-09-30), siehe
+    // [`zeile_verblassen`] und [`Spaltensummen`]: dieselben ganzen Zahlen,
+    // nur ohne die doppelt breite Rechnung je Wert.
     let mut kv = vec![0i128; breite];
-    for (a, &k_a) in k.iter().enumerate() {
-        let z = zeile(a);
-        for wert in z.iter_mut() {
-            if *wert != 0 {
-                *wert = rshift_round_i128(i128::from(*wert) * i128::from(g), ZERFALL_FRAC) as i64;
-            }
+    let mut groesste = vec![0u64; sd];
+    {
+        let mut summen = Spaltensummen::neu(&mut kv);
+        for (a, &k_a) in k.iter().enumerate() {
+            let z = zeile(a);
+            groesste[a] = zeile_verblassen(z, g);
+            summen.zeile(z, k_a, groesste[a]);
         }
-        zeile_aufaddieren(&mut kv, z, k_a);
+        summen.abschliessen();
     }
 
     // --- 3. Die Korrektur.
@@ -472,16 +477,138 @@ unsafe fn spalten_schritt(
     // damit auf jedem Knoten gleich.
     let links = ZUSTAND_FRAC - NORM_FRAC - INTERN_FRAC;
     akkus.iter_mut().for_each(|x| *x = 0);
+    let mut summen = Spaltensummen::neu(akkus);
     for (a, (&k_a, &q_a)) in k.iter().zip(q.iter()).enumerate() {
         let z = zeile(a);
+        // ⚑ Eine Zeile mit `k_a == 0` bleibt, wie sie nach dem Zerfall
+        //   war, und damit gilt auch ihre Schranke von dort weiter.
+        let mut gross = groesste[a];
         if k_a != 0 {
+            gross = 0;
+            let k_a = i64::from(k_a);
             for (wert, &d_b) in z.iter_mut().zip(delta.iter()) {
-                if d_b != 0 {
-                    *wert += (i64::from(k_a) * i64::from(d_b)) << links;
-                }
+                // Ein `d_b` von null traegt null bei; die Abfrage darauf
+                // waere ein Sprung je Wert fuer dieselbe Zahl.
+                *wert += (k_a * i64::from(d_b)) << links;
+                gross |= wert.unsigned_abs();
             }
         }
-        zeile_aufaddieren(akkus, z, q_a);
+        summen.zeile(z, q_a, gross);
+    }
+    summen.abschliessen();
+}
+
+/// **Eine Zeile des Zustands verblasst**: jeder Wert mal `g`, um
+/// [`ZERFALL_FRAC`] nach rechts, gerundet zur naechsten geraden Zahl.
+/// Zurueck kommt eine Schranke fuer die Betraege der Zeile danach (das ODER
+/// aller Betraege, also mindestens der groesste).
+///
+/// ⚑ **Dieselbe Zahl wie `rshift_round_i128(wert * g, ZERFALL_FRAC)`, ohne
+/// i128.** Mit `wert = hoch * 2^28 + tief` (`tief` von 0 bis 2^28 - 1) ist
+///
+/// ```text
+/// wert * g = hoch * g * 2^28 + tief * g
+/// ```
+///
+/// Der erste Summand ist ein Vielfaches von 2^28; Quotient und Rest der
+/// Verschiebung sind also `hoch * g + (tief * g >> 28)` und der Rest von
+/// `tief * g`, und die Rundung entscheidet an genau diesem Rest.
+///
+/// **Wertebereich:** Mit `g` zwischen 0 und 2^28 (ein Zerfall ueber eins
+/// gibt es nicht) liegt `tief * g` unter 2^56 und `hoch * g` zwischen
+/// `-2^35 * 2^28 = -2^63` und `(2^35 - 1) * 2^28`, fuer **jeden** Wert in
+/// i64. Der Quotient ist der abgerundete Wert von `wert * g / 2^28`, dem
+/// Betrag nach also hoechstens `|wert|`, und die Rundung hebt ihn nicht
+/// darueber. **Geprueft wird deshalb nur `g`**: Ein Zerfall ausserhalb
+/// dieser Spanne rechnet wie bisher in i128.
+///
+/// 📌 Die erste Fassung pruefte zusaetzlich `|wert| < 2^62`. Die Gegenprobe
+/// ohne diese Zeile blieb gruen, und die Rechnung oben sagt warum: Sie
+/// schuetzte vor einem Ueberlauf, den es nicht gibt.
+#[inline]
+fn zeile_verblassen(zeile: &mut [i64], g: i64) -> u64 {
+    const MASKE: i64 = (1i64 << ZERFALL_FRAC) - 1;
+    const HALB: i64 = 1i64 << (ZERFALL_FRAC - 1);
+    let schmal = (0..=(1i64 << ZERFALL_FRAC)).contains(&g);
+    let mut gross = 0u64;
+    for wert in zeile.iter_mut() {
+        let w = *wert;
+        let neu = if schmal {
+            let unten = (w & MASKE) * g;
+            let quotient = (w >> ZERFALL_FRAC) * g + (unten >> ZERFALL_FRAC);
+            let rest = unten & MASKE;
+            quotient + i64::from((rest > HALB) | ((rest == HALB) & (quotient & 1 != 0)))
+        } else {
+            rshift_round_i128(i128::from(w) * i128::from(g), ZERFALL_FRAC) as i64
+        };
+        *wert = neu;
+        gross |= neu.unsigned_abs();
+    }
+    gross
+}
+
+/// **Die Spaltensummen `Summe_a S[a][b] * x[a]`, in i64 gesammelt, solange
+/// das nachweislich reicht, und in i128 zusammengefuehrt.**
+///
+/// ⚑ **Die Schranke wird mitgefuehrt, nicht angenommen.** Jede Zeile bringt
+/// ihre Schranke `gross` mit (kein Betrag der Zeile liegt darueber); ihr
+/// Beitrag zu jeder Spaltensumme ist dem Betrag nach hoechstens
+/// `gross * |x_a|`. Solange die Summe dieser Beitraege unter 2^62 bleibt,
+/// kann keine Teilsumme in i64 ueberlaufen. Wuerde sie die Grenze
+/// erreichen, wandern die schmalen Summen in die breiten, und es geht bei
+/// null weiter; eine einzelne Zeile ueber der Grenze rechnet gleich in
+/// i128 ([`zeile_aufaddieren`]). **Dieselbe ganze Zahl in jedem Fall**, denn
+/// eine exakte Ganzzahlsumme haengt nicht an ihrer Klammerung.
+///
+/// 📌 Gemessen am 2026-09-30 im Decode des 27B (48 Koepfe zu 128 x 128 in
+/// 48 Ebenen): Die Rekurrenz trug mit jedem Summanden in i128 rund ein
+/// Zehntel der Zeit.
+struct Spaltensummen<'a> {
+    schmal: Vec<i64>,
+    breit: &'a mut [i128],
+    schranke: u64,
+}
+
+impl<'a> Spaltensummen<'a> {
+    const GRENZE: u64 = 1 << 62;
+
+    fn neu(breit: &'a mut [i128]) -> Self {
+        Spaltensummen { schmal: vec![0i64; breit.len()], breit, schranke: 0 }
+    }
+
+    /// Addiert `zeile * x_a` auf die Spaltensummen; `gross` ist eine
+    /// Schranke fuer die Betraege der Zeile.
+    #[inline]
+    fn zeile(&mut self, zeile: &[i64], x_a: i16, gross: u64) {
+        if x_a == 0 {
+            return;
+        }
+        match gross.checked_mul(u64::from(x_a.unsigned_abs())) {
+            Some(beitrag) if beitrag < Self::GRENZE => {
+                if self.schranke + beitrag >= Self::GRENZE {
+                    self.zusammenfuehren();
+                }
+                self.schranke += beitrag;
+                let faktor = i64::from(x_a);
+                for (akku, &s) in self.schmal.iter_mut().zip(zeile.iter()) {
+                    *akku += s * faktor;
+                }
+            }
+            _ => zeile_aufaddieren(self.breit, zeile, x_a),
+        }
+    }
+
+    fn zusammenfuehren(&mut self) {
+        for (b, s) in self.breit.iter_mut().zip(self.schmal.iter_mut()) {
+            *b += i128::from(*s);
+            *s = 0;
+        }
+        self.schranke = 0;
+    }
+
+    /// Fuehrt den Rest zusammen; danach stehen die Summen in `breit`.
+    fn abschliessen(mut self) {
+        self.zusammenfuehren();
     }
 }
 
@@ -646,6 +773,230 @@ const SPALTENBLOECKE: usize = 4;
 #[cfg(test)]
 mod proben {
     use super::*;
+
+    /// **Der Kern, wie er bis zum 2026-09-30 stand**: jeder Wert und jeder
+    /// Summand in i128. Das Orakel fuer die schmalen Wege.
+    #[allow(clippy::too_many_arguments)]
+    unsafe fn spalten_schritt_alt(
+        werte: *mut i64,
+        sd: usize,
+        wd: usize,
+        b0: usize,
+        b1: usize,
+        q: &[i16],
+        k: &[i16],
+        v: &[i16],
+        g: i64,
+        beta: i16,
+        akkus: &mut [i128],
+    ) {
+        assert_eq!(q.len(), sd, "q passt nicht zur Schluesseldimension");
+        assert_eq!(k.len(), sd, "k passt nicht zur Schluesseldimension");
+        assert_eq!(v.len(), wd, "v passt nicht zur Wertdimension");
+        assert!(b0 <= b1 && b1 <= wd, "die Spalten liegen ausserhalb des Kopfes");
+        let breite = b1 - b0;
+        assert_eq!(akkus.len(), breite, "eine Summe je Spalte");
+        // SICHERHEIT: siehe oben; Zeile `a` beginnt bei `a * wd`, und
+        // `[b0, b1)` liegt darin.
+        let zeile = |a: usize| -> &mut [i64] {
+            unsafe { std::slice::from_raw_parts_mut(werte.add(a * wd + b0), breite) }
+        };
+    
+        // --- 1. Der Zustand verblasst, und
+        //
+        // ⚑ **Ein Faktor unter eins ist ein Rechtsshift**, und genau hier
+        // entsteht der Rundungsfehler, den die Messung vermessen hat. Er wird
+        // im selben Schritt auch gedaempft: Jeder aeltere Fehler bekommt
+        // denselben Faktor. Deshalb laeuft die Summe in ein Gleichgewicht
+        // statt linear zu wachsen.
+        //
+        // --- 2. Lesen mit dem Schluessel, Kontraktion ueber a.
+        //
+        // ⚑ **Zeilenweise und nicht spaltenweise** (2026-09-25). Die Summe je
+        // Spalte `b` laeuft ueber die Zeilen `a`; hier stand sie als innere
+        // Schleife, und jeder Summand lag eine ganze Zeile (1 KiB) hinter dem
+        // vorigen. Jetzt wird Zeile fuer Zeile auf alle Spaltensummen
+        // zugleich addiert, und der Speicher wird am Stueck gelesen.
+        // Gemessen an 32 Koepfen zu 128 x 128: 1,54 ms auf 0,66 ms je Schritt.
+        //
+        // ⚑ **Dasselbe Ergebnis, Bit fuer Bit.** Die Summanden sind dieselben,
+        // nur ihre Reihenfolge ist eine andere, und eine Ganzzahlsumme in
+        // `i128` laeuft hier nicht ueber: Auf die Reihenfolge kommt es nicht an.
+        let mut kv = vec![0i128; breite];
+        for (a, &k_a) in k.iter().enumerate() {
+            let z = zeile(a);
+            for wert in z.iter_mut() {
+                if *wert != 0 {
+                    *wert = rshift_round_i128(i128::from(*wert) * i128::from(g), ZERFALL_FRAC) as i64;
+                }
+            }
+            zeile_aufaddieren(&mut kv, z, k_a);
+        }
+    
+        // --- 3. Die Korrektur.
+        let mut delta = vec![0i32; breite];
+        for (j, ziel) in delta.iter_mut().enumerate() {
+            // ⛔️ **Beide Seiten muessen dieselbe Skala tragen.** `v` kommt
+            //   als Aktivierung auf `WERT_FRAC`, `kv` als Rechenzwischenstand
+            //   auf `INTERN_FRAC`; ohne diese Verschiebung subtrahierte man
+            //   Zahlen verschiedener Bedeutung.
+            let kv_mem = rshift_round_i128(kv[j], ZUSTAND_FRAC + NORM_FRAC - INTERN_FRAC) as i32;
+            let v_intern = i64::from(v[b0 + j]) << (INTERN_FRAC - WERT_FRAC);
+            let roh = v_intern - i64::from(kv_mem);
+            *ziel = rshift_round_i64(roh * i64::from(beta), WERT_FRAC as u8) as i32;
+        }
+    
+        // --- 4. Rang-1-Fortschreibung, verlustfrei, und
+        // --- 5. Lesen mit der Abfrage, mit einer Skala JE KOPF.
+        //
+        // # ⛔️ Fund 418: eine Skala fuer 32 Koepfe, die um 1050 auseinander
+        //   liegen
+        //
+        // Bis zum 2026-09-22 stand hier eine feste Verschiebung auf
+        // `REKURRENZ_AUS_FRAC`, dieselbe fuer jeden Kopf. Gemessen am
+        // Qwen3.6-35B-A3B, Ebene 0, Token 3: Der lauteste Kopf hatte einen
+        // Effektivwert von 523 Zaehlern, der leiseste **0,5** - ein
+        // Verhaeltnis von 1050, also mehr als zehn Bit. In fuenfzehn Bit
+        // passen beide nicht: Wer den lauten Kopf ohne Saettigung abbilden
+        // will, laesst dem leisen weniger als einen Zaehler.
+        //
+        // ⛔️ **Und dahinter steht eine Normierung.** `torgesteuerte_norm`
+        // normiert **je Kopf** auf den Effektivwert eins. Sie loescht damit
+        // genau den Groessenunterschied, der die Skala gerechtfertigt hat,
+        // und hebt den leisen Kopf wieder auf volle Hoehe - mitsamt seinem
+        // Rundungsfehler. Gemessen: Die sechs Koepfe unter 32 Zaehlern kamen
+        // hinter der Norm auf einen mittleren Fehler von **24,5**, die
+        // sechsundzwanzig darueber auf 0,93. Die Verstaerkung erreichte das
+        // 167-fache.
+        //
+        // 📌 **Eine Normierung hinter einer geteilten Skala ist ein
+        // Rauschverstaerker.** Die Skala richtet sich nach dem lautesten
+        // Teilnehmer, die Normierung blaest den leisesten wieder auf, und
+        // was sie aufblaest, ist Rundungsfehler. Wer beides hintereinander
+        // baut, muss die Skala **so fein teilen wie die Normierung**.
+        //
+        // ⚑ **Die Skala kommt aus dem Groesstwert des Kopfes selbst**, als
+        // gerade Zweierpotenz, und wird zurueckgegeben. Das ist dasselbe
+        // Verfahren, das `rmsnorm_i16` fuer den Index der Wurzeltabelle
+        // benutzt (`dynamic_even_shift`), und es ist rein ganzzahlig und
+        // damit auf jedem Knoten gleich.
+        let links = ZUSTAND_FRAC - NORM_FRAC - INTERN_FRAC;
+        akkus.iter_mut().for_each(|x| *x = 0);
+        for (a, (&k_a, &q_a)) in k.iter().zip(q.iter()).enumerate() {
+            let z = zeile(a);
+            if k_a != 0 {
+                for (wert, &d_b) in z.iter_mut().zip(delta.iter()) {
+                    if d_b != 0 {
+                        *wert += (i64::from(k_a) * i64::from(d_b)) << links;
+                    }
+                }
+            }
+            zeile_aufaddieren(akkus, z, q_a);
+        }
+    }
+
+    /// **Der schnelle Kern ist der alte**, Zustand fuer Zustand und Summe
+    /// fuer Summe, ueber viele Schritte und in jedem Bereich, in dem ein
+    /// anderer Weg greift: kleine Zustaende (alles in i64), grosse (die
+    /// schmalen Summen werden mehrmals zusammengefuehrt), Werte ab 2^62
+    /// (Zerfall und Summe in i128), ein Zerfall ausserhalb von 0 bis eins,
+    /// Nullen in `q` und `k`, Spaltenbloecke.
+    #[test]
+    fn der_schnelle_kern_ist_der_alte() {
+        let (sd, wd) = (16usize, 12usize);
+        let mut s: u64 = 0x9E37_79B9_7F4A_7C15;
+        let mut zufall = move || {
+            s ^= s << 13;
+            s ^= s >> 7;
+            s ^= s << 17;
+            s
+        };
+        for (hoehe, g_art) in [(20u32, 0u8), (41, 0), (55, 0), (61, 0), (62, 1), (30, 2), (30, 3), (45, 4)] {
+            let start: Vec<i64> = (0..sd * wd)
+                .map(|i| {
+                    let r = zufall();
+                    if i % 17 == 0 { 0 } else { ((r >> 1) as i64 >> (62 - hoehe)) * if r & 1 == 0 { 1 } else { -1 } }
+                })
+                .collect();
+            let (mut neu, mut alt) = (start.clone(), start);
+            for schritt_nr in 0..6 {
+                let mut feld = |n: usize, m: u64| -> Vec<i16> { (0..n).map(|_| (zufall() % (2 * m + 1)) as i64 as i16 - m as i16).collect() };
+                let mut q = feld(sd, 4096);
+                let mut k = feld(sd, 4096);
+                q[3] = 0;
+                k[5] = 0;
+                k[6] = if schritt_nr % 2 == 0 { i16::MIN } else { i16::MAX };
+                let v = feld(wd, 600);
+                let eins = 1i64 << ZERFALL_FRAC;
+                let g = match g_art {
+                    0 | 1 => eins - 1 - (zufall() % (1 << 24)) as i64,
+                    2 => eins,
+                    3 => 0,
+                    _ => eins + 12345, // ausserhalb: der Weg in i128
+                };
+                let beta = (zufall() % 256) as i16;
+                for (b0, b1) in [(0usize, wd), (0, 4), (4, 12)] {
+                    let (mut an, mut aa) = (vec![0i128; b1 - b0], vec![7i128; b1 - b0]);
+                    let (mut zn, mut za) = (neu.clone(), alt.clone());
+                    unsafe {
+                        spalten_schritt(zn.as_mut_ptr(), sd, wd, b0, b1, &q, &k, &v, g, beta, &mut an);
+                        spalten_schritt_alt(za.as_mut_ptr(), sd, wd, b0, b1, &q, &k, &v, g, beta, &mut aa);
+                    }
+                    assert_eq!(zn, za, "Zustand: Hoehe {hoehe}, g-Art {g_art}, Schritt {schritt_nr}, Spalten {b0}..{b1}");
+                    assert_eq!(an, aa, "Summen: Hoehe {hoehe}, g-Art {g_art}, Schritt {schritt_nr}, Spalten {b0}..{b1}");
+                    if (b0, b1) == (0, wd) {
+                        neu = zn;
+                        alt = za;
+                    }
+                }
+            }
+            assert!(neu.iter().any(|&w| w != 0), "die Probe rechnet mit lauter Nullen");
+        }
+    }
+
+    /// **Die schmalen Spaltensummen laufen nicht ueber**: Zeilen gleichen
+    /// Vorzeichens, deren Summe i64 verlaesst, obwohl jede einzelne weit
+    /// darunter bleibt. Ohne das Zusammenfuehren an der Grenze bricht die
+    /// Summe hier ab (die Pruefungen laufen mit Ueberlaufkontrolle).
+    #[test]
+    fn die_schmalen_summen_werden_rechtzeitig_zusammengefuehrt() {
+        let (sd, wd) = (40usize, 3usize);
+        let werte: Vec<i64> = (0..sd * wd).map(|i| (1i64 << 58) + i as i64).collect();
+        let x: Vec<i16> = (0..sd).map(|a| 3 + (a % 2) as i16).collect();
+        let soll = zeilen_kontrahieren(&werte, &x, wd);
+        assert!(soll.iter().all(|&s| s > i128::from(i64::MAX)), "die Probe verlaesst i64 nicht");
+        let mut ist = vec![0i128; wd];
+        let mut summen = Spaltensummen::neu(&mut ist);
+        for (zeile, &x_a) in werte.chunks_exact(wd).zip(&x) {
+            let gross = zeile.iter().fold(0u64, |g, w| g | w.unsigned_abs());
+            summen.zeile(zeile, x_a, gross);
+        }
+        summen.abschliessen();
+        assert_eq!(ist, soll);
+    }
+
+    /// **Eine Zeile verblasst wie in i128**, an den Haelften, an den
+    /// Raendern von i64 und mit jedem Zerfall von null bis eins und
+    /// darueber.
+    #[test]
+    fn das_verblassen_ist_das_alte() {
+        let eins = 1i64 << ZERFALL_FRAC;
+        let mut werte: Vec<i64> = vec![0, 1, -1, 2, -2, 3, (1 << 27), (1 << 27) + 1, -(1 << 27), (1 << 28) + (1 << 27), 3 << 27, i64::MIN, i64::MAX];
+        for bits in [40u32, 61, 62, 63] {
+            let w = if bits == 63 { i64::MAX } else { (1i64 << bits) - 1 };
+            werte.extend_from_slice(&[w, -w, w - 12345, -(w - 12345), i64::MIN + 1]);
+        }
+        for g in [0i64, 1, 2, eins / 2, eins / 2 + 1, eins - 1, eins, eins + 1, -5, 174_213_377] {
+            let mut zeile = werte.clone();
+            let gross = zeile_verblassen(&mut zeile, g);
+            for (&w, &neu) in werte.iter().zip(&zeile) {
+                // Wie der alte Kern: das Ergebnis in i128, dann auf i64.
+                let soll = rshift_round_i128(i128::from(w) * i128::from(g), ZERFALL_FRAC) as i64;
+                assert_eq!(neu, soll, "wert {w}, g {g}");
+                assert!(gross >= neu.unsigned_abs(), "die Schranke liegt unter einem Betrag");
+            }
+        }
+    }
 
     /// **Die zeilenweise Kontraktion ist die spaltenweise von vorher**,
     /// Wert fuer Wert, auch mit Nullen mitten im Vektor und mit Zustaenden

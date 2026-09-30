@@ -1,8 +1,8 @@
 # ethics
 
-> **Version:** 0.7.0
-> **Datum:** 2026-09-21
-> **Status:** Manifest v0.2.0 steht (neu: **G9**, der Ausschlusskatalog),
+> **Version:** 0.8.1
+> **Datum:** 2026-09-30
+> **Status:** Manifest v0.3.1 steht (neu: **G10**, was der Assistent nicht tut; davor **G9**, der Ausschlusskatalog),
 > **Phase 1 abgeschlossen**: aus den
 > Zusagen sind Dateien geworden, die man erzeugen, diffen und im CI
 > prüfen kann. Die Design-Entscheidungen bleiben offen, und Phase 2
@@ -77,6 +77,28 @@ COMPLIANCE/ethics/
   nennt, was ihn trägt — oder ist als Absichtserklärung markiert.
 
 ## Changelog
+
+### v0.8.1 – 2026-09-30 (Manifest 0.3.1: Geldanlage mit Hinweis, Zuspruch bei seelischem Leid)
+
+`Manifest.md` **0.3.0 auf 0.3.1**, auf Festlegung des Projektinhabers; der
+Wortlaut steht im Changelog von `COMPLIANCE` v0.3.1.
+
+### v0.8.0 – 2026-09-30 (Manifest 0.3.0: G10, was der Assistent nicht tut)
+
+`Manifest.md` **0.2.1 auf 0.3.0**. Neuer Grundsatz G10 auf Festlegung des
+Projektinhabers: die Verhaltensregeln des Assistenten im Client, mit der
+Grenze zwischen Verstehen und Ausführen, drei Stufen und vier Regeln ohne
+Stufe, jede mit Abgrenzung. Der Mechanismus ist der geprüfte Systemprompt
+(`COMPLIANCE/systemprompt/`) und ein Satz Prüffragen; die Kategorie ist
+Betreiberpflicht im Client, nicht protokoll-durchsetzbar. Abschnitt 6 nennt
+die Pflicht beim CLIENT.
+
+⚑ **Der Ausschlusskatalog (`Ausschluss.json`) ist unverändert.** Er regelt,
+was in einen Korpus darf; G10 regelt, wie der Assistent antwortet. Medizin
+oder Geldanlage sind kein Ausschlussgrund für einen Korpus.
+
+Messung und Wortlaut des Systemprompts: Changelog der Komponente
+`COMPLIANCE`, v0.3.0.
 
 ### v0.7.0 – 2026-09-25 (die Komponente liegt unter COMPLIANCE)
 

@@ -11,7 +11,7 @@
 // Projekts. Bewusste Abweichung von clippy::too_many_arguments.
 #![allow(clippy::too_many_arguments)]
 
-use crate::fixed_point::{clamp_i16, rshift_round_i128, rshift_round_i64};
+use crate::fixed_point::{clamp_i16, clamp_i16_from_i64, rshift_round_i128, rshift_round_i64};
 
 /// Reziproken-Konstante 2^20 / n (gerundet) — einmalige Initialisierung,
 /// NICHT Teil des tokenweisen Hot-Path. Damit wird der Mittelwert im
@@ -194,15 +194,40 @@ pub fn rmsnorm_i16_mit_spur(
 /// 📌 Bis zum 2026-09-28 lief jedes Element in i128; im Decode des gepackten
 /// 8B trug die Norm mit der QK-Norm rund 12 % der Zeit.
 fn quadratsumme(x: &[i16], x_shifts: &[u8], ref_shift: u8) -> i128 {
-    let mut eimer = [0i64; 256];
-    for (&v, &s) in x.iter().zip(x_shifts) {
-        let v = i64::from(v);
-        eimer[usize::from(ref_shift - s)] += v * v;
+    // ⚑ **Eine Skala fuer alle: eine einzige Summe**, ohne Eimer. So ruft
+    //   jede Norm je Kopf (QK-Norm, Einheitslaenge, torgesteuerte Norm).
+    let kleinster = x_shifts.iter().copied().min().unwrap_or(ref_shift);
+    if kleinster == ref_shift {
+        let summe: i64 = x.iter().map(|&v| i64::from(v) * i64::from(v)).sum();
+        return i128::from(summe);
+    }
+    // ⚑ **Vier Eimersaetze im Wechsel** (2026-09-30). Mit einem Satz haengt
+    //   jedes Element am vorigen, sobald beide in denselben Eimer fallen:
+    //   Das Addieren geht ueber den Speicher, und der Residualstrom hat nur
+    //   eine Handvoll verschiedener Skalen. Vier Saetze sind vier
+    //   unabhaengige Ketten; am Ende dieselbe ganze Zahl, nur anders
+    //   geklammert.
+    let weite = usize::from(ref_shift - kleinster) + 1;
+    let mut eimer = [[0i64; 256]; 4];
+    let mut viertel = x.chunks_exact(4).zip(x_shifts.chunks_exact(4));
+    for (v, s) in &mut viertel {
+        for k in 0..4 {
+            let w = i64::from(v[k]);
+            eimer[k][usize::from(ref_shift - s[k])] += w * w;
+        }
+    }
+    let rest = x.len() - x.len() % 4;
+    for (&v, &s) in x[rest..].iter().zip(&x_shifts[rest..]) {
+        let w = i64::from(v);
+        eimer[0][usize::from(ref_shift - s)] += w * w;
     }
     let mut acc: i128 = 0;
-    for (abstand, &summe) in eimer.iter().enumerate() {
+    for abstand in 0..weite {
+        // Ein Eimer traegt hoechstens `n` Quadrate unter 2^30; vier davon
+        // zusammen bleiben weit in i64, zusammengefuehrt wird in i128.
+        let summe: i128 = eimer.iter().map(|e| i128::from(e[abstand])).sum();
         if summe != 0 {
-            acc += i128::from(summe) << (2 * abstand as u32);
+            acc += summe << (2 * abstand as u32);
         }
     }
     acc
@@ -321,38 +346,49 @@ fn rmsnorm_kern(
         };
     }
 
-    let mut out = Vec::with_capacity(n);
-    for i in 0..n {
-        // x_shifts[i] - ref_shift ist seit Fund 24 <= 0 (ref ist das
-        // MAXIMUM), deshalb vorzeichenbehaftet rechnen — in u8 wuerde die
-        // Differenz unterlaufen.
-        let total_frac = norm_frac as i32 + gamma_shifts[i] as i32
-            + (x_shifts[i] as i32 - ref_shift as i32);
-        let shift = total_frac - out_frac_bits as i32;
-        // Der Linksshift laeuft in i128, nicht in i64: seit Fund 24 ist
-        // `x_shifts[i] - ref_shift` immer <= 0, negative Gesamt-Shifts sind
-        // also der Regelfall statt der Ausnahme. `prod` erreicht 2^37
-        // (32767 * 32767 * 127); ab Verschiebung 26 waere i64 uebergelaufen
-        // und haette GEWRAPPT — das verbietet der numerische Vertrag
-        // ausdruecklich (spec: overflow.behavior = "explicit_clamp_only",
-        // wrap = false). i128 traegt den Fall mit grossem Abstand; die
-        // Saettigung geschieht danach explizit ueber clamp_i16.
-        //
-        // Ein Linksshift ist keine Division, sondern eine exakte
-        // Multiplikation mit 2^k — die Festlegung des Whitepapers auf den
-        // arithmetischen Rechtsshift (Kap. 6.2, Anhang B.5.4) betrifft
-        // ausschliesslich die Division und ihre Rundungsmehrdeutigkeit bei
-        // negativen Zahlen. Rundungsfrei und plattformgleich bleibt der
-        // Linksshift; einzig der Ueberlauf musste abgesichert werden.
-        //
-        // ⚑ **Seit dem 2026-09-28 in i64, wo die Grenze oben es erlaubt**:
-        // ein Rechtsshift bis 62 und ein Linksshift bis 25 (2^37 * 2^25 =
-        // 2^62). `rshift_round_i64` rundet nach derselben Regel wie die
-        // i128-Fassung, also dieselbe Zahl; alles andere laeuft wie bisher.
-        let skaliert = produkt_skalieren(i64::from(x[i]) * lut_val * i64::from(gamma[i]), shift);
-        out.push(clamp_i16(skaliert.clamp(i32::MIN as i128, i32::MAX as i128) as i32));
+    // ⚑ **Der gemeinsame Teil der Verschiebung einmal**, je Element nur
+    //   noch seine beiden Skalen. `x_shifts[i] - ref_shift` ist seit Fund 24
+    //   <= 0 (ref ist das MAXIMUM), deshalb vorzeichenbehaftet.
+    let basis = norm_frac as i32 - ref_shift as i32 - out_frac_bits as i32;
+    x.iter()
+        .zip(gamma)
+        .zip(gamma_shifts.iter().zip(x_shifts))
+        .map(|((&xi, &gi), (&gs, &xs))| {
+            let shift = basis + i32::from(gs) + i32::from(xs);
+            ausgabe_skalieren(i64::from(xi) * lut_val * i64::from(gi), shift)
+        })
+        .collect()
+}
+
+/// **Ein Ausgabewert der Norm**: `prod` um `shift` verschoben, gerundet
+/// zur naechsten geraden Zahl und auf i16 geklemmt.
+///
+/// `prod = x * lut * gamma` erreicht 2^37 (32767 * 32767 * 127). Ein
+/// Linksshift ist keine Division, sondern eine exakte Multiplikation mit
+/// 2^k; die Festlegung auf den arithmetischen Rechtsshift betrifft nur die
+/// Division. Einzig sein Ueberlauf muss abgesichert sein, deshalb laeuft er
+/// ausserhalb der Grenzen von [`produkt_skalieren`] in i128 (spec:
+/// overflow.behavior = "explicit_clamp_only", wrap = false).
+///
+/// ⚑ **Der uebliche Fall ohne Verzweigung** (2026-09-30): ein Rechtsshift
+/// von 1 bis 62 in i64, die Rundung als Summe zweier Vergleiche. Dieselbe
+/// Regel wie `rshift_round_i64`, nur ohne Sprung je Element; bei 5 120
+/// Kanaelen und zwei Normen je Ebene war die Norm im Decode des 27B rund
+/// ein Zehntel der Zeit. Alles andere geht den Weg ueber
+/// [`produkt_skalieren`] wie bisher. Beide Wege sind gegen die i128-Rechnung
+/// geprueft (`der_ausgabewert_ist_der_alte`).
+#[inline(always)]
+fn ausgabe_skalieren(prod: i64, shift: i32) -> i16 {
+    if (1..=62).contains(&shift) {
+        let s = shift as u32;
+        let quotient = prod >> s;
+        let rest = prod & ((1i64 << s) - 1);
+        let halb = 1i64 << (s - 1);
+        let auf = (rest > halb) | ((rest == halb) & (quotient & 1 != 0));
+        return clamp_i16_from_i64(quotient + i64::from(auf));
     }
-    out
+    let skaliert = produkt_skalieren(prod, shift);
+    clamp_i16(skaliert.clamp(i32::MIN as i128, i32::MAX as i128) as i32)
 }
 
 /// QK-Norm: RMSNorm je Attention-Kopf, wie Qwen3 sie vor RoPE anwendet.
@@ -807,6 +843,68 @@ mod exaktheit_der_schnellen_wege {
                 alt += ((x[i] as i128) * (x[i] as i128)) << align;
             }
             assert_eq!(quadratsumme(&x, &x_shifts, ref_shift), alt, "n = {n}");
+        }
+    }
+
+    /// **Der Ausgabewert ist der alte**: Verschiebung in i128, Klemme auf
+    /// i32, dann auf i16, ueber alle Shifts von -40 bis 70, die Raender
+    /// des Produkts und die Haelften, an denen die Rundung entscheidet.
+    #[test]
+    fn der_ausgabewert_ist_der_alte() {
+        let grenze = 32768i64 * 32767 * 128;
+        let mut werte = vec![0i64, 1, -1, 2, -2, 3, -3, 12345, -12345, grenze, -grenze, grenze - 1, 1 << 36, -(1 << 36) - 7];
+        // Genau die Haelfte, knapp darunter und darueber, bei geradem und
+        // ungeradem Quotienten, positiv und negativ.
+        for s in [1u32, 2, 7, 20, 36] {
+            for q in [0i64, 1, 2, 3, -1, -2, -3, 32766, 32767, 32768, -32768, -32769] {
+                for d in [-1i64, 0, 1] {
+                    let w = (q << s) + (1i64 << (s - 1)) + d;
+                    // ⚠️ Nur innerhalb der Vorbedingung: Das Produkt der
+                    //   Norm bleibt unter 2^37, und darauf verlaesst sich
+                    //   der Linksshift in i64.
+                    if w.abs() <= grenze {
+                        werte.push(w);
+                    }
+                }
+            }
+        }
+        for &prod in &werte {
+            for shift in -40..=70 {
+                let alt: i128 = if shift >= 0 {
+                    rshift_round_i128(i128::from(prod), shift as u32)
+                } else {
+                    i128::from(prod) << (-shift) as u32
+                };
+                let soll = clamp_i16(alt.clamp(i32::MIN as i128, i32::MAX as i128) as i32);
+                assert_eq!(ausgabe_skalieren(prod, shift), soll, "prod {prod}, shift {shift}");
+            }
+        }
+    }
+
+    /// **Die Quadratsumme mit einer einzigen Skala und mit wenigen** geht
+    /// eigene Wege (eine Summe, vier Eimersaetze); beide sind die alte.
+    #[test]
+    fn die_quadratsumme_ist_die_alte_auf_jedem_weg() {
+        let mut z = 0x0F0F_1234_5678_9ABC_u64;
+        for n in [1usize, 2, 3, 4, 5, 127, 128, 5120, 5123] {
+            for spanne in [0u8, 1, 3, 17] {
+                let x: Vec<i16> = (0..n)
+                    .map(|i| {
+                        z ^= z << 13;
+                        z ^= z >> 7;
+                        z ^= z << 17;
+                        if i % 89 == 0 { i16::MIN } else { z as u16 as i16 }
+                    })
+                    .collect();
+                let x_shifts: Vec<u8> = (0..n).map(|i| 5 + if spanne == 0 { 0 } else { (i * 11 % (spanne as usize + 1)) as u8 }).collect();
+                let ref_shift = *x_shifts.iter().max().unwrap();
+                let mut alt: i128 = 0;
+                for i in 0..n {
+                    let align = 2 * (ref_shift - x_shifts[i]) as u32;
+                    alt += ((x[i] as i128) * (x[i] as i128)) << align;
+                }
+                assert_eq!(quadratsumme(&x, &x_shifts, ref_shift), alt, "n = {n}, Spanne {spanne}");
+            }
         }
     }
 

@@ -2840,6 +2840,9 @@ tr.gesucht td:first-child { box-shadow: inset 2px 0 0 var(--kante-hell); }
    Knopfreihe (2026-09-18) sind beide wirkungslos bis stoerend. */
 .rundknopf.anhang { opacity: .72; }
 .rundknopf.anhang:hover { opacity: 1; }
+/* ⚑ Die Gluehbirne steht neben der Bueroklammer und sieht aus wie sie. */
+.rundknopf.skill { opacity: .72; }
+.rundknopf.skill:hover { opacity: 1; }
 /* ⚑ Waehrend eine Datei ueber dem Fenster haengt, sagt der Rand es. */
 body.ablegen .eingabefeld {
   outline: 2px dashed rgb(var(--auf) / .45);

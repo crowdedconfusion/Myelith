@@ -1,7 +1,7 @@
 # integer-llm
 
-> **Version:** 0.106.0 (θ_v 0.22.0; kernels 0.72.0, runtime 0.76.0, pipeline 0.15.1)
-> **Datum:** 2026-09-29
+> **Version:** 0.110.0 (θ_v 0.22.0; kernels 0.76.0, runtime 0.79.0, pipeline 0.15.1)
+> **Datum:** 2026-09-30
 > **Status:** ⚠️ **Das Akzeptanzkriterium ruht auf einer zu kleinen
 > Stichprobe.** Gemessen wurde bisher ueber **4 Sequenzen, 435
 > Positionen**; eine Messung ueber **32 Sequenzen, 3558 Positionen**
@@ -646,6 +646,459 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
   volle Paritätstests nur auf GPU-Runnern (nightly oder PR-basiert)
 
 ## Changelog
+
+### v0.110.0 – 2026-09-30 (kernels 0.76.0, runtime 0.79.0: Fund 510 behoben, beim Laden und nicht in der Ableitung)
+
+⛔️ **Fund 510 behoben** (gefunden in v0.109.0: ein ternäres Artefakt, ins
+Training geladen, war nicht mehr dasselbe Modell). **Zwei Anläufe, und der
+erste ist an der Messung gescheitert.**
+
+**Erster Anlauf, verworfen: der Betrag als Mittel über der Schwelle.** Nach
+kritischer Prüfung und mit der Literatur gewählt: Ternary Weight Networks (Li
+und Liu, 2016) zeigen, dass bei festem Muster das Mittel der Beträge über der
+Schwelle der Betrag mit dem kleinsten Fehler ist, und die Regel ist
+wiederholbar. (BitNet b1.58 nimmt das Mittel aller Beträge, wie wir, und
+umgeht das Problem, indem es immer von den hochaufgelösten Mastern aus
+weitertrainiert.) Gebaut, geprüft, dann gemessen, und die Umwandlung des 0,6B
+wurde deutlich **schlechter**, obwohl sie besser anfing:
+
+| Betragsregel | Haltemenge vorher | Haltemenge nach 60 Durchgängen |
+|---|---|---|
+| Mittel aller 128 (BitNet b1.58, gemessen in v0.109.0) | 13,7 Mio. | **2 835** |
+| Mittel über der Schwelle (Ternary Weight Networks) | 8,7 Mio. | 6 291 |
+
+Gleiche Einstellungen, gleicher Lernratenplan, beide Läufe 80 Minuten. Ein
+Grund ist nicht belegt. 📌 **Die Theorie sagte „besser“, die Messung sagte
+„schlechter“; entschieden hat die Messung.** Die Ableitung steht wieder auf
+dem Mittel aller 128.
+
+**Zweiter Anlauf, gebaut: beim Laden entpacken, sodass die Ableitung dasselbe
+Gewicht ergibt** (`ternaere_zeile_zu_mastern`). Die Nicht-Nullen einer Gruppe
+bekommen als Master `a · 128 / k` statt `a` (`k` die Zahl der Nicht-Nullen),
+gerundet über eine Tabelle von 128 Kehrwerten und einen gerundeten
+Rechtsshift, ohne Division zur Laufzeit. Dann ist das Mittel aller 128 wieder
+`a`, die Nullen bleiben unter der Schwelle, und dasselbe Gewicht kommt heraus.
+Bewegen sich die früheren Nullen später ein wenig, verschiebt das den Betrag
+nur um ihren kleinen Anteil. ⚠️ Der Preis: Die Master der Nicht-Nullen sind um
+`128 / k` größer als ihr Gewicht; wo das über die Mastergrenze ginge, wird
+begrenzt, und der Trainingsschritt meldet die Ebene als außerhalb der Form.
+`master_aus_gewicht` (runtime) nimmt diesen Weg für jeden ternären Tensor.
+
+**Belege:**
+- `ein_ternaeres_gewicht_entpackt_wird_wieder_dasselbe` (Kerne): ableiten,
+  entpacken, neu ableiten ergibt dieselben Gewichte und Shifts, auch nach
+  kleinen Bewegungen der früheren Nullen. Gegenprobe im Test: einfach entpackt
+  weicht ab.
+- `die_kehrwerte_sind_auf_einen_halben_schritt_genau` (Kerne).
+- `ein_ternaerer_stand_wird_ein_gepacktes_artefakt_das_gleich_rechnet`
+  (Laufzeit) lädt das geschriebene Artefakt jetzt auch wieder ins Training:
+  dieselbe Ausgabe. Gegenprobe mit einfachem Entpacken: rot.
+- **Am echten Stand:** Das Artefakt aus dem Lauf von v0.109.0, mit dem neuen
+  Bau wieder ins Werkzeug geladen, misst genau die Werte vom Ende des Laufs
+  (Lernmenge 2 420,5315, Haltemenge 2 835,0458). Mit dem alten Entpacken waren
+  es 2 534 und 2 785.
+- Alle Kerntests und die Artefaktproben grün, Clippy ohne Befund.
+
+### v0.109.0 – 2026-09-30 (kernels 0.75.0, runtime 0.78.0: Lernratenplan, Stand ins Artefakt, Drehung im Training; Funde 508 und 509, Fund 510 offen)
+
+**Anlass:** Auftrag des Projektinhabers, Rückwärtspass und Trainingskonzept
+für ternäre Modelle fertigzustellen. Drei Schritte der Reihenfolge dorthin
+(Lernratenplan, Stand ins Artefakt, Drehung im Training) und zwei Funde, die
+beim Bauen aufgefallen sind.
+
+⛔️ **Fund 509: Der Rückweg der Aufmerksamkeit nahm für Q und K die falsche
+Skala.** `dL/dq` trägt den Faktor K und `dL/dk` den Faktor Q, jeweils wie die
+Aufmerksamkeit sie gesehen hat, mit QK-Normierung also auf deren
+Ausgangsskala. `gradienten_der_aufmerksamkeit_aus_gradient` schob stattdessen
+um die Skala der Projektion. Der Vorwärtspfad derselben Funktion nimmt seit
+jeher die richtige (`q_wirk`, `k_wirk`).
+
+- **Wirkung:** `dL/dq` war um `2^(k_out − k_frac)` zu groß und `dL/dk` um
+  `2^(q_out − q_frac)`, am 0,6B in der letzten Ebene das Vier- und das
+  Achtfache. Für `q_proj` und `k_proj` selbst gleicht `--normiert` einen
+  festen Faktor je Matrix aus. **Verzerrt war der Gradient, der an die Ebenen
+  darunter weitergeht**: Er ist die Summe aus Q, K und V, und zwei der drei
+  Teile waren zu groß.
+- **Betroffen:** jedes Training an einem Modell mit QK-Normierung, dichte
+  Ebenen und Gemischebenen (beide gehen durch diese Funktion).
+- **Warum es nicht auffiel:** Der Test mit QK-Normierung setzte beide Skalen
+  gleich. Dieselbe Art Lücke wie bei Fund 507, eine Stelle weiter.
+- **Gefunden** an einer neuen Prüfung, die den Gradienten an einer **echten**
+  Ebene gegen die gemessene Änderung hält (siehe unten): q lag bei 0,19 und k
+  bei 0,06 der Vorhersage, die übrigen fünf bei 0,97 bis 1,01.
+- **Behoben**, vier Zeilen. Danach q 0,90 und k 0,89.
+
+**Gemessen** am 0,6B, zwölf Ebenen, zwölf Durchgänge, `--normiert
+--zeilenweise --sammeln`, 128 Lernfolgen zu je vier je Durchgang, Haltemenge
+26 Folgen (3 291 Positionen), Ausgangsstand Lernmenge 50,21 und Haltemenge
+32,22; je Zeile derselbe Lauf mit dem Bau vor und nach der Behebung:
+
+| Nenner | Haltemenge vor 509 | Haltemenge nach 509 | Lernmenge vor | Lernmenge nach |
+|---|---|---|---|---|
+| 64 | +8,16 % | **+39,71 %** | +8,35 % | +33,09 % |
+| 512 | −3,93 % | **−4,85 %** | −5,14 % | −7,37 % |
+| 4096 | +0,02 % | −0,02 % | −0,06 % | −0,05 % |
+| Rauschnullpunkt, ohne Gradienten | | +0,05 % | | −0,04 % |
+
+⚑ **Was das sagt.** Bei Nenner 512 lernt der Lauf (fünf Prozentpunkte vom
+Rauschen entfernt), und der berichtigte Gradient ist besser. Bei 4096 ist der
+Schritt zu klein, das Ergebnis ist Rauschen. ⚠️ **Bei Nenner 64 schaden beide
+Bauten, der berichtigte stärker.** Das ist kein Beleg gegen die Behebung,
+sondern gegen die Schrittweite: Wo der Lauf über das Ziel hinausschießt, sagt
+die Haltemenge wenig über die Richtung. 📌 **Die feste Schrittweite 64 der
+Läufe vom 2026-09-28 war für viele Ebenen zu groß**, und der alte Fehler hat
+es teilweise verdeckt.
+
+⛔️ **Fund 508: Der Trainingspfad nahm Ebenen an, deren Vorwärtspass er nicht
+rechnet.** Das Tor am Ausgang der Achtsamkeit und die Positionsdrehung über
+nur einen Teil des Kopfes (beides in den hybriden Modellen) gibt es in der
+Inferenz; der eigene Vorwärtspass des Trainings kennt sie nicht, und
+`Shardgewichte::aus_modell` wies solche Bereiche nicht ab. Es kämen Zahlen
+statt einer Meldung. Jetzt `Shardfehler::VorwaertspfadNichtGetragen`.
+⚠️ Am Code gelesen und an einem umgestellten 0,6B geprüft; an einem hybriden
+Modell selbst nicht ausgeführt. **Für das 27B braucht das Training damit
+neben Drehung und Zustandsschicht auch Tor und Teildrehung.**
+
+**Neu: Lernratenplan** (`optimierer::Lernratenplan`). Warmlauf, dann linearer
+Abfall der Schrittweite auf ein `E`-tel, als reine Funktion der
+Schrittnummer, also ohne Zustand und für jeden Rechner derselbe Nenner. Im
+Werkzeug `--warmlauf N`, `--abfall E`, `--planschritt K`, `--plangesamt G`
+(ein Lauf in Teilen); mit `--absenkung` nicht kombinierbar. Ohne die Schalter
+rechnet das Werkzeug wie bisher. ⚠️ Der Plan ist gebaut und geprüft (fünf
+Proben), seine Wirkung ist noch nicht gemessen.
+
+**Neu: aus einem trainierten Stand wird ein Artefakt**
+(`runtime/src/standartefakt.rs`, Werkzeug `stand_ins_artefakt <quelle>
+<stand> <ziel> [--ternaer]`). Die Gewichte entstehen mit derselben Umrechnung,
+durch die der Vorwärtspass des Trainings jede Matrix schickt; ternär gleich
+gepackt. Alles Übrige wird hart verlinkt, das Ziel darf es nicht geben.
+**Beleg:** Das geladene Artefakt rechnet in der Inferenz Wert für Wert, was
+der Vorwärtspass des Trainings mit dem bewegten Stand gerechnet hat, für int8
+und für ternär; der Lader prüft dabei jede Prüfsumme. Gegenprobe (eine Gruppe
+mit falschem Vorzeichen geschrieben): beide Proben rot. ⚠️ Expertengemische
+und der Ablesekopf gehen diesen Weg nicht.
+
+**Neu: die Eingangsdrehung im Trainingspfad**, vorwärts und rückwärts, für
+alle sieben Matrizen einer dichten Ebene (`drehung::Eingangsdrehung`,
+`gradient_zurueckdrehen`). Vorwärts liest eine gedrehte Matrix die gedrehte
+Eingabe; rückwärts gilt `dL/dW` der gedrehten Eingabe, und der
+Eingangsgradient wird zurückgedreht (dieselbe Hadamard-Matrix, die Vorzeichen
+danach). Ohne Drehung ist der Rechenweg Zeile für Zeile der bisherige. Die
+Inferenz kann für einen gedrehten MLP jetzt auch den Mitschnitt liefern.
+
+- **Exakt geprüft** (Kerne): Der Rückweg ist die Transponierte des Hinwegs,
+  auf ganzen Zahlen. Eine Drehung vor q, k, v und vor gate und up ist
+  dieselbe Rechnung wie die ungedrehte auf gedrehter Eingabe: Spur,
+  Gewichtsgradienten gleich, Eingangsgradient zurückgedreht.
+- **An einer echten Ebene geprüft** (letzte Ebene des 0,6B, mit angehängten
+  Drehungen an allen sieben Matrizen): vorwärts Wert für Wert wie die
+  Inferenz, auch wenn die gedrehte Eingabe auf einer anderen Skala liegt;
+  rückwärts sagt der Gradient die Änderung des Abstands voraus, im Mittel
+  über drei Schrittweiten 0,64 / 0,61 / 0,98 / 0,74 / 0,84 / 0,77 / 0,95.
+  Die beiden inneren Drehungen (vor o, vor down) trägt nur diese Prüfung;
+  Gegenprobe, Rückweg ohne die Hadamard-Matrix: v 0,22, gate −0,15, up −0,66.
+- ⚠️ **Nicht an einem gedrehten Modell gefahren.** Das einzige (27B) braucht
+  für seine Achtsamkeitsebenen zusätzlich Tor und Teildrehung (Fund 508).
+
+**Die ternäre Umwandlung des 0,6B, neu gefahren** mit beiden Behebungen
+(507, 509) und dem Lernratenplan (`--nenner 64 --warmlauf 4 --abfall 8`, also
+Nenner 320 im ersten Durchgang, 64 nach dem Warmlauf, 512 im letzten), sonst
+wie am 2026-09-28: 28 Ebenen, 60 Durchgänge zu je vier Folgen, `--ternaer`,
+80 Minuten.
+
+| | Lernmenge | Haltemenge |
+|---|---|---|
+| Ausgangsstand (ternär abgeleitet, ohne Training) | 18,4 Mio. | 13,7 Mio. |
+| 2026-09-28, mit beiden Fehlern und festem Nenner 64 | 3 418 | 3 537 |
+| **2026-09-30, berichtigt, mit Plan** | **2 421** | **2 835** |
+
+Rund 20 % besser auf der Haltemenge. ⚠️ Drei Dinge ändern sich zugleich (zwei
+Behebungen und der Plan); welches wie viel beiträgt, sagt dieser Lauf nicht.
+⚠️ Vom int8-Modell (Haltemenge um 83) ist das weiter weit entfernt: Eine
+Umwandlung ins Ternäre braucht nach der Literatur Milliarden Token, dieser
+Lauf sah rund 31 000. Der Stand ist mit `stand_ins_artefakt --ternaer` ein
+gepacktes Artefakt von 580 MB (int8: 0,92 GB).
+
+⛔️ **Fund 510 (in v0.110.0 behoben): Ein ternäres Artefakt ins Training
+geladen war nicht mehr dasselbe Modell.** `master_aus_gewicht` entpackt jede Gruppe zu Mastern
+mit den Werten −a, 0 und +a. Der Vorwärtspass des Trainings leitet daraus neu
+ab (`ternaer_aus_master`), und dort ist der Betrag das Mittel über **alle**
+128 Beträge, die Nullen eingeschlossen: `a' = a · (Anteil der Nicht-Nullen)`.
+Jedes Gewicht, das nicht null ist, schrumpft damit schon vor dem ersten
+Schritt, an der letzten Ebene des 0,6B etwa von 96 auf 68; gleich bleiben nur
+die Nullen (655 604 von 2 097 152). **Gefunden an der Gegenprobe zum Stand
+ins Artefakt:** Das Artefakt rechnet in der Inferenz, was das Training zuletzt
+rechnete (Haltemenge 2 835, durch die Probe belegt); wieder ins Werkzeug
+geladen misst es 2 785 (Lernmenge 2 534 statt 2 421). **Betroffen:** jedes
+Training und jede Messung von `trainingsguete`, die von einem ternären
+Artefakt ausgeht (das 8B ternär, später das Netz); nicht betroffen sind die
+Inferenz und ein Lauf, der mit `--stand-lesen` fortsetzt (der liest die
+Master selbst). **Zwei Wege zur Behebung, noch nicht entschieden:** beim
+Laden die Master einer Gruppe so setzen, dass ihr Mittel wieder `a` ist
+(Nicht-Nullen mal 128 durch ihre Zahl; braucht eine Schranke gegen
+Überlauf), oder den Betrag als Mittel über die Nicht-Nullen definieren (für
+Master aus int8 fast dasselbe wie heute, ändert aber die Formel).
+
+**Neue Prüfung an einer echten Ebene**
+(`der_gradient_einer_echten_ebene_sagt_die_aenderung_voraus`): bewegt viele
+Gewichte um je eine int8-Stufe gegen ihren Gradienten und vergleicht
+gemessene mit vorhergesagter Änderung. 📌 Die Prüfebene der Kerne sah Fund
+509 nicht; eine echte Ebene trägt, was die Kalibrierung ergeben hat.
+
+**Danach grün:** Kerntests auf drei Wegen, Laufzeit mit und ohne Metal,
+Clippy, Konformität 48/48 auf drei Wegen, Audit, `myl-pod`, `myl-verifier`,
+`myl-testclient`, `myl-node`, `pipeline`. ⚠️ Linux, Windows und die
+Mindestfassung sind lokal nicht geprüft.
+
+### v0.108.1 – 2026-09-30 (kernels 0.74.1, runtime 0.77.1: Fund 507, der Rückweg einer dichten Ebene ging nicht durch die QK-Normierung)
+
+**Anlass:** Auftrag des Projektinhabers, Rückwärtspass und Trainingskonzept
+für ternäre Modelle fertigzustellen. Gefunden beim Lesen des Rückwärtspasses,
+bevor etwas gebaut wurde.
+
+⛔️ **Fund 507.** `gradienten_der_ebene_aus_gradient` reichte der
+Aufmerksamkeit für den Rückweg `None` statt der QK-Vorgaben, mit dem Vermerk
+„ohne QK-Normierung, siehe den Vorwärtspfad“. Der Vorwärtspfad derselben
+Ebene normiert aber Q und K je Kopf, sobald das Modell es verlangt (Qwen3).
+**Vorwärts mit und rückwärts ohne ist der Gradient einer anderen Funktion.**
+
+- **Betroffen:** jedes Training an einem **dichten** Modell mit QK-Normierung,
+  also 0,6B, 4B und 8B, und damit alle ternären Umwandlungsläufe vom
+  2026-09-28. Die Gradienten von `q_proj` und `k_proj` und ihr Beitrag zum
+  Eingangsgradienten der Ebene galten einer Aufmerksamkeit ohne Normierung.
+- **Nicht betroffen:** Gemischebenen (30B-A3B); ihr Rückweg reicht die
+  Vorgaben seit jeher durch. Die Inferenz ohnehin nicht.
+- **Warum es nicht auffiel:** Der Baustein `qk_norm_heads_backward` ist gegen
+  die numerische Ableitung geprüft, und die Gemischebene benutzt ihn. Eine
+  dichte Ebene **mit** QK-Normierung baute kein Test; der Ebenentest läuft
+  auf einem Prüfmodell ohne.
+- **Behoben:** Der dichte Rückweg reicht `v.qk_norm` durch, eine Zeile.
+
+**Gemessen** am 0,6B, vier Ebenen, zwölf Durchgänge, `--normiert
+--zeilenweise --sammeln`, Nenner 64, Referenzleiter Stufe 2 mit frischer Haltemenge
+(55 Folgen, 6 911 Positionen); beide Läufe mit denselben Einstellungen,
+derselbe Ausgangsstand (Lernmenge 77,09, Haltemenge 83,24):
+
+| | Lernmenge | Haltemenge | Urteil des Werkzeugs |
+|---|---|---|---|
+| vor der Behebung | 109,59 (+42 %) | 115,42 (**+39 %**) | beide werden schlechter: der Lauf schadet |
+| **nach der Behebung** | 29,71 (−61 %) | **40,52 (−51 %)** | die Haltemenge wird besser |
+| Rauschnullpunkt, ohne Gradienten | +0,04 % | −0,02 % | kaum bewegt |
+
+Der Abstand zum Rauschnullpunkt ist damit 51 Prozentpunkte. ⚠️ Der Lauf
+„vor der Behebung“ stammt aus dem Bau vom 2026-09-28; dazwischen liegen nur
+Änderungen, die keine Zahl ändern (die Ausgangswerte beider Läufe sind
+gleich).
+
+**Beleg im Baum:** `der_gradient_der_ebene_sagt_die_aenderung_auch_mit_qk_norm_voraus`
+geht auf jeder der sieben Matrizen einer dichten Ebene mit QK-Normierung
+entlang ihres Gradienten und vergleicht gemessene mit vorhergesagter
+Senkung. Vor der Behebung lag `q` beim 0,33-Fachen, danach bei 1,25 (`k`
+1,12).
+
+📌 **Ein Vermerk, der auf eine andere Stelle zeigt, altert mit ihr.** Als die
+Normierung in den Vorwärtspfad kam, blieb der Satz „siehe den Vorwärtspfad“
+stehen und sagte weiter, dort gebe es keine. 📌 **Und zwei Wege durch
+dieselbe Rechnung (dicht und Gemisch) brauchen denselben Test**, sonst ist
+der zweite ungeprüft, gleich wie gut der erste geprüft ist.
+
+**Zwei gemessene Konstanten hingen am alten Gradienten** und sind neu
+gemessen, wie die Meldung der Probe es verlangt (`examples/lernrate_messen`,
+`examples/formgrenze`):
+
+| | bis zum 2026-09-30 | jetzt |
+|---|---|---|
+| `Trainingsvorgaben::vorgabe().lr_nenner`, Verlust nach 30 Schritten | `1 << 6`: 0,8994 | `1 << 6`: 1,0256; **`1 << 5`: 0,6593** |
+| kleinster `lr_zaehler`, der die Übertragungsform verlässt | 256 | **2 048** (1 024 nie) |
+
+Die Vorgabe steht jetzt auf `1 << 5`, die Gegenprobe auf 2 048; die Schranke
+der Probe (Verlust unter 1,0) ist unverändert. Dass die Grenze der Form um
+drei Stufen wandert, passt zur Sache: Die Normierung macht die
+Aufmerksamkeit unempfindlich gegen die Länge von Q und K, also zeigt der
+richtige Gradient nicht mehr dorthin, wo diese Gewichte wachsen.
+
+**Geprüft:** Kerntests auf drei Rechenwegen, Laufzeittests, Clippy,
+Konformität 48/48 auf `reference`, `cpu-simd` und `metal`, Gleitkomma-Audit,
+dazu die Proben von `myl-pod`, `myl-verifier`, `myl-testclient`, `myl-node`
+und `pipeline`.
+
+⚠️ **Offen:** Die Zahlen der ternären Umwandlung am 0,6B vom 2026-09-28
+(Haltemenge 3 537 nach 60 Durchgängen, Destillation zehnmal schlechter) sind
+mit diesem Fehler entstanden und gehören nachgemessen, bevor aus ihnen etwas
+gefolgert wird.
+
+### v0.108.0 – 2026-09-30 (kernels 0.74.0: ternäre Gewichte rechnen in der Vorbereitung auf der GPU, das 27B bereitet rund dreimal so schnell vor wie am Morgen)
+
+**Auftrag des Projektinhabers:** ein Metal-Kern für ternäre Gewichte, nachdem
+der NEON-Kern an seiner Grenze liegt (v0.107.0).
+
+**Erst gemessen, dann gebaut.** Eine Sonde außerhalb des Baums hat drei Wege
+an einer Matrix des 27B verglichen (17 408 x 5 120, 231 Eingaben, in T
+Gewichte mal Eingaben je Sekunde; alle Kerne der CPU schaffen 0,6):
+
+| Weg | Durchsatz | |
+|---|---|---|
+| eigener Shader, ein Faden je Zeile und Eingabe | 1,15 | |
+| eigener Shader, vier Eingaben je Faden | 1,3 | |
+| **`matmul2d` je 128er-Gruppe, mit dem Betrag gewichtet** | **2,3** | gebaut |
+| `matmul2d` über die ganze Breite (nur int8) | 6,0 | zum Vergleich |
+
+`matmul2d` über die ganze Breite geht für ternäre Gewichte nicht: Der Betrag
+wechselt je Gruppe und ist ein `i16`.
+
+**Der Weg im Shader** (`metal/w8a16.metal`, drei Schritte in einem
+Befehlspuffer):
+1. `entpacken`: aus jedem Musterbyte vier Werte `t = c - 1` als int8.
+2. `gruppenprodukt`: `matmul2d` je 128er-Gruppe und Kachel, int8 mal int8 nach
+   int32, danach mal dem Betrag der Gruppe in int64 gesammelt. Das ist die
+   Klammerung der CPU, `Σ_g m_g · (Σ_{i in g} t_i · x_i)`; die Eingaben sind
+   wie beim int8-Weg in zwei Stellen zerlegt.
+3. `nachlauf_breit`: Zusammensetzen, Rundung und Klemme wie bisher.
+
+**Anbindung** (`metal/geraet.rs`, `metal/mod.rs`, `linear.rs`, `mlp.rs`):
+- `metal::stapel_ternaer`; die Weiche in `linear` schickt beide Gewichtsarten
+  auf die GPU, mit derselben Schwelle von 16 Eingaben.
+- Muster und Beträge gehen ohne Kopie in den Shader. Die drei großen
+  Arbeitspuffer (entpackte Codes, Teilprodukte, Summen) bleiben über die
+  Aufrufe hinweg bestehen und werden nie vor dem Schreiben gelesen.
+- `mlp_h_stapel` rechnet gate und up als zwei Stapel auf der GPU, wenn sie den
+  Stapel nimmt (`metal::nimmt`), und das SiLU-Produkt danach verteilt.
+- **Die Selbstprüfung je Prozess deckt den neuen Weg ab**: Ränder in Zeilen und
+  Eingaben, der größte Betrag, der Code 3 und die Ränder des Wertebereichs,
+  gegen den ternären Kern der CPU; ein Fall läuft zweimal, damit auch die
+  wiederverwendeten Puffer geprüft sind.
+- `Gewichtsmatrix::als_int8` ist entfernt, es hatte keinen Aufrufer mehr.
+
+**Gemessen** (M5 Pro, 2026-09-30, 50 Sekunden Pause vor jedem Lauf; der
+Abdruck über Logits und Token ist mit und ohne GPU derselbe):
+
+| Vorbereitung, Token/s | 231 Token | 927 Token |
+|---|---|---|
+| 27B ternär, Stand v0.106.0, CPU | 15,5 | |
+| 27B ternär, v0.107.0, CPU | 19,1 | 17,4 |
+| **27B ternär, mit GPU** | **40 bis 46** | **46 bis 48** |
+| 35B-A3B, mit GPU | 52 bis 55 | 97 bis 99 |
+
+Der Decode bleibt bei 12,7 Token/s; eine einzelne Eingabe rechnet weiter die
+CPU.
+
+**Belege:** Kerntests auf `reference` (326), `cpu-simd` (327) und `metal`
+(332), darunter `ternaer_rechnet_wie_die_cpu` (direkt und über die Weiche,
+mit Zähler); Laufzeittests mit und ohne `metal`; Clippy für beide Features;
+Konformität 48/48 auf `reference`, `cpu-simd` und `metal`; Gleitkomma-Audit.
+
+⚠️ **Offen:**
+- **Das 35B bereitet weiter schneller vor**, bei langen Prompts doppelt so
+  schnell.
+- Bei 927 Token wartet der Hauptfaden knapp die Hälfte der Zeit auf die GPU;
+  ein Fünftel ist die Rekurrenz der Zustandsschicht auf der CPU, der Rest
+  Zerlegen, Drehen, Normen und Kopien. Während die GPU rechnet, stehen die
+  Kerne still.
+- gate und up laufen in zwei Befehlspuffern statt in einem.
+- Die Schwelle von 16 Eingaben ist für ternäre Gewichte nicht eigens
+  gemessen.
+
+### v0.107.0 – 2026-09-30 (kernels 0.73.0, runtime 0.77.0: das ternäre 27B schneller, Decode +19 %, Vorbereitung +23 %, keine Zahl geändert)
+
+**Auftrag des Projektinhabers:** den Durchsatz des 27B optimieren, möglichst
+bis über das 35B. Vorgehen wie beim 8B: profilieren (`sample`), den größten
+Posten abstellen, messen, wiederholen. **Jede Stufe ist eine reine
+Laufzeitentscheidung:** Der Abdruck über Logits und Token ist vor und nach
+jeder Stufe derselbe, am 27B (ternär, gedreht), am 35B-A3B (Gemisch, int8) und
+am 4B (dicht, int8).
+
+**Gemessen** (M5 Pro, `cpu-simd`, 2026-09-30; vor jedem Lauf 50 Sekunden
+Pause, beide Fassungen im Wechsel, je drei Läufe, Streuung unter 1 %):
+
+| | vorher | nachher | |
+|---|---|---|---|
+| 27B ternär, Decode (48 Token) | 10,66 | **12,73** Token/s | +19 % |
+| 27B ternär, Vorbereitung (231 Token) | 15,49 | **19,10** Token/s | +23 % |
+| 35B-A3B, Decode (48 Token) | 13,3 bis 14,0 | **15,75** Token/s | +12 bis +18 % |
+| 35B-A3B, Vorbereitung (231 Token) | 35,6 | **38,1** Token/s | +7 % |
+
+Das 35B gewinnt mit, weil Norm, Rundung und Rekurrenz dieselben sind. Mit
+`metal` bereitet es bei 231 Token 45 bis 50 Token/s vor; das ternäre 27B
+rechnet auf der GPU nicht.
+
+**Was geändert ist, nach Ertrag:**
+
+1. **Rundung ohne Sprung** (`fixed_point.rs`). `rshift_round` in allen drei
+   Breiten entscheidet das Aufrunden als Summe zweier Vergleiche statt über
+   einen Sprung. Ob aufgerundet wird, hängt am Rest, und der ist bei echten
+   Daten so gut wie zufällig; ein Sprung je Element wird dann jedes zweite
+   Mal falsch vorhergesagt. Dieselbe Regel, geprüft gegen die Fassung mit
+   Sprung über jede Schiebeweite.
+2. **RMSNorm** (`rmsnorm.rs`). Die Quadratsumme sammelt in vier Eimersätzen
+   im Wechsel (mit einem Satz hing jedes Element über den Speicher am
+   vorigen) und nimmt bei einer einzigen Skala eine einzige Summe. Die
+   Ausgabe rechnet den üblichen Fall (Rechtsshift 1 bis 62) in i64 ohne
+   Sprung. Im Decode des 27B trug die Norm rund ein Zehntel der Zeit.
+3. **Die Rekurrenz der Zustandsschicht** (`zustandsschicht.rs`). Der Zerfall
+   `wert * g >> 28` rechnet exakt in i64 (`wert = hoch * 2^28 + tief`, die
+   Rundung entscheidet am Rest von `tief * g`), und die Spaltensummen sammeln
+   in i64, solange eine mitgeführte Schranke das trägt; sonst wie bisher in
+   i128. Der alte Kern steht als Orakel in den Proben.
+4. **Die Drehung** (`drehung.rs`). Die ersten drei Stufen der
+   Walsh-Hadamard-Transformation je Achterstück ausgeschrieben, der Ausgang
+   im üblichen Fall in i32 ohne Sprung; damit sind beide Schleifen
+   Vektorschleifen.
+5. **Die Vorbereitung rechnet den gedrehten MLP gebündelt** (`mlp_h_stapel`,
+   `model.rs` `mlp_gedreht`). Bis hierher lief `mlp_h` einmal je Token: eine
+   Poolrunde je Token und Ebene, und jedes Token las gate und up ganz neu.
+   Die Drehungen eines Stapels laufen verteilt statt nacheinander auf einem
+   Kern (`eingaenge_fuer_alle`).
+6. **Eine ternäre Zeile mal mehreren Eingaben** (`ternaer.rs`
+   `zeile_dot_viele`, `Gewichtsmatrix::zeile_mal_viele`). Die acht
+   Codevektoren einer Gruppe entstehen einmal und dienen allen Eingaben einer
+   Kachel. Die Kachel ist für ternäre Gewichte **vier** statt acht
+   (`KACHEL_TERNAER`, gemessen: 614 gegen 555 G Gewichte mal Eingaben je
+   Sekunde), weil jede Eingabe dort zwei Bytes je Wert mitbringt.
+
+📌 **Woran der ternäre Kern wirklich hängt.** Erwartet war vom gemeinsamen
+Entpacken ein Drittel, gemessen sind 18 % auf einem Kern (57,6 auf 67,9 G/s).
+Der Kern hängt an den Punktprodukten: Eine Aktivierung hat zwei Bytes, also
+braucht jedes Gewicht zwei Byteprodukte, 16 je Befehl. Eine Mikroprobe misst
+auf dieser Maschine rund 3,5 solcher Befehle je Takt und Kern; der Kern liegt
+bei 3. **Mit NEON ist die dichte ternäre Matrix damit nahe an ihrer Grenze**:
+15 Kerne schaffen 450 bis 630 G Produkte je Sekunde, das 27B braucht 25,6 G
+je Token.
+
+📌 **Vier Wege gemessen und verworfen:** Poolfäden, die zwischen zwei Runden
+kurz drehen statt zu schlafen (100 µs gleich, 1000 µs 15 % langsamer),
+feinere Blöcke im Fadenpool (32 je Faden 6 % langsamer, 64 12 %), gröbere
+(2 je Faden 5 % langsamer) und Blöcke, die gegen Ende der Runde kleiner
+werden (bis 8 Zeilen 6 % langsamer, bis 32 Zeilen 2 %).
+
+📌 **Eine Schutzzeile ohne Wirkung.** Der Zerfall prüfte zuerst zusätzlich
+`|wert| < 2^62`. Die Gegenprobe ohne die Zeile blieb grün, und die Rechnung
+zeigt warum: Für jeden Wert in i64 und jedes `g` bis 2^28 läuft nichts über.
+Die Zeile ist entfernt, der Grund steht am Kern.
+
+**Die Sonde** (`bin/ternaerprobe.rs`) nimmt Zeilen, Spalten und eine Liste
+von Kernzahlen und misst zusätzlich den Stapel mit 64 Eingaben.
+
+**Belege:** Kerntests grün auf `reference`, `cpu-simd` (327) und `metal`
+(331), Laufzeit 101 Tests grün, Clippy ohne Befund, Konformität 48/48 auf
+`reference` und `cpu-simd`, Gleitkomma-Audit bestanden. Neue Proben, jede
+gegen die alte Rechnung: `die_rundung_ohne_sprung_ist_die_mit_sprung`,
+`der_ausgabewert_ist_der_alte`, `die_quadratsumme_ist_die_alte_auf_jedem_weg`,
+`der_schnelle_kern_ist_der_alte`, `das_verblassen_ist_das_alte`,
+`die_schmalen_summen_werden_rechtzeitig_zusammengefuehrt`,
+`die_ausgeschriebenen_stufen_sind_die_schleife`,
+`der_schnelle_ausgang_ist_der_alte`,
+`die_gemeinsame_fassung_ist_die_einzelne`, `mlp_h_stapel` in
+`ternaer_ist_derselbe_mlp`, `viele_eingaben_drehen_wie_jede_einzeln`.
+Gegenproben an der Rekurrenz (Rundung, Schranke der Zeile, Zusammenführen an
+der Grenze): je eine Probe rot.
+
+⚠️ **Offen:**
+- **Das 27B ist nicht schneller als das 35B**, und mit diesem Kern wird es
+  das nicht: Es rechnet je Token rund siebenmal so viele Gewichte. Decode
+  12,7 gegen 15,8, Vorbereitung 19 gegen 38 (CPU) und 45 bis 50 (GPU).
+- Im Decode liegen jetzt rund drei Viertel der Zeit in den Matrizen, ein
+  Achtel in der Rekurrenz, der Rest im Wecken und Warten des Fadenpools.
+- Die Vorbereitung ternärer Gewichte rechnet weiter nur die CPU.
 
 ### v0.106.0 – 2026-09-29 (runtime 0.76.0: die Vorbereitung eines Prompts hält am Abbruchschalter)
 

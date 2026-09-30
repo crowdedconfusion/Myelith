@@ -119,6 +119,8 @@ const TEXTE = {
     "eingabe.label": "Eingabe",
     "knopf.senden": "Senden",
     "knopf.anhang": "Datei anhängen",
+    "knopf.skill": "Skill lernen",
+    "skill.art": "Skill",
     "lauf.laeuftschon": "Es läuft noch ein Auftrag; einen Augenblick.",
     "loop.knopf": "Loop an oder aus",
     "loop.liste": "Tasks des Loops",
@@ -164,6 +166,7 @@ const TEXTE = {
     "loop.stand.wartet": (m) => `nächste Runde in ${m} min`,
     "loop.ziehen": "Ziehen zum Umsortieren (oder Alt+↑ und Alt+↓)",
     "loop.oeffnen": "Verlauf dieses Tasks öffnen",
+    "loop.ohne_gespraech": "ohne Gespräch",
     "loop.weiter": "Fortsetzen",
     "loop.stoppen": "Anhalten",
     "loop.entfernen": "Entfernen",
@@ -380,6 +383,8 @@ const TEXTE = {
     "eingabe.label": "Input",
     "knopf.senden": "Send",
     "knopf.anhang": "Attach a file",
+    "knopf.skill": "Learn a skill",
+    "skill.art": "Skill",
     "lauf.laeuftschon": "A run is still going; one moment.",
     "loop.knopf": "Loop on or off",
     "loop.liste": "Loop tasks",
@@ -425,6 +430,7 @@ const TEXTE = {
     "loop.stand.wartet": (m) => `next round in ${m} min`,
     "loop.ziehen": "Drag to reorder (or Alt+↑ and Alt+↓)",
     "loop.oeffnen": "Open this task's log",
+    "loop.ohne_gespraech": "no conversation",
     "loop.weiter": "Resume",
     "loop.stoppen": "Pause",
     "loop.entfernen": "Remove",
@@ -1372,6 +1378,7 @@ async function verzeichnis_wechseln() {
     if (!offen) return;
     offen.wurzel = gewaehlt;
     sichern();
+    if (hat_tasks(offen)) loopumfeld_senden(offen);
     reichweite_zeichnen();
     kontext_holen();
   } catch (f) {
@@ -1459,6 +1466,8 @@ function kontext_merken(g, nachrichten, zusammenfassung, ab) {
     g.zusammenfassung = zusammenfassung;
     g.verdichtet_bei = ab;
   }
+  // Hat das Gespraech Tasks, sehen ihre Runden den neuen Stand.
+  if (hat_tasks(g)) loopumfeld_senden(g);
 }
 
 function kontext_zeichnen(k) {
@@ -3981,6 +3990,8 @@ function anhangleiste_zeichnen() {
     const mass = document.createElement("span");
     mass.className = "chipmass";
     mass.textContent = a.sieht ? t("anhang.wirdangesehen") : `${a.art}, ${menschlich(a.bytes)}`;
+    // ⚑ Wofuer der Skill ist, steht im Plaettchen, wenn man darauf zeigt.
+    if (a.skill && a.satz) chip.title = a.satz;
     const weg = document.createElement("button");
     weg.type = "button";
     weg.className = "weg";
@@ -4258,6 +4269,26 @@ function sinne_zeigen(stand) {
   }
 }
 
+/// **Ein Skill haengt an der Eingabe wie ein Anhang**, bis abgeschickt
+/// wird; derselbe Skill nur einmal.
+///
+/// ⚑ **Ein Plaettchen und kein sofortiger Auftrag**: Wer einen Skill
+/// vorlegt, will meist etwas damit tun, und der Auftrag dazu ist noch
+/// nicht geschrieben. Ohne Auftrag abgeschickt, antwortet das Modell mit
+/// dem einen Satz, was es gelernt hat.
+async function skill_hinzufuegen() {
+  try {
+    const s = await invoke("skill_waehlen", { titel: t("knopf.skill") });
+    if (!s) return;
+    if (anhaenge_offen.some((a) => a.skill && a.pfad === s.pfad)) return;
+    anhaenge_offen.push({ skill: true, name: s.name, pfad: s.pfad, art: t("skill.art"), bytes: s.bytes, satz: s.satz });
+    anhangleiste_zeichnen();
+    feld.focus();
+  } catch (f) {
+    melden_als_fehler(f);
+  }
+}
+
 /// Der Knopf und das Ablegen, beide auf demselben Weg.
 function anhang_verdrahten() {
   const knopf = $("anhang");
@@ -4267,6 +4298,8 @@ function anhang_verdrahten() {
       await anhang_hinzufuegen(gewaehlt);
     });
   }
+  const skillknopf = $("skill");
+  if (skillknopf) skillknopf.addEventListener("click", skill_hinzufuegen);
   // ⚑ **Ablegen geht ueber das Fensterereignis und nicht ueber HTML5.**
   // Im Webview traegt ein abgelegtes `File` keinen Pfad; Tauri meldet
   // dagegen die echten Pfade. **Ein Anhang ohne Pfad waere ein Anhang,
@@ -4303,8 +4336,11 @@ function anhaenge_abloesen(text) {
   const anhaenge = anhaenge_offen;
   anhaenge_offen = [];
   anhangleiste_zeichnen();
-  const modelltext = anhaenge.length
-    ? [text, ...anhaenge.map((a) => a.nachricht)].filter(Boolean).join("\n\n")
+  // ⚑ Ein Skill traegt keine Zeile bei: Was das Modell zu ihm liest,
+  //   baut `skill_auftrag` beim Abschicken aus der Datei selbst.
+  const dateien = anhaenge.filter((a) => !a.skill);
+  const modelltext = dateien.length
+    ? [text, ...dateien.map((a) => a.nachricht)].filter(Boolean).join("\n\n")
     : null;
   return { anhaenge, modelltext };
 }
@@ -4317,17 +4353,50 @@ function belegt() {
   return true;
 }
 
+/// **Stellt anliegende Skills vor den Auftrag**: Das Modell lernt sie,
+/// sagt in einem Satz, was es gelernt hat, und bearbeitet dann den
+/// Auftrag; ohne Auftrag bleibt es bei dem Satz. Ohne Skills kommt
+/// `dateitext` unveraendert zurueck.
+///
+/// ⚠️ **Laesst sich ein Skill nicht mehr lesen, geht nichts hinaus**
+/// (Rueckgabe `undefined`), und Plaettchen und Text stehen wieder an der
+/// Eingabe: Ein Auftrag, der ohne den Skill liefe, waere ein anderer als
+/// der abgeschickte.
+async function skills_vorschalten(skills, anhaenge, text, dateitext) {
+  if (!skills.length) return dateitext;
+  try {
+    return await invoke("skill_auftrag", {
+      pfade: skills.map((a) => a.pfad),
+      auftrag: dateitext || text,
+      deutsch: sprache === "de",
+    });
+  } catch (f) {
+    anhaenge_offen = anhaenge;
+    anhangleiste_zeichnen();
+    feld.value = text;
+    feld_messen();
+    auftrag_laeuft = false;
+    melden_als_fehler(f);
+    return undefined;
+  }
+}
+
 async function senden(text) {
   // ⛔️ **Ein Auftrag zur Zeit.** Siehe `auftrag_laeuft`.
   if (belegt()) return;
   auftrag_laeuft = true;
-  const { anhaenge, modelltext } = anhaenge_abloesen(text);
+  const { anhaenge, modelltext: dateitext } = anhaenge_abloesen(text);
+  // ⚑ Anliegende Skills kommen vor den Auftrag, siehe `skills_vorschalten`.
+  const skills = anhaenge.filter((a) => a.skill);
+  const modelltext = await skills_vorschalten(skills, anhaenge, text, dateitext);
+  if (modelltext === undefined) return;
   if (!offen) neues_gespraech();
   // ⚑ **Vor dem neuen Beitrag gelesen**: Der Auftrag geht als Auftrag
   // hinein und nicht noch einmal als Teil des Verlaufs.
   const vorher = kontext_von(offen);
   if (offen.beitraege.length === 0) {
-    offen.titel = titel_aus(text);
+    // Ein Skill ohne Auftrag gibt dem Gespraech seinen Namen.
+    offen.titel = titel_aus(text || (skills.length ? `${t("skill.art")}: ${skills[0].name}` : ""));
   }
   offen.beitraege.push({ von: "nutzer", text, anhaenge, modelltext });
   // Ab hier gilt eine Zusammenfassung, die dieser Auftrag erzeugt.
@@ -4369,7 +4438,11 @@ async function senden(text) {
     await live_anfangen(offen.modus);
 
     if (offen.modus === "agent") {
-      const a = await invoke("agent_fahren", { auftrag: text, verlauf: vorher, wurzel: prozesspfad() });
+      // ⚑ **Mit Skill geht der Lernauftrag hinaus**, sonst der Text wie
+      //   bisher. Dateianhaenge allein aendern den Auftrag des Agenten
+      //   nicht.
+      const agentenauftrag = skills.length ? modelltext : text;
+      const a = await invoke("agent_fahren", { auftrag: agentenauftrag, verlauf: vorher, wurzel: prozesspfad() });
       kontext_merken(offen, a.nachrichten, a.zusammenfassung, auftrag_bei);
       kontext_zeichnen(a.kontext);
       // ⚑ **Die Rueckgabe schreibt den laufenden Beitrag fertig und
@@ -4409,7 +4482,9 @@ async function senden(text) {
         verlauf: verlauf.map((n) => [n.role === "assistant" ? "modell" : "nutzer", n.content]),
         // ⚑ **Die Anhaenge dieses Beitrags.** Liegt einer an, bekommt
         //    der Chat Werkzeuge, und zwar nur fuer die Anhaenge.
-        anhaenge: anhaenge.map((a) => a.pfad),
+        // ⚠️ Ohne die Skills: Sie liegen nicht im Anhangordner, und
+        //    ihr Text steht schon im Auftrag.
+        anhaenge: anhaenge.filter((a) => !a.skill).map((a) => a.pfad),
         wurzel: prozesspfad(),
         // ⚑ **Satzweise gesprochen, waehrend das Modell noch schreibt.**
         // Nur hier im Chat: In der Agentenschleife stehen im Strom auch
@@ -4918,7 +4993,13 @@ const loopstand_text = () =>
 /// ⚑ Es steht in der Agentenliste wie jedes andere, mit ∞ vor dem Titel;
 /// das Feld `task` bindet es an die Kennung. Angelegt wird es, ohne es zu
 /// oeffnen: Wer gerade woanders liest, soll nicht herausgerissen werden.
+/// ⚑ **Zuerst das Gespraech, an das der Task gebunden ist** (Festlegung des
+/// Projektinhabers, 2026-09-30): das, das beim Anlegen offen war. Nur ein
+/// Task ohne Bindung (aus Konsole oder `myl`, oder sein Gespraech wurde
+/// geloescht) bekommt ein eigenes „∞“-Gespraech wie vorher.
 function taskgespraech(kennung, ziel) {
+  const gebunden = gebundenes_gespraech(loopstand.tasks.find((z) => z.kennung === kennung));
+  if (gebunden) return gebunden;
   let g = gespraeche.find((x) => x.task === kennung);
   if (g) return g;
   g = {
@@ -4932,6 +5013,49 @@ function taskgespraech(kennung, ziel) {
   gespraeche.unshift(g);
   sichern();
   return g;
+}
+
+/// Das Gespraech, an das ein Eintrag der Taskliste gebunden ist, oder `null`.
+function gebundenes_gespraech(z) {
+  return (z?.gespraech && gespraeche.find((x) => x.id === z.gespraech)) || null;
+}
+
+/// Der Name des Gespraechs eines Tasks, fuer die Liste: „Ziel (Gespraech)“.
+function taskgespraech_name(z) {
+  const g = gebundenes_gespraech(z) || gespraeche.find((x) => x.task === z.kennung);
+  return g ? g.titel : t("loop.ohne_gespraech");
+}
+
+/// **Das Gespraech fuer einen neuen Task**: das offene Agentengespraech.
+/// Nur wenn keines offen ist, entsteht eines, benannt nach dem Task, und
+/// wird geoeffnet; weitere Tasks landen dann darin.
+function gespraech_fuer_neuen_task(ziel) {
+  if (offen && offen.modus === "agent") return offen;
+  const g = neues_gespraech("agent");
+  g.titel = `∞ ${kurz_titel(ziel)}`;
+  sichern();
+  alles_zeichnen();
+  return g;
+}
+
+/// Hat dieses Gespraech Tasks?
+const hat_tasks = (g) => Boolean(g) && loopstand.tasks.some((z) => z.gespraech === g.id);
+
+/// **Schickt dem Loop, was die Runden eines Gespraechs brauchen**: den
+/// Verlauf, wie ihn der Agent saehe, und den Ordner. Die Gespraeche liegen
+/// hier, also muss das Fenster sie schicken (siehe `Umfeld` im Ruecken).
+async function loopumfeld_senden(g) {
+  if (!g) return;
+  try {
+    await invoke("loop_umfeld", { gespraech: g.id, verlauf: kontext_von(g), wurzel: g.wurzel || null });
+  } catch (f) {
+    melden(t("loop.fehler", f));
+  }
+}
+
+async function loopumfelder_senden() {
+  const ids = new Set(loopstand.tasks.map((z) => z.gespraech).filter(Boolean));
+  for (const g of gespraeche.filter((x) => ids.has(x.id))) await loopumfeld_senden(g);
 }
 
 /// Oeffnet das Gespraech eines Tasks (Auswaehlen in der Liste).
@@ -5004,8 +5128,10 @@ function taskzeile_bauen(z) {
   const name = document.createElement("button");
   name.type = "button";
   name.className = "taskname blank";
-  name.textContent = z.ziel;
-  name.title = `${t("loop.oeffnen")}: ${z.ziel}`;
+  // ⚑ **„Ziel (Gespraech)“** (Festlegung des Projektinhabers, 2026-09-30).
+  const zu = taskgespraech_name(z);
+  name.textContent = `${z.ziel} (${zu})`;
+  name.title = `${t("loop.oeffnen")}: ${z.ziel} (${zu})`;
   name.addEventListener("click", () => task_oeffnen(z));
 
   const marke = document.createElement("span");
@@ -5281,6 +5407,8 @@ async function loop_an(von_selbst) {
   } catch {
     loopstand.schritte = 0;
   }
+  // Jede Runde sieht den Stand ihres Gespraechs von jetzt.
+  await loopumfelder_senden();
   try {
     const hinweis = await invoke("loop_starten");
     // ⚑ **Mit Standardeinstellungen steht ein Hinweis im Ausgabefenster**
@@ -5393,6 +5521,10 @@ async function loop_ereignis(e) {
       loopbuehne = null;
       sichern();
       if (offen === g) alles_zeichnen();
+      // ⚑ Die Runde gehoert jetzt zum Verlauf; der gemerkte Modellverlauf
+      //   kennt sie nicht, also wird er aus den Beitraegen neu hergeleitet.
+      kontexte.delete(g.id);
+      loopumfeld_senden(g);
     }
     loopstand.in_runde = false;
     melden(t("loop.meldung", kurz_titel(e.ziel), e.zustand), "gespraech");
@@ -5443,11 +5575,12 @@ function loop_verdrahten() {
     const ziel = feld_ziel.value.trim();
     if (!ziel) return;
     try {
-      const kennung = await invoke("task_anlegen", { ziel });
+      const g = gespraech_fuer_neuen_task(ziel);
+      const kennung = await invoke("task_anlegen", { ziel, gespraech: g.id, wurzel: g.wurzel || null });
       feld_ziel.value = "";
-      taskgespraech(kennung, ziel);
-      chats_zeichnen();
       const a = await tasks_holen();
+      await loopumfeld_senden(g);
+      chats_zeichnen();
       const z = a?.eintraege.find((x) => x.kennung === kennung);
       melden(t("loop.angelegt", kurz_titel(ziel), z ? z.wort : ""));
       taskwahl_setzen();
