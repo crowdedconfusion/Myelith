@@ -48,11 +48,11 @@ fn main() {
     // anzusehen ist: `--deutsch` und `--werkzeuge voll` in jeder
     // Kombination.
     let satz = if std::env::args().any(|a| a == "advanced" || a == "voll") {
-        myl_client::werkzeuge::Werkzeugkiste::Advanced
+        myl_local_agent::werkzeuge::Werkzeugkiste::Advanced
     } else {
-        myl_client::werkzeuge::Werkzeugkiste::Base
+        myl_local_agent::werkzeuge::Werkzeugkiste::Base
     };
-    let ruestung = match myl_client::ruestung::ruesten(&einstellung, form, satz, Vec::new()) {
+    let ruestung = match myl_local_agent::ruestung::ruesten(&einstellung, form, satz, Vec::new()) {
         Ok(r) => r,
         Err(m) => {
             eprintln!("{m}");

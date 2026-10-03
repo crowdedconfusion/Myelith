@@ -169,12 +169,16 @@ type QuantisierterExperte = (Vec<i8>, Vec<u8>, Vec<i8>, Vec<u8>, Vec<i8>, Vec<u8
 pub enum Ebenenstand {
     /// Q, K, V, O, Gate, Up, Down.
     Dicht(Box<[Vec<Master>; 7]>),
-    /// Aufmerksamkeit, Router, und die bisher gewählten Experten.
+    /// Mischer, Router, und die bisher gewählten Experten.
     Gemisch {
-        /// Q, K, V, O.
-        aufmerksamkeit: Box<[Vec<Master>; 4]>,
+        /// Die Achtsamkeit (Q, K, V, O) oder die rekurrente Zustandsschicht.
+        mischer: Mischerstand,
         /// Die Routerprojektion.
         router: Vec<Master>,
+        /// **Der geteilte Experte** (Qwen3.6), falls die Ebene einen hat:
+        /// Gate, Up, Down und die eine Zeile seines Tors. Er feuert bei
+        /// jedem Token und ist deshalb von Anfang an da (Fund 516).
+        geteilt: Option<Box<[Vec<Master>; 4]>>,
         /// Je **Expertennummer** seine drei Matrizen.
         ///
         /// ⚑ **`BTreeMap` und nicht `HashMap`.** Die Karte wird geordnet
@@ -182,6 +186,53 @@ pub enum Ebenenstand {
         /// dabei eine Reihenfolge, die an Adressen hängt.
         experten: std::collections::BTreeMap<u16, [Vec<Master>; 3]>,
     },
+}
+
+/// **Die Matrizen des Mischers einer Gemischebene.**
+///
+/// ⚑ **Der Mischer und der Block sind zwei Achsen**: Das 35B hat zehn
+/// Achtsamkeitsebenen und dreissig Zustandsebenen, alle mit Gemisch. Der
+/// Block bleibt derselbe, nur der Mischer davor ist ein anderer.
+#[derive(Clone)]
+pub enum Mischerstand {
+    /// Q, K, V, O.
+    Achtsamkeit(Box<[Vec<Master>; 4]>),
+    /// `in_proj_qkv`, `in_proj_z`, `in_proj_b`, `in_proj_a`, `out_proj` und
+    /// die Faltung, in dieser Reihenfolge (sie ist Teil des Abdrucks).
+    ///
+    /// ⚑ **Nicht trainiert werden** das Gamma der torgesteuerten Norm,
+    /// `dt_bias` und `exp_A`: je Wertkopf eine Zahl oder je Kanal ein
+    /// Gamma, wie das Gamma der QK-Normierung, das aus demselben Grund
+    /// stehen bleibt (`qk_norm_heads_backward`). Ihre Gradienten rechnet
+    /// der Rueckweg; sie mitzunehmen hiesse neue Master und neue
+    /// Wuerfelbereiche, also eine Aenderung des Trainingsvertrags.
+    Zustand(Box<[Vec<Master>; 6]>),
+}
+
+impl Mischerstand {
+    /// Die Matrizen in kanonischer Reihenfolge.
+    pub fn matrizen(&self) -> &[Vec<Master>] {
+        match self {
+            Self::Achtsamkeit(a) => &a[..],
+            Self::Zustand(z) => &z[..],
+        }
+    }
+
+    /// Dieselben, veraenderlich.
+    pub fn matrizen_mut(&mut self) -> &mut [Vec<Master>] {
+        match self {
+            Self::Achtsamkeit(a) => &mut a[..],
+            Self::Zustand(z) => &mut z[..],
+        }
+    }
+
+    /// Die Kennung der `n`-ten Matrix.
+    pub fn kennung(&self, n: usize) -> Matrixkennung {
+        match self {
+            Self::Achtsamkeit(_) => Matrixkennung::Aufmerksamkeit(n as u8),
+            Self::Zustand(_) => Matrixkennung::Zustand(n as u8),
+        }
+    }
 }
 
 /// Welche Matrix einer Ebene gemeint ist.
@@ -206,6 +257,14 @@ pub enum Matrixkennung {
     Router,
     /// Expertennummer und eine seiner drei Matrizen.
     Experte(u16, u8),
+    /// Der geteilte Experte: 0 Gate, 1 Up, 2 Down, 3 sein Tor.
+    ///
+    /// ⚑ **Hinten angehaengt**, damit die Ordnung der uebrigen Kennungen
+    /// bleibt, wie sie war.
+    Geteilt(u8),
+    /// Die Matrizen einer Zustandsschicht, in der Reihenfolge von
+    /// [`Mischerstand::Zustand`]. Ebenfalls hinten angehaengt.
+    Zustand(u8),
 }
 
 /// Die aufgelaufene Bewegung eines Segments, in feinen Einheiten.
@@ -451,9 +510,10 @@ impl Clone for Ebenenstand {
     fn clone(&self) -> Self {
         match self {
             Self::Dicht(m) => Self::Dicht(m.clone()),
-            Self::Gemisch { aufmerksamkeit, router, experten } => Self::Gemisch {
-                aufmerksamkeit: aufmerksamkeit.clone(),
+            Self::Gemisch { mischer, router, geteilt, experten } => Self::Gemisch {
+                mischer: mischer.clone(),
                 router: router.clone(),
+                geteilt: geteilt.clone(),
                 experten: experten.clone(),
             },
         }
@@ -470,10 +530,14 @@ impl Ebenenstand {
     pub fn matrix_mut(&mut self, k: Matrixkennung) -> Option<&mut Vec<Master>> {
         match (self, k) {
             (Self::Dicht(m), Matrixkennung::Dicht(n)) => m.get_mut(n as usize),
-            (Self::Gemisch { aufmerksamkeit, .. }, Matrixkennung::Aufmerksamkeit(n)) => {
-                aufmerksamkeit.get_mut(n as usize)
+            (Self::Gemisch { mischer: Mischerstand::Achtsamkeit(a), .. }, Matrixkennung::Aufmerksamkeit(n)) => {
+                a.get_mut(n as usize)
+            }
+            (Self::Gemisch { mischer: Mischerstand::Zustand(z), .. }, Matrixkennung::Zustand(n)) => {
+                z.get_mut(n as usize)
             }
             (Self::Gemisch { router, .. }, Matrixkennung::Router) => Some(router),
+            (Self::Gemisch { geteilt: Some(g), .. }, Matrixkennung::Geteilt(n)) => g.get_mut(n as usize),
             (Self::Gemisch { experten, .. }, Matrixkennung::Experte(nr, n)) => {
                 experten.get_mut(&nr).and_then(|drei| drei.get_mut(n as usize))
             }
@@ -492,10 +556,15 @@ impl Ebenenstand {
     pub fn matrizen(&self) -> Vec<&[Master]> {
         match self {
             Self::Dicht(m) => m.iter().map(|v| v.as_slice()).collect(),
-            Self::Gemisch { aufmerksamkeit, router, experten } => {
+            Self::Gemisch { mischer, router, geteilt, experten } => {
                 let mut aus: Vec<&[Master]> =
-                    aufmerksamkeit.iter().map(|v| v.as_slice()).collect();
+                    mischer.matrizen().iter().map(|v| v.as_slice()).collect();
                 aus.push(router.as_slice());
+                // ⚑ Der geteilte Experte hinter dem Router und vor den
+                //   gewaehlten: Er ist fest da, die gewaehlten wachsen.
+                if let Some(g) = geteilt {
+                    aus.extend(g.iter().map(|v| v.as_slice()));
+                }
                 for drei in experten.values() {
                     aus.extend(drei.iter().map(|v| v.as_slice()));
                 }
@@ -513,9 +582,12 @@ impl Ebenenstand {
     pub fn matrizen_veraenderlich(&mut self) -> Vec<&mut Vec<Master>> {
         match self {
             Self::Dicht(m) => m.iter_mut().collect(),
-            Self::Gemisch { aufmerksamkeit, router, experten } => {
-                let mut aus: Vec<&mut Vec<Master>> = aufmerksamkeit.iter_mut().collect();
+            Self::Gemisch { mischer, router, geteilt, experten } => {
+                let mut aus: Vec<&mut Vec<Master>> = mischer.matrizen_mut().iter_mut().collect();
                 aus.push(router);
+                if let Some(g) = geteilt {
+                    aus.extend(g.iter_mut());
+                }
                 for drei in experten.values_mut() {
                     aus.extend(drei.iter_mut());
                 }
@@ -582,23 +654,44 @@ impl Shardgewichte {
             return Err(Shardfehler::BereichUngueltig { von, bis, ebenen: m.num_layers });
         }
         let bereich: Vec<&crate::model::TransformerLayer> = m.layers.iter().take(bis).skip(von).collect();
-        if let Some(e) = bereich.iter().find(|e| matches!(e.mischer, crate::model::Mischer::Zustand(_))) {
+        // ⚑ **Zustandsebenen traegt der Gemischweg seit dem 2026-10-02**
+        //   (T5): vorwaerts ueber denselben Rumpf wie die Inferenz, rueckwaerts
+        //   ueber `zustandstraining`. Mit einem dichten Block gibt es noch
+        //   kein Modell und deshalb noch keinen Weg.
+        if let Some(e) = bereich
+            .iter()
+            .find(|e| matches!(e.mischer, crate::model::Mischer::Zustand(_)) && matches!(e.ffn, Feedforward::Dense(_)))
+        {
             return Err(Shardfehler::ZustandsschichtNichtGetragen { ebene: e.layer_idx });
         }
-        // ⛔️ **Was der Vorwaertspass des Trainings nicht rechnet, wird
-        //   abgewiesen** (Fund 508), statt still etwas anderes zu rechnen.
+        // ⚑ **Fund 508 geschlossen (2026-10-02):** Tor am Ausgang der
+        //   Achtsamkeit und Teildrehung rechnet der Trainingspfad selbst,
+        //   vorwaerts Wert fuer Wert wie die Inferenz (das Tor ueber dieselbe
+        //   Kernfunktion) und rueckwaerts. Hier wurden beide bis dahin
+        //   abgewiesen. `VorwaertspfadNichtGetragen` bleibt fuer das
+        //   naechste Bauteil, das die Inferenz kennt und das Training nicht.
+        //
+        // ⚑ **Fund 516 geschlossen (2026-10-02): der geteilte Experte** rechnet
+        //   im Gemischweg mit, vorwaerts Wert fuer Wert wie die Inferenz und
+        //   rueckwaerts; bis dahin fehlte er dort und wurde abgewiesen.
+        //
+        // ⛔️ **Fund 517 (2026-10-02): ternaere Betraege ueber 127.** Der
+        //   Trainingspfad leitet ein ternaeres Gewicht als int8 mit Zeilenshift
+        //   ab, der Betrag einer Gruppe ist dort hoechstens 127. Ein Import
+        //   mit exakt uebernommenen Skalen (das 27B: Betraege bis 6 692, in
+        //   jeder Gruppe ueber 127) liegt auf einem feineren Raster; das
+        //   Training rundete ihn still auf ein groeberes und rechnete ein
+        //   anderes Modell als die Inferenz (Ebene 3: 98 % der Werte
+        //   verschieden). Gefunden mit `vorwaertsvergleich`, abgegrenzt am
+        //   8B (Betraege bis 127, auch mit angehaengter Drehung Wert fuer Wert
+        //   gleich).
         for e in &bereich {
-            // ⚑ Die Eingangsdrehung der sieben Matrizen gehoert nicht mehr
-            //   dazu: Der Trainingspfad rechnet sie seit dem 2026-09-30
-            //   selbst, vorwaerts und rueckwaerts.
-            let was = if m.achtsamkeit_mit_tor {
-                "einem Tor am Ausgang der Achtsamkeit"
-            } else if m.drehbreite != m.head_dim {
-                "einer Positionsdrehung ueber einen Teil des Kopfes"
-            } else {
-                continue;
-            };
-            return Err(Shardfehler::VorwaertspfadNichtGetragen { ebene: e.layer_idx, was });
+            if ebene_zu_fein_fuer_das_training(e) {
+                return Err(Shardfehler::VorwaertspfadNichtGetragen {
+                    ebene: e.layer_idx,
+                    was: "ternaeren Gruppenbetraegen ueber 127, also einem feineren Raster als dem des Trainings",
+                });
+            }
         }
         // ⚑ **Ganz ternaer oder gar nicht.** Ein Bereich mit beiden Arten
         //   braeuchte eine Form je Ebene; das kommt, wenn es ein Modell gibt,
@@ -623,13 +716,31 @@ impl Shardgewichte {
                 // ⚑ **Die Experten bleiben leer**, siehe [`Ebenenstand`]:
                 // Sie kommen dazu, wenn der Router sie wählt.
                 Feedforward::Moe(moe) => Ebenenstand::Gemisch {
-                    aufmerksamkeit: Box::new([
-                        master_aus_gewicht(&ebene.achtsamkeit().q_proj),
-                        master_aus_gewicht(&ebene.achtsamkeit().k_proj),
-                        master_aus_gewicht(&ebene.achtsamkeit().v_proj),
-                        master_aus_gewicht(&ebene.achtsamkeit().o_proj),
-                    ]),
+                    mischer: match &ebene.mischer {
+                        crate::model::Mischer::Achtsamkeit(a) => Mischerstand::Achtsamkeit(Box::new([
+                            master_aus_gewicht(&a.q_proj),
+                            master_aus_gewicht(&a.k_proj),
+                            master_aus_gewicht(&a.v_proj),
+                            master_aus_gewicht(&a.o_proj),
+                        ])),
+                        crate::model::Mischer::Zustand(zs) => Mischerstand::Zustand(Box::new([
+                            master_aus_gewicht(&zs.in_proj_qkv),
+                            master_aus_gewicht(&zs.in_proj_z),
+                            master_aus_gewicht(&zs.in_proj_b),
+                            master_aus_gewicht(&zs.in_proj_a),
+                            master_aus_gewicht(&zs.out_proj),
+                            master_aus_gewicht(&zs.conv1d),
+                        ])),
+                    },
                     router: master_aus_gewicht(&moe.router),
+                    geteilt: moe.geteilter_experte.as_ref().map(|ge| {
+                        Box::new([
+                            master_aus_gewicht(&ge.mlp.gate_proj),
+                            master_aus_gewicht(&ge.mlp.up_proj),
+                            master_aus_gewicht(&ge.mlp.down_proj),
+                            master_aus_gewicht(&ge.tor),
+                        ])
+                    }),
                     experten: std::collections::BTreeMap::new(),
                 },
             });
@@ -778,10 +889,13 @@ impl Shardgewichte {
                 (Some(a), Ebenenstand::Dicht(_)) => {
                     a.matrizen().iter().map(|s| s.to_vec()).collect()
                 }
-                (Some(Ebenenstand::Gemisch { aufmerksamkeit, router, .. }),
+                (Some(Ebenenstand::Gemisch { mischer, router, geteilt, .. }),
                  Ebenenstand::Gemisch { experten, .. }) => {
-                    let mut v: Vec<Vec<Master>> = aufmerksamkeit.to_vec();
+                    let mut v: Vec<Vec<Master>> = mischer.matrizen().to_vec();
                     v.push(router.clone());
+                    if let Some(g) = geteilt {
+                        v.extend(g.iter().cloned());
+                    }
                     // ⚑ **Dieselbe kanonische Reihenfolge wie
                     // `matrizen()`**: Experten nach ihrer Nummer. Eine
                     // andere Ordnung verglände Matrizen über Kreuz, und
@@ -858,8 +972,10 @@ pub struct Gemischebenenspur {
     pub norm_ein: Vec<Vec<i16>>,
     /// Ihre Zwischenwerte.
     pub norm_ein_spur: Vec<integer_llm_kernels::rmsnorm::Rmsnormspur>,
-    /// Die Spur des Aufmerksamkeitsblocks.
+    /// Die Spur des Aufmerksamkeitsblocks (leer bei einer Zustandsebene).
     pub aufmerksamkeit: integer_llm_kernels::trainingsschritt::Aufmerksamkeitsspur,
+    /// Die Spur der Zustandsschicht, falls die Ebene rekurrent mischt.
+    pub zustand: Option<Box<crate::model::Zustandsspur>>,
     /// Der Residualstrom nach der ersten Addition.
     pub residual: Vec<Vec<i16>>,
     /// Die zweite Normierung je Position.
@@ -890,6 +1006,19 @@ pub struct Gemischteil {
     pub teile: Vec<integer_llm_kernels::mlp::Mlpspur>,
     /// Die Routerlogits über alle Experten.
     pub logits: Vec<i32>,
+    /// Was der geteilte Experte an dieser Position getan hat, falls es ihn
+    /// gibt.
+    pub geteilt: Option<Geteiltteil>,
+}
+
+/// Was der **geteilte Experte** an einer Position getan hat.
+pub struct Geteiltteil {
+    /// Die Zwischenwerte seines MLP.
+    pub spur: integer_llm_kernels::mlp::Mlpspur,
+    /// Seine Ausgabe vor dem Tor, auf der Akkumulationsskala des Blocks.
+    pub ausgabe: Vec<i16>,
+    /// Der Faktor `sigmoid(tor)` auf den Bruchstellen der Sigmoid-Tabelle.
+    pub faktor: i64,
 }
 
 /// Was ein Shard nach dem Rückwärtslauf abliefert.
@@ -962,8 +1091,10 @@ pub enum Shardfehler {
     /// werden soll. Ein ternaerer Bereich trainiert ternaer: Der Master ist
     /// hochaufgeloest, die Rechnung sieht je Gruppe -a, 0 und +a.
     TernaerNichtTrainierbar { ebene: usize },
-    /// ⛔️ **Eine rekurrente Zustandsschicht**: Ihr Rueckwaertspass fehlt noch
-    /// (Gated DeltaNet). Vorher war das eine Panik beim Einlesen.
+    /// ⛔️ **Eine rekurrente Zustandsschicht mit dichtem Block**: Den Weg
+    /// gibt es nur mit Expertengemisch (T5, 2026-10-02), weil es nur solche
+    /// Modelle gibt. Vorher war jede Zustandsebene abgewiesen, davor eine
+    /// Panik beim Einlesen.
     ZustandsschichtNichtGetragen { ebene: usize },
     /// ⛔️ **Die Ebene rechnet vorwaerts etwas, das der Trainingspfad nicht
     /// rechnet** (Fund 508): ein Tor am Ausgang der Achtsamkeit, oder eine
@@ -1011,8 +1142,8 @@ impl std::fmt::Display for Shardfehler {
             ),
             Self::ZustandsschichtNichtGetragen { ebene } => write!(
                 f,
-                "Ebene {ebene} ist eine rekurrente Zustandsschicht, und deren Rueckwaertspass \
-                 fehlt noch"
+                "Ebene {ebene} ist eine rekurrente Zustandsschicht mit dichtem Block; der \
+                 Trainingspfad traegt sie bisher nur mit Expertengemisch"
             ),
             Self::VorwaertspfadNichtGetragen { ebene, was } => write!(
                 f,
@@ -1024,6 +1155,35 @@ impl std::fmt::Display for Shardfehler {
 }
 
 impl std::error::Error for Shardfehler {}
+
+/// **Liegt eine ternaere Matrix auf einem feineren Raster, als das Training
+/// darstellt?** Das Training leitet ein ternaeres Gewicht als int8 mit
+/// Zeilenshift ab; ein Gruppenbetrag ueber 127 passt dort nicht (Fund 517).
+pub fn ternaer_zu_fein(t: &crate::model::QTensor) -> bool {
+    match &*t.data {
+        crate::model::Gewichtsdaten::Ternaer(td) => td.matrix().betraege().iter().any(|b| b.unsigned_abs() > 127),
+        _ => false,
+    }
+}
+
+/// Ob irgendeine Matrix einer Ebene zu fein fuer das Training ist.
+fn ebene_zu_fein_fuer_das_training(e: &crate::model::TransformerLayer) -> bool {
+    let a = match &e.mischer {
+        crate::model::Mischer::Achtsamkeit(_) => {
+            let a = e.achtsamkeit();
+            [&a.q_proj, &a.k_proj, &a.v_proj, &a.o_proj].into_iter().any(ternaer_zu_fein)
+        }
+        crate::model::Mischer::Zustand(_) => false,
+    };
+    let f = match &e.ffn {
+        Feedforward::Dense(mlp) => [&mlp.gate_proj, &mlp.up_proj, &mlp.down_proj].into_iter().any(ternaer_zu_fein),
+        Feedforward::Moe(moe) => moe
+            .experts
+            .iter()
+            .any(|x| [&x.gate_proj, &x.up_proj, &x.down_proj].into_iter().any(ternaer_zu_fein)),
+    };
+    a || f
+}
 
 /// Der Vorwärtslauf eines Shards, **mit Mitschnitt**.
 ///
@@ -1089,7 +1249,7 @@ pub fn vorwaerts(
                 )))
             }
             Feedforward::Moe(moe) => Ebenenmitschnitt::Gemisch(Box::new(
-                gemisch_vorwaerts(m, ebene, moe, &mut g.master[i], e, v, &strom, tab)?,
+                gemisch_vorwaerts(m, ebene, moe, &mut g.master[i], e, v, &strom, tab, form)?,
             )),
         };
         let y = match &spur {
@@ -1126,13 +1286,14 @@ fn gemisch_vorwaerts(
     v: &Shardvorgaben,
     hidden: &[Vec<i16>],
     tab: Ebenentabellen<'_>,
+    form: Gewichtsform,
 ) -> Result<Gemischebenenspur, Shardfehler> {
     use integer_llm_kernels::fixed_point::rescale_i64;
     use integer_llm_kernels::mlp::{mlp_int_mit_spur, Mlpspur};
     use integer_llm_kernels::moe::{mische_experten, route_top_k};
     use integer_llm_kernels::trainingsschritt::vorwaerts_der_aufmerksamkeit;
 
-    let Ebenenstand::Gemisch { aufmerksamkeit, router, experten } = stand else {
+    let Ebenenstand::Gemisch { mischer, router, geteilt, experten } = stand else {
         return Err(Shardfehler::ArtPasstNicht { ebene: e });
     };
     let sc = &ebene.scales;
@@ -1141,6 +1302,8 @@ fn gemisch_vorwaerts(
     let is = moe.experts[0].gate_proj.shape[0];
     let vg = vorgaben_der_ebene(m, sc, e, is, v.schritt, v.lr_zaehler, v.lr_nenner, Gewichtsform::Int8);
     let (a_vorgaben, m_vorgaben) = vg.bloecke();
+    // Der geteilte Experte, aus seinen Mastern, einmal fuer die ganze Folge.
+    let geteilt_gew = geteilter_experte_gewichte(moe, geteilt.as_deref(), hs);
     let acc_attn = vg.acc_attn();
     let acc_mlp = vg.acc_mlp();
     let aus_frac = vg.aus_frac;
@@ -1165,39 +1328,61 @@ fn gemisch_vorwaerts(
         spur.norm_ein_spur.push(ns);
     }
 
-    // 2. Aufmerksamkeit, aus den Mastern.
-    let a_breiten = [hs, hs, hs, m.num_heads * m.head_dim];
-    let a_umgerechnet: Vec<(Vec<i8>, Vec<u8>)> = (0..4)
-        .map(|n| gewicht_aus_master(&aufmerksamkeit[n], a_breiten[n], MASTER_FRAC))
-        .collect();
-    let a_gew = integer_llm_kernels::trainingsschritt::Aufmerksamkeitsgewichte {
-        q: &a_umgerechnet[0].0,
-        q_skalen: &a_umgerechnet[0].1,
-        k: &a_umgerechnet[1].0,
-        k_skalen: &a_umgerechnet[1].1,
-        v: &a_umgerechnet[2].0,
-        v_skalen: &a_umgerechnet[2].1,
-        o: &a_umgerechnet[3].0,
-        o_skalen: &a_umgerechnet[3].1,
-        drehung: crate::trainingsschleife::achtsamkeitsdrehungen(ebene),
+    // 2. Der Mischer, aus den Mastern: Achtsamkeit oder Zustandsschicht.
+    let mischer_aus: Vec<Vec<i16>> = match mischer {
+        Mischerstand::Achtsamkeit(aufmerksamkeit) => {
+            let a_breiten = [hs, hs, hs, m.num_heads * m.head_dim];
+            let a_umgerechnet: Vec<(Vec<i8>, Vec<u8>)> = (0..4)
+                .map(|n| gewicht_aus_master_als(&aufmerksamkeit[n], a_breiten[n], MASTER_FRAC, form))
+                .collect();
+            let a_gew = integer_llm_kernels::trainingsschritt::Aufmerksamkeitsgewichte {
+                q: &a_umgerechnet[0].0,
+                q_skalen: &a_umgerechnet[0].1,
+                k: &a_umgerechnet[1].0,
+                k_skalen: &a_umgerechnet[1].1,
+                v: &a_umgerechnet[2].0,
+                v_skalen: &a_umgerechnet[2].1,
+                o: &a_umgerechnet[3].0,
+                o_skalen: &a_umgerechnet[3].1,
+                drehung: crate::trainingsschleife::achtsamkeitsdrehungen(ebene),
+            };
+            spur.aufmerksamkeit = vorwaerts_der_aufmerksamkeit(
+                a_gew,
+                &spur.norm_ein,
+                vorspannungen_der_ebene(ebene),
+                tab.cos,
+                tab.sin,
+                tab.exp,
+                Some(&acc_attn),
+                crate::trainingsschleife::qk_vorgaben_der_ebene(m, e),
+                crate::trainingsschleife::tor_vorgaben(m),
+                a_vorgaben);
+            spur.aufmerksamkeit.y.clone()
+        }
+        Mischerstand::Zustand(z) => {
+            // ⚑ **Derselbe Rumpf wie in der Inferenz**, mit den Gewichten aus
+            //   den Mastern und ab leerem Zustand (T5).
+            let crate::model::Mischer::Zustand(zs) = &ebene.mischer else {
+                return Err(Shardfehler::ArtPasstNicht { ebene: e });
+            };
+            let zs_master = zustandsschicht_aus_mastern(zs, z, form);
+            let zeilen: Vec<&[i16]> = spur.norm_ein.iter().map(Vec::as_slice).collect();
+            let (y, zspur) = m.zustandsschicht_mit_spur(ebene, &zs_master, &zeilen, &acc_attn);
+            spur.zustand = Some(Box::new(zspur));
+            y
+        }
     };
-    spur.aufmerksamkeit = vorwaerts_der_aufmerksamkeit(
-        a_gew,
-        &spur.norm_ein,
-        vorspannungen_der_ebene(ebene),
-        tab.cos,
-        tab.sin,
-        tab.exp,
-        Some(&acc_attn),
-        crate::trainingsschleife::qk_vorgaben_der_ebene(m, e),
-        a_vorgaben,
-    );
 
     // 3. Residual, zweite Normierung, Gemisch, zweite Residualaddition.
     let exp_shift = moe.router_frac.saturating_sub(cfg.exp_input_frac);
+    // ⚑ **Der Router bleibt int8, auch in einem ternaeren Lauf** (L13): Eine
+    //   ternaere Expertenwahl kippt (gemessen mit `routerumwandlung`), und die
+    //   Literatur haelt ihn hochaufgeloest (MoTE). Ebenso der geteilte
+    //   Experte mit seinem Tor, der hochaufgeloeste Pfad neben den ternaeren
+    //   Experten.
     let (rw, rs) = gewicht_aus_master(router, hs, MASTER_FRAC);
     for (nr, h) in hidden.iter().enumerate() {
-        let o_aus = &spur.aufmerksamkeit.y[nr];
+        let o_aus = &mischer_aus[nr];
         let mut residual = vec![0i16; hs];
         for i in 0..hs {
             let r = rescale_i64(i64::from(h[i]), sc.residual_in_frac[i], acc_attn[i]);
@@ -1245,9 +1430,9 @@ fn gemisch_vorwaerts(
         let mut ausgaben: Vec<Vec<i16>> = Vec::with_capacity(routing.experten.len());
         for i in &routing.experten {
             let mm = &experten[i];
-            let (gw, gs) = gewicht_aus_master(&mm[0], hs, MASTER_FRAC);
-            let (uw, us) = gewicht_aus_master(&mm[1], hs, MASTER_FRAC);
-            let (dw, ds) = gewicht_aus_master(&mm[2], is, MASTER_FRAC);
+            let (gw, gs) = gewicht_aus_master_als(&mm[0], hs, MASTER_FRAC, form);
+            let (uw, us) = gewicht_aus_master_als(&mm[1], hs, MASTER_FRAC, form);
+            let (dw, ds) = gewicht_aus_master_als(&mm[2], is, MASTER_FRAC, form);
             let mut sp = Mlpspur::default();
             let aus = mlp_int_mit_spur(
                 &norm, &gw, &uw, &dw, hs, is, &gs, &us, &ds, tab.silu,
@@ -1259,6 +1444,36 @@ fn gemisch_vorwaerts(
             teile.push(sp);
         }
         let block = mische_experten(&ausgaben, &routing.gewichte, cfg.prob_frac_bits);
+        // ⚑ **Der geteilte Experte, Wert fuer Wert wie die Inferenz**
+        //   (`geteilten_experten_addieren`): sein MLP auf demselben normierten
+        //   Strom, sein Tor als eine Zeile, `gemischt + rshift(geteilt · s)`.
+        let (block, geteilt_teil) = match &geteilt_gew {
+            Some((ge, w)) => {
+                let mut sp = Mlpspur::default();
+                let aus = mlp_int_mit_spur(
+                    &norm, &w[0].0, &w[1].0, &w[2].0, hs, ge.zwischen, &w[0].1, &w[1].1, &w[2].1, tab.silu,
+                    m_vorgaben.act_frac, ge.gate_frac, ge.up_frac, ge.down_in_frac,
+                    m_vorgaben.silu_in_frac, m_vorgaben.silu_lut_offset, m_vorgaben.silu_out_frac,
+                    &acc_mlp, Some(&mut sp),
+                );
+                let tor_roh = integer_llm_kernels::linear::linear_w8a16(
+                    &norm, &w[3].0, hs, &w[3].1, m_vorgaben.act_frac, ge.tor_frac,
+                )[0];
+                let s = integer_llm_kernels::integer_math::torfaktor(
+                    tor_roh, ge.tor_frac, &m.sigmoid_lut, m.sigmoid_versatz, m.sigmoid_ein_frac, m.sigmoid_aus_frac,
+                );
+                let summe: Vec<i16> = block
+                    .iter()
+                    .zip(&aus)
+                    .map(|(&g, &x)| {
+                        let beitrag = integer_llm_kernels::fixed_point::rshift_round_i64(i64::from(x) * s, m.sigmoid_aus_frac);
+                        integer_llm_kernels::fixed_point::clamp_i16_from_i64(i64::from(g) + beitrag)
+                    })
+                    .collect();
+                (summe, Some(Geteiltteil { spur: sp, ausgabe: aus, faktor: s }))
+            }
+            None => (block, None),
+        };
 
         let mut y = vec![0i16; hs];
         for i in 0..hs {
@@ -1279,10 +1494,103 @@ fn gemisch_vorwaerts(
             ausgaben,
             teile,
             logits,
+            geteilt: geteilt_teil,
         });
         spur.y.push(y);
     }
     Ok(spur)
+}
+
+/// Ein quantisiertes Gewicht mit seinen Zeilenskalen.
+type Quantisiert = (Vec<i8>, Vec<u8>);
+
+/// Der Abstand der gehaltenen Zustaende im Rueckwaertspass der Rekurrenz.
+///
+/// ⚑ **Aendert keine Zahl**, nur Speicher und Zeit (Probe
+/// `der_abstand_aendert_keine_zahl`). Sechzehn halten bei 128 x 128 je Kopf
+/// rund 2 MiB je Kopf und Abschnitt und rechnen jeden Zustand einmal neu.
+const ZUSTAND_ABSTAND: usize = 16;
+
+/// **Die Zustandsschicht einer Ebene mit den Gewichten aus ihren Mastern.**
+///
+/// Was nicht trainiert wird (Gamma der Norm, `dt_bias`, `exp_A`, die
+/// Skalen), kommt aus dem Modell; die Drehungen ebenso, denn sie sind eine
+/// Festlegung des Artefakts und kein Gewicht.
+fn zustandsschicht_aus_mastern(
+    zs: &crate::model::Zustandsschicht,
+    z: &[Vec<Master>; 6],
+    form: Gewichtsform,
+) -> crate::model::Zustandsschicht {
+    // ⚑ **Ternaer nur, was auch ein ternaeres Artefakt ternaer traegt**:
+    //   `in_proj_qkv`, `in_proj_z`, `out_proj`. `in_proj_a` und `in_proj_b`
+    //   (eine Zeile je Wertkopf, sie bestimmen Zerfall und Schreibstaerke)
+    //   und die Faltung bleiben int8, wie beim gepackten 27B.
+    let neu = |t: &crate::model::QTensor, mm: &[Master], f: Gewichtsform| -> crate::model::QTensor {
+        let (w, s) = gewicht_aus_master_als(mm, t.cols(), MASTER_FRAC, f);
+        crate::model::QTensor {
+            data: std::sync::Arc::new(crate::model::Gewichtsdaten::Speicher(w)),
+            shape: t.shape.clone(),
+            shifts: s,
+            drehung: t.drehung.clone(),
+        }
+    };
+    crate::model::Zustandsschicht {
+        in_proj_qkv: neu(&zs.in_proj_qkv, &z[0], form),
+        in_proj_z: neu(&zs.in_proj_z, &z[1], form),
+        in_proj_b: neu(&zs.in_proj_b, &z[2], Gewichtsform::Int8),
+        in_proj_a: neu(&zs.in_proj_a, &z[3], Gewichtsform::Int8),
+        out_proj: neu(&zs.out_proj, &z[4], form),
+        conv1d: neu(&zs.conv1d, &z[5], Gewichtsform::Int8),
+        exp_a: zs.exp_a.clone(),
+        dt_bias: zs.dt_bias.clone(),
+        norm_gamma: zs.norm_gamma.clone(),
+        skalen: zs.skalen.clone(),
+    }
+}
+
+/// **Die Gewichte des geteilten Experten aus seinen Mastern**: Gate, Up,
+/// Down und die Torzeile, mit den Angaben des Modells dazu.
+fn geteilter_experte_gewichte<'a>(
+    moe: &'a crate::model::MoeLayer,
+    geteilt: Option<&[Vec<Master>; 4]>,
+    hs: usize,
+) -> Option<(&'a crate::model::GeteilterExperte, [Quantisiert; 4])> {
+    let ge = moe.geteilter_experte.as_ref()?;
+    let gm = geteilt?;
+    Some((
+        ge,
+        [
+            gewicht_aus_master(&gm[0], hs, MASTER_FRAC),
+            gewicht_aus_master(&gm[1], hs, MASTER_FRAC),
+            gewicht_aus_master(&gm[2], ge.zwischen, MASTER_FRAC),
+            gewicht_aus_master(&gm[3], hs, MASTER_FRAC),
+        ],
+    ))
+}
+
+/// **Rueckwaerts durch `block = gemischt + rshift(geteilt · s, f)`**, ohne
+/// den Gemischanteil (der bekommt `g` unveraendert).
+///
+/// `g` liegt auf dem Bus des Blocks, `geteilt` je Kanal auf `acc`, `s` auf
+/// `f` Bruchstellen. Zurueck kommen der Gradient nach dem MLP des geteilten
+/// Experten (`g · s`, auf dem Bus) und der nach seinem rohen Tor
+/// (`Σ g · geteilt · s · (1 − s)`, eine Zahl auf dem Bus).
+///
+/// ⚑ **Die Summe in `i128`**: `g · geteilt` erreicht 2^46, ueber alle
+/// Kanaele summiert und mit `s` multipliziert waere `i64` zu klein.
+fn torzweig_rueckwaerts(g: &[i32], geteilt: &[i16], s: i64, f: u8, acc: &[u8]) -> (Vec<i32>, i32) {
+    use integer_llm_kernels::fixed_point::{rshift_round_i128, rshift_round_i64};
+    use integer_llm_kernels::trainingsschritt::begrenze;
+    assert_eq!(g.len(), geteilt.len(), "Torzweig: Gradient und Ausgabe verschieden lang");
+    assert_eq!(g.len(), acc.len(), "Torzweig: eine Skala je Kanal");
+    let g_mlp: Vec<i32> = g.iter().map(|x| begrenze(rshift_round_i64(i64::from(*x) * s, f))).collect();
+    let mut summe: i128 = 0;
+    for ((x, y), a) in g.iter().zip(geteilt).zip(acc) {
+        summe += i128::from(rshift_round_i64(i64::from(*x) * i64::from(*y), *a));
+    }
+    let t2 = rshift_round_i128(summe * i128::from(s), u32::from(f));
+    let t3 = rshift_round_i128(t2 * i128::from((1i64 << f) - s), u32::from(f));
+    (g_mlp, t3.clamp(i128::from(i32::MIN), i128::from(i32::MAX)) as i32)
 }
 
 /// Klemmt einen `i64` auf `i16`.
@@ -1319,32 +1627,56 @@ fn klemme_i16(v: i64) -> i16 {
 /// Zahl der Experten ist fest, die der gewählten nicht; ein Router
 /// hinter den gewählten Experten läge bei jedem Schritt woanders.
 struct Gemischversatz {
-    aufmerksamkeit: [u64; 4],
+    /// Je Matrix des Mischers (Achtsamkeit oder Zustandsschicht).
+    mischer: Vec<u64>,
     router: u64,
     experten_basis: u64,
     je_experte: u64,
     je_matrix: u64,
+    /// Gate, Up, Down und Tor des geteilten Experten, hinter allen
+    /// Experten; ohne ihn null und ungenutzt.
+    geteilt: [u64; 4],
 }
 
 impl Gemischversatz {
-    fn neu(hs: usize, is: usize, kopfbreite: usize, anzahl_experten: usize) -> Self {
-        let a = [
-            0u64,
-            (hs * hs) as u64,
-            (hs * hs + hs * kopfbreite) as u64,
-            (hs * hs + 2 * hs * kopfbreite) as u64,
-        ];
-        // ⚑ Q ist `hs × hs`, K und V sind `hs × kv_breite`, O ist
-        // `kopfbreite × hs`. Die genauen Längen kommen aus den Mastern;
-        // hier zählt nur, dass die Bereiche sich nicht überlappen.
-        let nach_attn = a[3] + (kopfbreite * hs) as u64;
-        Self {
-            aufmerksamkeit: a,
-            router: nach_attn,
-            experten_basis: nach_attn + (hs * anzahl_experten) as u64,
-            je_experte: (hs * is * 3) as u64,
-            je_matrix: (hs * is) as u64,
+    /// ⛔️ **Fund 518 (2026-10-02): die Bereiche aus den wirklichen Laengen.**
+    ///
+    /// Hier stand eine Formel mit `Q = hs × hs` und dem Vermerk „hier zaehlt
+    /// nur, dass die Bereiche sich nicht ueberlappen“. Bei den Qwen3-Gemischen
+    /// ist `num_heads · head_dim` aber nicht `hidden` (35B: 4 096 gegen
+    /// 2 048), und mit dem Tor hat Q noch einmal doppelt so viele Zeilen: Die
+    /// Wuerfelbereiche von Q, K, V und O ueberlappten, und das stochastische
+    /// Runden war zwischen ihnen korreliert. Jetzt wird fortgezaehlt wie im
+    /// dichten Weg. Der Router steht weiter vor den Experten, der geteilte
+    /// Experte hinter ihnen: Beide Bereiche haengen nicht daran, welche
+    /// Experten gewaehlt werden.
+    fn neu(
+        mischer: &[Vec<Master>],
+        router: usize,
+        hs: usize,
+        is: usize,
+        anzahl_experten: usize,
+        geteilt: Option<&[Vec<Master>; 4]>,
+    ) -> Self {
+        let mut a = Vec::with_capacity(mischer.len());
+        let mut p = 0u64;
+        for m in mischer {
+            a.push(p);
+            p += m.len() as u64;
         }
+        let router_ab = p;
+        p += router as u64;
+        let experten_basis = p;
+        let je_experte = (hs * is * 3) as u64;
+        p += je_experte * anzahl_experten as u64;
+        let mut g = [0u64; 4];
+        if let Some(gm) = geteilt {
+            for (n, m) in gm.iter().enumerate() {
+                g[n] = p;
+                p += m.len() as u64;
+            }
+        }
+        Self { mischer: a, router: router_ab, experten_basis, je_experte, je_matrix: (hs * is) as u64, geteilt: g }
     }
 
     fn experte(&self, nummer: u16, matrix: usize) -> u64 {
@@ -1426,6 +1758,20 @@ pub enum Auswahl {
     NurMlp,
     /// ⚑ Nur `down_proj`, die Stelle, die MEMIT bearbeitet.
     NurAbwaerts,
+    /// ⚑ **Alles ausser dem Router** (Messwerkzeug fuer L13, 2026-10-02):
+    /// Ein ternaerer Lauf ueber vier Ebenen des 35B liess die Zahl der
+    /// gewaehlten Experten je Durchgang von rund 150 auf 58 je Ebene fallen
+    /// und die Haltemenge entgleisen; die Frage ist, ob der Router daran
+    /// schuld ist.
+    OhneRouter,
+    /// Nur der Mischer: Achtsamkeit oder Zustandsschicht (Messwerkzeug fuer
+    /// L13, dieselbe Frage von der anderen Seite).
+    NurMischer,
+    /// Nur die Zustandsschicht, alle sechs Matrizen.
+    NurZustand,
+    /// Nur deren grosse Projektionen (`in_proj_qkv`, `in_proj_z`, `out_proj`),
+    /// ohne die Torzeilen `in_proj_b`, `in_proj_a` und ohne die Faltung.
+    NurZustandsprojektionen,
 }
 
 impl Auswahl {
@@ -1438,6 +1784,10 @@ impl Auswahl {
     pub fn erlaubt(&self, k: Matrixkennung) -> bool {
         match (self, k) {
             (Self::Alles, _) => true,
+            (Self::OhneRouter, k) => k != Matrixkennung::Router,
+            (Self::NurMischer, k) => matches!(k, Matrixkennung::Aufmerksamkeit(_) | Matrixkennung::Zustand(_)),
+            (Self::NurZustand, k) => matches!(k, Matrixkennung::Zustand(_)),
+            (Self::NurZustandsprojektionen, k) => matches!(k, Matrixkennung::Zustand(0 | 1 | 4)),
             // Dicht: 0 bis 3 Aufmerksamkeit (q, k, v, o), 4 gate,
             // 5 up, 6 down. Dieselbe Reihenfolge wie in
             // `breiten_der_ebene`.
@@ -1453,6 +1803,11 @@ impl Auswahl {
             // Reihenfolge wie im dichten Block: 0 gate, 1 up, 2 down.
             (Self::NurMlp, Matrixkennung::Experte(_, _)) => true,
             (Self::NurAbwaerts, Matrixkennung::Experte(_, n)) => n == 2,
+            // ⚑ **Der geteilte Experte gehoert zum MLP-Teil**, seine drei
+            //   Matrizen wie die eines gewaehlten; sein Tor (3) entscheidet
+            //   wie der Router nur, wie viel er beitraegt, und bleibt stehen.
+            (Self::NurMlp, Matrixkennung::Geteilt(n)) => n < 3,
+            (Self::NurAbwaerts, Matrixkennung::Geteilt(n)) => n == 2,
             (Self::NurMlp | Self::NurAbwaerts, _) => false,
         }
     }
@@ -1463,6 +1818,10 @@ impl Auswahl {
             Self::Alles => "alles",
             Self::NurMlp => "nur MLP",
             Self::NurAbwaerts => "nur down_proj",
+            Self::OhneRouter => "alles ausser dem Router",
+            Self::NurMischer => "nur der Mischer",
+            Self::NurZustand => "nur die Zustandsschicht",
+            Self::NurZustandsprojektionen => "nur die Projektionen der Zustandsschicht",
         }
     }
 }
@@ -1638,6 +1997,8 @@ pub fn stand_lesen(g: &mut Shardgewichte, pfad: &std::path::Path) -> Result<(), 
 /// | `Router` | `hidden` |
 /// | `Experte(_, 0)`, `Experte(_, 1)` | `hidden` fuer gate und up |
 /// | `Experte(_, 2)` | ⚑ `moe_intermediate_size` fuer down |
+/// | `Geteilt(0, 1, 3)`, `Geteilt(2)` | `hidden`; die Zwischenbreite des geteilten Experten fuer down |
+/// | `Zustand(0..3)`, `Zustand(4)`, `Zustand(5)` | `hidden` fuer die vier Eingangsprojektionen; `Wertkoepfe · wert_dim` fuer `out_proj`; die Kernbreite der Faltung |
 ///
 /// `experten` ist die Zahl der Experten; die Karte deckt sie alle ab,
 /// denn welche in einem Durchgang gewaehlt werden, steht erst zur
@@ -1658,6 +2019,32 @@ pub fn zeilenbreiten_gemisch(
         aus.insert(Matrixkennung::Experte(e, 0), hs);
         aus.insert(Matrixkennung::Experte(e, 1), hs);
         aus.insert(Matrixkennung::Experte(e, 2), moe_is);
+    }
+    // ⚑ **Der geteilte Experte, falls das Modell einen hat** (Fund 516):
+    //   gate, up und das Tor lesen `hidden`, down seine eigene
+    //   Zwischenbreite. Ohne Eintrag fiele er still auf die Matrixnormierung
+    //   zurueck, dieselbe Luecke wie vor Fund 206.
+    let zwischen = m.layers.iter().find_map(|l| match &l.ffn {
+        Feedforward::Moe(g) => g.geteilter_experte.as_ref().map(|ge| ge.zwischen),
+        _ => None,
+    });
+    if let Some(zw) = zwischen {
+        for (n, b) in [(0u8, hs), (1, hs), (2, zw), (3, hs)] {
+            aus.insert(Matrixkennung::Geteilt(n), b);
+        }
+    }
+    // ⚑ **Die Zustandsschicht, falls das Modell eine hat** (T5), aus den
+    //   Tensoren selbst und nicht aus einer zweiten Tabelle.
+    if let Some(zs) = m.layers.iter().find_map(|l| match &l.mischer {
+        crate::model::Mischer::Zustand(zs) => Some(zs),
+        _ => None,
+    }) {
+        for (n, t) in [&zs.in_proj_qkv, &zs.in_proj_z, &zs.in_proj_b, &zs.in_proj_a, &zs.out_proj, &zs.conv1d]
+            .into_iter()
+            .enumerate()
+        {
+            aus.insert(Matrixkennung::Zustand(n as u8), t.cols());
+        }
     }
     aus
 }
@@ -1848,6 +2235,7 @@ pub fn rueckwaerts_mit(
                 &g,
                 tab,
                 fort,
+                form,
             )?,
             _ => return Err(Shardfehler::ArtPasstNicht { ebene: e }),
         };
@@ -1899,6 +2287,7 @@ fn gemisch_rueckwaerts(
     g_aus: &[Vec<i32>],
     tab: Ebenentabellen<'_>,
     fort: &mut Fortschreibung<'_>,
+    form: Gewichtsform,
 ) -> Result<Vec<Vec<i32>>, Shardfehler> {
     use integer_llm_kernels::fixed_point::rescale_i64;
     use integer_llm_kernels::trainingsschritt::{
@@ -1907,7 +2296,7 @@ fn gemisch_rueckwaerts(
     };
     use std::collections::BTreeMap;
 
-    let Ebenenstand::Gemisch { aufmerksamkeit, router, experten } = stand else {
+    let Ebenenstand::Gemisch { mischer, router, geteilt, experten } = stand else {
         return Err(Shardfehler::ArtPasstNicht { ebene: e });
     };
     let sc = &ebene.scales;
@@ -1915,8 +2304,13 @@ fn gemisch_rueckwaerts(
     let hs = m.hidden_size;
     let is = moe.experts[0].gate_proj.shape[0];
     let n = moe.experts.len();
+    let geteilt_gew = geteilter_experte_gewichte(moe, geteilt.as_deref(), hs);
+    let mut g_geteilt: Option<[Vec<i64>; 4]> = geteilt
+        .as_deref()
+        .map(|gm| [vec![0i64; gm[0].len()], vec![0i64; gm[1].len()], vec![0i64; gm[2].len()], vec![0i64; gm[3].len()]]);
     let vg = vorgaben_der_ebene(m, sc, e, is, v.schritt, v.lr_zaehler, v.lr_nenner, Gewichtsform::Int8);
     let (a_vorgaben, m_vorgaben) = vg.bloecke();
+    let acc_mlp = vg.acc_mlp();
     let aus_frac = vg.aus_frac;
     let a_bus = a_vorgaben.aus_frac;
     let m_bus = m_vorgaben.aus_frac;
@@ -1944,9 +2338,9 @@ fn gemisch_rueckwaerts(
             .iter()
             .map(|i| {
                 let mm = &experten[i];
-                let (gw, gs) = gewicht_aus_master(&mm[0], hs, MASTER_FRAC);
-                let (uw, us) = gewicht_aus_master(&mm[1], hs, MASTER_FRAC);
-                let (dw, ds) = gewicht_aus_master(&mm[2], is, MASTER_FRAC);
+                let (gw, gs) = gewicht_aus_master_als(&mm[0], hs, MASTER_FRAC, form);
+                let (uw, us) = gewicht_aus_master_als(&mm[1], hs, MASTER_FRAC, form);
+                let (dw, ds) = gewicht_aus_master_als(&mm[2], is, MASTER_FRAC, form);
                 (gw, gs, uw, us, dw, ds)
             })
             .collect();
@@ -1989,6 +2383,39 @@ fn gemisch_rueckwaerts(
         for (z, p) in g_router.iter_mut().zip(gr.router.iter()) {
             *z = z.saturating_add(i64::from(*p));
         }
+        // ⚑ **Der geteilte Experte rueckwaerts.** `block = gemischt +
+        //   geteilt · s`: Der Gemischanteil bekommt `g` unveraendert (oben),
+        //   das MLP `g · s`, das Tor `Σ g · geteilt · s · (1 − s)` als eine
+        //   Zahl, die durch seine eine Zeile laeuft. Die Eingangsgradienten
+        //   addieren sich, alle auf `act_frac`.
+        let mut eingang_mlp: Vec<i64> = gr.eingang.iter().map(|x| i64::from(*x)).collect();
+        if let (Some((ge, w)), Some(gt), Some(gsum)) = (&geteilt_gew, &teil.geteilt, g_geteilt.as_mut()) {
+            let (g_mlp, g_tor) = torzweig_rueckwaerts(&g_block, &gt.ausgabe, gt.faktor, m.sigmoid_aus_frac, &acc_mlp);
+            let mv = integer_llm_kernels::trainingsschritt::Mlpvorgaben {
+                intermediate_size: ge.zwischen,
+                gate_frac: ge.gate_frac,
+                up_frac: ge.up_frac,
+                down_in_frac: ge.down_in_frac,
+                ..m_vorgaben
+            };
+            let mg = integer_llm_kernels::trainingsschritt::gradienten_des_mlp_aus_gradient(
+                &g_mlp, &spur.norm_mitte[nr], &gt.spur,
+                &w[0].0, &w[0].1, &w[1].0, &w[1].1, &w[2].0, &w[2].1,
+                tab.silu, tab.silu_grad, Default::default(), mv,
+            );
+            for (ziel, quelle) in gsum.iter_mut().take(3).zip([&mg.gate, &mg.up, &mg.down]) {
+                for (z, p) in ziel.iter_mut().zip(quelle.iter()) {
+                    *z = z.saturating_add(i64::from(*p));
+                }
+            }
+            let gx_tor = integer_llm_kernels::backward::linear_backward_summierend(
+                &[g_tor], &spur.norm_mitte[nr], &w[3].0, hs, &w[3].1, m_bus, m_vorgaben.act_frac, &mut gsum[3],
+            );
+            for ((z, a), b) in eingang_mlp.iter_mut().zip(&mg.eingang).zip(&gx_tor) {
+                *z += i64::from(*a) + i64::from(*b);
+            }
+        }
+        let eingang_mlp: Vec<i32> = eingang_mlp.into_iter().map(begrenze).collect();
         for (i, mg) in &gr.experten {
             let ziel = g_experten
                 .entry(*i)
@@ -2007,7 +2434,7 @@ fn gemisch_rueckwaerts(
         // Durch die zweite Normierung, dann beide Zweige der ersten
         // Addition auf die Kanalskala des Residualstroms.
         let g_norm = normrueckwaerts(
-            &gr.eingang,
+            &eingang_mlp,
             &spur.residual[nr],
             &sc.residual_mid_frac,
             &ebene.post_attention_layernorm_gamma.data,
@@ -2031,22 +2458,9 @@ fn gemisch_rueckwaerts(
         g_residual.push(zeile);
     }
 
-    // Durch den Aufmerksamkeitsblock.
-    let a_breiten = [hs, hs, hs, m.num_heads * m.head_dim];
-    let a_umgerechnet: Vec<(Vec<i8>, Vec<u8>)> = (0..4)
-        .map(|n| gewicht_aus_master(&aufmerksamkeit[n], a_breiten[n], MASTER_FRAC))
-        .collect();
-    let a_gew = integer_llm_kernels::trainingsschritt::Aufmerksamkeitsgewichte {
-        q: &a_umgerechnet[0].0,
-        q_skalen: &a_umgerechnet[0].1,
-        k: &a_umgerechnet[1].0,
-        k_skalen: &a_umgerechnet[1].1,
-        v: &a_umgerechnet[2].0,
-        v_skalen: &a_umgerechnet[2].1,
-        o: &a_umgerechnet[3].0,
-        o_skalen: &a_umgerechnet[3].1,
-        drehung: crate::trainingsschleife::achtsamkeitsdrehungen(ebene),
-    };
+    // Durch den Mischer: Achtsamkeit oder Zustandsschicht. Beide bekommen
+    // den Gradienten auf demselben Bus und geben den nach ihrem normierten
+    // Eingang auf `act_frac` zurueck.
     let g_attn: Vec<Vec<i32>> = g_residual
         .iter()
         .map(|z| {
@@ -2056,22 +2470,64 @@ fn gemisch_rueckwaerts(
                 .collect()
         })
         .collect();
-    let a_grad = gradienten_der_aufmerksamkeit_aus_gradient(
-        &g_attn,
-        &spur.norm_ein,
-        &spur.aufmerksamkeit,
-        a_gew,
-        tab.cos,
-        tab.sin,
-        crate::trainingsschleife::qk_vorgaben_der_ebene(m, e),
-        a_vorgaben,
-    );
+    let (mischer_eingang, mischer_gradienten): (Vec<Vec<i32>>, Vec<Vec<i32>>) = match &*mischer {
+        Mischerstand::Achtsamkeit(aufmerksamkeit) => {
+            let a_breiten = [hs, hs, hs, m.num_heads * m.head_dim];
+            let a_umgerechnet: Vec<(Vec<i8>, Vec<u8>)> = (0..4)
+                .map(|n| gewicht_aus_master_als(&aufmerksamkeit[n], a_breiten[n], MASTER_FRAC, form))
+                .collect();
+            let a_gew = integer_llm_kernels::trainingsschritt::Aufmerksamkeitsgewichte {
+                q: &a_umgerechnet[0].0,
+                q_skalen: &a_umgerechnet[0].1,
+                k: &a_umgerechnet[1].0,
+                k_skalen: &a_umgerechnet[1].1,
+                v: &a_umgerechnet[2].0,
+                v_skalen: &a_umgerechnet[2].1,
+                o: &a_umgerechnet[3].0,
+                o_skalen: &a_umgerechnet[3].1,
+                drehung: crate::trainingsschleife::achtsamkeitsdrehungen(ebene),
+            };
+            let a_grad = gradienten_der_aufmerksamkeit_aus_gradient(
+                &g_attn,
+                &spur.norm_ein,
+                &spur.aufmerksamkeit,
+                a_gew,
+                tab.cos,
+                tab.sin,
+                crate::trainingsschleife::qk_vorgaben_der_ebene(m, e),
+                crate::trainingsschleife::tor_vorgaben(m),
+                a_vorgaben);
+            (a_grad.eingang, vec![a_grad.q, a_grad.k, a_grad.v, a_grad.o])
+        }
+        Mischerstand::Zustand(z) => {
+            let crate::model::Mischer::Zustand(zs) = &ebene.mischer else {
+                return Err(Shardfehler::ArtPasstNicht { ebene: e });
+            };
+            let Some(zspur) = spur.zustand.as_deref() else {
+                return Err(Shardfehler::ArtPasstNicht { ebene: e });
+            };
+            let zs_master = zustandsschicht_aus_mastern(zs, z, form);
+            let gr = crate::zustandstraining::rueckwaerts(m, ebene, &zs_master, zspur, &g_attn, a_bus, ZUSTAND_ABSTAND);
+            let als_grad = |v: Vec<i64>| -> Vec<i32> { v.into_iter().map(begrenze).collect() };
+            (
+                gr.eingang,
+                vec![
+                    als_grad(gr.in_proj_qkv),
+                    als_grad(gr.in_proj_z),
+                    als_grad(gr.in_proj_b),
+                    als_grad(gr.in_proj_a),
+                    als_grad(gr.out_proj),
+                    als_grad(gr.faltung),
+                ],
+            )
+        }
+    };
 
     // Durch die erste Normierung und die erste Residualaddition.
     let mut eingang: Vec<Vec<i32>> = Vec::with_capacity(hidden.len());
     for nr in 0..hidden.len() {
         let g_norm = normrueckwaerts(
-            &a_grad.eingang[nr],
+            &mischer_eingang[nr],
             &hidden[nr],
             &sc.residual_in_frac,
             &ebene.input_layernorm_gamma.data,
@@ -2096,16 +2552,16 @@ fn gemisch_rueckwaerts(
     }
 
     // ⚑ **Der Schritt, mit dem festgelegten Versatz.**
-    let versatz = Gemischversatz::neu(hs, is, m.num_heads * m.head_dim, n);
+    let versatz = Gemischversatz::neu(mischer.matrizen(), router.len(), hs, is, n, geteilt.as_deref());
     let kn = vg.aufmerksamkeit.kennung;
-    let a_gradienten = [&a_grad.q, &a_grad.k, &a_grad.v, &a_grad.o];
-    for (nr, (mm, gg)) in aufmerksamkeit.iter_mut().zip(a_gradienten.iter()).enumerate() {
+    let kennungen: Vec<Matrixkennung> = (0..mischer.matrizen().len()).map(|nr| mischer.kennung(nr)).collect();
+    for (nr, (mm, gg)) in mischer.matrizen_mut().iter_mut().zip(&mischer_gradienten).enumerate() {
         fort.tue(
             i,
-            Matrixkennung::Aufmerksamkeit(nr as u8),
+            kennungen[nr],
             mm,
             gg,
-            Schrittkennung { index_versatz: versatz.aufmerksamkeit[nr], ..kn },
+            Schrittkennung { index_versatz: versatz.mischer[nr], ..kn },
             v.lr_nenner,
         );
     }
@@ -2118,6 +2574,19 @@ fn gemisch_rueckwaerts(
         Schrittkennung { index_versatz: versatz.router, ..kn },
         v.lr_nenner,
     );
+    if let (Some(gsum), Some(gm)) = (&g_geteilt, geteilt.as_mut()) {
+        for (nr, (mm, gg)) in gm.iter_mut().zip(gsum.iter()).enumerate() {
+            let g32: Vec<i32> = gg.iter().copied().map(begrenze).collect();
+            fort.tue(
+                i,
+                Matrixkennung::Geteilt(nr as u8),
+                mm,
+                &g32,
+                Schrittkennung { index_versatz: versatz.geteilt[nr], ..kn },
+                v.lr_nenner,
+            );
+        }
+    }
     for (nummer, drei) in &g_experten {
         let mm = experten.get_mut(nummer).expect("gewaehlt, also vorhanden");
         for (nr, teil) in drei.iter().enumerate() {
@@ -2136,3 +2605,132 @@ fn gemisch_rueckwaerts(
     Ok(eingang)
 }
 
+
+#[cfg(test)]
+mod torzweig {
+    use super::*;
+
+    /// ⚑ **Der Torzweig gegen die exakte Rechnung**, mit gemeinsamem Nenner
+    /// in `i128` statt in Gleitkomma: `g · s / 2^f` je Kanal und
+    /// `Σ g · geteilt / 2^acc · s · (2^f − s) / 2^(2f)`. Gerundet wird im
+    /// Rechenpfad dreimal, also darf das Ergebnis um wenige Einheiten
+    /// abweichen und nicht mehr.
+    #[test]
+    fn der_torzweig_rechnet_die_ableitung() {
+        let f = 14u8;
+        let g = [12_345i32, -9_876, 4_321, -32_000, 77, 0];
+        let geteilt = [3_000i16, -2_500, 100, 1_234, -32_000, 9_999];
+        let acc = [8u8, 9, 10, 8, 11, 7];
+        for s in [0i64, 1, 5_000, 8_192, 11_000, 16_384] {
+            let (g_mlp, g_tor) = torzweig_rueckwaerts(&g, &geteilt, s, f, &acc);
+            for (i, x) in g.iter().enumerate() {
+                let exakt = i128::from(*x) * i128::from(s);
+                let ist = i128::from(g_mlp[i]) << f;
+                assert!((ist - exakt).abs() <= 1i128 << (f - 1), "s {s}, Kanal {i}: {} statt {exakt}/2^f", g_mlp[i]);
+            }
+            // Gemeinsamer Nenner 2^(12 + 2f), 12 >= jedes acc.
+            let mut zaehler: i128 = 0;
+            for i in 0..g.len() {
+                zaehler += (i128::from(g[i]) * i128::from(geteilt[i])) << (12 - acc[i]);
+            }
+            let zaehler = zaehler * i128::from(s) * i128::from((1i64 << f) - s);
+            let nenner_bits = 12 + 2 * u32::from(f);
+            let ist = i128::from(g_tor) << nenner_bits;
+            let abw = (ist - zaehler).abs();
+            // Drei Rundungen, jede hoechstens eine halbe Einheit ihrer Stufe;
+            // die erste je Kanal, also bis zu sechs halbe Einheiten.
+            assert!(abw <= 5i128 << nenner_bits, "s {s}: Tor {g_tor}, exakt {zaehler} / 2^{nenner_bits}");
+        }
+        // Ohne Tor (s = 0) und bei offenem Tor (s = 2^f) ist die Ableitung null.
+        assert_eq!(torzweig_rueckwaerts(&g, &geteilt, 0, f, &acc).1, 0);
+        assert_eq!(torzweig_rueckwaerts(&g, &geteilt, 1 << f, f, &acc).1, 0);
+    }
+}
+
+#[cfg(test)]
+mod raster {
+    use super::*;
+
+    /// Eine ternaere 1x128-Matrix mit dem Betrag `b` in ihrer einen Gruppe.
+    fn ternaer(b: i16) -> crate::model::QTensor {
+        let muster = vec![0b1010_1010u8 as i8; integer_llm_kernels::ternaer::BYTES_JE_GRUPPE];
+        let daten = crate::model::Ternaerdaten::neu(
+            crate::model::Gewichtsdaten::Speicher(muster),
+            crate::loader::Kopfdaten::Speicher(vec![b]),
+            1,
+            integer_llm_kernels::ternaer::GRUPPE,
+        )
+        .expect("Ternaerdaten");
+        crate::model::QTensor {
+            data: std::sync::Arc::new(crate::model::Gewichtsdaten::Ternaer(Box::new(daten))),
+            shape: vec![1, integer_llm_kernels::ternaer::GRUPPE],
+            shifts: vec![7],
+            drehung: None,
+        }
+    }
+
+    /// ⛔️ **Fund 517:** Ein Betrag bis 127 ist im Raster des Trainings, einer
+    /// darueber nicht; int8 ist es ohnehin.
+    #[test]
+    fn ein_betrag_ueber_127_ist_zu_fein() {
+        assert!(!ternaer_zu_fein(&ternaer(127)));
+        assert!(!ternaer_zu_fein(&ternaer(-127)));
+        assert!(ternaer_zu_fein(&ternaer(128)));
+        assert!(ternaer_zu_fein(&ternaer(-6692)));
+        let int8 = crate::model::QTensor::aus_speicher(vec![127; 4], vec![2, 2], vec![0, 0]);
+        assert!(!ternaer_zu_fein(&int8));
+    }
+}
+
+#[cfg(test)]
+mod zustandsmischer {
+    use super::*;
+
+    fn matrix(n: usize) -> Vec<Master> {
+        vec![0; n]
+    }
+
+    /// ⚑ **Die Wuerfelbereiche eines Zustandsmischers folgen den Laengen**
+    /// wie die der Achtsamkeit (Fund 518): sechs Bereiche ohne Ueberlappung,
+    /// dahinter Router, Experten und der geteilte Experte.
+    #[test]
+    fn der_versatz_eines_zustandsmischers_folgt_den_laengen() {
+        let mischer = Mischerstand::Zustand(Box::new([
+            matrix(12 * 4),
+            matrix(6 * 4),
+            matrix(2 * 4),
+            matrix(2 * 4),
+            matrix(4 * 6),
+            matrix(12 * 4),
+        ]));
+        let v = Gemischversatz::neu(mischer.matrizen(), 3 * 4, 4, 5, 2, None);
+        assert_eq!(v.mischer, vec![0, 48, 72, 80, 88, 112]);
+        assert_eq!(v.router, 160);
+        assert_eq!(v.experte(0, 0), 172);
+        assert_eq!(v.experte(1, 2), 172 + 60 + 40);
+    }
+
+    /// ⚑ **Die Kennungen haengen am Mischer**, und die Auswahl zaehlt die
+    /// Zustandsschicht wie die Achtsamkeit nicht zum MLP-Teil.
+    #[test]
+    fn die_kennungen_des_zustandsmischers() {
+        let mischer = Mischerstand::Zustand(Box::new(std::array::from_fn(|_| matrix(4))));
+        assert_eq!(mischer.kennung(4), Matrixkennung::Zustand(4));
+        let achtsam = Mischerstand::Achtsamkeit(Box::new(std::array::from_fn(|_| matrix(4))));
+        assert_eq!(achtsam.kennung(3), Matrixkennung::Aufmerksamkeit(3));
+        for n in 0..6 {
+            assert!(Auswahl::Alles.erlaubt(Matrixkennung::Zustand(n)));
+            assert!(!Auswahl::NurMlp.erlaubt(Matrixkennung::Zustand(n)));
+            assert!(!Auswahl::NurAbwaerts.erlaubt(Matrixkennung::Zustand(n)));
+        }
+        let mut stand = Ebenenstand::Gemisch {
+            mischer,
+            router: matrix(4),
+            geteilt: None,
+            experten: std::collections::BTreeMap::new(),
+        };
+        assert!(stand.matrix_mut(Matrixkennung::Zustand(5)).is_some());
+        assert!(stand.matrix_mut(Matrixkennung::Aufmerksamkeit(0)).is_none());
+        assert_eq!(stand.matrizen().len(), 7, "sechs des Mischers und der Router");
+    }
+}

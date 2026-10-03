@@ -380,11 +380,12 @@ impl Ansageform {
 ///
 /// # ⚑ Nachsichtig bei eindeutigen Formfehlern (2026-09-29)
 ///
-/// Innerhalb der Marken werden fünf Abweichungen gelesen, deren Sinn nicht
+/// Innerhalb der Marken werden sechs Abweichungen gelesen, deren Sinn nicht
 /// zweifelhaft ist: ein fehlender Schlüssel `"name"`
 /// (`{"search_skill", "arguments": …}`), `parameters` statt `arguments`,
-/// Argumente als JSON-Zeichenkette, ein Codezaun um das JSON und die Form
-/// `{"function": {…}}`. 📌 **Werkzeugabdeckung, 27B:** Das Modell schrieb
+/// Argumente als JSON-Zeichenkette, ein Codezaun um das JSON, die Form
+/// `{"function": {…}}` und, seit dem 2026-10-01, eine oder zwei fehlende
+/// schließende geschweifte Klammern am Ende (siehe [`fehlende_klammern`]). 📌 **Werkzeugabdeckung, 27B:** Das Modell schrieb
 /// viermal `{"search_skill", "arguments": {"anfrage": "Datum"}}`, jeder
 /// Aufruf galt als unlesbar, und der Auftrag scheiterte, obwohl klar war,
 /// was gemeint war.
@@ -415,7 +416,7 @@ pub fn vorschlaege(antwort: &str) -> Vec<Result<Vorschlag, Unlesbar>> {
     aus
 }
 
-/// Liest einen Aufrufblock, streng oder mit den fuenf eindeutigen
+/// Liest einen Aufrufblock, streng oder mit den sechs eindeutigen
 /// Abweichungen (siehe [`vorschlaege`]).
 fn nachsichtig_lesen(inhalt: &str) -> Option<Vorschlag> {
     let mut t = inhalt.trim();
@@ -426,9 +427,60 @@ fn nachsichtig_lesen(inhalt: &str) -> Option<Vorschlag> {
     }
     let wert: serde_json::Value = match serde_json::from_str(t) {
         Ok(w) => w,
-        Err(_) => serde_json::from_str(&name_ohne_schluessel(t)?).ok()?,
+        Err(_) => {
+            let t = fehlende_klammern(t).unwrap_or_else(|| t.to_string());
+            match serde_json::from_str(&t) {
+                Ok(w) => w,
+                Err(_) => serde_json::from_str(&name_ohne_schluessel(&t)?).ok()?,
+            }
+        }
     };
     aus_dem_wert(&wert, 0)
+}
+
+/// **Eine oder zwei fehlende `}` am Ende**, ergänzt, oder `None`.
+///
+/// 📌 **Anlass (2026-10-01):** Das 35B schrieb einen vollständigen
+/// `write_file` mit einem Skript von 2 500 Byte und schloss mit `}}` statt
+/// `}}}`. Die Endmarke `</tool_call>` stand da, abgeschnitten war also
+/// nichts; der Aufruf galt als unlesbar, und das Modell schrieb das ganze
+/// Skript noch einmal.
+///
+/// ⛔️ **Nur, wenn nichts zu raten bleibt:** Gezählt wird außerhalb von
+/// Zeichenketten. Offen sind am Ende nur geschweifte Klammern, keine
+/// eckige, und nie schließt eine mehr, als geöffnet war. Dann gibt es genau
+/// eine Ergänzung, und sie steht am Ende. Mehr als zwei offene Klammern
+/// sind kein Vergessen mehr, sondern ein anderer Fehler.
+fn fehlende_klammern(t: &str) -> Option<String> {
+    let mut offen: Vec<char> = Vec::new();
+    let mut in_text = false;
+    let mut maskiert = false;
+    for c in t.chars() {
+        if in_text {
+            match (maskiert, c) {
+                (true, _) => maskiert = false,
+                (false, '\\') => maskiert = true,
+                (false, '"') => in_text = false,
+                _ => {}
+            }
+            continue;
+        }
+        match c {
+            '"' => in_text = true,
+            '{' | '[' => offen.push(c),
+            '}' | ']' => {
+                let gehoert = if c == '}' { '{' } else { '[' };
+                if offen.pop() != Some(gehoert) {
+                    return None;
+                }
+            }
+            _ => {}
+        }
+    }
+    if in_text || offen.is_empty() || offen.len() > 2 || offen.iter().any(|&c| c != '{') {
+        return None;
+    }
+    Some(format!("{t}{}", "}".repeat(offen.len())))
 }
 
 /// `{"search_skill", "arguments": …}` wird `{"name": "search_skill", "arguments": …}`.
@@ -636,6 +688,42 @@ pub fn argumente_pruefen(
         }
     }
     Ok(())
+}
+
+/// **Eine eindeutige Hülle um die Argumente, aufgelöst**, oder `None`.
+///
+/// ⚑ **Anlass (2026-10-01):** Das 35B schrieb `write_file` in fünf von fünf
+/// CAD-Läufen zuerst als `{"felder": {"pfad": …, "inhalt": …}}`, verpackt
+/// in den Feldnamen eines anderen Werkzeugs (`fill_template`). Die Prüfung
+/// wies es richtig ab, und das Modell besserte aus; es kostete aber jedes
+/// Mal eine ganze Antwort, in der das Skript noch einmal entstand.
+///
+/// ⛔️ **Nur, wenn nichts zu raten bleibt:** genau ein Feld, das das Schema
+/// nicht kennt; sein Wert ein Objekt, das das Schema **vollständig**
+/// erfüllt (jedes Feld bekannt, jedes Pflichtfeld da). Dann gibt es genau
+/// eine Lesart. Alles andere bleibt, wie es ist, und geht an
+/// [`argumente_pruefen`]; ein Feld mit einem Namen aus dem Schema wird nie
+/// aufgelöst.
+pub fn huelle_aufloesen(werkzeug: &Werkzeug, v: &Vorschlag) -> Option<Vorschlag> {
+    let aussen = v.arguments.as_object()?;
+    if aussen.len() != 1 {
+        return None;
+    }
+    let (name, innen) = aussen.iter().next()?;
+    let schema = werkzeug.parameter.get("properties").and_then(|p| p.as_object())?;
+    if schema.contains_key(name) {
+        return None;
+    }
+    let innen_obj = innen.as_object().filter(|o| !o.is_empty())?;
+    if !innen_obj.keys().all(|k| schema.contains_key(k)) {
+        return None;
+    }
+    let noetig = werkzeug.parameter.get("required").and_then(|r| r.as_array());
+    if noetig.is_some_and(|n| n.iter().filter_map(|x| x.as_str()).any(|x| !innen_obj.contains_key(x))) {
+        return None;
+    }
+    let neu = Vorschlag { name: v.name.clone(), arguments: innen.clone() };
+    argumente_pruefen(werkzeug, &neu).ok().map(|_| neu)
 }
 
 /// Ein Vorschlag ohne Argumente gegen ein Schema mit Pflichtfeldern.

@@ -785,36 +785,29 @@ fn die_zeilenbreiten_decken_das_gemisch_ab() {
     assert_eq!(b.len(), 4 + 1 + 3 * 4);
 }
 
-/// ⛔️ **Fund 508: Was der Trainingspfad vorwaerts nicht rechnet, weist er
-/// ab.** Ein Tor am Ausgang der Achtsamkeit und eine Positionsdrehung ueber
-/// einen Teil des Kopfes gibt es in der Inferenz; der Vorwaertspass des
-/// Trainings kennt beides nicht und liefe trotzdem durch, mit Zahlen statt
-/// einer Meldung.
+/// ⚑ **Fund 508 geschlossen: Tor und Teildrehung werden getragen.** Bis
+/// zum 2026-10-02 wies der Trainingspfad beides ab, weil sein Vorwaertspass
+/// es nicht rechnete. Jetzt rechnet er es (Wert fuer Wert wie die Inferenz,
+/// geprueft an Vorlagen in `der_trainingspfad_rechnet_tor_und_teildrehung_wie_die_inferenz`),
+/// und hier wird es angenommen.
 ///
-/// ⚑ **Am 0,6B, mit je einem umgestellten Merkmal**, denn die Modelle, die
-/// diese Bauarten wirklich tragen, liegen nicht auf jeder Maschine, und die
-/// Schranke haengt nur am Merkmal.
+/// ⚑ **Am 0,6B, mit je einem umgestellten Merkmal**: Die Annahme haengt nur
+/// am Merkmal, gerechnet wird hier nichts.
 #[test]
-fn ein_vorwaertspfad_den_das_training_nicht_rechnet_wird_abgewiesen() {
+fn tor_und_teildrehung_werden_angenommen() {
     use integer_llm_runtime::model::{Drehung, Mischer};
-    use integer_llm_runtime::shardtraining::Shardfehler;
-    let abgewiesen = |m: &IntegerModel| {
-        matches!(
-            Shardgewichte::aus_modell(m, m.num_layers - 1, m.num_layers),
-            Err(Shardfehler::VorwaertspfadNichtGetragen { .. })
-        )
-    };
+    let angenommen = |m: &IntegerModel| Shardgewichte::aus_modell(m, m.num_layers - 1, m.num_layers).is_ok();
 
     let Some(mut m) = modell() else { return };
-    assert!(!abgewiesen(&m), "das unveraenderte Modell wird abgewiesen");
+    assert!(angenommen(&m), "das unveraenderte Modell wird abgewiesen");
 
     m.achtsamkeit_mit_tor = true;
-    assert!(abgewiesen(&m), "ein Tor am Ausgang der Achtsamkeit laeuft durch");
+    assert!(angenommen(&m), "ein Tor am Ausgang der Achtsamkeit wird abgewiesen");
     m.achtsamkeit_mit_tor = false;
 
     let breite = m.drehbreite;
     m.drehbreite = m.head_dim / 4;
-    assert!(abgewiesen(&m), "eine Teildrehung der Position laeuft durch");
+    assert!(angenommen(&m), "eine Teildrehung der Position wird abgewiesen");
     m.drehbreite = breite;
 
     // ⚑ Eine Eingangsdrehung wird NICHT mehr abgewiesen: Der Trainingspfad

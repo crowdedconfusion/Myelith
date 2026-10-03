@@ -500,7 +500,7 @@ fn werkzeuge(wurzel: Option<String>) -> Result<Werkzeugliste, String> {
     // ⚑ Die Einhaengung wird hier wirklich gebaut und nicht geraten:
     // Ein Pfad, der nicht existiert, hat auch keine Werkzeuge, und das
     // soll man sehen, bevor der Auftrag laeuft.
-    let ein = match myl_client::werkzeuge::Einhaengung::neu(&pfad, e.agent.schreiben) {
+    let ein = match myl_local_agent::werkzeuge::Einhaengung::neu(&pfad, e.agent.schreiben) {
         Ok(x) => x,
         Err(m) => {
             return Ok(Werkzeugliste {
@@ -513,7 +513,7 @@ fn werkzeuge(wurzel: Option<String>) -> Result<Werkzeugliste, String> {
         }
     };
     let mut namen: Vec<String> =
-        myl_client::werkzeuge::angebote(&ein, myl_client::Ansageform::Amtlich, kiste)
+        myl_local_agent::werkzeuge::angebote(&ein, myl_client::Ansageform::Amtlich, kiste)
             .into_iter()
             .map(|w| w.name)
             .collect();
@@ -522,7 +522,7 @@ fn werkzeuge(wurzel: Option<String>) -> Result<Werkzeugliste, String> {
     // **dieselbe Frage an zwei Orten**, und der zweite meldet sich
     // nicht. Wer hier nachsah, bekam eine Liste, die dem Agenten nicht
     // entsprach.
-    for (angebot, _) in myl_client::sinneswerkzeuge::angebote(
+    for (angebot, _) in myl_local_agent::sinneswerkzeuge::angebote(
         &myl_senses::Sinne::finden(),
         &ein,
         myl_client::Ansageform::Amtlich,
@@ -530,26 +530,26 @@ fn werkzeuge(wurzel: Option<String>) -> Result<Werkzeugliste, String> {
         //   was der Agent wirklich hat; eine eigene Entscheidung hier
         //   waere genau die zweite Wahrheit, gegen die der Absatz
         //   darueber geschrieben ist.
-        myl_client::sinneswerkzeuge::Blickbefugnis::aus_einstellung(&e.agent),
+        myl_local_agent::sinneswerkzeuge::Blickbefugnis::aus_einstellung(&e.agent),
     ) {
         namen.push(angebot.name);
     }
 
     // ⚑ **Auch die Werkzeuge aus dem Kisten-Ordner** (2026-09-14), damit die
     // Seitenleiste zeigt, was wirklich zur Verfuegung steht.
-    let kette = myl_client::kisten::ordnerkette(&e.agent);
-    for (angebot, _) in myl_client::kisten::angebote_der_kette(&kette, &ein, |_| {}) {
+    let kette = myl_local_agent::kisten::ordnerkette(&e.agent);
+    for (angebot, _) in myl_local_agent::kisten::angebote_der_kette(&kette, &ein, |_| {}) {
         namen.push(angebot.name);
     }
-    let ordner = myl_client::kisten::ordner_der_gilt(
+    let ordner = myl_local_agent::kisten::ordner_der_gilt(
         e.agent.kistenordner.as_deref(),
-        myl_client::werkzeuge::Werkzeugkiste::Base.name(),
+        myl_local_agent::werkzeuge::Werkzeugkiste::Base.name(),
     );
     Ok(Werkzeugliste {
         wurzel: Some(ein.wurzel().display().to_string()),
-        kiste: myl_client::kisten::ordnername(
+        kiste: myl_local_agent::kisten::ordnername(
             ordner.as_deref(),
-            myl_client::werkzeuge::Werkzeugkiste::Base.name(),
+            myl_local_agent::werkzeuge::Werkzeugkiste::Base.name(),
         ),
         kistenheimat: kistenheimat(&e),
         kistenordner: geltender_kistenordner(&e),
@@ -563,17 +563,17 @@ fn werkzeuge(wurzel: Option<String>) -> Result<Werkzeugliste, String> {
 /// der Wahl `Base`, `Advanced` und `1337` nebeneinander sehen, nicht den
 /// Inhalt von `Base`.
 fn geltender_kistenordner(e: &myl_client::Einstellungen) -> Option<String> {
-    myl_client::kisten::ordner_der_gilt(
+    myl_local_agent::kisten::ordner_der_gilt(
         e.agent.kistenordner.as_deref(),
-        myl_client::werkzeuge::Werkzeugkiste::Base.name(),
+        myl_local_agent::werkzeuge::Werkzeugkiste::Base.name(),
     )
     .map(|o| o.display().to_string())
 }
 
 fn kistenheimat(e: &myl_client::Einstellungen) -> Option<String> {
-    let o = myl_client::kisten::ordner_der_gilt(
+    let o = myl_local_agent::kisten::ordner_der_gilt(
         e.agent.kistenordner.as_deref(),
-        myl_client::werkzeuge::Werkzeugkiste::Base.name(),
+        myl_local_agent::werkzeuge::Werkzeugkiste::Base.name(),
     )?;
     Some(o.parent().unwrap_or(&o).display().to_string())
 }
@@ -603,7 +603,7 @@ struct Warnungsansicht {
 fn nachfrage_fuer(
     fenster: &tauri::AppHandle,
     modus: myl_client::einstellungen::Agentenmodus,
-) -> Option<myl_client::ruestung::Nachfrage> {
+) -> Option<myl_local_agent::ruestung::Nachfrage> {
     if !modus.fragt_nach() {
         return None;
     }
@@ -639,7 +639,7 @@ fn nachfrage_fuer(
 // - Wird das Fenster geschlossen, haelt der Loop an und macht beim
 //   naechsten Oeffnen genau dort weiter.
 //
-// ⚑ **Die Logik steht in `myl_client::vorhaben`**, wie bei Konsole und
+// ⚑ **Die Logik steht in `myl_local_agent::vorhaben`**, wie bei Konsole und
 // `myl`. Hier stehen nur Faden, Leihe und Meldungen ans Fenster.
 
 /// Der Ereignisname fuer Runden, Wartezeiten und das Ende des Loops.
@@ -698,7 +698,7 @@ fn loop_umfeld(
 struct Taskzeile {
     kennung: String,
     ziel: String,
-    stellung: myl_client::vorhaben::Stellung,
+    stellung: myl_local_agent::vorhaben::Stellung,
     /// „läuft", „queued", „pausiert" …, aus der Kiste.
     wort: String,
     runden: u32,
@@ -727,7 +727,7 @@ fn sprache_jetzt() -> myl_client::einstellungen::Sprache {
 #[tauri::command]
 fn tasks(halter: tauri::State<'_, Halter>) -> Taskansicht {
     use std::sync::atomic::Ordering;
-    let ablage = myl_client::vorhaben::Ablage::vorgabe();
+    let ablage = myl_local_agent::vorhaben::Ablage::vorgabe();
     let an = halter.schleife.laeuft.load(Ordering::SeqCst);
     let sprache = sprache_jetzt();
     Taskansicht {
@@ -760,14 +760,14 @@ fn task_anlegen(ziel: String, gespraech: Option<String>, wurzel: Option<String>)
     if let Some(satz) = myl_client::schutzfilter::abweisen(&ziel, sprache_jetzt(), "fenster-loop") {
         return Err(satz);
     }
-    let v = myl_client::vorhaben::Ablage::vorgabe().anlegen_fuer(&ziel, myl_client::vorhaben::jetzt(), gespraech, wurzel)?;
+    let v = myl_local_agent::vorhaben::Ablage::vorgabe().anlegen_fuer(&ziel, myl_local_agent::vorhaben::jetzt(), gespraech, wurzel)?;
     Ok(v.kennung)
 }
 
 /// **Die neue Reihenfolge nach dem Ziehen.**
 #[tauri::command]
 fn tasks_ordnen(reihe: Vec<String>) -> Result<(), String> {
-    myl_client::vorhaben::Ablage::vorgabe().reihe_setzen(&reihe)
+    myl_local_agent::vorhaben::Ablage::vorgabe().reihe_setzen(&reihe)
 }
 
 /// ⚠️ **Nicht mitten in seiner Runde.** Die Runde schriebe am Ende ihren
@@ -775,7 +775,7 @@ fn tasks_ordnen(reihe: Vec<String>) -> Result<(), String> {
 /// still verloren.
 fn nicht_in_seiner_runde(halter: &Halter, kennung: &str) -> Result<(), String> {
     use std::sync::atomic::Ordering;
-    let vorn = myl_client::vorhaben::Ablage::vorgabe().vorn().map(|v| v.kennung);
+    let vorn = myl_local_agent::vorhaben::Ablage::vorgabe().vorn().map(|v| v.kennung);
     if halter.schleife.in_runde.load(Ordering::SeqCst) && vorn.as_deref() == Some(kennung) {
         return Err(match sprache_jetzt() {
             myl_client::einstellungen::Sprache::De => {
@@ -791,20 +791,20 @@ fn nicht_in_seiner_runde(halter: &Halter, kennung: &str) -> Result<(), String> {
 
 #[tauri::command]
 fn task_weiter(kennung: String) -> Result<(), String> {
-    myl_client::vorhaben::Ablage::vorgabe().weitermachen(&kennung).map(|_| ())
+    myl_local_agent::vorhaben::Ablage::vorgabe().weitermachen(&kennung).map(|_| ())
 }
 
 #[tauri::command]
 fn task_stoppen(kennung: String, halter: tauri::State<'_, Halter>) -> Result<(), String> {
     nicht_in_seiner_runde(&halter, &kennung)?;
-    myl_client::vorhaben::Ablage::vorgabe().stoppen(&kennung, sprache_jetzt()).map(|_| ())
+    myl_local_agent::vorhaben::Ablage::vorgabe().stoppen(&kennung, sprache_jetzt()).map(|_| ())
 }
 
 /// ⛔️ Entfernt samt Tagebuch; das Fenster fragt vorher.
 #[tauri::command]
 fn task_entfernen(kennung: String, halter: tauri::State<'_, Halter>) -> Result<(), String> {
     nicht_in_seiner_runde(&halter, &kennung)?;
-    myl_client::vorhaben::Ablage::vorgabe().entfernen(&kennung)
+    myl_local_agent::vorhaben::Ablage::vorgabe().entfernen(&kennung)
 }
 
 /// **Das Ziel eines Tasks aendern** (Rechtsklick, Bearbeiten). Nicht waehrend
@@ -812,7 +812,7 @@ fn task_entfernen(kennung: String, halter: tauri::State<'_, Halter>) -> Result<(
 #[tauri::command]
 fn task_bearbeiten(kennung: String, ziel: String, halter: tauri::State<'_, Halter>) -> Result<(), String> {
     nicht_in_seiner_runde(&halter, &kennung)?;
-    myl_client::vorhaben::Ablage::vorgabe().ziel_aendern(&kennung, &ziel).map(|_| ())
+    myl_local_agent::vorhaben::Ablage::vorgabe().ziel_aendern(&kennung, &ziel).map(|_| ())
 }
 
 /// Die Sicherheitsmeldung vor `auto`, aus der Kiste (derselbe Text wie in
@@ -841,7 +841,7 @@ fn autowarnung() -> Autowarnungansicht {
 /// gelten (Wunsch des Projektinhabers: er steht im Ausgabefenster).
 #[tauri::command]
 fn loop_starten(fenster: tauri::AppHandle, halter: tauri::State<'_, Halter>) -> Result<Option<String>, String> {
-    use myl_client::vorhaben::{self, Ablage, Laeufer};
+    use myl_local_agent::vorhaben::{self, Ablage, Laeufer};
     use std::sync::atomic::Ordering;
     let z = halter.schleife.clone();
     if z.laeuft.swap(true, Ordering::SeqCst) {
@@ -860,7 +860,7 @@ fn loop_starten(fenster: tauri::AppHandle, halter: tauri::State<'_, Halter>) -> 
             return Err(f);
         }
     };
-    let hinweis = vorhaben::hinweis_vorgaben(&e);
+    let hinweis = vorhaben::hinweis_vorgaben(&e.schleife, e.agent.modus, e.oberflaeche.sprache);
     vorhaben::schliessen_zuruecksetzen();
     z.pause.store(false, Ordering::SeqCst);
     let _ = ablage.loop_aktiv_setzen(true);
@@ -894,17 +894,17 @@ fn loop_starten(fenster: tauri::AppHandle, halter: tauri::State<'_, Halter>) -> 
         let nachfrage = nachfrage_fuer(&fenster, e.agent.modus);
         let kiste = kiste_fuer(&e);
         let umfelder = z.umfelder.clone();
-        let umfeld = move |v: &myl_client::vorhaben::Vorhaben| -> Option<Umfeld> {
+        let umfeld = move |v: &myl_local_agent::vorhaben::Vorhaben| -> Option<Umfeld> {
             let g = v.gespraech.as_ref()?;
             umfelder.lock().ok()?.get(g).cloned()
         };
-        let ruester = |zusaetzlich: myl_client::vorhaben::Zusatzwerkzeuge, v: &myl_client::vorhaben::Vorhaben| {
+        let ruester = |zusaetzlich: myl_local_agent::vorhaben::Zusatzwerkzeuge, v: &myl_local_agent::vorhaben::Vorhaben| {
             let mut agent = v.agent_fuer(&e.agent);
             // ⚑ Der Ordner, den das Gespraech jetzt hat, vor dem beim Anlegen.
             if let Some(w) = umfeld(v).and_then(|u| u.wurzel) {
                 agent.wurzel = Some(w);
             }
-            myl_client::ruestung::ruesten_mit(
+            myl_local_agent::ruestung::ruesten_mit(
                 &agent,
                 myl_client::Ansageform::Amtlich,
                 kiste,
@@ -948,7 +948,7 @@ fn loop_starten(fenster: tauri::AppHandle, halter: tauri::State<'_, Halter>) -> 
         let melder = move |m: myl_client::Meldung<'_>| {
             let _ = f2.emit(LOOPLEBEND, lebend_aus(m));
         };
-        let verlauf = |v: &myl_client::vorhaben::Vorhaben| umfeld(v).map(|u| u.verlauf).unwrap_or_default();
+        let verlauf = |v: &myl_local_agent::vorhaben::Vorhaben| umfeld(v).map(|u| u.verlauf).unwrap_or_default();
         vorhaben::fahren_mit_verlauf(
             &laeufer,
             &leihen,
@@ -968,7 +968,7 @@ fn loop_starten(fenster: tauri::AppHandle, halter: tauri::State<'_, Halter>) -> 
             "pausiert"
         } else if vorhaben::schliessen_angefordert() {
             "geschlossen"
-        } else if myl_client::notaus::ausgeloest() {
+        } else if myl_local_agent::notaus::ausgeloest() {
             "notaus"
         } else {
             "leer"
@@ -997,7 +997,7 @@ fn loop_pausieren(halter: tauri::State<'_, Halter>) {
     use std::sync::atomic::Ordering;
     if halter.schleife.laeuft.load(Ordering::SeqCst) {
         halter.schleife.pause.store(true, Ordering::SeqCst);
-        myl_client::vorhaben::schliessen_anfordern();
+        myl_local_agent::vorhaben::schliessen_anfordern();
         // ⚑ **Auch ein laufender Befehl endet sofort** (Projektinhaber,
         //   2026-09-29: „umgehend pausiert“), sonst liefe er bis zu seiner
         //   Frist. Nur die des Loop-Fadens; ein Chat daneben bleibt.
@@ -1018,7 +1018,7 @@ fn loop_beim_schliessen(z: &Loopzustand) {
     if !z.laeuft.load(Ordering::SeqCst) {
         return;
     }
-    myl_client::vorhaben::schliessen_anfordern();
+    myl_local_agent::vorhaben::schliessen_anfordern();
     let bis = std::time::Instant::now() + std::time::Duration::from_secs(4);
     while z.laeuft.load(Ordering::SeqCst) && std::time::Instant::now() < bis {
         std::thread::sleep(std::time::Duration::from_millis(50));
@@ -1027,10 +1027,10 @@ fn loop_beim_schliessen(z: &Loopzustand) {
 
 /// **Die juengsten Eintraege des Aktionsprotokolls**, und wo es liegt.
 #[tauri::command]
-fn protokoll_lesen() -> (String, Vec<myl_client::protokoll::Eintrag>) {
+fn protokoll_lesen() -> (String, Vec<myl_local_agent::protokoll::Eintrag>) {
     (
-        myl_client::protokoll::ordner().display().to_string(),
-        myl_client::protokoll::lesen(200),
+        myl_local_agent::protokoll::ordner().display().to_string(),
+        myl_local_agent::protokoll::lesen(200),
     )
 }
 
@@ -1057,7 +1057,7 @@ fn notschalter_beim_schliessen() {
     if SCHON.swap(true, std::sync::atomic::Ordering::SeqCst) {
         return;
     }
-    myl_client::notaus::ausloesen("fenster geschlossen");
+    myl_local_agent::notaus::ausloesen("fenster geschlossen");
     myl_senses::prozess::alle_beenden();
 }
 
@@ -1109,7 +1109,7 @@ struct Werkzeugliste {
     /// Werkzeuge, und nicht „unbekannt".
     wurzel: Option<String>,
     /// Der Name der Werkzeugkiste, genau der des Ordners unter
-    /// `CLIENT/werkzeugkisten` (`Base`, `Advanced`, `1337`).
+    /// `AGENT_LAYER/local-toolkits` (`Base`, `Advanced`, `1337`).
     kiste: String,
     /// ⚑ **Wo die Kistenwahl aufgehen soll**: das Verzeichnis, in dem die
     /// Kisten nebeneinander liegen, also der Elternordner der geltenden
@@ -1459,7 +1459,7 @@ async fn agent_fahren(
     let nachfrage = nachfrage_fuer(&fenster, e.agent.modus);
     // ⚑ Der Auftrag ist die Saat der Web-Recherche, wie im Chat.
     e.agent.netzsaat = Some(auftrag.clone());
-    let ruestung = myl_client::ruestung::ruesten_mit(
+    let ruestung = myl_local_agent::ruestung::ruesten_mit(
         &e.agent,
         myl_client::Ansageform::Amtlich,
         kiste_fuer(&e),
@@ -1478,7 +1478,7 @@ async fn agent_fahren(
     let grenze = e.modell.token as u32;
 
     // ⛔️ Jeder Auftrag beginnt mit einem gelösten Notaus.
-    myl_client::notaus::zuruecksetzen();
+    myl_local_agent::notaus::zuruecksetzen();
     let _ = fenster.emit("agent-beginnt", &auftrag);
     let halt = halter.modell.clone();
     let aus = tauri::async_runtime::spawn_blocking(move || {
@@ -1502,15 +1502,15 @@ async fn agent_fahren(
         // ⚑ **Jeder Auftrag bekommt sein Nachschlagebudget neu**
         // (2026-09-17): Die naechste Nachricht ist ein neuer Anlass.
         ruestung.nachschlagebudget_zuruecksetzen();
-        let ergebnis = myl_client::lauf::fahren_im_gespraech(
+        let ergebnis = myl_local_agent::lauf::fahren_im_gespraech(
             m, &ruestung, schritte, !gesperrt, grenze, &verlauf, &auftrag, Some(&melder),
         );
         // 📌 Siehe `zusehen`: Der Beobachter geht wieder ab, sonst
         // meldete dieser Lauf in den naechsten hinein.
         m.beobachter = None;
-        let gespraech = myl_client::gespraech::Gespraech::aus(ergebnis.nachrichten.clone());
-        let ansage = myl_client::gespraech::ansage(&ruestung);
-        let kontext = myl_client::gespraech::anzeige(&*m, Some(&ansage), &gespraech);
+        let gespraech = myl_local_agent::gespraech::Gespraech::aus(ergebnis.nachrichten.clone());
+        let ansage = myl_local_agent::gespraech::ansage(&ruestung);
+        let kontext = myl_local_agent::gespraech::anzeige(&*m, Some(&ansage), &gespraech);
         Ok((ergebnis, gespraech, kontext))
     })
     .await
@@ -1523,7 +1523,7 @@ async fn agent_fahren(
         sekunden: (aus.sekunden * 10.0).round() / 10.0,
         gesperrt,
         nachrichten: gespraech.nachrichten().to_vec(),
-        zusammenfassung: myl_client::gespraech::zusammenfassung(&gespraech),
+        zusammenfassung: myl_local_agent::gespraech::zusammenfassung(&gespraech),
         kontext,
     })
 }
@@ -1545,19 +1545,19 @@ async fn kontext(
     // zaehlt falsch.
     wurzel: Option<String>,
     halter: tauri::State<'_, Halter>,
-) -> Result<Option<myl_client::gespraech::Kontextanzeige>, String> {
+) -> Result<Option<myl_local_agent::gespraech::Kontextanzeige>, String> {
     let mut e = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())?;
     if let Some(w) = wurzel.map(|w| w.trim().to_string()).filter(|w| !w.is_empty()) {
         e.agent.wurzel = Some(w);
     }
     let ansage = if modus == "agent" {
-        let r = myl_client::ruestung::ruesten(
+        let r = myl_local_agent::ruestung::ruesten(
             &e.agent,
             myl_client::Ansageform::Amtlich,
             kiste_fuer(&e),
             Vec::new(),
         )?;
-        Some(myl_client::gespraech::ansage(&r))
+        Some(myl_local_agent::gespraech::ansage(&r))
     } else {
         None
     };
@@ -1565,8 +1565,8 @@ async fn kontext(
     tauri::async_runtime::spawn_blocking(move || {
         let g = halt.lock().map_err(|_| "der Modellhalter ist vergiftet".to_string())?;
         let Some(m) = g.as_ref() else { return Ok(None) };
-        let gespraech = myl_client::gespraech::Gespraech::aus(verlauf);
-        Ok(myl_client::gespraech::anzeige(m, ansage.as_ref(), &gespraech))
+        let gespraech = myl_local_agent::gespraech::Gespraech::aus(verlauf);
+        Ok(myl_local_agent::gespraech::anzeige(m, ansage.as_ref(), &gespraech))
     })
     .await
     .map_err(|e| format!("der Rechenfaden ist abgestuerzt: {e}"))?
@@ -1586,7 +1586,7 @@ struct Verdichtung {
 /// **Fasst ein Gespraech zusammen**, mit dem geladenen Modell selbst.
 ///
 /// ⚑ Dieselbe Stelle wie `/compress` in der Konsole,
-/// `myl_client::gespraech::verdichten`.
+/// `myl_local_agent::gespraech::verdichten`.
 #[tauri::command]
 async fn verdichten(
     verlauf: Vec<myl_client::Nachricht>,
@@ -1599,7 +1599,7 @@ async fn verdichten(
         let Some(m) = g.as_ref() else {
             return Err("das Modell ist nicht geladen".to_string());
         };
-        let mut gespraech = myl_client::gespraech::Gespraech::aus(verlauf);
+        let mut gespraech = myl_local_agent::gespraech::Gespraech::aus(verlauf);
         // ⚑ **Der Mitschnitt entsteht genau hier** (2026-09-16), im
         // Augenblick, in dem die Urfassung noch da ist. Der Ordner ist
         // der eingehaengte; ohne einen wird nichts abgelegt, und das ist
@@ -1611,7 +1611,7 @@ async fn verdichten(
             .or_else(myl_client::Einstellungen::standard_wurzel)
             .map(std::path::PathBuf::from);
         let modellname = e.as_ref().map(|e| e.modell.artefakt.clone()).unwrap_or_default();
-        let (vorher, nachher) = myl_client::gespraech::verdichten_mit_mitschnitt(
+        let (vorher, nachher) = myl_local_agent::gespraech::verdichten_mit_mitschnitt(
             m,
             &mut gespraech,
             wurzel.as_deref(),
@@ -1621,7 +1621,7 @@ async fn verdichten(
         .map_err(|f| f.to_string())?;
         Ok(Verdichtung {
             nachrichten: gespraech.nachrichten().to_vec(),
-            zusammenfassung: myl_client::gespraech::zusammenfassung(&gespraech),
+            zusammenfassung: myl_local_agent::gespraech::zusammenfassung(&gespraech),
             vorher,
             nachher,
         })
@@ -1720,7 +1720,7 @@ async fn frage(
     halter: tauri::State<'_, Halter>,
 ) -> Result<Antwort, String> {
     // ⛔️ Jeder Auftrag beginnt mit einem gelösten Notaus.
-    myl_client::notaus::zuruecksetzen();
+    myl_local_agent::notaus::zuruecksetzen();
     let e = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())?;
     let grenze = e.modell.token as u32;
     // Fuer die Saetze, die das Nachdenken ueberbruecken.
@@ -1753,7 +1753,7 @@ async fn frage(
     //   Schleife.** Ein Suchwerkzeug, das nur zusammen mit einer
     //   angehängten Datei da wäre, wäre genau dann weg, wenn man es
     //   braucht.
-    let mit_netz = e.agent.web_recherche && myl_client::netzwerkzeuge::curl_vorhanden();
+    let mit_netz = e.agent.web_recherche && myl_local_agent::netzwerkzeuge::curl_vorhanden();
     if mit_anhang || mit_netz {
         let ordner = wurzel
             .map(|w| w.trim().to_string())
@@ -1785,7 +1785,7 @@ async fn frage(
         //   Vorbild, Festlegung des Projektinhabers, 2026-09-25): ein
         //   geaenderter Anhang und jede Web-Anfrage. 📌 Bis dahin stand
         //   hier `None`, und der Chat mit Anhang oder Recherche fragte nie.
-        let ruestung = myl_client::ruestung::ruesten_fuer_anhaenge(
+        let ruestung = myl_local_agent::ruestung::ruesten_fuer_anhaenge(
             &anhangordner,
             myl_client::Ansageform::Amtlich,
             mit_netz.then_some(saat.as_str()),
@@ -1834,14 +1834,14 @@ async fn frage(
                         LEBEND,
                         Lebend::Aufruf {
                             name: name.to_string(),
-                            argumente: myl_client::lauf::kurzform(argumente),
+                            argumente: myl_local_agent::lauf::kurzform(argumente),
                             voll: serde_json::to_string_pretty(argumente)
                                 .unwrap_or_else(|_| argumente.to_string()),
                         },
                     );
                 }
             };
-            let aus = myl_client::lauf::fahren_im_gespraech(
+            let aus = myl_local_agent::lauf::fahren_im_gespraech(
                 m,
                 &ruestung,
                 schritte,
@@ -1854,9 +1854,9 @@ async fn frage(
             let text = aus.antwort.clone().unwrap_or_default();
             let mut danach: Vec<myl_client::Nachricht> = n.clone();
             danach.push(myl_client::Nachricht::modell(text.clone()));
-            let gespraech = myl_client::gespraech::Gespraech::aus(danach);
-            let ansage = myl_client::gespraech::ansage(&ruestung);
-            let kontext = myl_client::gespraech::anzeige(m, Some(&ansage), &gespraech);
+            let gespraech = myl_local_agent::gespraech::Gespraech::aus(danach);
+            let ansage = myl_local_agent::gespraech::ansage(&ruestung);
+            let kontext = myl_local_agent::gespraech::anzeige(m, Some(&ansage), &gespraech);
             Ok::<_, String>((text, kontext))
         })
         .await
@@ -1886,9 +1886,9 @@ async fn frage(
         // zur Nutzerrolle und nicht stillschweigend verworfen: Ein
         // verschluckter Beitrag waere ein Gespraech mit einer Luecke.
         // ⛔️ **Auch der Chat ohne Werkzeuge steht unter den Grundsaetzen**
-        //    des vorgegebenen Systemprompts (`myl_client::systemprompt`).
+        //    des vorgegebenen Systemprompts (`myl_local_agent::systemprompt`).
         let mut n: Vec<myl_client::Nachricht> = vec![myl_client::Nachricht::system(
-            myl_client::systemprompt::grundsaetze(if sprache == "en" {
+            myl_local_agent::systemprompt::grundsaetze(if sprache == "en" {
                 myl_client::einstellungen::Sprache::En
             } else {
                 myl_client::einstellungen::Sprache::De
@@ -1938,7 +1938,7 @@ async fn frage(
         //   faellt weg und hoert nach dem laufenden Satz auf.
         if let Some(v) = vorleser {
             if let Some(v) = v.lock().ok().and_then(|mut g| g.take()) {
-                if myl_client::notaus::ausgeloest() {
+                if myl_local_agent::notaus::ausgeloest() {
                     drop(v);
                 } else {
                     for f in v.abschliessen() {
@@ -1954,13 +1954,13 @@ async fn frage(
         // Antwort, besonders nach einer Verdichtung, wenn das Modell wieder
         // ausfuehrlich nachdenkt. `chat` selbst bleibt roh, weil die
         // Agentenschleife daraus die Werkzeugaufrufe liest.
-        let text = myl_client::lauf::denken_und_prosa(&antwort?).1;
+        let text = myl_local_agent::lauf::denken_und_prosa(&antwort?).1;
         let mut danach = n;
         danach.push(myl_client::Nachricht::modell(text.clone()));
-        let kontext = myl_client::gespraech::anzeige(
+        let kontext = myl_local_agent::gespraech::anzeige(
             &*m,
             None,
-            &myl_client::gespraech::Gespraech::aus(danach),
+            &myl_local_agent::gespraech::Gespraech::aus(danach),
         );
         Ok::<_, String>((text, kontext))
     })
@@ -2017,12 +2017,12 @@ fn lebend_aus(m: myl_client::Meldung<'_>) -> Lebend {
         myl_client::Meldung::Schritt(nummer) => Lebend::Schritt { nummer },
         myl_client::Meldung::Aufruf { name, argumente } => Lebend::Aufruf {
             name: name.to_string(),
-            argumente: myl_client::lauf::kurzform(argumente),
-            voll: myl_client::lauf::volltext_der_argumente(argumente),
+            argumente: myl_local_agent::lauf::kurzform(argumente),
+            voll: myl_local_agent::lauf::volltext_der_argumente(argumente),
         },
         myl_client::Meldung::Ergebnis { name, text } => Lebend::Ergebnis {
             name: name.to_string(),
-            text: myl_client::lauf::bis_zur_grenze(text, myl_client::lauf::VOLLTEXT_GRENZE),
+            text: myl_local_agent::lauf::bis_zur_grenze(text, myl_local_agent::lauf::VOLLTEXT_GRENZE),
         },
         myl_client::Meldung::Abgelehnt { name, grund } => Lebend::Abgelehnt {
             name: name.to_string(),
@@ -2118,20 +2118,20 @@ fn zusehen_mit(
 ) {
     let f = fenster.clone();
     let sprache = sprache.to_string();
-    m.beobachter = Some(Box::new(move |s: myl_client::strom::Stueck| {
+    m.beobachter = Some(Box::new(move |s: myl_local_agent::textstrom::Stueck| {
         let mut vorrang = None;
         if let Some(v) = &vorleser {
             if let Ok(mut g) = v.lock() {
                 if let Some(v) = g.as_mut() {
                     match &s {
-                        myl_client::strom::Stueck::Text(t) => {
+                        myl_local_agent::textstrom::Stueck::Text(t) => {
                             v.schub(t);
                             vorrang = Some(v.vorrang());
                         }
                         // ⚑ **Nachdenken wird ueberbrueckt**, mit einem
                         //   vorbereiteten Satz, hoechstens einmal je Antwort
                         //   (siehe `Vorleser::ueberbruecken`).
-                        myl_client::strom::Stueck::Denken(_) => v.ueberbruecken(&sprache),
+                        myl_local_agent::textstrom::Stueck::Denken(_) => v.ueberbruecken(&sprache),
                     }
                 }
             }
@@ -2139,8 +2139,8 @@ fn zusehen_mit(
         let _ = f.emit(
             kanal,
             match s {
-                myl_client::strom::Stueck::Denken(text) => Lebend::Denken { text },
-                myl_client::strom::Stueck::Text(text) => Lebend::Text { text },
+                myl_local_agent::textstrom::Stueck::Denken(text) => Lebend::Denken { text },
+                myl_local_agent::textstrom::Stueck::Text(text) => Lebend::Text { text },
             },
         );
         // ⚑ **Der erste Ton geht vor** (siehe `sprechen::Vorrang`): Ist
@@ -2160,7 +2160,7 @@ struct Antwort {
     text: String,
     sekunden: f64,
     /// Der Kontext nach der Antwort, fuer den Balken.
-    kontext: Option<myl_client::gespraech::Kontextanzeige>,
+    kontext: Option<myl_local_agent::gespraech::Kontextanzeige>,
     /// **Welche Anhänge der Lauf verändert hat**, als Dateiname.
     ///
     /// ⚑ **Gemessen und nicht behauptet** (Auftrag des Projektinhabers,
@@ -2203,14 +2203,14 @@ struct Abschluss {
     /// naechsten Auftrag zurueck.
     nachrichten: Vec<myl_client::Nachricht>,
     /// Der Kontext danach, fuer den Balken.
-    kontext: Option<myl_client::gespraech::Kontextanzeige>,
+    kontext: Option<myl_local_agent::gespraech::Kontextanzeige>,
     /// Die Zusammenfassung am Anfang des Gespraechs, falls der Lauf
     /// verdichten musste; das Fenster legt nur sie ab.
     zusammenfassung: Option<String>,
 }
 
-fn zeile_aus(s: &myl_client::lauf::Schritt) -> Zeile {
-    use myl_client::lauf::Schritt as S;
+fn zeile_aus(s: &myl_local_agent::lauf::Schritt) -> Zeile {
+    use myl_local_agent::lauf::Schritt as S;
     match s {
         S::Plan(t) => Zeile { art: "plan", text: t.clone(), voll: None },
         S::Denken(t) => Zeile { art: "denken", text: t.clone(), voll: None },
@@ -2296,7 +2296,7 @@ fn anhang_aufnehmen(
     let ansehen = myl_senses::Sinne::finden().bereit(a.art);
     let werkzeug = einstellungen
         .as_ref()
-        .and_then(|e| myl_client::kisten::werkzeug_fuer(&e.agent, a.art.kennung()));
+        .and_then(|e| myl_local_agent::kisten::werkzeug_fuer(&e.agent, a.art.kennung()));
     // ⚑ **Ohne Werkzeuge nennt die Zeile keines.** Das gilt fuer den
     //   Text ebenso wie fuer Bild und Ton: Ein Werkzeugname im Chat ist
     //   ein Versprechen ohne Deckung.
@@ -2371,7 +2371,7 @@ async fn anhang_ansehen(pfad: String, wurzel: Option<String>) -> Result<String, 
         })
         .or_else(myl_client::Einstellungen::standard_wurzel)
         .ok_or_else(|| "Es ist kein Arbeitsordner gesetzt.".to_string())?;
-    let ein = myl_client::werkzeuge::Einhaengung::neu(&wurzel, false)?;
+    let ein = myl_local_agent::werkzeuge::Einhaengung::neu(&wurzel, false)?;
     let datei = ein.aufloesen(&pfad, true).map_err(|f| f.grund)?;
     let anhangordner = std::path::Path::new(&wurzel)
         .join(myl_client::anhang::unterordner())
@@ -2632,7 +2632,7 @@ async fn anhang_herausgeben(
 
     // ⛔️ **Die Einhaengegrenze gilt auch hinaus.** `aufloesen` weist
     //    jeden Namen ab, der aus dem Anhangordner hinausfuehrt.
-    let ein = myl_client::werkzeuge::Einhaengung::neu(&anhangordner, false)
+    let ein = myl_local_agent::werkzeuge::Einhaengung::neu(&anhangordner, false)
         .map_err(|f| format!("Anhangordner: {f}"))?;
     let quelle = ein
         .aufloesen(&name, true)
@@ -2697,7 +2697,7 @@ struct Skillwahl {
 async fn skill_waehlen(app: tauri::AppHandle, titel: String) -> Result<Option<Skillwahl>, String> {
     use tauri_plugin_dialog::DialogExt;
 
-    let ordner = myl_client::skills::allgemeiner_ordner();
+    let ordner = myl_local_agent::skills::allgemeiner_ordner();
     let _ = std::fs::create_dir_all(&ordner);
     let mut w = app.dialog().file().set_title(titel).add_filter("Markdown", &["md"]);
     if ordner.is_dir() {
@@ -2707,7 +2707,7 @@ async fn skill_waehlen(app: tauri::AppHandle, titel: String) -> Result<Option<Sk
         return Ok(None);
     };
     let pfad = gewaehlt.simplified().into_path().map_err(|f| f.to_string())?;
-    let seite = myl_client::skills::aus_datei(&pfad)?;
+    let seite = myl_local_agent::skills::aus_datei(&pfad)?;
     Ok(Some(Skillwahl {
         name: seite.name,
         pfad: seite.pfad.display().to_string(),
@@ -2720,15 +2720,15 @@ async fn skill_waehlen(app: tauri::AppHandle, titel: String) -> Result<Option<Sk
 /// Anleitungen, die Bitte um einen Satz je Skill, und dahinter der
 /// Auftrag des Nutzers, falls es einen gibt.
 ///
-/// ⚑ **Gebaut in `myl_client::skills::lernauftrag`**, derselben Stelle,
+/// ⚑ **Gebaut in `myl_local_agent::skills::lernauftrag`**, derselben Stelle,
 /// die auch die Konsole nimmt.
 #[tauri::command]
 async fn skill_auftrag(pfade: Vec<String>, auftrag: String, deutsch: bool) -> Result<String, String> {
     let seiten = pfade
         .iter()
-        .map(|p| myl_client::skills::aus_datei(std::path::Path::new(p)))
+        .map(|p| myl_local_agent::skills::aus_datei(std::path::Path::new(p)))
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(myl_client::skills::lernauftrag(&seiten, &auftrag, deutsch))
+    Ok(myl_local_agent::skills::lernauftrag(&seiten, &auftrag, deutsch))
 }
 
 #[tauri::command]
@@ -2926,7 +2926,7 @@ async fn terminal_ordner(halter: tauri::State<'_, Halter>) -> Result<String, Str
 
 fn main() {
     // ⛔️ Das Aktionsprotokoll gilt fuer jeden Lauf dieses Fensters.
-    myl_client::protokoll::einschalten();
+    myl_local_agent::protokoll::einschalten();
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(Halter::default())
@@ -3070,7 +3070,7 @@ fn datenort() -> std::path::PathBuf {
     // ⚑ **Hergeleitet wird in der Kiste** (seit dem 2026-09-16). Die
     // Konsole stellt dieselbe Frage; zwei Herleitungen desselben Ortes
     // zeigen irgendwann auf zwei Datentraeger.
-    myl_client::ort::datenort()
+    myl_local_agent::ort::datenort()
 }
 
 /// Was Myelith heute schon auf der Platte haelt.
@@ -3079,7 +3079,7 @@ fn belegung_heute() -> u64 {
     // Gewichte und Artefakte liegen seit dem 2026-09-21 nicht mehr im
     // selben Elternverzeichnis, und eine Aufzaehlung an dieser Stelle
     // waere die zweite (Fund 410).
-    myl_client::ort::gefuellte_orte()
+    myl_local_agent::ort::gefuellte_orte()
         .iter()
         .map(|o| myl_client::reservierung::belegung(o))
         .sum()
@@ -3130,7 +3130,7 @@ fn platte_nachfuehren(halter: &Halter) -> Result<u64, String> {
 /// Ort traegt ueber den Fall hinweg, dass das Programm **ausserhalb**
 /// des Baums liegt, also genau ueber den installierten Zustand.
 fn wurzel_suchen() -> Option<std::path::PathBuf> {
-    myl_client::ort::wurzel()
+    myl_local_agent::ort::wurzel()
 }
 
 /// Die Marke, an der das Fenster „es fehlt der Ordner" erkennt.
@@ -3240,7 +3240,7 @@ fn mit_zugriffshinweis(fehler: String, pfad: &str) -> String {
 /// Arbeitsverzeichnis, das dort `/` ist. Ein absoluter Pfad in den
 /// Einstellungen bliebe unberuehrt.
 fn artefakt_absolut(pfad: &str) -> String {
-    myl_client::ort::absolut(pfad)
+    myl_local_agent::ort::absolut(pfad)
 }
 
 /// Welche Werkzeugkiste dieser Lauf bekommt.
@@ -3264,12 +3264,12 @@ fn artefakt_absolut(pfad: &str) -> String {
 /// die Einhaengung ohnehin geht. Eine zweite Stelle, an der Werkzeuge
 /// zurueckgehalten werden, waere eine zweite Stelle, an der jemand
 /// eines vergisst.
-fn kiste_fuer(e: &myl_client::Einstellungen) -> myl_client::werkzeuge::Werkzeugkiste {
+fn kiste_fuer(e: &myl_client::Einstellungen) -> myl_local_agent::werkzeuge::Werkzeugkiste {
     // ⚑ **Der Ordner sagt die Kiste** (2026-09-15). Vorher stand hier
     // die Auswahl `agent.werkzeuge` samt Ableitung aus der Modellgroesse;
     // seit in den Einstellungen nur noch der Pfad steht, entscheidet sein
     // Name, und zwar an genau einer Stelle fuer Fenster und Konsole.
-    myl_client::kisten::kiste_der_gilt(&e.agent)
+    myl_local_agent::kisten::kiste_der_gilt(&e.agent)
 }
 
 /// Was fehlt, bevor gebaut werden kann.

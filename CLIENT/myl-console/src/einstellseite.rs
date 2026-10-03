@@ -392,7 +392,7 @@ pub fn fahren(t: Toene, ordner: &std::path::Path) -> bool {
     // ⚑ **Einmal beim Oeffnen und nicht je Tastendruck.** Der Scan
     // kostet auf macOS einen Unterprozess; welche Karten im Rechner
     // stecken, aendert sich waehrend einer Einstellungsseite nicht.
-    let hw = Hardware::erheben(&myl_client::ort::datenort());
+    let hw = Hardware::erheben(&myl_local_agent::ort::datenort());
     // ⚑ **Die Liste steht einmal.** Was sich waehrend der Seite aendert,
     // sind die **Werte**, und die holt jede Zeichnung aus den
     // Einstellungen; Enden, Beschriftungen und Sperrgruende haengen an
@@ -734,7 +734,7 @@ fn zeilenweise(e: &Einstellungen, ordner: &std::path::Path) {
     // ⚑ **Dieselbe Liste wie auf der Seite**, samt Rechenwerken. Eine
     // Roehre, die weniger zeigt als ein Terminal, waere eine zweite
     // Auskunft ueber dieselbe Ablage.
-    let hw = Hardware::erheben(&myl_client::ort::datenort());
+    let hw = Hardware::erheben(&myl_local_agent::ort::datenort());
     for f in reihen(e, &hw) {
         let wert = e.wert(&f.name).map(|w| f.wie(&w)).unwrap_or_else(|m| m);
         let zusatz = if f.sperrgrund.is_some() { "  (rechnet hier nicht)" } else { "" };
@@ -759,16 +759,16 @@ pub fn werkzeugkiste_waehlen(t: crate::design::Toene) -> Option<String> {
     let pfad = myl_client::Einstellungen::vorgabepfad();
     let mut e = myl_client::Einstellungen::lesen(&pfad).ok()?;
 
-    let kisten = myl_client::kisten::vorhandene(e.agent.kistenordner.as_deref());
+    let kisten = myl_local_agent::kisten::vorhandene(e.agent.kistenordner.as_deref());
     if kisten.is_empty() {
         println!("  Hier liegt keine Werkzeugkiste.");
         return None;
     }
 
     // Vorgewaehlt ist die, die gilt.
-    let jetzt = myl_client::kisten::ordner_der_gilt(
+    let jetzt = myl_local_agent::kisten::ordner_der_gilt(
         e.agent.kistenordner.as_deref(),
-        myl_client::werkzeuge::Werkzeugkiste::Base.name(),
+        myl_local_agent::werkzeuge::Werkzeugkiste::Base.name(),
     );
     let start = jetzt.as_ref().and_then(|o| kisten.iter().position(|k| k == o)).unwrap_or(0);
 
@@ -783,9 +783,9 @@ pub fn werkzeugkiste_waehlen(t: crate::design::Toene) -> Option<String> {
             // Der Ordnername entscheidet ueber die eingebauten Werkzeuge.
             hinweis: format!(
                 "{} Werkzeug(e) · eingebaut: {}",
-                myl_client::kisten::manifeste_lesen(k, |_| {}).len(),
-                myl_client::werkzeuge::Werkzeugkiste::aus_ordnername(
-                    &myl_client::kisten::ordnername(Some(k), "Base")
+                myl_local_agent::kisten::manifeste_lesen(k, |_| {}).len(),
+                myl_local_agent::werkzeuge::Werkzeugkiste::aus_ordnername(
+                    &myl_local_agent::kisten::ordnername(Some(k), "Base")
                 )
                 .name(),
             ),

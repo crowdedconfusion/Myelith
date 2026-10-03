@@ -81,7 +81,7 @@ fn die_startprobe_des_freigabe_jobs_geht_auf() {
 fn verlauf_findet_den_mitschnitt_im_arbeitsverzeichnis() {
     let hier = tempfile::tempdir().expect("Ordner");
     let anderswo = tempfile::tempdir().expect("Ordner");
-    myl_client::verlauf::schreiben(
+    myl_local_agent::verlauf::schreiben(
         hier.path(),
         "probe-hier",
         "myelith-0.6b",

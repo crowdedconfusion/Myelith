@@ -59,7 +59,7 @@ MYL = WURZEL / "SYSTEM/full-build" / "release" / "myl"
 HERAUS = Path(__file__).resolve().parent / "herausforderungen"
 
 # Welche Werkzeuge eine Kiste heute hat. ⚑ Von Hand und mit Absicht: Die
-# eine Quelle im Code ist `CLIENT/myl-client/src/werkzeuge.rs`; diese
+# eine Quelle im Code ist `AGENT_LAYER/local-agent/src/werkzeuge.rs`; diese
 # Liste ist die Sicht der Probe darauf und faellt auf, wenn sie
 # auseinanderlaeuft (eine base-Aufgabe, die ploetzlich uebersprungen
 # wird, oder eine elite-Aufgabe, die ploetzlich laeuft).

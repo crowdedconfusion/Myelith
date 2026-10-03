@@ -1,0 +1,17 @@
+{
+  "begonnen": "2026-10-01T23:35:08",
+  "modelle": [
+    "myelith-4b",
+    "myelith-35b-a3b"
+  ],
+  "saaten": [
+    8213088584698225,
+    4468002801560041,
+    6135214929457457
+  ],
+  "token": 1600,
+  "denken": "aus",
+  "werkzeuge": "voll",
+  "einstellungen": "ab Werk",
+  "satz": "stufen.json"
+}

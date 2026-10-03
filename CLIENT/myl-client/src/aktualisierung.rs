@@ -82,7 +82,7 @@ impl Stand {
 /// einmal aus dem Klon heraus gestartet hat, kann danach auch aus
 /// `~/.local/bin` heraus aktualisieren.
 pub fn quelle() -> Option<PathBuf> {
-    let w = crate::ort::wurzel()?;
+    let w = myl_local_agent::ort::wurzel()?;
     // ⚑ **Ein Baum ist noch kein Klon.** Wer ein Freigabearchiv
     // entpackt, hat die Marke und kein `.git`; `git merge` haette dort
     // nichts, was es vorwaertsbewegen koennte.

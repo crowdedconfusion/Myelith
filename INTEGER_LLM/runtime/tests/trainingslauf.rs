@@ -482,6 +482,7 @@ fn a_vorgaben(m: &IntegerModel, e: usize, schritt: u64, lr: i64) -> Aufmerksamke
         num_heads: m.num_heads,
         num_kv_heads: m.num_kv_heads,
         head_dim: m.head_dim,
+        drehbreite: m.drehbreite,
         act_frac: sc.norm_attn_frac,
         q_frac: sc.achtsamkeit().q_frac,
         k_frac: sc.achtsamkeit().k_frac,
@@ -566,7 +567,10 @@ fn die_vorwaerts_haelfte_trifft_den_mitschnitt() {
             None,
             // ⚑ Die QK-Normierung der Ebene, wenn sie eine hat.
             qk_vorgaben(&m, ebene),
-            a_vorgaben(&m, e, 0, 0),);
+            // ⚑ Das Tor der Ebene, wenn das Modell eines hat.
+            integer_llm_runtime::trainingsschleife::tor_vorgaben(&m),
+            a_vorgaben(&m, e, 0, 0),
+        );
 
         for (p, (a, b)) in spur.attn_aus.iter().zip(erwartet.iter()).enumerate() {
             assert_eq!(
@@ -638,6 +642,7 @@ fn die_ganze_ebene_trifft_den_mitschnitt() {
         mg.aus_frac = 0;
         let v = Ebenenvorgaben {
             qk_norm: qk_vorgaben(&m, ebene),
+            tor: integer_llm_runtime::trainingsschleife::tor_vorgaben(&m),
             aufmerksamkeit: vg,
             mlp: mg,
             residual_in_frac: &sc.residual_in_frac,

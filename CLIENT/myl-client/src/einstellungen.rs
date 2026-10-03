@@ -19,18 +19,15 @@
 
 use serde::{Deserialize, Serialize};
 
-/// **Die Umgebungsvariable, die den Standard-Arbeitsordner nennt.**
-///
-/// ⚑ Sie hat Vorrang vor dem Ordner im Baum, damit ein Einsatz
-/// ausserhalb des Repositoriums und eine Probe einen eigenen Ordner
-/// nennen koennen, ohne die Einstellungsdatei anzufassen.
-pub const ARBEITSORDNER: &str = "MYL_ARBEITSORDNER";
+/// ⚑ **Der Abschnitt des Agenten liegt in [`myl_local_agent::agentenwahl`]** und
+/// wird hier weitergereicht, damit jeder bisherige Pfad gilt.
+pub use myl_local_agent::agentenwahl::{
+    ist_admin, Agenteneinstellung, Agentenmodus, Loopeinstellung, Sprache, Werkzeugwahl,
+    AGENT_ANTWORT_MINDESTENS,
+};
 
-/// **Wie der Standard-Arbeitsordner im Repositorium heisst.**
-///
-/// ⚑ Derselbe Name wie die Umgebungsvariable ohne Praefix, und das ist
-/// Absicht: Wer den einen liest, kennt den anderen.
-pub const ARBEITSORDNER_IM_BAUM: &str = "WORK_DIR";
+/// Die beiden Namen des Standard-Arbeitsordners liegen in [`myl_local_agent::ort`].
+pub use myl_local_agent::ort::{ARBEITSORDNER, ARBEITSORDNER_IM_BAUM};
 
 /// ⚑ **Was ein Knoten an Hardware hergibt, und fuer wen.**
 ///
@@ -205,17 +202,6 @@ fn bereich(wert: &str, von: u32, bis: u32) -> Result<Option<u32>, String> {
 /// eingestellt ist.
 pub const ANTWORT_VORGABE: usize = 1600;
 
-/// **Die Untergrenze jedes Agentenlaufs**, hoeher als die Vorgabe fuer das
-/// Gespraech.
-///
-/// ⚑ **4 000 seit dem 2026-09-30** (Festlegung des Projektinhabers). Gemessen
-/// am selben Tag: Das 35B mit Denken brachte bei 1 600 Token einen
-/// `write_file` mit einem kurzen CAD-Skript (rund 500 Byte) dreimal nicht zu
-/// Ende, weil das Denken vorher den groessten Teil verbrauchte; bei 4 000
-/// gelang derselbe Auftrag. Das Gespraech behaelt 1 600: Dort endet eine
-/// Antwort von selbst, und es wird nichts geschrieben.
-pub const AGENT_ANTWORT_MINDESTENS: usize = 4000;
-
 fn denkbudget_vorgabe() -> Option<u32> {
     Some(DENKBUDGET_VORGABE)
 }
@@ -223,176 +209,6 @@ fn denkbudget_vorgabe() -> Option<u32> {
 impl Default for Modelleinstellung {
     fn default() -> Self {
         Self { artefakt: String::new(), token: ANTWORT_VORGABE, denken: false, denkbudget: denkbudget_vorgabe(), saat: None, temperatur: None, top_p: None, top_k: None }
-    }
-}
-
-/// Was der Agent darf.
-///
-/// 📌 **Bis zum 2026-09-11 stand hier `auch_bezeugtes`**, ein Schalter,
-/// der dem Modell bezeugte Werkzeuge zusaetzlich zu den nachrechenbaren
-/// oeffnete. **Er ist entfallen** (Festlegung des Projektinhabers):
-/// Welche Werkzeuge ein Lauf bekommt, sagt die Werkzeugkiste, und
-/// dabei soll es bleiben. Fuer einen einzelnen Vergleichslauf gibt es
-/// den Schalter `--bezeugtes` an der Kommandozeile; **eine Einstellung
-/// waere eine Dauerfreigabe, die niemand mehr sieht.**
-///
-/// ⚑ Eine Ablage aus der Zeit davor bleibt lesbar: `serde` uebergeht
-/// ein Feld, das es nicht mehr gibt.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Agenteneinstellung {
-    /// Hoechstzahl der Schritte je Auftrag.
-    pub schritte: u32,
-    /// Das Verzeichnis, in dem die Dateiwerkzeuge arbeiten duerfen.
-    ///
-    /// ⚑ **Ohne Angabe [`Einstellungen::standard_wurzel`]**, also
-    /// `WORK_DIR` im Repositorium, und wenn es das nicht gibt, keine
-    /// Dateiwerkzeuge. Das **Arbeitsverzeichnis** waere die bequeme
-    /// Wahl und die falsche: Ein Agent, der ueberall dort greifen darf,
-    /// wo der Nutzer zufaellig steht, hat keine Grenze, sondern eine
-    /// Gewohnheit. Ein benannter Ordner mit Beispieldateien ist etwas
-    /// anderes: Er ist eine Entscheidung, und sie steht an einer Stelle.
-    ///
-    /// ⚠️ **Die Konsole setzt dieses Feld selbst**, auf das Verzeichnis,
-    /// aus dem sie gestartet wurde. Wer `myelith` in einem Projekt
-    /// aufruft, will darin arbeiten; die Vorgabe gilt fuer das Fenster,
-    /// das von keinem Verzeichnis aus geoeffnet wird.
-    #[serde(default)]
-    pub wurzel: Option<String>,
-    /// Ob die Dateiwerkzeuge auch schreiben duerfen.
-    ///
-    /// ⚑ **Lesen und Schreiben sind nicht dieselbe Erlaubnis.** Wer ein
-    /// Verzeichnis einhaengt, damit der Agent darin nachsieht, hat
-    /// damit nicht gesagt, dass er es aendern darf.
-    #[serde(default)]
-    pub schreiben: bool,
-    /// Ein eigener Ordner, aus dem die Manifest-Werkzeuge kommen.
-    ///
-    /// ⚑ **Ohne Angabe entscheidet `werkzeuge`**, und der Ordner wird
-    /// unter `CLIENT/werkzeugkisten/Base` genommen. Wer hier einen
-    /// Pfad setzt, waehlt seine Kiste selbst, und ihr Name ist der des
-    /// Ordners.
-    ///
-    /// ⚠️ **Die eingebauten Dateiwerkzeuge haengen weiter an
-    /// `werkzeuge`**, nicht hier. Dieser Pfad sagt nur, wo die
-    /// Manifeste liegen; `run_command` und die Einhaengegrenze bleiben
-    /// an der Kiste, weil daran eine Erlaubnis haengt und nicht ein
-    /// Ordnername, den jeder setzen kann.
-    #[serde(default)]
-    pub kistenordner: Option<String>,
-    /// Ob die Warnung vor dem Agentenbetrieb noch gezeigt wird.
-    ///
-    /// ⚑ **Vorgabe ist `true`**, und das ist die einzige vertretbare:
-    /// Wer noch nie zugestimmt hat, hat noch nicht zugestimmt. Das
-    /// Haekchen im Fenster setzt sie auf `false`.
-    ///
-    /// ⚠️ **Sie ist keine Schranke.** Einhaengegrenze, Schreiberlaubnis
-    /// und Betriebsart wirken unabhaengig davon.
-    #[serde(default = "an")]
-    pub warnung: bool,
-    /// Ob Handlungen mit Wirkung nach aussen vorgelegt werden.
-    ///
-    /// ⚑ `#[serde(default)]`, damit eine Ablage aus der Zeit davor
-    /// lesbar bleibt. 📌 **Bis zum 2026-09-25 hiess das `auto`**, die
-    /// damalige Vorgabe; seither `manual` (siehe [`Agentenmodus`]). Eine
-    /// Ablage, die `auto` ausdruecklich traegt, behaelt es: Das ist eine
-    /// Wahl des Nutzers, und sie wird nicht still umgestellt.
-    #[serde(default)]
-    pub modus: Agentenmodus,
-    /// **Ob der Agent den Bildschirm aufnehmen darf.**
-    ///
-    /// ⛔️ **Eine eigene Erlaubnis und nicht die Folge des
-    /// Einhaengens.** Die Einhaengegrenze fasst einen Arbeitsordner
-    /// ein; eine Bildschirmaufnahme entsteht ausserhalb davon. Wer einen
-    /// Ordner freigibt, hat nicht gesagt, dass jemand ins Zimmer sehen
-    /// darf.
-    ///
-    /// ⚑ `#[serde(default)]`, also **aus**, und eine Ablage aus der Zeit
-    /// davor bedeutet damit dasselbe wie „nie erlaubt".
-    #[serde(default)]
-    pub blick_bildschirm: bool,
-    /// **Ob der Agent die Kamera aufnehmen darf.** Siehe
-    /// [`Agenteneinstellung::blick_bildschirm`]; die beiden sind
-    /// getrennt, weil ein Bildschirm etwas anderes zeigt als ein Raum.
-    #[serde(default)]
-    pub blick_kamera: bool,
-    /// **Ob der Chat im Web recherchieren darf.**
-    ///
-    /// ⛔️ **Aus, und das mit Absicht.** Dieses Häkchen tut zwei Dinge
-    /// auf einmal: Es öffnet einen Weg nach draussen, und es holt
-    /// fremden Text in das Fenster, in dem auch die Anhänge des Nutzers
-    /// stehen. Beides zusammen ist die Lage, in der eine eingeschleuste
-    /// Anweisung überhaupt erst Schaden anrichten kann. Die Schranken
-    /// dagegen stehen in `netzwerkzeuge`; die Entscheidung, sie
-    /// überhaupt zu brauchen, trifft der Nutzer.
-    ///
-    /// ⚑ **Es gilt für Chat und Agent** (Festlegung des Projektinhabers,
-    /// 2026-09-26). Bis dahin nur für den Chat, mit der Begründung, im
-    /// Agenten stehe mit `run_command` schon ein Weg nach draussen offen,
-    /// den keine Schranke einfasst. ⚠️ **Das bleibt wahr für `Advanced`**:
-    /// Ein Shell-Befehl kennt das Tor nicht. Die beiden Web-Werkzeuge selbst
-    /// bleiben ummauert, und im Agenten wächst ihre Verratsprobe mit
-    /// allem, was eigene Werkzeuge gelesen haben (`Tor::gesehen`).
-    #[serde(default)]
-    pub web_recherche: bool,
-    /// **Die Saat des Zielkreises** für die Web-Werkzeuge: was der Mensch
-    /// für diesen Lauf geschrieben hat, im Loop das Ziel des Tasks. Wird
-    /// je Lauf gesetzt und nie gespeichert.
-    #[serde(skip)]
-    pub netzsaat: Option<String>,
-}
-
-impl Default for Agenteneinstellung {
-    fn default() -> Self {
-        Self {
-            schritte: 6,
-            wurzel: None,
-            schreiben: false,
-            kistenordner: None,
-            warnung: true,
-            modus: Agentenmodus::Manuell,
-            blick_bildschirm: false,
-            blick_kamera: false,
-            web_recherche: false,
-            netzsaat: None,
-        }
-    }
-}
-
-/// **Die Grenzen eines Loops**, also eines Vorhabens, das der Dienst in
-/// Runden fuehrt (`crate::vorhaben`).
-///
-/// ⚑ **Grenzen im Code, nicht Bitten im Prompt.** Ein Vorhaben endet
-/// spaetestens an einer dieser Zahlen, gleich was das Modell meint;
-/// dieselbe Haltung wie bei `agent.schritte`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Loopeinstellung {
-    /// Hoechstzahl an Runden je Vorhaben.
-    pub runden: u32,
-    /// Hoechstdauer eines Vorhabens in Stunden. ⚑ Gezaehlt wird nur die
-    /// Zeit, in der Fenster oder Konsole offen sind (Festlegung des
-    /// Projektinhabers: Schliessen haelt an, Oeffnen macht weiter).
-    pub stunden: u32,
-    /// Werkzeugaufrufe je Runde.
-    pub schritte: u32,
-    /// Nach so vielen Runden ohne Fortschritt haelt das Vorhaben an und
-    /// fragt nach.
-    pub stillstand: u32,
-    /// Nach jeder Runde ein zweiter Durchgang, der Fortschritt und Ziel
-    /// prueft (Nutzereinstellung, Wunsch des Projektinhabers).
-    pub pruefen: bool,
-}
-
-impl Default for Loopeinstellung {
-    fn default() -> Self {
-        Self { runden: 50, stunden: 24, schritte: 12, stillstand: 3, pruefen: true }
-    }
-}
-
-impl Loopeinstellung {
-    /// Stehen noch die Vorgaben? Dann zeigen Fenster und Konsole beim
-    /// Start eines Loops einen Hinweis (Wunsch des Projektinhabers).
-    pub fn ist_vorgabe(&self) -> bool {
-        *self == Self::default()
     }
 }
 
@@ -409,76 +225,6 @@ pub struct Einstellungen {
     /// ⚑ `#[serde(default)]`: Eine Datei aus der Zeit davor bleibt lesbar.
     #[serde(default, rename = "loop")]
     pub schleife: Loopeinstellung,
-}
-
-/// **Die Sprache der Oberflaeche.**
-///
-/// # ⚑ Warum das ein Typ ist und kein `String`
-///
-/// Ein `String` liesse `"deutsch"`, `"DE"`, `"de-DE"` und `"klingon"`
-/// zu, und jede Stelle, die ihn liest, muesste sich selbst entscheiden,
-/// was davon sie versteht. **Eine Aufzaehlung mit zwei Werten hat diese
-/// Frage nicht.**
-///
-/// ⚠️ **Zwei Sprachen und nicht n.** Wer eine dritte hinzufuegt, fuegt
-/// sie hier hinzu, und der Kompilator zeigt jede Stelle, die sie noch
-/// nicht kennt. Genau das ist der Zweck.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-pub enum Sprache {
-    /// Deutsch, die Sprache dieses Projekts.
-    #[default]
-    #[serde(rename = "de")]
-    De,
-    /// Englisch.
-    #[serde(rename = "en")]
-    En,
-}
-
-impl Sprache {
-    /// Die Kennung, wie sie in der Ablage und im Fenster steht.
-    pub const fn kennung(self) -> &'static str {
-        match self {
-            Self::De => "de",
-            Self::En => "en",
-        }
-    }
-
-    /// Aus der Kennung, oder ein Fehler mit den moeglichen Werten.
-    ///
-    /// ⚑ **Der Fehler nennt, was ginge.** „unbekannte Sprache: fr"
-    /// laesst den Nutzer raten; „…, moeglich sind de, en" nicht.
-    pub fn aus(k: &str) -> Result<Self, String> {
-        match k {
-            "de" => Ok(Self::De),
-            "en" => Ok(Self::En),
-            andere => Err(format!("unbekannte Sprache {andere}, moeglich sind de, en")),
-        }
-    }
-
-    /// Waehlt zwischen zwei Fassungen desselben Textes.
-    ///
-    /// ⚑ `const` und `Copy`, damit sie auf `&'static str` in einer
-    /// Konstantenzuweisung geht.
-    pub const fn waehlen<T: Copy>(self, de: T, en: T) -> T {
-        match self {
-            Self::De => de,
-            Self::En => en,
-        }
-    }
-
-    /// Dasselbe fuer Werte, die sich nicht kopieren lassen.
-    ///
-    /// 📌 **Beide Fassungen werden gebaut, auch die ungenutzte.** Das
-    /// ist der Preis dafuer, dass der Aufrufer zwei fertige Saetze
-    /// hinschreiben kann statt zweier Bauanleitungen; bei einem Satz
-    /// je Regler ist er nicht messbar. **Wer ihn nicht zahlen will,
-    /// verzweigt selbst.**
-    pub fn waehlen_wert<T>(self, de: T, en: T) -> T {
-        match self {
-            Self::De => de,
-            Self::En => en,
-        }
-    }
 }
 
 /// **Wie die Konsole aussieht.**
@@ -571,34 +317,6 @@ impl Konsolendesign {
     }
 }
 
-/// **Ob der Agent schreiben darf, ohne zu fragen.**
-///
-/// ⚑ **Zwei Betriebsarten und keine dritte** (Festlegung des
-/// Projektinhabers, 2026-09-11). `auto mode` laesst den Agenten
-/// arbeiten; `manual mode` legt ihm jede **schreibende** Handlung
-/// vorher vor.
-///
-/// ⚑ **Nur die schreibenden.** Ein Modus, der auch das Lesen bestaetigen
-/// liesse, waere nach drei Fragen abgeschaltet, und dann bestaetigt
-/// niemand mehr etwas. **Was sich nicht rueckgaengig machen laesst, ist
-/// das Schreiben.**
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-pub enum Agentenmodus {
-    /// Der Agent handelt, und der Mensch sieht zu.
-    #[serde(rename = "auto")]
-    Auto,
-    /// Jede Handlung mit Wirkung nach aussen wird vorgelegt: Schreiben,
-    /// Befehle, Web-Anfragen.
-    ///
-    /// ⛔️ **Die Vorgabe** (Festlegung des Projektinhabers, 2026-09-25,
-    /// nach dem Vorbild von Art. 14 KI-Verordnung): Wer nichts einstellt,
-    /// bestaetigt jede solche Handlung. Das ist, was anderswo
-    /// `require_confirmation: true` heisst.
-    #[default]
-    #[serde(rename = "manual")]
-    Manuell,
-}
-
 /// **Die Sicherheitsmeldung vor dem Wechsel auf `auto`** (Festlegung des
 /// Projektinhabers, 2026-09-26: wer aktiv auf `auto` stellt, bekommt sie,
 /// danach arbeitet der Agent autonom).
@@ -632,197 +350,6 @@ pub fn autowarnung(sprache: Sprache) -> Autowarnung {
             ],
             frage: "Really switch to auto mode? [y/N] ",
         },
-    }
-}
-
-impl Agentenmodus {
-    /// Die Kennung, wie sie in der Ablage steht.
-    pub const fn kennung(self) -> &'static str {
-        match self {
-            Self::Auto => "auto",
-            Self::Manuell => "manual",
-        }
-    }
-
-    /// Wie er heisst, wo ein Mensch ihn liest.
-    ///
-    /// ⚑ **Die Namen kommen vom Projektinhaber** und sind Namen: Sie
-    /// werden nicht uebersetzt.
-    pub const fn name(self) -> &'static str {
-        match self {
-            Self::Auto => "auto mode",
-            Self::Manuell => "manual mode",
-        }
-    }
-
-    /// Der jeweils andere. **Ein Schalter braucht genau das.**
-    pub const fn andere(self) -> Self {
-        match self {
-            Self::Auto => Self::Manuell,
-            Self::Manuell => Self::Auto,
-        }
-    }
-
-    /// Ob eine schreibende Handlung vorgelegt werden muss.
-    pub const fn fragt_nach(self) -> bool {
-        matches!(self, Self::Manuell)
-    }
-
-    /// Aus der Kennung, oder ein Fehler mit den moeglichen Werten.
-    pub fn aus(k: &str) -> Result<Self, String> {
-        match k {
-            "auto" => Ok(Self::Auto),
-            "manual" | "manuell" => Ok(Self::Manuell),
-            andere => Err(format!("unbekannter Modus {andere}, moeglich sind auto, manual")),
-        }
-    }
-}
-
-/// Welche Werkzeugkiste ein Lauf bekommt.
-///
-/// 📌 **Drei Werte und nicht zwei.** Ohne `Automatisch` muesste ein
-/// Nutzer bei jedem Modellwechsel mitdenken, und die Einstellung waere
-/// beim naechsten Wechsel still falsch. **Eine Vorgabe, die dem Modell
-/// folgt, ist keine Vorgabe, sondern eine Ableitung**, und die kann
-/// nicht veralten.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-pub enum Werkzeugwahl {
-    /// Nach der Groesse des geladenen Modells.
-    #[default]
-    #[serde(rename = "automatisch")]
-    Automatisch,
-    /// Immer `Base`, auch bei einem grossen Modell.
-    ///
-    /// 📌 **`alias` und nicht nur `rename`.** Die Kisten hiessen bis zum
-    /// 2026-09-11 `grund` und `voll`; eine Ablage aus der Zeit davor
-    /// steht auf einer echten Platte. Ohne den Aliasnamen faellt sie
-    /// beim Lesen auf die Vorgabe zurueck, **und zwar still.**
-    #[serde(rename = "base", alias = "grund")]
-    Base,
-    /// Immer `Advanced`, auch bei einem kleinen Modell.
-    #[serde(rename = "advanced", alias = "voll")]
-    Advanced,
-    /// `1337`, und die gibt es nur mit der Adminmarke.
-    ///
-    /// ⚠️ **Steht sie in der Ablage ohne die Marke, gilt `Advanced`**,
-    /// und der Klient sagt es. Ein Wert, den niemand aendern kann und
-    /// der stillschweigend etwas anderes bedeutet, ist schlimmer als
-    /// eine Fehlermeldung.
-    #[serde(rename = "1337")]
-    Elite,
-}
-
-/// **Ob dieser Lauf die Adminmarke traegt.**
-///
-/// ⚑ Gesetzt wird sie in der Umgebung: `MYELITH_ADMIN=1`.
-///
-/// ⚠️ **Sie versteckt und schuetzt nicht, und das ist wichtig genug
-/// fuer eine eigene Zeile.** Ein oertlicher Klient laeuft auf der
-/// Maschine seines Nutzers, mit dessen Rechten, aus offenem Quelltext:
-/// Wer die Marke setzen will, setzt sie in einer Sekunde. Sie haelt
-/// eine Kiste aus der Auswahlliste heraus, damit niemand sie neben
-/// `Base` und `Advanced` fuer eine dritte gleichrangige Wahl haelt.
-/// **Eine Grenze, die nur bei Unkenntnis traegt, ist keine Grenze**,
-/// und dieses Projekt argumentiert an jeder anderen Stelle genauso.
-/// Eine echte Rolle gibt es erst, wenn es ein Netz gibt, das sie
-/// bezeugen kann.
-pub fn ist_admin() -> bool {
-    std::env::var("MYELITH_ADMIN")
-        .is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("ja") || v.eq_ignore_ascii_case("yes"))
-}
-
-impl Werkzeugwahl {
-    /// Die Kennung, wie sie in der Ablage und im Fenster steht.
-    pub const fn kennung(self) -> &'static str {
-        match self {
-            Self::Automatisch => "automatisch",
-            Self::Base => "base",
-            Self::Advanced => "advanced",
-            Self::Elite => "1337",
-        }
-    }
-
-    /// **Welche Kiste daraus folgt, und warum.**
-    ///
-    /// ⚑ **Eine Stelle fuer beide Oberflaechen.** Fenster und Konsole
-    /// stellen dieselbe Frage; rechneten sie sie je selbst, waeren es
-    /// zwei Antworten, sobald eine von beiden angefasst wird.
-    ///
-    /// ⚑ **Und der Grund kommt mit.** Eine Auswahl, die still faellt,
-    /// laesst den Nutzer raten, warum sein Modell ein Werkzeug nicht
-    /// hat.
-    pub fn aufloesen(
-        self,
-        artefakt: &std::path::Path,
-    ) -> (crate::werkzeuge::Werkzeugkiste, String) {
-        self.aufloesen_fuer(artefakt, ist_admin())
-    }
-
-    /// Dasselbe mit ausdruecklich gesagter Berechtigung.
-    pub fn aufloesen_fuer(
-        self,
-        artefakt: &std::path::Path,
-        admin: bool,
-    ) -> (crate::werkzeuge::Werkzeugkiste, String) {
-        use crate::werkzeuge::Werkzeugkiste;
-        match self {
-            Self::Automatisch => Werkzeugkiste::fuer_artefakt(artefakt),
-            Self::Base => (Werkzeugkiste::Base, "so eingestellt".to_string()),
-            Self::Advanced => (Werkzeugkiste::Advanced, "so eingestellt".to_string()),
-            // ⚠️ Ohne die Marke wird daraus `Advanced`, und der Grund
-            // sagt es: Sonst waere die Einstellung eine Behauptung.
-            Self::Elite if !admin => (
-                Werkzeugkiste::Advanced,
-                "1337 steht ohne MYELITH_ADMIN nicht zur Verfuegung".to_string(),
-            ),
-            Self::Elite => (Werkzeugkiste::Elite, "so eingestellt".to_string()),
-        }
-    }
-
-    /// Aus der Kennung, oder ein Fehler mit den moeglichen Werten.
-    pub fn aus(k: &str) -> Result<Self, String> {
-        Self::aus_fuer(k, ist_admin())
-    }
-
-    /// Dasselbe, aber mit ausdruecklich gesagter Berechtigung.
-    ///
-    /// ⚑ **Damit die Pruefung nicht an der Umgebung haengt.** Ein Test,
-    /// der `MYELITH_ADMIN` setzt, setzt es fuer **alle** Tests im
-    /// selben Prozess, und die laufen nebeneinander: Das Ergebnis
-    /// haengt dann an der Reihenfolge. **Was sich uebergeben laesst,
-    /// wird uebergeben.**
-    pub fn aus_fuer(k: &str, admin: bool) -> Result<Self, String> {
-        match k {
-            "automatisch" => Ok(Self::Automatisch),
-            "base" | "grund" => Ok(Self::Base),
-            "advanced" | "voll" => Ok(Self::Advanced),
-            // ⚑ **Die Fehlermeldung verschweigt die Kiste nicht.** Sie
-            // steht im Quelltext, und ein Hinweis, der so tut, als gebe
-            // es sie nicht, waere die Sorte Schutz, gegen die dieses
-            // Projekt sonst argumentiert.
-            "1337" if !admin => {
-                Err("1337 gibt es nur mit MYELITH_ADMIN=1 in der Umgebung".to_string())
-            }
-            "1337" => Ok(Self::Elite),
-            andere => Err(format!(
-                "unbekannte Werkzeugwahl {andere}, moeglich sind {}",
-                Self::moegliche_fuer(admin).join(", ")
-            )),
-        }
-    }
-
-    /// Was hier gesetzt werden darf, in dieser Umgebung.
-    pub fn moegliche() -> Vec<&'static str> {
-        Self::moegliche_fuer(ist_admin())
-    }
-
-    /// Dasselbe mit ausdruecklich gesagter Berechtigung.
-    pub fn moegliche_fuer(admin: bool) -> Vec<&'static str> {
-        let mut w = vec!["automatisch", "base", "advanced"];
-        if admin {
-            w.push("1337");
-        }
-        w
     }
 }
 
@@ -868,6 +395,31 @@ pub struct Ausgabeeinstellung {
     /// Das Verzeichnis fuer ausgegebene Gespraeche.
     #[serde(default)]
     pub ordner: Option<String>,
+}
+
+/// **Ein Kistenordner vom alten Ort, auf den neuen gesetzt**, oder `None`,
+/// wenn nichts zu tun ist.
+///
+/// ⚑ Getauscht wird nur der Abschnitt eines frueheren Ortes, der Rest des
+/// Pfades bleibt: Wer sein Repositorium woanders hat, behaelt seinen Ort,
+/// und der Name der Kiste dahinter bleibt derselbe. Beide Trennzeichen,
+/// weil eine Ablage unter Windows `\` traegt.
+///
+/// ⚠️ **Nur, wenn der alte Ordner nicht mehr da ist.** Ein aelterer Klon,
+/// der noch den alten Aufbau hat, wird nicht umgebogen.
+pub fn kistenordner_nach_dem_umzug(alt: &str) -> Option<String> {
+    use myl_local_agent::kisten::{FRUEHERE_HEIMATEN, HEIMAT};
+    if std::path::Path::new(alt).is_dir() {
+        return None;
+    }
+    for frueher in FRUEHERE_HEIMATEN {
+        for (a, n) in [(frueher.to_string(), HEIMAT.to_string()), (frueher.replace('/', "\\"), HEIMAT.replace('/', "\\"))] {
+            if alt.contains(&a) {
+                return Some(alt.replacen(&a, &n, 1));
+            }
+        }
+    }
+    None
 }
 
 impl Einstellungen {
@@ -942,6 +494,15 @@ impl Einstellungen {
             ("qwen3-30b-a3b", "myelith-30b-a3b"),
             ("qwen3-4b", "myelith-4b"),
         ];
+        // ⚑ **Die vierte Wanderung (2026-09-30) ist ein Umzug**: Die
+        //   mitgelieferten Kisten liegen jetzt unter `AGENT_LAYER`. Ein
+        //   gesetzter Kistenordner zeigte sonst ins Leere, und
+        //   `kisten::ordner_der_gilt` faellt dann bewusst nicht auf die
+        //   Vorgabe zurueck: Der Agent stuende ohne ein einziges
+        //   Manifest-Werkzeug da.
+        if let Some(neu) = self.agent.kistenordner.as_deref().and_then(kistenordner_nach_dem_umzug) {
+            self.agent.kistenordner = Some(neu);
+        }
         let pfad = self.modell.artefakt.trim_end_matches('/');
         let Some((vorne, letztes)) = pfad.rsplit_once('/') else { return };
         for (alt, neu) in ALT_NEU {
@@ -990,134 +551,12 @@ impl Einstellungen {
     /// die Ablage ihrer Nutzer festlegt, und dieses Projekt nennt NixOS
     /// ausdruecklich als Ziel.
     pub fn vorgabepfad() -> std::path::PathBuf {
-        // ⛔️ **`MYL_EINSTELLUNGEN` schirmt ab, und zwar ganz.** Ist die
-        //    Variable gesetzt, gilt nur dieser Pfad, ohne Rueckgriff auf
-        //    eine vorhandene Datei. 📌 Eingefuehrt am 2026-09-26, nachdem
-        //    ein Probelauf mit `XDG_CONFIG_HOME` die echten Einstellungen
-        //    des Projektinhabers ueberschrieben hatte: Die Regel darunter
-        //    („wer schon eine Datei hat, behaelt sie") ist fuer Menschen
-        //    richtig und fuer Proben eine Falle. Die Ablage der Vorhaben
-        //    liegt daneben und ist damit mit abgeschirmt.
-        if let Some(p) = std::env::var_os("MYL_EINSTELLUNGEN").filter(|p| !p.is_empty()) {
-            return std::path::PathBuf::from(p);
-        }
-        Self::plattformpfad()
+        myl_local_agent::ort::einstellungsdatei()
     }
 
-    /// **Der Ort nach der Plattform**, ohne die Abschirmung durch
-    /// `MYL_EINSTELLUNGEN`.
-    ///
-    /// ⚑ **Eine eigene Funktion, damit die Probe des Ortes die
-    /// Abschirmung nicht aufheben muss** (Fund 496). Sie lief nur ohne
-    /// `MYL_EINSTELLUNGEN` gruen, also genau so, wie keine Probe laufen
-    /// soll; und die Variable in einer Probe zu entfernen, gaebe allen
-    /// Proben, die daneben laufen, fuer diese Zeit die echte Datei frei.
-    fn plattformpfad() -> std::path::PathBuf {
-        // 📌 **Wer schon eine Datei hat, behaelt sie.** Ohne diese drei
-        // Zeilen zoege die Datei bei jedem, der `XDG_CONFIG_HOME` setzt,
-        // an einen neuen Ort um, und seine Einstellungen waeren
-        // stillschweigend weg: `lesen` faende nichts und legte die
-        // Vorgaben an. Das faellt erst auf, wenn jemand sein Artefakt
-        // sucht. Deshalb gewinnt eine **vorhandene** Datei vor der
-        // bevorzugten Stelle, und das gilt in beide Richtungen: Wer
-        // schon an der neuen Stelle liegt, wird nicht an die alte
-        // zurueckgeschickt.
-        for k in Self::kandidaten_liste() {
-            if k.is_file() {
-                return k;
-            }
-        }
-        Self::kandidaten_liste()
-            .into_iter()
-            .next()
-            .expect("die Liste endet immer mit dem Arbeitsverzeichnis")
-    }
-
-    /// **Der Standard-Arbeitsordner, wenn keiner gesetzt ist**:
-    /// `WORK_DIR` im Repositorium (Auftrag des Projektinhabers,
-    /// 2026-09-15).
-    ///
-    /// ⚑ **Ein Ordner mit Beispieldateien statt des CTF-Ordners.** Bis
-    /// zum 2026-09-15 stand hier `BENCHMARKS/Agent/ctf`. Der ist ein
-    /// Pruefstand mit Aufgaben, kein Arbeitsplatz: Wer den Client zum
-    /// ersten Mal oeffnet, soll Dateien vorfinden, an denen sich jedes
-    /// Werkzeug zeigt, und eine README, die dazu die Prompts nennt.
-    ///
-    /// ⚑ **Ueber [`crate::ort::wurzel`] gefunden, nicht vom
-    /// Arbeitsverzeichnis aufwaerts.**
-    ///
-    /// 📌 Genau dieser Unterschied war der Fehler bei `kiste_ordner`:
-    /// Das Fenster aus dem Finder hat als Arbeitsverzeichnis `/`, und
-    /// ein Lauf aufwaerts von dort findet nie ein Repositorium. `wurzel`
-    /// sucht zusaetzlich beim Programm selbst und faellt auf den
-    /// gemerkten Ort zurueck, und das ist der Fall, um den es hier geht.
-    ///
-    /// `None`, wenn nichts passt: dann bleibt es dabei, dass ohne
-    /// gesetzten Ordner keine Dateiwerkzeuge laufen.
+    /// Der Standard-Arbeitsordner, siehe [`myl_local_agent::ort::standard_wurzel`].
     pub fn standard_wurzel() -> Option<String> {
-        use std::path::PathBuf;
-        // ⚑ **Die Umgebung hat Vorrang**, damit eine Probe und ein
-        // Einsatz ausserhalb des Repositoriums einen eigenen Ordner
-        // nennen koennen, ohne die Einstellungsdatei anzufassen.
-        if let Some(p) = std::env::var_os(ARBEITSORDNER) {
-            let p = PathBuf::from(p);
-            if p.is_dir() {
-                return Some(p.display().to_string());
-            }
-        }
-        let o = crate::ort::wurzel()?.join(ARBEITSORDNER_IM_BAUM);
-        o.is_dir().then(|| o.display().to_string())
-    }
-
-    /// Die Orte, an denen die Einstellungsdatei liegen kann, in der
-    /// Reihenfolge, in der sie bevorzugt werden.
-    ///
-    /// ⚑ **Eigene Funktion, damit `vorgabepfad` und die Wanderung
-    /// dieselbe Liste benutzen.** Zwei Listen liefen auseinander, und
-    /// dann fande die eine, was die andere schriebe.
-    fn kandidaten_liste() -> Vec<std::path::PathBuf> {
-        use std::path::PathBuf;
-        let mut orte: Vec<PathBuf> = Vec::new();
-
-        #[cfg(windows)]
-        {
-            if let Some(appdata) = std::env::var_os("APPDATA") {
-                if !appdata.is_empty() {
-                    orte.push(PathBuf::from(appdata).join("Myelith").join("client.json"));
-                }
-            }
-            if let Some(profil) = std::env::var_os("USERPROFILE") {
-                if !profil.is_empty() {
-                    orte.push(
-                        PathBuf::from(profil)
-                            .join("AppData")
-                            .join("Roaming")
-                            .join("Myelith")
-                            .join("client.json"),
-                    );
-                }
-            }
-        }
-
-        if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME") {
-            // ⚑ Die Spezifikation sagt: ein relativer Wert ist ungueltig
-            // und zu ignorieren. Ohne diese Zeile fuehrte ein
-            // versehentliches `XDG_CONFIG_HOME=.config` zurueck in genau
-            // den Fehler, der oben behoben wird.
-            let p = PathBuf::from(xdg);
-            if p.is_absolute() {
-                orte.push(p.join("myelith").join("client.json"));
-            }
-        }
-        if let Some(heim) = std::env::var_os("HOME") {
-            if !heim.is_empty() {
-                orte.push(PathBuf::from(heim).join(".config/myelith/client.json"));
-            }
-        }
-        // Bleibt nur das Arbeitsverzeichnis. Das ist ein schlechter Ort,
-        // und deshalb steht er hier als letzter und nicht als erster.
-        orte.push(PathBuf::from(".config/myelith/client.json"));
-        orte
+        myl_local_agent::ort::standard_wurzel()
     }
 }
 
@@ -1671,7 +1110,7 @@ pub const FELDER: [Feld; 30] = [
         "agent.wurzel",
         Feldart::Pfad,
         ("Agent", "Agent"),
-        ("Arbeitsordner", "Working folder"),
+        myl_local_agent::agentenwahl::TITEL_WURZEL,
         (
             "Der einzige Ordner, in dem die Dateiwerkzeuge arbeiten dürfen. Ohne Angabe der Ordner WORK_DIR im Repositorium; findet sich auch der nicht, gibt es keine Dateiwerkzeuge.",
             "The only folder the file tools may work in. Unless set, the WORK_DIR folder in the repository; if that is missing too, there are no file tools at all.",
@@ -1691,7 +1130,7 @@ pub const FELDER: [Feld; 30] = [
         "agent.blick_bildschirm",
         Feldart::Schalter,
         ("Agent", "Agent"),
-        ("Bildschirm ansehen dürfen", "May look at the screen"),
+        myl_local_agent::agentenwahl::TITEL_BLICK_BILDSCHIRM,
         (
             "Erlaubt dem Agenten, den Bildschirm aufzunehmen und das Bild von einem kleinen Modell ansehen zu lassen, wenn er danach gefragt wird. Ohne dieses Häkchen gibt es das Werkzeug gar nicht. Jede Aufnahme bleibt im Arbeitsordner unter .AGENT/blicke/ liegen. Auf macOS braucht es zusätzlich die Freigabe unter Datenschutz, Bildschirmaufnahme.",
             "Lets the agent capture the screen and have a small model look at it, when asked to. Without this box the tool does not exist at all. Every capture is kept in the working folder under .AGENT/blicke/. On macOS this also needs the Screen Recording permission.",
@@ -1701,7 +1140,7 @@ pub const FELDER: [Feld; 30] = [
         "agent.blick_kamera",
         Feldart::Schalter,
         ("Agent", "Agent"),
-        ("Kamera ansehen dürfen", "May look through the camera"),
+        myl_local_agent::agentenwahl::TITEL_BLICK_KAMERA,
         (
             "Erlaubt dem Agenten, ein Kamerabild aufzunehmen und von einem kleinen Modell ansehen zu lassen, wenn er danach gefragt wird. Getrennt vom Bildschirm, denn eine Kamera zeigt den Raum und nicht den Rechner. Jede Aufnahme bleibt unter .AGENT/blicke/ liegen.",
             "Lets the agent capture a camera image and have a small model look at it, when asked to. Separate from the screen, because a camera shows the room and not the computer. Every capture is kept under .AGENT/blicke/.",
@@ -1711,7 +1150,7 @@ pub const FELDER: [Feld; 30] = [
         "agent.web_recherche",
         Feldart::Schalter,
         ("Agent", "Agent"),
-        ("Im Web recherchieren dürfen", "May research on the web"),
+        myl_local_agent::agentenwahl::TITEL_WEB_RECHERCHE,
         (
             "Gibt Chat und Agent zwei Werkzeuge: suchen und eine Seite lesen. Gelesen wird nur, was aus einem Suchtreffer stammt oder was du selbst genannt hast; eine selbst zusammengesetzte Adresse wird abgewiesen, und eine Suchfrage, die wörtlich aus einem Anhang oder einer gelesenen eigenen Datei stammt, ebenso. Fremder Seitentext kommt eingefasst und als Inhalt gekennzeichnet zurück, niemals als Anweisung. Ohne dieses Häkchen gibt es die Werkzeuge gar nicht. Es braucht curl auf dem Rechner.",
             "Gives chat and agent two tools: search, and read a page. Only an address from a search hit or one you named yourself is read; a self-composed address is refused, and so is a query taken verbatim from an attachment or from one of your own files the agent has read. Foreign page text comes back framed and marked as content, never as instruction. Without this box the tools do not exist at all. It needs curl on the machine.",
@@ -1721,7 +1160,7 @@ pub const FELDER: [Feld; 30] = [
         "agent.kistenordner",
         Feldart::Pfad,
         ("Agent", "Agent"),
-        ("Lokale Werkzeugkiste", "Local tool box"),
+        myl_local_agent::agentenwahl::TITEL_KISTENORDNER,
         (
             "Der Ordner, aus dem die lokalen Werkzeuge kommen. Sein Name ist der Name der Kiste und sagt zugleich, welche eingebauten Werkzeuge dazukommen: base die fünf Dateiwerkzeuge, advanced zusätzlich run_command. Ohne Angabe die Kiste Base. Die verankerten Werkzeuge kommen unabhängig davon dazu; sie rechnen aus ihren Eingaben und brauchen keinen Ordner.",
             "The folder the tools come from. Its name is the box name and also decides which built-in tools come along: base the five file tools, advanced adds run_command. Unless set, the Base box. The anchored tools come along regardless; they compute from their inputs and need no folder.",
@@ -1741,7 +1180,7 @@ pub const FELDER: [Feld; 30] = [
         "agent.schreiben",
         Feldart::Schalter,
         ("Agent", "Agent"),
-        ("Schreiben erlauben", "Allow writing"),
+        myl_local_agent::agentenwahl::TITEL_SCHREIBEN,
         (
             "Lässt den Agenten im Arbeitsordner auch ändern und anlegen. Ohne Angabe darf er nur lesen.",
             "Lets the agent change and create inside the working folder. Unless set it may only read.",
@@ -1870,14 +1309,6 @@ impl Feldart {
 pub const RECHENWERK_PRAEFIX: &str = "kap.rechenwerk.";
 
 /// Was `an` bedeutet.
-/// ⚑ **Die serde-Vorgabe fuer einen Schalter, der `true` sein muss.**
-/// Eine Ablage aus der Zeit vor diesem Feld traegt es nicht, und
-/// `bool::default()` waere `false`, also „schon zugestimmt". Das waere
-/// eine Zustimmung, die niemand gegeben hat.
-const fn an() -> bool {
-    true
-}
-
 fn ja(w: &str) -> bool {
     matches!(w, "an" | "ja" | "true" | "1")
 }
@@ -2460,7 +1891,7 @@ mod setzer {
         // NixOS die Ablage festlegt. Sie hat Vorrang vor `HOME`.
         std::env::set_var("XDG_CONFIG_HOME", "/x/konfig");
         std::env::set_var("HOME", "/heim/jemand");
-        let p = Einstellungen::plattformpfad();
+        let p = myl_local_agent::ort::plattformpfad();
         if cfg!(windows) {
             // Auf Windows entscheidet `APPDATA`, und diese Pruefung
             // sagt dort nichts ueber XDG aus.
@@ -2473,14 +1904,14 @@ mod setzer {
         // uebergangen; sonst faende man sich genau in dem Fehler wieder,
         // den diese Aenderung behebt.
         std::env::set_var("XDG_CONFIG_HOME", ".konfig");
-        let p = Einstellungen::plattformpfad();
+        let p = myl_local_agent::ort::plattformpfad();
         assert!(
             !p.starts_with(".konfig"),
             "ein relatives XDG_CONFIG_HOME wird uebergangen, bekommen: {p:?}"
         );
 
         std::env::remove_var("XDG_CONFIG_HOME");
-        let p = Einstellungen::plattformpfad();
+        let p = myl_local_agent::ort::plattformpfad();
         if !cfg!(windows) {
             assert_eq!(p, std::path::PathBuf::from("/heim/jemand/.config/myelith/client.json"));
         }
@@ -2489,7 +1920,7 @@ mod setzer {
         // Heimatvariablen gesetzt. Frueher war das Ergebnis
         // `./.config/...`, also je Arbeitsverzeichnis ein anderes.
         std::env::remove_var("HOME");
-        let p = Einstellungen::plattformpfad();
+        let p = myl_local_agent::ort::plattformpfad();
         if !cfg!(windows) {
             assert_eq!(
                 p,
@@ -2514,7 +1945,7 @@ mod setzer {
             std::env::set_var("HOME", heim.path());
             std::env::set_var("XDG_CONFIG_HOME", xdg.path());
             assert_eq!(
-                Einstellungen::plattformpfad(),
+                myl_local_agent::ort::plattformpfad(),
                 alt.join("client.json"),
                 "wer schon eine Datei hat, behaelt sie"
             );
@@ -2525,7 +1956,7 @@ mod setzer {
             std::fs::create_dir_all(&neu_dir).expect("neues Verzeichnis");
             std::fs::write(neu_dir.join("client.json"), "{}\n").expect("neue Datei");
             assert_eq!(
-                Einstellungen::plattformpfad(),
+                myl_local_agent::ort::plattformpfad(),
                 neu_dir.join("client.json"),
                 "liegt an beiden Stellen eine, gewinnt die bevorzugte"
             );
@@ -2589,7 +2020,7 @@ mod setzer {
         // Agent startet ohne Dateiwerkzeuge, ohne dass jemand einen
         // Fehler sieht.
         std::env::remove_var(ARBEITSORDNER);
-        let w = crate::ort::wurzel().expect("die Wurzel des Repositoriums");
+        let w = myl_local_agent::ort::wurzel().expect("die Wurzel des Repositoriums");
         let o = w.join(ARBEITSORDNER_IM_BAUM);
         assert!(o.is_dir(), "{} fehlt", o.display());
         assert!(

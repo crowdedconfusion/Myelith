@@ -87,7 +87,7 @@ wollte jeder alle Kerne, und sie naehmen sie sich gegenseitig weg.
 
 ⚑ **Die Werkzeugkiste ist ein Ordner.** `agent.kistenordner` sagt
 welcher; ohne Angabe der mitgelieferte `Base`-Ordner unter
-`CLIENT/werkzeugkisten`. Sein **Name** ist der Name der Kiste und sagt
+`AGENT_LAYER/local-toolkits`. Sein **Name** ist der Name der Kiste und sagt
 zugleich, welche eingebauten Werkzeuge dazukommen: `Base` die fuenf
 Dateiwerkzeuge, `Advanced` zusaetzlich `run_command` und die drei
 Werkzeuge fuer den Mitschnitt, ein anderer Name
@@ -134,7 +134,7 @@ Rechenzeit kostet wie ein Antworttoken.
 
 fn main() {
     // ⛔️ Das Aktionsprotokoll gilt fuer jeden Lauf von `myl`.
-    myl_client::protokoll::einschalten();
+    myl_local_agent::protokoll::einschalten();
     let args: Vec<String> = std::env::args().collect();
     // ⛔️ **Wo ein Modell antwortet, steht vorher, dass es eines ist**
     //   (Art. 50 Abs. 1 KI-Verordnung), auf der Fehlerausgabe, damit die
@@ -234,12 +234,12 @@ fn ruestung_fuer_diesen_lauf(
     e: &Einstellungen,
     args: &[String],
     auftrag: &str,
-) -> Result<myl_client::ruestung::Ruestung, String> {
+) -> Result<myl_local_agent::ruestung::Ruestung, String> {
     if !args.iter().any(|a| a == "--chat") {
         // ⚑ Der Auftrag ist die Saat der Web-Recherche, wie im Chat.
         let mut agent = agent_fuer_diesen_lauf(e, args);
         agent.netzsaat = Some(auftrag.to_string());
-        return myl_client::ruestung::ruesten(
+        return myl_local_agent::ruestung::ruesten(
             &agent,
             form_fuer_diesen_lauf(args),
             satz_fuer_diesen_lauf(e, args),
@@ -258,9 +258,9 @@ fn ruestung_fuer_diesen_lauf(
     // ⛔️ **Der Auftrag ist die Saat des Zielkreises**, nichts sonst:
     //    Genau wie im Fenster zaehlt nur, was der Mensch geschrieben
     //    hat.
-    let netz = (e.agent.web_recherche && myl_client::netzwerkzeuge::curl_vorhanden())
+    let netz = (e.agent.web_recherche && myl_local_agent::netzwerkzeuge::curl_vorhanden())
         .then_some(auftrag);
-    myl_client::ruestung::ruesten_fuer_anhaenge(
+    myl_local_agent::ruestung::ruesten_fuer_anhaenge(
         &anhangordner,
         form_fuer_diesen_lauf(args),
         netz,
@@ -309,7 +309,7 @@ fn artefakt_und_rest<'a>(
         // Programme desselben Klienten, zwei Antworten auf dieselbe
         // Frage.**
         _ if !e.modell.artefakt.is_empty() => {
-            (Some(myl_client::ort::absolut(&e.modell.artefakt)), args)
+            (Some(myl_local_agent::ort::absolut(&e.modell.artefakt)), args)
         }
         _ => (None, args),
     }
@@ -327,7 +327,7 @@ fn artefakt_und_rest<'a>(
 /// Klon heraus richtet damit auch das installierte Programm wieder
 /// aus, das von sich aus nichts faende.
 fn ort() -> i32 {
-    match myl_client::ort::wurzel() {
+    match myl_local_agent::ort::wurzel() {
         Some(w) => {
             println!("{}", w.display());
             0
@@ -337,7 +337,7 @@ fn ort() -> i32 {
                 "myl ort: kein Klon gefunden.\n\
                  Gesucht wurde ab dem Arbeitsverzeichnis und ab diesem Programm \
                  nach `{}`.",
-                myl_client::ort::MARKE
+                myl_local_agent::ort::MARKE
             );
             1
         }
@@ -519,8 +519,8 @@ fn ohne_wert(f: &myl_client::einstellungen::Feld) -> String {
 /// zuerst, als Tabelle.
 fn protokoll(args: &[String]) -> i32 {
     let anzahl = args.first().and_then(|a| a.parse().ok()).unwrap_or(50);
-    let eintraege = myl_client::protokoll::lesen(anzahl);
-    println!("Ablage: {}", myl_client::protokoll::ordner().display());
+    let eintraege = myl_local_agent::protokoll::lesen(anzahl);
+    println!("Ablage: {}", myl_local_agent::protokoll::ordner().display());
     if eintraege.is_empty() {
         println!("Noch keine Eintraege.");
         return 0;
@@ -633,9 +633,9 @@ fn sinne(args: &[String]) -> i32 {
     //   Umgebungsuebersteuerung. Eine eigene Lesart hier zeigte einen
     //   Stand, den der Agent nicht hat.
     let b = match myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad()) {
-        Ok(e) => myl_client::sinneswerkzeuge::Blickbefugnis::aus_einstellung(&e.agent),
-        Err(_) => myl_client::sinneswerkzeuge::Blickbefugnis::fuer(
-            myl_client::sinneswerkzeuge::Blickbefugnis::keine(),
+        Ok(e) => myl_local_agent::sinneswerkzeuge::Blickbefugnis::aus_einstellung(&e.agent),
+        Err(_) => myl_local_agent::sinneswerkzeuge::Blickbefugnis::fuer(
+            myl_local_agent::sinneswerkzeuge::Blickbefugnis::keine(),
         ),
     };
     let stand = |an: bool| if an { "scharf" } else { "AUS" };
@@ -751,7 +751,7 @@ fn anhaenge(args: &[String]) -> i32 {
         eprintln!("myl anhaenge: es ist kein Arbeitsordner gesetzt (`myl setzen agent.wurzel <pfad>`)");
         return 1;
     };
-    let ordner = wurzel.join(myl_client::verlauf::ORDNER).join(anhang::ORDNER);
+    let ordner = wurzel.join(myl_local_agent::verlauf::ORDNER).join(anhang::ORDNER);
     let liste = anhang::vorhandene(&wurzel);
     println!("Anhaenge in {}", ordner.display());
     if liste.is_empty() {
@@ -792,7 +792,7 @@ fn anhaenge(args: &[String]) -> i32 {
 
 
 fn skills(args: &[String]) -> i32 {
-    use myl_client::skills;
+    use myl_local_agent::skills;
     let allgemein = skills::allgemeiner_ordner();
     let wurzel = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())
         .ok()
@@ -880,7 +880,7 @@ fn skills(args: &[String]) -> i32 {
 /// nachpruefbar sind. ⚑ **Dieselben Zahlen wie `sed -n`, `grep -n`
 /// und der Sprung im Editor**, denn es sind Zeilen der Datei.
 fn verlauf(args: &[String]) -> i32 {
-    use myl_client::verlauf;
+    use myl_local_agent::verlauf;
 
     let loeschen = args.iter().any(|a| a == "--loeschen");
     let rest: Vec<&String> = args.iter().filter(|a| !a.starts_with('-')).collect();
@@ -903,7 +903,7 @@ fn verlauf(args: &[String]) -> i32 {
         // eingestellte Ordner waere nur noch aus Zufall erreichbar.
         .or_else(|| {
             let hier = std::env::current_dir().ok()?;
-            hier.join(myl_client::verlauf::ORDNER).is_dir().then_some(hier)
+            hier.join(myl_local_agent::verlauf::ORDNER).is_dir().then_some(hier)
         })
         .or_else(|| {
             myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())
@@ -1152,8 +1152,8 @@ fn wert(args: &[String], name: &str) -> Option<String> {
 fn satz_fuer_diesen_lauf(
     e: &Einstellungen,
     args: &[String],
-) -> myl_client::werkzeuge::Werkzeugkiste {
-    use myl_client::werkzeuge::Werkzeugkiste;
+) -> myl_local_agent::werkzeuge::Werkzeugkiste {
+    use myl_local_agent::werkzeuge::Werkzeugkiste;
     // 📌 **Hier stand `Werkzeugkiste::default()` als Vorgabe**, also
     // `Base`, ohne die Einstellung ueberhaupt anzusehen. Wer seine Kiste
     // auf `advanced` stellte und `myl agent` ohne Schalter rief, bekam
@@ -1161,7 +1161,7 @@ fn satz_fuer_diesen_lauf(
     // die eingebauten Werkzeuge aus einer anderen Quelle. **Dieselbe
     // Wahl an zwei Orten**, und die zweite meldet sich nicht.
     let Some(wort) = args.windows(2).find(|p| p[0] == "--werkzeuge").map(|p| p[1].clone()) else {
-        return myl_client::kisten::kiste_der_gilt(&e.agent);
+        return myl_local_agent::kisten::kiste_der_gilt(&e.agent);
     };
     // ⚑ Der Schalter ueberstimmt fuer diesen einen Lauf, und er nimmt
     // dieselben Woerter wie der Ordnername.
@@ -1250,7 +1250,7 @@ fn frage(args: &[String]) -> i32 {
 
     let anfang = std::time::Instant::now();
     // ⛔️ Auch der Chat ohne Werkzeuge steht unter den Grundsaetzen.
-    let grundsaetze = match myl_client::systemprompt::grundsaetze(e.oberflaeche.sprache) {
+    let grundsaetze = match myl_local_agent::systemprompt::grundsaetze(e.oberflaeche.sprache) {
         Ok(g) => g,
         Err(f) => {
             eprintln!("myl: {f}");
@@ -1336,7 +1336,7 @@ impl myl_local_agent::ausfuehrung::Werkzeugausfuehrung for Uhr {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        Ok(format!("{} ({jetzt} seconds since 1970)", myl_client::uhr::utc_text(jetzt)))
+        Ok(format!("{} ({jetzt} seconds since 1970)", myl_local_agent::uhr::utc_text(jetzt)))
     }
 }
 
@@ -1439,7 +1439,7 @@ fn sitzung(args: &[String]) -> i32 {
     saat_setzen(&mut m, rest, &e);
     let geladen = anfang.elapsed();
 
-    let ruestung = match myl_client::ruestung::ruesten(
+    let ruestung = match myl_local_agent::ruestung::ruesten(
         &agent_fuer_diesen_lauf(&e, rest),
         form_fuer_diesen_lauf(rest),
         satz_fuer_diesen_lauf(&e, rest),
@@ -1561,19 +1561,19 @@ fn zeigen(nachrichten: &[myl_local_agent::tuerklient::Nachricht], roh: bool) {
                     // vorhat, und genau daran erkennt man einen falschen
                     // Plan, bevor das Werkzeug ihn ausfuehrt. Ihn
                     // wegzulassen zeigte nur, DASS etwas gerufen wurde.
-                    let dazwischen = myl_client::lauf::ohne_aufrufe(&n.content);
+                    let dazwischen = myl_local_agent::lauf::ohne_aufrufe(&n.content);
                     if !dazwischen.is_empty() {
                         println!("  {dazwischen}");
                     }
                     for r in &rufe {
                         match r {
-                            Ok(v) => println!("  → {} {}", v.name, myl_client::lauf::kurzform(&v.arguments)),
+                            Ok(v) => println!("  → {} {}", v.name, myl_local_agent::lauf::kurzform(&v.arguments)),
                             Err(u) => println!("  → unlesbarer Aufruf: {}", u.roh),
                         }
                     }
                 }
             }
-            "tool" => println!("  ← {}", myl_client::lauf::eine_zeile(&n.content, 100)),
+            "tool" => println!("  ← {}", myl_local_agent::lauf::eine_zeile(&n.content, 100)),
             _ => {}
         }
     }
@@ -1682,7 +1682,7 @@ fn hinweis_betriebsart(bezeugtes: bool, wieviele: usize) {
 /// **geschriebenen Dateien** und nicht das Gespraechsprotokoll.
 fn einen_auftrag(
     m: &Oertlichesmodell,
-    ruestung: &myl_client::ruestung::Ruestung,
+    ruestung: &myl_local_agent::ruestung::Ruestung,
     schritte: usize,
     bezeugtes: bool,
     roh: bool,
@@ -1692,7 +1692,7 @@ fn einen_auftrag(
     // (2026-09-17): Die naechste Frage des Nutzers ist ein neuer Anlass
     // nachzulesen.
     ruestung.nachschlagebudget_zuruecksetzen();
-    // ⚑ **Ueber den gemeinsamen Weg** (`myl_client::lauf`), 2026-09-29.
+    // ⚑ **Ueber den gemeinsamen Weg** (`myl_local_agent::lauf`), 2026-09-29.
     //   📌 Hier stand eine eigene Kopie der Schleife: dieselbe Vollmacht,
     //   derselbe Systemprompt, aber `ansageform: Default::default()` statt
     //   der Form der Ruestung, und ohne das, was der gemeinsame Weg dem
@@ -1701,7 +1701,7 @@ fn einen_auftrag(
     //   Hinweis nie bekam, obwohl er gebaut und geprueft war. Zwei Wege
     //   zu derselben Schleife laufen auseinander, und der zweite meldet
     //   sich nicht.
-    let erg = myl_client::lauf::fahren(m, ruestung, schritte, bezeugtes, m.grenze as u32, auftrag);
+    let erg = myl_local_agent::lauf::fahren(m, ruestung, schritte, bezeugtes, m.grenze as u32, auftrag);
     zeigen(&erg.nachrichten, roh);
     saat_nennen(erg.saat);
     eprintln!("[myl] Ende: {:?}, {} Nachrichten", erg.ende, erg.nachrichten.len());
@@ -1781,7 +1781,7 @@ fn auftraege(args: &[String]) -> i32 {
     m.grenze = zahl(rest, "--token").unwrap_or(e.modell.token);
     m.denken = denken_gewaehlt(rest, &e);
     saat_setzen(&mut m, rest, &e);
-    let ruestung = match myl_client::ruestung::ruesten(
+    let ruestung = match myl_local_agent::ruestung::ruesten(
         &agent_fuer_diesen_lauf(&e, rest),
         form_fuer_diesen_lauf(rest),
         satz_fuer_diesen_lauf(&e, rest),
@@ -1826,7 +1826,7 @@ fn auftraege(args: &[String]) -> i32 {
 /// noch ein Faden rechnet, aenderte dessen Aufteilung mitten im Lauf.
 fn viele_auftraege(
     m: &Oertlichesmodell,
-    ruestung: &myl_client::ruestung::Ruestung,
+    ruestung: &myl_local_agent::ruestung::Ruestung,
     schritte: usize,
     bezeugtes: bool,
     roh: bool,
@@ -1844,11 +1844,11 @@ fn viele_auftraege(
     // schreiben, ergeben eine Ausgabe, in der keine Antwort mehr einem
     // Auftrag zuzuordnen ist. Gedruckt wird nach dem Zusammenlaufen,
     // in der Reihenfolge der Auftraege.
-    let ergebnisse: Vec<(usize, myl_client::lauf::Ausgang)> = std::thread::scope(|s| {
+    let ergebnisse: Vec<(usize, myl_local_agent::lauf::Ausgang)> = std::thread::scope(|s| {
         let griffe: Vec<_> = auftraege
             .iter()
             .enumerate()
-            .map(|(i, a)| s.spawn(move || (i, myl_client::lauf::fahren(m, ruestung, schritte, bezeugtes, m.grenze as u32, a))))
+            .map(|(i, a)| s.spawn(move || (i, myl_local_agent::lauf::fahren(m, ruestung, schritte, bezeugtes, m.grenze as u32, a))))
             .collect();
         griffe.into_iter().filter_map(|g| g.join().ok()).collect()
     });
@@ -2152,7 +2152,7 @@ mod sitzungsdeutung {
 fn schliessen_bei_signal() {
     extern "C" fn behandeln(_: libc::c_int) {
         // Nur atomare Speicherzugriffe: in einem Signalbehandler erlaubt.
-        myl_client::vorhaben::schliessen_anfordern();
+        myl_local_agent::vorhaben::schliessen_anfordern();
     }
     // SAFETY: Der Behandler ruft nur `schliessen_anfordern`, das zwei
     // atomare Werte setzt.
@@ -2175,14 +2175,14 @@ fn schleife(args: &[String]) -> i32 {
         }
     };
     kapazitaet_anwenden(&e);
-    let ablage = myl_client::vorhaben::Ablage::vorgabe();
+    let ablage = myl_local_agent::vorhaben::Ablage::vorgabe();
     let ziel = freitext(args);
     if !ziel.trim().is_empty() {
         if let Some(satz) = myl_client::schutzfilter::abweisen(&ziel, e.oberflaeche.sprache, "myl-loop") {
             eprintln!("{satz}");
             return 3;
         }
-        match ablage.anlegen(&ziel, myl_client::vorhaben::jetzt()) {
+        match ablage.anlegen(&ziel, myl_local_agent::vorhaben::jetzt()) {
             Ok(v) => eprintln!("[myl] Vorhaben {} angelegt: {}", v.kennung, v.ziel),
             Err(m) => {
                 eprintln!("myl loop: {m}");
@@ -2190,10 +2190,10 @@ fn schleife(args: &[String]) -> i32 {
             }
         }
     }
-    if let Some(h) = myl_client::vorhaben::hinweis_vorgaben(&e) {
+    if let Some(h) = myl_local_agent::vorhaben::hinweis_vorgaben(&e.schleife, e.agent.modus, e.oberflaeche.sprache) {
         eprintln!("[myl] {h}");
     }
-    let laeufer = match myl_client::vorhaben::Laeufer::oeffnen(ablage, "myl loop") {
+    let laeufer = match myl_local_agent::vorhaben::Laeufer::oeffnen(ablage, "myl loop") {
         Ok(l) => l,
         Err(m) => {
             eprintln!("myl loop: {m}");
@@ -2204,7 +2204,7 @@ fn schleife(args: &[String]) -> i32 {
         eprintln!("[myl] Kein aktives Vorhaben. Anlegen mit: myl loop <ziel>");
         return 0;
     }
-    let artefakt = myl_client::ort::absolut(&e.modell.artefakt);
+    let artefakt = myl_local_agent::ort::absolut(&e.modell.artefakt);
     let mut m = match Oertlichesmodell::laden(&artefakt, &e.kapazitaet) {
         Ok(m) => m,
         Err(f) => {
@@ -2217,18 +2217,18 @@ fn schleife(args: &[String]) -> i32 {
     saat_setzen(&mut m, args, &e);
     schliessen_bei_signal();
 
-    let ruester = |mut zusaetzlich: myl_client::vorhaben::Zusatzwerkzeuge, v: &myl_client::vorhaben::Vorhaben| {
+    let ruester = |mut zusaetzlich: myl_local_agent::vorhaben::Zusatzwerkzeuge, v: &myl_local_agent::vorhaben::Vorhaben| {
         zusaetzlich.push(werkzeug_uhr());
         let agent = v.agent_fuer(&agent_fuer_diesen_lauf(&e, args));
-        myl_client::ruestung::ruesten(
+        myl_local_agent::ruestung::ruesten(
             &agent,
             form_fuer_diesen_lauf(args),
             satz_fuer_diesen_lauf(&e, args),
             zusaetzlich,
         )
     };
-    let melden = |ev: myl_client::vorhaben::Ereignis| {
-        use myl_client::vorhaben::Ereignis;
+    let melden = |ev: myl_local_agent::vorhaben::Ereignis| {
+        use myl_local_agent::vorhaben::Ereignis;
         match ev {
             Ereignis::Beginnt { kennung, ziel, runde } => eprintln!("\n[myl] {kennung}, Runde {runde}: {ziel}"),
             Ereignis::Geendet { vorhaben, bericht, pruefung, saat } => {
@@ -2237,19 +2237,19 @@ fn schleife(args: &[String]) -> i32 {
                 if let Some(p) = pruefung {
                     eprintln!("[myl] Prüfung: Fortschritt {}, erreicht {}. {}", ja_nein(p.fortschritt), ja_nein(p.erreicht), p.grund);
                 }
-                let zustand = myl_client::vorhaben::zustandswort(&vorhaben, e.oberflaeche.sprache);
+                let zustand = myl_local_agent::vorhaben::zustandswort(&vorhaben, e.oberflaeche.sprache);
                 eprintln!("[myl] {}: {zustand}", vorhaben.kennung);
             }
             Ereignis::Angestossen { kennung, ziel } => eprintln!("[myl] Kette: {kennung} beginnt: {ziel}"),
             Ereignis::Wartet { bis } => eprintln!(
                 "[myl] Nichts fällig; die nächste Runde in {} Minuten. Strg-C schließt, `myl loop` macht dort weiter.",
-                bis.saturating_sub(myl_client::vorhaben::jetzt()).div_ceil(60)
+                bis.saturating_sub(myl_local_agent::vorhaben::jetzt()).div_ceil(60)
             ),
             Ereignis::Fehler { kennung, grund } => eprintln!("[myl] {kennung} angehalten: {grund}"),
             Ereignis::OhneModell { grund } => eprintln!("[myl] Ohne Modell: {grund}"),
         }
     };
-    myl_client::vorhaben::fahren(
+    myl_local_agent::vorhaben::fahren(
         &laeufer,
         &|runde| {
             runde(&m);
@@ -2268,11 +2268,11 @@ fn schleife(args: &[String]) -> i32 {
             }
         }),
     );
-    let geschlossen = myl_client::vorhaben::schliessen_angefordert();
+    let geschlossen = myl_local_agent::vorhaben::schliessen_angefordert();
     drop(laeufer);
     if geschlossen {
         eprintln!("\n[myl] Geschlossen. `myl loop` macht genau dort weiter.");
-    } else if myl_client::notaus::ausgeloest() {
+    } else if myl_local_agent::notaus::ausgeloest() {
         eprintln!("\n[myl] Notaus. Fortsetzen mit `myl tasks resume <ID>`.");
     }
     0
@@ -2283,7 +2283,7 @@ fn ja_nein(b: bool) -> &'static str {
 }
 
 fn tasks_befehl(args: &[String]) -> i32 {
-    let ablage = myl_client::vorhaben::Ablage::vorgabe();
+    let ablage = myl_local_agent::vorhaben::Ablage::vorgabe();
     let sprache = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())
         .map(|e| e.oberflaeche.sprache)
         .unwrap_or_default();
@@ -2311,7 +2311,7 @@ fn tasks_befehl(args: &[String]) -> i32 {
                 eprintln!("{satz}");
                 return 1;
             }
-            match ablage.anlegen(&ziel, myl_client::vorhaben::jetzt()) {
+            match ablage.anlegen(&ziel, myl_local_agent::vorhaben::jetzt()) {
                 Ok(v) => {
                     if let Some(b) = abnahme.filter(|b| !b.trim().is_empty()) {
                         if let Err(m) = ablage.abnahme_setzen(&v.kennung, &b) {

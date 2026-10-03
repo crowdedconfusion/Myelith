@@ -167,7 +167,7 @@ pub fn pruefen(anfrage: &str, sprache: Sprache) -> Option<Abweisung> {
 /// wird. Die eine Stelle, die die Bedieninstrumente rufen.
 pub fn abweisen(anfrage: &str, sprache: Sprache, stelle: &str) -> Option<String> {
     let a = pruefen(anfrage, sprache)?;
-    crate::protokoll::ereignis("schutzfilter", &format!("{stelle}:{}", a.klasse), anfrage.as_bytes(), "abgewiesen");
+    myl_local_agent::protokoll::ereignis("schutzfilter", &format!("{stelle}:{}", a.klasse), anfrage.as_bytes(), "abgewiesen");
     Some(a.satz)
 }
 

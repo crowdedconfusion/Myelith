@@ -1,6 +1,6 @@
 # client (Nutzer-Client inkl. Wallet)
 
-> **Version:** 0.112.0 (`myl-client` 0.78.0, `myl-oberflaeche` 0.58.0, `myl-console` 0.28.0, `myl-senses` 0.11.0)
+> **Version:** 0.113.0 (`myl-client` 0.79.0, `myl-oberflaeche` 0.58.1, `myl-console` 0.28.1, `myl-senses` 0.11.0)
 > **Datum:** 2026-09-30
 > **Status:** ✅ **Der lokale Betrieb läuft und ist ausgeliefert.** Ein
 > Gesprächsfenster mit Modellwahl, Agentenschleife und
@@ -34,7 +34,7 @@ kostet nichts, wenn er stimmt, und einen halben Tag, wenn nicht.
 | **Der Loop: ein Ziel über viele Runden** | Im Fenster ∞ neben dem Senden (an und aus), daneben die Liste der Tasks: auswählen, neu anlegen, am Griff in die gewünschte Reihenfolge ziehen. Der vorderste läuft, alle dahinter sind „queued“; jeder Task hat sein eigenes Gespräch. In der Konsole `/loop` und `/tasks`, auf der Kommandozeile `myl loop` und `myl tasks`. Wird geschlossen, geht es beim nächsten Öffnen genau dort weiter |
 | **Ein Gespräch mit einem lokalen Modell** | `myl frage <artefakt> <text>`, oder im Fenster |
 | **Die Agentenschleife** | `myl agent`, mit Werkzeugen innerhalb einer Einhängegrenze |
-| **Die Werkzeugkiste ist ein Ordner** | Eine Einstellung, ein Pfad: `agent.kistenordner`, ohne Angabe die mitgelieferte Kiste `Base` unter `CLIENT/werkzeugkisten/`. Der **Ordnername** sagt, welche eingebauten Werkzeuge dazukommen: `Base` die fünf Dateiwerkzeuge und die zwei Skillwerkzeuge `search_skill` und `learn_skill` (seit dem 2026-09-26), `Advanced` zusätzlich `run_command` und die drei Werkzeuge für den Mitschnitt (seit dem 2026-09-17, gemessen: das kleine Modell ruft sie nie). ⚑ **Eine Kiste kann das auch selbst sagen**, in ihrem `kiste.json`; ohne diese Datei und ohne einen der drei Namen bleibt es bei `Base`. Was als Manifest im Ordner liegt, sieht das Modell **ohne Neubau**. ⚑ **`Base` ist die Grundlage jeder Kiste**: Ihre Werkzeuge werden mitgeladen, gestapelt und nicht kopiert; bei gleichem Namen gewinnt die gewählte Kiste. ⛔️ Die fünf Dateiwerkzeuge bleiben kompiliert, weil nur sie die Einhängegrenze einhalten; ein Manifest läuft über die Shell und kann das nicht |
+| **Die Werkzeugkiste ist ein Ordner** | Eine Einstellung, ein Pfad: `agent.kistenordner`, ohne Angabe die mitgelieferte Kiste `Base` unter `AGENT_LAYER/local-toolkits/`. Der **Ordnername** sagt, welche eingebauten Werkzeuge dazukommen: `Base` die fünf Dateiwerkzeuge und die zwei Skillwerkzeuge `search_skill` und `learn_skill` (seit dem 2026-09-26), `Advanced` zusätzlich `run_command` und die drei Werkzeuge für den Mitschnitt (seit dem 2026-09-17, gemessen: das kleine Modell ruft sie nie). ⚑ **Eine Kiste kann das auch selbst sagen**, in ihrem `kiste.json`; ohne diese Datei und ohne einen der drei Namen bleibt es bei `Base`. Was als Manifest im Ordner liegt, sieht das Modell **ohne Neubau**. ⚑ **`Base` ist die Grundlage jeder Kiste**: Ihre Werkzeuge werden mitgeladen, gestapelt und nicht kopiert; bei gleichem Namen gewinnt die gewählte Kiste. ⛔️ Die fünf Dateiwerkzeuge bleiben kompiliert, weil nur sie die Einhängegrenze einhalten; ein Manifest läuft über die Shell und kann das nicht |
 | **Eine Datei anhängen** | In der Konsole `/datei <pfad>`, im Fenster der Knopf neben dem Senden oder Ziehen und Ablegen. Die Datei wandert nach `.AGENT/anhaenge/`, also unter die Einhängung, und das Gespräch bekommt **eine Zeile mit ihrem Pfad statt ihres Inhalts**. Gibt es ein Werkzeug für ihre Art, nennt die Zeile es. `myl anhaenge` zeigt, was liegt, `--aufraeumen` räumt auf |
 | **Sehen, Hören, Sprechen** | Die Kiste `myl-senses`: Bilder über llama.cpp, Ton über whisper.cpp, Sprechen über piper, jeweils mit einem **eigenen kleinen** Modell außerhalb des Repositoriums (`~/.myelith/sinne`). Das Hauptmodell bleibt ein Textmodell. ⚑ **Auch im Chat**, wo es keine Werkzeugschleife gibt: Eine angehängte Datei wird beim Anhängen angesehen. Fehlt ein Laufwerk, sagt der Sinn mit Pfad und Befehl, was fehlt, statt abzustürzen |
 | **Die Sprechtaste** | Im Fenster: gedrückt halten, reden, loslassen. Über dem Feld schlägt ein **Pegel** aus, solange aufgenommen wird, und danach steht der Text **in der Eingabezeile**, nicht im Gespräch: Wer sich verhört hat, bessert aus, bevor das Modell liest. Der Lautsprecherknopf liest Antworten vor, **satzweise**: Der erste Satz klingt, während das Modell noch schreibt. ⚠️ Ein Voll-Duplex-Gespräch ist das nicht, es fehlen Sprechbeginnerkennung, Unterbrechen und Echokompensation |
@@ -62,11 +62,18 @@ Logik, die hier nicht hingehört.
 
 | Verzeichnis | Zweck |
 |---|---|
-| `myl-client/` | Die Kiste. Einstellungen, örtlicher Betrieb, Agentenschleife, Werkzeuge mit Einhängegrenze, Türklient. Kommandozeile `myl`. |
+| `myl-client/` | Die Kiste. Einstellungen, örtlicher Betrieb (das Modell laden und fragen), Hardware, Modellkatalog, Schutzfilter und Kennzeichnung. Kommandozeile `myl`. |
 | `myl-console/` | Der Agent in der Konsole: `myelith`. Startbild, Modellwahl, Eingaberahmen. **Ohne eigene Logik**, alles kommt aus `myl-client`. |
 | `myl-oberflaeche/` | Die grafische Oberfläche auf Tauri v2. Rücken in Rust, Frontend als reines HTML, CSS und ES-Module: **kein Bündler, keine Node-Werkzeugkette**. |
 | `myl-oberflaeche/ui/` | `index.html`, `stil.css`, `app.js`, `netz.js`. Neunundvierzig Prüfungen halten HTML, CSS, Skript und Rücken gegeneinander. |
 | `myl-oberflaeche/icons/` | Symbole. `icon.ico` und `icon.icns` sind aus `icon.png` abgeleitet und liegen fertig da; von Hand nachbessern hilft nicht, die nächste Ableitung überschreibt es. |
+
+⚑ **Der örtliche Agent liegt seit dem 2026-09-30 unter `AGENT_LAYER`**:
+Werkzeuge, Werkzeugkisten, Skills, Loop, Aktionsprotokoll, Notaus und
+Systemprompt in der Kiste `AGENT_LAYER/local-agent`, die Kisten als
+Manifeste in `AGENT_LAYER/local-toolkits/`, die Skills in
+`AGENT_LAYER/local-skills/`. Der Client hängt am Agenten, nie umgekehrt;
+Konsole, Fenster und `myl` beziehen ihn direkt von dort.
 
 ## Ausliefern
 
@@ -152,6 +159,105 @@ Modell überhaupt etwas taugt, und weil eine Schnittstelle, die kein
 Mensch je bedient hat, an den Bedürfnissen vorbei entworfen wird.
 
 ## Changelog
+
+### v0.113.0 – 2026-09-30 (der örtliche Agent zieht nach `AGENT_LAYER`; gespeicherte Kistenpfade ziehen mit; Fund 511)
+
+`myl-client` 0.79.0, `myl-console` 0.28.1, `myl-oberflaeche` 0.58.1.
+**Wunsch des Projektinhabers:** Was zum lokalen Agenten gehört, passte
+nicht in CLIENT. Es liegt jetzt in `AGENT_LAYER/local-agent`
+(Changelog AGENT_LAYER v0.25.0), die Kisten in
+`AGENT_LAYER/local-toolkits/`, die Skills in `AGENT_LAYER/local-skills/`.
+
+- **`myl-client` verliert zwanzig Module** und behält Einstellungen,
+  örtlichen Betrieb, Hardware, Modellkatalog, Aktualisierung, Anhänge,
+  Schutzfilter, Kennzeichnung und Warnung. Er hängt an `myl-local-agent`,
+  nie umgekehrt; `myl-agent` und `sha2` braucht er selbst nicht mehr.
+- **Konsole, Fenster und `myl` beziehen den Agenten direkt**
+  (`myl_local_agent::vorhaben` statt `myl_client::vorhaben`), mit eigener
+  Abhängigkeit. Wer liest, woher ein Aufruf kommt, sieht, dass er örtlich
+  wirkt. Die Proben, die Quelltext festhalten, zogen dieselbe Ersetzung mit.
+- **Einstellungen:** Der Abschnitt des Agenten (`agent`, `loop`, die
+  Sprache, die Werkzeugwahl) kommt aus `myl_local_agent::agentenwahl` und wird
+  unter `einstellungen::` weitergereicht; `client.json` ist unverändert. Die
+  Titel der sechs Agentenfelder in der Feldtabelle kommen von dort, neue
+  Probe `die_feldtabelle_zeigt_die_titel_des_agenten`.
+- ⛔️ **Gespeicherte Kistenpfade ziehen mit.** `agent.kistenordner` trägt
+  einen absoluten Pfad, bei jedem Nutzer, der eine Kiste gewählt hat (auch
+  beim Projektinhaber: `…/CLIENT/werkzeugkisten/Base`). Ein Ordner, den es
+  nicht gibt, fällt bewusst nicht auf die Vorgabe zurück, also stünde der
+  Agent nach dem Umzug ohne ein einziges Manifest-Werkzeug da. `lesen` tauscht
+  deshalb den Abschnitt eines früheren Ortes gegen
+  `AGENT_LAYER/local-toolkits`: `CLIENT/werkzeugkisten`, und den Zwischennamen
+  `AGENT_LAYER/local-werkzeugkisten`, der einen Tag lang lokal installiert und
+  gespeichert war. Beide Trennzeichen, und nur, wenn der alte Ordner nicht
+  mehr da ist. Probe `ein_alter_kistenordner_zieht_mit_um` (vier Pfade ziehen
+  um, ein älterer Klon und ein eigener Ordner bleiben).
+- Neu `tests/bedienung.rs`: die zwei Proben über den Quelltext der drei
+  Bedieninstrumente (Protokoll beim Start, Artefaktpfad), vorher in den
+  umgezogenen Modulen.
+- **Fund 511:** `myl-console` lief in keinem Testlauf der CI (160 Proben,
+  lokal grün). Jetzt mit Testschritt und einem Wächter, der jede Kiste ohne
+  Testschritt rot meldet (Changelog AGENT_LAYER v0.25.0).
+
+- ⛔️ **Fund 512 (Teil im Client): Das Überlegen darf die Antwort nie ganz
+  verbrauchen.** `oertlich::wirksames_denkbudget`: höchstens fünf Achtel der
+  Antwortlänge (bei 4 000 Token 2 500 und 1 500 für Aufruf oder Antwort,
+  im Gespräch bei 1 600 Token 1 000 und 600), ein kleineres ausdrückliches
+  Budget wie beim Vorlesen gilt weiter. Vorher gab es ein Denkbudget nur
+  beim Vorlesen, und das 35B überlegte im Agenten eine ganze Antwort lang,
+  ohne einen Aufruf zu schreiben. Dazu meldet das örtliche Modell `length`
+  statt immer `stop`, wenn es an der Grenze endet; die Schleife behandelt
+  das (AGENT_LAYER v0.25.0). Probe
+  `das_ueberlegen_laesst_platz_fuer_die_antwort`, mit Gegenprobe über
+  mehrere Grenzen.
+
+**Beleg:** `myl-client` 148, `myl-console` 160, `myl-oberflaeche` 80,
+`myl-senses` 86, Clippy ohne Befund; Sperrdateien und Vorrat passen; die
+Installation ohne Netz läuft, und der installierte Client übersetzt die
+gespeicherten Kistenpfade (die echten Einstellungen des Projektinhabers und
+eine abgeschirmte Kopie nachgesehen).
+
+### v0.112.1 – 2026-09-30 (Skill `schrauben-und-bohrungen`; ein schlichter CAD-Auftrag reicht)
+
+Nur mitgelieferte Daten, keine Kiste ändert sich.
+
+- **Neu `myl-skills/schrauben-und-bohrungen/SKILL.md`**, ein Nachschlagewerk
+  für Maße, das jedes Werkzeug nutzen kann (Wunsch des Projektinhabers: ein
+  nützlicher Beispielskill, der sich gleich prüfen lässt).
+  Durchgangslöcher nach ISO 273 (fein, mittel, grob; M5 mittel 5,5 mm),
+  Kernlöcher für Gewinde (M3 2,5 bis M12 10,2), Kopfdurchmesser der
+  Zylinderschrauben nach ISO 4762 für Senkbohrungen, der Senkkopf nach
+  ISO 10642, Zugaben beim 3D-Druck und die Falle, die der Anlass ist: Ein
+  „M5-Loch“ misst 5,5 mm, nicht 5. Die Werte von ISO 273 sind gegen die Norm
+  nachgesehen. Stichworte deutsch und englisch, damit `search_skill` ihn
+  auch zu „clearance hole“ findet.
+- **`cad-erstellen` nennt die Argumente von `write_file`** (`pfad` und
+  `inhalt`), weil das Modell dort zweimal `felder` schrieb, den Parameter von
+  `fill_template`.
+- `myl-skills/README.md` führt den neuen Skill in der Tabelle.
+
+**Gefahren**, beide mit dem installierten Client, 35B als Agent, Kiste `CAD`,
+Saat 1, eigenem Arbeitsordner, ohne „FreeCAD“ im Auftrag:
+
+- **Abstandshülse**, „außen 12 mm, innen 5,5 mm, 20 mm lang“: Das Modell
+  lernte `cad-erstellen` von selbst und baute die Hülse im zweiten Versuch;
+  Volumen 1 786,781 mm³, von Hand 1 786,78.
+- **Montageplatte**, „60 x 40 x 5 mm mit vier Löchern für M5-Schrauben,
+  jeweils 8 mm vom Rand“, also **ohne ein Lochmaß**: Das Modell suchte nach
+  beiden Seiten des Auftrags, lernte **beide** Skills, nahm 5,5 mm „nach
+  ISO 273 mittel“ und legte das Maß als Parameter `schraubenloch` an.
+  Volumen 11 524,834 mm³, von Hand 12 000 − 4 · π · 2,75² · 5 = 11 524,83;
+  `cad_pruefen` meldet einen gültigen Körper mit fünf Schritten. 16
+  Nachrichten, ein Fehlversuch.
+- ⚠️ **Der eine Fehlversuch war wieder `felder` in `write_file`**, diesmal
+  neben den richtigen Argumenten und obwohl der Skill sie nennt, im dritten
+  Lauf von dreien. Die Schemaprüfung wies den Aufruf mit Namen der
+  bekannten Felder ab, und das Modell besserte sofort aus. Der Schutz hält;
+  woher die Verwechslung kommt, ist offen.
+
+**Beleg:** die beiden Läufe oben (Protokoll und Dateien im Arbeitsordner
+der Sitzung, nicht versioniert); `myl skills` führt den Skill unter den
+eigenen, nachdem er dorthin kopiert war.
 
 ### v0.112.0 – 2026-09-30 (ein Agentenlauf bekommt mindestens 4 000 Token; ein Beispielteil in `WORK_DIR`)
 

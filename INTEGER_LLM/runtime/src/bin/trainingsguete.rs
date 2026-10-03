@@ -54,6 +54,9 @@
 //! | `--abfall E` | ⚑ Danach faellt sie linear auf ein `E`-tel im letzten Durchgang. Der Plan ist `optimierer::Lernratenplan`, eine reine Funktion der Schrittnummer |
 //! | `--planschritt K`, `--plangesamt G` | Ein Lauf in Teilen: Dieser Aufruf beginnt bei Planschritt `K` von insgesamt `G`. Ohne sie ist der Aufruf der ganze Plan |
 //! | `--nur-mlp`, `--nur-abwaerts` | ⚑ **Parameterisolierung**, die dritte Saeule gegen das Vergessen; 📌 ungemessen |
+//! | `--nur-zustand`, `--nur-zustandsprojektionen` | Nur die Zustandsschicht, oder nur ihre Projektionen ohne Torzeilen und Faltung |
+//! | `--nur-mischer` | Nur Achtsamkeit oder Zustandsschicht wird bewegt |
+//! | `--router-fest` | Alles ausser dem Router wird bewegt (L13: kippt die Expertenwahl durch den Router oder durch den Strom?) |
 //!
 //! 📌 **`--probentoken N` (Vorgabe 40).** Wie viele Token je Probe
 //! erzeugt werden. Stand fest auf zwoelf, und das reichte nicht: Beim
@@ -246,24 +249,25 @@ fn kopf_hereinlesen(
 /// also das Mischungsverhaeltnis der Experten, aber die Zustandsschicht
 /// kommt in ihr nicht vor.
 fn warum_kein_training(m: &integer_llm_runtime::model::IntegerModel) -> Option<String> {
-    use integer_llm_runtime::model::Mischer;
-    let rekurrent: Vec<usize> = m
+    use integer_llm_runtime::model::{Feedforward, Mischer};
+    // ⚑ **Seit dem 2026-10-02 traegt der Trainingspfad die Zustandsschicht**
+    //   (T5), allerdings nur mit Expertengemisch dahinter; ein Modell mit
+    //   rekurrenter Ebene und dichtem Block gibt es nicht.
+    let dicht_rekurrent: Vec<usize> = m
         .layers
         .iter()
         .enumerate()
-        .filter(|(_, l)| matches!(l.mischer, Mischer::Zustand(_)))
+        .filter(|(_, l)| matches!(l.mischer, Mischer::Zustand(_)) && matches!(l.ffn, Feedforward::Dense(_)))
         .map(|(i, _)| i)
         .collect();
-    if rekurrent.is_empty() {
+    if dicht_rekurrent.is_empty() {
         return None;
     }
     Some(format!(
-        "dieses Artefakt hat {} rekurrente Ebenen von {} (die erste ist {}), und fuer die \
-         Zustandsschicht gibt es keinen Rueckwaertspass. Trainiert werden koennen zurzeit \
-         nur Artefakte, deren Ebenen alle volle Achtsamkeit mischen.",
-        rekurrent.len(),
-        m.layers.len(),
-        rekurrent[0]
+        "dieses Artefakt hat {} rekurrente Ebenen mit dichtem Block (die erste ist {}); \
+         der Trainingspfad traegt die Zustandsschicht bisher nur mit Expertengemisch.",
+        dicht_rekurrent.len(),
+        dicht_rekurrent[0]
     ))
 }
 
@@ -384,6 +388,18 @@ fn main() {
             // deshalb standardmaessig aus.
             "--nur-mlp" => {
                 auswahl = integer_llm_runtime::shardtraining::Auswahl::NurMlp;
+            }
+            "--nur-zustand" => {
+                auswahl = integer_llm_runtime::shardtraining::Auswahl::NurZustand;
+            }
+            "--nur-zustandsprojektionen" => {
+                auswahl = integer_llm_runtime::shardtraining::Auswahl::NurZustandsprojektionen;
+            }
+            "--nur-mischer" => {
+                auswahl = integer_llm_runtime::shardtraining::Auswahl::NurMischer;
+            }
+            "--router-fest" => {
+                auswahl = integer_llm_runtime::shardtraining::Auswahl::OhneRouter;
             }
             "--nur-abwaerts" => {
                 auswahl = integer_llm_runtime::shardtraining::Auswahl::NurAbwaerts;
@@ -719,9 +735,8 @@ fn main() {
     // gebraucht.
     let zwischenbreite = match &m.layers[0].ffn {
         integer_llm_runtime::model::Feedforward::Dense(d) => d.gate_proj.shape[0],
-        // 📌 Ein Expertengemisch bekommt keine Zeilenbreiten; siehe
-        // `zeilenbreiten_dicht`. Null heisst dort „unbekannt", und
-        // dann bleibt es bei der Matrixnormierung.
+        // Ein Expertengemisch nimmt `zeilenbreiten_gemisch` (unten); diese
+        // Zahl braucht es nicht.
         integer_llm_runtime::model::Feedforward::Moe(_) => 0,
     };
     let mut gewichte = Shardgewichte::aus_modell(&m, von, m.num_layers).expect("Gewichte");
@@ -1252,14 +1267,30 @@ fn main() {
             // ⚑ Die Breiten kommen aus derselben Quelle wie die
             // Rueckumrechnung in die Uebertragungsform; eine zweite
             // Tabelle waere die zweite Fassung.
-            sammlung.zeilenbreiten_setzen(
-                integer_llm_runtime::shardtraining::zeilenbreiten_dicht(&m, zwischenbreite),
-            );
+            // ⚑ **Ein Gemisch hat seine eigene Tabelle** (2026-10-02):
+            //   `zeilenbreiten_gemisch` kennt Mischer, Router, Experten und den
+            //   geteilten Experten. Hier stand fuer jedes Modell die dichte
+            //   Tabelle, und ein Gemisch fiel damit still auf die
+            //   Matrixnormierung zurueck.
+            let breiten = match &m.layers[0].ffn {
+                integer_llm_runtime::model::Feedforward::Moe(g) => {
+                    integer_llm_runtime::shardtraining::zeilenbreiten_gemisch(
+                        &m,
+                        g.experts[0].gate_proj.shape[0],
+                        g.experts.len(),
+                    )
+                }
+                integer_llm_runtime::model::Feedforward::Dense(_) => {
+                    integer_llm_runtime::shardtraining::zeilenbreiten_dicht(&m, zwischenbreite)
+                }
+            };
+            sammlung.zeilenbreiten_setzen(breiten);
         }
         // ⚑ **Minibatch** (`--je-durchgang`, 2026-09-28): Mit denselben
         //   vier Folgen in jedem Durchgang lernt das Modell diese vier
         //   auswendig. Aus einem Vorrat nimmt jeder Durchgang die naechsten,
         //   umlaufend; die Kosten je Durchgang bleiben, der Text wechselt.
+        let (mut durchgang_verlust, mut durchgang_n) = (0.0f64, 0usize);
         let charge: Vec<&Vec<usize>> = if je_durchgang == 0 {
             lernfolgen.iter().collect()
         } else {
@@ -1278,12 +1309,25 @@ fn main() {
             };
             let strom = strom_vor(&m, folge, von);
             let ms = vorwaerts(&m, &mut gewichte, &vg, &strom).expect("vorwaerts");
-            let (mut g, _logits) = if lehrer {
+            let (mut g, logits_folge) = if lehrer {
                 let q = lehrer_je_position(&m, folge, &v);
                 gradienten_je_position_vom_lehrer(&m, &ms.ausgang, &v, &q, kopfsammlung.as_mut())
             } else {
                 gradienten_je_position_mit_kopf(&m, &ms.ausgang, &v, kopfsammlung.as_mut())
             };
+            // ⚑ **Der Verlust des Durchgangs, vor seinem Schritt** (2026-10-02):
+            //   Ein langer Lauf meldete bis hierher nur Anfang und Ende; wo er
+            //   kippt, war nicht zu sehen. Die Logits sind ohnehin gerechnet.
+            for (p, l) in logits_folge.iter().enumerate() {
+                if l.is_empty() || p + 1 >= folge.len() {
+                    continue;
+                }
+                let ce = kreuzentropie_aus_logits(l, folge[p + 1], v.logit_frac);
+                if ce.is_finite() {
+                    durchgang_verlust += ce;
+                    durchgang_n += 1;
+                }
+            }
             if nur_letzte {
                 let letzte = g.len() - 1;
                 for (p, zeile) in g.iter_mut().enumerate() {
@@ -1355,12 +1399,13 @@ fn main() {
                 }
                 eprintln!(
                     "[trainingsguete] Durchgang {} von {schritte}: {} Folgen gesammelt, \
-                     {} Matrizen, {} Gewichte bewegt{}",
+                     {} Matrizen, {} Gewichte bewegt{} | Perplexitaet der Folgen vor dem Schritt {:.3}",
                     s + 1,
                     erg.laeufe,
                     sammlung.matrizen(),
                     erg.bewegte_gewichte,
-                    expertendeckung(&m, &gewichte, von)
+                    expertendeckung(&m, &gewichte, von),
+                    perplexitaet(durchgang_verlust, durchgang_n)
                 );
             }
 

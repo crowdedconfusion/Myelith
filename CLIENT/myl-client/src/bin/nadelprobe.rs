@@ -147,8 +147,8 @@ fn main() {
         .unwrap_or_else(|| "advanced".to_string())
         .as_str()
     {
-        "base" => myl_client::werkzeuge::Werkzeugkiste::Base,
-        "advanced" => myl_client::werkzeuge::Werkzeugkiste::Advanced,
+        "base" => myl_local_agent::werkzeuge::Werkzeugkiste::Base,
+        "advanced" => myl_local_agent::werkzeuge::Werkzeugkiste::Advanced,
         anderes => {
             eprintln!("nadelprobe: --kiste kennt `Base` und `Advanced`, nicht `{anderes}`");
             std::process::exit(2);
@@ -318,7 +318,7 @@ struct Aufbau<'a> {
     regel: Option<&'a str>,
     anweisung: bool,
     deutsch: bool,
-    kiste: myl_client::werkzeuge::Werkzeugkiste,
+    kiste: myl_local_agent::werkzeuge::Werkzeugkiste,
 }
 
 fn ein_lauf(
@@ -346,7 +346,7 @@ fn ein_lauf(
     let kontext_ganz = m.kontext(&verlauf).map(|s| s.belegt).unwrap_or(0);
     let abschnitte: Vec<(String, String)> =
         verlauf.iter().map(|n| (n.role.clone(), n.content.clone())).collect();
-    let name = match myl_client::verlauf::schreiben(
+    let name = match myl_local_agent::verlauf::schreiben(
         &wurzel,
         &format!("nadel-{wo}-{lauf}"),
         modellname,
@@ -362,7 +362,7 @@ fn ein_lauf(
         "{}\n{}{}",
         myl_local_agent::verdichtung::KOPF,
         ZUSAMMENFASSUNG,
-        myl_client::gespraech::verweis(&wurzel, &name)
+        myl_local_agent::gespraech::verweis(&wurzel, &name)
     );
     let kontext = vec![Nachricht::nutzer(zusammenfassung)];
     let kontext_verdichtet = m.kontext(&kontext).map(|s| s.belegt).unwrap_or(0);
@@ -417,7 +417,7 @@ fn ein_lauf(
     // ⚑ **Die Gegenprobe im selben Lauf**, mit demselben Kontext und
     // **ohne** Mitschnitt: Was hier trifft, kam nicht aus dem
     // Mitschnitt.
-    let _ = std::fs::remove_dir_all(wurzel.join(myl_client::verlauf::ORDNER));
+    let _ = std::fs::remove_dir_all(wurzel.join(myl_local_agent::verlauf::ORDNER));
     let (gegenprobe_gefunden, _, _, _) =
         fragen(m, &wurzel, &kontext, &frage, &kennung, a, false);
 
@@ -472,7 +472,7 @@ fn fragen(
         schreiben: false,
         ..Default::default()
     };
-    let r = match myl_client::ruestung::ruesten(
+    let r = match myl_local_agent::ruestung::ruesten(
         &agent,
         if a.deutsch { myl_client::Ansageform::Deutsch } else { myl_client::Ansageform::Amtlich },
         a.kiste,
@@ -481,7 +481,7 @@ fn fragen(
         Ok(r) => r,
         Err(f) => return (false, format!("ungeruestet: {f}"), 0, 0),
     };
-    let lauf = myl_client::lauf::fahren_mit_hausregel(
+    let lauf = myl_local_agent::lauf::fahren_mit_hausregel(
         m,
         &r,
         a.schritte,
@@ -515,7 +515,7 @@ fn fragen(
         println!("--- Weg und Antwort ---");
         for n in &lauf.nachrichten {
             if n.role != "system" {
-                println!("[{}] {}", n.role, myl_client::lauf::bis_zur_grenze(&n.content, 600));
+                println!("[{}] {}", n.role, myl_local_agent::lauf::bis_zur_grenze(&n.content, 600));
             }
         }
         println!("--- Ende (gesucht: {kennung}) ---\n");

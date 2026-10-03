@@ -159,17 +159,7 @@ fn kanal_schritt(
     aus_frac: u8,
 ) -> i16 {
     // --- 1. Die Summe ueber die letzten KERN Stellen.
-    //
-    // ⚑ **i64 und nicht i32.** Vier Summanden aus int8 mal int16
-    // passen zwar in i32; die Summe geht aber danach durch
-    // `rescale_i64`, und ein Wechsel des Typs mitten in der
-    // Rechnung ist eine Stelle, an der jemand spaeter eine
-    // Saettigung uebersieht.
-    let mut akku: i64 = 0;
-    for (&w_j, &f_j) in w.iter().zip(fenster.iter()) {
-        akku += i64::from(w_j) * i64::from(f_j);
-    }
-    akku += i64::from(w[KERN - 1]) * i64::from(x);
+    let akku = kanal_summe(w, fenster, x);
 
     // --- 2. SiLU als Zerlegung, nicht als Tabelle ueber `x`.
     //
@@ -281,6 +271,107 @@ pub fn schritte_fenster(
     aus
 }
 
+/// **Die Gradienten der Faltung**: nach dem Eingang (je Token, je Kanal),
+/// auf dem Bus des eingehenden Gradienten, und nach den Gewichten (je Kanal
+/// [`KERN`] Werte).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Faltungsgradienten {
+    pub ein: Vec<Vec<crate::backward::Grad>>,
+    /// `gewicht[c * KERN + j] = Summe_t du_t * x`, mit `x` in seiner
+    /// ganzzahligen Darstellung und **ohne Skalierung**, wie `dL/dW` bei
+    /// `linear_backward`: Der Schritt kennt seine eigene. Nach dem reellen
+    /// Gewicht ist das `gewicht / 2^ein_frac`.
+    pub gewicht: Vec<i64>,
+}
+
+/// **Die Faltung rueckwaerts**, ueber eine Folge ab leerem Fenster.
+///
+/// ```text
+/// u_t   = Summe_j w_j * x_(t-(KERN-1)+j)
+/// y_t   = silu(u_t) = u_t * s_t,              s_t = sigmoid(u_t)
+/// du_t  = dy_t * s_t * (1 + u_t * (1 - s_t))
+/// dx_t' = Summe ueber alle (t, j) mit t' = t-(KERN-1)+j:  du_t * w_j
+/// dw_j  = Summe_t du_t * x_(t-(KERN-1)+j)
+/// ```
+///
+/// ⚑ **`s` aus derselben Tabelle wie vorwaerts** und `u` aus derselben
+/// Summe ([`kanal_summe`]), also die Ableitung dessen, was gelaufen ist.
+/// ⚑ **Ab leerem Fenster**, wie ein Trainingsfenster beginnt: Vor dem
+/// ersten Token stehen Nullen, und sie bekommen keinen Gradienten.
+#[allow(clippy::too_many_arguments)]
+pub fn rueckwaerts(
+    ein: &[&[i16]],
+    gewicht: &[i8],
+    w_schiebungen: &[u8],
+    ein_frac: u8,
+    sigmoid_lut: &[i16],
+    sigmoid_versatz: i16,
+    sigmoid_ein_frac: u8,
+    sigmoid_aus_frac: u8,
+    d_aus: &[Vec<crate::backward::Grad>],
+) -> Faltungsgradienten {
+    use crate::fixed_point::{rescale_i64, rshift_round_i128, rshift_round_i64};
+    use crate::integer_math::sigmoid_nachschlagen;
+    let n = ein.len();
+    let c = w_schiebungen.len();
+    assert_eq!(gewicht.len(), c * KERN, "ein Kern von {KERN} Stellen je Kanal");
+    assert!(ein.iter().all(|x| x.len() == c), "ein Eingang passt nicht zur Kanalzahl");
+    assert_eq!(d_aus.len(), n, "ein Ausgangsgradient je Token");
+    assert!(d_aus.iter().all(|d| d.len() == c), "ein Ausgangsgradient passt nicht zur Kanalzahl");
+    let fs = sigmoid_aus_frac;
+    let eins = 1i64 << fs;
+
+    let mut dx = vec![vec![0i64; c]; n];
+    let mut dw = vec![0i128; c * KERN];
+    for kanal in 0..c {
+        let w = &gewicht[kanal * KERN..(kanal + 1) * KERN];
+        let xf = w_schiebungen[kanal] + ein_frac;
+        let wert = |t: isize| -> i16 { if t < 0 { 0 } else { ein[t as usize][kanal] } };
+        for t in 0..n {
+            let fenster: [i16; KERN - 1] = std::array::from_fn(|j| wert(t as isize - (KERN - 1) as isize + j as isize));
+            let u = kanal_summe(w, &fenster, ein[t][kanal]);
+            let arg = rescale_i64(u, xf, sigmoid_ein_frac).clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32;
+            let s = sigmoid_nachschlagen(arg, sigmoid_lut, sigmoid_versatz, sigmoid_ein_frac, fs);
+            // silu'(u) = s + u * s * (1 - s), auf `fs`
+            let us = rshift_round_i128(i128::from(u) * i128::from(s), u32::from(xf));
+            let ableitung = s + rshift_round_i128(us * i128::from(eins - s), u32::from(fs)) as i64;
+            let du = rshift_round_i128(i128::from(d_aus[t][kanal]) * i128::from(ableitung), u32::from(fs)) as i64;
+            if du == 0 {
+                continue;
+            }
+            for (j, &w_j) in w.iter().enumerate() {
+                let quelle = t as isize - (KERN - 1) as isize + j as isize;
+                if quelle < 0 {
+                    continue;
+                }
+                let quelle = quelle as usize;
+                dx[quelle][kanal] += rshift_round_i64(du * i64::from(w_j), w_schiebungen[kanal]);
+                dw[kanal * KERN + j] += i128::from(du) * i128::from(ein[quelle][kanal]);
+            }
+        }
+    }
+    Faltungsgradienten {
+        ein: dx.into_iter().map(|z| z.into_iter().map(crate::trainingsschritt::begrenze).collect()).collect(),
+        gewicht: dw.into_iter().map(|s| s.clamp(i128::from(i64::MIN), i128::from(i64::MAX)) as i64).collect(),
+    }
+}
+
+/// **Die Summe eines Kanals ueber die letzten [`KERN`] Stellen**, die
+/// aeltesten zuerst, `x` als juengster. Vorwaerts und rueckwaerts dieselbe.
+#[inline]
+fn kanal_summe(w: &[i8], fenster: &[i16], x: i16) -> i64 {
+    // ⚑ **i64 und nicht i32.** Vier Summanden aus int8 mal int16
+    // passen zwar in i32; die Summe geht aber danach durch
+    // `rescale_i64`, und ein Wechsel des Typs mitten in der
+    // Rechnung ist eine Stelle, an der jemand spaeter eine
+    // Saettigung uebersieht.
+    let mut akku: i64 = 0;
+    for (&w_j, &f_j) in w.iter().zip(fenster.iter()) {
+        akku += i64::from(w_j) * i64::from(f_j);
+    }
+    akku + i64::from(w[KERN - 1]) * i64::from(x)
+}
+
 /// **Wie viele Kanaele eine Einheit von [`schritte_fenster`] rechnet.**
 ///
 /// ⚑ 64 Kanaele sind bei 8192 Kanaelen 128 Einheiten, genug fuer eine
@@ -305,6 +396,66 @@ mod proben {
                 (y * (1u32 << aus_frac) as f64).round().clamp(-32768.0, 32767.0) as i16
             })
             .collect()
+    }
+
+    /// ⚑ **Der Rueckweg sagt die Aenderung voraus**, fuer den Eingang und
+    /// fuer die Gewichte, je in einer zufaelligen Richtung und mittig
+    /// gemessen am echten Vorwaertspass.
+    #[test]
+    fn der_rueckweg_sagt_die_aenderung_voraus() {
+        const C: usize = 64;
+        const N: usize = 10;
+        let lut = sigmoid_tabelle(8, 14, 4096);
+        let mut z = 0x2545_f491_4f6c_dd1du64;
+        let mut zahl = |von: i64, bis: i64| -> i64 {
+            z ^= z << 13;
+            z ^= z >> 7;
+            z ^= z << 17;
+            von + (z % (bis - von + 1) as u64) as i64
+        };
+        // ⚠️ **`u` um eins herum**, wo die SiLU gekruemmt ist. Bei grossen
+        // Betraegen ist sie dort die Identitaet oder null, und ein fehlender
+        // Summand ihrer Ableitung fiele nicht auf (so geschehen beim ersten
+        // Entwurf dieser Probe).
+        let ein: Vec<Vec<i16>> = (0..N).map(|_| (0..C).map(|_| zahl(-700, 700) as i16).collect()).collect();
+        let gewicht: Vec<i8> = (0..C * KERN).map(|_| zahl(-60, 60) as i8).collect();
+        let schieb = vec![6u8; C];
+        let aus_fracs = vec![10u8; C];
+        let w_l: Vec<Vec<i64>> = (0..N).map(|_| (0..C).map(|_| zahl(-(1 << 20), 1 << 20)).collect()).collect();
+        let verlust = |ein: &[Vec<i16>], gewicht: &[i8]| -> f64 {
+            let zeilen: Vec<&[i16]> = ein.iter().map(Vec::as_slice).collect();
+            let mut f = Faltungsfenster::leer(C, KERN);
+            let aus = schritte_fenster(&mut f, &zeilen, gewicht, &schieb, 10, &lut, 4096, 8, 14, &aus_fracs, 1);
+            aus.iter().zip(&w_l).flat_map(|(y, w)| y.iter().zip(w).map(|(a, b)| (i64::from(*a) * b) as f64)).sum::<f64>()
+                / 1024.0
+        };
+        let zeilen: Vec<&[i16]> = ein.iter().map(Vec::as_slice).collect();
+        let d_aus: Vec<Vec<crate::backward::Grad>> =
+            w_l.iter().map(|w| w.iter().map(|&x| x as crate::backward::Grad).collect()).collect();
+        let gr = rueckwaerts(&zeilen, &gewicht, &schieb, 10, &lut, 4096, 8, 14, &d_aus);
+
+        // Eingang: je Wert +-16 Einheiten von 2^-10.
+        let r_ein: Vec<Vec<i64>> = (0..N).map(|_| (0..C).map(|_| zahl(-1, 1) * 16).collect()).collect();
+        let um = |vz: i64| -> Vec<Vec<i16>> {
+            ein.iter().zip(&r_ein).map(|(x, d)| x.iter().zip(d).map(|(a, b)| (i64::from(*a) + vz * b) as i16).collect()).collect()
+        };
+        let vorher: f64 = gr.ein.iter().zip(&r_ein).flat_map(|(g, d)| g.iter().zip(d).map(|(a, b)| f64::from(*a) * *b as f64)).sum::<f64>()
+            / 1024.0;
+        let gemessen = (verlust(&um(1), &gewicht) - verlust(&um(-1), &gewicht)) / 2.0;
+        let r = gemessen / vorher;
+        eprintln!("[faltung] Eingang: gemessen / vorhergesagt = {r:.3}");
+        assert!((0.97..=1.03).contains(&r), "Eingang: das {r:.3}-fache der Vorhersage");
+
+        // Gewichte: je Wert +-2 Einheiten von 2^-6.
+        let r_w: Vec<i64> = (0..C * KERN).map(|_| zahl(-1, 1) * 2).collect();
+        let um_w = |vz: i64| -> Vec<i8> { gewicht.iter().zip(&r_w).map(|(a, b)| (i64::from(*a) + vz * b) as i8).collect() };
+        // `gewicht` traegt die Darstellung von `x` (2^10) und die Schiebung
+        // des Gewichts (2^6).
+        let vorher: f64 = gr.gewicht.iter().zip(&r_w).map(|(a, b)| *a as f64 * *b as f64).sum::<f64>() / 64.0 / 1024.0;
+        let gemessen = (verlust(&ein, &um_w(1)) - verlust(&ein, &um_w(-1))) / 2.0;
+        let r = gemessen / vorher;
+        eprintln!("[faltung] Gewichte: gemessen / vorhergesagt = {r:.3}");
+        assert!((0.97..=1.03).contains(&r), "Gewichte: das {r:.3}-fache der Vorhersage");
     }
 
     /// Was die Faltung fuer einen einzelnen Wert liefern muss.

@@ -1,6 +1,6 @@
 [package]
 name = "golem-einrichten"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 rust-version = "1.85"
 description = "Der Einrichtungsassistent von GolemOS: findet einen Myelith-Klon auf den angesteckten Laufwerken und installiert das System auf eine ganze Platte."

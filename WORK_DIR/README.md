@@ -116,7 +116,7 @@ hin. Das ist der Grund, warum es nicht in Base liegt.
 
 ## 5. Die Manifestwerkzeuge der Kiste Base
 
-Dies sind die `.json`-Dateien unter `CLIENT/werkzeugkisten/Base`. ⚠️
+Dies sind die `.json`-Dateien unter `AGENT_LAYER/local-toolkits/Base`. ⚠️
 **Auch sie laufen über die Shell und halten die Einhängegrenze nicht
 ein**, weshalb sie ebenfalls die Schreiberlaubnis brauchen.
 

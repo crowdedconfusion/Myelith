@@ -101,9 +101,11 @@ mod proben {
 
     #[test]
     fn kennung_wie_im_client() {
-        // Der Client nimmt genau `de` und `en` (`Sprache::aus` dort).
-        let pfad = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../CLIENT/myl-client/src/einstellungen.rs");
-        let text = fs::read_to_string(pfad).expect("einstellungen.rs");
+        // Der Client nimmt genau `de` und `en` (`Sprache::aus`). Die Sprache
+        // liegt seit dem 2026-09-30 beim oertlichen Agenten, der Client
+        // bindet sie ein.
+        let pfad = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../AGENT_LAYER/local-agent/src/agentenwahl.rs");
+        let text = fs::read_to_string(pfad).expect("agentenwahl.rs");
         assert!(text.contains("moeglich sind de, en"), "der Client kennt andere Sprachen");
         assert_eq!(Sprache::De.kennung(), "de");
         assert_eq!(Sprache::En.kennung(), "en");

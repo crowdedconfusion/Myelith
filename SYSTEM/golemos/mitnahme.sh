@@ -5,8 +5,8 @@
 #                                  [--sehen] [--hoeren]
 #
 # ⚑ **Es richtet sich nach dem Arbeitsverzeichnis, nicht nach Git.**
-# Die Kiste `1337` steht in `.gitignore` und liegt bewusst nur oertlich;
-# ein frischer Klon hat sie nicht, dieser Rechner schon. Der Auftrag
+# Eine Kiste, die nicht versioniert ist und nur oertlich liegt, hat ein
+# frischer Klon nicht, dieser Rechner schon. Der Auftrag
 # lautet „was der Nutzer hinzugefuegt hat", also zaehlt, was dasteht.
 set -eu
 
@@ -51,7 +51,7 @@ kopiere() {
 }
 
 echo "── Sammeln"
-kopiere "$WURZEL/CLIENT/werkzeugkisten" werkzeugkisten
+kopiere "$WURZEL/AGENT_LAYER/local-toolkits" werkzeugkisten
 # ⛔️ **`myelith/` und nicht direkt nach `/daten` (Fund 455).** GolemOS
 #    setzt `XDG_CONFIG_HOME=/daten`, und der Client sucht darunter
 #    `myelith/client.json` und `myelith/skills`. Wer eine Ebene zu hoch

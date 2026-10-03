@@ -33,7 +33,7 @@ pub const VOLLSTAENDIG: [&str; 6] = [
     "SYSTEM/golemos/spread.sh",
     "SYSTEM/golemos/abbild/fertig",
     "SYSTEM/crates-vorrat",
-    "CLIENT/werkzeugkisten",
+    "AGENT_LAYER/local-toolkits",
     "INTEGER_LLM/runtime/src",
     "COMPLIANCE",
 ];

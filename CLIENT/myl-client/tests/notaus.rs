@@ -31,12 +31,12 @@ fn modell() -> Option<myl_client::Oertlichesmodell> {
 #[test]
 fn der_notaus_haelt_an_und_behaelt_den_text() {
     let ablage = tempfile::tempdir().expect("Protokoll");
-    myl_client::protokoll::ordner_setzen(ablage.path().to_path_buf());
+    myl_local_agent::protokoll::ordner_setzen(ablage.path().to_path_buf());
 
     // Werkzeuge verweigern nach dem Notaus, ohne auszufuehren.
     let ordner = tempfile::tempdir().expect("Ordner");
     std::fs::write(ordner.path().join("a.md"), "alt\n").expect("Datei");
-    let r = myl_client::ruestung::ruesten_fuer_anhaenge(
+    let r = myl_local_agent::ruestung::ruesten_fuer_anhaenge(
         ordner.path(),
         myl_client::Ansageform::Amtlich,
         None,
@@ -44,17 +44,17 @@ fn der_notaus_haelt_an_und_behaelt_den_text() {
         None,
     )
     .expect("Ruestung");
-    myl_client::notaus::ausloesen("probe");
+    myl_local_agent::notaus::ausloesen("probe");
     let aus = r
         .kasten
         .ausfuehren_ungeprueft("write_file", &serde_json::json!({ "pfad": "a.md", "inhalt": "neu" }))
         .expect("write_file");
     assert!(aus.is_err(), "nach dem Notaus lief ein Werkzeug");
     assert_eq!(std::fs::read_to_string(ordner.path().join("a.md")).unwrap(), "alt\n");
-    let e = myl_client::protokoll::lesen(10);
+    let e = myl_local_agent::protokoll::lesen(10);
     assert!(e.iter().any(|x| x.art == "notaus"), "der Notaus steht nicht im Protokoll");
     assert!(e.iter().any(|x| x.werkzeug == "write_file" && x.entscheidung == "abgebrochen"));
-    myl_client::notaus::zuruecksetzen();
+    myl_local_agent::notaus::zuruecksetzen();
 
     // Mitten im Schreiben.
     let Some(mut m) = modell() else { return };
@@ -62,7 +62,7 @@ fn der_notaus_haelt_an_und_behaelt_den_text() {
     let z = std::sync::Arc::clone(&zaehler);
     m.beobachter = Some(Box::new(move |_| {
         if z.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 5 {
-            myl_client::notaus::ausloesen_still();
+            myl_local_agent::notaus::ausloesen_still();
         }
     }));
     let frage = [Nachricht::nutzer("Erzaehle mir ausfuehrlich von Paris.")];
@@ -76,7 +76,7 @@ fn der_notaus_haelt_an_und_behaelt_den_text() {
     assert!(bis_dahin < 20, "nach dem Notaus wurde weitergeschrieben: {bis_dahin} Stuecke");
 
     // Zurueckgesetzt laeuft es wieder.
-    myl_client::notaus::zuruecksetzen();
+    myl_local_agent::notaus::zuruecksetzen();
     m.beobachter = None;
     assert!(m.chat("myelith-0.6b", &frage, Some(8)).is_ok());
 }

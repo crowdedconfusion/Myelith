@@ -19,7 +19,7 @@ pub use myl_senses::anhang::{
 /// das Modell genannt bekommt. Zwei Angaben dafuer waeren zwei Orte, und
 /// der zweite meldet sich nicht.
 pub fn unterordner() -> String {
-    format!("{}/{ORDNER}", crate::verlauf::ORDNER)
+    format!("{}/{ORDNER}", myl_local_agent::verlauf::ORDNER)
 }
 
 /// **Nimmt eine Datei auf**, in den Anhangordner dieses Agenten.
@@ -34,9 +34,9 @@ pub fn aufnehmen(wurzel: &Path, quelle: &Path) -> Result<Anhang, String> {
     // schreiben, das es noch nicht gibt, geht still daneben, und dann
     // liegt die erste angehaengte Datei ungeschuetzt da. Genau so ist
     // diese Probe beim Umzug rot geworden.
-    let agentenordner = wurzel.join(crate::verlauf::ORDNER);
+    let agentenordner = wurzel.join(myl_local_agent::verlauf::ORDNER);
     std::fs::create_dir_all(&agentenordner).map_err(|f| format!("{}: {f}", agentenordner.display()))?;
-    let _ = crate::verlauf::gitignore_fuer_agentenordner(&agentenordner);
+    let _ = myl_local_agent::verlauf::gitignore_fuer_agentenordner(&agentenordner);
     myl_senses::anhang::aufnehmen(wurzel, &unterordner(), quelle)
 }
 

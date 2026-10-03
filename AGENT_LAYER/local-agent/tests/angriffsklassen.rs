@@ -17,7 +17,7 @@ use myl_agent::manifest::{Herkunft, Werkzeugart, Werkzeugmanifest};
 use myl_agent::registratur::{Benutzt, Registratur};
 use myl_local_agent::betrieb::Betriebsart;
 use myl_local_agent::werkzeug::{
-    argumente_pruefen, vorschlaege, Argumentfehler, Erlaubnis, Vorschlag, Werkzeug,
+    argumente_pruefen, huelle_aufloesen, vorschlaege, Argumentfehler, Erlaubnis, Vorschlag, Werkzeug,
     Werkzeugergebnis,
 };
 
@@ -218,4 +218,33 @@ fn klassen_5_und_7_haben_hier_keinen_gegenstand() {
     assert!(!e.erlaubt("ueberweisen"));
     // Und es gibt keinen zweiten Agenten, mit dem dieser spraeche.
     assert_eq!(myl_local_agent::WEG_CHAT, "/v1/chat/completions");
+}
+
+/// ⚑ **Eine eindeutige Hülle wird aufgelöst, und nur sie** (2026-10-01).
+/// Das 35B verpackte `write_file` fünfmal in `{"felder": {…}}`. Die
+/// Auflösung darf die Angriffsfläche nicht vergrößern: Was danach läuft,
+/// hätte genauso ohne Hülle laufen dürfen, und jede zweideutige Form geht
+/// weiter an die Prüfung.
+#[test]
+fn klasse_2_nur_eine_eindeutige_huelle_wird_aufgeloest() {
+    let w = ueberweisen();
+    let mit = |a: serde_json::Value| Vorschlag { name: "ueberweisen".into(), arguments: a };
+    // Der Fall aus dem Lauf: genau eine fremde Hülle, darin ein vollständiger Aufruf.
+    let gut = huelle_aufloesen(&w, &mit(serde_json::json!({"felder": {"an": "0xa", "betrag": 1}})))
+        .expect("eindeutig");
+    assert_eq!(gut.arguments, serde_json::json!({"an": "0xa", "betrag": 1}));
+    assert!(argumente_pruefen(&w, &gut).is_ok());
+    // Gegenproben: Jede Bedingung für sich hält.
+    for (warum, a) in [
+        ("zwei Felder aussen", serde_json::json!({"felder": {"an": "0xa", "betrag": 1}, "eilig": true})),
+        ("ein unbekanntes Feld innen", serde_json::json!({"felder": {"an": "0xa", "betrag": 1, "eilig": true}})),
+        ("ein Pflichtfeld fehlt innen", serde_json::json!({"felder": {"an": "0xa"}})),
+        ("ein falscher Typ innen", serde_json::json!({"felder": {"an": "0xa", "betrag": "alle"}})),
+        ("die Hülle trägt einen Namen aus dem Schema", serde_json::json!({"an": {"an": "0xa", "betrag": 1}})),
+        ("innen ist kein Objekt", serde_json::json!({"felder": "an=0xa"})),
+        ("innen ist leer", serde_json::json!({"felder": {}})),
+        ("ohne Hülle", serde_json::json!({"an": "0xa", "betrag": 1})),
+    ] {
+        assert!(huelle_aufloesen(&w, &mit(a)).is_none(), "aufgelöst, obwohl {warum}");
+    }
 }

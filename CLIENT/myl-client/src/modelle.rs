@@ -103,7 +103,7 @@ pub fn liste(e: &Einstellungen) -> Vec<Modellwahl> {
     let katalog = katalog();
     let mut oertlich: Vec<Modellwahl> = Vec::new();
 
-    let aufgeloest = crate::ort::absolut(&e.modell.artefakt);
+    let aufgeloest = myl_local_agent::ort::absolut(&e.modell.artefakt);
     let hier = std::path::Path::new(&aufgeloest);
     if let Some(eltern) = hier.parent() {
         if let Ok(lesen) = std::fs::read_dir(eltern) {
@@ -167,7 +167,7 @@ pub fn liste(e: &Einstellungen) -> Vec<Modellwahl> {
     // Pfade, die Einstellung oft einen relativen: Das eingestellte
     // Modell stand dann **zweimal** in der Wahl, einmal unter seinem
     // Namen und einmal als „(eingestellt)".
-    if !oertlich.iter().any(|m| crate::ort::absolut(&m.pfad) == aufgeloest) {
+    if !oertlich.iter().any(|m| myl_local_agent::ort::absolut(&m.pfad) == aufgeloest) {
         oertlich.insert(
             0,
             Modellwahl {
@@ -231,7 +231,7 @@ pub fn katalognamen() -> BTreeMap<String, String> {
 /// Angaben.
 pub fn katalog() -> BTreeMap<String, Katalogeintrag> {
     let mut aus = BTreeMap::new();
-    let Some(w) = crate::ort::wurzel() else { return aus };
+    let Some(w) = myl_local_agent::ort::wurzel() else { return aus };
     let Ok(roh) = std::fs::read_to_string(w.join("MODELS/llm/KATALOG.json")) else {
         return aus;
     };
@@ -379,11 +379,11 @@ pub fn kandidaten(e: &Einstellungen) -> Vec<Kandidat> {
     let katalog = katalog();
     let mut orte: Vec<std::path::PathBuf> = Vec::new();
     if !e.modell.artefakt.is_empty() {
-        if let Some(eltern) = std::path::Path::new(&crate::ort::absolut(&e.modell.artefakt)).parent() {
+        if let Some(eltern) = std::path::Path::new(&myl_local_agent::ort::absolut(&e.modell.artefakt)).parent() {
             orte.push(eltern.to_path_buf());
         }
     }
-    if let Some(w) = crate::ort::wurzel() {
+    if let Some(w) = myl_local_agent::ort::wurzel() {
         orte.push(w.join("INTEGER_LLM").join("artifacts"));
     }
     let mut aus: Vec<Kandidat> = Vec::new();

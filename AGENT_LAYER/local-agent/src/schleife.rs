@@ -46,7 +46,7 @@ use crate::strom::{Entscheidung, Sitzungsstrom};
 use crate::tuerklient::{Modellweg, Nachricht, Tuerfehler};
 use crate::vollmacht_grenzen::{Grenzfehler, Sitzungsgrenzen};
 use crate::werkzeug::{
-    angebot_mit_regel, argumente_pruefen, vorschlaege, Erlaubnis, Werkzeugergebnis,
+    angebot_mit_regel, argumente_pruefen, huelle_aufloesen, vorschlaege, Erlaubnis, Werkzeugergebnis,
 };
 
 /// Ab wie vielen verbleibenden Schritten die Schleife daran erinnert.
@@ -322,6 +322,16 @@ impl<'a> Lauf<'a> {
 
             // 3. Vorschlaege, aus der ANTWORT und aus nichts sonst.
             let roh = vorschlaege(&antwort.text);
+            // ⛔️ **Fund 512: Eine Antwort, die an der Tokengrenze endet und
+            //    keinen Vorschlag traegt, ist nicht das Ende der Arbeit.**
+            //    Das 35B ueberlegte am 2026-09-30 so lange, dass die Antwort
+            //    mitten im Denken abbrach; die Schleife meldete „fertig“, und
+            //    keine Datei war geschrieben. ⚑ Das Modell erfaehrt es und
+            //    darf es noch einmal versuchen; der Schritt zaehlt als
+            //    vergeblich, damit eine Wiederholung ohne Ende an
+            //    [`HOECHSTZAHL_BERICHTIGUNGEN`] haelt.
+            let abgeschnitten_ohne_vorschlag =
+                roh.is_empty() && antwort.abschlussgrund.as_deref() == Some("length");
             let mut entschieden = Vec::new();
             let mut ergebnisse: Vec<String> = Vec::new();
             let mut benutzt: Vec<myl_types::ids::MerkleRoot> = Vec::new();
@@ -335,6 +345,16 @@ impl<'a> Lauf<'a> {
             //    Modell an derselben Stelle.
             let mut lesbare = Vec::new();
             let mut unlesbar = 0usize;
+            if abgeschnitten_ohne_vorschlag {
+                unlesbar += 1;
+                let text = "deine Antwort endete an der Tokengrenze, bevor ein Werkzeugaufruf oder eine \
+                            Antwort kam, vermutlich noch beim Ueberlegen. Ueberlege kuerzer und handle \
+                            jetzt: rufe das naechste Werkzeug auf oder antworte."
+                    .to_string();
+                melden(Meldung::Abgelehnt { name: "(abgeschnitten)", grund: &text });
+                nachrichten.push(Werkzeugergebnis::nachricht("(abgeschnitten)", &text));
+                ergebnisse.push(text);
+            }
             for r in roh {
                 match r {
                     Ok(v) => lesbare.push(v),
@@ -381,6 +401,9 @@ impl<'a> Lauf<'a> {
                 }
                 // 5. Die Form der Argumente.
                 let angebot = self.kasten.angebot(&v.name).expect("erlaubt heisst angeboten");
+                // ⚑ Eine eindeutige Huelle wird aufgeloest, sonst nichts
+                //   (`huelle_aufloesen`).
+                let v = huelle_aufloesen(angebot, &v).unwrap_or(v);
                 if let Err(f) = argumente_pruefen(angebot, &v) {
                     let text = f.to_string();
                     melden(Meldung::Abgelehnt { name: &v.name, grund: &text });

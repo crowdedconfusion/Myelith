@@ -213,6 +213,33 @@ fn eindeutige_formfehler_werden_gelesen() {
     }
 }
 
+/// ⚑ **Eine oder zwei vergessene `}` am Ende werden ergänzt** (2026-10-01,
+/// 35B: ein ganzes CAD-Skript in `write_file`, geschlossen mit `}}` statt
+/// `}}}`), und nur das.
+#[test]
+fn vergessene_schliessende_klammern_werden_ergaenzt() {
+    // Klammern in Zeichenketten zählen nicht, auch maskierte Anführungszeichen nicht.
+    let block = r#"{"name":"write_file","arguments":{"pfad":"a.py","inhalt":"d = {\"x\": 1} } {"}"#;
+    let v = vorschlaege(&format!("<tool_call>{block}</tool_call>"));
+    let v = v[0].as_ref().expect("eine vergessene Klammer");
+    assert_eq!(v.name, "write_file");
+    assert_eq!(v.arguments["inhalt"], serde_json::json!("d = {\"x\": 1} } {"));
+    // Zwei vergessene, mit einer Hülle darum.
+    let v = vorschlaege(r#"<tool_call>{"name":"w","arguments":{"felder":{"pfad":"a"}</tool_call>"#);
+    assert_eq!(v[0].as_ref().expect("zwei vergessene").arguments, serde_json::json!({"felder": {"pfad": "a"}}));
+    // Gegenproben: drei offene, eine offene eckige, eine zu viel geschlossene,
+    // eine offene Zeichenkette.
+    for block in [
+        r#"{"name":"w","arguments":{"a":{"b":{"c":1"#,
+        r#"{"name":"w","arguments":{"a":[1,2}"#,
+        r#"{"name":"w","arguments":{"a":1}}}"#,
+        r#"{"name":"w","arguments":{"a":"offen"#,
+    ] {
+        let v = vorschlaege(&format!("<tool_call>{block}</tool_call>"));
+        assert!(v[0].is_err(), "{block} haette nicht gelesen werden duerfen: {v:?}");
+    }
+}
+
 /// Ohne Aufruf kein Vorschlag.
 #[test]
 fn eine_antwort_ohne_aufruf_ergibt_nichts() {

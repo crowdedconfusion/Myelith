@@ -153,3 +153,56 @@ fn eine_alte_ablage_findet_ihr_artefakt_wieder() {
         assert_eq!(e.modell.artefakt, unberuehrt, "`{unberuehrt}` wurde angefasst");
     }
 }
+
+/// ⚑ **Ein Kistenordner vom alten Ort zieht mit um** (2026-09-30).
+///
+/// Die mitgelieferten Kisten liegen seit dem Umzug unter
+/// `AGENT_LAYER/local-toolkits`. Eine Ablage mit einem alten Pfad
+/// ergaebe sonst einen Agenten ohne ein einziges Manifest-Werkzeug, denn
+/// ein gesetzter Ordner, den es nicht gibt, faellt bewusst nicht auf die
+/// Vorgabe zurueck.
+#[test]
+fn ein_alter_kistenordner_zieht_mit_um() {
+    let d = tempfile::tempdir().expect("Verzeichnis");
+    let p = d.path().join("client.json");
+    for (alt, neu) in [
+        ("/nirgends/Repo/CLIENT/werkzeugkisten/Base", "/nirgends/Repo/AGENT_LAYER/local-toolkits/Base"),
+        ("/nirgends/Repo/CLIENT/werkzeugkisten/CAD", "/nirgends/Repo/AGENT_LAYER/local-toolkits/CAD"),
+        (r"C:\Nirgends\Repo\CLIENT\werkzeugkisten\Advanced", r"C:\Nirgends\Repo\AGENT_LAYER\local-toolkits\Advanced"),
+        // Der Zwischenname vom 2026-09-30, nie gepusht, aber lokal gespeichert.
+        ("/nirgends/Repo/AGENT_LAYER/local-werkzeugkisten/CAD", "/nirgends/Repo/AGENT_LAYER/local-toolkits/CAD"),
+    ] {
+        let mut vorher = Einstellungen::default();
+        vorher.agent.kistenordner = Some(alt.to_string());
+        vorher.schreiben(&p).expect("schreiben");
+        let e = Einstellungen::lesen(&p).expect("lesen");
+        assert_eq!(e.agent.kistenordner.as_deref(), Some(neu), "`{alt}` ist nicht mitgezogen");
+    }
+
+    // ⚠️ **Was es am alten Ort noch gibt, bleibt**: ein aelterer Klon mit
+    // dem alten Aufbau. Und ein eigener Ordner ohnehin.
+    let alter_klon = d.path().join("CLIENT/werkzeugkisten/Base");
+    std::fs::create_dir_all(&alter_klon).expect("Ordner");
+    for unberuehrt in [alter_klon.display().to_string(), "/eigene/kiste".to_string()] {
+        let mut vorher = Einstellungen::default();
+        vorher.agent.kistenordner = Some(unberuehrt.clone());
+        vorher.schreiben(&p).expect("schreiben");
+        let e = Einstellungen::lesen(&p).expect("lesen");
+        assert_eq!(e.agent.kistenordner.as_deref(), Some(unberuehrt.as_str()), "`{unberuehrt}` wurde angefasst");
+    }
+}
+
+/// ⚑ **Die Feldtabelle zeigt fuer jedes Agentenfeld den Titel, den auch
+/// der Agent nennt**, und jedes betitelte Feld steht in der Tabelle. Der
+/// Titel steht einmal (`agentenwahl`); diese Probe haelt die Zuordnung
+/// der Namen fest, damit ein Hinweis des Agenten nie auf ein Feld zeigt,
+/// das anders heisst oder fehlt.
+#[test]
+fn die_feldtabelle_zeigt_die_titel_des_agenten() {
+    for name in myl_local_agent::agentenwahl::BETITELTE_FELDER {
+        let feld = myl_client::einstellungen::FELDER.iter().find(|f| f.name == name);
+        let feld = feld.unwrap_or_else(|| panic!("{name} fehlt in der Feldtabelle"));
+        let (de, en) = myl_local_agent::agentenwahl::feldtitel(name).expect("Titel");
+        assert_eq!((feld.titel, feld.titel_en), (de, en), "{name}");
+    }
+}

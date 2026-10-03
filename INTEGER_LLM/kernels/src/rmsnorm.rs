@@ -186,6 +186,33 @@ pub fn rmsnorm_i16_mit_spur(
     )
 }
 
+/// **Mit Epsilon und Spur**: [`rmsnorm_i16_mit_eps`], und der Kehrwert der
+/// Wurzel faellt mit ab, wie bei [`rmsnorm_i16_mit_spur`]. Fuer die
+/// torgesteuerte Norm der Zustandsschicht im Training.
+///
+/// ⚑ **Der Rueckwaertspass braucht das Epsilon nicht eigens**: Mit
+/// `r = 1/sqrt(mean(x^2) + eps)` ist `dr/dx_j = -r^3 * x_j / n`, dieselbe
+/// Form wie ohne, und `r` kommt aus der Spur.
+#[allow(clippy::too_many_arguments)]
+pub fn rmsnorm_i16_mit_eps_und_spur(
+    x: &[i16],
+    x_shifts: &[u8],
+    gamma: &[i8],
+    gamma_shifts: &[u8],
+    rsqrt_lut: &[i16],
+    lut_input_shift: u8,
+    lut_output_frac: u8,
+    inv_n_q20: i64,
+    out_frac_bits: u8,
+    eps_q40: i64,
+    spur: Option<&mut Rmsnormspur>,
+) -> Vec<i16> {
+    rmsnorm_kern(
+        x, x_shifts, gamma, gamma_shifts, rsqrt_lut, lut_input_shift, lut_output_frac,
+        inv_n_q20, out_frac_bits, eps_q40, spur,
+    )
+}
+
 /// `sum_i x_i^2 << (2 * (ref_shift - x_shifts[i]))`, exakt.
 ///
 /// ⚑ **Je Ausrichtung eine Summe in i64, zusammengefuehrt in i128**:

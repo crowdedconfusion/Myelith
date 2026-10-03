@@ -3642,7 +3642,7 @@ fn das_schliessen_ist_der_notschalter_und_haelt_alles_an() {
     let f = rs.find("fn notschalter_beim_schliessen() {").expect("Funktion");
     let rumpf = &rs[f..f + rs[f..].find("\n}\n").expect("Ende")];
     assert!(rumpf.contains("if SCHON.swap(true, std::sync::atomic::Ordering::SeqCst) {\n        return;"));
-    assert!(rumpf.contains("myl_client::notaus::ausloesen(\"fenster geschlossen\");"), "das Schliessen steht nicht im Protokoll");
+    assert!(rumpf.contains("myl_local_agent::notaus::ausloesen(\"fenster geschlossen\");"), "das Schliessen steht nicht im Protokoll");
     assert!(rumpf.contains("myl_senses::prozess::alle_beenden();"), "ein laufender Befehl ueberlebt das Fenster");
 
     // Kein zweiter Weg: kein Kuerzel, kein Befehl, den eines rufen koennte.
@@ -3651,9 +3651,9 @@ fn das_schliessen_ist_der_notschalter_und_haelt_alles_an() {
     assert!(!rs.contains("fn notaus()"), "der Befehl `notaus` ist zurueck");
     assert!(!js.contains("function stimme_anhalten"), "die Stimmbremse des Notaus steht ohne Aufrufer da");
 
-    assert_eq!(rs.matches("myl_client::notaus::zuruecksetzen();").count(), 2, "nicht jeder Auftrag beginnt geloest");
+    assert_eq!(rs.matches("myl_local_agent::notaus::zuruecksetzen();").count(), 2, "nicht jeder Auftrag beginnt geloest");
     assert!(rs.contains("Err(myl_client::Tuerfehler::Abgebrochen { bisher }) => Ok(bisher),"));
-    assert!(rs.contains("if myl_client::notaus::ausgeloest() {\n                    drop(v);"));
+    assert!(rs.contains("if myl_local_agent::notaus::ausgeloest() {\n                    drop(v);"));
 }
 
 /// ⚑ **∞, der Task und der Pfeil sind ein Feld, mittig unten im

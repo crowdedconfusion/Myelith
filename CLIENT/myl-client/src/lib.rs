@@ -60,36 +60,23 @@ pub mod rechenwege {
     }
 }
 
-pub mod abgeschaltet;
 pub mod aktualisierung;
 pub mod anhang;
 pub mod einstellungen;
-pub mod gespraech;
+
+// ⚑ **Der oertliche Agent liegt seit dem 2026-09-30 in
+//   `AGENT_LAYER/local-agent`** (`myl_local_agent`). Konsole, Fenster und
+//   `myl` beziehen ihn von dort und nicht ueber diese Kiste: Wer liest, woher
+//   ein Aufruf kommt, soll sehen, dass er oertlich wirkt. Die Richtung ist
+//   Absicht: Der Client haengt am Agenten, nie umgekehrt.
 pub mod hardware;
 pub mod kennzeichnung;
-pub mod lauf;
 pub mod markdown;
-pub mod notaus;
 pub mod oertlich;
-pub mod protokoll;
-pub mod ort;
 pub mod reservierung;
-pub mod strom;
-pub mod syntaxwache;
-pub mod uhr;
-pub mod ruestung;
 pub mod schutzfilter;
-pub mod netzwerkzeuge;
-pub mod sinneswerkzeuge;
-pub mod skills;
-pub mod systemprompt;
-pub mod verankert;
-pub mod verlauf;
 /// Vorhaben: ein Ziel ueber viele Runden (der Loop).
-pub mod vorhaben;
 pub mod warnung;
-pub mod werkzeuge;
-pub mod kisten;
 
 /// ⚑ **Weitergereicht, damit die Oberflaeche nicht an `myl-local-agent`
 /// haengen muss.** Sie braucht die Form nur, um `ruesten` zu rufen; eine

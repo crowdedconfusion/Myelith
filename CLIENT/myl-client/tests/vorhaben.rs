@@ -4,8 +4,8 @@
 use std::cell::RefCell;
 
 use myl_client::einstellungen::{Agenteneinstellung, Loopeinstellung, Sprache};
-use myl_client::vorhaben::{self, Ablage, Zustand};
-use myl_client::werkzeuge::Werkzeugkiste;
+use myl_local_agent::vorhaben::{self, Ablage, Zustand};
+use myl_local_agent::werkzeuge::Werkzeugkiste;
 use myl_local_agent::tuerklient::{Antwort, Modellweg, Nachricht, Tuerfehler};
 use myl_local_agent::werkzeug::Ansageform;
 
@@ -46,14 +46,14 @@ fn ordner(name: &str) -> std::path::PathBuf {
 
 fn ruester(
     wurzel: std::path::PathBuf,
-) -> impl Fn(vorhaben::Zusatzwerkzeuge, &vorhaben::Vorhaben) -> Result<myl_client::ruestung::Ruestung, String> {
+) -> impl Fn(vorhaben::Zusatzwerkzeuge, &vorhaben::Vorhaben) -> Result<myl_local_agent::ruestung::Ruestung, String> {
     move |zusaetzlich, _v| {
         let agent = Agenteneinstellung {
             wurzel: Some(wurzel.display().to_string()),
             schreiben: true,
             ..Agenteneinstellung::default()
         };
-        myl_client::ruestung::ruesten(&agent, Ansageform::Amtlich, Werkzeugkiste::Base, zusaetzlich)
+        myl_local_agent::ruestung::ruesten(&agent, Ansageform::Amtlich, Werkzeugkiste::Base, zusaetzlich)
     }
 }
 
@@ -462,7 +462,7 @@ fn ein_task_arbeitet_im_ordner_und_verlauf_seines_gespraechs() {
     let r = |zusaetzlich: vorhaben::Zusatzwerkzeuge, v: &vorhaben::Vorhaben| {
         let agent = v.agent_fuer(&Agenteneinstellung { schreiben: true, ..Agenteneinstellung::default() });
         assert_eq!(agent.netzsaat.as_deref(), Some("a.md anlegen"));
-        myl_client::ruestung::ruesten(&agent, Ansageform::Amtlich, Werkzeugkiste::Base, zusaetzlich)
+        myl_local_agent::ruestung::ruesten(&agent, Ansageform::Amtlich, Werkzeugkiste::Base, zusaetzlich)
     };
     let modell = Zeuge {
         zeilen: RefCell::new(vec![aufruf("write_file", serde_json::json!({"pfad": "a.md", "inhalt": "blau\n"}))]),

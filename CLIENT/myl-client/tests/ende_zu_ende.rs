@@ -116,12 +116,12 @@ fn der_laufende_text_ist_die_antwort() {
 
     let gesammelt = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
     let mit = std::sync::Arc::clone(&gesammelt);
-    m.beobachter = Some(Box::new(move |s: myl_client::strom::Stueck| {
+    m.beobachter = Some(Box::new(move |s: myl_local_agent::textstrom::Stueck| {
         // ⚑ Beides zusammen ergibt den ganzen Strom; die Trennung
         // prueft `strom.rs` fuer sich.
         let t = match s {
-            myl_client::strom::Stueck::Text(t) => t,
-            myl_client::strom::Stueck::Denken(t) => t,
+            myl_local_agent::textstrom::Stueck::Text(t) => t,
+            myl_local_agent::textstrom::Stueck::Denken(t) => t,
         };
         mit.lock().expect("Schloss").push_str(&t);
     }));
@@ -163,7 +163,7 @@ fn mit_beobachter_kommt_dieselbe_antwort() {
     let f = [Nachricht::nutzer("Nenne eine Primzahl.")];
     let ohne = m.chat("m", &f, Some(16)).expect("ohne Beobachter");
 
-    m.beobachter = Some(Box::new(|_: myl_client::strom::Stueck| {}));
+    m.beobachter = Some(Box::new(|_: myl_local_agent::textstrom::Stueck| {}));
     let mit = m.chat("m", &f, Some(16)).expect("mit Beobachter");
     assert_eq!(ohne.text, mit.text, "der Beobachter hat die Antwort veraendert");
 }
@@ -216,10 +216,10 @@ fn auch_live_kommt_nichts_nach_der_endmarke() {
     m.grenze = 400;
     let gesammelt = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
     let mit = std::sync::Arc::clone(&gesammelt);
-    m.beobachter = Some(Box::new(move |s: myl_client::strom::Stueck| {
+    m.beobachter = Some(Box::new(move |s: myl_local_agent::textstrom::Stueck| {
         let t = match s {
-            myl_client::strom::Stueck::Text(t) => t,
-            myl_client::strom::Stueck::Denken(t) => t,
+            myl_local_agent::textstrom::Stueck::Text(t) => t,
+            myl_local_agent::textstrom::Stueck::Denken(t) => t,
         };
         mit.lock().expect("Schloss").push_str(&t);
     }));
@@ -256,14 +256,14 @@ fn das_denkbudget_beendet_die_ueberlegung_und_es_kommt_eine_antwort() {
     let a = m.chat("myelith-4b", &frage, Some(200)).expect("Antwort");
     m.beobachter = None;
     assert_eq!(a.text.matches("</think>").count(), 1, "{:?}", a.text);
-    let (denken, prosa) = myl_client::lauf::denken_und_prosa(&a.text);
+    let (denken, prosa) = myl_local_agent::lauf::denken_und_prosa(&a.text);
     assert!(denken.contains("Time is short"), "die Schlussfolge fehlt: {denken:?}");
     assert!(prosa.contains("391"), "keine Antwort nach der Ueberlegung: {prosa:?}");
     let stuecke = stuecke.lock().unwrap();
     let text: String = stuecke
         .iter()
         .filter_map(|x| match x {
-            myl_client::strom::Stueck::Text(t) => Some(t.as_str()),
+            myl_local_agent::textstrom::Stueck::Text(t) => Some(t.as_str()),
             _ => None,
         })
         .collect();
@@ -272,7 +272,7 @@ fn das_denkbudget_beendet_die_ueberlegung_und_es_kommt_eine_antwort() {
 
     m.denkbudget = Some(0);
     let a = m.chat("myelith-4b", &frage, Some(200)).expect("Antwort");
-    let (denken, prosa) = myl_client::lauf::denken_und_prosa(&a.text);
+    let (denken, prosa) = myl_local_agent::lauf::denken_und_prosa(&a.text);
     assert!(denken.is_empty(), "mit null wurde ueberlegt: {denken:?}");
     assert!(prosa.contains("391"), "{prosa:?}");
 }

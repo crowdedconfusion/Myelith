@@ -1,0 +1,499 @@
+//! Wo dieses Repositorium liegt, und wie es sich wiederfindet.
+//!
+//! # ⚑ Warum das eine eigene Kiste braucht und keine Konstante
+//!
+//! **Ein Pfad, den jemand einmal aufschreibt, ist eine Wette darauf,
+//! dass nichts sich bewegt.** Dieses Repositorium wird verschoben,
+//! umbenannt, auf eine andere Platte gelegt und aus einem Buendel
+//! heraus gestartet, das gar nicht darin liegt. Ein fester Pfad
+//! ueberlebt keinen dieser Faelle.
+//!
+//! # Die vier Wege, in dieser Reihenfolge
+//!
+//! 1. **`MYELITH_WURZEL`** aus der Umgebung. Wer es setzt, meint es.
+//! 2. **Vom Arbeitsverzeichnis aufwaerts.** Wer im Klon steht, meint
+//!    diesen Klon.
+//! 3. **Vom Programm aufwaerts.** Aus dem Finder gestartet ist das
+//!    Arbeitsverzeichnis `/`; das Programm selbst liegt aber im Baum,
+//!    solange es nicht installiert wurde.
+//! 4. **Der gemerkte Ort**, `wurzel` neben der Einstellungsdatei.
+//!    ⚠️ **Er wird nachgeprueft und nicht geglaubt:** Steht die Marke
+//!    dort nicht mehr, ist der Zettel alt und gilt nicht. Er ist die
+//!    Antwort fuer den, der nirgendwo steht, also fuer das
+//!    **installierte** Programm aus dem Finder heraus.
+//!
+//! ⚑ **Und wer auf einem der beiden Suchwege faendig wird, schreibt
+//! den Zettel neu.** Damit heilt sich ein Umzug von selbst: Einmal aus
+//! dem verschobenen Klon heraus starten genuegt, und auch das
+//! installierte Programm findet danach wieder hin.
+//!
+//! 📌 **Der Zettel ist ein Zwischenspeicher und keine Einstellung.** Er
+//! steht deshalb nicht in `client.json`: Was dort steht, hat ein Mensch
+//! entschieden, und ein Mensch entscheidet nicht, wo sein Klon liegt,
+//! er verschiebt ihn.
+//!
+//! # ⚑ Die Marke und die Suche stehen eine Kiste tiefer
+//!
+//! `MARKE`, `ist_wurzel` und `aufwaerts` kommen aus `myl_senses::ort`
+//! und werden hier nur weitergegeben. Seit die fremden Gewichte unter
+//! `MODELS/` im Klon liegen, braucht die Sinneskiste die Wurzel selbst,
+//! und **eine zweite Marke waere dieselbe Angabe an einem zweiten Ort.**
+//! Was hier bleibt, ist der **gemerkte** Ort: Er braucht den Begriff
+//! einer Einstellungsdatei, und den hat nur diese Kiste.
+
+use std::path::{Path, PathBuf};
+
+// ⚑ **Die Marke und die Suche stehen in `myl-senses`** (seit dem
+// 2026-09-21), und hier steht nur, was auf sie zeigt.
+//
+// **Der Anlass war der Umzug der Gewichte nach `MODELS/`.** Seither
+// braucht auch `myl-senses` die Wurzel, um ein Sehmodell zu finden. Eine
+// zweite Marke dort haette dieselbe Zeichenkette an einem zweiten Ort
+// bedeutet, und **was an zwei Orten steht, laeuft auseinander**: Wer sie
+// einmal aendert, aendert eine von beiden, und die andere sucht danach
+// stillschweigend weiter nach einer Datei, die es nicht mehr gibt.
+//
+// ⚑ **Warum unten und nicht hier:** `myl-senses` hat keine
+// Abhaengigkeiten und liegt unter dieser Kiste. Die Richtung des Pfeils
+// war damit vorgegeben; der Typ gehoert dorthin, wo beide hinsehen.
+pub use myl_senses::ort::{aufwaerts, eigener_ordner, ist_wurzel, MARKE, UMGEBUNG};
+
+/// **Die Umgebungsvariable, die den Standard-Arbeitsordner nennt.**
+///
+/// ⚑ Sie hat Vorrang vor dem Ordner im Baum, damit ein Einsatz
+/// ausserhalb des Repositoriums und eine Probe einen eigenen Ordner
+/// nennen koennen, ohne die Einstellungsdatei anzufassen.
+pub const ARBEITSORDNER: &str = "MYL_ARBEITSORDNER";
+
+/// **Wie der Standard-Arbeitsordner im Repositorium heisst.**
+///
+/// ⚑ Derselbe Name wie die Umgebungsvariable ohne Praefix, und das ist
+/// Absicht: Wer den einen liest, kennt den anderen.
+pub const ARBEITSORDNER_IM_BAUM: &str = "WORK_DIR";
+
+/// **Wo die Einstellungen liegen**, und neben ihnen alles, was Myelith
+/// auf diesem Rechner ablegt (Aktionsprotokoll, eigene Skills, Vorhaben,
+/// der Zettel mit der Wurzel).
+///
+/// ⚑ **Hier und nicht in den Einstellungen des Clients**, weil der Agent
+/// den Ort braucht, ohne den Client zu kennen. Der Client fragt hier.
+pub fn einstellungsdatei() -> std::path::PathBuf {
+    // ⛔️ **`MYL_EINSTELLUNGEN` schirmt ab, und zwar ganz.** Ist die
+    //    Variable gesetzt, gilt nur dieser Pfad, ohne Rueckgriff auf
+    //    eine vorhandene Datei. 📌 Eingefuehrt am 2026-09-26, nachdem
+    //    ein Probelauf mit `XDG_CONFIG_HOME` die echten Einstellungen
+    //    des Projektinhabers ueberschrieben hatte: Die Regel darunter
+    //    („wer schon eine Datei hat, behaelt sie") ist fuer Menschen
+    //    richtig und fuer Proben eine Falle. Die Ablage der Vorhaben
+    //    liegt daneben und ist damit mit abgeschirmt.
+    if let Some(p) = std::env::var_os("MYL_EINSTELLUNGEN").filter(|p| !p.is_empty()) {
+        return std::path::PathBuf::from(p);
+    }
+    plattformpfad()
+}
+
+/// **Der Ort nach der Plattform**, ohne die Abschirmung durch
+/// `MYL_EINSTELLUNGEN`.
+///
+/// ⚑ **Eine eigene Funktion, damit die Probe des Ortes die
+/// Abschirmung nicht aufheben muss** (Fund 496). Sie lief nur ohne
+/// `MYL_EINSTELLUNGEN` gruen, also genau so, wie keine Probe laufen
+/// soll; und die Variable in einer Probe zu entfernen, gaebe allen
+/// Proben, die daneben laufen, fuer diese Zeit die echte Datei frei.
+pub fn plattformpfad() -> std::path::PathBuf {
+    // 📌 **Wer schon eine Datei hat, behaelt sie.** Ohne diese drei
+    // Zeilen zoege die Datei bei jedem, der `XDG_CONFIG_HOME` setzt,
+    // an einen neuen Ort um, und seine Einstellungen waeren
+    // stillschweigend weg: `lesen` faende nichts und legte die
+    // Vorgaben an. Das faellt erst auf, wenn jemand sein Artefakt
+    // sucht. Deshalb gewinnt eine **vorhandene** Datei vor der
+    // bevorzugten Stelle, und das gilt in beide Richtungen: Wer
+    // schon an der neuen Stelle liegt, wird nicht an die alte
+    // zurueckgeschickt.
+    for k in kandidaten_liste() {
+        if k.is_file() {
+            return k;
+        }
+    }
+    kandidaten_liste()
+        .into_iter()
+        .next()
+        .expect("die Liste endet immer mit dem Arbeitsverzeichnis")
+}
+
+/// **Der Standard-Arbeitsordner, wenn keiner gesetzt ist**:
+/// `WORK_DIR` im Repositorium (Auftrag des Projektinhabers,
+/// 2026-09-15).
+///
+/// ⚑ **Ein Ordner mit Beispieldateien statt des CTF-Ordners.** Bis
+/// zum 2026-09-15 stand hier `BENCHMARKS/Agent/ctf`. Der ist ein
+/// Pruefstand mit Aufgaben, kein Arbeitsplatz: Wer den Client zum
+/// ersten Mal oeffnet, soll Dateien vorfinden, an denen sich jedes
+/// Werkzeug zeigt, und eine README, die dazu die Prompts nennt.
+///
+/// ⚑ **Ueber [`crate::ort::wurzel`] gefunden, nicht vom
+/// Arbeitsverzeichnis aufwaerts.**
+///
+/// 📌 Genau dieser Unterschied war der Fehler bei `kiste_ordner`:
+/// Das Fenster aus dem Finder hat als Arbeitsverzeichnis `/`, und
+/// ein Lauf aufwaerts von dort findet nie ein Repositorium. `wurzel`
+/// sucht zusaetzlich beim Programm selbst und faellt auf den
+/// gemerkten Ort zurueck, und das ist der Fall, um den es hier geht.
+///
+/// `None`, wenn nichts passt: dann bleibt es dabei, dass ohne
+/// gesetzten Ordner keine Dateiwerkzeuge laufen.
+pub fn standard_wurzel() -> Option<String> {
+    use std::path::PathBuf;
+    // ⚑ **Die Umgebung hat Vorrang**, damit eine Probe und ein
+    // Einsatz ausserhalb des Repositoriums einen eigenen Ordner
+    // nennen koennen, ohne die Einstellungsdatei anzufassen.
+    if let Some(p) = std::env::var_os(ARBEITSORDNER) {
+        let p = PathBuf::from(p);
+        if p.is_dir() {
+            return Some(p.display().to_string());
+        }
+    }
+    let o = wurzel()?.join(ARBEITSORDNER_IM_BAUM);
+    o.is_dir().then(|| o.display().to_string())
+}
+
+/// Die Orte, an denen die Einstellungsdatei liegen kann, in der
+/// Reihenfolge, in der sie bevorzugt werden.
+///
+/// ⚑ **Eigene Funktion, damit `vorgabepfad` und die Wanderung
+/// dieselbe Liste benutzen.** Zwei Listen liefen auseinander, und
+/// dann fande die eine, was die andere schriebe.
+fn kandidaten_liste() -> Vec<std::path::PathBuf> {
+    use std::path::PathBuf;
+    let mut orte: Vec<PathBuf> = Vec::new();
+
+    #[cfg(windows)]
+    {
+        if let Some(appdata) = std::env::var_os("APPDATA") {
+            if !appdata.is_empty() {
+                orte.push(PathBuf::from(appdata).join("Myelith").join("client.json"));
+            }
+        }
+        if let Some(profil) = std::env::var_os("USERPROFILE") {
+            if !profil.is_empty() {
+                orte.push(
+                    PathBuf::from(profil)
+                        .join("AppData")
+                        .join("Roaming")
+                        .join("Myelith")
+                        .join("client.json"),
+                );
+            }
+        }
+    }
+
+    if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME") {
+        // ⚑ Die Spezifikation sagt: ein relativer Wert ist ungueltig
+        // und zu ignorieren. Ohne diese Zeile fuehrte ein
+        // versehentliches `XDG_CONFIG_HOME=.config` zurueck in genau
+        // den Fehler, der oben behoben wird.
+        let p = PathBuf::from(xdg);
+        if p.is_absolute() {
+            orte.push(p.join("myelith").join("client.json"));
+        }
+    }
+    if let Some(heim) = std::env::var_os("HOME") {
+        if !heim.is_empty() {
+            orte.push(PathBuf::from(heim).join(".config/myelith/client.json"));
+        }
+    }
+    // Bleibt nur das Arbeitsverzeichnis. Das ist ein schlechter Ort,
+    // und deshalb steht er hier als letzter und nicht als erster.
+    orte.push(PathBuf::from(".config/myelith/client.json"));
+    orte
+}
+
+/// Die Datei, in der der gefundene Ort steht.
+pub fn zettel() -> PathBuf {
+    let ablage = einstellungsdatei();
+    ablage.with_file_name("wurzel")
+}
+
+/// Schreibt den Ort auf den Zettel.
+///
+/// ⚑ **Ein Fehlschlag ist keiner.** Ein Rechner, auf dem sich der
+/// Zettel nicht schreiben laesst, findet die Wurzel weiter ueber die
+/// Suche; er findet sie nur jedes Mal neu.
+pub fn merken(w: &Path) {
+    let z = zettel();
+    if let Some(eltern) = z.parent() {
+        let _ = std::fs::create_dir_all(eltern);
+    }
+    let _ = std::fs::write(&z, format!("{}\n", w.display()));
+}
+
+/// Der gemerkte Ort, wenn er noch stimmt.
+fn gemerkt() -> Option<PathBuf> {
+    let text = std::fs::read_to_string(zettel()).ok()?;
+    let p = PathBuf::from(text.trim());
+    ist_wurzel(&p).then_some(p)
+}
+
+/// Das Verzeichnis dieses Repositoriums, oder `None`.
+///
+/// ⚠️ **`None` ist ein gueltiger Zustand und kein Fehler.** Wer nur die
+/// Freigabebuendel geladen hat, hat keinen Klon; dann gibt es keine
+/// Artefakte zu bauen und nichts zu aktualisieren, und die Oberflaeche
+/// sagt das, statt es zu versuchen.
+pub fn wurzel() -> Option<PathBuf> {
+    if let Some(w) = std::env::var_os(UMGEBUNG).map(PathBuf::from) {
+        if ist_wurzel(&w) {
+            merken(&w);
+            return Some(w);
+        }
+    }
+    // ⚑ **Die Suche vor dem Zettel, und das ist die ganze Ordnung.**
+    // Wer in einem Klon steht oder aus einem heraus gestartet ist,
+    // meint diesen, auch wenn auf dem Zettel ein anderer steht. **Der
+    // Zettel ist die Antwort fuer den, der nirgendwo steht**, also fuer
+    // das installierte Programm aus dem Finder.
+    for anfang in [std::env::current_dir().ok(), eigener_ordner()]
+        .into_iter()
+        .flatten()
+    {
+        if let Some(w) = aufwaerts(anfang) {
+            merken(&w);
+            return Some(w);
+        }
+    }
+    gemerkt()
+}
+
+/// Macht einen relativen Pfad gegen die Wurzel absolut.
+///
+/// 📌 **Ohne das scheitert „Modell laden" aus dem Finder heraus**, und
+/// zwar mit `No such file or directory`: In den Einstellungen steht
+/// `INTEGER_LLM/artifacts/myelith-4b`, und das ist relativ zu einem
+/// Arbeitsverzeichnis, das dort `/` ist.
+///
+/// ⚑ **Ein absoluter Pfad bleibt unberuehrt.** Wer sein Artefakt
+/// woanders liegen hat, hat das so gemeint.
+pub fn absolut(pfad: &str) -> String {
+    gegen(wurzel().as_deref(), pfad)
+}
+
+/// Dasselbe gegen eine **genannte** Wurzel.
+///
+/// ⚑ **Eigene Funktion, damit es sich pruefen laesst.** `absolut` fragt
+/// die Umgebung, den Zettel und zwei Suchwege ab; eine Pruefung
+/// darueber muesste all das stellen und liefe anderen Pruefungen ins
+/// Gehege, die dieselben Variablen und dieselbe Datei benutzen. **Was
+/// entschieden wird, steht hier; was ermittelt wird, steht dort.**
+pub fn gegen(wurzel: Option<&Path>, pfad: &str) -> String {
+    let p = Path::new(pfad);
+    if pfad.is_empty() || p.is_absolute() {
+        return pfad.to_string();
+    }
+    match wurzel {
+        Some(w) => w.join(p).display().to_string(),
+        None => pfad.to_string(),
+    }
+}
+
+/// **Das Verzeichnis, auf das sich die Plattenzahlen beziehen.**
+///
+/// ⚑ **Hier und nicht in den Oberflaechen** (seit dem 2026-09-16). Ein
+/// Rechner hat mehrere Datentraeger, und die Frage „wieviel Platz ist
+/// da" hat ohne einen Ort keine Antwort. Das Fenster hatte die
+/// Herleitung, die Konsole haette sie nachbauen muessen, und **zwei
+/// Herleitungen desselben Ortes zeigen irgendwann auf zwei
+/// Datentraeger.**
+///
+/// Ohne Klon gibt es keine Modelle und keine Artefakte; dann ist der
+/// Ort der Einstellungen der einzige, den es sicher gibt.
+pub fn datenort() -> PathBuf {
+    match wurzel() {
+        Some(w) => w.join("INTEGER_LLM"),
+        None => einstellungsdatei()
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| PathBuf::from(".")),
+    }
+}
+
+/// **Die Verzeichnisse, die Myelith mit Daten fuellt.**
+///
+/// ⚑ **Hier und nicht in den Oberflaechen**, aus demselben Grund wie bei
+/// [`datenort`]: Wer sie dort aufzaehlt, zaehlt sie beim naechsten
+/// Programm noch einmal, und zwei Aufzaehlungen derselben Sache zeigen
+/// irgendwann auf verschiedene Verzeichnisse.
+///
+/// ⛔️ **Und seit dem 2026-09-21 liegen die beiden nicht mehr
+/// beieinander** (Fund 410). Die fremden Gewichte sind nach `MODELS/` an
+/// die Wurzel gezogen, die gebauten Artefakte blieben unter
+/// `INTEGER_LLM/`. Eine Aufzaehlung, die weiter `INTEGER_LLM/models`
+/// nennt, wirft **keinen Fehler**, sondern liefert eine **zu kleine
+/// Zahl**: Das Verzeichnis ist einfach nicht da, und `belegung` zaehlt
+/// dann null. 📌 **Ein Pfad, der auf nichts zeigt, meldet sich nicht;
+/// er antwortet.**
+///
+/// ⚠️ **Ohne Klon ist die Liste leer, und das ist richtig.** Wer nur die
+/// Freigabebuendel geholt hat, hat weder Gewichte noch Artefakte im
+/// Baum, und eine Zahl waere dort geraten.
+pub fn gefuellte_orte() -> Vec<PathBuf> {
+    match wurzel() {
+        Some(w) => vec![w.join("MODELS"), w.join("INTEGER_LLM").join("artifacts")],
+        None => Vec::new(),
+    }
+}
+
+#[cfg(test)]
+mod proben {
+    use super::*;
+
+    /// Legt einen Scheinklon an: ein Verzeichnis mit der Marke darin.
+    fn scheinklon(name: &str) -> PathBuf {
+        let w = std::env::temp_dir().join(format!("myelith-ort-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&w);
+        std::fs::create_dir_all(w.join("INTEGER_LLM/scripts")).expect("anlegen");
+        std::fs::write(w.join(MARKE), "#!/bin/sh\n").expect("Marke");
+        std::fs::canonicalize(&w).unwrap_or(w)
+    }
+
+    #[test]
+    fn ein_verzeichnis_mit_der_marke_ist_die_wurzel() {
+        let w = scheinklon("marke");
+        assert!(ist_wurzel(&w));
+        assert!(!ist_wurzel(&w.join("INTEGER_LLM")));
+        let _ = std::fs::remove_dir_all(&w);
+    }
+
+    /// ⚑ **Von tief drinnen fuehrt der Weg nach oben ans Ziel.**
+    #[test]
+    fn von_innen_wird_die_wurzel_gefunden() {
+        let w = scheinklon("innen");
+        let tief = w.join("CLIENT/myl-oberflaeche/ui");
+        std::fs::create_dir_all(&tief).expect("anlegen");
+        assert_eq!(aufwaerts(tief), Some(w.clone()));
+        let _ = std::fs::remove_dir_all(&w);
+    }
+
+    /// 📌 **Ein alter Zettel wird nicht geglaubt.** Genau das ist der
+    /// Fall „Repositorium verschoben": Der Zettel zeigt auf einen Ort,
+    /// an dem nichts mehr liegt, und wer ihn glaubt, sucht Artefakte in
+    /// einem leeren Verzeichnis.
+    #[test]
+    fn ein_alter_zettel_wird_nicht_geglaubt() {
+        let w = scheinklon("zettel");
+        let fort = w.with_extension("fort");
+        std::fs::rename(&w, &fort).expect("verschieben");
+        // Der Zettel zeigt auf den alten Ort; dort ist die Marke weg.
+        assert!(!ist_wurzel(&w), "der alte Ort traegt noch die Marke");
+        assert!(ist_wurzel(&fort), "der neue Ort traegt sie nicht");
+        let _ = std::fs::remove_dir_all(&fort);
+    }
+
+    /// ⚑ **Ein absoluter Pfad bleibt, ein leerer auch.**
+    #[test]
+    fn absolute_und_leere_pfade_bleiben() {
+        let fest = if cfg!(windows) { "C:\\x\\y" } else { "/x/y" };
+        assert_eq!(absolut(fest), fest);
+        assert_eq!(absolut(""), "");
+    }
+
+    /// **Ein relativer Pfad wird gegen die Wurzel gelegt.**
+    ///
+    /// 📌 **Das ist der Fall „Repositorium verschoben".** In den
+    /// Einstellungen steht `INTEGER_LLM/artifacts/myelith-4b`, und
+    /// dieser Eintrag ueberlebt jeden Umzug: Was sich aendert, ist die
+    /// Wurzel, und die wird gesucht statt aufgeschrieben.
+    /// 📌 **Die Erwartung wird gebaut und nicht getippt** (2026-09-10).
+    /// Der erste Entwurf schrieb `"/wo/auch/immer/INTEGER_LLM/..."` als
+    /// Text hin und fiel unter Windows: Dort setzt `Path::join` einen
+    /// Backslash, und die Pruefung meldete einen Unterschied im
+    /// Trennzeichen als Fehler in der Aufloesung. **Eine Erwartung, die
+    /// von Hand geschrieben ist, prueft die Maschine, auf der sie
+    /// geschrieben wurde.**
+    #[test]
+    fn ein_relativer_pfad_haengt_an_der_wurzel() {
+        let alt = Path::new("/wo/auch/immer");
+        let neu = Path::new("/ganz/woanders");
+        let rel = "INTEGER_LLM/artifacts/myelith-4b";
+        assert_eq!(gegen(Some(alt), rel), alt.join(rel).display().to_string());
+        // Derselbe Eintrag, verschobener Klon, richtiger Pfad.
+        assert_eq!(gegen(Some(neu), rel), neu.join(rel).display().to_string());
+        // ⚑ Und die beiden sind wirklich verschieden: Ohne diese Zeile
+        // ginge die Pruefung auch dann durch, wenn `gegen` die Wurzel
+        // ignorierte und schlicht `rel` zurueckgaebe.
+        assert_ne!(gegen(Some(alt), rel), gegen(Some(neu), rel));
+        // ⚠️ Und ohne Wurzel bleibt er relativ, statt geraten zu werden.
+        assert_eq!(gegen(None, rel), rel);
+    }
+
+    /// Die Wurzel dieses Repositoriums, von der Kiste aus.
+    fn repo() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(|p| p.parent())
+            .expect("Wurzel des Repositoriums")
+            .to_path_buf()
+    }
+
+    /// **Kein Skript nennt einen festen Pfad in diesen Baum.**
+    ///
+    /// ⚑ **Die Wurzel ist, wo die Datei liegt.** `$(dirname "$0")` und
+    /// `%~dp0`, und sonst nichts. Damit ueberlebt das Einrichten jedes
+    /// Verschieben, Umbenennen und Kopieren des Repositoriums: Es gibt
+    /// keinen Pfad, den jemand nachziehen muesste.
+    ///
+    /// ⚠️ **Ein fester Pfad faellt sonst erst dem Naechsten auf**, und
+    /// zwar dem, der ihn nicht geschrieben hat.
+    #[test]
+    fn kein_skript_nennt_einen_festen_pfad() {
+        let wurzel = repo();
+        for datei in ["SYSTEM/install/installieren-macos.sh", "SYSTEM/install/installieren-nixos.sh"] {
+            let text = std::fs::read_to_string(wurzel.join(datei)).expect(datei);
+            for zeile in text.lines() {
+                let z = zeile.trim();
+                if z.starts_with('#') {
+                    continue;
+                }
+                assert!(
+                    !z.contains("/Users/") && !z.contains("C:\\Users"),
+                    "{datei} nennt einen festen Benutzerpfad:\n  {z}"
+                );
+            }
+            assert!(
+                text.contains("dirname \"$0\""),
+                "{datei} leitet die Wurzel nicht aus seinem eigenen Ort ab"
+            );
+        }
+        let ps = std::fs::read_to_string(wurzel.join("SYSTEM/install/installieren-windows.ps1"))
+            .expect("SYSTEM/install/installieren-windows.ps1");
+        assert!(ps.contains("$PSScriptRoot"), "das Windows-Skript kennt seinen Ort nicht");
+    }
+
+    /// **Der Menueeintrag fuer Linux wird erzeugt und nicht abgelegt.**
+    ///
+    /// 📌 Ein `.desktop` traegt absolute Pfade in `Exec` und `Icon`. Im
+    /// Repositorium abgelegt waere es beim ersten Verschieben falsch
+    /// und beim zweiten Klon von Anfang an. **Ein Pfad, der in einer
+    /// versionierten Datei steht, ist eine Wette darauf, dass nichts
+    /// sich bewegt.**
+    #[test]
+    fn der_menueeintrag_wird_erzeugt() {
+        let wurzel = repo();
+        let sh = std::fs::read_to_string(wurzel.join("SYSTEM/install/installieren-nixos.sh"))
+            .expect("Skript");
+        assert!(sh.contains("[Desktop Entry]"), "das Skript legt keinen Eintrag an");
+        assert!(sh.contains("Icon=$WURZEL/"), "der Eintrag traegt kein Symbol aus diesem Baum");
+        assert!(
+            !wurzel.join("myelith.desktop").exists() && !wurzel.join("Myelith.desktop").exists(),
+            "im Repositorium liegt ein .desktop mit festen Pfaden"
+        );
+    }
+
+    /// ⚠️ **Die Umgebungsvariable schlaegt alles**, aber nur, wenn dort
+    /// auch wirklich ein Klon liegt. Ein Tippfehler in der Variablen
+    /// darf nicht dazu fuehren, dass gar nichts mehr gefunden wird.
+    #[test]
+    fn eine_falsche_umgebungsvariable_blockiert_nicht() {
+        let leer = std::env::temp_dir().join("myelith-gibt-es-nicht");
+        assert!(!ist_wurzel(&leer));
+    }
+}

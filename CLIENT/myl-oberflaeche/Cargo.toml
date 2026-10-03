@@ -1,6 +1,6 @@
 [package]
 name = "myl-oberflaeche"
-version = "0.58.0"
+version = "0.58.1"
 edition = "2021"
 rust-version = "1.88"
 description = "Die grafische Oberflaeche des Clients auf Tauri: ein Gespraechsfenster, das dieselben Funktionen ruft wie die Kommandozeile."
@@ -30,6 +30,8 @@ ausliefern = "myl-oberflaeche"
 
 [dependencies]
 myl-client = { path = "../myl-client" }
+# ⚑ Der oertliche Agent, direkt und nicht ueber den Client (seit 2026-09-30).
+myl-local-agent = { path = "../../AGENT_LAYER/local-agent" }
 myl-senses = { path = "../myl-senses" }
 tauri = { version = "2", features = [] }
 serde = { version = "1.0", features = ["derive"] }

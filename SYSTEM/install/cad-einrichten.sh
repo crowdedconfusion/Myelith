@@ -17,7 +17,7 @@
 set -u
 
 HIER=$(cd "$(dirname "$0")/../.." && pwd)
-KISTE="$HIER/CLIENT/werkzeugkisten/CAD"
+KISTE="$HIER/AGENT_LAYER/local-toolkits/CAD"
 holen=0
 [ "${1:-}" = "--holen" ] && holen=1
 
@@ -64,7 +64,7 @@ echo "FreeCAD gefunden: $gefunden"
 # ⚑ Gefunden ist nicht dasselbe wie laeuft: ein Probeteil bauen.
 probe=$(mktemp -d "${TMPDIR:-/tmp}/myl-cad-probe.XXXXXX") || exit 1
 trap 'rm -rf "$probe"' EXIT
-cp "$HIER/CLIENT/myl-skills/cad-erstellen/vorlagen/flansch.py" "$probe/flansch.py" || exit 1
+cp "$HIER/AGENT_LAYER/local-skills/cad-erstellen/vorlagen/flansch.py" "$probe/flansch.py" || exit 1
 if (cd "$probe" && sh "$KISTE/cad.sh" bauen flansch.py flansch) | tee "$probe/bericht.txt" | tail -n 3; then :; fi
 if grep -q "^ERGEBNIS: gelungen" "$probe/bericht.txt" && [ -s "$probe/flansch.FCStd" ] && [ -s "$probe/flansch.step" ]; then
   echo "Fertig: die CAD-Werkzeuge laufen. Im Client die Werkzeugkiste CAD waehlen."

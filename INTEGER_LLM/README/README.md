@@ -1,7 +1,7 @@
 # integer-llm
 
-> **Version:** 0.110.0 (θ_v 0.22.0; kernels 0.76.0, runtime 0.79.0, pipeline 0.15.1)
-> **Datum:** 2026-09-30
+> **Version:** 0.115.0 (θ_v 0.22.0; kernels 0.78.0, runtime 0.84.0, pipeline 0.15.1)
+> **Datum:** 2026-10-03
 > **Status:** ⚠️ **Das Akzeptanzkriterium ruht auf einer zu kleinen
 > Stichprobe.** Gemessen wurde bisher ueber **4 Sequenzen, 435
 > Positionen**; eine Messung ueber **32 Sequenzen, 3558 Positionen**
@@ -646,6 +646,532 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
   volle Paritätstests nur auf GPU-Runnern (nightly oder PR-basiert)
 
 ## Changelog
+
+### v0.115.0 – 2026-10-03 (runtime 0.84.0: L13, erster Teil: die Expertenwahl unter ternärer Umwandlung gemessen, der Gemischweg trainiert ternär mit hochaufgelöstem Router, ein langer Lauf entgleist an der Zustandsschicht; Fund 520)
+
+**Ob ein Router die ternäre Umwandlung übersteht, ist jetzt gemessen**, und
+der Trainingspfad eines Gemischs folgt der Antwort: Experten und Mischer
+werden ternär, Router und geteilter Experte bleiben int8.
+
+- **Messung** (`routerumwandlung`, neu): derselbe Text zweimal Token für
+  Token, erst mit dem Artefakt, dann mit den Experten eines Ebenenbereichs an
+  Ort und Stelle ternär gerundet, so wie das Training sie ableitet. Am 35B
+  über 96 Token:
+
+  | umgewandelt | Perplexität | gleiche Experten in der eigenen Ebene | dahinter |
+  |---|---|---|---|
+  | Experten 0 bis 3, Router int8 | 4,88 → 6,21 | 1,00 / 0,82 / 0,78 / 0,70 | 0,70 bis 0,90 |
+  | dazu der Router ternär | 4,88 → 5,74 | **0,66 / 0,60 / 0,56 / 0,44** | 0,68 bis 0,89 |
+  | dazu der geteilte Experte ternär | 4,88 → 6,58 | 1,00 / 0,79 / 0,74 / 0,61 | 0,64 bis 0,89 |
+  | Experten 16 bis 23, Router int8 | 4,88 → 4,87 | 1,00 bis 0,78 | 0,72 bis 0,92 |
+
+  ⚑ **Der ternäre Router wählt in seiner eigenen Ebene ein Drittel bis mehr
+  als die Hälfte der Experten anders**, bevor irgendein Strom sich geändert
+  hat; der int8-Router weicht nur so weit ab, wie der Strom vor ihm sich
+  verschoben hat. Die mittleren Ebenen tragen ternäre Experten über acht
+  Ebenen ohne messbaren Verlust auf diesem Text, die ersten nicht.
+  ⚠️ 96 Token sind eine kleine Stichprobe; die Perplexität mit ternärem
+  Router liegt unter der mit int8-Router, und das ist Rauschen, nicht ein
+  Vorteil.
+- **Gemischweg mit Form:** `gemisch_vorwaerts` und `gemisch_rueckwaerts`
+  nehmen die Form des Bereichs. Ternär werden Q, K, V, O, die gewählten
+  Experten und bei einer Zustandsebene `in_proj_qkv`, `in_proj_z` und
+  `out_proj`; **int8 bleiben Router, geteilter Experte mit Tor,
+  `in_proj_a`, `in_proj_b` und die Faltung**, also genau, was das gepackte
+  27B auch hochaufgelöst trägt, und der hochaufgelöste Pfad neben ternären
+  Experten (MoTE). Bis hierher rechnete der Gemischweg immer int8, gleich
+  welche Form der Bereich hatte.
+- **`trainingsguete`:** nimmt Zustandsebenen mit Gemisch an (abgewiesen
+  bleibt nur eine Zustandsebene mit dichtem Block) und gibt einem Gemisch
+  mit `--zeilenweise` seine eigenen Zeilenbreiten
+  (`zeilenbreiten_gemisch`); bisher fiel es still auf die
+  Matrixnormierung zurück.
+
+- **Rauchlauf am 35B** (`trainingsguete --ternaer --normiert --zeilenweise
+  --ebenen 4 --schritte 1 --sammeln`, Leiter 2, zwei Lernfolgen, 58
+  Haltefolgen): Der Weg läuft durch, über drei Zustandsebenen und eine
+  Achtsamkeitsebene mit Gemisch; ein Durchgang bewegt 897 Matrizen, 487 von
+  1 024 Experten berührt. Haltemenge 312 → 79 407. ⛔️ **Das ist der
+  Schritt, nicht die Rundung**: `trainingsguete` misst VORHER schon mit der
+  ternären Form, die 312 sind also bereits gerundet. Geschadet hat ein
+  Durchgang mit der Vorgabe `lr_nenner = 32`, je Zeile normiert; dass so
+  große Schritte über mehrere Ebenen schaden, war vom 0,6B bekannt (Nenner
+  64 schlechter als 512). 📌 Hier zuerst als Rundungsschaden gemeldet und
+  nach dem Nachlesen der Messstelle zurückgenommen.
+
+- **Verifikationslauf** (Wunsch des Projektinhabers vor dem langen Lauf;
+  35B, letzte vier Ebenen, WikiText, je 4 Lern- und Haltefolgen, normiert, je
+  Zeile, gesammelt):
+
+  | Lauf | Haltemenge |
+  |---|---|
+  | int8, ohne Schritt | 5,29 |
+  | ternär gerundet, ohne Schritt | 35,00 |
+  | Rauschnullpunkt (int8-Störung, kein Gradient) | −0,53 % |
+  | **ternär, zwei Durchgänge, Nenner 512** | **35,00 → 22,56 (−35,6 %)**, Lernmenge −50,8 % |
+
+  Der Abstand zum Rauschnullpunkt ist das 67-Fache; ein Durchgang kostet
+  rund 16 Minuten.
+
+- ⛔️ **Der Lernlauf mit zwölf Durchgängen schadet** (Nenner 512, Warmlauf
+  2, Abfall auf ein Viertel, je Durchgang 4 von 48 Folgen, 8 Haltefolgen,
+  3 Stunden 28 Minuten): Haltemenge **40,3 → 56 722**, Lernmenge 100,8 → 66 159;
+  Rauschnullpunkt −0,01 %. ⚑ **Ein Anzeichen, und es ist ein Verdacht und
+  noch kein Beleg:** Die Zahl der Matrizen mit Gradient fällt je Durchgang
+  von 1 842 auf 741. Bei 42 festen Matrizen (Mischer, Router, geteilter
+  Experte) heißt das: Die Ebenen wählen über 512 Token statt rund 150 nur
+  noch rund 58 verschiedene Experten. Die Expertenwahl zieht sich zusammen.
+  Ob der Router das tut (je Zeile normiert bewegt jeder Schritt jede
+  Routerzeile um denselben Anteil, gleich wie klein ihr Gradient ist) oder
+  der veränderte Strom davor, klärt ein Lauf mit festem Router
+  (`--router-fest`, neu, `Auswahl::OhneRouter`; läuft).
+- ⛔️ **Fund 520: Ein Stand mit Gemischebenen lässt sich nicht zurücklesen.**
+  `stand_schreiben` schreibt die gewählten Experten in der Reihenfolge ihrer
+  Nummern, aber nicht die Nummern selbst; `stand_lesen` vergleicht mit einem
+  frischen Stand, der noch keinen Experten trägt, und lehnt wegen der
+  Matrixzahl ab. Der Stand dieses Laufs (11,4 GB) ist damit nicht wieder
+  ladbar. Nicht behoben; ein Stand gehört um die Expertennummern ergänzt.
+
+- ⛔️ **Der Router ist es nicht:** Mit festem Router (`--router-fest`, sechs
+  Durchgänge eines Plans über zwölf, je 4 von 24 Folgen) entgleist der Lauf
+  sogar stärker, Haltemenge 40,3 → 5,66 Mio.; die Zahl der Matrizen mit
+  Gradient fällt genauso (1 842 → 1 143). 📌 **Mein Verdacht vom Router war
+  damit falsch**; die Wahl zieht sich zusammen, weil der Strom davor sich
+  ändert, und der Strom ändert sich, weil das Training selbst entgleist.
+- **Eingrenzung** (`trainingsguete` meldet jetzt je Durchgang die
+  Perplexität seiner Folgen vor dem Schritt; neu `--nur-mischer`,
+  `--nur-zustand`, `--nur-zustandsprojektionen`, dazu die Varianten von
+  `Auswahl`). 35B, Ebenen 36 bis 39, ternär, je vier Durchgänge, Nenner 512,
+  je 4 von 16 Folgen, 4 Haltefolgen:
+
+  | bewegt wird nur … | Perplexität je Durchgang | Haltemenge |
+  |---|---|---|
+  | Experten und geteilter Experte | 70 → 114 → 129 → 101 | 35,0 → **25,9 (−26 %)** |
+  | der Mischer | 70 → 75 → 518 → 735 | 35,0 → 464 |
+  | alles | 70 → 74 → 491 → 755 | 35,0 → 463 |
+  | die Zustandsschicht, alle sechs Matrizen | 70 → 80 → 1 611 → 2 121 | 35,0 → 3 625 |
+  | nur `in_proj_qkv`, `in_proj_z`, `out_proj` | 70 → 80 → 1 653 → 2 096 | 35,0 → 3 666 |
+
+  ⚑ **Die Experten lernen ternär, der Router hält; was kippt, sind die
+  großen Projektionen der Zustandsschicht über mehrere Durchgänge.**
+  Torzeilen und Faltung tragen dazu nichts bei. 📌 Zweimal falsch vermutet
+  (erst der Router, dann die Torzeilen), beide Male am Lauf widerlegt.
+
+⚠️ **Offen in L13:** ob es an der ternären Form dieser drei Matrizen liegt
+oder am Gradienten (derselbe Lauf ohne `--ternaer`); Fund 520; dann
+ternär gepackte Experten im Artefakt und im Gemischkern der Inferenz
+(`Expertenteil` trägt heute nur int8), nach dem Assessment.
+
+**Belege:** Clippy sauber, runtime-Tests grün; die Messungen oben.
+
+### v0.114.0 – 2026-10-02 (kernels 0.78.0, runtime 0.83.0: T5, die Zustandsschicht im Training; Fund 519)
+
+**Die rekurrente Zustandsschicht trainiert mit**: ein Rückwärtspass vom
+Ausgang von `out_proj` bis zum normierten Eingang, und die Einbindung in
+den Gemischweg des Schardtrainings. Damit trägt der Trainingspfad alle
+Ebenen des 35B. Eine Zustandsebene mit **dichtem** Block wird weiter
+abgewiesen (`ZustandsschichtNichtGetragen`), weil es kein solches Modell
+gibt.
+
+- **Rekurrenz rückwärts** (`kernels::zustandsrueckweg`, neu): BPTT je
+  Wertkopf über die Folge (`kopf_rueckwaerts`). `kv` und `delta` kommen
+  aus **demselben** Kern wie vorwärts (`spalten_schritt` schreibt sie auf
+  Wunsch in eine Spur, `schritt_mit_spur`), der verblasste Zustand aus
+  derselben Rundung (`verblasst`, `zeile_verblassen`). `dS`, `dd` und `dkv`
+  tragen zwölf Bruchbits mehr als der Bus (`RUECK_EXTRA = NORM_FRAC`), damit
+  der Zuschlag `q ⊗ dO` ohne Rundung landet.
+- **Zustände in Abständen:** Gehalten wird jeder `abstand`-te Zustand,
+  dazwischen wird abschnittsweise von hinten neu gerechnet. Ein Zustand
+  sind beim großen Modell 128 KiB je Kopf; alle zu halten kostete bei 512
+  Token und 32 Köpfen 2 GiB je Ebene. Die Rekurrenz ist ganzzahlig, also
+  ist der neu gerechnete Zustand derselbe.
+- **Die beiden Tore als gemeinsamer Kern** (`zustandsschicht::Zustandstore`,
+  `Torwerte`): `beta = sigmoid(b)` und `g = exp(−exp_A · softplus(a + dt))`
+  rechneten bisher in `model.rs` von Hand; jetzt rufen Inferenz und
+  Training dieselbe Stelle, und `tore_rueckwaerts` leitet genau sie ab
+  (nach `b`, `a`, `dt_bias` und `exp_A`). Die Hilfsfunktionen
+  `vorspannwert` und `mal_vorspann` sind entfallen.
+- **Faltung rückwärts** (`faltung::rueckwaerts`): nach Eingang und
+  Gewichten; die Summe über die vier Stellen ist eine Funktion für beide
+  Richtungen (`kanal_summe`).
+- **RMSNorm mit Epsilon und Spur** (`rmsnorm_i16_mit_eps_und_spur`): Die
+  torgesteuerte Norm braucht `r` für den Rückweg. Die vorhandene
+  `rmsnorm_backward` trägt das Epsilon ohne Änderung, denn
+  `dr/dx = −r³ x / n` hat mit ihm dieselbe Form.
+- **Spur im Vorwärtspass der Inferenz** (`IntegerModel::zustandsschicht_mit_spur`,
+  `Zustandsspur`): derselbe Rumpf `zustandsschicht_fenster`, mit einem
+  optionalen Mitschnitt und ab leerem Zustand. Kein zweiter
+  Trainingsvorwärtspass.
+- **Die ganze Kette** (`runtime::zustandstraining::rueckwaerts`, neu):
+  `out_proj`, Produktregel und SiLU des Ausgangstors, torgesteuerte Norm je
+  Wertkopf, Rekurrenz und Tore verteilt je Wertkopf, Einheitslänge von `q`
+  und `k` (je Schlüsselkopf über seine Wertköpfe summiert), Faltung, die
+  vier Eingangsprojektionen mit Drehung. Ternär gepackte Projektionen der
+  Zustandsschicht werden mit Namen abgewiesen.
+- **Probe am echten Modell** (`zustandsrueckprobe`, neu).
+- **Einbindung ins Schardtraining:** `Ebenenstand::Gemisch` trägt statt der
+  vier Achtsamkeitsmatrizen einen `Mischerstand`, Achtsamkeit (Q, K, V, O)
+  oder Zustand (`in_proj_qkv`, `in_proj_z`, `in_proj_b`, `in_proj_a`,
+  `out_proj`, Faltung, in dieser Reihenfolge). Für Achtsamkeitsebenen ist
+  alles wie vorher, auch Abdruck und Würfelbereiche. Neue Kennung
+  `Matrixkennung::Zustand`, hinten angehängt; `Gemischversatz` zählt die
+  Bereiche des Mischers aus ihren Längen; `zeilenbreiten_gemisch` kennt die
+  sechs Breiten. Vorwärts rechnet die Ebene über `zustandsschicht_mit_spur`
+  mit Gewichten aus den Mastern (`zustandsschicht_aus_mastern`), rückwärts
+  über `zustandstraining::rueckwaerts` auf dem Bus der Achtsamkeit; Zustände
+  im Abstand 16.
+- ⚑ **Nicht trainiert** werden das Gamma der torgesteuerten Norm, `dt_bias`
+  und `exp_A`, aus demselben Grund wie das Gamma der QK-Normierung: neue
+  Master und Würfelbereiche wären eine Änderung des Trainingsvertrags.
+  Ihre Gradienten rechnet der Rückweg.
+- `vorgaben_der_ebene` und `qk_vorgaben_der_ebene` lasen
+  `achtsamkeit()`, bei einer Zustandsebene eine Panik; jetzt null und
+  `None`.
+- `faltung::rueckwaerts` gibt `dL/dW` wie `linear_backward` ohne Skalierung
+  (`Σ du · x`), damit der Schritt alle sechs Matrizen gleich behandelt.
+
+⛔️ **Fund 519: Die Ableitung der SiLU-Tabelle hat in den flachen Enden
+einzelne Spitzen.** Der Rückweg nimmt seit TRAINING V die mittige
+Differenz der Vorwärtstabelle, damit er ableitet, was gelaufen ist. Die
+Tabelle hat sechs Bruchbits Eingang und acht Ausgang; bei `z = −8,4`
+springt sie von 0 auf −1/256, und ihre Ableitung ist dort 0,125 statt
+0,0013. Gemessen am 35B, Ebene 0: Die Zeile 2383 von `in_proj_z` hat
+`z` um −8,7, an zehn von elf Token ist die Ableitung null, an einem
+liegt `z` auf der Stufe; vorhergesagt −1,7·10⁵, gemessen −3,3·10³. Im
+Mittel über viele Lagen ist die Tabellenableitung richtig, an einer
+einzelnen Stelle ist sie ein Kamm. ⚠️ **Dasselbe gilt für das Tor des
+MLP**, das dieselbe Tabelle nimmt. Nicht geändert: Ob eine geglättete
+Ableitung in den Enden besser lernt, ist eine Frage an eine Lernkurve und
+nicht an diese Probe.
+
+**Belege:**
+
+- **Inferenz unverändert:** `seq_layer_dump --full --alle-positionen` am
+  35B über elf Token, alle 41 Stufen an allen Positionen, gebaut aus dem
+  letzten Commit und aus diesem Stand: **gleich** (451 Zeilen). ⚠️ Die
+  Ausgabe hat sechs Nachkommastellen; bei Residualskalen von 16 bis 19
+  Bruchbits löst sie eine letzte Stelle auf.
+- `die_rekurrenz_sagt_die_aenderung_voraus`: q, k, v, g, beta, je gegen den
+  Gradienten **und** in zufälliger Richtung, mittig gemessen am echten
+  Vorwärtskern, drei Saaten: **0,996 bis 1,017**, Band 0,97 bis 1,03.
+  📌 Die erste Fassung prüfte nur gegen den Gradienten und blieb grün, als
+  `dk` sein zweiter Summand fehlte; dort ist das Verhältnis
+  `<wahr, falsch> / <falsch, falsch>`, und ein kleiner, fast senkrechter
+  Rest verschiebt es kaum.
+- `der_abstand_aendert_keine_zahl`: Abstand 1, 2, 3, 4, 10, 64, dieselben
+  Gradienten Bit für Bit. `die_spur_aendert_den_schritt_nicht`.
+- `die_tore_sagen_die_aenderung_voraus`: 4 096 Köpfe (die Tabellen sind
+  Treppen, erst über viele Stufen ist ihre Steigung die der Funktion):
+  b 1,002, a 1,004, dt_bias 1,000, exp_A 1,001.
+- `die_normen_der_zustandsschicht_sagen_die_aenderung_voraus`:
+  Einheitslänge mit `inv_n = d` und `1`, Norm mit Epsilon an einem Kopf, an
+  dem es den Nenner mitbestimmt: 1,001, 1,001, 1,008.
+- `der_rueckweg_sagt_die_aenderung_voraus` (Faltung): Eingang 0,999,
+  Gewichte 0,985, mit `u` um eins herum, wo die SiLU gekrümmt ist (bei
+  großen Beträgen fiel ein fehlender Summand ihrer Ableitung nicht auf).
+- **Gegenproben, alle gefangen:** Rekurrenz 8 (je ein Summand von `dk`
+  fehlt, `dkv` nicht in `dS`, `dS` verblasst nicht, `dbeta` ohne `kv`, `dq`
+  und `dg` aus dem falschen Zustand, Vorzeichen von `dkv`), Tore 5,
+  Faltung 4.
+- **Am 35B** (`zustandsrueckprobe`, Ebenen 0 und 4, elf Token, Schritt gegen
+  den Gradienten): `out_proj` 1,0000, `in_proj_qkv` 0,996 und 0,977,
+  `in_proj_z` 0,959 und 0,949, `in_proj_b` 1,012 und 0,983, `in_proj_a`
+  0,859 und 0,967, Faltung 0,896 und 1,071, Gamma 0,971 und 1,096, Eingang
+  1,129 und 1,221. Kein Faktor zwei, kein Vorzeichen, keine Null; die
+  Streuung kommt aus dem ganzzahligen Vorwärtspass (Fund 519, die leisen
+  Köpfe aus Fund 418/419, und ein dichter Schritt, der kein kleiner ist:
+  am Eingang ergab er 0,66 bis 0,80, mit einem Drittel der Einträge 1,06
+  bis 1,08). Die Begründung der Schrittwahl steht im Kopf des Werkzeugs.
+  ⚠️ `dt_bias` und `exp_A` (32 Werte) sind dort unter dem Rauschen und
+  werden nur gemeldet.
+- **Trainingsvorwärts gleich Inferenz:** `vorwaertsvergleich` am 35B,
+  Ebenen 0 bis 3 (drei Zustandsebenen und eine Achtsamkeitsebene, alle mit
+  Gemisch): **0 von 96 256** Werten verschieden.
+- **Schritte** (`zustandsschritt`, neu): Alle sechs Matrizen jeder
+  Zustandsebene bewegen sich. ⚠️ **Ob der Abstand sinkt, ist an diesem
+  Ziel nicht zu entscheiden, und zwar für beide Mischer:** Ziel ist der
+  Ausgang ±64 je Kanal; die Achtsamkeitsebene 3, deren Weg seit Wochen
+  geprüft ist, stieg normiert bei Nenner 256 von 92 274 688 auf
+  101 082 208 und bei 4 096 auf 92 369 378, die Zustandsebene 0 sank bei
+  4 096 auf 92 206 354 und stieg bei 256. Unnormiert sprengen beide
+  ab Nenner 4 096. Das Wechseln der Expertenwahl und die leisen Köpfe
+  machen den Abstand an einer Ebene zu einer Stufenfunktion. Die
+  belastbare Messung ist ein Lauf mit Haltemenge und Rauschnullpunkt
+  (`trainingsguete`), und der steht aus.
+- `zustandsmischer`: Würfelbereiche aus den Längen, Kennungen und Auswahl.
+- kernels 349 Tests grün (einer ignoriert), davon sechs neu; runtime 113 und
+  Integrationstests grün; myl-pod, myl-verifier, pipeline grün; Konformität
+  48/48; Clippy sauber.
+
+### v0.113.0 – 2026-10-02 (runtime 0.82.0: der geteilte Experte im Training, Fund 516 geschlossen; Fund 518, Würfelbereiche im Gemisch)
+
+**Der geteilte Experte rechnet im Gemischweg des Trainings mit**, der
+nächste Schritt zum 35B nach T3b. Bis v0.112.0 wurde er abgewiesen
+(Fund 516).
+
+- **Stand:** `Ebenenstand::Gemisch` trägt `geteilt` (Gate, Up, Down und die
+  eine Zeile seines Tors), von Anfang an, weil er bei jedem Token feuert;
+  neue Kennung `Matrixkennung::Geteilt` (hinten angehängt, die Ordnung der
+  übrigen bleibt). Kanonische Reihenfolge Aufmerksamkeit, Router,
+  geteilter Experte, gewählte Experten; für ein Modell ohne ihn ist der
+  Abdruck derselbe wie vorher. Schreiben und Lesen des Stands laufen über
+  dieselbe Reihenfolge und nehmen ihn mit.
+- **Vorwärts** wortgleich zur Inferenz (`geteilten_experten_addieren`):
+  sein MLP auf dem normierten Strom, sein Tor als eine Zeile,
+  `gemischt + rshift(geteilt · s)`.
+- **Rückwärts:** Der Gemischanteil bekommt den Gradienten unverändert, das
+  MLP `g · s` (über den vorhandenen MLP-Rückweg mit seinen eigenen Skalen),
+  das Tor `Σ g · geteilt · s · (1 − s)` als eine Zahl, die durch seine
+  Zeile läuft (`torzweig_rueckwaerts`, Summe in `i128`). Die drei
+  Eingangsgradienten addieren sich.
+- **Zeilenbreiten und Auswahl:** `zeilenbreiten_gemisch` kennt ihn (sonst
+  fiele er still auf die Matrixnormierung zurück, wie vor Fund 206); bei
+  „nur MLP“ werden seine drei Matrizen bewegt, sein Tor nicht.
+
+⛔️ **Fund 518: Die Würfelbereiche eines Gemischs überlappten.**
+`Gemischversatz` rechnete mit `Q = hidden × hidden` und vermerkte selbst
+„hier zählt nur, dass die Bereiche sich nicht überlappen“. Bei den
+Qwen3-Gemischen ist `num_heads · head_dim` aber nicht `hidden` (30B, 35B:
+4 096 gegen 2 048), und mit dem Tor hat Q noch einmal doppelt so viele
+Zeilen. Die Bereiche von Q, K, V und O überlappten, das stochastische
+Runden war zwischen ihnen korreliert. Jetzt aus den wirklichen Längen
+fortgezählt wie im dichten Weg; Router vor den Experten, der geteilte
+Experte hinter ihnen, beide unabhängig davon, welche Experten gewählt
+werden. ⚠️ Ein Gemischlauf würfelt damit anders als vorher; im Netz lief
+noch keiner.
+
+**Belege:**
+
+- `der_geteilte_experte_rechnet_im_training_wie_in_der_inferenz`: Vorlage
+  mit Gemisch, Tor, Teildrehung und geteiltem Experten, also allem, was
+  eine Achtsamkeitsebene des 35B trägt; vorwärts Wert für Wert wie
+  `durch_die_ebenen` (vorher an jeder Position verschieden), nach einem
+  Schritt hat sich jede der vier Matrizen bewegt, über sechs Schritte sinkt
+  der Abstand. ⚑ Schrittweite gemessen: Bei Nenner 16 und 64 springt der
+  Lauf auf dieser Vorlage über das Tal, **mit und ohne** geteilten Experten
+  gleichermaßen (ohne: 8,3 auf 9,3 Mrd.); bei 256 und 1 024 sinkt der
+  Abstand in beiden Fällen (mit: 12,9 auf 9,7 Mrd.).
+- `der_torzweig_rechnet_die_ableitung`: gegen die exakte Rechnung mit
+  gemeinsamem Nenner in `i128`, sechs Torfaktoren, an den Rändern 0 und
+  2^14 null.
+- **Gegenproben**, beide rot: ohne Torgradient (beide Proben: die
+  Torzeile bewegt sich nicht), ohne den Faktor `(1 − s)` (Torzweig).
+- **Am echten Modell:** 35B-A3B, Ebene 3, **vollständig**, mit geteiltem
+  Experten: **0 von 96 256 Werten verschieden.** Damit rechnet das
+  Training eine Achtsamkeitsebene des 35B vorwärts ganz wie die Inferenz;
+  es fehlen die Zustandsebenen (T5).
+
+### v0.112.0 – 2026-10-02 (kernels 0.77.0, runtime 0.81.0: Tor und Teildrehung im Training, Fund 508 geschlossen; Funde 516 und 517)
+
+**Anlass:** Festlegung des Projektinhabers, das ternäre Training in der
+Theorie für das komplexeste Modell abzudecken, also das 35B-A3B (Hybrid,
+Tor, Teildrehung, Gemisch mit geteiltem Experten). Dies ist der Schritt
+T3b der Reihenfolge dorthin.
+
+**Teildrehung im Trainingspfad.** `Aufmerksamkeitsvorgaben` trägt jetzt die
+`drehbreite`; die Tabellenzeilen sind `drehbreite / 2` breit, wie in der
+Inferenz, und `rope_backward` reicht den ungedrehten Rest eines Kopfes
+durch, wie `rotate_half_split_i16` vorwärts. Vorher schnitt der
+Trainingspfad die Tabelle mit `head_dim / 2` und hätte bei einer
+Teildrehung die Zeilen der falschen Position gelesen.
+
+**Tor am Ausgang der Achtsamkeit im Trainingspfad** (`TorVorgaben`, als
+`Option` wie die QK-Normierung; `None` ist Zeile für Zeile der bisherige
+Weg):
+
+- Vorwärts teilt der Trainingspfad `q_proj` je Kopf in Abfrage und Tor und
+  wendet `sigmoid(tor)` vor der Ausgabeprojektion an. ⚑ **Mit derselben
+  Funktion wie die Inferenz**: Das Tor steht jetzt einmal in den Kernen
+  (`integer_math::tor_anwenden`), und `IntegerModel::tor_anwenden` ruft
+  sie; zwei Fassungen derselben Rechnung liefen auseinander.
+- Rückwärts: `dL/da = g · s`, `dL/dtor = g · a · s · (1 − s)`, aus dem
+  nachgeschlagenen `s`, in drei Schritten geschoben gegen Überlauf. Beide
+  Hälften gehen je Kopf verschränkt in die Zeilen von `q_proj` zurück; das
+  Tor läuft weder durch die QK-Normierung noch durch die Drehung.
+- Die Spur hält das rohe Tor und den Wert vor dem Tor fest.
+
+`Shardgewichte::aus_modell` weist Tor und Teildrehung nicht mehr ab
+(Fund 508 geschlossen).
+
+**Belege, Vorlagen:**
+
+- `der_trainingspfad_rechnet_tor_und_teildrehung_wie_die_inferenz`: Tor
+  allein, Teildrehung allein, beides dicht, Teildrehung im Gemisch, Tor
+  und Teildrehung im Gemisch; der Vorwärtspass des Trainings liefert den
+  Strom jedes Tokens Wert für Wert wie `durch_die_ebenen`. Dafür eine
+  Vorlage mit eigenen Kopfmaßen (`write_full_fixture_ganz`, Kopf 4,
+  Drehbreite 2); bei Kopf 2 gibt es keine Teildrehung.
+- `tor_und_teildrehung_sagen_die_aenderung_des_abstands_voraus` (Kerne):
+  ein Schritt entlang des Gradienten senkt den Abstand wie vorhergesagt,
+  für die Abfrage- und die **Torzeilen** von `q_proj` getrennt, dazu K, V,
+  O; gemessen 0,72 / 0,90 / 0,67 / 1,14 / 1,09 (Schranke 0,65 bis 1,5; K
+  liegt nahe an ihr, der Lauf ist ganzzahlig und damit überall derselbe).
+  **Gegenproben**, alle rot: Torableitung ohne `(1 − s)` (Tor 0,35), Rückweg
+  ohne Tor (Abfrage 0,37), Tabellenzeile mit `head_dim / 2` statt
+  `drehbreite / 2` (Abfrage 0,42).
+- `rope_rueckwaerts_bei_teildrehung` (Kerne): zurückgedreht, und der Rest
+  bleibt vorwärts wie rückwärts.
+
+**Beleg am echten Modell** (`vorwaertsvergleich <artefakt> - 1 <von>
+<bis>`, neu: Eingang ist der Strom der Inferenz vor Ebene `von`, mit
+Zerlegung der ersten Position je Zwischenstufe): **35B-A3B, Ebene 3**
+(Tor, Teildrehung 64 von 256, QK-Normierung, Gemisch mit 256 Experten),
+den geteilten Experten dieser Ebene auf beiden Seiten entfernt: **0 von
+96 256 Werten verschieden.** Zur Kontrolle 0,6B Ebene 5 und 8B ternär
+Ebene 5: je 0 verschieden, das 8B auch mit einer angehängten
+Eingangsdrehung.
+
+⛔️ **Fund 516: Der Gemischweg des Trainings kannte den geteilten Experten
+nicht und wies ihn auch nicht ab.** Eine Gemischebene des Qwen3.6 rechnet
+neben den gewählten Experten einen, der bei jedem Token feuert, mit eigenem
+Tor; das Training traenierte still ein Modell ohne ihn. Gefunden an der
+Vorlage mit Tor und geteiltem Experten, der einzigen von fünf, die nicht
+Wert für Wert der Inferenz glich. Jetzt `VorwaertspfadNichtGetragen`, bis
+der Gemischweg ihn rechnet (`ein_geteilter_experte_wird_im_training_abgewiesen`).
+Für das 35B ist das der nächste Schritt.
+
+⛔️ **Fund 517: Ternäre Gruppenbeträge über 127 rechnet das Training auf
+einem gröberen Raster.** Am 27B wich Ebene 3 an 98 % der Werte ab, schon an
+Position 0 und schon in Q, K und V (die Zerlegung zeigte die Normierung
+gleich, alle Projektionen verschieden). Abgegrenzt in zwei Schritten: das
+8B ternär (Beträge bis 127) stimmt, auch mit angehängter Drehung; das 27B
+ist ein Import mit exakt übernommenen Skalen, **jede** Gruppe seiner Ebene 3
+hat einen Betrag über 127 (bis 6 692). Der Trainingspfad leitet ein
+ternäres Gewicht als int8 mit Zeilenshift ab, dort ist der Betrag höchstens
+127; er rundete still. 📌 **Die Drehung war es nicht**, obwohl sie der
+erste Verdacht war: Sie ist das Merkmal, in dem sich 27B und 8B
+unterscheiden, aber nicht die Ursache. Jetzt weist `aus_modell` eine Ebene
+mit solchen Beträgen ab (`ternaer_zu_fein`, Probe
+`ein_betrag_ueber_127_ist_zu_fein`). Für das Training eines solchen
+Imports gibt es zwei Wege: Beträge in `i16` im Trainingspfad (exakt,
+größerer Umbau) oder eine einmalige Umrechnung des Imports auf Beträge bis
+127 (ändert das Modell einmal, danach exakt). Die eigenen Umwandlungen
+(0,6B) liegen ohnehin im Raster.
+
+### v0.111.0 – 2026-10-02 (runtime 0.80.0: `lookahead`, Vermutungen mit exakter Prüfung; Fund 515, kleine Bündel im Gemisch doppelt so teuer wie der Einzelschritt)
+
+**Auftrag des Projektinhabers:** Richtung Expertengemisch, und dafür die
+Ideen aus Strata (eine Laufzeit, die ein Gemisch mit 125 Mrd. Parametern auf
+einem Spiele-PC fährt, MIT) aufnehmen: gelesen und neu geschrieben, gegen den
+Ganzzahlpfad. Dies ist der erste Teil: mehrere Token je Vorwärtspass.
+
+**Neu `runtime/src/lookahead.rs`, Vermutungen mit exakter Prüfung**
+(Name vom Projektinhaber; Arbeitsname war `vorschlag`). Im Decode laufen das gewählte Token und bis zu fünf
+vermutete in einem gebündelten Durchgang (`logits_stapel`). Angenommen
+wird eine Vermutung nur, wenn sie genau das Token ist, das die Auswahl an
+dieser Stelle mit derselben Saatkette ohnehin gewählt hätte; beim ersten
+Unterschied gilt das gewählte, der KV-Speicher wird gekürzt, ein
+rekurrenter Zustand zurückgesetzt und das Angenommene neu gerechnet.
+
+- ⚑ **Die Ausgabe ist Token für Token die des gewöhnlichen Laufs**, gleich
+  ob die Vermutungen gut, schlecht oder keine sind; ein Prüfer im Netz
+  braucht sie nicht. Bei Strata hängt die Ausgabe dagegen am Vorschlagen,
+  weil seine Gleitkomma-Kerne je nach Bündelgröße anders runden.
+- Die Vermutungen kommen zuerst aus dem Text selbst: das letzte frühere
+  Vorkommen der letzten zwei bis vier Token, und was dort folgte.
+- Eine Einstellung der Geschwindigkeit, nicht der Rechnung, darum am
+  Gesprächsspeicher (`Fortsetzung::vorschlaege_setzen`) und nicht in
+  `Erzeugung`. ⚑ **Standardmäßig aus**, und kein Aufrufer schaltet sie ein.
+  Nur außerhalb einer begrenzten Überlegung, und `dekodieren_mit_digest`
+  (Konformität) ist unberührt. `Wiederverwendung` zählt `vorgeschlagen` und
+  `angenommen`.
+- ⚠️ Ein Abbruchschalter greift erst nach einem Durchgang, also bis zu fünf
+  Token später.
+
+**Gemessen** (`lookaheadprobe`: je Aufgabe ohne, mit, ohne, gierig, Halt an
+`<|im_end|>`; die Probe bricht ab, wenn die Läufe verschiedene Token
+erzeugen, und das tat sie in keinem Fall):
+
+| Modell | Aufgabe | angenommen | Faktor |
+|---|---|---|---|
+| 4B | Code umbenennen | 95 % | **1,47** |
+| 4B | JSON umformen | 21 % | 0,65 |
+| 4B | freier Text | 19 % | 0,81 |
+| 35B (vor Fund 515) | Code umbenennen / JSON / frei | 78 / 37 / 40 % | 0,65 / 0,31 / 0,85 |
+| 35B (nach Fund 515) | Code umbenennen / JSON / frei | 78 / 37 / 40 % | 0,86 / 0,45 / 0,99 |
+
+**Warum es so wenig ist** (`stapelkosten`: k Einzelschritte gegen einen
+Durchgang mit k Token hinter einem fertigen Prompt, Logits verglichen):
+Ein Durchgang mit acht Token kostet beim 4B 4,7 Einzelschritte, beim 35B
+5,8. Der Decode auf der CPU ist überwiegend durch das Rechnen begrenzt und
+nicht durch das Lesen der Gewichte, und im Gemisch wählt jedes Token andere
+Experten; zu teilen bleibt wenig. Beim Hybrid kostet zudem jede Ablehnung
+einen zweiten Durchgang, weil sich der Zustand nicht kürzen lässt. Daraus
+folgt für die Vorhersageschicht, die Qwen3.6-35B-A3B mitbringt (19 Tensoren,
+im Artefakt bisher nicht übernommen): Mit den 2,4 bis 3,2 angenommenen Token
+je Durchgang, die Strata angibt, wären es hier etwa 1,1 bis 1,2. Sie wird
+deshalb vorerst nicht übernommen.
+
+⛔️ **Fund 515: Ein gebündelter Durchgang mit wenigen Token war im Gemisch
+doppelt so teuer wie der Einzelschritt.** Gemessen am 35B: ein Token
+gebündelt 95 ms, als Schritt 46 ms; acht Token 6,9 Schritte. Das Profil
+(`sample`) zeigt den Posten: Der gruppierte Expertenkern
+(`linear_w8a16_stapel_viele`) brauchte das 2,5-Fache des Einzelwegs
+(`mlp_int_experten_je_skala`), weil er auf viele Token je Experte gebaut
+ist und im Decode jeder gewählte Experte eines bekommt. Betroffen war
+nicht nur das Vermuten, sondern **jede kurze Vorbereitung**, also jedes
+Stück Prompt unter sechzehn Token. Jetzt rechnet eine Gemischebene unter
+`GEMISCH_EINZELN_UNTER` (16) Token für Token über `moe_vorwaerts`: ein
+Token 1,01 Schritte, acht Token 5,8. ⚑ Dieselbe Rechnung; neu
+`das_gruppierte_gemisch_ist_das_tokenweise`, weil die Probe mit sieben
+Token den gruppierten Weg sonst nicht mehr sähe. ⚠️ Ob die Grenze ohne
+`metal` ebenso liegt, ist nicht gemessen.
+
+**Zur Platte, gemessen im warmen Zustand** (`plattenprobe`: 64 Token
+aufwärmen, dann 128 messen; die Systemzahl `Pageins` aus `vm_stat` davor und
+danach, also nur auf einer ruhigen Maschine und nur auf macOS):
+
+| Modell | Decode | von der SSD |
+|---|---|---|
+| 4B | 31,1 Tok/s | 0 |
+| 35B (33 GB auf 24 GiB) | 18,6 Tok/s | **34,9 MB je Token**, 0,65 GB/s |
+
+Je Token berührt das 35B rund 960 MB Expertengewichte (8 von 256 Experten
+zu je 3 MB in 40 Ebenen); 35 MB davon kommen von der Platte, **der
+Dateicache trifft also schon zu rund 96 %**. Bei 3,4 GB/s für gebündeltes
+Nachladen (Fund 331) sind das etwa 10 von 54 ms je Token. ⚑ **Daraus die
+Obergrenze für die beiden anderen Ideen** (heiße Experten im Speicher
+halten, die der nächsten Ebene über deren Router vorausladen): höchstens
+etwa 1,2-fach, und nur, wenn die Wartezeit ganz verschwindet. Der grosse
+Hebel bei Strata, Experten zwischen Grafikkarte und CPU zu verteilen,
+setzt getrennten Grafikspeicher voraus; auf Apple-Silizium teilen sich
+beide denselben.
+
+**Die Gegenprobe zum Stand im Artefakt, am echten Modell** (Schritt T2 der
+ternären Reihenfolge; bisher nur an Testvorlagen belegt). Der Stand der
+Umwandlung des 0,6B vom 2026-09-30 (Haltemenge 2 835,0458) wurde mit
+`stand_ins_artefakt --ternaer` ein gepacktes Artefakt (580 MB) und dann
+auf **denselben** 26 Haltefolgen gemessen (`TOKENS_NACH` aus
+`trainingsguete`):
+
+| | int8-0,6B | ternär trainiert |
+|---|---|---|
+| Residualstrom hinter der letzten Ebene, Training gegen Inferenz | **0 von 3 396 608 Werten verschieden** | **0 von 3 396 608** |
+| Perplexität, Kopf mit 6 Bruchstellen (Inferenz) | 32,2241 | 2 835,1754 |
+| Perplexität, Kopf mit 16 Bruchstellen (Training, Fund 177) | 32,2222 | 2 835,0458 |
+
+Beide Ströme ergeben in jeder Zeile dieselbe Zahl. ⚑ **Training und
+Inferenz rechnen am echten Modell Wert für Wert dasselbe**, und der Weg vom
+Stand ins Artefakt verliert nichts; das Artefakt, wieder ins Training
+geladen, misst ebenfalls 2 835,0458. 📌 **Der Unterschied in der vierten
+Stelle zwischen `trainingsguete` und `perplexity_probe` ist allein die
+Messung**: Das Training liest den Kopf mit 16 Bruchstellen, die Inferenz mit
+`logit_frac_bits` = 6. Wer die beiden Werkzeuge vergleicht, vergleicht
+sonst zwei Köpfe. Neues Werkzeug `vorwaertsvergleich` (Strom und Kopf
+getrennt, je Bruchstellenzahl). Unabhängig nach WikiText (4 Folgen à 128):
+int8 31,3, ternär trainiert 1 518; das Verfahren trägt, vom int8-Modell ist
+der Stand nach 31 000 Token weit entfernt, wie erwartet.
+
+**Belege:** `vermutungen_aendern_nichts` (dicht, Gemisch, Gemisch mit Tor
+und geteiltem Experten, rekurrent; gierig, nach θ_v, nach Temperatur und
+Top-k; mit und ohne Haltemarke; 1, 6 und 24 Token; zwei Aufrufe am selben
+Speicher; Token, gemeldete Token, Speicherinhalt, KV und Zustand gleich;
+verlangt, dass an jeder Vorlage angenommen **und** abgelehnt wird);
+Gegenproben: alles annehmen und Zustand nicht zurücksetzen werden beide rot.
+`das_gruppierte_gemisch_ist_das_tokenweise` (1 bis 20 Token, mit und ohne
+geteilten Experten), Gegenprobe ohne geteilten Experten rot.
+`die_fortsetzung_kommt_aus_dem_verlauf`. Werkzeuge `lookaheadprobe`,
+`stapelkosten`, `plattenprobe` und `vorwaertsvergleich`.
 
 ### v0.110.0 – 2026-09-30 (kernels 0.76.0, runtime 0.79.0: Fund 510 behoben, beim Laden und nicht in der Ableitung)
 

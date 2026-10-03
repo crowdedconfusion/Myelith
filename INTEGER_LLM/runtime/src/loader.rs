@@ -3079,10 +3079,31 @@ mod tests {
         moe: Option<(usize, usize, usize)>,
         tor_und_geteilt: bool,
     ) {
+        write_full_fixture_ganz(dir, tie_word_embeddings, attention_bias, moe, tor_und_geteilt, (2, 2, 0));
+    }
+
+    /// Wie oben, mit eigenen Kopfmassen `(koepfe, kopf_dim, drehbreite)`;
+    /// `drehbreite` 0 heisst volle Drehung.
+    ///
+    /// ⚑ **Fuer die Teildrehung** (T3b): Bei `kopf_dim` 2 gibt es keine.
+    /// Die Kosinustabelle passt fuer jede Drehbreite 2, denn sie ist je
+    /// Position so breit wie die halbe Drehbreite, also eins.
+    fn write_full_fixture_ganz(
+        dir: &Path,
+        tie_word_embeddings: bool,
+        attention_bias: bool,
+        moe: Option<(usize, usize, usize)>,
+        tor_und_geteilt: bool,
+        kopf: (usize, usize, usize),
+    ) {
         let hidden = 4usize;
-        let heads = 2usize;
+        let (heads, head_dim, drehbreite) = kopf;
         let kv_heads = 1usize;
-        let head_dim = 2usize;
+        let mut merkmale: Vec<&str> =
+            if tor_und_geteilt { vec!["ausgangstor", "geteilter_experte"] } else { Vec::new() };
+        if drehbreite != 0 {
+            merkmale.push("teildrehung");
+        }
         let inter = 4usize;
         let vocab = 3usize;
 
@@ -3112,11 +3133,8 @@ mod tests {
             "output_gate_type": if tor_und_geteilt { "sigmoid" } else { "" },
             "shared_expert_intermediate_size":
                 if tor_und_geteilt { inter } else { 0 },
-            "merkmale": if tor_und_geteilt {
-                vec!["ausgangstor", "geteilter_experte"]
-            } else {
-                Vec::<&str>::new()
-            },
+            "merkmale": merkmale,
+            "rotary_dim": drehbreite,
         }));
 
         // Vollstaendige Per-Layer-Aktivierungsskalen (seit v0.12.20 Pflicht:
@@ -3568,6 +3586,191 @@ mod tests {
         }
     }
 
+    /// ⛔️ **Fund 508 geschlossen: Der Trainingspfad rechnet Tor und
+    /// Teildrehung Wert fuer Wert wie die Inferenz** (T3b). Bis zum
+    /// 2026-10-02 wies er beides ab; jetzt muss sein Vorwaertspass den
+    /// Strom jedes Tokens so liefern wie `durch_die_ebenen`, dicht und im
+    /// Gemisch, je Bauteil allein und beide zusammen.
+    #[test]
+    fn der_trainingspfad_rechnet_tor_und_teildrehung_wie_die_inferenz() {
+        use crate::shardtraining::{vorwaerts, Shardgewichte, Shardvorgaben};
+        let gemisch = Some((6usize, 2usize, 3usize));
+        struct Fall {
+            name: &'static str,
+            moe: Option<(usize, usize, usize)>,
+            tor: bool,
+            kopf: (usize, usize, usize),
+        }
+        let faelle = [
+            Fall { name: "t3b-tor-dicht", moe: None, tor: true, kopf: (2, 2, 0) },
+            Fall { name: "t3b-teil-dicht", moe: None, tor: false, kopf: (2, 4, 2) },
+            Fall { name: "t3b-beides-dicht", moe: None, tor: true, kopf: (2, 4, 2) },
+            Fall { name: "t3b-teil-gemisch", moe: gemisch, tor: false, kopf: (2, 4, 2) },
+        ];
+        for Fall { name, moe, tor, kopf } in faelle {
+            let dir = test_dir(name);
+            write_full_fixture_ganz(&dir, true, false, moe, tor, kopf);
+            gewichte_verrauschen(&dir, 0x5eed_0508);
+            skalen_je_kanal_streuen(&dir);
+            let m = load_model(&dir).expect("Artefakt muss laden");
+            assert_eq!(m.achtsamkeit_mit_tor, tor, "{name}: Tor");
+            assert_eq!(m.drehbreite, if kopf.2 == 0 { kopf.1 } else { kopf.2 }, "{name}: Drehbreite");
+            let folge: Vec<usize> = (0..23).map(|i| (i * 7 + i / 3) % 3).collect();
+            let strom: Vec<Vec<i16>> = folge.iter().map(|t| m.embed_token(*t)).collect();
+            let mut g = Shardgewichte::aus_modell(&m, 0, m.num_layers).expect("trainierbar");
+            let vg = Shardvorgaben { von: 0, bis: m.num_layers, schritt: 0, lr_zaehler: 1, lr_nenner: 64 };
+            let training = vorwaerts(&m, &mut g, &vg, &strom).expect("vorwaerts").ausgang;
+            let mut cache = crate::kv_cache::KVCache::new(m.num_layers, m.num_kv_heads);
+            let inferenz: Vec<Vec<i16>> =
+                folge.iter().enumerate().map(|(p, t)| m.durch_die_ebenen(*t, p, &mut cache)).collect();
+            assert_eq!(training, inferenz, "{name}: Training und Inferenz rechnen verschieden");
+            fs::remove_dir_all(&dir).ok();
+        }
+
+        // ⚑ **Das Tor auch im Gemisch.** Die Vorlage koppelt Tor und
+        //   geteilten Experten; den traegt der Trainingspfad nicht (Fund 516,
+        //   dort abgewiesen). Ohne ihn, auf beiden Seiten, bleibt das Tor.
+        let dir = test_dir("t3b-tor-gemisch");
+        write_full_fixture_ganz(&dir, true, false, gemisch, true, (2, 4, 2));
+        gewichte_verrauschen(&dir, 0x5eed_0508);
+        skalen_je_kanal_streuen(&dir);
+        let mut m = load_model(&dir).expect("Artefakt muss laden");
+        for ebene in m.layers.iter_mut() {
+            if let crate::model::Feedforward::Moe(moe) = &mut ebene.ffn {
+                moe.geteilter_experte = None;
+            }
+        }
+        let folge: Vec<usize> = (0..23).map(|i| (i * 7 + i / 3) % 3).collect();
+        let strom: Vec<Vec<i16>> = folge.iter().map(|t| m.embed_token(*t)).collect();
+        let mut g = Shardgewichte::aus_modell(&m, 0, m.num_layers).expect("trainierbar");
+        let vg = Shardvorgaben { von: 0, bis: m.num_layers, schritt: 0, lr_zaehler: 1, lr_nenner: 64 };
+        let training = vorwaerts(&m, &mut g, &vg, &strom).expect("vorwaerts").ausgang;
+        let mut cache = crate::kv_cache::KVCache::new(m.num_layers, m.num_kv_heads);
+        let inferenz: Vec<Vec<i16>> =
+            folge.iter().enumerate().map(|(p, t)| m.durch_die_ebenen(*t, p, &mut cache)).collect();
+        assert_eq!(training, inferenz, "Tor und Teildrehung im Gemisch: Training und Inferenz rechnen verschieden");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    /// ⛔️ **Fund 516 geschlossen: Der geteilte Experte rechnet im Training
+    /// wie in der Inferenz**, vorwaerts Wert fuer Wert, an der Vorlage mit
+    /// Gemisch, Tor, Teildrehung und geteiltem Experten (also allem, was eine
+    /// Achtsamkeitsebene des 35B traegt). Bis zum 2026-10-02 wich der Strom
+    /// hier an jeder Position ab.
+    ///
+    /// ⚑ **Und rueckwaerts kommt er an**: Nach einem Schritt hat sich jede
+    /// seiner vier Matrizen bewegt, und ueber einige Schritte sinkt der
+    /// Abstand zu einem Ziel.
+    #[test]
+    fn der_geteilte_experte_rechnet_im_training_wie_in_der_inferenz() {
+        use crate::shardtraining::{rueckwaerts, vorwaerts, Ebenenstand, Shardgewichte, Shardvorgaben};
+        let dir = test_dir("t3b-geteilt");
+        write_full_fixture_ganz(&dir, true, false, Some((6, 2, 3)), true, (2, 4, 2));
+        gewichte_verrauschen(&dir, 0x5eed_0516);
+        // ⚑ **Feinere Residualskalen als `skalen_je_kanal_streuen`**: Der
+        //   Rueckweg der gerouteten Experten verlangt einen Bus von mindestens
+        //   sechs Bruchstellen (Fund 79), die gestreuten liegen bei drei bis
+        //   sechs. Je Kanal verschieden bleiben sie trotzdem.
+        {
+            let pfad = dir.join("scales.json");
+            let mut skalen: serde_json::Value = serde_json::from_slice(&fs::read(&pfad).expect("lesen")).expect("parsen");
+            for (name, shifts) in [
+                ("model.layers.0.input_layernorm.input", [12i64, 10, 13, 11]),
+                ("model.layers.0.post_attention_layernorm.input", [9, 8, 10, 9]),
+                ("model.norm.input", [8, 10, 9, 8]),
+            ] {
+                skalen[name]["shifts"] = serde_json::json!(shifts);
+            }
+            fs::write(&pfad, serde_json::to_string(&skalen).unwrap()).expect("schreiben");
+            write_theta_v(&dir);
+        }
+        let m = load_model(&dir).expect("Artefakt muss laden");
+        let crate::model::Feedforward::Moe(moe) = &m.layers[0].ffn else { panic!("die Vorlage hat ein Gemisch") };
+        assert!(moe.geteilter_experte.is_some(), "die Vorlage hat einen geteilten Experten");
+        let folge: Vec<usize> = (0..23).map(|i| (i * 7 + i / 3) % 3).collect();
+        let strom: Vec<Vec<i16>> = folge.iter().map(|t| m.embed_token(*t)).collect();
+        let mut g = Shardgewichte::aus_modell(&m, 0, m.num_layers).expect("trainierbar");
+        // ⚑ **Nenner 256, gemessen und nicht geraten** (2026-10-02): Bei 16
+        //   und 64 springt der Lauf auf dieser kleinen Vorlage ueber das Tal,
+        //   **mit und ohne** geteilten Experten gleichermassen; bei 256 und
+        //   1 024 sinkt der Abstand in beiden Faellen.
+        let vg = |s: u64| Shardvorgaben { von: 0, bis: m.num_layers, schritt: s, lr_zaehler: 1, lr_nenner: 256 };
+
+        // Vorwaerts wie die Inferenz.
+        let training = vorwaerts(&m, &mut g, &vg(0), &strom).expect("vorwaerts").ausgang;
+        let mut cache = crate::kv_cache::KVCache::new(m.num_layers, m.num_kv_heads);
+        let inferenz: Vec<Vec<i16>> =
+            folge.iter().enumerate().map(|(p, t)| m.durch_die_ebenen(*t, p, &mut cache)).collect();
+        assert_eq!(training, inferenz, "Training und Inferenz rechnen verschieden");
+
+        // Rueckwaerts: ein Ziel, ein Abstand, einige Schritte.
+        let ziel: Vec<Vec<i16>> = (0..folge.len()).map(|p| (0..m.hidden_size).map(|i| ((p + 2 * i) % 5) as i16 * 40 - 80).collect()).collect();
+        let abstand = |y: &[Vec<i16>]| -> i64 {
+            y.iter().zip(&ziel).flat_map(|(a, b)| a.iter().zip(b).map(|(x, z)| (i64::from(*x) - i64::from(*z)).pow(2))).sum()
+        };
+        let geteilt_vorher = match &g.master[0] {
+            Ebenenstand::Gemisch { geteilt: Some(gm), .. } => gm.clone(),
+            _ => panic!("der Stand traegt den geteilten Experten nicht"),
+        };
+        let l0 = abstand(&training);
+        let mut l = l0;
+        for s in 0..6u64 {
+            let ms = vorwaerts(&m, &mut g, &vg(s), &strom).expect("vorwaerts");
+            l = abstand(&ms.ausgang);
+            let g_aus: Vec<Vec<i32>> = ms
+                .ausgang
+                .iter()
+                .zip(&ziel)
+                .map(|(a, b)| a.iter().zip(b).map(|(x, z)| 2 * (i32::from(*x) - i32::from(*z))).collect())
+                .collect();
+            rueckwaerts(&m, &mut g, &vg(s), &ms, &g_aus).expect("rueckwaerts");
+            if s == 0 {
+                let Ebenenstand::Gemisch { geteilt: Some(gm), .. } = &g.master[0] else { unreachable!() };
+                for (n, (vor, nach)) in geteilt_vorher.iter().zip(gm.iter()).enumerate() {
+                    assert_ne!(vor, nach, "Matrix {n} des geteilten Experten hat sich nicht bewegt");
+                }
+            }
+        }
+        assert!(l < l0, "der Abstand sank nicht: {l0} vorher, {l} nach fuenf Schritten");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    /// ⛔️ **Fund 515: Der gruppierte Gemischweg bleibt geprueft.** Seit
+    /// kleine Buendel Token fuer Token rechnen, laeuft
+    /// `die_gebuendelte_vorbereitung_rechnet_dasselbe` (sieben Token) nicht
+    /// mehr durch die Gruppierung. Hier wird sie direkt gegen den Einzelweg
+    /// gehalten, fuer jede Buendelgroesse von 1 bis 20, mit und ohne
+    /// geteilten Experten.
+    #[test]
+    fn das_gruppierte_gemisch_ist_das_tokenweise() {
+        for (name, tor) in [("gruppiert-moe", false), ("gruppiert-geteilt", true)] {
+            let dir = test_dir(name);
+            write_full_fixture_mit_tor(&dir, true, false, Some((6usize, 2usize, 3usize)), tor);
+            gewichte_verrauschen(&dir, 0x5eed_0515);
+            skalen_je_kanal_streuen(&dir);
+            let model = load_model(&dir).expect("Artefakt muss laden");
+            let layer = &model.layers[0];
+            let crate::model::Feedforward::Moe(moe) = &layer.ffn else {
+                panic!("{name}: die Vorlage hat kein Gemisch");
+            };
+            let sc = &layer.scales;
+            let acc = sc.residual_mid_frac.clone();
+            let breite = model.hidden_size;
+            for n in 1..=20usize {
+                let eingaben: Vec<Vec<i16>> = (0..n)
+                    .map(|b| (0..breite).map(|i| ((b * 37 + i * 11) % 61) as i16 * 97 - 2900).collect())
+                    .collect();
+                let normen: Vec<&[i16]> = eingaben.iter().map(Vec::as_slice).collect();
+                let gruppiert = model.moe_gruppiert(moe, &normen, sc, &model.config, &acc);
+                for (b, x) in normen.iter().enumerate() {
+                    let einzeln = model.moe_vorwaerts(moe, x, sc, &model.config, &acc, None, 0, None);
+                    assert_eq!(gruppiert[b], einzeln, "{name}: {n} Token, Token {b}");
+                }
+            }
+            fs::remove_dir_all(&dir).ok();
+        }
+    }
+
     #[test]
     fn die_gebuendelte_vorbereitung_rechnet_dasselbe() {
         for (name, moe) in [("stapel-dicht", None), ("stapel-moe", Some((6usize, 2usize, 3usize)))]
@@ -3895,6 +4098,96 @@ mod tests {
                     "{name}/{fall}: Kuerzen erreichte eine andere Laenge"
                 );
             }
+            fs::remove_dir_all(&dir).ok();
+        }
+    }
+
+    /// ⛔️ **Vermutungen aendern nichts** (`crate::lookahead`): Mit
+    /// Vermutungen aus dem Text erzeugt jede Vorlage Token fuer Token
+    /// dasselbe wie ohne, in jeder Auswahl (gierig, nach theta_v, nach
+    /// Temperatur und Top-k), mit und ohne Haltemarke, ueber mehrere
+    /// Aufrufe am selben Speicher; danach stehen dieselben Token, dieselben
+    /// KV-Eintraege und derselbe Zustand im Speicher.
+    ///
+    /// ⚑ **Beide Wege muessen vorkommen**, sonst prueft die Probe nur einen:
+    /// Angenommen wird etwas, und abgelehnt wird etwas, auch an der
+    /// rekurrenten Vorlage, wo eine Ablehnung den Zustand zuruecksetzt.
+    #[test]
+    fn vermutungen_aendern_nichts() {
+        use crate::generate::{dekodieren_fortgesetzt, Erzeugung, Fortsetzung, Ziehparameter};
+        use crate::lookahead::Vorschlagsquelle;
+        struct Vorlage {
+            name: &'static str,
+            moe: Option<(usize, usize, usize)>,
+            tor: bool,
+            zustand: bool,
+        }
+        let gemisch = Some((6, 2, 3));
+        let vorlagen = [
+            Vorlage { name: "verm-dicht", moe: None, tor: false, zustand: false },
+            Vorlage { name: "verm-moe", moe: gemisch, tor: false, zustand: false },
+            Vorlage { name: "verm-tor", moe: gemisch, tor: true, zustand: false },
+            Vorlage { name: "verm-zustand", moe: gemisch, tor: true, zustand: true },
+        ];
+        let ziehen = Ziehparameter { kehrwert_temperatur_q8: 256, top_k: 3, top_p_q16: 65536 };
+        for Vorlage { name, moe, tor, zustand } in vorlagen {
+            let dir = test_dir(name);
+            write_full_fixture_mit_tor(&dir, true, false, moe, tor);
+            if zustand {
+                zustandsebene_einsetzen(&dir);
+            }
+            gewichte_verrauschen(&dir, 0x5eed_0502);
+            skalen_je_kanal_streuen(&dir);
+            let model = load_model(&dir).expect("Artefakt muss laden");
+            assert_eq!(model.layers[0].ist_rekurrent(), zustand, "{name}: Vorlage");
+            let (mut vorgeschlagen, mut angenommen) = (0usize, 0usize);
+            for saat in [7u64, 1234, 99_991] {
+                for (art, greedy, ziehen) in [("gierig", true, None), ("theta", false, None), ("ziehen", false, Some(ziehen))] {
+                    for halt in [&[][..], &[2usize][..]] {
+                        for max_new_tokens in [1usize, 6, 24] {
+                            let lauf = Erzeugung { max_new_tokens, seed: saat, greedy, halt, denkgrenze: None, abbruch: None, ziehen };
+                            let a: Vec<usize> = (0..19).map(|i| (i * 7 + saat as usize + i / 4) % 3).collect();
+                            let mut ohne = Fortsetzung::neu(&model);
+                            let mut mit = Fortsetzung::neu(&model);
+                            mit.vorschlaege_setzen(Vorschlagsquelle::AusDemText { hoechstens: 4, mindestlauf: 1 });
+                            let mut prompt = a.clone();
+                            // Zwei Aufrufe am selben Speicher, der zweite mit dem Verlauf des ersten.
+                            for runde in 0..2 {
+                                let (aus_ohne, _) = dekodieren_fortgesetzt(&model, &prompt, &lauf, &mut ohne, &mut |_| {});
+                                let mut gemeldet = Vec::new();
+                                let (aus_mit, w) = dekodieren_fortgesetzt(&model, &prompt, &lauf, &mut mit, &mut |t| gemeldet.push(t));
+                                let fall = format!("{name}/{art}/saat {saat}/halt {halt:?}/{max_new_tokens}/runde {runde}");
+                                assert_eq!(aus_mit, aus_ohne, "{fall}: Token");
+                                assert_eq!(gemeldet, aus_mit, "{fall}: gemeldet wie ausgegeben");
+                                assert_eq!(mit.token, ohne.token, "{fall}: Token im Speicher");
+                                let laenge = mit.token.len();
+                                for ebene in 0..model.num_layers {
+                                    for kopf in 0..model.num_kv_heads {
+                                        assert_eq!(
+                                            mit.cache.read_scheiben(ebene, kopf, laenge),
+                                            ohne.cache.read_scheiben(ebene, kopf, laenge),
+                                            "{fall}: KV Ebene {ebene} Kopf {kopf}"
+                                        );
+                                    }
+                                }
+                                vorgeschlagen += w.vorgeschlagen;
+                                angenommen += w.angenommen;
+                                prompt.extend(&aus_mit);
+                                prompt.extend([1, 0, 2, 1]);
+                            }
+                            // Derselbe Zustand: Der naechste Schritt rechnet dieselben Logits.
+                            let laenge = mit.token.len();
+                            assert_eq!(
+                                model.forward_token(1, laenge, &mut mit.cache),
+                                model.forward_token(1, laenge, &mut ohne.cache),
+                                "{name}/{art}/{saat}: Zustand nach dem Lauf"
+                            );
+                        }
+                    }
+                }
+            }
+            assert!(angenommen > 0, "{name}: keine Vermutung angenommen, der Weg ist ungeprueft");
+            assert!(angenommen < vorgeschlagen, "{name}: keine abgelehnt, der Rueckweg ist ungeprueft");
             fs::remove_dir_all(&dir).ok();
         }
     }

@@ -45,10 +45,10 @@ mod wahl;
 
 fn main() {
     // ⛔️ Das Aktionsprotokoll gilt fuer jeden Lauf dieser Konsole.
-    myl_client::protokoll::einschalten();
+    myl_local_agent::protokoll::einschalten();
     // ⛔️ **Der vorgegebene Systemprompt muss zu seiner Pruefsumme passen**,
-    //    sonst startet die Konsole nicht (`myl_client::systemprompt`).
-    if let Err(f) = myl_client::systemprompt::alle_pruefen() {
+    //    sonst startet die Konsole nicht (`myl_local_agent::systemprompt`).
+    if let Err(f) = myl_local_agent::systemprompt::alle_pruefen() {
         eprintln!("{f}");
         std::process::exit(1);
     }

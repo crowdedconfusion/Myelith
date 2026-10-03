@@ -89,7 +89,7 @@ def main(args):
         ("modell.saat", saat),
         ("agent.wurzel", arbeit),
         ("agent.schreiben", "an"),
-        ("agent.kistenordner", os.path.join(WURZEL, "CLIENT", "werkzeugkisten", "Advanced")),
+        ("agent.kistenordner", os.path.join(WURZEL, "AGENT_LAYER", "local-toolkits", "Advanced")),
         ("agent.warnung", "aus"),
         # ⚠️ auto: Ohne Terminal kann niemand bestaetigen. Der Arbeitsordner
         #    ist eine Kopie, und die Einstellungen sind abgeschirmt.

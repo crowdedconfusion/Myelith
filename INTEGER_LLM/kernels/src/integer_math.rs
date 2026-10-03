@@ -442,6 +442,45 @@ pub fn sigmoid_nachschlagen(x: i32, lut: &[i16], offset: i16, _in_frac: u8, out_
     }
 }
 
+/// **Das Tor am Ausgang der Achtsamkeit: `aus · sigmoid(tor)`,
+/// elementweise** (Qwen3.6).
+///
+/// `aus` liegt auf der Eingangsskala der Ausgabeprojektion, `tor` auf
+/// `tor_frac` (der Skala von `q_proj`, Fund 422); das Ergebnis auf der von
+/// `aus`, denn das Tor bringt nur einen Faktor in `(0, 1)`.
+///
+/// ⚑ **Eine Stelle fuer Inferenz und Training.** Der Vorwaertspass des
+/// Trainings muss das Tor Wert fuer Wert so rechnen wie die Inferenz; zwei
+/// Fassungen derselben Rechnung liefen auseinander, und die zweite waere
+/// die schlechter gepruefte.
+#[allow(clippy::too_many_arguments)]
+pub fn tor_anwenden(
+    aus: &[i16],
+    tor: &[i16],
+    tor_frac: u8,
+    sigmoid_lut: &[i16],
+    versatz: i16,
+    ein_frac: u8,
+    aus_frac: u8,
+) -> Vec<i16> {
+    // ⛔️ `zip` bricht an der kuerzeren Seite ab (Fund 346).
+    assert_eq!(aus.len(), tor.len(), "Ausgang und Tor verschieden lang");
+    aus.iter()
+        .zip(tor.iter())
+        .map(|(&a, &g)| {
+            let s = torfaktor(g, tor_frac, sigmoid_lut, versatz, ein_frac, aus_frac);
+            crate::fixed_point::clamp_i16_from_i64(rshift_round_i64(i64::from(a) * s, aus_frac))
+        })
+        .collect()
+}
+
+/// **Der Faktor `sigmoid(g)` eines Torwertes**, auf `aus_frac`.
+#[inline]
+pub fn torfaktor(g: i16, tor_frac: u8, sigmoid_lut: &[i16], versatz: i16, ein_frac: u8, aus_frac: u8) -> i64 {
+    let dom = crate::fixed_point::rescale(i32::from(g), tor_frac, ein_frac);
+    sigmoid_nachschlagen(dom, sigmoid_lut, versatz, ein_frac, aus_frac)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

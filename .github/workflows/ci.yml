@@ -484,7 +484,9 @@ jobs:
             NODE/myl-node
             TESTCLIENT/myl-testclient
             CLIENT/myl-client
+            CLIENT/myl-console
             CLIENT/myl-oberflaeche
+            AGENT_LAYER/local-agent
             # ⚑ Diese drei fehlten bis zum 2026-08-28, obwohl die
             # Clippy-Schleife darunter sie seit jeher übersetzt: Sie
             # bauten in jedem Lauf von vorn, und `kernels` sogar
@@ -712,6 +714,54 @@ jobs:
           MYL_OHNE_ARTEFAKTE: "1"
         run: cargo test --quiet
 
+      # ⛔️ **Drei Kisten liefen bis zum 2026-09-30 in keinem Testlauf**
+      # (Fund 511): `myl-agent` mit 52 Proben, `myl-local-agent` mit 97
+      # und `myl-console` mit 160. Clippy sah sie, `cargo test` nicht; zum
+      # dritten Mal dieselbe Falle wie Fund 65. Lokal nachgefahren waren
+      # alle grün.
+      #
+      # Deshalb steht davor ein Waechter, der sie schliesst: Jede Kiste,
+      # die die Clippy-Schleife findet, braucht hier einen Schritt mit
+      # `cargo test` in ihrem Verzeichnis, sonst wird dieser Job rot.
+      - name: Jede Kiste hat einen Testschritt
+        run: |
+          python3 - <<'PRUEFUNG'
+          import glob, re, sys
+          ci = open(".github/workflows/ci.yml", encoding="utf-8").read()
+          getestet = set()
+          for schritt in re.split(r"\n\s+- name:", ci):
+              ort = re.search(r"working-directory:\s*(\S+)", schritt)
+              if ort and "cargo test" in schritt:
+                  getestet.add(ort.group(1))
+          kisten = sorted(m.rsplit("/", 1)[0] for m in glob.glob("*/*/Cargo.toml") + glob.glob("SYSTEM/*/*/Cargo.toml"))
+          fehlt = [k for k in kisten if k not in getestet]
+          print(f"{len(kisten)} Kisten, {len(kisten) - len(fehlt)} mit Testschritt")
+          if fehlt:
+              print("ohne Testschritt: " + ", ".join(fehlt))
+              sys.exit(1)
+          PRUEFUNG
+
+      # Die Netzseite des Agenten: Sitzungskontrakt, Vollmacht,
+      # Werkzeugaufruf als Protokollgroesse. Ohne Netz und ohne Artefakte.
+      - name: cargo test, AGENT_LAYER (myl-agent)
+        working-directory: AGENT_LAYER/myl-agent
+        run: cargo test --quiet
+
+      # Die lokale Seite, seit dem 2026-09-30 der ganze oertliche Agent:
+      # Schleife, Tuerklient, Risikoklassen, Werkzeuge mit Einhaengegrenze,
+      # Kisten, Skills, Loop, Aktionsprotokoll. Ohne Artefakte; das Modell
+      # steckt hinter einem Merkmal. Die Probe mit FreeCAD ist ausgenommen,
+      # weil kein Laeufer FreeCAD hat.
+      - name: cargo test, AGENT_LAYER (local-agent)
+        working-directory: AGENT_LAYER/local-agent
+        run: cargo test --quiet
+
+      - name: cargo test, CLIENT (myl-console)
+        working-directory: CLIENT/myl-console
+        env:
+          MYL_OHNE_ARTEFAKTE: "1"
+        run: cargo test --quiet
+
       # 📌 **Der Client lief bis zum 2026-09-08 in keinem Testlauf.**
       #
       # Die Clippy-Schleife oben findet ihn, weil sie die Crates aus
@@ -719,11 +769,12 @@ jobs:
       # Hand hier, und ein neues Crate ist damit erst einmal ungeprüft.
       # **Das ist dieselbe Falle wie Fund 65**, nur eine Zeile weiter.
       #
-      # Was hier läuft, braucht **kein Artefakt**: die Einhängegrenze
-      # der Dateiwerkzeuge (`..`, Verweis, absoluter Pfad), der Weg vom
-      # Werkzeugvorschlag bis zur geschriebenen Datei über einen
-      # eingesteckten `Modellweg`, und die Zusicherung, dass sich das
-      # geladene Modell über Fäden teilen lässt.
+      # Was hier läuft, braucht **kein Artefakt**: Einstellungen,
+      # Modellwahl, der Weg vom Werkzeugvorschlag bis zur geschriebenen
+      # Datei über einen eingesteckten `Modellweg`, und die Zusicherung,
+      # dass sich das geladene Modell über Fäden teilen lässt. Die
+      # Einhängegrenze der Dateiwerkzeuge prüft seit dem 2026-09-30 die
+      # Kiste `local-agent`, oben.
       #
       # 📌 **`MYL_OHNE_ARTEFAKTE=1` ist keine Formalie.**
       # `tests/ende_zu_ende.rs` laedt sonst ein 4B-Artefakt und schlaegt

@@ -810,6 +810,14 @@ pub struct Aufmerksamkeitsvorgaben {
     pub exp_input_frac: u8,
     /// Bruchstellen der Sinus- und Kosinustabelle.
     pub rope_frac: u8,
+    /// **Wie viele Stellen eines Kopfes gedreht werden**, bei voller
+    /// Drehung `head_dim`.
+    ///
+    /// ⚑ Die Tabellen sind `drehbreite / 2` breit, und der Rest eines
+    /// Kopfes geht unveraendert durch, vorwaerts wie rueckwaerts (Qwen3.6:
+    /// 64 von 256). Wer hier `head_dim` annimmt, liest bei einer
+    /// Teildrehung die Tabellenzeilen der falschen Position.
+    pub drehbreite: usize,
     /// Die Position der **ersten** übergebenen Stelle.
     ///
     /// ⚑ **Ein Abschnitt beginnt nicht bei null.** Wer über einen
@@ -865,6 +873,91 @@ pub struct QkNormVorgaben<'a> {
     pub rsqrt_input_shift: u8,
     /// Ihre Ausgangsskala.
     pub rsqrt_output_frac: u8,
+}
+
+/// **Das Tor am Ausgang der Achtsamkeit** (Qwen3.6), falls das Modell es
+/// hat: `q_proj` liefert je Kopf erst die Abfrage, dann das Tor, und der
+/// Ausgang der Achtsamkeit wird vor der Ausgabeprojektion elementweise mit
+/// `sigmoid(tor)` multipliziert ([`crate::integer_math::tor_anwenden`]).
+///
+/// ⚑ **`None` ist der bisherige Weg**, Zeile fuer Zeile.
+///
+/// ⚑ **Rueckwaerts mit `s · (1 − s)`**, aus dem nachgeschlagenen `s`.
+/// Vorwaerts ist das Tor eine Treppe aus der Tabelle; deren Ableitung waere
+/// fast ueberall null. Genommen wird die Ableitung der Funktion, die die
+/// Tabelle annaehert, an der Stelle, die die Tabelle liefert; dieselbe Wahl
+/// wie beim Gradientenvorrat der SiLU-Tabelle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TorVorgaben<'a> {
+    /// Die Sigmoid-Tabelle des Modells.
+    pub sigmoid_lut: &'a [i16],
+    /// Ihr Versatz.
+    pub versatz: i16,
+    /// Ihr Eingangsraster.
+    pub ein_frac: u8,
+    /// Die Bruchstellen des Faktors.
+    pub aus_frac: u8,
+}
+
+impl TorVorgaben<'_> {
+    /// `aus · sigmoid(tor)`, dieselbe Funktion wie in der Inferenz.
+    fn anwenden(&self, aus: &[i16], tor: &[i16], tor_frac: u8) -> Vec<i16> {
+        crate::integer_math::tor_anwenden(aus, tor, tor_frac, self.sigmoid_lut, self.versatz, self.ein_frac, self.aus_frac)
+    }
+
+    /// **Rueckwaerts durch das Tor.** `g` ist der Gradient nach dem
+    /// Ausgang des Tors, `a` der Wert davor (beide auf ihrer Skala, `g` auf
+    /// dem Bus), `tor` das rohe Tor auf `tor_frac`, `a_frac` die Skala von
+    /// `a`. Zurueck kommen der Gradient nach `a` und der nach dem Tor, beide
+    /// auf dem Bus von `g`.
+    ///
+    /// `dL/da = g · s` und `dL/dtor = g · a · s · (1 − s)`, in drei
+    /// Schritten geschoben, damit nichts ueberlaeuft: `g · a` traegt bis zu
+    /// 46 Bit, jeder weitere Faktor wird sofort zurueckgeschoben.
+    fn rueckwaerts(&self, g: &[Grad], a: &[i16], tor: &[i16], tor_frac: u8, a_frac: u8) -> (Vec<Grad>, Vec<Grad>) {
+        assert_eq!(g.len(), a.len(), "Tor rueckwaerts: Gradient und Wert verschieden lang");
+        assert_eq!(g.len(), tor.len(), "Tor rueckwaerts: Gradient und Tor verschieden lang");
+        use crate::fixed_point::rshift_round_i64;
+        let f = self.aus_frac;
+        let eins = 1i64 << f;
+        let mut ga = Vec::with_capacity(g.len());
+        let mut gt = Vec::with_capacity(g.len());
+        for i in 0..g.len() {
+            let s = crate::integer_math::torfaktor(tor[i], tor_frac, self.sigmoid_lut, self.versatz, self.ein_frac, f);
+            let gi = i64::from(g[i]);
+            ga.push(begrenze(rshift_round_i64(gi * s, f)));
+            let t1 = rshift_round_i64(gi * i64::from(a[i]), a_frac);
+            let t2 = rshift_round_i64(t1 * s, f);
+            gt.push(begrenze(rshift_round_i64(t2 * (eins - s), f)));
+        }
+        (ga, gt)
+    }
+}
+
+/// **Teilt den Ausgang von `q_proj` je Kopf in Abfrage und Tor**, wortgleich
+/// zur Inferenz: je Kopf erst `kopf_dim` Abfragewerte, dann `kopf_dim`
+/// Torwerte.
+fn abfrage_und_tor(roh: &[i16], koepfe: usize, kopf_dim: usize) -> (Vec<i16>, Vec<i16>) {
+    assert_eq!(roh.len(), 2 * koepfe * kopf_dim, "q_proj liefert mit Tor nicht die doppelte Kopfbreite");
+    let mut abfrage = Vec::with_capacity(koepfe * kopf_dim);
+    let mut tor = Vec::with_capacity(koepfe * kopf_dim);
+    for k in 0..koepfe {
+        let basis = 2 * k * kopf_dim;
+        abfrage.extend_from_slice(&roh[basis..basis + kopf_dim]);
+        tor.extend_from_slice(&roh[basis + kopf_dim..basis + 2 * kopf_dim]);
+    }
+    (abfrage, tor)
+}
+
+/// Die Umkehrung von [`abfrage_und_tor`] fuer Gradienten: je Kopf erst
+/// die der Abfrage, dann die des Tors, also die Zeilen von `q_proj`.
+fn abfrage_und_tor_verschraenken(abfrage: &[Grad], tor: &[Grad], koepfe: usize, kopf_dim: usize) -> Vec<Grad> {
+    let mut aus = Vec::with_capacity(2 * koepfe * kopf_dim);
+    for k in 0..koepfe {
+        aus.extend_from_slice(&abfrage[k * kopf_dim..(k + 1) * kopf_dim]);
+        aus.extend_from_slice(&tor[k * kopf_dim..(k + 1) * kopf_dim]);
+    }
+    aus
 }
 
 /// Die Gradienten eines Aufmerksamkeitsblocks.
@@ -1116,6 +1209,12 @@ pub struct Aufmerksamkeitsspur {
     pub q_normspur: Vec<Vec<crate::rmsnorm::Rmsnormspur>>,
     /// Dasselbe fuer K.
     pub k_normspur: Vec<Vec<crate::rmsnorm::Rmsnormspur>>,
+    /// Das rohe Tor je Position, auf `q_frac`; leer ohne Tor.
+    pub tor: Vec<Vec<i16>>,
+    /// Der Ausgang der Achtsamkeit je Position **vor** dem Tor, auf
+    /// `attn_out_frac`; leer ohne Tor. `attn_aus` ist dann der Wert danach,
+    /// also das, was die Ausgabeprojektion liest.
+    pub vor_tor: Vec<Vec<i16>>,
 }
 
 /// Der Vorwärtspass des Aufmerksamkeitsblocks über eine Folge.
@@ -1144,6 +1243,7 @@ pub fn vorwaerts_der_aufmerksamkeit(
     exp_lut: &[i16],
     aus_skalen: Option<&[u8]>,
     qkn: Option<QkNormVorgaben<'_>>,
+    tor: Option<TorVorgaben<'_>>,
     v: Aufmerksamkeitsvorgaben,
 ) -> Aufmerksamkeitsspur {
     let hs = v.hidden_size;
@@ -1159,8 +1259,14 @@ pub fn vorwaerts_der_aufmerksamkeit(
         v.num_kv_heads
     );
     let gruppe = v.num_heads / v.num_kv_heads;
-    let halb = hd / 2;
-    assert_eq!(2 * halb, hd, "vorwaerts_der_aufmerksamkeit: head_dim muss gerade sein");
+    // ⚑ **Die halbe Drehbreite, nicht die halbe Kopfbreite**: so breit sind
+    //   die Tabellenzeilen, wie in `koepfe_drehen` der Laufzeit.
+    let halb = v.drehbreite / 2;
+    assert!(
+        2 * halb == v.drehbreite && halb > 0 && v.drehbreite <= hd,
+        "vorwaerts_der_aufmerksamkeit: Drehbreite {} passt nicht zum Kopf {hd}",
+        v.drehbreite
+    );
     let n_pos = cos_lut.len() / halb;
     assert!(n_pos > 0, "vorwaerts_der_aufmerksamkeit: die Kosinustabelle ist zu kurz");
 
@@ -1196,6 +1302,13 @@ pub fn vorwaerts_der_aufmerksamkeit(
             add_bias_i16(&mut q_flat, b.q, b.q_skalen, v.q_frac);
             add_bias_i16(&mut k_flat, b.k, b.k_skalen, v.k_frac);
             add_bias_i16(&mut v_flat, b.v, b.v_skalen, v.v_frac);
+        }
+        // ⛔️ **Mit Tor liefert `q_proj` Abfrage UND Tor**, je Kopf
+        //   hintereinander, wie in der Inferenz.
+        if tor.is_some() {
+            let (abfrage, t_roh) = abfrage_und_tor(&q_flat, v.num_heads, hd);
+            q_flat = abfrage;
+            spur.tor.push(t_roh);
         }
         let idx = (v.positionsversatz + t) % n_pos;
         let cos_row = &cos_lut[idx * halb..(idx + 1) * halb];
@@ -1273,6 +1386,11 @@ pub fn vorwaerts_der_aufmerksamkeit(
         for w in zeile.iter_mut() {
             *w = clamp_i16(rescale(i32::from(*w), v.v_frac, v.attn_out_frac));
         }
+        // ⚑ **Das Tor wirkt VOR der Ausgabeprojektion**, wie in der Inferenz.
+        if let Some(tv) = &tor {
+            let getort = tv.anwenden(&zeile, &spur.tor[t], v.q_frac);
+            spur.vor_tor.push(std::mem::replace(&mut zeile, getort));
+        }
         // ⚑ **Wahlweise eine Skala oder eine je Kanal.** Allein
         // geprueft traegt der Block eine; **in einer Ebene addiert seine
         // Ausgabe direkt in den Residualstrom**, und der traegt seit
@@ -1336,6 +1454,8 @@ pub fn gradienten_der_aufmerksamkeit(
         // `Shardgewichte::aus_modell` ab, bis der Rueckwaertspass sie
         // traegt.
         None,
+        // Ohne Tor: dieser Einzelschritt ist der Block ohne Bauteile.
+        None,
         v,
     );
     let mut abstand = 0i64;
@@ -1364,7 +1484,8 @@ pub fn gradienten_der_aufmerksamkeit(
             },
             cos_lut,
             sin_lut,
-            // ⚑ Ohne QK-Normierung, siehe den Vorwaertspfad.
+            // ⚑ Ohne QK-Normierung und ohne Tor, siehe den Vorwaertspfad.
+            None,
             None,
             v,
 
@@ -1394,6 +1515,7 @@ pub fn gradienten_der_aufmerksamkeit_aus_gradient(
     cos_lut: &[i16],
     sin_lut: &[i16],
     qkn: Option<QkNormVorgaben<'_>>,
+    tor: Option<TorVorgaben<'_>>,
     v: Aufmerksamkeitsvorgaben,
 ) -> Aufmerksamkeitsgradienten {
     let hs = v.hidden_size;
@@ -1402,7 +1524,8 @@ pub fn gradienten_der_aufmerksamkeit_aus_gradient(
     let kv_breite = v.num_kv_heads * hd;
     let t_len = x.len();
     let gruppe = v.num_heads / v.num_kv_heads.max(1);
-    let halb = hd / 2;
+    // Die Tabellenzeilen sind `drehbreite / 2` breit, wie vorwaerts.
+    let halb = v.drehbreite / 2;
     let n_pos = cos_lut.len() / halb.max(1);
     let (wq, sq, wk, sk, wv, sv, wo, so) =
         (gew.q, gew.q_skalen, gew.k, gew.k_skalen, gew.v, gew.v_skalen, gew.o, gew.o_skalen);
@@ -1454,6 +1577,9 @@ pub fn gradienten_der_aufmerksamkeit_aus_gradient(
     //   schreibt nur in ihre eigenen Summen. Zwei Gruppen teilen keinen
     //   Gradienten, also aendert die Aufteilung keine Zahl; die Summen sind
     //   exakte i64-Additionen.
+    // ⚑ **Mit Tor:** `g_attn_alle` ist der Gradient nach dem Wert VOR dem
+    //   Tor, `g_tor_alle` der nach dem rohen Tor, beide auf dem Bus.
+    let mut g_tor_alle: Vec<Vec<Grad>> = Vec::new();
     let g_attn_alle: Vec<Vec<Grad>> = g_aus
         .iter()
         .enumerate()
@@ -1465,8 +1591,16 @@ pub fn gradienten_der_aufmerksamkeit_aus_gradient(
             let gz = crate::backward::linear_backward_summierend(
                 g_y, &zo, wo, q_breite, so, v.aus_frac, v.attn_out_frac, &mut gw_o,
             );
-            match gew.drehung.o {
+            let gz = match gew.drehung.o {
                 Some(d) => zurueckgedreht(&gz, d),
+                None => gz,
+            };
+            match &tor {
+                Some(tv) => {
+                    let (ga, gt) = tv.rueckwaerts(&gz, &spur.vor_tor[t], &spur.tor[t], v.q_frac, v.attn_out_frac);
+                    g_tor_alle.push(gt);
+                    ga
+                }
                 None => gz,
             }
         })
@@ -1610,6 +1744,13 @@ pub fn gradienten_der_aufmerksamkeit_aus_gradient(
             g_k_flat = gk.concat();
         }
 
+        // ⚑ **Mit Tor bekommt `q_proj` beide Haelften zurueck**, je Kopf
+        //   verschraenkt wie vorwaerts; das Tor laeuft weder durch die
+        //   QK-Normierung noch durch die Drehung.
+        if tor.is_some() {
+            g_q_flat = abfrage_und_tor_verschraenken(&g_q_flat, &g_tor_alle[t], v.num_heads, hd);
+        }
+
         // ⚑ **Der Eingangsgradient ist die Summe ueber Q, K und V**,
         // denn alle drei lesen dieselbe Zeile. In `i64` addiert und
         // **einmal** gesaettigt.
@@ -1722,6 +1863,8 @@ pub struct Ebenenvorgaben<'a> {
     /// bleibt, ist die Zusicherung, an der die Bitgleichheit aller
     /// schon trainierten Modelle haengt.
     pub qk_norm: Option<QkNormVorgaben<'a>>,
+    /// Das Tor am Ausgang der Achtsamkeit, falls die Ebene es hat.
+    pub tor: Option<TorVorgaben<'a>>,
     /// Bruchstellen des Residualstroms beim Eintritt, **je Kanal**.
     ///
     /// ⚑ **Je Kanal und nicht eine Zahl** (Fund 20). Gemessen an
@@ -1873,6 +2016,7 @@ pub fn vorwaerts_der_ebene(
         g.aufmerksamkeit, &spur.norm_ein, vorspannungen, t.cos, t.sin, t.exp,
         Some(&acc_attn),
         v.qk_norm,
+        v.tor,
         a_vorgaben,
     );
 
@@ -2104,6 +2248,7 @@ pub fn gradienten_der_ebene_aus_gradient(
         //   zeigt, altert mit ihr**: Als die Normierung vorn dazukam, blieb
         //   er stehen und sagte weiter, dort gebe es keine.
         v.qk_norm,
+        v.tor,
         a_vorgaben,
     );
 
@@ -2709,6 +2854,7 @@ mod tests {
             num_heads: A_KOEPFE,
             num_kv_heads: A_KV,
             head_dim: A_HD,
+            drehbreite: A_HD,
             // ⚑ **Nicht gleich `aus_frac`.** Waeren beide 8, fielen die
             // Skalen der Eingangs- und der Ausgabeprojektion zusammen
             // und eine Verwechslung waere unsichtbar.
@@ -3046,6 +3192,166 @@ mod tests {
         }
     }
 
+    /// Die Sigmoid-Tabelle wie im Export: 2^14 Eintraege, Versatz 8192,
+    /// Eingang auf 9, Ausgang auf 14 Bruchstellen.
+    fn sigmoid_tabelle() -> Vec<i16> {
+        (0..1usize << 14)
+            .map(|i| {
+                let x = (i as f64 - 8192.0) / 512.0;
+                (16384.0 / (1.0 + (-x).exp())).round() as i16
+            })
+            .collect()
+    }
+
+    /// Sinus- und Kosinustabelle fuer eine **Teildrehung** der Breite `dreh`.
+    fn rope_tabellen_teil(dreh: usize) -> (Vec<i16>, Vec<i16>) {
+        let halb = dreh / 2;
+        let mut cos = Vec::with_capacity(A_MAXPOS * halb);
+        let mut sin = Vec::with_capacity(A_MAXPOS * halb);
+        for t in 0..A_MAXPOS {
+            for j in 0..halb {
+                let theta = 1.0f64 / 3f64.powf(j as f64 / halb as f64);
+                let w = t as f64 * theta;
+                cos.push((w.cos() * 256.0).round() as i16);
+                sin.push((w.sin() * 256.0).round() as i16);
+            }
+        }
+        (cos, sin)
+    }
+
+    /// ⛔️ **Tor und Teildrehung, rueckwaerts: Der Gradient sagt die
+    /// Aenderung des Abstands voraus**, fuer die Abfragezeilen und die
+    /// **Torzeilen** von `q_proj` getrennt, dazu K, V und O (Fund 508,
+    /// T3b der ternaeren Reihenfolge).
+    ///
+    /// ⚑ **Getrennt, weil die Torzeilen sonst nicht auffielen.** Ein Schritt
+    /// ueber alle Zeilen von `q_proj` zugleich wird vom groesseren Beitrag
+    /// beherrscht; ein falscher Torgradient verschwaende darin. Gedreht
+    /// wird die Haelfte jedes Kopfes (4 von 8), damit ein Fehler im
+    /// ungedrehten Rest ebenso faellt wie einer in der Tabellenbreite.
+    #[test]
+    fn tor_und_teildrehung_sagen_die_aenderung_des_abstands_voraus() {
+        let qb = A_KOEPFE * A_HD;
+        let (q_abfrage, k, v, o, x, ziel) = a_aufbau();
+        // `q_proj` mit Tor: je Kopf erst die Abfrage-, dann die Torzeilen.
+        let tor_master: Vec<Master> = (0..qb * A_HS).map(|i| (i as i32 * 5113) % 22001 - 11000).collect();
+        let mut q: Vec<Master> = Vec::with_capacity(2 * qb * A_HS);
+        for kopf in 0..A_KOEPFE {
+            let zeilen = |m: &[Master]| m[kopf * A_HD * A_HS..(kopf + 1) * A_HD * A_HS].to_vec();
+            q.extend(zeilen(&q_abfrage));
+            q.extend(zeilen(&tor_master));
+        }
+        let ist_torzeile = |zeile: usize| (zeile / A_HD) % 2 == 1;
+        let dreh = A_HD / 2;
+        let (cos, sin) = rope_tabellen_teil(dreh);
+        let mut vg = a_vorgaben(1 << 11, 1, 0);
+        vg.drehbreite = dreh;
+        let exp = exp_tabelle(vg.score_frac, vg.exp_input_frac);
+        let lut = sigmoid_tabelle();
+        let tv = TorVorgaben { sigmoid_lut: &lut, versatz: 8192, ein_frac: 9, aus_frac: 14 };
+
+        let rechne = |q: &[Master], k: &[Master], v: &[Master], o: &[Master]| -> (i64, Aufmerksamkeitsgradienten) {
+            let (wq, sq) = gewicht_aus_master_als(q, A_HS, vg.master_frac, vg.gewichtsform);
+            let (wk, sk) = gewicht_aus_master_als(k, A_HS, vg.master_frac, vg.gewichtsform);
+            let (wv, sv) = gewicht_aus_master_als(v, A_HS, vg.master_frac, vg.gewichtsform);
+            let (wo, so) = gewicht_aus_master_als(o, qb, vg.master_frac, vg.gewichtsform);
+            let gew = Aufmerksamkeitsgewichte {
+                q: &wq, q_skalen: &sq, k: &wk, k_skalen: &sk, v: &wv, v_skalen: &sv, o: &wo, o_skalen: &so,
+                drehung: Default::default(),
+            };
+            let spur = vorwaerts_der_aufmerksamkeit(gew, &x, None, &cos, &sin, &exp, None, None, Some(tv), vg);
+            let mut abstand = 0i64;
+            let g_aus: Vec<Vec<Grad>> = spur
+                .y
+                .iter()
+                .zip(&ziel)
+                .map(|(y, z)| {
+                    y.iter()
+                        .zip(z)
+                        .map(|(a, b)| {
+                            let d = i64::from(*a) - i64::from(*b);
+                            abstand += d * d;
+                            begrenze(2 * d)
+                        })
+                        .collect()
+                })
+                .collect();
+            (abstand, gradienten_der_aufmerksamkeit_aus_gradient(&g_aus, &x, &spur, gew, &cos, &sin, None, Some(tv), vg))
+        };
+        let (l0, gr) = rechne(&q, &k, &v, &o);
+        assert_eq!(gr.q.len(), q.len(), "der Gradient deckt beide Haelften von q_proj");
+        assert!(
+            gr.q.iter().enumerate().any(|(i, g)| ist_torzeile(i / A_HS) && *g != 0),
+            "die Torzeilen bekommen keinen Gradienten"
+        );
+        let deckel = l0 as f64 / 50.0;
+
+        let gruppen: [(&str, usize); 5] = [("q (Abfrage)", 0), ("q (Tor)", 0), ("k", 1), ("v", 2), ("o", 3)];
+        for (nr, (name, matrix)) in gruppen.iter().enumerate() {
+            let (grad, master, breite, bus_und_eingang): (&[Grad], &[Master], usize, i32) = match matrix {
+                0 => (&gr.q, &q, A_HS, vg.attn_out_frac as i32 + vg.act_frac as i32),
+                1 => (&gr.k, &k, A_HS, vg.attn_out_frac as i32 + vg.act_frac as i32),
+                2 => (&gr.v, &v, A_HS, vg.attn_out_frac as i32 + vg.act_frac as i32),
+                _ => (&gr.o, &o, qb, vg.aus_frac as i32 + vg.attn_out_frac as i32),
+            };
+            let gehoert = |i: usize| match nr {
+                0 => !ist_torzeile(i / breite),
+                1 => ist_torzeile(i / breite),
+                _ => true,
+            };
+            let (_, verschiebungen) = gewicht_aus_master_als(master, breite, vg.master_frac, vg.gewichtsform);
+            let spitze = grad
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| gehoert(*i))
+                .map(|(_, g)| i64::from(*g).abs())
+                .max()
+                .unwrap_or(0)
+                .max(1);
+            let vorhersage = |weite: i64| -> (Vec<Master>, f64) {
+                let mut neu = master.to_vec();
+                let mut vorher = 0.0f64;
+                for (i, g) in grad.iter().enumerate() {
+                    if !gehoert(i) {
+                        continue;
+                    }
+                    let delta = -(i64::from(*g) * weite / spitze);
+                    if delta == 0 {
+                        continue;
+                    }
+                    neu[i] = neu[i].saturating_add(delta as i32);
+                    let s = i32::from(verschiebungen[i / breite]);
+                    let hoch = 2 * vg.aus_frac as i32 - (bus_und_eingang + 2 * s);
+                    vorher += delta as f64 * f64::from(*g) * 2f64.powi(hoch);
+                }
+                (neu, vorher)
+            };
+            let mut gewaehlt = vorhersage(2);
+            for weite in [4i64, 8, 16, 32, 64, 128, 256, 512, 1024] {
+                let kandidat = vorhersage(weite);
+                if kandidat.1.abs() > deckel {
+                    break;
+                }
+                gewaehlt = kandidat;
+            }
+            let (neu, vorher) = gewaehlt;
+            let l1 = match matrix {
+                0 => rechne(&neu, &k, &v, &o).0,
+                1 => rechne(&q, &neu, &v, &o).0,
+                2 => rechne(&q, &k, &neu, &o).0,
+                _ => rechne(&q, &k, &v, &neu).0,
+            };
+            let gemessen = (l1 - l0) as f64;
+            assert!(vorher < -1.0, "{name}: der Schritt sagt keine Senkung voraus ({vorher:.1})");
+            assert!(gemessen < 0.0, "{name}: der Abstand stieg um {gemessen:.0}, vorhergesagt {vorher:.0}");
+            let verhaeltnis = gemessen / vorher;
+            assert!(
+                (0.65..=1.5).contains(&verhaeltnis),
+                "{name}: gemessen {gemessen:.0}, vorhergesagt {vorher:.0}, also das {verhaeltnis:.2}-fache"
+            );
+        }
+    }
+
     /// ⚑ **Der Eingangsgradient sagt die Aenderung des Abstands
     /// voraus, im MLP-Block und im Aufmerksamkeitsblock.**
     ///
@@ -3236,6 +3542,7 @@ mod tests {
         Ebenenvorgaben {
             // ⚑ Dieses Pruefmodell hat keine QK-Normierung.
             qk_norm: None,
+            tor: None,
             aufmerksamkeit: a,
             mlp: m,
             residual_in_frac: &sk.0,
@@ -3597,8 +3904,8 @@ mod tests {
                 rsqrt_input_shift: 0,
                 rsqrt_output_frac: 12,
             };
-            let spur = vorwaerts_der_aufmerksamkeit(gew, &x, None, &cos, &sin, &exp, None, Some(qk), vor);
-            let gr = gradienten_der_aufmerksamkeit_aus_gradient(&g_aus, &x, &spur, gew, &cos, &sin, Some(qk), vor);
+            let spur = vorwaerts_der_aufmerksamkeit(gew, &x, None, &cos, &sin, &exp, None, Some(qk), None, vor);
+            let gr = gradienten_der_aufmerksamkeit_aus_gradient(&g_aus, &x, &spur, gew, &cos, &sin, Some(qk), None, vor);
             let betrag = |g: &[Grad]| g.iter().map(|v| f64::from(*v).abs()).sum::<f64>();
             (betrag(&gr.q), betrag(&gr.k))
         };
@@ -5025,6 +5332,7 @@ mod gedrehte_tests {
             num_heads: KOEPFE,
             num_kv_heads: KV,
             head_dim: HD,
+            drehbreite: HD,
             act_frac: AKT,
             q_frac: 8,
             k_frac: 7,
@@ -5060,17 +5368,17 @@ mod gedrehte_tests {
         let xg: Vec<Vec<i16>> = x.iter().map(|z| d.drehen(z, AKT)).collect();
         assert_ne!(x, xg);
 
-        let spur_mit = vorwaerts_der_aufmerksamkeit(mit, &x, None, &cos, &sin, &exp, None, None, v);
-        let spur_ohne = vorwaerts_der_aufmerksamkeit(ohne, &xg, None, &cos, &sin, &exp, None, None, v);
+        let spur_mit = vorwaerts_der_aufmerksamkeit(mit, &x, None, &cos, &sin, &exp, None, None, None, v);
+        let spur_ohne = vorwaerts_der_aufmerksamkeit(ohne, &xg, None, &cos, &sin, &exp, None, None, None, v);
         assert_eq!(spur_mit, spur_ohne, "vorwaerts rechnet die gedrehte Fassung etwas anderes");
         // Gegenprobe: ohne Drehung auf der ungedrehten Eingabe kommt etwas
         // anderes heraus.
-        assert_ne!(spur_mit.y, vorwaerts_der_aufmerksamkeit(ohne, &x, None, &cos, &sin, &exp, None, None, v).y);
+        assert_ne!(spur_mit.y, vorwaerts_der_aufmerksamkeit(ohne, &x, None, &cos, &sin, &exp, None, None, None, v).y);
 
         let g_aus: Vec<Vec<Grad>> =
             (0..LEN).map(|t| zufall(HS, 200 + t as u64).iter().map(|z| (z % 4001) as i32 - 2000).collect()).collect();
-        let gr_mit = gradienten_der_aufmerksamkeit_aus_gradient(&g_aus, &x, &spur_mit, mit, &cos, &sin, None, v);
-        let gr_ohne = gradienten_der_aufmerksamkeit_aus_gradient(&g_aus, &xg, &spur_ohne, ohne, &cos, &sin, None, v);
+        let gr_mit = gradienten_der_aufmerksamkeit_aus_gradient(&g_aus, &x, &spur_mit, mit, &cos, &sin, None, None, v);
+        let gr_ohne = gradienten_der_aufmerksamkeit_aus_gradient(&g_aus, &xg, &spur_ohne, ohne, &cos, &sin, None, None, v);
         assert!(gr_mit.q.iter().any(|z| *z != 0) && gr_mit.k.iter().any(|z| *z != 0), "der Aufbau erzeugt keinen Gradienten");
         assert_eq!(gr_mit.q, gr_ohne.q, "dL/dW von q gilt nicht der gedrehten Eingabe");
         assert_eq!(gr_mit.k, gr_ohne.k);

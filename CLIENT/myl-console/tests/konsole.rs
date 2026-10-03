@@ -157,12 +157,12 @@ fn die_logik_kommt_aus_der_kiste() {
     for naht in [
         // Seit dem 2026-09-14 mit dem Gespraech davor; Zaehlen und
         // Verdichten kommen ebenfalls aus der Kiste.
-        "myl_client::lauf::fahren_im_gespraech",
-        "myl_client::gespraech::verdichten",
-        "myl_client::gespraech::anzeige",
-        "myl_client::ruestung::ruesten",
+        "myl_local_agent::lauf::fahren_im_gespraech",
+        "myl_local_agent::gespraech::verdichten",
+        "myl_local_agent::gespraech::anzeige",
+        "myl_local_agent::ruestung::ruesten",
         "myl_client::Oertlichesmodell::laden",
-        "myl_client::ort::absolut",
+        "myl_local_agent::ort::absolut",
     ] {
         assert!(s.contains(naht), "die Naht `{naht}` fehlt");
     }

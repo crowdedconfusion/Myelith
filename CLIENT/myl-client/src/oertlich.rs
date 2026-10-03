@@ -205,6 +205,26 @@ fn haltemarken(wortschatz: &Tokenizer, familie: &str) -> Vec<usize> {
 pub const DENKSCHLUSS: &str =
     "\n\nTime is short, so I will answer now based on what I have worked out so far.\n</think>\n\n";
 
+/// **Wie viel der Antwortlaenge das Ueberlegen hoechstens bekommt, in
+/// Achteln.**
+///
+/// ⛔️ **Fund 512 (2026-09-30):** Das 35B ueberlegte im Agenten die ganzen
+/// 4 000 Token einer Antwort lang, ob eine Verrundung geht, und die
+/// Antwort endete mitten im Denken, ohne Werkzeugaufruf. Ein Denkbudget
+/// gab es nur beim Vorlesen. ⚑ **Das Ueberlegen darf die Antwort nie ganz
+/// verbrauchen**: Fuenf Achtel, der Rest bleibt fuer den Aufruf oder die
+/// Antwort. Bei 4 000 Token sind das 2 500 und 1 500, bei 1 600 im
+/// Gespraech 1 000 und 600. Ein CAD-Skript von 1 500 Byte braucht rund 500
+/// Token.
+pub const DENKANTEIL_ACHTEL: usize = 5;
+
+/// **Das Denkbudget, das wirkt**: das kleinere aus dem ausdruecklich
+/// gesetzten und dem Anteil an der Antwortlaenge.
+pub fn wirksames_denkbudget(ausdruecklich: Option<usize>, grenze: usize) -> usize {
+    let anteil = (grenze * DENKANTEIL_ACHTEL) >> 3;
+    ausdruecklich.map_or(anteil, |b| b.min(anteil))
+}
+
 /// **Wie ohne Denkmodus gezogen wird**: Temperatur 0,7, Top-k 20, Top-p 0,8.
 ///
 /// ⚑ Die Empfehlung der Qwen-Modellkarten fuer den Betrieb ohne
@@ -349,7 +369,7 @@ pub struct Oertlichesmodell {
     /// Ob ein Stueck Ueberlegung oder Antwort ist, entscheidet sich an
     /// Marken im Strom, und die kommen zerrissen an: `</think>` trifft
     /// als `</`, `think`, `>` ein. Das gehoert einmal geloest und nicht
-    /// bei jedem, der zusieht; [`crate::strom::Zerleger`] tut es.
+    /// bei jedem, der zusieht; [`myl_local_agent::textstrom::Zerleger`] tut es.
     ///
     /// 📌 **Und das Ende einer Antwort weiss nur diese Stelle.** Ein
     /// Zerleger haelt zurueck, was noch eine Marke werden koennte;
@@ -362,7 +382,7 @@ pub struct Oertlichesmodell {
     /// und das Modell wird ueber Faeden geteilt (Punkt 0.5). Wer hier
     /// veraenderlichen Zustand braucht, legt ihn hinter ein eigenes
     /// Schloss und nicht in diese Naht.
-    pub beobachter: Option<Box<dyn Fn(crate::strom::Stueck) + Send + Sync>>,
+    pub beobachter: Option<Box<dyn Fn(myl_local_agent::textstrom::Stueck) + Send + Sync>>,
     /// Wie viele Token dieses Modell bisher gelesen und geschrieben
     /// hat.
     ///
@@ -595,12 +615,16 @@ impl Oertlichesmodell {
             greedy: self.gierig,
             ziehen: self.ziehparameter(),
             halt: &self.halt,
-            denkgrenze: match (self.denkt(), self.denkbudget, self.denkende) {
-                (true, Some(budget), Some(ende)) => Some(Denkgrenze { budget, ende, schluss }),
+            // ⚑ Immer mit Grenze, wenn ueberlegt wird (Fund 512); siehe
+            //   [`wirksames_denkbudget`].
+            denkgrenze: match (self.denkt(), self.denkende) {
+                (true, Some(ende)) => {
+                    Some(Denkgrenze { budget: wirksames_denkbudget(self.denkbudget, grenze), ende, schluss })
+                }
                 _ => None,
             },
             // ⛔️ Der Notaus haelt die Erzeugung vor dem naechsten Token an.
-            abbruch: Some(crate::notaus::schalter()),
+            abbruch: Some(myl_local_agent::notaus::schalter()),
         }
     }
 
@@ -702,7 +726,7 @@ impl Oertlichesmodell {
             Some(f) => {
                 let mut bisher = String::new();
                 let mut alle: Vec<usize> = Vec::with_capacity(grenze);
-                let mut zerleger = crate::strom::Zerleger::neu_im_denken(
+                let mut zerleger = myl_local_agent::textstrom::Zerleger::neu_im_denken(
                     self.vorlage().oeffnet_denkblock(self.denkt()),
                 );
                 let token = dekodieren_fortgesetzt(
@@ -741,6 +765,10 @@ impl Oertlichesmodell {
         }
         drop(speicher);
         let text = self.wortschatz.decode(&token);
+        // ⛔️ **Fund 512: An der Grenze geendet ist nicht „stop“.** Die
+        //   Schleife muss es wissen, sonst haelt sie eine abgeschnittene
+        //   Antwort ohne Aufruf fuer das Ende der Arbeit.
+        let abschlussgrund = if token.len() >= grenze && !text.contains("<|im_end|>") { "length" } else { "stop" };
         // ⚑ Die Endmarke gehoert nicht in die Antwort; sie ist Rahmen
         // und nicht Inhalt.
         // ⚑ Rahmen ist nicht Inhalt: die Endmarke des einen Weges und
@@ -756,12 +784,12 @@ impl Oertlichesmodell {
             .to_string();
         // ⛔️ **Angehalten ist kein Ergebnis wie jedes andere**: Die Schleife
         //   muss enden, und der Text bis dahin kommt mit.
-        if crate::notaus::ausgeloest() {
+        if myl_local_agent::notaus::ausgeloest() {
             return Err(Tuerfehler::Abgebrochen { bisher: text });
         }
         Ok(Antwort {
             text,
-            abschlussgrund: Some("stop".to_string()),
+            abschlussgrund: Some(abschlussgrund.to_string()),
             // 📌 **Keine Kennung und kein Segment, und das mit Absicht.**
             // Beides sind Belege der Kette. Lokal gerechnete Arbeit hat
             // keinen, und einen zu erfinden waere schlimmer als keiner:
@@ -804,7 +832,7 @@ impl Modellweg for Oertlichesmodell {
                 s.saat = einmal.or(self.saat_fest).unwrap_or_else(zufallssaat);
                 s.zug = 0;
                 *self.aktion.lock().unwrap_or_else(|e| e.into_inner()) = Some(s.saat);
-                crate::protokoll::saat("aktion", (!self.waehlt_gierig()).then_some(s.saat), &self.parameterzeile());
+                myl_local_agent::protokoll::saat("aktion", (!self.waehlt_gierig()).then_some(s.saat), &self.parameterzeile());
             }
             s.tiefe += 1;
             a.set(s);
@@ -834,6 +862,22 @@ impl Modellweg for Oertlichesmodell {
 
 #[cfg(test)]
 mod teilbarkeit {
+
+    /// ⛔️ **Fund 512: Das Ueberlegen verbraucht nie die ganze Antwort.**
+    /// Fuenf Achtel der Grenze, ein kleineres ausdrueckliches Budget gilt
+    /// weiter, ein groesseres nicht.
+    #[test]
+    fn das_ueberlegen_laesst_platz_fuer_die_antwort() {
+        assert_eq!(wirksames_denkbudget(None, 4000), 2500);
+        assert_eq!(wirksames_denkbudget(None, 1600), 1000);
+        assert_eq!(wirksames_denkbudget(Some(32), 4000), 32);
+        assert_eq!(wirksames_denkbudget(Some(100_000), 4000), 2500);
+        // Gegenprobe: Es bleibt immer etwas, auch bei kleinen Grenzen.
+        for g in [8usize, 64, 1000, 4000, 32_000] {
+            assert!(wirksames_denkbudget(None, g) < g, "bei {g} bleibt nichts fuer die Antwort");
+        }
+    }
+
     use super::*;
 
     /// ⚑ **Woran Punkt 0.5 haengt, und zwar ganz.**

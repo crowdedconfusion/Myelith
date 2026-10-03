@@ -1,7 +1,7 @@
 # golemos (die Linux-Distribution, die nur Myelith bedient)
 
-> **Version:** 0.2.0 (`golem-einrichten` 0.2.0)
-> **Datum:** 2026-09-25
+> **Version:** 0.2.1 (`golem-einrichten` 0.2.1)
+> **Datum:** 2026-09-30
 > **Status:** Startet vom Stick und von Platte, findet einen
 > Myelith-Ordner auf dem Stick oder einem zweiten Laufwerk und
 > installiert sich mit einem Assistenten auf eine ganze Platte. Belegt
@@ -50,6 +50,17 @@ sie tut, soll sich in ihrem eigenen Quelltext lesen lassen.
 ---
 
 ## Changelog
+
+### v0.2.1 – 2026-09-30 (die Werkzeugkisten liegen jetzt unter `AGENT_LAYER`)
+
+Die Kisten des örtlichen Agenten sind von `CLIENT/werkzeugkisten` nach
+`AGENT_LAYER/local-toolkits` gezogen (AGENT_LAYER v0.25.0). Mitgezogen:
+die Vollständigkeitsliste eines Klons (`klon.rs`), die Mitnahme
+(`mitnahme.sh`, auf dem Stick heißt der Ordner weiter `werkzeugkisten`) und
+die Probe, die die Sprachen des Clients gegen die eigenen hält: Sie las
+`einstellungen.rs`, die Sprache liegt jetzt in `agentenwahl.rs` beim
+Agenten. Der Kopf von `mitnahme.sh` nennt keine einzelne örtliche Kiste mehr.
+**Beleg:** `golem-einrichten` 69 grün, Clippy ohne Befund.
 
 ### v0.2.0 – 2026-09-25 (Sprache und Tastatur am Anfang, Myelith ohne Installation benutzen, der ganze Myelith-Ordner kommt immer mit, GolemOS schreibt selbst weitere Sticks, der Stick heißt „Golem", eine Anleitung für Laien)
 

@@ -339,8 +339,132 @@ pub fn schritt(
     // SICHERHEIT: `zustand` ist fuer die Dauer des Aufrufs exklusiv
     // ausgeliehen, und `spalten_schritt` formt Ausschnitte nur innerhalb
     // seiner `sd * wd` Werte.
-    unsafe { spalten_schritt(zustand.werte.as_mut_ptr(), sd, wd, 0, wd, q, k, v, g, beta, &mut akkus) };
+    unsafe { spalten_schritt(zustand.werte.as_mut_ptr(), sd, wd, 0, wd, q, k, v, g, beta, &mut akkus, None) };
     ausgabe_skalieren(&akkus, aus)
+}
+
+/// **Ein Schritt wie [`schritt`], der `kv` und `delta` herausgibt**, beide auf
+/// [`INTERN_FRAC`], je Spalte. Der Rueckwaertspass braucht sie
+/// ([`crate::zustandsrueckweg`]).
+///
+/// ⚑ **Derselbe Kern**, nicht ein zweiter: `spalten_schritt` schreibt die
+/// beiden Zwischenwerte, die er ohnehin rechnet, in die Spur. Ohne Spur ist
+/// er Zeile fuer Zeile der bisherige.
+#[allow(clippy::too_many_arguments)]
+pub fn schritt_mit_spur(
+    zustand: &mut Zustand,
+    q: &[i16],
+    k: &[i16],
+    v: &[i16],
+    g: i64,
+    beta: i16,
+    aus: &mut [i16],
+    kv: &mut [i32],
+    delta: &mut [i32],
+) -> u8 {
+    assert_eq!(aus.len(), zustand.wert_dim, "die Ausgabe passt nicht zur Wertdimension");
+    assert_eq!(kv.len(), zustand.wert_dim, "kv passt nicht zur Wertdimension");
+    assert_eq!(delta.len(), zustand.wert_dim, "delta passt nicht zur Wertdimension");
+    let (sd, wd) = (zustand.schluessel_dim, zustand.wert_dim);
+    let mut akkus = vec![0i128; wd];
+    // SICHERHEIT: wie in `schritt`.
+    unsafe {
+        spalten_schritt(zustand.werte.as_mut_ptr(), sd, wd, 0, wd, q, k, v, g, beta, &mut akkus, Some((kv, delta)))
+    };
+    ausgabe_skalieren(&akkus, aus)
+}
+
+/// **Der verblasste Zustand `S * g`**, mit derselben Rundung wie der Schritt
+/// ([`zeile_verblassen`]), ohne `zustand` zu veraendern.
+pub fn verblasst(zustand: &Zustand, g: i64) -> Vec<i64> {
+    let mut werte = zustand.werte.clone();
+    for zeile in werte.chunks_exact_mut(zustand.wert_dim.max(1)) {
+        zeile_verblassen(zeile, g);
+    }
+    werte
+}
+
+impl Zustand {
+    /// Die Werte zeilenweise, `schluessel_dim * wert_dim`, in Einheiten von
+    /// `2^-ZUSTAND_FRAC`.
+    pub fn werte(&self) -> &[i64] {
+        &self.werte
+    }
+}
+
+/// **Die beiden Tore eines Wertkopfes**: `beta = sigmoid(b)` und
+/// `g = exp(-exp_A * softplus(a + dt_bias))`.
+///
+/// ⚑ **Eine Stelle fuer Inferenz und Training**, wie `tor_anwenden` bei der
+/// Achtsamkeit: Der Rueckwaertspass ([`crate::zustandsrueckweg`]) leitet
+/// genau diese Rechnung ab, und eine zweite Fassung liefe auseinander.
+///
+/// `dt_bias` und `exp_a` tragen eine Skala je Element (je Wertkopf ein
+/// Wert), wie sie das Artefakt ablegt.
+#[derive(Debug, Clone, Copy)]
+pub struct Zustandstore<'a> {
+    pub sigmoid_lut: &'a [i16],
+    pub sigmoid_versatz: i16,
+    pub sigmoid_ein_frac: u8,
+    pub sigmoid_aus_frac: u8,
+    /// Skala der Projektionen `in_proj_b` und `in_proj_a`.
+    pub b_frac: u8,
+    pub a_frac: u8,
+    pub softplus_rest: &'a [i32],
+    pub softplus_ein_frac: u8,
+    pub softplus_aus_frac: u8,
+    pub zerfall_exp: &'a [i32],
+    pub zerfall_raster_frac: u8,
+    pub zerfall_aus_frac: u8,
+    pub dt_bias: &'a [i16],
+    pub dt_bias_shifts: &'a [u8],
+    pub exp_a: &'a [i16],
+    pub exp_a_shifts: &'a [u8],
+}
+
+/// Was beide Richtungen von einem Torpaar brauchen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Torwerte {
+    /// `sigmoid(b)` auf `sigmoid_aus_frac`
+    pub s_b: i64,
+    /// `beta` auf [`WERT_FRAC`]
+    pub beta: i16,
+    /// `x = a + dt_bias` auf `softplus_ein_frac`
+    pub x: i32,
+    /// `softplus(x)` auf `softplus_aus_frac`
+    pub sp: i64,
+    /// `g` auf `zerfall_aus_frac`
+    pub g: i64,
+}
+
+impl Zustandstore<'_> {
+    /// Die Tore des Wertkopfes `h` aus seinen Projektionswerten.
+    pub fn werte(&self, h: usize, b_roh: i16, a_roh: i16) -> Torwerte {
+        use crate::fixed_point::{clamp_i16_from_i64, rescale, rescale_i64};
+        use crate::integer_math::{sigmoid_nachschlagen, softplus_nachschlagen, zerfall_nachschlagen};
+        // beta = sigmoid(b), in WERT_FRAC.
+        let b_dom = rescale(i32::from(b_roh), self.b_frac, self.sigmoid_ein_frac);
+        let s_b = sigmoid_nachschlagen(
+            b_dom, self.sigmoid_lut, self.sigmoid_versatz, self.sigmoid_ein_frac, self.sigmoid_aus_frac,
+        );
+        let beta = clamp_i16_from_i64(rescale_i64(s_b, self.sigmoid_aus_frac, WERT_FRAC as u8));
+        // d = exp_A * softplus(a + dt_bias), dann g = exp(-d).
+        let a_dom = rescale(i32::from(a_roh), self.a_frac, self.softplus_ein_frac);
+        let dt = rescale(i32::from(self.dt_bias[h]), self.dt_bias_shifts[h], self.softplus_ein_frac);
+        let x = a_dom + dt;
+        let sp = softplus_nachschlagen(x, self.softplus_rest, self.softplus_ein_frac, self.softplus_aus_frac);
+        // `exp_A` liegt als `data * 2^-shift` vor; das Produkt behaelt die
+        // Bruchbits von `sp`, wenn um `shift` nach rechts geschoben wird.
+        let d = rshift_round_i128(i128::from(self.exp_a[h]) * i128::from(sp), u32::from(self.exp_a_shifts[h])) as i64;
+        let g = zerfall_nachschlagen(
+            d,
+            self.zerfall_exp,
+            u32::from(self.softplus_aus_frac),
+            u32::from(self.zerfall_raster_frac),
+            u32::from(self.zerfall_aus_frac),
+        );
+        Torwerte { s_b, beta, x, sp, g }
+    }
 }
 
 /// **Der Kern eines Schritts, fuer die Spalten `[b0, b1)` eines Kopfes.**
@@ -379,6 +503,7 @@ unsafe fn spalten_schritt(
     g: i64,
     beta: i16,
     akkus: &mut [i128],
+    spur: Option<(&mut [i32], &mut [i32])>,
 ) {
     assert_eq!(q.len(), sd, "q passt nicht zur Schluesseldimension");
     assert_eq!(k.len(), sd, "k passt nicht zur Schluesseldimension");
@@ -430,15 +555,22 @@ unsafe fn spalten_schritt(
 
     // --- 3. Die Korrektur.
     let mut delta = vec![0i32; breite];
+    let mut spur = spur;
     for (j, ziel) in delta.iter_mut().enumerate() {
         // ⛔️ **Beide Seiten muessen dieselbe Skala tragen.** `v` kommt
         //   als Aktivierung auf `WERT_FRAC`, `kv` als Rechenzwischenstand
         //   auf `INTERN_FRAC`; ohne diese Verschiebung subtrahierte man
         //   Zahlen verschiedener Bedeutung.
         let kv_mem = rshift_round_i128(kv[j], ZUSTAND_FRAC + NORM_FRAC - INTERN_FRAC) as i32;
+        if let Some((kv_aus, _)) = spur.as_mut() {
+            kv_aus[j] = kv_mem;
+        }
         let v_intern = i64::from(v[b0 + j]) << (INTERN_FRAC - WERT_FRAC);
         let roh = v_intern - i64::from(kv_mem);
         *ziel = rshift_round_i64(roh * i64::from(beta), WERT_FRAC as u8) as i32;
+    }
+    if let Some((_, delta_aus)) = spur {
+        delta_aus.copy_from_slice(&delta);
     }
 
     // --- 4. Rang-1-Fortschreibung, verlustfrei, und
@@ -526,7 +658,7 @@ unsafe fn spalten_schritt(
 /// ohne diese Zeile blieb gruen, und die Rechnung oben sagt warum: Sie
 /// schuetzte vor einem Ueberlauf, den es nicht gibt.
 #[inline]
-fn zeile_verblassen(zeile: &mut [i64], g: i64) -> u64 {
+pub(crate) fn zeile_verblassen(zeile: &mut [i64], g: i64) -> u64 {
     const MASKE: i64 = (1i64 << ZERFALL_FRAC) - 1;
     const HALB: i64 = 1i64 << (ZERFALL_FRAC - 1);
     let schmal = (0..=(1i64 << ZERFALL_FRAC)).contains(&g);
@@ -737,7 +869,7 @@ where
                 spalten_schritt(
                     basen[h] as *mut i64, sd, wd,
                     block * breite, (block + 1) * breite,
-                    q, k, v, g, beta, ziel,
+                    q, k, v, g, beta, ziel, None,
                 );
             }
         }
@@ -939,7 +1071,7 @@ mod proben {
                     let (mut an, mut aa) = (vec![0i128; b1 - b0], vec![7i128; b1 - b0]);
                     let (mut zn, mut za) = (neu.clone(), alt.clone());
                     unsafe {
-                        spalten_schritt(zn.as_mut_ptr(), sd, wd, b0, b1, &q, &k, &v, g, beta, &mut an);
+                        spalten_schritt(zn.as_mut_ptr(), sd, wd, b0, b1, &q, &k, &v, g, beta, &mut an, None);
                         spalten_schritt_alt(za.as_mut_ptr(), sd, wd, b0, b1, &q, &k, &v, g, beta, &mut aa);
                     }
                     assert_eq!(zn, za, "Zustand: Hoehe {hoehe}, g-Art {g_art}, Schritt {schritt_nr}, Spalten {b0}..{b1}");

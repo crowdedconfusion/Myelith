@@ -791,7 +791,11 @@ pub(crate) fn qk_vorgaben_der_ebene(
     m: &IntegerModel,
     e: usize,
 ) -> Option<integer_llm_kernels::trainingsschritt::QkNormVorgaben<'_>> {
-    let qkn = m.layers[e].achtsamkeit().qk_norm.as_ref()?;
+    // Eine Zustandsebene hat keine QK-Normierung.
+    let crate::model::Mischer::Achtsamkeit(a) = &m.layers[e].mischer else {
+        return None;
+    };
+    let qkn = a.qk_norm.as_ref()?;
     Some(integer_llm_kernels::trainingsschritt::QkNormVorgaben {
         q_gamma: &qkn.q_gamma.data,
         q_gamma_shifts: &qkn.q_gamma.shifts,
@@ -802,6 +806,18 @@ pub(crate) fn qk_vorgaben_der_ebene(
         rsqrt_lut: &m.rsqrt_lut,
         rsqrt_input_shift: m.config.rsqrt_input_shift,
         rsqrt_output_frac: m.config.rsqrt_output_frac,
+    })
+}
+
+/// **Das Tor am Ausgang der Achtsamkeit**, falls das Modell es hat
+/// (Qwen3.6). Eine Stelle, aus demselben Grund wie
+/// [`qk_vorgaben_der_ebene`].
+pub fn tor_vorgaben(m: &IntegerModel) -> Option<integer_llm_kernels::trainingsschritt::TorVorgaben<'_>> {
+    m.achtsamkeit_mit_tor.then_some(integer_llm_kernels::trainingsschritt::TorVorgaben {
+        sigmoid_lut: &m.sigmoid_lut,
+        versatz: m.sigmoid_versatz,
+        ein_frac: m.sigmoid_ein_frac,
+        aus_frac: m.sigmoid_aus_frac,
     })
 }
 
@@ -819,18 +835,25 @@ pub(crate) fn vorgaben_der_ebene<'a>(
     form: Gewichtsform,
 ) -> Ebenenvorgaben<'a> {
     let kennung = Schrittkennung { ebene: e as u32, schritt, index_versatz: 0 };
+    // ⚑ **Eine Zustandsebene hat keine Achtsamkeitsskalen** (T5): Die vier
+    //   Felder stehen dann auf null und werden nicht gelesen, denn ihr Mischer
+    //   rechnet ueber `zustandstraining`. Hier stand `sc.achtsamkeit()`, und
+    //   das ist bei ihr eine Panik.
+    let a = sc.achtsamkeit.as_ref();
     Ebenenvorgaben {
         qk_norm: qk_vorgaben_der_ebene(m, e),
+        tor: tor_vorgaben(m),
         aufmerksamkeit: Aufmerksamkeitsvorgaben {
             hidden_size: m.hidden_size,
             num_heads: m.num_heads,
             num_kv_heads: m.num_kv_heads,
             head_dim: m.head_dim,
+            drehbreite: m.drehbreite,
             act_frac: sc.norm_attn_frac,
-            q_frac: sc.achtsamkeit().q_frac,
-            k_frac: sc.achtsamkeit().k_frac,
-            v_frac: sc.achtsamkeit().v_frac,
-            attn_out_frac: sc.achtsamkeit().attn_out_frac,
+            q_frac: a.map_or(0, |a| a.q_frac),
+            k_frac: a.map_or(0, |a| a.k_frac),
+            v_frac: a.map_or(0, |a| a.v_frac),
+            attn_out_frac: a.map_or(0, |a| a.attn_out_frac),
             aus_frac: 0,
             master_frac: MASTER_FRAC,
             gewichtsform: form,
@@ -1053,11 +1076,13 @@ pub fn trainingsschleife(
     for s in 0..v.schritte {
         let vg = Ebenenvorgaben {
             qk_norm: qk_vorgaben_der_ebene(m, 0),
+            tor: tor_vorgaben(m),
             aufmerksamkeit: Aufmerksamkeitsvorgaben {
                 hidden_size: m.hidden_size,
                 num_heads: m.num_heads,
                 num_kv_heads: m.num_kv_heads,
                 head_dim: m.head_dim,
+                drehbreite: m.drehbreite,
                 act_frac: sc.norm_attn_frac,
                 q_frac: sc.achtsamkeit().q_frac,
                 k_frac: sc.achtsamkeit().k_frac,

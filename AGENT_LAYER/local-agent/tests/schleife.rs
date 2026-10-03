@@ -887,3 +887,99 @@ fn bei_knappem_budget_erinnert_die_schleife() {
     assert!(werkzeug[1].contains("[Loop: 3 step(s) left"), "{}", werkzeug[1]);
     assert!(werkzeug[2].contains("[Loop: 2 step(s) left"), "{}", werkzeug[2]);
 }
+
+// --- ⛔️ Fund 512: an der Tokengrenze ohne Vorschlag ---------------------
+
+/// Ein Modellweg, der zu jeder Antwort auch den Abschlussgrund vorgibt.
+struct GrenzWeg {
+    antworten: std::cell::RefCell<std::collections::VecDeque<(String, &'static str)>>,
+}
+
+impl myl_local_agent::Modellweg for GrenzWeg {
+    fn chat(
+        &self,
+        _modell: &str,
+        _nachrichten: &[myl_local_agent::Nachricht],
+        _max_tokens: Option<u32>,
+    ) -> Result<myl_local_agent::Antwort, myl_local_agent::Tuerfehler> {
+        let (text, grund) = self.antworten.borrow_mut().pop_front().unwrap_or_default();
+        Ok(myl_local_agent::Antwort {
+            text,
+            abschlussgrund: Some(grund.to_string()),
+            kennung: "oertlich".to_string(),
+            segment: Default::default(),
+            prompt_token: 0,
+            antwort_token: 0,
+        })
+    }
+}
+
+fn fahren_mit_gruenden(antworten: Vec<(&str, &'static str)>) -> myl_local_agent::schleife::Ergebnis {
+    let weg = GrenzWeg {
+        antworten: std::cell::RefCell::new(antworten.into_iter().map(|(t, g)| (t.to_string(), g)).collect()),
+    };
+    let a = aufbau();
+    let grenzen = Sitzungsgrenzen::neu(kontrakt(8), a.kasten.angebote());
+    let adressen = a.adressen.clone();
+    let finden = move |n: &str| -> Option<MerkleRoot> { adressen.iter().find(|(k, _)| k == n).map(|(_, v)| *v) };
+    Lauf {
+        hausregel: None,
+        klient: &weg,
+        modell: "oertlich",
+        grenzen: &grenzen,
+        betriebsart: Betriebsart::Alles,
+        einhaengung: None,
+        kasten: &a.kasten,
+        registratur: &a.registratur,
+        adressen: &finden,
+        anker: Hash::from_bytes([7u8; 32]),
+        max_tokens: Some(32),
+        ansageform: Default::default(),
+        melder: None,
+    }
+    .fahren("Wie spaet ist es?")
+}
+
+/// ⛔️ **Eine an der Grenze abgeschnittene Ueberlegung ist nicht „fertig“**
+/// (Fund 512). Das Modell erfaehrt es, versucht es noch einmal, und das
+/// Werkzeug laeuft.
+#[test]
+fn eine_abgeschnittene_ueberlegung_ist_nicht_fertig() {
+    let e = fahren_mit_gruenden(vec![
+        ("<think>Erst ueberlege ich, ob die Zeit", "length"),
+        ("<tool_call>{\"name\":\"zeit\",\"arguments\":{}}</tool_call>", "stop"),
+        ("Es ist 12:00.", "stop"),
+    ]);
+    assert_eq!(e.ende, Ende::Fertig, "{}", e.ende);
+    assert!(
+        e.nachrichten.iter().any(|n| n.role == "tool" && n.content.contains("Tokengrenze")),
+        "das Modell erfuhr nicht, dass es abgeschnitten wurde"
+    );
+    assert!(
+        e.nachrichten.iter().any(|n| n.role == "assistant" && n.content.contains("12:00")),
+        "nach dem Hinweis lief die Arbeit nicht weiter"
+    );
+}
+
+/// Und wer immer wieder abgeschnitten wird, bleibt stecken, statt ohne Ende
+/// zu laufen.
+#[test]
+fn immer_abgeschnitten_bleibt_stecken() {
+    let lang = ("<think>Und noch einmal ueberlegt", "length");
+    let e = fahren_mit_gruenden(vec![lang; 6]);
+    assert_eq!(
+        e.ende,
+        Ende::Steckengeblieben { versuche: myl_local_agent::schleife::HOECHSTZAHL_BERICHTIGUNGEN + 1 },
+        "{}",
+        e.ende
+    );
+}
+
+/// Die Gegenprobe: Dieselbe Antwort mit `stop` ist ein gewoehnliches Ende,
+/// wie vorher.
+#[test]
+fn ohne_grenze_bleibt_eine_antwort_ohne_aufruf_das_ende() {
+    let e = fahren_mit_gruenden(vec![("<think>Erst ueberlege ich, ob die Zeit", "stop")]);
+    assert_eq!(e.ende, Ende::Fertig, "{}", e.ende);
+    assert!(!e.nachrichten.iter().any(|n| n.content.contains("Tokengrenze")));
+}

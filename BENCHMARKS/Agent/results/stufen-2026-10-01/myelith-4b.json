@@ -1,0 +1,720 @@
+{
+  "artefakt": "/Users/entity/Desktop/Code/Code/Artificial/Myelith/Repository/INTEGER_LLM/artifacts/myelith-4b",
+  "schritte": 6,
+  "saaten": [
+    8213088584698225,
+    4468002801560041,
+    6135214929457457
+  ],
+  "token": 1600,
+  "denken": "aus",
+  "ab_werk": true,
+  "laeufe": [
+    {
+      "name": "e_datei_anlegen",
+      "stufe": 1,
+      "lauf": 1,
+      "saat": 8213088584698225,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 17.2,
+      "werkzeuge": [
+        "write_file"
+      ]
+    },
+    {
+      "name": "e_datei_anlegen",
+      "stufe": 1,
+      "lauf": 2,
+      "saat": 4468002801560041,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 16.8,
+      "werkzeuge": [
+        "write_file"
+      ]
+    },
+    {
+      "name": "e_datei_anlegen",
+      "stufe": 1,
+      "lauf": 3,
+      "saat": 6135214929457457,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 17.0,
+      "werkzeuge": [
+        "write_file"
+      ]
+    },
+    {
+      "name": "e_wert_aendern",
+      "stufe": 1,
+      "lauf": 1,
+      "saat": 8213088584698225,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 19.7,
+      "werkzeuge": [
+        "read_file",
+        "edit_file"
+      ]
+    },
+    {
+      "name": "e_wert_aendern",
+      "stufe": 1,
+      "lauf": 2,
+      "saat": 4468002801560041,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 19.9,
+      "werkzeuge": [
+        "read_file",
+        "edit_file"
+      ]
+    },
+    {
+      "name": "e_wert_aendern",
+      "stufe": 1,
+      "lauf": 3,
+      "saat": 6135214929457457,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 20.1,
+      "werkzeuge": [
+        "read_file",
+        "edit_file"
+      ]
+    },
+    {
+      "name": "e_zeilen_zaehlen",
+      "stufe": 1,
+      "lauf": 1,
+      "saat": 8213088584698225,
+      "bestanden": false,
+      "grund": "Abnahme mit 1: ",
+      "sekunden": 19.1,
+      "werkzeuge": [
+        "read_file",
+        "write_file"
+      ]
+    },
+    {
+      "name": "e_zeilen_zaehlen",
+      "stufe": 1,
+      "lauf": 2,
+      "saat": 4468002801560041,
+      "bestanden": false,
+      "grund": "Abnahme mit 1: ",
+      "sekunden": 19.0,
+      "werkzeuge": [
+        "read_file",
+        "write_file"
+      ]
+    },
+    {
+      "name": "e_zeilen_zaehlen",
+      "stufe": 1,
+      "lauf": 3,
+      "saat": 6135214929457457,
+      "bestanden": false,
+      "grund": "Abnahme mit 1: ",
+      "sekunden": 18.9,
+      "werkzeuge": [
+        "read_file",
+        "write_file"
+      ]
+    },
+    {
+      "name": "m_summe_json",
+      "stufe": 2,
+      "lauf": 1,
+      "saat": 8213088584698225,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 31.9,
+      "werkzeuge": [
+        "list_directory",
+        "list_directory",
+        "read_file",
+        "fill_template",
+        "fill_template",
+        "fill_template",
+        "write_file"
+      ]
+    },
+    {
+      "name": "m_summe_json",
+      "stufe": 2,
+      "lauf": 2,
+      "saat": 4468002801560041,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 62.3,
+      "werkzeuge": [
+        "read_file",
+        "fill_template",
+        "fill_template",
+        "fill_template",
+        "fill_template",
+        "fill_template",
+        "write_file"
+      ]
+    },
+    {
+      "name": "m_summe_json",
+      "stufe": 2,
+      "lauf": 3,
+      "saat": 6135214929457457,
+      "bestanden": false,
+      "grund": "Abnahme mit 1: ",
+      "sekunden": 35.4,
+      "werkzeuge": [
+        "read_file",
+        "fill_template",
+        "write_file"
+      ]
+    },
+    {
+      "name": "m_funktion_umbenennen",
+      "stufe": 2,
+      "lauf": 1,
+      "saat": 8213088584698225,
+      "bestanden": false,
+      "grund": "Abnahme mit 1: ",
+      "sekunden": 61.6,
+      "werkzeuge": [
+        "search_skill",
+        "learn_skill",
+        "aufgabe-zerlegen",
+        "split",
+        "search_skill",
+        "learn_skill",
+        "fehlersuche",
+        "search_skill",
+        "learn_skill",
+        "edit_file"
+      ]
+    },
+    {
+      "name": "m_funktion_umbenennen",
+      "stufe": 2,
+      "lauf": 2,
+      "saat": 4468002801560041,
+      "bestanden": false,
+      "grund": "Abnahme mit 1: ",
+      "sekunden": 46.4,
+      "werkzeuge": [
+        "search_skill",
+        "learn_skill",
+        "search_skill",
+        "learn_skill",
+        "learn_skill",
+        "list_directory",
+        "list_directory",
+        "read_file",
+        "search_files",
+        "edit_file"
+      ]
+    },
+    {
+      "name": "m_funktion_umbenennen",
+      "stufe": 2,
+      "lauf": 3,
+      "saat": 6135214929457457,
+      "bestanden": false,
+      "grund": "Abnahme mit 1: ",
+      "sekunden": 61.7,
+      "werkzeuge": [
+        "search_skill",
+        "learn_skill",
+        "aufgabe-zerlegen",
+        "split",
+        "search_skill",
+        "learn_skill",
+        "fehlersuche",
+        "search_skill",
+        "learn_skill",
+        "edit_file"
+      ]
+    },
+    {
+      "name": "m_csv_filtern",
+      "stufe": 2,
+      "lauf": 1,
+      "saat": 8213088584698225,
+      "bestanden": false,
+      "grund": "Abnahme mit 1: sh: berlin.txt: No such file or directory",
+      "sekunden": 49.5,
+      "werkzeuge": [
+        "search_skill",
+        "learn_skill",
+        "search_skill",
+        "learn_skill",
+        "fill_template",
+        "search_skill",
+        "learn_skill",
+        "read_file",
+        "fill_template",
+        "fill_template"
+      ]
+    },
+    {
+      "name": "m_csv_filtern",
+      "stufe": 2,
+      "lauf": 2,
+      "saat": 4468002801560041,
+      "bestanden": false,
+      "grund": "Abnahme mit 1: sh: berlin.txt: No such file or directory",
+      "sekunden": 43.3,
+      "werkzeuge": [
+        "search_skill",
+        "learn_skill",
+        "search_skill",
+        "learn_skill",
+        "list_directory",
+        "list_directory",
+        "read_file",
+        "fill_template",
+        "fill_template",
+        "fill_template"
+      ]
+    },
+    {
+      "name": "m_csv_filtern",
+      "stufe": 2,
+      "lauf": 3,
+      "saat": 6135214929457457,
+      "bestanden": false,
+      "grund": "Abnahme mit 1: sh: berlin.txt: No such file or directory",
+      "sekunden": 43.7,
+      "werkzeuge": [
+        "search_skill",
+        "learn_skill",
+        "search_skill",
+        "learn_skill",
+        "list_directory",
+        "list_directory",
+        "read_file",
+        "fill_template",
+        "fill_template",
+        "fill_template"
+      ]
+    },
+    {
+      "name": "k_tests_gruen",
+      "stufe": 3,
+      "lauf": 1,
+      "saat": 8213088584698225,
+      "bestanden": false,
+      "grund": "Abnahme mit 1: ost recent call last):   File \"/private/var/folders/ll/rw70f8yd0wv955bq3sck012h0000gn/T/myl-agentenprobe-r7fyhfeo/test_rechner.py\", line 5, in <module>     assert median([3, 1, 2]) == 2 AssertionError",
+      "sekunden": 64.5,
+      "werkzeuge": [
+        "search_skill",
+        "learn_skill",
+        "run_command",
+        "search_skill",
+        "search_files",
+        "read_file",
+        "note_set",
+        "edit_file",
+        "run_command",
+        "search_files",
+        "read_file",
+        "note_set",
+        "edit_file",
+        "run_command",
+        "search_files",
+        "read_file"
+      ]
+    },
+    {
+      "name": "k_tests_gruen",
+      "stufe": 3,
+      "lauf": 2,
+      "saat": 4468002801560041,
+      "bestanden": false,
+      "grund": "Abnahme mit 1: private/var/folders/ll/rw70f8yd0wv955bq3sck012h0000gn/T/myl-agentenprobe-toks8vxk/test_rechner.py\", line 6, in <module>     assert median([4, 1, 3, 2]) == 2.5, median([4, 1, 3, 2]) AssertionError: 3.5",
+      "sekunden": 67.0,
+      "werkzeuge": [
+        "search_skill",
+        "learn_skill",
+        "run_command",
+        "search_files",
+        "read_file",
+        "edit_file",
+        "run_command",
+        "search_files",
+        "read_file",
+        "edit_file",
+        "run_command",
+        "search_files",
+        "read_file",
+        "edit_file",
+        "run_command",
+        "edit_file"
+      ]
+    },
+    {
+      "name": "k_tests_gruen",
+      "stufe": 3,
+      "lauf": 3,
+      "saat": 6135214929457457,
+      "bestanden": false,
+      "grund": "Abnahme mit 1: private/var/folders/ll/rw70f8yd0wv955bq3sck012h0000gn/T/myl-agentenprobe-1ube8ocp/test_rechner.py\", line 6, in <module>     assert median([4, 1, 3, 2]) == 2.5, median([4, 1, 3, 2]) AssertionError: 3.5",
+      "sekunden": 58.0,
+      "werkzeuge": [
+        "search_skill",
+        "learn_skill",
+        "run_command",
+        "search_skill",
+        "search_files",
+        "search_files",
+        "read_file",
+        "search_skill",
+        "edit_file",
+        "run_command",
+        "search_files",
+        "read_file",
+        "search_skill",
+        "search_files",
+        "search_files",
+        "edit_file"
+      ]
+    },
+    {
+      "name": "k_logs_auswerten",
+      "stufe": 3,
+      "lauf": 1,
+      "saat": 8213088584698225,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 67.8,
+      "werkzeuge": [
+        "search_skill",
+        "learn_skill",
+        "learn_skill",
+        "learn_skill",
+        "learn_skill",
+        "list_directory",
+        "list_directory",
+        "list_directory",
+        "search_files",
+        "fill_template",
+        "fill_template",
+        "zaehle_zeilen",
+        "zaehle_zeilen",
+        "write_file",
+        "sort_file",
+        "sort_file"
+      ]
+    },
+    {
+      "name": "k_logs_auswerten",
+      "stufe": 3,
+      "lauf": 2,
+      "saat": 4468002801560041,
+      "bestanden": false,
+      "grund": "Abnahme mit 1: ",
+      "sekunden": 53.7,
+      "werkzeuge": [
+        "search_skill",
+        "learn_skill",
+        "learn_skill",
+        "learn_skill",
+        "list_directory",
+        "list_directory",
+        "list_directory",
+        "search_files",
+        "fill_template",
+        "write_file"
+      ]
+    },
+    {
+      "name": "k_logs_auswerten",
+      "stufe": 3,
+      "lauf": 3,
+      "saat": 6135214929457457,
+      "bestanden": false,
+      "grund": "Abnahme mit 1: ",
+      "sekunden": 65.0,
+      "werkzeuge": [
+        "search_skill",
+        "learn_skill",
+        "learn_skill",
+        "learn_skill",
+        "list_directory",
+        "list_directory",
+        "list_directory",
+        "search_files",
+        "fill_template",
+        "sort",
+        "fill_template",
+        "write_file"
+      ]
+    },
+    {
+      "name": "k_konfig_migrieren",
+      "stufe": 3,
+      "lauf": 1,
+      "saat": 8213088584698225,
+      "bestanden": false,
+      "grund": "Abnahme mit 1: Traceback (most recent call last):   File \"<string>\", line 1, in <module> FileNotFoundError: [Errno 2] No such file or directory: 'einstellungen_v2.json'",
+      "sekunden": 82.6,
+      "werkzeuge": [
+        "search_skill",
+        "learn_skill",
+        "learn_skill",
+        "learn_skill",
+        "learn_skill",
+        "learn_skill",
+        "learn_skill",
+        "search_skill",
+        "learn_skill",
+        "learn_skill",
+        "learn_skill",
+        "learn_skill",
+        "read_file",
+        "fill_template",
+        "fill_template",
+        "fill_template"
+      ]
+    },
+    {
+      "name": "k_konfig_migrieren",
+      "stufe": 3,
+      "lauf": 2,
+      "saat": 4468002801560041,
+      "bestanden": false,
+      "grund": "Abnahme mit 1: ",
+      "sekunden": 101.2,
+      "werkzeuge": [
+        "search_skill",
+        "learn_skill",
+        "learn_skill",
+        "learn_skill",
+        "learn_skill",
+        "learn_skill",
+        "learn_skill",
+        "learn_skill",
+        "learn_skill",
+        "learn_skill",
+        "learn_skill",
+        "read_file",
+        "write_file",
+        "bericht-schreiben",
+        "bericht-schreiben",
+        "bericht-schreiben"
+      ]
+    },
+    {
+      "name": "k_konfig_migrieren",
+      "stufe": 3,
+      "lauf": 3,
+      "saat": 6135214929457457,
+      "bestanden": false,
+      "grund": "Abnahme mit 1: Traceback (most recent call last):   File \"<string>\", line 1, in <module> FileNotFoundError: [Errno 2] No such file or directory: 'einstellungen_v2.json'",
+      "sekunden": 76.1,
+      "werkzeuge": [
+        "search_skill",
+        "learn_skill",
+        "learn_skill",
+        "learn_skill",
+        "learn_skill",
+        "learn_skill",
+        "learn_skill",
+        "learn_skill",
+        "learn_skill",
+        "learn_skill",
+        "learn_skill",
+        "learn_skill",
+        "learn_skill",
+        "read_file",
+        "fill_template",
+        "fill_template"
+      ]
+    },
+    {
+      "name": "o_cli_inventar",
+      "stufe": 4,
+      "lauf": 1,
+      "saat": 8213088584698225,
+      "bestanden": false,
+      "grund": "Abnahme mit 1: Error: Not enough Mutter in inventory.",
+      "sekunden": 149.5,
+      "werkzeuge": [
+        "search_skill",
+        "learn_skill",
+        "write_file",
+        "run_command",
+        "edit_file",
+        "run_command",
+        "run_command",
+        "run_command",
+        "edit_file",
+        "run_command",
+        "edit_file",
+        "run_command",
+        "edit_file",
+        "run_command",
+        "edit_file",
+        "run_command",
+        "edit_file",
+        "run_command",
+        "edit_file",
+        "run_command",
+        "edit_file",
+        "run_command",
+        "edit_file",
+        "run_command"
+      ]
+    },
+    {
+      "name": "o_cli_inventar",
+      "stufe": 4,
+      "lauf": 2,
+      "saat": 4468002801560041,
+      "bestanden": false,
+      "grund": "Abnahme mit 1: 6 nicht verfügbar.",
+      "sekunden": 67.8,
+      "werkzeuge": [
+        "write_file"
+      ]
+    },
+    {
+      "name": "o_cli_inventar",
+      "stufe": 4,
+      "lauf": 3,
+      "saat": 6135214929457457,
+      "bestanden": false,
+      "grund": "Abnahme mit 2: ibrary/Developer/CommandLineTools/usr/bin/python3: can't open file '/private/var/folders/ll/rw70f8yd0wv955bq3sck012h0000gn/T/myl-agentenprobe-yjo0o2iv/inventar.py': [Errno 2] No such file or directory",
+      "sekunden": 62.2,
+      "werkzeuge": [
+        "search_skill",
+        "search_skill",
+        "learn_skill",
+        "learn_skill",
+        "learn_skill",
+        "learn_skill",
+        "learn_skill",
+        "learn_skill",
+        "learn_skill"
+      ]
+    },
+    {
+      "name": "o_refaktor_waehrung",
+      "stufe": 4,
+      "lauf": 1,
+      "saat": 8213088584698225,
+      "bestanden": false,
+      "grund": "Abnahme mit 1: te/var/folders/ll/rw70f8yd0wv955bq3sck012h0000gn/T/myl-agentenprobe-b4jcvg1q/test_waehrung.py\", line 1, in <module>     from waehrung import formatieren ModuleNotFoundError: No module named 'waehrung'",
+      "sekunden": 38.7,
+      "werkzeuge": [
+        "search_skill",
+        "search_skill",
+        "learn_skill",
+        "unlesbarer",
+        "unlesbarer",
+        "unlesbarer"
+      ]
+    },
+    {
+      "name": "o_refaktor_waehrung",
+      "stufe": 4,
+      "lauf": 2,
+      "saat": 4468002801560041,
+      "bestanden": false,
+      "grund": "Abnahme mit 1: te/var/folders/ll/rw70f8yd0wv955bq3sck012h0000gn/T/myl-agentenprobe-rzw773w4/test_waehrung.py\", line 1, in <module>     from waehrung import formatieren ModuleNotFoundError: No module named 'waehrung'",
+      "sekunden": 77.5,
+      "werkzeuge": [
+        "search_skill",
+        "search_skill",
+        "learn_skill",
+        "search_skill",
+        "learn_skill",
+        "search_skill",
+        "learn_skill",
+        "search_skill",
+        "learn_skill",
+        "search_skill",
+        "learn_skill"
+      ]
+    },
+    {
+      "name": "o_refaktor_waehrung",
+      "stufe": 4,
+      "lauf": 3,
+      "saat": 6135214929457457,
+      "bestanden": false,
+      "grund": "Abnahme mit 1: te/var/folders/ll/rw70f8yd0wv955bq3sck012h0000gn/T/myl-agentenprobe-436f6ltm/test_waehrung.py\", line 1, in <module>     from waehrung import formatieren ModuleNotFoundError: No module named 'waehrung'",
+      "sekunden": 39.8,
+      "werkzeuge": [
+        "search_skill",
+        "search_skill",
+        "learn_skill",
+        "search_skill",
+        "learn_skill",
+        "search_skill",
+        "learn_skill"
+      ]
+    },
+    {
+      "name": "o_daten_bereinigen",
+      "stufe": 4,
+      "lauf": 1,
+      "saat": 8213088584698225,
+      "bestanden": false,
+      "grund": "Abnahme mit 1: sh: umsatz_monat.csv: No such file or directory",
+      "sekunden": 33.6,
+      "werkzeuge": [
+        "read_file",
+        "fill_template"
+      ]
+    },
+    {
+      "name": "o_daten_bereinigen",
+      "stufe": 4,
+      "lauf": 2,
+      "saat": 4468002801560041,
+      "bestanden": false,
+      "grund": "Abnahme mit 1: ",
+      "sekunden": 192.8,
+      "werkzeuge": [
+        "read_file",
+        "search_skill",
+        "learn_skill",
+        "edit_file",
+        "read_file",
+        "fill_template",
+        "fill_template",
+        "fill_template",
+        "fill_template",
+        "fill_template",
+        "fill_template",
+        "fill_template",
+        "fill_template",
+        "fill_template",
+        "fill_template",
+        "fill_template",
+        "fill_template",
+        "fill_template",
+        "fill_template",
+        "fill_template",
+        "fill_template",
+        "write_file"
+      ]
+    },
+    {
+      "name": "o_daten_bereinigen",
+      "stufe": 4,
+      "lauf": 3,
+      "saat": 6135214929457457,
+      "bestanden": false,
+      "grund": "Abnahme mit 1: sh: umsatz_monat.csv: No such file or directory",
+      "sekunden": 33.0,
+      "werkzeuge": [
+        "read_file",
+        "fill_template"
+      ]
+    }
+  ]
+}

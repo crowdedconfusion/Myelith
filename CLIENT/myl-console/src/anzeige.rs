@@ -1191,14 +1191,14 @@ impl Stromgriff {
     /// ⚑ **Denken und Antwort sind schon getrennt**, und zwar dort, wo
     /// der Strom zerlegt wird. Hier wird nur noch gezeigt: das Denken
     /// eingerueckt, damit man beides auseinanderhaelt.
-    pub fn stueck(&self, s: myl_client::strom::Stueck) {
+    pub fn stueck(&self, s: myl_local_agent::textstrom::Stueck) {
         if !self.am_schirm {
             return;
         }
         let Ok(mut l) = self.lage.lock() else { return };
         match s {
-            myl_client::strom::Stueck::Denken(t) => l.strom.push((true, t)),
-            myl_client::strom::Stueck::Text(t) => l.strom.push((false, t)),
+            myl_local_agent::textstrom::Stueck::Denken(t) => l.strom.push((true, t)),
+            myl_local_agent::textstrom::Stueck::Text(t) => l.strom.push((false, t)),
         }
     }
 }

@@ -253,6 +253,9 @@ pub struct Fortsetzung {
     /// denen er genommen wurde.** Gueltig, solange die ersten so vielen
     /// Token in `token` unveraendert stehen.
     pub(crate) merkpunkt: Option<(usize, crate::zustandsspeicher::Zustandsspeicher)>,
+    /// **Woher Vermutungen fuer die naechsten Token kommen**, siehe
+    /// [`crate::lookahead`]. Aendert die Geschwindigkeit, nie die Ausgabe.
+    pub(crate) vorschlag: crate::lookahead::Vorschlagsquelle,
 }
 
 /// Was eine fortgesetzte Erzeugung wiederverwenden konnte.
@@ -266,6 +269,11 @@ pub struct Wiederverwendung {
     /// Haltemarke oder an `max_new_tokens`. Die Antwort ist dann
     /// abgeschnitten, und wer weiterrechnen will, muss den Verlauf kuerzen.
     pub kontext_voll: bool,
+    /// Wie viele Token vermutet wurden ([`crate::lookahead`]).
+    pub vorgeschlagen: usize,
+    /// Wie viele davon angenommen wurden, also ohne eigenen Vorwaertspass
+    /// in die Ausgabe kamen.
+    pub angenommen: usize,
 }
 
 impl Fortsetzung {
@@ -276,7 +284,15 @@ impl Fortsetzung {
             cache: KVCache::new(model.num_layers, model.num_kv_heads),
             merkmarke: None,
             merkpunkt: None,
+            vorschlag: crate::lookahead::Vorschlagsquelle::Aus,
         }
+    }
+
+    /// **Schaltet Vermutungen fuer die naechsten Token ein oder aus**
+    /// (siehe [`crate::lookahead`]). Die Ausgabe bleibt Token fuer Token
+    /// dieselbe; es aendert sich, wie viele Vorwaertspaesse sie kostet.
+    pub fn vorschlaege_setzen(&mut self, quelle: crate::lookahead::Vorschlagsquelle) {
+        self.vorschlag = quelle;
     }
 
     /// **Setzt das Token, vor dessen letztem Vorkommen im Prompt der
@@ -439,13 +455,24 @@ pub fn dekodieren_fortgesetzt(
         Ok(l) => l,
         Err(gerechnet) => {
             speicher.token = token_ids[..gerechnet].to_vec();
-            let w = Wiederverwendung { wiederverwendet: gemeinsam, neu: gerechnet.saturating_sub(gemeinsam), kontext_voll: false };
+            let w = Wiederverwendung {
+                wiederverwendet: gemeinsam,
+                neu: gerechnet.saturating_sub(gemeinsam),
+                kontext_voll: false,
+                vorgeschlagen: 0,
+                angenommen: 0,
+            };
             return (Vec::new(), w);
         }
     };
     speicher.token = token_ids.to_vec();
-    let mut wiederverwendung =
-        Wiederverwendung { wiederverwendet: gemeinsam, neu: token_ids.len() - gemeinsam, kontext_voll: false };
+    let mut wiederverwendung = Wiederverwendung {
+        wiederverwendet: gemeinsam,
+        neu: token_ids.len() - gemeinsam,
+        kontext_voll: false,
+        vorgeschlagen: 0,
+        angenommen: 0,
+    };
     let grenze = model.kontextgrenze();
 
     // Decode: Token fuer Token generieren, ab der Position hinter dem
@@ -457,21 +484,33 @@ pub fn dekodieren_fortgesetzt(
     let mut ueberlegt = 0usize;
     let mut denkt = denkgrenze.is_some();
     let mut pos = token_ids.len();
+    // ⚑ **Eine Auswahl, an jeder Stelle dieselbe**: Die Pruefung der
+    //   Vermutungen waehlt genau so, mit derselben Saatkette.
+    let mut waehlen = |logits: &[i32]| -> usize {
+        if let Some(p) = &ziehen {
+            let (t, s) = model.ziehen_next(logits, p, current_seed);
+            current_seed = s;
+            t
+        } else if greedy {
+            model.greedy_next(logits)
+        } else {
+            let (t, s) = model.sample_next(logits, current_seed);
+            current_seed = s;
+            t
+        }
+    };
+    // Ein Token, das die Pruefung einer Vermutung schon gewaehlt hat; die
+    // Saat ist dafuer schon weitergerueckt, es wird nicht noch einmal
+    // gewaehlt.
+    let mut vorgewaehlt: Option<usize> = None;
 
     while out.len() < max_new_tokens {
         if abbruch.is_some_and(|a| a.load(std::sync::atomic::Ordering::SeqCst)) {
             break;
         }
-        let next_token = if let Some(p) = &ziehen {
-            let (t, s) = model.ziehen_next(&logits, p, current_seed);
-            current_seed = s;
-            t
-        } else if greedy {
-            model.greedy_next(&logits)
-        } else {
-            let (t, s) = model.sample_next(&logits, current_seed);
-            current_seed = s;
-            t
+        let next_token = match vorgewaehlt.take() {
+            Some(t) => t,
+            None => waehlen(&logits),
         };
         
         // ⚑ **Die Haltemarke wird geprüft, bevor sie in die Ausgabe
@@ -491,10 +530,54 @@ pub fn dekodieren_fortgesetzt(
             wiederverwendung.kontext_voll = true;
             break;
         }
-        logits = model.forward_token(next_token, pos, &mut speicher.cache);
-        // Im Speicher steht jetzt auch dieser Token.
-        speicher.token.push(next_token);
-        pos += 1;
+        // ⚑ **Vermutungen nur ausserhalb einer begrenzten Ueberlegung**: Dort
+        //   kann die Schleife nach jedem Token eine Schlussfolge einschieben,
+        //   und die passt nicht in einen gebuendelten Durchgang.
+        let vermutet = if denkt || speicher.vorschlag == crate::lookahead::Vorschlagsquelle::Aus {
+            Vec::new()
+        } else {
+            let mut verlauf = speicher.token.clone();
+            verlauf.push(next_token);
+            let mut v = speicher.vorschlag.vorschlagen(&verlauf);
+            // Nicht ueber die Grenze des Kontexts und nicht ueber die Laenge
+            // der Antwort hinaus.
+            v.truncate((grenze - pos - 1).min(max_new_tokens - out.len()));
+            v
+        };
+        if vermutet.is_empty() {
+            logits = model.forward_token(next_token, pos, &mut speicher.cache);
+            // Im Speicher steht jetzt auch dieser Token.
+            speicher.token.push(next_token);
+            pos += 1;
+        } else {
+            let pruefung = vermutungen_pruefen(
+                model,
+                &mut speicher.cache,
+                next_token,
+                &vermutet,
+                pos,
+                &mut waehlen,
+                &mut |t| {
+                    if halt.contains(&t) || out.len() >= max_new_tokens {
+                        return false;
+                    }
+                    out.push(t);
+                    beobachter(t);
+                    true
+                },
+            );
+            wiederverwendung.vorgeschlagen += vermutet.len();
+            wiederverwendung.angenommen += pruefung.angenommen;
+            speicher.token.push(next_token);
+            speicher.token.extend_from_slice(&vermutet[..pruefung.angenommen]);
+            pos += 1 + pruefung.angenommen;
+            logits = pruefung.logits;
+            match pruefung.weiter {
+                Weiter::Gewaehlt(t) => vorgewaehlt = Some(t),
+                Weiter::Waehlen => {}
+                Weiter::Ende => break,
+            }
+        }
 
         let Some(g) = denkgrenze.filter(|_| denkt) else { continue };
         if next_token == g.ende {
@@ -527,6 +610,88 @@ pub fn dekodieren_fortgesetzt(
     }
 
     (out, wiederverwendung)
+}
+
+/// Wie es nach der Pruefung von Vermutungen weitergeht.
+enum Weiter {
+    /// Ein Token ist schon gewaehlt (beim ersten Unterschied) und noch nicht
+    /// gerechnet.
+    Gewaehlt(usize),
+    /// Alle Vermutungen sind angenommen; gewaehlt wird aus den Logits.
+    Waehlen,
+    /// Eine Haltemarke oder die Laenge der Antwort hat die Erzeugung beendet.
+    Ende,
+}
+
+/// Was die Pruefung von Vermutungen ergab.
+struct Pruefung {
+    /// Wie viele der Vermutungen angenommen und ausgegeben wurden.
+    angenommen: usize,
+    /// Die Logits hinter dem letzten Token, das jetzt im Speicher steht.
+    logits: Vec<i32>,
+    weiter: Weiter,
+}
+
+/// **Rechnet `gewaehlt` und die Vermutungen in einem Durchgang und nimmt an,
+/// was die Auswahl ohnehin gewaehlt haette** (siehe [`crate::lookahead`]).
+///
+/// `ausgeben` bekommt jedes angenommene Token und sagt, ob die Erzeugung
+/// weiterlaeuft (nicht bei einer Haltemarke, nicht ueber die Laenge der
+/// Antwort hinaus); ein abgelehntes Token steht danach nicht in der Ausgabe
+/// und nicht im Speicher.
+///
+/// ⚑ **Hinterher steht im Speicher genau `gewaehlt` und die angenommenen
+/// Vermutungen**, als waeren sie Token fuer Token gerechnet. Ohne
+/// rekurrente Ebenen wird der KV-Speicher gekuerzt; mit ihnen wird der
+/// Zustand von vor dem Durchgang zurueckgesetzt und das Angenommene noch
+/// einmal gerechnet, denn ein Zustand laesst sich nicht kuerzen.
+fn vermutungen_pruefen(
+    model: &IntegerModel,
+    cache: &mut KVCache,
+    gewaehlt: usize,
+    vermutet: &[usize],
+    pos: usize,
+    waehlen: &mut dyn FnMut(&[i32]) -> usize,
+    ausgeben: &mut dyn FnMut(usize) -> bool,
+) -> Pruefung {
+    let vorher = cache.zustand_kopie();
+    let mut reihe = Vec::with_capacity(1 + vermutet.len());
+    reihe.push(gewaehlt);
+    reihe.extend_from_slice(vermutet);
+    // `stapel[i]` sind die Logits hinter `reihe[i]`.
+    let mut stapel = model.logits_stapel(&reihe, pos, cache);
+    let mut angenommen = 0usize;
+    let mut weiter = Weiter::Waehlen;
+    for (i, &v) in vermutet.iter().enumerate() {
+        let t = waehlen(&stapel[i]);
+        if t != v {
+            weiter = Weiter::Gewaehlt(t);
+            break;
+        }
+        if !ausgeben(t) {
+            weiter = Weiter::Ende;
+            break;
+        }
+        angenommen += 1;
+    }
+    let behalten = 1 + angenommen;
+    if behalten < reihe.len() {
+        match vorher {
+            // ⚑ Mit Zustand: zurueck auf die Stelle vor dem Durchgang und das
+            //   Angenommene neu rechnen; dieselben Zahlen, siehe oben.
+            Some(z) => {
+                cache.zurueck_auf(pos, &z);
+                let neu = model.logits_stapel(&reihe[..behalten], pos, cache);
+                debug_assert_eq!(neu.last(), stapel.get(behalten - 1), "die Neurechnung muss bitgleich sein");
+            }
+            None => {
+                let bleibt = cache.kuerzen(pos + behalten);
+                debug_assert_eq!(bleibt, pos + behalten);
+            }
+        }
+    }
+    let logits = stapel.swap_remove(behalten - 1);
+    Pruefung { angenommen, logits, weiter }
 }
 
 /// Wie [`generate`], liefert zusätzlich einen Digest über die

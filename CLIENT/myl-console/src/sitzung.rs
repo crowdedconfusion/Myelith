@@ -69,7 +69,7 @@ struct Stand {
     /// **Das Gespraech, das ueber Auftraege mitgeht** (Entscheidung C2,
     /// beantwortet am 2026-09-14). `/clear` beginnt ein neues, `/compress`
     /// fasst es zusammen.
-    gespraech: myl_client::gespraech::Gespraech,
+    gespraech: myl_local_agent::gespraech::Gespraech,
     /// Die Werkzeugansage des letzten Laufs, damit `/context` sie nicht neu
     /// bauen muss.
     ansage: Option<myl_client::Nachricht>,
@@ -211,7 +211,7 @@ pub fn fahren() -> i32 {
             .map(|e| e.agent.modus)
             .unwrap_or_default(),
         schirm: None,
-        gespraech: myl_client::gespraech::Gespraech::neu(),
+        gespraech: myl_local_agent::gespraech::Gespraech::neu(),
         ansage: None,
         kontext_prozent: None,
     };
@@ -260,7 +260,7 @@ pub fn fahren() -> i32 {
 
     // ⚑ **Lief der Loop beim Schliessen, laeuft er beim Oeffnen weiter**
     //   (Festlegung des Projektinhabers: exakt dort, wo gestoppt).
-    if stand.modell.is_some() && myl_client::vorhaben::Ablage::vorgabe().loop_war_aktiv() {
+    if stand.modell.is_some() && myl_local_agent::vorhaben::Ablage::vorgabe().loop_war_aktiv() {
         println!("  Der Loop lief beim Schließen und macht jetzt dort weiter. Esc oder Strg-C hält an (mit Frage).");
         println!();
         loop_fahren(&mut stand, "");
@@ -412,17 +412,17 @@ fn modell_waehlen(stand: &mut Stand) -> Modellwahl {
         .collect();
 
     // Vorgewaehlt ist, was eingestellt ist.
-    let eingestellt = myl_client::ort::absolut(&e.modell.artefakt);
+    let eingestellt = myl_local_agent::ort::absolut(&e.modell.artefakt);
     let start = liste
         .iter()
-        .position(|m| myl_client::ort::absolut(&m.pfad) == eingestellt)
+        .position(|m| myl_local_agent::ort::absolut(&m.pfad) == eingestellt)
         .unwrap_or(0);
 
     let Some(i) = wahl::waehlen_ab("Welches Modell?", &punkte, start, design::toene(stand.design))
     else {
         return Modellwahl::Abgebrochen;
     };
-    let pfad = myl_client::ort::absolut(&liste[i].pfad);
+    let pfad = myl_local_agent::ort::absolut(&liste[i].pfad);
     let name = liste[i].name.clone();
 
     // ⚠️ **Laden dauert und sagt es.** Ein 4B-Artefakt sind
@@ -464,7 +464,7 @@ fn modell_waehlen(stand: &mut Stand) -> Modellwahl {
             println!();
             // ⚑ Die Kiste haengt am Modell, also wird sie hier
             // bestimmt und nicht bei jedem Auftrag neu.
-            let kiste = myl_client::kisten::kiste_der_gilt(&e.agent);
+            let kiste = myl_local_agent::kisten::kiste_der_gilt(&e.agent);
             stand.kiste = kiste.name().to_string();
             stand.name = name;
             stand.artefakt = pfad;
@@ -1156,11 +1156,11 @@ fn skillangabe(rest: &str) -> (&str, &str) {
 fn skill_lernen(stand: &mut Stand, rest: &str) {
     let (angabe, auftrag) = skillangabe(rest);
     let seite = if angabe.is_empty() {
-        let alle = myl_client::skills::alle(Some(&stand.ordner));
+        let alle = myl_local_agent::skills::alle(Some(&stand.ordner));
         if alle.is_empty() {
             println!(
                 "  Hier liegt kein Skill. Eigene gehoeren nach {}; /skill <pfad.md> lernt eine einzelne Datei.",
-                myl_client::skills::allgemeiner_ordner().display()
+                myl_local_agent::skills::allgemeiner_ordner().display()
             );
             println!();
             return;
@@ -1178,10 +1178,10 @@ fn skill_lernen(stand: &mut Stand, rest: &str) {
             println!();
             return;
         };
-        myl_client::skills::aus_datei(&alle[i].pfad)
-            .map(|seite| myl_client::skills::Lernseite { name: alle[i].name.clone(), ..seite })
+        myl_local_agent::skills::aus_datei(&alle[i].pfad)
+            .map(|seite| myl_local_agent::skills::Lernseite { name: alle[i].name.clone(), ..seite })
     } else {
-        myl_client::skills::lernseite(&stand.ordner, angabe)
+        myl_local_agent::skills::lernseite(&stand.ordner, angabe)
     };
     let seite = match seite {
         Ok(s) => s,
@@ -1195,7 +1195,7 @@ fn skill_lernen(stand: &mut Stand, rest: &str) {
     let deutsch = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())
         .map(|e| matches!(e.oberflaeche.sprache, myl_client::einstellungen::Sprache::De))
         .unwrap_or(true);
-    auftrag_fahren(stand, &myl_client::skills::lernauftrag(&[seite], auftrag, deutsch));
+    auftrag_fahren(stand, &myl_local_agent::skills::lernauftrag(&[seite], auftrag, deutsch));
 }
 
 /// **Haengt eine Datei an das Gespraech**, ohne sie hineinzuschreiben.
@@ -1277,7 +1277,7 @@ fn datei_anhaengen(stand: &mut Stand, pfad: &str) {
 fn werkzeug_fuer_art(art: myl_client::anhang::Art) -> Option<String> {
     myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())
         .ok()
-        .and_then(|e| myl_client::kisten::werkzeug_fuer(&e.agent, art.kennung()))
+        .and_then(|e| myl_local_agent::kisten::werkzeug_fuer(&e.agent, art.kennung()))
 }
 
 /// Welcher Befehl das ist, falls es einer ist, und was dahinter steht.
@@ -1365,7 +1365,7 @@ fn einstellungen_zeigen(stand: &mut Stand) {
             stand.modus = e.agent.modus;
             stand.design = e.oberflaeche.design;
             if !stand.artefakt.is_empty() {
-                let kiste = myl_client::kisten::kiste_der_gilt(&e.agent);
+                let kiste = myl_local_agent::kisten::kiste_der_gilt(&e.agent);
                 stand.kiste = kiste.name().to_string();
             }
         }
@@ -1523,9 +1523,9 @@ fn ansage_fuer(stand: &Stand) -> Option<myl_client::Nachricht> {
     let mut agent = e.agent.clone();
     agent.wurzel = Some(stand.ordner.display().to_string());
     konsolenvorgaben(&mut agent, stand.schreibt);
-    let kiste = myl_client::kisten::kiste_der_gilt(&e.agent);
-    let r = myl_client::ruestung::ruesten_mit(&agent, myl_client::Ansageform::Amtlich, kiste, Vec::new(), None).ok()?;
-    Some(myl_client::gespraech::ansage(&r))
+    let kiste = myl_local_agent::kisten::kiste_der_gilt(&e.agent);
+    let r = myl_local_agent::ruestung::ruesten_mit(&agent, myl_client::Ansageform::Amtlich, kiste, Vec::new(), None).ok()?;
+    Some(myl_local_agent::gespraech::ansage(&r))
 }
 
 /// **`/context`: der Balken und woraus er besteht.**
@@ -1535,7 +1535,7 @@ fn kontext_zeigen(stand: &mut Stand) {
         return;
     };
     let ansage = ansage_fuer(stand);
-    match myl_client::gespraech::anzeige(modell, ansage.as_ref(), &stand.gespraech) {
+    match myl_local_agent::gespraech::anzeige(modell, ansage.as_ref(), &stand.gespraech) {
         Some(a) => {
             stand.kontext_prozent = Some(a.prozent);
             println!();
@@ -1549,8 +1549,8 @@ fn kontext_zeigen(stand: &mut Stand) {
 }
 
 /// Die Zeilen von `/context`, ohne Farbe und damit pruefbar.
-fn kontextzeilen(a: &myl_client::gespraech::Kontextanzeige, breite: usize) -> Vec<String> {
-    let balken = myl_client::gespraech::balken(a.belegt, a.grenze, breite.saturating_sub(24).clamp(10, 40));
+fn kontextzeilen(a: &myl_local_agent::gespraech::Kontextanzeige, breite: usize) -> Vec<String> {
+    let balken = myl_local_agent::gespraech::balken(a.belegt, a.grenze, breite.saturating_sub(24).clamp(10, 40));
     vec![
         format!("  Kontext  {balken}  {} %", a.prozent),
         format!("           {} von {} Token", a.belegt, a.grenze),
@@ -1582,7 +1582,7 @@ fn gespraech_verdichten(stand: &mut Stand) {
     // weg. Die Konsole kennt ihren Arbeitsordner, also bekommt sie
     // einen; ohne Ordner gaebe es keinen Platz, an dem der Agent
     // nachlesen koennte.
-    match myl_client::gespraech::verdichten_mit_mitschnitt(
+    match myl_local_agent::gespraech::verdichten_mit_mitschnitt(
         modell,
         &mut stand.gespraech,
         Some(&stand.ordner),
@@ -1594,7 +1594,7 @@ fn gespraech_verdichten(stand: &mut Stand) {
             println!("  Verdichtet: {vorher} → {nachher} Token.");
             let ansage = ansage_fuer(stand);
             stand.kontext_prozent =
-                stand.modell.as_ref().and_then(|m| myl_client::gespraech::anzeige(m, ansage.as_ref(), &stand.gespraech)).map(|a| a.prozent);
+                stand.modell.as_ref().and_then(|m| myl_local_agent::gespraech::anzeige(m, ansage.as_ref(), &stand.gespraech)).map(|a| a.prozent);
         }
         Err(f) => {
             println!();
@@ -1643,7 +1643,7 @@ fn auftrag_fahren(stand: &mut Stand, auftrag: &str) {
     // ⚑ **Die Kiste folgt dem geladenen Modell**, sofern der Nutzer
     // nichts anderes eingestellt hat. Gerechnet wird das in der Kiste,
     // nicht hier: Fenster und Konsole stellen dieselbe Frage.
-    let kiste = myl_client::kisten::kiste_der_gilt(&e.agent);
+    let kiste = myl_local_agent::kisten::kiste_der_gilt(&e.agent);
 
 
     // ⚑ **Was geschieht, steht da, waehrend es geschieht.** Ein
@@ -1674,17 +1674,17 @@ fn auftrag_fahren(stand: &mut Stand, auftrag: &str) {
     // ⛔️ **Der Notaus**: Esc waehrend des Laufs haelt ihn an. Gelesen
     //   wird die Taste im Faden der Anzeige, dem einzigen Leser (Fund 483).
     let anzeige = anzeige::Anzeige::starten(stand.schirm, stand.design, zaehler, || {
-        myl_client::notaus::ausloesen("konsole")
+        myl_local_agent::notaus::ausloesen("konsole")
     });
 
     // ⚑ **Im `manual mode` bekommt jede schreibende Handlung eine
     // Nachfrage mit auf den Weg.** Sie haengt am Werkzeug und nicht am
     // Melder: Ein Melder darf berichten, und nur wer ausfuehrt, kann
     // etwas verhindern.
-    let nachfrage: Option<myl_client::ruestung::Nachfrage> = if stand.modus.fragt_nach() {
+    let nachfrage: Option<myl_local_agent::ruestung::Nachfrage> = if stand.modus.fragt_nach() {
         let frager = anzeige.frager();
         Some(std::sync::Arc::new(move |name: &str, a: &myl_client::serde_json::Value| {
-            frager.fragen(&format!("  ⚑ manual mode: {name} {}", myl_client::lauf::kurzform(a)))
+            frager.fragen(&format!("  ⚑ manual mode: {name} {}", myl_local_agent::lauf::kurzform(a)))
         }))
     } else {
         None
@@ -1698,7 +1698,7 @@ fn auftrag_fahren(stand: &mut Stand, auftrag: &str) {
     let strom = anzeige.strom();
     modell.beobachter = Some(Box::new(move |s| strom.stueck(s)));
 
-    let ruestung = match myl_client::ruestung::ruesten_mit(
+    let ruestung = match myl_local_agent::ruestung::ruesten_mit(
         &agent,
         myl_client::Ansageform::Amtlich,
         kiste,
@@ -1721,8 +1721,8 @@ fn auftrag_fahren(stand: &mut Stand, auftrag: &str) {
         myl_client::Meldung::Schritt(n) => anzeige.schritt(n),
         myl_client::Meldung::Aufruf { name, argumente } => {
             let voll = myl_client::serde_json::to_string(argumente)
-                .unwrap_or_else(|_| myl_client::lauf::kurzform(argumente));
-            anzeige.aufruf(name, &myl_client::lauf::kurzform(argumente), &voll);
+                .unwrap_or_else(|_| myl_local_agent::lauf::kurzform(argumente));
+            anzeige.aufruf(name, &myl_local_agent::lauf::kurzform(argumente), &voll);
         }
         myl_client::Meldung::Ergebnis { name, text } => {
             // ⚠️ Auch die ausfuehrliche Form hat eine Grenze: Ein
@@ -1730,8 +1730,8 @@ fn auftrag_fahren(stand: &mut Stand, auftrag: &str) {
             // schriebe sonst den ganzen Verlauf voll.
             anzeige.ergebnis(
                 name,
-                &myl_client::lauf::eine_zeile(text, 60),
-                &myl_client::lauf::eine_zeile(text, 2000),
+                &myl_local_agent::lauf::eine_zeile(text, 60),
+                &myl_local_agent::lauf::eine_zeile(text, 2000),
             );
         }
         myl_client::Meldung::Abgelehnt { name, grund } => anzeige.abgelehnt(name, grund),
@@ -1742,8 +1742,8 @@ fn auftrag_fahren(stand: &mut Stand, auftrag: &str) {
     // Die naechste Frage des Nutzers ist ein neuer Anlass nachzulesen.
     ruestung.nachschlagebudget_zuruecksetzen();
     // ⛔️ Jeder Auftrag beginnt mit geloestem Notaus.
-    myl_client::notaus::zuruecksetzen();
-    let aus = myl_client::lauf::fahren_im_gespraech(
+    myl_local_agent::notaus::zuruecksetzen();
+    let aus = myl_local_agent::lauf::fahren_im_gespraech(
         modell,
         &ruestung,
         e.agent.schritte as usize,
@@ -1804,7 +1804,7 @@ fn auftrag_fahren(stand: &mut Stand, auftrag: &str) {
     let kontext = stand
         .modell
         .as_ref()
-        .and_then(|m| myl_client::gespraech::anzeige(m, stand.ansage.as_ref(), &stand.gespraech));
+        .and_then(|m| myl_local_agent::gespraech::anzeige(m, stand.ansage.as_ref(), &stand.gespraech));
     stand.kontext_prozent = kontext.map(|a| a.prozent);
     let kontextangabe = kontext.map(|a| format!(" · Kontext {} %", a.prozent)).unwrap_or_default();
     // ⚑ **Die Saat steht in der Bilanz**, denn mit ihr laesst sich genau
@@ -1856,7 +1856,7 @@ fn auto_bestaetigen() -> bool {
 /// ⚑ Die Liste steht in der Reihenfolge der Schlange: Es laeuft das
 /// vorderste, die anderen sind „queued".
 fn vorhaben_zeigen(rest: &str) {
-    let ablage = myl_client::vorhaben::Ablage::vorgabe();
+    let ablage = myl_local_agent::vorhaben::Ablage::vorgabe();
     let sprache = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())
         .map(|e| e.oberflaeche.sprache)
         .unwrap_or_default();
@@ -1898,7 +1898,7 @@ fn vorhaben_zeigen(rest: &str) {
 /// `/loop` macht dort weiter. Wird die Konsole geschlossen, waehrend er
 /// laeuft, macht er beim naechsten Start von selbst weiter.
 fn loop_fahren(stand: &mut Stand, ziel: &str) {
-    use myl_client::vorhaben::{self, Ablage, Laeufer};
+    use myl_local_agent::vorhaben::{self, Ablage, Laeufer};
     let e = match myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad()) {
         Ok(e) => e,
         Err(f) => {
@@ -1927,7 +1927,7 @@ fn loop_fahren(stand: &mut Stand, ziel: &str) {
     }
     let rollen = design::rollen(stand.design);
     let farbig = design::farbig();
-    if let Some(h) = vorhaben::hinweis_vorgaben(&e) {
+    if let Some(h) = vorhaben::hinweis_vorgaben(&e.schleife, e.agent.modus, e.oberflaeche.sprache) {
         for z in umbrechen(&h, 74) {
             println!("{}", rollen.beiwerk.faerben(&format!("  {z}"), farbig));
         }
@@ -1971,24 +1971,24 @@ fn loop_fahren(stand: &mut Stand, ziel: &str) {
 }
 
 /// Wartet bis zur naechsten Runde; `false`, wenn pausiert wurde.
-fn warten_in_der_konsole(stand: &Stand, laeufer: &myl_client::vorhaben::Laeufer) -> bool {
+fn warten_in_der_konsole(stand: &Stand, laeufer: &myl_local_agent::vorhaben::Laeufer) -> bool {
     use crossterm::event::{self, Event, KeyCode, KeyModifiers};
     let Some(bis) = laeufer.naechster_termin() else { return true };
     let rollen = design::rollen(stand.design);
     let farbig = design::farbig();
-    let minuten = bis.saturating_sub(myl_client::vorhaben::jetzt()).div_ceil(60);
+    let minuten = bis.saturating_sub(myl_local_agent::vorhaben::jetzt()).div_ceil(60);
     let satz = format!("  Nächste Runde in {minuten} min. Esc oder Strg-C hält an.");
     println!("{}", rollen.beiwerk.faerben(&satz, farbig));
     let roh = stand.schirm.and_then(|_| auswahl::Rohmodus::an().ok());
     let mut letzte = std::time::Instant::now();
-    while myl_client::vorhaben::jetzt() < bis {
+    while myl_local_agent::vorhaben::jetzt() < bis {
         if roh.is_some() && event::poll(std::time::Duration::from_millis(500)).unwrap_or(false) {
             if let Ok(Event::Key(k)) = event::read() {
                 let strg_c = k.code == KeyCode::Char('c') && k.modifiers.contains(KeyModifiers::CONTROL);
                 // ⚑ **Dieselbe Frage wie in der Runde** (Festlegung des
                 //   Projektinhabers, 2026-09-26): Strg-C [J/n], Esc [j/N].
                 if (strg_c || k.code == KeyCode::Esc) && pausieren_bestaetigt(strg_c) {
-                    myl_client::vorhaben::schliessen_anfordern();
+                    myl_local_agent::vorhaben::schliessen_anfordern();
                     drop(roh);
                     println!();
                     return false;
@@ -2030,10 +2030,10 @@ fn pausieren_bestaetigt(vorgabe: bool) -> bool {
 fn runde_in_der_konsole(
     stand: &mut Stand,
     e: &myl_client::Einstellungen,
-    laeufer: &myl_client::vorhaben::Laeufer,
-    mut v: myl_client::vorhaben::Vorhaben,
+    laeufer: &myl_local_agent::vorhaben::Laeufer,
+    mut v: myl_local_agent::vorhaben::Vorhaben,
 ) -> bool {
-    use myl_client::vorhaben::{self, Zustand};
+    use myl_local_agent::vorhaben::{self, Zustand};
     let rollen = design::rollen(stand.design);
     let farbig = design::farbig();
     let kopf = format!("  ∞ {} · Runde {} · {}", v.kennung, v.runden + 1, v.ziel);
@@ -2042,7 +2042,7 @@ fn runde_in_der_konsole(
     let mut agent = e.agent.clone();
     agent.wurzel = Some(stand.ordner.display().to_string());
     konsolenvorgaben(&mut agent, stand.schreibt);
-    let kiste = myl_client::kisten::kiste_der_gilt(&e.agent);
+    let kiste = myl_local_agent::kisten::kiste_der_gilt(&e.agent);
     let fragt = stand.modus.fragt_nach();
     let schirm = stand.schirm;
     let design_jetzt = stand.design;
@@ -2055,33 +2055,33 @@ fn runde_in_der_konsole(
     //   Die Runde haelt sofort an, der Task bleibt, wie er war, und `/loop`
     //   macht genau dort weiter.
     let anzeige = anzeige::Anzeige::starten(schirm, design_jetzt, zaehler, vorhaben::schliessen_anfordern);
-    let nachfrage: Option<myl_client::ruestung::Nachfrage> = if fragt {
+    let nachfrage: Option<myl_local_agent::ruestung::Nachfrage> = if fragt {
         let frager = anzeige.frager();
         Some(std::sync::Arc::new(move |name: &str, a: &myl_client::serde_json::Value| {
-            frager.fragen(&format!("  ⚑ manual mode: {name} {}", myl_client::lauf::kurzform(a)))
+            frager.fragen(&format!("  ⚑ manual mode: {name} {}", myl_local_agent::lauf::kurzform(a)))
         }))
     } else {
         None
     };
     let strom = anzeige.strom();
     modell.beobachter = Some(Box::new(move |s| strom.stueck(s)));
-    let ruester = |zusaetzlich: myl_client::vorhaben::Zusatzwerkzeuge, v: &myl_client::vorhaben::Vorhaben| {
+    let ruester = |zusaetzlich: myl_local_agent::vorhaben::Zusatzwerkzeuge, v: &myl_local_agent::vorhaben::Vorhaben| {
         let agent = v.agent_fuer(&agent);
-        myl_client::ruestung::ruesten_mit(&agent, myl_client::Ansageform::Amtlich, kiste, zusaetzlich, nachfrage.clone())
+        myl_local_agent::ruestung::ruesten_mit(&agent, myl_client::Ansageform::Amtlich, kiste, zusaetzlich, nachfrage.clone())
     };
     let melder = |m: myl_client::Meldung<'_>| match m {
         myl_client::Meldung::Schritt(n) => anzeige.schritt(n),
         myl_client::Meldung::Aufruf { name, argumente } => {
-            let voll = myl_client::serde_json::to_string(argumente).unwrap_or_else(|_| myl_client::lauf::kurzform(argumente));
-            anzeige.aufruf(name, &myl_client::lauf::kurzform(argumente), &voll);
+            let voll = myl_client::serde_json::to_string(argumente).unwrap_or_else(|_| myl_local_agent::lauf::kurzform(argumente));
+            anzeige.aufruf(name, &myl_local_agent::lauf::kurzform(argumente), &voll);
         }
         myl_client::Meldung::Ergebnis { name, text } => {
-            anzeige.ergebnis(name, &myl_client::lauf::eine_zeile(text, 60), &myl_client::lauf::eine_zeile(text, 2000));
+            anzeige.ergebnis(name, &myl_local_agent::lauf::eine_zeile(text, 60), &myl_local_agent::lauf::eine_zeile(text, 2000));
         }
         myl_client::Meldung::Abgelehnt { name, grund } => anzeige.abgelehnt(name, grund),
         myl_client::Meldung::Verdichtet { vorher, nachher } => anzeige.verdichtet(vorher, nachher),
     };
-    myl_client::notaus::zuruecksetzen();
+    myl_local_agent::notaus::zuruecksetzen();
     let ergebnis = vorhaben::runde(
         &laeufer.ablage,
         &mut v,
@@ -2328,10 +2328,10 @@ mod tests {
     #[test]
     fn der_notaus_umschliesst_den_lauf() {
         let quelle = include_str!("sitzung.rs");
-        let lauf = quelle.find("let aus = myl_client::lauf::fahren_im_gespraech(").expect("Lauf");
+        let lauf = quelle.find("let aus = myl_local_agent::lauf::fahren_im_gespraech(").expect("Lauf");
         let vorher = &quelle[zeichengrenze_unten(quelle, lauf.saturating_sub(4000))..lauf];
-        assert!(vorher.contains("myl_client::notaus::zuruecksetzen();"));
-        assert!(vorher.contains("myl_client::notaus::ausloesen(\"konsole\")"), "Esc zieht den Notaus nicht");
+        assert!(vorher.contains("myl_local_agent::notaus::zuruecksetzen();"));
+        assert!(vorher.contains("myl_local_agent::notaus::ausloesen(\"konsole\")"), "Esc zieht den Notaus nicht");
         assert!(quelle.contains("myl_client::Tuerfehler::Abgebrochen { bisher }"));
         // ⛔️ Fund 483: kein zweiter Leser der Tastatur neben der Anzeige.
         let ohne_proben = &quelle[..quelle.find("#[cfg(test)]").expect("Proben")];
@@ -2380,7 +2380,7 @@ mod tests {
     /// ist breiter als der Rahmen.
     #[test]
     fn die_kontextanzeige_nennt_balken_und_zahlen() {
-        let a = myl_client::gespraech::Kontextanzeige { belegt: 12_345, grenze: 40_960, ansage: 1_234, nachrichten: 14, prozent: 30 };
+        let a = myl_local_agent::gespraech::Kontextanzeige { belegt: 12_345, grenze: 40_960, ansage: 1_234, nachrichten: 14, prozent: 30 };
         let zeilen = kontextzeilen(&a, 90);
         assert!(zeilen[0].contains('█') && zeilen[0].ends_with("30 %"), "{:?}", zeilen[0]);
         assert!(zeilen[1].contains("12345 von 40960 Token"), "{:?}", zeilen[1]);

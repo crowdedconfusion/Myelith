@@ -1095,13 +1095,26 @@ pub fn rmsnorm_backward(
 /// unverändert lässt, bekommt dasselbe Ergebnis; wer beides tut, dreht
 /// in die falsche Richtung, und der Fehler ist in einer Zahlenprobe
 /// kaum zu sehen. Deshalb steht die Herleitung hier.
+///
+/// # ⚑ Teildrehung: die Tabellenbreite ist die Drehbreite
+///
+/// Wie vorwärts in [`crate::rope::rotate_half_split_i16`]: Gedreht werden
+/// die Paare `(j, j + half)` mit `half = cos_row.len()`; was dahinter liegt,
+/// ging vorwärts unverändert durch, und sein Gradient geht es rückwärts
+/// auch. Bei voller Drehung ist `2 · half` die ganze Länge, und die
+/// Rechnung ist die bisherige.
 pub fn rope_backward(g: &[Grad], cos_row: &[i16], sin_row: &[i16], frac_bits: u8) -> Vec<Grad> {
-    let half = g.len() / 2;
-    assert_eq!(g.len(), 2 * half, "rope_backward: Länge muss gerade sein");
-    assert_eq!(cos_row.len(), half, "rope_backward: cos_row-Länge muss head_dim/2 sein");
-    assert_eq!(sin_row.len(), half, "rope_backward: sin_row-Länge muss head_dim/2 sein");
+    let half = cos_row.len();
+    assert_eq!(sin_row.len(), half, "rope_backward: cos_row und sin_row verschieden lang");
+    assert!(
+        2 * half <= g.len(),
+        "rope_backward: die Tabelle ist breiter als der Kopfvektor ({} gegen {})",
+        2 * half,
+        g.len()
+    );
 
-    let mut out = vec![0i32; g.len()];
+    // Der ungedrehte Teil geht unveraendert mit.
+    let mut out = g.to_vec();
     for j in 0..half {
         let cos = cos_row[j] as i64;
         let sin = sin_row[j] as i64;
@@ -2497,6 +2510,28 @@ mod tests {
                 zurueck[j], x[j]
             );
         }
+    }
+
+    /// ⚑ **Teildrehung:** Gedreht wird nur der vordere Teil, mit der Breite
+    /// der Tabelle; zurückgedreht kommt er wieder an, und der hintere Teil
+    /// geht vorwärts wie rückwärts unverändert durch.
+    #[test]
+    fn rope_rueckwaerts_bei_teildrehung() {
+        let frac = 14u8;
+        let winkel = [0.4f64, 1.3];
+        let cos: Vec<i16> = winkel.iter().map(|a| (a.cos() * (1 << frac) as f64).round() as i16).collect();
+        let sin: Vec<i16> = winkel.iter().map(|a| (a.sin() * (1 << frac) as f64).round() as i16).collect();
+        // Kopf 8, gedreht 4 (zwei Paare), Rest 4.
+        let x: Vec<i16> = vec![3000, -1200, 800, 2500, -900, 1700, -2200, 400];
+        let gedreht = crate::rope::rotate_half_split_i16(&x, &cos, &sin, frac);
+        assert_eq!(&gedreht[4..], &x[4..], "vorwaerts bleibt der Rest");
+        let g: Vec<Grad> = gedreht.iter().map(|v| *v as Grad).collect();
+        let zurueck = rope_backward(&g, &cos, &sin, frac);
+        for j in 0..4 {
+            assert!((zurueck[j] - x[j] as i32).abs() <= 4, "Kanal {j}: {} statt {}", zurueck[j], x[j]);
+        }
+        let rest: Vec<Grad> = x[4..].iter().map(|v| *v as Grad).collect();
+        assert_eq!(&zurueck[4..], rest.as_slice(), "rueckwaerts bleibt der Rest");
     }
 
     /// Bei Winkel null ist die Drehung die Identität, vorwärts wie
