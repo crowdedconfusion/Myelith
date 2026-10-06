@@ -149,6 +149,37 @@ if [ -d "${VECTORS_DIR}/moe" ]; then
     done
 fi
 
+# ── Ternaer-Level: derselbe Starter, anderer Pruefer ───────────────
+#
+# Der ternaere Kern, die Hadamard-Drehung, das Packen und die Ableitung
+# eines ternaeren Gewichts aus dem Master. Bis zum 2026-10-05 lokal
+# bitgleich gemessen, aber gegen kein festes Soll; die Sollwerte rechnet
+# eine getrennte Umsetzung (`ternaer_erzeugen.py`).
+#
+# Anders als die Gruppen davor bricht ein FEHLENDES Verzeichnis den Lauf:
+# Ein stilles Ueberspringen saehe aus wie ein bestandener Lauf mit
+# weniger Vektoren.
+echo ""
+echo "--- Ternaer-Level ---"
+if [ ! -d "${VECTORS_DIR}/ternaer" ]; then
+    echo "  FEHLER: ${VECTORS_DIR}/ternaer fehlt"
+    exit 2
+fi
+for f in "${VECTORS_DIR}/ternaer"/*.golden.json; do
+    [ -f "$f" ] || continue
+    TOTAL=$((TOTAL + 1))
+    NAME=$(basename "$f" .golden.json)
+    if cargo run --manifest-path "${KERNELS_DIR}/Cargo.toml" \
+            --bin golden_runner --no-default-features --features "${BACKEND}" --quiet -- \
+            "$f" "$BACKEND" 2>/dev/null | grep -q "^PASS:"; then
+        PASSED=$((PASSED + 1))
+        echo "  PASS: ${NAME}"
+    else
+        FAILED=$((FAILED + 1))
+        echo "  FAIL: ${NAME}"
+    fi
+done
+
 # ── Layer + E2E: golden_model Batch-Modus (runtime-Crate) ──────────
 echo ""
 echo "--- Layer + E2E ---"

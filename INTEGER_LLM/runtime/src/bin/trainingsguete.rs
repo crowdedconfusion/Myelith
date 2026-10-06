@@ -55,6 +55,7 @@
 //! | `--planschritt K`, `--plangesamt G` | Ein Lauf in Teilen: Dieser Aufruf beginnt bei Planschritt `K` von insgesamt `G`. Ohne sie ist der Aufruf der ganze Plan |
 //! | `--nur-mlp`, `--nur-abwaerts` | ⚑ **Parameterisolierung**, die dritte Saeule gegen das Vergessen; 📌 ungemessen |
 //! | `--nur-zustand`, `--nur-zustandsprojektionen` | Nur die Zustandsschicht, oder nur ihre Projektionen ohne Torzeilen und Faltung |
+//! | `--nur-eingangsprojektionen`, `--nur-out-proj` | Die Projektionen geteilt: `in_proj_qkv` und `in_proj_z` (Gradient durch eine SiLU-Ableitung) oder nur `out_proj` (ohne) |
 //! | `--nur-mischer` | Nur Achtsamkeit oder Zustandsschicht wird bewegt |
 //! | `--router-fest` | Alles ausser dem Router wird bewegt (L13: kippt die Expertenwahl durch den Router oder durch den Strom?) |
 //!
@@ -394,6 +395,12 @@ fn main() {
             }
             "--nur-zustandsprojektionen" => {
                 auswahl = integer_llm_runtime::shardtraining::Auswahl::NurZustandsprojektionen;
+            }
+            "--nur-eingangsprojektionen" => {
+                auswahl = integer_llm_runtime::shardtraining::Auswahl::NurEingangsprojektionen;
+            }
+            "--nur-out-proj" => {
+                auswahl = integer_llm_runtime::shardtraining::Auswahl::NurAusgangsprojektion;
             }
             "--nur-mischer" => {
                 auswahl = integer_llm_runtime::shardtraining::Auswahl::NurMischer;
@@ -1678,7 +1685,12 @@ fn main() {
             && (100.0 * (ppl_nach - ppl_vor) / ppl_vor).abs() < 0.1;
         println!(
             "URTEIL  {}",
-            if unbewegt {
+            if unbewegt && schritte == 0 {
+                // 📌 Hier stand bei `--schritte 0` (Rauschnullpunkt, Stand
+                // pruefen) „die Rate ist zu klein", ein Rat zu einer Rate,
+                // die nie wirkte (2026-10-05).
+                "keine Schritte verlangt (--schritte 0): gemessen, nicht trainiert"
+            } else if unbewegt {
                 "kein Gewicht bewegt: die Bewegung lag unter einer Master-Stufe, \
                  die Rate ist fuer dieses Modell zu klein"
             } else if kaum {

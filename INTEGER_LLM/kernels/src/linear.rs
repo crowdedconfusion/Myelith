@@ -566,7 +566,7 @@ mod stapeltests {
             .enumerate()
             .map(|(i, (_, sp, _))| Stapelauftrag {
                 xs: &scheiben[i],
-                w: &gewichte[i],
+                w: Gewichtsmatrix::from(&gewichte[i]),
                 in_features: *sp,
                 w_shifts: &shifts[i],
                 act_frac_bits: 7,
@@ -903,8 +903,8 @@ pub fn linear_w8a16_buendel(teile: &[Buendelteil<'_>]) -> Vec<i16> {
 /// denselben Gewichten.
 pub struct Stapelauftrag<'a> {
     pub xs: &'a [&'a [i16]],
-    /// Flach, Zeile fuer Zeile.
-    pub w: &'a [i8],
+    /// Flach, Zeile fuer Zeile, int8 oder ternaer ([`Gewichtsmatrix`]).
+    pub w: Gewichtsmatrix<'a>,
     pub in_features: usize,
     pub w_shifts: &'a [u8],
     pub act_frac_bits: u8,
@@ -927,14 +927,7 @@ pub struct Stapelauftrag<'a> {
 /// Wegen; geprueft in `viele_stapel_sind_dasselbe_wie_einzeln`.
 pub fn linear_w8a16_stapel_viele(auftraege: &[Stapelauftrag<'_>]) -> Vec<Vec<Vec<i16>>> {
     for a in auftraege {
-        assert_eq!(
-            a.w.len(),
-            a.in_features * a.w_shifts.len(),
-            "linear_stapel_viele: {} Gewichte passen nicht zu {} Zeilen à {} Elementen",
-            a.w.len(),
-            a.w_shifts.len(),
-            a.in_features
-        );
+        a.w.form_pruefen("linear_stapel_viele", a.in_features, a.w_shifts.len());
         if let Ausgangsskala::JeZeile(f) = a.aus {
             assert_eq!(f.len(), a.w_shifts.len(), "linear_stapel_viele: eine Ausgangsskala je Kanal (Fund 20)");
         }
@@ -942,8 +935,12 @@ pub fn linear_w8a16_stapel_viele(auftraege: &[Stapelauftrag<'_>]) -> Vec<Vec<Vec
     if auftraege.iter().all(|a| a.xs.is_empty()) {
         return auftraege.iter().map(|_| Vec::new()).collect();
     }
+    // ⚑ **Die GPU nimmt nur int8.** Ist ein Auftrag ternaer (die Experten
+    //   eines ternaeren Gemischs, seit 2026-10-05), rechnet das ganze Buendel
+    //   auf der CPU: dieselbe ganze Zahl je Ausgabeelement, nur langsamer.
+    //   Ein ternaerer Weg fuer Expertenbuendel auf der GPU steht aus.
     #[cfg(all(feature = "metal", target_os = "macos"))]
-    {
+    if auftraege.iter().all(|a| !a.w.ist_ternaer()) {
         let ziele: Vec<Box<dyn Fn(usize) -> u8 + Sync + '_>> = auftraege
             .iter()
             .map(|a| -> Box<dyn Fn(usize) -> u8 + Sync + '_> {
@@ -958,7 +955,10 @@ pub fn linear_w8a16_stapel_viele(auftraege: &[Stapelauftrag<'_>]) -> Vec<Vec<Vec
             .zip(&ziele)
             .map(|(a, ziel)| crate::metal::Auftrag {
                 xs: a.xs,
-                w: a.w,
+                w: match a.w {
+                    Gewichtsmatrix::Int8(w) => w,
+                    Gewichtsmatrix::Ternaer(_) => unreachable!("eben ausgeschlossen"),
+                },
                 in_features: a.in_features,
                 w_shifts: a.w_shifts,
                 act_frac_bits: a.act_frac_bits,
@@ -979,7 +979,7 @@ pub fn linear_w8a16_stapel_viele_cpu(auftraege: &[Stapelauftrag<'_>]) -> Vec<Vec
         .iter()
         .flat_map(|a| {
             a.xs.iter().map(move |x| Buendelteil {
-                w: Gewichtsmatrix::Int8(a.w),
+                w: a.w,
                 x,
                 in_features: a.in_features,
                 w_shifts: a.w_shifts,

@@ -837,7 +837,12 @@ impl TransformerLayer {
         };
         let mlp = match &self.ffn {
             Feedforward::Dense(m) => [&m.gate_proj, &m.up_proj, &m.down_proj].iter().any(|t| t.ist_ternaer()),
-            Feedforward::Moe(_) => false,
+            // ⚑ Seit 2026-10-05: die gerouteten Experten. Der geteilte
+            //   Experte bleibt int8 und zaehlt nicht.
+            Feedforward::Moe(g) => g
+                .experts
+                .iter()
+                .any(|x| [&x.gate_proj, &x.up_proj, &x.down_proj].iter().any(|t| t.ist_ternaer())),
         };
         achtsamkeit || mlp
     }
@@ -1306,7 +1311,7 @@ impl IntegerModel {
             let ex = &moe.experts[*e];
             vorne.push(Stapelauftrag {
                 xs: &eingaben[i],
-                w: &ex.gate_proj.data,
+                w: ex.gate_proj.matrix(),
                 in_features: ex.gate_proj.cols(),
                 w_shifts: &ex.gate_proj.shifts,
                 act_frac_bits: sc.norm_mlp_frac,
@@ -1314,7 +1319,7 @@ impl IntegerModel {
             });
             vorne.push(Stapelauftrag {
                 xs: &eingaben[i],
-                w: &ex.up_proj.data,
+                w: ex.up_proj.matrix(),
                 in_features: ex.up_proj.cols(),
                 w_shifts: &ex.up_proj.shifts,
                 act_frac_bits: sc.norm_mlp_frac,
@@ -1357,7 +1362,7 @@ impl IntegerModel {
                 let ex = &moe.experts[*e];
                 Stapelauftrag {
                     xs: &hs[i],
-                    w: &ex.down_proj.data,
+                    w: ex.down_proj.matrix(),
                     in_features: ex.down_proj.cols(),
                     w_shifts: &ex.down_proj.shifts,
                     act_frac_bits: sc.down_in_frac,
@@ -3251,9 +3256,9 @@ impl IntegerModel {
             .map(|e| {
                 let ex = &moe.experts[*e as usize];
                 Expertenteil {
-                    gate: &ex.gate_proj.data,
-                    up: &ex.up_proj.data,
-                    down: &ex.down_proj.data,
+                    gate: ex.gate_proj.matrix(),
+                    up: ex.up_proj.matrix(),
+                    down: ex.down_proj.matrix(),
                     gate_shifts: &ex.gate_proj.shifts,
                     up_shifts: &ex.up_proj.shifts,
                     down_shifts: &ex.down_proj.shifts,
@@ -3276,9 +3281,9 @@ impl IntegerModel {
         if let Some(ge) = moe.geteilter_experte.as_ref() {
             paare.push((
                 Expertenteil {
-                    gate: &ge.mlp.gate_proj.data,
-                    up: &ge.mlp.up_proj.data,
-                    down: &ge.mlp.down_proj.data,
+                    gate: ge.mlp.gate_proj.matrix(),
+                    up: ge.mlp.up_proj.matrix(),
+                    down: ge.mlp.down_proj.matrix(),
                     gate_shifts: &ge.mlp.gate_proj.shifts,
                     up_shifts: &ge.mlp.up_proj.shifts,
                     down_shifts: &ge.mlp.down_proj.shifts,

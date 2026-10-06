@@ -129,11 +129,82 @@ pub struct Shardgewichte {
     /// deshalb steht die Form nicht in [`Shardvorgaben`] und nicht auf dem
     /// Draht. [`Shardgewichte::form_setzen`] ist fuer die lokale Umwandlung
     /// eines int8-Modells in ein ternaeres.
-    form: Gewichtsform,
+    form: Formregel,
     /// Der Stand **vor** dem ersten Schritt, für das Δ-Commitment.
     anfang: Vec<Ebenenstand>,
     von: usize,
     bis: usize,
+}
+
+/// **Wie aus einem Master das Gewicht der Rechnung wird**, je Matrix.
+///
+/// # ⚑ Warum je Matrix und nicht je Bereich (2026-10-05)
+///
+/// Ein ternaeres Gemisch traegt nur seine gerouteten Experten ternaer;
+/// Router, geteilter Experte und Mischer bleiben int8 (gemessen in L13 und
+/// in der Literatur zu quantisierten Gemischen: Achtsamkeit und geteilte
+/// Experten sind die empfindlichen Teile). Eine Form fuer den ganzen Bereich
+/// haette den Mischer beim Laden ternaer gerundet und damit ein anderes
+/// Modell trainiert, als die Inferenz rechnet. Und ein Artefakt, das
+/// empfindliche Ebenen in int8 laesst, waere als Bereich gar nicht
+/// trainierbar gewesen („ganz ternaer oder gar nicht“).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Formregel {
+    /// Alle Matrizen, die ternaer sein koennen, in dieser Form: `Int8` fuer
+    /// ein int8-Modell, `Ternaer` fuer die Umwandlung eines int8-Modells
+    /// (`form_setzen`, die Wahl aus L13).
+    Einheitlich(Gewichtsform),
+    /// **Ein ternaeres Artefakt:** jede Matrix in der Form, die das Artefakt
+    /// ihr gibt. Damit sind Training, Inferenz und der Stand im Artefakt
+    /// dieselbe Form.
+    WieArtefakt,
+}
+
+impl Formregel {
+    /// Die Form fuer die Matrix, deren Tensor im Artefakt `t` ist.
+    pub fn fuer(self, t: &crate::model::QTensor) -> Gewichtsform {
+        match self {
+            Formregel::Einheitlich(f) => f,
+            Formregel::WieArtefakt if t.ist_ternaer() => Gewichtsform::Ternaer,
+            Formregel::WieArtefakt => Gewichtsform::Int8,
+        }
+    }
+
+    /// Die Form fuer eine dichte Ebene als Ganzes: Ihre sieben Matrizen
+    /// tragen in jedem bekannten ternaeren Artefakt dieselbe Form.
+    pub fn fuer_ebene(self, ebene: &crate::model::TransformerLayer) -> Gewichtsform {
+        match self {
+            Formregel::Einheitlich(f) => f,
+            Formregel::WieArtefakt if ebene.ist_ternaer() => Gewichtsform::Ternaer,
+            Formregel::WieArtefakt => Gewichtsform::Int8,
+        }
+    }
+}
+
+/// **Die Formen der sechs Matrizen einer Zustandsschicht**, in der
+/// Reihenfolge von [`Mischerstand::Zustand`]: `in_proj_qkv`, `in_proj_z`,
+/// `in_proj_b`, `in_proj_a`, `out_proj`, Faltung.
+///
+/// ⚑ **Eine Stelle fuer Training und Schreiben.** Der Vorwaertspass und
+/// der Weg vom Stand ins Artefakt muessen dieselbe Form waehlen; stuende die
+/// Wahl zweimal da, schriebe das Artefakt irgendwann eine andere Form, als
+/// trainiert wurde.
+///
+/// `in_proj_b`, `in_proj_a` (eine Zeile je Wertkopf) und die Faltung bleiben
+/// int8, wie beim gepackten 27B. `out_proj` ist ternaer nur, wenn das
+/// Artefakt es ternaer traegt (L13: ungedreht entgleist es ternaer).
+pub fn zustandsformen(zs: &crate::model::Zustandsschicht, form: Formregel) -> [Gewichtsform; 6] {
+    let int8 = Gewichtsform::Int8;
+    let aus = if zs.out_proj.ist_ternaer() { form.fuer(&zs.out_proj) } else { int8 };
+    [form.fuer(&zs.in_proj_qkv), form.fuer(&zs.in_proj_z), int8, int8, aus, int8]
+}
+
+/// Q, K, V oder O einer Achtsamkeitsebene, als Tensor des Artefakts.
+fn achtsamkeitstensor(ebene: &crate::model::TransformerLayer, n: usize) -> &crate::model::QTensor {
+    match &ebene.mischer {
+        crate::model::Mischer::Achtsamkeit(a) => [&a.q_proj, &a.k_proj, &a.v_proj, &a.o_proj][n],
+        crate::model::Mischer::Zustand(_) => panic!("Ebene {}: keine Achtsamkeit", ebene.layer_idx),
+    }
 }
 
 /// Eine Ebene mit ihren Matrizen vorher und jetzt.
@@ -626,11 +697,49 @@ impl Ebenenstand {
     pub fn ist_gemisch(&self) -> bool {
         matches!(self, Self::Gemisch { .. })
     }
+
+    /// Die Nummern der Experten, die diese Ebene gerade traegt, aufsteigend
+    /// und damit in der Reihenfolge von [`Self::matrizen`]. Leer bei einer
+    /// dichten Ebene.
+    pub fn expertennummern(&self) -> Vec<u16> {
+        match self {
+            Self::Dicht(_) => Vec::new(),
+            Self::Gemisch { experten, .. } => experten.keys().copied().collect(),
+        }
+    }
+
+    /// **Stellt genau diese Experten bereit**: Wer fehlt, bekommt leere
+    /// Matrizen, wer nicht genannt ist, geht.
+    ///
+    /// ⚑ Nur fuer das Einlesen eines Standes, der die Werte gleich danach
+    /// liefert. Ein leerer Experte, der so stehen bliebe, rechnete mit
+    /// Laenge null, und das faellt erst im naechsten Schritt auf.
+    pub fn experten_setzen(&mut self, nummern: &[u16]) -> Result<(), String> {
+        match self {
+            Self::Dicht(_) if nummern.is_empty() => Ok(()),
+            Self::Dicht(_) => Err("eine dichte Ebene hat keine Experten, der Stand nennt welche".into()),
+            Self::Gemisch { experten, .. } => {
+                experten.retain(|nr, _| nummern.contains(nr));
+                for nr in nummern {
+                    experten.entry(*nr).or_insert_with(|| [Vec::new(), Vec::new(), Vec::new()]);
+                }
+                Ok(())
+            }
+        }
+    }
 }
 
 impl Shardgewichte {
     /// Die Form, mit der dieser Bereich trainiert.
     pub fn form(&self) -> Gewichtsform {
+        match self.form {
+            Formregel::Einheitlich(f) => f,
+            Formregel::WieArtefakt => Gewichtsform::Ternaer,
+        }
+    }
+
+    /// Die Regel, nach der jede Matrix ihre Form bekommt.
+    pub fn formregel(&self) -> Formregel {
         self.form
     }
 
@@ -641,11 +750,17 @@ impl Shardgewichte {
     /// int8 trainieren (seine Master tragen nur -a, 0 und +a); das wird
     /// abgewiesen.
     pub fn form_setzen(&mut self, form: Gewichtsform) -> Result<(), Shardfehler> {
-        if self.form == Gewichtsform::Ternaer && form == Gewichtsform::Int8 {
-            return Err(Shardfehler::TernaerNichtTrainierbar { ebene: self.von });
+        match (self.form, form) {
+            (Formregel::WieArtefakt | Formregel::Einheitlich(Gewichtsform::Ternaer), Gewichtsform::Int8) => {
+                Err(Shardfehler::TernaerNichtTrainierbar { ebene: self.von })
+            }
+            // Ein ternaeres Artefakt bleibt bei seiner Form je Matrix.
+            (Formregel::WieArtefakt, Gewichtsform::Ternaer) => Ok(()),
+            _ => {
+                self.form = Formregel::Einheitlich(form);
+                Ok(())
+            }
         }
-        self.form = form;
-        Ok(())
     }
 
     /// Liest die Gewichte des Bereichs aus dem Modell.
@@ -693,20 +808,19 @@ impl Shardgewichte {
                 });
             }
         }
-        // ⚑ **Ganz ternaer oder gar nicht.** Ein Bereich mit beiden Arten
-        //   braeuchte eine Form je Ebene; das kommt, wenn es ein Modell gibt,
-        //   das es verlangt.
-        let ternaer = bereich.iter().filter(|e| e.ist_ternaer()).count();
-        if ternaer != 0 && ternaer != bereich.len() {
-            let e = bereich.iter().find(|e| !e.ist_ternaer()).expect("eine ist nicht ternaer");
-            return Err(Shardfehler::TernaerNichtTrainierbar { ebene: e.layer_idx });
-        }
-        if ternaer != 0 {
-            if let Some(e) = bereich.iter().find(|e| matches!(e.ffn, Feedforward::Moe(_))) {
-                return Err(Shardfehler::TernaerNichtTrainierbar { ebene: e.layer_idx });
-            }
-        }
-        let form = if ternaer != 0 { Gewichtsform::Ternaer } else { Gewichtsform::Int8 };
+        // ⚑ **Traegt das Artefakt ternaere Matrizen, folgt jede Matrix ihm**
+        //   ([`Formregel::WieArtefakt`], 2026-10-05).
+        //
+        // 📌 Hier stand bis dahin „ganz ternaer oder gar nicht“ und eine
+        //   Abweisung jedes ternaeren Gemischs. Beides stammte aus der Zeit
+        //   vor L13, als ein Gemisch ternaer nicht trainierbar war und kein
+        //   Artefakt Ebenen beider Arten trug. Ein ternaeres Gemisch, dessen
+        //   empfindliche Ebenen int8 bleiben, waere sonst nie trainierbar.
+        let form = if bereich.iter().any(|e| e.ist_ternaer()) {
+            Formregel::WieArtefakt
+        } else {
+            Formregel::Einheitlich(Gewichtsform::Int8)
+        };
         let mut master = Vec::with_capacity(bis - von);
         for ebene in m.layers.iter().take(bis).skip(von) {
             master.push(match &ebene.ffn {
@@ -1233,12 +1347,13 @@ pub fn vorwaerts(
                 let Ebenenstand::Dicht(master) = &g.master[i] else {
                     return Err(Shardfehler::ArtPasstNicht { ebene: e });
                 };
+                let f = form.fuer_ebene(ebene);
                 let umgerechnet: Vec<(Vec<i8>, Vec<u8>)> = (0..7)
-                    .map(|n| gewicht_aus_master_als(&master[n], breiten[n], MASTER_FRAC, form))
+                    .map(|n| gewicht_aus_master_als(&master[n], breiten[n], MASTER_FRAC, f))
                     .collect();
                 let gew = gewichte_der_ebene(&umgerechnet, ebene);
                 let vg = vorgaben_der_ebene(
-                    m, &ebene.scales, e, is, v.schritt, v.lr_zaehler, v.lr_nenner, form,
+                    m, &ebene.scales, e, is, v.schritt, v.lr_zaehler, v.lr_nenner, f,
                 );
                 Ebenenmitschnitt::Dicht(Box::new(vorwaerts_der_ebene(
                     gew,
@@ -1286,7 +1401,7 @@ fn gemisch_vorwaerts(
     v: &Shardvorgaben,
     hidden: &[Vec<i16>],
     tab: Ebenentabellen<'_>,
-    form: Gewichtsform,
+    form: Formregel,
 ) -> Result<Gemischebenenspur, Shardfehler> {
     use integer_llm_kernels::fixed_point::rescale_i64;
     use integer_llm_kernels::mlp::{mlp_int_mit_spur, Mlpspur};
@@ -1333,7 +1448,9 @@ fn gemisch_vorwaerts(
         Mischerstand::Achtsamkeit(aufmerksamkeit) => {
             let a_breiten = [hs, hs, hs, m.num_heads * m.head_dim];
             let a_umgerechnet: Vec<(Vec<i8>, Vec<u8>)> = (0..4)
-                .map(|n| gewicht_aus_master_als(&aufmerksamkeit[n], a_breiten[n], MASTER_FRAC, form))
+                .map(|n| {
+                    gewicht_aus_master_als(&aufmerksamkeit[n], a_breiten[n], MASTER_FRAC, form.fuer(achtsamkeitstensor(ebene, n)))
+                })
                 .collect();
             let a_gew = integer_llm_kernels::trainingsschritt::Aufmerksamkeitsgewichte {
                 q: &a_umgerechnet[0].0,
@@ -1430,9 +1547,10 @@ fn gemisch_vorwaerts(
         let mut ausgaben: Vec<Vec<i16>> = Vec::with_capacity(routing.experten.len());
         for i in &routing.experten {
             let mm = &experten[i];
-            let (gw, gs) = gewicht_aus_master_als(&mm[0], hs, MASTER_FRAC, form);
-            let (uw, us) = gewicht_aus_master_als(&mm[1], hs, MASTER_FRAC, form);
-            let (dw, ds) = gewicht_aus_master_als(&mm[2], is, MASTER_FRAC, form);
+            let ex = &moe.experts[*i as usize];
+            let (gw, gs) = gewicht_aus_master_als(&mm[0], hs, MASTER_FRAC, form.fuer(&ex.gate_proj));
+            let (uw, us) = gewicht_aus_master_als(&mm[1], hs, MASTER_FRAC, form.fuer(&ex.up_proj));
+            let (dw, ds) = gewicht_aus_master_als(&mm[2], is, MASTER_FRAC, form.fuer(&ex.down_proj));
             let mut sp = Mlpspur::default();
             let aus = mlp_int_mit_spur(
                 &norm, &gw, &uw, &dw, hs, is, &gs, &us, &ds, tab.silu,
@@ -1519,12 +1637,25 @@ const ZUSTAND_ABSTAND: usize = 16;
 fn zustandsschicht_aus_mastern(
     zs: &crate::model::Zustandsschicht,
     z: &[Vec<Master>; 6],
-    form: Gewichtsform,
+    form: Formregel,
 ) -> crate::model::Zustandsschicht {
     // ⚑ **Ternaer nur, was auch ein ternaeres Artefakt ternaer traegt**:
     //   `in_proj_qkv`, `in_proj_z`, `out_proj`. `in_proj_a` und `in_proj_b`
     //   (eine Zeile je Wertkopf, sie bestimmen Zerfall und Schreibstaerke)
     //   und die Faltung bleiben int8, wie beim gepackten 27B.
+    //
+    // ⚑ **`out_proj` folgt dem Artefakt** (L13, 2026-10-05): ternaer nur,
+    //   wenn es dort ternaer steht (ein Import wie das 27B), sonst int8,
+    //   auch in einem ternaeren Bereich. Gemessen am 35B, Ebenen 36 bis 39,
+    //   je vier Durchgaenge: nur `out_proj` ternaer bewegt laesst die
+    //   Haltemenge von 35,0 auf 410 entgleisen; `in_proj_qkv` und
+    //   `in_proj_z` ternaer lernen (35,0 auf 27,25, Rauschnullpunkt −0,22 %).
+    //   📌 Nicht, weil eine ternaere Ausgangsprojektion nicht ginge: Das
+    //   gedrehte 27B traegt sie, nach langem Training in einer gedrehten
+    //   Basis. Ungedreht und mit kurzem Straight-Through ab int8 traegt sie
+    //   hier nicht. Mit der eigenen Drehung (T4) ist das neu zu messen.
+    //   ⚠️ Wer aus einem solchen Stand ein Artefakt schreibt, schreibt
+    //   `out_proj` int8.
     let neu = |t: &crate::model::QTensor, mm: &[Master], f: Gewichtsform| -> crate::model::QTensor {
         let (w, s) = gewicht_aus_master_als(mm, t.cols(), MASTER_FRAC, f);
         crate::model::QTensor {
@@ -1534,13 +1665,14 @@ fn zustandsschicht_aus_mastern(
             drehung: t.drehung.clone(),
         }
     };
+    let f = zustandsformen(zs, form);
     crate::model::Zustandsschicht {
-        in_proj_qkv: neu(&zs.in_proj_qkv, &z[0], form),
-        in_proj_z: neu(&zs.in_proj_z, &z[1], form),
-        in_proj_b: neu(&zs.in_proj_b, &z[2], Gewichtsform::Int8),
-        in_proj_a: neu(&zs.in_proj_a, &z[3], Gewichtsform::Int8),
-        out_proj: neu(&zs.out_proj, &z[4], form),
-        conv1d: neu(&zs.conv1d, &z[5], Gewichtsform::Int8),
+        in_proj_qkv: neu(&zs.in_proj_qkv, &z[0], f[0]),
+        in_proj_z: neu(&zs.in_proj_z, &z[1], f[1]),
+        in_proj_b: neu(&zs.in_proj_b, &z[2], f[2]),
+        in_proj_a: neu(&zs.in_proj_a, &z[3], f[3]),
+        out_proj: neu(&zs.out_proj, &z[4], f[4]),
+        conv1d: neu(&zs.conv1d, &z[5], f[5]),
         exp_a: zs.exp_a.clone(),
         dt_bias: zs.dt_bias.clone(),
         norm_gamma: zs.norm_gamma.clone(),
@@ -1772,6 +1904,15 @@ pub enum Auswahl {
     /// Nur deren grosse Projektionen (`in_proj_qkv`, `in_proj_z`, `out_proj`),
     /// ohne die Torzeilen `in_proj_b`, `in_proj_a` und ohne die Faltung.
     NurZustandsprojektionen,
+    /// ⚑ **Nur `in_proj_qkv` und `in_proj_z`** (Messwerkzeug fuer L13,
+    /// 2026-10-05): die beiden Projektionen, deren Gradient durch die
+    /// Ableitung einer SiLU-Tabelle laeuft (Faltung mit SiLU, Tor
+    /// `silu(z)`). Fund 519 zeigt diese Ableitung als Kamm.
+    NurEingangsprojektionen,
+    /// ⚑ **Nur `out_proj`**, die Gegenseite: Sein Gradient ist Eingang mal
+    /// Ausgangsgradient, ohne SiLU-Ableitung davor. Entgleist er ternaer
+    /// genauso, ist Fund 519 nicht die Ursache.
+    NurAusgangsprojektion,
 }
 
 impl Auswahl {
@@ -1788,6 +1929,8 @@ impl Auswahl {
             (Self::NurMischer, k) => matches!(k, Matrixkennung::Aufmerksamkeit(_) | Matrixkennung::Zustand(_)),
             (Self::NurZustand, k) => matches!(k, Matrixkennung::Zustand(_)),
             (Self::NurZustandsprojektionen, k) => matches!(k, Matrixkennung::Zustand(0 | 1 | 4)),
+            (Self::NurEingangsprojektionen, k) => matches!(k, Matrixkennung::Zustand(0 | 1)),
+            (Self::NurAusgangsprojektion, k) => k == Matrixkennung::Zustand(4),
             // Dicht: 0 bis 3 Aufmerksamkeit (q, k, v, o), 4 gate,
             // 5 up, 6 down. Dieselbe Reihenfolge wie in
             // `breiten_der_ebene`.
@@ -1822,6 +1965,8 @@ impl Auswahl {
             Self::NurMischer => "nur der Mischer",
             Self::NurZustand => "nur die Zustandsschicht",
             Self::NurZustandsprojektionen => "nur die Projektionen der Zustandsschicht",
+            Self::NurEingangsprojektionen => "nur in_proj_qkv und in_proj_z",
+            Self::NurAusgangsprojektion => "nur out_proj",
         }
     }
 }
@@ -1908,20 +2053,35 @@ pub fn zum_anfang_ziehen(g: &mut Shardgewichte, staerke: u32) -> u64 {
 /// Lauf fortsetzen zu koennen.
 ///
 /// **Das Format ist absichtlich stumpf:** eine Kopfzeile mit `von`,
-/// `bis` und der Zahl der Matrizen je Ebene, dann die Werte als
-/// `i32` in nativer Bytefolge. 📌 **Damit ist es NICHT zwischen
-/// Maschinen uebertragbar**, und das ist hier richtig: Es dient dem
-/// Fortsetzen auf derselben Maschine, und ein Format, das mehr
-/// verspricht, waere ein Format, das jemand fuer den Konsens haelt.
+/// `bis`, je Ebene die Zahl ihrer festen Matrizen und die Nummern ihrer
+/// gewaehlten Experten, dann die Werte als `i32` in nativer Bytefolge.
+/// 📌 **Damit ist es NICHT zwischen Maschinen uebertragbar**, und das ist
+/// hier richtig: Es dient dem Fortsetzen auf derselben Maschine, und ein
+/// Format, das mehr verspricht, waere ein Format, das jemand fuer den
+/// Konsens haelt.
+///
+/// 📌 **Fund 520: Bis `MYLSTAND1` fehlten die Expertennummern.** Ein
+/// Gemisch traegt nur die Experten, die sein Router gewaehlt hat, und
+/// welche das sind, steht erst nach dem Lauf fest. Geschrieben wurden sie
+/// in der Reihenfolge ihrer Nummern, aber ohne die Nummern; ein frischer
+/// Stand, der noch keinen Experten traegt, lehnte beim Lesen wegen der
+/// Matrixzahl ab, und ein Stand von 11,4 GB war nicht wieder ladbar.
+/// `MYLSTAND2` nennt sie; `MYLSTAND1` bleibt lesbar, weil eine dichte
+/// Ebene darin vollstaendig beschrieben ist.
 pub fn stand_schreiben(g: &Shardgewichte, pfad: &std::path::Path) -> std::io::Result<()> {
     use std::io::Write;
     let mut f = std::io::BufWriter::new(std::fs::File::create(pfad)?);
-    f.write_all(b"MYLSTAND1")?;
+    f.write_all(STANDKENNUNG)?;
     f.write_all(&(g.von as u32).to_ne_bytes())?;
     f.write_all(&(g.bis as u32).to_ne_bytes())?;
     for stand in &g.master {
         let matrizen = stand.matrizen();
-        f.write_all(&(matrizen.len() as u32).to_ne_bytes())?;
+        let nummern = stand.expertennummern();
+        f.write_all(&((matrizen.len() - 3 * nummern.len()) as u32).to_ne_bytes())?;
+        f.write_all(&(nummern.len() as u32).to_ne_bytes())?;
+        for nr in &nummern {
+            f.write_all(&nr.to_ne_bytes())?;
+        }
         for m in matrizen {
             f.write_all(&(m.len() as u64).to_ne_bytes())?;
             for w in m {
@@ -1948,9 +2108,11 @@ pub fn stand_lesen(g: &mut Shardgewichte, pfad: &std::path::Path) -> Result<(), 
         i += n;
         Ok(s)
     };
-    if nimm(9)? != b"MYLSTAND1" {
-        return Err("das ist kein Gewichtsstand (Kennung fehlt)".into());
-    }
+    let mit_experten = match nimm(9)? {
+        k if k == STANDKENNUNG => true,
+        b"MYLSTAND1" => false,
+        _ => return Err("das ist kein Gewichtsstand (Kennung fehlt)".into()),
+    };
     let von = u32::from_ne_bytes(nimm(4)?.try_into().unwrap()) as usize;
     let bis = u32::from_ne_bytes(nimm(4)?.try_into().unwrap()) as usize;
     if von != g.von || bis != g.bis {
@@ -1960,16 +2122,31 @@ pub fn stand_lesen(g: &mut Shardgewichte, pfad: &std::path::Path) -> Result<(), 
         ));
     }
     for (e, stand) in g.master.iter_mut().enumerate() {
-        let anzahl = u32::from_ne_bytes(nimm(4)?.try_into().unwrap()) as usize;
+        let feste = u32::from_ne_bytes(nimm(4)?.try_into().unwrap()) as usize;
+        let mut nummern = Vec::new();
+        if mit_experten {
+            let n = u32::from_ne_bytes(nimm(4)?.try_into().unwrap()) as usize;
+            for _ in 0..n {
+                nummern.push(u16::from_ne_bytes(nimm(2)?.try_into().unwrap()));
+            }
+        }
+        // ⚑ **Die Experten des Standes gelten, nicht die, die schon da
+        //   waren.** Ihre Werte kommen gleich aus der Datei; was hier
+        //   angelegt wird, ist nur der Platz dafuer.
+        stand.experten_setzen(&nummern).map_err(|f| format!("Ebene {e}: {f}"))?;
         let mut matrizen = stand.matrizen_veraenderlich();
-        if anzahl != matrizen.len() {
+        let erwartet = matrizen.len() - 3 * nummern.len();
+        if feste != erwartet {
             return Err(format!(
-                "Ebene {e}: der Stand hat {anzahl} Matrizen, das Modell {}",
-                matrizen.len()
+                "Ebene {e}: der Stand hat {feste} feste Matrizen, das Modell {erwartet}"
             ));
         }
-        for m in matrizen.iter_mut() {
+        for (k, m) in matrizen.iter_mut().enumerate() {
             let laenge = u64::from_ne_bytes(nimm(8)?.try_into().unwrap()) as usize;
+            if k >= feste && m.is_empty() {
+                // Ein Experte, eben angelegt: Seine Laenge steht in der Datei.
+                m.resize(laenge, 0);
+            }
             if laenge != m.len() {
                 return Err(format!(
                     "Ebene {e}: eine Matrix hat {laenge} Werte, erwartet {}",
@@ -1981,8 +2158,14 @@ pub fn stand_lesen(g: &mut Shardgewichte, pfad: &std::path::Path) -> Result<(), 
             }
         }
     }
+    if i != d.len() {
+        return Err(format!("nach dem Stand stehen noch {} Bytes", d.len() - i));
+    }
     Ok(())
 }
+
+/// Die Kennung, mit der [`stand_schreiben`] heute schreibt.
+pub const STANDKENNUNG: &[u8; 9] = b"MYLSTAND2";
 
 /// Die Zeilenbreiten eines Expertengemisches.
 ///
@@ -2179,12 +2362,13 @@ pub fn rueckwaerts_mit(
                 let Ebenenstand::Dicht(master) = &gew_stand.master[i] else {
                     return Err(Shardfehler::ArtPasstNicht { ebene: e });
                 };
+                let f = form.fuer_ebene(ebene);
                 let umgerechnet: Vec<(Vec<i8>, Vec<u8>)> = (0..7)
-                    .map(|n| gewicht_aus_master_als(&master[n], breiten[n], MASTER_FRAC, form))
+                    .map(|n| gewicht_aus_master_als(&master[n], breiten[n], MASTER_FRAC, f))
                     .collect();
                 let gew = gewichte_der_ebene(&umgerechnet, ebene);
                 let vg = vorgaben_der_ebene(
-                    m, &ebene.scales, e, is, v.schritt, v.lr_zaehler, v.lr_nenner, form,
+                    m, &ebene.scales, e, is, v.schritt, v.lr_zaehler, v.lr_nenner, f,
                 );
                 let gr = gradienten_der_ebene_aus_gradient(
                     gew,
@@ -2287,7 +2471,7 @@ fn gemisch_rueckwaerts(
     g_aus: &[Vec<i32>],
     tab: Ebenentabellen<'_>,
     fort: &mut Fortschreibung<'_>,
-    form: Gewichtsform,
+    form: Formregel,
 ) -> Result<Vec<Vec<i32>>, Shardfehler> {
     use integer_llm_kernels::fixed_point::rescale_i64;
     use integer_llm_kernels::trainingsschritt::{
@@ -2338,9 +2522,10 @@ fn gemisch_rueckwaerts(
             .iter()
             .map(|i| {
                 let mm = &experten[i];
-                let (gw, gs) = gewicht_aus_master_als(&mm[0], hs, MASTER_FRAC, form);
-                let (uw, us) = gewicht_aus_master_als(&mm[1], hs, MASTER_FRAC, form);
-                let (dw, ds) = gewicht_aus_master_als(&mm[2], is, MASTER_FRAC, form);
+                let ex = &moe.experts[*i as usize];
+                let (gw, gs) = gewicht_aus_master_als(&mm[0], hs, MASTER_FRAC, form.fuer(&ex.gate_proj));
+                let (uw, us) = gewicht_aus_master_als(&mm[1], hs, MASTER_FRAC, form.fuer(&ex.up_proj));
+                let (dw, ds) = gewicht_aus_master_als(&mm[2], is, MASTER_FRAC, form.fuer(&ex.down_proj));
                 (gw, gs, uw, us, dw, ds)
             })
             .collect();
@@ -2474,7 +2659,9 @@ fn gemisch_rueckwaerts(
         Mischerstand::Achtsamkeit(aufmerksamkeit) => {
             let a_breiten = [hs, hs, hs, m.num_heads * m.head_dim];
             let a_umgerechnet: Vec<(Vec<i8>, Vec<u8>)> = (0..4)
-                .map(|n| gewicht_aus_master_als(&aufmerksamkeit[n], a_breiten[n], MASTER_FRAC, form))
+                .map(|n| {
+                    gewicht_aus_master_als(&aufmerksamkeit[n], a_breiten[n], MASTER_FRAC, form.fuer(achtsamkeitstensor(ebene, n)))
+                })
                 .collect();
             let a_gew = integer_llm_kernels::trainingsschritt::Aufmerksamkeitsgewichte {
                 q: &a_umgerechnet[0].0,
@@ -2730,7 +2917,146 @@ mod zustandsmischer {
             experten: std::collections::BTreeMap::new(),
         };
         assert!(stand.matrix_mut(Matrixkennung::Zustand(5)).is_some());
+        // Die beiden Haelften der Projektionen ergeben zusammen die drei.
+        for n in 0..6 {
+            let k = Matrixkennung::Zustand(n);
+            assert_eq!(
+                Auswahl::NurEingangsprojektionen.erlaubt(k) || Auswahl::NurAusgangsprojektion.erlaubt(k),
+                Auswahl::NurZustandsprojektionen.erlaubt(k),
+                "Zustand({n})"
+            );
+            assert!(!(Auswahl::NurEingangsprojektionen.erlaubt(k) && Auswahl::NurAusgangsprojektion.erlaubt(k)));
+        }
+        assert!(Auswahl::NurAusgangsprojektion.erlaubt(Matrixkennung::Zustand(4)));
+        assert!(!Auswahl::NurAusgangsprojektion.erlaubt(Matrixkennung::Router));
         assert!(stand.matrix_mut(Matrixkennung::Aufmerksamkeit(0)).is_none());
         assert_eq!(stand.matrizen().len(), 7, "sechs des Mischers und der Router");
+    }
+}
+
+#[cfg(test)]
+mod standdatei {
+    use super::*;
+
+    /// Eine Gemischebene mit Zustandsmischer und den genannten Experten,
+    /// jeder mit eigenen Werten, damit eine Verwechslung auffaellt.
+    fn gemisch(experten: &[(u16, i32)]) -> Ebenenstand {
+        Ebenenstand::Gemisch {
+            mischer: Mischerstand::Zustand(Box::new(std::array::from_fn(|k| vec![k as i32 + 1; 4]))),
+            router: vec![9; 4],
+            geteilt: None,
+            experten: experten
+                .iter()
+                .map(|(nr, w)| (*nr, [vec![*w; 6], vec![*w + 1; 6], vec![*w + 2; 4]]))
+                .collect(),
+        }
+    }
+
+    fn gewichte(master: Vec<Ebenenstand>) -> Shardgewichte {
+        let anfang = master.iter().map(|_| gemisch(&[])).collect();
+        Shardgewichte { master, form: Formregel::Einheitlich(Gewichtsform::Int8), anfang, von: 5, bis: 6 }
+    }
+
+    fn werte(g: &Shardgewichte) -> Vec<Vec<Master>> {
+        g.master.iter().flat_map(|s| s.matrizen().iter().map(|m| m.to_vec()).collect::<Vec<_>>()).collect()
+    }
+
+    fn datei(name: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("myl-{name}-{}.bin", std::process::id()))
+    }
+
+    /// ⚑ **Fund 520: Ein Gemischstand kommt mit seinen Experten zurueck**,
+    /// auch in einen Stand, der andere oder gar keine traegt. Der Experte 8
+    /// des Ziels ist nicht im Stand und muss gehen; 3 und 17 kommen dazu.
+    #[test]
+    fn ein_gemischstand_kommt_mit_seinen_experten_zurueck() {
+        let a = gewichte(vec![gemisch(&[(3, 30), (17, 170)])]);
+        let d = datei("gemischstand");
+        stand_schreiben(&a, &d).expect("schreiben");
+
+        let mut b = gewichte(vec![gemisch(&[(8, 80)])]);
+        stand_lesen(&mut b, &d).expect("lesen");
+        assert_eq!(b.master[0].expertennummern(), vec![3, 17]);
+        assert_eq!(werte(&b), werte(&a), "der gelesene Stand ist nicht der geschriebene");
+
+        let mut leer = gewichte(vec![gemisch(&[])]);
+        stand_lesen(&mut leer, &d).expect("lesen in einen frischen Stand");
+        assert_eq!(werte(&leer), werte(&a), "ein frischer Stand bekommt die Experten nicht");
+        let _ = std::fs::remove_file(&d);
+    }
+
+    /// 📌 **Ein Stand nach der alten Kennung ohne Nummern wird bei einem
+    /// Gemisch abgelehnt**, statt die Experten zu raten.
+    #[test]
+    fn ein_alter_gemischstand_wird_abgelehnt() {
+        let a = gewichte(vec![gemisch(&[(3, 30)])]);
+        let d = datei("gemischstand-alt");
+        stand_schreiben(&a, &d).expect("schreiben");
+        // Von Hand in die alte Form: Kennung 1, Gesamtzahl statt fester Zahl,
+        // keine Nummern.
+        let neu = std::fs::read(&d).expect("lesen");
+        let mut alt = b"MYLSTAND1".to_vec();
+        alt.extend_from_slice(&neu[9..17]);
+        alt.extend_from_slice(&10u32.to_ne_bytes());
+        alt.extend_from_slice(&neu[17 + 4 + 4 + 2..]);
+        std::fs::write(&d, alt).expect("schreiben");
+
+        let mut b = gewichte(vec![gemisch(&[])]);
+        let f = stand_lesen(&mut b, &d).expect_err("ein alter Gemischstand wurde angenommen");
+        assert!(f.contains("feste Matrizen"), "der Grund wird nicht genannt: {f}");
+        let _ = std::fs::remove_file(&d);
+    }
+
+    /// Eine dichte Ebene, fuer die der Stand Experten nennt, ist ein Stand
+    /// fuer ein anderes Modell.
+    #[test]
+    fn experten_an_einer_dichten_ebene_werden_abgelehnt() {
+        let mut dicht = Ebenenstand::Dicht(Box::new(std::array::from_fn(|_| vec![0; 4])));
+        assert!(dicht.experten_setzen(&[]).is_ok());
+        assert!(dicht.experten_setzen(&[1]).is_err());
+    }
+
+    /// Und was nach dem letzten Wert noch steht, ist kein Stand dieses Bereichs.
+    #[test]
+    fn ueberzaehlige_bytes_werden_abgelehnt() {
+        let a = gewichte(vec![gemisch(&[(3, 30)])]);
+        let d = datei("gemischstand-lang");
+        stand_schreiben(&a, &d).expect("schreiben");
+        let mut roh = std::fs::read(&d).expect("lesen");
+        roh.extend_from_slice(&[0, 0, 0, 0]);
+        std::fs::write(&d, roh).expect("schreiben");
+        let mut b = gewichte(vec![gemisch(&[])]);
+        assert!(stand_lesen(&mut b, &d).is_err());
+        let _ = std::fs::remove_file(&d);
+    }
+}
+
+#[cfg(test)]
+mod formregel {
+    use super::*;
+    use crate::model::{Gewichtsdaten, QTensor, Ternaerdaten};
+
+    fn int8_tensor() -> QTensor {
+        QTensor { data: std::sync::Arc::new(Gewichtsdaten::Speicher(vec![1; 256])), shape: vec![2, 128], shifts: vec![4, 4], drehung: None }
+    }
+
+    fn ternaerer_tensor() -> QTensor {
+        let gepackt = integer_llm_kernels::ternaer::packen(&[3i8; 256], 128).expect("ternaer");
+        let muster = Gewichtsdaten::Speicher(gepackt.muster.iter().map(|&b| b as i8).collect());
+        let daten = Ternaerdaten::neu(muster, crate::loader::Kopfdaten::Speicher(gepackt.betraege), 2, 128).expect("Matrix");
+        QTensor { data: std::sync::Arc::new(Gewichtsdaten::Ternaer(Box::new(daten))), shape: vec![2, 128], shifts: vec![4, 4], drehung: None }
+    }
+
+    /// ⚑ **Ein ternaeres Artefakt bestimmt die Form je Matrix**, eine
+    /// Umwandlung macht alles ternaer, was ternaer sein kann, ein int8-Modell
+    /// nichts.
+    #[test]
+    fn die_form_folgt_der_regel() {
+        let (i, t) = (int8_tensor(), ternaerer_tensor());
+        assert!(t.ist_ternaer() && !i.ist_ternaer());
+        assert_eq!(Formregel::WieArtefakt.fuer(&t), Gewichtsform::Ternaer);
+        assert_eq!(Formregel::WieArtefakt.fuer(&i), Gewichtsform::Int8, "eine int8-Insel im ternaeren Artefakt");
+        assert_eq!(Formregel::Einheitlich(Gewichtsform::Ternaer).fuer(&i), Gewichtsform::Ternaer, "Umwandlung");
+        assert_eq!(Formregel::Einheitlich(Gewichtsform::Int8).fuer(&i), Gewichtsform::Int8);
     }
 }

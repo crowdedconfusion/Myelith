@@ -291,6 +291,123 @@ fn run_mischung(gv: &GoldenVector) -> (bool, Vec<String>) {
     (ok, gruende)
 }
 
+/// Prüft einen Vektor des **ternären Rechenwegs** (Umfang `ternaer`).
+///
+/// # ⚑ Warum es diesen Umfang gibt (2026-10-05)
+///
+/// Der ternäre Kern, die Hadamard-Drehung, das Packen und die Ableitung
+/// eines ternären Gewichts aus dem Master liefen bis hierher **gegen kein
+/// festes Soll**: lokal bitgleich gemessen, aber ohne eine Zusage, die ein
+/// fremder Knoten prüfen kann. Ein ternäres Modell im Netz rechnet genau
+/// über diese vier, und die Ableitung aus dem Master ist die Vorschrift,
+/// nach der aus bestätigten Δm ein Gewicht wird.
+///
+/// ⚑ **Eigener Umfang, aus demselben Grund wie `training` und `moe`:**
+/// Der Abdruck der Operationsstufe bleibt, wie er ist.
+pub fn ternaer_vektor_pruefen(gv: &GoldenVector) -> VektorErgebnis {
+    let name = gv.name.clone();
+    let mut gruende: Vec<String> = Vec::new();
+
+    if !tensor_hashes_pruefen(gv, &mut gruende) {
+        return VektorErgebnis { name, bestanden: false, gruende, integer_verletzt: true };
+    }
+
+    let (bestanden, weitere) = match gv.name.as_str() {
+        "linear_ternaer" => run_linear_ternaer(gv),
+        "packen_ternaer" => run_packen_ternaer(gv),
+        "ternaer_aus_master" => run_ternaer_aus_master(gv),
+        "drehen" | "drehen_saettigung" => run_drehen(gv),
+        _ => (false, vec![format!("Unbekannter ternärer Vektor: {}", gv.name)]),
+    };
+    gruende.extend(weitere);
+    VektorErgebnis { name, bestanden, gruende, integer_verletzt: false }
+}
+
+/// Prüft eine Datei als Vektor des ternären Rechenwegs.
+pub fn ternaer_vektor_aus_datei(pfad: &Path) -> Result<VektorErgebnis, String> {
+    let gv = vektor_lesen(pfad)?;
+    Ok(ternaer_vektor_pruefen(&gv))
+}
+
+/// Die Musterbytes eines Vektors; ein Wert ausserhalb eines Bytes ist ein
+/// kaputter Vektor und wird nicht still abgeschnitten.
+fn musterbytes(t: &TensorData) -> Result<Vec<u8>, String> {
+    t.data
+        .iter()
+        .map(|&v| u8::try_from(v).map_err(|_| format!("Musterbyte {v} liegt ausserhalb eines Bytes")))
+        .collect()
+}
+
+fn run_linear_ternaer(gv: &GoldenVector) -> (bool, Vec<String>) {
+    let x = als_i16(&gv.inputs["x"]);
+    let muster = match musterbytes(&gv.inputs["muster"]) {
+        Ok(m) => m,
+        Err(f) => return (false, vec![f]),
+    };
+    let betraege = als_i16(&gv.inputs["betraege"]);
+    let zeilen = zahl(gv, "zeilen") as usize;
+    let spalten = zahl(gv, "spalten") as usize;
+    let w_shifts: Vec<u8> = gv.metadata["w_shifts"]
+        .as_array()
+        .map(|a| a.iter().map(|v| v.as_u64().unwrap_or(0) as u8).collect())
+        .unwrap_or_default();
+    let matrix = match crate::ternaer::Ternaermatrix::neu(&muster, &betraege, zeilen, spalten) {
+        Ok(m) => m,
+        Err(f) => return (false, vec![f]),
+    };
+    let y = crate::linear::linear_matrix(
+        &x,
+        crate::linear::Gewichtsmatrix::Ternaer(matrix),
+        spalten,
+        &w_shifts,
+        zahl(gv, "act_frac") as u8,
+        zahl(gv, "out_frac") as u8,
+    );
+    let ist: Vec<i32> = y.iter().map(|v| i32::from(*v)).collect();
+    let mut gruende = Vec::new();
+    let ok = vergleiche("y", &ist, &als_i32(&gv.outputs["y"]), &mut gruende);
+    (ok, gruende)
+}
+
+fn run_packen_ternaer(gv: &GoldenVector) -> (bool, Vec<String>) {
+    let werte = als_i16(&gv.inputs["werte"]);
+    let gepackt = match crate::ternaer::packen(&werte, zahl(gv, "spalten") as usize) {
+        Ok(g) => g,
+        Err(f) => return (false, vec![f]),
+    };
+    let muster: Vec<i32> = gepackt.muster.iter().map(|v| i32::from(*v)).collect();
+    let betraege: Vec<i32> = gepackt.betraege.iter().map(|v| i32::from(*v)).collect();
+    let mut gruende = Vec::new();
+    let a = vergleiche("muster", &muster, &als_i32(&gv.outputs["muster"]), &mut gruende);
+    let b = vergleiche("betraege", &betraege, &als_i32(&gv.outputs["betraege"]), &mut gruende);
+    (a && b, gruende)
+}
+
+fn run_ternaer_aus_master(gv: &GoldenVector) -> (bool, Vec<String>) {
+    let master = als_i32(&gv.inputs["master"]);
+    let (w, shifts) = crate::trainingsschritt::ternaer_aus_master(
+        &master,
+        zahl(gv, "spalten") as usize,
+        zahl(gv, "master_frac") as u8,
+    );
+    let w: Vec<i32> = w.iter().map(|v| i32::from(*v)).collect();
+    let shifts: Vec<i32> = shifts.iter().map(|v| i32::from(*v)).collect();
+    let mut gruende = Vec::new();
+    let a = vergleiche("gewichte", &w, &als_i32(&gv.outputs["gewichte"]), &mut gruende);
+    let b = vergleiche("shifts", &shifts, &als_i32(&gv.outputs["shifts"]), &mut gruende);
+    (a && b, gruende)
+}
+
+fn run_drehen(gv: &GoldenVector) -> (bool, Vec<String>) {
+    let x = als_i16(&gv.inputs["x"]);
+    let vorzeichen: Vec<i8> = gv.inputs["vorzeichen"].data.iter().map(|&v| v as i8).collect();
+    let y = crate::drehung::drehen(&x, zahl(gv, "x_frac") as u8, &vorzeichen, zahl(gv, "ziel_frac") as u8);
+    let ist: Vec<i32> = y.iter().map(|v| i32::from(*v)).collect();
+    let mut gruende = Vec::new();
+    let ok = vergleiche("y", &ist, &als_i32(&gv.outputs["y"]), &mut gruende);
+    (ok, gruende)
+}
+
 /// Prüft eine Datei als Trainingsvektor.
 pub fn trainingsvektor_aus_datei(pfad: &Path) -> Result<VektorErgebnis, String> {
     let gv = vektor_lesen(pfad)?;
@@ -866,6 +983,42 @@ mod tests {
             gesehen += 1;
         }
         assert_eq!(gesehen, 4, "erwartet werden vier MoE-Vektoren");
+    }
+
+    /// ⚑ **Der ternäre Rechenweg, seit dem 2026-10-05 belegt**, gegen
+    /// Sollwerte aus einer getrennten Umsetzung
+    /// (`conformance/ternaer_erzeugen.py`).
+    #[test]
+    fn ternaere_vektoren_des_repositoriums_bestehen() {
+        let verzeichnis = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../conformance/vectors/ternaer");
+        let mut gesehen = 0;
+        for eintrag in std::fs::read_dir(&verzeichnis).expect("ternäre Vektoren fehlen") {
+            let pfad = eintrag.expect("Verzeichniseintrag").path();
+            if pfad.extension().map(|e| e != "json").unwrap_or(true) {
+                continue;
+            }
+            let gv = vektor_lesen(&pfad).expect("Vektor lesbar");
+            assert_eq!(gv.level, "ternaer", "{}: falsche Ebene", gv.name);
+            assert_eq!(
+                gv.herkunft, "unabhaengig",
+                "{}: ein selbsterzeugter Vektor belegt keine Richtigkeit",
+                gv.name
+            );
+            let e = ternaer_vektor_pruefen(&gv);
+            assert!(e.bestanden, "{}: {:?}", e.name, e.gruende);
+            gesehen += 1;
+        }
+        assert_eq!(gesehen, 5, "erwartet werden fünf ternäre Vektoren");
+    }
+
+    /// Ein Musterbyte ausserhalb eines Bytes wird abgelehnt, nicht
+    /// abgeschnitten: `256 as u8` wäre still eine Null.
+    #[test]
+    fn ein_musterbyte_ueber_255_wird_abgelehnt() {
+        let t: TensorData = serde_json::from_str(r#"{"dtype": "int32", "shape": [2], "hash": "", "data": [3, 256]}"#)
+            .expect("Tensor");
+        assert!(musterbytes(&t).is_err());
     }
 
     #[test]

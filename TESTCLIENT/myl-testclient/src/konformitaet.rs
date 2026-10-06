@@ -15,8 +15,9 @@
 //! ## Der Umfang gehört zum Messverfahren
 //!
 //! Zwei Läufe können verschiedene Mengen an Vektoren geprüft haben:
-//! ohne Artefakt **siebzehn** (sechs Operationen, dazu Training und
-//! Gemisch), mit passendem Artefakt zusätzlich die modellabhängigen.
+//! ohne Artefakt **zweiundzwanzig** (sechs Operationen, dazu Training,
+//! Gemisch und der ternäre Rechenweg), mit passendem Artefakt zusätzlich
+//! die modellabhängigen. Bis zum 2026-10-05 waren es siebzehn.
 //!
 //! 📌 **Hier stand „sechs ohne Artefakt, dreiunddreißig mit", und das
 //! galt einmal.** Training und Gemisch kamen später dazu und brauchen
@@ -73,12 +74,25 @@ pub const WERT_TRAINING: &str = "konformitaet_training";
 /// dass einer gelogen hätte.
 pub const WERT_MOE: &str = "konformitaet_moe";
 
+/// Name des Vergleichswerts des **ternären Rechenwegs**: ternärer Kern,
+/// Hadamard-Drehung, Packen und die Ableitung des ternären Gewichts aus
+/// dem Master.
+///
+/// ⚑ **Seit dem 2026-10-05.** Bis dahin lokal bitgleich gemessen, aber
+/// gegen kein festes Soll, und damit nichts, was ein fremder Knoten
+/// prüfen kann.
+pub const WERT_TERNAER: &str = "konformitaet_ternaer";
+
 /// Nur die Operations-Vektoren wurden geprüft.
 pub const UMFANG_OP: &str = "op";
-/// Operations- und Trainingsvektoren, ohne Modell.
-pub const UMFANG_OHNE_MODELL: &str = "op+training+moe";
-/// Alles: Operations-, Trainings-, Layer- und E2E-Vektoren.
-pub const UMFANG_VOLL: &str = "op+training+moe+layer+e2e";
+/// Alles, was kein Modell braucht.
+///
+/// 📌 Bis zum 2026-10-05 ohne `ternaer`. Der Name aendert sich mit dem
+/// Umfang, damit `vergleich` einen alten und einen neuen Lauf als
+/// unvergleichbar erkennt, statt zwei verschiedene Zusagen zu vergleichen.
+pub const UMFANG_OHNE_MODELL: &str = "op+training+moe+ternaer";
+/// Alles: dazu die Layer- und E2E-Vektoren des Ankermodells.
+pub const UMFANG_VOLL: &str = "op+training+moe+ternaer+layer+e2e";
 
 /// Das Manifest bei den Vektoren: welches Artefakt sie erzeugt hat.
 ///
@@ -377,6 +391,48 @@ pub fn laufen(log: &mut RunLog, artefakt: Option<&Path>) -> bool {
         WERT_MOE,
         &digest_aus_ergebnissen(&ergebnisse[vor_moe_ergebnisse..]),
         format!("{}/{}", bestanden - vor_moe_bestanden, gesamt - vor_moe_gesamt),
+    );
+
+    let vor_ternaer_gesamt = gesamt;
+    let vor_ternaer_bestanden = bestanden;
+    let vor_ternaer_ergebnisse = ergebnisse.len();
+    let ternaer_dateien = vektor_dateien(&vektoren, "ternaer");
+    if ternaer_dateien.is_empty() {
+        log.error(format!(
+            "keine ternären Vektoren unter {}",
+            vektoren.join("ternaer").display()
+        ));
+        return false;
+    }
+    for pfad in &ternaer_dateien {
+        match integer_llm_kernels::konformitaet::ternaer_vektor_aus_datei(pfad) {
+            Ok(e) => {
+                gesamt += 1;
+                if e.bestanden {
+                    bestanden += 1;
+                } else {
+                    for grund in &e.gruende {
+                        log.error(format!("{}: {}", e.name, grund));
+                    }
+                }
+                let name = zeile("ternaer", &e.name, e.bestanden);
+                ergebnisse.push((name.clone(), e.bestanden));
+                log.event(Event::Step {
+                    name: format!("konformitaet_{}", name),
+                    millis: 0,
+                    detail: if e.bestanden { "bestanden".into() } else { "fehlschlagen".into() },
+                });
+            }
+            Err(e) => {
+                log.error(format!("{}: {}", pfad.display(), e));
+                return false;
+            }
+        }
+    }
+    log.result(
+        WERT_TERNAER,
+        &digest_aus_ergebnissen(&ergebnisse[vor_ternaer_ergebnisse..]),
+        format!("{}/{}", bestanden - vor_ternaer_bestanden, gesamt - vor_ternaer_gesamt),
     );
 
     let umfang = if entscheidung.layer_e2e {

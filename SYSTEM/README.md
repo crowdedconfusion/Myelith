@@ -23,7 +23,7 @@ hiesse entweder, 117 MB Archive **und** 900 MB Auspackung einzuchecken,
 oder gar nichts, und dann wäre die Zusage weg.
 
 ⚠️ **`full-build/` wächst und wird nie kleiner.** Cargo räumt es nicht
-auf; hier stehen gerade 27 GB. Es wird gelegentlich geleert und einmal
+auf; nach einigen Wochen standen hier schon 27 GB. Es wird gelegentlich geleert und einmal
 voll gebaut, und ein frischer Vollbau aller Crates liegt bei rund 6 GB.
 Wer deutlich darüber liegt, hat Altlasten und keine Abhängigkeiten.
 

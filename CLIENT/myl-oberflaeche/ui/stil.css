@@ -1273,73 +1273,85 @@ header > .kopfrechts { right: var(--kopf-polster); }
 
 .zeitzeile { font-size: .72rem; color: var(--leiser); font-family: var(--fest); }
 
-/* ⚑ Der Werkzeugverlauf haengt AN der Antwort und steht nicht zwischen
-   den Beitraegen: Er gehoert zu ihr wie eine Fussnote. Zugeklappt
-   nimmt er eine Zeile. */
-/* ⚑ **Zwei Klappen am Beitrag: die Ueberlegung und die Befehle.**
-   Beide sind oft laenger als die Antwort, und beide gehoeren dazu; wer
-   sie immer zeigt, laesst die Antwort darunter verschwinden, wer sie
-   weglaesst, nimmt dem Nutzer die Auskunft, wie es dazu kam.
+/* --- Der Verlauf einer Antwort (2026-10-05) ----------------------------
 
-   📌 **Sie heissen `denken` und `befehle` und nicht mehr `verlauf`.**
-   Ein Name fuer beides waere ein Kasten fuer zwei verschiedene Dinge,
-   und die Ueberschrift koennte nur eines von beiden zaehlen. */
-.denken,
-.befehle {
+   ⚑ **Oben das Ladezeichen, darunter eine Zeile, die zaehlt, darunter der
+   Schritt.** Ein Klick auf die Zeile oeffnet die Zeitleiste: Gedanken,
+   Zwischenausgaben und Befehle in der Reihenfolge ihres Entstehens, jeder
+   fuer sich zugeklappt. Der Verlauf gehoert zur Antwort wie eine
+   Fussnote, nur steht er vor ihr, weil er vor ihr geschah.
+
+   📌 **Bis CLIENT v0.113.1 zwei Klappen, `denken` und `befehle`.** Der
+   Denkfaden verband alle Ueberlegungen zu einem Text, und nach einem
+   Werkzeugaufruf schrieb die neue sichtbar in der alten weiter. */
+.verlauf { display: grid; gap: .25rem; }
+.verlauf:empty { display: none; }
+
+.verlaufsklappe {
   border-left: 1px solid var(--kante);
   padding-left: .8rem;
   display: grid;
-  gap: .25rem;
+  gap: .3rem;
 }
-.denken > summary,
-.befehle > summary {
+/* ⚑ Zwei Zeilen als Bloecke und kein Raster: Ein `summary` mit eigenem
+   `display` klappt in aelteren WebKit-Fassungen nicht mehr auf, und das
+   Fenster laeuft unter macOS in WebKit. */
+.verlaufsklappe > summary {
   cursor: pointer;
-  color: var(--leiser);
-  font-size: .78rem;
   list-style: none;
 }
-.denken > summary::-webkit-details-marker,
-.befehle > summary::-webkit-details-marker { display: none; }
-.denken > summary:hover,
-.befehle > summary:hover { color: var(--leise); }
+.verlaufsklappe > summary::-webkit-details-marker { display: none; }
+.verlaufszeile { display: block; color: var(--leiser); font-size: .78rem; }
+.verlaufsklappe > summary:hover .verlaufszeile { color: var(--leise); }
+.schrittzeile { display: block; color: var(--leiser); font-size: .7rem; font-family: var(--fest); }
+.verlauf > .schrittzeile { padding-left: .8rem; }
 
-/* ⚑ Die Ueberlegung ist Fliesstext und keine Schrittliste: ein Faden ueber
-   den ganzen Lauf, der waehrenddessen laenger wird. Ab einer Hoehe rollt
-   er in sich, damit ein langes Nachdenken die Antwort nicht aus dem Bild
-   schiebt. */
-.denktext {
+/* ⚑ **Jeder Eintrag eine Zeile, solange er zu ist.** Gedanke und
+   Zwischenausgabe sind Fliesstext, ein Befehl eine Kennung; die Kanten
+   tragen die Art ueber Helligkeit und Breite, keine Farbe. */
+.zeitleiste { display: grid; gap: .25rem; }
+
+.eintrag > summary {
+  cursor: pointer;
+  list-style: none;
+  font-size: .8rem;
+  padding: .32rem .7rem;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.eintrag > summary::-webkit-details-marker { display: none; }
+.eintrag > summary:hover { color: var(--text); }
+.eintrag[open] > summary { white-space: normal; overflow-wrap: anywhere; }
+.eintrag .marke2 { color: var(--leiser); margin-right: .6rem; }
+.eintragstitel { color: var(--leise); }
+
+.eintrag.denken,
+.eintrag.plan {
+  border-left: 2px solid var(--kante);
+  border-radius: 0 var(--rund-klein) var(--rund-klein) 0;
+}
+.eintrag.plan { border-left-style: dashed; }
+
+/* ⚑ Der Text eines Gedankens rollt ab einer Hoehe in sich, damit ein
+   langes Nachdenken die Antwort nicht aus dem Bild schiebt. */
+.eintragstext {
   color: var(--leise);
   font-size: .82rem;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  padding: .2rem 0 .3rem;
+  padding: .2rem .7rem .45rem;
+  border-top: 1px solid var(--kante);
   max-height: 24rem;
   overflow-y: auto;
 }
-
-/* --- Die Befehle, einzeln aufklappbar (2026-09-14) --------------------
-
-   ⚑ **Zu steht eine Zeile je Befehl, offen stehen Befehl und Antwort.**
-   Die Kanten tragen die Art wie vorher die Schrittzeilen: Helligkeit und
-   Breite, keine Farbe. */
-.befehlsliste { display: grid; gap: .25rem; }
 
 .befehl {
   border-left: 2px solid var(--kante);
   background: rgb(var(--unter) / .22);
   border-radius: 0 var(--rund-klein) var(--rund-klein) 0;
 }
-.befehl > summary {
-  cursor: pointer;
-  list-style: none;
-  font-family: var(--fest);
-  font-size: .8rem;
-  padding: .32rem .7rem;
-  overflow-wrap: anywhere;
-}
-.befehl > summary::-webkit-details-marker { display: none; }
-.befehl > summary:hover { color: var(--text); }
-.befehl .marke2 { color: var(--leiser); margin-right: .6rem; }
+.befehl > summary { font-family: var(--fest); }
 .befehl.aufruf   { border-left-color: var(--leise); }
 .befehl.ergebnis { border-left-color: var(--gut); }
 /* ⚑ Eine abgewiesene Ausfuehrung ist ein Befund und kein Fehler des
@@ -1373,13 +1385,6 @@ header > .kopfrechts { right: var(--kopf-polster); }
   overflow-wrap: anywhere;
   max-height: 20rem;
   overflow-y: auto;
-}
-/* ⚑ Ein Vorhaben ist Prosa des Modells und keine Kennung, also Fliesstext.
-   Daran erkennt man einen falschen Plan, bevor das Werkzeug ihn ausfuehrt. */
-.befehlsteil.plan .teiltext {
-  font-family: var(--schrift);
-  font-size: .84rem;
-  color: var(--leise);
 }
 .befehlsteil.befehlstext .teiltext { color: var(--text); }
 .befehlsteil.antwort .teiltext { color: var(--leise); }

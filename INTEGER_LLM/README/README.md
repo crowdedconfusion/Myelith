@@ -1,7 +1,7 @@
 # integer-llm
 
-> **Version:** 0.115.0 (θ_v 0.22.0; kernels 0.78.0, runtime 0.84.0, pipeline 0.15.1)
-> **Datum:** 2026-10-03
+> **Version:** 0.119.0 (θ_v 0.22.0; kernels 0.80.0, runtime 0.86.0, pipeline 0.15.1)
+> **Datum:** 2026-10-05
 > **Status:** ⚠️ **Das Akzeptanzkriterium ruht auf einer zu kleinen
 > Stichprobe.** Gemessen wurde bisher ueber **4 Sequenzen, 435
 > Positionen**; eine Messung ueber **32 Sequenzen, 3558 Positionen**
@@ -401,9 +401,11 @@ müssen zeichengleich sein.
 bash conformance/run.sh
 ```
 
-Fährt 48 eingefrorene Testvektoren gegen das Referenz-Backend, von
+Fährt 53 eingefrorene Testvektoren gegen das Referenz-Backend, von
 einzelnen Kernen über ganze Layer bis zu vollständigen
-Prompt-Durchläufen. **48/48 ist die Erwartung, nicht das Ziel.** Weicht
+Prompt-Durchläufen, seit dem 2026-10-05 auch den ternären Rechenweg
+(Kern, Drehung, Packen, Ableitung aus dem Master). **53/53 ist die
+Erwartung, nicht das Ziel.** Weicht
 auch nur einer ab, rechnet dieses Backend etwas anderes als der
 dokumentierte numerische Vertrag, und alle weiteren Zahlen sind
 bedeutungslos.
@@ -646,6 +648,277 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
   volle Paritätstests nur auf GPU-Runnern (nightly oder PR-basiert)
 
 ## Changelog
+
+### v0.119.0 – 2026-10-06 (das ternäre 35B trägt: datenabhängige Rundung mit Skalensuche; keine Kiste berührt)
+
+**Die voll ternären Experten des 35B sind funktional.** Nur
+`calibrate/src/ternaer_gptq.py` und seine Probe sind geändert; Kerne,
+Lader und Training bleiben, wie sie v0.118.0 gebaut hat.
+
+- **Datenabhängige Rundung am Modell gefahren.** Mitschnitt über 16 384
+  Token (WikiText-Training, Rust-Quelltext, deutsche Prosa, verschränkt;
+  20,4 Token/s, 7,5 GB), dann GPTQ je Experte über die Token, die der Router
+  ihm zuteilt, rund 105 s je Ebene. Gegenüber blossem Runden sinkt der
+  relative Ausgabefehler auf zurückgehaltenen Token um 8 bis 45 % je Ebene.
+- ⚑ **Skalensuche je Gruppe** (`SKALENFAKTOREN`, 0,6 bis 1,5 mal das
+  Betragsmittel, gewählt nach dem mit H gewichteten Fehler der Gruppe).
+  Ein Kurzversuch auf den Mitschnittdaten (Ebenen 3, 20, 37, je 16 Experten)
+  hat entschieden, welcher Hebel zuerst kommt:
+
+  | | gate | down |
+  |---|---|---|
+  | Skalensuche | −20 bis −29 % | −17 bis −20 % |
+  | Hadamard-Drehung allein | −3 bis −9 % | −5 bis −12 % |
+  | beides | −24 bis −34 % | −26 bis −31 % |
+
+  Über alle Ebenen sinkt der mittlere Ausgabefehler mit der Suche von 0,191
+  auf **0,149** (−22 %). Die Drehung bleibt ein möglicher weiterer Schritt,
+  vor allem für `down`.
+- **Prompt-Vergleich** (vier Prompts, 48 Token greedy, gegen int8):
+
+  | | blosses Runden | GPTQ | **GPTQ mit Skalensuche** |
+  |---|---|---|---|
+  | Rechnen 17 + 23 − 8 | 37 | 23 | ✅ **40, dann 40 − 8 = 32**, „The answer is 32“ |
+  | Paris | Schleife | erfunden | ✅ Siedlung eines gallischen Stammes, 1. Jh. v. Chr. |
+  | Fibonacci | Kopfzeile wiederholt | korrekt | ✅ korrekt |
+  | Deutsch | „dezentralen dezentralen …“ | Schleife | sinnvoll („keine zentrale Autorität“), wiederholt sich |
+
+  ⚠️ Vier Prompts sind ein Blick und keine Messung; im greedy Fliesstext
+  bleibt eine Neigung zu Wiederholungen. Die volle Messung ist mit dem
+  Projektinhaber verabredet und steht aus.
+- **Das Artefakt:** alle 40 Gemischebenen mit ternären Experten, Router,
+  geteilter Experte und Mischer int8; Experten **8,56 GB statt 32,21 GB**,
+  das Artefakt rund 9,4 GB statt 33 GB. Lokal abgelegt als
+  `artifacts/myelith-35b-a3b-ternaer` (nicht versioniert, wie alle
+  Artefakte). Training gegen Inferenz an diesem Artefakt, Ebenen 36 bis 39:
+  0 von 96 256 Werten verschieden.
+- **Proben:** `test_die_skalensuche_senkt_den_fehler` (0,023 gegen 0,046);
+  die beiden Eigenschaftsproben laufen mit `faktoren=(1.0,)`, denn ihre
+  Aussage gilt für dieselbe Skala.
+
+### v0.118.0 – 2026-10-05 (kernels 0.80.0, runtime 0.86.0: das 35B-Gemisch mit ternären Experten, gepackt, trainierbar und zurückschreibbar; blosses Runden trägt die Qualität nicht)
+
+⚑ **Auftrag des Projektinhabers:** das Flagship-Gemisch `myelith-35b-a3b`
+vollständig ternär und trainingsbereit, mit möglichst geringem Verlust;
+Vorrang hat, dass alles ternär läuft, das Training vorbereitet ist (nicht
+lokal durchgeführt), und die Qualität wird zuerst an Prompts beurteilt.
+
+- ⚑ **Was ternär wird: die gerouteten Experten, sonst nichts.** Router,
+  geteilter Experte und der ganze Mischer (Achtsamkeit, Zustandsschicht)
+  bleiben int8. Begründet aus L13 (Router und `out_proj` tragen ternär
+  nicht) und aus der Literatur zu quantisierten Gemischen (Achtsamkeit,
+  geteilte Experten und die ersten Blöcke sind die empfindlichen Teile; dort
+  quantisierte man allein die Experten). Die Experten tragen beim 35B rund
+  92 % der Gewichte.
+- **Inferenz mit gepackten ternären Experten.** `Expertenteil` und
+  `Stapelauftrag` tragen eine `Gewichtsmatrix` (int8 oder ternär) statt
+  `&[i8]`; der Gemischweg und der Stapelweg der Vorbereitung lesen
+  `QTensor::matrix()`. Der Lader lässt geroutete Experten ternär zu
+  (`mlp_experts_<n>_{gate,up,down}_proj_weight`), den geteilten Experten
+  ausdrücklich nicht. ⚠️ Ein Stapel mit einem ternären Auftrag rechnet auf
+  der CPU, die GPU nimmt dort nur int8 (bitgleich, nur langsamer; offen).
+- **Umwandlung** (`expertenumwandlung`, Werkzeug `experten_umwandeln`):
+  eine Kopie des int8-Artefakts mit ternär gerundeten Experten, gerundet mit
+  der Ableitung des Trainings (`master_aus_gewicht`, `ternaer_aus_master`);
+  `--ohne` und `--nur` wählen Ebenen; `--aus` nimmt die Experten aus einem
+  Verzeichnis (etwa einer datenabhängigen Rundung) und weist eine nicht
+  ternäre Gruppe mit Matrix, Zeile und Gruppe ab. Geschrieben wird in
+  `<ziel>.unfertig`, umbenannt erst am Ende (📌 ein abgewiesener Ersatz
+  hinterliess vorher ein halbes Ziel, das wie ein Artefakt aussah). Danach
+  packt `ternaer_packen` exakt.
+- **Am 35B:**
+
+  | | ternäre Experten | Experten | Umwandeln |
+  |---|---|---|---|
+  | A, alle 40 Ebenen | 30 720 Matrizen, 31,8 % Nullen | **8,56 GB** statt 32,21 GB | 112 s |
+  | B, ohne 0, 2, 4, 8, 10, 39 | 26 112 Matrizen | 7,27 GB statt 27,38 GB | 98 s |
+
+  Gepackt **bitgleich** zum ungepackten (gleiche Token, Probe Ebene 39).
+- ⛔️ **Blosses Runden trägt die Qualität nicht.** Prompt-Vergleich, vier
+  Prompts, 48 Token greedy: int8 korrekt; A und B fallen in
+  Wiederholungsschleifen, rechnen „17 + 23 = 37“ (A) und „= 30“ (B),
+  wiederholen bei Code die Kopfzeile (A) oder verlieren die Einrückung (B).
+  Empfindlichkeit je Ebene (`routerumwandlung`, 96 Token, grob): 39 +16 %,
+  2 +11,5 %, 4 +8,6 %, 8 und 10 +7,7 %, 0 +7,6 %; die Mitte im Rauschen.
+- **Für die datenabhängige Rundung gebaut, noch nicht am Modell gefahren:**
+  `expertenmitschnitt` schreibt je Gemischebene den normierten Eingang, die
+  Expertenwahl und den Eingang jeder `down`-Projektion;
+  `calibrate/src/ternaer_gptq.py` rundet je Experte mit GPTQ-Kompensation über
+  die Token, die der Router ihm zuteilt (Gitter des Formats und des
+  Trainings, Dämpfung 0,1); Probe `tests/test_ternaer_gptq.py` (ternär;
+  ohne Korrelation gleich dem blossen Runden; mit Korrelation 0,043 gegen
+  0,258 Ausgabefehler), Gegenprobe ohne Kompensation beisst.
+- ⚑ **Training: die Form folgt dem Artefakt je Matrix** (`Formregel`):
+  `Einheitlich` für int8 oder die Umwandlung eines int8-Modells,
+  `WieArtefakt` für ein ternäres Artefakt. `Ebene::ist_ternaer` zählt
+  Experten; `aus_modell` weist ternäre Gemische und Bereiche aus beiden
+  Arten nicht mehr ab (📌 beides stammte aus der Zeit vor L13);
+  `zustandsformen` ist die eine Stelle, an der Training und Schreiben die
+  Form der Zustandsschicht wählen.
+- **Stand → Artefakt für Gemische** (`stand_ins_artefakt`): Mischer, Router,
+  geteilter Experte mit Tor und die berührten Experten, jede Matrix in ihrer
+  Form; die übrigen Experten aus der Quelle.
+- **Belege am echten 35B** (B, Ebenen 36 bis 39, Ebene 39 mit int8-Experten):
+  Vorwärtspass des Trainings gegen die Inferenz **0 von 96 256** Werten
+  verschieden; Gegenprobe mit der alten einheitlichen Form **96 244 von
+  96 256** verschieden. Ein Trainingsschritt ab dem ternären Artefakt (rc 0,
+  264 s, 617 Experten berührt); Stand → Artefakt C (26 112 ternäre Matrizen
+  wie B); **C misst genau die Endwerte des Trainings** (48,1793 und 17,5634);
+  Vorwärtsvergleich an C 0; C lädt und erzeugt.
+- **Proben:** `formregel::die_form_folgt_der_regel`; Lader: Experten
+  zulässig, geteilter Experte und Router nicht, dazu Grenzfälle der Namen;
+  `expertenumwandlung` (Namen; jede Gruppe ternär, Rundung des Trainings).
+  `kernels` alle Tests, Clippy mit fünf Featuresätzen; `runtime` 168 Tests,
+  Clippy auch mit `cpu-simd`; `pipeline`, `myl-pod` grün; Clippy über alle
+  26 Kisten; `run.sh` 53/53 auf `reference`, `cpu-simd`, `metal`;
+  Mindestfassung 1.85 für beide; Gleitkomma-Audit (`expertenumwandlung.rs`
+  eingetragen).
+
+### v0.117.0 – 2026-10-05 (kernels 0.79.0: Konformitätsvektoren für den ternären Rechenweg, 53 statt 48)
+
+⚑ **Freigabe des Projektinhabers**, weil sich die Zahl der Vektoren und der
+Gesamtabdruck ändern.
+
+- **Neue Gruppe `ternaer`, fünf Vektoren**, jeder mit `herkunft:
+  unabhaengig`:
+
+  | Vektor | prüft | Randfall im Vektor |
+  |---|---|---|
+  | `linear_ternaer` | `linear_matrix` mit gepackten Gewichten | Code 3 (= +2), leere Gruppe, Betrag 32 767, eine Zeile sättigt bewusst |
+  | `packen_ternaer` | `ternaer::packen` | Betrag 30 000 |
+  | `ternaer_aus_master` | `trainingsschritt::ternaer_aus_master` | der doppelte Betrag genau gleich `a` (bleibt null) neben knapp darüber; eine Nullzeile |
+  | `drehen` | `drehung::drehen`, Rechtsshift | zwei Blöcke zu 1 024 |
+  | `drehen_saettigung` | dieselbe mit Linksshift | 288 von 2 048 Werten gesättigt |
+
+  ⚑ **Die Sollwerte rechnet `conformance/ternaer_erzeugen.py`**, eine
+  getrennte Umsetzung in reiner Ganzzahlarithmetik (eigene Rundung zur
+  geraden Zahl, eigene Bitstellen, die Hadamard-Matrix ausmultipliziert statt
+  schnell transformiert), mit einem festen Kongruenzgenerator; zwei Läufe
+  ergeben dieselben Bytes. Alle fünf bestanden gegen die Kerne beim ersten
+  Lauf.
+- 📌 **Drei Schwächen des eigenen Erzeugers, beim Bauen gefunden und mit
+  einer Bedingung im Erzeuger gesichert:** Die Schwellenprobe rechnete den
+  Gruppenbetrag vor dem Einsetzen der Prüfwerte, die ihn selbst verschieben,
+  und wurde danach vom Zeilenshift unsichtbar gemacht; `linear_ternaer`
+  sättigte drei von vier Zeilen; `drehen_saettigung` sättigte 2 028 von
+  2 048 Werten. **Ein gesättigter Sollwert verdeckt jeden Fehler davor.**
+- **Gegenproben, alle vier beissen:** Code 3 als +1 gelesen, Schwelle `>=`
+  statt `>`, Drehung rundet ab statt zur geraden Zahl, Packer vertauscht die
+  Codes.
+- **Eingebunden:** `kernels::konformitaet::ternaer_vektor_pruefen` (Probe
+  `ternaere_vektoren_des_repositoriums_bestehen`, Zahl fünf; ein Musterbyte
+  über 255 wird abgelehnt statt abgeschnitten), `golden_runner` (Ebene
+  `ternaer`), `conformance/run.sh` (eigene Stufe; ein **fehlendes**
+  Verzeichnis bricht den Lauf, statt still weniger zu prüfen), Testclient
+  (eigener Abdruck), CI und Release-Job.
+- **Belegt:** `run.sh` **53/53** gegen `reference`, `cpu-simd` und `metal`;
+  `kernels` alle Tests grün, Clippy mit allen fünf Featuresätzen sauber;
+  Testclient 22/22 mit `894d8357ae92b5c1` (unverändert), `f1b60342b9cfcdb6`
+  und `715529e71dfcfcfd`.
+
+### v0.116.0 – 2026-10-05 (runtime 0.85.0: Fund 520 geschlossen, ein Gemischstand kommt mit seinen Experten zurück; L13 eingegrenzt: `out_proj` bleibt int8, das Gesamtprofil lernt)
+
+- **Fund 520 geschlossen.** `stand_schreiben` schreibt jetzt `MYLSTAND2`: je
+  Ebene die Zahl der festen Matrizen und die **Nummern** der gewählten
+  Experten, dann die Werte wie bisher. `stand_lesen` stellt genau diese
+  Experten bereit (fehlende werden angelegt, nicht genannte gehen), prüft
+  die festen Matrizen gegen das Modell und lehnt überzählige Bytes ab.
+  `MYLSTAND1` bleibt lesbar, solange keine Ebene Experten trägt; ein alter
+  Gemischstand wird mit Grund abgelehnt statt geraten. `bereich_des_standes`
+  nimmt beide Kennungen. Neu an `Ebenenstand`: `expertennummern`,
+  `experten_setzen`.
+  - **Am echten Fall belegt (35B, ternär, Ebene 39, 172 von 256 Experten):**
+    Lauf A trainiert einen Schritt und schreibt den Stand (2,3 GB), Lauf B
+    liest ihn mit `--schritte 0`. B beginnt genau dort, wo A endet:
+    Lernmenge 6,4360 und Haltemenge 3,2090, Verlust 1,8619 und 1,1660 auf
+    allen Stellen gleich.
+  - **Vier neue Proben** (`standdatei`), **vier Gegenproben, alle beissen**:
+    Experten nicht bereitgestellt, fremde Experten bleiben stehen,
+    Restbytes hingenommen, dichte Ebene nimmt Experten.
+- **L13, zwei Eingrenzungsläufe** am 35B (Ebenen 36 bis 40, nur
+  `in_proj_qkv`, `in_proj_z`, `out_proj`, 4 × 4 Folgen, dieselben Daten wie
+  v0.115.0):
+
+  | Lauf | Perplexität vor dem Schritt je Durchgang | Haltemenge |
+  |---|---|---|
+  | ternär, Nenner 512 (v0.115.0) | 70 → 80 → 1 653 → 2 096 | 35,0 → 3 666 |
+  | **int8, Nenner 512** | 7,0 → 16,2 → 26,4 → 17,6 | 5,29 → 5,32 (+0,46 %) |
+  | **ternär, Nenner 2048** | 70 → 86 → 103 → 135 | 35,0 → 55,6 (+59 %) |
+
+  ⚑ **Int8 entgleist nicht, bewegt aber auch nur 0,0195 % der Gewichte.
+  Ternär mit einem Viertel der Schrittweite schadet langsamer, aber stetig.**
+  Es liegt also an der Richtung, nicht an der Schrittweite allein: Entweder
+  passt die ternäre Form an diesen Matrizen nicht zum Straight-Through-
+  Gradienten, oder der Gradient ist falsch. ⚠️ Beide Läufe ohne
+  Rauschnullpunkt; sie grenzen ein und belegen kein Lernen.
+- **Zwei Auswahlen zum Trennen** (`--nur-eingangsprojektionen`,
+  `--nur-out-proj`): `in_proj_qkv` und `in_proj_z` haben einen Gradienten
+  durch die Ableitung einer SiLU-Tabelle (Faltung mit SiLU, Tor `silu(z)`),
+  und genau dort liegt Fund 519 (die Ableitung ist in den flachen Enden ein
+  Kamm, gemessen an `in_proj_z` des 35B); `out_proj` hat keinen. Probe: Die
+  beiden Hälften ergeben zusammen die drei Projektionen und überschneiden
+  sich nicht.
+- ⚑ **Die Trennung, gemessen** (gleiche Daten und Einstellung, ternär,
+  Nenner 512, je mit kurzem Vorlauf):
+
+  | bewegt | Perplexität vor dem Schritt je Durchgang | Haltemenge |
+  |---|---|---|
+  | alle drei Projektionen (v0.115.0) | 70 → 80 → 1 653 → 2 096 | 35,0 → 3 666 |
+  | **nur `out_proj`** | 70 → 78 → 886 → 3 407 | 35,0 → 410 (+1 072 %) |
+  | **nur `in_proj_qkv`, `in_proj_z`** | 70 → 104 → 114 → 96 | **35,0 → 27,25 (−22,1 %)** |
+  | Rauschnullpunkt dazu (`--rauschen 1`, ohne Schritt) | | 35,0 → 34,93 (−0,22 %) |
+
+  ⚑ **`out_proj` entgleist ternär allein, und sein Gradient läuft durch
+  keine SiLU-Ableitung: Fund 519 ist nicht die Ursache.** Es ist die
+  ternäre Form der Projektion, die unmittelbar in den Residualstrom
+  schreibt. **Die Eingangsprojektionen lernen ternär**, mit Abstand zum
+  Rauschnullpunkt (−22,1 % gegen −0,22 %, wobei die Störung 0,87 % der
+  Gewichte bewegt und das Training 0,023 %). ⚠️ Die Haltemenge sind vier
+  Folgen mit 508 Positionen; ein Beleg der Richtung, nicht der Grösse.
+- ⚑ **`out_proj` folgt dem Artefakt** (`zustandsschicht_aus_mastern`,
+  Entscheidung des Projektinhabers nach kritischer Prüfung): ternär nur,
+  wenn das Artefakt es ternär trägt (ein Import wie das gedrehte 27B), sonst
+  int8, auch in einem ternären Bereich. `in_proj_qkv` und `in_proj_z` bleiben
+  ternär. Geprüft wurde dreierlei:
+  - **Kein Fehler an der Stelle:** `out_proj` wird über seine echte
+    Eingangsbreite (4 096) abgeleitet, wie die Zeilennormierung; Vorwärts-
+    und Rückweg teilen dieselbe Funktion.
+  - **Das Gegenargument:** Das gedrehte 27B trägt ein ternäres `out_proj`.
+    Deshalb nicht „immer int8“; mit der eigenen Drehung ist es neu zu messen.
+  - **Das Gesamtprofil** (alles bewegt, ternär, sonst wie oben):
+
+    | | Haltemenge vorher | nach 4 Durchgängen |
+    |---|---|---|
+    | `out_proj` ternär (v0.115.0, „alles“) | 35,0 | 463 (entgleist) |
+    | **`out_proj` int8** | **25,9** | **24,66 (−4,65 %)**, Lernfolgen −29,9 % |
+    | Rauschnullpunkt dazu | 25,9 | 25,69 (−0,70 %) |
+
+    Die bloße Rundung schadet weniger (25,9 statt 35,0), und das Training
+    lernt mit Abstand zum Rauschen. ⚠️ Der Abstand von Lern- und Haltemenge
+    zeigt auch Auswendiglernen; vier Haltefolgen.
+  - **Kosten:** 30 Zustandsebenen × 2 048 × 4 096 = 252 Mio. Gewichte in int8
+    statt ternär, rund 0,2 GB.
+- **Urteilszeile bei `--schritte 0`:** Sie riet zu einer grösseren Rate,
+  obwohl keine Rate wirkte; jetzt „keine Schritte verlangt: gemessen, nicht
+  trainiert“.
+
+### v0.115.1 – 2026-10-05 (das Gleitkomma-Audit kennt die drei neuen Dateien des Trainings und des Decodes)
+
+Keine Kiste berührt, nur `tests/audit/test_no_float.py`.
+
+- **Die CI war seit dem Push vom 2026-09-30 rot**, im Schritt „Audit,
+  Gleitkomma und Skalen“. Die Vollständigkeitsprüfung meldete drei Dateien
+  in einem Konsens-Crate, die in keiner Liste standen:
+  `kernels/src/zustandsrueckweg.rs` (v0.114.0), `runtime/src/zustandstraining.rs`
+  (v0.114.0) und `runtime/src/lookahead.rs` (v0.111.0). Sie stehen jetzt im
+  Heisspfad, je mit dem Grund daneben.
+- **Kein Gleitkomma im Rechenpfad:** Die `f64` in `zustandsrueckweg.rs`
+  stehen ausschliesslich unter `#[cfg(test)]` (Verlust und Tabellen der
+  Proben), die beiden anderen Dateien haben keine. Belegt durch den Lauf
+  danach: null Treffer.
+- 📌 **Die Prüfung hat getan, wofür sie gebaut ist**, und es hat zwei Pushes
+  gedauert, bis jemand hinsah. Wer eine Datei in `kernels/src` oder
+  `runtime/src` anlegt, trägt sie im selben Zug in die Liste ein.
 
 ### v0.115.0 – 2026-10-03 (runtime 0.84.0: L13, erster Teil: die Expertenwahl unter ternärer Umwandlung gemessen, der Gemischweg trainiert ternär mit hochaufgelöstem Router, ein langer Lauf entgleist an der Zustandsschicht; Fund 520)
 

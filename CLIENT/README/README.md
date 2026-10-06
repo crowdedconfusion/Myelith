@@ -1,7 +1,7 @@
 # client (Nutzer-Client inkl. Wallet)
 
-> **Version:** 0.113.0 (`myl-client` 0.79.0, `myl-oberflaeche` 0.58.1, `myl-console` 0.28.1, `myl-senses` 0.11.0)
-> **Datum:** 2026-09-30
+> **Version:** 0.114.0 (`myl-client` 0.79.0, `myl-oberflaeche` 0.59.0, `myl-console` 0.28.1, `myl-senses` 0.11.0)
+> **Datum:** 2026-10-05
 > **Status:** ✅ **Der lokale Betrieb läuft und ist ausgeliefert.** Ein
 > Gesprächsfenster mit Modellwahl, Agentenschleife und
 > Einstellungsseite; aus einem frischen Klon lassen sich darüber
@@ -159,6 +159,75 @@ Modell überhaupt etwas taugt, und weil eine Schnittstelle, die kein
 Mensch je bedient hat, an den Bedürfnissen vorbei entworfen wird.
 
 ## Changelog
+
+### v0.114.0 – 2026-10-05 (der Verlauf einer Antwort als Zeitleiste: jeder Gedanke, jede Zwischenausgabe, jeder Werkzeugaufruf für sich)
+
+`myl-oberflaeche` 0.59.0. **Auftrag des Projektinhabers.**
+
+- **Was vorher war:** Zwei Klappen je Antwort. In der einen standen alle
+  Überlegungen als ein Faden, durch `· · ·` verbunden, in der anderen alle
+  Befehle. Nach einem Werkzeugaufruf schrieb die neue Überlegung damit
+  sichtbar im alten Faden weiter, und welcher Befehl zwischen welchen zwei
+  Gedanken lief, war nicht zu sehen. **Die Daten trugen die Reihenfolge
+  immer**; verloren ging sie erst beim Zeichnen.
+- **Was jetzt ist:** Oben das Ladezeichen, darunter die Zeile „3-mal
+  nachgedacht, 2 Werkzeugaufrufe“ und darunter „Schritt 3 von 40“. Ein Klick
+  öffnet die Zeitleiste: Gedanken, Zwischenausgaben und Befehle in der
+  Reihenfolge ihres Entstehens, **jeder Eintrag zugeklappt**, ein Gedanke
+  mit seinem ersten Satz als Titel, ein Befehl mit Befehl und Antwort. Die
+  Zeile sagt, was gerade geschieht („denkt gerade nach …“, „ein Werkzeug
+  läuft …“). Gilt für Chat, Agent und Loop, denn alle drei gehen über
+  denselben Live-Weg.
+- **Zwischenausgaben wandern in die Zeitleiste.** Was das Modell vor einem
+  Werkzeugvorschlag schreibt, blieb live im Antworttext stehen, und alles
+  nach dem Werkzeug wurde daran angehängt; erst die Rückgabe am Ende räumte
+  auf. Jetzt wird es beim Vorschlag ein eigener Eintrag, wie die Rückgabe es
+  als `plan` ohnehin führt, und die Antwort beginnt wieder leer.
+- **Der Schritt steht nicht mehr in der Fusszeile**, sondern unter der
+  Zählung, und bleibt nach dem Lauf dort stehen. Die Fusszeile trägt wieder
+  nur Dauer und Abschluss.
+- **Entfallen:** `denkfaden`, `denkueberschrift`, `befehlszeile`,
+  `schritte_buendeln`, `befehl_zeichnen` und die Texte für „Vorhaben“ und
+  „n Befehle ausgeführt“; das Vorhaben ist jetzt ein eigener Eintrag.
+- **Proben:** `befehle_und_nachdenken_stehen_gebuendelt` ist ersetzt durch
+  `der_verlauf_steht_in_der_reihenfolge_seines_entstehens` (eine Klappe für
+  den Verlauf, je Eintrag eine eigene, die zu beginnt; kein verbindender
+  Faden; Zwischenausgabe wandert; Texte in beiden Sprachen).
+  `das_ladezeichen_steht_beim_beitrag` verlangt das Zeichen oben im Verlauf.
+  **Vier Gegenproben, alle beissen** (Zwischenausgabe bleibt stehen, Eintrag
+  beginnt offen, Zeichen nicht oben, Zeichen kommt nach dem Schreiben nicht
+  wieder).
+- **Belegt:** 80 Tests grün, Clippy mit `-D warnings` (Rust 1.99) sauber.
+  Unter `node` am Skript selbst sechs Verhaltensprüfungen (Reihenfolge,
+  Paarung eines Befehls mit späterer Antwort an seinem Platz, erster Satz
+  mit `3.5` und `datei.rs`, leerer Gedanke, Zählzeile deutsch und
+  englisch, Schrittzeile). ⚠️ **Im echten Fenster noch nicht angesehen.**
+- ⚠️ **Nachtrag zu v0.113.1:** Dort war `tauri.conf.json` beim Sprung auf
+  0.58.2 nicht mitgezogen, und `die_buendelversion_ist_die_kistenversion`
+  wäre rot gewesen. Die Tests dort liefen vor dem Sprung. Mit 0.59.0 stehen
+  beide wieder gleich.
+
+### v0.113.1 – 2026-10-05 (die CI ist wieder grün: eine Probe, die Clippy 1.99 anmahnt)
+
+`myl-oberflaeche` 0.58.2.
+
+- **Die CI war seit dem Push vom 2026-09-30 rot**, im Schritt „cargo
+  clippy (alle Crates)“, ohne dass sich an der Stelle etwas geändert
+  hatte. Clippy 1.99 (seit dem 2026-09-28 die stabile Fassung, die die CI
+  bei jedem Lauf neu holt) meldet `single_element_loop` auch für eine
+  Schleife über ein Feld mit einem Element. Getroffen hat es
+  `wer_horcht_braucht_die_erlaubnis_dazu` in `tests/oberflaeche.rs`, die
+  über `["main"]` lief. Jetzt steht das Fenster als einzelner Wert da;
+  die Prüfung ist dieselbe.
+- **Belegt:** Clippy mit 1.99 über alle 26 Kisten und die vier
+  Kernel-Features, nur diese Stelle rot; danach `myl-oberflaeche` grün
+  (Clippy mit `-D warnings`, 80 Tests, Mindestfassung 1.88). Dieselben
+  26 Kisten unter Linux (arm64, im Behälter) mit 1.98 grün. ⚠️ Lokal nicht
+  geprüft: x86_64 unter Linux und Windows.
+- 📌 **Die CI nimmt immer die neueste stabile Fassung, die Arbeitsmaschine
+  nicht von selbst.** Lokal stand noch 1.97.1, und Clippy war damit
+  überall grün. Wer lokal prüft, was die CI prüft, holt vorher
+  `rustup update stable`.
 
 ### v0.113.0 – 2026-09-30 (der örtliche Agent zieht nach `AGENT_LAYER`; gespeicherte Kistenpfade ziehen mit; Fund 511)
 

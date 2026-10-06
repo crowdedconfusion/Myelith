@@ -563,11 +563,16 @@ pub fn mlp_matrix_stapel(
 }
 
 /// Die drei Matrizen eines Experten, wie ein Buendel sie sieht.
+///
+/// ⚑ **int8 oder ternaer** ([`Gewichtsmatrix`], seit 2026-10-05): Die
+/// gerouteten Experten eines Gemischs tragen fast alle Gewichte, und gerade
+/// sie vertragen die ternaere Form. Der Buendelweg rechnet beide Formen
+/// schon; hier wird die Form nur durchgereicht.
 #[derive(Clone, Copy)]
 pub struct Expertenteil<'a> {
-    pub gate: &'a [i8],
-    pub up: &'a [i8],
-    pub down: &'a [i8],
+    pub gate: Gewichtsmatrix<'a>,
+    pub up: Gewichtsmatrix<'a>,
+    pub down: Gewichtsmatrix<'a>,
     pub gate_shifts: &'a [u8],
     pub up_shifts: &'a [u8],
     pub down_shifts: &'a [u8],
@@ -667,7 +672,7 @@ pub fn mlp_int_experten_je_skala(
     let mut vorne: Vec<Buendelteil<'_>> = Vec::with_capacity(2 * experten.len());
     for (e, s) in experten {
         vorne.push(Buendelteil {
-            w: Gewichtsmatrix::Int8(e.gate),
+            w: e.gate,
             x,
             in_features: hidden_size,
             w_shifts: e.gate_shifts,
@@ -675,7 +680,7 @@ pub fn mlp_int_experten_je_skala(
             aus: Ausgangsskala::Eine(s.gate_out_frac),
         });
         vorne.push(Buendelteil {
-            w: Gewichtsmatrix::Int8(e.up),
+            w: e.up,
             x,
             in_features: hidden_size,
             w_shifts: e.up_shifts,
@@ -723,7 +728,7 @@ pub fn mlp_int_experten_je_skala(
         .iter()
         .zip(hs.iter())
         .map(|((e, s), h)| Buendelteil {
-            w: Gewichtsmatrix::Int8(e.down),
+            w: e.down,
             x: h,
             // ⚑ Die Breite aus dem Experten selbst: Ein geteilter Experte
             //   darf breiter sein als die gerouteten.
@@ -950,9 +955,9 @@ mod stapeltests {
 
             let teile: Vec<Expertenteil<'_>> = (0..n)
                 .map(|i| Expertenteil {
-                    gate: &gate[i],
-                    up: &up[i],
-                    down: &down[i],
+                    gate: Gewichtsmatrix::from(&gate[i]),
+                    up: Gewichtsmatrix::from(&up[i]),
+                    down: Gewichtsmatrix::from(&down[i]),
                     gate_shifts: &gs[i],
                     up_shifts: &us[i],
                     down_shifts: &ds[i],
@@ -1016,7 +1021,7 @@ mod stapeltests {
             .map(|(i, f)| {
                 (
                     Expertenteil {
-                        gate: &gate[i], up: &up[i], down: &down[i],
+                        gate: Gewichtsmatrix::from(&gate[i]), up: Gewichtsmatrix::from(&up[i]), down: Gewichtsmatrix::from(&down[i]),
                         gate_shifts: &gs[i], up_shifts: &us[i], down_shifts: &ds[i],
                     },
                     Expertenskala { gate_out_frac: f.1, up_out_frac: f.2, down_in_frac: f.3 },

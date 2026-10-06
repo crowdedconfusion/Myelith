@@ -153,8 +153,12 @@ jobs:
           # Trainings- oder MoE-Kern waere veroeffentlicht worden, und
           # genau dessen Bitgleichheit ist die Zusage, die dieses
           # Release gibt.
+          # ⚑ Seit dem 2026-10-05 drei: dazu `konformitaet_ternaer` (fuenf
+          # Vektoren des ternaeren Rechenwegs); der Gesamtwert umfasst
+          # zweiundzwanzig, bis dahin siebzehn (`6da384ba301b9454`).
           for paar in "894d8357ae92b5c1:konformitaet_op (6 Vektoren)" \
-                      "6da384ba301b9454:konformitaet gesamt (17 Vektoren)"; do
+                      "f1b60342b9cfcdb6:konformitaet_ternaer (5 Vektoren)" \
+                      "715529e71dfcfcfd:konformitaet gesamt (22 Vektoren)"; do
             abdruck="${paar%%:*}"; was="${paar#*:}"
             if ! grep -q "$abdruck" release-konf/*.jsonl; then
               echo "FEHLER: dieses Binary rechnet anders als das Netz."
@@ -163,7 +167,7 @@ jobs:
               exit 1
             fi
           done
-          echo "Konformitaet belegt fuer ${{ matrix.ziel }}: 17 Vektoren"
+          echo "Konformitaet belegt fuer ${{ matrix.ziel }}: 22 Vektoren"
 
       # ⚑ **Warum der Client keinen eigenen Konformitaetslauf bekommt.**
       # Er koennte einen haben, und er waere eine Doppelung: `myl` und

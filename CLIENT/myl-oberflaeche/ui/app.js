@@ -281,22 +281,23 @@ const TEXTE = {
     "ausgabe.fehler": (f) => `Fehler beim Ausgeben: ${f}`,
     "umbenennen.label": (was) => `${was} umbenennen`,
 
-    "denken.mal": (n) => (n === 1 ? "1 Mal nachgedacht" : `${n} Mal nachgedacht`),
+    "verlauf.zeile": (denken, befehle) =>
+      [
+        denken > 0 ? `${denken}-mal nachgedacht` : "",
+        befehle > 0 ? `${befehle} ${befehle === 1 ? "Werkzeugaufruf" : "Werkzeugaufrufe"}` : "",
+      ]
+        .filter(Boolean)
+        .join(", ") || "Zwischenausgabe",
+    "verlauf.schritt": (n, von) => (von ? `Schritt ${n} von ${von}` : `Schritt ${n}`),
+    "verlauf.denkt": "Denkt nach …",
     "denken.jetzt": " · denkt gerade nach …",
-    "befehl.laufend": (getan) =>
-      getan === 0
-        ? "Befehl wird ausgeführt …"
-        : `${getan} ${getan === 1 ? "Befehl" : "Befehle"} ausgeführt · einer läuft …`,
-    "befehl.vorhaben": "Vorhaben",
+    "befehl.jetzt": " · ein Werkzeug läuft …",
     "befehl.befehl": "Befehl",
     "befehl.antwort": "Antwort",
     "befehl.aussteht": "Antwort steht noch aus…",
     "befehl.ohne": "Keine Antwort erhalten",
     "befehl.unlesbar": "Nicht lesbarer Vorschlag",
     "befehl.ohne_aufruf": "Antwort ohne erkannten Befehl",
-    "befehl.keine": "Keine Befehle ausgeführt",
-    "befehl.eins": "1 Befehl ausgeführt",
-    "befehl.viele": (n) => `${n} Befehle ausgeführt`,
     "lauf.arbeitet": "arbeitet",
     "antwort.keine": "(keine Schlussantwort)",
 
@@ -546,22 +547,23 @@ const TEXTE = {
     "ausgabe.fehler": (f) => `Export failed: ${f}`,
     "umbenennen.label": (was) => `Rename ${was.toLowerCase()}`,
 
-    "denken.mal": (n) => (n === 1 ? "Thought once" : `Thought ${n} times`),
+    "verlauf.zeile": (denken, befehle) =>
+      [
+        denken > 0 ? (denken === 1 ? "Thought once" : `Thought ${denken} times`) : "",
+        befehle > 0 ? `${befehle} ${befehle === 1 ? "tool call" : "tool calls"}` : "",
+      ]
+        .filter(Boolean)
+        .join(", ") || "Intermediate output",
+    "verlauf.schritt": (n, von) => (von ? `Step ${n} of ${von}` : `Step ${n}`),
+    "verlauf.denkt": "Thinking …",
     "denken.jetzt": " · thinking …",
-    "befehl.laufend": (getan) =>
-      getan === 0
-        ? "Running a command …"
-        : `${getan} ${getan === 1 ? "command" : "commands"} run · one running …`,
-    "befehl.vorhaben": "Intent",
+    "befehl.jetzt": " · a tool is running …",
     "befehl.befehl": "Command",
     "befehl.antwort": "Response",
     "befehl.aussteht": "Response still pending…",
     "befehl.ohne": "No response received",
     "befehl.unlesbar": "Unreadable proposal",
     "befehl.ohne_aufruf": "Response without a recognised command",
-    "befehl.keine": "No commands run",
-    "befehl.eins": "1 command run",
-    "befehl.viele": (n) => `${n} commands run`,
     "lauf.arbeitet": "working",
     "antwort.keine": "(no final answer)",
 
@@ -2021,17 +2023,17 @@ function beitrag_zeichnen(b) {
     return wurzel;
   }
 
-  // ⚑ **Zwei Klappen je Antwort: das Nachdenken und die Befehle**
-  // (Auftrag des Projektinhabers, 2026-09-14). Siehe `bloecke`.
-  for (const block of bloecke(b)) wurzel.append(block);
-  // ⚑ **Das Ladezeichen steht dort, wo gleich die Antwort steht**, und
-  // nicht in einer Zeile am Fensterrand.
+  // ⚑ **Das Ladezeichen steht oben, und darunter der Verlauf** (Auftrag
+  // des Projektinhabers, 2026-10-05): erst das Zeichen, dann die Zeile
+  // „3-mal nachgedacht, 2 Werkzeugaufrufe“ mit dem Schritt, dann die
+  // Antwort. Siehe `verlauf_zeichnen`.
   //
   // 📌 **Vorher stand „der Agent faehrt" unter der Eingabe.** Das ist
   // die falsche Stelle: Wer auf eine Antwort wartet, sieht auf den
   // Fleck, an dem sie erscheinen wird, und nicht ans andere Ende des
-  // Fensters. Dazu belegte es die Zeile, die jetzt sagt, welches
-  // Modell im Speicher liegt.
+  // Fensters. Bis CLIENT v0.113.1 stand das Zeichen deshalb unter dem
+  // wachsenden Text; seit Zwischenausgaben in die Zeitleiste wandern,
+  // ist der Platz ueber der Antwort derselbe Fleck.
   //
   // 📌 **Und hier stand `&& !b.text && !schritte.length`**, also „nur
   // solange noch gar nichts da ist". Das war falsch, und der
@@ -2044,18 +2046,16 @@ function beitrag_zeichnen(b) {
   // ⚑ **Es haengt am Lauf und nicht am Inhalt**, aber es schweigt,
   // **solange das Modell schreibt** (Festlegung des Projektinhabers,
   // 2026-09-24). Wenn Text ankommt, ist der wachsende Text selbst die
-  // Auskunft, dass es weitergeht, und ein Zeichen darunter waere doppelt.
+  // Auskunft, dass es weitergeht, und ein Zeichen darueber waere doppelt.
   // Es steht, waehrend geladen, nachgedacht oder ein Werkzeug gerufen
   // wird, und kommt nach jedem Werkzeugschritt wieder, denn dann rechnet
   // das Modell ohne sichtbaren Zuwachs weiter (das war Fund 292). Wer
   // `b.schreibt` setzt und loescht, steht in `live_meldung`.
   let laufzeichen = null;
   if (b.laufend && !b.schreibt) {
-    // ⚑ Angehaengt wird es **am Ende** dieser Funktion, damit es unter
-    // allem steht, was schon da ist: Ein Zeichen ueber dem wachsenden
-    // Text saehe aus, als gehoerte es zu etwas Vergangenem.
     laufzeichen = laufzeichen_bauen();
   }
+  wurzel.append(verlauf_zeichnen(b, laufzeichen));
 
   // 📌 **`t` heisst hier nicht `t`.** Die Uebersetzung heisst so, und
   // eine lokale Bindung desselben Namens verdeckt sie **im ganzen
@@ -2136,29 +2136,30 @@ function beitrag_zeichnen(b) {
     });
     wurzel.append(kasten);
   }
-  if (laufzeichen) wurzel.append(laufzeichen);
   return wurzel;
 }
 
-// ⚑ **Aus der Schrittfolge werden zwei Klappen** (Auftrag des
-// Projektinhabers, 2026-09-14): **eine fuer das Nachdenken**, als ein Faden
-// ueber den ganzen Lauf fortgesetzt und waehrenddessen Token fuer Token
-// wachsend, und **eine fuer die Befehle**, jeder darin einzeln aufklappbar
-// mit dem genauen Befehl und der Antwort des Werkzeugs.
+// --- Der Verlauf einer Antwort -------------------------------------------
 //
-// 📌 **Bis dahin bekam jede Ueberlegung ihre eigene Klappe** und jede Folge
-// von Werkzeugschritten eine weitere (Festlegung vom 2026-09-10, damals
-// gegen eine Ueberlegung, die in der Befehlsliste landete). Bei zehn
-// Schritten standen zwanzig Klappen untereinander, und die Antwort eines
-// Werkzeugs war eine Zeile von 200 Zeichen. **Die Trennung der Ueberlegungen
-// bleibt sichtbar**, als Trenner im Faden, und die Zahl in der Ueberschrift
-// zaehlt sie.
+// ⚑ **Jeder Gedanke, jede Zwischenausgabe und jeder Werkzeugaufruf ist ein
+// eigener Eintrag, in der Reihenfolge seines Entstehens** (Auftrag des
+// Projektinhabers, 2026-10-05). Ueber allem steht eine Zeile, die zaehlt
+// („3-mal nachgedacht, 2 Werkzeugaufrufe“), darunter der Schritt des
+// Agenten; ein Klick darauf oeffnet die Zeitleiste. **Jeder Eintrag darin
+// steht zu**, ein Gedanke mit seinem ersten Satz als Titel, und wird
+// einzeln aufgeklappt.
+//
+// 📌 **Bis CLIENT v0.113.1 standen hier zwei Klappen**: ein Denkfaden, in
+// dem alle Ueberlegungen durch `· · ·` verbunden waren, und eine
+// Befehlsliste daneben. Nach einem Werkzeugaufruf schrieb die neue
+// Ueberlegung damit sichtbar im alten Faden weiter, und welcher Befehl
+// zwischen welchen zwei Gedanken lief, war nicht mehr zu sehen. Die Daten
+// trugen die Reihenfolge immer; verloren ging sie erst beim Zeichnen.
 //
 // ⚑ **Die Schlussantwort steht nicht dabei**: Sie ist der Text darunter,
-// und zweimal dasselbe zu zeigen ist keine Vollstaendigkeit.
-
-/// Zwischen zwei Ueberlegungen im fortgesetzten Faden.
-const TRENNER = "\n\n· · ·\n\n";
+// und zweimal dasselbe zu zeigen ist keine Vollstaendigkeit. **Eine
+// Zwischenausgabe schon**: Was das Modell vor einem Werkzeugaufruf
+// schreibt, ist nicht die Antwort, sondern ein Teil des Weges dorthin.
 
 /// **Welche Klappen eines Beitrags offen stehen.**
 ///
@@ -2171,7 +2172,7 @@ const klappzustaende = new WeakMap();
 const klappzustand = (b) => {
   let z = klappzustaende.get(b);
   if (!z) {
-    z = { denken: false, befehle: false, befehl: new Set() };
+    z = { verlauf: false, eintrag: new Set() };
     klappzustaende.set(b, z);
   }
   return z;
@@ -2188,103 +2189,132 @@ const klappe = (klasse, ueberschrift, offen, merken) => {
   return d;
 };
 
-/// **Die Schritte eines Beitrags, gebuendelt**: alle Ueberlegungen in ihrer
-/// Reihenfolge und alle Befehle mit ihrer Antwort.
+/// **Die Schritte eines Beitrags als Zeitleiste**: Gedanken und
+/// Zwischenausgaben je fuer sich, jeder Befehl mit seiner Antwort.
 ///
-/// ⚑ **Befehl und Antwort werden der Reihe nach gepaart.** Live meldet der
-/// Ruecken Aufruf und Ergebnis abwechselnd; die Rueckgabe am Ende nennt
-/// erst alle Aufrufe einer Modellantwort und dann alle Ergebnisse. Die
-/// erste noch offene Antwort gehoert in beiden Faellen zum ersten noch
-/// offenen Befehl. Ein Vorhaben (was das Modell vor dem Aufruf schrieb)
-/// geht an den naechsten Befehl.
-const schritte_buendeln = (schritte) => {
-  const denken = [];
-  const befehle = [];
+/// ⚑ **Befehl und Antwort werden der Reihe nach gepaart, und der Befehl
+/// behaelt seinen Platz.** Live meldet der Ruecken Aufruf und Ergebnis
+/// abwechselnd; die Rueckgabe am Ende nennt erst alle Aufrufe einer
+/// Modellantwort und dann alle Ergebnisse. Die erste noch offene Antwort
+/// gehoert in beiden Faellen zum ersten noch offenen Befehl, und der steht
+/// dort, wo er vorgeschlagen wurde.
+const zeitleiste = (schritte) => {
+  const eintraege = [];
   const offen = [];
-  let vorhaben = "";
-  const neu = (e) => {
-    befehle.push({ vorhaben, ...e });
-    vorhaben = "";
-    return befehle.length - 1;
-  };
   for (const z of schritte) {
-    if (z.art === "denken") {
-      denken.push(z.text);
-    } else if (z.art === "plan") {
-      vorhaben = vorhaben ? `${vorhaben}\n${z.text}` : z.text;
+    if (z.art === "denken" || z.art === "plan") {
+      eintraege.push({ art: z.art, text: z.text });
     } else if (z.art === "aufruf") {
-      offen.push(neu({ art: "aufruf", kurz: z.text, voll: z.voll || z.text, antwort: null }));
+      offen.push(eintraege.length);
+      eintraege.push({ art: "aufruf", kurz: z.text, voll: z.voll || z.text, antwort: null });
     } else if (z.art === "ergebnis") {
       const i = offen.shift();
       if (i === undefined) {
-        neu({ art: "ergebnis", kurz: t("befehl.ohne_aufruf"), voll: "", antwort: z.text });
+        eintraege.push({ art: "ergebnis", kurz: t("befehl.ohne_aufruf"), voll: "", antwort: z.text });
       } else {
-        befehle[i].antwort = z.text;
+        eintraege[i].antwort = z.text;
       }
     } else if (z.art === "abgelehnt") {
       const [name, ...grund] = z.text.split(": ");
-      neu({ art: "abgelehnt", kurz: name, voll: name, antwort: grund.join(": ") });
+      eintraege.push({ art: "abgelehnt", kurz: name, voll: name, antwort: grund.join(": ") });
     } else if (z.art === "unlesbar") {
-      neu({ art: "unlesbar", kurz: t("befehl.unlesbar"), voll: z.text, antwort: t("befehl.unlesbar") });
+      eintraege.push({ art: "unlesbar", kurz: t("befehl.unlesbar"), voll: z.text, antwort: t("befehl.unlesbar") });
     }
   }
-  return { denken, befehle };
+  return eintraege;
 };
 
-/// Der fortgesetzte Denkfaden eines Beitrags.
-const denkfaden = (b) =>
-  (b.schritte || []).filter((z) => z.art === "denken").map((z) => z.text).join(TRENNER);
+const ist_befehl = (e) => e.art !== "denken" && e.art !== "plan";
 
-const denkueberschrift = (b) => {
-  const n = (b.schritte || []).filter((z) => z.art === "denken").length;
-  return t("denken.mal", n) + (b.laufend && b.denkt ? t("denken.jetzt") : "");
+/// **Der erste Satz eines Textes, als Titel.**
+///
+/// ⚑ Ein Satz endet an `.`, `!`, `?` oder `…` vor einem Leerzeichen, oder
+/// am Zeilenende; ein Punkt in `3.5` oder `datei.rs` beendet ihn nicht.
+/// Laenger als eine Zeile wird er abgeschnitten, denn ein Titel, der
+/// umbricht, ist kein Titel mehr.
+const erster_satz = (text) => {
+  const s = (text || "").trim();
+  if (!s) return "";
+  const zeile = s.split("\n")[0].trim();
+  const ende = zeile.search(/[.!?…](\s|$)/);
+  const satz = ende >= 0 ? zeile.slice(0, ende + 1) : zeile;
+  return satz.length > 110 ? `${satz.slice(0, 108).trimEnd()}…` : satz;
 };
 
-const bloecke = (b) => {
-  const { denken, befehle } = schritte_buendeln(b.schritte || []);
+/// Der Titel eines Gedankens oder einer Zwischenausgabe; solange noch kein
+/// Wort da ist, sagt er, was geschieht.
+const eintragstitel = (e) => erster_satz(e.text) || (e.art === "denken" ? t("verlauf.denkt") : "…");
+
+/// **Die Zeile ueber der Zeitleiste**: wie oft nachgedacht, wie viele
+/// Werkzeugaufrufe, und was gerade geschieht.
+///
+/// 📌 **Solange ein Befehl laeuft, sagt die Zeile das.** Ein „2
+/// Werkzeugaufrufe“ waehrend der Ausfuehrung des zweiten waere eine
+/// Aussage ueber etwas, das noch nicht geschehen ist.
+const verlaufszeile = (b, eintraege) => {
+  const denken = eintraege.filter((e) => e.art === "denken").length;
+  const befehle = eintraege.filter(ist_befehl);
+  let zeile = t("verlauf.zeile", denken, befehle.length);
+  if (b.laufend && b.denkt) zeile += t("denken.jetzt");
+  else if (b.laufend && befehle.some((e) => e.antwort === null)) zeile += t("befehl.jetzt");
+  return zeile;
+};
+
+/// „Schritt 3 von 40“, oder nichts, solange der Agent keinen meldet.
+const schrittzeile = (b) => (b.schritt ? t("verlauf.schritt", b.schritt.nummer, b.schritt.grenze) : "");
+
+/// **Kopf und Zeitleiste eines Beitrags**: oben das Ladezeichen, darunter
+/// die zaehlende Zeile mit dem Schritt, aufgeklappt die Eintraege.
+///
+/// ⚑ **Das Ladezeichen steht ueber der Zeile, die zaehlt** (Auftrag des
+/// Projektinhabers, 2026-10-05), und damit ueber der Stelle, an der die
+/// Antwort erscheinen wird. Es kommt hier nicht hinein, sondern von
+/// `beitrag_zeichnen`, weil es am Lauf haengt und nicht am Verlauf.
+const verlauf_zeichnen = (b, laufzeichen) => {
+  const kasten = document.createElement("div");
+  kasten.className = "verlauf";
+  if (laufzeichen) kasten.append(laufzeichen);
+  const eintraege = zeitleiste(b.schritte || []);
   const zustand = klappzustand(b);
-  const aus = [];
-  if (denken.length > 0) {
-    const d = klappe("denken", denkueberschrift(b), zustand.denken, (o) => {
-      zustand.denken = o;
-    });
-    const faden = document.createElement("div");
-    faden.className = "denktext";
-    faden.textContent = denken.join(TRENNER);
-    d.append(faden);
-    aus.push(d);
+  const schritt = schrittzeile(b);
+  if (eintraege.length === 0) {
+    if (schritt) {
+      const s = document.createElement("div");
+      s.className = "schrittzeile";
+      s.textContent = schritt;
+      kasten.append(s);
+    }
+    return kasten;
   }
-  if (befehle.length > 0) {
-    const d = klappe("befehle", befehlszeile(befehle, b.laufend), zustand.befehle, (o) => {
-      zustand.befehle = o;
-    });
-    const liste = document.createElement("div");
-    liste.className = "befehlsliste";
-    befehle.forEach((c, i) => liste.append(befehl_zeichnen(c, i, b.laufend, zustand)));
-    d.append(liste);
-    aus.push(d);
+  const d = klappe("verlaufsklappe", "", zustand.verlauf, (o) => {
+    zustand.verlauf = o;
+  });
+  const kopf = d.querySelector("summary");
+  const zeile = document.createElement("span");
+  zeile.className = "verlaufszeile";
+  zeile.textContent = verlaufszeile(b, eintraege);
+  kopf.append(zeile);
+  if (schritt) {
+    const s = document.createElement("span");
+    s.className = "schrittzeile";
+    s.textContent = schritt;
+    kopf.append(s);
   }
-  return aus;
-};
-
-// ⚑ **Die Ueberschrift der Befehle, an einer Stelle.**
-//
-// 📌 Solange etwas laeuft, steht dort die Verlaufsform: Ein „1 Befehl
-// ausgefuehrt" waehrend der Ausfuehrung waere eine Aussage ueber etwas,
-// das noch nicht geschehen ist. Das ist derselbe Unterschied wie
-// zwischen zugesagt und nachgewiesen.
-const befehlszeile = (befehle, laeuft) => {
-  const getan = befehle.filter((c) => c.antwort !== null).length;
-  if (laeuft && getan < befehle.length) return t("befehl.laufend", getan);
-  if (getan === 0) return t("befehl.keine");
-  return getan === 1 ? t("befehl.eins") : t("befehl.viele", getan);
+  const liste = document.createElement("div");
+  liste.className = "zeitleiste";
+  eintraege.forEach((e, i) => liste.append(eintrag_zeichnen(e, i, b.laufend, zustand)));
+  d.append(liste);
+  kasten.append(d);
+  return kasten;
 };
 
 // ⚑ **Alle Schrittarten an einer Stelle**, und es sind genau die, die
 // der Ruecken erzeugt: `zeile_aus` fuer die Rueckgabe, die Meldungen
 // fuer den Live-Weg. Eine Art ohne Eintrag bekaeme den Punkt, und das
-// saehe aus wie eine Absicht.
+// saehe aus wie eine Absicht. `antwort` steht nur der Vollstaendigkeit
+// halber hier: Die Schlussantwort ist der Text unter dem Verlauf.
 const MARKE = {
+  denken: "∴",
   plan: "·",
   aufruf: "→",
   ergebnis: "←",
@@ -2293,19 +2323,30 @@ const MARKE = {
   abgelehnt: "⚑",
 };
 
-/// **Ein Befehl in der Liste**: zu die Zeile, offen Vorhaben, Befehl und
-/// Antwort, und solange die Antwort fehlt, sagt die Stelle das.
-const befehl_zeichnen = (c, i, laeuft, zustand) => {
-  const d = klappe(`befehl ${c.art}`, "", zustand.befehl.has(i), (o) => {
-    if (o) zustand.befehl.add(i);
-    else zustand.befehl.delete(i);
+/// **Ein Eintrag der Zeitleiste**, zu mit seinem Titel, offen mit dem
+/// ganzen Text oder mit Befehl und Antwort.
+const eintrag_zeichnen = (e, i, laeuft, zustand) => {
+  const klasse = ist_befehl(e) ? `eintrag befehl ${e.art}` : `eintrag ${e.art}`;
+  const d = klappe(klasse, "", zustand.eintrag.has(i), (o) => {
+    if (o) zustand.eintrag.add(i);
+    else zustand.eintrag.delete(i);
   });
   const kopf = d.querySelector("summary");
   const m = document.createElement("span");
   m.className = "marke2";
-  m.textContent = MARKE[c.art] || "·";
-  kopf.append(m, document.createTextNode(c.kurz));
+  m.textContent = MARKE[e.art] || "·";
+  const titel = document.createElement("span");
+  titel.className = "eintragstitel";
+  titel.textContent = ist_befehl(e) ? e.kurz : eintragstitel(e);
+  kopf.append(m, titel);
 
+  if (!ist_befehl(e)) {
+    const x = document.createElement("div");
+    x.className = "eintragstext";
+    x.textContent = e.text;
+    d.append(x);
+    return d;
+  }
   const teil = (klasse, ueberschrift, text) => {
     const w = document.createElement("div");
     w.className = `befehlsteil ${klasse}`;
@@ -2318,12 +2359,11 @@ const befehl_zeichnen = (c, i, laeuft, zustand) => {
     w.append(k, x);
     return w;
   };
-  if (c.vorhaben) d.append(teil("plan", t("befehl.vorhaben"), c.vorhaben));
-  if (c.voll) d.append(teil("befehlstext", t("befehl.befehl"), c.voll));
-  if (c.antwort === null) {
+  if (e.voll) d.append(teil("befehlstext", t("befehl.befehl"), e.voll));
+  if (e.antwort === null) {
     d.append(teil("antwort wartet", t("befehl.antwort"), laeuft ? t("befehl.aussteht") : t("befehl.ohne")));
   } else {
-    d.append(teil("antwort", t("befehl.antwort"), c.antwort));
+    d.append(teil("antwort", t("befehl.antwort"), e.antwort));
   }
   return d;
 };
@@ -3787,45 +3827,43 @@ function live_meldung(m) {
   laufendes_element_suchen();
   const w = laufendes_element;
 
-  // ⚑ **Ob gerade nachgedacht wird**, fuer die Ueberschrift des Denkfadens.
-  // Jede andere Meldung beendet es; geaendert wird nur die Ueberschrift.
+  // ⚑ **Ob gerade nachgedacht wird**, fuer die Zeile ueber der Zeitleiste.
+  // Jede andere Meldung beendet es; geaendert wird nur die Zeile.
   const dachte = laufender.denkt;
   laufender.denkt = m.art === "Denken";
 
   // ⚑ **Ob gerade geschrieben wird**, fuer das Ladezeichen: Text laesst
   // es gehen, jede Meldung ueber Denken, Werkzeug oder Schritt holt es
   // zurueck. Eine Verdichtung aendert nichts daran, was das Modell tut.
+  // Es steht oben im Verlauf, ueber der Zeile, die zaehlt.
   const schrieb = laufender.schreibt;
   if (m.art !== "Verdichtet") laufender.schreibt = m.art === "Text";
   if (schrieb && !laufender.schreibt) {
-    w.append(laufzeichen_bauen());
+    w.querySelector(":scope > .verlauf")?.prepend(laufzeichen_bauen());
   } else if (!schrieb && laufender.schreibt) {
-    w.querySelector(":scope > .laeuft")?.remove();
+    w.querySelector(":scope > .verlauf > .laeuft")?.remove();
   }
-  if (dachte && !laufender.denkt) {
-    const s = w.querySelector(".denken > summary");
-    if (s) s.textContent = denkueberschrift(laufender);
-  }
+  if (dachte && !laufender.denkt) verlaufszeile_auffrischen(w);
 
   if (m.art === "Denken") {
-    // ⚑ **Zuwachs geht in den letzten Denkschritt** und von dort in den
-    // einen Faden; ohne Neuzeichnen, denn das geschieht je Token. Ist der
-    // letzte Schritt keiner, beginnt eine neue Ueberlegung, die Zahl in
-    // der Ueberschrift waechst, und dafuer wird neu gezeichnet.
+    // ⚑ **Zuwachs geht in den letzten Denkschritt**, ohne Neuzeichnen,
+    // denn das geschieht je Token. **Ist der letzte Schritt keiner, beginnt
+    // ein neuer Gedanke** mit eigenem Eintrag, und zwar auch nach einem
+    // Werkzeugaufruf: Genau dort schrieb bis CLIENT v0.113.1 die neue
+    // Ueberlegung sichtbar im alten Faden weiter.
     const letzter = laufender.schritte[laufender.schritte.length - 1];
     if (letzter && letzter.art === "denken") {
       letzter.text += m.text;
-      const faden = w.querySelector(".denken > .denktext");
-      if (faden) {
-        // Mitlaufen, solange der Leser am Ende des Fadens steht.
-        const unten = faden.scrollHeight - faden.scrollTop - faden.clientHeight < 24;
-        faden.textContent = denkfaden(laufender);
-        if (unten) faden.scrollTop = faden.scrollHeight;
+      const e = w.querySelector(".zeitleiste > .eintrag:last-child");
+      if (e) {
+        e.querySelector(".eintragstitel").textContent = eintragstitel(letzter);
+        const x = e.querySelector(".eintragstext");
+        // Mitlaufen, solange der Leser am Ende des Gedankens steht.
+        const unten = x.scrollHeight - x.scrollTop - x.clientHeight < 24;
+        x.textContent = letzter.text;
+        if (unten) x.scrollTop = x.scrollHeight;
       }
-      if (!dachte) {
-        const s = w.querySelector(".denken > summary");
-        if (s) s.textContent = denkueberschrift(laufender);
-      }
+      if (!dachte) verlaufszeile_auffrischen(w);
     } else {
       laufender.schritte.push({ art: "denken", text: m.text });
       live_neu_zeichnen();
@@ -3840,25 +3878,36 @@ function live_meldung(m) {
     laufender_verdichtet = true;
     melden(t("kontext.verdichtet", m.vorher, m.nachher));
   } else if (m.art === "Schritt") {
-    // ⚑ **Der Schritt bekommt keine Zeile, sondern die Fusszeile.**
-    // Er zaehlt die Fragen an das Modell und nicht die Taten; als
-    // Zeile stuende er zwischen den Werkzeugen und saehe aus wie eines.
-    // In der Fusszeile beantwortet er die Frage, die ein Wartender
-    // wirklich hat: Wie weit ist er?
-    laufender.fuss = `Schritt ${m.nummer} von ${schrittgrenze}`;
-    const f = w.querySelector(".zeitzeile");
-    if (f) f.textContent = laufender.fuss;
+    // ⚑ **Der Schritt bekommt keinen Eintrag, sondern die Zeile unter der
+    // Zaehlung.** Er zaehlt die Fragen an das Modell und nicht die Taten;
+    // als Eintrag stuende er zwischen den Werkzeugen und saehe aus wie
+    // eines. Unter der Zaehlung beantwortet er die Frage, die ein
+    // Wartender wirklich hat: Wie weit ist er?
+    laufender.schritt = { nummer: m.nummer, grenze: schrittgrenze };
+    const s = w.querySelector(".verlauf .schrittzeile");
+    if (s) s.textContent = schrittzeile(laufender);
+    else live_neu_zeichnen();
   } else {
-    // ⚑ Aufruf, Ergebnis und Abgelehnt landen in derselben Liste: Sie
-    // erzaehlen zusammen, was der Agent getan hat, und getrennte
-    // Listen zwaengen den Leser, sie im Kopf zu verschraenken.
+    // ⚑ Aufruf, Ergebnis und Abgelehnt landen in derselben Zeitleiste:
+    // Sie erzaehlen zusammen mit den Gedanken, was der Agent getan hat,
+    // und getrennte Listen zwaengen den Leser, sie im Kopf zu
+    // verschraenken.
     const z = zeile_aus_meldung(m);
     if (!z) return;
+    // ⚑ **Was das Modell vor einem Vorschlag geschrieben hat, ist eine
+    // Zwischenausgabe und nicht die Antwort.** Sie wandert als eigener
+    // Eintrag in die Zeitleiste, und die Antwort beginnt wieder leer.
+    // 📌 Vorher blieb sie im Antworttext stehen, und alles, was nach dem
+    // Werkzeug kam, wurde daran angehaengt; erst die Rueckgabe am Ende
+    // raeumte das auf. Die Rueckgabe fuehrt dasselbe als `plan`.
+    if (z.art !== "ergebnis" && laufender.text.trim()) {
+      laufender.schritte.push({ art: "plan", text: laufender.text.trim() });
+      laufender.text = "";
+    }
     laufender.schritte.push(z);
-    // ⚑ **Hier wird neu gezeichnet und nicht angehaengt.** Ein
-    // Werkzeugschritt kann eine neue Klappe eroeffnen (wenn davor eine
-    // Ueberlegung stand), und das laesst sich nicht anhaengen. Es
-    // geschieht eine Handvoll Mal je Lauf und nicht je Token.
+    // ⚑ **Hier wird neu gezeichnet und nicht angehaengt.** Ein Ergebnis
+    // gehoert zu einem frueheren Eintrag, und die Zaehlung aendert sich.
+    // Es geschieht eine Handvoll Mal je Lauf und nicht je Token.
     live_neu_zeichnen();
   }
   // ⚑ Mitlaufen, aber nur, wenn der Leser ohnehin unten steht: Wer
@@ -3866,6 +3915,13 @@ function live_meldung(m) {
   // werden.
   const g = $("gespraech");
   if (g.scrollHeight - g.scrollTop - g.clientHeight < 80) g.scrollTop = g.scrollHeight;
+}
+
+/// Setzt die zaehlende Zeile eines laufenden Beitrags neu, ohne ihn neu zu
+/// zeichnen.
+function verlaufszeile_auffrischen(w) {
+  const z = w.querySelector(".verlauf .verlaufszeile");
+  if (z) z.textContent = verlaufszeile(laufender, zeitleiste(laufender.schritte));
 }
 
 const zeile_aus_meldung = (m) => {

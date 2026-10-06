@@ -1,7 +1,7 @@
 # testclient (`myl-testclient`)
 
-> **Version:** 0.37.3
-> **Datum:** 2026-09-21
+> **Version:** 0.38.0
+> **Datum:** 2026-10-05
 > **Status:** Phase 1 und **Phase 3 vollständig**, dazu Punkt 2.1
 > (`vergleich`), **2.2** (Backend-Vergleich innerhalb einer Maschine, seit
 > dem 2026-08-30) und 2.4 (`--repeat`); **Phase 4 vollständig** (4.3 die
@@ -543,6 +543,24 @@ COMPUTE_PIPELINE Phase 1: erstmals über einen aufrufbaren Befehl statt
 über einen Integrationstest.
 
 ## Changelog
+
+### v0.38.0 – 2026-10-05 (der Konformitätslauf prüft den ternären Rechenweg)
+
+- **Neue Stufe `konformitaet_ternaer`**: fünf Vektoren aus
+  `INTEGER_LLM/conformance/vectors/ternaer` (lineare Schicht mit gepackten
+  ternären Gewichten, Packen, Ableitung aus dem Master, zwei Drehungen),
+  geprüft über `kernels::konformitaet::ternaer_vektor_aus_datei`, mit eigenem
+  Abdruck wie `op`, `training` und `moe`.
+- ⚑ **Der Umfang ohne Modell heisst jetzt `op+training+moe+ternaer`** (22
+  Vektoren statt 17), der volle `op+training+moe+ternaer+layer+e2e`. Der
+  Name ändert sich mit dem Umfang, damit `vergleich` einen alten und einen
+  neuen Lauf als unvergleichbar erkennt.
+- **Abdrücke:** `konformitaet_op` unverändert `894d8357ae92b5c1`;
+  `konformitaet_ternaer` `f1b60342b9cfcdb6`; der Gesamtwert
+  `715529e71dfcfcfd` (bis hierher `6da384ba301b9454`). Die Wächter in
+  `ci.yml` (macOS, Linux, Windows) und `release.yml` prüfen jetzt alle drei.
+- **Belegt:** 286 Tests grün, Clippy mit `-D warnings` sauber, Konformität
+  22/22 auf aarch64/macOS mit allen drei Abdrücken.
 
 ### v0.37.3 – 2026-09-25 (ein Verweis zeigt auf den neuen Ort des Ethik-Manifests)
 

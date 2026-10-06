@@ -1,7 +1,7 @@
 # Konformitätspaket — INTEGER_LLM
 
 > **theta_v-Version:** 0.22.0
-> **Komponentenversion:** 0.91.1 (`kernels` 0.65.1, `runtime` 0.62.1)
+> **Komponentenversion:** 0.117.0 (`kernels` 0.79.0, `runtime` 0.85.0)
 > **Ankermodell der Layer- und E2E-Vektoren:** `myelith-0.6b` (Qwen3-0.6B, 28 Ebenen)
 > **Zweck:** Eigenständiges Artefakt, gegen das fremde Implementierungen
 > sich prüfen können — ohne Kenntnis des Projektinneren.
@@ -24,13 +24,24 @@ neu erzeugt, die Zahlen darin sind unverändert (24 von 24 Layer-Vektoren
 bitgleich zur eingefrorenen Fassung), und `golden_model` rechnet die
 Hashes jetzt nach, bevor ein Vektor als Maßstab dient.
 
-### Drei Validierungsebenen
+### Sechs Validierungsebenen
 
-| Ebene | Datei-Muster | Was geprüft wird |
-|---|---|---|
-| **Op** | `vectors/op/*.golden.json` | Einzelne Kernel (RMSNorm, Linear W8A16, Softmax) |
-| **Layer** | `vectors/layer/*.golden.json` | Kompletter Transformer-Layer (RMSNorm → Attention → MLP → ResAdd) |
-| **E2E** | `vectors/e2e/*.golden.json` | End-to-End-Generierung (Embedding → alle Ebenen → LM-Head → Token-Auswahl) |
+| Ebene | Datei-Muster | Was geprüft wird | Vektoren |
+|---|---|---|---|
+| **Op** | `vectors/op/*.golden.json` | Einzelne Kernel (RMSNorm, Linear W8A16, Softmax) und drei Rückwärtskerne | 6 |
+| **Training** | `vectors/training/*.golden.json` | Rückwärtspass (Aufmerksamkeit, SiLU, RMSNorm, Einbettung), Optimierer, Softmax über das Vokabular | 7 |
+| **MoE** | `vectors/moe/*.golden.json` | Expertenwahl und Mischung | 4 |
+| **Ternär** | `vectors/ternaer/*.golden.json` | Lineare Schicht mit gepackten ternären Gewichten, Packen, Ableitung des ternären Gewichts aus dem Master, Hadamard-Drehung | 5 |
+| **Layer** | `vectors/layer/*.golden.json` | Kompletter Transformer-Layer (RMSNorm → Attention → MLP → ResAdd) | 28 |
+| **E2E** | `vectors/e2e/*.golden.json` | End-to-End-Generierung (Embedding → alle Ebenen → LM-Head → Token-Auswahl) | 3 |
+
+Die ersten vier brauchen kein Modell, die letzten beiden das Ankermodell.
+**53 Vektoren**, und eine konforme Implementierung besteht alle.
+
+Die Sollwerte der Gruppe **Ternär** rechnet `ternaer_erzeugen.py`, eine
+getrennte Umsetzung in reiner Ganzzahlarithmetik ohne eine Zeile aus den
+Rechenkernen (`herkunft: unabhaengig`); aufgerufen aus der Wurzel, erzeugt
+sie bei jedem Lauf dieselben Bytes.
 
 **E2E prüft die Zahlen, nicht die Entscheidung (seit 2026-08-22).** Ein
 E2E-Vektor trägt neben `outputs.tokens` das Metadatum

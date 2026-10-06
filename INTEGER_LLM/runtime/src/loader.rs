@@ -160,6 +160,14 @@ const TERNAER_ZULAESSIG: &[&str] = &[
     "linear_attn_out_proj_weight",
 ];
 
+/// **Die gerouteten Experten eines Gemischs** (seit 2026-10-05): je
+/// Experte gate, up und down, nach dem Teil `mlp_experts_<nummer>_`. Ihr Weg
+/// (`Expertenteil`, der Buendel- und der Stapelweg) liest
+/// [`crate::model::QTensor::matrix`]. ⛔️ **Der geteilte Experte gehoert nicht
+/// dazu** (`mlp_shared_expert_…`): Er feuert bei jedem Token und bleibt
+/// hochaufgeloest.
+const TERNAER_ZULAESSIG_EXPERTE: &[&str] = &["gate_proj_weight", "up_proj_weight", "down_proj_weight"];
+
 pub fn ternaer_zulaessig(name: &str) -> bool {
     if name == "lm_head" || name == "lm_head_weight" {
         return true;
@@ -168,10 +176,20 @@ pub fn ternaer_zulaessig(name: &str) -> bool {
         return false;
     };
     let ziffern = rest.chars().take_while(char::is_ascii_digit).count();
-    ziffern > 0
-        && rest[ziffern..]
+    let Some(teil) = (ziffern > 0).then(|| rest[ziffern..].strip_prefix('_')).flatten() else {
+        return false;
+    };
+    if TERNAER_ZULAESSIG.contains(&teil) {
+        return true;
+    }
+    let Some(experte) = teil.strip_prefix("mlp_experts_") else {
+        return false;
+    };
+    let nummer = experte.chars().take_while(char::is_ascii_digit).count();
+    nummer > 0
+        && experte[nummer..]
             .strip_prefix('_')
-            .is_some_and(|teil| TERNAER_ZULAESSIG.contains(&teil))
+            .is_some_and(|m| TERNAER_ZULAESSIG_EXPERTE.contains(&m))
 }
 
 /// Ein geladener INT8-Tensor mit seinen Manifest-Metadaten.
@@ -1376,9 +1394,10 @@ fn vorzeichen_laden(
 fn ternaer_laden(artifact_dir: &Path, name: String, entry: WeightManifestEntry, pruefen: bool) -> Result<Geladen, String> {
     if !ternaer_zulaessig(&name) {
         return Err(format!(
-            "{name}: ternaer ist nur fuer den Kopf und fuer die Projektionen dichter Ebenen \
-             zulaessig ({}); der Rechenweg dieses Tensors liest int8",
-            TERNAER_ZULAESSIG.join(", ")
+            "{name}: ternaer ist nur fuer den Kopf, die Projektionen dichter Ebenen ({}) und \
+             die gerouteten Experten ({}) zulaessig; der Rechenweg dieses Tensors liest int8",
+            TERNAER_ZULAESSIG.join(", "),
+            TERNAER_ZULAESSIG_EXPERTE.join(", ")
         ));
     }
     if entry.shape.len() != 2 {
@@ -2440,13 +2459,23 @@ mod tests {
             "model_layers_3_linear_attn_in_proj_qkv_weight",
             "model_layers_3_linear_attn_in_proj_z_weight",
             "model_layers_3_linear_attn_out_proj_weight",
+            // Seit 2026-10-05: die gerouteten Experten eines Gemischs.
+            "model_layers_3_mlp_experts_5_gate_proj_weight",
+            "model_layers_39_mlp_experts_255_up_proj_weight",
+            "model_layers_0_mlp_experts_0_down_proj_weight",
         ] {
             assert!(ternaer_zulaessig(ja), "{ja}");
         }
         for nein in [
             "model_embed_tokens_weight",
-            "model_layers_3_mlp_experts_5_gate_proj_weight",
+            // Der geteilte Experte und der Router bleiben hochaufgeloest.
             "model_layers_3_mlp_shared_expert_gate_proj_weight",
+            "model_layers_3_mlp_shared_expert_gate_weight",
+            "model_layers_3_mlp_gate_weight",
+            "model_layers_3_mlp_experts__gate_proj_weight",
+            "model_layers_3_mlp_experts_x_gate_proj_weight",
+            "model_layers_3_mlp_experts_5_gate_weight",
+            "model_layers_3_mlp_experts_5_gate_proj_weight_shifts",
             // Ungedreht und hochaufgeloest, bleiben int8.
             "model_layers_3_linear_attn_in_proj_a_weight",
             "model_layers_3_linear_attn_in_proj_b_weight",
@@ -2502,8 +2531,10 @@ mod tests {
     #[test]
     fn ein_ternaerer_tensor_faellt_laut_aus() {
         let dir = test_dir("ternaer-fehler");
-        let (e, _) = ternaerer_eintrag(&dir, "model_layers_0_mlp_experts_1_up_proj", 2, 128);
-        write_manifest(&dir, "model_layers_0_mlp_experts_1_up_proj_weight", e.clone());
+        // ⚑ Der geteilte Experte: Seit 2026-10-05 duerfen die gerouteten
+        //   Experten ternaer sein, er nicht.
+        let (e, _) = ternaerer_eintrag(&dir, "model_layers_0_mlp_shared_expert_up_proj", 2, 128);
+        write_manifest(&dir, "model_layers_0_mlp_shared_expert_up_proj_weight", e.clone());
         let Err(fehler) = load_weights(&dir) else { panic!("an falscher Stelle geladen") };
         assert!(fehler.contains("ternaer ist nur"), "{fehler}");
 

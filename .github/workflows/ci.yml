@@ -361,8 +361,12 @@ jobs:
           # ⚑ Beide bleiben stehen, weil sie Verschiedenes sagen: Der
           # Teilabdruck benennt bei einem Fehlschlag, WELCHE Gruppe
           # ausschert, der Gesamtabdruck faengt ueberhaupt alle.
+          # ⚑ Seit dem 2026-10-05 drei: dazu `konformitaet_ternaer` (fuenf
+          # Vektoren des ternaeren Rechenwegs); der Gesamtwert umfasst
+          # zweiundzwanzig, bis dahin siebzehn (`6da384ba301b9454`).
           for paar in "894d8357ae92b5c1:konformitaet_op (6 Vektoren)" \
-                      "6da384ba301b9454:konformitaet gesamt (17 Vektoren)"; do
+                      "f1b60342b9cfcdb6:konformitaet_ternaer (5 Vektoren)" \
+                      "715529e71dfcfcfd:konformitaet gesamt (22 Vektoren)"; do
             abdruck="${paar%%:*}"; was="${paar#*:}"
             if ! grep -q "$abdruck" ci-konf/*.jsonl; then
               echo "FEHLER: $was weicht ab, erwartet $abdruck"
@@ -370,7 +374,7 @@ jobs:
               exit 1
             fi
           done
-          echo "Konformitaet belegt auf aarch64/macOS: 17 Vektoren, beide Abdruecke"
+          echo "Konformitaet belegt auf aarch64/macOS: 22 Vektoren, drei Abdruecke"
 
   # ── Runtime: Nur Unit-Tests (keine Integrationstests mit Artefakten) ─
   runtime:
@@ -856,8 +860,12 @@ jobs:
           # ⚑ Beide bleiben stehen, weil sie Verschiedenes sagen: Der
           # Teilabdruck benennt bei einem Fehlschlag, WELCHE Gruppe
           # ausschert, der Gesamtabdruck faengt ueberhaupt alle.
+          # ⚑ Seit dem 2026-10-05 drei: dazu `konformitaet_ternaer` (fuenf
+          # Vektoren des ternaeren Rechenwegs); der Gesamtwert umfasst
+          # zweiundzwanzig, bis dahin siebzehn (`6da384ba301b9454`).
           for paar in "894d8357ae92b5c1:konformitaet_op (6 Vektoren)" \
-                      "6da384ba301b9454:konformitaet gesamt (17 Vektoren)"; do
+                      "f1b60342b9cfcdb6:konformitaet_ternaer (5 Vektoren)" \
+                      "715529e71dfcfcfd:konformitaet gesamt (22 Vektoren)"; do
             abdruck="${paar%%:*}"; was="${paar#*:}"
             if ! grep -q "$abdruck" ci-konf/*.jsonl; then
               echo "FEHLER: $was weicht ab, erwartet $abdruck"
@@ -865,7 +873,7 @@ jobs:
               exit 1
             fi
           done
-          echo "Konformitaet belegt auf x86_64/Linux: 17 Vektoren, beide Abdruecke"
+          echo "Konformitaet belegt auf x86_64/Linux: 22 Vektoren, drei Abdruecke"
 
   # ── Zahlensemantik-Audit (12.22-12.25) ──────────────────────────
   # test_division.py und test_overflow.py rufen `cargo test` als
@@ -988,17 +996,19 @@ jobs:
           cargo run --release -- --name ci --logs ci-konf konformitaet
           # 📌 Zwei Abdruecke, siehe die ausfuehrliche Begruendung am
           # Linux-Schritt: `894d…` ist nur `konformitaet_op` (sechs
-          # Vektoren), `6da3…` der Gesamtwert ueber alle siebzehn.
+          # Vektoren), `f1b6…` der ternaere Rechenweg (fuenf), `7155…` der
+          # Gesamtwert ueber alle zweiundzwanzig.
           foreach ($paar in @(
               @('894d8357ae92b5c1', 'konformitaet_op (6 Vektoren)'),
-              @('6da384ba301b9454', 'konformitaet gesamt (17 Vektoren)'))) {
+              @('f1b60342b9cfcdb6', 'konformitaet_ternaer (5 Vektoren)'),
+              @('715529e71dfcfcfd', 'konformitaet gesamt (22 Vektoren)'))) {
             $zeile = Select-String -Path ci-konf\*.jsonl -Pattern $paar[0]
             if (-not $zeile) {
               Write-Error ("FEHLER: " + $paar[1] + " weicht ab, erwartet " + $paar[0])
               exit 1
             }
           }
-          Write-Host "Konformitaet belegt auf x86_64/Windows: 17 Vektoren, beide Abdruecke"
+          Write-Host "Konformitaet belegt auf x86_64/Windows: 22 Vektoren, drei Abdruecke"
           exit 0
 
       # Gegenprobe: Der Vergleich muss ein leeres Verzeichnis ablehnen.

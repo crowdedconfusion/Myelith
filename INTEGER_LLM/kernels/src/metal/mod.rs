@@ -512,7 +512,7 @@ mod tests {
         let auftraege: Vec<Stapelauftrag<'_>> = (0..formen.len())
             .map(|i| Stapelauftrag {
                 xs: &xs[i],
-                w: &w[i],
+                w: crate::linear::Gewichtsmatrix::from(&w[i]),
                 in_features: formen[i].1,
                 w_shifts: &shifts[i],
                 act_frac_bits: 9,

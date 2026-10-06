@@ -11,6 +11,7 @@ pub mod mitschnitt;
 pub mod messung;
 pub mod shardtraining;
 pub mod standartefakt;
+pub mod expertenumwandlung;
 pub mod trainingsschleife;
 pub mod zustandstraining;
 pub mod model;

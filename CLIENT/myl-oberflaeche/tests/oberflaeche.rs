@@ -689,14 +689,17 @@ fn wer_horcht_braucht_die_erlaubnis_dazu() {
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tauri.conf.json"),
     )
     .expect("tauri.conf.json");
+    // 📌 Hier stand eine Schleife ueber `["main"]`; Clippy 1.99 meldet
+    // eine Schleife ueber ein einziges Element (`single_element_loop`),
+    // und die CI wurde damit rot, ohne dass sich hier etwas geaendert
+    // hatte. Gibt es ein zweites Fenster, wird es wieder eine Liste.
+    let fenster = "main";
     for t in &dateien {
-        for fenster in ["main"] {
-            if t.contains(&format!("\"{fenster}\"")) {
-                assert!(
-                    konf.contains(&format!("\"label\": \"{fenster}\"")),
-                    "die Faehigkeit nennt das Fenster `{fenster}`, die Konfiguration kennt es nicht"
-                );
-            }
+        if t.contains(&format!("\"{fenster}\"")) {
+            assert!(
+                konf.contains(&format!("\"label\": \"{fenster}\"")),
+                "die Faehigkeit nennt das Fenster `{fenster}`, die Konfiguration kennt es nicht"
+            );
         }
     }
 }
@@ -1335,15 +1338,22 @@ fn der_laufende_beitrag_wird_fertiggeschrieben() {
     );
 }
 
-/// **Befehle und Nachdenken stehen gebuendelt, und eine offene Klappe bleibt
-/// offen** (Auftrag des Projektinhabers, 2026-09-14).
+/// **Der Verlauf steht in der Reihenfolge seines Entstehens, jeder Eintrag
+/// fuer sich und zugeklappt** (Auftrag des Projektinhabers, 2026-10-05).
 ///
-/// ⚑ Geprueft wird, was sich am Quelltext zeigen laesst: Der Ruecken schickt
-/// den vollen Befehl live und in der Rueckgabe; das Fenster zeichnet ueber
-/// den Klappzustand des Beitrags, sodass das Neuzeichnen waehrend des Laufs
-/// nichts zuklappt; eine ausstehende Antwort sagt das, in beiden Sprachen.
+/// 📌 Bis CLIENT v0.113.1 hiess diese Probe „Befehle und Nachdenken stehen
+/// gebuendelt“ und verlangte genau eine Denkklappe und genau eine
+/// Befehlsklappe. Damit schrieb eine Ueberlegung nach einem Werkzeugaufruf
+/// sichtbar im alten Faden weiter.
+///
+/// ⚑ Geprueft wird, was sich am Quelltext zeigen laesst: eine Klappe fuer
+/// den ganzen Verlauf, darin je Eintrag eine eigene, die zu beginnt; kein
+/// Faden, der Gedanken verbindet; die Zwischenausgabe vor einem Aufruf
+/// wandert in die Zeitleiste; Zaehlung, Schritt und ausstehende Antwort in
+/// beiden Sprachen; der Ruecken schickt den vollen Befehl live und in der
+/// Rueckgabe.
 #[test]
-fn befehle_und_nachdenken_stehen_gebuendelt() {
+fn der_verlauf_steht_in_der_reihenfolge_seines_entstehens() {
     let js = lies("app.js");
     let rs = lies_quelle("main.rs");
     assert!(
@@ -1351,16 +1361,31 @@ fn befehle_und_nachdenken_stehen_gebuendelt() {
         "die Live-Meldung traegt den vollen Befehl nicht"
     );
     assert!(rs.contains("voll: Some(voll.clone())"), "die Rueckgabe traegt den vollen Befehl nicht");
-    let bloecke = js
-        .split_once("const bloecke = (b) => {")
-        .and_then(|(_, r)| r.split_once("\n};"))
-        .map(|(k, _)| k)
-        .expect("kein `bloecke`");
-    assert!(bloecke.contains("klappzustand(b)"), "`bloecke` zeichnet ohne Klappzustand, das Neuzeichnen klappt zu");
-    assert_eq!(bloecke.matches("klappe(\"denken\"").count(), 1, "genau eine Denkklappe je Beitrag");
-    assert_eq!(bloecke.matches("klappe(\"befehle\"").count(), 1, "genau eine Befehlsklappe je Beitrag");
-    assert_eq!(js.matches("\"befehl.aussteht\":").count(), 2, "die ausstehende Antwort fehlt in einer Sprache");
-    assert!(js.contains("t(\"befehl.aussteht\")"), "die ausstehende Antwort wird nie gezeigt");
+    let rumpf = |kopf: &str| {
+        js.split_once(kopf)
+            .and_then(|(_, r)| r.split_once("\n};"))
+            .map(|(k, _)| k.to_string())
+            .unwrap_or_else(|| panic!("kein `{kopf}`"))
+    };
+    let verlauf = rumpf("const verlauf_zeichnen = (b, laufzeichen) => {");
+    assert!(verlauf.contains("klappzustand(b)"), "der Verlauf zeichnet ohne Klappzustand, das Neuzeichnen klappt zu");
+    assert_eq!(verlauf.matches("klappe(\"").count(), 1, "genau eine Klappe fuer den ganzen Verlauf");
+    assert!(verlauf.contains("eintrag_zeichnen(e, i"), "die Eintraege werden nicht einzeln gezeichnet");
+    let eintrag = rumpf("const eintrag_zeichnen = (e, i, laeuft, zustand) => {");
+    assert!(
+        eintrag.contains("klappe(klasse, \"\", zustand.eintrag.has(i)"),
+        "ein Eintrag beginnt nicht zugeklappt, oder er vergisst beim Neuzeichnen, dass er offen war"
+    );
+    assert!(eintrag.contains("eintragstitel(e)"), "ein Gedanke traegt nicht seinen ersten Satz als Titel");
+    assert!(!js.contains("TRENNER"), "die Gedanken werden wieder zu einem Faden verbunden");
+    assert!(
+        js.contains("laufender.schritte.push({ art: \"plan\", text: laufender.text.trim() });"),
+        "eine Zwischenausgabe vor einem Aufruf bleibt im Antworttext stehen"
+    );
+    for k in ["verlauf.zeile", "verlauf.schritt", "verlauf.denkt", "befehl.aussteht"] {
+        assert_eq!(js.matches(&format!("\"{k}\":")).count(), 2, "`{k}` fehlt in einer Sprache");
+        assert!(js.contains(&format!("t(\"{k}\"")), "`{k}` wird nie gezeigt");
+    }
 }
 
 /// **Das Fenster setzt niemals Markup.**
@@ -1570,10 +1595,13 @@ fn das_ladezeichen_steht_beim_beitrag() {
 
     assert!(js.contains("l.className = \"laeuft\""), "es gibt kein Ladezeichen");
     assert!(hat_regel(&css, "laeuft"), "das Ladezeichen hat keine Regel");
-    // ⚑ Es haengt am Beitrag und nicht an der Zeile unter der Eingabe.
+    // ⚑ Es haengt am Beitrag und nicht an der Zeile unter der Eingabe,
+    // und dort **oben im Verlauf**, ueber der Zeile, die zaehlt (Auftrag
+    // des Projektinhabers, 2026-10-05).
     assert!(
-        js.contains("wurzel.append(laufzeichen);"),
-        "das Ladezeichen haengt nicht am Beitrag"
+        js.contains("wurzel.append(verlauf_zeichnen(b, laufzeichen));")
+            && js.contains("kasten.className = \"verlauf\";\n  if (laufzeichen) kasten.append(laufzeichen);"),
+        "das Ladezeichen steht nicht oben im Verlauf des Beitrags"
     );
 
     // 📌 **Und es haengt am Lauf und nicht am Inhalt.**
@@ -1606,11 +1634,13 @@ fn das_ladezeichen_steht_beim_beitrag() {
         "niemand merkt sich, ob das Modell gerade schreibt"
     );
     assert!(
-        rumpf.contains("if (schrieb && !laufender.schreibt) {\n    w.append(laufzeichen_bauen());"),
+        rumpf.contains(
+            "if (schrieb && !laufender.schreibt) {\n    w.querySelector(\":scope > .verlauf\")?.prepend(laufzeichen_bauen());"
+        ),
         "das Ladezeichen kommt nach dem Schreiben nicht wieder"
     );
     assert!(
-        rumpf.contains("w.querySelector(\":scope > .laeuft\")?.remove();"),
+        rumpf.contains("w.querySelector(\":scope > .verlauf > .laeuft\")?.remove();"),
         "das Ladezeichen geht nicht, wenn das Modell schreibt"
     );
 }

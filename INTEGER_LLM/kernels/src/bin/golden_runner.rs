@@ -46,6 +46,7 @@ fn main() {
     let ergebnis = match gv.level.as_str() {
         "training" => konformitaet::trainingsvektor_pruefen(&gv),
         "moe" => konformitaet::moe_vektor_pruefen(&gv),
+        "ternaer" => konformitaet::ternaer_vektor_pruefen(&gv),
         _ => konformitaet::op_vektor_pruefen(&gv),
     };
 

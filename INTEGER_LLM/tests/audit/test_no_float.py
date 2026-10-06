@@ -107,6 +107,16 @@ HOT_PATH = [
     # Liste, und der Lauf meldete trotzdem "null Treffer": dieselbe
     # Klasse wie Fund 44, Fund 84 und `backward.rs`.
     REPO / "kernels" / "src" / "faltung.rs",
+    # ⚑ Der Rueckwaertspass der Rekurrenz (2026-10-02). Er fuehrt den
+    # Gradienten durch die Zeit zurueck, und ein Zustandsgradient haengt
+    # wie der Zustand selbst an allen Schritten davor: Ein float darin
+    # liefe ueber die Folge auseinander. ⚠️ Das `f64` in dieser Datei
+    # steht ausschliesslich in `#[cfg(test)]` (Verlust und Tabellen der
+    # Proben), dieselbe erlaubte Zone wie in `faltung.rs`.
+    #
+    # 📌 Gemeldet hat sie die Vollstaendigkeitspruefung in der CI, zwei
+    # Pushes lang rot, bevor jemand hinsah.
+    REPO / "kernels" / "src" / "zustandsrueckweg.rs",
     # 2026-09-11: Der Fadenpool ersetzt das `thread::scope` je Matrix.
     # Er rechnet nichts, er verteilt nur Zeilen; genau deshalb steht er
     # hier: Ein Konsens-Crate hat keine Datei, die "rechnet nichts"
@@ -197,11 +207,28 @@ HOT_PATH = [
     # ⚑ Seit dem 2026-09-05: Training ueber einen Ebenenbereich, also
     # das, was ein Shard tut. Derselbe Heisspfad wie die Schleife.
     REPO / "runtime" / "src" / "shardtraining.rs",
+    # Seit dem 2026-10-02: der Rueckwaertspass einer ganzen
+    # Zustandsebene. Derselbe Heisspfad wie die Schleife; ein float
+    # hier waere ein Gewicht der Zustandsschicht, das zwei Maschinen
+    # verschieden fortschreiben.
+    REPO / "runtime" / "src" / "zustandstraining.rs",
+    # Seit dem 2026-10-02: Vermutungen mit exakter Pruefung im Decode.
+    # Er rechnet nichts am Modell, er vergleicht nur Token; seine Zusage
+    # ist, dass sich kein Token der Ausgabe aendert, und eine
+    # Gleitkommazahl in der Annahmeregel waere genau die Stelle, an der
+    # sie bricht.
+    REPO / "runtime" / "src" / "lookahead.rs",
     # Seit dem 2026-09-30: aus einem trainierten Stand wird ein Artefakt.
     # Die Umrechnung ist die des Trainings; eine Gleitkommazahl hier
     # hiesse, dass das ausgelieferte Modell ein anderes ist als das
     # gemessene.
     REPO / "runtime" / "src" / "standartefakt.rs",
+    # Seit dem 2026-10-05: die Experten eines Gemischs ternaer runden, mit
+    # der Ableitung des Trainings. Kein Rechenpfad, aber sie entscheidet,
+    # welche Zahl ein Gewicht im Artefakt bekommt; eine Gleitkommazahl hier
+    # hiesse, dass zwei Umwandlungen derselben Quelle verschiedene
+    # Artefakte ergeben.
+    REPO / "runtime" / "src" / "expertenumwandlung.rs",
     REPO / "runtime" / "src" / "tokenizer.rs",
     # Die Konformitaetspruefung, seit sie eine Bibliothek ist (2026-08-27).
     #
