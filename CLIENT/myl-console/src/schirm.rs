@@ -50,6 +50,66 @@ pub const MINDESTHOEHE: u16 = 14;
 /// Uebersetzen auffaellt, kostet niemanden einen Testlauf.**
 const _: () = assert!(MINDESTHOEHE > RESERVE + 4);
 
+/// **Zeilen unter dem Eingaberahmen**: der Bereich eines Moduls oder die
+/// Liste der Vervollstaendigung, eine Leerzeile eingerechnet. Null heisst
+/// keine.
+///
+/// ⚑ Wunsch des Projektinhabers (2026-10-07): den Bereich immer zu sehen,
+/// der Text darueber scrollbar. **Unten und nicht oben:** Text rollt dann
+/// weiter in der ersten Zeile aus dem Fenster, und das Terminal behaelt
+/// ihn im Verlauf. 📌 Ein fester Kopf oben (Rollbereich ab der Zeile unter
+/// dem Bereich) liess Terminal.app genau diese Zeilen verwerfen; das Mausrad
+/// fand nichts mehr.
+static UNTEN: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(0);
+
+/// Wie viele Zeilen unter dem Rahmen gewuenscht sind.
+pub fn unten() -> u16 {
+    UNTEN.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Setzt sie; wirksam mit dem naechsten [`Schirm::einrichten`] oder
+/// [`Schirm::grenze_setzen`].
+pub fn unten_setzen(zeilen: u16) {
+    UNTEN.store(zeilen, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Wie viele Zeilen darueber mindestens rollen muessen; sonst entfaellt
+/// der Bereich unten, und alles ist wie ohne ihn.
+pub const MINDESTROLLEN: u16 = 6;
+
+/// Die Zeilen unter dem Rahmen, die ein Fenster der Hoehe `hoehe`
+/// tatsaechlich bekommt (gewuenscht `unten`).
+pub fn zusatz_fuer(hoehe: u16, unten: u16) -> u16 {
+    if unten > 0 && hoehe >= RESERVE + unten + MINDESTROLLEN {
+        unten
+    } else {
+        0
+    }
+}
+
+/// **Gibt einen Rollbereich frei, wer immer ihn gesetzt hat** (`ESC[r`),
+/// ohne den Wagen zu bewegen. Nur mit Terminal.
+///
+/// 📌 2026-10-07, gemeldet vom Projektinhaber: Nach einem Neustart standen
+/// Vorspann, Hinweise und Modellwahl zu hoch und abgeschnitten. Vier
+/// Ausgaenge (`process::exit(130)` nach Strg-C in Auswahl, Eingabe und
+/// Laufanzeige) und jedes geschlossene Fenster beenden das Programm, ohne
+/// [`Schirm::aufloesen`] zu erreichen; der Rollbereich blieb im Terminal
+/// stehen, mit Bereich unten entsprechend kuerzer. Das Leeren des Schirms
+/// setzt ihn nicht zurueck. Deshalb gibt ihn der Start als Erstes frei,
+/// und die Ausgaenge in `anzeige.rs` und `wahl.rs` tun es vor dem Beenden.
+/// ⚠️ Die zwei in `auswahl.rs` nicht: Die Datei ist eine wortgetreue Kopie
+/// des Testclients, der keinen Rollbereich kennt. Strg-C in einer Auswahl
+/// laesst der Shell danach den Bereich stehen, bis `reset` oder der naechste
+/// Start ihn freigibt.
+pub fn rollbereich_freigeben() {
+    if std::io::stdout().is_terminal() {
+        let mut aus = std::io::stdout();
+        let _ = write!(aus, "\x1b7\x1b[r\x1b8");
+        let _ = aus.flush();
+    }
+}
+
 /// Der untere Rand, solange er eingerichtet ist.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Schirm {
@@ -69,7 +129,12 @@ impl Schirm {
 
     /// Die letzte Zeile, die noch rollt.
     pub fn rollende(&self) -> u16 {
-        self.hoehe.saturating_sub(RESERVE)
+        self.hoehe.saturating_sub(RESERVE + self.zusatz())
+    }
+
+    /// Die Zeilen unter dem Rahmen in diesem Fenster (siehe [`unten`]).
+    pub fn zusatz(&self) -> u16 {
+        zusatz_fuer(self.hoehe, unten())
     }
 
     /// Die Zeile, in der die obere Kante des Rahmens steht.
@@ -99,7 +164,7 @@ impl Schirm {
         let mut aus = std::io::stdout();
         let _ = aus.flush();
         let vorher = crossterm::cursor::position().ok().map(|(_, zeile)| zeile);
-        let _ = write!(aus, "{}", "\n".repeat(RESERVE as usize));
+        let _ = write!(aus, "{}", "\n".repeat((RESERVE + self.zusatz()) as usize));
         let _ = write!(aus, "\x1b[1;{}r", self.rollende());
         let ziel = match vorher {
             Some(zeile) => fortsetzungszeile(zeile, self.rollende()),
@@ -255,6 +320,31 @@ impl Rahmen {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **Kein harter Ausgang ohne Freigabe des Rollbereichs**, und der Start
+    /// gibt ihn als Erstes frei (Anlass siehe [`rollbereich_freigeben`]).
+    #[test]
+    fn harte_ausgaenge_geben_den_rollbereich_frei() {
+        // `auswahl.rs` nicht: wortgetreue Kopie des Testclients.
+        for (name, quelle) in [("anzeige.rs", include_str!("anzeige.rs")), ("wahl.rs", include_str!("wahl.rs")), ("sitzung.rs", include_str!("sitzung.rs"))] {
+            let teile: Vec<&str> = quelle.split("std::process::exit(").collect();
+            for vorher in &teile[..teile.len() - 1] {
+                let zeile_davor = vorher.trim_end().lines().last().unwrap_or("");
+                assert!(zeile_davor.contains("rollbereich_freigeben()"), "{name}: ein Ausgang ohne Freigabe nach `{zeile_davor}`");
+            }
+        }
+        let start = include_str!("sitzung.rs").split("animation::abspielen(design)").next().unwrap_or("");
+        assert!(start.contains("crate::schirm::rollbereich_freigeben();"), "der Start gibt den Rollbereich nicht frei");
+    }
+
+    /// **Der Bereich unten bekommt nur Platz, wenn darueber genug rollt.**
+    #[test]
+    fn zusatz_nur_mit_platz() {
+        assert_eq!(zusatz_fuer(40, 0), 0, "ohne Bereich nichts");
+        assert_eq!(zusatz_fuer(40, 13), 13);
+        assert_eq!(zusatz_fuer(RESERVE + 13 + MINDESTROLLEN, 13), 13, "genau sechs Zeilen rollen noch");
+        assert_eq!(zusatz_fuer(RESERVE + 13 + MINDESTROLLEN - 1, 13), 0, "zu eng: kein Bereich statt eines Fensters ohne Platz");
+    }
 
     /// **Vier eigene Zeilen, und der Rollbereich hoert davor auf.**
     ///

@@ -106,6 +106,7 @@ pub fn waehlen_ab(kopf: &str, punkte: &[Punkt], start: usize, t: Toene) -> Optio
             KeyCode::Char('c') if k.modifiers.contains(KeyModifiers::CONTROL) => {
                 drop(_roh);
                 println!();
+                crate::schirm::rollbereich_freigeben();
                 std::process::exit(130);
             }
             _ => continue,

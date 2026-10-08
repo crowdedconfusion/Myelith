@@ -76,6 +76,10 @@ struct Stand {
     /// Belegter Kontext nach dem letzten Auftrag, in Prozent, fuer die
     /// Fusszeile.
     kontext_prozent: Option<usize>,
+    /// **Die Module** dieser Konsole, gefunden, geprueft, laufend.
+    module: crate::module::Modulwirt,
+    /// Was vor dem Modus eines Moduls galt.
+    modus_vorher: Option<Vorher>,
 }
 
 pub fn fahren() -> i32 {
@@ -153,6 +157,9 @@ pub fn fahren() -> i32 {
     let design = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())
         .map(|e| e.oberflaeche.design)
         .unwrap_or_default();
+    // ⚑ Ein Rollbereich, den ein frueherer Lauf stehen liess, gilt hier
+    //   nicht mehr (siehe `schirm::rollbereich_freigeben`).
+    crate::schirm::rollbereich_freigeben();
     if std::io::stdout().is_terminal() {
         // ⚑ **Zuerst den Hintergrund erfragen**, vor der ersten
         // Tastenabfrage der Animation: Die Antwort kommt ueber die Eingabe.
@@ -214,6 +221,8 @@ pub fn fahren() -> i32 {
         gespraech: myl_local_agent::gespraech::Gespraech::neu(),
         ansage: None,
         kontext_prozent: None,
+        module: crate::module::Modulwirt::neu(),
+        modus_vorher: None,
     };
 
     // ⛔️ **Mit `--root` gilt Schreibrecht**, sonst waere der Schalter
@@ -266,6 +275,8 @@ pub fn fahren() -> i32 {
         loop_fahren(&mut stand, "");
     }
     let ende = schleife(&mut stand);
+    // Module enden mit der Konsole.
+    stand.module.alle_beenden();
 
     // ⚠️ **Was reserviert wurde, wird zurueckgegeben.** Ein Programm,
     // das mit gesetztem Rollbereich endet, hinterlaesst eine Shell, die
@@ -469,6 +480,8 @@ fn modell_waehlen(stand: &mut Stand) -> Modellwahl {
             stand.name = name;
             stand.artefakt = pfad;
             stand.modell = Some(m);
+            let kennung = Some(modellkennung(stand));
+            stand.module.allen(&myl_module::nachricht::AnModul::Modell { kennung });
             Modellwahl::Geladen
         }
         Err(f) => {
@@ -518,11 +531,16 @@ fn eingaberahmen(stand: &Stand) {
         // (Festlegung des Projektinhabers, 2026-09-11). Er steht
         // dauerhaft da, weil der Agent genau dort arbeitet.
         SetForegroundColor(t.kante),
+        // ⚑ **Im Modus eines Moduls steht hier dessen Fusszeile**, wenn es
+        //   die Befugnis hat; gefaerbt nach dem Zuschnitt auf die Breite.
         Print(format!(
             "{}{}{}",
             sch.zeile(Schirm::KASTEN + 4),
             r.einzug,
-            ordnerzeile(&stand.kurzer_ordner(), r.innen)
+            match stand.module.aktives().filter(|l| l.g.beschreibung.befugnisse.fusszeile && !l.fusszeile.is_empty()) {
+                Some(l) => crate::module::teile_zeichnen(&l.fusszeile, r.innen, stand.design, t.kante),
+                None => ordnerzeile(&stand.kurzer_ordner(), r.innen),
+            }
         )),
         ResetColor,
         // ⚑ Die Ladezeile gehoert der Anzeige; hier wird sie nur
@@ -530,6 +548,10 @@ fn eingaberahmen(stand: &Stand) {
         Print(sch.zeile(Schirm::LADEZEILE)),
         Print(sch.zeile(Schirm::LADEZEILE + 1)),
     );
+    // Der Bereich unten eines Moduls, aus dem Gemerkten.
+    if let Some(l) = stand.module.aktives().filter(|l| !l.unten.is_empty()) {
+        let _ = crossterm::queue!(aus, Print(crate::module::unten_text(&sch, &l.unten, stand.design)));
+    }
     let _ = aus.flush();
     zeile_zeichnen(&sch, &r, t, "");
 }
@@ -705,7 +727,7 @@ fn saat_befehl(stand: &mut Stand, rest: &str) {
                 },
                 wahl::Punkt {
                     titel: letzte.map_or("Letzte behalten".into(), |l| format!("Letzte behalten ({l})")),
-                    hinweis: "immer, bis /seed zufall".into(),
+                    hinweis: "immer, bis /seed random".into(),
                     offen: letzte.is_some(),
                 },
             ];
@@ -725,7 +747,7 @@ fn saat_befehl(stand: &mut Stand, rest: &str) {
                     if let Some(l) = letzte {
                         m.saat_fest = Some(l);
                         setzen(Some(l));
-                        println!("  Saat fest {l}, bis /seed zufall.");
+                        println!("  Saat fest {l}, bis /seed random.");
                     }
                 }
                 _ => println!("  Die Saat bleibt, wie sie war."),
@@ -740,7 +762,7 @@ fn saat_befehl(stand: &mut Stand, rest: &str) {
             Some(l) if immer => {
                 m.saat_fest = Some(l);
                 setzen(Some(l));
-                println!("  Saat fest {l}, bis /seed zufall.");
+                println!("  Saat fest {l}, bis /seed random.");
             }
             Some(l) => {
                 m.naechste_saat(l);
@@ -752,13 +774,13 @@ fn saat_befehl(stand: &mut Stand, rest: &str) {
             Ok(s) if immer => {
                 m.saat_fest = Some(s);
                 setzen(Some(s));
-                println!("  Saat fest {s}, bis /seed zufall.");
+                println!("  Saat fest {s}, bis /seed random.");
             }
             Ok(s) => {
                 m.naechste_saat(s);
                 println!("  Die naechste Aktion laeuft mit Saat {s}; danach wieder wie eingestellt.");
             }
-            Err(_) => println!("  {w} ist keine Saat. /seed <zahl>, /seed <zahl> immer, /seed nochmal, /seed zufall"),
+            Err(_) => println!("  {w} ist keine Saat. /seed <zahl>, /seed <zahl> always, /seed again, /seed random"),
         },
     }
     println!();
@@ -797,6 +819,9 @@ impl Stand {
 }
 
 fn schleife(stand: &mut Stand) -> i32 {
+    // ⚑ **Was getippt war, bleibt**, wenn ein Modul fuer einen Takt die
+    //   Eingabe unterbricht.
+    let mut entwurf = String::new();
     loop {
         // ⚑ **Vor jeder Eingabe neu gemessen.** Wer das Fenster zieht,
         // verschiebt den unteren Rand; ein Rahmen, der auf der alten
@@ -812,6 +837,8 @@ fn schleife(stand: &mut Stand) -> i32 {
             if let Some(sch) = jetzt {
                 sch.grenze_setzen();
             }
+            let (breite, hoehe) = crate::banner::fenstermasse();
+            stand.module.allen(&myl_module::nachricht::AnModul::Masse { breite, hoehe });
         }
         eingaberahmen(stand);
         let r = Rahmen::messen();
@@ -822,7 +849,22 @@ fn schleife(stand: &mut Stand) -> i32 {
                 zeile_zeichnen(&sch, &r, toene, text);
             }
         };
-        let gelesen = eingabe::lesen(&zeichnen);
+        // ⚑ **Mit laufendem Modul gibt es immer eine Frist**, sonst kaeme
+        //   sein Weckruf nicht an: Die Zeile sieht nur mit Frist danach.
+        let frist = stand
+            .module
+            .irgendeins_laeuft()
+            .then(|| stand.module.frist().unwrap_or_else(|| std::time::Instant::now() + std::time::Duration::from_secs(3600)));
+        let alle_vorschlaege = vorschlaege(&stand.module);
+        let gelesen = {
+            let stand_lesend: &Stand = stand;
+            let liste = |v: Option<(&[eingabe::Vorschlag], usize)>| {
+                if let Some(sch) = schirm {
+                    vorschlaege_zeichnen(stand_lesend, &sch, &r, v);
+                }
+            };
+            eingabe::lesen_mit_liste(&zeichnen, &liste, &alle_vorschlaege, std::mem::take(&mut entwurf), frist)
+        };
         // 📌 **Die abgeschickte Zeile wird aus dem Kasten geraeumt.**
         // Sie blieb dort stehen, waehrend der Agent lief, und es sah
         // aus, als waere nichts abgeschickt worden. Gemeldet vom
@@ -835,6 +877,13 @@ fn schleife(stand: &mut Stand) -> i32 {
         }
         let zeile = match gelesen {
             eingabe::Eingabe::Zeile(z) => z,
+            // ⚑ **Die Frist der Module**: ein Takt oder ein Weckruf, dann
+            //   zurueck an die Zeile, mit dem, was schon dastand.
+            eingabe::Eingabe::Frist(z) => {
+                entwurf = z;
+                modul_takt(stand);
+                continue;
+            }
             // ⚑ **Umschalt-Tab wechselt den Modus und sonst nichts.**
             // Die naechste Runde zeichnet den Rahmen neu, und in der
             // Fusszeile steht der neue Name.
@@ -847,6 +896,16 @@ fn schleife(stand: &mut Stand) -> i32 {
                     continue;
                 }
                 stand.modus = neu;
+                // ⚑ Im Modus eines Moduls merkt sich die Konsole den
+                //   Agentenmodus fuer dessen naechsten Start (Projektinhaber,
+                //   2026-10-07).
+                if let Some(name) = stand.module.aktives().map(|l| l.g.beschreibung.name.clone()) {
+                    let p = modusdatei(&name);
+                    if let Some(o) = p.parent() {
+                        let _ = std::fs::create_dir_all(o);
+                    }
+                    let _ = std::fs::write(p, neu.kennung());
+                }
                 continue;
             }
             eingabe::Eingabe::Ende => {
@@ -895,10 +954,16 @@ fn schleife(stand: &mut Stand) -> i32 {
         }
         println!();
 
+        // ⚑ **Ein Befehl eines gepruefen Moduls** geht an das Modul; ohne
+        //   Modul ist er ein unbekannter Befehl wie jeder andere.
+        if let Some(name) = stand.module.modul_der_zeile(&text) {
+            modul_befehl(stand, &name, &text);
+            continue;
+        }
         match befehl_zu(&text) {
             Some(Befehlsart::Ende) => return GUT,
             Some(Befehlsart::Hilfe) => {
-                hilfe();
+                hilfe(&stand.module);
                 continue;
             }
             Some(Befehlsart::Datei) => {
@@ -924,6 +989,11 @@ fn schleife(stand: &mut Stand) -> i32 {
             Some(Befehlsart::Saat) => {
                 let rest = befehl_und_rest(&text).map(|(_, r)| r).unwrap_or("").to_string();
                 saat_befehl(stand, &rest);
+                continue;
+            }
+            Some(Befehlsart::Module) => {
+                let rest = befehl_und_rest(&text).map(|(_, r)| r).unwrap_or("").to_string();
+                module_befehl(stand, &rest);
                 continue;
             }
             Some(Befehlsart::Modell) => {
@@ -1041,6 +1111,8 @@ enum Befehlsart {
     Vorhaben,
     /// Die Saat zeigen und setzen, fuer die naechste Aktion oder immer.
     Saat,
+    /// Die Module zeigen und installieren.
+    Module,
     Hilfe,
     Ende,
 }
@@ -1061,7 +1133,7 @@ struct Befehl {
 /// nennt irgendwann einen Befehl, den es nicht gibt, oder verschweigt
 /// einen, den es gibt, **und beides sieht erst der, der es
 /// ausprobiert.**
-const BEFEHLE: [Befehl; 14] = [
+const BEFEHLE: [Befehl; 15] = [
     Befehl {
         art: Befehlsart::Modell,
         namen: &["/model", "/modell"],
@@ -1080,7 +1152,7 @@ const BEFEHLE: [Befehl; 14] = [
     Befehl {
         art: Befehlsart::Datei,
         namen: &["/file", "/datei"],
-        was: "haengt eine Datei an: /datei <pfad>",
+        was: "haengt eine Datei an: /file <pfad>",
     },
     Befehl {
         art: Befehlsart::Skill,
@@ -1117,12 +1189,17 @@ const BEFEHLE: [Befehl; 14] = [
         // ⚑ Nur `/tasks`, ohne deutschen Zweitnamen (Festlegung des
         //   Projektinhabers, 2026-09-26).
         namen: &["/tasks"],
-        was: "zeigt die Tasks des Loops in ihrer Reihenfolge; /tasks resume|pause <ID>, /tasks abnahme <ID> <befehl>",
+        was: "zeigt die Tasks des Loops in ihrer Reihenfolge; /tasks resume|pause <ID>, /tasks check <ID> <befehl>",
     },
     Befehl {
         art: Befehlsart::Saat,
         namen: &["/seed", "/saat"],
-        was: "die Saat der Ausgabe: /seed zeigt und waehlt; /seed <zahl> nur fuer die naechste Aktion, /seed <zahl> immer, /seed nochmal, /seed zufall",
+        was: "die Saat der Ausgabe: /seed zeigt und waehlt; /seed <zahl> nur fuer die naechste Aktion, /seed <zahl> always, /seed again, /seed random",
+    },
+    Befehl {
+        art: Befehlsart::Module,
+        namen: &["/module"],
+        was: "zeigt die Module; /module install <ordner> installiert eines (nur signiert, sonst abgelehnt)",
     },
     Befehl {
         art: Befehlsart::Hilfe,
@@ -1300,9 +1377,115 @@ fn befehl_und_rest(text: &str) -> Option<(Befehlsart, &str)> {
         .map(|b| (b.art, rest.trim()))
 }
 
+/// **Die Vorschlaege der Vervollstaendigung**: alle Befehle aus
+/// [`BEFEHLE`], dazu die der gepruefen Module aus ihren Beschreibungen.
+/// Beides die einzigen Listen ihrer Art; hier wird nur gelesen.
+fn vorschlaege(module: &crate::module::Modulwirt) -> Vec<eingabe::Vorschlag> {
+    let mut aus: Vec<eingabe::Vorschlag> = BEFEHLE
+        .iter()
+        .map(|b| eingabe::Vorschlag {
+            befehl: b.namen[0].to_string(),
+            auch: b.namen[1..].iter().map(|n| n.to_string()).collect(),
+            was: b.was.to_string(),
+            mit_angabe: matches!(b.art, Befehlsart::Datei | Befehlsart::Skill | Befehlsart::Loop),
+        })
+        .collect();
+    for b in module.befehle() {
+        aus.push(eingabe::Vorschlag {
+            befehl: myl_module::filter::eine_zeile(&b.name),
+            auch: Vec::new(),
+            was: myl_module::filter::eine_zeile(&b.was),
+            mit_angabe: false,
+        });
+    }
+    aus
+}
+
+/// **Ob ein Name ein Befehl der Konsole ist**; ein Modul darf ihn nicht
+/// belegen.
+pub(crate) fn eingebauter_befehl(name: &str) -> bool {
+    BEFEHLE.iter().any(|b| b.namen.contains(&name))
+}
+
+/// **Zeichnet die Vorschlaege unter der Fusszeile** (`Some`) oder raeumt
+/// sie weg (`None`).
+///
+/// ⚑ Im Modus eines Moduls mit Bereich unten in dessen Platz (danach
+/// steht der Bereich wieder da); sonst bekommt die Liste eigenen Platz: Der Text im
+/// Rollbereich rueckt nach oben (er bleibt im Verlauf), der Rahmen mit
+/// ihm, und darunter steht die Liste. Beim Wegraeumen kommt der Rahmen
+/// zurueck an den unteren Rand.
+fn vorschlaege_zeichnen(stand: &Stand, sch: &Schirm, r: &Rahmen, v: Option<(&[eingabe::Vorschlag], usize)>) {
+    let mut aus = std::io::stdout();
+    let unten_des_moduls = stand.module.aktives().filter(|l| !l.unten.is_empty()).map(|l| l.unten.clone());
+    let mit_bereich = unten_des_moduls.is_some() && sch.zusatz() > 0 && crate::schirm::unten() > 0 && !LISTE_RAUM.load(std::sync::atomic::Ordering::Relaxed);
+    let Some((liste, gewaehlt)) = v else {
+        if let Some(u) = unten_des_moduls.filter(|_| mit_bereich) {
+            let _ = write!(aus, "{}", crate::module::unten_text(sch, &u, stand.design));
+        } else if LISTE_RAUM.swap(false, std::sync::atomic::Ordering::Relaxed) {
+            // Rahmen und Liste raeumen, Grenze zurueck, Rahmen unten neu.
+            let _ = write!(aus, "\x1b[{};1H\x1b[J", sch.erste_eigene());
+            crate::schirm::unten_setzen(0);
+            sch.grenze_setzen();
+            let _ = write!(aus, "\x1b8");
+            let _ = aus.flush();
+            eingaberahmen(stand);
+        }
+        let _ = aus.flush();
+        return;
+    };
+    // Eine Leerzeile Abstand zur Fusszeile, dann die Eintraege.
+    let mut zeilen = liste.len() as u16;
+    if mit_bereich {
+        zeilen = zeilen.min(sch.zusatz().saturating_sub(1));
+    } else if !LISTE_RAUM.load(std::sync::atomic::Ordering::Relaxed) || crate::schirm::unten() != zeilen + 1 {
+        let vorher = crate::schirm::unten();
+        if vorher > 0 && LISTE_RAUM.load(std::sync::atomic::Ordering::Relaxed) {
+            // Andere Groesse: erst wegraeumen.
+            let _ = write!(aus, "\x1b[{};1H\x1b[J", sch.erste_eigene());
+            crate::schirm::unten_setzen(0);
+            sch.grenze_setzen();
+            let _ = write!(aus, "\x1b8");
+        }
+        let h = zeilen + 1;
+        // Der Text rueckt h Zeilen nach oben (rollt in den Verlauf, wenn
+        // noetig); der Wagen bleibt an seinem Ende und wird gemerkt.
+        let _ = write!(aus, "\x1b8{}\x1b[{h}A\x1b7", "\n".repeat(h as usize));
+        crate::schirm::unten_setzen(h);
+        if sch.zusatz() == 0 {
+            // Zu eng fuer eine Liste.
+            crate::schirm::unten_setzen(0);
+            let _ = aus.flush();
+            return;
+        }
+        LISTE_RAUM.store(true, std::sync::atomic::Ordering::Relaxed);
+        sch.grenze_setzen();
+        let _ = write!(aus, "\x1b8");
+        let _ = aus.flush();
+        eingaberahmen(stand);
+    }
+    let rollen = design::rollen(stand.design);
+    let farbig = design::farbig();
+    let breite = r.innen + 2;
+    let mut text = sch.zeile(crate::schirm::RESERVE);
+    for (i, v) in liste.iter().take(zeilen as usize).enumerate() {
+        let zeile: String = format!("{} {:<24} {}", if i == gewaehlt { "›" } else { " " }, v.befehl, v.was).chars().take(breite).collect();
+        let stil = if i == gewaehlt { &rollen.ueberschrift } else { &rollen.beiwerk };
+        text.push_str(&sch.zeile(crate::schirm::RESERVE + 1 + i as u16));
+        text.push_str(&r.einzug);
+        text.push_str(&stil.faerben(&zeile, farbig));
+    }
+    let _ = write!(aus, "{text}");
+    let _ = aus.flush();
+}
+
+/// Ob die Liste gerade eigenen Platz unter dem Rahmen hat (ausserhalb des
+/// Modus eines Moduls mit Bereich unten).
+static LISTE_RAUM: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /// **Alle Befehle mit einem Satz dazu**, aus der einen Liste.
-fn hilfezeilen() -> Vec<String> {
-    BEFEHLE
+fn hilfezeilen(module: &crate::module::Modulwirt) -> Vec<String> {
+    let mut aus: Vec<String> = BEFEHLE
         .iter()
         .map(|b| {
             // Die weiteren Schreibweisen stehen dahinter: Wer `/hilfe`
@@ -1314,12 +1497,17 @@ fn hilfezeilen() -> Vec<String> {
             };
             format!("  {:<12}{}{weitere}", b.namen[0], b.was)
         })
-        .collect()
+        .collect();
+    // Die Befehle der gepruefen Module, aus ihren Beschreibungen.
+    for b in module.befehle() {
+        aus.push(format!("  {:<12}{}", myl_module::filter::eine_zeile(&b.name), myl_module::filter::eine_zeile(&b.was)));
+    }
+    aus
 }
 
-fn hilfe() {
+fn hilfe(module: &crate::module::Modulwirt) {
     println!();
-    for z in hilfezeilen() {
+    for z in hilfezeilen(module) {
         println!("{z}");
     }
     println!();
@@ -1605,29 +1793,67 @@ fn gespraech_verdichten(stand: &mut Stand) {
 }
 
 /// Ein Auftrag, von der Eingabe bis zur Antwort.
+/// Wer einen Auftrag gibt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Auftragsart {
+    /// Der Mensch hat ihn getippt: Schutzfilter, und das Gespraech geht mit.
+    Mensch,
+    /// Ein Auftrag eines Moduls: ohne Vorgeschichte, und er geht nicht ins
+    /// Gespraech ein.
+    Modul,
+}
+
 fn auftrag_fahren(stand: &mut Stand, auftrag: &str) {
+    let _ = auftrag_fahren_als(stand, auftrag, Auftragsart::Mensch);
+}
+
+/// Faehrt einen Auftrag; gibt die Schlussantwort zurueck, falls es eine gab.
+fn auftrag_fahren_als(stand: &mut Stand, auftrag: &str, art: Auftragsart) -> Option<String> {
     // ⛔️ **Der Schutzfilter vor allem anderen** (Art. 5 KI-Verordnung): Ein
     //   Auftrag, der erkennbar auf eine verbotene Praxis zielt, wird nicht
     //   gefahren, und die Konsole sagt warum.
+    // ⚑ **Fuer das, was der Mensch tippt.** Den Auftrag eines Moduls
+    //   stellt das Modul zusammen, nicht ein Mensch.
     let sprache = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())
         .map(|e| e.oberflaeche.sprache)
         .unwrap_or_default();
-    if let Some(satz) = myl_client::schutzfilter::abweisen(auftrag, sprache, "konsole") {
-        println!();
-        println!("  {satz}");
-        println!();
-        return;
+    if art == Auftragsart::Mensch {
+        if let Some(satz) = myl_client::schutzfilter::abweisen(auftrag, sprache, "konsole") {
+            println!();
+            println!("  {satz}");
+            println!();
+            return None;
+        }
     }
-    let verlauf = stand.gespraech.nachrichten().to_vec();
+    let verlauf = match art {
+        Auftragsart::Mensch => stand.gespraech.nachrichten().to_vec(),
+        Auftragsart::Modul => Vec::new(),
+    };
+    // ⚑ **Im Modus eines Moduls arbeitet der Agent mit dessen Kiste**, in
+    //   dessen Arbeitsordner (nur dort schreibend), ohne Netz und ohne
+    //   Blick; welche Werkzeuge nur lesen und deshalb nicht nachfragen,
+    //   sagt die Kiste selbst (`ohne_nachfrage` in `kiste.json`).
+    let modulanpassung = stand.module.aktives().map(|l| {
+        let b = &l.g.beschreibung;
+        let kiste = b.kiste.as_ref().map(|k| l.g.ordner.join(k));
+        let ohne: Vec<String> = kiste
+            .as_ref()
+            .and_then(|k| std::fs::read_to_string(k.join("kiste.json")).ok())
+            .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+            .and_then(|v| v["ohne_nachfrage"].as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()))
+            .unwrap_or_default();
+        (b.arbeit.as_ref().map(|a| l.g.ordner.join(a)), kiste, ohne)
+    });
+    let ohne_nachfrage: Vec<String> = modulanpassung.as_ref().map(|m| m.2.clone()).unwrap_or_default();
     let Some(modell) = stand.modell.as_mut() else {
         eprintln!("Es ist kein Modell geladen. `/model` waehlt eines.");
-        return;
+        return None;
     };
     let e = match myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad()) {
         Ok(e) => e,
         Err(f) => {
             eprintln!("Die Einstellungen sind nicht lesbar: {f}");
-            return;
+            return None;
         }
     };
 
@@ -1639,11 +1865,19 @@ fn auftrag_fahren(stand: &mut Stand, auftrag: &str) {
     // ⚑ Der Auftrag ist die Saat der Web-Recherche, wie im Chat.
     agent.netzsaat = Some(auftrag.to_string());
     konsolenvorgaben(&mut agent, stand.schreibt);
+    if let Some((arbeit, kiste, _)) = &modulanpassung {
+        agent.schreiben = arbeit.is_some();
+        agent.wurzel = arbeit.as_ref().map(|a| a.display().to_string()).or(agent.wurzel);
+        agent.kistenordner = kiste.as_ref().map(|k| k.display().to_string());
+        agent.web_recherche = false;
+        agent.blick_bildschirm = false;
+        agent.blick_kamera = false;
+    }
 
     // ⚑ **Die Kiste folgt dem geladenen Modell**, sofern der Nutzer
     // nichts anderes eingestellt hat. Gerechnet wird das in der Kiste,
     // nicht hier: Fenster und Konsole stellen dieselbe Frage.
-    let kiste = myl_local_agent::kisten::kiste_der_gilt(&e.agent);
+    let kiste = myl_local_agent::kisten::kiste_der_gilt(&agent);
 
 
     // ⚑ **Was geschieht, steht da, waehrend es geschieht.** Ein
@@ -1684,6 +1918,9 @@ fn auftrag_fahren(stand: &mut Stand, auftrag: &str) {
     let nachfrage: Option<myl_local_agent::ruestung::Nachfrage> = if stand.modus.fragt_nach() {
         let frager = anzeige.frager();
         Some(std::sync::Arc::new(move |name: &str, a: &myl_client::serde_json::Value| {
+            if ohne_nachfrage.iter().any(|n| n == name) {
+                return true;
+            }
             frager.fragen(&format!("  ⚑ manual mode: {name} {}", myl_local_agent::lauf::kurzform(a)))
         }))
     } else {
@@ -1710,7 +1947,7 @@ fn auftrag_fahren(stand: &mut Stand, auftrag: &str) {
             anzeige.beenden();
             drop(roh);
             eprintln!("Die Werkzeuge haengen nicht: {f}");
-            return;
+            return None;
         }
     };
     // ⚑ **Jede Meldung in zwei Laengen.** Kurz steht in der Zeitleiste,
@@ -1798,8 +2035,10 @@ fn auftrag_fahren(stand: &mut Stand, auftrag: &str) {
         println!("{}", rollen.beiwerk.faerben(&satz, farbig));
     }
     // ⚑ **Das Gespraech geht mit**, samt einer Verdichtung, falls der Lauf
-    // eine brauchte.
-    stand.gespraech.nach_dem_lauf(&aus.nachrichten);
+    // eine brauchte. Ein Auftrag eines Moduls nicht: Ihn haelt das Modul fest.
+    if art == Auftragsart::Mensch {
+        stand.gespraech.nach_dem_lauf(&aus.nachrichten);
+    }
     stand.ansage = aus.nachrichten.first().filter(|n| n.role == "system").cloned();
     let kontext = stand
         .modell
@@ -1820,6 +2059,461 @@ fn auftrag_fahren(stand: &mut Stand, auftrag: &str) {
     // der naechste sind zwei Absaetze, nicht einer.
     println!();
     println!();
+    aus.antwort.clone()
+}
+
+// ── Module ──────────────────────────────────────────────────────────
+
+/// **Die Kennung des geladenen Modells**: der Name seines Verzeichnisses,
+/// etwa `myelith-35b-a3b`.
+///
+/// 📌 **Nicht der Anzeigename.** Hier stand `stand.name`, und der heisst
+/// in der Konsole „Myelith 35B-A3B"; ein Modul, das Modelle nach ihrem
+/// Verzeichnis zulaesst, lehnte das zulaessige ab (2026-10-06).
+fn modellkennung(stand: &Stand) -> String {
+    std::path::Path::new(&stand.artefakt)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .filter(|n| !n.is_empty())
+        .unwrap_or_else(|| stand.name.clone())
+}
+
+/// **Die Umgebung, in der die Werkzeuge der Kiste eines Moduls das
+/// gepruefte Programm finden**, solange sein Modus gilt.
+const MODULPROGRAMM: &str = "MYL_MODUL_PROGRAMM";
+
+/// Was vor dem Modus eines Moduls galt; kommt beim Verlassen zurueck.
+struct Vorher {
+    gespraech: myl_local_agent::gespraech::Gespraech,
+    kiste: String,
+}
+
+/// Wo sich die Konsole den Agentenmodus (auto oder manual) je Modul merkt.
+fn modusdatei(name: &str) -> std::path::PathBuf {
+    crate::module::einstellungsordner().join("modulmodus").join(name)
+}
+
+/// **Die Angaben fuer den Start eines Moduls**, als eigene Werte, damit
+/// `stand.module` danach veraenderlich geliehen werden kann.
+struct Startwerte {
+    sprache: &'static str,
+    modell: Option<String>,
+    breite: u16,
+    hoehe: u16,
+    speicher: std::path::PathBuf,
+}
+
+impl Startwerte {
+    fn von(stand: &Stand) -> Self {
+        let sprache = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad()).map(|e| e.oberflaeche.sprache).unwrap_or_default();
+        let (breite, hoehe) = crate::banner::fenstermasse();
+        Self {
+            sprache: if sprache == myl_local_agent::agentenwahl::Sprache::De { "de" } else { "en" },
+            modell: stand.modell.is_some().then(|| modellkennung(stand)),
+            breite,
+            hoehe,
+            speicher: crate::module::speicherpfad(),
+        }
+    }
+
+    fn start(&self) -> myl_module::wirt::Start<'_> {
+        myl_module::wirt::Start {
+            konsole: env!("CARGO_PKG_VERSION"),
+            sprache: self.sprache,
+            modell: self.modell.clone(),
+            breite: self.breite,
+            hoehe: self.hoehe,
+            speicher: &self.speicher,
+            wecker: Some(crate::eingabe::wecken),
+        }
+    }
+}
+
+/// **Ein Befehl eines Moduls**: starten, falls noetig, und weitergeben.
+fn modul_befehl(stand: &mut Stand, name: &str, zeile: &str) {
+    // ⚑ **Sofort eine Zeile, dass etwas geschieht** (Wunsch des
+    //   Projektinhabers, 2026-10-08): Pruefen, Starten und die erste Antwort
+    //   eines Moduls brauchen Sekunden, und bis dahin stand nichts da.
+    let laeuft = stand.module.laufendes(name).is_some_and(|l| l.lauf.laeuft());
+    let rollen = design::rollen(stand.design);
+    let satz = if laeuft { format!("  ⟳ {name} …") } else { format!("  ⟳ Modul {name} wird geladen und geprüft …") };
+    println!("{}", rollen.beiwerk.faerben(&satz, design::farbig()));
+    let _ = std::io::stdout().flush();
+    let werte = Startwerte::von(stand);
+    let ergebnis = stand.module.starten(name, &werte.start());
+    if let Err(f) = ergebnis {
+        let rollen = design::rollen(stand.design);
+        println!("{}", rollen.warnung.faerben(&format!("  {name}: {f}"), design::farbig()));
+        println!();
+        return;
+    }
+    if let Some(l) = stand.module.laufendes(name) {
+        l.letzter_befehl = Some(zeile.to_string());
+        l.lauf.senden(&myl_module::nachricht::AnModul::Befehl { zeile: zeile.to_string() });
+    }
+    // Die erste Antwort kommt meist sofort; kurz darauf warten, damit sie
+    // vor dem Rahmen steht.
+    let bis = std::time::Instant::now() + std::time::Duration::from_millis(400);
+    while std::time::Instant::now() < bis && !crate::eingabe::geweckt() {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    modul_takt(stand);
+}
+
+/// **Der Takt der Module**: Faelliges schicken, alles Angekommene
+/// verarbeiten. Gerufen, wenn die Eingabezeile ihre Frist erreicht oder
+/// geweckt wird.
+fn modul_takt(stand: &mut Stand) {
+    // Mehrere Durchgaenge: Eine Antwort (etwa auf eine Modellfrage) bringt
+    // oft gleich die naechste Nachricht.
+    for _ in 0..50 {
+        let werte = Startwerte::von(stand);
+        let ereignisse = stand.module.abholen(&werte.start());
+        if ereignisse.is_empty() {
+            return;
+        }
+        for (name, e) in ereignisse {
+            modul_ereignis(stand, &name, e);
+        }
+    }
+}
+
+fn modul_ereignis(stand: &mut Stand, name: &str, e: myl_module::wirt::Ereignis) {
+    use myl_module::wirt::Ereignis;
+    let rollen = design::rollen(stand.design);
+    let farbig = design::farbig();
+    match e {
+        Ereignis::Nachricht(n) => modul_nachricht(stand, name, n),
+        Ereignis::Abgelehnt(f) => {
+            crate::module::protokoll(name, &format!("abgelehnt: {f}"));
+            if stand.module.ablehnung_zeigen(name) {
+                println!("{}", rollen.warnung.faerben(&format!("  ⚠ {name}: {f}"), farbig));
+            }
+        }
+        Ereignis::Fehlerausgabe(z) => crate::module::protokoll(name, &z),
+        Ereignis::Beendet(w) => {
+            crate::module::protokoll(name, &format!("beendet: {w}"));
+            let aktiv = stand.module.laufendes(name).is_some_and(|l| l.modus);
+            if aktiv {
+                modus_verlassen(stand, name);
+            }
+            stand.module.laufend.retain(|l| l.g.beschreibung.name != name);
+            println!("{}", rollen.warnung.faerben(&format!("  {name} ist beendet ({w})."), farbig));
+        }
+    }
+}
+
+fn modul_nachricht(stand: &mut Stand, name: &str, n: myl_module::nachricht::VomModul) {
+    use myl_module::nachricht::{AnModul, VomModul};
+    match n {
+        VomModul::Hallo { .. } => {}
+        VomModul::Zeilen { text, stil } => crate::module::zeilen_ausgeben(&text, stil, stand.design),
+        VomModul::Protokoll { text } => crate::module::protokoll(name, &text),
+        VomModul::WeckenIn { ms } => {
+            if let Some(l) = stand.module.laufendes(name) {
+                l.naechster_takt = Some(std::time::Instant::now() + std::time::Duration::from_millis(ms.clamp(100, 3_600_000)));
+            }
+        }
+        VomModul::Fusszeile { teile } => {
+            if let Some(l) = stand.module.laufendes(name) {
+                l.fusszeile = teile;
+            }
+        }
+        VomModul::Unten { zeilen } => {
+            let Some(l) = stand.module.laufendes(name) else { return };
+            l.unten = zeilen;
+            l.unten_da = true;
+            if l.modus {
+                unten_zeichnen(stand);
+            }
+        }
+        VomModul::Modus { aktiv: true, banner } => modus_betreten(stand, name, banner),
+        VomModul::Modus { aktiv: false, .. } => modus_verlassen(stand, name),
+        VomModul::ModellFragen { id, frage, grenze, denken, strom } => {
+            let antwort = modul_modell(stand, name, id, &frage, grenze, denken, strom);
+            if let Some(l) = stand.module.laufendes(name) {
+                l.lauf.senden(&AnModul::Modellantwort { id, antwort });
+            }
+        }
+        VomModul::Agentenlauf { id, auftrag } => {
+            let antwort = if stand.module.aktives().is_some_and(|l| l.g.beschreibung.name == name) {
+                auftrag_fahren_als(stand, &auftrag, Auftragsart::Modul).ok_or_else(|| "keine Antwort".to_string())
+            } else {
+                Err("ein Agentenlauf geht nur im Modus des Moduls".to_string())
+            };
+            if let Some(l) = stand.module.laufendes(name) {
+                l.lauf.senden(&AnModul::Agentenergebnis { id, antwort });
+            }
+        }
+        VomModul::NutzerFragen { id, frage } => {
+            let antwort = modul_nutzerfrage(stand, name, frage);
+            if let Some(l) = stand.module.laufendes(name) {
+                l.lauf.senden(&AnModul::Nutzerantwort { id, antwort });
+            }
+        }
+    }
+}
+
+/// **Eine Modellfrage eines Moduls**, mit Strom, wenn erbeten, und
+/// begrenzt durch das Budget der Befugnisse.
+#[allow(clippy::too_many_arguments)]
+fn modul_modell(stand: &mut Stand, name: &str, id: u64, frage: &str, grenze: u32, denken: bool, strom: bool) -> Result<String, String> {
+    use myl_module::nachricht::AnModul;
+    if stand.modell.is_none() {
+        return Err("es ist kein Modell geladen".into());
+    }
+    let Some(l) = stand.module.laufendes(name) else { return Err("nicht gestartet".into()) };
+    let budget = l.g.beschreibung.befugnisse.modell_token_je_stunde;
+    if l.token_stunde.0.elapsed() >= std::time::Duration::from_secs(3600) {
+        l.token_stunde = (std::time::Instant::now(), 0);
+    }
+    if budget > 0 && l.token_stunde.1.saturating_add(grenze) > budget {
+        return Err(format!("Budget erschoepft ({budget} Token je Stunde)"));
+    }
+    l.token_stunde.1 = l.token_stunde.1.saturating_add(grenze);
+    let beobachter: Option<Box<dyn Fn(myl_local_agent::textstrom::Stueck) + Send + Sync>> = strom.then(|| {
+        let sender = l.lauf.sender();
+        Box::new(move |s: myl_local_agent::textstrom::Stueck| {
+            if let myl_local_agent::textstrom::Stueck::Text(text) = s {
+                sender.senden(&AnModul::Modellstueck { id, text });
+            }
+        }) as Box<dyn Fn(myl_local_agent::textstrom::Stueck) + Send + Sync>
+    });
+    modell_fragen_mit(stand, frage, grenze as usize, Some(denken), name, beobachter).ok_or_else(|| "keine Antwort".to_string())
+}
+
+/// **Eine Frage eines Moduls an den Menschen**, im Rahmen der Konsole.
+///
+/// ⛔️ **Die Konsole fragt, nicht das Modul**: Der Kopf sagt, wer fragen
+/// laesst, der Text kommt gesaeubert an, und getippt wird hier. So kann ein
+/// Modul keine Frage der Konsole nachahmen und keine Antwort erfinden.
+fn modul_nutzerfrage(stand: &mut Stand, name: &str, frage: myl_module::nachricht::Nutzerfrage) -> Option<String> {
+    use myl_module::nachricht::Nutzerfrage;
+    let rollen = design::rollen(stand.design);
+    let farbig = design::farbig();
+    println!();
+    println!("  {}", rollen.ueberschrift.faerben(&format!("⚑ Die Konsole fragt für das Modul {name}:"), farbig));
+    let text = match &frage {
+        Nutzerfrage::Wort { text, .. } | Nutzerfrage::JaNein { text } | Nutzerfrage::Auswahl { text, .. } => text.clone(),
+    };
+    for z in text.lines() {
+        println!("  {}", rollen.warnung.faerben(z, farbig));
+    }
+    let lesen = |satz: &str| -> String {
+        print!("  {satz} ");
+        let _ = std::io::stdout().flush();
+        let mut z = String::new();
+        let _ = std::io::stdin().read_line(&mut z);
+        z.trim().to_string()
+    };
+    match frage {
+        Nutzerfrage::Wort { wort, .. } => Some(lesen(&format!("Zum Bestätigen {wort} tippen, alles andere bricht ab:"))),
+        Nutzerfrage::JaNein { .. } => Some(if matches!(lesen("[j/N]").to_lowercase().as_str(), "j" | "ja") { "ja".into() } else { "nein".into() }),
+        Nutzerfrage::Auswahl { punkte, .. } => {
+            let mut p: Vec<wahl::Punkt> = punkte.iter().map(|x| wahl::Punkt { titel: x.titel.clone(), hinweis: x.hinweis.clone(), offen: true }).collect();
+            p.push(wahl::Punkt { titel: "Abbrechen".into(), hinweis: String::new(), offen: true });
+            match wahl::waehlen_ab("Pfeiltasten, Enter; Esc bricht ab", &p, 0, design::toene(stand.design)) {
+                Some(i) if i < punkte.len() => Some(i.to_string()),
+                _ => None,
+            }
+        }
+    }
+}
+
+/// **Der Bereich unten neu**: Platz anpassen, wenn noetig, und zeichnen;
+/// der Wagen bleibt im Rollbereich, wo er war.
+fn unten_zeichnen(stand: &mut Stand) {
+    let Some(sch) = stand.schirm else { return };
+    let Some(l) = stand.module.aktives() else { return };
+    let platz = crate::module::unten_platz(&l.unten);
+    let mut o = std::io::stdout();
+    if crate::schirm::unten() != platz {
+        // ⛔️ **Erst die Zeile des Wagens, dann die Grenze.** Ein neuer
+        //    Rollbereich setzt den Wagen in die erste Zeile (VT100); wer
+        //    ihn danach merkt, merkt die falsche Stelle, und aller Text
+        //    danach steht ab Zeile 1 ueber dem, was dort schon stand.
+        //    📌 2026-10-08, am ersten Start des Handels als Modul: Das
+        //    Banner lag zerstueckelt unter der Uebersicht.
+        let _ = o.flush();
+        let zeile = crossterm::cursor::position().ok().map(|(_, z)| z + 1);
+        crate::schirm::unten_setzen(platz);
+        sch.grenze_setzen();
+        let ziel = zeile.map(|z| z.min(sch.rollende())).unwrap_or_else(|| sch.rollende());
+        let _ = write!(o, "\x1b[{ziel};1H");
+    }
+    let text = crate::module::unten_text(&sch, &l.unten, stand.design);
+    let _ = write!(o, "\x1b7{text}\x1b8");
+    let _ = o.flush();
+}
+
+/// **Der Modus eines Moduls beginnt**: Gespraech und Werkzeugkiste des
+/// Agenten werden die des Moduls, der Schirm beginnt leer mit dem Banner
+/// des Moduls, unten steht sein Bereich, und der zuletzt in diesem Modus
+/// gewaehlte Agentenmodus gilt wieder.
+fn modus_betreten(stand: &mut Stand, name: &str, banner: Option<Vec<String>>) {
+    use myl_module::nachricht::AnModul;
+    if let Some(anderes) = stand.module.aktives().map(|l| l.g.beschreibung.name.clone()).filter(|a| a != name) {
+        if let Some(l) = stand.module.laufendes(name) {
+            l.lauf.senden(&AnModul::Modell { kennung: None });
+        }
+        let rollen = design::rollen(stand.design);
+        println!("{}", rollen.warnung.faerben(&format!("  Der Modus von {anderes} läuft noch; erst ihn beenden."), design::farbig()));
+        return;
+    }
+    let Some(l) = stand.module.laufendes(name) else { return };
+    if l.modus {
+        return;
+    }
+    l.modus = true;
+    l.aktivierung = l.letzter_befehl.clone();
+    // ⚑ **Werkzeuge der Kiste rufen die gepruefte Kopie**, nicht die Datei
+    //   im Modulordner, die nach der Pruefung getauscht sein koennte.
+    std::env::set_var(MODULPROGRAMM, &l.lauf.programm);
+    let ordner = l.g.ordner.clone();
+    let b = l.g.beschreibung.clone();
+    if let Some(s) = &b.skills {
+        myl_local_agent::skills::modusordner_setzen(Some(ordner.join(s)));
+    }
+    let kiste = b.kiste.as_deref().and_then(|k| k.rsplit('/').next()).unwrap_or(&b.name).to_string();
+    let gespraech = std::mem::replace(&mut stand.gespraech, myl_local_agent::gespraech::Gespraech::neu());
+    let kiste_vorher = std::mem::replace(&mut stand.kiste, kiste);
+    stand.modus_vorher = Some(Vorher { gespraech, kiste: kiste_vorher });
+    let gemerkt = match std::fs::read_to_string(modusdatei(name)).unwrap_or_default().trim() {
+        "auto" => Some(myl_client::einstellungen::Agentenmodus::Auto),
+        "manual" => Some(myl_client::einstellungen::Agentenmodus::Manuell),
+        _ => None,
+    };
+    if let Some(m) = gemerkt {
+        stand.modus = m;
+    }
+    // ⚑ **Ein leerer Schirm, dann das Banner, dann der Bereich unten.**
+    //   📌 Ohne ausdrueckliches Loeschen des alten Rahmens schob Terminal.app
+    //   ihn beim Leeren in den Verlauf, und die alte Eingabezeile rutschte
+    //   sichtbar nach oben.
+    if let Some(sch) = stand.schirm {
+        sch.aufloesen();
+        let mut o = std::io::stdout();
+        let _ = write!(o, "\x1b[{};1H\x1b[J", sch.erste_eigene());
+        let _ = o.flush();
+        schirm_leeren();
+        println!();
+        if let Some(z) = banner.filter(|z| !z.is_empty()) {
+            crate::modulbanner::zeigen(stand.design, &z, &b.was, &|| true);
+        }
+        crate::schirm::unten_setzen(stand.module.aktives().map(|l| crate::module::unten_platz(&l.unten)).unwrap_or(0));
+        sch.einrichten();
+        unten_zeichnen(stand);
+    }
+}
+
+/// **Der Modus eines Moduls endet**: alles kommt zurueck, wie es vorher war.
+fn modus_verlassen(stand: &mut Stand, name: &str) {
+    let Some(l) = stand.module.laufendes(name) else { return };
+    if !l.modus {
+        return;
+    }
+    l.modus = false;
+    l.naechster_takt = None;
+    std::env::remove_var(MODULPROGRAMM);
+    l.fusszeile.clear();
+    l.unten.clear();
+    myl_local_agent::skills::modusordner_setzen(None);
+    if let Some(v) = stand.modus_vorher.take() {
+        stand.gespraech = v.gespraech;
+        stand.kiste = v.kiste;
+    }
+    crate::schirm::unten_setzen(0);
+    if let Some(sch) = stand.schirm {
+        sch.aufloesen();
+    }
+    frei_bis_auf_das_logo(stand.design);
+    if let Some(sch) = stand.schirm {
+        sch.einrichten();
+    }
+}
+
+/// **`/module`**: zeigen, oder `install <ordner>`.
+fn module_befehl(stand: &mut Stand, rest: &str) {
+    let rollen = design::rollen(stand.design);
+    let farbig = design::farbig();
+    let mut w = rest.split_whitespace();
+    match w.next() {
+        None => {
+            for z in crate::module::liste(&stand.module) {
+                let rolle = if z.starts_with('✗') { &rollen.warnung } else { &rollen.beiwerk };
+                println!("  {}", rolle.faerben(&z, farbig));
+            }
+            println!("  {}", rollen.beiwerk.faerben(&format!("Vertrauensliste: {}", crate::module::vertrauenspfad().display()), farbig));
+        }
+        Some("install") => {
+            let pfad = rest.trim_start().strip_prefix("install").unwrap_or("").trim();
+            if pfad.is_empty() {
+                println!("  /module install <ordner>");
+            } else {
+                println!("{}", rollen.warnung.faerben("  ⚠ Ein Modul ist ein Programm. Installiert wird nur, was ein Schlüssel deiner Vertrauensliste signiert hat; ein natives Modul läuft ohne Abschottung mit deinen Rechten.", farbig));
+                match crate::module::installieren(std::path::Path::new(pfad)) {
+                    Ok(name) => {
+                        stand.module.neu_pruefen();
+                        println!("  ✓ {name} installiert.");
+                    }
+                    Err(f) => println!("{}", rollen.warnung.faerben(&format!("  ✗ {f}"), farbig)),
+                }
+            }
+        }
+        Some(_) => println!("  /module zeigt die Module; /module install <ordner> installiert eines."),
+    }
+    println!();
+}
+
+/// **Eine direkte Frage an das geladene Modell**, ohne Werkzeuge und ohne
+/// Verlauf, unter denselben Grundsaetzen wie jeder Chat, mit einem
+/// Beobachter fuer die Dauer der Frage (der vorige kommt danach zurueck).
+/// `denken`: `None` laesst die Einstellung stehen. Die Ueberlegung gehoert
+/// nicht zur Antwort.
+fn modell_fragen_mit(
+    stand: &mut Stand,
+    frage: &str,
+    grenze_token: usize,
+    denken_hier: Option<bool>,
+    wofuer: &str,
+    beobachter: Option<Box<dyn Fn(myl_local_agent::textstrom::Stueck) + Send + Sync>>,
+) -> Option<String> {
+    use myl_local_agent::Modellweg;
+    let sprache = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad()).map(|e| e.oberflaeche.sprache).unwrap_or_default();
+    let grundsaetze = match myl_local_agent::systemprompt::grundsaetze(sprache) {
+        Ok(g) => g,
+        Err(f) => {
+            eprintln!("  {f}");
+            return None;
+        }
+    };
+    let modell = stand.modell.as_mut()?;
+    let (grenze, denken) = (modell.grenze, modell.denken);
+    modell.grenze = grenze_token;
+    if let Some(d) = denken_hier {
+        modell.denken = d;
+    }
+    // Ohne eigenen Beobachter bleibt der vorhandene, wie er ist.
+    let vorher = beobachter.map(|b| modell.beobachter.replace(b));
+    let antwort = modell.chat("lokal", &[myl_client::Nachricht::system(grundsaetze), myl_client::Nachricht::nutzer(frage.to_string())], Some(grenze_token as u32));
+    if let Some(v) = vorher {
+        modell.beobachter = v;
+    }
+    modell.grenze = grenze;
+    modell.denken = denken;
+    match antwort {
+        Ok(a) => {
+            let text = match a.text.rfind("</think>") {
+                Some(i) => a.text[i + "</think>".len()..].to_string(),
+                None => a.text,
+            };
+            Some(text.trim().to_string())
+        }
+        Err(f) => {
+            eprintln!("  {wofuer}: {f}");
+            None
+        }
+    }
 }
 
 // ── Der Loop in der Konsole ─────────────────────────────────────────
@@ -1871,7 +2565,7 @@ fn vorhaben_zeigen(rest: &str) {
                 println!("  {z}");
             }
         }
-        (Some("abnahme"), Some(k)) => {
+        (Some("check" | "abnahme"), Some(k)) => {
             // ⚑ Alles nach der Kennung ist der Befehl (Punkt 4.7); leer loescht ihn.
             let befehl = rest.split_whitespace().skip(2).collect::<Vec<_>>().join(" ");
             match ablage.abnahme_setzen(k, &befehl) {
@@ -1886,7 +2580,7 @@ fn vorhaben_zeigen(rest: &str) {
                 Err(f) => println!("  {k}: {f}"),
             }
         }
-        _ => println!("  /tasks [resume|pause <ID> | abnahme <ID> <befehl>]"),
+        _ => println!("  /tasks [resume|pause <ID> | check <ID> <befehl>]"),
     }
     println!();
 }
@@ -2159,6 +2853,18 @@ fn kurz(pfad: &str) -> String {
 mod tests {
     use super::*;
 
+    /// **Ohne Modul steht kein Befehl eines Moduls in Hilfe und
+    /// Vervollstaendigung**, und ein Modul darf keinen Befehl der Konsole
+    /// belegen.
+    #[test]
+    fn ohne_modul_nur_die_eigenen_befehle() {
+        let leer = crate::module::Modulwirt::default();
+        assert_eq!(vorschlaege(&leer).len(), BEFEHLE.len());
+        assert_eq!(hilfezeilen(&leer).len(), BEFEHLE.len());
+        assert!(BEFEHLE.iter().all(|b| b.namen.iter().all(|n| eingebauter_befehl(n))), "jeder Name der Liste ist eingebaut");
+        assert!(!eingebauter_befehl("/beispiel"));
+    }
+
     /// `str::floor_char_boundary` ist erst ab Rust 1.91 stabil, die Kiste
     /// verspricht eine aeltere Mindestfassung (die CI prueft sie). Dasselbe,
     /// von Hand.
@@ -2361,7 +3067,7 @@ mod tests {
         // Schmal: Die Saat faellt vor dem Modellnamen weg.
         let schmal = fusszeile("auto mode", "myelith-4b", "Base", true, None, Some("Saat fest 42".into()), ohne.chars().count());
         assert!(!schmal.contains("Saat") && schmal.contains("myelith-4b"), "{schmal}");
-        for zeile in ["/seed", "/seed 1234", "/seed 1234 immer", "/seed nochmal", "/saat zufall"] {
+        for zeile in ["/seed", "/seed 1234", "/seed 1234 always", "/seed again", "/seed random", "/seed 1234 immer", "/seed nochmal", "/saat zufall"] {
             assert_eq!(befehl_zu(zeile), Some(Befehlsart::Saat), "{zeile}");
         }
     }
@@ -2413,7 +3119,7 @@ mod tests {
 
     #[test]
     fn jeder_befehl_wird_behandelt_und_steht_in_der_hilfe() {
-        let zeilen = hilfezeilen().join("\n");
+        let zeilen = hilfezeilen(&crate::module::Modulwirt::default()).join("\n");
         for b in BEFEHLE.iter() {
             assert!(!b.namen.is_empty(), "ein Befehl ohne Namen");
             assert!(!b.was.is_empty(), "{} ohne Satz dazu", b.namen[0]);

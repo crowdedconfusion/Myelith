@@ -1,7 +1,7 @@
 # agent-layer
 
-> **Version:** 0.28.0 (`myl-agent` 0.7.1, `myl-local-agent` 0.21.0)
-> **Datum:** 2026-10-01
+> **Version:** 0.30.0 (`myl-agent` 0.7.1, `myl-local-agent` 0.23.0)
+> **Datum:** 2026-10-06
 > **Status:** Manifeste, Herkunftsstufe, Registratur, der
 > **Session-Kontrakt** mit Durchsetzung im Ledger, der **Plan** und seit
 > v0.7.0 die **Segmentkette**. 52 Tests. ⚑ **Was jetzt fehlt, ist keine
@@ -68,6 +68,51 @@ umbenannt, weil er in jedem `use` steht.
 - `src/kette.rs` — dass er es auch so getan hat, und wann er aufhört.
 
 ## Changelog
+
+### v0.30.0 – 2026-10-06 (rohe Zeilenumbrüche in einem Werkzeugaufruf werden gelesen; `myl-local-agent` 0.23.0)
+
+**Anlass:** In einem Agentenlauf gibt das 35B Angaben zu zehn Einträgen
+als eine lange Zeichenkette ab. In drei Probetagen war der Aufruf zweimal
+unlesbar, und das Modell blieb nach drei Versuchen stecken. Die Rückmeldung
+zeigt nur die ersten 120 Zeichen, die Ursache ist deshalb nicht belegt;
+wahrscheinlich ist ein roher Zeilenumbruch in der Liste, der als JSON
+ungültig, aber nicht mehrdeutig ist.
+
+- **Siebte nachsichtige Abweichung:** Rohe Steuerzeichen (Zeilenumbruch,
+  Wagenrücklauf, Tabulator, andere) **innerhalb einer Zeichenkette** werden
+  maskiert, bevor ein Aufruf als unlesbar gilt (`steuerzeichen_maskieren`).
+  Gezählt wird wie bei den fehlenden Klammern; schon maskierte Folgen und
+  Zeilenumbrüche zwischen den Werten bleiben, wie sie sind.
+- ⛔️ Die Grenze bleibt: gelesen wird nur zwischen den Marken in der Antwort
+  des Modells, jeder Vorschlag geht danach durch dieselbe Erlaubnis.
+- Test `rohe_zeilenumbrueche_in_zeichenketten_werden_gelesen` mit
+  gemischtem Fall und Gegenprobe (offene Zeichenkette bleibt unlesbar).
+  `cargo test` grün, Clippy ohne Warnung.
+
+### v0.29.0 – 2026-10-06 (ein vierter Ort für Skills: der Ordner eines Modus; `myl-local-agent` 0.22.0)
+
+**Anlass:** Ein Modus der Konsole bringt eigene Skills mit, und die
+gehören weder in den Arbeitsordner noch zu den eigenen oder den
+mitgelieferten. Eine Kopie in den Projektordner wären zwei Orte, die
+auseinanderlaufen.
+
+- **`skills::modusordner_setzen`** hängt für die Dauer eines Modus einen
+  Ordner ein; `None` nimmt ihn wieder heraus. Ein Ordner, den es nicht gibt,
+  wird nicht gesetzt. Prozessweit, wie der Modus selbst.
+- **`Orte` trägt ein Feld `modus`**, und `Herkunft::Modus` steht **vor**
+  Projekt, eigenen und mitgelieferten: Bei gleichem Namen gewinnt der
+  Modus, solange er gilt. `search_skill`, `learn_skill` und `/skill` sehen
+  ihn ohne weitere Änderung, denn alle gehen über `alle_in`.
+- **Proben:** `der_naehere_ort_gewinnt` prüft jetzt auch den Modus
+  (gewinnt bei gleichem Namen, lässt den Rest, wie er war, wird gelernt und
+  gefunden); neu `der_modusordner_kommt_und_geht`.
+- ⛔️ **`$MYL_KISTE` ist jetzt immer absolut.** Ein Manifest-Befehl laeuft im
+  Arbeitsordner; ein relativ angegebener Kistenordner (`myl agent --kiste
+  …`) zeigte von dort ins Leere (`sh: …/<skript>.sh: not found`, am ersten
+  Lauf einer Kiste außerhalb des Arbeitsordners mit dem 35B). Probe `ein_relativer_kistenordner_findet_sein_skript`;
+  die Gegenprobe ohne `canonicalize` beisst.
+- **Belegt:** alle Tests von `myl-local-agent` grün, Clippy mit
+  `-D warnings` sauber.
 
 ### v0.28.0 – 2026-10-01 (secure-flow mit dem 4B gefahren: verborgene Pfade nach Fremdem geschützt, „meintest du …?“ für fehlende Dateien; `myl-local-agent` 0.21.0)
 

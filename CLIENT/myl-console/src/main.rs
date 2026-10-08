@@ -38,6 +38,8 @@ mod banner;
 mod design;
 mod farben;
 mod geometrie;
+mod module;
+mod modulbanner;
 mod schimmer;
 mod schirm;
 mod sitzung;

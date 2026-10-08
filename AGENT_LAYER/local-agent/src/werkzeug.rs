@@ -380,12 +380,14 @@ impl Ansageform {
 ///
 /// # ⚑ Nachsichtig bei eindeutigen Formfehlern (2026-09-29)
 ///
-/// Innerhalb der Marken werden sechs Abweichungen gelesen, deren Sinn nicht
+/// Innerhalb der Marken werden sieben Abweichungen gelesen, deren Sinn nicht
 /// zweifelhaft ist: ein fehlender Schlüssel `"name"`
 /// (`{"search_skill", "arguments": …}`), `parameters` statt `arguments`,
 /// Argumente als JSON-Zeichenkette, ein Codezaun um das JSON, die Form
 /// `{"function": {…}}` und, seit dem 2026-10-01, eine oder zwei fehlende
-/// schließende geschweifte Klammern am Ende (siehe [`fehlende_klammern`]). 📌 **Werkzeugabdeckung, 27B:** Das Modell schrieb
+/// schließende geschweifte Klammern am Ende (siehe [`fehlende_klammern`]),
+/// seit dem 2026-10-06 rohe Steuerzeichen (Zeilenumbruch, Tabulator) in
+/// einer Zeichenkette (siehe [`steuerzeichen_maskieren`]). 📌 **Werkzeugabdeckung, 27B:** Das Modell schrieb
 /// viermal `{"search_skill", "arguments": {"anfrage": "Datum"}}`, jeder
 /// Aufruf galt als unlesbar, und der Auftrag scheiterte, obwohl klar war,
 /// was gemeint war.
@@ -416,7 +418,7 @@ pub fn vorschlaege(antwort: &str) -> Vec<Result<Vorschlag, Unlesbar>> {
     aus
 }
 
-/// Liest einen Aufrufblock, streng oder mit den sechs eindeutigen
+/// Liest einen Aufrufblock, streng oder mit den sieben eindeutigen
 /// Abweichungen (siehe [`vorschlaege`]).
 fn nachsichtig_lesen(inhalt: &str) -> Option<Vorschlag> {
     let mut t = inhalt.trim();
@@ -428,14 +430,73 @@ fn nachsichtig_lesen(inhalt: &str) -> Option<Vorschlag> {
     let wert: serde_json::Value = match serde_json::from_str(t) {
         Ok(w) => w,
         Err(_) => {
-            let t = fehlende_klammern(t).unwrap_or_else(|| t.to_string());
+            let t = steuerzeichen_maskieren(t).unwrap_or_else(|| t.to_string());
             match serde_json::from_str(&t) {
                 Ok(w) => w,
-                Err(_) => serde_json::from_str(&name_ohne_schluessel(&t)?).ok()?,
+                Err(_) => {
+                    let t = fehlende_klammern(&t).unwrap_or_else(|| t.clone());
+                    match serde_json::from_str(&t) {
+                        Ok(w) => w,
+                        Err(_) => serde_json::from_str(&name_ohne_schluessel(&t)?).ok()?,
+                    }
+                }
             }
         }
     };
     aus_dem_wert(&wert, 0)
+}
+
+/// **Rohe Steuerzeichen in Zeichenketten maskiert**, oder `None`, wenn es
+/// keine gab oder eine Zeichenkette offen bleibt.
+///
+/// 📌 **Anlass (2026-10-06):** Das 35B gab in einem Agentenlauf Angaben zu
+/// zehn Einträgen als eine lange Zeichenkette ab, und zweimal in drei
+/// Probetagen war der Aufruf unlesbar; das Modell blieb nach drei Versuchen
+/// stecken. Ein roher Zeilenumbruch in einer Zeichenkette ist ungültiges
+/// JSON, aber nicht mehrdeutig: Gemeint ist `\n`.
+///
+/// ⛔️ **Nur innerhalb von Zeichenketten**, gezählt wie in
+/// [`fehlende_klammern`]; schon maskierte Folgen bleiben, wie sie sind.
+/// Zwischen den Werten ist ein Zeilenumbruch ohnehin erlaubt.
+fn steuerzeichen_maskieren(t: &str) -> Option<String> {
+    let mut aus = String::with_capacity(t.len() + 8);
+    let mut in_text = false;
+    let mut maskiert = false;
+    let mut geaendert = false;
+    for c in t.chars() {
+        if in_text {
+            match (maskiert, c) {
+                (true, _) => maskiert = false,
+                (false, '\\') => maskiert = true,
+                (false, '"') => in_text = false,
+                (false, '\n') => {
+                    aus.push_str("\\n");
+                    geaendert = true;
+                    continue;
+                }
+                (false, '\r') => {
+                    aus.push_str("\\r");
+                    geaendert = true;
+                    continue;
+                }
+                (false, '\t') => {
+                    aus.push_str("\\t");
+                    geaendert = true;
+                    continue;
+                }
+                (false, c) if c.is_control() => {
+                    aus.push_str(&format!("\\u{:04x}", c as u32));
+                    geaendert = true;
+                    continue;
+                }
+                _ => {}
+            }
+        } else if c == '"' {
+            in_text = true;
+        }
+        aus.push(c);
+    }
+    (geaendert && !in_text).then_some(aus)
 }
 
 /// **Eine oder zwei fehlende `}` am Ende**, ergänzt, oder `None`.

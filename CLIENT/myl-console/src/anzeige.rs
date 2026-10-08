@@ -719,6 +719,7 @@ fn abbrechen(schirm: Option<Schirm>) -> ! {
         s.aufloesen();
     }
     println!();
+    crate::schirm::rollbereich_freigeben();
     std::process::exit(130);
 }
 

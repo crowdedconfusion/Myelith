@@ -240,6 +240,24 @@ fn vergessene_schliessende_klammern_werden_ergaenzt() {
     }
 }
 
+/// ⚑ **Rohe Zeilenumbrüche in einer Zeichenkette werden maskiert**
+/// (2026-10-06, 35B: Prognosen für zehn Märkte in einer langen Liste), und
+/// nur dort.
+#[test]
+fn rohe_zeilenumbrueche_in_zeichenketten_werden_gelesen() {
+    let block = "{\"name\": \"prognosen_abgeben\", \"arguments\": {\"liste\": \"EURUSD kauf 52 Grund;\nGOLD verkauf 51\tGrund\"}}";
+    let v = vorschlaege(&format!("<tool_call>{block}</tool_call>"));
+    let v = v[0].as_ref().expect("ein roher Zeilenumbruch in der Liste");
+    assert_eq!(v.arguments["liste"], serde_json::json!("EURUSD kauf 52 Grund;\nGOLD verkauf 51\tGrund"));
+    // Schon maskierte Folgen bleiben, Zeilenumbrüche zwischen den Werten auch.
+    let block = "{\n\"name\": \"w\",\n\"arguments\": {\"a\": \"x\\\\ny\\\"z\nq\"}}";
+    let v = vorschlaege(&format!("<tool_call>{block}</tool_call>"));
+    assert_eq!(v[0].as_ref().expect("gemischt").arguments["a"], serde_json::json!("x\\ny\"z\nq"));
+    // Gegenprobe: Eine offene Zeichenkette bleibt unlesbar.
+    let v = vorschlaege("<tool_call>{\"name\": \"w\", \"arguments\": {\"a\": \"offen\nweiter}}</tool_call>");
+    assert!(v[0].is_err(), "eine offene Zeichenkette haette nicht gelesen werden duerfen: {v:?}");
+}
+
 /// Ohne Aufruf kein Vorschlag.
 #[test]
 fn eine_antwort_ohne_aufruf_ergibt_nichts() {

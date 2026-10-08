@@ -78,7 +78,19 @@ pub struct Stil {
     pub hintergrund: Option<Color>,
 }
 
+/// **Gewinn und Verlust**, fuer die Stile eines Moduls, in jedem Design
+/// dieselben. ⚑ Das Rot nur ganz wenig zum Orange hin (Farbton etwa 7
+/// Grad statt 0), gut sichtbar auf dunklem Grund (Wunsch des
+/// Projektinhabers, 2026-10-07).
+pub const GEWINN: Color = Color::Rgb { r: 72, g: 208, b: 96 };
+pub const VERLUST: Color = Color::Rgb { r: 255, g: 72, b: 48 };
+
 impl Stil {
+    /// Ein Stil nur mit Farbe.
+    pub const fn farbe(farbe: Color) -> Self {
+        Self::schlicht(farbe)
+    }
+
     const fn schlicht(farbe: Color) -> Self {
         Self { farbe, fett: false, kursiv: false, unterstrichen: false, hintergrund: None }
     }

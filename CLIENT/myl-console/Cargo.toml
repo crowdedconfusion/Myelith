@@ -1,6 +1,6 @@
 [package]
 name = "myl-console"
-version = "0.28.1"
+version = "0.43.0"
 # ⚑ **2021 wie alle anderen Kisten hier.** Mit 2024 meldet `clippy`
 # andere Regeln, und dann traegt dieselbe Zeile in zwei Kisten einmal
 # einen Fehler und einmal nicht. **Eine Ausgabe je Repositorium**,
@@ -48,6 +48,9 @@ myl-client = { path = "../myl-client" }
 # ⚑ Der oertliche Agent, direkt und nicht ueber den Client (seit 2026-09-30).
 myl-local-agent = { path = "../../AGENT_LAYER/local-agent" }
 myl-senses = { path = "../myl-senses" }
+# ⚑ Module der Konsole: Protokoll, Beschreibung, Signatur und Wirt.
+myl-module = { path = "../myl-module" }
+serde_json = "1"
 
 # ⚑ **Fuer Marke, Farben und Auswahl im Terminal.** Dieselbe Fassung
 # wie im Testclient, aus dem die Animation stammt; `fassungsprobe.py`

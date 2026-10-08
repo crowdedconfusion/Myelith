@@ -807,6 +807,14 @@ jobs:
         working-directory: CLIENT/myl-senses
         run: cargo test --quiet
 
+      # ⚑ **Die Module der Konsole**: Protokoll, Beschreibung, Signatur,
+      # Vertrauensliste, Rollback-Sperre und der Wirt. Die Proben bauen
+      # ihre Module selbst (signierte Skripte) und brauchen nichts
+      # Fremdes; die Laeufe mit echtem Prozess nur unter Unix.
+      - name: cargo test, CLIENT (myl-module)
+        working-directory: CLIENT/myl-module
+        run: cargo test --quiet
+
       # 📌 **Die Oberfläche baut nur mit den WebKit-Bibliotheken des
       # Systems**, und unter Ubuntu heissen sie `libwebkit2gtk-4.1-dev`
       # samt `libgtk-3-dev` und `libayatana-appindicator3-dev`. Ohne sie

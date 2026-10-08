@@ -39,6 +39,8 @@ myl: lokaler Betrieb von Myelith
 
   myl ort                         Wo dieses Repositorium liegt
   myl frage <artefakt> <text>     Eine Frage an das lokale Modell
+  myl fragen [artefakt] --datei P --aus Q
+                                  Viele Fragen ohne Werkzeuge, Modell einmal geladen (JSONL, fortsetzbar)
   myl modell <artefakt>           Was in einem Artefakt steht
   myl agent [artefakt] <auftrag>  Die Agentenschleife, lokal
   myl sitzung [artefakt]          Viele Auftraege, Modell einmal geladen
@@ -79,7 +81,10 @@ von `frage`:
   --roh           Der volle Nachrichtenverlauf statt der Kurzform
   --deutsch       Werkzeuge deutsch ansagen (Vergleichsschalter, s.u.)
   --werkzeuge S   `Base` (Vorgabe) oder `Advanced`, s.u.
-  --datei P       Nur `auftraege`: je Zeile ein Auftrag
+  --kiste P       Werkzeugkiste aus dem Ordner P, nur fuer diesen Lauf
+  --skills P      Skills zusaetzlich aus dem Ordner P (vor allen anderen), nur fuer diesen Lauf
+  --datei P       Nur `auftraege` (je Zeile ein Auftrag) und `fragen` (je Zeile JSON mit `id` und `text`)
+  --aus Q         Nur `fragen`: die Antwortdatei (JSONL); schon beantwortete Kennungen werden uebersprungen
 
 ⚑ Bei `auftraege` teilen sich alle Unteragenten EIN geladenes Modell,
 und das Kernbudget aus `kap.kerne` wird durch ihre Zahl geteilt: Sonst
@@ -139,7 +144,7 @@ fn main() {
     // ⛔️ **Wo ein Modell antwortet, steht vorher, dass es eines ist**
     //   (Art. 50 Abs. 1 KI-Verordnung), auf der Fehlerausgabe, damit die
     //   Antwort auf der Standardausgabe unberuehrt bleibt.
-    if matches!(args.get(1).map(String::as_str), Some("frage" | "agent" | "sitzung" | "loop")) {
+    if matches!(args.get(1).map(String::as_str), Some("frage" | "fragen" | "agent" | "sitzung" | "loop")) {
         let sprache = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())
             .map(|e| e.oberflaeche.sprache)
             .unwrap_or_default();
@@ -147,6 +152,7 @@ fn main() {
     }
     let code = match args.get(1).map(String::as_str) {
         Some("frage") => frage(&args[2..]),
+        Some("fragen") => fragen(&args[2..]),
         Some("modell") => modell(&args[2..]),
         Some("agent") => agent(&args[2..]),
         Some("sitzung") => sitzung(&args[2..]),
@@ -203,8 +209,8 @@ fn main() {
 ///
 /// Wer einen Schalter mit Wert hinzufuegt, traegt ihn hier ein;
 /// `kein_wertschalter_fehlt` haelt es fest.
-const MIT_WERT: [&str; 6] =
-    ["--token", "--saat", "--schritte", "--wurzel", "--datei", "--werkzeuge"];
+const MIT_WERT: [&str; 9] =
+    ["--token", "--saat", "--schritte", "--wurzel", "--datei", "--werkzeuge", "--kiste", "--skills", "--aus"];
 
 /// Wie breit die Namensspalte der Einstellungsliste sein muss.
 ///
@@ -1161,7 +1167,8 @@ fn satz_fuer_diesen_lauf(
     // die eingebauten Werkzeuge aus einer anderen Quelle. **Dieselbe
     // Wahl an zwei Orten**, und die zweite meldet sich nicht.
     let Some(wort) = args.windows(2).find(|p| p[0] == "--werkzeuge").map(|p| p[1].clone()) else {
-        return myl_local_agent::kisten::kiste_der_gilt(&e.agent);
+        // ⚑ Mit `--kiste` sagt deren `kiste.json`, welche eingebauten dazugehoeren.
+        return myl_local_agent::kisten::kiste_der_gilt(&agent_fuer_diesen_lauf(e, args));
     };
     // ⚑ Der Schalter ueberstimmt fuer diesen einen Lauf, und er nimmt
     // dieselben Woerter wie der Ordnername.
@@ -1200,6 +1207,10 @@ fn agent_fuer_diesen_lauf(
     args: &[String],
 ) -> myl_client::einstellungen::Agenteneinstellung {
     let mut a = e.agent.clone();
+    // ⚑ Eine Werkzeugkiste nur fuer diesen Lauf, wie `--wurzel`.
+    if let Some(k) = wert(args, "--kiste") {
+        a.kistenordner = Some(k);
+    }
     if let Some(w) = wert(args, "--wurzel") {
         a.wurzel = Some(w);
         a.schreiben = args.iter().any(|x| x == "--schreiben");
@@ -1277,6 +1288,118 @@ fn frage(args: &[String]) -> i32 {
             1
         }
     }
+}
+
+/// **Bereits beantwortete Kennungen** einer Antwortdatei (fuer das
+/// Fortsetzen); unlesbare Zeilen zaehlen nicht.
+fn beantwortet(text: &str) -> std::collections::HashSet<String> {
+    text.lines()
+        .filter_map(|z| myl_client::serde_json::from_str::<myl_client::serde_json::Value>(z).ok())
+        .filter_map(|v| v["id"].as_str().map(str::to_string))
+        .collect()
+}
+
+/// **Die offenen Fragen** einer Eingabedatei: je Zeile `{"id", "text"}`,
+/// ohne die schon beantworteten. Eine unlesbare Zeile ist ein Fehler mit
+/// Zeilennummer, kein stilles Auslassen.
+fn offene_fragen(eingabe: &str, erledigt: &std::collections::HashSet<String>) -> Result<Vec<(String, String)>, String> {
+    let mut aus = Vec::new();
+    for (n, z) in eingabe.lines().enumerate().filter(|(_, z)| !z.trim().is_empty()) {
+        let v: myl_client::serde_json::Value = myl_client::serde_json::from_str(z).map_err(|f| format!("Zeile {}: {f}", n + 1))?;
+        let (Some(id), Some(text)) = (v["id"].as_str(), v["text"].as_str()) else {
+            return Err(format!("Zeile {}: es fehlt \"id\" oder \"text\"", n + 1));
+        };
+        if !erledigt.contains(id) {
+            aus.push((id.to_string(), text.to_string()));
+        }
+    }
+    Ok(aus)
+}
+
+/// **`myl fragen`**: viele Fragen ohne Werkzeuge, das Modell einmal geladen.
+///
+/// ⚑ Fuer Stapel wie das Einstufen Tausender Meldungen. `myl frage` laedt
+/// das Modell je Frage, und beim 35B ist das Laden der teuerste Teil;
+/// `myl sitzung` faehrt Agenten mit Werkzeugen. Hier: je Zeile der
+/// Eingabe eine Frage, je Frage eine Zeile in der Antwortdatei, sofort
+/// geschrieben. **Fortsetzbar:** Was schon beantwortet ist, wird
+/// uebersprungen; ein abgebrochener Nachtlauf macht dort weiter.
+///
+/// ⛔️ Dieselben Grundsaetze und derselbe Schutzfilter wie bei `frage`, je
+/// Frage. Eine abgewiesene Frage bekommt eine Zeile mit `fehler`.
+fn fragen(args: &[String]) -> i32 {
+    use std::io::Write;
+    let e = match Einstellungen::lesen(&Einstellungen::vorgabepfad()) {
+        Ok(e) => e,
+        Err(m) => {
+            eprintln!("myl fragen: {m}");
+            return 1;
+        }
+    };
+    kapazitaet_anwenden(&e);
+    let (artefakt, _) = artefakt_und_rest(args, &e);
+    let Some(artefakt) = artefakt else {
+        eprintln!("myl fragen: es fehlt das Artefaktverzeichnis");
+        return 2;
+    };
+    let (Some(ein), Some(aus)) = (wert(args, "--datei"), wert(args, "--aus")) else {
+        eprintln!("myl fragen: --datei <eingabe.jsonl> und --aus <antworten.jsonl> sind noetig");
+        return 2;
+    };
+    let erledigt = beantwortet(&std::fs::read_to_string(&aus).unwrap_or_default());
+    let offen = match std::fs::read_to_string(&ein).map_err(|f| format!("{ein}: {f}")).and_then(|t| offene_fragen(&t, &erledigt)) {
+        Ok(o) => o,
+        Err(f) => {
+            eprintln!("myl fragen: {f}");
+            return 2;
+        }
+    };
+    eprintln!("[myl] {} Fragen offen, {} schon beantwortet", offen.len(), erledigt.len());
+    if offen.is_empty() {
+        return 0;
+    }
+    let mut m = match Oertlichesmodell::laden(&artefakt, &e.kapazitaet) {
+        Ok(m) => m,
+        Err(f) => {
+            eprintln!("myl fragen: {f}");
+            return 1;
+        }
+    };
+    m.grenze = zahl(args, "--token").unwrap_or(e.modell.token);
+    m.denken = denken_gewaehlt(args, &e);
+    saat_setzen(&mut m, args, &e);
+    let grundsaetze = match myl_local_agent::systemprompt::grundsaetze(e.oberflaeche.sprache) {
+        Ok(g) => g,
+        Err(f) => {
+            eprintln!("myl: {f}");
+            return 1;
+        }
+    };
+    let mut datei = match std::fs::OpenOptions::new().create(true).append(true).open(&aus) {
+        Ok(d) => d,
+        Err(f) => {
+            eprintln!("myl fragen: {aus}: {f}");
+            return 1;
+        }
+    };
+    let beginn = std::time::Instant::now();
+    for (i, (id, text)) in offen.iter().enumerate() {
+        let anfang = std::time::Instant::now();
+        let zeile = match myl_client::schutzfilter::abweisen(text, e.oberflaeche.sprache, "myl-fragen") {
+            Some(satz) => myl_client::serde_json::json!({"id": id, "fehler": satz}),
+            None => match m.chat("lokal", &[Nachricht::system(grundsaetze.clone()), Nachricht::nutzer(text.clone())], Some(m.grenze as u32)) {
+                Ok(a) => myl_client::serde_json::json!({"id": id, "antwort": a.text, "prompt_token": a.prompt_token, "antwort_token": a.antwort_token, "millisekunden": anfang.elapsed().as_millis() as u64}),
+                Err(f) => myl_client::serde_json::json!({"id": id, "fehler": f.to_string()}),
+            },
+        };
+        if writeln!(datei, "{zeile}").and_then(|_| datei.flush()).is_err() {
+            eprintln!("myl fragen: {aus}: nicht schreibbar");
+            return 1;
+        }
+        eprintln!("[myl] {}/{} {id} ({} s)", i + 1, offen.len(), anfang.elapsed().as_secs());
+    }
+    eprintln!("[myl] Fertig: {} Fragen in {} s", offen.len(), beginn.elapsed().as_secs());
+    0
 }
 
 fn modell(args: &[String]) -> i32 {
@@ -1358,6 +1481,9 @@ fn agent(args: &[String]) -> i32 {
     if auftrag.trim().is_empty() {
         eprintln!("myl agent: es fehlt der Auftrag");
         return 2;
+    }
+    if let Some(s) = wert(args, "--skills") {
+        myl_local_agent::skills::modusordner_setzen(Some(std::path::PathBuf::from(s)));
     }
     // ⛔️ Der Schutzfilter, wie bei `myl frage`.
     if let Some(satz) = myl_client::schutzfilter::abweisen(&auftrag, e.oberflaeche.sprache, "myl-agent") {
@@ -2048,6 +2174,22 @@ mod auftragsliste_probe {
     #[test]
     fn eine_fehlende_datei_meldet_sich() {
         assert!(auftragsliste(&worte(&["--datei", "/gibtesnicht/x.txt"])).is_err());
+    }
+}
+
+#[cfg(test)]
+mod fragen_tests {
+    use super::*;
+
+    #[test]
+    fn fragen_setzt_fort_und_meldet_unlesbares() {
+        let eingabe = "{\"id\": \"a\", \"text\": \"Eins\"}\n\n{\"id\": \"b\", \"text\": \"Zwei\"}\n";
+        let erledigt = beantwortet("{\"id\": \"a\", \"antwort\": \"x\"}\nkaputt\n");
+        let offen = offene_fragen(eingabe, &erledigt).expect("lesbar");
+        assert_eq!(offen, vec![("b".to_string(), "Zwei".to_string())], "a ist schon beantwortet");
+        // Gegenproben: eine unlesbare Zeile und eine ohne Text sind Fehler mit Zeilennummer.
+        assert!(offene_fragen("{\"id\": \"a\"}", &Default::default()).unwrap_err().contains("Zeile 1"));
+        assert!(offene_fragen("x\n{\"id\":1}", &Default::default()).unwrap_err().contains("Zeile 1"));
     }
 }
 

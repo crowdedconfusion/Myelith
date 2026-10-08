@@ -5,12 +5,13 @@
 //!
 //! | Ort | Was dort liegt | Wer ihn fuellt |
 //! |---|---|---|
+//! | der **Modusordner** (nur solange ein Modus ihn setzt) | was zu einem **Modus** der Konsole gehoert | der Modus, siehe [`modusordner_setzen`] |
 //! | `<einhaengung>/.AGENT/skills/` | was zu **diesem Projekt** gehoert | die Arbeit an diesem Ordner, auch der Agent selbst |
 //! | `<konfiguration>/skills/` | was **ueberall** gilt | der Nutzer (`myl skills neu <name>`) |
 //! | `AGENT_LAYER/local-skills/` | die **mitgelieferten** Grundskills und die Vorlage | das Repositorium |
 //!
-//! Bei gleichem Namen gewinnt der naehere Ort: Projekt vor eigenen vor
-//! mitgelieferten. ⚑ **Die mitgelieferten liegen neben `myl-senses`**
+//! Bei gleichem Namen gewinnt der naehere Ort: Modus vor Projekt vor
+//! eigenen vor mitgelieferten. ⚑ **Die mitgelieferten liegen neben `myl-senses`**
 //! (Wunsch des Projektinhabers, 2026-09-26) und kommen mit jedem Klon,
 //! auch auf den GolemOS-Stick.
 //!
@@ -65,6 +66,7 @@ const HOECHSTENS_DATEIEN: usize = 30;
 /// Woher ein Skill kommt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Herkunft {
+    Modus,
     Projekt,
     Eigene,
     Mitgeliefert,
@@ -73,6 +75,7 @@ pub enum Herkunft {
 impl Herkunft {
     pub fn wort(self) -> &'static str {
         match self {
+            Herkunft::Modus => "Modus",
             Herkunft::Projekt => "Projekt",
             Herkunft::Eigene => "eigene",
             Herkunft::Mitgeliefert => "mitgeliefert",
@@ -127,7 +130,30 @@ pub fn projektordner(wurzel: &Path) -> PathBuf {
     wurzel.join(crate::verlauf::ORDNER).join(ORDNER)
 }
 
-/// Die drei Orte, in der Reihenfolge des Vorrangs.
+/// **Der Skillordner eines Modus**, fuer die Dauer des Modus.
+///
+/// ⚑ **Ein Modus bringt sein Wissen mit, ohne es zu kopieren.** Der Modus
+/// eines Moduls der Konsole etwa haengt seinen eigenen Ordner ein, solange
+/// er laeuft, und nimmt ihn beim Verlassen wieder heraus. Eine Kopie in
+/// den Projektordner waeren zwei Orte, die auseinanderlaufen.
+///
+/// ⚠️ **Prozessweit**, wie der Modus selbst: Es gibt in einer Konsole nur
+/// einen. Pruefungen bauen ihre [`Orte`] von Hand und beruehren das nicht.
+static MODUSORDNER: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
+
+/// Setzt (oder mit `None`: entfernt) den Skillordner des laufenden Modus.
+pub fn modusordner_setzen(ordner: Option<PathBuf>) {
+    if let Ok(mut m) = MODUSORDNER.lock() {
+        *m = ordner.filter(|o| o.is_dir());
+    }
+}
+
+/// Der Skillordner des laufenden Modus, falls es einen gibt.
+pub fn modusordner() -> Option<PathBuf> {
+    MODUSORDNER.lock().ok().and_then(|m| m.clone())
+}
+
+/// Die Orte, in der Reihenfolge des Vorrangs.
 ///
 /// ⚑ **Eine Naht, damit die Vorrangregel pruefbar ist.** Eigener und
 /// mitgelieferter Ordner haengen sonst an der Umgebung des ganzen
@@ -136,6 +162,8 @@ pub fn projektordner(wurzel: &Path) -> PathBuf {
 /// dieses Projekt hat das zweimal bezahlt (Funde 378 und 385).
 #[derive(Debug, Clone)]
 pub struct Orte {
+    /// Der Ordner eines Modus, solange er gilt ([`modusordner_setzen`]).
+    pub modus: Option<PathBuf>,
     pub projekt: Option<PathBuf>,
     pub eigene: PathBuf,
     pub mitgeliefert: Option<PathBuf>,
@@ -144,6 +172,7 @@ pub struct Orte {
 impl Orte {
     pub fn fuer(wurzel: Option<&Path>) -> Self {
         Self {
+            modus: modusordner(),
             projekt: wurzel.map(projektordner),
             eigene: allgemeiner_ordner(),
             mitgeliefert: mitgelieferter_ordner(),
@@ -261,8 +290,12 @@ pub fn im_ordner(ordner: &Path, herkunft: Herkunft) -> Vec<Skill> {
 
 /// Alle drei Orte zusammen; bei gleichem Namen gewinnt der naehere.
 pub fn alle_in(o: &Orte) -> Vec<Skill> {
-    let mut aus = o.projekt.as_deref().map(|p| im_ordner(p, Herkunft::Projekt)).unwrap_or_default();
-    let weitere = [(Some(o.eigene.as_path()), Herkunft::Eigene), (o.mitgeliefert.as_deref(), Herkunft::Mitgeliefert)];
+    let mut aus = o.modus.as_deref().map(|p| im_ordner(p, Herkunft::Modus)).unwrap_or_default();
+    let weitere = [
+        (o.projekt.as_deref(), Herkunft::Projekt),
+        (Some(o.eigene.as_path()), Herkunft::Eigene),
+        (o.mitgeliefert.as_deref(), Herkunft::Mitgeliefert),
+    ];
     for (ordner, herkunft) in weitere {
         for s in ordner.map(|p| im_ordner(p, herkunft)).unwrap_or_default() {
             if !aus.iter().any(|x| x.name == s.name) {
@@ -805,7 +838,7 @@ mod proben {
         std::fs::write(eigene.join("bericht").join("SKILL.md"), "Erst sammeln.\n").expect("schreiben");
         std::fs::write(d.join("bericht"), "keine Anleitung").expect("schreiben");
         std::fs::write(d.join("frei.md"), "Frei gewaehlt.\n").expect("schreiben");
-        let o = Orte { projekt: None, eigene, mitgeliefert: None };
+        let o = Orte { modus: None, projekt: None, eigene, mitgeliefert: None };
         let s = lernseite_in(&o, " Bericht ", &d).expect("der Name");
         assert_eq!((s.name.as_str(), s.text.as_str()), ("bericht", "Erst sammeln."));
         let s = lernseite_in(&o, "frei.md", &d).expect("der Pfad ab dem Bezug");
@@ -930,7 +963,7 @@ mod proben {
     }
 
     fn orte(projekt: &Path, eigene: &Path, mit: &Path) -> Orte {
-        Orte { projekt: Some(projekt.to_path_buf()), eigene: eigene.to_path_buf(), mitgeliefert: Some(mit.to_path_buf()) }
+        Orte { modus: None, projekt: Some(projekt.to_path_buf()), eigene: eigene.to_path_buf(), mitgeliefert: Some(mit.to_path_buf()) }
     }
 
     /// ⛔️ **Bei gleichem Namen gewinnt der naehere Ort**: Projekt vor
@@ -959,6 +992,28 @@ mod proben {
         assert_eq!(alle.iter().filter(|s| s.name == "gleich").count(), 1, "doppelt in der Liste");
         assert!(lernen_in(&o, "GLEICH", None).unwrap().text.contains('P'));
         assert!(lernen_in(&o, "gibtsnicht", None).unwrap_err().contains("nur-mit"), "die Fehlermeldung nennt, was es gibt");
+        // ⚑ **Der Modus geht allem vor**, solange er gilt.
+        let modus = tempfile::tempdir().unwrap();
+        skill(modus.path(), "gleich", "beschreibung: die Fassung des Modus", "MODUS");
+        skill(modus.path(), "nur-modus", "beschreibung: nur im Modus", "X");
+        let mit_modus = Orte { modus: Some(modus.path().to_path_buf()), ..orte(p.path(), e.path(), m.path()) };
+        let alle = alle_in(&mit_modus);
+        assert_eq!(alle.iter().find(|s| s.name == "gleich").unwrap().herkunft, Herkunft::Modus);
+        assert_eq!(alle.iter().find(|s| s.name == "zwei").unwrap().herkunft, Herkunft::Eigene, "der Rest bleibt, wie er war");
+        assert!(lernen_in(&mit_modus, "gleich", None).unwrap().text.contains("MODUS"));
+        assert!(suchen_in(&mit_modus, "nur im Modus", 5).iter().any(|t| t.skill.name == "nur-modus"));
+    }
+
+    /// ⚑ **Der Modusordner gilt, solange er gesetzt ist**, und nur, wenn es ihn gibt.
+    #[test]
+    fn der_modusordner_kommt_und_geht() {
+        let d = tempfile::tempdir().unwrap();
+        modusordner_setzen(Some(d.path().join("gibtsnicht")));
+        assert_eq!(modusordner(), None, "ein Ordner, den es nicht gibt, wird nicht gesetzt");
+        modusordner_setzen(Some(d.path().to_path_buf()));
+        assert_eq!(Orte::fuer(None).modus.as_deref(), Some(d.path()));
+        modusordner_setzen(None);
+        assert_eq!(Orte::fuer(None).modus, None);
     }
 
     /// ⚑ **Der Kopf traegt Beschreibung und Stichworte**, auch mit
@@ -1007,7 +1062,7 @@ mod proben {
     #[test]
     fn lernen_nennt_die_dateien_und_bleibt_im_skill() {
         let d = tempfile::tempdir().unwrap();
-        let o = Orte { projekt: None, eigene: d.path().to_path_buf(), mitgeliefert: None };
+        let o = Orte { modus: None, projekt: None, eigene: d.path().to_path_buf(), mitgeliefert: None };
         skill(d.path(), "bericht", "beschreibung: Berichte.", "Die Anleitung.");
         std::fs::write(d.path().join("bericht/referenz/gliederung.md"), "Die Gliederung.").unwrap();
         std::fs::write(d.path().join("geheim.txt"), "nicht lesen").unwrap();

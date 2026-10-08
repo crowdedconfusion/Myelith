@@ -476,7 +476,13 @@ impl Werkzeugausfuehrung for ManifestWerkzeug {
             });
         }
         let befehl = befehl_aus_vorlage(&self.manifest.befehl, a)?;
-        let umgebung = [(UMGEBUNG_KISTE, self.ordner.display().to_string())];
+        // ⛔️ **Absolut, sonst zeigt es ins Leere.** Der Befehl laeuft im
+        //    Arbeitsordner, nicht dort, wo die Kiste angegeben wurde. 📌 Ein
+        //    relativ uebergebener Kistenordner (`myl agent --kiste …`) ergab
+        //    `sh: …/<skript>.sh: not found`, gefunden am ersten Lauf einer
+        //    Kiste ausserhalb des Arbeitsordners mit dem 35B (2026-10-06).
+        let ordner = std::fs::canonicalize(&self.ordner).unwrap_or_else(|_| self.ordner.clone());
+        let umgebung = [(UMGEBUNG_KISTE, ordner.display().to_string())];
         befehl_im_verzeichnis_mit(&self.einhaengung, &befehl, &umgebung, self.manifest.frist_s())
     }
 }
@@ -688,6 +694,28 @@ mod tests {
         let angebote = angebote(&kiste, &ein, |w| panic!("{w}"));
         let aus = angebote[0].1.ausfuehren(&serde_json::json!({"wort": "hallo"})).expect("laeuft");
         assert!(aus.contains("kennwort:hallo"), "das Skript neben dem Manifest lief nicht: {aus}");
+    }
+
+    /// ⛔️ **Auch ein relativ angegebener Kistenordner traegt.** Der Befehl
+    /// laeuft im Arbeitsordner; `$MYL_KISTE` muss deshalb absolut sein.
+    /// Gegenprobe: Ohne `canonicalize` in `ausfuehren` findet `sh` das
+    /// Skript nicht.
+    #[test]
+    fn ein_relativer_kistenordner_findet_sein_skript() {
+        let (d, _) = kiste_mit(&[]);
+        let relativ = PathBuf::from(format!("probe-kiste-relativ-{}", std::process::id()));
+        std::fs::create_dir_all(&relativ).expect("Ordner");
+        std::fs::write(
+            relativ.join("sinn.json"),
+            r#"{"name":"sinn","beschreibung":"b","parameter":{"type":"object","properties":{},"required":[]},"befehl":"sh \"$MYL_KISTE/sinn.sh\""}"#,
+        )
+        .expect("Manifest");
+        std::fs::write(relativ.join("sinn.sh"), "#!/bin/sh\necho gefunden\n").expect("Skript");
+        let ein = Einhaengung::neu(d.path(), true).expect("Einhaengung");
+        let angebote = angebote(&relativ, &ein, |w| panic!("{w}"));
+        let aus = angebote[0].1.ausfuehren(&serde_json::json!({}));
+        let _ = std::fs::remove_dir_all(&relativ);
+        assert!(aus.expect("laeuft").contains("gefunden"), "das Skript der relativ angegebenen Kiste lief nicht");
     }
 
     /// ⚑ **Die Frist steht im Manifest, und der Deckel steht darueber.**

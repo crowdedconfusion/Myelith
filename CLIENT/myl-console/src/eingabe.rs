@@ -46,6 +46,12 @@ pub enum Eingabe {
     /// war zu viel Wirkung fuer einen Fehlgriff. Der Aufrufer fragt
     /// nach, bevor er darauf beendet, und zwar bei beiden Tasten.
     Abbruch(Ausgang),
+    /// **Die Frist ist um**, mit dem bis dahin Getippten.
+    ///
+    /// ⚑ Nur, solange ein Modul laeuft, das waehrend des Wartens auf eine
+    /// Eingabe seine Takte bekommt. Der Text geht nicht verloren: Der
+    /// Aufrufer gibt ihn beim naechsten Lesen als Anfang zurueck.
+    Frist(String),
 }
 
 /// Welche Taste hinausfuehrte.
@@ -57,21 +63,156 @@ pub enum Ausgang {
     StrgX,
 }
 
-/// **Liest eine Zeile und zeichnet sie dabei selbst.**
+/// **Ein Vorschlag der Vervollstaendigung**: ein Befehl, seine weiteren
+/// Schreibweisen und sein Satz.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Vorschlag {
+    /// Wie er in der Hilfe steht, etwa `/model` oder `/tasks resume`.
+    pub befehl: String,
+    /// Weitere Schreibweisen (`/modell`).
+    pub auch: Vec<String>,
+    /// Ein Satz dazu.
+    pub was: String,
+    /// Ob er eine Angabe braucht (`/file <pfad>`): Enter uebernimmt ihn
+    /// dann nur und wartet auf die Angabe.
+    pub mit_angabe: bool,
+}
+
+/// Wer die Vorschlaege zeichnet (`None`: wegraeumen).
+pub type Listenzeichner<'a> = dyn Fn(Option<(&[Vorschlag], usize)>) + 'a;
+
+/// So viele Vorschlaege stehen hoechstens da.
+pub const VORSCHLAEGE_HOECHSTENS: usize = 8;
+
+/// **Die passenden Vorschlaege, der beste zuerst.** Nur, solange die Zeile
+/// mit `/` beginnt. Rang: genau getroffen; Anfang des Befehls; Anfang einer
+/// anderen Schreibweise; irgendwo im Befehl; im Satz. Bei gleichem Rang der
+/// kuerzere, dann nach dem Alphabet.
+///
+/// ⚑ Wunsch des Projektinhabers (2026-10-07): eine Liste unter der
+/// Eingabe, sobald `/` dasteht, mit den Pfeiltasten waehlbar, beim
+/// Weitertippen enger, die groesste Uebereinstimmung oben.
+pub fn passende(alle: &[Vorschlag], zeile: &str) -> Vec<Vorschlag> {
+    let q = zeile.trim_start().to_lowercase();
+    if !q.starts_with('/') {
+        return Vec::new();
+    }
+    let ohne = q.trim_start_matches('/');
+    let mut bewertet: Vec<(u8, &Vorschlag)> = alle
+        .iter()
+        .filter_map(|v| {
+            let b = v.befehl.to_lowercase();
+            let rang = if b == q {
+                0
+            } else if b.starts_with(&q) {
+                1
+            } else if v.auch.iter().any(|a| a.to_lowercase().starts_with(&q)) {
+                2
+            } else if !ohne.is_empty() && b.contains(ohne) {
+                3
+            } else if !ohne.is_empty() && v.was.to_lowercase().contains(ohne) {
+                4
+            } else {
+                return None;
+            };
+            Some((rang, v))
+        })
+        .collect();
+    bewertet.sort_by(|(ra, a), (rb, b)| ra.cmp(rb).then(a.befehl.len().cmp(&b.befehl.len())).then(a.befehl.cmp(&b.befehl)));
+    bewertet.into_iter().map(|(_, v)| v.clone()).take(VORSCHLAEGE_HOECHSTENS).collect()
+}
+
+/// **Der Weckruf**: Ein Nebenfaden hat etwas gebracht, die Zeile mit Frist
+/// soll vorzeitig mit [`Eingabe::Frist`] zurueckkommen.
+///
+/// ⚑ **Ein Schalter und keine kuerzere Frist** (2026-10-07). Jede Rueckkehr zeichnet den Rahmen neu; eine
+/// Frist von einer Sekunde haette ihn jede Sekunde neu gezeichnet, auch
+/// wenn nichts kam. So kehrt die Zeile nur zurueck, wenn etwas da ist.
+static WECKER: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// So oft sieht die Zeile mit Frist nach dem Weckruf.
+const WECKSCHRITT: std::time::Duration = std::time::Duration::from_millis(200);
+
+/// Weckt die Zeile mit Frist (aus jedem Faden).
+pub fn wecken() {
+    WECKER.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// Ob geweckt wurde; setzt den Schalter zurueck.
+pub(crate) fn geweckt() -> bool {
+    WECKER.swap(false, std::sync::atomic::Ordering::SeqCst)
+}
+
+/// **Liest eine Zeile und zeichnet sie dabei selbst** (`lesen_mit_liste`).
 ///
 /// `zeichnen` bekommt den bisherigen Text und setzt ihn in die
 /// Eingabezeile, samt Wagen. **Das Zeichnen gehoert dem Aufrufer**,
 /// denn nur der weiss, wo der Rahmen steht.
-pub fn lesen(zeichnen: &dyn Fn(&str)) -> Eingabe {
+///
+/// ⚑ **Mit einem Anfang und einer Frist** (seit 2026-10-06). Der Anfang ist, was vor einer Unterbrechung schon getippt
+/// war. Ohne Frist wartet die Zeile, bis sie abgeschickt wird; mit Frist kommt
+/// [`Eingabe::Frist`] zurueck, sobald sie verstrichen ist; ohne Terminal
+/// gibt es keine Frist, denn eine Roehre liefert ihre Zeilen ohnehin.
+///
+/// ⚑ **Dazu die Vervollstaendigung** (2026-10-07): `liste` zeichnet die
+/// passenden Vorschlaege mit dem gewaehlten (`Some`) oder raeumt sie weg
+/// (`None`); das Zeichnen gehoert dem Aufrufer wie bei `zeichnen`.
+pub fn lesen_mit_liste(
+    zeichnen: &dyn Fn(&str),
+    liste: &Listenzeichner,
+    alle: &[Vorschlag],
+    anfang: String,
+    frist: Option<std::time::Instant>,
+) -> Eingabe {
     if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
         return aus_der_roehre();
     }
     let Ok(_roh) = crate::auswahl::Rohmodus::an() else {
         return aus_der_roehre();
     };
-    let mut zeile = String::new();
+    let mut zeile = anfang;
+    // Die Liste: was gerade passt, was gewaehlt ist, ob sie zu sehen ist,
+    // und ob Esc sie fuer diese Zeile weggeraeumt hat.
+    let mut passend: Vec<Vorschlag> = Vec::new();
+    let mut gewaehlt = 0usize;
+    let mut offen = false;
+    let mut weggeraeumt: Option<String> = None;
+    let auffrischen = |zeile: &str, passend: &mut Vec<Vorschlag>, gewaehlt: &mut usize, offen: &mut bool, weggeraeumt: &Option<String>| {
+        let neu = if weggeraeumt.as_deref() == Some(zeile) { Vec::new() } else { passende(alle, zeile) };
+        // Steht genau ein Vorschlag da und ist schon getippt, braucht es keine Liste.
+        let noetig = !neu.is_empty() && !(neu.len() == 1 && neu[0].befehl == zeile.trim());
+        if neu != *passend {
+            *gewaehlt = 0;
+        }
+        *passend = neu;
+        if noetig {
+            liste(Some((passend.as_slice(), *gewaehlt)));
+            *offen = true;
+        } else if *offen {
+            liste(None);
+            *offen = false;
+        }
+        zeichnen(zeile);
+    };
     zeichnen(&zeile);
+    auffrischen(&zeile, &mut passend, &mut gewaehlt, &mut offen, &weggeraeumt);
+    // Was immer herausgeht, die Liste geht vorher weg.
+    let hinaus = |e: Eingabe, offen: bool| {
+        if offen {
+            liste(None);
+        }
+        e
+    };
     loop {
+        if let Some(bis) = frist {
+            let jetzt = std::time::Instant::now();
+            if jetzt >= bis || geweckt() {
+                return hinaus(Eingabe::Frist(zeile), offen);
+            }
+            if !event::poll((bis - jetzt).min(WECKSCHRITT)).unwrap_or(false) {
+                continue;
+            }
+        }
         let Ok(Event::Key(k)) = event::read() else { continue };
         // Windows liefert Press und Release; ohne diese Pruefung zaehlt
         // jeder Tastendruck doppelt.
@@ -79,12 +220,57 @@ pub fn lesen(zeichnen: &dyn Fn(&str)) -> Eingabe {
             continue;
         }
         let strg = k.modifiers.contains(KeyModifiers::CONTROL);
+        // ⚑ **Mit offener Liste** gehoeren Pfeile, Tab, Enter und Esc ihr.
+        //   Esc raeumt nur die Liste weg: An der Zeile beendet Esc sonst die
+        //   Konsole, und mit offener Liste waere das eine Falle.
+        if offen && !passend.is_empty() {
+            match k.code {
+                KeyCode::Up => {
+                    gewaehlt = (gewaehlt + passend.len() - 1) % passend.len();
+                    liste(Some((passend.as_slice(), gewaehlt)));
+                    zeichnen(&zeile);
+                    continue;
+                }
+                KeyCode::Down => {
+                    gewaehlt = (gewaehlt + 1) % passend.len();
+                    liste(Some((passend.as_slice(), gewaehlt)));
+                    zeichnen(&zeile);
+                    continue;
+                }
+                KeyCode::Tab => {
+                    let v = &passend[gewaehlt];
+                    zeile = if v.mit_angabe { format!("{} ", v.befehl) } else { v.befehl.clone() };
+                    auffrischen(&zeile, &mut passend, &mut gewaehlt, &mut offen, &weggeraeumt);
+                    continue;
+                }
+                KeyCode::Enter => {
+                    let v = passend[gewaehlt].clone();
+                    if v.mit_angabe && zeile.trim() != v.befehl {
+                        zeile = format!("{} ", v.befehl);
+                        auffrischen(&zeile, &mut passend, &mut gewaehlt, &mut offen, &weggeraeumt);
+                        continue;
+                    }
+                    return hinaus(Eingabe::Zeile(v.befehl), offen);
+                }
+                KeyCode::Esc => {
+                    weggeraeumt = Some(zeile.clone());
+                    auffrischen(&zeile, &mut passend, &mut gewaehlt, &mut offen, &weggeraeumt);
+                    continue;
+                }
+                // Strg-C und Strg-X fuehren hinaus: vorher die Liste weg.
+                KeyCode::Char('c') | KeyCode::Char('x') if strg => {
+                    liste(None);
+                    offen = false;
+                }
+                _ => {}
+            }
+        }
         match k.code {
-            KeyCode::Enter => return Eingabe::Zeile(zeile),
+            KeyCode::Enter => return hinaus(Eingabe::Zeile(zeile), offen),
             // 📌 **LF ist auch ein Zeilenende** (Fund 308): Eingefuegter
             // mehrzeiliger Text schickt 0x0A, und das kommt als Strg-J.
-            KeyCode::Char('j') if strg => return Eingabe::Zeile(zeile),
-            KeyCode::BackTab => return Eingabe::Modus,
+            KeyCode::Char('j') if strg => return hinaus(Eingabe::Zeile(zeile), offen),
+            KeyCode::BackTab => return hinaus(Eingabe::Modus, offen),
             // ⚑ **Zwei Tasten fuehren hinaus, und beide fragen nach**
             // (Festlegung des Projektinhabers, 2026-09-15): Escape und
             // Strg-X. Strg-D und Strg-C endeten hier bis dahin **ohne
@@ -108,7 +294,7 @@ pub fn lesen(zeichnen: &dyn Fn(&str)) -> Eingabe {
             KeyCode::Char('x') if strg => return Eingabe::Abbruch(Ausgang::StrgX),
             KeyCode::Backspace => {
                 zeile.pop();
-                zeichnen(&zeile);
+                auffrischen(&zeile, &mut passend, &mut gewaehlt, &mut offen, &weggeraeumt);
             }
             // 📌 **Strg und ein Buchstabe ist keine Eingabe.** Strg-S
             // landete als `s` in der Zeile, weil crossterm die Taste
@@ -117,7 +303,7 @@ pub fn lesen(zeichnen: &dyn Fn(&str)) -> Eingabe {
             KeyCode::Char(_) if strg => continue,
             KeyCode::Char(c) => {
                 zeile.push(c);
-                zeichnen(&zeile);
+                auffrischen(&zeile, &mut passend, &mut gewaehlt, &mut offen, &weggeraeumt);
             }
             _ => {}
         }
@@ -192,6 +378,43 @@ mod tests {
         );
     }
 
+    fn v(befehl: &str, auch: &[&str], was: &str) -> Vorschlag {
+        Vorschlag { befehl: befehl.into(), auch: auch.iter().map(|s| s.to_string()).collect(), was: was.into(), mit_angabe: false }
+    }
+
+    /// **Die beste Uebereinstimmung oben, beim Weitertippen enger.**
+    #[test]
+    fn vorschlaege_nach_rang() {
+        let alle = vec![
+            v("/model", &["/modell"], "ein Modell waehlen"),
+            v("/beispiel", &[], "ein Modul"),
+            v("/beispiel probe", &[], "mit dem Probekonto"),
+            v("/beispiel status", &[], "Uebersicht"),
+            v("/help", &["/hilfe"], "alle Befehle"),
+            v("/tasks", &[], "die Vorhaben"),
+        ];
+        let namen = |z: &str| passende(&alle, z).into_iter().map(|v| v.befehl).collect::<Vec<_>>();
+        assert_eq!(namen("/").len(), 6, "alle bei einem Schraegstrich");
+        assert_eq!(namen("/bei"), vec!["/beispiel", "/beispiel probe", "/beispiel status"], "Anfang, der kuerzere zuerst");
+        assert_eq!(namen("/beispiel p"), vec!["/beispiel probe"]);
+        assert_eq!(namen("/hil"), vec!["/help"], "andere Schreibweise");
+        assert_eq!(namen("/probe")[0], "/beispiel probe", "irgendwo im Befehl");
+        assert_eq!(namen("/vorhaben"), vec!["/tasks"], "im Satz");
+        assert!(namen("hallo").is_empty(), "ohne Schraegstrich keine Liste");
+        assert!(namen("/xyz").is_empty());
+    }
+
+    /// **Esc mit offener Liste raeumt nur die Liste weg**, und dieser Fall
+    /// steht vor dem Esc, das die Konsole beendet.
+    #[test]
+    fn esc_raeumt_erst_die_liste() {
+        let quelle = include_str!("eingabe.rs");
+        let rumpf = quelle.split("pub fn lesen_mit_liste(").nth(1).expect("`lesen_mit_liste` fehlt");
+        let liste = rumpf.find("weggeraeumt = Some(zeile.clone());").expect("Esc der Liste fehlt");
+        let ende = rumpf.find("KeyCode::Esc => return Eingabe::Ende,").expect("Esc der Zeile fehlt");
+        assert!(liste < ende);
+    }
+
     /// **Umlaute zaehlen als ein Zeichen.**
     ///
     /// ⚠️ Mit `len()` waeren „ä" zwei und der Ausschnitt jedes Mal um
@@ -216,7 +439,7 @@ mod abbruchprobe {
     #[test]
     fn esc_und_strg_c_beenden_strg_x_fragt() {
         let quelle = include_str!("eingabe.rs");
-        let rumpf = quelle.split("pub fn lesen(").nth(1).expect("`lesen` fehlt");
+        let rumpf = quelle.split("pub fn lesen_mit_liste(").nth(1).expect("`lesen_mit_liste` fehlt");
         assert!(rumpf.contains("KeyCode::Esc => return Eingabe::Ende,"), "Escape beendet nicht");
         assert!(rumpf.contains("KeyCode::Char('c') if strg => return Eingabe::Ende,"), "Strg-C beendet nicht");
         assert!(

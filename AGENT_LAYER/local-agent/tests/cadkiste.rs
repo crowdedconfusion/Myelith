@@ -52,6 +52,7 @@ fn die_drei_werkzeuge_lesen_sich_und_rufen_den_einen_weg() {
 #[test]
 fn der_skill_wird_unter_seinen_stichworten_gefunden() {
     let orte = myl_local_agent::skills::Orte {
+        modus: None,
         projekt: None,
         eigene: PathBuf::from("/gibt/es/nicht"),
         mitgeliefert: Some(wurzel().join("AGENT_LAYER/local-skills")),

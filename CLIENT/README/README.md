@@ -1,7 +1,7 @@
 # client (Nutzer-Client inkl. Wallet)
 
-> **Version:** 0.114.0 (`myl-client` 0.79.0, `myl-oberflaeche` 0.59.0, `myl-console` 0.28.1, `myl-senses` 0.11.0)
-> **Datum:** 2026-10-05
+> **Version:** 0.131.0 (`myl-client` 0.81.0, `myl-oberflaeche` 0.59.0, `myl-console` 0.43.0, `myl-senses` 0.11.0, `myl-module` 0.1.0)
+> **Datum:** 2026-10-08
 > **Status:** ✅ **Der lokale Betrieb läuft und ist ausgeliefert.** Ein
 > Gesprächsfenster mit Modellwahl, Agentenschleife und
 > Einstellungsseite; aus einem frischen Klon lassen sich darüber
@@ -159,6 +159,159 @@ Modell überhaupt etwas taugt, und weil eine Schnittstelle, die kein
 Mensch je bedient hat, an den Bedürfnissen vorbei entworfen wird.
 
 ## Changelog
+
+### v0.131.0 (2026-10-08): Module in der Konsole
+
+`myl-console` 0.43.0. **Auftrag des Projektinhabers:** Erweiterungen der
+Konsole als Module, nachträglich installierbar, signiert und ohne
+Signatur abgelehnt.
+
+- **Der Wirt** (`module.rs`): Module liegen in `MODULES/` an der Wurzel
+  des Repositoriums oder in `module/` neben den Einstellungen. Jedes wird
+  beim Start geprüft (`myl_module::signatur::pruefen` gegen
+  `vertrauen.json` und den Versionsstand neben den Einstellungen) und vor
+  jedem Start noch einmal; nur ein geprüftes zeigt seine Befehle in Hilfe
+  und Vervollständigung. Ein Name gilt nur einmal, und kein Modul kann
+  einen Befehl der Konsole belegen. Gestartet wird ein Modul beim ersten
+  Befehl, aus einer eigenen Kopie der geprüften Bytes.
+- **Was die Konsole für ein Modul tut**, je nach Befugnis: Text in den
+  Rollbereich (ohne Steuerzeichen, Stile in den Farben des Designs), eine
+  Fußzeile und einen Bereich unter dem Rahmen im eigenen Modus, Takte
+  auf Wunsch, Fragen an das Modell (auch mit Strom der Antwort, mit Token
+  je Stunde als Grenze), Agentenläufe mit der Werkzeugkiste, den Skills
+  und dem Arbeitsordner des Moduls (nur dort schreibend, ohne Netz und
+  Blick), und Fragen an den Menschen **im Rahmen der Konsole** („Die
+  Konsole fragt für das Modul …“): ein getipptes Wort, ja oder nein, eine
+  Auswahl. Der Agentenmodus wird je Modul gemerkt.
+- **Neustart ohne Neustart der Konsole:** Ändert sich die Signatur eines
+  laufenden Moduls, wird es geprüft, beendet und neu gestartet; war sein
+  Modus aktiv, beginnt er wieder. Fällt die Prüfung durch, läuft die
+  geprüfte Fassung weiter, und die Konsole sagt es.
+- **`/module`** zeigt die Module mit Zustand, Signatur und Art (nativ ohne
+  Abschottung oder abgeschottet), dazu die abgelehnten mit Grund;
+  **`/module install <ordner>`** prüft, kopiert ohne den Inhalt
+  veränderlicher Ordner, prüft die Kopie und sagt vorher in einem Satz,
+  dass ein Modul ein Programm ist.
+- 📌 **Erst die Zeile des Wagens, dann die Grenze** (`unten_zeichnen`):
+  Ein neuer Rollbereich setzt den Wagen in die erste Zeile (VT100). Am
+  ersten echten Start eines Moduls kam sein Bereich unten erst nach dem
+  Banner; die Grenze wurde umgesetzt und der Wagen danach gemerkt, und
+  aller folgende Text stand ab Zeile 1 über dem Banner (vom
+  Projektinhaber gemeldet, mit Bild). Jetzt wird die Zeile vorher erfragt
+  und danach wieder angefahren, höchstens bis zum neuen Ende des
+  Rollbereichs.
+- **Sofort eine Zeile, dass etwas geschieht**: „⟳ Modul … wird geladen
+  und geprüft …“ beim ersten Befehl, „⟳ … …“ bei jedem weiteren (Wunsch
+  des Projektinhabers); Prüfen, Starten und die erste Antwort brauchen
+  Sekunden.
+- Das Banner eines Modus (`modulbanner.rs`) baut die Zeilen des Moduls
+  aus flackernden Ziffern auf. Was ein Modul auf stderr schreibt, was
+  abgelehnt wurde und wann es endete, steht in seinem Protokoll neben den
+  Einstellungen, nicht auf dem Schirm.
+- Tests: Hilfe und Vervollständigung ohne Modul nur mit den eigenen
+  Befehlen, Teile auf die Breite, Bereich unten. Der Weg Ende zu Ende
+  (Signieren, Prüfen, Handschlag, Befehle, Ablehnung eines veränderten
+  Prompts und einer dazugelegten Datei) ist mit einem Probemodul über den
+  Wirt gefahren. `cargo test` (162 und 7), Clippy ohne Warnung.
+
+### v0.130.0 (2026-10-08): neue Kiste `myl-module`, Module signiert und geprüft
+
+`myl-module` 0.1.0, die siebenundzwanzigste Kiste. **Auftrag des
+Projektinhabers:** Module, die sich in die Konsole einhängen, nachträglich
+installierbar, signiert, ohne Signatur abgelehnt. Diese Fassung bringt
+Protokoll, Beschreibung, Signatur und Wirt; die Konsole bindet sie im
+nächsten Schritt ein.
+
+- **Protokoll** (`nachricht`): je Nachricht eine JSON-Zeile, Fassung 1
+  (`PROTOKOLL`). Ereignisgetrieben ohne Fäden im Modul: Befehl, Takt,
+  Stück und Ende einer Modellantwort, Antwort des Menschen, Ergebnis eines
+  Agentenlaufs kommen als Ereignisse; das Modul antwortet mit Text, Modus,
+  Fußzeile, Bereich unten, Weckbitte, Modellfrage, Agentenlauf, Frage an
+  den Menschen. Dasselbe Protokoll trägt ein natives Programm und später
+  WebAssembly. Befehle stehen nicht im Protokoll, sondern in der
+  signierten Beschreibung.
+- **Beschreibung** `modul.json` (`beschreibung`), streng gelesen
+  (unbekannte Felder sind ein Fehler): Name, Version, Protokoll, Laufzeit
+  (nativ je Zielsystem oder WebAssembly), Befehle (der erste ist der
+  Hauptbefehl, alle anderen beginnen mit ihm), Befugnisse (Modell, Agent,
+  Netzmodell, Zeilen unten, Fußzeile, erreichbare Rechner, Token je
+  Stunde; was fehlt, ist verboten), veränderliche Ordner, Prüfsumme jeder
+  Datei. Pfade bleiben im Modulordner; Programm, Werkzeugkiste und Skills
+  liegen nie in einem veränderlichen Ordner.
+- **Signatur** (`signatur`): Ed25519 über eine Domäne und die Bytes der
+  Beschreibung. Geprüft wird gegen die örtliche Vertrauensliste
+  (Schlüssel mit „nativ“ und „widerrufen“); abgelehnt wird ohne Signatur,
+  mit fremdem oder widerrufenem Schlüssel, ein natives Modul ohne
+  Freigabe des Schlüssels dafür, jede veränderte, fehlende oder
+  dazugelegte Datei, jeder symbolische Verweis und jede Version unter der
+  zuletzt gestarteten (Rollback). Das Programm wird einmal gelesen und an
+  diesen Bytes geprüft.
+- **Anzeigefilter** (`filter`): Text eines Moduls ohne Steuerzeichen (C0,
+  C1, ESC) und ohne Zeichen, die die Schreibrichtung drehen oder unsichtbar
+  einschieben; sonst könnte ein Modul eine Bestätigungsfrage der Konsole
+  nachzeichnen.
+- **Wirt** (`wirt`): startet die geprüften Bytes aus einer eigenen Kopie
+  im Zwischenspeicher (ein Tausch im Modulordner nach der Prüfung ändert
+  nicht, was läuft), schreibt und liest in eigenen Fäden (ein hängendes
+  Modul hält die Konsole nie an), Handschlag mit Frist, Name und
+  Protokollfassung; prüft jede Nachricht gegen die Befugnisse, säubert
+  Text, kürzt den Bereich unten, deckelt Token und Zeilen je Minute,
+  beendet ein Modul nach 20 Verstößen in Folge. **Gast** (`gast`): die
+  Ereignisschleife für ein natives Modul.
+- **Programm `myl-module`**: `schluessel` (nur für den Besitzer lesbar,
+  überschreibt nie), `signieren`, `pruefen`.
+- Nachgetragen in derselben Fassung: das Feld `arbeit` (Arbeitsordner
+  eines Agentenlaufs, nur in einem veränderlichen Ordner),
+  `wirt::Start::wecker` (gerufen, sobald eine Nachricht ankommt),
+  `wirt::Lauf::sender` und `Lauf::programm` (Pfad der geprüften Kopie, die
+  läuft).
+- ⛔️ **Ein natives Modul ist keine Sicherheitsgrenze**; es startet nur mit
+  einem ausdrücklich dafür vertrauten Schlüssel. Abgeschottete Module
+  (WebAssembly) folgen.
+- Tests: 20 (Filter, Protokoll, Beschreibung, Signatur mit jedem
+  Ablehnungsgrund, Befugnisse, ein echter Lauf mit getauschtem Programm,
+  falscher Handschlag). Gegenproben je Schutzzeile, dreizehn, alle rot;
+  die zum Handschlag biss zuerst nicht, der Fall ist ergänzt. Clippy ohne
+  Warnung; `cargo check` für Windows und Linux. CI: eigener Testschritt.
+  Lizenzhinweise neu geschrieben (27 Kisten).
+
+### v0.115.0 bis v0.129.0 (2026-10-06 bis 2026-10-08): Vervollständigung, Eingabe mit Frist und Weckruf, Bereich unter dem Rahmen, Start im ganzen Fenster, englische Unterbefehle, `myl fragen`
+
+`myl-console` 0.29.0 bis 0.42.0, `myl-client` 0.81.0. Zusammengefasst, was
+an der Konsole allgemein ist.
+
+- **Vervollständigung der `/`-Befehle** (`eingabe::passende`,
+  `lesen_mit_liste`): Sobald die Zeile mit `/` beginnt, steht unter der
+  Fußzeile eine Liste der passenden Befehle mit ihrem Satz, höchstens
+  acht, die größte Übereinstimmung oben; ↑/↓ wählt, Tab übernimmt, Enter
+  führt aus, Esc räumt nur die Liste weg. Die Vorschläge kommen aus der
+  einen Liste der Befehle.
+- **Die Eingabezeile mit Anfang, Frist und Weckruf** (`eingabe::wecken`):
+  Mit Frist kehrt die Zeile zur Frist zurück, oder früher, wenn ein
+  Nebenfaden weckt (nachgesehen alle 200 ms), und gibt das Getippte beim
+  nächsten Lesen zurück. Ein Schalter statt einer kürzeren Frist, denn
+  jede Rückkehr zeichnet den Rahmen neu.
+- **Ein Bereich unter dem Rahmen** (`schirm::unten`), der Text darüber
+  rollt weiter und bleibt im Verlauf des Terminals. 📌 Ein fester Kopf
+  oben ließ Terminal.app die Zeilen verwerfen, die unter ihm aus dem
+  Rollbereich fielen.
+- **Der Start steht wieder im ganzen Fenster**
+  (`schirm::rollbereich_freigeben`): Ein Lauf, der hart endete
+  (`process::exit(130)` nach Strg-C, ein geschlossenes Fenster), ließ den
+  Rollbereich stehen, und das Leeren des Schirms setzt ihn nicht zurück.
+  Der Start gibt ihn frei, die Ausgänge in `anzeige.rs` und `wahl.rs`
+  vor dem Beenden; `auswahl.rs` nicht, sie ist eine wortgetreue Kopie des
+  Testclients.
+- **Die Unterbefehle heißen englisch**: `/seed <zahl> always`, `/seed
+  again`, `/seed random`, `/tasks check <ID> <befehl>`; die deutschen
+  Wörter gelten still weiter. `/file <pfad>` in der Hilfe.
+- **`myl fragen [artefakt] --datei P --aus Q`** (`myl-client` 0.81.0):
+  viele Fragen ohne Werkzeuge mit einmal geladenem Modell, je Zeile der
+  Eingabe (JSON mit `id` und `text`) eine Antwortzeile (`id`, `antwort`,
+  Tokenzahlen, Millisekunden oder `fehler`), fortsetzbar; dieselben
+  Grundsätze und derselbe Schutzfilter wie bei `frage`. Gemessen am 35B,
+  gierig, ohne Denken, rund 1 400 Token je Frage: etwa 21 s je Antwort.
+- Geprüft je Fassung: `cargo test` und Clippy ohne Warnung.
 
 ### v0.114.0 – 2026-10-05 (der Verlauf einer Antwort als Zeitleiste: jeder Gedanke, jede Zwischenausgabe, jeder Werkzeugaufruf für sich)
 
