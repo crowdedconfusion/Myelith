@@ -200,6 +200,10 @@ Signatur abgelehnt.
   Projektinhaber gemeldet, mit Bild). Jetzt wird die Zeile vorher erfragt
   und danach wieder angefahren, höchstens bis zum neuen Ende des
   Rollbereichs.
+- **`MODULES/README.md`** (neu, versioniert; die Module selbst nicht
+  zwingend): was ein Modul ist, die Felder der Beschreibung, Signieren und
+  Vertrauensliste, Installieren, und was die Prüfung schützt und was
+  nicht.
 - **Sofort eine Zeile, dass etwas geschieht**: „⟳ Modul … wird geladen
   und geprüft …“ beim ersten Befehl, „⟳ … …“ bei jedem weiteren (Wunsch
   des Projektinhabers); Prüfen, Starten und die erste Antwort brauchen
