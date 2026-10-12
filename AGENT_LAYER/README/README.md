@@ -1,7 +1,7 @@
 # agent-layer
 
-> **Version:** 0.30.0 (`myl-agent` 0.7.1, `myl-local-agent` 0.23.0)
-> **Datum:** 2026-10-06
+> **Version:** 0.34.0 (`myl-agent` 0.7.1, `myl-local-agent` 0.27.0)
+> **Datum:** 2026-10-12
 > **Status:** Manifeste, Herkunftsstufe, Registratur, der
 > **Session-Kontrakt** mit Durchsetzung im Ledger, der **Plan** und seit
 > v0.7.0 die **Segmentkette**. 52 Tests. ⚑ **Was jetzt fehlt, ist keine
@@ -68,6 +68,166 @@ umbenannt, weil er in jedem `use` steht.
 - `src/kette.rs` — dass er es auch so getan hat, und wann er aufhört.
 
 ## Changelog
+
+### v0.34.0 – 2026-10-12 (der Debug-Log; `myl-local-agent` 0.27.0)
+
+**Auftrag:** Ein Log, der alles mitschreibt, ein- und ausschaltbar, unter
+`SYSTEM/logs/debug/`, eine fortlaufende Datei je Monat, Beginn und Ende in
+Großbuchstaben mit Datum und Uhrzeit.
+
+- **Neues Modul `debuglog`:** `setzen(an, wer, anlass)` schaltet und
+  schreibt beim Wechsel `DEBUG GESTARTET` oder `DEBUG BEENDET` mit Datum,
+  Uhrzeit (UTC, wie Aktionsprotokoll und Uhr), Oberfläche, Anlass und
+  Prozessnummer, ganz in Großbuchstaben; `eintrag(art, text)` schreibt
+  einen Eintrag mit Zeit, Oberfläche und Art, der Text eingerückt darunter.
+  Datei `debug-JJJJ-MM.log` unter der Wurzel des Repositoriums
+  (`ORDNER`), ohne eine im Datenordner. Ein Eintrag je `write_all` im
+  Anhängemodus, damit Konsole und Fenster einander nicht ins Wort fallen;
+  ein Schreibfehler hält keinen Lauf auf.
+- **Was mitgeschrieben wird:** in der Schleife der volle Kontext beim
+  Beginn eines Laufs, jede Modellantwort mit Abschlussgrund und Token,
+  jede Meldung (Werkzeugaufruf mit Argumenten, volles Ergebnis,
+  Ablehnungen, Verdichtung), Zwischenrufe und das Ende; im Loop Beginn und
+  Ende jeder Runde (Zustand, Bericht, Abnahme), die rohe Antwort der
+  Prüfung, die Ableitung von Ziel und Namen, Bestätigen, Nachbessern und
+  Antworten des Menschen.
+- ⛔️ **Aus als Vorgabe**, denn er enthält auch Dateiinhalte; der Ordner
+  steht in der `.gitignore`. Proben schalten ihn nie ein.
+- Belege: `cargo test` grün (neu: `markierung_und_monatsdatei`), Clippy
+  ohne Warnung; eine Probe am echten `myl` mit einer Wegwerf-Einstellung
+  schrieb beide Markierungen in `debug-2026-10.log`, git sah die Datei nicht.
+
+### v0.33.0 – 2026-10-12 (eine Frage am Ende der Antwort ist eine Rückfrage; Zwischenrufe des Menschen; `myl-local-agent` 0.26.0)
+
+- 📌 **Fund 533, im ersten Lauf, der fragen sollte.** Das Ziel verlangte,
+  vorher nach dem Namen zu fragen. Das 35B schrieb „Wie heißt du?“ als
+  Antwort, rief `ask_human` nicht, kein Werkzeug lief, und die Frage stand
+  nur im Tagebuch; ohne Grenze hätte jede weitere Runde wieder gefragt.
+  Jetzt gilt eine Antwort, die mit einer Frage **endet**, als Rückfrage
+  (`frage_am_ende`, der letzte Absatz, höchstens `FRAGE_ZEICHEN`): nur bei
+  einer Runde mit Abschluss und nur, wenn sich das Modell nicht mit
+  `finish_goal` abgemeldet hat (ein „Kann ich sonst noch helfen?“ ist dann
+  eine Floskel). Eine Frage mitten in einem Bericht zählt nicht. Probe
+  `eine_frage_am_ende_ist_eine_rueckfrage`.
+- **Zwischenrufe** (Wunsch des Projektinhabers: während eines Laufs Text
+  annehmen und nach dem nächsten Schritt an das Modell geben). Neues Modul
+  `zwischenruf`: eine prozessweite Schlange (`einreihen`, `abholen`), die
+  die Schleife nach jedem Werkzeugschritt abholt und als Nachricht des
+  Menschen anhängt, mit einem englischen Rahmen wie jede Ansage an das
+  Modell. Hat das Modell gerade abgeschlossen, bekommt es den Zwischenruf
+  trotzdem und arbeitet einen Schritt weiter; das Schrittbudget gilt wie
+  immer. ⚑ **Aus, bis eine Oberfläche es einschaltet** (`annehmen`): `myl`,
+  das Fenster und die Proben holen nichts ab.
+- Belege: `cargo test` grün (neu: `tests/zwischenruf.rs` in einem eigenen
+  Prozess, damit keine andere Schleifenprobe einen Zwischenruf abholt,
+  dieselbe Lehre wie Fund 528; Gegenprobe ohne das Anhängen schlägt fehl);
+  Clippy ohne Warnung.
+
+### v0.32.0 – 2026-10-12 (das Modell kann im Loop fragen; `myl-local-agent` 0.25.0)
+
+**Auftrag:** Im ersten echten Loop fragte das Modell im Tagebuch nach dem
+Ziel, und niemand las es. Es soll den Menschen fragen können, wenn es ohne
+ihn nicht weiterkommt, und ihn fragen, wenn es die Aufgabe für erledigt
+hält (das gibt es seit v0.31.0); sonst im `auto`-Modus ganz selbstständig
+arbeiten.
+
+- **Werkzeug `ask_human`** (fünftes Werkzeug einer Runde): legt eine Frage
+  ab (höchstens `FRAGE_ZEICHEN` = 600 Zeichen) und sagt dem Modell, die
+  Runde mit einem Satz zu beenden. Ohne Wirkung nach außen, also auch im
+  `manual mode` ohne Nachfrage.
+- **Neuer Zustand `Frage { frage }`**, `Stellung::Frage` („fragt dich“).
+  `abschliessen` setzt ihn vor jedem „fertig“: Wer fragt, ist sich nicht
+  sicher. Nur eine bestandene Abnahme schlägt die Frage.
+- **`Ablage::antworten`** macht das Vorhaben bereit und legt Frage und
+  Antwort als Notiz `mensch` ab (für das Modell gesperrt, Fund 532) und ins
+  Tagebuch; eine leere Antwort sagt dem Modell, selbst zu entscheiden.
+  `weitermachen` ohne Antwort tut dasselbe.
+- **Der Auftrag** sagt jetzt: selbstständig arbeiten, `ask_human` nur, wenn
+  es ohne Entscheidung oder Angabe des Menschen nicht sinnvoll weitergeht.
+- Belege: `cargo test` 269 grün, zwei übersprungen (neu:
+  `das_modell_fragt_und_die_antwort_kommt_an`,
+  `fortsetzen_ohne_antwort_laesst_das_modell_entscheiden`); Clippy ohne
+  Warnung. `im_loop_empfiehlt_der_hinweis_nach_dem_ziel` prüft seither den
+  Befund selbst (der Rundentext verfehlt `fehlersuche`) statt des Skills,
+  der zufällig vorn stand: Mit den neuen Sätzen im Auftrag steht dort
+  `aufgabe-zerlegen` statt `bericht-schreiben`.
+
+### v0.31.0 – 2026-10-12 (der Loop ohne Grenzen, mit Bestätigung durch den Menschen; `myl-local-agent` 0.24.0)
+
+**Auftrag:** Ein Loop soll erst enden, wenn der Mensch ihn anhält, das Ziel
+erreicht ist oder das Fenster schließt. Die Oberflächen dazu stehen in
+CLIENT v0.133.0.
+
+- **`Loopeinstellung` trägt nur noch `schritte` und `pruefen`.** `runden`,
+  `stunden` und `stillstand` sind entfallen; `abschliessen` hält an keiner
+  Zahl mehr an. Ab `STILLSTAND_HINWEIS` (3) Runden ohne Fortschritt steht
+  die Notiz `stillstand` im Auftrag, und der Loop läuft weiter. Der Auftrag
+  sagt nicht mehr „Runde n von höchstens m“.
+- **Neuer Zustand `Vorgelegt { ergebnis }`.** `abschliessen` setzt nie mehr
+  `Fertig`: Was das Modell (mit Prüfung und Abnahme) als erreicht meldet,
+  wird vorgelegt. `Ablage::bestaetigen` macht daraus `Fertig` und legt erst
+  jetzt die Kette an (bisher in der Runde selbst); `Ablage::nachbessern`
+  macht das Vorhaben wieder bereit und trägt den Satz des Menschen als
+  Notiz `mensch` und ins Tagebuch. `Stellung::Vorgelegt` mit dem Wort
+  „wartet auf Bestätigung“. `Runde::neue` und `Ereignis::Angestossen` sind
+  entfallen.
+- **Anhalten und Fortsetzen:** `vorn_anhalten`, `vom_menschen_anhalten`,
+  `nach_dem_schliessen` (hält den Task an, der beim Schließen lief, genau
+  einmal; nie, solange ein anderer lebender Prozess den Loop fährt),
+  `fortsetzbare`, `nach_vorn` und `wieder_aufnehmen`. `weitermachen` nimmt
+  ein vorgelegtes Ergebnis als nicht abgenommen.
+- **Name und Ziel:** `Vorhaben::name` (alte Dateien ohne Feld lesen sich
+  weiter) und `anzeigename`, das sonst das gekürzte Ziel nimmt
+  (`kurzname`, höchstens `NAME_ZEICHEN` = 48 Zeichen). `zielfrage`,
+  `ableiten` und `benennen` fragen das Modell nach Ziel und Namen; die
+  Antwort wird zeilenweise gelesen (`ZIEL:`/`GOAL:`, `NAME:`), und ohne sie
+  gelten die Worte des Menschen. `finish_goal` sagt dem Modell, dass ein
+  Mensch das Ergebnis bestätigt.
+- `hinweis_vorgaben` sagt jetzt, wie ein Loop endet, statt Grenzen zu nennen.
+- 📌 **Fund 529, beim ersten echten Lauf** (35B, `/start loop` ohne Ziel):
+  Der Ableitungsauftrag zeigte die Form als `ZIEL: <das Ziel>`, das Modell
+  gab genau diese Zeile zurück, und der Loop lief mit dem Ziel „<das
+  Ziel>“. Das Modell erkannte den Platzhalter in Runde 1 und fragte im
+  Tagebuch nach dem Ziel; ohne Grenze hätte der Loop so weitergedreht, bis
+  ihn jemand anhält. Behoben: Der Auftrag beschreibt die Form in Worten
+  und zeigt ein Beispiel aus einem anderen Gebiet (`BEISPIEL_ZIEL`);
+  `ableitung_lesen` verwirft Platzhalter in spitzen Klammern und das
+  Beispiel, dann gelten die Worte des Menschen. Probe
+  `ziel_und_name_werden_gelesen` um genau diesen Fall erweitert.
+- 📌 **Fund 530, im selben Lauf:** Der Mensch lehnte im `manual mode`
+  einen Testlauf ab, danach wurde angehalten. Der Rundenstand trug die
+  Absage als erledigt, und die Doppelsperre hätte beim Fortsetzen
+  denselben Aufruf mit der alten Absage beantwortet; das Modell hätte den
+  Test nie mehr ausführen können. Behoben: `zaehlt_als_erledigt` lässt
+  Ergebnisse, die mit `protokoll::ABSAGE` beginnen, aus dem Rundenstand;
+  Probe `eine_absage_zaehlt_nicht_als_erledigt`. 266 Proben grün, Clippy
+  ohne Warnung.
+- 📌 **Fund 531, im selben Lauf: Die Prüfung berät jetzt, sie sperrt
+  nicht** (Entscheidung des Projektinhabers). Alle Tests liefen, das
+  Modell meldete fertig, der Prüfdurchgang sagte Nein; ohne Grenze hätte
+  der Loop so endlos gedreht, und sein Grund brach nach 120 Token ab
+  („Der Bericht beh“). Jetzt legt `abschliessen` auch bei einem Nein der
+  Prüfung vor, mit `Zustand::Vorgelegt { einwand }`; `zustandswort` nennt
+  den Einwand. Die Prüfung bekommt `PRUEF_TOKEN` = 600 statt 120. Der
+  Abnahmebefehl sperrt weiterhin. Probe `pruefung_beraet_und_sperrt_nicht`
+  ersetzt `pruefung_verhindert_fertig_ohne_ergebnis`.
+- 📌 **Fund 532, im selben Lauf: Notizen des Systems sind für das Modell
+  gesperrt.** Nach einem Nein der Prüfung schrieb das Modell mit
+  `note_set` unter `pruefung` „erreicht: …“, und die Prüfung liest die
+  Notizen. Ebenso hätte es `mensch` löschen können, den Hinweis des
+  Menschen. `SYSTEMNOTIZEN` (`runde`, `pruefung`, `abnahme`, `mensch`,
+  `stillstand`) lehnt `note_set` jetzt ab, in jeder Schreibweise. Probe
+  `notizen_des_systems_sind_gesperrt`; 267 Proben grün, Clippy ohne
+  Warnung.
+- Belege: `cargo test` 265 grün, zwei übersprungen (neu oder neu gefasst: `fertig_heisst_vorgelegt_und_die_kette_wartet`,
+  `stillstand_ist_ein_hinweis_und_kein_halt`,
+  `keine_hoechstzahl_an_runden_und_keine_hoechstdauer`,
+  `bestaetigen_macht_fertig_und_beginnt_die_kette`,
+  `nachbessern_macht_bereit_und_traegt_den_hinweis_weiter`,
+  `nach_dem_schliessen_ist_der_laufende_angehalten` samt Gegenfall mit
+  lebendem Läufer, `wieder_aufnehmen_stellt_nach_vorn`,
+  `ziel_und_name_werden_gelesen`); die Proben zu Höchstzahl, Höchstdauer
+  und Stillstand sind durch diese ersetzt. Clippy ohne Warnung.
 
 ### v0.30.0 – 2026-10-06 (rohe Zeilenumbrüche in einem Werkzeugaufruf werden gelesen; `myl-local-agent` 0.23.0)
 

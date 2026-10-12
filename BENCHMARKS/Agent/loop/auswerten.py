@@ -206,7 +206,9 @@ def main(args):
     md = [f"# Loop-Szenario: {os.path.basename(info.get('artefakt', '?'))}", ""]
     md.append(f"- **Stand:** {time.strftime('%Y-%m-%d %H:%M')}, {minuten:.0f} min nach dem Start"
               + (f", beendet ({ende.split('Fertig: ')[1]})" if ende else ", läuft noch"))
-    md.append(f"- **Einstellungen:** {info.get('runden')} Runden je Task, {info.get('schritte')} Schritte je Runde"
+    # Aeltere Laeufe tragen noch eine Hoechstzahl an Runden; neuere haben keine.
+    runden = f"{info['runden']} Runden je Task, " if info.get("runden") else ""
+    md.append(f"- **Einstellungen:** {runden}{info.get('schritte')} Schritte je Runde"
               + (f", Saat {info['saat']} (wiederholen mit `--saat {info['saat']}`)" if info.get("saat") is not None else ", gierig (vor der Saat)"))
     md.append(f"- **Prüfungen bestanden:** {gesamt} von {len(alle)}")
     md.append("")

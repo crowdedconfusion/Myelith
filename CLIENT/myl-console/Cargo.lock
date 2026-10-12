@@ -611,7 +611,7 @@ dependencies = [
 
 [[package]]
 name = "integer-llm-runtime"
-version = "0.86.0"
+version = "0.87.0"
 dependencies = [
  "integer-llm-kernels",
  "memmap2",
@@ -770,7 +770,7 @@ dependencies = [
 
 [[package]]
 name = "myl-client"
-version = "0.81.0"
+version = "0.86.0"
 dependencies = [
  "integer-llm-runtime",
  "libc",
@@ -783,7 +783,7 @@ dependencies = [
 
 [[package]]
 name = "myl-console"
-version = "0.43.0"
+version = "0.51.0"
 dependencies = [
  "crossterm",
  "libc",
@@ -796,7 +796,7 @@ dependencies = [
 
 [[package]]
 name = "myl-local-agent"
-version = "0.23.0"
+version = "0.27.0"
 dependencies = [
  "libc",
  "myl-agent",
@@ -810,7 +810,7 @@ dependencies = [
 
 [[package]]
 name = "myl-module"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "ed25519-dalek",
  "getrandom 0.2.17",

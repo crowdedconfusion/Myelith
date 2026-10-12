@@ -74,6 +74,7 @@
 pub mod tuerklient;
 pub mod ausfuehrung;
 pub mod betrieb;
+pub mod debuglog;
 pub mod risiko;
 pub mod schleife;
 pub mod vollmacht_grenzen;
@@ -103,6 +104,7 @@ pub mod verankert;
 pub mod verlauf;
 pub mod vorhaben;
 pub mod werkzeuge;
+pub mod zwischenruf;
 
 pub use tuerklient::{Antwort, Kontextstand, Modellweg, Nachricht, Tuerfehler, Tuerklient};
 pub use werkzeug::{Erlaubnis, Vorschlag, Werkzeug};

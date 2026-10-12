@@ -90,3 +90,8 @@ SYSTEM/crates-lager/
 SYSTEM/golemos/aus/
 SYSTEM/golemos/bau/
 SYSTEM/golemos/overlay/usr/bin/
+
+# Laufprotokolle, samt Debug-Log (`/debug on`, Einstellung debug.log), der
+# alles mitschreibt, auch Dateiinhalte und Antworten des Modells. Nichts
+# davon gehoert ins Repositorium (Festlegung des Projektinhabers, 2026-10-12).
+SYSTEM/logs/

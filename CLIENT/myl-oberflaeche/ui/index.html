@@ -607,6 +607,46 @@
       </div>
     </div>
 
+    <!-- ⚑ **Das vorgelegte Ergebnis eines Loops** (Festlegung des
+         Projektinhabers, 2026-10-12): Meldet das Modell das Ziel als
+         erreicht, entscheidet der Mensch, ob der Loop endet oder wo er
+         weiterarbeitet. „Später“ laesst das Ergebnis liegen; ✓ in der
+         Taskliste fragt erneut. -->
+    <div id="ergebnisfrage" class="warnung" hidden role="dialog" aria-modal="true"
+         aria-labelledby="ergebnisfragetitel">
+      <div class="warnungkasten">
+        <h2 id="ergebnisfragetitel" class="warnungachtung"></h2>
+        <p id="ergebnisfrageergebnis" class="ergebnistext"></p>
+        <p id="ergebnisfrageeinwand" class="warnungkern" hidden></p>
+        <p class="warnungkern" data-t="loop.frage.kern">Hat der Loop zum richtigen Ergebnis geführt und soll er enden?</p>
+        <textarea id="ergebnisfragewo" class="ergebniswo" rows="3"
+                  data-t-platz="loop.frage.platz" data-t-marke="loop.frage.platz"></textarea>
+        <div class="autoknoepfe">
+          <button type="button" id="ergebnisspaeter" data-t="loop.frage.spaeter">Später</button>
+          <button type="button" id="ergebnisnein" data-t="loop.frage.nein">Weiterarbeiten</button>
+          <button type="button" id="ergebnisja" data-t="loop.frage.ja">Ja, Loop beenden</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ⚑ **Eine Frage des Modells im Loop** (`ask_human`, Wunsch des
+         Projektinhabers, 2026-10-12): Der Task wartet, bis du antwortest;
+         „Später“ laesst die Frage offen, ? in der Taskliste stellt sie
+         erneut. -->
+    <div id="rueckfrage" class="warnung" hidden role="dialog" aria-modal="true"
+         aria-labelledby="rueckfragetitel">
+      <div class="warnungkasten">
+        <h2 id="rueckfragetitel" class="warnungachtung"></h2>
+        <p id="rueckfragetext" class="ergebnistext"></p>
+        <textarea id="rueckfrageantwort" class="ergebniswo" rows="3"
+                  data-t-platz="loop.rueckfrage.platz" data-t-marke="loop.rueckfrage.platz"></textarea>
+        <div class="autoknoepfe">
+          <button type="button" id="rueckfragespaeter" data-t="loop.frage.spaeter">Später</button>
+          <button type="button" id="rueckfrageja" data-t="loop.rueckfrage.antworten">Antworten</button>
+        </div>
+      </div>
+    </div>
+
     <!-- ⚑ Die Einstellungen sind eine SEITE und kein Ausklapper. Sie
          nehmen den ganzen Raum, weil man sie nicht nebenbei bedient,
          und das Gespraech bleibt derweil stehen. -->

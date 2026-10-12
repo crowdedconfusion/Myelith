@@ -9,26 +9,41 @@
 //! hat (Tagebuch) und wann er weitermachen will (Selbstwecken). Ein
 //! fertiges Vorhaben kann ein naechstes anstossen (Kette).
 //!
-//! # ⚑ Festlegungen des Projektinhabers (2026-09-26)
+//! # ⚑ Festlegungen des Projektinhabers (2026-09-26, 2026-10-12)
 //!
 //! - **Kein eigener Prozess, keine Zeitsteuerung des Betriebssystems.**
-//!   Der Loop laeuft im Fenster oder in der Konsole. Wird eines davon
-//!   geschlossen, haelt er an und macht beim naechsten Oeffnen **genau
-//!   dort** weiter: Eine unterbrochene Runde setzt mit dem fort, was sie
-//!   schon erledigt hatte (`Rundenstand`), eine Wartezeit mit ihrem Rest,
-//!   und die Hoechstdauer zaehlt nur offene Zeit.
+//!   Der Loop laeuft im Fenster oder in der Konsole.
+//! - ⚑ **Ein Loop endet nur auf drei Wegen** (2026-10-12): Der Mensch
+//!   haelt ihn an, der Mensch bestaetigt das Ergebnis, oder Fenster oder
+//!   Konsole schliessen. **Keine Hoechstzahl an Runden, keine
+//!   Hoechstdauer, kein Anhalten wegen Stillstand.**
+//! - ⚑ **Schliessen haelt an, und weiter geht es nur auf Wunsch**
+//!   (2026-10-12, ersetzt das selbsttaetige Weitermachen vom 2026-09-26).
+//!   Der Task, der lief, steht danach als angehalten da; `/resume loop`
+//!   setzt ihn fort, und zwar **genau dort**: Eine unterbrochene Runde
+//!   setzt mit dem fort, was sie schon erledigt hatte (`Rundenstand`).
+//! - ⚑ **„Fertig“ sagt der Mensch** (2026-10-12). Meldet das Modell das
+//!   Ziel als erreicht (und stimmen Pruefung und Abnahme zu), wird das
+//!   Ergebnis **vorgelegt** ([`Zustand::Vorgelegt`]). Der Mensch
+//!   bestaetigt es ([`Ablage::bestaetigen`]) oder sagt, wo weitergearbeitet
+//!   werden soll ([`Ablage::nachbessern`]).
+//! - ⚑ **Das Modell kann fragen** (2026-10-12): `ask_human` beendet die
+//!   Runde, das Vorhaben wartet als [`Zustand::Frage`], und die Antwort
+//!   ([`Ablage::antworten`]) steht in der naechsten Runde als Notiz
+//!   `mensch`. Sonst arbeitet es selbststaendig; im `auto`-Modus ohne jede
+//!   Nachfrage zu einzelnen Handlungen.
 //! - **Ausloeser sind Selbstwecken und Kette**, auch zusammen.
 //! - **Aufsicht wie beim normalen Agenten**: Im `manual mode` legt die
 //!   Ruestung jede Handlung mit Wirkung nach aussen vor; wer auf `auto`
 //!   stellt, bekommt vorher eine Sicherheitsmeldung.
 //! - **Der Pruefdurchgang ist eine Einstellung** (`loop.pruefen`).
 //!
-//! # ⛔️ Grenzen stehen im Code
+//! # ⛔️ Was im Code begrenzt bleibt
 //!
-//! Runden, Dauer, Schritte je Runde und Stillstand sind Zahlen aus
-//! `Loopeinstellung`, und ein Vorhaben endet an ihnen, gleich was das
-//! Modell meint. Das Modell kann sich weder mehr Runden geben noch seine
-//! Wartezeit ueber `WECKEN_BIS` hinausschieben.
+//! Die Schritte **je Runde** (`Loopeinstellung::schritte`), der Notizblock
+//! und die Wartezeit: Das Modell kann seine Wartezeit nicht ueber
+//! `WECKEN_BIS` hinausschieben. **Keine dieser Zahlen beendet den Loop**;
+//! eine Runde an der Schrittgrenze wird von der naechsten fortgesetzt.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -56,6 +71,18 @@ pub const NOTIZ_ZEICHEN: usize = 600;
 /// Wie viele Tagebucheintraege eine Runde zu sehen bekommt.
 pub const TAGEBUCH_RUECKBLICK: usize = 3;
 
+/// **Nach so vielen Runden ohne Fortschritt bekommt das Modell einen
+/// Hinweis**, den Weg zu wechseln.
+///
+/// ⚑ **Ein Hinweis und kein Halt** (Festlegung des Projektinhabers,
+/// 2026-10-12). Bis dahin hielt ein Vorhaben hier an; jetzt laeuft es
+/// weiter, bis der Mensch es anhaelt, und die Notiz `stillstand` sagt der
+/// naechsten Runde, dass der bisherige Weg nichts bringt.
+pub const STILLSTAND_HINWEIS: u32 = 3;
+
+/// Wie lang der Name eines Tasks hoechstens ist, in Zeichen.
+pub const NAME_ZEICHEN: usize = 48;
+
 /// Wo ein Vorhaben gerade steht.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "art", rename_all = "snake_case")]
@@ -68,6 +95,22 @@ pub enum Zustand {
     Fertig,
     /// Angehalten, mit Grund; weiter nur, wenn ein Mensch es fortsetzt.
     Angehalten { grund: String },
+    /// ⚑ **Das Modell haelt das Ziel fuer erreicht**, und der Mensch hat
+    /// noch nicht entschieden. Keine Runde laeuft; [`Ablage::bestaetigen`]
+    /// macht daraus `Fertig`, [`Ablage::nachbessern`] wieder `Bereit`.
+    ///
+    /// `einwand` ist, was der Pruefdurchgang dagegen sagt, falls er
+    /// widerspricht: Er beraet, der Mensch entscheidet (Festlegung des
+    /// Projektinhabers, 2026-10-12, Fund 531).
+    Vorgelegt {
+        ergebnis: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        einwand: Option<String>,
+    },
+    /// ⚑ **Das Modell fragt den Menschen** (`ask_human`) und wartet auf die
+    /// Antwort. Keine Runde laeuft; [`Ablage::antworten`] macht es wieder
+    /// bereit.
+    Frage { frage: String },
 }
 
 /// Ein Vorhaben, so wie es auf der Platte liegt.
@@ -75,6 +118,11 @@ pub enum Zustand {
 pub struct Vorhaben {
     pub kennung: String,
     pub ziel: String,
+    /// ⚑ **Der Name in Listen**, kurz (Wunsch des Projektinhabers,
+    /// 2026-10-12: „den Task entsprechend benennen“). Leer heisst: das
+    /// gekuerzte Ziel ([`Vorhaben::anzeigename`]).
+    #[serde(default)]
+    pub name: Option<String>,
     pub angelegt: u64,
     pub zustand: Zustand,
     /// Abgeschlossene Runden.
@@ -120,6 +168,7 @@ impl Vorhaben {
         Self {
             kennung,
             ziel: ziel.trim().to_string(),
+            name: None,
             angelegt: jetzt,
             zustand: Zustand::Bereit,
             runden: 0,
@@ -147,6 +196,19 @@ impl Vorhaben {
             a.wurzel = Some(w.clone());
         }
         a
+    }
+
+    /// **Der Name in Listen**: der vergebene, sonst das gekuerzte Ziel.
+    pub fn anzeigename(&self) -> String {
+        match self.name.as_deref().map(str::trim).filter(|n| !n.is_empty()) {
+            Some(n) => n.to_string(),
+            None => kurzname(&self.ziel),
+        }
+    }
+
+    /// Ist es abgeschlossen, also vom Menschen bestaetigt?
+    pub fn fertig(&self) -> bool {
+        self.zustand == Zustand::Fertig
     }
 
     /// Laeuft es noch, im weitesten Sinn (bereit oder schlafend)?
@@ -394,6 +456,8 @@ impl Ablage {
                 let s = match &v.zustand {
                     Zustand::Fertig => Stellung::Fertig,
                     Zustand::Angehalten { .. } => Stellung::Angehalten,
+                    Zustand::Vorgelegt { .. } => Stellung::Vorgelegt,
+                    Zustand::Frage { .. } => Stellung::Frage,
                     _ if !vorn_vergeben => {
                         vorn_vergeben = true;
                         Stellung::Vorn
@@ -406,10 +470,25 @@ impl Ablage {
     }
 
     /// **Ein Mensch setzt fort**: bereit, sofort faellig, Stillstand von vorn.
+    ///
+    /// ⚑ Ein vorgelegtes Ergebnis gilt dabei als nicht abgenommen: Wer
+    /// fortsetzt, will weiterarbeiten. Wer sagen will, wo, nimmt
+    /// [`Ablage::nachbessern`].
     pub fn weitermachen(&self, kennung: &str) -> Result<Vorhaben, String> {
         let mut v = self.laden(kennung)?;
         if v.zustand == Zustand::Fertig {
             return Err(format!("{kennung} ist fertig"));
+        }
+        if matches!(v.zustand, Zustand::Vorgelegt { .. }) {
+            v.ergebnis = None;
+        }
+        // ⚑ Wer fortsetzt, ohne die Frage zu beantworten, laesst das Modell
+        //   selbst entscheiden; das steht dann in seinen Notizen.
+        if let Zustand::Frage { frage } = &v.zustand {
+            v.notizen.insert(
+                "mensch".into(),
+                format!("Der Mensch hat deine Frage „{frage}“ nicht beantwortet: Entscheide selbst und halte die Annahme fest."),
+            );
         }
         v.zustand = Zustand::Bereit;
         v.ohne_fortschritt = 0;
@@ -476,6 +555,163 @@ impl Ablage {
         self.speichern(&v)?;
         Ok(v)
     }
+
+    /// **Gibt einem Vorhaben seinen Namen**; leer nimmt ihn weg.
+    pub fn name_setzen(&self, kennung: &str, name: &str) -> Result<Vorhaben, String> {
+        let mut v = self.laden(kennung)?;
+        let n = name_saeubern(name);
+        v.name = (!n.is_empty()).then_some(n);
+        self.speichern(&v)?;
+        Ok(v)
+    }
+
+    /// **Stellt ein Vorhaben an die Spitze der Schlange.**
+    ///
+    /// ⚑ Wer einen Loop startet oder fortsetzt, meint diesen und nicht den,
+    /// der zufaellig vorn stand. Der andere wartet dahinter („queued“).
+    pub fn nach_vorn(&self, kennung: &str) -> Result<(), String> {
+        let mut k: Vec<String> = self.reihe().into_iter().map(|v| v.kennung).filter(|x| x != kennung).collect();
+        k.insert(0, kennung.to_string());
+        self.reihe_setzen(&k)
+    }
+
+    /// **Haelt das vorderste aktive Vorhaben an**, mit Grund, und liefert es.
+    ///
+    /// ⚑ **Das vorderste ist das, das lief**: Der Laeufer faehrt nur das
+    /// vorderste ([`Laeufer::faellig`]). Gerufen, **nachdem** der Lauf
+    /// stand; waehrend einer Runde schriebe die Runde am Ende ihren eigenen
+    /// Stand darueber.
+    pub fn vorn_anhalten(&self, grund: &str) -> Option<Vorhaben> {
+        let mut v = self.vorn()?;
+        v.zustand = Zustand::Angehalten { grund: grund.to_string() };
+        self.speichern(&v).ok()?;
+        Some(v)
+    }
+
+    /// **Der Mensch haelt den Loop an** (`/stop loop`, ∞ aus, Esc).
+    pub fn vom_menschen_anhalten(&self, sprache: Sprache) -> Option<Vorhaben> {
+        let _ = self.loop_aktiv_setzen(false);
+        self.vorn_anhalten(if sprache == Sprache::De { "vom Menschen angehalten" } else { "paused by a human" })
+    }
+
+    /// **Nach dem Schliessen**: Lief der Loop, als Fenster oder Konsole
+    /// zugingen, steht der Task, der lief, danach als angehalten da.
+    ///
+    /// ⚑ **Zweimal gerufen, und das zweite Mal tut es nichts**: am Ende des
+    /// Laufs, wenn das Schliessen ihn beendet hat, und beim naechsten Start.
+    /// Der zweite Ruf faengt das harte Ende (Absturz, `kill`, Terminal zu),
+    /// nach dem keine Zeile mehr lief; die Marke `.aktiv` steht dann noch.
+    ///
+    /// ⛔️ **Nie, solange ein anderer Prozess den Loop faehrt.** Fenster und
+    /// Konsole koennen gleichzeitig offen sein; die Marke steht dann, weil
+    /// der andere laeuft, und sein Task darf hier nicht angehalten werden.
+    pub fn nach_dem_schliessen(&self, sprache: Sprache) -> Option<Vorhaben> {
+        if !self.loop_war_aktiv() || self.laeuft_gerade() {
+            return None;
+        }
+        let _ = self.loop_aktiv_setzen(false);
+        self.vorn_anhalten(if sprache == Sprache::De { "beim Schließen angehalten" } else { "stopped on close" })
+    }
+
+    /// **Alles, was sich fortsetzen laesst**: jedes Vorhaben, das nicht
+    /// fertig ist, in der Reihenfolge der Schlange (fuer `/resume loop`).
+    pub fn fortsetzbare(&self) -> Vec<Vorhaben> {
+        self.reihe().into_iter().filter(|v| !v.fertig()).collect()
+    }
+
+    /// **Setzt ein Vorhaben fort und stellt es nach vorn**, damit genau
+    /// dieses als naechstes laeuft.
+    pub fn wieder_aufnehmen(&self, kennung: &str) -> Result<Vorhaben, String> {
+        let v = self.weitermachen(kennung)?;
+        self.nach_vorn(kennung)?;
+        Ok(v)
+    }
+
+    /// **Der Mensch bestaetigt das vorgelegte Ergebnis**: fertig, und eine
+    /// Kette beginnt erst jetzt. Liefert die neuen Vorhaben der Kette.
+    ///
+    /// ⚑ **Die Kette wartet auf die Bestaetigung.** Ein Folgeziel, das auf
+    /// einem nicht abgenommenen Ergebnis aufsetzt, setzt auf etwas auf,
+    /// das vielleicht falsch ist.
+    pub fn bestaetigen(&self, kennung: &str, sprache: Sprache) -> Result<Vec<Vorhaben>, String> {
+        let mut v = self.laden(kennung)?;
+        let Zustand::Vorgelegt { ergebnis, .. } = v.zustand.clone() else {
+            return Err(format!("{kennung} hat kein Ergebnis vorgelegt"));
+        };
+        v.zustand = Zustand::Fertig;
+        v.ergebnis = Some(ergebnis);
+        self.speichern(&v)?;
+        let satz = if sprache == Sprache::De { "Ergebnis vom Menschen bestätigt." } else { "Result confirmed by a human." };
+        crate::debuglog::eintrag("Mensch bestaetigt", &format!("{kennung}: {}", v.ergebnis.as_deref().unwrap_or("")));
+        self.tagebuch_anhaengen(&v.kennung, v.runden, &format!("{SYSTEMMARKE} {satz}"))?;
+        let mut neue = Vec::new();
+        for z in v.anschluss.clone() {
+            let mut n = self.anlegen(&z, jetzt())?;
+            n.vorgaenger = Some(v.kennung.clone());
+            self.speichern(&n)?;
+            self.einreihen_nach(&n.kennung, &v.kennung)?;
+            neue.push(n);
+        }
+        Ok(neue)
+    }
+
+    /// **Der Mensch nimmt das Ergebnis nicht ab** und sagt, wo
+    /// weitergearbeitet werden soll. Das Vorhaben ist wieder bereit, und
+    /// seine naechste Runde liest den Hinweis als Notiz `mensch`.
+    ///
+    /// ⚑ **Als Notiz und im Tagebuch**: Die Notiz steht in jeder Runde im
+    /// Auftrag, bis das Modell sie ersetzt; das Tagebuch haelt fest, dass
+    /// der Satz vom Menschen kam und nicht vom Modell.
+    /// **Der Mensch beantwortet die Frage des Modells.** Das Vorhaben ist
+    /// wieder bereit, und die naechste Runde liest Frage und Antwort als
+    /// Notiz `mensch` (die das Modell nicht ueberschreiben kann).
+    pub fn antworten(&self, kennung: &str, antwort: &str, sprache: Sprache) -> Result<Vorhaben, String> {
+        let mut v = self.laden(kennung)?;
+        let Zustand::Frage { frage } = v.zustand.clone() else {
+            return Err(format!("{kennung} hat keine offene Frage"));
+        };
+        let antwort: String = antwort.trim().chars().take(NOTIZ_ZEICHEN / 2).collect();
+        let frage_kurz: String = frage.chars().take(NOTIZ_ZEICHEN / 3).collect();
+        let notiz = match (antwort.is_empty(), sprache == Sprache::De) {
+            (true, true) => format!("Auf deine Frage „{frage_kurz}“ kam keine Antwort: Entscheide selbst und halte die Annahme fest."),
+            (true, false) => format!("Your question \"{frage_kurz}\" got no answer: decide yourself and note the assumption."),
+            (false, true) => format!("Antwort des Menschen auf deine Frage „{frage_kurz}“: {antwort}"),
+            (false, false) => format!("The human's answer to your question \"{frage_kurz}\": {antwort}"),
+        };
+        crate::debuglog::eintrag("Mensch antwortet", &format!("{kennung}: {notiz}"));
+        v.notizen.insert("mensch".into(), notiz.clone());
+        v.zustand = Zustand::Bereit;
+        v.naechste = jetzt();
+        v.rest = None;
+        self.speichern(&v)?;
+        self.tagebuch_anhaengen(&v.kennung, v.runden, &format!("{SYSTEMMARKE} {notiz}"))?;
+        Ok(v)
+    }
+
+    pub fn nachbessern(&self, kennung: &str, hinweis: &str, sprache: Sprache) -> Result<Vorhaben, String> {
+        let mut v = self.laden(kennung)?;
+        if !matches!(v.zustand, Zustand::Vorgelegt { .. }) {
+            return Err(format!("{kennung} hat kein Ergebnis vorgelegt"));
+        }
+        let de = sprache == Sprache::De;
+        let hinweis: String = hinweis.trim().chars().take(NOTIZ_ZEICHEN - 80).collect();
+        let notiz = match (hinweis.is_empty(), de) {
+            (true, true) => "Das Ergebnis ist nicht abgenommen: weiterarbeiten, das Ziel ist noch nicht erreicht.".to_string(),
+            (true, false) => "The result was not accepted: keep working, the goal is not reached yet.".to_string(),
+            (false, true) => format!("Das Ergebnis ist nicht abgenommen. Weiterarbeiten bei: {hinweis}"),
+            (false, false) => format!("The result was not accepted. Continue with: {hinweis}"),
+        };
+        crate::debuglog::eintrag("Mensch bessert nach", &format!("{kennung}: {notiz}"));
+        v.notizen.insert("mensch".into(), notiz.clone());
+        v.ergebnis = None;
+        v.zustand = Zustand::Bereit;
+        v.ohne_fortschritt = 0;
+        v.naechste = jetzt();
+        v.rest = None;
+        self.speichern(&v)?;
+        self.tagebuch_anhaengen(&v.kennung, v.runden, &format!("{SYSTEMMARKE} {notiz}"))?;
+        Ok(v)
+    }
 }
 
 impl Ablage {
@@ -498,7 +734,15 @@ impl Ablage {
             .into_iter()
             .enumerate()
             .map(|(i, (v, st))| {
-                format!("{:>2}. {}  ({})  {} {runden}  {}", i + 1, v.kennung, st.wort(&v, an, sprache), v.runden, v.ziel)
+                format!(
+                    "{:>2}. {}  {}  ({})  {} {runden}  {}",
+                    i + 1,
+                    v.kennung,
+                    v.anzeigename(),
+                    st.wort(&v, an, sprache),
+                    v.runden,
+                    v.ziel
+                )
             })
             .collect()
     }
@@ -519,6 +763,16 @@ pub fn zustandswort(v: &Vorhaben, sprache: Sprache) -> String {
         Zustand::Fertig => format!("done: {}", v.ergebnis.as_deref().unwrap_or("")),
         Zustand::Angehalten { grund } if de => format!("angehalten: {grund}"),
         Zustand::Angehalten { grund } => format!("stopped: {grund}"),
+        Zustand::Frage { frage } if de => format!("fragt dich: {frage}"),
+        Zustand::Frage { frage } => format!("asks you: {frage}"),
+        Zustand::Vorgelegt { ergebnis, einwand } if de => match einwand {
+            Some(e) => format!("laut Modell erreicht, die Prüfung widerspricht ({e}); wartet auf deine Bestätigung: {ergebnis}"),
+            None => format!("laut Modell erreicht, wartet auf deine Bestätigung: {ergebnis}"),
+        },
+        Zustand::Vorgelegt { ergebnis, einwand } => match einwand {
+            Some(e) => format!("reached according to the model, the review objects ({e}); awaiting your confirmation: {ergebnis}"),
+            None => format!("reached according to the model, awaiting your confirmation: {ergebnis}"),
+        },
     }
 }
 
@@ -532,6 +786,10 @@ pub enum Stellung {
     Wartend,
     Fertig,
     Angehalten,
+    /// Wartet auf die Bestaetigung des Menschen.
+    Vorgelegt,
+    /// Wartet auf die Antwort des Menschen auf eine Frage des Modells.
+    Frage,
 }
 
 impl Stellung {
@@ -554,6 +812,8 @@ impl Stellung {
             Stellung::Vorn => (if de { "als Nächstes" } else { "next" }).into(),
             Stellung::Wartend => "queued".into(),
             Stellung::Fertig => (if de { "fertig" } else { "done" }).into(),
+            Stellung::Vorgelegt => (if de { "wartet auf Bestätigung" } else { "awaiting confirmation" }).into(),
+            Stellung::Frage => (if de { "fragt dich" } else { "asks you" }).into(),
             Stellung::Angehalten => match &v.zustand {
                 Zustand::Angehalten { grund } if de => format!("angehalten: {grund}"),
                 Zustand::Angehalten { grund } => format!("stopped: {grund}"),
@@ -584,6 +844,8 @@ pub struct Rundenwahl {
     pub wecken_minuten: Option<u64>,
     pub fertig: Option<String>,
     pub anschluss: Vec<String>,
+    /// Was das Modell den Menschen fragt (`ask_human`).
+    pub frage: Option<String>,
 }
 
 type Geteilt = Arc<Mutex<Rundenwahl>>;
@@ -604,7 +866,7 @@ const LESEND: [&str; 16] = [
 ];
 
 /// Werkzeuge, die weder lesen noch die Welt aendern: die des Loops selbst.
-const OHNE_WIRKUNG: [&str; 4] = ["note_set", "wake_in", "finish_goal", "chain_goal"];
+const OHNE_WIRKUNG: [&str; 5] = ["note_set", "wake_in", "finish_goal", "chain_goal", "ask_human"];
 
 /// **Die Wiederholungsbremse**: Ein lesender Aufruf, der in dieser Runde
 /// genauso schon lief, und seither hat sich nichts geaendert, laeuft
@@ -964,6 +1226,59 @@ struct Notiz(Geteilt);
 struct Wecken(Geteilt);
 struct Fertig(Geteilt);
 struct Anschluss(Geteilt);
+struct Rueckfrage(Geteilt);
+
+/// **Die Frage am Ende einer Antwort**, falls die Antwort mit einer endet:
+/// der letzte Absatz, hoechstens [`FRAGE_ZEICHEN`].
+///
+/// 📌 **Fund 533 (2026-10-12), im ersten Lauf, der fragen sollte:** Das
+/// Ziel verlangte ausdruecklich, vorher nach dem Namen zu fragen. Das 35B
+/// schrieb „Wie heißt du?“ als Antwort, rief `ask_human` nicht, kein
+/// Werkzeug lief, und die Frage stand nur im Tagebuch; die naechste Runde
+/// haette wieder gefragt, ohne Grenze endlos. Kleine Modelle vergessen
+/// Werkzeuge, die eine Runde abschliessen (dieselbe Lehre wie bei
+/// `finish_goal`, wo die Pruefung ein fertig ohne Abmeldung erkennt).
+/// Gewertet wird nur, womit die Antwort **endet**: Eine Frage mitten in
+/// einem Bericht ist keine Bitte um Antwort.
+pub fn frage_am_ende(antwort: &str) -> Option<String> {
+    let text = antwort.trim();
+    let letzte = text.lines().rev().map(str::trim).find(|z| !z.is_empty())?;
+    let letzte = letzte.trim_end_matches(['*', '_', '`', ')', '"', '“', '”', '»', ' ']);
+    if !(letzte.ends_with('?') || letzte.ends_with('？')) {
+        return None;
+    }
+    let absatz = text.rsplit("\n\n").map(str::trim).find(|a| !a.is_empty()).unwrap_or(text);
+    Some(absatz.chars().take(FRAGE_ZEICHEN).collect())
+}
+
+/// Wie lang eine Frage an den Menschen hoechstens ist, in Zeichen.
+pub const FRAGE_ZEICHEN: usize = 600;
+
+impl Werkzeugausfuehrung for Rueckfrage {
+    fn name(&self) -> &str {
+        "ask_human"
+    }
+    fn ausfuehren(&self, a: &serde_json::Value) -> Result<String, Werkzeugfehler> {
+        let f = text_arg(a, "question")?;
+        if f.is_empty() {
+            return Err(Werkzeugfehler { grund: "the question must not be empty".into() });
+        }
+        self.0.lock().expect("Rundenwahl").frage = Some(f.chars().take(FRAGE_ZEICHEN).collect());
+        Ok("The question goes to the human after this round, which ends now: answer with one short sentence \
+            and call no further tool. The answer will be in the note `mensch` next round."
+            .into())
+    }
+}
+
+/// **Notizen, die das System schreibt und das Modell nur liest.**
+///
+/// 📌 **Fund 532 (2026-10-12), im ersten echten Loop:** Der Pruefdurchgang
+/// hatte widersprochen, und das Modell schrieb in der naechsten Runde mit
+/// `note_set` unter `pruefung` „erreicht: …“. Die Pruefung liest die
+/// Notizen; danach sagte sie ja. Auf demselben Weg haette das Modell auch
+/// `mensch` loeschen koennen, den Satz, mit dem der Mensch sagt, wo
+/// weitergearbeitet werden soll. Diese Schluessel gehoeren dem System.
+pub const SYSTEMNOTIZEN: [&str; 5] = ["runde", "pruefung", "abnahme", "mensch", "stillstand"];
 
 impl Werkzeugausfuehrung for Notiz {
     fn name(&self) -> &str {
@@ -974,6 +1289,14 @@ impl Werkzeugausfuehrung for Notiz {
         let wert = a.get("value").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
         if schluessel.is_empty() {
             return Err(Werkzeugfehler { grund: "the key must not be empty".into() });
+        }
+        if SYSTEMNOTIZEN.iter().any(|k| k.eq_ignore_ascii_case(&schluessel)) {
+            return Err(Werkzeugfehler {
+                grund: format!(
+                    "the note `{schluessel}` is written by the system and is read-only for you; \
+                     use another key for your own notes"
+                ),
+            });
         }
         let mut w = self.0.lock().expect("Rundenwahl");
         if wert.is_empty() {
@@ -1040,7 +1363,7 @@ impl Werkzeugausfuehrung for Anschluss {
     }
 }
 
-/// Die vier Werkzeuge einer Runde, mit dem geteilten Stand.
+/// Die fuenf Werkzeuge einer Runde, mit dem geteilten Stand.
 pub fn werkzeuge(wahl: &Geteilt) -> Zusatzwerkzeuge {
     let text = |b: &str| serde_json::json!({"type": "string", "description": b});
     vec![
@@ -1067,11 +1390,22 @@ pub fn werkzeuge(wahl: &Geteilt) -> Zusatzwerkzeuge {
         (
             Werkzeug {
                 name: "finish_goal".into(),
-                beschreibung: "Mark the whole task as finished, with its result.".into(),
+                beschreibung: "Report the whole task as finished, with its result. A human confirms it before it counts as done.".into(),
                 parameter: serde_json::json!({"type": "object", "properties": {
                     "result": text("the result of the task")}, "required": ["result"]}),
             },
             Box::new(Fertig(wahl.clone())),
+        ),
+        (
+            Werkzeug {
+                name: "ask_human".into(),
+                beschreibung: "Ask the human a question and pause this task until they answer. Only when you cannot \
+                               sensibly continue without their decision or information; otherwise work on alone."
+                    .into(),
+                parameter: serde_json::json!({"type": "object", "properties": {
+                    "question": text("one clear question the human can answer")}, "required": ["question"]}),
+            },
+            Box::new(Rueckfrage(wahl.clone())),
         ),
         (
             Werkzeug {
@@ -1088,20 +1422,17 @@ pub fn werkzeuge(wahl: &Geteilt) -> Zusatzwerkzeuge {
 // ── Der Auftrag einer Runde ─────────────────────────────────────────
 
 /// Der Auftrag, mit dem eine Runde beginnt.
-pub fn auftrag(
-    v: &Vorhaben,
-    rueckblick: &[String],
-    stand: Option<&Rundenstand>,
-    grenzen: &Loopeinstellung,
-    sprache: Sprache,
-) -> String {
+///
+/// ⚑ **Ohne „von höchstens“** (2026-10-12): Es gibt keine Hoechstzahl an
+/// Runden mehr, also nennt der Auftrag auch keine.
+pub fn auftrag(v: &Vorhaben, rueckblick: &[String], stand: Option<&Rundenstand>, sprache: Sprache) -> String {
     let de = sprache == Sprache::De;
     let mut s = String::new();
     let runde = v.runden + 1;
     s.push_str(&if de {
-        format!("Du arbeitest an einem Langzeitvorhaben, Runde {runde} von höchstens {}.\n\nZIEL:\n{}\n\n", grenzen.runden, v.ziel)
+        format!("Du arbeitest an einem Langzeitvorhaben, Runde {runde}.\n\nZIEL:\n{}\n\n", v.ziel)
     } else {
-        format!("You are working on a long-running task, round {runde} of at most {}.\n\nGOAL:\n{}\n\n", grenzen.runden, v.ziel)
+        format!("You are working on a long-running task, round {runde}.\n\nGOAL:\n{}\n\n", v.ziel)
     });
     let notizen = stand.map(|r| &r.notizen).unwrap_or(&v.notizen);
     s.push_str(if de { "NOTIZEN (dein Gedächtnis zwischen den Runden):\n" } else { "NOTES (your memory between rounds):\n" });
@@ -1152,14 +1483,18 @@ pub fn auftrag(
     s.push_str(if de {
         "\nTu in dieser Runde den nächsten sinnvollen Schritt auf das Ziel hin. \
          Halte mit note_set fest, was die nächste Runde wissen muss. \
-         Ist das Ziel erreicht, rufe finish_goal mit dem Ergebnis. \
+         Ist das Ziel erreicht, rufe finish_goal mit dem Ergebnis; der Mensch prüft es danach. \
+         Arbeite sonst selbstständig. Nur wenn du ohne eine Entscheidung oder Angabe des Menschen \
+         nicht sinnvoll weiterkommst, rufe ask_human mit einer klaren Frage; die Runde endet dann. \
          Soll die nächste Runde erst später kommen, rufe wake_in mit Minuten. \
          Soll danach ein weiteres Vorhaben beginnen, rufe chain_goal. \
          Schließe mit einem Satz, was du in dieser Runde getan hast."
     } else {
         "\nIn this round, take the next sensible step towards the goal. \
          Use note_set to record what the next round must know. \
-         If the goal is reached, call finish_goal with the result. \
+         If the goal is reached, call finish_goal with the result; a human checks it afterwards. \
+         Otherwise work on your own. Only if you cannot sensibly continue without a decision or \
+         information from the human, call ask_human with one clear question; the round then ends. \
          If the next round should come later, call wake_in with minutes. \
          If another task should start afterwards, call chain_goal. \
          End with one sentence on what you did in this round."
@@ -1181,6 +1516,14 @@ pub struct Pruefung {
 /// Wie viele Werkzeugergebnisse der Pruefdurchgang als Belege sieht, und
 /// wie lang jedes hoechstens ist.
 pub const PRUEF_BELEGE: usize = 8;
+
+/// **Wie viele Token die Pruefung hoechstens antworten darf.**
+///
+/// 📌 Hier standen 120 (Fund 531). Am 35B im Denkmodus reichte das fuer
+/// die drei Zeilen, aber nicht fuer den Grund: Er brach nach „Der Bericht
+/// beh“ ab, und niemand konnte sehen, warum die Pruefung widersprach. Seit
+/// sie beraet, ist ihr Grund das, was der Mensch liest.
+pub const PRUEF_TOKEN: u32 = 600;
 const PRUEF_BELEG_ZEICHEN: usize = 400;
 /// Wie viele der geschriebenen Dateien die Pruefung sieht, und wie viel
 /// von jeder.
@@ -1490,26 +1833,22 @@ pub fn schliessen_zuruecksetzen() {
     crate::notaus::zuruecksetzen();
 }
 
-/// Rechnet eine abgeschlossene Runde in das Vorhaben ein und liefert die
-/// Vorhaben, die als Kette neu beginnen.
+/// Rechnet eine abgeschlossene Runde in das Vorhaben ein.
 ///
-/// ⚑ **Eine reine Rechnung**, ohne Platte und ohne Uhr, damit sich jede
-/// Grenze pruefen laesst.
-pub fn abschliessen(
-    v: &mut Vorhaben,
-    wahl: &Rundenwahl,
-    pruefung: Option<&Pruefung>,
-    ende: &Rundenende,
-    grenzen: &Loopeinstellung,
-    jetzt: u64,
-) -> Vec<String> {
+/// ⚑ **Eine reine Rechnung**, ohne Platte und ohne Uhr, damit sich jeder
+/// Uebergang pruefen laesst.
+///
+/// ⚑ **„Fertig“ wird hier nie gesetzt, nur vorgelegt** (2026-10-12): Das
+/// Ergebnis wartet als [`Zustand::Vorgelegt`] auf den Menschen, und eine
+/// Kette beginnt erst mit seiner Bestaetigung ([`Ablage::bestaetigen`]).
+pub fn abschliessen(v: &mut Vorhaben, wahl: &Rundenwahl, pruefung: Option<&Pruefung>, ende: &Rundenende, jetzt: u64) {
     if let Rundenende::Abbruch(grund) = ende {
         v.notizen = wahl.notizen.clone();
         v.zustand = Zustand::Angehalten { grund: grund.clone() };
-        return Vec::new();
+        return;
     }
     if *ende == Rundenende::Unterbrochen {
-        return Vec::new();
+        return;
     }
     v.runden += 1;
     v.notizen = wahl.notizen.clone();
@@ -1525,13 +1864,21 @@ pub fn abschliessen(
     //   den Notizen.
     //   📌 Gemessen am 2026-09-26 mit dem 0,6B-Modell: Die Datei stand
     //   nach Runde 1, die Pruefung sagte dreimal „erreicht", aber das
-    //   Modell rief nie `finish_goal`, und zwei Runden liefen umsonst bis
-    //   zur Hoechstzahl. Kleine Modelle vergessen das Abmelden.
+    //   Modell rief nie `finish_goal`, und zwei Runden liefen umsonst.
+    //   Kleine Modelle vergessen das Abmelden.
     // ⛔️ **Eine Runde an der Schrittgrenze ist nie „fertig"** (Fund 487):
     //    Das Modell hat dann nichts abgeschlossen, und ein Urteil darueber
     //    waere eines ueber eine Runde, die mitten im Satz aufhoerte.
     //    Der Fortschritt zaehlt trotzdem: Eine Runde, die an der Grenze
     //    endet, kann eine Zeile repariert haben.
+    // ⚑ **Eine Frage an den Menschen geht vor**, auch vor einem „fertig“:
+    //   Wer fragt, ist sich nicht sicher. Nur eine bestandene Abnahme
+    //   schlaegt sie (`abschliessen_mit_abnahme` nimmt sie dann weg).
+    if let Some(frage) = wahl.frage.clone() {
+        v.notizen.remove("stillstand");
+        v.zustand = Zustand::Frage { frage };
+        return;
+    }
     let begrenzt = *ende == Rundenende::Begrenzt;
     if begrenzt && (wahl.fertig.is_some() || pruefung.is_some_and(|p| p.erreicht)) {
         v.notizen.insert(
@@ -1540,45 +1887,55 @@ pub fn abschliessen(
         );
     }
     let wahl_fertig = if begrenzt { None } else { wahl.fertig.clone() };
+    // ⚑ **Die Pruefung beraet, sie sperrt nicht** (Festlegung des
+    //   Projektinhabers, 2026-10-12, Fund 531). Meldet das Modell „fertig“
+    //   und die Pruefung widerspricht, wird trotzdem vorgelegt, mit ihrem
+    //   Einwand; der Mensch entscheidet ohnehin. 📌 Bis dahin hielt ihr
+    //   Nein das Vorhaben auf, und im ersten echten Loop sagte sie Nein,
+    //   obwohl alle Tests liefen: Ohne Grenze haette er so endlos gedreht.
+    //   Sagt die Pruefung „erreicht“, ohne dass das Modell sich abmeldet,
+    //   wird ebenfalls vorgelegt (kleine Modelle vergessen das Abmelden).
     let fertig = match pruefung {
         Some(_) if begrenzt => None,
-        Some(p) if p.erreicht => Some(wahl_fertig.clone().unwrap_or_else(|| p.grund.clone())),
-        Some(p) => {
-            if wahl_fertig.is_some() {
-                v.notizen.insert("pruefung".into(), format!("noch nicht erreicht: {}", p.grund));
-            }
-            None
-        }
-        None => wahl_fertig,
+        Some(p) if p.erreicht => Some((wahl_fertig.clone().unwrap_or_else(|| p.grund.clone()), None)),
+        Some(p) => wahl_fertig.map(|e| (e, Some(p.grund.clone()).filter(|g| !g.trim().is_empty()).or_else(|| Some("ohne Begründung".into())))),
+        None => wahl_fertig.map(|e| (e, None)),
     };
-    if let Some(ergebnis) = fertig {
-        v.zustand = Zustand::Fertig;
+    if let Some((ergebnis, einwand)) = fertig {
+        v.notizen.remove("stillstand");
+        v.notizen.remove("pruefung");
+        v.zustand = Zustand::Vorgelegt { ergebnis: ergebnis.clone(), einwand };
         v.ergebnis = Some(ergebnis);
-        return v.anschluss.clone();
+        return;
     }
 
     let fortschritt = match pruefung {
         Some(p) => p.fortschritt,
         None => wahl.notizen_geaendert,
     };
-    v.ohne_fortschritt = if fortschritt { 0 } else { v.ohne_fortschritt + 1 };
+    v.ohne_fortschritt = if fortschritt { 0 } else { v.ohne_fortschritt.saturating_add(1) };
 
-    if v.ohne_fortschritt >= grenzen.stillstand {
-        v.zustand = Zustand::Angehalten {
-            grund: format!("{} Runden ohne Fortschritt", v.ohne_fortschritt),
-        };
-    } else if v.runden >= grenzen.runden {
-        v.zustand = Zustand::Angehalten { grund: format!("Höchstzahl von {} Runden erreicht", grenzen.runden) };
-    } else if v.laufzeit >= u64::from(grenzen.stunden) * 3600 {
-        v.zustand = Zustand::Angehalten { grund: format!("Höchstdauer von {} Stunden erreicht", grenzen.stunden) };
-    } else if let Some(m) = wahl.wecken_minuten {
+    // ⚑ **Stillstand ist ein Hinweis an das Modell, kein Halt**
+    //   (2026-10-12). Die Notiz geht, sobald eine Runde wieder etwas bringt.
+    if v.ohne_fortschritt >= STILLSTAND_HINWEIS {
+        v.notizen.insert(
+            "stillstand".into(),
+            format!(
+                "{} Runden ohne Fortschritt: Der bisherige Weg bringt nichts. Einen anderen versuchen, \
+                 oder mit finish_goal melden, was erreicht ist und was fehlt.",
+                v.ohne_fortschritt
+            ),
+        );
+    } else {
+        v.notizen.remove("stillstand");
+    }
+    if let Some(m) = wahl.wecken_minuten {
         v.naechste = jetzt + m * 60;
         v.zustand = Zustand::Schlaeft;
     } else {
         v.naechste = jetzt;
         v.zustand = Zustand::Bereit;
     }
-    Vec::new()
 }
 
 /// Die Marke, mit der das System seine Zeilen im Tagebuch kennzeichnet.
@@ -1677,9 +2034,10 @@ pub fn abnahme_fahren(befehl: &str, ordner: Option<&Path>) -> Abnahme {
 
 /// **Rechnet eine Runde samt Abnahme ein.**
 ///
-/// ⚑ **Mit Abnahme entscheidet der Befehl ueber „fertig“, sonst niemand.**
-/// Endet er mit 0, ist das Vorhaben fertig, auch an der Schrittgrenze und
-/// auch, wenn das Modell sich nicht abgemeldet hat. Endet er anders, ist
+/// ⚑ **Mit Abnahme entscheidet der Befehl, ob vorgelegt wird.** Endet er
+/// mit 0, wird das Ergebnis dem Menschen vorgelegt, auch an der
+/// Schrittgrenze und auch, wenn das Modell sich nicht abgemeldet hat;
+/// „fertig“ sagt danach der Mensch. Endet er anders, ist
 /// es nicht fertig, und seine Ausgabe steht als Notiz `abnahme` da: Die
 /// naechste Runde sieht den echten Fehler statt einer Vermutung.
 ///
@@ -1691,30 +2049,30 @@ pub fn abschliessen_mit_abnahme(
     wahl: &Rundenwahl,
     pruefung: Option<&Pruefung>,
     ende: &Rundenende,
-    grenzen: &Loopeinstellung,
     jetzt: u64,
     abnahme: Option<&Abnahme>,
-) -> Vec<String> {
+) {
     let Some(a) = abnahme.filter(|_| matches!(ende, Rundenende::Normal | Rundenende::Begrenzt)) else {
-        return abschliessen(v, wahl, pruefung, ende, grenzen, jetzt);
+        abschliessen(v, wahl, pruefung, ende, jetzt);
+        return;
     };
     let mut w = wahl.clone();
     if a.bestanden {
         w.fertig = Some(w.fertig.clone().unwrap_or_else(|| format!("Abnahme bestanden: {}", a.befehl)));
+        w.frage = None;
         let p = Pruefung { fortschritt: true, erreicht: true, grund: format!("`{}` endete mit 0", a.befehl) };
-        let aus = abschliessen(v, &w, Some(&p), &Rundenende::Normal, grenzen, jetzt);
+        abschliessen(v, &w, Some(&p), &Rundenende::Normal, jetzt);
         v.notizen.remove("abnahme");
         v.notizen.remove("runde");
         v.notizen.remove("pruefung");
-        return aus;
+        return;
     }
     w.fertig = None;
     let p = pruefung.map(|p| Pruefung { erreicht: false, ..p.clone() });
-    let aus = abschliessen(v, &w, p.as_ref(), ende, grenzen, jetzt);
+    abschliessen(v, &w, p.as_ref(), ende, jetzt);
     let code = a.code.map(|c| c.to_string()).unwrap_or_else(|| "ohne Rueckgabewert".into());
     let ausgabe: String = a.ausgabe.chars().rev().take(NOTIZ_ZEICHEN - 80).collect::<Vec<_>>().into_iter().rev().collect();
     v.notizen.insert("abnahme".into(), format!("`{}` endete mit {code}: {ausgabe}", a.befehl));
-    aus
 }
 
 // ── Anhalten und Fortsetzen ─────────────────────────────────────────
@@ -1750,12 +2108,25 @@ pub struct Runde {
     pub unterbrochen: bool,
     pub bericht: String,
     pub pruefung: Option<Pruefung>,
-    pub neue: Vec<Vorhaben>,
     /// Was der Abnahmebefehl ergab, falls das Vorhaben einen hat.
     pub abnahme: Option<Abnahme>,
     /// **Die Saat der Runde**, wenn gezogen wurde: Lauf und Pruefung ziehen
     /// aus ihr, und mit ihr wiederholt sich die Runde.
     pub saat: Option<u64>,
+}
+
+/// **Zaehlt ein Werkzeugergebnis als erledigt**, also als etwas, das beim
+/// Fortsetzen nicht noch einmal laufen darf?
+///
+/// 📌 **Eine Absage des Menschen nicht** (Fund 530, 2026-10-12). Im ersten
+/// echten Loop lehnte der Mensch im `manual mode` einen Testlauf ab, dann
+/// wurde angehalten. Der Rundenstand trug die Absage als erledigt, und die
+/// Doppelsperre haette beim Fortsetzen denselben Aufruf mit der alten
+/// Absage beantwortet: Das Modell haette den Test nie mehr ausfuehren
+/// koennen. Eine abgelehnte Handlung hat nichts bewirkt, also gibt es
+/// nichts doppelt zu tun.
+pub fn zaehlt_als_erledigt(ergebnis: &str) -> bool {
+    !ergebnis.trim_start().starts_with(crate::protokoll::ABSAGE)
 }
 
 /// Schliesst die Aktion einer Runde auch bei einem vorzeitigen Ausgang.
@@ -1816,6 +2187,9 @@ pub fn runde_im_gespraech(
     verlauf: &[crate::tuerklient::Nachricht],
 ) -> Result<Runde, String> {
     let anfang = std::time::Instant::now();
+    crate::debuglog::eintrag_mit("Runde beginnt", || {
+        format!("{} „{}“, Runde {}\nZiel: {}", v.kennung, v.anzeigename(), v.runden + 1, v.ziel)
+    });
     // ⚑ **Die Runde ist eine Aktion**, samt Pruefung: Beide ziehen aus einer
     // Saat, und mit ihr wiederholt sich die Runde (Regel des
     // Projektinhabers, 2026-09-29). Der Lauf darin oeffnet keine zweite.
@@ -1823,7 +2197,7 @@ pub fn runde_im_gespraech(
     let _aktion = Aktionsklammer(modell);
     let stand = ablage.rundenstand(&v.kennung);
     let rueckblick = ablage.tagebuch_letzte(&v.kennung, TAGEBUCH_RUECKBLICK);
-    let text = auftrag(v, &rueckblick, stand.as_ref(), grenzen, sprache);
+    let text = auftrag(v, &rueckblick, stand.as_ref(), sprache);
 
     let start_notizen = stand.as_ref().map(|r| r.notizen.clone()).unwrap_or_else(|| v.notizen.clone());
     let wahl: Geteilt = Arc::new(Mutex::new(Rundenwahl { notizen: start_notizen, ..Default::default() }));
@@ -1892,7 +2266,9 @@ pub fn runde_im_gespraech(
             Meldung::Aufruf { name, argumente } => f.1 = Some((name.to_string(), argumente.to_string())),
             Meldung::Ergebnis { name, text } => {
                 let argumente = f.1.take().filter(|(n, _)| n == name).map(|(_, a)| a).unwrap_or_default();
-                f.0.erledigt.push(Erledigt { werkzeug: name.to_string(), argumente, ergebnis: text.to_string() });
+                if zaehlt_als_erledigt(text) {
+                    f.0.erledigt.push(Erledigt { werkzeug: name.to_string(), argumente, ergebnis: text.to_string() });
+                }
                 f.0.notizen = wahl.lock().expect("Rundenwahl").notizen.clone();
                 let _ = ablage.rundenstand_schreiben(&kennung, &f.0);
             }
@@ -1941,7 +2317,16 @@ pub fn runde_im_gespraech(
             }
         }
     };
-    let w = wahl.lock().expect("Rundenwahl").clone();
+    let mut w = wahl.lock().expect("Rundenwahl").clone();
+    // ⚑ **Eine Antwort, die mit einer Frage endet, ist eine Rueckfrage**,
+    //   auch ohne `ask_human` (Fund 533). Nur bei einer Runde mit Abschluss:
+    //   An der Schrittgrenze oder nach einem Abbruch hat das Modell nicht
+    //   zu Ende gesprochen. Und nicht, wenn es sich abgemeldet hat: Ein
+    //   „Kann ich sonst noch helfen?“ nach `finish_goal` ist eine Floskel,
+    //   und die Frage an den Menschen ist dann das vorgelegte Ergebnis.
+    if w.frage.is_none() && w.fertig.is_none() && ende == Rundenende::Normal {
+        w.frage = ausgang.antwort.as_deref().and_then(frage_am_ende);
+    }
 
     // ⚠️ Bei einem Abbruch keine Pruefung und kein Tagebuch: Die Runde ist
     //    nicht zu Ende, sie wird fortgesetzt, und der Rundenstand bleibt.
@@ -1952,9 +2337,12 @@ pub fn runde_im_gespraech(
                 let belege = festhalten.lock().expect("Rundenstand").0.erledigt.clone();
                 let dateien = geschriebene_dateien(&belege, ruestung.einhaengung.as_ref().map(|e| e.wurzel()));
                 pruefauftrag(v, &w, &bericht, &belege, &dateien, sprache)
-            }, Some(120))
+            }, Some(PRUEF_TOKEN))
             .ok()
-            .map(|a| pruefung_lesen(&a.text))
+            .map(|a| {
+                crate::debuglog::eintrag("Pruefung", &a.text);
+                pruefung_lesen(&a.text)
+            })
             .map(|p| zieldateien_pruefen(p, &v.ziel, ruestung.einhaengung.as_ref().map(|e| e.wurzel()), sprache))
     } else {
         None
@@ -1967,7 +2355,14 @@ pub fn runde_im_gespraech(
         v.abnahme.as_deref().map(|b| abnahme_fahren(b, ruestung.einhaengung.as_ref().map(|e| e.wurzel())))
     };
     v.laufzeit += anfang.elapsed().as_secs();
-    let anschluss = abschliessen_mit_abnahme(v, &w, pruefung.as_ref(), &ende, grenzen, jetzt(), abnahme.as_ref());
+    abschliessen_mit_abnahme(v, &w, pruefung.as_ref(), &ende, jetzt(), abnahme.as_ref());
+    crate::debuglog::eintrag_mit("Runde endet", || {
+        let mut t = format!("{} Runde {}: {}\nBericht: {bericht}", v.kennung, v.runden, zustandswort(v, sprache));
+        if let Some(a) = &abnahme {
+            t.push_str(&format!("\nAbnahme `{}`: Rueckgabe {:?}\n{}", a.befehl, a.code, a.ausgabe));
+        }
+        t
+    });
     if !unfertig {
         // ⚑ **Das Tagebuch haelt Tatsachen fest, nicht nur Behauptungen.**
         //   Neben dem Bericht des Modells steht, welche Werkzeuge die Runde
@@ -2004,16 +2399,7 @@ pub fn runde_im_gespraech(
         ablage.rundenstand_loeschen(&v.kennung);
     }
     ablage.speichern(v)?;
-
-    let mut neue = Vec::new();
-    for z in anschluss {
-        let mut n = ablage.anlegen(&z, jetzt())?;
-        n.vorgaenger = Some(v.kennung.clone());
-        ablage.speichern(&n)?;
-        ablage.einreihen_nach(&n.kennung, &v.kennung)?;
-        neue.push(n);
-    }
-    Ok(Runde { unterbrochen: ende == Rundenende::Unterbrochen, bericht, pruefung, neue, abnahme, saat })
+    Ok(Runde { unterbrochen: ende == Rundenende::Unterbrochen, bericht, pruefung, abnahme, saat })
 }
 
 // ── Der Laeufer ─────────────────────────────────────────────────────
@@ -2190,27 +2576,167 @@ fn lebt(pid: u32) -> bool {
 /// (Wunsch des Projektinhabers). ⚑ Ein Text fuer `myl`, Konsole und
 /// Fenster.
 ///
-/// ⚑ Nimmt nur, was es braucht (Loop-Grenzen, Betriebsart, Sprache), und
-/// nicht die ganzen Einstellungen des Clients: So kennt der Agent den
+/// ⚑ Nimmt nur, was es braucht (Loop-Einstellung, Betriebsart, Sprache),
+/// und nicht die ganzen Einstellungen des Clients: So kennt der Agent den
 /// Client nicht.
+///
+/// ⚑ **Er sagt, wie ein Loop endet** (2026-10-12), denn ohne Hoechstzahl
+/// endet er nicht von selbst.
 pub fn hinweis_vorgaben(l: &Loopeinstellung, modus: crate::agentenwahl::Agentenmodus, sprache: Sprache) -> Option<String> {
     if !l.ist_vorgabe() {
         return None;
     }
     Some(match sprache {
         Sprache::De => format!(
-            "Loop mit Standardeinstellungen: höchstens {} Runden und {} Stunden, {} Schritte je Runde, \
-             Pause nach {} Runden ohne Fortschritt, Prüfdurchgang {}. Modus: {}. \
-             Ändern in den Einstellungen unter „Loop“ (oder `myl setzen loop.runden …`).",
-            l.runden, l.stunden, l.schritte, l.stillstand, if l.pruefen { "an" } else { "aus" }, modus.kennung()
+            "Der Loop läuft ohne Grenze an Runden und Dauer, bis du ihn anhältst (/stop loop) oder das Ergebnis \
+             bestätigst; Schließen hält ihn an, /resume loop setzt ihn fort. {} Schritte je Runde, Prüfdurchgang {}. \
+             Modus: {}. Ändern in den Einstellungen unter „Loop“ (oder `myl setzen loop.schritte …`).",
+            l.schritte, if l.pruefen { "an" } else { "aus" }, modus.kennung()
         ),
         Sprache::En => format!(
-            "Loop with default settings: at most {} rounds and {} hours, {} steps per round, \
-             pause after {} rounds without progress, review pass {}. Mode: {}. \
-             Change in the settings under “Loop” (or `myl setzen loop.runden …`).",
-            l.runden, l.stunden, l.schritte, l.stillstand, if l.pruefen { "on" } else { "off" }, modus.kennung()
+            "The loop runs without a limit on rounds or time until you stop it (/stop loop) or confirm the result; \
+             closing stops it, /resume loop continues it. {} steps per round, review pass {}. Mode: {}. \
+             Change in the settings under “Loop” (or `myl setzen loop.schritte …`).",
+            l.schritte, if l.pruefen { "on" } else { "off" }, modus.kennung()
         ),
     })
+}
+
+// ── Ziel und Name ───────────────────────────────────────────────────
+
+/// **Das gekuerzte Ziel als Name**, wo keiner vergeben ist: die ersten
+/// Woerter bis [`NAME_ZEICHEN`], mit „…“, wenn gekuerzt wurde.
+pub fn kurzname(ziel: &str) -> String {
+    let eine = ziel.split_whitespace().collect::<Vec<_>>().join(" ");
+    if eine.chars().count() <= NAME_ZEICHEN {
+        return eine;
+    }
+    let mut aus = String::new();
+    for w in eine.split(' ') {
+        if aus.chars().count() + w.chars().count() + 1 > NAME_ZEICHEN - 1 {
+            break;
+        }
+        if !aus.is_empty() {
+            aus.push(' ');
+        }
+        aus.push_str(w);
+    }
+    if aus.is_empty() {
+        aus = eine.chars().take(NAME_ZEICHEN - 1).collect();
+    }
+    format!("{aus}…")
+}
+
+/// Ein Name, wie ihn ein Modell oder ein Mensch liefert: eine Zeile, ohne
+/// Anfuehrungszeichen und Satzzeichen am Rand, hoechstens [`NAME_ZEICHEN`].
+fn name_saeubern(name: &str) -> String {
+    let eine = name.lines().next().unwrap_or("").split_whitespace().collect::<Vec<_>>().join(" ");
+    let rand: &[char] = &['"', '\'', '`', '„', '“', '”', '*', '.', ':', ' '];
+    eine.trim_matches(rand).chars().take(NAME_ZEICHEN).collect()
+}
+
+/// **Die Frage nach dem Ziel**, wenn `/start loop` ohne eines kam.
+pub fn zielfrage(sprache: Sprache) -> &'static str {
+    match sprache {
+        Sprache::De => "Was soll der Loop erreichen? Beschreib das Ziel so genau, dass ich erkennen kann, wann es erreicht ist.",
+        Sprache::En => "What should the loop achieve? Describe the goal precisely enough that I can tell when it is reached.",
+    }
+}
+
+/// **Der Auftrag, aus einer Antwort Ziel und Namen zu machen.**
+///
+/// ⚑ **Zwei Zeilen mit festem Anfang**, damit sich die Antwort ohne
+/// JSON lesen laesst; ein kleines Modell bricht JSON leichter als eine
+/// Zeile, die mit `ZIEL:` beginnt.
+///
+/// 📌 **Ohne Platzhalter in spitzen Klammern** (2026-10-12). Die erste
+/// Fassung zeigte die Form als `ZIEL: <das Ziel>`, und das 35B gab genau
+/// diese Zeile zurueck; der erste echte Loop lief mit dem Ziel „<das
+/// Ziel>“. Jetzt beschreibt der Auftrag die Form in Worten und zeigt ein
+/// Beispiel aus einem anderen Gebiet ([`BEISPIEL_ZIEL`]), und
+/// [`ableitung_lesen`] verwirft beides, falls es trotzdem zurueckkommt.
+pub fn ableitungsauftrag(antwort: &str, sprache: Sprache) -> Vec<Nachricht> {
+    let (bz, bn) = beispiel(sprache);
+    let text = match sprache {
+        Sprache::De => format!(
+            "Ein Mensch beschreibt, was ein Langzeitvorhaben erreichen soll:\n\n{}\n\n\
+             Formuliere daraus das Ziel als einen klaren, prüfbaren Auftrag (ohne etwas hinzuzuerfinden) \
+             und gib dem Vorhaben einen kurzen Namen aus zwei bis fünf Wörtern. Antworte in genau zwei \
+             Zeilen, mit nichts davor oder danach: Die erste beginnt mit „ZIEL:“, dahinter das Ziel; die \
+             zweite beginnt mit „NAME:“, dahinter der Name. Ein Beispiel für die Form, zu einem ganz \
+             anderen Vorhaben:\nZIEL: {bz}\nNAME: {bn}",
+            antwort.trim()
+        ),
+        Sprache::En => format!(
+            "A human describes what a long-running task should achieve:\n\n{}\n\n\
+             Turn this into the goal as a clear, checkable assignment (without inventing anything) \
+             and give the task a short name of two to five words. Answer in exactly two lines, with \
+             nothing before or after: the first starts with \"GOAL:\" followed by the goal, the second \
+             starts with \"NAME:\" followed by the name. An example of the form, for an entirely \
+             different task:\nGOAL: {bz}\nNAME: {bn}",
+            antwort.trim()
+        ),
+    };
+    vec![Nachricht::nutzer(text)]
+}
+
+/// Das Beispiel im Auftrag, je Sprache: (Ziel, Name).
+pub const BEISPIEL_ZIEL: [(&str, &str); 2] = [
+    ("In notizen/ liegt für jeden Monat 2025 eine Datei mit den Ausgaben dieses Monats.", "Ausgaben 2025"),
+    ("notes/ contains one file per month of 2025 with that month's expenses.", "Expenses 2025"),
+];
+
+fn beispiel(sprache: Sprache) -> (&'static str, &'static str) {
+    BEISPIEL_ZIEL[if sprache == Sprache::De { 0 } else { 1 }]
+}
+
+/// **Ist das ein Platzhalter oder das Beispiel**, also nichts, was zur
+/// Antwort des Menschen gehoert?
+fn kein_echter_wert(w: &str) -> bool {
+    let w = w.trim();
+    (w.starts_with('<') && w.ends_with('>'))
+        || BEISPIEL_ZIEL.iter().any(|(z, n)| w.eq_ignore_ascii_case(z) || w.eq_ignore_ascii_case(n))
+}
+
+/// **Liest Ziel und Namen aus der Antwort des Modells.**
+///
+/// ⚑ **Im Zweifel die Worte des Menschen**: Fehlt die Zielzeile, ist das
+/// Ziel die Antwort selbst; fehlt der Name, das gekuerzte Ziel. Ein Loop
+/// darf an einer schlecht geformten Antwort nicht scheitern.
+pub fn ableitung_lesen(text: &str, antwort: &str) -> (String, String) {
+    let zeile = |marken: &[&str]| {
+        text.lines().find_map(|z| {
+            let z = z.trim().trim_start_matches(['*', '-', ' ']);
+            marken.iter().find_map(|m| {
+                z.get(..m.len())
+                    .filter(|anfang| anfang.eq_ignore_ascii_case(m))
+                    .map(|_| z[m.len()..].trim().trim_matches('*').trim().to_string())
+            })
+        })
+    };
+    let ziel = zeile(&["ZIEL:", "GOAL:"])
+        .filter(|z| !z.is_empty() && !kein_echter_wert(z))
+        .unwrap_or_else(|| antwort.trim().to_string());
+    let name = zeile(&["NAME:"])
+        .filter(|n| !kein_echter_wert(n))
+        .map(|n| name_saeubern(&n))
+        .filter(|n| !n.is_empty())
+        .unwrap_or_else(|| kurzname(&ziel));
+    (ziel, name)
+}
+
+/// **Fragt das Modell nach Ziel und Namen** und liest seine Antwort; ohne
+/// Antwort bleibt es bei den Worten des Menschen.
+pub fn ableiten(modell: &dyn Modellweg, antwort: &str, sprache: Sprache) -> (String, String) {
+    let text = modell.chat("lokal", &ableitungsauftrag(antwort, sprache), Some(200)).map(|a| a.text).unwrap_or_default();
+    crate::debuglog::eintrag("Ziel und Name abgeleitet", &format!("Antwort des Menschen: {antwort}\nModell: {text}"));
+    ableitung_lesen(&text, antwort)
+}
+
+/// **Nur ein Name fuer ein Ziel, das schon feststeht** (`/start loop <ziel>`).
+/// Das Ziel bleibt wortgleich; vom Modell kommt nur der Name.
+pub fn benennen(modell: &dyn Modellweg, ziel: &str, sprache: Sprache) -> String {
+    ableiten(modell, ziel, sprache).1
 }
 
 // ── Der Antrieb ─────────────────────────────────────────────────────
@@ -2222,8 +2748,6 @@ pub enum Ereignis {
     Beginnt { kennung: String, ziel: String, runde: u32 },
     /// Eine Runde ist zu Ende.
     Geendet { vorhaben: Box<Vorhaben>, bericht: String, pruefung: Option<Pruefung>, saat: Option<u64> },
-    /// Ein neues Vorhaben aus einer Kette.
-    Angestossen { kennung: String, ziel: String },
     /// Nichts faellig; das naechste um diese Zeit.
     Wartet { bis: u64 },
     /// Eine Runde liess sich nicht fahren.
@@ -2309,9 +2833,6 @@ pub fn fahren_mit_verlauf(
             match ergebnis {
                 Ok(r) if r.unterbrochen => return,
                 Ok(r) => {
-                    for n in &r.neue {
-                        melden(Ereignis::Angestossen { kennung: n.kennung.clone(), ziel: n.ziel.clone() });
-                    }
                     melden(Ereignis::Geendet { vorhaben: Box::new(v), bericht: r.bericht, pruefung: r.pruefung, saat: r.saat });
                 }
                 Err(grund) => {
@@ -2339,10 +2860,6 @@ pub fn fahren_mit_verlauf(
 mod proben {
     use super::*;
 
-    fn grenzen() -> Loopeinstellung {
-        Loopeinstellung::default()
-    }
-
     fn wahl() -> Rundenwahl {
         Rundenwahl::default()
     }
@@ -2352,7 +2869,7 @@ mod proben {
         let mut v = Vorhaben::neu("v1".into(), "Ziel", 100);
         let mut w = wahl();
         w.notizen_geaendert = true;
-        abschliessen(&mut v, &w, None, &Rundenende::Normal, &grenzen(), 200);
+        abschliessen(&mut v, &w, None, &Rundenende::Normal, 200);
         assert_eq!(v.runden, 1);
         assert_eq!(v.zustand, Zustand::Bereit);
         assert!(v.faellig(200));
@@ -2364,7 +2881,7 @@ mod proben {
         let mut w = wahl();
         w.notizen_geaendert = true;
         w.wecken_minuten = Some(90);
-        abschliessen(&mut v, &w, None, &Rundenende::Normal, &grenzen(), 1000);
+        abschliessen(&mut v, &w, None, &Rundenende::Normal, 1000);
         assert_eq!(v.zustand, Zustand::Schlaeft);
         assert_eq!(v.naechste, 1000 + 90 * 60);
         assert!(!v.faellig(1000 + 89 * 60));
@@ -2385,19 +2902,22 @@ mod proben {
         assert!(v.rest.is_none());
     }
 
+    /// ⚑ **„Fertig“ meldet das Modell, und vorgelegt wird es**: Keine Runde
+    /// laeuft mehr, die Kette ist vermerkt, aber noch nicht begonnen.
     #[test]
-    fn fertig_mit_kette() {
+    fn fertig_heisst_vorgelegt_und_die_kette_wartet() {
         let mut v = Vorhaben::neu("v1".into(), "Ziel", 0);
         let mut w = wahl();
         w.fertig = Some("erledigt".into());
         w.anschluss = vec!["Folgeziel".into()];
-        let neu = abschliessen(&mut v, &w, None, &Rundenende::Normal, &grenzen(), 10);
-        assert_eq!(v.zustand, Zustand::Fertig);
+        abschliessen(&mut v, &w, None, &Rundenende::Normal, 10);
+        assert_eq!(v.zustand, Zustand::Vorgelegt { ergebnis: "erledigt".into(), einwand: None });
         assert_eq!(v.ergebnis.as_deref(), Some("erledigt"));
-        assert_eq!(neu, ["Folgeziel"]);
+        assert_eq!(v.anschluss, ["Folgeziel"]);
+        assert!(!v.aktiv() && !v.fertig(), "weder laufend noch fertig");
     }
 
-    /// ⚑ Kombination: Selbstwecken jetzt, Kette nach dem Fertigwerden.
+    /// ⚑ Kombination: Selbstwecken jetzt, Kette nach dem Vorlegen vermerkt.
     #[test]
     fn kette_wartet_auf_das_fertigwerden() {
         let mut v = Vorhaben::neu("v1".into(), "Ziel", 0);
@@ -2405,74 +2925,87 @@ mod proben {
         w.notizen_geaendert = true;
         w.wecken_minuten = Some(5);
         w.anschluss = vec!["danach".into()];
-        let neu = abschliessen(&mut v, &w, None, &Rundenende::Normal, &grenzen(), 0);
-        assert!(neu.is_empty(), "noch nicht fertig, also noch keine Kette");
+        abschliessen(&mut v, &w, None, &Rundenende::Normal, 0);
+        assert_eq!(v.zustand, Zustand::Schlaeft, "noch nicht fertig, also noch keine Kette");
         assert_eq!(v.anschluss, ["danach"]);
         let mut w2 = wahl();
         w2.notizen = v.notizen.clone();
         w2.fertig = Some("ok".into());
-        let neu = abschliessen(&mut v, &w2, None, &Rundenende::Normal, &grenzen(), 400);
-        assert_eq!(neu, ["danach"]);
+        abschliessen(&mut v, &w2, None, &Rundenende::Normal, 400);
+        assert!(matches!(v.zustand, Zustand::Vorgelegt { .. }));
     }
 
-    /// ⛔️ Die Pruefung widerspricht: nicht fertig, und der Grund steht in den Notizen.
+    /// ⚑ **Die Pruefung widerspricht: vorgelegt, mit ihrem Einwand**
+    /// (Fund 531, 2026-10-12). Sie beraet, der Mensch entscheidet. Bis
+    /// dahin hielt ihr Nein das Vorhaben auf.
     #[test]
-    fn pruefung_verhindert_fertig_ohne_ergebnis() {
+    fn pruefung_beraet_und_sperrt_nicht() {
         let mut v = Vorhaben::neu("v1".into(), "Ziel", 0);
         let mut w = wahl();
         w.fertig = Some("alles erledigt".into());
         let p = Pruefung { fortschritt: true, erreicht: false, grund: "die Datei fehlt".into() };
-        abschliessen(&mut v, &w, Some(&p), &Rundenende::Normal, &grenzen(), 0);
-        assert_ne!(v.zustand, Zustand::Fertig);
-        assert!(v.notizen["pruefung"].contains("die Datei fehlt"));
+        abschliessen(&mut v, &w, Some(&p), &Rundenende::Normal, 0);
+        assert_eq!(
+            v.zustand,
+            Zustand::Vorgelegt { ergebnis: "alles erledigt".into(), einwand: Some("die Datei fehlt".into()) }
+        );
+        assert!(zustandswort(&v, Sprache::De).contains("die Datei fehlt"), "der Mensch sieht den Einwand nicht");
+        // Ohne Meldung des Modells und ohne „erreicht“ geht es weiter.
+        let mut v = Vorhaben::neu("v2".into(), "Ziel", 0);
+        abschliessen(&mut v, &wahl(), Some(&p), &Rundenende::Normal, 0);
+        assert_eq!(v.zustand, Zustand::Bereit);
     }
 
     /// ⚑ Die Pruefung sagt „erreicht", der Agent hat sich nicht abgemeldet:
-    /// fertig, mit dem Grund der Pruefung als Ergebnis.
+    /// vorgelegt, mit dem Grund der Pruefung als Ergebnis.
     #[test]
     fn pruefung_erkennt_fertig_ohne_abmeldung() {
         let mut v = Vorhaben::neu("v1".into(), "Ziel", 0);
         let p = Pruefung { fortschritt: true, erreicht: true, grund: "die Datei steht".into() };
-        abschliessen(&mut v, &wahl(), Some(&p), &Rundenende::Normal, &grenzen(), 0);
-        assert_eq!(v.zustand, Zustand::Fertig);
-        assert_eq!(v.ergebnis.as_deref(), Some("die Datei steht"));
+        abschliessen(&mut v, &wahl(), Some(&p), &Rundenende::Normal, 0);
+        assert_eq!(v.zustand, Zustand::Vorgelegt { ergebnis: "die Datei steht".into(), einwand: None });
     }
 
+    /// ⛔️ **Stillstand haelt nicht an** (2026-10-12): Nach
+    /// [`STILLSTAND_HINWEIS`] Runden ohne Fortschritt steht ein Hinweis in
+    /// den Notizen, und die naechste Runde ist faellig. Bringt eine Runde
+    /// wieder etwas, geht der Hinweis.
     #[test]
-    fn stillstand_haelt_an() {
+    fn stillstand_ist_ein_hinweis_und_kein_halt() {
         let mut v = Vorhaben::neu("v1".into(), "Ziel", 0);
-        let g = grenzen();
-        for _ in 0..g.stillstand {
-            abschliessen(&mut v, &wahl(), None, &Rundenende::Normal, &g, 0);
+        for _ in 0..STILLSTAND_HINWEIS - 1 {
+            abschliessen(&mut v, &wahl(), None, &Rundenende::Normal, 0);
         }
-        assert!(matches!(&v.zustand, Zustand::Angehalten { grund } if grund.contains("ohne Fortschritt")));
+        assert!(!v.notizen.contains_key("stillstand"), "zu frueh");
+        for _ in 0..20 {
+            abschliessen(&mut v, &wahl(), None, &Rundenende::Normal, 0);
+        }
+        assert_eq!(v.zustand, Zustand::Bereit);
+        assert!(v.notizen["stillstand"].contains("ohne Fortschritt"));
+        let mut w = wahl();
+        w.notizen = v.notizen.clone();
+        w.notizen_geaendert = true;
+        abschliessen(&mut v, &w, None, &Rundenende::Normal, 0);
+        assert!(!v.notizen.contains_key("stillstand"), "der Hinweis bleibt nach Fortschritt stehen");
     }
 
+    /// ⛔️ **Keine Hoechstzahl an Runden und keine Hoechstdauer**
+    /// (Festlegung des Projektinhabers, 2026-10-12). Bis CLIENT v0.132.0
+    /// hielt ein Vorhaben nach 50 Runden oder 24 Stunden an.
     #[test]
-    fn hoechstzahl_an_runden_haelt_an() {
+    fn keine_hoechstzahl_an_runden_und_keine_hoechstdauer() {
         let mut v = Vorhaben::neu("v1".into(), "Ziel", 0);
-        let g = Loopeinstellung { runden: 2, ..grenzen() };
         let mut w = wahl();
         w.notizen_geaendert = true;
-        abschliessen(&mut v, &w, None, &Rundenende::Normal, &g, 0);
-        assert!(v.aktiv());
-        abschliessen(&mut v, &w, None, &Rundenende::Normal, &g, 0);
-        assert!(matches!(&v.zustand, Zustand::Angehalten { grund } if grund.contains("Runden")));
-    }
-
-    #[test]
-    fn hoechstdauer_zaehlt_nur_laufzeit() {
-        let mut v = Vorhaben::neu("v1".into(), "Ziel", 0);
-        let g = Loopeinstellung { stunden: 1, ..grenzen() };
-        let mut w = wahl();
-        w.notizen_geaendert = true;
-        // Tage vergangen, aber kaum Laufzeit: laeuft weiter.
-        v.laufzeit = 100;
-        abschliessen(&mut v, &w, None, &Rundenende::Normal, &g, 10 * 86_400);
-        assert!(v.aktiv());
-        v.laufzeit = 3_600;
-        abschliessen(&mut v, &w, None, &Rundenende::Normal, &g, 10 * 86_400);
-        assert!(matches!(&v.zustand, Zustand::Angehalten { grund } if grund.contains("Stunden")));
+        v.laufzeit = 30 * 86_400;
+        for _ in 0..500 {
+            abschliessen(&mut v, &w, None, &Rundenende::Normal, 0);
+        }
+        assert_eq!(v.runden, 500);
+        assert_eq!(v.zustand, Zustand::Bereit);
+        // Auch eine Runde an der Schrittgrenze beendet nichts.
+        abschliessen(&mut v, &w, None, &Rundenende::Begrenzt, 0);
+        assert_eq!(v.zustand, Zustand::Bereit);
     }
 
     #[test]
@@ -2481,16 +3014,141 @@ mod proben {
         let vorher = v.clone();
         let mut w = wahl();
         w.notizen.insert("halb".into(), "fertig".into());
-        abschliessen(&mut v, &w, None, &Rundenende::Unterbrochen, &grenzen(), 0);
+        abschliessen(&mut v, &w, None, &Rundenende::Unterbrochen, 0);
         assert_eq!(v, vorher, "keine Runde gezaehlt, nichts angehalten");
     }
 
     #[test]
     fn notaus_haelt_an_und_zaehlt_keine_runde() {
         let mut v = Vorhaben::neu("v1".into(), "Ziel", 0);
-        abschliessen(&mut v, &wahl(), None, &Rundenende::Abbruch("Notaus".into()), &grenzen(), 0);
+        abschliessen(&mut v, &wahl(), None, &Rundenende::Abbruch("Notaus".into()), 0);
         assert_eq!(v.runden, 0);
         assert!(matches!(&v.zustand, Zustand::Angehalten { grund } if grund == "Notaus"));
+    }
+
+    /// ⚑ **Bestaetigen macht fertig und beginnt erst dann die Kette**, direkt
+    /// hinter dem Vorgaenger.
+    #[test]
+    fn bestaetigen_macht_fertig_und_beginnt_die_kette() {
+        let a = Ablage::neu(ordner("bestaetigen"));
+        let mut v = a.anlegen("Ziel", 1).unwrap();
+        let hinten = a.anlegen("anderes", 2).unwrap();
+        let mut w = wahl();
+        w.fertig = Some("steht".into());
+        w.anschluss = vec!["danach".into()];
+        abschliessen(&mut v, &w, None, &Rundenende::Normal, 3);
+        a.speichern(&v).unwrap();
+        assert!(a.bestaetigen(&hinten.kennung, Sprache::De).is_err(), "nichts vorgelegt");
+        let neue = a.bestaetigen(&v.kennung, Sprache::De).unwrap();
+        assert_eq!(neue.len(), 1);
+        assert_eq!(neue[0].ziel, "danach");
+        let v = a.laden(&v.kennung).unwrap();
+        assert!(v.fertig());
+        assert_eq!(v.ergebnis.as_deref(), Some("steht"));
+        let reihe: Vec<String> = a.reihe().into_iter().map(|x| x.ziel).collect();
+        assert_eq!(reihe, ["Ziel", "danach", "anderes"]);
+        assert!(a.tagebuch_letzte(&v.kennung, 1)[0].contains("bestätigt"));
+    }
+
+    /// ⚑ **Nachbessern: wieder bereit, und der Satz des Menschen steht als
+    /// Notiz im naechsten Auftrag.**
+    #[test]
+    fn nachbessern_macht_bereit_und_traegt_den_hinweis_weiter() {
+        let a = Ablage::neu(ordner("nachbessern"));
+        let mut v = a.anlegen("Ziel", 1).unwrap();
+        let mut w = wahl();
+        w.fertig = Some("steht".into());
+        abschliessen(&mut v, &w, None, &Rundenende::Normal, 3);
+        a.speichern(&v).unwrap();
+        let v = a.nachbessern(&v.kennung, "die Tabelle fehlt noch", Sprache::De).unwrap();
+        assert_eq!(v.zustand, Zustand::Bereit);
+        assert!(v.ergebnis.is_none());
+        assert!(v.notizen["mensch"].contains("die Tabelle fehlt noch"));
+        assert!(auftrag(&v, &[], None, Sprache::De).contains("die Tabelle fehlt noch"));
+        assert!(a.nachbessern(&v.kennung, "noch mal", Sprache::De).is_err(), "nur, was vorgelegt ist");
+    }
+
+    /// ⚑ **Schliessen haelt den laufenden Task an**, und zwar genau einmal:
+    /// am Ende des Laufs oder, nach einem harten Ende, beim naechsten Start.
+    #[test]
+    fn nach_dem_schliessen_ist_der_laufende_angehalten() {
+        let a = Ablage::neu(ordner("schliessen"));
+        let v = a.anlegen("lief", 1).unwrap();
+        let zweiter = a.anlegen("wartete", 2).unwrap();
+        assert!(a.nach_dem_schliessen(Sprache::De).is_none(), "ohne Marke lief nichts");
+        a.loop_aktiv_setzen(true).unwrap();
+        let gestoppt = a.nach_dem_schliessen(Sprache::De).expect("der laufende");
+        assert_eq!(gestoppt.kennung, v.kennung);
+        assert!(matches!(a.laden(&v.kennung).unwrap().zustand, Zustand::Angehalten { .. }));
+        assert!(a.laden(&zweiter.kennung).unwrap().aktiv(), "nur der vorderste");
+        assert!(!a.loop_war_aktiv());
+        assert!(a.nach_dem_schliessen(Sprache::De).is_none(), "das zweite Mal tut es nichts");
+
+        // ⛔️ Faehrt ein anderer lebender Prozess den Loop, bleibt sein Task.
+        let dritter = a.anlegen("laeuft woanders", 3).unwrap();
+        a.reihe_setzen(std::slice::from_ref(&dritter.kennung)).unwrap();
+        a.loop_aktiv_setzen(true).unwrap();
+        std::fs::write(a.ordner.join(".laeufer"), format!("{} 0 Fenster", std::process::id())).unwrap();
+        assert!(a.nach_dem_schliessen(Sprache::De).is_none(), "der Task eines laufenden Loops wurde angehalten");
+        assert!(a.laden(&dritter.kennung).unwrap().aktiv());
+    }
+
+    /// ⚑ **`/resume loop`**: Zur Wahl steht alles, was nicht fertig ist, und
+    /// das Gewaehlte laeuft als naechstes.
+    #[test]
+    fn wieder_aufnehmen_stellt_nach_vorn() {
+        let a = Ablage::neu(ordner("aufnehmen"));
+        let erst = a.anlegen("eins", 1).unwrap();
+        let zwei = a.anlegen("zwei", 2).unwrap();
+        let drei = a.anlegen("drei", 3).unwrap();
+        a.vom_menschen_anhalten(Sprache::De).expect("eins lief");
+        a.stoppen(&zwei.kennung, Sprache::De).unwrap();
+        let mut fertig = a.laden(&drei.kennung).unwrap();
+        fertig.zustand = Zustand::Fertig;
+        a.speichern(&fertig).unwrap();
+        let wahl: Vec<String> = a.fortsetzbare().into_iter().map(|v| v.kennung).collect();
+        assert_eq!(wahl, [erst.kennung.clone(), zwei.kennung.clone()], "das fertige steht nicht zur Wahl");
+        a.wieder_aufnehmen(&zwei.kennung).unwrap();
+        assert_eq!(a.vorn().map(|v| v.kennung), Some(zwei.kennung));
+    }
+
+    /// ⛔️ **Fund 530: Eine Absage ist nicht erledigt**, alles andere schon,
+    /// auch ein Fehler des Werkzeugs (er kann etwas halb getan haben).
+    #[test]
+    fn eine_absage_zaehlt_nicht_als_erledigt() {
+        assert!(!zaehlt_als_erledigt(&format!("{} Grund: lieber nicht", crate::protokoll::ABSAGE)));
+        assert!(zaehlt_als_erledigt("zahlen.py: eine Stelle ersetzt."));
+        assert!(zaehlt_als_erledigt("Fehler: Datei nicht gefunden"));
+    }
+
+    /// ⚑ **Ziel und Name aus der Antwort des Modells**, und im Zweifel die
+    /// Worte des Menschen.
+    #[test]
+    fn ziel_und_name_werden_gelesen() {
+        let (z, n) = ableitung_lesen("ZIEL: Eine Liste aller Dateien schreiben.\nNAME: „Dateiliste“", "mach mal");
+        assert_eq!(z, "Eine Liste aller Dateien schreiben.");
+        assert_eq!(n, "Dateiliste");
+        let (z, n) = ableitung_lesen("**GOAL:** Count the lines\n**NAME:** Line count", "x");
+        assert_eq!((z.as_str(), n.as_str()), ("Count the lines", "Line count"));
+        let (z, n) = ableitung_lesen("Gern! Ich helfe dir.", "die README übersetzen");
+        assert_eq!(z, "die README übersetzen", "ohne Zielzeile die Antwort des Menschen");
+        assert_eq!(n, "die README übersetzen");
+        // 📌 Der Fall vom 2026-10-12: Das Modell gibt die Platzhalter
+        //    zurueck. Dann gelten die Worte des Menschen.
+        let (z, n) = ableitung_lesen("ZIEL: <das Ziel>\nNAME: <der Name>", "Die Tests sollen bestehen.");
+        assert_eq!((z.as_str(), n.as_str()), ("Die Tests sollen bestehen.", "Die Tests sollen bestehen."));
+        let (bz, bn) = BEISPIEL_ZIEL[0];
+        let (z, n) = ableitung_lesen(&format!("ZIEL: {bz}\nNAME: {bn}"), "Wetter morgen");
+        assert_eq!((z.as_str(), n.as_str()), ("Wetter morgen", "Wetter morgen"), "das Beispiel ist kein Ergebnis");
+        let auftrag = &ableitungsauftrag("x", Sprache::De)[0].content;
+        assert!(!auftrag.contains('<'), "wieder ein Platzhalter im Auftrag: {auftrag}");
+        let lang = "wort ".repeat(40);
+        assert!(kurzname(&lang).chars().count() <= NAME_ZEICHEN);
+        assert!(kurzname(&lang).ends_with('…'));
+        let mut v = Vorhaben::neu("v1".into(), &lang, 0);
+        assert_eq!(v.anzeigename(), kurzname(&lang));
+        v.name = Some("Kurz".into());
+        assert_eq!(v.anzeigename(), "Kurz");
     }
 
     #[test]
@@ -2514,6 +3172,70 @@ mod proben {
         assert_eq!(g.lock().unwrap().wecken_minuten, Some(WECKEN_BIS_MINUTEN));
     }
 
+    /// ⚑ **Die Rueckfrage** (2026-10-12): `ask_human` beendet die Runde mit
+    /// einer Frage, die vor einem „fertig“ geht; die Antwort steht danach
+    /// als Notiz `mensch` im Auftrag, und das Vorhaben ist bereit.
+    #[test]
+    fn das_modell_fragt_und_die_antwort_kommt_an() {
+        let a = Ablage::neu(ordner("rueckfrage"));
+        let mut v = a.anlegen("Bericht schreiben", 1).unwrap();
+        let g = Arc::new(Mutex::new(Rundenwahl::default()));
+        Rueckfrage(g.clone()).ausfuehren(&serde_json::json!({"question": "Deutsch oder Englisch?"})).unwrap();
+        let mut w = g.lock().unwrap().clone();
+        w.fertig = Some("schon fertig".into());
+        abschliessen(&mut v, &w, None, &Rundenende::Normal, 5);
+        assert_eq!(v.zustand, Zustand::Frage { frage: "Deutsch oder Englisch?".into() }, "die Frage geht vor");
+        assert!(!v.aktiv() && !v.fertig());
+        a.speichern(&v).unwrap();
+        assert!(a.antworten(&v.kennung, "Deutsch", Sprache::De).is_ok());
+        let v = a.laden(&v.kennung).unwrap();
+        assert_eq!(v.zustand, Zustand::Bereit);
+        assert!(v.notizen["mensch"].contains("Deutsch oder Englisch?") && v.notizen["mensch"].contains(": Deutsch"));
+        assert!(auftrag(&v, &[], None, Sprache::De).contains("ask_human"));
+        assert!(a.antworten(&v.kennung, "x", Sprache::De).is_err(), "nur eine offene Frage wird beantwortet");
+        assert!(Rueckfrage(g).ausfuehren(&serde_json::json!({"question": "  "})).is_err());
+    }
+
+    /// ⛔️ **Fund 533: Eine Antwort, die mit einer Frage endet, ist eine
+    /// Rueckfrage**, auch ohne `ask_human`; eine Frage mitten im Text nicht.
+    #[test]
+    fn eine_frage_am_ende_ist_eine_rueckfrage() {
+        let echt = "Ich erstelle die Datei `gruss.txt` mit einer Begrüßung, dazu brauche ich noch deinen Namen. Wie heißt du?";
+        assert_eq!(frage_am_ende(echt).as_deref(), Some(echt));
+        assert_eq!(frage_am_ende("Bericht steht.\n\nSoll ich ihn noch kürzen?**").as_deref(), Some("Soll ich ihn noch kürzen?**"));
+        assert!(frage_am_ende("Warum war der Test rot? Weil der Mittelwert falsch teilte. Jetzt ist er grün.").is_none());
+        assert!(frage_am_ende("").is_none());
+        assert_eq!(frage_am_ende(&format!("{}?", "x".repeat(2000))).map(|f| f.chars().count()), Some(FRAGE_ZEICHEN));
+    }
+
+    /// ⚑ Fortsetzen ohne Antwort: Das Modell entscheidet selbst, und das
+    /// steht in seinen Notizen.
+    #[test]
+    fn fortsetzen_ohne_antwort_laesst_das_modell_entscheiden() {
+        let a = Ablage::neu(ordner("ohne-antwort"));
+        let mut v = a.anlegen("Ziel", 1).unwrap();
+        v.zustand = Zustand::Frage { frage: "Welche Farbe?".into() };
+        a.speichern(&v).unwrap();
+        let v = a.weitermachen(&v.kennung).unwrap();
+        assert_eq!(v.zustand, Zustand::Bereit);
+        assert!(v.notizen["mensch"].contains("Entscheide selbst"));
+    }
+
+    /// ⛔️ **Fund 532: Notizen des Systems kann das Modell weder
+    /// ueberschreiben noch loeschen**, auch nicht mit anderer Schreibweise.
+    #[test]
+    fn notizen_des_systems_sind_gesperrt() {
+        let g = Arc::new(Mutex::new(Rundenwahl::default()));
+        g.lock().unwrap().notizen.insert("mensch".into(), "die Tabelle fehlt".into());
+        let n = Notiz(g.clone());
+        for k in SYSTEMNOTIZEN {
+            assert!(n.ausfuehren(&serde_json::json!({"key": k, "value": "erreicht"})).is_err(), "{k} ist beschreibbar");
+        }
+        assert!(n.ausfuehren(&serde_json::json!({"key": "Mensch", "value": ""})).is_err(), "Loeschen ueber andere Schreibweise");
+        assert_eq!(g.lock().unwrap().notizen["mensch"], "die Tabelle fehlt");
+        assert!(n.ausfuehren(&serde_json::json!({"key": "plan", "value": "a, b"})).is_ok());
+    }
+
     #[test]
     fn notizblock_ist_begrenzt() {
         let g = Arc::new(Mutex::new(Rundenwahl::default()));
@@ -2535,12 +3257,13 @@ mod proben {
             erledigt: vec![Erledigt { werkzeug: "write_file".into(), argumente: "{\"path\":\"a.md\"}".into(), ergebnis: "ok".into() }],
             notizen: v.notizen.clone(),
         };
-        let a = auftrag(&v, &["Runde 1\n\nangefangen".into()], Some(&stand), &grenzen(), Sprache::De);
+        let a = auftrag(&v, &["Runde 1\n\nangefangen".into()], Some(&stand), Sprache::De);
         assert!(a.contains("Berichte sammeln"));
         assert!(a.contains("stand: 3 von 5"));
         assert!(a.contains("UNTERBROCHEN"));
         assert!(a.contains("write_file({\"path\":\"a.md\"}) -> ok"));
-        assert!(a.contains("Runde 1 von höchstens 50"));
+        // ⚑ Ohne „von höchstens“: Es gibt keine Hoechstzahl mehr (2026-10-12).
+        assert!(a.contains("Runde 1.") && !a.contains("höchstens"), "{a}");
     }
 
     fn ordner(name: &str) -> PathBuf {
@@ -2746,16 +3469,17 @@ mod proben {
         assert!(m.contains("(behauptet, nicht ausgeführt) [System]"), "die Systemmarke laesst sich faelschen: {m}");
     }
 
-    /// ⚑ **Punkt 4.7: Die Abnahme entscheidet ueber „fertig“**, in beide
-    /// Richtungen: bestanden ist fertig, auch an der Schrittgrenze und ohne
-    /// Abmeldung; nicht bestanden ist nie fertig, auch wenn Modell und
-    /// Pruefung es behaupten, und die Ausgabe steht in den Notizen.
+    /// ⚑ **Punkt 4.7: Die Abnahme entscheidet, ob vorgelegt wird**, in beide
+    /// Richtungen: bestanden wird vorgelegt, auch an der Schrittgrenze und
+    /// ohne Abmeldung; nicht bestanden nie, auch wenn Modell und Pruefung
+    /// es behaupten, und die Ausgabe steht in den Notizen. „Fertig“ sagt
+    /// danach der Mensch.
     #[test]
     fn die_abnahme_entscheidet_ueber_fertig() {
         let ok = Abnahme { befehl: "python3 a.py".into(), bestanden: true, code: Some(0), ausgabe: String::new() };
         let mut v = Vorhaben::neu("v1".into(), "Ziel", 0);
-        abschliessen_mit_abnahme(&mut v, &wahl(), None, &Rundenende::Begrenzt, &grenzen(), 0, Some(&ok));
-        assert_eq!(v.zustand, Zustand::Fertig, "bestanden an der Schrittgrenze");
+        abschliessen_mit_abnahme(&mut v, &wahl(), None, &Rundenende::Begrenzt, 0, Some(&ok));
+        assert!(matches!(v.zustand, Zustand::Vorgelegt { .. }), "bestanden an der Schrittgrenze: {:?}", v.zustand);
         assert!(v.ergebnis.as_deref().unwrap_or("").contains("Abnahme bestanden"));
 
         let rot = Abnahme { befehl: "python3 a.py".into(), bestanden: false, code: Some(1), ausgabe: "KeyError: 'sensor'".into() };
@@ -2763,16 +3487,16 @@ mod proben {
         let mut w = wahl();
         w.fertig = Some("alles erledigt".into());
         let p = Pruefung { fortschritt: true, erreicht: true, grund: "sieht gut aus".into() };
-        abschliessen_mit_abnahme(&mut v, &w, Some(&p), &Rundenende::Normal, &grenzen(), 0, Some(&rot));
-        assert_ne!(v.zustand, Zustand::Fertig, "nicht bestanden und trotzdem fertig");
+        abschliessen_mit_abnahme(&mut v, &w, Some(&p), &Rundenende::Normal, 0, Some(&rot));
+        assert_eq!(v.zustand, Zustand::Bereit, "nicht bestanden und trotzdem vorgelegt");
         assert_eq!(v.ohne_fortschritt, 0, "der Fortschritt der Pruefung zaehlt weiter");
         assert!(v.notizen["abnahme"].contains("KeyError: 'sensor'"), "{:?}", v.notizen);
         assert!(v.notizen["abnahme"].contains("endete mit 1"));
 
         // Ohne Abnahme bleibt alles beim Alten.
         let mut v = Vorhaben::neu("v3".into(), "Ziel", 0);
-        abschliessen_mit_abnahme(&mut v, &w, Some(&p), &Rundenende::Normal, &grenzen(), 0, None);
-        assert_eq!(v.zustand, Zustand::Fertig);
+        abschliessen_mit_abnahme(&mut v, &w, Some(&p), &Rundenende::Normal, 0, None);
+        assert!(matches!(v.zustand, Zustand::Vorgelegt { .. }));
     }
 
     #[cfg(unix)]
@@ -2937,13 +3661,13 @@ mod proben {
         let mut w = wahl();
         w.fertig = Some("behauptet".into());
         let p = Pruefung { fortschritt: true, erreicht: true, grund: "sieht gut aus".into() };
-        abschliessen(&mut v, &w, Some(&p), &Rundenende::Begrenzt, &grenzen(), 0);
-        assert_ne!(v.zustand, Zustand::Fertig, "an der Grenze fertig gemeldet");
+        abschliessen(&mut v, &w, Some(&p), &Rundenende::Begrenzt, 0);
+        assert_eq!(v.zustand, Zustand::Bereit, "an der Grenze fertig gemeldet");
         assert_eq!(v.ohne_fortschritt, 0, "der Fortschritt der Pruefung zaehlt nicht mehr");
         assert!(v.notizen["runde"].contains("Schrittgrenze"));
-        // Dieselbe Runde mit Abschluss ist fertig.
-        abschliessen(&mut v, &w, Some(&p), &Rundenende::Normal, &grenzen(), 0);
-        assert_eq!(v.zustand, Zustand::Fertig);
+        // Dieselbe Runde mit Abschluss wird vorgelegt.
+        abschliessen(&mut v, &w, Some(&p), &Rundenende::Normal, 0);
+        assert!(matches!(v.zustand, Zustand::Vorgelegt { .. }));
     }
 
     /// ⚑ **Die Pruefung sieht die Belege** (Fund 487), und ohne Werkzeug

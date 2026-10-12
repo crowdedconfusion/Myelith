@@ -3736,7 +3736,8 @@ fn der_loop_ist_ein_feld_in_der_mitte() {
 
     // Der Titel ist der Task, der vorn steht; ∞ schaltet, der Rest oeffnet.
     assert!(js.contains("const vorn = loopstand.tasks.find((z) => z.stellung === \"vorn\");"));
-    assert!(js.contains("$(\"looptask\").textContent = vorn ? vorn.ziel : t(\"loop.kein_task\");"));
+    // ⚑ Seit dem 2026-10-12 der Name des Tasks, nicht sein ganzes Ziel.
+    assert!(js.contains("$(\"looptask\").textContent = vorn ? vorn.name : t(\"loop.kein_task\");"));
     assert!(js.contains("$(\"loopknopf\").addEventListener(\"click\", loop_umschalten);"));
     assert!(js.contains("$(\"loopwahl\").addEventListener(\"click\", () => {"));
 }
@@ -3830,7 +3831,9 @@ fn ein_task_gehoert_zu_seinem_gespraech() {
         js[a..a + 200].contains("if (offen && offen.modus === \"agent\") return offen;"),
         "ein neuer Task nimmt nicht das offene Agentengespraech"
     );
-    assert!(js.contains("name.textContent = `${z.ziel} (${zu})`;"), "die Liste nennt das Gespraech nicht");
+    // ⚑ Seit dem 2026-10-12 „Name (Gespraech)“; das Ziel steht am Zeiger.
+    assert!(js.contains("name.textContent = `${z.name} (${zu})`;"), "die Liste nennt das Gespraech nicht");
+    assert!(js.contains("name.title = `${t(\"loop.oeffnen\")}: ${z.ziel} (${zu})`;"), "das Ziel fehlt am Zeiger");
     assert!(js.contains("invoke(\"loop_umfeld\", { gespraech: g.id, verlauf: kontext_von(g), wurzel: g.wurzel || null })"));
     for stelle in ["await loopumfelder_senden();", "if (hat_tasks(g)) loopumfeld_senden(g);", "if (hat_tasks(offen)) loopumfeld_senden(offen);"] {
         assert!(js.contains(stelle), "das Umfeld wird hier nicht mehr geschickt: {stelle}");

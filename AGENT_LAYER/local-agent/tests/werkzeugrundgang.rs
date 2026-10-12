@@ -220,9 +220,8 @@ fn der_loopauftrag_nennt_den_hausregel_skill() {
         und recherchiere Zuordnung, Grenzwerte und Maßnahmen in quellen/. Achte darauf, welche \
         Unterlagen noch gelten. Halte dich an unsere Hausregeln für Quellenangaben.";
     let v = myl_local_agent::vorhaben::Vorhaben::neu("v1".into(), ziel, 0);
-    let grenzen = myl_local_agent::agentenwahl::Loopeinstellung::default();
     for sprache in [myl_local_agent::agentenwahl::Sprache::De, myl_local_agent::agentenwahl::Sprache::En] {
-        let text = myl_local_agent::vorhaben::auftrag(&v, &[], None, &grenzen, sprache);
+        let text = myl_local_agent::vorhaben::auftrag(&v, &[], None, sprache);
         let treffer = myl_local_agent::skills::suchen(Some(&r.arbeit), &text, 6);
         println!("\n── Sprache {sprache:?}: {} Zeichen Auftrag", text.chars().count());
         for t in &treffer {
@@ -246,13 +245,15 @@ fn im_loop_empfiehlt_der_hinweis_nach_dem_ziel() {
     let ziel = d["aufgaben"][0]["ziel"].as_str().unwrap().to_string();
     let mut v = myl_local_agent::vorhaben::Vorhaben::neu("v1".into(), &ziel, 0);
     v.abnahme = d["aufgaben"][0]["abnahme"].as_str().map(str::to_string);
-    let text = myl_local_agent::vorhaben::auftrag(
-        &v, &[], None, &myl_local_agent::agentenwahl::Loopeinstellung::default(), myl_local_agent::agentenwahl::Sprache::De,
-    );
+    let text = myl_local_agent::vorhaben::auftrag(&v, &[], None, myl_local_agent::agentenwahl::Sprache::De);
     let nach_text: Vec<String> = myl_local_agent::skills::suchen(Some(&r.arbeit), &text, 3).into_iter().map(|t| t.skill.name).collect();
     let nach_ziel: Vec<String> = myl_local_agent::skills::suchen(Some(&r.arbeit), &ziel, 3).into_iter().map(|t| t.skill.name).collect();
     println!("nach Rundentext: {nach_text:?}\nnach Ziel: {nach_ziel:?}");
-    assert_eq!(nach_text[0], "bericht-schreiben", "der Befund, der die Aenderung begruendet, hat sich veraendert");
+    // ⚑ Der Befund ist, dass der Rundentext die passende Fehlersuche verfehlt.
+    //   📌 Bis zum 2026-10-12 stand hier `nach_text[0] == "bericht-schreiben"`;
+    //   mit den Saetzen zu `ask_human` im Auftrag steht dort nun
+    //   `aufgabe-zerlegen`. Welcher falsche vorn steht, war nie die Aussage.
+    assert!(!nach_text.contains(&"fehlersuche".to_string()), "der Befund, der die Aenderung begruendet, hat sich veraendert: {nach_text:?}");
     assert!(nach_ziel[..2].contains(&"fehlersuche".to_string()), "{nach_ziel:?}");
     assert_ne!(nach_ziel[0], "bericht-schreiben", "{nach_ziel:?}");
 }

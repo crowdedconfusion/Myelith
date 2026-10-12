@@ -98,20 +98,29 @@ fn zwei_runden_notiz_wecken_fertig_und_kette() {
 
     // Die zweite Runde sieht Notizen und Tagebuch der ersten.
     let zweite = vorhaben::runde(&ablage, &mut v, &modell, &r, &grenzen, Sprache::De, 256, None).unwrap();
-    let auftrag2 = modell.gefragt.borrow().iter().find(|t| t.contains("Runde 2 von")).cloned().expect("Auftrag der zweiten Runde");
+    let auftrag2 = modell.gefragt.borrow().iter().find(|t| t.contains("Runde 2.")).cloned().expect("Auftrag der zweiten Runde");
     assert!(auftrag2.contains("stand: a.md angelegt"), "{auftrag2}");
     assert!(auftrag2.contains("Ich habe a.md angelegt."), "Tagebuch fehlt: {auftrag2}");
     assert!(auftrag2.contains("[System] Tatsächlich ausgeführt: note_set("), "Werkzeuge fehlen im Tagebuch: {auftrag2}");
     assert!(auftrag2.contains("write_file("), "{auftrag2}");
-    assert_eq!(v.zustand, Zustand::Fertig);
+    // ⚑ **Vorgelegt, nicht fertig** (2026-10-12): Der Mensch bestaetigt, und
+    //   erst dann beginnt die Kette.
+    assert_eq!(v.zustand, Zustand::Vorgelegt { ergebnis: "a.md steht".into(), einwand: None }, "{zweite:?}");
     assert_eq!(v.ergebnis.as_deref(), Some("a.md steht"));
-    assert_eq!(zweite.neue.len(), 1);
-    assert_eq!(zweite.neue[0].ziel, "Die Dateien zusammenfassen");
-    assert_eq!(zweite.neue[0].vorgaenger.as_deref(), Some(v.kennung.as_str()));
+    assert_eq!(ablage.alle().len(), 1, "die Kette wartet auf die Bestaetigung");
+    let neue = ablage.bestaetigen(&v.kennung, Sprache::De).unwrap();
+    assert_eq!(neue.len(), 1);
+    assert_eq!(neue[0].ziel, "Die Dateien zusammenfassen");
+    assert_eq!(neue[0].vorgaenger.as_deref(), Some(v.kennung.as_str()));
     assert_eq!(ablage.alle().len(), 2);
+    assert!(ablage.laden(&v.kennung).unwrap().fertig());
 }
 
 /// ⛔️ Die Pruefung widerspricht dem „fertig": Das Vorhaben laeuft weiter.
+///
+/// ⚑ **Seit dem 2026-10-12 beraet die Pruefung nur** (Fund 531): Das
+/// falsche „fertig“ wird vorgelegt, mit ihrem Einwand, und der Mensch
+/// entscheidet. Der Name der Probe stammt aus der Zeit, als sie sperrte.
 #[test]
 fn pruefung_haelt_ein_falsches_fertig_auf() {
     let basis = ordner("falsches-fertig");
@@ -125,9 +134,10 @@ fn pruefung_haelt_ein_falsches_fertig_auf() {
         gefragt: RefCell::new(Vec::new()),
     };
     vorhaben::runde(&ablage, &mut v, &modell, &ruester(arbeit), &Loopeinstellung::default(), Sprache::De, 256, None).unwrap();
-    assert_ne!(v.zustand, Zustand::Fertig);
-    assert!(v.notizen["pruefung"].contains("keinen Bericht"));
-    assert_eq!(v.ohne_fortschritt, 1);
+    assert_eq!(
+        v.zustand,
+        Zustand::Vorgelegt { ergebnis: "alles da".into(), einwand: Some("es gibt keinen Bericht".into()) }
+    );
 }
 
 /// ⚑ Ohne Pruefdurchgang fragt niemand nach, und das Wort des Agenten gilt.
@@ -145,7 +155,7 @@ fn ohne_pruefung_kein_zweiter_durchgang() {
     };
     let grenzen = Loopeinstellung { pruefen: false, ..Loopeinstellung::default() };
     vorhaben::runde(&ablage, &mut v, &modell, &ruester(arbeit), &grenzen, Sprache::De, 256, None).unwrap();
-    assert_eq!(v.zustand, Zustand::Fertig);
+    assert_eq!(v.zustand, Zustand::Vorgelegt { ergebnis: "ok".into(), einwand: None });
     assert!(!modell.gefragt.borrow().iter().any(|t| t.starts_with("Prüfe eine Runde")));
 }
 
@@ -260,6 +270,10 @@ fn unterbrochene_runde_wird_mit_ihrem_stand_fortgesetzt() {
 /// faehrt in der Reihenfolge der Schlange, und eine Kette kommt direkt
 /// nach ihrem Vorgaenger, vor allem, was schon wartete. Der Beginn einer
 /// Runde wird erst gemeldet, wenn das Modell geliehen ist.
+///
+/// ⚑ **Der Mensch bestaetigt im Melder** (2026-10-12): Jedes Ergebnis wird
+/// vorgelegt, und erst die Bestaetigung legt die Kette an. So bestaetigt
+/// das Fenster, waehrend der Loop weiterlaeuft.
 #[test]
 fn fahren_leiht_je_runde_und_haelt_die_reihe() {
     let basis = ordner("schlange");
@@ -295,11 +309,16 @@ fn fahren_leiht_je_runde_und_haelt_die_reihe() {
         Ok(())
     };
     let begonnen = RefCell::new(Vec::new());
-    let melden = |e: vorhaben::Ereignis| {
-        if let vorhaben::Ereignis::Beginnt { ziel, .. } = e {
+    let melden = |e: vorhaben::Ereignis| match e {
+        vorhaben::Ereignis::Beginnt { ziel, .. } => {
             assert!(geliehen.get(), "„beginnt“ vor der Leihe: {ziel}");
             begonnen.borrow_mut().push(ziel.chars().next().unwrap());
         }
+        vorhaben::Ereignis::Geendet { vorhaben: v, .. } => {
+            assert!(matches!(v.zustand, Zustand::Vorgelegt { .. }), "{:?}", v.zustand);
+            ablage.bestaetigen(&v.kennung, Sprache::De).unwrap();
+        }
+        _ => {}
     };
     let laeufer = vorhaben::Laeufer::oeffnen(ablage.clone(), "probe").unwrap();
     let r = ruester(arbeit);
@@ -354,13 +373,13 @@ fn die_abnahme_entscheidet_ueber_ganze_runden() {
     let r = ruester(arbeit.clone());
     let grenzen = Loopeinstellung::default();
     let erste = vorhaben::runde(&ablage, &mut v, &modell, &r, &grenzen, Sprache::De, 256, None).unwrap();
-    assert_ne!(v.zustand, Zustand::Fertig, "die Behauptung hat die Abnahme ueberstimmt");
+    assert_eq!(v.zustand, Zustand::Bereit, "die Behauptung hat die Abnahme ueberstimmt");
     assert!(erste.abnahme.as_ref().is_some_and(|a| !a.bestanden));
     assert!(v.notizen["abnahme"].contains("endete mit 1"), "{:?}", v.notizen);
     let zweite = vorhaben::runde(&ablage, &mut v, &modell, &r, &grenzen, Sprache::De, 256, None).unwrap();
-    let auftrag2 = modell.gefragt.borrow().iter().find(|t| t.contains("Runde 2 von")).cloned().unwrap();
+    let auftrag2 = modell.gefragt.borrow().iter().find(|t| t.contains("Runde 2.")).cloned().unwrap();
     assert!(auftrag2.contains("ABNAHME:") && auftrag2.contains("endete mit 1"), "die Runde sah die Abnahme nicht: {auftrag2}");
-    assert_eq!(v.zustand, Zustand::Fertig, "{:?}", zweite.abnahme);
+    assert!(matches!(v.zustand, Zustand::Vorgelegt { .. }), "{:?}", zweite.abnahme);
     assert!(zweite.abnahme.as_ref().is_some_and(|a| a.bestanden && a.ausgabe.contains("ABNAHME_OK")));
 }
 
@@ -487,3 +506,34 @@ fn ein_task_arbeitet_im_ordner_und_verlauf_seines_gespraechs() {
     let alt = ablage.laden(&alt.kennung).expect("ein Task von vorher laedt nicht mehr");
     assert!(alt.gespraech.is_none() && alt.wurzel.is_none());
 }
+
+/// ⚑ **Die Rueckfrage ueber zwei ganze Runden** (2026-10-12): Das Modell
+/// ruft `ask_human`, die Runde endet mit der Frage, der Mensch antwortet,
+/// und die naechste Runde sieht Frage und Antwort im Auftrag.
+#[test]
+fn die_rueckfrage_kommt_an_und_die_antwort_zurueck() {
+    let basis = ordner("rueckfrage");
+    let ablage = Ablage::neu(basis.join("vorhaben"));
+    let arbeit = basis.join("arbeit");
+    std::fs::create_dir_all(&arbeit).unwrap();
+    let mut v = ablage.anlegen("Einen Bericht schreiben", vorhaben::jetzt()).unwrap();
+    let modell = Drehbuch {
+        zeilen: RefCell::new(vec![
+            aufruf("ask_human", serde_json::json!({"question": "Auf Deutsch oder auf Englisch?"})),
+            "Ich warte auf die Antwort.".into(),
+            "Ich schreibe auf Deutsch.".into(),
+        ]),
+        urteile: RefCell::new(vec!["FORTSCHRITT: NEIN\nERREICHT: NEIN\nGRUND: wartet".into(), "FORTSCHRITT: JA\nERREICHT: NEIN\nGRUND: begonnen".into()]),
+        gefragt: RefCell::new(Vec::new()),
+    };
+    let r = ruester(arbeit);
+    vorhaben::runde(&ablage, &mut v, &modell, &r, &Loopeinstellung::default(), Sprache::De, 256, None).unwrap();
+    assert_eq!(v.zustand, Zustand::Frage { frage: "Auf Deutsch oder auf Englisch?".into() });
+    assert_eq!(ablage.laden(&v.kennung).unwrap().zustand, v.zustand, "gespeichert");
+    let mut v = ablage.antworten(&v.kennung, "Deutsch", Sprache::De).unwrap();
+    assert!(v.aktiv());
+    vorhaben::runde(&ablage, &mut v, &modell, &r, &Loopeinstellung::default(), Sprache::De, 256, None).unwrap();
+    let auftrag2 = modell.gefragt.borrow().iter().find(|t| t.contains("Runde 2.")).cloned().expect("Auftrag der zweiten Runde");
+    assert!(auftrag2.contains("Auf Deutsch oder auf Englisch?") && auftrag2.contains(": Deutsch"), "{auftrag2}");
+}
+

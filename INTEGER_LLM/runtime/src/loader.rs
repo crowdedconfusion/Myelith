@@ -4308,6 +4308,66 @@ mod tests {
         fs::remove_dir_all(&dir).ok();
     }
 
+    /// **Merkpunkte vor jeder Marke**: Fragen mit gleichem Anfang (System),
+    /// festem Teil und wechselndem Ende, abwechselnd gestellt, verwenden den
+    /// laengsten gemeinsamen Anfang wieder und rechnen bitgleich wie frisch.
+    ///
+    /// ⚑ Mit nur einem Merkpunkt vor der letzten Marke fiel jede solche Frage
+    /// auf null zurueck, weil sie vor der letzten Marke abweicht.
+    #[test]
+    fn mehrere_merkpunkte_tragen_abwechselnde_fragen() {
+        use crate::generate::{dekodieren_fortgesetzt, Erzeugung, Fortsetzung};
+        let dir = test_dir("fort-merkpunkte");
+        write_full_fixture_mit_tor(&dir, true, false, Some((6usize, 2usize, 3usize)), true);
+        zustandsebene_einsetzen(&dir);
+        gewichte_verrauschen(&dir, 0x5eed_1008);
+        skalen_je_kanal_streuen(&dir);
+        let model = load_model(&dir).expect("Artefakt muss laden");
+        let lauf = Erzeugung { max_new_tokens: 4, seed: 7, greedy: true, halt: &[], denkgrenze: None, abbruch: None, ziehen: None };
+        // Marke 2; System 20 Token, fester Teil je Frageart 8, wechselnder Teil 6.
+        let system: Vec<usize> = (0..20).map(|i| (i * 7 + 1) % 2).collect();
+        let fest = |art: usize| -> Vec<usize> { (0..8).map(|i| (i + art) % 2).collect() };
+        let frage = |art: usize, var: usize| -> Vec<usize> {
+            let mut v = system.clone();
+            v.push(2);
+            v.extend(fest(art));
+            v.push(2);
+            v.extend((0..6).map(|i| (i * 3 + var) % 2));
+            v.extend([2, 0]);
+            v
+        };
+        let marke_system = system.len(); // vor der ersten Marke nach dem System
+        let marke_fest = marke_system + 1 + 8; // vor der Marke nach dem festen Teil
+        let mut speicher = Fortsetzung::neu(&model);
+        speicher.merkmarke_setzen(Some(2));
+        // (Frage, erwartet wiederverwendet): erste frisch; andere Art: das System;
+        // wieder die erste Art mit neuem Ende: System, denn dazwischen stand die andere;
+        // dieselbe Art gleich danach: System und fester Teil.
+        for (fall, prompt, wieder) in [
+            ("erste", frage(0, 0), 0),
+            ("andere Art", frage(1, 1), marke_system),
+            ("erste Art, neues Ende", frage(0, 2), marke_system),
+            ("gleiche Art, neues Ende", frage(0, 3), marke_fest),
+        ] {
+            let (fort, w) = dekodieren_fortgesetzt(&model, &prompt, &lauf, &mut speicher, &mut |_| {});
+            let mut frisch = Fortsetzung::neu(&model);
+            let (neu, _) = dekodieren_fortgesetzt(&model, &prompt, &lauf, &mut frisch, &mut |_| {});
+            assert_eq!(fort, neu, "{fall}: Token");
+            assert_eq!(w.wiederverwendet, wieder, "{fall}: wiederverwendet");
+            let laenge = speicher.token.len();
+            assert_eq!(
+                model.forward_token(prompt[0], laenge, &mut speicher.cache),
+                model.forward_token(prompt[0], laenge, &mut frisch.cache),
+                "{fall}: derselbe Zustand"
+            );
+            // Den Schritt wieder wegnehmen (siehe die Probe mit einem Merkpunkt).
+            speicher.leeren();
+            speicher.merkmarke_setzen(Some(2));
+            let _ = dekodieren_fortgesetzt(&model, &prompt, &lauf, &mut speicher, &mut |_| {});
+        }
+        fs::remove_dir_all(&dir).ok();
+    }
+
     /// **Eine angehaltene Vorbereitung erzeugt nichts, und die naechste
     /// rechnet dasselbe wie eine frische**, dicht und mit Zustandsebene.
     ///

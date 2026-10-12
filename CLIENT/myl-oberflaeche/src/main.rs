@@ -433,6 +433,10 @@ fn setzen(
         "kap.platte" => {
             platte_nachfuehren(&halter)?;
         }
+        // ⚑ **Der Debug-Log schaltet beim Setzen**, nicht beim naechsten Start.
+        "debug.log" => {
+            e.debug_anwenden("Fenster", "Einstellung im Fenster");
+        }
         _ => {}
     }
     Ok(())
@@ -632,12 +636,21 @@ fn nachfrage_fuer(
 // ── Der Loop: ∞ neben dem Senden ────────────────────────────────────
 //
 // ⚑ **Festlegungen des Projektinhabers (2026-09-26):**
-// - ∞ ist ein Schalter: an faehrt der Loop, aus pausiert er.
+// - ∞ ist ein Schalter: an faehrt der Loop, aus haelt er an.
 // - Daneben eine Liste der Tasks: auswaehlen, neu anlegen, und per
 //   Ziehen die Reihenfolge aendern. Der vorderste laeuft („(läuft)"),
 //   alle dahinter warten („(queued)").
-// - Wird das Fenster geschlossen, haelt der Loop an und macht beim
-//   naechsten Oeffnen genau dort weiter.
+//
+// ⚑ **Und vom 2026-10-12:**
+// - Ein Loop endet nur, wenn der Mensch ihn anhaelt, das Ergebnis
+//   bestaetigt oder das Fenster schliesst; keine Hoechstzahl an Runden.
+// - Wird das Fenster geschlossen, ist der Task, der lief, danach
+//   angehalten; ▶ in der Liste setzt ihn genau dort fort. 📌 Bis CLIENT
+//   v0.132.0 fuhr er beim naechsten Oeffnen von selbst weiter.
+// - Meldet das Modell das Ziel als erreicht, fragt das Fenster nach, ob
+//   das Ergebnis stimmt oder wo weitergearbeitet werden soll.
+// - In der Liste je Task ▶ oder ⏸ und der Papierkorb; ▶ startet den Loop
+//   mit genau diesem Task.
 //
 // ⚑ **Die Logik steht in `myl_local_agent::vorhaben`**, wie bei Konsole und
 // `myl`. Hier stehen nur Faden, Leihe und Meldungen ans Fenster.
@@ -698,6 +711,12 @@ fn loop_umfeld(
 struct Taskzeile {
     kennung: String,
     ziel: String,
+    /// Der Name in der Liste, sonst das gekuerzte Ziel.
+    name: String,
+    /// Was die Pruefung gegen ein vorgelegtes Ergebnis sagt (Fund 531).
+    einwand: Option<String>,
+    /// Was das Modell den Menschen fragt (`ask_human`).
+    frage: Option<String>,
     stellung: myl_local_agent::vorhaben::Stellung,
     /// „läuft", „queued", „pausiert" …, aus der Kiste.
     wort: String,
@@ -712,8 +731,6 @@ struct Taskansicht {
     /// Laeuft der Loop in diesem Fenster?
     laeuft: bool,
     in_runde: bool,
-    /// Lief er beim letzten Schliessen? Dann faehrt das Fenster ihn an.
-    war_aktiv: bool,
     eintraege: Vec<Taskzeile>,
 }
 
@@ -733,12 +750,20 @@ fn tasks(halter: tauri::State<'_, Halter>) -> Taskansicht {
     Taskansicht {
         laeuft: an,
         in_runde: halter.schleife.in_runde.load(Ordering::SeqCst),
-        war_aktiv: !an && ablage.loop_war_aktiv(),
         eintraege: ablage
             .stellungen()
             .into_iter()
             .map(|(v, st)| Taskzeile {
                 wort: st.wort(&v, an, sprache),
+                name: v.anzeigename(),
+                einwand: match &v.zustand {
+                    myl_local_agent::vorhaben::Zustand::Vorgelegt { einwand, .. } => einwand.clone(),
+                    _ => None,
+                },
+                frage: match &v.zustand {
+                    myl_local_agent::vorhaben::Zustand::Frage { frage } => Some(frage.clone()),
+                    _ => None,
+                },
                 kennung: v.kennung,
                 ziel: v.ziel,
                 stellung: st,
@@ -754,14 +779,41 @@ fn tasks(halter: tauri::State<'_, Halter>) -> Taskansicht {
 ///
 /// ⚑ **Gebunden an das Gespraech, in dem er angelegt wurde**, samt dessen
 /// Ordner (Festlegung des Projektinhabers, 2026-09-30).
+///
+/// ⚑ **Benannt vom Modell, wenn es frei ist** (2026-10-12), und zwar in
+/// einem eigenen Faden: Der Befehl kehrt sofort zurueck, der Name kommt
+/// mit dem Ereignis `Benannt`. Ist das Modell nicht geladen oder rechnet
+/// gerade ein Chat oder eine Runde, wird nicht gewartet; dann steht das
+/// gekuerzte Ziel in der Liste.
 #[tauri::command]
-fn task_anlegen(ziel: String, gespraech: Option<String>, wurzel: Option<String>) -> Result<String, String> {
+fn task_anlegen(
+    ziel: String,
+    gespraech: Option<String>,
+    wurzel: Option<String>,
+    fenster: tauri::AppHandle,
+    halter: tauri::State<'_, Halter>,
+) -> Result<String, String> {
+    let sprache = sprache_jetzt();
     // ⛔️ Derselbe Schutzfilter wie vor jedem Auftrag (Art. 5 KI-Verordnung).
-    if let Some(satz) = myl_client::schutzfilter::abweisen(&ziel, sprache_jetzt(), "fenster-loop") {
+    if let Some(satz) = myl_client::schutzfilter::abweisen(&ziel, sprache, "fenster-loop") {
         return Err(satz);
     }
-    let v = myl_local_agent::vorhaben::Ablage::vorgabe().anlegen_fuer(&ziel, myl_local_agent::vorhaben::jetzt(), gespraech, wurzel)?;
-    Ok(v.kennung)
+    let ablage = myl_local_agent::vorhaben::Ablage::vorgabe();
+    let v = ablage.anlegen_fuer(&ziel, myl_local_agent::vorhaben::jetzt(), gespraech, wurzel)?;
+    let modell = halter.modell.clone();
+    let kennung = v.kennung.clone();
+    std::thread::spawn(move || {
+        let name = modell
+            .try_lock()
+            .ok()
+            .and_then(|g| g.as_ref().map(|m| myl_local_agent::vorhaben::benennen(m, &v.ziel, sprache)));
+        if let Some(n) = name {
+            if ablage.name_setzen(&v.kennung, &n).is_ok() {
+                let _ = fenster.emit(LOOPEREIGNIS, serde_json::json!({ "art": "Benannt", "kennung": v.kennung, "name": n }));
+            }
+        }
+    });
+    Ok(kennung)
 }
 
 /// **Die neue Reihenfolge nach dem Ziehen.**
@@ -789,9 +841,45 @@ fn nicht_in_seiner_runde(halter: &Halter, kennung: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// **▶ an einem Task**: fortsetzen und nach vorn, damit genau dieser als
+/// naechstes laeuft. Den Loop schaltet danach das Fenster an.
 #[tauri::command]
 fn task_weiter(kennung: String) -> Result<(), String> {
-    myl_local_agent::vorhaben::Ablage::vorgabe().weitermachen(&kennung).map(|_| ())
+    myl_local_agent::vorhaben::Ablage::vorgabe().wieder_aufnehmen(&kennung).map(|_| ())
+}
+
+/// **Das vorgelegte Ergebnis stimmt**: fertig. Liefert die Ziele einer
+/// Kette, die damit beginnt.
+#[tauri::command]
+fn task_bestaetigen(kennung: String) -> Result<Vec<String>, String> {
+    let neue = myl_local_agent::vorhaben::Ablage::vorgabe().bestaetigen(&kennung, sprache_jetzt())?;
+    Ok(neue.into_iter().map(|v| v.ziel).collect())
+}
+
+/// **Das vorgelegte Ergebnis stimmt nicht**: weiter, und zwar bei `hinweis`.
+/// Der Task steht danach vorn.
+#[tauri::command]
+fn task_nachbessern(kennung: String, hinweis: String) -> Result<(), String> {
+    let ablage = myl_local_agent::vorhaben::Ablage::vorgabe();
+    ablage.nachbessern(&kennung, &hinweis, sprache_jetzt())?;
+    ablage.nach_vorn(&kennung)
+}
+
+/// **Die Antwort auf eine Frage des Modells** (`ask_human`). Der Task steht
+/// danach vorn und ist bereit.
+#[tauri::command]
+fn task_antworten(kennung: String, antwort: String) -> Result<(), String> {
+    let ablage = myl_local_agent::vorhaben::Ablage::vorgabe();
+    ablage.antworten(&kennung, &antwort, sprache_jetzt())?;
+    ablage.nach_vorn(&kennung)
+}
+
+/// **Beim Start des Fensters**: Lief der Loop, als es zuletzt zuging (oder
+/// endete es hart), ist der Task, der lief, jetzt angehalten. Liefert
+/// seinen Namen fuer den Hinweis.
+#[tauri::command]
+fn loop_nach_dem_start() -> Option<String> {
+    myl_local_agent::vorhaben::Ablage::vorgabe().nach_dem_schliessen(sprache_jetzt()).map(|v| v.anzeigename())
 }
 
 #[tauri::command]
@@ -921,6 +1009,17 @@ fn loop_starten(fenster: tauri::AppHandle, halter: tauri::State<'_, Halter>) -> 
                 }
                 Ereignis::Geendet { vorhaben: v, bericht, pruefung, saat } => serde_json::json!({
                     "art": "Geendet",
+                    // ⚑ Steht hier ein Ergebnis, fragt das Fenster nach.
+                    "vorgelegt": match &v.zustand {
+                        vorhaben::Zustand::Vorgelegt { ergebnis, .. } => Some(ergebnis.clone()),
+                        _ => None,
+                    },
+                    // ⚑ Steht hier eine Frage des Modells, fragt das Fenster.
+                    "frage": match &v.zustand {
+                        vorhaben::Zustand::Frage { frage } => Some(frage.clone()),
+                        _ => None,
+                    },
+                    "name": v.anzeigename(),
                     "kennung": v.kennung,
                     "ziel": v.ziel,
                     "runde": v.runden,
@@ -930,9 +1029,6 @@ fn loop_starten(fenster: tauri::AppHandle, halter: tauri::State<'_, Halter>) -> 
                     // Als Text, siehe `Saatstand`.
                     "saat": saat.map(|s| s.to_string()),
                 }),
-                Ereignis::Angestossen { kennung, ziel } => {
-                    serde_json::json!({ "art": "Angestossen", "kennung": kennung, "ziel": ziel })
-                }
                 Ereignis::Wartet { bis } => serde_json::json!({
                     "art": "Wartet",
                     "minuten": bis.saturating_sub(vorhaben::jetzt()).div_ceil(60),
@@ -961,9 +1057,11 @@ fn loop_starten(fenster: tauri::AppHandle, halter: tauri::State<'_, Halter>) -> 
             Some(&melder),
             Some(&verlauf),
         );
-        // ⚑ **Warum er endete, entscheidet ueber die Marke.** Nur ein
-        //   geschlossenes Fenster laesst sie stehen: Dann faehrt er beim
-        //   naechsten Oeffnen von selbst weiter.
+        // ⚑ **Warum er endete, entscheidet, was aus dem Task wird**
+        //   (2026-10-12): Angehalten (∞ aus, ⏸) und geschlossen heisst, der
+        //   Task, der lief, ist angehalten und wartet auf ▶. Erst nach dem
+        //   Ende des Laeufers, denn eine Runde schreibt bis dahin ihren
+        //   Stand.
         let grund = if z.pause.load(Ordering::SeqCst) {
             "pausiert"
         } else if vorhaben::schliessen_angefordert() {
@@ -973,10 +1071,18 @@ fn loop_starten(fenster: tauri::AppHandle, halter: tauri::State<'_, Halter>) -> 
         } else {
             "leer"
         };
-        if grund != "geschlossen" {
-            let _ = ablage.loop_aktiv_setzen(false);
-        }
         drop(laeufer);
+        match grund {
+            "pausiert" => {
+                let _ = ablage.vom_menschen_anhalten(sprache);
+            }
+            "geschlossen" => {
+                let _ = ablage.nach_dem_schliessen(sprache);
+            }
+            _ => {
+                let _ = ablage.loop_aktiv_setzen(false);
+            }
+        }
         if grund != "notaus" {
             vorhaben::schliessen_zuruecksetzen();
         }
@@ -990,8 +1096,9 @@ fn loop_starten(fenster: tauri::AppHandle, halter: tauri::State<'_, Halter>) -> 
     Ok(hinweis)
 }
 
-/// **∞ aus: der Loop pausiert.** Eine laufende Runde haelt sofort an und
-/// setzt beim naechsten ∞ genau dort fort.
+/// **∞ aus oder ⏸ am laufenden Task: der Loop haelt an.** Eine laufende
+/// Runde haelt sofort an, der Task steht danach als angehalten da, und ▶
+/// setzt ihn genau dort fort.
 #[tauri::command]
 fn loop_pausieren(halter: tauri::State<'_, Halter>) {
     use std::sync::atomic::Ordering;
@@ -1007,12 +1114,13 @@ fn loop_pausieren(halter: tauri::State<'_, Halter>) {
     }
 }
 
-/// **Das Fenster geht zu**: anhalten, die Marke stehen lassen, und kurz
-/// warten, damit der Laeufer seine Wartezeiten als Rest sichert.
+/// **Das Fenster geht zu**: anhalten, und kurz warten, damit der Faden den
+/// Task, der lief, als angehalten ablegt (`nach_dem_schliessen`).
 ///
 /// ⚠️ **Hoechstens vier Sekunden.** Steht die Runde gerade in einer
 /// Nachfrage des Betriebssystems, kommt sie nicht heraus, solange der
-/// Hauptfaden hier wartet; dann sichert der Herzschlag den Stand.
+/// Hauptfaden hier wartet; dann bleibt die Marke `.aktiv` stehen, und der
+/// naechste Start haelt den Task an (`loop_nach_dem_start`).
 fn loop_beim_schliessen(z: &Loopzustand) {
     use std::sync::atomic::Ordering;
     if !z.laeuft.load(Ordering::SeqCst) {
@@ -1923,11 +2031,16 @@ async fn frage(
         m.denkbudget = if vorleser.is_some() { denkbudget.map(|b| b as usize) } else { None };
         // ⛔️ **Ein angehaltener Chat behaelt, was er bis dahin schrieb**
         //   (Notaus): Der Text ist ein Ergebnis, kein Fehler.
+        myl_local_agent::debuglog::eintrag_mit("Chat beginnt", || myl_local_agent::schleife::nachrichten_text(&n));
         let antwort = match m.chat("lokal", &n, Some(grenze)) {
             Ok(a) => Ok(a.text),
             Err(myl_client::Tuerfehler::Abgebrochen { bisher }) => Ok(bisher),
             Err(f) => Err(f.to_string()),
         };
+        myl_local_agent::debuglog::eintrag_mit("Chat-Antwort", || match &antwort {
+            Ok(t) => t.clone(),
+            Err(f) => format!("Fehler: {f}"),
+        });
         m.denkbudget = None;
         m.beobachter = None;
         // ⚑ **Der Rest geht noch raus, dann wird gewartet.** Ein
@@ -2927,17 +3040,22 @@ async fn terminal_ordner(halter: tauri::State<'_, Halter>) -> Result<String, Str
 fn main() {
     // ⛔️ Das Aktionsprotokoll gilt fuer jeden Lauf dieses Fensters.
     myl_local_agent::protokoll::einschalten();
+    // ⚑ Der Debug-Log folgt der Einstellung `debug.log` (2026-10-12).
+    if let Ok(e) = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad()) {
+        e.debug_anwenden("Fenster", "Fenster gestartet");
+    }
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(Halter::default())
-        // ⚑ **Fenster zu heisst: Loop anhalten, beim naechsten Oeffnen
-        //   genau dort weiter** (Festlegung des Projektinhabers), und
+        // ⚑ **Fenster zu heisst: Loop anhalten, weiter mit ▶ genau dort**
+        //   (Festlegung des Projektinhabers, 2026-10-12), und
         //   ⛔️ **alles andere endet**: Das Schliessen ist der Notschalter.
         .on_window_event(|fenster, ereignis| {
             if let tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed = ereignis {
                 use tauri::Manager;
                 loop_beim_schliessen(&fenster.state::<Halter>().schleife);
                 notschalter_beim_schliessen();
+                myl_local_agent::debuglog::setzen(false, "Fenster", "Fenster geschlossen");
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -2949,6 +3067,10 @@ fn main() {
             loop_umfeld,
             tasks_ordnen,
             task_weiter,
+            task_bestaetigen,
+            task_nachbessern,
+            task_antworten,
+            loop_nach_dem_start,
             task_stoppen,
             task_entfernen,
             task_bearbeiten,

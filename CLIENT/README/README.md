@@ -1,7 +1,7 @@
 # client (Nutzer-Client inkl. Wallet)
 
-> **Version:** 0.131.0 (`myl-client` 0.81.0, `myl-oberflaeche` 0.59.0, `myl-console` 0.43.0, `myl-senses` 0.11.0, `myl-module` 0.1.0)
-> **Datum:** 2026-10-08
+> **Version:** 0.139.0 (`myl-client` 0.86.0, `myl-oberflaeche` 0.63.0, `myl-console` 0.51.0, `myl-senses` 0.11.0, `myl-module` 0.2.0)
+> **Datum:** 2026-10-12
 > **Status:** ✅ **Der lokale Betrieb läuft und ist ausgeliefert.** Ein
 > Gesprächsfenster mit Modellwahl, Agentenschleife und
 > Einstellungsseite; aus einem frischen Klon lassen sich darüber
@@ -31,7 +31,7 @@ kostet nichts, wenn er stimmt, und einen halben Tag, wenn nicht.
 | **Fünf Konsolen-Designs** | `Standard` nimmt die Farben deines Terminals, dazu `Myelith`, `Bernstein`, `Tiefsee`, `Tinte`. Voreingestellt über `oberflaeche.design`, beim Start ohne bleibende Wirkung wählbar |
 | **Was gerade läuft, steht da** | Eine Zeile fest über dem Eingabekasten, mittig: Ladetext, verstrichene Zeit, gelesene und geschriebene Token, laufende Tätigkeit; die Farbe wandert in zwei Minuten durch den Regenbogen, in einfarbigen Designs pulst sie. Jeder Schritt und jeder Werkzeugaufruf **bleibt** in der Zeitleiste; `^S` schaltet auf die ausführliche Form, in der auch der Denkvorgang live durchläuft |
 | **auto mode und manual mode** | Umschalt-Tab in der Konsole, oder `agent.modus` in den Einstellungen. Im manual mode wird **jede schreibende Handlung** vorgelegt und läuft erst nach einer Bestätigung; Lesen und Suchen fragen nie. Das Fenster legt sie seit v0.47.0 im Kasten des Betriebssystems vor, mit Namen und Argumenten; vorher nahm es die schreibenden Werkzeuge in diesem Modus **ganz weg** |
-| **Der Loop: ein Ziel über viele Runden** | Im Fenster ∞ neben dem Senden (an und aus), daneben die Liste der Tasks: auswählen, neu anlegen, am Griff in die gewünschte Reihenfolge ziehen. Der vorderste läuft, alle dahinter sind „queued“; jeder Task hat sein eigenes Gespräch. In der Konsole `/loop` und `/tasks`, auf der Kommandozeile `myl loop` und `myl tasks`. Wird geschlossen, geht es beim nächsten Öffnen genau dort weiter |
+| **Der Loop: ein Ziel über viele Runden** | **Ohne Grenze an Runden oder Dauer:** Ein Loop endet, wenn du ihn anhältst oder sein Ergebnis bestätigst. Meldet das Modell das Ziel als erreicht, fragt der Client, ob es stimmt oder wo weitergearbeitet werden soll; kommt das Modell ohne dich nicht weiter, stellt es dir eine Frage, und der Loop wartet auf deine Antwort. Im Fenster ∞ neben dem Senden (an und aus), daneben die Liste der Tasks mit ▶, ⏸, ✓ und Papierkorb je Task: auswählen, neu anlegen, am Griff in die gewünschte Reihenfolge ziehen. Der vorderste läuft, alle dahinter sind „queued“; jeder Task hat einen Namen und sein eigenes Gespräch. In der Konsole `/start loop [ziel]` (ohne Ziel fragt das Modell danach und benennt den Loop), `/stop loop`, `/resume loop` und `/tasks`; auf der Kommandozeile `myl loop` und `myl tasks`. Wird geschlossen, während ein Loop läuft, ist er danach angehalten und lässt sich genau dort fortsetzen |
 | **Ein Gespräch mit einem lokalen Modell** | `myl frage <artefakt> <text>`, oder im Fenster |
 | **Die Agentenschleife** | `myl agent`, mit Werkzeugen innerhalb einer Einhängegrenze |
 | **Die Werkzeugkiste ist ein Ordner** | Eine Einstellung, ein Pfad: `agent.kistenordner`, ohne Angabe die mitgelieferte Kiste `Base` unter `AGENT_LAYER/local-toolkits/`. Der **Ordnername** sagt, welche eingebauten Werkzeuge dazukommen: `Base` die fünf Dateiwerkzeuge und die zwei Skillwerkzeuge `search_skill` und `learn_skill` (seit dem 2026-09-26), `Advanced` zusätzlich `run_command` und die drei Werkzeuge für den Mitschnitt (seit dem 2026-09-17, gemessen: das kleine Modell ruft sie nie). ⚑ **Eine Kiste kann das auch selbst sagen**, in ihrem `kiste.json`; ohne diese Datei und ohne einen der drei Namen bleibt es bei `Base`. Was als Manifest im Ordner liegt, sieht das Modell **ohne Neubau**. ⚑ **`Base` ist die Grundlage jeder Kiste**: Ihre Werkzeuge werden mitgeladen, gestapelt und nicht kopiert; bei gleichem Namen gewinnt die gewählte Kiste. ⛔️ Die fünf Dateiwerkzeuge bleiben kompiliert, weil nur sie die Einhängegrenze einhalten; ein Manifest läuft über die Shell und kann das nicht |
@@ -52,7 +52,7 @@ kostet nichts, wenn er stimmt, und einen halben Tag, wenn nicht.
 | **Gespraeche verwalten** | Rechtsklick auf eine Zeile: umbenennen an Ort und Stelle, als Markdown ausgeben, loeschen. Wohin ausgegeben wird, steht in `ausgabe.ordner`; ohne Angabe fuehrt das Fenster dorthin |
 
 ⚑ **Die Oberfläche ruft dieselben Funktionen wie die Kommandozeile**,
-über dreiundfünfzig Befehle. ⚠️ **Mit genau einer Ausnahme, und sie ist gewollt:** `terminal_ausfuehren` startet eine Shell, denn ein Terminal, das keine startet, ist keines. Jeder andere Befehl startet **keinen einzigen Unterprozess**. `jeder_befehl_ist_angemeldet` hält die vier
+über siebenundfünfzig Befehle. ⚠️ **Mit genau einer Ausnahme, und sie ist gewollt:** `terminal_ausfuehren` startet eine Shell, denn ein Terminal, das keine startet, ist keines. Jeder andere Befehl startet **keinen einzigen Unterprozess**. `jeder_befehl_ist_angemeldet` hält die vier
 Richtungen zusammen: kein Befehl ohne Anmeldung, keine Anmeldung ohne
 Befehl, kein Aufruf ins Leere und kein Befehl, den niemand ruft. „Ohne eigene Logik" hiesse sonst, aus einer Textausgabe
 für Menschen eine Schnittstelle zu machen, und genau das ist die Sorte
@@ -159,6 +159,303 @@ Modell überhaupt etwas taugt, und weil eine Schnittstelle, die kein
 Mensch je bedient hat, an den Bedürfnissen vorbei entworfen wird.
 
 ## Changelog
+
+### v0.139.0 (2026-10-12): der Debug-Log, in Konsole, Fenster und `myl`
+
+`myl-client` 0.86.0, `myl-console` 0.51.0, `myl-oberflaeche` 0.63.0; dazu
+AGENT_LAYER `myl-local-agent` 0.27.0 (Modul `debuglog`). Wurzel:
+`.gitignore`.
+
+- **Einstellung `debug.log`** (Bereich „Diagnose“, aus als Vorgabe): im
+  Fenster als Schalter auf der Einstellungsseite, beim Agenten; in der
+  Konsole `/debug on`, `/debug off` und `/debug` (zeigt Zustand und Datei);
+  auf der Kommandozeile `myl setzen debug.log an`. Alle setzen dasselbe
+  Feld (`Einstellungen::debug_anwenden`, eine Stelle).
+- **Wann der Log schaltet:** beim Start jeder Oberfläche nach der
+  Einstellung („Konsole gestartet“, „Fenster gestartet“, „myl loop
+  gestartet“), sofort beim Umschalten, und in der Konsole vor jeder
+  Eingabe, sodass ein Schalter im Fenster auch eine laufende Konsole
+  erreicht. Beim Beenden steht „DEBUG BEENDET“ mit dem Anlass („Konsole
+  beendet“, „Fenster geschlossen“, „myl beendet“); die Einstellung bleibt.
+- **Zusätzlich mitgeschrieben:** in der Konsole jede Eingabe, auch die
+  während eines Laufs, und jede Ja-Nein-Antwort; im Fenster jeder Chat
+  ohne Agent (Nachrichten und Antwort).
+- ⛔️ **`SYSTEM/logs/` steht jetzt ganz in der `.gitignore`** (Festlegung
+  des Projektinhabers). Der Ordner war nicht ausgenommen, und ein Debug-Log
+  enthält Dateiinhalte und Antworten. Das einzige dort versionierte
+  Protokoll (`knoten-1789471384844.jsonl`) wird mit dem nächsten Commit aus
+  dem Index genommen; auf der Platte bleibt es.
+- Belege: `cargo test` und Clippy grün in `myl-client`, `myl-console`,
+  `myl-oberflaeche`; Probe am echten `myl` (siehe AGENT_LAYER v0.34.0).
+  ⚠️ Konsole und Fenster nicht von Hand mit eingeschaltetem Log geprüft.
+
+### v0.138.0 (2026-10-12): Text während eines Laufs geht an das Modell
+
+`myl-console` 0.50.0; dazu AGENT_LAYER `myl-local-agent` 0.26.0
+(Zwischenrufe, und eine Frage am Ende einer Antwort ist eine Rückfrage).
+
+- **Text während eines Laufs ist ein Zwischenruf** (Wunsch des
+  Projektinhabers): Was ohne `/` in die Eingabezeile getippt und abgeschickt
+  wird, geht nach dem nächsten Schritt an das Modell; die Zeitleiste
+  bestätigt es. Dasselbe beim Warten zwischen zwei Runden eines Loops (dann
+  in der nächsten Runde). Bisher bekam Text den Satz, er gehe erst nach dem
+  Lauf.
+- **Nichts geht verloren:** Endet ein Lauf, bevor ein Zwischenruf an der
+  Reihe war, steht er danach wieder in der Eingabezeile, mit einem Hinweis.
+- Belege: `cargo test` grün (`befehle_waehrend_eines_laufs` prüft das
+  Anstellen), Clippy ohne Warnung. ⚠️ Nicht von Hand mit einem Modell
+  geprüft.
+
+### v0.137.0 (2026-10-12): Umschalt-Tab auch während eines Laufs; die Eingabezeile wieder so breit wie ihr Rahmen; Einfügen schickt nicht ab
+
+`myl-console` 0.49.0.
+
+**Anlass:** Ein Bild des Projektinhabers aus einem laufenden Loop: Der
+rechte Strich der Eingabezeile stand eine Spalte links von den Ecken, und
+Umschalt-Tab schaltete nicht in den `auto mode`.
+
+- **Die Eingabezeile füllt ihren Rahmen.** Die gezeichnete Zeile eines
+  Laufs war ein Zeichen zu schmal (Luft `innen - (Text + 3)` statt `+ 2`).
+  Jetzt steht ihr Inhalt an einer Stelle (`eingabeinnen`), und eine Probe
+  hält die Breite fest, mit und ohne Wagen, leer und zu lang; ihre
+  Gegenprobe mit dem alten Wert schlägt fehl.
+- **Umschalt-Tab während eines Laufs und beim Warten zwischen zwei
+  Runden.** Bisher kannte nur die Eingabezeile zwischen zwei Läufen die
+  Taste. Nach `auto` stehen erst die Sätze der Sicherheitsmeldung und eine
+  blinkende Ja-Nein-Frage (`Auf auto stellen? [j/N]`); zurück nach `manual`
+  geht ohne Frage. Die Fußzeile zeigt den neuen Modus sofort.
+- **Der Wechsel gilt sofort**, auch mitten in einer Runde: Die Nachfrage
+  im `manual mode` liest den Modus bei jeder Handlung, nicht beim Start des
+  Laufs. Nach dem Lauf übernimmt die Sitzung den Modus, und die nächste
+  Runde eines Loops beginnt mit ihm.
+- **Eingefügt heißt nicht abgeschickt** (gemeldet vom Projektinhaber: ein
+  eingefügter Befehl lief sofort). Ohne Klammern kam eingefügter Text als
+  einzelne Tasten an, und ein mitkopierter Zeilenumbruch war eine
+  Eingabetaste. Jetzt schaltet die Konsole das Einfügen in Klammern ein
+  (`ESC[?2004h`), solange sie liest: in der Eingabezeile, während eines
+  Laufs und beim Warten zwischen zwei Runden. Der Text kommt als ein Stück,
+  Zeilenumbrüche werden Leerzeichen, ein Umbruch am Ende fällt weg
+  (`eingabe::einfuegetext`), und erst die Eingabetaste schickt. Jeder
+  Ausgang schaltet die Klammern wieder ab.
+- Belege: `cargo test` grün (neu: `die_eingabezeile_fuellt_den_rahmen`,
+  `umschalt_tab_im_lauf`, `eingefuegt_ist_nicht_abgeschickt`), Clippy ohne
+  Warnung. ⚠️ Nicht von Hand am laufenden Loop geprüft; ein Terminal ohne
+  Einfügen in Klammern verhält sich wie bisher.
+
+### v0.136.0 (2026-10-12): Ja-Nein-Fragen mit einem Tastendruck, und sie blinken
+
+`myl-console` 0.48.0.
+
+**Auftrag:** Bestätigungen sollen nicht über die Eingabezeile gehen. Solange
+eine Ja-Nein-Frage offen ist, steht dort kein Wagen, und die Frage blinkt.
+
+- **Neues Modul `janein`:** eine Frage, ein Tastendruck (`j`/`y` ja, `n`
+  nein, Eingabe nimmt die Vorgabe, Esc und Strg-C lassen offen). Die Frage
+  blinkt über die Schriftart des Terminals (`ESC[5m`) und wird nicht jeden
+  Takt neu geschrieben; danach steht sie ruhig mit der Antwort da. Der
+  Rohmodus wird nur angelegt, wenn er nicht schon läuft.
+- **Umgestellt:** die Frage nach dem vorgelegten Ergebnis im Loop, `/root`
+  („Wirklich?“), die Sicherheitsmeldung vor `auto`, Ja-Nein-Fragen eines
+  Moduls, „Wirklich beenden?“ und der Notaus beim Warten zwischen zwei
+  Runden. Bisher las jede davon eine ganze Zeile mit der Eingabetaste.
+- **Während eines Laufs** (Vorlage im `manual mode`, Notaus, „Wirklich
+  beenden?“ nach Strg-X): Die Frage blinkt, die Eingabezeile zeigt keinen
+  Wagen, und nach der Antwort steht er mit dem schon Getippten wieder da.
+  Die Klammern nennen jetzt überall die Vorgabe: `ausfuehren? [J/n]` (die
+  Eingabetaste hieß dort schon immer ja), `Wirklich beenden? [J/n]` statt
+  „[Eingabe] ja [n] weiter“.
+- **Hervorgehoben** (gemeldet vom Projektinhaber: die blinkende Frage stand
+  im Grau des Beiwerks und war kaum zu sehen): Jede Ja-Nein-Frage steht
+  fett in der Warnfarbe des gewählten Designs (`janein::hervor`), in der
+  Laufanzeige wie außerhalb; ohne Farbe blinkt sie nur.
+- Belege: `cargo test` grün (neu: `tasten_und_vorgaben`, `die_frage_blinkt`;
+  `escape_bleibt_und_strg_x_beendet` prüft die Vorgabe jetzt an
+  `janein`), Clippy ohne Warnung. ⚠️ Ob ein Terminal blinkt, hängt an seiner
+  Einstellung; nicht von Hand geprüft.
+
+### v0.135.0 (2026-10-12): das Modell fragt im Loop
+
+`myl-console` 0.47.0, `myl-client` 0.85.0, `myl-oberflaeche` 0.62.0; dazu
+AGENT_LAYER `myl-local-agent` 0.25.0 mit dem Werkzeug `ask_human`.
+
+- **Konsole:** Stellt das Modell eine Frage, fragt die Konsole sofort, mit
+  der Antwort im Rahmen; Esc lässt sie offen, und `/resume loop` stellt sie
+  erneut. Danach läuft der Loop weiter.
+- **Fenster:** Ein Dialog „… fragt dich“ mit Antwortfeld, „Antworten“ und
+  „Später“; in der Taskliste steht an einem fragenden Task ein `?`, auch
+  im Menü am Rechtsklick. Offene Fragen kommen beim Start des Fensters.
+  Neuer Befehl `task_antworten`.
+- **`myl`:** `myl tasks answer <ID> <antwort>`; `myl loop` nennt am Ende
+  offene Fragen.
+- Belege: `cargo test` grün in `myl-client` (neu:
+  `die_rueckfrage_kommt_an_und_die_antwort_zurueck`, zwei ganze Runden),
+  `myl-console`, `myl-oberflaeche`; Clippy ohne Warnung. ⚠️ Nicht von Hand
+  mit einem Modell geprüft.
+
+### v0.134.0 (2026-10-12): der Wagen bleibt in der Eingabezeile, Befehle gehen jederzeit; die Prüfung berät
+
+`myl-console` 0.46.0, `myl-client` 0.84.0, `myl-oberflaeche` 0.61.0; dazu
+AGENT_LAYER `myl-local-agent` 0.24.0 (Fund 531).
+
+**Anlass:** Im ersten echten Loop fiel dem Projektinhaber auf, dass der
+Wagen während eines Laufs nicht in der Eingabezeile steht, sondern dort, wo
+die Antwort entsteht; Befehle mit `/` sollen jederzeit gehen.
+
+- **Ein gezeichneter Wagen.** Ein Terminal hat nur einen Wagen, und
+  während eines Laufs muss er im Rollbereich stehen, wo die Ausgabe
+  hinschreibt. Er wird deshalb versteckt, und die Eingabezeile im Rahmen
+  zeigt einen gezeichneten (eine umgekehrt gesetzte Stelle hinter dem
+  Text). Jeder Ausgang zeigt den echten wieder, auch ein harter (Strg-X,
+  Strg-C in einer Auswahl): Das Freigeben des Rollbereichs tut es mit.
+- **Getippt wird in jedem Lauf in die Eingabezeile**, nicht mehr erst nach
+  einem `/` an der Stelle der Ladezeile. Eingabe schickt die Zeile ab, Esc
+  leert sie, Esc an der leeren Zeile ist wie bisher der Notaus.
+- **Sofort gehen** `/stop loop` (im Loop), `/tasks` und `/help`; jeder
+  andere Befehl sagt, wann er geht (nach dem Lauf, im Loop nach
+  `/stop loop`), statt still zu verschwinden. Text ohne `/` bekommt
+  denselben Hinweis. Dasselbe beim Warten zwischen zwei Runden.
+- **Fragen im Loop stehen im Rahmen**: die Frage nach dem Ziel bei
+  `/start loop` und die nach dem vorgelegten Ergebnis. Die Antwort wird in
+  der Eingabezeile getippt, nicht mehr im Rollbereich; Esc bricht ab.
+- **Die Prüfung berät, sie sperrt nicht** (Entscheidung des
+  Projektinhabers, Fund 531). Im ersten echten Loop liefen alle Tests, das
+  Modell meldete fertig, und der Prüfdurchgang widersprach, mit einem
+  Grund, der nach „Der Bericht beh“ abbrach. Jetzt wird das Ergebnis
+  trotzdem vorgelegt, und der Einwand steht dabei: in der Konsole unter dem
+  Ergebnis, im Fenster im Dialog, bei `myl loop` in der Meldung. Der
+  Abnahmebefehl bleibt eine Sperre, denn ihn setzt der Mensch.
+- **Nachgezogen:** `tauri.conf.json` trug seit v0.133.0 noch 0.59.0, obwohl
+  die Kiste auf 0.60.0 stand; die Probe
+  `die_buendelversion_ist_die_kistenversion` fand es.
+- Belege: `cargo test` grün (neu: `die_eingabezeile_eines_laufs`,
+  `befehle_waehrend_eines_laufs`; `pruefung_haelt_ein_falsches_fertig_auf`
+  prüft jetzt das Vorlegen mit Einwand), Clippy ohne Warnung in
+  `myl-console`, `myl-client`, `myl-oberflaeche`. ⚠️ Nicht von Hand an
+  einem laufenden Loop geprüft.
+
+### v0.133.0 (2026-10-12): der Loop ohne Grenzen, mit Bestätigung durch den Menschen
+
+`myl-console` 0.45.0, `myl-client` 0.83.0, `myl-oberflaeche` 0.60.0; dazu
+AGENT_LAYER `myl-local-agent` 0.24.0, in dem die Logik steht.
+
+**Auftrag:** Ein Loop soll erst enden, wenn der Mensch ihn anhält, das Ziel
+erreicht ist oder das Fenster schließt; keine Rundenzahl und keine andere
+Grenze, die ihn vorher beendet.
+
+- **Keine Grenze, die einen Loop beendet.** Die Einstellungen `loop.runden`
+  (50), `loop.stunden` (24) und `loop.stillstand` (3) sind entfallen; alte
+  Einstellungsdateien werden weiter gelesen, die Felder übergangen.
+  `loop.schritte` bleibt und formt nur eine Runde: Endet sie an der Grenze,
+  setzt die nächste fort. Runden ohne Fortschritt halten nicht mehr an,
+  sondern geben dem Modell ab der dritten einen Hinweis (Notiz
+  `stillstand`), einen anderen Weg zu versuchen.
+- **„Fertig“ sagt der Mensch.** Meldet das Modell das Ziel als erreicht (und
+  stimmen Prüfdurchgang und Abnahmebefehl zu, wo es sie gibt), wird das
+  Ergebnis **vorgelegt**: Keine Runde läuft mehr, und der Client fragt, ob
+  das Ergebnis stimmt. Ja beendet den Loop, und erst dann beginnt eine Kette.
+  Nein fragt, wo weitergearbeitet werden soll; der Satz steht als Notiz
+  `mensch` im Auftrag der nächsten Runde, und es geht sofort weiter.
+- **Schließen hält an.** Läuft beim Schließen ein Loop, ist sein Task danach
+  angehalten und lässt sich genau dort fortsetzen; eine unterbrochene Runde
+  setzt mit dem fort, was sie schon erledigt hatte. Bisher fuhr der Loop beim
+  nächsten Öffnen von selbst weiter. Endet der Prozess hart (Terminal zu,
+  Absturz), geschieht das Anhalten beim nächsten Start; ein Loop, der gerade
+  in einem anderen Fenster oder einer anderen Konsole läuft, bleibt dabei
+  unberührt.
+- **Konsole:** `/start loop <ziel>` beginnt einen Loop, das Ziel bleibt
+  wortgleich und das Modell gibt ihm einen Namen. `/start loop` ohne Ziel
+  fragt danach; das Modell leitet aus der Antwort Ziel und Namen ab (fehlt
+  ihm die Form, gelten die Worte des Menschen). `/stop loop` lässt sich
+  während einer Runde und beim Warten eintippen (`/` öffnet eine Zeile an
+  der Stelle der Ladezeile) und tut dasselbe wie ein bestätigtes Esc.
+  `/resume loop` zeigt alles, was nicht fertig ist, zur Wahl; ein
+  vorgelegtes Ergebnis wird dabei zuerst erfragt. `/loop` ist entfallen.
+  Befehle aus zwei Wörtern erkennt die Befehlstabelle seither allgemein.
+- **Fenster:** In der Taskliste je Task ▶ (fortsetzen, nach vorn und den
+  Loop anschalten), ⏸ (der laufende hält den ganzen Loop sofort an, auch
+  mitten in seiner Runde; ein wartender wird zurückgestellt), ✓ (das
+  vorgelegte Ergebnis prüfen) und der Papierkorb, der den laufenden Task
+  zuerst anhält. Ein Dialog fragt nach dem Ergebnis: „Ja, Loop beenden“,
+  „Weiterarbeiten“ mit einem Feld für die Stelle, oder „Später“. Die Liste
+  nennt den Namen, das Ziel steht am Zeiger. Benannt wird ein neuer Task vom
+  Modell in einem eigenen Faden, wenn es geladen und frei ist; sonst steht
+  das gekürzte Ziel da. Drei neue Befehle: `task_bestaetigen`,
+  `task_nachbessern`, `loop_nach_dem_start`.
+- **`myl`:** `myl tasks confirm <ID>` und `myl tasks rework <ID> <wo>`;
+  `myl loop` nennt am Ende, was auf eine Bestätigung wartet, und hält beim
+  Schließen den laufenden Task an.
+- **Fund 528 behoben** (`myl-console`, `erhoehung.rs`): Die Probe
+  `der_abschalter_gilt_vor_jeder_anderen_pruefung` wackelte, weil zwei
+  Proben dieselbe Umgebungsvariable nebeneinander setzten und löschten. Die
+  Entscheidung steht jetzt in einer reinen Funktion (`entscheiden`), die
+  beide Schalter als Werte bekommt; keine Probe fasst die Umgebung mehr an.
+- **Messaufbau** `BENCHMARKS/Agent/loop/starten.py`: setzt die entfallenen
+  Felder nicht mehr; ein Lauf endet, wenn alle Tasks ihr Ergebnis vorgelegt
+  haben, oder an der Frist.
+- Belege: `cargo test` grün in `myl-local-agent` (265, zwei übersprungen;
+  fünf neue Proben zu Bestätigen, Nachbessern, Schließen, Fortsetzen sowie
+  Ziel und Name, vier ersetzte zu Vorlegen, Stillstand ohne Halt und ohne
+  Höchstzahl), `myl-client`, `myl-console` (zwei
+  neue: Befehle aus zwei Wörtern, die getippte Zeile), `myl-oberflaeche`,
+  `myl-module` und `myl-testclient`; Clippy ohne Warnung in allen sechs.
+  ⚠️ Nicht von Hand am laufenden Fenster und an der laufenden Konsole mit
+  einem Modell geprüft.
+
+### v0.132.0 (2026-10-08): fester Vorspann für Modellfragen
+
+`myl-module` 0.2.0, `myl-console` 0.44.0, `myl-client` 0.82.0; dazu
+INTEGER_LLM runtime 0.87.0 (Merkpunkte vor jeder Marke).
+
+- **Protokoll** (`myl-module`): `ModellFragen` trägt wahlweise einen
+  `vorspann`, einen festen Teil, der bei vielen Fragen gleich bleibt.
+  Fehlt er, ist alles wie bisher; ein Modul ohne das Feld läuft unverändert.
+- **Konsole**: Der Vorspann steht als eigene Nachricht zwischen
+  Grundsätzen und Frage. Die Laufzeit hebt den Zustand vor jeder
+  Nachrichtenmarke auf; bleibt der Vorspann gleich, wird nur der wechselnde
+  Teil neu eingelesen.
+- **Gierig auf Wunsch** (`ModellFragen::gierig`): Die Konsole wählt für
+  diese eine Frage gierig statt gezogen und stellt danach die Einstellung
+  wieder her. Für Urteile, die gemessen und kalibriert werden; dieselbe
+  Frage gibt dieselbe Antwort.
+- **`myl fragen`**: je Zeile wahlweise `"vorspann"`, mit derselben Wirkung;
+  damit lässt sich ein Stapel mit und ohne Vorspann vergleichen (Urteile und
+  Zeit je Frage).
+- Belege: Tests `myl-module` 20, `myl-console` 162 und 7, `myl fragen` mit
+  Vorspann; Clippy ohne Warnung.
+- **Gemessen** (2026-10-08, `myelith-35b-a3b`, 30 Fragen einer Stichprobe
+  aus einer festen Probe, gierig, Median ohne die erste Frage): bisher 19,5 s
+  je Frage; mit der neuen Laufzeit und unverändertem Aufbau 13,4 s, die
+  Antworten in allen 30 Fällen gleich den früheren; mit festem Vorspann
+  10,1 s, aber 6 von 30 Antworten mit anderem Urteil. ⚑ Ein Vorspann
+  verändert also, was das Modell antwortet: Wer ihn einführt, prüft vorher
+  an einer Stichprobe, ob die Antworten gleich bleiben. Das ternäre 35B
+  (`myelith-35b-a3b-ternaer`) braucht mit Vorspann 4,5 s, urteilt aber in 8
+  von 30 Fällen anders als das int8-Artefakt. Acht Fachfragen (Rechnung
+  mit Währungsumrechnung, Zinsentscheid, Angebotsschock, Optionskennzahl,
+  Kelly-Kriterium u. a.), gierig: int8 durchweg fachlich richtig; ternär mit
+  Rechenfehlern, Wiederholungsschleifen und drei Antworten, die nach
+  `<think>` enden.
+
+### v0.131.1 (2026-10-08): ein Modul bleibt auch nach dem zweiten Neustart aktiv
+
+`myl-console` 0.43.1.
+
+- **Fund:** Ändert sich die Signatur eines laufenden Moduls, startet die
+  Konsole es neu und schickt die letzte Aktivierung (den Befehl, mit dem
+  sein Modus betreten wurde) noch einmal. Die neue Fassung übernahm sie
+  aber nicht: Beim Betreten des Modus merkte sie sich den letzten Befehl
+  **des Menschen**, und den gab es für sie nicht. Der erste Neustart lief
+  deshalb, der zweite fand keine Aktivierung mehr, und das Modul stand
+  untätig im Modus, ohne Takt und ohne Fehlermeldung.
+- **Behoben** (`module.rs`, `sitzung.rs`): Der Neustart trägt die
+  Aktivierung als letzten Befehl der neuen Fassung ein, und das Betreten
+  des Modus behält eine vorhandene Aktivierung, wenn kein neuer Befehl
+  vorliegt.
+- Belege: 162 und 7 Tests, Clippy ohne Warnung. Im Lauf geprüft am
+  2026-10-08 um 12:14 UTC: zwei Neustarts hintereinander (unverändert neu
+  signiert), beide Male hat sich das Modul nach 2 und 3 Sekunden selbst
+  wieder aktiviert und danach weitergearbeitet. Mit 0.43.0 blieb es beim
+  zweiten Neustart untätig.
 
 ### v0.131.0 (2026-10-08): Module in der Konsole
 

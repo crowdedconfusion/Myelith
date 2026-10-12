@@ -249,10 +249,18 @@ pub struct Fortsetzung {
     /// **Vor welchem Token der Zustand aufgehoben wird**, bei Modellen mit
     /// rekurrenten Ebenen (siehe [`Fortsetzung::merkmarke_setzen`]).
     pub(crate) merkmarke: Option<usize>,
-    /// **Der aufgehobene rekurrente Zustand und die Zahl der Token, nach
-    /// denen er genommen wurde.** Gueltig, solange die ersten so vielen
-    /// Token in `token` unveraendert stehen.
-    pub(crate) merkpunkt: Option<(usize, crate::zustandsspeicher::Zustandsspeicher)>,
+    /// **Die aufgehobenen rekurrenten Zustaende und die Zahl der Token,
+    /// nach denen sie genommen wurden**, aufsteigend, hoechstens
+    /// [`MERKPUNKTE`]. Jeder gilt, solange die ersten so vielen Token in
+    /// `token` unveraendert stehen.
+    ///
+    /// ⚑ **Mehrere statt einem** (2026-10-08): Ein Merkpunkt vor der letzten
+    /// Marke traegt einen Chatverlauf, der nur hinten waechst. Wechseln sich
+    /// Fragen mit gleichem Anfang und verschiedenem Ende ab (Systemprompt,
+    /// fester Fragetext, wechselnder Teil), weicht die naechste Frage vor der
+    /// letzten Marke ab, und der Speicher fiel auf null. Mit einem Merkpunkt
+    /// vor jeder Marke bleibt der laengste gemeinsame Anfang stehen.
+    pub(crate) merkpunkte: Vec<(usize, crate::zustandsspeicher::Zustandsspeicher)>,
     /// **Woher Vermutungen fuer die naechsten Token kommen**, siehe
     /// [`crate::lookahead`]. Aendert die Geschwindigkeit, nie die Ausgabe.
     pub(crate) vorschlag: crate::lookahead::Vorschlagsquelle,
@@ -283,7 +291,7 @@ impl Fortsetzung {
             token: Vec::new(),
             cache: KVCache::new(model.num_layers, model.num_kv_heads),
             merkmarke: None,
-            merkpunkt: None,
+            merkpunkte: Vec::new(),
             vorschlag: crate::lookahead::Vorschlagsquelle::Aus,
         }
     }
@@ -326,12 +334,19 @@ impl Fortsetzung {
         //   Zustand; der Rueckgabewert kann deshalb hier entfallen.
         let _ = self.cache.kuerzen(0);
         self.token.clear();
-        self.merkpunkt = None;
+        self.merkpunkte.clear();
     }
 
-    /// Hebt den rekurrenten Zustand nach den ersten `n` Token auf.
+    /// Hebt den rekurrenten Zustand nach den ersten `n` Token auf; die
+    /// aeltesten fallen heraus, wenn es mehr als [`MERKPUNKTE`] werden.
     fn merken(&mut self, n: usize) {
-        self.merkpunkt = self.cache.zustand_kopie().map(|z| (n, z));
+        if let Some(z) = self.cache.zustand_kopie() {
+            self.merkpunkte.retain(|(p, _)| *p < n);
+            self.merkpunkte.push((n, z));
+            if self.merkpunkte.len() > MERKPUNKTE {
+                self.merkpunkte.remove(0);
+            }
+        }
     }
 
     /// **Kuerzt auf hoechstens `gewuenscht` Token und gibt zurueck, wie
@@ -340,7 +355,8 @@ impl Fortsetzung {
     /// ⚑ **Mit rekurrentem Zustand drei Faelle** (2026-09-28):
     /// 1. Es ist nichts zu kuerzen: Der Zustand steht genau bei
     ///    `gewuenscht`, alles bleibt.
-    /// 2. Ein Merkpunkt liegt bei hoechstens `gewuenscht`: zurueck auf ihn.
+    /// 2. Ein Merkpunkt liegt bei hoechstens `gewuenscht`: zurueck auf den
+    ///    spaetesten solchen; die dahinter gelten nicht mehr.
     /// 3. Sonst null, wie vor dem Merkpunkt.
     ///
     /// 📌 **Die Position zaehlt hier und nicht im Zustandsspeicher.** Ein
@@ -355,23 +371,26 @@ impl Fortsetzung {
             // Der Zustand steht genau hier; der KV-Speicher ebenso.
             gewuenscht
         } else {
-            match self.merkpunkt.as_ref() {
-                Some((p, z)) if *p <= gewuenscht && *p <= self.token.len() => {
-                    let p = *p;
-                    self.cache.zurueck_auf(p, z);
+            let grenze = gewuenscht.min(self.token.len());
+            match self.merkpunkte.iter().rposition(|(p, _)| *p <= grenze) {
+                Some(i) => {
+                    let p = self.merkpunkte[i].0;
+                    self.cache.zurueck_auf(p, &self.merkpunkte[i].1);
                     p
                 }
-                _ => self.cache.kuerzen(0),
+                None => self.cache.kuerzen(0),
             }
         };
-        if gemeinsam == 0 {
-            // Eine neue Folge beginnt ohne den Merkpunkt der alten.
-            self.merkpunkt = None;
-        }
+        // Merkpunkte hinter dem gemeinsamen Anfang gehoeren zur alten Folge.
+        self.merkpunkte.retain(|(p, _)| *p <= gemeinsam);
         self.token.truncate(gemeinsam);
         gemeinsam
     }
 }
+
+/// So viele Merkpunkte haelt ein Speicher hoechstens (je einer kostet eine
+/// Kopie des rekurrenten Zustands).
+pub const MERKPUNKTE: usize = 4;
 
 /// Laenge des gemeinsamen Anfangs zweier Tokenfolgen.
 fn gemeinsamer_anfang(a: &[usize], b: &[usize]) -> usize {
@@ -428,29 +447,35 @@ pub fn dekodieren_fortgesetzt(
     //   `die_gebuendelten_logits_sind_die_tokenweisen`). Die Logits am Ende
     //   des ersten Stuecks liest niemand.
     let rekurrent = model.layers.iter().any(|l| l.ist_rekurrent());
-    let merkstelle = speicher
-        .merkmarke
-        .filter(|_| rekurrent)
-        .and_then(|m| token_ids.iter().rposition(|&t| t == m))
-        .filter(|&q| q > gemeinsam && q < token_ids.len());
+    // Vor jeder Marke hinter dem gemeinsamen Anfang ein Merkpunkt (die
+    // letzten [`MERKPUNKTE`] davon).
+    let mut merkstellen: Vec<usize> = match speicher.merkmarke.filter(|_| rekurrent) {
+        Some(m) => token_ids.iter().enumerate().filter(|(q, &t)| t == m && *q > gemeinsam).map(|(q, _)| q).collect(),
+        None => Vec::new(),
+    };
+    if merkstellen.len() > MERKPUNKTE {
+        merkstellen.drain(..merkstellen.len() - MERKPUNKTE);
+    }
     // ⚑ **Auch die Vorbereitung haelt am Abbruchschalter**, zwischen zwei
     //   Fenstern (siehe `prompt_vorbereiten_unterbrechbar`). Angehalten
     //   steht im Speicher, was gerechnet ist, und nichts wird erzeugt.
-    let vorbereitet = match merkstelle {
-        Some(q) => model
-            .prompt_vorbereiten_unterbrechbar(&token_ids[..q], gemeinsam, &mut speicher.cache, abbruch)
-            .and_then(|_| {
-                speicher.merken(q);
-                model.prompt_vorbereiten_unterbrechbar(token_ids, q, &mut speicher.cache, abbruch)
-            }),
-        None => model
-            .prompt_vorbereiten_unterbrechbar(token_ids, gemeinsam, &mut speicher.cache, abbruch)
-            .inspect(|_| {
-                if rekurrent {
-                    speicher.merken(token_ids.len());
-                }
-            }),
-    };
+    let mut ab = gemeinsam;
+    let mut vorbereitet = Ok(Vec::new());
+    for &q in &merkstellen {
+        vorbereitet = model.prompt_vorbereiten_unterbrechbar(&token_ids[..q], ab, &mut speicher.cache, abbruch);
+        if vorbereitet.is_err() {
+            break;
+        }
+        speicher.merken(q);
+        ab = q;
+    }
+    if vorbereitet.is_ok() {
+        vorbereitet = model.prompt_vorbereiten_unterbrechbar(token_ids, ab, &mut speicher.cache, abbruch).inspect(|_| {
+            if rekurrent && merkstellen.is_empty() {
+                speicher.merken(token_ids.len());
+            }
+        });
+    }
     let mut logits = match vorbereitet {
         Ok(l) => l,
         Err(gerechnet) => {

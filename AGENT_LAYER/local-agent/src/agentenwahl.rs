@@ -153,25 +153,25 @@ impl Default for Agenteneinstellung {
     }
 }
 
-/// **Die Grenzen eines Loops**, also eines Vorhabens, das der Dienst in
-/// Runden fuehrt (`crate::vorhaben`).
+/// **Die Einstellungen eines Loops**, also eines Vorhabens, das der Dienst
+/// in Runden fuehrt (`crate::vorhaben`).
 ///
-/// ⚑ **Grenzen im Code, nicht Bitten im Prompt.** Ein Vorhaben endet
-/// spaetestens an einer dieser Zahlen, gleich was das Modell meint;
-/// dieselbe Haltung wie bei `agent.schritte`.
+/// ⚑ **Keine Grenze, die einen Loop beendet** (Festlegung des
+/// Projektinhabers, 2026-10-12). Ein Loop endet, wenn der Mensch ihn
+/// anhaelt, wenn er das Ergebnis bestaetigt oder wenn Fenster oder Konsole
+/// schliessen; dann ist er angehalten und laesst sich fortsetzen. Was hier
+/// steht, formt eine **Runde** und nicht den Loop.
+///
+/// 📌 **Bis CLIENT v0.132.0 standen hier drei Grenzen**: `runden` (50),
+/// `stunden` (24) und `stillstand` (3 Runden ohne Fortschritt), und an
+/// jeder hielt ein Vorhaben an, gleich wie weit es war. Alte
+/// Einstellungsdateien tragen sie noch; sie werden beim Lesen uebergangen,
+/// denn dieser Typ lehnt unbekannte Felder nicht ab.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Loopeinstellung {
-    /// Hoechstzahl an Runden je Vorhaben.
-    pub runden: u32,
-    /// Hoechstdauer eines Vorhabens in Stunden. ⚑ Gezaehlt wird nur die
-    /// Zeit, in der Fenster oder Konsole offen sind (Festlegung des
-    /// Projektinhabers: Schliessen haelt an, Oeffnen macht weiter).
-    pub stunden: u32,
-    /// Werkzeugaufrufe je Runde.
+    /// Werkzeugaufrufe je Runde. ⚑ **Eine Runde, die hier endet, beendet
+    /// den Loop nicht**: Die naechste setzt fort.
     pub schritte: u32,
-    /// Nach so vielen Runden ohne Fortschritt haelt das Vorhaben an und
-    /// fragt nach.
-    pub stillstand: u32,
     /// Nach jeder Runde ein zweiter Durchgang, der Fortschritt und Ziel
     /// prueft (Nutzereinstellung, Wunsch des Projektinhabers).
     pub pruefen: bool,
@@ -179,7 +179,7 @@ pub struct Loopeinstellung {
 
 impl Default for Loopeinstellung {
     fn default() -> Self {
-        Self { runden: 50, stunden: 24, schritte: 12, stillstand: 3, pruefen: true }
+        Self { schritte: 12, pruefen: true }
     }
 }
 

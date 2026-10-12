@@ -256,7 +256,56 @@ struct Lage {
     gestellt: bool,
     /// Die Antwort, sobald eine Taste kam.
     antwort: Option<bool>,
+    /// ⚑ **Wer getippte Befehle beantwortet**, gesetzt vom Aufrufer
+    /// ([`Anzeige::befehle_zulassen`]). Ohne ihn gibt es eine Antwort, die
+    /// sagt, dass waehrend dieses Laufs kein Befehl geht.
+    befehle: Option<Arc<Befehlsgriff>>,
+    /// **Was in der Eingabezeile steht**, waehrend der Lauf laeuft
+    /// (Wunsch des Projektinhabers, 2026-10-12: der Wagen bleibt in der
+    /// Eingabezeile, und Befehle gehen jederzeit).
+    getippt: String,
+    /// Die Frage vor `auto` ist offen (Umschalt-Tab im Lauf).
+    modusfrage: bool,
+    /// Ob sie schon dasteht.
+    modusfrage_gestellt: bool,
+    /// Die Saetze der Sicherheitsmeldung vor `auto`, und wer danach die
+    /// Fusszeile zeichnet; ohne beides schaltet Umschalt-Tab hier nichts.
+    moduswechsel: Option<(Vec<String>, Arc<Modushaken>)>,
 }
+
+/// **Ob gerade `auto` gilt**, prozessweit und waehrend eines Laufs
+/// umschaltbar (Umschalt-Tab, Wunsch des Projektinhabers, 2026-10-12).
+///
+/// ⚑ **Die Nachfrage im `manual mode` liest ihn bei jeder Handlung**, nicht
+/// beim Start des Laufs: So gilt ein Wechsel sofort, auch mitten in einer
+/// Runde. Die Konsole setzt ihn vor jedem Lauf aus ihrem Stand und liest
+/// ihn danach zurueck.
+static AUTO: AtomicBool = AtomicBool::new(false);
+
+/// Gilt gerade `auto`?
+pub fn auto_an() -> bool {
+    AUTO.load(Ordering::SeqCst)
+}
+
+/// Setzt den Modus fuer die Nachfrage.
+pub fn auto_setzen(an: bool) {
+    AUTO.store(an, Ordering::SeqCst);
+}
+
+/// Wer nach einem Moduswechsel die Fusszeile neu zeichnet; bekommt `true`
+/// fuer `auto`.
+pub type Modushaken = dyn Fn(bool) + Send + Sync;
+
+/// **Was ein getippter Befehl waehrend eines Laufs bewirkt.**
+pub enum Befehlsfolge {
+    /// Den Lauf anhalten, wie ein bestaetigtes Esc (`/stop loop`).
+    Anhalten,
+    /// Zeilen in die Zeitleiste, und der Lauf geht weiter.
+    Zeilen(Vec<String>),
+}
+
+/// Wer einen getippten Befehl beantwortet; er bekommt die ganze Zeile.
+pub type Befehlsgriff = dyn Fn(&str) -> Befehlsfolge + Send + Sync;
 
 impl Lage {
     /// Ein neuer Spruch, und **nie derselbe zweimal**.
@@ -340,6 +389,11 @@ impl Anzeige {
             frage: None,
             gestellt: false,
             antwort: None,
+            befehle: None,
+            getippt: String::new(),
+            modusfrage: false,
+            modusfrage_gestellt: false,
+            moduswechsel: None,
         };
         anfangslage.neuer_spruch();
 
@@ -352,12 +406,40 @@ impl Anzeige {
         if am_schirm {
             crate::schimmer::los();
         }
+        // ⚑ **Der Wagen bleibt in der Eingabezeile** (Wunsch des
+        //   Projektinhabers, 2026-10-12). Das Terminal hat nur einen, und
+        //   der muss dort stehen, wo die Ausgabe hinschreibt; deshalb wird
+        //   er versteckt, und in der Eingabezeile steht ein gezeichneter.
+        if let Some(sch) = schirm {
+            crate::schirm::wagen_verstecken();
+            crate::schirm::einfuegen_geklammert(true);
+            tippzeile_zeichnen(&sch, bild, "");
+        }
         let faden = am_schirm.then(|| {
             let lage = Arc::clone(&lage);
             let laeuft = Arc::clone(&laeuft);
             std::thread::spawn(move || takten(lage, laeuft, schirm, bild, zaehler, halt))
         });
         Self { lage, laeuft, faden, am_schirm }
+    }
+
+    /// **Umschalt-Tab wechselt den Modus auch waehrend des Laufs.** Vor
+    /// `auto` stehen die Saetze der Sicherheitsmeldung (`warnung`) und eine
+    /// Ja-Nein-Frage; zurueck nach `manual` geht ohne Frage. `haken`
+    /// zeichnet danach die Fusszeile.
+    pub fn moduswechsel_zulassen(&self, warnung: Vec<String>, haken: Arc<Modushaken>) {
+        if let Ok(mut l) = self.lage.lock() {
+            l.moduswechsel = Some((warnung, haken));
+        }
+    }
+
+    /// **Wer getippte Befehle beantwortet**, solange der Lauf laeuft.
+    /// Getippt wird in jedem Lauf in die Eingabezeile; Eingabe schickt die
+    /// Zeile an `griff`, und dessen [`Befehlsfolge`] gilt.
+    pub fn befehle_zulassen(&self, griff: Arc<Befehlsgriff>) {
+        if let Ok(mut l) = self.lage.lock() {
+            l.befehle = Some(griff);
+        }
     }
 
     /// Ein neuer Schritt: neuer Spruch, neue Scheibe, und gedacht wird
@@ -498,6 +580,8 @@ impl Anzeige {
             let mut aus = std::io::stdout();
             let _ = write!(aus, "\r\x1b[2K");
             let _ = aus.flush();
+            crate::schirm::wagen_zeigen();
+            crate::schirm::einfuegen_geklammert(false);
         }
         let l = self.lage.lock();
         match l {
@@ -537,6 +621,22 @@ fn takten(
         // Millisekunden auf eine Sperre, die ohnehin nur wartet.
         if event::poll(TAKT).unwrap_or(false) {
             match event::read() {
+                // ⚑ **Eingefuegt heisst nicht abgeschickt**, auch im Lauf;
+                //   solange eine Frage offen ist, wird nichts eingefuegt.
+                Ok(Event::Paste(text)) => {
+                    let ohne_frage = lage.lock().is_ok_and(|l| {
+                        !l.abbruchfrage && l.notausfrage.is_none() && !l.modusfrage && l.frage.is_none()
+                    });
+                    if ohne_frage {
+                        let neu = lage.lock().ok().map(|mut l| {
+                            l.getippt.push_str(&crate::eingabe::einfuegetext(&text));
+                            l.getippt.clone()
+                        });
+                        if let (Some(sch), Some(t)) = (schirm, neu) {
+                            tippzeile_zeichnen(&sch, bild, &t);
+                        }
+                    }
+                }
                 Ok(Event::Key(k)) if k.kind == KeyEventKind::Press => {
                     // ⚑ **Eine offene Abbruchfrage geht allem vor**
                     // (Auftrag des Projektinhabers, 2026-09-15): Solange
@@ -549,12 +649,14 @@ fn takten(
                                 abbrechen(schirm);
                             }
                             abbruchfrage_weg(&lage);
+                            wagen_zurueck(&lage, schirm, bild);
                         }
                     } else if let Some(vorgabe) = offene_notausfrage(&lage) {
                         // ⛔️ **Die Antwort auf den Notaus.** Ein zweites
                         //   Strg-C heisst ja, wie man es gewohnt ist.
                         if let Some(ja) = notausantwort(k.code, strg, vorgabe) {
                             notausfrage_weg(&lage);
+                            wagen_zurueck(&lage, schirm, bild);
                             if ja {
                                 // Eine offene Vorlage gilt als abgelehnt,
                                 // sonst wartete der Lauf auf sie.
@@ -562,6 +664,11 @@ fn takten(
                                 halt();
                                 haltezeile(&lage);
                             }
+                        }
+                    } else if offene_modusfrage(&lage) {
+                        if let Some(a) = crate::janein::taste(k.code, strg, Some(false)) {
+                            modusfrage_beantworten(&lage, a.ja());
+                            wagen_zurueck(&lage, schirm, bild);
                         }
                     } else if strg {
                         match k.code {
@@ -576,6 +683,51 @@ fn takten(
                     } else if offene_frage(&lage) {
                         if let Some(ja) = als_antwort(k.code) {
                             beantworten(&lage, ja);
+                            wagen_zurueck(&lage, schirm, bild);
+                        }
+                    } else if k.code == KeyCode::BackTab {
+                        // ⚑ **Umschalt-Tab wechselt den Modus**, auch hier.
+                        modus_umschalten(&lage);
+                    } else if let Some(t) = getippte_taste(&lage, k.code) {
+                        // ⚑ **Jede Taste gehoert der Eingabezeile**, ausser
+                        //   Esc an einer leeren Zeile (der Notaus darunter).
+                        match t {
+                            Tipp::Geaendert(text) => {
+                                if let Some(sch) = schirm {
+                                    tippzeile_zeichnen(&sch, bild, &text);
+                                }
+                            }
+                            Tipp::Abgeschickt(zeile) => {
+                                if let Some(sch) = schirm {
+                                    tippzeile_zeichnen(&sch, bild, "");
+                                }
+                                // ⚑ **Getippt ist schon bestaetigt**: Wer
+                                //   `/stop loop` ausschreibt, hat sich
+                                //   entschieden. Der Griff laeuft ausserhalb
+                                //   der Sperre.
+                                let griff = lage.lock().ok().and_then(|l| l.befehle.clone());
+                                let folge = match griff {
+                                    Some(g) => g(&zeile),
+                                    None => Befehlsfolge::Zeilen(vec![format!(
+                                        "{zeile}: Während dieses Laufs geht kein Befehl; Esc hält ihn an."
+                                    )]),
+                                };
+                                match folge {
+                                    Befehlsfolge::Anhalten => {
+                                        halt();
+                                        haltezeile(&lage);
+                                    }
+                                    Befehlsfolge::Zeilen(zeilen) => {
+                                        if let Ok(mut l) = lage.lock() {
+                                            for z in zeilen {
+                                                let satz = format!("  · {z}");
+                                                l.offen.push(Zeitzeile { art: Art::Hinweis, kurz: Some(satz.clone()), voll: satz });
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            Tipp::Nichts => {}
                         }
                     } else if k.code == KeyCode::Esc {
                         // ⛔️ **Esc: Notaus, Vorgabe nein** (im Loop: die
@@ -628,6 +780,171 @@ fn haltezeile(lage: &Arc<Mutex<Lage>>) {
     if let Ok(mut l) = lage.lock() {
         l.offen.push(Zeitzeile { art: Art::Hinweis, kurz: Some("  · Esc: wird angehalten".into()), voll: "  · Esc: wird angehalten".into() });
     }
+}
+
+/// Der Befehl, der einen laufenden Loop anhaelt.
+pub const STOP_LOOP: &str = "/stop loop";
+
+/// Ist diese Zeile [`STOP_LOOP`]? Gross, klein und Leerraum zaehlen nicht.
+pub fn ist_stop_loop(zeile: &str) -> bool {
+    zeile.split_whitespace().collect::<Vec<_>>().join(" ").eq_ignore_ascii_case(STOP_LOOP)
+}
+
+/// Was eine Taste mit der Eingabezeile gemacht hat.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Tipp {
+    /// Die Taste gehoert nicht der Zeile (Esc an einer leeren Zeile, eine
+    /// Pfeiltaste); wer sie sonst braucht, nimmt sie.
+    Nichts,
+    /// Die Zeile hat jetzt diesen Text.
+    Geaendert(String),
+    /// Eingabe: diese Zeile ist abgeschickt, die Eingabezeile wieder leer.
+    Abgeschickt(String),
+}
+
+/// **Eine Taste fuer die Eingabezeile eines Laufs.** Zeichen und
+/// Ruecktaste bearbeiten sie, Esc leert sie, Eingabe schickt sie ab.
+///
+/// ⚑ **Rein**, damit sie sich ohne Terminal pruefen laesst; die Konsole
+/// nimmt sie in jedem Lauf und beim Warten zwischen zwei Runden.
+/// ⚑ **Esc an einer leeren Zeile gehoert nicht ihr**, sondern dem Notaus;
+/// eine leere Eingabe schickt nichts ab.
+pub fn tippen(puffer: &mut String, code: KeyCode) -> Tipp {
+    match code {
+        KeyCode::Char(c) => {
+            puffer.push(c);
+            Tipp::Geaendert(puffer.clone())
+        }
+        KeyCode::Backspace if !puffer.is_empty() => {
+            puffer.pop();
+            Tipp::Geaendert(puffer.clone())
+        }
+        KeyCode::Esc if !puffer.is_empty() => {
+            puffer.clear();
+            Tipp::Geaendert(String::new())
+        }
+        KeyCode::Enter if !puffer.trim().is_empty() => Tipp::Abgeschickt(std::mem::take(puffer).trim().to_string()),
+        _ => Tipp::Nichts,
+    }
+}
+
+/// Ist die Frage vor `auto` offen?
+fn offene_modusfrage(lage: &Arc<Mutex<Lage>>) -> bool {
+    lage.lock().is_ok_and(|l| l.modusfrage)
+}
+
+/// **Umschalt-Tab im Lauf.** Von `auto` nach `manual` sofort; nach `auto`
+/// erst die Sicherheitsmeldung und die Frage.
+fn modus_umschalten(lage: &Arc<Mutex<Lage>>) {
+    let Ok(mut l) = lage.lock() else { return };
+    let Some((warnung, haken)) = l.moduswechsel.clone() else {
+        let satz = "  · Den Modus wechselt Umschalt-Tab erst nach diesem Lauf.".to_string();
+        l.offen.push(Zeitzeile { art: Art::Hinweis, kurz: Some(satz.clone()), voll: satz });
+        return;
+    };
+    if auto_an() {
+        auto_setzen(false);
+        let satz = "  · manual mode: Jede Handlung mit Wirkung nach außen wird wieder vorgelegt.".to_string();
+        l.offen.push(Zeitzeile { art: Art::Hinweis, kurz: Some(satz.clone()), voll: satz });
+        drop(l);
+        haken(false);
+        return;
+    }
+    for w in warnung {
+        let satz = format!("  ⚠️  {w}");
+        l.offen.push(Zeitzeile { art: Art::Hinweis, kurz: Some(satz.clone()), voll: satz });
+    }
+    l.modusfrage = true;
+    l.modusfrage_gestellt = false;
+}
+
+/// Die Antwort auf die Frage vor `auto`.
+fn modusfrage_beantworten(lage: &Arc<Mutex<Lage>>, ja: bool) {
+    let haken = {
+        let Ok(mut l) = lage.lock() else { return };
+        l.modusfrage = false;
+        l.modusfrage_gestellt = false;
+        l.gestellt = false;
+        let satz = if ja {
+            "  · auto mode: Der Agent handelt ab jetzt ohne Rückfrage."
+        } else {
+            "  · Es bleibt beim manual mode."
+        }
+        .to_string();
+        l.offen.push(Zeitzeile { art: Art::Hinweis, kurz: Some(satz.clone()), voll: satz });
+        l.moduswechsel.as_ref().map(|(_, h)| Arc::clone(h))
+    };
+    if ja {
+        auto_setzen(true);
+        if let Some(h) = haken {
+            h(true);
+        }
+    }
+}
+
+/// **Nach einer Ja-Nein-Frage**: der Wagen wieder in die Eingabezeile,
+/// mit dem, was dort schon getippt war.
+fn wagen_zurueck(lage: &Arc<Mutex<Lage>>, schirm: Option<Schirm>, bild: myl_client::einstellungen::Konsolendesign) {
+    if let (Some(sch), Ok(l)) = (schirm, lage.lock()) {
+        tippzeile_zeichnen(&sch, bild, &l.getippt);
+    }
+}
+
+/// Gibt die Taste der Eingabezeile; `None`, wenn sie ihr nicht gehoert.
+fn getippte_taste(lage: &Arc<Mutex<Lage>>, code: KeyCode) -> Option<Tipp> {
+    let mut l = lage.lock().ok()?;
+    match tippen(&mut l.getippt, code) {
+        Tipp::Nichts => None,
+        t => Some(t),
+    }
+}
+
+/// **Zeichnet die Eingabezeile eines Laufs**, samt gezeichnetem Wagen, und
+/// laesst den echten dort, wo die Ausgabe weiterschreibt.
+///
+/// ⚑ **Der Wagen ist eine umgekehrt gesetzte Stelle hinter dem Text.** Der
+/// echte ist versteckt ([`crate::schirm::wagen_verstecken`]), denn er muss
+/// im Rollbereich stehen, wo die Antwort entsteht.
+pub fn tippzeile_zeichnen(sch: &Schirm, bild: myl_client::einstellungen::Konsolendesign, text: &str) {
+    eingabezeile(sch, bild, text, true);
+}
+
+/// **Die Eingabezeile ohne Wagen**, solange eine Ja-Nein-Frage offen ist
+/// (Festlegung des Projektinhabers, 2026-10-12): Dann blinkt die Frage,
+/// und in der Eingabezeile wird nichts getippt.
+pub fn eingabezeile_ohne_wagen(sch: &Schirm, bild: myl_client::einstellungen::Konsolendesign) {
+    eingabezeile(sch, bild, "", false);
+}
+
+fn eingabezeile(sch: &Schirm, bild: myl_client::einstellungen::Konsolendesign, text: &str, wagen: bool) {
+    let r = Rahmen::messen();
+    let t = design::toene(bild);
+    let mut aus = std::io::stdout();
+    let _ = write!(
+        aus,
+        "\x1b7{}{}{}│{}{}{}│{}\x1b8",
+        sch.zeile(Schirm::KASTEN + 1),
+        crossterm::style::SetForegroundColor(t.kante),
+        r.einzug,
+        crossterm::style::ResetColor,
+        eingabeinnen(r.innen, text, wagen),
+        crossterm::style::SetForegroundColor(t.kante),
+        crossterm::style::ResetColor
+    );
+    let _ = aus.flush();
+}
+
+/// **Was zwischen den beiden Strichen der Eingabezeile steht**, genau
+/// `innen` Spalten breit: ein Leerzeichen, das Ende des Textes, der Wagen
+/// (umgekehrt gesetzt) oder ein Leerzeichen, die Luft.
+///
+/// 📌 Hier stand die Luft als `innen - (Text + 3)`, und die Zeile war eine
+/// Spalte zu schmal: Der rechte Strich stand links von den Ecken darueber
+/// und darunter (gemeldet vom Projektinhaber am 2026-10-12, mit einem Bild).
+pub fn eingabeinnen(innen: usize, text: &str, wagen: bool) -> String {
+    let sicht = crate::eingabe::sichtbar(text, innen.saturating_sub(3));
+    let luft = innen.saturating_sub(sicht.chars().count() + 2);
+    format!(" {sicht}{}{}", if wagen { "\x1b[7m \x1b[27m" } else { " " }, " ".repeat(luft))
 }
 
 /// Die offene Notausfrage und ihre Vorgabe.
@@ -761,12 +1078,28 @@ fn zeichnen(
         if !l.notaus_gestellt {
             l.notaus_gestellt = true;
             let wahl = if vorgabe { "[J/n]" } else { "[j/N]" };
+            if let Some(sch) = schirm {
+                eingabezeile_ohne_wagen(&sch, bild);
+            }
             let _ = write!(
                 aus,
-                "\r\x1b[2K{}  Notaus: anhalten? {wahl}{}",
-                crossterm::style::SetForegroundColor(design::toene(bild).beiwerk),
-                crossterm::style::ResetColor
+                "\r\x1b[2K  {}",
+                crate::janein::hervor(&format!("Notaus: anhalten? {wahl}"), Some(bild))
             );
+            let _ = aus.flush();
+        }
+        return;
+    }
+
+    // ⚑ **Die Frage vor `auto`** (Umschalt-Tab im Lauf): blinkend, wie
+    //   jede Ja-Nein-Frage, und die Eingabezeile ohne Wagen.
+    if l.modusfrage {
+        if !l.modusfrage_gestellt {
+            l.modusfrage_gestellt = true;
+            if let Some(sch) = schirm {
+                eingabezeile_ohne_wagen(&sch, bild);
+            }
+            let _ = write!(aus, "\r\x1b[2K  {}", crate::janein::hervor("Auf auto stellen? [j/N]", Some(bild)));
             let _ = aus.flush();
         }
         return;
@@ -778,11 +1111,13 @@ fn zeichnen(
     if l.abbruchfrage && l.frage.is_none() {
         if !l.abbruch_gestellt {
             l.abbruch_gestellt = true;
+            if let Some(sch) = schirm {
+                eingabezeile_ohne_wagen(&sch, bild);
+            }
             let _ = write!(
                 aus,
-                "\r\x1b[2K{}  Wirklich beenden? [Eingabe] ja   [n] weiter{}",
-                crossterm::style::SetForegroundColor(design::toene(bild).beiwerk),
-                crossterm::style::ResetColor
+                "\r\x1b[2K  {}",
+                crate::janein::hervor("Wirklich beenden? [J/n]", Some(bild))
             );
             let _ = aus.flush();
         }
@@ -799,11 +1134,13 @@ fn zeichnen(
         // warten duerfen.**
         if !l.gestellt {
             l.gestellt = true;
+            if let Some(sch) = schirm {
+                eingabezeile_ohne_wagen(&sch, bild);
+            }
             let _ = write!(
                 aus,
-                "\r\x1b[2K{f}\r\n\r\x1b[2K{}  ausfuehren? [j] ja   [n] nein{}",
-                crossterm::style::SetForegroundColor(design::toene(bild).beiwerk),
-                crossterm::style::ResetColor
+                "\r\x1b[2K{f}\r\n\r\x1b[2K  {}",
+                crate::janein::hervor("ausfuehren? [J/n]", Some(bild))
             );
             let _ = aus.flush();
         }
@@ -1090,6 +1427,11 @@ mod tests {
             frage: None,
             gestellt: false,
             antwort: None,
+            befehle: None,
+            getippt: String::new(),
+            modusfrage: false,
+            modusfrage_gestellt: false,
+            moduswechsel: None,
         };
         for _ in 0..200 {
             let vorher = l.spruch;
@@ -1120,6 +1462,11 @@ mod tests {
             frage: None,
             gestellt: false,
             antwort: None,
+            befehle: None,
+            getippt: String::new(),
+            modusfrage: false,
+            modusfrage_gestellt: false,
+            moduswechsel: None,
         };
         let mut gesehen = std::collections::BTreeSet::new();
         for _ in 0..500 {
@@ -1267,6 +1614,97 @@ mod abbruchprobe {
         assert_eq!(notausantwort(KeyCode::Esc, false, true), Some(false));
         assert_eq!(notausantwort(KeyCode::Char('x'), false, true), None);
         assert_eq!(notausantwort(KeyCode::Char('s'), true, true), None, "Strg-S antwortet nicht");
+    }
+
+    /// 📌 **Die Eingabezeile ist genau so breit wie der Rahmen**, mit und
+    /// ohne Wagen, leer und mit zu langem Text (Bild des Projektinhabers,
+    /// 2026-10-12: der rechte Strich stand eine Spalte zu weit links).
+    #[test]
+    fn die_eingabezeile_fuellt_den_rahmen() {
+        use super::eingabeinnen;
+        let sichtbar = |s: &str| s.replace("\x1b[7m", "").replace("\x1b[27m", "").chars().count();
+        for innen in [26usize, 40, 76] {
+            for text in ["", "/stop loop", &"x".repeat(200)] {
+                for wagen in [true, false] {
+                    assert_eq!(sichtbar(&eingabeinnen(innen, text, wagen)), innen, "innen {innen}, Text {}, Wagen {wagen}", text.len());
+                }
+            }
+        }
+    }
+
+    /// ⚑ **Umschalt-Tab im Lauf** (2026-10-12): nach `auto` erst die
+    /// Sicherheitsmeldung und die Frage, ein Nein aendert nichts, ein Ja
+    /// schaltet und zeichnet die Fusszeile; zurueck nach `manual` ohne Frage.
+    #[test]
+    fn umschalt_tab_im_lauf() {
+        use super::{auto_an, auto_setzen, modus_umschalten, modusfrage_beantworten, offene_modusfrage, Lage, SPRUECHE};
+        use std::sync::{Arc, Mutex};
+        use std::time::Instant;
+        let gezeichnet = Arc::new(Mutex::new(Vec::new()));
+        let g = Arc::clone(&gezeichnet);
+        let mut l = Lage {
+            was: String::new(),
+            spruch: SPRUECHE[0],
+            rad: 0,
+            anfang: Instant::now(),
+            offen: Vec::new(),
+            gezaehlt: 0,
+            details: false,
+            strom: Vec::new(),
+            zuletzt: None,
+            strom_offen: false,
+            saat: 1,
+            abbruchfrage: false,
+            abbruch_gestellt: false,
+            notausfrage: None,
+            notaus_gestellt: false,
+            frage: None,
+            gestellt: false,
+            antwort: None,
+            befehle: None,
+            getippt: String::new(),
+            modusfrage: false,
+            modusfrage_gestellt: false,
+            moduswechsel: None,
+        };
+        l.moduswechsel = Some((vec!["Achtung: auto mode".into()], Arc::new(move |an: bool| g.lock().unwrap().push(an))));
+        let lage = Arc::new(Mutex::new(l));
+        auto_setzen(false);
+        modus_umschalten(&lage);
+        assert!(offene_modusfrage(&lage) && !auto_an(), "vor auto kommt die Frage");
+        assert!(lage.lock().unwrap().offen.iter().any(|z| z.voll.contains("Achtung: auto mode")), "die Sicherheitsmeldung fehlt");
+        modusfrage_beantworten(&lage, false);
+        assert!(!auto_an() && !offene_modusfrage(&lage), "ein Nein schaltet nicht");
+        modus_umschalten(&lage);
+        modusfrage_beantworten(&lage, true);
+        assert!(auto_an(), "ein Ja schaltet");
+        modus_umschalten(&lage);
+        assert!(!auto_an() && !offene_modusfrage(&lage), "zurueck nach manual ohne Frage");
+        assert_eq!(*gezeichnet.lock().unwrap(), vec![true, false], "die Fusszeile folgt dem Modus");
+    }
+
+    /// ⚑ **Die Eingabezeile eines Laufs** (2026-10-12): Zeichen und
+    /// Ruecktaste bearbeiten, Esc leert, Eingabe schickt ab; Esc an der
+    /// leeren Zeile und eine leere Eingabe gehoeren ihr nicht.
+    #[test]
+    fn die_eingabezeile_eines_laufs() {
+        use super::{ist_stop_loop, tippen, Tipp};
+        use crossterm::event::KeyCode;
+        let mut p = String::new();
+        assert_eq!(tippen(&mut p, KeyCode::Esc), Tipp::Nichts, "Esc an der leeren Zeile ist der Notaus");
+        assert_eq!(tippen(&mut p, KeyCode::Enter), Tipp::Nichts, "leer wird nichts abgeschickt");
+        for c in "/stop  loopx".chars() {
+            tippen(&mut p, KeyCode::Char(c));
+        }
+        assert_eq!(tippen(&mut p, KeyCode::Backspace), Tipp::Geaendert("/stop  loop".into()));
+        let Tipp::Abgeschickt(zeile) = tippen(&mut p, KeyCode::Enter) else { panic!("nicht abgeschickt") };
+        assert!(ist_stop_loop(&zeile), "{zeile}");
+        assert!(p.is_empty(), "nach der Eingabe ist die Zeile leer");
+        tippen(&mut p, KeyCode::Char('a'));
+        assert_eq!(tippen(&mut p, KeyCode::Esc), Tipp::Geaendert(String::new()), "Esc leert erst die Zeile");
+        assert!(ist_stop_loop(" /STOP LOOP "));
+        assert!(!ist_stop_loop("/stop"));
+        assert!(!ist_stop_loop("/stop loops"));
     }
 
     /// ⛔️ **Die Abbruchfrage und die Vorlage im `manual mode` sind zwei

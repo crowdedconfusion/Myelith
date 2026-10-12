@@ -12,6 +12,10 @@ Legt im Laufordner an:
 
 Die Frist ist hart: Danach bekommt `myl loop` ein SIGINT (geordnetes Schliessen,
 der Stand bleibt), eine Minute spaeter ein SIGKILL.
+
+Ein Loop hat keine Hoechstzahl an Runden und keine Hoechstdauer mehr; ein Task
+endet hier, sobald er sein Ergebnis vorlegt (ohne Menschen bestaetigt es
+niemand), sonst endet der Lauf an der Frist.
 """
 import json
 import os
@@ -39,7 +43,6 @@ def main(args):
     artefakt = os.path.abspath(args[0])
     lauf = os.path.abspath(args[1])
     frist_min = zahl(args, "--frist-min", 180)
-    runden = zahl(args, "--runden", 10)
     schritte = zahl(args, "--schritte", 16)
     # ⚑ Immer mit Saat (Regel des Projektinhabers, 2026-09-29): genannt,
     #    oder hier gezogen. Sie steht in starter.log und lauf.json, damit
@@ -94,14 +97,11 @@ def main(args):
         # ⚠️ auto: Ohne Terminal kann niemand bestaetigen. Der Arbeitsordner
         #    ist eine Kopie, und die Einstellungen sind abgeschirmt.
         ("agent.modus", "auto"),
-        ("loop.runden", runden),
-        ("loop.stunden", max(1, (frist_min + 59) // 60)),
         ("loop.schritte", schritte),
-        ("loop.stillstand", 3),
         ("loop.pruefen", "an"),
     ]:
         setzen(feld, wert)
-    notiz(f"Einstellungen gesetzt: {runden} Runden, {schritte} Schritte, Frist {frist_min} min, Saat {saat}")
+    notiz(f"Einstellungen gesetzt: {schritte} Schritte je Runde, Frist {frist_min} min, Saat {saat}")
 
     with open(os.path.join(HIER, "aufgaben.json"), encoding="utf-8") as f:
         aufgaben = json.load(f)["aufgaben"]
@@ -124,7 +124,7 @@ def main(args):
     p = subprocess.Popen([MYL, "loop"], cwd=arbeit, env=umgebung, stdout=log, stderr=subprocess.STDOUT)
     with open(os.path.join(lauf, "lauf.json"), "w", encoding="utf-8") as f:
         json.dump({"start": start, "frist": frist, "artefakt": artefakt, "pid": p.pid, "saat": saat,
-                   "tasks": kennungen, "runden": runden, "schritte": schritte,
+                   "tasks": kennungen, "schritte": schritte,
                    "abnahme": "--ohne-abnahme" not in args}, f, indent=2)
     notiz(f"myl loop gestartet, Prozess {p.pid}")
 

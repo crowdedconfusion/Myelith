@@ -1651,7 +1651,7 @@ dependencies = [
 
 [[package]]
 name = "integer-llm-runtime"
-version = "0.86.0"
+version = "0.87.0"
 dependencies = [
  "integer-llm-kernels",
  "memmap2",
@@ -2509,7 +2509,7 @@ dependencies = [
 
 [[package]]
 name = "myl-local-agent"
-version = "0.23.0"
+version = "0.27.0"
 dependencies = [
  "libc",
  "myl-agent",

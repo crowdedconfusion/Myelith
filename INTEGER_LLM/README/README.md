@@ -1,6 +1,6 @@
 # integer-llm
 
-> **Version:** 0.119.0 (θ_v 0.22.0; kernels 0.80.0, runtime 0.86.0, pipeline 0.15.1)
+> **Version:** 0.120.0 (θ_v 0.22.0; kernels 0.80.0, runtime 0.87.0, pipeline 0.15.1)
 > **Datum:** 2026-10-05
 > **Status:** ⚠️ **Das Akzeptanzkriterium ruht auf einer zu kleinen
 > Stichprobe.** Gemessen wurde bisher ueber **4 Sequenzen, 435
@@ -648,6 +648,30 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
   volle Paritätstests nur auf GPU-Runnern (nightly oder PR-basiert)
 
 ## Changelog
+
+### v0.120.0 (2026-10-08): Merkpunkte vor jeder Marke (runtime 0.87.0)
+
+**Wiederverwendung bei Fragen mit gleichem Anfang und wechselndem Ende.**
+Bei Modellen mit rekurrenten Ebenen hob `Fortsetzung` den Zustand bisher
+an **einer** Stelle auf, vor der letzten Merkmarke (`<|im_start|>`). Das
+trägt einen Chatverlauf, der nur hinten wächst. Fragen dagegen, die einen
+gleichen Systemprompt, einen gleichen festen Teil und ein wechselndes Ende
+haben, weichen schon vor der letzten Marke ab; der Speicher fiel jedes Mal
+auf null, und der ganze Prompt wurde neu eingelesen.
+
+- `Fortsetzung::merkpunkte` (statt `merkpunkt`): ein Merkpunkt vor **jeder**
+  Marke hinter dem gemeinsamen Anfang, höchstens `MERKPUNKTE` (4), die
+  ältesten fallen heraus. `kuerzen` geht auf den spätesten Merkpunkt bis zum
+  gemeinsamen Anfang zurück; Merkpunkte dahinter verfallen.
+- Die Vorbereitung läuft dafür in so vielen Stücken, wie Marken folgen; ein
+  Stück oder mehrere rechnen dieselben Zahlen (die gebündelte Vorbereitung
+  ist Position für Position die tokenweise).
+- Belege: neue Probe `mehrere_merkpunkte_tragen_abwechselnde_fragen`
+  (Systemprompt, zwei Frage-Arten im Wechsel, Gemisch mit Zustandsebene):
+  wiederverwendet wird jeweils der längste gemeinsame Anfang, Token und
+  Zustand bitgleich mit einer frischen Rechnung. Gegenprobe mit einem
+  einzigen Merkpunkt rot. Die bisherigen Proben zur Fortsetzung bleiben
+  grün, ebenso die ganze Testreihe der Laufzeit; Clippy ohne Warnung.
 
 ### v0.119.0 – 2026-10-06 (das ternäre 35B trägt: datenabhängige Rundung mit Skalensuche; keine Kiste berührt)
 

@@ -267,14 +267,25 @@ pub fn fahren() -> i32 {
         sch.einrichten();
     }
 
-    // ⚑ **Lief der Loop beim Schliessen, laeuft er beim Oeffnen weiter**
-    //   (Festlegung des Projektinhabers: exakt dort, wo gestoppt).
-    if stand.modell.is_some() && myl_local_agent::vorhaben::Ablage::vorgabe().loop_war_aktiv() {
-        println!("  Der Loop lief beim Schließen und macht jetzt dort weiter. Esc oder Strg-C hält an (mit Frage).");
+    // ⚑ **Lief der Loop beim Schliessen, ist er jetzt angehalten**, und
+    //   weiter geht es nur auf Wunsch (Festlegung des Projektinhabers,
+    //   2026-10-12; bis dahin fuhr er von selbst weiter). Die Konsole endet
+    //   mit ihrem Terminal, ohne eine Zeile danach; deshalb geschieht das
+    //   Anhalten hier, beim naechsten Start.
+    let sprache = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())
+        .map(|e| e.oberflaeche.sprache)
+        .unwrap_or_default();
+    if let Some(v) = myl_local_agent::vorhaben::Ablage::vorgabe().nach_dem_schliessen(sprache) {
+        println!("  Der Loop „{}“ lief beim Schließen und ist angehalten. /resume loop setzt ihn fort.", v.anzeigename());
         println!();
-        loop_fahren(&mut stand, "");
+    }
+    if let Ok(e) = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad()) {
+        e.debug_anwenden("Konsole", "Konsole gestartet");
     }
     let ende = schleife(&mut stand);
+    // ⚑ **Das Ende steht im Debug-Log**, wenn er lief; die Einstellung
+    //   bleibt, und der naechste Start schreibt wieder „gestartet“.
+    myl_local_agent::debuglog::setzen(false, "Konsole", "Konsole beendet");
     // Module enden mit der Konsole.
     stand.module.alle_beenden();
 
@@ -822,7 +833,23 @@ fn schleife(stand: &mut Stand) -> i32 {
     // ⚑ **Was getippt war, bleibt**, wenn ein Modul fuer einen Takt die
     //   Eingabe unterbricht.
     let mut entwurf = String::new();
+    // ⚑ **Zwischenrufe**: Text, der waehrend eines Laufs getippt wird, geht
+    //   nach dem naechsten Schritt an das Modell (Wunsch des
+    //   Projektinhabers, 2026-10-12).
+    myl_local_agent::zwischenruf::annehmen(true);
     loop {
+        // ⚑ **Was nicht mehr ankam, steht wieder in der Eingabezeile**:
+        //   Endete der Lauf, bevor ein Zwischenruf an der Reihe war, geht
+        //   er nicht verloren und nicht still in den naechsten Lauf.
+        let liegen = myl_local_agent::zwischenruf::abholen();
+        if !liegen.is_empty() {
+            println!("  · Nicht mehr beim Modell angekommen; steht wieder in der Eingabezeile.");
+            println!();
+            if !entwurf.is_empty() {
+                entwurf.push(' ');
+            }
+            entwurf.push_str(&liegen.join(" "));
+        }
         // ⚑ **Vor jeder Eingabe neu gemessen.** Wer das Fenster zieht,
         // verschiebt den unteren Rand; ein Rahmen, der auf der alten
         // Hoehe stehenbleibt, steht mitten im Text.
@@ -830,6 +857,9 @@ fn schleife(stand: &mut Stand) -> i32 {
         // Wer sie nebenan mit `myl setzen` umlegt, sieht es hier.
         if let Ok(e) = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad()) {
             stand.schreibt = e.agent.schreiben;
+            // ⚑ Auch der Debug-Log folgt der Einstellung vor jeder Eingabe:
+            //   Wer ihn im Fenster umlegt, erreicht damit auch die Konsole.
+            e.debug_anwenden("Konsole", "Einstellung geändert");
         }
         let jetzt = Schirm::messen();
         if jetzt != stand.schirm {
@@ -876,7 +906,10 @@ fn schleife(stand: &mut Stand) -> i32 {
             sch.zurueck();
         }
         let zeile = match gelesen {
-            eingabe::Eingabe::Zeile(z) => z,
+            eingabe::Eingabe::Zeile(z) => {
+                myl_local_agent::debuglog::eintrag("Eingabe", &z);
+                z
+            }
             // ⚑ **Die Frist der Module**: ein Takt oder ein Weckruf, dann
             //   zurueck an die Zeile, mit dem, was schon dastand.
             eingabe::Eingabe::Frist(z) => {
@@ -976,9 +1009,24 @@ fn schleife(stand: &mut Stand) -> i32 {
                 skill_lernen(stand, &rest);
                 continue;
             }
-            Some(Befehlsart::Loop) => {
+            Some(Befehlsart::StartLoop) => {
                 let ziel = befehl_und_rest(&text).map(|(_, r)| r).unwrap_or("").to_string();
-                loop_fahren(stand, &ziel);
+                loop_starten(stand, &ziel);
+                continue;
+            }
+            Some(Befehlsart::StopLoop) => {
+                // ⚑ Hier laeuft kein Loop, sonst gehoerte die Eingabe ihm
+                //   (dort nimmt die Anzeige `/stop loop` an).
+                println!("  Es läuft gerade kein Loop. Während einer läuft, halten Esc, Strg-C oder /stop loop ihn an.");
+                println!();
+                continue;
+            }
+            Some(Befehlsart::ResumeLoop) => {
+                loop_fortsetzen(stand);
+                continue;
+            }
+            Some(art @ (Befehlsart::DebugAn | Befehlsart::DebugAus | Befehlsart::DebugStand)) => {
+                debug_befehl(art);
                 continue;
             }
             Some(Befehlsart::Vorhaben) => {
@@ -1105,8 +1153,19 @@ enum Befehlsart {
     Kontext,
     Verdichten,
     Neu,
-    /// Ein Vorhaben in Runden verfolgen; nimmt ein Ziel oder nichts.
-    Loop,
+    /// Einen Loop beginnen; nimmt ein Ziel oder fragt danach.
+    StartLoop,
+    /// Den laufenden Loop anhalten (waehrend er laeuft, nimmt die Anzeige
+    /// den Befehl an).
+    StopLoop,
+    /// Einen angehaltenen Loop aus einer Liste waehlen und fortsetzen.
+    ResumeLoop,
+    /// Den Debug-Log einschalten.
+    DebugAn,
+    /// Den Debug-Log ausschalten.
+    DebugAus,
+    /// Zeigt, ob der Debug-Log schreibt, und wohin.
+    DebugStand,
     /// Die Vorhaben zeigen, fortsetzen, anhalten.
     Vorhaben,
     /// Die Saat zeigen und setzen, fuer die naechste Aktion oder immer.
@@ -1133,7 +1192,7 @@ struct Befehl {
 /// nennt irgendwann einen Befehl, den es nicht gibt, oder verschweigt
 /// einen, den es gibt, **und beides sieht erst der, der es
 /// ausprobiert.**
-const BEFEHLE: [Befehl; 15] = [
+const BEFEHLE: [Befehl; 20] = [
     Befehl {
         art: Befehlsart::Modell,
         namen: &["/model", "/modell"],
@@ -1179,10 +1238,40 @@ const BEFEHLE: [Befehl; 15] = [
         namen: &["/root", "/wurzel"],
         was: "haengt das GANZE Dateisystem ein, mit Schreibrecht (fragt nach)",
     },
+    // ⚑ **Drei Befehle aus zwei Woertern** (Wunsch des Projektinhabers,
+    //   2026-10-12). 📌 Bis CLIENT v0.132.0 stand hier `/loop`, das ein Ziel
+    //   anlegte oder ohne Ziel weiterfuhr.
     Befehl {
-        art: Befehlsart::Loop,
-        namen: &["/loop"],
-        was: "verfolgt ein Ziel in Runden: /loop <ziel>; ohne Ziel macht er weiter (Esc oder Strg-C hält an, mit Frage)",
+        art: Befehlsart::StartLoop,
+        namen: &["/start loop"],
+        was: "beginnt einen Loop: /start loop <ziel>; ohne Ziel fragt das Modell danach. Er laeuft, bis du ihn anhaeltst oder das Ergebnis bestaetigst",
+    },
+    Befehl {
+        art: Befehlsart::StopLoop,
+        namen: &["/stop loop"],
+        was: "haelt den laufenden Loop an (waehrend er laeuft eintippen, oder Esc und Strg-C)",
+    },
+    Befehl {
+        art: Befehlsart::ResumeLoop,
+        namen: &["/resume loop"],
+        was: "setzt einen angehaltenen Loop fort, gewaehlt aus der Liste",
+    },
+    // ⚑ **Der Debug-Log** (Wunsch des Projektinhabers, 2026-10-12): dieselbe
+    //   Einstellung wie der Schalter im Fenster (`debug.log`).
+    Befehl {
+        art: Befehlsart::DebugAn,
+        namen: &["/debug on"],
+        was: "schreibt ab jetzt alles mit (SYSTEM/logs/debug/, eine Datei je Monat)",
+    },
+    Befehl {
+        art: Befehlsart::DebugAus,
+        namen: &["/debug off"],
+        was: "beendet den Debug-Log",
+    },
+    Befehl {
+        art: Befehlsart::DebugStand,
+        namen: &["/debug"],
+        was: "zeigt, ob der Debug-Log schreibt, und in welche Datei",
     },
     Befehl {
         art: Befehlsart::Vorhaben,
@@ -1368,13 +1457,36 @@ fn befehl_zu(text: &str) -> Option<Befehlsart> {
     befehl_und_rest(text).map(|(art, _)| art)
 }
 
+/// ⚑ **Ein Name kann aus mehreren Woertern bestehen** (`/start loop`). Er
+/// trifft, wenn die Zeile mit ihm beginnt und danach nichts oder Leerraum
+/// folgt; Leerraum dazwischen zaehlt wie ein Leerzeichen. Bei mehreren
+/// Treffern gewinnt der laengste.
 fn befehl_und_rest(text: &str) -> Option<(Befehlsart, &str)> {
     let geschnitten = text.trim();
-    let (erstes, rest) = geschnitten.split_once(char::is_whitespace).unwrap_or((geschnitten, ""));
-    BEFEHLE
-        .iter()
-        .find(|b| b.namen.contains(&erstes))
-        .map(|b| (b.art, rest.trim()))
+    let mut bester: Option<(usize, Befehlsart, &str)> = None;
+    for b in BEFEHLE {
+        for name in b.namen {
+            if let Some(rest) = nach_namen(geschnitten, name) {
+                let woerter = name.split_whitespace().count();
+                if bester.is_none_or(|(w, _, _)| woerter > w) {
+                    bester = Some((woerter, b.art, rest.trim()));
+                }
+            }
+        }
+    }
+    bester.map(|(_, art, rest)| (art, rest))
+}
+
+/// Was nach einem Befehlsnamen steht, wenn die Zeile mit ihm beginnt.
+fn nach_namen<'a>(zeile: &'a str, name: &str) -> Option<&'a str> {
+    let mut rest = zeile;
+    for wort in name.split_whitespace() {
+        rest = rest.trim_start().strip_prefix(wort)?;
+        if !(rest.is_empty() || rest.starts_with(char::is_whitespace)) {
+            return None;
+        }
+    }
+    Some(rest)
 }
 
 /// **Die Vorschlaege der Vervollstaendigung**: alle Befehle aus
@@ -1387,7 +1499,7 @@ fn vorschlaege(module: &crate::module::Modulwirt) -> Vec<eingabe::Vorschlag> {
             befehl: b.namen[0].to_string(),
             auch: b.namen[1..].iter().map(|n| n.to_string()).collect(),
             was: b.was.to_string(),
-            mit_angabe: matches!(b.art, Befehlsart::Datei | Befehlsart::Skill | Befehlsart::Loop),
+            mit_angabe: matches!(b.art, Befehlsart::Datei | Befehlsart::Skill),
         })
         .collect();
     for b in module.befehle() {
@@ -1636,7 +1748,7 @@ fn rechtelage() -> String {
 /// ⚑ **Die Vorgabe ist Nein.** Eine leere Eingabe, ein Abbruch und alles
 /// andere ausser einem ausdruecklichen Ja zaehlen als Nein.
 fn wurzel_bestaetigen(ziel: &std::path::Path) -> bool {
-    use std::io::{BufRead, IsTerminal, Write};
+    use std::io::IsTerminal;
 
     println!();
     println!("  ⚠️  DAS GANZE DATEISYSTEM EINHAENGEN");
@@ -1658,11 +1770,7 @@ fn wurzel_bestaetigen(ziel: &std::path::Path) -> bool {
         return false;
     }
 
-    print!("  Wirklich? [j/N] ");
-    let _ = std::io::stdout().flush();
-    let mut zeile = String::new();
-    let _ = std::io::stdin().lock().read_line(&mut zeile);
-    let ja = matches!(zeile.trim().to_ascii_lowercase().as_str(), "j" | "ja" | "y" | "yes");
+    let ja = crate::janein::fragen("Wirklich?", Some(false), None).ja();
     println!();
     if !ja {
         println!("  Bleibt beim bisherigen Ordner.");
@@ -1845,6 +1953,7 @@ fn auftrag_fahren_als(stand: &mut Stand, auftrag: &str, art: Auftragsart) -> Opt
         (b.arbeit.as_ref().map(|a| l.g.ordner.join(a)), kiste, ohne)
     });
     let ohne_nachfrage: Vec<String> = modulanpassung.as_ref().map(|m| m.2.clone()).unwrap_or_default();
+    let (modussaetze, modushaken) = modusumfeld(stand);
     let Some(modell) = stand.modell.as_mut() else {
         eprintln!("Es ist kein Modell geladen. `/model` waehlt eines.");
         return None;
@@ -1910,22 +2019,23 @@ fn auftrag_fahren_als(stand: &mut Stand, auftrag: &str, art: Auftragsart) -> Opt
     let anzeige = anzeige::Anzeige::starten(stand.schirm, stand.design, zaehler, || {
         myl_local_agent::notaus::ausloesen("konsole")
     });
+    anzeige.befehle_zulassen(befehle_im_lauf(false));
+    anzeige.moduswechsel_zulassen(modussaetze, modushaken);
 
     // ⚑ **Im `manual mode` bekommt jede schreibende Handlung eine
     // Nachfrage mit auf den Weg.** Sie haengt am Werkzeug und nicht am
     // Melder: Ein Melder darf berichten, und nur wer ausfuehrt, kann
     // etwas verhindern.
-    let nachfrage: Option<myl_local_agent::ruestung::Nachfrage> = if stand.modus.fragt_nach() {
-        let frager = anzeige.frager();
+    // ⚑ **Sie liest den Modus bei jeder Handlung** (2026-10-12): Umschalt-Tab
+    //   kann ihn mitten im Lauf wechseln, und der Wechsel gilt sofort.
+    let frager = anzeige.frager();
+    let nachfrage: Option<myl_local_agent::ruestung::Nachfrage> =
         Some(std::sync::Arc::new(move |name: &str, a: &myl_client::serde_json::Value| {
-            if ohne_nachfrage.iter().any(|n| n == name) {
+            if anzeige::auto_an() || ohne_nachfrage.iter().any(|n| n == name) {
                 return true;
             }
             frager.fragen(&format!("  ⚑ manual mode: {name} {}", myl_local_agent::lauf::kurzform(a)))
-        }))
-    } else {
-        None
-    };
+        }));
 
     // ⚑ **Der Tokenstrom geht an die Anzeige** (Auftrag des
     // Projektinhabers, 2026-09-11). Ohne ihn sieht ein Denkvorgang von
@@ -1946,6 +2056,7 @@ fn auftrag_fahren_als(stand: &mut Stand, auftrag: &str, art: Auftragsart) -> Opt
         Err(f) => {
             anzeige.beenden();
             drop(roh);
+            stand.modus = modus_nach_dem_lauf();
             eprintln!("Die Werkzeuge haengen nicht: {f}");
             return None;
         }
@@ -2001,6 +2112,7 @@ fn auftrag_fahren_als(stand: &mut Stand, auftrag: &str, art: Auftragsart) -> Opt
         m.beobachter = None;
     }
     let (gesehen, wieviele) = anzeige.beenden();
+    stand.modus = modus_nach_dem_lauf();
     // Erst den Rohmodus zurueck, dann drucken: In ihm braucht jede
     // Zeile ein `\r`, und das will niemand in jedem `println!` stehen
     // haben.
@@ -2229,8 +2341,8 @@ fn modul_nachricht(stand: &mut Stand, name: &str, n: myl_module::nachricht::VomM
         }
         VomModul::Modus { aktiv: true, banner } => modus_betreten(stand, name, banner),
         VomModul::Modus { aktiv: false, .. } => modus_verlassen(stand, name),
-        VomModul::ModellFragen { id, frage, grenze, denken, strom } => {
-            let antwort = modul_modell(stand, name, id, &frage, grenze, denken, strom);
+        VomModul::ModellFragen { id, vorspann, frage, grenze, denken, strom, gierig } => {
+            let antwort = modul_modell(stand, name, id, &vorspann, &frage, grenze, denken, strom, gierig);
             if let Some(l) = stand.module.laufendes(name) {
                 l.lauf.senden(&AnModul::Modellantwort { id, antwort });
             }
@@ -2257,7 +2369,7 @@ fn modul_nachricht(stand: &mut Stand, name: &str, n: myl_module::nachricht::VomM
 /// **Eine Modellfrage eines Moduls**, mit Strom, wenn erbeten, und
 /// begrenzt durch das Budget der Befugnisse.
 #[allow(clippy::too_many_arguments)]
-fn modul_modell(stand: &mut Stand, name: &str, id: u64, frage: &str, grenze: u32, denken: bool, strom: bool) -> Result<String, String> {
+fn modul_modell(stand: &mut Stand, name: &str, id: u64, vorspann: &str, frage: &str, grenze: u32, denken: bool, strom: bool, gierig: bool) -> Result<String, String> {
     use myl_module::nachricht::AnModul;
     if stand.modell.is_none() {
         return Err("es ist kein Modell geladen".into());
@@ -2279,7 +2391,17 @@ fn modul_modell(stand: &mut Stand, name: &str, id: u64, frage: &str, grenze: u32
             }
         }) as Box<dyn Fn(myl_local_agent::textstrom::Stueck) + Send + Sync>
     });
-    modell_fragen_mit(stand, frage, grenze as usize, Some(denken), name, beobachter).ok_or_else(|| "keine Antwort".to_string())
+    // ⚑ Gierig nur fuer diese Frage, danach wie eingestellt.
+    let vorher = stand.modell.as_mut().map(|m| {
+        let v = m.gierig;
+        m.gierig = v || gierig;
+        v
+    });
+    let antwort = modell_fragen_mit(stand, vorspann, frage, grenze as usize, Some(denken), name, beobachter).ok_or_else(|| "keine Antwort".to_string());
+    if let (Some(m), Some(v)) = (stand.modell.as_mut(), vorher) {
+        m.gierig = v;
+    }
+    antwort
 }
 
 /// **Eine Frage eines Moduls an den Menschen**, im Rahmen der Konsole.
@@ -2308,7 +2430,11 @@ fn modul_nutzerfrage(stand: &mut Stand, name: &str, frage: myl_module::nachricht
     };
     match frage {
         Nutzerfrage::Wort { wort, .. } => Some(lesen(&format!("Zum Bestätigen {wort} tippen, alles andere bricht ab:"))),
-        Nutzerfrage::JaNein { .. } => Some(if matches!(lesen("[j/N]").to_lowercase().as_str(), "j" | "ja") { "ja".into() } else { "nein".into() }),
+        Nutzerfrage::JaNein { .. } => match crate::janein::fragen("Ja oder nein?", Some(false), stand.schirm.map(|s| (s, stand.design))) {
+            crate::janein::Antwort::Ja => Some("ja".into()),
+            crate::janein::Antwort::Nein => Some("nein".into()),
+            crate::janein::Antwort::Offen => None,
+        },
         Nutzerfrage::Auswahl { punkte, .. } => {
             let mut p: Vec<wahl::Punkt> = punkte.iter().map(|x| wahl::Punkt { titel: x.titel.clone(), hinweis: x.hinweis.clone(), offen: true }).collect();
             p.push(wahl::Punkt { titel: "Abbrechen".into(), hinweis: String::new(), offen: true });
@@ -2365,7 +2491,7 @@ fn modus_betreten(stand: &mut Stand, name: &str, banner: Option<Vec<String>>) {
         return;
     }
     l.modus = true;
-    l.aktivierung = l.letzter_befehl.clone();
+    l.aktivierung = l.letzter_befehl.clone().or(l.aktivierung.take());
     // ⚑ **Werkzeuge der Kiste rufen die gepruefte Kopie**, nicht die Datei
     //   im Modulordner, die nach der Pruefung getauscht sein koennte.
     std::env::set_var(MODULPROGRAMM, &l.lauf.programm);
@@ -2472,6 +2598,7 @@ fn module_befehl(stand: &mut Stand, rest: &str) {
 /// nicht zur Antwort.
 fn modell_fragen_mit(
     stand: &mut Stand,
+    vorspann: &str,
     frage: &str,
     grenze_token: usize,
     denken_hier: Option<bool>,
@@ -2495,7 +2622,15 @@ fn modell_fragen_mit(
     }
     // Ohne eigenen Beobachter bleibt der vorhandene, wie er ist.
     let vorher = beobachter.map(|b| modell.beobachter.replace(b));
-    let antwort = modell.chat("lokal", &[myl_client::Nachricht::system(grundsaetze), myl_client::Nachricht::nutzer(frage.to_string())], Some(grenze_token as u32));
+    // ⚑ **Der feste Vorspann als eigene Nachricht** (V1, 2026-10-08): Die
+    //   Laufzeit merkt sich den Zustand vor jeder Nachrichtenmarke; bleibt
+    //   der Vorspann gleich, wird nur der wechselnde Teil neu eingelesen.
+    let mut nachrichten = vec![myl_client::Nachricht::system(grundsaetze)];
+    if !vorspann.trim().is_empty() {
+        nachrichten.push(myl_client::Nachricht::nutzer(vorspann.to_string()));
+    }
+    nachrichten.push(myl_client::Nachricht::nutzer(frage.to_string()));
+    let antwort = modell.chat("lokal", &nachrichten, Some(grenze_token as u32));
     if let Some(v) = vorher {
         modell.beobachter = v;
     }
@@ -2520,7 +2655,7 @@ fn modell_fragen_mit(
 
 /// **Die Sicherheitsmeldung vor `auto`**, mit Bestaetigung.
 fn auto_bestaetigen() -> bool {
-    use std::io::{BufRead, IsTerminal, Write};
+    use std::io::IsTerminal;
     let sprache = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())
         .map(|e| e.oberflaeche.sprache)
         .unwrap_or_default();
@@ -2536,11 +2671,9 @@ fn auto_bestaetigen() -> bool {
     if !std::io::stdin().is_terminal() {
         return false;
     }
-    print!("  {}", w.frage);
-    let _ = std::io::stdout().flush();
-    let mut z = String::new();
-    let _ = std::io::stdin().lock().read_line(&mut z);
-    let ja = matches!(z.trim().to_lowercase().as_str(), "j" | "ja" | "y" | "yes");
+    // Die Klammer setzt `janein`; der Text der Kiste traegt sie schon.
+    let frage = w.frage.trim().trim_end_matches("[j/N]").trim_end_matches("[y/N]").trim();
+    let ja = crate::janein::fragen(frage, Some(false), None).ja();
     println!();
     ja
 }
@@ -2559,7 +2692,7 @@ fn vorhaben_zeigen(rest: &str) {
         (None, _) => {
             let zeilen = ablage.liste(sprache);
             if zeilen.is_empty() {
-                println!("  Keine Tasks. `/loop <ziel>` legt einen an.");
+                println!("  Keine Tasks. `/start loop <ziel>` beginnt einen.");
             }
             for z in zeilen {
                 println!("  {z}");
@@ -2576,7 +2709,7 @@ fn vorhaben_zeigen(rest: &str) {
         (Some(was @ ("resume" | "pause")), Some(k)) => {
             let r = if was == "resume" { ablage.weitermachen(k) } else { ablage.stoppen(k, sprache) };
             match r {
-                Ok(_) => println!("  {k}: {was}. `/loop` fährt den vordersten Task."),
+                Ok(_) => println!("  {k}: {was}. `/resume loop` fährt ihn."),
                 Err(f) => println!("  {k}: {f}"),
             }
         }
@@ -2585,14 +2718,270 @@ fn vorhaben_zeigen(rest: &str) {
     println!();
 }
 
+/// **Stellt eine Frage und liest die Antwort in der Eingabezeile**; `None`
+/// ohne Terminal oder wenn der Mensch mit Esc abbricht.
+///
+/// ⚑ **Im Rahmen und nicht im Rollbereich** (Wunsch des Projektinhabers,
+/// 2026-10-12: der Wagen steht immer in der Eingabezeile). Die Frage steht
+/// darueber in der Zeitleiste. Ohne eingerichteten Rand wird wie bisher
+/// eine Zeile gelesen.
+fn zeile_lesen(stand: &Stand, frage: &str) -> Option<String> {
+    use std::io::{BufRead, IsTerminal, Write};
+    if !std::io::stdin().is_terminal() {
+        return None;
+    }
+    let Some(sch) = stand.schirm else {
+        print!("{frage}");
+        let _ = std::io::stdout().flush();
+        let mut z = String::new();
+        std::io::stdin().lock().read_line(&mut z).ok()?;
+        return Some(z.trim().to_string());
+    };
+    println!("{frage}");
+    eingaberahmen(stand);
+    let r = Rahmen::messen();
+    let t = design::toene(stand.design);
+    let zeichnen = |text: &str| zeile_zeichnen(&sch, &r, t, text);
+    let gelesen = eingabe::lesen_mit_liste(&zeichnen, &|_| {}, &[], String::new(), None);
+    zeichnen("");
+    sch.zurueck();
+    match gelesen {
+        eingabe::Eingabe::Zeile(z) => Some(z.trim().to_string()),
+        _ => None,
+    }
+}
+
+/// **`/start loop [ziel]`: einen Loop beginnen.**
+///
+/// ⚑ **Ohne Ziel fragt das Modell danach** (Wunsch des Projektinhabers,
+/// 2026-10-12) und leitet aus der Antwort Ziel und Namen ab. Mit Ziel bleibt
+/// es wortgleich, und vom Modell kommt nur der Name. Der neue Loop steht
+/// vorn und laeuft sofort.
+fn loop_starten(stand: &mut Stand, ziel: &str) {
+    use myl_local_agent::vorhaben::{self, Ablage};
+    let e = match myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad()) {
+        Ok(e) => e,
+        Err(f) => {
+            eprintln!("Die Einstellungen sind nicht lesbar: {f}");
+            return;
+        }
+    };
+    let sprache = e.oberflaeche.sprache;
+    let Some(modell) = stand.modell.as_ref() else {
+        eprintln!("Es ist kein Modell geladen. `/model` waehlt eines.");
+        return;
+    };
+    let rollen = design::rollen(stand.design);
+    let farbig = design::farbig();
+    let antwort = if ziel.trim().is_empty() {
+        println!("{}", crate::antwort::setzen(vorhaben::zielfrage(sprache), &rollen, farbig));
+        match zeile_lesen(stand, "") {
+            Some(a) if !a.is_empty() => a,
+            _ => {
+                println!("  Kein Ziel, kein Loop.");
+                println!();
+                return;
+            }
+        }
+    } else {
+        ziel.trim().to_string()
+    };
+    // ⛔️ Derselbe Schutzfilter wie vor jedem Auftrag, auf die Worte des Menschen.
+    if let Some(satz) = myl_client::schutzfilter::abweisen(&antwort, sprache, "konsole-loop") {
+        println!("  {satz}");
+        println!();
+        return;
+    }
+    println!("{}", rollen.beiwerk.faerben("  Das Modell benennt den Loop …", farbig));
+    let (ziel, name) = if ziel.trim().is_empty() {
+        vorhaben::ableiten(modell, &antwort, sprache)
+    } else {
+        (antwort.clone(), vorhaben::benennen(modell, &antwort, sprache))
+    };
+    let ablage = Ablage::vorgabe();
+    let angelegt = ablage
+        .anlegen_fuer(&ziel, vorhaben::jetzt(), None, Some(stand.ordner.display().to_string()))
+        .and_then(|v| ablage.name_setzen(&v.kennung, &name))
+        .and_then(|v| ablage.nach_vorn(&v.kennung).map(|_| v));
+    match angelegt {
+        Ok(v) => {
+            println!("  ∞ Loop „{}“ ({}) beginnt.", v.anzeigename(), v.kennung);
+            if v.ziel != antwort {
+                println!("{}", rollen.beiwerk.faerben(&format!("  Ziel: {}", v.ziel), farbig));
+            }
+        }
+        Err(f) => {
+            println!("  {f}");
+            println!();
+            return;
+        }
+    }
+    loop_fahren(stand);
+}
+
+/// **`/resume loop`: einen angehaltenen Loop waehlen und fortsetzen.**
+///
+/// ⚑ **Zur Wahl steht alles, was nicht fertig ist**: angehalten, beim
+/// Schliessen unterbrochen, wartend oder mit einem Ergebnis, das noch auf
+/// die Bestaetigung wartet. Bei Letzterem kommt zuerst die Frage danach.
+fn loop_fortsetzen(stand: &mut Stand) {
+    use myl_local_agent::vorhaben::{self, Ablage, Zustand};
+    let ablage = Ablage::vorgabe();
+    let sprache = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())
+        .map(|e| e.oberflaeche.sprache)
+        .unwrap_or_default();
+    let alle = ablage.fortsetzbare();
+    if alle.is_empty() {
+        println!("  Kein angehaltener Loop. `/start loop` beginnt einen.");
+        println!();
+        return;
+    }
+    let punkte: Vec<wahl::Punkt> = alle
+        .iter()
+        .map(|v| wahl::Punkt {
+            titel: format!("{}  ({}, {} Runden)", v.anzeigename(), vorhaben::zustandswort(v, sprache), v.runden),
+            hinweis: v.ziel.clone(),
+            offen: true,
+        })
+        .collect();
+    let Some(i) = wahl::waehlen_ab("Welchen Loop fortsetzen?", &punkte, 0, design::toene(stand.design)) else {
+        println!("  Kein Loop gewaehlt.");
+        println!();
+        return;
+    };
+    let v = &alle[i];
+    if matches!(v.zustand, Zustand::Vorgelegt { .. }) {
+        if !ergebnis_abfragen(stand, v) {
+            return;
+        }
+    } else if matches!(v.zustand, Zustand::Frage { .. }) {
+        if !frage_beantworten(stand, v) {
+            return;
+        }
+        if let Err(f) = ablage.nach_vorn(&v.kennung) {
+            println!("  {f}");
+            println!();
+            return;
+        }
+    } else if let Err(f) = ablage.wieder_aufnehmen(&v.kennung) {
+        println!("  {f}");
+        println!();
+        return;
+    }
+    loop_fahren(stand);
+}
+
+/// **Fragt den Menschen, ob das vorgelegte Ergebnis stimmt.** `true`, wenn
+/// danach weitergearbeitet wird (nicht abgenommen, oder eine Kette beginnt).
+///
+/// ⚑ Wunsch des Projektinhabers (2026-10-12): „ob der Loop zum korrekten
+/// Ergebnis geführt hat und beendet werden soll, bzw. an welcher Stelle
+/// weitergearbeitet werden soll“.
+fn ergebnis_abfragen(stand: &Stand, v: &myl_local_agent::vorhaben::Vorhaben) -> bool {
+    use myl_local_agent::vorhaben::{Ablage, Zustand};
+    let Zustand::Vorgelegt { ergebnis, einwand } = &v.zustand else { return false };
+    let ablage = Ablage::vorgabe();
+    let sprache = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())
+        .map(|e| e.oberflaeche.sprache)
+        .unwrap_or_default();
+    let rollen = design::rollen(stand.design);
+    let farbig = design::farbig();
+    println!("{}", rollen.warnung.faerben(&format!("  ∞ „{}“ meldet das Ziel als erreicht:", v.anzeigename()), farbig));
+    println!("{}", crate::antwort::setzen(ergebnis, &rollen, farbig));
+    // ⚑ **Der Einwand der Pruefung steht dabei**: Sie beraet, du entscheidest
+    //   (Fund 531).
+    if let Some(e) = einwand {
+        println!("{}", rollen.warnung.faerben(&format!("  Die Prüfung widerspricht: {e}"), farbig));
+    }
+    // ⚑ **Ein Tastendruck, und die Frage blinkt** (Festlegung des
+    //   Projektinhabers, 2026-10-12): `j` beendet, `n` fragt nach dem Wo,
+    //   Esc laesst das Ergebnis liegen.
+    let antwort = crate::janein::fragen(
+        "Hat der Loop zum richtigen Ergebnis geführt und soll er enden?",
+        None,
+        stand.schirm.map(|s| (s, stand.design)),
+    );
+    if antwort == crate::janein::Antwort::Offen {
+        println!("  Keine Antwort: Das Ergebnis bleibt vorgelegt; /resume loop fragt erneut.");
+        println!();
+        return false;
+    }
+    if antwort.ja() {
+        match ablage.bestaetigen(&v.kennung, sprache) {
+            Ok(neue) => {
+                println!("{}", rollen.beiwerk.faerben(&format!("  ∞ „{}“ ist fertig.", v.anzeigename()), farbig));
+                for n in &neue {
+                    println!("{}", rollen.beiwerk.faerben(&format!("  ∞ Kette: {} beginnt: {}", n.kennung, n.ziel), farbig));
+                }
+                println!();
+                return !neue.is_empty();
+            }
+            Err(f) => {
+                println!("  {f}");
+                println!();
+                return false;
+            }
+        }
+    }
+    let wo = zeile_lesen(stand, "  Wo soll weitergearbeitet werden? (Eingabe ohne Text: einfach weiter)").unwrap_or_default();
+    match ablage.nachbessern(&v.kennung, &wo, sprache).and_then(|n| ablage.nach_vorn(&n.kennung)) {
+        Ok(()) => {
+            println!("{}", rollen.beiwerk.faerben("  ∞ Es geht weiter.", farbig));
+            println!();
+            true
+        }
+        Err(f) => {
+            println!("  {f}");
+            println!();
+            false
+        }
+    }
+}
+
+/// **Das Modell fragt (`ask_human`), der Mensch antwortet im Rahmen.**
+/// `true`, wenn geantwortet wurde und der Loop weitergeht; Esc laesst die
+/// Frage offen, und `/resume loop` stellt sie erneut.
+fn frage_beantworten(stand: &Stand, v: &myl_local_agent::vorhaben::Vorhaben) -> bool {
+    use myl_local_agent::vorhaben::{Ablage, Zustand};
+    let Zustand::Frage { frage } = &v.zustand else { return false };
+    let sprache = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())
+        .map(|e| e.oberflaeche.sprache)
+        .unwrap_or_default();
+    let rollen = design::rollen(stand.design);
+    let farbig = design::farbig();
+    println!("{}", rollen.warnung.faerben(&format!("  ∞ „{}“ fragt dich:", v.anzeigename()), farbig));
+    println!("{}", crate::antwort::setzen(frage, &rollen, farbig));
+    let Some(antwort) = zeile_lesen(stand, "  Deine Antwort (Esc: später):") else {
+        println!("  Die Frage bleibt offen; /resume loop stellt sie erneut.");
+        println!();
+        return false;
+    };
+    match Ablage::vorgabe().antworten(&v.kennung, &antwort, sprache) {
+        Ok(_) => {
+            println!("{}", rollen.beiwerk.faerben("  ∞ Danke, es geht weiter.", farbig));
+            println!();
+            true
+        }
+        Err(f) => {
+            println!("  {f}");
+            println!();
+            false
+        }
+    }
+}
+
 /// **Der Loop: faellige Runden fahren, dazwischen warten.**
 ///
 /// ⚑ **Im Vordergrund.** Waehrend der Loop laeuft, gehoert die Konsole
-/// ihm; Esc pausiert ihn und gibt die Eingabe zurueck,
-/// `/loop` macht dort weiter. Wird die Konsole geschlossen, waehrend er
-/// laeuft, macht er beim naechsten Start von selbst weiter.
-fn loop_fahren(stand: &mut Stand, ziel: &str) {
-    use myl_local_agent::vorhaben::{self, Ablage, Laeufer};
+/// ihm; Esc, Strg-C (je mit Frage) oder ein getipptes `/stop loop` halten
+/// ihn an, und `/resume loop` setzt ihn fort.
+///
+/// ⚑ **Er endet nur auf diesen Wegen** (Festlegung des Projektinhabers,
+/// 2026-10-12): Der Mensch haelt an, der Mensch bestaetigt das Ergebnis,
+/// oder die Konsole schliesst. Keine Hoechstzahl an Runden, keine
+/// Hoechstdauer.
+fn loop_fahren(stand: &mut Stand) {
+    use myl_local_agent::vorhaben::{self, Ablage, Laeufer, Zustand};
     let e = match myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad()) {
         Ok(e) => e,
         Err(f) => {
@@ -2605,20 +2994,6 @@ fn loop_fahren(stand: &mut Stand, ziel: &str) {
         return;
     }
     let ablage = Ablage::vorgabe();
-    if !ziel.trim().is_empty() {
-        if let Some(satz) = myl_client::schutzfilter::abweisen(ziel, e.oberflaeche.sprache, "konsole-loop") {
-            println!("  {satz}");
-            println!();
-            return;
-        }
-        match ablage.anlegen(ziel, vorhaben::jetzt()) {
-            Ok(v) => println!("  Vorhaben {} angelegt.", v.kennung),
-            Err(f) => {
-                println!("  {f}");
-                return;
-            }
-        }
-    }
     let rollen = design::rollen(stand.design);
     let farbig = design::farbig();
     if let Some(h) = vorhaben::hinweis_vorgaben(&e.schleife, e.agent.modus, e.oberflaeche.sprache) {
@@ -2635,33 +3010,53 @@ fn loop_fahren(stand: &mut Stand, ziel: &str) {
         }
     };
     vorhaben::schliessen_zuruecksetzen();
+    // ⚑ Die Marke steht, solange der Loop laeuft. Endet die Konsole mit
+    //   ihrem Terminal, steht sie noch, und der naechste Start haelt den
+    //   Task an, der lief (`Ablage::nach_dem_schliessen`).
     let _ = ablage.loop_aktiv_setzen(true);
     loop {
         if let Some(v) = laeufer.faellig(vorhaben::jetzt()) {
-            if !runde_in_der_konsole(stand, &e, &laeufer, v) {
+            let Some(nach) = runde_in_der_konsole(stand, &e, &laeufer, v) else {
                 break;
+            };
+            // ⚑ **Ein vorgelegtes Ergebnis und eine Frage des Modells werden
+            //   sofort erfragt**: Die Konsole gehoert gerade dem Loop, und der
+            //   Mensch sitzt davor.
+            match nach.zustand {
+                Zustand::Vorgelegt { .. } => {
+                    ergebnis_abfragen(stand, &nach);
+                }
+                Zustand::Frage { .. } => {
+                    frage_beantworten(stand, &nach);
+                }
+                _ => {}
             }
             continue;
         }
         if laeufer.aktive() == 0 {
-            let _ = ablage.loop_aktiv_setzen(false);
-            println!("{}", rollen.beiwerk.faerben("  Keine aktiven Vorhaben mehr; der Loop endet.", farbig));
+            println!("{}", rollen.beiwerk.faerben("  Kein Loop mehr offen; die Konsole gehört wieder dir.", farbig));
             println!();
             break;
         }
-        if !warten_in_der_konsole(stand, &laeufer) {
+        let weiter = warten_in_der_konsole(stand, &laeufer);
+        stand.modus = modus_nach_dem_lauf();
+        if !weiter {
             break;
         }
     }
-    // Pausiert: Die Marke geht, der Loop faehrt beim naechsten Start nicht
-    // von selbst.
-    if vorhaben::schliessen_angefordert() {
-        let _ = ablage.loop_aktiv_setzen(false);
-        println!("{}", rollen.warnung.faerben("  Loop pausiert. `/loop` macht genau dort weiter.", farbig));
-        println!();
+    let angehalten = vorhaben::schliessen_angefordert();
+    drop(laeufer);
+    let _ = ablage.loop_aktiv_setzen(false);
+    // ⚑ **Angehalten heisst angehalten**: Der Task, der lief, steht danach
+    //   so da, und `/resume loop` bietet ihn an.
+    if angehalten {
+        if let Some(v) = ablage.vom_menschen_anhalten(e.oberflaeche.sprache) {
+            let satz = format!("  Loop „{}“ angehalten. /resume loop setzt ihn genau dort fort.", v.anzeigename());
+            println!("{}", rollen.warnung.faerben(&satz, farbig));
+            println!();
+        }
     }
     vorhaben::schliessen_zuruecksetzen();
-    drop(laeufer);
 }
 
 /// Wartet bis zur naechsten Runde; `false`, wenn pausiert wurde.
@@ -2671,21 +3066,105 @@ fn warten_in_der_konsole(stand: &Stand, laeufer: &myl_local_agent::vorhaben::Lae
     let rollen = design::rollen(stand.design);
     let farbig = design::farbig();
     let minuten = bis.saturating_sub(myl_local_agent::vorhaben::jetzt()).div_ceil(60);
-    let satz = format!("  Nächste Runde in {minuten} min. Esc oder Strg-C hält an.");
+    let satz = format!("  Nächste Runde in {minuten} min. Esc, Strg-C oder /stop loop hält an.");
     println!("{}", rollen.beiwerk.faerben(&satz, farbig));
     let roh = stand.schirm.and_then(|_| auswahl::Rohmodus::an().ok());
     let mut letzte = std::time::Instant::now();
+    // ⚑ **Auch beim Warten steht der Wagen in der Eingabezeile**, und jeder
+    //   Befehl geht, wie in der Runde (2026-10-12).
+    let mut getippt = String::new();
+    let griff = befehle_im_lauf(true);
+    if let Some(sch) = stand.schirm {
+        crate::schirm::wagen_verstecken();
+        anzeige::tippzeile_zeichnen(&sch, stand.design, "");
+    }
+    let _geklammert = stand.schirm.map(|_| crate::schirm::Geklammert::an());
+    let ende = |roh: Option<auswahl::Rohmodus>| {
+        drop(roh);
+        crate::schirm::wagen_zeigen();
+    };
     while myl_local_agent::vorhaben::jetzt() < bis {
         if roh.is_some() && event::poll(std::time::Duration::from_millis(500)).unwrap_or(false) {
-            if let Ok(Event::Key(k)) = event::read() {
+            let ereignis = event::read();
+            // ⚑ Eingefuegt heisst nicht abgeschickt, auch beim Warten.
+            if let Ok(Event::Paste(text)) = &ereignis {
+                getippt.push_str(&crate::eingabe::einfuegetext(text));
+                if let Some(sch) = stand.schirm {
+                    anzeige::tippzeile_zeichnen(&sch, stand.design, &getippt);
+                }
+                continue;
+            }
+            if let Ok(Event::Key(k)) = ereignis {
+                if k.kind != crossterm::event::KeyEventKind::Press {
+                    continue;
+                }
+                let strg = k.modifiers.contains(KeyModifiers::CONTROL);
+                // ⚑ **Umschalt-Tab auch beim Warten** (2026-10-12): vor `auto`
+                //   die Sicherheitsmeldung und die Frage, zurueck ohne Frage.
+                //   Der Loop liest den Modus danach aus `anzeige::auto_an`.
+                if k.code == KeyCode::BackTab {
+                    let (saetze, haken) = modusumfeld_fuer_warten(stand);
+                    if anzeige::auto_an() {
+                        anzeige::auto_setzen(false);
+                        haken(false);
+                        print!("{}\r\n", rollen.beiwerk.faerben("  · manual mode", farbig));
+                    } else {
+                        for w in &saetze {
+                            print!("{}\r\n", rollen.warnung.faerben(&format!("  ⚠️  {w}"), farbig));
+                        }
+                        if crate::janein::fragen("Auf auto stellen?", Some(false), stand.schirm.map(|s| (s, stand.design))).ja() {
+                            anzeige::auto_setzen(true);
+                            haken(true);
+                        }
+                    }
+                    if let Some(sch) = stand.schirm {
+                        crate::schirm::wagen_verstecken();
+                        anzeige::tippzeile_zeichnen(&sch, stand.design, &getippt);
+                    }
+                    continue;
+                }
+                match if strg { anzeige::Tipp::Nichts } else { anzeige::tippen(&mut getippt, k.code) } {
+                    anzeige::Tipp::Geaendert(t) => {
+                        if let Some(sch) = stand.schirm {
+                            anzeige::tippzeile_zeichnen(&sch, stand.design, &t);
+                        }
+                        continue;
+                    }
+                    anzeige::Tipp::Abgeschickt(zeile) => {
+                        if let Some(sch) = stand.schirm {
+                            anzeige::tippzeile_zeichnen(&sch, stand.design, "");
+                        }
+                        match griff(&zeile) {
+                            anzeige::Befehlsfolge::Anhalten => {
+                                myl_local_agent::vorhaben::schliessen_anfordern();
+                                ende(roh);
+                                println!();
+                                return false;
+                            }
+                            anzeige::Befehlsfolge::Zeilen(zeilen) => {
+                                for z in zeilen {
+                                    print!("{}\r\n", rollen.beiwerk.faerben(&format!("  · {z}"), farbig));
+                                }
+                            }
+                        }
+                        continue;
+                    }
+                    anzeige::Tipp::Nichts => {}
+                }
                 let strg_c = k.code == KeyCode::Char('c') && k.modifiers.contains(KeyModifiers::CONTROL);
                 // ⚑ **Dieselbe Frage wie in der Runde** (Festlegung des
                 //   Projektinhabers, 2026-09-26): Strg-C [J/n], Esc [j/N].
-                if (strg_c || k.code == KeyCode::Esc) && pausieren_bestaetigt(strg_c) {
-                    myl_local_agent::vorhaben::schliessen_anfordern();
-                    drop(roh);
-                    println!();
-                    return false;
+                if strg_c || k.code == KeyCode::Esc {
+                    if pausieren_bestaetigt(strg_c, stand.schirm.map(|s| (s, stand.design))) {
+                        myl_local_agent::vorhaben::schliessen_anfordern();
+                        ende(roh);
+                        println!();
+                        return false;
+                    }
+                    // Nein: der Wagen zurueck in die Eingabezeile.
+                    if let Some(sch) = stand.schirm {
+                        anzeige::tippzeile_zeichnen(&sch, stand.design, &getippt);
+                    }
                 }
             }
         } else if roh.is_none() {
@@ -2697,14 +3176,165 @@ fn warten_in_der_konsole(stand: &Stand, laeufer: &myl_local_agent::vorhaben::Lae
             letzte = std::time::Instant::now();
         }
     }
-    drop(roh);
+    ende(roh);
     true
 }
+
+/// **`/debug on`, `/debug off`, `/debug`.** Schreibt die Einstellung
+/// `debug.log` (dieselbe wie der Schalter im Fenster) und schaltet den Log
+/// in dieser Konsole sofort.
+fn debug_befehl(art: Befehlsart) {
+    let pfad = myl_client::Einstellungen::vorgabepfad();
+    let mut e = match myl_client::Einstellungen::lesen(&pfad) {
+        Ok(e) => e,
+        Err(f) => {
+            println!("  Die Einstellungen sind nicht lesbar: {f}");
+            println!();
+            return;
+        }
+    };
+    let anlass = match art {
+        Befehlsart::DebugAn => Some((true, "/debug on")),
+        Befehlsart::DebugAus => Some((false, "/debug off")),
+        _ => None,
+    };
+    if let Some((an, anlass)) = anlass {
+        e.debug.log = an;
+        if let Err(f) = e.schreiben(&pfad) {
+            println!("  Die Einstellung ließ sich nicht schreiben: {f}");
+            println!();
+            return;
+        }
+        e.debug_anwenden("Konsole", anlass);
+    }
+    let datei = myl_local_agent::debuglog::datei_fuer(myl_local_agent::vorhaben::jetzt());
+    if myl_local_agent::debuglog::an() {
+        println!("  Debug-Log an: Alles wird mitgeschrieben, nach {}", kurz(&datei.display().to_string()));
+        println!("  ⚠️  Er enthält auch Dateiinhalte und Antworten; /debug off beendet ihn.");
+    } else {
+        println!("  Debug-Log aus. /debug on schaltet ihn ein ({}).", kurz(&myl_local_agent::debuglog::ordner().display().to_string()));
+    }
+    println!();
+}
+
+/// **Was ein Lauf zum Moduswechsel braucht** (Umschalt-Tab im Lauf, Wunsch
+/// des Projektinhabers, 2026-10-12): die Saetze der Sicherheitsmeldung vor
+/// `auto` und wer danach die Fusszeile zeichnet.
+///
+/// ⚑ **Vor dem Lauf gerechnet**, solange der Stand noch frei ist: Waehrend
+/// des Laufs gehoert das Modell darin dem Lauf. Beide Fusszeilen stehen
+/// schon fertig da; der Haken waehlt nur.
+///
+/// Setzt dabei den prozessweiten Modus aus dem Stand ([`anzeige::auto_setzen`]).
+fn modusumfeld(stand: &Stand) -> (Vec<String>, std::sync::Arc<anzeige::Modushaken>) {
+    use myl_client::einstellungen::Agentenmodus;
+    anzeige::auto_setzen(stand.modus == Agentenmodus::Auto);
+    let sprache = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())
+        .map(|e| e.oberflaeche.sprache)
+        .unwrap_or_default();
+    let w = myl_client::einstellungen::autowarnung(sprache);
+    let mut saetze = vec![w.titel.to_string()];
+    saetze.extend(w.punkte.iter().map(|p| p.to_string()));
+    let Some(sch) = stand.schirm else {
+        return (saetze, std::sync::Arc::new(|_| {}));
+    };
+    let r = Rahmen::messen();
+    let t = design::toene(stand.design);
+    let zeile = |m: Agentenmodus| {
+        format!(
+            "\x1b7{}{}{}{}{}\x1b8",
+            sch.zeile(Schirm::KASTEN + 3),
+            SetForegroundColor(t.beiwerk),
+            r.einzug,
+            fusszeile(m.name(), &stand.name, &stand.kiste, stand.schreibt, stand.kontext_prozent, saatangabe(stand), r.innen),
+            ResetColor
+        )
+    };
+    let manuell = zeile(Agentenmodus::Manuell);
+    let auto = zeile(Agentenmodus::Auto);
+    (
+        saetze,
+        std::sync::Arc::new(move |an: bool| {
+            use std::io::Write;
+            print!("{}", if an { &auto } else { &manuell });
+            let _ = std::io::stdout().flush();
+        }),
+    )
+}
+
+/// Wie [`modusumfeld`], aber ohne den Modus aus dem Stand zu setzen: Beim
+/// Warten zwischen zwei Runden gilt, was die letzte Runde hinterliess.
+fn modusumfeld_fuer_warten(stand: &Stand) -> (Vec<String>, std::sync::Arc<anzeige::Modushaken>) {
+    let jetzt = anzeige::auto_an();
+    let aus = modusumfeld(stand);
+    anzeige::auto_setzen(jetzt);
+    aus
+}
+
+/// Der Modus nach einem Lauf, wie ihn Umschalt-Tab darin hinterliess.
+fn modus_nach_dem_lauf() -> myl_client::einstellungen::Agentenmodus {
+    if anzeige::auto_an() {
+        myl_client::einstellungen::Agentenmodus::Auto
+    } else {
+        myl_client::einstellungen::Agentenmodus::Manuell
+    }
+}
+
+/// **Was ein getippter Befehl waehrend eines Laufs bewirkt** (Wunsch des
+/// Projektinhabers, 2026-10-12: Befehle gehen jederzeit).
+///
+/// ⚑ **Sofort gehen die, die weder das Modell noch den Schirm brauchen**:
+/// `/stop loop` (im Loop), `/tasks` und `/help`. Jeder andere Befehl der
+/// Konsole braucht das Modell, das gerade rechnet, oder den ganzen Schirm,
+/// auf dem gerade die Antwort entsteht; er bekommt den Satz, wann er geht,
+/// statt still zu verschwinden.
+fn befehle_im_lauf(im_loop: bool) -> std::sync::Arc<anzeige::Befehlsgriff> {
+    std::sync::Arc::new(move |zeile: &str| {
+        use anzeige::Befehlsfolge;
+        let danach = if im_loop { "nach /stop loop" } else { "nach dem Lauf (Esc hält ihn an)" };
+        // ⚑ **Text ist ein Zwischenruf** (Wunsch des Projektinhabers,
+        //   2026-10-12): Er geht nach dem naechsten Schritt an das Modell.
+        myl_local_agent::debuglog::eintrag("Eingabe im Lauf", zeile);
+        if !zeile.starts_with('/') {
+            myl_local_agent::zwischenruf::einreihen(zeile);
+            return Befehlsfolge::Zeilen(vec![format!("Geht nach dem nächsten Schritt an das Modell: {zeile}")]);
+        }
+        if anzeige::ist_stop_loop(zeile) {
+            return if im_loop {
+                Befehlsfolge::Anhalten
+            } else {
+                Befehlsfolge::Zeilen(vec!["Es läuft kein Loop; Esc oder Strg-C halten diesen Lauf an.".into()])
+            };
+        }
+        match befehl_und_rest(zeile) {
+            Some((Befehlsart::Vorhaben, "")) => {
+                let sprache = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())
+                    .map(|e| e.oberflaeche.sprache)
+                    .unwrap_or_default();
+                let zeilen = myl_local_agent::vorhaben::Ablage::vorgabe().liste(sprache);
+                Befehlsfolge::Zeilen(if zeilen.is_empty() { vec!["Keine Tasks.".into()] } else { zeilen })
+            }
+            Some((Befehlsart::Hilfe, _)) => Befehlsfolge::Zeilen(vec![format!(
+                "Während eines Laufs gehen sofort: {}/tasks, /help; Esc oder Strg-C halten an. Text geht nach dem nächsten Schritt an das Modell. Alle anderen Befehle {danach}.",
+                if im_loop { "/stop loop, " } else { "" }
+            )]),
+            Some(_) => Befehlsfolge::Zeilen(vec![format!("{zeile}: geht {danach}.")]),
+            None => Befehlsfolge::Zeilen(vec![format!("{zeile}: kein Befehl der Konsole. /help zeigt, was während des Laufs geht.")]),
+        }
+    })
+}
 /// Fragt im Countdown, ob pausiert werden soll; wartet auf eine Antwort.
-fn pausieren_bestaetigt(vorgabe: bool) -> bool {
+///
+/// ⚑ Wie jede Ja-Nein-Frage (2026-10-12): Sie blinkt, und in der
+/// Eingabezeile steht solange kein Wagen. Die Tasten sind die des Notaus
+/// (ein zweites Strg-C heisst ja).
+fn pausieren_bestaetigt(vorgabe: bool, rahmen: Option<(Schirm, myl_client::einstellungen::Konsolendesign)>) -> bool {
     use crossterm::event::{self, Event, KeyEventKind, KeyModifiers};
     use std::io::Write;
-    print!("\r  Notaus: Loop anhalten? {}", if vorgabe { "[J/n]" } else { "[j/N]" });
+    if let Some((sch, bild)) = rahmen {
+        crate::anzeige::eingabezeile_ohne_wagen(&sch, bild);
+    }
+    print!("{}", crate::janein::zeile("Notaus: Loop anhalten?", Some(vorgabe), rahmen.map(|(_, b)| b)));
     let _ = std::io::stdout().flush();
     loop {
         let Ok(Event::Key(k)) = event::read() else { continue };
@@ -2720,43 +3350,47 @@ fn pausieren_bestaetigt(vorgabe: bool) -> bool {
     }
 }
 
-/// Eine Runde, verdrahtet wie ein Auftrag; `false`, wenn pausiert wurde.
+/// Eine Runde, verdrahtet wie ein Auftrag; der Task danach, oder `None`,
+/// wenn angehalten wurde.
 fn runde_in_der_konsole(
     stand: &mut Stand,
     e: &myl_client::Einstellungen,
     laeufer: &myl_local_agent::vorhaben::Laeufer,
     mut v: myl_local_agent::vorhaben::Vorhaben,
-) -> bool {
+) -> Option<myl_local_agent::vorhaben::Vorhaben> {
     use myl_local_agent::vorhaben::{self, Zustand};
     let rollen = design::rollen(stand.design);
     let farbig = design::farbig();
-    let kopf = format!("  ∞ {} · Runde {} · {}", v.kennung, v.runden + 1, v.ziel);
+    let kopf = format!("  ∞ {} · Runde {} · {}", v.anzeigename(), v.runden + 1, v.ziel);
     println!("{}", rollen.beiwerk.faerben(&kopf, farbig));
 
     let mut agent = e.agent.clone();
     agent.wurzel = Some(stand.ordner.display().to_string());
     konsolenvorgaben(&mut agent, stand.schreibt);
     let kiste = myl_local_agent::kisten::kiste_der_gilt(&e.agent);
-    let fragt = stand.modus.fragt_nach();
+    let (modussaetze, modushaken) = modusumfeld(stand);
     let schirm = stand.schirm;
     let design_jetzt = stand.design;
-    let Some(modell) = stand.modell.as_mut() else { return false };
+    let modell = stand.modell.as_mut()?;
 
     let roh = schirm.and_then(|_| auswahl::Rohmodus::an().ok());
     modell.zaehler.zuruecksetzen();
     let zaehler = std::sync::Arc::clone(&modell.zaehler);
-    // ⚑ Der bestaetigte Notaus (Strg-C [J/n], Esc [j/N]) pausiert den Loop:
-    //   Die Runde haelt sofort an, der Task bleibt, wie er war, und `/loop`
-    //   macht genau dort weiter.
+    // ⚑ Der bestaetigte Notaus (Strg-C [J/n], Esc [j/N]) und ein getipptes
+    //   `/stop loop` halten den Loop an: Die Runde haelt sofort an, der Task
+    //   steht als angehalten da, und `/resume loop` macht genau dort weiter.
     let anzeige = anzeige::Anzeige::starten(schirm, design_jetzt, zaehler, vorhaben::schliessen_anfordern);
-    let nachfrage: Option<myl_local_agent::ruestung::Nachfrage> = if fragt {
-        let frager = anzeige.frager();
+    anzeige.befehle_zulassen(befehle_im_lauf(true));
+    anzeige.moduswechsel_zulassen(modussaetze, modushaken);
+    // ⚑ Die Nachfrage liest den Modus bei jeder Handlung (Umschalt-Tab im Lauf).
+    let frager = anzeige.frager();
+    let nachfrage: Option<myl_local_agent::ruestung::Nachfrage> =
         Some(std::sync::Arc::new(move |name: &str, a: &myl_client::serde_json::Value| {
+            if anzeige::auto_an() {
+                return true;
+            }
             frager.fragen(&format!("  ⚑ manual mode: {name} {}", myl_local_agent::lauf::kurzform(a)))
-        }))
-    } else {
-        None
-    };
+        }));
     let strom = anzeige.strom();
     modell.beobachter = Some(Box::new(move |s| strom.stueck(s)));
     let ruester = |zusaetzlich: myl_local_agent::vorhaben::Zusatzwerkzeuge, v: &myl_local_agent::vorhaben::Vorhaben| {
@@ -2789,6 +3423,7 @@ fn runde_in_der_konsole(
     modell.beobachter = None;
     let _ = anzeige.beenden();
     drop(roh);
+    stand.modus = modus_nach_dem_lauf();
     println!();
     let r = match ergebnis {
         Ok(r) => r,
@@ -2796,11 +3431,11 @@ fn runde_in_der_konsole(
             v.zustand = Zustand::Angehalten { grund: f.clone() };
             let _ = laeufer.ablage.speichern(&v);
             println!("{}", rollen.warnung.faerben(&format!("  Die Runde ließ sich nicht fahren: {f}"), farbig));
-            return true;
+            return Some(v);
         }
     };
     if r.unterbrochen {
-        return false;
+        return None;
     }
     println!("{}", crate::antwort::setzen(&r.bericht, &rollen, farbig));
     if let Some(p) = &r.pruefung {
@@ -2814,12 +3449,9 @@ fn runde_in_der_konsole(
     }
     let zustand = vorhaben::zustandswort(&v, e.oberflaeche.sprache);
     let rolle = if matches!(v.zustand, Zustand::Angehalten { .. }) { &rollen.warnung } else { &rollen.beiwerk };
-    println!("{}", rolle.faerben(&format!("  ∞ {}: {zustand}", v.kennung), farbig));
-    for n in &r.neue {
-        println!("{}", rollen.beiwerk.faerben(&format!("  ∞ Kette: {} beginnt: {}", n.kennung, n.ziel), farbig));
-    }
+    println!("{}", rolle.faerben(&format!("  ∞ {}: {zustand}", v.anzeigename()), farbig));
     println!();
-    true
+    Some(v)
 }
 
 /// Ein Pfad, der in eine Zeile passt.
@@ -3117,6 +3749,52 @@ mod tests {
         );
     }
 
+    /// ⚑ **Befehle waehrend eines Laufs** (2026-10-12): `/stop loop` haelt
+    /// nur im Loop an, `/help` sagt, was geht, jeder andere Befehl sagt,
+    /// wann er geht, und Text wird nicht still verschluckt.
+    #[test]
+    fn befehle_waehrend_eines_laufs() {
+        use crate::anzeige::Befehlsfolge;
+        let im_loop = befehle_im_lauf(true);
+        let im_auftrag = befehle_im_lauf(false);
+        assert!(matches!(im_loop("/stop loop"), Befehlsfolge::Anhalten));
+        assert!(matches!(im_auftrag("/stop loop"), Befehlsfolge::Zeilen(_)), "ausserhalb eines Loops haelt es nichts an");
+        let text = |f: Befehlsfolge| match f {
+            Befehlsfolge::Zeilen(z) => z.join("\n"),
+            Befehlsfolge::Anhalten => "ANHALTEN".into(),
+        };
+        // ⚠️ Die Namen aus der Liste und nicht als Literal: Jeder Befehl
+        //    steht genau einmal im Quelltext (`tests/konsole.rs`).
+        let name = |art: Befehlsart| BEFEHLE.iter().find(|b| b.art == art).expect("in der Liste").namen[0];
+        assert!(text(im_loop(name(Befehlsart::Hilfe))).contains("/stop loop"));
+        let modell = name(Befehlsart::Modell);
+        assert!(text(im_loop(modell)).contains("nach /stop loop"), "{}", text(im_loop(modell)));
+        assert!(text(im_auftrag(modell)).contains("nach dem Lauf"));
+        // Text ist ein Zwischenruf: angestellt, nicht abgewiesen.
+        let _ = myl_local_agent::zwischenruf::abholen();
+        assert!(text(im_loop("Bitte auf Deutsch")).contains("nächsten Schritt"));
+        assert_eq!(myl_local_agent::zwischenruf::abholen(), vec!["Bitte auf Deutsch".to_string()]);
+        assert!(text(im_loop("/gibtsnicht")).contains("kein Befehl"));
+    }
+
+    /// ⚑ **Befehle aus zwei Woertern** (`/start loop`, 2026-10-12): Der
+    /// Rest ist das Ziel, Leerraum dazwischen zaehlt nicht, und ein Wort,
+    /// das nur so anfaengt (`/start loops`), ist kein Treffer.
+    #[test]
+    fn die_loopbefehle_haben_zwei_woerter() {
+        assert_eq!(befehl_und_rest("/start loop"), Some((Befehlsart::StartLoop, "")));
+        assert_eq!(
+            befehl_und_rest("  /start   loop   Eine Liste der Dateien  "),
+            Some((Befehlsart::StartLoop, "Eine Liste der Dateien"))
+        );
+        assert_eq!(befehl_und_rest("/stop loop"), Some((Befehlsart::StopLoop, "")));
+        assert_eq!(befehl_und_rest("/resume loop"), Some((Befehlsart::ResumeLoop, "")));
+        assert_eq!(befehl_zu("/start loops"), None);
+        assert_eq!(befehl_zu("/start"), None);
+        assert_eq!(befehl_zu("/loop"), None, "der alte Befehl ist ersetzt");
+        assert_eq!(nach_namen("/startloop", "/start loop"), None);
+    }
+
     #[test]
     fn jeder_befehl_wird_behandelt_und_steht_in_der_hilfe() {
         let zeilen = hilfezeilen(&crate::module::Modulwirt::default()).join("\n");
@@ -3321,34 +3999,15 @@ fn warnung_zeigen(design: myl_client::einstellungen::Konsolendesign) -> i32 {
 /// ⚠️ **Ohne Terminal wird nicht gefragt**, sondern beendet: Dort ist
 /// niemand, der antworten koennte, und eine Frage in einer Roehre waere
 /// ein Haenger.
+///
+/// ⚑ **Seit dem 2026-10-12 ein Tastendruck** ([`crate::janein`]): Die
+/// Frage blinkt, die Eingabetaste nimmt die Vorgabe, Esc bleibt.
 fn wirklich_beenden(vorgabe_ja: bool) -> bool {
-    use std::io::{BufRead, IsTerminal, Write};
+    use std::io::IsTerminal;
     if !std::io::stdin().is_terminal() {
         return true;
     }
-    loop {
-        let frage = if vorgabe_ja {
-            "Wirklich beenden? (J/n): "
-        } else {
-            "Wirklich beenden? (j/N): "
-        };
-        print!("{}", crate::banner::zentriert(frage));
-        let _ = std::io::stdout().flush();
-        let mut zeile = String::new();
-        if std::io::stdin().lock().read_line(&mut zeile).is_err() {
-            // Kein Eingabestrom mehr (Strg-D): Das ist ein Schluss.
-            return true;
-        }
-        match zeile.trim().to_ascii_lowercase().as_str() {
-            "j" | "ja" | "y" | "yes" => return true,
-            "n" | "nein" | "no" => return false,
-            // Eingabe allein nimmt die Vorgabe an.
-            "" => return vorgabe_ja,
-            // Eine unverstandene Antwort beendet nichts; sie fragt noch
-            // einmal.
-            _ => continue,
-        }
-    }
+    crate::janein::fragen("Wirklich beenden?", Some(vorgabe_ja), None).ja()
 }
 
 /// Bricht einen Satz auf eine Breite, ohne Woerter zu zerschneiden.
@@ -3440,11 +4099,17 @@ mod vorgabeprobe {
         let quelle = include_str!("sitzung.rs");
         // Beide Fragezeilen stehen da, und das grosse Zeichen nennt die
         // Vorgabe.
-        assert!(quelle.contains("\"Wirklich beenden? (J/n): \""), "die Ja-Vorgabe fehlt");
-        assert!(quelle.contains("\"Wirklich beenden? (j/N): \""), "die Nein-Vorgabe fehlt");
-        // Eine leere Antwort nimmt die Vorgabe an, statt etwas zu raten.
+        // ⚑ Seit dem 2026-10-12 ein Tastendruck: Die Klammer nennt die
+        //   Vorgabe, und die Eingabetaste nimmt sie (`janein::taste`).
         assert!(
-            quelle.contains("\"\" => return vorgabe_ja,"),
+            quelle.contains("crate::janein::fragen(\"Wirklich beenden?\", Some(vorgabe_ja), None)"),
+            "die Vorgabe geht nicht an die Frage"
+        );
+        assert_eq!(crate::janein::klammer(Some(true)), "[J/n]", "die Ja-Vorgabe fehlt");
+        assert_eq!(crate::janein::klammer(Some(false)), "[j/N]", "die Nein-Vorgabe fehlt");
+        assert_eq!(
+            crate::janein::taste(crossterm::event::KeyCode::Enter, false, Some(true)),
+            Some(crate::janein::Antwort::Ja),
             "die Eingabetaste nimmt die Vorgabe nicht an"
         );
         // Und die Zuordnung: Strg-X gibt `true`, Escape in der Auswahl `false`.

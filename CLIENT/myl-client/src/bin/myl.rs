@@ -46,8 +46,8 @@ myl: lokaler Betrieb von Myelith
   myl sitzung [artefakt]          Viele Auftraege, Modell einmal geladen
   myl auftraege [artefakt] A B    Mehrere Auftraege NEBENLAEUFIG
   myl loop [ziel]                 Ein Vorhaben in Runden verfolgen (ohne Ziel: fortsetzen)
-  myl tasks [add ZIEL [--abnahme BEFEHL]|abnahme ID BEFEHL|resume ID|pause ID]
-                                  Die Tasks des Loops; die Abnahme entscheidet ueber fertig
+  myl tasks [add ZIEL [--abnahme BEFEHL]|abnahme ID BEFEHL|resume ID|pause ID|confirm ID|rework ID WO|answer ID TEXT]
+                                  Die Tasks des Loops; confirm nimmt ein vorgelegtes Ergebnis ab, rework gibt es zurueck
   myl skills [neu NAME]           Skills: wo sie liegen, was da ist; neu legt einen aus der Vorlage an
   myl anhaenge [--aufraeumen]     Angehaengte Dateien: was liegt, und weg damit
   myl sinne [datei|--sprich TEXT] Sehen, Hoeren, Sprechen: was geht, und eine Probe
@@ -145,12 +145,19 @@ fn main() {
     //   (Art. 50 Abs. 1 KI-Verordnung), auf der Fehlerausgabe, damit die
     //   Antwort auf der Standardausgabe unberuehrt bleibt.
     if matches!(args.get(1).map(String::as_str), Some("frage" | "fragen" | "agent" | "sitzung" | "loop")) {
-        let sprache = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())
-            .map(|e| e.oberflaeche.sprache)
-            .unwrap_or_default();
-        eprintln!("{}", myl_client::kennzeichnung::zeile(sprache));
+        let e = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad()).unwrap_or_default();
+        eprintln!("{}", myl_client::kennzeichnung::zeile(e.oberflaeche.sprache));
+        // ⚑ Der Debug-Log folgt der Einstellung `debug.log` (2026-10-12).
+        e.debug_anwenden("myl", &format!("myl {} gestartet", args[1]));
     }
-    let code = match args.get(1).map(String::as_str) {
+    let code = myl_hauptteil(&args);
+    myl_local_agent::debuglog::setzen(false, "myl", "myl beendet");
+    std::process::exit(code);
+}
+
+/// Der Befehl selbst; `main` umgibt ihn mit Kennzeichnung und Debug-Log.
+fn myl_hauptteil(args: &[String]) -> i32 {
+    match args.get(1).map(String::as_str) {
         Some("frage") => frage(&args[2..]),
         Some("fragen") => fragen(&args[2..]),
         Some("modell") => modell(&args[2..]),
@@ -187,8 +194,7 @@ fn main() {
             eprint!("{}", hilfe());
             2
         }
-    };
-    std::process::exit(code);
+    }
 }
 
 /// 📌 **Der Freitext ohne Schalter UND ohne deren Werte.**
@@ -1300,9 +1306,11 @@ fn beantwortet(text: &str) -> std::collections::HashSet<String> {
 }
 
 /// **Die offenen Fragen** einer Eingabedatei: je Zeile `{"id", "text"}`,
+/// wahlweise mit `"vorspann"` (ein fester Teil, der als eigene Nachricht
+/// vor dem Text steht und dessen gerechneter Zustand wiederverwendet wird),
 /// ohne die schon beantworteten. Eine unlesbare Zeile ist ein Fehler mit
 /// Zeilennummer, kein stilles Auslassen.
-fn offene_fragen(eingabe: &str, erledigt: &std::collections::HashSet<String>) -> Result<Vec<(String, String)>, String> {
+fn offene_fragen(eingabe: &str, erledigt: &std::collections::HashSet<String>) -> Result<Vec<(String, String, String)>, String> {
     let mut aus = Vec::new();
     for (n, z) in eingabe.lines().enumerate().filter(|(_, z)| !z.trim().is_empty()) {
         let v: myl_client::serde_json::Value = myl_client::serde_json::from_str(z).map_err(|f| format!("Zeile {}: {f}", n + 1))?;
@@ -1310,7 +1318,7 @@ fn offene_fragen(eingabe: &str, erledigt: &std::collections::HashSet<String>) ->
             return Err(format!("Zeile {}: es fehlt \"id\" oder \"text\"", n + 1));
         };
         if !erledigt.contains(id) {
-            aus.push((id.to_string(), text.to_string()));
+            aus.push((id.to_string(), v["vorspann"].as_str().unwrap_or("").to_string(), text.to_string()));
         }
     }
     Ok(aus)
@@ -1383,11 +1391,18 @@ fn fragen(args: &[String]) -> i32 {
         }
     };
     let beginn = std::time::Instant::now();
-    for (i, (id, text)) in offen.iter().enumerate() {
+    for (i, (id, vorspann, text)) in offen.iter().enumerate() {
         let anfang = std::time::Instant::now();
         let zeile = match myl_client::schutzfilter::abweisen(text, e.oberflaeche.sprache, "myl-fragen") {
             Some(satz) => myl_client::serde_json::json!({"id": id, "fehler": satz}),
-            None => match m.chat("lokal", &[Nachricht::system(grundsaetze.clone()), Nachricht::nutzer(text.clone())], Some(m.grenze as u32)) {
+            None => match m.chat("lokal", &{
+                let mut n = vec![Nachricht::system(grundsaetze.clone())];
+                if !vorspann.trim().is_empty() {
+                    n.push(Nachricht::nutzer(vorspann.clone()));
+                }
+                n.push(Nachricht::nutzer(text.clone()));
+                n
+            }, Some(m.grenze as u32)) {
                 Ok(a) => myl_client::serde_json::json!({"id": id, "antwort": a.text, "prompt_token": a.prompt_token, "antwort_token": a.antwort_token, "millisekunden": anfang.elapsed().as_millis() as u64}),
                 Err(f) => myl_client::serde_json::json!({"id": id, "fehler": f.to_string()}),
             },
@@ -2186,7 +2201,10 @@ mod fragen_tests {
         let eingabe = "{\"id\": \"a\", \"text\": \"Eins\"}\n\n{\"id\": \"b\", \"text\": \"Zwei\"}\n";
         let erledigt = beantwortet("{\"id\": \"a\", \"antwort\": \"x\"}\nkaputt\n");
         let offen = offene_fragen(eingabe, &erledigt).expect("lesbar");
-        assert_eq!(offen, vec![("b".to_string(), "Zwei".to_string())], "a ist schon beantwortet");
+        assert_eq!(offen, vec![("b".to_string(), String::new(), "Zwei".to_string())], "a ist schon beantwortet");
+        // Mit Vorspann: er steht getrennt neben dem Text.
+        let mit = offene_fragen("{\"id\": \"c\", \"vorspann\": \"Fest.\", \"text\": \"Drei\"}", &Default::default()).expect("lesbar");
+        assert_eq!(mit, vec![("c".to_string(), "Fest.".to_string(), "Drei".to_string())]);
         // Gegenproben: eine unlesbare Zeile und eine ohne Text sind Fehler mit Zeilennummer.
         assert!(offene_fragen("{\"id\": \"a\"}", &Default::default()).unwrap_err().contains("Zeile 1"));
         assert!(offene_fragen("x\n{\"id\":1}", &Default::default()).unwrap_err().contains("Zeile 1"));
@@ -2318,6 +2336,11 @@ fn schleife(args: &[String]) -> i32 {
     };
     kapazitaet_anwenden(&e);
     let ablage = myl_local_agent::vorhaben::Ablage::vorgabe();
+    // ⚑ Ein Lauf, der hart endete (Absturz, `kill`), hat seinen Task nicht
+    //   mehr angehalten; das geschieht hier (siehe `nach_dem_schliessen`).
+    if let Some(v) = ablage.nach_dem_schliessen(e.oberflaeche.sprache) {
+        eprintln!("[myl] {} wurde beim Schließen angehalten. Fortsetzen: myl tasks resume {}", v.anzeigename(), v.kennung);
+    }
     let ziel = freitext(args);
     if !ziel.trim().is_empty() {
         if let Some(satz) = myl_client::schutzfilter::abweisen(&ziel, e.oberflaeche.sprache, "myl-loop") {
@@ -2344,8 +2367,12 @@ fn schleife(args: &[String]) -> i32 {
     };
     if laeufer.aktive() == 0 {
         eprintln!("[myl] Kein aktives Vorhaben. Anlegen mit: myl loop <ziel>");
+        vorgelegte_nennen(&laeufer.ablage);
         return 0;
     }
+    // ⚑ Die Marke steht, solange der Loop laeuft; so findet der naechste
+    //   Start nach einem harten Ende den Task, der lief.
+    let _ = laeufer.ablage.loop_aktiv_setzen(true);
     let artefakt = myl_local_agent::ort::absolut(&e.modell.artefakt);
     let mut m = match Oertlichesmodell::laden(&artefakt, &e.kapazitaet) {
         Ok(m) => m,
@@ -2382,7 +2409,6 @@ fn schleife(args: &[String]) -> i32 {
                 let zustand = myl_local_agent::vorhaben::zustandswort(&vorhaben, e.oberflaeche.sprache);
                 eprintln!("[myl] {}: {zustand}", vorhaben.kennung);
             }
-            Ereignis::Angestossen { kennung, ziel } => eprintln!("[myl] Kette: {kennung} beginnt: {ziel}"),
             Ereignis::Wartet { bis } => eprintln!(
                 "[myl] Nichts fällig; die nächste Runde in {} Minuten. Strg-C schließt, `myl loop` macht dort weiter.",
                 bis.saturating_sub(myl_local_agent::vorhaben::jetzt()).div_ceil(60)
@@ -2411,13 +2437,41 @@ fn schleife(args: &[String]) -> i32 {
         }),
     );
     let geschlossen = myl_local_agent::vorhaben::schliessen_angefordert();
+    let ablage = laeufer.ablage.clone();
     drop(laeufer);
     if geschlossen {
-        eprintln!("\n[myl] Geschlossen. `myl loop` macht genau dort weiter.");
-    } else if myl_local_agent::notaus::ausgeloest() {
-        eprintln!("\n[myl] Notaus. Fortsetzen mit `myl tasks resume <ID>`.");
+        // ⚑ **Schliessen haelt an** (Festlegung des Projektinhabers,
+        //   2026-10-12), und weiter geht es nur auf Wunsch.
+        match ablage.nach_dem_schliessen(e.oberflaeche.sprache) {
+            Some(v) => eprintln!("\n[myl] Geschlossen; {} angehalten. Fortsetzen: myl tasks resume {}", v.anzeigename(), v.kennung),
+            None => eprintln!("\n[myl] Geschlossen."),
+        }
+    } else {
+        let _ = ablage.loop_aktiv_setzen(false);
+        if myl_local_agent::notaus::ausgeloest() {
+            eprintln!("\n[myl] Notaus. Fortsetzen mit `myl tasks resume <ID>`.");
+        }
     }
+    vorgelegte_nennen(&ablage);
     0
+}
+
+/// **Was auf den Menschen wartet** (eine Bestaetigung oder eine Antwort),
+/// mit den Befehlen dazu.
+fn vorgelegte_nennen(ablage: &myl_local_agent::vorhaben::Ablage) {
+    for v in ablage.fortsetzbare() {
+        if let myl_local_agent::vorhaben::Zustand::Vorgelegt { ergebnis, einwand } = &v.zustand {
+            eprintln!("[myl] {} ({}) meldet das Ziel als erreicht: {ergebnis}", v.anzeigename(), v.kennung);
+            if let Some(e) = einwand {
+                eprintln!("[myl]   Die Prüfung widerspricht: {e}");
+            }
+            eprintln!("[myl]   Richtig? myl tasks confirm {k}   Weiterarbeiten: myl tasks rework {k} <wo>", k = v.kennung);
+        }
+        if let myl_local_agent::vorhaben::Zustand::Frage { frage } = &v.zustand {
+            eprintln!("[myl] {} ({}) fragt dich: {frage}", v.anzeigename(), v.kennung);
+            eprintln!("[myl]   Antworten: myl tasks answer {} <antwort>", v.kennung);
+        }
+    }
 }
 
 fn ja_nein(b: bool) -> &'static str {
@@ -2480,6 +2534,43 @@ fn tasks_befehl(args: &[String]) -> i32 {
                 1
             }
         },
+        // ⚑ **Das vorgelegte Ergebnis abnehmen oder zurueckgeben**
+        //   (2026-10-12): `confirm` macht fertig und beginnt eine Kette,
+        //   `rework` sagt, wo weitergearbeitet werden soll.
+        (Some("confirm"), Some(k)) => match ablage.bestaetigen(k, sprache) {
+            Ok(neue) => {
+                println!("{k}: fertig");
+                for n in neue {
+                    println!("{}: Kette beginnt: {}", n.kennung, n.ziel);
+                }
+                0
+            }
+            Err(m) => {
+                eprintln!("myl tasks: {m}");
+                1
+            }
+        },
+        // ⚑ Die Antwort auf eine Frage des Modells (`ask_human`).
+        (Some("answer"), Some(k)) => match ablage.antworten(k, &args[2..].join(" "), sprache) {
+            Ok(_) => {
+                println!("{k}: beantwortet. `myl loop` fährt ihn weiter.");
+                0
+            }
+            Err(m) => {
+                eprintln!("myl tasks: {m}");
+                1
+            }
+        },
+        (Some("rework"), Some(k)) => match ablage.nachbessern(k, &args[2..].join(" "), sprache) {
+            Ok(_) => {
+                println!("{k}: weiter. `myl loop` fährt ihn.");
+                0
+            }
+            Err(m) => {
+                eprintln!("myl tasks: {m}");
+                1
+            }
+        },
         (Some(was @ ("resume" | "pause")), Some(k)) => {
             let r = if was == "resume" { ablage.weitermachen(k) } else { ablage.stoppen(k, sprache) };
             match r {
@@ -2494,7 +2585,9 @@ fn tasks_befehl(args: &[String]) -> i32 {
             }
         }
         _ => {
-            eprintln!("myl tasks [add <ziel> [--abnahme <befehl>] | abnahme <ID> <befehl> | resume <ID> | pause <ID>]");
+            eprintln!(
+                "myl tasks [add <ziel> [--abnahme <befehl>] | abnahme <ID> <befehl> | resume <ID> | pause <ID> | confirm <ID> | rework <ID> <wo> | answer <ID> <antwort>]"
+            );
             2
         }
     }

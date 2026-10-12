@@ -289,6 +289,11 @@ impl Modulwirt {
         match self.starten(name, s) {
             Ok(()) => {
                 if let (true, Some(z), Some(l)) = (modus, aktivierung, self.laufendes(name)) {
+                    // 📌 2026-10-08: Ohne diese Zeile merkte sich die neue
+                    //    Fassung beim Betreten des Modus „keine Aktivierung“
+                    //    (sie kam nicht vom Menschen), und der zweite Neustart
+                    //    liess das Modul untaetig stehen.
+                    l.letzter_befehl = Some(z.clone());
                     l.lauf.senden(&AnModul::Befehl { zeile: z });
                 }
             }

@@ -102,10 +102,71 @@ pub fn zusatz_fuer(hoehe: u16, unten: u16) -> u16 {
 /// des Testclients, der keinen Rollbereich kennt. Strg-C in einer Auswahl
 /// laesst der Shell danach den Bereich stehen, bis `reset` oder der naechste
 /// Start ihn freigibt.
+///
+/// ⚑ **Und zeigt den Wagen wieder** (2026-10-12): Waehrend eines Laufs ist
+/// er versteckt ([`wagen_verstecken`]); wer mitten im Lauf hinausgeht,
+/// hinterliesse sonst eine Shell ohne sichtbaren Wagen.
 pub fn rollbereich_freigeben() {
     if std::io::stdout().is_terminal() {
         let mut aus = std::io::stdout();
-        let _ = write!(aus, "\x1b7\x1b[r\x1b8");
+        let _ = write!(aus, "\x1b7\x1b[r\x1b8\x1b[?25h\x1b[?2004l");
+        let _ = aus.flush();
+    }
+}
+
+/// **Versteckt den echten Wagen**, solange ein Lauf ausgibt.
+///
+/// ⚑ Wunsch des Projektinhabers (2026-10-12): Der Wagen soll immer in der
+/// Eingabezeile stehen. Ein Terminal hat nur einen, und waehrend eines
+/// Laufs muss er im Rollbereich stehen, wo die Antwort entsteht. Also wird
+/// er dort versteckt, und die Eingabezeile zeigt einen gezeichneten
+/// ([`crate::anzeige::tippzeile_zeichnen`]).
+pub fn wagen_verstecken() {
+    if std::io::stdout().is_terminal() {
+        let mut aus = std::io::stdout();
+        let _ = write!(aus, "\x1b[?25l");
+        let _ = aus.flush();
+    }
+}
+
+/// **Eingefuegter Text kommt als ein Stueck** (Einfuegen in Klammern,
+/// `ESC[?2004h`), solange `an` gilt.
+///
+/// 📌 Gemeldet vom Projektinhaber am 2026-10-12: Ein eingefuegter Befehl
+/// lief sofort. Ohne Klammern kommt eingefuegter Text als einzelne Tasten
+/// an, und ein Zeilenumbruch am Ende ist eine Eingabetaste. Mit Klammern
+/// meldet das Terminal ihn als ein Ereignis (`Event::Paste`), und die
+/// Konsole setzt ihn in die Zeile, ohne abzuschicken. Ein Terminal, das
+/// die Klammern nicht kennt, uebergeht die Sequenz.
+pub fn einfuegen_geklammert(an: bool) {
+    if std::io::stdout().is_terminal() {
+        let mut aus = std::io::stdout();
+        let _ = write!(aus, "{}", if an { "\x1b[?2004h" } else { "\x1b[?2004l" });
+        let _ = aus.flush();
+    }
+}
+
+/// Haelt das Einfuegen in Klammern, solange er lebt.
+pub struct Geklammert;
+
+impl Geklammert {
+    pub fn an() -> Self {
+        einfuegen_geklammert(true);
+        Self
+    }
+}
+
+impl Drop for Geklammert {
+    fn drop(&mut self) {
+        einfuegen_geklammert(false);
+    }
+}
+
+/// Zeigt den echten Wagen wieder.
+pub fn wagen_zeigen() {
+    if std::io::stdout().is_terminal() {
+        let mut aus = std::io::stdout();
+        let _ = write!(aus, "\x1b[?25h");
         let _ = aus.flush();
     }
 }
@@ -192,7 +253,7 @@ impl Schirm {
     /// Gibt den Rollbereich zurueck und setzt den Wagen ans Ende.
     pub fn aufloesen(&self) {
         let mut aus = std::io::stdout();
-        let _ = writeln!(aus, "\x1b[r\x1b[{};1H", self.hoehe);
+        let _ = writeln!(aus, "\x1b[r\x1b[{};1H\x1b[?25h\x1b[?2004l", self.hoehe);
         let _ = aus.flush();
     }
 

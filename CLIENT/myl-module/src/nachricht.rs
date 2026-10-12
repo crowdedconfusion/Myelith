@@ -82,6 +82,12 @@ pub enum VomModul {
     /// Eine Frage an das geladene Modell, ohne Werkzeuge und ohne Verlauf.
     ModellFragen {
         id: u64,
+        /// **Ein fester Vorspann**, der bei vielen Fragen gleich bleibt; die
+        /// Konsole stellt ihn als eigene Nachricht vor die Frage. So kann
+        /// die Laufzeit seinen gerechneten Zustand wiederverwenden und muss
+        /// nur den wechselnden Teil neu einlesen. Leer: keiner.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        vorspann: String,
         frage: String,
         /// Hoechstens so viele Token Antwort.
         grenze: u32,
@@ -89,6 +95,11 @@ pub enum VomModul {
         denken: bool,
         /// Ob Stuecke der Antwort kommen sollen, waehrend sie entsteht.
         strom: bool,
+        /// **Gierig statt gezogen**: dieselbe Frage gibt dieselbe Antwort.
+        /// Fuer Urteile, die gemessen und kalibriert werden; Zufall waere
+        /// dort Rauschen. Fehlt es, zieht die Konsole wie eingestellt.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        gierig: bool,
     },
     /// Ein Agentenlauf mit der Werkzeugkiste des Moduls.
     Agentenlauf { id: u64, auftrag: String },
@@ -169,7 +180,8 @@ mod tests {
             VomModul::Zeilen { text: "a\nb".into(), stil: Stil::Gewinn },
             VomModul::Fusszeile { teile: vec![Teil { text: "Heute ".into(), stil: Stil::Normal }, Teil { text: "+0,12 %".into(), stil: Stil::Gewinn }] },
             VomModul::NutzerFragen { id: 3, frage: Nutzerfrage::Wort { text: "Freigeben?".into(), wort: "WORT".into() } },
-            VomModul::ModellFragen { id: 4, frage: "?".into(), grenze: 64, denken: false, strom: true },
+            VomModul::ModellFragen { id: 4, vorspann: String::new(), frage: "?".into(), grenze: 64, denken: false, strom: true, gierig: false },
+            VomModul::ModellFragen { id: 5, vorspann: "Immer gleich.".into(), frage: "?".into(), grenze: 64, denken: false, strom: false, gierig: true },
         ];
         for n in alle {
             let z = zeile(&n);

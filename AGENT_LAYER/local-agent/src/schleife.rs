@@ -136,6 +136,33 @@ pub struct Lauf<'a> {
     pub melder: Option<&'a dyn Fn(Meldung<'_>)>,
 }
 
+/// Die Art einer Meldung fuer den Debug-Log.
+fn meldungsart(m: &Meldung<'_>) -> &'static str {
+    match m {
+        Meldung::Schritt(_) => "Schritt",
+        Meldung::Aufruf { .. } => "Werkzeugaufruf",
+        Meldung::Ergebnis { .. } => "Werkzeugergebnis",
+        Meldung::Abgelehnt { .. } => "Abgelehnt",
+        Meldung::Verdichtet { .. } => "Verdichtet",
+    }
+}
+
+/// Der volle Text einer Meldung fuer den Debug-Log.
+fn meldungstext(m: &Meldung<'_>) -> String {
+    match m {
+        Meldung::Schritt(n) => format!("{n}"),
+        Meldung::Aufruf { name, argumente } => format!("{name} {argumente}"),
+        Meldung::Ergebnis { name, text } => format!("{name}\n{text}"),
+        Meldung::Abgelehnt { name, grund } => format!("{name}: {grund}"),
+        Meldung::Verdichtet { vorher, nachher } => format!("{vorher} -> {nachher} Token"),
+    }
+}
+
+/// Alle Nachrichten eines Gespraechs fuer den Debug-Log, je mit Rolle.
+pub fn nachrichten_text(nachrichten: &[Nachricht]) -> String {
+    nachrichten.iter().map(|n| format!("--- {} ---\n{}", n.role, n.content)).collect::<Vec<_>>().join("\n")
+}
+
 /// Was waehrend eines Laufs geschieht, waehrend es geschieht.
 ///
 /// ⚑ **Fuer eine Anzeige und nicht fuer ein Protokoll.** Das Protokoll
@@ -288,10 +315,15 @@ impl<'a> Lauf<'a> {
         // jeder Stelle ausgepackt: Ein `if let Some(...)` je Meldung
         // waere fuenfmal dieselbe Zeile.
         let melden = |m: Meldung<'_>| {
+            // ⚑ **Der Debug-Log sieht jede Meldung**, bevor sie weitergeht:
+            //   Werkzeug samt Argumenten, sein volles Ergebnis, Ablehnungen,
+            //   Verdichtungen. Ausgeschaltet kostet das eine Abfrage.
+            crate::debuglog::eintrag_mit(meldungsart(&m), || meldungstext(&m));
             if let Some(f) = self.melder {
                 f(m);
             }
         };
+        crate::debuglog::eintrag_mit("Lauf beginnt", || nachrichten_text(&nachrichten));
 
         let ende = loop {
             // 1. Schrittzahl.
@@ -317,6 +349,15 @@ impl<'a> Lauf<'a> {
                     Err(e) => break Ende::Tuer(e),
                 };
             getan += 1;
+            crate::debuglog::eintrag_mit("Modellantwort", || {
+                format!(
+                    "Schritt {getan}, Abschluss {}, Token hinein {} heraus {}\n{}",
+                    antwort.abschlussgrund.as_deref().unwrap_or("-"),
+                    antwort.prompt_token,
+                    antwort.antwort_token,
+                    antwort.text
+                )
+            });
             let gefragt = nachrichten.clone();
             nachrichten.push(Nachricht::modell(antwort.text.clone()));
 
@@ -500,9 +541,24 @@ impl<'a> Lauf<'a> {
                 stufe,
             ));
 
+            // ⚑ **Zwischenrufe des Menschen** (Wunsch des Projektinhabers,
+            //   2026-10-12): Was er waehrend der Arbeit getippt hat, steht
+            //   nach diesem Schritt als seine Nachricht da. Hat das Modell
+            //   gerade abgeschlossen, bekommt es sie trotzdem und arbeitet
+            //   weiter; das Schrittbudget gilt wie fuer jeden Schritt.
+            let zurufe = crate::zwischenruf::fuer_die_schleife();
+            let zugerufen = !zurufe.is_empty();
+            for z in zurufe {
+                crate::debuglog::eintrag("Zwischenruf an das Modell", &z);
+                nachrichten.push(Nachricht::nutzer(crate::zwischenruf::nachricht(&z)));
+            }
+
             // ⚑ **Fertig heisst: das Modell hat nichts mehr
             // vorgeschlagen.** Das ist der normale Ausgang.
             if !versucht {
+                if zugerufen {
+                    continue;
+                }
                 break Ende::Fertig;
             }
             if lief_etwas {
@@ -524,6 +580,7 @@ impl<'a> Lauf<'a> {
             }
         };
 
+        crate::debuglog::eintrag_mit("Lauf endet", || format!("{ende}"));
         Ergebnis { strom, nachrichten, ende }
     }
 

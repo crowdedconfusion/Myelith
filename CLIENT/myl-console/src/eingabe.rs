@@ -170,6 +170,8 @@ pub fn lesen_mit_liste(
     let Ok(_roh) = crate::auswahl::Rohmodus::an() else {
         return aus_der_roehre();
     };
+    // ⚑ Eingefuegter Text kommt als ein Stueck und wird nie abgeschickt.
+    let _geklammert = crate::schirm::Geklammert::an();
     let mut zeile = anfang;
     // Die Liste: was gerade passt, was gewaehlt ist, ob sie zu sehen ist,
     // und ob Esc sie fuer diese Zeile weggeraeumt hat.
@@ -213,7 +215,17 @@ pub fn lesen_mit_liste(
                 continue;
             }
         }
-        let Ok(Event::Key(k)) = event::read() else { continue };
+        let k = match event::read() {
+            Ok(Event::Key(k)) => k,
+            // ⚑ **Eingefuegt heisst nicht abgeschickt** (2026-10-12): Der
+            //   Text steht in der Zeile, und erst die Eingabetaste schickt.
+            Ok(Event::Paste(text)) => {
+                zeile.push_str(&einfuegetext(&text));
+                auffrischen(&zeile, &mut passend, &mut gewaehlt, &mut offen, &weggeraeumt);
+                continue;
+            }
+            _ => continue,
+        };
         // Windows liefert Press und Release; ohne diese Pruefung zaehlt
         // jeder Tastendruck doppelt.
         if k.kind != KeyEventKind::Press {
@@ -308,6 +320,20 @@ pub fn lesen_mit_liste(
             _ => {}
         }
     }
+}
+
+/// **Eingefuegter Text fuer eine einzeilige Eingabe**: Zeilenumbrueche und
+/// Tabulatoren werden zu Leerzeichen, Umbrueche am Ende fallen weg, andere
+/// Steuerzeichen auch. So schickt ein mitkopierter Zeilenumbruch nichts ab.
+pub fn einfuegetext(text: &str) -> String {
+    text.trim_end_matches(['\r', '\n'])
+        .chars()
+        .filter_map(|c| match c {
+            '\r' | '\n' | '\t' => Some(' '),
+            c if c.is_control() => None,
+            c => Some(c),
+        })
+        .collect()
 }
 
 /// Ohne Terminal gibt es nichts zu zeichnen und nichts umzuschalten.
@@ -413,6 +439,23 @@ mod tests {
         let liste = rumpf.find("weggeraeumt = Some(zeile.clone());").expect("Esc der Liste fehlt");
         let ende = rumpf.find("KeyCode::Esc => return Eingabe::Ende,").expect("Esc der Zeile fehlt");
         assert!(liste < ende);
+    }
+
+    /// 📌 **Ein eingefuegter Befehl wird nicht abgeschickt** (gemeldet vom
+    /// Projektinhaber, 2026-10-12): Der Umbruch am Ende faellt weg, andere
+    /// werden Leerzeichen, und die Zeile liest eingefuegten Text als ein
+    /// Stueck, ohne hinauszufuehren.
+    #[test]
+    fn eingefuegt_ist_nicht_abgeschickt() {
+        assert_eq!(einfuegetext("/start loop Ziel\n"), "/start loop Ziel");
+        assert_eq!(einfuegetext("/tasks\r\n"), "/tasks");
+        assert_eq!(einfuegetext("a\nb\tc\u{7}d"), "a b cd");
+        let quelle = include_str!("eingabe.rs");
+        let rumpf = quelle.split("pub fn lesen_mit_liste(").nth(1).expect("`lesen_mit_liste` fehlt");
+        let stueck = rumpf.split("Ok(Event::Paste(text)) => {").nth(1).expect("die Zeile kennt kein Einfuegen");
+        let bis_continue = stueck.split("continue;").next().unwrap_or("");
+        assert!(!bis_continue.contains("hinaus("), "eingefuegter Text fuehrt hinaus");
+        assert!(rumpf.contains("Geklammert::an()"), "ohne Klammern kommt eingefuegter Text als Tasten");
     }
 
     /// **Umlaute zaehlen als ein Zeichen.**

@@ -118,8 +118,8 @@ impl Pruefer {
             }
             VomModul::Fusszeile { teile } if b.fusszeile => VomModul::Fusszeile { teile: Self::teile(teile) },
             VomModul::Unten { zeilen } if b.unten > 0 => VomModul::Unten { zeilen: zeilen.into_iter().take(b.unten as usize).map(Self::teile).collect() },
-            VomModul::ModellFragen { id, frage, grenze, denken, strom } if b.modell => {
-                VomModul::ModellFragen { id, frage, grenze: grenze.min(8_192), denken, strom }
+            VomModul::ModellFragen { id, vorspann, frage, grenze, denken, strom, gierig } if b.modell => {
+                VomModul::ModellFragen { id, vorspann, frage, grenze: grenze.min(8_192), denken, strom, gierig }
             }
             VomModul::Agentenlauf { id, auftrag } if b.agent => VomModul::Agentenlauf { id, auftrag },
             VomModul::NutzerFragen { id, frage } => VomModul::NutzerFragen { id, frage: nutzerfrage_saeubern(frage)? },
@@ -367,7 +367,7 @@ mod tests {
     #[test]
     fn befugnisse_greifen() {
         let mut p = Pruefer::neu(Befugnisse::default());
-        assert!(p.pruefen(VomModul::ModellFragen { id: 1, frage: "?".into(), grenze: 10, denken: false, strom: false }).is_err(), "ohne Befugnis kein Modell");
+        assert!(p.pruefen(VomModul::ModellFragen { id: 1, vorspann: String::new(), frage: "?".into(), grenze: 10, denken: false, strom: false, gierig: false }).is_err(), "ohne Befugnis kein Modell");
         assert!(p.pruefen(VomModul::Agentenlauf { id: 2, auftrag: "x".into() }).is_err());
         assert!(p.pruefen(VomModul::Fusszeile { teile: vec![] }).is_err());
         assert!(p.pruefen(VomModul::Unten { zeilen: vec![] }).is_err());
@@ -375,7 +375,7 @@ mod tests {
         let mut p = Pruefer::neu(befugt(2));
         let unten = p.pruefen(VomModul::Unten { zeilen: vec![vec![]; 5] }).unwrap();
         assert_eq!(unten, VomModul::Unten { zeilen: vec![vec![]; 2] }, "auf die Befugnis gekuerzt");
-        let gross = p.pruefen(VomModul::ModellFragen { id: 1, frage: "?".into(), grenze: 1_000_000, denken: false, strom: false }).unwrap();
+        let gross = p.pruefen(VomModul::ModellFragen { id: 1, vorspann: String::new(), frage: "?".into(), grenze: 1_000_000, denken: false, strom: false, gierig: false }).unwrap();
         assert!(matches!(gross, VomModul::ModellFragen { grenze: 8_192, .. }));
     }
 

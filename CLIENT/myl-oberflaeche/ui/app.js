@@ -178,15 +178,32 @@ const TEXTE = {
     "loop.laeuft_runde": (n) => `Runde ${n} läuft`,
     "loop.pruefung": (f, e, g) => `Prüfung: Fortschritt ${f ? "ja" : "nein"}, erreicht ${e ? "ja" : "nein"}. ${g}`,
     "loop.erst_task": "Lege zuerst einen Task an: Ziel in die Liste schreiben.",
+    "loop.waehlen": "Alle Tasks sind angehalten: ▶ an einem Task setzt ihn fort.",
     "loop.angelegt": (z, wort) => `Task angelegt: ${z} (${wort})`,
     "loop.belegt": "Der Loop rechnet gerade eine Runde; das Modell gehört ihr. ∞ pausiert sie.",
     "loop.laedt": "Der Loop lädt das Modell …",
     "loop.fehler": (g) => `Loop: ${g}`,
-    "loop.ende.pausiert": "Loop pausiert. ∞ macht genau dort weiter.",
+    "loop.ende.pausiert": "Loop angehalten. ▶ in der Taskliste setzt ihn genau dort fort.",
     "loop.ende.leer": "Keine offenen Tasks mehr; der Loop endet.",
     "loop.ende.notaus": "Notaus: Der Loop ist angehalten, der laufende Task auch.",
-    "loop.wieder": "Der Loop lief beim Schließen und macht jetzt dort weiter.",
-    "loop.unterbrochen": "unterbrochen; beim nächsten ∞ geht es genau hier weiter",
+    "loop.geschlossen": (n) => `Der Loop „${n}“ lief beim Schließen und ist angehalten. ▶ in der Taskliste setzt ihn fort.`,
+    "loop.unterbrochen": "angehalten; ▶ in der Taskliste macht genau hier weiter",
+    "loop.abnehmen": "Ergebnis prüfen",
+    "loop.frage.titel": (n) => `∞ „${n}“ meldet das Ziel als erreicht`,
+    "loop.frage.kern": "Hat der Loop zum richtigen Ergebnis geführt und soll er enden? Wenn nicht, schreib, wo weitergearbeitet werden soll.",
+    "loop.frage.platz": "Wo soll weitergearbeitet werden? (leer: einfach weiter)",
+    "loop.frage.ja": "Ja, Loop beenden",
+    "loop.frage.nein": "Weiterarbeiten",
+    "loop.frage.spaeter": "Später",
+    "loop.frage.einwand": (e) => `Die Prüfung widerspricht: ${e}`,
+    "loop.rueckfrage.titel": (n) => `∞ „${n}“ fragt dich`,
+    "loop.rueckfrage.platz": "Deine Antwort …",
+    "loop.rueckfrage.antworten": "Antworten",
+    "loop.rueckfrage.knopf": "Frage beantworten",
+    "loop.keine_antwort": "(keine; das Modell entscheidet selbst)",
+    "loop.beantwortet": (a) => `∞ Deine Antwort: ${a}`,
+    "loop.bestaetigt": (n) => `∞ ${n}: Ergebnis bestätigt, der Loop ist fertig.`,
+    "loop.nachgebessert": (h) => (h ? `∞ Nicht abgenommen. Weiter bei: ${h}` : "∞ Nicht abgenommen; es geht weiter."),
     "loop.haelt_an": "hält an …",
     "loop.meldung": (z, zustand) => `∞ ${z}: ${zustand}`,
     "loop.kette": (z) => `∞ Kette: neuer Task ${z}`,
@@ -443,15 +460,32 @@ const TEXTE = {
     "loop.laeuft_runde": (n) => `Round ${n} running`,
     "loop.pruefung": (f, e, g) => `Review: progress ${f ? "yes" : "no"}, reached ${e ? "yes" : "no"}. ${g}`,
     "loop.erst_task": "Add a task first: write a goal into the list.",
+    "loop.waehlen": "All tasks are stopped: ▶ on a task continues it.",
     "loop.angelegt": (z, wort) => `Task added: ${z} (${wort})`,
     "loop.belegt": "The loop is running a round; the model belongs to it. ∞ pauses it.",
     "loop.laedt": "The loop is loading the model …",
     "loop.fehler": (g) => `Loop: ${g}`,
-    "loop.ende.pausiert": "Loop paused. ∞ continues exactly there.",
+    "loop.ende.pausiert": "Loop stopped. ▶ in the task list continues exactly there.",
     "loop.ende.leer": "No open tasks left; the loop ends.",
     "loop.ende.notaus": "Emergency stop: the loop is halted, and so is the running task.",
-    "loop.wieder": "The loop was running when the window closed and continues now.",
-    "loop.unterbrochen": "interrupted; the next ∞ continues exactly here",
+    "loop.geschlossen": (n) => `The loop “${n}” was running when the window closed and is stopped. ▶ in the task list continues it.`,
+    "loop.unterbrochen": "stopped; ▶ in the task list continues exactly here",
+    "loop.abnehmen": "Check the result",
+    "loop.frage.titel": (n) => `∞ “${n}” reports the goal as reached`,
+    "loop.frage.kern": "Did the loop lead to the right result, and should it end? If not, write where work should continue.",
+    "loop.frage.platz": "Where should work continue? (empty: just continue)",
+    "loop.frage.ja": "Yes, end the loop",
+    "loop.frage.nein": "Keep working",
+    "loop.frage.spaeter": "Later",
+    "loop.frage.einwand": (e) => `The review objects: ${e}`,
+    "loop.rueckfrage.titel": (n) => `∞ “${n}” asks you`,
+    "loop.rueckfrage.platz": "Your answer …",
+    "loop.rueckfrage.antworten": "Answer",
+    "loop.rueckfrage.knopf": "Answer the question",
+    "loop.keine_antwort": "(none; the model decides)",
+    "loop.beantwortet": (a) => `∞ Your answer: ${a}`,
+    "loop.bestaetigt": (n) => `∞ ${n}: result confirmed, the loop is done.`,
+    "loop.nachgebessert": (h) => (h ? `∞ Not accepted. Continue with: ${h}` : "∞ Not accepted; work continues."),
     "loop.haelt_an": "stopping …",
     "loop.meldung": (z, zustand) => `∞ ${z}: ${zustand}`,
     "loop.kette": (z) => `∞ Chain: new task ${z}`,
@@ -2700,7 +2734,8 @@ const tabelle_fuer = (name) =>
       : // ⚑ **Agent und Modell in getrennten Tabellen**, damit die Sinne
         // dazwischen stehen koennen (2026-09-18).
         // ⚑ Der Loop steht beim Agenten: Er ist eine Folge von Agentenlaeufen.
-        name.startsWith("agent.") || name.startsWith("loop.")
+        // ⚑ Der Debug-Log auch: Er schreibt mit, was Laeufe tun (2026-10-12).
+        name.startsWith("agent.") || name.startsWith("loop.") || name.startsWith("debug.")
         ? "felder-agent"
         : "felder-modell";
 
@@ -5030,8 +5065,8 @@ function loop_zeichnen() {
   knopf.classList.toggle("an", loopstand.laeuft);
   knopf.title = `${t("loop.knopf")} · ${loopstand_text()}`;
   const vorn = loopstand.tasks.find((z) => z.stellung === "vorn");
-  $("looptask").textContent = vorn ? vorn.ziel : t("loop.kein_task");
-  $("loopwahl").title = vorn ? `${vorn.ziel} (${vorn.wort})` : t("loop.liste");
+  $("looptask").textContent = vorn ? vorn.name : t("loop.kein_task");
+  $("loopwahl").title = vorn ? `${vorn.name}: ${vorn.ziel} (${vorn.wort})` : t("loop.liste");
   if (!$("taskwahl").hidden) taskliste_zeichnen();
 }
 
@@ -5186,7 +5221,8 @@ function taskzeile_bauen(z) {
   name.className = "taskname blank";
   // ⚑ **„Ziel (Gespraech)“** (Festlegung des Projektinhabers, 2026-09-30).
   const zu = taskgespraech_name(z);
-  name.textContent = `${z.ziel} (${zu})`;
+  // ⚑ **Der Name des Tasks, das Ziel am Zeiger** (2026-10-12).
+  name.textContent = `${z.name} (${zu})`;
   name.title = `${t("loop.oeffnen")}: ${z.ziel} (${zu})`;
   name.addEventListener("click", () => task_oeffnen(z));
 
@@ -5207,10 +5243,21 @@ function taskzeile_bauen(z) {
   const aktionen = document.createElement("span");
   aktionen.className = "taskaktionen";
   const kennung = z.kennung;
-  if (z.stellung === "angehalten") {
-    aktionen.append(tat("▶", t("loop.weiter"), () => task_befehl(invoke("task_weiter", { kennung }))));
+  // ⚑ **▶, ⏸ oder ✓ neben jedem Task, dazu der Papierkorb** (Wunsch des
+  //    Projektinhabers, 2026-10-12). ▶ startet den Loop mit genau diesem
+  //    Task; ⏸ haelt ihn an, auch mitten in seiner Runde; ✓ fragt nach dem
+  //    vorgelegten Ergebnis.
+  if (z.stellung === "vorgelegt") {
+    aktionen.append(tat("✓", t("loop.abnehmen"), () => ergebnis_fragen(z)));
+  } else if (z.stellung === "frage") {
+    aktionen.append(tat("?", t("loop.rueckfrage.knopf"), () => rueckfrage_stellen(z)));
+  } else if (task_laeuft(z)) {
+    aktionen.append(tat("⏸", t("loop.stoppen"), () => task_halten(z)));
   } else if (z.stellung !== "fertig") {
-    aktionen.append(tat("⏸", t("loop.stoppen"), () => task_befehl(invoke("task_stoppen", { kennung }))));
+    aktionen.append(tat("▶", t("loop.weiter"), () => task_spielen(z)));
+    if (z.stellung === "wartend") {
+      aktionen.append(tat("⏸", t("loop.stoppen"), () => task_halten(z)));
+    }
   }
   // ⛔️ **Entfernen braucht zwei Klicks.** Ein Task traegt sein Tagebuch
   //    mit; ein Klick daneben soll es nicht kosten.
@@ -5218,7 +5265,7 @@ function taskzeile_bauen(z) {
   //    2026-09-29); vorher ein kleines „ד, das man uebersah.
   const weg = tat("", t("loop.entfernen"), () => {
     if (weg.dataset.scharf === "ja") {
-      task_befehl(invoke("task_entfernen", { kennung }));
+      task_loeschen(z);
       return;
     }
     weg.dataset.scharf = "ja";
@@ -5286,7 +5333,14 @@ function taskmenue_oeffnen(z, li, x, y) {
   taskmenue_fuer = { z, li };
   const halten = m.querySelector('[data-tasktat="halten"]');
   halten.hidden = z.stellung === "fertig";
-  halten.textContent = z.stellung === "angehalten" ? t("loop.weiter") : t("loop.stoppen");
+  halten.textContent =
+    z.stellung === "vorgelegt"
+      ? t("loop.abnehmen")
+      : z.stellung === "frage"
+        ? t("loop.rueckfrage.knopf")
+        : task_laeuft(z)
+          ? t("loop.stoppen")
+          : t("loop.weiter");
   m.hidden = false;
   // Erst zeigen, dann messen (siehe `menue_oeffnen`).
   const r = m.getBoundingClientRect();
@@ -5301,9 +5355,12 @@ async function taskmenue_tat(tat) {
   if (!ziel) return;
   const kennung = ziel.z.kennung;
   if (tat === "loeschen") {
-    await task_befehl(invoke("task_entfernen", { kennung }));
+    await task_loeschen(ziel.z);
   } else if (tat === "halten") {
-    await task_befehl(invoke(ziel.z.stellung === "angehalten" ? "task_weiter" : "task_stoppen", { kennung }));
+    if (ziel.z.stellung === "vorgelegt") await ergebnis_fragen(ziel.z);
+    else if (ziel.z.stellung === "frage") await rueckfrage_stellen(ziel.z);
+    else if (task_laeuft(ziel.z)) await task_halten(ziel.z);
+    else await task_spielen(ziel.z);
   } else if (tat === "bearbeiten") {
     task_bearbeiten_zeigen(ziel.z, ziel.li);
   }
@@ -5360,6 +5417,141 @@ async function task_befehl(aufruf) {
     melden(t("loop.fehler", f));
   }
   await tasks_holen();
+}
+
+/// Laeuft dieser Task gerade, also vorn bei laufendem Loop?
+const task_laeuft = (z) => z.stellung === "vorn" && loopstand.laeuft;
+
+/// **▶: genau diesen Task fahren.** Er kommt nach vorn, und der Loop geht an,
+/// falls er aus ist. Laeuft er schon, kommt dieser Task als naechster dran.
+async function task_spielen(z) {
+  await task_befehl(invoke("task_weiter", { kennung: z.kennung }));
+  if (!loopstand.laeuft) await loop_an(false);
+}
+
+/// **⏸: anhalten.** Der laufende Task haelt den ganzen Loop an, sofort und
+/// auch mitten in seiner Runde; ein wartender wird nur zurueckgestellt.
+async function task_halten(z) {
+  if (task_laeuft(z)) {
+    await loop_umschalten();
+    return;
+  }
+  await task_befehl(invoke("task_stoppen", { kennung: z.kennung }));
+}
+
+/// **Loeschen, auch den laufenden Task**: Der Loop haelt zuerst an, und
+/// geloescht wird, wenn seine Runde steht.
+async function task_loeschen(z) {
+  if (task_laeuft(z)) {
+    await loop_umschalten();
+    if (loopstand.haelt_an) await loopstand.haelt_an;
+  }
+  await task_befehl(invoke("task_entfernen", { kennung: z.kennung }));
+}
+
+// ── Das vorgelegte Ergebnis ──
+//
+// ⚑ **Fertig sagt der Mensch** (Festlegung des Projektinhabers,
+// 2026-10-12). Meldet das Modell das Ziel als erreicht, fragt das Fenster:
+// stimmt es, dann endet der Loop; sonst geht es weiter, und zwar dort, wo
+// der Mensch es sagt. „Später“ laesst das Ergebnis liegen; ✓ in der Liste
+// fragt erneut.
+
+/// Fragen nacheinander, nie zwei Kaesten uebereinander.
+let ergebnisfragen = Promise.resolve();
+
+function ergebnis_fragen(z) {
+  ergebnisfragen = ergebnisfragen.then(() => ergebnis_fragen_jetzt(z)).catch((f) => melden(t("loop.fehler", f)));
+  return ergebnisfragen;
+}
+
+/// **Eine Frage des Modells** (`ask_human`): derselbe Weg wie beim
+/// Ergebnis, nacheinander und nie zwei Kaesten uebereinander.
+function rueckfrage_stellen(z) {
+  ergebnisfragen = ergebnisfragen.then(() => rueckfrage_jetzt(z)).catch((f) => melden(t("loop.fehler", f)));
+  return ergebnisfragen;
+}
+
+async function rueckfrage_jetzt(z) {
+  const a = await tasks_holen();
+  const jetzt = a?.eintraege.find((x) => x.kennung === z.kennung);
+  if (!jetzt || jetzt.stellung !== "frage") return;
+  $("rueckfragetitel").textContent = t("loop.rueckfrage.titel", jetzt.name);
+  $("rueckfragetext").textContent = jetzt.frage || "";
+  const feld = $("rueckfrageantwort");
+  feld.value = "";
+  const kasten = $("rueckfrage");
+  kasten.hidden = false;
+  feld.focus();
+  const wahl = await new Promise((fertig) => {
+    const ende = (w) => {
+      kasten.hidden = true;
+      $("rueckfrageja").onclick = null;
+      $("rueckfragespaeter").onclick = null;
+      fertig(w);
+    };
+    $("rueckfrageja").onclick = () => ende("ja");
+    $("rueckfragespaeter").onclick = () => ende("spaeter");
+  });
+  if (wahl === "spaeter") return;
+  const antwort = feld.value.trim();
+  await invoke("task_antworten", { kennung: jetzt.kennung, antwort });
+  const g = taskgespraech(jetzt.kennung, jetzt.ziel);
+  g.beitraege.push({ von: "hinweis", text: t("loop.beantwortet", antwort || t("loop.keine_antwort")) });
+  sichern();
+  if (offen === g) alles_zeichnen();
+  await tasks_holen();
+  if (!loopstand.laeuft) await loop_an(true);
+}
+
+async function ergebnis_fragen_jetzt(z) {
+  // Steht es noch zur Frage? Ein zweites Fenster oder die Konsole kann es
+  // inzwischen entschieden haben.
+  const a = await tasks_holen();
+  const jetzt = a?.eintraege.find((x) => x.kennung === z.kennung);
+  if (!jetzt || jetzt.stellung !== "vorgelegt") return;
+  $("ergebnisfragetitel").textContent = t("loop.frage.titel", jetzt.name);
+  $("ergebnisfrageergebnis").textContent = jetzt.ergebnis || "";
+  // ⚑ Der Einwand der Pruefung steht dabei: Sie beraet, du entscheidest.
+  const einwand = $("ergebnisfrageeinwand");
+  einwand.textContent = jetzt.einwand ? t("loop.frage.einwand", jetzt.einwand) : "";
+  einwand.hidden = !jetzt.einwand;
+  const feld = $("ergebnisfragewo");
+  feld.value = "";
+  const kasten = $("ergebnisfrage");
+  kasten.hidden = false;
+  feld.focus();
+  const wahl = await new Promise((fertig) => {
+    const ende = (w) => {
+      kasten.hidden = true;
+      for (const id of ["ergebnisja", "ergebnisnein", "ergebnisspaeter"]) $(id).onclick = null;
+      fertig(w);
+    };
+    $("ergebnisja").onclick = () => ende("ja");
+    $("ergebnisnein").onclick = () => ende("nein");
+    $("ergebnisspaeter").onclick = () => ende("spaeter");
+  });
+  if (wahl === "spaeter") return;
+  const g = taskgespraech(jetzt.kennung, jetzt.ziel);
+  if (wahl === "ja") {
+    const kette = await invoke("task_bestaetigen", { kennung: jetzt.kennung });
+    g.beitraege.push({ von: "hinweis", text: t("loop.bestaetigt", jetzt.name) });
+    melden(t("loop.bestaetigt", jetzt.name));
+    for (const ziel of kette) melden(t("loop.kette", kurz_titel(ziel)));
+    sichern();
+    if (offen === g) alles_zeichnen();
+    await tasks_holen();
+    if (kette.length && !loopstand.laeuft) await loop_an(true);
+    return;
+  }
+  const hinweis = feld.value.trim();
+  await invoke("task_nachbessern", { kennung: jetzt.kennung, hinweis });
+  g.beitraege.push({ von: "hinweis", text: t("loop.nachgebessert", hinweis) });
+  melden(t("loop.nachgebessert", hinweis));
+  sichern();
+  if (offen === g) alles_zeichnen();
+  await tasks_holen();
+  if (!loopstand.laeuft) await loop_an(true);
 }
 
 // ── Ziehen ──
@@ -5450,7 +5642,10 @@ async function loop_an(von_selbst) {
   if (!a) return;
   if (!a.eintraege.some((z) => z.stellung === "vorn")) {
     if (!von_selbst) {
-      melden(t("loop.erst_task"));
+      // ⚑ Gibt es angehaltene Tasks, wird einer gewaehlt (▶), statt einen
+      //    neuen anzulegen.
+      const angehalten = a.eintraege.some((z) => ["angehalten", "vorgelegt", "frage"].includes(z.stellung));
+      melden(t(angehalten ? "loop.waehlen" : "loop.erst_task"));
       await taskwahl_oeffnen();
     }
     return;
@@ -5583,11 +5778,17 @@ async function loop_ereignis(e) {
       loopumfeld_senden(g);
     }
     loopstand.in_runde = false;
-    melden(t("loop.meldung", kurz_titel(e.ziel), e.zustand), "gespraech");
-  } else if (e.art === "Angestossen") {
-    taskgespraech(e.kennung, e.ziel);
-    chats_zeichnen();
-    melden(t("loop.kette", kurz_titel(e.ziel)));
+    melden(t("loop.meldung", e.name || kurz_titel(e.ziel), e.zustand), "gespraech");
+    // ⚑ Ein vorgelegtes Ergebnis wird sofort erfragt; der Loop faehrt
+    //    derweil mit dem naechsten Task weiter, falls einer wartet.
+    if (e.vorgelegt != null) {
+      ergebnis_fragen({ kennung: e.kennung });
+    }
+    if (e.frage != null) {
+      rueckfrage_stellen({ kennung: e.kennung });
+    }
+  } else if (e.art === "Benannt") {
+    // Der Name kam nach dem Anlegen; die Liste holt ihn unten.
   } else if (e.art === "Wartet") {
     loopstand.minuten = e.minuten;
   } else if (e.art === "Fehler" || e.art === "OhneModell") {
@@ -5899,13 +6100,21 @@ async function saat_an_beitrag(b) {
   ausgabepfeil_zeichnen(null);
 }
 
-/// ⚑ **Lief der Loop beim Schliessen, laeuft er jetzt weiter** (Festlegung
-/// des Projektinhabers: exakt dort, wo gestoppt). Erst nach dem KI-Hinweis.
+/// ⚑ **Lief der Loop beim Schliessen, ist er jetzt angehalten**, und ▶ in
+/// der Liste setzt ihn fort (Festlegung des Projektinhabers, 2026-10-12;
+/// bis dahin fuhr er von selbst weiter). Erst nach dem KI-Hinweis.
+/// Wartet ein Ergebnis auf die Bestaetigung, wird danach gefragt.
 async function loop_beim_start() {
+  try {
+    const name = await invoke("loop_nach_dem_start");
+    if (name) melden(t("loop.geschlossen", name));
+  } catch (f) {
+    melden(t("loop.fehler", f));
+  }
   const stand = await tasks_holen();
-  if (stand && stand.war_aktiv) {
-    melden(t("loop.wieder"));
-    await loop_an(true);
+  for (const z of stand?.eintraege || []) {
+    if (z.stellung === "vorgelegt") ergebnis_fragen(z);
+    if (z.stellung === "frage") rueckfrage_stellen(z);
   }
 }
 

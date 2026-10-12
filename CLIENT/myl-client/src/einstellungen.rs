@@ -225,6 +225,30 @@ pub struct Einstellungen {
     /// ⚑ `#[serde(default)]`: Eine Datei aus der Zeit davor bleibt lesbar.
     #[serde(default, rename = "loop")]
     pub schleife: Loopeinstellung,
+    /// Der Debug-Log (`myl_local_agent::debuglog`); seit dem 2026-10-12.
+    #[serde(default)]
+    pub debug: Debugeinstellung,
+}
+
+impl Einstellungen {
+    /// **Schaltet den Debug-Log so, wie die Einstellung es sagt.** Aendert
+    /// sich dabei etwas, steht der Wechsel im Log (`wer` ist die
+    /// Oberflaeche, `anlass` der Grund). Eine Stelle fuer Konsole, Fenster
+    /// und `myl`.
+    pub fn debug_anwenden(&self, wer: &str, anlass: &str) -> bool {
+        myl_local_agent::debuglog::setzen(self.debug.log, wer, anlass)
+    }
+}
+
+/// **Der Debug-Log**: ob alles mitgeschrieben wird.
+///
+/// ⚑ **Aus als Vorgabe**: Er schreibt Auftraege, Dateiinhalte und Antworten
+/// vollstaendig auf die Platte (unter `SYSTEM/logs/debug/`), und das soll
+/// nur geschehen, wenn es jemand will.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct Debugeinstellung {
+    #[serde(default)]
+    pub log: bool,
 }
 
 /// **Wie die Konsole aussieht.**
@@ -901,7 +925,7 @@ impl Schriftgroesse {
 /// beieinander, und wer hier ein Feld einfuegt, verschiebt es damit
 /// auch auf der Seite. Das ist beabsichtigt: Eine zweite Liste, die nur
 /// die Reihenfolge festlegt, waere wieder eine zweite Liste.
-pub const FELDER: [Feld; 30] = [
+pub const FELDER: [Feld; 28] = [
     // ⚑ **Sie steht zuerst** (Festlegung des Projektinhabers,
     // 2026-09-10). Sie beschriftet alles, was darunter kommt: Wer die
     // Seite in einer Sprache oeffnet, die er nicht liest, findet hier
@@ -1056,44 +1080,19 @@ pub const FELDER: [Feld; 30] = [
             "After this many tool calls the agent stops and answers with what it has.",
         ),
     ),
-    feld(
-        "loop.runden",
-        Feldart::Zahl,
-        ("Loop", "Loop"),
-        ("Höchstzahl an Runden", "Maximum rounds"),
-        (
-            "So viele Runden arbeitet ein Vorhaben höchstens, dann hält es an und meldet sich im Posteingang.",
-            "A task runs at most this many rounds, then it stops and reports in the inbox.",
-        ),
-    ),
-    feld(
-        "loop.stunden",
-        Feldart::Zahl,
-        ("Loop", "Loop"),
-        ("Höchstdauer in Stunden", "Maximum duration in hours"),
-        (
-            "Gezählt wird nur die Zeit, in der Fenster oder Konsole offen sind und das Vorhaben läuft oder wartet. Danach hält es an.",
-            "Only time while the window or console is open and the task runs or waits counts. After that it stops.",
-        ),
-    ),
+    // ⚑ **Keine Hoechstzahl an Runden, keine Hoechstdauer und kein Halt
+    //   bei Stillstand** (Festlegung des Projektinhabers, 2026-10-12): Ein
+    //   Loop endet, wenn der Mensch ihn anhaelt oder das Ergebnis
+    //   bestaetigt. Bis CLIENT v0.132.0 standen hier `loop.runden`,
+    //   `loop.stunden` und `loop.stillstand`.
     feld(
         "loop.schritte",
         Feldart::Zahl,
         ("Loop", "Loop"),
         ("Schritte je Runde", "Steps per round"),
         (
-            "So viele Werkzeugaufrufe darf eine Runde höchstens machen.",
-            "A round may make at most this many tool calls.",
-        ),
-    ),
-    feld(
-        "loop.stillstand",
-        Feldart::Zahl,
-        ("Loop", "Loop"),
-        ("Pause nach Runden ohne Fortschritt", "Pause after rounds without progress"),
-        (
-            "Bringen so viele Runden hintereinander nichts voran, hält das Vorhaben an und fragt nach, statt Rechenzeit zu verbrauchen.",
-            "If this many rounds in a row make no progress, the task stops and asks instead of burning compute.",
+            "So viele Werkzeugaufrufe darf eine Runde höchstens machen. Danach setzt die nächste Runde fort; der Loop endet daran nicht.",
+            "A round may make at most this many tool calls. The next round then continues; the loop does not end there.",
         ),
     ),
     feld(
@@ -1114,6 +1113,16 @@ pub const FELDER: [Feld; 30] = [
         (
             "Der einzige Ordner, in dem die Dateiwerkzeuge arbeiten dürfen. Ohne Angabe der Ordner WORK_DIR im Repositorium; findet sich auch der nicht, gibt es keine Dateiwerkzeuge.",
             "The only folder the file tools may work in. Unless set, the WORK_DIR folder in the repository; if that is missing too, there are no file tools at all.",
+        ),
+    ),
+    feld(
+        "debug.log",
+        Feldart::Schalter,
+        ("Diagnose", "Diagnostics"),
+        ("Debug-Log", "Debug log"),
+        (
+            "Schreibt alles mit, was ein Lauf tut: Auftrag, jede Antwort des Modells, jedes Werkzeug mit vollem Ergebnis, Prüfungen und Rückfragen. Eine Datei je Monat unter SYSTEM/logs/debug/, mit Beginn und Ende in Großbuchstaben. Er enthält auch Dateiinhalte und gehört deshalb nicht in fremde Hände. In der Konsole auch mit /debug on und /debug off.",
+            "Records everything a run does: the task, every model answer, every tool with its full result, reviews and questions. One file per month under SYSTEM/logs/debug/, with start and end marked in capitals. It contains file contents too, so keep it private. In the console also with /debug on and /debug off.",
         ),
     ),
     feld(
@@ -1377,11 +1386,9 @@ impl Einstellungen {
             "modell.top_p" => zahl(self.modell.top_p),
             "modell.top_k" => zahl(self.modell.top_k),
             "agent.schritte" => Feldwert::Zahl(self.agent.schritte as u64),
-            "loop.runden" => Feldwert::Zahl(self.schleife.runden as u64),
-            "loop.stunden" => Feldwert::Zahl(self.schleife.stunden as u64),
             "loop.schritte" => Feldwert::Zahl(self.schleife.schritte as u64),
-            "loop.stillstand" => Feldwert::Zahl(self.schleife.stillstand as u64),
             "loop.pruefen" => Feldwert::Schalter(self.schleife.pruefen),
+            "debug.log" => Feldwert::Schalter(self.debug.log),
             "agent.wurzel" => text(&self.agent.wurzel),
             // 📌 **Hier stand kurzzeitig die geltende Kiste statt des
             // gespeicherten Werts**, damit das Feld nicht leer aussieht.
@@ -1463,21 +1470,17 @@ impl Einstellungen {
             "agent.schritte" => {
                 self.agent.schritte = wert.parse().map_err(|_| format!("{wert} ist keine Zahl"))?
             }
-            "loop.runden" | "loop.stunden" | "loop.schritte" | "loop.stillstand" => {
+            "loop.schritte" => {
                 let n: u32 = wert.parse().map_err(|_| format!("{wert} ist keine Zahl"))?;
-                // ⚑ Null waere keine Grenze, sondern ein Vorhaben, das nie
-                //   eine Runde dreht (oder beim Stillstand: sofort anhaelt).
+                // ⚑ Null waere keine Grenze, sondern eine Runde, die nie
+                //   einen Schritt tut.
                 if n == 0 {
                     return Err(format!("{feld} braucht mindestens 1"));
                 }
-                match feld {
-                    "loop.runden" => self.schleife.runden = n,
-                    "loop.stunden" => self.schleife.stunden = n,
-                    "loop.schritte" => self.schleife.schritte = n,
-                    _ => self.schleife.stillstand = n,
-                }
+                self.schleife.schritte = n;
             }
             "loop.pruefen" => self.schleife.pruefen = ja(wert),
+            "debug.log" => self.debug.log = ja(wert),
             "agent.wurzel" => self.agent.wurzel = (wert != "aus").then(|| wert.to_string()),
             "agent.kistenordner" => {
                 self.agent.kistenordner = (wert != "aus").then(|| wert.to_string())

@@ -2649,6 +2649,30 @@ td input[type="text"] { width: 20rem; padding: .24rem .55rem; }
 }
 .autoknoepfe { display: flex; justify-content: flex-end; gap: .6rem; }
 
+/* ⚑ Das vorgelegte Ergebnis eines Loops: der Text des Modells, darunter
+   das Feld fuer „wo weiter“. Der Text rollt, statt den Kasten zu sprengen. */
+.ergebnistext {
+  margin: 0;
+  max-height: 14rem;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  color: var(--text);
+  line-height: 1.45;
+  border-left: 2px solid var(--kante-hell);
+  padding-left: .7rem;
+}
+.ergebniswo {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--grund);
+  border: 1px solid var(--kante-hell);
+  border-radius: calc(var(--rund) - .3rem);
+  color: var(--text);
+  font: inherit;
+  padding: .4rem .5rem;
+  resize: vertical;
+}
+
 /* ⚑ Das Feld zum Umbenennen sitzt genau auf dem Titel und uebernimmt
    dessen Masse, damit die Zeile beim Bearbeiten nicht springt. */
 .titelfeld {

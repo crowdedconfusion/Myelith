@@ -87,10 +87,28 @@ impl Grund {
 /// erfahren, warum sein `--root` ihn nicht zum Verwalter gemacht hat.
 /// Ein blosses „nein" liesse ihn raten.
 pub fn noetig(ist_verwalter: Option<bool>, terminal: bool) -> Result<(), Grund> {
-    if std::env::var(ABSCHALTER).is_ok_and(|w| !w.trim().is_empty()) {
+    let gesetzt = |name: &str| std::env::var(name).is_ok_and(|w| !w.trim().is_empty());
+    entscheiden(gesetzt(ABSCHALTER), gesetzt(MARKE), ist_verwalter, terminal)
+}
+
+/// **Die Entscheidung selbst, ohne einen Blick in die Umgebung.**
+///
+/// 📌 **Getrennt von [`noetig`], weil die Umgebung prozessweit ist.** Die
+/// Proben setzten [`ABSCHALTER`] und [`MARKE`] mit `set_var` und loeschten
+/// sie wieder; zwei davon liefen nebeneinander, und die eine nahm der
+/// anderen den Abschalter weg, bevor diese ihn las. Die Probe wackelte,
+/// ohne dass am Code etwas falsch war (Fund 528). Hier hinein kommen beide
+/// Schalter als Werte, und keine Probe fasst die Umgebung mehr an.
+fn entscheiden(
+    abgeschaltet: bool,
+    versucht: bool,
+    ist_verwalter: Option<bool>,
+    terminal: bool,
+) -> Result<(), Grund> {
+    if abgeschaltet {
         return Err(Grund::Abgeschaltet);
     }
-    if std::env::var(MARKE).is_ok_and(|w| !w.trim().is_empty()) {
+    if versucht {
         return Err(Grund::SchonVersucht);
     }
     match ist_verwalter {
@@ -271,29 +289,19 @@ mod proben {
     /// ⛔️ **Jede Bedingung nennt ihren eigenen Grund.**
     #[test]
     fn die_gruende_werden_unterschieden() {
-        // Die Umgebung ist prozessweit; diese Probe raeumt hinter sich auf.
-        unsafe { std::env::remove_var(ABSCHALTER) };
-        unsafe { std::env::remove_var(MARKE) };
-        assert_eq!(noetig(Some(true), true), Err(Grund::SchonVerwalter));
-        assert_eq!(noetig(None, true), Err(Grund::UnbekannteLage));
-        assert_eq!(noetig(Some(false), false), Err(Grund::OhneTerminal));
-        assert_eq!(noetig(Some(false), true), Ok(()));
-
-        unsafe { std::env::set_var(MARKE, "1") };
-        assert_eq!(noetig(Some(false), true), Err(Grund::SchonVersucht));
-        unsafe { std::env::remove_var(MARKE) };
-
-        unsafe { std::env::set_var(ABSCHALTER, "1") };
-        assert_eq!(noetig(Some(false), true), Err(Grund::Abgeschaltet));
-        unsafe { std::env::remove_var(ABSCHALTER) };
+        assert_eq!(entscheiden(false, false, Some(true), true), Err(Grund::SchonVerwalter));
+        assert_eq!(entscheiden(false, false, None, true), Err(Grund::UnbekannteLage));
+        assert_eq!(entscheiden(false, false, Some(false), false), Err(Grund::OhneTerminal));
+        assert_eq!(entscheiden(false, false, Some(false), true), Ok(()));
+        assert_eq!(entscheiden(false, true, Some(false), true), Err(Grund::SchonVersucht));
+        assert_eq!(entscheiden(true, false, Some(false), true), Err(Grund::Abgeschaltet));
     }
 
     /// ⚑ **Der Abschalter schlaegt alles andere.** Wer ihn setzt, will
     /// nicht erhoeht werden, auch nicht „nur dieses eine Mal".
     #[test]
     fn der_abschalter_gilt_vor_jeder_anderen_pruefung() {
-        unsafe { std::env::set_var(ABSCHALTER, "1") };
-        assert_eq!(noetig(Some(true), true), Err(Grund::Abgeschaltet));
-        unsafe { std::env::remove_var(ABSCHALTER) };
+        assert_eq!(entscheiden(true, true, Some(true), true), Err(Grund::Abgeschaltet));
+        assert_eq!(entscheiden(true, false, None, false), Err(Grund::Abgeschaltet));
     }
 }

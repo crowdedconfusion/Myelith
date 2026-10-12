@@ -42,6 +42,7 @@ mod module;
 mod modulbanner;
 mod schimmer;
 mod schirm;
+mod janein;
 mod sitzung;
 mod wahl;
 
