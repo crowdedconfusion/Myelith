@@ -93,7 +93,7 @@ pub fn generate(
         model,
         tokenizer,
         prompt,
-        &Erzeugung { max_new_tokens, seed, greedy, halt: &[], denkgrenze: None, abbruch: None, ziehen: None },
+        &Erzeugung { max_new_tokens, seed, greedy, halt: &[], denkgrenze: None, abbruch: None, ziehen: None, gesperrt: &[] },
         &mut |_| {},
     )
 }
@@ -135,6 +135,19 @@ pub struct Erzeugung<'a> {
     /// Ziehen nach theta_v. ⚑ **`None` heisst: wie bisher**, und dann ist
     /// der Lauf Zeichen fuer Zeichen der alte.
     pub ziehen: Option<integer_llm_kernels::sampling::Ziehparameter>,
+    /// **Token, die nie gewaehlt werden** (2026-10-14).
+    ///
+    /// 📌 **Fund 541:** Mit „ohne Denken“ gibt die Vorlage einen leeren
+    /// Denkblock vor, und das hybride 35B oeffnete danach trotzdem einen
+    /// neuen. Im Schlaf, dessen Antworten knapp bemessen sind, bestand die
+    /// Antwort dann nur aus `<think>`, und die Erinnerung ging verloren. ⚑
+    /// Ohne Denken sperrt der Aufrufer `<think>` hier: Sein Logit wird vor
+    /// jeder Wahl auf den kleinsten Wert gesetzt, ganzzahlig, an der einen
+    /// Stelle, die auch die Vorausschau benutzt.
+    ///
+    /// ⚑ **Leer heisst: nichts gesperrt**, und dann ist der Lauf Zeichen fuer
+    /// Zeichen der alte.
+    pub gesperrt: &'a [usize],
 }
 
 /// **Eine Obergrenze fuer die Ueberlegung vor der Antwort.**
@@ -419,7 +432,7 @@ pub fn dekodieren_fortgesetzt(
     speicher: &mut Fortsetzung,
     beobachter: &mut dyn FnMut(usize),
 ) -> (Vec<usize>, Wiederverwendung) {
-    let Erzeugung { max_new_tokens, seed, greedy, halt, denkgrenze, abbruch, ziehen } = *lauf;
+    let Erzeugung { max_new_tokens, seed, greedy, halt, denkgrenze, abbruch, ziehen, gesperrt } = *lauf;
 
     // ⚑ **Vorbereitung ohne Kopf, ausser fuer die letzte Position**, und
     // gebuendelt (Fund 366). Der gemeinsame Anfang mit dem letzten Aufruf
@@ -511,7 +524,20 @@ pub fn dekodieren_fortgesetzt(
     let mut pos = token_ids.len();
     // ⚑ **Eine Auswahl, an jeder Stelle dieselbe**: Die Pruefung der
     //   Vermutungen waehlt genau so, mit derselben Saatkette.
+    let mut gesperrte_logits: Vec<i32> = Vec::new();
     let mut waehlen = |logits: &[i32]| -> usize {
+        let logits = if gesperrt.is_empty() {
+            logits
+        } else {
+            gesperrte_logits.clear();
+            gesperrte_logits.extend_from_slice(logits);
+            for &t in gesperrt {
+                if let Some(l) = gesperrte_logits.get_mut(t) {
+                    *l = i32::MIN;
+                }
+            }
+            &gesperrte_logits[..]
+        };
         if let Some(p) = &ziehen {
             let (t, s) = model.ziehen_next(logits, p, current_seed);
             current_seed = s;

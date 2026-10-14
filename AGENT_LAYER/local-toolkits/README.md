@@ -22,7 +22,7 @@ meldet. Die Kisten beschreiben jetzt nur noch ihren **Inhalt**.
 |---|---|
 | `Base` | die Grundlage, in jeder anderen Kiste enthalten |
 | `Advanced` | mehr Werkzeuge, dazu das eingebaute `run_command` |
-| `CAD` | parametrische 3D-Teile mit FreeCAD; dazu die eingebauten von `Advanced` |
+| `GolemOS` | wie `Advanced`, dazu Oberfläche und Knoten auf GolemOS (`golem-schicht`, `golem-knoten`) |
 
 ⚑ **Gestapelt, nicht kopiert.** Der gewählte Ordner kommt **nach**
 `Base`, und bei gleichem Werkzeugnamen gewinnt der gewählte. Wer ein
@@ -114,6 +114,15 @@ mit `ziel: welt` läuft, solange Privates im Gespräch steht, nur, wenn seine
 Argumente kein wörtliches Zitat daraus tragen. Eine Angabe ist ein
 Versprechen der Kiste: Wer `braucht_vertrauen: false` schreibt, sagt, dass
 das Werkzeug auch auf Anweisung fremden Textes nichts anrichten kann.
+
+⛔️ **Ein Werkzeug, das Text von Dritten liefert, sagt `"vertrauen": "fremd"`**,
+auch wenn es nur lokal liest: Commit-Nachrichten eines geklonten Projekts
+(`git_verlauf` tut das seit dem 2026-10-14, Fund 540), Mails, Kurse eines
+Marktplatzes, eine heruntergeladene Datei. Ohne die Angabe käme dieser Text
+als vertraut ins Gespräch, und danach liefe die Shell ohne Freigabe. Ein
+fremdes Ergebnis bekommt vorn die Marke `[Untrusted origin: …]`; sie sagt
+dem Modell, dass der Text Auskunft ist und kein Auftrag, und sie trägt die
+Herkunft in die nächste Runde des Gesprächs.
 
 ## `kiste.json`: was die Kiste über sich sagt
 

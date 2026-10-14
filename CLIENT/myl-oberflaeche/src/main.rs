@@ -46,6 +46,8 @@
 
 use std::sync::Mutex;
 
+mod modulwirt;
+
 use serde::Serialize;
 use tauri::Emitter;
 
@@ -472,7 +474,10 @@ fn modelle() -> Result<Vec<myl_client::modelle::Modellwahl>, String> {
 /// Einhaengegrenze fuer einen Menschen sichtbar wird.
 #[tauri::command]
 fn werkzeuge(wurzel: Option<String>) -> Result<Werkzeugliste, String> {
-    let e = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())?;
+    let mut e = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())?;
+    // ⚑ Die Leiste zeigt, was wirklich zur Verfuegung steht, samt Modul.
+    let modul = e.agent.modul.clone();
+    let (_, modulgrund) = modul_anwenden(&mut e);
     let kiste = kiste_fuer(&e);
     // ⚑ **Der effektive Ordner**: der gesetzte, sonst `WORK_DIR` als
     // Vorgabe (wie in `ruestung`), damit die Anzeige das Gleiche zeigt, was
@@ -499,6 +504,8 @@ fn werkzeuge(wurzel: Option<String>) -> Result<Werkzeugliste, String> {
             kistenheimat: kistenheimat(&e),
             kistenordner: geltender_kistenordner(&e),
             namen: Vec::new(),
+            modul: modul.clone(),
+            modulgrund: modulgrund.clone(),
         });
     };
     // ⚑ Die Einhaengung wird hier wirklich gebaut und nicht geraten:
@@ -513,6 +520,8 @@ fn werkzeuge(wurzel: Option<String>) -> Result<Werkzeugliste, String> {
                 kistenheimat: kistenheimat(&e),
                 kistenordner: geltender_kistenordner(&e),
                 namen: Vec::new(),
+                modul,
+                modulgrund,
             })
         }
     };
@@ -558,6 +567,8 @@ fn werkzeuge(wurzel: Option<String>) -> Result<Werkzeugliste, String> {
         kistenheimat: kistenheimat(&e),
         kistenordner: geltender_kistenordner(&e),
         namen,
+        modul,
+        modulgrund,
     })
 }
 
@@ -608,12 +619,25 @@ fn nachfrage_fuer(
     fenster: &tauri::AppHandle,
     modus: myl_client::einstellungen::Agentenmodus,
 ) -> Option<myl_local_agent::ruestung::Nachfrage> {
+    nachfrage_ohne(fenster, modus, Vec::new())
+}
+
+/// Wie [`nachfrage_fuer`]; die Werkzeuge in `ohne` fragen nicht nach (die
+/// lesenden Werkzeuge eines Moduls, `ohne_nachfrage` in seiner `kiste.json`).
+fn nachfrage_ohne(
+    fenster: &tauri::AppHandle,
+    modus: myl_client::einstellungen::Agentenmodus,
+    ohne: Vec<String>,
+) -> Option<myl_local_agent::ruestung::Nachfrage> {
     if !modus.fragt_nach() {
         return None;
     }
     let app = fenster.clone();
     Some(std::sync::Arc::new(move |name: &str, argumente: &serde_json::Value| {
         use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
+        if ohne.iter().any(|n| n == name) {
+            return true;
+        }
         // ⚑ Die Argumente stehen mit im Kasten: Eine Zustimmung ohne
         // zu wissen, **worauf**, ist keine.
         let was = serde_json::to_string_pretty(argumente).unwrap_or_else(|_| argumente.to_string());
@@ -626,6 +650,91 @@ fn nachfrage_fuer(
             ))
             .blocking_show()
     }))
+}
+
+/// **Das eingestellte Modul an einen Lauf haengen** (Festlegung des
+/// Projektinhabers, 2026-10-12): Seine Kiste ergaenzt die gewaehlte, seine
+/// Skills kommen dazu. Liefert seine lesenden Werkzeuge (ohne Nachfrage)
+/// und, falls es nicht besteht, den Grund; dann laeuft der Lauf ohne Modul.
+fn modul_anwenden(e: &mut myl_client::Einstellungen) -> (Vec<String>, Option<String>) {
+    match myl_client::module::eingestellter_zusatz(&e.agent) {
+        Some(Ok(z)) => {
+            z.anwenden(&mut e.agent);
+            (z.ohne_nachfrage, None)
+        }
+        Some(Err(f)) => {
+            myl_local_agent::skills::modusordner_setzen(None);
+            (Vec::new(), Some(f))
+        }
+        None => {
+            myl_local_agent::skills::modusordner_setzen(None);
+            (Vec::new(), None)
+        }
+    }
+}
+
+/// **Die Befehle der gepruefen Module**, fuer die Eingabe im
+/// Agentenmodus. `neu` prueft alle Module erneut.
+#[tauri::command]
+fn modul_befehle(neu: Option<bool>, halter: tauri::State<'_, Halter>) -> Result<Vec<modulwirt::Modulbefehl>, String> {
+    halter.module.befehle(neu.unwrap_or(false))
+}
+
+/// **Ein Befehl eines Moduls**, im Agentenmodus getippt: Das Modul startet,
+/// falls noetig, und bekommt die Zeile. Antworten kommen als
+/// `modul-ereignis`.
+#[tauri::command]
+async fn modul_befehl(zeile: String, fenster: tauri::AppHandle, halter: tauri::State<'_, Halter>) -> Result<String, String> {
+    // ⚑ Pruefen und Starten brauchen Sekunden (Handschlag); nicht im
+    //   Befehlsfaden des Fensters.
+    let module = halter.module.clone();
+    // ⚑ Wer das Modell braucht, weckt den Schlaf zuerst.
+    halter.ruhe.wecken();
+    let modell = halter.modell.clone();
+    tauri::async_runtime::spawn_blocking(move || module.befehl(&zeile, &fenster, &modell))
+        .await
+        .map_err(|e| format!("der Modulfaden ist abgestuerzt: {e}"))?
+}
+
+/// **Ein Modul waehlen** (Seitenleiste, unter der Werkzeugkiste): Es
+/// startet, jedes andere endet; `None` beendet alle. Die Einstellung
+/// `agent.modul` setzt die Oberflaeche vorher ueber `setzen`.
+#[tauri::command]
+async fn modul_waehlen(name: Option<String>, fenster: tauri::AppHandle, halter: tauri::State<'_, Halter>) -> Result<(), String> {
+    let module = halter.module.clone();
+    // ⚑ Wer das Modell braucht, weckt den Schlaf zuerst.
+    halter.ruhe.wecken();
+    let modell = halter.modell.clone();
+    tauri::async_runtime::spawn_blocking(move || module.waehlen(name.as_deref(), &fenster, &modell))
+        .await
+        .map_err(|e| format!("der Modulfaden ist abgestuerzt: {e}"))?
+}
+
+/// **Die Datei einer Ansicht** (Bild oder Koerper) als Bytes, ohne Umweg
+/// ueber Text: Die Oberflaeche zeichnet sie selbst.
+#[tauri::command]
+fn modul_datei(name: String, datei: String, halter: tauri::State<'_, Halter>) -> Result<tauri::ipc::Response, String> {
+    halter.module.datei(&name, &datei).map(tauri::ipc::Response::new)
+}
+
+/// Der Stand der laufenden Module, fuer Fusszeile und Bereich unten.
+#[tauri::command]
+fn modul_stand(halter: tauri::State<'_, Halter>) -> Vec<modulwirt::Modulstand> {
+    halter.module.stand()
+}
+
+/// Die Antwort des Menschen auf eine Frage eines Moduls; `None` heisst
+/// abgebrochen.
+#[tauri::command]
+fn modul_antwort(name: String, id: u64, antwort: Option<String>, halter: tauri::State<'_, Halter>) -> Result<(), String> {
+    halter.module.antworten(&name, id, antwort)
+}
+
+/// **Die Module zur Wahl** in der Seitenleiste: gepruefte zuerst, die
+/// anderen mit ihrem Grund.
+#[tauri::command]
+fn module_wahl() -> Vec<myl_client::module::Modulwahl> {
+    myl_client::module::wahl()
 }
 
 // 📌 **Hier stand der Befehl `notaus`**, gerufen vom Knopf im Kopf und
@@ -704,6 +813,87 @@ fn loop_umfeld(
     let mut g = halter.schleife.umfelder.lock().map_err(|_| "das Umfeld ist vergiftet".to_string())?;
     g.insert(gespraech, Umfeld { verlauf, wurzel: wurzel.filter(|w| !w.trim().is_empty()) });
     Ok(())
+}
+
+/// Was beim Loeschen eines Gespraechs mit wegging.
+#[derive(Serialize, Default)]
+struct Vergessen {
+    /// Tasks des Gespraechs, mit ihren Notizen und ihrem Tagebuch.
+    tasks: usize,
+    /// Mitschnitte des Gespraechs im Arbeitsordner (`.AGENT/<kennung>/`).
+    mitschnitte: usize,
+    /// Ob der gerechnete Zustand des Modells geleert wurde.
+    zustand: bool,
+    /// Tasks, die gerade eine Runde rechnen und deshalb blieben.
+    geblieben: Vec<String>,
+}
+
+/// **Ein geloeschtes Gespraech nimmt mit, was zu ihm gehoert** (Wunsch des
+/// Projektinhabers, 2026-10-13): sein Umfeld fuer Loop-Runden, seine Tasks
+/// (samt Notizen, Tagebuch und Rundenstand), die Mitschnitte seiner
+/// Verdichtungen im Arbeitsordner und den gerechneten Zustand des Modells.
+/// Den verdichteten Kontext selbst traegt das Gespraech im Speicher des
+/// Fensters; er geht mit ihm.
+///
+/// ⚑ **Das dreht eine Festlegung vom 2026-09-16 um**: Bis dahin fasste das
+/// Aufraeumen der Liste den Mitschnitt ausdruecklich nicht an, damit ein
+/// neuer Agent im selben Ordner aufnehmen konnte. Geloescht wird jetzt nur
+/// der Ordner **dieses** Gespraechs; die anderer Gespraeche bleiben.
+///
+/// ⚠️ **Der Zustand des Modells wird nur geleert, wenn es frei ist.** Rechnet
+/// es gerade, gehoert der Zustand dem anderen Gespraech, und der Anfang des
+/// geloeschten faellt beim naechsten Lauf ohnehin heraus.
+/// ⚠️ **Das Aktionsprotokoll bleibt**: Es ist der Nachweis, was der Agent
+/// getan hat, und gehoert keinem Gespraech.
+#[tauri::command]
+fn gespraech_vergessen(kennung: String, wurzel: Option<String>, halter: tauri::State<'_, Halter>) -> Result<Vergessen, String> {
+    if let Ok(mut u) = halter.schleife.umfelder.lock() {
+        u.remove(&kennung);
+    }
+    let e = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad()).ok();
+    let orte = [wurzel.filter(|w| !w.trim().is_empty()), e.as_ref().and_then(|e| e.agent.wurzel.clone()), myl_client::Einstellungen::standard_wurzel()];
+    vergessen_in(
+        &kennung,
+        orte.into_iter().flatten().map(std::path::PathBuf::from),
+        &myl_local_agent::vorhaben::Ablage::vorgabe(),
+        &halter.modell,
+        |task| nicht_in_seiner_runde(&halter, task).is_err(),
+    )
+}
+
+/// Der Kern von [`gespraech_vergessen`], ohne Fenster: Tasks, Mitschnitte
+/// in jedem der `orte` (jeder einmal), Zustand des Modells.
+fn vergessen_in(
+    kennung: &str,
+    orte: impl IntoIterator<Item = std::path::PathBuf>,
+    ablage: &myl_local_agent::vorhaben::Ablage,
+    modell: &Mutex<Option<myl_client::Oertlichesmodell>>,
+    rechnet: impl Fn(&str) -> bool,
+) -> Result<Vergessen, String> {
+    let mut aus = Vergessen::default();
+    for v in ablage.reihe().into_iter().filter(|v| v.gespraech.as_deref() == Some(kennung)) {
+        if rechnet(&v.kennung) {
+            aus.geblieben.push(v.kennung);
+            continue;
+        }
+        ablage.entfernen(&v.kennung)?;
+        aus.tasks += 1;
+    }
+    let mut gesehen: Vec<std::path::PathBuf> = Vec::new();
+    for w in orte {
+        if gesehen.contains(&w) {
+            continue;
+        }
+        aus.mitschnitte += myl_local_agent::verlauf::loeschen(&w, Some(kennung)).map_err(|f| f.to_string())?;
+        gesehen.push(w);
+    }
+    if let Ok(g) = modell.try_lock() {
+        if let Some(m) = g.as_ref() {
+            m.vergessen();
+            aus.zustand = true;
+        }
+    }
+    Ok(aus)
 }
 
 /// Eine Zeile der Taskliste.
@@ -800,6 +990,8 @@ fn task_anlegen(
     }
     let ablage = myl_local_agent::vorhaben::Ablage::vorgabe();
     let v = ablage.anlegen_fuer(&ziel, myl_local_agent::vorhaben::jetzt(), gespraech, wurzel)?;
+    // ⚑ Wer das Modell braucht, weckt den Schlaf zuerst.
+    halter.ruhe.wecken();
     let modell = halter.modell.clone();
     let kennung = v.kennung.clone();
     std::thread::spawn(move || {
@@ -952,7 +1144,10 @@ fn loop_starten(fenster: tauri::AppHandle, halter: tauri::State<'_, Halter>) -> 
     vorhaben::schliessen_zuruecksetzen();
     z.pause.store(false, Ordering::SeqCst);
     let _ = ablage.loop_aktiv_setzen(true);
+    // ⚑ Wer das Modell braucht, weckt den Schlaf zuerst.
+    halter.ruhe.wecken();
     let modell = halter.modell.clone();
+    let ruhe = halter.ruhe.clone();
 
     let zf = z.clone();
     let griff = std::thread::spawn(move || {
@@ -961,6 +1156,8 @@ fn loop_starten(fenster: tauri::AppHandle, halter: tauri::State<'_, Halter>) -> 
         // ⚑ **Die Leihe**: das Modell fuer genau eine Runde, und falls es
         //   in der Zwischenzeit entladen wurde (Ruhefrist), wird es geladen.
         let leihen = |runde: &mut dyn FnMut(&dyn myl_client::Modellweg)| -> Result<(), String> {
+            // ⚑ Eine Runde weckt den Schlaf, wie jeder Auftrag.
+            ruhe.wecken();
             let mut g = modell.lock().map_err(|_| "der Modellhalter ist vergiftet".to_string())?;
             if g.is_none() {
                 let _ = f.emit(LOOPEREIGNIS, serde_json::json!({ "art": "Laedt" }));
@@ -979,7 +1176,10 @@ fn loop_starten(fenster: tauri::AppHandle, halter: tauri::State<'_, Halter>) -> 
             m.beobachter = None;
             Ok(())
         };
-        let nachfrage = nachfrage_fuer(&fenster, e.agent.modus);
+        // ⚑ Das eingestellte Modul ergaenzt auch die Runden eines Loops.
+        let mut mit_modul = e.clone();
+        let (ohne, _modulgrund) = modul_anwenden(&mut mit_modul);
+        let nachfrage = nachfrage_ohne(&fenster, e.agent.modus, ohne);
         let kiste = kiste_fuer(&e);
         let umfelder = z.umfelder.clone();
         let umfeld = move |v: &myl_local_agent::vorhaben::Vorhaben| -> Option<Umfeld> {
@@ -987,7 +1187,7 @@ fn loop_starten(fenster: tauri::AppHandle, halter: tauri::State<'_, Halter>) -> 
             umfelder.lock().ok()?.get(g).cloned()
         };
         let ruester = |zusaetzlich: myl_local_agent::vorhaben::Zusatzwerkzeuge, v: &myl_local_agent::vorhaben::Vorhaben| {
-            let mut agent = v.agent_fuer(&e.agent);
+            let mut agent = v.agent_fuer(&mit_modul.agent);
             // ⚑ Der Ordner, den das Gespraech jetzt hat, vor dem beim Anlegen.
             if let Some(w) = umfeld(v).and_then(|u| u.wurzel) {
                 agent.wurzel = Some(w);
@@ -1230,6 +1430,10 @@ struct Werkzeugliste {
     /// Der Ordner, aus dem die Werkzeuge wirklich kommen.
     kistenordner: Option<String>,
     namen: Vec<String>,
+    /// Das eingestellte Modul (`agent.modul`), und warum es nichts
+    /// mitbringt, falls es die Pruefung nicht besteht.
+    modul: Option<String>,
+    modulgrund: Option<String>,
 }
 
 /// Das geladene Modell, samt seiner Ruestung.
@@ -1277,6 +1481,150 @@ struct Halter {
     terminalordner: std::sync::Arc<Mutex<Option<std::path::PathBuf>>>,
     /// **Der Loop dieses Fensters** (∞ neben dem Senden).
     schleife: Loopzustand,
+    /// **Die Module dieses Fensters**, gestartet mit ihrem ersten Befehl.
+    module: modulwirt::Fensterwirt,
+    /// **Der Schlaf dieses Fensters** (`myl_local_agent::schlaf`).
+    ruhe: Ruhe,
+}
+
+/// **Der Schlaf des Fensters**: sein Wecker, und ob er gerade laeuft.
+///
+/// ⚑ **Jeder Befehl, der das Modell braucht, weckt zuerst**
+/// ([`Ruhe::wecken`]). Der Schlaf haelt das Modell nur fuer einen
+/// Aufruf ([`GeliehenesModell`]) und haelt dessen Erzeugung am Wecker an;
+/// ein Auftrag wartet also hoechstens bis zum naechsten Token.
+#[derive(Default, Clone)]
+struct Ruhe {
+    wecker: myl_local_agent::schlaf::Wecker,
+    laeuft: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl Ruhe {
+    fn wecken(&self) {
+        self.wecker.wecken();
+    }
+}
+
+/// **Das Modell des Fensters, je Aufruf geliehen.**
+///
+/// ⚑ **Nicht fuer die ganze Dauer**: Ein Schlaf, der das Schloss eine
+/// Minute lang hielte, liesse jede Frage in dieser Minute warten. ⚑
+/// **Gierig fuer die Dauer des Aufrufs**, damit dasselbe Material dieselben
+/// Erinnerungen ergibt; danach gilt wieder, was eingestellt ist.
+struct GeliehenesModell(std::sync::Arc<Mutex<Option<myl_client::Oertlichesmodell>>>);
+
+impl myl_client::Modellweg for GeliehenesModell {
+    fn chat(
+        &self,
+        modell: &str,
+        nachrichten: &[myl_client::Nachricht],
+        max_tokens: Option<u32>,
+    ) -> Result<myl_local_agent::Antwort, myl_client::Tuerfehler> {
+        self.chat_unterbrechbar(modell, nachrichten, max_tokens, &std::sync::atomic::AtomicBool::new(false))
+    }
+
+    fn chat_unterbrechbar(
+        &self,
+        modell: &str,
+        nachrichten: &[myl_client::Nachricht],
+        max_tokens: Option<u32>,
+        abbruch: &std::sync::atomic::AtomicBool,
+    ) -> Result<myl_local_agent::Antwort, myl_client::Tuerfehler> {
+        let mut g = self
+            .0
+            .lock()
+            .map_err(|_| myl_client::Tuerfehler::Unerreichbar { grund: "der Modellhalter ist vergiftet".into() })?;
+        let m = g.as_mut().ok_or_else(|| myl_client::Tuerfehler::Unerreichbar { grund: "das Modell ist entladen".into() })?;
+        // ⚑ Gierig und ohne Nachdenken, wie in der Konsole: Die Fragen des
+        //   Schlafs haben kurze Tokengrenzen.
+        let vorher = (m.gierig, m.denken);
+        m.gierig = true;
+        m.denken = false;
+        let aus = m.chat_unterbrechbar(modell, nachrichten, max_tokens, abbruch);
+        (m.gierig, m.denken) = vorher;
+        aus
+    }
+}
+
+/// Ein Gespraech, wie das Fenster es dem Schlaf reicht.
+#[derive(serde::Deserialize)]
+struct Ruhegespraech {
+    kennung: String,
+    verlauf: Vec<myl_client::Nachricht>,
+    wurzel: Option<String>,
+}
+
+/// **Der Schlaf, gerufen, wenn das Fenster eine Weile nichts tut.**
+/// Gibt die Zeile des Berichts zurueck, oder `None`, wenn er nicht lief
+/// (aus, laeuft schon, oder das Modell ist gerade beschaeftigt).
+///
+/// ⚑ **Die Gespraeche reicht das Fenster**: Sie liegen in seinem Speicher
+///   und nicht im Ruecken (siehe `Umfeld`). Je Arbeitsordner ein Durchgang;
+///   ohne eigenen Ordner gilt der eingestellte.
+/// ⚠️ **Ohne Vorwaermen**: Im Fenster geht das Modell nach der Ruhefrist
+///   ohnehin aus dem Speicher, und ein Vorwaermen davor waere verloren.
+#[tauri::command]
+async fn schlafen(gespraeche: Vec<Ruhegespraech>, halter: tauri::State<'_, Halter>) -> Result<Option<String>, String> {
+    use std::sync::atomic::Ordering;
+    let e = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())?;
+    if !e.schlaf.an || halter.schleife.in_runde.load(Ordering::SeqCst) {
+        return Ok(None);
+    }
+    let ruhe = halter.ruhe.clone();
+    if ruhe.laeuft.swap(true, Ordering::SeqCst) {
+        return Ok(None);
+    }
+    ruhe.wecker.zuruecksetzen();
+    // ⚑ Wer das Modell braucht, weckt den Schlaf zuerst.
+    halter.ruhe.wecken();
+    let modell = halter.modell.clone();
+    // ⚑ **`try_lock`**: Haelt jemand das Modell, ist das Fenster nicht in
+    //   Ruhe, und der Schlaf kommt beim naechsten Mal.
+    let geladen = match modell.try_lock() {
+        Ok(g) => g.is_some(),
+        Err(_) => {
+            ruhe.laeuft.store(false, Ordering::SeqCst);
+            return Ok(None);
+        }
+    };
+    let rechnen = geladen && e.schlaf.darf_rechnen();
+    let deutsch = e.oberflaeche.sprache == myl_client::einstellungen::Sprache::De;
+    let vorgabe = e.agent.wurzel.clone().or_else(myl_client::Einstellungen::standard_wurzel);
+    let r = ruhe.clone();
+    let aus = tauri::async_runtime::spawn_blocking(move || {
+        let mut je: std::collections::BTreeMap<String, Vec<myl_local_agent::schlaf::Episode>> = Default::default();
+        for g in gespraeche {
+            let Some(w) = g.wurzel.filter(|w| !w.trim().is_empty()).or_else(|| vorgabe.clone()) else { continue };
+            je.entry(w).or_default().push(myl_local_agent::schlaf::episode_aus_gespraech(&g.kennung, &g.verlauf));
+        }
+        if let (true, Some(v)) = (je.is_empty(), vorgabe) {
+            je.insert(v, Vec::new());
+        }
+        let weg = GeliehenesModell(modell);
+        let ablage = myl_local_agent::vorhaben::Ablage::vorgabe();
+        let mut zeilen = Vec::new();
+        for (i, (w, episoden)) in je.into_iter().enumerate() {
+            if r.wecker.geweckt() {
+                break;
+            }
+            let wurzel = std::path::PathBuf::from(w);
+            let auftrag = myl_local_agent::schlaf::Ruheauftrag {
+                wurzel: &wurzel,
+                gespraeche: episoden,
+                // Die Vorhaben sind eine Ablage fuer alle Ordner: einmal.
+                vorhaben: (i == 0).then_some(&ablage),
+                vorwaermen: None,
+                deutsch,
+                tag: myl_local_agent::gedaechtnis::heute(),
+            };
+            let b = myl_local_agent::schlaf::schlafen(rechnen.then_some(&weg as &dyn myl_client::Modellweg), &auftrag, &r.wecker);
+            zeilen.push(b.zeile(deutsch));
+        }
+        zeilen.join(" ")
+    })
+    .await;
+    ruhe.laeuft.store(false, Ordering::SeqCst);
+    aus.map(Some).map_err(|f| format!("der Schlaf ist abgestuerzt: {f}"))
 }
 
 /// Wie ein geladenes Modell heisst und wo es liegt.
@@ -1310,6 +1658,7 @@ async fn modell_laden(halter: tauri::State<'_, Halter>) -> Result<Ladung, String
     let m = modell_aus(&e)?;
     let dauer = anfang.elapsed().as_secs_f64();
     *halter.modell.lock().map_err(|_| "der Modellhalter ist vergiftet")? = Some(m);
+    halter.module.modell_melden(modulwirt::modellkennung(&e.modell.artefakt));
     Ok(Ladung {
         name: anzeigename(&e.modell.artefakt),
         pfad: e.modell.artefakt.clone(),
@@ -1355,6 +1704,7 @@ async fn modell_vorladen(halter: tauri::State<'_, Halter>) -> Result<Option<Vorl
         e.schreiben(&pfad)?;
         (true, w.grund)
     };
+    halter.ruhe.wecken();
     let halt = halter.modell.clone();
     let e2 = e.clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -1426,7 +1776,7 @@ fn modell_aus(e: &myl_client::Einstellungen) -> Result<myl_client::Oertlichesmod
 /// fragen; die Zeitschaltung tut das nicht und soll es nicht muessen.
 /// **Wo die Saat gerade steht**, fuer das Feld am Eingabefeld und die
 /// Zeile unter einer Antwort.
-#[derive(Serialize)]
+#[derive(Serialize, Clone, Default)]
 struct Saatstand {
     /// Die Saat der letzten Aktion, falls eine lief und gezogen wurde.
     ///
@@ -1440,6 +1790,83 @@ struct Saatstand {
     /// Temperatur, Top-p und Top-k in einer Zeile, oder „gierig“.
     parameter: String,
     gierig: bool,
+    /// Das Modell rechnet gerade: Was jetzt gesetzt wird, gilt ab der
+    /// naechsten Antwort oder Runde.
+    belegt: bool,
+}
+
+/// ⚑ **Das Feld am Eingabefeld wartet nie auf das Modell** (Wunsch des
+/// Projektinhabers, 2026-10-13). Die Befehle dazu laufen auf dem Hauptfaden;
+/// ein wartendes `lock` fror das ganze Fenster ein, solange eine Antwort,
+/// ein Auftrag oder eine Runde des Loops rechnete. Jetzt: `try_lock`, und
+/// ist das Modell belegt, kommt der Stand aus dem zuletzt gesehenen
+/// ([`SAATSPIEGEL`]), und eine Saat fuer die naechste Antwort wird
+/// vorgemerkt ([`SAAT_VORGEMERKT`]) und vor der naechsten Antwort oder Runde
+/// uebernommen ([`ausgabe_uebernehmen`]). Die uebrigen Werte (Temperatur,
+/// Top-p, Top-k, Laenge, Denken, feste Saat) stehen in den Einstellungen,
+/// und die liest jeder Lauf ohnehin frisch.
+static SAAT_VORGEMERKT: Mutex<Option<u64>> = Mutex::new(None);
+/// Der Stand, wie er zuletzt bei freiem Modell gelesen wurde.
+static SAATSPIEGEL: Mutex<Option<Saatstand>> = Mutex::new(None);
+
+fn saat_vorgemerkt() -> Option<u64> {
+    *SAAT_VORGEMERKT.lock().unwrap_or_else(|v| v.into_inner())
+}
+
+/// **Der Stand der Saat, ohne zu warten.**
+fn saatstand_aus(modell: &Mutex<Option<myl_client::Oertlichesmodell>>, e: &myl_client::Einstellungen) -> Result<Saatstand, String> {
+    let mut g = match modell.try_lock() {
+        Ok(g) => g,
+        Err(std::sync::TryLockError::WouldBlock) => {
+            let spiegel = SAATSPIEGEL.lock().unwrap_or_else(|v| v.into_inner()).clone().unwrap_or_default();
+            return Ok(Saatstand {
+                fest: e.modell.saat.map(|s| s.to_string()),
+                naechste: saat_vorgemerkt().map(|s| s.to_string()),
+                gierig: e.modell.temperatur == Some(0),
+                belegt: true,
+                ..spiegel
+            });
+        }
+        Err(std::sync::TryLockError::Poisoned(_)) => return Err("der Modellhalter ist vergiftet".to_string()),
+    };
+    let stand = match g.as_mut() {
+        Some(m) => {
+            ausgabe_uebernehmen(m, e);
+            Saatstand {
+                letzte: if m.waehlt_gierig() { None } else { m.letzte_saat().map(|s| s.to_string()) },
+                fest: m.saat_fest.map(|s| s.to_string()),
+                naechste: m.naechste().map(|s| s.to_string()),
+                parameter: m.parameterzeile(),
+                gierig: m.waehlt_gierig(),
+                belegt: false,
+            }
+        }
+        None => Saatstand {
+            letzte: None,
+            fest: e.modell.saat.map(|s| s.to_string()),
+            naechste: saat_vorgemerkt().map(|s| s.to_string()),
+            parameter: String::new(),
+            gierig: e.modell.temperatur == Some(0),
+            belegt: false,
+        },
+    };
+    *SAATSPIEGEL.lock().unwrap_or_else(|v| v.into_inner()) = Some(stand.clone());
+    Ok(stand)
+}
+
+/// **Eine Saat fuer die naechste Antwort, ohne zu warten**: bei freiem
+/// Modell sofort dort, sonst vorgemerkt. Ohne geladenes Modell ebenfalls
+/// vorgemerkt; sie gilt dann fuer die erste Antwort nach dem Laden.
+fn saat_einmal_in(modell: &Mutex<Option<myl_client::Oertlichesmodell>>, saat: u64) -> Result<(), String> {
+    match modell.try_lock() {
+        Ok(g) => match g.as_ref() {
+            Some(m) => m.naechste_saat(saat),
+            None => *SAAT_VORGEMERKT.lock().unwrap_or_else(|v| v.into_inner()) = Some(saat),
+        },
+        Err(std::sync::TryLockError::WouldBlock) => *SAAT_VORGEMERKT.lock().unwrap_or_else(|v| v.into_inner()) = Some(saat),
+        Err(std::sync::TryLockError::Poisoned(_)) => return Err("der Modellhalter ist vergiftet".to_string()),
+    }
+    Ok(())
 }
 
 /// **Der Stand der Saat** (Regel des Projektinhabers, 2026-09-29: der
@@ -1447,26 +1874,7 @@ struct Saatstand {
 #[tauri::command]
 fn saat_stand(halter: tauri::State<'_, Halter>) -> Result<Saatstand, String> {
     let e = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())?;
-    let mut g = halter.modell.lock().map_err(|_| "der Modellhalter ist vergiftet".to_string())?;
-    Ok(match g.as_mut() {
-        Some(m) => {
-            ausgabe_uebernehmen(m, &e);
-            Saatstand {
-                letzte: if m.waehlt_gierig() { None } else { m.letzte_saat().map(|s| s.to_string()) },
-                fest: m.saat_fest.map(|s| s.to_string()),
-                naechste: m.naechste().map(|s| s.to_string()),
-                parameter: m.parameterzeile(),
-                gierig: m.waehlt_gierig(),
-            }
-        }
-        None => Saatstand {
-            letzte: None,
-            fest: e.modell.saat.map(|s| s.to_string()),
-            naechste: None,
-            parameter: String::new(),
-            gierig: e.modell.temperatur == Some(0),
-        },
-    })
+    saatstand_aus(&halter.modell, &e)
 }
 
 /// **Eine Saat nur fuer die naechste Antwort**; danach gilt wieder die
@@ -1475,10 +1883,7 @@ fn saat_stand(halter: tauri::State<'_, Halter>) -> Result<Saatstand, String> {
 #[tauri::command]
 fn saat_einmal(saat: String, halter: tauri::State<'_, Halter>) -> Result<(), String> {
     let saat: u64 = saat.trim().parse().map_err(|_| format!("{saat} ist keine Saat"))?;
-    let g = halter.modell.lock().map_err(|_| "der Modellhalter ist vergiftet".to_string())?;
-    let m = g.as_ref().ok_or_else(|| "das Modell ist nicht geladen".to_string())?;
-    m.naechste_saat(saat);
-    Ok(())
+    saat_einmal_in(&halter.modell, saat)
 }
 
 /// **Saat und Ziehparameter aus den Einstellungen**, frisch vor jedem
@@ -1489,6 +1894,12 @@ fn ausgabe_uebernehmen(m: &mut myl_client::Oertlichesmodell, e: &myl_client::Ein
     m.temperatur = e.modell.temperatur;
     m.top_p = e.modell.top_p;
     m.top_k = e.modell.top_k;
+    // Der Arbeitskontext gilt ebenso ab dem naechsten Lauf.
+    m.kontextbudget = e.modell.kontext;
+    // Eine Saat, die vorgemerkt wurde, waehrend das Modell rechnete.
+    if let Some(saat) = SAAT_VORGEMERKT.lock().unwrap_or_else(|v| v.into_inner()).take() {
+        m.naechste_saat(saat);
+    }
 }
 
 #[tauri::command]
@@ -1502,7 +1913,11 @@ fn modell_entladen(halter: tauri::State<'_, Halter>) -> Result<bool, String> {
         Err(std::sync::TryLockError::WouldBlock) => return Ok(false),
         Err(std::sync::TryLockError::Poisoned(_)) => return Err("der Modellhalter ist vergiftet".into()),
     };
-    Ok(g.take().is_some())
+    let war = g.take().is_some();
+    if war {
+        halter.module.modell_melden(None);
+    }
+    Ok(war)
 }
 
 /// Faehrt einen Auftrag und meldet den Verlauf ans Fenster.
@@ -1564,7 +1979,9 @@ async fn agent_fahren(
             zusammenfassung: None,
         });
     }
-    let nachfrage = nachfrage_fuer(&fenster, e.agent.modus);
+    // ⚑ Das eingestellte Modul ergaenzt Kiste und Skills.
+    let (ohne, _modulgrund) = modul_anwenden(&mut e);
+    let nachfrage = nachfrage_ohne(&fenster, e.agent.modus, ohne);
     // ⚑ Der Auftrag ist die Saat der Web-Recherche, wie im Chat.
     e.agent.netzsaat = Some(auftrag.clone());
     let ruestung = myl_local_agent::ruestung::ruesten_mit(
@@ -1588,6 +2005,7 @@ async fn agent_fahren(
     // ⛔️ Jeder Auftrag beginnt mit einem gelösten Notaus.
     myl_local_agent::notaus::zuruecksetzen();
     let _ = fenster.emit("agent-beginnt", &auftrag);
+    halter.ruhe.wecken();
     let halt = halter.modell.clone();
     let aus = tauri::async_runtime::spawn_blocking(move || {
         let mut g = halt.lock().map_err(|_| "der Modellhalter ist vergiftet".to_string())?;
@@ -1659,6 +2077,8 @@ async fn kontext(
         e.agent.wurzel = Some(w);
     }
     let ansage = if modus == "agent" {
+        // ⚑ Gezaehlt wird die Ansage, die laeuft, also mit dem Modul.
+        let _ = modul_anwenden(&mut e);
         let r = myl_local_agent::ruestung::ruesten(
             &e.agent,
             myl_client::Ansageform::Amtlich,
@@ -1669,6 +2089,7 @@ async fn kontext(
     } else {
         None
     };
+    halter.ruhe.wecken();
     let halt = halter.modell.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let g = halt.lock().map_err(|_| "der Modellhalter ist vergiftet".to_string())?;
@@ -1701,6 +2122,7 @@ async fn verdichten(
     sitzung: String,
     halter: tauri::State<'_, Halter>,
 ) -> Result<Verdichtung, String> {
+    halter.ruhe.wecken();
     let halt = halter.modell.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let g = halt.lock().map_err(|_| "der Modellhalter ist vergiftet".to_string())?;
@@ -1719,12 +2141,15 @@ async fn verdichten(
             .or_else(myl_client::Einstellungen::standard_wurzel)
             .map(std::path::PathBuf::from);
         let modellname = e.as_ref().map(|e| e.modell.artefakt.clone()).unwrap_or_default();
+        // ⚑ Ob der Verweis `read_history` nennen darf, entscheidet die Kiste.
+        let nachlesen = e.as_ref().map(kiste_fuer).is_none_or(|k| k.kann_nachlesen());
         let (vorher, nachher) = myl_local_agent::gespraech::verdichten_mit_mitschnitt(
             m,
             &mut gespraech,
             wurzel.as_deref(),
             &sitzung,
             &modellname,
+            nachlesen,
         )
         .map_err(|f| f.to_string())?;
         Ok(Verdichtung {
@@ -1913,6 +2338,7 @@ async fn frage(
         //   haben will.
         let vorher_stand = stand_des_ordners(&anhangordner);
 
+        halter.ruhe.wecken();
         let halt = halter.modell.clone();
         let f = fenster.clone();
         let (text, kontext) = tauri::async_runtime::spawn_blocking(move || {
@@ -1978,6 +2404,7 @@ async fn frage(
         });
     }
 
+    halter.ruhe.wecken();
     let halt = halter.modell.clone();
     let sprecher = std::sync::Arc::clone(&halter.sprecher);
     let denkbudget = e.modell.denkbudget;
@@ -2122,6 +2549,8 @@ enum Lebend {
     Abgelehnt { name: String, grund: String },
     /// Der Verlauf passte nicht mehr in den Kontext und wurde verdichtet.
     Verdichtet { vorher: usize, nachher: usize },
+    /// Statt zu verdichten wurden alte Werkzeugausgaben ausgeblendet.
+    Ausgeblendet { ergebnisse: usize, vorher: usize, nachher: usize },
 }
 
 /// Eine Meldung der Agentenschleife in der Form, die das Fenster zeichnet.
@@ -2142,6 +2571,9 @@ fn lebend_aus(m: myl_client::Meldung<'_>) -> Lebend {
             grund: grund.to_string(),
         },
         myl_client::Meldung::Verdichtet { vorher, nachher } => Lebend::Verdichtet { vorher, nachher },
+        myl_client::Meldung::Ausgeblendet { ergebnisse, vorher, nachher } => {
+            Lebend::Ausgeblendet { ergebnisse, vorher, nachher }
+        }
     }
 }
 
@@ -3054,6 +3486,8 @@ fn main() {
             if let tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed = ereignis {
                 use tauri::Manager;
                 loop_beim_schliessen(&fenster.state::<Halter>().schleife);
+                // ⚑ Mit dem Fenster enden seine Module.
+                fenster.state::<Halter>().module.alle_beenden();
                 notschalter_beim_schliessen();
                 myl_local_agent::debuglog::setzen(false, "Fenster", "Fenster geschlossen");
             }
@@ -3065,11 +3499,19 @@ fn main() {
             tasks,
             task_anlegen,
             loop_umfeld,
+            gespraech_vergessen,
             tasks_ordnen,
             task_weiter,
             task_bestaetigen,
             task_nachbessern,
             task_antworten,
+            module_wahl,
+            modul_befehle,
+            modul_befehl,
+            modul_stand,
+            modul_antwort,
+            modul_waehlen,
+            modul_datei,
             loop_nach_dem_start,
             task_stoppen,
             task_entfernen,
@@ -3085,6 +3527,7 @@ fn main() {
             markdown,
             artefakt_loeschen,
             modell_entladen,
+            schlafen,
             setzen,
             modell_laden,
             agent_fahren,
@@ -3694,4 +4137,71 @@ fn lauf_mit_ausgabe(
         return Err(format!("{phase} ist fehlgeschlagen ({stand}):\n{kurz}"));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// ⚑ **Das Feld am Eingabefeld wartet nicht auf ein rechnendes Modell.**
+    /// Haelt ein anderer Faden das Modell, antworten Stand und Saat sofort:
+    /// der Stand als „belegt“, die Saat vorgemerkt fuer die naechste Antwort.
+    /// 📌 Vorher fror das Oeffnen des Felds das ganze Fenster ein, bis die
+    /// Antwort fertig war (gemeldet vom Projektinhaber, 2026-10-13).
+    #[test]
+    fn das_ausgabefeld_wartet_nicht_auf_das_modell() {
+        let modell: std::sync::Arc<Mutex<Option<myl_client::Oertlichesmodell>>> = std::sync::Arc::new(Mutex::new(None));
+        let e = myl_client::Einstellungen::default();
+        let (gehalten, warten) = std::sync::mpsc::channel();
+        let (los, frei) = std::sync::mpsc::channel::<()>();
+        let halter = modell.clone();
+        let rechnet = std::thread::spawn(move || {
+            let _g = halter.lock().unwrap();
+            gehalten.send(()).unwrap();
+            let _ = frei.recv();
+        });
+        warten.recv().unwrap();
+        let beginn = std::time::Instant::now();
+        let stand = saatstand_aus(&modell, &e).expect("Stand");
+        saat_einmal_in(&modell, 42).expect("vormerken");
+        assert!(beginn.elapsed() < std::time::Duration::from_millis(500), "es wurde gewartet");
+        assert!(stand.belegt);
+        assert_eq!(saat_vorgemerkt(), Some(42));
+        assert_eq!(saatstand_aus(&modell, &e).unwrap().naechste.as_deref(), Some("42"), "die vorgemerkte Saat steht im Stand");
+        los.send(()).unwrap();
+        rechnet.join().unwrap();
+        // Frei und ohne Modell: nicht mehr belegt, die Saat bleibt vorgemerkt.
+        let frei = saatstand_aus(&modell, &e).unwrap();
+        assert!(!frei.belegt);
+        assert_eq!(frei.naechste.as_deref(), Some("42"));
+        *SAAT_VORGEMERKT.lock().unwrap() = None;
+    }
+
+    /// ⚑ **Ein geloeschtes Gespraech nimmt seine Tasks und Mitschnitte mit**,
+    /// und nur seine: Tasks und Mitschnitte anderer Gespraeche bleiben, ein
+    /// Task mitten in seiner Runde ebenso, und ein Ort, der zweimal genannt
+    /// ist, zaehlt einmal.
+    #[test]
+    fn ein_geloeschtes_gespraech_nimmt_seines_mit() {
+        let d = std::env::temp_dir().join(format!("myl-vergessen-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        let ablage = myl_local_agent::vorhaben::Ablage::neu(d.join("vorhaben"));
+        let a = ablage.anlegen_fuer("erstes", 1, Some("g-1".into()), None).unwrap();
+        let b = ablage.anlegen_fuer("zweites", 2, Some("g-1".into()), None).unwrap();
+        let fremd = ablage.anlegen_fuer("fremdes", 3, Some("g-2".into()), None).unwrap();
+        let arbeit = d.join("arbeit");
+        for (sitzung, inhalt) in [("g-1", "geheim"), ("g-2", "bleibt")] {
+            myl_local_agent::verlauf::schreiben(&arbeit, sitzung, "m", &[("user".into(), inhalt.into())]).unwrap();
+        }
+        let modell: Mutex<Option<myl_client::Oertlichesmodell>> = Mutex::new(None);
+        let weg = vergessen_in("g-1", [arbeit.clone(), arbeit.clone()], &ablage, &modell, |k| k == b.kennung).unwrap();
+        assert_eq!((weg.tasks, weg.mitschnitte), (1, 1));
+        assert_eq!(weg.geblieben, vec![b.kennung.clone()], "der rechnende Task bleibt");
+        let uebrig: Vec<String> = ablage.reihe().into_iter().map(|v| v.kennung).collect();
+        assert!(!uebrig.contains(&a.kennung) && uebrig.contains(&b.kennung) && uebrig.contains(&fremd.kennung), "{uebrig:?}");
+        let mitschnitte = myl_local_agent::verlauf::sitzungen(&arbeit);
+        assert_eq!(mitschnitte.len(), 1, "nur der Mitschnitt des anderen Gespraechs bleibt: {mitschnitte:?}");
+        assert!(mitschnitte[0].ends_with("g-2"));
+        let _ = std::fs::remove_dir_all(&d);
+    }
 }

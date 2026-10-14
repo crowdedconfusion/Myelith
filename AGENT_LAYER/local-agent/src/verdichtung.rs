@@ -29,8 +29,110 @@
 //! die er dem Modell gegeben hat, und die Zusammenfassung ist eine davon.
 //! Wer den Verlauf vorlegt, kann damit nicht behaupten, das Modell habe
 //! eine andere gesehen.
+//!
+//! # ⚑ Und davor eine billigere Stufe: alte Werkzeugausgaben ausblenden
+//!
+//! (2026-10-13) Wird der Kontext voll, ersetzt der Lauf zuerst die
+//! Werkzeugausgaben aelterer Schritte durch einen kurzen Vermerk
+//! ([`ausblenden`]); erst wenn das nicht genug Luft schafft, fasst das
+//! Modell zusammen. **Das Ausblenden kostet keinen Modellaufruf**, die
+//! Ueberlegungen und Aufrufe des Modells bleiben woertlich, und der
+//! Auftrag ohnehin. Vorbild ist die Messung von Lindenbauer und anderen
+//! („The Complexity Trap", NeurIPS 2025): Bei Agenten auf
+//! Programmieraufgaben loeste das blosse Ausblenden alter Beobachtungen
+//! genauso viele Aufgaben wie eine Zusammenfassung durch das Modell, zur
+//! halben Rechnung, und beides zusammen war am billigsten.
+//!
+//! ⚑ **Warum das hier besonders zaehlt:** Lokal kostet jedes Token im
+//! Kontext Einlesezeit, und die faellt mit der Laenge (am 35B gemessen 125
+//! Token je Sekunde bei 2 k, 47 bei 64 k). Ein kleiner Kontext ist hier
+//! nicht nur billiger, sondern schneller.
 
-use crate::tuerklient::{Modellweg, Nachricht, Tuerfehler};
+use crate::tuerklient::{Kontextstand, Modellweg, Nachricht, Tuerfehler};
+use crate::werkzeug::Werkzeugergebnis;
+
+/// **Die Werkzeugausgaben so vieler letzter Schritte bleiben beim
+/// Ausblenden woertlich.**
+///
+/// ⚑ **Drei, und das ist eine Abwaegung.** Die Vorlage liess zehn Runden
+/// stehen, bei Kontexten von 128 k und mehr. Hier ist der Arbeitskontext
+/// 64 k, und eine einzige gelesene Datei belegt leicht 5 000 Token; zehn
+/// solche fuellten ihn fast allein. Drei decken, was das Modell gerade
+/// vergleicht oder weiterbearbeitet.
+pub const WOERTLICHE_SCHRITTE: usize = 3;
+
+/// **Kuerzere Werkzeugausgaben bleiben stehen.** Ein Vermerk kostet selbst
+/// rund 30 Token; eine Ausgabe von wenigen Zeilen (ein Exit-Code, „Datei
+/// geschrieben") auszublenden, spart nichts und nimmt dem Modell ein
+/// Ergebnis.
+pub const AUSBLENDEN_AB_ZEICHEN: usize = 600;
+
+/// Der Anfang des Vermerks, der an die Stelle einer ausgeblendeten Ausgabe
+/// tritt; an ihm erkennt [`ausblenden`] eine schon ausgeblendete.
+///
+/// ⚑ **Englisch**, wie die Werkzeugansage und [`AUFTRAG`]: Er ist eine
+/// Anweisung an das Modell.
+pub const AUSGEBLENDET: &str = "[Output hidden to save context";
+
+/// **Ersetzt die langen Werkzeugausgaben vor den letzten
+/// [`WOERTLICHE_SCHRITTE`] Schritten durch einen Vermerk.** Zurueck kommen
+/// die neuen Nachrichten und wie viele Ausgaben ausgeblendet wurden.
+///
+/// Angefasst werden nur Nachrichten ab `ab` mit der Rolle `tool`, deren
+/// Form [`Werkzeugergebnis::nachricht`] ist; der Vermerk nennt das Werkzeug
+/// und die Laenge der Ausgabe. Alles andere bleibt Zeichen fuer Zeichen,
+/// und die Zahl der Nachrichten bleibt gleich, damit jeder Index in den
+/// Verlauf (etwa der des Auftrags) weiter stimmt.
+pub fn ausblenden(nachrichten: &[Nachricht], ab: usize) -> (Vec<Nachricht>, usize) {
+    let schritte: Vec<usize> = (ab..nachrichten.len()).filter(|&i| nachrichten[i].role == "assistant").collect();
+    let mut neu = nachrichten.to_vec();
+    let Some(&grenze) = schritte.len().checked_sub(WOERTLICHE_SCHRITTE).and_then(|k| schritte.get(k)) else {
+        return (neu, 0);
+    };
+    let mut zahl = 0;
+    for n in neu.iter_mut().take(grenze).skip(ab).filter(|n| n.role == "tool") {
+        let Some((name, inhalt)) = werkzeugausgabe(&n.content) else {
+            continue;
+        };
+        let zeichen = inhalt.chars().count();
+        if zeichen < AUSBLENDEN_AB_ZEICHEN || inhalt.starts_with(AUSGEBLENDET) {
+            continue;
+        }
+        let vermerk = format!(
+            "{AUSGEBLENDET}: {zeichen} characters from an earlier step. If you still need them, call the tool again.]"
+        );
+        // ⛔️ **Die Herkunft bleibt stehen** (2026-10-14): Ohne die Marke
+        //   vorn waere ein ausgeblendetes fremdes Ergebnis in der naechsten
+        //   Runde ein vertrautes (`secure_flow::label_aus_verlauf`).
+        let vermerk = if crate::secure_flow::nennt_sich_fremd(&inhalt) {
+            format!("{}\n{vermerk}", crate::secure_flow::fremdmarke(&name))
+        } else {
+            vermerk
+        };
+        *n = Werkzeugergebnis::nachricht(&name, &vermerk);
+        zahl += 1;
+    }
+    (neu, zahl)
+}
+
+/// Name und Inhalt einer Werkzeugausgabe in der Form von
+/// [`Werkzeugergebnis::nachricht`]; `None` fuer jede andere Form.
+pub(crate) fn werkzeugausgabe(text: &str) -> Option<(String, String)> {
+    let innen = text.strip_prefix("<tool_response>\n")?.strip_suffix("\n</tool_response>")?;
+    let wert: serde_json::Value = serde_json::from_str(innen).ok()?;
+    Some((wert.get("name")?.as_str()?.to_string(), wert.get("content")?.as_str()?.to_string()))
+}
+
+/// **Reicht das Ausblenden?** Nur wenn danach ausser der Antwortlaenge
+/// noch ein Viertel des Kontexts frei ist.
+///
+/// ⚑ **Ein Viertel und nicht „passt gerade"**: Sonst stuende der Lauf
+/// einen Schritt spaeter wieder an der Grenze, und jedes Ausblenden
+/// aendert den Anfang des Prompts, den der KV-Speicher sonst weiterfuehrt
+/// (Fund 372). Selten und gruendlich ist billiger als oft und knapp.
+pub fn luft_genug(stand: Kontextstand, reserve: usize) -> bool {
+    stand.passt(reserve.saturating_add(stand.grenze / 4))
+}
 
 /// Die Anweisung an das Modell.
 ///
@@ -163,6 +265,12 @@ fn anfrage(bisher: Option<&str>, stueck: &[Nachricht]) -> Vec<Nachricht> {
         text.push_str(b);
         text.push_str("\n\nThe transcript continues:\n\n");
     }
+    // 📌 **Eingerahmt, und am Ende das Ganze verlangt** (2026-10-14, am
+    //   echten Beispiel in der Konsole mit dem 4B): Ohne Rahmen endete der
+    //   Text mit der letzten Antwort des Assistenten, und das 4B setzte
+    //   genau diese fort. Aus vier Themen samt vier Teilenummern wurden drei
+    //   Punkte ueber die letzte Frage (1 603 → 86 Token).
+    text.push_str("<transcript>\n");
     for n in stueck {
         text.push_str("### ");
         text.push_str(&n.role);
@@ -170,13 +278,33 @@ fn anfrage(bisher: Option<&str>, stueck: &[Nachricht]) -> Vec<Nachricht> {
         text.push_str(&n.content);
         text.push_str("\n\n");
     }
-    text.push_str("Condense this part of the transcript.");
+    text.push_str("</transcript>\n\n");
+    // 📌 **Und nicht abschreiben** (am selben Tag, Log von 120 Zeilen): Mit
+    //   „keep every name, identifier and number exactly as written" schrieb
+    //   das 4B den Verlauf samt Logdatei woertlich ab, bis die Tokengrenze
+    //   ihn abschnitt; die Antworten des Assistenten fehlten danach ganz.
+    text.push_str(
+        "Condense the whole transcript above, from its first message to its last, not only the last one, \
+         into short notes. Do not copy it; keep the names, identifiers and numbers that still matter.",
+    );
     vec![Nachricht::system(AUFTRAG), Nachricht::nutzer(text)]
 }
 
 /// Die Nachricht, die an die Stelle des verdichteten Verlaufs tritt.
-pub fn als_nachricht(zusammenfassung: &str) -> Nachricht {
-    Nachricht::nutzer(format!("{KOPF}\n{zusammenfassung}"))
+///
+/// ⛔️ **`ersetzt` sind die Nachrichten, an deren Stelle sie tritt** (seit
+/// dem 2026-10-14 Pflicht): Stand darin Fremdes, bekommt die
+/// Zusammenfassung die Marke in die Zeile nach dem Kopf. Sonst wuesche das
+/// Verdichten die Herkunft aus, denn die Belege verschwinden mit den
+/// Nachrichten (`secure_flow::label_aus_verlauf`).
+pub fn als_nachricht(zusammenfassung: &str, ersetzt: &[Nachricht]) -> Nachricht {
+    let (label, _) = crate::secure_flow::label_aus_verlauf(ersetzt);
+    if label.vertrauen == crate::secure_flow::Vertrauen::Fremd {
+        let marke = crate::secure_flow::fremdmarke("summary of earlier steps");
+        Nachricht::nutzer(format!("{KOPF}\n{marke}\n{zusammenfassung}"))
+    } else {
+        Nachricht::nutzer(format!("{KOPF}\n{zusammenfassung}"))
+    }
 }
 
 /// Wie viele Token einer Zusammenfassung zustehen: ein Achtel des Kontexts,
@@ -187,4 +315,51 @@ pub fn als_nachricht(zusammenfassung: &str) -> Nachricht {
 /// kein Verdichten mehr ist.
 pub fn antwortlaenge(grenze: usize) -> u32 {
     (grenze / 8).clamp(64, 2048) as u32
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn schritt(i: usize, laenge: usize) -> [Nachricht; 2] {
+        [
+            Nachricht::modell(format!("Schritt {i}")),
+            Werkzeugergebnis::nachricht("read_file", &format!("{i}{}", "d".repeat(laenge))),
+        ]
+    }
+
+    /// ⚑ **Nur alte, lange Werkzeugausgaben verschwinden**: Die letzten
+    /// [`WOERTLICHE_SCHRITTE`] Schritte, kurze Ausgaben, alles vor `ab` und
+    /// alles, was keine Werkzeugausgabe ist, bleiben Zeichen fuer Zeichen,
+    /// und die Zahl der Nachrichten bleibt gleich.
+    #[test]
+    fn alte_lange_ausgaben_werden_ausgeblendet_und_sonst_nichts() {
+        let mut n = vec![Nachricht::system("Ansage"), Nachricht::nutzer("Auftrag")];
+        n.extend(schritt(0, 2000));
+        n.extend(schritt(1, 10));
+        n.push(Nachricht::nutzer("x".repeat(2000)));
+        for i in 2..6 {
+            n.extend(schritt(i, 2000));
+        }
+        let (neu, zahl) = ausblenden(&n, 1);
+        assert_eq!(neu.len(), n.len(), "die Indizes bleiben");
+        assert_eq!(zahl, 2, "Schritt 0 und 2; 1 ist kurz, 3 bis 5 sind die letzten drei");
+        for i in [3, 8] {
+            let (name, inhalt) = werkzeugausgabe(&neu[i].content).expect("Form");
+            assert_eq!(name, "read_file");
+            assert!(inhalt.starts_with(AUSGEBLENDET) && inhalt.contains("2001 characters"), "{inhalt}");
+        }
+        for i in (0..n.len()).filter(|i| ![3, 8].contains(i)) {
+            assert_eq!(neu[i], n[i], "Nachricht {i} wurde veraendert");
+        }
+        assert_eq!(ausblenden(&neu, 1), (neu.clone(), 0), "ein zweiter Durchgang findet nichts mehr");
+        assert_eq!(ausblenden(&n[..8], 1).1, 0, "mit drei Schritten bleibt alles");
+        assert_eq!(ausblenden(&n, 4).1, 1, "vor `ab` bleibt alles");
+    }
+
+    #[test]
+    fn luft_genug_heisst_ein_viertel_frei() {
+        assert!(luft_genug(Kontextstand { belegt: 700, grenze: 1000 }, 50));
+        assert!(!luft_genug(Kontextstand { belegt: 701, grenze: 1000 }, 50));
+    }
 }

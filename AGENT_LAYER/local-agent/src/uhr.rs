@@ -42,6 +42,11 @@ pub fn utc_text(sekunden: u64) -> String {
 /// Begruendung, das aktuelle Jahr sei 2023. Es kannte das Datum nicht; die
 /// Uhr stand als Werkzeug bereit, gerufen hat es sie nicht. Agentensysteme
 /// geben das Datum deshalb in den Kontext, statt auf den Aufruf zu warten.
+/// Womit [`heute_zeile`] beginnt; der Schlaf schneidet dort ab
+/// (`crate::gedaechtnis::nur_nutzerworte`).
+pub const HEUTE_DE: &str = "\n\nHeute ist ";
+pub const HEUTE_EN: &str = "\n\nToday is ";
+
 pub fn heute_zeile(deutsch: bool) -> String {
     let jetzt = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -50,11 +55,7 @@ pub fn heute_zeile(deutsch: bool) -> String {
     let text = utc_text(jetzt);
     let datum = text.split(' ').next().unwrap_or_default();
     let tag = text.rsplit(", ").next().unwrap_or_default();
-    if deutsch {
-        format!("\n\nHeute ist {datum} ({tag}).")
-    } else {
-        format!("\n\nToday is {datum} ({tag}).")
-    }
+    format!("{}{datum} ({tag}).", if deutsch { HEUTE_DE } else { HEUTE_EN })
 }
 
 #[cfg(test)]

@@ -1,7 +1,7 @@
 # NODE — der Myelith-Knoten
 
-> **Version:** 0.48.5
-> **Datum:** 2026-09-21
+> **Version:** 0.48.6
+> **Datum:** 2026-10-13
 > **Status:** Netzknoten lauffähig, Blockproduktion mit **Persistenz über
 > Neustarts**, BFT-Runden über das Netz mit Rundenwechsel, und seit dem
 > 1. September **schließt der Knoten die Epoche selbst ab**.
@@ -278,6 +278,26 @@ NODE/
 ```
 
 ## Changelog
+
+### v0.48.6 – 2026-10-13 (der Knoten als Dienst in GolemOS wird gegen den Knoten und das NixOS-Modul gehalten)
+
+Seit GolemOS 0.3.0 gibt es einen zweiten Weg, `myl-node` als Dienst zu
+fahren: `golem-knoten` in GolemOS, neben dem NixOS-Modul. **Zwei Orte, die
+dieselbe Befehlszeile bauen**, also neun Proben in `tests/golemknoten.rs`:
+Jedes Flag, das `golem-knoten` übergibt, kennt der Knoten; beide Dienste
+übergeben **dieselben** Flags und halten Tür und Ortsleitung zu; die
+Startbegrenzung (fünf Abbrüche in 300 s, zehn Sekunden Pause) und die
+Vorgabe der Aufnahmen sind in beiden dieselbe; die Kennung des
+Dienstkontos (900) steht im Skript und in der Benutzertabelle des Abbilds
+gleich. Unter Unix laufen dazu fünf Proben gegen das Skript selbst: der
+Zuschnitt der Befehlszeile, abgewiesene Werte (Leerzeichen,
+eingeschmuggelte Flags, Port unter 1025, unbekannte Felder), eine
+untergeschobene Einstellung wird gelesen und nicht ausgeführt, ohne
+Konformitätsvektoren startet der Knoten nur auf ausdrückliches `aus`, und
+der Konsensschlüssel landet mit 0400 im Zustand. Gegenproben: eine
+eingeschobene Tür, abgeschaltete Wertprüfung und eine per `eval`
+gelesene Einstellung machen je ein bis zwei Proben rot. Kein Code des
+Knotens geändert.
 
 ### v0.48.5 – 2026-09-21 (der Serverzuschnitt kennt den neuen Ablageort)
 

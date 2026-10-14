@@ -18,10 +18,13 @@
 //! Kontinuitaet. Genau deshalb kann ein **neuer** Agent im selben Ordner
 //! aufnehmen, woran der vorige gearbeitet hat.
 //!
-//! ⚑ **Daraus folgt, was das Aufraeumen der Gespraechsliste NICHT tut:**
-//! Es fasst den Mitschnitt nicht an. Ein Gespraech aus der Liste zu
-//! nehmen ist Aufraeumen; einen Verlauf zu loeschen ist eine eigene
-//! Handlung, und die gibt es auch ([`loeschen`]).
+//! ⚑ **Loescht jemand ein Gespraech, geht sein Mitschnitt mit**, und nur
+//! seiner (Festlegung des Projektinhabers, 2026-10-13; das Fenster ruft
+//! [`loeschen`] mit der Kennung des Gespraechs). Die Mitschnitte anderer
+//! Gespraeche bleiben, und mit ihnen die Kontinuitaet des Ordners.
+//! 📌 Bis dahin fasste das Aufraeumen der Liste den Mitschnitt
+//! ausdruecklich nicht an (Festlegung vom 2026-09-16): Was ein Mensch
+//! loescht, soll aber nicht als Datei weiterleben.
 //!
 //! # ⛔️ Klartext, und warum die Verschluesselung wieder gegangen ist
 //!
@@ -162,6 +165,29 @@ pub fn kennung_aus(roh: &str) -> String {
 ///
 /// `abschnitte` ist der Verlauf, ein Eintrag je Nachricht, als
 /// `(Rolle, Text)`. Gibt den Pfad zurueck, relativ zum Arbeitsordner.
+/// **Ein Werkzeugergebnis, wie es im Mitschnitt steht**: der Name in einer
+/// Zeile, darunter der Inhalt mit echten Zeilenumbruechen.
+///
+/// 📌 **Gefunden am 2026-10-14 an der Nadel im echten Beispiel** (Konsole,
+/// 4B): Ein Ergebnis stand als JSON-Zeile im Mitschnitt, `<tool_response>`
+/// samt `"content": "…\n…"`, eine gelesene Logdatei von 120 Zeilen also
+/// auf **einer** Zeile. Die Suche fand sie, zeigte aber nur deren Anfang,
+/// und `read_history` konnte keine einzelne Zeile darin nennen; das 4B griff
+/// aus dem Anfang einen falschen Fehlercode. ⚑ Der Mitschnitt wird nur als
+/// Text gelesen (`zeilen`, `verzeichnis`), nie in Nachrichten
+/// zurueckverwandelt, also darf er lesbar sein. Was sich nicht so lesen
+/// laesst, bleibt, wie es war.
+pub fn lesbares_ergebnis(text: &str) -> String {
+    let innen = text.trim().strip_prefix("<tool_response>").and_then(|t| t.strip_suffix("</tool_response>")).unwrap_or(text).trim();
+    match serde_json::from_str::<serde_json::Value>(innen) {
+        Ok(v) => match (v.get("name").and_then(|n| n.as_str()), v.get("content").and_then(|c| c.as_str())) {
+            (Some(name), Some(inhalt)) => format!("[{name}]\n{}", inhalt.trim_end()),
+            _ => text.to_string(),
+        },
+        Err(_) => text.to_string(),
+    }
+}
+
 pub fn schreiben(
     wurzel: &Path,
     sitzung: &str,
@@ -203,6 +229,8 @@ pub fn schreiben(
     let mut eintraege = Vec::with_capacity(abschnitte.len());
     let mut koerper = String::new();
     for (i, (rolle, text)) in abschnitte.iter().enumerate() {
+        let text = if rolle == "tool" { lesbares_ergebnis(text) } else { text.clone() };
+        let text = &text;
         let block = format!("### {rolle}\n\n{text}\n");
         let n = block.lines().count();
         eintraege.push(Abschnitt {
@@ -493,7 +521,7 @@ pub fn zeilen(pfad: &Path, von: usize, bis: usize) -> Result<String, Fehler> {
 ///
 /// ⛔️ **Das ist die Handlung, die es vorher gar nicht gab**, und sie ist
 /// die wichtige: „Da stand etwas Vertrauliches drin, weg damit." Das
-/// Aufraeumen der Gespraechsliste tut es ausdruecklich **nicht**.
+/// Loeschen eines Gespraechs im Fenster ruft es mit dessen Kennung.
 ///
 /// `sitzung` `None` loescht den ganzen Ordner. Gibt zurueck, wie viele
 /// Sitzungen entfernt wurden.
@@ -501,6 +529,12 @@ pub fn loeschen(wurzel: &Path, sitzung: Option<&str>) -> Result<usize, Fehler> {
     let ordner = wurzel.join(ORDNER);
     match sitzung {
         Some(s) => {
+            // ⛔️ **Das Gedaechtnis vergisst mit** (2026-10-13): Was der
+            //    Schlaf aus diesem Gespraech gewonnen hat, soll nicht
+            //    als Erinnerung weiterleben, wenn der Mitschnitt geht.
+            //    Auch wenn es keinen Mitschnitt gab, denn der Schlaf
+            //    liest auch das lebende Gespraech.
+            crate::gedaechtnis::sitzung_vergessen(wurzel, s).map_err(Fehler::Datei)?;
             let p = ordner.join(kennung_aus(s));
             if !p.is_dir() {
                 return Ok(0);
@@ -770,6 +804,31 @@ mod proben {
             ("user".into(), "Und der Arbeitsspeicher?".into()),
             ("assistant".into(), "Vierundzwanzig Gibibyte.".into()),
         ]
+    }
+
+    /// ⚑ **Ein Werkzeugergebnis steht zeilenweise im Mitschnitt**: Eine
+    /// Zeile einer gelesenen Datei ist eine Zeile der Datei, findbar und
+    /// mit ihrer Nummer nachzulesen; das Verzeichnis zeigt weiter richtig.
+    #[test]
+    fn ein_werkzeugergebnis_steht_zeilenweise() {
+        let d = ordner("werkzeug");
+        let log = "00:00 INFO ok\n03:12 FEHLER E-4471 Luefter blockiert\n03:16 INFO ok";
+        let ab = vec![
+            ("user".into(), "Lies das Log.".into()),
+            ("tool".into(), crate::werkzeug::Werkzeugergebnis::nachricht("read_file", log).content),
+            ("assistant".into(), "Ein Fehler um 03:12.".into()),
+        ];
+        let rel = schreiben(&d, "sitzung-w", "myelith-4b", &ab).expect("schreiben");
+        let pfad = d.join(&rel);
+        let text = std::fs::read_to_string(&pfad).expect("lesen");
+        let nr = text.lines().position(|z| z == "03:12 FEHLER E-4471 Luefter blockiert").expect("die Zeile steht einzeln") + 1;
+        assert_eq!(zeilen(&pfad, nr, nr).expect("zeilen").trim(), "03:12 FEHLER E-4471 Luefter blockiert");
+        assert!(text.contains("[read_file]") && !text.contains("<tool_response>"), "{text}");
+        let v = verzeichnis(&pfad).expect("Verzeichnis");
+        let werkzeug = &v.abschnitte[1];
+        assert!(werkzeug.von < nr && nr <= werkzeug.bis, "das Verzeichnis deckt die Zeile nicht: {werkzeug:?}");
+        // Was sich nicht lesen laesst, bleibt, wie es war.
+        assert_eq!(lesbares_ergebnis("kein JSON"), "kein JSON");
     }
 
     /// ⛔️ **Die Zeilennummern zeigen auf Zeilen der Datei.**

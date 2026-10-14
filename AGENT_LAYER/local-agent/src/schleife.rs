@@ -144,6 +144,7 @@ fn meldungsart(m: &Meldung<'_>) -> &'static str {
         Meldung::Ergebnis { .. } => "Werkzeugergebnis",
         Meldung::Abgelehnt { .. } => "Abgelehnt",
         Meldung::Verdichtet { .. } => "Verdichtet",
+        Meldung::Ausgeblendet { .. } => "Ausgeblendet",
     }
 }
 
@@ -155,6 +156,9 @@ fn meldungstext(m: &Meldung<'_>) -> String {
         Meldung::Ergebnis { name, text } => format!("{name}\n{text}"),
         Meldung::Abgelehnt { name, grund } => format!("{name}: {grund}"),
         Meldung::Verdichtet { vorher, nachher } => format!("{vorher} -> {nachher} Token"),
+        Meldung::Ausgeblendet { ergebnisse, vorher, nachher } => {
+            format!("{ergebnisse} Werkzeugausgaben, {vorher} -> {nachher} Token")
+        }
     }
 }
 
@@ -194,6 +198,12 @@ pub enum Meldung<'a> {
     /// woertlich als davor, und das soll niemand erst an einer Antwort
     /// merken.
     Verdichtet { vorher: usize, nachher: usize },
+    /// **Alte Werkzeugausgaben wurden ausgeblendet**, statt den Verlauf
+    /// zusammenzufassen: wie viele, und die belegten Token davor und danach.
+    ///
+    /// ⚑ **Gehoert in die Anzeige** wie [`Meldung::Verdichtet`]: Das Modell
+    /// sieht danach weniger woertlich, wenn auch nur die alten Ausgaben.
+    Ausgeblendet { ergebnisse: usize, vorher: usize, nachher: usize },
 }
 
 /// **Wie viele Runden hintereinander nichts laufen darf, bevor der Lauf
@@ -604,6 +614,21 @@ impl<'a> Lauf<'a> {
         if vorher.passt(reserve) {
             return Ok(());
         }
+        // ⚑ **Erst ausblenden, dann zusammenfassen** (siehe Modulkopf von
+        //   `verdichtung`). Reicht das Ausblenden nicht fuer ein Viertel
+        //   Luft, wird der Verlauf wie zuvor zusammengefasst, und zwar der
+        //   ungekuerzte: Die Zusammenfassung soll aus den Ausgaben schoepfen
+        //   koennen, die gerade erst verschwinden wuerden.
+        let (ausgeblendet, zahl) = crate::verdichtung::ausblenden(nachrichten, 1);
+        if zahl > 0 {
+            if let Some(stand) = self.klient.kontext(&ausgeblendet) {
+                if crate::verdichtung::luft_genug(stand, reserve) {
+                    *nachrichten = ausgeblendet;
+                    melden(Meldung::Ausgeblendet { ergebnisse: zahl, vorher: vorher.belegt, nachher: stand.belegt });
+                    return Ok(());
+                }
+            }
+        }
         // Der letzte Schritt: ab der letzten Antwort des Modells, sofern sie
         // hinter dem Auftrag steht.
         let letzter = nachrichten
@@ -623,7 +648,7 @@ impl<'a> Lauf<'a> {
                 &mitte,
                 crate::verdichtung::antwortlaenge(vorher.grenze),
             )?;
-            let mut neu = vec![nachrichten[0].clone(), crate::verdichtung::als_nachricht(&text)];
+            let mut neu = vec![nachrichten[0].clone(), crate::verdichtung::als_nachricht(&text, &mitte)];
             neu.push(nachrichten[*auftrag_bei].clone());
             neu.extend(nachrichten[letzter..].iter().cloned());
             *nachrichten = neu;

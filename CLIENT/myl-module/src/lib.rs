@@ -29,6 +29,7 @@
 
 pub mod beschreibung;
 pub mod filter;
+pub mod fund;
 pub mod gast;
 pub mod nachricht;
 pub mod signatur;

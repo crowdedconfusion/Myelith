@@ -58,6 +58,7 @@ fn run() -> Result<(), String> {
             denkgrenze: None,
             abbruch: None,
             ziehen: None,
+            gesperrt: &[],
         };
         let anfang = std::time::Instant::now();
         let tokens = generate_beobachtet(&model, &tokenizer, &prompt, &lauf, &mut |_| {});

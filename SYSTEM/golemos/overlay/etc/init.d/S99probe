@@ -23,7 +23,7 @@ echo "Kern:     $(uname -srm)"
 echo "System:   $(cat /etc/issue 2>/dev/null | head -1)"
 echo "Speicher: $(awk '/MemTotal/{printf "%d MB", $2/1024}' /proc/meminfo)"
 echo
-for p in myelith myl; do
+for p in myelith myl myl-node; do
   if [ -x "/usr/bin/$p" ]; then
     echo "  $p  $(du -h /usr/bin/$p | cut -f1)  vorhanden"
   else
@@ -116,6 +116,92 @@ if [ -f /daten/myelith/client.json ]; then
   fi
 else
   echo "  uebersprungen: keine Einstellungen auf /daten, also kein Modell gefunden"
+fi
+
+# ── Der Knoten als Dienst (seit GolemOS 0.3.0) ──────────────────────
+#
+# ⚑ **Nur mit `golemos.knotenprobe` auf der Kernzeile**, denn ein Knoten
+#   braucht Zeit zum Starten, und die gewoehnliche Probe soll schnell
+#   bleiben. Geprueft wird, was `golem-knoten` zusagt: Der Knoten laeuft
+#   unter seinem eigenen Konto und nicht als root, nach aussen hoert nur
+#   der P2P-Port, die Beobachtung nur auf der Rueckschleife, und
+#   `stoppen` haelt ihn an. Alles in einem Zwischenordner, damit die
+#   Probe keine Einstellung hinterlaesst.
+if grep -q golemos.knotenprobe /proc/cmdline; then
+  echo
+  echo "── Knoten ──"
+  K=/tmp/knotenprobe
+  export GOLEM_KNOTEN_KONF=$K/knoten.conf GOLEM_KNOTEN_STAND=$K/stand GOLEM_KNOTEN_LAUF=$K/lauf
+  befund=""
+  /usr/sbin/golem-knoten einrichten --name probe --konformitaet aus >/dev/null 2>&1 || befund="$befund einrichten"
+  /usr/sbin/golem-knoten starten >/dev/null 2>&1 || befund="$befund starten"
+  n=0
+  while [ $n -lt 60 ] && ! netstat -ltn 2>/dev/null | grep -q ":4001 "; do sleep 1; n=$((n + 1)); done
+  echo "  P2P-Port nach $n s"
+  pid=$(cat $K/lauf/knoten.pid 2>/dev/null)
+  # ⚑ Der Waechter startet ueber `setpriv`; die gemerkte Kennung ist die
+  #   der Unterschale, deren einziges Kind der Knoten ist.
+  kind=$(pidof myl-node 2>/dev/null | cut -d' ' -f1)
+  konto=$(awk '/^Uid:/{print $2}' /proc/${kind:-0}/status 2>/dev/null)
+  echo "  myl-node: Prozess ${kind:-keiner}, Konto ${konto:-?} (Waechterkind $pid)"
+  [ "$konto" = 900 ] || befund="$befund konto"
+  netstat -ltn 2>/dev/null | awk 'NR>2{print "  hoert: "$4}'
+  netstat -ltn 2>/dev/null | awk 'NR>2{print $4}' | grep -v -e ":4001$" -e "^127.0.0.1:" -e "^::1:" > /tmp/offen.txt
+  if [ -s /tmp/offen.txt ]; then befund="$befund offen:$(tr '\n' ' ' < /tmp/offen.txt)"; fi
+  netstat -ltn 2>/dev/null | grep -q "127.0.0.1:4151 " || befund="$befund beobachtung"
+  /usr/sbin/golem-knoten stoppen >/dev/null 2>&1
+  sleep 2
+  pidof myl-node >/dev/null 2>&1 && befund="$befund stoppen"
+  tail -n 3 $K/stand/dienst.log 2>/dev/null | sed 's/^/  /'
+  if [ -z "$befund" ]; then echo "  KNOTEN_OK"; else echo "  KNOTEN_FEHLGESCHLAGEN:$befund"; fi
+fi
+
+# ── Die Oberflaeche als Schicht (seit GolemOS 0.3.0) ────────────────
+#
+# ⚑ **Nur mit `golemos.schichtprobe` auf der Kernzeile**, und nur, wenn
+#   auf der Datenpartition eine Schicht samt Pruefsumme liegt
+#   (`/daten/oberflaeche-<arch>.sqfs` und `.sha256`). Geprobt wird der Weg
+#   eines Nutzers: holen, starten, und nachsehen, ob Kompositor und Fenster
+#   laufen und unter welchem Konto; danach `stoppen`, und es darf nichts
+#   eingehaengt bleiben. ⚑ **Das Bild nimmt der Pruefstand von aussen
+#   auf** (QEMU-Monitor, `screendump`), solange hier `SCHICHT_LAEUFT`
+#   steht; drinnen gibt es keinen Blick auf den Bildschirm.
+if grep -q golemos.schichtprobe /proc/cmdline; then
+  echo
+  echo "── Oberflaeche ──"
+  befund=""
+  q=/daten/oberflaeche-$(uname -m).sqfs
+  if [ ! -f "$q" ]; then
+    echo "  SCHICHT_FEHLGESCHLAGEN: keine Schicht unter $q"
+  else
+    /usr/sbin/golem-schicht holen "$q" > /tmp/holen.log 2>&1 || befund="$befund holen"
+    sed 's/^/  /' /tmp/holen.log
+    setsid /usr/sbin/golem-schicht starten < /dev/null > /tmp/oberflaeche.log 2>&1 &
+    # ⚠️ Unter QEMU ohne Beschleunigung braucht WebKit Minuten. ⚑ Wer
+    #   vorher aufgibt, ist die Schicht: Ist sie nach dem Einhaengen wieder
+    #   ausgehaengt, kommt kein Fenster mehr.
+    n=0
+    while [ $n -lt 600 ] && ! pidof myelith-fenster >/dev/null 2>&1; do
+      [ $n -gt 30 ] && ! grep -q " /run/schicht/" /proc/mounts && break
+      sleep 1; n=$((n + 1))
+    done
+    echo "  Fenster nach $n s"
+    for p in cage myelith-fenster; do
+      pid=$(pidof $p 2>/dev/null | cut -d' ' -f1)
+      konto=$(awk '/^Uid:/{print $2}' /proc/${pid:-0}/status 2>/dev/null)
+      echo "  $p: Prozess ${pid:-keiner}, Konto ${konto:-?}"
+      [ "$konto" = 1000 ] || befund="$befund $p"
+    done
+    echo "  SCHICHT_LAEUFT"
+    sleep 240
+    /usr/sbin/golem-schicht status 2>&1 | sed 's/^/  /'
+    pidof myelith-fenster >/dev/null 2>&1 || befund="$befund abgestuerzt"
+    /usr/sbin/golem-schicht stoppen > /dev/null 2>&1
+    sleep 3
+    grep -q " /run/schicht/" /proc/mounts && befund="$befund eingehaengt"
+    tail -n 15 /tmp/oberflaeche.log 2>/dev/null | sed 's/^/  | /'
+    if [ -z "$befund" ]; then echo "  SCHICHT_OK"; else echo "  SCHICHT_FEHLGESCHLAGEN:$befund"; fi
+  fi
 fi
 
 echo

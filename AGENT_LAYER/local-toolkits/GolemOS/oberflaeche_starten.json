@@ -1,0 +1,6 @@
+{
+  "name": "oberflaeche_starten",
+  "beschreibung": "Nur auf GolemOS: startet die geholte Oberflaeche, also das Myelith-Fenster im Vollbild auf dem Bildschirm des Rechners. Das Fenster laedt sein eigenes Modell; sage dem Menschen, dass er diese Konsole danach beenden sollte, damit nicht zwei Modelle im Speicher liegen. Zurueck zur Konsole geht es mit Strg+Alt+F2.",
+  "parameter": { "type": "object", "properties": {}, "required": [] },
+  "befehl": "command -v golem-schicht >/dev/null || { echo 'Das ist kein GolemOS.'; exit 1; }; setsid golem-schicht starten > /tmp/oberflaeche.log 2>&1 < /dev/null & sleep 3; if grep -q ' /run/schicht/oberflaeche ' /proc/mounts; then echo 'Oberflaeche startet.'; else cat /tmp/oberflaeche.log; exit 1; fi"
+}

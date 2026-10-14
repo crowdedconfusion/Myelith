@@ -109,6 +109,35 @@ impl Ruestung {
 /// deshalb der Unterschied.
 pub type Nachfrage = std::sync::Arc<dyn Fn(&str, &serde_json::Value) -> bool + Send + Sync>;
 
+/// **Ob gerade kein Mensch freigibt** (der `auto mode` der Konsole),
+/// prozessweit und waehrend eines Laufs umschaltbar.
+///
+/// # ⛔️ Warum das hier steht (Fund 535, 2026-10-14)
+///
+/// Die Konsole uebergibt **auch im auto mode** eine [`Nachfrage`], damit
+/// Umschalt-Tab mitten im Lauf wirkt; im auto mode bejaht sie jede Handlung
+/// von selbst. Der Informationsfluss verlangt bei fremdem Inhalt eine
+/// Freigabe und hielt dieses Ja fuer die eines Menschen: In der Konsole lief
+/// im auto mode die Shell nach einem Anhang, am echten 35B gesehen. Das
+/// Fenster und `myl agent` uebergeben im auto mode keine Nachfrage und waren
+/// nicht betroffen.
+///
+/// ⚑ **Eine Stelle**: Die Konsole liest und setzt ihren Modus hier
+/// (`anzeige::auto_an`, `anzeige::auto_setzen`), und der Fluss fragt
+/// dasselbe (`secure_flow::Bewacht`). Zwei Schalter fuer denselben Zustand
+/// liefen auseinander.
+static OHNE_MENSCH: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Gilt gerade, dass kein Mensch freigibt? Siehe [`OHNE_MENSCH`].
+pub fn ohne_mensch() -> bool {
+    OHNE_MENSCH.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// Setzt, ob ein Mensch freigibt. Siehe [`OHNE_MENSCH`].
+pub fn ohne_mensch_setzen(an: bool) {
+    OHNE_MENSCH.store(an, std::sync::atomic::Ordering::SeqCst);
+}
+
 /// **Jedes eingehaengte Werkzeug protokolliert**, siehe `crate::protokoll`.
 ///
 /// ⚑ **Aussen um die Nachfrage**, damit das Protokoll auch sieht, was der
@@ -131,7 +160,14 @@ fn bewacht(
     fluss: &std::sync::Arc<crate::secure_flow::Fluss>,
     fragt_selbst: bool,
 ) -> Box<dyn Werkzeugausfuehrung> {
-    Box::new(crate::secure_flow::Bewacht { inner, vertrag, fluss: std::sync::Arc::clone(fluss), fragt_selbst, wurzel: None })
+    Box::new(crate::secure_flow::Bewacht {
+        inner,
+        vertrag,
+        fluss: std::sync::Arc::clone(fluss),
+        fragt_selbst,
+        wurzel: None,
+        ohne_mensch,
+    })
 }
 
 /// Wie [`bewacht`], mit dem Arbeitsordner: Die Dateiwerkzeuge pruefen
@@ -149,6 +185,7 @@ fn bewacht_im_ordner(
         fluss: std::sync::Arc::clone(fluss),
         fragt_selbst,
         wurzel: Some(wurzel.to_path_buf()),
+        ohne_mensch,
     })
 }
 

@@ -274,6 +274,42 @@ pub trait Modellweg {
 
     /// Das Ende der Aktion aus [`Self::aktion_beginnen`].
     fn aktion_beenden(&self) {}
+
+    /// **Wie [`Self::chat`], haelt aber an, sobald `abbruch` steht**, und
+    /// meldet dann [`Tuerfehler::Abgebrochen`].
+    ///
+    /// ⚑ **Fuer den Schlaf** (`crate::schlaf`): Er rechnet, waehrend
+    /// niemand wartet, und muss dem Menschen sofort Platz machen. Der
+    /// Notaus waere der falsche Schalter, denn er gehoert dem Menschen und
+    /// haelt jeden Auftrag an.
+    ///
+    /// Die Vorgabe rechnet ohne Unterbrechung zu Ende; ein Weg, der es
+    /// besser kann, uebernimmt das.
+    fn chat_unterbrechbar(
+        &self,
+        modell: &str,
+        nachrichten: &[Nachricht],
+        max_tokens: Option<u32>,
+        abbruch: &std::sync::atomic::AtomicBool,
+    ) -> Result<Antwort, Tuerfehler> {
+        let _ = abbruch;
+        self.chat(modell, nachrichten, max_tokens)
+    }
+
+    /// **Liest diese Nachrichten in den KV-Speicher, ohne zu antworten**,
+    /// damit die naechste Antwort auf denselben Anfang nur noch rechnet,
+    /// was neu ist (Fund 372). Gibt die Zahl neu gerechneter Token zurueck.
+    ///
+    /// ⚑ **Der Schlaf verdraengt das laufende Gespraech** aus dem
+    /// Speicher, denn das Modell hat nur einen. Ohne Vorwaermen bezahlte
+    /// die erste Frage danach den ganzen Prompt.
+    ///
+    /// `None` heisst: Dieser Weg hat keinen Speicher, den es vorzuwaermen
+    /// gaebe (die Vorgabe), oder der Lauf wurde unterbrochen.
+    fn vorwaermen(&self, nachrichten: &[Nachricht], abbruch: &std::sync::atomic::AtomicBool) -> Option<usize> {
+        let _ = (nachrichten, abbruch);
+        None
+    }
 }
 
 /// Belegter und vorhandener Kontext, in Token.

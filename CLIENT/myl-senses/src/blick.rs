@@ -114,6 +114,98 @@ pub fn kamera(zeug: &Kamerazeug, ziel: &Path) -> Result<(), String> {
     lauf_und_pruefen(&mut b, ziel, &zeug.programm.display().to_string(), "Die Kamera")
 }
 
+/// Wie lange die Frage nach den sichtbaren Fenstern hoechstens dauert.
+///
+/// ⚑ **Kurz**: Die Liste ist eine Systemabfrage ohne Rechnen. Wer laenger
+/// braucht, haengt, und dann gilt der Blick als fremd, statt zu warten.
+pub const FRIST_FENSTER_S: u64 = 5;
+
+/// **Fragt macOS nach den Besitzern aller Fenster auf dem Bildschirm.**
+///
+/// ⚑ **Ebene 0 sind die gewoehnlichen Programmfenster**; Menueleiste,
+/// Dock und Mitteilungen liegen darueber und zaehlen nicht. Der Name des
+/// Besitzers braucht keine Freigabe zur Bildschirmaufnahme, anders als
+/// der Fenstertitel, der hier gar nicht gelesen wird.
+const FENSTER_MACOS: &str = r#"ObjC.import("CoreGraphics"); ObjC.import("Foundation");
+var a = ObjC.castRefToObject($.CGWindowListCopyWindowInfo($.kCGWindowListOptionOnScreenOnly | $.kCGWindowListExcludeDesktopElements, 0));
+var n = [];
+for (var i = 0; i < a.count; i++) {
+  var w = a.objectAtIndex(i);
+  if (ObjC.unwrap(w.objectForKey("kCGWindowLayer")) === 0) n.push(ObjC.unwrap(w.objectForKey("kCGWindowOwnerName")));
+}
+n.join("\n");"#;
+
+/// **Welche Programme gerade ein Fenster auf dem Bildschirm haben.**
+///
+/// # ⚑ Wozu
+///
+/// Ein Bildschirmfoto zeigt, was dort steht, und das kann die eigene
+/// Arbeit sein oder eine fremde Webseite. **Welches von beiden, sagt das
+/// Bild nicht, wohl aber die Liste der Programme, die es zeigt.** Was
+/// daraus folgt, entscheidet der Client; hier wird nur gefragt.
+///
+/// ⚠️ **Das Programm im Vordergrund reicht nicht.** Ein Browser halb
+/// hinter dem Terminal steht trotzdem im Bild.
+///
+/// # ⚑ `None` heisst: unbekannt
+///
+/// - **macOS**: `osascript` mit JavaScript, siehe [`FENSTER_MACOS`].
+/// - **Linux unter X11**: `wmctrl -lx`, falls eingerichtet. ⚠️ Es nennt
+///   auch Fenster auf anderen Arbeitsflaechen; das macht die Liste
+///   laenger, nie kuerzer, und damit das Urteil hoechstens strenger.
+/// - **Sonst** (Windows, Wayland, kein `wmctrl`): `None`.
+///
+/// ⛔️ **Eine leere Liste ist ebenfalls `None`.** Ein Bildschirm ohne ein
+/// einziges Fenster ist moeglich, eine leere Antwort aber viel haeufiger
+/// ein Fehler, und ein Fehler darf nicht als „nichts Fremdes zu sehen"
+/// durchgehen.
+pub fn sichtbare_programme() -> Option<Vec<String>> {
+    let (mut befehl, lesen): (std::process::Command, fn(&str) -> Vec<String>) = if cfg!(target_os = "macos") {
+        let mut b = std::process::Command::new("osascript");
+        b.arg("-l").arg("JavaScript").arg("-e").arg(FENSTER_MACOS);
+        (b, programme_aus_zeilen)
+    } else if cfg!(target_os = "linux") {
+        let mut b = std::process::Command::new("wmctrl");
+        b.arg("-lx");
+        (b, programme_aus_wmctrl)
+    } else {
+        return None;
+    };
+    let a = crate::prozess::laufen(&mut befehl, FRIST_FENSTER_S, crate::AUSGABEGRENZE).ok()?;
+    if !a.gut() || a.mehr {
+        return None;
+    }
+    let n = lesen(&a.aus);
+    (!n.is_empty()).then_some(n)
+}
+
+/// Eine Zeile je Programm, ohne Doppel, in der Reihenfolge des Auftretens.
+pub fn programme_aus_zeilen(text: &str) -> Vec<String> {
+    let mut n: Vec<String> = Vec::new();
+    for z in text.lines().map(str::trim).filter(|z| !z.is_empty()) {
+        if !n.iter().any(|x| x == z) {
+            n.push(z.to_string());
+        }
+    }
+    n
+}
+
+/// **Die Fensterklassen aus `wmctrl -lx`.**
+///
+/// Eine Zeile ist `0x03a00003  0 Navigator.firefox  rechner  Titel`; die
+/// dritte Spalte ist `Instanz.Klasse`, und die Klasse ist der Name, den
+/// das Programm sich selbst gibt. ⚠️ Der Titel wird nicht gelesen: Er ist
+/// das, was das Fenster zeigt, und damit genau das Fremde.
+pub fn programme_aus_wmctrl(text: &str) -> Vec<String> {
+    let klassen: String = text
+        .lines()
+        .filter_map(|z| z.split_whitespace().nth(2))
+        .map(|k| k.rsplit('.').next().unwrap_or(k))
+        .collect::<Vec<_>>()
+        .join("\n");
+    programme_aus_zeilen(&klassen)
+}
+
 /// ⛔️ **Geprueft wird der Rueckgabewert UND die Datei.**
 ///
 /// Die Zusage dieser Funktion lautet „danach liegt ein Bild da", und
@@ -203,6 +295,34 @@ mod proben {
             "ohne Vorlauf ist das erste Bild dunkel: {a:?}"
         );
         assert!(a.iter().any(|x| x == "-update"), "ohne -update bleibt nicht das letzte stehen");
+    }
+
+    /// ⚑ **Jedes Programm einmal**, auch wenn es drei Fenster hat.
+    #[test]
+    fn die_programmliste_hat_keine_doppel() {
+        assert_eq!(
+            programme_aus_zeilen("Terminal\nFirefox\n\nTerminal\n  Vorschau \n"),
+            ["Terminal", "Firefox", "Vorschau"]
+        );
+    }
+
+    /// ⚑ **Aus `wmctrl` zaehlt die Klasse**, und der Titel bleibt ungelesen.
+    #[test]
+    fn aus_wmctrl_kommt_die_klasse() {
+        let t = "0x03a00003  0 gnome-terminal-server.Gnome-terminal  rechner  ~/arbeit\n\
+                 0x04200007  0 Navigator.firefox  rechner  Terminal Code Myelith\n";
+        assert_eq!(programme_aus_wmctrl(t), ["Gnome-terminal", "firefox"]);
+    }
+
+    /// ⚑ **Auf diesem Rechner antwortet macOS**, und dann mit mindestens
+    /// einem Namen; ohne Fenster (etwa auf einem Bauserver) ist `None`
+    /// richtig. Geprueft wird die Form, nicht der Inhalt.
+    #[test]
+    fn die_abfrage_liefert_namen_oder_nichts() {
+        if let Some(n) = sichtbare_programme() {
+            assert!(!n.is_empty());
+            assert!(n.iter().all(|x| !x.trim().is_empty() && !x.contains('\n')), "{n:?}");
+        }
     }
 
     /// ⚠️ **Eine Datei ohne Inhalt ist kein Bild.** Der Rueckgabewert

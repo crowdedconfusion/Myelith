@@ -1,6 +1,6 @@
 [package]
 name = "myl-oberflaeche"
-version = "0.63.0"
+version = "0.75.0"
 edition = "2021"
 rust-version = "1.88"
 description = "Die grafische Oberflaeche des Clients auf Tauri: ein Gespraechsfenster, das dieselben Funktionen ruft wie die Kommandozeile."
@@ -33,10 +33,23 @@ myl-client = { path = "../myl-client" }
 # ⚑ Der oertliche Agent, direkt und nicht ueber den Client (seit 2026-09-30).
 myl-local-agent = { path = "../../AGENT_LAYER/local-agent" }
 myl-senses = { path = "../myl-senses" }
-tauri = { version = "2", features = [] }
+# ⚑ Fuer die Nachrichten der Module im Fenster (2026-10-12); keine neue
+#   Fremdkiste, `myl-client` haengt schon daran.
+myl-module = { path = "../myl-module" }
+# ⚑ **Die Vorgaben von Tauri ausgeschrieben, X11 als eigener Schalter**
+#   (seit 0.71.0). Unter Linux verlangt `x11` beim Bauen GDK fuer X11; die
+#   Oberflaechen-Schicht von GolemOS hat nur Wayland und baut deshalb mit
+#   `--no-default-features`. Alle anderen Bauten sind unveraendert, denn
+#   `x11` ist hier die Vorgabe, wie bei Tauri selbst.
+tauri = { version = "2", default-features = false, features = ["wry", "compression", "common-controls-v6", "dynamic-acl", "dbus"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tauri-plugin-dialog = "2"
+
+[features]
+default = ["x11"]
+# Das Fenster auch unter X11 (Linux); ohne nur Wayland.
+x11 = ["tauri/x11"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

@@ -12,6 +12,8 @@ BR2_TOOLCHAIN_BUILDROOT_CXX=y
 BR2_LINUX_KERNEL=y
 BR2_LINUX_KERNEL_LATEST_VERSION=y
 BR2_LINUX_KERNEL_USE_ARCH_DEFAULT_CONFIG=y
+# ⚑ Die Anzeige fuer die Oberflaechen-Schicht, fest eingebaut (siehe dort).
+BR2_LINUX_KERNEL_CONFIG_FRAGMENT_FILES="/eingabe/konfigurationen/kern-anzeige.fragment"
 
 # ⛔️ **Kein `BR2_LINUX_KERNEL_INSTALL_TARGET`.** 📌 Es legte den Kern ein
 #    zweites Mal ins Dateisystem, 40 MB von 152. Beim Start ueber
@@ -73,6 +75,9 @@ BR2_PACKAGE_HOST_MTOOLS=y
 BR2_ROOTFS_POST_BUILD_SCRIPT="/eingabe/abbild/nach-dem-bauen.sh"
 BR2_ROOTFS_POST_IMAGE_SCRIPT="/eingabe/abbild/nach-dem-abbild.sh"
 
+# ⚑ Das Dienstkonto des Knotens, mit fester Kennung (siehe die Tabelle).
+BR2_ROOTFS_USERS_TABLES="/eingabe/konfigurationen/benutzer.tabelle"
+
 # ── Die Datenpartition, die beim ersten Start waechst ───────────────
 #
 # ⛔️ **Ohne diese Pakete bleibt `golem-daten` bei 32 MB.** Nach `dd`
@@ -92,6 +97,21 @@ BR2_PACKAGE_UTIL_LINUX=y
 BR2_PACKAGE_UTIL_LINUX_BINARIES=y
 BR2_PACKAGE_UTIL_LINUX_LIBFDISK=y
 BR2_PACKAGE_UTIL_LINUX_PARTX=y
+# ⚑ Das vollstaendige `setpriv` fuer `golem-knoten`. 📌 Das von BusyBox kann
+#   nur Faehigkeiten setzen und kein Konto wechseln; `--reuid` steht dort
+#   nur im Kommentar. Gemessen am 2026-10-13: Der Knoten startete nicht, und
+#   die Startbegrenzung hielt ihn nach fuenf Versuchen an.
+BR2_PACKAGE_UTIL_LINUX_SETPRIV=y
+
+# ⚑ **Was die Oberflaechen-Schicht mit Vorrechten braucht, liegt in der
+#   Basis** (seit GolemOS 0.3.0): udev sagt libinput und wlroots, welche
+#   Geraete Tastatur, Maus und Bildschirm sind, und seatd reicht sie dem
+#   Konto der Schicht, ohne dass dieses Vorrechte braucht. So laeuft kein
+#   Code einer geholten Schicht als root. Nebenbei laedt udev jetzt
+#   Kernmodule fuer erkannte Hardware von selbst.
+BR2_ROOTFS_DEVICE_CREATION_DYNAMIC_EUDEV=y
+BR2_PACKAGE_SEATD=y
+BR2_PACKAGE_SEATD_DAEMON=y
 BR2_PACKAGE_DOSFSTOOLS=y
 BR2_PACKAGE_DOSFSTOOLS_MKFS_FAT=y
 BR2_PACKAGE_DOSFSTOOLS_FATLABEL=y

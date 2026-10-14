@@ -106,5 +106,22 @@ fn main() {
     // Pruefstand liest seither einen Zaehler; **diese Messung liest ihn
     // jetzt auch.** Null heisst: Die CPU hat gerechnet, und die Zahl
     // gehoert nicht unter die Ueberschrift `metal`.
-    println!("metal_buendel {}", integer_llm_kernels::metal::gerechnet());
+    println!("metal_buendel {}", integer_llm_kernels::ressourcen::metal::gerechnet());
+    println!("karten_buendel {}", integer_llm_kernels::ressourcen::karten::gerechnet());
+    // ⚑ **Und je Karte** (2026-10-14, fuer eine Maschine mit mehreren
+    // Karten): Der Gesamtzaehler saehe auch dann gut aus, wenn nur eine
+    // von sechs Karten je etwas bekommen haette.
+    for k in integer_llm_kernels::ressourcen::karten::karten() {
+        // ⛔️ Eine nachgebildete Karte rechnet auf der CPU und steht nie
+        // unter dem Namen eines Rechenwegs.
+        println!(
+            "karte {}:{} {} teile {} zeilen {} ausgefallen {}",
+            if k.nachgebildet { "nachbau" } else { k.hersteller.rechenweg() },
+            k.nummer,
+            k.pci,
+            k.teile,
+            k.zeilen,
+            k.ausgefallen
+        );
+    }
 }

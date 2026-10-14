@@ -83,7 +83,7 @@ HOT_PATH = [
     REPO / "kernels" / "src" / "mlp.rs",
     REPO / "kernels" / "src" / "moe.rs",
     REPO / "kernels" / "src" / "softmax.rs",
-    REPO / "kernels" / "src" / "backend.rs",
+    REPO / "kernels" / "src" / "ressourcen" / "backend.rs",
     REPO / "kernels" / "src" / "integer_math.rs",
     REPO / "kernels" / "src" / "prng.rs",
     REPO / "kernels" / "src" / "sampling.rs",
@@ -138,15 +138,27 @@ HOT_PATH = [
     REPO / "kernels" / "src" / "dot.rs",
     REPO / "kernels" / "src" / "rechenpfad.rs",
     REPO / "kernels" / "src" / "konformitaet.rs",
-    REPO / "kernels" / "src" / "backends" / "mod.rs",
-    REPO / "kernels" / "src" / "backends" / "reference.rs",
-    REPO / "kernels" / "src" / "backends" / "simd.rs",
-    REPO / "kernels" / "src" / "backends" / "cuda.rs",
-    REPO / "kernels" / "src" / "backends" / "rocm.rs",
+    REPO / "kernels" / "src" / "ressourcen" / "backends" / "mod.rs",
+    REPO / "kernels" / "src" / "ressourcen" / "backends" / "reference.rs",
+    REPO / "kernels" / "src" / "ressourcen" / "backends" / "simd.rs",
+    REPO / "kernels" / "src" / "ressourcen" / "backends" / "cuda.rs",
+    REPO / "kernels" / "src" / "ressourcen" / "backends" / "rocm.rs",
     # 2026-09-14: der Metal-Weg (Phase 12.89). Die Shaderquelle daneben
     # prueft `SHADER`, mit eigenen Mustern.
-    REPO / "kernels" / "src" / "metal" / "mod.rs",
-    REPO / "kernels" / "src" / "metal" / "geraet.rs",
+    REPO / "kernels" / "src" / "ressourcen" / "metal" / "mod.rs",
+    REPO / "kernels" / "src" / "ressourcen" / "metal" / "geraet.rs",
+    # 2026-10-14: der Weg zu Karten von NVIDIA und AMD. Die Kernquelle
+    # `kerne.cu` und der Nachbau pruefen `SHADER`.
+    # 2026-10-14: das Dach ueber allen Rechenwerken, mit der einen Weiche.
+    REPO / "kernels" / "src" / "ressourcen" / "mod.rs",
+    REPO / "kernels" / "src" / "ressourcen" / "karten" / "mod.rs",
+    REPO / "kernels" / "src" / "ressourcen" / "karten" / "lader.rs",
+    REPO / "kernels" / "src" / "ressourcen" / "karten" / "treiber.rs",
+    REPO / "kernels" / "src" / "ressourcen" / "karten" / "verteiler.rs",
+    REPO / "kernels" / "src" / "ressourcen" / "karten" / "pruefung.rs",
+    REPO / "kernels" / "src" / "ressourcen" / "karten" / "nachbau.rs",
+    REPO / "kernels" / "src" / "ressourcen" / "karten" / "attrappe.rs",
+    REPO / "kernels" / "src" / "ressourcen" / "karten" / "nachbaukarte.rs",
     REPO / "runtime" / "src" / "model.rs",
     REPO / "runtime" / "src" / "kv_cache.rs",
     REPO / "runtime" / "src" / "generate.rs",
@@ -553,7 +565,13 @@ FLOAT_PATTERNS = [
 # als Endung. Mit den Rust-Mustern allein saehe ein Shader voller
 # Gleitkomma sauber aus.
 SHADER = [
-    REPO / "kernels" / "src" / "metal" / "w8a16.metal",
+    REPO / "kernels" / "src" / "ressourcen" / "metal" / "w8a16.metal",
+    # ⚑ Die Kerne fuer CUDA und ROCm (2026-10-14), C++ wie die Shader:
+    # `float` und `double` heissen dort genauso. Der Nachbau gehoert dazu,
+    # denn er laeuft dieselbe Quelle durch.
+    REPO / "kernels" / "src" / "ressourcen" / "karten" / "kerne.cu",
+    REPO / "kernels" / "src" / "ressourcen" / "karten" / "nachbau.hpp",
+    REPO / "kernels" / "src" / "ressourcen" / "karten" / "nachbau_haupt.cpp",
 ]
 
 SHADER_PATTERNS = [
@@ -823,9 +841,11 @@ def pruefe_vollstaendigkeit() -> int:
         # ⚑ Auch Shaderquellen: Eine neue `.metal`-Datei ohne Eintrag in
         # `SHADER` waere derselbe blinde Fleck wie eine ungelistete `.rs`.
         gelistet_shader = {p.resolve() for p in SHADER}
-        for datei in sorted(verzeichnis.rglob("*.metal")):
-            if datei.resolve() not in gelistet_shader:
-                fehlend.append(datei)
+        # Seit dem 2026-10-14 ebenso CUDA- und C++-Quellen.
+        for endung in ("*.metal", "*.cu", "*.cpp", "*.hpp"):
+            for datei in sorted(verzeichnis.rglob(endung)):
+                if datei.resolve() not in gelistet_shader:
+                    fehlend.append(datei)
         for datei in sorted(verzeichnis.rglob("*.rs")):
             if datei.resolve() in gelistet:
                 continue

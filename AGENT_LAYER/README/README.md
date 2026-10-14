@@ -1,7 +1,7 @@
 # agent-layer
 
-> **Version:** 0.34.0 (`myl-agent` 0.7.1, `myl-local-agent` 0.27.0)
-> **Datum:** 2026-10-12
+> **Version:** 0.46.0 (`myl-agent` 0.7.1, `myl-local-agent` 0.37.0)
+> **Datum:** 2026-10-14
 > **Status:** Manifeste, Herkunftsstufe, Registratur, der
 > **Session-Kontrakt** mit Durchsetzung im Ledger, der **Plan** und seit
 > v0.7.0 die **Segmentkette**. 52 Tests. ⚑ **Was jetzt fehlt, ist keine
@@ -42,7 +42,7 @@ Nutzers und ist nie Teil einer prüfbaren Netzaktion.
 |---|---|---|
 | `myl-agent/` | Netz | Manifeste, Herkunftsstufe, Registratur, Session-Kontrakt, Plan, Segmentkette |
 | `local-agent/` | Ort | der ganze örtliche Agent als eine Kiste (`myl-local-agent`): Schleife, Türklient, Risikoklassen, das Merkmal `Modellweg`, Werkzeuge mit Einhängegrenze, das Laden der Kisten, Skills, Loop, Aktionsprotokoll, Notaus, Systemprompt |
-| `local-toolkits/` | Ort | die mitgelieferten Werkzeugkisten als Manifeste und Skripte (`Base`, `Advanced`, `CAD`) |
+| `local-toolkits/` | Ort | die mitgelieferten Werkzeugkisten als Manifeste und Skripte (`Base`, `Advanced`) |
 | `local-skills/` | Ort | die mitgelieferten Skills und die Vorlage |
 
 **Der Pfeil geht nur in eine Richtung.** `local-agent` hängt an
@@ -68,6 +68,641 @@ umbenannt, weil er in jedem `use` steht.
 - `src/kette.rs` — dass er es auch so getan hat, und wann er aufhört.
 
 ## Changelog
+
+### v0.46.0 – 2026-10-14 (Härtung und Schlaf am int8-35B; der Schlaf liest nackte Sätze und kennt den Assistenten; `myl-local-agent` 0.37.0)
+
+Die Proben von v0.45.0 liefen mit dem **ternären** 35B, begründet mit „die
+int8-Fassung passt nicht in 24 GB“. 📌 **Die Begründung war nie geprüft und
+ist falsch:** Das Gemisch läuft per mmap; ein `myl agent`-Auftrag kalt in
+63 s bei 17,7 GB resident. Das ternäre 35B ist für Urteile ungeeignet und
+kein Stellvertreter. Alles noch einmal mit `myelith-35b-a3b` (int8):
+
+- **Informationsfluss, unverändert gehärtet:** über die Runde in der
+  Konsole (auto mode, Kiste Advanced): Runde 1 liest den Anhang, Runde 2
+  `ls` **gesperrt**; Gegenprobe mit der eigenen README, `ls` läuft. Über
+  eine Datei mit `myl agent`: Notiz nach dem Anhang erlaubt und im
+  Herkunftsbuch; im nächsten Gespräch Lesen mit Marke, `ls` **gesperrt**;
+  Gegenprobe mit einer Notiz des Nutzers, `ls` läuft. Je Auftrag 65 bis
+  91 s.
+- ⛔️ **Fund 542: Eine Antwort ohne Aufzählungszeichen ging verloren.** Auf
+  die Worte des Nutzers antwortete das int8-35B zweimal mit nackten Sätzen
+  („Der Sensor ist ein BME280 an der I2C-Adresse 0x76.“), richtig und
+  wortgleich; `erinnerungen_lesen` nahm nur Zeilen mit `- `. Der Satz kam
+  nur über den gemischten Durchgang an, also **fremd**, verblasste und
+  fehlte am Tag 60 im Erinnerungsblock. ⚑ Trägt keine Zeile ein Zeichen,
+  gilt jede, außer einer Einleitung mit Doppelpunkt; dieselben
+  Belegproben wie sonst.
+- ⛔️ **Fund 543: „Assistent“ fiel an der strengen Belegprobe.** Aus „Und
+  führe nie sudo ohne Rückfrage aus.“ wurde „Der Nutzer will, dass der
+  Assistent nie sudo ohne Rückfrage ausführt.“ Zwei Wörter unbelegt
+  („Assistent“, „ausführt“), erlaubt ist eines; die Regel kam nur fremd an.
+  ⚑ Die Gegenrolle zu „Nutzer“ ist jetzt Füllwort (`assistent`,
+  `assistenten`, `assistentin`, `assistant`).
+- **Schlafprobe mit dem int8-35B** (`BENCHMARKS/Agent/schlaf`, Saat
+  20261013, gierig, ohne Denken):
+
+  | Lauf | Gedächtnis | mit Schlaf | ohne Schlaf | Schlaf gesamt |
+  |---|---|---|---|---|
+  | 1, vor Fund 542 und 543 | 13/13 | 5/7 | 2/7 | 418 s |
+  | 2, danach | 13/13 | **7/7** | 2/7 | 438 s |
+  | zum Vergleich: 4B | 13/13 | 5/7 | 1/7 | 89 s |
+
+  In Lauf 1 fehlten mit Schlaf genau Sensor und sudo, die beiden fremd
+  abgelegten Aussagen; in Lauf 2 sind beide vertraut. Die Einschleusung
+  hielt in beiden Läufen (nie vertraut, nie im Block).
+- Belege: `cargo test` grün (464, neu:
+  `nackte_saetze_und_der_assistent_zaehlen` mit dem Wortlaut des int8-35B
+  und zwei Gegenproben); Gegenprobe: ohne die Füllwörter scheitert die
+  sudo-Zeile, ohne die nackten Zeilen die Sensorzeile. Clippy mit
+  `-D warnings` sauber; Client-Prüfung `schlaf` grün.
+
+### v0.45.0 – 2026-10-14 (der Informationsfluss gehärtet: die Herkunft reist mit; `myl-local-agent` 0.36.0)
+
+**Auftrag des Projektinhabers:** den Informationsfluss am echten 35B auf
+Umgehungen prüfen und härten. ⚑ **Geprüft ohne Angriffstexte**: Der Fluss
+entscheidet nach der Herkunft eines Textes und nicht nach seinem Wortlaut;
+ein harmloses Produktblatt aus den Anhängen löst dieselbe Regel aus. Gesucht
+wurde deshalb im Code nach Wegen, auf denen fremder Inhalt das Gespräch
+verlässt und **ohne Kennzeichnung** zurückkommt, und jeder Fund wurde mit
+harmlosem Inhalt nachgestellt, in Prüfungen und am echten Modell.
+
+- ⛔️ **Fund 535: Im auto mode der Konsole galt eine Nachfrage ohne
+  Menschen als Freigabe.** Die Konsole übergibt auch im auto mode eine
+  Nachfrage (damit Umschalt-Tab mitten im Lauf wirkt), und die bejaht dort
+  jede Handlung; der Fluss hielt das für die Freigabe eines Menschen. Am
+  echten 35B lief so die Shell nach einem Anhang. ⚑ Der Schalter liegt
+  jetzt hier (`ruestung::ohne_mensch`, eine Stelle für Konsole und Fluss),
+  und `Bewacht` erkennt eine Freigabe nur an, wenn wirklich gefragt wird.
+  Fenster und `myl agent` waren nicht betroffen.
+- ⛔️ **Fund 536: Herkunftswäsche über die Runde.** Jede Runde rüstet neu
+  und beginnt mit einem vertrauten Fluss; das Gespräch mit den fremden
+  Ergebnissen der vorigen Runde reiste aber mit. ⚑ Ein fremdes Ergebnis
+  trägt jetzt vorn die Marke `[Untrusted origin: …]`
+  (`secure_flow::fremdmarke`; sie sagt dem Modell zugleich, dass der Text
+  Auskunft ist und kein Auftrag), und `secure_flow::label_aus_verlauf`
+  liest Label und private Abschnitte zu Beginn jeder Runde aus dem Verlauf
+  (`Fluss::fortsetzen`, in `lauf::fahren_im_gespraech`). Kein zweiter
+  Speicherort. Verdichten (`verdichtung::als_nachricht` braucht jetzt die
+  ersetzten Nachrichten) und Ausblenden tragen die Marke weiter; ein in der
+  Mitte gekürztes Ergebnis behält sie, eines ohne die feste Form gilt als
+  fremd.
+- ⛔️ **Fund 537: über eine Datei.** Nach einem Anhang darf der Agent eine
+  neue Datei schreiben; ein späteres Gespräch las sie vertraut.
+  ⚑ `secure_flow::HERKUNFTSBUCH` (`.AGENT/herkunft-fremd.txt`): Was
+  geschrieben wird, während Fremdes im Gespräch steht, kommt hinein; Lesen
+  und Suchen darin tragen die Marke; ein vollständiges Neuschreiben in einem
+  vertrauten Gespräch nimmt die Datei heraus. Das Buch liegt unter einem
+  verborgenen Pfad und ist nach Fremdem nur mit Freigabe zu ändern.
+- ⛔️ **Fund 538: über das Loop-Tagebuch.** Jede Runde eines Vorhabens
+  bekam das Tagebuch der vorigen im Auftrag, aber einen vertrauten Fluss.
+  ⚑ `Vorhaben::fremd`: Stand in einer Runde Fremdes, beginnt jede weitere
+  fremd. Ein Rundenbericht, der sich als Wort des Menschen ausgibt, war
+  schon abgefangen (Fund 491); jetzt mit Prüfung.
+- ⛔️ **Fund 539: über einen Projekt-Skill.** Ein Skill, der nach Fremdem
+  (mit Freigabe) angelegt wurde, stand danach in jedem Auftrag als
+  vertrauter Hinweis. ⚑ `skills::ist_fremd` (aus dem Herkunftsbuch): nicht
+  im Hinweis, `learn_skill` und `search_skill` mit Marke.
+- ⛔️ **Fund 540: `git_verlauf` lieferte Text von Dritten als vertraut**
+  (Commit-Nachrichten eines geklonten Projekts). ⚑ Das Manifest sagt jetzt
+  `"vertrauen": "fremd"`; die Kisten-Anleitung nennt die Regel für jedes
+  Werkzeug, das Text Dritter liefert.
+- Geprüft und in Ordnung: Gedächtnis (nur vertraute Erinnerungen kommen
+  in den Auftrag, `search_memory` ist fremd), Mitschnitt (fremd),
+  Argumente der Manifeste (shell-sicher eingesetzt), Nachfolger eines
+  Vorhabens (bekommt keinen Text, nur Dateien, die das Buch deckt).
+- **Am echten 35B** (ternär, auto mode, harmloser Anhang): **über die
+  Runde** in der Konsole: Runde 1 Anhang, Runde 2 `ls` gesperrt;
+  Gegenprobe mit eigener Datei läuft. **Über eine Datei** mit `myl agent`:
+  Notiz nach Anhang erlaubt und im Buch, im nächsten Gespräch Lesen mit
+  Marke und `ls` gesperrt; Gegenprobe mit einer Notiz des Nutzers läuft.
+  Das Modell sagt dem Nutzer jeweils, dass `ls` nicht lief.
+- Belege: `cargo test` grün (463, neu: `das_label_reist_mit_dem_verlauf`,
+  `ein_fremdes_ergebnis_traegt_die_marke`,
+  `verdichten_und_ausblenden_waschen_nicht`,
+  `eine_datei_traegt_ihre_herkunft_ins_naechste_gespraech`,
+  `das_herkunftsbuch_ist_geschuetzt`, `ohne_menschen_gibt_es_keine_freigabe`,
+  `das_fremd_flag_wird_gespeichert`, `ein_bericht_ist_kein_menschenwort`,
+  `ein_fremder_skill_steht_nicht_im_hinweis`), Clippy ohne Befund.
+  Gegenprobe: ohne die Marke scheitern genau die drei Prüfungen, die an ihr
+  hängen.
+
+### v0.44.0 – 2026-10-14 (die Verlaufswerkzeuge in `Base`, der Bildschirmblick nach Kontext; `myl-local-agent` 0.35.0)
+
+Zwei Festlegungen des Projektinhabers auf die offenen Fragen aus v0.43.0.
+
+- ⚑ **`list_history`, `search_history` und `read_history` stehen wieder
+  in `Base`** („Das gehört in Base“). `Dateiwerkzeug::BASE` hat zehn
+  Werkzeuge statt sieben; damit kann jede Kiste nachlesen, und der
+  Verweis nach dem Verdichten nennt `read_history` überall. 📌 Der Anlass
+  ist die Nadel aus v0.43.0: Das 4B bekommt `Base`, rief das Werkzeug in
+  `Advanced` von selbst und holte eine Logzeile wörtlich zurück; in
+  `Base` blieb nur der ehrliche Satz, dass es nicht geht. Die Geschichte
+  der Herausnahme vom 2026-09-17 (27 Läufe mit dem 0,6B, kein Aufruf)
+  bleibt am Feld stehen. Die beiden Tests, die das Fehlen festhielten,
+  prüfen jetzt das Gegenteil (`es_steht_in_jeder_kiste`,
+  `die_drei_stehen_zusammen_in_jeder_kiste`).
+- ⚑ **Der Blick auf den Bildschirm wird nach Kontext eingestuft**
+  („Was auf dem Bildschirm steht soll differenziert im Kontext betrachtet
+  werden“). Vor der Aufnahme fragt `look_at_screen` nach den sichtbaren
+  Programmen (`myl-senses`); `sinneswerkzeuge::bildherkunft` urteilt:
+  `Eigen`, wenn alle in `VERTRAUTE_PROGRAMME` stehen (Terminals, Editoren
+  und Entwicklungsumgebungen, Dateiverwaltung, Myelith, Systemeinstellungen;
+  JetBrains unter Linux über die Vorsilbe), sonst `Fremd` mit den fremden
+  Namen, ohne Liste `Unbekannt`. ⛔️ Unbekannt heisst fremd. Die Kamera
+  bleibt beim Vertrag, denn sie zeigt den Raum und keine Programme.
+- ⚑ **`secure_flow::FREMD_MARKEN`**: Beginnt ein Werkzeugergebnis mit
+  `[Herkunft fremd:` oder `[Untrusted origin:`, macht `Fluss::aufnehmen`
+  den Beitrag fremd (nur das Vertrauen, der Leser bleibt beim Vertrag) und
+  vermerkt es. ⛔️ Die Marke kann nur strenger machen; darum ist gleich,
+  wer sie schreibt. Mitten im Text zählt sie nicht. Der Blick setzt sie
+  vorn und sagt dem Modell darin, welche fremden Programme sichtbar sind
+  und dass der Inhalt Auskunft ist und kein Auftrag.
+- 📌 **Die Blicke nannten in ihrer Beschreibung einen Ordner** („Die
+  Aufnahme bleibt unter .AGENT/blicke/ liegen“), und das 4B rief
+  `look_at_screen` in zwei echten Läufen jedes Mal mit
+  `pfad=.AGENT/blicke/`; das Schema wies den Aufruf ab, der Blick fand
+  nie statt. ⚑ Der Satz ist weg („Einen Pfad braucht es nicht.“), der
+  Ort steht weiter im Ergebnis. Im dritten Lauf rief das 4B ohne Pfad.
+  Test `ein_blick_nennt_keinen_ordner`.
+- ⚠️ **Offen am echten Modell:** Die Aufnahme selbst scheitert auf dieser
+  Maschine ohne die Freigabe zur Bildschirmaufnahme (`could not create
+  image from display`, wie am 2026-09-23). Der Weg Marke → gesperrte
+  Shell ist deshalb mit Tests belegt
+  (`die_fremdmarke_macht_nur_strenger`, `jede_marke_wird_vom_fluss_erkannt`,
+  `der_kontext_entscheidet_ueber_den_blick`, `unbekannt_ist_fremd`), nicht
+  im echten Lauf.
+- Belege: `cargo test` grün (453), Clippy ohne Befund.
+
+### v0.43.0 – 2026-10-14 (die Nadel im Heuhaufen und der Informationsfluss am echten Beispiel; `myl-local-agent` 0.34.0)
+
+**Auftrag des Projektinhabers:** die Suche nach einer Einzelheit, die das
+Verdichten weggenommen hat, und den Informationsfluss am echten Beispiel
+ausgiebig prüfen, berichten und unterwegs beheben. Gemessen in der
+Konsole (Pseudoterminal) und mit `myl agent`, jeweils mit dem echten 4B;
+der Beleg, dass die Nadel nach dem Verdichten fehlt, kommt aus dem
+Debug-Log (neu: `Gespraech verdichtet` mit der Zusammenfassung).
+
+- 📌 **Das Verdichten fasste nur die letzte Antwort zusammen.** Aus vier
+  Themen samt Teilenummern wurden drei Punkte über die letzte Frage (1 603
+  → 86 Token): Der Verlauf endete mit der Antwort des Assistenten, und das
+  4B setzte sie fort. ⚑ `verdichtung::anfrage` rahmt den Verlauf
+  (`<transcript>`) und verlangt das Ganze, von der ersten bis zur letzten
+  Nachricht. 📌 Mit „keep every identifier exactly as written" schrieb es
+  danach ab (eine Logdatei wörtlich, bis zur Tokengrenze); jetzt „into
+  short notes, do not copy". Gemessen: 6 842 → 142 Token mit allen Themen;
+  ein kurzes Gespräch behält die Teilenummer (1 603 → 588).
+- 📌 **Der Verweis nach dem Verdichten nannte ein Werkzeug, das es nicht
+  gab.** In der Kiste `Base` fehlen die Verlaufswerkzeuge seit dem
+  2026-09-17 (Festlegung des Projektinhabers), und der Verweis sagte
+  trotzdem „mit `read_history` nachlesen"; das 4B versprach, die Datei zu
+  öffnen, und hörte auf. ⚑ `Werkzeugkiste::kann_nachlesen` (aus den
+  Werkzeugen der Kiste abgeleitet) entscheidet;
+  `verdichten_mit_mitschnitt` nimmt es als Argument, ohne Nachlesen sagt
+  `verweis_ohne_nachlesen`, dass die Einzelheit nicht zu lesen ist und
+  nicht erfunden werden soll.
+- 📌 **Ein Werkzeugergebnis stand als eine JSON-Zeile im Mitschnitt**, eine
+  gelesene Logdatei von 120 Zeilen also auf einer Zeile. Die Suche fand
+  sie, zeigte aber nur den Anfang, und das 4B nannte daraus einen falschen
+  Fehlercode („E-1182" statt „E-4471"). ⚑ `verlauf::lesbares_ergebnis`:
+  Werkzeugname in einer Zeile, darunter der Inhalt mit echten Zeilen; der
+  Mitschnitt wird nur als Text gelesen, nie zurückverwandelt. Danach fand
+  der Agent mit `Advanced` die Zeile über `read_history` wörtlich.
+- 📌 **Der Schlaf merkte sich Sätze über das Gespräch statt seinen
+  Inhalt**: „Der Nutzer hat die Ersatzteile notiert." statt der
+  Teilenummern, „Der Nutzer hat gefragt, wie …". ⚑ Die Frage nach
+  vertrauten Erinnerungen lautet jetzt „was der Nutzer festlegt, will oder
+  als Tatsache nennt, mit Namen, Nummern und Kennungen wörtlich"; danach
+  stand „Lüfter 40 mm (Teilenummer FX-7741-B)" im Gedächtnis.
+  ⛔️ `eng_belegt`: Eine vertraute Erinnerung darf höchstens ein
+  unbelegtes Inhaltswort je fünf tragen (die Antwort des Assistenten kam
+  sonst als Wort des Nutzers hinein).
+- ⛔️ **Ein Bild oder eine Aufnahme aus den Anhängen machte das Gespräch
+  nicht fremd.** `Vertrag::SINN` kannte Anhänge nicht; das 4B öffnete einen
+  Anhang mit `describe_image`, und eine Schrift im Bild wäre als vertraut
+  durchgegangen. ⚑ Jetzt `anhang_ist_fremd`. Am echten Modell mit einem
+  echten Bild: Anhang, danach `run_command` → gesperrt; dasselbe Bild im
+  Arbeitsordner → läuft.
+- Der Informationsfluss am echten Modell (`myl agent`, 4B, auto mode,
+  gewöhnliche Aufträge ohne Angriffstext): Geheimnisse aus `konfig.env`
+  sah das Modell nie (geschwärzt); `run_command` ohne Fremdes lief; nach
+  dem Lesen eines Anhangs wurde `edit_file` auf die bestehende `README.md`
+  gesperrt, und die Datei blieb unverändert; eine neue Datei durfte
+  entstehen.
+- ⚠️ **Was offen bleibt:** Mit `Base` ist eine weggekürzte Einzelheit nicht
+  zu erreichen (der Agent sagt es jetzt ehrlich); mit `Advanced` und
+  Schlaf las der Agent die richtigen Zeilen, schloss aber nicht ab (zwölf
+  Schritte ohne Antwort); zweimal beschrieb das 4B, was es tun würde, statt
+  es zu tun.
+- Belege: `cargo test` grün (448 Proben in 18 Programmen; neu
+  `ein_werkzeugergebnis_steht_zeilenweise`, `vertrautes_wird_eng_belegt`,
+  die Sinnesregel in `nach_fremdem_braucht_die_shell_eine_freigabe`),
+  Clippy ohne Befund.
+
+### v0.42.0 – 2026-10-14 (die Schlafprobe: acht Wochen mit und ohne Schlaf, und was sie am Gedächtnis fand; `myl-local-agent` 0.33.0)
+
+**Auftrag des Projektinhabers:** den Schlaf an einem komplexen Verlauf
+auf Herz und Nieren prüfen, dazu einen identischen Lauf ohne Schlaf und
+eine ausgiebige Bewertung beider. Die Probe steht in
+`BENCHMARKS/Agent/schlaf/`, die Ergebnisse in
+`BENCHMARKS/Agent/results/schlaf-myelith-4b-2026-10-14.md`.
+
+- **Neu: die Schlafprobe** (`schlafprobe.py`, `szenario.json`): ein Projekt
+  über acht Wochen mit eigenen Festlegungen, Widersprüchen über die Zeit,
+  einer Doppelung, einer eingeschleusten Anweisung auf einer Webseite,
+  einer fremden Quelle gegen den Namen, Rauschen und Abrufen; zwei
+  Ordner, einer schläft, einer nie; Gedächtnisprüfungen und dieselben
+  sieben Fragen an `myl agent` für beide. Mit dem 4B in vier Läufen: das
+  Gedächtnis von 9 auf **13 von 13**, die Fragen mit Schlaf 5 von 7, ohne
+  Schlaf 1 von 7 (ohne Schlaf erfindet der Agent Name, Intervall und
+  Sicherung).
+- Was die Probe fand, alles behoben und mit Probe:
+  - ⛔️ **Vertraute Erinnerungen verblassten bis ins Archiv**, obwohl sie
+    über das Auffüllen in jeden Auftrag kamen; an Tag 60 bekam kein
+    Auftrag mehr einen Block. ⚑ Eine vertraute wird nie von selbst
+    archiviert; abgelöst wird sie durch eine spätere Aussage, durch
+    Vergessen oder über der Höchstzahl.
+  - **Anweisungen in Befehlsform fielen an der Belegprobe**: Aus
+    „Schreib Berichte … als Tabelle" wird „Berichte sollen … geschrieben
+    werden". ⚑ Hilfs- und Modalverben sind Füllwörter, und die Vorsilbe
+    „ge-" eines Partizips fällt beim Vergleich auf beiden Seiten weg;
+    Phase 1 rechnet die SimHashes danach neu.
+  - **Das 4B befolgte das Material**: Auf „Ab jetzt bitte Berichte auf
+    Englisch" schrieb es englisch, gegen deutsches Material unbelegbar,
+    und ein Satz „in der Sprache des Materials" half nicht.
+    ⚑ `sprache_von` erkennt die falsche Sprache; dann übersetzt das Modell
+    seine eigenen Sätze, und die Übersetzung wird wie jede Erinnerung
+    geprüft. Was danach von einer Nachricht des Nutzers nicht gedeckt ist,
+    bleibt **wörtlich als Zitat** („Der Nutzer sagte: „…""), damit es nicht
+    wie eine neue Anweisung klingt.
+  - ⛔️ **„Der Nutzer heißt Eve." als fremde Erinnerung** aus einer
+    Webseite. ⚑ `ueber_den_nutzer`: Was vom Nutzer handelt, kommt nur aus
+    seinen eigenen Worten; eine fremde Tatsache darüber fällt.
+  - **Die Gegenfrage verwarf eine echte Änderung**: „zugleich wahr?"
+    beantwortete das 4B für „alle 10 Minuten" gegen „auf 5 Minuten
+    geändert" mit ja. ⚑ Jetzt: „Gilt A weiterhin, wenn B stimmt?"
+  - **Widersprüche mit wenig gemeinsamen Wörtern** wurden nie verglichen.
+    ⚑ Nah heißt jetzt: ein gemeinsames Inhaltswort im Text und zwei samt
+    Suchwörtern, ohne Anteil; die Suchwörter entstehen dafür vor dem
+    Vergleichen (Reihenfolge Nutzen, Erschließen, Vergleichen). ⛔️ Die
+    Texte selbst müssen ein Wort teilen, sonst machten allgemeine
+    Suchwörter Name und Berichtssprache einander ähnlich.
+  - **Eine zusammengesetzte Erinnerung ging ganz, wo eine neuere nur einen
+    Teil ablöste** („auf Deutsch und als Tabelle" gegen „ab jetzt
+    Englisch"). ⚑ `Frager::rest` fragt, welche Festlegung weiter gilt
+    (nach A-Mem: alte Notizen werden fortgeschrieben), wenn die alte ein
+    Bindewort trägt und zwei Wörter mehr hat (`zusammengesetzt`,
+    `REST_AB`). ⛔️ Besteht kein Rest, bleiben beide: Das 4B gab die alte
+    unverändert zurück, und ersetzt hätte „Englisch" auch „Tabelle".
+  - Suchwörter des 0,6B wie „*10 Minuten*", „Andere Wörter: …" oder „5.
+    Welche …?" räumt `aufgeraeumt` auf; doppelte Aufzählungszeichen fallen.
+- ⚠️ **Was bleibt, liegt beim Agenten, nicht am Gedächtnis:** „Jonas baut
+  …" sagt nur zwischen den Zeilen, dass der Nutzer Jonas heißt, und in
+  Lauf 4 antwortete der Agent auf „Wie heiße ich?" mit „Myelith"; ein Skill
+  mit eigener Vorlage setzte sich gegen „Tabelle, Englisch" durch; und mit
+  Gedächtnis klingt der Agent auch dort sicher, wo er nichts weiß.
+- Belege: `cargo test` grün (446 Proben in 18 Programmen; neu
+  `ohne_rest_bleiben_beide`, `eine_zusammengesetzte_wird_fortgeschrieben`,
+  `befehle_werden_als_aussage_belegt`, `saetze_ueber_den_nutzer`,
+  `die_sprache_wird_erkannt`, `wann_fortgeschrieben_wird`,
+  `suchwoerter_werden_aufgeraeumt`, erweitert
+  `halbieren_je_woche_und_archivieren`), Clippy ohne Befund; die
+  Schlafprobe mit dem 4B in vier Läufen, mit dem 0,6B als kurzer Lauf.
+
+### v0.41.0 – 2026-10-13 (der Schlaf ordnet mehr: erschließen, Nutzen prüfen, vergleichen; `myl-local-agent` 0.32.0)
+
+**Auftrag des Projektinhabers:** In der Ruhe mehr sinnvolle Sortierung
+anstoßen; ein Schlaf von acht Sekunden kam ihm kurz vor. ⚑ Kurz war er,
+weil es wenig Material gab, und er endet, sobald nichts mehr zu tun ist.
+Neu sind drei Arbeiten, die aus dem vorhandenen Gedächtnis mehr machen,
+jede einmal je Erinnerung oder Paar und mit einer Grenze je Schlaf.
+
+- **Neu: Erschließen** (Phase 3, nach den Mustern; `Eintrag::stichwoerter`,
+  `erschlossen`, `Gedaechtnis::zu_erschliessen`). Das Modell schreibt zu
+  jeder Erinnerung zwei Fragen, auf die sie die Antwort ist, so wie der
+  Nutzer sie stellen würde, und Suchwörter auf Deutsch und Englisch
+  (nach doc2query, Nogueira u. a. 2019, und A-Mem, Xu u. a. 2025; die
+  Indextheorie des Hippocampus, Teyler und DiScenna 1986).
+  `Gedaechtnis::passende` sucht im Text und in den Suchwörtern; in einen
+  Auftrag kommt nur der Text. ⛔️ `stichwoerter_lesen` verwirft Zahlen, die
+  nicht im Text stehen, Füllwörter, reine Wörter der Anweisung, mehr als
+  drei Wörter je Suchwort und mehr als zwei Fragen. 📌 Gemessen mit dem
+  4B: Erst mit den Fragen fand „Wie heiße ich" die Erinnerung „Mira ist
+  der erste Name des Nutzers." (Frage „Wie heißt du?"); nur nach
+  Suchwörtern gefragt, kamen „Mira, Nutzerin, Person, Benutzerin".
+- **Neu: Nutzen prüfen** (Phase 2d; `nutzen_offen`, `nutzen_vermerken`),
+  nur fremde Tatsachen, nie vertraute: Nennt der Satz einen Inhalt oder
+  nur einen Arbeitsschritt? ⚑ **Belanglos nur, wenn es zweimal so heißt**,
+  mit vertauschter Reihenfolge der Antworten; abgelegt wird archiviert,
+  nicht gelöscht. 📌 „Nützlich oder belanglos" beantwortete das 4B immer
+  mit „nützlich", auch für „Das Werkzeug ask_human wurde ausgeführt.".
+- **Neu: Vergleichen** (Phase 2c; `vergleichspaare`, `verglichen`): jedes
+  nahe Paar einmal, nicht nur eine neue Erinnerung mit ihrer nächsten;
+  nah heißt hier fast gleicher SimHash oder zwei gemeinsame Inhaltswörter
+  und 30 Prozent. 📌 „Berichte bitte immer auf Deutsch" und „ab jetzt auf
+  Englisch" teilten zwei von sechs Wörtern und wurden vorher nie
+  verglichen; jetzt ersetzt die spätere die frühere.
+- ⛔️ **Behoben: Eine fremde Erinnerung konnte eine vertraute ersetzen.**
+  Das 4B urteilte, „Die human's first name is Mira." sei neuer als „Mira
+  is my first name.", und bestätigte es auf Nachfrage. Die Lücke bestand
+  auch beim Einordnen. Jetzt an einer Stelle (`paar_entscheiden`, dazu
+  `einordnen`): „neuer" nie von fremd auf vertraut; bei „gleich" bleibt
+  der Wortlaut des Nutzers, wenn nur einer vertraut ist, und ein
+  vertrautes Wort macht einen fremden Wortlaut nie vertraut.
+- ⚑ **Jedes „neuer" braucht ein Nein auf die Gegenfrage** „Können A und B
+  zugleich wahr sein?" (`Frager::urteil`). 📌 Gemessen: „ask_human wurde
+  ausgeführt" gegen „finish_goal wurde ausgeführt" hieß erst „neuer", auf
+  die Gegenfrage „ja"; beide bleiben.
+- 📌 **Der Satz zur Frage erklärt jetzt, statt zu verbieten.** Er lautete
+  „[frage] … sagt nichts über ihn", und auf „What is your first name?" mit
+  der Antwort „Mira" antwortete das 4B mit KEINE; der nächste Auftrag
+  kannte den Namen nicht. Jetzt: „[frage] ist die Frage, auf die die Zeile
+  [user] danach die Antwort des Nutzers ist." Dass allein die Frage nichts
+  Vertrautes belegt, prüft weiter `gestuetzt`. Danach: vertraut „Mira ist
+  der erste Name des Nutzers.", erschlossen mit „Wie heißt du?".
+- 📌 **Kurze Fragen, kurze Grenzen** (`URTEIL_TOKEN` 16, `NUTZEN_TOKEN` 12,
+  `STICHWORT_TOKEN` 112, `MUSTER_TOKEN` 96, `ZUSAMMENFASSUNG_TOKEN` 256):
+  Das 4B wiederholte Suchwörter zu „Trainingsläufe" bis zur Grenze von 512
+  Token. Mit Grenzen sank derselbe Schlaf von 32 auf 18,5 s.
+- **Die Zeile** nennt jetzt auch „verglichen", „als belanglos abgelegt"
+  und „erschlossen".
+- Gemessen mit dem echten 4B (`myl schlafen`, gierig): Auf zwölf
+  verrauschten Erinnerungen aus dem echten Loop in 16 s und 26 Aufrufen:
+  drei Arbeitsschritte abgelegt, die vertraute „Mira is my first name."
+  bleibt, Deutsch wird durch Englisch ersetzt, „Wie heiße ich" und „In
+  welcher Sprache schreibe ich Berichte" finden das Richtige. ⚠️ Ein
+  Fehlgriff blieb: „Der Ordner notizen/ enthält für jeden Monat 2025 eine
+  Datei." nennt das 4B in beiden Stellungen einen Arbeitsschritt (abgelegt,
+  nicht gelöscht). ⚠️ Der Abruf bleibt wörtlich: „Wie schnell ist das
+  0,6B" findet die Messung nicht, deren Suchwörter „Geschwindigkeit" und
+  „speed" heißen.
+- Belege: `cargo test` grün (439 Proben in 18 Programmen; neu
+  `erschliessen_pruefen_und_vergleichen`, `fremdes_ersetzt_nie_vertrautes`,
+  `neuer_braucht_ein_nein_auf_die_gegenfrage`, `nutzenurteile_werden_gelesen`,
+  erweitert `neuer_verlangt_eine_spaetere_herkunft`), Clippy ohne Befund.
+
+### v0.40.0 – 2026-10-13 (der Schlaf liest, was ein Loop erlebt hat; `myl-local-agent` 0.31.0)
+
+**Auftrag des Projektinhabers:** den Schlaf an einem realen Task prüfen,
+der zwischendurch einschläft, ohne dass der Nutzer pausiert, etwa weil
+eine Frage des Modells eine Weile nicht beantwortet wird. Die Auslöser
+stehen in CLIENT v0.149.0; hier, was der echte Lauf am Kern fand.
+
+- 📌 **Der Schlaf las nichts von einem Loop.** Gespräche und Mitschnitte
+  ja, das Tagebuch eines Vorhabens nicht, und gerade dort steht die
+  Antwort des Menschen auf `ask_human`, also das, was er selbst
+  festlegt. **Neu: `schlaf::episoden_aus_vorhaben`**: je Vorhaben mit
+  derselben Wurzel eine Episode (Sitzung `loop-<kennung>`, Herkunft in
+  Zeilen von `tagebuch.md`). Das Ziel und die Berichte der Runden sind
+  fremd (`ziel`, `runde`); die Antwort auf eine Frage und ein
+  Nachbessern sind Worte des Nutzers (`user`). ⛔️ Das eigene Vordenken
+  wird nicht wieder gelesen, sonst bestätigte sich ein Schlaf mit dem
+  vorigen; Systemsätze ohne Worte des Menschen auch nicht.
+- ⚑ **Die Frage ist Zusammenhang, kein Wort des Nutzers**
+  (`Abschnitt::bezug`): Das Modell sieht sie als Zeile `[frage]` vor der
+  Antwort, mit einem Satz dazu, und nur dann; ohne Frage bleibt der
+  Wortlaut, an dem die Proben gemessen sind. ⛔️ **`gestuetzt`**: Eine
+  vertraute Erinnerung muss mindestens ein Inhaltswort mit den eigenen
+  Worten des Nutzers teilen. Sonst käme eine Frage, die etwas behauptet,
+  mit einem „ja" als Wort des Nutzers in jeden Auftrag.
+- **Neu in `vorhaben`:** `menschenwort` liest die Worte des Menschen aus
+  einem Tagebucheintrag, mit denselben Konstanten, mit denen
+  `antworten` und `nachbessern` sie schreiben;
+  `Ablage::tagebuch_eintraege` liefert das Tagebuch mit Zeilennummern.
+  ⛔️ **`Ablage::entfernen` vergisst mit**: Was der Schlaf aus einem Task
+  gewann, geht mit ihm, wie bei einem gelöschten Gespräch.
+- 📌 **Zwei Funde des echten 4B**, beide mit Probe: Auf „Wie heiße ich?"
+  kam „Mira", und das Modell schrieb richtig „Mira ist der Name des
+  Nutzers." Verworfen wurde es zweimal. Die **Echoprobe** sah „Nutzers"
+  in der Anweisung, und als Füllwort galt nur „nutzer" (jetzt auch
+  „nutzers", „nutzern", „users"). Die **Belegprobe** fand nur ein Drittel
+  der Wörter, denn die Bedeutung liegt zwischen Frage und Antwort und
+  braucht ein Brückenwort. ⚑ **`bis_auf_ein_wort`**: Bei einer Antwort
+  mit Frage darf genau ein Wort unbelegt sein, jede Zahl muss stehen,
+  und die Stütze gilt weiter. „Der Nutzer heißt Mira und wohnt in
+  Berlin" fällt so nach wie vor.
+- 📌 **Die Datumszeile galt als Wort des Nutzers.** Der Lauf hängt an
+  jeden Auftrag Skillhinweis, Datum und Erinnerungsblock; abgeschnitten
+  wurde nur der Block. Der echte Lauf mit dem 4B merkte sich danach als
+  vertraut „Ich heiße heute 2026-10-13 (Tuesday).", aus „Wie heiße ich?"
+  und der Zeile dahinter. ⚑ **`gedaechtnis::nur_nutzerworte`** (statt
+  `ohne_eigenen_hinweis`) schneidet an der ersten der angehängten Marken
+  ab; sie stehen als Konstanten an ihrer Quelle (`uhr::HEUTE_DE`/`_EN`,
+  `skills::SKILLHINWEIS_DE`/`_EN`, `MARKE_DE`/`_EN`), und `heute_zeile` und
+  der Skillhinweis benutzen sie selbst. Auch die Stütze liest nur die
+  Worte des Nutzers.
+- 📌 **Der Name kam nicht in den nächsten Auftrag.** „Mira is my first
+  name." stand vertraut im Gedächtnis, und auf „Wie heiße ich?" kam „Mein
+  Name ist Myelith.": Ausgewählt wurde nur, was ein Wort mit dem Auftrag
+  teilt. ⚑ **Jetzt aufgefüllt** bis `IM_AUFTRAG_HOECHSTENS` (fünf) mit den
+  stärksten vertrauten Erinnerungen, nach dem Passenden; was der Nutzer
+  selbst festgelegt hat, gilt auch ohne gemeinsames Wort. Fremdes füllt
+  nie auf, und als Abruf zählt nur das Passende, sonst hielte das
+  Auffüllen die stärksten für immer stark.
+- 📌 **Wiederholung zählte als Bestätigung.** Im Warten zwischen zwei
+  Runden wiederholte das 4B in einem Bericht dieselbe Notiz sechsmal; der
+  Schlaf meldete „6 bestätigt", und „Das Ziel ist erledigt." stand aus
+  einer einzigen Stelle mit vierfacher Stärke da. ⚑ **`bestaetigen` macht
+  nur mit einer neuen Herkunft stärker** und sagt zurück, ob es das tat;
+  gezählt wird nur dann.
+- **Die Zeile sagt, was geschah:** „2 Abschnitte gelesen, nichts davon
+  behalten" statt „nichts zu tun", wenn gelesen und alles verworfen wurde
+  (so im echten Lauf mit dem 0,6B), und „geweckt, bevor etwas fertig war
+  (setzt beim nächsten Mal fort)" ohne das doppelte „geweckt".
+- Belege: `cargo test` grün (`tests/schlaf.rs` neu
+  `die_antwort_an_einen_loop_wird_erinnert`: Antwort vertraut mit
+  Herkunft, die Frage allein belegt nichts Vertrautes, Vordenken und ein
+  Loop aus einem anderen Ordner bleiben draußen, zweimal gelesen wird
+  nicht, Entfernen vergisst; in `vorhaben` neu
+  `die_worte_des_menschen_kommen_zurueck`, in `schlaf`
+  `die_zeile_unterscheidet_nichts_von_nichts_behalten`, in `gedaechtnis`
+  `vertrautes_fuellt_auf`, `nur_eine_neue_herkunft_bestaetigt` und die
+  Datumszeile in `nur_vertrautes_kommt_in_den_auftrag`; 435 Proben in 18
+  Programmen), Clippy ohne
+  Befund. Mit dem echten 4B auf dem Ordner des Konsolenlaufs:
+  „Schlaf: 4 neu, 1 verknüpft", darunter vertraut „Mira ist der Name des
+  Nutzers."
+
+### v0.39.0 – 2026-10-13 (der Schlaf: ein Gedächtnis je Arbeitsordner, geordnet, wenn niemand etwas will; `myl-local-agent` 0.30.0)
+
+**Auftrag des Projektinhabers:** Ruhephasen (ein Warten im Loop, keine
+Inferenz) nutzen, damit sich das Gedächtnis sortiert, verdichtet und
+Duplikate auflöst, dem Schlaf von Säugetieren nachempfunden; alle Konzepte
+sinnvoll integrieren.
+
+⚑ **Der Name „Schlaf" (englisch „Sleep") kommt vom Projektinhaber**;
+das Modul heisst `schlaf`, die Befehle `/sleep` und `myl schlafen`.
+
+- **Neu: `gedaechtnis`**, das Gedächtnis eines Arbeitsordners unter
+  `.AGENT/gedaechtnis/`: Tatsachen, Episoden und Muster, jede mit Herkunft
+  (Sitzung, Quelle, Zeilen oder Nachrichten), Stärke, SimHash, Verweisen
+  und Zustand (aktiv, ersetzt als Grabstein mit Verweis, archiviert).
+  Rein ganzzahlig: Ähnlichkeit über einen SimHash und Wortüberlapp mit
+  Wortanfängen von fünf Zeichen, Verhältnisse über Kreuz multipliziert.
+- **Neu: `schlaf`**, der Schlaf in drei Phasen. **Ordnen** ohne
+  Modell: Abrufe einholen, wörtlich Gleiches zusammenführen, je volle
+  Woche halbieren (Rechtsshift), unter 16 archivieren, Grabsteine nach 30
+  Tagen abräumen, fast Gleiches nur vormerken. **Wiederholen** mit dem
+  Modell: vorgemerkte Paare und neue Erinnerungen bekommen ein Urteil
+  (gleich, neuer, beide), neue Abschnitte aus Mitschnitten und lebenden
+  Gesprächen werden gelesen, Episoden zusammengefasst. **Verknüpfen**:
+  Verweise ohne Modell, Muster aus verknüpften Tatsachen, schlafende
+  Vorhaben vordenken (ins Tagebuch, die nächste Runde liest es) und den
+  KV-Speicher vorwärmen.
+- ⛔️ **Vertraut ist nur, was der Nutzer selbst gesagt hat.** Zwei
+  getrennte Fragen an das Modell: Nachrichten des Nutzers (vertraut) und
+  der Rest mit Werkzeugergebnissen (fremd). Nur Vertrautes kommt von
+  selbst hinter einen Auftrag (`lauf::mit_kontext`), als `privat,
+  vertraut` in den Fluss (`Fluss::vorab`); Fremdes findet nur das neue
+  Werkzeug `search_memory` mit dem Vertrag des Mitschnitts.
+- ⛔️ **Der eigene Erinnerungsblock wird vor dem Lesen abgeschnitten**
+  (`ohne_eigenen_hinweis`), sonst bestätigte sich das Gedächtnis jede
+  Nacht selbst.
+- ⛔️ **Ein gelöschtes Gespräch nimmt seine Erinnerungen mit**:
+  `verlauf::loeschen` ruft `gedaechtnis::sitzung_vergessen`, auch für eine
+  Erinnerung mit zweiter Herkunft; was sie ersetzt hatte, gilt wieder.
+  Das Aufräumen der Mitschnitte (zwanzig Sitzungen) vergisst nicht.
+- ⛔️ **Jede Eingabe weckt sofort**: `Modellweg::chat_unterbrechbar` hält
+  die Erzeugung am `Wecker` an, ohne den Notaus anzufassen; gespeichert
+  wird nach jedem Schritt, und ein Abschnitt gilt erst als gelesen, wenn
+  seine Erinnerungen stehen. Ein Schlaf je Ordner (Sperre mit
+  Prozessnummer).
+- **Neu am `Modellweg`:** `chat_unterbrechbar` und `vorwaermen` (beide mit
+  Vorgabe, die Tür und alle Proben bleiben unverändert).
+- **Neu: `search_memory` / `erinnerung_suchen`** in `Advanced` und
+  `Elite`, nicht in `Base` (das 0,6B ruft Nachschlagewerkzeuge nicht von
+  selbst, gemessen 2026-09-17). Ein Fund stärkt die Erinnerung.
+- 📌 **Vier Fehler, die erst das echte Modell zeigte**, alle mit Probe:
+  - Das 0,6B gab die Wörter der Anweisung als Erinnerung zurück
+    („Festlegungen", „Rahmenbedingungen") und wiederholte die Anweisung
+    in einer Schleife. ⚑ **Belegprobe** (`belegt`): Zwei Drittel der
+    Inhaltswörter einer Tatsache und **jede Zahl** müssen im Material
+    stehen, bei Episoden und Mustern die Hälfte. Eine Antwort länger als
+    eine Erinnerung ist eine Schleife und wird verworfen.
+  - Mit einem Beispiel im Auftrag schrieb das 0,6B das Beispiel ab („Der
+    Ordner hat 12 Dateien"). ⚑ Ohne Beispiel.
+  - „Die Prefill-Messung ist nützlich.": das Wort der Frage als Aussage.
+    ⚑ **Echoprobe** (`spiegelt`) für Tatsachen und Muster.
+  - Das 4B urteilte, „Berichte in Markdown" ersetze „Berichte auf
+    Deutsch", beide aus demselben Satz. ⚑ **„Neuer" verlangt eine spätere
+    Herkunft**, sonst gelten beide. Ein Muster, das eines seiner Glieder zu
+    vier Fünfteln wiederholt, wird verworfen.
+  - Dazu aus der ersten Probe: „Bericht" fand „Berichte" nicht (jetzt
+    Wortanfänge), und „mindestens zwei gemeinsame Wörter" verfehlte kurze
+    Vorlieben (jetzt eines, ohne Füllwörter).
+- ⚠️ **Nicht integriert, mit Absicht:** das Festigen in die Gewichte
+  (Training im Schlaf). Es ist der einzige Teil, der das Modell selbst
+  ändert, und gehört mit Haltemenge und Rauschnullpunkt zu `myl-train`.
+  Die Mitschnitte werden nicht komprimiert: Sie müssen über `grep` und
+  Zeilennummern lesbar bleiben.
+- Belege: `cargo test` grün (18 Testprogramme, neu `tests/schlaf.rs` mit
+  sieben Proben: der ganze Weg, Wecken und Fortsetzen, ohne Modell,
+  Löschen, Vordenken, Sperre, ein echter Lauf mit Abruf), Clippy ohne
+  Befund. Mit dem echten Modell: `CLIENT/myl-client/tests/schlaf.rs`
+  (Wecker ohne Notaus; Vorwärmen 57 von 63 Token aus dem Speicher, der Rest
+  ist der Kopf der Antwort; ein ganzer Durchgang mit dem 0,6B).
+
+### v0.38.0 – 2026-10-13 (die Werkzeugkiste `GolemOS` und der Skill `golemos-einrichten`)
+
+**Auftrag des Projektinhabers:** Oberfläche und Knoten auf GolemOS sollen
+sich ohne Vorwissen einrichten lassen, auch durch das Modell.
+
+- **Neu: `local-toolkits/GolemOS`**, wie `Advanced` und dazu sechs
+  Werkzeuge: `golemos_status` (ändert nichts), `oberflaeche_holen` (im
+  Hintergrund, Stand über `golemos_status`), `oberflaeche_starten`,
+  `oberflaeche_beim_start`, `knoten_einrichten` (Name und Rolle, nur
+  `teilnehmer` oder `relais`), `knoten_schalten`. ⚑ **Sie rufen nur die
+  Befehle der Basis** (`golem-schicht`, `golem-knoten`) und bringen keine
+  eigene Logik mit; was dort geprüft wird, gilt also auch hier. Auf einem
+  anderen System sagen sie „Das ist kein GolemOS“ und tun nichts.
+- **Neu: `local-skills/golemos-einrichten`**: wo die Schicht liegt, die
+  Reihenfolge, und dass ein Knoten nur auf ausdrücklichen Wunsch und nach
+  einer Erklärung eingerichtet wird. Ohne die Kiste gehen dieselben
+  Schritte mit `run_command`.
+- Die READMEs beider Ordner nennen die neue Kiste und den neuen Skill.
+- Belege: `cargo test` in `local-agent` grün (die Proben lesen jede
+  mitgelieferte Kiste und jeden mitgelieferten Skill). Kein Code geändert.
+
+### v0.37.0 – 2026-10-13 (erst ausblenden, dann zusammenfassen; `myl-local-agent` 0.29.0)
+
+**Auftrag des Projektinhabers:** den Kontext klein und damit schnell
+halten, nach dem Vorbild erfolgreicher Agentenprojekte.
+
+- **Neu: Wird der Kontext im Lauf voll, blendet der Agent zuerst alte
+  Werkzeugausgaben aus** (`verdichtung::ausblenden`). Eine Ausgabe vor den
+  letzten drei Schritten (`WOERTLICHE_SCHRITTE`) mit mindestens 600 Zeichen
+  (`AUSBLENDEN_AB_ZEICHEN`) wird durch einen Vermerk ersetzt, der das
+  Werkzeug und die Länge nennt und sagt, dass ein erneuter Aufruf sie
+  zurückholt. Überlegungen und Aufrufe des Modells, der Auftrag und alle
+  kurzen Ausgaben bleiben wörtlich, die Zahl der Nachrichten bleibt gleich.
+- ⚑ **Zusammengefasst wird nur noch, wenn das nicht reicht**: wenn nach dem
+  Ausblenden außer der Antwortlänge nicht ein Viertel des Kontexts frei
+  wäre (`luft_genug`). Dann fasst das Modell wie bisher zusammen, und zwar
+  den ungekürzten Verlauf, damit es aus den Ausgaben schöpfen kann, die
+  gerade erst verschwunden wären.
+- ⚑ **Warum:** Das Ausblenden kostet keinen Modellaufruf und verliert nichts,
+  was das Modell selbst geschrieben hat. Lindenbauer und andere („The
+  Complexity Trap", NeurIPS 2025) maßen bei Agenten auf
+  Programmieraufgaben, dass das bloße Ausblenden alter Beobachtungen
+  genauso viele Aufgaben löst wie eine Zusammenfassung durch das Modell,
+  zur halben Rechnung; beides zusammen war am billigsten. Lokal zählt das
+  doppelt, denn jedes Token im Kontext kostet Einlesezeit (am 35B 125
+  Token/s bei 2 k, 47 bei 64 k).
+- ⚑ **Warum drei Schritte und nicht zehn wie in der Vorlage:** Dort waren
+  die Kontexte 128 k und größer, hier ist der Arbeitskontext 64 k, und eine
+  gelesene Datei belegt leicht 5 000 Token.
+- ⚑ **Warum ein Viertel Luft:** Jedes Ausblenden ändert den Anfang des
+  Prompts, den der KV-Speicher sonst fortsetzt; knapp unter der Grenze
+  stünde der Lauf einen Schritt später wieder dort.
+- **Neu: `Meldung::Ausgeblendet { ergebnisse, vorher, nachher }`** für die
+  Anzeige und den Debug-Log; Konsole und Fenster zeigen sie (CLIENT
+  v0.146.0).
+- Belege: `cargo test` und Clippy (`-D warnings`) grün. Neu:
+  `alte_lange_ausgaben_werden_ausgeblendet_und_sonst_nichts`,
+  `luft_genug_heisst_ein_viertel_frei` (in `verdichtung`),
+  `alte_werkzeugausgaben_werden_ausgeblendet_statt_zusammengefasst` und
+  `reicht_das_ausblenden_nicht_wird_zusammengefasst` (in
+  `tests/schleife.rs`). Gegenprobe: Mit abgeschaltetem Ausblenden scheitert
+  die erste der beiden Schleifenproben.
+
+### v0.36.1 – 2026-10-13 (der Mitschnitt geht mit seinem Gespräch; `myl-local-agent` 0.28.1)
+
+- `verlauf.rs`: Die Beschreibung sagt jetzt, dass das Fenster beim Löschen
+  eines Gesprächs dessen Mitschnitt mit `verlauf::loeschen` entfernt
+  (Festlegung des Projektinhabers); die Mitschnitte anderer Gespräche
+  bleiben. Bis dahin stand dort ausdrücklich das Gegenteil (Festlegung vom
+  2026-09-16). Kein Code geändert.
+
+### v0.36.0 – 2026-10-13 (die Werkzeugkiste `CAD` ist entfernt)
+
+- **Entfernt:** die Werkzeugkiste `local-toolkits/CAD` (drei Werkzeuge mit
+  FreeCAD, `cad.sh`, `cad_lauf.py`, `myl_cad.py`), die Skills
+  `cad-erstellen` und `schrauben-und-bohrungen`, ihre Proben
+  (`local-agent/tests/cadkiste.rs`) und `SYSTEM/install/cad-einrichten.sh`
+  (Auftrag des Projektinhabers). Mitgeliefert sind jetzt die Kisten `Base`
+  und `Advanced` und fünf Skills.
+- ⚠️ **Wer `agent.kistenordner` auf die alte Kiste gesetzt hat**, bekommt
+  keine Manifest-Werkzeuge mehr, denn ein gesetzter Ordner, den es nicht
+  gibt, fällt bewusst nicht auf die Vorgabe zurück. Abhilfe: eine andere
+  Kiste wählen (`myl setzen agent.kistenordner …`).
+- `ci.yml`: Der Hinweis auf die ausgenommene FreeCAD-Probe entfällt mit ihr.
+- Belege: `cargo test` und Clippy (`-D warnings`) grün in `local-agent`.
+
+### v0.35.0 – 2026-10-12 (die Kiste eines Moduls ergänzt; `myl-local-agent` 0.28.0)
+
+- **`Agenteneinstellung::modul`** (gespeichert, der Name des gewählten
+  Moduls) und **`modulkiste`** (je Lauf vom Client gesetzt, nie
+  gespeichert). `kisten::ordnerkette` legt die Modulkiste zuletzt auf Base
+  und die gewählte Kiste: Sie **ergänzt** (Festlegung des Projektinhabers).
+  📌 Bis dahin ersetzte die Konsole im Modus eines Moduls die gewählte
+  Kiste durch die des Moduls.
+- **Umgebung je Kistenordner** (`kisten::umgebung_setzen`, `umgebung_fuer`):
+  Ein Werkzeug bekommt zu `$MYL_KISTE` die eingetragene Umgebung, für ein
+  Modul den Pfad der geprüften Programmkopie (`MYL_MODUL_PROGRAMM`). ⛔️
+  Ohne sie startete ein Modulwerkzeug das Programm im Modulordner, das sich
+  nach der Prüfung geändert haben kann.
+- Belege: `cargo test` grün (neu:
+  `die_kiste_eines_moduls_ergaenzt_und_bekommt_ihre_umgebung`; Gegenprobe
+  ohne die Umgebung schlägt fehl), Clippy ohne Warnung.
 
 ### v0.34.0 – 2026-10-12 (der Debug-Log; `myl-local-agent` 0.27.0)
 

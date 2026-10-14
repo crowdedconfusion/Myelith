@@ -21,13 +21,14 @@
 //!
 //! # ⚠️ Was „abschalten" heisst und was nicht
 //!
-//! **Es gibt heute genau einen Rechenweg mit einem Schalter**, und das
-//! ist `metal`: [`integer_llm_kernels::metal::schwelle_setzen`] nimmt
-//! die GPU aus dem Pfad, ohne ein Ergebnis zu aendern. `cuda` und
-//! `rocm` reichen an die Referenzkernel weiter und haben deshalb nichts
-//! zum Abschalten. [`setzen`] sagt mit seinem Rueckgabewert, welcher
-//! Fall vorlag; **ein stilles Ja waere die Zusage, etwas getan zu
-//! haben, das nicht geschehen ist.**
+//! **Drei Rechenwege haben einen Schalter**: `metal`
+//! ([`integer_llm_kernels::ressourcen::metal::schwelle_setzen`]) und seit dem
+//! 2026-10-14 `cuda` und `rocm`
+//! ([`integer_llm_kernels::ressourcen::karten::hersteller_setzen`]), aber nur in
+//! einer Uebersetzung mit dem jeweiligen Feature. Jeder nimmt seine Karten
+//! aus dem Pfad, ohne ein Ergebnis zu aendern. [`setzen`] sagt mit seinem
+//! Rueckgabewert, ob es den Schalter gab; **ein stilles Ja waere die
+//! Zusage, etwas getan zu haben, das nicht geschehen ist.**
 
 use std::sync::OnceLock;
 
@@ -67,12 +68,30 @@ static METALL_AUSGANG: OnceLock<usize> = OnceLock::new();
 pub fn setzen(backend: &str, an: bool) -> bool {
     match backend {
         "metal" => {
-            let ausgang = *METALL_AUSGANG.get_or_init(integer_llm_kernels::metal::schwelle);
-            integer_llm_kernels::metal::schwelle_setzen(if an { ausgang } else { 0 });
+            let ausgang = *METALL_AUSGANG.get_or_init(integer_llm_kernels::ressourcen::metal::schwelle);
+            integer_llm_kernels::ressourcen::metal::schwelle_setzen(if an { ausgang } else { 0 });
+            true
+        }
+        "cuda" | "rocm" => {
+            use integer_llm_kernels::ressourcen::karten::{hersteller_setzen, uebersetzt_fuer, Hersteller};
+            let h = if backend == "cuda" { Hersteller::Nvidia } else { Hersteller::Amd };
+            if !uebersetzt_fuer(h) {
+                return false;
+            }
+            hersteller_setzen(h, an);
             true
         }
         _ => false,
     }
+}
+
+/// **Schaltet eine einzelne Karte (CUDA, ROCm) ab oder wieder an**, ueber
+/// ihre PCI-Adresse. Siehe [`integer_llm_kernels::ressourcen::karten::karte_setzen`].
+///
+/// ⚑ **Je Karte, weil der Client je Karte freigibt.** Gibt zurueck, ob
+/// eine bereite Karte diese Adresse traegt.
+pub fn karte_setzen(pci: &str, an: bool) -> bool {
+    integer_llm_kernels::ressourcen::karten::karte_setzen(pci, an)
 }
 
 #[cfg(test)]
@@ -87,12 +106,20 @@ mod proben {
     }
 
     /// ⚑ **Ein Rechenweg ohne Schalter sagt das.** `cuda` und `rocm`
-    /// reichen an die Referenzkernel weiter; wer sie abzuschalten
-    /// versucht, bekommt ein Nein und keine stille Zusage.
+    /// haben einen genau dann, wenn ihr Feature uebersetzt ist; sonst
+    /// kommt ein Nein und keine stille Zusage.
     #[test]
     fn ohne_schalter_kommt_ein_nein() {
-        assert!(!setzen("cuda", false), "cuda meldet einen Schalter, den es nicht hat");
-        assert!(!setzen("rocm", false));
+        use integer_llm_kernels::ressourcen::karten::{hersteller_an, uebersetzt_fuer, Hersteller};
+        for (weg, h) in [("cuda", Hersteller::Nvidia), ("rocm", Hersteller::Amd)] {
+            let vorher = hersteller_an(h);
+            assert_eq!(setzen(weg, false), uebersetzt_fuer(h), "{weg} meldet den Schalter falsch");
+            if uebersetzt_fuer(h) {
+                assert!(!hersteller_an(h), "{weg} ist nicht aus");
+                assert!(setzen(weg, vorher));
+            }
+            assert_eq!(hersteller_an(h), vorher, "{weg}: der Ausgangszustand ist nicht zurueck");
+        }
         assert!(!setzen("reference", false), "die Referenz laesst sich nicht abschalten");
         assert!(!setzen("gibt-es-nicht", true));
     }
@@ -110,12 +137,12 @@ mod proben {
     /// schreibt, die es tut, legt sie mit dieser zusammen.
     #[test]
     fn aus_und_wieder_an_stellt_die_schwelle_her() {
-        let vorher = integer_llm_kernels::metal::schwelle();
+        let vorher = integer_llm_kernels::ressourcen::metal::schwelle();
         assert!(setzen("metal", false), "metal hat einen Schalter");
-        assert_eq!(integer_llm_kernels::metal::schwelle(), 0, "die GPU ist nicht aus");
+        assert_eq!(integer_llm_kernels::ressourcen::metal::schwelle(), 0, "die GPU ist nicht aus");
         assert!(setzen("metal", true));
         assert_eq!(
-            integer_llm_kernels::metal::schwelle(),
+            integer_llm_kernels::ressourcen::metal::schwelle(),
             vorher,
             "die Ausgangsschwelle ist nicht zurueckgekommen"
         );

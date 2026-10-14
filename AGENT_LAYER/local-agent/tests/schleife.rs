@@ -554,6 +554,7 @@ fn ein_melder_aendert_den_lauf_nicht() {
             M::Ergebnis { name, .. } => format!("ergebnis {name}"),
             M::Abgelehnt { name, .. } => format!("abgelehnt {name}"),
             M::Verdichtet { vorher, nachher } => format!("verdichtet {vorher} {nachher}"),
+            M::Ausgeblendet { ergebnisse, .. } => format!("ausgeblendet {ergebnisse}"),
         });
     };
     let (mit, ()) = fahren_mit_melder(antworten, Betriebsart::Alles, 4, Some(&melder));
@@ -761,6 +762,75 @@ fn ein_voller_kontext_wird_verdichtet_und_der_auftrag_bleibt() {
     let ohne = myl_local_agent::strom::nachrichten_commitment(&[erste[0].clone(), erste[2].clone()]);
     assert_eq!(erg.strom.schritte()[0].anfrage, mit, "der Strom bindet die Zusammenfassung mit");
     assert_ne!(mit, ohne, "ohne sie waere das Commitment ein anderes");
+}
+
+/// Ein Verlauf aus vier Werkzeugschritten mit den Ausgabelaengen `laengen`
+/// und einer Antwort am Ende.
+fn verlauf_mit_ausgaben(laengen: [usize; 4]) -> Vec<myl_local_agent::Nachricht> {
+    use myl_local_agent::Nachricht;
+    let mut v = vec![Nachricht::nutzer("Lies die vier Dateien.")];
+    for (i, l) in laengen.iter().enumerate() {
+        v.push(Nachricht::modell("<tool_call>{\"name\":\"zeit\",\"arguments\":{}}</tool_call>"));
+        v.push(myl_local_agent::werkzeug::Werkzeugergebnis::nachricht("zeit", &format!("AUSGABE{i}{}", "a".repeat(*l))));
+    }
+    v.push(Nachricht::modell("Gelesen."));
+    v
+}
+
+/// Die Zeichen, die Ansage, `verlauf` und `auftrag` zusammen belegen.
+fn belegt_mit(verlauf: &[myl_local_agent::Nachricht], auftrag: &str) -> usize {
+    ansagelaenge() + verlauf.iter().map(|n| n.content.chars().count()).sum::<usize>() + auftrag.chars().count()
+}
+
+/// ⚑ **Erst ausblenden, dann zusammenfassen** (2026-10-13): Wird der
+/// Kontext voll und schafft das Ausblenden alter Werkzeugausgaben ein
+/// Viertel Luft, fragt der Lauf das Modell nach keiner Zusammenfassung.
+/// Die Ausgaben der letzten drei Schritte, die Antworten des Modells und
+/// der Auftrag bleiben woertlich, und die Anzeige erfaehrt es.
+#[test]
+fn alte_werkzeugausgaben_werden_ausgeblendet_statt_zusammengefasst() {
+    let verlauf = verlauf_mit_ausgaben([6000; 4]);
+    let voll = belegt_mit(&verlauf, "Weiter.");
+    let weg = ZaehlenderWeg::neu(vec!["Fertig."], voll - 100);
+    let meldungen = std::cell::RefCell::new(Vec::new());
+    let erg = fahren_im_gespraech(&weg, &verlauf, "Weiter.", &meldungen);
+
+    assert_eq!(erg.ende, Ende::Fertig, "{:?}", erg.ende);
+    assert_eq!(weg.verdichtet.get(), 0, "keine Zusammenfassung noetig");
+    let erste = &weg.gesehen.borrow()[0];
+    assert_eq!(erste.len(), verlauf.len() + 2, "Ansage, Verlauf, Auftrag: keine Nachricht fehlt");
+    assert_eq!(&erste[1..2], &verlauf[..1]);
+    for (i, n) in verlauf.iter().enumerate().skip(1) {
+        let gesehen = &erste[i + 1];
+        if i == 2 || i == 4 {
+            assert!(gesehen.content.contains(myl_local_agent::verdichtung::AUSGEBLENDET), "{gesehen:?}");
+            assert!(!gesehen.content.contains("AUSGABE"), "die alte Ausgabe steht noch da");
+        } else {
+            assert_eq!(gesehen, n, "Nachricht {i} wurde veraendert");
+        }
+    }
+    assert_eq!(erste.last(), Some(&myl_local_agent::Nachricht::nutzer("Weiter.")));
+    let m = meldungen.borrow();
+    assert_eq!(m.iter().filter(|m| m.starts_with("Ausgeblendet { ergebnisse: 2")).count(), 1, "{m:?}");
+    assert!(!m.iter().any(|m| m.starts_with("Verdichtet")), "{m:?}");
+}
+
+/// ⚑ **Reicht das Ausblenden nicht, wird zusammengefasst wie zuvor**, und
+/// zwar ohne halbe Massnahme: keine Meldung ueber ein Ausblenden, das
+/// nicht uebernommen wurde.
+#[test]
+fn reicht_das_ausblenden_nicht_wird_zusammengefasst() {
+    let verlauf = verlauf_mit_ausgaben([700, 700, 6000, 6000]);
+    let voll = belegt_mit(&verlauf, "Weiter.");
+    let weg = ZaehlenderWeg::neu(vec!["Fertig."], voll - 100);
+    let meldungen = std::cell::RefCell::new(Vec::new());
+    let erg = fahren_im_gespraech(&weg, &verlauf, "Weiter.", &meldungen);
+
+    assert_eq!(erg.ende, Ende::Fertig, "{:?}", erg.ende);
+    assert!(weg.verdichtet.get() >= 1, "das Modell hat zusammengefasst");
+    let m = meldungen.borrow();
+    assert!(m.iter().any(|m| m.starts_with("Verdichtet")), "{m:?}");
+    assert!(!m.iter().any(|m| m.starts_with("Ausgeblendet")), "{m:?}");
 }
 
 /// ⚑ **Passt es auch verdichtet nicht, endet der Lauf benannt**, statt eine

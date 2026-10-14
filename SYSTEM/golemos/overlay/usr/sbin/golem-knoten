@@ -1,0 +1,419 @@
+#!/bin/sh
+# golem-knoten: der Myelith-Knoten (`myl-node`) als Dienst in GolemOS.
+#
+#   golem-knoten einrichten [--name N] [--rolle teilnehmer|relais] [--port P]
+#                           [--bootstrap ADRESSE]... [--oeffentlich ADRESSE]...
+#                           [--beobachtung PORT|aus] [--konformitaet PFAD|klon|aus]
+#                           [--aufnahme SEK] [--erzeuger ja|nein] [--stimmsatz PFAD]
+#   golem-knoten konsensschluessel DATEI   den Konsensschluessel uebernehmen
+#   golem-knoten starten | stoppen | status | protokoll
+#   golem-knoten an | aus                   beim Start mitstarten oder nicht
+#   golem-knoten befehlszeile               was gestartet wuerde, ein Argument je Zeile
+#
+# ⚑ **Derselbe Zuschnitt wie der MYL-SERVER fuer NixOS** (`NODE/myl-server/
+# modul.nix`), auf einem System ohne systemd. Was dort eine Option ist, ist
+# hier ein Feld der Einrichtung; die Vorgaben sind dieselben, und eine Probe
+# in `NODE/myl-node/tests/golemknoten.rs` haelt beide Befehlszeilen und den
+# Knoten zusammen.
+#
+# ⛔️ **Was dieser Befehl mit Absicht NICHT tut**, wie das Modul:
+#   - Er oeffnet KEINE Tuer, KEINEN Beobachtungs- und KEINEN
+#     Ortsleitungsport nach aussen. Nach aussen hoert nur der P2P-Port; die
+#     Beobachtung liegt fest auf der Rueckschleife.
+#   - Er nimmt KEINE freien Zusatzflags. Wer etwas braucht, das hier fehlt,
+#     ergaenzt es hier, mit Pruefung, und nicht in einer Datei, die jeder
+#     beschreiben kann.
+#   - Er entscheidet NICHTS im Protokoll. Rolle, Pod-Zuteilung, Routing und
+#     Abstimmungen bestimmt die Kette, und `myl-node` rechnet sie nach. Dieser
+#     Befehl richtet ein und betreibt; Befugnis traegt er keine.
+#
+# ⚑ **Einstellung und Zustand liegen auf der Wurzel, nicht auf `/daten`.**
+# Die Datenpartition ist FAT und fuer jeden lesbar und beschreibbar
+# (`umask=0000`, damit jeder Rechner Gewichte daraufkopieren kann). Ein
+# Schluessel dort waere fuer jedes Programm lesbar, und eine Einstellung
+# dort, die root liest, waere eine Einladung. Die Wurzel ist ext4 mit echten
+# Rechten: Einstellung root 0600, Zustand dem Dienstkonto, 0700.
+# ⚠️ **Eine Neuinstallation loescht beides**; eine kuenftige A/B-Aktualisierung
+# muss beides auf die neue Wurzel mitnehmen.
+#
+# ⚑ **Der Identitaetsschluessel entsteht beim ersten Start im Zustand**, nicht
+# auf dem Stick: `myl-node` legt ihn an, wenn es keinen gibt. Damit beruehrt
+# er nie die FAT-Partition. Der Konsensschluessel eines stimmberechtigten
+# Knotens dagegen wird mitgebracht, und `konsensschluessel` sagt, dass die
+# Vorlage danach vom Stick gehoert.
+set -eu
+
+KONF=${GOLEM_KNOTEN_KONF:-/etc/golemos/knoten.conf}
+STAND=${GOLEM_KNOTEN_STAND:-/var/lib/myl-knoten}
+PROGRAMM=${GOLEM_KNOTEN_PROGRAMM:-/usr/bin/myl-node}
+LAUF=${GOLEM_KNOTEN_LAUF:-/run/myl-knoten}
+KLON=${GOLEM_KNOTEN_KLON:-/run/golemos/wurzel}
+# ⚑ **Das `setpriv` aus util-linux, mit vollem Pfad.** 📌 Das Applet von
+#   BusyBox heisst gleich, kann aber kein Konto wechseln; ueber den Suchpfad
+#   kaeme je nach Reihenfolge das falsche (gemessen am 2026-10-13: Der Knoten
+#   brach fuenfmal mit der Hilfe von BusyBox ab).
+SETPRIV=${GOLEM_KNOTEN_SETPRIV:-/usr/bin/setpriv}
+# ⚑ **Feste Kennung**, nicht „die naechste freie": Der Zustand ueberlebt
+#   eine Aktualisierung, und mit einer anderen Kennung gehoerte er danach
+#   niemandem. Dieselbe Zahl steht in `konfigurationen/benutzer.tabelle`.
+KONTO_ID=900
+
+# Die Vorgaben, dieselben wie im Modul.
+name=$(hostname 2>/dev/null || echo golemos)
+rolle=teilnehmer
+port=4001
+bootstrap=""
+oeffentlich=""
+beobachtung=4151
+# ⚑ **300 und nicht die 30 des Knotens**: Ein Dienst laeuft Monate, und der
+#   Abstand der Aufnahmen ist die Rate, mit der die Protokolle wachsen.
+aufnahme=300
+# ⚑ `klon` heisst: die Op-Vektoren aus dem Myelith-Ordner, den GolemOS beim
+#   Start gefunden hat. Fehlt er, startet der Knoten NICHT; ohne Pruefung
+#   laeuft er nur auf ausdrueckliches `aus`.
+konformitaet=klon
+erzeuger=nein
+stimmsatz=""
+konsens=nein
+aktiv=nein
+
+fehler() {
+  echo "golem-knoten: $*" >&2
+  exit 1
+}
+
+# ── Pruefen ─────────────────────────────────────────────────────────
+#
+# ⛔️ **Jeder Wert wird gegen eine enge Zeichenmenge geprueft**, bevor er in
+#    die Einstellung oder in die Befehlszeile kommt. Die Befehlszeile wird
+#    ohne Shell-Quoting gebaut, also darf kein Wert ein Leerzeichen, ein
+#    Anfuehrungszeichen oder ein `$` tragen; und ein Wert, der mit `-`
+#    beginnt, waere ein eingeschmuggeltes Flag.
+
+nur() { # nur MENGE WERT: besteht WERT nur aus Zeichen der MENGE?
+  case "$2" in
+    "" | -*) return 1 ;;
+  esac
+  case "$2" in
+    *[!$1]*) return 1 ;;
+  esac
+  return 0
+}
+
+zahl_im_bereich() { # zahl_im_bereich WERT VON BIS
+  nur "0-9" "$1" || return 1
+  [ "${#1}" -le 6 ] || return 1
+  [ "$1" -ge "$2" ] && [ "$1" -le "$3" ]
+}
+
+pruefe() { # pruefe FELD WERT
+  case "$1" in
+    name) nur "A-Za-z0-9._-" "$2" || fehler "name: nur Buchstaben, Ziffern, Punkt, Unterstrich, Bindestrich" ;;
+    rolle) case "$2" in teilnehmer | relais) ;; *) fehler "rolle: teilnehmer oder relais" ;; esac ;;
+    # ⚑ Ueber 1024, damit der Dienst kein Vorrecht braucht.
+    port) zahl_im_bereich "$2" 1025 65535 || fehler "port: eine Zahl von 1025 bis 65535" ;;
+    bootstrap | oeffentlich) nur "A-Za-z0-9./:_-" "$2" || fehler "$1: eine Multiadresse wie /dns4/name/tcp/4001/p2p/..." ;;
+    beobachtung) [ "$2" = aus ] || zahl_im_bereich "$2" 1025 65535 || fehler "beobachtung: ein Port von 1025 bis 65535 oder aus" ;;
+    aufnahme) zahl_im_bereich "$2" 10 86400 || fehler "aufnahme: Sekunden von 10 bis 86400" ;;
+    konformitaet | stimmsatz)
+      [ "$1" = konformitaet ] && { [ "$2" = klon ] || [ "$2" = aus ]; } && return 0
+      case "$2" in /*) ;; *) fehler "$1: ein absoluter Pfad" ;; esac
+      nur "A-Za-z0-9./_-" "$2" || fehler "$1: nur Buchstaben, Ziffern und ./_- im Pfad"
+      ;;
+    erzeuger | konsens | aktiv) case "$2" in ja | nein) ;; *) fehler "$1: ja oder nein" ;; esac ;;
+    *) fehler "unbekanntes Feld: $1" ;;
+  esac
+}
+
+# ── Einstellung lesen und schreiben ─────────────────────────────────
+#
+# ⛔️ **Gelesen und nicht mit `.` ausgefuehrt.** Eine Datei, die root
+#    einliest, ist sonst ein Programm, das root ausfuehrt. Jede Zeile ist
+#    `feld=wert`, jedes Feld steht in der Liste, jeder Wert wird geprueft.
+lesen() {
+  [ -f "$KONF" ] || return 1
+  while IFS= read -r zeile || [ -n "$zeile" ]; do
+    case "$zeile" in "" | \#*) continue ;; esac
+    feld=${zeile%%=*}
+    wert=${zeile#*=}
+    pruefe "$feld" "$wert"
+    case "$feld" in
+      bootstrap) bootstrap="$bootstrap $wert" ;;
+      oeffentlich) oeffentlich="$oeffentlich $wert" ;;
+      *) eval "$feld=\$wert" ;;
+    esac
+  done < "$KONF"
+  return 0
+}
+
+schreiben() {
+  mkdir -p "$(dirname "$KONF")"
+  neu="$KONF.neu"
+  (
+    umask 077
+    {
+      echo "# Geschrieben von golem-knoten einrichten; von Hand nur mit Bedacht."
+      for f in name rolle port beobachtung aufnahme konformitaet erzeuger stimmsatz konsens aktiv; do
+        eval "w=\$$f"
+        [ -n "$w" ] && echo "$f=$w"
+      done
+      for a in $bootstrap; do echo "bootstrap=$a"; done
+      for a in $oeffentlich; do echo "oeffentlich=$a"; done
+    } > "$neu"
+  )
+  mv "$neu" "$KONF"
+}
+
+zustand_anlegen() {
+  mkdir -p "$STAND"
+  chmod 0700 "$STAND"
+  # ⚑ Nur als root: Unter einer Probe ohne Vorrecht bleibt der Ordner dem
+  #   Aufrufer, und das ist dort richtig.
+  if [ "$(id -u)" = 0 ]; then
+    chown "$KONTO_ID:$KONTO_ID" "$STAND"
+  fi
+}
+
+# ── Die Befehlszeile ────────────────────────────────────────────────
+#
+# ⚑ **Ein Argument je Zeile**, damit `befehlszeile` sie zeigen und die Probe
+# sie lesen kann, ohne ein Quoting zu verstehen. Alle Werte sind oben
+# geprueft und tragen keine Leerzeichen.
+#
+# >>> befehlszeile
+befehlszeile() {
+  echo "$PROGRAMM"
+  echo "--name"; echo "$name"
+  echo "--rolle"; echo "$rolle"
+  echo "--port"; echo "$port"
+  echo "--schluessel"; echo "$STAND/identitaet.key"
+  echo "--kette"; echo "$STAND/kette.dat"
+  echo "--protokolle"; echo "$STAND/protokolle"
+  echo "--aufnahme"; echo "$aufnahme"
+  # ⚑ **Tuer und Ortsleitung werden NICHT uebergeben**, wie im Modul: Der
+  #   Knoten bindet die eine per Vorgabe an die Rueckschleife und laesst
+  #   die andere aus. Die Beobachtung dagegen ausdruecklich, damit
+  #   `befehlszeile` die Zusage „nur die Rueckschleife" zeigt.
+  if [ "$beobachtung" = aus ]; then
+    echo "--ohne-beobachtung"
+  else
+    echo "--beobachtung"; echo "127.0.0.1:$beobachtung"
+  fi
+  [ "$erzeuger" = ja ] && echo "--erzeuger"
+  case "$konformitaet" in
+    aus) echo "--ohne-konformitaet" ;;
+    klon)
+      k=""
+      [ -r "$KLON" ] && k="$(cat "$KLON")/INTEGER_LLM/conformance/vectors/op"
+      [ -n "$k" ] && [ -d "$k" ] || fehler "kein Myelith-Ordner mit Konformitaetsvektoren gefunden; Ordner auf den Stick bringen oder einrichten --konformitaet PFAD|aus"
+      echo "--konformitaet"; echo "$k"
+      ;;
+    *) echo "--konformitaet"; echo "$konformitaet" ;;
+  esac
+  for a in $bootstrap; do echo "--bootstrap"; echo "$a"; done
+  for a in $oeffentlich; do echo "--oeffentlich"; echo "$a"; done
+  if [ "$konsens" = ja ]; then
+    echo "--konsensschluessel"; echo "$STAND/konsens.key"
+  fi
+  if [ -n "$stimmsatz" ]; then
+    echo "--stimmsatz"; echo "$stimmsatz"
+  fi
+  return 0
+}
+# <<< befehlszeile
+
+# ── Der Waechter ────────────────────────────────────────────────────
+#
+# ⛔️ **Ein Startfehler darf keine Schleife werden**, wie im Modul
+#    (`startLimitBurst` 5 in 300 s, `RestartSec` 10): Ein Knoten mit einem
+#    falschen Stimmsatz startet, faellt, startet, und das liesse sich vom
+#    Betrieb nicht unterscheiden. Nach fuenf Abbruechen in fuenf Minuten
+#    haelt der Waechter an und schreibt den Grund in den Status.
+GRENZE_ABBRUECHE=5
+GRENZE_FENSTER=300
+PAUSE=10
+
+waechter() {
+  mkdir -p "$LAUF"
+  echo $$ > "$LAUF/waechter.pid"
+  abbrueche=""
+  while :; do
+    # ⚑ Die Befehlszeile wird je Start neu gebaut: Wer zwischendurch
+    #   einrichtet, startet mit der neuen.
+    # ⛔️ Erst ganz bauen, dann starten: Scheitert der Bau (etwa weil der
+    #    Myelith-Ordner fehlt), startete sonst ein Knoten mit halber
+    #    Befehlszeile.
+    if ! zeilen=$(befehlszeile 2>&1); then
+      echo "angehalten: $zeilen" > "$LAUF/grund"
+      break
+    fi
+    set --
+    while IFS= read -r arg; do set -- "$@" "$arg"; done <<ZEILEN
+$zeilen
+ZEILEN
+    protokoll_kuerzen
+    echo "── $(date '+%F %T') gestartet: $*" >> "$STAND/dienst.log"
+    # ⚑ **Ohne Vorrecht**: eigenes Konto, keine Gruppen, keine
+    #   Faehigkeiten, und `--nnp` verhindert, dass ein Kindprozess sie ueber
+    #   ein setuid-Programm zurueckholt. Was systemd dem Modul an
+    #   Abschottung gibt (Systemaufruffilter, Namensraeume), hat BusyBox
+    #   nicht; das ist der benannte Abstand zum NixOS-Dienst.
+    ( umask 077; ulimit -n 65536 2>/dev/null || true
+      exec "$SETPRIV" --reuid="$KONTO_ID" --regid="$KONTO_ID" --clear-groups --nnp \
+        --inh-caps=-all --bounding-set=-all -- "$@" \
+        >> "$STAND/dienst.log" 2>&1 ) &
+    echo $! > "$LAUF/knoten.pid"
+    rueckgabe=0
+    wait $! || rueckgabe=$?
+    rm -f "$LAUF/knoten.pid"
+    [ -f "$LAUF/halt" ] && break
+    if [ "$rueckgabe" -eq 0 ]; then
+      echo "── $(date '+%F %T') ordentlich beendet" >> "$STAND/dienst.log"
+      break
+    fi
+    jetzt=$(date +%s)
+    neu=""
+    for t in $abbrueche; do [ $((jetzt - t)) -lt "$GRENZE_FENSTER" ] && neu="$neu $t"; done
+    abbrueche="$neu $jetzt"
+    # shellcheck disable=SC2086
+    zahl=$(set -- $abbrueche; echo $#)
+    echo "── $(date '+%F %T') abgebrochen mit $rueckgabe ($zahl in ${GRENZE_FENSTER} s)" >> "$STAND/dienst.log"
+    if [ "$zahl" -ge "$GRENZE_ABBRUECHE" ]; then
+      echo "angehalten: $zahl Abbrueche in $GRENZE_FENSTER Sekunden, zuletzt Rueckgabe $rueckgabe; siehe golem-knoten protokoll" > "$LAUF/grund"
+      break
+    fi
+    sleep "$PAUSE"
+  done
+  rm -f "$LAUF/waechter.pid"
+}
+
+# ⚑ **Das Dienstprotokoll waechst nicht ohne Ende.** Ueber einem Megabyte
+#   bleibt die zweite Haelfte; die Protokolle des Knotens selbst liegen
+#   daneben unter `protokolle/` und regelt `--aufnahme`.
+protokoll_kuerzen() {
+  d="$STAND/dienst.log"
+  [ -f "$d" ] || return 0
+  groesse=$(wc -c < "$d")
+  if [ "$groesse" -gt 1048576 ]; then
+    tail -c 524288 "$d" > "$d.neu" && mv "$d.neu" "$d"
+  fi
+}
+
+laeuft() {
+  [ -f "$LAUF/waechter.pid" ] && kill -0 "$(cat "$LAUF/waechter.pid")" 2>/dev/null
+}
+
+# ── Befehle ─────────────────────────────────────────────────────────
+
+befehl=${1:-status}
+[ $# -gt 0 ] && shift
+
+case "$befehl" in
+  einrichten)
+    lesen || true
+    bootstrap_neu=""; oeffentlich_neu=""
+    while [ $# -gt 0 ]; do
+      [ $# -ge 2 ] || fehler "$1 braucht einen Wert"
+      feld=${1#--}
+      pruefe "$feld" "$2"
+      case "$feld" in
+        bootstrap) bootstrap_neu="$bootstrap_neu $2" ;;
+        oeffentlich) oeffentlich_neu="$oeffentlich_neu $2" ;;
+        konsens | aktiv) fehler "$feld setzt golem-knoten selbst" ;;
+        *) eval "$feld=\$2" ;;
+      esac
+      shift 2
+    done
+    # ⚑ Genannte Listen ersetzen die alten, statt sich anzuhaengen: Wer
+    #   einen Bootstrap-Knoten tauscht, will den alten nicht behalten.
+    [ -n "$bootstrap_neu" ] && bootstrap=$bootstrap_neu
+    [ -n "$oeffentlich_neu" ] && oeffentlich=$oeffentlich_neu
+    if [ -n "$stimmsatz" ] && [ "$konsens" != ja ]; then
+      fehler "ein Stimmsatz ohne Konsensschluessel stimmt nicht mit; erst golem-knoten konsensschluessel DATEI"
+    fi
+    schreiben
+    zustand_anlegen
+    echo "Eingerichtet: $name als $rolle, P2P-Port $port."
+    echo "Weiter mit: golem-knoten starten   (und golem-knoten an, damit er beim Start mitkommt)"
+    [ "$rolle" = relais ] && echo "⚠️ Ein Relais braucht eine oeffentliche Adresse (--oeffentlich) und eine Weiterleitung von Port $port im Router."
+    [ "$erzeuger" = ja ] && echo "⚠️ Erzeuger: GENAU EIN Knoten im Netz baut die Bloecke. Zwei gabeln die Kette."
+    [ "$konformitaet" = aus ] && echo "⚠️ Ohne Konformitaetspruefung: nur fuer einen Probelauf."
+    exit 0
+    ;;
+  konsensschluessel)
+    [ $# -eq 1 ] || fehler "Aufruf: golem-knoten konsensschluessel DATEI"
+    [ -f "$1" ] || fehler "$1 gibt es nicht"
+    lesen || fehler "erst golem-knoten einrichten"
+    zustand_anlegen
+    ( umask 077; cp "$1" "$STAND/konsens.key.neu" )
+    chmod 0400 "$STAND/konsens.key.neu"
+    [ "$(id -u)" = 0 ] && chown "$KONTO_ID:$KONTO_ID" "$STAND/konsens.key.neu"
+    mv "$STAND/konsens.key.neu" "$STAND/konsens.key"
+    konsens=ja
+    schreiben
+    echo "Konsensschluessel uebernommen nach $STAND/konsens.key."
+    echo "⛔️ Die Vorlage $1 jetzt loeschen: Liegt sie auf dem Stick, kann jedes Programm und jeder Rechner sie lesen."
+    exit 0
+    ;;
+  befehlszeile)
+    lesen || fehler "noch nicht eingerichtet: golem-knoten einrichten"
+    befehlszeile
+    ;;
+  an | aus)
+    lesen || fehler "noch nicht eingerichtet: golem-knoten einrichten"
+    if [ "$befehl" = an ]; then aktiv=ja; else aktiv=nein; fi
+    schreiben
+    echo "Beim Start von GolemOS: $( [ "$aktiv" = ja ] && echo mit Knoten || echo ohne Knoten )."
+    ;;
+  starten)
+    lesen || fehler "noch nicht eingerichtet: golem-knoten einrichten"
+    laeuft && { echo "Der Knoten laeuft schon."; exit 0; }
+    [ -x "$PROGRAMM" ] || fehler "$PROGRAMM fehlt in diesem Abbild"
+    [ -x "$SETPRIV" ] || fehler "$SETPRIV fehlt in diesem Abbild; ohne es liefe der Knoten als root"
+    # Die Befehlszeile einmal vorab bauen: Ein Fehler (etwa kein Klon)
+    # kommt so hier an und nicht erst im Protokoll des Waechters.
+    befehlszeile > /dev/null
+    zustand_anlegen
+    mkdir -p "$LAUF"
+    rm -f "$LAUF/halt" "$LAUF/grund"
+    setsid "$0" waechter < /dev/null > /dev/null 2>&1 &
+    echo "Knoten gestartet; golem-knoten status zeigt den Stand."
+    ;;
+  waechter)
+    lesen || fehler "noch nicht eingerichtet"
+    waechter
+    ;;
+  stoppen)
+    mkdir -p "$LAUF"
+    touch "$LAUF/halt"
+    [ -f "$LAUF/knoten.pid" ] && kill "$(cat "$LAUF/knoten.pid")" 2>/dev/null || true
+    [ -f "$LAUF/waechter.pid" ] && kill "$(cat "$LAUF/waechter.pid")" 2>/dev/null || true
+    rm -f "$LAUF/waechter.pid" "$LAUF/knoten.pid"
+    echo "Knoten gestoppt."
+    ;;
+  status)
+    if ! lesen; then
+      echo "Knoten: nicht eingerichtet (golem-knoten einrichten)"
+      exit 0
+    fi
+    echo "Knoten: $name, $rolle, P2P-Port $port, beim Start $( [ "$aktiv" = ja ] && echo mit || echo nicht mit )"
+    if laeuft; then
+      echo "Laeuft (Waechter $(cat "$LAUF/waechter.pid"))."
+    else
+      echo "Laeuft nicht."
+      [ -f "$LAUF/grund" ] && cat "$LAUF/grund"
+    fi
+    [ -f "$STAND/dienst.log" ] && { echo "── zuletzt:"; tail -n 5 "$STAND/dienst.log"; }
+    exit 0
+    ;;
+  protokoll)
+    [ -f "$STAND/dienst.log" ] || fehler "noch kein Protokoll"
+    tail -n "${1:-40}" "$STAND/dienst.log"
+    ;;
+  -h | --hilfe | hilfe)
+    sed -n '2,10p' "$0"
+    ;;
+  *)
+    fehler "unbekannt: $befehl (golem-knoten hilfe)"
+    ;;
+esac

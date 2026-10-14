@@ -329,7 +329,7 @@ pub fn mlp_h_stapel(
     //   `silu_produkt`), nur nicht verschmolzen. Gemessen am 2026-09-30
     //   rechnet die GPU einen ternaeren Stapel rund viermal so schnell wie
     //   alle Kerne.
-    if crate::metal::nimmt(b) {
+    if crate::ressourcen::nimmt(b) {
         let gate = crate::linear::linear_matrix_stapel(xs, W_gate, hidden_size, gate_w_shifts, in_frac_bits, gate_out_frac);
         let up = crate::linear::linear_matrix_stapel(xs, W_up, hidden_size, up_w_shifts, in_frac_bits, up_out_frac);
         let flach = crate::fadenpool::rechnen_breit(b, zeilen, crate::linear::kerngrenze(), |i, ziel| {

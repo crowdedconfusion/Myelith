@@ -23,7 +23,7 @@ mit 16 Kernen) und gilt nur dort.
 | `matmul2d` über die ganze Breite, nur int8 | 6,0 |
 
 Gebaut wurde der vierte Weg; er steht in
-`INTEGER_LLM/kernels/src/metal/`.
+`INTEGER_LLM/kernels/src/ressourcen/metal/`.
 
 ## Aufrufe
 

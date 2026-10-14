@@ -72,7 +72,7 @@ impl Fingerprint {
             // Ein Bau mit `--features cuda` ist dafür konfiguriert und
             // rechnet trotzdem mit der Referenz.
             ("backends_rechnend".into(), rechnende_backends().join(",")),
-            ("backend_selected".into(), selected_backend().to_string()),
+            ("backend_selected".into(), selected_backend()),
         ];
 
         // Die Beschreibung ist kein Teil des Fingerabdrucks: Sie benennt
@@ -278,10 +278,10 @@ pub fn rechnende_backends() -> Vec<String> {
 /// Das Backend, das dieser Lauf tatsächlich verwendet.
 ///
 /// **Meldet nie mehr, als geschieht.** Ein Bau mit `--features cuda`
-/// bekommt hier `reference`, weil die Referenzkernel rechnen. Stünde
-/// stattdessen `cuda` im Protokoll, sähe ein bitgleiches Ergebnis wie ein
-/// bestandener GPU-Nachweis aus und wäre keiner.
-pub fn selected_backend() -> &'static str {
+/// ohne bereite Karte bekommt hier keinen Teil `cuda`, weil die CPU
+/// rechnet. Stünde er trotzdem im Protokoll, sähe ein bitgleiches
+/// Ergebnis wie ein bestandener GPU-Nachweis aus und wäre keiner.
+pub fn selected_backend() -> String {
     // **Gefragt wird der Code, nicht der Prozessor** (Fund 34).
     // Hier stand `is_x86_feature_detected!("avx2")`, und bei einem Treffer
     // ging `cpu-simd/avx2` ins Protokoll. Das war eine Auskunft darüber,
@@ -293,16 +293,26 @@ pub fn selected_backend() -> &'static str {
     // ⚑ **Die GPU dazu, wenn sie rechnen darf** (2026-09-14). Sie rechnet die
     // gebündelten Matrizen der Vorbereitung, alles andere die CPU; auf
     // Apple-Silizium ist das immer der vektorisierte Weg.
-    let gpu = integer_llm_kernels::metal::verfuegbar() && integer_llm_kernels::metal::schwelle() > 0;
-    match (integer_llm_kernels::dot::VEKTORISIERT, gpu) {
-        // Der einzige vektorisierte Pfad, den es gibt. Kommt AVX2 dazu,
-        // gehört hier eine Fallunterscheidung nach `target_arch` hin, und
-        // dann trägt sie auch etwas aus.
-        (true, true) => "metal+cpu-simd/neon",
-        (true, false) => "cpu-simd/neon",
-        (false, true) => "metal+reference",
-        (false, false) => "reference",
+    //
+    // ⚑ **Ebenso die Steckkarten** (2026-10-14), je Hersteller, wenn eine
+    // Karte die Selbstpruefung bestanden hat und rechnen darf.
+    use integer_llm_kernels::ressourcen::karten;
+    let mut teile: Vec<&str> = Vec::new();
+    if karten::schwelle() > 0 {
+        for h in [karten::Hersteller::Nvidia, karten::Hersteller::Amd] {
+            if karten::hersteller_an(h) && karten::verfuegbar_fuer(h) {
+                teile.push(h.rechenweg());
+            }
+        }
     }
+    if integer_llm_kernels::ressourcen::metal::verfuegbar() && integer_llm_kernels::ressourcen::metal::schwelle() > 0 {
+        teile.push("metal");
+    }
+    // Der einzige vektorisierte Pfad, den es gibt. Kommt AVX2 dazu,
+    // gehört hier eine Fallunterscheidung nach `target_arch` hin, und
+    // dann trägt sie auch etwas aus.
+    teile.push(if integer_llm_kernels::dot::VEKTORISIERT { "cpu-simd/neon" } else { "reference" });
+    teile.join("+")
 }
 
 // ---------------------------------------------------------------------------
@@ -657,11 +667,15 @@ mod tests {
         );
     }
 
-    /// **Der Kern der Sperre.** Ein Bau, der für ein delegierendes
-    /// Backend konfiguriert ist, darf keinen Messlauf zulassen. Ohne das
-    /// bekäme jemand mit `--features cuda` ein bitgleiches Ergebnis,
-    /// weil auf beiden Seiten die CPU-Referenz rechnet, und hielte es für
-    /// den GPU-Nachweis.
+    /// **Der Kern der Sperre.** Ein Bau, der für `cuda` oder `rocm`
+    /// konfiguriert ist, darf ohne geprüfte Karte keinen Messlauf
+    /// zulassen. Ohne das bekäme jemand mit `--features cuda` ein
+    /// bitgleiches Ergebnis, weil auf beiden Seiten die CPU rechnet, und
+    /// hielte es für den GPU-Nachweis.
+    ///
+    /// 📌 Seit dem 2026-10-14 gibt es echte Kerne (`kernels::ressourcen::karten`).
+    /// Hat eine Karte die Selbstprüfung bestanden, rechnet der Weg, und es
+    /// gibt für ihn nichts abzulehnen; sonst wird abgelehnt wie bei Metal.
     #[test]
     fn ein_bau_ohne_rechenpfad_wird_abgelehnt() {
         let konfiguriert = compiled_backends();
@@ -669,12 +683,12 @@ mod tests {
 
         for backend in ["cuda", "rocm"] {
             if konfiguriert.iter().any(|b| b == backend) {
-                assert!(
-                    !rechnend.iter().any(|b| b == backend),
-                    "{backend} rechnet: dann gehört dieser Test angepasst"
-                );
+                if rechnend.iter().any(|b| b == backend) {
+                    continue;
+                }
                 let fehler = rechenpfad_pruefen().expect_err("hätte ablehnen müssen");
-                assert!(fehler.contains("KEINEN eigenen Rechenpfad"), "{fehler}");
+                assert!(fehler.contains("rechnet in diesem Prozess NICHT"), "{fehler}");
+                assert!(fehler.contains("Selbstpruefung"), "{fehler}");
                 return;
             }
         }

@@ -103,7 +103,10 @@ fn run_batch(model: &IntegerModel, vectors_dir: &Path) {
     // lehnt einen Lauf ab, in dem diese Zahl null ist; sonst bestaende
     // die CPU unter dem Namen der GPU (Fund 33).
     #[cfg(feature = "metal")]
-    println!("metal_buendel_auf_der_gpu {}", integer_llm_kernels::metal::gerechnet());
+    println!("metal_buendel_auf_der_gpu {}", integer_llm_kernels::ressourcen::metal::gerechnet());
+    // Dasselbe fuer die Steckkarten (`run.sh cuda`, `run.sh rocm`).
+    #[cfg(any(feature = "cuda", feature = "rocm"))]
+    println!("karten_buendel_auf_der_gpu {}", integer_llm_kernels::ressourcen::karten::gerechnet());
     if !errors.is_empty() {
         eprintln!("Fehlgeschlagen: {:?}", errors);
         std::process::exit(1);

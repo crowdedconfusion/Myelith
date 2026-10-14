@@ -1,7 +1,7 @@
 # integer-llm
 
-> **Version:** 0.120.0 (θ_v 0.22.0; kernels 0.80.0, runtime 0.87.0, pipeline 0.15.1)
-> **Datum:** 2026-10-05
+> **Version:** 0.126.0 (θ_v 0.22.0; kernels 0.84.0, runtime 0.93.0, pipeline 0.15.1)
+> **Datum:** 2026-10-14
 > **Status:** ⚠️ **Das Akzeptanzkriterium ruht auf einer zu kleinen
 > Stichprobe.** Gemessen wurde bisher ueber **4 Sequenzen, 435
 > Positionen**; eine Messung ueber **32 Sequenzen, 3558 Positionen**
@@ -648,6 +648,311 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
   volle Paritätstests nur auf GPU-Runnern (nightly oder PR-basiert)
 
 ## Changelog
+
+### v0.126.0 (2026-10-14): Gesperrte Token bei der Erzeugung (runtime 0.93.0)
+
+- 📌 **Fund 541:** Mit „ohne Denken“ gibt die Vorlage einen leeren
+  Denkblock vor, und das hybride 35B öffnete danach trotzdem einen neuen.
+  Gefunden in der Schlafprobe mit dem 35B (ternär): Zwei der sechs
+  vertrauten Antworten des Schlafs bestanden nur aus `<think>`, das knappe
+  Budget war damit verbraucht, und die Festlegungen des Nutzers gingen
+  verloren. ⚑ `Erzeugung::gesperrt`: Token, die nie gewählt werden. Ihr
+  Logit wird vor jeder Wahl auf den kleinsten Wert gesetzt, ganzzahlig, an
+  der einen Stelle `waehlen`, die auch die Vorausschau benutzt. Leer heißt:
+  der Lauf ist Zeichen für Zeichen der alte. Gesetzt wird es vom Client
+  (CLIENT v0.156.0).
+- Neue Prüfung `ein_gesperrtes_token_wird_nie_gewaehlt` (mit dem 0,6B):
+  ohne Sperre wiederholbar dieselbe Folge, mit Sperre des ersten Tokens
+  ein anderes, mit Sperre aller Token keines davon.
+- Belege: `cargo test` grün (170), Clippy ohne Befund.
+
+### v0.125.0 (2026-10-14): Ein Dach `ressourcen` über allen Rechenwerken, mit einer Weiche (kernels 0.84.0, runtime 0.92.0)
+
+⚑ **Festlegung des Projektinhabers:** „Gerne als Dach ‚Ressourcen‘ und
+alle Backends darunter.“ Vorher lagen Metal, die Steckkarten und das
+Backend-Trait nebeneinander in der Wurzel der Kiste.
+
+```
+kernels/src/ressourcen/
+  mod.rs       das Dach: Überblick und die eine Weiche
+  metal/       vorher src/metal
+  karten/      vorher src/resources (CUDA, ROCm, mehrere Karten)
+  backend.rs   vorher src/backend.rs (das Trait je Operation)
+  backends/    vorher src/backends (reference, simd, die alten Stubs)
+```
+
+- ⚑ **Die eine Weiche** (`ressourcen::stapel`, `stapel_viele`, `nimmt`):
+  zuerst Metal, dann die Steckkarten, sonst die CPU. 📌 Vorher stand diese
+  Reihenfolge zweimal in `linear.rs` und einmal in `mlp.rs`; drei Orte für
+  eine Entscheidung. `linear.rs` fragt jetzt nur noch das Dach, und die
+  Hilfsfunktion für die Ausgangsskalen zieht mit. Neue Prüfung
+  `die_weiche_gibt_none_oder_dieselbe_zahl`.
+- **Die CPU bekommt kein eigenes Modul**, mit Absicht: Ihr Rechenpfad sind
+  die Kerne selbst (`linear.rs`, `dot.rs`, Fadenpool), der Maßstab, gegen
+  den sich jedes Rechenwerk prüft. Das Dach sagt das.
+- Die Steckkarten heißen unter dem Dach `karten` (vorher `resources`).
+  Pfade: `integer_llm_kernels::ressourcen::{metal, karten, backend,
+  backends}`. Nachgezogen in Runtime (`rechenwege`, `bench_probe`,
+  `golden_model`), Testclient, Paritätstest, Gleitkomma-Audit (mit
+  `ressourcen/mod.rs`), `run.sh`, CI (`--lib ressourcen::karten`),
+  `karten-pruefen.sh`, Sondenbeschreibung. Für die Glossare unter
+  `README/` liegt ein Vorschlag vor; ältere Changelog-Einträge behalten
+  ihre Pfade.
+- Belege: `cargo test` ohne Feature 375, `cuda,rocm` 391, `metal` 388,
+  alle drei 396; Clippy über `cpu-simd`, `cuda`, `rocm`, `metal` und ohne
+  Feature; zwölf abhängige Kisten grün, Runtime, Testclient und Client
+  auch mit `cuda,rocm`; Audit grün; Konformität `reference`, `cpu-simd`
+  53/53, **`metal` 53/53 mit 280 Bündelungen auf der GPU über die neue
+  Weiche**; `run.sh cuda` ohne Karte abgelehnt; `karten-pruefen.sh
+  --nachbau 6` dreimal mit dem CPU-Abdruck.
+
+### v0.124.0 (2026-10-14): Das Modul für die Karten heißt `resources` (kernels 0.83.0, runtime 0.91.0)
+
+⚑ **Name vom Projektinhaber** (2026-10-14, „wie wäre es mit
+‚resources‘?“): `kernels/src/diskret/` heißt jetzt `kernels/src/resources/`,
+der Pfad `integer_llm_kernels::resources`. Der Arbeitsname stammte aus
+dem Bau; nach der Regel für Code, der einer Vorlage folgt, wird ein
+fertiges Modul vom Projektinhaber benannt.
+
+- Umbenannt an 90 Stellen in Kernen, Runtime (`rechenwege`,
+  `bench_probe`, `golden_model`), Gleitkomma-Audit, `run.sh`, CI
+  (`cargo test --features cuda,rocm --lib resources`) und
+  `karten-pruefen.sh`; der Nachbau findet seine Quellen unter dem neuen
+  Pfad. Nur das ganze Wort, das Adjektiv („diskreten Logarithmus“ im
+  Konsens) bleibt unberührt. Die Einträge v0.122.0 und v0.123.0 halten den
+  Stand ihrer Fassung und nennen den alten Namen.
+- Belege: `cargo test` mit denselben Zahlen wie vorher (ohne Feature 374,
+  `cuda,rocm` 390, `metal` 387), Clippy über alle vier Features, Runtime
+  und Testclient mit und ohne Features grün, Audit grün, `run.sh cuda`
+  lehnt ohne Karte ab, `karten-pruefen.sh --nachbau 6` mit Rückgabe 0.
+
+### v0.123.0 (2026-10-14): Vorbereitet für eine Mietmaschine mit sechs Karten (kernels 0.82.0, runtime 0.90.0)
+
+**Auftrag des Projektinhabers:** alles vorbereiten, um auf einer
+Mietmaschine mit sechs Grafikkarten ein Modell über alle sechs zu rechnen
+und die Verteilung der Arbeit erfolgreich zu testen.
+
+⚑ **Was dafür fehlte, und jetzt da ist:**
+
+- **Ein Zähler je Karte** (`Kartenbeschreibung.teile`, `.zeilen`). Der
+  Gesamtzähler sähe auch dann gut aus, wenn nur eine von sechs Karten
+  rechnete. `bench_probe` gibt je Karte eine Zeile aus,
+  `karten_messung` eine Tabelle.
+- **Ausfall mit Ersatzlauf** (`mit_ersatz`). Fällt eine Karte mitten im
+  Lauf aus, wird dasselbe Bündel auf den übrigen neu verteilt, die Karte
+  ist danach draußen (`ausgefallen`), und der Lauf geht mit fünf weiter.
+  Vorher hätte jedes weitere Bündel die CPU gerechnet.
+- **Der Verteiler gegen eine Schnittstelle** (`Rechner`): Die echte Karte
+  erfüllt sie, in den Prüfungen eine Attrappe (`attrappe.rs`). Damit laufen
+  in **jedem** Bau sechs Karten: eine Matrix nach Zeilen, 40 Experten
+  int8/ternär ganz, Gewichte 1:1:1:1:1:3 (genau drei Achtel), ein Ausfall
+  mit Ersatzlauf und alle sechs aus. Gegenprobe: ein Fehler im
+  Zusammensetzen fällt auf.
+- ⚑ **Eine nachgebildete Karte auf Treiberebene** (`nachbaukarte.rs`,
+  `MYL_GPU_NACHBAU=N`): Speicher im Hauptspeicher, Kerne auf der CPU, und
+  **jeder Zugriff gegen den belegten Speicher geprüft**, strenger als eine
+  echte Karte. Damit läuft der ganze Weg von `auf_karte` (Puffer,
+  Versätze, Teilgewichte, Argumente, Herunterladen) und die
+  Selbstprüfung je Karte ohne Hardware. ⛔️ Sie zählt für keinen Rechenweg
+  (`verfuegbar_fuer`, `rechenpfad`), ein Konformitätslauf besteht mit ihr
+  nicht, und jede Ausgabe nennt sie `nachbau` (Fund 33).
+- **`karten_messung`**: Skalierung über 1 bis N Karten (die übrigen je
+  Lauf abgeschaltet), mit Gleichheitsprüfung.
+
+**Belegt mit echten Modellen und sechs nachgebildeten Karten**
+(`bench_probe`, Abdruck über alle Logits):
+
+| Modell | Lauf | Karten mit Arbeit | Bündel | Abdruck wie CPU |
+|---|---|---|---|---|
+| myelith-0.6b | alle sechs | 6 | 392 | ja |
+| myelith-0.6b | Hälfte (`MYL_GPU_GERAETE=0,1,2`) | 3 | 392 | ja |
+| myelith-0.6b | Gewichte 1:1:1:1:1:3 | 6 (die letzte genau dreimal so viele Zeilen) | 392 | ja |
+| myelith-30b-a3b | alle drei Läufe | 6 / 3 / 6 | 24 390 | ja |
+
+Beim Gemisch rechnen die sechs Karten fast gleich viel (3 564 bis 3 896
+Teile), ganze Experten und geteilte Matrizen nebeneinander.
+
+- Belege: `cargo test` grün ohne Feature (374) und mit `cuda,rocm` (390);
+  Clippy über `cpu-simd`, `cuda`, `rocm`, `metal`; Gleitkomma-Audit mit
+  `attrappe.rs` und `nachbaukarte.rs`; derselbe Probelauf unter Linux
+  (aarch64, dash, GNU-Werkzeuge) mit Rückgabe 0.
+
+### v0.122.0 (2026-10-14): Gebündelte Matrizen auf Karten von NVIDIA und AMD, auch auf mehreren zugleich (kernels 0.81.0, runtime 0.89.0)
+
+**Auftrag des Projektinhabers:** CUDA- und ROCm-Backends, „aus einem
+anderen Projekt geholt“ und an Runtime und Konfiguration angepasst, damit
+auf einem (Miet-)System sofort gerechnet werden kann; nachgereicht:
+mehrere Karten am selben System gleichzeitig, mit einer Logik, die
+verteilt. Festlegungen: **eine eigene dünne Schicht** statt `cudarc`;
+**der Decode auf der Karte nur, wenn sicher problemlos**, sonst bis
+Hardware da ist. ⚑ Er ist zurückgestellt: Er braucht Gewichte, die dauernd
+auf der Karte liegen, einen Eingriff in das Modell und vorher die Messung
+Host→Karte.
+
+⚑ **Was aus fremden Projekten kommt, und was nicht.** Die verbreiteten
+Backends (llama.cpp/ggml, candle, vLLM) rechnen in fp16/fp32, meist auf
+Tensor Cores; ihre Kerne sind für den Vertrag hier unbrauchbar. Als
+Vorlage gelesen und neu geschrieben ist nur das Gerüst: Treiber zur
+Laufzeit laden (wie `cudarc`), eine Kernquelle für CUDA und HIP (wie
+ggml). Die Rechnung folgt dem eigenen Metal-Shader.
+
+**Neu: `kernels/src/diskret/`** (Arbeitsname, Feature `cuda` bzw. `rocm`,
+beide schließen `cpu-simd` ein wie `metal`):
+
+- **`kerne.cu`**: zwei Kerne in einem Dialekt für NVRTC und hiprtc,
+  `myl_w8a16` und `myl_ternaer`. Kacheln zu 64 Zeilen und 16 Eingaben über
+  den gemeinsamen Speicher und `__syncthreads`; Summen exakt in int32 je
+  Stück (höchstens 2²⁸ bzw. 2²³ je Gruppe) und int64 gesamt; Runden zur
+  nächsten geraden Zahl und Klemmen wie `fixed_point.rs`, der Linksshift
+  mit Umlauf wie in Rust. Kein Gleitkomma, keine Tensor Cores, kein
+  Warp-Shuffle, keine Annahme über die Warp-Breite.
+- **`lader.rs`**: eigener `dlopen`/`LoadLibraryW`, keine neue Kiste. Eine
+  fehlende Bibliothek kostet die Karte, nie den Bau.
+- **`treiber.rs`**: NVIDIA über `libcuda` und NVRTC (CUBIN für `sm_XY`,
+  Rückfall PTX), AMD über `libamdhip64` und hiprtc (Architektur aus den
+  Kartenangaben gesucht statt über einen festen Versatz gelesen,
+  `MYL_HIP_ARCH` geht vor). Je Karte Kontext, Modul, Pufferverrat unter
+  Mutex, PCI-Adresse. Bibliotheken über `MYL_CUDA_TREIBER`, `MYL_NVRTC`,
+  `MYL_HIP`, `MYL_HIPRTC`, `ROCM_PATH`.
+- **`verteiler.rs`**: mehrere Karten. Viele Aufträge (ab zwei je Karte)
+  ganz, die teuersten zuerst an die im Verhältnis zum Gewicht am wenigsten
+  belastete Karte; wenige Aufträge nach Zeilen, proportional, auf 64
+  ausgerichtet. Ganzzahlig, wiederholbar. **Bitgleich, weil nur
+  zusammengesetzt und nie über Karten summiert wird.** Jede Karte rechnet
+  in ihrem eigenen Faden.
+- **`mod.rs`**: Schnittstelle wie `metal` (`stapel`, `stapel_ternaer`,
+  `stapel_viele` auch ternär, `nimmt`, `verfuegbar`, `gerechnet`,
+  Schwelle `MYL_GPU_AB`, Vorgabe 16, ⚠️ ungemessen), Auswahl
+  `MYL_GPU_GERAETE`, Gewichte `MYL_GPU_GEWICHTE`, Schalter je Hersteller
+  und **je Karte über die PCI-Adresse** (`karte_setzen`). ⚑ **Die Gewichte
+  werden je Aufruf hochgeladen**: Ein Speicher je Adresse wäre falsch
+  (Metal-Kopf, Training ändert an Ort und Stelle), und den Inhalt zu
+  prüfen kostet so viel wie das Hochladen.
+- **`pruefung.rs`**: die Selbstprüfung **je Karte** (Extremwerte bei 9 728
+  Spalten, Kachelränder, alle drei Umskalierungen, ternär mit Code 3 und
+  größtem Betrag, alle Fälle zugleich und geteilt an einer Grenze mitten in
+  einer Kachel). ⛔️ **Eine Karte, die anders rechnet, fällt allein
+  heraus**; die anderen rechnen weiter.
+- **`nachbau.rs`, `nachbau.hpp`, `nachbau_haupt.cpp`**: dieselbe
+  `kerne.cu` als C++20 auf der CPU, Fäden als echte Threads mit Schranke,
+  gegen die CPU-Kerne mit den Fällen der Selbstprüfung. **Belegt ohne
+  Karte**: bitgleich in allen sieben Fällen, auf macOS (clang) und Linux
+  (gcc). Gegenprobe: ein Rundungsfehler um eins und ein falsch entpackter
+  Ternärcode fallen beide auf. Ohne C++-Übersetzer scheitert die Prüfung
+  laut.
+
+**Eingebaut:** `linear.rs` (Stapel, Stapel ternär, viele Stapel, nach
+Metal; die Ausgangsskalen beider Wege in einer Hilfsfunktion
+`ausgangsziele`), `mlp.rs` (`nimmt`), `metal::abstaende_fuer` für beide
+Wege. `rechenpfad`: `cuda`/`rocm` gelten genau dann, wenn eine Karte die
+Selbstprüfung bestanden hat; die Ablehnung nennt den Grund (gekürzt:
+„nicht gefunden“ statt eines Dutzends Suchpfade). Der Test
+`delegierende_backends_werden_abgelehnt` heißt jetzt
+`cuda_und_rocm_gelten_nur_mit_gepruefter_karte`, wie er es selbst
+angekündigt hatte. Runtime: `rechenwege::setzen("cuda"|"rocm")` schaltet,
+`rechenwege::karte_setzen(pci)` neu, `golden_model` meldet
+`karten_buendel_auf_der_gpu`, `bench_probe` `karten_buendel`.
+`conformance/run.sh cuda|rocm` erzwingt die Karten (`MYL_GPU_AB=1`) und
+lehnt ab, wenn keine gerechnet hat.
+
+**Neu: `karten_messung`** (kernels): CPU gegen Karten für vier Formen und
+Stapel 1 bis 512, das Hochladen, 128 Experten in einem Bündel; jede
+Messung prüft die Gleichheit, eine Abweichung endet mit 1. Schlägt eine
+Schwelle vor.
+
+**Gleitkomma-Audit:** die sechs neuen Dateien im Konsenspfad, `kerne.cu`
+und der Nachbau unter den Shadern; die Vollständigkeitsprüfung sucht
+jetzt auch `*.cu`, `*.cpp`, `*.hpp`.
+
+- 📌 **Fund 534** (Client, siehe dort): Der Schalter je Hersteller wurde
+  je Karte aufgerufen, die zuletzt bearbeitete entschied für alle.
+  Deshalb der Schalter je Karte.
+- ⚠️ **Offen, nur auf Hardware:** Selbstprüfung und Konformität auf echten
+  Karten, die Schwelle, die Architekturerkennung bei AMD, der Durchsatz
+  der Kerne (geschrieben auf Richtigkeit, nicht auf Tempo; `__dp4a`
+  bzw. `sdot4` mit der Zerlegung aus Metal ist der nächste Schritt).
+- Belege: `cargo test` grün ohne Feature (368), mit `cuda`, `rocm`,
+  `metal` (je 381) und allen zusammen (386); Clippy mit `-D warnings` über
+  `cpu-simd`, `cuda`, `rocm`, `metal`; Linux (aarch64, gcc) mit Nachbau
+  grün, Windows-Kreuzbau sauber; Konformität `reference`, `cpu-simd`,
+  `metal` je 53/53 (Metal 280 Bündelungen auf der GPU) nach dem Umbau in
+  `linear.rs`; `run.sh cuda` und `run.sh rocm` hier mit Exit 2 abgelehnt.
+
+### v0.121.0 (2026-10-13): Das 35B rechnet 262 144 Positionen mit der richtigen Drehung (runtime 0.88.0)
+
+**Auftrag des Projektinhabers:** Das Kontextfenster von 40 960 Token
+erweitern, ohne drastischen Geschwindigkeitsverlust.
+
+- **Woher die 40 960 kamen:** nicht vom Modell. Das Qwen3.6-35B-A3B kann
+  262 144 Positionen, aber das Artefakt (gebaut am 2026-09-22) trug
+  Drehtabellen für 40 960 (Fund 497, seit damals offen). Die Grenze ist das
+  Kleinere aus `max_context` und den Zeilen der Tabellen.
+- ⛔️ **Und dabei gefunden: die Tabellen drehten mit der falschen Basis.**
+  Aus Zeile 1 zurückgerechnet rund 1e6; das Modell verlangt 1e7
+  (`rope_parameters.rope_theta` in seiner `config.json`, in der
+  `model_config.json` des Artefakts richtig eingetragen). Das ternäre 35B
+  teilte die Datei als harten Verweis und hatte denselben Fehler. Die
+  Konfigurationsprobe hatte nur die Länge der Tabellen geprüft.
+- **Neu: `calibrate/src/rope_nachziehen.py`** zieht die Drehtabellen eines
+  vorhandenen Artefakts auf seine volle Länge nach, ohne Gewichte und Skalen
+  anzufassen: dieselbe Herleitung (`rope_masse`), derselbe Erzeuger und
+  dasselbe Format wie die Ausfuhr. ⛔️ Geschrieben wird nur, wenn die ersten
+  Zeilen bytegleich zur alten Tabelle sind; sonst ist das Artefakt mit
+  anderen Maßen gebaut. `--berichtigen` schreibt trotzdem und nennt die
+  Basis, mit der die alte Tabelle gerechnet war. Alle Dateien kommen als neue
+  Datei an die Stelle, auch `luts.json` und `theta_v.json`. 📌 Beim ersten
+  Entwurf wäre `luts.json` in die geteilte Datei geschrieben worden; das
+  ternäre 35B hätte danach Hashes genannt, die zu seinen alten Tabellen
+  nicht passen, und nicht mehr geladen. ⚠️ Die Kennung des Artefakts
+  (`luts_hash`) ändert sich.
+- **Berichtigt** (die Artefakte sind nicht versioniert): `myelith-35b-a3b`
+  und `myelith-35b-a3b-ternaer`, 40 960 → 262 144 Zeilen mit Basis 1e7.
+  Alle anderen Artefakte geprüft: richtig.
+- **Gemessen, ob es besser wird** (35B int8, Wikitext-2-Test als ein
+  zusammenhängender Text, Lehrervorgabe über je 1 024 Token, alte und neue
+  Tabelle bei denselben Gewichten):
+
+  | Kontext davor | alte Tabelle (1e6) | neue Tabelle (1e7) |
+  |---|---|---|
+  | 8 192 | 3,8366 | 3,8209 (−0,4 %) |
+  | 24 576 | 5,4851 | 5,4396 (−0,8 %) |
+  | 39 000 | 4,7075 | 4,6677 (−0,85 %) |
+
+  Bis 2 048 Token (vier Sequenzen, 8 188 Positionen) gleich (−0,1 %): Die
+  Basen unterscheiden sich in den langsam drehenden Paaren, und deren Winkel
+  bleiben bei kurzem Abstand klein.
+- **Gemessen, was langer Kontext kostet** (neue Kontextprobe, 35B int8,
+  `cpu-simd` und `metal`, sonst ruhige Maschine):
+
+  | Kontext | Decode | Vorbereitung neuer Token |
+  |---|---|---|
+  | 2 048 | 12,7 Tok/s | 125 Tok/s |
+  | 16 384 | 9,5 Tok/s | 123 Tok/s |
+  | 40 960 | 9,3 Tok/s | 73 Tok/s |
+  | 65 536 | 8,6 Tok/s | 47 Tok/s |
+  | 98 304 | 6,9 Tok/s | 32 Tok/s |
+  | 131 072 | 6,2 Tok/s | 24 Tok/s |
+
+  ⚑ **Der Decode halbiert sich bis 128 k, die Vorbereitung fällt auf ein
+  Fünftel.** Teuer an langem Kontext ist also das Einlesen neuer Token
+  (eine Werkzeugausgabe von 5 000 Token: 40 s bei 2 k, dreieinhalb Minuten
+  bei 128 k), nicht das Antworten. Nur jede vierte Ebene des Gemischs hat
+  volle Aufmerksamkeit, die anderen tragen einen Zustand fester Größe; der
+  KV-Speicher wächst mit rund 20 KiB je Token (2,6 GB bei 128 k).
+- **Neu: `src/bin/kontextprobe.rs`**: bereitet eine Tokenfolge bis zu Marken
+  vor und misst dort Decode oder, mit `--lehrer`, die Perplexität der
+  folgenden Token. Messpfad in f64, kein Teil der Auslieferung.
+- **Konfigurationsprobe** (`tests/test_modellkonfig_vollstaendig.py`): prüft
+  jetzt auch die ersten 64 Zeilen jeder Drehtabelle gegen die Maße des
+  Modells; Gegenprobe mit der alten Tabelle des 35B fällt durch. 📌 **Eine
+  Größe zu prüfen ist nicht, den Inhalt zu prüfen.**
+- **Neu: `tests/test_rope_nachziehen.py`** (ohne Fremdbibliothek, in
+  `ci.yml` aufgenommen): wächst und bleibt am Anfang bytegleich, Hashes
+  nachgezogen, harte Verweise bleiben alt, eine abweichende Tabelle bleibt
+  ohne `--berichtigen`, nie über `max_context`.
+- Belege: `cargo test` (169) und Clippy (`-D warnings`) grün in `runtime`;
+  Konfigurationsprobe, `test_rope_nachziehen.py`, `test_rope_yarn.py`,
+  `test_no_float.py` grün.
 
 ### v0.120.0 (2026-10-08): Merkpunkte vor jeder Marke (runtime 0.87.0)
 

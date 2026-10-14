@@ -1,0 +1,10 @@
+{
+  "name": "oberflaeche_beim_start",
+  "beschreibung": "Nur auf GolemOS: legt fest, ob die Oberflaeche (Myelith-Fenster im Vollbild) beim Hochfahren von selbst startet. Nur auf ausdruecklichen Wunsch des Menschen.",
+  "parameter": {
+    "type": "object",
+    "properties": { "an": { "type": "string", "enum": ["ja", "nein"], "description": "ja: startet beim Hochfahren; nein: nicht" } },
+    "required": ["an"]
+  },
+  "befehl": "command -v golem-schicht >/dev/null || { echo 'Das ist kein GolemOS.'; exit 1; }; case {an} in ja) golem-schicht an ;; nein) golem-schicht aus ;; *) echo 'an: ja oder nein'; exit 2 ;; esac"
+}

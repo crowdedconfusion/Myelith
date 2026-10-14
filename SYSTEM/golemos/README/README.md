@@ -1,11 +1,14 @@
 # golemos (die Linux-Distribution, die nur Myelith bedient)
 
-> **Version:** 0.2.1 (`golem-einrichten` 0.2.1)
-> **Datum:** 2026-09-30
+> **Version:** 0.3.0 (`golem-einrichten` 0.3.0)
+> **Datum:** 2026-10-13
 > **Status:** Startet vom Stick und von Platte, findet einen
 > Myelith-Ordner auf dem Stick oder einem zweiten Laufwerk und
 > installiert sich mit einem Assistenten auf eine ganze Platte. Belegt
-> unter QEMU mit UEFI auf x86_64 und aarch64, von Anfang bis Ende. Offen: ein Lauf
+> unter QEMU mit UEFI auf x86_64 und aarch64, von Anfang bis Ende. Seit
+> 0.3.0 betreibt es einen **Myelith-Knoten** als Dienst (`golem-knoten`,
+> unter QEMU belegt) und nimmt eine **Oberflächen-Schicht** dazu
+> (`golem-schicht`, das Myelith-Fenster im Vollbild). Offen: ein Lauf
 > auf echter Hardware, die A/B-Umschaltung, eine eigene
 > Kernkonfiguration.
 
@@ -43,6 +46,54 @@ Gemeint sind PCs (x86_64) und ARM-Rechner mit UEFI (aarch64).
 | `golem-einrichten suchen` | Myelith-Ordner suchen, Modell einstellen; läuft bei jedem Start (`S06myelith`) |
 | `golem-einrichten platten` | welche Platte für eine Installation in Frage kommt, und warum nicht |
 | `golem-einrichten installieren --ziel NAME --bestaetigung NAME` | dasselbe ohne Fragen, mit denselben Prüfungen |
+| `golem-einrichten schicht-eintreten WURZEL PROGRAMM` | in eine Schicht wechseln und alle Vorrechte ablegen, bevor ihr erstes Programm läuft (für `golem-schicht`) |
+
+## Der Knoten (`golem-knoten`)
+
+`myl-node` als Dienst, mit demselben Zuschnitt wie der MYL-SERVER für NixOS
+(`NODE/myl-server/modul.nix`): eigenes Konto ohne Vorrechte (900,
+`setpriv` aus util-linux), nach außen nur der P2P-Port, Beobachtung und Tür
+auf der Rückschleife, nach fünf Abbrüchen in fünf Minuten angehalten statt
+endlos neu gestartet. Einstellung (`/etc/golemos/knoten.conf`, root 0600)
+und Zustand samt Identität (`/var/lib/myl-knoten`, 0700) liegen auf der
+Wurzel und nicht auf der für jeden lesbaren FAT-Datenpartition.
+
+| Befehl | Was |
+|---|---|
+| `golem-knoten einrichten --name N --rolle teilnehmer\|relais [...]` | einrichten, jeder Wert geprüft |
+| `golem-knoten starten` / `stoppen` / `status` / `protokoll` | betreiben |
+| `golem-knoten an` / `aus` | beim Hochfahren mitstarten (`S50knoten`) |
+| `golem-knoten konsensschluessel DATEI` | den Konsensschlüssel eines stimmberechtigten Knotens übernehmen |
+| `golem-knoten befehlszeile` | was gestartet würde, ein Argument je Zeile |
+
+⚑ **Der Knoten entscheidet nichts im Protokoll.** Rolle, Pod-Zuteilung,
+Routing und Abstimmungen bestimmt die Kette; `golem-knoten` richtet ein und
+betreibt.
+
+## Die Oberfläche (`golem-schicht`)
+
+Das Myelith-Fenster im Vollbild (cage, GTK3, WebKitGTK), als **Schicht**:
+eine squashfs-Datei auf der Datenpartition, gebaut mit
+`schicht-bauen.sh`, nicht im Repositorium und nicht in der Basis. Die Basis
+bleibt klein; wer die Oberfläche nicht will, holt sie nicht.
+
+| Befehl | Was |
+|---|---|
+| `golem-schicht holen QUELLE` | von einem Laufwerk oder per https holen; ohne passende Prüfsumme wird nichts übernommen |
+| `golem-schicht starten` / `stoppen` / `status` | die Oberfläche betreiben |
+| `golem-schicht an` / `aus` | beim Hochfahren starten (`S70oberflaeche`) |
+| `golem-schicht entfernen` | die Schicht löschen |
+
+⛔️ **Kein Code der Schicht läuft als root.** udev und seatd gehören zur
+Basis; die Schicht wird `nosuid,nodev` eingehängt, und
+`golem-einrichten schicht-eintreten` legt alle Vorrechte ab, bevor ihr
+erstes Programm startet. Das Fenster läuft als `golem` (1000) und sieht den
+Zustand des Knotens nicht.
+
+⚑ **Der Agent bedient beides** über die Werkzeugkiste
+`AGENT_LAYER/local-toolkits/GolemOS` und den Skill `golemos-einrichten`;
+liegt der Myelith-Ordner auf der Datenpartition, stellt die erste
+Einrichtung diese Kiste ein.
 
 Die Kiste hat keine einzige Abhängigkeit: Sie löscht Platten, und was
 sie tut, soll sich in ihrem eigenen Quelltext lesen lassen.
@@ -50,6 +101,157 @@ sie tut, soll sich in ihrem eigenen Quelltext lesen lassen.
 ---
 
 ## Changelog
+
+### v0.3.0 – 2026-10-13 (der Knoten als Dienst, die Oberflächen-Schicht, udev und seatd in der Basis)
+
+**Auftrag des Projektinhabers:** Desktop und Fensterclient auf der
+Basisinstallation ohne Vorwissen ermöglichen, ohne das Repositorium zu
+belasten, und alles, was mit dem Betrieb eines Knotens zu tun hat, über
+GolemOS statt eines Nix-Servers vorbereiten (Entscheidungen: Kiosk,
+Schicht auf der Datenpartition, „ohne Vorwissen“, NixOS-Modul bleibt als
+Alternative).
+
+- **Neu: `golem-knoten`** (`overlay/usr/sbin/`), `S50knoten`, das
+  Dienstkonto `myl-knoten` (900) über `konfigurationen/benutzer.tabelle`,
+  und `myl-node` im Abbild, statisch gegen musl wie die übrigen. Belegt mit
+  einer neuen Knotenprobe (`golemos.knotenprobe` auf der Kernzeile, in
+  `S99probe`): unter QEMU aarch64 hört der Knoten nach einer Sekunde auf
+  `0.0.0.0:4001`, läuft unter Konto 900, Beobachtung (4151) und Tür (4160)
+  nur auf `127.0.0.1`, `stoppen` beendet ihn ordentlich; `KNOTEN_OK`.
+- 📌 **Die erste Knotenprobe fand einen echten Fehler:** BusyBox' `setpriv`
+  kann kein Konto wechseln (`--reuid` steht dort nur im Kommentar), der
+  Knoten brach fünfmal mit dessen Hilfe ab, und die Startbegrenzung hielt
+  ihn an, wie sie soll. Jetzt das `setpriv` aus util-linux
+  (`BR2_PACKAGE_UTIL_LINUX_SETPRIV`) mit vollem Pfad, und `bauen.sh`
+  verlangt genau dieses statt irgendeines.
+- 📌 **`bauen.sh` baut ein Paket neu, dessen Unteroption sich ändert.**
+  Bisher wurde bei einer geänderten Einstellung nur der Zielbaum neu
+  zusammengesetzt; util-linux blieb ohne `setpriv` und der Kern ohne sein
+  neues Fragment, und nichts sagte es. Aus jedem geänderten Namen wird das
+  Paket abgeleitet und nur dieses verworfen und neu gebaut (gemessen:
+  `linux` und `util-linux`, sonst nichts).
+- **Neu: der Kern bringt die Anzeige fest eingebaut mit**
+  (`konfigurationen/kern-anzeige.fragment`: `simpledrm` für den Bildschirm
+  jeder UEFI-Maschine, `virtio-gpu` und `virtio-input` für virtuelle
+  Maschinen). `bauen.sh` prüft nach dem Bau, dass jede Zeile im Kern
+  angekommen ist.
+- 📌 **Behoben: der Kern für x86_64 konnte die Schicht nicht einhängen.**
+  Die Kernvorgabe für aarch64 bringt squashfs mit, die für x86_64 nicht;
+  beim Neubau der Basis für x86_64 zeigte die Kernkonfiguration Loop, aber
+  kein squashfs. Die Schicht wäre geholt und geprüft worden und dann am
+  Einhängen gescheitert. Jetzt stehen `CONFIG_BLK_DEV_LOOP`,
+  `CONFIG_SQUASHFS` und `CONFIG_SQUASHFS_ZLIB` im selben Fragment, und
+  `bauen.sh` prüft sie mit; gemessen nach dem Neubau: alle drei im Kern.
+- **Neu: udev und seatd in der Basis** (`BR2_ROOTFS_DEVICE_CREATION_DYNAMIC_EUDEV`,
+  `seatd`). Sie brauchen Vorrechte und gehören deshalb in die geprüfte
+  Basis, nicht in eine geholte Schicht. Nebenbei lädt udev Kernmodule für
+  erkannte Hardware jetzt von selbst.
+- **Neu: die Oberflächen-Schicht.** `schicht-bauen.sh` baut mit demselben
+  Buildroot-Baum in eigenem Ausgabeordner ein squashfs (gzip, das kann der
+  Kern) mit cage, GTK3, WebKitGTK, Mesa (softpipe, virgl) und dem Fenster,
+  das mit rustup gegen den sysroot der Schicht gebaut wird, aus einer Kopie
+  der Quellen im Volumen (`tauri-build` schreibt sonst ein Linux-Schema ins
+  Repositorium). Es zählt die Einstellung nach (was zuletzt gilt) und
+  prüft, dass jede Bibliothek des Fensters in der Schicht liegt.
+  `--nur-pruefen` ist der kurze Lauf vor dem langen. 📌 **Gebaut wird mit
+  so vielen Fäden, wie der Speicher trägt** (zwei Gigabyte je Faden): Mit
+  einem Faden je Kern wurde der Übersetzer in WebKitGTK in einer
+  Docker-VM mit 7,75 GiB siebenmal vom Kern abgeschossen, mit drei Fäden
+  noch einmal in WebCore, mit zwei ein drittes Mal; jetzt dreieinhalb
+  Gigabyte je Faden, und nach einem Abschuss halbiert das Skript die Fäden
+  und baut am Stand weiter, bis zu einem. Gemessen: Mit einem Faden lief
+  WebKitGTK durch, der ganze erste Bau der Schicht brauchte rund
+  fünfeinhalb Stunden; die Schicht wiegt **102 MB**.
+- 📌 **Drei Fallen im Querbau des Fensters**, alle drei erst sichtbar,
+  nachdem WebKit durch war:
+  - **Der Linker steht in `RUSTFLAGS`, nicht in
+    `CARGO_TARGET_<ZIEL>_LINKER`.** Bau-Container und Schicht tragen auf
+    aarch64 dieselbe Kennung, also galt die Zieleinstellung auch für
+    Bauskripte: Sie wurden gegen die glibc der Schicht (2.39) gelinkt und
+    liefen im Container nicht (`GLIBC_2.39 not found`). `RUSTFLAGS` gilt
+    bei ausdrücklichem `--target` nur für den Zielcode.
+  - **pkg-config kommt aus Buildroot** (`host/bin/pkg-config`); der
+    Bau-Container hat keines, und dieses kennt die Sysroot von sich aus.
+  - **Das Fenster baut ohne X11** (`--no-default-features`,
+    `myl-oberflaeche` 0.71.0 mit eigenem Schalter `x11`, CLIENT v0.147.0):
+    Die Schicht hat nur Wayland, und Tauri verlangte sonst `gdk-x11-3.0`.
+- **Neu: `golem-schicht`** und `S70oberflaeche`, dazu
+  `schicht/oberflaeche/usr/bin/golem-kiosk` (Umgebung, Tastatur aus der
+  Wahl des Assistenten, Zeichnen in Software) und
+  `golem-einrichten schicht-eintreten` (`src/schicht.rs`): `chroot`,
+  Gruppen, Gruppe und Konto ablegen, Umgebung leeren, erst dann das erste
+  Programm der Schicht.
+- **Neu: die Schichtprobe** (`golemos.schichtprobe` auf der Kernzeile, in
+  `S99probe`): holt eine Schicht von der Datenpartition
+  (`/daten/oberflaeche-<arch>.sqfs` samt Prüfsumme), startet sie, prüft, dass
+  Kompositor und Fenster unter Konto 1000 laufen, hält sie nach vier Minuten
+  an und verlangt, dass danach nichts eingehängt bleibt. Das Bild nimmt der
+  Prüfstand von außen über den QEMU-Monitor auf, solange `SCHICHT_LAEUFT`
+  dasteht. 📌 **Sie fand zwei Fehler, die kein Bau und keine Probe auf dem
+  Mac gefunden hätte:**
+  - **seatd:** Buildroot bringt mit dem Dienst ein eigenes `S70seatd` mit,
+    das den Socket beim Start der Gruppe `video` gibt, und `golem-schicht`
+    sah nur „läuft schon“. Das Konto der Schicht hat keine Zusatzgruppen,
+    cage brach ab (`Could not connect to socket /run/seatd.sock: Permission
+    denied`). Und `seatd -u` nimmt nur Namen, ein Konto `golem` gibt es aber
+    nur in der Schicht. Jetzt entfernt `nach-dem-bauen.sh` das `S70seatd`,
+    `golem-schicht` startet seatd selbst und gibt den Socket per `chown` mit
+    der Nummer dem Konto der Schicht (0600); ein fremder seatd wird ersetzt.
+  - **OpenGL:** GTK forderte einen Kontext für Desktop-OpenGL an. Mesa kann
+    ihn über EGL erzeugen, die Schicht hat aber keine Bibliothek für dessen
+    Funktionen (kein GLX, kein glvnd), und libepoxy brach das Fenster ab
+    (`Couldn't open libGL.so.1 or libOpenGL.so.0`). Gefunden mit einem
+    Diagnoselauf, der vier Zeichenwege in einem Start nacheinander probierte:
+    Nur mit `GDK_GL=gles` überlebte das Fenster; damit stand es nach 45 s
+    vollständig da, mit Zeichnen auf dem Prozessor in Skia zeigte es nach
+    55 s erst den Ladeschirm. `golem-kiosk` setzt `GDK_GL=gles` jetzt immer.
+- **Behoben: der Schalter für die Grafikkarte.** `golem-kiosk` las
+  `GOLEM_KIOSK_GPU=1` aus der Umgebung, die `schicht-eintreten` vorher
+  leert; er kam nie an. Jetzt eine Datei: `/daten/golemos/oberflaeche-gpu`.
+- **Neu: die erste Einrichtung stellt die Werkzeugkiste `GolemOS` ein**,
+  wenn der Myelith-Ordner auf der Datenpartition liegt (`golemos_kiste`).
+- 📌 **Behoben: `S05daten` fand die Datenpartition nicht mehr**, sobald
+  util-linux gegen udev gebaut ist. Das Skript läuft vor `udevd` (S10), und
+  `lsblk` liest Partitionsname, Kennung und Typ dann nur aus der
+  udev-Datenbank: Es sah `vda1`, aber ohne `PARTLABEL`. Gemessen unter QEMU
+  x86_64 („Datenpartition: nicht gefunden"); nach dem Hochfahren fand
+  dasselbe `lsblk` sie, und mit weggeschobenem `/run/udev` wieder nicht.
+  Jetzt `blkid -t PARTUUID=…`, `blkid -t PARTLABEL=…`, die Platte aus sysfs
+  und der Typ aus `blkid -p -s PART_ENTRY_TYPE`; alle vier im laufenden
+  System ohne udev-Datenbank und ohne blkid-Zwischenspeicher geprüft;
+  danach beide Basen neu gebaut und beide Schichtproben grün.
+  ⚠️ **Auf aarch64 fiel es nicht auf**, weil util-linux dort aus der Zeit
+  vor udev stammte: `bauen.sh` baut ein Paket neu, wenn sich seine eigene
+  Einstellung ändert, nicht wenn eine neue Abhängigkeit dazukommt. Ein
+  frischer Bau hätte es auf beiden Architekturen gezeigt.
+- ⚠️ **Mit nur `console=ttyS0` auf der Kernzeile** liegen die Anmeldung auf
+  `console` und die auf `ttyS0` am selben Gerät und teilen sich die
+  Eingabe. Über GRUB tritt das nicht auf (dort steht `tty1` zuletzt); wer
+  direkt mit QEMU startet, hängt `console=tty0` an.
+- ✅ **x86_64 fertig: Basis und Schicht gebaut, Schichtprobe grün.** Die
+  Schicht wiegt 104 MB; ihr erster Bau brauchte rund 2 Stunden 40
+  Minuten (nach einem Speicherabschuss in WebKit mit einem Faden weiter).
+  Unter QEMU x86_64 (q35, `-vga none`, virtio-gpu ohne 3D): Datenpartition
+  eingehängt, Schicht geholt und geprüft, nach 3 s laufen cage (Prozess
+  316) und Fenster (317) unter Konto 1000, das Bild zeigt nach 30, 110 und
+  200 s das vollständige Fenster mit dem KI-Hinweis, `status` „läuft",
+  `stoppen` hängt alles aus: **`SCHICHT_OK`**.
+- ✅ **Beleg am Bildschirm: die Schichtprobe unter QEMU aarch64**
+  (virtio-gpu ohne 3D, Software, 4 Kerne ohne Beschleunigung): Schicht
+  geholt und geprüft, nach 4 s laufen cage (Prozess 300) und Fenster
+  (Prozess 303) unter Konto 1000, das Bild 1280×800 zeigt nach 30, 110 und
+  200 s dasselbe vollständige Myelith-Fenster mit dem KI-Hinweis; `status`
+  meldet „läuft“, `stoppen` beendet es, nichts bleibt eingehängt:
+  **`SCHICHT_OK`**. ⚠️ Die Meldungen von libEGL zu `fd -1` und
+  `/dev/dri/card0` bleiben im Protokoll; sie sind die Suche nach einer
+  Grafikkarte, bevor auf Software ausgewichen wird.
+- Belege: `golem-einrichten` 78 Proben grün (neu: drei in `schicht.rs`,
+  `die_golemos_kiste_nur_auf_der_datenpartition`,
+  `jede_karte_kennt_auch_die_oberflaeche`, vier in `tests/schicht.rs`:
+  heile Schicht übernommen, falsche Prüfsumme hält alles an und `status`
+  meldet eine später veränderte, ohne Prüfsumme oder über http
+  abgewiesen, Konto überall 1000), Clippy ohne Befund. Gegenprobe: mit
+  abgeschalteter Prüfsumme wird die Probe rot.
 
 ### v0.2.1 – 2026-09-30 (die Werkzeugkisten liegen jetzt unter `AGENT_LAYER`)
 

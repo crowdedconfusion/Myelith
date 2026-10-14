@@ -1,0 +1,7 @@
+{
+  "name": "golemos_status",
+  "beschreibung": "Nur auf GolemOS: zeigt, ob die Oberflaeche (Myelith-Fenster im Vollbild) geholt ist, laeuft und beim Start mitkommt, und ob der Myelith-Knoten eingerichtet ist und laeuft. Dazu die letzten Zeilen eines laufenden Holens. Aendert nichts.",
+  "parameter": { "type": "object", "properties": {}, "required": [] },
+  "befehl": "command -v golem-schicht >/dev/null || { echo 'Das ist kein GolemOS (golem-schicht fehlt).'; exit 1; }; golem-schicht status; echo; golem-knoten status; if [ -f /tmp/golem-holen.log ]; then echo; echo '── Holen der Oberflaeche:'; tail -n 5 /tmp/golem-holen.log; fi",
+  "fluss": { "liefert": "privat", "vertrauen": "vertraut", "ziel": "keins", "braucht_vertrauen": false }
+}

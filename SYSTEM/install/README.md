@@ -277,6 +277,71 @@ proschein“).
 
 ---
 
+## Grafikkarten von NVIDIA und AMD (Mietmaschine)
+
+Die gebündelten Matrizen der Vorbereitung und die Experten eines Gemischs
+rechnen auf Karten von NVIDIA (`--features cuda`) und AMD
+(`--features rocm`), auch auf mehreren Karten zugleich. **Gebaut wird
+ohne CUDA-Toolkit und ohne ROCm-SDK**: Treiber und Laufzeitübersetzer
+werden erst beim Start geladen. Auf der Maschine gebraucht werden nur:
+
+| | NVIDIA | AMD |
+|---|---|---|
+| Treiber | `libcuda.so.1` | `libamdhip64.so` |
+| Übersetzer zur Laufzeit | `libnvrtc.so` (oft nicht beim Treiber dabei; pip: `nvidia-cuda-nvrtc-cu12`) | `libhiprtc.so` (bei ROCm dabei) |
+
+Auf einer frisch gemieteten Linux-Maschine, im Klon:
+
+```sh
+sh SYSTEM/install/karten-pruefen.sh --einrichten   # fehlendes NVRTC und Rust holen (Netz)
+sh SYSTEM/install/karten-pruefen.sh                # danach: pruefen und messen
+```
+
+Das Skript findet die Karten, prüft die Kerne (Nachbau auf der CPU und
+**Selbstprüfung auf jeder Karte**), misst CPU gegen Karten und fährt den
+Konformitätslauf mit erzwungenen Karten. Der Bericht landet unter
+`BENCHMARKS/Inferenz/results/karten-<weg>-<datum>-<rechner>.md`. Für den
+Konformitätslauf muss `INTEGER_LLM/artifacts/myelith-0.6b` da sein;
+kopieren ist schneller als bauen.
+
+⚑ **Eine Karte, die anders rechnet als die CPU, rechnet nicht mit**; die
+anderen schon, und die Meldung nennt sie. Ohne jede bereite Karte rechnet
+die CPU, mit derselben Zahl.
+
+Die Stellschrauben, alle über die Umgebung: `MYL_GPU_AB` (ab wie vielen
+Eingaben, `0` aus), `MYL_GPU_GERAETE` (etwa `0,1` oder `cuda:0`),
+`MYL_GPU_GEWICHTE` (Anteil je Karte, etwa `3,1`), `MYL_NVRTC`,
+`MYL_CUDA_TREIBER`, `MYL_HIP`, `MYL_HIPRTC`, `ROCM_PATH`, `MYL_HIP_ARCH`.
+
+**Mehrere Karten** rechnen zugleich: Eine Matrix wird nach Zeilen geteilt,
+viele Experten gehen ganz an je eine Karte, und das Ergebnis ist
+bitgleich, weil nur zusammengesetzt wird. Das Skript prüft im letzten
+Schritt ein ganzes Modell (`--modell myelith-4b`, auch mehrfach, etwa mit
+`myelith-30b-a3b`) einmal nur auf der CPU und dann auf allen Karten, auf
+der Hälfte und mit ungleichen Gewichten; der Abdruck über alle Logits
+muss jedes Mal derselbe sein, und **jede Karte muss gerechnet haben**.
+Fällt eine Karte mitten im Lauf aus, rechnen die übrigen das Bündel neu.
+
+Der Ablauf auf einer Mietmaschine, aus dem Klon:
+
+```sh
+python3 SYSTEM/install/vorrat.py auspacken
+sh SYSTEM/install/karten-pruefen.sh --einrichten --nur-finden
+sh SYSTEM/install/karten-pruefen.sh --modell myelith-0.6b --prompt-woerter 60   # erst kurz
+sh SYSTEM/install/karten-pruefen.sh --modell myelith-4b --modell myelith-30b-a3b
+```
+
+⚑ **Probelauf ohne Karte**, auch auf macOS:
+`sh SYSTEM/install/karten-pruefen.sh --nachbau 6 --modell myelith-0.6b`.
+Sechs nachgebildete Karten rechnen auf der CPU (`MYL_GPU_NACHBAU`), jeder
+Zugriff auf ihren Speicher wird geprüft; sie zählen für keinen Rechenweg.
+Der Bericht geht nach `SYSTEM/logs/karten/`, denn er misst nichts.
+
+⚠️ **Noch nicht auf einer Karte gelaufen** (Stand 2026-10-14): Die Kerne
+sind auf der CPU nachgebaut und bitgleich belegt; ob Treiberanbindung,
+Übersetzung und Durchsatz auf echter Hardware tragen, sagt der erste Lauf
+dieses Skripts. Der Decode rechnet weiter auf der CPU.
+
 ## Freigaben des Betriebssystems
 
 **Ein installiertes Programm ist noch keine Erlaubnis.** Mikrofon, Kamera

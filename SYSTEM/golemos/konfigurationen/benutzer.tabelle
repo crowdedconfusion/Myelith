@@ -1,0 +1,8 @@
+# Buildroot-Benutzertabelle (BR2_ROOTFS_USERS_TABLES): Name, Kennung, Gruppe,
+# Gruppenkennung, Kennwort, Heimat, Shell, weitere Gruppen, Beschreibung.
+#
+# ⚑ Das Dienstkonto des Knotens (golem-knoten). Feste Kennung 900, nicht
+# „die naechste freie": Der Zustand unter /var/lib/myl-knoten gehoert ihr und
+# muss nach einer Aktualisierung derselben Kennung gehoeren. `*` heisst: keine
+# Anmeldung moeglich.
+myl-knoten 900 myl-knoten 900 * /var/lib/myl-knoten /bin/false - Myelith-Knoten

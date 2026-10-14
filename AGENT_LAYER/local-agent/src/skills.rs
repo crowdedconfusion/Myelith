@@ -444,6 +444,12 @@ pub fn suchen(wurzel: Option<&Path>, anfrage: &str, hoechstens: usize) -> Vec<Tr
 /// jede Anleitung.
 pub const HINWEIS_AB: u32 = 6;
 
+/// Womit der Skillhinweis im Auftrag beginnt; der Schlaf schneidet dort
+/// ab (`crate::gedaechtnis::nur_nutzerworte`), denn er ist kein Wort des
+/// Nutzers.
+pub const SKILLHINWEIS_DE: &str = "\n\nSkills, die zu diesem Auftrag passen koennten; ";
+pub const SKILLHINWEIS_EN: &str = "\n\nSkills that may fit this task; ";
+
 /// **Die Skills, die zu einem Auftrag passen, als Zeilen fuer den Auftrag.**
 ///
 /// # ⚑ Warum der Auftrag sie nennt, statt auf die Suche zu warten
@@ -458,9 +464,32 @@ pub const HINWEIS_AB: u32 = 6;
 /// Agentensystemen bewaehrt hat (schrittweise Offenlegung): Name und Satz
 /// stehen im Auftrag, die Anleitung holt `learn_skill`. So traegt der
 /// Kontext nur, was passen koennte, und das Modell entscheidet.
+/// **Ist dieser Skill fremd?** Ein Projekt-Skill, von dem eine Datei im
+/// Herkunftsbuch steht (`secure_flow::HERKUNFTSBUCH`): geschrieben,
+/// waehrend fremder Inhalt im Gespraech stand.
+///
+/// 📌 **Fund 539, gefunden bei der Haertung (2026-10-14):** Der Agent darf
+/// Projekt-Skills selbst anlegen; nach Fremdem nur mit Freigabe, denn
+/// `.AGENT/` ist verborgen. Mit Freigabe aber stand der Skill danach in
+/// jedem Auftrag als **vertrauter** Hinweis, und `learn_skill` lieferte ihn
+/// ohne Marke: Herkunftswaesche ueber einen Skill.
+pub fn ist_fremd(wurzel: Option<&Path>, s: &Skill) -> bool {
+    let (Some(w), Herkunft::Projekt) = (wurzel, s.herkunft) else {
+        return false;
+    };
+    s.ordner
+        .strip_prefix(w)
+        .ok()
+        .is_some_and(|rel| crate::secure_flow::im_herkunftsbuch(w, &rel.to_string_lossy()))
+}
+
 pub fn hinweis_fuer_auftrag(wurzel: Option<&Path>, auftrag: &str, lernen: &str, deutsch: bool) -> Option<String> {
-    let treffer: Vec<Treffer> =
-        suchen(wurzel, auftrag, 3).into_iter().filter(|t| t.punkte >= HINWEIS_AB).collect();
+    // ⛔️ **Ein fremder Skill steht nicht im Hinweis**: Der Hinweis wird Teil
+    //    des Auftrags und damit vertraut ([`ist_fremd`]).
+    let treffer: Vec<Treffer> = suchen(wurzel, auftrag, 3)
+        .into_iter()
+        .filter(|t| t.punkte >= HINWEIS_AB && !ist_fremd(wurzel, &t.skill))
+        .collect();
     if treffer.is_empty() {
         return None;
     }
@@ -468,16 +497,11 @@ pub fn hinweis_fuer_auftrag(wurzel: Option<&Path>, auftrag: &str, lernen: &str, 
         treffer.iter().map(|t| format!("- {}: {}", t.skill.name, kuerzen(&t.skill.satz))).collect();
     Some(if deutsch {
         format!(
-            "\n\nSkills, die zu diesem Auftrag passen koennten; `{lernen}` liefert die Anleitung. \
-             Passt einer, lerne ihn, bevor du anfaengst:\n{}",
+            "{SKILLHINWEIS_DE}`{lernen}` liefert die Anleitung. Passt einer, lerne ihn, bevor du anfaengst:\n{}",
             liste.join("\n")
         )
     } else {
-        format!(
-            "\n\nSkills that may fit this task; `{lernen}` returns the instructions. \
-             If one fits, learn it before you start:\n{}",
-            liste.join("\n")
-        )
+        format!("{SKILLHINWEIS_EN}`{lernen}` returns the instructions. If one fits, learn it before you start:\n{}", liste.join("\n"))
     })
 }
 
@@ -930,6 +954,46 @@ mod proben {
                 .is_none_or(|h| !h.contains("hausregeln-datum")),
             "ein unpassender Skill wurde genannt"
         );
+    }
+
+    /// ⛔️ **Ein Skill aus dem Herkunftsbuch ist fremd**: nicht im Hinweis
+    /// des Auftrags, und `learn_skill` liefert ihn mit Marke. Ein anderer
+    /// Skill im selben Ordner bleibt unberuehrt.
+    #[test]
+    fn ein_fremder_skill_steht_nicht_im_hinweis() {
+        let d = tempfile::tempdir().expect("Verzeichnis");
+        let o = anlegen(d.path()).expect("anlegen");
+        for name in ["hausregeln-datum", "hausregeln-datei"] {
+            std::fs::create_dir_all(o.join(name)).expect("Ordner");
+            std::fs::write(
+                o.join(format!("{name}/SKILL.md")),
+                "---\nbeschreibung: Die Hausregel fuer Datumsangaben in Berichten.\nstichworte: datum, hausregel\n---\n\n# Datum\n",
+            )
+            .expect("schreiben");
+        }
+        let auftrag = "Wie schreibe ich ein Datum? Es gibt eine Hausregel.";
+        let vorher = hinweis_fuer_auftrag(Some(d.path()), auftrag, "learn_skill", false).expect("Hinweis");
+        assert!(vorher.contains("hausregeln-datum"), "{vorher}");
+        std::fs::write(
+            d.path().join(crate::secure_flow::HERKUNFTSBUCH),
+            ".AGENT/skills/hausregeln-datum/SKILL.md\n",
+        )
+        .expect("Buch");
+        let nachher = hinweis_fuer_auftrag(Some(d.path()), auftrag, "learn_skill", false).unwrap_or_default();
+        assert!(!nachher.contains("hausregeln-datum"), "{nachher}");
+        assert!(nachher.contains("hausregeln-datei"), "der andere Skill fehlt: {nachher}");
+
+        // `learn_skill` ueber das Werkzeug: mit Marke.
+        let ein = crate::werkzeuge::Einhaengung::neu(d.path(), false).expect("einhaengen");
+        let budget = crate::werkzeuge::verlaufsbudget();
+        let lernen = crate::werkzeuge::Dateiwerkzeug::SkillLernen.ausfuehrung(ein.clone(), crate::werkzeug::Ansageform::Amtlich, &budget);
+        let t = lernen.ausfuehren(&serde_json::json!({"name": "hausregeln-datum"})).expect("lernen");
+        assert!(crate::secure_flow::nennt_sich_fremd(&t), "{t}");
+        let t = lernen.ausfuehren(&serde_json::json!({"name": "hausregeln-datei"})).expect("lernen");
+        assert!(!crate::secure_flow::nennt_sich_fremd(&t), "{t}");
+        let suchen = crate::werkzeuge::Dateiwerkzeug::SkillSuche.ausfuehrung(ein, crate::werkzeug::Ansageform::Amtlich, &budget);
+        let t = suchen.ausfuehren(&serde_json::json!({"anfrage": "datum hausregel"})).expect("suchen");
+        assert!(crate::secure_flow::nennt_sich_fremd(&t), "{t}");
     }
 
     /// ⚑ **Genannt wird mit Satz, und die Zahl ist gedeckelt.**

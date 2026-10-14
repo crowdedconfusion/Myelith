@@ -310,7 +310,50 @@ pub fn ordnerkette(agent: &crate::agentenwahl::Agenteneinstellung) -> Vec<PathBu
             kette.push(o);
         }
     }
+    // ⚑ **Die Kiste des gewaehlten Moduls ergaenzt, sie ersetzt nicht**
+    //   (Festlegung des Projektinhabers, 2026-10-12): Sie liegt zuletzt in
+    //   der Kette, ihre Werkzeuge kommen zu denen der gewaehlten Kiste dazu.
+    //   📌 Bis dahin setzte die Konsole im Modus eines Moduls dessen Kiste
+    //   als `kistenordner` ein, und die gewaehlte (etwa Advanced) fiel weg.
+    if let Some(m) = agent.modulkiste.clone() {
+        if !kette.contains(&m) {
+            kette.push(m);
+        }
+    }
     kette
+}
+
+/// **Zusaetzliche Umgebung fuer die Werkzeuge eines Kistenordners**, etwa
+/// den Pfad der gepruefen Programmkopie eines Moduls
+/// (`MYL_MODUL_PROGRAMM`).
+///
+/// ⚑ **Je Ordner und prozessweit**: Der Client traegt sie ein, sobald er ein
+/// Modul geprueft hat, und jedes Werkzeug aus diesem Ordner bekommt sie zu
+/// `$MYL_KISTE` dazu. ⛔️ Ohne sie startete ein Modulwerkzeug das Programm im
+/// Modulordner, und das kann sich nach der Pruefung geaendert haben; mit ihr
+/// laeuft genau die geprueften Bytes.
+static KISTENUMGEBUNG: std::sync::Mutex<Vec<(PathBuf, Umgebung)>> = std::sync::Mutex::new(Vec::new());
+
+/// Umgebungsvariablen als Paare aus Name und Wert.
+pub type Umgebung = Vec<(String, String)>;
+
+/// Traegt die Umgebung fuer die Werkzeuge aus `ordner` ein (ersetzt eine
+/// fruehere fuer denselben Ordner).
+pub fn umgebung_setzen(ordner: &Path, umgebung: Umgebung) {
+    let ordner = std::fs::canonicalize(ordner).unwrap_or_else(|_| ordner.to_path_buf());
+    if let Ok(mut u) = KISTENUMGEBUNG.lock() {
+        u.retain(|(o, _)| o != &ordner);
+        u.push((ordner, umgebung));
+    }
+}
+
+/// Die eingetragene Umgebung fuer `ordner`, leer ohne Eintrag.
+pub fn umgebung_fuer(ordner: &Path) -> Umgebung {
+    KISTENUMGEBUNG
+        .lock()
+        .ok()
+        .and_then(|u| u.iter().find(|(o, _)| o == ordner).map(|(_, e)| e.clone()))
+        .unwrap_or_default()
 }
 
 /// **Die Angebote der ganzen Kette**, spaetere Ordner gewinnen.
@@ -482,7 +525,9 @@ impl Werkzeugausfuehrung for ManifestWerkzeug {
         //    `sh: …/<skript>.sh: not found`, gefunden am ersten Lauf einer
         //    Kiste ausserhalb des Arbeitsordners mit dem 35B (2026-10-06).
         let ordner = std::fs::canonicalize(&self.ordner).unwrap_or_else(|_| self.ordner.clone());
-        let umgebung = [(UMGEBUNG_KISTE, ordner.display().to_string())];
+        let mut umgebung: Vec<(String, String)> = vec![(UMGEBUNG_KISTE.to_string(), ordner.display().to_string())];
+        umgebung.extend(umgebung_fuer(&ordner));
+        let umgebung: Vec<(&str, String)> = umgebung.iter().map(|(k, w)| (k.as_str(), w.clone())).collect();
         befehl_im_verzeichnis_mit(&self.einhaengung, &befehl, &umgebung, self.manifest.frist_s())
     }
 }
@@ -696,6 +741,28 @@ mod tests {
         assert!(aus.contains("kennwort:hallo"), "das Skript neben dem Manifest lief nicht: {aus}");
     }
 
+    /// ⚑ **Die Kiste eines Moduls ergaenzt** (2026-10-12): Sie liegt zuletzt
+    /// in der Kette, die gewaehlte bleibt, und ihre Werkzeuge bekommen die
+    /// eingetragene Umgebung (die gepruefte Programmkopie) zu `$MYL_KISTE`.
+    #[test]
+    fn die_kiste_eines_moduls_ergaenzt_und_bekommt_ihre_umgebung() {
+        let (d, kiste) = kiste_mit(&[(
+            "wo.json",
+            r#"{"name":"wo","beschreibung":"b","parameter":{"type":"object","properties":{},"required":[]},
+               "befehl":"echo programm:$MYL_MODUL_PROGRAMM"}"#,
+        )]);
+        let mut agent = crate::agentenwahl::Agenteneinstellung::default();
+        let ohne = ordnerkette(&agent);
+        agent.modulkiste = Some(kiste.clone());
+        let mit = ordnerkette(&agent);
+        assert_eq!(&mit[..ohne.len()], &ohne[..], "die gewaehlte Kette bleibt");
+        assert_eq!(mit.last(), Some(&kiste), "die Modulkiste liegt zuletzt");
+        umgebung_setzen(&kiste, vec![("MYL_MODUL_PROGRAMM".into(), "/geprueft/handel".into())]);
+        let ein = Einhaengung::neu(d.path(), true).expect("Einhaengung");
+        let aus = angebote(&kiste, &ein, |w| panic!("{w}"))[0].1.ausfuehren(&serde_json::json!({})).expect("laeuft");
+        assert!(aus.contains("programm:/geprueft/handel"), "die Umgebung kam nicht an: {aus}");
+    }
+
     /// ⛔️ **Auch ein relativ angegebener Kistenordner traegt.** Der Befehl
     /// laeuft im Arbeitsordner; `$MYL_KISTE` muss deshalb absolut sein.
     /// Gegenprobe: Ohne `canonicalize` in `ausfuehren` findet `sh` das
@@ -790,6 +857,8 @@ mod tests {
             blick_kamera: false,
             web_recherche: false,
             netzsaat: None,
+            modul: None,
+            modulkiste: None,
         };
 
         // Ohne Blatt entscheidet der Name, und der ist keiner der drei.
@@ -893,6 +962,8 @@ mod tests {
             blick_kamera: false,
             web_recherche: false,
             netzsaat: None,
+            modul: None,
+            modulkiste: None,
         };
         assert_eq!(werkzeug_fuer(&agent, "sonstiges").as_deref(), Some("tabelle_lesen"));
         // Fuer eine Art, fuer die sich niemand meldet, wird niemand genannt.
@@ -936,6 +1007,8 @@ mod tests {
             blick_kamera: false,
             web_recherche: false,
             netzsaat: None,
+            modul: None,
+            modulkiste: None,
         };
         let kette: Vec<String> = angebote_der_kette(&ordnerkette(&agent), &ein, |_| {})
             .into_iter()

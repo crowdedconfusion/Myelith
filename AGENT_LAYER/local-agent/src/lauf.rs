@@ -187,6 +187,11 @@ pub fn fahren_im_gespraech(
     // ⛔️ **Der vorgegebene Systemprompt, geprueft, oder kein Lauf**
     //    (`crate::systemprompt`). Die Fassung und ihr voller SHA-256 gehen
     //    ins Aktionsprotokoll.
+    // ⛔️ **Die Herkunft der frueheren Runden zuerst** (2026-10-14): Die
+    //    Ruestung ist frisch, das Gespraech nicht. Was dort fremd oder privat
+    //    war, ist es weiter (`secure_flow::label_aus_verlauf`).
+    let (bisher, privat) = crate::secure_flow::label_aus_verlauf(verlauf);
+    ruestung.fluss.fortsetzen(bisher, privat);
     let (datei, text) = crate::systemprompt::fassung(ruestung.form);
     let regel = match crate::systemprompt::geprueft(ruestung.form) {
         Ok(t) => t,
@@ -236,7 +241,19 @@ fn mit_skillhinweis(ruestung: &Ruestung, auftrag: &str) -> String {
 /// (`crate::uhr::heute_zeile`).
 fn mit_kontext(ruestung: &Ruestung, auftrag: &str) -> String {
     let deutsch = matches!(ruestung.form, crate::werkzeug::Ansageform::Deutsch);
-    format!("{}{}", mit_skillhinweis(ruestung, auftrag), crate::uhr::heute_zeile(deutsch))
+    let mut s = format!("{}{}", mit_skillhinweis(ruestung, auftrag), crate::uhr::heute_zeile(deutsch));
+    // ⚑ **Die Erinnerungen des Ordners zuletzt** (`crate::gedaechtnis`),
+    //   damit der Schlaf sie beim naechsten Lesen an ihrer Marke
+    //   abschneiden kann und nicht fuer eine Aussage des Nutzers haelt.
+    //   Nur vertraute; sie fliessen als privat und vertraut ins Gespraech.
+    if let Some(w) = ruestung.einhaengung.as_ref().map(|e| e.wurzel()) {
+        if let Some((block, nrs)) = crate::gedaechtnis::hinweis_fuer_auftrag(w, auftrag, deutsch) {
+            let label = crate::secure_flow::Label::neu(crate::secure_flow::Leser::Privat, crate::secure_flow::Vertrauen::Vertraut);
+            s.push_str(&ruestung.fluss.vorab("gedaechtnis", label, &block));
+            crate::gedaechtnis::abruf_vermerken(w, &nrs);
+        }
+    }
+    s
 }
 
 /// **Wie [`fahren_im_gespraech`], mit einer Hausregel hinter der

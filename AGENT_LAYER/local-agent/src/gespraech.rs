@@ -131,7 +131,7 @@ pub fn ansage(ruestung: &crate::ruestung::Ruestung) -> Nachricht {
 /// ⚑ **Das Gespraech bleibt unberuehrt, wenn es schiefgeht.** Eine halbe
 /// Verdichtung waere ein Verlust ohne Gegenwert.
 pub fn verdichten(modell: &dyn Modellweg, gespraech: &mut Gespraech) -> Result<(usize, usize), Tuerfehler> {
-    verdichten_mit_mitschnitt(modell, gespraech, None, "", "")
+    verdichten_mit_mitschnitt(modell, gespraech, None, "", "", true)
 }
 
 /// **Wie [`verdichten`], und legt den Verlauf vorher als Mitschnitt ab.**
@@ -157,6 +157,7 @@ pub fn verdichten_mit_mitschnitt(
     wurzel: Option<&std::path::Path>,
     sitzung: &str,
     modellname: &str,
+    nachlesen: bool,
 ) -> Result<(usize, usize), Tuerfehler> {
     let mitschnitt = wurzel.and_then(|w| {
         if gespraech.ist_leer() {
@@ -184,7 +185,7 @@ pub fn verdichten_mit_mitschnitt(
                 // Aufruf, und das Werkzeug behaelt genau eine Aufgabe.
                 // **Es ist ausserdem klein:** eine Zeile je Nachricht,
                 // gegen den ganzen Verlauf, den es ersetzt.
-                let t = verweis(w, &name);
+                let t = if nachlesen { verweis(w, &name) } else { verweis_ohne_nachlesen(&name) };
                 Some(Ok((name, t)))
             }
             Err(f) => Some(Err(f.to_string())),
@@ -213,6 +214,22 @@ pub fn verdichten_mit_mitschnitt(
 /// weiterhin gruen und sagte nichts mehr ueber das Programm aus. **Das
 /// ist dieselbe Angabe an zwei Orten, und dieses Projekt hat damit
 /// genug Erfahrung.**
+/// **Der Verweis, wenn die Kiste nicht nachlesen kann** (Base).
+///
+/// 📌 **Gefunden am 2026-10-14 am echten Beispiel** (Konsole, 4B, Base): Der
+/// Verweis sagte „liest sie mit `read_history` nach", aber die Kiste `Base`
+/// hat die Verlaufswerkzeuge seit dem 2026-09-17 nicht mehr (Festlegung des
+/// Projektinhabers). Das Modell versprach dann, die Datei zu oeffnen, und
+/// hoerte auf. ⚑ Jetzt sagt der Verweis, was wahr ist: Der Verlauf liegt da,
+/// lesen kann ihn der Agent mit dieser Kiste nicht, also soll er das sagen
+/// und nichts erfinden.
+pub fn verweis_ohne_nachlesen(name: &str) -> String {
+    format!(
+        "\n\nDer vollstaendige Verlauf liegt unter `{name}`. Mit dieser Werkzeugkiste kannst du ihn nicht lesen. \
+         Fehlt dir eine Einzelheit, die oben nicht steht, sag das dem Nutzer und nenne die Datei; erfinde sie nicht.\n"
+    )
+}
+
 pub fn verweis(wurzel: &std::path::Path, name: &str) -> String {
     let mut t = format!(
         "\n\nDer vollstaendige Verlauf liegt unter `{name}`. \
@@ -244,7 +261,11 @@ fn verdichten_roh(modell: &dyn Modellweg, gespraech: &mut Gespraech) -> Result<(
         return Ok((0, 0));
     }
     let text = verdichtung::zusammenfassen(modell, "lokal", &gespraech.nachrichten, verdichtung::antwortlaenge(grenze))?;
-    let neu = vec![verdichtung::als_nachricht(&text)];
+    // ⚑ **Die Zusammenfassung in den Debug-Log** (2026-10-14): Was nach dem
+    //   Verdichten im Kontext steht, war bis dahin nirgends zu sehen; eine
+    //   Probe, ob eine Einzelheit dabei verloren ging, braucht genau das.
+    crate::debuglog::eintrag("Gespraech verdichtet", &text);
+    let neu = vec![verdichtung::als_nachricht(&text, &gespraech.nachrichten)];
     let nachher = modell.kontext(&neu).map(|s| s.belegt).unwrap_or(0);
     gespraech.nachrichten = neu;
     Ok((vorher.map(|s| s.belegt).unwrap_or(0), nachher))
@@ -362,7 +383,7 @@ mod tests {
             Nachricht::nutzer("Die Kennzahl lautet 4711 und steht in der Tabelle."),
             Nachricht::modell("Verstanden.\nDie Nebenzahl ist 0815 und gehoert nicht ins Verzeichnis."),
         ]);
-        verdichten_mit_mitschnitt(&Zeichen(10_000), &mut g, Some(&d), "probe-1", "myelith-0.6b")
+        verdichten_mit_mitschnitt(&Zeichen(10_000), &mut g, Some(&d), "probe-1", "myelith-0.6b", true)
             .expect("verdichtet");
 
         let mitschnitte = crate::verlauf::vorhandene(&d);
@@ -407,9 +428,9 @@ mod tests {
     fn verdichten_ersetzt_das_gespraech_durch_die_zusammenfassung() {
         let mut g = Gespraech::aus(vec![Nachricht::nutzer("x".repeat(50)), Nachricht::modell("y".repeat(50))]);
         let (vorher, nachher) = verdichten(&Zeichen(10_000), &mut g).expect("verdichtet");
-        assert_eq!(g.nachrichten(), &[verdichtung::als_nachricht("KURZ")]);
+        assert_eq!(g.nachrichten(), &[verdichtung::als_nachricht("KURZ", &[])]);
         assert_eq!(vorher, 100);
-        assert_eq!(nachher, verdichtung::als_nachricht("KURZ").content.len());
+        assert_eq!(nachher, verdichtung::als_nachricht("KURZ", &[]).content.len());
         let mut leer = Gespraech::neu();
         assert_eq!(verdichten(&Zeichen(10), &mut leer), Ok((0, 0)));
     }
@@ -419,8 +440,8 @@ mod tests {
         let mut g = Gespraech::aus(vec![Nachricht::nutzer("x"), Nachricht::modell("y")]);
         assert_eq!(zusammenfassung(&g), None);
         verdichten(&Zeichen(10_000), &mut g).expect("verdichtet");
-        assert_eq!(zusammenfassung(&g), Some(verdichtung::als_nachricht("KURZ").content));
-        let falsch = Gespraech::aus(vec![Nachricht::modell(verdichtung::als_nachricht("KURZ").content)]);
+        assert_eq!(zusammenfassung(&g), Some(verdichtung::als_nachricht("KURZ", &[]).content));
+        let falsch = Gespraech::aus(vec![Nachricht::modell(verdichtung::als_nachricht("KURZ", &[]).content)]);
         assert_eq!(zusammenfassung(&falsch), None, "nur als Nutzernachricht am Anfang");
     }
 

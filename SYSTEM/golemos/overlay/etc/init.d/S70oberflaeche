@@ -1,0 +1,23 @@
+#!/bin/sh
+# ⚑ **Die Oberflaeche, wenn sie eingeschaltet ist** (`golem-schicht an`).
+#
+# Nach `S06myelith`, das den Myelith-Ordner findet, und nach udev. Startet
+# das Myelith-Fenster im Vollbild; wer es schliesst, landet an der Konsole,
+# und der Assistent ist mit `golem-einrichten` weiter da.
+#
+# ⚠️ **Ein Fehler hier haelt den Start nicht auf.** Ohne Oberflaeche bleibt
+#    GolemOS ein Konsolensystem, wie vorher; `golem-schicht status` sagt,
+#    was fehlt, und das Protokoll liegt unter /tmp/oberflaeche.log.
+
+case "$1" in
+  start)
+    if [ -f /etc/golemos/oberflaeche.an ]; then
+      setsid /usr/sbin/golem-schicht starten < /dev/null > /tmp/oberflaeche.log 2>&1 &
+    fi
+    ;;
+  stop)
+    /usr/sbin/golem-schicht stoppen > /dev/null 2>&1 || true
+    ;;
+  restart|reload) "$0" stop; "$0" start ;;
+  *) echo "Aufruf: $0 {start|stop|restart}" >&2; exit 1 ;;
+esac

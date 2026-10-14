@@ -90,6 +90,9 @@ pub fn suchen(aus: &mut dyn Write) -> io::Result<Bericht> {
             let pfad = klon::einstellpfad(a, b.klon.as_deref());
             myl_setzen(b.klon.as_deref(), "modell.artefakt", &pfad)?;
             myl_setzen(b.klon.as_deref(), "agent.wurzel", "/daten/arbeit")?;
+            if let Some(kiste) = golemos_kiste(b.klon.as_deref()) {
+                myl_setzen(b.klon.as_deref(), "agent.kistenordner", &kiste.display().to_string())?;
+            }
             b.eingestellt = Some(pfad);
         }
     }
@@ -104,6 +107,24 @@ pub fn suchen(aus: &mut dyn Write) -> io::Result<Bericht> {
         writeln!(aus, "Eingestellt: {p}")?;
     }
     Ok(b)
+}
+
+/// **Die Werkzeugkiste `GolemOS`, wenn sie fest liegt.**
+///
+/// ⚑ Mit ihr bedient der Agent Oberflaeche und Knoten, ohne dass der
+/// Mensch einen Befehl kennen muss. Eingestellt wird sie nur bei der
+/// ersten Einrichtung (wie das Modell) und nur, wenn der Myelith-Ordner auf
+/// der Datenpartition liegt. ⛔️ **Unter `/medien` nicht:** Dort haengt der
+/// Pfad am Namen des Laufwerks, und ein gesetzter Kistenordner, den es
+/// nicht mehr gibt, faellt bewusst nicht auf die Vorgabe zurueck; der
+/// Agent stuende dann ohne Werkzeuge da.
+pub fn golemos_kiste(klon: Option<&Path>) -> Option<PathBuf> {
+    let k = klon?;
+    if !k.starts_with(DATEN) {
+        return None;
+    }
+    let kiste = k.join("AGENT_LAYER/local-toolkits/GolemOS");
+    kiste.is_dir().then_some(kiste)
 }
 
 /// Der Wert von `"artefakt"` in `client.json`, ohne JSON-Zerleger.
@@ -182,6 +203,17 @@ fn fremde_einhaengen() -> (Vec<PathBuf>, usize) {
 #[cfg(test)]
 mod proben {
     use super::*;
+
+    #[test]
+    fn die_golemos_kiste_nur_auf_der_datenpartition() {
+        assert_eq!(golemos_kiste(None), None);
+        assert_eq!(golemos_kiste(Some(Path::new("/medien/sdb1/Myelith"))), None, "unter /medien haengt der Pfad am Laufwerk");
+        // Ein Klon unter /daten ohne die Kiste (etwa ein aelterer) bekommt keine.
+        assert_eq!(golemos_kiste(Some(Path::new("/daten/gibt-es-nicht"))), None);
+        // ⚑ Die Kiste liegt im Repositorium dort, wo die Funktion sucht.
+        let hier = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../AGENT_LAYER/local-toolkits/GolemOS");
+        assert!(hier.join("kiste.json").is_file(), "{}", hier.display());
+    }
 
     #[test]
     fn liest_das_eingestellte_artefakt() {

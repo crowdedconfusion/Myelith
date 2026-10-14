@@ -935,39 +935,10 @@ pub fn linear_w8a16_stapel_viele(auftraege: &[Stapelauftrag<'_>]) -> Vec<Vec<Vec
     if auftraege.iter().all(|a| a.xs.is_empty()) {
         return auftraege.iter().map(|_| Vec::new()).collect();
     }
-    // ⚑ **Die GPU nimmt nur int8.** Ist ein Auftrag ternaer (die Experten
-    //   eines ternaeren Gemischs, seit 2026-10-05), rechnet das ganze Buendel
-    //   auf der CPU: dieselbe ganze Zahl je Ausgabeelement, nur langsamer.
-    //   Ein ternaerer Weg fuer Expertenbuendel auf der GPU steht aus.
-    #[cfg(all(feature = "metal", target_os = "macos"))]
-    if auftraege.iter().all(|a| !a.w.ist_ternaer()) {
-        let ziele: Vec<Box<dyn Fn(usize) -> u8 + Sync + '_>> = auftraege
-            .iter()
-            .map(|a| -> Box<dyn Fn(usize) -> u8 + Sync + '_> {
-                match a.aus {
-                    Ausgangsskala::Eine(f) => Box::new(move |_| f),
-                    Ausgangsskala::JeZeile(f) => Box::new(move |z| f[z]),
-                }
-            })
-            .collect();
-        let gpu: Vec<crate::metal::Auftrag<'_>> = auftraege
-            .iter()
-            .zip(&ziele)
-            .map(|(a, ziel)| crate::metal::Auftrag {
-                xs: a.xs,
-                w: match a.w {
-                    Gewichtsmatrix::Int8(w) => w,
-                    Gewichtsmatrix::Ternaer(_) => unreachable!("eben ausgeschlossen"),
-                },
-                in_features: a.in_features,
-                w_shifts: a.w_shifts,
-                act_frac_bits: a.act_frac_bits,
-                ziel: ziel.as_ref(),
-            })
-            .collect();
-        if let Some(aus) = crate::metal::stapel_viele(&gpu) {
-            return aus;
-        }
+    // ⚑ **Wo gerechnet wird, entscheidet `crate::ressourcen`**: Metal,
+    //   dann die Steckkarten, sonst die CPU, mit derselben Zahl.
+    if let Some(aus) = crate::ressourcen::stapel_viele(auftraege) {
+        return aus;
     }
     linear_w8a16_stapel_viele_cpu(auftraege)
 }
@@ -1082,9 +1053,9 @@ pub fn linear_matrix_pc_stapel(
 
 /// Der gemeinsame Rumpf beider Stapelwege.
 ///
-/// ⚑ **Mit dem Feature `metal` rechnet zuerst die GPU**, wenn sich die
-/// Buendelung dort lohnt; siehe `metal/mod.rs`. Die Pruefungen der Formen
-/// stehen davor und gelten fuer beide Wege.
+/// ⚑ **Zuerst fragt er die Rechenwerke** (`crate::ressourcen`: Metal, die
+/// Steckkarten), wenn sich die Buendelung dort lohnt. Die Pruefungen der
+/// Formen stehen davor und gelten fuer jeden Weg.
 fn stapel_intern<S>(
     xs: &[&[i16]],
     W: Gewichtsmatrix<'_>,
@@ -1101,27 +1072,17 @@ where
     if xs.is_empty() {
         return Vec::new();
     }
-    // ⚑ **Beide Gewichtsarten haben einen Weg auf der GPU** (ternaer seit
-    //   dem 2026-09-30); jeder gibt `None`, wenn die CPU rechnen soll, und
-    //   die rechnet dieselbe Zahl.
-    #[cfg(all(feature = "metal", target_os = "macos"))]
-    {
-        let gpu = match W {
-            Gewichtsmatrix::Int8(w8) => crate::metal::stapel(xs, w8, in_features, w_shifts, act_frac_bits, &out_frac),
-            Gewichtsmatrix::Ternaer(t) => crate::metal::stapel_ternaer(
-                xs, t.muster(), t.betraege(), in_features, w_shifts, act_frac_bits, &out_frac,
-            ),
-        };
-        if let Some(aus) = gpu {
-            return aus;
-        }
+    // ⚑ **Wo gerechnet wird, entscheidet `crate::ressourcen`**, fuer beide
+    //   Gewichtsarten; `None` heisst, die CPU rechnet dieselbe Zahl.
+    if let Some(aus) = crate::ressourcen::stapel(xs, W, in_features, w_shifts, act_frac_bits, &out_frac) {
+        return aus;
     }
     stapel_cpu(xs, W, in_features, w_shifts, out_frac, act_frac_bits)
 }
 
 /// Wie [`linear_matrix_pc_stapel`], **immer auf der CPU**, fuer jede
 /// Gewichtsart; aus demselben Grund wie [`linear_w8a16_pc_stapel_cpu`].
-#[cfg(all(feature = "metal", target_os = "macos"))]
+#[cfg(any(all(feature = "metal", target_os = "macos"), feature = "cuda", feature = "rocm"))]
 pub(crate) fn linear_matrix_pc_stapel_cpu(
     xs: &[&[i16]],
     W: Gewichtsmatrix<'_>,

@@ -21,6 +21,14 @@ Werkzeuge wechselt, einen Projektskill selbst findet und in Unterlagen
 recherchiert. Aufbau, Fallen und Auswertung stehen in `loop/README.md`,
 Ergebnisse unter `results/loop-*.md`.
 
+`schlaf/` misst das Gedächtnis: ein Projekt über acht Wochen mit
+Widersprüchen, einer Einschleusung und Rauschen, einmal mit Schlaf und
+einmal ohne, und danach dieselben Fragen an den Agenten. Aufbau und
+Grenzen stehen in `schlaf/README.md`. Ergebnisse unter `results/schlaf-*.md`: das 4B
+(Gedächtnis 13 von 13, Fragen mit Schlaf 5 von 7, ohne 1 von 7), das
+35B-Gemisch in int8 (13 von 13, 7 von 7, 2 von 7) und zum Vergleich ternär
+(10 von 13, 3 von 7, 2 von 7; die ternäre Fassung urteilt unzuverlässig).
+
 ## Kurze Aufgaben in vier Stufen (seit 2026-09-30)
 
 `stufen.json`: zwölf Aufgaben, je drei in den Stufen **einfach** (eine Datei

@@ -11,7 +11,7 @@
 //! Bis zu diesem Tag entschied sich der Rechenweg ausschließlich beim
 //! Übersetzen, und ein Vergleich zweier Wege brauchte zwei Bauten und zwei
 //! Läufe. Seitdem schalten `kernels::dot::skalar_erzwingen`,
-//! `kernels::metal::schwelle_setzen` und `kernels::linear::kerngrenze_setzen`
+//! `kernels::ressourcen::metal::schwelle_setzen` und `kernels::linear::kerngrenze_setzen`
 //! zur Laufzeit um, und ein Lauf prüft alle.
 //!
 //! # ⚑ Ein Vergleichswert, nicht einer je Weg
@@ -42,7 +42,8 @@
 //! übersprungen: Sie ist der Maßstab.
 
 use crate::logging::{sha256_hex, Event, RunLog};
-use integer_llm_kernels::{dot, linear, metal};
+use integer_llm_kernels::ressourcen::{karten, metal};
+use integer_llm_kernels::{dot, linear};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
@@ -77,6 +78,10 @@ pub struct Weg {
     pub skalar: bool,
     /// Die GPU jede Bündelung rechnen lassen; sonst ist sie abgeschaltet.
     pub gpu: bool,
+    /// ⚑ Die Steckkarten (CUDA, ROCm, seit dem 2026-10-14) jede Bündelung
+    /// rechnen lassen; sonst sind sie abgeschaltet. Getrennt von `gpu`,
+    /// damit jeder Weg seinen eigenen Zähler belegt.
+    pub karten: bool,
     /// Ein Kern statt aller.
     pub ein_kern: bool,
 }
@@ -84,24 +89,24 @@ pub struct Weg {
 /// Die Wege dieser Maschine, vom schnellsten zum langsamsten.
 ///
 /// ⚑ **Aus dem, was rechnet, nicht aus dem, was übersetzt ist**: Die
-/// Angaben kommen aus `kernels` (`dot::VEKTORISIERT`, `metal::verfuegbar`).
-/// Ein Weg auf einem Kern entfällt, wenn die Maschine ohnehin nur einen
-/// hat; er wäre derselbe wie der auf allen.
-pub fn wege(vektorisiert: bool, gpu: bool, kerne: usize) -> Vec<Weg> {
+/// Angaben kommen aus `kernels` (`dot::VEKTORISIERT`, `metal::verfuegbar`,
+/// `karten::verfuegbar`). Ein Weg auf einem Kern entfällt, wenn die
+/// Maschine ohnehin nur einen hat; er wäre derselbe wie der auf allen.
+pub fn wege(vektorisiert: bool, gpu: bool, karten: bool, kerne: usize) -> Vec<Weg> {
+    let cpu = |name, skalar, ein_kern| Weg { name, skalar, gpu: false, karten: false, ein_kern };
     let mut w = Vec::new();
+    if karten {
+        w.push(Weg { name: "karten", skalar: false, gpu: false, karten: true, ein_kern: false });
+    }
     if gpu {
-        w.push(Weg { name: "metal", skalar: false, gpu: true, ein_kern: false });
+        w.push(Weg { name: "metal", skalar: false, gpu: true, karten: false, ein_kern: false });
     }
     if vektorisiert {
-        w.push(Weg { name: "cpu-simd", skalar: false, gpu: false, ein_kern: false });
+        w.push(cpu("cpu-simd", false, false));
     }
-    w.push(Weg { name: "reference", skalar: true, gpu: false, ein_kern: false });
+    w.push(cpu("reference", true, false));
     if kerne > 1 {
-        w.push(if vektorisiert {
-            Weg { name: "cpu-simd, ein Kern", skalar: false, gpu: false, ein_kern: true }
-        } else {
-            Weg { name: "reference, ein Kern", skalar: true, gpu: false, ein_kern: true }
-        });
+        w.push(if vektorisiert { cpu("cpu-simd, ein Kern", false, true) } else { cpu("reference, ein Kern", true, true) });
     }
     w
 }
@@ -117,18 +122,20 @@ pub fn schaetzung(weg: &Weg, gemessen: &[(Weg, Duration)], kerne: usize) -> Opti
     }
     gemessen
         .iter()
-        .find(|(w, _)| !w.ein_kern && !w.gpu && w.skalar == weg.skalar)
+        .find(|(w, _)| !w.ein_kern && !w.gpu && !w.karten && w.skalar == weg.skalar)
         .map(|(_, d)| d.saturating_mul(kerne as u32))
 }
 
 /// Die Einstellung vor der Stufe, zum Zurücksetzen.
 struct Stand {
     schwelle: usize,
+    karten_schwelle: usize,
 }
 
 fn einstellen(weg: &Weg) {
     dot::skalar_erzwingen(weg.skalar);
     metal::schwelle_setzen(if weg.gpu { 1 } else { 0 });
+    karten::schwelle_setzen(if weg.karten { 1 } else { 0 });
     linear::kerngrenze_setzen(if weg.ein_kern { 1 } else { 0 });
 }
 
@@ -137,6 +144,7 @@ fn einstellen(weg: &Weg) {
 fn zuruecksetzen(stand: &Stand) {
     dot::skalar_erzwingen(false);
     metal::schwelle_setzen(stand.schwelle);
+    karten::schwelle_setzen(stand.karten_schwelle);
     linear::kerngrenze_setzen(0);
 }
 
@@ -179,9 +187,16 @@ pub fn laufen(log: &mut RunLog, artefakt: &Path) -> bool {
     if let Some(grund) = metal::nicht_verfuegbar_weil() {
         log.note(format!("GPU nicht dabei: {grund}"));
     }
-    let wege = wege(vektorisiert, gpu, kerne);
+    let karten = karten::verfuegbar();
+    let mit_karten = karten::uebersetzt_fuer(karten::Hersteller::Nvidia) || karten::uebersetzt_fuer(karten::Hersteller::Amd);
+    if mit_karten {
+        if let Some(grund) = karten::nicht_verfuegbar_weil() {
+            log.note(format!("Karten nicht dabei: {grund}"));
+        }
+    }
+    let wege = wege(vektorisiert, gpu, karten, kerne);
 
-    let stand = Stand { schwelle: metal::schwelle() };
+    let stand = Stand { schwelle: metal::schwelle(), karten_schwelle: karten::schwelle() };
     let beginn = Instant::now();
     let mut dauern: Vec<(Weg, Duration)> = Vec::new();
     let mut abdruecke: Vec<(Weg, String)> = Vec::new();
@@ -204,12 +219,14 @@ pub fn laufen(log: &mut RunLog, artefakt: &Path) -> bool {
         einstellen(weg);
         let kerne_im_weg = linear::kerngrenze();
         let gpu_vorher = metal::gerechnet();
+        let karten_vorher = karten::gerechnet();
         let skalar_vorher = dot::erzwungen_skalar_gerechnet();
         let t0 = Instant::now();
         let (_, abdruck) =
             integer_llm_runtime::generate::dekodieren_mit_digest(&modell, &ids, SCHRITTE, 0, true);
         let dauer = t0.elapsed();
         let gpu_buendel = metal::gerechnet() - gpu_vorher;
+        let karten_buendel = karten::gerechnet() - karten_vorher;
         let skalar_gerechnet = dot::erzwungen_skalar_gerechnet() - skalar_vorher;
         zuruecksetzen(&stand);
 
@@ -217,10 +234,11 @@ pub fn laufen(log: &mut RunLog, artefakt: &Path) -> bool {
             name: format!("rechenweg {}", weg.name),
             millis: dauer.as_millis() as u64,
             detail: format!(
-                "Abdruck {}, {} Kern(e), GPU-Bündel {}, erzwungen skalar {}",
+                "Abdruck {}, {} Kern(e), GPU-Bündel {}, Karten-Bündel {}, erzwungen skalar {}",
                 &abdruck[..16.min(abdruck.len())],
                 kerne_im_weg,
                 gpu_buendel,
+                karten_buendel,
                 skalar_gerechnet
             ),
         });
@@ -232,6 +250,14 @@ pub fn laufen(log: &mut RunLog, artefakt: &Path) -> bool {
         }
         if !weg.gpu && gpu_buendel > 0 {
             log.error(format!("{}: die GPU hat gerechnet, obwohl sie abgeschaltet war", weg.name));
+            ok = false;
+        }
+        if weg.karten && karten_buendel == 0 {
+            log.error(format!("{}: keine Karte hat gerechnet", weg.name));
+            ok = false;
+        }
+        if !weg.karten && karten_buendel > 0 {
+            log.error(format!("{}: die Karten haben gerechnet, obwohl sie abgeschaltet waren", weg.name));
             ok = false;
         }
         if weg.skalar && vektorisiert && skalar_gerechnet == 0 {
@@ -289,15 +315,20 @@ mod tests {
     fn die_referenz_ist_immer_dabei() {
         for vekt in [false, true] {
             for gpu in [false, true] {
-                for kerne in [1, 2, 15] {
-                    let w = wege(vekt, gpu, kerne);
-                    let n = namen(&w);
-                    assert!(n.contains(&"reference"), "{vekt} {gpu} {kerne}: {n:?}");
-                    let eindeutig: std::collections::HashSet<_> = n.iter().collect();
-                    assert_eq!(eindeutig.len(), n.len());
-                    assert_eq!(n.contains(&"metal"), gpu);
-                    assert_eq!(n.contains(&"cpu-simd"), vekt);
-                    assert_eq!(w.iter().any(|w| w.ein_kern), kerne > 1);
+                for karten in [false, true] {
+                    for kerne in [1, 2, 15] {
+                        let w = wege(vekt, gpu, karten, kerne);
+                        let n = namen(&w);
+                        assert!(n.contains(&"reference"), "{vekt} {gpu} {karten} {kerne}: {n:?}");
+                        let eindeutig: std::collections::HashSet<_> = n.iter().collect();
+                        assert_eq!(eindeutig.len(), n.len());
+                        assert_eq!(n.contains(&"metal"), gpu);
+                        assert_eq!(n.contains(&"karten"), karten);
+                        assert_eq!(n.contains(&"cpu-simd"), vekt);
+                        assert_eq!(w.iter().any(|w| w.ein_kern), kerne > 1);
+                        // Kein Weg rechnet auf GPU und Karten zugleich.
+                        assert!(w.iter().all(|w| !(w.gpu && w.karten)));
+                    }
                 }
             }
         }
@@ -307,18 +338,20 @@ mod tests {
     #[test]
     fn die_reihenfolge_steht_fest() {
         assert_eq!(
-            namen(&wege(true, true, 15)),
+            namen(&wege(true, true, false, 15)),
             ["metal", "cpu-simd", "reference", "cpu-simd, ein Kern"]
         );
-        assert_eq!(namen(&wege(false, false, 4)), ["reference", "reference, ein Kern"]);
-        assert_eq!(wege(true, true, 15).iter().filter(|w| w.gpu).count(), 1);
+        assert_eq!(namen(&wege(false, false, false, 4)), ["reference", "reference, ein Kern"]);
+        assert_eq!(namen(&wege(false, false, true, 4)), ["karten", "reference", "reference, ein Kern"]);
+        assert_eq!(wege(true, true, true, 15).iter().filter(|w| w.gpu).count(), 1);
+        assert_eq!(wege(true, true, true, 15).iter().filter(|w| w.karten).count(), 1);
     }
 
     /// **Nur der Weg auf einem Kern wird geschätzt**, aus dem passenden
     /// Weg auf allen Kernen.
     #[test]
     fn die_schaetzung_nimmt_den_passenden_weg() {
-        let w = wege(true, true, 10);
+        let w = wege(true, true, false, 10);
         let gemessen = vec![
             (w[0], Duration::from_millis(100)),
             (w[1], Duration::from_millis(300)),
@@ -328,7 +361,7 @@ mod tests {
         assert_eq!(schaetzung(&w[2], &gemessen, 10), None);
         assert_eq!(schaetzung(&w[3], &gemessen, 10), Some(Duration::from_millis(3000)));
 
-        let r = wege(false, false, 4);
+        let r = wege(false, false, false, 4);
         let gemessen = vec![(r[0], Duration::from_secs(20))];
         assert_eq!(schaetzung(&r[1], &gemessen, 4), Some(Duration::from_secs(80)));
         assert!(schaetzung(&r[1], &gemessen, 4).unwrap() > ZEITRAHMEN);

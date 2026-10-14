@@ -1,0 +1,70 @@
+#!/bin/sh
+# golem-kiosk: das Myelith-Fenster im Vollbild, in der Oberflaechen-Schicht.
+#
+# ⚑ **Laeuft im chroot der Schicht als `golem`, nie als root.** Gestartet
+# wird es von `golem-schicht starten` in der Basis; Geraeteverwaltung (udev)
+# und Sitzung (seatd) laufen dort, in der gepruefen Basis, und reichen die
+# Bildschirm- und Eingabegeraete ueber `seatd` herein. Diese Schicht selbst
+# braucht damit kein einziges Vorrecht.
+#
+# ⚑ **Zeichnen in Software**, damit es auf jeder Maschine mit UEFI-Bildschirm
+# laeuft: der Kompositor mit pixman, WebKit ohne GPU-Puffer. Wer eine
+# unterstuetzte Grafikkarte hat, legt `/daten/golemos/oberflaeche-gpu` an.
+# 📌 **Eine Datei und keine Umgebungsvariable:** `schicht-eintreten` leert
+#   die Umgebung, bevor es dieses Skript startet; hier stand
+#   `GOLEM_KIOSK_GPU=1`, und das kam nie an.
+set -eu
+
+export HOME=/home/golem
+export XDG_RUNTIME_DIR=/run/golem
+# ⚑ Dieselbe Ablage wie Konsole und `myl` in GolemOS (siehe
+#   /etc/profile.d/golemos.sh der Basis): die Einstellungen unter /daten.
+export XDG_CONFIG_HOME=/daten
+if [ -r /run/golemos/wurzel ]; then
+  MYELITH_WURZEL=$(cat /run/golemos/wurzel)
+  export MYELITH_WURZEL
+fi
+
+export LIBSEAT_BACKEND=seatd
+export GDK_BACKEND=wayland
+# ⚑ Ohne Barrierefreiheits-Bus: Es gibt in der Schicht keinen, und GTK
+#   wartete sonst bei jedem Start auf ihn.
+export NO_AT_BRIDGE=1
+# ⛔️ **GTK zeichnet mit OpenGL ES, immer** (`GDK_GL=gles`). Gemessen in der
+#   Schichtprobe unter QEMU (2026-10-13): Ohne die Zeile fordert GTK einen
+#   Kontext fuer Desktop-OpenGL an. Mesa kann den ueber EGL erzeugen, aber
+#   die Schicht hat keine Bibliothek, die dessen Funktionen ausfuehrt (kein
+#   GLX, kein glvnd), und libepoxy bricht das Fenster ab:
+#   `Couldn't open libGL.so.1 or libOpenGL.so.0`. Mit der Zeile stand das
+#   Fenster nach 45 s; mit Zeichnen auf dem Prozessor in Skia
+#   (`WEBKIT_SKIA_ENABLE_CPU_RENDERING`) lief es auch, zeigte nach 55 s aber
+#   erst den Ladeschirm.
+export GDK_GL=gles
+if [ ! -e /daten/golemos/oberflaeche-gpu ]; then
+  export WLR_RENDERER=pixman
+  export WLR_NO_HARDWARE_CURSORS=1
+  export WEBKIT_DISABLE_DMABUF_RENDERER=1
+  export WEBKIT_DISABLE_COMPOSITING_MODE=1
+fi
+
+# ⚑ **Dieselbe Tastatur wie in der Konsole.** Der Assistent der Basis legt
+#   die Konsolenbelegung ab (`loadkeys`-Name); Wayland spricht XKB. Die
+#   Liste ist die des Assistenten (`einrichten/src/sprache.rs`).
+if [ -r /daten/golemos/tastatur ]; then
+  case "$(cat /daten/golemos/tastatur)" in
+    de-latin1-nodeadkeys) export XKB_DEFAULT_LAYOUT=de XKB_DEFAULT_VARIANT=nodeadkeys ;;
+    de_CH-latin1) export XKB_DEFAULT_LAYOUT=ch ;;
+    us) export XKB_DEFAULT_LAYOUT=us ;;
+    uk) export XKB_DEFAULT_LAYOUT=gb ;;
+    fr-latin9) export XKB_DEFAULT_LAYOUT=fr XKB_DEFAULT_VARIANT=latin9 ;;
+    es) export XKB_DEFAULT_LAYOUT=es ;;
+    it) export XKB_DEFAULT_LAYOUT=it ;;
+    nl) export XKB_DEFAULT_LAYOUT=nl ;;
+    pt-latin1) export XKB_DEFAULT_LAYOUT=pt ;;
+    pl2) export XKB_DEFAULT_LAYOUT=pl ;;
+  esac
+fi
+
+# ⚑ `-s` erlaubt den Wechsel auf eine Textkonsole (Strg+Alt+F2): Wer das
+#   Fenster nicht mehr bedienen kann, kommt so an den Assistenten.
+exec cage -s -- /usr/bin/myelith-fenster

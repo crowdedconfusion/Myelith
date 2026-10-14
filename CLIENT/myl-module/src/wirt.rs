@@ -125,6 +125,8 @@ impl Pruefer {
             VomModul::NutzerFragen { id, frage } => VomModul::NutzerFragen { id, frage: nutzerfrage_saeubern(frage)? },
             VomModul::Modus { aktiv, banner } => VomModul::Modus { aktiv, banner: banner.map(|z| z.iter().take(40).map(|x| crate::filter::eine_zeile(x)).collect()) },
             VomModul::Protokoll { text } => VomModul::Protokoll { text: crate::filter::saeubern(&text) },
+            VomModul::Ansicht { ansicht } if b.ansicht => VomModul::Ansicht { ansicht: ansicht_saeubern(ansicht)? },
+            VomModul::AnsichtWeg { id } if b.ansicht => VomModul::AnsichtWeg { id: ansichtsname(&id)? },
             n @ (VomModul::WeckenIn { .. } | VomModul::Hallo { .. }) => n,
             andere => return Err(format!("nicht befugt: {}", art(&andere))),
         })
@@ -137,6 +139,7 @@ fn art(n: &VomModul) -> &'static str {
         VomModul::Unten { .. } => "Bereich unten",
         VomModul::ModellFragen { .. } => "Modell fragen",
         VomModul::Agentenlauf { .. } => "Agentenlauf",
+        VomModul::Ansicht { .. } | VomModul::AnsichtWeg { .. } => "Ansicht",
         _ => "Nachricht",
     }
 }
@@ -160,6 +163,60 @@ fn nutzerfrage_saeubern(f: crate::nachricht::Nutzerfrage) -> Result<crate::nachr
             N::Auswahl { text: s(&text), punkte: punkte.into_iter().map(|p| Auswahlpunkt { titel: crate::filter::eine_zeile(&p.titel), hinweis: crate::filter::eine_zeile(&p.hinweis) }).collect() }
         }
     })
+}
+
+/// So viele Reihen hat eine Kurve hoechstens, und so viele Punkte eine Reihe.
+pub const REIHEN_HOECHSTENS: usize = 8;
+pub const PUNKTE_HOECHSTENS: usize = 10_000;
+/// So viele Spalten und Zeilen hat eine Tabelle hoechstens.
+pub const SPALTEN_HOECHSTENS: usize = 32;
+pub const TABELLENZEILEN_HOECHSTENS: usize = 2_000;
+/// Die Endungen, die das Fenster als Bild oder Koerper zeichnet.
+pub const BILDENDUNGEN: [&str; 5] = ["png", "jpg", "jpeg", "gif", "webp"];
+pub const KOERPERENDUNGEN: [&str; 1] = ["stl"];
+
+fn ansichtsname(id: &str) -> Result<String, String> {
+    let id = crate::filter::eine_zeile(id);
+    if id.trim().is_empty() || id.chars().count() > 64 {
+        return Err("Ansicht: id leer oder laenger als 64 Zeichen".into());
+    }
+    Ok(id)
+}
+
+/// Ob eine Datei einer Ansicht im Modulordner bleibt und eine der Endungen
+/// traegt.
+fn ansichtsdatei(datei: &str, endungen: &[&str]) -> Result<String, String> {
+    let endung = datei.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()).unwrap_or_default();
+    if !crate::beschreibung::sicherer_pfad(datei) || !endungen.contains(&endung.as_str()) {
+        return Err(format!("Ansicht: Datei „{}“ verlaesst den Modulordner oder ist keine {}", crate::filter::eine_zeile(datei), endungen.join("/")));
+    }
+    Ok(datei.to_string())
+}
+
+/// **Eine Ansicht, gesaeubert und begrenzt**: Text ohne Steuerzeichen,
+/// Mengen unter ihren Grenzen, Dateien im Modulordner. Was ueber eine
+/// Grenze geht, wird abgelehnt und nicht still gekuerzt, damit das Modul
+/// nicht eine halbe Kurve fuer die ganze haelt.
+pub fn ansicht_saeubern(a: crate::nachricht::Ansicht) -> Result<crate::nachricht::Ansicht, String> {
+    use crate::nachricht::{Ansicht, Ansichtsinhalt as I, Reihe};
+    let z = |t: &str| crate::filter::eine_zeile(t);
+    let inhalt = match a.inhalt {
+        I::Kurve { x, y, nachkomma, reihen } => {
+            if reihen.is_empty() || reihen.len() > REIHEN_HOECHSTENS || reihen.iter().any(|r| r.punkte.len() > PUNKTE_HOECHSTENS) || nachkomma > 9 {
+                return Err(format!("Ansicht: 1 bis {REIHEN_HOECHSTENS} Reihen, je hoechstens {PUNKTE_HOECHSTENS} Punkte, hoechstens 9 Nachkommastellen"));
+            }
+            I::Kurve { x: z(&x), y: z(&y), nachkomma, reihen: reihen.into_iter().map(|r| Reihe { name: z(&r.name), punkte: r.punkte }).collect() }
+        }
+        I::Tabelle { kopf, zeilen } => {
+            if kopf.len() > SPALTEN_HOECHSTENS || zeilen.len() > TABELLENZEILEN_HOECHSTENS || zeilen.iter().any(|r| r.len() > SPALTEN_HOECHSTENS) {
+                return Err(format!("Ansicht: hoechstens {SPALTEN_HOECHSTENS} Spalten und {TABELLENZEILEN_HOECHSTENS} Zeilen"));
+            }
+            I::Tabelle { kopf: kopf.iter().map(|k| z(k)).collect(), zeilen: zeilen.iter().map(|r| r.iter().map(|k| z(k)).collect()).collect() }
+        }
+        I::Bild { datei } => I::Bild { datei: ansichtsdatei(&datei, &BILDENDUNGEN)? },
+        I::Koerper { datei } => I::Koerper { datei: ansichtsdatei(&datei, &KOERPERENDUNGEN)? },
+    };
+    Ok(Ansicht { id: ansichtsname(&a.id)?, titel: z(&a.titel), inhalt })
 }
 
 /// **Legt die gepruefen Bytes im Zwischenspeicher ab** und gibt den Pfad
@@ -204,6 +261,8 @@ pub struct Start<'a> {
     /// Wird gerufen, sobald eine Nachricht des Moduls ankommt (aus dem
     /// Lesefaden), etwa um die Eingabezeile zu wecken.
     pub wecker: Option<fn()>,
+    /// Ob dieser Wirt Ansichten zeigt; steht im Handschlag.
+    pub ansicht: bool,
 }
 
 impl Lauf {
@@ -268,7 +327,7 @@ impl Lauf {
             });
         }
         let mut lauf = Lauf { name: g.beschreibung.name.clone(), programm: programm.clone(), befugnisse: g.beschreibung.befugnisse.clone(), kind, an, von, pruefer: Pruefer::neu(g.beschreibung.befugnisse.clone()) };
-        lauf.senden(&AnModul::Hallo { protokoll: crate::PROTOKOLL, konsole: s.konsole.into(), sprache: s.sprache.into(), modell: s.modell.clone(), breite: s.breite, hoehe: s.hoehe });
+        lauf.senden(&AnModul::Hallo { protokoll: crate::PROTOKOLL, konsole: s.konsole.into(), sprache: s.sprache.into(), modell: s.modell.clone(), breite: s.breite, hoehe: s.hoehe, ansicht: s.ansicht });
         let bis = Instant::now() + HANDSCHLAG_FRIST;
         loop {
             let rest = bis.saturating_duration_since(Instant::now());
@@ -379,6 +438,27 @@ mod tests {
         assert!(matches!(gross, VomModul::ModellFragen { grenze: 8_192, .. }));
     }
 
+    /// ⚑ **Ansichten nur mit Befugnis**, Dateien nur im Modulordner und mit
+    /// passender Endung, Mengen unter ihrer Grenze.
+    #[test]
+    fn ansichten_geprueft() {
+        use crate::nachricht::{Ansicht, Ansichtsinhalt as I, Reihe};
+        let a = |inhalt| VomModul::Ansicht { ansicht: Ansicht { id: "a".into(), titel: "T\x1b".into(), inhalt } };
+        let mut ohne = Pruefer::neu(Befugnisse::default());
+        assert!(ohne.pruefen(a(I::Bild { datei: "daten/a.png".into() })).is_err(), "ohne Befugnis keine Ansicht");
+        let mut p = Pruefer::neu(Befugnisse { ansicht: true, ..Default::default() });
+        assert_eq!(p.pruefen(a(I::Bild { datei: "daten/a.PNG".into() })).unwrap(), VomModul::Ansicht { ansicht: Ansicht { id: "a".into(), titel: "T".into(), inhalt: I::Bild { datei: "daten/a.PNG".into() } } });
+        assert!(p.pruefen(a(I::Bild { datei: "../a.png".into() })).is_err(), "aus dem Ordner hinaus");
+        assert!(p.pruefen(a(I::Bild { datei: "daten/a.svg".into() })).is_err(), "SVG traegt Skript");
+        assert!(p.pruefen(a(I::Koerper { datei: "daten/a.png".into() })).is_err(), "ein Koerper ist STL");
+        assert!(p.pruefen(a(I::Koerper { datei: "teil.stl".into() })).is_ok());
+        let lang = Reihe { name: String::new(), punkte: vec![[0, 0]; PUNKTE_HOECHSTENS + 1] };
+        assert!(p.pruefen(a(I::Kurve { x: String::new(), y: String::new(), nachkomma: 0, reihen: vec![lang] })).is_err(), "zu viele Punkte, nicht still gekuerzt");
+        assert!(p.pruefen(a(I::Kurve { x: String::new(), y: String::new(), nachkomma: 0, reihen: vec![] })).is_err(), "eine Kurve ohne Reihe");
+        assert!(p.pruefen(VomModul::AnsichtWeg { id: String::new() }).is_err());
+        assert!(p.pruefen(VomModul::AnsichtWeg { id: "a".into() }).is_ok());
+    }
+
     #[test]
     fn text_kommt_gesaeubert() {
         let mut p = Pruefer::neu(befugt(1));
@@ -429,7 +509,7 @@ mod tests {
     fn falscher_handschlag() {
         let (o, g) = skriptmodul("name", "#!/bin/sh\nread z\necho '{\"art\":\"hallo\",\"protokoll\":1,\"name\":\"anderes\",\"version\":\"0.1.0\"}'\nsleep 5\n");
         let speicher = o.join("speicher");
-        let r = Lauf::starten(&g, &Start { konsole: "probe", sprache: "de", modell: None, breite: 80, hoehe: 24, speicher: &speicher, wecker: None });
+        let r = Lauf::starten(&g, &Start { konsole: "probe", sprache: "de", modell: None, breite: 80, hoehe: 24, speicher: &speicher, wecker: None, ansicht: false });
         assert!(r.as_ref().err().is_some_and(|f| f.contains("Handschlag passt nicht")), "{:?}", r.err());
         let _ = std::fs::remove_dir_all(&o);
     }
@@ -446,7 +526,7 @@ mod tests {
         // Nach der Pruefung im Ordner getauscht: laeuft trotzdem die gepruefte Kopie.
         std::fs::write(o.join("bin/beispiel"), "#!/bin/sh\nexit 9\n").unwrap();
         let speicher = o.join("speicher");
-        let mut lauf = Lauf::starten(&g, &Start { konsole: "probe", sprache: "de", modell: None, breite: 80, hoehe: 24, speicher: &speicher, wecker: None }).unwrap();
+        let mut lauf = Lauf::starten(&g, &Start { konsole: "probe", sprache: "de", modell: None, breite: 80, hoehe: 24, speicher: &speicher, wecker: None, ansicht: false }).unwrap();
         let bis = Instant::now() + Duration::from_secs(5);
         let mut alles = Vec::new();
         while Instant::now() < bis && !alles.iter().any(|e| matches!(e, Ereignis::Beendet(_))) {

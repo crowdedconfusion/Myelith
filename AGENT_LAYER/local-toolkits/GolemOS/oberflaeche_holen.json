@@ -1,0 +1,10 @@
+{
+  "name": "oberflaeche_holen",
+  "beschreibung": "Nur auf GolemOS: holt die Oberflaechen-Schicht (Datei oberflaeche-<arch>.sqfs, daneben muss dieselbe Datei mit .sha256 liegen) von einem Laufwerk unter /medien oder ueber eine https-Adresse und prueft die Pruefsumme. Laeuft im Hintergrund, weil es Minuten dauern kann; den Stand zeigt golemos_status. Die Architektur des Rechners nennt `uname -m`.",
+  "parameter": {
+    "type": "object",
+    "properties": { "quelle": { "type": "string", "description": "absoluter Pfad der .sqfs-Datei oder https-Adresse" } },
+    "required": ["quelle"]
+  },
+  "befehl": "command -v golem-schicht >/dev/null || { echo 'Das ist kein GolemOS.'; exit 1; }; setsid golem-schicht holen {quelle} > /tmp/golem-holen.log 2>&1 < /dev/null & echo 'Holen laeuft im Hintergrund; Stand mit golemos_status.'"
+}

@@ -8,5 +8,6 @@
     },
     "required": ["anzahl"]
   },
-  "befehl": "git log --oneline -n {anzahl}"
+  "befehl": "git log --oneline -n {anzahl}",
+  "fluss": { "liefert": "privat", "vertrauen": "fremd", "ziel": "keins", "braucht_vertrauen": true }
 }

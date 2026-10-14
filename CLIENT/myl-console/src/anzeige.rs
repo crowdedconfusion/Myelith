@@ -280,16 +280,17 @@ struct Lage {
 /// beim Start des Laufs: So gilt ein Wechsel sofort, auch mitten in einer
 /// Runde. Die Konsole setzt ihn vor jedem Lauf aus ihrem Stand und liest
 /// ihn danach zurueck.
-static AUTO: AtomicBool = AtomicBool::new(false);
-
-/// Gilt gerade `auto`?
+///
+/// ⛔️ **Der Schalter liegt im Agenten** (`myl_local_agent::ruestung::ohne_mensch`,
+/// Fund 535): Der Informationsfluss muss wissen, dass im auto mode kein
+/// Mensch freigibt, und ein zweiter Schalter hier liefe auseinander.
 pub fn auto_an() -> bool {
-    AUTO.load(Ordering::SeqCst)
+    myl_local_agent::ruestung::ohne_mensch()
 }
 
-/// Setzt den Modus fuer die Nachfrage.
+/// Setzt den Modus fuer die Nachfrage und fuer den Informationsfluss.
 pub fn auto_setzen(an: bool) {
-    AUTO.store(an, Ordering::SeqCst);
+    myl_local_agent::ruestung::ohne_mensch_setzen(an);
 }
 
 /// Wer nach einem Moduswechsel die Fusszeile neu zeichnet; bekommt `true`
@@ -495,6 +496,13 @@ impl Anzeige {
     pub fn verdichtet(&self, vorher: usize, nachher: usize) {
         let z = format!("  ⚑ Kontext verdichtet: {vorher} → {nachher} Token");
         self.merken(Zeitzeile { art: Art::Hinweis, kurz: Some(z.clone()), voll: z }, Some("verdichtet".to_string()));
+    }
+
+    /// **Der Agent hat alte Werkzeugausgaben ausgeblendet**, statt den
+    /// Verlauf zusammenzufassen.
+    pub fn ausgeblendet(&self, ergebnisse: usize, vorher: usize, nachher: usize) {
+        let z = format!("  ⚑ Kontext entlastet: {ergebnisse} alte Werkzeugausgaben ausgeblendet, {vorher} → {nachher} Token");
+        self.merken(Zeitzeile { art: Art::Hinweis, kurz: Some(z.clone()), voll: z }, Some("ausgeblendet".to_string()));
     }
 
     fn merken(&self, zeile: Zeitzeile, was: Option<String>) {

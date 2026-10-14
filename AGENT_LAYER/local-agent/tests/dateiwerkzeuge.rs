@@ -71,6 +71,8 @@ fn fahren(
         blick_kamera: false,
         web_recherche: false,
         netzsaat: None,
+        modul: None,
+        modulkiste: None,
     };
     let ruestung = myl_local_agent::ruestung::ruesten(&agent, FORM, SATZ, Vec::new()).expect("Ruestung");
     let kontrakt = myl_types::sitzung::Sitzungskontrakt::neu(
@@ -308,6 +310,8 @@ fn ohne_wurzel_greift_der_standard_arbeitsordner_und_verankertes_bleibt() {
         blick_kamera: false,
         web_recherche: false,
         netzsaat: None,
+        modul: None,
+        modulkiste: None,
     };
 
     // 1. Mit gesetzter Umgebung haengt der Ordner ein.

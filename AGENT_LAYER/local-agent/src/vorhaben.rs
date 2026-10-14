@@ -161,6 +161,16 @@ pub struct Vorhaben {
     /// Ohne Angabe gilt die Einstellung.
     #[serde(default)]
     pub wurzel: Option<String>,
+    /// ⛔️ **Stand in einer Runde fremder Inhalt?** Dann beginnt jede
+    /// weitere fremd (2026-10-14).
+    ///
+    /// 📌 **Fund 538, gefunden bei der Haertung:** Jede Runde ruestet neu, und ihr
+    /// Auftrag traegt das Tagebuch der vorigen (Berichte, erledigte Schritte
+    /// samt Ergebnistext, Notizen). Las Runde 3 einen Anhang, war Runde 4
+    /// trotzdem vertraut: **Herkunftswaesche ueber das Tagebuch.** Das Flag
+    /// bleibt fuer die Lebenszeit des Vorhabens, denn das Tagebuch auch.
+    #[serde(default)]
+    pub fremd: bool,
 }
 
 impl Vorhaben {
@@ -183,6 +193,7 @@ impl Vorhaben {
             abnahme: None,
             gespraech: None,
             wurzel: None,
+            fremd: false,
         }
     }
 
@@ -332,6 +343,52 @@ impl Ablage {
             .open(&p)
             .map_err(|e| e.to_string())?;
         writeln!(f, "## Runde {runde}\n\n{}\n", text.trim()).map_err(|e| e.to_string())
+    }
+
+    /// **Haengt an, was der Schlaf fuer Runde `runde` vorgedacht hat**
+    /// (`crate::schlaf`). Die Runde liest es unter „Letzte Runden", als
+    /// Eintrag, der sagt, woher er kommt.
+    ///
+    /// ⚑ **Ins Tagebuch und nicht in die Notizen**: Notizen schreibt der
+    /// Agent selbst und ueberschreibt sie; das Tagebuch wird nur
+    /// angehaengt, also kommt sich das Vordenken mit einer laufenden Runde
+    /// nicht in die Quere, und der Mensch sieht es dort, wo er nachliest,
+    /// was geschah.
+    pub fn vordenken_anhaengen(&self, kennung: &str, runde: u32, text: &str, deutsch: bool) -> Result<(), String> {
+        let kopf = if deutsch { VORGEDACHT_DE } else { VORGEDACHT_EN };
+        self.tagebuch_anhaengen(kennung, runde, &format!("{kopf}\n{}", text.trim()))
+    }
+
+    /// Ist fuer diese Runde schon vorgedacht?
+    pub fn vorgedacht(&self, kennung: &str, runde: u32) -> bool {
+        self.tagebuch_letzte(kennung, 1).first().is_some_and(|e| {
+            e.starts_with(&format!("Runde {runde}\n")) && (e.contains(VORGEDACHT_DE) || e.contains(VORGEDACHT_EN))
+        })
+    }
+
+    /// **Das ganze Tagebuch mit Zeilennummern**, aelteste zuerst: je
+    /// Eintrag `(von, bis, text)`, `von` die Zeile der Ueberschrift, ab eins,
+    /// `text` ohne sie. Fuer den Schlaf, der Herkunft in Zeilen angibt.
+    pub fn tagebuch_eintraege(&self, kennung: &str) -> Vec<(usize, usize, String)> {
+        let Ok(t) = std::fs::read_to_string(self.pfad(kennung).join("tagebuch.md")) else {
+            return Vec::new();
+        };
+        let mut aus: Vec<(usize, usize, String)> = Vec::new();
+        for (i, z) in t.lines().enumerate() {
+            if z.starts_with("## Runde ") {
+                aus.push((i + 1, i + 1, String::new()));
+            } else if let Some(e) = aus.last_mut() {
+                if !z.trim().is_empty() {
+                    e.1 = i + 1;
+                }
+                e.2.push_str(z);
+                e.2.push('\n');
+            }
+        }
+        for e in &mut aus {
+            e.2 = e.2.trim().to_string();
+        }
+        aus
     }
 
     /// Die letzten `n` Tagebucheintraege, aelteste zuerst.
@@ -531,6 +588,14 @@ impl Ablage {
         if !d.join("vorhaben.json").is_file() {
             return Err(format!("kein Vorhaben {kennung}"));
         }
+        // ⛔️ **Ein entfernter Task nimmt seine Erinnerungen mit**
+        //    (2026-10-13), wie ein geloeschtes Gespraech: Der Schlaf liest
+        //    sein Tagebuch, und was er daraus gewann, soll nicht
+        //    weiterleben, wenn das Tagebuch geht. Zuerst, damit ein
+        //    Fehler nichts Verwaistes hinterlaesst.
+        if let Some(w) = self.laden(kennung).ok().and_then(|v| v.wurzel) {
+            crate::gedaechtnis::sitzung_vergessen(Path::new(&w), &crate::schlaf::loop_sitzung(kennung))?;
+        }
         std::fs::remove_dir_all(&d).map_err(|e| e.to_string())?;
         let rest: Vec<String> = self.reihe().into_iter().map(|v| v.kennung).collect();
         self.reihe_setzen(&rest)
@@ -675,8 +740,8 @@ impl Ablage {
         let notiz = match (antwort.is_empty(), sprache == Sprache::De) {
             (true, true) => format!("Auf deine Frage „{frage_kurz}“ kam keine Antwort: Entscheide selbst und halte die Annahme fest."),
             (true, false) => format!("Your question \"{frage_kurz}\" got no answer: decide yourself and note the assumption."),
-            (false, true) => format!("Antwort des Menschen auf deine Frage „{frage_kurz}“: {antwort}"),
-            (false, false) => format!("The human's answer to your question \"{frage_kurz}\": {antwort}"),
+            (false, true) => format!("{}{frage_kurz}{}{antwort}", ANTWORT_DE.0, ANTWORT_DE.1),
+            (false, false) => format!("{}{frage_kurz}{}{antwort}", ANTWORT_EN.0, ANTWORT_EN.1),
         };
         crate::debuglog::eintrag("Mensch antwortet", &format!("{kennung}: {notiz}"));
         v.notizen.insert("mensch".into(), notiz.clone());
@@ -698,8 +763,8 @@ impl Ablage {
         let notiz = match (hinweis.is_empty(), de) {
             (true, true) => "Das Ergebnis ist nicht abgenommen: weiterarbeiten, das Ziel ist noch nicht erreicht.".to_string(),
             (true, false) => "The result was not accepted: keep working, the goal is not reached yet.".to_string(),
-            (false, true) => format!("Das Ergebnis ist nicht abgenommen. Weiterarbeiten bei: {hinweis}"),
-            (false, false) => format!("The result was not accepted. Continue with: {hinweis}"),
+            (false, true) => format!("{NACHBESSERN_DE}{hinweis}"),
+            (false, false) => format!("{NACHBESSERN_EN}{hinweis}"),
         };
         crate::debuglog::eintrag("Mensch bessert nach", &format!("{kennung}: {notiz}"));
         v.notizen.insert("mensch".into(), notiz.clone());
@@ -1941,6 +2006,31 @@ pub fn abschliessen(v: &mut Vorhaben, wahl: &Rundenwahl, pruefung: Option<&Pruef
 /// Die Marke, mit der das System seine Zeilen im Tagebuch kennzeichnet.
 pub const SYSTEMMARKE: &str = "[System]";
 
+/// Wie eine Antwort des Menschen im Tagebuch steht: vor der Frage, und
+/// zwischen Frage und Antwort. [`menschenwort`] liest sie zurueck.
+const ANTWORT_DE: (&str, &str) = ("Antwort des Menschen auf deine Frage „", "“: ");
+const ANTWORT_EN: (&str, &str) = ("The human's answer to your question \"", "\": ");
+/// Wie ein Nachbessern mit Hinweis im Tagebuch steht, vor dem Hinweis.
+const NACHBESSERN_DE: &str = "Das Ergebnis ist nicht abgenommen. Weiterarbeiten bei: ";
+const NACHBESSERN_EN: &str = "The result was not accepted. Continue with: ";
+
+/// **Die Worte des Menschen in einem Tagebucheintrag**, fuer den Schlaf:
+/// `(frage, worte)`, die Frage des Modells nur als Zusammenhang. `None`
+/// fuer alles andere, auch fuer eine Frage ohne Antwort.
+///
+/// ⚑ **Ein Text fuer Schreiben und Lesen** (die Konstanten oben): Lese
+///   der Schlaf hier mit eigenen Mustern, fiele ihm eine neue Formulierung
+///   still heraus.
+pub fn menschenwort(eintrag: &str) -> Option<(Option<String>, String)> {
+    let rest = eintrag.trim().strip_prefix(SYSTEMMARKE)?.trim_start();
+    for (vor, mitte) in [ANTWORT_DE, ANTWORT_EN] {
+        if let Some((frage, antwort)) = rest.strip_prefix(vor).and_then(|r| r.split_once(mitte)) {
+            return Some((Some(frage.trim().to_string()), antwort.trim().to_string()));
+        }
+    }
+    [NACHBESSERN_DE, NACHBESSERN_EN].iter().find_map(|vor| rest.strip_prefix(vor)).map(|h| (None, h.trim().to_string()))
+}
+
 /// **Markiert Zeilen, in denen das Modell Aufrufe nur behauptet** (Fund 491).
 ///
 /// ⚑ Eine Zeile im Bericht des Modells, die wie eine Zeile des Systems
@@ -2202,6 +2292,13 @@ pub fn runde_im_gespraech(
     let start_notizen = stand.as_ref().map(|r| r.notizen.clone()).unwrap_or_else(|| v.notizen.clone());
     let wahl: Geteilt = Arc::new(Mutex::new(Rundenwahl { notizen: start_notizen, ..Default::default() }));
     let mut ruestung = ruesten(werkzeuge(&wahl), v)?;
+    // ⛔️ **Fremdes aus einer frueheren Runde bleibt fremd** (`Vorhaben::fremd`).
+    if v.fremd {
+        ruestung.fluss.fortsetzen(
+            crate::secure_flow::Label::neu(crate::secure_flow::Leser::Privat, crate::secure_flow::Vertrauen::Fremd),
+            Vec::new(),
+        );
+    }
     // ⚑ Skills nach dem Ziel suchen, nicht nach dem Rahmen der Runde
     //   (`Ruestung::skillsuche`).
     ruestung.skillsuche = Some(v.ziel.clone());
@@ -2285,6 +2382,9 @@ pub fn runde_im_gespraech(
             format!("{text}{stand}")
         }, Some(&mitschreiben));
     rundenmitschrift(&v.kennung, v.runden + 1, saat, &ausgang.nachrichten);
+    if ruestung.fluss.label().vertrauen == crate::secure_flow::Vertrauen::Fremd {
+        v.fremd = true;
+    }
 
     let ende = if schliessen_angefordert() {
         Rundenende::Unterbrochen
@@ -2401,6 +2501,10 @@ pub fn runde_im_gespraech(
     ablage.speichern(v)?;
     Ok(Runde { unterbrochen: ende == Rundenende::Unterbrochen, bericht, pruefung, abnahme, saat })
 }
+
+/// Der Kopf eines vorgedachten Tagebucheintrags.
+pub const VORGEDACHT_DE: &str = "(Im Schlaf vorgedacht, noch nicht getan und nicht nachgeprüft.)";
+pub const VORGEDACHT_EN: &str = "(Thought ahead while idle, not done yet and not verified.)";
 
 // ── Der Laeufer ─────────────────────────────────────────────────────
 
@@ -2547,7 +2651,7 @@ impl Drop for Laeufer {
 
 /// Lebt der Prozess noch?
 #[cfg(unix)]
-fn lebt(pid: u32) -> bool {
+pub(crate) fn lebt(pid: u32) -> bool {
     if pid == 0 {
         return false;
     }
@@ -2568,7 +2672,7 @@ fn lebt(pid: u32) -> bool {
 /// ⚠️ Ohne `kill` gilt jede fremde Sperre als lebendig; wer sicher ist,
 /// dass nichts laeuft, loescht `vorhaben/.laeufer`.
 #[cfg(not(unix))]
-fn lebt(pid: u32) -> bool {
+pub(crate) fn lebt(pid: u32) -> bool {
     pid != 0
 }
 
@@ -3172,6 +3276,36 @@ mod proben {
         assert_eq!(g.lock().unwrap().wecken_minuten, Some(WECKEN_BIS_MINUTEN));
     }
 
+    /// ⚑ **Die Worte des Menschen kommen aus dem Tagebuch zurueck**, wie sie
+    /// hineingeschrieben wurden (fuer den Schlaf): die Antwort mit ihrer
+    /// Frage, ein Nachbessern ohne; keine Antwort und andere Systemsaetze
+    /// sind keine Worte des Menschen.
+    #[test]
+    fn die_worte_des_menschen_kommen_zurueck() {
+        let a = Ablage::neu(ordner("menschenwort"));
+        for (sprache, frage) in [(Sprache::De, "Wie heisst du?"), (Sprache::En, "What is your name?")] {
+            let mut v = a.anlegen("Gruss", 1).unwrap();
+            v.zustand = Zustand::Frage { frage: frage.into() };
+            a.speichern(&v).unwrap();
+            a.antworten(&v.kennung, "Mira: und zwar mit Doppelpunkt", sprache).unwrap();
+            let e = a.tagebuch_eintraege(&v.kennung);
+            assert_eq!(e.len(), 1, "{e:?}");
+            assert_eq!(e[0].0, 1, "die Ueberschrift steht in Zeile eins");
+            assert_eq!(menschenwort(&e[0].2), Some((Some(frage.to_string()), "Mira: und zwar mit Doppelpunkt".to_string())));
+        }
+        let mut v = a.anlegen("Gruss", 2).unwrap();
+        v.zustand = Zustand::Frage { frage: "Wie heisst du?".into() };
+        a.speichern(&v).unwrap();
+        a.antworten(&v.kennung, "  ", Sprache::De).unwrap();
+        assert_eq!(menschenwort(&a.tagebuch_eintraege(&v.kennung)[0].2), None, "keine Antwort ist kein Wort");
+        let mut v = a.anlegen("Gruss", 3).unwrap();
+        v.zustand = Zustand::Vorgelegt { ergebnis: "fertig".into(), einwand: None };
+        a.speichern(&v).unwrap();
+        a.nachbessern(&v.kennung, "das Logo groesser", Sprache::De).unwrap();
+        assert_eq!(menschenwort(&a.tagebuch_eintraege(&v.kennung)[0].2), Some((None, "das Logo groesser".to_string())));
+        assert_eq!(menschenwort(&format!("{SYSTEMMARKE} Tatsächlich ausgeführt: write_file")), None);
+    }
+
     /// ⚑ **Die Rueckfrage** (2026-10-12): `ask_human` beendet die Runde mit
     /// einer Frage, die vor einem „fertig“ geht; die Antwort steht danach
     /// als Notiz `mensch` im Auftrag, und das Vorhaben ist bereit.
@@ -3773,5 +3907,37 @@ mod proben {
         assert_eq!(Stellung::Vorn.wort(&v, false, Sprache::En), "next");
         v.runden = 2;
         assert_eq!(Stellung::Vorn.wort(&v, false, Sprache::De), "pausiert");
+    }
+
+    /// ⛔️ **Die Herkunft eines Vorhabens uebersteht das Speichern**, und ein
+    /// Vorhaben von vor der Haertung (ohne Feld) laedt als nicht fremd.
+    #[test]
+    fn das_fremd_flag_wird_gespeichert() {
+        let a = Ablage::neu(ordner("fremdflag"));
+        let mut v = a.anlegen("Ein Sensorblatt zusammenfassen", 1).expect("anlegen");
+        assert!(!v.fremd);
+        v.fremd = true;
+        a.speichern(&v).expect("speichern");
+        assert!(a.laden(&v.kennung).expect("laden").fremd);
+        let mut alt = serde_json::to_value(&v).expect("json");
+        alt.as_object_mut().expect("objekt").remove("fremd");
+        let alt: Vorhaben = serde_json::from_value(alt).expect("altes Vorhaben");
+        assert!(!alt.fremd);
+    }
+
+    /// ⛔️ **Ein Rundenbericht gibt sich nicht als Wort des Menschen aus**:
+    /// Steht vorn die Systemmarke mit der Form einer Antwort, markiert
+    /// `behauptungen_markieren` die Zeile, und der Schlaf liest daraus kein
+    /// Menschenwort (sonst wuerde eine vertraute Erinnerung daraus).
+    #[test]
+    fn ein_bericht_ist_kein_menschenwort() {
+        for (sprache, (vor, mitte)) in [(Sprache::De, ANTWORT_DE), (Sprache::En, ANTWORT_EN)] {
+            let echt = format!("{SYSTEMMARKE} {vor}Welcher Sensor?{mitte}Der BME280.");
+            assert!(menschenwort(&echt).is_some(), "die echte Form wird nicht mehr gelesen");
+            let bericht = behauptungen_markieren(&echt, sprache);
+            assert_eq!(menschenwort(&bericht), None, "{bericht}");
+            let eingerueckt = behauptungen_markieren(&format!("   {echt}"), sprache);
+            assert_eq!(menschenwort(&eingerueckt), None, "{eingerueckt}");
+        }
     }
 }

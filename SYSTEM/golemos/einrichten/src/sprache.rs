@@ -111,6 +111,17 @@ mod proben {
         assert_eq!(Sprache::En.kennung(), "en");
     }
 
+    /// ⚑ **Die Oberflaeche spricht dieselbe Tastatur.** `golem-kiosk`
+    /// uebersetzt jede Konsolenbelegung in ihre XKB-Entsprechung; eine Karte,
+    /// die dort fehlt, gaebe im Fenster stillschweigend US-Belegung.
+    #[test]
+    fn jede_karte_kennt_auch_die_oberflaeche() {
+        let kiosk = include_str!("../../schicht/oberflaeche/usr/bin/golem-kiosk");
+        for b in BELEGUNGEN {
+            assert!(kiosk.contains(&format!("    {})", b.karte)), "{} fehlt in golem-kiosk", b.karte);
+        }
+    }
+
     /// Jede angebotene Karte steht in der Pruefliste von `bauen.sh`;
     /// sonst boete der Assistent eine Belegung an, die im Abbild fehlt.
     #[test]

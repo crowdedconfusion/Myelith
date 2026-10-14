@@ -242,6 +242,15 @@ jobs:
         working-directory: INTEGER_LLM/kernels
         run: cargo build --features rocm --quiet
 
+      # ⚑ Die Kerne fuer NVIDIA und AMD ohne Karte: der Nachbau
+      # (`kerne.cu` als C++ gegen die CPU-Kerne, braucht g++), der
+      # Verteiler fuer mehrere Karten und der Lader. Auf dem Runner gibt
+      # es keine Karte; die Selbstpruefung je Karte laeuft erst auf einer
+      # Maschine mit Karte (`SYSTEM/install/karten-pruefen.sh`).
+      - name: cargo test --features cuda,rocm --lib ressourcen::karten (Nachbau der Kerne)
+        working-directory: INTEGER_LLM/kernels
+        run: cargo test --features cuda,rocm --lib ressourcen::karten --quiet
+
       # ── Was hierher gehoert, weil es dieselbe Uebersetzung braucht ──
       #
       # `test_division.py` und `test_overflow.py` rufen
@@ -754,8 +763,7 @@ jobs:
       # Die lokale Seite, seit dem 2026-09-30 der ganze oertliche Agent:
       # Schleife, Tuerklient, Risikoklassen, Werkzeuge mit Einhaengegrenze,
       # Kisten, Skills, Loop, Aktionsprotokoll. Ohne Artefakte; das Modell
-      # steckt hinter einem Merkmal. Die Probe mit FreeCAD ist ausgenommen,
-      # weil kein Laeufer FreeCAD hat.
+      # steckt hinter einem Merkmal.
       - name: cargo test, AGENT_LAYER (local-agent)
         working-directory: AGENT_LAYER/local-agent
         run: cargo test --quiet
@@ -1596,7 +1604,7 @@ jobs:
       # als Rechenpfad-Datei nicht in der Audit-Liste stand: **Eine
       # Pruefung, die nicht laeuft, meldet nichts.**
       #
-      # Diese acht brauchen keine Fremdbibliothek. Die fuenf, die torch
+      # Diese neun brauchen keine Fremdbibliothek. Die fuenf, die torch
       # brauchen, laufen im eigenen Job `kalibrierung-python`, damit
       # dieser hier schnell bleibt: er wurde am 2026-08-24 bewusst von
       # ueber drei Minuten auf unter eine Sekunde gebracht.
@@ -1618,6 +1626,7 @@ jobs:
           python3 tests/test_luts.py
           python3 tests/test_rmsnorm.py
           python3 tests/test_rope.py
+          python3 tests/test_rope_nachziehen.py
 
   # ── Kalibrierungs-Tests mit torch: eigener Job ────────────────────
   #

@@ -1,0 +1,10 @@
+{
+  "name": "knoten_schalten",
+  "beschreibung": "Nur auf GolemOS und nur auf ausdruecklichen Wunsch des Menschen: startet oder stoppt den eingerichteten Myelith-Knoten, oder legt fest, ob er beim Hochfahren mitstartet.",
+  "parameter": {
+    "type": "object",
+    "properties": { "aktion": { "type": "string", "enum": ["starten", "stoppen", "an", "aus"], "description": "starten, stoppen, an (beim Hochfahren mit) oder aus" } },
+    "required": ["aktion"]
+  },
+  "befehl": "command -v golem-knoten >/dev/null || { echo 'Das ist kein GolemOS.'; exit 1; }; case {aktion} in starten|stoppen|an|aus) ;; *) echo 'aktion: starten, stoppen, an oder aus'; exit 2 ;; esac; golem-knoten {aktion}"
+}

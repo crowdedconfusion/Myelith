@@ -102,6 +102,10 @@ pub struct Befugnisse {
     /// ausser der Befugnis selbst.
     #[serde(default)]
     pub modell_token_je_stunde: u32,
+    /// Ansichten im Sichtfeld des Fensters (Kurven, Tabellen, Bilder und
+    /// Koerper aus dem eigenen Ordner).
+    #[serde(default)]
+    pub ansicht: bool,
 }
 
 /// **Das Zielsystem dieses Rechners** als Schluessel fuer

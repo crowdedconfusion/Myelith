@@ -81,5 +81,4 @@ Die Vorlage liegt unter `skill-erstellen/vorlagen/SKILL.md`.
 | `aufgabe-zerlegen` | ein großes Ziel in prüfbare Schritte teilen, auch im Loop |
 | `bericht-schreiben` | Ergebnisse als Markdown-Bericht festhalten |
 | `datei-sicher-aendern` | bestehende Dateien ändern, ohne etwas zu zerstören |
-| `cad-erstellen` | ein parametrisches 3D-Teil bauen oder ändern, das sich in FreeCAD weiter bearbeiten lässt (braucht die Werkzeugkiste `CAD`) |
-| `schrauben-und-bohrungen` | die richtigen Maße für Durchgangslöcher, Kernlöcher, Köpfe und Senkungen (ISO 273, ISO 4762, ISO 10642), dazu die Zugaben beim 3D-Druck; ein Nachschlagewerk, das jedes Werkzeug nutzen kann |
+| `golemos-einrichten` | auf GolemOS die Oberfläche holen und starten oder einen Knoten einrichten |

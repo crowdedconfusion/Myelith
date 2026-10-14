@@ -14,6 +14,12 @@
 # verschiedenen Geraeten stoeren sich nicht.
 set -e
 
+# ⚑ **seatd startet nicht beim Hochfahren**, sondern mit der Oberflaeche
+#   (`golem-schicht`), und gibt seinen Socket dann nur deren Konto. Das
+#   `S70seatd` aus dem Buildroot-Paket gaebe ihn der Gruppe `video` und
+#   liefe auch ohne Oberflaeche.
+rm -f "$TARGET_DIR/etc/init.d/S70seatd"
+
 INITTAB="$TARGET_DIR/etc/inittab"
 [ -f "$INITTAB" ] || exit 0
 

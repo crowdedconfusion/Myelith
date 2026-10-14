@@ -1,7 +1,7 @@
 # testclient (`myl-testclient`)
 
-> **Version:** 0.38.0
-> **Datum:** 2026-10-05
+> **Version:** 0.41.0
+> **Datum:** 2026-10-14
 > **Status:** Phase 1 und **Phase 3 vollständig**, dazu Punkt 2.1
 > (`vergleich`), **2.2** (Backend-Vergleich innerhalb einer Maschine, seit
 > dem 2026-08-30) und 2.4 (`--repeat`); **Phase 4 vollständig** (4.3 die
@@ -543,6 +543,38 @@ COMPUTE_PIPELINE Phase 1: erstmals über einen aufrufbaren Befehl statt
 über einen Integrationstest.
 
 ## Changelog
+
+### v0.41.0 – 2026-10-14 (die Rechenwerke unter dem Dach `ressourcen`)
+
+- Folgt dem Umbau in `kernels` (INTEGER_LLM v0.125.0):
+  `integer_llm_kernels::ressourcen::{metal, karten}`. Kein Verhalten
+  geändert.
+- Belege: `cargo test` grün (286) ohne und mit `--features cuda,rocm`,
+  Clippy ohne Befund.
+
+### v0.40.0 – 2026-10-14 (das Modul der Karten heißt `resources`)
+
+- Folgt der Umbenennung in `kernels` (INTEGER_LLM v0.124.0):
+  `integer_llm_kernels::resources` statt `diskret`, in `rechenwege` und
+  `hardware`. Kein Verhalten geändert.
+- Belege: `cargo test` grün (286) ohne und mit `--features cuda,rocm`,
+  Clippy ohne Befund.
+
+### v0.39.0 – 2026-10-14 (die Karten von NVIDIA und AMD als eigener Rechenweg)
+
+- **Stufe `rechenwege`**: ein Weg `karten`, wenn eine Karte die
+  Selbstprüfung bestanden hat (`kernels::diskret`), vor `metal`, mit
+  eigenem Beleg: Auf ihm muss eine Karte gerechnet haben, auf jedem anderen
+  darf keine. Die Schwelle wird wie die von Metal gesichert und
+  zurückgesetzt.
+- **`backend_selected`** nennt die Karten mit (`cuda+cpu-simd/neon`,
+  `cuda+rocm+reference`), nach derselben Regel wie Metal: Jeder Teil muss
+  rechnen. Ohne bereite Karte steht dort kein `cuda`.
+- Die Prüfung `ein_bau_ohne_rechenpfad_wird_abgelehnt` erwartet für `cuda`
+  und `rocm` den neuen Wortlaut der Ablehnung und die Selbstprüfung darin;
+  rechnet ein Weg, gibt es für ihn nichts abzulehnen.
+- Belege: `cargo test` grün (286) ohne und mit `--features cuda,rocm`,
+  Clippy ohne Befund in beiden.
 
 ### v0.38.0 – 2026-10-05 (der Konformitätslauf prüft den ternären Rechenweg)
 

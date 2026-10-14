@@ -323,10 +323,17 @@ pub struct Oertlichesmodell {
     /// es vom Aufrufer fuer einen einzelnen Weg, heute beim Vorlesen: Dort
     /// ist die Ueberlegung Wartezeit, in der nichts klingt.
     pub denkbudget: Option<usize>,
+    /// **Der Arbeitskontext**: Ab so vielen Token gilt der Kontext als voll
+    /// ([`myl_local_agent::Kontextstand::grenze`]), und der Agent verdichtet.
+    /// `None` heisst die Grenze des Modells. Hoeher als sie wird er nie.
+    pub kontextbudget: Option<usize>,
     /// Die Endmarke der Ueberlegung (`</think>`), aus dem Wortschatz;
     /// `None`, wenn er sie nicht als ein Token kennt, und dann wirkt
     /// kein Budget.
     denkende: Option<usize>,
+    /// Das Token `<think>`, falls es eines ist; gesperrt, wenn nicht
+    /// ueberlegt wird (Fund 541).
+    denkbeginn: Option<usize>,
     /// Was eingeschoben wird, wenn das Budget erschoepft ist, bis
     /// einschliesslich der Endmarke. Siehe [`DENKSCHLUSS`].
     pub denkschluss: String,
@@ -491,6 +498,10 @@ impl Oertlichesmodell {
             let t = wortschatz.encode("</think>");
             (t.len() == 1).then(|| t[0])
         };
+        let denkbeginn = {
+            let t = wortschatz.encode("<think>");
+            (t.len() == 1).then(|| t[0])
+        };
         // ⚑ **Die Merkmarke fuer Modelle mit rekurrenten Ebenen**: Vor der
         //   letzten Rollenmarke bleibt ein Verlauf von Schritt zu Schritt
         //   gleich, dahinter steht die neu gerenderte Antwort. Dort hebt
@@ -515,7 +526,9 @@ impl Oertlichesmodell {
             aktion: std::sync::Mutex::new(None),
             denken: false,
             denkbudget: None,
+            kontextbudget: None,
             denkende,
+            denkbeginn,
             denkschluss: DENKSCHLUSS.to_string(),
             halt,
             beobachter: None,
@@ -558,10 +571,28 @@ impl Oertlichesmodell {
     pub fn uebernehmen(&mut self, e: &crate::einstellungen::Modelleinstellung) {
         self.grenze = e.token;
         self.denken = e.denken;
+        self.kontextbudget = e.kontext;
         self.saat_fest = e.saat;
         self.temperatur = e.temperatur;
         self.top_p = e.top_p;
         self.top_k = e.top_k;
+    }
+
+    /// **Wie voll der Kontext werden darf**: der Arbeitskontext, hoechstens
+    /// die Grenze des Modells.
+    pub fn arbeitsgrenze(&self) -> usize {
+        let grenze = self.modell.kontextgrenze();
+        self.kontextbudget.map_or(grenze, |b| b.min(grenze))
+    }
+
+    /// **Vergisst den gerechneten Zustand** (KV-Cache und Merkpunkte), etwa
+    /// wenn das Gespraech geloescht wird, dessen Anfang er traegt. Die
+    /// naechste Antwort liest ihren Prompt dann ganz neu ein.
+    ///
+    /// ⚑ Ein geloeschtes Gespraech soll nicht als Zustand im Speicher
+    /// weiterleben (Wunsch des Projektinhabers, 2026-10-13).
+    pub fn vergessen(&self) {
+        self.fortsetzung.lock().unwrap_or_else(|e| e.into_inner()).leeren();
     }
 
     /// **Eine Saat nur fuer die naechste Aktion**; danach wieder die feste
@@ -625,6 +656,9 @@ impl Oertlichesmodell {
             },
             // ⛔️ Der Notaus haelt die Erzeugung vor dem naechsten Token an.
             abbruch: Some(myl_local_agent::notaus::schalter()),
+            // ⛔️ **Ohne Denken kein neuer Denkblock** (Fund 541, siehe
+            //   `Erzeugung::gesperrt`).
+            gesperrt: if self.denkt() { &[] } else { self.denkbeginn.as_slice() },
         }
     }
 
@@ -685,6 +719,18 @@ impl Oertlichesmodell {
         nachrichten: &[Nachricht],
         max_tokens: Option<u32>,
     ) -> Result<Antwort, Tuerfehler> {
+        self.antworten_mit(nachrichten, max_tokens, myl_local_agent::notaus::schalter())
+    }
+
+    /// **Wie [`Self::antworten`], mit einem eigenen Schalter zum Anhalten.**
+    /// Der Notaus ist der Schalter jedes Auftrags; der Schlaf bringt
+    /// seinen Wecker mit (`myl_local_agent::schlaf`).
+    fn antworten_mit(
+        &self,
+        nachrichten: &[Nachricht],
+        max_tokens: Option<u32>,
+        abbruch: &std::sync::atomic::AtomicBool,
+    ) -> Result<Antwort, Tuerfehler> {
         let prompt = self.vorlage().bauen(nachrichten, self.denkt());
         // Einmal zerlegt, fuer den Zaehler und fuer die Rechnung: Bei einem
         // langen Verlauf kostet das Zerlegen selbst merklich.
@@ -702,6 +748,8 @@ impl Oertlichesmodell {
         // ⚑ **Ein Schloss fuer den ganzen Schritt**: Zwei gleichzeitige
         // Aufrufe duerfen nicht in denselben Speicher schreiben.
         let mut speicher = self.fortsetzung.lock().unwrap_or_else(|e| e.into_inner());
+        let mut erzeugung = self.erzeugung(grenze, &schluss);
+        erzeugung.abbruch = Some(abbruch);
         let (token, wiederverwendung) = match &self.beobachter {
             // ⚑ Auch ohne Zuschauer wird gehalten: Die Marken gehoeren
             // zur Antwort und nicht zur Anzeige. Ohne sie rechnete
@@ -710,7 +758,7 @@ impl Oertlichesmodell {
             None => dekodieren_fortgesetzt(
                 &self.modell,
                 &prompt_token,
-                &self.erzeugung(grenze, &schluss),
+                &erzeugung,
                 &mut speicher,
                 &mut |_| {
                     self.zaehler.heraus.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -732,7 +780,7 @@ impl Oertlichesmodell {
                 let token = dekodieren_fortgesetzt(
                     &self.modell,
                     &prompt_token,
-                    &self.erzeugung(grenze, &schluss),
+                    &erzeugung,
                     &mut speicher,
                     &mut |t| {
                         self.zaehler.heraus.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -784,7 +832,7 @@ impl Oertlichesmodell {
             .to_string();
         // ⛔️ **Angehalten ist kein Ergebnis wie jedes andere**: Die Schleife
         //   muss enden, und der Text bis dahin kommt mit.
-        if myl_local_agent::notaus::ausgeloest() {
+        if abbruch.load(std::sync::atomic::Ordering::SeqCst) {
             return Err(Tuerfehler::Abgebrochen { bisher: text });
         }
         Ok(Antwort {
@@ -824,6 +872,48 @@ impl Modellweg for Oertlichesmodell {
         aus
     }
 
+    /// ⚑ Wie `chat`, mit dem Schalter des Schlafs statt des Notaus.
+    fn chat_unterbrechbar(
+        &self,
+        _modell: &str,
+        nachrichten: &[Nachricht],
+        max_tokens: Option<u32>,
+        abbruch: &std::sync::atomic::AtomicBool,
+    ) -> Result<Antwort, Tuerfehler> {
+        let eigene = AKTION.with(|a| a.get().tiefe == 0);
+        if eigene {
+            self.aktion_beginnen();
+        }
+        let aus = self.antworten_mit(nachrichten, max_tokens, abbruch);
+        if eigene {
+            self.aktion_beenden();
+        }
+        aus
+    }
+
+    /// **Liest die Nachrichten in den KV-Speicher und erzeugt nichts**:
+    /// `max_new_tokens` null, die Vorbereitung haelt am Schalter an.
+    ///
+    /// ⚑ Zaehlt nicht in die Tokenzaehler: Kein Auftrag hat das bestellt.
+    fn vorwaermen(&self, nachrichten: &[Nachricht], abbruch: &std::sync::atomic::AtomicBool) -> Option<usize> {
+        let prompt = self.vorlage().bauen(nachrichten, self.denkt());
+        let token = self.wortschatz.encode(&prompt);
+        if token.len() >= self.modell.kontextgrenze() {
+            return None;
+        }
+        let schluss = self.wortschatz.encode(&self.denkschluss);
+        let mut speicher = self.fortsetzung.lock().unwrap_or_else(|e| e.into_inner());
+        let mut erzeugung = self.erzeugung(0, &schluss);
+        erzeugung.denkgrenze = None;
+        erzeugung.abbruch = Some(abbruch);
+        let (_, w) = dekodieren_fortgesetzt(&self.modell, &token, &erzeugung, &mut speicher, &mut |_| {});
+        if abbruch.load(std::sync::atomic::Ordering::SeqCst) {
+            return None;
+        }
+        self.zaehler.kontext.store(speicher.laenge() as u32, std::sync::atomic::Ordering::Relaxed);
+        Some(w.neu)
+    }
+
     fn aktion_beginnen(&self) -> Option<u64> {
         let stand = AKTION.with(|a| {
             let mut s = a.get();
@@ -855,7 +945,7 @@ impl Modellweg for Oertlichesmodell {
         let prompt = self.vorlage().bauen(nachrichten, self.denkt());
         Some(myl_local_agent::Kontextstand {
             belegt: self.wortschatz.encode(&prompt).len(),
-            grenze: self.modell.kontextgrenze(),
+            grenze: self.arbeitsgrenze(),
         })
     }
 }

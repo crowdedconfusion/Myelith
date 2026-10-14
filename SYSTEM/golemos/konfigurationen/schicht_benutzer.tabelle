@@ -1,0 +1,9 @@
+# Buildroot-Benutzertabelle der Oberflaechen-Schicht (siehe benutzer.tabelle).
+#
+# ⚑ **Das Fenster laeuft nicht als root.** Ein Browser-Kern, der Webseiten
+# und Werkzeugausgaben darstellt, ist die groesste Angriffsflaeche der
+# Schicht. `golem` darf den Bildschirm (video) und die Eingabegeraete (input)
+# benutzen und sonst nichts; `/daten` erreicht es, weil die Datenpartition
+# fuer jeden beschreibbar ist. Den Zustand des Knotens auf der Wurzel der
+# Basis sieht es nicht: Er liegt ausserhalb des chroot.
+golem 1000 golem 1000 * /home/golem /bin/sh video,input Myelith-Fenster

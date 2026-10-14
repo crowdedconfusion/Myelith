@@ -56,6 +56,16 @@
 //! deshalb `metal::verfuegbar`, und das heißt: Gerät da, Shader übersetzt,
 //! Selbstprüfung gegen die CPU bestanden.
 //!
+//! ## ⚑ Seit dem 2026-10-14 ebenso `cuda` und `rocm`
+//!
+//! Die Delegations-Stubs in `backends/` rechnen weiter nichts. Gerechnet
+//! wird in `ressourcen::karten`: die gebuendelten Matrizen auf Karten von NVIDIA und
+//! AMD, mit derselben Bauform wie Metal. Gefragt wird deshalb
+//! `ressourcen::karten::verfuegbar_fuer`, und das heisst: Treiber und Uebersetzer
+//! geladen, mindestens eine Karte dieses Herstellers aufgebaut, und ihre
+//! Selbstpruefung gegen die CPU bestanden. Auf einer Maschine ohne Karte
+//! bleibt der Pruefstand also so streng wie vorher.
+//!
 //! ## Was das Modul nicht behauptet
 //!
 //! Es sagt **nicht**, dass ein Backend richtig rechnet. Dafür sind die
@@ -75,16 +85,22 @@
 /// wiederholt, sie lief auseinander, und daraus wurde Fund 34. Der
 /// Modulkopf von `dot.rs` führt die Messung.
 ///
-/// `cuda` und `rocm` stehen bewusst **nicht** darin. Ihre Umsetzungen in
-/// `backends/` delegieren jede Operation an die Referenzkernel; sie sind
-/// Platzhalter mit dokumentierter Absicht, kein Rechenpfad.
+/// `cuda` und `rocm` stehen darin, wenn eine Karte des Herstellers bereit
+/// ist und die Selbstpruefung bestanden hat (`ressourcen::karten`). Die Umsetzungen
+/// in `backends/` delegieren weiter an die Referenz und zaehlen dafuer
+/// nicht.
 pub fn mit_rechenpfad() -> Vec<&'static str> {
     let mut vorhanden = vec!["reference"];
     if crate::dot::VEKTORISIERT {
         vorhanden.push("cpu-simd");
     }
-    if crate::metal::verfuegbar() {
+    if crate::ressourcen::metal::verfuegbar() {
         vorhanden.push("metal");
+    }
+    for h in [crate::ressourcen::karten::Hersteller::Nvidia, crate::ressourcen::karten::Hersteller::Amd] {
+        if crate::ressourcen::karten::verfuegbar_fuer(h) {
+            vorhanden.push(h.rechenweg());
+        }
     }
     vorhanden
 }
@@ -144,6 +160,22 @@ pub fn ablehnung(backend: &str) -> String {
             mit_rechenpfad().join(", ")
         );
     }
+    if backend == "cuda" || backend == "rocm" {
+        let (feature, karte) = if backend == "cuda" { ("cuda", "NVIDIA") } else { ("rocm", "AMD") };
+        return format!(
+            "Backend \"{backend}\" rechnet in diesem Prozess NICHT.\n\
+             Vorhanden sind: {}.\n\
+             Grund: {}\n\
+             \n\
+             Moegliche Gruende: ohne `--features {feature}` gebaut, keine {karte}-Karte,\n\
+             Treiber oder Laufzeituebersetzer nicht gefunden, oder keine Karte hat\n\
+             die Selbstpruefung gegen die CPU bestanden. Ein Prueflauf darueber\n\
+             zertifizierte die CPU unter dem Namen der Karte. Die Umsetzung in\n\
+             kernels/src/ressourcen/backends/ ist ein Delegations-Stub und zaehlt nicht.",
+            mit_rechenpfad().join(", "),
+            crate::ressourcen::karten::nicht_verfuegbar_weil().unwrap_or_else(|| "keiner gemeldet".into())
+        );
+    }
     format!(
         "Backend {backend:?} hat auf dieser Übersetzung KEINEN eigenen Rechenpfad.\n\
          Vorhanden sind: {}.\n\
@@ -153,7 +185,7 @@ pub fn ablehnung(backend: &str) -> String {
          ein Nachweis über die Referenz, und er sähe genau wie ein bestandener\n\
          Backend-Nachweis aus.\n\
          \n\
-         Bei {backend:?} liegt das daran, dass die Umsetzung in kernels/src/backends/\n\
+         Bei {backend:?} liegt das daran, dass die Umsetzung in kernels/src/ressourcen/backends/\n\
          jede Operation an die Referenzkernel weiterreicht (Delegations-Stub).\n\
          Sobald dort echte Kernel stehen, gehört das Backend in\n\
          kernels/src/rechenpfad.rs, und erst dann besteht dieser Lauf.",
@@ -172,26 +204,28 @@ mod tests {
         assert!(mit_rechenpfad().contains(&"reference"));
     }
 
-    /// **Der Kern des Befunds.** Solange die Umsetzungen in `backends/`
-    /// delegieren, darf kein Prüflauf sie zertifizieren. Fällt dieser
-    /// Test eines Tages, ist das richtig: Dann gibt es echte Kernel, und
-    /// wer sie schreibt, ändert ihn mit.
+    /// **Der Kern des Befunds.** `cuda` und `rocm` gelten genau dann als
+    /// Rechenpfad, wenn eine Karte die Selbstpruefung bestanden hat; die
+    /// delegierenden Stubs in `backends/` zaehlen nie. Ohne Feature, und
+    /// auf jeder Maschine ohne Karte, also auch hier, ist die Antwort nein.
+    ///
+    /// 📌 Bis zum 2026-10-14 hiess dieser Test
+    /// `delegierende_backends_werden_abgelehnt` und verlangte ein festes
+    /// Nein. Er ist umgeschrieben worden, als die echten Kerne kamen, wie
+    /// er es selbst angekuendigt hatte.
     #[test]
-    fn delegierende_backends_werden_abgelehnt() {
-        for backend in ["cuda", "rocm"] {
-            assert!(
-                !rechnet(backend),
-                "{backend} gilt als Rechenpfad, obwohl es delegiert"
-            );
-            let text = ablehnung(backend);
-            assert!(
-                text.contains("KEINEN eigenen Rechenpfad"),
-                "Ablehnung nennt den Grund nicht: {text}"
-            );
-            assert!(
-                text.contains("Delegations-Stub"),
-                "Ablehnung sagt nicht, woran es liegt: {text}"
-            );
+    fn cuda_und_rocm_gelten_nur_mit_gepruefter_karte() {
+        for (backend, h) in [("cuda", crate::ressourcen::karten::Hersteller::Nvidia), ("rocm", crate::ressourcen::karten::Hersteller::Amd)] {
+            assert_eq!(rechnet(backend), crate::ressourcen::karten::verfuegbar_fuer(h), "{backend}");
+            if !crate::ressourcen::karten::uebersetzt_fuer(h) {
+                assert!(!rechnet(backend), "{backend} ohne Feature gemeldet");
+            }
+            if !rechnet(backend) {
+                let text = ablehnung(backend);
+                assert!(text.contains("rechnet in diesem Prozess NICHT"), "{text}");
+                assert!(text.contains("Selbstpruefung"), "Ablehnung nennt die Pruefung nicht: {text}");
+                assert!(text.contains("Grund:"), "Ablehnung nennt keinen Grund: {text}");
+            }
         }
     }
 
@@ -232,7 +266,7 @@ mod tests {
     /// Feature ist die Antwort immer nein.
     #[test]
     fn metal_gilt_nur_mit_bereiter_gpu() {
-        assert_eq!(rechnet("metal"), crate::metal::verfuegbar());
+        assert_eq!(rechnet("metal"), crate::ressourcen::metal::verfuegbar());
         if !cfg!(all(feature = "metal", target_os = "macos")) {
             assert!(!rechnet("metal"), "metal ohne Feature gemeldet");
         }
@@ -252,6 +286,8 @@ mod tests {
         }
         assert_eq!(uebersetzt.contains(&"cpu-simd"), cfg!(feature = "cpu-simd"));
         assert_eq!(uebersetzt.contains(&"metal"), cfg!(feature = "metal"));
+        assert_eq!(uebersetzt.contains(&"cuda"), cfg!(feature = "cuda"));
+        assert_eq!(uebersetzt.contains(&"rocm"), cfg!(feature = "rocm"));
     }
 
     /// Ein Tippfehler im Backend-Namen darf nicht wie ein fehlender

@@ -1,7 +1,7 @@
 # client (Nutzer-Client inkl. Wallet)
 
-> **Version:** 0.139.0 (`myl-client` 0.86.0, `myl-oberflaeche` 0.63.0, `myl-console` 0.51.0, `myl-senses` 0.11.0, `myl-module` 0.2.0)
-> **Datum:** 2026-10-12
+> **Version:** 0.156.0 (`myl-client` 0.94.0, `myl-oberflaeche` 0.75.0, `myl-console` 0.59.0, `myl-senses` 0.12.0, `myl-module` 0.4.0)
+> **Datum:** 2026-10-14
 > **Status:** ✅ **Der lokale Betrieb läuft und ist ausgeliefert.** Ein
 > Gesprächsfenster mit Modellwahl, Agentenschleife und
 > Einstellungsseite; aus einem frischen Klon lassen sich darüber
@@ -32,6 +32,7 @@ kostet nichts, wenn er stimmt, und einen halben Tag, wenn nicht.
 | **Was gerade läuft, steht da** | Eine Zeile fest über dem Eingabekasten, mittig: Ladetext, verstrichene Zeit, gelesene und geschriebene Token, laufende Tätigkeit; die Farbe wandert in zwei Minuten durch den Regenbogen, in einfarbigen Designs pulst sie. Jeder Schritt und jeder Werkzeugaufruf **bleibt** in der Zeitleiste; `^S` schaltet auf die ausführliche Form, in der auch der Denkvorgang live durchläuft |
 | **auto mode und manual mode** | Umschalt-Tab in der Konsole, oder `agent.modus` in den Einstellungen. Im manual mode wird **jede schreibende Handlung** vorgelegt und läuft erst nach einer Bestätigung; Lesen und Suchen fragen nie. Das Fenster legt sie seit v0.47.0 im Kasten des Betriebssystems vor, mit Namen und Argumenten; vorher nahm es die schreibenden Werkzeuge in diesem Modus **ganz weg** |
 | **Der Loop: ein Ziel über viele Runden** | **Ohne Grenze an Runden oder Dauer:** Ein Loop endet, wenn du ihn anhältst oder sein Ergebnis bestätigst. Meldet das Modell das Ziel als erreicht, fragt der Client, ob es stimmt oder wo weitergearbeitet werden soll; kommt das Modell ohne dich nicht weiter, stellt es dir eine Frage, und der Loop wartet auf deine Antwort. Im Fenster ∞ neben dem Senden (an und aus), daneben die Liste der Tasks mit ▶, ⏸, ✓ und Papierkorb je Task: auswählen, neu anlegen, am Griff in die gewünschte Reihenfolge ziehen. Der vorderste läuft, alle dahinter sind „queued“; jeder Task hat einen Namen und sein eigenes Gespräch. In der Konsole `/start loop [ziel]` (ohne Ziel fragt das Modell danach und benennt den Loop), `/stop loop`, `/resume loop` und `/tasks`; auf der Kommandozeile `myl loop` und `myl tasks`. Wird geschlossen, während ein Loop läuft, ist er danach angehalten und lässt sich genau dort fortsetzen |
+| **Module** | Signierte Erweiterungen mit eigenen Befehlen, eigenem Modus, Fragen an Modell und Mensch und eigener Werkzeugkiste (`MODULES/README.md`). In der Konsole getippt wie jeder Befehl. Im Fenster **gewählt** in der Seitenleiste unter der Werkzeugkiste: Die Wahl startet das Modul, seine Befehle öffnet ein Pfeil ganz rechts im Feld der Wahl als Liste, seine Zeilen im Gespräch, Fußzeile und Bereich unten unter der Eingabe, und seine Fragen stellt ein Dialog des Fensters. Bilder, Kurven, Tabellen und 3D-Modelle (STL, drehbar) eines Moduls zeigt das **Sichtfeld**, geöffnet von der Lasche am rechten Rand; offen deckt es das ganze Gespräch. Das gewählte Modul ergänzt die Werkzeugkiste jedes Auftrags |
 | **Ein Gespräch mit einem lokalen Modell** | `myl frage <artefakt> <text>`, oder im Fenster |
 | **Die Agentenschleife** | `myl agent`, mit Werkzeugen innerhalb einer Einhängegrenze |
 | **Die Werkzeugkiste ist ein Ordner** | Eine Einstellung, ein Pfad: `agent.kistenordner`, ohne Angabe die mitgelieferte Kiste `Base` unter `AGENT_LAYER/local-toolkits/`. Der **Ordnername** sagt, welche eingebauten Werkzeuge dazukommen: `Base` die fünf Dateiwerkzeuge und die zwei Skillwerkzeuge `search_skill` und `learn_skill` (seit dem 2026-09-26), `Advanced` zusätzlich `run_command` und die drei Werkzeuge für den Mitschnitt (seit dem 2026-09-17, gemessen: das kleine Modell ruft sie nie). ⚑ **Eine Kiste kann das auch selbst sagen**, in ihrem `kiste.json`; ohne diese Datei und ohne einen der drei Namen bleibt es bei `Base`. Was als Manifest im Ordner liegt, sieht das Modell **ohne Neubau**. ⚑ **`Base` ist die Grundlage jeder Kiste**: Ihre Werkzeuge werden mitgeladen, gestapelt und nicht kopiert; bei gleichem Namen gewinnt die gewählte Kiste. ⛔️ Die fünf Dateiwerkzeuge bleiben kompiliert, weil nur sie die Einhängegrenze einhalten; ein Manifest läuft über die Shell und kann das nicht |
@@ -52,7 +53,7 @@ kostet nichts, wenn er stimmt, und einen halben Tag, wenn nicht.
 | **Gespraeche verwalten** | Rechtsklick auf eine Zeile: umbenennen an Ort und Stelle, als Markdown ausgeben, loeschen. Wohin ausgegeben wird, steht in `ausgabe.ordner`; ohne Angabe fuehrt das Fenster dorthin |
 
 ⚑ **Die Oberfläche ruft dieselben Funktionen wie die Kommandozeile**,
-über siebenundfünfzig Befehle. ⚠️ **Mit genau einer Ausnahme, und sie ist gewollt:** `terminal_ausfuehren` startet eine Shell, denn ein Terminal, das keine startet, ist keines. Jeder andere Befehl startet **keinen einzigen Unterprozess**. `jeder_befehl_ist_angemeldet` hält die vier
+über sechsundsechzig Befehle. ⚠️ **Mit zwei Ausnahmen, und beide sind gewollt:** `terminal_ausfuehren` startet eine Shell, denn ein Terminal, das keine startet, ist keines; `modul_waehlen` und `modul_befehl` starten ein Modul, und zwar wie die Konsole nur die geprüfte Kopie eines signierten Moduls. Jeder andere Befehl startet **keinen einzigen Unterprozess**. `jeder_befehl_ist_angemeldet` hält die vier
 Richtungen zusammen: kein Befehl ohne Anmeldung, keine Anmeldung ohne
 Befehl, kein Aufruf ins Leere und kein Befehl, den niemand ruft. „Ohne eigene Logik" hiesse sonst, aus einer Textausgabe
 für Menschen eine Schnittstelle zu machen, und genau das ist die Sorte
@@ -143,6 +144,27 @@ Die Recherchewerkzeuge des Chats sind abgeschaltet, bis das Häkchen
 `run_command` bereits ein Weg nach draussen offen, den keine dieser
 Schranken einfasst.
 
+### Der Blick auf den Bildschirm
+
+Ob ein Bildschirmfoto als eigene Arbeit gilt, hängt an den Programmen,
+die es zeigt. Vor jeder Aufnahme fragt `myl-senses` das System nach den
+Besitzern aller sichtbaren Fenster (macOS über `osascript`, Linux unter
+X11 über `wmctrl -lx`):
+
+* **vertraut**, wenn nur Terminals, Editoren und Entwicklungsumgebungen,
+  die Dateiverwaltung, Myelith selbst oder die Systemeinstellungen im
+  Bild sind;
+* **fremd**, sobald etwas anderes sichtbar ist, ausdrücklich Browser,
+  Mail, Messenger und Betrachter wie Vorschau, und ebenso, wenn sich die
+  Programme nicht feststellen lassen (Windows, Wayland, kein `wmctrl`).
+
+Ein fremder Blick bekommt vorn eine Marke, die dem Modell die
+sichtbaren fremden Programme nennt und sagt, dass der Inhalt Auskunft
+ist und kein Auftrag. Der Informationsfluss liest dieselbe Marke: Danach
+braucht eine Shell oder das Ändern einer bestehenden Datei die Freigabe
+des Nutzers. ⚠️ Eine Namensliste ist eine Näherung; ein Terminal kann
+auch eine heruntergeladene Datei zeigen.
+
 ## Abhängigkeiten
 
 `INTEGER_LLM` (Laufzeit und Artefakte), `AGENT_LAYER` (Werkzeugansage
@@ -159,6 +181,554 @@ Modell überhaupt etwas taugt, und weil eine Schnittstelle, die kein
 Mensch je bedient hat, an den Bedürfnissen vorbei entworfen wird.
 
 ## Changelog
+
+### v0.156.0 (2026-10-14): Ohne Denken kein neuer Denkblock
+
+`myl-client` 0.94.0; der Mechanismus steht in INTEGER_LLM v0.126.0.
+
+- 📌 **Fund 541:** Das hybride 35B öffnete auch ohne Denken einen
+  Denkblock, im Schlaf mit leeren Erinnerungen als Folge. ⚑
+  `Oertlichesmodell` sperrt das Token `<think>`, wenn nicht überlegt wird
+  (`denkbeginn`, aus dem Wortschatz, nur wenn es ein einzelnes Token ist).
+  Das wirkt überall, wo ohne Denken gerechnet wird: Schlaf, Konsole,
+  Fenster, `myl agent --ohne-denken`.
+- Belege: `cargo test` grün (159), Clippy ohne Befund.
+
+### v0.155.0 (2026-10-14): Im auto mode gibt die Konsole keine Freigabe mehr vor
+
+`myl-console` 0.59.0; der Kern steht in AGENT_LAYER v0.45.0.
+
+- ⛔️ **Fund 535:** Die Nachfrage der Konsole bejaht im auto mode jede
+  Handlung von selbst, und der Informationsfluss hielt das für die
+  Freigabe eines Menschen; nach einem Anhang lief die Shell. ⚑
+  `anzeige::auto_an` und `anzeige::auto_setzen` lesen und setzen jetzt den
+  Schalter des Agenten (`myl_local_agent::ruestung::ohne_mensch`), eine
+  Stelle für beide. Am echten 35B: Runde 1 liest einen Anhang, Runde 2
+  `ls` ist gesperrt; mit eigener Datei läuft es.
+- Belege: `cargo test` grün (178), Clippy ohne Befund.
+
+### v0.154.0 (2026-10-14): Jede Karte mit ihrem eigenen Schalter
+
+`myl-client` 0.93.0; der Kern steht in INTEGER_LLM v0.122.0 (Karten von
+NVIDIA und AMD, auch mehrere zugleich).
+
+- 📌 **Fund 534: Bei zwei Karten desselben Herstellers entschied die
+  zuletzt bearbeitete für beide.** `hardware::anwenden` rief für jede Karte
+  `rechenwege::setzen("cuda", an)`; ein Schalter je Hersteller, je Karte
+  aufgerufen. Gefunden beim Bau des Wegs für mehrere Karten. ⚑ Jetzt
+  `schaltplan`: Eine Karte mit PCI-Adresse wird einzeln geschaltet
+  (`rechenwege::karte_setzen`), ein Weg ist an, wenn irgendeine seiner
+  Karten an ist. Bei Metal ist das genau der Regler; bei mehreren Karten
+  ohne Adresse (Windows) die einzige Wahl, die keinen erlaubenden Regler
+  überstimmt.
+- **`Rechenwerk.pci`**: unter Linux aus `sysfs` (das Ziel von `device`),
+  sonst `None`. Über sie findet der Schalter die Karte, die CUDA oder HIP
+  zählt; deren Nummern und die Reihenfolge hier müssen nicht passen.
+- Belege: `cargo test` grün (159), Clippy ohne Befund, auch mit
+  `--features cuda,rocm`; `cargo check` unter Linux und für Windows
+  sauber. Neue Prüfungen
+  `zwei_karten_eines_herstellers_werden_einzeln_geschaltet` (beide
+  Reihenfolgen) und `ohne_adresse_wird_der_weg_geschaltet`.
+
+### v0.153.0 (2026-10-14): Der Bildschirmblick nach Kontext, die Verlaufswerkzeuge in `Base`
+
+`myl-senses` 0.12.0, `myl-console` 0.58.0; der Kern steht in AGENT_LAYER
+v0.44.0.
+
+- ⚑ **`myl_senses::blick::sichtbare_programme`** nennt die Programme mit
+  einem sichtbaren Fenster: macOS über `osascript` (CoreGraphics,
+  Fensterebene 0, nur der Besitzername, der Titel wird nicht gelesen),
+  Linux unter X11 über `wmctrl -lx` (die Fensterklasse), sonst `None`.
+  ⛔️ Eine leere Antwort gilt als `None`: Ein Fehler darf nicht als
+  „nichts Fremdes zu sehen“ durchgehen. Frist 5 s. Auf dieser Maschine
+  geprüft: `Vorschau, Docker Desktop, Terminal, Firefox`.
+- **Konsole (`/compress`)**: Ob der Verweis nach dem Verdichten das
+  Nachlesen anbietet, sagt jetzt die Werkzeugliste der Kiste
+  (`kann_nachlesen`) und nicht mehr ihr Name. 📌 Der Namensvergleich
+  („nicht `Base`“) hätte `Base` nach der Rücknahme vom selben Tag still
+  weiter ohne Nachlesen gelassen; im Fenster war es schon die Liste.
+- Neuer Abschnitt „Der Blick auf den Bildschirm“ oben.
+- Belege: `cargo test` grün in `myl-senses` (89), `myl-console` (178),
+  `myl-client` (157), `myl-oberflaeche` (87), Clippy mit `-D warnings`
+  ohne Befund.
+
+### v0.152.0 (2026-10-14): Der Verweis nach dem Verdichten passt zur Werkzeugkiste
+
+`myl-console` 0.57.0, `myl-oberflaeche` 0.75.0; der Kern steht in
+AGENT_LAYER v0.43.0.
+
+- **Konsole (`/compress`) und Fenster (`verdichten`)** sagen der
+  Verdichtung, ob die Werkzeugkiste im Mitschnitt nachlesen kann; mit
+  `Base` nennt der Verweis `read_history` nicht mehr. 📌 Gefunden an der
+  Nadel im echten Beispiel: Das 4B versprach in `Base`, die Datei zu
+  öffnen, und hörte auf.
+- Belege: `cargo test` grün in `myl-console` und `myl-oberflaeche`, Clippy
+  ohne Befund; die Nadel in der Konsole mit dem 4B in vier Varianten (siehe
+  AGENT_LAYER v0.43.0).
+
+### v0.151.0 (2026-10-14): `myl schlafen --tag` und `myl gedaechtnis --auftrag`
+
+`myl-client` 0.92.0; gebraucht von der Schlafprobe
+(`BENCHMARKS/Agent/schlaf`), der Kern steht in AGENT_LAYER v0.42.0.
+
+- **`myl schlafen --tag N`** schläft als Tag N (Tage seit 1970): Verblassen
+  und Archivieren hängen am Tag, und eine Probe über Wochen braucht ihn.
+- **`myl gedaechtnis --auftrag TEXT`** zeigt genau den Erinnerungsblock,
+  den ein Auftrag bekäme, und vermerkt ihn als Abruf wie ein echter Lauf.
+- 📌 **Behoben: Werte von Schaltern galten als Ordner oder Suchtext.** Die
+  Nummer hinter `--vergessen` landete im Suchtext, und ohne Ordner wäre
+  der Wert hinter `--tag` als Ordner gelesen worden. `ohne_schalter` nimmt
+  sie heraus.
+- Belege: `cargo test` grün, Clippy ohne Befund; vier Läufe der
+  Schlafprobe mit dem 4B über beide Schalter.
+
+### v0.150.0 (2026-10-13): Der Schlaf ohne Nachdenken
+
+`myl-console` 0.56.0, `myl-oberflaeche` 0.74.0; der Kern steht in
+AGENT_LAYER v0.41.0 (erschließen, Nutzen prüfen, vergleichen).
+
+- **Konsole und Fenster schalten für den Schlaf das Nachdenken ab**, wie
+  `myl schlafen` es schon tat, und danach wieder auf die Einstellung. Die
+  Fragen des Schlafs haben jetzt kurze Tokengrenzen (ein Urteil 16 Token,
+  ein Nutzenurteil 12); ein Denkblock verbrauchte sie, bevor die Antwort
+  käme. Im Fenster gilt das je geliehenem Aufruf, zusammen mit „gierig".
+- Belege: `cargo test` grün in `myl-console` und `myl-oberflaeche`,
+  Clippy ohne Befund.
+
+### v0.149.0 (2026-10-13): Der Schlaf kommt auch, wenn ein Loop auf dich wartet
+
+`myl-console` 0.55.0, `myl-oberflaeche` 0.73.0; der Kern steht in
+AGENT_LAYER v0.40.0.
+
+**Auftrag des Projektinhabers:** den Schlaf an einem realen Task prüfen,
+der zwischendurch einschläft, ohne dass der Nutzer pausiert, etwa weil
+eine Frage des Modells länger als x Minuten nicht beantwortet wird.
+
+- 📌 **In der Konsole schlief ein Loop nie.** Die Frist des Schlafs hing
+  an der Hauptzeile, und solange ein Loop lief, kam die Konsole dort nicht
+  hin. Jetzt schläft sie nach `schlaf.ruhe_minuten` ohne Antwort an jeder
+  Stelle, an der ein Loop auf den Menschen wartet:
+  - **an einer Frage des Modells** (`ask_human`) und an jeder Zeile, die
+    `zeile_lesen` liest (Ziel, „Wo soll weitergearbeitet werden?"). Die
+    Pause beginnt mit der Frage; wer schon tippt, schläft nicht; die
+    Frage steht nach dem Schlaf noch einmal über der Antwortzeile.
+  - **an der Abnahme eines Ergebnisses** (`janein::fragen_bis`, die
+    Ja-Nein-Frage mit Frist). 📌 Gefunden im echten Lauf mit dem 0,6B: Es
+    legte vor, statt zu fragen, und die Konsole wartete eine Viertelstunde
+    wach.
+  - **im Warten zwischen zwei Runden** (`wake_in`), einmal je Wartezeit.
+    `ruhen` nimmt dafür einen Termin (`bis`): Die Runde weckt den Schlaf
+    pünktlich. Ein Rohmodus, der schon an war, bleibt an, und geschrieben
+    wird trotzdem gekocht.
+  - Eine Frist für alle (`schlaffrist`), und jede Taste weckt wie bisher
+    und bleibt in der Zeile.
+- **Fenster:** Das Ende einer Loop-Runde beginnt eine Pause (`regung`),
+  denn wartet der Loop danach auf eine Antwort oder auf die nächste
+  Runde, ist das Ruhe; vorher zählte die Pause ab der letzten Eingabe vor
+  dem Loop. Mitten in einer Runde schläft das Fenster nie
+  (`loopstand.in_runde`).
+- **Belegt am echten Task in einem Pseudoterminal**, Ziel „Begrüße mich
+  persönlich mit meinem Vornamen; frage mich mit ask_human danach",
+  `schlaf.ruhe_minuten` 1:
+  - 4B: Frage nach 36 bis 40 s, **Schlaf genau 60 s nach der
+    unbeantworteten Frage**; eine Taste eine Sekunde später weckt in 1,3 s
+    („geweckt, bevor etwas fertig war"), das „M" steht in der Antwort.
+    Nach „Mira" grüßt der Loop und legt vor, nach der Abnahme schläft die
+    Konsole wieder und behält vertraut „Mira ist der erste Name des
+    Nutzers."; ein neuer Auftrag „Wie heiße ich?" antwortet **„Dein Name
+    ist Mira."**
+  - **Im Warten zwischen zwei Runden** (4B, Ziel „rufe in der ersten Runde
+    nur wake_in mit 2 Minuten"): Schlaf 60 s nach Beginn des Wartens, nach
+    7 s fertig mit „1 vorgedacht", das Vorgedachte steht im Tagebuch vor
+    Runde 2, und **Runde 2 beginnt pünktlich 120 s** nach Beginn des
+    Wartens; danach Vorlage und Abnahme.
+  - 0,6B: legte ohne zu fragen vor; Schlaf 61 s nach der Vorlage, danach
+    „n" und „Mein Vorname ist Mira" als Nachbesserung, vier weitere Runden,
+    Abnahme. ⚠️ Das 0,6B merkte sich daraus „Mira grüßt mich.": belegt
+    und vertraut, aber falsch verstanden. Für die eigenen Worte des
+    Nutzers taugt erst das 4B verlässlich.
+  - Unterwegs gefunden und in AGENT_LAYER v0.40.0 behoben: Der Schlaf las
+    keinen Loop, die Datumszeile galt als Wort des Nutzers, eine
+    Ein-Wort-Antwort fiel an Beleg- und Echoprobe, der Name kam nicht in
+    den nächsten Auftrag, und eine sechsfach wiederholte Notiz zählte als
+    sechs Bestätigungen.
+  - ⚠️ **Nebenbefund am Loop, nicht am Schlaf:** Das 4B rief in einer
+    Runde `ask_human` und `finish_goal` zugleich, die Frage ging nach
+    der bestehenden Regel vor, und es fragte dreimal nach demselben Namen.
+- Belege: `cargo test` grün in `myl-console` (neu `die_frist_des_schlafs`)
+  und `myl-oberflaeche`, Clippy ohne Befund.
+
+### v0.148.0 (2026-10-13): Der Schlaf in Konsole, Fenster und `myl`
+
+`myl-client` 0.91.0, `myl-console` 0.54.0, `myl-oberflaeche` 0.72.0; der
+Kern steht in AGENT_LAYER v0.39.0 (`gedaechtnis`, `schlaf`).
+Den Namen „Schlaf" (englisch „Sleep") hat der Projektinhaber gegeben;
+so heisst er in Einstellungen, Meldungen und Hilfe.
+
+- **Neu: drei Einstellungen unter „Gedächtnis"**: `schlaf.an` (Vorgabe
+  an), `schlaf.ruhe_minuten` (Vorgabe 15, mindestens 1) und
+  `schlaf.nur_am_netz` (Vorgabe an: auf dem Akku nur aufräumen, ohne
+  Modell; ein Rechner, der nichts über seinen Strom sagt, gilt als am
+  Netz).
+- **Das örtliche Modell kann unterbrochen antworten und vorwärmen**
+  (`Oertlichesmodell::chat_unterbrechbar`, `vorwaermen`): eigener
+  Schalter statt des Notaus; Vorwärmen liest mit `max_new_tokens` null nur
+  in den KV-Speicher und zählt nicht in die Tokenzähler.
+- **Konsole:** Nach `schlaf.ruhe_minuten` ohne Eingabe ruht sie einmal je
+  Pause, im Vordergrund mit einem Tastenwächter daneben; jede Taste weckt
+  und bleibt in der Eingabezeile. Gierig für die Dauer des Ruhens, danach
+  gilt wieder die Einstellung. Am Ende werden Ansage und Gespräch
+  vorgewärmt. Neu `/sleep` (`/schlafen`) und `/memory [suchtext]`
+  (`/gedaechtnis`). Wer gerade tippt, ruht nicht.
+- **Fenster:** neuer Befehl `schlafen`; das Fenster reicht die zehn
+  jüngsten Gespräche mit, je Arbeitsordner ein Durchgang. Das Modell wird
+  je Aufruf geliehen (`GeliehenesModell`), und jeder Befehl, der das Modell
+  braucht, weckt zuerst, auch eine Loop-Runde. Ohne Vorwärmen, denn das
+  Modell geht nach der Ruhefrist ohnehin. Der Bericht erscheint als
+  Meldung, die Zeile unter der Eingabe bleibt beim Modellstand.
+- 📌 **Behoben: Die Ruhefrist des Fensters zählte ab dem Laden.**
+  `ruhe_neu_stellen` sagt „weil gerade etwas geschehen ist", wurde aber
+  nur beim Laden gerufen; das Modell ging also 15 Minuten nach dem Laden,
+  auch mitten in der Arbeit zwischen zwei Aufträgen. Jetzt stellt jedes
+  Senden und jedes Ende eines Laufs die Frist neu (`regung`), und vor dem
+  Entladen wird einmal geruht.
+- **`myl schlafen [ordner] [--ohne-modell]`** und **`myl gedaechtnis
+  [ordner] [suchtext] [--vergessen NR]`**; der Arbeitsordner wird für
+  `verlauf`, `schlafen` und `gedaechtnis` an einer Stelle gefunden
+  (`arbeitsordner`).
+- Belege: `cargo test` grün in `myl-client` (neu `tests/schlaf.rs`
+  mit dem echten 0,6B), `myl-console` (170 und 7) und `myl-oberflaeche`
+  (5 und 82; die Probe zur Ruhefrist prüft jetzt auch den Schlaf),
+  Clippy ohne Befund. Von Hand: die Konsole in einem Pseudoterminal mit
+  dem 0,6B, eine Minute Ruhe, „Schlaf: 9 neu, 1 bestätigt, 4
+  verknüpft", `/memory` zeigt sie; mit dem 4B eine Taste nach zwei
+  Sekunden, „geweckt", und das Gedächtnis blieb leer statt halb. `myl
+  schlafen` gierig mit 0,6B und 4B ergibt bei gleichem Material dieselben
+  Erinnerungen wie die Konsole.
+
+### v0.147.0 (2026-10-13): Das Fenster auch ohne X11
+
+`myl-oberflaeche` 0.71.0.
+
+- **X11 ist ein eigener Schalter der Kiste** (`x11`, Vorgabe an). Tauri
+  wird mit `default-features = false` und seinen übrigen fünf Vorgaben
+  ausgeschrieben (`wry`, `compression`, `common-controls-v6`,
+  `dynamic-acl`, `dbus`); `x11` reicht `tauri/x11` durch. Ohne den
+  Schalter verlangt der Bau unter Linux kein GDK für X11 mehr, und das
+  Fenster läuft nur unter Wayland.
+- ⚑ **Anlass ist die Oberflächen-Schicht von GolemOS** (SYSTEM/golemos
+  0.3.0): Sie hat nur Wayland, und der Querbau des Fensters scheiterte an
+  `gdkx11-sys`, weil `gdk-x11-3.0` fehlt. `schicht-bauen.sh` baut seither mit
+  `--no-default-features`. ⚠️ X11 in die Schicht zu nehmen hätte GTK neu
+  gebaut und die Bibliotheken von X11 mitgebracht, für einen Kiosk, der
+  nie X11 spricht.
+- Jeder andere Bau ist unverändert, denn `x11` ist die Vorgabe wie bei
+  Tauri selbst. Geprüft: Mit Vorgabe hängt `gdkx11-sys` im Baum (`cargo
+  tree -i gdkx11-sys`), mit `--no-default-features` nicht mehr; kein
+  Plugin schaltet es zurück (`tauri-plugin-dialog` und `tauri-plugin-fs`
+  binden Tauri ohne Vorgaben).
+- Belege: `cargo test` grün (5 und 82), Clippy mit `-D warnings` grün mit
+  und ohne Vorgaben; der Querbau für aarch64 in der Schicht lief durch.
+
+### v0.146.0 (2026-10-13): Ausgeblendete Werkzeugausgaben in der Anzeige
+
+`myl-console` 0.53.0, `myl-oberflaeche` 0.70.0.
+
+- Der Agent blendet bei vollem Kontext zuerst alte Werkzeugausgaben aus und
+  fasst erst zusammen, wenn das nicht reicht (AGENT_LAYER v0.37.0). **Konsole
+  und Fenster zeigen es** wie eine Verdichtung: „Kontext entlastet: N alte
+  Werkzeugausgaben ausgeblendet, vorher → nachher Token“ (Konsole
+  `Anzeige::ausgeblendet`, Fenster `Lebend::Ausgeblendet` mit dem Text
+  `kontext.ausgeblendet` auf Deutsch und Englisch). Im Fenster lässt die
+  Meldung das Ladezeichen in Ruhe und vermerkt am Lauf, dass der Kontext
+  im Lauf verkleinert wurde.
+- Belege: `cargo test` und Clippy grün in `myl-console`, `myl-oberflaeche`
+  und `myl-client`.
+
+### v0.145.0 (2026-10-13): Arbeitskontext statt fester Grenze
+
+`myl-client` 0.90.0, `myl-oberflaeche` 0.69.0.
+
+**Auftrag des Projektinhabers:** mehr Kontext als 40 960 Token, ohne
+drastischen Geschwindigkeitsverlust. Das 35B rechnet jetzt 262 144
+Positionen (INTEGER_LLM v0.121.0); gemessen kostet ein voller Kontext beim
+Antworten bis 128 k die Hälfte, beim Einlesen neuer Token bis zu vier
+Fünftel der Geschwindigkeit.
+
+- **Neu: `modell.kontext`, der Arbeitskontext in Token** (Vorgabe 65 536,
+  mindestens 8 192, leer oder `voll` heißt die ganze Länge des Modells). Ab
+  hier verdichtet der Agent den Verlauf, und der Kontextbalken misst daran
+  (`Oertlichesmodell::arbeitsgrenze`, das Kleinere aus Arbeitskontext und
+  Grenze des Modells). Was physisch geht, bleibt die Grenze des Modells: Ein
+  einzelner Prompt darüber wird weiter abgelehnt, einer darunter läuft.
+- ⚑ **Warum 65 536:** gemessen am 35B decodiert es dort mit 8,6 Token/s
+  gegen 9,3 bei 40 960 und liest neue Token mit 47 statt 73 je Sekunde ein;
+  dafür bleibt 60 % mehr wörtlich im Kopf. Wer mehr will, stellt mehr ein.
+- ⚑ **Warum ein Arbeitskontext und nicht einfach die volle Grenze:** Der
+  Agent verdichtet erst, wenn der nächste Schritt nicht mehr hineinpasst.
+  Mit 262 144 als Rand liefe ein langer Auftrag bis dorthin voll, und jeder
+  späte Schritt läse seine Werkzeugausgabe mit einem Fünftel der
+  Geschwindigkeit ein.
+- Übernommen wie Länge und Denkmodus (`Oertlichesmodell::uebernehmen`), im
+  Fenster frisch vor jedem Lauf (`ausgabe_uebernehmen`). Eine Ablage ohne
+  das Feld bekommt die Vorgabe.
+- `Einstellungen::untergrenze`: die kleinste Zahl eines Zahlenfelds, an einer
+  Stelle für Setzer und Proben.
+- Belege: `cargo test` und Clippy grün in `myl-client` (neu:
+  `der_arbeitskontext_hat_eine_vorgabe_eine_untergrenze_und_ein_offenes_ende`),
+  `myl-oberflaeche` und `myl-console`.
+
+### v0.144.0 (2026-10-13): Das Ausgabefeld wartet nicht, ein gelöschtes Gespräch nimmt seines mit
+
+`myl-client` 0.89.0, `myl-oberflaeche` 0.68.0.
+
+**Auftrag des Projektinhabers:** (1) Das Feld am Eingabefeld (Pfeil rechts)
+hängte das ganze Fenster auf, solange eine Antwort lief; Einstellungen dort
+sollen ab der nächsten Eingabe oder Runde gelten, ohne Aufhängen. (2) Beim
+Löschen eines Gesprächs, Tasks oder Loop-Verlaufs sollen Zugehöriges und
+verdichteter Kontext mitgehen.
+
+- 📌 **Ursache des Aufhängens:** `saat_stand` und `saat_einmal` laufen auf
+  dem Hauptfaden und warteten mit `lock` auf das Modell; eine laufende
+  Antwort, ein Auftrag oder eine Loop-Runde hält es bis zum Ende. Jetzt mit
+  `try_lock`: Ist das Modell belegt, kommt der Stand aus dem zuletzt
+  gesehenen, das Feld sagt „Modell rechnet: Änderungen gelten ab der
+  nächsten Antwort“, und eine Saat nur für die nächste Antwort wird
+  vorgemerkt und vor der nächsten Antwort oder Runde übernommen
+  (`ausgabe_uebernehmen`). Temperatur, Top-p, Top-k, Länge, Denken und die
+  feste Saat stehen in den Einstellungen und galten schon ab dem nächsten
+  Lauf, denn jeder liest sie frisch. Die übrigen Befehle des Fensters
+  warten nicht auf das Modell (nachgesehen: alle anderen sperren es in
+  eigenen Fäden oder mit `try_lock`).
+- **Ein gelöschtes Gespräch nimmt mit, was zu ihm gehört** (neuer Befehl
+  `gespraech_vergessen`): seine Tasks samt Notizen, Tagebuch und
+  Rundenstand, die Mitschnitte seiner Verdichtungen im Arbeitsordner
+  (`.AGENT/<kennung>/`, im Ordner des Gesprächs, im eingestellten und im
+  vorgegebenen), sein Umfeld für Loop-Runden und den gerechneten Zustand
+  des Modells (KV-Cache und Merkpunkte, neu `Oertlichesmodell::vergessen`),
+  wenn das Modell frei ist. Den verdichteten Kontext trägt das Gespräch
+  selbst im Speicher des Fensters; er ging schon immer mit. Rechnet gerade
+  ein Task des Gesprächs, hält der Loop vorher an. Die Meldung sagt, was
+  mitging.
+- ⚑ **Das dreht eine Festlegung vom 2026-09-16 um:** Bis dahin fasste das
+  Aufräumen der Liste den Mitschnitt ausdrücklich nicht an, damit ein neuer
+  Agent im selben Ordner aufnehmen konnte. Jetzt geht der Mitschnitt des
+  gelöschten Gesprächs mit; die anderer Gespräche bleiben.
+- **Was bleibt:** das Aktionsprotokoll (der Nachweis, was der Agent getan
+  hat; es gehört keinem Gespräch) und ausgegebene Gespräche im
+  Ausgabeordner. Ein einzelner Task nahm seinen Ordner schon immer mit.
+- **README:** fünfundsechzig Befehle.
+- Belege: `cargo test` und Clippy grün in `myl-client` und
+  `myl-oberflaeche` (neu: `das_ausgabefeld_wartet_nicht_auf_das_modell`,
+  hält das Modell in einem zweiten Faden und verlangt eine Antwort unter
+  0,5 s; `ein_geloeschtes_gespraech_nimmt_seines_mit`, mit Tasks und
+  Mitschnitten zweier Gespräche, einem Task mitten in seiner Runde und einem
+  doppelt genannten Ort). ⚠️ Im Fenster nicht von Hand geprüft.
+
+### v0.143.1 (2026-10-13): Beispiel im Test ohne die entfernte Kiste
+
+- `myl-client/tests/einstellungen.rs` (`ein_alter_kistenordner_zieht_mit_um`)
+  nimmt als Beispiel einen Ordner `Meine` statt der Werkzeugkiste `CAD`, die
+  aus dem Repositorium entfernt ist. Geprüft wird dasselbe: Ein Kistenordner
+  vom alten Ort zieht mit um, gleich wie er heißt.
+- Belege: `cargo test` und Clippy grün in `myl-client`.
+
+### v0.143.0 (2026-10-12): Modulbefehle als Liste am Pfeil
+
+`myl-oberflaeche` 0.67.0.
+
+**Auftrag:** Die Befehle eines Moduls nicht als Knopfreihe unter der Wahl,
+sondern in einer Liste, die ein Pfeil öffnet, ganz rechts in das Feld der
+Modulwahl integriert.
+
+- **Der Pfeil sitzt im Feld der Modulwahl**, rechts, durch eine feine Linie
+  vom Namen getrennt; der Name klickt weiter zur Wahl eines anderen Moduls.
+  Er erscheint, sobald ein geprüftes Modul gewählt ist, und dreht sich,
+  solange die Liste offen ist; ein zweiter Klick schließt sie.
+- **Die Liste** steht unter dem Feld: je Befehl sein Wortlaut
+  (`/trading demo`) und darunter, was er tut. Ein Klick schickt ihn an das
+  Modul; Klick daneben oder Esc schließt sie. Die Knopfreihe aus v0.142.0
+  ist entfallen.
+- Öffnen und Schließen der Listen an der Seitenleiste ist jetzt eine
+  Funktion (`liste_oeffnen`) für die Modulwahl und die Befehlsliste. Sie
+  nimmt ihre Horcher auch dann wieder ab, wenn ein Eintrag gewählt wurde;
+  vorher blieben sie bis zum nächsten Klick irgendwo liegen.
+- 📌 **Beim Bauen gefunden:** Die neue Funktion hieß zuerst `menue_oeffnen`,
+  und die gab es schon (das Menü an den Gesprächen). Im Skript als Modul ist
+  das ein Syntaxfehler, und das ganze Fenster hätte nichts geladen; alle 81
+  Fenstertests waren trotzdem grün. Aufgefallen ist es erst bei
+  `node --check`. Neue Prüfung `keine_funktion_zweimal`, mit Gegenprobe
+  (fällt bei dem alten Namen).
+- Belege: `cargo test` und Clippy (`-D warnings`) grün in
+  `myl-oberflaeche`, `node --check` über das Skript ohne Fehler.
+  ⚠️ Das Fenster nicht von Hand geprüft.
+
+### v0.142.0 (2026-10-12): Module gewählt statt getippt, Sichtfeld
+
+`myl-oberflaeche` 0.66.0, `myl-console` 0.52.2, `myl-module` 0.4.0.
+
+**Auftrag:** Korrektur des Projektinhabers an v0.141.0: Im Fenster wird ein
+Modul nicht mit einem Befehl getippt, sondern in der Seitenleiste unter der
+Werkzeugkiste gewählt. Der Rest bleibt wie in der Konsole, und das
+einklappbare Feld dient nur Darstellungen (Bilder, 3D-Modelle, Kurven),
+geöffnet von einer Lasche am rechten Rand, die das ganze Ausgabefeld deckt.
+
+- **Die Wahl startet das Modul** (`modul_waehlen`): Es startet mit dem
+  Handschlag und ohne Befehl, jedes andere laufende Modul endet, „Kein
+  Modul“ beendet alle. ⚑ Ohne Befehl, damit die Wahl allein nichts auslöst,
+  was ein Modul erst auf einen Befehl hin tut; beim Handel ist der
+  Hauptbefehl der Modus mit Echtgeld. Ein gewähltes Modul startet auch beim
+  Öffnen des Fensters, ebenso ohne Befehl.
+- **Seine Befehle als Knöpfe** direkt unter der Wahl: der Hauptbefehl als
+  „Start“, die anderen mit ihren Wörtern („demo“, „status“, …); was jeder
+  tut, steht im Hinweis am Knopf. Getippt gehen sie weiter wie in der
+  Konsole.
+- **Seine Zeilen stehen im Gespräch**, wie in der Konsole im Rollbereich:
+  als Block mit dem Namen des Moduls, aufeinanderfolgende Zeilen im selben
+  Block, höchstens 400 je Block. Die Blöcke stehen neben dem Verlauf und
+  nicht darin: Sie gehen nie ins Modell und nicht in den gespeicherten
+  Verlauf, behalten beim Neuzeichnen aber ihre Stelle zwischen den
+  Beiträgen. Das Banner des Modus steht ebenfalls dort.
+- **Fußzeile und Bereich unten** stehen unter der Eingabe, darüber „Agent des
+  Moduls arbeitet …“ während eines Agentenlaufs.
+- **Das Modulfeld aus v0.141.0 ist entfallen**, mit ihm `modul_beenden`.
+- **Das Sichtfeld:** Eine Lasche schmiegt sich mittig an den rechten Rand,
+  zur Fensterseite abgerundet, mit einem Pfeil nach links; offen deckt das
+  Feld das ganze Gespräch, und der Pfeil dreht sich. Die Lasche steht da,
+  solange ein Modul läuft oder eine Ansicht da ist; eine neue Ansicht bei
+  geschlossenem Feld bekommt einen Punkt an der Lasche. Im Terminal und im
+  Sprachmodus sind beide weg.
+- **Ansichten im Protokoll** (`myl-module`): neue Nachrichten `Ansicht` und
+  `AnsichtWeg`, eine neue Befugnis `ansicht`, und im Handschlag sagt der Wirt,
+  ob er Ansichten zeigt (das Fenster ja, die Konsole nein). Vier Formen:
+  **Kurve** (bis 8 Reihen zu je 10 000 Punkten, ganzzahlig, y mit
+  Nachkommastellen als eigener Angabe), **Tabelle** (bis 32 Spalten und
+  2000 Zeilen Text), **Bild** (PNG, JPEG, GIF, WebP) und **Körper** (STL,
+  binär oder Text), beide aus einer Datei im Modulordner. Gleiche `id`
+  ersetzt eine Ansicht an ihrer Stelle. Über eine Grenze wird abgelehnt und
+  nicht still gekürzt; ein Pfad aus dem Ordner hinaus und SVG (trägt Skript)
+  ebenso.
+- ⛔️ **Ein Modul beschreibt, das Fenster zeichnet:** Kurven auf einer
+  Leinwand in den Grautönen des Designs, Reihen durch Helligkeit und
+  Strich unterschieden; Tabellen aus `textContent`; Bilder über
+  `createImageBitmap` auf eine Leinwand, ohne Adresse und ohne Änderung der
+  CSP; Körper mit einer eigenen WebGL-Zeichnung (Normalen je Dreieck
+  berechnet, Ziehen dreht, das Rad zoomt). Die Datei liest der Rücken
+  (`modul_datei`, höchstens 64 MiB) und gibt sie als Bytes, nur aus dem
+  Ordner des geprüften Moduls und nicht über einen symbolischen Verweis
+  hinaus.
+- **Konsole:** Sie hat kein Sichtfeld und sagt das im Handschlag; schickt ein
+  Modul trotzdem eine Ansicht, steht dafür eine Zeile „…: eine Ansicht, nur
+  im Fenster zu sehen.“
+- **README:** vierundsechzig Befehle; `modul_waehlen` startet wie
+  `modul_befehl` nur die geprüfte Kopie eines signierten Moduls. Zeile
+  „Module“ unter „Was heute geht“ neu gefasst.
+- Belege: `cargo test` und Clippy (`-D warnings`) grün in `myl-module` (neu:
+  `ansichten_geprueft`, `handschlag_mit_und_ohne_ansicht`), `myl-console`
+  und `myl-oberflaeche` (neu: `ansichtsdatei_nur_im_ordner`). Der STL-Leser
+  (binär, Text, Unsinn abgelehnt) und die Matrizen sind mit Node gegen
+  Hand-Beispiele geprüft. Probe Ende zu Ende in der Konsole mit einem
+  Wegwerf-Modul: Handschlag ohne Ansicht, drei Ersatzzeilen, ein Bild mit
+  `../` im Pfad abgelehnt. ⚠️ Das Fenster selbst ist nicht von Hand
+  geprüft.
+
+### v0.141.0 (2026-10-12): Module laufen im Fenster
+
+`myl-client` 0.88.0, `myl-oberflaeche` 0.65.0, `myl-console` 0.52.1.
+
+**Auftrag:** Den Wirt der Module auch im Fenster nutzbar machen: Befehle
+eines Moduls, Fußzeile und Bereich unten, Fragen an das Modell, Fragen an
+den Menschen und Takte (Schritt 2 nach der Modulwahl in v0.140.0).
+
+- **Die Verwaltung der laufenden Module steht jetzt in `myl_client::module`**
+  (`Modulwirt`, `Laufendes`, `liste`, `installieren`, `protokoll`), eine
+  Stelle für Konsole und Fenster: Prüfen vor jedem Start, Neustart nach einer
+  Änderung der Signatur, Takte, Ablehnungen höchstens einmal je Minute. Was
+  ein Wirt selbst belegt, nennt er als `Verbot` (die Konsole: ihre eigenen
+  Befehle). In der Konsole bleibt nur das Zeichnen.
+- **Ebenfalls geteilt:** `modell_fragen` (Grundsätze, Vorspann als eigene
+  Nachricht, Antwort ohne Denkteil; Grenze, Denken und Gierigkeit nur für
+  diese Frage), `Modulwirt::budget_buchen` (Token je Stunde aus den
+  Befugnissen) und `Modulzusatz::im_modus` (Agentenlauf eines Moduls nur in
+  seinem Arbeitsordner schreibend, ohne Netz und ohne Blick). Die Konsole
+  benutzt alle drei; ihr eigener Weg ist entfallen, ihr Verhalten gleich.
+- **Fenster, Rücken (`modulwirt.rs`):** fünf neue Befehle `modul_befehle`,
+  `modul_befehl`, `modul_stand`, `modul_antwort`, `modul_beenden`. Ein Faden
+  holt ab dem ersten Modulbefehl die Ereignisse ab (geweckt vom Lesefaden des
+  Moduls, sonst alle 80 ms) und schickt sie als `modul-ereignis` an die
+  Oberfläche. Modellfragen und Agentenläufe eines Moduls rechnen in eigenen
+  Fäden; wartet das Modell auf einen Chat, laufen die Takte weiter. Ein
+  Agentenlauf geht nur im Modus des Moduls, mit dessen Kiste zusätzlich zur
+  gewählten. Laden und Entladen eines Modells erfahren laufende Module; mit
+  dem Fenster enden sie.
+- **Fenster, Oberfläche:** Eine Zeile, deren erstes Wort der Hauptbefehl
+  eines geprüften Moduls ist, geht an das Modul und nicht an das Modell, auch
+  während ein Auftrag läuft. Darüber das **Modulfeld**, einklappbar: Name und
+  Satz des Moduls, seine Zeilen (höchstens 400), im Modus sein Banner, sein
+  Bereich unten, seine Fußzeile, „Agent arbeitet …“ während eines
+  Agentenlaufs, ✕ beendet das Modul oder schließt das Feld. Fragen eines
+  Moduls (Wort, Ja oder Nein, Auswahl) stellt ein Dialog des Fensters mit
+  dem Kopf „Das Fenster fragt für das Modul …“; Esc bricht ab. ⛔️ Was ein
+  Modul schickt, wird nur als `textContent` gesetzt, nie als Markup.
+- **README:** Die Oberfläche ruft jetzt über dreiundsechzig Befehle, und
+  neben `terminal_ausfuehren` startet ein zweiter einen Unterprozess:
+  `modul_befehl`, nur mit der geprüften Kopie eines signierten Moduls. Neue
+  Zeile „Module“ unter „Was heute geht“.
+- 📌 **Beim Durchsehen gefunden, vor dem ersten Lauf behoben:** Bei
+  erschöpftem Budget hätte der Fensterwirt beim Antworten den Wirt ein
+  zweites Mal gesperrt, während er die erste Sperre noch hielt, und der
+  Faden wäre für immer stehen geblieben. Jetzt wird erst losgelassen, dann
+  geantwortet.
+- Belege: `cargo test` und Clippy (`-D warnings`) grün in `myl-module`,
+  `myl-client` (neu: `im_modus_eng`), `myl-console`, `myl-oberflaeche` (neu:
+  `modellkennung_aus_dem_ordner`, `ohne_geladenes_modell_keines`,
+  `modultext_ist_nie_markup`; dieser schlug an, solange ein Kommentar im
+  Abschnitt das Wort `innerHTML` trug). Probe Ende zu Ende mit einem
+  Wegwerf-Modul (eigener Schlüssel, eigene Einstellungen) in der Konsole:
+  gefunden, geprüft, gestartet, Zeilen angekommen, Modus aktiv, `/module`
+  zeigt „läuft, Modus aktiv“. ⚠️ Das Fenster nicht von Hand geprüft.
+
+### v0.140.0 (2026-10-12): Module im Fenster wählen; ein Modul ergänzt die Werkzeugkiste
+
+`myl-module` 0.3.0, `myl-client` 0.87.0, `myl-console` 0.52.0,
+`myl-oberflaeche` 0.64.0; dazu AGENT_LAYER `myl-local-agent` 0.28.0.
+`MODULES/README.md` um den Abschnitt „Ein Modul wählen“ ergänzt.
+
+**Auftrag:** Im Fenster ein Modul wählen können, in der Seitenleiste unter
+der Werkzeugkiste und nur im Agentenmodus; das gewählte ergänzt die
+Werkzeugkiste und bringt seine Skills in die Aufträge mit. Ergänzen gilt
+überall, auch in der Konsole (Entscheidung des Projektinhabers).
+
+- **Finden und Prüfen an einer Stelle:** neues Modul `myl_module::fund`
+  (`kandidaten`, `finden`), dazu `myl_client::module` mit den Orten dieses
+  Rechners (`MODULES/`, `module/` neben den Einstellungen, Vertrauensliste,
+  Versionsstand, Speicher). Die Konsole benutzt beides; ihr eigener
+  Prüfweg ist entfallen. `myl-client` hängt dafür an `myl-module`, ohne neue
+  Fremdkiste.
+- **`Modulzusatz`:** aus einem geprüften Modul seine Kiste, Skills,
+  Arbeitsordner, `ohne_nachfrage` und die geprüfte Programmkopie; die Kopie
+  steht den Werkzeugen seiner Kiste als `MYL_MODUL_PROGRAMM` zur
+  Verfügung. Geprüft wird vor jedem Lauf.
+- **Einstellung `agent.modul`** (Name, `aus` heißt keines). Ein eingestelltes
+  Modul, das die Prüfung nicht besteht, bringt nichts mit, und der Lauf
+  sagt warum.
+- **Fenster:** In der Seitenleiste unter „Lokale Werkzeugkiste“ steht
+  „Modul“; ein Klick öffnet die Liste, geprüfte wählbar, die anderen
+  ausgegraut mit Grund, dazu „Kein Modul“. Agentenauftrag, Loop,
+  Kontextzählung und die Werkzeugliste der Leiste rechnen mit dem Modul;
+  seine lesenden Werkzeuge fragen nicht nach. Neuer Befehl `module_wahl`.
+- **Konsole:** Im Modus eines Moduls ergänzt dessen Kiste jetzt die
+  gewählte, statt sie zu ersetzen (Arbeitsordner, Netz und Blick wie
+  bisher); ohne Modus gilt `agent.modul`, auch in den Runden eines Loops.
+- **`myl module`:** jedes Modul geprüft oder mit Grund, und was das
+  eingestellte mitbringt.
+- Belege: `cargo test` und Clippy grün in `myl-module` (neu:
+  `kandidaten_und_ohne_vertrauen`), `myl-client` (neu:
+  `ohne_nachfrage_aus_der_kiste`, `ohne_wahl_kein_zusatz`), `myl-console`,
+  `myl-oberflaeche`. Probe am echten Handelsmodul mit einer
+  Wegwerf-Einstellung: `myl module` fand und prüfte `trading`, Kiste und
+  Skills als Ergänzung, Programmkopie im Speicher, zehn Werkzeuge ohne
+  Nachfrage. ⚠️ Das Fenster nicht von Hand geprüft.
 
 ### v0.139.0 (2026-10-12): der Debug-Log, in Konsole, Fenster und `myl`
 

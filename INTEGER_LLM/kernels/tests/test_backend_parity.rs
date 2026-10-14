@@ -33,9 +33,9 @@
 // jedem Standard-Build).
 #![cfg(feature = "cpu-simd")]
 
-use integer_llm_kernels::backend::Backend;
-use integer_llm_kernels::backends::reference::ReferenceBackend;
-use integer_llm_kernels::backends::simd::SimdBackend;
+use integer_llm_kernels::ressourcen::backend::Backend;
+use integer_llm_kernels::ressourcen::backends::reference::ReferenceBackend;
+use integer_llm_kernels::ressourcen::backends::simd::SimdBackend;
 
 // =====================================================================
 // Test-Daten

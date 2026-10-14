@@ -104,6 +104,8 @@ const TEXTE = {
     "kontext.verdichtet": (vorher, nachher) =>
       `⚑ Kontext verdichtet: ${vorher} → ${nachher} Token. Ab hier sieht das Modell eine Zusammenfassung des Gesprächs davor.`,
     "kontext.verdichtet_kurz": (vorher, nachher) => `verdichtet ${vorher} → ${nachher}`,
+    "kontext.ausgeblendet": (zahl, vorher, nachher) =>
+      `⚑ Kontext entlastet: ${zahl} alte Werkzeugausgaben ausgeblendet, ${vorher} → ${nachher} Token. Der Agent kann ein Werkzeug erneut aufrufen, wenn er eine davon noch braucht.`,
     "kontext.im_lauf": "Kontext verdichtet",
     "kontext.fehler": (f) => `Verdichten fehlgeschlagen: ${f}`,
     "leiste.label": "Gespräche und Betriebsart",
@@ -145,6 +147,7 @@ const TEXTE = {
     "ausgabe.stand.zufall": "Zufall je Antwort",
     "ausgabe.stand.fest": (s) => `fest ${s}`,
     "ausgabe.stand.einmal": (s) => `nächste ${s}`,
+    "ausgabe.stand.belegt": "Modell rechnet: Änderungen gelten ab der nächsten Antwort",
     "ausgabe.keine_zahl": "Eine Saat ist eine ganze Zahl ab 0.",
     "ausgabe.keine_letzte": "Es lief noch keine Antwort mit Saat.",
     "ausgabe.gesetzt_einmal": (s) => `Die nächste Antwort läuft mit Saat ${s}.`,
@@ -286,12 +289,47 @@ const TEXTE = {
     "reichweite.kistemarke": "Lokale Werkzeugkiste:",
     "reichweite.andereKiste": "andere Werkzeugkiste",
     "reichweite.kistehinweis": "Der Ordner, aus dem die Werkzeuge kommen. Weiterschalten zwischen den Kisten.",
+    "reichweite.modulmarke": "Modul:",
+    "reichweite.keinModul": "kein Modul",
+    "reichweite.modulhinweis": "Ergänzt die Werkzeugkiste um die Werkzeuge und Skills dieses Moduls; es ersetzt sie nicht.",
+    "reichweite.anderesModul": "anderes Modul wählen",
+    "reichweite.modulungeprueft": (g) => `Bringt nichts mit: ${g}`,
+    "modul.keins": "Kein Modul",
+    "modul.leer": "Keine Module gefunden (MODULES/ oder module/ neben den Einstellungen).",
+    "modul.gewaehlt": (n) => `Modul ${n}: Seine Werkzeuge und Skills ergänzen ab dem nächsten Auftrag die Werkzeugkiste.`,
+    "modul.abgewaehlt": "Kein Modul mehr: Es gilt nur die Werkzeugkiste.",
+    "modul.befehle": (n) => `Befehle von ${n}`,
+    "modulausgabe.agent": "Agent des Moduls arbeitet …",
+    "modulausgabe.laedt": (n) => `⟳ ${n} wird geladen und geprüft …`,
+    "modulausgabe.startet": (n) => `⟳ ${n} wird geprüft und gestartet …`,
+    "modulausgabe.bereit": (n) => `${n} läuft. Seine Befehle öffnet der Pfeil rechts im Feld der Modulwahl.`,
+    "modulausgabe.beendet": (n, g) => `${n} ist beendet (${g}).`,
+    "sicht.marke": "Ansichten",
+    "sicht.titel": "Ansichten",
+    "sicht.oeffnen": "Ansichten zeigen",
+    "sicht.schliessen": "Ansichten schließen",
+    "sicht.leer": "Noch keine Ansicht. Hier zeigt ein Modul Bilder, Kurven, Tabellen und 3D-Modelle.",
+    "sicht.fehler": (f) => `Nicht zu zeigen: ${f}`,
+    "sicht.keinstl": "keine lesbare STL-Datei",
+    "sicht.ohnegl": "3D braucht WebGL, und dieses Fenster hat keines.",
+    "sicht.koerper": (n) => `${n} Dreiecke · Ziehen dreht, das Rad zoomt`,
+    "modulfrage.titel": (n) => `⚑ Das Fenster fragt für das Modul ${n}`,
+    "modulfrage.wort": (w) => `Zum Bestätigen „${w}“ tippen; alles andere bricht ab.`,
+    "modulfrage.ja": "Ja",
+    "modulfrage.nein": "Nein",
+    "modulfrage.abbrechen": "Abbrechen",
+    "modulfrage.antworten": "Antworten",
     "werkzeuge.zeigen": "Werkzeuge anzeigen",
     "werkzeuge.verbergen": "Werkzeuge verbergen",
     "werkzeuge.aus": (kiste, n) => `Aus der Kiste „${kiste}“, ${n} Stück:`,
     "reichweite.fehler": (f) => `Ging nicht: ${f}`,
     "md.beitraege": (n) => `- Beiträge: ${n}`,
     "geloescht": (was, titel) => `${was} „${titel}“ gelöscht.`,
+    "vergessen.mit": (was) => `Mit ihm: ${was}.`,
+    "vergessen.tasks": (n) => (n === 1 ? "ein Task" : `${n} Tasks`),
+    "vergessen.mitschnitte": (n) => (n === 1 ? "sein Mitschnitt" : `${n} Mitschnitte`),
+    "vergessen.geblieben": (n) => `${n} Task rechnete gerade und blieb; ihn in der Taskliste löschen.`,
+    "vergessen.fehler": (f) => `Zugehöriges nicht ganz gelöscht: ${f}`,
     "abgelegt": (was, wo) => `${was} abgelegt: ${wo}`,
     "ausgabe.warum": (was) =>
       `Bevor ein ${was} ausgegeben werden kann, braucht es einen Ordner dafür. Trage ihn hier ein; danach landet jedes ausgegebene ${was} als Markdown darin.`,
@@ -389,6 +427,8 @@ const TEXTE = {
     "kontext.verdichtet": (vorher, nachher) =>
       `⚑ Context compressed: ${vorher} → ${nachher} tokens. From here on the model sees a summary of the conversation before.`,
     "kontext.verdichtet_kurz": (vorher, nachher) => `compressed ${vorher} → ${nachher}`,
+    "kontext.ausgeblendet": (zahl, vorher, nachher) =>
+      `⚑ Context relieved: ${zahl} old tool outputs hidden, ${vorher} → ${nachher} tokens. The agent can call a tool again if it still needs one of them.`,
     "kontext.im_lauf": "context compressed",
     "kontext.fehler": (f) => `Compressing failed: ${f}`,
     "leiste.label": "Conversations and mode",
@@ -427,6 +467,7 @@ const TEXTE = {
     "ausgabe.stand.zufall": "random per answer",
     "ausgabe.stand.fest": (s) => `fixed ${s}`,
     "ausgabe.stand.einmal": (s) => `next ${s}`,
+    "ausgabe.stand.belegt": "Model busy: changes apply from the next answer",
     "ausgabe.keine_zahl": "A seed is a whole number from 0.",
     "ausgabe.keine_letzte": "No answer with a seed has run yet.",
     "ausgabe.gesetzt_einmal": (s) => `The next answer runs with seed ${s}.`,
@@ -569,12 +610,47 @@ const TEXTE = {
     "reichweite.kistemarke": "Local toolbox:",
     "reichweite.andereKiste": "other toolbox",
     "reichweite.kistehinweis": "The folder the tools come from. Cycle through the boxes.",
+    "reichweite.modulmarke": "Module:",
+    "reichweite.keinModul": "no module",
+    "reichweite.modulhinweis": "Adds this module's tools and skills to the toolbox; it does not replace it.",
+    "reichweite.anderesModul": "choose another module",
+    "reichweite.modulungeprueft": (g) => `Brings nothing: ${g}`,
+    "modul.keins": "No module",
+    "modul.leer": "No modules found (MODULES/ or module/ next to the settings).",
+    "modul.gewaehlt": (n) => `Module ${n}: its tools and skills join the toolbox from the next task on.`,
+    "modul.abgewaehlt": "No module any more: only the toolbox applies.",
+    "modul.befehle": (n) => `Commands of ${n}`,
+    "modulausgabe.agent": "Module agent working …",
+    "modulausgabe.laedt": (n) => `⟳ Loading and verifying ${n} …`,
+    "modulausgabe.startet": (n) => `⟳ Verifying and starting ${n} …`,
+    "modulausgabe.bereit": (n) => `${n} is running. The arrow at the right of the module field opens its commands.`,
+    "modulausgabe.beendet": (n, g) => `${n} has ended (${g}).`,
+    "sicht.marke": "Views",
+    "sicht.titel": "Views",
+    "sicht.oeffnen": "Show views",
+    "sicht.schliessen": "Close views",
+    "sicht.leer": "No view yet. A module shows images, charts, tables and 3D models here.",
+    "sicht.fehler": (f) => `Cannot show: ${f}`,
+    "sicht.keinstl": "not a readable STL file",
+    "sicht.ohnegl": "3D needs WebGL, and this window has none.",
+    "sicht.koerper": (n) => `${n} triangles · drag to rotate, wheel to zoom`,
+    "modulfrage.titel": (n) => `⚑ The window asks for module ${n}`,
+    "modulfrage.wort": (w) => `Type “${w}” to confirm; anything else cancels.`,
+    "modulfrage.ja": "Yes",
+    "modulfrage.nein": "No",
+    "modulfrage.abbrechen": "Cancel",
+    "modulfrage.antworten": "Answer",
     "werkzeuge.zeigen": "Show tools",
     "werkzeuge.verbergen": "Hide tools",
     "werkzeuge.aus": (kiste, n) => `From the “${kiste}” box, ${n} of them:`,
     "reichweite.fehler": (f) => `Did not work: ${f}`,
     "md.beitraege": (n) => `- Messages: ${n}`,
     "geloescht": (was, titel) => `${was} “${titel}” deleted.`,
+    "vergessen.mit": (was) => `Along with it: ${was}.`,
+    "vergessen.tasks": (n) => (n === 1 ? "one task" : `${n} tasks`),
+    "vergessen.mitschnitte": (n) => (n === 1 ? "its transcript" : `${n} transcripts`),
+    "vergessen.geblieben": (n) => `${n} task was mid-round and stayed; delete it in the task list.`,
+    "vergessen.fehler": (f) => `Related data not fully deleted: ${f}`,
     "abgelegt": (was, wo) => `${was} exported to: ${wo}`,
     "ausgabe.warum": (was) =>
       `Before a ${was.toLowerCase()} can be exported it needs a folder. Enter it here; every exported ${was.toLowerCase()} then lands there as Markdown.`,
@@ -1250,11 +1326,16 @@ function ruhe_neu_stellen() {
   ruheuhr = setTimeout(async () => {
     // 📌 **Nicht mitten in einem Lauf.** Der Halter ist dann belegt, und
     // ein Entladen waere entweder wirkungslos oder schlimmer. Die Frist
-    // wird stattdessen neu gestellt.
-    if (laufender) {
+    // wird stattdessen neu gestellt. Dasselbe, solange der Schlaf
+    // arbeitet.
+    if (laufender || schlaeft) {
       ruhe_neu_stellen();
       return;
     }
+    // ⚑ **Vor dem Entladen einmal ruhen**, falls es in dieser Pause noch
+    //   nicht geschah: Danach fehlt das Modell, und der Schlaf
+    //   koennte nur noch aufraeumen.
+    if (!geschlafen) await einschlafen();
     try {
       const war_da = await invoke("modell_entladen");
       if (!war_da) return;
@@ -1269,6 +1350,71 @@ function ruhe_neu_stellen() {
     }
   }, RUHEFRIST_MS);
 }
+
+// --- Der Schlaf -------------------------------------------------
+//
+// ⚑ **Wenn eine Weile niemand etwas will, ordnet Myelith sein Gedaechtnis**
+// (`myl_local_agent::schlaf`, Wunsch des Projektinhabers 2026-10-13):
+// Es fasst die juengsten Gespraeche zu Erinnerungen zusammen und denkt
+// wartende Loop-Runden vor. Die Gespraeche liegen hier im Fenster, also
+// reicht es sie mit; im Ruecken laeuft der Rest.
+//
+// ⚑ **Jede Eingabe weckt**: Jeder Befehl, der das Modell braucht, setzt im
+// Ruecken zuerst den Wecker, und die Erzeugung des Schlafs haelt vor
+// dem naechsten Token an.
+//
+// ⚑ **Einmal je Pause** (`geschlafen`), und gezaehlt wird ab der letzten
+// Regung, nicht ab dem Laden des Modells.
+
+/// So viele der juengsten Gespraeche gehen mit.
+const RUHE_GESPRAECHE = 10;
+let letzte_regung = Date.now();
+let schlaeft = false;
+let geschlafen = false;
+
+/// **Es ist gerade etwas geschehen**: Pause und Ruhefrist beginnen neu.
+function regung() {
+  letzte_regung = Date.now();
+  geschlafen = false;
+  ruhe_neu_stellen();
+}
+
+async function einschlafen() {
+  // ⚑ **Nie mitten in einer Loop-Runde**: Die haelt das Modell. Zwischen
+  //   zwei Runden und waehrend eine Frage des Modells offen ist, sehr wohl.
+  if (laufender || auftrag_laeuft || loopstand.in_runde || schlaeft || geschlafen || !modellstand) return;
+  schlaeft = true;
+  try {
+    const liste = gespraeche
+      .slice(0, RUHE_GESPRAECHE)
+      .map((g) => ({ kennung: g.id, verlauf: kontext_von(g), wurzel: g.wurzel || null }))
+      .filter((x) => x.verlauf.length > 0);
+    const zeile = await invoke("schlafen", { gespraeche: liste });
+    // ⚑ **Als Meldung und nicht in der Zeile unter der Eingabe**: Die sagt
+    //   nur, welches Modell im Speicher liegt.
+    if (zeile) melden(zeile);
+  } catch {
+    // Ein misslungener Schlaf ist kein Grund, jemanden zu stoeren;
+    // der naechste setzt dort fort.
+  } finally {
+    schlaeft = false;
+    geschlafen = true;
+  }
+}
+
+// ⚑ **Einmal je Minute nachsehen**, mit der Einstellung von jetzt: Wer
+//   `schlaf.ruhe_minuten` aendert, muss das Fenster nicht neu oeffnen.
+setInterval(async () => {
+  if (geschlafen || schlaeft || !modellstand) return;
+  try {
+    const w = (await invoke("einstellungen")).werte;
+    if (w["schlaf.an"] === false) return;
+    const minuten = Number(w["schlaf.ruhe_minuten"]) || 15;
+    if (Date.now() - letzte_regung >= minuten * 60 * 1000) await einschlafen();
+  } catch {
+    // Ohne Einstellungen eben nicht.
+  }
+}, 60 * 1000);
 
 /// Der Anzeigename zu einem Pfad, aus der zuletzt geholten Modellwahl.
 ///
@@ -1369,6 +1515,7 @@ async function reichweite_zeichnen() {
     k.title = voll;
     k.addEventListener("click", beim_klick);
     w.append(k);
+    return k;
   };
 
   // 1. Der Einhaengepfad, ein Klick waehlt einen anderen.
@@ -1387,10 +1534,138 @@ async function reichweite_zeichnen() {
     kiste_wechseln,
   );
 
+  // 3. ⚑ **Das Modul, unter der Kiste** (Wunsch des Projektinhabers,
+  //    2026-10-12): Es ergaenzt die Kiste um seine Werkzeuge und Skills,
+  //    und ein Klick waehlt ein anderes. Besteht es die Pruefung nicht,
+  //    steht der Grund dabei, und es bringt nichts mit.
+  const modulwert = abschnitt(
+    "reichweite.modulmarke",
+    r.modul ? (r.modulgrund ? `⚠️ ${r.modul}` : r.modul) : t("reichweite.keinModul"),
+    `${r.modulgrund ? t("reichweite.modulungeprueft", r.modulgrund) : t("reichweite.modulhinweis")}\n${t("reichweite.anderesModul")}`,
+    (ereignis) => modul_waehlen(ereignis.currentTarget, r.modul || null),
+  );
+
+  // 4. ⚑ **Die Befehle des gewaehlten Moduls hinter einem Pfeil ganz
+  //    rechts im Feld der Modulwahl** (Wunsch des Projektinhabers,
+  //    2026-10-12): Er oeffnet eine Liste, ein Klick schickt den Befehl.
+  //    Im Fenster wird kein Befehl getippt.
+  if (r.modul && !r.modulgrund) {
+    if (!modulbefehle.length) await modulbefehle_holen();
+    if (modulbefehle.some((b) => b.modul === r.modul) && modulwert.isConnected) {
+      const feld = document.createElement("div");
+      feld.className = "modulwahlfeld";
+      modulwert.replaceWith(feld);
+      modulwert.classList.add("mitpfeil");
+      const pfeil = document.createElement("button");
+      pfeil.type = "button";
+      pfeil.className = "modulpfeil blank";
+      pfeil.setAttribute("aria-haspopup", "menu");
+      pfeil.setAttribute("aria-expanded", "false");
+      pfeil.setAttribute("aria-label", t("modul.befehle", r.modul));
+      pfeil.title = t("modul.befehle", r.modul);
+      pfeil.append(pfeilzeichen());
+      pfeil.addEventListener("click", () => modulbefehle_zeigen(feld, pfeil, r.modul));
+      feld.append(modulwert, pfeil);
+    }
+  }
+
   // ⚑ **Die Werkzeugliste steht nicht mehr hier**, sondern hinter einem
   // Knopf in den Einstellungen: In der Leiste war sie eine Wand aus
   // Namen, die bei jedem Zeichnen mitlief und die zwei Angaben
   // darueber erschlug, die man wirklich braucht.
+}
+
+/// **Ein Modul waehlen**: eine kleine Liste am Knopf, gepruefte waehlbar,
+/// die anderen ausgegraut mit ihrem Grund, dazu „Kein Modul“. Die Wahl
+/// steht in `agent.modul`, wie die Kiste in `agent.kistenordner`.
+async function modul_waehlen(knopf, jetzt) {
+  let liste;
+  try {
+    liste = await invoke("module_wahl");
+  } catch (f) {
+    melden(t("reichweite.fehler", f));
+    return;
+  }
+  const m = $("modulmenue");
+  m.replaceChildren();
+  const eintrag = (text, titel, aus, fn) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "menueeintrag blank";
+    b.setAttribute("role", "menuitem");
+    b.textContent = text;
+    b.title = titel;
+    b.disabled = aus;
+    b.addEventListener("click", async () => {
+      m.hidden = true;
+      await fn();
+    });
+    m.append(b);
+  };
+  const setzen = async (wert, satz) => {
+    try {
+      await invoke("setzen", { feld: "agent.modul", wert });
+      melden(satz);
+      await modulbefehle_holen(true);
+      // ⚑ **Die Wahl startet das Modul** (Festlegung des Projektinhabers,
+      //   2026-10-12), ohne Befehl; jedes andere endet.
+      modul_starten(wert === "aus" ? null : wert);
+    } catch (f) {
+      melden(t("reichweite.fehler", f));
+    }
+    reichweite_zeichnen();
+    kontext_holen();
+  };
+  eintrag(`${jetzt ? "" : "✓ "}${t("modul.keins")}`, t("modul.abgewaehlt"), false, () => setzen("aus", t("modul.abgewaehlt")));
+  for (const w of liste) {
+    const name = `${w.name === jetzt ? "✓ " : ""}${w.name}`;
+    eintrag(name, w.geprueft ? w.was : t("reichweite.modulungeprueft", w.grund || ""), !w.geprueft, () =>
+      setzen(w.name, t("modul.gewaehlt", w.name)),
+    );
+  }
+  if (!liste.length) {
+    const p = document.createElement("p");
+    p.className = "menuehinweis";
+    p.textContent = t("modul.leer");
+    m.append(p);
+  }
+  liste_oeffnen(m, knopf, knopf);
+}
+
+/// **Ein Menue an seinem Anker oeffnen**: darunter, links buendig, im
+/// Fenster gehalten; zu mit einem Klick daneben oder der Fluchttaste.
+/// `zu` wird gerufen, wenn es sich schliesst.
+/// Je offenem Menue, wie es sich schliesst.
+const offene_menues = new WeakMap();
+
+function liste_oeffnen(m, anker, ausloeser, zu = () => {}) {
+  offene_menues.get(m)?.({ type: "neu" });
+  m.hidden = false;
+  const r = anker.getBoundingClientRect();
+  const h = m.getBoundingClientRect();
+  m.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - h.width - 8))}px`;
+  m.style.top = `${Math.max(8, Math.min(r.bottom + 4, window.innerHeight - h.height - 8))}px`;
+  m.querySelector(".menueeintrag:not([disabled])")?.focus();
+  const schliessen = (e) => {
+    if (e.type === "keydown" && e.key !== "Escape") return;
+    if (e.type === "pointerdown" && (m.contains(e.target) || ausloeser.contains(e.target))) return;
+    m.hidden = true;
+    document.removeEventListener("pointerdown", schliessen);
+    document.removeEventListener("keydown", schliessen);
+    m.removeEventListener("click", gewaehlt);
+    offene_menues.delete(m);
+    zu();
+  };
+  offene_menues.set(m, schliessen);
+  // Ein gewaehlter Eintrag schliesst es auch; dann gehen die Horcher mit.
+  const gewaehlt = (e) => {
+    if (e.target.closest(".menueeintrag")) schliessen({ type: "auswahl" });
+  };
+  m.addEventListener("click", gewaehlt);
+  setTimeout(() => {
+    document.addEventListener("pointerdown", schliessen);
+    document.addEventListener("keydown", schliessen);
+  }, 0);
 }
 
 /// **Verzeichnis wechseln** ueber den Ordnerdialog des Systems, dann als
@@ -1696,17 +1971,43 @@ function als_markdown(g) {
   return `${kopf.join("\n")}${teile.join("\n\n")}\n`;
 }
 
+/// Was mit einem Gespraech wegging, als Nachsatz zur Meldung.
+function vergessen_satz(w) {
+  const teile = [];
+  if (w.tasks) teile.push(t("vergessen.tasks", w.tasks));
+  if (w.mitschnitte) teile.push(t("vergessen.mitschnitte", w.mitschnitte));
+  let satz = teile.length ? ` ${t("vergessen.mit", teile.join(", "))}` : "";
+  if (w.geblieben?.length) satz += ` ${t("vergessen.geblieben", w.geblieben.length)}`;
+  return satz;
+}
+
 async function menue_tat(tat) {
   const g = menue_fuer;
   menue_schliessen();
   if (!g) return;
 
   if (tat === "loeschen") {
+    // ⚑ **Was zum Gespraech gehoert, geht mit** (Wunsch des
+    //   Projektinhabers, 2026-10-13): seine Tasks, die Mitschnitte seiner
+    //   Verdichtungen, sein Umfeld fuer den Loop und der gerechnete Zustand
+    //   des Modells. Rechnet gerade ein Task dieses Gespraechs, haelt der
+    //   Loop erst an, wie beim Loeschen eines einzelnen Tasks.
+    if (loopstand.tasks.some((z) => z.gespraech === g.id && task_laeuft(z))) {
+      await loop_umschalten();
+      if (loopstand.haelt_an) await loopstand.haelt_an;
+    }
     gespraeche = gespraeche.filter((x) => x.id !== g.id);
     if (offen && offen.id === g.id) offen = gespraeche[0] || null;
     sichern();
+    let weg = null;
+    try {
+      weg = await invoke("gespraech_vergessen", { kennung: g.id, wurzel: g.wurzel || null });
+    } catch (f) {
+      melden(t("vergessen.fehler", f));
+    }
     alles_zeichnen();
-    melden(t("geloescht", wort(g.modus).eines, g.titel));
+    tasks_holen();
+    melden(t("geloescht", wort(g.modus).eines, g.titel) + (weg ? vergessen_satz(weg) : ""));
     return;
   }
 
@@ -2527,7 +2828,10 @@ const teile_zeichnen = (teile) => {
 function gespraech_zeichnen() {
   const w = $("gespraech");
   w.replaceChildren();
-  if (!offen || offen.beitraege.length === 0) {
+  // ⚑ Was ein Modul vor dem ersten Beitrag geschrieben hat, steht statt
+  //   des Leerzustands da.
+  const vorn = modulbloecke_nach(0);
+  if ((!offen || offen.beitraege.length === 0) && !vorn.length) {
     const m = MODI.find((x) => x.id === modus_jetzt());
     // 📌 **Hier stand der Modusname noch einmal davor** („Chat. Ein
     // Gespraech mit …"). Er steht schon in der Leiste links und im
@@ -2540,14 +2844,15 @@ function gespraech_zeichnen() {
     w.append(p);
     return;
   }
-  for (const b of offen.beitraege) {
+  w.append(...vorn.map(modulblock_element));
+  for (const [i, b] of (offen?.beitraege || []).entries()) {
     const el = beitrag_zeichnen(b);
     // ⚑ **Ein laufender Beitrag bekommt sein neues Element zurueck.** Sonst
     //   schriebe der Strom nach einem Neuzeichnen in ein Element, das
     //   nicht mehr dasteht, und der Beitrag stuende still bis zum Ende.
     if (loopbuehne && b === loopbuehne.beitrag) loopbuehne.element = el;
     if (b === laufender) laufendes_element = el;
-    w.append(el);
+    w.append(el, ...modulbloecke_nach(i + 1).map(modulblock_element));
   }
   w.scrollTop = w.scrollHeight;
 }
@@ -3872,7 +4177,7 @@ function live_meldung(m) {
   // zurueck. Eine Verdichtung aendert nichts daran, was das Modell tut.
   // Es steht oben im Verlauf, ueber der Zeile, die zaehlt.
   const schrieb = laufender.schreibt;
-  if (m.art !== "Verdichtet") laufender.schreibt = m.art === "Text";
+  if (m.art !== "Verdichtet" && m.art !== "Ausgeblendet") laufender.schreibt = m.art === "Text";
   if (schrieb && !laufender.schreibt) {
     w.querySelector(":scope > .verlauf")?.prepend(laufzeichen_bauen());
   } else if (!schrieb && laufender.schreibt) {
@@ -3912,6 +4217,9 @@ function live_meldung(m) {
   } else if (m.art === "Verdichtet") {
     laufender_verdichtet = true;
     melden(t("kontext.verdichtet", m.vorher, m.nachher));
+  } else if (m.art === "Ausgeblendet") {
+    laufender_verdichtet = true;
+    melden(t("kontext.ausgeblendet", m.ergebnisse, m.vorher, m.nachher));
   } else if (m.art === "Schritt") {
     // ⚑ **Der Schritt bekommt keinen Eintrag, sondern die Zeile unter der
     // Zaehlung.** Er zaehlt die Fragen an das Modell und nicht die Taten;
@@ -4006,6 +4314,9 @@ async function live_beenden() {
   }
   laufender = null;
   laufendes_element = null;
+  // ⚑ Auch das Ende eines Laufs ist eine Regung: Die Pause beginnt erst
+  //   jetzt, nicht beim Absenden.
+  regung();
 }
 
 /// Holt die Gliederung eines Textes aus der Kiste.
@@ -4476,6 +4787,8 @@ async function senden(text) {
   // ⛔️ **Ein Auftrag zur Zeit.** Siehe `auftrag_laeuft`.
   if (belegt()) return;
   auftrag_laeuft = true;
+  // ⚑ Eine Regung: Ruhefrist und Schlaf zaehlen ab jetzt neu.
+  regung();
   const { anhaenge, modelltext: dateitext } = anhaenge_abloesen(text);
   // ⚑ Anliegende Skills kommen vor den Auftrag, siehe `skills_vorschalten`.
   const skills = anhaenge.filter((a) => a.skill);
@@ -4954,6 +5267,12 @@ $("eingabe").addEventListener("submit", async (e) => {
   if (!text && anhaenge_offen.length === 0) return;
   feld.value = "";
   feld_messen();
+  // ⚑ **Ein Befehl eines Moduls geht an das Modul**, nicht an das Modell,
+  //   und auch waehrend ein Auftrag laeuft (wie in der Konsole).
+  if (modulbefehl_der_zeile(text) && anhaenge_offen.length === 0) {
+    await modul_senden(text);
+    return;
+  }
   await senden(text);
 });
 
@@ -5778,6 +6097,11 @@ async function loop_ereignis(e) {
       loopumfeld_senden(g);
     }
     loopstand.in_runde = false;
+    // ⚑ **Das Ende einer Runde beginnt eine Pause** (2026-10-13): Wartet der
+    //   Loop danach auf die naechste Runde oder auf eine Antwort, schlaeft
+    //   das Fenster `schlaf.ruhe_minuten` spaeter, gezaehlt ab hier und
+    //   nicht ab der letzten Eingabe vor dem Loop.
+    regung();
     melden(t("loop.meldung", e.name || kurz_titel(e.ziel), e.zustand), "gespraech");
     // ⚑ Ein vorgelegtes Ergebnis wird sofort erfragt; der Loop faehrt
     //    derweil mit dem naechsten Task weiter, falls einer wartet.
@@ -5873,6 +6197,751 @@ function loop_verdrahten() {
   }, 20000);
 }
 
+// ── Module im Fenster ──
+//
+// ⚑ **Gewaehlt, nicht getippt** (Festlegung des Projektinhabers,
+//   2026-10-12): Ein Modul laeuft, solange es in der Seitenleiste unter der
+//   Werkzeugkiste gewaehlt ist, und seine Befehle stehen dort als Knoepfe.
+//   Seine Zeilen stehen im Ausgabefeld wie in der Konsole, seine Fusszeile
+//   und sein Bereich unten unter der Eingabe, seine Fragen stellt das
+//   Fenster. Getippt gehen die Befehle trotzdem, wie in der Konsole. Die
+//   Verwaltung (Pruefen, Starten, Takt, Budget) liegt im Ruecken und ist
+//   dieselbe wie in der Konsole.
+//
+// ⛔️ **Was ein Modul schickt, ist Text.** Gesetzt wird nur `textContent`, nie
+//   Markup aus seinem Inhalt; ein Modul kann im Fenster nichts ausfuehren.
+
+/// Die Befehle der gepruefen Module: `[{ name, was, modul }]`.
+let modulbefehle = [];
+/// Der Stand der laufenden Module: `[{ name, was, modus, fusszeile, unten }]`.
+let modulstand = [];
+/// So viele Zeilen behaelt ein Block; aeltere fallen vorn heraus.
+const MODULZEILEN_HOECHSTENS = 400;
+/// **Was Module ins Ausgabefeld geschrieben haben**, je Block:
+/// `{ gespraech, nach, name, zeilen, element }`.
+///
+/// ⚑ **Neben dem Gespraech, nicht darin**: Es geht nie ins Modell und nicht
+/// in den gespeicherten Verlauf. `nach` sagt, hinter wie vielen Beitraegen
+/// der Block steht; so bleibt er beim Neuzeichnen an seiner Stelle.
+const modulbloecke = [];
+/// Fragen der Module, nacheinander und nie zwei Kaesten uebereinander.
+let modulfragen = Promise.resolve();
+
+async function modulbefehle_holen(neu = false) {
+  try {
+    modulbefehle = await invoke("modul_befehle", { neu });
+  } catch {
+    modulbefehle = [];
+  }
+}
+
+/// **Ob eine Zeile ein Befehl eines Moduls ist**: Ihr erstes Wort ist der
+/// Hauptbefehl eines gepruefen Moduls (wie in der Konsole).
+function modulbefehl_der_zeile(text) {
+  const wort = (text || "").trim().split(/\s+/)[0] || "";
+  if (!wort.startsWith("/")) return null;
+  return modulbefehle.find((b) => b.name.split(/\s+/)[0] === wort) || null;
+}
+
+/// Teile mit Stil als Spannen, je Teil eine, nur mit `textContent`.
+function teile_als_spannen(teile) {
+  return (teile || []).map((teil) => {
+    const s = document.createElement("span");
+    s.className = `modulstil-${teil.stil || "normal"}`;
+    s.textContent = teil.text;
+    return s;
+  });
+}
+
+function modulzeile_element(z) {
+  const d = document.createElement("div");
+  d.className = `modulzeile modulstil-${z.stil || "normal"}`;
+  d.textContent = z.text;
+  return d;
+}
+
+function modulblock_element(block) {
+  const w = document.createElement("div");
+  w.className = "beitrag von-modul";
+  const kopf = document.createElement("div");
+  kopf.className = "modulkopfzeile";
+  kopf.textContent = block.name;
+  const zeilen = document.createElement("div");
+  zeilen.className = "modulzeilen";
+  zeilen.append(...block.zeilen.map(modulzeile_element));
+  w.append(kopf, zeilen);
+  block.element = w;
+  return w;
+}
+
+/// Die Bloecke, die im offenen Gespraech hinter `n` Beitraegen stehen.
+function modulbloecke_nach(n) {
+  const id = offen?.id ?? null;
+  return modulbloecke.filter((b) => b.gespraech === id && b.nach === n);
+}
+
+/// **Eine Zeile eines Moduls ins Ausgabefeld.** Folgt sie einer Zeile
+/// desselben Moduls ohne Beitrag dazwischen, kommt sie in denselben Block.
+function modulzeile(name, text, stil = "normal") {
+  const id = offen?.id ?? null;
+  const nach = offen?.beitraege.length ?? 0;
+  const g = $("gespraech");
+  const unten = g.scrollHeight - g.scrollTop - g.clientHeight < 80;
+  let block = modulbloecke.at(-1);
+  if (!block || block.gespraech !== id || block.nach !== nach || block.name !== name) {
+    block = { gespraech: id, nach, name, zeilen: [], element: null };
+    modulbloecke.push(block);
+    while (modulbloecke.length > 200) modulbloecke.shift();
+    g.querySelector(".leerzustand")?.remove();
+    g.append(modulblock_element(block));
+  }
+  const neu = String(text).split("\n").map((z) => ({ text: z, stil }));
+  block.zeilen.push(...neu);
+  const weg = Math.max(0, block.zeilen.length - MODULZEILEN_HOECHSTENS);
+  block.zeilen.splice(0, weg);
+  const ziel = block.element?.isConnected ? block.element.querySelector(".modulzeilen") : null;
+  if (ziel) {
+    ziel.append(...neu.map(modulzeile_element));
+    while (ziel.childElementCount > MODULZEILEN_HOECHSTENS) ziel.firstElementChild.remove();
+  }
+  if (unten) g.scrollTop = g.scrollHeight;
+}
+
+/// **Fusszeile und Bereich unten** des Moduls im Modus, unter der Eingabe
+/// wie in der Konsole unter dem Rahmen.
+function modulstand_zeichnen(stand) {
+  modulstand = stand || [];
+  const l = modulstand.find((x) => x.modus) || null;
+  const fuss = $("modulfuss");
+  fuss.replaceChildren(...teile_als_spannen(l?.fusszeile));
+  fuss.hidden = !l?.fusszeile?.length;
+  const unten = $("modulunten");
+  unten.replaceChildren(
+    ...(l?.unten || []).map((zeile) => {
+      const d = document.createElement("div");
+      d.className = "untenzeile";
+      d.append(...teile_als_spannen(zeile));
+      return d;
+    }),
+  );
+  unten.hidden = !l?.unten?.length;
+  $("modulleiste").hidden = fuss.hidden && unten.hidden && $("modulagent").hidden;
+  sichtlasche_zeichnen();
+}
+
+/// **Ein Befehl eines Moduls**, von seinem Knopf in der Seitenleiste oder
+/// getippt wie in der Konsole.
+async function modul_senden(text) {
+  const name = modulbefehl_der_zeile(text)?.modul || text.trim().split(/\s+/)[0];
+  modulzeile(name, `› ${text}`, "beiwerk");
+  if (!modulstand.some((x) => x.name === name)) modulzeile(name, t("modulausgabe.laedt", name), "beiwerk");
+  try {
+    await invoke("modul_befehl", { zeile: text });
+    modulstand_zeichnen(await invoke("modul_stand"));
+  } catch (f) {
+    modulzeile(name, String(f), "warnung");
+  }
+}
+
+/// **Das gewaehlte Modul starten**, jedes andere endet; `null` beendet
+/// alle. ⚑ Ohne Befehl: Die Wahl allein loest nichts aus, was ein Modul
+/// erst auf einen Befehl hin tut.
+async function modul_starten(name) {
+  for (const [k, e] of ansichten) if (e.name !== name) ansicht_entfernen(k);
+  if (name) modulzeile(name, t("modulausgabe.startet", name), "beiwerk");
+  try {
+    await invoke("modul_waehlen", { name });
+    if (name) modulzeile(name, t("modulausgabe.bereit", name), "beiwerk");
+  } catch (f) {
+    if (name) modulzeile(name, String(f), "warnung");
+    else melden(String(f));
+  }
+  try {
+    modulstand_zeichnen(await invoke("modul_stand"));
+  } catch {
+    modulstand_zeichnen([]);
+  }
+}
+
+/// Der Pfeil im Feld der Modulwahl, nach unten; offen dreht er sich.
+function pfeilzeichen() {
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("viewBox", "0 0 12 12");
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("focusable", "false");
+  const pfad = document.createElementNS(ns, "path");
+  pfad.setAttribute("d", "M3 4.5l3 3 3-3");
+  svg.append(pfad);
+  return svg;
+}
+
+/// **Die Befehle eines Moduls als Liste** unter dem Feld der Modulwahl:
+/// je Befehl sein Wortlaut und darunter, was er tut. Ein Klick schickt ihn.
+function modulbefehle_zeigen(feld, pfeil, modul) {
+  const m = $("modulbefehlsmenue");
+  // ⚑ Der Pfeil schaltet: Ist die Liste offen, schliesst er sie.
+  if (!m.hidden && offene_menues.has(m)) {
+    offene_menues.get(m)({ type: "umschalten" });
+    return;
+  }
+  m.replaceChildren();
+  for (const b of modulbefehle.filter((x) => x.modul === modul)) {
+    const e = document.createElement("button");
+    e.type = "button";
+    e.className = "menueeintrag blank";
+    e.setAttribute("role", "menuitem");
+    const name = document.createElement("span");
+    name.className = "befehlsname";
+    name.textContent = b.name;
+    const was = document.createElement("span");
+    was.className = "befehlswas";
+    was.textContent = b.was;
+    e.append(name, was);
+    e.addEventListener("click", () => modul_senden(b.name));
+    m.append(e);
+  }
+  pfeil.setAttribute("aria-expanded", "true");
+  liste_oeffnen(m, feld, pfeil, () => pfeil.setAttribute("aria-expanded", "false"));
+}
+
+function modul_ereignis(a) {
+  switch (a.art) {
+    case "zeilen":
+      modulzeile(a.name, a.text, a.stil);
+      break;
+    case "stand":
+      modulstand_zeichnen(a.stand);
+      break;
+    case "modus":
+      if (a.aktiv && (a.banner || []).length) modulzeile(a.name, a.banner.join("\n"), "beiwerk");
+      break;
+    case "frage":
+      modulfragen = modulfragen.then(() => modulfrage_jetzt(a)).catch((f) => melden(String(f)));
+      break;
+    case "hinweis":
+      modulzeile(a.name, `⚠ ${a.text}`, "warnung");
+      break;
+    case "agent":
+      $("modulagent").hidden = !a.laeuft;
+      modulstand_zeichnen(modulstand);
+      break;
+    case "beendet":
+      modulzeile(a.name, t("modulausgabe.beendet", a.name, a.grund), "warnung");
+      $("modulagent").hidden = true;
+      modulstand_zeichnen(modulstand.filter((x) => x.name !== a.name));
+      break;
+    case "ansicht":
+      ansicht_setzen(a.name, a.ansicht);
+      break;
+    case "ansicht_weg":
+      ansicht_entfernen(`${a.name}\u0000${a.id}`);
+      break;
+  }
+}
+
+/// **Eine Frage eines Moduls**, gestellt vom Fenster. Die Antwort geht
+/// zurueck wie in der Konsole: das getippte Wort, `ja` oder `nein`, die
+/// Nummer des Punkts ab 0, oder nichts, wenn abgebrochen.
+async function modulfrage_jetzt(a) {
+  const f = a.frage || {};
+  $("modulfragetitel").textContent = t("modulfrage.titel", a.name);
+  $("modulfragetext").textContent = f.text || "";
+  const wort = $("modulfragewort");
+  const eingabe = $("modulfrageeingabe");
+  const wahl = $("modulfragewahl");
+  const knoepfe = $("modulfrageknoepfe");
+  wort.hidden = f.form !== "wort";
+  wort.textContent = f.form === "wort" ? t("modulfrage.wort", f.wort) : "";
+  eingabe.hidden = f.form !== "wort";
+  eingabe.value = "";
+  wahl.hidden = f.form !== "auswahl";
+  wahl.replaceChildren();
+  knoepfe.replaceChildren();
+  const kasten = $("modulfrage");
+  const antwort = await new Promise((fertig) => {
+    const ende = (w) => {
+      kasten.hidden = true;
+      document.removeEventListener("keydown", taste, true);
+      fertig(w);
+    };
+    const knopf = (text, w) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.textContent = text;
+      b.addEventListener("click", () => ende(w()));
+      knoepfe.append(b);
+      return b;
+    };
+    const taste = (e) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        ende(null);
+      } else if (e.key === "Enter" && f.form === "wort" && document.activeElement === eingabe) {
+        e.preventDefault();
+        ende(eingabe.value.trim());
+      }
+    };
+    document.addEventListener("keydown", taste, true);
+    knopf(t("modulfrage.abbrechen"), () => null);
+    if (f.form === "wort") {
+      knopf(t("modulfrage.antworten"), () => eingabe.value.trim());
+    } else if (f.form === "ja_nein") {
+      knopf(t("modulfrage.nein"), () => "nein");
+      knopf(t("modulfrage.ja"), () => "ja");
+    } else if (f.form === "auswahl") {
+      (f.punkte || []).forEach((p, i) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "modulpunkt blank";
+        const titel = document.createElement("span");
+        titel.className = "modulpunkttitel";
+        titel.textContent = p.titel;
+        b.append(titel);
+        if (p.hinweis) {
+          const h = document.createElement("span");
+          h.className = "modulpunkthinweis";
+          h.textContent = p.hinweis;
+          b.append(h);
+        }
+        b.addEventListener("click", () => ende(String(i)));
+        wahl.append(b);
+      });
+    }
+    kasten.hidden = false;
+    if (f.form === "wort") eingabe.focus();
+    else (wahl.querySelector("button") || knoepfe.lastElementChild)?.focus();
+  });
+  try {
+    await invoke("modul_antwort", { name: a.name, id: a.id, antwort });
+  } catch (fehler) {
+    modulzeile(a.name, String(fehler), "warnung");
+  }
+}
+
+// ── Das Sichtfeld ──
+//
+// ⚑ **Nur fuer Bilder, Koerper und andere Darstellungen** (Festlegung des
+//   Projektinhabers, 2026-10-12): rechts am Rand eine Lasche mit einem Pfeil
+//   nach links; aufgeklappt deckt das Feld das ganze Ausgabefeld. Text eines
+//   Moduls steht nie hier, sondern im Ausgabefeld.
+//
+// ⛔️ **Ein Modul beschreibt, das Fenster zeichnet.** Eine Ansicht ist eine
+//   Kurve aus Zahlen, eine Tabelle aus Text, oder ein Bild oder Koerper aus
+//   einer Datei im Modulordner, die der Ruecken liest. Kein Markup, kein
+//   Skript, keine Adresse eines Moduls kommt in diese Seite.
+
+/// Die Ansichten: Schluessel `name\0id` → `{ name, ansicht, karte, aufraeumen }`.
+const ansichten = new Map();
+
+function sicht_offen() {
+  return $("sichtfeld").classList.contains("offen");
+}
+
+function sicht_schalten(auf) {
+  const feld = $("sichtfeld");
+  const lasche = $("sichtlasche");
+  feld.classList.toggle("offen", auf);
+  feld.inert = !auf;
+  feld.setAttribute("aria-hidden", auf ? "false" : "true");
+  lasche.setAttribute("aria-expanded", auf ? "true" : "false");
+  const satz = t(auf ? "sicht.schliessen" : "sicht.oeffnen");
+  lasche.title = satz;
+  lasche.setAttribute("aria-label", satz);
+  if (auf) lasche.classList.remove("neu");
+}
+
+/// Die Lasche steht da, solange ein Modul laeuft oder eine Ansicht da ist.
+function sichtlasche_zeichnen() {
+  const da = ansichten.size > 0 || modulstand.length > 0;
+  $("sichtlasche").hidden = !da;
+  $("sichtleer").hidden = ansichten.size > 0;
+  if (!da && sicht_offen()) sicht_schalten(false);
+}
+
+function ansicht_entfernen(schluessel) {
+  const e = ansichten.get(schluessel);
+  if (!e) return;
+  e.aufraeumen?.();
+  e.karte.remove();
+  ansichten.delete(schluessel);
+  sichtlasche_zeichnen();
+}
+
+/// **Eine Ansicht neu oder ersetzt**; gleiche `id` ersetzt die Karte an
+/// ihrer Stelle.
+function ansicht_setzen(name, a) {
+  const schluessel = `${name}\u0000${a.id}`;
+  const alt = ansichten.get(schluessel);
+  const karte = document.createElement("article");
+  karte.className = "sichtkarte";
+  const kopf = document.createElement("p");
+  kopf.className = "sichtkartentitel";
+  kopf.textContent = a.titel || a.id;
+  const herkunft = document.createElement("span");
+  herkunft.className = "sichtherkunft";
+  herkunft.textContent = name;
+  kopf.append(herkunft);
+  karte.append(kopf);
+  const eintrag = { name, ansicht: a, karte, aufraeumen: null };
+  if (alt) {
+    alt.aufraeumen?.();
+    alt.karte.replaceWith(karte);
+  } else {
+    $("sichtinhalt").append(karte);
+  }
+  ansichten.set(schluessel, eintrag);
+  ansicht_fuellen(eintrag).catch((f) => sichtfehler(karte, f));
+  if (!sicht_offen()) $("sichtlasche").classList.add("neu");
+  sichtlasche_zeichnen();
+}
+
+function sichtfehler(karte, f) {
+  const p = document.createElement("p");
+  p.className = "sichtfehler";
+  p.textContent = t("sicht.fehler", String(f));
+  karte.append(p);
+}
+
+function sicht_vermerk(karte, text) {
+  const p = document.createElement("p");
+  p.className = "sichthinweis";
+  p.textContent = text;
+  karte.append(p);
+}
+
+async function ansicht_fuellen(e) {
+  const i = e.ansicht.inhalt || {};
+  if (i.form === "tabelle") {
+    e.karte.append(tabelle_bauen(i));
+  } else if (i.form === "kurve") {
+    const leinwand = document.createElement("canvas");
+    leinwand.className = "sichtkurve";
+    e.karte.append(leinwand);
+    const zeichnen = () => kurve_zeichnen(leinwand, i);
+    const beobachter = new ResizeObserver(zeichnen);
+    beobachter.observe(leinwand);
+    e.aufraeumen = () => beobachter.disconnect();
+  } else if (i.form === "bild") {
+    const daten = await invoke("modul_datei", { name: e.name, datei: i.datei });
+    const bild = await createImageBitmap(new Blob([daten]));
+    const leinwand = document.createElement("canvas");
+    leinwand.className = "sichtbild";
+    leinwand.width = bild.width;
+    leinwand.height = bild.height;
+    leinwand.getContext("2d").drawImage(bild, 0, 0);
+    bild.close();
+    e.karte.append(leinwand);
+  } else if (i.form === "koerper") {
+    const daten = await invoke("modul_datei", { name: e.name, datei: i.datei });
+    if (!ansichten.has(`${e.name}\u0000${e.ansicht.id}`) || !e.karte.isConnected) return;
+    koerper_zeigen(e, stl_lesen(daten));
+  }
+}
+
+function tabelle_bauen(i) {
+  const rahmen = document.createElement("div");
+  rahmen.className = "sichttabellenrahmen";
+  const tab = document.createElement("table");
+  tab.className = "sichttabelle";
+  if ((i.kopf || []).length) {
+    const kopf = tab.createTHead().insertRow();
+    for (const k of i.kopf) {
+      const th = document.createElement("th");
+      th.textContent = k;
+      kopf.append(th);
+    }
+  }
+  const rumpf = tab.createTBody();
+  for (const z of i.zeilen || []) {
+    const zeile = rumpf.insertRow();
+    for (const w of z) zeile.insertCell().textContent = w;
+  }
+  rahmen.append(tab);
+  return rahmen;
+}
+
+/// Ein Ton aus dem Stilblatt, damit die Zeichnung dem Design folgt.
+function stilton(name, sonst) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || sonst;
+}
+
+/// **Eine Kurve auf der Leinwand.** `y` ist `zahl / 10^nachkomma`, `x`
+/// bleibt ganz. Reihen unterscheiden sich durch Helligkeit und Strich,
+/// denn das Fenster ist grau.
+function kurve_zeichnen(leinwand, k) {
+  const breite = leinwand.clientWidth;
+  const hoehe = leinwand.clientHeight;
+  if (!breite || !hoehe) return;
+  const dichte = window.devicePixelRatio || 1;
+  leinwand.width = Math.round(breite * dichte);
+  leinwand.height = Math.round(hoehe * dichte);
+  const c = leinwand.getContext("2d");
+  c.setTransform(dichte, 0, 0, dichte, 0, 0);
+  c.clearRect(0, 0, breite, hoehe);
+  const alle = (k.reihen || []).flatMap((r) => r.punkte || []);
+  if (!alle.length) return;
+  const teiler = 10 ** (k.nachkomma || 0);
+  let [x0, x1, y0, y1] = [Infinity, -Infinity, Infinity, -Infinity];
+  for (const [x, y] of alle) {
+    x0 = Math.min(x0, x);
+    x1 = Math.max(x1, x);
+    y0 = Math.min(y0, y);
+    y1 = Math.max(y1, y);
+  }
+  if (x0 === x1) [x0, x1] = [x0 - 1, x1 + 1];
+  if (y0 === y1) [y0, y1] = [y0 - 1, y1 + 1];
+  const luft = (y1 - y0) * 0.06;
+  [y0, y1] = [y0 - luft, y1 + luft];
+  const rand = { l: 64, r: 14, o: 18, u: 24 };
+  const px = (x) => rand.l + ((x - x0) / (x1 - x0)) * (breite - rand.l - rand.r);
+  const py = (y) => hoehe - rand.u - ((y - y0) / (y1 - y0)) * (hoehe - rand.o - rand.u);
+  const schrift = `11px ${stilton("--fest", "monospace")}`;
+  const zahl = (v) => (v / teiler).toLocaleString(sprache, { maximumFractionDigits: k.nachkomma || 0 });
+  c.font = schrift;
+  c.lineWidth = 1;
+  c.strokeStyle = stilton("--kante-hell", "#444444");
+  c.fillStyle = stilton("--leise", "#8e9195");
+  c.textBaseline = "middle";
+  for (let s = 0; s <= 4; s++) {
+    const y = y0 + ((y1 - y0) * s) / 4;
+    c.beginPath();
+    c.moveTo(rand.l, Math.round(py(y)) + 0.5);
+    c.lineTo(breite - rand.r, Math.round(py(y)) + 0.5);
+    c.stroke();
+    c.textAlign = "right";
+    c.fillText(zahl(y), rand.l - 6, py(y));
+  }
+  c.textAlign = "left";
+  c.textBaseline = "top";
+  c.fillText(String(Math.round(x0)), rand.l, hoehe - rand.u + 6);
+  c.textAlign = "right";
+  c.fillText(k.x ? `${Math.round(x1)} ${k.x}` : String(Math.round(x1)), breite - rand.r, hoehe - rand.u + 6);
+  c.textAlign = "left";
+  if (k.y) c.fillText(k.y, 4, 2);
+  const toene = [stilton("--text", "#eceef0"), stilton("--leise", "#8e9195"), stilton("--leiser", "#63666a")];
+  const striche = [[], [6, 4], [2, 3], [10, 3, 2, 3]];
+  (k.reihen || []).forEach((r, n) => {
+    c.strokeStyle = toene[n % toene.length];
+    c.setLineDash(striche[Math.floor(n / toene.length) % striche.length]);
+    c.lineWidth = 1.6;
+    c.beginPath();
+    (r.punkte || []).forEach(([x, y], j) => (j ? c.lineTo(px(x), py(y)) : c.moveTo(px(x), py(y))));
+    c.stroke();
+    if (r.name) {
+      c.setLineDash([]);
+      c.fillStyle = toene[n % toene.length];
+      c.textAlign = "right";
+      c.fillText(r.name, breite - rand.r, 2 + n * 13);
+    }
+  });
+  c.setLineDash([]);
+}
+
+/// **Ein STL lesen**, binaer oder als Text: die Ecken der Dreiecke, je
+/// neun Zahlen eines. Binaer ist es, wenn die Laenge genau zur Zahl der
+/// Dreiecke im Kopf passt.
+function stl_lesen(puffer) {
+  const d = new DataView(puffer);
+  if (puffer.byteLength >= 84) {
+    const n = d.getUint32(80, true);
+    if (84 + n * 50 === puffer.byteLength) {
+      const ecken = new Float32Array(n * 9);
+      for (let i = 0; i < n; i++) {
+        for (let j = 0; j < 9; j++) ecken[i * 9 + j] = d.getFloat32(84 + i * 50 + 12 + j * 4, true);
+      }
+      return ecken;
+    }
+  }
+  const text = new TextDecoder().decode(puffer);
+  const zahlen = [];
+  for (const m of text.matchAll(/vertex\s+(\S+)\s+(\S+)\s+(\S+)/g)) zahlen.push(+m[1], +m[2], +m[3]);
+  if (!zahlen.length || zahlen.length % 9 || zahlen.some((z) => !Number.isFinite(z))) throw new Error(t("sicht.keinstl"));
+  return new Float32Array(zahlen);
+}
+
+/// Matrizen in Spaltenfolge, wie WebGL sie nimmt.
+function mat_mal(a, b) {
+  const r = new Float32Array(16);
+  for (let i = 0; i < 4; i++) {
+    for (let j = 0; j < 4; j++) {
+      let s = 0;
+      for (let k = 0; k < 4; k++) s += a[k * 4 + j] * b[i * 4 + k];
+      r[i * 4 + j] = s;
+    }
+  }
+  return r;
+}
+
+function mat_drehung(nick, gier) {
+  const [cn, sn, cg, sg] = [Math.cos(nick), Math.sin(nick), Math.cos(gier), Math.sin(gier)];
+  const x = new Float32Array([1, 0, 0, 0, 0, cn, sn, 0, 0, -sn, cn, 0, 0, 0, 0, 1]);
+  const y = new Float32Array([cg, 0, -sg, 0, 0, 1, 0, 0, sg, 0, cg, 0, 0, 0, 0, 1]);
+  return mat_mal(x, y);
+}
+
+function mat_sicht(seitenverhaeltnis, abstand) {
+  const f = 1 / Math.tan(Math.PI / 9);
+  const [nah, fern] = [0.01, 100];
+  const p = new Float32Array([f / seitenverhaeltnis, 0, 0, 0, 0, f, 0, 0, 0, 0, (fern + nah) / (nah - fern), -1, 0, 0, (2 * fern * nah) / (nah - fern), 0]);
+  const v = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, -abstand, 1]);
+  return mat_mal(p, v);
+}
+
+const KOERPER_ECKEN = `
+attribute vec3 ort;
+attribute vec3 normale;
+uniform mat4 drehung;
+uniform mat4 sicht;
+varying vec3 n;
+void main() {
+  n = (drehung * vec4(normale, 0.0)).xyz;
+  gl_Position = sicht * drehung * vec4(ort, 1.0);
+}`;
+const KOERPER_FLAECHEN = `
+precision mediump float;
+varying vec3 n;
+uniform vec3 ton;
+void main() {
+  float licht = abs(dot(normalize(n), normalize(vec3(0.4, 0.7, 0.6))));
+  gl_FragColor = vec4(ton * (0.3 + 0.7 * licht), 1.0);
+}`;
+
+/// **Ein Koerper, drehbar**: Ziehen dreht, das Rad zoomt. Mitte und Groesse
+/// werden aus den Ecken bestimmt, die Normalen je Dreieck berechnet (die im
+/// STL stehen, sind oft falsch oder null).
+function koerper_zeigen(e, ecken) {
+  const leinwand = document.createElement("canvas");
+  leinwand.className = "sichtkoerper";
+  e.karte.append(leinwand);
+  const gl = leinwand.getContext("webgl", { antialias: true, alpha: true });
+  if (!gl) {
+    leinwand.remove();
+    sicht_vermerk(e.karte, t("sicht.ohnegl"));
+    return;
+  }
+  const n = ecken.length / 9;
+  let [min, max] = [[Infinity, Infinity, Infinity], [-Infinity, -Infinity, -Infinity]];
+  for (let i = 0; i < ecken.length; i += 3) {
+    for (let a = 0; a < 3; a++) {
+      min[a] = Math.min(min[a], ecken[i + a]);
+      max[a] = Math.max(max[a], ecken[i + a]);
+    }
+  }
+  const mitte = [0, 1, 2].map((a) => (min[a] + max[a]) / 2);
+  const halb = Math.hypot(...[0, 1, 2].map((a) => (max[a] - min[a]) / 2)) || 1;
+  const orte = new Float32Array(ecken.length);
+  const normalen = new Float32Array(ecken.length);
+  for (let i = 0; i < ecken.length; i++) orte[i] = (ecken[i] - mitte[i % 3]) / halb;
+  for (let f = 0; f < n; f++) {
+    const o = f * 9;
+    const u = [orte[o + 3] - orte[o], orte[o + 4] - orte[o + 1], orte[o + 5] - orte[o + 2]];
+    const v = [orte[o + 6] - orte[o], orte[o + 7] - orte[o + 1], orte[o + 8] - orte[o + 2]];
+    const k = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+    const l = Math.hypot(...k) || 1;
+    for (let j = 0; j < 3; j++) for (let a = 0; a < 3; a++) normalen[o + j * 3 + a] = k[a] / l;
+  }
+  const shader = (art, quelle) => {
+    const s = gl.createShader(art);
+    gl.shaderSource(s, quelle);
+    gl.compileShader(s);
+    return s;
+  };
+  const prog = gl.createProgram();
+  gl.attachShader(prog, shader(gl.VERTEX_SHADER, KOERPER_ECKEN));
+  gl.attachShader(prog, shader(gl.FRAGMENT_SHADER, KOERPER_FLAECHEN));
+  gl.linkProgram(prog);
+  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+    leinwand.remove();
+    sicht_vermerk(e.karte, t("sicht.ohnegl"));
+    return;
+  }
+  gl.useProgram(prog);
+  const puffer = (daten, name) => {
+    const b = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, b);
+    gl.bufferData(gl.ARRAY_BUFFER, daten, gl.STATIC_DRAW);
+    const stelle = gl.getAttribLocation(prog, name);
+    gl.enableVertexAttribArray(stelle);
+    gl.vertexAttribPointer(stelle, 3, gl.FLOAT, false, 0, 0);
+  };
+  puffer(orte, "ort");
+  puffer(normalen, "normale");
+  const ton = stilton("--text", "#eceef0").match(/[0-9a-f]{2}/gi)?.map((h) => parseInt(h, 16) / 255) || [0.9, 0.9, 0.9];
+  gl.uniform3fv(gl.getUniformLocation(prog, "ton"), ton.slice(0, 3));
+  gl.enable(gl.DEPTH_TEST);
+  const lage = { nick: 0.45, gier: -0.6, abstand: 3.2 };
+  let geplant = false;
+  const zeichnen = () => {
+    geplant = false;
+    const dichte = window.devicePixelRatio || 1;
+    const [b, h] = [leinwand.clientWidth, leinwand.clientHeight];
+    if (!b || !h) return;
+    leinwand.width = Math.round(b * dichte);
+    leinwand.height = Math.round(h * dichte);
+    gl.viewport(0, 0, leinwand.width, leinwand.height);
+    gl.clearColor(0, 0, 0, 0);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    gl.uniformMatrix4fv(gl.getUniformLocation(prog, "drehung"), false, mat_drehung(lage.nick, lage.gier));
+    gl.uniformMatrix4fv(gl.getUniformLocation(prog, "sicht"), false, mat_sicht(b / h, lage.abstand));
+    gl.drawArrays(gl.TRIANGLES, 0, n * 3);
+  };
+  const planen = () => {
+    if (!geplant) {
+      geplant = true;
+      requestAnimationFrame(zeichnen);
+    }
+  };
+  let zug = null;
+  leinwand.addEventListener("pointerdown", (ev) => {
+    zug = [ev.clientX, ev.clientY];
+    leinwand.setPointerCapture(ev.pointerId);
+  });
+  leinwand.addEventListener("pointermove", (ev) => {
+    if (!zug) return;
+    lage.gier += (ev.clientX - zug[0]) * 0.01;
+    lage.nick = Math.max(-1.5, Math.min(1.5, lage.nick + (ev.clientY - zug[1]) * 0.01));
+    zug = [ev.clientX, ev.clientY];
+    planen();
+  });
+  leinwand.addEventListener("pointerup", () => (zug = null));
+  leinwand.addEventListener("pointercancel", () => (zug = null));
+  leinwand.addEventListener(
+    "wheel",
+    (ev) => {
+      ev.preventDefault();
+      lage.abstand = Math.max(1.2, Math.min(20, lage.abstand * Math.exp(ev.deltaY * 0.001)));
+      planen();
+    },
+    { passive: false },
+  );
+  const beobachter = new ResizeObserver(planen);
+  beobachter.observe(leinwand);
+  sicht_vermerk(e.karte, t("sicht.koerper", n.toLocaleString(sprache)));
+  e.aufraeumen = () => {
+    beobachter.disconnect();
+    gl.getExtension("WEBGL_lose_context")?.loseContext();
+  };
+}
+
+function modul_verdrahten() {
+  horchen("modul-ereignis", (e) => modul_ereignis(e.payload));
+  const lasche = $("sichtlasche");
+  lasche.addEventListener("click", () => sicht_schalten(!sicht_offen()));
+  sicht_schalten(false);
+  // ⚑ **Ein gewaehltes Modul laeuft auch nach dem Neustart des Fensters**:
+  //   Die Wahl steht in den Einstellungen, und ein Fenster, das sie zeigt,
+  //   aber das Modul nicht startet, saehe anders aus, als es ist. Gestartet
+  //   wird ohne Befehl, wie bei der Wahl selbst.
+  (async () => {
+    await modulbefehle_holen();
+    const r = await invoke("werkzeuge", { wurzel: prozesspfad() }).catch(() => null);
+    const name = r && !r.modulgrund ? r.modul : null;
+    if (name && modulbefehle.some((b) => b.modul === name)) await modul_starten(name);
+    reichweite_zeichnen();
+  })();
+}
+
 // ── Das Feld fuer die Ausgabe ──
 //
 // ⚑ **Saat und alles, was die Antwort direkt veraendert, an einem Ort**
@@ -5929,6 +6998,9 @@ function ausgabepfeil_zeichnen(werte) {
 
 function ausgabestand_text(s) {
   if (!s) return "";
+  // ⚑ Rechnet das Modell, wartet das Feld nicht auf es, und was jetzt
+  //   gesetzt wird, gilt ab der naechsten Antwort; das sagt es dann.
+  if (s.belegt) return t("ausgabe.stand.belegt");
   if (s.naechste) return t("ausgabe.stand.einmal", s.naechste);
   if (s.fest) return t("ausgabe.stand.fest", s.fest);
   return t("ausgabe.stand.zufall");
@@ -6207,6 +7279,7 @@ async function auto_bestaetigen() {
   await vorhangWeg();
   await starthinweis_zeigen();
   loop_verdrahten();
+  modul_verdrahten();
   ausgabe_verdrahten();
   await loop_beim_start();
   feld.focus();

@@ -167,10 +167,10 @@ fn ein_alter_kistenordner_zieht_mit_um() {
     let p = d.path().join("client.json");
     for (alt, neu) in [
         ("/nirgends/Repo/CLIENT/werkzeugkisten/Base", "/nirgends/Repo/AGENT_LAYER/local-toolkits/Base"),
-        ("/nirgends/Repo/CLIENT/werkzeugkisten/CAD", "/nirgends/Repo/AGENT_LAYER/local-toolkits/CAD"),
+        ("/nirgends/Repo/CLIENT/werkzeugkisten/Meine", "/nirgends/Repo/AGENT_LAYER/local-toolkits/Meine"),
         (r"C:\Nirgends\Repo\CLIENT\werkzeugkisten\Advanced", r"C:\Nirgends\Repo\AGENT_LAYER\local-toolkits\Advanced"),
         // Der Zwischenname vom 2026-09-30, nie gepusht, aber lokal gespeichert.
-        ("/nirgends/Repo/AGENT_LAYER/local-werkzeugkisten/CAD", "/nirgends/Repo/AGENT_LAYER/local-toolkits/CAD"),
+        ("/nirgends/Repo/AGENT_LAYER/local-werkzeugkisten/Meine", "/nirgends/Repo/AGENT_LAYER/local-toolkits/Meine"),
     ] {
         let mut vorher = Einstellungen::default();
         vorher.agent.kistenordner = Some(alt.to_string());

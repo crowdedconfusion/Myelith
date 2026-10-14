@@ -1,6 +1,6 @@
 [package]
 name = "integer-llm-kernels"
-version = "0.80.0"
+version = "0.84.0"
 edition = "2021"
 rust-version = "1.85"
 license = "LicenseRef-PolyForm-Shield-1.0.0"
@@ -14,8 +14,13 @@ path = "src/bin/golden_runner.rs"
 default = ["reference"]
 reference = []
 cpu-simd = []
-cuda = []
-rocm = []
+# Gebuendelte Matrizen auf Grafikkarten von NVIDIA bzw. AMD, auch auf
+# mehreren zugleich (`src/ressourcen/karten/`). Ohne Abhaengigkeit: Treiber und
+# Uebersetzer werden zur Laufzeit geladen, also baut beides auf jeder
+# Maschine, und ohne Karte rechnet die CPU. Schliessen `cpu-simd` ein wie
+# `metal`, denn alles ausser den Buendeln rechnet weiter die CPU.
+cuda = ["cpu-simd"]
+rocm = ["cpu-simd"]
 # Gebuendelte Matrizen auf der GPU von Apple-Silizium. Schliesst
 # `cpu-simd` ein, denn alles ausser den Buendeln rechnet weiter die CPU.
 # Die Abhaengigkeiten gibt es nur fuer macOS; auf jedem anderen Ziel ist

@@ -4036,7 +4036,7 @@ mod tests {
         assert_eq!(model.kontextgrenze(), 64, "max_context ist kleiner als die Tabelle");
 
         let prompt: Vec<usize> = (0..60).map(|i| i % 3).collect();
-        let lauf = Erzeugung { max_new_tokens: 10, seed: 1, greedy: true, halt: &[], denkgrenze: None, abbruch: None, ziehen: None };
+        let lauf = Erzeugung { max_new_tokens: 10, seed: 1, greedy: true, halt: &[], denkgrenze: None, abbruch: None, ziehen: None, gesperrt: &[] };
         let mut speicher = Fortsetzung::neu(&model);
         let (aus, w) = dekodieren_fortgesetzt(&model, &prompt, &lauf, &mut speicher, &mut |_| {});
         assert_eq!(aus.len(), 5, "Positionen 60 bis 63 werden gerechnet, das Token fuer 64 nur ausgegeben");
@@ -4079,7 +4079,7 @@ mod tests {
             gewichte_verrauschen(&dir, 0x5eed_0372);
             skalen_je_kanal_streuen(&dir);
             let model = load_model(&dir).expect("Artefakt muss laden");
-            let lauf = Erzeugung { max_new_tokens: 5, seed: 7, greedy: true, halt: &[], denkgrenze: None, abbruch: None, ziehen: None };
+            let lauf = Erzeugung { max_new_tokens: 5, seed: 7, greedy: true, halt: &[], denkgrenze: None, abbruch: None, ziehen: None, gesperrt: &[] };
 
             let a: Vec<usize> = (0..40).map(|i| (i * 5 + i / 3) % 3).collect();
             let mut speicher = Fortsetzung::neu(&model);
@@ -4176,7 +4176,7 @@ mod tests {
                 for (art, greedy, ziehen) in [("gierig", true, None), ("theta", false, None), ("ziehen", false, Some(ziehen))] {
                     for halt in [&[][..], &[2usize][..]] {
                         for max_new_tokens in [1usize, 6, 24] {
-                            let lauf = Erzeugung { max_new_tokens, seed: saat, greedy, halt, denkgrenze: None, abbruch: None, ziehen };
+                            let lauf = Erzeugung { max_new_tokens, seed: saat, greedy, halt, denkgrenze: None, abbruch: None, ziehen, gesperrt: &[] };
                             let a: Vec<usize> = (0..19).map(|i| (i * 7 + saat as usize + i / 4) % 3).collect();
                             let mut ohne = Fortsetzung::neu(&model);
                             let mut mit = Fortsetzung::neu(&model);
@@ -4271,7 +4271,7 @@ mod tests {
         skalen_je_kanal_streuen(&dir);
         let model = load_model(&dir).expect("Artefakt muss laden");
         assert!(model.layers[0].ist_rekurrent(), "die Vorlage muss rekurrent laden");
-        let lauf = Erzeugung { max_new_tokens: 5, seed: 7, greedy: true, halt: &[], denkgrenze: None, abbruch: None, ziehen: None };
+        let lauf = Erzeugung { max_new_tokens: 5, seed: 7, greedy: true, halt: &[], denkgrenze: None, abbruch: None, ziehen: None, gesperrt: &[] };
 
         // Verlauf aus 0 und 1, dann Marke und Antwortkopf.
         let verlauf: Vec<usize> = (0..30).map(|i| (i * 5 + i / 3) % 2).collect();
@@ -4323,7 +4323,7 @@ mod tests {
         gewichte_verrauschen(&dir, 0x5eed_1008);
         skalen_je_kanal_streuen(&dir);
         let model = load_model(&dir).expect("Artefakt muss laden");
-        let lauf = Erzeugung { max_new_tokens: 4, seed: 7, greedy: true, halt: &[], denkgrenze: None, abbruch: None, ziehen: None };
+        let lauf = Erzeugung { max_new_tokens: 4, seed: 7, greedy: true, halt: &[], denkgrenze: None, abbruch: None, ziehen: None, gesperrt: &[] };
         // Marke 2; System 20 Token, fester Teil je Frageart 8, wechselnder Teil 6.
         let system: Vec<usize> = (0..20).map(|i| (i * 7 + 1) % 2).collect();
         let fest = |art: usize| -> Vec<usize> { (0..8).map(|i| (i + art) % 2).collect() };
@@ -4388,7 +4388,7 @@ mod tests {
             skalen_je_kanal_streuen(&dir);
             let model = load_model(&dir).expect("Artefakt muss laden");
             let an = AtomicBool::new(true);
-            let lauf = Erzeugung { max_new_tokens: 5, seed: 7, greedy: true, halt: &[], denkgrenze: None, abbruch: None, ziehen: None };
+            let lauf = Erzeugung { max_new_tokens: 5, seed: 7, greedy: true, halt: &[], denkgrenze: None, abbruch: None, ziehen: None, gesperrt: &[] };
             let angehalten = Erzeugung { abbruch: Some(&an), ..lauf };
 
             let a: Vec<usize> = (0..20).map(|i| (i * 5 + i / 3) % 2).collect();

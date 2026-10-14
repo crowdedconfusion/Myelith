@@ -3,8 +3,6 @@
 //! Strenge Fixed-Point-Operationen fuer bit-exakte LLM-Inferenz.
 //! Kein Float im Hot-Path.
 
-pub mod backend;
-pub mod backends;
 pub mod dot;
 pub mod fadenpool;
 pub mod fixed_point;
@@ -17,7 +15,7 @@ pub mod rmsnorm;
 pub mod linear;
 pub mod ternaer;
 pub mod drehung;
-pub mod metal;
+pub mod ressourcen;
 pub mod rope;
 pub mod softmax;
 pub mod attention;

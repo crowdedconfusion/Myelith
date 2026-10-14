@@ -56,6 +56,7 @@
 //! | [`ruestung`], [`lauf`] | einen Lauf ausstatten und fahren |
 //! | [`vorhaben`] | der Loop: ein Ziel über viele Runden |
 //! | [`skills`], [`verlauf`], [`gespraech`] | Skills (`AGENT_LAYER/local-skills/`), Mitschnitt, Verdichtung |
+//! | [`gedaechtnis`], [`schlaf`] | das Gedaechtnis eines Ordners, und der Schlaf, der es ordnet |
 //! | [`systemprompt`], [`protokoll`], [`notaus`] | Regeln, Aktionsprotokoll, Notaus |
 //! | [`secure_flow`] | wohin Daten fliessen duerfen: Labels, Vertraege, Pruefung an der Werkzeuggrenze |
 //! | [`agentenwahl`] | was der Nutzer dem Agenten einstellt |
@@ -86,6 +87,7 @@ pub mod verdichtung;
 pub mod abgeschaltet;
 pub mod agentenwahl;
 pub mod secure_flow;
+pub mod gedaechtnis;
 pub mod gespraech;
 pub mod kisten;
 pub mod lauf;
@@ -94,6 +96,7 @@ pub mod notaus;
 pub mod ort;
 pub mod protokoll;
 pub mod ruestung;
+pub mod schlaf;
 pub mod sinneswerkzeuge;
 pub mod skills;
 pub mod syntaxwache;

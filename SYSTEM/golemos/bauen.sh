@@ -162,12 +162,14 @@ docker run --rm -t --platform "$PLATTFORM" -v "$WURZEL:$WURZEL" -w "$WURZEL" \
     CARGO_BUILD_TARGET=$(rustc -vV | awk "/^host:/{print \$2}")
     export CARGO_BUILD_TARGET
     export RUSTFLAGS="-C target-feature=+crt-static"
-    for kiste in CLIENT/myl-console CLIENT/myl-client SYSTEM/golemos/einrichten; do
+    # ⚑ `NODE/myl-node` seit GolemOS 0.3.0: der Knoten als Dienst
+    #   (`golem-knoten`), derselbe Zuschnitt wie der MYL-SERVER fuer NixOS.
+    for kiste in CLIENT/myl-console CLIENT/myl-client SYSTEM/golemos/einrichten NODE/myl-node; do
       cargo build --release --offline --locked --manifest-path "$kiste/Cargo.toml"
     done
   '
 
-for prog in myelith myl golem-einrichten; do
+for prog in myelith myl golem-einrichten myl-node; do
   gefunden=$(find "$HIER/bau/programme-$ARCH" -type f -name "$prog" -path "*release*" | head -1)
   [ -n "$gefunden" ] || { echo "$prog wurde nicht gebaut" >&2; exit 4; }
   install -m 0755 "$gefunden" "$HIER/overlay/usr/bin/$prog"
@@ -181,13 +183,13 @@ done
 # ⛔️ **Nachsehen, ob es wirklich statisch ist.** Ein dynamisch
 #    gebundenes Programm faellt sonst erst im Abbild auf, und dort
 #    fehlt jedes Werkzeug, um es zu untersuchen.
-for prog in myelith myl golem-einrichten; do
+for prog in myelith myl golem-einrichten myl-node; do
   if ! file "$HIER/overlay/usr/bin/$prog" | grep -q "static"; then
     echo "⛔️ $prog ist nicht statisch gebunden; im Abbild fehlt seine Bibliothek" >&2
     exit 6
   fi
 done
-echo "   alle drei statisch gebunden"
+echo "   alle vier statisch gebunden"
 
 # ── 2 bis 4. Buildroot holen, konfigurieren, bauen ──────────────────
 #
@@ -277,8 +279,42 @@ if [ -f "$BR/.golemos-konf" ] && ! cmp -s "$BR/.golemos-konf" /tmp/konf; then
   find "$BR/output/build" -name '.stamp_target_installed' -delete
   find "$BR/output/build" -name '.stamp_images_installed' -delete
   rm -rf "$BR/output/target"
+
+  # ⛔️ **Und ein Paket, dessen Unteroption sich aendert, neu
+  #    konfigurieren.** 📌 Gemessen am 2026-10-13: `BR2_PACKAGE_UTIL_LINUX_SETPRIV`
+  #    kam dazu, der Zielbaum wurde neu zusammengesetzt, und util-linux
+  #    blieb, wie es war, ohne `setpriv`; ebenso der Kern ohne sein neues
+  #    Fragment. Buildroot merkt sich je Paket nur „gebaut", nicht „mit
+  #    welchen Optionen". ⚑ Aus jedem geaenderten Namen wird das Paket
+  #    abgeleitet (`BR2_PACKAGE_UTIL_LINUX_SETPRIV` → `util-linux`, der
+  #    laengste Praefix mit einem Paketordner; `BR2_LINUX_KERNEL_*` →
+  #    `linux`) und nur dieses verworfen und neu gebaut, nicht der ganze Baum.
+  for name in $( (diff "$BR/.golemos-konf" /tmp/konf || true) | sed -n 's/^[<>] \(# \)\{0,1\}\(BR2_[A-Z0-9_]*\).*/\2/p' | sort -u); do
+    paket=""
+    case "$name" in
+      BR2_LINUX_KERNEL*) paket=linux ;;
+      BR2_PACKAGE_*)
+        rest=$(echo "${name#BR2_PACKAGE_}" | tr 'A-Z_' 'a-z-')
+        while [ -n "$rest" ]; do
+          [ -d "$BR/package/$rest" ] && { paket=$rest; break; }
+          case "$rest" in *-*) rest=${rest%-*} ;; *) rest="" ;; esac
+        done
+        ;;
+    esac
+    # Ein Paket, das erst jetzt dazukommt, hat noch keinen Bauordner und
+    # wird ohnehin gebaut.
+    if [ -n "$paket" ] && ls -d "$BR/output/build/$paket"-* >/dev/null 2>&1; then
+      echo "   $name geaendert: $paket neu konfigurieren"
+      echo "$paket" >> /tmp/neu-konfigurieren
+    fi
+  done
 fi
 cp /tmp/konf "$BR/.golemos-konf"
+if [ -s /tmp/neu-konfigurieren ]; then
+  for paket in $(sort -u /tmp/neu-konfigurieren); do
+    make -C "$BR" "$paket-dirclean" >/dev/null
+  done
+fi
 
 echo "── Bauen mit $(nproc) Faeden"
 make -C "$BR" -j"$(nproc)"
@@ -310,7 +346,10 @@ fehlt=0
 #   in einer Installation auf.
 # ⚑ `xz` und `sha256sum` braucht `spread.sh`, wenn GolemOS aus dem
 #   Myelith-Ordner auf dem Stick selbst einen neuen Stick schreibt.
-for w in sfdisk partx mkfs.vfat fatlabel blkid lsblk mount umount poweroff sync xz sha256sum loadkeys; do
+# ⚑ `setsid` braucht `golem-knoten`, sonst stuerbe sein Waechter mit der
+#   Anmeldung. `setpriv` steht weiter unten mit vollem Pfad.
+# ⚑ `udevd` und `seatd` braucht `golem-schicht` fuer die Oberflaeche.
+for w in sfdisk partx mkfs.vfat fatlabel blkid lsblk mount umount poweroff sync xz sha256sum loadkeys setsid udevd seatd; do
   if ! find "$BR/output/target" -name "$w" 2>/dev/null | grep -q .; then
     echo "   ⛔️ $w fehlt im Abbild; S05daten, golem-einrichten oder spread.sh scheitert daran" >&2
     fehlt=$((fehlt + 1))
@@ -326,8 +365,27 @@ for k in de-latin1-nodeadkeys de_CH-latin1 us uk fr-latin9 es it nl pt-latin1 pl
     fehlt=$((fehlt + 1))
   fi
 done
+# ⛔️ **`setpriv` aus util-linux, nicht irgendeines.** 📌 BusyBox bringt ein
+#    gleichnamiges Applet mit, das kein Konto wechseln kann; die Suche oben
+#    haette es gefunden und „da" gemeldet (gemessen am 2026-10-13, der
+#    Knoten startete nicht).
+if [ ! -x "$BR/output/target/usr/bin/setpriv" ] || [ -L "$BR/output/target/usr/bin/setpriv" ]; then
+  echo "   ⛔️ /usr/bin/setpriv aus util-linux fehlt; golem-knoten startet den Knoten sonst nicht" >&2
+  fehlt=$((fehlt + 1))
+fi
 [ "$fehlt" -eq 0 ] || { echo "$fehlt Programme fehlen" >&2; exit 7; }
 echo "   alle da"
+
+# ⛔️ **Und das Kernstueck fuer die Anzeige muss im Kern angekommen sein.**
+#    Ein Fragment, das der Kern verwirft (etwa weil eine Abhaengigkeit
+#    fehlt), meldet nichts; die Oberflaechen-Schicht faende spaeter keinen
+#    Bildschirm, und niemand wuesste warum.
+KERNKONF=$(ls -d "$BR"/output/build/linux-[0-9]*/.config 2>/dev/null | head -1)
+while IFS= read -r zeile; do
+  case "$zeile" in CONFIG_*=*) ;; *) continue ;; esac
+  grep -qx "$zeile" "$KERNKONF" || { echo "   ⛔️ im Kern nicht angekommen: $zeile" >&2; exit 7; }
+done < /eingabe/konfigurationen/kern-anzeige.fragment
+echo "   Kern mit Anzeige (simpledrm, virtio-gpu) und squashfs fuer die Schicht"
 
 mkdir -p /bau/aus
 for f in bzImage Image rootfs.cpio.gz golemos.img; do

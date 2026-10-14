@@ -1,0 +1,228 @@
+#!/bin/sh
+# golem-schicht: Schichten wie die Oberflaeche zur Basis von GolemOS dazunehmen.
+#
+#   golem-schicht status                  was da ist, ob es laeuft, ob es beim Start kommt
+#   golem-schicht holen QUELLE            eine Schicht holen und pruefen (Datei oder https-Adresse
+#                                         der .sqfs; daneben muss QUELLE.sha256 liegen)
+#   golem-schicht starten                 die Oberflaeche starten (Myelith-Fenster im Vollbild)
+#   golem-schicht stoppen                 sie beenden, zurueck zur Konsole
+#   golem-schicht an | aus                beim Start von GolemOS mitstarten oder nicht
+#   golem-schicht entfernen               die Schicht loeschen
+#
+# ⚑ **Eine Schicht ist eine Datei auf der Datenpartition** (squashfs, nur
+# lesbar eingehaengt), keine Installation. Die Basis bleibt bei rund 50 MB
+# und unveraendert; wer die Oberflaeche nicht mehr will, loescht die Datei.
+# Die Schicht laeuft auch auf einem GolemOS, das schon installiert ist.
+#
+# ⛔️ **Kein Code der Schicht laeuft als root.** Was Vorrechte braucht, die
+# Geraeteverwaltung (udev) und die Sitzung (seatd), gehoert zur Basis und
+# laeuft dort. Eingehaengt wird mit `nosuid,nodev`, und in die Schicht
+# tritt `golem-einrichten schicht-eintreten` ein, das erst die Wurzel
+# wechselt, dann alle Vorrechte ablegt und erst danach das erste Programm
+# der Schicht startet. Was eine untergeschobene Schicht anrichten kann, ist
+# damit das, was ein gewoehnliches Konto kann; das ist nicht nichts (sie
+# sieht `/daten`), aber es ist nicht root.
+set -eu
+
+NAME=oberflaeche
+ARCH=$(uname -m)
+ORDNER=${GOLEM_SCHICHT_ORDNER:-/daten/golemos/schichten}
+DATEI="$ORDNER/$NAME-$ARCH.sqfs"
+WURZEL=/run/schicht/$NAME
+AN=/etc/golemos/$NAME.an
+HEIM=/daten/golemos/heim
+KONTO=1000
+
+fehler() {
+  echo "golem-schicht: $*" >&2
+  exit 1
+}
+
+# ── Pruefen ─────────────────────────────────────────────────────────
+#
+# ⚑ **Die Pruefsumme steht neben der Schicht**, wie bei den Abbildern
+#   (`freigeben.sh`). Sie belegt, dass die Datei heil angekommen ist; dass
+#   sie aus der richtigen Quelle stammt, belegt sie nur, wenn die Quelle
+#   selbst vertrauenswuerdig ist (die Veroeffentlichung des Projekts ueber
+#   https). ⚠️ Eine Signatur fehlt noch; der Schaden einer falschen Schicht
+#   ist durch den Zuschnitt oben auf ein Konto ohne Vorrechte begrenzt.
+pruefsumme_stimmt() { # pruefsumme_stimmt DATEI SUMMENDATEI
+  soll=$(cut -d' ' -f1 < "$2")
+  case "$soll" in
+    "" | *[!0-9a-f]*) return 1 ;;
+  esac
+  [ "${#soll}" -eq 64 ] || return 1
+  ist=$(sha256sum "$1" | cut -d' ' -f1)
+  [ "$soll" = "$ist" ]
+}
+
+laeuft() {
+  grep -q " $WURZEL " /proc/mounts 2>/dev/null
+}
+
+# ── Einhaengen und aushaengen ───────────────────────────────────────
+#
+# ⚑ **Was die Schicht von der Basis sieht**, und nicht mehr: Geraete,
+#   Prozesse und sysfs (fuer Bildschirm und Eingabe), die Datenbank von udev,
+#   den Sitzungssocket von seatd, die Datenpartition, die Medien mit dem
+#   Myelith-Ordner und den Zettel, wo dieser liegt. Die Wurzel der Basis,
+#   also auch der Zustand des Knotens, liegt ausserhalb.
+EINHAENGE=""
+einhaengen() { # einhaengen ART QUELLE ZIEL [OPTIONEN]
+  mkdir -p "$3" 2>/dev/null || true
+  case "$1" in
+    bind) mount -o "bind${4:+,$4}" "$2" "$3" ;;
+    rbind) mount -o rbind "$2" "$3" ;;
+    *) mount -t "$1" -o "${4:-defaults}" "$2" "$3" ;;
+  esac
+  EINHAENGE="$3 $EINHAENGE"
+}
+
+aushaengen() {
+  # ⚑ In umgekehrter Reihenfolge, und `-l`, damit ein haengengebliebener
+  #   Prozess das Aushaengen nicht aufhaelt; die Wurzel zuletzt.
+  for z in $(grep " $WURZEL" /proc/mounts | cut -d' ' -f2 | sort -r); do
+    umount -l "$z" 2>/dev/null || true
+  done
+}
+
+dienste_der_basis() {
+  # udev: liefert libinput und wlroots, welche Geraete Tastatur, Maus und
+  # Bildschirm sind. Laeuft schon, wenn die Basis mit eudev startet.
+  pidof udevd >/dev/null 2>&1 || fehler "udevd laeuft nicht; diese Basis ist aelter als die Schicht (GolemOS 0.3.0 oder neuer noetig)"
+  # seatd: gibt dem Konto der Schicht Bildschirm und Eingabe, ohne dass
+  # es Vorrechte braucht. ⚑ **Der Socket gehoert dem Konto der Schicht und
+  # nur ihm** (0600). Das Konto hat in der Schicht keine Zusatzgruppen,
+  # `video` und `input` braucht es nicht, denn die Geraete oeffnet seatd.
+  #
+  # 📌 **Gemessen in der ersten Schichtprobe (2026-10-13):** cage brach mit
+  #   `Could not connect to socket /run/seatd.sock: Permission denied` ab.
+  #   Buildroot bringt mit seatd ein eigenes `S70seatd` mit, das den Socket
+  #   beim Start der Gruppe `video` gab; hier stand nur „laeuft schon, gut“.
+  #   Und `seatd -u` nimmt nur Namen, keine Nummern, ein Konto `golem` gibt
+  #   es aber nur in der Schicht. ⚑ Deshalb: Ein seatd, dessen Socket nicht
+  #   dem Konto gehoert, wird ersetzt, und der eigene bekommt den Socket per
+  #   `chown` mit der Nummer, bevor die Schicht startet.
+  command -v seatd >/dev/null 2>&1 || fehler "seatd fehlt in dieser Basis (GolemOS 0.3.0 oder neuer noetig)"
+  if pidof seatd >/dev/null 2>&1 && [ "$(stat -c %u /run/seatd.sock 2>/dev/null)" != "$KONTO" ]; then
+    kill $(pidof seatd) 2>/dev/null || true
+    n=0
+    while pidof seatd >/dev/null 2>&1 && [ $n -lt 50 ]; do sleep 0.1; n=$((n + 1)); done
+  fi
+  if ! pidof seatd >/dev/null 2>&1; then
+    seatd -l error >/dev/null 2>&1 &
+    n=0
+    while [ ! -S /run/seatd.sock ] && [ $n -lt 50 ]; do sleep 0.1; n=$((n + 1)); done
+    [ -S /run/seatd.sock ] || fehler "seatd startete nicht"
+    chown "$KONTO:$KONTO" /run/seatd.sock
+    chmod 0600 /run/seatd.sock
+  fi
+}
+
+starten() {
+  [ -f "$DATEI" ] || fehler "keine Oberflaeche unter $DATEI; erst golem-schicht holen QUELLE"
+  laeuft && fehler "die Oberflaeche laeuft schon"
+  # ⚑ **Vor jedem Start geprueft**, nicht nur beim Holen: Die Datei liegt
+  #   auf FAT, und jeder Rechner, an dem der Stick steckt, kann sie aendern.
+  pruefsumme_stimmt "$DATEI" "$DATEI.sha256" || fehler "die Pruefsumme stimmt nicht; die Schicht wurde veraendert oder ist beschaedigt (golem-schicht holen)"
+  dienste_der_basis
+  mkdir -p "$WURZEL" "$HEIM"
+  trap 'aushaengen' EXIT INT TERM
+  einhaengen squashfs "$DATEI" "$WURZEL" "ro,loop,nosuid,nodev"
+  einhaengen rbind /dev "$WURZEL/dev"
+  einhaengen proc proc "$WURZEL/proc" "nosuid,nodev,noexec"
+  einhaengen rbind /sys "$WURZEL/sys"
+  einhaengen tmpfs tmpfs "$WURZEL/tmp" "mode=1777,nosuid,nodev"
+  einhaengen tmpfs tmpfs "$WURZEL/run" "mode=0755,nosuid,nodev"
+  mkdir -p "$WURZEL/run/golem" "$WURZEL/run/udev" "$WURZEL/run/golemos"
+  chown "$KONTO:$KONTO" "$WURZEL/run/golem"
+  chmod 0700 "$WURZEL/run/golem"
+  einhaengen bind /run/udev "$WURZEL/run/udev" "ro"
+  : > "$WURZEL/run/seatd.sock"
+  einhaengen bind /run/seatd.sock "$WURZEL/run/seatd.sock"
+  [ -d /run/golemos ] && einhaengen bind /run/golemos "$WURZEL/run/golemos" "ro"
+  einhaengen bind /daten "$WURZEL/daten" "nosuid,nodev"
+  einhaengen bind "$HEIM" "$WURZEL/home/golem" "nosuid,nodev"
+  [ -d /medien ] && einhaengen rbind /medien "$WURZEL/medien"
+  echo "Oberflaeche startet; zurueck zur Konsole mit Strg+Alt+F2 oder golem-schicht stoppen."
+  rueckgabe=0
+  /usr/bin/golem-einrichten schicht-eintreten "$WURZEL" /usr/bin/golem-kiosk || rueckgabe=$?
+  aushaengen
+  trap - EXIT INT TERM
+  return "$rueckgabe"
+}
+
+befehl=${1:-status}
+[ $# -gt 0 ] && shift
+
+case "$befehl" in
+  status)
+    if [ -f "$DATEI" ]; then
+      echo "Oberflaeche: $DATEI ($(du -h "$DATEI" | cut -f1))"
+      if pruefsumme_stimmt "$DATEI" "$DATEI.sha256" 2>/dev/null; then echo "  Pruefsumme stimmt"; else echo "  ⛔️ Pruefsumme stimmt NICHT"; fi
+    else
+      echo "Oberflaeche: nicht geholt (golem-schicht holen QUELLE)"
+    fi
+    if laeuft; then echo "  laeuft"; else echo "  laeuft nicht"; fi
+    if [ -f "$AN" ]; then echo "  startet beim Hochfahren mit"; else echo "  startet beim Hochfahren nicht mit (golem-schicht an)"; fi
+    ;;
+  holen)
+    [ $# -eq 1 ] || fehler "Aufruf: golem-schicht holen QUELLE (Datei oder https-Adresse der .sqfs)"
+    quelle=$1
+    case "$quelle" in
+      http://*) fehler "nur https: ueber http koennte jeder unterwegs die Schicht und ihre Pruefsumme tauschen" ;;
+    esac
+    mkdir -p "$ORDNER"
+    neu="$DATEI.neu"
+    rm -f "$neu" "$neu.sha256"
+    case "$quelle" in
+      https://*)
+        curl -fL --proto =https -o "$neu.sha256" "$quelle.sha256" || fehler "die Pruefsumme liess sich nicht laden: $quelle.sha256"
+        curl -fL --proto =https -o "$neu" "$quelle" || fehler "die Schicht liess sich nicht laden: $quelle"
+        ;;
+      *)
+        [ -f "$quelle" ] || fehler "$quelle gibt es nicht"
+        [ -f "$quelle.sha256" ] || fehler "$quelle.sha256 fehlt; ohne Pruefsumme wird nichts uebernommen"
+        cp "$quelle.sha256" "$neu.sha256"
+        cp "$quelle" "$neu"
+        ;;
+    esac
+    if ! pruefsumme_stimmt "$neu" "$neu.sha256"; then
+      rm -f "$neu" "$neu.sha256"
+      fehler "die Pruefsumme stimmt nicht; nichts uebernommen"
+    fi
+    laeuft && fehler "die Oberflaeche laeuft; erst golem-schicht stoppen"
+    mv "$neu.sha256" "$DATEI.sha256"
+    mv "$neu" "$DATEI"
+    echo "Oberflaeche geholt und geprueft: $DATEI"
+    echo "Weiter mit: golem-schicht starten   (und golem-schicht an, damit sie beim Hochfahren kommt)"
+    ;;
+  starten)
+    starten
+    ;;
+  stoppen)
+    laeuft || { echo "Die Oberflaeche laeuft nicht."; exit 0; }
+    # Das Fenster und der Kompositor gehoeren dem Konto der Schicht.
+    for p in $(pidof cage myelith-fenster 2>/dev/null); do kill "$p" 2>/dev/null || true; done
+    n=0
+    while laeuft && [ $n -lt 50 ]; do sleep 0.1; n=$((n + 1)); done
+    laeuft && aushaengen
+    echo "Oberflaeche beendet."
+    ;;
+  an | aus)
+    [ -f "$DATEI" ] || [ "$befehl" = aus ] || fehler "erst golem-schicht holen QUELLE"
+    mkdir -p "$(dirname "$AN")"
+    if [ "$befehl" = an ]; then : > "$AN"; echo "Die Oberflaeche startet beim Hochfahren."; else rm -f "$AN"; echo "Die Oberflaeche startet beim Hochfahren nicht mehr."; fi
+    ;;
+  entfernen)
+    laeuft && "$0" stoppen
+    rm -f "$DATEI" "$DATEI.sha256" "$AN"
+    echo "Oberflaeche entfernt. Die Einstellungen unter /daten bleiben."
+    ;;
+  -h | --hilfe | hilfe)
+    sed -n '2,10p' "$0"
+    ;;
+  *)
+    fehler "unbekannt: $befehl (golem-schicht hilfe)"
+    ;;
+esac

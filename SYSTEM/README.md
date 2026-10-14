@@ -13,7 +13,7 @@ keine Komponente, nichts mit einer eigenen Fassung: die Unterlage.
 | `crates-vorrat/` | 760 `.crate`-Archive, alles, was die 27 Crates zum Bauen brauchen | **ja**, 117 MB |
 | `crates-lager/` | dieselben Archive ausgepackt, dazu die Cargo-Konfiguration | nein, erzeugt |
 | `golemos/` | die Linux-Distribution, die nur Myelith bedient, mit Einrichtungsassistent (die 26. Kiste) und freigegebenen Abbildern | **ja**, seit 2026-09-25; draußen bleiben `aus/` und `bau/` |
-| `install/` | drei Einrichtungsskripte, je eines für macOS, NixOS und Windows | ja |
+| `install/` | die Einrichtungsskripte für macOS, NixOS und Windows, dazu Sinne, Vorrat und die Prüfung der Grafikkarten einer (Miet-)Maschine (`karten-pruefen.sh`) | ja |
 | `logs/` | Laufprotokolle des Knotens und, unter `debug/`, der Debug-Log (eine Datei je Monat) | nein, ausgeschlossen seit 2026-10-12: Der Debug-Log enthält Dateiinhalte und Antworten |
 
 ⚑ **Warum Vorrat und Lager zwei Ordner sind.** Der **Vorrat** ist die

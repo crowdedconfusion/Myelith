@@ -88,13 +88,26 @@ pub fn fragen(
     vorgabe: Option<bool>,
     rahmen: Option<(Schirm, myl_client::einstellungen::Konsolendesign)>,
 ) -> Antwort {
+    fragen_bis(text, vorgabe, rahmen, None).unwrap_or(Antwort::Offen)
+}
+
+/// **Wie [`fragen`], mit einer Frist**: `None`, wenn sie ohne Taste
+/// verstrich. Die Frage verschwindet dann aus ihrer Zeile, und der Aufrufer
+/// stellt sie spaeter neu (fuer den Schlaf, der nach einer Weile ohne
+/// Antwort kommt).
+pub fn fragen_bis(
+    text: &str,
+    vorgabe: Option<bool>,
+    rahmen: Option<(Schirm, myl_client::einstellungen::Konsolendesign)>,
+    frist: Option<std::time::Instant>,
+) -> Option<Antwort> {
     if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
-        return Antwort::Offen;
+        return Some(Antwort::Offen);
     }
     let schon_roh = crossterm::terminal::is_raw_mode_enabled().unwrap_or(false);
     let roh = if schon_roh { None } else { crate::auswahl::Rohmodus::an().ok() };
     if !schon_roh && roh.is_none() {
-        return Antwort::Offen;
+        return Some(Antwort::Offen);
     }
     // ⚑ Kein Wagen in der Eingabezeile, solange gefragt wird.
     crate::schirm::wagen_verstecken();
@@ -105,6 +118,19 @@ pub fn fragen(
     let _ = write!(aus, "{}", zeile(text, vorgabe, rahmen.map(|(_, b)| b).or_else(eingestelltes_design)));
     let _ = aus.flush();
     let antwort = loop {
+        if let Some(f) = frist {
+            let rest = f.saturating_duration_since(std::time::Instant::now());
+            if rest.is_zero() || !event::poll(rest).unwrap_or(false) {
+                if std::time::Instant::now() < f {
+                    continue;
+                }
+                let _ = write!(aus, "\r\x1b[2K");
+                let _ = aus.flush();
+                drop(roh);
+                crate::schirm::wagen_zeigen();
+                return None;
+            }
+        }
         let Ok(Event::Key(k)) = event::read() else { continue };
         if k.kind != KeyEventKind::Press {
             continue;
@@ -124,7 +150,7 @@ pub fn fragen(
     let _ = aus.flush();
     drop(roh);
     crate::schirm::wagen_zeigen();
-    antwort
+    Some(antwort)
 }
 
 /// Das Design aus den Einstellungen, wo der Aufrufer keinen Rahmen kennt.

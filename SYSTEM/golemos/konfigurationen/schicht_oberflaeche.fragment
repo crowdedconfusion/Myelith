@@ -1,0 +1,62 @@
+# Die Oberflaechen-Schicht: was zur Basis dazukommt, damit das Myelith-Fenster
+# im Vollbild laeuft (Kiosk). Gebaut von `schicht-bauen.sh` als eigener
+# Buildroot-Lauf, an die Vorgabe der Architektur angehaengt; was hier steht,
+# gewinnt.
+#
+# ⚑ **Die Schicht ist ein ganzes Wurzeldateisystem, aber kein System.** Sie
+# startet keinen Kern und kein Init: `golem-schicht` haengt sie auf der
+# laufenden Basis ein und startet darin nur den Kompositor und das Fenster
+# (chroot). Deshalb fehlen hier Kern, Startprogramm und Plattenabbild, und
+# die Basis bleibt bei rund 50 MB.
+
+# ── Ohne Kern, Startprogramm und Plattenabbild ─────────────────────────
+# BR2_LINUX_KERNEL is not set
+# BR2_TARGET_GRUB2 is not set
+# BR2_TARGET_ROOTFS_CPIO is not set
+# BR2_TARGET_ROOTFS_EXT2 is not set
+# BR2_PACKAGE_HOST_GENIMAGE is not set
+BR2_ROOTFS_POST_IMAGE_SCRIPT=""
+BR2_ROOTFS_POST_BUILD_SCRIPT=""
+BR2_ROOTFS_OVERLAY="/bau/schicht-overlay"
+BR2_ROOTFS_USERS_TABLES="/eingabe/konfigurationen/schicht_benutzer.tabelle"
+
+# ⚑ **squashfs mit gzip**: Der Kern der Basis kann squashfs fest eingebaut,
+#   aber nur mit zlib entpacken (xz und zstd fehlen in seiner Vorgabe).
+BR2_TARGET_ROOTFS_SQUASHFS=y
+BR2_TARGET_ROOTFS_SQUASHFS4_GZIP=y
+
+# ── Geraete: eudev, denn libinput und wlroots verlangen udev ──────────
+# ⚑ Gebraucht wird hier nur `libudev`; der Dienst `udevd` laeuft in der
+#   Basis, und ihre Datenbank unter /run/udev wird hereingereicht.
+BR2_ROOTFS_DEVICE_CREATION_DYNAMIC_EUDEV=y
+
+# ── Zeichnen in Software ───────────────────────────────────────────────
+# ⚑ **softpipe und nicht llvmpipe**: llvmpipe braucht LLVM, und das allein
+#   wiegt mehr als der Rest der Schicht. Der Kompositor zeichnet mit pixman
+#   (`WLR_RENDERER=pixman`), das Fenster in Software; EGL und GBM braucht es
+#   trotzdem, denn GTK und wlroots verlangen sie beim Bauen. `virgl` fuer
+#   virtuelle Maschinen mit 3D.
+BR2_PACKAGE_MESA3D=y
+BR2_PACKAGE_MESA3D_GALLIUM_DRIVER_SOFTPIPE=y
+BR2_PACKAGE_MESA3D_GALLIUM_DRIVER_VIRGL=y
+BR2_PACKAGE_MESA3D_OPENGL_EGL=y
+BR2_PACKAGE_MESA3D_OPENGL_ES=y
+BR2_PACKAGE_MESA3D_GBM=y
+
+# ── Kiosk: cage, ein Kompositor fuer genau ein Fenster ─────────────────
+BR2_PACKAGE_CAGE=y
+# ⚑ Nur die Bibliothek: Der Dienst `seatd` laeuft in der Basis, nicht hier.
+BR2_PACKAGE_SEATD=y
+BR2_PACKAGE_XKEYBOARD_CONFIG=y
+
+# ── Das Fenster: GTK3 mit Wayland und WebKitGTK (webkit2gtk-4.1) ───────
+BR2_PACKAGE_LIBGTK3=y
+BR2_PACKAGE_LIBGTK3_WAYLAND=y
+BR2_PACKAGE_WEBKITGTK=y
+BR2_PACKAGE_WEBKITGTK_WAYLAND=y
+# ⚑ Ohne Medienwiedergabe: Sie zoege GStreamer nach, und das Fenster spielt
+#   Ton ueber die Sinne des Clients ab, nicht ueber WebKit.
+# BR2_PACKAGE_WEBKITGTK_MULTIMEDIA is not set
+BR2_PACKAGE_HICOLOR_ICON_THEME=y
+BR2_PACKAGE_DEJAVU=y
+BR2_PACKAGE_FONTCONFIG=y

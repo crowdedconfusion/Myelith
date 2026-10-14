@@ -70,6 +70,7 @@ fn run() -> Result<(), String> {
         denkgrenze: None,
         abbruch: None,
         ziehen: None,
+        gesperrt: &[],
     };
     let mut speicher = Fortsetzung::neu(&model);
     let (warm, _) = dekodieren_fortgesetzt(&model, &prompt, &lauf(aufwaermen), &mut speicher, &mut |_| {});

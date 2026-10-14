@@ -1,0 +1,13 @@
+{
+  "name": "knoten_einrichten",
+  "beschreibung": "Nur auf GolemOS und nur auf ausdruecklichen Wunsch des Menschen: richtet diesen Rechner als Myelith-Knoten ein (myl-node als Dienst ohne Vorrechte; nach aussen hoert nur der P2P-Port 4001). Rolle teilnehmer hoert zu und rechnet nach; relais braucht eine oeffentliche Adresse und eine Weiterleitung im Router. Der Knoten entscheidet nichts selbst: Rolle, Pod-Zuteilung und Abstimmungen bestimmt die Kette. Startet ihn noch nicht.",
+  "parameter": {
+    "type": "object",
+    "properties": {
+      "name": { "type": "string", "description": "Name des Knotens: Buchstaben, Ziffern, Punkt, Unterstrich, Bindestrich" },
+      "rolle": { "type": "string", "enum": ["teilnehmer", "relais"], "description": "teilnehmer (Vorgabe fuer zu Hause) oder relais" }
+    },
+    "required": ["name", "rolle"]
+  },
+  "befehl": "command -v golem-knoten >/dev/null || { echo 'Das ist kein GolemOS.'; exit 1; }; golem-knoten einrichten --name {name} --rolle {rolle}"
+}

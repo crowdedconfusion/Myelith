@@ -38,19 +38,28 @@ start() {
   #   der Installation gibt es `golem-daten` zweimal, sobald der Stick
   #   noch steckt, und die Marke allein nimmt, was der Kern zuerst fand.
   #   Geschrieben wird die Kernzeile von `golem-einrichten`.
+  #
+  # ⛔️ **`blkid` und sysfs, nicht `lsblk`.** Dieses Skript laeuft vor
+  #    `udevd` (S10), und seit udev in der Basis ist, liest `lsblk` Namen,
+  #    Kennungen und Typen nur noch aus dessen Datenbank: Hier sah es die
+  #    Partition, aber ohne `PARTLABEL`. 📌 Gemessen am 2026-10-13 unter
+  #    QEMU x86_64: „Datenpartition: nicht gefunden", nach dem Hochfahren
+  #    fand dasselbe `lsblk` sie. `blkid` liest die Platte selbst.
+  #    ⚠️ Auf aarch64 fiel es nicht auf, weil util-linux dort noch aus der
+  #    Zeit vor udev stammte; ein frischer Bau haette es ueberall gezeigt.
   TEIL=""
   for w in $(cat /proc/cmdline); do
     case "$w" in
       golemos.daten=PARTUUID=*)
         GESUCHT=$(echo "${w#golemos.daten=PARTUUID=}" | tr 'A-F' 'a-f')
-        TEIL=$(lsblk -rno NAME,PARTUUID 2>/dev/null | awk -v u="$GESUCHT" 'tolower($2)==u {print "/dev/"$1; exit}')
+        TEIL=$(blkid -t PARTUUID="$GESUCHT" -o device 2>/dev/null | head -1)
         ;;
     esac
   done
   [ -n "$TEIL" ] || TEIL=$(blkid -L "$MARKE" 2>/dev/null)
   if [ -z "$TEIL" ]; then
     # Noch nicht formatiert: ueber die Partitionsnummer suchen.
-    TEIL=$(lsblk -rno NAME,PARTLABEL 2>/dev/null | awk -v m="$MARKE" '$2==m {print "/dev/"$1; exit}')
+    TEIL=$(blkid -t PARTLABEL="$MARKE" -o device 2>/dev/null | head -1)
   fi
   if [ -z "$TEIL" ]; then
     echo "nicht gefunden, uebersprungen"
@@ -58,8 +67,10 @@ start() {
   fi
 
   # Der Datentraeger, auf dem sie liegt, und ihre Nummer darauf.
-  TRAEGER=$(lsblk -rno PKNAME "$TEIL" 2>/dev/null | head -1)
-  [ -n "$TRAEGER" ] && TRAEGER="/dev/$TRAEGER"
+  #   Aus sysfs: Der Eintrag einer Partition liegt im Ordner ihrer Platte.
+  TRAEGER=""
+  OBEN=$(readlink -f "/sys/class/block/${TEIL##*/}/.." 2>/dev/null)
+  [ -n "$OBEN" ] && [ -e "$OBEN/dev" ] && TRAEGER="/dev/${OBEN##*/}"
   NUMMER=$(echo "$TEIL" | sed 's/.*[^0-9]\([0-9]*\)$/\1/')
 
   # ⛔️ **Fund 476: Der Partitionstyp muss „Microsoft Basic Data" sein**,
@@ -69,7 +80,7 @@ start() {
   #    aendert sich, kein Byte der Daten.
   DATENTYP=ebd0a0a2-b9e5-4433-87c0-68b6b72699c7
   if [ -n "$TRAEGER" ] && [ -n "$NUMMER" ]; then
-    IST=$(lsblk -rno PARTTYPE "$TEIL" 2>/dev/null | tr 'A-F' 'a-f')
+    IST=$(blkid -p -s PART_ENTRY_TYPE -o value "$TEIL" 2>/dev/null | tr 'A-F' 'a-f')
     if [ -n "$IST" ] && [ "$IST" != "$DATENTYP" ]; then
       sfdisk --no-reread --force --part-type "$TRAEGER" "$NUMMER" "$DATENTYP" >/dev/null 2>&1 \
         && printf "Typ berichtigt … "

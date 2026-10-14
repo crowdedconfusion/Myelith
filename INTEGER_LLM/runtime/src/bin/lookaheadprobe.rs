@@ -68,6 +68,7 @@ fn lauf(
         denkgrenze: None,
         abbruch: None,
         ziehen: None,
+        gesperrt: &[],
     };
     let mut speicher = Fortsetzung::neu(model);
     speicher.vorschlaege_setzen(quelle);
@@ -84,6 +85,7 @@ fn lauf(
         denkgrenze: None,
         abbruch: None,
         ziehen: None,
+        gesperrt: &[],
     };
     let _ = dekodieren_fortgesetzt(model, prompt, &nur_prompt, &mut speicher, &mut |_| {});
     let anfang = std::time::Instant::now();

@@ -80,6 +80,11 @@ struct Stand {
     module: crate::module::Modulwirt,
     /// Was vor dem Modus eines Moduls galt.
     modus_vorher: Option<Vorher>,
+    /// **Seit wann niemand etwas will**, fuer den Schlaf
+    /// (`myl_local_agent::schlaf`).
+    ruhe_seit: std::time::Instant,
+    /// Ob seit der letzten Eingabe schon geruht wurde: einmal je Pause.
+    geruht: bool,
 }
 
 pub fn fahren() -> i32 {
@@ -221,8 +226,10 @@ pub fn fahren() -> i32 {
         gespraech: myl_local_agent::gespraech::Gespraech::neu(),
         ansage: None,
         kontext_prozent: None,
-        module: crate::module::Modulwirt::neu(),
+        module: crate::module::wirt(),
         modus_vorher: None,
+        ruhe_seit: std::time::Instant::now(),
+        geruht: false,
     };
 
     // ⛔️ **Mit `--root` gilt Schreibrecht**, sonst waere der Schalter
@@ -855,7 +862,9 @@ fn schleife(stand: &mut Stand) -> i32 {
         // Hoehe stehenbleibt, steht mitten im Text.
         // ⚑ Die Schreiberlaubnis wird vor jeder Eingabe neu gelesen:
         // Wer sie nebenan mit `myl setzen` umlegt, sieht es hier.
+        let mut schlaf = myl_local_agent::schlaf::Schlafeinstellung::default();
         if let Ok(e) = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad()) {
+            schlaf = e.schlaf;
             stand.schreibt = e.agent.schreiben;
             // ⚑ Auch der Debug-Log folgt der Einstellung vor jeder Eingabe:
             //   Wer ihn im Fenster umlegt, erreicht damit auch die Konsole.
@@ -881,10 +890,17 @@ fn schleife(stand: &mut Stand) -> i32 {
         };
         // ⚑ **Mit laufendem Modul gibt es immer eine Frist**, sonst kaeme
         //   sein Weckruf nicht an: Die Zeile sieht nur mit Frist danach.
-        let frist = stand
+        let modulfrist = stand
             .module
             .irgendeins_laeuft()
             .then(|| stand.module.frist().unwrap_or_else(|| std::time::Instant::now() + std::time::Duration::from_secs(3600)));
+        // ⚑ **Der Schlaf bringt seine eigene Frist mit**: einmal je
+        //   Pause, nach `schlaf.ruhe_minuten` ohne Eingabe.
+        let ruhefrist = schlaffrist(&schlaf, stand.ruhe_seit, stand.geruht);
+        let frist = match (modulfrist, ruhefrist) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        };
         let alle_vorschlaege = vorschlaege(&stand.module);
         let gelesen = {
             let stand_lesend: &Stand = stand;
@@ -908,13 +924,25 @@ fn schleife(stand: &mut Stand) -> i32 {
         let zeile = match gelesen {
             eingabe::Eingabe::Zeile(z) => {
                 myl_local_agent::debuglog::eintrag("Eingabe", &z);
+                stand.ruhe_seit = std::time::Instant::now();
+                stand.geruht = false;
                 z
             }
             // ⚑ **Die Frist der Module**: ein Takt oder ein Weckruf, dann
             //   zurueck an die Zeile, mit dem, was schon dastand.
             eingabe::Eingabe::Frist(z) => {
                 entwurf = z;
-                modul_takt(stand);
+                if stand.module.irgendeins_laeuft() {
+                    modul_takt(stand);
+                }
+                // ⚑ Wer gerade etwas tippt, ruht nicht: Die Pause beginnt neu.
+                if ruhefrist.is_some_and(|f| std::time::Instant::now() >= f) {
+                    if entwurf.trim().is_empty() {
+                        ruhen(stand, &schlaf, false, None);
+                    } else {
+                        stand.ruhe_seit = std::time::Instant::now();
+                    }
+                }
                 continue;
             }
             // ⚑ **Umschalt-Tab wechselt den Modus und sonst nichts.**
@@ -1113,6 +1141,14 @@ fn schleife(stand: &mut Stand) -> i32 {
                 gespraech_verdichten(stand);
                 continue;
             }
+            Some(Befehlsart::Ruhen) => {
+                ruhen(stand, &schlaf, true, None);
+                continue;
+            }
+            Some(Befehlsart::Gedaechtnis) => {
+                gedaechtnis_zeigen(stand, befehl_und_rest(&text).map(|(_, r)| r).unwrap_or(""));
+                continue;
+            }
             Some(Befehlsart::Neu) => {
                 stand.gespraech.leeren();
                 stand.kontext_prozent = None;
@@ -1152,6 +1188,10 @@ enum Befehlsart {
     Einstellungen,
     Kontext,
     Verdichten,
+    /// Den Schlaf jetzt, ohne auf die Pause zu warten.
+    Ruhen,
+    /// Das Gedaechtnis des Arbeitsordners zeigen oder durchsuchen.
+    Gedaechtnis,
     Neu,
     /// Einen Loop beginnen; nimmt ein Ziel oder fragt danach.
     StartLoop,
@@ -1192,7 +1232,7 @@ struct Befehl {
 /// nennt irgendwann einen Befehl, den es nicht gibt, oder verschweigt
 /// einen, den es gibt, **und beides sieht erst der, der es
 /// ausprobiert.**
-const BEFEHLE: [Befehl; 20] = [
+const BEFEHLE: [Befehl; 22] = [
     Befehl {
         art: Befehlsart::Modell,
         namen: &["/model", "/modell"],
@@ -1227,6 +1267,17 @@ const BEFEHLE: [Befehl; 20] = [
         art: Befehlsart::Verdichten,
         namen: &["/compress", "/verdichten"],
         was: "fasst das bisherige Gespraech zusammen und schafft Platz",
+    },
+    // ⚑ **Der Schlaf** (Wunsch des Projektinhabers, 2026-10-13).
+    Befehl {
+        art: Befehlsart::Ruhen,
+        namen: &["/sleep", "/schlafen"],
+        was: "ordnet jetzt das Gedaechtnis dieses Ordners (sonst nach der eingestellten Pause von selbst); jede Taste weckt",
+    },
+    Befehl {
+        art: Befehlsart::Gedaechtnis,
+        namen: &["/memory", "/gedaechtnis"],
+        was: "zeigt, was das Gedaechtnis dieses Ordners weiss; /memory <suchtext> sucht darin",
     },
     Befehl {
         art: Befehlsart::Neu,
@@ -1878,12 +1929,24 @@ fn gespraech_verdichten(stand: &mut Stand) {
     // weg. Die Konsole kennt ihren Arbeitsordner, also bekommt sie
     // einen; ohne Ordner gaebe es keinen Platz, an dem der Agent
     // nachlesen koennte.
+    // ⚑ Ob der Verweis `read_history` nennen darf, entscheidet die Kiste,
+    // und zwar ihre Werkzeugliste, nicht ihr Name: Seit dem 2026-10-14
+    // traegt auch `Base` die Verlaufswerkzeuge, und ein Namensvergleich
+    // haette das still verschwiegen.
+    let nachlesen = {
+        use myl_local_agent::werkzeuge::Werkzeugkiste as K;
+        [K::Base, K::Advanced, K::Elite]
+            .into_iter()
+            .find(|k| k.name() == stand.kiste)
+            .is_none_or(|k| k.kann_nachlesen())
+    };
     match myl_local_agent::gespraech::verdichten_mit_mitschnitt(
         modell,
         &mut stand.gespraech,
         Some(&stand.ordner),
         &stand.sitzung,
         &stand.name,
+        nachlesen,
     ) {
         Ok((vorher, nachher)) => {
             println!("{:.1} s", anfang.elapsed().as_secs_f64());
@@ -1897,6 +1960,141 @@ fn gespraech_verdichten(stand: &mut Stand) {
             eprintln!("  Das Gespraech liess sich nicht verdichten: {f}");
         }
     }
+    println!();
+}
+
+/// **Der Schlaf in der Konsole** (`myl_local_agent::schlaf`).
+///
+/// ⚑ **Im Vordergrund, mit einem Tastenwaechter daneben**: Das Modell
+///   gehoert der Konsole und nicht einem zweiten Faden. Ein Nebenfaden
+///   sieht nur nach, ob eine Taste kam, und weckt; die Taste selbst bleibt
+///   liegen und landet danach in der Eingabezeile.
+/// ⚑ **Gierig fuer die Dauer des Ruhens**, damit dasselbe Material dieselben
+///   Erinnerungen ergibt; danach gilt wieder, was eingestellt ist.
+/// ⚑ **Am Ende wird vorgewaermt**: Ansage und Gespraech stehen wieder im
+///   KV-Speicher, und die naechste Frage rechnet nur ihre eigene Nachricht.
+/// ⚑ **`bis` weckt zur Zeit** (Sekunden wie `vorhaben::jetzt`): Im Warten
+///   eines Loops ist das die naechste Runde, und die faengt puenktlich an.
+/// ⚠️ **Ein Rohmodus, der schon an war, bleibt an**: Das Warten des Loops
+///   liest seine Tasten roh; schaltete der Schlaf ihn danach ab, kaeme
+///   Esc dort als Zeile an. Geschrieben wird trotzdem gekocht, sonst
+///   treppen die Zeilen.
+fn ruhen(stand: &mut Stand, e: &myl_local_agent::schlaf::Schlafeinstellung, von_hand: bool, bis: Option<u64>) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    stand.geruht = true;
+    let war_roh = crossterm::terminal::is_raw_mode_enabled().unwrap_or(false);
+    if war_roh {
+        let _ = crossterm::terminal::disable_raw_mode();
+    }
+    let deutsch = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())
+        .map(|e| matches!(e.oberflaeche.sprache, myl_client::einstellungen::Sprache::De))
+        .unwrap_or(true);
+    let rechnet = stand.modell.is_some() && (von_hand || e.darf_rechnen());
+    println!(
+        "  · {}",
+        if deutsch { "Schlaf: ordnet das Gedächtnis dieses Ordners … (jede Taste weckt)" } else { "Sleep: organising this folder's memory … (any key wakes)" }
+    );
+    let _ = std::io::stdout().flush();
+    let wecker = myl_local_agent::schlaf::Wecker::neu();
+    let ende = std::sync::Arc::new(AtomicBool::new(false));
+    let roh = crossterm::terminal::enable_raw_mode().is_ok();
+    let waechter = {
+        let (w, ende) = (wecker.clone(), ende.clone());
+        std::thread::spawn(move || {
+            while !ende.load(Ordering::SeqCst) {
+                if crossterm::event::poll(std::time::Duration::from_millis(100)).unwrap_or(false)
+                    || bis.is_some_and(|b| myl_local_agent::vorhaben::jetzt() >= b)
+                {
+                    w.wecken();
+                    break;
+                }
+            }
+        })
+    };
+    let vorwaermen = (rechnet && !stand.gespraech.ist_leer()).then(|| ansage_fuer(stand)).flatten().map(|a| {
+        let mut v = vec![a];
+        v.extend(stand.gespraech.nachrichten().iter().cloned());
+        v
+    });
+    let gespraeche = if stand.gespraech.ist_leer() {
+        Vec::new()
+    } else {
+        vec![myl_local_agent::schlaf::episode_aus_gespraech(&stand.sitzung, stand.gespraech.nachrichten())]
+    };
+    let ablage = myl_local_agent::vorhaben::Ablage::vorgabe();
+    let auftrag = myl_local_agent::schlaf::Ruheauftrag {
+        wurzel: &stand.ordner,
+        gespraeche,
+        vorhaben: Some(&ablage),
+        vorwaermen,
+        deutsch,
+        tag: myl_local_agent::gedaechtnis::heute(),
+    };
+    // ⚑ **Ohne Nachdenken**, wie `myl schlafen`: Die Fragen des Schlafs
+    //   haben kurze Tokengrenzen (ein Urteil, ein Wort, ein paar
+    //   Suchwoerter), und ein Denkblock verbraeuchte sie, bevor die Antwort
+    //   kommt. Danach gilt wieder die Einstellung.
+    let vorher = stand.modell.as_ref().map(|m| (m.gierig, m.denken));
+    if let (true, Some(m)) = (rechnet, stand.modell.as_mut()) {
+        m.gierig = true;
+        m.denken = false;
+    }
+    let modell = stand.modell.as_ref().filter(|_| rechnet).map(|m| m as &dyn myl_client::Modellweg);
+    let b = myl_local_agent::schlaf::schlafen(modell, &auftrag, &wecker);
+    if let (Some((g, d)), Some(m)) = (vorher, stand.modell.as_mut()) {
+        m.gierig = g;
+        m.denken = d;
+    }
+    ende.store(true, Ordering::SeqCst);
+    let _ = waechter.join();
+    if roh {
+        let _ = crossterm::terminal::disable_raw_mode();
+    }
+    println!("  · {}", b.zeile(deutsch));
+    println!();
+    if war_roh {
+        let _ = crossterm::terminal::enable_raw_mode();
+    }
+}
+
+/// Die Schlafeinstellung von jetzt; ohne lesbare Einstellungen die Vorgabe.
+fn schlafeinstellung() -> myl_local_agent::schlaf::Schlafeinstellung {
+    myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad()).map(|e| e.schlaf).unwrap_or_default()
+}
+
+/// Wann die Pause, die bei `seit` begann, zum Schlaf wird; `None`, wenn
+/// nicht (abgeschaltet oder in dieser Pause schon geschehen).
+fn schlaffrist(e: &myl_local_agent::schlaf::Schlafeinstellung, seit: std::time::Instant, geruht: bool) -> Option<std::time::Instant> {
+    (e.an && !geruht).then(|| seit + std::time::Duration::from_secs(u64::from(e.ruhe_minuten).saturating_mul(60)))
+}
+
+/// **`/memory`: was das Gedaechtnis dieses Ordners weiss.**
+fn gedaechtnis_zeigen(stand: &Stand, suchtext: &str) {
+    use myl_local_agent::gedaechtnis::{self, Gedaechtnis};
+    let g = match Gedaechtnis::laden(&stand.ordner) {
+        Ok(g) => g,
+        Err(f) => {
+            eprintln!("  Das Gedaechtnis ist nicht lesbar: {f}");
+            return;
+        }
+    };
+    if g.eintraege.is_empty() {
+        println!("  Das Gedaechtnis dieses Ordners ist leer. Es fuellt sich im Schlaf (/sleep).");
+        println!();
+        return;
+    }
+    println!("  {} aktive Erinnerungen, {} insgesamt.", g.aktive().count(), g.eintraege.len());
+    let liste: Vec<&gedaechtnis::Eintrag> = if suchtext.trim().is_empty() {
+        let mut alle: Vec<&gedaechtnis::Eintrag> = g.aktive().collect();
+        alle.sort_by_key(|e| (std::cmp::Reverse(e.staerke), e.nr));
+        alle.into_iter().take(20).collect()
+    } else {
+        g.passende(suchtext, 20, false, true)
+    };
+    for e in liste {
+        println!("  {}", gedaechtnis::zeile(e, true));
+    }
+    println!("  Eine vergessen: myl gedaechtnis --vergessen <nr>");
     println!();
 }
 
@@ -1941,18 +2139,23 @@ fn auftrag_fahren_als(stand: &mut Stand, auftrag: &str, art: Auftragsart) -> Opt
     //   dessen Arbeitsordner (nur dort schreibend), ohne Netz und ohne
     //   Blick; welche Werkzeuge nur lesen und deshalb nicht nachfragen,
     //   sagt die Kiste selbst (`ohne_nachfrage` in `kiste.json`).
-    let modulanpassung = stand.module.aktives().map(|l| {
-        let b = &l.g.beschreibung;
-        let kiste = b.kiste.as_ref().map(|k| l.g.ordner.join(k));
-        let ohne: Vec<String> = kiste
-            .as_ref()
-            .and_then(|k| std::fs::read_to_string(k.join("kiste.json")).ok())
-            .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
-            .and_then(|v| v["ohne_nachfrage"].as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()))
-            .unwrap_or_default();
-        (b.arbeit.as_ref().map(|a| l.g.ordner.join(a)), kiste, ohne)
-    });
-    let ohne_nachfrage: Vec<String> = modulanpassung.as_ref().map(|m| m.2.clone()).unwrap_or_default();
+    // ⚑ **Ein Modul ergaenzt die Kiste, es ersetzt sie nicht** (Festlegung
+    //   des Projektinhabers, 2026-10-12): Im Modus eines Moduls dessen Kiste,
+    //   sonst die des eingestellten (`agent.modul`), jeweils zuletzt in der
+    //   Kette. 📌 Bis dahin setzte der Modus die Modulkiste als
+    //   `kistenordner` ein, und die gewaehlte fiel weg.
+    let im_modus = stand.module.aktives().is_some();
+    let zusatz: Option<myl_client::module::Modulzusatz> = match stand.module.aktives() {
+        Some(l) => match myl_client::module::Modulzusatz::aus(&l.g) {
+            Ok(z) => Some(z),
+            Err(f) => {
+                println!("  Modul {}: {f}", l.g.beschreibung.name);
+                None
+            }
+        },
+        None => modulzusatz_der_einstellung(),
+    };
+    let ohne_nachfrage: Vec<String> = zusatz.as_ref().map(|z| z.ohne_nachfrage.clone()).unwrap_or_default();
     let (modussaetze, modushaken) = modusumfeld(stand);
     let Some(modell) = stand.modell.as_mut() else {
         eprintln!("Es ist kein Modell geladen. `/model` waehlt eines.");
@@ -1974,13 +2177,17 @@ fn auftrag_fahren_als(stand: &mut Stand, auftrag: &str, art: Auftragsart) -> Opt
     // ⚑ Der Auftrag ist die Saat der Web-Recherche, wie im Chat.
     agent.netzsaat = Some(auftrag.to_string());
     konsolenvorgaben(&mut agent, stand.schreibt);
-    if let Some((arbeit, kiste, _)) = &modulanpassung {
-        agent.schreiben = arbeit.is_some();
-        agent.wurzel = arbeit.as_ref().map(|a| a.display().to_string()).or(agent.wurzel);
-        agent.kistenordner = kiste.as_ref().map(|k| k.display().to_string());
-        agent.web_recherche = false;
-        agent.blick_bildschirm = false;
-        agent.blick_kamera = false;
+    match &zusatz {
+        Some(z) => z.anwenden(&mut agent),
+        // Kein Modul: auch keine Skills eines frueher gewaehlten.
+        None if !im_modus => myl_local_agent::skills::modusordner_setzen(None),
+        None => {}
+    }
+    // ⚑ **Nur im Modus eines Moduls** arbeitet der Agent in dessen
+    //   Arbeitsordner, ohne Netz und ohne Blick; ein eingestelltes Modul
+    //   ergaenzt bloss die Werkzeuge.
+    if let Some(z) = zusatz.as_ref().filter(|_| im_modus) {
+        z.im_modus(&mut agent);
     }
 
     // ⚑ **Die Kiste folgt dem geladenen Modell**, sofern der Nutzer
@@ -2084,6 +2291,9 @@ fn auftrag_fahren_als(stand: &mut Stand, auftrag: &str, art: Auftragsart) -> Opt
         }
         myl_client::Meldung::Abgelehnt { name, grund } => anzeige.abgelehnt(name, grund),
         myl_client::Meldung::Verdichtet { vorher, nachher } => anzeige.verdichtet(vorher, nachher),
+        myl_client::Meldung::Ausgeblendet { ergebnisse, vorher, nachher } => {
+            anzeige.ausgeblendet(ergebnisse, vorher, nachher)
+        }
     };
 
     // ⚑ **Jeder Auftrag bekommt sein Nachschlagebudget neu** (2026-09-17):
@@ -2192,7 +2402,7 @@ fn modellkennung(stand: &Stand) -> String {
 
 /// **Die Umgebung, in der die Werkzeuge der Kiste eines Moduls das
 /// gepruefte Programm finden**, solange sein Modus gilt.
-const MODULPROGRAMM: &str = "MYL_MODUL_PROGRAMM";
+const MODULPROGRAMM: &str = myl_client::module::PROGRAMMVARIABLE;
 
 /// Was vor dem Modus eines Moduls galt; kommt beim Verlassen zurueck.
 struct Vorher {
@@ -2237,6 +2447,8 @@ impl Startwerte {
             hoehe: self.hoehe,
             speicher: &self.speicher,
             wecker: Some(crate::eingabe::wecken),
+            // ⚑ Die Konsole hat kein Sichtfeld; das sagt sie im Handschlag.
+            ansicht: false,
         }
     }
 }
@@ -2321,6 +2533,12 @@ fn modul_nachricht(stand: &mut Stand, name: &str, n: myl_module::nachricht::VomM
         VomModul::Hallo { .. } => {}
         VomModul::Zeilen { text, stil } => crate::module::zeilen_ausgeben(&text, stil, stand.design),
         VomModul::Protokoll { text } => crate::module::protokoll(name, &text),
+        // ⚑ Ohne Sichtfeld eine Zeile statt der Ansicht: Das Modul hat im
+        //   Handschlag erfahren, dass hier keine gezeigt wird.
+        VomModul::Ansicht { ansicht } => {
+            crate::module::zeilen_ausgeben(&format!("{}: eine Ansicht, nur im Fenster zu sehen.", ansicht.titel), myl_module::nachricht::Stil::Beiwerk, stand.design)
+        }
+        VomModul::AnsichtWeg { .. } => {}
         VomModul::WeckenIn { ms } => {
             if let Some(l) = stand.module.laufendes(name) {
                 l.naechster_takt = Some(std::time::Instant::now() + std::time::Duration::from_millis(ms.clamp(100, 3_600_000)));
@@ -2374,34 +2592,18 @@ fn modul_modell(stand: &mut Stand, name: &str, id: u64, vorspann: &str, frage: &
     if stand.modell.is_none() {
         return Err("es ist kein Modell geladen".into());
     }
+    stand.module.budget_buchen(name, grenze)?;
     let Some(l) = stand.module.laufendes(name) else { return Err("nicht gestartet".into()) };
-    let budget = l.g.beschreibung.befugnisse.modell_token_je_stunde;
-    if l.token_stunde.0.elapsed() >= std::time::Duration::from_secs(3600) {
-        l.token_stunde = (std::time::Instant::now(), 0);
-    }
-    if budget > 0 && l.token_stunde.1.saturating_add(grenze) > budget {
-        return Err(format!("Budget erschoepft ({budget} Token je Stunde)"));
-    }
-    l.token_stunde.1 = l.token_stunde.1.saturating_add(grenze);
-    let beobachter: Option<Box<dyn Fn(myl_local_agent::textstrom::Stueck) + Send + Sync>> = strom.then(|| {
+    let beobachter: Option<myl_client::module::Stueckbeobachter> = strom.then(|| {
         let sender = l.lauf.sender();
         Box::new(move |s: myl_local_agent::textstrom::Stueck| {
             if let myl_local_agent::textstrom::Stueck::Text(text) = s {
                 sender.senden(&AnModul::Modellstueck { id, text });
             }
-        }) as Box<dyn Fn(myl_local_agent::textstrom::Stueck) + Send + Sync>
+        }) as myl_client::module::Stueckbeobachter
     });
-    // ⚑ Gierig nur fuer diese Frage, danach wie eingestellt.
-    let vorher = stand.modell.as_mut().map(|m| {
-        let v = m.gierig;
-        m.gierig = v || gierig;
-        v
-    });
-    let antwort = modell_fragen_mit(stand, vorspann, frage, grenze as usize, Some(denken), name, beobachter).ok_or_else(|| "keine Antwort".to_string());
-    if let (Some(m), Some(v)) = (stand.modell.as_mut(), vorher) {
-        m.gierig = v;
-    }
-    antwort
+    let Some(m) = stand.modell.as_mut() else { return Err("es ist kein Modell geladen".into()) };
+    myl_client::module::modell_fragen(m, vorspann, frage, grenze as usize, Some(denken), gierig, beobachter).inspect_err(|f| eprintln!("  {name}: {f}"))
 }
 
 /// **Eine Frage eines Moduls an den Menschen**, im Rahmen der Konsole.
@@ -2591,66 +2793,6 @@ fn module_befehl(stand: &mut Stand, rest: &str) {
     println!();
 }
 
-/// **Eine direkte Frage an das geladene Modell**, ohne Werkzeuge und ohne
-/// Verlauf, unter denselben Grundsaetzen wie jeder Chat, mit einem
-/// Beobachter fuer die Dauer der Frage (der vorige kommt danach zurueck).
-/// `denken`: `None` laesst die Einstellung stehen. Die Ueberlegung gehoert
-/// nicht zur Antwort.
-fn modell_fragen_mit(
-    stand: &mut Stand,
-    vorspann: &str,
-    frage: &str,
-    grenze_token: usize,
-    denken_hier: Option<bool>,
-    wofuer: &str,
-    beobachter: Option<Box<dyn Fn(myl_local_agent::textstrom::Stueck) + Send + Sync>>,
-) -> Option<String> {
-    use myl_local_agent::Modellweg;
-    let sprache = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad()).map(|e| e.oberflaeche.sprache).unwrap_or_default();
-    let grundsaetze = match myl_local_agent::systemprompt::grundsaetze(sprache) {
-        Ok(g) => g,
-        Err(f) => {
-            eprintln!("  {f}");
-            return None;
-        }
-    };
-    let modell = stand.modell.as_mut()?;
-    let (grenze, denken) = (modell.grenze, modell.denken);
-    modell.grenze = grenze_token;
-    if let Some(d) = denken_hier {
-        modell.denken = d;
-    }
-    // Ohne eigenen Beobachter bleibt der vorhandene, wie er ist.
-    let vorher = beobachter.map(|b| modell.beobachter.replace(b));
-    // ⚑ **Der feste Vorspann als eigene Nachricht** (V1, 2026-10-08): Die
-    //   Laufzeit merkt sich den Zustand vor jeder Nachrichtenmarke; bleibt
-    //   der Vorspann gleich, wird nur der wechselnde Teil neu eingelesen.
-    let mut nachrichten = vec![myl_client::Nachricht::system(grundsaetze)];
-    if !vorspann.trim().is_empty() {
-        nachrichten.push(myl_client::Nachricht::nutzer(vorspann.to_string()));
-    }
-    nachrichten.push(myl_client::Nachricht::nutzer(frage.to_string()));
-    let antwort = modell.chat("lokal", &nachrichten, Some(grenze_token as u32));
-    if let Some(v) = vorher {
-        modell.beobachter = v;
-    }
-    modell.grenze = grenze;
-    modell.denken = denken;
-    match antwort {
-        Ok(a) => {
-            let text = match a.text.rfind("</think>") {
-                Some(i) => a.text[i + "</think>".len()..].to_string(),
-                None => a.text,
-            };
-            Some(text.trim().to_string())
-        }
-        Err(f) => {
-            eprintln!("  {wofuer}: {f}");
-            None
-        }
-    }
-}
-
 // ── Der Loop in der Konsole ─────────────────────────────────────────
 
 /// **Die Sicherheitsmeldung vor `auto`**, mit Bestaetigung.
@@ -2725,7 +2867,14 @@ fn vorhaben_zeigen(rest: &str) {
 /// 2026-10-12: der Wagen steht immer in der Eingabezeile). Die Frage steht
 /// darueber in der Zeitleiste. Ohne eingerichteten Rand wird wie bisher
 /// eine Zeile gelesen.
-fn zeile_lesen(stand: &Stand, frage: &str) -> Option<String> {
+///
+/// ⚑ **Wer nicht antwortet, laesst das Modell schlafen** (Wunsch des
+/// Projektinhabers, 2026-10-13: „wenn das Modell eine Frage an den Nutzer
+/// hat, welche laenger als x Minuten nicht beantwortet wird"). Die Pause
+/// beginnt mit der Frage, `schlaf.ruhe_minuten` spaeter schlaeft die
+/// Konsole einmal, und die erste Taste weckt und steht danach in der
+/// Antwortzeile. Wer schon etwas getippt hat, schlaeft nicht.
+fn zeile_lesen(stand: &mut Stand, frage: &str) -> Option<String> {
     use std::io::{BufRead, IsTerminal, Write};
     if !std::io::stdin().is_terminal() {
         return None;
@@ -2738,16 +2887,40 @@ fn zeile_lesen(stand: &Stand, frage: &str) -> Option<String> {
         return Some(z.trim().to_string());
     };
     println!("{frage}");
-    eingaberahmen(stand);
-    let r = Rahmen::messen();
-    let t = design::toene(stand.design);
-    let zeichnen = |text: &str| zeile_zeichnen(&sch, &r, t, text);
-    let gelesen = eingabe::lesen_mit_liste(&zeichnen, &|_| {}, &[], String::new(), None);
-    zeichnen("");
-    sch.zurueck();
-    match gelesen {
-        eingabe::Eingabe::Zeile(z) => Some(z.trim().to_string()),
-        _ => None,
+    stand.ruhe_seit = std::time::Instant::now();
+    stand.geruht = false;
+    let mut entwurf = String::new();
+    loop {
+        let schlaf = schlafeinstellung();
+        let frist = schlaffrist(&schlaf, stand.ruhe_seit, stand.geruht);
+        eingaberahmen(stand);
+        let r = Rahmen::messen();
+        let t = design::toene(stand.design);
+        let zeichnen = |text: &str| zeile_zeichnen(&sch, &r, t, text);
+        let gelesen = eingabe::lesen_mit_liste(&zeichnen, &|_| {}, &[], std::mem::take(&mut entwurf), frist);
+        zeichnen("");
+        sch.zurueck();
+        match gelesen {
+            eingabe::Eingabe::Zeile(z) => {
+                stand.ruhe_seit = std::time::Instant::now();
+                stand.geruht = false;
+                return Some(z.trim().to_string());
+            }
+            eingabe::Eingabe::Frist(z) => {
+                entwurf = z;
+                if entwurf.trim().is_empty() {
+                    ruhen(stand, &schlaf, false, None);
+                    // Die Frage steht jetzt ueber dem Bericht; sie kommt
+                    // noch einmal, direkt ueber die Antwortzeile.
+                    if !frage.is_empty() {
+                        println!("{frage}");
+                    }
+                } else {
+                    stand.ruhe_seit = std::time::Instant::now();
+                }
+            }
+            _ => return None,
+        }
     }
 }
 
@@ -2767,10 +2940,10 @@ fn loop_starten(stand: &mut Stand, ziel: &str) {
         }
     };
     let sprache = e.oberflaeche.sprache;
-    let Some(modell) = stand.modell.as_ref() else {
+    if stand.modell.is_none() {
         eprintln!("Es ist kein Modell geladen. `/model` waehlt eines.");
         return;
-    };
+    }
     let rollen = design::rollen(stand.design);
     let farbig = design::farbig();
     let antwort = if ziel.trim().is_empty() {
@@ -2793,6 +2966,9 @@ fn loop_starten(stand: &mut Stand, ziel: &str) {
         return;
     }
     println!("{}", rollen.beiwerk.faerben("  Das Modell benennt den Loop …", farbig));
+    // Erst hier geliehen: Die Frage nach dem Ziel kann schlafen, und der
+    // Schlaf braucht das Modell.
+    let Some(modell) = stand.modell.as_ref() else { return };
     let (ziel, name) = if ziel.trim().is_empty() {
         vorhaben::ableiten(modell, &antwort, sprache)
     } else {
@@ -2877,7 +3053,7 @@ fn loop_fortsetzen(stand: &mut Stand) {
 /// ⚑ Wunsch des Projektinhabers (2026-10-12): „ob der Loop zum korrekten
 /// Ergebnis geführt hat und beendet werden soll, bzw. an welcher Stelle
 /// weitergearbeitet werden soll“.
-fn ergebnis_abfragen(stand: &Stand, v: &myl_local_agent::vorhaben::Vorhaben) -> bool {
+fn ergebnis_abfragen(stand: &mut Stand, v: &myl_local_agent::vorhaben::Vorhaben) -> bool {
     use myl_local_agent::vorhaben::{Ablage, Zustand};
     let Zustand::Vorgelegt { ergebnis, einwand } = &v.zustand else { return false };
     let ablage = Ablage::vorgabe();
@@ -2896,11 +3072,29 @@ fn ergebnis_abfragen(stand: &Stand, v: &myl_local_agent::vorhaben::Vorhaben) -> 
     // ⚑ **Ein Tastendruck, und die Frage blinkt** (Festlegung des
     //   Projektinhabers, 2026-10-12): `j` beendet, `n` fragt nach dem Wo,
     //   Esc laesst das Ergebnis liegen.
-    let antwort = crate::janein::fragen(
-        "Hat der Loop zum richtigen Ergebnis geführt und soll er enden?",
-        None,
-        stand.schirm.map(|s| (s, stand.design)),
-    );
+    // ⚑ **Auch die Abnahme laesst schlafen** (2026-10-13): Ein vorgelegtes
+    //   Ergebnis ist eine Frage an den Menschen wie `ask_human`, und wer
+    //   nicht antwortet, laesst die Konsole nach `schlaf.ruhe_minuten`
+    //   einschlafen; danach steht die Frage wieder da. 📌 Gefunden im
+    //   echten Lauf mit dem 0,6B: Es legte vor, statt zu fragen, und die
+    //   Konsole wartete eine Viertelstunde wach.
+    stand.ruhe_seit = std::time::Instant::now();
+    stand.geruht = false;
+    let antwort = loop {
+        let schlaf = schlafeinstellung();
+        let frist = schlaffrist(&schlaf, stand.ruhe_seit, stand.geruht);
+        match crate::janein::fragen_bis(
+            "Hat der Loop zum richtigen Ergebnis geführt und soll er enden?",
+            None,
+            stand.schirm.map(|s| (s, stand.design)),
+            frist,
+        ) {
+            Some(a) => break a,
+            None => ruhen(stand, &schlaf, false, None),
+        }
+    };
+    stand.ruhe_seit = std::time::Instant::now();
+    stand.geruht = false;
     if antwort == crate::janein::Antwort::Offen {
         println!("  Keine Antwort: Das Ergebnis bleibt vorgelegt; /resume loop fragt erneut.");
         println!();
@@ -2941,7 +3135,7 @@ fn ergebnis_abfragen(stand: &Stand, v: &myl_local_agent::vorhaben::Vorhaben) -> 
 /// **Das Modell fragt (`ask_human`), der Mensch antwortet im Rahmen.**
 /// `true`, wenn geantwortet wurde und der Loop weitergeht; Esc laesst die
 /// Frage offen, und `/resume loop` stellt sie erneut.
-fn frage_beantworten(stand: &Stand, v: &myl_local_agent::vorhaben::Vorhaben) -> bool {
+fn frage_beantworten(stand: &mut Stand, v: &myl_local_agent::vorhaben::Vorhaben) -> bool {
     use myl_local_agent::vorhaben::{Ablage, Zustand};
     let Zustand::Frage { frage } = &v.zustand else { return false };
     let sprache = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())
@@ -3060,7 +3254,7 @@ fn loop_fahren(stand: &mut Stand) {
 }
 
 /// Wartet bis zur naechsten Runde; `false`, wenn pausiert wurde.
-fn warten_in_der_konsole(stand: &Stand, laeufer: &myl_local_agent::vorhaben::Laeufer) -> bool {
+fn warten_in_der_konsole(stand: &mut Stand, laeufer: &myl_local_agent::vorhaben::Laeufer) -> bool {
     use crossterm::event::{self, Event, KeyCode, KeyModifiers};
     let Some(bis) = laeufer.naechster_termin() else { return true };
     let rollen = design::rollen(stand.design);
@@ -3083,8 +3277,28 @@ fn warten_in_der_konsole(stand: &Stand, laeufer: &myl_local_agent::vorhaben::Lae
         drop(roh);
         crate::schirm::wagen_zeigen();
     };
+    // ⚑ **Im Warten auf die naechste Runde schlaeft die Konsole** (Wunsch
+    //   des Projektinhabers, 2026-10-13: „ein sleep in einem Loop"): nach
+    //   `schlaf.ruhe_minuten` ohne Taste einmal, und die Runde weckt zu
+    //   ihrer Zeit. Wer tippt, schiebt die Pause hinaus.
+    let schlaf = schlafeinstellung();
+    let mut pause_seit = std::time::Instant::now();
+    let mut geschlafen = false;
     while myl_local_agent::vorhaben::jetzt() < bis {
+        if !geschlafen
+            && getippt.trim().is_empty()
+            && schlaffrist(&schlaf, pause_seit, false).is_some_and(|f| std::time::Instant::now() >= f)
+        {
+            geschlafen = true;
+            ruhen(stand, &schlaf, false, Some(bis));
+            if let Some(sch) = stand.schirm {
+                crate::schirm::wagen_verstecken();
+                anzeige::tippzeile_zeichnen(&sch, stand.design, &getippt);
+            }
+            continue;
+        }
         if roh.is_some() && event::poll(std::time::Duration::from_millis(500)).unwrap_or(false) {
+            pause_seit = std::time::Instant::now();
             let ereignis = event::read();
             // ⚑ Eingefuegt heisst nicht abgeschickt, auch beim Warten.
             if let Ok(Event::Paste(text)) = &ereignis {
@@ -3215,6 +3429,19 @@ fn debug_befehl(art: Befehlsart) {
         println!("  Debug-Log aus. /debug on schaltet ihn ein ({}).", kurz(&myl_local_agent::debuglog::ordner().display().to_string()));
     }
     println!();
+}
+
+/// **Der Zusatz des eingestellten Moduls** (`agent.modul`), geprueft; ein
+/// eingestelltes, das nicht besteht, sagt warum, und der Lauf geht ohne.
+fn modulzusatz_der_einstellung() -> Option<myl_client::module::Modulzusatz> {
+    let e = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad()).ok()?;
+    match myl_client::module::eingestellter_zusatz(&e.agent)? {
+        Ok(z) => Some(z),
+        Err(f) => {
+            println!("  {f}; dieser Lauf geht ohne das Modul.");
+            None
+        }
+    }
 }
 
 /// **Was ein Lauf zum Moduswechsel braucht** (Umschalt-Tab im Lauf, Wunsch
@@ -3367,6 +3594,13 @@ fn runde_in_der_konsole(
     let mut agent = e.agent.clone();
     agent.wurzel = Some(stand.ordner.display().to_string());
     konsolenvorgaben(&mut agent, stand.schreibt);
+    // ⚑ Das eingestellte Modul ergaenzt auch die Runden eines Loops.
+    let zusatz = modulzusatz_der_einstellung();
+    match &zusatz {
+        Some(z) => z.anwenden(&mut agent),
+        None => myl_local_agent::skills::modusordner_setzen(None),
+    }
+    let ohne_nachfrage: Vec<String> = zusatz.map(|z| z.ohne_nachfrage).unwrap_or_default();
     let kiste = myl_local_agent::kisten::kiste_der_gilt(&e.agent);
     let (modussaetze, modushaken) = modusumfeld(stand);
     let schirm = stand.schirm;
@@ -3386,7 +3620,7 @@ fn runde_in_der_konsole(
     let frager = anzeige.frager();
     let nachfrage: Option<myl_local_agent::ruestung::Nachfrage> =
         Some(std::sync::Arc::new(move |name: &str, a: &myl_client::serde_json::Value| {
-            if anzeige::auto_an() {
+            if anzeige::auto_an() || ohne_nachfrage.iter().any(|n| n == name) {
                 return true;
             }
             frager.fragen(&format!("  ⚑ manual mode: {name} {}", myl_local_agent::lauf::kurzform(a)))
@@ -3408,6 +3642,9 @@ fn runde_in_der_konsole(
         }
         myl_client::Meldung::Abgelehnt { name, grund } => anzeige.abgelehnt(name, grund),
         myl_client::Meldung::Verdichtet { vorher, nachher } => anzeige.verdichtet(vorher, nachher),
+        myl_client::Meldung::Ausgeblendet { ergebnisse, vorher, nachher } => {
+            anzeige.ausgeblendet(ergebnisse, vorher, nachher)
+        }
     };
     myl_local_agent::notaus::zuruecksetzen();
     let ergebnis = vorhaben::runde(
@@ -4052,6 +4289,19 @@ mod abbruchprobe {
                 Modellwahl::Unmoeglich => 2,
             };
         }
+    }
+
+    /// ⚑ **Die Frist des Schlafs**, an der Hauptzeile, an einer Frage des
+    /// Modells, an der Abnahme und im Warten des Loops dieselbe: aus der
+    /// Einstellung, ab Beginn der Pause, einmal je Pause, abschaltbar.
+    #[test]
+    fn die_frist_des_schlafs() {
+        let seit = std::time::Instant::now();
+        let mut e = myl_local_agent::schlaf::Schlafeinstellung { an: true, ruhe_minuten: 3, nur_am_netz: false };
+        assert_eq!(schlaffrist(&e, seit, false), Some(seit + std::time::Duration::from_secs(180)));
+        assert_eq!(schlaffrist(&e, seit, true), None, "zweimal in derselben Pause");
+        e.an = false;
+        assert_eq!(schlaffrist(&e, seit, false), None, "abgeschaltet");
     }
 
     /// ⚑ **Die Rueckfrage steht erst, wenn schon ein Modell laeuft.**

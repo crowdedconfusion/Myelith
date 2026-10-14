@@ -1638,7 +1638,7 @@ dependencies = [
 
 [[package]]
 name = "integer-llm-kernels"
-version = "0.80.0"
+version = "0.84.0"
 dependencies = [
  "itertools 0.13.0",
  "objc2",
@@ -1651,7 +1651,7 @@ dependencies = [
 
 [[package]]
 name = "integer-llm-runtime"
-version = "0.87.0"
+version = "0.93.0"
 dependencies = [
  "integer-llm-kernels",
  "memmap2",
@@ -2509,7 +2509,7 @@ dependencies = [
 
 [[package]]
 name = "myl-local-agent"
-version = "0.27.0"
+version = "0.37.0"
 dependencies = [
  "libc",
  "myl-agent",
@@ -2543,7 +2543,7 @@ dependencies = [
 
 [[package]]
 name = "myl-node"
-version = "0.48.5"
+version = "0.48.6"
 dependencies = [
  "async-trait",
  "borsh",
@@ -2589,7 +2589,7 @@ dependencies = [
 
 [[package]]
 name = "myl-senses"
-version = "0.11.0"
+version = "0.12.0"
 
 [[package]]
 name = "myl-siegel"
@@ -2616,7 +2616,7 @@ dependencies = [
 
 [[package]]
 name = "myl-testclient"
-version = "0.38.0"
+version = "0.41.0"
 dependencies = [
  "borsh",
  "crossterm",

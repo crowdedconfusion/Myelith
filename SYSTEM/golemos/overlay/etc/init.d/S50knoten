@@ -1,0 +1,24 @@
+#!/bin/sh
+# ⚑ **Der Myelith-Knoten, wenn er eingeschaltet ist** (`golem-knoten an`).
+#
+# Nach dem Netz (`S40network`) und nach `S06myelith`, das den Myelith-Ordner
+# mit den Konformitaetsvektoren findet. Die Arbeit tut `golem-knoten`; hier
+# steht nur, ob und wann.
+#
+# ⚠️ **Ein Fehler hier haelt den Start nicht auf.** Ein Knoten, der nicht
+#    startet, nimmt GolemOS nicht mit; `golem-knoten status` sagt warum.
+
+KONF=/etc/golemos/knoten.conf
+
+case "$1" in
+  start)
+    if [ -f "$KONF" ] && grep -qx "aktiv=ja" "$KONF"; then
+      /usr/sbin/golem-knoten starten || echo "golem-knoten starten: gescheitert, siehe golem-knoten status"
+    fi
+    ;;
+  stop)
+    [ -f /run/myl-knoten/waechter.pid ] && /usr/sbin/golem-knoten stoppen
+    ;;
+  restart|reload) "$0" stop; "$0" start ;;
+  *) echo "Aufruf: $0 {start|stop|restart}" >&2; exit 1 ;;
+esac

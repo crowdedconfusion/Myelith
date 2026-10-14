@@ -13,9 +13,14 @@
 # Buendelung (MYL_METAL_AB=1) und wird abgelehnt, wenn sie dabei nicht
 # gerechnet hat: Sonst bestaende die CPU unter dem Namen der GPU.
 #
+# "cuda" und "rocm" rechnen dieselben Buendel auf Karten von NVIDIA bzw.
+# AMD (kernels/src/ressourcen/karten/), auf allen Karten, die ihre Selbstpruefung
+# bestehen. Der Lauf erzwingt die Karten (MYL_GPU_AB=1) und wird
+# abgelehnt, wenn sie dabei nicht gerechnet haben.
+#
 # Nicht jedes davon laeuft ueberall. Der Pruefstand lehnt ein Backend ab
 # (Exit 2), das auf DIESER Uebersetzung keinen eigenen Rechenpfad hat:
-#   - "cuda"/"rocm" ueberall, solange backends/ nur delegiert (Fund 33)
+#   - "cuda"/"rocm" auf jeder Maschine ohne gepruefte Karte (Fund 33)
 #   - "cpu-simd" auf jedem Ziel ausser aarch64, weil kernels/src/dot.rs
 #     bisher nur eine NEON-Fassung hat (Fund 34)
 # Massgeblich ist kernels/src/rechenpfad.rs, nicht diese Liste.
@@ -44,6 +49,9 @@ FAILED=0
 
 if [ "${BACKEND}" = "metal" ]; then
     export MYL_METAL_AB=1
+fi
+if [ "${BACKEND}" = "cuda" ] || [ "${BACKEND}" = "rocm" ]; then
+    export MYL_GPU_AB=1
 fi
 
 echo "=== Konformitäts-Prüflauf ==="
@@ -215,6 +223,16 @@ if [ -d "${ARTIFACT_DIR}" ]; then
         if [ -z "${GPU}" ] || [ "${GPU}" -eq 0 ]; then
             echo ""
             echo "=== Prueflauf abgelehnt: die GPU hat nicht gerechnet ==="
+            exit 2
+        fi
+    fi
+    # ⚑ Dasselbe fuer die Steckkarten.
+    if [ "${BACKEND}" = "cuda" ] || [ "${BACKEND}" = "rocm" ]; then
+        KARTE=$(printf '%s\n' "$OUTPUT" | sed -n 's/^karten_buendel_auf_der_gpu \([0-9][0-9]*\)$/\1/p')
+        echo "  ${BACKEND}: ${KARTE:-keine Angabe} Buendelungen auf den Karten"
+        if [ -z "${KARTE}" ] || [ "${KARTE}" -eq 0 ]; then
+            echo ""
+            echo "=== Prueflauf abgelehnt: keine Karte hat gerechnet ==="
             exit 2
         fi
     fi

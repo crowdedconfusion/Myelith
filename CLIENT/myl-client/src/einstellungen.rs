@@ -125,6 +125,21 @@ pub struct Modelleinstellung {
     /// soll die Vorgabe bekommen und nicht die unbegrenzte Ueberlegung.
     #[serde(default = "denkbudget_vorgabe")]
     pub denkbudget: Option<u32>,
+    /// **Der Arbeitskontext in Token**: Ab hier fasst der Agent den
+    /// bisherigen Verlauf zusammen, und der Kontextbalken misst daran.
+    /// `None` heisst die ganze Laenge, die das Modell kann.
+    ///
+    /// ⚑ **Getrennt von der Grenze des Modells** (Festlegung des
+    /// Projektinhabers, 2026-10-13: mehr Kontext, aber ohne drastischen
+    /// Geschwindigkeitsverlust). Die Grenze sagt, was physisch geht (beim
+    /// 35B 262 144 Positionen); der Arbeitskontext, wie voll es werden darf,
+    /// bevor verdichtet wird. Ein Schritt kostet in den Ebenen mit voller
+    /// Aufmerksamkeit Zeit je Token im Kontext, also wird jede Antwort
+    /// langsamer, je voller er ist, und nicht, je hoeher die Grenze steht.
+    ///
+    /// ⚑ **Eine fehlende Angabe ist die Vorgabe**, wie beim Denkbudget.
+    #[serde(default = "kontext_vorgabe")]
+    pub kontext: Option<usize>,
     /// **Die Saat, mit der gezogen wird.** `None` heisst: bei jedem Laden
     /// eine neue aus dem Zufall des Systems. Eine Zahl heisst: jeder Lauf
     /// von vorn bitgleich (Regel des Projektinhabers, 2026-09-29). Eine
@@ -206,9 +221,29 @@ fn denkbudget_vorgabe() -> Option<u32> {
     Some(DENKBUDGET_VORGABE)
 }
 
+/// **Die Vorgabe des Arbeitskontexts**, in Token.
+pub const KONTEXT_VORGABE: usize = 65_536;
+
+/// Darunter ist ein Arbeitskontext kein Arbeitskontext: Werkzeugansage,
+/// Auftrag und eine Antwort brauchen allein einige tausend Token.
+pub const KONTEXT_MINDESTENS: usize = 8_192;
+
+fn kontext_vorgabe() -> Option<usize> {
+    Some(KONTEXT_VORGABE)
+}
+
+/// **Die kleinste Zahl, die ein Zahlenfeld annimmt**; 0 heisst ohne
+/// Untergrenze. ⚑ An einer Stelle, damit Setzer und Proben dieselbe kennen.
+pub fn untergrenze(feld: &str) -> u64 {
+    match feld {
+        "modell.kontext" => KONTEXT_MINDESTENS as u64,
+        _ => 0,
+    }
+}
+
 impl Default for Modelleinstellung {
     fn default() -> Self {
-        Self { artefakt: String::new(), token: ANTWORT_VORGABE, denken: false, denkbudget: denkbudget_vorgabe(), saat: None, temperatur: None, top_p: None, top_k: None }
+        Self { artefakt: String::new(), token: ANTWORT_VORGABE, denken: false, denkbudget: denkbudget_vorgabe(), kontext: kontext_vorgabe(), saat: None, temperatur: None, top_p: None, top_k: None }
     }
 }
 
@@ -228,6 +263,9 @@ pub struct Einstellungen {
     /// Der Debug-Log (`myl_local_agent::debuglog`); seit dem 2026-10-12.
     #[serde(default)]
     pub debug: Debugeinstellung,
+    /// Der Schlaf (`myl_local_agent::schlaf`); seit dem 2026-10-13.
+    #[serde(default)]
+    pub schlaf: myl_local_agent::schlaf::Schlafeinstellung,
 }
 
 impl Einstellungen {
@@ -925,7 +963,7 @@ impl Schriftgroesse {
 /// beieinander, und wer hier ein Feld einfuegt, verschiebt es damit
 /// auch auf der Seite. Das ist beabsichtigt: Eine zweite Liste, die nur
 /// die Reihenfolge festlegt, waere wieder eine zweite Liste.
-pub const FELDER: [Feld; 28] = [
+pub const FELDER: [Feld; 33] = [
     // ⚑ **Sie steht zuerst** (Festlegung des Projektinhabers,
     // 2026-09-10). Sie beschriftet alles, was darunter kommt: Wer die
     // Seite in einer Sprache oeffnet, die er nicht liest, findet hier
@@ -1008,6 +1046,16 @@ pub const FELDER: [Feld; 28] = [
         (
             "Höchstzahl der Token je Antwort im Gespräch. Mehr Token heißt längere Antworten und längere Wartezeit. Der Agent nimmt nie weniger als 4000, denn ein abgeschnittener Werkzeugaufruf ist verlorene Arbeit.",
             "Maximum number of tokens per answer in chat. More tokens means longer answers and a longer wait. The agent never takes less than 4000, because a cut-off tool call is lost work.",
+        ),
+    ),
+    feld(
+        "modell.kontext",
+        Feldart::Zahl,
+        ("Modell", "Model"),
+        ("Arbeitskontext (Token)", "Working context (tokens)"),
+        (
+            "Ab so vielen Token fasst der Agent den bisherigen Verlauf zusammen, und der Kontextbalken misst daran. Mehr heißt: Er behält mehr wörtlich, aber jede Antwort wird langsamer, je voller der Kontext ist. Leer: die ganze Länge, die das Modell kann. Vorgabe 65536.",
+            "From this many tokens on the agent condenses the conversation so far, and the context bar measures against it. More means it keeps more word for word, but every answer gets slower the fuller the context is. Empty: the full length the model can do. Default 65536.",
         ),
     ),
     feld(
@@ -1125,6 +1173,38 @@ pub const FELDER: [Feld; 28] = [
             "Records everything a run does: the task, every model answer, every tool with its full result, reviews and questions. One file per month under SYSTEM/logs/debug/, with start and end marked in capitals. It contains file contents too, so keep it private. In the console also with /debug on and /debug off.",
         ),
     ),
+    // ⚑ **Der Schlaf** (Wunsch des Projektinhabers, 2026-10-13):
+    //   ein Gedaechtnis je Arbeitsordner, geordnet, wenn niemand etwas will.
+    feld(
+        "schlaf.an",
+        Feldart::Schalter,
+        ("Gedächtnis", "Memory"),
+        ("Schlaf", "Sleep"),
+        (
+            "Ordnet nach einer Weile ohne Eingabe das Gedächtnis des Arbeitsordners: Es fasst frühere Gespräche zu kurzen Erinnerungen zusammen, führt Doppeltes zusammen, lässt Ungebrauchtes verblassen und denkt wartende Loop-Runden vor. Was du selbst gesagt hast, steht danach bei passenden Aufträgen von selbst dabei. Alles bleibt unter .AGENT/gedaechtnis/ im Arbeitsordner; löschst du ein Gespräch, gehen seine Erinnerungen mit. Jede Eingabe weckt sofort.",
+            "After a while without input, organises the memory of the working folder: it condenses earlier conversations into short memories, merges duplicates, lets unused ones fade and thinks ahead for waiting loop rounds. What you said yourself then comes along with matching tasks by itself. Everything stays under .AGENT/gedaechtnis/ in the working folder; deleting a conversation takes its memories with it. Any input wakes it at once.",
+        ),
+    ),
+    feld(
+        "schlaf.ruhe_minuten",
+        Feldart::Zahl,
+        ("Gedächtnis", "Memory"),
+        ("Minuten Ruhe bis zum Schlaf", "Idle minutes before sleep"),
+        (
+            "So lange ohne Eingabe, dann beginnt der Schlaf. Im Fenster geht das Modell nach 15 Minuten Ruhe ohnehin aus dem Speicher; ein Schlaf danach ordnet nur noch ohne Modell.",
+            "This long without input, then sleep starts. In the window the model leaves memory after 15 idle minutes anyway; sleep after that only tidies up without the model.",
+        ),
+    ),
+    feld(
+        "schlaf.nur_am_netz",
+        Feldart::Schalter,
+        ("Gedächtnis", "Memory"),
+        ("Auf dem Akku nur aufräumen", "On battery only tidy up"),
+        (
+            "Auf dem Akku rechnet der Schlaf nicht mit dem Modell, sondern räumt nur auf (Doppeltes, Verblassen). Ein Rechner, der nicht sagt, woher sein Strom kommt, gilt als am Netz.",
+            "On battery, sleep does not use the model but only tidies up (duplicates, fading). A machine that does not say where its power comes from counts as plugged in.",
+        ),
+    ),
     feld(
         "agent.warnung",
         Feldart::Schalter,
@@ -1173,6 +1253,16 @@ pub const FELDER: [Feld; 28] = [
         (
             "Der Ordner, aus dem die lokalen Werkzeuge kommen. Sein Name ist der Name der Kiste und sagt zugleich, welche eingebauten Werkzeuge dazukommen: base die fünf Dateiwerkzeuge, advanced zusätzlich run_command. Ohne Angabe die Kiste Base. Die verankerten Werkzeuge kommen unabhängig davon dazu; sie rechnen aus ihren Eingaben und brauchen keinen Ordner.",
             "The folder the tools come from. Its name is the box name and also decides which built-in tools come along: base the five file tools, advanced adds run_command. Unless set, the Base box. The anchored tools come along regardless; they compute from their inputs and need no folder.",
+        ),
+    ),
+    feld(
+        "agent.modul",
+        Feldart::Text,
+        ("Agent", "Agent"),
+        ("Modul", "Module"),
+        (
+            "Das Modul, dessen Werkzeuge und Skills zu denen der gewählten Kiste dazukommen, mit seinem Namen (siehe /module). Es ersetzt die Kiste nicht, es ergänzt sie. Geprüft wird es vor jedem Lauf; ein Modul ohne gültige Signatur bringt nichts mit. Im Fenster in der Seitenleiste unter der Werkzeugkiste wählbar; aus heißt keines.",
+            "The module whose tools and skills are added to those of the chosen box, by name (see /module). It does not replace the box, it adds to it. It is checked before every run; a module without a valid signature brings nothing. In the window it can be picked in the sidebar below the tool box; aus means none.",
         ),
     ),
     feld_wahl(
@@ -1385,10 +1475,14 @@ impl Einstellungen {
             "modell.temperatur" => zahl(self.modell.temperatur),
             "modell.top_p" => zahl(self.modell.top_p),
             "modell.top_k" => zahl(self.modell.top_k),
+            "modell.kontext" => self.modell.kontext.map_or(Feldwert::Leer, |v| Feldwert::Zahl(v as u64)),
             "agent.schritte" => Feldwert::Zahl(self.agent.schritte as u64),
             "loop.schritte" => Feldwert::Zahl(self.schleife.schritte as u64),
             "loop.pruefen" => Feldwert::Schalter(self.schleife.pruefen),
             "debug.log" => Feldwert::Schalter(self.debug.log),
+            "schlaf.an" => Feldwert::Schalter(self.schlaf.an),
+            "schlaf.ruhe_minuten" => Feldwert::Zahl(u64::from(self.schlaf.ruhe_minuten)),
+            "schlaf.nur_am_netz" => Feldwert::Schalter(self.schlaf.nur_am_netz),
             "agent.wurzel" => text(&self.agent.wurzel),
             // 📌 **Hier stand kurzzeitig die geltende Kiste statt des
             // gespeicherten Werts**, damit das Feld nicht leer aussieht.
@@ -1399,6 +1493,7 @@ impl Einstellungen {
             // Vorgabe gesetzt" unterscheiden. Die geltende Kiste zeigt die
             // Oberflaeche als Platzhalter an.
             "agent.kistenordner" => text(&self.agent.kistenordner),
+            "agent.modul" => text(&self.agent.modul),
             "agent.warnung" => Feldwert::Schalter(self.agent.warnung),
             "agent.blick_bildschirm" => Feldwert::Schalter(self.agent.blick_bildschirm),
             "agent.web_recherche" => Feldwert::Schalter(self.agent.web_recherche),
@@ -1455,6 +1550,18 @@ impl Einstellungen {
             "modell.temperatur" => self.modell.temperatur = bereich(wert, 0, 200)?,
             "modell.top_p" => self.modell.top_p = bereich(wert, 1, 100)?,
             "modell.top_k" => self.modell.top_k = bereich(wert, 1, 200)?,
+            "modell.kontext" => {
+                self.modell.kontext = match wert.trim() {
+                    "" | "aus" | "voll" | "full" => None,
+                    w => {
+                        let n: usize = w.parse().map_err(|_| format!("{w} ist keine Zahl"))?;
+                        if (n as u64) < untergrenze("modell.kontext") {
+                            return Err(format!("{n} ist zu wenig; mindestens {KONTEXT_MINDESTENS} Token"));
+                        }
+                        Some(n)
+                    }
+                }
+            }
             "modell.saat" => {
                 self.modell.saat = match wert.trim() {
                     "" | "aus" | "zufall" | "random" => None,
@@ -1481,9 +1588,24 @@ impl Einstellungen {
             }
             "loop.pruefen" => self.schleife.pruefen = ja(wert),
             "debug.log" => self.debug.log = ja(wert),
+            "schlaf.an" => self.schlaf.an = ja(wert),
+            "schlaf.ruhe_minuten" => {
+                let n: u32 = wert.parse().map_err(|_| format!("{wert} ist keine Zahl"))?;
+                // ⚑ Null hiesse: nach jeder Antwort sofort, und dann kaeme
+                //   der Schlaf dem naechsten Tastendruck in die Quere.
+                if n == 0 {
+                    return Err(format!("{feld} braucht mindestens 1"));
+                }
+                self.schlaf.ruhe_minuten = n;
+            }
+            "schlaf.nur_am_netz" => self.schlaf.nur_am_netz = ja(wert),
             "agent.wurzel" => self.agent.wurzel = (wert != "aus").then(|| wert.to_string()),
             "agent.kistenordner" => {
                 self.agent.kistenordner = (wert != "aus").then(|| wert.to_string())
+            }
+            "agent.modul" => {
+                let w = wert.trim();
+                self.agent.modul = (!w.is_empty() && w != "aus").then(|| w.to_string())
             }
             "agent.warnung" => self.agent.warnung = ja(wert),
             "agent.blick_bildschirm" => self.agent.blick_bildschirm = ja(wert),
@@ -1608,6 +1730,24 @@ mod setzer {
         assert!(f.gilt.im_fenster() && !f.gilt.in_der_konsole());
     }
 
+    /// ⚑ **Der Arbeitskontext: Vorgabe, Untergrenze, ganze Laenge.** Eine
+    /// alte Ablage bekommt die Vorgabe, `voll` die Grenze des Modells, und
+    /// darunter wird nichts angenommen.
+    #[test]
+    fn der_arbeitskontext_hat_eine_vorgabe_eine_untergrenze_und_ein_offenes_ende() {
+        let alt: Modelleinstellung = serde_json::from_str(r#"{"artefakt":"x","token":256,"denken":false}"#).expect("alt");
+        assert_eq!(alt.kontext, Some(KONTEXT_VORGABE), "eine alte Ablage bekommt die Vorgabe");
+        let mut e = Einstellungen::default();
+        e.setzen("modell.kontext", "131072").expect("131072");
+        assert_eq!(e.wert("modell.kontext").expect("lesen"), Feldwert::Zahl(131_072));
+        e.setzen("modell.kontext", "voll").expect("voll");
+        assert_eq!(e.modell.kontext, None);
+        let zurueck: Modelleinstellung = serde_json::from_str(&serde_json::to_string(&e.modell).unwrap()).unwrap();
+        assert_eq!(zurueck.kontext, None, "ohne Grenze wurde beim Lesen zur Vorgabe");
+        assert!(e.setzen("modell.kontext", "4096").is_err(), "unter der Untergrenze angenommen");
+        assert!(e.setzen("modell.kontext", "64k").is_err());
+    }
+
     #[test]
     fn ein_unbekanntes_feld_wird_abgelehnt() {
         let mut e = Einstellungen::default();
@@ -1668,6 +1808,9 @@ mod setzer {
     fn probewert(f: &Feld) -> &'static str {
         match f.art {
             Feldart::Text | Feldart::Pfad | Feldart::Ordner => "/tmp/x",
+            Feldart::Zahl | Feldart::Grenze | Feldart::Budget if untergrenze(f.name) > 4 => {
+                Box::leak(untergrenze(f.name).to_string().into_boxed_str())
+            }
             Feldart::Zahl | Feldart::Grenze | Feldart::Budget => "4",
             Feldart::Schalter => "an",
             Feldart::Auswahl => {
@@ -1811,7 +1954,10 @@ mod setzer {
 
             let (hinein, erwartet) = match f.art {
                 Feldart::Schalter => ("an", Feldwert::Schalter(true)),
-                Feldart::Zahl | Feldart::Grenze | Feldart::Budget => ("7", Feldwert::Zahl(7)),
+                Feldart::Zahl | Feldart::Grenze | Feldart::Budget => {
+                    let n = untergrenze(f.name).max(7);
+                    (&*Box::leak(n.to_string().into_boxed_str()), Feldwert::Zahl(n))
+                }
                 Feldart::Text | Feldart::Pfad | Feldart::Ordner => {
                     ("/tmp/x", Feldwert::Text("/tmp/x".to_string()))
                 }

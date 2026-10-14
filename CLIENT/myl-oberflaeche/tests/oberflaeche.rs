@@ -1571,9 +1571,15 @@ fn das_modell_geht_nach_einer_weile_wieder() {
         "der Ruecken kennt das Entladen nicht"
     );
     // ⚑ Nicht mitten im Lauf.
+    // ⚑ Und nicht, solange der Schlaf arbeitet (seit 2026-10-13).
     assert!(
-        js.contains("if (laufender) {\n      ruhe_neu_stellen();"),
-        "die Frist entlaedt auch waehrend eines Laufs"
+        js.contains("if (laufender || schlaeft) {\n      ruhe_neu_stellen();"),
+        "die Frist entlaedt auch waehrend eines Laufs oder des Schlafs"
+    );
+    // ⚑ Vor dem Entladen wird einmal geruht, sonst fehlte das Modell dafuer.
+    assert!(
+        js.contains("if (!geschlafen) await einschlafen();"),
+        "das Modell geht, bevor der Schlaf es benutzen konnte"
     );
     // ⚑ Und ein Modellwechsel gibt das alte frei: Es antwortet ohnehin
     // nicht mehr, sein Speicher waere von da an geschenkt.
@@ -1801,7 +1807,7 @@ fn glas_hat_dicke_und_spiegelung() {
 /// diese Zahlen bewegen, und wer darueber hinauskommt, bekommt es
 /// gesagt statt eines stillen Durchlaufs.
 fn zahlwort(n: usize) -> String {
-    const WORTE: [&str; 61] = [
+    const WORTE: [&str; 71] = [
         "null", "ein", "zwei", "drei", "vier", "fünf", "sechs", "sieben", "acht", "neun",
         "zehn", "elf", "zwölf", "dreizehn", "vierzehn", "fünfzehn", "sechzehn", "siebzehn",
         "achtzehn", "neunzehn", "zwanzig", "einundzwanzig", "zweiundzwanzig",
@@ -1814,6 +1820,9 @@ fn zahlwort(n: usize) -> String {
         "achtundvierzig", "neunundvierzig", "fünfzig", "einundfünfzig", "zweiundfünfzig",
         "dreiundfünfzig", "vierundfünfzig", "fünfundfünfzig", "sechsundfünfzig",
         "siebenundfünfzig", "achtundfünfzig", "neunundfünfzig", "sechzig",
+        "einundsechzig", "zweiundsechzig", "dreiundsechzig", "vierundsechzig",
+        "fünfundsechzig", "sechsundsechzig", "siebenundsechzig", "achtundsechzig",
+        "neunundsechzig", "siebzig",
     ];
     WORTE
         .get(n)
@@ -3871,4 +3880,45 @@ fn der_skillknopf_steht_neben_dem_anhang_und_ist_verdrahtet() {
     for befehl in ["skill_waehlen,", "skill_auftrag,"] {
         assert!(liste.contains(befehl), "{befehl} ist nicht angemeldet");
     }
+}
+
+/// ⛔️ **Keine Funktion zweimal auf oberster Ebene.**
+///
+/// 📌 Am 2026-10-12 hiess eine neue Hilfsfunktion fuer die Befehlsliste der
+/// Module `menue_oeffnen`, und die gab es schon (das Menue an den
+/// Gespraechen). Das Skript ist ein Modul; dort ist eine zweite Deklaration
+/// desselben Namens ein Syntaxfehler, und das **ganze Fenster** laedt dann
+/// nichts. Keine andere Pruefung hier sah es, aufgefallen ist es erst bei
+/// `node --check`.
+#[test]
+fn keine_funktion_zweimal() {
+    let js = lies("app.js");
+    let mut gesehen = BTreeSet::new();
+    for zeile in js.lines() {
+        let rest = zeile.strip_prefix("async function ").or_else(|| zeile.strip_prefix("function "));
+        let Some(rest) = rest else { continue };
+        let name: String = rest.chars().take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '$').collect();
+        assert!(gesehen.insert(name.clone()), "`{name}` ist im Skript zweimal deklariert; dann laedt das ganze Fenster nicht");
+    }
+    assert!(gesehen.len() > 100, "nur {} Funktionen gefunden; sucht die Pruefung noch richtig?", gesehen.len());
+}
+
+/// ⛔️ **Was ein Modul schickt, wird nie Markup.** Der Abschnitt der Module
+/// im Skript setzt nur `textContent`; ein `innerHTML` dort liesse ein Modul
+/// im Fenster Code ausfuehren oder einen Dialog des Fensters nachahmen.
+/// Und ein Befehl eines Moduls geht an das Modul, bevor der Auftrag ans
+/// Modell geht.
+#[test]
+fn modultext_ist_nie_markup() {
+    let js = lies("app.js");
+    let a = js.find("// ── Module im Fenster ──").expect("der Abschnitt der Module fehlt");
+    let b = js[a..].find("// ── Das Feld fuer die Ausgabe ──").expect("das Ende des Abschnitts fehlt") + a;
+    let abschnitt = &js[a..b];
+    for verboten in ["innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "DOMParser"] {
+        assert!(!abschnitt.contains(verboten), "`{verboten}` im Abschnitt der Module");
+    }
+    let absenden = js.split("$(\"eingabe\").addEventListener(\"submit\"").nth(1).expect("das Absenden fehlt");
+    let i_modul = absenden.find("await modul_senden(text)").expect("ein Modulbefehl geht nicht an das Modul");
+    let i_senden = absenden.find("await senden(text)").expect("das Senden fehlt");
+    assert!(i_modul < i_senden, "der Modulbefehl wird erst nach dem Auftrag gefragt");
 }

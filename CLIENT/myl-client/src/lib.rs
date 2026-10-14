@@ -58,6 +58,13 @@ pub mod rechenwege {
     pub fn setzen(backend: &str, an: bool) -> bool {
         integer_llm_runtime::rechenwege::setzen(backend, an)
     }
+
+    /// Schaltet eine einzelne Karte (CUDA, ROCm) ueber ihre PCI-Adresse.
+    ///
+    /// Gibt zurueck, ob eine bereite Karte diese Adresse traegt.
+    pub fn karte_setzen(pci: &str, an: bool) -> bool {
+        integer_llm_runtime::rechenwege::karte_setzen(pci, an)
+    }
 }
 
 pub mod aktualisierung;
@@ -72,6 +79,7 @@ pub mod einstellungen;
 pub mod hardware;
 pub mod kennzeichnung;
 pub mod markdown;
+pub mod module;
 pub mod oertlich;
 pub mod reservierung;
 pub mod schutzfilter;

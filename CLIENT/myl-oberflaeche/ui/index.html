@@ -50,6 +50,14 @@
   <button type="button" class="menueeintrag blank weg" role="menuitem" data-tasktat="loeschen" data-t="loop.entfernen">Löschen</button>
 </div>
 
+<!-- ⚑ **Die Modulwahl in der Seitenleiste**, unter der Werkzeugkiste
+     (Wunsch des Projektinhabers, 2026-10-12). Gefuellt beim Oeffnen. -->
+<div id="modulmenue" class="menuefeld" role="menu" hidden></div>
+
+<!-- ⚑ **Die Befehle des gewaehlten Moduls**, geoeffnet vom Pfeil rechts im
+     Feld der Modulwahl (Wunsch des Projektinhabers, 2026-10-12). -->
+<div id="modulbefehlsmenue" class="menuefeld befehlsmenue" role="menu" hidden></div>
+
 <div id="kontextwahl" class="glas" role="menu" hidden>
   <button type="button" class="menueeintrag blank" role="menuitem" data-kontext="verdichten" data-t="kontext.verdichten">Kontext verdichten</button>
   <button type="button" class="menueeintrag blank" role="menuitem" data-kontext="neu" data-t="kontext.neu">Neues Gespräch</button>
@@ -360,6 +368,25 @@
     <!-- Das Gespraech. -->
     <main id="gespraech" role="log" aria-live="polite"></main>
 
+    <!-- ⚑ **Das Sichtfeld** (Festlegung des Projektinhabers, 2026-10-12):
+         nur fuer Bilder, Koerper und andere Darstellungen eines Moduls.
+         Geoeffnet von der Lasche am rechten Rand, deren Pfeil nach links
+         zeigt; offen deckt es das ganze Ausgabefeld. Die Lasche steht da,
+         solange ein Modul laeuft oder eine Ansicht da ist. -->
+    <button type="button" id="sichtlasche" class="sichtlasche blank" hidden
+            aria-controls="sichtfeld" aria-expanded="false"
+            aria-label="Ansichten zeigen" data-t-marke="sicht.oeffnen" title="Ansichten zeigen">
+      <svg viewBox="0 0 12 20" aria-hidden="true" focusable="false">
+        <path d="M8 5l-4 5 4 5"/>
+      </svg>
+    </button>
+    <section id="sichtfeld" class="sichtfeld" aria-label="Ansichten" data-t-marke="sicht.marke" inert aria-hidden="true">
+      <p class="sichtkopf" data-t="sicht.titel">Ansichten</p>
+      <div id="sichtinhalt" class="sichtinhalt">
+        <p id="sichtleer" class="sichtleer" data-t="sicht.leer">Noch keine Ansicht.</p>
+      </div>
+    </section>
+
     <!-- ⛔️ **Die Kommandozeile des Menschen, nicht die des Modells.**
          Was hier laeuft, hat die Rechte des Nutzers und keine
          Einhaengegrenze. Der Befehl dahinter steht in keinem
@@ -544,6 +571,15 @@
         <span class="kontextspur"><span id="kontextfuellung" class="kontextfuellung"></span></span>
         <span id="kontextzahl" class="kontextzahl"></span>
       </button>
+      <!-- ⚑ **Fusszeile und Bereich unten des Moduls im Modus**, unter der
+           Eingabe wie in der Konsole unter dem Rahmen (2026-10-12). Seine
+           Zeilen stehen im Gespraech, seine Ansichten im Sichtfeld.
+           ⛔️ Alles darin ist Text: Das Skript setzt nur `textContent`. -->
+      <div id="modulleiste" class="modulleiste" hidden>
+        <span id="modulagent" class="modulagent" hidden data-t="modulausgabe.agent">Agent des Moduls arbeitet …</span>
+        <div id="modulfuss" class="modulfuss" hidden></div>
+        <div id="modulunten" class="modulunten" hidden></div>
+      </div>
     </form>
 
     <!-- ⚑ **Die Warnung vor dem Agentenbetrieb** (Auftrag des
@@ -644,6 +680,21 @@
           <button type="button" id="rueckfragespaeter" data-t="loop.frage.spaeter">Später</button>
           <button type="button" id="rueckfrageja" data-t="loop.rueckfrage.antworten">Antworten</button>
         </div>
+      </div>
+    </div>
+
+    <!-- ⚑ **Eine Frage eines Moduls an den Menschen**: gestellt vom Fenster,
+         nicht vom Modul. Der Kopf sagt, fuer wen gefragt wird; Wort, Ja
+         oder Nein, oder eine Auswahl. -->
+    <div id="modulfrage" class="warnung" hidden role="dialog" aria-modal="true"
+         aria-labelledby="modulfragetitel">
+      <div class="warnungkasten">
+        <h2 id="modulfragetitel" class="warnungachtung"></h2>
+        <p id="modulfragetext" class="ergebnistext"></p>
+        <p id="modulfragewort" class="modulfragewort" hidden></p>
+        <input id="modulfrageeingabe" class="ergebniswo" type="text" autocomplete="off" spellcheck="false" hidden />
+        <div id="modulfragewahl" class="modulfragewahl" hidden></div>
+        <div id="modulfrageknoepfe" class="autoknoepfe"></div>
       </div>
     </div>
 

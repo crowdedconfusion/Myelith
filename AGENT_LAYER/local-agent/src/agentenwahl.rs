@@ -134,6 +134,18 @@ pub struct Agenteneinstellung {
     /// je Lauf gesetzt und nie gespeichert.
     #[serde(skip)]
     pub netzsaat: Option<String>,
+    /// ⚑ **Das gewaehlte Modul**, mit Namen (Festlegung des Projektinhabers,
+    /// 2026-10-12): Seine Werkzeugkiste **ergaenzt** die gewaehlte, seine
+    /// Skills kommen dazu. Aufgeloest und geprueft wird es vom Client; hier
+    /// steht nur der Name, `None` heisst keines.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modul: Option<String>,
+    /// **Die Kiste des Moduls fuer diesen Lauf**, vom Client aus [`Self::modul`]
+    /// aufgeloest, nachdem er es geprueft hat. Sie liegt in der Kette zuletzt
+    /// ([`crate::kisten::ordnerkette`]). Wird je Lauf gesetzt und nie
+    /// gespeichert.
+    #[serde(skip)]
+    pub modulkiste: Option<std::path::PathBuf>,
 }
 
 impl Default for Agenteneinstellung {
@@ -149,6 +161,8 @@ impl Default for Agenteneinstellung {
             blick_kamera: false,
             web_recherche: false,
             netzsaat: None,
+            modul: None,
+            modulkiste: None,
         }
     }
 }

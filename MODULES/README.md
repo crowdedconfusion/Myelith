@@ -6,6 +6,15 @@ das geladene Modell und Agentenläufe mit eigener Werkzeugkiste. Die Konsole
 baut und läuft ohne jedes Modul; dann gibt es keinen seiner Befehle, weder
 in `/help` noch in der Vervollständigung.
 
+**Im Fenster** (`myl-oberflaeche`) gehen dieselben Module, nur **gewählt
+statt getippt**: In der Seitenleiste unter der Werkzeugkiste gewählt,
+startet ein Modul, und seine Befehle öffnet ein Pfeil ganz rechts im Feld der Modulwahl als Liste; ein Klick schickt den Befehl. Seine Zeilen
+stehen im Gespräch wie in der Konsole im Rollbereich, seine Fußzeile und sein
+Bereich unten unter der Eingabe, und seine Fragen an den Menschen stellt ein
+Dialog des Fensters. Was ein Modul schickt, zeigt das Fenster nur als Text.
+Dazu kommt das **Sichtfeld** für Ansichten (unten), geöffnet von der Lasche
+am rechten Rand.
+
 Module liegen hier, je eines in einem eigenen Ordner (`MODULES/<name>/`),
 oder im Ordner `module/` neben den Einstellungen der Konsole. `/module`
 zeigt, welche gefunden und geprüft wurden.
@@ -54,11 +63,65 @@ Skills, und Ordner, deren Inhalt sich im Betrieb ändert (Daten, Zustand).
   geladene Modell fragen), `agent` (Agentenläufe mit der eigenen Kiste),
   `netzmodell` (über das Netz statt am örtlichen Modell), `unten` (Zeilen
   unter dem Rahmen, höchstens 24), `fusszeile`, `http` (erreichbare
-  Rechner für abgeschottete Module), `modell_token_je_stunde`.
+  Rechner für abgeschottete Module), `modell_token_je_stunde`, `ansicht`
+  (Ansichten im Sichtfeld des Fensters).
 - **Veränderlich**: Ordner, deren Inhalt nicht signiert ist. Programm,
   Werkzeugkiste und Skills liegen nie darin; der Arbeitsordner (`arbeit`)
   eines Agentenlaufs immer.
 - **`dateien`** füllt das Signieren aus; von Hand bleibt es leer.
+
+## Ein Modul wählen
+
+Ein Modul **ergänzt** die Werkzeugkiste, es ersetzt sie nicht: Seine Kiste
+liegt über Base und der gewählten Kiste, seine Skills kommen zu denen des
+Arbeitsordners dazu, und seine Werkzeuge laufen mit der geprüften Kopie
+seines Programms (`MYL_MODUL_PROGRAMM`). Werkzeuge, die seine `kiste.json`
+unter `ohne_nachfrage` nennt, fragen im `manual mode` nicht nach.
+
+Gewählt wird es in der Einstellung `agent.modul`: im Fenster in der
+Seitenleiste unter der Werkzeugkiste (im Agentenmodus), in der Konsole und
+auf der Kommandozeile mit `myl setzen agent.modul <name>` (`aus` heißt
+keines). `myl module` zeigt, welche Module geprüft sind und was das
+eingestellte mitbringt. Geprüft wird vor jedem Lauf; ein Modul, das die
+Prüfung nicht besteht, bringt nichts mit, und der Lauf sagt es. Im Modus
+eines Moduls in der Konsole gilt dessen Kiste genauso als Ergänzung.
+
+Im Fenster **startet die Wahl das Modul**, und zwar nur mit dem Handschlag,
+ohne Befehl: Was ein Modul erst auf einen Befehl hin tut, löst die Wahl
+allein nicht aus. Jedes andere laufende Modul endet dabei; „Kein Modul“
+beendet alle. Ein gewähltes Modul startet auch beim Öffnen des Fensters.
+
+## Ansichten
+
+Ein Modul mit der Befugnis `ansicht` kann dem Fenster Darstellungen
+schicken, die dort im Sichtfeld stehen:
+
+```json
+{"art": "ansicht", "ansicht": {"id": "kurs", "titel": "Kurs",
+  "inhalt": {"form": "kurve", "x": "min", "y": "EUR", "nachkomma": 2,
+             "reihen": [{"name": "Kurs", "punkte": [[0, 10512], [1, 10498]]}]}}}
+{"art": "ansicht_weg", "id": "kurs"}
+```
+
+| Form | Inhalt | Grenzen |
+|---|---|---|
+| `kurve` | Reihen von Punkten `[x, y]`, ganzzahlig; ein y-Wert ist `zahl / 10^nachkomma` | 1 bis 8 Reihen, je 10 000 Punkte, höchstens 9 Nachkommastellen |
+| `tabelle` | `kopf` und `zeilen` aus Text | 32 Spalten, 2000 Zeilen |
+| `bild` | `datei`: PNG, JPEG, GIF oder WebP im Modulordner | 64 MiB |
+| `koerper` | `datei`: STL (binär oder Text) im Modulordner, drehbar | 64 MiB |
+
+- **Gleiche `id` ersetzt** eine Ansicht an ihrer Stelle; so wird aus einer
+  Kurve, die jeder Takt neu schickt, eine, die mitläuft.
+- **Beschrieben, nicht gezeichnet**: Ein Modul schickt kein Markup, kein
+  Skript und keine Adresse; das Fenster zeichnet selbst, in seinen Farben.
+  Eine Datei liest das Fenster nur aus dem Ordner des geprüften Moduls und
+  nicht über einen symbolischen Verweis hinaus. SVG gibt es nicht, denn es
+  kann Skript tragen.
+- **Über eine Grenze wird abgelehnt, nicht gekürzt**, damit ein Modul nicht
+  eine halbe Kurve für die ganze hält.
+- **Der Handschlag sagt, ob der Wirt Ansichten zeigt** (`"ansicht": true` in
+  `hallo`): das Fenster ja, die Konsole nein. Die Konsole zeigt für eine
+  Ansicht eine Zeile, dass sie nur im Fenster zu sehen ist.
 
 ## Signieren und Vertrauen
 

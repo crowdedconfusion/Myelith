@@ -37,6 +37,10 @@ pub enum AnModul {
         modell: Option<String>,
         breite: u16,
         hoehe: u16,
+        /// Ob dieser Wirt Ansichten zeigt ([`VomModul::Ansicht`]); die
+        /// Konsole nicht, das Fenster schon. Fehlt es, keine.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        ansicht: bool,
     },
     /// Der Mensch hat einen Befehl des Moduls getippt; `zeile` ist die ganze
     /// Zeile samt Befehl.
@@ -70,7 +74,8 @@ pub enum VomModul {
     Zeilen { text: String, stil: Stil },
     /// Der Modus des Moduls beginnt oder endet. Aktiv: Takte kommen, die
     /// Fusszeile und der Bereich unten gehoeren dem Modul, und der Agent
-    /// arbeitet mit der Werkzeugkiste und den Skills des Moduls.
+    /// arbeitet zusaetzlich mit der Werkzeugkiste und den Skills des
+    /// Moduls: Sie ergaenzen die gewaehlte Kiste, sie ersetzen sie nicht.
     Modus { aktiv: bool, banner: Option<Vec<String>> },
     /// Die Fusszeile unter der Eingabe, solange der Modus aktiv ist.
     Fusszeile { teile: Vec<Teil> },
@@ -108,6 +113,57 @@ pub enum VomModul {
     NutzerFragen { id: u64, frage: Nutzerfrage },
     /// Eine Zeile fuers Protokoll der Konsole (nicht auf den Schirm).
     Protokoll { text: String },
+    /// **Eine Ansicht im Sichtfeld des Fensters**: eine Kurve, eine
+    /// Tabelle, ein Bild oder ein Koerper. Gleiche `id` ersetzt die
+    /// vorige. ⚑ Nur beschrieben, nie Markup oder Skript: Gezeichnet wird
+    /// vom Fenster selbst. Ein Wirt ohne Sichtfeld sagt es im Handschlag.
+    Ansicht { ansicht: Ansicht },
+    /// Nimmt die Ansicht mit dieser `id` weg.
+    AnsichtWeg { id: String },
+}
+
+/// **Eine Ansicht**, wie das Fenster sie zeichnet.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Ansicht {
+    /// Ein Name, unter dem das Modul sie ersetzt oder wegnimmt.
+    pub id: String,
+    pub titel: String,
+    pub inhalt: Ansichtsinhalt,
+}
+
+/// **Was eine Ansicht zeigt.**
+///
+/// ⚑ **Zahlen ganzzahlig, mit Nachkommastellen als eigener Angabe**: Ein
+/// y-Wert ist `zahl / 10^nachkomma`, x bleibt ganz (Zeit, Zaehler). So
+/// bleibt die Nachricht frei von Gleitkomma, und das Modul rechnet nichts
+/// um, was es ganzzahlig hat.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "form", rename_all = "snake_case")]
+pub enum Ansichtsinhalt {
+    /// Linien ueber einer x-Achse, je Reihe eine.
+    Kurve {
+        #[serde(default)]
+        x: String,
+        #[serde(default)]
+        y: String,
+        #[serde(default)]
+        nachkomma: u8,
+        reihen: Vec<Reihe>,
+    },
+    /// Eine Tabelle aus Text.
+    Tabelle { kopf: Vec<String>, zeilen: Vec<Vec<String>> },
+    /// Ein Bild (PNG, JPEG, GIF oder WebP) im Modulordner.
+    Bild { datei: String },
+    /// Ein Koerper (STL, binaer oder als Text) im Modulordner, drehbar.
+    Koerper { datei: String },
+}
+
+/// Eine Reihe einer Kurve: Punkte `[x, y]`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Reihe {
+    #[serde(default)]
+    pub name: String,
+    pub punkte: Vec<[i64; 2]>,
 }
 
 /// **Wie die Konsole einen Text faerbt.** Benannt und nicht als Farbe: Die
@@ -182,6 +238,9 @@ mod tests {
             VomModul::NutzerFragen { id: 3, frage: Nutzerfrage::Wort { text: "Freigeben?".into(), wort: "WORT".into() } },
             VomModul::ModellFragen { id: 4, vorspann: String::new(), frage: "?".into(), grenze: 64, denken: false, strom: true, gierig: false },
             VomModul::ModellFragen { id: 5, vorspann: "Immer gleich.".into(), frage: "?".into(), grenze: 64, denken: false, strom: false, gierig: true },
+            VomModul::Ansicht { ansicht: Ansicht { id: "kurs".into(), titel: "Kurs".into(), inhalt: Ansichtsinhalt::Kurve { x: "t".into(), y: "€".into(), nachkomma: 2, reihen: vec![Reihe { name: "a".into(), punkte: vec![[0, 100], [1, -5]] }] } } },
+            VomModul::Ansicht { ansicht: Ansicht { id: "teil".into(), titel: "Teil".into(), inhalt: Ansichtsinhalt::Koerper { datei: "daten/teil.stl".into() } } },
+            VomModul::AnsichtWeg { id: "kurs".into() },
         ];
         for n in alle {
             let z = zeile(&n);
@@ -190,6 +249,16 @@ mod tests {
         }
         let a = AnModul::Modellantwort { id: 4, antwort: Err("kein Modell".into()) };
         assert_eq!(lesen::<AnModul>(&zeile(&a)).unwrap(), a);
+    }
+
+    /// ⚑ **Ein Handschlag ohne `ansicht` heisst keine**, und ein Modul,
+    /// das das Feld nicht kennt, liest ihn trotzdem.
+    #[test]
+    fn handschlag_mit_und_ohne_ansicht() {
+        let ohne = r#"{"art":"hallo","protokoll":1,"konsole":"0.1","sprache":"de","modell":null,"breite":80,"hoehe":24}"#;
+        assert!(matches!(lesen::<AnModul>(ohne).unwrap(), AnModul::Hallo { ansicht: false, .. }));
+        let mit = AnModul::Hallo { protokoll: 1, konsole: "0.1".into(), sprache: "de".into(), modell: None, breite: 80, hoehe: 24, ansicht: true };
+        assert!(zeile(&mit).contains(r#""ansicht":true"#));
     }
 
     #[test]

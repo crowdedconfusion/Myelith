@@ -70,6 +70,12 @@ pub struct Rechenwerk {
     /// der hier nicht rechnet". Der Unterschied steht im Sperrgrund des
     /// Reglers, denn er entscheidet, ob jemand etwas bauen kann.
     pub rueckseite: Option<Rueckseite>,
+    /// ⚑ **Die PCI-Adresse**, soweit die Maschine sie nennt (Linux:
+    /// `sysfs`). Ueber sie findet der Schalter je Karte die Karte, die CUDA
+    /// oder HIP zaehlt; deren Nummern und die Reihenfolge hier muessen
+    /// nicht uebereinstimmen. `None` (macOS, Windows) heisst: geschaltet
+    /// wird der ganze Rechenweg.
+    pub pci: Option<String>,
 }
 
 /// Der Rechenweg, der ein Geraet bedient.
@@ -255,15 +261,57 @@ pub fn anwenden(e: &crate::einstellungen::Einstellungen) -> bool {
     if !eine_null && !ABGESCHALTET.load(std::sync::atomic::Ordering::Relaxed) {
         return false;
     }
-    for w in Hardware::rechenwerke() {
-        let Some(r) = w.rueckseite else { continue };
-        // ⚑ **Kein Eintrag heisst ganz freigegeben**, wie ueberall
-        // sonst: Der Regler steht dann am rechten Anschlag.
-        let an = e.kapazitaet.rechenwerke.get(&w.kennung).is_none_or(|p| *p > 0);
-        crate::rechenwege::setzen(r.backend(), an);
+    // ⚑ **Kein Eintrag heisst ganz freigegeben**, wie ueberall sonst:
+    // Der Regler steht dann am rechten Anschlag.
+    let (karten, wege) = schaltplan(&Hardware::rechenwerke(), |kennung| {
+        e.kapazitaet.rechenwerke.get(kennung).is_none_or(|p| *p > 0)
+    });
+    for (pci, an) in &karten {
+        crate::rechenwege::karte_setzen(pci, *an);
+    }
+    for (weg, an) in wege {
+        crate::rechenwege::setzen(weg, an);
     }
     ABGESCHALTET.store(eine_null, std::sync::atomic::Ordering::Relaxed);
     true
+}
+
+/// Je Karte die PCI-Adresse und an oder aus; je Rechenweg an oder aus.
+pub(crate) type Schaltplan = (Vec<(String, bool)>, Vec<(&'static str, bool)>);
+
+/// **Was [`anwenden`] schaltet**: je Karte mit PCI-Adresse die Karte, je
+/// Rechenweg den ganzen Weg.
+///
+/// 📌 **Fund 534: Vorher wurde der Weg je Karte geschaltet** (2026-10-14
+/// gefunden, beim Bau des Wegs fuer mehrere Karten): `setzen("cuda", an)` fuer jede
+/// Karte nacheinander, und bei zwei NVIDIA-Karten, von denen eine aus sein
+/// sollte, entschied die zuletzt bearbeitete fuer beide. ⚑ Jetzt gilt:
+///
+/// - Eine Karte mit Adresse wird **einzeln** geschaltet, und ihr Weg
+///   bleibt ihretwegen an.
+/// - Ein Weg ist an, **wenn irgendeine seiner Karten an ist**; aus nur,
+///   wenn alle ohne Adresse aus sind. Das ist bei Metal (eine GPU) genau
+///   der Regler, und bei mehreren Karten ohne Adresse (Windows) die
+///   einzige Wahl, die keinen Regler ueberstimmt, der Rechnen erlaubt.
+pub(crate) fn schaltplan(werke: &[Rechenwerk], an: impl Fn(&str) -> bool) -> Schaltplan {
+    let mut karten = Vec::new();
+    let mut wege: Vec<(&'static str, bool)> = Vec::new();
+    for w in werke {
+        let Some(r) = w.rueckseite else { continue };
+        let werk_an = an(&w.kennung);
+        let weg_an = match (r, &w.pci) {
+            (Rueckseite::Cuda | Rueckseite::Rocm, Some(pci)) => {
+                karten.push((pci.clone(), werk_an));
+                true
+            }
+            _ => werk_an,
+        };
+        match wege.iter_mut().find(|(weg, _)| *weg == r.backend()) {
+            Some((_, a)) => *a |= weg_an,
+            None => wege.push((r.backend(), weg_an)),
+        }
+    }
+    (karten, wege)
 }
 
 /// Ob in diesem Prozess schon einmal ein Rechenwerk abgeschaltet wurde.
@@ -468,6 +516,7 @@ fn rechenwerke_suchen() -> Vec<Rechenwerk> {
                 // einem aelteren Mac traegt deshalb `None` und keine
                 // Zusage, die niemand geprueft hat.
                 rueckseite: eingebaut.then_some(Rueckseite::Metal),
+                pci: None,
             })
         })
         .collect()
@@ -512,6 +561,12 @@ fn rechenwerke_suchen() -> Vec<Rechenwerk> {
         // Kennung zuerst; `vendor` ist hier `0x10de` oder `0x1002` und
         // kommt aus `sysfs`, nicht aus einer Beschriftung.
         let rueckseite = rueckseite_aus(Some(&hersteller), &name);
+        // ⚑ `device` zeigt auf das PCI-Geraet, und sein Ordnername ist
+        // die Adresse (`0000:3b:00.0`).
+        let pci = std::fs::read_link(&geraet)
+            .ok()
+            .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+            .filter(|n| n.contains(':'));
         aus.push(Rechenwerk {
             kennung: kennung_aus(&format!("{karte}-{hersteller}-{geraetenummer}")),
             name,
@@ -519,6 +574,7 @@ fn rechenwerke_suchen() -> Vec<Rechenwerk> {
             gemeinsamer_speicher: false,
             kerne: None,
             rueckseite,
+            pci,
         });
     }
     aus
@@ -570,6 +626,7 @@ fn rechenwerke_suchen() -> Vec<Rechenwerk> {
                 gemeinsamer_speicher: false,
                 kerne: None,
                 rueckseite,
+                pci: None,
             })
         })
         .collect()
@@ -972,7 +1029,39 @@ mod proben {
             gemeinsamer_speicher: false,
             kerne: None,
             rueckseite: r,
+            pci: None,
         }
+    }
+
+    /// ⛔️ **Zwei Karten desselben Herstellers, eine aus**: Die andere
+    /// rechnet weiter, und keine ueberstimmt die andere.
+    #[test]
+    fn zwei_karten_eines_herstellers_werden_einzeln_geschaltet() {
+        let mut a = werk("a", "Karte a", Some(Rueckseite::Cuda));
+        a.pci = Some("0000:3b:00.0".into());
+        let mut b = werk("b", "Karte b", Some(Rueckseite::Cuda));
+        b.pci = Some("0000:5e:00.0".into());
+        for reihenfolge in [vec![a.clone(), b.clone()], vec![b.clone(), a.clone()]] {
+            let (karten, wege) = schaltplan(&reihenfolge, |k| k != "a");
+            assert!(karten.contains(&("0000:3b:00.0".into(), false)), "{karten:?}");
+            assert!(karten.contains(&("0000:5e:00.0".into(), true)), "{karten:?}");
+            assert_eq!(wege, vec![("cuda", true)]);
+        }
+    }
+
+    /// ⚑ **Ohne Adresse wird der Weg geschaltet**: Metal aus heisst aus;
+    /// zwei Karten ohne Adresse, eine an, heisst an.
+    #[test]
+    fn ohne_adresse_wird_der_weg_geschaltet() {
+        let m = werk("m", "GPU", Some(Rueckseite::Metal));
+        assert_eq!(schaltplan(std::slice::from_ref(&m), |_| false), (vec![], vec![("metal", false)]));
+        assert_eq!(schaltplan(std::slice::from_ref(&m), |_| true), (vec![], vec![("metal", true)]));
+        let x = werk("x", "Karte x", Some(Rueckseite::Rocm));
+        let y = werk("y", "Karte y", Some(Rueckseite::Rocm));
+        assert_eq!(schaltplan(&[x.clone(), y.clone()], |k| k == "y").1, vec![("rocm", true)]);
+        assert_eq!(schaltplan(&[x, y], |_| false).1, vec![("rocm", false)]);
+        // Ein Werk ohne Rechenweg schaltet nichts.
+        assert_eq!(schaltplan(&[werk("n", "n", None)], |_| false), (vec![], vec![]));
     }
 
     fn maschine(werke: Vec<Rechenwerk>) -> Hardware {
@@ -1184,6 +1273,7 @@ mod proben {
                     gemeinsamer_speicher: true,
                     kerne: Some(16),
                     rueckseite: Some(Rueckseite::Metal),
+                    pci: None,
                 },
             ],
         };

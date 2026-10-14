@@ -433,6 +433,12 @@ impl Werkzeugkiste {
     /// ⚑ **Die Namen kommen vom Projektinhaber** (2026-09-11) und sind
     /// Namen und keine Woerter: Sie werden nicht uebersetzt, so wenig
     /// wie `Myelith` uebersetzt wird.
+    /// **Kann ein Lauf mit dieser Kiste im Mitschnitt nachlesen?** Aus den
+    /// Werkzeugen der Kiste abgeleitet, nicht ein zweites Mal festgelegt.
+    pub fn kann_nachlesen(&self) -> bool {
+        self.werkzeuge().contains(&Dateiwerkzeug::Verlauf)
+    }
+
     pub fn name(&self) -> &'static str {
         match self {
             Self::Base => "Base",
@@ -549,6 +555,15 @@ pub enum Dateiwerkzeug {
     /// dieses Wort". Ihre Antwort sind ein paar Zeilen, und danach liest
     /// `read_history` genau die genannten.
     VerlaufSuche,
+    /// **Sucht im Gedaechtnis des Ordners** (`crate::gedaechtnis`): in dem,
+    /// was der Schlaf aus frueheren Gespraechen verdichtet hat, auch
+    /// im Archivierten und in dem, was nicht vom Nutzer selbst stammt.
+    ///
+    /// ⚑ **Nur in den grossen Kisten, wie die Verlaufswerkzeuge**: Das
+    /// Vertraute steht ohnehin von selbst hinter dem Auftrag, und das 0,6B
+    /// ruft Nachschlagewerkzeuge nicht (gemessen am 2026-09-17).
+    /// ⚑ **Ein Fund staerkt die Erinnerung**, wie ein Abruf im Auftrag.
+    Erinnern,
     /// **Sucht Skills nach den Worten einer Aufgabe oder eines Problems.**
     ///
     /// ⚑ **Fuer den Fall, dass das Modell nicht weiterweiss** (Wunsch des
@@ -575,7 +590,7 @@ pub enum Dateiwerkzeug {
 
 impl Dateiwerkzeug {
     /// Alle, in der Reihenfolge, in der sie angeboten werden.
-    pub const ALLE: [Dateiwerkzeug; 12] = [
+    pub const ALLE: [Dateiwerkzeug; 13] = [
         Dateiwerkzeug::Verzeichnis,
         Dateiwerkzeug::Lesen,
         Dateiwerkzeug::Suchen,
@@ -585,6 +600,7 @@ impl Dateiwerkzeug {
         Dateiwerkzeug::VerlaufListe,
         Dateiwerkzeug::VerlaufSuche,
         Dateiwerkzeug::Verlauf,
+        Dateiwerkzeug::Erinnern,
         Dateiwerkzeug::SkillSuche,
         Dateiwerkzeug::SkillLernen,
         Dateiwerkzeug::Befehl,
@@ -613,9 +629,16 @@ impl Dateiwerkzeug {
     /// `= ALLE`: `run_command` (B1) liegt in `Advanced` und nicht hier,
     /// weil ein Shell-Befehl die Einhaengegrenze nicht einhaelt. Damit
     /// bedeuten `Base` und `Advanced` zum ersten Mal Verschiedenes.
-    /// ⛔️ **Die drei Verlaufswerkzeuge sind am 2026-09-17 wieder
-    /// herausgenommen worden** (Festlegung des Projektinhabers, nach
-    /// der Messung).
+    /// ⚑ **Die drei Verlaufswerkzeuge sind seit dem 2026-10-14 wieder
+    /// dabei** (Festlegung des Projektinhabers: „Das gehört in Base“).
+    /// 📌 Gemessen an der Nadel im echten Beispiel: Ohne sie war eine
+    /// Einzelheit, die das Verdichten weggenommen hatte, mit `Base` nicht
+    /// zu erreichen, und mit `Base` laufen 0,6B und 4B. Das 4B rief
+    /// `read_history` von selbst und fand eine Logzeile woertlich wieder.
+    /// Die Geschichte davor, als Lehre:
+    ///
+    /// ⛔️ **Am 2026-09-17 waren sie herausgenommen worden** (Festlegung
+    /// des Projektinhabers, nach der Messung).
     ///
     /// Sie standen hier einen Tag lang, weil „Nachlesen keine Sache der
     /// Modellgroesse" ist. ⚑ **Die Messung sagt das Gegenteil, und zwar
@@ -637,12 +660,15 @@ impl Dateiwerkzeug {
     /// Nachschlagewerkzeuge nicht von selbst ruft; der Unterschied hier
     /// ist ein ausdruecklicher Anlass im Auftrag. Gemessen steht es im
     /// Changelog dieser Fassung.
-    pub const BASE: [Dateiwerkzeug; 7] = [
+    pub const BASE: [Dateiwerkzeug; 10] = [
         Dateiwerkzeug::Verzeichnis,
         Dateiwerkzeug::Lesen,
         Dateiwerkzeug::Suchen,
         Dateiwerkzeug::Schreiben,
         Dateiwerkzeug::Aendern,
+        Dateiwerkzeug::VerlaufListe,
+        Dateiwerkzeug::VerlaufSuche,
+        Dateiwerkzeug::Verlauf,
         Dateiwerkzeug::SkillSuche,
         Dateiwerkzeug::SkillLernen,
     ];
@@ -663,7 +689,7 @@ impl Dateiwerkzeug {
             Self::Verzeichnis | Self::Lesen | Self::Suchen | Self::SkillSuche | Self::SkillLernen => Vertrag::EIGENES_LESEN,
             Self::Schreiben | Self::Aendern | Self::UeberallErsetzen => Vertrag::EIGENES_SCHREIBEN,
             Self::Befehl => Vertrag::SHELL,
-            Self::Verlauf | Self::VerlaufListe | Self::VerlaufSuche => Vertrag::ERINNERN,
+            Self::Verlauf | Self::VerlaufListe | Self::VerlaufSuche | Self::Erinnern => Vertrag::ERINNERN,
         }
     }
 
@@ -688,6 +714,7 @@ impl Dateiwerkzeug {
             (Self::Verlauf, Ansageform::Amtlich) => "read_history",
             (Self::VerlaufListe, Ansageform::Amtlich) => "list_history",
             (Self::VerlaufSuche, Ansageform::Amtlich) => "search_history",
+            (Self::Erinnern, Ansageform::Amtlich) => "search_memory",
             (Self::SkillSuche, Ansageform::Amtlich) => "search_skill",
             (Self::SkillLernen, Ansageform::Amtlich) => "learn_skill",
             (Self::Verzeichnis, Ansageform::Deutsch) => "verzeichnis",
@@ -700,6 +727,7 @@ impl Dateiwerkzeug {
             (Self::Verlauf, Ansageform::Deutsch) => "verlauf_lesen",
             (Self::VerlaufListe, Ansageform::Deutsch) => "verlauf_liste",
             (Self::VerlaufSuche, Ansageform::Deutsch) => "verlauf_suchen",
+            (Self::Erinnern, Ansageform::Deutsch) => "erinnerung_suchen",
             (Self::SkillSuche, Ansageform::Deutsch) => "skill_suchen",
             (Self::SkillLernen, Ansageform::Deutsch) => "skill_lernen",
         }
@@ -823,6 +851,20 @@ impl Dateiwerkzeug {
                  Zusammenfassung fehlt: nach einem Wort aus der Frage suchen. Klartext \
                  und kein regulaerer Ausdruck; Gross- und Kleinschreibung wird \
                  ignoriert."
+            ),
+            (Self::Erinnern, Ansageform::Amtlich) => format!(
+                "Search the memory of this folder: short facts, summaries and rules condensed \
+                 from earlier conversations while the assistant was idle, at most \
+                 {ERINNERN_TREFFER}. Each hit names where it came from, so read_history can \
+                 check it. Memories are not verified; the files and tool results are. Use a \
+                 few words from the question."
+            ),
+            (Self::Erinnern, Ansageform::Deutsch) => format!(
+                "Sucht im Gedaechtnis dieses Ordners: kurze Tatsachen, Zusammenfassungen und \
+                 Regeln, die im Schlaf aus frueheren Gespraechen verdichtet wurden, \
+                 hoechstens {ERINNERN_TREFFER}. Jeder Treffer nennt seine Herkunft, damit \
+                 verlauf_lesen ihn pruefen kann. Erinnerungen sind nicht nachgeprueft; die \
+                 Dateien und Werkzeugergebnisse sind es. Ein paar Woerter aus der Frage genuegen."
             ),
             (Self::SkillSuche, Ansageform::Amtlich) => "Search the skills: short guides for \
                  recurring kinds of work. Describe the task or the problem in a few words. \
@@ -996,6 +1038,13 @@ impl Dateiwerkzeug {
                 },
                 "required": ["name"]
             }),
+            Self::Erinnern => serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "anfrage": {"type": "string"}
+                },
+                "required": ["anfrage"]
+            }),
             Self::VerlaufSuche => serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -1115,6 +1164,7 @@ impl Dateiwerkzeug {
             Self::Verlauf => Box::new(Verlauflesen(e, form, budget.clone())),
             Self::VerlaufListe => Box::new(Verlaufliste(e, form, budget.clone())),
             Self::VerlaufSuche => Box::new(Verlaufsuche(e, form, budget.clone())),
+            Self::Erinnern => Box::new(Erinnern(e, form, budget.clone())),
             Self::SkillSuche => Box::new(Skillsuche(e, form, budget.clone())),
             Self::SkillLernen => Box::new(Skilllernen(e, form, budget.clone())),
         }
@@ -1421,6 +1471,11 @@ impl crate::ausfuehrung::Werkzeugausfuehrung for Skillsuche {
         } else {
             "Learn one with learn_skill and its name."
         });
+        // ⛔️ Nennt die Liste einen fremden Skill, ist sie fremd
+        //    (`skills::ist_fremd`).
+        if treffer.iter().any(|t| crate::skills::ist_fremd(Some(self.0.wurzel()), &t.skill)) {
+            aus = format!("{}\n{aus}", crate::secure_flow::fremdmarke("search_skill"));
+        }
         Ok(vom_budget(&self.2, aus, deutsch))
     }
 }
@@ -1452,6 +1507,7 @@ impl crate::ausfuehrung::Werkzeugausfuehrung for Skilllernen {
         };
         match crate::skills::lernen(Some(self.0.wurzel()), &skill, datei.as_deref()) {
             Ok(g) => {
+                let fremd = crate::skills::ist_fremd(Some(self.0.wurzel()), &g.skill);
                 let mut aus = g.text;
                 if datei.is_none() && !g.dateien.is_empty() {
                     let liste: Vec<String> = g.dateien.iter().map(|d| format!("{}/{d}", g.skill.name)).collect();
@@ -1460,6 +1516,10 @@ impl crate::ausfuehrung::Werkzeugausfuehrung for Skilllernen {
                     } else {
                         format!("\n\n[Further files of this skill, open with learn_skill: {}]", liste.join(", "))
                     });
+                }
+                // ⛔️ Ein fremder Skill traegt die Marke (`skills::ist_fremd`).
+                if fremd {
+                    aus = format!("{}\n{aus}", crate::secure_flow::fremdmarke(&format!("learn_skill {}", g.skill.name)));
                 }
                 Ok(vom_budget_ganz(&self.2, aus, deutsch))
             }
@@ -1471,6 +1531,46 @@ impl crate::ausfuehrung::Werkzeugausfuehrung for Skilllernen {
 }
 
 /// Sucht im Mitschnitt und nennt die Abschnitte.
+/// So viele Erinnerungen gibt `search_memory` hoechstens zurueck.
+pub const ERINNERN_TREFFER: usize = 10;
+
+/// Sucht im Gedaechtnis des Ordners.
+struct Erinnern(Einhaengung, Ansageform, Verlaufsbudget);
+
+impl crate::ausfuehrung::Werkzeugausfuehrung for Erinnern {
+    fn name(&self) -> &str {
+        Dateiwerkzeug::Erinnern.name(self.1)
+    }
+    fn ausfuehren(&self, a: &serde_json::Value) -> Result<String, Werkzeugfehler> {
+        let deutsch = matches!(self.1, Ansageform::Deutsch);
+        let anfrage = a
+            .get("anfrage")
+            .and_then(|v| v.as_str())
+            .map(|t| t.to_string())
+            .ok_or_else(|| Werkzeugfehler { grund: "`anfrage` fehlt oder ist kein Text".to_string() })?;
+        let g = crate::gedaechtnis::Gedaechtnis::laden(self.0.wurzel()).map_err(|grund| Werkzeugfehler { grund })?;
+        let treffer = g.passende(&anfrage, ERINNERN_TREFFER, false, true);
+        if treffer.is_empty() {
+            return Ok(if deutsch {
+                format!("Keine Erinnerung zu \"{anfrage}\" in diesem Ordner.")
+            } else {
+                format!("No memory about \"{anfrage}\" in this folder.")
+            });
+        }
+        crate::gedaechtnis::abruf_vermerken(self.0.wurzel(), &treffer.iter().map(|e| e.nr).collect::<Vec<_>>());
+        let mut aus = if deutsch {
+            format!("{} Erinnerungen zu \"{anfrage}\" (nicht nachgeprueft):\n", treffer.len())
+        } else {
+            format!("{} memories about \"{anfrage}\" (not verified):\n", treffer.len())
+        };
+        for e in treffer {
+            aus.push_str(&crate::gedaechtnis::zeile(e, deutsch));
+            aus.push('\n');
+        }
+        Ok(vom_budget(&self.2, aus, deutsch))
+    }
+}
+
 struct Verlaufsuche(Einhaengung, Ansageform, Verlaufsbudget);
 
 impl crate::ausfuehrung::Werkzeugausfuehrung for Verlaufsuche {
@@ -3760,25 +3860,25 @@ mod verlaufwerkzeug {
         assert!(f.grund.contains("bis"), "{}", f.grund);
     }
 
-    /// ⛔️ **Es steht NICHT in `Base`, und das ist gemessen.**
+    /// ⚑ **Es steht in jeder Kiste, seit dem 2026-10-14 auch in `Base`.**
     ///
-    /// Einen Tag lang stand es dort, weil „Nachlesen keine Sache der
-    /// Modellgroesse" ist. ⚑ **Die Messung sagt das Gegenteil fuer
-    /// genau das Modell, fuer das `Base` gemacht ist:** 27 Laeufe, kein
-    /// einziger Aufruf. Ein Werkzeug, das nie gerufen wird, kostet
-    /// trotzdem in jeder Runde Ansage und macht die Auswahl schwerer.
+    /// Vom 2026-09-17 an fehlte es dort: 27 Laeufe mit dem 0,6B, kein
+    /// einziger Aufruf. 📌 Das 4B, das ebenfalls `Base` bekommt, rief es
+    /// von selbst und holte eine Logzeile woertlich zurueck, die das
+    /// Verdichten weggenommen hatte; ohne das Werkzeug blieb nur der
+    /// ehrliche Satz, dass es nicht geht. Der Projektinhaber hat es
+    /// darauf wieder hineingenommen.
     #[test]
-    fn es_steht_in_den_groesseren_kisten_und_nicht_in_base() {
-        for kiste in [Werkzeugkiste::Advanced, Werkzeugkiste::Elite] {
+    fn es_steht_in_jeder_kiste() {
+        for kiste in [Werkzeugkiste::Base, Werkzeugkiste::Advanced, Werkzeugkiste::Elite] {
             assert!(
                 kiste.werkzeuge().contains(&Dateiwerkzeug::Verlauf),
                 "{kiste:?} kennt das Verlaufwerkzeug nicht"
             );
         }
-        assert!(
-            !Werkzeugkiste::Base.werkzeuge().contains(&Dateiwerkzeug::Verlauf),
-            "Base traegt das Verlaufwerkzeug wieder"
-        );
+        // ⚑ **Damit sagt der Verweis nach dem Verdichten ueberall, dass
+        // nachgelesen werden kann.**
+        assert!(Werkzeugkiste::Base.kann_nachlesen());
         // ⚑ **Und es schreibt nicht**, braucht also keine
         // Schreiberlaubnis: Es liest nach, was ohnehin gesagt wurde.
         assert!(!Dateiwerkzeug::Verlauf.schreibt());
@@ -4154,22 +4254,16 @@ mod verlaufliste {
     /// **Eine Kiste, die zwei davon hat, hat das Werkzeug ohne den
     /// Weg.**
     #[test]
-    fn die_drei_stehen_zusammen_und_nicht_in_base() {
+    fn die_drei_stehen_zusammen_in_jeder_kiste() {
         let drei = [
             Dateiwerkzeug::Verlauf,
             Dateiwerkzeug::VerlaufListe,
             Dateiwerkzeug::VerlaufSuche,
         ];
-        for kiste in [Werkzeugkiste::Advanced, Werkzeugkiste::Elite] {
+        for kiste in [Werkzeugkiste::Base, Werkzeugkiste::Advanced, Werkzeugkiste::Elite] {
             for w in drei {
                 assert!(kiste.werkzeuge().contains(&w), "{kiste:?} kennt {w:?} nicht");
             }
-        }
-        for w in drei {
-            assert!(
-                !Werkzeugkiste::Base.werkzeuge().contains(&w),
-                "Base traegt {w:?} wieder"
-            );
         }
     }
 }

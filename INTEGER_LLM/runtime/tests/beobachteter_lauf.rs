@@ -63,7 +63,7 @@ fn dieselbe_folge_mit_und_ohne_beobachter() {
         &m,
         &w,
         prompt,
-        &Erzeugung { max_new_tokens: 12, seed: 0, greedy: true, halt: &[], denkgrenze: None, abbruch: None, ziehen: None },
+        &Erzeugung { max_new_tokens: 12, seed: 0, greedy: true, halt: &[], denkgrenze: None, abbruch: None, ziehen: None, gesperrt: &[] },
         &mut |t| gesehen.push(t),
     );
 
@@ -96,7 +96,7 @@ fn gemeldet_wird_sofort_und_nicht_am_ende() {
         &m,
         &w,
         "Eins zwei drei",
-        &Erzeugung { max_new_tokens: 6, seed: 0, greedy: true, halt: &[], denkgrenze: None, abbruch: None, ziehen: None },
+        &Erzeugung { max_new_tokens: 6, seed: 0, greedy: true, halt: &[], denkgrenze: None, abbruch: None, ziehen: None, gesperrt: &[] },
         &mut |_| {
         zahl += 1;
         if erste_meldung_nach.is_none() {
@@ -139,7 +139,7 @@ fn eine_haltemarke_beendet_und_steht_nicht_in_der_ausgabe() {
         &m,
         &w,
         prompt,
-        &Erzeugung { max_new_tokens: 12, seed: 0, greedy: true, halt: &[marke], denkgrenze: None, abbruch: None, ziehen: None },
+        &Erzeugung { max_new_tokens: 12, seed: 0, greedy: true, halt: &[marke], denkgrenze: None, abbruch: None, ziehen: None, gesperrt: &[] },
         &mut |t| gesehen.push(t),
     );
 
@@ -163,7 +163,7 @@ fn ohne_marken_aendert_sich_nichts() {
         &m,
         &w,
         prompt,
-        &Erzeugung { max_new_tokens: 10, seed: 0, greedy: true, halt: &[], denkgrenze: None, abbruch: None, ziehen: None },
+        &Erzeugung { max_new_tokens: 10, seed: 0, greedy: true, halt: &[], denkgrenze: None, abbruch: None, ziehen: None, gesperrt: &[] },
         &mut |_| {},
     );
     assert_eq!(a, b, "eine leere Markenliste hat die Folge veraendert");
@@ -201,6 +201,7 @@ fn die_denkgrenze_schiebt_den_schluss_ein_und_rechnet_ihn_mit() {
             denkgrenze: Some(Denkgrenze { budget: 3, ende: usize::MAX, schluss: &schluss }),
             abbruch: None,
             ziehen: None,
+            gesperrt: &[],
         },
         &mut |t| gesehen.push(t),
     );
@@ -214,7 +215,7 @@ fn die_denkgrenze_schiebt_den_schluss_ein_und_rechnet_ihn_mit() {
     let (weiter, _) = dekodieren_fortgesetzt(
         &m,
         &vorne,
-        &Erzeugung { max_new_tokens: rest, seed: 0, greedy: true, halt: &[], denkgrenze: None, abbruch: None, ziehen: None },
+        &Erzeugung { max_new_tokens: rest, seed: 0, greedy: true, halt: &[], denkgrenze: None, abbruch: None, ziehen: None, gesperrt: &[] },
         &mut Fortsetzung::neu(&m),
         &mut |_| {},
     );
@@ -246,6 +247,7 @@ fn eine_endmarke_vor_dem_budget_aendert_nichts() {
             denkgrenze: Some(Denkgrenze { budget: 4, ende: frei[1], schluss: &schluss }),
             abbruch: None,
             ziehen: None,
+            gesperrt: &[],
         },
         &mut |_| {},
     );
@@ -273,6 +275,7 @@ fn der_abbruchschalter_haelt_an() {
             denkgrenze: None,
             abbruch: Some(&schalter),
             ziehen: None,
+            gesperrt: &[],
         },
         &mut |_| {
             gesehen += 1;
@@ -288,7 +291,7 @@ fn der_abbruchschalter_haelt_an() {
         &m,
         &w,
         prompt,
-        &Erzeugung { max_new_tokens: 12, seed: 0, greedy: true, halt: &[], denkgrenze: None, abbruch: Some(&schalter), ziehen: None },
+        &Erzeugung { max_new_tokens: 12, seed: 0, greedy: true, halt: &[], denkgrenze: None, abbruch: Some(&schalter), ziehen: None, gesperrt: &[] },
         &mut |_| {},
     );
     assert!(nichts.is_empty());
@@ -315,6 +318,7 @@ fn gezogen_mit_saat_wiederholbar_und_verschieden() {
         denkgrenze: None,
         abbruch: None,
         ziehen: Some(ziehen),
+        gesperrt: &[],
     };
     let folge = |seed| generate_beobachtet(&m, &w, prompt, &lauf(seed), &mut |_| {});
     assert_eq!(folge(1), folge(1), "gleiche Saat, gleiche Folge");
@@ -326,8 +330,46 @@ fn gezogen_mit_saat_wiederholbar_und_verschieden() {
         &m,
         &w,
         prompt,
-        &Erzeugung { max_new_tokens: 16, seed: 99, greedy: true, halt: &[], denkgrenze: None, abbruch: None, ziehen: None },
+        &Erzeugung { max_new_tokens: 16, seed: 99, greedy: true, halt: &[], denkgrenze: None, abbruch: None, ziehen: None, gesperrt: &[] },
         &mut |_| {},
     );
     assert_eq!(gierig, wieder);
+}
+
+/// ⛔️ **Ein gesperrtes Token wird nie gewaehlt** (Fund 541), und ohne Sperre
+/// bleibt die Folge die alte. Gesperrt wird hier, was der Lauf ohne Sperre
+/// als Erstes waehlte, und danach alles, was er waehlte.
+#[test]
+fn ein_gesperrtes_token_wird_nie_gewaehlt() {
+    let Some((m, w)) = modell() else { return };
+    let prompt = "Die Hauptstadt von Frankreich ist";
+    let lauf = |gesperrt: &[usize]| {
+        let mut gesehen = Vec::new();
+        let gesperrt = gesperrt.to_vec();
+        generate_beobachtet(
+            &m,
+            &w,
+            prompt,
+            &Erzeugung {
+                max_new_tokens: 8,
+                seed: 0,
+                greedy: true,
+                halt: &[],
+                denkgrenze: None,
+                abbruch: None,
+                ziehen: None,
+                gesperrt: &gesperrt,
+            },
+            &mut |t| gesehen.push(t),
+        );
+        gesehen
+    };
+    let frei = lauf(&[]);
+    assert!(!frei.is_empty());
+    assert_eq!(frei, lauf(&[]), "ohne Sperre ist die Folge nicht wiederholbar");
+    let ohne_erstes = lauf(&[frei[0]]);
+    assert_ne!(ohne_erstes[0], frei[0], "das gesperrte Token kam trotzdem");
+    assert!(!ohne_erstes.contains(&frei[0]));
+    let ohne_alle = lauf(&frei);
+    assert!(ohne_alle.iter().all(|t| !frei.contains(t)), "{ohne_alle:?} gegen {frei:?}");
 }

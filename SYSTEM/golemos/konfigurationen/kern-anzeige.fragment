@@ -1,0 +1,33 @@
+# Ergaenzung der Kernkonfiguration (BR2_LINUX_KERNEL_CONFIG_FRAGMENT_FILES):
+# die Anzeige, die die Oberflaechen-Schicht braucht.
+#
+# ⚑ **Fest eingebaut und nicht als Modul.** GolemOS hat kein udev und laedt
+# Module nicht von selbst nach; ein Anzeigetreiber als Modul waere fuer die
+# Schicht nicht da.
+#
+# ⚑ **`simpledrm` ist der Treiber fuer jede Maschine.** Er benutzt den
+# Bildschirm, den die UEFI-Firmware schon eingerichtet hat, ohne zu wissen,
+# welche Grafikkarte dahinter steckt. Unbeschleunigt, aber die Schicht
+# zeichnet ohnehin in Software (pixman, softpipe). Damit startet die
+# Oberflaeche auch auf Rechnern mit AMD- oder NVIDIA-Karte, fuer die der
+# Kern der Basis keinen eigenen Treiber mitbringt.
+#
+# ⚑ `virtio-gpu` und `virtio-input` fuer virtuelle Maschinen (QEMU, UTM),
+# auf denen die Schicht geprueft wird. Auf x86_64 bringt die Vorgabe beides
+# schon mit, auf aarch64 nicht.
+CONFIG_DRM=y
+CONFIG_DRM_SIMPLEDRM=y
+CONFIG_SYSFB_SIMPLEFB=y
+CONFIG_DRM_VIRTIO_GPU=y
+CONFIG_VIRTIO_INPUT=y
+CONFIG_INPUT_EVDEV=y
+
+# ⛔️ **Und das Einhaengen der Schicht selbst: squashfs mit zlib, ueber ein
+#    Loop-Geraet.** 📌 Gemessen am 2026-10-13: Die Vorgabe fuer aarch64
+#    bringt squashfs mit, die fuer x86_64 nicht. Die Schicht fuer x86_64
+#    waere geholt und geprueft worden und haette sich dann nicht einhaengen
+#    lassen. Deshalb steht es hier und nicht in der Annahme ueber eine
+#    Vorgabe.
+CONFIG_BLK_DEV_LOOP=y
+CONFIG_SQUASHFS=y
+CONFIG_SQUASHFS_ZLIB=y

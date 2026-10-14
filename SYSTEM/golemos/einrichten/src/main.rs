@@ -4,6 +4,7 @@
 //!   golem-einrichten suchen              Klon suchen, Modell einstellen (beim Start)
 //!   golem-einrichten platten             welche Platte in Frage kommt, und warum
 //!   golem-einrichten installieren --ziel sdb --bestaetigung sdb [--ohne-daten]
+//!   golem-einrichten schicht-eintreten <wurzel> <programm> [argumente]
 //!
 //! ⚑ **Der letzte Weg ist derselbe wie im Assistenten**, nur ohne
 //! Fragen: derselbe Plan, dieselben Pruefungen, und die Bestaetigung
@@ -17,6 +18,7 @@ mod grub;
 mod klon;
 mod plan;
 mod platten;
+mod schicht;
 mod sprache;
 mod start;
 
@@ -36,6 +38,8 @@ const HILFE: &str = "golem-einrichten: GolemOS einrichten
   golem-einrichten suchen              Myelith-Klon suchen, Modell einstellen
   golem-einrichten platten             welche Platte fuer eine Installation in Frage kommt
   golem-einrichten installieren --ziel NAME --bestaetigung NAME [--ohne-daten]
+  golem-einrichten schicht-eintreten WURZEL PROGRAMM [ARGUMENTE]
+                                       in eine Schicht wechseln, ohne Vorrechte (fuer golem-schicht)
 
 Eine Installation belegt die ganze Zielplatte und loescht alles darauf.
 Bestaetigt wird mit dem Namen der Platte, zweimal derselbe.";
@@ -146,6 +150,10 @@ fn main() -> ExitCode {
         Some("suchen") => start::suchen(&mut aus).map(|_| ()),
         Some("platten") => platten_zeigen(&mut aus),
         Some("installieren") => installieren(&args[1..], &mut aus),
+        Some("schicht-eintreten") => match (args.get(1), args.get(2)) {
+            (Some(wurzel), Some(programm)) => Err(schicht::eintreten(Path::new(wurzel), programm, &args[3..])),
+            _ => Err(io::Error::other("es braucht WURZEL und PROGRAMM")),
+        },
         Some("-h" | "--hilfe" | "hilfe") => writeln!(aus, "{HILFE}"),
         Some(x) => {
             eprintln!("golem-einrichten: unbekannt: {x}\n\n{HILFE}");

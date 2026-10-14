@@ -35,6 +35,8 @@ fn main() {
         blick_kamera: false,
         web_recherche: false,
         netzsaat: None,
+        modul: None,
+        modulkiste: None,
     };
     // ⚑ Mit `--deutsch` dieselbe Ansage in der Fassung vor dem
     // 2026-09-09. Das Beispiel ist damit die billigste Art, den

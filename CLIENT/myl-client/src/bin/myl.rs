@@ -48,12 +48,17 @@ myl: lokaler Betrieb von Myelith
   myl loop [ziel]                 Ein Vorhaben in Runden verfolgen (ohne Ziel: fortsetzen)
   myl tasks [add ZIEL [--abnahme BEFEHL]|abnahme ID BEFEHL|resume ID|pause ID|confirm ID|rework ID WO|answer ID TEXT]
                                   Die Tasks des Loops; confirm nimmt ein vorgelegtes Ergebnis ab, rework gibt es zurueck
+  myl module                      Die Module: geprueft oder warum nicht, und was das eingestellte mitbringt
   myl skills [neu NAME]           Skills: wo sie liegen, was da ist; neu legt einen aus der Vorlage an
   myl anhaenge [--aufraeumen]     Angehaengte Dateien: was liegt, und weg damit
   myl sinne [datei|--sprich TEXT] Sehen, Hoeren, Sprechen: was geht, und eine Probe
   myl kennzeichen <datei.wav>     Prueft, ob eine Tondatei als KI-erzeugt gekennzeichnet ist
   myl protokoll [anzahl]          Die juengsten Handlungen des Agenten (ohne Klartext, 30 Tage)
   myl verlauf [<von> <bis>]       Der Mitschnitt: Uebersicht oder Zeilen
+  myl schlafen [ordner] [--ohne-modell] [--tag N]
+                                  Der Schlaf jetzt: Gedaechtnis des Ordners ordnen, Vorhaben vordenken
+  myl gedaechtnis [ordner] [suchtext] [--vergessen NR] [--auftrag TEXT]
+                                  Das Gedaechtnis des Ordners: was es weiss, Suche, eine Erinnerung vergessen
   myl einstellungen               Zeigt die Einstellungen
   myl setzen <feld> <wert>        Aendert eine Einstellung
 
@@ -166,9 +171,12 @@ fn myl_hauptteil(args: &[String]) -> i32 {
         Some("auftraege") => auftraege(&args[2..]),
         Some("loop") => schleife(&args[2..]),
         Some("tasks") => tasks_befehl(&args[2..]),
+        Some("module") => module_befehl(),
         Some("ort") => ort(),
         Some("einstellungen") => einstellungen(),
         Some("verlauf") => verlauf(&args[2..]),
+        Some("schlafen") => schlafen(&args[2..]),
+        Some("gedaechtnis") => gedaechtnis(&args[2..]),
         Some("skills") => skills(&args[2..]),
         Some("anhaenge") => anhaenge(&args[2..]),
         Some("sinne") => sinne(&args[2..]),
@@ -891,15 +899,12 @@ fn skills(args: &[String]) -> i32 {
 /// eine Stelle, an der die Zeilennummern des Verzeichnisses von Hand
 /// nachpruefbar sind. ⚑ **Dieselben Zahlen wie `sed -n`, `grep -n`
 /// und der Sprung im Editor**, denn es sind Zeilen der Datei.
-fn verlauf(args: &[String]) -> i32 {
-    use myl_local_agent::verlauf;
-
-    let loeschen = args.iter().any(|a| a == "--loeschen");
-    let rest: Vec<&String> = args.iter().filter(|a| !a.starts_with('-')).collect();
-
+/// **Der Arbeitsordner fuer `verlauf`, `schlafen` und `gedaechtnis`**: der
+/// genannte, sonst das Arbeitsverzeichnis mit `.AGENT`, sonst der
+/// eingestellte, sonst die Vorgabe.
+fn arbeitsordner(erster: Option<&String>) -> Option<std::path::PathBuf> {
     // Der erste freie Wert ist ein Ordner, wenn es ihn gibt.
-    let wurzel = rest
-        .first()
+    erster
         .map(|a| std::path::PathBuf::from(a.as_str()))
         .filter(|p| p.is_dir())
         // ⛔️ **Danach das Arbeitsverzeichnis, aber nur, wenn dort
@@ -923,7 +928,16 @@ fn verlauf(args: &[String]) -> i32 {
                 .and_then(|e| e.agent.wurzel.clone())
                 .map(std::path::PathBuf::from)
         })
-        .or_else(|| myl_client::Einstellungen::standard_wurzel().map(std::path::PathBuf::from));
+        .or_else(|| myl_client::Einstellungen::standard_wurzel().map(std::path::PathBuf::from))
+}
+
+fn verlauf(args: &[String]) -> i32 {
+    use myl_local_agent::verlauf;
+
+    let loeschen = args.iter().any(|a| a == "--loeschen");
+    let rest: Vec<&String> = args.iter().filter(|a| !a.starts_with('-')).collect();
+
+    let wurzel = arbeitsordner(rest.first().copied());
     let Some(wurzel) = wurzel else {
         eprintln!("myl verlauf: kein Arbeitsordner. Einen angeben oder `agent.wurzel` setzen.");
         return 1;
@@ -1003,6 +1017,142 @@ fn verlauf(args: &[String]) -> i32 {
     println!();
     println!("Zeilen lesen:  myl verlauf <von> <bis>");
     println!("Loeschen:      myl verlauf --loeschen [<sitzung>]");
+    0
+}
+
+/// **`myl schlafen`: der Schlaf von Hand**, ueber die Mitschnitte des
+/// Ordners und die wartenden Vorhaben. Ohne Gespraech, also auch ohne
+/// Vorwaermen: Dieser Prozess endet danach.
+fn schlafen(args: &[String]) -> i32 {
+    let rest = ohne_schalter(args, &["--tag"]);
+    let Some(wurzel) = arbeitsordner(rest.first().copied()) else {
+        eprintln!("myl schlafen: kein Arbeitsordner. Einen angeben oder `agent.wurzel` setzen.");
+        return 1;
+    };
+    let e = Einstellungen::lesen(&Einstellungen::vorgabepfad()).unwrap_or_default();
+    // ⚑ Der Debug-Log sieht jede Frage und Antwort des Schlafs.
+    e.debug_anwenden("myl", "myl schlafen gestartet");
+    let deutsch = e.oberflaeche.sprache == myl_client::einstellungen::Sprache::De;
+    let ohne = args.iter().any(|a| a == "--ohne-modell");
+    // ⚑ Von Hand gerufen gilt der Akku-Vorbehalt trotzdem: Wer auf dem Akku
+    //   ausdruecklich will, sagt es mit `schlaf.nur_am_netz aus`.
+    let m = if ohne || !e.schlaf.darf_rechnen() {
+        None
+    } else {
+        kapazitaet_anwenden(&e);
+        let artefakt = myl_local_agent::ort::absolut(&e.modell.artefakt);
+        match Oertlichesmodell::laden(&artefakt, &e.kapazitaet) {
+            Ok(mut m) => {
+                // ⚑ **Gierig und ohne Ueberlegen**: Was verdichtet wird, soll
+                //   bei demselben Material dasselbe sein, und eine Erinnerung
+                //   braucht keine Ueberlegung, nur einen Satz.
+                m.denken = false;
+                m.gierig = true;
+                Some(m)
+            }
+            Err(f) => {
+                eprintln!("myl schlafen: {f}; nur geordnet, ohne Modell.");
+                None
+            }
+        }
+    };
+    let ablage = myl_local_agent::vorhaben::Ablage::vorgabe();
+    let auftrag = myl_local_agent::schlaf::Ruheauftrag {
+        wurzel: &wurzel,
+        gespraeche: Vec::new(),
+        vorhaben: Some(&ablage),
+        vorwaermen: None,
+        deutsch,
+        // ⚑ `--tag N` (Tage seit 1970) schlaeft als ein anderer Tag, fuer
+        //   Proben ueber Wochen: Verblassen und Archivieren haengen am Tag.
+        tag: wert(args, "--tag").and_then(|t| t.parse().ok()).unwrap_or_else(myl_local_agent::gedaechtnis::heute),
+    };
+    let anfang = std::time::Instant::now();
+    let b = myl_local_agent::schlaf::schlafen(m.as_ref().map(|m| m as &dyn Modellweg), &auftrag, &myl_local_agent::schlaf::Wecker::neu());
+    println!("{}", b.zeile(deutsch));
+    println!(
+        "  {} Abschnitte gelesen, {} Modellaufrufe, {:.1} s; Ordner {}",
+        b.abschnitte,
+        b.modellaufrufe,
+        anfang.elapsed().as_secs_f64(),
+        wurzel.display()
+    );
+    i32::from(b.fehler.is_some())
+}
+
+/// **`myl gedaechtnis`: was der Ordner weiss.** Mit Suchtext die Treffer
+/// (auch Archiviertes), ohne die staerksten fuenfzig; `--vergessen NR`
+/// nimmt eine Erinnerung heraus.
+fn gedaechtnis(args: &[String]) -> i32 {
+    use myl_local_agent::gedaechtnis::{self, Gedaechtnis};
+    let rest = ohne_schalter(args, &["--vergessen", "--auftrag"]);
+    let (wurzel, suchtext) = match rest.first().map(|a| std::path::Path::new(a.as_str()).is_dir()) {
+        Some(true) => (arbeitsordner(rest.first().copied()), rest[1..].iter().map(|s| s.as_str()).collect::<Vec<_>>().join(" ")),
+        _ => (arbeitsordner(None), rest.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(" ")),
+    };
+    let Some(wurzel) = wurzel else {
+        eprintln!("myl gedaechtnis: kein Arbeitsordner. Einen angeben oder `agent.wurzel` setzen.");
+        return 1;
+    };
+    // ⚑ **`--auftrag TEXT`: genau der Block, den ein Auftrag bekaeme**, und
+    //   als Abruf vermerkt wie bei einem echten Lauf. So prueft eine Probe,
+    //   was ein Auftrag erfaehrt, ohne ein Modell zu laden.
+    if let Some(text) = wert(args, "--auftrag") {
+        let deutsch = Einstellungen::lesen(&Einstellungen::vorgabepfad())
+            .map(|e| e.oberflaeche.sprache == myl_client::einstellungen::Sprache::De)
+            .unwrap_or(true);
+        match gedaechtnis::hinweis_fuer_auftrag(&wurzel, &text, deutsch) {
+            Some((block, nrs)) => {
+                println!("{}", block.trim());
+                gedaechtnis::abruf_vermerken(&wurzel, &nrs);
+            }
+            None => println!("(kein Erinnerungsblock)"),
+        }
+        return 0;
+    }
+    if let Some(nr) = wert(args, "--vergessen") {
+        let Ok(nr) = nr.parse::<u64>() else {
+            eprintln!("myl gedaechtnis: --vergessen braucht eine Nummer");
+            return 1;
+        };
+        return match gedaechtnis::vergessen(&wurzel, nr) {
+            Ok(true) => {
+                println!("Erinnerung {nr} vergessen.");
+                0
+            }
+            Ok(false) => {
+                println!("Keine Erinnerung {nr}.");
+                0
+            }
+            Err(f) => {
+                eprintln!("myl gedaechtnis: {f}");
+                1
+            }
+        };
+    }
+    let g = match Gedaechtnis::laden(&wurzel) {
+        Ok(g) => g,
+        Err(f) => {
+            eprintln!("myl gedaechtnis: {f}");
+            return 1;
+        }
+    };
+    let aktiv = g.aktive().count();
+    println!(
+        "{aktiv} aktive Erinnerungen, {} insgesamt, unter {}",
+        g.eintraege.len(),
+        gedaechtnis::ordner(&wurzel).display()
+    );
+    let liste: Vec<&gedaechtnis::Eintrag> = if suchtext.trim().is_empty() {
+        let mut alle: Vec<&gedaechtnis::Eintrag> = g.eintraege.iter().collect();
+        alle.sort_by_key(|e| (std::cmp::Reverse(e.aktiv()), std::cmp::Reverse(e.staerke), e.nr));
+        alle.into_iter().take(50).collect()
+    } else {
+        g.passende(&suchtext, 20, false, true)
+    };
+    for e in liste {
+        println!("  {}", gedaechtnis::zeile(e, true));
+    }
     0
 }
 
@@ -1125,6 +1275,29 @@ fn saat_nennen(saat: Option<u64>) {
 }
 
 /// Ein Textwert hinter einem Schalter.
+/// Die Argumente ohne Schalter und ohne die Werte der genannten Schalter.
+///
+/// 📌 Bis zum 2026-10-13 galt alles ohne Strich als Ordner oder Suchtext,
+/// also auch die Nummer hinter `--vergessen`.
+fn ohne_schalter<'a>(args: &'a [String], mit_wert: &[&str]) -> Vec<&'a String> {
+    let mut aus = Vec::new();
+    let mut ueberspringen = false;
+    for a in args {
+        if ueberspringen {
+            ueberspringen = false;
+            continue;
+        }
+        if mit_wert.contains(&a.as_str()) {
+            ueberspringen = true;
+            continue;
+        }
+        if !a.starts_with('-') {
+            aus.push(a);
+        }
+    }
+    aus
+}
+
 fn wert(args: &[String], name: &str) -> Option<String> {
     let i = args.iter().position(|a| a == name)?;
     args.get(i + 1).cloned()
@@ -2036,6 +2209,8 @@ mod schalter {
                 blick_kamera: false,
                 web_recherche: false,
                 netzsaat: None,
+                modul: None,
+                modulkiste: None,
             },
             ..Einstellungen::default()
         }
@@ -2472,6 +2647,38 @@ fn vorgelegte_nennen(ablage: &myl_local_agent::vorhaben::Ablage) {
             eprintln!("[myl]   Antworten: myl tasks answer {} <antwort>", v.kennung);
         }
     }
+}
+
+/// **`myl module`**: jedes gefundene Modul, geprueft oder mit Grund, und
+/// was das eingestellte (`agent.modul`) einem Lauf mitbringt.
+fn module_befehl() -> i32 {
+    let wahl = myl_client::module::wahl();
+    if wahl.is_empty() {
+        println!("Keine Module. Sie liegen in {} an der Wurzel oder in {}.", myl_client::module::MODULORDNER, myl_client::module::einstellungsordner().join(myl_client::module::NUTZERMODULE).display());
+    }
+    for w in &wahl {
+        match &w.grund {
+            None => println!("{}  geprueft  {}", w.name, w.was),
+            Some(g) => println!("{}  abgelehnt  {g}", w.name),
+        }
+    }
+    let e = Einstellungen::lesen(&Einstellungen::vorgabepfad()).unwrap_or_default();
+    match myl_client::module::eingestellter_zusatz(&e.agent) {
+        None => println!("\nEingestellt: kein Modul (myl setzen agent.modul <name>)."),
+        Some(Err(f)) => {
+            println!("\nEingestellt: {f}");
+            return 1;
+        }
+        Some(Ok(z)) => {
+            println!("\nEingestellt: {}", z.name);
+            let zeig = |p: &Option<std::path::PathBuf>| p.as_ref().map(|p| p.display().to_string()).unwrap_or_else(|| "-".into());
+            println!("  Kiste (ergaenzt die gewaehlte): {}", zeig(&z.kiste));
+            println!("  Skills: {}", zeig(&z.skills));
+            println!("  Programmkopie fuer die Werkzeuge: {}", zeig(&z.programm));
+            println!("  Ohne Nachfrage: {}", if z.ohne_nachfrage.is_empty() { "-".into() } else { z.ohne_nachfrage.join(", ") });
+        }
+    }
+    0
 }
 
 fn ja_nein(b: bool) -> &'static str {
