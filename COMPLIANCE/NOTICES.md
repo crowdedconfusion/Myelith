@@ -28,6 +28,7 @@ The artefacts are integer-converted derivative works of the base weights.
 | `myelith-0.6b` | [Qwen/Qwen3-0.6B](https://huggingface.co/Qwen/Qwen3-0.6B) | Apache-2.0 | PolyForm Shield License 1.0.0 |
 | `myelith-30b-a3b` | [Qwen/Qwen3-30B-A3B](https://huggingface.co/Qwen/Qwen3-30B-A3B) | Apache-2.0 | PolyForm Shield License 1.0.0 |
 | `myelith-35b-a3b` | [Qwen/Qwen3.6-35B-A3B](https://huggingface.co/Qwen/Qwen3.6-35B-A3B) | Apache-2.0 | PolyForm Shield License 1.0.0 |
+| `myelith-35b-a3b-int4` | [Qwen/Qwen3.6-35B-A3B](https://huggingface.co/Qwen/Qwen3.6-35B-A3B) | Apache-2.0 | PolyForm Shield License 1.0.0 |
 | `myelith-4b` | [Qwen/Qwen3-4B](https://huggingface.co/Qwen/Qwen3-4B) | Apache-2.0 | PolyForm Shield License 1.0.0 |
 | `myelith-8b` | [Qwen/Qwen3-8B](https://huggingface.co/Qwen/Qwen3-8B) | Apache-2.0 | PolyForm Shield License 1.0.0 |
 

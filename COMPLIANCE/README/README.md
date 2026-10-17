@@ -1,7 +1,7 @@
 # compliance
 
-> **Version:** 0.4.0
-> **Datum:** 2026-10-01
+> **Version:** 0.4.1
+> **Datum:** 2026-10-17
 > **Status:** Die Pflichten aus der KI-Verordnung sind dokumentiert und,
 > soweit technisch, umgesetzt; die Einordnung Artikel für Artikel steht in
 > der [Selbsteinschätzung](../de/Selbsteinschaetzung.md). Offen: ein
@@ -39,6 +39,24 @@ Notaus (`notaus.rs`), alle unter `CLIENT/myl-client/src/`, sofern nicht
 anders genannt.
 
 ## Changelog
+
+### v0.4.1 – 2026-10-17 (die Lizenzliste kennt das 35B in vier Bit; das Aktionsprotokoll steht nicht mehr im Fenster; Fund 557)
+
+- ⛔️ **Fund 557: `NOTICES.md` fehlte ein Modell, und die CI fiel daran.**
+  Am 2026-10-17 kam `myelith-35b-a3b-int4` in den Katalog der Sprachmodelle
+  (INTEGER_LLM v0.135.0), und die Liste wurde nicht neu erzeugt. Der
+  Schritt „NOTICES entspricht den Quellen“ im Job der Abhängigkeitsprüfung
+  war damit rot, obwohl cargo-deny selbst grün war. Neu erzeugt; jetzt mit
+  der Zeile für das int4-35B (Apache-2.0 für die Grundgewichte, PolyForm
+  Shield für das Artefakt). 📌 **Wer den Katalog ändert, erzeugt die Liste
+  neu**, nicht nur wer eine Abhängigkeit anhebt: `notices.py` liest beides.
+- **Selbsteinschätzung, Art. 12 (freiwillig), deutsch und englisch:** Das
+  Fenster zeigt das Aktionsprotokoll seit CLIENT v0.167.0 nicht mehr auf
+  der Einstellungsseite an. Geschrieben wird es weiter, wie bisher ohne
+  Klartext und 30 Tage lang; lesbar mit `myl protokoll`. Der Satz nannte
+  noch die Anzeige im Fenster.
+- Belege: `notices.py --pruefe` PASSED; Gegenprobe mit der gepushten
+  Fassung FEHLGESCHLAGEN, wie in der CI.
 
 ### v0.4.0 – 2026-10-01 (der Systemprompt, gestrafft und am 4B gemessen besser)
 
