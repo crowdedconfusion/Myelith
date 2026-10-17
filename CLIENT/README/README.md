@@ -1,6 +1,6 @@
 # client (Nutzer-Client inkl. Wallet)
 
-> **Version:** 0.169.0 (`myl-client` 0.106.0, `myl-oberflaeche` 0.83.0, `myl-console` 0.66.0, `myl-senses` 0.13.2, `myl-module` 0.4.0)
+> **Version:** 0.169.2 (`myl-client` 0.106.1, `myl-oberflaeche` 0.83.0, `myl-console` 0.66.0, `myl-senses` 0.13.3, `myl-module` 0.4.0)
 > **Datum:** 2026-10-17
 > **Status:** ✅ **Der lokale Betrieb läuft und ist ausgeliefert.** Ein
 > Gesprächsfenster mit Modellwahl, Agentenschleife und
@@ -181,6 +181,50 @@ Modell überhaupt etwas taugt, und weil eine Schnittstelle, die kein
 Mensch je bedient hat, an den Bedürfnissen vorbei entworfen wird.
 
 ## Changelog
+
+### v0.169.2 (2026-10-17): `VERSION.md` ist kein Changelog mehr (`myl-client` 0.106.1)
+
+Festlegung des Projektinhabers: In `VERSION.md` steht nur die aktuelle
+Fassung mit ihren Änderungen, die alten Abschnitte werden beim Heben
+entfernt.
+
+- `VERSION.md` trägt nur noch den Abschnitt von 0.1.2; der Kopf der Datei
+  sagt, dass er mit jeder Fassung ersetzt wird.
+- `die_eigene_versionsdatei_stimmt_mit_sich_ueberein` verlangt jetzt
+  **genau einen** Abschnitt mit der Fassung der ersten Zeile (vorher:
+  absteigende Abschnitte). Belegt in beide Richtungen: mit den drei alten
+  Abschnitten rot, mit einem grün (`aktualisierung` 10/10), Clippy still.
+- Der Leser (`Versionsdatei::lesen`, `neuer_als`) kann weiter mehrere
+  Abschnitte, damit eine ältere Datei auf GitHub kein Fehler wird; seine
+  Proben bleiben. Wer Fassungen überspringt, sieht vor dem Update den
+  Abschnitt der neuesten.
+
+### v0.169.1 (2026-10-17): Ein eben geschriebenes Programm startet auch, wenn ein anderer Faden gerade etwas startet (`myl-senses` 0.13.3, Fund 560)
+
+Anlass: Der CI-Job „Clippy + Tests (Protokoll-Crates)“ war unter Linux rot,
+in `das_sprechskript_bekommt_die_probe_als_dritten_pfad`: „liess sich nicht
+starten: Text file busy (os error 26)“. Beim Push davor war er grün, die
+Kiste unverändert; der Fehler hängt am Zeitpunkt.
+
+- **Fund 560:** Ein Test schreibt sein Skript und startet es; ein anderer
+  Test startet im selben Moment in einem anderen Faden einen Prozess.
+  Zwischen dessen `fork` und `exec` hält das Kind eine Kopie des
+  Schreibzugriffs auf das eben geschriebene Skript, und Linux verweigert den
+  Start mit `ETXTBSY`. Dasselbe kann im Betrieb ein frisch eingerichtetes
+  Sprech- oder Aufnahmeprogramm treffen.
+- **Behebung:** `prozess::starten` wiederholt den Start bei `ETXTBSY` alle
+  10 ms, höchstens zwei Sekunden; jeder andere Fehler kommt sofort. Alle drei
+  Startstellen der Kiste nehmen es (`prozess::laufen_mit_eingabe`, der
+  Dauerläufer in `sprechen`, `aufnahme`).
+- **Beleg:** `ein_eben_geschriebenes_skript_startet_trotzdem` (nur Linux)
+  stellt den Zustand gezielt her: Das Skript bleibt zum Schreiben offen, der
+  erste Start scheitert nachweislich mit `ETXTBSY`, ein Faden schließt die
+  Datei nach 100 ms, `starten` kommt durch. Grün in einem Linux-Behälter
+  (aarch64, cargo 1.98.1), dort auch `mit_attrappe` 27/27; auf macOS
+  `cargo test` grün, Clippy mit `-D warnings` still.
+- Sperrdateien der Kisten, die `myl-senses` einbinden, nachgezogen
+  (`myl-client`, `myl-console`, `myl-oberflaeche`, `local-agent`,
+  `myl-testclient`).
 
 ### v0.169.0 (2026-10-17): int4 ist der Standard, das Aktionsprotokoll entfällt, die Frage nach dem Einhängepfad (`myl-client` 0.106.0, `myl-oberflaeche` 0.83.0, `myl-console` 0.66.0)
 

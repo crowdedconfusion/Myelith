@@ -1,3 +1,15 @@
+# ⚑ Grundregel: Jede Textdatei kommt auf jedem System mit LF an, auch unter
+# Windows. Ohne diese Zeile setzte Git for Windows beim Auschecken CRLF ein,
+# und alles, was Bytes vergleicht, rechnete dort mit anderen Dateien als
+# ueberall sonst: Am 2026-10-17 fiel so im Windows-Job der CI die Vorlage der
+# Werkzeugansage (die Tests vergleichen sie zeichengleich mit der erzeugten
+# Ansage), und die Proben der Oberflaeche suchen in den Quellen nach Mustern
+# mit Zeilenumbruch. Unter Wine fiel das nicht auf, denn dort liefen die
+# Proben auf einem Auschecken von macOS. Was Git als binaer erkennt, bleibt
+# unberuehrt. Die Regeln darunter gehen vor, wo sie etwas anderes sagen
+# (Stapeldateien mit CRLF).
+* text=auto eol=lf
+
 # Windows-Stapelverarbeitung braucht CRLF. Mit LF-Zeilenenden verhaelt sich
 # `goto` in cmd.exe je nach Windows-Fassung unzuverlaessig; das faellt erst
 # auf der fremden Maschine auf, auf der der Testclient gerade laufen soll.

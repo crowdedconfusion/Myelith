@@ -210,12 +210,13 @@ impl Dauersprecher {
         if let Some(probe) = &zeug.probe {
             befehl.arg(probe);
         }
-        let mut kind = befehl
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .map_err(|f| format!("{} liess sich nicht starten: {f}", zeug.name()))?;
+        let mut kind = crate::prozess::starten(
+            befehl
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::null()),
+        )
+        .map_err(|f| format!("{} liess sich nicht starten: {f}", zeug.name()))?;
         // ⚠️ **Fremdzeilen ueberlesen, mit Deckel und mit Frist.**
         //
         // modelscope und tqdm schreiben beim Laden gern nach stdout; der

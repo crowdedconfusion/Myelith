@@ -3,12 +3,19 @@
 //! # ⚑ Was hier verglichen wird: die Fassung in `VERSION.md`
 //!
 //! ⚑ **Festlegung des Projektinhabers, 2026-10-17.** In der Wurzel liegt
-//! `VERSION.md`; ihre erste Zeile ist die Fassung von Myelith, darunter steht
-//! je Fassung, was sich geaendert hat. Verglichen wird die Fassung, mit der
+//! `VERSION.md`; ihre erste Zeile ist die Fassung von Myelith, darunter steht,
+//! was sich mit dieser Fassung geaendert hat. Verglichen wird die Fassung, mit der
 //! **dieses Programm gebaut wurde** ([`EINGEBAUT`]), mit der ersten Zeile
 //! derselben Datei auf GitHub. Ist die dort hoeher, gibt es ein Update; ist
 //! sie niedriger oder gleich, nicht. Ein Klon, der seinem `origin` voraus
 //! ist, wird also nie zurueckgestellt.
+//!
+//! ⚑ **Die Datei ist kein Changelog** (Festlegung des Projektinhabers, am
+//! selben Tag): Sie traegt nur den Abschnitt der aktuellen Fassung, der
+//! vorige wird beim Heben ersetzt. Wer von 0.1.0 auf 0.1.2 springt, sieht
+//! also, was 0.1.2 bringt, nicht die Summe. Der Leser unten kann trotzdem
+//! mehrere Abschnitte, damit eine aeltere Datei auf GitHub nicht zum Fehler
+//! wird.
 //!
 //! 📌 **Bis CLIENT v0.167.0 fragte es, ob `origin` Commits hat, die der Klon
 //! nicht hat** (`git fetch` und `git rev-list`), und daneben nach der
@@ -476,24 +483,25 @@ mod proben {
     }
 
     /// ⛔️ **Die Versionsdatei im Repositorium ist lesbar, und ihre erste
-    /// Zeile steht auch als oberster Abschnitt da.** Dieselbe Angabe an zwei
+    /// Zeile steht auch als einziger Abschnitt da.** Dieselbe Angabe an zwei
     /// Orten laeuft sonst auseinander: Wer die Nummer hebt und den Abschnitt
-    /// vergisst, kuendigt ein Update ohne Inhalt an.
+    /// vergisst, kuendigt ein Update ohne Inhalt an. ⚑ **Und es ist genau
+    /// einer**: Die Datei ist kein Changelog; wer beim Heben den alten
+    /// Abschnitt stehen laesst, faellt hier auf.
     #[test]
     fn die_eigene_versionsdatei_stimmt_mit_sich_ueberein() {
         let v = Versionsdatei::lesen(EINGEBAUT).expect("VERSION.md ist lesbar");
         assert_eq!(
             v.eintraege.first().map(|e| e.fassung.clone()),
             Some(v.fassung.to_string()),
-            "die erste Zeile von VERSION.md und der oberste Abschnitt nennen verschiedene Fassungen"
+            "die erste Zeile von VERSION.md und der Abschnitt nennen verschiedene Fassungen"
         );
-        assert!(!v.eintraege[0].text.is_empty(), "der oberste Abschnitt sagt nicht, was sich geaendert hat");
-        let mut vorher: Option<Fassung> = None;
-        for e in &v.eintraege {
-            let f = Fassung::lesen(&e.fassung).expect("Fassung");
-            assert!(vorher.is_none_or(|v| f < v), "die Abschnitte stehen nicht absteigend: {}", e.fassung);
-            vorher = Some(f);
-        }
+        assert!(!v.eintraege[0].text.is_empty(), "der Abschnitt sagt nicht, was sich geaendert hat");
+        assert_eq!(
+            v.eintraege.iter().map(|e| e.fassung.as_str()).collect::<Vec<_>>(),
+            [v.fassung.to_string()],
+            "VERSION.md traegt nur den Abschnitt der aktuellen Fassung; die alten werden beim Heben entfernt"
+        );
         assert!(adresse_dort().ends_with("/main/VERSION.md"));
     }
 

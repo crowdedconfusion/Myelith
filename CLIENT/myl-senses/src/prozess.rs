@@ -171,6 +171,37 @@ pub fn laufen(befehl: &mut Command, frist_s: u64, grenze: usize) -> Result<Ausga
     laufen_mit_eingabe(befehl, std::process::Stdio::null(), frist_s, grenze)
 }
 
+/// Startet `befehl` und wiederholt den Start kurz, solange das System meldet,
+/// die Programmdatei sei gerade zum Schreiben offen (`ETXTBSY`).
+///
+/// 📌 **Fund 560** (CI, Linux, 2026-10-17): Ein Test schreibt ein Skript und
+/// startet es; ein anderer Test startet im selben Moment in einem anderen
+/// Faden einen Prozess. Zwischen dessen `fork` und `exec` haelt das Kind
+/// eine Kopie des Schreibzugriffs auf das eben geschriebene Skript, und der
+/// Start scheitert mit „Text file busy“, obwohl die Datei laengst fertig
+/// ist. Dasselbe trifft ein Programm, das ein frisch installiertes Werkzeug
+/// startet, waehrend ein anderer Faden etwas anderes startet. Der Zustand
+/// vergeht mit dem `exec` des Kindes, also nach Millisekunden; gewartet wird
+/// hoechstens zwei Sekunden, danach kommt der Fehler, wie er ist.
+pub fn starten(befehl: &mut Command) -> std::io::Result<Child> {
+    use std::time::{Duration, Instant};
+    let bis = Instant::now() + Duration::from_secs(2);
+    loop {
+        match befehl.spawn() {
+            Err(f) if programm_beschaeftigt(&f) && Instant::now() < bis => {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            ergebnis => return ergebnis,
+        }
+    }
+}
+
+/// `ETXTBSY` traegt unter Linux und macOS die Nummer 26; unter Windows
+/// bedeutet dieselbe Nummer etwas anderes, und dort gibt es den Fall nicht.
+fn programm_beschaeftigt(f: &std::io::Error) -> bool {
+    cfg!(unix) && f.raw_os_error() == Some(26)
+}
+
 /// **Derselbe Lauf, aber mit etwas an `stdin`.**
 ///
 /// ⚑ **Gebraucht von den Sprechprogrammen**, die ihren Text von der
@@ -188,11 +219,7 @@ pub fn laufen_mit_eingabe(
     use std::sync::mpsc;
     use std::time::{Duration, Instant};
 
-    let mut kind = befehl
-        .stdin(eingabe)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
+    let mut kind = starten(befehl.stdin(eingabe).stdout(Stdio::piped()).stderr(Stdio::piped()))
         .map_err(|f| format!("liess sich nicht starten: {f}"))?;
     let aus_roehre = kind.stdout.take().expect("stdout");
     let err_roehre = kind.stderr.take().expect("stderr");
@@ -353,6 +380,33 @@ pub(crate) fn probeskript(unix: &str, windows: &str) -> Command {
 #[cfg(test)]
 mod proben {
     use super::*;
+
+    /// 📌 **Fund 560: ein Skript, das noch zum Schreiben offen ist, startet,
+    /// sobald es zu ist.** Unter Linux laesst sich der Zustand gezielt
+    /// herstellen: Wer die Datei offen haelt, macht jeden Start zu
+    /// „Text file busy“. Ein Faden schliesst sie nach 100 ms; `starten`
+    /// muss dann durchkommen, statt beim ersten Versuch aufzugeben.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn ein_eben_geschriebenes_skript_startet_trotzdem() {
+        use std::io::Write;
+        use std::os::unix::fs::PermissionsExt;
+        let d = tempfile::tempdir().expect("Verzeichnis");
+        let skript = d.path().join("probe");
+        let mut offen = std::fs::File::create(&skript).expect("anlegen");
+        offen.write_all(b"#!/bin/sh\necho da\n").expect("schreiben");
+        std::fs::set_permissions(&skript, std::fs::Permissions::from_mode(0o755)).expect("Rechte");
+        let f = Command::new(&skript).spawn().expect_err("offen zum Schreiben startet nicht");
+        assert!(programm_beschaeftigt(&f), "{f:?}");
+        let schliessen = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            drop(offen);
+        });
+        let mut b = Command::new(&skript);
+        let kind = starten(b.stdout(std::process::Stdio::piped())).expect("startet nach dem Schliessen");
+        assert_eq!(kind.wait_with_output().expect("Ausgabe").stdout, b"da\n");
+        schliessen.join().expect("Faden");
+    }
 
     #[test]
     fn die_beiden_roehren_bleiben_getrennt() {

@@ -683,7 +683,7 @@ dependencies = [
 
 [[package]]
 name = "myl-client"
-version = "0.106.0"
+version = "0.106.1"
 dependencies = [
  "integer-llm-runtime",
  "libc",
@@ -734,7 +734,7 @@ dependencies = [
 
 [[package]]
 name = "myl-senses"
-version = "0.13.2"
+version = "0.13.3"
 
 [[package]]
 name = "myl-store"

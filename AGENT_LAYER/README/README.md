@@ -1,6 +1,6 @@
 # agent-layer
 
-> **Version:** 0.49.0 (`myl-agent` 0.7.1, `myl-local-agent` 0.40.0)
+> **Version:** 0.49.1 (`myl-agent` 0.7.1, `myl-local-agent` 0.40.0)
 > **Datum:** 2026-10-17
 > **Status:** Manifeste, Herkunftsstufe, Registratur, der
 > **Session-Kontrakt** mit Durchsetzung im Ledger, der **Plan** und seit
@@ -68,6 +68,27 @@ umbenannt, weil er in jedem `use` steht.
 - `src/kette.rs` — dass er es auch so getan hat, und wann er aufhört.
 
 ## Changelog
+
+### v0.49.1 – 2026-10-17 (die Vorlage der Werkzeugansage kommt auch unter Windows mit LF an; Fund 561; keine Kiste geändert)
+
+Anlass: Im CI-Job „Klient und Agent (windows-latest)“ fielen zwei Proben in
+`tests/werkzeugansage.rs`: Die erzeugte Ansage hatte LF, die Vorlage
+`tests/vorlagen/qwen3-werkzeugansage.txt` kam mit CRLF an.
+
+- **Fund 561:** Git for Windows checkt Textdateien ohne Regel mit CRLF aus.
+  Die Proben vergleichen die Vorlage zeichengleich mit der erzeugten
+  Ansage, und das ist gewollt (das Modell wurde auf genau diese Zeichen
+  geschliffen). Unter Wine fiel es nicht auf, weil dort die Proben auf einem
+  Auschecken von macOS liefen.
+- **Behebung in `.gitattributes`** (Wurzel): `* text=auto eol=lf` als
+  Grundregel, die Regeln für Stapeldateien (CRLF) gehen vor. Damit gilt LF
+  für jede Textdatei auf jedem System; betroffen wären sonst auch die
+  Proben der Oberfläche, die in den Quellen nach Mustern mit Zeilenumbruch
+  suchen. Im Index lag keine Datei mit CRLF, es wird also nichts
+  umgeschrieben.
+- **Beleg:** ein Klon mit `core.autocrlf=true` (wie auf dem Windows-Läufer):
+  Vorlage und `ui/app.js` vorher mit CRLF, mit der neuen Regel mit LF. Die
+  Bestätigung auf Windows bringt der nächste CI-Lauf.
 
 ### v0.49.0 – 2026-10-17 (das Aktionsprotokoll entfällt; der Notaus bleibt eine eigene Hülle; `myl-local-agent` 0.40.0)
 

@@ -128,12 +128,13 @@ pub fn starten(zeug: &Aufnahmezeug) -> Result<Aufnahme, String> {
             befehl.arg(&ziel);
         }
     }
-    let mut kind = befehl
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .map_err(|f| format!("die Aufnahme liess sich nicht starten ({}): {f}", zeug.programm.display()))?;
+    let mut kind = crate::prozess::starten(
+        befehl
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped()),
+    )
+    .map_err(|f| format!("die Aufnahme liess sich nicht starten ({}): {f}", zeug.programm.display()))?;
 
     // ⚑ **Und ein Faden liest die Meldungen mit**, aus demselben Grund
     // und damit der Fehlerfall etwas zu sagen hat.
