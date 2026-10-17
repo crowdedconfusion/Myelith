@@ -95,23 +95,36 @@ fn jeder_befehl_steht_genau_einmal_im_quelltext() {
     );
 }
 
-/// **Hier wird nichts gebaut.**
+/// **Gebaut wird nur ueber `myl_client::bezug`, nach Platzpruefung und
+/// ausdruecklicher Bestaetigung.**
 ///
-/// ⚠️ Ein Artefakt zu holen und zu kalibrieren dauert Minuten bis
-/// Stunden und braucht Gigabyte. Das gehoert nicht hinter eine Zeile,
-/// die jemand tippt, weil er eine Frage stellen wollte: **Das Fenster
-/// hat dafuer einen Balken und einen Abbruch, eine Konsolenzeile hat
-/// beides nicht.**
+/// 📌 **Hier stand bis zum 2026-10-16 „Hier wird nichts gebaut"**: Ein
+/// Artefakt zu holen und zu kalibrieren dauert Minuten bis Stunden, und
+/// eine Konsolenzeile hatte weder Balken noch Abbruch. Der Projektinhaber
+/// hat es anders festgelegt: **alles ermoeglichen, aber immer ausdruecklich
+/// bestaetigen lassen, wie viel Speicher waehrend des Vorgangs gebraucht
+/// wird, und ohne diesen Platz keine Freigabe.** Die Konsole zeigt jede
+/// Zeile des Laufs; abgebrochen wird mit Strg-C, und ein neuer Lauf setzt
+/// fort, was liegen geblieben ist (Download, Mitschnitt).
+///
+/// ⚑ Was bleibt: Die Konsole baut **nicht selbst** (kein eigener Prozess,
+/// kein `hf`), sondern ueber dieselbe Stelle wie das Fenster, und die
+/// Platzpruefung steht vor der Frage, die Frage hat keine Vorgabe.
 #[test]
-fn hier_wird_nichts_gebaut() {
+fn gebaut_wird_nur_ueber_den_bezug_nach_bestaetigung() {
     let s = quelle("sitzung.rs");
     for verboten in ["artefakt_bauen", "hf download", "Command::new"] {
-        assert!(!s.contains(verboten), "der Konsolenclient ruft `{verboten}`");
+        assert!(!s.contains(verboten), "der Konsolenclient ruft `{verboten}` selbst");
     }
-    assert!(
-        s.contains("myl-oberflaeche"),
-        "er sagt nicht, wo ein Artefakt herkommt"
-    );
+    let rumpf = s
+        .split_once("fn holen_und_bauen")
+        .and_then(|(_, rest)| rest.split_once("\n}\n"))
+        .map(|(r, _)| r)
+        .expect("die Funktion, die baut, heisst nicht mehr so");
+    let pruefen = rumpf.find("platz_pruefen").expect("keine Platzpruefung");
+    let frage = rumpf.find("janein::fragen(\"So holen und bauen?\", None").expect("keine Frage ohne Vorgabe");
+    let bauen = rumpf.find("bezug::ausfuehren").expect("gebaut wird nicht ueber den Bezug");
+    assert!(pruefen < frage && frage < bauen, "Reihenfolge: erst Platz, dann Frage, dann Bau");
 }
 
 /// **Die Kopie ist als Kopie gekennzeichnet, und nur sie.**

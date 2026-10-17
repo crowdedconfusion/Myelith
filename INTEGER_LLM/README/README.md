@@ -1,7 +1,7 @@
 # integer-llm
 
-> **Version:** 0.126.0 (θ_v 0.22.0; kernels 0.84.0, runtime 0.93.0, pipeline 0.15.1)
-> **Datum:** 2026-10-14
+> **Version:** 0.135.0 (θ_v 0.22.0; kernels 0.87.0, runtime 0.97.0, pipeline 0.15.1)
+> **Datum:** 2026-10-17
 > **Status:** ⚠️ **Das Akzeptanzkriterium ruht auf einer zu kleinen
 > Stichprobe.** Gemessen wurde bisher ueber **4 Sequenzen, 435
 > Positionen**; eine Messung ueber **32 Sequenzen, 3558 Positionen**
@@ -648,6 +648,498 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
   volle Paritätstests nur auf GPU-Runnern (nightly oder PR-basiert)
 
 ## Changelog
+
+### v0.135.0 (2026-10-17): Aus dem kalten Klon bauen, auch das 35B in vier Bit: Python-Umgebung, Kalibriertext, Bauskript, Register (Funde 552, 553)
+
+Festlegung des Projektinhabers: „Alles soll vorher in einen kalten repo
+Klon korrekt gebaut werden inkl. der Python Umgebung. Das int4
+selbstverständlich mit in den Katalog“.
+
+- **`scripts/python_einrichten.sh`** (neu): legt `calibrate/.venv` mit den
+  festen Fassungen aus **`calibrate/requirements-fest.txt`** (neu, 55
+  Pakete, aufgenommen aus der Umgebung, mit der gebaut und gemessen ist)
+  an; mit `uv` samt Python 3.12, sonst mit einem Python ab 3.10. Eine
+  halbe Umgebung wird neu angelegt, eine vollstaendige nicht angefasst.
+  Feste Fassungen, weil der Gitterbau in torch rechnet und eine andere
+  Fassung andere Gewichte ergeben kann.
+- **`scripts/build_vierbit.sh [quelle] [ziel]`** (neu): der Weg aus BP-26
+  als ein Aufruf: Platz pruefen (Katalog), die Quelle gegen ihren
+  Manifest-Hash, Werkzeuge ohne Netz bauen, Kalibriertext, Mitschnitt
+  (16 384 Token; ein liegender Mitschnitt eines abgebrochenen Laufs wird
+  weiter benutzt), Gitterbau `int4ganz --schrumpf 8192` in drei Teilen zu
+  vier Faeden (bei 40 Ebenen 0-13, 14-26, 27-39 wie der gemessene Bau),
+  kein Wert geklemmt, Abschluss, Packen, und ⛔️ **das Ergebnis gegen den
+  Manifest-Hash im Register**. Weicht es ab, bleibt es als
+  `<ziel>-abweichend` liegen, und das Skript endet mit FEHLER: ein anderes
+  Artefakt ist ein anderes Modell. Danach werden Behaelter und Mitschnitt
+  geloescht. `VIERBIT_PROBE=1` ist der kurze Lauf davor: nur die letzte
+  Ebene, gepackt, ohne Hashpruefung, der Mitschnitt bleibt fuer den langen
+  Lauf liegen. 📌 Zwei Fehler hat erst der kalte Klon gezeigt: Die
+  Werkzeuge baute das Skript mit dem `~/.cargo` der Maschine statt mit
+  dem Vorrat des Repositoriums (wie das Installationsskript), und es las
+  die Ebenenzahl als `num_hidden_layers`, das Artefakt nennt sie
+  `num_layers`. ⚠️ Der zweite brach erst nach dem Mitschnitt ab, weil der
+  kurze Lauf vor dem langen fehlte; dafuer gibt es jetzt den Probelauf.
+- **Belegt im kalten Klon:** Probelauf (Ebene 39, 1536/1536 Dateien
+  bitgleich), dann der volle Lauf ueber die Konsole in 106 Minuten:
+  „bitgleich zum gemessenen Artefakt (Manifest b372bfc5…)“, Digest
+  a2a320f6… wie im Register, geladen in 9,1 s, „Wie viel ist 17 mal 23?“
+  ergab 391.
+- ⚑ **Der Gitterbau ist deterministisch**, auf dieser Maschine belegt:
+  Ebene 39 neu gebaut und gepackt, alle 1536 Dateien Byte fuer Byte gleich
+  denen des gemessenen Artefakts. Ueber Maschinen hinweg ist das nicht
+  zugesagt (andere Bibliotheken koennen Summen anders ordnen); dafuer die
+  Pruefung gegen den Hash.
+- **Kalibriertext** (`calibrate/src/kalibriertext.py`, neu): Der Text, mit
+  dem das int4 kalibriert ist, lag nur in einem Arbeitsordner. Die eigenen
+  Teile (Quelltext, Glossar, Lerntext) sind in
+  `calibrate/daten/kalibrierteile.json` eingefroren, der WikiText-Teil
+  kommt aus dem Trainingssplit, der bei Bedarf geholt und gegen seine
+  Pruefsumme geprueft wird; das Ergebnis wird gegen die Pruefsumme des
+  verwendeten Texts geprueft. Gegenprobe: Ein frisch geholter
+  Trainingssplit hat genau die festgehaltene Pruefsumme, und der Text
+  entsteht Byte fuer Byte gleich.
+- ⛔️ **Fund 552: Das Skalenpaket des 35B war veraltet.** Seit INTEGER_LLM
+  v0.93.0 (Funde 453, 454) haben die Drehtabellen des 35B 262 144
+  Positionen statt 40 960; das Artefakt war danach neu gebaut, das Paket
+  nicht. Ein Bau aus einem frischen Klon haette still die kurzen Tabellen
+  bekommen, ein Sechstel des Kontexts, und der Digest des gemessenen
+  Artefakts stimmte nicht mit dem Register (`theta_v.json` verschieden,
+  die Gewichte gleich). Das Paket ist aus dem gemessenen Artefakt erneuert
+  (`cos.lut.bin` und `sin.lut.bin` je 16 MB statt 2,6 MB), der Digest ist
+  jetzt `e03f70c7…`. Alle sechs Artefakte dieser Maschine stimmen mit dem
+  Register.
+- **Register fuer abgeleitete Artefakte:** `tools/skalenpaket_bauen.py
+  --abgeleitet-von <quelle> <modell>` legt ein Paket an, das nur das eigene
+  `theta_v.json` haelt und die Quelle nennt; das Werkzeug prueft, dass
+  Skalen und Tabellen die der Quelle sind. So steht
+  `myelith-35b-a3b-int4` im Register (Digest `a2a320f6…`, Manifest
+  `b372bfc5…`) und im Katalog (`bauweg: vierbit`, `quelle`,
+  `zwischen_bytes`, Status `erprobt`).
+- ⛔️ **Fund 553: Aus einem kalten Klon liess sich kein int8-Artefakt
+  bauen.** Die Kalibrierung verlangt den WikiText-2-Testsplit, der nicht
+  im Repositorium liegt, und nannte als Abhilfe
+  `python3 BENCHMARKS/Inferenz/wikitext_common.py`; die Datei hatte keinen
+  Hauptteil, der Aufruf tat nichts. Gefunden im kalten Klon. Jetzt holt
+  `wikitext_common.py` den Split, prueft ihn gegen seine Pruefsumme
+  (`aca2f467…`, ein frisch geholter Split trifft sie) und schreibt nur
+  dann; `build_artifacts.sh` ruft das selbst, wenn die Datei fehlt, und die
+  Meldung nennt das Python der Umgebung.
+- **Antworten des int4** (`myl frage`, gierig, ohne Denkmodus): Canberra mit
+  Begruendung, eine Fibonacci-Funktion in Python, 9:40 plus 2 h 35 min
+  gleich 12:15. Dazu aus v0.133.0: Perplexitaet +0,06 % zum int8, GSM8K
+  41/50 wie das int8.
+
+### v0.134.0 (2026-10-16): Vier Bit auf Metal, auf den Steckkarten und auf x86 mit SSE2 (kernels 0.87.0)
+
+Auftrag des Projektinhabers: „Dann lass uns die anderen Kerne angehen.“
+Jeder neue Weg rechnet dieselbe ganze Zahl wie die CPU und ist gegen sie
+geprüft, bevor er rechnen darf.
+
+- ⚑ **Die Zerlegung für die Rechenwerke:** je Gruppe
+  `sum (a q + b) x = a * sum q x + b * sum x`. Die Codes q (0 bis 15)
+  passen in int8, auch wo das Format Werte bis 255 * 15 + 127 zulässt, die
+  in kein int8 passen; ein bloßes Entpacken nach int8 wäre dort falsch.
+- **Metal** (`w8a16.metal`, `geraet.rs`): drei neue Shader
+  (`entpacken_vierbit`, `gruppensummen`, `gruppenprodukt_vierbit`) und
+  `nachlauf_breit` wie beim ternären Weg. `metal::stapel_vierbit` nimmt
+  einen Stapel oder viele, **alle in einem Befehlspuffer**; die
+  Arbeitspuffer teilen sich die Aufträge nacheinander, so wächst der
+  Speicher mit der größten Matrix, nicht mit der Zahl der Experten. Die
+  Weiche schickt vier Bit auch im Bündel an Metal, wenn alle Aufträge vier
+  Bit sind (gemischte und ternäre Bündel wie bisher an die Karten oder die
+  CPU). Selbstprüfung um vier Fälle erweitert (Code 15, Schritt 255 mit
+  Versatz −128, Schritt 0, Ränder von x), einzeln und zusammen; Probe
+  `vierbit_rechnet_wie_die_cpu` (direkt, über die Weiche einzeln und
+  viele, mit Zähler). Gegenprobe: Ein Shader, der den Versatz ohne
+  Vorzeichen liest, lässt die Selbstprüfung scheitern („GPU −300 gegen
+  CPU −262“), und der Prozess rechnet auf der CPU.
+- **Am 35B** (`myelith-35b-a3b-int4`, `bench_probe`, 32 Token, Prompt mit
+  416 Token): `decode_hash` mit und ohne Metal gleich (`3645fc4d588be101`).
+  Vorbereitung `cpu-simd` 7,41 / 7,55 s, mit Metal 5,22 / 5,07 s (−31 %).
+  ⚠️ **Den Gewinn trägt vor allem die Aufmerksamkeit in int8**, die Metal
+  schon vorher rechnete: Ein Messbau mit abgeschaltetem Vierbitzweig kam
+  auf 5,40 / 5,04 s, mit ihm 5,15 / 4,78 s, also rund 5 %. Je Experte
+  kommen hier nur rund 13 Eingaben an, und NEON mit `sdot` ist auf dieser
+  Maschine schon schnell. Beim Prompt mit 12 Token rechnet die GPU nicht.
+- **Steckkarten** (`kerne.cu`): neuer Kern `myl_vierbit` für NVRTC und
+  hiprtc, je Gruppe `teil * a + xsumme * b` in int64, der Versatz als i8
+  von Hand (die Umwandlung über 127 ist vor C++20 nicht festgelegt).
+  `Gewichte::Vierbit`, `karten::stapel_vierbit`, Hochladen der Codes und
+  Gitter, Kern im Treiber (`Kern::Vierbit`), nachgebildete Karte,
+  Attrappe; die Selbstprüfung jeder Karte und der Nachbau (`kerne.cu` als
+  C++ auf der CPU) haben drei Vierbitfälle. Gegenproben am Nachbau: ohne
+  Versatz rot, mit vertauschten Halbbytes rot („Karte −104 gegen CPU −22“),
+  mit falschem Vorzeichen des Versatzes rot (−23 gegen −22). ⚠️ **Auf einer
+  echten Karte ungeprüft**; dort prüft sich jede Karte selbst, bevor sie
+  rechnet, und fällt bei einer Abweichung allein heraus.
+- **x86_64 mit SSE2** (`vierbit::sse2`): je acht Codes als i16 mal acht
+  Werte von x mit `_mm_madd_epi16`, exakt in i32, ohne Zerlegung der
+  Eingabe und ohne Laufzeittest (SSE2 hat jede x86_64-Maschine). Unter
+  `cpu-simd` nimmt `dot::vierbit_zeile` diese Fassung, mit
+  `skalar_erzwingen` die skalare. Probe `die_sse2_fassung_ist_die_skalare`
+  (Ränder, Schritt 255 und 0); als x86_64-Programm unter Rosetta gefahren:
+  393 Proben mit `cpu-simd`, 384 ohne, beide Vierbitvektoren bestehen.
+  Gegenprobe: zwei vertauschte Codehälften rot. Unter Rosetta 1,5 ms gegen
+  15 ms skalar für 512 x 2048 (zwanzigmal). ⚑ **AVX2 bleibt offen:** Rosetta
+  kennt kein AVX, ein AVX2-Kern ließe sich hier nur übersetzen, nicht
+  prüfen.
+- **Konformität:** `linear_vierbit` rechnet zusätzlich als Bündel über die
+  Weiche, und `run.sh` lehnt den Vektor unter `metal`, `cuda` und `rocm`
+  ab, wenn das Rechenwerk dabei nicht gerechnet hat (`golden_runner` gibt
+  die Zähler aus; Gegenprobe mit `MYL_METAL_AB=0`: Zähler 0). 55/55 gegen
+  `reference`, `cpu-simd` und `metal`; die Abdrücke des Testclients
+  bleiben (`9102be0890358ceb`, gesamt `cb696efd3817e575`).
+- Geprüft: `cargo test` der Kerne ohne Features 384, `cpu-simd` 393,
+  `metal,cpu-simd` 399, `cuda,rocm` 401; runtime 175, Testclient 286;
+  Clippy mit `-D warnings` über alle Feature-Kombinationen, auch für Linux
+  und Windows; Mindestfassung 1.85.
+
+### v0.133.0 (2026-10-16): Das 35B mit Experten in vier Bit, gepackt und bitgleich abgenommen, ohne Training (kernels 0.86.0, runtime 0.97.0)
+
+Auftrag des Projektinhabers: „Ja gerne lass uns nur das effizienteste int4
+behalten und ready machen“. Gewählt: int4 in Gruppen von 128 mit
+Schrumpfen, gepackt auf 4,125 Bit je Expertengewicht. Zahlen in
+`BENCHMARKS/Inferenz/results/gittervergleich_myelith-35b-a3b.md` (Abschnitt 7).
+
+- **Neue Speicherform `vierbit_g128`** (`integer_llm_kernels::vierbit`):
+  Je Gewicht ein Code q von 0 bis 15, je Gruppe von 128 ein Schritt a
+  (u8) und ein Versatz b (i8); der Wert ist a q + b. Je Gruppe 64 Codebytes
+  und 2 Gitterbytes. Byte j eines Blocks von 16 trägt im unteren Halbbyte
+  Gewicht j und im oberen Gewicht 16 + j. ⚑ **Eine Speicherform, keine neue
+  Rechnung:** Jede Zeile ergibt dieselbe ganze Zahl wie das ungepackte
+  int8-Gewicht, θ_v bleibt bei 0.22.0, wie beim ternären Format.
+- **Kerne:** `Vierbitmatrix` (`zeile_mal`, `zeile_mal_mit`,
+  `zeile_mal_viele`, `zeile_entpacken`), `zeile_skalar`, unter `cpu-simd`
+  auf aarch64 NEON mit `sdot`/`udot` (Codes und Eingabe in Bytehälften,
+  dieselbe Zerlegung wie beim ternären Kern) und `vmlal` als Rückfall.
+  `packen` macht aus int8 die Codes: Versatz der kleinste Wert der Gruppe,
+  Schritt der größte gemeinsame Teiler der Abstände, Schritt 0 bei einer
+  Gruppe aus einem Wert; eine Gruppe mit mehr als 16 Stufen ist ein Fehler
+  („nicht vierbittig“ samt Zahl der Stufen). `dot::vierbit_zeile`,
+  `dot::vierbit_zeile_viele`; `Gewichtsmatrix::Vierbit` mit
+  `ist_gepackt()`, und `mlp` kachelt gepackte Matrizen wie die ternären.
+  ⚠️ Vier Bit rechnen vorerst nur auf der CPU: `ressourcen` schickt sie nie
+  an Metal, CUDA oder ROCm; auf x86 rechnet der skalare Weg (AVX2 offen).
+  Neun Proben in `vierbit.rs`.
+- **Lader** (`loader.rs`): dtype `vierbit_g128` mit `gitter_file` und
+  `gitter_hash`, beide Dateien gegen ihre SHA-256 geprüft; zulässig an
+  denselben Stellen wie ternär (`vierbit_zulaessig`: geroutete Experten und
+  Projektionen dichter Ebenen, nie der Kopf). `Gewichtsdaten::Vierbit`,
+  `QTensor::ist_vierbit()`; wer einen Vierbittensor als int8 liest, bricht
+  ab, statt falsch zu rechnen. Der Rückweg des Trainings entpackt
+  (`master_aus_gewicht`). Proben: `ein_vierbittensor_laedt_und_rechnet_wie_int8`,
+  `vierbit_ist_nur_an_der_liste_zulaessig_und_geprueft`.
+- **Packer `vierbit_packen <quelle> <ziel> [--faeden n]`** (neu): packt
+  jeden zulässigen int8-Tensor, dessen Gruppen alle vierbittig sind, und
+  lässt alles andere unverändert (kein Runden, kein Nähern); verlinkt die
+  übrigen Dateien hart, die Prüfmarke nie, und schreibt Manifest und
+  `theta_v.json` neu. Am 35B in 30 s: 30 720 Tensoren gepackt, 130
+  Aufmerksamkeitsmatrizen bleiben int8; Expertengewichte 16,61 GB statt
+  32,21 GB, das Artefakt 19 GB statt 33.
+- **Neues Gitter `int4ganz`** in `calibrate/src/gittervergleich.py`
+  (`gitter_int(bits, ganz=True)`): Schritt und Versatz ganzzahlig, je
+  Faktor der Schritt abgerundet und aufgerundet, Versatz auf −127 bis
+  127 − 15a begrenzt. Damit ist der int8-Behälter genau das, was der Packer
+  verlustfrei packt. Je Matrix +4 % Fehler gegen das freie int4, aber
+  **kein einziger Wert geklemmt** (das freie int4 mit Schrumpfen klemmte
+  15 671 Werte auf ±127). Probe `test_int4ganz_packt_jede_gruppe` mit
+  Gegenprobe (das freie int4, gerundet, packt in 60 von 64 Gruppen nicht).
+- **Das Artefakt `myelith-35b-a3b-int4`** (lokal, nicht versioniert): Bau
+  `int4ganz --schrumpf 8192` in drei Teilen (1 h 45 min), alle 251 658 240
+  Gruppen vierbittig, gepackt. Perplexität auf 48 Folgen (7173 Positionen)
+  **10,3467 gegen 10,3410 des int8, +0,06 %** (int4 mit Schrumpfen bisher
+  +0,54 %; beide Gegenmessungen am selben Tag mit demselben Programm genau
+  wiederholt). GSM8K (50): **41/50 wie das int8**, in 866 s statt rund 1400 s im Behälter. ⚠️ Warum das ganzzahlige Gitter
+  trotz größerem Fehler je Matrix besser abschneidet, ist nicht belegt;
+  naheliegend ist das Klemmen, denn die geklemmten Werte sind die größten
+  Gewichte.
+- **Bitgleich abgenommen:** `artefaktvergleich.py 4 128 <behälter> <gepackt> --bitgleich`
+  IDENTISCH 439/439 Zeilen; der ignorierte Test
+  `runtime/tests/vierbit.rs` (`gepackt_rechnet_dieselben_logits`, Stapelweg
+  und Decode) grün in 12 s; `decode_hash` beider gleich. Gegenprobe int8
+  gegen gepackt: VERSCHIEDEN, 0/64. Der Test prüft außerdem einen Abdruck
+  (SHA-256) der Logits des gepackten Artefakts, aufgenommen bei grünem
+  Vergleich; so belegt er die Gleichheit auch nach dem Löschen des Behälters
+  fort.
+- **Tempo** (`bench_probe`, 64 Token, im Wechsel int8, int4, int4, int8):
+  Decode int8 18,8 und 17,0 Tok/s, int4 23,5 und 21,3 Tok/s, also rund
+  **+25 %**; Prefill 2,16 s gegen 1,42 s. Perplexität über 48 Folgen 156 s
+  statt 304 s. Seitenfehler je Lauf 1,16 Mio. statt 2,6 Mio.: 19 GB liegen
+  auf 24 GiB fast ganz im Speicher, 33 GB nicht.
+- **Konformität:** Gruppe `vierbit` mit zwei unabhängig erzeugten Vektoren
+  (`conformance/vierbit_erzeugen.py`, eigene Packung und Rundung ohne eine
+  Zeile aus den Kernen): `linear_vierbit` (auch Schritt 255 und Versatz
+  −128, Schritt 0, Code 15) und `packen_vierbit`. `golden_runner` kennt das
+  Level `vierbit`, `run.sh` fährt es mit. **55 Vektoren**, 55/55 gegen
+  `reference` und `cpu-simd`; ein verfälschter Vektor fällt durch.
+- **Gelöscht** (lokal, mit Zusage): die Behälter `-zweiebenen`,
+  `-zweiebenen-gemischt-50`, das alte `-int4`, `-int4-g32` und die vier
+  Mischungen nach Häufigkeit, nach der Abnahme auch der Behälter
+  `-int4ganz` und `-int4-schrumpf`. Es bleibt ein int4: das gepackte
+  `myelith-35b-a3b-int4`.
+- `tests/audit/test_no_float.py` führt `kernels/src/vierbit.rs` im
+  Heißpfad; ohne den Eintrag meldete die Probe die Datei als nicht gelistet.
+- Offen: Vier-Bit-Kerne für Metal, CUDA und ROCm, AVX2 auf x86; die Wahl
+  des Artefakts in der Oberfläche und im Client.
+
+### v0.132.0 (2026-10-16): int4 bleibt ohne Training unter 1 %, Schrumpfen für seltene Experten, die Probe mit 48 Folgen (keine Kiste berührt)
+
+Auftrag des Projektinhabers: „Lass uns gerne die Kalibrierung fahren und
+danach entscheiden. Lass uns die harte Grenze bei ternären Modellen
+vermerken und dies später angehen.“ Zahlen in
+`BENCHMARKS/Inferenz/results/gittervergleich_myelith-35b-a3b.md` (Abschnitt 6).
+
+- **`gittervergleich.py bauen --schrumpf n0`** (neu, Vorgabe 0 wie bisher):
+  H = XᵀX + n₀ Σ mit der Lage der Ebene. Für gate und up ist Σ die
+  Kovarianz aller x der Ebene, für down die Kovarianz des **eigenen** h,
+  nachgerechnet auf `LAGE_TOKEN` = 8192 Token aus x und den echten
+  Gewichten von gate und up (`h_nachrechnen`; die beiden Shifts je Ebene
+  sucht `h_skala` und bricht mit FEHLER ab, wenn der Rest über 0,01 liegt;
+  am 35B unter 0,0005). Neu auch `--gruppe G` (Vorgabe 128); `bauen` setzt
+  die Gruppe danach zurück.
+- **`gittervergleich.py seltenheit`** (neu) stellt seltene Experten an
+  häufigen nach: H nur aus k Lerntoken, Fehler auf den vielen Haltetoken.
+  Ohne Schrumpfen rundet GPTQ mit 256 Token kaum besser als mit 4; mit
+  n₀ = 8192 erreicht jede Lernmenge den Wert aller Token. Ein Mitschnitt
+  über 65 536 Token brachte je Matrix nichts darüber hinaus und wurde nicht
+  verbaut.
+- **Gruppengröße je Matrix** (int4, Schrumpfen): g128 0,0045, g64 0,0038,
+  g32 0,0029; int5 g128 0,0011. Sortieren nach diag(H) spart nur 2 bis 3 %.
+- **Perplexität auf 48 Folgen** (7173 Positionen) gegen int8 10,3410:
+  int4 g128 **+0,71 %**, mit Schrumpfen **+0,54 %**, g32 mit Schrumpfen
+  **+0,43 %**, zwei Trit-Ebenen +2,84 %. GSM8K (50): int4 mit Schrumpfen
+  40/50, g32 42/50 (int8 41, int4 43, zwei Ebenen 41). Bei 50 Aufgaben ist ein
+  Abstand von zwei bis drei Rauschen. ⚑ **Damit bleibt
+  int4 ohne Training innerhalb von 1 % des int8**, bei 4,13 Bit je
+  Expertengewicht statt 8.
+- ⚠️ **Die Probe mit 16 Folgen (2150 Positionen) war für Abstände unter
+  2 % zu klein.** Auf ihr standen dieselben Artefakte bei +2,08, +1,58 und
+  +1,68 %, und g32 schien trotz 35 % weniger Fehler je Matrix nichts zu
+  bringen. Erst mit 48 Folgen stimmt die Reihenfolge mit dem Fehler je
+  Matrix überein. Die Zahlen aus v0.130.0 und v0.131.0 bleiben als
+  Messungen auf der kleinen Probe stehen.
+- 📌 **Berichtigung zu v0.131.0:** Die „seltenen“ 8841 Experten tragen auf
+  den Mitschnitten 61,6 % bzw. 65,2 % der Aufrufe, nicht die Hälfte; die
+  Aussage „ein seltener Experte kostet je Aufruf doppelt so viel“ ist nicht
+  belegt. Die Mischungen mit Schrumpfen (16 Folgen): häufige int4 +0,63 %,
+  seltene +1,22 %.
+- **Vermerkt:** Ternäre Experten heilen ohne Training nicht (Schranke auf
+  Haltetoken bei 1,58 Bit rund 0,074 je Matrix); vertagt, bis stärkere
+  Hardware für Training da ist, samt Abschätzung des Aufwands.
+- **Proben:** `test_schrumpfen_hilft_wenigen_token` (0,0060 auf 0,0027;
+  n₀ = 0 ist genau die alte Dämpfung), `test_h_skala_findet_die_shifts`
+  (mit falschem h abgewiesen), und `test_bauen_schreibt_nie_in_die_quelle`
+  prüft `--gruppe 32` (höchstens 16 Stufen je 32er Gruppe) und dass die
+  Gruppe danach wieder 128 ist (mit der inneren Funktion statt der Hülle
+  rot).
+- Lokale Artefakte (nicht versioniert): `myelith-35b-a3b-int4-schrumpf`,
+  `-int4-g32`, `-int4-schrumpf-haeufig-500`, `-int4-schrumpf-selten-500`.
+
+### v0.131.0 (2026-10-16): int4 statt zwei Ebenen, die seltenen Experten als Hebel, die Prüfmarke schreibt nie durch einen Link (runtime 0.96.1; Fund 551)
+
+Auftrag des Projektinhabers: „Haben wir keine Chance, eine
+perplexitätswahrende Umwandlung komplett ohne Training umzusetzen? …
+Lohnt sich das Format mit zwei ternären Ebenen überhaupt?“ Zahlen in
+`BENCHMARKS/Inferenz/results/gittervergleich_myelith-35b-a3b.md` (Abschnitt 5).
+
+- **`gittervergleich.py schranke`** (neu): was bei R Bit je Gewicht
+  bestenfalls erreichbar ist, mit idealer Transformationscodierung in der
+  Basis der Eingänge, **auf Haltetoken**. Bei 1,58 Bit gate 0,053, up 0,074,
+  down 0,096 (heute erreicht: 0,137); bei 2,06 Bit 0,027 / 0,038 / 0,050.
+  ⚑ **Bei der Größe des ternären Formats gibt es keine perplexitätswahrende
+  Umwandlung ohne Training, auch nicht mit idealer Codierung.** 📌 Im
+  Eigenraum des einzelnen Experten lag derselbe Wert auf den Lerntoken
+  fünfzigmal tiefer (0,002 bis 0,015) und auf den Haltetoken nicht besser
+  als die Basis der Ebene: Ein Experte sieht nur einige hundert Token.
+  Probe `test_schranke_ohne_buendelung_ist_shannon` (gleich verteilte
+  Eingänge ergeben 2^(−2R), gebündelte deutlich weniger).
+- **int4 im int8-Behälter** (GPTQ, Gruppe 128, mit Versatz): Perplexität
+  **11,24 (+2,1 %)**, GSM8K 43/50; zwei Ebenen 11,29 (+2,5 %), 41/50; int8
+  11,01, 41/50. ⚠️ Der Fehler je Matrix ist bei int4 dreimal kleiner als bei
+  zwei Ebenen, der Verlust am Modell sinkt aber nur von 2,5 auf 2,1 %.
+- **Wo der Verlust sitzt** (Mischungen mit `tools/experten_mischen.py`, int4
+  als zweite Quelle): die 8841 seltenen Experten (die Hälfte der Aufrufe)
+  int4 **+1,33 %**, die 1399 häufigen int4 **+0,62 %**. ⚑ **Je Aufruf kostet
+  ein seltener Experte doppelt so viel**, weil er im Mitschnitt nur wenige
+  Token sieht und GPTQ sich daran anpasst. Der Vergleich je Matrix zog nur
+  Experten mit mindestens 16 Haltetoken und konnte das nicht zeigen. Der
+  nächste trainingsfreie Hebel ist damit die Kalibrierung der seltenen.
+- ⚑ **Zwei Ebenen in der einfachen Packung (2 Bit je Trit) lohnen nicht:**
+  gleich groß wie int4 und schlechter. Nur dicht gepackt (5 Trits je Byte,
+  3,3 statt 4,1 Bit) wären sie ein Kandidat: 20 % kleiner für 0,4 Punkte
+  mehr Perplexität.
+- **Fund 551: Die Prüfmarke des Laders schrieb durch harte Links.**
+  `pruefstand::marke_setzen` schrieb mit `fs::write` an Ort und Stelle, und
+  `experten_mischen.py` (seit v0.129.0), `gittervergleich.py abschluss`,
+  `expertenumwandlung`, `standartefakt` und `ternaer_packen` verlinkten die
+  Marke `.geprueft` mit. Das Laden eines abgeleiteten Artefakts änderte so
+  die Marke des int8 und aller Geschwister (sieben teilten eine). Kein
+  falsches Ergebnis, denn die Marke hält Manifest und Dateilage fest und gilt
+  nie für ein fremdes Artefakt; aber jedes Laden eines anderen erzwang beim
+  nächsten die volle Prüfung (17 s am 35B), und eine Datei der Quelle
+  änderte sich. Bemerkt, weil nach dem Bau eine Datei im int8 jünger war als
+  der Mitschnitt. Jetzt schreibt die Marke über `.geprueft.neu` und
+  Umbenennen, und alle fünf Werkzeuge lassen sie aus. Probe
+  `die_marke_schreibt_nicht_durch_einen_link` (mit dem alten Schreibweg
+  rot); in `test_gittervergleich.py` nimmt der Abschluss keine Marke mit.
+  Die geteilten Marken der lokalen Artefakte sind entfernt.
+- **Geprüft:** runtime Clippy mit `-D warnings` und alle Tests grün (124 in
+  der Bibliothek), Windows-Kreuzprüfung grün.
+- Lokale Artefakte (nicht versioniert): `myelith-35b-a3b-int4`,
+  `myelith-35b-a3b-int4-selten-500`, `myelith-35b-a3b-int4-haeufig-500`.
+
+### v0.130.0 (2026-10-15): Zwei ternäre Ebenen heilen die Experten des 35B ohne Training (keine Kiste berührt)
+
+Auftrag des Projektinhabers: vollständige Heilung der ternären Experten,
+mit einer anderen Methode als Training, nach ausgiebiger Recherche; dazu die
+Frage, ob sich mehrere trainingsfreie Techniken kombinieren lassen. Alle
+Zahlen in `BENCHMARKS/Inferenz/results/gittervergleich_myelith-35b-a3b.md`.
+
+- **`calibrate/src/gittervergleich.py`** (neu): misst trainingsfreie
+  Gitter für die Experten am selben Mitschnitt und mit demselben Fehlermaß
+  wie `ternaer_gptq.py` (`vergleich`), und baut ein Artefakt im
+  **int8-Behälter** (`bauen`, `abschluss`): gleiche Dateien und Shifts, die
+  Werte auf dem Gitter des Verfahrens, Manifest mit neuen Prüfsummen und
+  eigener `weights_hash`. So misst jedes vorhandene Werkzeug die Qualität
+  eines Gitters, bevor es dafür ein Format und Kerne gibt. Gitter: ternär,
+  asymmetrisch, **zwei Trit-Ebenen** (s₁t₁ + s₂t₂, 9 Stufen, Beträge je
+  Zeile und Gruppe abwechselnd angepasst), gebunden (−4..4), int2 bis int4;
+  Zusätze Hadamard-Drehung, exakte Ausreißer, Rang-Ausgleich im Eigenraum
+  der Eingänge. Probe `tests/test_gittervergleich.py` (fünf Aussagen, darunter
+  „bauen schreibt nie in die Quelle“ mit Gegenprobe).
+- **Ausgabefehler je Matrix** (7 Ebenen, je 8 Experten): ternär 0,137;
+  alle Hebel für eine Ebene zusammen (Drehung, Versatz, 1 % Ausreißer,
+  Rang 32) 0,089 (−35 %, bei rund 3 Bit je Gewicht); **zwei Trit-Ebenen
+  0,019 (−86 %)**, mit Drehung und Ausreißern 0,015; int4 0,006. ⚑ **Die
+  Hebel addieren sich, aber eine Ebene bleibt eine Ebene:** Bei etwa
+  gleichem Speicher ist die zweite Ebene knapp fünfmal genauer als alle
+  Hebel für eine zusammen. Alle Gitter liegen beim 1,2- bis 1,7-Fachen der
+  Schranke 2^(−2R) für R Bit je Gewicht.
+- **Perplexität** (WikiText-2, 16 × 256): **alle Experten mit zwei Ebenen
+  11,29 gegen 11,01 im int8 (+2,5 %, unter der Abnahmegrenze von +5 %)**;
+  ternär 21,21 (+93 %); seltene ternär und sonst zwei Ebenen 11,69 (+6,1 %).
+  Vier Prüffragen wie int8, ohne Schleifen. **GSM8K (50 Aufgaben, im
+  selben Lauf): zwei Ebenen 41/50, int8 41/50, ternär 20/50**; beide richtig
+  bei 38, je 3 nur bei einem, dieselbe Zahl bei 38.
+- **Was es noch nicht ist:** schneller. Der Behälter ist so groß wie int8.
+  Ein Format mit zwei gepackten ternären Ebenen hätte rund 17 GB Experten
+  (zweimal das heutige ternäre Format) statt 32,2 GB; dicht gepackt (5 Trits
+  je Byte) rund 13 GB. Das ist eine Formänderung (θ_v, Kerne, Vektoren) und
+  wartet auf die Freigabe.
+- 📌 **Fund 549, beim Bau, ehe er Schaden tat:** Der erste Entwurf verlinkte am
+  Ende jedes Teillaufs die fehlenden Dateien hart aus dem int8; ein später
+  endender Teillauf hätte dann durch den Link **in das int8-Artefakt**
+  geschrieben. Bemerkt nach dem Start, vor dem ersten Ende, abgebrochen;
+  das int8 ist unverändert (keine Datei jünger als der Mitschnitt). Jetzt
+  schreibt `bauen` über eine Zwischendatei mit Umbenennen, und nur
+  `abschluss` verlinkt, einmal am Ende.
+- 📌 **Fund 550, nachgetragen aus v0.128.0:** `runtime/src/vorlader.rs`
+  stand in keiner Liste von `tests/audit/test_no_float.py`; die
+  Vollständigkeitsprüfung meldete ihn, und die CI wäre beim nächsten Push
+  rot gewesen. Jetzt im Heißpfad, mit Begründung; das Audit ist grün.
+- Lokale Artefakte (nicht versioniert): `myelith-35b-a3b-zweiebenen`,
+  `myelith-35b-a3b-zweiebenen-gemischt-50`.
+
+### v0.129.0 (2026-10-15): Gemischte Genauigkeit, Rechnen während des Ladens, der Kern der Zustandsschicht vermessen (kernels 0.85.0, runtime 0.96.0)
+
+Auftrag: die drei Hebel aus der Messung für kleine Maschinen angehen. Alle
+Zahlen in `BENCHMARKS/Inferenz/results/decode_speicherdruck_myelith-35b-a3b.md`.
+
+- **Gemischte Genauigkeit** (`tools/experten_mischen.py`, neu): aus dem
+  int8- und dem ternären Artefakt desselben Modells ein drittes, in dem die
+  **seltensten** Experten ternär sind, bis zu einem Anteil der Aufrufe nach
+  einem Expertenprofil; Dateien hart verlinkt, das neue Artefakt kostet
+  fast keinen Platz; `weights_hash` neu. Am 35B, Zählung an 4800 Token:
+  **gemischt-50** (3997 von 10 240 Experten ternär, sie tragen 4,9 % der
+  Aufrufe; Experten 23,0 statt 32,2 GB) hat **Perplexität 11,38 gegen
+  11,01 (+3,4 %, unter der Grenze von +5 %)** und beantwortet die vier
+  Prüffragen wie int8; das voll ternäre liegt bei 21,21 (+93 %). Decode
+  **+22 % / +6 % / +12 %** bei 17,4 / 11,9 / 8,7 GiB frei. 📌 Je knapper der
+  Speicher, desto weniger bringt es, nur die seltenen zu verkleinern: Die
+  Fehlzugriffe treffen dort vor allem die häufigen. Die Artefakte sind
+  nicht versioniert (`artifacts/myelith-35b-a3b-gemischt-50`, `-100`).
+- **Rechnen, während die Ebene lädt** (`moe_vorwaerts`): Liegen einige der
+  gewählten Experten im Speicher (`Gewichtsdaten::vermutlich_im_speicher`,
+  `mincore` auf der ersten Seite, nur unter Unix), rechnen sie samt
+  geteiltem Experten, während `vorlader::im_hintergrund` die fehlenden auf
+  24 Lesefäden holt; danach die fehlenden, gemischt in der Reihenfolge der
+  Wahl. Bitgleich (`decode_hash` je Artefakt gleich). Gemessen +4 bis +9 %
+  bei 9 GiB frei, +5 bis +7 % bei 12 GiB, 0 bis −6 % bei 17 GiB. ⚑ **Darum
+  standardmäßig aus**; `model::rechnen_waehrend_laden` schaltet es, der
+  Client tut das nach dem Plan. Fragt über 256 Gemischebenen in Folge kein
+  Experte nach der Platte, prüft nur noch jede sechzehnte. 📌 Erst ab zwei
+  fehlenden Experten zu teilen ist gemessen und verworfen.
+- **Der Kern der Zustandsschicht** (`bin/zustandsmessung`, neu): 32 Köpfe zu
+  128 × 128, 567 bis 582 µs je Token einfädig, 72 bis 73 mit 15 Fäden,
+  linear bis 5 Fäden. Gemessen und verworfen: Puffer je Faden statt
+  Vektoren je Aufruf (langsamer, 603 µs). `target-cpu=native` brächte 6 %,
+  aber nur auf diesem Prozessor; `apple-m1` bringt nichts. ⚑ **Kein
+  übertragbarer Gewinn ohne andere Rechnung**: Der Kern liegt nah am
+  skalaren Limit, NEON hat keine 64-Bit-Multiplikation. Ein echter Sprung
+  bräuchte die blockweise Form der Rekurrenz, die anders rundet, also eine
+  Änderung an θ_v.
+- **Proben:** `das_geteilte_gemisch_ist_das_ungeteilte` (Gegenprobe:
+  vertauschte Hälften werden rot; die Reihenfolge innerhalb einer Hälfte
+  prüft die Vorlage mit 2 von 6 Experten nicht). Konformität 53/53.
+
+### v0.128.0 (2026-10-15): Gemische unter Speicherdruck schneller, drei Wege gemessen und verworfen (runtime 0.95.0)
+
+Auftrag: „Ein schneller Durchsatz auch auf kleinen Ressourcen ist key.“
+Gemessen am int8-35B mit einem Speicherballon (`BENCHMARKS/Inferenz/ballon.py`),
+alle Zahlen in `BENCHMARKS/Inferenz/results/decode_speicherdruck_myelith-35b-a3b.md`;
+`decode_hash` in allen Läufen gleich.
+
+- ⚑ **Anwärmen je Matrix statt je Experte** (`moe_vorwaerts`): Je
+  gewähltem Experten las ein Faden gate, up und down nacheinander, jetzt
+  ist jede der 24 Matrizen ein eigener Auftrag. Decode **+12 %** bei
+  17,7 GiB frei (18,7 / 17,2 statt 15,9 / 15,7 Token/s), **+8 %** bei 12,5
+  GiB, **+4 %** bei 9,6 GiB.
+- **`IntegerModel::naechste_wahl`**: der Router der nächsten Ebene auf dem
+  Residualstrom dieser Ebene. Trefferquote an 1977 Token 78,8 % mit 8
+  Kandidaten, 90,2 % mit 12, 94,2 % mit 16; Präzision je Rang 98, 96, 93,
+  88, 81, 71, 59, 46 %. Im Messmodus steht sie in `Routingbefund::naechste`,
+  `expertenprobe --vorhersage` schreibt sie Token für Token.
+- **`vorlader`** (neu): kündigt die vorhergesagten Experten der nächsten
+  Ebene auf eigenen Fäden an, Aufträge mit `Arc` auf die Gewichte, veraltete
+  werden verworfen. ⚠️ **Standardmäßig aus**: Mit 8 Kandidaten +5 % bei 18
+  GiB frei, −8 % bei 9,6 GiB, mit 12 bis −37 %. Schaltbar mit
+  `IntegerModel::vorladen_setzen`, `bench_probe --vorladen <k>`.
+- 📌 **Gemessen und verworfen:** `pread` in einen Wegwerfpuffer statt des
+  Rats an den Kern (Mikromessung 9,1 gegen 3,1 GB/s, im Decode gleich
+  schnell oder langsamer) und 24 eigene Lesefäden statt der Rechenfäden
+  (im Rauschen). Beide sind wieder ausgebaut, die Lehre steht am Rat.
+- **Profil, wohin die Zeit geht:** Decode bei 9,6 GiB frei 53 % Warten auf
+  Experten (Latenz, die Platte liefert dabei 2,9 GB/s, beim Prefill 6 bis
+  8), 19 % Aufmerksamkeit und Zustandsschichten, 15 % Experten. Prefill
+  (772 Token, `metal`) 37 % in `spalten_schritt` der Zustandsschichten.
+- **Proben:** `vorlader::ein_veralteter_auftrag_wird_verworfen` neu; 122
+  Proben der Bibliothek grün.
+
+### v0.127.0 (2026-10-15): Die Laufzeit zählt die Wahl der Experten (runtime 0.94.0)
+
+- **`model::Wahlzaehler`**, je Gemischebene ein Zähler je Experte, und
+  `IntegerModel::wahl_abholen` (Stand je Ebene, dabei auf null). ⚑ **Immer
+  an, ohne Schalter**: je Token und Ebene `top_k` Additionen ohne Ordnung,
+  gezählt nach der Wahl, beim 35B 320 je Token. An keiner Zahl der Rechnung
+  ändert er etwas. Gezählt wird auf beiden Wegen, Token für Token
+  (`moe_vorwaerts`) und gruppiert (`moe_gruppiert`); gesättigt bei
+  `u32::MAX`. Der Client führt damit das Expertenprofil der Maschine fort.
+- **`expertenprobe --profil <datei> --spur <datei>`**: die Zählung als
+  Expertenprofil in der Form des Dispatchers, und die Wahl Token für Token
+  (je Zeile ein Token, Ebenen durch `;`, Experten durch `,`) zum
+  Nachspielen in der Belegungssimulation. Probelauf am int8-35B: 10 Token
+  in 8,7 s, Rückgabe 0; danach 2035 und 1977 Token in je gut zwei Minuten.
+- **Proben:** `das_gruppierte_gemisch_ist_das_tokenweise` hält jetzt auch
+  fest, dass beide Wege dieselbe Wahl zählen, je Token `top_k`. 121 Proben
+  der Bibliothek grün.
+
+### v0.126.1 (2026-10-15): Fund 546, ein fremdes Projekt im Changelog genannt (nur Text)
+
+Der Eintrag zu v0.111.0 nannte an vier Stellen das Projekt, dessen Ideen
+dort aufgenommen wurden. In versionierten Dateien steht kein anderes
+Projekt mit Namen; die Aussagen stehen jetzt ohne ihn da, inhaltlich
+unverändert. Keine Kiste berührt.
 
 ### v0.126.0 (2026-10-14): Gesperrte Token bei der Erzeugung (runtime 0.93.0)
 
@@ -1652,10 +2144,10 @@ größerer Umbau) oder eine einmalige Umrechnung des Imports auf Beträge bis
 
 ### v0.111.0 – 2026-10-02 (runtime 0.80.0: `lookahead`, Vermutungen mit exakter Prüfung; Fund 515, kleine Bündel im Gemisch doppelt so teuer wie der Einzelschritt)
 
-**Auftrag des Projektinhabers:** Richtung Expertengemisch, und dafür die
-Ideen aus Strata (eine Laufzeit, die ein Gemisch mit 125 Mrd. Parametern auf
-einem Spiele-PC fährt, MIT) aufnehmen: gelesen und neu geschrieben, gegen den
-Ganzzahlpfad. Dies ist der erste Teil: mehrere Token je Vorwärtspass.
+**Auftrag des Projektinhabers:** Richtung Expertengemisch: Verfahren, mit
+denen große Gemische auf einem einzelnen Rechner laufen, aufnehmen und für den
+Ganzzahlpfad neu schreiben. Dies ist der erste Teil: mehrere Token je
+Vorwärtspass.
 
 **Neu `runtime/src/lookahead.rs`, Vermutungen mit exakter Prüfung**
 (Name vom Projektinhaber; Arbeitsname war `vorschlag`). Im Decode laufen das gewählte Token und bis zu fünf
@@ -1667,8 +2159,8 @@ rekurrenter Zustand zurückgesetzt und das Angenommene neu gerechnet.
 
 - ⚑ **Die Ausgabe ist Token für Token die des gewöhnlichen Laufs**, gleich
   ob die Vermutungen gut, schlecht oder keine sind; ein Prüfer im Netz
-  braucht sie nicht. Bei Strata hängt die Ausgabe dagegen am Vorschlagen,
-  weil seine Gleitkomma-Kerne je nach Bündelgröße anders runden.
+  braucht sie nicht. Mit Gleitkomma-Kernen hinge die Ausgabe dagegen am
+  Vorschlagen, weil sie je nach Bündelgröße anders runden.
 - Die Vermutungen kommen zuerst aus dem Text selbst: das letzte frühere
   Vorkommen der letzten zwei bis vier Token, und was dort folgte.
 - Eine Einstellung der Geschwindigkeit, nicht der Rechnung, darum am
@@ -1701,7 +2193,8 @@ Experten; zu teilen bleibt wenig. Beim Hybrid kostet zudem jede Ablehnung
 einen zweiten Durchgang, weil sich der Zustand nicht kürzen lässt. Daraus
 folgt für die Vorhersageschicht, die Qwen3.6-35B-A3B mitbringt (19 Tensoren,
 im Artefakt bisher nicht übernommen): Mit den 2,4 bis 3,2 angenommenen Token
-je Durchgang, die Strata angibt, wären es hier etwa 1,1 bis 1,2. Sie wird
+je Durchgang, wie sie für solche Vorhersageschichten genannt werden, wären es
+hier etwa 1,1 bis 1,2. Sie wird
 deshalb vorerst nicht übernommen.
 
 ⛔️ **Fund 515: Ein gebündelter Durchgang mit wenigen Token war im Gemisch
@@ -1735,7 +2228,7 @@ Nachladen (Fund 331) sind das etwa 10 von 54 ms je Token. ⚑ **Daraus die
 Obergrenze für die beiden anderen Ideen** (heiße Experten im Speicher
 halten, die der nächsten Ebene über deren Router vorausladen): höchstens
 etwa 1,2-fach, und nur, wenn die Wartezeit ganz verschwindet. Der grosse
-Hebel bei Strata, Experten zwischen Grafikkarte und CPU zu verteilen,
+Hebel, Experten zwischen Grafikkarte und CPU zu verteilen,
 setzt getrennten Grafikspeicher voraus; auf Apple-Silizium teilen sich
 beide denselben.
 

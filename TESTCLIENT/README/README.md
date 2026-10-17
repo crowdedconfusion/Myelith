@@ -1,7 +1,7 @@
 # testclient (`myl-testclient`)
 
-> **Version:** 0.41.0
-> **Datum:** 2026-10-14
+> **Version:** 0.43.1
+> **Datum:** 2026-10-17
 > **Status:** Phase 1 und **Phase 3 vollständig**, dazu Punkt 2.1
 > (`vergleich`), **2.2** (Backend-Vergleich innerhalb einer Maschine, seit
 > dem 2026-08-30) und 2.4 (`--repeat`); **Phase 4 vollständig** (4.3 die
@@ -543,6 +543,56 @@ COMPUTE_PIPELINE Phase 1: erstmals über einen aufrufbaren Befehl statt
 über einen Integrationstest.
 
 ## Changelog
+
+### v0.43.1 (2026-10-17): Die Knotenkonfiguration kennt Speicherorte
+
+`myl-node` 0.49.0 bringt das Feld `KnotenKonfig::speicherorte`; die
+beiden Knoten des Menüs (`src/knoten.rs`) und der kalte Pfad
+(`tests/kalter_pfad.rs`) setzen es auf `None`, denn sie halten nichts
+für das Netz. **Belegt:** 286 von 286 Tests grün, Clippy sauber.
+
+### v0.43.0 (2026-10-17): Das 35B in vier Bit im Register, beschafft aus seiner int8-Quelle
+
+- **Katalog:** `Katalogeintrag` liest `bauweg`, `quelle` und
+  `zwischen_anzeige`. Fuer `bauweg: vierbit` beschafft `beschaffen_fuer`
+  erst die int8-Quelle (Gewichte, Kalibrierung), wenn sie fehlt, und ruft
+  dann `INTEGER_LLM/scripts/build_vierbit.sh`; das Skript prueft sein
+  Ergebnis selbst gegen den Manifest-Hash im Register. Die Frage nennt
+  die Zwischenstaende mit.
+- **WikiText vor der Kalibrierung** (Fund 553): Fehlt der Testsplit, holt
+  ihn `artefakte_bauen` ueber `BENCHMARKS/Inferenz/wikitext_common.py`,
+  geprueft gegen seine Pruefsumme. Ohne ihn brach die Kalibrierung im
+  kalten Klon ab, und der Befehl, den sie nannte, tat nichts.
+- Register und Katalog fuehren beide `myelith-35b-a3b-int4`; die Probe
+  `katalog_und_register_kennen_dieselben_modelle` haelt das. 286 Proben.
+
+### v0.42.0 (2026-10-16): Neue Stufe `konformitaet_vierbit`, das Vierbitformat der Experten
+
+- **Neue Stufe `konformitaet_vierbit`**: zwei Vektoren aus
+  `INTEGER_LLM/conformance/vectors/vierbit/` (lineare Schicht über
+  Vierbitgewichten mit ganzem Schritt und Versatz je Gruppe, und das
+  Packen), geprüft über `integer_llm_kernels::konformitaet::vierbit_vektor_aus_datei`.
+  Die Sollwerte rechnet eine getrennte Umsetzung (`vierbit_erzeugen.py`).
+  Ein fehlendes Verzeichnis bricht den Lauf, wie bei `ternaer`.
+- ⚑ **Der Umfang ohne Modell heisst jetzt `op+training+moe+ternaer+vierbit`**
+  (24 Vektoren statt 22), der volle `op+training+moe+ternaer+vierbit+layer+e2e`.
+  Damit erkennt `vergleich` einen Lauf von vorher als unvergleichbar.
+- **Abdrücke** (gemessen auf aarch64/macOS mit `cpu-simd`, 24/24):
+  `konformitaet_vierbit` `9102be0890358ceb`, der Gesamtwert
+  `cb696efd3817e575` (bis dahin `715529e71dfcfcfd`); `konformitaet_op` und
+  `konformitaet_ternaer` unverändert. Die drei Prüfschritte der CI und der
+  Release-Lauf erwarten jetzt vier Abdrücke.
+- Geprüft: `cargo test` 286 grün, Clippy mit `-D warnings` grün,
+  Mindestfassung 1.88 grün.
+
+### v0.41.1 – 2026-10-14 (Sicherheitsmeldungen zu `quinn-proto` und `rustls`; nur die Sperrdatei)
+
+- `quinn-proto` 0.11.17 auf 0.11.19 und `rustls` 0.23.45 auf 0.23.46, beide
+  über `myl-net` (0.16.1) und `myl-node` (0.48.7) eingezogen. Anlass: die
+  Abhängigkeitsprüfung war rot wegen neuer Meldungen (RUSTSEC-2026-0338
+  bis 0343 und 0346 bis 0349). Kein Code geändert.
+- **Belege:** cargo-deny grün; Clippy mit `-D warnings` und alle Tests
+  offline gegen den Vorrat (`--locked --offline`) mit Rückgabe 0.
 
 ### v0.41.0 – 2026-10-14 (die Rechenwerke unter dem Dach `ressourcen`)
 

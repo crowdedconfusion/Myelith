@@ -1,0 +1,35 @@
+[package]
+name = "myl-dispatcher"
+version = "0.8.0"
+edition = "2021"
+rust-version = "1.85"
+description = "Wer auf einer Maschine wie viel Arbeitsspeicher, Grafikspeicher und Kerne bekommt: Erhebung des Angebots, Bedarf aus dem Artefakt, ein ganzzahliger Belegungsplan mit Vorrang Agent vor Vision vor Sprache."
+license = "LicenseRef-PolyForm-Shield-1.0.0"
+publish = false
+
+# ⚑ **Nur drei Fremdkisten, alle schon im Vorrat, und keine Kiste dieses
+# Repositoriums.** Der Client, der Knoten und das Messwerkzeug der
+# Mietmaschine lesen hier dieselbe Erhebung und denselben Plan; eine
+# Abhaengigkeit auf den Rechenpfad haette jeden von ihnen gezwungen, ihn
+# mitzubauen, nur um zu fragen, wieviel Speicher frei ist.
+[dependencies]
+libc = "0.2"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[[bin]]
+name = "dispatcher"
+path = "src/bin/dispatcher.rs"
+
+# ⛔️ **Geprueft wird mit `cargo test`, nie mit `--release`.** Dieses
+# Profil optimiert trotzdem, haelt aber `debug-assertions` und
+# `overflow-checks` an; `--release` schaltet genau die beiden Schalter
+# ab, die Ueberlaeufe finden.
+[profile.test]
+opt-level = 2
+debug-assertions = true
+overflow-checks = true
+debug = "line-tables-only"
+
+[profile.dev]
+debug = "line-tables-only"

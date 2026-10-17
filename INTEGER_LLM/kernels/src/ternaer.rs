@@ -66,7 +66,8 @@ pub const BYTES_JE_GRUPPE: usize = GRUPPE / 4;
 /// Gewichte je Block von 16 Bytes.
 const BLOCK: usize = 64;
 
-/// Eine Aktivierung, aufbereitet fuer ternaere Zeilen.
+/// Eine Aktivierung, aufbereitet fuer ternaere Zeilen und ebenso fuer
+/// Vierbitzeilen ([`crate::vierbit`]), die dieselbe Zerlegung lesen.
 ///
 /// ⚑ **Warum aufbereiten.** Die vektorisierte Fassung multipliziert die
 /// Codes als 8-Bit-Lanes, 16 Gewichte je Befehlspaar. Dafuer wird jedes
@@ -121,6 +122,14 @@ impl<'a> Eingabe<'a> {
     /// Die vektorisierte Fassung liest ohne Grenzpruefung.
     pub(crate) fn laengen_passen(&self, n: usize, g: usize) -> bool {
         self.x.len() >= n && self.hoch.len() >= n && self.tief.len() >= n && self.summen.len() >= g
+    }
+
+    /// Die ganze Zerlegung, ungekuerzt, fuer die gemeinsame Fassung des
+    /// Vierbitkerns ([`crate::vierbit`]); die Laengen hat
+    /// [`Self::laengen_passen`] geprueft.
+    #[cfg(all(feature = "cpu-simd", target_arch = "aarch64"))]
+    pub(crate) fn roh_teile(&self) -> (&[i8], &[u8], &[i64]) {
+        (&self.hoch, &self.tief, &self.summen)
     }
 
     /// Die Zerlegung fuer eine Zeile mit `n` Werten in `g` Gruppen, oder
@@ -489,7 +498,7 @@ pub(crate) mod neon {
 
     #[inline]
     #[target_feature(enable = "dotprod")]
-    unsafe fn sdot(acc: int32x4_t, a: int8x16_t, b: int8x16_t) -> int32x4_t {
+    pub(crate) unsafe fn sdot(acc: int32x4_t, a: int8x16_t, b: int8x16_t) -> int32x4_t {
         let mut r = acc;
         std::arch::asm!(
             "sdot {r:v}.4s, {a:v}.16b, {b:v}.16b",
@@ -503,7 +512,7 @@ pub(crate) mod neon {
 
     #[inline]
     #[target_feature(enable = "dotprod")]
-    unsafe fn udot(acc: uint32x4_t, a: uint8x16_t, b: uint8x16_t) -> uint32x4_t {
+    pub(crate) unsafe fn udot(acc: uint32x4_t, a: uint8x16_t, b: uint8x16_t) -> uint32x4_t {
         let mut r = acc;
         std::arch::asm!(
             "udot {r:v}.4s, {a:v}.16b, {b:v}.16b",

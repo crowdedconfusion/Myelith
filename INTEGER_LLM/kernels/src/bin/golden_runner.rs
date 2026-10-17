@@ -47,12 +47,18 @@ fn main() {
         "training" => konformitaet::trainingsvektor_pruefen(&gv),
         "moe" => konformitaet::moe_vektor_pruefen(&gv),
         "ternaer" => konformitaet::ternaer_vektor_pruefen(&gv),
+        "vierbit" => konformitaet::vierbit_vektor_pruefen(&gv),
         _ => konformitaet::op_vektor_pruefen(&gv),
     };
 
     for grund in &ergebnis.gruende {
         eprintln!("  {}", grund);
     }
+    // ⚑ **Hat ein Rechenwerk gerechnet?** `run.sh` liest die Zahlen fuer
+    //   die Vektoren, die ein Buendel rechnen (`linear_vierbit`); sonst
+    //   bestuende die CPU unter dem Namen der GPU (Fund 33).
+    println!("metal_buendel_auf_der_gpu {}", integer_llm_kernels::ressourcen::metal::gerechnet());
+    println!("karten_buendel_auf_der_gpu {}", integer_llm_kernels::ressourcen::karten::gerechnet());
     if ergebnis.bestanden {
         println!("PASS: {}", ergebnis.name);
         std::process::exit(0);

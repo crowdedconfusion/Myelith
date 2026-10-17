@@ -1,7 +1,7 @@
 // W8A16 im Buendel auf der GPU von Apple-Silizium.
 //
-// Fuer int8-Gewichte zwei Rechenschritte in einem Befehlspuffer (der Weg
-// fuer ternaer gepackte Gewichte steht weiter unten):
+// Fuer int8-Gewichte zwei Rechenschritte in einem Befehlspuffer (die Wege
+// fuer ternaer und in vier Bit gepackte Gewichte stehen weiter unten):
 //
 // 1. `produkt`: C = X * W^T ueber `matmul2d` aus Metal Performance
 //    Primitives, int8 mal int8 nach int32. X traegt die zerlegten
@@ -203,4 +203,114 @@ kernel void nachlauf_breit(device int64_t *summen    [[buffer(0)]],
     int64_t acc = hoch * 256 + niedrig + zeilensumme * 128;
     int64_t y = umskalieren(acc, int(abstaende[z]));
     aus[b * zeilen + z] = int16_t(clamp(y, int64_t(-32768), int64_t(32767)));
+}
+
+// ---------------------------------------------------------------------------
+// Vier Bit je Gewicht im Buendel: je Gruppe von 128 Codes q von 0 bis 15,
+// ein Schritt a (u8) und ein Versatz b (i8); das Gewicht ist a * q + b.
+//
+// ⚑ Nicht als int8 entpackt: Das Format laesst Werte bis 255 * 15 + 127 zu,
+// die in kein int8 passen. Stattdessen je Gruppe
+//
+//     sum_i (a q_i + b) x_i = a * sum_i q_i x_i + b * sum_i x_i,
+//
+// mit den Codes als int8-Matrix fuer `matmul2d` und den Summen der
+// Eingaben je Gruppe aus einem eigenen Schritt. Dieselbe ganze Zahl wie
+// die CPU, fuer jeden Schritt und Versatz.
+//
+// Vier Rechenschritte in einem Befehlspuffer:
+//
+// 1. `entpacken_vierbit`: aus jedem Codebyte zwei Codes als int8. Byte j
+//    eines Blocks von 16 traegt im unteren Halbbyte den Code des Gewichts j
+//    und im oberen den des Gewichts 16 + j; vier Bloecke je Gruppe.
+// 2. `gruppensummen`: je Zeile von X und Gruppe die Summe der 128 Werte in
+//    int32 (hoechstens 128 * 128 dem Betrag nach).
+// 3. `gruppenprodukt_vierbit`: wie `gruppenprodukt`, der Beitrag einer
+//    Gruppe ist a * Teilprodukt + b * Gruppensumme in int64.
+// 4. `nachlauf_breit`, wie beim ternaeren Weg.
+//
+// Wertebereich: ein Teilprodukt hoechstens 128 * 15 * 128 < 2^18, in int32.
+
+kernel void entpacken_vierbit(device uchar  *codes [[buffer(0)]],
+                              device int8_t *w     [[buffer(1)]],
+                              constant Entpackform &f [[buffer(2)]],
+                              uint2 ort [[thread_position_in_grid]]) {
+    // ort.x: Codebyte der Zeile, ort.y: Zeile.
+    int bytes_je_zeile = f.spalten / 2;
+    if (int(ort.x) >= bytes_je_zeile || int(ort.y) >= f.zeilen) {
+        return;
+    }
+    long z = long(ort.y);
+    int p = int(ort.x);
+    uint B = uint(codes[z * long(bytes_je_zeile) + p]);
+    // 64 Byte je Gruppe, vier Bloecke zu 16 Byte fuer je 32 Gewichte.
+    int spalte = (p / 64) * 128 + ((p % 64) / 16) * 32 + (p % 16);
+    device int8_t *ziel = w + z * long(f.spalten) + spalte;
+    ziel[0]  = int8_t(B & 15u);
+    ziel[16] = int8_t(B >> 4);
+}
+
+struct Summenform {
+    int32_t spalten;   // ein Vielfaches von 128
+    int32_t eingaben;  // Zeilen von X
+};
+
+kernel void gruppensummen(device int8_t  *x       [[buffer(0)]],
+                          device int32_t *summen  [[buffer(1)]],
+                          constant Summenform &f  [[buffer(2)]],
+                          uint2 ort [[thread_position_in_grid]]) {
+    // ort.x: Gruppe, ort.y: Zeile von X.
+    int gruppen = f.spalten / 128;
+    if (int(ort.x) >= gruppen || int(ort.y) >= f.eingaben) {
+        return;
+    }
+    device int8_t *anfang = x + long(ort.y) * long(f.spalten) + long(ort.x) * 128;
+    int32_t s = 0;
+    for (int k = 0; k < 128; k++) {
+        s += int32_t(anfang[k]);
+    }
+    summen[long(ort.y) * long(gruppen) + long(ort.x)] = s;
+}
+
+kernel void gruppenprodukt_vierbit(device int8_t  *w        [[buffer(0)]],
+                                   device int8_t  *x        [[buffer(1)]],
+                                   device int32_t *zwischen [[buffer(2)]],
+                                   constant Gruppenform &f  [[buffer(3)]],
+                                   device uchar   *gitter   [[buffer(4)]],
+                                   device int64_t *summen   [[buffer(5)]],
+                                   device int32_t *xsummen  [[buffer(6)]],
+                                   uint2 gruppe [[threadgroup_position_in_grid]],
+                                   uint faden [[thread_index_in_threadgroup]]) {
+    auto X = tensor<device int8_t,  dextents<int32_t, 2>, tensor_inline>(x, dextents<int32_t, 2>(f.spalten, f.eingaben));
+    auto W = tensor<device int8_t,  dextents<int32_t, 2>, tensor_inline>(w, dextents<int32_t, 2>(f.spalten, f.zeilen));
+    long kachel = long(gruppe.y) * long(f.kacheln_x) + long(gruppe.x);
+    device int32_t *teil = zwischen + kachel * 1024;
+    auto C = tensor<device int32_t, dextents<int32_t, 2>, tensor_inline>(teil, dextents<int32_t, 2>(64, 16));
+    constexpr auto d = matmul2d_descriptor(16, 64, 128, false, true, false);
+    matmul2d<d, execution_simdgroups<4>> op;
+    int gruppen = f.spalten / 128;
+    for (int g = 0; g < gruppen; g++) {
+        auto teil_x = X.slice(g * 128, int(gruppe.y) * 16);
+        auto teil_w = W.slice(g * 128, int(gruppe.x) * 64);
+        op.run(teil_x, teil_w, C);
+        threadgroup_barrier(mem_flags::mem_device);
+        for (int i = int(faden); i < 1024; i += f.breite) {
+            long z = long(gruppe.x) * 64 + long(i % 64);
+            long e = long(gruppe.y) * 16 + long(i / 64);
+            if (z < long(f.zeilen) && e < long(f.eingaben)) {
+                long stelle = (z * long(gruppen) + g) * 2;
+                int64_t schritt = int64_t(gitter[stelle]);
+                // Das Byte als i8 von Hand, ohne eine Umwandlung, deren
+                // Ergebnis ueber 127 nicht festgelegt waere.
+                int64_t versatz = int64_t(gitter[stelle + 1]);
+                if (versatz > 127) {
+                    versatz -= 256;
+                }
+                int64_t beitrag = int64_t(teil[i]) * schritt + int64_t(xsummen[e * long(gruppen) + g]) * versatz;
+                long ziel = e * long(f.zeilen) + z;
+                summen[ziel] = (g == 0) ? beitrag : summen[ziel] + beitrag;
+            }
+        }
+        threadgroup_barrier(mem_flags::mem_device);
+    }
 }

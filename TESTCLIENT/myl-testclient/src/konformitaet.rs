@@ -83,16 +83,21 @@ pub const WERT_MOE: &str = "konformitaet_moe";
 /// prüfen kann.
 pub const WERT_TERNAER: &str = "konformitaet_ternaer";
 
+/// Name des Vergleichswerts des **Vierbitformats**: lineare Schicht ueber
+/// Vierbitgewichten und das Packen (seit dem 2026-10-16).
+pub const WERT_VIERBIT: &str = "konformitaet_vierbit";
+
 /// Nur die Operations-Vektoren wurden geprüft.
 pub const UMFANG_OP: &str = "op";
 /// Alles, was kein Modell braucht.
 ///
-/// 📌 Bis zum 2026-10-05 ohne `ternaer`. Der Name aendert sich mit dem
-/// Umfang, damit `vergleich` einen alten und einen neuen Lauf als
-/// unvergleichbar erkennt, statt zwei verschiedene Zusagen zu vergleichen.
-pub const UMFANG_OHNE_MODELL: &str = "op+training+moe+ternaer";
+/// 📌 Bis zum 2026-10-05 ohne `ternaer`, bis zum 2026-10-16 ohne `vierbit`.
+/// Der Name aendert sich mit dem Umfang, damit `vergleich` einen alten und
+/// einen neuen Lauf als unvergleichbar erkennt, statt zwei verschiedene
+/// Zusagen zu vergleichen.
+pub const UMFANG_OHNE_MODELL: &str = "op+training+moe+ternaer+vierbit";
 /// Alles: dazu die Layer- und E2E-Vektoren des Ankermodells.
-pub const UMFANG_VOLL: &str = "op+training+moe+ternaer+layer+e2e";
+pub const UMFANG_VOLL: &str = "op+training+moe+ternaer+vierbit+layer+e2e";
 
 /// Das Manifest bei den Vektoren: welches Artefakt sie erzeugt hat.
 ///
@@ -433,6 +438,45 @@ pub fn laufen(log: &mut RunLog, artefakt: Option<&Path>) -> bool {
         WERT_TERNAER,
         &digest_aus_ergebnissen(&ergebnisse[vor_ternaer_ergebnisse..]),
         format!("{}/{}", bestanden - vor_ternaer_bestanden, gesamt - vor_ternaer_gesamt),
+    );
+
+    let vor_vierbit_gesamt = gesamt;
+    let vor_vierbit_bestanden = bestanden;
+    let vor_vierbit_ergebnisse = ergebnisse.len();
+    let vierbit_dateien = vektor_dateien(&vektoren, "vierbit");
+    if vierbit_dateien.is_empty() {
+        log.error(format!("keine Vierbitvektoren unter {}", vektoren.join("vierbit").display()));
+        return false;
+    }
+    for pfad in &vierbit_dateien {
+        match integer_llm_kernels::konformitaet::vierbit_vektor_aus_datei(pfad) {
+            Ok(e) => {
+                gesamt += 1;
+                if e.bestanden {
+                    bestanden += 1;
+                } else {
+                    for grund in &e.gruende {
+                        log.error(format!("{}: {}", e.name, grund));
+                    }
+                }
+                let name = zeile("vierbit", &e.name, e.bestanden);
+                ergebnisse.push((name.clone(), e.bestanden));
+                log.event(Event::Step {
+                    name: format!("konformitaet_{}", name),
+                    millis: 0,
+                    detail: if e.bestanden { "bestanden".into() } else { "fehlschlagen".into() },
+                });
+            }
+            Err(e) => {
+                log.error(format!("{}: {}", pfad.display(), e));
+                return false;
+            }
+        }
+    }
+    log.result(
+        WERT_VIERBIT,
+        &digest_aus_ergebnissen(&ergebnisse[vor_vierbit_ergebnisse..]),
+        format!("{}/{}", bestanden - vor_vierbit_bestanden, gesamt - vor_vierbit_gesamt),
     );
 
     let umfang = if entscheidung.layer_e2e {

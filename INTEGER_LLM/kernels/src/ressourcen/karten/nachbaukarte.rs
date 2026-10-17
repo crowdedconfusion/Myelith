@@ -112,6 +112,14 @@ pub(super) fn starten(kern: Kern, zeiger: &[Zeiger], zeilen: usize, spalten: usi
             bereich(be, zeilen * (spalten / crate::ternaer::GRUPPE) * 2, "Betraege")?;
             (m, be, x, a, o)
         }
+        (Kern::Vierbit, &[c, g, x, a, o]) => {
+            if spalten % crate::vierbit::GRUPPE != 0 {
+                return Err(format!("{spalten} Spalten sind kein Vielfaches der Gruppe"));
+            }
+            bereich(c, zeilen * spalten / 2, "Codes")?;
+            bereich(g, zeilen * (spalten / crate::vierbit::GRUPPE) * crate::vierbit::GITTER_JE_GRUPPE, "Gitter")?;
+            (c, g, x, a, o)
+        }
         _ => return Err(format!("{} Argumente passen nicht zum Kern", zeiger.len())),
     };
     bereich(x, stapel * spalten * 2, "Eingaben")?;
@@ -143,6 +151,18 @@ pub(super) fn starten(kern: Kern, zeiger: &[Zeiger], zeilen: usize, spalten: usi
             };
             let t = crate::ternaer::Ternaermatrix::neu(muster, betraege, zeilen, spalten)?;
             Box::new(move |z, x| t.zeile_mal(z, x))
+        }
+        Kern::Vierbit => {
+            // SAFETY: wie oben; Codes und Gitter sind Bytes, ohne Ausrichtung.
+            let gruppen = spalten / crate::vierbit::GRUPPE;
+            let (codes, gitter) = unsafe {
+                (
+                    ausschnitt::<u8>(w, zeilen * spalten / 2),
+                    ausschnitt::<u8>(m, zeilen * gruppen * crate::vierbit::GITTER_JE_GRUPPE),
+                )
+            };
+            let v = crate::vierbit::Vierbitmatrix::neu(codes, gitter, zeilen, spalten)?;
+            Box::new(move |z, x| v.zeile_mal(z, x))
         }
     };
     let faeden = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1).clamp(1, 4);

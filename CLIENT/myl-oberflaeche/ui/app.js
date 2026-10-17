@@ -22,8 +22,40 @@
 
 import { vorhangStarten } from "./vorhang.js";
 
-const { invoke } = window.__TAURI__.core;
+const { invoke: tauri_aufruf } = window.__TAURI__.core;
 const $ = (k) => document.getElementById(k);
+
+// --- Befehlszeiten --------------------------------------------------------
+//
+// ⚑ **Was dauert, meldet sich** (Meldung des Projektinhabers, 2026-10-17):
+// jede Antwort ueber 150 ms, jede Luecke im Bildtakt ueber 250 ms und die
+// Abschnitte des Starts gehen an `zeit_melden`; geschrieben wird nur mit
+// `MYL_BEFEHLSZEITEN` oder laufendem Debug-Log (siehe den Ruecken).
+const zeit_start = performance.now();
+const zeit = (was, ms) => {
+  invoke("zeit_melden", { was, ms: Math.max(0, Math.round(ms)) }).catch(() => {});
+};
+const abschnitt = (was) => zeit(`Abschnitt ${was}`, performance.now() - zeit_start);
+async function invoke(name, args) {
+  const a = performance.now();
+  try {
+    return await tauri_aufruf(name, args);
+  } finally {
+    const d = performance.now() - a;
+    // Die Meldung selbst wird nicht gemessen, sonst meldete sie sich.
+    if (d > 150 && name !== "zeit_melden") zeit(`Antwort ${name}`, d);
+  }
+}
+{
+  let zuletzt = performance.now();
+  const takt = (jetzt) => {
+    if (jetzt - zuletzt > 250) zeit(`Bild stand ab ${Math.round(zuletzt - zeit_start)} ms`, jetzt - zuletzt);
+    zuletzt = jetzt;
+    requestAnimationFrame(takt);
+  };
+  requestAnimationFrame(takt);
+}
+abschnitt("Skript laeuft");
 
 // --- Vorschaltbild ------------------------------------------------------
 
@@ -62,6 +94,7 @@ async function vorhangWeg() {
   // ein, waehrend es noch durchscheint.
   vorhangAnhalten();
   vorhang.remove();
+  abschnitt("Vorhang weg");
 }
 
 // --- Modi ---------------------------------------------------------------
@@ -220,17 +253,6 @@ const TEXTE = {
     "sinne.titel": "Sinne",
     "sinne.stimmewaehlen": "Stimme hochladen",
     "sinne.einwilligung": "Die Aufnahme ist meine eigene Stimme, oder die Person hat eingewilligt.",
-    "protokoll.titel": "Aktionsprotokoll",
-    "protokoll.satz": "Jede Handlung des Agenten, ohne Klartext: Eingaben und Ergebnisse stehen nur als Fingerabdruck darin. Nach 30 Tagen wird gelöscht.",
-    "protokoll.zeigen": "Protokoll anzeigen",
-    "protokoll.leer": "Noch keine Einträge.",
-    "protokoll.ort": (o) => `Ablage: ${o}`,
-    "protokoll.zeit": "Zeit",
-    "protokoll.art": "Art",
-    "protokoll.werkzeug": "Werkzeug",
-    "protokoll.entscheidung": "Entscheidung",
-    "protokoll.ergebnis": "Ergebnis",
-    "protokoll.dauer": "Dauer",
     "sinne.stimmeweg": "Stimme entfernen",
     "sinne.einrichten": "Läufer anlegen",
     "sinne.hoert": "🎙 Aufnahme läuft, zum Beenden loslassen",
@@ -256,8 +278,29 @@ const TEXTE = {
       "Der Agent erledigt deinen Auftrag mit den Werkzeugen in seinem Werkzeugkoffer. Das Gespräch geht von Auftrag zu Auftrag mit. In den Einstellungen kannst du Anpassungen vornehmen …",
     "modus.knoten.name": "Knoten",
     "modus.knoten.was": "Mining",
-    "modus.knoten.warum":
-      "Der Knoten rechnet für das Netz und verdient daran. Dem Klienten fehlen Knotenadresse und Vollmacht.",
+    "knoten.titel": "Mining",
+    "knoten.probelauf":
+      "Probelauf ohne Testnetz: Der Knoten läuft auf seiner eigenen Probekette, die MYL darauf sind Spielgeld. Inferenzaufträge aus dem Netz lehnt er ab, bis ein Shard angeschlossen ist.",
+    "knoten.platte": "Platte",
+    "knoten.ordner": "Ordner",
+    "knoten.volumen": "Volumen",
+    "knoten.gewichte": "Eigene Gewichte auch dort",
+    "knoten.kerne": "CPU-Kerne",
+    "knoten.rechenwerke": "Rechenwerke",
+    "knoten.keinwerk": "keine außer der CPU",
+    "knoten.starten": "Mining starten",
+    "knoten.beenden": "Mining beenden",
+    "knoten.startet": "startet den Knoten …",
+    "knoten.beendet": "Mining beendet.",
+    "knoten.laeuftschon": (a) => `Mining läuft (gestartet in: ${a}); erst beenden, dann ändern.`,
+    "knoten.meldungen": "Meldungen alle fünf Minuten",
+    "knoten.orte": (a) => `Speicherorte: ${a}`,
+    "knoten.weitere": (a) => ` · weitere Orte für das Netz: ${a}`,
+    "knoten.frei": (a) => `${a} frei`,
+    "knoten.hoechstens": (a, b) => `${a} GiB (höchstens ${b} GiB)`,
+    "knoten.vonkernen": (a, b) => `${a} von ${b}`,
+    "knoten.abgelegt": (a) => `Abgelegt in ${a}.`,
+    "knoten.ablegen": "Nur ablegen",
     "modus.wallet.name": "Wallet",
     "modus.wallet.was": "Guthaben",
     "modus.wallet.warum":
@@ -279,10 +322,13 @@ const TEXTE = {
     "wort.agent.neu": "Neuer Prozess",
 
     "speicher.voll": (was) => `Das ${was} ließ sich nicht merken; der Speicher des Fensters ist zu.`,
-    "wurzel.warum":
-      "Der Agent hat noch keinen Arbeitsordner. Ohne einen gibt es die Dateiwerkzeuge nicht, und er antwortet nur aus dem, was er weiß. Wähle den Ordner, in dem er arbeiten soll.",
     "reichweite.kein": "kein Verzeichnis eingehängt",
-    "reichweite.hinweis": "Ohne Arbeitsordner hat der Agent keine Werkzeuge. In den Einstellungen setzen.",
+    "reichweite.hinweis": "Ohne Arbeitsordner hat der Agent keine Werkzeuge. Ein Klick hier wählt einen.",
+    "pfadfrage.titel": "Einhängepfad für dieses Gespräch",
+    "pfadfrage.satz": "In diesem Ordner arbeitet der Agent. Beibehalten oder einen anderen wählen?",
+    "pfadfrage.ohne": "Es ist kein Ordner eingehängt, und ohne ihn hat der Agent keine Dateiwerkzeuge. Einen wählen?",
+    "pfadfrage.behalten": "Beibehalten",
+    "pfadfrage.aendern": "Ändern …",
     "reichweite.gesperrt": ", Werkzeuge durch die Betriebsart gesperrt",
     "reichweite.pfadmarke": "Einhängepfad:",
     "reichweite.wechseln": "Verzeichnis wechseln",
@@ -320,6 +366,9 @@ const TEXTE = {
     "modulfrage.abbrechen": "Abbrechen",
     "modulfrage.antworten": "Antworten",
     "werkzeuge.zeigen": "Werkzeuge anzeigen",
+    "lauf.im_kreis": "angehalten: derselbe Schritt kam fünfmal mit demselben Ergebnis",
+    "werkzeuge.titel": "Werkzeuge",
+    "werkzeuge.satz": "Was der Agent bekommt: aus der Werkzeugkiste und dem Modul, beide in der Seitenleiste gewählt, und aus dem Einhängepfad des offenen Gesprächs.",
     "werkzeuge.verbergen": "Werkzeuge verbergen",
     "werkzeuge.aus": (kiste, n) => `Aus der Kiste „${kiste}“, ${n} Stück:`,
     "reichweite.fehler": (f) => `Ging nicht: ${f}`,
@@ -374,12 +423,17 @@ const TEXTE = {
     "bau.hinweis": "Herunterladen und Kalibrieren dauert Minuten bis Stunden und braucht Gigabyte.",
     "bau.knopf": "Download und kalibrieren",
     "bau.knopf.nurbauen": "kalibrieren",
+    "bau.frage.titel": (n) => `${n} holen und bauen?`,
+    "bau.frage.ja": "Holen und bauen",
+    "bau.frage.nein": "Abbrechen",
+    "bau.frage.zuwenig": "Schließen",
     "bau.fertig": (n) => `${n} ist fertig kalibriert.`,
     "bau.fehler": (n) => `${n} ist fehlgeschlagen.`,
     "katalog.fehler": (f) => `Katalog nicht lesbar: ${f}`,
 
     "platte.frei": (g) => `${g} frei auf der Platte`,
     "platte.haelt": (g) => ` Myelith hält davon ${g}`,
+    "platte.zaehlt": " Was Myelith davon hält, wird gerade gezählt",
     "platte.reserviert": (g) => ` und reserviert ${g}`,
 
     "modell.keins": "kein Modell geladen",
@@ -540,17 +594,6 @@ const TEXTE = {
     "sinne.titel": "Senses",
     "sinne.stimmewaehlen": "Upload a voice",
     "sinne.einwilligung": "The recording is my own voice, or the person has consented.",
-    "protokoll.titel": "Action log",
-    "protokoll.satz": "Every agent action, without plain text: inputs and results appear only as fingerprints. Deleted after 30 days.",
-    "protokoll.zeigen": "Show log",
-    "protokoll.leer": "No entries yet.",
-    "protokoll.ort": (o) => `Stored in: ${o}`,
-    "protokoll.zeit": "Time",
-    "protokoll.art": "Kind",
-    "protokoll.werkzeug": "Tool",
-    "protokoll.entscheidung": "Decision",
-    "protokoll.ergebnis": "Result",
-    "protokoll.dauer": "Duration",
     "sinne.stimmeweg": "Remove the voice",
     "sinne.einrichten": "Create the runner",
     "sinne.hoert": "🎙 Recording, release to stop",
@@ -576,8 +619,29 @@ const TEXTE = {
       "The agent carries out your task with the tools in its toolbox. The conversation carries over from task to task. You can adjust things in the settings …",
     "modus.knoten.name": "Node",
     "modus.knoten.was": "Mining",
-    "modus.knoten.warum":
-      "The node computes for the network and earns from it. The client is missing a node address and a mandate.",
+    "knoten.titel": "Mining",
+    "knoten.probelauf":
+      "Trial run without a test network: the node runs on its own trial chain, and the MYL on it are play money. It declines inference requests from the network until a shard is attached.",
+    "knoten.platte": "Disk",
+    "knoten.ordner": "Folder",
+    "knoten.volumen": "Volume",
+    "knoten.gewichte": "Own weights there too",
+    "knoten.kerne": "CPU cores",
+    "knoten.rechenwerke": "Accelerators",
+    "knoten.keinwerk": "none besides the CPU",
+    "knoten.starten": "Start mining",
+    "knoten.beenden": "Stop mining",
+    "knoten.startet": "starting the node …",
+    "knoten.beendet": "Mining stopped.",
+    "knoten.laeuftschon": (a) => `Mining is running (started in: ${a}); stop it first, then change.`,
+    "knoten.meldungen": "Reports every five minutes",
+    "knoten.orte": (a) => `Storage locations: ${a}`,
+    "knoten.weitere": (a) => ` · further locations for the network: ${a}`,
+    "knoten.frei": (a) => `${a} free`,
+    "knoten.hoechstens": (a, b) => `${a} GiB (at most ${b} GiB)`,
+    "knoten.vonkernen": (a, b) => `${a} of ${b}`,
+    "knoten.abgelegt": (a) => `Saved in ${a}.`,
+    "knoten.ablegen": "Save only",
     "modus.wallet.name": "Wallet",
     "modus.wallet.was": "Balance",
     "modus.wallet.warum":
@@ -600,10 +664,13 @@ const TEXTE = {
 
     "speicher.voll": (was) =>
       `The ${was.toLowerCase()} could not be remembered; the window's storage is closed.`,
-    "wurzel.warum":
-      "The agent has no working folder yet. Without one there are no file tools at all, and it answers only from what it knows. Pick the folder it should work in.",
     "reichweite.kein": "no folder mounted",
-    "reichweite.hinweis": "Without a working folder the agent has no tools. Set one in the settings.",
+    "reichweite.hinweis": "Without a working folder the agent has no tools. Click here to pick one.",
+    "pfadfrage.titel": "Mount path for this conversation",
+    "pfadfrage.satz": "The agent works in this folder. Keep it or pick another?",
+    "pfadfrage.ohne": "No folder is mounted, and without one the agent has no file tools. Pick one?",
+    "pfadfrage.behalten": "Keep",
+    "pfadfrage.aendern": "Change …",
     "reichweite.gesperrt": ", tools locked by the operating mode",
     "reichweite.pfadmarke": "Mount path:",
     "reichweite.wechseln": "Change folder",
@@ -641,6 +708,9 @@ const TEXTE = {
     "modulfrage.abbrechen": "Cancel",
     "modulfrage.antworten": "Answer",
     "werkzeuge.zeigen": "Show tools",
+    "lauf.im_kreis": "stopped: the same step came five times with the same result",
+    "werkzeuge.titel": "Tools",
+    "werkzeuge.satz": "What the agent gets: from the tool box and the module, both chosen in the sidebar, and from the mount path of the open conversation.",
     "werkzeuge.verbergen": "Hide tools",
     "werkzeuge.aus": (kiste, n) => `From the “${kiste}” box, ${n} of them:`,
     "reichweite.fehler": (f) => `Did not work: ${f}`,
@@ -695,12 +765,17 @@ const TEXTE = {
     "bau.hinweis": "Downloading and calibrating takes minutes to hours and needs gigabytes.",
     "bau.knopf": "Download and calibrate",
     "bau.knopf.nurbauen": "calibrate",
+    "bau.frage.titel": (n) => `Fetch and build ${n}?`,
+    "bau.frage.ja": "Fetch and build",
+    "bau.frage.nein": "Cancel",
+    "bau.frage.zuwenig": "Close",
     "bau.fertig": (n) => `${n} is calibrated.`,
     "bau.fehler": (n) => `${n} failed.`,
     "katalog.fehler": (f) => `Catalogue not readable: ${f}`,
 
     "platte.frei": (g) => `${g} free on disk`,
     "platte.haelt": (g) => ` Myelith holds ${g} of it`,
+    "platte.zaehlt": " What Myelith holds of it is being counted",
     "platte.reserviert": (g) => ` and reserves ${g}`,
 
     "modell.keins": "no model loaded",
@@ -825,9 +900,11 @@ const MODI = [
   // stehen gedaempft da und sagen beim Anfassen, was fehlt. Ein Modus,
   // der still nichts taete, waere schlimmer als keiner; einer, der
   // ganz fehlt, verschweigt, wohin der Client geht.
+  // ⚑ **Der Knoten ist offen** (Auftrag des Projektinhabers, 2026-10-17):
+  //   Hier wird das Mining eingestellt und gestartet, und solange es laeuft,
+  //   atmet der Reiter.
   {
     id: "knoten",
-    offen: false,
   },
   {
     id: "wallet",
@@ -1178,32 +1255,60 @@ function nach_oben(g) {
 // ⚑ Der Titel kommt aus dem ersten Beitrag und wird nicht erfragt. Ein
 // Dialog, der nach einem Namen fragt, bevor man weiss, worum es geht,
 // ist eine Huerde vor dem ersten Satz.
-/// ⚑ **Ein Agentengespraech ohne Arbeitsverzeichnis fuehrt zur
-/// Einstellung, statt ohne Werkzeuge loszulaufen.**
+/// **Fragt bei einem neuen Agentengespraech, ob der Einhaengepfad bleibt.**
 ///
-/// # 📌 Warum das kein Hinweis ist, sondern ein Weg
+/// ⚑ **Wunsch des Projektinhabers, 2026-10-17**: Jedes neue Agentengespraech
+/// fragt, ob der gewaehlte Einhaengepfad beibehalten oder geaendert wird.
+/// Vorgeschlagen wird der Pfad des Gespraechs davor, denn den sah man
+/// zuletzt in der Seitenleiste; ohne ihn, was Einstellung und Vorgabe
+/// sagen. In der Konsole fragt nichts: Dort ist der Pfad das Verzeichnis,
+/// aus dem sie gestartet wurde.
 ///
-/// Ohne gesetzte Wurzel gibt es die Dateiwerkzeuge **gar nicht**, und
-/// der Agent arbeitet dann ohne sie. Das steht zwar in der
-/// Seitenleiste, aber wer gerade ein Agentengespraech aufmacht, liest
-/// dort nicht nach: Er tippt einen Auftrag und wundert sich, warum
-/// nichts angefasst wird. Eine Meldung waere derselbe Satz an einer
-/// Stelle, an der man ihn wegklickt.
+/// 📌 **Bis myl-oberflaeche 0.80.0 stand hier `wurzel_verlangen`**: Ohne
+/// gesetzte Wurzel sprang das Fenster auf die Einstellungsseite, zum Feld
+/// `agent.wurzel`. Das Feld steht dort nicht mehr, und gefragt wird jetzt
+/// jedes Mal und nicht nur, wenn nichts gesetzt ist.
 ///
-/// ⚑ **Dieselbe Entscheidung wie beim Ausgabeordner am 2026-09-09:**
-/// Ein fehlender Ordner ist keine Fehlermeldung, sondern eine fehlende
-/// Entscheidung, und das Fenster fuehrt dorthin, wo sie getroffen wird.
-async function wurzel_verlangen() {
-  if (modus_jetzt() !== "agent") return;
+/// ⚑ **„Ändern“ setzt den Vorschlag vorher.** Bricht man die Ordnerwahl ab,
+/// gilt er; ein abgebrochener Dialog soll nicht still auf die Vorgabe
+/// zurueckfallen.
+async function pfad_fragen(g, vorschlag) {
+  if (!g || g.modus !== "agent") return;
+  let r;
   try {
-    const e = await invoke("einstellungen");
-    if (e.werte["agent.wurzel"]) return;
+    r = await invoke("werkzeuge", { wurzel: vorschlag || null });
   } catch {
-    // Wer die Einstellungen nicht lesen kann, hat ein groesseres
-    // Problem; das meldet der naechste Aufruf, der sie braucht.
-    return;
+    r = { wurzel: null };
   }
-  await zum_feld("agent.wurzel", t("wurzel.warum"));
+  $("pfadfragepfad").textContent = r.wurzel || t("reichweite.kein");
+  $("pfadfragesatz").textContent = r.wurzel ? t("pfadfrage.satz") : t("pfadfrage.ohne");
+  const kasten = $("pfadfrage");
+  kasten.hidden = false;
+  $("pfadfrage-behalten").focus();
+  const aendern = await new Promise((fertig) => {
+    const ende = (ja) => {
+      kasten.hidden = true;
+      $("pfadfrage-behalten").onclick = null;
+      $("pfadfrage-aendern").onclick = null;
+      kasten.onkeydown = null;
+      fertig(ja);
+    };
+    $("pfadfrage-behalten").onclick = () => ende(false);
+    $("pfadfrage-aendern").onclick = () => ende(true);
+    kasten.onkeydown = (e) => {
+      if (e.key === "Escape") ende(false);
+    };
+  });
+  if (vorschlag) {
+    g.wurzel = vorschlag;
+    sichern();
+  }
+  if (aendern && offen === g) {
+    await verzeichnis_wechseln();
+  } else {
+    reichweite_zeichnen();
+    kontext_holen();
+  }
 }
 
 /// **Der Titel ist der ganze erste Satz, nicht sein Anfang.**
@@ -1447,6 +1552,9 @@ function modi_zeichnen() {
       b.dataset.offen = "nein";
       b.title = t(`modus.${m.id}.warum`);
     }
+    // ⚑ **Der Reiter atmet, solange Mining laeuft**, wie der Loop-Knopf;
+    //   gleich ob hier oder in der Konsole gestartet.
+    if (m.id === "knoten") b.dataset.atmet = mining_laeuft ? "ja" : "nein";
     const n = document.createElement("span");
     n.textContent = t(`modus.${m.id}.name`);
     const s = document.createElement("span");
@@ -1471,7 +1579,6 @@ function modi_zeichnen() {
       if (offen && offen.modus !== modus) offen = null;
       alles_zeichnen();
       kontext_holen();
-      wurzel_verlangen();
     });
     w.append(b);
   }
@@ -2867,7 +2974,303 @@ function alles_zeichnen() {
   chats_zeichnen();
   gespraech_zeichnen();
   terminal_umschalten();
+  knoten_umschalten();
 }
+
+// --- Der Knoten: Mining ---------------------------------------------------
+//
+// ⚑ **Dieselbe Freigabe wie `/mining` in der Konsole.** Vorschlag, Pruefung,
+// Ablage, Start und Meldung stehen in `myl_client::mining`; hier wird nur
+// gezeichnet und weitergereicht.
+
+/// Ob Mining laeuft, nach dem letzten Blick; danach atmet der Reiter.
+let mining_laeuft = false;
+/// Die Lage aus dem Ruecken, solange die Seite offen ist.
+let knotenlage = null;
+/// Wann die naechste Meldung faellig ist (alle fuenf Minuten).
+let knoten_naechste = 0;
+const KNOTEN_MELDETAKT = 5 * 60 * 1000;
+
+function groesse_text(bytes) {
+  for (const [name, n] of [["TiB", 1024 ** 4], ["GiB", GIB], ["MiB", 1024 ** 2], ["KiB", 1024]]) {
+    if (bytes >= n) {
+      const z = Math.round((bytes * 10) / n);
+      return z % 10 === 0 ? `${z / 10} ${name}` : `${Math.floor(z / 10)},${z % 10} ${name}`;
+    }
+  }
+  return `${bytes} B`;
+}
+
+/// Ob die Knotenseite beim letzten Umschalten offen war.
+let knoten_offen = false;
+
+/// Stellt zwischen Gespraech und Knotenseite um.
+function knoten_umschalten() {
+  const an = modus_jetzt() === "knoten";
+  const eben_geoeffnet = an && !knoten_offen;
+  knoten_offen = an;
+  $("knotenseite").hidden = !an;
+  if (an) {
+    $("gespraech").hidden = true;
+    $("eingabe").hidden = true;
+    const leiste = $("anhangleiste");
+    if (leiste) leiste.hidden = true;
+    // ⚑ **Beim Oeffnen die Karten neu suchen**, nach dem ersten Zeichnen:
+    //   Eine im Betrieb angesteckte Karte erscheint dann ohne Neustart
+    //   (Wunsch des Projektinhabers, 2026-10-17).
+    const geladen = knoten_laden();
+    if (eben_geoeffnet) geladen.then(knoten_werke_auffrischen);
+  }
+}
+
+/// **Holt die Rechenwerke neu**, wenn sich die Menge geaendert hat, und
+/// behaelt, was auf der Seite schon eingestellt ist.
+async function knoten_werke_auffrischen() {
+  let anders = false;
+  try {
+    anders = await invoke("rechenwerke_auffrischen");
+  } catch (_) {
+    return;
+  }
+  if (!anders || !knotenlage) return;
+  const f = knotenlage.freigabe;
+  let neu;
+  try {
+    neu = await invoke("mining_lage");
+  } catch (_) {
+    return;
+  }
+  // ⚑ Was die Seite eingestellt hat, bleibt; nur eine Karte, die nicht mehr
+  //   da ist oder nicht rechnet, faellt aus der Wahl.
+  neu.freigabe = {
+    ...f,
+    rechenwerke: f.rechenwerke.filter((k) => neu.rechenwerke.some((w) => w.kennung === k && w.rechnet)),
+  };
+  neu.schon_bytes = knotenlage.schon_bytes;
+  knotenlage = neu;
+  knoten_zeichnen();
+}
+
+/// Holt die Lage und zeichnet die Seite.
+async function knoten_laden() {
+  try {
+    knotenlage = await invoke("mining_lage");
+  } catch (f) {
+    $("knotenmeldung").textContent = String(f);
+    return;
+  }
+  mining_laeuft_setzen(knotenlage.laeuft);
+  knoten_zeichnen();
+}
+
+/// Was die Seite gerade einstellt, als Freigabe fuer den Ruecken.
+function knoten_freigabe() {
+  const f = knotenlage.freigabe;
+  return {
+    platte: f.platte,
+    ordner: f.ordner,
+    volumen_gib: f.volumen_gib,
+    gewichte: f.gewichte,
+    kerne: f.kerne,
+    rechenwerke: f.rechenwerke,
+  };
+}
+
+function knoten_hoechstens() {
+  const f = knotenlage.freigabe;
+  const p = knotenlage.platten.find((x) => x.wurzel === f.platte);
+  const frei = p ? p.frei_bytes : 0;
+  return Math.max(1, Math.floor((frei + knotenlage.schon_bytes) / GIB));
+}
+
+function knoten_zeichnen() {
+  const l = knotenlage;
+  if (!l) return;
+  const f = l.freigabe;
+  const gesperrt = l.laeuft;
+  const stand = $("knotenstand");
+  stand.replaceChildren(...l.zeilen.map((z) => {
+    const p = document.createElement("p");
+    p.textContent = z;
+    return p;
+  }));
+  stand.dataset.laeuft = l.laeuft ? "ja" : "nein";
+
+  const wahl = $("knoten-platte");
+  wahl.replaceChildren();
+  let gefunden = false;
+  for (const p of l.platten) {
+    const o = document.createElement("option");
+    o.value = p.wurzel;
+    o.textContent = `${p.name} · ${t("knoten.frei", groesse_text(p.frei_bytes))}`;
+    if (p.wurzel === f.platte) {
+      o.selected = true;
+      gefunden = true;
+    }
+    wahl.append(o);
+  }
+  if (!gefunden && f.platte) {
+    const o = document.createElement("option");
+    o.value = f.platte;
+    o.textContent = f.platte;
+    o.selected = true;
+    wahl.append(o);
+  }
+  $("knoten-ordner").value = f.ordner;
+  $("knoten-pfad").textContent = `${f.platte.replace(/\/$/, "")}/${f.ordner}`;
+  const v = $("knoten-volumen");
+  v.max = String(knoten_hoechstens());
+  v.value = String(f.volumen_gib);
+  $("knoten-volumen-wert").textContent = t("knoten.hoechstens", f.volumen_gib, knoten_hoechstens());
+  $("knoten-gewichte").checked = f.gewichte;
+  const k = $("knoten-kerne");
+  k.max = String(l.kerne);
+  k.value = String(f.kerne);
+  $("knoten-kerne-wert").textContent = t("knoten.vonkernen", f.kerne, l.kerne);
+  const werke = $("knoten-rechenwerke");
+  werke.replaceChildren();
+  if (!l.rechenwerke.length) werke.textContent = t("knoten.keinwerk");
+  // ⚑ **Jedes gefundene Rechenwerk mit eigenem Schalter**; eines, das hier
+  //   nicht rechnet, steht gesperrt da und sagt darunter, warum. Der Name
+  //   traegt den Rechenweg („… (CUDA)"), damit bei zwei Karten zu sehen
+  //   ist, welche wovon bedient wird.
+  for (const w of l.rechenwerke) {
+    const lab = document.createElement("label");
+    lab.className = "knotenwerk";
+    const c = document.createElement("input");
+    c.type = "checkbox";
+    c.checked = w.rechnet && f.rechenwerke.includes(w.kennung);
+    c.disabled = gesperrt || !w.rechnet;
+    c.addEventListener("change", () => {
+      f.rechenwerke = c.checked
+        ? [...f.rechenwerke.filter((x) => x !== w.kennung), w.kennung]
+        : f.rechenwerke.filter((x) => x !== w.kennung);
+    });
+    lab.append(c, document.createTextNode(` ${w.titel}`));
+    if (!w.rechnet) {
+      lab.dataset.gesperrt = "ja";
+      const grund = document.createElement("small");
+      grund.className = "knotengrund";
+      grund.textContent = w.sperrgrund || "";
+      lab.append(grund);
+    }
+    werke.append(lab);
+  }
+  for (const id of ["knoten-platte", "knoten-ordner", "knoten-volumen", "knoten-gewichte", "knoten-kerne"]) {
+    $(id).disabled = gesperrt;
+  }
+  // ⚑ **Ein Knopf an derselben Stelle**: starten, solange nichts laeuft,
+  //   sonst beenden (Auftrag des Projektinhabers).
+  const knopf = $("knotenknopf");
+  knopf.textContent = t(l.laeuft ? "knoten.beenden" : "knoten.starten");
+  knopf.dataset.laeuft = l.laeuft ? "ja" : "nein";
+  $("knotenablegen").disabled = gesperrt;
+  $("knotenmeldung").textContent = l.laeuft && l.von && l.von !== "Fenster" ? t("knoten.laeuftschon", l.von) : "";
+  $("knotenorte").textContent = t("knoten.orte", l.speicherorte) + (l.weitere.length ? t("knoten.weitere", l.weitere.join(", ")) : "");
+}
+
+$("knoten-platte").addEventListener("change", () => {
+  if (!knotenlage) return;
+  knotenlage.freigabe.platte = $("knoten-platte").value;
+  knotenlage.schon_bytes = 0;
+  knotenlage.freigabe.volumen_gib = Math.min(knotenlage.freigabe.volumen_gib, knoten_hoechstens());
+  knoten_zeichnen();
+});
+$("knoten-ordner").addEventListener("input", () => {
+  if (!knotenlage) return;
+  knotenlage.freigabe.ordner = $("knoten-ordner").value.trim();
+  $("knoten-pfad").textContent = `${knotenlage.freigabe.platte.replace(/\/$/, "")}/${knotenlage.freigabe.ordner}`;
+});
+$("knoten-volumen").addEventListener("input", () => {
+  if (!knotenlage) return;
+  knotenlage.freigabe.volumen_gib = Number($("knoten-volumen").value);
+  $("knoten-volumen-wert").textContent = t("knoten.hoechstens", knotenlage.freigabe.volumen_gib, knoten_hoechstens());
+});
+$("knoten-gewichte").addEventListener("change", () => {
+  if (knotenlage) knotenlage.freigabe.gewichte = $("knoten-gewichte").checked;
+});
+$("knoten-kerne").addEventListener("input", () => {
+  if (!knotenlage) return;
+  knotenlage.freigabe.kerne = Number($("knoten-kerne").value);
+  $("knoten-kerne-wert").textContent = t("knoten.vonkernen", knotenlage.freigabe.kerne, knotenlage.kerne);
+});
+
+$("knotenknopf").addEventListener("click", async () => {
+  if (!knotenlage) return;
+  const knopf = $("knotenknopf");
+  knopf.disabled = true;
+  try {
+    if (knotenlage.laeuft) {
+      await invoke("mining_beenden");
+      $("knotenmeldung").textContent = t("knoten.beendet");
+    } else {
+      $("knotenmeldung").textContent = t("knoten.startet");
+      // ⛔️ Geprueft wird im Ruecken, vor allem anderen: ohne Platz keine
+      //   Freigabe, und der Grund steht dann hier.
+      await invoke("mining_starten", { freigabe: knoten_freigabe() });
+      knoten_naechste = Date.now() + KNOTEN_MELDETAKT;
+      $("knotenmeldung").textContent = "";
+    }
+    await knoten_laden();
+  } catch (f) {
+    $("knotenmeldung").textContent = String(f);
+  } finally {
+    knopf.disabled = false;
+  }
+});
+
+// ⚑ **Ablegen, ohne zu starten**: Wer nur einen Ort fuer eigene Gewichte
+//   eintraegt, will kein Mining. Geprueft wird wie beim Start.
+$("knotenablegen").addEventListener("click", async () => {
+  if (!knotenlage) return;
+  try {
+    const pfad = await invoke("mining_ablegen", { freigabe: knoten_freigabe() });
+    $("knotenmeldung").textContent = t("knoten.abgelegt", pfad);
+  } catch (f) {
+    $("knotenmeldung").textContent = String(f);
+  }
+});
+
+/// Setzt den Stand und zeichnet die Modi neu, wenn er sich aendert.
+function mining_laeuft_setzen(an) {
+  if (an === mining_laeuft) return;
+  mining_laeuft = an;
+  if (an && !knoten_naechste) knoten_naechste = Date.now() + KNOTEN_MELDETAKT;
+  if (!an) knoten_naechste = 0;
+  modi_zeichnen();
+}
+
+/// **Alle fuenfzehn Sekunden ein Blick, alle fuenf Minuten die Meldung.**
+///
+/// ⚑ Der Blick sieht auch ein Mining aus der Konsole; die Meldung steht auf
+/// der Seite und als Hinweis im Fenster.
+async function mining_takt() {
+  let zeilen = null;
+  try {
+    zeilen = await invoke("mining_stand");
+  } catch {
+    zeilen = null;
+  }
+  mining_laeuft_setzen(Boolean(zeilen));
+  if (zeilen && knoten_naechste && Date.now() >= knoten_naechste) {
+    knoten_naechste = Date.now() + KNOTEN_MELDETAKT;
+    const block = document.createElement("pre");
+    block.textContent = `${new Date().toLocaleTimeString()}  ${zeilen.join("\n")}`;
+    $("knotenmeldungen").prepend(block);
+    melden(zeilen.join("\n"));
+  }
+  if (zeilen && knotenlage && modus_jetzt() === "knoten") {
+    knotenlage.zeilen = zeilen;
+    const stand = $("knotenstand");
+    stand.replaceChildren(...zeilen.map((z) => {
+      const p = document.createElement("p");
+      p.textContent = z;
+      return p;
+    }));
+  }
+}
+setInterval(mining_takt, 15000);
+mining_takt();
 
 // --- Das Terminal -------------------------------------------------------
 //
@@ -3025,7 +3428,7 @@ function melden(text, wo) {
 // Abschnitte, die keine Einstellungen sind: Aktualisierung, Modelle,
 // was dieser Rechner hergibt. Die Reihenfolge steht im HTML, hier steht
 // nur, welches Feld wohin gehoert.
-const TABELLEN = ["felder-oberflaeche", "felder-grenzen", "felder-modell", "felder-agent"];
+const TABELLEN = ["felder-oberflaeche", "felder-grenzen", "felder-modell", "felder-agent", "felder-diagnose"];
 
 // ⚑ **Entschieden wird am Namen und nicht an der Ueberschrift.** Ein
 // Feldname (`kap.speicher`) ist in jeder Sprache derselbe; eine
@@ -3039,10 +3442,14 @@ const tabelle_fuer = (name) =>
       : // ⚑ **Agent und Modell in getrennten Tabellen**, damit die Sinne
         // dazwischen stehen koennen (2026-09-18).
         // ⚑ Der Loop steht beim Agenten: Er ist eine Folge von Agentenlaeufen.
-        // ⚑ Der Debug-Log auch: Er schreibt mit, was Laeufe tun (2026-10-12).
-        name.startsWith("agent.") || name.startsWith("loop.") || name.startsWith("debug.")
+        name.startsWith("agent.") || name.startsWith("loop.")
         ? "felder-agent"
-        : "felder-modell";
+        : // ⚑ **Der Debug-Log steht ganz unten** (Wunsch des Projektinhabers, 2026-10-17). Bis dahin stand er bei
+          // den Agentenfeldern, und deren zweite Haelfte trug seine
+          // Ueberschrift „Diagnose" (Fund 556).
+          name.startsWith("debug.")
+          ? "felder-diagnose"
+          : "felder-modell";
 
 const bereichszeile = (name) => {
   const tr = document.createElement("tr");
@@ -3248,17 +3655,26 @@ const sinnbild = (d) => {
 // ⚑ Die Phasennamen heissen im Fenster anders als im Ruecken: dort
 // `holen`, hier „Download". Der Ruecken spricht die Sprache des
 // Protokolls, das Fenster die des Nutzers.
-const PHASEN = { holen: 1, kalibrieren: 2, fertig: 3 };
-const PHASENNAME = { holen: "Download", kalibrieren: "Kalibrierung", fertig: "fertig" };
+// ⚑ Fuenf Phasen seit dem 2026-10-16: Python-Umgebung und vier Bit kamen
+//   dazu (`myl_client::bezug`). Nicht jeder Bau hat alle; der Balken zeigt,
+//   wo in der Reihe der Lauf steht.
+const PHASEN = { umgebung: 1, holen: 2, kalibrieren: 3, vierbit: 4, fertig: 5 };
+const PHASENNAME = {
+  umgebung: "Python-Umgebung",
+  holen: "Download",
+  kalibrieren: "Kalibrierung",
+  vierbit: "vier Bit",
+  fertig: "fertig",
+};
 let baut = null;
 
 /// ⚠️ **Der Balken zeigt Phasen und keine erfundene Zahl.** Die
 /// Skripte melden keinen Prozentsatz; wer daraus einen macht, hat
-/// einen Balken, der bei siebzig Prozent stehenbleibt. Drei Phasen,
+/// einen Balken, der bei siebzig Prozent stehenbleibt. Phasen,
 /// und daneben steht, was gerade laeuft und wie lange schon.
 function baustand_setzen(phase, text, seit) {
   $("baustand").hidden = false;
-  const anteil = (PHASEN[phase] || 0) / 3;
+  const anteil = (PHASEN[phase] || 0) / PHASEN.fertig;
   $("balkenteil").style.width = `${Math.round(anteil * 100)}%`;
   const min = Math.floor((Date.now() - seit) / 60000);
   const wie = min < 1 ? "gerade begonnen" : `seit ${min} Minuten`;
@@ -3387,7 +3803,7 @@ async function katalog_zeichnen() {
     } else {
       b.textContent = t(m.modell_da ? "bau.knopf.nurbauen" : "bau.knopf");
       b.disabled = v.fehlt.length > 0 || baut !== null;
-      b.addEventListener("click", () => bauen(m.schluessel, m.anzeigename || m.schluessel));
+      b.addEventListener("click", () => baufrage(m.schluessel, m.anzeigename || m.schluessel));
     }
     z.append(links, b);
     // 📌 **Der Balken wird VERSCHOBEN und nicht neu gebaut.** Er haengt
@@ -3402,6 +3818,43 @@ async function katalog_zeichnen() {
     }
     w.append(z);
   }
+}
+
+/// ⛔️ **Erst der Plan, dann der Bau** (Festlegung des Projektinhabers,
+/// 2026-10-16): Was geschieht und wie viel Speicher waehrend des Vorgangs
+/// gebraucht wird, steht im Kasten und wird ausdruecklich bestaetigt. Reicht
+/// der Platz nicht, gibt es keinen Knopf zum Bauen, nur die fehlende Zahl.
+async function baufrage(schluessel, name) {
+  let plan;
+  try {
+    plan = await invoke("bauplan", { schluessel });
+  } catch (f) {
+    $("bauhinweis").textContent = String(f);
+    return;
+  }
+  $("baufragetitel").textContent = t("bau.frage.titel", name);
+  $("baufragetext").textContent = plan.text;
+  const grund = $("baufragegrund");
+  grund.textContent = plan.grund;
+  grund.hidden = plan.reicht;
+  const ja = $("baufrageja");
+  ja.hidden = !plan.reicht;
+  $("baufragenein").textContent = t(plan.reicht ? "bau.frage.nein" : "bau.frage.zuwenig");
+  const kasten = $("baufrage");
+  kasten.hidden = false;
+  // Der Fokus liegt auf Abbrechen: Bestaetigt wird mit einem Klick, nicht mit der Eingabetaste.
+  $("baufragenein").focus();
+  const wahl = await new Promise((fertig) => {
+    const ende = (w) => {
+      kasten.hidden = true;
+      ja.onclick = null;
+      $("baufragenein").onclick = null;
+      fertig(w);
+    };
+    ja.onclick = () => ende(plan.reicht);
+    $("baufragenein").onclick = () => ende(false);
+  });
+  if (wahl) await bauen(schluessel, name);
 }
 
 async function bauen(schluessel, name) {
@@ -3703,17 +4156,27 @@ function werkzeugblock() {
   return td;
 }
 
-/// **Die Rueckfallzeile**, falls es das Kistenfeld einmal nicht gibt.
+/// **Die Werkzeugzeile**, unter den Agentenfeldern.
 ///
-/// ⚠️ Ein Knopf, der dann gar nicht mehr erschiene, waere schlechter als
-/// einer an der zweiten Stelle.
+/// ⚑ **Eine eigene Zeile mit eigener Beschriftung** (2026-10-17): Bis
+/// myl-oberflaeche 0.80.0 hing der Knopf in der Zelle des Kistenfeldes.
+/// Kiste, Modul und Einhaengepfad stehen seitdem nur noch in der
+/// Seitenleiste (Wunsch des Projektinhabers), und ein Knopf ohne Feld
+/// daneben muss selbst sagen, wessen Werkzeuge er zeigt.
 function werkzeugzeile() {
   const tr = document.createElement("tr");
   tr.className = "werkzeugzeile";
-  const leer = document.createElement("td");
+  const links = document.createElement("td");
+  const titel = document.createElement("span");
+  titel.className = "feldtitel";
+  titel.textContent = t("werkzeuge.titel");
+  const satz = document.createElement("span");
+  satz.className = "feldsatz";
+  satz.textContent = t("werkzeuge.satz");
+  links.append(titel, satz);
   const td = document.createElement("td");
   td.append(werkzeugblock());
-  tr.append(leer, td);
+  tr.append(links, td);
   return tr;
 }
 
@@ -3741,16 +4204,11 @@ async function einstellungen_zeichnen() {
   // wird sie am Feldnamen, nicht an der Ueberschrift: `agent.` ist in
   // jeder Sprache dasselbe, „Agent" nicht zwingend. Dieselbe Begruendung
   // wie bei `tabelle_fuer`.
-  // ⚑ **Der Werkzeugknopf haengt an der Kistenzeile und nicht am Ende
-  // der Rubrik** (Meldung des Projektinhabers, 2026-09-15). Er
-  // beantwortet die Frage, die der Pfad darueber aufwirft: „welche
-  // Werkzeuge kommen aus dieser Kiste?" Zwei Zeilen weiter unten steht
-  // sie neben etwas anderem und liest sich wie eine eigene Sache.
-  //
-  // ⚠️ **Die letzte Agentenzeile bleibt als Rueckfall**, falls das Feld
-  // einmal anders heisst oder wegfaellt: Ein Knopf, der dann gar nicht
-  // mehr erscheint, waere schlechter als einer an der zweiten Stelle.
-  let kistenzeile = null;
+  // 📌 **Bis myl-oberflaeche 0.80.0 hing der Werkzeugknopf an der
+  // Kistenzeile** (Meldung des Projektinhabers, 2026-09-15). Kiste, Modul
+  // und Einhaengepfad stehen seit dem 2026-10-17 nur noch in der
+  // Seitenleiste; der Knopf steht jetzt in einer eigenen Zeile nach dem
+  // letzten Agentenfeld, siehe `werkzeugzeile`.
   let letzte_agentenzeile = null;
   for (const f of felder) {
     if (f.freigabe) continue;
@@ -3797,50 +4255,9 @@ async function einstellungen_zeichnen() {
         }
       });
     koerper.append(zeile);
-    if (f.name === "agent.kistenordner") kistenzeile = zeile;
     if (f.name.startsWith("agent.")) letzte_agentenzeile = zeile;
   }
-  if (kistenzeile) {
-    // In die Zelle des Pfadfeldes, direkt unter das Feld.
-    kistenzeile.querySelector("td:last-child").append(werkzeugblock());
-  } else if (letzte_agentenzeile) {
-    letzte_agentenzeile.after(werkzeugzeile());
-  }
-  // ⚑ **Das leere Kistenfeld sagt, was stattdessen gilt** (Meldung des
-  // Projektinhabers, 2026-09-15: der Pfad wurde nicht angezeigt). Der
-  // Wert bleibt leer, denn er ist nicht gesetzt; der Platzhalter nennt
-  // die Kiste, aus der die Werkzeuge wirklich kommen. 📌 Den Wert selbst
-  // zu füllen wäre falsch: Dann liesse sich „nicht gesetzt" nicht mehr
-  // von „auf die Vorgabe gesetzt" unterscheiden, und die Prüfung
-  // `wert_und_setzer_kennen_dieselben_felder` hat genau das gefangen.
-  //
-  // ⚑ **Dasselbe beim Arbeitsordner** (Meldung des Projektinhabers,
-  // 2026-09-15: „der Einhaengepfad ist noch nicht standardmaessig das
-  // WORK_DIR"). Er **ist** die Vorgabe, seit es eine gibt; sie war nur
-  // nirgends zu sehen, wenn das Feld leer war. Jetzt nennt der
-  // Platzhalter den Ordner, in dem der Agent wirklich arbeitet.
-  //
-  // ⚠️ **Ein gesetzter Pfad gewinnt weiter**, und das ist Absicht: Wer
-  // einen Ordner eingetragen hat, meint ihn. Wer zur Vorgabe zurueck
-  // will, leert das Feld.
-  //
-  // ⚑ **Hier ohne den Pfad des Prozesses**, anders als in der Leiste und
-  // am Werkzeugknopf: Ein Platzhalter sagt, was **bei leerem Feld** gilt,
-  // also die Einstellung oder die Vorgabe. Den Ordner eines einzelnen
-  // Prozesses hier zu zeigen hiesse, eine Einstellung mit dem Zustand
-  // eines Auftrags zu beschriften, und beim naechsten Prozess stuende
-  // etwas anderes da.
-  try {
-    const r = await invoke("werkzeuge", { wurzel: null });
-    const platz = (name, pfad) => {
-      const feld = $("felder-agent").querySelector(`tr[data-feld="${name}"] input`);
-      if (feld && pfad) feld.placeholder = pfad;
-    };
-    platz("agent.kistenordner", r.kistenordner);
-    platz("agent.wurzel", r.wurzel);
-  } catch {
-    /* ohne Platzhalter bleibt das Feld eben leer */
-  }
+  if (letzte_agentenzeile) letzte_agentenzeile.after(werkzeugzeile());
   $("pfad").textContent = e.pfad;
   await freigabe_zeichnen(e);
   return e;
@@ -3873,9 +4290,12 @@ async function freigabe_zeichnen(e) {
   // und schon 122 belegt, hat nichts freigegeben, sondern etwas
   // zurueckgenommen.
   let satz = teile.join(", ") + ".";
-  if (e.platte_belegt > 0) satz += t("platte.haelt", gib(e.platte_belegt));
+  // ⚑ **Die Belegung wird im Hintergrund gezaehlt** (Fund 555); solange die
+  //   erste Zaehlung laeuft, sagt der Satz das statt einer Zahl.
+  if (e.platte_belegt === null || e.platte_belegt === undefined) satz += t("platte.zaehlt");
+  else if (e.platte_belegt > 0) satz += t("platte.haelt", gib(e.platte_belegt));
   if (e.platte_gehalten > 0) satz += t("platte.reserviert", gib(e.platte_gehalten));
-  if (e.platte_belegt > 0) satz += ".";
+  if (e.platte_belegt > 0 || e.platte_belegt === null || e.platte_belegt === undefined) satz += ".";
   $("freigabehinweis").textContent = satz;
 
   for (const r of m.regler) ziel.append(reglerzeile(r));
@@ -4593,30 +5013,6 @@ async function sinne_verdrahten() {
       }
     });
   }
-  // ⛔️ Das Aktionsprotokoll: erst auf den Knopf, neueste zuerst.
-  const protokollknopf = $("protokoll-zeigen");
-  if (protokollknopf) {
-    protokollknopf.addEventListener("click", async () => {
-      const [ort, eintraege] = await invoke("protokoll_lesen");
-      $("protokollort").textContent = t("protokoll.ort", ort);
-      const tafel = $("protokolltafel");
-      const rumpf = tafel.querySelector("tbody");
-      rumpf.replaceChildren(
-        ...eintraege.map((e) => {
-          const tr = document.createElement("tr");
-          for (const wert of [e.zeit, e.art, e.werkzeug, e.entscheidung, e.ergebnis, `${e.dauer_ms} ms`]) {
-            const td = document.createElement("td");
-            td.textContent = wert;
-            tr.append(td);
-          }
-          return tr;
-        }),
-      );
-      tafel.hidden = eintraege.length === 0;
-      if (eintraege.length === 0) $("protokollort").textContent += ` · ${t("protokoll.leer")}`;
-    });
-  }
-
   const weg = $("stimme-weg");
   if (weg) {
     weg.addEventListener("click", async () => {
@@ -4794,7 +5190,9 @@ async function senden(text) {
   const skills = anhaenge.filter((a) => a.skill);
   const modelltext = await skills_vorschalten(skills, anhaenge, text, dateitext);
   if (modelltext === undefined) return;
-  if (!offen) neues_gespraech();
+  // ⚑ Wer im Agenten ohne offenes Gespraech lostippt, eroeffnet eines, und
+  //   auch dann wird nach dem Einhaengepfad gefragt, vor dem ersten Lauf.
+  if (!offen) await pfad_fragen(neues_gespraech(), null);
   // ⚑ **Vor dem neuen Beitrag gelesen**: Der Auftrag geht als Auftrag
   // hinein und nicht noch einmal als Teil des Verlaufs.
   const vorher = kontext_von(offen);
@@ -4863,7 +5261,7 @@ async function senden(text) {
       laufender.schritte = a.verlauf;
       laufender.fuss =
         `${a.sekunden} s` +
-        (a.fertig ? "" : ", abgebrochen") +
+        (a.fertig ? "" : a.im_kreis ? `, ${t("lauf.im_kreis")}` : ", abgebrochen") +
         (a.gesperrt ? t("reichweite.gesperrt") : "") +
         (laufender_verdichtet ? `, ${t("kontext.im_lauf")}` : "");
     } else {
@@ -5170,11 +5568,13 @@ $("zurueck").addEventListener("click", () => {
   $("auftrag").focus();
 });
 
-$("neues-gespraech").addEventListener("click", () => {
-  neues_gespraech();
+$("neues-gespraech").addEventListener("click", async () => {
+  // ⚑ Der Pfad des Gespraechs davor ist der Vorschlag, siehe `pfad_fragen`.
+  const vorher = prozesspfad();
+  const g = neues_gespraech();
   alles_zeichnen();
+  await pfad_fragen(g, vorher);
   $("auftrag").focus();
-  wurzel_verlangen();
 });
 
 $("laden").addEventListener("click", modell_laden);
@@ -6156,7 +6556,13 @@ function loop_verdrahten() {
     const ziel = feld_ziel.value.trim();
     if (!ziel) return;
     try {
+      // ⚑ **Entsteht dafuer ein neues Gespraech, wird nach dem Pfad
+      //   gefragt**; ein Task im offenen Gespraech arbeitet in dessen Ordner,
+      //   wie die anderen Tasks darin.
+      const neu = !(offen && offen.modus === "agent");
+      const vorher = prozesspfad();
       const g = gespraech_fuer_neuen_task(ziel);
+      if (neu) await pfad_fragen(g, vorher);
       const kennung = await invoke("task_anlegen", { ziel, gespraech: g.id, wurzel: g.wurzel || null });
       feld_ziel.value = "";
       const a = await tasks_holen();
@@ -7253,13 +7659,16 @@ async function auto_bestaetigen() {
   // ⚑ Knopf und Ablegen einmal beim Start verdrahten.
   anhang_verdrahten();
   sinne_verdrahten();
+  abschnitt("Einstellungen da");
   await bild_abwarten();
   alles_zeichnen();
   await bild_abwarten();
   try {
     await modellwahl_zeichnen();
+    abschnitt("Modellwahl");
     await bild_abwarten();
     await kopf_zeichnen();
+    abschnitt("Kopf");
     await bild_abwarten();
     // ⚑ **Einmal beim Start und nicht bei jeder Zeichnung.** Was vor
     // dieser Fassung gespeichert wurde, hat keine Gliederung; sie beim
@@ -7272,7 +7681,9 @@ async function auto_bestaetigen() {
     await modellzeile_schreiben();
     // ⚑ Waehrend das Vorschaltbild laeuft: das passende Modell ermitteln
     //   und schon laden (Wunsch des Projektinhabers, 2026-09-29).
+    abschnitt("vor dem Vorladen");
     await modell_vorladen_beim_start();
+    abschnitt("Vorladen fertig oder Frist");
   } catch (f) {
     melden(t("fehler.start", f));
   }

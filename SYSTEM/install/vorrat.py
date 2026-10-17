@@ -44,6 +44,7 @@ import json
 import pathlib
 import re
 import shutil
+import subprocess
 import sys
 import tarfile
 import time
@@ -64,12 +65,46 @@ QUELLE = "https://static.crates.io/crates/{name}/{name}-{version}.crate"
 AUSGENOMMEN = ("INSPIRATION", "/fuzz/", "SYSTEM/full-build", "/.venv/", "/vendor/")
 
 
+def von_git_ignoriert(pfade: list[pathlib.Path]) -> set[pathlib.Path]:
+    """Die Sperrdateien, die git ignoriert: lokale Kisten ohne Versionierung.
+
+    📌 Lokale Module unter `MODULES/` werden nicht versioniert, tragen aber
+    eine eigene Sperrdatei. Ohne diese Abfrage legte `sammeln` ihre Archive
+    in den versionierten Vorrat, den kein Klon je braucht, und `pruefen`
+    meldete sie dort als fehlend, sobald sie fehlten (2026-10-14: vier
+    Archive, `pruefen` lokal dauerhaft rot). Eine neue Kiste, deren
+    Sperrdatei noch nicht eingecheckt, aber auch nicht ignoriert ist,
+    bleibt dabei: Gefragt wird nach Ignorieren, nicht nach Versioniertsein.
+
+    Ohne git (ein entpacktes Archiv des Baums) zaehlt jede Sperrdatei.
+    """
+    if not (WURZEL / ".git").exists() or shutil.which("git") is None:
+        return set()
+    eingabe = "\n".join(p.relative_to(WURZEL).as_posix() for p in pfade)
+    try:
+        # Rueckgabe 1 heisst "nichts ignoriert" und ist kein Fehler.
+        lauf = subprocess.run(
+            ["git", "-C", str(WURZEL), "check-ignore", "--stdin"],
+            input=eingabe,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return set()
+    if lauf.returncode not in (0, 1):
+        return set()
+    return {WURZEL / z for z in lauf.stdout.splitlines() if z}
+
+
 def sperrdateien() -> list[pathlib.Path]:
-    return sorted(
+    kandidaten = [
         p
         for p in WURZEL.rglob("Cargo.lock")
         if not any(a in str(p) for a in AUSGENOMMEN)
-    )
+    ]
+    ignoriert = von_git_ignoriert(kandidaten)
+    return sorted(p for p in kandidaten if p not in ignoriert)
 
 
 def pakete() -> dict[tuple[str, str], str]:

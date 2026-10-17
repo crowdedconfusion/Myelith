@@ -80,6 +80,14 @@ myl-node — ein Myelith-Netzknoten
                          nimmt der Knoten einen aus seinem Namen
                          abgeleiteten Schluessel, den jeder nachrechnen
                          kann. Eine ANDERE Datei als --konsensschluessel.
+  --speicherorte <datei> Die Speicherorte (speicherorte.toml). Der Knoten
+                         zaehlt bei jeder Zustandsaufnahme, was in den
+                         Orten mit dem Zweck \"netz\" liegt, und meldet es
+                         im Protokoll und unter /metriken.
+  --zusage <datei>       Eine Kapazitaetszusage (TOML). Der Knoten
+                         unterschreibt sie beim Start mit dem
+                         Kontoschluessel und legt <datei>.unterschrift
+                         daneben. Braucht --kontoschluessel.
   --konto <64 hex>       Wohin die Ertraege gehen. Vorgabe: die Adresse
                          des unterschreibenden Schluessels selbst.
   --ortsausweis <pfad>   Wo der Ausweis des Shard-Prozesses liegt, Datei
@@ -163,6 +171,8 @@ struct Argumente {
     konformitaetspfad: std::path::PathBuf,
     /// Ausdrücklich ohne Konformitätsprüfung starten.
     ohne_konformitaet: bool,
+    /// Eine Zusage, die der Knoten beim Start unterschreibt.
+    zusage: Option<PathBuf>,
 }
 
 fn lies_argumente() -> Result<Option<Argumente>, String> {
@@ -184,6 +194,7 @@ fn lies_argumente() -> Result<Option<Argumente>, String> {
     let mut bft_frist: Option<u64> = None;
     let mut bft_zuwachs: Option<u64> = None;
 
+    let mut zusage: Option<PathBuf> = None;
     let mut i = 0;
     while i < roh.len() {
         let wert = |i: usize| -> Result<String, String> {
@@ -253,6 +264,8 @@ fn lies_argumente() -> Result<Option<Argumente>, String> {
                 i += 2;
             }
             "--modell" => { konfig.modellname = wert(i)?; i += 2; }
+            "--speicherorte" => { konfig.speicherorte = Some(PathBuf::from(wert(i)?)); i += 2; }
+            "--zusage" => { zusage = Some(PathBuf::from(wert(i)?)); i += 2; }
             "--kontoschluessel" => {
                 konfig.kontoschluesseldatei = Some(PathBuf::from(wert(i)?));
                 i += 2;
@@ -401,6 +414,7 @@ fn lies_argumente() -> Result<Option<Argumente>, String> {
         probeschluessel,
         genesiszeile,
         timeouts,
+        zusage,
     }))
 }
 
@@ -500,6 +514,7 @@ async fn main() {
     let podkennung = args.konfig.pod;
     let modellname = args.konfig.modellname.clone();
     let konsenspfad = args.konfig.konsensschluesseldatei.clone();
+    let zusage = args.zusage.clone();
     // ⚑ **Der Identitaetsschluessel der Tuer.** Er unterschreibt die
     // Epochenankuendigung, mit der sich der Knoten beim Shard ausweist.
     // Ohne ihn gibt es keinen Shard-Weg, und das ist richtig so: Der
@@ -524,6 +539,18 @@ async fn main() {
     };
 
     eprintln!("myl-node: Peer-Id {}", knoten.peer_id());
+    // ⚑ **Die Zusage vor allem anderen**: Wer mit einer Zusage startet,
+    // deren Unterschrift scheitert, soll das sofort erfahren und nicht
+    // einen Knoten haben, der ohne sie laeuft.
+    if let Some(pfad) = &zusage {
+        match knoten.zusage_unterschreiben(pfad) {
+            Ok(ziel) => eprintln!("myl-node: Zusage unterschrieben: {}", ziel.display()),
+            Err(e) => {
+                eprintln!("myl-node: Zusage nicht unterschrieben: {e}");
+                std::process::exit(1);
+            }
+        }
+    }
     if kettendatei.is_some() {
         eprintln!(
             "myl-node: Kette bei Höhe {} ({} Blöcke in der Datei)",

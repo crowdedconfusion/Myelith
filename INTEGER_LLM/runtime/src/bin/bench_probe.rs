@@ -10,7 +10,15 @@
 //! nicht der Inferenzpfad. Die Logits entstehen ausschliesslich im
 //! Integerpfad (wie bei perplexity_probe).
 //!
-//! Usage: bench_probe <artifact_dir> <prompt> <decode_tokens>
+//! Usage: bench_probe <artifact_dir> <prompt> <decode_tokens> [--vorladen <k>] [--ueberlappung]
+//!
+//! `--ueberlappung` rechnet in jeder Gemischebene die vorhandenen Experten,
+//! waehrend die fehlenden geholt werden, statt auf alle zu warten
+//! (`integer_llm_runtime::model::rechnen_waehrend_laden`).
+//!
+//! `--vorladen <k>` kuendigt je Ebene die `k` vermutlich gewaehlten Experten
+//! der naechsten an (`integer_llm_runtime::vorlader`); `decode_hash` muss
+//! mit und ohne derselbe sein.
 
 use std::time::Instant;
 
@@ -28,8 +36,21 @@ fn main() {
     let dir = std::path::PathBuf::from(&args[1]);
     let prompt = &args[2];
     let decode_tokens: usize = args[3].parse().expect("decode_tokens muss eine Zahl sein");
+    let mut vorladen = 0usize;
+    let mut rest = args[4..].iter();
+    while let Some(a) = rest.next() {
+        match a.as_str() {
+            "--ueberlappung" => integer_llm_runtime::model::rechnen_waehrend_laden(true),
+            "--vorladen" => vorladen = rest.next().and_then(|k| k.parse().ok()).expect("--vorladen braucht eine Zahl"),
+            _ => {
+                eprintln!("Usage: bench_probe <artifact_dir> <prompt> <decode_tokens> [--vorladen <k>] [--ueberlappung]");
+                std::process::exit(1);
+            }
+        }
+    }
 
     let model = load_model(&dir).expect("Modell-Ladung fehlgeschlagen");
+    model.vorladen_setzen(vorladen);
     let tokenizer = Tokenizer::from_file(
         dir.join("tokenizer.json").to_str().expect("Pfad-UTF-8"),
     )
@@ -73,6 +94,7 @@ fn main() {
     // Token-Hash zur Abgleichbarkeit mit anderen Evidenz-Laeufen
     // (derselbe Prompt muss dieselben Tokens ergeben).
     println!("decode_hash {}", hash_tokens(&out));
+    println!("vorladen {vorladen} verworfen {}", integer_llm_runtime::vorlader::verworfen());
 
     // **Der Wert, an dem die Bitgleichheit haengt** (Fund 36,
     // 2026-08-22). `decode_hash` deckt nur die erzeugten Token ab, also

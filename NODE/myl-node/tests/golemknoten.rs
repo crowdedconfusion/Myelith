@@ -16,8 +16,10 @@
 //! - und `golem-knoten` selbst prueft, was es einliest (nur unter Unix,
 //!   denn es ist ein Shell-Skript).
 
-use std::path::{Path, PathBuf};
-use std::process::Command;
+// 📌 Nur `PathBuf` steht hier oben. `Path` und `Command` braucht allein
+// das Modul `lauf` unter `#[cfg(unix)]`; oben eingebunden waren sie unter
+// Windows unbenutzt, und Clippy mit `-D warnings` brach dort ab.
+use std::path::PathBuf;
 
 /// Wo das Skript im Repositorium liegt, gegen das Manifest aufgeloest.
 const SKRIPT: &str = "../../SYSTEM/golemos/overlay/usr/sbin/golem-knoten";
@@ -134,6 +136,8 @@ fn das_dienstkonto_hat_ueberall_dieselbe_kennung() {
 #[cfg(unix)]
 mod lauf {
     use super::*;
+    use std::path::Path;
+    use std::process::Command;
 
     /// Ein Zwischenordner fuer eine Probe, ohne fremde Kiste.
     struct Ordner(PathBuf);

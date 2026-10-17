@@ -1,6 +1,6 @@
 [package]
 name = "integer-llm-runtime"
-version = "0.93.0"
+version = "0.97.0"
 edition = "2021"
 rust-version = "1.85"
 license = "LicenseRef-PolyForm-Shield-1.0.0"
@@ -34,6 +34,12 @@ sha2 = "0.10"
 # Seiten sauber und verdraengbar statt auslagerungspflichtig.
 memmap2 = "0.9"
 tokenizers = "0.21"
+
+# ⚑ Nur unter Unix: `mincore`, um je Experte zu fragen, ob er schon im
+# Speicher liegt (`Gewichtsdaten::vermutlich_im_speicher`). Dieselbe Kiste,
+# die `memmap2` ohnehin mitbringt; nichts Neues im Vorrat.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 # Testprofil, siehe die ausfuehrliche Begruendung in
 # `SHARED_TYPES/myl-types/Cargo.toml`: optimiert, aber `debug-assertions`

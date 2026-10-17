@@ -359,6 +359,7 @@ impl Schnittstelle {
 pub(super) enum Kern {
     W8a16,
     Ternaer,
+    Vierbit,
 }
 
 /// Ein behaltener Puffer auf der Karte.
@@ -403,6 +404,7 @@ pub(super) struct Karte {
     kontext: usize,
     w8a16: usize,
     ternaer: usize,
+    vierbit: usize,
     /// ⚑ **Ein Aufruf zur Zeit je Karte.** Haelt die Puffer.
     pub sperre: Mutex<Vorrat>,
     /// Gerechnete Teile und Zeilen, ohne die Selbstpruefung.
@@ -534,8 +536,9 @@ impl Karte {
     /// 16 x 16 wie in `kerne.cu`.
     ///
     /// Die Argumente in der Reihenfolge des Kerns: `myl_w8a16(w, x,
-    /// abstaende, aus, zeilen, spalten, stapel)` bzw. `myl_ternaer(muster,
-    /// betraege, x, abstaende, aus, zeilen, spalten, stapel)`.
+    /// abstaende, aus, zeilen, spalten, stapel)`, `myl_ternaer(muster,
+    /// betraege, x, abstaende, aus, zeilen, spalten, stapel)` bzw.
+    /// `myl_vierbit(codes, gitter, x, abstaende, aus, zeilen, spalten, stapel)`.
     pub fn starten(&self, kern: Kern, zeiger: &[Zeiger], zeilen: usize, spalten: usize, stapel: usize) -> Result<(), String> {
         let gitter_x = zeilen.div_ceil(KACHEL_ZEILEN);
         let gitter_y = stapel.div_ceil(KACHEL_EINGABEN);
@@ -559,6 +562,7 @@ impl Karte {
         let f = match kern {
             Kern::W8a16 => self.w8a16,
             Kern::Ternaer => self.ternaer,
+            Kern::Vierbit => self.vierbit,
         } as *mut c_void;
         // SAFETY: `argumente` zeigt auf Werte, die bis nach dem Aufruf leben,
         // in der Reihenfolge und Groesse der Kernsignatur (Adressen 8 Byte,
@@ -698,7 +702,7 @@ fn karte_aufbauen(
             c
         }
     };
-    let (w8a16, ternaer) = laden(api, &code)?;
+    let (w8a16, ternaer, vierbit) = laden(api, &code)?;
     let speicher = {
         let (mut frei, mut ganz) = (0usize, 0usize);
         // SAFETY: lokale Zielvariablen; die Karte ist gesetzt.
@@ -726,6 +730,7 @@ fn karte_aufbauen(
         kontext,
         w8a16,
         ternaer,
+        vierbit,
         sperre: Mutex::new(Vorrat::default()),
         teile: AtomicUsize::new(0),
         zeilen: AtomicUsize::new(0),
@@ -749,6 +754,7 @@ pub(super) fn nachbaukarten(anzahl: usize, h: Hersteller) -> Vec<Karte> {
             kontext: 0,
             w8a16: 0,
             ternaer: 0,
+            vierbit: 0,
             sperre: Mutex::new(Vorrat::default()),
             teile: AtomicUsize::new(0),
             zeilen: AtomicUsize::new(0),
@@ -900,8 +906,8 @@ fn protokoll(rtc: &Rtc, programm: *mut c_void) -> String {
     }
 }
 
-/// Laedt den Code als Modul auf der gesetzten Karte und holt beide Kerne.
-fn laden(api: &Schnittstelle, code: &[u8]) -> Result<(usize, usize), String> {
+/// Laedt den Code als Modul auf der gesetzten Karte und holt die drei Kerne.
+fn laden(api: &Schnittstelle, code: &[u8]) -> Result<(usize, usize, usize), String> {
     let mut modul: *mut c_void = std::ptr::null_mut();
     let (laden, funktion) = match api {
         Schnittstelle::Cuda(c) => (c.modul_laden, c.funktion),
@@ -917,7 +923,7 @@ fn laden(api: &Schnittstelle, code: &[u8]) -> Result<(usize, usize), String> {
         api.pruefen(&format!("Kern {name:?}"), unsafe { funktion(&mut f, modul, name.as_ptr()) })?;
         Ok(f as usize)
     };
-    Ok((holen(c"myl_w8a16")?, holen(c"myl_ternaer")?))
+    Ok((holen(c"myl_w8a16")?, holen(c"myl_ternaer")?, holen(c"myl_vierbit")?))
 }
 
 #[cfg(test)]

@@ -382,6 +382,14 @@ pub(crate) fn master_aus_gewicht(t: &QTensor) -> Vec<Master> {
             })
             .collect();
     }
+    // Ein Vierbittensor wird zu seinen ganzen Zahlen entpackt und dann wie
+    // int8 gehoben: Seine Werte sind int8, nur anders gespeichert.
+    if let crate::model::Gewichtsdaten::Vierbit(vd) = &*t.data {
+        let m = vd.matrix();
+        return (0..t.shape[0])
+            .flat_map(|z| m.zeile_entpacken(z).into_iter().map(move |w| w << (MASTER_FRAC - t.shifts[z])))
+            .collect();
+    }
     t.data
         .iter()
         .enumerate()

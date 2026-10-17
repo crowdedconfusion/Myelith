@@ -47,6 +47,22 @@ pub(super) struct Ternaerjob<'a> {
     pub abstaende: &'a [i8],
 }
 
+/// Ein Stapel auf Gewichten in vier Bit fuer [`Kontext::rechnen_vierbit`]:
+/// Codes und Gitter wie in `crate::vierbit`.
+pub(super) struct Vierbitjob<'a> {
+    pub xs: &'a [&'a [i16]],
+    pub codes: &'a [u8],
+    pub gitter: &'a [u8],
+    pub spalten: usize,
+    pub abstaende: &'a [i8],
+}
+
+#[repr(C)]
+struct Summenform {
+    spalten: i32,
+    eingaben: i32,
+}
+
 #[repr(C)]
 struct Entpackform {
     zeilen: i32,
@@ -76,6 +92,8 @@ struct Vorrat {
     codes: Option<Puffer>,
     zwischen: Option<Puffer>,
     summen: Option<Puffer>,
+    /// Die Summen der Eingaben je Gruppe, nur fuer vier Bit.
+    xsummen: Option<Puffer>,
 }
 
 // SAFETY: Ein `MTLBuffer` darf von jedem Faden benutzt werden; nicht
@@ -106,6 +124,9 @@ struct Kontext {
     entpacken: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
     gruppenprodukt: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
     nachlauf_breit: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    entpacken_vierbit: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    gruppensummen: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    gruppenprodukt_vierbit: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
     /// ⚑ **Ein Befehlspuffer zur Zeit.** Die Puffer eines Aufrufs gehoeren
     /// ihm allein; die Sperre haelt zwei Aufrufer auseinander, die sonst
     /// dieselbe Schlange und dieselbe Speicherbandbreite teilten. Sie
@@ -210,6 +231,26 @@ pub(super) fn stapel_ternaer(job: &Ternaerjob<'_>) -> Option<Vec<Vec<i16>>> {
     }
 }
 
+pub(super) fn stapel_vierbit(jobs: &[Vierbitjob<'_>]) -> Option<Vec<Vec<Vec<i16>>>> {
+    let k = kontext()?;
+    match k.rechnen_vierbit(jobs) {
+        Ok(aus) => {
+            super::GERECHNET.fetch_add(jobs.len(), std::sync::atomic::Ordering::Relaxed);
+            Some(aus)
+        }
+        Err(grund) => {
+            eprintln!("⚠️ Metal: {grund}; diese Buendelung rechnet die CPU");
+            None
+        }
+    }
+}
+
+/// Rechnet ohne Schwelle und ohne Rueckfall, fuer die Pruefungen.
+#[cfg(test)]
+pub(super) fn direkt_vierbit(jobs: &[Vierbitjob<'_>]) -> Option<Result<Vec<Vec<Vec<i16>>>, String>> {
+    kontext().map(|k| k.rechnen_vierbit(jobs))
+}
+
 /// Rechnet ohne Schwelle und ohne Rueckfall, fuer die Pruefungen.
 #[cfg(test)]
 pub(super) fn direkt_ternaer(job: &Ternaerjob<'_>) -> Option<Result<Vec<Vec<i16>>, String>> {
@@ -257,6 +298,9 @@ impl Kontext {
         let entpacken = pipeline("entpacken")?;
         let gruppenprodukt = pipeline("gruppenprodukt")?;
         let nachlauf_breit = pipeline("nachlauf_breit")?;
+        let entpacken_vierbit = pipeline("entpacken_vierbit")?;
+        let gruppensummen = pipeline("gruppensummen")?;
+        let gruppenprodukt_vierbit = pipeline("gruppenprodukt_vierbit")?;
         let schlange = geraet.newCommandQueue().ok_or("keine Befehlsschlange")?;
         Ok(Kontext {
             geraet,
@@ -266,6 +310,9 @@ impl Kontext {
             entpacken,
             gruppenprodukt,
             nachlauf_breit,
+            entpacken_vierbit,
+            gruppensummen,
+            gruppenprodukt_vierbit,
             sperre: Mutex::new(Vorrat::default()),
         })
     }
@@ -461,6 +508,196 @@ impl Kontext {
         // int16.
         let werte = unsafe { std::slice::from_raw_parts(aus.contents().as_ptr() as *const i16, stapel * zeilen) };
         Ok(werte.chunks_exact(zeilen).map(|z| z.to_vec()).collect())
+    }
+
+    /// **Stapel auf Gewichten in vier Bit, alle in einem Befehlspuffer**:
+    /// je Auftrag entpacken, Gruppensummen der Eingaben, je Gruppe
+    /// multiplizieren und mit Schritt und Versatz gewichten, umskalieren.
+    /// Die Schritte stehen im Shader; die Eingaben sind zerlegt wie beim
+    /// int8-Weg (`mod.rs`).
+    ///
+    /// ⚑ **Die Arbeitspuffer teilen sich alle Auftraege nacheinander.** Ein
+    /// Kodierer rechnet seine Auftraege der Reihe nach (wie schon Entpacken
+    /// und Gruppenprodukt beim ternaeren Weg); jeder Auftrag liest die
+    /// entpackten Codes, Summen und Teilprodukte erst, nachdem er sie selbst
+    /// geschrieben hat. So waechst der Speicher mit der groessten Matrix und
+    /// nicht mit der Zahl der Experten. Eingaben, Abstaende und Ausgaben
+    /// liegen dagegen je Auftrag in einem eigenen Abschnitt.
+    fn rechnen_vierbit(&self, jobs: &[Vierbitjob<'_>]) -> Result<Vec<Vec<Vec<i16>>>, String> {
+        struct Lage {
+            x: usize,
+            a: usize,
+            o: usize,
+        }
+        let zu_gross = |n: usize| n > i32::MAX as usize;
+        let mut lagen = Vec::with_capacity(jobs.len());
+        let (mut gx, mut ga, mut go) = (0usize, 0usize, 0usize);
+        let (mut max_codes, mut max_zwischen, mut max_summen, mut max_xsummen) = (0usize, 0usize, 0usize, 0usize);
+        for job in jobs {
+            let (zeilen, stapel, spalten) = (job.abstaende.len(), job.xs.len(), job.spalten);
+            if spalten == 0 || spalten % 128 != 0 {
+                return Err(format!("{spalten} Spalten sind kein Vielfaches von 128"));
+            }
+            let gruppen = spalten / 128;
+            if job.codes.len() != zeilen * spalten / 2 || job.gitter.len() != zeilen * gruppen * 2 {
+                return Err(format!(
+                    "{} Codebytes und {} Gitterbytes passen nicht zu {zeilen} x {spalten}",
+                    job.codes.len(),
+                    job.gitter.len()
+                ));
+            }
+            for x in job.xs {
+                if x.len() != spalten {
+                    return Err(format!("Eingabe mit {} statt {spalten} Elementen", x.len()));
+                }
+            }
+            let eingaben = 2 * stapel + 1;
+            if zu_gross(eingaben * spalten) || zu_gross(eingaben * zeilen) || zu_gross(zeilen * spalten) {
+                return Err(format!("{zeilen} x {spalten} bei {stapel} Eingaben sprengt die Indizes des Shaders"));
+            }
+            let (kacheln_x, kacheln_y) = (zeilen.div_ceil(KACHEL_ZEILEN), eingaben.div_ceil(KACHEL_EINGABEN));
+            lagen.push(Lage { x: gx, a: ga, o: go });
+            gx += eingaben * spalten;
+            ga += zeilen;
+            go += stapel * zeilen * 2;
+            max_codes = max_codes.max(zeilen * spalten);
+            max_zwischen = max_zwischen.max(kacheln_x * kacheln_y * KACHEL_ZEILEN * KACHEL_EINGABEN * 4);
+            max_summen = max_summen.max(eingaben * zeilen * 8);
+            max_xsummen = max_xsummen.max(eingaben * gruppen * 4);
+        }
+        let leer = |job: &Vierbitjob<'_>| job.abstaende.is_empty() || job.xs.is_empty();
+
+        let mut vorrat = self.sperre.lock().unwrap_or_else(|e| e.into_inner());
+        let gewichte: Vec<((Puffer, usize), (Puffer, usize))> = jobs
+            .iter()
+            .map(|j| Ok((self.fremdpuffer(j.codes)?, self.fremdpuffer(j.gitter)?)))
+            .collect::<Result<_, String>>()?;
+        let codes = self.arbeitspuffer(&mut vorrat.codes, max_codes)?;
+        let zwischen = self.arbeitspuffer(&mut vorrat.zwischen, max_zwischen)?;
+        let summen = self.arbeitspuffer(&mut vorrat.summen, max_summen)?;
+        let xsummen = self.arbeitspuffer(&mut vorrat.xsummen, max_xsummen)?;
+        let x = self.neuer_puffer(gx)?;
+        let abst = self.neuer_puffer(ga)?;
+        let aus = self.neuer_puffer(go)?;
+
+        // SAFETY: `x` und `abst` sind frisch und gehoeren nur diesem Aufruf;
+        // jeder Auftrag schreibt nur in seinen Abschnitt, und die Abschnitte
+        // liegen nach Konstruktion hintereinander. Die GPU rechnet erst nach
+        // `commit`.
+        unsafe {
+            for (job, lage) in jobs.iter().zip(&lagen) {
+                let (zeilen, stapel, spalten) = (job.abstaende.len(), job.xs.len(), job.spalten);
+                let ziel = std::slice::from_raw_parts_mut(
+                    (x.contents().as_ptr() as *mut i8).add(lage.x),
+                    (2 * stapel + 1) * spalten,
+                );
+                let (hoch, rest) = ziel.split_at_mut(stapel * spalten);
+                let (niedrig, einsen) = rest.split_at_mut(stapel * spalten);
+                for (b, eingabe) in job.xs.iter().enumerate() {
+                    let h = &mut hoch[b * spalten..(b + 1) * spalten];
+                    let l = &mut niedrig[b * spalten..(b + 1) * spalten];
+                    for ((h, l), &wert) in h.iter_mut().zip(l.iter_mut()).zip(eingabe.iter()) {
+                        (*h, *l) = super::zerlegen(wert);
+                    }
+                }
+                einsen.fill(1);
+                std::ptr::copy_nonoverlapping(
+                    job.abstaende.as_ptr(),
+                    (abst.contents().as_ptr() as *mut i8).add(lage.a),
+                    zeilen,
+                );
+            }
+        }
+
+        let puffer = self.schlange.commandBuffer().ok_or("kein Befehlspuffer")?;
+        let kodierer = puffer.computeCommandEncoder().ok_or("kein Kodierer")?;
+        let breite = self.gruppenprodukt_vierbit.threadExecutionWidth() * SIMD_GRUPPEN;
+        for ((job, lage), ((cw, cv), (gw, gv))) in jobs.iter().zip(&lagen).zip(&gewichte) {
+            if leer(job) {
+                continue;
+            }
+            let (zeilen, stapel, spalten) = (job.abstaende.len(), job.xs.len(), job.spalten);
+            let (eingaben, gruppen) = (2 * stapel + 1, spalten / 128);
+            let kacheln_x = zeilen.div_ceil(KACHEL_ZEILEN);
+            let entpackform = Entpackform { zeilen: zeilen as i32, spalten: spalten as i32 };
+            let summenform = Summenform { spalten: spalten as i32, eingaben: eingaben as i32 };
+            let gruppenform = Gruppenform {
+                zeilen: zeilen as i32,
+                spalten: spalten as i32,
+                eingaben: eingaben as i32,
+                kacheln_x: kacheln_x as i32,
+                breite: breite as i32,
+            };
+            let nachlaufform = Nachlaufform { zeilen: zeilen as i32, stapel: stapel as i32 };
+            // SAFETY: Die Indizes entsprechen den `[[buffer(n)]]` des Shaders,
+            // die Versaetze liegen innerhalb der Puffer, und `setBytes`
+            // kopiert die Formen. Der Shader schreibt weder in die Codes
+            // noch in die Gitter.
+            unsafe {
+                kodierer.setComputePipelineState(&self.entpacken_vierbit);
+                kodierer.setBuffer_offset_atIndex(Some(cw), *cv, 0);
+                kodierer.setBuffer_offset_atIndex(Some(&codes), 0, 1);
+                kodierer.setBytes_length_atIndex(NonNull::from(&entpackform).cast(), std::mem::size_of::<Entpackform>(), 2);
+                kodierer.dispatchThreads_threadsPerThreadgroup(
+                    MTLSize { width: spalten / 2, height: zeilen, depth: 1 },
+                    MTLSize { width: 32, height: 8.min(zeilen), depth: 1 },
+                );
+
+                kodierer.setComputePipelineState(&self.gruppensummen);
+                kodierer.setBuffer_offset_atIndex(Some(&x), lage.x, 0);
+                kodierer.setBuffer_offset_atIndex(Some(&xsummen), 0, 1);
+                kodierer.setBytes_length_atIndex(NonNull::from(&summenform).cast(), std::mem::size_of::<Summenform>(), 2);
+                kodierer.dispatchThreads_threadsPerThreadgroup(
+                    MTLSize { width: gruppen, height: eingaben, depth: 1 },
+                    MTLSize { width: 8.min(gruppen), height: 32.min(eingaben), depth: 1 },
+                );
+
+                kodierer.setComputePipelineState(&self.gruppenprodukt_vierbit);
+                kodierer.setBuffer_offset_atIndex(Some(&codes), 0, 0);
+                kodierer.setBuffer_offset_atIndex(Some(&x), lage.x, 1);
+                kodierer.setBuffer_offset_atIndex(Some(&zwischen), 0, 2);
+                kodierer.setBytes_length_atIndex(NonNull::from(&gruppenform).cast(), std::mem::size_of::<Gruppenform>(), 3);
+                kodierer.setBuffer_offset_atIndex(Some(gw), *gv, 4);
+                kodierer.setBuffer_offset_atIndex(Some(&summen), 0, 5);
+                kodierer.setBuffer_offset_atIndex(Some(&xsummen), 0, 6);
+                kodierer.dispatchThreadgroups_threadsPerThreadgroup(
+                    MTLSize { width: kacheln_x, height: eingaben.div_ceil(KACHEL_EINGABEN), depth: 1 },
+                    MTLSize { width: breite, height: 1, depth: 1 },
+                );
+
+                kodierer.setComputePipelineState(&self.nachlauf_breit);
+                kodierer.setBuffer_offset_atIndex(Some(&summen), 0, 0);
+                kodierer.setBuffer_offset_atIndex(Some(&abst), lage.a, 1);
+                kodierer.setBuffer_offset_atIndex(Some(&aus), lage.o, 2);
+                kodierer.setBytes_length_atIndex(NonNull::from(&nachlaufform).cast(), std::mem::size_of::<Nachlaufform>(), 3);
+                kodierer.dispatchThreads_threadsPerThreadgroup(
+                    MTLSize { width: zeilen, height: stapel, depth: 1 },
+                    MTLSize { width: 32.min(zeilen), height: 8.min(stapel), depth: 1 },
+                );
+            }
+        }
+        kodierer.endEncoding();
+        puffer.commit();
+        puffer.waitUntilCompleted();
+        if let Some(fehler) = puffer.error() {
+            return Err(format!("Befehlspuffer gescheitert: {}", fehler.localizedDescription()));
+        }
+        Ok(jobs
+            .iter()
+            .zip(&lagen)
+            .map(|(job, lage)| {
+                let (zeilen, stapel) = (job.abstaende.len(), job.xs.len());
+                if zeilen == 0 {
+                    return vec![Vec::new(); stapel];
+                }
+                // SAFETY: Der Befehlspuffer ist fertig; der Abschnitt haelt
+                // `stapel * zeilen` int16 dieses Auftrags.
+                let werte = unsafe {
+                    std::slice::from_raw_parts((aus.contents().as_ptr() as *const i16).add(lage.o / 2), stapel * zeilen)
+                };
+                werte.chunks_exact(zeilen).map(|z| z.to_vec()).collect()
+            })
+            .collect())
     }
 
     fn rechnen(
@@ -761,6 +998,88 @@ impl Kontext {
             if nummer == 0 && !cpu.iter().flatten().any(|&v| v != 0 && v != i16::MAX && v != i16::MIN) {
                 return Err("ternaer: die Selbstpruefung rechnet nur Nullen oder Saettigung".into());
             }
+        }
+
+        // ⚑ **Vier Bit gegen den Vierbitkern der CPU**: Code 15, Schritt 255
+        // mit Versatz -128 (Werte weit ausserhalb von int8, im Format
+        // erlaubt), Schritt 0, die Raender des Wertebereichs der Eingaben und
+        // Kachelraender; alle Faelle zuerst je allein, dann zusammen in einem
+        // Befehlspuffer, damit die geteilten Arbeitspuffer und die Abschnitte
+        // je Auftrag geprueft sind.
+        type Vierbitfall = (Vec<u8>, Vec<u8>, Vec<Vec<i16>>, Vec<u8>, Vec<u8>, usize);
+        let vierbitfaelle: Vec<Vierbitfall> = [(67usize, 1_280usize, 17usize), (130, 384, 33), (3, 128, 2), (200, 256, 1)]
+            .iter()
+            .enumerate()
+            .map(|(nummer, &(zeilen, spalten, stapel))| {
+                let gruppen = spalten / 128;
+                let codes: Vec<u8> =
+                    (0..zeilen * spalten / 2).map(|i| if nummer == 0 && i % 89 == 0 { 0xFF } else { zufall() as u8 }).collect();
+                let gitter: Vec<u8> = (0..zeilen * gruppen)
+                    .flat_map(|g| match (nummer, g % 7, g % 11) {
+                        (0, 0, _) => [255u8, 0x80],
+                        (0, _, 0) => [0u8, zufall() as u8],
+                        _ => {
+                            let r = zufall();
+                            [r as u8, (r >> 8) as u8]
+                        }
+                    })
+                    .collect();
+                let eingaben: Vec<Vec<i16>> = (0..stapel)
+                    .map(|b| {
+                        (0..spalten)
+                            .map(|i| match (nummer, (b + i) % 7) {
+                                (0, 0) => i16::MIN,
+                                (0, 1) => i16::MAX,
+                                _ => zufall() as i16,
+                            })
+                            .collect()
+                    })
+                    .collect();
+                let w_shifts: Vec<u8> = (0..zeilen).map(|z| [20u8, 14, 9, 9][z % 4]).collect();
+                let ziele: Vec<u8> = (0..zeilen).map(|z| [0u8, 3, 20, 21][z % 4]).collect();
+                (codes, gitter, eingaben, w_shifts, ziele, spalten)
+            })
+            .collect();
+        let act = 11u8;
+        let scheiben: Vec<Vec<&[i16]>> =
+            vierbitfaelle.iter().map(|(_, _, e, _, _, _)| e.iter().map(|v| v.as_slice()).collect()).collect();
+        let abstaende: Vec<Vec<i8>> = vierbitfaelle
+            .iter()
+            .map(|(_, _, _, w, z, _)| (0..w.len()).map(|r| (w[r] + act) as i8 - z[r] as i8).collect())
+            .collect();
+        let vierbitjobs: Vec<Vierbitjob<'_>> = vierbitfaelle
+            .iter()
+            .zip(&scheiben)
+            .zip(&abstaende)
+            .map(|(((codes, gitter, _, _, _, spalten), xs), ab)| Vierbitjob { xs, codes, gitter, spalten: *spalten, abstaende: ab })
+            .collect();
+        let mut erwartet = Vec::new();
+        for (i, ((codes, gitter, _, w_shifts, ziele, spalten), job)) in vierbitfaelle.iter().zip(&vierbitjobs).enumerate() {
+            let zeilen = w_shifts.len();
+            let matrix = crate::vierbit::Vierbitmatrix::neu(codes, gitter, zeilen, *spalten)?;
+            let cpu = crate::linear::linear_matrix_pc_stapel_cpu(job.xs, matrix.into(), *spalten, w_shifts, act, ziele);
+            let gpu = self.rechnen_vierbit(std::slice::from_ref(job))?.pop().unwrap_or_default();
+            if gpu != cpu {
+                let (b, z) = gpu
+                    .iter()
+                    .zip(cpu.iter())
+                    .enumerate()
+                    .find_map(|(b, (g, c))| g.iter().zip(c).position(|(g, c)| g != c).map(|z| (b, z)))
+                    .unwrap_or((0, 0));
+                return Err(format!(
+                    "vierbit: {zeilen} x {spalten} bei {} Eingaben weicht ab, zuerst Eingabe {b}, Zeile {z}: GPU {} gegen CPU {}",
+                    job.xs.len(),
+                    gpu.get(b).and_then(|g| g.get(z)).copied().unwrap_or_default(),
+                    cpu[b][z]
+                ));
+            }
+            if i == 0 && !cpu.iter().flatten().any(|&v| v != 0 && v != i16::MAX && v != i16::MIN) {
+                return Err("vierbit: die Selbstpruefung rechnet nur Nullen oder Saettigung".into());
+            }
+            erwartet.push(cpu);
+        }
+        if self.rechnen_vierbit(&vierbitjobs)? != erwartet {
+            return Err("vierbit: mehrere Auftraege in einem Befehlspuffer weichen von den einzelnen ab".into());
         }
 
         // ⚑ **Und mehrere Auftraege in einem Befehlspuffer**, mit

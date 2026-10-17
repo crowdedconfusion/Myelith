@@ -69,6 +69,8 @@ pub mod rechenwege {
 
 pub mod aktualisierung;
 pub mod anhang;
+/// Ein Modell holen und sein Artefakt bauen, fuer Konsole und Fenster.
+pub mod bezug;
 pub mod einstellungen;
 
 // ⚑ **Der oertliche Agent liegt seit dem 2026-09-30 in
@@ -79,6 +81,7 @@ pub mod einstellungen;
 pub mod hardware;
 pub mod kennzeichnung;
 pub mod markdown;
+pub mod mining;
 pub mod module;
 pub mod oertlich;
 pub mod reservierung;

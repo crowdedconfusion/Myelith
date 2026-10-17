@@ -162,6 +162,9 @@ pub fn fahren() -> i32 {
     let design = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())
         .map(|e| e.oberflaeche.design)
         .unwrap_or_default();
+    // ⚑ **Die Rechenwerke suchen, waehrend die Animation laeuft**: `/settings`
+    //   und `/mining` brauchen sie, und die Suche kostet einen Unterprozess.
+    myl_client::hardware::vorwaermen();
     // ⚑ Ein Rollbereich, den ein frueherer Lauf stehen liess, gilt hier
     //   nicht mehr (siehe `schirm::rollbereich_freigeben`).
     crate::schirm::rollbereich_freigeben();
@@ -289,7 +292,12 @@ pub fn fahren() -> i32 {
     if let Ok(e) = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad()) {
         e.debug_anwenden("Konsole", "Konsole gestartet");
     }
+    // ⚑ **Ein Mining aus dem Fenster zeigt sich auch hier**, mit Zeile und
+    //   Meldung; beendet wird es aber nur von dem, der es gestartet hat.
+    crate::miningzeile::auffrischen();
     let ende = schleife(&mut stand);
+    // ⚑ **Ein Knoten aus dieser Konsole endet mit ihr** (`myl_client::mining`, Kopf).
+    myl_client::mining::beenden_wenn_eigen();
     // ⚑ **Das Ende steht im Debug-Log**, wenn er lief; die Einstellung
     //   bleibt, und der naechste Start schreibt wieder „gestartet“.
     myl_local_agent::debuglog::setzen(false, "Konsole", "Konsole beendet");
@@ -410,14 +418,41 @@ fn modell_waehlen(stand: &mut Stand) -> Modellwahl {
     // ⚑ **Dieselbe Liste wie im Fenster**, aus derselben Funktion. Sie
     // traegt die Anzeigenamen aus dem Katalog und den Netzeintrag, der
     // dasteht und nicht traegt.
-    let liste = myl_client::modelle::liste(&e);
-    if !liste.iter().any(|m| m.offen) {
-        eprintln!("myelith: hier liegt kein gebautes Artefakt.");
-        eprintln!("  Im Fenster laesst sich eines holen und bauen: `myl-oberflaeche`.");
-        return Modellwahl::Unmoeglich;
+    // ⚑ **Und was der Katalog kennt, aber hier noch fehlt** (Festlegung des
+    //   Projektinhabers, 2026-10-16): Es steht hinter den gebauten
+    //   Artefakten, mit dem Platz, den der Bau braucht, und laesst sich von
+    //   hier aus holen und bauen, wie im Fenster.
+    let wurzel = myl_local_agent::ort::wurzel();
+    loop {
+        let liste = myl_client::modelle::liste(&e);
+        let baubar = wurzel.as_deref().map(myl_client::bezug::baubar).unwrap_or_default();
+        if !liste.iter().any(|m| m.offen) && baubar.is_empty() {
+            eprintln!("myelith: hier liegt kein gebautes Artefakt, und der Katalog nennt keines zum Bauen.");
+            eprintln!("  Gesucht wird die Wurzel des Repositoriums; aus einem Freigabe-Programm heraus gibt es die Skripte nicht.");
+            return Modellwahl::Unmoeglich;
+        }
+        match modell_waehlen_aus(stand, &e, &liste, &baubar) {
+            Wahlausgang::Fertig(w) => return w,
+            // Nicht gebaut (Nein, kein Platz, gescheitert): die Wahl noch
+            // einmal, mit dem, was jetzt da ist.
+            Wahlausgang::Nochmal => continue,
+        }
     }
+}
 
-    let punkte: Vec<wahl::Punkt> = liste
+/// Ob die Wahl fertig ist oder noch einmal kommt.
+enum Wahlausgang {
+    Fertig(Modellwahl),
+    Nochmal,
+}
+
+fn modell_waehlen_aus(
+    stand: &mut Stand,
+    e: &myl_client::Einstellungen,
+    liste: &[myl_client::modelle::Modellwahl],
+    baubar: &[myl_client::bezug::Bauplan],
+) -> Wahlausgang {
+    let mut punkte: Vec<wahl::Punkt> = liste
         .iter()
         .map(|m| wahl::Punkt {
             titel: m.name.clone(),
@@ -439,6 +474,18 @@ fn modell_waehlen(stand: &mut Stand) -> Modellwahl {
             offen: m.offen,
         })
         .collect();
+    for p in baubar {
+        let spitze = myl_client::bezug::gib(p.bedarf().spitze());
+        punkte.push(wahl::Punkt {
+            titel: format!("{} (holen und bauen)", p.anzeigename),
+            hinweis: if p.hardware.is_empty() {
+                format!("braucht waehrend des Baus bis zu {spitze}")
+            } else {
+                format!("braucht waehrend des Baus bis zu {spitze} · {}", p.hardware)
+            },
+            offen: true,
+        });
+    }
 
     // Vorgewaehlt ist, was eingestellt ist.
     let eingestellt = myl_local_agent::ort::absolut(&e.modell.artefakt);
@@ -449,18 +496,31 @@ fn modell_waehlen(stand: &mut Stand) -> Modellwahl {
 
     let Some(i) = wahl::waehlen_ab("Welches Modell?", &punkte, start, design::toene(stand.design))
     else {
-        return Modellwahl::Abgebrochen;
+        return Wahlausgang::Fertig(Modellwahl::Abgebrochen);
     };
-    let pfad = myl_local_agent::ort::absolut(&liste[i].pfad);
-    let name = liste[i].name.clone();
+    let (pfad, name) = if i < liste.len() {
+        (myl_local_agent::ort::absolut(&liste[i].pfad), liste[i].name.clone())
+    } else {
+        let plan = &baubar[i - liste.len()];
+        match holen_und_bauen(plan, e) {
+            Some(pfad) => (pfad, plan.anzeigename.clone()),
+            None => return Wahlausgang::Nochmal,
+        }
+    };
 
     // ⚠️ **Laden dauert und sagt es.** Ein 4B-Artefakt sind
     // viereinhalb Gigabyte; ohne diese Zeile sieht ein Start wie ein
     // Haenger aus.
+    //
+    // 📌 **Und es bewegt sich dabei** (Meldung des Projektinhabers,
+    // 2026-10-17): Gemessen mit dem 35B kam 6,3 s lang kein einziges Byte
+    // auf den Schirm, und das sah aus wie ein Haenger. Jetzt dreht sich
+    // hinter dem Namen eine Scheibe mit den Sekunden ([`mit_ladeanzeige`]).
     print!("  {name} wird geladen … ");
     let _ = std::io::stdout().flush();
     let anfang = std::time::Instant::now();
-    match myl_client::Oertlichesmodell::laden(&pfad, &e.kapazitaet) {
+    let geladen = mit_ladeanzeige(&name, stand.design, || myl_client::Oertlichesmodell::laden(&pfad, &e.kapazitaet));
+    match geladen {
         Ok(mut m) => {
             m.uebernehmen(&e.modell);
             // ⚑ **Die Bestaetigung nennt Namen und Pfad** (Festlegung
@@ -500,12 +560,107 @@ fn modell_waehlen(stand: &mut Stand) -> Modellwahl {
             stand.modell = Some(m);
             let kennung = Some(modellkennung(stand));
             stand.module.allen(&myl_module::nachricht::AnModul::Modell { kennung });
-            Modellwahl::Geladen
+            Wahlausgang::Fertig(Modellwahl::Geladen)
         }
         Err(f) => {
             println!();
             eprintln!("myelith: das Modell laesst sich nicht laden: {f}");
-            Modellwahl::Unmoeglich
+            Wahlausgang::Fertig(Modellwahl::Unmoeglich)
+        }
+    }
+}
+
+/// **Laesst `arbeit` laufen und dreht dabei hinter dem Namen eine Scheibe.**
+///
+/// ⚑ **Ein eigener Faden schreibt, und nur in diese eine Zeile**: Er setzt
+/// mit `\r` an ihren Anfang und schreibt sie neu, solange die Arbeit laeuft;
+/// danach steht sie wie vorher da, „… wird geladen … “, und der Aufrufer
+/// haengt die Zeit an. Waehrend des Ladens schreibt sonst niemand, also gibt
+/// es keinen zweiten Schreiber. Ohne Terminal dreht sich nichts.
+fn mit_ladeanzeige<T>(name: &str, bild: myl_client::einstellungen::Konsolendesign, arbeit: impl FnOnce() -> T) -> T {
+    if !std::io::stdout().is_terminal() {
+        return arbeit();
+    }
+    let fertig = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let faden = {
+        let fertig = fertig.clone();
+        let name = name.to_string();
+        std::thread::spawn(move || {
+            let anfang = std::time::Instant::now();
+            let mut takt = 0usize;
+            while !fertig.load(std::sync::atomic::Ordering::Relaxed) {
+                std::thread::sleep(std::time::Duration::from_millis(120));
+                if fertig.load(std::sync::atomic::Ordering::Relaxed) {
+                    break;
+                }
+                takt += 1;
+                let kopf = ladescheibe(takt, anfang.elapsed());
+                let mut aus = std::io::stdout();
+                let _ = write!(
+                    aus,
+                    "\r\x1b[2K  {name} wird geladen {}{kopf}{}",
+                    crossterm::style::SetForegroundColor(design::ladefarbe(bild, anfang.elapsed())),
+                    crossterm::style::ResetColor
+                );
+                let _ = aus.flush();
+            }
+            let _ = write!(std::io::stdout(), "\r\x1b[2K  {name} wird geladen … ");
+            let _ = std::io::stdout().flush();
+        })
+    };
+    let ergebnis = arbeit();
+    fertig.store(true, std::sync::atomic::Ordering::Relaxed);
+    let _ = faden.join();
+    ergebnis
+}
+
+/// Die Scheibe beim Laden, mit den Sekunden: rein, damit es sich pruefen laesst.
+fn ladescheibe(takt: usize, seit: std::time::Duration) -> String {
+    const RAD: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+    format!("{} {} s", RAD[takt % RAD.len()], seit.as_secs())
+}
+
+/// **Holt und baut nach Plan, nach ausdruecklicher Bestaetigung.**
+///
+/// ⛔️ Festlegung des Projektinhabers (2026-10-16): Erst steht da, was
+/// geschieht und wie viel Speicher waehrend des Baus gebraucht wird. Reicht
+/// der Platz nicht, gibt es keine Frage, sondern die fehlende Zahl: erst
+/// Speicher schaffen. Sonst eine Ja-Nein-Frage **ohne Vorgabe**, die
+/// Eingabetaste allein beantwortet sie nicht. Gibt den Pfad des fertigen
+/// Artefakts zurueck oder `None`.
+fn holen_und_bauen(plan: &myl_client::bezug::Bauplan, e: &myl_client::Einstellungen) -> Option<String> {
+    let lage = plan.platzlage(e);
+    println!();
+    for z in plan.bestaetigung(&lage).lines() {
+        println!("  {z}");
+    }
+    if let Err(f) = plan.platz_pruefen(&lage) {
+        eprintln!("  {f}");
+        println!();
+        return None;
+    }
+    if !crate::janein::fragen("So holen und bauen?", None, None).ja() {
+        println!("  Nicht gebaut.");
+        println!();
+        return None;
+    }
+    let anfang = std::time::Instant::now();
+    // ⚑ Jede Zeile der Skripte, gekuerzt auf eine Bildschirmzeile; ein
+    //   Bau dauert Minuten bis Stunden und soll nicht wie ein Haenger
+    //   aussehen.
+    let sagen = |z: myl_client::bezug::Zeile| {
+        let text: String = z.text.chars().filter(|c| *c != '\r').take(150).collect();
+        println!("  [{}] {text}", z.phase);
+    };
+    match myl_client::bezug::ausfuehren(plan, e, &sagen) {
+        Ok(pfad) => {
+            println!("  Gebaut in {} min: {}", anfang.elapsed().as_secs() / 60, pfad.display());
+            Some(pfad.display().to_string())
+        }
+        Err(f) => {
+            eprintln!("  Nicht gebaut: {f}");
+            println!();
+            None
         }
     }
 }
@@ -901,6 +1056,20 @@ fn schleife(stand: &mut Stand) -> i32 {
             (Some(a), Some(b)) => Some(a.min(b)),
             (a, b) => a.or(b),
         };
+        // ⚑ **Die Meldung des Minings bringt ihre eigene Frist mit**: alle
+        //   fuenf Minuten, und sie steht im Rollbereich wie jede Ausgabe.
+        let frist = match (frist, crate::miningzeile::naechste_meldung()) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        };
+        let design_jetzt = stand.design;
+        // ⚑ **Die Zeile des Minings dreht sich auch im Leerlauf**, gezeichnet
+        //   von der Eingabe selbst ([`crate::miningzeile`]).
+        let mining_nebenbei = move || match schirm {
+            Some(sch) => crate::miningzeile::zeichnen_ohne_wagen(&sch, 0, design_jetzt),
+            None => false,
+        };
+        let nebenbei: Option<&eingabe::Nebenbei> = crate::miningzeile::laeuft().then_some(&mining_nebenbei);
         let alle_vorschlaege = vorschlaege(&stand.module);
         let gelesen = {
             let stand_lesend: &Stand = stand;
@@ -909,7 +1078,7 @@ fn schleife(stand: &mut Stand) -> i32 {
                     vorschlaege_zeichnen(stand_lesend, &sch, &r, v);
                 }
             };
-            eingabe::lesen_mit_liste(&zeichnen, &liste, &alle_vorschlaege, std::mem::take(&mut entwurf), frist)
+            eingabe::lesen_mit_liste(&zeichnen, &liste, &alle_vorschlaege, std::mem::take(&mut entwurf), frist, nebenbei)
         };
         // 📌 **Die abgeschickte Zeile wird aus dem Kasten geraeumt.**
         // Sie blieb dort stehen, waehrend der Agent lief, und es sah
@@ -934,6 +1103,9 @@ fn schleife(stand: &mut Stand) -> i32 {
                 entwurf = z;
                 if stand.module.irgendeins_laeuft() {
                     modul_takt(stand);
+                }
+                if let Some(zeilen) = crate::miningzeile::faellig() {
+                    mining_melden(stand.design, &zeilen);
                 }
                 // ⚑ Wer gerade etwas tippt, ruht nicht: Die Pause beginnt neu.
                 if ruhefrist.is_some_and(|f| std::time::Instant::now() >= f) {
@@ -1070,6 +1242,20 @@ fn schleife(stand: &mut Stand) -> i32 {
             Some(Befehlsart::Module) => {
                 let rest = befehl_und_rest(&text).map(|(_, r)| r).unwrap_or("").to_string();
                 module_befehl(stand, &rest);
+                continue;
+            }
+            Some(Befehlsart::Mining) => {
+                mining_zeigen(stand);
+                continue;
+            }
+            Some(Befehlsart::MiningStop) => {
+                match myl_client::mining::beenden() {
+                    Ok(true) => println!("  ⛏ Mining beendet."),
+                    Ok(false) => println!("  Es läuft kein Mining."),
+                    Err(f) => println!("  ⚠️  {f}"),
+                }
+                crate::miningzeile::uebernehmen(myl_client::mining::zustand());
+                println!();
                 continue;
             }
             Some(Befehlsart::Modell) => {
@@ -1212,6 +1398,10 @@ enum Befehlsart {
     Saat,
     /// Die Module zeigen und installieren.
     Module,
+    /// Die Seite des Minings: Ort, Ordner, Volumen, Rechenwerke, Start.
+    Mining,
+    /// Das Mining beenden.
+    MiningStop,
     Hilfe,
     Ende,
 }
@@ -1232,7 +1422,7 @@ struct Befehl {
 /// nennt irgendwann einen Befehl, den es nicht gibt, oder verschweigt
 /// einen, den es gibt, **und beides sieht erst der, der es
 /// ausprobiert.**
-const BEFEHLE: [Befehl; 22] = [
+const BEFEHLE: [Befehl; 24] = [
     Befehl {
         art: Befehlsart::Modell,
         namen: &["/model", "/modell"],
@@ -1340,6 +1530,18 @@ const BEFEHLE: [Befehl; 22] = [
         art: Befehlsart::Module,
         namen: &["/module"],
         was: "zeigt die Module; /module install <ordner> installiert eines (nur signiert, sonst abgelehnt)",
+    },
+    // ⚑ **Mining** (Auftrag des Projektinhabers, 2026-10-17): dieselbe
+    //   Freigabe wie der Reiter „Knoten" im Fenster.
+    Befehl {
+        art: Befehlsart::Mining,
+        namen: &["/mining"],
+        was: "Mining im Probelauf: Platte, Ordner, Volumen, Kerne und Rechenwerke freigeben und starten; zeigt den Stand",
+    },
+    Befehl {
+        art: Befehlsart::MiningStop,
+        namen: &["/mining stop"],
+        was: "beendet das Mining",
     },
     Befehl {
         art: Befehlsart::Hilfe,
@@ -1734,6 +1936,31 @@ fn einstellungen_zeigen(stand: &mut Stand) {
         banner::bildschirm_mit(stand.design);
         sch.einrichten();
     }
+}
+
+/// **Die Seite des Minings**, ganzer Schirm wie `/settings`, danach zurueck
+/// unter das Logo.
+fn mining_zeigen(stand: &mut Stand) {
+    let t = design::toene(stand.design);
+    if let Some(sch) = stand.schirm {
+        sch.aufloesen();
+        schirm_leeren();
+    }
+    let z = crate::miningseite::fahren(t);
+    crate::miningzeile::uebernehmen(z);
+    if let Some(sch) = stand.schirm {
+        banner::bildschirm_mit(stand.design);
+        sch.einrichten();
+    }
+}
+
+/// Die Meldung des Minings im Rollbereich, mit einer Leerzeile danach.
+fn mining_melden(bild: myl_client::einstellungen::Konsolendesign, zeilen: &[String]) {
+    let r = design::rollen(bild);
+    for z in zeilen {
+        println!("  {}", r.beiwerk.faerben(z, design::farbig()));
+    }
+    println!();
 }
 
 /// **Die Werkzeugansage, wie der naechste Lauf sie haette.**
@@ -2304,7 +2531,7 @@ fn auftrag_fahren_als(stand: &mut Stand, auftrag: &str, art: Auftragsart) -> Opt
     let aus = myl_local_agent::lauf::fahren_im_gespraech(
         modell,
         &ruestung,
-        e.agent.schritte as usize,
+        e.agent.schrittgrenze(),
         // ⚑ **Das eingehaengte Verzeichnis ist die Zustimmung.** Bis
         // zum 2026-09-11 stand hier ein zweiter Schalter, ohne den die
         // Dateiwerkzeuge in der Ansage standen und nicht liefen.
@@ -2348,6 +2575,15 @@ fn auftrag_fahren_als(stand: &mut Stand, auftrag: &str, art: Auftragsart) -> Opt
         }
         (_, Some(a)) => println!("{}", crate::antwort::setzen(a, &rollen, farbig)),
         (_, None) => println!("{}", rollen.warnung.faerben("(keine Schlussantwort)", farbig)),
+    }
+    // ⚑ **Die Loop-Erkennung sagt, warum sie anhielt** (2026-10-17): Seit
+    //   die Schritte ohne Grenze sind, ist sie der haeufigste Grund, und ohne
+    //   den Satz sahe der Halt aus wie eine Antwort.
+    if let myl_client::Ende::Kreislauf { wiederholt } = aus.ende {
+        let satz = format!(
+            "  Angehalten: Derselbe Schritt kam {wiederholt}-mal mit demselben Ergebnis. Sag genauer, was fehlt, oder gib einen anderen Weg vor."
+        );
+        println!("{}", rollen.warnung.faerben(&satz, farbig));
     }
     println!();
     // ⚑ **Wer die Aufrufe nicht gesehen hat, erfaehrt wenigstens, dass
@@ -2897,7 +3133,7 @@ fn zeile_lesen(stand: &mut Stand, frage: &str) -> Option<String> {
         let r = Rahmen::messen();
         let t = design::toene(stand.design);
         let zeichnen = |text: &str| zeile_zeichnen(&sch, &r, t, text);
-        let gelesen = eingabe::lesen_mit_liste(&zeichnen, &|_| {}, &[], std::mem::take(&mut entwurf), frist);
+        let gelesen = eingabe::lesen_mit_liste(&zeichnen, &|_| {}, &[], std::mem::take(&mut entwurf), frist, None);
         zeichnen("");
         sch.zurueck();
         match gelesen {
@@ -4294,6 +4530,16 @@ mod abbruchprobe {
     /// ⚑ **Die Frist des Schlafs**, an der Hauptzeile, an einer Frage des
     /// Modells, an der Abnahme und im Warten des Loops dieselbe: aus der
     /// Einstellung, ab Beginn der Pause, einmal je Pause, abschaltbar.
+    #[test]
+    fn die_scheibe_beim_laden_dreht_sich_und_zaehlt() {
+        let a = ladescheibe(0, std::time::Duration::from_secs(3));
+        assert_eq!(a, "⠋ 3 s");
+        assert_ne!(a, ladescheibe(1, std::time::Duration::from_secs(3)), "die Scheibe steht");
+        // ⚑ Das Laden laeuft durch die Anzeige, nicht an ihr vorbei.
+        let quelle = include_str!("sitzung.rs");
+        assert!(quelle.contains("mit_ladeanzeige(&name, stand.design, || myl_client::Oertlichesmodell::laden("));
+    }
+
     #[test]
     fn die_frist_des_schlafs() {
         let seit = std::time::Instant::now();

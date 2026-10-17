@@ -304,6 +304,12 @@ Konformitätslauf mit erzwungenen Karten. Der Bericht landet unter
 Konformitätslauf muss `INTEGER_LLM/artifacts/myelith-0.6b` da sein;
 kopieren ist schneller als bauen.
 
+Am Anfang des Berichts steht, was die Maschine hat und frei hat, je
+Karte, und wie der Dispatcher (`COMPUTE_PIPELINE/dispatcher`) die
+mitgebrachten Modelle belegen würde, samt der Zahl der Ebenen, die
+dauerhaft auf jede Karte passten. Das ist nur Auskunft; scheitert es, läuft
+das Skript weiter.
+
 ⚑ **Eine Karte, die anders rechnet als die CPU, rechnet nicht mit**; die
 anderen schon, und die Meldung nennt sie. Ohne jede bereite Karte rechnet
 die CPU, mit derselben Zahl.

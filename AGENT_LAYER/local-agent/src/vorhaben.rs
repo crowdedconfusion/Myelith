@@ -2394,7 +2394,7 @@ pub fn runde_im_gespraech(
         use crate::schleife::Ende;
         match &ausgang.ende {
             Ende::Fertig => Rundenende::Normal,
-            Ende::Steckengeblieben { .. } | Ende::Grenze(_) => Rundenende::Begrenzt,
+            Ende::Steckengeblieben { .. } | Ende::Kreislauf { .. } | Ende::Grenze(_) => Rundenende::Begrenzt,
             Ende::Tuer(t) => Rundenende::Abbruch(format!("{t}")),
         }
     };

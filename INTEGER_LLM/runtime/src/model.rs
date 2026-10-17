@@ -62,6 +62,52 @@ pub enum Gewichtsdaten {
     /// Ternaer gepackt, siehe [`Ternaerdaten`]. Gelesen wird es nur ueber
     /// [`QTensor::matrix`].
     Ternaer(Box<Ternaerdaten>),
+    /// Vier Bit je Gewicht, siehe [`Vierbitdaten`]; ebenso nur ueber
+    /// [`QTensor::matrix`] gelesen.
+    Vierbit(Box<Vierbitdaten>),
+}
+
+/// Eine Vierbitmatrix: Codes und Gitter aus dem Artefakt (Format in
+/// `integer_llm_kernels::vierbit`).
+///
+/// ⚑ **Dieselben Zahlen wie das int8-Gewicht, aus dem sie gepackt ist**,
+/// wie beim ternaeren Format: Jede Gruppe ist `a * q + b` mit ganzen `a`
+/// und `b`, und die Zeilensumme ist dieselbe ganze Zahl, anders geklammert.
+///
+/// ⛔️ **Kein `&[i8]`**, aus demselben Grund wie bei [`Ternaerdaten`].
+pub struct Vierbitdaten {
+    /// Je Gruppe 64 Byte, als `i8` gehalten wie die Muster der ternaeren.
+    pub codes: Gewichtsdaten,
+    /// Je Gruppe zwei Byte: Schritt und Versatz.
+    pub gitter: Gewichtsdaten,
+    pub zeilen: usize,
+    pub spalten: usize,
+}
+
+impl Vierbitdaten {
+    /// Prueft die Form einmal; der Lader ruft das beim Laden.
+    pub fn neu(codes: Gewichtsdaten, gitter: Gewichtsdaten, zeilen: usize, spalten: usize) -> Result<Self, String> {
+        let v = Vierbitdaten { codes, gitter, zeilen, spalten };
+        integer_llm_kernels::vierbit::Vierbitmatrix::neu(als_u8(&v.codes), als_u8(&v.gitter), zeilen, spalten)?;
+        Ok(v)
+    }
+
+    pub fn matrix(&self) -> integer_llm_kernels::vierbit::Vierbitmatrix<'_> {
+        integer_llm_kernels::vierbit::Vierbitmatrix::neu(als_u8(&self.codes), als_u8(&self.gitter), self.zeilen, self.spalten)
+            .expect("die Form ist beim Laden geprueft")
+    }
+
+    fn bytes(&self) -> usize {
+        self.codes.bytes() + self.gitter.bytes()
+    }
+}
+
+/// Die Bytes eines Abbilds oder Puffers ohne Vorzeichen.
+fn als_u8(d: &Gewichtsdaten) -> &[u8] {
+    let m: &[i8] = d;
+    // SICHERHEIT: `i8` und `u8` haben dieselbe Groesse und Ausrichtung, und
+    // jedes Bitmuster ist fuer beide gueltig.
+    unsafe { std::slice::from_raw_parts(m.as_ptr() as *const u8, m.len()) }
 }
 
 /// Eine ternaer gepackte Matrix: Muster und Betraege aus dem Artefakt
@@ -120,6 +166,11 @@ impl std::ops::Deref for Gewichtsdaten {
                 "ein ternaerer Tensor ({} x {}) wurde als int8 gelesen; dieser Weg rechnet \
                  keine ternaeren Gewichte und muesste `QTensor::matrix` nehmen",
                 t.zeilen, t.spalten
+            ),
+            Gewichtsdaten::Vierbit(v) => panic!(
+                "ein Vierbittensor ({} x {}) wurde als int8 gelesen; dieser Weg rechnet keine \
+                 Vierbitgewichte und muesste `QTensor::matrix` nehmen",
+                v.zeilen, v.spalten
             ),
             Gewichtsdaten::Abbild(abbild) => {
                 // SICHERHEIT: `i8` und `u8` haben dieselbe Größe und
@@ -190,7 +241,27 @@ impl Gewichtsdaten {
                 t.muster.vorbereiten();
                 t.betraege.vorbereiten();
             }
+            Gewichtsdaten::Vierbit(v) => {
+                v.codes.vorbereiten();
+                v.gitter.vorbereiten();
+            }
             Gewichtsdaten::Speicher(_) => {}
+        }
+    }
+
+    /// **Ob die erste Seite im Speicher liegt** (`mincore` unter Unix); ein
+    /// Tensor im Heap liegt immer dort, ohne Auskunft gilt er als da.
+    ///
+    /// ⚑ **Nur die erste Seite**: Ein Experte kommt als Ganzes in den
+    /// Speicher und geht meist als Ganzes, und eine Frage je Experte statt
+    /// je Seite haelt die Pruefung bei acht Systemaufrufen je Ebene. Ein
+    /// Irrtum kostet nur Wartezeit, nie ein anderes Ergebnis.
+    pub fn vermutlich_im_speicher(&self) -> bool {
+        match self {
+            Gewichtsdaten::Speicher(_) => true,
+            Gewichtsdaten::Abbild(a) => erste_seite_da(a),
+            Gewichtsdaten::Ternaer(t) => t.muster.vermutlich_im_speicher(),
+            Gewichtsdaten::Vierbit(v) => v.codes.vermutlich_im_speicher(),
         }
     }
 
@@ -201,6 +272,7 @@ impl Gewichtsdaten {
             Gewichtsdaten::Speicher(v) => v.len(),
             Gewichtsdaten::Abbild(a) => a.len(),
             Gewichtsdaten::Ternaer(t) => t.bytes(),
+            Gewichtsdaten::Vierbit(v) => v.bytes(),
         }
     }
 }
@@ -230,6 +302,66 @@ fn vorrat_ankuendigen(abbild: &memmap2::Mmap) {
 #[cfg(not(unix))]
 fn vorrat_ankuendigen(_abbild: &memmap2::Mmap) {}
 
+// 📌 **Gemessen und verworfen (2026-10-15): Lesen statt Rat.** Eine
+// Mikromessung unter Speicherdruck (300 zufaellige Expertendateien, 16
+// Faeden) gab `pread` in einen Wegwerfpuffer 9,1 GB/s gegen 3,1 fuer den
+// Rat, im Muster einer Ebene (7 Dateien parallel) 0,83 gegen 2,2 ms. Im
+// echten Decode des int8-35B war das Lesen mit `mincore` davor trotzdem
+// **gleich schnell oder langsamer** (9,6 GiB frei: 10,0 bis 10,2 gegen
+// 10,4 bis 10,6 Token/s; 12,5 GiB frei: 13,4 bis 13,5 gegen 13,9 bis
+// 14,1), im Prefill 3 % schneller. Der Gewinn lag woanders: in der
+// Verteilung je Matrix statt je Experte (`moe_vorwaerts`).
+
+#[cfg(unix)]
+fn erste_seite_da(abbild: &memmap2::Mmap) -> bool {
+    if abbild.is_empty() {
+        return true;
+    }
+    let mut v = [0u8; 1];
+    // SICHERHEIT: Das Abbild beginnt an einer Seitengrenze (eine ganze Datei
+    // ab null), die Laenge eins liegt darin, und fuer eine Seite schreibt
+    // `mincore` genau ein Byte nach `v`. Gelesen wird nur die Seitentabelle.
+    let r = unsafe { libc::mincore(abbild.as_ptr() as *mut libc::c_void, 1, v.as_mut_ptr().cast()) };
+    r != 0 || v[0] & 1 != 0
+}
+
+#[cfg(not(unix))]
+fn erste_seite_da(_abbild: &memmap2::Mmap) -> bool {
+    true
+}
+
+/// Wie viele Gemischebenen in Folge ohne fehlenden Experten, bevor nur noch
+/// jede [`PRUEFTAKT`]-te fragt.
+const RUHE_AB: u32 = 256;
+/// Wie oft eine ruhige Folge noch fragt.
+const PRUEFTAKT: u32 = 16;
+/// Gemischebenen in Folge, in denen kein gewaehlter Experte fehlte.
+static RUHIGE_EBENEN: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// Ob [`IntegerModel::moe_vorwaerts`] die vorhandenen Experten rechnet,
+/// waehrend die fehlenden geholt werden, oder auf alle wartet (Vorgabe).
+///
+/// ⚑ **Aus, bis jemand weiss, dass der Speicher knapp ist.** Gemessen am
+/// int8- und am gemischten 35B (Ballon, je zwei Runden im Wechsel): bei 8,9
+/// bis 9,0 GiB frei +4 bis +9 %, bei 12 GiB +5 bis +7 %, bei 17 bis 18 GiB
+/// zwischen 0 und −6 %. Wo fast alles im Speicher liegt, kostet die zweite
+/// Rechenrunde mehr, als sie versteckt. Der Client schaltet es nach dem Plan
+/// ein.
+static RECHNEN_WAEHREND_LADEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(test)]
+thread_local! {
+    /// Nur fuer Proben: jeder zweite Experte gilt als fehlend, damit der
+    /// geteilte Weg auch ohne Speicherdruck laeuft.
+    pub(crate) static TEILUNG_ERZWINGEN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Schaltet das Rechnen waehrend des Ladens an oder ab. An keiner Zahl
+/// aendert es etwas.
+pub fn rechnen_waehrend_laden(an: bool) {
+    RECHNEN_WAEHREND_LADEN.store(an, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// Dasselbe fuer den Lader, der sein Abbild noch nicht eingepackt hat.
 pub fn abbild_vorbereiten(abbild: &memmap2::Mmap) {
     vorrat_ankuendigen(abbild);
@@ -249,6 +381,7 @@ impl std::fmt::Debug for Gewichtsdaten {
             Gewichtsdaten::Speicher(_) => "Speicher",
             Gewichtsdaten::Abbild(_) => "Abbild",
             Gewichtsdaten::Ternaer(_) => "Ternaer",
+            Gewichtsdaten::Vierbit(_) => "Vierbit",
         };
         write!(f, "Gewichtsdaten::{art}({} Byte)", self.bytes())
     }
@@ -337,12 +470,18 @@ impl QTensor {
         self.shape.iter().product()
     }
 
-    /// Die Gewichte fuer die linearen Kerne, int8 oder ternaer.
+    /// Die Gewichte fuer die linearen Kerne: int8, ternaer oder vier Bit.
     pub fn matrix(&self) -> Gewichtsmatrix<'_> {
         match &*self.data {
             Gewichtsdaten::Ternaer(t) => Gewichtsmatrix::Ternaer(t.matrix()),
+            Gewichtsdaten::Vierbit(v) => Gewichtsmatrix::Vierbit(v.matrix()),
             andere => Gewichtsmatrix::Int8(andere),
         }
+    }
+
+    /// Ist dieser Tensor in vier Bit gepackt?
+    pub fn ist_vierbit(&self) -> bool {
+        matches!(&*self.data, Gewichtsdaten::Vierbit(_))
     }
 
     /// Ist dieser Tensor ternaer gepackt?
@@ -530,7 +669,16 @@ pub struct Routingbefund {
     /// ⚑ Die Grösse, aus der die Sättigung folgt: Ab einem gewissen
     /// Abstand liefert die exp-Tabelle für den Verlierer null.
     pub logit_spanne: i32,
+    /// **Die Vorhersage für die nächste Ebene**: ihre Experten nach dem
+    /// Logit, das ihr Router auf dem Residualstrom **dieser** Ebene (nach
+    /// der Aufmerksamkeit) ergibt, die stärksten zuerst, höchstens
+    /// [`VORHERSAGE_MESSBREITE`]. Leer, wenn die nächste Ebene kein Gemisch
+    /// ist. Siehe [`IntegerModel::naechste_wahl`].
+    pub naechste: Vec<u16>,
 }
+
+/// Wie viele vorhergesagte Experten eine Messung aufzeichnet.
+pub const VORHERSAGE_MESSBREITE: usize = 32;
 
 /// Der Feedforward-Teil einer Layer.
 ///
@@ -610,7 +758,80 @@ pub struct GeteilterExperte {
     pub down_in_frac: u8,
 }
 
+/// **Wie oft jeder Experte einer Gemischebene gewaehlt wurde**, seit dem
+/// Laden oder dem letzten [`Wahlzaehler::abholen`].
+///
+/// # ⚑ Wozu, und warum er immer zaehlt
+///
+/// Die Wahl eines Gemischs ist schief: Am int8-35B trug ein Fuenftel der
+/// Experten gut drei Viertel der Aufrufe. Wer Arbeitsspeicher verteilt,
+/// gibt ihn deshalb zuerst den haeufigen, und **welche das sind, sagt erst
+/// der Betrieb**: Ein Profil von einem festen Text gilt fuer diesen Text.
+/// Der Client holt den Stand ab und fuehrt ihn in seinem Profil fort.
+///
+/// ⚑ **Immer an, ohne Schalter**: je Token und Ebene `top_k` Additionen
+/// ohne Ordnung (`Relaxed`), beim 35B 320 je Token gegen Milliarden
+/// Rechenschritte. Ein Schalter waere ein zweiter Zustand, den jemand
+/// vergisst zu setzen. **An keiner Zahl der Rechnung aendert er etwas**: Er
+/// liest die Wahl, nachdem sie gefallen ist.
+///
+/// ⚑ **Ein Zeiger und keine Liste im Feld**: `MoeLayer` steht in einer
+/// Variante von `Feedforward`, und jedes Byte mehr dort macht jede dichte
+/// Ebene gleich gross mit (Clippy `large_enum_variant`, mit 24 Bytes fuer
+/// einen `Vec` ueber der Schwelle, mit 16 fuer einen Ausschnitt nicht).
+pub struct Wahlzaehler(Box<[std::sync::atomic::AtomicU32]>);
+
+impl Wahlzaehler {
+    pub fn neu(experten: usize) -> Self {
+        Self((0..experten).map(|_| std::sync::atomic::AtomicU32::new(0)).collect())
+    }
+
+    /// Zaehlt eine Wahl; ein Experte ausserhalb (eine kaputte Konfiguration)
+    /// wird uebergangen, der Rechenweg meldet ihn selbst.
+    pub fn zaehlen(&self, experten: &[u16]) {
+        for &e in experten {
+            if let Some(z) = self.0.get(e as usize) {
+                // Gesaettigt: Ein Ueberlauf nach vier Milliarden Wahlen
+                // ergaebe sonst einen seltenen Experten. Gezaehlt wird vom
+                // rechnenden Faden, also ohne Wettlauf um die Grenze.
+                if z.load(std::sync::atomic::Ordering::Relaxed) < u32::MAX {
+                    z.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
+            }
+        }
+    }
+
+    /// **Der Stand, und dabei auf null**: Wer abholt, zaehlt das Abgeholte
+    /// selbst weiter, und zweimal Abholen zaehlt nichts doppelt.
+    pub fn abholen(&self) -> Vec<u32> {
+        self.0.iter().map(|z| z.swap(0, std::sync::atomic::Ordering::Relaxed)).collect()
+    }
+}
+
+impl IntegerModel {
+    /// **Schaltet den Vorlader ein** (`breite` Experten je Ebene) **oder
+    /// aus** (null). An keiner Zahl der Rechnung aendert das etwas.
+    pub fn vorladen_setzen(&self, breite: usize) {
+        self.vorladen.store(breite, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// **Die Wahl aller Gemischebenen seit dem letzten Abholen**, als
+    /// `(Ebene, Zaehler je Experte)`, und dabei auf null; dichte Ebenen
+    /// fehlen.
+    pub fn wahl_abholen(&self) -> Vec<(usize, Vec<u32>)> {
+        self.layers
+            .iter()
+            .filter_map(|l| match &l.ffn {
+                Feedforward::Moe(m) => Some((l.layer_idx, m.wahl.abholen())),
+                _ => None,
+            })
+            .collect()
+    }
+}
+
 pub struct MoeLayer {
+    /// **Wie oft jeder Experte gewaehlt wurde** (siehe [`Wahlzaehler`]).
+    pub wahl: Wahlzaehler,
     /// Router-Projektion, `[num_experts, hidden_size]`. Liefert je
     /// Experte einen Logit.
     pub router: QTensor,
@@ -966,6 +1187,11 @@ pub struct IntegerModel {
     /// validiert und in den Forward-Pass verdrahtet, v0.12.20).
     pub activation_scales: LoadedScales,
     pub config: ModelConfig,
+    /// **Wie viele Experten der naechsten Gemischebene vorab angekuendigt
+    /// werden** (siehe [`crate::vorlader`]); null heisst aus, und so laedt
+    /// jedes Modell. ⚠️ Gemessen ohne verlaesslichen Gewinn, deshalb setzt
+    /// es heute nur eine Messung ([`IntegerModel::vorladen_setzen`]).
+    pub vorladen: std::sync::atomic::AtomicUsize,
     /// **Die Masse und Tabellen der rekurrenten Ebenen**, oder `None`
     /// bei einem Modell ohne solche.
     pub zustandsmasse: Option<Zustandsmasse>,
@@ -1278,6 +1504,7 @@ impl IntegerModel {
         // 2. Je Experte seine Token, als (Token, Platz in dessen Auswahl).
         let mut je_experte: Vec<Vec<(usize, usize)>> = vec![Vec::new(); moe.experts.len()];
         for (b, r) in auswahl.iter().enumerate() {
+            moe.wahl.zaehlen(&r.experten);
             for (platz, e) in r.experten.iter().enumerate() {
                 je_experte[*e as usize].push((b, platz));
             }
@@ -2783,6 +3010,22 @@ impl IntegerModel {
     ) -> Vec<i16> {
         let cfg = &self.config;
         let sc = &layer.scales;
+        // ⚑ **Die naechste Ebene vorab ankuendigen**, bevor diese rechnet:
+        //   Die Platte liest, waehrend hier gerechnet wird (`vorlader`).
+        let breite = self.vorladen.load(std::sync::atomic::Ordering::Relaxed);
+        if breite > 0 {
+            let jetzt = crate::vorlader::schritt();
+            let naechste = self.layers.iter().find(|l| l.layer_idx == layer.layer_idx + 1);
+            if let Some(Feedforward::Moe(moe)) = naechste.map(|l| &l.ffn) {
+                let wahl = self.naechste_wahl(layer, residual, breite);
+                crate::vorlader::ankuendigen(
+                    wahl.iter().filter_map(|&e| moe.experts.get(e as usize)).flat_map(|ex| {
+                        [&ex.gate_proj, &ex.up_proj, &ex.down_proj].map(|t| std::sync::Arc::clone(&t.data))
+                    }),
+                    jetzt + 1,
+                );
+            }
+        }
         let mlp_out = match &layer.ffn {
             Feedforward::Dense(mlp) => {
                 let mut spur = auf.as_ref().map(|_| Mlpspur::default());
@@ -2802,16 +3045,21 @@ impl IntegerModel {
                 // und zwar durch denselben Eingang wie beim dichten Fall:
                 // ein `Option`, das im Regelbetrieb `None` ist.
                 let mut spur = auf.as_ref().map(|_| crate::mitschnitt::Moespur::default());
+                let mut befunde = befunde;
                 let aus = self.moe_vorwaerts(
                     moe,
                     norm_residual,
                     sc,
                     cfg,
                     acc_mlp,
-                    befunde,
+                    befunde.as_deref_mut(),
                     layer.layer_idx,
                     spur.as_mut(),
                 );
+                // Nur wenn jemand misst: die Vorhersage fuer die naechste Ebene.
+                if let Some(letzter) = befunde.and_then(|b| b.last_mut()) {
+                    letzter.naechste = self.naechste_wahl(layer, residual, VORHERSAGE_MESSBREITE);
+                }
                 if let (Some(a), Some(sp)) = (auf.as_mut(), spur) {
                     a.mlp = crate::mitschnitt::Mlpteil::Expertengemisch {
                         experten: sp.experten,
@@ -3151,6 +3399,49 @@ impl IntegerModel {
         (logits, routing)
     }
 
+    /// **Welche Experten die naechste Ebene vermutlich waehlt**, die
+    /// `breite` staerksten zuerst (bei gleichem Logit der kleinere Index):
+    /// der Router der Ebene nach `layer`, angewandt auf deren Norm des
+    /// Residualstroms `residual` dieser Ebene nach der Aufmerksamkeit. Leer,
+    /// wenn danach keine Gemischebene kommt.
+    ///
+    /// ⚑ **Eine Vorhersage und keine Rechnung**: Sie entscheidet nur, was
+    /// vorab von der Platte angekuendigt wird. Gerechnet wird spaeter mit
+    /// der echten Wahl der naechsten Ebene; ein Fehlgriff kostet Plattenzeit,
+    /// nie ein anderes Ergebnis.
+    pub fn naechste_wahl(&self, layer: &TransformerLayer, residual: &[i16], breite: usize) -> Vec<u16> {
+        let Some(naechste) = self.layers.iter().find(|l| l.layer_idx == layer.layer_idx + 1) else {
+            return Vec::new();
+        };
+        let Feedforward::Moe(moe) = &naechste.ffn else {
+            return Vec::new();
+        };
+        let cfg = &self.config;
+        let x = rmsnorm_i16(
+            residual,
+            &layer.scales.residual_mid_frac,
+            &naechste.post_attention_layernorm_gamma.data,
+            &naechste.post_attention_layernorm_gamma.shifts,
+            &self.rsqrt_lut,
+            cfg.rsqrt_input_shift,
+            cfg.rsqrt_output_frac,
+            self.inv_n_q20,
+            naechste.scales.norm_mlp_frac,
+        );
+        let logits = linear_w8a16(
+            &x,
+            &moe.router.data,
+            moe.router.cols(),
+            &moe.router.shifts,
+            naechste.scales.norm_mlp_frac,
+            moe.router_frac,
+        );
+        let mut reihe: Vec<u16> = (0..logits.len() as u16).collect();
+        reihe.sort_by(|a, b| logits[*b as usize].cmp(&logits[*a as usize]).then(a.cmp(b)));
+        reihe.truncate(breite);
+        reihe
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn moe_vorwaerts(
         &self,
@@ -3164,6 +3455,7 @@ impl IntegerModel {
         spur: Option<&mut crate::mitschnitt::Moespur>,
     ) -> Vec<i16> {
         let (logits, routing) = self.moe_routing(moe, x, sc, cfg);
+        moe.wahl.zaehlen(&routing.experten);
 
         // Nur wenn jemand misst. Im Regelbetrieb ist das ein
         // Option-Test je MoE-Layer, sonst nichts; `randgleichstaende`
@@ -3188,8 +3480,71 @@ impl IntegerModel {
                     ),
                 gewichte: routing.gewichte.clone(),
                 logit_spanne: groesstes.saturating_sub(kleinstes),
+                naechste: Vec::new(),
             });
         }
+
+        if routing.experten.is_empty() {
+            return vec![0i16; acc.len()];
+        }
+        // ⚑ **Rechnen, waehrend geladen wird** (2026-10-15). Liegen einige
+        //   der gewaehlten Experten schon im Speicher und andere nicht,
+        //   holen eigene Lesefaeden die fehlenden, und die Rechenfaeden
+        //   rechnen inzwischen die vorhandenen samt geteiltem Experten.
+        //   Danach die fehlenden. **Jeder Experte rechnet fuer sich**, und
+        //   gemischt wird in der Reihenfolge der Wahl: dasselbe Ergebnis,
+        //   Bit fuer Bit. Mit Mitschnitt (Training) bleibt es beim einen
+        //   Durchgang.
+        // ⚑ **Nur fragen, wo es sich lohnt**: Fehlte ueber viele Ebenen nie
+        //   ein Experte (genug Speicher), fragt nur noch jede
+        //   [`PRUEFTAKT`]-te Ebene; fehlt wieder einer, fragt sofort jede.
+        //   📌 Jede Ebene zu fragen kostete auf viel Speicher gemessen 3 bis
+        //   4 % (gemischtes 35B, 17,7 GiB frei).
+        let ruhig = RUHIGE_EBENEN.load(std::sync::atomic::Ordering::Relaxed);
+        let fragen = ruhig < RUHE_AB || ruhig % PRUEFTAKT == 0;
+        let da: Vec<bool> = routing
+            .experten
+            .iter()
+            .map(|e| !fragen || moe.experts[*e as usize].gate_proj.data.vermutlich_im_speicher())
+            .collect();
+        if fragen {
+            if da.iter().all(|&d| d) {
+                RUHIGE_EBENEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            } else {
+                RUHIGE_EBENEN.store(0, std::sync::atomic::Ordering::Relaxed);
+            }
+        } else {
+            RUHIGE_EBENEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        #[cfg(test)]
+        let da: Vec<bool> = if TEILUNG_ERZWINGEN.with(|t| t.get()) { (0..da.len()).map(|i| i % 2 == 0).collect() } else { da };
+        // 📌 Gemessen und verworfen: erst ab zwei fehlenden Experten teilen.
+        //   Bei 9,0 GiB frei verschwand damit der Gewinn (10,8 / 11,1 gegen
+        //   10,9 / 11,1 ohne Teilen), und der Verlust bei viel Speicher
+        //   blieb; er kam vom Fragen, nicht vom Teilen.
+        let fehlen = da.iter().filter(|&&d| !d).count();
+        #[cfg(test)]
+        let an = RECHNEN_WAEHREND_LADEN.load(std::sync::atomic::Ordering::Relaxed) || TEILUNG_ERZWINGEN.with(|t| t.get());
+        #[cfg(not(test))]
+        let an = RECHNEN_WAEHREND_LADEN.load(std::sync::atomic::Ordering::Relaxed);
+        let teilen = spur.is_none()
+            && an
+            && fehlen > 0
+            && fehlen < da.len();
+        let matrizen = |idx: &[usize]| -> Vec<std::sync::Arc<Gewichtsdaten>> {
+            idx.iter()
+                .flat_map(|&i| {
+                    let ex = &moe.experts[routing.experten[i] as usize];
+                    [&ex.gate_proj, &ex.up_proj, &ex.down_proj].map(|t| std::sync::Arc::clone(&t.data))
+                })
+                .collect()
+        };
+        let (erst, danach): (Vec<usize>, Vec<usize>) = if teilen {
+            (0..da.len()).partition(|&i| da[i])
+        } else {
+            ((0..da.len()).collect(), Vec::new())
+        };
+        let unterwegs = teilen.then(|| crate::vorlader::im_hintergrund(matrizen(&danach)));
 
         // **Erst ankuendigen, dann rechnen.** Die Wahl steht fest,
         // sobald der Router gesprochen hat; ab hier ist bekannt, welche
@@ -3209,11 +3564,22 @@ impl IntegerModel {
         // Pool kostet keinen Fadenstart, nur eine Runde. Gemessen, je zwei
         // Laeufe zu 128 Token: 30B 12,3 bis 12,5 auf 14,9 bis 15,1 Token/s,
         // 35B 10,4 bis 10,8 auf 11,1 bis 12,6; `decode_hash` unveraendert.
+        //
+        // ⚑ **Je Matrix und nicht je Experte** (2026-10-15). Je Experte
+        //   las ein Faden gate, up und down nacheinander, und jede Ebene
+        //   wartete dreimal auf die Platte statt einmal. Gemessen am
+        //   int8-35B bei 9,6 GiB frei: siehe `abbild_anwaermen`.
+        //
+        // 📌 Gemessen und verworfen am selben Tag: 24 eigene Lesefaeden statt
+        //   der Rechenfaeden (eine Welle statt zwei). Bei 18,2, 12,5 und 9,5
+        //   GiB frei lagen beide Wege im Rauschen (17,4 bis 18,7, 13,0 bis
+        //   13,8, 10,1 bis 11,0 Token/s).
         let _ = integer_llm_kernels::fadenpool::rechnen(
-            routing.experten.len(),
+            erst.len() * 3,
             integer_llm_kernels::fadenpool::faeden(),
             |i| {
-                moe.experts[routing.experten[i] as usize].vorbereiten();
+                let ex = &moe.experts[routing.experten[erst[i / 3]] as usize];
+                [&ex.gate_proj, &ex.up_proj, &ex.down_proj][i % 3].data.vorbereiten();
                 0
             },
         );
@@ -3247,24 +3613,17 @@ impl IntegerModel {
         // Vektor zurueck. Der Residualstrom haette ihn nicht addieren
         // koennen. Eine leere Summe ist null, und null hat die Breite
         // des Stroms.
-        if routing.experten.is_empty() {
-            return vec![0i16; acc.len()];
-        }
-        let buendel: Vec<Expertenteil<'_>> = routing
-            .experten
-            .iter()
-            .map(|e| {
-                let ex = &moe.experts[*e as usize];
-                Expertenteil {
-                    gate: ex.gate_proj.matrix(),
-                    up: ex.up_proj.matrix(),
-                    down: ex.down_proj.matrix(),
-                    gate_shifts: &ex.gate_proj.shifts,
-                    up_shifts: &ex.up_proj.shifts,
-                    down_shifts: &ex.down_proj.shifts,
-                }
-            })
-            .collect();
+        let teil = |e: u16| {
+            let ex = &moe.experts[e as usize];
+            Expertenteil {
+                gate: ex.gate_proj.matrix(),
+                up: ex.up_proj.matrix(),
+                down: ex.down_proj.matrix(),
+                gate_shifts: &ex.gate_proj.shifts,
+                up_shifts: &ex.up_proj.shifts,
+                down_shifts: &ex.down_proj.shifts,
+            }
+        };
         // ⚑ **Der geteilte Experte rechnet in denselben zwei Runden mit**
         //   (2026-09-25), mit seinen eigenen Skalen. Bis dahin folgten ihm
         //   im Decode drei eigene Runden nach den gerouteten. Jede Zeile
@@ -3277,7 +3636,7 @@ impl IntegerModel {
             down_in_frac: sc.down_in_frac,
         };
         let mut paare: Vec<(Expertenteil<'_>, Expertenskala)> =
-            buendel.iter().map(|e| (*e, skala)).collect();
+            erst.iter().map(|&i| (teil(routing.experten[i]), skala)).collect();
         if let Some(ge) = moe.geteilter_experte.as_ref() {
             paare.push((
                 Expertenteil {
@@ -3308,6 +3667,34 @@ impl IntegerModel {
             acc,
             spur.as_ref().map(|_| &mut teile),
         );
+        // Die fehlenden, sobald sie da sind; dann alles in die Reihenfolge der Wahl.
+        let geteilt_aus = moe.geteilter_experte.is_some().then(|| ausgaben.pop().expect("der geteilte Experte hat eine Ausgabe"));
+        if let Some(u) = unterwegs {
+            u.abwarten();
+            let paare_danach: Vec<(Expertenteil<'_>, Expertenskala)> =
+                danach.iter().map(|&i| (teil(routing.experten[i]), skala)).collect();
+            let mut spaeter = mlp_int_experten_je_skala(
+                x,
+                &paare_danach,
+                moe.experts[routing.experten[0] as usize].gate_proj.cols(),
+                &self.silu_lut,
+                sc.norm_mlp_frac,
+                cfg.silu_in_frac,
+                cfg.silu_lut_offset,
+                cfg.silu_out_frac,
+                acc,
+                None,
+            )
+            .into_iter();
+            let mut frueh = std::mem::take(&mut ausgaben).into_iter();
+            ausgaben = da
+                .iter()
+                .map(|&d| if d { frueh.next() } else { spaeter.next() }.expect("je Experte eine Ausgabe"))
+                .collect();
+        }
+        if let Some(g) = geteilt_aus {
+            ausgaben.push(g);
+        }
         let geteilt = if moe.geteilter_experte.is_some() {
             if spur.is_some() {
                 teile.pop();

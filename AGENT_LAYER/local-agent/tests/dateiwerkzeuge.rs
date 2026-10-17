@@ -61,7 +61,7 @@ fn fahren(
     drehbuch: Vec<String>,
 ) -> myl_local_agent::schleife::Ergebnis {
     let agent = Agenteneinstellung {
-        schritte: 4,
+        schritte: Some(4),
         wurzel: Some(wurzel.display().to_string()),
         schreiben,
         kistenordner: None,
@@ -300,7 +300,7 @@ fn nur_lesen_steht_im_protokoll() {
 #[test]
 fn ohne_wurzel_greift_der_standard_arbeitsordner_und_verankertes_bleibt() {
     let agent = || Agenteneinstellung {
-        schritte: 2,
+        schritte: Some(2),
         wurzel: None,
         schreiben: false,
         kistenordner: None,

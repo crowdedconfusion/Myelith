@@ -295,6 +295,7 @@ pub fn anlaufstelle() -> bool {
         // Abstimmungsrunde, und die gibt es noch nicht.
         erzeugt_bloecke: true,
         teilnehmer,
+        speicherorte: None,
         // Kein Mitstimmen: Der Testclient fährt keine BFT-Runden.
         // Dafür bräuchte er eine Stimmsatzdatei mit dem Validator-Satz,
         // und die entsteht nicht nebenbei aus einer Einladung.
@@ -371,6 +372,7 @@ pub fn teilnehmer(name_vorgabe: &str) -> bool {
         // rechnen die Blöcke der Anlaufstelle nach.
         erzeugt_bloecke: false,
         teilnehmer,
+        speicherorte: None,
         kettendatei: None,
         stimmsatzdatei_pfad: None,
         konsensschluesseldatei: None,

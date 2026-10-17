@@ -203,3 +203,84 @@ fn eine_verbotene_frage_wird_vor_dem_laden_abgewiesen() {
     assert!(eintraege.contains("\"schutzfilter\""), "{eintraege}");
     assert!(!eintraege.contains("Mitarbeiter"), "Klartext im Protokoll: {eintraege}");
 }
+
+/// ⚑ **`myl plan` plant mit den Einstellungen und ohne Modell**: abgeschirmt
+/// von den echten Einstellungen und Gewichten, ohne Artefakt nur die
+/// Sinne, und hier gibt es keine.
+#[test]
+fn der_plan_ohne_artefakt_zeigt_das_angebot() {
+    let ort = tempfile::tempdir().expect("Ordner");
+    let a = Command::new(env!("CARGO_BIN_EXE_myl"))
+        .arg("plan")
+        .env("MYL_EINSTELLUNGEN", ort.path().join("einstellungen.toml"))
+        .env("MYL_SINNE", ort.path())
+        .output()
+        .expect("das gebaute Binaerprogramm laesst sich starten");
+    let text = String::from_utf8_lossy(&a.stdout);
+    assert_eq!(a.status.code(), Some(0), "{text}{}", String::from_utf8_lossy(&a.stderr));
+    assert!(text.starts_with("Angebot: ") && text.contains("Frei danach: "), "{text}");
+    assert!(String::from_utf8_lossy(&a.stderr).contains("kein Artefakt"));
+}
+
+/// ⚑ **Mit dem 0,6B**: Der Arbeitskontext ist ohne Einstellung die
+/// Vorgabe (65 536), und das Modell kann nur 40 960; mehr plant der
+/// Dispatcher nicht.
+#[test]
+fn der_plan_fuer_das_ankermodell() {
+    let pfad = concat!(env!("CARGO_MANIFEST_DIR"), "/../../INTEGER_LLM/artifacts/myelith-0.6b");
+    if std::env::var_os("MYL_OHNE_ARTEFAKTE").is_some() {
+        eprintln!("SKIP (MYL_OHNE_ARTEFAKTE gesetzt): {pfad}");
+        return;
+    }
+    assert!(std::path::Path::new(pfad).is_dir(), "Artefakte fehlen: {pfad}");
+    let ort = tempfile::tempdir().expect("Ordner");
+    let a = Command::new(env!("CARGO_BIN_EXE_myl"))
+        .args(["plan", pfad])
+        .env("MYL_EINSTELLUNGEN", ort.path().join("einstellungen.toml"))
+        .env("MYL_SINNE", ort.path())
+        .output()
+        .expect("das gebaute Binaerprogramm laesst sich starten");
+    let text = String::from_utf8_lossy(&a.stdout);
+    assert_eq!(a.status.code(), Some(0), "{text}");
+    assert!(text.contains("Agent    myelith-0.6b:") && text.contains("Kontext 40960"), "{text}");
+}
+
+/// ⚑ **`myl eichen` ohne Artefakt und ohne Sinne misst nichts**, sagt es
+/// und schreibt kein Buch.
+#[test]
+fn eichen_ohne_gegenstand_misst_nichts() {
+    let ort = tempfile::tempdir().expect("Ordner");
+    let a = Command::new(env!("CARGO_BIN_EXE_myl"))
+        .arg("eichen")
+        .env("MYL_EINSTELLUNGEN", ort.path().join("einstellungen.toml"))
+        .env("MYL_SINNE", ort.path())
+        .output()
+        .expect("das gebaute Binaerprogramm laesst sich starten");
+    assert_eq!(a.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&a.stderr).contains("nichts zu messen"));
+    assert!(!ort.path().join("eichbuch.json").exists(), "ein Buch ohne Messung");
+}
+
+/// ⚑ **Eine Messung je Prozess**: Der innere Lauf misst einen Befehl und
+/// gibt die Messung als letzte Zeile aus; ein gescheiterter Befehl misst
+/// nichts.
+#[cfg(unix)]
+#[test]
+fn eichen_einzeln_liefert_eine_messung() {
+    let a = Command::new(env!("CARGO_BIN_EXE_myl"))
+        .args(["eichen", "--einzeln", "probe", "0", "--", "sh", "-c", "echo davor"])
+        .output()
+        .expect("das gebaute Binaerprogramm laesst sich starten");
+    assert_eq!(a.status.code(), Some(0));
+    let text = String::from_utf8_lossy(&a.stdout);
+    let letzte = text.lines().last().unwrap_or_default();
+    let m: myl_dispatcher::local::eichung::Eichung = serde_json::from_str(letzte).expect("die letzte Zeile ist die Messung");
+    assert_eq!((m.last.as_str(), m.kontext), ("probe", 0));
+    assert!(text.contains("davor"), "der Befehl durfte vorher schreiben");
+    let a = Command::new(env!("CARGO_BIN_EXE_myl"))
+        .args(["eichen", "--einzeln", "probe", "0", "--", "sh", "-c", "exit 3"])
+        .output()
+        .expect("das gebaute Binaerprogramm laesst sich starten");
+    assert_eq!(a.status.code(), Some(1));
+}
+

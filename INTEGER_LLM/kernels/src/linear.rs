@@ -21,6 +21,7 @@
 use crate::dot::dot_i8_i16;
 use crate::fixed_point::{clamp_i16_from_i64, rescale, rescale_i64};
 use crate::ternaer::{Eingabe, Ternaermatrix};
+use crate::vierbit::Vierbitmatrix;
 
 /// Die Gewichte einer linearen Schicht: int8 wie bisher, oder ternaer
 /// gepackt ([`crate::ternaer`]).
@@ -41,6 +42,9 @@ pub enum Gewichtsmatrix<'a> {
     /// Flach, Zeile fuer Zeile, `in_features` Elemente je Zeile.
     Int8(&'a [i8]),
     Ternaer(Ternaermatrix<'a>),
+    /// Vier Bit je Gewicht mit ganzem Schritt und Versatz je Gruppe
+    /// ([`crate::vierbit`]); ebenso dieselbe Zahl wie das int8-Gewicht.
+    Vierbit(Vierbitmatrix<'a>),
 }
 
 impl<'a> Gewichtsmatrix<'a> {
@@ -49,7 +53,7 @@ impl<'a> Gewichtsmatrix<'a> {
     pub fn eingabe<'x>(&self, x: &'x [i16]) -> Eingabe<'x> {
         match self {
             Gewichtsmatrix::Int8(_) => Eingabe::roh(x),
-            Gewichtsmatrix::Ternaer(_) => Eingabe::neu(x),
+            Gewichtsmatrix::Ternaer(_) | Gewichtsmatrix::Vierbit(_) => Eingabe::neu(x),
         }
     }
 
@@ -59,6 +63,7 @@ impl<'a> Gewichtsmatrix<'a> {
         match self {
             Gewichtsmatrix::Int8(w) => dot_i8_i16(&w[z * in_features..(z + 1) * in_features], e.x()),
             Gewichtsmatrix::Ternaer(t) => t.zeile_mal_mit(z, e),
+            Gewichtsmatrix::Vierbit(v) => v.zeile_mal_mit(z, e),
         }
     }
 
@@ -78,12 +83,20 @@ impl<'a> Gewichtsmatrix<'a> {
                 }
             }
             Gewichtsmatrix::Ternaer(t) => t.zeile_mal_viele(z, e, aus),
+            Gewichtsmatrix::Vierbit(v) => v.zeile_mal_viele(z, e, aus),
         }
     }
 
     /// Ist diese Matrix ternaer gepackt?
     pub fn ist_ternaer(&self) -> bool {
         matches!(self, Gewichtsmatrix::Ternaer(_))
+    }
+
+    /// Ist diese Matrix gepackt (ternaer oder vier Bit)? Dann liest sie die
+    /// aufbereitete Eingabe ([`Self::eingabe`]) und rechnet in schmaleren
+    /// Kacheln.
+    pub fn ist_gepackt(&self) -> bool {
+        !matches!(self, Gewichtsmatrix::Int8(_))
     }
 
     /// Passt die Matrix zu `zeilen` Zeilen zu je `in_features`? Die
@@ -102,6 +115,12 @@ impl<'a> Gewichtsmatrix<'a> {
                 "{wer}: ternaere Matrix {} x {} passt nicht zu {zeilen} Zeilen à {in_features} Elementen",
                 t.zeilen(),
                 t.spalten()
+            ),
+            Gewichtsmatrix::Vierbit(v) => assert!(
+                v.spalten() == in_features && v.zeilen() == zeilen,
+                "{wer}: Vierbitmatrix {} x {} passt nicht zu {zeilen} Zeilen à {in_features} Elementen",
+                v.zeilen(),
+                v.spalten()
             ),
         }
     }
@@ -122,6 +141,12 @@ impl<'a> From<&'a Vec<i8>> for Gewichtsmatrix<'a> {
 impl<'a> From<Ternaermatrix<'a>> for Gewichtsmatrix<'a> {
     fn from(t: Ternaermatrix<'a>) -> Self {
         Gewichtsmatrix::Ternaer(t)
+    }
+}
+
+impl<'a> From<Vierbitmatrix<'a>> for Gewichtsmatrix<'a> {
+    fn from(v: Vierbitmatrix<'a>) -> Self {
+        Gewichtsmatrix::Vierbit(v)
     }
 }
 
@@ -1131,7 +1156,7 @@ where
     let faeden = stapelfaeden(zeilen, in_features, b);
 
     // ⚑ **In Kacheln und nicht am Stueck.** Siehe [`KACHEL`].
-    let kachel = kachelbreite(W.ist_ternaer());
+    let kachel = kachelbreite(W.ist_gepackt());
     let mut aus = vec![vec![0i16; zeilen]; b];
     let mut anfang = 0usize;
     while anfang < b {
@@ -1178,13 +1203,17 @@ where
 /// ⚑ **Die Kachel ist der Ausgleich zwischen beidem:** Sie soll klein
 /// genug sein, dass ihre Eingaben in den ersten Zwischenspeicher
 /// passen, und gross genug, dass die Gewichtszeile sich lohnt.
-pub(crate) fn kachelbreite(ternaer: bool) -> usize {
+///
+/// `gepackt`: ternaer oder vier Bit. Die Vierbitmatrix nimmt die Kachel des
+/// ternaeren Formats, denn sie liest dieselbe Zerlegung der Eingabe und
+/// entpackt ebenso je Zeile einmal fuer alle Eingaben der Kachel.
+pub(crate) fn kachelbreite(gepackt: bool) -> usize {
     use std::sync::OnceLock;
     static K: OnceLock<Option<usize>> = OnceLock::new();
     let gesetzt = *K.get_or_init(|| {
         std::env::var("MYL_KACHEL").ok().and_then(|v| v.parse().ok()).filter(|&k: &usize| k > 0)
     });
-    gesetzt.unwrap_or(if ternaer { KACHEL_TERNAER } else { KACHEL }).min(KACHEL_HOECHSTENS)
+    gesetzt.unwrap_or(if gepackt { KACHEL_TERNAER } else { KACHEL }).min(KACHEL_HOECHSTENS)
 }
 
 /// Vorgabe der Kachelbreite fuer ternaere Gewichte.

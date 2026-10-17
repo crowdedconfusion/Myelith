@@ -5,8 +5,8 @@
 //!
 //! **Dasselbe wie in [`crate::ressourcen::metal`]**: viele Eingaben auf denselben
 //! Gewichten, also die Matrizen einer Ebene in der Vorbereitung eines
-//! Prompts und die Experten eines Gemischs, fuer int8 und ternaer gepackte
-//! Gewichte. Alles andere rechnet die CPU, auch der Decode.
+//! Prompts und die Experten eines Gemischs, fuer int8, ternaer und in vier
+//! Bit gepackte Gewichte. Alles andere rechnet die CPU, auch der Decode.
 //!
 //! ⚑ **Der Decode auf der Karte ist zurueckgestellt** (Festlegung des
 //! Projektinhabers, 2026-10-14: nur, wenn er sicher problemlos geht, sonst
@@ -37,7 +37,8 @@
 //!
 //! 1. **Eine Selbstpruefung je Karte und Prozess**, bevor die Karte zum
 //!    ersten Mal rechnen darf: Extremwerte, Kachelraender, alle Faelle der
-//!    Umskalierung, ternaere Codes bis +2, mehrere Auftraege zugleich,
+//!    Umskalierung, ternaere Codes bis +2, vier Bit mit dem groessten
+//!    Schritt und Versatz, mehrere Auftraege zugleich,
 //!    verglichen mit der CPU. **Eine Karte, die anders rechnet, faellt
 //!    allein heraus**; die anderen rechnen weiter.
 //! 2. **Der Konformitaetslauf mit erzwungener Karte** (`run.sh cuda` bzw.
@@ -240,6 +241,9 @@ pub enum Gewichte<'a> {
     Int8(&'a [i8]),
     /// Ternaer gepackt wie in `crate::ternaer`.
     Ternaer { muster: &'a [u8], betraege: &'a [i16] },
+    /// Vier Bit je Gewicht wie in `crate::vierbit`: Codes und je Gruppe
+    /// Schritt und Versatz.
+    Vierbit { codes: &'a [u8], gitter: &'a [u8] },
 }
 
 /// Ein Stapel fuer [`stapel_viele`], mit denselben Angaben wie [`stapel`].
@@ -285,6 +289,22 @@ pub fn stapel_ternaer(
     ziel: &(dyn Fn(usize) -> u8 + Sync),
 ) -> Option<Vec<Vec<i16>>> {
     let a = Auftrag { xs, w: Gewichte::Ternaer { muster, betraege }, in_features, w_shifts, act_frac_bits, ziel };
+    stapel_viele(std::slice::from_ref(&a)).and_then(|mut v| v.pop())
+}
+
+/// **Wie [`stapel`], fuer Gewichte in vier Bit** (`crate::vierbit`): Codes
+/// und Gitter statt int8. Der Kern rechnet je Gruppe `a * (q * x) + b * x`,
+/// dieselbe ganze Zahl wie die CPU.
+pub fn stapel_vierbit(
+    xs: &[&[i16]],
+    codes: &[u8],
+    gitter: &[u8],
+    in_features: usize,
+    w_shifts: &[u8],
+    act_frac_bits: u8,
+    ziel: &(dyn Fn(usize) -> u8 + Sync),
+) -> Option<Vec<Vec<i16>>> {
+    let a = Auftrag { xs, w: Gewichte::Vierbit { codes, gitter }, in_features, w_shifts, act_frac_bits, ziel };
     stapel_viele(std::slice::from_ref(&a)).and_then(|mut v| v.pop())
 }
 
@@ -518,6 +538,11 @@ impl<'a> Job<'a> {
                     && muster.len() == zeilen * spalten / 4
                     && betraege.len() == zeilen * (spalten / crate::ternaer::GRUPPE)
             }
+            Gewichte::Vierbit { codes, gitter } => {
+                spalten % crate::vierbit::GRUPPE == 0
+                    && codes.len() == zeilen * spalten / 2
+                    && gitter.len() == zeilen * (spalten / crate::vierbit::GRUPPE) * crate::vierbit::GITTER_JE_GRUPPE
+            }
         };
         if !passt || a.xs.iter().any(|x| x.len() != spalten) {
             return None;
@@ -713,6 +738,11 @@ fn auf_karte(k: &treiber::Karte, teile: &[verteiler::Teil], jobs: &[Job<'_>]) ->
                 gw += ausgerichtet(n * j.spalten / 4);
                 gm += ausgerichtet(n * (j.spalten / crate::ternaer::GRUPPE) * 2);
             }
+            // Die Gitter liegen im Puffer der Betraege.
+            Gewichte::Vierbit { .. } => {
+                gw += ausgerichtet(n * j.spalten / 2);
+                gm += ausgerichtet(n * (j.spalten / crate::vierbit::GRUPPE) * crate::vierbit::GITTER_JE_GRUPPE);
+            }
         }
         gx += ausgerichtet(j.xs.len() * j.spalten * 2);
         ga += ausgerichtet(n);
@@ -739,6 +769,11 @@ fn auf_karte(k: &treiber::Karte, teile: &[verteiler::Teil], jobs: &[Job<'_>]) ->
                 k.hoch(pw + lage.w as u64, &muster[t.von * s / 4..t.bis * s / 4])?;
                 k.hoch(pm + lage.m as u64, bytes_i16(&betraege[t.von * g..t.bis * g]))?;
             }
+            Gewichte::Vierbit { codes, gitter } => {
+                let g = s / crate::vierbit::GRUPPE * crate::vierbit::GITTER_JE_GRUPPE;
+                k.hoch(pw + lage.w as u64, &codes[t.von * s / 2..t.bis * s / 2])?;
+                k.hoch(pm + lage.m as u64, &gitter[t.von * g..t.bis * g])?;
+            }
         }
         flach.clear();
         for x in j.xs {
@@ -757,6 +792,13 @@ fn auf_karte(k: &treiber::Karte, teile: &[verteiler::Teil], jobs: &[Job<'_>]) ->
             )?,
             Gewichte::Ternaer { .. } => k.starten(
                 treiber::Kern::Ternaer,
+                &[pw + lage.w as u64, pm + lage.m as u64, px + lage.x as u64, pa + lage.a as u64, po + lage.o as u64],
+                zeilen,
+                s,
+                stapel,
+            )?,
+            Gewichte::Vierbit { .. } => k.starten(
+                treiber::Kern::Vierbit,
                 &[pw + lage.w as u64, pm + lage.m as u64, px + lage.x as u64, pa + lage.a as u64, po + lage.o as u64],
                 zeilen,
                 s,

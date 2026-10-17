@@ -1,0 +1,128 @@
+Nutzer: Lies bitte den Plan und erklär mir die Reihenfolge der Zuteilung.
+Assistent: {"name": "read_file", "arguments": {"path": "COMPUTE_PIPELINE/dispatcher/src/local/plan.rs", "start": 1, "end": 80}}
+
+# compute-pipeline (`myl-pod`, `myl-dispatcher`)
+
+> **Version:** 0.38.0 (`myl-pod` 0.35.1, `myl-dispatcher` 0.3.0)
+> **Datum:** 2026-10-15
+> **Status:** Phase 1 vollständig, Phase 2.1, **Phase 3 vollständig**
+> (3.1 bis 3.3) und Punkt 4.3. `shard_loop` mit Spur-Hashes und
+> Manipulationserkennung, `coordinator_loop` mit Micro-Batching,
+> KV-Cache-Session-Affinität, erasure-codierte DA-Archivierung,
+> Ausfallsicherung mit Standby-Übernahme, Epochenübergang, seit dem
+> 26. August die **Verdrahtung mit dem Epochen-Scheduler** und seit dem
+> 1. September die **Nachbesetzung aus der Reserve des Netzes** (3.4)
+> samt **Gegenzeichnung und Frist** für die Ausfallmeldung (3.5) und der
+> **Staffelung nach dem Verstoß-Zähler** (3.6). **115 Tests grün.**
+>
+> **Offen:** die Verbreitung der Meldung über Gossip (der zweite Teil von
+> 3.5) und der Pod-Lauf über getrennte Hosts.
+>
+> **Seit dem 2026-10-15 der Dispatcher** (`COMPUTE_PIPELINE/dispatcher`,
+> Kiste `myl-dispatcher`): wer auf einer Maschine wie viel
+> Arbeitsspeicher, Grafikspeicher und Kerne bekommt, mit Vorrang Agent vor
+> Vision vor Sprache. Der Teil für das Netz (`network`) ist geplant, nicht
+> gebaut.
+
+Pod-Orchestrierung über ein echtes Netzwerk: Pipeline-Routing,
+Micro-Batching, KV-Cache-Verwaltung, spekulatives Decoding.
+Referenzimplementierung von Whitepaper Kap. 4 und Anhang A.3.
+
+## Aufgabe
+
+Schicht L2 (Compute Layer / Inference Fabric): der „Mining-Loop", ein Pod
+aus k Shard-Minern führt gemeinsam Forward-Pässe aus, koordiniert von einem
+Pod-Koordinator, der Micro-Batches bildet und PoI-Bündel einreicht
+(Anhang A.3). Diese Komponente ist die **Netzwerk-Orchestrierung** um
+INTEGER_LLM herum, sie ersetzt nicht dessen Rechenkerne (`kernels`/
+`runtime`), sondern verteilt sie über echte Nodes, mit Session-Affinität,
+Ausfallsicherung und Durchsatzoptimierung.
+
+## ⚑ Offener Mangel: Fund 164 (2026-09-03)
+
+**Drei Sitzungsverzeichnisse wachsen unbegrenzt.** `ShardNode` führt
+`caches: HashMap<u64, KVCache>` (Session-Affinität, Kap. 4.2) und
+`dekodier_digest: HashMap<u64, DekodierDigest>`, der `Coordinator` führt
+`completed: Vec<CompletedSegment>`. **Keine wird je verkleinert.**
+
+Dazu kommt: **Jede Anfrage bekommt vo
+
+//! **Der Belegungsplan**: eine reine Funktion in ganzen Zahlen.
+//!
+//! ```text
+//! belegen(angebot, lasten, regeln) → Plan
+//! ```
+//!
+//! # ⚑ Die Reihenfolge der Zuteilung, und warum sie diese ist
+//!
+//! **Erst jedes Minimum, in Vorrangfolge; dann der Ueberschuss, wieder in
+//! Vorrangfolge.**
+//!
+//! 1. **Minimum.** Fuer ein eigenes Artefakt, in dieser Folge:
+//!    - der **feste Teil**: KV-Speicher fuer den Mindestkontext, Zustand,
+//!      Zuschlag. Nichts davon laesst sich auslagern; passt er nicht, wird
+//!      die Last abgelehnt;
+//!    - die **dichten Gewichte** im Arbeitsspeicher, Rand und Ebene um
+//!      Ebene, denn sie liest jedes Token; was nicht passt, kommt per mmap
+//!      von der Platte, und der Plan sagt, dass es langsam wird;
+//!    - die **heissen Experten**, falls ein Profil vorliegt
+//!      ([`crate::local::profil`]): die haeufigsten, bis sie zusammen
+//!      [`HEISS_DECKUNG_PROMILLE`] der Aufrufe tragen. Nach den dichten
+//!      Gewichten sind sie das, was am haeufigsten gelesen wird;
+//!    - der **Arbeitskontext** (`kontext_soll`), bis er erreicht ist oder der
+//!      Platz endet, auf ein Raster abgerundet. Er ist eine Einstellung des
+//!      Menschen und kein Tempo; wird er gekuerzt, sagt der Plan es.
+//!
+//!    Fuer ein fremdes Modell: alle seine Dateien und sein Zuschlag. In
+//!    Vorrangfolge Agent, Vision, Sprache.
+//! 2. **Ueberschuss**, nur fuer eigene Artefakte: die uebrigen gerouteten
+//!    Experten im Arbeitsspeicher statt von der Platte, **die haeufigsten
+//!    zuerst** (ohne Profil in der Reihenfolge des Artefakts).
+//!
+//! ⚑ **Damit weicht eine niedrigere Last nie fuer etwas, das eine hoehere
+//! nur ein wenig schneller macht, aber immer fuer etwas, das sie erst so
+//! laufen laesst, wie sie eingestellt ist.** Die dichten Gewichte und der
+//! Arbeitskontext sind die Last selbst; die heissen Experten liest sie so
+//! oft, dass sie praktisch dazugehoeren. Die seltenen Experten sind Tempo
+//! am Rand.
+//!
+//! ⚑ **Festlegung des Projektinhabers vom 2026-10-15**: Die haeufig
+//! genutzten Experten kommen direkt nach den dichten Gewichten, also auch
+//! vor dem Arbeitskontext und vor Sehen und Hoeren. Gemessen am int8-35B
+//! traegt dort ein Fuenftel der Experten gut drei Viertel der Aufrufe; jeder
+//! davon, der von der Platte kommt, kostet jedes Token Zeit, waehrend ein
+//! Kontext ueber dem Mindestmass nur gebraucht wird, wenn der Verlauf so
+//! lang ist. ⚠️ **Der Arbeitskontext kann dafuer bis zum Mindestkontext
+//! weichen**, und der Plan sagt es dann.
+//!
+//! ⚑ **Mehr Kontext als eingestellt gibt es nic
+
+# NOTICES
+
+> **Erzeugt, nicht bearbeiten.** Quelle: `COMPLIANCE/werkzeuge/notices.py`
+> aus `cargo metadata`, `MODELS/llm/KATALOG.json` und
+> `COMPLIANCE/fremdkomponenten.json`.
+>
+> **Generated, do not edit.** Source: `COMPLIANCE/werkzeuge/notices.py`
+> from `cargo metadata`, `MODELS/llm/KATALOG.json` and
+> `COMPLIANCE/fremdkomponenten.json`.
+
+Myelith selbst steht unter der PolyForm Shield License 1.0.0 (siehe
+`LICENSE.md`). Diese Datei nennt alles Fremde, was Myelith benutzt,
+mitliefert oder auf den Rechner des Nutzers holt, mit der Lizenz, die
+sein Anbieter angibt. Sie ist eine Auskunft und keine Rechtsberatung.
+
+Myelith itself is licensed under the PolyForm Shield License 1.0.0
+(see `LICENSE.md`). This file lists every third-party component that
+Myelith uses, ships or fetches onto the user's machine, with the licence
+stated by its provider. It is information, not legal advice.
+
+## 1. Sprachmodelle / Language models
+
+Die Artefakte sind ganzzahlig umgerechnete Bearbeitungen der Grundgewichte.
+The artefacts are integer-converted derivative works of the base weights.
+
+| Artefakt / artefact | Grundgewichte / base weights | Lizenz der Gewichte / weights licence | Lizenz des Artefakts / artefact licence |
+|---|---|---|---|
+| `myelith-0.6b` | [Qwen/Qwen3-0.6B](https://huggingface.co/Qwen/Qwen3-0.6B) | Apache-2.0 | PolyForm Shield License 1.0.0 |
+| `myelith-30b-a3b` | [Qwen/Qwen3-30B

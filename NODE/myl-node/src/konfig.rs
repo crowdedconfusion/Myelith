@@ -200,6 +200,12 @@ pub struct KnotenKonfig {
     /// Satz und weist damit alle ab. Das ist der sichere Vorgabefall:
     /// Ungeprüfte Atteste durchzulassen hieße, A10 offen zu halten.
     pub teilnehmer: Vec<String>,
+    /// Die Speicherorte (`speicherorte.toml`), oder `None`.
+    ///
+    /// ⚑ **Der Knoten liest sie bei jeder Zustandsaufnahme neu** und
+    /// zaehlt, was in den Orten fuer das Netz liegt. Wer die Datei
+    /// aendert, sieht es in der naechsten Aufnahme, ohne Neustart.
+    pub speicherorte: Option<PathBuf>,
 }
 
 /// Fehler der Konfiguration.
@@ -295,6 +301,7 @@ impl Default for KnotenKonfig {
             testverkehr_sekunden: None,
             erzeugt_bloecke: false,
             teilnehmer: Vec::new(),
+            speicherorte: None,
         }
     }
 }

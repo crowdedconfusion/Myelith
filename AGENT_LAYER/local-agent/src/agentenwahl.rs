@@ -35,8 +35,22 @@ pub const AGENT_ANTWORT_MINDESTENS: usize = 4000;
 /// ein Feld, das es nicht mehr gibt.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Agenteneinstellung {
-    /// Hoechstzahl der Schritte je Auftrag.
-    pub schritte: u32,
+    /// Hoechstzahl der Schritte je Auftrag; `None` heisst ohne Grenze.
+    ///
+    /// ⚑ **Ohne Grenze ist die Vorgabe** (Festlegung des Projektinhabers,
+    /// 2026-10-17). Ein Auftrag endet, wenn das Modell fertig ist, wenn der
+    /// Mensch ihn anhaelt oder wenn es sich im Kreis dreht
+    /// (`crate::schleife::KREIS_ENDE_AB`); eine Zahl brach vorher mitten in
+    /// der Arbeit ab, gleich wie weit sie war.
+    ///
+    /// 📌 **Gespeichert unter einem neuen Namen.** Bis CLIENT v0.166.0 hiess
+    /// das Feld `schritte` und trug immer eine Zahl, meist die alte Vorgabe 6,
+    /// die beim Speichern mitgeschrieben wurde. Ob jemand sie gewaehlt hatte,
+    /// laesst sich daran nicht mehr ablesen; unter dem alten Namen haette jede
+    /// bestehende Ablage die Grenze behalten. Der alte Eintrag wird beim Lesen
+    /// uebergangen.
+    #[serde(default, rename = "schritte_hoechstens", skip_serializing_if = "Option::is_none")]
+    pub schritte: Option<u32>,
     /// Das Verzeichnis, in dem die Dateiwerkzeuge arbeiten duerfen.
     ///
     /// ⚑ **Ohne Angabe [`crate::ort::standard_wurzel`]**, also
@@ -151,7 +165,7 @@ pub struct Agenteneinstellung {
 impl Default for Agenteneinstellung {
     fn default() -> Self {
         Self {
-            schritte: 6,
+            schritte: None,
             wurzel: None,
             schreiben: false,
             kistenordner: None,
@@ -166,6 +180,19 @@ impl Default for Agenteneinstellung {
         }
     }
 }
+
+impl Agenteneinstellung {
+    /// **Die Schrittgrenze, wie der Lauf sie braucht**: die gesetzte Zahl,
+    /// sonst [`OHNE_SCHRITTGRENZE`].
+    pub fn schrittgrenze(&self) -> usize {
+        self.schritte.map_or(OHNE_SCHRITTGRENZE, |n| n as usize)
+    }
+}
+
+/// **Was „ohne Grenze" fuer die Schrittzahl heisst**: die groesste Zahl, die
+/// der Sitzungskontrakt fassen kann. Erreicht wird sie nicht; vorher endet
+/// der Lauf von selbst, durch den Menschen oder an der Loop-Erkennung.
+pub const OHNE_SCHRITTGRENZE: usize = u32::MAX as usize;
 
 /// **Die Einstellungen eines Loops**, also eines Vorhabens, das der Dienst
 /// in Runden fuehrt (`crate::vorhaben`).

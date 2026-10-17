@@ -190,7 +190,8 @@ def _wikitext_calibration_texts(n_sequences):
             "waere das Artefakt auf einer schmaleren Grundlage gebaut als die\n"
             "uebrigen, und der Vergleich ihrer Perplexitaeten haette keinen\n"
             "gemeinsamen Bezug.\n"
-            "Holen: python3 BENCHMARKS/Inferenz/wikitext_common.py\n"
+            "Holen: INTEGER_LLM/calibrate/.venv/bin/python3 BENCHMARKS/Inferenz/wikitext_common.py\n"
+            "(build_artifacts.sh tut das selbst, wenn die Datei fehlt)\n"
             "(oder INTEGER_LLM_OHNE_WIKITEXT=1 setzen und wissen, was man tut)."
         )
     lines = cache.read_text(encoding="utf-8").splitlines()

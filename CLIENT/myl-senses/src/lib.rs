@@ -82,6 +82,37 @@ pub const FRIST_SPRECHEN_S: u64 = 60;
 /// mit Vermerk abgeschnitten.
 pub const AUSGABEGRENZE: usize = 8 * 1024;
 
+/// **Die Speicherwache**: eine Frage, bevor ein Sinn seine Gewichte laedt.
+///
+/// Sie bekommt die Art und die Summe der Gewichte in Bytes und sagt, ob der
+/// Sinn daneben starten darf; `Err` traegt den Grund, und der geht statt
+/// einer Beschreibung an den Aufrufer.
+///
+/// ⚑ **Ein Haken und keine Abhaengigkeit.** Diese Kiste haengt von nichts
+/// ab, und das bleibt so: Wer weiss, was sonst laeuft (der Client mit dem
+/// geladenen Agenten), setzt die Wache ([`speicherwache_setzen`]). Ohne
+/// gesetzte Wache startet jeder Sinn wie bisher.
+pub type Speicherwache = fn(Art, u64) -> Result<(), String>;
+
+static WACHE: std::sync::OnceLock<Speicherwache> = std::sync::OnceLock::new();
+
+/// **Setzt die Speicherwache**, einmal je Prozess; `false`, wenn schon
+/// eine gesetzt war.
+pub fn speicherwache_setzen(w: Speicherwache) -> bool {
+    WACHE.set(w).is_ok()
+}
+
+/// Fragt die Wache, falls es eine gibt, mit der Summe der Dateien.
+///
+/// ⚠️ **Eine Datei, deren Groesse sich nicht lesen laesst, zaehlt null.**
+/// Fehlt sie wirklich, scheitert der Sinn gleich danach mit seinem eigenen,
+/// genaueren Grund.
+fn wachen(art: Art, dateien: &[&std::path::Path]) -> Result<(), String> {
+    let Some(w) = WACHE.get() else { return Ok(()) };
+    let bytes = dateien.iter().filter_map(|d| std::fs::metadata(d).ok()).map(|m| m.len()).sum();
+    w(art, bytes)
+}
+
 /// **Wertet eine Datei aus, wenn es fuer ihre Art einen Sinn gibt.**
 ///
 /// ⚑ **Die eine Tuer fuer beide Wege**: Chat und Agentenschleife rufen
@@ -99,14 +130,18 @@ pub fn auswerten(
 ) -> Option<Result<String, String>> {
     match art {
         Art::Bild => Some(match &sinne.sehen {
-            Ok(s) => sehen::beschreiben(s.fuer(stufe), datei, frage.unwrap_or(sehen::VORGABEFRAGE)),
+            Ok(s) => {
+                let z = s.fuer(stufe);
+                wachen(Art::Bild, &[&z.modell, &z.projektor])
+                    .and_then(|()| sehen::beschreiben(z, datei, frage.unwrap_or(sehen::VORGABEFRAGE)))
+            }
             Err(m) => Err(m.bericht()),
         }),
         // ⚑ **Die Stufe gilt nur fuers Sehen.** Beim Hoeren gibt es
         // heute ein Modell; eine zweite Sprosse, die auf dieselbe Datei
         // zeigt, waere eine Wahl ohne Unterschied.
         Art::Ton => Some(match &sinne.hoeren {
-            Ok(z) => hoeren::mitschreiben(z, datei, frage.unwrap_or("auto")),
+            Ok(z) => wachen(Art::Ton, &[&z.modell]).and_then(|()| hoeren::mitschreiben(z, datei, frage.unwrap_or("auto"))),
             Err(m) => Err(m.bericht()),
         }),
         Art::Text | Art::Sonstiges => None,
@@ -228,5 +263,44 @@ mod proben {
             .expect("es gibt einen Sinn");
         assert!(a.is_err());
         assert!(a.unwrap_err().contains("Sehmodell"));
+    }
+
+    /// Die Wache dieser Proben: Sie lehnt genau 4242 Bytes ab und laesst
+    /// alles andere durch, damit keine andere Probe sie spuert.
+    fn probewache(art: Art, bytes: u64) -> Result<(), String> {
+        if bytes == 4242 {
+            Err(format!("Probewache: {art:?} mit {bytes} Bytes passt nicht"))
+        } else {
+            Ok(())
+        }
+    }
+
+    /// ⚑ **Die Wache steht vor dem Start**: Lehnt sie ab, kommt ihr Grund
+    /// zurueck und nicht der Fehler des Programms, das gar nicht erst lief.
+    #[test]
+    fn die_speicherwache_fragt_vor_dem_start() {
+        speicherwache_setzen(probewache);
+        let ort = std::env::temp_dir().join(format!("sinne-wache-{}", std::process::id()));
+        std::fs::create_dir_all(&ort).expect("Ordner");
+        let (modell, projektor) = (ort.join("sehen.gguf"), ort.join("sehen-mmproj.gguf"));
+        std::fs::write(&modell, vec![0u8; 4000]).expect("Modell");
+        std::fs::write(&projektor, vec![0u8; 242]).expect("Projektor");
+        let zeug = Sehzeug { programm: ort.join("gibt-es-nicht"), modell: modell.clone(), projektor: projektor.clone() };
+        let mut s = Sinne::finden_in(std::path::Path::new("/gibt/es/nicht"), &laufwerk::Eigene::default(), &[]);
+        s.sehen = Ok(Sehen { schnell: Some(zeug.clone()), genau: None });
+        let grund = auswerten(&s, &modell, Art::Bild, None, Stufe::Schnell).expect("Sinn").expect_err("abgelehnt");
+        assert!(grund.contains("Probewache"), "{grund}");
+        // Andere Groesse: Die Wache laesst durch, und es scheitert erst das
+        // Programm, das es nicht gibt.
+        std::fs::write(&projektor, vec![0u8; 243]).expect("Projektor");
+        let grund = auswerten(&s, &modell, Art::Bild, None, Stufe::Schnell).expect("Sinn").expect_err("kein Programm");
+        assert!(!grund.contains("Probewache"), "{grund}");
+        // Dasselbe fuers Hoeren, mit einem Modell von genau 4242 Bytes.
+        let hoermodell = ort.join("hoeren.bin");
+        std::fs::write(&hoermodell, vec![0u8; 4242]).expect("Hoermodell");
+        s.hoeren = Ok(Hoerzeug { programm: ort.join("gibt-es-nicht"), modell: hoermodell });
+        let grund = auswerten(&s, &modell, Art::Ton, None, Stufe::Schnell).expect("Sinn").expect_err("abgelehnt");
+        assert!(grund.contains("Probewache") && grund.contains("Ton"), "{grund}");
+        let _ = std::fs::remove_dir_all(&ort);
     }
 }

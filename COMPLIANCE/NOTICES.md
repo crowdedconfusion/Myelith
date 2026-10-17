@@ -71,15 +71,15 @@ The artefacts are integer-converted derivative works of the base weights.
 
 ## 5. Rust-Kisten / Rust crates
 
-760 Pakete aus 27 Kisten, offline aus `SYSTEM/crates-vorrat`. In die
+759 Pakete aus 28 Kisten, offline aus `SYSTEM/crates-vorrat`. In die
 Freigabebündel gehen nur die, die das jeweilige Programm zieht.
 
-760 packages from 27 crates, offline from `SYSTEM/crates-vorrat`.
+759 packages from 28 crates, offline from `SYSTEM/crates-vorrat`.
 Release bundles contain only those the respective program pulls in.
 
 | Lizenz / licence | Pakete / packages |
 |---|---|
-| MIT OR Apache-2.0 | 340 |
+| MIT OR Apache-2.0 | 339 |
 | MIT | 177 |
 | Apache-2.0 OR MIT | 81 |
 | Unicode-3.0 | 32 |
@@ -575,8 +575,7 @@ Release bundles contain only those the respective program pulls in.
 | `quick-protobuf-codec` | 0.3.1 | MIT | https://github.com/libp2p/rust-libp2p |
 | `quick-xml` | 0.42.0 | MIT | https://github.com/tafia/quick-xml |
 | `quinn` | 0.11.11 | MIT OR Apache-2.0 | https://github.com/quinn-rs/quinn |
-| `quinn-proto` | 0.11.16 | MIT OR Apache-2.0 | https://github.com/quinn-rs/quinn |
-| `quinn-proto` | 0.11.17 | MIT OR Apache-2.0 | https://github.com/quinn-rs/quinn |
+| `quinn-proto` | 0.11.19 | MIT OR Apache-2.0 | https://github.com/quinn-rs/quinn |
 | `quinn-udp` | 0.5.15 | MIT OR Apache-2.0 | https://github.com/quinn-rs/quinn |
 | `quote` | 1.0.47 | MIT OR Apache-2.0 | https://github.com/dtolnay/quote |
 | `r-efi` | 5.3.0 | MIT OR Apache-2.0 OR LGPL-2.1-or-later | https://github.com/r-efi/r-efi |
@@ -612,7 +611,7 @@ Release bundles contain only those the respective program pulls in.
 | `rusticata-macros` | 4.1.0 | MIT/Apache-2.0 | https://github.com/rusticata/rusticata-macros.git |
 | `rustix` | 1.1.4 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | https://github.com/bytecodealliance/rustix |
 | `rustix` | 1.1.5 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | https://github.com/bytecodealliance/rustix |
-| `rustls` | 0.23.45 | Apache-2.0 OR ISC OR MIT | https://github.com/rustls/rustls |
+| `rustls` | 0.23.46 | Apache-2.0 OR ISC OR MIT | https://github.com/rustls/rustls |
 | `rustls-pki-types` | 1.15.1 | MIT OR Apache-2.0 | https://github.com/rustls/pki-types |
 | `rustls-webpki` | 0.103.14 | ISC | https://github.com/rustls/webpki |
 | `rustls-webpki` | 0.103.15 | ISC | https://github.com/rustls/webpki |

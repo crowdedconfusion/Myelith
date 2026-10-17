@@ -309,6 +309,7 @@ async fn ein_neu_gestarteter_knoten_stimmt_mit_dem_durchlaufenden_ueberein() {
         bootstrap,
         rolle: Rolle::Teilnehmer,
         nat: Default::default(),
+        speicherorte: None,
         aufnahme_sekunden: 1,
         // Kein Endpunkt: Ein fester Port kollidierte, sobald zwei
         // Testknoten nebeneinander laufen, und dieser Test prueft

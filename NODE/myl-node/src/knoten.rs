@@ -192,6 +192,13 @@ pub struct Knoten {
     /// es mit `--ortsleitung`; wer nichts sagt, lehnt Aufträge ehrlich
     /// ab, statt einen Shard vorzutäuschen, den es nicht gibt.
     ortsanschluss: Option<crate::ortsklient::Ortsanschluss>,
+    /// Inferenzauftraege aus dem Netz: beantwortet und abgelehnt.
+    ///
+    /// ⚑ **Geteilt, weil die Antwort in einer eigenen Aufgabe entsteht**
+    /// und erst dort feststeht, ob der Shard rechnete oder ablehnte.
+    inferenz_zaehler: Arc<Inferenzzaehler>,
+    /// Wie viele Bytes die unterschriebene Zusage nennt; null ohne.
+    zugesagt_bytes: u64,
     /// Was die Tür an Abrechnungen abgelegt hat.
     ///
     /// ⚑ **Ein Kanal und kein direkter Aufruf**, weil die Tür in einer
@@ -523,6 +530,8 @@ impl Knoten {
             kontraktabschrift: crate::tuer::Kontraktabschrift::neu(),
             letzte_inferenzantwort: None,
             ortsanschluss,
+            inferenz_zaehler: Arc::new(Inferenzzaehler::default()),
+            zugesagt_bytes: 0,
             abrechnungen: abrechnungen_rx,
             abrechnungskanal: abrechnungen_tx,
             abrechnungsnonce: 1_000_000,
@@ -1417,6 +1426,83 @@ impl Knoten {
         }
     }
 
+    /// Zaehlt, was in den Orten fuer das Netz liegt, oder `None` ohne
+    /// `--speicherorte`.
+    ///
+    /// ⚠️ **Eine kaputte Datei zaehlt als keine Orte und steht im
+    /// Protokoll**, denn der Knoten soll an einer Tippfehlerzeile nicht
+    /// sterben; die Zahl null sagt dann, dass etwas fehlt.
+    fn speicher_zaehlen(&mut self) -> Option<Speicherstand> {
+        let pfad = self.konfig.speicherorte.clone()?;
+        let orte = match myl_store::Speicherorte::lesen(&pfad) {
+            Ok(o) => o,
+            Err(e) => {
+                self.protokoll.schreibe(Eintrag::neu("speicherorte_fehler").text("grund", e.to_string()));
+                return Some(Speicherstand::default());
+            }
+        };
+        let mut s = Speicherstand::default();
+        for o in orte.fuer(myl_store::Zweck::Netz) {
+            let b = myl_store::belegung(o);
+            s.orte += 1;
+            s.grenze_bytes = s.grenze_bytes.saturating_add(o.volumen_bytes());
+            s.belegung.gegenstaende += b.gegenstaende;
+            s.belegung.shards += b.shards;
+            s.belegung.unlesbar += b.unlesbar;
+            s.belegung.bytes = s.belegung.bytes.saturating_add(b.bytes);
+        }
+        Some(s)
+    }
+
+    /// **Unterschreibt eine Zusage** mit dem Kontoschluessel und legt die
+    /// Unterschrift daneben (`<datei>.unterschrift`).
+    ///
+    /// ⚑ **Nur mit einem Kontoschluessel aus einer Datei.** Der aus dem
+    /// Namen abgeleitete ist keiner (Fund 170): Wer den Namen kennt,
+    /// unterschriebe dieselbe Zusage.
+    ///
+    /// ⚑ **Die Epoche ist die der eigenen Kette beim Unterschreiben**; im
+    /// Probelauf also die der Probekette, und die Zusage sagt selbst, dass
+    /// sie aus einem Probelauf stammt.
+    pub fn zusage_unterschreiben(&mut self, pfad: &Path) -> Result<std::path::PathBuf, String> {
+        let roh = std::fs::read(pfad).map_err(|e| format!("{}: {e}", pfad.display()))?;
+        let text = std::str::from_utf8(&roh).map_err(|_| format!("{}: kein UTF-8", pfad.display()))?;
+        let zusage = myl_store::Zusage::aus_text(text).map_err(|e| e.to_string())?;
+        let Some(schluessel) = self.kontoschluessel.as_ref() else {
+            return Err("--zusage braucht --kontoschluessel: ohne eigenen Schluessel ist eine Unterschrift keine".into());
+        };
+        let epoche = self.kette.zustand().epoch.0;
+        let unterschrift = schluessel
+            .signiere(&myl_store::orte::botschaft(&roh, epoche))
+            .map_err(|e| format!("unterschreiben: {e:?}"))?;
+        let hex = |b: &[u8]| b.iter().map(|x| format!("{x:02x}")).collect::<String>();
+        let oeffentlich = borsh::to_vec(&schluessel.oeffentlich()).map_err(|e| e.to_string())?;
+        let signatur = borsh::to_vec(&unterschrift).map_err(|e| e.to_string())?;
+        let hash = myl_types::hash::Hash::sha256(&roh);
+        let ziel = pfad.with_extension("unterschrift");
+        let inhalt = format!(
+            "# Unterschrift unter {}\n# Botschaft: MYELITH-KAPAZITAETSZUSAGE-V1, SHA-256 der Datei, Epoche (u64, little endian)\n\
+             konto {}\nschluessel {}\nepoche {epoche}\nsha256 {}\nunterschrift {}\n",
+            pfad.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
+            hex(self.eigenes_konto().as_bytes()),
+            hex(&oeffentlich),
+            hex(hash.as_bytes()),
+            hex(&signatur),
+        );
+        std::fs::write(&ziel, inhalt).map_err(|e| format!("{}: {e}", ziel.display()))?;
+        self.zugesagt_bytes = zusage.volumen_bytes();
+        self.protokoll.schreibe(
+            Eintrag::neu("zusage")
+                .text("sha256", hex(hash.as_bytes()))
+                .zahl("epoche", epoche.min(i64::MAX as u64) as i64)
+                .zahl("volumen_bytes", zusage.volumen_bytes().min(i64::MAX as u64) as i64)
+                .zahl("kerne", zusage.kerne as i64)
+                .zahl("rechenwerke", zusage.rechenwerke.len() as i64)
+                .text("probelauf", if zusage.probelauf { "ja" } else { "nein" }),
+        );
+        Ok(ziel)
+    }
+
     /// Ob der Kontoschlüssel aus einer Datei kam.
     pub fn kontoschluessel_aus_datei(&self) -> bool {
         self.kontoschluessel.is_some()
@@ -1526,6 +1612,23 @@ impl Knoten {
                 *groesse as i64,
             );
         }
+        // ⚑ **Was der Knoten fuer das Netz haelt, und was er daran hat.**
+        // Gezaehlt wird auf der Platte, bei jeder Aufnahme neu.
+        let speicher = self.speicher_zaehlen();
+        let guthaben = self.kette.zustand().account(&self.eigenes_konto()).balance;
+        let (bearbeitet, abgelehnt) = self.inferenz_zaehler.stand();
+        if let Some(s) = &speicher {
+            eintrag = eintrag
+                .zahl("speicher_orte", s.orte as i64)
+                .zahl("speicher_gegenstaende", s.belegung.gegenstaende as i64)
+                .zahl("speicher_shards", s.belegung.shards as i64)
+                .zahl("speicher_belegt_bytes", s.belegung.bytes.min(i64::MAX as u64) as i64)
+                .zahl("speicher_grenze_bytes", s.grenze_bytes.min(i64::MAX as u64) as i64);
+        }
+        eintrag = eintrag
+            .zahl("inferenz_bearbeitet", bearbeitet as i64)
+            .zahl("inferenz_abgelehnt", abgelehnt as i64)
+            .zahl("konto_guthaben", guthaben.min(i64::MAX as u64) as i64);
         self.protokoll.schreibe(eintrag);
 
         // ⚑ **Und die Kontraktabschrift für die eigene Tür** (B6-3).
@@ -1568,6 +1671,16 @@ impl Knoten {
             latenz_min_us: if anzahl > 0 { kleinste } else { 0 },
             latenz_max_us: groesste,
             nachforderung_laeuft: self.nachforderung_laeuft,
+            speicher_orte: speicher.as_ref().map(|s| s.orte).unwrap_or(0),
+            speicher_gegenstaende: speicher.as_ref().map(|s| s.belegung.gegenstaende).unwrap_or(0),
+            speicher_shards: speicher.as_ref().map(|s| s.belegung.shards).unwrap_or(0),
+            speicher_unlesbar: speicher.as_ref().map(|s| s.belegung.unlesbar).unwrap_or(0),
+            speicher_belegt_bytes: speicher.as_ref().map(|s| s.belegung.bytes).unwrap_or(0),
+            speicher_grenze_bytes: speicher.as_ref().map(|s| s.grenze_bytes).unwrap_or(0),
+            speicher_zugesagt_bytes: self.zugesagt_bytes,
+            inferenz_bearbeitet: bearbeitet,
+            inferenz_abgelehnt: abgelehnt,
+            konto_guthaben: guthaben,
         });
     }
 
@@ -1833,6 +1946,7 @@ impl Knoten {
                     // sie etwas unterscheidet.
                     Some(Nachforderung::Inferenz(auftrag)) => {
                         let sitzung = auftrag.sitzung;
+                        let zaehler = self.inferenz_zaehler.clone();
                         match self.ortsanschluss.clone() {
                             Some(anschluss) => {
                                 let sender = self.kommandos.clone();
@@ -1850,6 +1964,7 @@ impl Knoten {
                                             sitzung,
                                         },
                                     };
+                                    zaehler.zaehlen(&antwort);
                                     if let Some(bytes) = Nachlieferung::Inferenz(antwort).als_bytes()
                                     {
                                         let _ = sender
@@ -1858,14 +1973,13 @@ impl Knoten {
                                 });
                                 None
                             }
-                            None => Some((
-                                Nachlieferung::Inferenz(
-                                    myl_types::inferenzauftrag::Inferenzantwort::Abgelehnt {
-                                        sitzung,
-                                    },
-                                ),
-                                0,
-                            )),
+                            None => {
+                                let antwort = myl_types::inferenzauftrag::Inferenzantwort::Abgelehnt {
+                                    sitzung,
+                                };
+                                zaehler.zaehlen(&antwort);
+                                Some((Nachlieferung::Inferenz(antwort), 0))
+                            }
                         }
                     }
                     // Unlesbare Anfrage: trotzdem antworten. Schweigen
@@ -2094,5 +2208,38 @@ impl Beendigungswache {
                 std::future::pending::<()>().await;
             }
         }
+    }
+}
+
+/// Was in den Orten fuer das Netz liegt, ueber alle zusammen.
+#[derive(Debug, Clone, Copy, Default)]
+struct Speicherstand {
+    orte: u64,
+    grenze_bytes: u64,
+    belegung: myl_store::Belegung,
+}
+
+/// Inferenzauftraege aus dem Netz, nach Ausgang.
+#[derive(Debug, Default)]
+pub struct Inferenzzaehler {
+    bearbeitet: std::sync::atomic::AtomicU64,
+    abgelehnt: std::sync::atomic::AtomicU64,
+}
+
+impl Inferenzzaehler {
+    /// Zaehlt eine Antwort: ein Ergebnis als bearbeitet, alles andere als
+    /// abgelehnt.
+    pub fn zaehlen(&self, antwort: &myl_types::inferenzauftrag::Inferenzantwort) {
+        use std::sync::atomic::Ordering;
+        match antwort {
+            myl_types::inferenzauftrag::Inferenzantwort::Ergebnis { .. } => self.bearbeitet.fetch_add(1, Ordering::Relaxed),
+            _ => self.abgelehnt.fetch_add(1, Ordering::Relaxed),
+        };
+    }
+
+    /// Bearbeitet und abgelehnt.
+    pub fn stand(&self) -> (u64, u64) {
+        use std::sync::atomic::Ordering;
+        (self.bearbeitet.load(Ordering::Relaxed), self.abgelehnt.load(Ordering::Relaxed))
     }
 }

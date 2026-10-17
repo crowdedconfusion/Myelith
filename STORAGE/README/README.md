@@ -1,9 +1,9 @@
 # STORAGE — die Rolle Store und die Verfügbarkeitsschicht
 
-> **Version:** 0.5.2
-> **Datum:** 2026-09-14
+> **Version:** 0.6.0
+> **Datum:** 2026-10-17
 > **Status:** Gegenstandsformat, **Verfügbarkeitsnachweis** und
-> **Speicherentgelt** stehen (`myl-store` v0.5.2, 22 Tests; Format und Stichproben-Ableitung liegen in `myl-types`). Sechs der
+> **Speicherentgelt** stehen (`myl-store` v0.6.0, 29 Tests; Format und Stichproben-Ableitung liegen in `myl-types`). Sechs der
 > sieben Entwurfsfragen sind entschieden, eine ausdrücklich nicht: Ob ein
 > Gegenstand vervielfältigt oder erasure-kodiert wird, ist Latenz gegen
 > Platz. **Die Platz-Zahl steht seit dem 2026-08-30**, die Latenz-Zahl
@@ -125,6 +125,38 @@ Mindestreplikation, die Bewertung einer Quittung und der Abruf.
 Changelog, und die Prüfung, die Kopfversion und Changelog vergleicht,
 übersprang es still (Fund 354). Die Einträge sind aus den
 Versionssprüngen der Kiste und dem Planungsverlauf zusammengestellt.
+
+### v0.6.0 (2026-10-17): Speicherorte und Kapazitätszusage (`orte`)
+
+Auftrag des Projektinhabers: Gewichte auf eine angeschlossene Platte
+auslagern und einen physischen Ort samt Volumen ans Netz vergeben, dazu
+eine Datei, in der die Speicherorte stehen, damit das System später weiß,
+wo es auf dem Knoten nach Gewichten und nach entgeltlich gespeicherten
+Gegenständen sucht.
+
+- **`speicherorte.toml`** (neu, `orte::Speicherorte`): je Ort Name, Pfad
+  (absolut), Obergrenze `volumen_gib` und `zwecke` (`gewichte`, `netz`).
+  Unter dem Pfad liegen `gewichte/` (ein Artefakt je Unterordner) und
+  `netz/` (ein Gegenstand je Unterordner, erkannt an `manifest.borsh`).
+  ⚑ **Die Obergrenze gilt für den ganzen Ort**, beide Zwecke zusammen.
+  Eine fehlende Datei heißt keine Orte, eine kaputte ist ein Fehler.
+  Geschrieben wird erst daneben, dann an den Platz; jede geschriebene
+  Datei trägt einen Kopf, der das Format erklärt, denn sie darf von Hand
+  bearbeitet werden.
+- **`belegung(ort)`**: zählt auf der Platte, was am Ort liegt:
+  Gegenstände, davon Shard-Gewichte, Ordner ohne lesbares Manifest (sie
+  zählen nicht, werden aber genannt), Bytes über den ganzen Ort,
+  Verknüpfungen nicht verfolgt.
+- **`Zusage`** und **`botschaft`**: was ein Knoten dem Netz zusagt (Orte
+  mit Obergrenze, Kerne, Rechenwerke, `probelauf`), als TOML; die
+  Unterschrift geht über Trenner `MYELITH-KAPAZITAETSZUSAGE-V1`, SHA-256
+  der **Dateibytes** und die Epoche. ⚑ `probelauf` steht im Text und damit
+  unter der Unterschrift: Eine Zusage aus einem Probelauf lässt sich
+  nicht als eine fürs Netz ausgeben. Eine fremde Fassung wird abgelehnt.
+- Neue Abhängigkeiten `serde` und `toml` 0.8 (dieselbe Fassung wie
+  `myl-local-agent`, liegt im Vorrat).
+- **Belegt:** 29 Tests grün (7 neu), darunter die Belegung an echten
+  Manifesten und die Abhängigkeit der Botschaft von Datei und Epoche.
 
 ### v0.5.2 – 2026-09-02 (der Satz des Speicherentgelts ist hergeleitet)
 

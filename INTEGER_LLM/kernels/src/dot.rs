@@ -127,6 +127,30 @@ mod gewaehlt {
             false
         }
     }
+
+    /// Die Laengen hat [`super::vierbit_zeile`] geprueft.
+    #[inline]
+    pub fn vierbit(codes: &[u8], gitter: &[u8], _x: &[i16], hoch: &[i8], tief: &[u8], summen: &[i64]) -> i64 {
+        // ⚑ Dieselbe Wahl wie beim ternaeren Kern; beide Fassungen rechnen
+        //   dieselbe Zahl (`beide_vektorfassungen_sind_die_skalare` in `vierbit`).
+        if crate::ternaer::neon::mit_dot() {
+            unsafe { crate::vierbit::neon::zeile_dot(codes, gitter, hoch, tief, summen) }
+        } else {
+            unsafe { crate::vierbit::neon::zeile(codes, gitter, hoch, tief, summen) }
+        }
+    }
+
+    /// Eine Zeile mal mehreren Eingaben; die Laengen hat
+    /// [`super::vierbit_zeile_viele`] geprueft.
+    #[inline]
+    pub fn vierbit_viele(codes: &[u8], gitter: &[u8], e: &[crate::ternaer::Eingabe<'_>], aus: &mut [i64]) -> bool {
+        if crate::ternaer::neon::mit_dot() {
+            unsafe { crate::vierbit::neon::zeile_dot_viele(codes, gitter, e, aus) };
+            true
+        } else {
+            false
+        }
+    }
 }
 
 #[cfg(not(all(feature = "cpu-simd", target_arch = "aarch64")))]
@@ -145,6 +169,25 @@ mod gewaehlt {
     /// Ohne vektorisierte Fassung gibt es auch keine gemeinsame.
     #[inline]
     pub fn ternaer_viele(_muster: &[u8], _betraege: &[i16], _e: &[crate::ternaer::Eingabe<'_>], _aus: &mut [i64]) -> bool {
+        false
+    }
+
+    /// ⚑ **Auf x86_64 mit `cpu-simd` die SSE2-Fassung**, die ohne Zerlegung
+    /// der Eingabe auskommt ([`crate::vierbit::sse2`]); dieselbe Zahl. Mit
+    /// [`super::skalar_erzwingen`] rechnet auch hier die skalare.
+    #[inline]
+    pub fn vierbit(codes: &[u8], gitter: &[u8], x: &[i16], _hoch: &[i8], _tief: &[u8], _summen: &[i64]) -> i64 {
+        #[cfg(all(feature = "cpu-simd", target_arch = "x86_64"))]
+        if !super::SKALAR_ERZWUNGEN.load(super::Ordering::Relaxed) {
+            // SAFETY: Die Laengen hat `super::vierbit_zeile` geprueft: je
+            // Gruppe 64 Codebytes, zwei Gitterbytes und 128 Werte von `x`.
+            return unsafe { crate::vierbit::sse2::zeile(codes, gitter, x) };
+        }
+        crate::vierbit::zeile_skalar(codes, gitter, x)
+    }
+
+    #[inline]
+    pub fn vierbit_viele(_codes: &[u8], _gitter: &[u8], _e: &[crate::ternaer::Eingabe<'_>], _aus: &mut [i64]) -> bool {
         false
     }
 }
@@ -251,6 +294,64 @@ pub fn ternaer_zeile_viele(muster: &[u8], betraege: &[i16], e: &[crate::ternaer:
     for (ein, ziel) in e.iter().zip(aus.iter_mut()) {
         let (hoch, tief, summen) = ein.teile(n, betraege.len());
         *ziel = ternaer_zeile(muster, betraege, &ein.x()[..n], hoch, tief, summen);
+    }
+}
+
+/// Eine Zeile einer Vierbitmatrix mal `x`, siehe [`crate::vierbit`].
+///
+/// ⚑ **Dieselbe Weiche wie [`ternaer_zeile`]**, und dieselbe Vorbereitung
+/// von `x`: vektorisiert, wo [`VEKTORISIERT`] gilt, skalar, wenn
+/// [`skalar_erzwingen`] steht, und in beiden Faellen dieselbe Zahl.
+///
+/// ⚠️ **Die Laengen werden hier geprueft**, weil die vektorisierte Fassung
+/// ohne Grenzpruefung liest: je Gruppe 64 Codebytes, zwei Gitterbytes, 128
+/// Werte in `x`, `hoch` und `tief` und eine Summe.
+#[inline]
+pub fn vierbit_zeile(codes: &[u8], gitter: &[u8], x: &[i16], hoch: &[i8], tief: &[u8], summen: &[i64]) -> i64 {
+    let gruppen = gitter.len() / crate::vierbit::GITTER_JE_GRUPPE;
+    assert!(
+        gitter.len() % crate::vierbit::GITTER_JE_GRUPPE == 0 && codes.len() == gruppen * crate::vierbit::BYTES_JE_GRUPPE,
+        "vierbit_zeile: {} Codebytes zu {} Gitterbytes",
+        codes.len(),
+        gitter.len()
+    );
+    assert_eq!(x.len(), gruppen * crate::vierbit::GRUPPE, "vierbit_zeile: {} Eingaben zu {gruppen} Gruppen", x.len());
+    if VEKTORISIERT && SKALAR_ERZWUNGEN.load(Ordering::Relaxed) {
+        SKALAR_GERECHNET.fetch_add(1, Ordering::Relaxed);
+        return crate::vierbit::zeile_skalar(codes, gitter, x);
+    }
+    if VEKTORISIERT {
+        assert!(
+            hoch.len() == x.len() && tief.len() == x.len() && summen.len() == gruppen,
+            "vierbit_zeile: die Eingabe ist nicht vorbereitet ({} / {} / {} zu {})",
+            hoch.len(),
+            tief.len(),
+            summen.len(),
+            x.len()
+        );
+    }
+    gewaehlt::vierbit(codes, gitter, x, hoch, tief, summen)
+}
+
+/// Eine Zeile einer Vierbitmatrix mal **mehreren** Eingaben: `aus[k]` ist
+/// genau [`vierbit_zeile`] fuer die Eingabe `k`; dieselbe Weiche wie
+/// [`ternaer_zeile_viele`].
+#[inline]
+pub fn vierbit_zeile_viele(codes: &[u8], gitter: &[u8], e: &[crate::ternaer::Eingabe<'_>], aus: &mut [i64]) {
+    assert_eq!(e.len(), aus.len(), "vierbit_zeile_viele: {} Eingaben, {} Ausgaben", e.len(), aus.len());
+    let gruppen = gitter.len() / crate::vierbit::GITTER_JE_GRUPPE;
+    let n = gruppen * crate::vierbit::GRUPPE;
+    let gemeinsam = VEKTORISIERT
+        && !SKALAR_ERZWUNGEN.load(Ordering::Relaxed)
+        && gitter.len() % crate::vierbit::GITTER_JE_GRUPPE == 0
+        && codes.len() == gruppen * crate::vierbit::BYTES_JE_GRUPPE
+        && e.iter().all(|ein| ein.laengen_passen(n, gruppen));
+    if gemeinsam && gewaehlt::vierbit_viele(codes, gitter, e, aus) {
+        return;
+    }
+    for (ein, ziel) in e.iter().zip(aus.iter_mut()) {
+        let (hoch, tief, summen) = ein.teile(n, gruppen);
+        *ziel = vierbit_zeile(codes, gitter, &ein.x()[..n], hoch, tief, summen);
     }
 }
 

@@ -210,3 +210,90 @@ MYL_KERN void myl_ternaer(const myl_u8* muster, const myl_i16* betraege, const m
         }
     }
 }
+
+// Vier Bit je Gewicht: je Zeile `spalten / 2` Codebytes und `spalten / 128`
+// Gitter zu zwei Byte (Schritt a als u8, Versatz b als i8). Format wie in
+// `vierbit.rs`: Je Gruppe 64 Byte in vier Bloecken zu 16 fuer je 32
+// Gewichte; Byte j eines Blocks traegt im unteren Halbbyte den Code q des
+// Gewichts j und im oberen den des Gewichts 16 + j, und das Gewicht ist
+// a * q + b. Je Gruppe die Summe q * x und die Summe x in int32, zusammen
+// in int64 als a * (q * x) + b * x: dieselbe ganze Zahl wie
+// `sum_g sum_{i in g} (a_g q_i + b_g) x_i` der CPU, auch fuer Schritte und
+// Versaetze, deren Werte nicht in int8 passen.
+//
+// Wertebereich: q * x je Gruppe hoechstens 128 * 15 * 32 768 < 2^26, die
+// Summe x hoechstens 128 * 32 768 = 2^22, beide in int32.
+MYL_KERN void myl_vierbit(const myl_u8* codes, const myl_u8* gitter, const myl_i16* x,
+                          const myl_i8* abstaende, myl_i16* aus, int zeilen, int spalten, int stapel) {
+    __shared__ myl_i8 kq[KACHEL_ZEILEN][GRUPPE + 4];
+    __shared__ myl_i16 kx[KACHEL_EINGABEN][GRUPPE + 2];
+    const int tx = (int)threadIdx.x;
+    const int ty = (int)threadIdx.y;
+    const int faden = ty * FAEDEN_X + tx;
+    const myl_i64 zeile0 = (myl_i64)blockIdx.x * KACHEL_ZEILEN;
+    const myl_i64 eingabe0 = (myl_i64)blockIdx.y * KACHEL_EINGABEN;
+    const int gruppen = spalten / GRUPPE;
+    const myl_i64 bytes_je_zeile = spalten / 2;
+    myl_i64 summe[ZEILEN_JE_FADEN];
+    for (int r = 0; r < ZEILEN_JE_FADEN; r++) {
+        summe[r] = 0;
+    }
+    for (int g = 0; g < gruppen; g++) {
+        // 64 Zeilen zu 64 Codebytes, je Byte zwei Gewichte.
+        for (int i = faden; i < KACHEL_ZEILEN * (GRUPPE / 2); i += FAEDEN) {
+            int r = i / (GRUPPE / 2);
+            int p = i % (GRUPPE / 2);
+            myl_i64 z = zeile0 + r;
+            int spalte = (p / 16) * 32 + (p % 16);
+            if (z < zeilen) {
+                unsigned int B = (unsigned int)codes[z * bytes_je_zeile + (myl_i64)g * (GRUPPE / 2) + p];
+                kq[r][spalte] = (myl_i8)(B & 15u);
+                kq[r][spalte + 16] = (myl_i8)(B >> 4);
+            } else {
+                kq[r][spalte] = 0;
+                kq[r][spalte + 16] = 0;
+            }
+        }
+        for (int i = faden; i < KACHEL_EINGABEN * GRUPPE; i += FAEDEN) {
+            int e = i / GRUPPE;
+            int k = i % GRUPPE;
+            myl_i64 b = eingabe0 + e;
+            kx[e][k] = (b < stapel) ? x[b * spalten + (myl_i64)g * GRUPPE + k] : (myl_i16)0;
+        }
+        __syncthreads();
+        myl_i32 teil[ZEILEN_JE_FADEN];
+        for (int r = 0; r < ZEILEN_JE_FADEN; r++) {
+            teil[r] = 0;
+        }
+        myl_i32 xsumme = 0;
+        for (int k = 0; k < GRUPPE; k++) {
+            myl_i32 xv = kx[tx][k];
+            xsumme += xv;
+            for (int r = 0; r < ZEILEN_JE_FADEN; r++) {
+                teil[r] += (myl_i32)kq[ty + FAEDEN_Y * r][k] * xv;
+            }
+        }
+        for (int r = 0; r < ZEILEN_JE_FADEN; r++) {
+            myl_i64 z = zeile0 + ty + FAEDEN_Y * r;
+            if (z < zeilen) {
+                myl_i64 stelle = (z * gruppen + g) * 2;
+                myl_i64 schritt = (myl_i64)gitter[stelle];
+                // Das Byte als i8 von Hand: Die Umwandlung eines Werts ueber
+                // 127 nach `signed char` ist vor C++20 nicht festgelegt.
+                myl_i64 versatz = (myl_i64)gitter[stelle + 1];
+                if (versatz > 127) {
+                    versatz -= 256;
+                }
+                summe[r] += (myl_i64)teil[r] * schritt + (myl_i64)xsumme * versatz;
+            }
+        }
+        __syncthreads();
+    }
+    const myl_i64 b = eingabe0 + tx;
+    for (int r = 0; r < ZEILEN_JE_FADEN; r++) {
+        myl_i64 z = zeile0 + ty + FAEDEN_Y * r;
+        if (z < zeilen && b < stapel) {
+            aus[b * zeilen + z] = klemmen(umskalieren(summe[r], (int)abstaende[z]));
+        }
+    }
+}

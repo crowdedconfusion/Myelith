@@ -143,6 +143,10 @@ pub(crate) fn geweckt() -> bool {
     WECKER.swap(false, std::sync::atomic::Ordering::SeqCst)
 }
 
+/// **Was waehrend des Wartens nebenbei gezeichnet wird**, etwa die Zeile des
+/// Minings; `true` heisst, es wurde gezeichnet und der Wagen muss zurueck.
+pub type Nebenbei = dyn Fn() -> bool;
+
 /// **Liest eine Zeile und zeichnet sie dabei selbst** (`lesen_mit_liste`).
 ///
 /// `zeichnen` bekommt den bisherigen Text und setzt ihn in die
@@ -163,6 +167,7 @@ pub fn lesen_mit_liste(
     alle: &[Vorschlag],
     anfang: String,
     frist: Option<std::time::Instant>,
+    nebenbei: Option<&Nebenbei>,
 ) -> Eingabe {
     if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
         return aus_der_roehre();
@@ -206,12 +211,21 @@ pub fn lesen_mit_liste(
         e
     };
     loop {
-        if let Some(bis) = frist {
+        if frist.is_some() || nebenbei.is_some() {
             let jetzt = std::time::Instant::now();
-            if jetzt >= bis || geweckt() {
-                return hinaus(Eingabe::Frist(zeile), offen);
+            if let Some(bis) = frist {
+                if jetzt >= bis || geweckt() {
+                    return hinaus(Eingabe::Frist(zeile), offen);
+                }
             }
-            if !event::poll((bis - jetzt).min(WECKSCHRITT)).unwrap_or(false) {
+            let warten = frist.map(|bis| (bis - jetzt).min(WECKSCHRITT)).unwrap_or(WECKSCHRITT);
+            if !event::poll(warten).unwrap_or(false) {
+                // ⚑ **Im selben Faden**: Wer hier nebenbei zeichnet, zeichnet
+                //   nie gleichzeitig mit der Zeile. Danach steht der Wagen
+                //   wieder, wo getippt wird.
+                if nebenbei.is_some_and(|n| n()) {
+                    zeichnen(&zeile);
+                }
                 continue;
             }
         }

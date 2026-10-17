@@ -323,6 +323,99 @@ pub fn ternaer_vektor_pruefen(gv: &GoldenVector) -> VektorErgebnis {
     VektorErgebnis { name, bestanden, gruende, integer_verletzt: false }
 }
 
+/// Prüft einen Vektor des **Vierbitformats** (Umfang `vierbit`, seit dem
+/// 2026-10-16): die lineare Schicht über gepackten Gewichten und das Packen.
+///
+/// ⚑ **Eine Speicherform, keine neue Rechnung**, wie das ternäre Format;
+/// trotzdem ein eigenes Soll, denn ein fremder Knoten, der ein
+/// Vierbitartefakt lädt, muss dieselben Bytes zu denselben Zahlen machen.
+pub fn vierbit_vektor_pruefen(gv: &GoldenVector) -> VektorErgebnis {
+    let name = gv.name.clone();
+    let mut gruende: Vec<String> = Vec::new();
+    if !tensor_hashes_pruefen(gv, &mut gruende) {
+        return VektorErgebnis { name, bestanden: false, gruende, integer_verletzt: true };
+    }
+    let (bestanden, weitere) = match gv.name.as_str() {
+        "linear_vierbit" => run_linear_vierbit(gv),
+        "packen_vierbit" => run_packen_vierbit(gv),
+        _ => (false, vec![format!("Unbekannter Vierbitvektor: {}", gv.name)]),
+    };
+    gruende.extend(weitere);
+    VektorErgebnis { name, bestanden, gruende, integer_verletzt: false }
+}
+
+/// Prüft eine Datei als Vektor des Vierbitformats.
+pub fn vierbit_vektor_aus_datei(pfad: &Path) -> Result<VektorErgebnis, String> {
+    let gv = vektor_lesen(pfad)?;
+    Ok(vierbit_vektor_pruefen(&gv))
+}
+
+fn run_linear_vierbit(gv: &GoldenVector) -> (bool, Vec<String>) {
+    let x = als_i16(&gv.inputs["x"]);
+    let (codes, gitter) = match (musterbytes(&gv.inputs["codes"]), musterbytes(&gv.inputs["gitter"])) {
+        (Ok(c), Ok(g)) => (c, g),
+        (Err(f), _) | (_, Err(f)) => return (false, vec![f]),
+    };
+    let zeilen = zahl(gv, "zeilen") as usize;
+    let spalten = zahl(gv, "spalten") as usize;
+    let w_shifts: Vec<u8> = gv.metadata["w_shifts"]
+        .as_array()
+        .map(|a| a.iter().map(|v| v.as_u64().unwrap_or(0) as u8).collect())
+        .unwrap_or_default();
+    let matrix = match crate::vierbit::Vierbitmatrix::neu(&codes, &gitter, zeilen, spalten) {
+        Ok(m) => m,
+        Err(f) => return (false, vec![f]),
+    };
+    let y = crate::linear::linear_matrix(
+        &x,
+        crate::linear::Gewichtsmatrix::Vierbit(matrix),
+        spalten,
+        &w_shifts,
+        zahl(gv, "act_frac") as u8,
+        zahl(gv, "out_frac") as u8,
+    );
+    let ist: Vec<i32> = y.iter().map(|v| i32::from(*v)).collect();
+    let soll = als_i32(&gv.outputs["y"]);
+    let mut gruende = Vec::new();
+    let mut ok = vergleiche("y", &ist, &soll, &mut gruende);
+    // ⚑ **Derselbe Vektor als Buendel**, ueber die Weiche der Rechenwerke:
+    //   Mit erzwungener GPU oder Karte (`run.sh metal`, `cuda`, `rocm`)
+    //   rechnet dort der Weg fuer vier Bit, und der unabhaengige Sollwert
+    //   prueft ihn; sonst rechnet die CPU dieselbe Zahl.
+    let xs: Vec<&[i16]> = vec![x.as_slice(); 3];
+    let ziele = vec![zahl(gv, "out_frac") as u8; zeilen];
+    let buendel = crate::linear::linear_matrix_pc_stapel(
+        &xs,
+        crate::linear::Gewichtsmatrix::Vierbit(matrix),
+        spalten,
+        &w_shifts,
+        zahl(gv, "act_frac") as u8,
+        &ziele,
+    );
+    for (b, y) in buendel.iter().enumerate() {
+        let ist: Vec<i32> = y.iter().map(|v| i32::from(*v)).collect();
+        ok &= vergleiche(&format!("y im Buendel, Eingabe {b}"), &ist, &soll, &mut gruende);
+    }
+    (ok, gruende)
+}
+
+fn run_packen_vierbit(gv: &GoldenVector) -> (bool, Vec<String>) {
+    let werte: Vec<i8> = match als_i16(&gv.inputs["werte"]).iter().map(|&v| i8::try_from(v)).collect() {
+        Ok(w) => w,
+        Err(_) => return (false, vec!["ein Wert liegt ausserhalb von int8".into()]),
+    };
+    let gepackt = match crate::vierbit::packen(&werte, zahl(gv, "spalten") as usize) {
+        Ok(g) => g,
+        Err(f) => return (false, vec![f]),
+    };
+    let codes: Vec<i32> = gepackt.codes.iter().map(|v| i32::from(*v)).collect();
+    let gitter: Vec<i32> = gepackt.gitter.iter().map(|v| i32::from(*v)).collect();
+    let mut gruende = Vec::new();
+    let a = vergleiche("codes", &codes, &als_i32(&gv.outputs["codes"]), &mut gruende);
+    let b = vergleiche("gitter", &gitter, &als_i32(&gv.outputs["gitter"]), &mut gruende);
+    (a && b, gruende)
+}
+
 /// Prüft eine Datei als Vektor des ternären Rechenwegs.
 pub fn ternaer_vektor_aus_datei(pfad: &Path) -> Result<VektorErgebnis, String> {
     let gv = vektor_lesen(pfad)?;
@@ -1010,6 +1103,27 @@ mod tests {
             gesehen += 1;
         }
         assert_eq!(gesehen, 5, "erwartet werden fünf ternäre Vektoren");
+    }
+
+    /// ⚑ **Das Vierbitformat, seit dem 2026-10-16 belegt**, gegen Sollwerte
+    /// aus einer getrennten Umsetzung (`conformance/vierbit_erzeugen.py`).
+    #[test]
+    fn vierbitvektoren_des_repositoriums_bestehen() {
+        let verzeichnis = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../conformance/vectors/vierbit");
+        let mut gesehen = 0;
+        for eintrag in std::fs::read_dir(&verzeichnis).expect("Vierbitvektoren fehlen") {
+            let pfad = eintrag.expect("Verzeichniseintrag").path();
+            if pfad.extension().map(|e| e != "json").unwrap_or(true) {
+                continue;
+            }
+            let gv = vektor_lesen(&pfad).expect("Vektor lesbar");
+            assert_eq!(gv.level, "vierbit", "{}: falsche Ebene", gv.name);
+            assert_eq!(gv.herkunft, "unabhaengig", "{}: ein selbsterzeugter Vektor belegt keine Richtigkeit", gv.name);
+            let e = vierbit_vektor_pruefen(&gv);
+            assert!(e.bestanden, "{}: {:?}", e.name, e.gruende);
+            gesehen += 1;
+        }
+        assert_eq!(gesehen, 2, "erwartet werden zwei Vierbitvektoren");
     }
 
     /// Ein Musterbyte ausserhalb eines Bytes wird abgelehnt, nicht

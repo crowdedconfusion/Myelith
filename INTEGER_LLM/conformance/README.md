@@ -24,7 +24,7 @@ neu erzeugt, die Zahlen darin sind unverändert (24 von 24 Layer-Vektoren
 bitgleich zur eingefrorenen Fassung), und `golden_model` rechnet die
 Hashes jetzt nach, bevor ein Vektor als Maßstab dient.
 
-### Sechs Validierungsebenen
+### Sieben Validierungsebenen
 
 | Ebene | Datei-Muster | Was geprüft wird | Vektoren |
 |---|---|---|---|
@@ -32,16 +32,18 @@ Hashes jetzt nach, bevor ein Vektor als Maßstab dient.
 | **Training** | `vectors/training/*.golden.json` | Rückwärtspass (Aufmerksamkeit, SiLU, RMSNorm, Einbettung), Optimierer, Softmax über das Vokabular | 7 |
 | **MoE** | `vectors/moe/*.golden.json` | Expertenwahl und Mischung | 4 |
 | **Ternär** | `vectors/ternaer/*.golden.json` | Lineare Schicht mit gepackten ternären Gewichten, Packen, Ableitung des ternären Gewichts aus dem Master, Hadamard-Drehung | 5 |
+| **Vierbit** | `vectors/vierbit/*.golden.json` | Lineare Schicht mit Vierbitgewichten (Code, ganzer Schritt und Versatz je Gruppe), Packen | 2 |
 | **Layer** | `vectors/layer/*.golden.json` | Kompletter Transformer-Layer (RMSNorm → Attention → MLP → ResAdd) | 28 |
 | **E2E** | `vectors/e2e/*.golden.json` | End-to-End-Generierung (Embedding → alle Ebenen → LM-Head → Token-Auswahl) | 3 |
 
-Die ersten vier brauchen kein Modell, die letzten beiden das Ankermodell.
-**53 Vektoren**, und eine konforme Implementierung besteht alle.
+Die ersten fünf brauchen kein Modell, die letzten beiden das Ankermodell.
+**55 Vektoren**, und eine konforme Implementierung besteht alle.
 
 Die Sollwerte der Gruppe **Ternär** rechnet `ternaer_erzeugen.py`, eine
 getrennte Umsetzung in reiner Ganzzahlarithmetik ohne eine Zeile aus den
 Rechenkernen (`herkunft: unabhaengig`); aufgerufen aus der Wurzel, erzeugt
-sie bei jedem Lauf dieselben Bytes.
+sie bei jedem Lauf dieselben Bytes. Ebenso rechnet `vierbit_erzeugen.py` die
+Sollwerte der Gruppe **Vierbit**.
 
 **E2E prüft die Zahlen, nicht die Entscheidung (seit 2026-08-22).** Ein
 E2E-Vektor trägt neben `outputs.tokens` das Metadatum
@@ -203,6 +205,12 @@ statt zu bestehen. `run.sh metal` ebenso, wenn die GPU in diesem Prozess
 nicht rechnen darf (kein Gerät, Shadersprache 4.0 fehlt, Selbstprüfung
 gegen die CPU gescheitert) **oder** wenn sie im Lauf keine einzige
 Bündelung gerechnet hat.
+
+Seit dem 2026-10-16 gilt das auch für einen einzelnen Vektor:
+`linear_vierbit` rechnet zusätzlich als Bündel aus drei gleichen
+Eingaben über die Weiche der Rechenwerke, und unter `metal`, `cuda` oder
+`rocm` zählt er nur, wenn dabei das Rechenwerk gerechnet hat. So prüft
+der unabhängige Sollwert auch den Vierbitkern der GPU und der Karten.
 
 **Warum die Sperre nötig wurde (2026-08-22).** Vorher meldete
 `run.sh cuda` auf einem Mac ohne NVIDIA-Hardware 30/30 bestanden. Die

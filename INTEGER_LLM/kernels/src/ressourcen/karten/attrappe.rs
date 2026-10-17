@@ -55,6 +55,9 @@ fn zeile(job: &Job<'_>, z: usize, x: &[i16]) -> i16 {
         Gewichte::Ternaer { muster, betraege } => crate::ternaer::Ternaermatrix::neu(muster, betraege, job.zeilen(), s)
             .expect("ternaere Form")
             .zeile_mal(z, x),
+        Gewichte::Vierbit { codes, gitter } => crate::vierbit::Vierbitmatrix::neu(codes, gitter, job.zeilen(), s)
+            .expect("Vierbitform")
+            .zeile_mal(z, x),
     };
     let a = job.abstaende[z];
     let y = if a >= 0 { rshift_round_i64(summe, a as u8) } else { summe << (-a) };

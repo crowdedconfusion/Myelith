@@ -101,7 +101,13 @@ fn run() -> Result<(), String> {
     for d in std::fs::read_dir(quelle).map_err(|e| format!("{}: {e}", quelle.display()))? {
         let d = d.map_err(|e| e.to_string())?;
         let n = d.file_name().to_string_lossy().to_string();
-        if ersetzt.contains(&n) || n == "weights_manifest.json" || n == "theta_v.json" || !d.path().is_file() {
+        // Die Pruefmarke der Quelle gilt hier nie (Fund 551).
+        if ersetzt.contains(&n)
+            || n == "weights_manifest.json"
+            || n == "theta_v.json"
+            || n.starts_with(integer_llm_runtime::pruefstand::MARKENNAME)
+            || !d.path().is_file()
+        {
             continue;
         }
         if std::fs::hard_link(d.path(), ziel.join(&n)).is_err() {

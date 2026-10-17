@@ -1,7 +1,7 @@
-# compute-pipeline (`myl-pod`)
+# compute-pipeline (`myl-pod`, `myl-dispatcher`)
 
-> **Version:** 0.35.1
-> **Datum:** 2026-09-09
+> **Version:** 0.43.0 (`myl-pod` 0.35.1, `myl-dispatcher` 0.8.0)
+> **Datum:** 2026-10-17
 > **Status:** Phase 1 vollständig, Phase 2.1, **Phase 3 vollständig**
 > (3.1 bis 3.3) und Punkt 4.3. `shard_loop` mit Spur-Hashes und
 > Manipulationserkennung, `coordinator_loop` mit Micro-Batching,
@@ -14,6 +14,12 @@
 >
 > **Offen:** die Verbreitung der Meldung über Gossip (der zweite Teil von
 > 3.5) und der Pod-Lauf über getrennte Hosts.
+>
+> **Seit dem 2026-10-15 der Dispatcher** (`COMPUTE_PIPELINE/dispatcher`,
+> Kiste `myl-dispatcher`): wer auf einer Maschine wie viel
+> Arbeitsspeicher, Grafikspeicher und Kerne bekommt, mit Vorrang Agent vor
+> Vision vor Sprache. Der Teil für das Netz (`network`) ist geplant, nicht
+> gebaut.
 
 Pod-Orchestrierung über ein echtes Netzwerk: Pipeline-Routing,
 Micro-Batching, KV-Cache-Verwaltung, spekulatives Decoding.
@@ -100,6 +106,279 @@ COMPUTE_PIPELINE/
 ```
 
 ## Changelog
+
+### v0.43.0 (2026-10-17): Rechenwerke mit Klarnamen und stabilen Kennungen (`myl-dispatcher` 0.8.0)
+
+Anlass: Frage des Projektinhabers, ob im Reiter „Knoten“ später auch
+NVIDIA- und AMD-Karten einzeln erscheinen. Sie erscheinen, aber unter
+Linux mit Nummern statt Namen, und ihre Kennung hing an einer Zahl, die
+sich nach einem Neustart ändern kann.
+
+- **Klarnamen unter Linux.** Eine Karte hieß bis hier „nvidia
+  0x10de:0x2684“ (Treiber und Nummern). Der Name kommt jetzt von der Karte
+  selbst (`product_name` in `sysfs`, AMD), von `nvidia-smi` (NVIDIA; die
+  Abfrage holt den Namen jetzt mit, sie lief für das Freie ohnehin) oder
+  aus der Namensliste des Systems (`pci.ids` unter `/usr/share/hwdata`,
+  `/usr/share/misc` oder `/usr/share`, vom System vorgegebene Orte). Aus
+  der Liste wird der Verkaufsname in den Klammern genommen und der
+  Hersteller gekürzt: „NVIDIA GeForce RTX 4090“ statt „AD102 [GeForce RTX
+  4090]“ unter „NVIDIA Corporation“. Erst ohne alle drei stehen die
+  Nummern da.
+- **Kennung aus der PCI-Adresse unter Linux.** Bisher aus `card0`,
+  `card1`, und diese Nummern vergibt der Kern in der Reihenfolge, in der
+  die Treiber laden: Nach einem Neustart konnte die Freigabe der einen
+  Karte bei der anderen stehen. Jetzt `pci-0000-3b-00-0`, also der
+  Steckplatz. ⚠️ Eine unter Linux schon abgelegte Freigabe je Karte
+  (`kap.rechenwerk.<kennung>`) passt danach nicht mehr und gilt wieder als
+  „ohne Grenze“.
+- **Gleiche Kennungen werden verschieden** (`eindeutig_machen`, für alle
+  Systeme in `Hardware::rechenwerke`): Zwei baugleiche Karten unter macOS
+  (ein Mac Pro mit zwei Radeon) trugen dieselbe Kennung, weil sie dort aus
+  dem Namen kommt, und ein Schalter schaltete beide. Die zweite heißt
+  jetzt `…-2`. ⚠️ Die Nummer folgt der Reihenfolge, in der das System die
+  Karten nennt.
+- ⚠️ **Nicht an echten Karten geprüft**: Auf dieser Maschine steckt keine
+  NVIDIA- oder AMD-Karte. Belegt ist das Lesen der Ausgaben mit
+  nachgebauten Zeilen, die Übersetzung für Linux und Windows mit Clippy.
+- Proben `die_namensliste_nennt_den_verkaufsnamen`,
+  `zwei_gleiche_karten_bekommen_zwei_kennungen`,
+  `die_kennung_aus_der_adresse_ist_stabil` (neu);
+  `das_freie_einer_nvidia_karte_findet_ihre_adresse` liest jetzt auch den
+  Namen, mit Komma darin.
+- **Belegt:** 47 Tests grün, Clippy sauber für macOS, Linux und Windows
+  (`--target x86_64-unknown-linux-gnu`, `x86_64-pc-windows-msvc`).
+
+### v0.42.0 (2026-10-17): Erheben mit schon gefundenen Rechenwerken (`myl-dispatcher` 0.7.0)
+
+- **`Hardware::erheben_mit(datenort, rechenwerke)`** (neu): dieselbe
+  Erhebung wie `erheben`, nur ohne die Suche nach Rechenwerken, die unter
+  macOS `system_profiler` startet (gemessen 135 ms, unter Speicherdruck
+  mehr). `erheben` ruft sie jetzt mit frisch gesuchten Rechenwerken.
+- ⚑ **Gemerkt wird beim Aufrufer, nicht hier**: Der Client merkt sich die
+  Rechenwerke je Prozess (`myl_client::hardware::rechenwerke_gemerkt`);
+  im Dispatcher sucht jede Erhebung weiter frisch, damit Proben mit
+  nachgebildeten Karten nicht an einer gemerkten Liste vorbeilaufen.
+- **Belegt:** 44 Tests grün, Clippy sauber.
+
+### v0.41.0 (2026-10-17): Die Platte allein erheben (`myl-dispatcher` 0.6.0)
+
+- **`Hardware::platte(pfad)`** (neu): nur der freie und ganze Platz unter
+  einem Pfad, gemessen wie in `Hardware::erheben` (unter Unix `statvfs`
+  mit `f_bavail`, unter Windows ueber PowerShell), ohne Speicher und
+  Rechenwerke. Fuer die Frage vor einem Download, ob der Platz reicht
+  (`myl_client::bezug`): Sie kommt oft und soll nicht jedes Mal die
+  Rechenwerke suchen.
+
+### v0.40.0 – 2026-10-15 (`myl-dispatcher` 0.5.0: der seltene Rand)
+
+- **`Modellbedarf::rand_selten_bytes`**: Trägt ein Artefakt einen eigenen
+  Kopf in `i16` (`lm_head.bin`), rechnet die Laufzeit die Logits damit;
+  dann liest jedes Token von der Einbettung nur seine eine Zeile, und ein
+  zweiter Kopf in `int8` (`lm_head_weight.bin`, bei den Gemischen) wird nie
+  gelesen. Beide zählen nicht mehr zum dichten Teil, der im Speicher
+  bleiben muss, wohl aber zu `gewichte_bytes`. 📌 Beim 35B hielt der Plan
+  damit 1 GB für fest, das das System in Wirklichkeit den Experten gab: Auf
+  10 GiB passen jetzt 1836 statt 1513 häufige Experten in den Plan
+  (Deckung 67,1 statt 61,8 %). ⚠️ Eine Festlegung der Laufzeit, die hier
+  ein zweites Mal steht; die Probe `der_seltene_rand` hält sie fest.
+- **Proben:** 44 (eine neu).
+
+### v0.39.0 – 2026-10-15 (`myl-dispatcher` 0.4.0: die häufigen Experten direkt nach den dichten Gewichten)
+
+⚑ **Festlegung des Projektinhabers:** Die häufig genutzten Experten eines
+Gemischs kommen in der Belegung direkt nach den dichten Gewichten, also
+vor dem Arbeitskontext und vor Sehen und Hören.
+
+- **`local::profil`, neu: das Expertenprofil**, eine Zählung je Ebene und
+  Experte (`modell`, `token`, `zaehler`), mit `rangfolge` (die häufigsten
+  zuerst, bei Gleichstand nach Lage, auf jeder Maschine dieselbe),
+  `heisse` (wie viele vorne `HEISS_DECKUNG_PROMILLE` = 800 ‰ der Aufrufe
+  tragen), `deckung_promille` und `fortschreiben` (eine abgeholte Wahl der
+  Laufzeit dazu; über `PROFIL_FENSTER` = 2^20 Token verliert das Alte die
+  Hälfte, zur geraden Zahl gerundet). Gemessen am int8-35B an 2035 Token
+  aus deutscher Dokumentation, Rust und Englisch: 20 % der Experten
+  tragen 70,2 %, 30 % tragen 81,8 % der Aufrufe; heiß sind 2878 Experten
+  (8,4 GiB).
+- **`plan::belegen`**: `Last` trägt ein optionales `profil`. Phase A
+  nimmt nach den dichten Gewichten die heißen Experten, dann erst den
+  Arbeitskontext; der weicht dafür bis zum Mindestkontext, und der Plan
+  sagt es („neben den häufigen Experten“). Phase B nimmt die übrigen
+  Experten nach Häufigkeit statt in der Reihenfolge des Artefakts. Ohne
+  Profil bleibt alles wie bisher. `Belegung` trägt `experten_heiss`,
+  `heiss_bytes` und `deckung_promille`, der Bericht eine Zeile dazu.
+- ⚑ **Ein Aufruf von Sehen oder Hören darf sich die heißen Experten
+  leihen**, den seltensten zuerst, nie dichte Gewichte, festen Teil oder
+  Arbeitskontext; der Plan nennt die geliehene Menge, eine Ablehnung nennt
+  das Leihbare. Begründung aus der Belegungssimulation
+  (`BENCHMARKS/Inferenz/belegungssimulation.py`): Festgehalten auch gegen
+  einen Aufruf, lehnte der Plan beim int8-35B auf 24 GiB jedes Bild ab, um
+  danach rund 2 % Tempo zu sparen (14,9 gegen 14,6 Token/s). Die Wache
+  (`register`) schützt deshalb weiter nur die dichten Gewichte.
+- **`dispatcher plan --profil <datei>`** (ein Profil eines anderen Modells
+  ist ein Fehler) und **`--angebot-mib <n>`**: ein Trockenlauf für eine
+  Maschine mit diesem freien Arbeitsspeicher; die Simulation fragt damit
+  den Plan, statt seine Regeln nachzubauen.
+- **Proben:** 43 (sechs neu): Rangfolge und heiße Spitze, kaputtes Profil,
+  Fortschreiben mit Halbieren; die heißen Experten vor dem Arbeitskontext
+  (ohne Profil der Kontext zuerst); Sehen leiht sich die heißen Experten,
+  wird erst abgelehnt, wenn auch das nicht reicht, und der Rest folgt der
+  Häufigkeit.
+
+### v0.38.0 – 2026-10-15 (`myl-dispatcher` 0.3.0: was fest bleiben muss, und eine Freigabe, die ganz gilt)
+
+- **`plan::fluessig_bytes`**: was ein eigenes Artefakt im Speicher halten
+  muss, um flüssig zu laufen (KV für einen Kontext, Zustand, Zuschlag,
+  alle dichten Gewichte samt Einbettung und Kopf), ohne die gerouteten
+  Experten. Dieselbe Grenze wie das Minimum im Plan; der Client prüft
+  seine Freigabe jetzt dagegen und nicht gegen die Größe auf der Platte.
+- **`plan::ram_angebot`**, und `Angebot::aus` nimmt dafür die Regeln mit:
+  ⚑ **Die Rücklage schützt das System, nicht die Freigabe.** Bis hierher
+  stand im Angebot das Kleinere von frei und Freigabe, und der Plan zog
+  die Rücklage davon ab; eine Freigabe von 4 GiB gab nur 3 GiB her. Jetzt
+  bleibt das Kleinere von „frei minus Rücklage“ und der Freigabe.
+- **Eichung über den ganzen Prozessbaum**: Der Fußabdruck summiert je
+  Abfrage über das Kind und alle Nachkommen (macOS `proc_listchildpids`,
+  Linux `/proc/*/stat`). 📌 Ein Sinn startet seine Laufzeit als Enkel
+  (`myl sinne` startet das Sehprogramm); gemessen wurde vorher nur das
+  Kind (2 MB statt 0,9 GiB).
+- **Für Fremde das Größere** aus „Spitze über den Dateien“ und Fußabdruck:
+  Beide schätzen denselben Teil, und jede verfehlt ihn auf ihre Art.
+- **`Eichbuch::zuschlag_eigen`, `zuschlag_fremd`**: gemessen oder die
+  Vorgabe, eine Stelle für jeden Leser; **`register::wache_mit`** mit einem
+  gemessenen Zuschlag.
+- **Proben:** 37 (vier neu): flüssig ist genau das Minimum des Plans mit
+  dichten Gewichten, ein Überlauf ist kein Bedarf; die Freigabe gilt ganz,
+  wenn genug frei ist, und knapp bleibt die Rücklage; das Buch liefert den
+  Zuschlag oder die Vorgabe; der Fußabdruck zählt die Enkel mit (Gegenprobe
+  ohne Nachkommen rot); die Elternkennung aus `/proc/<pid>/stat`.
+
+### v0.37.0 – 2026-10-15 (`myl-dispatcher` 0.2.0: was schon läuft, und ob etwas daneben starten darf)
+
+⚑ **Der erste Aufrufer im Betrieb.** Der Plan verteilt eine Maschine,
+bevor etwas läuft; im Betrieb lautet die Frage anders: Der Agent hat sein
+Modell geladen, und jetzt soll ein Bild beschrieben oder ein Ton
+mitgeschrieben werden, von einer fremden Laufzeit mit eigenen Gewichten.
+
+- **`local::register`**: Ein Prozess meldet seine laufenden Lasten an
+  (`anmelden`); die Anmeldung gilt, solange ihr Wert lebt, und verschwindet
+  mit ihm, damit kein Fehlerweg die Abmeldung vergisst.
+- **`daneben`** (rein) und **`wache`** (misst das Freie, dann `daneben`):
+  Eine neue Last darf starten, wenn sie in das Freie passt, abzüglich der
+  **dichten Gewichte jeder laufenden Last mit höherem Vorrang** und der
+  Rücklage. ⚑ **Warum genau diese:** Das Freie enthält den Dateicache, also
+  auch die per mmap gelesenen Gewichte des Agenten. Seine dichten Gewichte
+  liest jedes Token, sie bleiben geschützt; seine gerouteten Experten nicht,
+  denn im Plan kommt eine niedrigere Last vor den Experten einer höheren.
+  Ohne messbares Freies gibt es kein Urteil und damit keine Ablehnung.
+- **`erhebung::speicher_frei_jetzt`**: nur der Arbeitsspeicher, ohne den
+  Scan der Rechenwerke (der kostet auf macOS rund eine Sekunde).
+- **`plan::bericht`**: der Plan als Text, eine Stelle für das Programm
+  `dispatcher` und `myl plan`. Je Steckkarte mit bekanntem Freiem steht
+  dabei, wie viele Ebenen der Last dauerhaft darauf passten.
+- **`plan::ebenen_hoechstens`**: die größte Zahl zusammenhängender Ebenen,
+  für die **jedes** Fenster in ein Budget passt (dichte Gewichte, alle
+  Experten, Anteil an KV oder Zustand). Jedes Fenster und nicht der
+  Durchschnitt, weil die Ebenen verschieden schwer sind; wem ein Bereich
+  zugeteilt wird, kann nicht wählen, welcher. Das ist die Zahl für die
+  Entscheidung, ob Gewichte dauerhaft auf einer Karte liegen sollen, und
+  später die, die ein Knoten für ein Modell ankündigt.
+- **Unter Linux auf x86_64 geprüft** (Docker, offline gegen den Vorrat):
+  alle Proben grün, `MemAvailable` gelesen, Plan mit gekürztem Kontext und
+  Hinweis, Eichung mit `ru_maxrss` in KiB und `RssAnon`.
+- **Proben:** 32 (sechs neu): das schwerste Fenster zählt, auch hinter dem ersten; der Bericht nennt jede Last; die dichten Gewichte des Agenten bleiben;
+  nur höherer Vorrang ist geschützt, und Sehen schützt sich vor dem Hören;
+  ohne Auskunft kein Urteil; die Anmeldung endet mit ihrem Wert.
+
+### v0.36.0 – 2026-10-15 (`myl-dispatcher` 0.1.0 neu: Erhebung, Bedarf und Belegungsplan einer Maschine)
+
+⚑ **Eine neue Kiste, `COMPUTE_PIPELINE/dispatcher`**, Auftrag des
+Projektinhabers: ein Dispatcher, der prüft, wie viel Speicher und
+Leistung eine Maschine hat und was wie belegt werden kann; der Teil für
+Knoten und Netz baut darauf auf. **Festlegung dazu: Vorrang hat immer
+Agent vor Vision vor Sprache.** Diese Fassung deckt eine Maschine
+(`local`); das Netz ist geplant und steht im Kopf von `src/lib.rs`.
+
+Drei Teile, der mittlere ist eine reine Funktion in ganzen Zahlen:
+
+1. **Angebot** (`local::erhebung`): Kerne, Arbeitsspeicher, Platte und
+   jedes Rechenwerk, und zwar **gesamt und frei**. Die Erhebung stand bis
+   heute im Client und ist hierher gezogen, damit Client, Knoten und
+   Messwerkzeug dieselbe lesen; der Client reicht die Typen unter ihren
+   alten Namen weiter. Neu ist das Freie:
+   - **Arbeitsspeicher:** unter Linux `MemAvailable`, unter Windows der
+     freie physische Speicher, unter macOS aus `vm_stat` als Rest
+     (gesamt minus fest verdrahtet, Kompressor und anonyme Seiten, plus
+     entleerbare). 📌 *Der erste Entwurf zählte frei, inaktiv und
+     spekulativ und schwankte mit dem Cache: Direkt nach einem Lauf des
+     35B meldete dieselbe Maschine 8,8 statt 12,9 GiB, weil die Seiten des
+     Modells als aktive Dateiseiten lagen. Die Restrechnung ergab 17,2
+     GiB, das System selbst meldete zur selben Zeit 75 % frei.*
+   - **Grafikspeicher:** bei AMD aus `sysfs`, bei NVIDIA über
+     `nvidia-smi`, der Karte über ihre PCI-Adresse zugeordnet (beide
+     Schreibweisen werden angeglichen); bei gemeinsamem Speicher gilt der
+     Arbeitsspeicher.
+2. **Bedarf** (`local::bedarf`): für ein eigenes Artefakt **auf das Byte
+   aus seinen Dateien**, je Ebene dicht und je gerouteten Experten
+   getrennt, dazu aus `model_config.json` der KV-Speicher je Token (je
+   achtsamer Ebene `num_kv_heads · head_dim` Werte für Schlüssel und
+   Werte, je 2 Byte) und der Zustand je Folge (je Wertkopf eine Matrix
+   aus `i64`, dazu das Faltungsfenster). Ein halbes Artefakt (eine Ebene
+   oder ein Experte fehlt) ist ein Fehler und kein kleiner Bedarf;
+   gepackte Experten werden abgewiesen statt als dicht gezählt. Fremde
+   Modelle (Vision, Sprache): die Summe ihrer Dateien.
+3. **Plan** (`local::plan::belegen`): **erst jedes Minimum, in
+   Vorrangfolge; dann der Überschuss.** Das Minimum eines eigenen
+   Artefakts ist sein fester Teil (KV für den Mindestkontext, Zustand,
+   Zuschlag), dann die dichten Gewichte im Speicher (sie liest jedes
+   Token), dann der eingestellte Arbeitskontext, so weit er passt, auf
+   256 Token abgerundet. Überschuss sind die gerouteten Experten im
+   Speicher statt von der Platte. **Damit weicht eine niedrigere Last nie
+   für etwas, das eine höhere nur schneller macht, aber immer für etwas,
+   das sie erst so laufen lässt, wie sie eingestellt ist.** Was nicht
+   passt, wird abgelehnt und sagt warum; dichte Gewichte, die nicht
+   passen, lehnen nicht ab, sondern kommen von der Platte, und der Plan
+   sagt, dass es langsam wird. Die Rechenwerke gehen an die eigene Last
+   mit dem höchsten Vorrang, die Kerne bis auf die Mindestzahlen der
+   anderen ebenso. 📌 *Im ersten Probelauf kam der Kontext vor den
+   Experten, mit dem Höchstkontext des Modells als Wunsch: Beim int8-35B
+   ging damit der ganze Überschuss in 183 808 Token (3,8 GB), und kein
+   Experte lag im Speicher.*
+
+**Eichung** (`local::eichung`): Was keine Datei nennt (Puffer, Fäden,
+Tabellen der Laufzeit), misst ein kurzer echter Lauf, und zwar der
+**Fußabdruck**, also der Speicher, der sich nicht auslagern lässt (unter
+macOS die Höchstmarke von `ri_phys_footprint`, unter Linux `RssAnon`),
+abgefragt, solange der Lauf lebt. Per mmap gelesene Gewichte zählen darin
+nicht, deshalb sagt die Messung auch dann etwas, wenn ein Artefakt nicht
+ganz in den Speicher passt. Ein gescheiterter Lauf misst nichts. Ohne
+Messung gilt eine Vorgabe von einem Gibibyte.
+
+**Gemessen** (2026-10-15, Apple M5 Pro, 24 GiB):
+
+| Artefakt | Spitze | Fußabdruck | Zuschlag | statt Vorgabe |
+|---|---|---|---|---|
+| `myelith-0.6b`, 16 Token | 1,00 GiB | 0,13 GiB | 0,12 GiB | 1,0 GiB |
+| `myelith-35b-a3b` (int8), 8 Token | 15,25 GiB | 0,48 GiB | 0,36 GiB | 1,0 GiB |
+
+Beim 0,6B stimmen zwei unabhängige Wege überein (Fußabdruck minus KV:
+132 MB; Spitze minus Gewichte: 144 MB). Plan für das int8-35B mit Sehen
+(1,6 GiB) und Hören (0,5 GiB) auf dieser Maschine: Agent 5,2 GiB im
+Speicher mit vollem Arbeitskontext 65 536, Vision angenommen, Sprache
+abgelehnt mit Grund, die Experten des Agenten über den Dateicache.
+
+**Programm `dispatcher`**: `erheben` (die Maschine), `plan` (ein
+Trockenlauf für einen Agenten, Vision und Sprache, für Menschen oder als
+JSON) und `eichen` (misst einen Befehl und trägt ihn in ein Eichbuch
+ein). Ein unbekannter Schalter ist ein Fehler, kein stiller Vorgabewert.
+
+**Proben:** 26, davon der Plan mit zwölf: Vorrang gegen die Reihenfolge
+der Eingabe, Vision vor den Experten des Agenten, aber nicht vor seinem
+Arbeitskontext, Kürzen des Kontexts auf das Raster, Rücklage, Kerne,
+Rechenwerke mit Steckkarte und gemeinsamem Speicher, Ablehnen mit Grund,
+und über 286 Speichergrößen: deterministisch und nie mehr verteilt, als
+da ist. **Gegenproben je Zeile:** 22 tragende Zeilen einzeln verändert,
+jede macht mindestens eine benannte Probe rot. Clippy mit `-D warnings`
+für macOS, Linux und Windows, Mindestfassung 1.85.
 
 ### v0.35.1 – 2026-09-28 (`myl-pod` 0.35.1: ein veralteter Vergleichswert, Fund 498)
 

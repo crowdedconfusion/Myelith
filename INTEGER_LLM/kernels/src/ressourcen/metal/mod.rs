@@ -5,8 +5,9 @@
 //! **Nur [`crate::linear::linear_w8a16_stapel`] und sein Zwilling mit
 //! einer Ausgangsskala je Kanal**, also viele Eingaben auf denselben
 //! Gewichten: die sieben Matrizen einer Ebene in der Vorbereitung eines
-//! Prompts. Seit dem 2026-09-30 fuer beide Gewichtsarten: int8 und ternaer
-//! gepackt ([`stapel_ternaer`]). Alles andere bleibt auf der CPU, und zwar
+//! Prompts. Seit dem 2026-09-30 auch ternaer gepackt ([`stapel_ternaer`]),
+//! seit dem 2026-10-16 in vier Bit ([`stapel_vierbit`], auch viele Experten
+//! in einem Befehlspuffer). Alles andere bleibt auf der CPU, und zwar
 //! gemessen:
 //!
 //! | je Matrix, `down_proj` des 4B | eine Eingabe | 169 Eingaben |
@@ -198,6 +199,61 @@ fn rechnen_ternaer(xs: &[&[i16]], muster: &[u8], betraege: &[i16], in_features: 
 
 #[cfg(not(all(feature = "metal", target_os = "macos")))]
 fn rechnen_ternaer(_: &[&[i16]], _: &[u8], _: &[i16], _: usize, _: &[i8]) -> Option<Vec<Vec<i16>>> {
+    None
+}
+
+/// Ein Stapel auf Gewichten in vier Bit fuer [`stapel_vierbit`]: Codes und
+/// Gitter wie in `crate::vierbit`, sonst dieselben Angaben wie [`stapel`].
+pub struct Vierbitauftrag<'a> {
+    pub xs: &'a [&'a [i16]],
+    pub codes: &'a [u8],
+    pub gitter: &'a [u8],
+    pub in_features: usize,
+    pub w_shifts: &'a [u8],
+    pub act_frac_bits: u8,
+    pub ziel: &'a (dyn Fn(usize) -> u8 + Sync),
+}
+
+/// **Stapel auf Gewichten in vier Bit**, einer oder viele in einem
+/// Befehlspuffer (die Experten eines Gemischs), oder `None`, wenn die CPU
+/// rechnet.
+///
+/// ⚑ **Eigener Weg im Shader, dieselbe Zahl.** Die Codes werden auf der GPU
+/// zu int8 von 0 bis 15 entpackt, `matmul2d` rechnet je 128er-Gruppe, und
+/// je Gruppe wird `a * (q * x) + b * (Summe x)` in int64 gesammelt. So gilt
+/// es fuer jeden Schritt und Versatz, auch fuer Werte, die nicht in int8
+/// passen (Kopf des Vierbitteils in `w8a16.metal`). Geprueft in der
+/// Selbstpruefung und in `vierbit_rechnet_wie_die_cpu`.
+///
+/// ⚑ Die Schwelle gilt fuer die **Summe** der Eingaben, wie bei
+/// [`stapel_viele`].
+pub fn stapel_vierbit(auftraege: &[Vierbitauftrag<'_>]) -> Option<Vec<Vec<Vec<i16>>>> {
+    let ab = schwelle();
+    let eingaben: usize = auftraege.iter().map(|a| a.xs.len()).sum();
+    if ab == 0
+        || eingaben < ab
+        || auftraege.is_empty()
+        || auftraege.iter().any(|a| a.in_features == 0 || a.in_features % 128 != 0 || a.in_features > HOECHSTE_SPALTENZAHL)
+    {
+        return None;
+    }
+    let abstaende: Vec<Vec<i8>> =
+        auftraege.iter().map(|a| abstaende_fuer(a.w_shifts, a.act_frac_bits, a.ziel)).collect();
+    rechnen_vierbit(auftraege, &abstaende)
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+fn rechnen_vierbit(auftraege: &[Vierbitauftrag<'_>], abstaende: &[Vec<i8>]) -> Option<Vec<Vec<Vec<i16>>>> {
+    let jobs: Vec<geraet::Vierbitjob<'_>> = auftraege
+        .iter()
+        .zip(abstaende)
+        .map(|(a, ab)| geraet::Vierbitjob { xs: a.xs, codes: a.codes, gitter: a.gitter, spalten: a.in_features, abstaende: ab })
+        .collect();
+    geraet::stapel_vierbit(&jobs)
+}
+
+#[cfg(not(all(feature = "metal", target_os = "macos")))]
+fn rechnen_vierbit(_: &[Vierbitauftrag<'_>], _: &[Vec<i8>]) -> Option<Vec<Vec<Vec<i16>>>> {
     None
 }
 
@@ -411,6 +467,97 @@ mod tests {
                 assert!(gerechnet() >= vorher + 2, "die Weiche hat die GPU nicht genommen");
             }
         }
+    }
+
+    /// **Vier Bit rechnen auf der GPU wie auf der CPU**: direkt, ueber die
+    /// Weiche fuer einen Stapel und fuer viele (die Experten eines
+    /// Gemischs), mit Schritt 255 und Versatz -128, Schritt 0 und Code 15,
+    /// ueber Kachelraender in Zeilen und Eingaben.
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    #[test]
+    fn vierbit_rechnet_wie_die_cpu() {
+        use crate::linear::{
+            linear_matrix_pc_stapel, linear_matrix_pc_stapel_cpu, linear_w8a16_stapel_viele, linear_w8a16_stapel_viele_cpu,
+            Ausgangsskala, Gewichtsmatrix, Stapelauftrag,
+        };
+        use crate::vierbit::Vierbitmatrix;
+        let _allein = SCHWELLE_IN_BENUTZUNG.lock().unwrap_or_else(|e| e.into_inner());
+        if !gpu_bereit() {
+            return;
+        }
+        let mut zufall = xorshift(0x4b17_5eed_0001);
+        let formen = [(200usize, 640usize, 40usize), (65, 128, 17), (1, 256, 16), (512, 2048, 3)];
+        let codes: Vec<Vec<u8>> = formen
+            .iter()
+            .map(|&(z, s, _)| (0..z * s / 2).map(|i| if i % 53 == 0 { 0xFF } else { zufall() as u8 }).collect())
+            .collect();
+        let gitter: Vec<Vec<u8>> = formen
+            .iter()
+            .map(|&(z, s, _)| {
+                (0..z * s / 128)
+                    .flat_map(|g| match (g % 5, g % 9) {
+                        (0, _) => [255u8, 0x80],
+                        (_, 0) => [0u8, 0x7F],
+                        _ => {
+                            let r = zufall();
+                            [r as u8, (r >> 8) as u8]
+                        }
+                    })
+                    .collect::<Vec<u8>>()
+            })
+            .collect();
+        let eingaben: Vec<Vec<Vec<i16>>> =
+            formen.iter().map(|&(_, s, b)| (0..b).map(|_| (0..s).map(|_| zufall() as i16).collect()).collect()).collect();
+        let xs: Vec<Vec<&[i16]>> = eingaben.iter().map(|e| e.iter().map(|v| v.as_slice()).collect()).collect();
+        let shifts: Vec<Vec<u8>> = formen.iter().map(|&(z, _, _)| (0..z).map(|r| 18 + (r % 5) as u8).collect()).collect();
+        let ziele: Vec<Vec<u8>> = formen.iter().map(|&(z, _, _)| (0..z).map(|r| 2 + (r % 3) as u8).collect()).collect();
+        let matrizen: Vec<Gewichtsmatrix<'_>> = formen
+            .iter()
+            .enumerate()
+            .map(|(i, &(z, s, _))| Vierbitmatrix::neu(&codes[i], &gitter[i], z, s).expect("Form").into())
+            .collect();
+        let cpu: Vec<Vec<Vec<i16>>> = (0..formen.len())
+            .map(|i| linear_matrix_pc_stapel_cpu(&xs[i], matrizen[i], formen[i].1, &shifts[i], 9, &ziele[i]))
+            .collect();
+        assert!(cpu[0].iter().flatten().any(|&v| v != 0 && v != i16::MAX && v != i16::MIN), "nur Nullen oder Saettigung");
+
+        // Direkt, je Matrix fuer sich und alle in einem Befehlspuffer.
+        let abstaende: Vec<Vec<i8>> = (0..formen.len()).map(|i| abstaende_fuer(&shifts[i], 9, &|z| ziele[i][z])).collect();
+        let jobs: Vec<geraet::Vierbitjob<'_>> = (0..formen.len())
+            .map(|i| geraet::Vierbitjob { xs: &xs[i], codes: &codes[i], gitter: &gitter[i], spalten: formen[i].1, abstaende: &abstaende[i] })
+            .collect();
+        for (i, job) in jobs.iter().enumerate() {
+            let einzeln = geraet::direkt_vierbit(std::slice::from_ref(job)).expect("GPU bereit").expect("Befehlspuffer");
+            assert_eq!(einzeln[0], cpu[i], "{:?}, direkt", formen[i]);
+        }
+        assert_eq!(geraet::direkt_vierbit(&jobs).expect("GPU bereit").expect("Befehlspuffer"), cpu, "alle zusammen");
+
+        // Ueber die Weiche, mit erzwungener GPU; der Zaehler belegt es.
+        let vorher_schwelle = schwelle();
+        schwelle_setzen(1);
+        let gezaehlt = gerechnet();
+        let einzeln: Vec<Vec<Vec<i16>>> = (0..formen.len())
+            .map(|i| linear_matrix_pc_stapel(&xs[i], matrizen[i], formen[i].1, &shifts[i], 9, &ziele[i]))
+            .collect();
+        let nach_einzeln = gerechnet();
+        let auftraege: Vec<Stapelauftrag<'_>> = (0..formen.len())
+            .map(|i| Stapelauftrag {
+                xs: &xs[i],
+                w: matrizen[i],
+                in_features: formen[i].1,
+                w_shifts: &shifts[i],
+                act_frac_bits: 9,
+                aus: Ausgangsskala::JeZeile(&ziele[i]),
+            })
+            .collect();
+        let viele = linear_w8a16_stapel_viele(&auftraege);
+        let nach_vielen = gerechnet();
+        schwelle_setzen(vorher_schwelle);
+        assert_eq!(einzeln, cpu, "ueber die Weiche, einzeln");
+        assert_eq!(viele, linear_w8a16_stapel_viele_cpu(&auftraege), "ueber die Weiche, viele");
+        assert_eq!(viele, cpu);
+        assert!(nach_einzeln >= gezaehlt + formen.len(), "die Weiche hat die GPU fuer einzelne Stapel nicht genommen");
+        assert!(nach_vielen >= nach_einzeln + formen.len(), "die Weiche hat die GPU fuer viele Stapel nicht genommen");
     }
 
     /// **Die GPU rechnet Bit fuer Bit wie die CPU**, ueber Formen, die das

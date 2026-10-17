@@ -120,11 +120,25 @@ pub fn marke_gilt(artifact_dir: &Path, manifest_hash: &str) -> bool {
 /// schreibgeschuetzt, gibt es eben keine Marke und die naechste Ladung
 /// prueft wieder voll. Langsam ist kein Grund, einen Lauf abzubrechen,
 /// der sonst durchginge.
+///
+/// ⛔️ **Neu schreiben und umbenennen, nie an Ort und Stelle** (Fund 551).
+/// Werkzeuge, die ein Artefakt aus einem anderen bauen, verlinken die
+/// unveraenderten Dateien hart, und frueher auch die Marke. `fs::write`
+/// schrieb dann durch den Link in die Marke **aller** verlinkten Artefakte:
+/// kein falsches Ergebnis (die Marke haelt das Manifest fest), aber jedes
+/// Laden eines anderen Artefakts liess die volle Pruefung beim naechsten
+/// wieder laufen, und eine Datei des Quellartefakts aenderte sich.
 pub fn marke_setzen(artifact_dir: &Path, manifest_hash: &str) {
     let Ok(jetzt) = kennung(artifact_dir) else {
         return;
     };
-    let _ = std::fs::write(artifact_dir.join(MARKENNAME), markentext(manifest_hash, &jetzt));
+    let neu = artifact_dir.join(format!("{MARKENNAME}.neu"));
+    if std::fs::write(&neu, markentext(manifest_hash, &jetzt)).is_err() {
+        return;
+    }
+    if std::fs::rename(&neu, artifact_dir.join(MARKENNAME)).is_err() {
+        let _ = std::fs::remove_file(&neu);
+    }
 }
 
 fn markentext(manifest_hash: &str, kennung: &str) -> String {
@@ -186,6 +200,26 @@ mod proben {
             assert!(!marke_gilt(&p, "abc"), "{was} kam durch");
             let _ = std::fs::remove_dir_all(&p);
         }
+    }
+
+    /// ⛔️ **Fund 551: Die Marke schreibt nie durch einen harten Link.**
+    /// Zwei Artefakte teilen die Marke wie nach einem Bau mit Links; die
+    /// Marke des einen zu setzen, laesst die des anderen unberuehrt.
+    #[test]
+    fn die_marke_schreibt_nicht_durch_einen_link() {
+        let quelle = ordner("link-quelle");
+        let ziel = ordner("link-ziel");
+        marke_setzen(&quelle, "abc");
+        let vorher = std::fs::read(quelle.join(MARKENNAME)).expect("Marke der Quelle");
+        std::fs::hard_link(quelle.join(MARKENNAME), ziel.join(MARKENNAME)).expect("Link");
+        std::fs::write(ziel.join("c.bin"), b"anders").expect("c");
+        marke_setzen(&ziel, "xyz");
+        assert_eq!(std::fs::read(quelle.join(MARKENNAME)).expect("Marke der Quelle"), vorher);
+        assert!(marke_gilt(&quelle, "abc"), "die Marke der Quelle gilt nicht mehr");
+        assert!(marke_gilt(&ziel, "xyz"), "die Marke des Ziels gilt nicht");
+        assert!(!ziel.join(format!("{MARKENNAME}.neu")).exists(), "die Zwischendatei blieb liegen");
+        let _ = std::fs::remove_dir_all(&quelle);
+        let _ = std::fs::remove_dir_all(&ziel);
     }
 
     /// ⚑ **Der Abschalter schlaegt die Marke.**

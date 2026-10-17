@@ -26,6 +26,11 @@ HIER = Path(__file__).resolve().parent
 REPO = LLM  # Altlast, damit bestehende Zeilen weiterlesen
 DATASETS = HIER / "datasets"
 WIKITEXT_CACHE = DATASETS / "wikitext2_test.txt"
+#: SHA-256 des Caches: die Zeilen des Testsplits von `Salesforce/wikitext`,
+#: `wikitext-2-raw-v1`, mit "\n" verbunden. Mit ihm sind alle Artefakte und
+#: Messungen dieses Repositoriums gebaut; ein anderer Inhalt waere eine
+#: andere Messung.
+WIKITEXT_SHA256 = "aca2f46735043bcfd0a44eca981d04627b9cdf74c4c9a04bf0856d04066f58fc"
 
 sys.path.insert(0, str(REPO / "calibrate"))
 from src.model_configs import get_export_model_config  # noqa: E402
@@ -100,8 +105,15 @@ def load_wikitext2_test(verbose: bool = True) -> list:
         print("[wikitext] Lade WikiText-2 von Hugging Face ...")
     ds = load_dataset("Salesforce/wikitext", "wikitext-2-raw-v1", split="test")
     lines = [str(x) for x in ds["text"]]
+    roh = "\n".join(lines).encode("utf-8")
+    # ⛔️ Nur der gepruefte Inhalt kommt in den Cache (Fund 553).
+    import hashlib
+    if hashlib.sha256(roh).hexdigest() != WIKITEXT_SHA256:
+        print(f"[wikitext] FEHLER: der geholte Testsplit hat die Pruefsumme "
+              f"{hashlib.sha256(roh).hexdigest()}, erwartet {WIKITEXT_SHA256}", file=sys.stderr)
+        sys.exit(1)
     DATASETS.mkdir(parents=True, exist_ok=True)
-    WIKITEXT_CACHE.write_text("\n".join(lines), encoding="utf-8")
+    WIKITEXT_CACHE.write_bytes(roh)
     if verbose:
         print(f"[wikitext] Geladen und gecacht: {len(lines)} Zeilen")
     return lines
@@ -141,3 +153,11 @@ def select_sequences(n_sequences: int, seq_len: int, verbose: bool = True) -> li
         total = sum(len(s) for s in sequences)
         print(f"[wikitext] {len(sequences)} Sequenzen, {total} Tokens")
     return sequences
+
+
+if __name__ == "__main__":
+    # ⚑ **Holt den Testsplit, falls er fehlt** (Fund 553): Die Kalibrierung
+    #   verlangt ihn und nannte diesen Aufruf, aber die Datei hatte bis zum
+    #   2026-10-16 keinen Hauptteil, und der Aufruf tat nichts.
+    load_wikitext2_test()
+    print("Fertig")

@@ -1819,7 +1819,7 @@ dependencies = [
 
 [[package]]
 name = "integer-llm-kernels"
-version = "0.84.0"
+version = "0.87.0"
 dependencies = [
  "itertools 0.13.0",
  "objc2",
@@ -1832,9 +1832,10 @@ dependencies = [
 
 [[package]]
 name = "integer-llm-runtime"
-version = "0.93.0"
+version = "0.97.0"
 dependencies = [
  "integer-llm-kernels",
+ "libc",
  "memmap2",
  "serde",
  "serde_json",
@@ -2262,21 +2263,32 @@ dependencies = [
 
 [[package]]
 name = "myl-client"
-version = "0.94.0"
+version = "0.104.0"
 dependencies = [
  "integer-llm-runtime",
  "libc",
+ "myl-dispatcher",
  "myl-local-agent",
  "myl-module",
  "myl-senses",
+ "myl-store",
  "myl-types",
  "serde",
  "serde_json",
 ]
 
 [[package]]
+name = "myl-dispatcher"
+version = "0.8.0"
+dependencies = [
+ "libc",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "myl-local-agent"
-version = "0.37.0"
+version = "0.38.0"
 dependencies = [
  "libc",
  "myl-agent",
@@ -2302,7 +2314,7 @@ dependencies = [
 
 [[package]]
 name = "myl-oberflaeche"
-version = "0.75.0"
+version = "0.81.0"
 dependencies = [
  "myl-client",
  "myl-local-agent",
@@ -2317,7 +2329,17 @@ dependencies = [
 
 [[package]]
 name = "myl-senses"
-version = "0.12.0"
+version = "0.13.1"
+
+[[package]]
+name = "myl-store"
+version = "0.6.0"
+dependencies = [
+ "borsh",
+ "myl-types",
+ "serde",
+ "toml 0.8.23",
+]
 
 [[package]]
 name = "myl-types"

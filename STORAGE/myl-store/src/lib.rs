@@ -52,6 +52,7 @@
 pub mod entgelt;
 pub mod kappa;
 pub mod nachweis;
+pub mod orte;
 
 // ⚑ **Das Format zog am 2026-08-31 nach `myl-types`**, weil das
 // Manifest in den Konsenszustand wandert und der Ledger es lesen können
@@ -65,6 +66,7 @@ pub use entgelt::{
     abrechnen, darf_fallengelassen_werden, verbrauch_je_epoche, Abrechnung, Speicherguthaben,
 };
 pub use kappa::{Kappa, KappaFehler, Uebergang};
+pub use orte::{belegung, Belegung, OrtFehler, Speicherort, Speicherorte, Zusage, Zusageort, Zweck};
 pub use nachweis::{
     erwartete_laenge, pruefe, Antwort, NachweisFehler, Stichprobe, DST_SPEICHER_STICHPROBE,
 };

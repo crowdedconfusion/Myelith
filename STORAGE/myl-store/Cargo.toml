@@ -1,6 +1,6 @@
 [package]
 name = "myl-store"
-version = "0.5.2"
+version = "0.6.0"
 edition = "2021"
 rust-version = "1.85"
 description = "Speicher- und Verfügbarkeitsschicht für Myelith: Inhaltsadressierung über Klartext-Hashes, Manifest je Gegenstand, versionierte Wurzel der Wissensdatenbank (κ_v) und Erasure-Kodierung über die bestehende Reed-Solomon-Schicht."
@@ -10,6 +10,9 @@ publish = false
 [dependencies]
 borsh = { version = "1.6", features = ["derive"] }
 myl-types = { path = "../../SHARED_TYPES/myl-types" }
+# Fuer die Speicherorte (`orte`): eine Datei, die ein Mensch schreibt.
+serde = { version = "1.0", features = ["derive"] }
+toml = "0.8"
 
 [profile.test]
 opt-level = 2

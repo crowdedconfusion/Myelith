@@ -275,6 +275,15 @@ thread_local! {
 
 /// Das Modell im eigenen Speicher.
 pub struct Oertlichesmodell {
+    /// ⚑ **Die Anmeldung beim Dispatcher**: Solange dieses Modell geladen
+    /// ist, weiss jeder Sinn in diesem Prozess, dass ein Agent laeuft und
+    /// wie viel von ihm im Speicher bleiben muss. Mit dem Modell endet sie.
+    _anmeldung: myl_dispatcher::local::register::Anmeldung,
+    /// ⚑ **Wie viel Kontext der Arbeitsspeicher beim Laden trug**, nach dem
+    /// Plan des Dispatchers; `None`, wo das Freie nicht messbar war oder der
+    /// Bedarf nicht lesbar. Begrenzt [`Self::arbeitsgrenze`]: Darueber
+    /// lagerte der KV-Speicher aus.
+    pub kontext_tragbar: Option<usize>,
     modell: Arc<IntegerModel>,
     wortschatz: Tokenizer,
     /// Die Familie aus `model_config.json`, aus der die Vorlage folgt.
@@ -409,6 +418,9 @@ pub struct Oertlichesmodell {
     /// noch einmal; gerechnet wird nur, was dahinter neu ist. Hinter einem
     /// Schloss, weil [`Modellweg::chat`] `&self` nimmt.
     fortsetzung: std::sync::Mutex<Fortsetzung>,
+    /// **Name und `top_k` eines Gemischs**, dessen Wahl nach jeder Antwort
+    /// ins Profil dieser Maschine geht; `None` bei einem dichten Modell.
+    profil: Option<(String, u32)>,
 }
 
 /// Gelesene und geschriebene Token, waehrend es geschieht.
@@ -442,6 +454,20 @@ impl Tokenzaehler {
     }
 }
 
+/// **Die Speicherwache der Sinne**: Sehen und Hoeren starten nur, wenn sie
+/// neben den laufenden Lasten passen, mit Vorrang Agent vor Vision vor
+/// Sprache. Gesetzt beim ersten Laden eines Modells.
+fn speicherwache(art: myl_senses::Art, bytes: u64) -> Result<(), String> {
+    use myl_dispatcher::local::plan::Vorrang;
+    let (name, vorrang) = match art {
+        myl_senses::Art::Ton => ("Hören", Vorrang::Sprache),
+        _ => ("Sehen", Vorrang::Vision),
+    };
+    // Der Zuschlag aus dem Eichbuch, falls `myl eichen` diesen Sinn gemessen hat.
+    let zuschlag = crate::hardware::eichbuch().zuschlag_fremd(name, bytes);
+    myl_dispatcher::local::register::wache_mit(name, vorrang, bytes, zuschlag)
+}
+
 impl Oertlichesmodell {
     /// Laedt ein Artefaktverzeichnis, soweit die Freigabe es zulaesst.
     ///
@@ -453,30 +479,90 @@ impl Oertlichesmodell {
     /// daran vorbei, denn der Uebersetzer verlangt die Freigabe als
     /// Argument.
     ///
-    /// 📌 **Und sie ist vorsichtig und nicht genau.** Gemessen wird die
-    /// Groesse des Artefakts auf der Platte; die Gewichte werden aber
-    /// **speicherabgebildet**, der wirkliche Verbrauch liegt also
-    /// darunter und haengt daran, wie viel davon angefasst wird. Die
-    /// Schranke lehnt damit gelegentlich etwas ab, das gerade noch
-    /// gepasst haette. **Das ist die richtige Richtung zu irren:** Ein
-    /// abgelehntes Laden ist ein Satz, ein zu spaet bemerkter
-    /// Speichermangel ist ein toter Rechner.
+    /// # ⚑ Gegen was die Freigabe geprueft wird (seit dem 2026-10-15)
+    ///
+    /// **Gegen das, was das Modell fest im Speicher halten muss, um
+    /// fluessig zu laufen**: dichte Gewichte, KV-Speicher fuer den kleinsten
+    /// Arbeitskontext, Zustand und Puffer (`plan::fluessig_bytes` im
+    /// Dispatcher, dieselbe Zahl, mit der der Plan rechnet). Die gerouteten
+    /// Experten eines Gemischs zaehlen nicht mit: Sie kommen ueber den
+    /// Dateicache, den das System jederzeit zurueckholt, und der Plan legt
+    /// sie erst in den Speicher, wenn alles andere passt.
+    ///
+    /// 📌 **Bis dahin galt die Groesse auf der Platte**, mit der Begruendung,
+    /// lieber vorsichtig zu irren. Bei einem dichten Modell ist das fast
+    /// dieselbe Zahl; bei einem Gemisch lehnte es ab, was gut laeuft (das
+    /// int8-35B: 33 GB auf der Platte, 3,8 GB fest; es laeuft per mmap auf
+    /// 24 GB). Laesst sich der Bedarf eines Verzeichnisses nicht lesen, gilt
+    /// die alte, vorsichtige Schranke weiter.
     pub fn laden(
         verzeichnis: &str,
         kapazitaet: &crate::einstellungen::Kapazitaet,
     ) -> Result<Self, String> {
+        let artefakt = Path::new(verzeichnis);
+        let bedarf = myl_dispatcher::local::bedarf::Modellbedarf::aus_artefakt(artefakt).ok();
+        // Gemessen, falls `myl eichen` lief, sonst die Vorgabe.
+        let zuschlag = bedarf
+            .as_ref()
+            .map_or(myl_dispatcher::local::eichung::VORGABE_ZUSCHLAG, |b| crate::hardware::eichbuch().zuschlag_eigen(b));
+        let mindestkontext = crate::einstellungen::KONTEXT_MINDESTENS as u64;
         if let Some(grenze) = kapazitaet.speicher_gib {
-            let braucht = crate::reservierung::belegung(Path::new(verzeichnis));
-            let erlaubt = grenze as u64 * crate::hardware::GIB;
-            if braucht > erlaubt {
-                let gib = |b: u64| b as f64 / crate::hardware::GIB as f64;
-                return Err(format!(
-                    "Das Artefakt belegt {:.1} GiB, freigegeben sind {grenze} GiB \
-                     Arbeitsspeicher. Erhöhe die Freigabe oder wähle ein kleineres Modell.",
-                    gib(braucht)
-                ));
+            let erlaubt = u64::from(grenze) * crate::hardware::GIB;
+            let gib = |b: u64| b as f64 / crate::hardware::GIB as f64;
+            match &bedarf {
+                Some(b) => {
+                    let braucht = myl_dispatcher::local::plan::fluessig_bytes(b, mindestkontext, zuschlag).unwrap_or(u64::MAX);
+                    if braucht > erlaubt {
+                        return Err(format!(
+                            "Das Modell braucht mindestens {:.1} GiB fest im Arbeitsspeicher (dichte Gewichte, \
+                             KV-Speicher für {mindestkontext} Token, Zustand und Puffer), freigegeben sind {grenze} GiB \
+                             Arbeitsspeicher. Erhöhe die Freigabe oder wähle ein kleineres Modell.",
+                            gib(braucht)
+                        ));
+                    }
+                }
+                None => {
+                    let braucht = crate::reservierung::belegung(artefakt);
+                    if braucht > erlaubt {
+                        return Err(format!(
+                            "Das Artefakt belegt {:.1} GiB, freigegeben sind {grenze} GiB \
+                             Arbeitsspeicher. Erhöhe die Freigabe oder wähle ein kleineres Modell.",
+                            gib(braucht)
+                        ));
+                    }
+                }
             }
         }
+        // ⚑ **Wie viel Kontext der Speicher traegt**, nach dem Plan: Dichte
+        //   Gewichte zuerst, dann die haeufigen Experten nach dem Profil
+        //   dieser Maschine (falls eines da ist), dann Kontext bis zur
+        //   Grenze des Modells, im Freien von jetzt (hoechstens der
+        //   Freigabe), nach der Ruecklage des Plans.
+        //   Darueber lagerte der KV-Speicher aus, oder er verdraengte die
+        //   haeufigen Experten, und jedes Token wuerde langsam; der Agent
+        //   fasst dann lieber vorher zusammen.
+        let expertenprofil = bedarf.as_ref().and_then(|b| crate::hardware::expertenprofil(&b.name));
+        let belegung = bedarf.as_ref().and_then(|b| {
+            use myl_dispatcher::local::plan;
+            let frei = myl_dispatcher::local::erhebung::speicher_frei_jetzt()?;
+            let regeln = plan::Regeln::default();
+            let freigabe = kapazitaet.speicher_gib.map(|g| u64::from(g) * crate::hardware::GIB);
+            let ram_bytes = plan::ram_angebot(frei, freigabe, regeln.ruecklage_bytes);
+            let last = plan::Last {
+                name: String::new(),
+                vorrang: plan::Vorrang::Agent,
+                gewichte: plan::Gewichte::Eigen(b.clone()),
+                zuschlag_bytes: zuschlag,
+                kontext_mindestens: mindestkontext.min(b.hoechstkontext),
+                kontext_soll: b.hoechstkontext,
+                kerne_mindestens: 1,
+                profil: expertenprofil.clone(),
+            };
+            let angebot = plan::Angebot { ram_bytes, kerne: 1, karten: Vec::new() };
+            let p = plan::belegen(&angebot, std::slice::from_ref(&last), &regeln);
+            p.belegung("").cloned()
+        });
+        let kontext_tragbar = belegung.as_ref().map(|bel| bel.kontext as usize);
         let modell = load_model(Path::new(verzeichnis)).map_err(|e| format!("Modell: {e}"))?;
         let wortschatz = Tokenizer::from_file(
             &format!("{verzeichnis}/tokenizer.json"),
@@ -513,7 +599,36 @@ impl Oertlichesmodell {
             let t = wortschatz.encode("<|im_start|>");
             fortsetzung.merkmarke_setzen((t.len() == 1).then(|| t[0]));
         }
-        Ok(Self {
+        // ⚑ **Anmelden, und die Wache der Sinne setzen.** Was bleiben muss,
+        //   sind die dichten Gewichte; die haeufigen Experten darf sich ein
+        //   Sinn leihen, wie im Plan. Laesst sich der Bedarf nicht lesen,
+        //   gilt vorsichtig das ganze Artefakt.
+        let dicht_bytes =
+            bedarf.as_ref().map_or_else(|| crate::reservierung::belegung(artefakt), |b| b.dicht_bytes());
+        // ⚑ **Ein Gemisch schreibt sein Profil fort**, ein dichtes Modell hat keins.
+        let profil = bedarf.as_ref().zip(modell.layers.iter().find_map(|l| match &l.ffn {
+            integer_llm_runtime::model::Feedforward::Moe(m) => Some(m.top_k as u32),
+            _ => None,
+        }))
+        .map(|(b, k)| (b.name.clone(), k));
+        let _anmeldung = myl_dispatcher::local::register::anmelden(myl_dispatcher::local::register::Laufend {
+            name: artefakt.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
+            vorrang: myl_dispatcher::local::plan::Vorrang::Agent,
+            dicht_bytes,
+        });
+        myl_senses::speicherwache_setzen(speicherwache);
+        // ⚑ **Die haeufigen Experten vorwaermen**, so viele, wie der Plan
+        //   ihnen gab: Sie werden in den ersten Token ohnehin gebraucht, und
+        //   so kommen sie in einem Lauf statt Token fuer Token. Vorwaermen,
+        //   nicht festhalten; was danach im Speicher bleibt, entscheidet der
+        //   Dateicache (Begruendung bei `vorwaermen_im_hintergrund`).
+        let warm: Vec<(usize, usize)> = match (&expertenprofil, &bedarf, &belegung) {
+            (Some(p), Some(b), Some(bel)) => p.rangfolge(b).into_iter().take(bel.experten_heiss as usize).collect(),
+            _ => Vec::new(),
+        };
+        let selbst = Self {
+            _anmeldung,
+            kontext_tragbar,
             wortschatz,
             familie,
             grenze: 512,
@@ -535,7 +650,47 @@ impl Oertlichesmodell {
             zaehler: std::sync::Arc::new(Tokenzaehler::default()),
             fortsetzung: std::sync::Mutex::new(fortsetzung),
             modell: Arc::new(modell),
-        })
+            profil,
+        };
+        vorwaermen_im_hintergrund(&selbst.modell, warm);
+        // ⚑ **Rechnen, waehrend geladen wird, nur bei knappem Speicher**: wenn
+        //   der Plan weniger als die Haelfte der Experten im Speicher sieht.
+        //   Gemessen am 35B half es dort 4 bis 9 % und kostete, wo fast alles
+        //   lag, bis zu 6 % (`integer_llm_runtime::model::rechnen_waehrend_laden`).
+        if let (Some(b), Some(bel)) = (&bedarf, &belegung) {
+            let alle: u64 = b.ebenen.iter().map(|e| e.experten_bytes.len() as u64).sum();
+            if alle > 0 {
+                let im_speicher = alle - bel.experten_von_platte;
+                integer_llm_runtime::model::rechnen_waehrend_laden(im_speicher * 2 < alle);
+            }
+        }
+        Ok(selbst)
+    }
+
+    /// **Holt die Wahl der Gemischebenen ab und fuehrt sie im Profil dieser
+    /// Maschine fort**, nach jeder Antwort.
+    ///
+    /// ⚑ **Nach jeder Antwort und nicht beim Entladen**: Ein Prozess, der
+    /// mit `exit` endet, entlaedt nichts. Eine Antwort dauert Sekunden, das
+    /// Schreiben von rund 30 KB nicht.
+    ///
+    /// ⚠️ Ein Fehler beim Schreiben kostet nur das Profil und wird
+    /// verschluckt; ein kaputtes Profil wird durch ein neues ersetzt, denn
+    /// lesen kann es ohnehin niemand mehr.
+    fn profil_fortschreiben(&self) {
+        use myl_dispatcher::local::profil::Expertenprofil;
+        let Some((name, top_k)) = &self.profil else { return };
+        let wahl = self.modell.wahl_abholen();
+        let pfad = crate::hardware::profil_pfad(name);
+        let mut p = match Expertenprofil::lesen(&pfad) {
+            Ok(Some(p)) if p.modell == *name => p,
+            _ => Expertenprofil { modell: name.clone(), ..Default::default() },
+        };
+        let vorher = p.token;
+        p.fortschreiben(&wahl, *top_k);
+        if p.token != vorher {
+            let _ = p.schreiben(&pfad);
+        }
     }
 
     /// **Ob gierig gewaehlt wird**: ausdruecklich (`--gierig`) oder mit
@@ -579,9 +734,15 @@ impl Oertlichesmodell {
     }
 
     /// **Wie voll der Kontext werden darf**: der Arbeitskontext, hoechstens
-    /// die Grenze des Modells.
+    /// die Grenze des Modells und hoechstens, was der Arbeitsspeicher traegt
+    /// ([`Self::kontext_tragbar`]).
+    ///
+    /// ⚑ **Die dritte Grenze ist Tempo, nicht Vorsicht**: Ein Kontext, den
+    /// der Speicher nicht traegt, lagert aus, und dann wird jedes Token
+    /// langsam. Der Agent verdichtet lieber vorher.
     pub fn arbeitsgrenze(&self) -> usize {
         let grenze = self.modell.kontextgrenze();
+        let grenze = self.kontext_tragbar.map_or(grenze, |t| t.min(grenze));
         self.kontextbudget.map_or(grenze, |b| b.min(grenze))
     }
 
@@ -712,6 +873,45 @@ impl Oertlichesmodell {
     }
 }
 
+/// **Kuendigt dem System die Experten `warm` (die haeufigsten zuerst) an**,
+/// in einem eigenen Faden, die seltensten zuerst, damit die haeufigsten
+/// zuletzt kommen und am laengsten bleiben.
+///
+/// ⚑ **Vorwaermen und nicht festhalten**, nach der Belegungssimulation vom
+/// 2026-10-15 am int8-35B (Profil an einem Text, nachgespielt an einem
+/// anderen, `BENCHMARKS/Inferenz/belegungssimulation.py`): Die heissen
+/// Experten fest im Speicher zu halten brachte im Dauerbetrieb auf 24 GiB
+/// 15,2 statt 14,9 Token/s und auf 16 GiB nichts; alle heissen festgehalten,
+/// auch mehr, als der Cache fasst, waren es dort 6,1 statt 7,6. Was ein Text
+/// gerade braucht, weiss der Dateicache besser als eine alte Zaehlung.
+///
+/// ⚠️ **Vorwaermen lohnt sich nur in der Wartezeit**, etwa waehrend der
+/// Mensch die erste Frage tippt: Dann laufen die ersten 500 Token mit 15,4
+/// statt 14,7 Token/s (24 GiB) und 19,1 statt 17,3 (32 GiB). Kommt die
+/// Frage sofort, liest das Vorwaermen auch Experten, die sie nicht braucht,
+/// und kostet auf 24 GiB etwas (14,3 statt 14,7); ab 32 GiB ist es dann
+/// gleich.
+///
+/// ⚠️ An der Rechnung aendert das nichts: Es sagt dem System nur, welche
+/// Seiten bald gebraucht werden.
+fn vorwaermen_im_hintergrund(modell: &Arc<IntegerModel>, warm: Vec<(usize, usize)>) {
+    if warm.is_empty() {
+        return;
+    }
+    let m = Arc::clone(modell);
+    // Ein Faden, der nicht startet, kostet nur das Vorwaermen.
+    let _ = std::thread::Builder::new().name("vorwaermen".into()).spawn(move || {
+        for &(ebene, experte) in warm.iter().rev() {
+            let ffn = m.layers.iter().find(|l| l.layer_idx == ebene).map(|l| &l.ffn);
+            if let Some(integer_llm_runtime::model::Feedforward::Moe(moe)) = ffn {
+                if let Some(ex) = moe.experts.get(experte) {
+                    ex.vorbereiten();
+                }
+            }
+        }
+    });
+}
+
 impl Oertlichesmodell {
     /// Eine Antwort, innerhalb der laufenden Aktion.
     fn antworten(
@@ -812,6 +1012,7 @@ impl Oertlichesmodell {
             self.zaehler.kontext.store(speicher.laenge() as u32, Relaxed);
         }
         drop(speicher);
+        self.profil_fortschreiben();
         let text = self.wortschatz.decode(&token);
         // ⛔️ **Fund 512: An der Grenze geendet ist nicht „stop“.** Die
         //   Schleife muss es wissen, sonst haelt sie eine abgeschnittene

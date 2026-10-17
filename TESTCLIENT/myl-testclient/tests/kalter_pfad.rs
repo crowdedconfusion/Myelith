@@ -108,6 +108,7 @@ fn konfig(
         testverkehr_sekunden: None,
         erzeugt_bloecke: false,
         teilnehmer: Vec::new(),
+        speicherorte: None,
         kettendatei: None,
         stimmsatzdatei_pfad: None,
         konsensschluesseldatei: None,

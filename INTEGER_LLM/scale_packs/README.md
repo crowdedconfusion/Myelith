@@ -91,6 +91,28 @@ Ein Paket ist an **eine** Spec-Version gebunden. Passt sie nicht zur
 aktuellen `theta_v/spec.json`, bricht der Bau ab, statt Skalen und LUTs aus
 verschiedenen Specs zu mischen — das wäre ein stiller Modellwechsel.
 
+⚠️ **Und nach jedem Neubau eines Artefakts, das schon ein Paket hat.**
+Das Paket des 35B blieb nach dem Neubau mit längeren Drehtabellen (262 144
+statt 40 960 Positionen) einen Monat lang alt, und ein Bau aus einem
+frischen Klon hätte still die kurzen Tabellen bekommen (Fund 552). Probe:
+Der Artefakt-Digest jedes Artefakts auf der Maschine stimmt mit
+`REGISTER.json`.
+
+## Abgeleitete Artefakte
+
+Ein Artefakt, das aus einem anderen umgepackt ist und dessen Skalen und
+Tabellen trägt, hat ein Paket nur mit seinem eigenen `theta_v.json` (darin
+der neue `weights_hash`) und nennt die Quelle (`abgeleitet_von`). So das
+35B mit Experten in vier Bit:
+
+```bash
+python tools/skalenpaket_bauen.py --abgeleitet-von myelith-35b-a3b myelith-35b-a3b-int4
+```
+
+Gebaut wird es nicht mit der Kalibrierung, sondern aus der Quelle
+(`scripts/build_vierbit.sh`), und das Skript prüft sein Ergebnis gegen den
+`weights_manifest_sha256` dieses Eintrags.
+
 ## Lizenz
 
 Skalen und LUTs sind Messwerte und Tabellen dieses Projekts, keine

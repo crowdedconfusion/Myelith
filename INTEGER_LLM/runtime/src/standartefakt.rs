@@ -194,7 +194,12 @@ pub fn stand_ins_artefakt(
         let d = d.map_err(|e| e.to_string())?;
         let n = d.file_name().to_string_lossy().to_string();
         // Was das Ziel schon hat, ist neu geschrieben und bleibt es.
-        if ersetzt.contains(&n) || !d.path().is_file() || ziel.join(&n).exists() {
+        // Die Pruefmarke der Quelle gilt hier nie (Fund 551).
+        if ersetzt.contains(&n)
+            || !d.path().is_file()
+            || ziel.join(&n).exists()
+            || n.starts_with(crate::pruefstand::MARKENNAME)
+        {
             continue;
         }
         if std::fs::hard_link(d.path(), ziel.join(&n)).is_err() {

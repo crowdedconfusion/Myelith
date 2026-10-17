@@ -495,6 +495,40 @@ fn die_schrittzahl_des_kontrakts_haelt() {
     assert_eq!(e.strom.schritte().len(), 2, "mehr Schritte als der Kontrakt zulaesst");
 }
 
+/// ⚑ **Die Loop-Erkennung** (Wunsch des Projektinhabers, 2026-10-17):
+/// Ohne Schrittgrenze haelt ein Modell, das denselben Aufruf mit demselben
+/// Ergebnis wiederholt, an der Wiederholung und nicht an einer Zahl. Beim
+/// dritten Mal erfaehrt es das, beim fuenften endet der Lauf benannt.
+#[test]
+fn wer_sich_im_kreis_dreht_wird_erst_gewarnt_und_dann_angehalten() {
+    use myl_local_agent::schleife::{KREIS_ENDE_AB, KREIS_HINWEIS_AB};
+    let ruf = "<tool_call>{\"name\":\"zeit\",\"arguments\":{}}</tool_call>";
+    let e = fahren(vec![ruf; 9], Betriebsart::NurVerankert, u32::MAX);
+    assert_eq!(e.ende, Ende::Kreislauf { wiederholt: KREIS_ENDE_AB }, "{}", e.ende);
+    assert_eq!(e.strom.schritte().len(), KREIS_ENDE_AB, "der Lauf lief am Kreis vorbei");
+    let hinweise: Vec<usize> = e
+        .nachrichten
+        .iter()
+        .filter(|n| n.role == "tool")
+        .enumerate()
+        .filter(|(_, n)| n.content.contains("Loop: You have now taken this step"))
+        .map(|(i, _)| i + 1)
+        .collect();
+    assert_eq!(hinweise, (KREIS_HINWEIS_AB..KREIS_ENDE_AB).collect::<Vec<_>>(), "der Hinweis kam nicht oder zu frueh");
+}
+
+/// ⚑ **Unter der Schwelle bleibt es still.** Zwei Werkzeuge im Wechsel,
+/// jedes zweimal: Gezaehlt wird je Schritt im ganzen Lauf, und keiner kommt
+/// auf `KREIS_HINWEIS_AB`. Kein Hinweis, und der Lauf endet normal.
+#[test]
+fn verschiedene_schritte_sind_kein_kreis() {
+    let zeit = "<tool_call>{\"name\":\"zeit\",\"arguments\":{}}</tool_call>";
+    let kaputt = "<tool_call>{\"name\":\"kaputt\",\"arguments\":{}}</tool_call>";
+    let e = fahren(vec![zeit, kaputt, zeit, kaputt, "Fertig."], Betriebsart::Alles, u32::MAX);
+    assert_eq!(e.ende, Ende::Fertig, "{}", e.ende);
+    assert!(!e.nachrichten.iter().any(|n| n.content.contains("Loop: You have now")));
+}
+
 /// ⚑ **Ein Lauf, der an einer Grenze endet, hat trotzdem einen Beleg.**
 ///
 /// Ein Beleg, den es nur bei Erfolg gibt, ist keiner.

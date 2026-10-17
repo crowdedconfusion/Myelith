@@ -341,7 +341,7 @@ pub fn mlp_h_stapel(
         return flach.chunks_exact(zeilen).map(<[i16]>::to_vec).collect();
     }
     let faeden = stapelfaeden(zeilen, 2 * hidden_size, b);
-    let kachel = kachelbreite(W_gate.ist_ternaer() || W_up.ist_ternaer());
+    let kachel = kachelbreite(W_gate.ist_gepackt() || W_up.ist_gepackt());
     let mut aus = vec![vec![0i16; zeilen]; b];
     let mut anfang = 0usize;
     while anfang < b {
@@ -349,10 +349,10 @@ pub fn mlp_h_stapel(
         let teil = &xs[anfang..ende];
         let breite = teil.len();
         // ⚑ Eine Aufbereitung je Eingabe genuegt fuer beide Matrizen: Eine
-        //   ternaere liest die Zerlegung, eine int8-Matrix nur `x`.
+        //   gepackte (ternaer oder vier Bit) liest die Zerlegung, eine int8-Matrix nur `x`.
         let eingaben: Vec<crate::ternaer::Eingabe<'_>> = teil
             .iter()
-            .map(|x| if W_gate.ist_ternaer() || W_up.ist_ternaer() { crate::ternaer::Eingabe::neu(x) } else { crate::ternaer::Eingabe::roh(x) })
+            .map(|x| if W_gate.ist_gepackt() || W_up.ist_gepackt() { crate::ternaer::Eingabe::neu(x) } else { crate::ternaer::Eingabe::roh(x) })
             .collect();
         let flach = crate::fadenpool::rechnen_breit(zeilen, breite, faeden, |z, ziel| {
             let mut g = [0i64; KACHEL_HOECHSTENS];

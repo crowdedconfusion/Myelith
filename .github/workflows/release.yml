@@ -156,9 +156,13 @@ jobs:
           # ⚑ Seit dem 2026-10-05 drei: dazu `konformitaet_ternaer` (fuenf
           # Vektoren des ternaeren Rechenwegs); der Gesamtwert umfasst
           # zweiundzwanzig, bis dahin siebzehn (`6da384ba301b9454`).
+          # ⚑ Seit dem 2026-10-16 vier: dazu `konformitaet_vierbit` (zwei
+          # Vektoren des Vierbitformats); der Gesamtwert umfasst
+          # vierundzwanzig, bis dahin zweiundzwanzig (`715529e71dfcfcfd`).
           for paar in "894d8357ae92b5c1:konformitaet_op (6 Vektoren)" \
                       "f1b60342b9cfcdb6:konformitaet_ternaer (5 Vektoren)" \
-                      "715529e71dfcfcfd:konformitaet gesamt (22 Vektoren)"; do
+                      "9102be0890358ceb:konformitaet_vierbit (2 Vektoren)" \
+                      "cb696efd3817e575:konformitaet gesamt (24 Vektoren)"; do
             abdruck="${paar%%:*}"; was="${paar#*:}"
             if ! grep -q "$abdruck" release-konf/*.jsonl; then
               echo "FEHLER: dieses Binary rechnet anders als das Netz."
@@ -167,7 +171,7 @@ jobs:
               exit 1
             fi
           done
-          echo "Konformitaet belegt fuer ${{ matrix.ziel }}: 22 Vektoren"
+          echo "Konformitaet belegt fuer ${{ matrix.ziel }}: 24 Vektoren"
 
       # ⚑ **Warum der Client keinen eigenen Konformitaetslauf bekommt.**
       # Er koennte einen haben, und er waere eine Doppelung: `myl` und

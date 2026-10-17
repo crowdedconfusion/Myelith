@@ -467,7 +467,7 @@ fn fragen(
     zeigen: bool,
 ) -> (bool, String, usize, usize) {
     let agent = myl_client::einstellungen::Agenteneinstellung {
-        schritte: a.schritte as u32,
+        schritte: Some(a.schritte as u32),
         wurzel: Some(wurzel.display().to_string()),
         schreiben: false,
         ..Default::default()

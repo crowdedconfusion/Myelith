@@ -54,7 +54,7 @@ fn schreiben_und_lesen_ergibt_dasselbe() {
     e.modell.artefakt = "INTEGER_LLM/artifacts/myelith-4b".to_string();
     e.modell.token = 128;
     e.kapazitaet.kerne = Some(4);
-    e.agent.schritte = 12;
+    e.agent.schritte = Some(12);
     e.schreiben(&p).expect("schreiben");
     assert_eq!(Einstellungen::lesen(&p).expect("lesen"), e);
 }

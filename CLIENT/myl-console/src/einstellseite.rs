@@ -24,7 +24,7 @@ use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::style::{Attribute, Print, ResetColor, SetAttribute, SetForegroundColor};
 
 use myl_client::einstellungen::{Einstellungen, Feld, Feldart, Feldwert, FELDER};
-use myl_client::hardware::{Einheit, Hardware, Regler};
+use myl_client::hardware::{Einheit, Freigabemaske, Hardware, Regler};
 
 use crate::design::Toene;
 
@@ -317,6 +317,11 @@ pub fn anzeige(f: &Feld, w: &Feldwert) -> String {
             return gefunden.titel.to_string();
         }
     }
+    // ⚑ **Leere Schritte heissen ohne Grenze** (2026-10-17), und das steht
+    //   da: „(nicht gesetzt)“ liesse raten, was dann gilt.
+    if f.name == "agent.schritte" && *w == Feldwert::Leer {
+        return "ohne Grenze".to_string();
+    }
     // ⚑ **Eine Grenze steht hier nicht mehr**, sie geht durch
     // [`Spanne::wie`]: Was „nicht gesetzt" heisst, haengt seit dem
     // 2026-09-16 am Ende des Reglers, und das kennt nur der Scan.
@@ -392,7 +397,7 @@ pub fn fahren(t: Toene, ordner: &std::path::Path) -> bool {
     // ⚑ **Einmal beim Oeffnen und nicht je Tastendruck.** Der Scan
     // kostet auf macOS einen Unterprozess; welche Karten im Rechner
     // stecken, aendert sich waehrend einer Einstellungsseite nicht.
-    let hw = Hardware::erheben(&myl_local_agent::ort::datenort());
+    let hw = myl_client::hardware::erheben(&myl_local_agent::ort::datenort());
     // ⚑ **Die Liste steht einmal.** Was sich waehrend der Seite aendert,
     // sind die **Werte**, und die holt jede Zeichnung aus den
     // Einstellungen; Enden, Beschriftungen und Sperrgruende haengen an
@@ -528,7 +533,7 @@ pub fn fahren(t: Toene, ordner: &std::path::Path) -> bool {
 }
 
 /// Fragt einen Text ab, unter der Liste.
-fn tippen(titel: &str, jetzt: &str, t: Toene) -> Option<String> {
+pub(crate) fn tippen(titel: &str, jetzt: &str, t: Toene) -> Option<String> {
     let mut aus = std::io::stdout();
     // ⚑ **Der bisherige Wert steht in der Klammer und nicht im Feld.**
     // Vorgetippt muesste man ihn erst wegloeschen; daneben ist er die
@@ -734,7 +739,7 @@ fn zeilenweise(e: &Einstellungen, ordner: &std::path::Path) {
     // ⚑ **Dieselbe Liste wie auf der Seite**, samt Rechenwerken. Eine
     // Roehre, die weniger zeigt als ein Terminal, waere eine zweite
     // Auskunft ueber dieselbe Ablage.
-    let hw = Hardware::erheben(&myl_local_agent::ort::datenort());
+    let hw = myl_client::hardware::erheben(&myl_local_agent::ort::datenort());
     for f in reihen(e, &hw) {
         let wert = e.wert(&f.name).map(|w| f.wie(&w)).unwrap_or_else(|m| m);
         let zusatz = if f.sperrgrund.is_some() { "  (rechnet hier nicht)" } else { "" };
@@ -933,7 +938,7 @@ mod tests {
     #[test]
     fn die_zeilen_tragen_die_rechenwerke_mit() {
         let e = Einstellungen::default();
-        let hw = Hardware::erheben(std::path::Path::new("."));
+        let hw = myl_client::hardware::erheben(std::path::Path::new("."));
         let liste = reihen(&e, &hw);
 
         // ⚑ **Nur die Felder, die hier auch wirken.** Ein Feld, das nur
@@ -989,6 +994,13 @@ mod tests {
         let f = feld("agent.schritte");
         assert_eq!(geaendert(&f, &Feldwert::Zahl(1), false, false).as_deref(), Some("1"));
         assert_eq!(geaendert(&f, &Feldwert::Zahl(6), true, false).as_deref(), Some("7"));
+    }
+
+    /// ⚑ **Leere Schritte stehen als „ohne Grenze“ da** (2026-10-17).
+    #[test]
+    fn leere_schritte_heissen_ohne_grenze() {
+        assert_eq!(anzeige(&feld("agent.schritte"), &Feldwert::Leer), "ohne Grenze");
+        assert_eq!(anzeige(&feld("modell.kontext"), &Feldwert::Leer), "(nicht gesetzt)");
     }
 
     /// **Eine Auswahl zeigt ihre Beschriftung, keine Kennung.**

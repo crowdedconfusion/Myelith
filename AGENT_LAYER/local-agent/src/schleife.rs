@@ -221,6 +221,62 @@ pub enum Meldung<'a> {
 /// Modell nachweislich wieder auf Kurs.
 pub const HOECHSTZAHL_BERICHTIGUNGEN: usize = 2;
 
+/// **Beim wievielten gleichen Schritt der Agent erfaehrt, dass er sich im
+/// Kreis dreht.**
+///
+/// ⚑ **Die Loop-Erkennung** (Wunsch des Projektinhabers, 2026-10-17): Seit
+/// die Schritte je Auftrag ohne Grenze sind, haelt nichts mehr einen Lauf an,
+/// der dieselben Aufrufe mit denselben Ergebnissen wiederholt. **Gleich heisst
+/// hier: dieselben Werkzeuge, dieselben Argumente und dieselben Ergebnisse.**
+/// Liest der Agent eine Datei zweimal, weil er sie dazwischen geaendert hat,
+/// ist das Ergebnis ein anderes, und es zaehlt nicht.
+///
+/// ⚠️ **Gezaehlt wird im ganzen Lauf und nicht hintereinander**, anders als
+/// bei [`HOECHSTZAHL_BERICHTIGUNGEN`]. Ein Modell, das zwischen zwei
+/// Aufrufen hin und her pendelt, wiederholt keinen davon unmittelbar und
+/// dreht sich trotzdem im Kreis.
+pub const KREIS_HINWEIS_AB: usize = 3;
+
+/// **Beim wievielten gleichen Schritt der Lauf endet**, siehe
+/// [`KREIS_HINWEIS_AB`]. Dazwischen liegt eine Gelegenheit, den Hinweis zu
+/// lesen und anders vorzugehen.
+pub const KREIS_ENDE_AB: usize = 5;
+
+/// **Der Satz, den die Schleife anhaengt, wenn sich ein Schritt wiederholt.**
+pub fn kreishinweis(wiederholt: usize, form: crate::werkzeug::Ansageform) -> String {
+    match form {
+        crate::werkzeug::Ansageform::Deutsch => format!(
+            "\n[Schleife: Diesen Schritt hast du jetzt {wiederholt}-mal gemacht, mit denselben \
+             Argumenten und demselben Ergebnis. Er bringt nichts Neues. Geh anders vor oder \
+             antworte mit dem, was du hast.]"
+        ),
+        _ => format!(
+            "\n[Loop: You have now taken this step {wiederholt} times, with the same arguments \
+             and the same result. It brings nothing new. Take a different approach or answer \
+             with what you have.]"
+        ),
+    }
+}
+
+/// **Der Fingerabdruck eines Schritts**: Werkzeuge, Argumente und Ergebnisse.
+///
+/// ⚑ **Kein kryptographischer Hash**, denn es geht um Wiederholung im eigenen
+/// Lauf und nicht um einen Beleg; ein Zusammenstoss kostete hoechstens einen
+/// Hinweis zu frueh.
+fn fingerabdruck<'v>(
+    aufrufe: impl Iterator<Item = &'v crate::werkzeug::Vorschlag>,
+    ergebnisse: &[String],
+) -> u64 {
+    use std::hash::{Hash as _, Hasher as _};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    for v in aufrufe {
+        v.name.hash(&mut h);
+        v.arguments.to_string().hash(&mut h);
+    }
+    ergebnisse.hash(&mut h);
+    h.finish()
+}
+
 /// Warum ein Lauf endete.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Ende {
@@ -241,6 +297,16 @@ pub enum Ende {
         /// Wie viele Runden hintereinander nichts lief.
         versuche: usize,
     },
+    /// **Der Agent hat sich im Kreis gedreht**: Derselbe Schritt kam
+    /// [`KREIS_ENDE_AB`]-mal, siehe [`KREIS_HINWEIS_AB`].
+    ///
+    /// ⚑ **Eigener Ausgang, aus demselben Grund wie
+    /// [`Ende::Steckengeblieben`]**: Ein Lauf, der sich verrennt, darf nicht
+    /// aussehen wie einer, der fertig ist.
+    Kreislauf {
+        /// Wie oft derselbe Schritt kam.
+        wiederholt: usize,
+    },
     /// Der Sitzungskontrakt lässt keine weiteren Schritte zu.
     Grenze(Grenzfehler),
     /// Die Tür hat nicht geantwortet.
@@ -254,6 +320,10 @@ impl std::fmt::Display for Ende {
             Self::Steckengeblieben { versuche } => write!(
                 f,
                 "steckengeblieben: {versuche} Aufrufe hintereinander konnten nicht laufen"
+            ),
+            Self::Kreislauf { wiederholt } => write!(
+                f,
+                "im Kreis: derselbe Schritt kam {wiederholt}-mal, mit denselben Ergebnissen"
             ),
             Self::Grenze(g) => write!(f, "Grenze erreicht: {g}"),
             Self::Tuer(t) => write!(f, "die Tuer: {t}"),
@@ -320,6 +390,9 @@ impl<'a> Lauf<'a> {
         // ⚑ **Wie viele Runden hintereinander nichts lief.** Siehe
         //   [`HOECHSTZAHL_BERICHTIGUNGEN`] und Fund 444.
         let mut vergebliche: usize = 0;
+        // ⚑ **Wie oft jeder Schritt kam**, je Fingerabdruck. Siehe
+        //   [`KREIS_HINWEIS_AB`].
+        let mut gesehen: std::collections::HashMap<u64, usize> = std::collections::HashMap::new();
 
         // ⚑ Der Melder wird ueber eine Hilfe gerufen und nicht an
         // jeder Stelle ausgepackt: Ein `if let Some(...)` je Meldung
@@ -532,6 +605,23 @@ impl<'a> Lauf<'a> {
                 }
             }
 
+            // 7c. ⚑ **Die Loop-Erkennung**, siehe [`KREIS_HINWEIS_AB`].
+            //     Gezaehlt wird nur ein Schritt, in dem etwas lief; einer, in
+            //     dem nichts lief, zaehlt schon [`HOECHSTZAHL_BERICHTIGUNGEN`].
+            let mut wiederholt = 0usize;
+            if entschieden.iter().any(|(_, e)| e.erlaubt()) {
+                let abdruck = fingerabdruck(entschieden.iter().map(|(v, _)| v), &ergebnisse);
+                let zahl = gesehen.entry(abdruck).or_insert(0);
+                *zahl += 1;
+                wiederholt = *zahl;
+                if (KREIS_HINWEIS_AB..KREIS_ENDE_AB).contains(&wiederholt) {
+                    crate::debuglog::eintrag("Loop-Erkennung", &format!("Schritt {wiederholt}-mal gleich"));
+                    if let Some(letzte) = nachrichten.last_mut().filter(|n| n.role == "tool") {
+                        letzte.content.push_str(&kreishinweis(wiederholt, self.ansageform));
+                    }
+                }
+            }
+
             // 8. In den Strom, samt allem, was abgelehnt wurde.
             let stufe = self
                 .registratur
@@ -558,6 +648,12 @@ impl<'a> Lauf<'a> {
             //   weiter; das Schrittbudget gilt wie fuer jeden Schritt.
             let zurufe = crate::zwischenruf::fuer_die_schleife();
             let zugerufen = !zurufe.is_empty();
+            // ⚑ **Ein Zwischenruf ist neue Lage**: Was vorher im Kreis lief,
+            //   darf danach noch einmal laufen.
+            if zugerufen {
+                gesehen.clear();
+                wiederholt = 0;
+            }
             for z in zurufe {
                 crate::debuglog::eintrag("Zwischenruf an das Modell", &z);
                 nachrichten.push(Nachricht::nutzer(crate::zwischenruf::nachricht(&z)));
@@ -570,6 +666,9 @@ impl<'a> Lauf<'a> {
                     continue;
                 }
                 break Ende::Fertig;
+            }
+            if wiederholt >= KREIS_ENDE_AB {
+                break Ende::Kreislauf { wiederholt };
             }
             if lief_etwas {
                 // ⚑ **Zurueck auf null.** Das Modell ist nachweislich

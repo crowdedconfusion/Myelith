@@ -23,16 +23,54 @@
 //! andere Experten waehlen; was sie beantwortet, ist die Frage, **ob es
 //! ueberhaupt eine Schiefe gibt**, nicht welche.
 //!
-//! Aufruf: `expertenprobe <artefakt> <text> [neue_token]`
+//! Aufruf: `expertenprobe <artefakt> <text> [neue_token] [--profil <datei>]
+//! [--spur <datei>]`
+//!
+//! - `--profil` schreibt die Zaehlung als Expertenprofil, in der Form, die
+//!   der Dispatcher liest (`modell`, `token`, `zaehler[ebene][experte]`).
+//! - `--spur` schreibt die Wahl Token fuer Token, eine Zeile je Token, die
+//!   Ebenen durch `;` getrennt, die Experten einer Ebene durch `,`. Damit
+//!   laesst sich nachspielen, was ein Zwischenspeicher bestimmter Groesse
+//!   und Ordnung getroffen haette.
+//! - `--vorhersage` schreibt je Token dieselbe Form, aber je Ebene die
+//!   vorhergesagten Experten der **naechsten** Ebene (die staerksten
+//!   zuerst, siehe `IntegerModel::naechste_wahl`); die letzte Ebene bleibt
+//!   leer.
 
 use integer_llm_runtime::kv_cache::KVCache;
 use integer_llm_runtime::loader::load_model;
 use integer_llm_runtime::tokenizer::Tokenizer;
 
 fn main() {
-    let args: Vec<String> = std::env::args().collect();
+    let alle_args: Vec<String> = std::env::args().collect();
+    // Die Schalter mit Wert heraus, der Rest bleibt in seiner Reihenfolge.
+    let mut args = Vec::new();
+    let mut profil_ort: Option<String> = None;
+    let mut spur_ort: Option<String> = None;
+    let mut vorhersage_ort: Option<String> = None;
+    let mut i = 0;
+    while i < alle_args.len() {
+        match alle_args[i].as_str() {
+            "--profil" | "--spur" | "--vorhersage" => {
+                let Some(w) = alle_args.get(i + 1) else {
+                    eprintln!("{} braucht einen Wert", alle_args[i]);
+                    std::process::exit(1);
+                };
+                match alle_args[i].as_str() {
+                    "--profil" => profil_ort = Some(w.clone()),
+                    "--spur" => spur_ort = Some(w.clone()),
+                    _ => vorhersage_ort = Some(w.clone()),
+                }
+                i += 2;
+            }
+            _ => {
+                args.push(alle_args[i].clone());
+                i += 1;
+            }
+        }
+    }
     if args.len() < 3 {
-        eprintln!("Usage: expertenprobe <artefakt> <text> [neue_token]");
+        eprintln!("Usage: expertenprobe <artefakt> <text> [neue_token] [--profil <datei>] [--spur <datei>]");
         std::process::exit(1);
     }
     let dir = std::path::PathBuf::from(&args[1]);
@@ -50,10 +88,31 @@ fn main() {
     let mut besuche: u64 = 0;
     let mut logits = vec![0i32; model.vocab_size];
     let mut pos = 0usize;
+    // Je Token eine Zeile der Spur, nur wenn verlangt.
+    let mut spur: Vec<String> = Vec::new();
+    let mit_spur = spur_ort.is_some();
+    let mut vorhersage: Vec<String> = Vec::new();
+    let mit_vorhersage = vorhersage_ort.is_some();
 
     let aufnehmen = |befunde: Vec<integer_llm_runtime::model::Routingbefund>,
                          zaehler: &mut Vec<Vec<u32>>,
-                         besuche: &mut u64| {
+                         besuche: &mut u64,
+                         spur: &mut Vec<String>,
+                         vorhersage: &mut Vec<String>| {
+        if mit_vorhersage {
+            let zeile: Vec<String> = befunde
+                .iter()
+                .map(|b| b.naechste.iter().map(|e| e.to_string()).collect::<Vec<_>>().join(","))
+                .collect();
+            vorhersage.push(zeile.join(";"));
+        }
+        if mit_spur {
+            let zeile: Vec<String> = befunde
+                .iter()
+                .map(|b| b.experten.iter().map(|e| e.to_string()).collect::<Vec<_>>().join(","))
+                .collect();
+            spur.push(zeile.join(";"));
+        }
         for b in befunde {
             while zaehler.len() <= b.layer {
                 zaehler.push(Vec::new());
@@ -72,15 +131,30 @@ fn main() {
     for &tid in &ids {
         let (l, befunde) = model.forward_token_mit_routing(tid, pos, &mut cache);
         logits = l;
-        aufnehmen(befunde, &mut zaehler, &mut besuche);
+        aufnehmen(befunde, &mut zaehler, &mut besuche, &mut spur, &mut vorhersage);
         pos += 1;
     }
     for _ in 0..neue {
         let next = model.greedy_next(&logits);
         let (l, befunde) = model.forward_token_mit_routing(next, pos, &mut cache);
         logits = l;
-        aufnehmen(befunde, &mut zaehler, &mut besuche);
+        aufnehmen(befunde, &mut zaehler, &mut besuche, &mut spur, &mut vorhersage);
         pos += 1;
+    }
+
+    if let Some(ort) = &profil_ort {
+        let modell = dir.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        let json = serde_json::json!({ "modell": modell, "token": ids.len() + neue, "zaehler": zaehler });
+        std::fs::write(ort, json.to_string()).expect("Profil schreiben");
+        eprintln!("[expertenprobe] Profil: {ort}");
+    }
+    if let Some(ort) = &vorhersage_ort {
+        std::fs::write(ort, vorhersage.join("\n") + "\n").expect("Vorhersage schreiben");
+        eprintln!("[expertenprobe] Vorhersage: {ort} ({} Token)", vorhersage.len());
+    }
+    if let Some(ort) = &spur_ort {
+        std::fs::write(ort, spur.join("\n") + "\n").expect("Spur schreiben");
+        eprintln!("[expertenprobe] Spur: {ort} ({} Token)", spur.len());
     }
 
     let ebenen = zaehler.len();

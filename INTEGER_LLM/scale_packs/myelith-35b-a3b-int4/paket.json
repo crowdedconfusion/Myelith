@@ -1,0 +1,15 @@
+{
+  "theta_v": "0.22.0",
+  "dateien": [
+    "theta_v.json"
+  ],
+  "bytes": 262,
+  "artefakt_digest_sha256": "a2a320f608129473174211975d2b032672a11f7862fb504026064d6ae781061a",
+  "digest_ueber": [
+    "theta_v.json",
+    "model_config.json",
+    "tokenizer.json"
+  ],
+  "weights_manifest_sha256": "b372bfc58bf643e92600c8417392102feb4680819df3a3e064886c18d46b4f38",
+  "abgeleitet_von": "myelith-35b-a3b"
+}

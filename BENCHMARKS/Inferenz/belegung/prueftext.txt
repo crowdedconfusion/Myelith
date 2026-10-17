@@ -1,0 +1,145 @@
+User: Please run the node tests and tell me what failed.
+Assistant: {"name": "run_shell", "arguments": {"command": "cargo test --offline", "cwd": "NODE/myl-node"}}
+
+# NODE, der Myelith-Knoten
+
+> **Version:** 0.48.7
+> **Datum:** 2026-10-14
+> **Status:** Netzknoten lauffähig, Blockproduktion mit **Persistenz über
+> Neustarts**, BFT-Runden über das Netz mit Rundenwechsel, und seit dem
+> 1. September **schließt der Knoten die Epoche selbst ab**.
+> **251 Tests grün.**
+>
+> ⚑ **Seit dem 27. August sind Blockhöhe und Epoche zwei Dinge.** Die
+> Probekette schrieb ihre Höhe in das Epochenfeld des Blockkopfs; das
+> trug, solange eine Epoche ein Block war. Jede Frist „je Epoche"
+> bedeutete damit in Wahrheit „je Block".
+
+## Aufgabe
+
+Die Verdrahtung, die aus den Protokoll-Bibliotheken ein laufendes
+Programm macht: Identität, Konfiguration, Netzanbindung über `myl-net`
+(L0), Nutzlastprüfung gegen `myl-consensus` (L1) und ein
+Betriebsprotokoll für die nachträgliche Fehlersuche.
+
+## ⚑ Der Probelauf ist nicht das Testnetz
+
+Steht hier oben, weil eine Verwechslung teuer wäre. Was der Knoten heute
+fährt, ist eine **Trockenübung des Codes**: Der Zustand ist Wegwerfware,
+jeder Start beginnt bei null, die MYL sind Spielgeld, und der Startwert
+der Probekette lautet im Klartext `MYELITH-PROBELAUF-KEIN-TESTNETZ`.
+**Ein Probeblock kann deshalb niemals an eine echte Kette anschließen**,
+und ein Test hält das fest.
+
+Wann das Testnetz beginnt, entscheidet das Projekt und nicht der
+Umstand, dass dieser Code läuft.
+
+## Warum es diese Komponente gibt
+
+Bis zum 2026-08-24 hatte das Projekt dreizehn Komponenten, rund 1500
+Tests und **kein Programm, das einen Myelith-Knoten startet**. `myl-net`
+hatte im ganzen Repositorium **keinen einzigen Abnehmer**: Der Testclient
+hängt an neun Crates, an der Netzschicht nicht.
+
+Das ist keine Ordnungsfrage, sondern die Ursache einer ganzen Fundklasse.
+**Fund 52** (der Vergütungspfad war unbenutzbar), **Fund 55** (der
+dokumentierte Prüf-Einstieg war über die Laufzeit nicht erreichbar),
+**Fund 56** (ein Relais ohne eigene Adresse antwortet ins Leere) und
+**Fund 57** (die Formprüfung für Blöcke filtert kaum) haben eines
+gemeinsam: Sie wurden sichtbar, als jemand die Teile zusammensteckte.
+Eine Naht, die niemand belastet, hält alles aus.
+
+## Was der Knoten heute ist, und was nicht
+
+**Ist:** ein Netzknoten. Er findet Gegenstell
+
+//! Ein [`Modellweg`], der das Modell auf **derselben Maschine** rechnet.
+//!
+//! # ⚑ Damit laeuft der Agent ohne Netz
+//!
+//! Bis zum 2026-09-08 brauchte die Agentenschleife die Tuer eines
+//! Knotens. Sie braucht sie weiterhin, wenn sie bezahlte, geprüfte
+//! Arbeit will; fuer den eigenen Rechner genuegt dieses hier.
+
+use std::path::Path;
+use std::sync::Arc;
+
+use integer_llm_runtime::generate::{dekodieren_fortgesetzt, Denkgrenze, Erzeugung, Fortsetzung, Ziehparameter};
+use integer_llm_runtime::loader::load_model;
+use integer_llm_runtime::model::IntegerModel;
+use integer_llm_runtime::tokenizer::Tokenizer;
+use myl_local_agent::{Antwort, Modellweg, Nachricht, Tuerfehler};
+
+/// Welche Form ein Artefakt versteht.
+///
+/// # 📌 Warum das nicht der Client entscheidet (2026-09-08)
+///
+/// Der erste Anlauf setzte ChatML fuer alles, mit der Begruendung, es
+/// sei „die richtige" Vorlage. **Der Ende-zu-Ende-Test hat das
+/// widerlegt:** Qwen2.5-0,5B echote die Frage und lieferte Unsinn.
+///
+/// ⚑ **Der Grund stand im Modellkatalog.** Die Artefakte stammen aus
+/// `Qwen/Qwen2.5-0.5B` und `Qwen/Qwen2.5-7B`, also aus den
+/// **Basis**repositorien. Ein Basismodell ist auf Textfortsetzung
+/// trainiert und hat Rollenmarken nie gesehen; es setzt sie als
+/// gewoehnlichen Text fort. Bei **Qwen3** ist es umgekehrt: Dort ist
+/// die Fassung ohne Zusatz die instruktionsgeschliffene, das
+/// Basismodell hiesse `-Base`.
+///
+/// ⚑ **Deshalb haengt die Vorlage am Artefakt und nicht an einer
+/// Einstellung.** Eine Einstellung kann jemand falsch setzen; eine
+/// Eigenschaft des Modells nicht.
+///
+/// 📌 **Und eine Luecke, die offen bleibt:** Kaeme eine Instruct-Fassung
+/// von Qwen2.5 dazu, traeffe die Ableitung aus der Familie das Falsche.
+/// Dann braucht der Katalog ein eigenes Feld. Bis dahin ist die
+/// Herleitung richtig und die Grenze benannt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Vorlage {
+    /// Rollenmarken, wie ein instruktionsgeschliffenes Modell sie kennt.
+    ChatMl,
+    /// ChatML, aber die Aufforderung **oeffnet den Denkblock**.
+    ///
+    /// ⚑ **Der Unterschied ist eine Zeile und entscheidet alles**
+    /// (Fund 425). Qwen3 schreibt `<think>` selbst, sobald es dran ist;
+    /// die Vorlage des Qwen3.6 stellt es dagegen in die Aufforderung,
+    /// das Modell setzt also **innerhalb** des Blocks fort und schreibt
+    /// die Marke nicht mehr. Wer sie weglaesst, laesst das Modell auf
+    /// einer Form antworten, die seine Vorlage nie erzeugt.
+    ///
+    /// ⚠️ **Eine eigene Variante und kein Schalter an `ChatMl`**, damit
+    /// die Form fuer Qw
+
+# Myelith einrichten
+
+Ein Skript je System. Es **prüft zuerst, baut dann** und legt die
+Programme ab. **Netz braucht es dafür nicht:** Alle Rust-Abhängigkeiten
+liegen im Klon.
+
+## Auf einen Blick
+
+| System | Einmal vorher | Dann |
+|---|---|---|
+| **macOS** | `xcode-select --install` und [rustup](https://rustup.rs) | `sh SYSTEM/install/installieren-macos.sh` |
+| **Linux mit Nix, NixOS** | `nix` | `sh SYSTEM/install/installieren-nixos.sh` |
+| **Windows** (PowerShell) | Rust, die C++-Buildwerkzeuge von Visual Studio, Python (Befehle unten) | `.\SYSTEM\install\installieren-windows.ps1` |
+
+Aufgerufen wird aus der Wurzel des Klons. Jedes Skript findet den Klon
+über seinen eigenen Ort, ein anderes Verzeichnis geht also auch.
+
+**Danach sind fünf Programme da:**
+
+| Programm | wofür |
+|---|---|
+| `myelith` | der Agent in der Konsole: in ein Verzeichnis gehen, `myelith` tippen |
+| `myl` | das Bedieninstrument: `myl frage`, `myl agent`, `myl einstellungen`, `myl sinne` |
+| `myl-oberflaeche` | das Fenster, unter macOS zusätzlich `Myelith.app` |
+| `myl-node` | der Knoten |
+| `myl-test` | der Testclient für Hardware- und Determinismusläufe |
+
+Welche Programme das sind, sagen die Kisten selbst (`ausliefern` unter
+`[package.metadata.myelith]` in ihrer `Cargo.toml`); kein Skript führt
+eine eigene Liste.
+
+⚠️ **Ein Modell ist danach noch nicht da.** Ein Klon enthält keine
+Gewichte, dafür sind sie 

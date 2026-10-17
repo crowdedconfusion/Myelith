@@ -117,6 +117,14 @@ pub struct WeightManifestEntry {
     /// SHA-256 der Betragsdatei.
     #[serde(default)]
     pub betraege_hash: Option<String>,
+    /// Nur fuer Vierbittensoren ([`VIERBIT_DTYPE`]): die Datei mit Schritt
+    /// und Versatz je Gruppe von 128, zwei Byte. `file` traegt dann die
+    /// Codes.
+    #[serde(default)]
+    pub gitter_file: Option<String>,
+    /// SHA-256 der Gitterdatei.
+    #[serde(default)]
+    pub gitter_hash: Option<String>,
     /// Nur fuer gedrehte Tensoren: die Datei mit den Vorzeichen der
     /// Eingangsdrehung (int8, +1 oder -1 je Eingang). Die Skala der
     /// gedrehten Eingabe steht in `scales.json` unter `<name>.drehung`.
@@ -136,6 +144,23 @@ pub struct WeightManifestEntry {
 /// gepackt ist; θ_v beschreibt die Rechnung, und die bleibt. Was sich
 /// aendert, ist das Artefakt und damit sein `weights_hash`.
 pub const TERNAER_DTYPE: &str = "ternaer_g128";
+
+/// Der `dtype` eines Vierbittensors: ein Code von 0 bis 15 je Gewicht,
+/// dazu ganzer Schritt und Versatz je Gruppe von 128 (Format in
+/// `integer_llm_kernels::vierbit`).
+///
+/// ⚑ **Wie [`TERNAER_DTYPE`] eine Speicherform, keine neue Rechnung.** Jede
+/// Zeile ergibt dieselbe ganze Zahl wie das int8-Gewicht, aus dem sie
+/// gepackt ist; θ_v bleibt, das Artefakt und sein `weights_hash` aendern
+/// sich.
+pub const VIERBIT_DTYPE: &str = "vierbit_g128";
+
+/// **Welche Tensoren vier Bit sein duerfen**: dieselben wie ternaer, ohne
+/// den Kopf. Dessen Weg liest int16 oder ternaer (`Kopfdaten`), und einen
+/// Vierbitkopf gibt es nicht.
+pub fn vierbit_zulaessig(name: &str) -> bool {
+    name != "lm_head" && name != "lm_head_weight" && ternaer_zulaessig(name)
+}
 
 /// **Welche Tensoren ternaer sein duerfen**: die, deren Rechenwege
 /// [`crate::model::QTensor::matrix`] lesen.
@@ -1053,6 +1078,9 @@ fn eintrag_laden(
     if entry.dtype == TERNAER_DTYPE {
         return ternaer_laden(artifact_dir, name, entry, pruefen);
     }
+    if entry.dtype == VIERBIT_DTYPE {
+        return vierbit_laden(artifact_dir, name, entry, pruefen);
+    }
     // INT16-Tensoren: der LM-Head (spec-Ausnahme 0.6.0) und seit
     // theta_v 0.13.0 die Attention-Biases (Fund 23, siehe BiasTensor).
     if entry.dtype == "int16" {
@@ -1456,6 +1484,70 @@ fn ternaer_laden(artifact_dir: &Path, name: String, entry: WeightManifestEntry, 
     Ok(Geladen::Gewicht(name, LoadedWeight {
         tensor: QTensor {
             data: std::sync::Arc::new(crate::model::Gewichtsdaten::Ternaer(Box::new(daten))),
+            shape: entry.shape,
+            shifts,
+            drehung,
+        },
+        original_name: entry.original_name,
+        scale: entry.scale,
+    }))
+}
+
+/// Laedt einen Vierbittensor ([`VIERBIT_DTYPE`]).
+///
+/// ⚑ **Die Shifts sind Pflicht**, einer je Zeile wie beim int8-Gewicht, aus
+/// dem der Tensor gepackt ist; ohne sie waere es nicht mehr dieselbe Zahl.
+fn vierbit_laden(artifact_dir: &Path, name: String, entry: WeightManifestEntry, pruefen: bool) -> Result<Geladen, String> {
+    if !vierbit_zulaessig(&name) {
+        return Err(format!(
+            "{name}: vier Bit ist nur fuer die Projektionen dichter Ebenen ({}) und die gerouteten \
+             Experten ({}) zulaessig; der Rechenweg dieses Tensors liest int8",
+            TERNAER_ZULAESSIG.join(", "),
+            TERNAER_ZULAESSIG_EXPERTE.join(", ")
+        ));
+    }
+    if entry.shape.len() != 2 {
+        return Err(format!("{name}: vier Bit erwartet eine Matrix, shape {:?}", entry.shape));
+    }
+    let (zeilen, spalten) = (entry.shape[0], entry.shape[1]);
+    let gitter_file = entry
+        .gitter_file
+        .as_deref()
+        .ok_or_else(|| format!("{name}: Vierbiteintrag ohne gitter_file"))?;
+    let gitter_hash = entry
+        .gitter_hash
+        .as_deref()
+        .ok_or_else(|| format!("{name}: Vierbiteintrag ohne gitter_hash"))?;
+    let shifts_file = entry
+        .shifts_file
+        .as_deref()
+        .ok_or_else(|| format!("{name}: Vierbiteintrag ohne shifts_file"))?;
+
+    let codes = abbild_geprueft(artifact_dir, &name, &entry.file, &entry.hash, pruefen)?;
+    let gitter = abbild_geprueft(artifact_dir, &name, gitter_file, gitter_hash, pruefen)?;
+    let shifts = std::fs::read(artifact_dir.join(shifts_file))
+        .map_err(|e| format!("{name}: Fehler beim Lesen von {shifts_file}: {e}"))?;
+    if shifts.len() != zeilen {
+        return Err(format!("{name}: {} Shifts in '{shifts_file}', aber {zeilen} Zeilen erwartet", shifts.len()));
+    }
+    if let Some(soll) = &entry.shifts_hash {
+        let ist = sha256_hex(&shifts);
+        if ist != *soll {
+            return Err(format!("{name}: SHA-256 der Shifts-Datei {ist} stimmt nicht mit Manifest-Hash {soll} ueberein"));
+        }
+    }
+    let daten = crate::model::Vierbitdaten::neu(
+        crate::model::Gewichtsdaten::Abbild(codes),
+        crate::model::Gewichtsdaten::Abbild(gitter),
+        zeilen,
+        spalten,
+    )
+    .map_err(|e| format!("{name}: {e}"))?;
+    let drehung = vorzeichen_laden(artifact_dir, &name, &entry, spalten)?
+        .map(|v| std::sync::Arc::new(crate::model::Drehung { vorzeichen: v, frac: 0 }));
+    Ok(Geladen::Gewicht(name, LoadedWeight {
+        tensor: QTensor {
+            data: std::sync::Arc::new(crate::model::Gewichtsdaten::Vierbit(Box::new(daten))),
             shape: entry.shape,
             shifts,
             drehung,
@@ -2168,6 +2260,7 @@ pub fn build_model(
                 });
             }
             Feedforward::Moe(MoeLayer {
+                wahl: crate::model::Wahlzaehler::neu(dims.num_experts),
                 // ⚑ **Der geteilte Experte, falls das Modell einen hat.**
                 // Er haengt an `shared_expert_intermediate_size`; null
                 // heisst „keiner", und das gilt fuer jedes Gemisch vor
@@ -2327,6 +2420,7 @@ pub fn build_model(
         inv_n_q20: integer_llm_kernels::rmsnorm::inv_n_q20(dims.hidden_size),
         activation_scales: scales,
         config,
+        vorladen: std::sync::atomic::AtomicUsize::new(0),
     };
 
     Ok(model)
@@ -2510,6 +2604,97 @@ mod tests {
         let daten = t.data.clone();
         assert!(std::panic::catch_unwind(move || daten[0]).is_err(), "als int8 gelesen, ohne Panik");
 
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Schreibt eine Vierbitmatrix gepackt ins Verzeichnis und gibt den
+    /// Manifesteintrag und die ungepackten Werte zurueck.
+    fn vierbit_eintrag(dir: &Path, stamm: &str, zeilen: usize, spalten: usize) -> (serde_json::Value, Vec<i8>) {
+        let mut x = 0x51ED_2701_u64;
+        let (mut a, mut b) = (1i32, 0i32);
+        let werte: Vec<i8> = (0..zeilen * spalten)
+            .map(|i| {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                if i % 128 == 0 {
+                    a = [1i32, 7, 16][(x % 3) as usize];
+                    b = -127 + ((x >> 8) % (255 - 15 * a) as u64) as i32;
+                }
+                (a * ((x >> 20) % 16) as i32 + b) as i8
+            })
+            .collect();
+        let p = integer_llm_kernels::vierbit::packen(&werte, spalten).expect("vierbittig");
+        let shifts: Vec<u8> = (0..zeilen).map(|z| 6 + z as u8).collect();
+        fs::write(dir.join(format!("{stamm}.codes.bin")), &p.codes).unwrap();
+        fs::write(dir.join(format!("{stamm}.gitter.bin")), &p.gitter).unwrap();
+        fs::write(dir.join(format!("{stamm}_shifts.bin")), &shifts).unwrap();
+        let e = serde_json::json!({
+            "original_name": format!("{stamm}.weight"),
+            "file": format!("{stamm}.codes.bin"),
+            "hash": sha256_hex(&p.codes),
+            "gitter_file": format!("{stamm}.gitter.bin"),
+            "gitter_hash": sha256_hex(&p.gitter),
+            "shifts_file": format!("{stamm}_shifts.bin"),
+            "shifts_hash": sha256_hex(&shifts),
+            "shape": [zeilen, spalten],
+            "scale": -1.0,
+            "shift": -1,
+            "dtype": VIERBIT_DTYPE,
+        });
+        (e, werte)
+    }
+
+    /// **Ein Vierbitexperte laedt und rechnet jede Zeile wie int8**, und
+    /// wer ihn als int8 lesen will, bekommt eine Panik statt Bytes.
+    #[test]
+    fn ein_vierbittensor_laedt_und_rechnet_wie_int8() {
+        let dir = test_dir("vierbit-roundtrip");
+        let name = "model_layers_2_mlp_experts_17_down_proj";
+        let (e, werte) = vierbit_eintrag(&dir, name, 3, 384);
+        write_manifest(&dir, &format!("{name}_weight"), e);
+
+        let loaded = load_weights(&dir).expect("Laden erfolgreich");
+        let t = &loaded.weights[&format!("{name}_weight")].tensor;
+        assert!(t.ist_vierbit() && !t.ist_ternaer());
+        assert_eq!(t.shifts, vec![6, 7, 8]);
+        let x: Vec<i16> = (0..384).map(|i| (i * 977 % 65536) as u16 as i16).collect();
+        for z in 0..3 {
+            let soll = integer_llm_kernels::dot::dot_i8_i16(&werte[z * 384..(z + 1) * 384], &x);
+            let m = t.matrix();
+            assert_eq!(m.zeile_mal(z, 384, &m.eingabe(&x)), soll, "Zeile {z}");
+        }
+        let daten = t.data.clone();
+        assert!(std::panic::catch_unwind(move || daten[0]).is_err(), "als int8 gelesen, ohne Panik");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    /// **Vier Bit nur an der Liste**, und nie fuer den Kopf; eine
+    /// veraenderte Gitterdatei faellt an ihrer Pruefsumme auf.
+    #[test]
+    fn vierbit_ist_nur_an_der_liste_zulaessig_und_geprueft() {
+        assert!(vierbit_zulaessig("model_layers_39_mlp_experts_255_up_proj_weight"));
+        assert!(vierbit_zulaessig("model_layers_0_self_attn_q_proj_weight"));
+        assert!(!vierbit_zulaessig("lm_head") && !vierbit_zulaessig("lm_head_weight"));
+        assert!(!vierbit_zulaessig("model_layers_3_mlp_shared_expert_gate_proj_weight"));
+
+        let dir = test_dir("vierbit-kopf");
+        let (e, _) = vierbit_eintrag(&dir, "lm_head", 2, 128);
+        write_manifest(&dir, "lm_head", e);
+        let Err(fehler) = load_weights(&dir) else { panic!("ein Vierbitkopf wird abgewiesen") };
+        assert!(fehler.to_string().contains("vier Bit ist nur"), "{fehler}");
+        fs::remove_dir_all(&dir).ok();
+
+        let dir = test_dir("vierbit-gitter");
+        let name = "model_layers_1_mlp_experts_3_gate_proj";
+        let (e, _) = vierbit_eintrag(&dir, name, 2, 128);
+        write_manifest(&dir, &format!("{name}_weight"), e);
+        let pfad = dir.join(format!("{name}.gitter.bin"));
+        let mut g = fs::read(&pfad).unwrap();
+        g[0] ^= 1;
+        fs::write(&pfad, &g).unwrap();
+        let Err(fehler) = load_weights(&dir) else { panic!("ein veraendertes Gitter faellt auf") };
+        assert!(fehler.to_string().contains("gitter.bin"), "{fehler}");
         fs::remove_dir_all(&dir).ok();
     }
 
@@ -3792,11 +3977,49 @@ mod tests {
                     .map(|b| (0..breite).map(|i| ((b * 37 + i * 11) % 61) as i16 * 97 - 2900).collect())
                     .collect();
                 let normen: Vec<&[i16]> = eingaben.iter().map(Vec::as_slice).collect();
+                let _ = moe.wahl.abholen();
                 let gruppiert = model.moe_gruppiert(moe, &normen, sc, &model.config, &acc);
+                let wahl_gruppiert = moe.wahl.abholen();
                 for (b, x) in normen.iter().enumerate() {
                     let einzeln = model.moe_vorwaerts(moe, x, sc, &model.config, &acc, None, 0, None);
                     assert_eq!(gruppiert[b], einzeln, "{name}: {n} Token, Token {b}");
                 }
+                // ⚑ **Beide Wege zaehlen dieselbe Wahl**, je Token `top_k`.
+                let wahl_einzeln = moe.wahl.abholen();
+                assert_eq!(wahl_gruppiert, wahl_einzeln, "{name}: {n} Token zaehlen verschieden");
+                assert_eq!(wahl_einzeln.iter().sum::<u32>() as usize, n * moe.top_k, "{name}: {n} Token");
+            }
+            fs::remove_dir_all(&dir).ok();
+        }
+    }
+
+    /// ⚑ **Rechnen, waehrend geladen wird, rechnet dasselbe**: die Haelfte
+    /// der Experten zuerst, die andere danach, gemischt in der Reihenfolge
+    /// der Wahl, Bit fuer Bit wie in einem Durchgang; mit und ohne geteilten
+    /// Experten. Gegenprobe: vertauschte Haelften werden rot. ⚠️ Die Vorlage
+    /// waehlt 2 von 6 Experten, jede Haelfte hat also einen; eine falsche
+    /// Reihenfolge **innerhalb** einer Haelfte faellt hier nicht auf.
+    #[test]
+    fn das_geteilte_gemisch_ist_das_ungeteilte() {
+        for (name, tor) in [("geteilt-moe", false), ("geteilt-geteilt", true)] {
+            let dir = test_dir(name);
+            write_full_fixture_mit_tor(&dir, true, false, Some((6usize, 2usize, 3usize)), tor);
+            gewichte_verrauschen(&dir, 0x5eed_1015);
+            skalen_je_kanal_streuen(&dir);
+            let model = load_model(&dir).expect("Artefakt muss laden");
+            let layer = &model.layers[0];
+            let crate::model::Feedforward::Moe(moe) = &layer.ffn else {
+                panic!("{name}: die Vorlage hat kein Gemisch");
+            };
+            let sc = &layer.scales;
+            let acc = sc.residual_mid_frac.clone();
+            for b in 0..12usize {
+                let x: Vec<i16> = (0..model.hidden_size).map(|i| ((b * 41 + i * 13) % 59) as i16 * 101 - 2900).collect();
+                let ganz = model.moe_vorwaerts(moe, &x, sc, &model.config, &acc, None, 0, None);
+                crate::model::TEILUNG_ERZWINGEN.with(|t| t.set(true));
+                let geteilt = model.moe_vorwaerts(moe, &x, sc, &model.config, &acc, None, 0, None);
+                crate::model::TEILUNG_ERZWINGEN.with(|t| t.set(false));
+                assert_eq!(ganz, geteilt, "{name}: Eingabe {b}");
             }
             fs::remove_dir_all(&dir).ok();
         }

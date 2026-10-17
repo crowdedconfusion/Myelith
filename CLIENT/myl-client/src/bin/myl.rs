@@ -52,6 +52,8 @@ myl: lokaler Betrieb von Myelith
   myl skills [neu NAME]           Skills: wo sie liegen, was da ist; neu legt einen aus der Vorlage an
   myl anhaenge [--aufraeumen]     Angehaengte Dateien: was liegt, und weg damit
   myl sinne [datei|--sprich TEXT] Sehen, Hoeren, Sprechen: was geht, und eine Probe
+  myl plan [artefakt]             Wie der Dispatcher diese Maschine belegen wuerde: Agent, Sehen, Hoeren
+  myl eichen [artefakt]           Misst, was Agent, Sehen und Hoeren hier wirklich belegen (fuer den Plan)
   myl kennzeichen <datei.wav>     Prueft, ob eine Tondatei als KI-erzeugt gekennzeichnet ist
   myl protokoll [anzahl]          Die juengsten Handlungen des Agenten (ohne Klartext, 30 Tage)
   myl verlauf [<von> <bis>]       Der Mitschnitt: Uebersicht oder Zeilen
@@ -59,6 +61,8 @@ myl: lokaler Betrieb von Myelith
                                   Der Schlaf jetzt: Gedaechtnis des Ordners ordnen, Vorhaben vordenken
   myl gedaechtnis [ordner] [suchtext] [--vergessen NR] [--auftrag TEXT]
                                   Das Gedaechtnis des Ordners: was es weiss, Suche, eine Erinnerung vergessen
+  myl mining [start [--ort PFAD] [--volumen GIB] [--kerne N] [--gewichte]|stop]
+                                  Mining im Probelauf: Stand, starten (Knoten laeuft weiter), beenden
   myl einstellungen               Zeigt die Einstellungen
   myl setzen <feld> <wert>        Aendert eine Einstellung
 
@@ -180,9 +184,12 @@ fn myl_hauptteil(args: &[String]) -> i32 {
         Some("skills") => skills(&args[2..]),
         Some("anhaenge") => anhaenge(&args[2..]),
         Some("sinne") => sinne(&args[2..]),
+        Some("plan") => plan_befehl(&args[2..]),
+        Some("eichen") => eichen_befehl(&args[2..]),
         Some("kennzeichen") => kennzeichen(&args[2..]),
         Some("protokoll") => protokoll(&args[2..]),
         Some("setzen") => setzen(&args[2..]),
+        Some("mining") => mining(&args[2..]),
         // Die Hilfe ist hier eine Antwort und kein Fehler: Sie geht nach
         // stdout und gibt null zurueck.
         None | Some("--hilfe") | Some("-h") | Some("--help") | Some("hilfe") => {
@@ -203,6 +210,101 @@ fn myl_hauptteil(args: &[String]) -> i32 {
             2
         }
     }
+}
+
+/// **`myl mining`**: Stand, Start, Ende.
+///
+/// ⚑ **Von hier gestartet laeuft der Knoten weiter**, wenn `myl` endet:
+/// Das ist der Weg fuer eine Maschine ohne Oberflaeche. Konsole und Fenster
+/// beenden dagegen den Knoten, den sie gestartet haben, mit sich.
+fn mining(args: &[String]) -> i32 {
+    use myl_client::mining;
+    let wert = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned();
+    match args.first().map(String::as_str) {
+        None | Some("status") => match mining::zustand() {
+            Some(mut z) => match mining::stand(&mut z) {
+                Ok(s) => {
+                    let jetzt = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_millis() as u64)
+                        .unwrap_or(0);
+                    for zeile in mining::zusammenfassung(&z, &s, jetzt) {
+                        println!("{zeile}");
+                    }
+                    0
+                }
+                Err(f) => {
+                    eprintln!("myl mining: der Knoten antwortet nicht: {f}");
+                    1
+                }
+            },
+            None => {
+                println!("Mining läuft nicht.");
+                0
+            }
+        },
+        Some("start") => {
+            let e = Einstellungen::lesen(&Einstellungen::vorgabepfad()).unwrap_or_default();
+            let orte = match myl_store_orte() {
+                Ok(o) => o,
+                Err(f) => {
+                    eprintln!("myl mining: {f}");
+                    return 1;
+                }
+            };
+            let platten = mining::platten();
+            let hw = myl_client::hardware::erheben(&myl_local_agent::ort::datenort());
+            let werke = mining::werke(&hw, e.oberflaeche.sprache);
+            let mut f = mining::Freigabe::vorschlag(&e, &orte, &platten, hw.kerne.max(1) as u32, &werke);
+            if let Some(o) = wert("--ort") {
+                let p = std::path::PathBuf::from(o);
+                f.platte = p.parent().map(std::path::Path::to_path_buf).unwrap_or_default();
+                f.ordner = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            }
+            if let Some(v) = wert("--volumen").and_then(|v| v.parse().ok()) {
+                f.volumen_gib = v;
+            }
+            if let Some(k) = wert("--kerne").and_then(|v| v.parse().ok()) {
+                f.kerne = k;
+            }
+            if args.iter().any(|a| a == "--gewichte") {
+                f.gewichte = true;
+            }
+            match mining::starten(&f, "myl") {
+                Ok(z) => {
+                    println!("Mining läuft: Knoten {} unter {}, {} zugesagt.", z.pid, z.pfad.display(), mining::groesse_text(z.volumen_bytes));
+                    0
+                }
+                Err(f) => {
+                    eprintln!("myl mining: {f}");
+                    1
+                }
+            }
+        }
+        Some("stop") => match mining::beenden() {
+            Ok(true) => {
+                println!("Mining beendet.");
+                0
+            }
+            Ok(false) => {
+                println!("Mining lief nicht.");
+                0
+            }
+            Err(f) => {
+                eprintln!("myl mining: {f}");
+                1
+            }
+        },
+        Some(anders) => {
+            eprintln!("myl mining: unbekannt `{anders}`; status, start oder stop.");
+            2
+        }
+    }
+}
+
+/// Die Speicherorte aus ihrer Datei.
+fn myl_store_orte() -> Result<myl_client::mining::Speicherorte, String> {
+    myl_client::mining::Speicherorte::lesen(&myl_client::mining::speicherorte_pfad()).map_err(|e| e.to_string())
 }
 
 /// 📌 **Der Freitext ohne Schalter UND ohne deren Werte.**
@@ -453,9 +555,11 @@ fn uebersicht(e: &Einstellungen, kerne: usize) -> Vec<String> {
 /// Maschine mit GPU eine leere Liste gewesen. **Eine Anzeige, die den
 /// Normalfall verschweigt, zeigt nur die Ausnahme.**
 fn rechenwerkzeilen(e: &Einstellungen) -> Vec<String> {
+    use myl_client::hardware::Freigabemaske;
     let h = myl_client::hardware::Hardware {
         kerne: 0,
         speicher_bytes: None,
+        speicher_frei_bytes: None,
         platte: None,
         rechenwerke: myl_client::hardware::Hardware::rechenwerke(),
     };
@@ -591,6 +695,274 @@ fn kennzeichen(args: &[String]) -> i32 {
 /// „alles da", und ein Werkzeug, das dann doch nicht laeuft, waeren zwei
 /// Auskuenfte; hier ist es dieselbe. **Der kuerzeste Weg von der
 /// Behauptung zum Beleg.**
+/// **Wie der Dispatcher diese Maschine belegen wuerde**, mit den
+/// Einstellungen, wie sie sind: das eingestellte (oder genannte) Artefakt,
+/// der Arbeitskontext, die Freigabe des Besitzers und die Sinne, die
+/// gefunden werden.
+///
+/// ⚑ **Ein Trockenlauf**: Nichts wird geladen oder gesetzt. Gemeint ist die
+/// Maschine **ohne** die geplanten Lasten; laeuft schon ein Modell, ist
+/// sein Speicher nicht frei, und der Plan faellt knapper aus.
+///
+/// Rueckgabe 0 mit einem Plan (auch einem, der etwas ablehnt), 1 wenn sich
+/// das Artefakt oder die Maschine nicht lesen laesst, 2 bei falschem Aufruf.
+fn plan_befehl(args: &[String]) -> i32 {
+    use myl_dispatcher::local::{bedarf, plan};
+    let e = Einstellungen::lesen(&Einstellungen::vorgabepfad()).unwrap_or_default();
+    let (artefakt, rest) = artefakt_und_rest(args, &e);
+    if let Some(x) = rest.first() {
+        eprintln!("myl plan: unerwartet: {x}");
+        return 2;
+    }
+    // Gemessen, falls `myl eichen` lief, sonst die Vorgaben.
+    let buch = myl_client::hardware::eichbuch();
+    let fremd = |name: &str, vorrang, bytes| plan::Last {
+        name: name.to_string(),
+        vorrang,
+        gewichte: plan::Gewichte::Fremd { bytes },
+        zuschlag_bytes: buch.zuschlag_fremd(name, bytes),
+        kontext_mindestens: 0,
+        kontext_soll: 0,
+        kerne_mindestens: 1,
+        profil: None,
+    };
+    let mut lasten = Vec::new();
+    match &artefakt {
+        Some(a) => match bedarf::Modellbedarf::aus_artefakt(std::path::Path::new(a)) {
+            Ok(b) => lasten.push(plan::Last {
+                name: b.name.clone(),
+                vorrang: plan::Vorrang::Agent,
+                // ⚑ Ohne Einstellung „die ganze Laenge, die das Modell kann“.
+                kontext_soll: e.modell.kontext.map_or(b.hoechstkontext, |k| k as u64),
+                kontext_mindestens: myl_client::einstellungen::KONTEXT_MINDESTENS as u64,
+                zuschlag_bytes: buch.zuschlag_eigen(&b),
+                // Das Profil, das der Betrieb auf dieser Maschine geschrieben hat.
+                profil: myl_client::hardware::expertenprofil(&b.name),
+                gewichte: plan::Gewichte::Eigen(b),
+                kerne_mindestens: 1,
+            }),
+            Err(f) => {
+                eprintln!("myl plan: {f}");
+                return 1;
+            }
+        },
+        None => eprintln!("myl plan: kein Artefakt eingestellt oder genannt; geplant werden nur die Sinne"),
+    }
+    let sinne = myl_senses::Sinne::finden();
+    if let Ok(s) = &sinne.sehen {
+        // Die genaue Sprosse: Sie ist die groessere, und der Werkzeugaufruf nimmt sie.
+        let z = s.fuer(myl_senses::Stufe::Genau);
+        if let Ok(bytes) = bedarf::fremd_aus_dateien(&[&z.modell, &z.projektor]) {
+            lasten.push(fremd("Sehen", plan::Vorrang::Vision, bytes));
+        }
+    }
+    if let Ok(h) = &sinne.hoeren {
+        if let Ok(bytes) = bedarf::fremd_aus_dateien(&[&h.modell]) {
+            lasten.push(fremd("Hören", plan::Vorrang::Sprache, bytes));
+        }
+    }
+    let h = myl_client::hardware::erheben(&myl_local_agent::ort::datenort());
+    let freigabe = plan::Freigabe {
+        kerne: e.kapazitaet.kerne,
+        ram_bytes: e.kapazitaet.speicher_gib.map(|g| u64::from(g) * myl_client::hardware::GIB),
+        karten_aus: e.kapazitaet.rechenwerke.iter().filter(|(_, p)| **p == 0).map(|(k, _)| k.clone()).collect(),
+    };
+    let regeln = plan::Regeln::default();
+    let angebot = match plan::Angebot::aus(&h, &freigabe, &regeln) {
+        Ok(a) => a,
+        Err(g) => {
+            eprintln!("myl plan: {g}");
+            return 1;
+        }
+    };
+    println!("{}", plan::bericht(&angebot, &lasten, &regeln, &plan::belegen(&angebot, &lasten, &regeln)));
+    0
+}
+
+/// **Misst, was Agent, Sehen und Hoeren auf dieser Maschine belegen**, und
+/// legt es im Eichbuch neben den Einstellungen ab
+/// ([`myl_client::hardware::eichbuch_pfad`]). Der Plan, die Schranke beim
+/// Laden und die Wache der Sinne lesen es dann statt der Vorgabe.
+///
+/// ⚑ **Mit den Wegen des Betriebs**: Der Agent ueber `myl frage`, Sehen
+/// und Hoeren ueber `myl sinne` mit einem kleinen Bild und einem kurzen Ton,
+/// die hier geschrieben werden. Was gemessen wird, ist also das, was spaeter
+/// laeuft, samt allem, was `myl` dazulegt.
+///
+/// ⚑ **Jede Messung in einem eigenen Prozess** (`myl eichen --einzeln`):
+/// Die Spitze kommt aus `RUSAGE_CHILDREN`, und die gilt fuer alle Kinder
+/// eines Prozesses; drei Messungen in einem saehen jede die Spitze der
+/// vorigen.
+///
+/// Rueckgabe 0, wenn mindestens eine Messung gelang und das Buch
+/// geschrieben ist; 1 sonst; 2 bei falschem Aufruf.
+fn eichen_befehl(args: &[String]) -> i32 {
+    use myl_dispatcher::local::eichung::{messen, Eichbuch, Eichung};
+    if args.first().map(String::as_str) == Some("--einzeln") {
+        let (Some(last), Some(kontext)) = (args.get(1), args.get(2).and_then(|k| k.parse().ok())) else {
+            eprintln!("myl eichen --einzeln <last> <kontext> -- <befehl>");
+            return 2;
+        };
+        let befehl: Vec<String> = args.iter().skip_while(|a| *a != "--").skip(1).cloned().collect();
+        return match messen(last, kontext, &befehl) {
+            Ok(e) => match serde_json::to_string(&e) {
+                // ⚑ Die letzte Zeile ist die Messung; davor darf der Befehl schreiben.
+                Ok(json) => {
+                    println!("\n{json}");
+                    0
+                }
+                Err(f) => {
+                    eprintln!("{f}");
+                    1
+                }
+            },
+            Err(g) => {
+                eprintln!("{g}");
+                1
+            }
+        };
+    }
+    let e = Einstellungen::lesen(&Einstellungen::vorgabepfad()).unwrap_or_default();
+    let (artefakt, rest) = artefakt_und_rest(args, &e);
+    if let Some(x) = rest.first() {
+        eprintln!("myl eichen: unerwartet: {x}");
+        return 2;
+    }
+    let pfad = myl_client::hardware::eichbuch_pfad();
+    let mut buch = match Eichbuch::lesen(&pfad) {
+        Ok(b) => b,
+        Err(g) => {
+            eprintln!("myl eichen: das Eichbuch ist unlesbar und wird nicht ueberschrieben: {g}");
+            return 1;
+        }
+    };
+    let Ok(selbst) = std::env::current_exe() else {
+        eprintln!("myl eichen: das eigene Programm ist nicht zu finden");
+        return 1;
+    };
+    let selbst = selbst.display().to_string();
+    let ort = std::env::temp_dir().join(format!("myl-eichen-{}", std::process::id()));
+    if let Err(f) = std::fs::create_dir_all(&ort) {
+        eprintln!("myl eichen: {}: {f}", ort.display());
+        return 1;
+    }
+    let (bild, ton) = (ort.join("probe.bmp"), ort.join("probe.wav"));
+    let mut laeufe: Vec<(String, u64, Vec<String>)> = Vec::new();
+    if let Some(a) = &artefakt {
+        let name = std::path::Path::new(a).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        let befehl = [selbst.as_str(), "frage", a, "Die Hauptstadt von Frankreich ist", "--token", "8", "--gierig"];
+        // ⚑ Kontext 0: Der Lauf liest Systemansage und Frage (beim 0,6B gut
+        //   800 Token), und deren KV abzuziehen hiesse, ihn zu kennen. Ohne
+        //   Abzug steckt er im Zuschlag; das ist vorsichtig, nie zu knapp.
+        laeufe.push((name, 0, befehl.iter().map(|s| s.to_string()).collect()));
+    }
+    let sinne = myl_senses::Sinne::finden();
+    if sinne.sehen.is_ok() && std::fs::write(&bild, probebild()).is_ok() {
+        laeufe.push(("Sehen".into(), 0, vec![selbst.clone(), "sinne".into(), bild.display().to_string()]));
+    }
+    if sinne.hoeren.is_ok() && std::fs::write(&ton, probeton()).is_ok() {
+        laeufe.push(("Hören".into(), 0, vec![selbst.clone(), "sinne".into(), ton.display().to_string()]));
+    }
+    if laeufe.is_empty() {
+        eprintln!("myl eichen: nichts zu messen (kein Artefakt, keine eingerichteten Sinne)");
+        let _ = std::fs::remove_dir_all(&ort);
+        return 1;
+    }
+    let mut gelungen = 0;
+    for (last, kontext, befehl) in laeufe {
+        eprintln!("== {last}");
+        let aus = std::process::Command::new(&selbst)
+            .args(["eichen", "--einzeln", &last, &kontext.to_string(), "--"])
+            .args(&befehl)
+            .stderr(std::process::Stdio::inherit())
+            .output();
+        let messung = aus.ok().filter(|a| a.status.success()).and_then(|a| {
+            let text = String::from_utf8_lossy(&a.stdout).to_string();
+            text.lines().rev().find(|z| z.starts_with('{')).and_then(|z| serde_json::from_str::<Eichung>(z).ok())
+        });
+        match messung {
+            Some(m) => {
+                let gib = |b: u64| myl_dispatcher::local::plan::gib(b);
+                println!(
+                    "{last}: Spitze {}, fest {}, in {} ms",
+                    gib(m.spitze_bytes),
+                    m.fest_bytes.map_or("nicht messbar".to_string(), gib),
+                    m.dauer_ms
+                );
+                buch.eintragen(m);
+                gelungen += 1;
+            }
+            None => println!("{last}: Messung gescheitert (siehe oben); es gilt weiter, was im Buch steht, sonst die Vorgabe"),
+        }
+    }
+    let _ = std::fs::remove_dir_all(&ort);
+    if gelungen == 0 {
+        return 1;
+    }
+    match buch.schreiben(&pfad) {
+        Ok(()) => {
+            println!("Eichbuch: {}", pfad.display());
+            0
+        }
+        Err(g) => {
+            eprintln!("myl eichen: {g}");
+            1
+        }
+    }
+}
+
+/// **Ein kleines Bild fuer die Eichung**: 64 mal 64 Bildpunkte, grauer
+/// Verlauf, als unkomprimiertes BMP (24 Bit). So braucht es keine
+/// Bildbibliothek, und die Sinne erkennen es an `BM`.
+fn probebild() -> Vec<u8> {
+    const SEITE: u32 = 64;
+    let zeile = SEITE * 3; // 192, durch vier teilbar, also ohne Fuellbytes
+    let daten = zeile * SEITE;
+    let mut b = Vec::with_capacity(54 + daten as usize);
+    b.extend_from_slice(b"BM");
+    b.extend_from_slice(&(54 + daten).to_le_bytes());
+    b.extend_from_slice(&[0; 4]);
+    b.extend_from_slice(&54u32.to_le_bytes());
+    b.extend_from_slice(&40u32.to_le_bytes());
+    b.extend_from_slice(&SEITE.to_le_bytes());
+    b.extend_from_slice(&SEITE.to_le_bytes());
+    b.extend_from_slice(&1u16.to_le_bytes());
+    b.extend_from_slice(&24u16.to_le_bytes());
+    b.extend_from_slice(&[0; 4]);
+    b.extend_from_slice(&daten.to_le_bytes());
+    b.extend_from_slice(&[0; 16]);
+    for y in 0..SEITE {
+        for x in 0..SEITE {
+            let g = ((x + y) * 2) as u8;
+            b.extend_from_slice(&[g, g, g]);
+        }
+    }
+    b
+}
+
+/// **Ein kurzer Ton fuer die Eichung**: eine Sekunde Stille, 16 kHz, mono,
+/// 16 Bit, als WAV. Mehr braucht das Mitschreiben nicht, um sein Modell zu
+/// laden und einmal zu rechnen.
+fn probeton() -> Vec<u8> {
+    const RATE: u32 = 16_000;
+    let daten = RATE * 2;
+    let mut b = Vec::with_capacity(44 + daten as usize);
+    b.extend_from_slice(b"RIFF");
+    b.extend_from_slice(&(36 + daten).to_le_bytes());
+    b.extend_from_slice(b"WAVEfmt ");
+    b.extend_from_slice(&16u32.to_le_bytes());
+    b.extend_from_slice(&1u16.to_le_bytes());
+    b.extend_from_slice(&1u16.to_le_bytes());
+    b.extend_from_slice(&RATE.to_le_bytes());
+    b.extend_from_slice(&(RATE * 2).to_le_bytes());
+    b.extend_from_slice(&2u16.to_le_bytes());
+    b.extend_from_slice(&16u16.to_le_bytes());
+    b.extend_from_slice(b"data");
+    b.extend_from_slice(&daten.to_le_bytes());
+    b.resize(44 + daten as usize, 0);
+    b
+}
+
 fn sinne(args: &[String]) -> i32 {
     let s = myl_senses::Sinne::finden();
     // ⚑ **Die Orte werden aufgezaehlt und nicht zusammengefasst** (seit
@@ -1707,7 +2079,7 @@ fn agent(args: &[String]) -> i32 {
         );
     }
     let bezeugtes = !args.iter().any(|a| a == "--nur-verankert");
-    let schritte = zahl(args, "--schritte").unwrap_or(e.agent.schritte as usize);
+    let schritte = zahl(args, "--schritte").unwrap_or(e.agent.schrittgrenze());
     hinweis_betriebsart(bezeugtes, ruestung.kasten.angebote().len());
     let roh = args.iter().any(|a| a == "--roh");
     einen_auftrag(&m, &ruestung, schritte, bezeugtes, roh, &auftrag)
@@ -1766,7 +2138,7 @@ fn sitzung(args: &[String]) -> i32 {
         }
     };
     let bezeugtes = !rest.iter().any(|a| a == "--nur-verankert");
-    let schritte = zahl(rest, "--schritte").unwrap_or(e.agent.schritte as usize);
+    let schritte = zahl(rest, "--schritte").unwrap_or(e.agent.schrittgrenze());
     let roh = rest.iter().any(|a| a == "--roh");
 
     println!("myl Sitzung");
@@ -2109,7 +2481,7 @@ fn auftraege(args: &[String]) -> i32 {
     };
     let bezeugtes = !rest.iter().any(|a| a == "--nur-verankert");
     let roh = rest.iter().any(|a| a == "--roh");
-    let schritte = zahl(rest, "--schritte").unwrap_or(e.agent.schritte as usize);
+    let schritte = zahl(rest, "--schritte").unwrap_or(e.agent.schrittgrenze());
     hinweis_betriebsart(bezeugtes, ruestung.kasten.angebote().len());
     viele_auftraege(&m, &ruestung, schritte, bezeugtes, roh, &liste)
 }
@@ -2199,7 +2571,7 @@ mod schalter {
     fn grund() -> Einstellungen {
         Einstellungen {
             agent: myl_client::einstellungen::Agenteneinstellung {
-                schritte: 6,
+                schritte: Some(6),
                 wurzel: Some("/vorher".into()),
                 schreiben: true,
                 kistenordner: None,
@@ -2307,6 +2679,23 @@ mod schalter {
     fn ein_schalter_ohne_wert_aendert_nichts() {
         let a = agent_fuer_diesen_lauf(&grund(), &worte(&["--wurzel"]));
         assert_eq!(a.wurzel.as_deref(), Some("/vorher"));
+    }
+}
+
+#[cfg(test)]
+mod eichproben {
+    use super::*;
+
+    /// ⚑ **Testbild und Testton sind, was sie sein sollen**: Die Sinne
+    /// erkennen sie an ihren Kopfbytes, und die Groessen stimmen mit dem Kopf.
+    #[test]
+    fn bild_und_ton_der_eichung_werden_erkannt() {
+        let bild = probebild();
+        assert_eq!(myl_client::anhang::art_bestimmen(&bild, "probe.bmp"), myl_senses::Art::Bild);
+        assert_eq!(u32::from_le_bytes(bild[2..6].try_into().unwrap()) as usize, bild.len());
+        let ton = probeton();
+        assert_eq!(myl_client::anhang::art_bestimmen(&ton, "probe.wav"), myl_senses::Art::Ton);
+        assert_eq!(u32::from_le_bytes(ton[4..8].try_into().unwrap()) as usize + 8, ton.len());
     }
 }
 

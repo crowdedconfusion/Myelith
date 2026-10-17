@@ -266,6 +266,29 @@ pub struct Einstellungen {
     /// Der Schlaf (`myl_local_agent::schlaf`); seit dem 2026-10-13.
     #[serde(default)]
     pub schlaf: myl_local_agent::schlaf::Schlafeinstellung,
+    /// Was dieser Rechner beim Mining hergibt (`crate::mining`); seit dem
+    /// 2026-10-17.
+    #[serde(default)]
+    pub mining: Miningeinstellung,
+}
+
+/// **Was beim Mining an Rechenwerken hergegeben wird.**
+///
+/// ⚑ **Ort, Ordner und Volumen stehen nicht hier**, sondern in
+/// `speicherorte.toml` (`myl_store::orte`): Dort sucht auch der Knoten,
+/// und dieselbe Angabe an zwei Orten liefe auseinander.
+///
+/// ⚑ **Anders als [`Kapazitaet`] ist das keine oertliche Grenze**, sondern
+/// der Inhalt der Zusage, die der Knoten beim Start unterschreibt.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct Miningeinstellung {
+    /// Wie viele CPU-Kerne. `None` heisst noch nicht gewaehlt; die Seite
+    /// schlaegt dann die Haelfte vor.
+    #[serde(default)]
+    pub kerne: Option<u32>,
+    /// Kennungen der freigegebenen Rechenwerke aus dem Hardwarescan.
+    #[serde(default)]
+    pub rechenwerke: Vec<String>,
 }
 
 impl Einstellungen {
@@ -585,7 +608,13 @@ impl Einstellungen {
         // klebt in jeder Ausgabe an der naechsten Zeile und laesst
         // `diff` eine Aenderung melden, die keine ist.
         let t = serde_json::to_string_pretty(self).map_err(|e| e.to_string())?;
-        std::fs::write(pfad, t + "\n").map_err(|e| format!("{}: {e}", pfad.display()))
+        // ⚑ **Erst daneben, dann an den Platz** (2026-10-17): Seit die
+        //   Befehle des Fensters neben dem Hauptfaden laufen, liest einer,
+        //   waehrend ein anderer schreibt. Ein `write` an Ort und Stelle
+        //   liesse ihn eine halbe Datei sehen und „nicht lesbar" melden.
+        let neben = pfad.with_extension("json.neu");
+        std::fs::write(&neben, t + "\n").map_err(|e| format!("{}: {e}", neben.display()))?;
+        std::fs::rename(&neben, pfad).map_err(|e| format!("{}: {e}", pfad.display()))
     }
 
     /// Wo die Datei ueblicherweise liegt.
@@ -817,6 +846,11 @@ pub enum Gilt {
     /// In beiden Bedieninstrumenten.
     Ueberall,
     /// Nur in `myelith`, dem Konsolenclient.
+    ///
+    /// ⚑ **Auch fuer ein Feld, das im Fenster an anderer Stelle gewaehlt
+    /// wird** (2026-10-17): Einhaengepfad, Werkzeugkiste und Modul wirken
+    /// dort, stehen aber in der Seitenleiste. Eine zweite Stelle auf der
+    /// Einstellungsseite liesse offen, welche gilt.
     NurKonsole,
     /// Nur im Fenster.
     NurFenster,
@@ -963,6 +997,18 @@ impl Schriftgroesse {
 /// beieinander, und wer hier ein Feld einfuegt, verschiebt es damit
 /// auch auf der Seite. Das ist beabsichtigt: Eine zweite Liste, die nur
 /// die Reihenfolge festlegt, waere wieder eine zweite Liste.
+///
+/// 📌 **„Gleiche Bereiche stehen beieinander" stand hier schon, und es
+/// stimmte nicht** (Fund 556, 2026-10-17). Beide Seiten setzen eine
+/// Ueberschrift, wo der Bereich wechselt (Konsole) oder zum ersten Mal
+/// vorkommt (Fenster). Zwischen den Agentenfeldern standen Loop,
+/// Diagnose und Gedaechtnis, und im Fenster trugen acht Agentenfelder
+/// die Ueberschrift „Diagnose". Seitdem haelt ein Test fest, dass jeder
+/// Bereich zusammenhaengt.
+///
+/// ⚑ **Die Diagnose steht zuletzt** (Wunsch des Projektinhabers,
+/// 2026-10-17): Den Debug-Log schaltet man selten, und wer ihn sucht,
+/// sucht ihn ganz unten.
 pub const FELDER: [Feld; 33] = [
     // ⚑ **Sie steht zuerst** (Festlegung des Projektinhabers,
     // 2026-09-10). Sie beschriftet alles, was darunter kommt: Wer die
@@ -1124,36 +1170,16 @@ pub const FELDER: [Feld; 33] = [
         ("Agent", "Agent"),
         ("Schritte je Auftrag", "Steps per task"),
         (
-            "Nach so vielen Werkzeugaufrufen bricht der Agent ab und antwortet mit dem, was er hat.",
-            "After this many tool calls the agent stops and answers with what it has.",
+            "Leer heißt ohne Grenze, und das ist die Vorgabe: Der Agent arbeitet, bis er fertig ist oder du ihn anhältst. Dreht er sich im Kreis und wiederholt denselben Schritt mit demselben Ergebnis, wird er erst darauf hingewiesen und hält beim fünften Mal an. Eine Zahl setzt zusätzlich eine Grenze: Nach so vielen Werkzeugaufrufen antwortet er mit dem, was er hat.",
+            "Empty means no limit, and that is the default: the agent works until it is done or you stop it. If it goes in circles, repeating the same step with the same result, it is first told so and stops the fifth time. A number adds a limit: after this many tool calls it answers with what it has.",
         ),
     ),
-    // ⚑ **Keine Hoechstzahl an Runden, keine Hoechstdauer und kein Halt
-    //   bei Stillstand** (Festlegung des Projektinhabers, 2026-10-12): Ein
-    //   Loop endet, wenn der Mensch ihn anhaelt oder das Ergebnis
-    //   bestaetigt. Bis CLIENT v0.132.0 standen hier `loop.runden`,
-    //   `loop.stunden` und `loop.stillstand`.
-    feld(
-        "loop.schritte",
-        Feldart::Zahl,
-        ("Loop", "Loop"),
-        ("Schritte je Runde", "Steps per round"),
-        (
-            "So viele Werkzeugaufrufe darf eine Runde höchstens machen. Danach setzt die nächste Runde fort; der Loop endet daran nicht.",
-            "A round may make at most this many tool calls. The next round then continues; the loop does not end there.",
-        ),
-    ),
-    feld(
-        "loop.pruefen",
-        Feldart::Schalter,
-        ("Loop", "Loop"),
-        ("Prüfdurchgang", "Review pass"),
-        (
-            "Nach jeder Runde prüft ein zweiter Durchgang, ob sie das Vorhaben vorangebracht hat und ob das Ziel wirklich erreicht ist. Kostet etwa ein Drittel mehr Rechenzeit, verhindert aber „fertig“ ohne Ergebnis.",
-            "After every round a second pass checks whether it moved the task forward and whether the goal is really reached. Costs about a third more compute, but prevents “done” without a result.",
-        ),
-    ),
-    feld(
+    // ⚑ **Einhaengepfad, Werkzeugkiste und Modul stehen im Fenster nicht
+    //   auf der Einstellungsseite** (Wunsch des Projektinhabers,
+    //   2026-10-17): Dort waehlt man sie in der Seitenleiste, und den
+    //   Einhaengepfad fragt das Fenster bei jedem neuen Agentengespraech
+    //   ab. Zwei Stellen fuer dieselbe Wahl liessen offen, welche gilt.
+    nur_in_der_konsole(feld(
         "agent.wurzel",
         Feldart::Pfad,
         ("Agent", "Agent"),
@@ -1162,49 +1188,7 @@ pub const FELDER: [Feld; 33] = [
             "Der einzige Ordner, in dem die Dateiwerkzeuge arbeiten dürfen. Ohne Angabe der Ordner WORK_DIR im Repositorium; findet sich auch der nicht, gibt es keine Dateiwerkzeuge.",
             "The only folder the file tools may work in. Unless set, the WORK_DIR folder in the repository; if that is missing too, there are no file tools at all.",
         ),
-    ),
-    feld(
-        "debug.log",
-        Feldart::Schalter,
-        ("Diagnose", "Diagnostics"),
-        ("Debug-Log", "Debug log"),
-        (
-            "Schreibt alles mit, was ein Lauf tut: Auftrag, jede Antwort des Modells, jedes Werkzeug mit vollem Ergebnis, Prüfungen und Rückfragen. Eine Datei je Monat unter SYSTEM/logs/debug/, mit Beginn und Ende in Großbuchstaben. Er enthält auch Dateiinhalte und gehört deshalb nicht in fremde Hände. In der Konsole auch mit /debug on und /debug off.",
-            "Records everything a run does: the task, every model answer, every tool with its full result, reviews and questions. One file per month under SYSTEM/logs/debug/, with start and end marked in capitals. It contains file contents too, so keep it private. In the console also with /debug on and /debug off.",
-        ),
-    ),
-    // ⚑ **Der Schlaf** (Wunsch des Projektinhabers, 2026-10-13):
-    //   ein Gedaechtnis je Arbeitsordner, geordnet, wenn niemand etwas will.
-    feld(
-        "schlaf.an",
-        Feldart::Schalter,
-        ("Gedächtnis", "Memory"),
-        ("Schlaf", "Sleep"),
-        (
-            "Ordnet nach einer Weile ohne Eingabe das Gedächtnis des Arbeitsordners: Es fasst frühere Gespräche zu kurzen Erinnerungen zusammen, führt Doppeltes zusammen, lässt Ungebrauchtes verblassen und denkt wartende Loop-Runden vor. Was du selbst gesagt hast, steht danach bei passenden Aufträgen von selbst dabei. Alles bleibt unter .AGENT/gedaechtnis/ im Arbeitsordner; löschst du ein Gespräch, gehen seine Erinnerungen mit. Jede Eingabe weckt sofort.",
-            "After a while without input, organises the memory of the working folder: it condenses earlier conversations into short memories, merges duplicates, lets unused ones fade and thinks ahead for waiting loop rounds. What you said yourself then comes along with matching tasks by itself. Everything stays under .AGENT/gedaechtnis/ in the working folder; deleting a conversation takes its memories with it. Any input wakes it at once.",
-        ),
-    ),
-    feld(
-        "schlaf.ruhe_minuten",
-        Feldart::Zahl,
-        ("Gedächtnis", "Memory"),
-        ("Minuten Ruhe bis zum Schlaf", "Idle minutes before sleep"),
-        (
-            "So lange ohne Eingabe, dann beginnt der Schlaf. Im Fenster geht das Modell nach 15 Minuten Ruhe ohnehin aus dem Speicher; ein Schlaf danach ordnet nur noch ohne Modell.",
-            "This long without input, then sleep starts. In the window the model leaves memory after 15 idle minutes anyway; sleep after that only tidies up without the model.",
-        ),
-    ),
-    feld(
-        "schlaf.nur_am_netz",
-        Feldart::Schalter,
-        ("Gedächtnis", "Memory"),
-        ("Auf dem Akku nur aufräumen", "On battery only tidy up"),
-        (
-            "Auf dem Akku rechnet der Schlaf nicht mit dem Modell, sondern räumt nur auf (Doppeltes, Verblassen). Ein Rechner, der nicht sagt, woher sein Strom kommt, gilt als am Netz.",
-            "On battery, sleep does not use the model but only tidies up (duplicates, fading). A machine that does not say where its power comes from counts as plugged in.",
-        ),
-    ),
+    )),
     feld(
         "agent.warnung",
         Feldart::Schalter,
@@ -1245,7 +1229,7 @@ pub const FELDER: [Feld; 33] = [
             "Gives chat and agent two tools: search, and read a page. Only an address from a search hit or one you named yourself is read; a self-composed address is refused, and so is a query taken verbatim from an attachment or from one of your own files the agent has read. Foreign page text comes back framed and marked as content, never as instruction. Without this box the tools do not exist at all. It needs curl on the machine.",
         ),
     ),
-    feld(
+    nur_in_der_konsole(feld(
         "agent.kistenordner",
         Feldart::Pfad,
         ("Agent", "Agent"),
@@ -1254,8 +1238,8 @@ pub const FELDER: [Feld; 33] = [
             "Der Ordner, aus dem die lokalen Werkzeuge kommen. Sein Name ist der Name der Kiste und sagt zugleich, welche eingebauten Werkzeuge dazukommen: base die fünf Dateiwerkzeuge, advanced zusätzlich run_command. Ohne Angabe die Kiste Base. Die verankerten Werkzeuge kommen unabhängig davon dazu; sie rechnen aus ihren Eingaben und brauchen keinen Ordner.",
             "The folder the tools come from. Its name is the box name and also decides which built-in tools come along: base the five file tools, advanced adds run_command. Unless set, the Base box. The anchored tools come along regardless; they compute from their inputs and need no folder.",
         ),
-    ),
-    feld(
+    )),
+    nur_in_der_konsole(feld(
         "agent.modul",
         Feldart::Text,
         ("Agent", "Agent"),
@@ -1264,7 +1248,7 @@ pub const FELDER: [Feld; 33] = [
             "Das Modul, dessen Werkzeuge und Skills zu denen der gewählten Kiste dazukommen, mit seinem Namen (siehe /module). Es ersetzt die Kiste nicht, es ergänzt sie. Geprüft wird es vor jedem Lauf; ein Modul ohne gültige Signatur bringt nichts mit. Im Fenster in der Seitenleiste unter der Werkzeugkiste wählbar; aus heißt keines.",
             "The module whose tools and skills are added to those of the chosen box, by name (see /module). It does not replace the box, it adds to it. It is checked before every run; a module without a valid signature brings nothing. In the window it can be picked in the sidebar below the tool box; aus means none.",
         ),
-    ),
+    )),
     feld_wahl(
         "agent.modus",
         ("Agent", "Agent"),
@@ -1283,6 +1267,63 @@ pub const FELDER: [Feld; 33] = [
         (
             "Lässt den Agenten im Arbeitsordner auch ändern und anlegen. Ohne Angabe darf er nur lesen.",
             "Lets the agent change and create inside the working folder. Unless set it may only read.",
+        ),
+    ),
+    // ⚑ **Keine Hoechstzahl an Runden, keine Hoechstdauer und kein Halt
+    //   bei Stillstand** (Festlegung des Projektinhabers, 2026-10-12): Ein
+    //   Loop endet, wenn der Mensch ihn anhaelt oder das Ergebnis
+    //   bestaetigt. Bis CLIENT v0.132.0 standen hier `loop.runden`,
+    //   `loop.stunden` und `loop.stillstand`.
+    feld(
+        "loop.schritte",
+        Feldart::Zahl,
+        ("Loop", "Loop"),
+        ("Schritte je Runde", "Steps per round"),
+        (
+            "So viele Werkzeugaufrufe darf eine Runde höchstens machen. Danach setzt die nächste Runde fort; der Loop endet daran nicht.",
+            "A round may make at most this many tool calls. The next round then continues; the loop does not end there.",
+        ),
+    ),
+    feld(
+        "loop.pruefen",
+        Feldart::Schalter,
+        ("Loop", "Loop"),
+        ("Prüfdurchgang", "Review pass"),
+        (
+            "Nach jeder Runde prüft ein zweiter Durchgang, ob sie das Vorhaben vorangebracht hat und ob das Ziel wirklich erreicht ist. Kostet etwa ein Drittel mehr Rechenzeit, verhindert aber „fertig“ ohne Ergebnis.",
+            "After every round a second pass checks whether it moved the task forward and whether the goal is really reached. Costs about a third more compute, but prevents “done” without a result.",
+        ),
+    ),
+    // ⚑ **Der Schlaf** (Wunsch des Projektinhabers, 2026-10-13):
+    //   ein Gedaechtnis je Arbeitsordner, geordnet, wenn niemand etwas will.
+    feld(
+        "schlaf.an",
+        Feldart::Schalter,
+        ("Gedächtnis", "Memory"),
+        ("Schlaf", "Sleep"),
+        (
+            "Ordnet nach einer Weile ohne Eingabe das Gedächtnis des Arbeitsordners: Es fasst frühere Gespräche zu kurzen Erinnerungen zusammen, führt Doppeltes zusammen, lässt Ungebrauchtes verblassen und denkt wartende Loop-Runden vor. Was du selbst gesagt hast, steht danach bei passenden Aufträgen von selbst dabei. Alles bleibt unter .AGENT/gedaechtnis/ im Arbeitsordner; löschst du ein Gespräch, gehen seine Erinnerungen mit. Jede Eingabe weckt sofort.",
+            "After a while without input, organises the memory of the working folder: it condenses earlier conversations into short memories, merges duplicates, lets unused ones fade and thinks ahead for waiting loop rounds. What you said yourself then comes along with matching tasks by itself. Everything stays under .AGENT/gedaechtnis/ in the working folder; deleting a conversation takes its memories with it. Any input wakes it at once.",
+        ),
+    ),
+    feld(
+        "schlaf.ruhe_minuten",
+        Feldart::Zahl,
+        ("Gedächtnis", "Memory"),
+        ("Minuten Ruhe bis zum Schlaf", "Idle minutes before sleep"),
+        (
+            "So lange ohne Eingabe, dann beginnt der Schlaf. Im Fenster geht das Modell nach 15 Minuten Ruhe ohnehin aus dem Speicher; ein Schlaf danach ordnet nur noch ohne Modell.",
+            "This long without input, then sleep starts. In the window the model leaves memory after 15 idle minutes anyway; sleep after that only tidies up without the model.",
+        ),
+    ),
+    feld(
+        "schlaf.nur_am_netz",
+        Feldart::Schalter,
+        ("Gedächtnis", "Memory"),
+        ("Auf dem Akku nur aufräumen", "On battery only tidy up"),
+        (
+            "Auf dem Akku rechnet der Schlaf nicht mit dem Modell, sondern räumt nur auf (Doppeltes, Verblassen). Ein Rechner, der nicht sagt, woher sein Strom kommt, gilt als am Netz.",
+            "On battery, sleep does not use the model but only tidies up (duplicates, fading). A machine that does not say where its power comes from counts as plugged in.",
         ),
     ),
     feld(
@@ -1323,6 +1364,16 @@ pub const FELDER: [Feld; 33] = [
         (
             "Wohin ein ausgegebenes Gespräch geschrieben wird. Ohne Angabe wird nichts geschrieben, und das Fenster führt beim Ausgeben hierher.",
             "Where an exported conversation is written. Unless set nothing is written, and exporting leads here instead.",
+        ),
+    ),
+    feld(
+        "debug.log",
+        Feldart::Schalter,
+        ("Diagnose", "Diagnostics"),
+        ("Debug-Log", "Debug log"),
+        (
+            "Schreibt alles mit, was ein Lauf tut: Auftrag, jede Antwort des Modells, jedes Werkzeug mit vollem Ergebnis, Prüfungen und Rückfragen. Eine Datei je Monat unter SYSTEM/logs/debug/, mit Beginn und Ende in Großbuchstaben. Er enthält auch Dateiinhalte und gehört deshalb nicht in fremde Hände. In der Konsole auch mit /debug on und /debug off.",
+            "Records everything a run does: the task, every model answer, every tool with its full result, reviews and questions. One file per month under SYSTEM/logs/debug/, with start and end marked in capitals. It contains file contents too, so keep it private. In the console also with /debug on and /debug off.",
         ),
     ),
 ];
@@ -1476,7 +1527,7 @@ impl Einstellungen {
             "modell.top_p" => zahl(self.modell.top_p),
             "modell.top_k" => zahl(self.modell.top_k),
             "modell.kontext" => self.modell.kontext.map_or(Feldwert::Leer, |v| Feldwert::Zahl(v as u64)),
-            "agent.schritte" => Feldwert::Zahl(self.agent.schritte as u64),
+            "agent.schritte" => zahl(self.agent.schritte),
             "loop.schritte" => Feldwert::Zahl(self.schleife.schritte as u64),
             "loop.pruefen" => Feldwert::Schalter(self.schleife.pruefen),
             "debug.log" => Feldwert::Schalter(self.debug.log),
@@ -1574,8 +1625,19 @@ impl Einstellungen {
                     w => Some(w.parse().map_err(|_| format!("{w} ist keine Zahl"))?),
                 }
             }
+            // ⚑ **Leer heisst ohne Grenze**, die Vorgabe (2026-10-17). Null
+            //   waere keine Grenze, sondern ein Auftrag, der nichts tut.
             "agent.schritte" => {
-                self.agent.schritte = wert.parse().map_err(|_| format!("{wert} ist keine Zahl"))?
+                self.agent.schritte = match wert.trim() {
+                    "" | "aus" | "unbegrenzt" => None,
+                    w => {
+                        let n: u32 = w.parse().map_err(|_| format!("{w} ist keine Zahl"))?;
+                        if n == 0 {
+                            return Err(format!("{feld} braucht mindestens 1, leer heisst ohne Grenze"));
+                        }
+                        Some(n)
+                    }
+                }
             }
             "loop.schritte" => {
                 let n: u32 = wert.parse().map_err(|_| format!("{wert} ist keine Zahl"))?;
@@ -1748,6 +1810,15 @@ mod setzer {
         assert!(e.setzen("modell.kontext", "64k").is_err());
     }
 
+    /// ⚑ **Der Dispatcher plant mit denselben Kontextzahlen wie diese
+    /// Einstellung**, denn sein Trockenlauf soll zeigen, was der Client
+    /// bekaeme. Zwei Orte, und diese Probe haelt sie gleich.
+    #[test]
+    fn der_dispatcher_kennt_dieselben_kontextzahlen() {
+        assert_eq!(KONTEXT_MINDESTENS as u64, myl_dispatcher::local::plan::KONTEXT_MINDESTENS);
+        assert_eq!(KONTEXT_VORGABE as u64, myl_dispatcher::local::plan::KONTEXT_VORGABE);
+    }
+
     #[test]
     fn ein_unbekanntes_feld_wird_abgelehnt() {
         let mut e = Einstellungen::default();
@@ -1791,11 +1862,43 @@ mod setzer {
         }
     }
 
+    /// ⚑ **Einhaengepfad, Werkzeugkiste und Modul stehen im Fenster nur in
+    /// der Seitenleiste** (Wunsch des Projektinhabers, 2026-10-17), in der
+    /// Konsole weiter unter /settings.
+    #[test]
+    fn pfad_kiste_und_modul_stehen_nicht_auf_der_fensterseite() {
+        for name in ["agent.wurzel", "agent.kistenordner", "agent.modul"] {
+            let f = FELDER.iter().find(|f| f.name == name).expect("Feld");
+            assert!(!f.gilt.im_fenster(), "{name} steht wieder auf der Einstellungsseite des Fensters");
+            assert!(f.gilt.in_der_konsole(), "{name} fehlt in der Konsole");
+        }
+    }
+
     #[test]
     fn keine_zahl_ist_ein_fehler() {
         let mut e = Einstellungen::default();
         assert!(e.setzen("modell.token", "viele").is_err());
-        assert!(e.setzen("agent.schritte", "").is_err());
+        assert!(e.setzen("agent.schritte", "viele").is_err());
+    }
+
+    /// ⚑ **Die Schritte je Auftrag sind ohne Grenze, solange niemand eine
+    /// setzt** (Festlegung des Projektinhabers, 2026-10-17), und eine alte
+    /// Ablage mit der frueheren Vorgabe 6 behaelt sie nicht.
+    #[test]
+    fn die_schritte_sind_ohne_grenze_und_eine_alte_sechs_gilt_nicht_mehr() {
+        let mut e = Einstellungen::default();
+        assert_eq!(e.agent.schritte, None);
+        assert_eq!(e.wert("agent.schritte"), Ok(Feldwert::Leer));
+        e.setzen("agent.schritte", "40").expect("setzen");
+        assert_eq!(e.agent.schrittgrenze(), 40);
+        e.setzen("agent.schritte", "").expect("leeren");
+        assert_eq!(e.agent.schrittgrenze(), myl_local_agent::agentenwahl::OHNE_SCHRITTGRENZE);
+        assert!(e.setzen("agent.schritte", "0").is_err());
+
+        let mut roh = serde_json::to_value(Einstellungen::default()).expect("JSON");
+        roh["agent"]["schritte"] = serde_json::json!(6);
+        let alt: Einstellungen = serde_json::from_value(roh).expect("alte Ablage lesbar");
+        assert_eq!(alt.agent.schritte, None, "die alte Vorgabe 6 haelt den Agenten weiter an");
     }
 
     /// **Ein Wert, den dieses Feld annehmen muss.**
@@ -1850,6 +1953,22 @@ mod setzer {
             ["modell.artefakt", "agent.wurzel", "agent.kistenordner", "ausgabe.ordner"],
             "die Menge der Verzeichnisfelder hat sich geaendert; bekommt das neue Feld einen Auswaehler?"
         );
+    }
+
+    /// ⚑ **Jeder Bereich haengt zusammen** (Fund 556), und die Diagnose
+    /// steht zuletzt. Ein Bereich, der ein zweites Mal beginnt, bekommt
+    /// in der Konsole eine zweite Ueberschrift und im Fenster keine, und
+    /// seine Felder stehen dann unter der fremden.
+    #[test]
+    fn jeder_bereich_haengt_zusammen_und_die_diagnose_steht_zuletzt() {
+        let mut gesehen: Vec<&str> = Vec::new();
+        for f in FELDER {
+            if gesehen.last() != Some(&f.bereich) {
+                assert!(!gesehen.contains(&f.bereich), "der Bereich {} beginnt bei {} ein zweites Mal", f.bereich, f.name);
+                gesehen.push(f.bereich);
+            }
+        }
+        assert_eq!(FELDER.last().map(|f| f.name), Some("debug.log"), "der Debug-Log steht nicht zuletzt");
     }
 
     /// ⚑ **Eine Beschriftung ist kein Feldname.** Sie steht in der

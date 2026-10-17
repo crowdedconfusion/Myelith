@@ -35,6 +35,9 @@ BENCHMARKS/Inferenz/
 ├── artefaktvergleich.py    # mehrere Artefakte auf denselben Folgen; --bitgleich
 ├── gsm8k.py                # Aufgaben mit Denken: GSM8K-Teilmenge, gierig
 ├── paket_perplexitaet.py   # Gleitkomma-Referenz eines gedrehten, gepackten Pakets
+├── belegungssimulation.py  # Expertenwahl gegen Belegungen des Speichers nachgespielt
+├── ballon.py               # belegt N GiB, um eine kleinere Maschine nachzustellen
+├── belegung/               # Lern- und Prüftext der Belegungssimulation
 ├── datasets/               # WikiText-2-Cache (nicht versioniert)
 └── results/                # Messergebnisse (versioniert)
     ├── baseline_wikitext2.json
@@ -95,6 +98,70 @@ zusammenzufassen hiesse, den Beleg zu verlieren. Was fehlte, war die
 es wird **nicht** auf eine andere Datei zurückgefallen. Die erste
 Fassung dieses Erzeugers tat genau das und zeigte bei zwei Modellen die
 Zahlen eines dritten.
+
+## Belegungssimulation (seit 2026-10-15)
+
+Wie schnell läuft ein Gemisch, das nicht in den Arbeitsspeicher passt, je
+nachdem, wie der Speicher verteilt wird? `belegungssimulation.py` legt
+eine gemessene Expertenwahl (Token für Token) gegen verschiedene
+Belegungen: alles fest laden, Dateicache mit kurzem, vollem oder
+Arbeitskontext, den Plan des Dispatchers (`dispatcher plan --angebot-mib`),
+die heißen Experten festgehalten, und die beste mögliche Ersetzung
+(Belady) als Schranke. Die Tokenzeit folgt aus der gemessenen Rechenzeit
+(43,5 ms) und dem gemessenen Plattendurchsatz (3,41 GB/s).
+
+```bash
+cd COMPUTE_PIPELINE/dispatcher && cargo build --bin dispatcher && cd ../..
+cd INTEGER_LLM/runtime && cargo build --release --features cpu-simd --bin expertenprobe && cd ../..
+A=INTEGER_LLM/artifacts/myelith-35b-a3b; P=./SYSTEM/full-build/release/expertenprobe
+$P $A "$(cat BENCHMARKS/Inferenz/belegung/lerntext.txt)" 64 --profil profil.json --spur lern.txt
+$P $A "$(cat BENCHMARKS/Inferenz/belegung/prueftext.txt)" 64 --spur pruef.txt
+python3 BENCHMARKS/Inferenz/belegungssimulation.py --artefakt $A --profil profil.json \
+  --lernspur lern.txt --pruefspur pruef.txt --speicher-gib 16 24 32 48 64 \
+  --aus BENCHMARKS/Inferenz/results/belegungssimulation_myelith-35b-a3b.md
+```
+
+Ergebnis: `results/belegungssimulation_myelith-35b-a3b.md`, das Profil
+des Lerntexts `results/expertenprofil_myelith-35b-a3b.json`. Die Spuren
+(je gut 2 MB) werden nicht versioniert; die Erhebung dauert je Text gut
+zwei Minuten.
+
+⚠️ **Ein Modell mit gemessenen Eingaben, keine Messung der Tokenrate.**
+Der Dateicache ist als LRU nachgebaut, Rechnung und Platte laufen
+nacheinander, und der KV-Speicher zählt in voller Höhe des Kontexts.
+
+⚑ **Was es gezeigt hat:** Bei gleichem Kontext ist der Plan im
+Dauerbetrieb so schnell wie der Dateicache allein; die heißen Experten
+festzuhalten brachte höchstens 2 %. Was zählt, ist der Kontext, der neben
+den Experten bleibt (auf 24 GiB 15,7 Token/s mit 65 536 Token gegen 12,4
+mit dem ganzen Trainingskontext, auf 16 GiB 9,4 mit 8192 gegen 8,4 mit
+65 536), das Vorwärmen in der Wartezeit und ein Sehen mit begrenztem
+Kontext (3,65 statt 18,25 GiB, sonst 4 bis 17 GiB Auslagerung). Bis zur
+Schranke fehlen auf 24 GiB noch 24 % (19,5 Token/s).
+
+⚠️ **Die Simulation ist pessimistisch.** Sie nimmt Rechnen und Lesen
+nacheinander an; gemessen lief derselbe Mac bei 18 GiB frei mit 17 bis
+19 Token/s, die Simulation sagt für 24 GiB 15,7.
+
+## Decode unter Speicherdruck (seit 2026-10-15)
+
+Echte Messung statt Modell: `ballon.py` belegt Speicher, `bench_probe`
+misst den Decode. Ergebnis und Wiederholung in
+`results/decode_speicherdruck_myelith-35b-a3b.md`. Übernommen ist das
+Anwärmen je Matrix (+4 bis +12 %); der Vorlader über Ebenen hinweg,
+Lesen statt Rat und eigene Lesefäden sind gemessen und nicht übernommen.
+
+## Gitter für die Experten im Vergleich (seit 2026-10-15)
+
+`INTEGER_LLM/calibrate/src/gittervergleich.py` misst trainingsfreie
+Rundungen der Expertengewichte (ternär, asymmetrisch, zwei Trit-Ebenen,
+int2 bis int4, dazu Drehung, Ausreißer, Rang-Ausgleich) am Mitschnitt aus
+`expertenmitschnitt`, und baut das beste als Artefakt im int8-Behälter, das
+`artefaktvergleich.py` und `gsm8k.py` dann wie jedes andere messen.
+Ergebnis und Wiederholung in `results/gittervergleich_myelith-35b-a3b.md`.
+⚑ **Zwei Trit-Ebenen für alle Experten: Perplexität +2,5 % zum int8, int4
++2,1 %**, ternär +93 %. `schranke` sagt, was bei R Bit je Gewicht
+bestenfalls erreichbar ist, auf Haltetoken gemessen.
 
 ## Aufruf
 

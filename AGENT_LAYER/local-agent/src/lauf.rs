@@ -118,7 +118,9 @@ pub fn kontrakt_fuer(schritte: usize) -> myl_types::sitzung::Sitzungskontrakt {
         vec![myl_types::ids::Address::new([9u8; 32])],
         myl_types::ids::EpochId(0),
         myl_types::ids::EpochId(u64::MAX),
-        schritte as u32,
+        // ⚑ Mehr, als der Kontrakt fasst, heisst ohne Grenze und nicht eine
+        //   abgeschnittene Zahl.
+        u32::try_from(schritte).unwrap_or(u32::MAX),
     )
     .expect("der Sitzungskontrakt ist fest verdrahtet und kann nicht an einer Eingabe scheitern")
 }

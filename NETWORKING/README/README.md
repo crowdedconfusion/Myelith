@@ -1,7 +1,7 @@
 # networking (`myl-net`, `myl-siegel`)
 
-> **Version:** 0.16.0
-> **Datum:** 2026-09-01
+> **Version:** 0.16.1
+> **Datum:** 2026-10-14
 > **Status:** **Phase 1 und 2 abgeschlossen** (1.1–1.6, 2.1–2.3),
 > **Phase 3 umgesetzt** (3.1–3.4, Abschluss unter Reviewvorbehalt), dazu Punkt 4.2 (Fuzzing der Wire-Protocol-Parser), Punkt 4.3
 > (Verbindungsgrenzen und Peer-Diversität) und seit dem 26. August
@@ -108,6 +108,25 @@ NETWORKING/
 ```
 
 ## Changelog
+
+### v0.16.1 – 2026-10-14 (Sicherheitsmeldungen zu `quinn-proto` und `rustls`; nur die Sperrdatei)
+
+**Die Abhängigkeitsprüfung (cargo-deny) war rot**, ohne dass sich hier
+Code geändert hatte: Zwischen zwei Läufen sind neue Meldungen erschienen.
+
+| Paket | vorher | jetzt | Meldungen |
+|---|---|---|---|
+| `quinn-proto` (QUIC unter `libp2p-quic`) | 0.11.16 | **0.11.19** | RUSTSEC-2026-0338 bis 0343: entfernte Gegenstellen bringen den Empfänger mit kleinen Rahmen zum Absturz oder lassen Puffer unbegrenzt wachsen |
+| `rustls` (TLS unter `libp2p-tls` und QUIC) | 0.23.45 | **0.23.46** | RUSTSEC-2026-0346 bis 0349: unter anderem ein nicht beglaubigtes ServerHello, das spätere Verbindungen auf klassischen Schlüsselaustausch herabstuft |
+
+Angehoben mit `cargo update -p quinn-proto` und `-p rustls`; sonst bewegt
+sich keine Fassung. Die beiden Archive liegen im Vorrat der Fremdquellen,
+die drei abgelösten sind entfernt, sodass der Bau weiter ohne Netz geht.
+
+**Belege:** `cargo deny check` grün für `myl-net`, `myl-node` und
+`myl-testclient` (vorher je rot); dieselben drei Kisten offline gegen den
+Vorrat (`--locked --offline`), Clippy mit `-D warnings` und alle Tests
+mit Rückgabe 0.
 
 ### v0.16.0 – 2026-09-03 (⚑ Fund 159: der Umschlag passte nicht durch den Kanal)
 

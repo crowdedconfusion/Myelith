@@ -1,11 +1,11 @@
 # NODE — der Myelith-Knoten
 
-> **Version:** 0.48.6
-> **Datum:** 2026-10-13
+> **Version:** 0.49.0
+> **Datum:** 2026-10-17
 > **Status:** Netzknoten lauffähig, Blockproduktion mit **Persistenz über
 > Neustarts**, BFT-Runden über das Netz mit Rundenwechsel, und seit dem
 > 1. September **schließt der Knoten die Epoche selbst ab**.
-> **251 Tests grün.**
+> **294 Tests grün.**
 >
 > ⚑ **Seit dem 27. August sind Blockhöhe und Epoche zwei Dinge.** Die
 > Probekette schrieb ihre Höhe in das Epochenfeld des Blockkopfs; das
@@ -278,6 +278,68 @@ NODE/
 ```
 
 ## Changelog
+
+### v0.49.0 (2026-10-17): Speicherorte, Kapazitätszusage und die Zahlen eines Miners
+
+Für das Mining aus Konsole und Fenster (CLIENT v0.163.0). Der Client
+startet diesen Knoten im Probelauf; was er dazu braucht, steht hier.
+
+- **`--speicherorte <datei>`** (neu, `KnotenKonfig::speicherorte`): Bei
+  jeder Zustandsaufnahme liest der Knoten die Datei neu und zählt mit
+  `myl_store::belegung`, was in den Orten mit dem Zweck `netz` liegt.
+  Eine kaputte Datei zählt als keine Orte und steht als
+  `speicherorte_fehler` im Protokoll; der Knoten stirbt nicht an einer
+  Tippfehlerzeile.
+- **`--zusage <datei>`** (neu): Der Knoten unterschreibt die Zusage beim
+  Start mit dem **Kontoschlüssel** (BLS) und legt
+  `<datei>.unterschrift` daneben: Konto, öffentlicher Schlüssel, Epoche,
+  SHA-256 der Datei, Unterschrift. ⚑ **Nur mit einem Kontoschlüssel aus
+  einer Datei**; der aus dem Namen abgeleitete ist keiner (Fund 170).
+  Scheitert die Unterschrift, endet der Start mit Rückgabe 1, statt ohne
+  Zusage zu laufen. Im Protokoll steht eine Zeile `zusage`.
+- **Neue Zahlen** in Zustandsaufnahme und `/metriken`:
+  `myelith_speicher_{orte,gegenstaende,shards,unlesbar,belegt_bytes,grenze_bytes,zugesagt_bytes}`,
+  `myelith_inferenz_bearbeitet_total` und `myelith_inferenz_abgelehnt_total`
+  (gezählt am Ausgang jedes Inferenzauftrags aus dem Netz, auch der
+  Ablehnung ohne Shard) und `myelith_konto_guthaben` (das eigene Konto in
+  der Kette).
+- Neue Abhängigkeit `myl-store`.
+- **Belegt:** `tests/speicher_und_zusage.rs` (neu): Die Unterschrift
+  lässt sich mit dem öffentlichen Schlüssel aus der Datei nachprüfen,
+  eine andere Epoche und eine geänderte Datei passen nicht, die Aufnahme
+  zählt einen Shard in einem Ort; ohne Kontoschlüssel wird nichts
+  unterschrieben. Alle 294 Tests grün, Clippy mit `-D warnings` sauber.
+  Am echten Programm: gestartet vom Client, `zusage.unterschrift` liegt
+  da, `/metriken` liefert die Zahlen, SIGTERM schreibt `ende` mit
+  „Beendigungssignal“.
+
+### v0.48.7 – 2026-10-14 (⚑ Fund 544: die neue GolemOS-Probe brach Clippy unter Windows; Sicherheitsmeldungen in der Sperrdatei)
+
+**Fund 544.** `tests/golemknoten.rs` (v0.48.6) band `Path` und
+`Command` oben in der Datei ein. Benutzt werden beide nur im Modul
+`lauf`, und das steht unter `#[cfg(unix)]`, weil es ein Shell-Skript
+ruft. Unter Windows waren die Importe damit unbenutzt, und der Schritt
+„cargo clippy, dieselben Crates“ im Job „Kernel und Konsens
+(windows-latest)“ brach mit `-D warnings` ab (Rückgabe 101). Auf macOS
+und Linux sieht man das nie. Jetzt stehen die beiden Importe in `lauf`,
+oben bleibt nur `PathBuf`.
+
+- **Beleg:** im Kreuzabbild für Windows (`x86_64-pc-windows-gnu`,
+  `cargo check --all-targets` mit `-D warnings`, offline gegen den
+  Vorrat) alle sechs Kisten des Schritts mit Rückgabe 0: `kernels`,
+  `myl-types`, `myl-ledger`, `myl-scheduler`, `myl-consensus`,
+  `myl-node`. **Gegenprobe:** mit der alten Datei Rückgabe 101 und genau
+  die beiden Meldungen der CI (`unused import: Path`, `unused import:
+  std::process::Command`). Auf macOS Clippy grün, die neun Proben grün.
+- ⚠️ **Lokal nicht geprüft:** Clippy selbst für das Windows-Ziel
+  (`blst` braucht C-Header, die hier fehlen, und im Kreuzabbild fehlt
+  Clippy). Was nur Clippy findet und rustc nicht, sieht erst die CI.
+
+**Sperrdatei:** `quinn-proto` 0.11.17 auf 0.11.19 und `rustls` 0.23.45 auf
+0.23.46, wegen neuer Sicherheitsmeldungen (RUSTSEC-2026-0338 bis 0343
+und 0346 bis 0349); `myl-net` 0.16.1. cargo-deny grün, Clippy und alle
+Tests offline gegen den Vorrat mit Rückgabe 0. Kein Code des Knotens
+geändert.
 
 ### v0.48.6 – 2026-10-13 (der Knoten als Dienst in GolemOS wird gegen den Knoten und das NixOS-Modul gehalten)
 

@@ -15,106 +15,115 @@
 //! noch nicht wirkt, sagt in [`Regler::sperrgrund`] **warum**, und zwar
 //! mit dem, was dafuer geschrieben werden muss.
 //!
-//! # 📌 Was ein Scan nicht darf
+//! # ⚑ Die Erhebung selbst steht im Dispatcher
 //!
-//! **Raten.** Jede Groesse, die sich auf dieser Maschine nicht
-//! ermitteln laesst, ist `None` und wird als „nicht erkannt" angezeigt.
-//! Eine erfundene Zahl in einem Regler waere schlimmer als eine fehlende:
-//! Der Nutzer stellte dann einen Anteil von etwas ein, das es so nicht
-//! gibt.
+//! Was die Maschine hat und was davon frei ist, erhebt seit dem 2026-10-15
+//! `myl-dispatcher` (`local::erhebung`), denn auch der Knoten und das
+//! Messwerkzeug brauchen sie. Hier stehen weiter die Regler der
+//! Freigabemaske und ihr Umsetzen; die Typen werden unter ihren alten
+//! Namen weitergereicht, damit kein Aufrufer etwas merkt.
 
-use std::path::Path;
+pub use myl_dispatcher::local::erhebung::{Hardware, Platte, Rechenwerk, Rueckseite, GIB};
 
-/// Alles, was der Scan ueber diese Maschine herausbekommen hat.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-pub struct Hardware {
-    /// Logische Kerne, die dieser Prozess sehen darf.
-    pub kerne: usize,
-    /// Arbeitsspeicher der Maschine, `None` wenn nicht ermittelbar.
-    pub speicher_bytes: Option<u64>,
-    /// Der Datentraeger, auf dem Myelith seine Daten haelt.
-    pub platte: Option<Platte>,
-    /// Jedes gefundene Rechenwerk ausser der CPU.
-    pub rechenwerke: Vec<Rechenwerk>,
-}
-
-/// Der Datentraeger unter einem bestimmten Verzeichnis.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-pub struct Platte {
-    /// Das Verzeichnis, auf das sich die Zahlen beziehen.
-    pub pfad: String,
-    pub gesamt_bytes: u64,
-    /// Frei fuer diesen Nutzer, nicht frei im Dateisystem: Auf vielen
-    /// Systemen ist ein Teil fuer den Systemverwalter zurueckgehalten.
-    pub frei_bytes: u64,
-}
-
-/// Ein Rechenwerk ausser der CPU.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-pub struct Rechenwerk {
-    /// Stabil ueber Neustarts, denn die Freigabe wird darunter
-    /// abgelegt. ⚑ **Nicht der Listenplatz:** Wer eine zweite Karte
-    /// einbaut, verschoebe damit alle Freigaben um eins.
-    pub kennung: String,
-    pub name: String,
-    /// Eigener Speicher in Bytes. `None` heisst **gemeinsamer
-    /// Speicher** mit der CPU, nicht „unbekannt"; das unterscheidet
-    /// [`Rechenwerk::gemeinsamer_speicher`].
-    pub speicher_bytes: Option<u64>,
-    /// Teilt sich das Rechenwerk den Arbeitsspeicher mit der CPU?
-    pub gemeinsamer_speicher: bool,
-    /// Kerne des Rechenwerks, soweit die Maschine sie nennt.
-    pub kerne: Option<u32>,
-    /// ⚑ **Welcher Rechenweg ueber dieses Geraet fuehren wuerde.**
-    /// `None` heisst: gar keiner, und das ist etwas anderes als „einer,
-    /// der hier nicht rechnet". Der Unterschied steht im Sperrgrund des
-    /// Reglers, denn er entscheidet, ob jemand etwas bauen kann.
-    pub rueckseite: Option<Rueckseite>,
-    /// ⚑ **Die PCI-Adresse**, soweit die Maschine sie nennt (Linux:
-    /// `sysfs`). Ueber sie findet der Schalter je Karte die Karte, die CUDA
-    /// oder HIP zaehlt; deren Nummern und die Reihenfolge hier muessen
-    /// nicht uebereinstimmen. `None` (macOS, Windows) heisst: geschaltet
-    /// wird der ganze Rechenweg.
-    pub pci: Option<String>,
-}
-
-/// Der Rechenweg, der ein Geraet bedient.
+/// **Die Rechenwerke dieser Maschine, einmal je Prozess gesucht.**
 ///
-/// ⚑ **Eine Eigenschaft des Geraets und nicht der Uebersetzung.** Ob
-/// der Weg hier auch **rechnet**, ist die zweite Frage, und sie wird
-/// dort gestellt, wo der Code ausgewaehlt wird
-/// ([`crate::rechenwege::vorhanden`]). Wer beides in einem Feld
-/// zusammenzoege, koennte nicht mehr sagen, ob ein Geraet keinen
-/// Rechenweg hat oder nur keinen gebauten.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
-pub enum Rueckseite {
-    Metal,
-    Cuda,
-    Rocm,
+/// 📌 **Warum gemerkt wird (Meldung des Projektinhabers, 2026-10-17):**
+/// Start und Einstellungsseite des Fensters dauerten lange, und die
+/// Startanimation stand still. Gemessen: Der Befehl `einstellungen` lief
+/// bei jedem Aufruf durch den ganzen Hardwarescan, rund 200 ms auf dem
+/// Hauptfaden (davon 135 ms `system_profiler`), und das Fenster ruft ihn an
+/// mehr als zehn Stellen, unter Speicherdruck jedesmal laenger. Welche
+/// Karten im Rechner stecken, aendert sich waehrend eines Programmlaufs
+/// nicht oft; wer eine Karte im Betrieb ansteckt, sieht sie, sobald eine
+/// Seite [`rechenwerke_neu_suchen`] ruft (der Reiter „Knoten" und `/mining`
+/// beim Oeffnen).
+///
+/// ⚑ **Die Sperre haelt waehrend der ersten Suche**, wie vorher die
+/// `OnceLock`: Wer gleichzeitig fragt, wartet auf dieses eine Ergebnis,
+/// statt einen zweiten Unterprozess zu starten.
+pub fn rechenwerke_gemerkt() -> Vec<Rechenwerk> {
+    let mut g = GEMERKT.lock().unwrap_or_else(|v| v.into_inner());
+    g.get_or_insert_with(Hardware::rechenwerke).clone()
 }
 
-impl Rueckseite {
-    /// Der Name, unter dem dieser Rechenweg in den Kernkisten steht.
-    ///
-    /// ⚑ **Dieselbe Schreibweise wie im Konformitaetslauf**, denn beide
-    /// fragen dieselbe Liste. Ein zweites Etikett hier hiesse, dass ein
-    /// Regler einen Weg freigibt, den der Pruefstand nicht kennt.
-    pub const fn backend(self) -> &'static str {
-        match self {
-            Self::Metal => "metal",
-            Self::Cuda => "cuda",
-            Self::Rocm => "rocm",
-        }
-    }
+static GEMERKT: std::sync::Mutex<Option<Vec<Rechenwerk>>> = std::sync::Mutex::new(None);
 
-    /// Wie er in einer Beschriftung steht.
-    pub const fn anzeige(self) -> &'static str {
-        match self {
-            Self::Metal => "Metal",
-            Self::Cuda => "CUDA",
-            Self::Rocm => "ROCm",
-        }
-    }
+/// **Sucht die Rechenwerke neu** und merkt sich das Ergebnis. Gibt `true`,
+/// wenn sich die Menge der Karten geaendert hat (eine dazu, eine weg).
+///
+/// ⚑ **Gesucht wird ausserhalb der Sperre**: Waehrend der Unterprozess
+/// laeuft, bekommt jeder andere Aufrufer die alte Liste sofort.
+/// ⚑ **Verglichen werden die Kennungen**, nicht ganze Eintraege: Das Freie
+/// einer Karte aendert sich bei jeder Suche, und eine Seite, die deshalb
+/// neu zeichnete, zeichnete immer neu.
+///
+/// 📌 Gewuenscht vom Projektinhaber (2026-10-17): Eine eGPU, die im
+/// Betrieb angesteckt wird, soll im Reiter erscheinen, ohne das Programm
+/// neu zu starten. Bis dahin sah sie erst der naechste Start.
+pub fn rechenwerke_neu_suchen() -> bool {
+    let neu = Hardware::rechenwerke();
+    let kennungen = |w: &[Rechenwerk]| w.iter().map(|w| w.kennung.clone()).collect::<Vec<_>>();
+    let mut g = GEMERKT.lock().unwrap_or_else(|v| v.into_inner());
+    let anders = g.as_deref().is_none_or(|alt| kennungen(alt) != kennungen(&neu));
+    *g = Some(neu);
+    anders
+}
+
+/// **Wie `Hardware::erheben`, mit den gemerkten Rechenwerken**: Speicher
+/// und Platte sind frisch, die Suche nach Karten geschieht einmal.
+pub fn erheben(datenort: &std::path::Path) -> Hardware {
+    Hardware::erheben_mit(datenort, rechenwerke_gemerkt())
+}
+
+/// **Sucht die Rechenwerke im Hintergrund**, damit die erste Seite, die sie
+/// braucht, nicht wartet. Fuer den Start einer Oberflaeche.
+pub fn vorwaermen() {
+    std::thread::spawn(|| {
+        rechenwerke_gemerkt();
+    });
+}
+
+/// **Wo die Messungen dieser Maschine liegen**: neben der Einstellungsdatei.
+///
+/// ⚑ **Dort und nicht im Datenort**: Der liegt in einem Klon unter
+/// `INTEGER_LLM/`, und eine Messung dieser Maschine ist so wenig Teil des
+/// Repositoriums wie ihre Einstellungen. Eine Probe, die die Einstellungen
+/// abschirmt (`MYL_EINSTELLUNGEN`), schirmt damit auch das Buch ab.
+pub fn eichbuch_pfad() -> std::path::PathBuf {
+    crate::einstellungen::Einstellungen::vorgabepfad().with_file_name("eichbuch.json")
+}
+
+/// **Das Eichbuch dieser Maschine**; fehlt oder klemmt es, ein leeres, und
+/// dann gelten die Vorgaben.
+///
+/// ⚠️ Ein kaputtes Buch ist hier kein Grund, nicht zu laden oder nicht zu
+/// sehen: Es kostet nur Genauigkeit. `myl eichen` meldet es, wenn es
+/// schreiben will.
+pub fn eichbuch() -> myl_dispatcher::local::eichung::Eichbuch {
+    myl_dispatcher::local::eichung::Eichbuch::lesen(&eichbuch_pfad()).unwrap_or_default()
+}
+
+/// **Wo das Expertenprofil eines Modells liegt**: neben dem Eichbuch, je
+/// Modell eine Datei.
+///
+/// ⚑ Aus demselben Grund wie das Eichbuch nicht im Datenort: Welche
+/// Experten auf dieser Maschine haeufig sind, haengt an der Arbeit ihres
+/// Besitzers und nicht am Repositorium.
+pub fn profil_pfad(modell: &str) -> std::path::PathBuf {
+    eichbuch_pfad().with_file_name(format!("expertenprofil-{modell}.json"))
+}
+
+/// **Das Expertenprofil eines Modells**, falls eines da ist und zu ihm
+/// gehoert.
+///
+/// ⚠️ Fehlt es oder klemmt es, kein Profil, und dann bekommt der Plan keine
+/// heissen Experten: Es kostet Tempo und nichts sonst. Der Betrieb schreibt
+/// es danach neu.
+pub fn expertenprofil(modell: &str) -> Option<myl_dispatcher::local::profil::Expertenprofil> {
+    myl_dispatcher::local::profil::Expertenprofil::lesen(&profil_pfad(modell))
+        .ok()
+        .flatten()
+        .filter(|p| p.modell == modell && p.token > 0)
 }
 
 /// Womit ein Regler misst.
@@ -192,32 +201,6 @@ pub struct Regler {
     /// eine Zierde, und Zierde in einer Freigabemaske beruhigt ueber
     /// eine Stelle, die nichts leistet.
     pub sperrgrund: Option<String>,
-}
-
-impl Hardware {
-    /// Fragt die Maschine ab.
-    ///
-    /// ⚑ **`datenort` ist das Verzeichnis, auf das sich die
-    /// Plattenzahlen beziehen.** Ein Rechner hat mehrere Datentraeger,
-    /// und die Frage „wieviel Platz ist da" hat ohne einen Ort keine
-    /// Antwort.
-    pub fn erheben(datenort: &Path) -> Self {
-        Self {
-            kerne: std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1),
-            speicher_bytes: speicher_der_maschine(),
-            platte: platte_unter(datenort),
-            rechenwerke: rechenwerke_suchen(),
-        }
-    }
-
-    /// Nur die Rechenwerke, ohne Speicher und ohne Platte.
-    ///
-    /// ⚑ **Weil der Scan eines Rechenwerks einen Unterprozess kostet
-    /// und der Rest nicht.** Wer nur wissen will, welches Geraet welchen
-    /// Rechenweg bedient, braucht weder `statvfs` noch `hw.memsize`.
-    pub fn rechenwerke() -> Vec<Rechenwerk> {
-        rechenwerke_suchen()
-    }
 }
 
 /// **Setzt um, was der Nutzer an Kapazitaet freigegeben hat**: die
@@ -351,402 +334,6 @@ pub fn im_hintergrund_rechnen() {
     }
 }
 
-// ── Arbeitsspeicher ─────────────────────────────────────────────────
-
-#[cfg(target_os = "macos")]
-fn speicher_der_maschine() -> Option<u64> {
-    // `hw.memsize` gibt die Bytes als u64 zurueck.
-    let mut wert: u64 = 0;
-    let mut laenge = std::mem::size_of::<u64>();
-    let name = c"hw.memsize";
-    // SICHERHEIT: `wert` ist genau so gross, wie `laenge` sagt, und der
-    // Name ist eine nullterminierte Konstante.
-    let rueckgabe = unsafe {
-        libc::sysctlbyname(
-            name.as_ptr(),
-            (&raw mut wert).cast(),
-            &mut laenge,
-            std::ptr::null_mut(),
-            0,
-        )
-    };
-    (rueckgabe == 0 && wert > 0).then_some(wert)
-}
-
-#[cfg(target_os = "linux")]
-fn speicher_der_maschine() -> Option<u64> {
-    // `MemTotal:   16334204 kB`
-    let text = std::fs::read_to_string("/proc/meminfo").ok()?;
-    let zeile = text.lines().find(|z| z.starts_with("MemTotal:"))?;
-    let kib: u64 = zeile.split_whitespace().nth(1)?.parse().ok()?;
-    Some(kib * 1024)
-}
-
-#[cfg(target_os = "windows")]
-fn speicher_der_maschine() -> Option<u64> {
-    // ⚑ Ueber die Systemabfrage und nicht ueber eine Bibliothek: Der
-    // Scan laeuft einmal beim Oeffnen der Seite, und ein Unterprozess
-    // kostet dort nichts. Die Ausgabe ist JSON und keine Prosa.
-    let aus = powershell(
-        "(Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory",
-    )?;
-    aus.trim().parse().ok()
-}
-
-#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-fn speicher_der_maschine() -> Option<u64> {
-    None
-}
-
-// ── Platte ──────────────────────────────────────────────────────────
-
-#[cfg(unix)]
-fn platte_unter(pfad: &Path) -> Option<Platte> {
-    use std::os::unix::ffi::OsStrExt;
-
-    // 📌 **Das Verzeichnis muss es geben.** `statvfs` auf einen Pfad,
-    // den niemand angelegt hat, meldet einen Fehler, und das saehe aus
-    // wie „kein Datentraeger" statt „noch kein Ordner".
-    let ort = erster_vorhandener(pfad)?;
-    let c = std::ffi::CString::new(ort.as_os_str().as_bytes()).ok()?;
-    let mut s: libc::statvfs = unsafe { std::mem::zeroed() };
-    // SICHERHEIT: `c` ist nullterminiert, `s` ist ausgenullt und gross
-    // genug.
-    if unsafe { libc::statvfs(c.as_ptr(), &mut s) } != 0 {
-        return None;
-    }
-    // `f_frsize` ist die Blockgroesse der Zahlen darunter. `f_bavail`
-    // ist das, was ein gewoehnlicher Nutzer bekommt; `f_bfree` zaehlt
-    // die Reserve des Systemverwalters mit und waere zu grosszuegig.
-    let block = if s.f_frsize > 0 { s.f_frsize as u64 } else { s.f_bsize as u64 };
-    Some(Platte {
-        pfad: ort.display().to_string(),
-        gesamt_bytes: (s.f_blocks as u64).saturating_mul(block),
-        frei_bytes: (s.f_bavail as u64).saturating_mul(block),
-    })
-}
-
-#[cfg(windows)]
-fn platte_unter(pfad: &Path) -> Option<Platte> {
-    let ort = erster_vorhandener(pfad)?;
-    let aus = powershell(&format!(
-        "$d=(Get-Item -LiteralPath '{}').PSDrive; \
-         \"$($d.Used + $d.Free);$($d.Free)\"",
-        ort.display()
-    ))?;
-    let (gesamt, frei) = aus.trim().split_once(';')?;
-    Some(Platte {
-        pfad: ort.display().to_string(),
-        gesamt_bytes: gesamt.trim().parse().ok()?,
-        frei_bytes: frei.trim().parse().ok()?,
-    })
-}
-
-/// Der Pfad selbst, sonst sein naechster vorhandener Vorfahre.
-///
-/// ⚑ **Weil die Frage dem Datentraeger gilt und nicht dem Ordner.** Wer
-/// einen Ausgabeordner einstellt, den es noch nicht gibt, will trotzdem
-/// wissen, wieviel Platz dort waere.
-fn erster_vorhandener(pfad: &Path) -> Option<std::path::PathBuf> {
-    let mut p = pfad.to_path_buf();
-    loop {
-        if p.exists() {
-            return Some(p);
-        }
-        if !p.pop() {
-            return None;
-        }
-    }
-}
-
-// ── Rechenwerke ─────────────────────────────────────────────────────
-
-#[cfg(target_os = "macos")]
-fn rechenwerke_suchen() -> Vec<Rechenwerk> {
-    // ⚑ **JSON und nicht die Menschenausgabe.** `system_profiler`
-    // kann beides; aus einer Textausgabe fuer Menschen eine
-    // Schnittstelle zu machen ist genau die Sorte Logik, die dieses
-    // Projekt nicht baut.
-    let Some(roh) = befehl("system_profiler", &["SPDisplaysDataType", "-json"]) else {
-        return Vec::new();
-    };
-    let Ok(d) = serde_json::from_str::<serde_json::Value>(&roh) else {
-        return Vec::new();
-    };
-    let Some(liste) = d.get("SPDisplaysDataType").and_then(|v| v.as_array()) else {
-        return Vec::new();
-    };
-
-    liste
-        .iter()
-        .filter_map(|g| {
-            let name = g
-                .get("sppci_model")
-                .or_else(|| g.get("_name"))
-                .and_then(|v| v.as_str())?
-                .to_string();
-            // ⚑ **Eingebaut heisst gemeinsamer Speicher.** Apple
-            // Silicon hat kein eigenes VRAM, und `spdisplays_vram`
-            // fehlt dort deshalb. Das ist kein fehlgeschlagener Scan,
-            // sondern die Eigenschaft der Maschine, und beides
-            // auseinanderzuhalten ist der Grund fuer das eigene Feld.
-            let eingebaut = g
-                .get("sppci_bus")
-                .and_then(|v| v.as_str())
-                .is_some_and(|b| b.contains("builtin"));
-            Some(Rechenwerk {
-                kennung: kennung_aus(&name),
-                name,
-                speicher_bytes: g
-                    .get("spdisplays_vram_shared")
-                    .or_else(|| g.get("spdisplays_vram"))
-                    .and_then(|v| v.as_str())
-                    .and_then(mib_aus_text),
-                gemeinsamer_speicher: eingebaut,
-                kerne: g
-                    .get("sppci_cores")
-                    .and_then(|v| v.as_str())
-                    .and_then(|s| s.parse().ok()),
-                // ⚑ **Nur das eingebaute Werk, und das ist keine
-                // Bequemlichkeit.** Der Metal-Rechenweg ist fuer die
-                // GPU von Apple-Silizium geschrieben, und die
-                // Selbstpruefung laeuft gegen das Geraet, das
-                // `MTLCreateSystemDefaultDevice` herausgibt: auf diesen
-                // Maschinen genau das eingebaute. Eine Steckkarte in
-                // einem aelteren Mac traegt deshalb `None` und keine
-                // Zusage, die niemand geprueft hat.
-                rueckseite: eingebaut.then_some(Rueckseite::Metal),
-                pci: None,
-            })
-        })
-        .collect()
-}
-
-#[cfg(target_os = "linux")]
-fn rechenwerke_suchen() -> Vec<Rechenwerk> {
-    // ⚑ **Ueber `sysfs` und nicht ueber ein Werkzeug des Herstellers.**
-    // `/sys/class/drm/card*/device` gibt es fuer jede Karte, die einen
-    // Treiber hat, gleich von welchem Hersteller; `nvidia-smi` gibt es
-    // nur mit dem einen.
-    let Ok(eintraege) = std::fs::read_dir("/sys/class/drm") else {
-        return Vec::new();
-    };
-    let mut aus = Vec::new();
-    let mut namen: Vec<String> = eintraege
-        .filter_map(|e| e.ok())
-        .map(|e| e.file_name().to_string_lossy().to_string())
-        // `card0`, aber nicht `card0-DP-1`: Das zweite ist ein Anschluss.
-        .filter(|n| n.starts_with("card") && !n.contains('-'))
-        .collect();
-    namen.sort();
-
-    for karte in namen {
-        let geraet = std::path::Path::new("/sys/class/drm").join(&karte).join("device");
-        let lies = |datei: &str| {
-            std::fs::read_to_string(geraet.join(datei)).ok().map(|s| s.trim().to_string())
-        };
-        // Der Treibername sagt mehr als die reine Kennzahl; wo er
-        // fehlt, bleibt die Hersteller-Geraete-Nummer als Name stehen.
-        let treiber = std::fs::read_link(geraet.join("driver"))
-            .ok()
-            .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()));
-        let hersteller = lies("vendor").unwrap_or_default();
-        let geraetenummer = lies("device").unwrap_or_default();
-        let name = match &treiber {
-            Some(t) => format!("{t} {hersteller}:{geraetenummer}"),
-            None => format!("{hersteller}:{geraetenummer}"),
-        };
-        // ⚑ **Die Herstellerkennung steht im Geraet, der Name in einer
-        // Zeichenkette, die ein Treiber setzt.** Deshalb zaehlt die
-        // Kennung zuerst; `vendor` ist hier `0x10de` oder `0x1002` und
-        // kommt aus `sysfs`, nicht aus einer Beschriftung.
-        let rueckseite = rueckseite_aus(Some(&hersteller), &name);
-        // ⚑ `device` zeigt auf das PCI-Geraet, und sein Ordnername ist
-        // die Adresse (`0000:3b:00.0`).
-        let pci = std::fs::read_link(&geraet)
-            .ok()
-            .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
-            .filter(|n| n.contains(':'));
-        aus.push(Rechenwerk {
-            kennung: kennung_aus(&format!("{karte}-{hersteller}-{geraetenummer}")),
-            name,
-            speicher_bytes: lies("mem_info_vram_total").and_then(|s| s.parse().ok()),
-            gemeinsamer_speicher: false,
-            kerne: None,
-            rueckseite,
-            pci,
-        });
-    }
-    aus
-}
-
-#[cfg(target_os = "windows")]
-fn rechenwerke_suchen() -> Vec<Rechenwerk> {
-    let Some(roh) = powershell(
-        "Get-CimInstance Win32_VideoController | \
-         Select-Object Name,AdapterRAM,PNPDeviceID | ConvertTo-Json -Compress",
-    ) else {
-        return Vec::new();
-    };
-    let Ok(d) = serde_json::from_str::<serde_json::Value>(&roh) else {
-        return Vec::new();
-    };
-    // 📌 **Ein einzelnes Ergebnis ist kein Feld.** `ConvertTo-Json`
-    // gibt bei genau einer Karte ein Objekt zurueck und erst ab zwei
-    // ein Feld. Wer nur das Feld liest, findet auf jedem Rechner mit
-    // einer Grafikkarte nichts.
-    let liste: Vec<&serde_json::Value> = match d.as_array() {
-        Some(f) => f.iter().collect(),
-        None => vec![&d],
-    };
-    liste
-        .into_iter()
-        .filter_map(|g| {
-            let name = g.get("Name").and_then(|v| v.as_str())?.to_string();
-            let kennung = g
-                .get("PNPDeviceID")
-                .and_then(|v| v.as_str())
-                .unwrap_or(&name)
-                .to_string();
-            // ⚑ **Die Herstellerkennung steht in der PNP-Kennung**, als
-            // `PCI\VEN_10DE&DEV_2684&…`. Sie kommt aus dem Geraet und
-            // nicht aus einer Beschriftung, deshalb zaehlt sie zuerst;
-            // der Name ist der Rueckfall.
-            let rueckseite = rueckseite_aus(hersteller_aus_pnp(&kennung).as_deref(), &name);
-            Some(Rechenwerk {
-                // 📌 `AdapterRAM` ist ein `uint32` und laeuft ab 4 GiB
-                // ueber; ein negativer oder abgeschnittener Wert ist
-                // deshalb **kein** Wert und nicht etwa eine kleine Karte.
-                speicher_bytes: g
-                    .get("AdapterRAM")
-                    .and_then(|v| v.as_u64())
-                    .filter(|b| *b > 0 && *b < u32::MAX as u64),
-                kennung: kennung_aus(&kennung),
-                name,
-                gemeinsamer_speicher: false,
-                kerne: None,
-                rueckseite,
-                pci: None,
-            })
-        })
-        .collect()
-}
-
-#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-fn rechenwerke_suchen() -> Vec<Rechenwerk> {
-    Vec::new()
-}
-
-/// Die Herstellerkennung aus einer PNP-Geraetekennung: `VEN_10DE` → `10de`.
-// ⚑ **Nur Windows ruft sie**, denn eine PNP-Kennung gibt es nur dort;
-// Linux liest den Hersteller aus sysfs und ruft `rueckseite_aus`
-// unmittelbar. Geprueft wird sie trotzdem ueberall: Unter `cfg`
-// gestellt liefe sie auf der Entwicklungsmaschine nie durch eine
-// Pruefung, und genau dort wird das Zusammenspiel zweier Karten
-// entschieden.
-//
-// 📌 **Hier stand `not(any(linux, windows))`, und das war falsch.** Der
-// Vermerk galt damit auf macOS und **nicht** auf Linux, wo sie ebenso
-// ungerufen bleibt: Die CI unter Linux brach mit `never used` ab,
-// waehrend hier alles gruen war. **Eine `cfg`-Bedingung, die das falsche
-// System nennt, faellt auf der Maschine, auf der man sie schreibt, nie
-// auf.**
-#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
-fn hersteller_aus_pnp(pnp: &str) -> Option<String> {
-    let k = pnp.to_ascii_lowercase();
-    let ab = k.find("ven_")? + 4;
-    let s: String = k[ab..].chars().take_while(|c| c.is_ascii_hexdigit()).collect();
-    (!s.is_empty()).then_some(s)
-}
-
-/// **Welcher Rechenweg dieses Geraet bedienen wuerde.**
-///
-/// ⚑ **Nicht unter `cfg` gestellt, obwohl nur zwei Betriebssysteme sie
-/// rufen.** Sie ist reine Zeichenkettenarbeit und kostet auf einem
-/// dritten Ziel nichts; unter `cfg` liefe sie auf der
-/// Entwicklungsmaschine nie durch eine Pruefung und waere genau dort
-/// ungedeckt, wo das Zusammenspiel zweier Karten entschieden wird.
-///
-/// ⚑ **Die Herstellerkennung zaehlt vor dem Namen.** Sie steht im
-/// Geraet; der Name ist eine Zeichenkette, die ein Treiber setzt und
-/// ein Hersteller aendert.
-// ⚑ **Auf macOS ruft sie niemand, und geprueft wird sie trotzdem.**
-// Unter `cfg` gestellt liefe sie auf der Entwicklungsmaschine nie durch
-// eine Pruefung, und genau dort wird das Zusammenspiel zweier Karten
-// entschieden. Der Vermerk nimmt die Warnung ueber den Zweig, den
-// dieses Ziel nicht ruft, und sagt zugleich, welches Ziel gemeint ist.
-#[cfg_attr(not(any(target_os = "linux", target_os = "windows")), allow(dead_code))]
-fn rueckseite_aus(hersteller: Option<&str>, name: &str) -> Option<Rueckseite> {
-    if let Some(h) = hersteller {
-        match h.trim().trim_start_matches("0x").to_ascii_lowercase().as_str() {
-            "10de" => return Some(Rueckseite::Cuda),
-            "1002" | "1022" => return Some(Rueckseite::Rocm),
-            _ => {}
-        }
-    }
-    let n = name.to_ascii_lowercase();
-    if n.contains("nvidia") || n.contains("nouveau") {
-        Some(Rueckseite::Cuda)
-    } else if n.contains("amdgpu") || n.contains("radeon") || n.contains("amd ") {
-        Some(Rueckseite::Rocm)
-    } else {
-        // ⚑ **Kein Rueckfall auf „irgendetwas".** Eine eingebaute
-        // Intel-Grafik bekommt hier `None`, und das ist die richtige
-        // Antwort: Es gibt keinen Rechenweg fuer sie, und ein geratener
-        // waere ein Regler, der etwas freigibt, das nie jemand rechnet.
-        None
-    }
-}
-
-/// Eine Kennung, die sich als Schluessel in der Ablage eignet.
-///
-/// ⚑ **Aus dem Namen hergeleitet und nicht durchnummeriert.** Der
-/// Listenplatz aendert sich, sobald jemand eine zweite Karte einbaut,
-/// und dann traegt eine Freigabe die Zahl einer anderen Karte.
-fn kennung_aus(roh: &str) -> String {
-    roh.chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '-' })
-        .collect::<String>()
-        .split('-')
-        .filter(|s| !s.is_empty())
-        .collect::<Vec<_>>()
-        .join("-")
-}
-
-/// `"8 GB"` oder `"1536 MB"` in Bytes.
-#[cfg(target_os = "macos")]
-fn mib_aus_text(s: &str) -> Option<u64> {
-    let s = s.trim();
-    let (zahl, rest) = s.split_at(s.find(|c: char| !c.is_ascii_digit())?);
-    let n: u64 = zahl.parse().ok()?;
-    let r = rest.trim().to_ascii_uppercase();
-    if r.starts_with("GB") {
-        Some(n * 1024 * 1024 * 1024)
-    } else if r.starts_with("MB") {
-        Some(n * 1024 * 1024)
-    } else {
-        None
-    }
-}
-
-/// Ein Befehl, dessen Ausgabe gelesen wird; `None` bei jedem Fehlschlag.
-#[cfg(any(target_os = "macos", target_os = "windows"))]
-fn befehl(programm: &str, argumente: &[&str]) -> Option<String> {
-    let aus = std::process::Command::new(programm).args(argumente).output().ok()?;
-    aus.status.success().then(|| String::from_utf8_lossy(&aus.stdout).to_string())
-}
-
-#[cfg(target_os = "windows")]
-fn powershell(skript: &str) -> Option<String> {
-    befehl(
-        "powershell",
-        &["-NoProfile", "-NonInteractive", "-Command", skript],
-    )
-}
-
-/// Ein Gibibyte in Bytes.
-pub const GIB: u64 = 1024 * 1024 * 1024;
-
 /// ⚑ **Was fehlt, bevor ein Rechenwerk mitrechnen darf.**
 ///
 /// Der Satz steht hier und nicht im Fenster, aus demselben Grund wie
@@ -762,7 +349,7 @@ pub const GIB: u64 = 1024 * 1024 * 1024;
 /// Rechenweg gab, galt fuer ihren Fall und nicht fuer den zweiten.**
 /// Deshalb nennt der Satz jetzt den Rechenweg des Geraets, und ob er
 /// ueberhaupt faellt, entscheidet [`crate::rechenwege::vorhanden`].
-fn gesperrt_weil(r: Option<Rueckseite>, sprache: crate::einstellungen::Sprache) -> String {
+pub(crate) fn gesperrt_weil(r: Option<Rueckseite>, sprache: crate::einstellungen::Sprache) -> String {
     let Some(r) = r else {
         return sprache.waehlen(OHNE_RUECKSEITE.0, OHNE_RUECKSEITE.1).to_string();
     };
@@ -828,7 +415,17 @@ pub const OHNE_GRENZE: (&str, &str) = ("ohne Grenze", "no limit");
 /// freigegebene GPU rechnet weiter, er rechnet nur auf der CPU.
 pub const RECHNET_NICHT: (&str, &str) = ("rechnet nicht", "not used");
 
-impl Hardware {
+/// **Die Regler der Freigabemaske** fuer eine erhobene Maschine.
+///
+/// ⚑ **Ein Zug und keine Methode am Typ**, weil `Hardware` im Dispatcher
+/// steht und die Regler hier an Einstellungen und Sprache haengen. Wer
+/// `regler` ruft, bindet diesen Zug ein.
+pub trait Freigabemaske {
+    /// Die Regler dieser Maschine, mit dem, was heute freigegeben ist.
+    fn regler(&self, e: &crate::einstellungen::Einstellungen) -> Vec<Regler>;
+}
+
+impl Freigabemaske for Hardware {
     /// Die Regler dieser Maschine, mit dem, was heute freigegeben ist.
     ///
     /// ⚑ **Eine Quelle fuer die ganze Freigabemaske.** Die festen
@@ -836,7 +433,7 @@ impl Hardware {
     /// Rechenwerke aus dem Scan, die Werte aus
     /// [`crate::einstellungen::Einstellungen::wert`]. Das Fenster
     /// zaehlt nichts davon selbst auf.
-    pub fn regler(&self, e: &crate::einstellungen::Einstellungen) -> Vec<Regler> {
+    fn regler(&self, e: &crate::einstellungen::Einstellungen) -> Vec<Regler> {
         use crate::einstellungen::{Feldwert, FELDER, RECHENWERK_PRAEFIX};
 
         let zahl = |w: Feldwert| match w {
@@ -859,7 +456,7 @@ impl Hardware {
         let mut aus = Vec::new();
         for f in FELDER.iter().filter(|f| f.freigabe) {
             let f = f.in_sprache(sprache);
-            let (einheit, hoechstens) = self.masse(f.name);
+            let (einheit, hoechstens) = masse(self, f.name);
             aus.push(Regler {
                 name: f.name.to_string(),
                 titel: f.titel.to_string(),
@@ -907,112 +504,97 @@ impl Hardware {
                     .and_then(zahl),
                 links: Some(sprache.waehlen(RECHNET_NICHT.0, RECHNET_NICHT.1).to_string()),
                 rechts: ohne_grenze.clone(),
-                hinweis: r.beschreibung(self.speicher_bytes, sprache, rechnet),
+                hinweis: beschreibung(r, self.speicher_bytes, sprache, rechnet),
                 sperrgrund: (!rechnet).then(|| gesperrt_weil(r.rueckseite, sprache)),
             });
         }
         aus
     }
+}
 
-    /// Einheit und Hoechstwert eines festen Betriebsmittels.
-    fn masse(&self, name: &str) -> (Einheit, Option<u64>) {
-        match name {
-            "kap.kerne" => (Einheit::Kerne, Some(self.kerne as u64)),
-            "kap.speicher" => (Einheit::Gib, self.speicher_bytes.map(|b| b / GIB)),
-            // ⚑ **Das Ende ist, was frei ist.** Die ganze Platte waere
-            // gelogen, denn sie gehoert nicht Myelith; was schon belegt
-            // ist, steht ohnehin nicht mehr zur Freigabe.
-            "kap.platte" => (Einheit::Gib, self.platte.as_ref().map(|p| p.frei_bytes / GIB)),
-            _ => (Einheit::Gib, None),
-        }
+/// Einheit und Hoechstwert eines festen Betriebsmittels.
+fn masse(h: &Hardware, name: &str) -> (Einheit, Option<u64>) {
+    match name {
+        "kap.kerne" => (Einheit::Kerne, Some(h.kerne as u64)),
+        "kap.speicher" => (Einheit::Gib, h.speicher_bytes.map(|b| b / GIB)),
+        // ⚑ **Das Ende ist, was frei ist.** Die ganze Platte waere
+        // gelogen, denn sie gehoert nicht Myelith; was schon belegt
+        // ist, steht ohnehin nicht mehr zur Freigabe.
+        "kap.platte" => (Einheit::Gib, h.platte.as_ref().map(|p| p.frei_bytes / GIB)),
+        _ => (Einheit::Gib, None),
     }
 }
 
-impl Rechenwerk {
-    /// **Wie das Geraet in der Maske heisst**, samt seinem Rechenweg.
-    ///
-    /// ⚑ **Der Rechenweg gehoert in die Beschriftung und nicht in den
-    /// Satz darunter** (Auftrag des Projektinhabers, 2026-09-16). Wer
-    /// zwei Karten im Rechner hat, muss an der Zeile sehen, welche
-    /// wovon bedient wird; ein Name allein sagt das nicht.
-    pub fn beschriftung(&self) -> String {
-        match self.rueckseite {
-            Some(r) => format!("{} ({})", self.name, r.anzeige()),
-            None => self.name.clone(),
-        }
-    }
-
-    /// Ein Satz darueber, was dieses Rechenwerk ist.
-    ///
-    /// ⚑ **`rechnet` entscheidet, ob der Satz sagt, was der Anteil
-    /// bewirkt.** Bei einem gesperrten Werk steht das im Sperrgrund,
-    /// und zweimal dasselbe in zwei Saetzen unter demselben Regler
-    /// waere eine Wiederholung, die irgendwann auseinanderlaeuft.
-    pub fn beschreibung(
-        &self,
-        speicher_der_maschine: Option<u64>,
-        sprache: crate::einstellungen::Sprache,
-        rechnet: bool,
-    ) -> String {
-        let gib = |b: u64| format!("{:.0} GiB", b as f64 / GIB as f64);
-        let kerne = match self.kerne {
-            Some(k) => format!("{k} {}, ", sprache.waehlen("Kerne", "cores")),
-            None => String::new(),
+/// Ein Satz darueber, was ein Rechenwerk ist.
+///
+/// ⚑ **`rechnet` entscheidet, ob der Satz sagt, was der Anteil
+/// bewirkt.** Bei einem gesperrten Werk steht das im Sperrgrund,
+/// und zweimal dasselbe in zwei Saetzen unter demselben Regler
+/// waere eine Wiederholung, die irgendwann auseinanderlaeuft.
+pub fn beschreibung(
+    r: &Rechenwerk,
+    speicher_der_maschine: Option<u64>,
+    sprache: crate::einstellungen::Sprache,
+    rechnet: bool,
+) -> String {
+    let gib = |b: u64| format!("{:.0} GiB", b as f64 / GIB as f64);
+    let kerne = match r.kerne {
+        Some(k) => format!("{k} {}, ", sprache.waehlen("Kerne", "cores")),
+        None => String::new(),
+    };
+    let bauart = if r.gemeinsamer_speicher {
+        let speicher = match speicher_der_maschine {
+            Some(b) => format!(
+                "{} ({})",
+                sprache.waehlen("gemeinsamer Speicher mit der CPU", "memory shared with the CPU"),
+                gib(b)
+            ),
+            None => sprache
+                .waehlen("gemeinsamer Speicher mit der CPU", "memory shared with the CPU")
+                .to_string(),
         };
-        let bauart = if self.gemeinsamer_speicher {
-            let speicher = match speicher_der_maschine {
-                Some(b) => format!(
-                    "{} ({})",
-                    sprache.waehlen("gemeinsamer Speicher mit der CPU", "memory shared with the CPU"),
-                    gib(b)
-                ),
-                None => sprache
-                    .waehlen("gemeinsamer Speicher mit der CPU", "memory shared with the CPU")
-                    .to_string(),
-            };
-            sprache.waehlen_wert(
-                format!("Eingebaut, {kerne}{speicher}. Der Anteil gilt der Rechenzeit dieses Werks."),
-                format!("Integrated, {kerne}{speicher}. The share applies to this unit's compute time."),
-            )
-        } else {
-            let speicher = match self.speicher_bytes {
-                Some(b) => format!("{} {}", gib(b), sprache.waehlen("eigener Speicher", "of its own memory")),
-                None => sprache
-                    .waehlen("eigener Speicher nicht erkannt", "own memory not detected")
-                    .to_string(),
-            };
-            sprache.waehlen_wert(
-                format!(
-                    "Eigenständig, {kerne}{speicher}. Der Anteil gilt Rechenzeit und Speicher \
-                     dieses Werks."
-                ),
-                format!(
-                    "Discrete, {kerne}{speicher}. The share applies to this unit's compute time \
-                     and memory."
-                ),
-            )
+        sprache.waehlen_wert(
+            format!("Eingebaut, {kerne}{speicher}. Der Anteil gilt der Rechenzeit dieses Werks."),
+            format!("Integrated, {kerne}{speicher}. The share applies to this unit's compute time."),
+        )
+    } else {
+        let speicher = match r.speicher_bytes {
+            Some(b) => format!("{} {}", gib(b), sprache.waehlen("eigener Speicher", "of its own memory")),
+            None => sprache
+                .waehlen("eigener Speicher nicht erkannt", "own memory not detected")
+                .to_string(),
         };
-        if !rechnet {
-            return bauart;
-        }
-        // ⚑ **Was der Anteil heute wirklich tut, und was er noch nicht
-        // tut.** Abschaltbar ist das Werk, teilbar ist es nicht: Eine
-        // Quote auf die Rechenzeit einer GPU braucht einen Planer, und
-        // den gibt es nicht. **Der Satz sagt beides**, denn ein Regler,
-        // der mehr verspricht als er haelt, ist schlimmer als ein
-        // gesperrter.
-        let anteil = sprache.waehlen(
-            "Ganz links rechnet dieses Werk nicht mit, und der Rechenpfad läuft \
-             vollständig auf der CPU weiter; jeder Wert darüber lässt es rechnen. Eine \
-             Teilquote wirkt örtlich noch nicht, sie steht als Freigabe da: Ein Anteil an \
-             der Rechenzeit einer GPU braucht einen Planer, den es noch nicht gibt.",
-            "At the far left this unit does not take part and the compute path runs \
-             entirely on the CPU; any value above lets it compute. A partial share has no \
-             local effect yet, it is recorded as a pledge: a share of a GPU's compute time \
-             needs a scheduler that does not exist yet.",
-        );
-        format!("{bauart} {anteil}")
+        sprache.waehlen_wert(
+            format!(
+                "Eigenständig, {kerne}{speicher}. Der Anteil gilt Rechenzeit und Speicher \
+                 dieses Werks."
+            ),
+            format!(
+                "Discrete, {kerne}{speicher}. The share applies to this unit's compute time \
+                 and memory."
+            ),
+        )
+    };
+    if !rechnet {
+        return bauart;
     }
+    // ⚑ **Was der Anteil heute wirklich tut, und was er noch nicht
+    // tut.** Abschaltbar ist das Werk, teilbar ist es nicht: Eine
+    // Quote auf die Rechenzeit einer GPU braucht einen Planer, und
+    // den gibt es nicht. **Der Satz sagt beides**, denn ein Regler,
+    // der mehr verspricht als er haelt, ist schlimmer als ein
+    // gesperrter.
+    let anteil = sprache.waehlen(
+        "Ganz links rechnet dieses Werk nicht mit, und der Rechenpfad läuft \
+         vollständig auf der CPU weiter; jeder Wert darüber lässt es rechnen. Eine \
+         Teilquote wirkt örtlich noch nicht, sie steht als Freigabe da: Ein Anteil an \
+         der Rechenzeit einer GPU braucht einen Planer, den es noch nicht gibt.",
+        "At the far left this unit does not take part and the compute path runs \
+         entirely on the CPU; any value above lets it compute. A partial share has no \
+         local effect yet, it is recorded as a pledge: a share of a GPU's compute time \
+         needs a scheduler that does not exist yet.",
+    );
+    format!("{bauart} {anteil}")
 }
 
 #[cfg(test)]
@@ -1026,6 +608,7 @@ mod proben {
             kennung: kennung.into(),
             name: name.into(),
             speicher_bytes: Some(16 * GIB),
+            frei_bytes: None,
             gemeinsamer_speicher: false,
             kerne: None,
             rueckseite: r,
@@ -1065,7 +648,7 @@ mod proben {
     }
 
     fn maschine(werke: Vec<Rechenwerk>) -> Hardware {
-        Hardware { kerne: 8, speicher_bytes: Some(32 * GIB), platte: None, rechenwerke: werke }
+        Hardware { kerne: 8, speicher_bytes: Some(32 * GIB), speicher_frei_bytes: None, platte: None, rechenwerke: werke }
     }
 
     /// ⚑ **Der Scan raet nicht.** Was er nicht ermitteln kann, ist
@@ -1076,6 +659,7 @@ mod proben {
         let leer = Hardware {
             kerne: 4,
             speicher_bytes: None,
+            speicher_frei_bytes: None,
             platte: None,
             rechenwerke: Vec::new(),
         };
@@ -1215,54 +799,13 @@ mod proben {
         );
     }
 
-    /// ⚑ **Die Beschriftung nennt den Rechenweg**, sonst ist bei zwei
-    /// Karten nicht zu sehen, welche wovon bedient wird.
-    #[test]
-    fn die_beschriftung_nennt_den_rechenweg() {
-        assert_eq!(
-            werk("a", "Apple M5 Pro", Some(Rueckseite::Metal)).beschriftung(),
-            "Apple M5 Pro (Metal)"
-        );
-        assert_eq!(
-            werk("b", "NVIDIA GeForce RTX 4090", Some(Rueckseite::Cuda)).beschriftung(),
-            "NVIDIA GeForce RTX 4090 (CUDA)"
-        );
-        // Ohne Rechenweg bleibt der Name allein: Eine leere Klammer
-        // saehe aus wie ein verlorener Wert.
-        assert_eq!(werk("c", "Intel UHD Graphics", None).beschriftung(), "Intel UHD Graphics");
-    }
-
-    /// ⚑ **Zwei Karten verschiedener Hersteller bekommen verschiedene
-    /// Rechenwege**, und genau das ist der Fall, um den es geht: eine
-    /// NVIDIA und eine AMD im selben Rechner.
-    ///
-    /// ⚑ **Die Herstellerkennung schlaegt den Namen.** Sie steht im
-    /// Geraet; der Name ist eine Zeichenkette, die ein Treiber setzt.
-    #[test]
-    fn die_herstellerkennung_entscheidet_und_nicht_der_name() {
-        // Linux: `vendor` aus sysfs.
-        assert_eq!(rueckseite_aus(Some("0x10de"), "nvidia 0x10de:0x2684"), Some(Rueckseite::Cuda));
-        assert_eq!(rueckseite_aus(Some("0x1002"), "amdgpu 0x1002:0x744c"), Some(Rueckseite::Rocm));
-        // Windows: aus der PNP-Kennung gezogen.
-        assert_eq!(hersteller_aus_pnp("PCI\\VEN_10DE&DEV_2684&SUBSYS_0000"), Some("10de".into()));
-        assert_eq!(hersteller_aus_pnp("PCI\\VEN_1002&DEV_744C"), Some("1002".into()));
-        assert_eq!(hersteller_aus_pnp("ohne kennung"), None);
-        // Ohne Kennung traegt der Name.
-        assert_eq!(rueckseite_aus(None, "NVIDIA GeForce RTX 4090"), Some(Rueckseite::Cuda));
-        assert_eq!(rueckseite_aus(None, "AMD Radeon RX 7900 XTX"), Some(Rueckseite::Rocm));
-        // ⚑ **Und die Kennung gewinnt gegen einen irrefuehrenden Namen.**
-        assert_eq!(rueckseite_aus(Some("0x10de"), "AMD Radeon"), Some(Rueckseite::Cuda));
-        // Wofuer es keinen Rechenweg gibt, bekommt keinen geraten.
-        assert_eq!(rueckseite_aus(Some("0x8086"), "Intel UHD Graphics 770"), None);
-        assert_eq!(rueckseite_aus(None, "VMware SVGA 3D"), None);
-    }
-
     /// ⚑ **Jedes gefundene Rechenwerk bekommt einen eigenen Regler.**
     #[test]
     fn jedes_rechenwerk_bekommt_einen_eigenen_regler() {
         let h = Hardware {
             kerne: 8,
             speicher_bytes: Some(32 * GIB),
+            speicher_frei_bytes: None,
             platte: None,
             rechenwerke: vec![
                 werk("eins", "Karte eins", Some(Rueckseite::Cuda)),
@@ -1270,6 +813,7 @@ mod proben {
                     kennung: "zwei".into(),
                     name: "Karte zwei".into(),
                     speicher_bytes: None,
+                    frei_bytes: None,
                     gemeinsamer_speicher: true,
                     kerne: Some(16),
                     rueckseite: Some(Rueckseite::Metal),
@@ -1327,12 +871,4 @@ mod proben {
         assert!(!anwenden(&e), "der Durchlauf laeuft weiter, obwohl nichts mehr aus ist");
     }
 
-    /// ⚑ **Die Kennung haengt am Geraet und nicht am Listenplatz.**
-    #[test]
-    fn die_kennung_ueberlebt_eine_zweite_karte() {
-        assert_eq!(kennung_aus("Apple M5 Pro"), "apple-m5-pro");
-        assert_eq!(kennung_aus("NVIDIA GeForce RTX 4090"), "nvidia-geforce-rtx-4090");
-        assert_eq!(kennung_aus("PCI\\VEN_10DE&DEV_2684"), "pci-ven-10de-dev-2684");
-        assert_ne!(kennung_aus("Karte A"), kennung_aus("Karte B"));
-    }
 }

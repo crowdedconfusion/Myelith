@@ -25,7 +25,7 @@ fn main() {
         std::process::exit(1);
     }
     let einstellung = myl_client::einstellungen::Agenteneinstellung {
-        schritte: 6,
+        schritte: Some(6),
         wurzel: Some(d.display().to_string()),
         schreiben: true,
         kistenordner: None,

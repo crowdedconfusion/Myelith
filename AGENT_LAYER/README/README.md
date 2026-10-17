@@ -1,7 +1,7 @@
 # agent-layer
 
-> **Version:** 0.46.0 (`myl-agent` 0.7.1, `myl-local-agent` 0.37.0)
-> **Datum:** 2026-10-14
+> **Version:** 0.47.0 (`myl-agent` 0.7.1, `myl-local-agent` 0.38.0)
+> **Datum:** 2026-10-17
 > **Status:** Manifeste, Herkunftsstufe, Registratur, der
 > **Session-Kontrakt** mit Durchsetzung im Ledger, der **Plan** und seit
 > v0.7.0 die **Segmentkette**. 52 Tests. ⚑ **Was jetzt fehlt, ist keine
@@ -68,6 +68,39 @@ umbenannt, weil er in jedem `use` steht.
 - `src/kette.rs` — dass er es auch so getan hat, und wann er aufhört.
 
 ## Changelog
+
+### v0.47.0 – 2026-10-17 (Schritte je Auftrag ohne Grenze, dafür eine Loop-Erkennung; `myl-local-agent` 0.38.0)
+
+Wunsch des Projektinhabers: Die Agentenschritte sollen nicht mehr begrenzt
+sein, standardmäßig unbegrenzt, und stattdessen soll der Agent erkennen,
+wenn er sich im Kreis dreht.
+
+- ⚑ **`Agenteneinstellung::schritte` ist `Option<u32>`, `None` heißt ohne
+  Grenze und ist die Vorgabe** (vorher 6). `schrittgrenze()` gibt dem Lauf
+  die Zahl oder `OHNE_SCHRITTGRENZE`, die größte, die der
+  Sitzungskontrakt fasst. `kontrakt_fuer` schneidet eine größere Zahl
+  nicht mehr still ab, sondern nimmt das Höchste.
+- 📌 **Gespeichert unter `schritte_hoechstens`**: Der alte Eintrag
+  `schritte` trug fast immer die frühere Vorgabe 6, die beim Speichern
+  mitgeschrieben wurde. Ob sie jemand gewählt hatte, lässt sich daran
+  nicht ablesen; unter dem alten Namen hätte jede bestehende Ablage die
+  Grenze behalten. Er wird beim Lesen übergangen.
+- ⚑ **Die Loop-Erkennung** (`schleife`): Jeder Schritt, in dem etwas lief,
+  bekommt einen Fingerabdruck aus Werkzeugen, Argumenten und Ergebnissen.
+  Kommt derselbe zum dritten Mal (`KREIS_HINWEIS_AB`), steht am letzten
+  Werkzeugergebnis ein Hinweis an das Modell, dass der Schritt nichts
+  Neues bringt; beim fünften Mal (`KREIS_ENDE_AB`) endet der Lauf mit dem
+  neuen Ausgang `Ende::Kreislauf`, der nicht wie „fertig“ aussieht. Im Loop
+  zählt eine solche Runde als begrenzt, wie eine, die an der Schrittzahl
+  endet; die nächste setzt fort.
+- ⚠️ **Gezählt wird im ganzen Lauf, nicht hintereinander**: Ein Modell,
+  das zwischen zwei Aufrufen pendelt, wiederholt keinen unmittelbar. Wer
+  eine Datei zweimal liest, weil er sie dazwischen geändert hat, bekommt
+  ein anderes Ergebnis, und das zählt nicht. Ein Zwischenruf des Menschen
+  setzt die Zählung zurück, denn danach ist die Lage eine andere.
+- Proben `wer_sich_im_kreis_dreht_wird_erst_gewarnt_und_dann_angehalten`
+  und `verschiedene_schritte_sind_kein_kreis` (neu). `cargo test` grün
+  (die Schleifenproben 28, vorher 26).
 
 ### v0.46.0 – 2026-10-14 (Härtung und Schlaf am int8-35B; der Schlaf liest nackte Sätze und kennt den Assistenten; `myl-local-agent` 0.37.0)
 

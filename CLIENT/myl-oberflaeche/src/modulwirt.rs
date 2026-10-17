@@ -527,7 +527,7 @@ fn agentenlauf(app: &tauri::AppHandle, modell: &Arc<Mutex<Option<myl_client::Oer
     let mut g = modell.lock().map_err(|_| "der Modellhalter ist vergiftet".to_string())?;
     let m = g.as_mut().ok_or("es ist kein Modell geladen")?;
     ruestung.nachschlagebudget_zuruecksetzen();
-    let ergebnis = myl_local_agent::lauf::fahren_im_gespraech(m, &ruestung, agent.schritte as usize, true, e.modell.token as u32, &[], auftrag, None);
+    let ergebnis = myl_local_agent::lauf::fahren_im_gespraech(m, &ruestung, agent.schrittgrenze(), true, e.modell.token as u32, &[], auftrag, None);
     myl_local_agent::skills::modusordner_setzen(None);
     ergebnis.antwort.clone().ok_or_else(|| "keine Antwort".to_string())
 }

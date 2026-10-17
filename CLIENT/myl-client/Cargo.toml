@@ -1,6 +1,6 @@
 [package]
 name = "myl-client"
-version = "0.94.0"
+version = "0.104.0"
 edition = "2021"
 rust-version = "1.85"
 description = "Der Nutzer-Client: eine Frage an ein lokales Modell, die Agentenschleife mit Einhaengegrenze, die Einstellungen."
@@ -43,6 +43,10 @@ myl-senses = { path = "../myl-senses" }
 #   neue Fremdkiste mit: Ihre Abhaengigkeiten baut die Konsole schon.
 myl-module = { path = "../myl-module" }
 myl-types = { path = "../../SHARED_TYPES/myl-types" }
+# Speicherorte und Zusage fuer das Mining (`mining`).
+myl-store = { path = "../../STORAGE/myl-store" }
+# Erhebung der Maschine und Belegungsplan; drei Fremdkisten, alle schon da.
+myl-dispatcher = { path = "../../COMPUTE_PIPELINE/dispatcher" }
 # ⚑ **Mit `cpu-simd`, und auf macOS mit `metal`** (Fund 367, 2026-09-14).
 # Bis zu diesem Tag stand die Runtime hier ohne Feature und rechnete damit
 # auf dem skalaren Referenzpfad: gemessen 25 bis 35 Prozent langsamer als

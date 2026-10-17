@@ -99,18 +99,62 @@ pub const NETZ: &str = "netz:";
 /// ⛔️ **Gesperrt, bis die Knoten stehen.** Die Eintraege sind sichtbar
 /// und nicht waehlbar, und `warum` sagt es. Ein Eintrag, der still
 /// nichts tut, waere schlimmer als keiner.
+/// **Wo nach Artefakten gesucht wird**: neben dem eingestellten, und unter
+/// jedem Speicherort mit dem Zweck `gewichte` (`speicherorte.toml`).
+///
+/// ⚑ **Damit lassen sich Gewichte auslagern** (Wunsch des Projektinhabers,
+/// 2026-10-17): Wer ein Artefakt nach `<ort>/gewichte/` verschiebt, findet
+/// es in der Wahl wieder, ohne einen Pfad einzustellen. Eine kaputte Datei
+/// kostet nur diese Orte, nicht die Wahl.
+pub fn suchorte(eingestellt: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let s = crate::mining::Speicherorte::lesen(&crate::mining::speicherorte_pfad()).unwrap_or_default();
+    suchorte_aus(eingestellt, &s, myl_local_agent::ort::wurzel().as_deref())
+}
+
+/// Wo im Repositorium die Artefakte liegen.
+pub const ARTEFAKTORDNER: &str = "INTEGER_LLM/artifacts";
+
+/// [`suchorte`] ohne Datei und Umgebung, damit es sich pruefen laesst.
+///
+/// 📌 **Fund 554: Ohne eingestelltes Artefakt suchte die Wahl nirgends.**
+/// Frische Einstellungen tragen `modell.artefakt = ""`, und ein leerer Pfad
+/// hat keinen Elternordner. Solange im Repositorium noch etwas zu bauen war,
+/// fiel das nicht auf, denn dann stand die Bauliste da; mit allen Modellen
+/// gebaut meldete die Konsole „hier liegt kein gebautes Artefakt" vor zwoelf
+/// Artefakten. Gefunden beim Probelauf des Minings mit abgeschirmten
+/// Einstellungen. Jetzt ist der Artefaktordner des Repositoriums der
+/// Rueckfall.
+pub fn suchorte_aus(
+    eingestellt: &std::path::Path,
+    s: &crate::mining::Speicherorte,
+    wurzel: Option<&std::path::Path>,
+) -> Vec<std::path::PathBuf> {
+    let mut orte: Vec<std::path::PathBuf> = match eingestellt.parent().filter(|p| !p.as_os_str().is_empty()) {
+        Some(p) => vec![p.to_path_buf()],
+        None => wurzel.map(|w| vec![w.join(ARTEFAKTORDNER)]).unwrap_or_default(),
+    };
+    for o in s.fuer(crate::mining::Zweck::Gewichte) {
+        let d = o.ordner(crate::mining::Zweck::Gewichte);
+        if !orte.contains(&d) {
+            orte.push(d);
+        }
+    }
+    orte
+}
+
 pub fn liste(e: &Einstellungen) -> Vec<Modellwahl> {
     let katalog = katalog();
     let mut oertlich: Vec<Modellwahl> = Vec::new();
 
     let aufgeloest = myl_local_agent::ort::absolut(&e.modell.artefakt);
     let hier = std::path::Path::new(&aufgeloest);
-    if let Some(eltern) = hier.parent() {
-        if let Ok(lesen) = std::fs::read_dir(eltern) {
+    for eltern in suchorte(hier) {
+        if let Ok(lesen) = std::fs::read_dir(&eltern) {
             let pfade: Vec<std::path::PathBuf> = lesen
                 .flatten()
                 .map(|x| x.path())
                 .filter(|p| p.join("model_config.json").is_file())
+                .filter(|p| !oertlich.iter().any(|m| std::path::Path::new(&m.pfad) == p.as_path()))
                 .collect();
             for p in pfade {
                 let ordner =
@@ -291,15 +335,56 @@ pub fn hardware_zu(pfad: &str) -> String {
 
 /// **Wie ein Artefakt heisst, wenn ein Mensch es liest.**
 ///
-/// ⚑ Der Katalog kennt die eigenen; fuer alles andere bleibt der
-/// Verzeichnisname. **Ein Name, den niemand vergeben hat, waere
-/// schlechter als ein technischer.**
+/// ⚑ Der Katalog kennt die eigenen; fuer ein Artefakt dieses Projekts, das
+/// dort nicht steht, gilt [`name_nach_schema`], und fuer alles andere bleibt
+/// der Verzeichnisname. **Ein Name, den niemand vergeben hat, waere
+/// schlechter als ein technischer**; die Regel ist einer, den der
+/// Projektinhaber vergeben hat.
 pub fn anzeigename(pfad: &str) -> String {
     let ordner = std::path::Path::new(pfad)
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| pfad.to_string());
-    katalognamen().get(&ordner).cloned().unwrap_or(ordner)
+    katalognamen()
+        .get(&ordner)
+        .cloned()
+        .or_else(|| name_nach_schema(&ordner))
+        .unwrap_or(ordner)
+}
+
+/// **Der Name nach dem Schema „Myelith <Groesse> <Format>“**, etwa
+/// `myelith-35b-a3b` zu „Myelith 35B-A3B INT8“.
+///
+/// ⚑ **Festlegung des Projektinhabers, 2026-10-17.** Die Groesse steht wie
+/// im Verzeichnisnamen, gross geschrieben, bei einem Gemisch mit den
+/// aktiven Parametern (`A3B`). Dahinter die Zahlform der Gewichte: ohne
+/// Zusatz `INT8`, denn das ist der Weg dieses Projekts; sonst der Zusatz
+/// des Verzeichnisses (`INT4`, `TERNÄR`, `GEMISCHT 50`).
+///
+/// ⚑ **Die Regel ist die Quelle, der Katalog folgt ihr.** Er traegt die
+/// Namen weiter ausgeschrieben, weil auch Werkzeuge ohne diese Kiste sie
+/// lesen; `die_katalognamen_folgen_dem_schema` haelt beide beisammen.
+///
+/// `None` fuer einen Ordner, der nicht `myelith-<Groesse>…` heisst.
+pub fn name_nach_schema(ordner: &str) -> Option<String> {
+    let rest = ordner.strip_prefix("myelith-")?;
+    let mut teile = rest.split('-').peekable();
+    let groesse = teile.next().filter(|g| g.starts_with(|c: char| c.is_ascii_digit()) && g.ends_with('b'))?;
+    let mut groesse = groesse.to_ascii_uppercase();
+    let ist_aktiv = |t: &&str| {
+        t.len() > 2 && t.starts_with('a') && t.ends_with('b') && t[1..t.len() - 1].chars().all(|c| c.is_ascii_digit())
+    };
+    if let Some(aktiv) = teile.next_if(ist_aktiv) {
+        groesse = format!("{groesse}-{}", aktiv.to_ascii_uppercase());
+    }
+    let format: Vec<String> = teile
+        .map(|t| match t {
+            "ternaer" => "TERNÄR".to_string(),
+            anderes => anderes.to_uppercase(),
+        })
+        .collect();
+    let format = if format.is_empty() { "INT8".to_string() } else { format.join(" ") };
+    Some(format!("Myelith {groesse} {format}"))
 }
 
 // ── Welches Modell zu dieser Maschine passt ─────────────────────────────
@@ -416,7 +501,7 @@ pub fn kandidaten(e: &Einstellungen) -> Vec<Kandidat> {
 /// Die Empfehlung fuer diese Maschine, oder `None`, wenn kein Artefakt da
 /// ist oder der Arbeitsspeicher sich nicht ermitteln laesst.
 pub fn empfehlung(e: &Einstellungen) -> Option<Empfehlung> {
-    let speicher = crate::hardware::Hardware::erheben(std::path::Path::new(".")).speicher_bytes?;
+    let speicher = crate::hardware::erheben(std::path::Path::new(".")).speicher_bytes?;
     empfehlung_fuer(&kandidaten(e), speicher)
 }
 
@@ -460,4 +545,56 @@ mod empfehlung_proben {
         assert!(klein.grund.contains("kleinste"), "{}", klein.grund);
         assert!(empfehlung_fuer(&[], 24 << 30).is_none());
     }
+
+    /// ⚑ **Ausgelagerte Gewichte werden gefunden**: unter jedem Ort mit dem
+    /// Zweck `gewichte`, nicht unter einem nur fuer das Netz.
+    #[test]
+    fn gesucht_wird_auch_unter_den_orten_fuer_gewichte() {
+        use crate::mining::{Speicherort, Speicherorte, Zweck};
+        let mut s = Speicherorte::default();
+        s.setzen(Speicherort { name: "extern".into(), pfad: "/Volumes/P/M".into(), volumen_gib: 1, zwecke: vec![Zweck::Gewichte, Zweck::Netz] });
+        s.setzen(Speicherort { name: "netz".into(), pfad: "/Volumes/N".into(), volumen_gib: 1, zwecke: vec![Zweck::Netz] });
+        let orte = suchorte_aus(std::path::Path::new("/repo/INTEGER_LLM/artifacts/myelith-0.6b"), &s, None);
+        assert_eq!(orte, [std::path::PathBuf::from("/repo/INTEGER_LLM/artifacts"), "/Volumes/P/M/gewichte".into()]);
+    }
+
+    /// 📌 **Fund 554**: Ohne eingestelltes Artefakt wird im Repositorium
+    /// gesucht und nicht nirgends.
+    #[test]
+    fn ohne_eingestelltes_artefakt_sucht_die_wahl_im_repositorium() {
+        let leer = crate::mining::Speicherorte::default();
+        let w = std::path::Path::new("/repo");
+        assert_eq!(suchorte_aus(std::path::Path::new(""), &leer, Some(w)), [w.join(ARTEFAKTORDNER)]);
+        assert!(suchorte_aus(std::path::Path::new(""), &leer, None).is_empty());
+    }
+
+    /// ⚑ **Das Schema der Modellnamen** (Festlegung des Projektinhabers,
+    /// 2026-10-17), auch fuer Artefakte, die der Katalog nicht kennt.
+    #[test]
+    fn die_namen_folgen_dem_schema() {
+        for (ordner, name) in [
+            ("myelith-35b-a3b", "Myelith 35B-A3B INT8"),
+            ("myelith-35b-a3b-int4", "Myelith 35B-A3B INT4"),
+            ("myelith-0.6b", "Myelith 0.6B INT8"),
+            ("myelith-8b-ternaer-gepackt", "Myelith 8B TERNÄR GEPACKT"),
+            ("myelith-35b-a3b-gemischt-50", "Myelith 35B-A3B GEMISCHT 50"),
+            ("myelith-27b-ternaer", "Myelith 27B TERNÄR"),
+        ] {
+            assert_eq!(name_nach_schema(ordner).as_deref(), Some(name), "{ordner}");
+        }
+        assert_eq!(name_nach_schema("Qwen3-4B"), None);
+        assert_eq!(name_nach_schema("myelith-neu"), None);
+    }
+
+    /// ⚑ **Der Katalog folgt der Regel**, damit dasselbe Modell nicht an zwei
+    /// Stellen zwei Namen traegt.
+    #[test]
+    fn die_katalognamen_folgen_dem_schema() {
+        let namen = katalognamen();
+        assert!(!namen.is_empty(), "der Katalog wurde nicht gefunden");
+        for (ordner, name) in namen {
+            assert_eq!(name_nach_schema(&ordner).as_deref(), Some(name.as_str()), "{ordner} im Katalog");
+        }
+    }
+
 }

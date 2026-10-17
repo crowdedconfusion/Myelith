@@ -67,6 +67,7 @@ fn die_kerne_rechnen_wie_die_cpu() {
         let art = match f.daten {
             Daten::Int8(_) => 0i32,
             Daten::Ternaer { .. } => 1,
+            Daten::Vierbit { .. } => 2,
         };
         for n in [art, f.zeilen as i32, f.spalten as i32, f.eingaben.len() as i32] {
             eingabe.extend_from_slice(&n.to_le_bytes());
@@ -76,6 +77,10 @@ fn die_kerne_rechnen_wie_die_cpu() {
             Daten::Ternaer { muster, betraege } => {
                 eingabe.extend_from_slice(muster);
                 eingabe.extend(betraege.iter().flat_map(|v| v.to_le_bytes()));
+            }
+            Daten::Vierbit { codes, gitter } => {
+                eingabe.extend_from_slice(codes);
+                eingabe.extend_from_slice(gitter);
             }
         }
         eingabe.extend(f.eingaben.iter().flatten().flat_map(|v| v.to_le_bytes()));

@@ -6,6 +6,8 @@
 # CPU. Der Reihe nach:
 #
 #   1. Karten, Treiber und Laufzeituebersetzer finden (NVRTC bzw. hiprtc).
+#   1b. Die Maschine und ihr Plan: Speicher gesamt und frei, je Karte, und
+#      wie der Dispatcher die mitgebrachten Modelle belegen wuerde.
 #   2. Die Kerne bauen und pruefen: der Nachbau auf der CPU und die
 #      Selbstpruefung auf jeder Karte (`cargo test --lib ressourcen::karten`).
 #   3. Messen: CPU gegen Karten je Matrixform und Stapelgroesse, das
@@ -206,6 +208,28 @@ for WEG in $WEGE; do
     esac
     echo '```'
   } > "$BERICHT"
+
+  # ── 1b. Die Maschine und ihr Plan (Dispatcher) ──────────────────────
+  # ⚑ Nur zur Auskunft: Was die Maschine hat und frei hat, je Karte, und
+  #   wie der Dispatcher die mitgebrachten Modelle belegen wuerde. Genau
+  #   diese Zahlen fehlen, um Gewichte dauerhaft auf die Karten zu legen.
+  #   Scheitert es, warnt das Skript und macht weiter.
+  sagen "Maschine und Plan"
+  if (cd "$HIER/COMPUTE_PIPELINE/dispatcher" && cargo build --release --quiet) > "$BERICHT.dispatcher" 2>&1; then
+    VERTEILER="${CARGO_TARGET_DIR:-$HIER/SYSTEM/full-build}/release/dispatcher"
+    {
+      echo; echo "## Maschine und Plan"; echo
+      echo '```'; "$VERTEILER" erheben --datenort "$HIER" 2>&1; echo '```'
+      for MODELL in $MODELLE; do
+        [ -d "$HIER/INTEGER_LLM/artifacts/$MODELL" ] || continue
+        echo; echo "### Plan fuer $MODELL"; echo
+        echo '```'; "$VERTEILER" plan --agent "$HIER/INTEGER_LLM/artifacts/$MODELL" --datenort "$HIER" 2>&1; echo '```'
+      done
+    } >> "$BERICHT"
+    rm -f "$BERICHT.dispatcher"
+  else
+    echo "⚠️ der Dispatcher laesst sich nicht bauen, siehe $BERICHT.dispatcher (weiter ohne ihn)"
+  fi
 
   if [ "$nur_modell" = 0 ]; then
   # ── 2. Bauen und pruefen ──────────────────────────────────────────

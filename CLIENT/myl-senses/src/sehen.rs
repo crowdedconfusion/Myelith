@@ -65,6 +65,26 @@ pub const TOKEN_VORGABE: u32 = 320;
 /// Option nicht kennt. Dann gilt wieder, was das Programm selbst tut.
 pub const BILDTOKEN_VORGABE: u32 = 1024;
 
+/// **Der Kontext, den ein Bildaufruf braucht**: Bildtoken, Antworttoken und
+/// die Frage (hoechstens ein Token je zwei Bytes, also reichlich), dazu 256
+/// Rand, auf 256 aufgerundet.
+///
+/// ⛔️ **Fund 548 (2026-10-15): Ohne `-c` legt das Sehprogramm den
+/// KV-Speicher fuer den ganzen Trainingskontext des Modells an.** Gemessen
+/// mit dem genauen Sehmodell (2,5 GB Gewichte), einem Bild zu 64 mal 64
+/// und 16 Token Antwort: **15,5 GB Fussabdruck** ohne Angabe, **1,27 GB**
+/// mit `-c 4096`, bei derselben Zeit (1,9 s) und derselben Beschreibung.
+/// Auf einer Maschine, auf der der Agent ein grosses Modell haelt, draengte
+/// jedes angesehene Bild ihn aus dem Speicher. Gefunden beim Eichen des
+/// Dispatchers, der die Spitze fuer unplausibel hielt und richtig lag.
+pub fn kontext_fuer(bildtoken: u32, antworttoken: u32, frage_bytes: usize) -> u32 {
+    let roh = bildtoken
+        .saturating_add(antworttoken)
+        .saturating_add(u32::try_from(frage_bytes / 2).unwrap_or(u32::MAX))
+        .saturating_add(256);
+    roh.div_ceil(256).saturating_mul(256)
+}
+
 /// **Der Aufruf des Sehprogramms**, getrennt vom Lauf.
 ///
 /// ⚑ **Damit die Argumente pruefbar sind.** Ein Aufruf, der nur im
@@ -72,6 +92,22 @@ pub const BILDTOKEN_VORGABE: u32 = 1024;
 /// geprueft: Die Pruefsammlung hat keines, und in der CI liegt keines.
 /// Genauso macht es `sprechen::befehl_fuer`.
 fn befehl_fuer(zeug: &Sehzeug, bild: &Path, frage: &str) -> std::process::Command {
+    befehl_mit(
+        zeug,
+        bild,
+        frage,
+        crate::zahl_aus_umgebung("MYL_SEHEN_BILDTOKEN", BILDTOKEN_VORGABE),
+        crate::zahl_aus_umgebung("MYL_SEHEN_TOKEN", TOKEN_VORGABE),
+    )
+}
+
+/// Dasselbe mit ausdruecklichen Zahlen.
+///
+/// 📌 **Eine eigene Funktion, damit keine Probe die Umgebung setzen muss.**
+/// Bis zum 2026-10-15 setzte eine Probe `MYL_SEHEN_BILDTOKEN=0`, waehrend
+/// nebenlaeufige Proben dieselbe Variable lasen; eine zweite Probe wurde
+/// davon zufaellig rot. Die Umgebung ist prozessweit, eine Probe ist es nicht.
+fn befehl_mit(zeug: &Sehzeug, bild: &Path, frage: &str, bildtoken: u32, antworttoken: u32) -> std::process::Command {
     let frage = if frage.trim().is_empty() { VORGABEFRAGE } else { frage };
     // ⛔️ Die Regel steht vor jeder Frage, siehe [`SEHREGEL`].
     let frage = format!("{SEHREGEL}\n\n{frage}");
@@ -86,7 +122,7 @@ fn befehl_fuer(zeug: &Sehzeug, bild: &Path, frage: &str) -> std::process::Comman
         .arg("-p")
         .arg(&frage)
         .arg("-n")
-        .arg(crate::zahl_aus_umgebung("MYL_SEHEN_TOKEN", TOKEN_VORGABE).to_string())
+        .arg(antworttoken.to_string())
         .arg("-t")
         .arg(crate::faeden().to_string())
         .arg("--temp")
@@ -94,9 +130,12 @@ fn befehl_fuer(zeug: &Sehzeug, bild: &Path, frage: &str) -> std::process::Comman
     // ⚑ **Die Bildgrenze nur, wenn sie gesetzt ist.** Siehe
     // [`BILDTOKEN_VORGABE`]: Null heisst „diese Option nicht mitgeben",
     // damit ein Sehprogramm, das sie nicht kennt, nicht daran scheitert.
-    let bildtoken = crate::zahl_aus_umgebung("MYL_SEHEN_BILDTOKEN", BILDTOKEN_VORGABE);
     if bildtoken > 0 {
         befehl.arg("--image-max-tokens").arg(bildtoken.to_string());
+        // ⛔️ Und der Kontext dazu, siehe [`kontext_fuer`]. Ohne Bildgrenze ist
+        //    die Zahl der Bildtoken unbekannt, und dann bleibt es beim
+        //    Programm.
+        befehl.arg("-c").arg(kontext_fuer(bildtoken, antworttoken, frage.len()).to_string());
     }
     befehl
 }
@@ -156,21 +195,32 @@ mod proben {
         assert_eq!(a[i + 1], BILDTOKEN_VORGABE.to_string());
     }
 
+    /// ⛔️ **Der Kontext steht im Aufruf** (Fund 548), und er reicht fuer
+    /// Bild, Frage und Antwort.
+    #[test]
+    fn der_aufruf_begrenzt_den_kontext() {
+        let frage = "x".repeat(1000);
+        let a = argumente(&befehl_fuer(&zeug(), Path::new("/nirgends/bild.png"), &frage));
+        let i = a.iter().position(|x| x == "-c").expect("der Kontext fehlt im Aufruf");
+        let c: u32 = a[i + 1].parse().expect("eine Zahl");
+        assert_eq!(c % 256, 0);
+        assert!(c >= BILDTOKEN_VORGABE + TOKEN_VORGABE + 500, "{c} reicht nicht fuer Bild, Antwort und Frage");
+        assert!(c <= 4096, "{c} ist mehr, als ein Bildaufruf braucht");
+        assert_eq!(kontext_fuer(1024, 320, 0), 1792);
+        assert_eq!(kontext_fuer(1024, 320, 512), 2048);
+    }
+
     /// ⚑ **Null laesst die Option weg**, fuer ein Sehprogramm, das sie
     /// nicht kennt. Ohne diesen Weg waere die einzige Abhilfe, die
     /// Fassung des Sehprogramms zu wechseln.
     #[test]
     fn null_laesst_die_bildgrenze_weg() {
-        // ⚠️ Die Umgebung ist prozessweit; diese Probe setzt und raeumt
-        //    sie im selben Atemzug und teilt sich den Namen mit keiner
-        //    anderen.
-        unsafe { std::env::set_var("MYL_SEHEN_BILDTOKEN", "0") };
-        let a = argumente(&befehl_fuer(&zeug(), Path::new("/nirgends/bild.png"), ""));
-        unsafe { std::env::remove_var("MYL_SEHEN_BILDTOKEN") };
+        let a = argumente(&befehl_mit(&zeug(), Path::new("/nirgends/bild.png"), "", 0, TOKEN_VORGABE));
         assert!(
             !a.iter().any(|x| x == "--image-max-tokens"),
             "die Option steht trotz Null im Aufruf: {a:?}"
         );
+        assert!(!a.iter().any(|x| x == "-c"), "ohne Bildgrenze kein Kontext: {a:?}");
     }
 
     /// ⚑ **Eine leere Frage wird zur Vorgabe**, und die fragt nach dem

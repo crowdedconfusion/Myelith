@@ -14,6 +14,7 @@ pub mod rechenpfad;
 pub mod rmsnorm;
 pub mod linear;
 pub mod ternaer;
+pub mod vierbit;
 pub mod drehung;
 pub mod ressourcen;
 pub mod rope;

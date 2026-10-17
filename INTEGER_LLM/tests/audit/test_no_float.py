@@ -78,6 +78,9 @@ HOT_PATH = [
     # beide liegen in jeder Projektion eines ternaeren Modells.
     REPO / "kernels" / "src" / "ternaer.rs",
     REPO / "kernels" / "src" / "drehung.rs",
+    # Vier Bit je Gewicht in Gruppen von 128 (2026-10-16): jede Projektion
+    # eines Experten im gepackten Gemisch.
+    REPO / "kernels" / "src" / "vierbit.rs",
     REPO / "kernels" / "src" / "rope.rs",
     REPO / "kernels" / "src" / "attention.rs",
     REPO / "kernels" / "src" / "mlp.rs",
@@ -230,6 +233,13 @@ HOT_PATH = [
     # Gleitkommazahl in der Annahmeregel waere genau die Stelle, an der
     # sie bricht.
     REPO / "runtime" / "src" / "lookahead.rs",
+    # Seit dem 2026-10-15: Experten ankuendigen und im Hintergrund lesen,
+    # waehrend die Ebene rechnet. Er rechnet nichts am Modell; seine Zusage
+    # ist, dass jede Zahl bitgleich bleibt, und eine Gleitkommazahl in der
+    # Wahl dessen, was gelesen wird, waere die erste Stelle, an der eine
+    # Maschine anders entscheidet. 📌 Fund 550: Er kam ohne Eintrag hierher,
+    # und erst die Vollstaendigkeitspruefung hat ihn gemeldet.
+    REPO / "runtime" / "src" / "vorlader.rs",
     # Seit dem 2026-09-30: aus einem trainierten Stand wird ein Artefakt.
     # Die Umrechnung ist die des Trainings; eine Gleitkommazahl hier
     # hiesse, dass das ausgelieferte Modell ein anderes ist als das

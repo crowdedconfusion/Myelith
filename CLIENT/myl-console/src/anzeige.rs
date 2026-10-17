@@ -1044,6 +1044,7 @@ fn abbrechen(schirm: Option<Schirm>) -> ! {
         s.aufloesen();
     }
     println!();
+    myl_client::mining::beenden_wenn_eigen();
     crate::schirm::rollbereich_freigeben();
     std::process::exit(130);
 }
@@ -1077,6 +1078,18 @@ fn zeichnen(
                 l.zuletzt = Some(Block::Handlung);
                 let _ = write!(aus, "{}\r\n", zeile_setzen(z.art, &t, &rollen, farbig));
             }
+        }
+    }
+    // ⚑ **Die Meldung des Minings auch mitten im Lauf**, alle fuenf Minuten
+    //   (Auftrag des Projektinhabers, 2026-10-17), in der Zeitleiste und als
+    //   Hinweis gesetzt; sonst laege sie hinter einem langen Loop.
+    if !l.strom_offen {
+        if let Some(zeilen) = crate::miningzeile::faellig() {
+            let _ = write!(aus, "\r\x1b[2K");
+            for z in zeilen {
+                let _ = write!(aus, "{}\r\n", zeile_setzen(Art::Hinweis, &format!("  {z}"), &rollen, farbig));
+            }
+            l.zuletzt = Some(Block::Handlung);
         }
     }
 
@@ -1228,6 +1241,9 @@ fn zeichnen(
         crossterm::style::ResetColor
     );
     let _ = aus.flush();
+    // ⚑ **Die Zeile des Minings eine darunter**, solange der Lauf die
+    //   Ladezeile braucht ([`crate::miningzeile`]).
+    crate::miningzeile::zeichnen_im_lauf(&sch, bild);
 }
 
 /// **Die Zeile selbst**, und sie ist rein: Dieselben Angaben ergeben

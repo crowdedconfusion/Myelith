@@ -205,7 +205,14 @@ pub fn artefakt_umwandeln(
     for d in std::fs::read_dir(quelle).map_err(|f| format!("{}: {f}", quelle.display()))? {
         let d = d.map_err(|f| f.to_string())?;
         let n = d.file_name().to_string_lossy().to_string();
-        if ersetzt.contains(&n) || n == "weights_manifest.json" || n == "theta_v.json" || !d.path().is_file() {
+        // Die Pruefmarke der Quelle gilt hier nie (Fund 551); sie wird beim
+        // ersten Laden neu gesetzt, statt geteilt zu werden.
+        if ersetzt.contains(&n)
+            || n == "weights_manifest.json"
+            || n == "theta_v.json"
+            || n.starts_with(crate::pruefstand::MARKENNAME)
+            || !d.path().is_file()
+        {
             continue;
         }
         if std::fs::hard_link(d.path(), arbeit.join(&n)).is_err() {

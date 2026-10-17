@@ -1638,7 +1638,7 @@ dependencies = [
 
 [[package]]
 name = "integer-llm-kernels"
-version = "0.84.0"
+version = "0.87.0"
 dependencies = [
  "itertools 0.13.0",
  "objc2",
@@ -1651,9 +1651,10 @@ dependencies = [
 
 [[package]]
 name = "integer-llm-runtime"
-version = "0.93.0"
+version = "0.97.0"
 dependencies = [
  "integer-llm-kernels",
+ "libc",
  "memmap2",
  "serde",
  "serde_json",
@@ -2509,7 +2510,7 @@ dependencies = [
 
 [[package]]
 name = "myl-local-agent"
-version = "0.37.0"
+version = "0.38.0"
 dependencies = [
  "libc",
  "myl-agent",
@@ -2523,7 +2524,7 @@ dependencies = [
 
 [[package]]
 name = "myl-net"
-version = "0.16.0"
+version = "0.16.1"
 dependencies = [
  "async-trait",
  "borsh",
@@ -2543,7 +2544,7 @@ dependencies = [
 
 [[package]]
 name = "myl-node"
-version = "0.48.6"
+version = "0.49.0"
 dependencies = [
  "async-trait",
  "borsh",
@@ -2557,6 +2558,7 @@ dependencies = [
  "myl-net",
  "myl-scheduler",
  "myl-siegel",
+ "myl-store",
  "myl-tokenomics",
  "myl-types",
  "tokio",
@@ -2589,7 +2591,7 @@ dependencies = [
 
 [[package]]
 name = "myl-senses"
-version = "0.12.0"
+version = "0.13.1"
 
 [[package]]
 name = "myl-siegel"
@@ -2608,15 +2610,17 @@ dependencies = [
 
 [[package]]
 name = "myl-store"
-version = "0.5.2"
+version = "0.6.0"
 dependencies = [
  "borsh",
  "myl-types",
+ "serde",
+ "toml",
 ]
 
 [[package]]
 name = "myl-testclient"
-version = "0.41.0"
+version = "0.43.1"
 dependencies = [
  "borsh",
  "crossterm",
@@ -3179,9 +3183,9 @@ dependencies = [
 
 [[package]]
 name = "quinn-proto"
-version = "0.11.17"
+version = "0.11.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "04759210543be93709136e28212294a659ef5001836ff4eab4d663e4529bba83"
+checksum = "0e750cca55fe4f0439a15d0bb529da9651e79993e8e72c61a899a36d462befbe"
 dependencies = [
  "bytes",
  "fastbloom",
@@ -3479,9 +3483,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.45"
+version = "0.23.46"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0d41d731c7d2f962d1ccc364cec258de3c0e93b38c2fb3ba97ac74513048d634"
+checksum = "48e13bd8c0e9365c43cfa5c9e8f9ad49d3c8444926c9aac819e0e4dc503c8fdf"
 dependencies = [
  "once_cell",
  "ring",

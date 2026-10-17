@@ -48,6 +48,7 @@ use std::sync::Mutex;
 
 mod modulwirt;
 
+use myl_client::hardware::Freigabemaske as _;
 use serde::Serialize;
 use tauri::Emitter;
 
@@ -84,7 +85,8 @@ struct Ansicht {
     /// Was die Plattenfreigabe gerade wirklich haelt, in Bytes.
     platte_gehalten: u64,
     /// Was Myelith heute an Modellen und Artefakten haelt, in Bytes.
-    platte_belegt: u64,
+    /// `None`, solange die erste Zaehlung noch laeuft ([`belegung_stand`]).
+    platte_belegt: Option<u64>,
     /// ⚑ **Die Betriebsart als dauerhafter Zustand.** Auf der
     /// Kommandozeile genuegt ein Satz beim Start; hier nicht. Wer nicht
     /// sieht, in welcher Betriebsart er arbeitet, hat keine Wahl
@@ -175,7 +177,7 @@ fn kurzform(a: &myl_client::einstellungen::Agenteneinstellung) -> (&'static str,
 }
 
 #[tauri::command]
-fn einstellungen(halter: tauri::State<'_, Halter>) -> Result<Ansicht, String> {
+async fn einstellungen(halter: tauri::State<'_, Halter>) -> Result<Ansicht, String> {
     let pfad = myl_client::Einstellungen::vorgabepfad();
     let e = myl_client::Einstellungen::lesen(&pfad)?;
     // ⚑ **Umgesetzt wird in der Kiste**, mit derselben Funktion, die
@@ -198,7 +200,9 @@ fn einstellungen(halter: tauri::State<'_, Halter>) -> Result<Ansicht, String> {
         werte.insert(f.name.to_string(), e.wert(f.name)?);
     }
     // Dazu die Freigaben je Rechenwerk, deren Namen erst der Scan kennt.
-    for r in &myl_client::hardware::Hardware::erheben(&datenort()).rechenwerke {
+    // ⚑ Nur die Rechenwerke, und die gemerkt: Speicher und Platte braucht
+    //   diese Ansicht nicht, und `vm_stat` kostete hier jedesmal 75 ms.
+    for r in &myl_client::hardware::rechenwerke_gemerkt() {
         let name = format!("{}{}", myl_client::einstellungen::RECHENWERK_PRAEFIX, r.kennung);
         let w = e.wert(&name)?;
         werte.insert(name, w);
@@ -209,7 +213,7 @@ fn einstellungen(halter: tauri::State<'_, Halter>) -> Result<Ansicht, String> {
         sprache: e.oberflaeche.sprache.kennung().to_string(),
         kerne_wirksam: myl_client::kapazitaet::kerne(),
         platte_gehalten,
-        platte_belegt: belegung_heute(),
+        platte_belegt: belegung_stand(),
         betriebsart: kurzform(&e.agent).0.into(),
         betriebsart_warum: kurzform(&e.agent).1.into(),
         pfad: pfad.display().to_string(),
@@ -280,6 +284,8 @@ fn artefakt_loeschen(
 
     let belegt = myl_client::reservierung::belegung(&echt);
     std::fs::remove_dir_all(&echt).map_err(|e| format!("{}: {e}", echt.display()))?;
+    // ⚑ Die Belegung hat sich geaendert (Fund 555).
+    belegung_vergessen();
     // ⚑ Der freigewordene Platz geht zurueck in die Reservierung, sonst
     // stimmte die Summe aus belegt und reserviert nicht mehr.
     let _ = platte_nachfuehren(&halter);
@@ -320,9 +326,9 @@ fn markdown(text: String) -> Vec<myl_client::markdown::Block> {
 /// Datei; die Einstellungsseite fragt ihn einmal beim Oeffnen und nicht
 /// nach jedem gesetzten Feld.
 #[tauri::command]
-fn hardware() -> Result<Freigabemaske, String> {
+async fn hardware() -> Result<Freigabemaske, String> {
     let e = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())?;
-    let h = myl_client::hardware::Hardware::erheben(&datenort());
+    let h = myl_client::hardware::erheben(&datenort());
     Ok(Freigabemaske { regler: h.regler(&e), hardware: h, ort: datenort().display().to_string() })
 }
 
@@ -380,7 +386,7 @@ fn felder() -> Result<Vec<myl_client::einstellungen::Feld>, String> {
 /// Befehle, weil sie zwei Entscheidungen sind: Die eine kostet eine
 /// Netzanfrage, die andere Minuten und einen neuen Programmstand.
 #[tauri::command]
-fn aktualisierung() -> myl_client::aktualisierung::Stand {
+async fn aktualisierung() -> myl_client::aktualisierung::Stand {
     myl_client::aktualisierung::pruefen(env!("CARGO_PKG_VERSION"))
 }
 
@@ -451,7 +457,7 @@ fn setzen(
 /// **zwei Listen, die dasselbe aufzaehlen, zaehlen irgendwann
 /// verschieden auf.**
 #[tauri::command]
-fn modelle() -> Result<Vec<myl_client::modelle::Modellwahl>, String> {
+async fn modelle() -> Result<Vec<myl_client::modelle::Modellwahl>, String> {
     let e = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())?;
     Ok(myl_client::modelle::liste(&e))
 }
@@ -473,7 +479,7 @@ fn modelle() -> Result<Vec<myl_client::modelle::Modellwahl>, String> {
 /// ist keine Zierde: Es ist die einzige Stelle, an der die
 /// Einhaengegrenze fuer einen Menschen sichtbar wird.
 #[tauri::command]
-fn werkzeuge(wurzel: Option<String>) -> Result<Werkzeugliste, String> {
+async fn werkzeuge(wurzel: Option<String>) -> Result<Werkzeugliste, String> {
     let mut e = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())?;
     // ⚑ Die Leiste zeigt, was wirklich zur Verfuegung steht, samt Modul.
     let modul = e.agent.modul.clone();
@@ -733,7 +739,7 @@ fn modul_antwort(name: String, id: u64, antwort: Option<String>, halter: tauri::
 /// **Die Module zur Wahl** in der Seitenleiste: gepruefte zuerst, die
 /// anderen mit ihrem Grund.
 #[tauri::command]
-fn module_wahl() -> Vec<myl_client::module::Modulwahl> {
+async fn module_wahl() -> Vec<myl_client::module::Modulwahl> {
     myl_client::module::wahl()
 }
 
@@ -1331,15 +1337,6 @@ fn loop_beim_schliessen(z: &Loopzustand) {
     while z.laeuft.load(Ordering::SeqCst) && std::time::Instant::now() < bis {
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
-}
-
-/// **Die juengsten Eintraege des Aktionsprotokolls**, und wo es liegt.
-#[tauri::command]
-fn protokoll_lesen() -> (String, Vec<myl_local_agent::protokoll::Eintrag>) {
-    (
-        myl_local_agent::protokoll::ordner().display().to_string(),
-        myl_local_agent::protokoll::lesen(200),
-    )
 }
 
 /// ⛔️ **Der Notschalter des Fensters ist das Schliessen** (Festlegung
@@ -1972,6 +1969,7 @@ async fn agent_fahren(
             verlauf: Vec::new(),
             antwort: Some(satz),
             fertig: true,
+            im_kreis: false,
             sekunden: 0.0,
             gesperrt: false,
             nachrichten,
@@ -1999,7 +1997,7 @@ async fn agent_fahren(
     // entscheidet ueber das Schreiben, und die Werkzeugkiste sagt,
     // welche Werkzeuge es gibt.
     let gesperrt = false;
-    let schritte = e.agent.schritte as usize;
+    let schritte = e.agent.schrittgrenze();
     let grenze = e.modell.token as u32;
 
     // ⛔️ Jeder Auftrag beginnt mit einem gelösten Notaus.
@@ -2046,6 +2044,7 @@ async fn agent_fahren(
         verlauf: aus.verlauf.iter().map(zeile_aus).collect(),
         antwort: aus.antwort.clone(),
         fertig: aus.fertig(),
+        im_kreis: matches!(aus.ende, myl_client::Ende::Kreislauf { .. }),
         sekunden: (aus.sekunden * 10.0).round() / 10.0,
         gesperrt,
         nachrichten: gespraech.nachrichten().to_vec(),
@@ -2325,7 +2324,7 @@ async fn frage(
             Vec::new(),
             nachfrage_fuer(&fenster, e.agent.modus),
         )?;
-        let schritte = e.agent.schritte as usize;
+        let schritte = e.agent.schrittgrenze();
 
         // ⚑ **Der Stand VOR dem Lauf**, damit sich nachher vergleichen
         //   laesst, was wirklich geschehen ist. 📌 Eine Antwort, die
@@ -2738,6 +2737,10 @@ struct Abschluss {
     verlauf: Vec<Zeile>,
     antwort: Option<String>,
     fertig: bool,
+    /// ⚑ **Ob der Lauf an der Loop-Erkennung endete** (2026-10-17): Seit die
+    /// Schritte ohne Grenze sind, ist das der haeufigste Grund fuer ein
+    /// „abgebrochen“, und er gehoert dazugesagt.
+    im_kreis: bool,
     sekunden: f64,
     /// ⚑ Ob die Betriebsart die lokalen Werkzeuge gesperrt hat. Ohne
     /// diese Angabe sieht der Nutzer einen Agenten, der seine Werkzeuge
@@ -2800,7 +2803,7 @@ fn zeile_aus(s: &myl_local_agent::lauf::Schritt) -> Zeile {
 /// gelesen wird mit den Werkzeugen, die es ohnehin hat. **Ein Anhang
 /// soll den Kontext nicht fuellen, sondern ihn erreichbar machen.**
 #[tauri::command]
-fn anhang_aufnehmen(
+async fn anhang_aufnehmen(
     pfad: String,
     wurzel: Option<String>,
     // ⛔️ **Der Betriebsmodus gehoert hierher** (Fund 439, 2026-09-23).
@@ -2966,8 +2969,8 @@ struct Sinnesansicht {
 /// ⚑ **Frisch gefragt, nicht gemerkt.** Wer waehrend einer Sitzung ein
 /// Modell hinlegt, soll es benutzen koennen, ohne das Fenster neu zu
 /// starten; die Suche kostet ein paar Dateiabfragen.
-#[tauri::command]
-fn sinne_stand() -> Sinnesansicht {
+/// Der Stand der Sinne, fuer den Befehl und fuer die Befehle, die ihn danach zurueckgeben.
+fn sinne_ansicht() -> Sinnesansicht {
     let s = myl_senses::Sinne::finden();
     let mut mangel = Vec::new();
     for m in [s.sehen.as_ref().err(), s.hoeren.as_ref().err(), s.sprechen.as_ref().err()]
@@ -2998,8 +3001,15 @@ fn sinne_stand() -> Sinnesansicht {
 /// ⚑ **Im Fenster ist es wirklich eine Taste**, gedrueckt und
 /// losgelassen. In einem Terminal ginge das nicht: Das Loslassen meldet
 /// nur, wer das Kitty-Protokoll spricht.
+/// ⚑ `async`, denn die Suche fragt Geraete und Programme ab und soll das
+/// Fenster nicht anhalten.
 #[tauri::command]
-fn sprechtaste_start(
+async fn sinne_stand() -> Sinnesansicht {
+    sinne_ansicht()
+}
+
+#[tauri::command]
+async fn sprechtaste_start(
     fenster: tauri::AppHandle,
     halter: tauri::State<'_, Halter>,
 ) -> Result<(), String> {
@@ -3057,14 +3067,14 @@ async fn stimme_setzen(pfad: String, einwilligung: Option<bool>) -> Result<Sinne
     })
     .await
     .map_err(|f| format!("der Rechenfaden ist abgestuerzt: {f}"))??;
-    Ok(sinne_stand())
+    Ok(sinne_ansicht())
 }
 
 /// **Nimmt die Stimmprobe wieder weg.**
 #[tauri::command]
-fn stimme_entfernen() -> Sinnesansicht {
+async fn stimme_entfernen() -> Sinnesansicht {
     myl_senses::sprechen::probe_entfernen();
-    sinne_stand()
+    sinne_ansicht()
 }
 
 /// **Laedt das Sprechmodell im Voraus.**
@@ -3075,7 +3085,7 @@ fn stimme_entfernen() -> Sinnesansicht {
 /// Lautsprecher einschaltet, will nicht achtzehn Sekunden auf einen
 /// Knopf warten.
 #[tauri::command]
-fn stimme_vorwaermen(halter: tauri::State<'_, Halter>) -> Result<(), String> {
+async fn stimme_vorwaermen(halter: tauri::State<'_, Halter>) -> Result<(), String> {
     let sprecher = std::sync::Arc::clone(&halter.sprecher);
     // Die Saetze zum Ueberbruecken werden in der Sprache des Fensters
     // vorbereitet.
@@ -3469,13 +3479,58 @@ async fn terminal_ordner(halter: tauri::State<'_, Halter>) -> Result<String, Str
     Ok(o.get_or_insert_with(terminalanfang).display().to_string())
 }
 
+// --- Befehlszeiten ----------------------------------------------------------
+//
+// ⚑ **Messen, wohin die Zeit geht** (Meldung des Projektinhabers, 2026-10-17:
+// das Fenster laedt lange ohne Bild, die Einstellungsseite bis zu zehn
+// Sekunden). Mit `MYL_BEFEHLSZEITEN=<datei>` schreibt das Fenster je Zeile
+// die Millisekunden seit dem Start, was es war, und wie lange: jeden Befehl
+// mit seiner Zeit auf dem Hauptfaden (gemessen um den Aufruf herum, bei
+// `async`-Befehlen nur das Annehmen), dazu, was das Skript meldet
+// (`zeit_melden`: langsame Antworten, Luecken im Bildtakt, Abschnitte des
+// Starts). Ohne die Variable schreibt es nichts; bei laufendem Debug-Log
+// steht, was ueber 100 ms dauerte, dort.
+
+fn startzeit() -> std::time::Instant {
+    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    *START.get_or_init(std::time::Instant::now)
+}
+
+/// Schreibt eine Zeile der Befehlszeiten.
+fn zeit_schreiben(was: &str, ms: u64) {
+    let seit = startzeit().elapsed().as_millis();
+    if let Some(p) = std::env::var_os("MYL_BEFEHLSZEITEN") {
+        use std::io::Write;
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(p) {
+            let _ = writeln!(f, "{seit:>8} ms  {ms:>7} ms  {was}");
+        }
+    }
+    if ms > 100 {
+        myl_local_agent::debuglog::eintrag_mit("Zeit", || format!("{was}: {ms} ms"));
+    }
+}
+
+/// **Was das Skript misst**: langsame Antworten, Luecken im Bildtakt,
+/// Abschnitte des Starts.
+#[tauri::command]
+fn zeit_melden(was: String, ms: u64) {
+    zeit_schreiben(&format!("Fenster: {was}"), ms);
+}
+
 fn main() {
+    startzeit();
     // ⛔️ Das Aktionsprotokoll gilt fuer jeden Lauf dieses Fensters.
     myl_local_agent::protokoll::einschalten();
     // ⚑ Der Debug-Log folgt der Einstellung `debug.log` (2026-10-12).
     if let Ok(e) = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad()) {
         e.debug_anwenden("Fenster", "Fenster gestartet");
     }
+    // ⚑ **Die Rechenwerke im Hintergrund suchen, bevor das Fenster steht**:
+    //   Die Einstellungsseite braucht sie, und die Suche kostet einen
+    //   Unterprozess (`myl_client::hardware::rechenwerke_gemerkt`).
+    myl_client::hardware::vorwaermen();
+    // ⚑ **Und die Belegung zaehlen**, ebenfalls im Hintergrund (Fund 555).
+    belegung_stand();
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(Halter::default())
@@ -3489,10 +3544,15 @@ fn main() {
                 // ⚑ Mit dem Fenster enden seine Module.
                 fenster.state::<Halter>().module.alle_beenden();
                 notschalter_beim_schliessen();
+                // ⚑ **Ein Knoten aus diesem Fenster endet mit ihm**
+                //   (`myl_client::mining`, Kopf); einer aus der Konsole nicht.
+                myl_client::mining::beenden_wenn_eigen();
                 myl_local_agent::debuglog::setzen(false, "Fenster", "Fenster geschlossen");
             }
         })
-        .invoke_handler(tauri::generate_handler![
+        .invoke_handler({
+          let befehle: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![
+            zeit_melden,
             modell_vorladen,
             saat_stand,
             saat_einmal,
@@ -3520,7 +3580,6 @@ fn main() {
             loop_starten,
             loop_pausieren,
             starthinweis,
-            protokoll_lesen,
             einstellungen,
             felder,
             hardware,
@@ -3541,6 +3600,13 @@ fn main() {
             katalog,
             voraussetzungen,
             artefakt_bauen,
+            bauplan,
+            mining_lage,
+            rechenwerke_auffrischen,
+            mining_stand,
+            mining_ablegen,
+            mining_starten,
+            mining_beenden,
             gespraech_ausgeben,
             ordner_waehlen,
             anhang_aufnehmen,
@@ -3559,7 +3625,18 @@ fn main() {
             aktualisieren,
             terminal_ausfuehren,
             terminal_ordner
-        ])
+        ];
+          // ⚑ Die Zeit auf dem Hauptfaden je Befehl (siehe `zeit_schreiben`).
+          move |aufruf: tauri::ipc::Invoke<tauri::Wry>| {
+              let name = aufruf.message.command().to_string();
+              let anfang = std::time::Instant::now();
+              let antwort = befehle(aufruf);
+              if name != "zeit_melden" {
+                  zeit_schreiben(&format!("Hauptfaden: {name}"), anfang.elapsed().as_millis() as u64);
+              }
+              antwort
+          }
+        })
         .run(tauri::generate_context!())
         .expect("die Oberflaeche liess sich nicht starten");
 }
@@ -3644,10 +3721,64 @@ fn belegung_heute() -> u64 {
     // Gewichte und Artefakte liegen seit dem 2026-09-21 nicht mehr im
     // selben Elternverzeichnis, und eine Aufzaehlung an dieser Stelle
     // waere die zweite (Fund 410).
-    myl_local_agent::ort::gefuellte_orte()
+    let summe = myl_local_agent::ort::gefuellte_orte()
         .iter()
         .map(|o| myl_client::reservierung::belegung(o))
-        .sum()
+        .sum();
+    if let Ok(mut g) = BELEGUNG.lock() {
+        g.wert = Some((std::time::Instant::now(), summe));
+    }
+    summe
+}
+
+/// Die gemerkte Belegung, und ob gerade gezaehlt wird.
+#[derive(Default)]
+struct Belegungsstand {
+    wert: Option<(std::time::Instant, u64)>,
+    zaehlt: bool,
+}
+
+static BELEGUNG: std::sync::Mutex<Belegungsstand> = std::sync::Mutex::new(Belegungsstand { wert: None, zaehlt: false });
+
+/// Wie alt eine gemerkte Belegung werden darf, bevor im Hintergrund neu
+/// gezaehlt wird.
+const BELEGUNG_GILT: std::time::Duration = std::time::Duration::from_secs(300);
+
+/// **Die Belegung, ohne zu warten**: die gemerkte Zahl, oder `None`, solange
+/// die erste Zaehlung laeuft. Ist sie aelter als [`BELEGUNG_GILT`] oder fehlt
+/// sie, zaehlt ein Hintergrundfaden neu, hoechstens einer zugleich.
+///
+/// 📌 **Fund 555 (Meldung des Projektinhabers, 2026-10-17): Der Start des
+/// Fensters dauerte rund siebzig Sekunden, die Einstellungsseite bis zu
+/// zehn.** Gemessen mit `MYL_BEFEHLSZEITEN`: Jeder Aufruf von
+/// `einstellungen` brauchte 8 bis 10 s, beim Start fuenfmal hintereinander.
+/// Er zaehlte jedesmal alle Dateien unter Artefakten und Gewichten (zwoelf
+/// Artefakte und vier Gewichtssaetze, weit ueber 200 GB), nur fuer einen
+/// Satz der Freigabeansicht. Meine erste Messung der Teile hatte nur
+/// `platte_nachfuehren` gesehen, das ohne Plattengrenze nicht zaehlt.
+fn belegung_stand() -> Option<u64> {
+    let mut g = BELEGUNG.lock().ok()?;
+    let wert = g.wert;
+    let alt = wert.is_none_or(|(wann, _)| wann.elapsed() > BELEGUNG_GILT);
+    if alt && !g.zaehlt {
+        g.zaehlt = true;
+        std::thread::spawn(|| {
+            belegung_heute();
+            if let Ok(mut g) = BELEGUNG.lock() {
+                g.zaehlt = false;
+            }
+        });
+    }
+    wert.map(|(_, w)| w)
+}
+
+/// Vergisst die gemerkte Belegung, etwa nach einem Bau oder Loeschen; die
+/// naechste Frage zaehlt neu.
+fn belegung_vergessen() {
+    if let Ok(mut g) = BELEGUNG.lock() {
+        g.wert = None;
+    }
+    belegung_stand();
 }
 
 /// Stellt die Reservierung auf die heutige Freigabe ein.
@@ -3667,10 +3798,10 @@ fn platte_nachfuehren(halter: &Halter) -> Result<u64, String> {
             Ok(0)
         }
         Some(gib) => {
-            let soll = myl_client::reservierung::zu_halten(
-                gib as u64 * myl_client::hardware::GIB,
-                belegung_heute(),
-            );
+            // ⚑ Die gemerkte Zahl, wenn es eine gibt; sonst wird hier
+            //   gezaehlt, denn die Reservierung braucht eine.
+            let belegt = belegung_stand().unwrap_or_else(belegung_heute);
+            let soll = myl_client::reservierung::zu_halten(gib as u64 * myl_client::hardware::GIB, belegt);
             match gehalten.as_mut() {
                 Some(r) => r.setzen(soll)?,
                 None => {
@@ -3845,8 +3976,11 @@ struct Voraussetzungen {
     wurzel: Option<String>,
 }
 
-#[tauri::command]
-fn voraussetzungen() -> Voraussetzungen {
+/// ⚑ **Die Python-Umgebung fehlt hier nicht mehr** (seit dem 2026-10-16):
+/// Sie ist der erste Schritt des Baus (`myl_client::bezug`), mit
+/// Bestaetigung und im Platzbedarf mitgezaehlt. Bleiben die Skripte des
+/// Repositoriums und `bash`, das sie faehrt.
+fn voraussetzungen_pruefen() -> Voraussetzungen {
     let Some(w) = wurzel_suchen() else {
         return Voraussetzungen {
             fehlt: vec![
@@ -3858,68 +3992,28 @@ fn voraussetzungen() -> Voraussetzungen {
         };
     };
     let mut fehlt = Vec::new();
-    // ⚑ Der `hf`-Befehl kommt aus `huggingface_hub`; ohne ihn laedt
-    // `fetch_model.sh` nichts. Gesucht wird er in der
-    // Kalibrier-Umgebung **und** im System, denn dort sucht ihn der
-    // Lauf auch.
-    if !befehl_da(&w, "hf") {
-        fehlt.push(
-            "Der Befehl `hf` fehlt (huggingface_hub). \
-             `calibrate/.venv/bin/pip install -r calibrate/requirements.txt`"
-                .into(),
-        );
-    }
-    let venv = w.join("INTEGER_LLM/calibrate/.venv/bin/python3");
-    if !venv.is_file() {
-        fehlt.push(format!(
-            "Die Kalibrier-Umgebung fehlt: {}. \
-             `python3 -m venv calibrate/.venv` und dann die Anforderungen installieren.",
-            venv.display()
-        ));
+    if which("bash").is_none() {
+        fehlt.push("Der Befehl `bash` fehlt; die Bauskripte brauchen ihn (unter Windows etwa Git Bash).".into());
     }
     Voraussetzungen { fehlt, wurzel: Some(w.display().to_string()) }
+}
+
+/// ⚑ `async` wie die anderen Befehle mit Plattenzugriff.
+#[tauri::command]
+async fn voraussetzungen() -> Voraussetzungen {
+    voraussetzungen_pruefen()
 }
 
 /// Sucht einen Befehl im `PATH`.
 fn which(name: &str) -> Option<std::path::PathBuf> {
     let pfad = std::env::var_os("PATH")?;
-    std::env::split_paths(&pfad).map(|d| d.join(name)).find(|p| p.is_file())
-}
-
-/// Das `bin` der Kalibrier-Umgebung.
-fn venv_bin(w: &std::path::Path) -> std::path::PathBuf {
-    w.join("INTEGER_LLM/calibrate/.venv/bin")
-}
-
-/// Der `PATH`, unter dem die Bauskripte laufen: die Kalibrier-Umgebung
-/// **vor** dem System.
-///
-/// 📌 **Bis zum 2026-09-09 bekam nur der Kalibrierschritt ihn.** Der
-/// Download davor lief mit dem blossen System-`PATH`, und
-/// `fetch_model.sh` bricht ohne `hf` ab. Der Befehl liegt aber genau
-/// hier und nicht im System: `huggingface_hub` wird in die Umgebung
-/// installiert. Auf einem **richtig** eingerichteten Klon waere der
-/// Knopf „Download" damit fehlgeschlagen, mit der Meldung, man solle
-/// installieren, was schon da ist.
-fn pfad_mit_venv(w: &std::path::Path) -> String {
-    format!(
-        "{}:{}",
-        venv_bin(w).display(),
-        std::env::var("PATH").unwrap_or_default()
-    )
-}
-
-/// Liegt der Befehl in der Kalibrier-Umgebung oder im System?
-///
-/// ⚑ **Gesucht wird dort, wo der Lauf ihn suchen wird**, und nicht nur
-/// im `PATH` dieses Fensters. Sonst meldet die Oberflaeche einen
-/// Mangel, den es nicht gibt, und verschweigt einen, den es gibt.
-fn befehl_da(w: &std::path::Path, name: &str) -> bool {
-    venv_bin(w).join(name).is_file() || which(name).is_some()
+    std::env::split_paths(&pfad)
+        .flat_map(|d| [d.join(name), d.join(format!("{name}.exe"))])
+        .find(|p| p.is_file())
 }
 
 #[tauri::command]
-fn katalog() -> Result<Vec<Katalogeintrag>, String> {
+async fn katalog() -> Result<Vec<Katalogeintrag>, String> {
     let w = wurzel_suchen().ok_or("Das Repositorium ist nicht zu finden")?;
     let roh = std::fs::read_to_string(w.join("MODELS/llm/KATALOG.json"))
         .map_err(|e| format!("KATALOG.json: {e}"))?;
@@ -3929,9 +4023,6 @@ fn katalog() -> Result<Vec<Katalogeintrag>, String> {
     let text = |v: &serde_json::Value, k: &str| {
         v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string()
     };
-    // ⚑ Eine fehlende Groesse ist null und nicht geraten: Der Platz
-    // wird dann nicht geprueft, statt gegen eine erfundene Zahl.
-    let zahl = |v: &serde_json::Value, k: &str| v.get(k).and_then(|x| x.as_u64()).unwrap_or(0);
     let mut aus = Vec::new();
     for (schluessel, v) in obj {
         // Die Schluessel mit Unterstrich sind Hinweise und keine Modelle.
@@ -3949,8 +4040,17 @@ fn katalog() -> Result<Vec<Katalogeintrag>, String> {
             gewichte: text(v, "gewichte_anzeige"),
             artefakt: text(v, "artefakt_anzeige"),
             status: text(v, "status"),
-            braucht_bytes: zahl(v, "gewichte_bytes") + zahl(v, "artefakt_bytes"),
-            modell_da: w.join("MODELS/llm").join(text(v, "hf_verzeichnis")).is_dir(),
+            // ⚑ Die Spitze aus dem Plan: was waehrend des Baus zugleich
+            //   liegt, gezaehlt nur, was noch fehlt (`myl_client::bezug`).
+            braucht_bytes: myl_client::bezug::Bauplan::fuer(&w, schluessel)
+                .map(|p| p.bedarf().spitze())
+                .unwrap_or(0),
+            // 📌 **Am `config.json` erkannt, nicht am Ordner** (2026-10-16):
+            //   Jeder Modellordner liegt mit seiner LICENSE im Repositorium,
+            //   im kalten Klon also immer da, und der Knopf hiess dann
+            //   „kalibrieren" statt „holen und bauen" (dieselbe Lehre wie
+            //   Fund 471 im Installationsskript).
+            modell_da: w.join("MODELS/llm").join(text(v, "hf_verzeichnis")).join("config.json").is_file(),
             artefakt_da: w
                 .join("INTEGER_LLM/artifacts")
                 .join(schluessel)
@@ -3965,178 +4065,215 @@ fn katalog() -> Result<Vec<Katalogeintrag>, String> {
 /// Eine Zeile aus dem Baulauf, wie sie im Fenster ankommt.
 #[derive(Clone, Serialize)]
 struct Bauzeile {
-    /// `holen`, `kalibrieren`, `fertig` oder `fehler`.
+    /// `umgebung`, `holen`, `kalibrieren`, `vierbit`, `fertig` oder `fehler`.
     phase: &'static str,
     text: String,
 }
 
-/// Holt ein Modell und baut sein Artefakt.
+// --- Mining (Reiter „Knoten") ---------------------------------------------
+//
+// ⚑ **Dieselbe Freigabe wie `/mining` in der Konsole**, aus derselben
+// Stelle (`myl_client::mining`): Vorschlag, Pruefung, Ablage, Start und
+// Meldung stehen dort. Hier wird nur weitergereicht.
+
+/// Was die Seite zum Zeichnen braucht.
+#[derive(Serialize)]
+struct Mininglage {
+    platten: Vec<myl_client::mining::Platte>,
+    freigabe: myl_client::mining::Freigabe,
+    kerne: usize,
+    /// ⚑ Jedes gefundene, mit Rechenweg im Namen und gesperrt mit Grund,
+    /// wenn es hier nicht rechnet (`mining::werke`).
+    rechenwerke: Vec<myl_client::mining::Werkwahl>,
+    /// Was unter dem vorgeschlagenen Pfad schon liegt; es zaehlt zum
+    /// Hoechstwert des Volumens wie in der Pruefung.
+    schon_bytes: u64,
+    laeuft: bool,
+    /// Wer ihn gestartet hat, wenn er laeuft.
+    von: String,
+    zeilen: Vec<String>,
+    speicherorte: String,
+    /// Weitere Orte fuer das Netz aus der Datei.
+    weitere: Vec<String>,
+}
+
+fn jetzt_ms() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
+}
+
+/// Die Zeilen der Zusammenfassung, wenn Mining laeuft.
+fn mining_zeilen() -> Option<(myl_client::mining::Zustand, Vec<String>)> {
+    let mut z = myl_client::mining::zustand()?;
+    let zeilen = match myl_client::mining::stand(&mut z) {
+        Ok(s) => myl_client::mining::zusammenfassung(&z, &s, jetzt_ms()),
+        Err(f) => vec![format!("⛏ Mining läuft, der Knoten antwortet aber nicht: {f}")],
+    };
+    Some((z, zeilen))
+}
+
+/// **Die Lage fuer den Reiter**: Platten, Vorschlag, Maschine, Stand.
+///
+/// ⚑ `async`, denn der Hardwarescan startet auf macOS einen Unterprozess
+/// und soll das Fenster nicht anhalten.
+#[tauri::command]
+async fn mining_lage() -> Result<Mininglage, String> {
+    use myl_client::mining;
+    let e = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())?;
+    let pfad = mining::speicherorte_pfad();
+    let orte = mining::Speicherorte::lesen(&pfad).map_err(|f| f.to_string())?;
+    let platten = mining::platten();
+    let hw = myl_client::hardware::erheben(&myl_local_agent::ort::datenort());
+    let werke = mining::werke(&hw, e.oberflaeche.sprache);
+    let freigabe = mining::Freigabe::vorschlag(&e, &orte, &platten, hw.kerne.max(1) as u32, &werke);
+    let schon_bytes = mining::belegt(&freigabe.pfad());
+    let lauf = mining_zeilen();
+    Ok(Mininglage {
+        platten,
+        schon_bytes,
+        freigabe,
+        kerne: hw.kerne,
+        rechenwerke: werke,
+        laeuft: lauf.is_some(),
+        von: lauf.as_ref().map(|(z, _)| z.von.clone()).unwrap_or_default(),
+        zeilen: lauf.map(|(_, z)| z).unwrap_or_else(|| vec!["Mining läuft nicht.".into()]),
+        speicherorte: pfad.display().to_string(),
+        weitere: orte.fuer(mining::Zweck::Netz).filter(|o| o.name != mining::ORTNAME).map(|o| o.name.clone()).collect(),
+    })
+}
+
+/// **Sucht die Rechenwerke neu**, wenn der Reiter aufgeht; `true`, wenn
+/// eine Karte dazugekommen oder weggefallen ist. Dann holt die Seite ihre
+/// Lage noch einmal.
+///
+/// ⚑ **Nach dem Zeichnen und nicht davor** (Wunsch des Projektinhabers,
+/// 2026-10-17: eine im Betrieb angesteckte Karte soll ohne Neustart
+/// erscheinen). Die Suche kostet unter macOS einen Unterprozess; der Reiter
+/// steht vorher schon mit der gemerkten Liste da.
+#[tauri::command]
+async fn rechenwerke_auffrischen() -> bool {
+    myl_client::hardware::rechenwerke_neu_suchen()
+}
+
+/// Die Zusammenfassung, wenn Mining laeuft, sonst `None`. Das Fenster fragt
+/// danach, ob der Reiter atmet, und alle fuenf Minuten fuer die Meldung.
+#[tauri::command]
+async fn mining_stand() -> Option<Vec<String>> {
+    mining_zeilen().map(|(_, z)| z)
+}
+
+/// Legt die Freigabe ab, ohne zu starten (etwa nur einen Ort fuer Gewichte).
+#[tauri::command]
+async fn mining_ablegen(freigabe: myl_client::mining::Freigabe) -> Result<String, String> {
+    let hw = myl_client::hardware::erheben(&freigabe.platte);
+    myl_client::mining::pruefen(&freigabe, &hw)?;
+    myl_client::mining::speichern(&freigabe)?;
+    Ok(myl_client::mining::speicherorte_pfad().display().to_string())
+}
+
+/// **Startet den Knoten.** ⛔️ Geprueft wird in `mining::starten`, vor allem
+/// anderen; ohne Platz keine Freigabe.
+#[tauri::command]
+async fn mining_starten(freigabe: myl_client::mining::Freigabe) -> Result<Vec<String>, String> {
+    myl_client::mining::starten(&freigabe, "Fenster")?;
+    Ok(mining_zeilen().map(|(_, z)| z).unwrap_or_default())
+}
+
+/// Beendet den Knoten, gleich wer ihn gestartet hat.
+#[tauri::command]
+async fn mining_beenden() -> Result<bool, String> {
+    myl_client::mining::beenden()
+}
+
+/// Was vor dem Knopf steht: der Plan und ob der Platz reicht.
+#[derive(Serialize)]
+struct Baufrage {
+    /// Schritte, Platz waehrend und nach dem Bau, freier Platz.
+    text: String,
+    /// ⛔️ `false` heisst: keine Freigabe, erst Speicher schaffen; `grund`
+    /// sagt, wie viel fehlt.
+    reicht: bool,
+    grund: String,
+}
+
+/// **Der Plan zu einem Katalogeintrag**, fuer die Bestaetigung.
+///
+/// ⚑ Derselbe Text wie in der Konsole (`myl_client::bezug`): Was der Bau
+/// tut und wie viel Speicher er waehrend des Vorgangs braucht, steht an
+/// einer Stelle.
+#[tauri::command]
+fn bauplan(schluessel: String) -> Result<Baufrage, String> {
+    let w = wurzel_suchen().ok_or("Das Repositorium ist nicht zu finden")?;
+    let e = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())?;
+    let plan = myl_client::bezug::Bauplan::fuer(&w, &schluessel)?;
+    let lage = plan.platzlage(&e);
+    let (reicht, grund) = match plan.platz_pruefen(&lage) {
+        Ok(()) => (true, String::new()),
+        Err(f) => (false, f),
+    };
+    Ok(Baufrage { text: plan.bestaetigung(&lage), reicht, grund })
+}
+
+/// **Holt ein Modell und baut sein Artefakt**, nach dem Plan aus
+/// `myl_client::bezug`: Python-Umgebung, Gewichte, int8, vier Bit, je
+/// nachdem, was fehlt.
 ///
 /// # ⚑ Warum die Skripte gerufen werden und nicht nachgebaut
 ///
 /// `fetch_model.sh` nagelt die Revision fest, `build_artifacts.sh`
-/// ruft `calibrate.src.main`. Beides hier nachzubauen hiesse, den
-/// dokumentierten Weg ein zweites Mal zu schreiben, und der zweite ist
-/// immer der schlechter geprueffte. Dieselbe Begruendung wie dafuer,
-/// dass der Ruecken `myl-client` ruft und nicht `myl`.
+/// ruft `calibrate.src.main`, `build_vierbit.sh` den Gitterbau. Beides
+/// hier nachzubauen hiesse, den dokumentierten Weg ein zweites Mal zu
+/// schreiben, und der zweite ist immer der schlechter gepruefte. Seit dem
+/// 2026-10-16 ruft auch das Fenster sie nicht mehr selbst, sondern ueber
+/// `bezug`, dieselbe Stelle wie die Konsole.
 ///
 /// # ⚠️ Ein Fortschrittsbalken, der nicht luegt
 ///
 /// Die Skripte melden keinen Prozentsatz. Was gemeldet wird, sind
-/// **Phasen**: holen, kalibrieren, fertig. Der Balken zeigt deshalb
-/// die Phase und die letzte Zeile, und keine erfundene Zahl. Ein
-/// Balken, der bei siebzig Prozent stehenbleibt, weil jemand geraten
-/// hat, ist schlimmer als einer, der sagt „kalibriert seit vier
-/// Minuten".
+/// **Phasen**. Der Balken zeigt deshalb die Phase und die letzte Zeile,
+/// und keine erfundene Zahl.
+///
+/// ⛔️ Der Platz wird in `bezug::ausfuehren` unmittelbar vor dem ersten
+/// Schritt noch einmal geprueft, mit frischen Zahlen.
 #[tauri::command]
 async fn artefakt_bauen(
     halter: tauri::State<'_, Halter>,
     schluessel: String,
     fenster: tauri::AppHandle,
 ) -> Result<String, String> {
-    let v = voraussetzungen();
+    let v = voraussetzungen_pruefen();
     if !v.fehlt.is_empty() {
         return Err(v.fehlt.join("\n"));
     }
     let w = std::path::PathBuf::from(v.wurzel.ok_or("keine Wurzel")?);
-
-    // Aus dem Katalog: HF-Kennung und Revision.
-    let roh = std::fs::read_to_string(w.join("MODELS/llm/KATALOG.json"))
-        .map_err(|e| e.to_string())?;
-    let d: serde_json::Value = serde_json::from_str(&roh).map_err(|e| e.to_string())?;
-    let eintrag = d.get(&schluessel).ok_or(format!("{schluessel} steht nicht im Katalog"))?;
-    let repo = eintrag.get("hf_repo").and_then(|x| x.as_str()).unwrap_or("").to_string();
-    let revision =
-        eintrag.get("hf_revision").and_then(|x| x.as_str()).unwrap_or("main").to_string();
-    let verzeichnis =
-        eintrag.get("hf_verzeichnis").and_then(|x| x.as_str()).unwrap_or("").to_string();
-    if repo.is_empty() {
-        return Err(format!("{schluessel} nennt kein `hf_repo`"));
-    }
-
-    // ⚑ **Passt es in die Freigabe?** Der Katalog nennt beide Groessen
-    // in Bytes, die Frage ist also gerechnet und nicht geschaetzt. Ein
-    // Download, der die Freigabe sprengt, wird **vorher** abgelehnt und
-    // nicht nach vierzig Minuten mit einer vollen Platte.
-    let braucht = eintrag.get("gewichte_bytes").and_then(|x| x.as_u64()).unwrap_or(0)
-        + eintrag.get("artefakt_bytes").and_then(|x| x.as_u64()).unwrap_or(0);
     let e = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())?;
-    if let (Some(gib), true) = (e.kapazitaet.platte_gib, braucht > 0) {
-        let freigabe = gib as u64 * myl_client::hardware::GIB;
-        let belegt = belegung_heute();
-        if belegt + braucht > freigabe {
-            let g = |b: u64| b as f64 / myl_client::hardware::GIB as f64;
-            return Err(format!(
-                "Das passt nicht in die Freigabe: {:.1} GiB werden gebraucht, \
-                 {:.1} GiB sind belegt, freigegeben sind {gib} GiB. \
-                 Erhöhe die Freigabe oder gib Platz frei.",
-                g(braucht),
-                g(belegt)
-            ));
-        }
-        // ⚑ **Der Platz geht von der Reservierung an den Download
-        // ueber.** Die Summe aus belegt und reserviert bleibt die
-        // Freigabe; ohne diesen Schritt hielte die Reservierung genau
-        // den Platz fest, den der Download gleich braucht.
+    let plan = myl_client::bezug::Bauplan::fuer(&w, &schluessel)?;
+    plan.platz_pruefen(&plan.platzlage(&e))?;
+
+    // ⚑ **Der Platz geht von der Reservierung an den Bau ueber.** Die
+    // Summe aus belegt und reserviert bleibt die Freigabe; ohne diesen
+    // Schritt hielte die Reservierung genau den Platz fest, den der Bau
+    // gleich braucht.
+    if e.kapazitaet.platte_gib.is_some() {
         if let Ok(mut g) = halter.platte.lock() {
             if let Some(r) = g.as_mut() {
-                r.hergeben(braucht)?;
+                r.hergeben(plan.bedarf().spitze())?;
             }
         }
     }
 
     let f = fenster.clone();
-    let sagen = move |phase: &'static str, text: String| {
-        let _ = f.emit("bau-zeile", Bauzeile { phase, text });
+    let sagen = move |z: myl_client::bezug::Zeile| {
+        let _ = f.emit("bau-zeile", Bauzeile { phase: z.phase, text: z.text });
     };
-
-    tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
-        let modellordner = w.join("MODELS/llm").join(&verzeichnis);
-        // ⚑ **Schon da heisst: nicht noch einmal.** Ein zweiter
-        // Download von mehreren Gigabyte, weil jemand den Knopf
-        // zweimal gedrueckt hat, waere teuer und ueberfluessig.
-        if modellordner.is_dir() {
-            sagen("holen", format!("{verzeichnis} liegt schon da, kein Download"));
-        } else {
-            sagen("holen", format!("lade {repo}@{revision} ..."));
-            lauf_mit_ausgabe(
-                std::process::Command::new("bash")
-                    .arg(w.join("INTEGER_LLM/scripts/fetch_model.sh"))
-                    .current_dir(w.join("INTEGER_LLM"))
-                    .env("MODEL_ID", &repo)
-                    .env("REVISION", &revision)
-                    // 📌 Ohne diese Zeile bricht `fetch_model.sh` mit
-                    // „hf-CLI nicht gefunden" ab, obwohl der Befehl in
-                    // der Kalibrier-Umgebung liegt.
-                    .env("PATH", pfad_mit_venv(&w)),
-                "holen",
-                &sagen,
-            )?;
-        }
-
-        sagen("kalibrieren", format!("kalibriere {schluessel}, das dauert ..."));
-        lauf_mit_ausgabe(
-            std::process::Command::new("bash")
-                .arg(w.join("INTEGER_LLM/scripts/build_artifacts.sh"))
-                .current_dir(w.join("INTEGER_LLM"))
-                .env("INTEGER_LLM_MODEL", &schluessel)
-                // ⚑ Das Skript ruft `python3`; ohne die Umgebung im Pfad
-                // griffe es das System-Python und faende `torch` nicht.
-                .env("PATH", pfad_mit_venv(&w)),
-            "kalibrieren",
-            &sagen,
-        )?;
-
-        let ziel = w.join("INTEGER_LLM/artifacts").join(&schluessel);
-        if !ziel.join("model_config.json").is_file() {
-            return Err(format!(
-                "Der Lauf ist durch, aber {} fehlt. Die Ausgabe oben sagt, woran es lag.",
-                ziel.join("model_config.json").display()
-            ));
-        }
-        sagen("fertig", ziel.display().to_string());
-        Ok(ziel.display().to_string())
+    let ergebnis = tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
+        myl_client::bezug::ausfuehren(&plan, &e, &sagen).map(|p| p.display().to_string())
     })
     .await
-    .map_err(|e| format!("der Baufaden ist abgestuerzt: {e}"))?
-}
-
-/// Faehrt einen Befehl und reicht jede Zeile durch.
-///
-/// 📌 **Zeilenweise und nicht am Ende.** Ein Kalibrierlauf dauert
-/// Minuten bis Stunden; wer die Ausgabe erst danach zeigt, hat ein
-/// Fenster, das aussieht wie eingefroren. Genau dafuer gibt es die
-/// Ereignisse.
-fn lauf_mit_ausgabe(
-    befehl: &mut std::process::Command,
-    phase: &'static str,
-    sagen: &impl Fn(&'static str, String),
-) -> Result<(), String> {
-    use std::io::BufRead;
-    let mut kind = befehl
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("{phase}: {e}"))?;
-
-    if let Some(aus) = kind.stdout.take() {
-        for zeile in std::io::BufReader::new(aus).lines().map_while(Result::ok) {
-            sagen(phase, zeile);
-        }
-    }
-    let stand = kind.wait().map_err(|e| e.to_string())?;
-    if !stand.success() {
-        // ⚑ Die Fehlerausgabe erst hier: Sie ist kurz, und sie waere
-        // zwischen den Fortschrittszeilen untergegangen.
-        let mut fehler = String::new();
-        if let Some(mut e) = kind.stderr.take() {
-            use std::io::Read;
-            let _ = e.read_to_string(&mut fehler);
-        }
-        let kurz: String = fehler.lines().rev().take(6).collect::<Vec<_>>().join("\n");
-        return Err(format!("{phase} ist fehlgeschlagen ({stand}):\n{kurz}"));
-    }
-    Ok(())
+    .map_err(|e| format!("der Baufaden ist abgestuerzt: {e}"))?;
+    // ⚑ Nach einem Bau, auch einem abgebrochenen, liegt anderes auf der
+    //   Platte (Fund 555).
+    belegung_vergessen();
+    ergebnis
 }
 
 #[cfg(test)]

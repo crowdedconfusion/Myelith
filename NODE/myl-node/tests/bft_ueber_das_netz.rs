@@ -112,6 +112,7 @@ fn konfig(verzeichnis: &std::path::Path, name: &str, bootstrap: Vec<String>) -> 
         stimmsatzdatei_pfad: None,
         konsensschluesseldatei: None,
         nat: Default::default(),
+        speicherorte: None,
         aufnahme_sekunden: 1,
         // Kein Endpunkt: Ein fester Port kollidierte, sobald zwei
         // Testknoten nebeneinander laufen, und dieser Test prueft

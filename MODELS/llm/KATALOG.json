@@ -8,7 +8,7 @@
     "geholt": "Gewichte liegen lokal mit fixierter Revision, Artefakt noch nicht gebaut. ⚑ Dieser Wert ist am 2026-09-21 dazugekommen, weil keiner der drei anderen den Zustand traf: `vorgemerkt` heisst ausdruecklich \"noch nicht geholt\", `erprobt` verlangt ein gebautes Artefakt. Ein Zustand ohne Wort wird sonst auf den naechstbesten gebucht, und dann meldet der Katalog etwas Falsches."
   },
   "myelith-0.6b": {
-    "anzeigename": "Myelith 0,6B",
+    "anzeigename": "Myelith 0.6B INT8",
     "reihung": 0.6,
     "hardware": "ab 4 GB Arbeitsspeicher, 1 GB Platte",
     "hf_repo": "Qwen/Qwen3-0.6B",
@@ -33,7 +33,7 @@
     "grundmodell": "Qwen3-0,6B"
   },
   "myelith-4b": {
-    "anzeigename": "Myelith 4B",
+    "anzeigename": "Myelith 4B INT8",
     "hf_repo": "Qwen/Qwen3-4B",
     "hf_verzeichnis": "Qwen3-4B",
     "hf_revision": "1cfa9a7208912126459214e8b04321603b3df60c",
@@ -58,7 +58,7 @@
     "hardware": "ab 8 GB Arbeitsspeicher, 5 GB Platte"
   },
   "myelith-8b": {
-    "anzeigename": "Myelith 8B",
+    "anzeigename": "Myelith 8B INT8",
     "hf_repo": "Qwen/Qwen3-8B",
     "hf_verzeichnis": "Qwen3-8B",
     "hf_revision": "b968826d9c46dd6066d109eabc6255188de91218",
@@ -83,7 +83,7 @@
     "hardware": "ab 16 GB Arbeitsspeicher, 9 GB Platte"
   },
   "myelith-30b-a3b": {
-    "anzeigename": "Myelith 30B-A3B",
+    "anzeigename": "Myelith 30B-A3B INT8",
     "hf_repo": "Qwen/Qwen3-30B-A3B",
     "hf_verzeichnis": "Qwen3-30B-A3B",
     "hf_revision": "ad44e777bcd18fa416d9da3bd8f70d33ebb85d39",
@@ -108,7 +108,7 @@
     "hardware": "ab 24 GB Arbeitsspeicher, 32 GB Platte"
   },
   "myelith-35b-a3b": {
-    "anzeigename": "Myelith 35B-A3B",
+    "anzeigename": "Myelith 35B-A3B INT8",
     "hf_repo": "Qwen/Qwen3.6-35B-A3B",
     "hf_verzeichnis": "Qwen3.6-35B-A3B",
     "hf_revision": "995ad96eacd98c81ed38be0c5b274b04031597b0",
@@ -123,8 +123,8 @@
     "vocab_size": 248320,
     "gewichte_bytes": 71903645408,
     "gewichte_anzeige": "rund 67 GB",
-    "artefakt_bytes": 34359738368,
-    "artefakt_anzeige": "rund 32 GB",
+    "artefakt_bytes": 35772817450,
+    "artefakt_anzeige": "rund 33 GB",
     "status": "erprobt",
     "perplexitaet": "9060,93 gegen BF16 8613,28 (+5,20 %), gemessen am 2026-09-22 ueber 16 Sequenzen aus WikiText-2 mit 1683 ausgewerteten Positionen. ⚠️ Damit liegt es KNAPP UEBER dem Akzeptanzkriterium von 5 Prozent, deshalb 'erprobt' und nicht 'verifiziert'. Bei 1683 Positionen ist der Abstand nicht gesichert; die Messung gehoert ueber 32 Sequenzen wiederholt. ⚑ Die Referenz ist hier NICHT baseline.py, denn die laedt bewusst ohne Auslagerung und 67 GB passen nicht in 24 GiB; gemessen wurde gegen das offizielle Modell mit ausdruecklicher Auslagerung auf Platte, auf denselben Sequenzen.",
     "bemerkung": "Das erste hybride Modell des Projekts: 30 der 40 Ebenen sind rekurrente Zustandsschichten (Gated DeltaNet), 10 sind Achtsamkeit mit Ausgangstor und Teildrehung (rotary_dim 64 von 256). Gemisch mit 256 Experten, Top-8, dazu ein geteilter Experte, der bei jedem Token feuert.\n⚑ Es ist ein DENKMODELL: Seine Vorlage oeffnet den Denkblock in der Aufforderung (`<|im_start|>assistant\\n<think>\\n`), anders als Qwen3, das `<think>` selbst schreibt. Der Client bedient das ueber die Vorlage `ChatMlDenkblock`.\n⛔️ Der Bau hat zehn Funde gekostet (417 bis 430). Der entscheidende war 423: `Qwen3_5MoeRMSNorm` rechnet `x * (1 + weight)` mit einem auf null angelegten Gewicht, und der Export nahm das Gewicht so, wie es dastand. Belegt gegen das offizielle Modell: Ebene 0 fiel damit von rel.L2 0,9665 auf 0,0017, und die Top-8 der Logits stimmen Token fuer Token ueberein (' Paris' an eins fuer 'The capital of France is').\nDurchsatz 8,8 Token/s Dekodierung auf Apple M5 Pro mit 24 GiB.",
@@ -132,6 +132,36 @@
     "reihung": 35.0,
     "hardware": "ab 24 GB Arbeitsspeicher, 33 GB Platte"
   },
-  "_anzeigename_bedeutung": "⚑ `anzeigename` heisst seit dem 2026-09-09 \"Myelith <Groesse>\" und nicht mehr nach dem Grundmodell. Der Grund ist sachlich: Was ausgeliefert wird, ist ein SELBST GEBAUTES Artefakt, ganzzahlig quantisiert nach dem Verfahren dieses Projektes, mit eigenen Skalen und Nachschlagetabellen. Es rechnet anders als das Gleitkommamodell, aus dem es stammt, und seine Perplexitaet steht hier daneben; es \"Qwen3-4B\" zu nennen behauptete eine Gleichheit, die nicht besteht. ⚠️ Die Herkunft verschwindet dabei NICHT: Sie steht in `grundmodell`, `hf_repo` und `hf_revision`, und die Oberflaeche zeigt sie neben dem Namen. Das ist keine Hoeflichkeit, sondern die Bedingung der Apache-2.0, unter der die Grundmodelle stehen; ohne sie waere der Name eine Verschleierung statt einer Unterscheidung.",
+  "myelith-35b-a3b-int4": {
+    "anzeigename": "Myelith 35B-A3B INT4",
+    "hf_repo": "Qwen/Qwen3.6-35B-A3B",
+    "hf_verzeichnis": "Qwen3.6-35B-A3B",
+    "hf_revision": "995ad96eacd98c81ed38be0c5b274b04031597b0",
+    "lizenz_gewichte": "Apache-2.0",
+    "lizenz_artefakt": "PolyForm Shield License 1.0.0",
+    "lizenz_geprueft": "2026-09-22 gegen die LICENSE-Datei des Verzeichnisses geprueft (Apache License Version 2.0). Keine eigene Rechtspruefung, siehe COMPLIANCE/ethics/Lizenzlage.md",
+    "parameter": "35 Mrd. gesamt, rund 3 Mrd. aktiv je Token",
+    "layer": 40,
+    "hidden_size": 2048,
+    "num_heads": 16,
+    "num_kv_heads": 2,
+    "vocab_size": 248320,
+    "gewichte_bytes": 71903645408,
+    "gewichte_anzeige": "rund 67 GB",
+    "bauweg": "vierbit",
+    "quelle": "myelith-35b-a3b",
+    "zwischen_bytes": 40275808256,
+    "zwischen_anzeige": "rund 38 GB waehrend des Baus (Mitschnitt 7,5 GB, Behaelter 30 GB), danach geloescht",
+    "artefakt_bytes": 16632106807,
+    "artefakt_anzeige": "rund 19 GB, davon 3,3 GB mit dem int8 geteilt",
+    "bauzeit_anzeige": "rund 2 Stunden nach dem int8 (Mitschnitt 15 min, Gitterbau 1 h 45 min auf einem M5 Pro)",
+    "status": "erprobt",
+    "perplexitaet": "10,3467 gegen das int8 10,3410 (+0,06 %), gemessen am 2026-10-16 ueber 48 Sequenzen aus WikiText-2 zu 256 Token, 7173 Positionen. GSM8K: 41 von 50 Aufgaben wie das int8. Gegen die Gleitkomma-Referenz nicht eigens gemessen; der Abstand ist der des int8 plus diese 0,06 %.",
+    "bemerkung": "Die Experten des int8-35B in vier Bit, trainingsfrei: GPTQ mit ganzem Gitter je Gruppe von 128 und geschrumpfter Kovarianz fuer seltene Experten, gepackt auf 4,125 Bit je Gewicht (Format vierbit_g128). Das gepackte Artefakt rechnet jede Zeile als dieselbe ganze Zahl wie sein Behaelter in int8, belegt Zeile fuer Zeile an den Logits. Aufmerksamkeit, Zustandsschichten, geteilter Experte und Kopf bleiben int8. Auf 24 GiB passt es fast ganz in den Speicher: Decode rund 25 % schneller als das int8, die Vorbereitung rund 35 %. Gebaut wird es aus dem int8 mit INTEGER_LLM/scripts/build_vierbit.sh; das Ergebnis wird gegen den Manifest-Hash im Register geprueft.",
+    "grundmodell": "Qwen3.6-35B-A3B",
+    "reihung": 35.0,
+    "hardware": "ab 24 GB Arbeitsspeicher, 19 GB Platte (dazu das int8 als Quelle)"
+  },
+  "_anzeigename_bedeutung": "⚑ `anzeigename` heisst seit dem 2026-10-17 \"Myelith <Groesse> <Format>\", etwa \"Myelith 35B-A3B INT8\": die Groesse wie im Verzeichnisnamen, bei einem Gemisch mit den aktiven Parametern, dahinter die Zahlform der Gewichte. Dieselbe Regel benennt ein Artefakt, das hier nicht steht, und eine Probe haelt die Namen dieser Liste an ihr fest. Seit dem 2026-09-09 heisst er nicht mehr nach dem Grundmodell. Der Grund ist sachlich: Was ausgeliefert wird, ist ein SELBST GEBAUTES Artefakt, ganzzahlig quantisiert nach dem Verfahren dieses Projektes, mit eigenen Skalen und Nachschlagetabellen. Es rechnet anders als das Gleitkommamodell, aus dem es stammt, und seine Perplexitaet steht hier daneben; es \"Qwen3-4B\" zu nennen behauptete eine Gleichheit, die nicht besteht. ⚠️ Die Herkunft verschwindet dabei NICHT: Sie steht in `grundmodell`, `hf_repo` und `hf_revision`, und die Oberflaeche zeigt sie neben dem Namen. Das ist keine Hoeflichkeit, sondern die Bedingung der Apache-2.0, unter der die Grundmodelle stehen; ohne sie waere der Name eine Verschleierung statt einer Unterscheidung.",
   "_hardware_bedeutung": "⚑ `hardware` ist die Mindestausstattung fuer den OERTLICHEN Betrieb, kleingedruckt neben dem Modell. Zwei Zahlen: Platte ist das gemessene Artefakt aufgerundet und eine harte Bedingung, denn es muss liegen koennen. Arbeitsspeicher ist die Groesse, ab der das Modell fluessig antwortet; weniger geht, wird aber langsamer, weil die Gewichte dann von der Platte kommen. ⚠️ Gemessen auf Apple M5 Pro; eine langsamere Platte verschiebt die zweite Zahl nach oben, nicht die erste. `reihung` ist die Zahl der Parameter in Milliarden und ordnet die Wahl aufsteigend; sie steht als Zahl da, damit niemand nach Zeichenketten sortiert und `14B` vor `4B` landet."
 }

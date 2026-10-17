@@ -15,6 +15,7 @@
 //! **Diese Datei ersetzt den Buendler an genau der Stelle, an der er
 //! etwas geleistet haette**, und nirgends sonst.
 
+use myl_client::hardware::Freigabemaske as _;
 use std::collections::BTreeSet;
 
 fn lies(name: &str) -> String {
@@ -942,36 +943,25 @@ fn jede_regel_hat_ein_element() {
 /// fehlgeschlagen, mit der Aufforderung zu installieren, was schon da
 /// ist. Das faellt in keinem Bau auf: Es ist eine fehlende Zeile und
 /// kein Fehler.
+///
+/// ⚑ **Seit dem 2026-10-16 faehrt das Fenster die Skripte nicht mehr
+/// selbst**, sondern ueber `myl_client::bezug`, dieselbe Stelle wie die
+/// Konsole. Geprueft wird deshalb dort: Es gibt genau einen Start eines
+/// Skripts, er setzt den `PATH` mit der Umgebung vorn, und der Pfad zur
+/// Umgebung steht einmal. Im Fenster startet kein Skript mehr.
 #[test]
 fn jedes_bauskript_bekommt_die_umgebung_in_den_pfad() {
-    let quelle = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/main.rs"))
-        .expect("main.rs");
-
-    let mut gefunden = 0;
-    let mut rest = quelle.as_str();
-    while let Some(a) = rest.find("Command::new(\"bash\")") {
-        // Der Aufbau eines Befehls endet an seinem Komma vor dem
-        // naechsten Argument von `lauf_mit_ausgabe`; ein grosszuegiges
-        // Fenster genuegt, um die Kette der `.env` zu sehen.
-        let fenster = &rest[a..(a + 700).min(rest.len())];
-        assert!(
-            fenster.contains("pfad_mit_venv"),
-            "ein Bauskript wird ohne die Kalibrier-Umgebung im Pfad gefahren:\n{}",
-            fenster.lines().take(6).collect::<Vec<_>>().join("\n")
-        );
-        gefunden += 1;
-        rest = &rest[a + 20..];
-    }
-    assert!(gefunden >= 2, "nur {gefunden} Bauskriptaufrufe gefunden, erwartet zwei");
-
-    // ⚑ Und die Stelle, an der der Pfad zusammengesetzt wird, gibt es
-    //   nur einmal. Zwei Fassungen liefen irgendwann auseinander, und
-    //   genau das war der Fehler.
-    assert_eq!(
-        quelle.matches("calibrate/.venv/bin\")").count(),
-        1,
-        "der Pfad zur Kalibrier-Umgebung steht mehr als einmal im Quelltext"
+    let fenster = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/main.rs")).expect("main.rs");
+    assert!(
+        !fenster.contains("Command::new(\"bash\")"),
+        "das Fenster startet ein Bauskript selbst statt ueber myl_client::bezug"
     );
+    let bezug = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../myl-client/src/bezug.rs")).expect("bezug.rs");
+    assert_eq!(bezug.matches("Command::new(\"bash\")").count(), 1, "genau ein Start eines Bauskripts");
+    let a = bezug.find("Command::new(\"bash\")").expect("Start");
+    let kette = &bezug[a..(a + 600).min(bezug.len())];
+    assert!(kette.contains(".env(\"PATH\", pfad_mit_umgebung(wurzel))"), "das Bauskript laeuft ohne die Umgebung im Pfad:\n{kette}");
+    assert_eq!(bezug.matches("calibrate/.venv/bin\"").count(), 1, "der Pfad zur Kalibrier-Umgebung steht mehr als einmal");
 }
 
 /// **Wer `window.__TAURI__` benutzt, braucht `withGlobalTauri`.**
@@ -1807,7 +1797,7 @@ fn glas_hat_dicke_und_spiegelung() {
 /// diese Zahlen bewegen, und wer darueber hinauskommt, bekommt es
 /// gesagt statt eines stillen Durchlaufs.
 fn zahlwort(n: usize) -> String {
-    const WORTE: [&str; 71] = [
+    const WORTE: [&str; 81] = [
         "null", "ein", "zwei", "drei", "vier", "fünf", "sechs", "sieben", "acht", "neun",
         "zehn", "elf", "zwölf", "dreizehn", "vierzehn", "fünfzehn", "sechzehn", "siebzehn",
         "achtzehn", "neunzehn", "zwanzig", "einundzwanzig", "zweiundzwanzig",
@@ -1822,7 +1812,9 @@ fn zahlwort(n: usize) -> String {
         "siebenundfünfzig", "achtundfünfzig", "neunundfünfzig", "sechzig",
         "einundsechzig", "zweiundsechzig", "dreiundsechzig", "vierundsechzig",
         "fünfundsechzig", "sechsundsechzig", "siebenundsechzig", "achtundsechzig",
-        "neunundsechzig", "siebzig",
+        "neunundsechzig", "siebzig", "einundsiebzig", "zweiundsiebzig", "dreiundsiebzig",
+        "vierundsiebzig", "fünfundsiebzig", "sechsundsiebzig", "siebenundsiebzig",
+        "achtundsiebzig", "neunundsiebzig", "achtzig",
     ];
     WORTE
         .get(n)
@@ -2644,6 +2636,9 @@ fn die_aktualisierung_steht_zuoberst() {
         ("id=\"felder-modell\"", "die Feinheiten des Modells"),
         ("id=\"sinne\"", "die Sinne"),
         ("id=\"felder-agent\"", "die Feinheiten des Agenten"),
+        // ⚑ **Die Diagnose ganz unten** (Wunsch des Projektinhabers,
+        // 2026-10-17), und mit ihr der Debug-Log.
+        ("id=\"felder-diagnose\"", "die Diagnose"),
     ];
     for paar in folge.windows(2) {
         assert!(
@@ -2653,6 +2648,12 @@ fn die_aktualisierung_steht_zuoberst() {
             paar[1].1
         );
     }
+    let js = lies("app.js");
+    assert!(
+        js.contains("name.startsWith(\"debug.\")\n          ? \"felder-diagnose\""),
+        "der Debug-Log kommt nicht in die Tabelle ganz unten"
+    );
+    assert!(js.contains("\"felder-agent\", \"felder-diagnose\"]"), "die Diagnosetabelle wird beim Zeichnen nicht geleert");
 }
 
 /// **Der Einspielknopf erscheint erst, wenn es etwas einzuspielen
@@ -2873,7 +2874,9 @@ fn ein_beruehrtes_gespraech_wandert_nach_oben() {
     //    ab, statt etwas ueber das Umordnen zu sagen.
     // ⚑ 1 400 seit dem 2026-09-30: Vor dem Umordnen stehen jetzt auch die
     //    anliegenden Skills.
-    let rumpf = &senden[..zeichengrenze_unten(senden, 1400)];
+    // ⚑ 1 800 seit dem 2026-10-17: Davor steht jetzt die Frage nach dem
+    //    Einhaengepfad.
+    let rumpf = &senden[..zeichengrenze_unten(senden, 1800)];
     assert!(
         rumpf.contains("nach_oben(offen)"),
         "beim Senden wird nicht umgeordnet"
@@ -2985,39 +2988,24 @@ fn der_wert_selbst_ist_der_knopf() {
         js.contains("function werkzeugzeile()"),
         "der Knopf `Werkzeuge anzeigen` fehlt"
     );
-    // ⚑ **Und sie haengt an der Kistenzeile, nicht am Ende der Rubrik**
-    // (Meldung des Projektinhabers, 2026-09-15): Der Knopf beantwortet
-    // die Frage, die der Pfad darueber aufwirft. Zwei Zeilen weiter
-    // unten steht er neben etwas anderem.
+    // 📌 **Bis myl-oberflaeche 0.80.0 hing sie an der Kistenzeile**
+    // (Meldung des Projektinhabers, 2026-09-15). Seit dem 2026-10-17 steht
+    // die Kiste nur noch in der Seitenleiste; der Knopf steht in einer
+    // eigenen, beschrifteten Zeile nach dem letzten Agentenfeld.
     assert!(
-        js.contains("if (f.name === \"agent.kistenordner\") kistenzeile = zeile;"),
-        "die Kistenzeile wird nicht gemerkt"
+        js.contains("if (letzte_agentenzeile) letzte_agentenzeile.after(werkzeugzeile());"),
+        "die Werkzeugzeile steht nicht nach den Agentenfeldern"
     );
-    // ⚑ **Und sie steht in der zweiten Spalte, unter dem Pfadfeld.**
-    //
-    // 📌 Gemeldet vom Projektinhaber am 2026-09-15: Mit `colSpan = 2`
-    // spannte die Zeile ueber beide Spalten, und der Knopf sass ganz
-    // links unter dem Erklaertext statt unter dem Feld, auf das er sich
-    // bezieht. Eine leere erste Zelle bringt ihn in dieselbe Spalte.
+    assert!(
+        js.contains("titel.textContent = t(\"werkzeuge.titel\");"),
+        "die Werkzeugzeile sagt nicht, wessen Werkzeuge sie zeigt"
+    );
     // ⚠️ Geprueft wird die **Zuweisung**, nicht das Wort: Ein
     // Erklaerkommentar nennt `colSpan` selbst, und eine Probe, die
     // darauf anschlaegt, prueft ihren eigenen Text.
     assert!(
         !js.contains("td.colSpan ="),
-        "die Werkzeugzeile spannt wieder ueber beide Spalten"
-    );
-    // ⚑ **Der Knopf haengt in der Zelle des Pfadfeldes, nicht in einer
-    // eigenen Zeile.**
-    //
-    // 📌 Zweimal gemeldet vom Projektinhaber am 2026-09-15: erst auf
-    // der falschen Seite, dann zu weit unten. Die linke Zelle der
-    // Kistenzeile traegt 350 Zeichen Erklaerung und macht die ganze
-    // Zeile so hoch; was in der naechsten Zeile folgt, beginnt erst
-    // darunter. **Eine Nachbarzeile steht nicht unter dem Feld, sondern
-    // unter der hoeheren der beiden Spalten.**
-    assert!(
-        js.contains("kistenzeile.querySelector(\"td:last-child\").append(werkzeugblock())"),
-        "der Knopf haengt nicht in der Zelle des Pfadfeldes"
+        "die Werkzeugzeile spannt ueber beide Spalten"
     );
     // Und sie entscheidet am Feldnamen, nicht an der uebersetzten
     // Ueberschrift: `agent.` ist in jeder Sprache dasselbe.
@@ -3139,12 +3127,17 @@ fn der_einhaengepfad_gehoert_dem_prozess() {
         js.contains("invoke(\"werkzeuge\", { wurzel: prozesspfad() })"),
         "die Werkzeugliste bekommt den Pfad des Prozesses nicht mit"
     );
-    // ⚑ Der Platzhalter in den Einstellungen aber ausdruecklich nicht:
-    // Er sagt, was bei leerem Feld gilt.
-    assert!(
-        js.contains("invoke(\"werkzeuge\", { wurzel: null })"),
-        "der Platzhalter der Einstellungen haengt am Prozess"
-    );
+    // ⚑ **Jedes neue Agentengespraech fragt nach dem Pfad** (Wunsch des
+    // Projektinhabers, 2026-10-17), mit dem des Gespraechs davor als
+    // Vorschlag; beim Knopf, beim Lostippen und beim Task, der ein neues
+    // Gespraech anlegt.
+    assert!(js.contains("async function pfad_fragen(g, vorschlag)"), "die Frage nach dem Pfad fehlt");
+    assert!(js.contains("await pfad_fragen(g, vorher);\n  $(\"auftrag\").focus();"), "der Knopf fragt nicht");
+    assert!(js.contains("if (!offen) await pfad_fragen(neues_gespraech(), null);"), "das Lostippen fragt nicht");
+    assert!(js.contains("if (neu) await pfad_fragen(g, vorher);"), "ein neuer Task fragt nicht");
+    let html = lies("index.html");
+    assert!(html.contains("id=\"pfadfrage-behalten\"") && html.contains("id=\"pfadfrage-aendern\""));
+    assert!(!js.contains("wurzel_verlangen()"), "der alte Sprung auf die Einstellungsseite ist zurueck");
 }
 
 /// **Der offene Anschlag eines Reglers liegt rechts, und er heisst, wie
@@ -3628,13 +3621,13 @@ fn der_ki_hinweis_kommt_bei_jedem_start_und_laesst_sich_nicht_wegklicken() {
     assert!(!stil.contains("#auftrag::placeholder { display: none") && !stil.contains("::placeholder { color: transparent"));
 }
 
-/// ⛔️ **Keine Stimme ohne Einwilligung, und das Protokoll ist sichtbar.**
+/// ⛔️ **Keine Stimme ohne Einwilligung, und das Protokoll wird geschrieben.**
 ///
 /// Die Einwilligung wird zweimal verlangt: am Haekchen, das den Knopf
 /// freigibt, und im Befehl, der ohne sie ablehnt. Das zweite ist das
 /// eigentliche; das erste sagt dem Menschen, wozu er zustimmt.
 #[test]
-fn keine_stimme_ohne_einwilligung_und_das_protokoll_ist_sichtbar() {
+fn keine_stimme_ohne_einwilligung_und_das_protokoll_wird_geschrieben() {
     let rs = lies_quelle("main.rs");
     let a = rs.find("async fn stimme_setzen(").expect("stimme_setzen");
     let f = &rs[a..zeichengrenze_unten(&rs, a + 800)];
@@ -3648,10 +3641,11 @@ fn keine_stimme_ohne_einwilligung_und_das_protokoll_ist_sichtbar() {
     assert!(js.contains("invoke(\"stimme_setzen\", { pfad: gewaehlt, einwilligung: true })"));
     assert!(js.contains("if (!einwilligung.checked) return;"));
 
-    // Das Protokoll: ein Abschnitt, ein Befehl, und der Befehl ist angemeldet.
-    assert!(html.contains("<section id=\"protokoll\">"));
-    assert!(js.contains("invoke(\"protokoll_lesen\")"));
-    assert!(rs.contains("fn protokoll_lesen()"));
+    // ⚑ **Das Aktionsprotokoll steht nicht mehr auf der Seite** (Wunsch des
+    // Projektinhabers, 2026-10-17); geschrieben wird es weiter.
+    assert!(!html.contains("<section id=\"protokoll\">"), "das Aktionsprotokoll steht wieder auf der Seite");
+    assert!(!js.contains("invoke(\"protokoll_lesen\")"));
+    assert!(rs.contains("myl_local_agent::protokoll::einschalten();"), "das Fenster schreibt kein Aktionsprotokoll mehr");
 }
 
 /// ⛔️ **Der Notschalter des Fensters ist das Schliessen, und nur das**,
@@ -3921,4 +3915,65 @@ fn modultext_ist_nie_markup() {
     let i_modul = absenden.find("await modul_senden(text)").expect("ein Modulbefehl geht nicht an das Modul");
     let i_senden = absenden.find("await senden(text)").expect("das Senden fehlt");
     assert!(i_modul < i_senden, "der Modulbefehl wird erst nach dem Auftrag gefragt");
+}
+
+/// ⛔️ **Was dauert, laeuft nicht auf dem Hauptfaden.**
+///
+/// 📌 Meldung des Projektinhabers (2026-10-17): Start und Einstellungsseite
+/// dauerten lange, und die Startanimation stand. Ein Befehl ohne `async`
+/// laeuft in Tauri 2 auf dem Hauptfaden und haelt dort das ganze Fenster an;
+/// `einstellungen` lief so bei jedem Aufruf durch den Hardwarescan
+/// (`system_profiler`, `vm_stat`), und das Fenster ruft ihn an mehr als zehn
+/// Stellen. Diese Probe nennt die langsamen Aufrufe und verlangt, dass jeder
+/// Befehl, der einen davon enthaelt, `async` ist.
+#[test]
+fn was_dauert_laeuft_nicht_auf_dem_hauptfaden() {
+    let rs = lies_quelle("main.rs");
+    const LANGSAM: [&str; 7] = [
+        "hardware::erheben(",
+        "aktualisierung::pruefen(",
+        "Sinne::finden(",
+        "module::wahl(",
+        "modelle::liste(",
+        "sinne_ansicht(",
+        "voraussetzungen_pruefen(",
+    ];
+    let mut falsch = Vec::new();
+    for teil in rs.split("#[tauri::command]").skip(1) {
+        let kopf = teil.trim_start();
+        let ende = kopf.find("\n}\n").unwrap_or(kopf.len());
+        let rumpf = &kopf[..ende];
+        let name = kopf.split("fn ").nth(1).and_then(|r| r.split('(').next()).unwrap_or("?");
+        if !kopf.starts_with("async fn") && LANGSAM.iter().any(|l| rumpf.contains(l)) {
+            falsch.push(name.to_string());
+        }
+    }
+    assert!(falsch.is_empty(), "Befehle mit langsamen Aufrufen auf dem Hauptfaden: {falsch:?}");
+    // Gegenprobe: Die Probe sieht die Aufrufe ueberhaupt.
+    assert!(rs.contains("myl_client::hardware::erheben(&datenort())"));
+}
+
+/// ⚑ **Die Rechenwerke werden gemerkt und beim Start vorgewaermt**, sonst
+/// zahlte die erste Einstellungsseite den Scan.
+#[test]
+fn die_rechenwerke_werden_gemerkt_und_vorgewaermt() {
+    let rs = lies_quelle("main.rs");
+    assert!(!rs.contains("Hardware::erheben("), "ein Scan ohne Merker");
+    let vor = rs.find("myl_client::hardware::vorwaermen();").expect("kein Vorwaermen");
+    let bau = rs.find("tauri::Builder::default()").expect("kein Builder");
+    assert!(vor < bau, "erst vorwaermen, dann das Fenster bauen");
+}
+
+/// 📌 **Fund 555: Die Ansicht der Einstellungen zaehlt nicht die Platte.**
+/// Jeder Aufruf von `einstellungen` zaehlte alle Dateien unter Artefakten und
+/// Gewichten, 8 bis 10 s, beim Start fuenfmal. Jetzt kommt die Zahl aus dem
+/// Merker, der im Hintergrund zaehlt.
+#[test]
+fn die_einstellungen_zaehlen_nicht_die_platte() {
+    let rs = lies_quelle("main.rs");
+    let rumpf = rs.split("async fn einstellungen(").nth(1).expect("einstellungen").split("\n}\n").next().unwrap();
+    assert!(!rumpf.contains("belegung_heute()"), "einstellungen zaehlt wieder selbst");
+    assert!(rumpf.contains("belegung_stand()"));
+    let vor = rs.find("    belegung_stand();\n    tauri::Builder::default()").is_some();
+    assert!(vor, "die Zaehlung beginnt nicht beim Start");
 }

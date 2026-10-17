@@ -161,6 +161,13 @@ pub struct Katalogeintrag {
     pub artefakt_anzeige: String,
     pub status: String,
     pub bemerkung: String,
+    /// `vierbit`: Das Artefakt entsteht aus seiner `quelle` in int8
+    /// (`INTEGER_LLM/scripts/build_vierbit.sh`), nicht aus den Gewichten.
+    /// Leer heisst int8 aus den Gewichten.
+    pub bauweg: String,
+    pub quelle: String,
+    /// Was der Bau zusaetzlich zwischendurch belegt, fuer die Frage.
+    pub zwischen_anzeige: String,
 }
 
 /// Liest `MODELS/llm/KATALOG.json`.
@@ -206,6 +213,9 @@ pub fn katalog_lesen(text: &str) -> Vec<Katalogeintrag> {
                 "artefakt_anzeige",
                 "status",
                 "bemerkung",
+                "bauweg",
+                "quelle",
+                "zwischen_anzeige",
             ] {
                 if let Some(v) = feld(t, schluessel) {
                     felder.push((schluessel.to_string(), v));
@@ -238,6 +248,9 @@ pub fn katalog_lesen(text: &str) -> Vec<Katalogeintrag> {
                     artefakt_anzeige: hole("artefakt_anzeige"),
                     status: hole("status"),
                     bemerkung: hole("bemerkung"),
+                    bauweg: hole("bauweg"),
+                    quelle: hole("quelle"),
+                    zwischen_anzeige: hole("zwischen_anzeige"),
                     name: n,
                 });
                 felder.clear();
@@ -915,6 +928,15 @@ pub fn artefakte_bauen(
     meldung: &mut dyn FnMut(String),
 ) -> Result<(), String> {
     let py = python_sicherstellen(repo, antwort, meldung)?;
+    // ⚑ **Der WikiText-2-Testsplit gehoert zur Kalibrierung** (Fund 553):
+    //   Im Repositorium liegt er nicht, und ohne ihn bricht sie ab. Geholt
+    //   und gegen seine Pruefsumme geprueft wird er an einer Stelle,
+    //   `BENCHMARKS/Inferenz/wikitext_common.py`.
+    if !repo.join("BENCHMARKS/Inferenz/datasets/wikitext2_test.txt").is_file() {
+        meldung("WikiText-2-Testsplit fehlt, er wird geholt …".to_string());
+        let skript = repo.join("BENCHMARKS/Inferenz/wikitext_common.py");
+        lauf(&py, &[&skript.to_string_lossy()], repo, meldung)?;
+    }
     meldung(format!("Baue Artefakte für {modell} (Skalenpaket wird verwendet) …"));
     // Am Kindprozess statt global: `std::env::set_var` verändert den
     // eigenen Prozess und ist bei mehreren Threads nicht sauber definiert.
@@ -1328,8 +1350,15 @@ pub fn beschaffen_fuer(
             bauanleitung(repo, modell)
         ));
     };
+    let eintrag = katalogeintrag(repo, modell);
+    let zwischen = eintrag
+        .as_ref()
+        .map(|k| k.zwischen_anzeige.clone())
+        .filter(|z| !z.is_empty())
+        .map(|z| format!(", dazu {z}"))
+        .unwrap_or_default();
     let t = frage(&format!(
-        "{} von Hugging Face laden ({}) und Artefakte bauen? [J/n] ",
+        "{} von Hugging Face laden ({}{zwischen}) und Artefakte bauen? [J/n] ",
         hf_id(repo, modell),
         download_groesse(repo, modell)
     ))
@@ -1340,13 +1369,26 @@ pub fn beschaffen_fuer(
         return Err(format!("Abgebrochen.\n{}", bauanleitung(repo, modell)));
     }
 
-    let gewichte = gewichte_verzeichnis(repo, modell);
-    if gewichte.join("config.json").is_file() {
-        meldung(format!("Gewichte liegen bereits in {}. Download entfällt.", gewichte.display()));
-    } else {
-        gewichte_holen(repo, modell, antwort, meldung)?;
+    // ⚑ **Ein Artefakt in vier Bit entsteht aus seiner int8-Quelle**
+    //   (seit dem 2026-10-16): erst die Quelle, wenn sie fehlt, dann der
+    //   Vierbitbau, der sein Ergebnis selbst gegen das Register prueft.
+    let vierbit = eintrag.as_ref().filter(|k| k.bauweg == "vierbit").map(|k| k.quelle.clone());
+    let int8 = vierbit.clone().unwrap_or_else(|| modell.to_string());
+    if vierbit.is_none() || vorhandenes(repo, &int8).is_none() {
+        let gewichte = gewichte_verzeichnis(repo, &int8);
+        if gewichte.join("config.json").is_file() {
+            meldung(format!("Gewichte liegen bereits in {}. Download entfällt.", gewichte.display()));
+        } else {
+            gewichte_holen(repo, &int8, antwort, meldung)?;
+        }
+        artefakte_bauen(repo, &int8, antwort, meldung)?;
     }
-    artefakte_bauen(repo, modell, antwort, meldung)?;
+    if let Some(quelle) = &vierbit {
+        meldung(format!("Baue {modell} aus {quelle} in vier Bit (rund zwei Stunden) …"));
+        let skript = repo.join("INTEGER_LLM/scripts/build_vierbit.sh");
+        let skript = skript.to_string_lossy();
+        lauf(Path::new("bash"), &[&skript, quelle, modell], repo, meldung)?;
+    }
 
     let bekannt = register(repo)?;
     let b = bekannt.iter().find(|b| b.name == modell).ok_or("Register unvollständig")?;

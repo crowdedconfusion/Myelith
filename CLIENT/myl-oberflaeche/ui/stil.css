@@ -2179,6 +2179,8 @@ td input[type="text"] { width: 20rem; padding: .24rem .55rem; }
   .loopknopf.an svg { animation: none; }
   .modulagent { animation: none; }
   .loopknopf.an::before { animation: none; opacity: .55; }
+  .modus[data-atmet="ja"] > span:first-child { animation: none; }
+  .modus[data-atmet="ja"]::after { animation: none; opacity: .55; }
   /* ⚑ Der Ausschlag und das Stimmzeichen sind **Auskunft** und keine
      Verzierung: Sie bleiben, nur ohne weiche Wege dorthin. */
   .stimmzeichen .ring, .stimmzeichen .kern { transition: none; }
@@ -3363,3 +3365,83 @@ body.ablegen .eingabefeld {
 .modulpunkt:hover, .modulpunkt:focus-visible { border-color: var(--kante-hell); background: var(--glas-hoch); }
 .modulpunkttitel { font-weight: 500; }
 .modulpunkthinweis { color: var(--leise); font-size: .85em; }
+
+/* --- Der Knoten: Mining ------------------------------------------------
+   ⚑ **Der Reiter atmet, solange Mining laeuft** (Auftrag des
+   Projektinhabers, 2026-10-17), mit denselben Keyframes wie der
+   Loop-Knopf: Der Name schwillt und leuchtet, dahinter atmet ein Lichthof.
+   `::after`, denn `::before` traegt die Marke des eingerasteten Modus. */
+.modus[data-atmet="ja"] { position: relative; color: var(--text); }
+.modus[data-atmet="ja"] > span:first-child {
+  display: inline-block;
+  position: relative;
+  z-index: 1;
+  animation: atmen 3.2s ease-in-out infinite;
+}
+.modus[data-atmet="ja"]::after {
+  content: "";
+  position: absolute;
+  left: .2rem;
+  top: 50%;
+  width: 4.5rem;
+  height: 2rem;
+  margin-top: -1rem;
+  border-radius: 50%;
+  background: radial-gradient(ellipse, rgb(var(--auf) / .45) 0%, rgb(var(--auf) / .14) 45%, rgb(var(--auf) / 0) 72%);
+  pointer-events: none;
+  will-change: opacity, transform;
+  animation: lichthof 3.2s ease-in-out infinite;
+}
+
+.knotenseite {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 18px 26px 24px;
+  max-width: 52rem;
+}
+.knotenseite h2 { margin: 0 0 .25rem; }
+.knotenseite h3 { margin: 1.4rem 0 .4rem; font-size: .9rem; color: var(--leise); }
+.knotenhinweis { margin: 0 0 1rem; color: var(--leise); font-size: .85rem; }
+.knotenstand {
+  margin: 0 0 1rem;
+  padding: .6rem .8rem;
+  border: 1px solid var(--kante);
+  border-radius: var(--rund-klein);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12.5px;
+  white-space: pre-wrap;
+}
+.knotenstand p { margin: 0; }
+.knotenstand[data-laeuft="nein"] { color: var(--leise); }
+.knotenreihen {
+  display: grid;
+  grid-template-columns: minmax(9rem, auto) 1fr;
+  gap: .6rem 1rem;
+  align-items: center;
+}
+.knotenreihen input[type="text"], .knotenreihen select { width: 100%; box-sizing: border-box; }
+.knotenreihen .pfad { margin: .2rem 0 0; }
+.knotenregler { display: flex; align-items: center; gap: .8rem; }
+.knotenregler input[type="range"] { flex: 1; }
+.knotenregler output { min-width: 10rem; color: var(--leise); font-size: .85rem; }
+/* ⚑ Je Rechenwerk eine Zeile mit eigenem Schalter; ein gesperrtes nennt
+   darunter seinen Grund, und der braucht die ganze Breite. */
+.knotenwerke { display: flex; flex-direction: column; gap: .5rem; color: var(--leise); font-size: .9rem; }
+.knotenwerk { display: block; }
+.knotenwerk[data-gesperrt="ja"] { opacity: .75; }
+.knotengrund { display: block; margin: .15rem 0 0 1.6rem; font-size: .8rem; line-height: 1.35; }
+.knotenmeldung { min-height: 1.2rem; margin: 1rem 0 .4rem; color: var(--schlecht); white-space: pre-wrap; }
+.knotenknoepfe { display: flex; gap: .8rem; flex-wrap: wrap; }
+.knotenknopf { min-width: 12rem; }
+.knotenknopf[data-laeuft="ja"] { color: var(--text); }
+.knotenmeldungen pre {
+  margin: 0 0 .6rem;
+  white-space: pre-wrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  color: var(--leise);
+}
+@media (max-width: 560px) {
+  .knotenreihen { grid-template-columns: 1fr; }
+}

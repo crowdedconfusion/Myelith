@@ -373,9 +373,13 @@ jobs:
           # ⚑ Seit dem 2026-10-05 drei: dazu `konformitaet_ternaer` (fuenf
           # Vektoren des ternaeren Rechenwegs); der Gesamtwert umfasst
           # zweiundzwanzig, bis dahin siebzehn (`6da384ba301b9454`).
+          # ⚑ Seit dem 2026-10-16 vier: dazu `konformitaet_vierbit` (zwei
+          # Vektoren des Vierbitformats); der Gesamtwert umfasst
+          # vierundzwanzig, bis dahin zweiundzwanzig (`715529e71dfcfcfd`).
           for paar in "894d8357ae92b5c1:konformitaet_op (6 Vektoren)" \
                       "f1b60342b9cfcdb6:konformitaet_ternaer (5 Vektoren)" \
-                      "715529e71dfcfcfd:konformitaet gesamt (22 Vektoren)"; do
+                      "9102be0890358ceb:konformitaet_vierbit (2 Vektoren)" \
+                      "cb696efd3817e575:konformitaet gesamt (24 Vektoren)"; do
             abdruck="${paar%%:*}"; was="${paar#*:}"
             if ! grep -q "$abdruck" ci-konf/*.jsonl; then
               echo "FEHLER: $was weicht ab, erwartet $abdruck"
@@ -383,7 +387,7 @@ jobs:
               exit 1
             fi
           done
-          echo "Konformitaet belegt auf aarch64/macOS: 22 Vektoren, drei Abdruecke"
+          echo "Konformitaet belegt auf aarch64/macOS: 24 Vektoren, vier Abdruecke"
 
   # ── Runtime: Nur Unit-Tests (keine Integrationstests mit Artefakten) ─
   runtime:
@@ -493,6 +497,7 @@ jobs:
             STORAGE/myl-store
             SIMULATION/myl-simulation
             COMPUTE_PIPELINE/myl-pod
+            COMPUTE_PIPELINE/dispatcher
             TRAINING/myl-train
             NODE/myl-node
             TESTCLIENT/myl-testclient
@@ -678,6 +683,14 @@ jobs:
           cargo test --lib --quiet
           cargo test --test adversarial --quiet
           cargo test --test koordinator_byzantinisch --quiet
+
+      # ⚑ **Der Dispatcher**: Erhebung der Maschine, Bedarf aus dem
+      # Artefakt, Belegungsplan. Die Proben rechnen auf ausgedachten
+      # Maschinen und Artefakten und brauchen weder Modell noch Karte; die
+      # Eichung startet nur `sh`.
+      - name: cargo test, COMPUTE_PIPELINE (myl-dispatcher)
+        working-directory: COMPUTE_PIPELINE/dispatcher
+        run: cargo test --quiet
 
       # myl-train braucht weder Modell noch Netz: Die Provenienz rechnet
       # auf Merkle-Baeumen und einem uebergebenen Seed.
@@ -879,9 +892,13 @@ jobs:
           # ⚑ Seit dem 2026-10-05 drei: dazu `konformitaet_ternaer` (fuenf
           # Vektoren des ternaeren Rechenwegs); der Gesamtwert umfasst
           # zweiundzwanzig, bis dahin siebzehn (`6da384ba301b9454`).
+          # ⚑ Seit dem 2026-10-16 vier: dazu `konformitaet_vierbit` (zwei
+          # Vektoren des Vierbitformats); der Gesamtwert umfasst
+          # vierundzwanzig, bis dahin zweiundzwanzig (`715529e71dfcfcfd`).
           for paar in "894d8357ae92b5c1:konformitaet_op (6 Vektoren)" \
                       "f1b60342b9cfcdb6:konformitaet_ternaer (5 Vektoren)" \
-                      "715529e71dfcfcfd:konformitaet gesamt (22 Vektoren)"; do
+                      "9102be0890358ceb:konformitaet_vierbit (2 Vektoren)" \
+                      "cb696efd3817e575:konformitaet gesamt (24 Vektoren)"; do
             abdruck="${paar%%:*}"; was="${paar#*:}"
             if ! grep -q "$abdruck" ci-konf/*.jsonl; then
               echo "FEHLER: $was weicht ab, erwartet $abdruck"
@@ -889,7 +906,7 @@ jobs:
               exit 1
             fi
           done
-          echo "Konformitaet belegt auf x86_64/Linux: 22 Vektoren, drei Abdruecke"
+          echo "Konformitaet belegt auf x86_64/Linux: 24 Vektoren, vier Abdruecke"
 
   # ── Zahlensemantik-Audit (12.22-12.25) ──────────────────────────
   # test_division.py und test_overflow.py rufen `cargo test` als
@@ -1012,19 +1029,21 @@ jobs:
           cargo run --release -- --name ci --logs ci-konf konformitaet
           # 📌 Zwei Abdruecke, siehe die ausfuehrliche Begruendung am
           # Linux-Schritt: `894d…` ist nur `konformitaet_op` (sechs
-          # Vektoren), `f1b6…` der ternaere Rechenweg (fuenf), `7155…` der
-          # Gesamtwert ueber alle zweiundzwanzig.
+          # Vektoren), `f1b6…` der ternaere Rechenweg (fuenf), `9102…` das
+          # Vierbitformat (zwei), `cb69…` der Gesamtwert ueber alle
+          # vierundzwanzig.
           foreach ($paar in @(
               @('894d8357ae92b5c1', 'konformitaet_op (6 Vektoren)'),
               @('f1b60342b9cfcdb6', 'konformitaet_ternaer (5 Vektoren)'),
-              @('715529e71dfcfcfd', 'konformitaet gesamt (22 Vektoren)'))) {
+              @('9102be0890358ceb', 'konformitaet_vierbit (2 Vektoren)'),
+              @('cb696efd3817e575', 'konformitaet gesamt (24 Vektoren)'))) {
             $zeile = Select-String -Path ci-konf\*.jsonl -Pattern $paar[0]
             if (-not $zeile) {
               Write-Error ("FEHLER: " + $paar[1] + " weicht ab, erwartet " + $paar[0])
               exit 1
             }
           }
-          Write-Host "Konformitaet belegt auf x86_64/Windows: 22 Vektoren, drei Abdruecke"
+          Write-Host "Konformitaet belegt auf x86_64/Windows: 24 Vektoren, vier Abdruecke"
           exit 0
 
       # Gegenprobe: Der Vergleich muss ein leeres Verzeichnis ablehnen.

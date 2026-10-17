@@ -1,6 +1,6 @@
 [package]
 name = "myl-node"
-version = "0.48.6"
+version = "0.49.0"
 edition = "2021"
 # ⚑ 1.88 und nicht 1.85 wie die uebrigen Crates, und der Grund liegt
 # nicht im eigenen Code: Ueber libp2p haengt hier die `icu_*`-Kette
@@ -58,6 +58,9 @@ myl-scheduler = { path = "../../CONSENSUS/myl-scheduler" }
 # eine oeffentliche Tuer gehoere nicht auf die Konsensmaschine, gilt
 # deshalb nicht: Sie ist nicht oeffentlich.
 myl-gateway = { path = "../../GATEWAY/myl-gateway" }
+# ⚑ Fuer die Speicherorte und die Zusage: Format und Zaehlung gehoeren
+# der Speicherschicht, der Knoten liest sie nur.
+myl-store = { path = "../../STORAGE/myl-store" }
 # Fuer `myl_gateway::oai::Rechenweg`: Die Tuer bedient, der Knoten
 # rechnet, und das ist ein `async`-Merkmal.
 async-trait = "0.1"

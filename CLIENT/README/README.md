@@ -1,7 +1,7 @@
 # client (Nutzer-Client inkl. Wallet)
 
-> **Version:** 0.156.0 (`myl-client` 0.94.0, `myl-oberflaeche` 0.75.0, `myl-console` 0.59.0, `myl-senses` 0.12.0, `myl-module` 0.4.0)
-> **Datum:** 2026-10-14
+> **Version:** 0.167.0 (`myl-client` 0.104.0, `myl-oberflaeche` 0.81.0, `myl-console` 0.64.0, `myl-senses` 0.13.1, `myl-module` 0.4.0)
+> **Datum:** 2026-10-17
 > **Status:** ✅ **Der lokale Betrieb läuft und ist ausgeliefert.** Ein
 > Gesprächsfenster mit Modellwahl, Agentenschleife und
 > Einstellungsseite; aus einem frischen Klon lassen sich darüber
@@ -43,7 +43,7 @@ kostet nichts, wenn er stimmt, und einen halben Tag, wenn nicht.
 | **Der Sprachmodus** | Ein Knopf ersetzt den Verlauf durch ein Zeichen, dessen Ringe **mit dem Ton mitschwingen**; darunter steht die laufende Antwort. Wer spricht und zuhört, liest nicht mit |
 | **Eine eigene Stimme** | Auf der Einstellungsseite eine Aufnahme hochladen; sie wird zur Stimme. Whisper schreibt ihren Text gleich mit, weil CosyVoice damit besser trifft. ⛔️ Liegt eine Probe und spricht ein Programm, das nicht klonen kann, **steht das da** |
 | **Mehrere Stellen auf einmal ändern** | `edit_file` nimmt eine Liste aus `alt` und `neu`. Erst ein Trockenlauf über eine Kopie, dann wird geschrieben: **Entweder alle Stellen oder keine** |
-| **Vier Betriebsarten** | Chat und Agent laufen; Knoten und Wallet stehen mit ihrer Begründung da und warten auf das Netz |
+| **Vier Betriebsarten** | Chat und Agent laufen; im Reiter **Knoten** (Konsole: `/mining`) wird Mining eingestellt und gestartet, heute als Knoten im Probelauf ohne Testnetz, und der Reiter atmet, solange es läuft; Wallet steht mit seiner Begründung da und wartet auf das Netz |
 | **Modellwahl** | Aus dem Katalog, mit Anzeigenamen statt Verzeichnisnamen. Der Netzeintrag heisst „Netzwerkmodell (API), kostet Inferenz-Credits" und ist gesperrt, solange Knotenadresse und Vollmacht fehlen |
 | **Modelle holen und Artefakte bauen** | Aus der Einstellungsseite heraus, mit Ladebalken unter dem angeklickten Modell und einer schliessbaren Meldung, wenn es fertig ist |
 | **Einstellungen** | Fünf Bereiche, vierzehn Felder (dreizehn davon im Fenster: das Konsolen-Design wirkt dort nicht) in der Reihenfolge, in der jemand sucht (Sprache, Aktualisierung, Modelle, was dieser Rechner hergibt, dann Modell und Agent), und dazu ein Schieberegler je gefundenem Rechenwerk, jedes mit Beschriftung und einem Satz darunter, was es bewirkt. Art **und** Beschriftung kommen aus der Kiste. Die drei Verzeichnisfelder lassen sich über den Fensterdialog des Systems wählen, getippt werden dürfen sie weiter |
@@ -53,7 +53,7 @@ kostet nichts, wenn er stimmt, und einen halben Tag, wenn nicht.
 | **Gespraeche verwalten** | Rechtsklick auf eine Zeile: umbenennen an Ort und Stelle, als Markdown ausgeben, loeschen. Wohin ausgegeben wird, steht in `ausgabe.ordner`; ohne Angabe fuehrt das Fenster dorthin |
 
 ⚑ **Die Oberfläche ruft dieselben Funktionen wie die Kommandozeile**,
-über sechsundsechzig Befehle. ⚠️ **Mit zwei Ausnahmen, und beide sind gewollt:** `terminal_ausfuehren` startet eine Shell, denn ein Terminal, das keine startet, ist keines; `modul_waehlen` und `modul_befehl` starten ein Modul, und zwar wie die Konsole nur die geprüfte Kopie eines signierten Moduls. Jeder andere Befehl startet **keinen einzigen Unterprozess**. `jeder_befehl_ist_angemeldet` hält die vier
+über dreiundsiebzig Befehle. ⚠️ **Mit fünf Ausnahmen, und alle sind gewollt:** `terminal_ausfuehren` startet eine Shell, denn ein Terminal, das keine startet, ist keines; `modul_waehlen` und `modul_befehl` starten ein Modul, und zwar wie die Konsole nur die geprüfte Kopie eines signierten Moduls; `artefakt_bauen` startet die Bauskripte des Repositoriums über `myl_client::bezug`, dieselbe Stelle wie die Konsole, und nur nach Bestätigung; die Aktualisierung startet `curl`, `git` und das Installationsskript über `myl_client::aktualisierung`. `mining_starten` startet den Knoten (`myl-node`) und `mining_beenden` schickt ihm das Ende (`kill`), beide über `myl_client::mining`, dieselbe Stelle wie `/mining` in der Konsole. Jeder andere Befehl startet **keinen einzigen Unterprozess**. 📌 Bis zum 2026-10-16 nannte dieser Satz nur die ersten beiden, obwohl Bau und Aktualisierung schon damals Unterprozesse starteten. `jeder_befehl_ist_angemeldet` hält die vier
 Richtungen zusammen: kein Befehl ohne Anmeldung, keine Anmeldung ohne
 Befehl, kein Aufruf ins Leere und kein Befehl, den niemand ruft. „Ohne eigene Logik" hiesse sonst, aus einer Textausgabe
 für Menschen eine Schnittstelle zu machen, und genau das ist die Sorte
@@ -181,6 +181,600 @@ Modell überhaupt etwas taugt, und weil eine Schnittstelle, die kein
 Mensch je bedient hat, an den Bedürfnissen vorbei entworfen wird.
 
 ## Changelog
+
+### v0.167.0 (2026-10-17): Die Einstellungsseite aufgeräumt, die Frage nach dem Einhängepfad, Schritte ohne Grenze mit Loop-Erkennung, Modellnamen nach Schema (`myl-client` 0.104.0, `myl-oberflaeche` 0.81.0, `myl-console` 0.64.0)
+
+Vier Wünsche des Projektinhabers zur Einstellungsseite und zum Agenten,
+dazu einer zu den Modellnamen.
+
+**Die Einstellungsseite des Fensters:**
+- ⚑ **Einhängepfad, Werkzeugkiste und Modul stehen nicht mehr darauf**
+  (`agent.wurzel`, `agent.kistenordner`, `agent.modul` jetzt
+  `nur_in_der_konsole`). Im Fenster wählt man sie in der Seitenleiste;
+  zwei Stellen für dieselbe Wahl ließen offen, welche gilt. In der
+  Konsole stehen sie weiter unter `/settings`, und `myl setzen` kennt sie
+  alle. Probe `pfad_kiste_und_modul_stehen_nicht_auf_der_fensterseite`
+  (neu).
+- **Der Knopf „Werkzeuge anzeigen“** hing in der Zelle des Kistenfeldes;
+  er steht jetzt in einer eigenen, beschrifteten Zeile nach dem letzten
+  Agentenfeld („Werkzeuge: Was der Agent bekommt …“). Die Platzhalter, die
+  im leeren Kisten- und Pfadfeld die geltende Vorgabe nannten, sind mit
+  den Feldern entfallen.
+- ⚑ **Das Aktionsprotokoll steht nicht mehr auf der Seite**, samt dem
+  Befehl `protokoll_lesen` im Fenster: Was der Agent tut, steht im offenen
+  Gespräch, und im Wortlaut im Debug-Log. ⚠️ **Geschrieben wird es
+  weiter** (Fenster, Konsole und `myl`), ohne Klartext und 30 Tage lang;
+  lesen lässt es sich mit `myl protokoll`. Ob es ganz entfallen soll, ist
+  eine eigene Entscheidung. Die Zahl der Befehle im Satz oben ist damit
+  dreiundsiebzig.
+
+**Die Frage nach dem Einhängepfad (Fenster):**
+- ⚑ **Jedes neue Agentengespräch fragt, ob der Pfad bleibt oder sich
+  ändert** (`pfad_fragen`, Dialog `pfadfrage`): beim Knopf „Neues
+  Gespräch“, beim Lostippen ohne offenes Gespräch und bei einem Task, der
+  dafür ein neues Gespräch anlegt. Vorgeschlagen wird der Pfad des
+  Gesprächs davor, denn den sah man zuletzt in der Seitenleiste; ohne ihn,
+  was Einstellung und Vorgabe sagen. „Ändern …“ öffnet die Ordnerwahl, und
+  wer sie abbricht, behält den Vorschlag. Ohne Ordner sagt die Frage, dass
+  es dann keine Dateiwerkzeuge gibt. In der Konsole fragt nichts: Dort ist
+  der Pfad das Verzeichnis, aus dem sie gestartet wurde.
+- ⚠️ **Ein Task im offenen Gespräch fragt nicht**: Er arbeitet im Ordner
+  des Gesprächs, wie die anderen Tasks darin; ein neuer Pfad dort hätte
+  sie mit umgezogen.
+- 📌 **Ersetzt `wurzel_verlangen`**: Ohne gesetzte Wurzel sprang das
+  Fenster bisher auf die Einstellungsseite zum Feld `agent.wurzel`, das
+  dort nicht mehr steht. Der Modusknopf „Agent“ fragt nicht mehr; er legt
+  kein Gespräch an.
+
+**Schritte je Auftrag ohne Grenze:**
+- ⚑ **`agent.schritte` ist leer, und leer heißt ohne Grenze** (Vorgabe).
+  Eine Zahl setzt weiter eine Grenze; null lehnt der Setzer ab. Die Konsole,
+  das Fenster, ein Modul und `myl agent` fragen die Grenze über
+  `Agenteneinstellung::schrittgrenze` ab (AGENT_LAYER v0.47.0).
+- 📌 **Eine bestehende Ablage verliert ihre alte Sechs.** Gespeichert wird
+  unter `schritte_hoechstens`; der alte Eintrag `schritte` trug fast
+  überall die frühere Vorgabe 6, die beim Speichern mitgeschrieben wurde,
+  und wird jetzt übergangen. Wer eine eigene Grenze gesetzt hatte, setzt
+  sie neu. Probe
+  `die_schritte_sind_ohne_grenze_und_eine_alte_sechs_gilt_nicht_mehr`
+  (neu).
+- **Was den Agenten jetzt anhält:** Er ist fertig, du hältst ihn an, oder
+  die **Loop-Erkennung** greift: Derselbe Schritt mit denselben Argumenten
+  und demselben Ergebnis beim dritten Mal mit einem Hinweis an das Modell,
+  beim fünften Mal endet der Lauf als „im Kreis“.
+- ⚠️ **`loop.schritte` (Schritte je Runde eines Loops) bleibt**: Es
+  beendet keinen Loop, sondern teilt ihn in Runden, nach denen der
+  Prüfdurchgang läuft.
+
+**Modellnamen nach dem Schema „Myelith 35B-A3B INT8“:**
+- ⚑ **Größe wie im Verzeichnisnamen, bei einem Gemisch mit den aktiven
+  Parametern, dahinter die Zahlform** (`modelle::name_nach_schema`, neu):
+  „Myelith 0.6B INT8“, „Myelith 4B INT8“, „Myelith 8B INT8“,
+  „Myelith 30B-A3B INT8“, „Myelith 35B-A3B INT8“, „Myelith 35B-A3B INT4“
+  (vorher „Myelith 35B-A3B, vier Bit“). Der Katalog
+  (`MODELS/llm/KATALOG.json`) trägt die neuen Namen.
+- **Artefakte ohne Katalogeintrag** heißen nach derselben Regel statt
+  nach ihrem Ordner: „Myelith 27B TERNÄR“, „Myelith 8B TERNÄR GEPACKT“,
+  „Myelith 35B-A3B GEMISCHT 50“.
+- ⚑ **Die Regel ist die Quelle**: `die_katalognamen_folgen_dem_schema`
+  hält jeden Katalognamen an ihr fest, `die_namen_folgen_dem_schema` die
+  Fälle ohne Katalog (beide neu).
+- ⚠️ **„0,6B“ heißt jetzt „0.6B“**, mit Punkt wie im Verzeichnisnamen und
+  wie die übrigen Teile des Schemas.
+
+**Gezeigt wird der Grund:** Endet ein Lauf an der Loop-Erkennung, sagt die
+Konsole „Angehalten: Derselbe Schritt kam 5-mal mit demselben Ergebnis …“
+und das Fenster in der Fußzeile des Beitrags „angehalten: derselbe Schritt
+kam fünfmal …“ statt „abgebrochen“ (`Abschluss::im_kreis`, neu).
+
+**Belegt:** `cargo test` grün in `myl-client` (187), `myl-console` (186),
+`myl-oberflaeche` (90) und `myl-testclient`; Clippy mit `-D warnings`
+sauber. Neue Proben außer den oben genannten:
+`leere_schritte_heissen_ohne_grenze` (Konsole), und in der Fensterprobe
+`der_einhaengepfad_gehoert_dem_prozess` die vier Stellen der Frage nach
+dem Pfad. ⚠️ Die Frage nach dem Einhängepfad und die aufgeräumte Seite
+sind an der Quelle geprüft, nicht angeklickt.
+
+### v0.166.0 (2026-10-17): Jede Karte einzeln im Reiter „Knoten“, und der Debug-Log ganz unten (`myl-client` 0.103.0, `myl-oberflaeche` 0.80.0, `myl-console` 0.63.0; Fund 556)
+
+Zwei Fragen des Projektinhabers: ob im Reiter „Knoten“ alle Rechenwerke
+erscheinen, später auch NVIDIA- und AMD-Karten, einzeln und mit eigenem
+Schalter; und ob es `/debug` mit einem Gegenstück in den Einstellungen
+des Fensters gibt, möglichst ganz unten. Beides gab es im Kern, mit fünf
+Lücken bei den Karten und dem Schalter in der Mitte der Seite.
+
+**Rechenwerke im Reiter „Knoten“ und in `/mining`:**
+- **Jede Karte mit Rechenweg im Namen**, etwa „NVIDIA GeForce RTX 4090
+  (CUDA)“ (`mining::werke`, `Werkwahl`, neu). Die Klarnamen unter Linux
+  und die stabilen Kennungen kommen aus `myl-dispatcher` 0.8.0
+  (COMPUTE_PIPELINE v0.43.0).
+- ⚑ **Eine Karte, die hier nicht rechnet, steht gesperrt da und sagt
+  warum**, mit demselben Satz wie die Freigabemaske der Einstellungen.
+  Bis hier bekam jedes Gerät einen Schalter, auch eine eingebaute
+  Intel-Grafik ohne Rechenweg, und die Zusage nannte dann eine Karte, die
+  nichts rechnen kann. `mining::pruefen` lehnt eine solche Karte jetzt ab
+  („… rechnet in diesem Programm nicht und lässt sich deshalb nicht
+  zusagen“). ⚠️ Das gilt heute auch für NVIDIA und AMD, solange ihre
+  Rechenwege in diesem Programm nicht rechnen (`rechenwege::vorhanden`);
+  sobald sie es tun, werden die Schalter ohne weiteres Zutun frei.
+- **Eine abgezogene oder gesperrte Karte fällt aus dem Vorschlag**
+  (`Freigabe::vorschlag` nimmt die Werke mit): Sie hätte sonst jeden Start
+  an der Prüfung scheitern lassen, ohne auf der Seite zu stehen.
+- **Beim Öffnen neu gesucht** (`hardware::rechenwerke_neu_suchen`, neu;
+  Befehl `rechenwerke_auffrischen` im Fenster): Eine im Betrieb
+  angesteckte Karte erscheint ohne Neustart. Das Fenster zeichnet erst mit
+  der gemerkten Liste und sucht danach; hat sich die Menge geändert, holt
+  es die Lage neu und behält, was auf der Seite eingestellt ist. Die
+  Konsole sucht beim Öffnen von `/mining`. Verglichen werden die
+  Kennungen, denn das Freie einer Karte ändert sich bei jeder Suche. Die
+  gemerkte Liste steht jetzt hinter einer Sperre statt einer `OnceLock`.
+- **Konsole:** Die Reihe heißt „Rechenwerk 1“, Name und Lage stehen im
+  Wert („… · freigegeben“, „… · gesperrt, rechnet hier nicht“), denn die
+  Titelspalte ist dreißig Zeichen breit. Der Satz unter der Liste wird
+  umgebrochen statt abgeschnitten, bis zu sechs Zeilen; bei einer
+  gesperrten Karte ist es ihr Grund.
+- **Fenster:** je Karte eine Zeile, die gesperrte mit ihrem Grund darunter.
+- ⚠️ Nicht an einer NVIDIA- oder AMD-Karte geprüft: Auf dieser Maschine
+  steckt keine.
+
+**Der Debug-Log ganz unten:**
+- ⚑ **Eigene Tabelle `felder-diagnose` unter dem Aktionsprotokoll** im
+  Fenster; in der Konsole steht „Diagnose“ in `/settings` zuletzt. Den
+  Schalter gab es seit dem 2026-10-12; er stand bei den Agentenfeldern.
+- 📌 **Fund 556: Die Felder standen nicht nach Bereich geordnet.** Die
+  Liste `FELDER` sagte im Kommentar „Gleiche Bereiche stehen beieinander“,
+  und es stimmte nicht: Zwischen den Agentenfeldern standen Loop, Diagnose
+  und Gedächtnis. Das Fenster setzt eine Überschrift nur beim ersten
+  Vorkommen eines Bereichs, also trugen acht Agentenfelder (Warnung,
+  Bildschirm, Kamera, Web-Recherche, Kistenordner, Modul, Modus,
+  Schreiben) die Überschrift „Diagnose“ und der Arbeitsordner „Loop“. Die
+  Konsole setzt eine Überschrift bei jedem Wechsel und zeigte „Agent“
+  zweimal. Jetzt geordnet: Oberfläche, Modell, Agent, Loop, Gedächtnis,
+  Grenzen, Ausgabe, Diagnose.
+- Proben `jeder_bereich_haengt_zusammen_und_die_diagnose_steht_zuletzt`
+  (neu); `die_aktualisierung_steht_zuoberst` prüft die Folge bis zur
+  Diagnose und die Zuordnung im Skript.
+- **Gelöscht wird der Debug-Log nicht** (Frage des Projektinhabers): Er
+  hängt an die Datei des Monats an, nichts im Code kürzt oder entfernt
+  sie, und die Aufräumprobe fasst `SYSTEM/logs/debug/` nicht an.
+
+**Belegt:** `myl-client` 183 Tests, `myl-console` 185, `myl-oberflaeche`
+90, alle grün; Clippy sauber. Proben `der_vorschlag_vergisst_karten_die_nicht_mehr_rechnen`,
+`eine_karte_ohne_rechenweg_steht_gesperrt_da_und_wird_nicht_zugesagt`,
+`ein_gesperrtes_rechenwerk_schaltet_nicht_und_nennt_den_grund`,
+`der_hinweis_wird_umgebrochen_und_nicht_abgeschnitten` (neu). Die Zahl
+der Befehle im Satz oben ist vierundsiebzig.
+
+### v0.165.0 (2026-10-17): Der Start des Fensters von siebzig auf acht Sekunden, und die Befehlszeiten lassen sich messen (`myl-oberflaeche` 0.79.0; Fund 555)
+
+Meldung des Projektinhabers nach v0.164.0: Das Fenster lädt weiter lange
+ohne Bild, zeigt meist nur das Startbild, kurz die Animation, dann steht
+es; die Einstellungsseite braucht bis zu zehn Sekunden; der Reiter
+„Knoten“ ist nicht aufrufbar.
+
+- 📌 **Erst einmal: Installiert war noch Fassung 0.70.0 vom 13. Oktober.**
+  Gebaut und geprüft war nur die Entwicklungsfassung; was der
+  Projektinhaber sah, war der alte Stand, ohne Mining und ohne v0.164.0.
+  Jetzt neu installiert (`SYSTEM/install/installieren-macos.sh
+  --ohne-netz`).
+- **Befehlszeiten messen** (neu): Mit `MYL_BEFEHLSZEITEN=<datei>` schreibt
+  das Fenster je Zeile Millisekunden seit dem Start, was es war und wie
+  lange: jeden Befehl mit seiner Zeit auf dem Hauptfaden (ein Umschlag um
+  die Anmeldeliste), dazu, was das Skript meldet (`zeit_melden`, neu):
+  jede Antwort über 150 ms, jede Lücke im Bildtakt über 250 ms und die
+  Abschnitte des Starts. Bei laufendem Debug-Log steht, was über 100 ms
+  dauerte, auch dort. Ohne beides wird nichts geschrieben.
+- 📌 **Fund 555: `einstellungen` zählte bei jedem Aufruf die ganze
+  Platte.** Gemessen mit einer Kopie der Einstellungen (35B, Modul
+  `cad`): Jeder Aufruf brauchte 8 bis 10 s, und der Start wartet fünfmal
+  hintereinander darauf; bis der Vorhang aufging, vergingen rund 70 s.
+  Der Befehl zählte für einen einzigen Satz der Freigabeansicht („Myelith
+  hält davon …“) alle Dateien unter Artefakten und Gewichten, zwölf
+  Artefakte und vier Gewichtssätze, weit über 200 GB. ⚠️ v0.164.0 hatte
+  den Befehl vom Hauptfaden genommen und damit das Einfrieren behoben,
+  nicht das Warten; die Messung der Teile hatte nur `platte_nachfuehren`
+  gesehen, das ohne Plattengrenze nicht zählt.
+  - **Behebung:** gezählt wird im Hintergrund und gemerkt
+    (`belegung_stand`), neu nach fünf Minuten und sofort nach einem Bau
+    oder Löschen (`belegung_vergessen`); die erste Zählung beginnt beim
+    Start. `einstellungen` wartet nicht mehr; solange keine Zahl da ist,
+    sagt der Satz „wird gerade gezählt“. Mit gesetzter Plattengrenze
+    zählt die Reservierung wie bisher selbst, wenn noch keine Zahl da ist.
+  - **Gemessen danach:** Einstellungen da nach 5 ms (vorher 9,4 s),
+    Modellwahl und Kopf nach 0,3 s, Vorhang weg nach 8,5 s (vorher rund
+    70 s). Die übrigen 7 s sind das Vorladen des 35B, auf das der Vorhang
+    nach der Festlegung vom 2026-09-29 wartet; der Bildtakt meldete dabei
+    keine Lücke über 250 ms.
+  - Probe `die_einstellungen_zaehlen_nicht_die_platte` (neu).
+- **Belegt:** `myl-oberflaeche` 90 Tests grün, Clippy sauber; gemessen am
+  echten Fenster (Release, Kopie der Einstellungen). ⚠️ Die
+  Einstellungsseite selbst ist nicht angeklickt worden; gemessen ist der
+  Befehl, auf den sie wartet.
+
+### v0.164.0 (2026-10-17): Fenster und Konsole stehen beim Start, beim Laden und auf der Einstellungsseite nicht mehr still (`myl-client` 0.102.0, `myl-console` 0.62.0, `myl-oberflaeche` 0.78.0)
+
+Meldung des Projektinhabers: Start und Einstellungsseite brauchen oft
+sehr lange, und die Startanimation läuft dabei nicht.
+
+- **Gemessen, wohin die Zeit geht** (mit einer Kopie der Einstellungen):
+  Hardwarescan 200 ms je Aufruf (`system_profiler` 135 ms, dazu
+  `vm_stat`), Aktualisierungsprüfung 1,27 s (`curl` und `git fetch`),
+  Module 67 ms, Sinne 34 ms. Alles davon lief in Befehlen **ohne
+  `async`**, und die laufen in Tauri 2 auf dem Hauptfaden: Solange einer
+  rechnet, steht das ganze Fenster, die Animation eingeschlossen. Der
+  Befehl `einstellungen` lief bei **jedem** Aufruf durch den ganzen Scan,
+  und das Fenster ruft ihn an mehr als zehn Stellen, beim Start mehrmals
+  hintereinander, unter Speicherdruck (35B geladen) jedesmal länger.
+- **Behebung:**
+  - Dreizehn Befehle laufen jetzt neben dem Hauptfaden (`async`):
+    `einstellungen`, `hardware`, `aktualisierung`, `katalog`, `modelle`,
+    `module_wahl`, `sinne_stand`, `voraussetzungen`, `werkzeuge`,
+    `anhang_aufnehmen`, `sprechtaste_start`, `stimme_entfernen`,
+    `stimme_vorwaermen`. Wo sie auch intern gerufen werden, steht die
+    Arbeit in einer gewöhnlichen Funktion (`sinne_ansicht`,
+    `voraussetzungen_pruefen`) und der Befehl ist eine dünne Hülle.
+  - **Die Rechenwerke werden einmal je Prozess gesucht**
+    (`myl_client::hardware::rechenwerke_gemerkt`, `hardware::erheben`)
+    und beim Start im Hintergrund vorgewärmt (`hardware::vorwaermen`, im
+    Fenster vor dem Aufbau, in der Konsole vor der Animation). Speicher
+    und Platte bleiben frisch. `einstellungen` nimmt nur noch die
+    gemerkte Liste. ⚠️ Eine im Betrieb angesteckte Karte erscheint nach
+    dem nächsten Start.
+  - **Die Einstellungsdatei wird erst daneben geschrieben, dann
+    umbenannt**: Seit Befehle gleichzeitig laufen, liest einer, während
+    ein anderer schreibt.
+- **Probe** `was_dauert_laeuft_nicht_auf_dem_hauptfaden` (neu): Jeder
+  Befehl mit Hardwarescan, Aktualisierungsprüfung, Sinnen, Modulen oder
+  Modellliste muss `async` sein. ⚑ **Sie fand beim ersten Lauf fünf
+  weitere** (`werkzeuge`, `anhang_aufnehmen`, `sprechtaste_start`,
+  `stimme_entfernen`, `stimme_vorwaermen`), die die Messung nicht
+  einzeln gezeigt hatte. Dazu `die_rechenwerke_werden_gemerkt_und_vorgewaermt`.
+- **Belegt:** `myl-oberflaeche` 89, `myl-client` 180, `myl-console` 183
+  Tests grün, Clippy sauber. ⚠️ **Das Fenster selbst ist nicht gestartet
+  und nicht gestoppt worden**; belegt ist der Rücken und dass kein
+  langsamer Befehl mehr auf dem Hauptfaden liegt.
+- **Konsole**: Gemessen im pty mit einer Kopie der Einstellungen (35B,
+  Modul `cad`): Hinweis, Design und Modellwahl antworten in 0,11 bis
+  0,16 s, `/settings` in 0,07 s, aber **beim Laden des 35B kam 6,3 s lang
+  kein einziges Byte**, denn vor `Oertlichesmodell::laden` stand nur ein
+  `print!`. Jetzt dreht sich hinter „… wird geladen“ eine Scheibe mit den
+  Sekunden (`mit_ladeanzeige`, ein eigener Faden, der nur diese Zeile
+  schreibt); danach steht die Zeile wie bisher mit der Ladezeit da.
+  Gegenprobe: dieselbe Messung ohne Pause während der 5,4 s Laden. Das
+  Vorwärmen nimmt der ersten Einstellungsseite den Scan ab.
+  📌 Eine Pause von 2 s nach dem Laden, die die Messung zuerst zeigte, war
+  das Warten im Messskript selbst; die rohen Blöcke zeigen Frage nach
+  der Wagenposition, Antwort und Rahmen in derselben Millisekunde.
+
+### v0.163.0 (2026-10-17): Mining im Reiter „Knoten“ und mit `/mining`, Speicherorte für Netz und eigene Gewichte (`myl-client` 0.101.0, `myl-console` 0.61.0, `myl-oberflaeche` 0.77.0; Fund 554)
+
+Auftrag des Projektinhabers: Gewichte auf eine angeschlossene Platte
+auslagern; Ort (Platte), Ordner und Volumen sowie Rechenwerke und
+CPU-Kerne im Fenster und in der Konsole zur Freigabe ans Netz wählen und
+mit „Mining starten“ bereitstellen; solange es läuft, soll der Reiter
+atmen und die Konsole eine Zeile mit Sprüchen zeigen; alle fünf Minuten
+eine Zusammenfassung; „/mining stop“ und derselbe Knopf beenden es; dazu
+eine Datei mit den Speicherorten. ⚑ **Festlegung des Projektinhabers
+zur Frage, was „Mining starten“ heute tut:** einen echten Knoten im
+Probelauf, denn ein Testnetz gibt es noch nicht.
+
+- **`myl_client::mining`** (neu), die eine Stelle für Konsole, Fenster
+  und `myl`: Platten finden (Benutzerordner, dann unter macOS jede Platte
+  unter `/Volumes`, unter Linux `/media/<nutzer>`, `/run/media/<nutzer>`,
+  `/mnt`, unter Windows die Laufwerke), Vorschlag (zuletzt Abgelegtes,
+  sonst die erste angeschlossene Platte, Ordner `Myelith`, hundert GiB
+  oder die Hälfte des Freien, die Hälfte der Kerne), Prüfung, Ablage,
+  Start, Ende, Stand und Zusammenfassung.
+  - ⛔️ **Ohne Platz keine Freigabe**: Das Volumen muss frei sein oder
+    schon im Ordner liegen, sonst heißt es „Erst Speicher schaffen oder
+    weniger hergeben.“ Geprüft werden auch Ordnername (relativ, ohne
+    `..`), Kerne, Rechenwerke und dass der Ordner beschreibbar ist.
+  - **Start**: legt den Ort `mining` in `speicherorte.toml` ab (neben den
+    Einstellungen, oder `MYL_SPEICHERORTE`), Kerne und Rechenwerke in den
+    Einstellungen (`mining`), schreibt die Zusage und startet `myl-node`
+    im Probelauf (`--erzeuger`, Kette und Protokoll unter `<ort>/knoten/`,
+    Schlüssel im Datenordner neben den Einstellungen,
+    `--speicherorte`, `--zusage`, Endpunkt auf einem freien Port der
+    Rückschleife, ohne Tür). Er wartet, bis der Knoten antwortet;
+    scheitert der Start, kommt der Grund aus dessen Ausgabe.
+  - ⚑ **Der Knoten gehört dem, der ihn startet**: Aus Konsole und Fenster
+    endet er mit ihnen (auch wenn das Terminal zugeht), aus `myl` in
+    eigener Prozessgruppe läuft er weiter. `zustand.json` im Datenordner
+    lässt die andere Oberfläche ihn sehen und beenden; „läuft“ heißt
+    „antwortet“.
+  - **Die Zusammenfassung** nennt Laufzeit, Kerne, Rechenwerke, Volumen
+    und Ort, Gegenstände und Shards im Speicher, Anfragen bearbeitet und
+    abgelehnt, gemintes MYL seit dem Start und Höhe und Gegenstellen der
+    Kette, alles aus dem Knoten oder der Zusage. ⚠️ Dabei steht ehrlich:
+    Probelauf ohne Testnetz, MYL als Spielgeld, Anfragen „(kein Shard
+    angeschlossen)“ (`SHARD_ANGESCHLOSSEN`).
+- **Konsole**: `/mining` öffnet eine Seite wie `/settings` (↑↓ wählen,
+  ←→ ändern, ⏎ Ordner tippen oder Knopf auslösen): Platte, Ordner,
+  Volumen, eigene Gewichte auch dort, CPU-Kerne, je Rechenwerk eine Zeile,
+  darunter der Knopf „Mining starten“ oder „Mining beenden“; oben steht
+  der Stand. Geändert und nicht gestartet heißt beim Schließen abgelegt.
+  `/mining stop` beendet. **Die Zeile** (`miningzeile.rs`): Sprüche wie
+  „harvesting ripe crops…“, „collecting pennies…“, „panning for gold
+  dust…“ mit eigener Drehscheibe, im Leerlauf an der Stelle der
+  Ladezeile, während eines Laufs eine Zeile darunter. ⚑ Im Leerlauf
+  zeichnet die Eingabe sie im selben Faden (neu `lesen_mit_liste(…,
+  nebenbei)`), und zwar ohne `ESC 7`: Dort hält dieser Speicher die
+  Stelle der nächsten Antwort. Die Meldung alle fünf Minuten steht im
+  Rollbereich, im Leerlauf über eine Frist der Eingabe, im Lauf aus der
+  Anzeige.
+- **Fenster**: Der Reiter „Knoten“ ist offen und trägt dieselbe Seite:
+  Wahl der Platte mit freiem Platz, Ordner mit ganzem Pfad, Regler für
+  Volumen (bis zum Freien) und Kerne, Häkchen für eigene Gewichte und je
+  Rechenwerk, „Mining starten“ und „Mining beenden“ an derselben Stelle,
+  „Nur ablegen“ daneben, darunter die Meldungen. Solange Mining läuft,
+  **atmet der Reiter** mit den Keyframes des Loop-Knopfs (abbestellbar
+  wie jede Bewegung), gleich wo es gestartet wurde; alle 15 Sekunden ein
+  Blick, alle fünf Minuten die Meldung auf der Seite und als Hinweis.
+  Fünf neue Befehle (`mining_lage`, `mining_stand`, `mining_ablegen`,
+  `mining_starten`, `mining_beenden`); das Schließen beendet einen Knoten
+  aus diesem Fenster.
+- **`myl mining [start [--ort PFAD] [--volumen GIB] [--kerne N]
+  [--gewichte]|stop]`** für Maschinen ohne Oberfläche.
+- **Gewichte auslagern**: Die Modellwahl sucht jetzt auch unter
+  `<ort>/gewichte/` jedes Orts mit dem Zweck `gewichte`
+  (`modelle::suchorte`). Wer ein Artefakt dorthin verschiebt, findet es
+  in der Wahl wieder.
+- 📌 **Fund 554: Ohne eingestelltes Artefakt suchte die Wahl nirgends.**
+  Frische Einstellungen tragen `modell.artefakt = ""`, ein leerer Pfad
+  hat keinen Elternordner. Solange etwas zu bauen war, stand die Bauliste
+  da; mit allen Modellen gebaut meldete die Konsole „hier liegt kein
+  gebautes Artefakt“ vor zwölf Artefakten. Gefunden beim Probelauf des
+  Minings mit abgeschirmten Einstellungen. Jetzt ist
+  `INTEGER_LLM/artifacts` der Rückfall, einmal als
+  `modelle::ARTEFAKTORDNER` (auch in `bezug.rs` statt zweier fester
+  Pfade).
+- README: der Satz zu den Unterprozessen nennt jetzt fünf Ausnahmen und
+  zweiundsiebzig Befehle; die Zeile zu den Betriebsarten.
+- **Belegt:**
+  - `myl-client` 180, `myl-console` 182, `myl-oberflaeche` 87 Tests grün
+    (neu unter anderem Vorschlag, Prüfung mit Platzmangel, Zusage über
+    alle Orte, Zahlen aus dem Text des Knotens, Zusammenfassung, Suchorte,
+    Fund 554, die Zeile ohne `ESC 7`); Clippy mit `-D warnings` sauber.
+  - `myl mining start` gegen den echten Knoten in 0,8 s, Unterschrift
+    liegt da, Stand aus `/metriken`, `stop` beendet sauber; ein zu großes
+    Volumen wird abgelehnt; aus einem pty gestartet überlebt der Knoten
+    das Schließen des Terminals.
+  - Konsole im pty mit abgeschirmten Einstellungen: 0,6B geladen,
+    `/mining` geöffnet und gestartet, die Zeile im Leerlauf 25-mal in
+    5 s gezeichnet, während einer Antwort in Reihe 40 unter der Ladezeile
+    in Reihe 39, nach fünf Minuten die Meldung, `/mining stop` beendet.
+  - ⚠️ **Das Fenster ist gebaut und seine Rückseite geprüft; die Seite
+    hat niemand angeklickt.**
+
+### v0.162.0 (2026-10-17): Modelle holen und bauen, aus Konsole und Fenster, nur mit Platz und Bestätigung (`myl-client` 0.100.0, `myl-console` 0.60.0, `myl-oberflaeche` 0.76.0)
+
+Festlegung des Projektinhabers: „Alles ermöglichen nur immer explizit
+bestätigen lassen dass so viel Speicher während des Prozesses benötigt
+wird, falls dieser nicht vorhanden ist keine Freigabe zum Download, erst
+Speicher schaffen. Alles soll vorher in einen kalten repo Klon korrekt
+gebaut werden inkl. der Python Umgebung.“
+
+- **`myl_client::bezug`** (neu), eine Stelle fuer Konsole und Fenster:
+  `Bauplan::fuer` liest aus `MODELS/llm/KATALOG.json`, was fuer einen
+  Eintrag noch fehlt (Python-Umgebung, Gewichte, int8-Artefakt, bei
+  `bauweg: vierbit` der Vierbitbau aus der `quelle`), `bedarf()` den Platz
+  (aus dem Netz, was bleibt, was nur zwischendurch liegt; die Spitze ist
+  beides zusammen), `platz_pruefen` vergleicht die Spitze mit dem freien
+  Platz **und** mit der Freigabe der Einstellungen, `bestaetigung` ist der
+  Text, den der Mensch bestaetigt, und `ausfuehren` faehrt die Skripte des
+  Repositoriums (`python_einrichten.sh`, `fetch_model.sh`,
+  `build_artifacts.sh`, `build_vierbit.sh`) und prueft den Platz
+  unmittelbar vorher noch einmal. ⛔️ **Ein Byte zu wenig, und es gibt
+  keine Freigabe**, sondern die fehlende Zahl: erst Speicher schaffen.
+  Nicht messbarer Platz heisst ebenfalls nein. Sechs Proben, darunter
+  `ohne_platz_gibt_es_keine_freigabe` und
+  `das_int4_braucht_vom_kalten_klon_alles`.
+- **Konsole:** Die Modellwahl fuehrt hinter den gebauten Artefakten jeden
+  Katalogeintrag, der hier fehlt, als „(holen und bauen)“ mit dem Speicher,
+  den der Bau zugleich braucht, beim Start und unter `/model`. Gewaehlt,
+  steht der Plan da; reicht der Platz nicht, kommt keine Frage. Sonst eine
+  Ja-Nein-Frage **ohne Vorgabe** (die Eingabetaste allein beantwortet sie
+  nicht), dann jede Zeile des Laufs und danach das Laden. Nein,
+  Platzmangel oder ein Fehlschlag fuehren zurueck in die Wahl. 📌 Die
+  Probe `hier_wird_nichts_gebaut` ist durch
+  `gebaut_wird_nur_ueber_den_bezug_nach_bestaetigung` ersetzt: Die Konsole
+  startet weiterhin keinen Prozess selbst, und die Reihenfolge Platz,
+  Frage, Bau ist geprueft.
+- **Fenster:** neuer Befehl `bauplan` und ein Kasten vor dem Bau mit dem
+  Text aus `bezug`; reicht der Platz nicht, steht dort die fehlende Zahl,
+  und der Knopf zum Bauen fehlt. Der Fokus liegt auf Abbrechen.
+  `artefakt_bauen` faehrt nicht mehr selbst Skripte, sondern
+  `bezug::ausfuehren`; die Python-Umgebung ist keine Voraussetzung mehr,
+  sondern der erste Schritt. Der Balken kennt fuenf Phasen (Umgebung,
+  Download, Kalibrierung, vier Bit, fertig).
+- 📌 **Das Fenster hielt Gewichte fuer vorhanden, sobald ihr Ordner
+  existierte.** Jeder Modellordner liegt mit seiner `LICENSE` im
+  Repositorium, im kalten Klon also immer, und der Knopf hiess dann
+  „kalibrieren“ statt „holen und bauen“. Erkannt wird jetzt an
+  `config.json`, wie im Bezug.
+- 📌 **Berichtigt im Absatz zu den Befehlen:** Dort stand, nur Terminal
+  und Module starteten Unterprozesse. Bau und Aktualisierung taten es
+  schon vorher; beide stehen jetzt dort, und die Zahl der Befehle ist
+  siebenundsechzig.
+- **Geprueft im kalten Klon** (frisch geklont, Arbeitsstand darueber, ohne
+  Gewichte, Artefakte und Python-Umgebung): voller Bau aus dem Vorrat ohne
+  Netz mit `SYSTEM/install/installieren-macos.sh` (abgeschirmt, eigenes
+  `HOME`), dann die Konsole in einem echten Terminal: Myelith 0,6B
+  gewaehlt, Bestaetigung gelesen, mit `n` abgelehnt (die Wahl kam zurueck),
+  dann mit `j` bestaetigt: Python-Umgebung, Download, WikiText,
+  Kalibrierung, Laden, und auf „Was ist die Hauptstadt von Frankreich?“
+  die Antwort „Die Hauptstadt von Frankreich ist Paris.“ Das gebaute
+  Artefakt ist bitgleich zum registrierten (Digest und Manifest).
+  Danach im selben Klon das 35B: erst das int8 (67 GiB Download,
+  Kalibrierung, Digest und Manifest stimmen mit dem Register), dann ueber
+  die Konsole „Myelith 35B-A3B, vier Bit (holen und bauen)“. Die
+  Bestaetigung nannte 15,5 GiB fuer das Artefakt, 37,5 GiB
+  Zwischenstaende, bis zu 55,8 GiB zugleich und 186,2 GiB frei; mit `j`
+  lief der Bau in 106 Minuten durch, das Skript meldete „bitgleich zum
+  gemessenen Artefakt“, das Artefakt lud in 9,1 s, und auf „Wie viel ist
+  17 mal 23?“ kam 391. Digest (a2a320f6…) und Manifest (b372bfc5…)
+  stimmen mit dem Register.
+  ⚠️ Das Fenster ist im Klon gebaut und seine Rueckseite geprueft; den
+  Kasten hat niemand angeklickt.
+
+### v0.161.0 (2026-10-15): Rechnen während des Ladens, wenn der Speicher knapp ist (`myl-client` 0.99.0)
+
+- Beim Laden schaltet der Client das Rechnen während des Ladens der
+  Laufzeit ein (`integer_llm_runtime::model::rechnen_waehrend_laden`),
+  wenn der Plan weniger als die Hälfte der gerouteten Experten im Speicher
+  sieht. Gemessen am 35B half es dort 4 bis 9 % und kostete, wo fast alles
+  lag, bis zu 6 %.
+- Für ein schnelleres Gemisch auf kleinem Speicher: `myl setzen
+  modell.artefakt INTEGER_LLM/artifacts/myelith-35b-a3b-gemischt-50` (die
+  seltenen Experten ternär, Perplexität +3,4 %; Bau mit
+  `INTEGER_LLM/tools/experten_mischen.py`).
+
+### v0.160.1 (2026-10-15): Probe an den seltenen Rand angepasst (`myl-client` 0.98.1)
+
+- `ein_geladenes_modell_ist_angemeldet` erwartet als angemeldeten festen
+  Teil jetzt die dichten Gewichte **ohne** die Einbettung (das 0,6B rechnet
+  die Logits mit seinem eigenen `i16`-Kopf und liest je Token nur eine
+  Zeile der Einbettung; `myl-dispatcher` 0.5.0). Kein Code des Clients
+  berührt.
+
+### v0.160.0 (2026-10-15): Das Expertenprofil der Maschine, und die häufigen Experten vorgewärmt (`myl-client` 0.98.0)
+
+- **Das Profil entsteht im Betrieb**: Nach jeder Antwort holt der Client
+  die Wahl der Gemischebenen bei der Laufzeit ab und führt sie in
+  `expertenprofil-<modell>.json` neben dem Eichbuch fort
+  (`hardware::profil_pfad`, `hardware::expertenprofil`). ⚑ Nach jeder
+  Antwort und nicht beim Entladen: Ein Prozess, der mit `exit` endet,
+  entlädt nichts. Ein dichtes Modell schreibt keins.
+- **Laden plant mit dem Profil**: Die häufigen Experten kommen vor dem
+  Arbeitskontext (Festlegung des Projektinhabers), und
+  `kontext_tragbar` sinkt dafür, wo der Speicher knapp ist. `myl plan`
+  zeigt den Plan mit dem Profil.
+- ⚑ **Vorwärmen statt Festhalten**: Beim Laden kündigt ein Hintergrundfaden
+  die heißen Experten an, so viele, wie der Plan ihnen gab, die
+  häufigsten zuletzt. Nach der Belegungssimulation brachte Festhalten
+  im Dauerbetrieb 15,2 statt 14,9 Token/s (24 GiB) und auf 16 GiB nichts.
+  Vorwärmen in der Wartezeit brachte in den ersten 500 Token 15,4 statt
+  14,7 (24 GiB) und 19,1 statt 17,3 (32 GiB); kommt die Frage sofort,
+  kostet es auf 24 GiB etwas (14,3).
+- **Die Wache der Sinne schützt weiter nur die dichten Gewichte**: Ein Bild
+  darf sich die häufigen Experten leihen, wie im Plan.
+
+### v0.159.0 (2026-10-15): Die Freigabe prüft, was fest bleiben muss; der Arbeitskontext endet, wo der Speicher endet; `myl eichen`; Fund 548 (`myl-client` 0.97.0, `myl-senses` 0.13.1)
+
+- ⚑ **Die Speicherfreigabe gilt dem, was fest im Speicher bleiben muss**
+  (Entscheidung des Projektinhabers, „lockern, wenn sinnvoll“): dichte
+  Gewichte, KV-Speicher für den kleinsten Arbeitskontext (8192), Zustand
+  und Puffer, nach `plan::fluessig_bytes` des Dispatchers. Bis hierher
+  galt die Größe auf der Platte. Bei einem dichten Modell ist das fast
+  dieselbe Zahl; bei einem Gemisch lehnte es ab, was gut läuft: Das
+  int8-35B hat 33 GB auf der Platte und braucht 3,8 GB fest, den Rest
+  liest es über den Dateicache. Lässt sich der Bedarf nicht lesen, gilt die
+  alte Schranke weiter.
+- ⚑ **Eine dritte Grenze des Arbeitskontexts: was der Speicher trägt.**
+  Beim Laden rechnet der Plan, wie viel Kontext neben den dichten Gewichten
+  ins Freie passt (höchstens die Freigabe, nach der Rücklage);
+  `arbeitsgrenze` nimmt das Kleinste aus Einstellung, Modellgrenze und
+  diesem Wert (`Oertlichesmodell::kontext_tragbar`). Darüber lagerte der
+  KV-Speicher aus, und jedes Token würde langsam; der Agent verdichtet
+  lieber vorher. Auf dieser Maschine (24 GB) begrenzt es nichts: das 0,6B
+  trägt seine ganzen 40 960 Token, das 35B weit mehr als 65 536.
+- Der Bedarf wird beim Laden einmal gelesen und für Schranke, Grenze und
+  Anmeldung benutzt.
+- ⛔️ **Fund 548, `myl-senses`: Das Sehprogramm lief ohne Kontextangabe**
+  und legte den KV-Speicher für den ganzen Trainingskontext des Sehmodells
+  an. Gemessen mit dem genauen Sehmodell (2,5 GB Gewichte) und einem
+  kleinen Bild: **15,5 GB Fußabdruck** ohne Angabe, **1,27 GB** mit
+  `-c 4096`, bei derselben Zeit und derselben Beschreibung. Auf dieser
+  Maschine drängte damit jedes angesehene Bild den Agenten aus dem
+  Speicher. Jetzt steht `-c` im Aufruf, gerechnet aus Bildtoken,
+  Antworttoken und Frage (`sehen::kontext_fuer`, mit Bildgrenze 1024 und
+  320 Token Antwort 1792 bis 2048). Ohne Bildgrenze bleibt es beim
+  Programm. Gefunden beim Eichen: Die Spitze von 16,6 GiB war echt.
+- 📌 **Ein Wettlauf in den Proben der Sinne behoben**: Eine Probe setzte
+  `MYL_SEHEN_BILDTOKEN=0` prozessweit, während nebenläufige Proben die
+  Variable lasen; eine zweite wurde davon zufällig rot. Der Aufruf nimmt
+  die Zahlen jetzt als Argumente (`befehl_mit`), und keine Probe setzt mehr
+  die Umgebung.
+- **`myl eichen [artefakt]`**: misst, was Agent (über `myl frage`), Sehen
+  und Hören (über `myl sinne` mit einem kleinen Bild und einem kurzen Ton,
+  die hier geschrieben werden) auf dieser Maschine wirklich belegen, und
+  legt es im Eichbuch neben den Einstellungen ab
+  (`hardware::eichbuch_pfad`; abgeschirmt mit `MYL_EINSTELLUNGEN`). Jede
+  Messung in einem eigenen Prozess (`myl eichen --einzeln`), weil die
+  Spitze über alle Kinder eines Prozesses zählt. Die Schranke beim Laden,
+  die Grenze des Kontexts, `myl plan` und die Wache der Sinne lesen das Buch
+  und fallen ohne Messung auf die Vorgabe zurück. Gemessen auf dieser
+  Maschine: int8-35B Zuschlag 0,6 GiB, Sehen 0,9 GiB, Hören 0,8 GiB neben
+  den Gewichten; im Plan liegen damit 1 976 statt 1 212 Experten des 35B im
+  Speicher.
+- **Proben:** `myl-senses` `der_aufruf_begrenzt_den_kontext` (mit
+  Gegenprobe); `tests/aufruf.rs`: `myl eichen` ohne Gegenstand misst nichts
+  und schreibt kein Buch, `--einzeln` liefert eine Messung als letzte Zeile
+  und ein gescheiterter Befehl keine; Testbild und Testton werden als Bild
+  und Ton erkannt. `tests/dispatcher.rs`: Das 0,6B lehnt eine Freigabe von 2 GiB
+  mit dem neuen Grund ab und lädt mit 4 GiB; dabei begrenzt der Speicher
+  den Arbeitskontext unter 40 960, und eine kleinere Einstellung gilt
+  weiter. `tests/freigabe.rs` unverändert grün (Scheinartefakte nehmen den
+  alten Weg).
+
+### v0.158.0 (2026-10-15): Sehen und Hören starten nur, wenn sie neben dem Agenten passen; `myl plan` (`myl-client` 0.96.0, `myl-senses` 0.13.0)
+
+⚑ **Vorrang Agent vor Vision vor Sprache, im Betrieb** (Festlegung des
+Projektinhabers). Bis hierher startete ein Sinn seine fremde Laufzeit
+(llama.cpp, whisper.cpp) mit ein bis zwei Gigabyte Gewichten, gleich
+wieviel Speicher der Agent daneben hielt; auf einer knappen Maschine
+drängte das den Agenten aus dem Speicher.
+
+- **`myl-senses`: eine Speicherwache als Haken.** `auswerten`, die eine
+  Tür für Chat und Agentenschleife, fragt vor dem Start von Sehen und
+  Hören eine Wache mit der Summe der Gewichte; lehnt sie ab, kommt ihr
+  Grund zurück statt einer Beschreibung. ⚑ **Ein Haken und keine
+  Abhängigkeit:** Die Kiste hängt weiter von nichts ab; ohne gesetzte
+  Wache startet jeder Sinn wie bisher.
+- **`myl-client`: anmelden und die Wache setzen.** `Oertlichesmodell::laden`
+  meldet das geladene Modell beim Dispatcher an (mit seinen dichten
+  Gewichten; lässt sich der Bedarf nicht lesen, vorsichtig mit dem ganzen
+  Artefakt) und setzt die Wache: Bild heißt Vision, Ton heißt Sprache. Die
+  Anmeldung ist ein Feld des Modells und endet mit ihm. Was die Wache
+  entscheidet, steht im Changelog von COMPUTE_PIPELINE (v0.37.0).
+- **`myl plan [artefakt]`**: wie der Dispatcher diese Maschine belegen
+  würde, mit den Einstellungen, wie sie sind: eingestelltes (oder genanntes)
+  Artefakt, Arbeitskontext (ohne Einstellung die ganze Länge des Modells),
+  Freigabe des Besitzers (Kerne, Arbeitsspeicher, abgeschaltete
+  Rechenwerke) und die gefundenen Sinne (Sehen mit der genauen Sprosse).
+  Ein Trockenlauf; nichts wird geladen. Rückgabe 0 mit Plan, 1 wenn sich
+  Artefakt oder Maschine nicht lesen lassen, 2 bei falschem Aufruf. Proben
+  in `tests/aufruf.rs`: ohne Artefakt, abgeschirmt über `MYL_EINSTELLUNGEN`
+  und `MYL_SINNE` (läuft in der CI), und mit dem 0,6B (Kontext 40 960, weil
+  das Modell nicht mehr kann).
+- **Proben:** `myl-senses` `die_speicherwache_fragt_vor_dem_start` (Bild
+  und Ton; die Probewache lehnt genau 4242 Bytes ab, damit keine andere
+  Probe sie spürt), mit Gegenprobe je Weg; `myl-client` `tests/dispatcher.rs`:
+  ein geladenes 0,6B ist angemeldet, mit allen Gewichten als dichtem Teil,
+  die Wache ist gesetzt, und mit dem Modell endet die Anmeldung. Gegenproben:
+  ohne Setzen der Wache und mit falschen dichten Bytes je rot.
+
+### v0.157.0 (2026-10-15): Die Erhebung der Maschine zieht in den Dispatcher (`myl-client` 0.95.0, `myl-console` 0.59.1, `myl-oberflaeche` 0.75.1)
+
+- **Was die Maschine hat, erhebt jetzt `myl-dispatcher`**
+  (`COMPUTE_PIPELINE/dispatcher`), denn auch der Knoten und das
+  Messwerkzeug brauchen es, und eine zweite Erhebung daneben liefe
+  auseinander. `myl_client::hardware` reicht `Hardware`, `Platte`,
+  `Rechenwerk`, `Rueckseite` und `GIB` unter ihren alten Namen weiter; die
+  Logik der Erhebung ist unverändert umgezogen, samt ihrer drei Proben
+  (Beschriftung, Herstellerkennung, Kennung).
+- **Neu in der Erhebung: das Freie.** `Hardware::speicher_frei_bytes` und
+  `Rechenwerk::frei_bytes`; das Fenster bekommt beide mit der Freigabemaske.
+- **Die Regler bleiben hier**, an einem Zug `Freigabemaske` statt als
+  Methode, weil der Typ jetzt im Dispatcher steht; `beschreibung` ist eine
+  freie Funktion. Fünf Aufrufstellen binden den Zug ein, das Fenster
+  namenlos (`as _`), weil es selbst einen Typ dieses Namens hat.
+- **Eine Probe hält die Kontextzahlen** des Arbeitskontexts (Untergrenze
+  8192, Vorgabe 65 536) gleich mit denen, mit denen der Dispatcher plant.
+- **Belege:** `myl-client`, `myl-console`, `myl-oberflaeche`: Clippy mit
+  `-D warnings` und alle Proben grün; Mindestfassungen 1.85 und 1.88 grün.
+  Die Proben der Erhebung zählen vorher und nachher zusammen zwölf (neun
+  hier, drei im Dispatcher).
 
 ### v0.156.0 (2026-10-14): Ohne Denken kein neuer Denkblock
 

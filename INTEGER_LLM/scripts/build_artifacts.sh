@@ -46,6 +46,16 @@ FEHLT
 fi
 
 echo "[build_artifacts] Interpreter: ${PY}"
+
+# ⚑ **Der WikiText-2-Testsplit gehoert zur Kalibrierung** (Fund 553): Die
+#   Aktivierungsskalen entstehen aus ihm, und im Repositorium liegt er
+#   nicht. Fehlt er, wird er geholt und gegen seine Pruefsumme geprueft;
+#   ohne ihn bricht die Kalibrierung ab.
+WIKITEXT="${REPO_ROOT}/../BENCHMARKS/Inferenz/datasets/wikitext2_test.txt"
+if [ ! -f "${WIKITEXT}" ] && [ -z "${INTEGER_LLM_OHNE_WIKITEXT:-}" ]; then
+    echo "[build_artifacts] WikiText-2-Testsplit fehlt, er wird geholt"
+    "${PY}" "${REPO_ROOT}/../BENCHMARKS/Inferenz/wikitext_common.py"
+fi
 echo "[build_artifacts] Starte Kalibrierungs- und Export-Workflow ..."
 "${PY}" -m calibrate.src.main
 

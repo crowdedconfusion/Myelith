@@ -12,6 +12,8 @@
 //! - **Alle drei Faelle der Umskalierung**: Rechtsshift, kein Shift,
 //!   Linksshift.
 //! - **Ternaer**: Code 3 (+2), der groesste Betrag, mehrere Gruppen.
+//! - **Vier Bit**: Code 15, Schritt 255 und Versatz −128 (Werte weit
+//!   ausserhalb von int8, im Format erlaubt), Schritt 0, mehrere Gruppen.
 //! - **Mehrere Auftraege zugleich und geteilte Matrizen**: Ein falscher
 //!   Versatz oder eine falsche Zeilengrenze faellt nur dort auf.
 
@@ -21,6 +23,7 @@ use crate::linear::Gewichtsmatrix;
 pub(super) enum Daten {
     Int8(Vec<i8>),
     Ternaer { muster: Vec<u8>, betraege: Vec<i16> },
+    Vierbit { codes: Vec<u8>, gitter: Vec<u8> },
 }
 
 /// Ein Pruefauftrag.
@@ -40,6 +43,7 @@ impl Fall {
         match &self.daten {
             Daten::Int8(w) => super::Gewichte::Int8(w),
             Daten::Ternaer { muster, betraege } => super::Gewichte::Ternaer { muster, betraege },
+            Daten::Vierbit { codes, gitter } => super::Gewichte::Vierbit { codes, gitter },
         }
     }
 
@@ -54,6 +58,9 @@ impl Fall {
             Daten::Int8(w) => Gewichtsmatrix::Int8(w),
             Daten::Ternaer { muster, betraege } => {
                 crate::ternaer::Ternaermatrix::neu(muster, betraege, self.zeilen, self.spalten)?.into()
+            }
+            Daten::Vierbit { codes, gitter } => {
+                crate::vierbit::Vierbitmatrix::neu(codes, gitter, self.zeilen, self.spalten)?.into()
             }
         };
         Ok(crate::linear::linear_matrix_pc_stapel_cpu(&xs, w, self.spalten, &self.w_shifts, self.act, &self.ziele))
@@ -131,6 +138,49 @@ pub(super) fn faelle() -> Vec<Fall> {
             zeilen,
             spalten,
             daten: Daten::Ternaer { muster, betraege },
+            eingaben,
+            w_shifts,
+            ziele,
+            act: 11,
+        });
+    }
+    for (nummer, (zeilen, spalten, stapel)) in
+        [(67usize, 1_280usize, 17usize), (130, 384, 33), (3, 128, 2)].into_iter().enumerate()
+    {
+        let gruppen = spalten / crate::vierbit::GRUPPE;
+        let codes: Vec<u8> = (0..zeilen * spalten / 2)
+            .map(|i| if nummer == 0 && i % 89 == 0 { 0xFF } else { z.naechste() as u8 })
+            .collect();
+        // Im ersten Fall jede siebte Gruppe mit Schritt 255 und Versatz
+        // -128, jede elfte mit Schritt 0.
+        let gitter: Vec<u8> = (0..zeilen * gruppen)
+            .flat_map(|g| match (nummer, g % 7, g % 11) {
+                (0, 0, _) => [255u8, 0x80],
+                (0, _, 0) => [0u8, z.naechste() as u8],
+                _ => {
+                    let r = z.naechste();
+                    [r as u8, (r >> 8) as u8]
+                }
+            })
+            .collect();
+        let eingaben: Vec<Vec<i16>> = (0..stapel)
+            .map(|b| {
+                (0..spalten)
+                    .map(|i| match (nummer, (b + i) % 7) {
+                        (0, 0) => i16::MIN,
+                        (0, 1) => i16::MAX,
+                        _ => z.naechste() as i16,
+                    })
+                    .collect()
+            })
+            .collect();
+        let w_shifts: Vec<u8> = (0..zeilen).map(|r| [20u8, 14, 9, 9][r % 4]).collect();
+        let ziele: Vec<u8> = (0..zeilen).map(|r| [0u8, 3, 20, 21][r % 4]).collect();
+        f.push(Fall {
+            name: format!("vierbit {zeilen} x {spalten}"),
+            zeilen,
+            spalten,
+            daten: Daten::Vierbit { codes, gitter },
             eingaben,
             w_shifts,
             ziele,

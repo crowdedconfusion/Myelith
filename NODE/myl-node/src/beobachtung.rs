@@ -119,6 +119,26 @@ pub struct Beobachtungsstand {
     /// und laufender Nachforderung arbeitet; einer mit niedriger Hoehe
     /// und ohne Nachforderung haengt.
     pub nachforderung_laeuft: bool,
+    /// Orte fuer das Netz aus `--speicherorte`.
+    pub speicher_orte: u64,
+    /// Gegenstaende darin, erkannt am Manifest.
+    pub speicher_gegenstaende: u64,
+    /// Davon Shard-Gewichte.
+    pub speicher_shards: u64,
+    /// Ordner ohne lesbares Manifest.
+    pub speicher_unlesbar: u64,
+    /// Bytes unter den Orten.
+    pub speicher_belegt_bytes: u64,
+    /// Die Obergrenzen der Orte zusammen.
+    pub speicher_grenze_bytes: u64,
+    /// Was die unterschriebene Zusage nennt.
+    pub speicher_zugesagt_bytes: u64,
+    /// Inferenzauftraege aus dem Netz mit Ergebnis.
+    pub inferenz_bearbeitet: u64,
+    /// Inferenzauftraege aus dem Netz, abgelehnt.
+    pub inferenz_abgelehnt: u64,
+    /// Guthaben des eigenen Kontos in der Kette, in der kleinsten Einheit.
+    pub konto_guthaben: u64,
 }
 
 impl Beobachtungsstand {
@@ -325,6 +345,23 @@ pub fn als_prometheus(stand: &Beobachtungsstand, jetzt_ms: u64) -> String {
             "gauge",
             stand.latenz_max_us,
         );
+    }
+    // ⚑ **Was ein Miner wissen will**: was er haelt, was er beantwortet
+    // hat, und was es ihm eingebracht hat. Dieselben Zahlen wie in der
+    // Zustandsaufnahme des Protokolls.
+    for (name, hilfe, art, wert) in [
+        ("myelith_speicher_orte", "Speicherorte fuer das Netz.", "gauge", stand.speicher_orte),
+        ("myelith_speicher_gegenstaende", "Gegenstaende in den Orten fuer das Netz.", "gauge", stand.speicher_gegenstaende),
+        ("myelith_speicher_shards", "Davon Shard-Gewichte.", "gauge", stand.speicher_shards),
+        ("myelith_speicher_unlesbar", "Ordner ohne lesbares Manifest.", "gauge", stand.speicher_unlesbar),
+        ("myelith_speicher_belegt_bytes", "Belegte Bytes in den Orten fuer das Netz.", "gauge", stand.speicher_belegt_bytes),
+        ("myelith_speicher_grenze_bytes", "Obergrenze der Orte fuer das Netz.", "gauge", stand.speicher_grenze_bytes),
+        ("myelith_speicher_zugesagt_bytes", "Bytes in der unterschriebenen Zusage.", "gauge", stand.speicher_zugesagt_bytes),
+        ("myelith_inferenz_bearbeitet_total", "Inferenzauftraege aus dem Netz mit Ergebnis.", "counter", stand.inferenz_bearbeitet),
+        ("myelith_inferenz_abgelehnt_total", "Abgelehnte Inferenzauftraege aus dem Netz.", "counter", stand.inferenz_abgelehnt),
+        ("myelith_konto_guthaben", "Guthaben des eigenen Kontos in der kleinsten Einheit.", "gauge", stand.konto_guthaben),
+    ] {
+        zeile(name, hilfe, art, wert);
     }
     zeile(
         "myelith_bereit",

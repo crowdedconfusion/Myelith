@@ -14,7 +14,17 @@ kommen von Hugging Face.
 
 Usage:
     python tools/skalenpaket_bauen.py myelith-0.6b [myelith-30b-a3b ...]
+    python tools/skalenpaket_bauen.py --abgeleitet-von myelith-35b-a3b myelith-35b-a3b-int4
+
+**Abgeleitete Artefakte** (`--abgeleitet-von <quelle>`, seit 2026-10-16):
+ein Artefakt, das aus einem anderen umgepackt ist und dessen Skalen und
+Tabellen traegt, etwa die Experten in vier Bit aus dem int8-Gemisch. Sein
+Paket haelt nur das eigene `theta_v.json` (darin der neue `weights_hash`)
+und nennt die Quelle; Skalen und Tabellen liegen einmal, im Paket der
+Quelle. Das Werkzeug prueft, dass sie dort dieselben sind.
 """
+from __future__ import annotations
+
 import hashlib
 import json
 import shutil
@@ -38,14 +48,23 @@ def sha256(p: Path) -> str:
     return h.hexdigest()
 
 
-def bauen(modell: str) -> dict:
+def bauen(modell: str, abgeleitet_von: str | None = None) -> dict:
     quelle = ARTEFAKTE / modell
     ziel = PAKETE / modell
     if not (quelle / "scales.json").is_file():
-        sys.exit(f"FEHLER: keine Artefakte unter {quelle} — erst kalibrieren.")
+        sys.exit(f"FEHLER: keine Artefakte unter {quelle}, erst kalibrieren.")
     ziel.mkdir(parents=True, exist_ok=True)
 
-    dateien = list(PFLICHT) + sorted(p.name for p in quelle.glob("*.lut.bin"))
+    if abgeleitet_von:
+        # ⚑ Skalen und Tabellen muessen die der Quelle sein, sonst ist es
+        #   kein abgeleitetes Artefakt, sondern ein eigenes.
+        paket_quelle = PAKETE / abgeleitet_von
+        for name in ["scales.json", "luts.json"] + sorted(p.name for p in quelle.glob("*.lut.bin")):
+            if not (paket_quelle / name).is_file() or sha256(paket_quelle / name) != sha256(quelle / name):
+                sys.exit(f"FEHLER: {name} von {modell} ist nicht die aus dem Paket {abgeleitet_von}")
+        dateien = ["theta_v.json"]
+    else:
+        dateien = list(PFLICHT) + sorted(p.name for p in quelle.glob("*.lut.bin"))
     for name in dateien:
         shutil.copy2(quelle / name, ziel / name)
 
@@ -84,6 +103,8 @@ def bauen(modell: str) -> dict:
         "digest_ueber": list(anker),
         "weights_manifest_sha256": sha256(quelle / "weights_manifest.json"),
     }
+    if abgeleitet_von:
+        eintrag["abgeleitet_von"] = abgeleitet_von
     (ziel / "paket.json").write_text(json.dumps(eintrag, indent=2) + "\n")
     print(f"[paket] {modell}: {len(dateien)} Dateien, {groesse / 1024:.0f} KiB, "
           f"theta_v {version}")
@@ -97,8 +118,14 @@ def main():
     PAKETE.mkdir(parents=True, exist_ok=True)
     reg_pfad = PAKETE / "REGISTER.json"
     register = json.loads(reg_pfad.read_text()) if reg_pfad.is_file() else {}
-    for modell in sys.argv[1:]:
-        register[modell] = bauen(modell)
+    args = sys.argv[1:]
+    abgeleitet_von = None
+    if args[:1] == ["--abgeleitet-von"]:
+        if len(args) < 3:
+            sys.exit(__doc__)
+        abgeleitet_von, args = args[1], args[2:]
+    for modell in args:
+        register[modell] = bauen(modell, abgeleitet_von)
     reg_pfad.write_text(json.dumps(register, indent=2, sort_keys=True) + "\n")
     print(f"[paket] Register geschrieben: {reg_pfad}")
 

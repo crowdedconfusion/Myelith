@@ -48,8 +48,8 @@
     "weights_manifest_sha256": "78d3d83523ca2cf416d234078520492292e45c58da583fb5dfb36f490b916f71"
   },
   "myelith-35b-a3b": {
-    "artefakt_digest_sha256": "c611df6e3d975406b097612bcbedfeafd93e56f0fc5cd28c0770564b9f0de9cf",
-    "bytes": 6085383,
+    "artefakt_digest_sha256": "e03f70c75d3d6495c58a2baacdbd065d117c7c5473a21d4b68611f4632ac8527",
+    "bytes": 34396935,
     "dateien": [
       "scales.json",
       "luts.json",
@@ -70,6 +70,21 @@
     ],
     "theta_v": "0.22.0",
     "weights_manifest_sha256": "7819a36f76f6b1681dcab160238be2744735af11b447d8b2a5c1e1a92de63430"
+  },
+  "myelith-35b-a3b-int4": {
+    "abgeleitet_von": "myelith-35b-a3b",
+    "artefakt_digest_sha256": "a2a320f608129473174211975d2b032672a11f7862fb504026064d6ae781061a",
+    "bytes": 262,
+    "dateien": [
+      "theta_v.json"
+    ],
+    "digest_ueber": [
+      "theta_v.json",
+      "model_config.json",
+      "tokenizer.json"
+    ],
+    "theta_v": "0.22.0",
+    "weights_manifest_sha256": "b372bfc58bf643e92600c8417392102feb4680819df3a3e064886c18d46b4f38"
   },
   "myelith-4b": {
     "artefakt_digest_sha256": "ce86c94cdb5c15de4bceb8f3831326411d4b72062b9c79dedfea5c289b713a8c",

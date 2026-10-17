@@ -56,7 +56,7 @@ fn die_wahl_steigt_an() {
 
     assert_eq!(
         namen,
-        vec!["Myelith 0,6B", "Myelith 4B", "Myelith 30B-A3B"],
+        vec!["Myelith 0.6B INT8", "Myelith 4B INT8", "Myelith 30B-A3B INT8"],
         "die Wahl steht nicht aufsteigend"
     );
     let _ = std::fs::remove_dir_all(&ordner);

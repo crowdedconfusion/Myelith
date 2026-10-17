@@ -408,6 +408,46 @@
       </form>
     </section>
 
+    <!-- ⚑ **Der Reiter „Knoten": Mining** (Auftrag des Projektinhabers,
+         2026-10-17). Dieselbe Freigabe wie `/mining` in der Konsole; der
+         Knopf unten startet und beendet an derselben Stelle. -->
+    <section id="knotenseite" class="knotenseite" hidden aria-label="Knoten" data-t-marke="modus.knoten.name">
+      <h2 data-t="knoten.titel">Mining</h2>
+      <p class="knotenhinweis" data-t="knoten.probelauf">Probelauf ohne Testnetz.</p>
+      <div id="knotenstand" class="knotenstand" role="status" aria-live="polite"></div>
+      <div class="knotenreihen">
+        <label for="knoten-platte" data-t="knoten.platte">Platte</label>
+        <select id="knoten-platte"></select>
+        <label for="knoten-ordner" data-t="knoten.ordner">Ordner</label>
+        <div>
+          <input id="knoten-ordner" type="text" autocomplete="off" spellcheck="false" />
+          <p id="knoten-pfad" class="pfad"></p>
+        </div>
+        <label for="knoten-volumen" data-t="knoten.volumen">Volumen</label>
+        <div class="knotenregler">
+          <input id="knoten-volumen" type="range" min="1" step="1" />
+          <output id="knoten-volumen-wert" for="knoten-volumen"></output>
+        </div>
+        <label for="knoten-gewichte" data-t="knoten.gewichte">Eigene Gewichte auch dort</label>
+        <input id="knoten-gewichte" type="checkbox" />
+        <label for="knoten-kerne" data-t="knoten.kerne">CPU-Kerne</label>
+        <div class="knotenregler">
+          <input id="knoten-kerne" type="range" min="1" step="1" />
+          <output id="knoten-kerne-wert" for="knoten-kerne"></output>
+        </div>
+        <span data-t="knoten.rechenwerke">Rechenwerke</span>
+        <div id="knoten-rechenwerke" class="knotenwerke"></div>
+      </div>
+      <p id="knotenmeldung" class="knotenmeldung" role="alert"></p>
+      <div class="knotenknoepfe">
+        <button type="button" id="knotenknopf" class="knotenknopf" data-t="knoten.starten">Mining starten</button>
+        <button type="button" id="knotenablegen" data-t="knoten.ablegen">Nur ablegen</button>
+      </div>
+      <p id="knotenorte" class="pfad"></p>
+      <h3 data-t="knoten.meldungen">Meldungen alle fünf Minuten</h3>
+      <div id="knotenmeldungen" class="knotenmeldungen" role="log"></div>
+    </section>
+
     <!-- ⚑ **Im Sprachmodus steht hier ein Zeichen statt des Verlaufs**
          (Auftrag des Projektinhabers, 2026-09-18). Wer spricht und
          zuhoert, liest nicht mit; ein Gespraechsverlauf im Ruecken ist
@@ -626,6 +666,22 @@
       </div>
     </div>
 
+    <!-- ⚑ **Die Frage nach dem Einhaengepfad** (Wunsch des
+         Projektinhabers, 2026-10-17): bei jedem neuen Agentengespraech,
+         beibehalten oder aendern. -->
+    <div id="pfadfrage" class="warnung" hidden role="dialog" aria-modal="true"
+         aria-labelledby="pfadfragetitel">
+      <div class="warnungkasten">
+        <h2 id="pfadfragetitel" class="warnungachtung" data-t="pfadfrage.titel">Einhängepfad für dieses Gespräch</h2>
+        <p id="pfadfragesatz" class="warnungkern"></p>
+        <p id="pfadfragepfad" class="pfad"></p>
+        <div class="autoknoepfe">
+          <button type="button" id="pfadfrage-aendern" data-t="pfadfrage.aendern">Ändern …</button>
+          <button type="button" id="pfadfrage-behalten" data-t="pfadfrage.behalten">Beibehalten</button>
+        </div>
+      </div>
+    </div>
+
     <!-- ⛔️ **Die Sicherheitsmeldung vor `auto`** (Festlegung des
          Projektinhabers: Vorgabe ist `manual`, wer aktiv umstellt, wird
          gewarnt). Derselbe Text wie in der Konsole, aus der Kiste; zwei
@@ -679,6 +735,24 @@
         <div class="autoknoepfe">
           <button type="button" id="rueckfragespaeter" data-t="loop.frage.spaeter">Später</button>
           <button type="button" id="rueckfrageja" data-t="loop.rueckfrage.antworten">Antworten</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ⛔️ **Holen und bauen nur nach Bestaetigung** (Festlegung des
+         Projektinhabers, 2026-10-16): Der Kasten nennt jeden Schritt und den
+         Speicher waehrend und nach dem Bau. Reicht der Platz nicht, steht dort
+         die fehlende Zahl, und es gibt keinen Knopf zum Bauen: erst Speicher
+         schaffen. -->
+    <div id="baufrage" class="warnung" hidden role="dialog" aria-modal="true"
+         aria-labelledby="baufragetitel">
+      <div class="warnungkasten">
+        <h2 id="baufragetitel" class="warnungachtung"></h2>
+        <pre id="baufragetext" class="ergebnistext"></pre>
+        <p id="baufragegrund" class="ergebnistext" hidden></p>
+        <div class="autoknoepfe">
+          <button type="button" id="baufragenein" data-t="bau.frage.nein">Abbrechen</button>
+          <button type="button" id="baufrageja" data-t="bau.frage.ja">Holen und bauen</button>
         </div>
       </div>
     </div>
@@ -839,24 +913,16 @@
 
       <table id="felder-agent"><tbody></tbody></table>
 
-      <!-- ⛔️ **Das Aktionsprotokoll** (Festlegung des Projektinhabers,
-           2026-09-25): jede Handlung des Agenten, ohne Klartext, 30 Tage.
-           Geladen wird erst auf den Knopf, denn es kann lang sein. -->
-      <section id="protokoll">
-        <h2 data-t="protokoll.titel">Aktionsprotokoll</h2>
-        <p class="pfad" data-t="protokoll.satz">Jede Handlung des Agenten, ohne Klartext: Eingaben und Ergebnisse stehen nur als Fingerabdruck darin. Nach 30 Tagen wird gelöscht.</p>
-        <p id="protokollort" class="pfad"></p>
-        <button id="protokoll-zeigen" data-t="protokoll.zeigen">Protokoll anzeigen</button>
-        <table id="protokolltafel" hidden>
-          <thead><tr>
-            <th data-t="protokoll.zeit">Zeit</th><th data-t="protokoll.art">Art</th>
-            <th data-t="protokoll.werkzeug">Werkzeug</th><th data-t="protokoll.entscheidung">Entscheidung</th>
-            <th data-t="protokoll.ergebnis">Ergebnis</th><th data-t="protokoll.dauer">Dauer</th>
-          </tr></thead>
-          <tbody></tbody>
-        </table>
-      </section>
+      <!-- ⚑ **Hier stand das Aktionsprotokoll** bis myl-oberflaeche 0.80.0.
+           Es ist entfallen (Wunsch des Projektinhabers, 2026-10-17): Was
+           der Agent tut, steht im offenen Gespraech, und alles im Wortlaut
+           im Debug-Log. Geschrieben wird es weiter; lesen laesst es sich
+           mit `myl protokoll`. -->
 
+      <!-- ⚑ **Die Diagnose steht ganz unten** (Wunsch des Projektinhabers,
+           2026-10-17): Den Debug-Log schaltet man selten, und wer ihn
+           sucht, sucht ihn am Ende der Seite. -->
+      <table id="felder-diagnose"><tbody></tbody></table>
 
       <p class="pfad" id="pfad"></p>
       <p class="pfad" id="setzmeldung" role="status"></p>

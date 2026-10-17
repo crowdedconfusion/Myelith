@@ -43,6 +43,8 @@ mod modulbanner;
 mod schimmer;
 mod schirm;
 mod janein;
+mod miningseite;
+mod miningzeile;
 mod sitzung;
 mod wahl;
 

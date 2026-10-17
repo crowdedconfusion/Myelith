@@ -188,6 +188,47 @@ for f in "${VECTORS_DIR}/ternaer"/*.golden.json; do
     fi
 done
 
+# ── Vierbit-Level: derselbe Starter, anderer Pruefer ──────────────
+#
+# Das Vierbitformat der Experten (seit dem 2026-10-16): die lineare Schicht
+# ueber gepackten Gewichten und das Packen, gegen Sollwerte aus einer
+# getrennten Umsetzung (`vierbit_erzeugen.py`). Ein fehlendes Verzeichnis
+# bricht den Lauf, wie beim ternaeren.
+echo ""
+echo "--- Vierbit-Level ---"
+if [ ! -d "${VECTORS_DIR}/vierbit" ]; then
+    echo "  FEHLER: ${VECTORS_DIR}/vierbit fehlt"
+    exit 2
+fi
+# ⚑ `linear_vierbit` rechnet auch als Buendel ueber die Weiche der
+# Rechenwerke. Mit "metal", "cuda" oder "rocm" muss dabei das Rechenwerk
+# gerechnet haben, sonst zaehlt der Vektor als FAIL (Fund 33).
+for f in "${VECTORS_DIR}/vierbit"/*.golden.json; do
+    [ -f "$f" ] || continue
+    TOTAL=$((TOTAL + 1))
+    NAME=$(basename "$f" .golden.json)
+    AUSGABE=$(cargo run --manifest-path "${KERNELS_DIR}/Cargo.toml" \
+            --bin golden_runner --no-default-features --features "${BACKEND}" --quiet -- \
+            "$f" "$BACKEND" 2>/dev/null)
+    GERECHNET=1
+    if [ "${NAME}" = "linear_vierbit" ]; then
+        case "${BACKEND}" in
+            metal) GERECHNET=$(printf '%s\n' "$AUSGABE" | sed -n 's/^metal_buendel_auf_der_gpu \([0-9][0-9]*\)$/\1/p') ;;
+            cuda|rocm) GERECHNET=$(printf '%s\n' "$AUSGABE" | sed -n 's/^karten_buendel_auf_der_gpu \([0-9][0-9]*\)$/\1/p') ;;
+        esac
+    fi
+    if printf '%s\n' "$AUSGABE" | grep -q "^PASS:" && [ -n "${GERECHNET}" ] && [ "${GERECHNET}" -gt 0 ]; then
+        PASSED=$((PASSED + 1))
+        echo "  PASS: ${NAME}"
+    elif printf '%s\n' "$AUSGABE" | grep -q "^PASS:"; then
+        FAILED=$((FAILED + 1))
+        echo "  FAIL: ${NAME} (das Rechenwerk ${BACKEND} hat nicht gerechnet)"
+    else
+        FAILED=$((FAILED + 1))
+        echo "  FAIL: ${NAME}"
+    fi
+done
+
 # ── Layer + E2E: golden_model Batch-Modus (runtime-Crate) ──────────
 echo ""
 echo "--- Layer + E2E ---"

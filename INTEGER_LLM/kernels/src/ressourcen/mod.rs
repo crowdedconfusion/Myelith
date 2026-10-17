@@ -10,8 +10,8 @@
 //!
 //! | Modul | Rechenwerk | Feature | was es rechnet |
 //! |---|---|---|---|
-//! | [`metal`] | GPU von Apple-Silizium | `metal` | gebuendelte Matrizen, int8 und ternaer |
-//! | [`karten`] | Steckkarten von NVIDIA und AMD, auch mehrere | `cuda`, `rocm` | gebuendelte Matrizen, int8 und ternaer, auch viele Experten |
+//! | [`metal`] | GPU von Apple-Silizium | `metal` | gebuendelte Matrizen, int8, ternaer und vier Bit |
+//! | [`karten`] | Steckkarten von NVIDIA und AMD, auch mehrere | `cuda`, `rocm` | gebuendelte Matrizen, int8, ternaer und vier Bit, auch viele Experten |
 //! | [`backend`], [`backends`] | das Trait je Operation mit Referenz, SIMD und den alten Stubs fuer CUDA und ROCm | je eins | Paritaetspruefungen; der Rechenpfad nimmt es nicht |
 //!
 //! ⚑ **Die CPU hat hier kein eigenes Modul**, und das ist Absicht: Ihr
@@ -65,8 +65,8 @@ pub fn stapel(
     act_frac_bits: u8,
     ziel: &(dyn Fn(usize) -> u8 + Sync),
 ) -> Option<Vec<Vec<i16>>> {
-    // ⚑ Metal hat fuer beide Gewichtsarten einen Weg (ternaer seit dem
-    //   2026-09-30).
+    // ⚑ Metal hat fuer jede Gewichtsart einen Weg (ternaer seit dem
+    //   2026-09-30, vier Bit seit dem 2026-10-16).
     #[cfg(all(feature = "metal", target_os = "macos"))]
     {
         let gpu = match w {
@@ -74,6 +74,16 @@ pub fn stapel(
             Gewichtsmatrix::Ternaer(t) => {
                 metal::stapel_ternaer(xs, t.muster(), t.betraege(), in_features, w_shifts, act_frac_bits, ziel)
             }
+            Gewichtsmatrix::Vierbit(v) => metal::stapel_vierbit(&[metal::Vierbitauftrag {
+                xs,
+                codes: v.codes(),
+                gitter: v.gitter(),
+                in_features,
+                w_shifts,
+                act_frac_bits,
+                ziel,
+            }])
+            .and_then(|mut aus| aus.pop()),
         };
         if gpu.is_some() {
             return gpu;
@@ -85,6 +95,9 @@ pub fn stapel(
             Gewichtsmatrix::Int8(w8) => karten::stapel(xs, w8, in_features, w_shifts, act_frac_bits, ziel),
             Gewichtsmatrix::Ternaer(t) => {
                 karten::stapel_ternaer(xs, t.muster(), t.betraege(), in_features, w_shifts, act_frac_bits, ziel)
+            }
+            Gewichtsmatrix::Vierbit(v) => {
+                karten::stapel_vierbit(xs, v.codes(), v.gitter(), in_features, w_shifts, act_frac_bits, ziel)
             }
         };
         if auf_karten.is_some() {
@@ -101,11 +114,35 @@ pub fn stapel(
     allow(unused_variables)
 )]
 pub fn stapel_viele(auftraege: &[Stapelauftrag<'_>]) -> Option<Vec<Vec<Vec<i16>>>> {
-    // ⚑ **Metal nimmt in einem Buendel nur int8.** Ist ein Auftrag
-    //   ternaer (die Experten eines ternaeren Gemischs), geht das Buendel an
-    //   die Steckkarten oder die CPU: dieselbe ganze Zahl je Ausgabeelement.
+    // ⚑ **Metal nimmt in einem Buendel nur eine Gewichtsart, int8 oder
+    //   vier Bit.** Ist ein Auftrag ternaer (die Experten eines ternaeren
+    //   Gemischs) oder sind die Arten gemischt, geht das Buendel an die
+    //   Steckkarten oder die CPU: dieselbe ganze Zahl je Ausgabeelement.
     #[cfg(all(feature = "metal", target_os = "macos"))]
-    if auftraege.iter().all(|a| !a.w.ist_ternaer()) {
+    if !auftraege.is_empty() && auftraege.iter().all(|a| matches!(a.w, Gewichtsmatrix::Vierbit(_))) {
+        let ziele = ausgangsziele(auftraege);
+        let gpu: Vec<metal::Vierbitauftrag<'_>> = auftraege
+            .iter()
+            .zip(&ziele)
+            .map(|(a, ziel)| {
+                let Gewichtsmatrix::Vierbit(v) = a.w else { unreachable!("eben geprueft") };
+                metal::Vierbitauftrag {
+                    xs: a.xs,
+                    codes: v.codes(),
+                    gitter: v.gitter(),
+                    in_features: a.in_features,
+                    w_shifts: a.w_shifts,
+                    act_frac_bits: a.act_frac_bits,
+                    ziel: ziel.as_ref(),
+                }
+            })
+            .collect();
+        if let Some(aus) = metal::stapel_vierbit(&gpu) {
+            return Some(aus);
+        }
+    }
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    if auftraege.iter().all(|a| !a.w.ist_gepackt()) {
         let ziele = ausgangsziele(auftraege);
         let gpu: Vec<metal::Auftrag<'_>> = auftraege
             .iter()
@@ -114,7 +151,7 @@ pub fn stapel_viele(auftraege: &[Stapelauftrag<'_>]) -> Option<Vec<Vec<Vec<i16>>
                 xs: a.xs,
                 w: match a.w {
                     Gewichtsmatrix::Int8(w) => w,
-                    Gewichtsmatrix::Ternaer(_) => unreachable!("eben ausgeschlossen"),
+                    Gewichtsmatrix::Ternaer(_) | Gewichtsmatrix::Vierbit(_) => unreachable!("eben ausgeschlossen"),
                 },
                 in_features: a.in_features,
                 w_shifts: a.w_shifts,
@@ -126,8 +163,8 @@ pub fn stapel_viele(auftraege: &[Stapelauftrag<'_>]) -> Option<Vec<Vec<Vec<i16>>
             return Some(aus);
         }
     }
-    // ⚑ **Die Steckkarten**, auch fuer ternaere Auftraege und auf mehreren
-    //   Karten zugleich.
+    // ⚑ **Die Steckkarten**, fuer jede Gewichtsart und auf mehreren Karten
+    //   zugleich.
     #[cfg(any(feature = "cuda", feature = "rocm"))]
     {
         let ziele = ausgangsziele(auftraege);
@@ -139,6 +176,7 @@ pub fn stapel_viele(auftraege: &[Stapelauftrag<'_>]) -> Option<Vec<Vec<Vec<i16>>
                 w: match a.w {
                     Gewichtsmatrix::Int8(w) => karten::Gewichte::Int8(w),
                     Gewichtsmatrix::Ternaer(t) => karten::Gewichte::Ternaer { muster: t.muster(), betraege: t.betraege() },
+                    Gewichtsmatrix::Vierbit(v) => karten::Gewichte::Vierbit { codes: v.codes(), gitter: v.gitter() },
                 },
                 in_features: a.in_features,
                 w_shifts: a.w_shifts,

@@ -847,7 +847,7 @@ mod tests {
         let meins = d.path().join("Meins");
         std::fs::create_dir(&meins).expect("Ordner");
         let agent = |ordner: &std::path::Path| crate::agentenwahl::Agenteneinstellung {
-            schritte: 1,
+            schritte: Some(1),
             wurzel: None,
             schreiben: true,
             kistenordner: Some(ordner.display().to_string()),
@@ -952,7 +952,7 @@ mod tests {
                "befehl":"echo {pfad}","fuer":["sonstiges"]}"#,
         )]);
         let mut agent = crate::agentenwahl::Agenteneinstellung {
-            schritte: 1,
+            schritte: Some(1),
             wurzel: None,
             schreiben: true,
             kistenordner: Some(kiste.display().to_string()),
@@ -997,7 +997,7 @@ mod tests {
         // Die Kette, wie der Agent sie sieht: Base zuerst, die gewaehlte
         // zuletzt.
         let agent = crate::agentenwahl::Agenteneinstellung {
-            schritte: 1,
+            schritte: Some(1),
             wurzel: None,
             schreiben: true,
             kistenordner: Some(heimat.join(Werkzeugkiste::Advanced.name()).display().to_string()),

@@ -15,5 +15,6 @@ pub mod expertenumwandlung;
 pub mod trainingsschleife;
 pub mod zustandstraining;
 pub mod model;
+pub mod vorlader;
 pub mod paths;
 pub mod pruefstand;
