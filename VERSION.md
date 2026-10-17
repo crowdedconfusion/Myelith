@@ -1,4 +1,4 @@
-0.1.0
+0.1.1
 
 # Myelith: Fassungen und was sich mit ihnen geändert hat
 
@@ -11,6 +11,12 @@ und installiert alles und startet neu.
 Darunter steht je Fassung ein Abschnitt, die neueste oben. Die Überschrift
 beginnt mit der Fassung; was danach bis zur nächsten Überschrift steht,
 zeigt das Programm vor dem Update als Liste der Änderungen.
+
+## 0.1.1 (2026-10-17)
+
+- **Windows:** Liegt an der Stelle, an der Myelith seine Messungen des
+  Rechners ablegt, ein Ordner statt einer Datei, meldet das Programm jetzt
+  einen Fehler, statt still mit Vorgabewerten zu rechnen.
 
 ## 0.1.0 (2026-10-17)
 

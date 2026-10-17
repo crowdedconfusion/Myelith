@@ -1,6 +1,6 @@
 # compute-pipeline (`myl-pod`, `myl-dispatcher`)
 
-> **Version:** 0.43.0 (`myl-pod` 0.35.1, `myl-dispatcher` 0.8.0)
+> **Version:** 0.43.1 (`myl-pod` 0.35.1, `myl-dispatcher` 0.8.1)
 > **Datum:** 2026-10-17
 > **Status:** Phase 1 vollständig, Phase 2.1, **Phase 3 vollständig**
 > (3.1 bis 3.3) und Punkt 4.3. `shard_loop` mit Spur-Hashes und
@@ -106,6 +106,27 @@ COMPUTE_PIPELINE/
 ```
 
 ## Changelog
+
+### v0.43.1 (2026-10-17): Ein Verzeichnis ist auch unter Windows kein leeres Eichbuch (`myl-dispatcher` 0.8.1, Fund 559)
+
+Anlass: Der neue CI-Job „Klient und Agent (windows-latest)“ war beim ersten
+Lauf rot, im Schritt `cargo test` dieser Kiste, mit genau einem Test:
+`local::eichung::proben::ein_kaputtes_buch_ist_ein_fehler` scheiterte an
+der Zusicherung „ein Verzeichnis ist kein Buch“. Unter Wine war derselbe
+Test grün.
+
+- **Fund 559:** `Eichbuch::lesen` las eine fehlende Datei als leeres Buch
+  und erkannte „fehlt“ an der Fehlerart `NotFound`. Windows meldet diese
+  Art auch beim Lesen eines **Verzeichnisses** (hier das Temp-Verzeichnis
+  des Läufers), das Buch galt dann als leer. Folge außerhalb des Tests:
+  Läge unter dem Pfad des Eichbuchs ein Verzeichnis, rechnete der
+  Dispatcher still mit Vorgaben statt einen Fehler zu melden.
+- **Behebung:** Leer ist das Buch nur, wenn `NotFound` kommt **und** unter
+  dem Pfad nichts liegt (`symlink_metadata` scheitert). Liegt dort etwas,
+  ist es ein Fehler mit Pfad und Meldung, auf jedem System gleich.
+- Belege: `cargo test` 47 von 47 auf macOS, Clippy mit `-D warnings` ohne
+  Meldung. Die Bestätigung auf echtem Windows bringt der nächste CI-Lauf;
+  Wine bildet diese Fehlerart nicht nach und taugt dafür nicht als Probe.
 
 ### v0.43.0 (2026-10-17): Rechenwerke mit Klarnamen und stabilen Kennungen (`myl-dispatcher` 0.8.0)
 

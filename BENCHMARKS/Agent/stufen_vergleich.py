@@ -35,7 +35,6 @@ from pathlib import Path
 HIER = Path(__file__).resolve().parent
 WURZEL = HIER.parents[1]
 ARTEFAKTE = WURZEL / "INTEGER_LLM" / "artifacts"
-STUFEN = ["einfach", "mittel", "komplex", "overkill"]
 
 #: ⚑ **Das langsamste zuletzt**: Das ternaere 27B bereitet mit rund 12 Token/s
 #: vor und haelt sonst alle anderen auf.
@@ -65,7 +64,7 @@ def starten(a: argparse.Namespace) -> int:
         "denken": a.denken,
         "werkzeuge": "voll",
         "einstellungen": "ab Werk",
-        "satz": "stufen.json",
+        "satz": a.satz,
     }
     (ziel / "lauf.json").write_text(json.dumps(lauf, indent=2) + "\n", encoding="utf-8")
     print(f"[stufen] Ergebnisse: {ziel}")
@@ -76,7 +75,7 @@ def starten(a: argparse.Namespace) -> int:
         print(f"[stufen] === {m} ===", flush=True)
         befehl = [
             sys.executable, "-u", str(HIER / "agentenprobe.py"), str(ARTEFAKTE / m),
-            "--auftraege", str(HIER / "stufen.json"), "--werkzeuge", "voll",
+            "--auftraege", str(HIER / a.satz), "--werkzeuge", "voll",
             "--saaten", ",".join(map(str, saaten)), "--token", str(a.token), "--denken", a.denken,
             "--json", str(ziel / f"{m}.json"), "--ab-werk",
         ]
@@ -93,26 +92,32 @@ def starten(a: argparse.Namespace) -> int:
 
 def auswerten_ordner(ziel: Path) -> Path:
     lauf = json.loads((ziel / "lauf.json").read_text(encoding="utf-8"))
-    satz = {x["name"]: x for x in json.loads((HIER / "stufen.json").read_text(encoding="utf-8"))["auftrag"]}
+    # ⚑ Der Satz steht in `lauf.json` (seit 2026-10-17 auch `extrem.json`);
+    #   die Stufen kommen aus dem Satz und nicht aus einer festen Liste.
+    satzname = lauf.get("satz", "stufen.json")
+    satz = {x["name"]: x for x in json.loads((HIER / satzname).read_text(encoding="utf-8"))["auftrag"]}
+    stufen = sorted({(x["stufe"], x.get("stufenname", "")) for x in satz.values()})
+    titel = "Kurze Aufgaben in vier Stufen" if satzname == "stufen.json" else f"Agentenaufgaben aus {satzname}"
+    je_stufe = "Je Stufe drei Aufgaben" if satzname == "stufen.json" else f"{len(satz)} Aufgaben"
     zeilen = [
-        f"# Kurze Aufgaben in vier Stufen, {ziel.name.removeprefix('stufen-')}",
+        f"# {titel}, {ziel.name.removeprefix('stufen-')}",
         "",
         f"Saaten: {', '.join(map(str, lauf['saaten']))}. Antwortlänge {lauf['token']}, Denken {lauf['denken']}, "
-        f"Werkzeugsatz {lauf['werkzeuge']}. Je Stufe drei Aufgaben, je Aufgabe eine Zelle je Saat; "
+        f"Werkzeugsatz {lauf['werkzeuge']}. {je_stufe}, je Aufgabe eine Zelle je Saat; "
         "bestanden heißt: Die Abnahme von außen endet mit 0.",
         "",
-        "| Modell | " + " | ".join(STUFEN) + " | gesamt | Minuten |",
-        "|---|" + "---|" * (len(STUFEN) + 2),
+        "| Modell | " + " | ".join(n for _, n in stufen) + " | gesamt | Minuten |",
+        "|---|" + "---|" * (len(stufen) + 2),
     ]
     einzeln = []
     for m in lauf["modelle"]:
         p = ziel / f"{m}.json"
         if not p.is_file():
-            zeilen.append(f"| {m} | " + " | ".join("…" for _ in STUFEN) + " | läuft oder steht aus | |")
+            zeilen.append(f"| {m} | " + " | ".join("…" for _ in stufen) + " | läuft oder steht aus | |")
             continue
         laeufe = json.loads(p.read_text(encoding="utf-8"))["laeufe"]
         zellen = []
-        for i, _ in enumerate(STUFEN, start=1):
+        for i, _ in stufen:
             w = [x["bestanden"] for x in laeufe if x["stufe"] == i]
             zellen.append(f"{sum(w)}/{len(w)}" if w else "–")
         alle = [x["bestanden"] for x in laeufe]
@@ -141,6 +146,7 @@ def main() -> int:
     u = p.add_subparsers(dest="was", required=True)
     s = u.add_parser("starten")
     s.add_argument("--modelle", default=VORGABE_MODELLE)
+    s.add_argument("--satz", default="stufen.json", help="Auftragssatz neben diesem Skript, etwa extrem.json")
     s.add_argument("--saaten", default="", help="feste Saaten durch Komma; sonst neu gezogen")
     s.add_argument("--anzahl", type=int, default=3, help="wie viele Saaten gezogen werden")
     s.add_argument("--token", type=int, default=1600)

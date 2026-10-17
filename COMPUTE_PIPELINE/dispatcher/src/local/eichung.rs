@@ -109,7 +109,13 @@ impl Eichbuch {
     pub fn lesen(pfad: &Path) -> Result<Self, String> {
         match std::fs::read_to_string(pfad) {
             Ok(t) => serde_json::from_str(&t).map_err(|e| format!("{}: {e}", pfad.display())),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
+            // 📌 Fund 559: Windows meldet beim Lesen eines Verzeichnisses
+            // „nicht gefunden“ (CI, windows-latest; unter Wine nicht). Leer
+            // ist das Buch deshalb nur, wenn unter dem Pfad wirklich nichts
+            // liegt.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound && std::fs::symlink_metadata(pfad).is_err() => {
+                Ok(Self::default())
+            }
             Err(e) => Err(format!("{}: {e}", pfad.display())),
         }
     }

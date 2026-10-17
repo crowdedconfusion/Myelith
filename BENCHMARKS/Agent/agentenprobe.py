@@ -90,6 +90,12 @@ def einen_lauf(
         for name, inhalt in (auftrag.get("dateien") or {}).items():
             (wurzel / name).parent.mkdir(parents=True, exist_ok=True)
             (wurzel / name).write_text(inhalt, encoding="utf-8")
+        # ⚑ **Eine Vorbereitung, wenn der Ausgangsstand mehr ist als Dateien**
+        #   (2026-10-17, Stufe extrem): etwa eine Git-Historie. Sie laeuft im
+        #   Arbeitsordner, bevor der Agent ihn sieht, und muss mit 0 enden;
+        #   sonst misst der Lauf einen kaputten Aufbau und nicht das Modell.
+        if auftrag.get("vorbereitung"):
+            subprocess.run(["sh", "-c", auftrag["vorbereitung"]], cwd=wurzel, check=True, capture_output=True)
         # ⚑ **Echte Dateien statt geschriebener** (2026-09-23). Ein Bild
         #   und eine Tonaufnahme lassen sich nicht als Text hinschreiben,
         #   und ohne sie sind `describe_image` und `transcribe_audio`

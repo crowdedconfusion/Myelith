@@ -30,10 +30,17 @@ def main() -> int:
             for name, inhalt in a.get("dateien", {}).items():
                 (ordner / name).parent.mkdir(parents=True, exist_ok=True)
                 (ordner / name).write_text(inhalt, encoding="utf-8")
+            # Dieselbe Vorbereitung wie in agentenprobe.py (etwa eine Git-Historie).
+            if a.get("vorbereitung"):
+                subprocess.run(["sh", "-c", a["vorbereitung"]], cwd=ordner, check=True, capture_output=True)
             vorher = abnahme(ordner, a["abnahme"])
             for name, inhalt in a["_muster"].items():
                 (ordner / name).parent.mkdir(parents=True, exist_ok=True)
                 (ordner / name).write_text(inhalt, encoding="utf-8")
+            # Was die Musterloesung nicht als Datei hinschreiben kann (etwa einen
+            # Hash, der erst bei der Vorbereitung entsteht), steht als Befehl da.
+            if a.get("_muster_befehl"):
+                subprocess.run(["sh", "-c", a["_muster_befehl"]], cwd=ordner, check=True)
             nachher = abnahme(ordner, a["abnahme"])
         gut = (not vorher) and nachher
         fehler += not gut
