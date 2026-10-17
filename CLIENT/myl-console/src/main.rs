@@ -37,6 +37,7 @@ mod einstellseite;
 mod banner;
 mod design;
 mod farben;
+mod ansi;
 mod geometrie;
 mod module;
 mod modulbanner;
@@ -49,13 +50,44 @@ mod sitzung;
 mod wahl;
 
 fn main() {
-    // ⛔️ Das Aktionsprotokoll gilt fuer jeden Lauf dieser Konsole.
-    myl_local_agent::protokoll::einschalten();
     // ⛔️ **Der vorgegebene Systemprompt muss zu seiner Pruefsumme passen**,
     //    sonst startet die Konsole nicht (`myl_local_agent::systemprompt`).
     if let Err(f) = myl_local_agent::systemprompt::alle_pruefen() {
         eprintln!("{f}");
         std::process::exit(1);
     }
-    std::process::exit(sitzung::fahren());
+    let rc = sitzung::fahren();
+    // ⚑ **Nach einem gelungenen `/update` startet die Konsole neu**, und
+    //   zwar erst hier: Die Sitzung hat ihren Schirm schon aufgeraeumt.
+    if sitzung::NEUSTART.load(std::sync::atomic::Ordering::SeqCst) {
+        neu_starten();
+    }
+    std::process::exit(rc);
+}
+
+/// **Startet das neu installierte Programm an derselben Stelle**, mit
+/// denselben Argumenten.
+///
+/// ⚑ Unter Unix ersetzt `exec` diesen Prozess: dasselbe Terminal, derselbe
+/// Vordergrund. Unter Windows startet ein Kind, und dieser Prozess wartet
+/// auf sein Ende; eine laufende `.exe` laesst sich dort nicht ersetzen.
+fn neu_starten() {
+    let Some(datei) = myl_client::aktualisierung::laufende_datei() else {
+        eprintln!("  Das eigene Programm ist nicht auffindbar; bitte myelith neu starten.");
+        return;
+    };
+    let argumente: Vec<String> = std::env::args().skip(1).collect();
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        let fehler = std::process::Command::new(&datei).args(&argumente).exec();
+        eprintln!("  Neustart ging nicht ({fehler}); bitte myelith neu starten.");
+    }
+    #[cfg(not(unix))]
+    {
+        match std::process::Command::new(&datei).args(&argumente).status() {
+            Ok(s) => std::process::exit(s.code().unwrap_or(0)),
+            Err(f) => eprintln!("  Neustart ging nicht ({f}); bitte myelith neu starten."),
+        }
+    }
 }

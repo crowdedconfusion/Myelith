@@ -72,8 +72,8 @@ pub const ARBEITSORDNER: &str = "MYL_ARBEITSORDNER";
 pub const ARBEITSORDNER_IM_BAUM: &str = "WORK_DIR";
 
 /// **Wo die Einstellungen liegen**, und neben ihnen alles, was Myelith
-/// auf diesem Rechner ablegt (Aktionsprotokoll, eigene Skills, Vorhaben,
-/// der Zettel mit der Wurzel).
+/// auf diesem Rechner ablegt (eigene Skills, Vorhaben, der Zettel mit der
+/// Wurzel).
 ///
 /// ⚑ **Hier und nicht in den Einstellungen des Clients**, weil der Agent
 /// den Ort braucht, ohne den Client zu kennen. Der Client fragt hier.

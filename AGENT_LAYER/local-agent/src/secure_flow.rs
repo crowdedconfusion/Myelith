@@ -331,9 +331,34 @@ fn texte_der_argumente(a: &serde_json::Value) -> Vec<String> {
     aus
 }
 
-/// Ein Pfad, wie er verglichen wird: ohne `./` und Leerraum.
+/// Ein Pfad, wie er verglichen wird: ohne `./` und Leerraum, mit `/`
+/// getrennt, unter Windows klein geschrieben.
+///
+/// ⛔️ **Fund 558 (2026-10-17, unter Wine gefunden): Unter Windows ging das
+/// Herkunftsbuch an einer anderen Schreibweise vorbei.** Eingetragen wurde
+/// `daten/notiz.md`; gelesen als `daten\notiz.md` oder `Daten/Notiz.md`
+/// (NTFS unterscheidet Gross und Klein nicht) war es eine andere Zeichenkette,
+/// und fremder Inhalt kam als vertraut herein. Ebenso ein Projekt-Skill, dessen
+/// Ordner Windows mit Rueckstrich nennt.
+///
+/// ⚑ **Angeglichen wird in die sichere Richtung**: Rueckstrich wird `/` auf
+/// jedem System, doppelte Striche fallen weg, und unter Windows wird klein
+/// geschrieben. Zwei verschiedene Dateien koennen so denselben Schluessel
+/// bekommen (unter Unix `a\b` und `a/b`); dann gilt eine zu viel als fremd,
+/// nie eine zu wenig.
 fn pfadschluessel(pfad: &str) -> String {
-    pfad.trim().trim_start_matches("./").to_string()
+    let mut s = pfad.trim().replace('\\', "/");
+    while s.contains("//") {
+        s = s.replace("//", "/");
+    }
+    while let Some(rest) = s.strip_prefix("./") {
+        s = rest.to_string();
+    }
+    if cfg!(windows) {
+        s.to_lowercase()
+    } else {
+        s
+    }
 }
 
 /// Die Pfade, die ein schreibender Aufruf betrifft (`pfad`, `pfade`), oder
@@ -351,9 +376,9 @@ fn pfade_der_argumente(a: &serde_json::Value) -> Option<Vec<String>> {
     (!aus.is_empty()).then_some(aus)
 }
 
-/// **Der erste Satz jeder Sperre.** An ihm erkennt das Aktionsprotokoll,
-/// dass der Informationsfluss und nicht der Mensch oder das Werkzeug
-/// abgelehnt hat.
+/// **Der erste Satz jeder Sperre.** An ihm erkennen Loop und Anzeige, dass
+/// der Informationsfluss und nicht der Mensch oder das Werkzeug abgelehnt
+/// hat.
 pub const SPERRE: &str = "Vom Informationsfluss gesperrt.";
 
 /// Was die Pruefung vor einem Aufruf ergibt.
@@ -1360,6 +1385,13 @@ mod bestehendes {
         );
         assert_eq!(pfade_der_argumente(&serde_json::json!({"muster": "x"})), None);
         assert_eq!(pfadschluessel(" ./a/b.md "), "a/b.md");
+        // ⛔️ Fund 558: jede Schreibweise desselben Pfades, derselbe Schluessel.
+        assert_eq!(pfadschluessel("a\\b.md"), "a/b.md");
+        assert_eq!(pfadschluessel(".\\a\\\\b.md"), "a/b.md");
+        assert_eq!(pfadschluessel("././a//b.md"), "a/b.md");
+        if cfg!(windows) {
+            assert_eq!(pfadschluessel("Daten\\Notiz.MD"), "daten/notiz.md");
+        }
     }
 }
 

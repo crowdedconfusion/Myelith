@@ -36,13 +36,14 @@ base models and the generated model card.
 dem jeder Lauf von Myelith steht, deutsch und englisch, mit
 `pruefsummen.txt`. Er ist eingebaut und nicht einstellbar; vor jedem Lauf
 wird er gegen seine Prüfsumme gehalten, und passt sie nicht, läuft kein
-Agent. Jeder Lauf trägt den vollen SHA-256 der Fassung ins
-Aktionsprotokoll. Hier stehen künftig auch die Vorgaben aus Compliance
+Agent. Läuft der Debug-Log, nennt jeder Lauf darin den vollen SHA-256 der
+Fassung. Hier stehen künftig auch die Vorgaben aus Compliance
 und Ethik, die das Modell kennen muss. / The fixed system prompt every
 Myelith run operates under, in German and English, with
 `pruefsummen.txt`. It is built in and cannot be configured; before every
 run it is checked against its checksum, and if it does not match, no agent
-runs. Every run records the full SHA-256 of the version in the action log.
+runs. With the debug log on, every run records the full SHA-256 of the
+version there.
 
 ```
 cd COMPLIANCE/systemprompt && shasum -a 256 -c pruefsummen.txt
@@ -59,7 +60,6 @@ text updates the checksum too; otherwise the probe fails and no agent runs.
 |---|---|
 | `python3 COMPLIANCE/werkzeuge/notices.py [--pruefe]` | erzeugt oder prüft `NOTICES.md` / generates or checks `NOTICES.md` |
 | `myl kennzeichen <datei.wav>` | prüft die KI-Kennzeichnung einer Tondatei / checks the AI marking of an audio file |
-| `myl protokoll [anzahl]` | zeigt das Aktionsprotokoll / shows the action log |
 
 ## Kontakt / Contact
 

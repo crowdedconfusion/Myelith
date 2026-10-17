@@ -588,55 +588,6 @@ fn die_vorgabe_fragt_nach() {
     assert!(!auto.modus.fragt_nach(), "eine ausdrueckliche Wahl wurde ueberschrieben");
 }
 
-/// ⛔️ **Das Aktionsprotokoll haelt jede Handlung fest, auch eine
-/// abgelehnte, und kein Klartext steht darin.**
-#[test]
-fn das_aktionsprotokoll_haelt_fest_ohne_klartext() {
-    let ablage = tempfile::tempdir().expect("Protokollordner");
-    myl_local_agent::protokoll::ordner_setzen(ablage.path().to_path_buf());
-    let ordner = tempfile::tempdir().expect("Ordner");
-    std::fs::write(ordner.path().join("geheimliste.md"), "- Vertrauliches\n").expect("Anhang");
-    let nein: myl_local_agent::ruestung::Nachfrage = std::sync::Arc::new(|_: &str, _: &serde_json::Value| false);
-    let r = myl_local_agent::ruestung::ruesten_fuer_anhaenge(ordner.path(), FORM, None, Vec::new(), Some(nein))
-        .expect("Ruestung");
-    r.kasten
-        .ausfuehren_ungeprueft("read_file", &serde_json::json!({ "pfad": "geheimliste.md" }))
-        .expect("read_file")
-        .expect("gelesen");
-    let _ = r
-        .kasten
-        .ausfuehren_ungeprueft("write_file", &serde_json::json!({ "pfad": "geheimliste.md", "inhalt": "weg" }))
-        .expect("write_file");
-
-    // ⚑ **Gefunden ueber den Fingerabdruck der eigenen Eingabe**: Der
-    //   Protokollort gilt je Prozess, und andere Proben dieser Datei
-    //   protokollieren nebenher mit hinein. 📌 Die erste Fassung nahm die
-    //   juengste `read_file`-Zeile und erwischte dabei ein fremdes,
-    //   absichtlich scheiterndes Lesen.
-    let e = myl_local_agent::protokoll::lesen(1000);
-    let fa = |v: serde_json::Value| myl_local_agent::protokoll::fingerabdruck(v.to_string().as_bytes());
-    let gelesen = fa(serde_json::json!({ "pfad": "geheimliste.md" }));
-    let lesen = e.iter().find(|x| x.eingabe == gelesen).expect("Lesen fehlt im Protokoll");
-    assert_eq!(
-        (lesen.werkzeug.as_str(), lesen.art.as_str(), lesen.entscheidung.as_str(), lesen.ergebnis.as_str()),
-        ("read_file", "datei_lesen", "ausgefuehrt", "ok")
-    );
-    assert_eq!(lesen.eingabe.len(), 32, "kein Fingerabdruck: {lesen:?}");
-    let geschrieben = fa(serde_json::json!({ "pfad": "geheimliste.md", "inhalt": "weg" }));
-    let schreiben = e.iter().find(|x| x.eingabe == geschrieben).expect("Schreiben fehlt im Protokoll");
-    assert_eq!(schreiben.werkzeug, "write_file");
-    assert_eq!(schreiben.art, "datei_schreiben");
-    assert_eq!(schreiben.entscheidung, "abgelehnt");
-
-    // Kein Klartext: weder Pfad noch Inhalt in irgendeiner Datei.
-    for d in std::fs::read_dir(ablage.path()).unwrap().flatten() {
-        let t = std::fs::read_to_string(d.path()).unwrap_or_default();
-        for verboten in ["geheimliste", "Vertrauliches", "weg\""] {
-            assert!(!t.contains(verboten), "`{verboten}` steht im Protokoll: {}", d.path().display());
-        }
-    }
-}
-
 /// ⛔️ **Die Werkzeugansage trägt den vorgegebenen, geprüften Systemprompt**,
 /// hinter der Vorlage des Modells.
 #[test]

@@ -11,6 +11,12 @@
 //!
 //! ⛔️ **Der letzte Fall ist der wichtige.** Er ist der, den jeder
 //! Nutzer zuerst sieht.
+//!
+//! ⚠️ **Nur unter Unix** (2026-10-17): Die Attrappen sind Shell-Skripte mit
+//! `#!/bin/sh`, die direkt gestartet werden; unter Windows startet so
+//! nichts. Dort pruefen die Proben der Bibliothek den Weg (`prozess`, mit
+//! `cmd /C`), die Attrappen bleiben Unix vorbehalten.
+#![cfg(unix)]
 
 use std::path::{Path, PathBuf};
 

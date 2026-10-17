@@ -37,7 +37,8 @@ use std::io::{self, IsTerminal, Write};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crossterm::event::{self, Event};
-use crossterm::style::{Attribute, Color, Print, ResetColor, SetAttribute, SetForegroundColor};
+use crossterm::style::{Attribute, Color, Print};
+use crate::ansi::{ResetColor, SetAttribute, SetForegroundColor};
 use myl_client::einstellungen::Konsolendesign;
 use crossterm::terminal::{self, Clear, ClearType};
 use crossterm::{cursor, execute, queue};

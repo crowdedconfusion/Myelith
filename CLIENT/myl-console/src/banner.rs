@@ -104,7 +104,8 @@ pub const SUBTITLE: &str = "";
 /// oben links, auf einem eben geraeumten Schirm. Von dort aus darf es
 /// fliessen, bis es wegrollt.
 pub fn bildschirm_mit(design: myl_client::einstellungen::Konsolendesign) {
-    use crossterm::style::{Attribute, Print, ResetColor, SetAttribute, SetForegroundColor};
+    use crossterm::style::{Attribute, Print};
+    use crate::ansi::{ResetColor, SetAttribute, SetForegroundColor};
     use std::io::IsTerminal;
 
     if std::env::var("MYL_NO_BANNER").is_ok() {

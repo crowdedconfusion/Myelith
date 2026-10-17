@@ -2076,7 +2076,12 @@ pub fn abnahme_fahren(befehl: &str, ordner: Option<&Path>) -> Abnahme {
     let Some(ordner) = ordner else {
         return fehlschlag("kein Arbeitsordner eingehaengt".into());
     };
-    let mut kind = match std::process::Command::new("sh")
+    // ⚑ Die Shell wird gesucht, siehe `crate::schale`.
+    let sh = match crate::schale::sh() {
+        Ok(sh) => sh,
+        Err(grund) => return fehlschlag(grund),
+    };
+    let mut kind = match std::process::Command::new(sh)
         .arg("-c")
         .arg(befehl)
         .current_dir(ordner)
@@ -2216,7 +2221,7 @@ pub struct Runde {
 /// koennen. Eine abgelehnte Handlung hat nichts bewirkt, also gibt es
 /// nichts doppelt zu tun.
 pub fn zaehlt_als_erledigt(ergebnis: &str) -> bool {
-    !ergebnis.trim_start().starts_with(crate::protokoll::ABSAGE)
+    !ergebnis.trim_start().starts_with(crate::ruestung::ABSAGE)
 }
 
 /// Schliesst die Aktion einer Runde auch bei einem vorzeitigen Ausgang.
@@ -3220,7 +3225,7 @@ mod proben {
     /// auch ein Fehler des Werkzeugs (er kann etwas halb getan haben).
     #[test]
     fn eine_absage_zaehlt_nicht_als_erledigt() {
-        assert!(!zaehlt_als_erledigt(&format!("{} Grund: lieber nicht", crate::protokoll::ABSAGE)));
+        assert!(!zaehlt_als_erledigt(&format!("{} Grund: lieber nicht", crate::ruestung::ABSAGE)));
         assert!(zaehlt_als_erledigt("zahlen.py: eine Stelle ersetzt."));
         assert!(zaehlt_als_erledigt("Fehler: Datei nicht gefunden"));
     }

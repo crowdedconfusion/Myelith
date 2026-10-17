@@ -1123,7 +1123,10 @@ impl Modellweg for Oertlichesmodell {
                 s.saat = einmal.or(self.saat_fest).unwrap_or_else(zufallssaat);
                 s.zug = 0;
                 *self.aktion.lock().unwrap_or_else(|e| e.into_inner()) = Some(s.saat);
-                myl_local_agent::protokoll::saat("aktion", (!self.waehlt_gierig()).then_some(s.saat), &self.parameterzeile());
+                myl_local_agent::debuglog::eintrag_mit("Saat", || match (!self.waehlt_gierig()).then_some(s.saat) {
+                    Some(saat) => format!("{saat} ({})", self.parameterzeile()),
+                    None => format!("gierig ({})", self.parameterzeile()),
+                });
             }
             s.tiefe += 1;
             a.set(s);

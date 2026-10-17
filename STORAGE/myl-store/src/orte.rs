@@ -360,6 +360,20 @@ pub fn botschaft(datei: &[u8], epoche: u64) -> Vec<u8> {
 mod tests {
     use super::*;
 
+    /// **Ein absoluter Pfad auf diesem System.** 📌 Unter Windows ist
+    /// `/x` nicht absolut, es fehlt das Laufwerk; die Proben standen bis
+    /// STORAGE v0.6.0 mit Unix-Pfaden da und fielen dort (2026-10-17, unter
+    /// Wine gefunden). Der Code war richtig, die Proben nicht.
+    fn abs(rest: &str) -> String {
+        if cfg!(windows) { format!("C:\\{}", rest.replace('/', "\\")) } else { format!("/{rest}") }
+    }
+
+    /// Derselbe Pfad als TOML-Zeile, in einfachen Anfuehrungszeichen, damit
+    /// ein Backslash nicht als Fluchtzeichen gelesen wird.
+    fn pfadzeile(rest: &str) -> String {
+        format!("pfad='{}'", abs(rest))
+    }
+
     fn ort(name: &str, pfad: &str) -> Speicherort {
         Speicherort { name: name.into(), pfad: pfad.into(), volumen_gib: 10, zwecke: vec![Zweck::Netz] }
     }
@@ -367,8 +381,8 @@ mod tests {
     #[test]
     fn eine_datei_kommt_so_zurueck_wie_sie_geschrieben_wurde() {
         let mut s = Speicherorte::default();
-        s.setzen(Speicherort { zwecke: vec![Zweck::Gewichte, Zweck::Netz], ..ort("extern", "/Volumes/Platte/Myelith") });
-        s.setzen(ort("intern", "/home/a/myelith"));
+        s.setzen(Speicherort { zwecke: vec![Zweck::Gewichte, Zweck::Netz], ..ort("extern", &abs("Volumes/Platte/Myelith")) });
+        s.setzen(ort("intern", &abs("home/a/myelith")));
         let text = s.als_text();
         assert!(text.starts_with("# Speicherorte"), "der Kopf fehlt");
         assert!(text.contains("zwecke = [\"gewichte\", \"netz\"]"), "{text}");
@@ -378,8 +392,8 @@ mod tests {
     #[test]
     fn setzen_ersetzt_den_gleichnamigen() {
         let mut s = Speicherorte::default();
-        s.setzen(ort("a", "/x"));
-        s.setzen(Speicherort { volumen_gib: 99, ..ort("a", "/y") });
+        s.setzen(ort("a", &abs("x")));
+        s.setzen(Speicherort { volumen_gib: 99, ..ort("a", &abs("y")) });
         assert_eq!(s.orte.len(), 1);
         assert_eq!(s.orte[0].volumen_gib, 99);
     }
@@ -387,11 +401,24 @@ mod tests {
     #[test]
     fn die_regeln_greifen() {
         let fall = |t: &str| Speicherorte::aus_text(t).unwrap_err().to_string();
+        let (x, y) = (pfadzeile("x"), pfadzeile("y"));
         assert!(fall("[[ort]]\nname=\"a\"\npfad=\"rel\"\nvolumen_gib=1\nzwecke=[\"netz\"]").contains("nicht absolut"));
-        assert!(fall("[[ort]]\nname=\"a\"\npfad=\"/x\"\nvolumen_gib=0\nzwecke=[\"netz\"]").contains("null"));
-        assert!(fall("[[ort]]\nname=\"a\"\npfad=\"/x\"\nvolumen_gib=1\nzwecke=[]").contains("ohne Zweck"));
-        assert!(fall("[[ort]]\nname=\"a\"\npfad=\"/x\"\nvolumen_gib=1\nzwecke=[\"netz\"]\n[[ort]]\nname=\"a\"\npfad=\"/y\"\nvolumen_gib=1\nzwecke=[\"netz\"]").contains("zweimal"));
-        assert!(fall("[[ort]]\nname=\"a\"\npfad=\"/x\"\nvolumen_gib=1\nzwecke=[\"kaffee\"]").starts_with(DATEINAME));
+        assert!(fall(&format!("[[ort]]\nname=\"a\"\n{x}\nvolumen_gib=0\nzwecke=[\"netz\"]")).contains("null"));
+        assert!(fall(&format!("[[ort]]\nname=\"a\"\n{x}\nvolumen_gib=1\nzwecke=[]")).contains("ohne Zweck"));
+        assert!(fall(&format!("[[ort]]\nname=\"a\"\n{x}\nvolumen_gib=1\nzwecke=[\"netz\"]\n[[ort]]\nname=\"a\"\n{y}\nvolumen_gib=1\nzwecke=[\"netz\"]")).contains("zweimal"));
+        assert!(fall(&format!("[[ort]]\nname=\"a\"\n{x}\nvolumen_gib=1\nzwecke=[\"kaffee\"]")).starts_with(DATEINAME));
+    }
+
+    /// ⚑ **Ein Laufwerkspfad mit Backslashes kommt heil zurueck** (nur unter
+    /// Windows, dort ist er absolut): Die Datei schreibt `toml` und nicht ein
+    /// `format!`, und ein `\\U` in `C:\\Users` waere sonst ein Fluchtzeichen.
+    #[cfg(windows)]
+    #[test]
+    fn ein_laufwerkspfad_kommt_heil_zurueck() {
+        let mut s = Speicherorte::default();
+        s.setzen(ort("platte", "D:\\Users\\Netz\\Myelith"));
+        let zurueck = Speicherorte::aus_text(&s.als_text()).unwrap();
+        assert_eq!(zurueck.orte[0].pfad, std::path::PathBuf::from("D:\\Users\\Netz\\Myelith"));
     }
 
     #[test]

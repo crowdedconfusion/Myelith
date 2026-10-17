@@ -1,6 +1,6 @@
 # compliance
 
-> **Version:** 0.4.1
+> **Version:** 0.4.2
 > **Datum:** 2026-10-17
 > **Status:** Die Pflichten aus der KI-Verordnung sind dokumentiert und,
 > soweit technisch, umgesetzt; die Einordnung Artikel für Artikel steht in
@@ -34,11 +34,22 @@ neu.
 ⚑ **Wo die Technik steht.** Die Dokumente beschreiben, der Code setzt um:
 Kennzeichnung als KI (`CLIENT/myl-client/src/kennzeichnung.rs`),
 Kennzeichnung der Stimme (`CLIENT/myl-senses/src/kennzeichnung.rs`),
-Schutzfilter (`schutzfilter.rs`), Aktionsprotokoll (`protokoll.rs`),
-Notaus (`notaus.rs`), alle unter `CLIENT/myl-client/src/`, sofern nicht
-anders genannt.
+Schutzfilter (`CLIENT/myl-client/src/schutzfilter.rs`), Notaus
+(`AGENT_LAYER/local-agent/src/notaus.rs`).
 
 ## Changelog
+
+### v0.4.2 – 2026-10-17 (Selbsteinschätzung, Zweckbestimmung und Manifest ohne Aktionsprotokoll)
+
+- Das Aktionsprotokoll entfällt (AGENT_LAYER v0.49.0). Nach dem EU AI Act
+  ist eine Protokollierung nur für Hochrisiko-Systeme vorgeschrieben
+  (Art. 12, 19, 26 Abs. 6); Myelith ist keines, die Zweckbestimmung schließt
+  diese Zwecke aus. Selbsteinschätzung (deutsch und englisch), Zweckbestimmung
+  und Intended Use Policy, Manifest und dieses README beschreiben den Stand
+  ohne es: Art. 12 steht nicht mehr als freiwillige Maßnahme da, die Fassung
+  des Systemprompts nennt der Debug-Log, wenn er läuft, und der Datenschutz
+  sagt, dass der Debug-Log aus ist, bis ihn jemand einschaltet.
+- Der Ort des Notaus berichtigt: `AGENT_LAYER/local-agent/src/notaus.rs`.
 
 ### v0.4.1 – 2026-10-17 (die Lizenzliste kennt das 35B in vier Bit; das Aktionsprotokoll steht nicht mehr im Fenster; Fund 557)
 

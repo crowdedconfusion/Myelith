@@ -280,16 +280,16 @@ pub fn malen(rollende: u16) {
             let _ = crossterm::queue!(
                 puffer,
                 crossterm::cursor::MoveTo(x as u16, lage.oben + y as u16),
-                crossterm::style::SetForegroundColor(ton),
-                crossterm::style::SetAttribute(stark),
+                crate::ansi::SetForegroundColor(ton),
+                crate::ansi::SetAttribute(stark),
                 crossterm::style::Print(c)
             );
         }
     }
     let _ = crossterm::queue!(
         puffer,
-        crossterm::style::ResetColor,
-        crossterm::style::SetAttribute(Attribute::Reset)
+        crate::ansi::ResetColor,
+        crate::ansi::SetAttribute(Attribute::Reset)
     );
     let _ = write!(puffer, "\x1b8");
     let _ = aus.write_all(&puffer);

@@ -185,7 +185,20 @@ foreach ($p in $Programme) {
   # 📌 Bis zum 2026-09-29 `target-shared\release\`: der Bauordner vor dem
   #    Umzug. Gebaut wurde nach SYSTEM\full-build (`.cargo/config.toml`), und
   #    das Kopieren fand nichts.
-  Copy-Item (Join-Path $Wurzel "SYSTEM\full-build\release\$($p.Name)") (Join-Path $Bin $p.Name) -Force
+  $ziel = Join-Path $Bin $p.Name
+  # ⛔️ **Ein laufendes Programm wird umbenannt, nicht ueberschrieben**
+  #    (2026-10-17): Das Update aus Konsole oder Fenster laeuft aus dem
+  #    Programm, das es ersetzt, und Windows sperrt eine laufende `.exe` gegen
+  #    Schreiben, nicht aber gegen Umbenennen. Die alte bleibt mit einer
+  #    eindeutigen Endung `.<zahl>.alt` liegen, bis sie frei ist, und wird
+  #    beim naechsten Lauf weggeraeumt; eine noch gesperrte bleibt still.
+  Get-ChildItem $Bin -Filter "$($p.Name).*.alt" -ErrorAction SilentlyContinue |
+    Remove-Item -Force -ErrorAction SilentlyContinue
+  if (Test-Path $ziel) {
+    try { Remove-Item $ziel -Force -ErrorAction Stop }
+    catch { Rename-Item $ziel "$($p.Name).$(Get-Random).alt" }
+  }
+  Copy-Item (Join-Path $Wurzel "SYSTEM\full-build\release\$($p.Name)") $ziel -Force
 }
 
 # ⚑ **Eine Verknuepfung im Startmenue**, denn ein Programm, das man

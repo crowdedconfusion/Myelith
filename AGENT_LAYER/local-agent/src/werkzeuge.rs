@@ -172,7 +172,8 @@ impl Einhaengung {
         });
         if let Some((_, n)) = bester {
             let ganz = match eltern.filter(|e| !e.as_os_str().is_empty()) {
-                Some(e) => e.join(&n).display().to_string(),
+                // ⚑ Mit `/` auf jedem System, wie jeder Pfad zum Modell (`kurz`).
+                Some(e) => self.kurz(&e.join(&n)),
                 None => n,
             };
             return format!("; meintest du `{ganz}`?");
@@ -198,7 +199,7 @@ impl Einhaengung {
             for e in eintraege.flatten() {
                 gesehen += 1;
                 if gesehen > 5000 {
-                    return treffer.map(|p| p.display().to_string());
+                    return treffer.map(|p| self.kurz(&p));
                 }
                 let Ok(art) = e.file_type() else { continue };
                 let name = e.file_name().to_string_lossy().to_string();
@@ -214,7 +215,7 @@ impl Einhaengung {
                 }
             }
         }
-        treffer.map(|p| p.display().to_string())
+        treffer.map(|p| self.kurz(&p))
     }
 
     /// Loest einen Pfad auf und prueft, dass er in der Einhaengung liegt.
@@ -2589,7 +2590,10 @@ pub fn befehl_im_verzeichnis_mit(
         });
     }
 
-    let mut kind = std::process::Command::new("sh");
+    // ⚑ **Die Shell wird gesucht** (`crate::schale`): Unter Windows liegt
+    //   `sh` nicht im PATH, sondern bei Git for Windows.
+    let sh = crate::schale::sh().map_err(|grund| Werkzeugfehler { grund })?;
+    let mut kind = std::process::Command::new(sh);
     kind.arg("-c")
         .arg(befehl)
         .envs(umgebung.iter().map(|(name, wert)| (*name, wert.as_str())))

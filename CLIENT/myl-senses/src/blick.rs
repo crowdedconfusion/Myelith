@@ -330,8 +330,7 @@ mod proben {
     #[test]
     fn ein_lauf_ohne_bild_gilt_als_fehlschlag() {
         let ziel = crate::zwischenname("blickprobe", "png");
-        let mut b = std::process::Command::new("/bin/sh");
-        b.arg("-c").arg("true");
+        let mut b = crate::prozess::probeskript("true", "exit 0");
         let f = lauf_und_pruefen(&mut b, &ziel, "sh", "Der Bildschirm")
             .expect_err("ohne Datei darf das nicht gutgehen");
         assert!(f.contains("kein Bild"), "{f}");

@@ -16,7 +16,8 @@
 use std::io::{IsTerminal, Write};
 
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
-use crossterm::style::{Attribute, Print, ResetColor, SetAttribute, SetForegroundColor};
+use crossterm::style::{Attribute, Print};
+use crate::ansi::{ResetColor, SetAttribute, SetForegroundColor};
 
 use crate::design::Toene;
 

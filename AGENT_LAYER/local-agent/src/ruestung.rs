@@ -138,20 +138,25 @@ pub fn ohne_mensch_setzen(an: bool) {
     OHNE_MENSCH.store(an, std::sync::atomic::Ordering::SeqCst);
 }
 
-/// **Jedes eingehaengte Werkzeug protokolliert**, siehe `crate::protokoll`.
+/// **Jedes eingehaengte Werkzeug haelt am Notaus**, siehe
+/// [`crate::notaus::Notausfest`].
 ///
-/// ⚑ **Aussen um die Nachfrage**, damit das Protokoll auch sieht, was der
-/// Mensch abgelehnt hat. Eine Stelle fuer alle Einhaengungen in dieser
-/// Datei: Ein Werkzeug, das an ihr vorbei eingehaengt wird, liefe
-/// unprotokolliert, und `jedes_werkzeug_ist_protokolliert` haelt das fest.
-fn protokolliert(inner: Box<dyn Werkzeugausfuehrung>) -> Box<dyn Werkzeugausfuehrung> {
-    Box::new(crate::protokoll::Protokolliert { inner })
+/// ⚑ **Aussen um alles andere**: Nach dem Notaus wird nicht einmal mehr
+/// gefragt. Eine Stelle fuer alle Einhaengungen in dieser Datei; ein
+/// Werkzeug daneben liefe weiter, und `jedes_werkzeug_haengt_hinter_dem_notaus`
+/// haelt das fest.
+fn notausfest(inner: Box<dyn Werkzeugausfuehrung>) -> Box<dyn Werkzeugausfuehrung> {
+    Box::new(crate::notaus::Notausfest { inner })
 }
+
+/// **Der erste Satz jeder Absage durch den Menschen.** An ihm erkennt der
+/// Loop, dass eine Handlung abgelehnt und nicht erledigt ist.
+pub const ABSAGE: &str = "Der Nutzer hat diese Handlung abgelehnt.";
 
 /// **Unter Aufsicht des Informationsflusses** (`crate::secure_flow`).
 ///
-/// ⚑ **Innen im Protokoll und aussen um die Nachfrage**: Der Fluss prueft,
-/// bevor der Mensch gefragt wird, und das Protokoll sieht jede Sperre.
+/// ⚑ **Innen am Notaus und aussen um die Nachfrage**: Der Fluss prueft,
+/// bevor der Mensch gefragt wird.
 /// `fragt_selbst` sagt, ob darunter eine Nachfrage sitzt; dann ist sie die
 /// Freigabe.
 fn bewacht(
@@ -219,12 +224,12 @@ impl Werkzeugausfuehrung for Nachfragend {
             // wie ein Fehler behandelt**, und dann versucht es dieselbe
             // Handlung gleich noch einmal.
             return Err(crate::ausfuehrung::Werkzeugfehler {
-                // ⚑ Der erste Satz ist `protokoll::ABSAGE`: An ihm erkennt
-                //   das Aktionsprotokoll, dass der Mensch abgelehnt hat.
+                // ⚑ Der erste Satz ist [`ABSAGE`]: An ihm erkennt der Loop,
+                //   dass der Mensch abgelehnt hat.
                 grund: format!(
                     "{} Sie wurde nicht ausgefuehrt, und die Datei ist unveraendert. \
                      Wiederhole sie nicht; sage stattdessen, was du sonst tun kannst.",
-                    crate::protokoll::ABSAGE
+                    ABSAGE
                 ),
             });
         }
@@ -415,7 +420,7 @@ fn ruesten_zugeschnitten(
     for (angebot, ausfuehrung) in crate::verankert::angebote() {
         let name = angebot.name.clone();
         kasten
-            .einhaengen(angebot, protokolliert(bewacht(ausfuehrung, crate::secure_flow::Vertrag::RECHNEN, &fluss, false)))
+            .einhaengen(angebot, notausfest(bewacht(ausfuehrung, crate::secure_flow::Vertrag::RECHNEN, &fluss, false)))
             .map_err(|f| format!("Verankertes Werkzeug {name} haengt nicht: {f:?}"))?;
     }
 
@@ -427,7 +432,7 @@ fn ruesten_zugeschnitten(
             (crate::secure_flow::Vertrag::ZUSATZ, false)
         };
         kasten
-            .einhaengen(angebot, protokolliert(bewacht(ausfuehrung, vertrag, &fluss, fragt_selbst)))
+            .einhaengen(angebot, notausfest(bewacht(ausfuehrung, vertrag, &fluss, fragt_selbst)))
             .map_err(|f| format!("Werkzeug {name} haengt nicht: {f:?}"))?;
     }
 
@@ -492,7 +497,7 @@ fn ruesten_zugeschnitten(
                         form,
                     );
                     kasten
-                        .einhaengen(angebot, protokolliert(bewacht(ausfuehrung, crate::secure_flow::Vertrag::NICHTS, &fluss, false)))
+                        .einhaengen(angebot, notausfest(bewacht(ausfuehrung, crate::secure_flow::Vertrag::NICHTS, &fluss, false)))
                         .map_err(|f| format!("Platzhalter {} haengt nicht: {f:?}", w.name(form)))?;
                     continue;
                 }
@@ -512,7 +517,7 @@ fn ruesten_zugeschnitten(
                     }
                 }
                 kasten
-                    .einhaengen(angebot, protokolliert(bewacht_im_ordner(ausfuehrung, w.fluss_vertrag(), &fluss, fragt && w.schreibt(), ein.wurzel())))
+                    .einhaengen(angebot, notausfest(bewacht_im_ordner(ausfuehrung, w.fluss_vertrag(), &fluss, fragt && w.schreibt(), ein.wurzel())))
                     .map_err(|f| format!("Dateiwerkzeug {name} haengt nicht: {f:?}"))?;
             }
 
@@ -530,7 +535,7 @@ fn ruesten_zugeschnitten(
                         form,
                     );
                     kasten
-                        .einhaengen(angebot, protokolliert(bewacht(ausfuehrung, crate::secure_flow::Vertrag::NICHTS, &fluss, false)))
+                        .einhaengen(angebot, notausfest(bewacht(ausfuehrung, crate::secure_flow::Vertrag::NICHTS, &fluss, false)))
                         .map_err(|f| format!("Platzhalter {} haengt nicht: {f:?}", w.name(form)))?;
                 }
             }
@@ -546,7 +551,7 @@ fn ruesten_zugeschnitten(
                 {
                     let name = angebot.name.clone();
                     kasten
-                        .einhaengen(angebot, protokolliert(bewacht(ausfuehrung, crate::secure_flow::Vertrag::SINN, &fluss, false)))
+                        .einhaengen(angebot, notausfest(bewacht(ausfuehrung, crate::secure_flow::Vertrag::SINN, &fluss, false)))
                         .map_err(|f| format!("Sinneswerkzeug {name} haengt nicht: {f:?}"))?;
                 }
                 // ⚑ Ein Blick, den der Rechner koennte und die Einstellung
@@ -567,7 +572,7 @@ fn ruesten_zugeschnitten(
                             form,
                         );
                         kasten
-                            .einhaengen(angebot, protokolliert(bewacht(ausfuehrung, crate::secure_flow::Vertrag::NICHTS, &fluss, false)))
+                            .einhaengen(angebot, notausfest(bewacht(ausfuehrung, crate::secure_flow::Vertrag::NICHTS, &fluss, false)))
                             .map_err(|f| format!("Platzhalter {} haengt nicht: {f:?}", w.name(form)))?;
                     }
                 }
@@ -594,7 +599,7 @@ fn ruesten_zugeschnitten(
                     }
                     let vertrag = vertraege.get(&name).copied().unwrap_or(crate::secure_flow::Vertrag::SHELL);
                     kasten
-                        .einhaengen(angebot, protokolliert(bewacht(ausfuehrung, vertrag, &fluss, fragt)))
+                        .einhaengen(angebot, notausfest(bewacht(ausfuehrung, vertrag, &fluss, fragt)))
                         .map_err(|f| format!("Kisten-Werkzeug {name} haengt nicht: {f:?}"))?;
                 }
             }
@@ -609,7 +614,7 @@ fn ruesten_zugeschnitten(
             let (angebot, ausfuehrung) =
                 crate::abgeschaltet::angebot(w.name(form), w.parameter(form), &crate::abgeschaltet::Grund::kein_ordner(form), form);
             kasten
-                .einhaengen(angebot, protokolliert(bewacht(ausfuehrung, crate::secure_flow::Vertrag::NICHTS, &fluss, false)))
+                .einhaengen(angebot, notausfest(bewacht(ausfuehrung, crate::secure_flow::Vertrag::NICHTS, &fluss, false)))
                 .map_err(|f| format!("Platzhalter {} haengt nicht: {f:?}", w.name(form)))?;
         }
     }
@@ -630,7 +635,7 @@ fn ruesten_zugeschnitten(
             };
             let name = angebot.name.clone();
             kasten
-                .einhaengen(angebot, protokolliert(bewacht(ausfuehrung, crate::secure_flow::Vertrag::WEB, &fluss, fragt)))
+                .einhaengen(angebot, notausfest(bewacht(ausfuehrung, crate::secure_flow::Vertrag::WEB, &fluss, fragt)))
                 .map_err(|f| format!("Web-Werkzeug {name} haengt nicht: {f:?}"))?;
         }
     } else if zuschnitt == Zuschnitt::Arbeitsordner {
@@ -642,7 +647,7 @@ fn ruesten_zugeschnitten(
         for (angebot, ausfuehrung) in web_platzhalter(&grund, form) {
             let name = angebot.name.clone();
             kasten
-                .einhaengen(angebot, protokolliert(bewacht(ausfuehrung, crate::secure_flow::Vertrag::NICHTS, &fluss, false)))
+                .einhaengen(angebot, notausfest(bewacht(ausfuehrung, crate::secure_flow::Vertrag::NICHTS, &fluss, false)))
                 .map_err(|f| format!("Platzhalter {name} haengt nicht: {f:?}"))?;
         }
     }

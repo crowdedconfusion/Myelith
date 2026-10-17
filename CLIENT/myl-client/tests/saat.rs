@@ -1,6 +1,6 @@
 //! **Immer mit Saat** (Regel des Projektinhabers, 2026-09-29): Gleiche Saat,
 //! bitgleiche Antwort; andere Saat, anderer Weg; ohne Angabe eine neue Saat
-//! je Aktion, und jede steht im Aktionsprotokoll.
+//! je Aktion, und `myl` nennt sie.
 
 use myl_client::Oertlichesmodell;
 use myl_local_agent::{Modellweg, Nachricht};

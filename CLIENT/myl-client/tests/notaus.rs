@@ -30,9 +30,6 @@ fn modell() -> Option<myl_client::Oertlichesmodell> {
 /// Werkzeug, und zurueckgesetzt laeuft wieder alles.
 #[test]
 fn der_notaus_haelt_an_und_behaelt_den_text() {
-    let ablage = tempfile::tempdir().expect("Protokoll");
-    myl_local_agent::protokoll::ordner_setzen(ablage.path().to_path_buf());
-
     // Werkzeuge verweigern nach dem Notaus, ohne auszufuehren.
     let ordner = tempfile::tempdir().expect("Ordner");
     std::fs::write(ordner.path().join("a.md"), "alt\n").expect("Datei");
@@ -51,9 +48,6 @@ fn der_notaus_haelt_an_und_behaelt_den_text() {
         .expect("write_file");
     assert!(aus.is_err(), "nach dem Notaus lief ein Werkzeug");
     assert_eq!(std::fs::read_to_string(ordner.path().join("a.md")).unwrap(), "alt\n");
-    let e = myl_local_agent::protokoll::lesen(10);
-    assert!(e.iter().any(|x| x.art == "notaus"), "der Notaus steht nicht im Protokoll");
-    assert!(e.iter().any(|x| x.werkzeug == "write_file" && x.entscheidung == "abgebrochen"));
     myl_local_agent::notaus::zuruecksetzen();
 
     // Mitten im Schreiben.

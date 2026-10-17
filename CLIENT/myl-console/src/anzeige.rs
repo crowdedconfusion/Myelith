@@ -932,12 +932,12 @@ fn eingabezeile(sch: &Schirm, bild: myl_client::einstellungen::Konsolendesign, t
         aus,
         "\x1b7{}{}{}│{}{}{}│{}\x1b8",
         sch.zeile(Schirm::KASTEN + 1),
-        crossterm::style::SetForegroundColor(t.kante),
+        crate::ansi::SetForegroundColor(t.kante),
         r.einzug,
-        crossterm::style::ResetColor,
+        crate::ansi::ResetColor,
         eingabeinnen(r.innen, text, wagen),
-        crossterm::style::SetForegroundColor(t.kante),
-        crossterm::style::ResetColor
+        crate::ansi::SetForegroundColor(t.kante),
+        crate::ansi::ResetColor
     );
     let _ = aus.flush();
 }
@@ -1231,14 +1231,14 @@ fn zeichnen(
         let _ = write!(
             aus,
             "{}{c}",
-            crossterm::style::SetForegroundColor(design::ladefarbe(bild, versatz))
+            crate::ansi::SetForegroundColor(design::ladefarbe(bild, versatz))
         );
     }
     let _ = write!(
         aus,
         "{}{schweif}{}\x1b8",
-        crossterm::style::SetForegroundColor(design::toene(bild).beiwerk),
-        crossterm::style::ResetColor
+        crate::ansi::SetForegroundColor(design::toene(bild).beiwerk),
+        crate::ansi::ResetColor
     );
     let _ = aus.flush();
     // ⚑ **Die Zeile des Minings eine darunter**, solange der Lauf die

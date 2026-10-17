@@ -187,8 +187,8 @@ pub fn fahren_im_gespraech(
     melder: Option<&dyn Fn(crate::schleife::Meldung<'_>)>,
 ) -> Ausgang {
     // ⛔️ **Der vorgegebene Systemprompt, geprueft, oder kein Lauf**
-    //    (`crate::systemprompt`). Die Fassung und ihr voller SHA-256 gehen
-    //    ins Aktionsprotokoll.
+    //    (`crate::systemprompt`). Die Fassung und ihr voller SHA-256 stehen
+    //    im Debug-Log, wenn er laeuft.
     // ⛔️ **Die Herkunft der frueheren Runden zuerst** (2026-10-14): Die
     //    Ruestung ist frisch, das Gespraech nicht. Was dort fremd oder privat
     //    war, ist es weiter (`secure_flow::label_aus_verlauf`).
@@ -198,7 +198,7 @@ pub fn fahren_im_gespraech(
     let regel = match crate::systemprompt::geprueft(ruestung.form) {
         Ok(t) => t,
         Err(grund) => {
-            crate::protokoll::systemprompt(datei, &crate::systemprompt::sha256(text), false);
+            crate::debuglog::eintrag("Systemprompt", &format!("{datei} {} abgewiesen", crate::systemprompt::sha256(text)));
             return Ausgang {
                 verlauf: Vec::new(),
                 antwort: None,
@@ -212,7 +212,8 @@ pub fn fahren_im_gespraech(
             };
         }
     };
-    crate::protokoll::systemprompt(datei, &crate::systemprompt::sha256(text), true);
+    // ⚑ **Welche Fassung der Regeln lief**, im Debug-Log, wenn er laeuft.
+    crate::debuglog::eintrag("Systemprompt", &format!("{datei} {}", crate::systemprompt::sha256(text)));
     fahren_mit_hausregel(
         modell, ruestung, schritte, bezeugtes, max_tokens, verlauf, auftrag, melder, Some(regel),
     )

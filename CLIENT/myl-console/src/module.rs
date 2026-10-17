@@ -51,7 +51,8 @@ pub fn teile_zeichnen(teile: &[Teil], breite: usize, d: myl_client::einstellunge
 
 /// Ein Stil eines Moduls in den Farben dieser Konsole.
 pub fn stil_faerben(stil: Stil, text: &str, d: myl_client::einstellungen::Konsolendesign, farbig: bool, grund: crossterm::style::Color) -> String {
-    use crossterm::style::{Attribute, SetAttribute, SetForegroundColor};
+    use crossterm::style::{Attribute};
+    use crate::ansi::{SetAttribute, SetForegroundColor};
     if !farbig {
         return text.to_string();
     }
@@ -132,6 +133,6 @@ mod tests {
     fn verlust_bleibt_fett_und_kehrt_zurueck() {
         let d = myl_client::einstellungen::Konsolendesign::default();
         let s = stil_faerben(Stil::Verlust, "−0,72 %", d, true, crossterm::style::Color::Grey);
-        assert!(s.contains("−0,72 %") && s.ends_with(&format!("{}", crossterm::style::SetForegroundColor(crossterm::style::Color::Grey))), "{s:?}");
+        assert!(s.contains("−0,72 %") && s.ends_with(&format!("{}", crate::ansi::SetForegroundColor(crossterm::style::Color::Grey))), "{s:?}");
     }
 }

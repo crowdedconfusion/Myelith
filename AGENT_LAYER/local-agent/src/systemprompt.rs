@@ -21,9 +21,9 @@
 //! Summe, und die Probe `die_pruefsummen_stimmen` hält beide in der CI
 //! zusammen.
 //!
-//! ⚑ **Nachvollziehbar:** Jeder Lauf trägt den vollen SHA-256 der Fassung
-//! ins Aktionsprotokoll (`art: systemprompt`). So lässt sich belegen,
-//! unter welcher Fassung ein Lauf stand.
+//! ⚑ **Nachvollziehbar:** Jeder Lauf schreibt den vollen SHA-256 der
+//! Fassung in den Debug-Log, wenn er läuft (`Systemprompt`). So lässt sich
+//! belegen, unter welcher Fassung ein Lauf stand.
 //!
 //! # ⚑ Welche Sprache
 //!

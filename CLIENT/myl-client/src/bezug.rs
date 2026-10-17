@@ -363,7 +363,9 @@ fn skript(
     sagen: &(dyn Fn(Zeile) + Sync),
 ) -> Result<(), String> {
     use std::io::BufRead;
-    let mut befehl = std::process::Command::new("bash");
+    // ⚑ **`bash` wird gesucht** (`myl_local_agent::schale`): Unter Windows
+    //   liegt sie bei Git for Windows und nicht im PATH.
+    let mut befehl = std::process::Command::new(myl_local_agent::schale::bash()?);
     befehl
         .arg(wurzel.join("INTEGER_LLM/scripts").join(name))
         .args(args)

@@ -14,8 +14,8 @@
 //!
 //! ⚠️ **Er ist eine Huerde und keine Mauer.** Wer umschreibt, kommt
 //! vorbei, und ein lokal laufendes Programm laesst sich aendern. Er faengt
-//! die offensichtlichen Faelle, sagt dabei, warum, und haelt die Abweisung
-//! im Aktionsprotokoll fest, ohne den Text.
+//! die offensichtlichen Faelle und sagt dabei, warum; laeuft der Debug-Log,
+//! steht die Abweisung darin.
 
 use crate::einstellungen::Sprache;
 
@@ -163,11 +163,12 @@ pub fn pruefen(anfrage: &str, sprache: Sprache) -> Option<Abweisung> {
     Some(Abweisung { klasse: klasse.kennung, satz })
 }
 
-/// **Prueft, protokolliert und gibt den Satz zurueck**, wenn abgewiesen
-/// wird. Die eine Stelle, die die Bedieninstrumente rufen.
+/// **Prueft und gibt den Satz zurueck**, wenn abgewiesen wird; laeuft der
+/// Debug-Log, steht die Abweisung darin. Die eine Stelle, die die
+/// Bedieninstrumente rufen.
 pub fn abweisen(anfrage: &str, sprache: Sprache, stelle: &str) -> Option<String> {
     let a = pruefen(anfrage, sprache)?;
-    myl_local_agent::protokoll::ereignis("schutzfilter", &format!("{stelle}:{}", a.klasse), anfrage.as_bytes(), "abgewiesen");
+    myl_local_agent::debuglog::eintrag("Schutzfilter", &format!("{stelle}: {} abgewiesen", a.klasse));
     Some(a.satz)
 }
 

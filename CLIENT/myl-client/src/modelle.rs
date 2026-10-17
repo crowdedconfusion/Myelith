@@ -163,12 +163,11 @@ pub fn liste(e: &Einstellungen) -> Vec<Modellwahl> {
                 oertlich.push(Modellwahl {
                     pfad: p.display().to_string(),
                     // ⚑ Der Anzeigename kommt aus dem Katalog, wenn er
-                    // dort steht: In der Wahl soll „Myelith 4B" stehen
-                    // und nicht der Verzeichnisname `myelith-4b`. Steht
-                    // er nicht drin, bleibt der Verzeichnisname, denn
-                    // ein erfundener Name waere schlechter als ein
-                    // technischer.
-                    name: k.map(|x| x.name.clone()).unwrap_or_else(|| ordner.clone()),
+                    // dort steht, sonst aus [`name_nach_schema`]; erst
+                    // danach bleibt der Verzeichnisname. 📌 Bis CLIENT
+                    // v0.168.0 fehlte hier das Schema, und Artefakte ohne
+                    // Katalogeintrag standen beim Ordnernamen in der Wahl.
+                    name: k.map(|x| x.name.clone()).or_else(|| name_nach_schema(&ordner)).unwrap_or_else(|| ordner.clone()),
                     offen: true,
                     warum: String::new(),
                     hardware: k.map(|x| x.hardware.clone()).unwrap_or_default(),
@@ -422,7 +421,15 @@ const LUFT_DICHT: u64 = 6 << 30;
 /// wenige Experten und darf bis zum Anderthalbfachen des Speichers gross
 /// sein: gemessen 33 GB (35B-A3B) auf 24 GiB mit 12 bis 15 Token/s. Unter
 /// denen, die passen, gewinnt die groessere Parameterzahl aus dem Katalog,
-/// danach die Groesse. Passt keines, das kleinste.
+/// danach die **kleinere** Datei. Passt keines, das kleinste.
+///
+/// ⚑ **Bei gleicher Parameterzahl die kleinere Zahlform** (Festlegung des
+/// Projektinhabers, 2026-10-17: int4 ist der neue Standard). Gleiche
+/// Parameterzahl heisst dasselbe Modell in anderer Form; das 35B in vier Bit
+/// liegt 0,06 % ueber dem int8, rechnet GSM8K gleich und ist 19 statt 33 GB
+/// gross. 📌 Bis CLIENT v0.168.0 gewann hier die groessere Datei, also das
+/// int8. Eine Parameterzahl vergibt nur der Katalog, und er fuehrt nur
+/// abgenommene Formen; ein ternaeres Artefakt ohne Eintrag zaehlt mit null.
 ///
 /// ⚠️ Eine Faustregel aus den Messungen dieser Maschine, keine Zusage fuer
 /// jede; wer ein Modell eingestellt hat, behaelt es (`modell_vorladen`).
@@ -442,7 +449,7 @@ pub fn empfehlung_fuer(kandidaten: &[Kandidat], speicher: u64) -> Option<Empfehl
             a.reihung
                 .unwrap_or(0.0)
                 .total_cmp(&b.reihung.unwrap_or(0.0))
-                .then(a.groesse.cmp(&b.groesse))
+                .then(b.groesse.cmp(&a.groesse))
         });
     match bester {
         Some(k) => Some(Empfehlung {
@@ -488,7 +495,7 @@ pub fn kandidaten(e: &Einstellungen) -> Vec<Kandidat> {
             let k = katalog.get(&ordner);
             aus.push(Kandidat {
                 pfad: p.display().to_string(),
-                name: k.map(|x| x.name.clone()).unwrap_or_else(|| ordner.clone()),
+                name: k.map(|x| x.name.clone()).or_else(|| name_nach_schema(&ordner)).unwrap_or_else(|| ordner.clone()),
                 groesse: ordnergroesse(&p),
                 gemisch,
                 reihung: k.map(|x| x.reihung).filter(|r| *r > 0.0),
@@ -537,8 +544,11 @@ mod empfehlung_proben {
             k("27b-ternaer", 8, false, Some(27.0)),
             k("30b-a3b", 29, true, Some(30.0)),
             k("35b-a3b", 33, true, Some(35.0)),
+            k("35b-a3b-int4", 19, true, Some(35.0)),
         ];
-        assert_eq!(empfehlung_fuer(&alle, 24 << 30).unwrap().name, "35b-a3b");
+        // ⚑ Dasselbe Modell in zwei Formen: die kleinere ist der Standard.
+        assert_eq!(empfehlung_fuer(&alle, 24 << 30).unwrap().name, "35b-a3b-int4");
+        assert_eq!(empfehlung_fuer(&alle[..6], 24 << 30).unwrap().name, "35b-a3b", "ohne int4 das int8");
         assert_eq!(empfehlung_fuer(&alle[..3], 16 << 30).unwrap().name, "8b", "14B + Luft passt nicht in 16");
         let klein = empfehlung_fuer(&alle[1..3], 4 << 30).unwrap();
         assert_eq!(klein.name, "8b");

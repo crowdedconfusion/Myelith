@@ -7,10 +7,15 @@ name: CI
 # Hebel, weil ein großer Teil der Commits genau das tut: READMEs,
 # Anleitungen, Grafiken.
 #
-# Belegt, dass es gefahrlos ist: Kein Test und kein Skript liest eine
-# `.md`-Datei ein (geprüft über alle Crates und `tests/`). Die beiden
-# einzigen Treffer sind ein erzeugter Dateiname und eine gedruckte
-# Zeichenkette.
+# ⛔️ **Ausgenommen ist nur, was sicher reine Doku ist, und nicht mehr
+# `**.md`** (2026-10-17). Bis dahin stand hier „kein Test und kein Skript
+# liest eine `.md`-Datei“, und das stimmte nicht mehr: Die CI prüft
+# `COMPLIANCE/NOTICES.md` gegen ihre Quellen, die Fensterprobe zählt die
+# Befehle im CLIENT-README, die Proben des Agenten lesen Skills
+# (`SKILL.md`) und die READMEs der Werkzeugkisten. 📌 Ein Commit, der nur
+# `NOTICES.md` berichtigte, startete deshalb keinen Lauf, und der rote
+# Lauf davor blieb stehen. Wer hier ein Muster ergänzt, prüft vorher, ob
+# eine Probe die Dateien liest.
 #
 # WARUM NICHT FEINER, also je Job nach berührtem Verzeichnis: Der
 # Abhängigkeitsgraph gibt es nicht her. An `myl-types` hängen **acht**
@@ -29,7 +34,11 @@ on:
   push:
     branches: [main]
     paths-ignore:
-      - '**.md'
+      - 'README.md'
+      - 'README.en.md'
+      - 'README/Glossar.md'
+      - 'README/Glossary.en.md'
+      - 'README/Whitepaper/**.md'
       - 'README/Grafiken/**'
       - 'LICENSE.md'
   # Woechentlich, damit die langsamen Whitepaper-Simulationen auch dann
@@ -43,7 +52,11 @@ on:
   pull_request:
     branches: [main]
     paths-ignore:
-      - '**.md'
+      - 'README.md'
+      - 'README.en.md'
+      - 'README/Glossar.md'
+      - 'README/Glossary.en.md'
+      - 'README/Whitepaper/**.md'
       - 'README/Grafiken/**'
       - 'LICENSE.md'
 
@@ -775,7 +788,7 @@ jobs:
 
       # Die lokale Seite, seit dem 2026-09-30 der ganze oertliche Agent:
       # Schleife, Tuerklient, Risikoklassen, Werkzeuge mit Einhaengegrenze,
-      # Kisten, Skills, Loop, Aktionsprotokoll. Ohne Artefakte; das Modell
+      # Kisten, Skills, Loop, Notaus. Ohne Artefakte; das Modell
       # steckt hinter einem Merkmal.
       - name: cargo test, AGENT_LAYER (local-agent)
         working-directory: AGENT_LAYER/local-agent
@@ -1128,6 +1141,89 @@ jobs:
             exit 1
           fi
           echo "Start belegt fuer ${{ matrix.os }}"
+
+  # ── Die Kisten des Klienten und des Agenten unter Windows (2026-10-17) ──
+  #
+  # ⛔️ **Bis zum 2026-10-17 liefen unter Windows nur `myl-client`, der
+  # Testclient, Kernel und Konsens.** Konsole, Fenster, Sinne, Module, der
+  # oertliche Agent, der Dispatcher und die Speicherorte wurden dort nur
+  # uebersetzt. Unter Wine nachgefahren fielen dabei echte Fehler: Proben mit
+  # Unix-Pfaden (`myl-store`), mit fest `/bin/sh` (`myl-senses`), eine Shell,
+  # die unter Windows nicht im PATH liegt (`run_command`, Manifeste, Bau),
+  # und ein Herkunftsbuch, das an `\` und an Gross- und Kleinschreibung
+  # vorbeiging (Fund 558). Genau diese Sorte findet man nur auf dem System.
+  #
+  # ⚑ **Die Shell kommt hier von Git for Windows**, wie bei einem Nutzer; der
+  # Laeufer hat sie. Ohne sie melden `run_command` und die Manifeste, dass sie
+  # fehlt, und die Proben dazu fielen.
+  windows-kisten:
+    name: Klient und Agent (windows-latest)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            CLIENT/myl-console
+            CLIENT/myl-oberflaeche
+            AGENT_LAYER/local-agent
+          key: windows-kisten
+
+      - name: cargo test — STORAGE (myl-store)
+        working-directory: STORAGE/myl-store
+        run: cargo test --quiet
+
+      - name: cargo test, COMPUTE_PIPELINE (myl-dispatcher)
+        working-directory: COMPUTE_PIPELINE/dispatcher
+        run: cargo test --quiet
+
+      - name: cargo test, AGENT_LAYER (myl-agent)
+        working-directory: AGENT_LAYER/myl-agent
+        run: cargo test --quiet
+
+      - name: cargo test, AGENT_LAYER (local-agent)
+        working-directory: AGENT_LAYER/local-agent
+        env:
+          MYL_OHNE_ARTEFAKTE: "1"
+        run: cargo test --quiet
+
+      - name: cargo test — CLIENT (myl-senses)
+        working-directory: CLIENT/myl-senses
+        run: cargo test --quiet
+
+      - name: cargo test, CLIENT (myl-module)
+        working-directory: CLIENT/myl-module
+        run: cargo test --quiet
+
+      - name: cargo test, CLIENT (myl-console)
+        working-directory: CLIENT/myl-console
+        env:
+          MYL_OHNE_ARTEFAKTE: "1"
+        run: cargo test --quiet
+
+      - name: cargo test — CLIENT (myl-oberflaeche)
+        working-directory: CLIENT/myl-oberflaeche
+        run: cargo test --quiet
+
+      # 📌 **Clippy gehoert dazu**: Ein `#[cfg(unix)]`, das unter Windows
+      # toten Code hinterlaesst, faellt erst hier auf.
+      - name: cargo clippy — dieselben Kisten
+        shell: bash
+        run: |
+          set -euo pipefail
+          for crate in STORAGE/myl-store COMPUTE_PIPELINE/dispatcher AGENT_LAYER/myl-agent \
+                       AGENT_LAYER/local-agent CLIENT/myl-senses CLIENT/myl-module \
+                       CLIENT/myl-console CLIENT/myl-oberflaeche; do
+            echo "── clippy: $crate"
+            (cd "$crate" && cargo clippy --all-targets -- -D warnings)
+          done
 
   # ── Kalter Klon, ohne Netz, auf allen drei Systemen (2026-09-25) ──
   #

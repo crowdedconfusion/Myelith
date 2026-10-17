@@ -115,7 +115,8 @@ impl Stil {
     /// seinen Text hinausreicht, faerbt die naechste Zeile, und in einem
     /// Terminal bleibt er stehen, bis jemand ihn zuruecknimmt.
     pub fn faerben(&self, text: &str, farbig: bool) -> String {
-        use crossterm::style::{Attribute, ResetColor, SetAttribute, SetBackgroundColor, SetForegroundColor};
+        use crossterm::style::{Attribute};
+        use crate::ansi::{ResetColor, SetAttribute, SetBackgroundColor, SetForegroundColor};
         if !farbig || text.is_empty() {
             return text.to_string();
         }

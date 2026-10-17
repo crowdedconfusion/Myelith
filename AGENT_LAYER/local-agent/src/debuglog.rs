@@ -16,8 +16,7 @@
 //! Oberflaeche aus ihrer Einstellung setzt ([`setzen`]). Laeuft nichts, kostet
 //! ein Eintrag eine Abfrage dieses Schalters.
 //!
-//! ⚑ **Zeiten in UTC**, wie im Aktionsprotokoll und in der Uhr des Agenten
-//! (`crate::uhr`): ohne Bibliothek fuer Zeitzonen, und eindeutig, wenn
+//! ⚑ **Zeiten in UTC**, wie in der Uhr des Agenten (`crate::uhr`): ohne Bibliothek fuer Zeitzonen, und eindeutig, wenn
 //! Konsole und Fenster in dieselbe Datei schreiben.
 
 use std::io::Write;

@@ -196,6 +196,12 @@ for zeile in $PROGRAMME; do
   IFS=$ALTES_IFS
   # shellcheck disable=SC2086
   set -- $zeile
+  # ⛔️ **Erst weg, dann hin** (2026-10-17): Ein laufendes Programm laesst
+  # sich unter Linux nicht ueberschreiben (`Text file busy`), und das Update
+  # aus Konsole oder Fenster laeuft genau aus dem Programm, das es ersetzt.
+  # Geloescht behaelt der laufende Prozess seine Datei, und der Neustart
+  # findet unter demselben Pfad die neue.
+  rm -f "$BIN/$2"
   cp "$WURZEL/SYSTEM/full-build/release/$2" "$BIN/$2"
   IFS='
 '

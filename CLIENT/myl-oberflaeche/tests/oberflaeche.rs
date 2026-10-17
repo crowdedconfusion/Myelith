@@ -957,8 +957,12 @@ fn jedes_bauskript_bekommt_die_umgebung_in_den_pfad() {
         "das Fenster startet ein Bauskript selbst statt ueber myl_client::bezug"
     );
     let bezug = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../myl-client/src/bezug.rs")).expect("bezug.rs");
-    assert_eq!(bezug.matches("Command::new(\"bash\")").count(), 1, "genau ein Start eines Bauskripts");
-    let a = bezug.find("Command::new(\"bash\")").expect("Start");
+    // ⚑ **Seit dem 2026-10-17 wird `bash` gesucht** (`myl_local_agent::schale`),
+    //   denn unter Windows liegt sie bei Git for Windows und nicht im PATH.
+    let start = "Command::new(myl_local_agent::schale::bash()?)";
+    assert!(!bezug.contains("Command::new(\"bash\")"), "bash wird wieder fest gerufen statt gesucht");
+    assert_eq!(bezug.matches(start).count(), 1, "genau ein Start eines Bauskripts");
+    let a = bezug.find(start).expect("Start");
     let kette = &bezug[a..(a + 600).min(bezug.len())];
     assert!(kette.contains(".env(\"PATH\", pfad_mit_umgebung(wurzel))"), "das Bauskript laeuft ohne die Umgebung im Pfad:\n{kette}");
     assert_eq!(bezug.matches("calibrate/.venv/bin\"").count(), 1, "der Pfad zur Kalibrier-Umgebung steht mehr als einmal");
@@ -3621,13 +3625,13 @@ fn der_ki_hinweis_kommt_bei_jedem_start_und_laesst_sich_nicht_wegklicken() {
     assert!(!stil.contains("#auftrag::placeholder { display: none") && !stil.contains("::placeholder { color: transparent"));
 }
 
-/// ⛔️ **Keine Stimme ohne Einwilligung, und das Protokoll wird geschrieben.**
+/// ⛔️ **Keine Stimme ohne Einwilligung.**
 ///
 /// Die Einwilligung wird zweimal verlangt: am Haekchen, das den Knopf
 /// freigibt, und im Befehl, der ohne sie ablehnt. Das zweite ist das
 /// eigentliche; das erste sagt dem Menschen, wozu er zustimmt.
 #[test]
-fn keine_stimme_ohne_einwilligung_und_das_protokoll_wird_geschrieben() {
+fn keine_stimme_ohne_einwilligung() {
     let rs = lies_quelle("main.rs");
     let a = rs.find("async fn stimme_setzen(").expect("stimme_setzen");
     let f = &rs[a..zeichengrenze_unten(&rs, a + 800)];
@@ -3640,12 +3644,6 @@ fn keine_stimme_ohne_einwilligung_und_das_protokoll_wird_geschrieben() {
     let js = lies("app.js");
     assert!(js.contains("invoke(\"stimme_setzen\", { pfad: gewaehlt, einwilligung: true })"));
     assert!(js.contains("if (!einwilligung.checked) return;"));
-
-    // ⚑ **Das Aktionsprotokoll steht nicht mehr auf der Seite** (Wunsch des
-    // Projektinhabers, 2026-10-17); geschrieben wird es weiter.
-    assert!(!html.contains("<section id=\"protokoll\">"), "das Aktionsprotokoll steht wieder auf der Seite");
-    assert!(!js.contains("invoke(\"protokoll_lesen\")"));
-    assert!(rs.contains("myl_local_agent::protokoll::einschalten();"), "das Fenster schreibt kein Aktionsprotokoll mehr");
 }
 
 /// ⛔️ **Der Notschalter des Fensters ist das Schliessen, und nur das**,
@@ -3675,7 +3673,7 @@ fn das_schliessen_ist_der_notschalter_und_haelt_alles_an() {
     let f = rs.find("fn notschalter_beim_schliessen() {").expect("Funktion");
     let rumpf = &rs[f..f + rs[f..].find("\n}\n").expect("Ende")];
     assert!(rumpf.contains("if SCHON.swap(true, std::sync::atomic::Ordering::SeqCst) {\n        return;"));
-    assert!(rumpf.contains("myl_local_agent::notaus::ausloesen(\"fenster geschlossen\");"), "das Schliessen steht nicht im Protokoll");
+    assert!(rumpf.contains("myl_local_agent::notaus::ausloesen(\"fenster geschlossen\");"), "das Schliessen loest den Notaus nicht aus");
     assert!(rumpf.contains("myl_senses::prozess::alle_beenden();"), "ein laufender Befehl ueberlebt das Fenster");
 
     // Kein zweiter Weg: kein Kuerzel, kein Befehl, den eines rufen koennte.

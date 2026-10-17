@@ -1,17 +1,27 @@
 //! Nachsehen, ob es einen neueren Stand gibt, und ihn einspielen.
 //!
-//! # ⚑ Was hier geprueft wird, und warum gerade das
+//! # ⚑ Was hier verglichen wird: die Fassung in `VERSION.md`
 //!
-//! Die naheliegende Frage waere „ist meine Version aelter als die
-//! neueste". Sie ist hier nicht beantwortbar: Die Freigabemarken
-//! dieses Repositoriums heissen `v*` und gehoeren zum **Projekt**,
-//! waehrend jede Kiste ihre eigene Fassung traegt. Ein Vergleich
-//! zwischen `myl-oberflaeche 0.23.0` und `v0.26.0` waere ein Vergleich
-//! zwischen zwei Zaehlwerken.
+//! ⚑ **Festlegung des Projektinhabers, 2026-10-17.** In der Wurzel liegt
+//! `VERSION.md`; ihre erste Zeile ist die Fassung von Myelith, darunter steht
+//! je Fassung, was sich geaendert hat. Verglichen wird die Fassung, mit der
+//! **dieses Programm gebaut wurde** ([`EINGEBAUT`]), mit der ersten Zeile
+//! derselben Datei auf GitHub. Ist die dort hoeher, gibt es ein Update; ist
+//! sie niedriger oder gleich, nicht. Ein Klon, der seinem `origin` voraus
+//! ist, wird also nie zurueckgestellt.
 //!
-//! ⚑ **Gefragt wird deshalb: Hat `origin` Aenderungen, die ich nicht
-//! habe.** Das ist exakt, braucht keine Vereinbarung ueber Namen, und
-//! es ist genau die Frage, deren Antwort das Einspielen aendert.
+//! 📌 **Bis CLIENT v0.167.0 fragte es, ob `origin` Commits hat, die der Klon
+//! nicht hat** (`git fetch` und `git rev-list`), und daneben nach der
+//! neuesten Freigabemarke. Die Marken gehoerten zum Projekt, die Kisten
+//! zaehlten jede fuer sich, und eine Nummer, die ein Mensch liest, gab es
+//! nicht. Dazu brauchte `git fetch` die Anmeldung beim entfernten Baum; beim
+//! Start des Fensters von selbst gefragt, waere das eine Passwortfrage ohne
+//! Anlass.
+//!
+//! ⚑ **Gelesen wird die Datei ohne Anmeldung**, ueber die Rohansicht von
+//! GitHub. Eingespielt wird weiter mit dem Installationsskript der
+//! Plattform (`--aktualisieren`): `git fetch`, `git merge --ff-only`, Bau,
+//! Installation.
 //!
 //! # ⚑ Und es gibt keinen HTTP-Klienten dafuer
 //!
@@ -22,17 +32,17 @@
 //!
 //! # ⚠️ Was das Einspielen tut, ausgeschrieben
 //!
-//! Es bewegt den Klon mit `git merge --ff-only` vorwaerts und ruft
-//! danach das Installationsskript der Plattform. **Das ist Ausfuehren
-//! von Code, der gerade geholt wurde**, und das gehoert benannt. Drei
-//! Dinge begrenzen es: Es kommt aus dem Klon des Nutzers und nicht aus
-//! einem Netzpfad, `git` traegt die Unversehrtheit der Uebertragung,
-//! und `--ff-only` schliesst aus, dass dabei eigene Arbeit
-//! verschwindet. **Wer das nicht will, laesst den Knopf stehen**; das
-//! Nachsehen allein aendert nichts.
+//! Das Skript bewegt den Klon mit `git merge --ff-only` vorwaerts und baut
+//! danach. **Das ist Ausfuehren von Code, der gerade geholt wurde**, und das
+//! gehoert benannt. Drei Dinge begrenzen es: Es kommt aus dem Klon des
+//! Nutzers und nicht aus einem Netzpfad, `git` traegt die Unversehrtheit der
+//! Uebertragung, und `--ff-only` schliesst aus, dass dabei eigene Arbeit
+//! verschwindet. ⚑ **Und es geschieht nur nach einer Bestaetigung**: Konsole
+//! und Fenster zeigen vorher Fassung und Aenderungen und fragen.
 
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::io::{BufRead, BufReader};
+use std::path::PathBuf;
+use std::process::{Command, Stdio};
 
 use serde::Serialize;
 
@@ -43,29 +53,170 @@ use serde::Serialize;
 /// jemand etwas anderes schreiben kann; von dort kommt danach Code.
 pub const SEITE: &str = "https://github.com/crowdedconfusion/Myelith";
 
+/// Der Name der Versionsdatei in der Wurzel des Repositoriums.
+pub const VERSIONSDATEI: &str = "VERSION.md";
+
+/// Der Zweig, dessen Versionsdatei gilt.
+pub const ZWEIG: &str = "main";
+
+/// **Die Versionsdatei, mit der dieses Programm gebaut wurde.**
+///
+/// ⚑ **Eingebaut und nicht zur Laufzeit gelesen.** Gefragt ist, was
+/// **laeuft**: Wer den Klon von Hand vorwaertsbewegt und nicht neu
+/// installiert, hat im Klon die neue Datei und im Programm den alten Stand.
+/// Nur die eingebaute Fassung sagt, ob ein Update noetig ist. Der Pfad steht
+/// relativ zur Kiste; `include_str!` ist die Ausnahme von der Regel gegen
+/// feste Pfade, die eine Konstante zur Bauzeit braucht.
+pub const EINGEBAUT: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../VERSION.md"));
+
+/// **Eine Fassung, `haupt.neben.flick`**, verglichen Stelle fuer Stelle.
+///
+/// ⚑ **Drei Zahlen und kein Text.** Als Zeichenkette verglichen kaeme
+/// `0.10.0` vor `0.9.0`; genau diese Falle hat die Modellwahl schon einmal
+/// gehabt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Fassung(pub u32, pub u32, pub u32);
+
+impl Fassung {
+    /// Liest `0.1.0` oder `v0.1.0`; alles andere ist `None`.
+    pub fn lesen(text: &str) -> Option<Self> {
+        let t = text.trim();
+        let t = t.strip_prefix('v').unwrap_or(t);
+        let mut teile = t.split('.');
+        let zahl = |x: Option<&str>| x.and_then(|z| z.parse::<u32>().ok());
+        let f = Fassung(zahl(teile.next())?, zahl(teile.next())?, zahl(teile.next())?);
+        teile.next().is_none().then_some(f)
+    }
+}
+
+impl std::fmt::Display for Fassung {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}.{}.{}", self.0, self.1, self.2)
+    }
+}
+
+/// Ein Abschnitt der Versionsdatei: eine Fassung und was sie geaendert hat.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Eintrag {
+    /// Die Fassung aus der Ueberschrift.
+    pub fassung: String,
+    /// Die ganze Ueberschrift, ohne `## `.
+    pub titel: String,
+    /// Was unter der Ueberschrift steht, ohne Leerzeilen am Rand.
+    pub text: String,
+}
+
+/// **Die gelesene Versionsdatei.**
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Versionsdatei {
+    /// Die Fassung aus der ersten Zeile.
+    pub fassung: Fassung,
+    /// Die Abschnitte, in der Reihenfolge der Datei (neueste oben).
+    pub eintraege: Vec<Eintrag>,
+}
+
+impl Versionsdatei {
+    /// Liest die Datei: erste Zeile die Fassung, danach die Abschnitte mit
+    /// `## <fassung> …` als Ueberschrift.
+    ///
+    /// ⚑ **Die erste Zeile ist die ganze Zusage.** Steht dort keine Fassung,
+    /// ist die Datei unbrauchbar, und das ist ein Fehler und kein „aktuell“.
+    pub fn lesen(text: &str) -> Result<Self, String> {
+        let erste = text.lines().next().unwrap_or("").trim();
+        let fassung = Fassung::lesen(erste)
+            .ok_or_else(|| format!("die erste Zeile von {VERSIONSDATEI} ist keine Fassung: {erste:?}"))?;
+        let mut eintraege: Vec<Eintrag> = Vec::new();
+        for zeile in text.lines().skip(1) {
+            if let Some(titel) = zeile.strip_prefix("## ") {
+                let wort = titel.split_whitespace().next().unwrap_or("");
+                if let Some(f) = Fassung::lesen(wort) {
+                    eintraege.push(Eintrag { fassung: f.to_string(), titel: titel.trim().to_string(), text: String::new() });
+                    continue;
+                }
+            }
+            if let Some(e) = eintraege.last_mut() {
+                e.text.push_str(zeile);
+                e.text.push('\n');
+            }
+        }
+        for e in &mut eintraege {
+            e.text = e.text.trim().to_string();
+        }
+        Ok(Self { fassung, eintraege })
+    }
+
+    /// Die Abschnitte, die neuer sind als `hier`, neueste zuerst.
+    pub fn neuer_als(&self, hier: Fassung) -> Vec<Eintrag> {
+        self.eintraege
+            .iter()
+            .filter(|e| Fassung::lesen(&e.fassung).is_some_and(|f| f > hier))
+            .cloned()
+            .collect()
+    }
+}
+
+/// Die Fassung, mit der dieses Programm gebaut wurde.
+pub fn eingebaute_fassung() -> Fassung {
+    Versionsdatei::lesen(EINGEBAUT).map(|v| v.fassung).unwrap_or(Fassung(0, 0, 0))
+}
+
 /// Was das Nachsehen ergeben hat.
 #[derive(Debug, Clone, Serialize)]
 pub struct Stand {
     /// Das Quellverzeichnis, wenn dieses Programm aus einem Klon laeuft.
     pub quelle: Option<String>,
-    /// Die Fassung dieses Programms.
+    /// Die Fassung dieses Programms, aus der eingebauten `VERSION.md`.
     pub eigene: String,
-    /// Die neueste Freigabemarke, wenn sie sich abfragen liess.
+    /// Die Fassung auf GitHub, wenn sie sich lesen liess.
     pub neueste: Option<String>,
-    /// Ihr Datum, wie GitHub es nennt.
-    pub stand: Option<String>,
-    /// Wie viele Aenderungen `origin` hat, die dieser Klon nicht hat.
-    pub hinterher: Option<u32>,
-    /// Die Seite, auf der die Freigaben liegen.
+    /// Ob die Fassung auf GitHub hoeher ist als die eigene.
+    pub neuer: bool,
+    /// Was die neueren Fassungen geaendert haben, neueste zuerst.
+    pub aenderungen: Vec<Eintrag>,
+    /// Die Seite des Repositoriums.
     pub seite: String,
-    /// Warum nichts einzuspielen ist, wenn nichts einzuspielen ist.
+    /// Warum nichts einzuspielen ist oder warum nicht nachgesehen werden
+    /// konnte; `None`, wenn alles beantwortet ist.
     pub grund: Option<String>,
 }
 
 impl Stand {
-    /// Gibt es etwas zu tun?
+    /// Gibt es etwas einzuspielen?
     pub fn lohnt(&self) -> bool {
-        self.quelle.is_some() && self.hinterher.unwrap_or(0) > 0
+        self.quelle.is_some() && self.neuer
+    }
+
+    /// Der Stand aus der eigenen Datei und der von GitHub, ohne Netz.
+    pub fn aus(quelle: Option<PathBuf>, eigene: &str, dort: Result<String, String>) -> Self {
+        let hier = Versionsdatei::lesen(eigene).map(|v| v.fassung).unwrap_or(Fassung(0, 0, 0));
+        let mut s = Stand {
+            quelle: quelle.as_ref().map(|q| q.display().to_string()),
+            eigene: hier.to_string(),
+            neueste: None,
+            neuer: false,
+            aenderungen: Vec::new(),
+            seite: SEITE.to_string(),
+            grund: None,
+        };
+        match dort.and_then(|t| Versionsdatei::lesen(&t)) {
+            Ok(v) => {
+                s.neueste = Some(v.fassung.to_string());
+                s.neuer = v.fassung > hier;
+                if s.neuer {
+                    s.aenderungen = v.neuer_als(hier);
+                }
+            }
+            Err(f) => s.grund = Some(f),
+        }
+        if s.neuer && quelle.is_none() {
+            s.grund = Some(
+                "Dieses Programm laeuft nicht aus einem Klon des Repositoriums. \
+                 Ein neuer Stand laesst sich deshalb nicht von hier aus einspielen; \
+                 die Seite des Repositoriums fuehrt zum neuen Stand."
+                    .to_string(),
+            );
+        }
+        s
     }
 }
 
@@ -89,111 +240,41 @@ pub fn quelle() -> Option<PathBuf> {
     w.join(".git").exists().then_some(w)
 }
 
-/// Fragt GitHub nach der neuesten Freigabe.
-///
-/// ⚑ **Ein Fehlschlag ist keiner.** Wer offline arbeitet, bekommt
-/// `None` und keine Fehlermeldung: Die Frage „gibt es eine neuere
-/// Fassung" ist ohne Netz schlicht unbeantwortet, und das ist etwas
-/// anderes als „nein".
-fn neueste_marke() -> (Option<String>, Option<String>) {
-    let adresse = format!(
-        "https://api.github.com/repos/{}/releases/latest",
+/// Die Adresse der Versionsdatei in der Rohansicht von GitHub.
+pub fn adresse_dort() -> String {
+    format!(
+        "https://raw.githubusercontent.com/{}/{ZWEIG}/{VERSIONSDATEI}",
         SEITE.trim_start_matches("https://github.com/")
-    );
-    let aus = Command::new("curl")
-        .args([
-            "--silent",
-            "--show-error",
-            "--fail",
-            "--max-time",
-            "10",
-            "--header",
-            "Accept: application/vnd.github+json",
-            "--header",
-            "User-Agent: myelith-client",
-            &adresse,
-        ])
-        .output()
-        .ok();
-    let text = match aus {
-        Some(a) if a.status.success() => String::from_utf8_lossy(&a.stdout).to_string(),
-        _ => return (None, None),
-    };
-    (feld(&text, "tag_name"), feld(&text, "published_at"))
+    )
 }
 
-/// Ein Zeichenkettenfeld aus einer flachen JSON-Antwort.
+/// Holt die Versionsdatei von GitHub.
 ///
-/// ⚑ **Von Hand und ohne JSON-Kiste.** Gebraucht werden zwei Felder
-/// aus einer Antwort, die dieses Programm nicht weiterverarbeitet;
-/// eine Abhaengigkeit dafuer waere eine Kiste im Graphen fuer zwei
-/// Zeichenketten. Was hier nicht passt, gibt `None`, und `None` heisst
-/// „unbeantwortet".
-fn feld(text: &str, name: &str) -> Option<String> {
-    let marke = format!("\"{name}\":");
-    let rest = text.split_once(&marke)?.1.trim_start();
-    let rest = rest.strip_prefix('"')?;
-    let (wert, _) = rest.split_once('"')?;
-    (!wert.is_empty()).then(|| wert.to_string())
-}
-
-/// Wie viele Aenderungen `origin` hat, die dieser Klon nicht hat.
-fn hinterher(wurzel: &Path) -> Result<u32, String> {
-    lauf(wurzel, "git", &["fetch", "--quiet", "origin"])?;
-    let zahl = lauf(wurzel, "git", &["rev-list", "--count", "HEAD..FETCH_HEAD"])?;
-    zahl.trim().parse().map_err(|_| format!("unerwartete Antwort von git: {zahl}"))
-}
-
-/// Ruft ein Programm im Quellverzeichnis und gibt seine Ausgabe.
-fn lauf(wurzel: &Path, was: &str, argumente: &[&str]) -> Result<String, String> {
-    let aus = Command::new(was)
-        .args(argumente)
-        .current_dir(wurzel)
+/// ⚑ **Ein Fehlschlag ist kein „aktuell“.** Ohne Netz ist die Frage
+/// unbeantwortet, und das steht im Grund; ein Fenster, das beim Start von
+/// selbst nachsieht, zeigt dann schlicht nichts an.
+fn datei_dort() -> Result<String, String> {
+    let aus = Command::new("curl")
+        .args(["--silent", "--show-error", "--fail", "--max-time", "10", "--header", "User-Agent: myelith-client"])
+        .arg(adresse_dort())
         .output()
-        .map_err(|f| format!("{was} liess sich nicht aufrufen: {f}"))?;
+        .map_err(|f| format!("curl liess sich nicht aufrufen: {f}"))?;
     if !aus.status.success() {
         let fehler = String::from_utf8_lossy(&aus.stderr).trim().to_string();
-        return Err(if fehler.is_empty() {
-            format!("{was} {} ging nicht", argumente.join(" "))
-        } else {
-            fehler
-        });
+        // ⚑ **Eine fehlende Datei sagt es selbst**: So steht es da, solange
+        //   `VERSION.md` noch nicht auf `main` liegt, und ein nackter
+        //   curl-Fehler liesse an eine kaputte Leitung denken.
+        if fehler.contains("404") {
+            return Err(format!("auf GitHub liegt noch keine {VERSIONSDATEI} (Zweig {ZWEIG})"));
+        }
+        return Err(format!("GitHub war nicht zu erreichen ({})", if fehler.is_empty() { "ohne Grund" } else { &fehler }));
     }
     Ok(String::from_utf8_lossy(&aus.stdout).to_string())
 }
 
 /// Sieht nach, ohne etwas zu aendern.
-pub fn pruefen(eigene: &str) -> Stand {
-    let (neueste, stand) = neueste_marke();
-    let Some(wurzel) = quelle() else {
-        return Stand {
-            quelle: None,
-            eigene: eigene.to_string(),
-            neueste,
-            stand,
-            hinterher: None,
-            seite: SEITE.to_string(),
-            grund: Some(
-                "Dieses Programm laeuft nicht aus einem Klon des Repositoriums. \
-                 Ein neuer Stand laesst sich deshalb nicht von hier aus einspielen; \
-                 die Freigabeseite fuehrt zu den fertigen Buendeln."
-                    .to_string(),
-            ),
-        };
-    };
-    let (zahl, grund) = match hinterher(&wurzel) {
-        Ok(n) => (Some(n), None),
-        Err(f) => (None, Some(f)),
-    };
-    Stand {
-        quelle: Some(wurzel.display().to_string()),
-        eigene: eigene.to_string(),
-        neueste,
-        stand,
-        hinterher: zahl,
-        seite: SEITE.to_string(),
-        grund,
-    }
+pub fn pruefen() -> Stand {
+    Stand::aus(quelle(), EINGEBAUT, datei_dort())
 }
 
 /// Die drei Installationsskripte, **immer alle drei uebersetzt**.
@@ -263,6 +344,11 @@ pub fn skript() -> Option<(&'static str, &'static [&'static str])> {
 /// ⚠️ **Es baut neu, und das dauert Minuten.** Der Melder ist deshalb
 /// keine Bequemlichkeit: Ein Fortschritt, den niemand sieht, ist von
 /// einem Stillstand nicht zu unterscheiden.
+///
+/// 📌 **Bis CLIENT v0.167.0 kamen die Zeilen erst am Ende**, alle auf
+/// einmal (`output()`), und waehrend der Minuten des Baus stand nichts da.
+/// Jetzt laufen `stdout` und `stderr` je in einem Faden mit und gehen
+/// sofort weiter.
 pub fn einspielen(melder: &dyn Fn(&str)) -> Result<(), String> {
     let wurzel = quelle().ok_or_else(|| {
         "Dieses Programm laeuft nicht aus einem Klon; es gibt nichts einzuspielen.".to_string()
@@ -272,94 +358,162 @@ pub fn einspielen(melder: &dyn Fn(&str)) -> Result<(), String> {
     })?;
 
     melder(&format!("{was} {}", argumente.join(" ")));
-    let aus = Command::new(was)
+    let mut kind = Command::new(was)
         .args(argumente)
         .current_dir(&wurzel)
-        .output()
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .map_err(|f| format!("{was} liess sich nicht aufrufen: {f}"))?;
-
-    for zeile in String::from_utf8_lossy(&aus.stdout).lines() {
-        melder(zeile);
+    let (sender, empfaenger) = std::sync::mpsc::channel::<(bool, String)>();
+    let mut faeden = Vec::new();
+    if let Some(aus) = kind.stdout.take() {
+        let s = sender.clone();
+        faeden.push(std::thread::spawn(move || {
+            for z in BufReader::new(aus).lines().map_while(Result::ok) {
+                let _ = s.send((false, z));
+            }
+        }));
     }
-    if aus.status.success() {
-        // ⚑ **Und der Hinweis, der sonst fehlt.** Ein Programm kann
-        // sich nicht selbst waehrend des Laufens ersetzen; was gerade
-        // gebaut wurde, laeuft erst beim naechsten Start.
-        melder("Fertig. Der neue Stand laeuft ab dem naechsten Start.");
+    if let Some(err) = kind.stderr.take() {
+        let s = sender.clone();
+        faeden.push(std::thread::spawn(move || {
+            for z in BufReader::new(err).lines().map_while(Result::ok) {
+                let _ = s.send((true, z));
+            }
+        }));
+    }
+    drop(sender);
+    let mut fehlerzeilen = Vec::new();
+    for (fehler, zeile) in empfaenger {
+        melder(&zeile);
+        if fehler {
+            fehlerzeilen.push(zeile);
+        }
+    }
+    for f in faeden {
+        let _ = f.join();
+    }
+    let status = kind.wait().map_err(|f| format!("{was} lief nicht zu Ende: {f}"))?;
+    if status.success() {
+        melder("Fertig. Der neue Stand ist installiert.");
         return Ok(());
     }
-    let fehler = String::from_utf8_lossy(&aus.stderr).trim().to_string();
+    let fehler = fehlerzeilen.join("\n").trim().to_string();
     Err(if fehler.is_empty() { "das Installationsskript ging nicht durch".into() } else { fehler })
+}
+
+/// **Das Programm, das neu gestartet werden soll**: die laufende Datei.
+///
+/// ⚑ **Dieselbe Stelle, an die das Skript den neuen Stand gelegt hat.** Es
+/// loescht die alte Datei, bevor es die neue hinlegt; ein laufendes
+/// Programm behaelt seine, und der Neustart findet unter demselben Pfad die
+/// neue. 📌 Unter Linux nennt `/proc/self/exe` eine geloeschte Datei mit dem
+/// Zusatz ` (deleted)`; der faellt hier weg.
+pub fn laufende_datei() -> Option<PathBuf> {
+    let p = std::env::current_exe().ok()?;
+    let text = p.to_string_lossy();
+    Some(match text.strip_suffix(" (deleted)") {
+        Some(rest) => PathBuf::from(rest),
+        None => p,
+    })
 }
 
 #[cfg(test)]
 mod proben {
     use super::*;
+    use std::path::Path;
 
-    /// ⚑ **Der Leser holt, was er soll, und nichts daneben.**
+    const DATEI: &str = "0.3.0\n\n# Kopf\n\nText.\n\n## 0.3.0 (2026-10-20)\n\n- drei\n\n## 0.2.0\n\n- zwei\n\n## 0.1.0 (2026-10-17)\n\n- eins\n";
+
+    /// ⚑ **Die erste Zeile ist die Fassung, die Abschnitte stehen darunter.**
     #[test]
-    fn ein_feld_wird_aus_der_antwort_gelesen() {
-        let antwort = r#"{"url":"x","tag_name":"v0.26.0","published_at":"2026-09-10T08:00:00Z"}"#;
-        assert_eq!(feld(antwort, "tag_name").as_deref(), Some("v0.26.0"));
-        assert_eq!(feld(antwort, "published_at").as_deref(), Some("2026-09-10T08:00:00Z"));
-        assert_eq!(feld(antwort, "gibt_es_nicht"), None);
+    fn die_versionsdatei_wird_gelesen() {
+        let v = Versionsdatei::lesen(DATEI).expect("lesbar");
+        assert_eq!(v.fassung, Fassung(0, 3, 0));
+        assert_eq!(v.eintraege.len(), 3);
+        assert_eq!(v.eintraege[0].titel, "0.3.0 (2026-10-20)");
+        assert_eq!(v.eintraege[1].text, "- zwei");
+        let neu: Vec<String> = v.neuer_als(Fassung(0, 1, 0)).into_iter().map(|e| e.fassung).collect();
+        assert_eq!(neu, ["0.3.0", "0.2.0"], "gezeigt wird alles nach der eigenen Fassung, neueste zuerst");
+        assert!(Versionsdatei::lesen("# keine Fassung\n").is_err());
+        assert!(Versionsdatei::lesen("").is_err());
     }
 
-    /// 📌 **Eine kaputte Antwort ergibt `None` und keinen Absturz.**
-    /// GitHub antwortet auch mit Fehlerseiten, und eine Fehlerseite ist
-    /// kein JSON.
+    /// 📌 **Verglichen wird Zahl fuer Zahl**, nicht als Text: `0.10.0` ist
+    /// neuer als `0.9.0`.
     #[test]
-    fn eine_kaputte_antwort_ergibt_nichts() {
-        for text in ["", "<html>503</html>", r#"{"tag_name":"#, r#"{"tag_name":""}"#] {
-            assert_eq!(feld(text, "tag_name"), None, "{text}");
+    fn fassungen_werden_als_zahlen_verglichen() {
+        assert!(Fassung::lesen("0.10.0") > Fassung::lesen("0.9.0"));
+        assert_eq!(Fassung::lesen("v1.2.3"), Some(Fassung(1, 2, 3)));
+        for falsch in ["", "1.2", "1.2.3.4", "a.b.c", "0.1.0-pre"] {
+            assert_eq!(Fassung::lesen(falsch), None, "{falsch}");
         }
     }
 
-    /// ⚑ **Ohne Klon ist nichts einzuspielen, und der Stand sagt es.**
+    /// ⚑ **Ein Update nur, wenn GitHub hoeher ist**; ein Klon, der voraus
+    /// ist, wird nicht zurueckgestellt, und ohne Klon gibt es einen Grund.
     #[test]
-    fn ohne_klon_gibt_es_einen_grund() {
-        let s = Stand {
-            quelle: None,
-            eigene: "0.23.0".into(),
-            neueste: Some("v0.26.0".into()),
-            stand: None,
-            hinterher: None,
-            seite: SEITE.into(),
-            grund: Some("kein Klon".into()),
-        };
-        assert!(!s.lohnt());
-        assert!(s.grund.is_some(), "ein gesperrter Knopf ohne Grund ist eine Sackgasse");
+    fn ein_update_nur_wenn_github_hoeher_ist() {
+        let hier = "0.2.0\n";
+        let q = || Some(PathBuf::from("/klon"));
+        let s = Stand::aus(q(), hier, Ok(DATEI.into()));
+        assert!(s.neuer && s.lohnt());
+        assert_eq!(s.neueste.as_deref(), Some("0.3.0"));
+        assert_eq!(s.aenderungen.iter().map(|e| e.fassung.as_str()).collect::<Vec<_>>(), ["0.3.0"]);
+
+        let gleich = Stand::aus(q(), "0.3.0\n", Ok(DATEI.into()));
+        assert!(!gleich.lohnt() && gleich.aenderungen.is_empty() && gleich.grund.is_none());
+        let voraus = Stand::aus(q(), "0.4.0\n", Ok(DATEI.into()));
+        assert!(!voraus.lohnt(), "ein Klon, der voraus ist, wird zurueckgestellt");
+
+        let ohne_klon = Stand::aus(None, hier, Ok(DATEI.into()));
+        assert!(!ohne_klon.lohnt() && ohne_klon.grund.is_some(), "ein gesperrter Weg ohne Grund ist eine Sackgasse");
+
+        let ohne_netz = Stand::aus(q(), hier, Err("kein Netz".into()));
+        assert!(!ohne_netz.lohnt());
+        assert_eq!(ohne_netz.grund.as_deref(), Some("kein Netz"), "ohne Netz heisst unbeantwortet, nicht aktuell");
     }
 
-    /// ⚑ **Und mit Klon und Rueckstand lohnt es.**
+    /// ⛔️ **Die Versionsdatei im Repositorium ist lesbar, und ihre erste
+    /// Zeile steht auch als oberster Abschnitt da.** Dieselbe Angabe an zwei
+    /// Orten laeuft sonst auseinander: Wer die Nummer hebt und den Abschnitt
+    /// vergisst, kuendigt ein Update ohne Inhalt an.
     #[test]
-    fn mit_rueckstand_lohnt_es() {
-        let s = Stand {
-            quelle: Some("/x".into()),
-            eigene: "0.23.0".into(),
-            neueste: None,
-            stand: None,
-            hinterher: Some(3),
-            seite: SEITE.into(),
-            grund: None,
-        };
-        assert!(s.lohnt());
+    fn die_eigene_versionsdatei_stimmt_mit_sich_ueberein() {
+        let v = Versionsdatei::lesen(EINGEBAUT).expect("VERSION.md ist lesbar");
+        assert_eq!(
+            v.eintraege.first().map(|e| e.fassung.clone()),
+            Some(v.fassung.to_string()),
+            "die erste Zeile von VERSION.md und der oberste Abschnitt nennen verschiedene Fassungen"
+        );
+        assert!(!v.eintraege[0].text.is_empty(), "der oberste Abschnitt sagt nicht, was sich geaendert hat");
+        let mut vorher: Option<Fassung> = None;
+        for e in &v.eintraege {
+            let f = Fassung::lesen(&e.fassung).expect("Fassung");
+            assert!(vorher.is_none_or(|v| f < v), "die Abschnitte stehen nicht absteigend: {}", e.fassung);
+            vorher = Some(f);
+        }
+        assert!(adresse_dort().ends_with("/main/VERSION.md"));
     }
 
-    /// 📌 **Null Rueckstand ist kein Rueckstand.** Ein Knopf, der bei
-    /// „alles aktuell" trotzdem baut, kostet Minuten fuer nichts.
+    /// ⛔️ **Kein Skript ueberschreibt ein laufendes Programm.** Das Update
+    /// laeuft aus dem Programm heraus, das es ersetzt. Unter macOS und Linux
+    /// wird deshalb erst geloescht und dann kopiert (sonst `Text file busy`
+    /// unter Linux, ein SIGKILL wegen der alten Signatur unter macOS); unter
+    /// Windows laesst sich ein laufendes Programm nicht ueberschreiben, wohl
+    /// aber umbenennen.
     #[test]
-    fn ohne_rueckstand_lohnt_es_nicht() {
-        let s = Stand {
-            quelle: Some("/x".into()),
-            eigene: "0.23.0".into(),
-            neueste: None,
-            stand: None,
-            hinterher: Some(0),
-            seite: SEITE.into(),
-            grund: None,
-        };
-        assert!(!s.lohnt());
+    fn kein_skript_ueberschreibt_ein_laufendes_programm() {
+        let wurzel = Path::new(env!("CARGO_MANIFEST_DIR")).parent().and_then(|p| p.parent()).expect("Wurzel");
+        for datei in [SKRIPT_MACOS, SKRIPT_LINUX] {
+            let text = std::fs::read_to_string(wurzel.join(datei)).expect(datei);
+            let loeschen = text.find("rm -f \"$BIN/$2\"").unwrap_or_else(|| panic!("{datei} loescht das alte Programm nicht"));
+            let kopieren = text.find("cp \"$WURZEL/SYSTEM/full-build/release/$2\" \"$BIN/$2\"").expect("Kopierzeile");
+            assert!(loeschen < kopieren, "{datei} kopiert, bevor es loescht");
+        }
+        let ps = std::fs::read_to_string(wurzel.join(SKRIPT_WINDOWS.replace('\\', "/"))).expect("ps1");
+        assert!(ps.contains("Rename-Item"), "das Windows-Skript benennt ein laufendes Programm nicht um");
     }
 
     /// ⚑ **Auf jeder Plattform, die dieses Projekt baut, gibt es ein

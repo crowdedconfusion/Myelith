@@ -321,14 +321,42 @@ pub fn laufen_mit_eingabe(
     })
 }
 
+/// **Ein kleines Skript fuer die Proben, auf diesem System**: `/bin/sh -c`
+/// unter Unix, `cmd /C` unter Windows.
+///
+/// 📌 **Bis `myl-senses` 0.13.1 riefen die Proben fest `/bin/sh`** (2026-10-17,
+/// unter Wine gefunden): Unter Windows gibt es diesen Pfad nicht, und neun
+/// Proben fielen, ohne dass `laufen` dort je geprueft worden war. Die CI fuhr
+/// diese Kiste unter Windows nicht. Der Code war richtig; er stand nur ohne
+/// Beleg da.
+#[cfg(test)]
+pub(crate) fn probeskript(unix: &str, windows: &str) -> Command {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let _ = unix;
+        let mut c = Command::new("cmd");
+        // ⚑ Roh weitergegeben: `cmd` liest die Zeile selbst, und eine
+        //   zusaetzliche Huelle aus Anfuehrungszeichen aenderte, was sie sieht.
+        c.raw_arg("/C").raw_arg(windows);
+        c
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = windows;
+        let mut c = Command::new("/bin/sh");
+        c.arg("-c").arg(unix);
+        c
+    }
+}
+
 #[cfg(test)]
 mod proben {
     use super::*;
 
     #[test]
     fn die_beiden_roehren_bleiben_getrennt() {
-        let mut b = Command::new("/bin/sh");
-        b.arg("-c").arg("echo hierher; echo dorthin >&2");
+        let mut b = probeskript("echo hierher; echo dorthin >&2", "echo hierher& echo dorthin 1>&2");
         let a = laufen(&mut b, 5, 1024).expect("laeuft");
         assert!(a.gut(), "{a:?}");
         assert_eq!(a.aus.trim(), "hierher");
@@ -345,11 +373,12 @@ mod proben {
     /// Sekunden und **nie der Grund**.
     #[test]
     fn stderr_behaelt_das_ende_und_nicht_den_anfang() {
-        let mut b = Command::new("/bin/sh");
         // Viel Geschwaetz, danach die eine Zeile, auf die es ankommt.
-        b.arg("-c")
-            .arg("i=0; while [ $i -lt 400 ]; do echo \"Fortschritt $i\" >&2; i=$((i+1)); done; \
-                  echo DIES_IST_DER_GRUND >&2; exit 1");
+        let mut b = probeskript(
+            "i=0; while [ $i -lt 400 ]; do echo \"Fortschritt $i\" >&2; i=$((i+1)); done; \
+             echo DIES_IST_DER_GRUND >&2; exit 1",
+            "(for /L %i in (0,1,399) do @echo Fortschritt %i 1>&2) & echo DIES_IST_DER_GRUND 1>&2 & exit 1",
+        );
         let a = laufen(&mut b, 10, 512).expect("laeuft");
         assert!(!a.gut(), "{a:?}");
         assert_eq!(a.kopf(), "beendet, Rueckgabewert 1");
@@ -359,8 +388,9 @@ mod proben {
             "der Grund fehlt, behalten wurde:\n{}",
             a.fehler
         );
+        // ⚑ Je Zeile verglichen: Unter Windows enden sie auf `\r\n`.
         assert!(
-            !a.fehler.contains("Fortschritt 0\n"),
+            !a.fehler.lines().any(|z| z.trim() == "Fortschritt 0"),
             "der Anfang steht noch da, also wurde das falsche Ende behalten"
         );
     }
@@ -371,10 +401,11 @@ mod proben {
     /// entweder den Grund oder den Anfang der Antwort.
     #[test]
     fn stdout_behaelt_den_anfang_und_nicht_das_ende() {
-        let mut b = Command::new("/bin/sh");
-        b.arg("-c")
-            .arg("echo SO_FAENGT_DIE_ANTWORT_AN; \
-                  i=0; while [ $i -lt 400 ]; do echo \"Fuellung $i\"; i=$((i+1)); done");
+        let mut b = probeskript(
+            "echo SO_FAENGT_DIE_ANTWORT_AN; \
+             i=0; while [ $i -lt 400 ]; do echo \"Fuellung $i\"; i=$((i+1)); done",
+            "echo SO_FAENGT_DIE_ANTWORT_AN& for /L %i in (0,1,399) do @echo Fuellung %i",
+        );
         let a = laufen(&mut b, 10, 512).expect("laeuft");
         assert!(a.gut(), "{a:?}");
         assert!(a.mehr, "es war mehr da, als behalten wurde");
@@ -388,6 +419,10 @@ mod proben {
     /// ⚠️ **Ein Schnitt am Ende darf keine halbe Mehrbytefolge
     /// hinterlassen.** Der Puffer wird von vorn gekuerzt, und dort kann
     /// ein Zeichen mitten durchgehen.
+    ///
+    /// ⚠️ **Nur unter Unix**: `cmd` gibt UTF-8 nicht verlaesslich aus. Der
+    /// Schnitt selbst ist Bytearbeit und auf jedem System derselbe.
+    #[cfg(unix)]
     #[test]
     fn das_gekuerzte_ende_beginnt_an_einer_zeichengrenze() {
         let mut b = Command::new("/bin/sh");
@@ -406,8 +441,8 @@ mod proben {
     /// ⚑ **Die Frist greift, und sie steht in der Meldung.**
     #[test]
     fn ein_haengendes_programm_wird_abgebrochen() {
-        let mut b = Command::new("/bin/sh");
-        b.arg("-c").arg("sleep 5");
+        // ⚑ Unter Windows wartet `ping` fuenf Sekunden; `timeout` braucht eine Konsole.
+        let mut b = probeskript("sleep 5", "ping -n 6 127.0.0.1 >nul");
         let anfang = std::time::Instant::now();
         let a = laufen(&mut b, 1, 1024).expect("laeuft");
         assert!(a.abgebrochen, "{a:?}");
@@ -420,8 +455,10 @@ mod proben {
     /// bleibt sichtbar.
     #[test]
     fn viel_ausgabe_wird_gekuerzt_und_sagt_es() {
-        let mut b = Command::new("/bin/sh");
-        b.arg("-c").arg("i=0; while [ $i -lt 2000 ]; do echo abcdefghij; i=$((i+1)); done");
+        let mut b = probeskript(
+            "i=0; while [ $i -lt 2000 ]; do echo abcdefghij; i=$((i+1)); done",
+            "for /L %i in (1,1,2000) do @echo abcdefghij",
+        );
         let a = laufen(&mut b, 20, 256).expect("laeuft");
         assert!(a.gut(), "{a:?}");
         let (text, gekuerzt) = a.zusammen(256);
@@ -445,9 +482,8 @@ mod proben {
     /// Die Shell schickt `sleep` in den Hintergrund und endet sofort.
     #[test]
     fn ein_enkel_an_der_roehre_haelt_den_aufruf_nicht_auf() {
-        let mut b = Command::new("/bin/sh");
         // Die Shell ist sofort fertig, das Enkelkind haelt die Roehre.
-        b.arg("-c").arg("sleep 5 &");
+        let mut b = probeskript("sleep 5 &", "start /b ping -n 6 127.0.0.1");
         let anfang = std::time::Instant::now();
         let a = laufen(&mut b, 10, 1024).expect("laeuft");
         assert!(a.gut(), "{a:?}");
@@ -462,8 +498,7 @@ mod proben {
     /// Funktion.** Sie meldet ihn, statt ihn zu verschlucken.
     #[test]
     fn ein_schlechter_rueckgabewert_kommt_durch() {
-        let mut b = Command::new("/bin/sh");
-        b.arg("-c").arg("exit 3");
+        let mut b = probeskript("exit 3", "exit 3");
         let a = laufen(&mut b, 5, 64).expect("laeuft");
         assert_eq!(a.kode, Some(3));
         assert!(!a.gut());

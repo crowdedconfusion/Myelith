@@ -55,7 +55,6 @@ myl: lokaler Betrieb von Myelith
   myl plan [artefakt]             Wie der Dispatcher diese Maschine belegen wuerde: Agent, Sehen, Hoeren
   myl eichen [artefakt]           Misst, was Agent, Sehen und Hoeren hier wirklich belegen (fuer den Plan)
   myl kennzeichen <datei.wav>     Prueft, ob eine Tondatei als KI-erzeugt gekennzeichnet ist
-  myl protokoll [anzahl]          Die juengsten Handlungen des Agenten (ohne Klartext, 30 Tage)
   myl verlauf [<von> <bis>]       Der Mitschnitt: Uebersicht oder Zeilen
   myl schlafen [ordner] [--ohne-modell] [--tag N]
                                   Der Schlaf jetzt: Gedaechtnis des Ordners ordnen, Vorhaben vordenken
@@ -147,8 +146,6 @@ Rechenzeit kostet wie ein Antworttoken.
 ";
 
 fn main() {
-    // ⛔️ Das Aktionsprotokoll gilt fuer jeden Lauf von `myl`.
-    myl_local_agent::protokoll::einschalten();
     let args: Vec<String> = std::env::args().collect();
     // ⛔️ **Wo ein Modell antwortet, steht vorher, dass es eines ist**
     //   (Art. 50 Abs. 1 KI-Verordnung), auf der Fehlerausgabe, damit die
@@ -187,7 +184,6 @@ fn myl_hauptteil(args: &[String]) -> i32 {
         Some("plan") => plan_befehl(&args[2..]),
         Some("eichen") => eichen_befehl(&args[2..]),
         Some("kennzeichen") => kennzeichen(&args[2..]),
-        Some("protokoll") => protokoll(&args[2..]),
         Some("setzen") => setzen(&args[2..]),
         Some("mining") => mining(&args[2..]),
         // Die Hilfe ist hier eine Antwort und kein Fehler: Sie geht nach
@@ -629,34 +625,6 @@ fn ohne_wert(f: &myl_client::einstellungen::Feld) -> String {
         Feldart::Grenze | Feldart::Budget => "ohne Grenze".to_string(),
         _ => "(nicht gesetzt)".to_string(),
     }
-}
-
-/// **Die Wissensmappen fuer einen Menschen**: wo sie liegen, was da ist.
-///
-/// # ⚑ Warum es diesen Befehl gibt
-///
-/// Der allgemeine Ordner liegt neben den Einstellungen, und dieser Pfad
-/// haengt am Betriebssystem. **Ein Ordner, den der Nutzer fuellen soll,
-/// dessen Ort er aber raten muss, wird nicht gefuellt.** Der Befehl
-/// nennt beide Orte und legt den allgemeinen auf Wunsch an.
-/// **`myl protokoll`: die juengsten Handlungen des Agenten**, neueste
-/// zuerst, als Tabelle.
-fn protokoll(args: &[String]) -> i32 {
-    let anzahl = args.first().and_then(|a| a.parse().ok()).unwrap_or(50);
-    let eintraege = myl_local_agent::protokoll::lesen(anzahl);
-    println!("Ablage: {}", myl_local_agent::protokoll::ordner().display());
-    if eintraege.is_empty() {
-        println!("Noch keine Eintraege.");
-        return 0;
-    }
-    println!("{:<21} {:<16} {:<22} {:<12} {:<7} {:>7}", "Zeit", "Art", "Werkzeug", "Entscheidung", "Ergebnis", "Dauer");
-    for e in eintraege {
-        println!(
-            "{:<21} {:<16} {:<22} {:<12} {:<7} {:>5} ms",
-            e.zeit, e.art, e.werkzeug, e.entscheidung, e.ergebnis, e.dauer_ms
-        );
-    }
-    0
 }
 
 /// **`myl kennzeichen`: traegt eine Tondatei die KI-Kennzeichnung?**
@@ -1182,7 +1150,14 @@ fn anhaenge(args: &[String]) -> i32 {
     0
 }
 
-
+/// **Die Wissensmappen fuer einen Menschen**: wo sie liegen, was da ist.
+///
+/// # ⚑ Warum es diesen Befehl gibt
+///
+/// Der allgemeine Ordner liegt neben den Einstellungen, und dieser Pfad
+/// haengt am Betriebssystem. **Ein Ordner, den der Nutzer fuellen soll,
+/// dessen Ort er aber raten muss, wird nicht gefuellt.** Der Befehl
+/// nennt beide Orte und legt den allgemeinen auf Wunsch an.
 fn skills(args: &[String]) -> i32 {
     use myl_local_agent::skills;
     let allgemein = skills::allgemeiner_ordner();

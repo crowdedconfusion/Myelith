@@ -26,11 +26,10 @@ Status: ✅ umgesetzt · 🟡 teilweise umgesetzt · ➖ nicht anwendbar
 |---|---|---|---|
 | Art. 2 | Anwendungsbereich | ✅ | Myelith wird vorsorglich als in der Union bereitgestellt behandelt; die Ausnahme für freie und quelloffene Lizenzen greift nicht (siehe oben) |
 | Art. 4 | KI-Kompetenz | 🟡 | Die Pflicht gilt für Personal von Anbietern und Betreibern; der Anbieter ist eine Einzelperson. Nutzer erfahren Fähigkeiten und Grenzen im Starthinweis und in der [Zweckbestimmung](Zweckbestimmung.md) |
-| Art. 5 | Verbotene Praktiken | ✅ | [Zweckbestimmung](Zweckbestimmung.md) Abschnitt 2.1; Schutzfilter an allen Eingängen (`CLIENT/myl-client/src/schutzfilter.rs`), Abweisungen im Aktionsprotokoll ohne Klartext; Regel für das Sehmodell (`CLIENT/myl-senses/src/sehen.rs`, `SEHREGEL`). Grenze: ein Filter lässt sich umschreiben |
+| Art. 5 | Verbotene Praktiken | ✅ | [Zweckbestimmung](Zweckbestimmung.md) Abschnitt 2.1; Schutzfilter an allen Eingängen (`CLIENT/myl-client/src/schutzfilter.rs`); Regel für das Sehmodell (`CLIENT/myl-senses/src/sehen.rs`, `SEHREGEL`). Grenze: ein Filter lässt sich umschreiben |
 | Art. 6, Anhang III | Einstufung als Hochrisiko | ➖ | Nicht für Anhang-III-Bereiche bestimmt ([Zweckbestimmung](Zweckbestimmung.md) Abschnitt 2.2). Wer Myelith dort einsetzt, ändert die Zweckbestimmung (Art. 25) |
-| Art. 8 bis 15 | Anforderungen an Hochrisiko-Systeme | ➖ | Nicht anwendbar. **Freiwillig** nach ihrem Vorbild: Aktionsprotokoll (Art. 12), Bestätigung vor Handlungen und Notaus (Art. 14) |
-| Art. 12 (freiwillig) | Protokollierung | ✅ | `AGENT_LAYER/local-agent/src/protokoll.rs`: jede Handlung des Agenten als JSON-Zeile mit Zeit, Art, Werkzeug, Fingerabdruck von Ein- und Ausgabe (SHA-256 mit Schlüssel, kein Klartext), Entscheidung und Ergebnis; 30 Tage; lesbar mit `myl protokoll` (das Fenster zeigt es seit dem 2026-10-17 nicht mehr an, schreibt es aber weiter) |
-| Art. 14 (freiwillig) | Menschliche Aufsicht | ✅ | Vorgabe `agent.modus = manual`: Schreiben, Befehle und Web-Anfragen werden vor dem Ausführen vorgelegt. Notschalter im Fenster ist das Schließen des Fensters: Es beendet die Erzeugung, jedes weitere Werkzeug und auch einen schon gestarteten Befehl, und es steht im Aktionsprotokoll. In der Konsole der Notaus (Strg-C oder Esc während eines Laufs); er hält die Erzeugung und jedes weitere Werkzeug an. Das Gespräch bleibt in beiden Fällen erhalten |
+| Art. 8 bis 15 | Anforderungen an Hochrisiko-Systeme | ➖ | Nicht anwendbar. **Freiwillig** nach ihrem Vorbild: Bestätigung vor Handlungen und Notaus (Art. 14) |
+| Art. 14 (freiwillig) | Menschliche Aufsicht | ✅ | Vorgabe `agent.modus = manual`: Schreiben, Befehle und Web-Anfragen werden vor dem Ausführen vorgelegt. Notschalter im Fenster ist das Schließen des Fensters: Es beendet die Erzeugung, jedes weitere Werkzeug und auch einen schon gestarteten Befehl. In der Konsole der Notaus (Strg-C oder Esc während eines Laufs); er hält die Erzeugung und jedes weitere Werkzeug an. Das Gespräch bleibt in beiden Fällen erhalten |
 | Art. 16 bis 22 | Pflichten bei Hochrisiko-Systemen, Bevollmächtigte | ➖ | Nicht anwendbar. Art. 22 betrifft Anbieter aus Drittländern; der Anbieter sitzt in Deutschland |
 | Art. 25 | Verantwortung entlang der Wertschöpfungskette | ✅ | [Zweckbestimmung](Zweckbestimmung.md) Abschnitt 2.2: Wer die Zweckbestimmung ändert, übernimmt Anbieterpflichten |
 | Art. 50 Abs. 1 | Hinweis auf KI | ✅ | Hinweis bei **jedem** Start, aktiv zu bestätigen (Fenster und Konsole), Zeile auf der Fehlerausgabe bei `myl`; dauerhafte Kennzeichnung im leeren Eingabefeld des Fensters („Hier antwortet eine KI.“) und „KI“ in der Fußzeile der Konsole; jede Antwort im Fenster trägt „KI-generiert" (`CLIENT/myl-client/src/kennzeichnung.rs`) |
@@ -47,7 +46,7 @@ Status: ✅ umgesetzt · 🟡 teilweise umgesetzt · ➖ nicht anwendbar
 
 | Gebiet | Stand |
 |---|---|
-| Datenschutz (DSGVO) | Myelith verarbeitet alles auf dem Rechner des Nutzers. Eine Stimmprobe ist ein personenbezogenes Datum; sie wird nur mit bestätigter Einwilligung abgelegt und verlässt den Rechner nicht. Das Aktionsprotokoll enthält keinen Klartext |
+| Datenschutz (DSGVO) | Myelith verarbeitet alles auf dem Rechner des Nutzers. Eine Stimmprobe ist ein personenbezogenes Datum; sie wird nur mit bestätigter Einwilligung abgelegt und verlässt den Rechner nicht. Der Debug-Log ist aus, solange ihn niemand einschaltet; eingeschaltet enthält er auch Dateiinhalte und bleibt auf dem Rechner |
 | Lizenzen der Fremdkomponenten | [NOTICES](../NOTICES.md), erzeugt und im CI geprüft. Offen: die Schrift der Wortmarke (Lizenz ungeklärt) |
 
 ## Offene Punkte

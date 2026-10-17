@@ -1,6 +1,6 @@
 # client (Nutzer-Client inkl. Wallet)
 
-> **Version:** 0.167.0 (`myl-client` 0.104.0, `myl-oberflaeche` 0.81.0, `myl-console` 0.64.0, `myl-senses` 0.13.1, `myl-module` 0.4.0)
+> **Version:** 0.169.0 (`myl-client` 0.106.0, `myl-oberflaeche` 0.83.0, `myl-console` 0.66.0, `myl-senses` 0.13.2, `myl-module` 0.4.0)
 > **Datum:** 2026-10-17
 > **Status:** ✅ **Der lokale Betrieb läuft und ist ausgeliefert.** Ein
 > Gesprächsfenster mit Modellwahl, Agentenschleife und
@@ -53,7 +53,7 @@ kostet nichts, wenn er stimmt, und einen halben Tag, wenn nicht.
 | **Gespraeche verwalten** | Rechtsklick auf eine Zeile: umbenennen an Ort und Stelle, als Markdown ausgeben, loeschen. Wohin ausgegeben wird, steht in `ausgabe.ordner`; ohne Angabe fuehrt das Fenster dorthin |
 
 ⚑ **Die Oberfläche ruft dieselben Funktionen wie die Kommandozeile**,
-über dreiundsiebzig Befehle. ⚠️ **Mit fünf Ausnahmen, und alle sind gewollt:** `terminal_ausfuehren` startet eine Shell, denn ein Terminal, das keine startet, ist keines; `modul_waehlen` und `modul_befehl` starten ein Modul, und zwar wie die Konsole nur die geprüfte Kopie eines signierten Moduls; `artefakt_bauen` startet die Bauskripte des Repositoriums über `myl_client::bezug`, dieselbe Stelle wie die Konsole, und nur nach Bestätigung; die Aktualisierung startet `curl`, `git` und das Installationsskript über `myl_client::aktualisierung`. `mining_starten` startet den Knoten (`myl-node`) und `mining_beenden` schickt ihm das Ende (`kill`), beide über `myl_client::mining`, dieselbe Stelle wie `/mining` in der Konsole. Jeder andere Befehl startet **keinen einzigen Unterprozess**. 📌 Bis zum 2026-10-16 nannte dieser Satz nur die ersten beiden, obwohl Bau und Aktualisierung schon damals Unterprozesse starteten. `jeder_befehl_ist_angemeldet` hält die vier
+über vierundsiebzig Befehle. ⚠️ **Mit fünf Ausnahmen, und alle sind gewollt:** `terminal_ausfuehren` startet eine Shell, denn ein Terminal, das keine startet, ist keines; `modul_waehlen` und `modul_befehl` starten ein Modul, und zwar wie die Konsole nur die geprüfte Kopie eines signierten Moduls; `artefakt_bauen` startet die Bauskripte des Repositoriums über `myl_client::bezug`, dieselbe Stelle wie die Konsole, und nur nach Bestätigung; die Aktualisierung startet `curl`, `git` und das Installationsskript über `myl_client::aktualisierung`. `mining_starten` startet den Knoten (`myl-node`) und `mining_beenden` schickt ihm das Ende (`kill`), beide über `myl_client::mining`, dieselbe Stelle wie `/mining` in der Konsole. Jeder andere Befehl startet **keinen einzigen Unterprozess**. 📌 Bis zum 2026-10-16 nannte dieser Satz nur die ersten beiden, obwohl Bau und Aktualisierung schon damals Unterprozesse starteten. `jeder_befehl_ist_angemeldet` hält die vier
 Richtungen zusammen: kein Befehl ohne Anmeldung, keine Anmeldung ohne
 Befehl, kein Aufruf ins Leere und kein Befehl, den niemand ruft. „Ohne eigene Logik" hiesse sonst, aus einer Textausgabe
 für Menschen eine Schnittstelle zu machen, und genau das ist die Sorte
@@ -70,7 +70,7 @@ Logik, die hier nicht hingehört.
 | `myl-oberflaeche/icons/` | Symbole. `icon.ico` und `icon.icns` sind aus `icon.png` abgeleitet und liegen fertig da; von Hand nachbessern hilft nicht, die nächste Ableitung überschreibt es. |
 
 ⚑ **Der örtliche Agent liegt seit dem 2026-09-30 unter `AGENT_LAYER`**:
-Werkzeuge, Werkzeugkisten, Skills, Loop, Aktionsprotokoll, Notaus und
+Werkzeuge, Werkzeugkisten, Skills, Loop, Notaus und
 Systemprompt in der Kiste `AGENT_LAYER/local-agent`, die Kisten als
 Manifeste in `AGENT_LAYER/local-toolkits/`, die Skills in
 `AGENT_LAYER/local-skills/`. Der Client hängt am Agenten, nie umgekehrt;
@@ -181,6 +181,93 @@ Modell überhaupt etwas taugt, und weil eine Schnittstelle, die kein
 Mensch je bedient hat, an den Bedürfnissen vorbei entworfen wird.
 
 ## Changelog
+
+### v0.169.0 (2026-10-17): int4 ist der Standard, das Aktionsprotokoll entfällt, die Frage nach dem Einhängepfad (`myl-client` 0.106.0, `myl-oberflaeche` 0.83.0, `myl-console` 0.66.0)
+
+Drei Festlegungen des Projektinhabers.
+
+- ⚑ **Das 35B in vier Bit ist der Standard.** Die Empfehlung beim Start
+  nimmt bei gleicher Parameterzahl jetzt die kleinere Zahlform; bis hierher
+  gewann die größere Datei, also das int8. Das int4 liegt 0,06 % über dem
+  int8, rechnet GSM8K gleich und ist 19 statt 33 GB groß. Probe
+  `das_groesste_das_passt` mit beiden Formen. Auf dieser Maschine geeicht:
+  Spitze 14,4 GiB, fest 0,7 GiB.
+- **Das Aktionsprotokoll entfällt** (AGENT_LAYER v0.49.0): `myl protokoll`
+  ist entfernt, Konsole, Fenster und `myl` schalten nichts mehr ein.
+  Abweisungen des Schutzfilters und die Saat einer Aktion stehen im
+  Debug-Log, wenn er läuft.
+- ⚑ **Die Frage nach dem Einhängepfad**, wie festgelegt: Bei jedem neuen
+  Agenten-Prozess im Fenster „Ist er richtig?“ mit „Ja“ und „Nein, anderen
+  wählen …“, das die Ordnerwahl des Systems öffnet (Finder, Explorer). Ist
+  keiner gewählt, öffnet sie sich gleich. Ein Task in einem offenen Prozess
+  fragt nicht; er arbeitet in dessen Ordner.
+- Ein Doc-Kommentar in `myl` stand über dem falschen Befehl und hängt jetzt
+  an `skills`.
+
+### v0.168.0 (2026-10-17): Updates nach `VERSION.md` mit Rückfrage und Neustart, und die Kisten des Klienten unter Windows geprüft (`myl-client` 0.105.0, `myl-oberflaeche` 0.82.0, `myl-console` 0.65.0, `myl-senses` 0.13.2)
+
+Zwei Aufträge des Projektinhabers: die Update-Funktion richten (Konsole
+`/update`, Fenster beim Start, Abgleich einer Versionsnummer mit GitHub,
+vorher fragen, danach alles installieren und neu starten) und alles, was vor
+der Mietmaschine geht, für Windows und Linux abhaken.
+
+**Updates:**
+- ⚑ **`VERSION.md` in der Wurzel** (neu): erste Zeile die Fassung von
+  Myelith (heute 0.1.0), darunter je Fassung ein Abschnitt mit den
+  Änderungen, die neueste oben. Das Programm liest die Datei **beim Bauen**
+  ein (`aktualisierung::EINGEBAUT`) und vergleicht diese Fassung mit der
+  ersten Zeile derselben Datei auf GitHub (Zweig `main`, Rohansicht, ohne
+  Anmeldung). Nur eine **höhere** Fassung dort ist ein Update; ein Klon, der
+  voraus ist, wird nie zurückgestellt.
+- 📌 **Bis hierher** fragte das Nachsehen, ob `origin` Commits hat, die der
+  Klon nicht hat (`git fetch`), und nannte daneben eine Freigabemarke. Beim
+  Start von selbst gefragt, wäre `git fetch` eine Anmeldung beim entfernten
+  Baum ohne Anlass gewesen; eine Nummer, die ein Mensch liest, gab es nicht.
+- **Konsole: `/update`.** Zeigt die eigene Fassung, die auf GitHub und die
+  Abschnitte der neueren Fassungen, fragt mit j/n, spielt ein (Zeile für
+  Zeile sichtbar) und startet die Konsole danach neu, mit denselben
+  Argumenten (`exec` unter Unix). Ein Nein lässt alles, wie es ist.
+- **Fenster: beim Start von selbst.** Gibt es ein Update, erscheint ein
+  Dialog mit Fassungen und Änderungen, „Jetzt aktualisieren“ oder „Später“;
+  die Ausgabe des Baus läuft im Dialog mit, danach startet das Fenster neu
+  (Befehl `neu_starten`). Ohne Netz oder ohne Klon erscheint nichts, die
+  Einstellungsseite sagt dann warum. 📌 Das dreht die Festlegung vom
+  2026-09-10 um, nach der das Fenster nie von selbst nachsah.
+- **Eingespielt** wird wie bisher mit dem Installationsskript
+  (`--aktualisieren`: `git fetch`, `git merge --ff-only`, Bau,
+  Installation). 📌 **Die Zeilen des Skripts kamen bisher erst am Ende**
+  (`output()`); jetzt laufen `stdout` und `stderr` mit.
+- ⛔️ **Kein Skript überschreibt mehr ein laufendes Programm**, denn das
+  Update läuft aus dem Programm, das es ersetzt: Linux löscht jetzt vor dem
+  Kopieren (sonst `Text file busy`), Windows benennt eine laufende `.exe`
+  um (`.<zahl>.alt`, beim nächsten Lauf weggeräumt), macOS tat es schon.
+  Probe `kein_skript_ueberschreibt_ein_laufendes_programm`.
+- Proben: `die_versionsdatei_wird_gelesen`,
+  `fassungen_werden_als_zahlen_verglichen` (`0.10.0` nach `0.9.0`),
+  `ein_update_nur_wenn_github_hoeher_ist`,
+  `die_eigene_versionsdatei_stimmt_mit_sich_ueberein` (erste Zeile und
+  oberster Abschnitt nennen dieselbe Fassung).
+- Die Zahl der Befehle oben ist wieder vierundsiebzig (`neu_starten`).
+
+**Unter Windows geprüft** (mit den Testprogrammen für
+`x86_64-pc-windows-gnu`, ausgeführt unter Wine):
+- **`myl-senses`:** Neun Prozessproben riefen fest `/bin/sh`; sie laufen
+  jetzt über `probeskript` mit `cmd /C` unter Windows. Eine Probe legte
+  Dateinamen mit Zeilenumbruch und `"` an, die Windows nicht erlaubt. Die
+  Proben mit Attrappen (Shell-Skripte) bleiben Unix vorbehalten. Unter
+  Windows 60 Proben grün.
+- **Konsole:** Farben in Zeichenketten über eigene Hüllen (`ansi`), die als
+  Text immer ANSI schreiben. crossterm verweigert das unter Windows ohne
+  ANSI-fähige Konsole und ließ `format!` mit einer Panik abbrechen, etwa bei
+  umgeleiteter Ausgabe. `auswahl.rs` bleibt die wortgleiche Kopie aus dem
+  Testclient und damit wie bisher.
+- **Modellbau:** `bash` wird gesucht (`myl_local_agent::schale`), unter
+  Windows bei Git for Windows.
+- **Fenster, Konsole, Module, Sinne** laufen in einem neuen Windows-Job der
+  CI (`Klient und Agent (windows-latest)`), dazu Agent, Dispatcher und
+  Speicherorte.
+- **Nachgezogen aus v0.167.0:** Die Modellwahl nannte Artefakte ohne
+  Katalogeintrag weiter beim Ordnernamen; jetzt nach dem Schema.
 
 ### v0.167.0 (2026-10-17): Die Einstellungsseite aufgeräumt, die Frage nach dem Einhängepfad, Schritte ohne Grenze mit Loop-Erkennung, Modellnamen nach Schema (`myl-client` 0.104.0, `myl-oberflaeche` 0.81.0, `myl-console` 0.64.0)
 

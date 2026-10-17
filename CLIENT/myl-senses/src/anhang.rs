@@ -480,7 +480,16 @@ mod proben {
         let anhangordner = ziel.path().join(PROBEORDNER).canonicalize().expect("Ordner");
         // ⚑ **Namen, die ein Dateisystem erlaubt und eine Nachricht
         // zerlegen:** Zeilenumbruch, Anfuehrungszeichen, Backtick.
-        for name in ["zwei\nzeilen.md", "mit\"anfuehrung.md", "back`tick.md", "..punkte..md"] {
+        // ⚠️ **Unter Windows erlaubt das Dateisystem Zeilenumbruch und
+        // Anfuehrungszeichen gar nicht**; dort bleiben Backtick und Punkte.
+        // Die Probe legte sie bis `myl-senses` 0.13.1 auf jedem System an und
+        // fiel unter Windows schon beim Schreiben (2026-10-17, unter Wine).
+        let namen: &[&str] = if cfg!(windows) {
+            &["back`tick.md", "..punkte..md"]
+        } else {
+            &["zwei\nzeilen.md", "mit\"anfuehrung.md", "back`tick.md", "..punkte..md"]
+        };
+        for name in namen {
             let boese = d.path().join(name);
             std::fs::write(&boese, "x").expect("schreiben");
             let b = aufnehmen(ziel.path(), PROBEORDNER, &boese).expect("aufnehmen");

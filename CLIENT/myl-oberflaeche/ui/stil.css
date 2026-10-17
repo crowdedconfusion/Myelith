@@ -2653,6 +2653,12 @@ td input[type="text"] { width: 20rem; padding: .24rem .55rem; }
   line-height: 1.45;
 }
 .autoknoepfe { display: flex; justify-content: flex-end; gap: .6rem; }
+/* ⚑ Die Aenderungen eines Updates: je Fassung eine Ueberschrift und der
+   Text, wie er in VERSION.md steht; lange Listen rollen im Kasten. */
+.updateaenderungen { max-height: 40vh; overflow-y: auto; }
+.updateaenderungen h3 { margin: .6rem 0 .2rem; font-size: 1rem; }
+.updateaenderungen pre, #updatezeilen { white-space: pre-wrap; margin: 0; font-size: .85rem; }
+#updatezeilen { max-height: 30vh; overflow-y: auto; }
 
 /* ⚑ Das vorgelegte Ergebnis eines Loops: der Text des Modells, darunter
    das Feld fuer „wo weiter“. Der Text rollt, statt den Kasten zu sprengen. */
@@ -2822,12 +2828,6 @@ tr.gesucht td:first-child { box-shadow: inset 2px 0 0 var(--kante-hell); }
 .warnungok:disabled { opacity: .45; cursor: not-allowed; }
 #stimme-waehlen:disabled { opacity: .45; cursor: not-allowed; }
 .stimmeinwilligung { flex-basis: 100%; font-size: .85rem; }
-
-/* Das Aktionsprotokoll: eine schlichte Tafel, die rollt, statt die Seite
-   zu verbreitern. */
-#protokolltafel { display: block; max-height: 22rem; overflow: auto; font-size: .78rem; border-collapse: collapse; }
-#protokolltafel th, #protokolltafel td { padding: .2rem .5rem; text-align: left; white-space: nowrap; }
-#protokolltafel thead th { position: sticky; top: 0; background: var(--grund-hoch); }
 
 /* ⛔️ Der Hinweis beim Start: ueber allem, auch ueber der Warnung. */
 .kihinweis { z-index: 70; }

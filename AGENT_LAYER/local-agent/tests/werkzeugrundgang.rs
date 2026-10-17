@@ -46,15 +46,11 @@ fn kopieren(von: &Path, nach: &Path) {
 
 struct Rundgang {
     _arbeit: tempfile::TempDir,
-    _protokoll: tempfile::TempDir,
     arbeit: PathBuf,
     ruestung: Ruestung,
 }
 
 fn ruesten(web: bool, schreiben: bool) -> Rundgang {
-    // ⛔️ Das Aktionsprotokoll in einen Wegwerfordner, nie in den des Nutzers.
-    let protokoll = tempfile::tempdir().unwrap();
-    myl_local_agent::protokoll::ordner_setzen(protokoll.path().to_path_buf());
     let arbeit_d = tempfile::tempdir().unwrap();
     let arbeit = arbeit_d.path().join("arbeit");
     kopieren(&wurzel_des_repositoriums().join("BENCHMARKS/Agent/loop/vorlage"), &arbeit);
@@ -75,7 +71,7 @@ fn ruesten(web: bool, schreiben: bool) -> Rundgang {
         myl_local_agent::vorhaben::werkzeuge(&wahl),
     )
     .expect("Ruestung");
-    Rundgang { _arbeit: arbeit_d, _protokoll: protokoll, arbeit, ruestung }
+    Rundgang { _arbeit: arbeit_d, arbeit, ruestung }
 }
 
 /// Ein Aufruf wie in der Schleife: Formpruefung, dann Ausfuehrung.

@@ -12,7 +12,8 @@ use std::io::{IsTerminal, Write};
 
 use crossterm::cursor::MoveTo;
 use crossterm::terminal::{Clear, ClearType};
-use crossterm::style::{Print, ResetColor, SetForegroundColor};
+use crossterm::style::{Print};
+use crate::ansi::{ResetColor, SetForegroundColor};
 use std::path::PathBuf;
 
 use crate::schirm::{Rahmen, Schirm};
@@ -599,8 +600,8 @@ fn mit_ladeanzeige<T>(name: &str, bild: myl_client::einstellungen::Konsolendesig
                 let _ = write!(
                     aus,
                     "\r\x1b[2K  {name} wird geladen {}{kopf}{}",
-                    crossterm::style::SetForegroundColor(design::ladefarbe(bild, anfang.elapsed())),
-                    crossterm::style::ResetColor
+                    crate::ansi::SetForegroundColor(design::ladefarbe(bild, anfang.elapsed())),
+                    crate::ansi::ResetColor
                 );
                 let _ = aus.flush();
             }
@@ -1248,6 +1249,13 @@ fn schleife(stand: &mut Stand) -> i32 {
                 mining_zeigen(stand);
                 continue;
             }
+            Some(Befehlsart::Update) => {
+                if aktualisieren() {
+                    NEUSTART.store(true, std::sync::atomic::Ordering::SeqCst);
+                    return GUT;
+                }
+                continue;
+            }
             Some(Befehlsart::MiningStop) => {
                 match myl_client::mining::beenden() {
                     Ok(true) => println!("  ⛏ Mining beendet."),
@@ -1402,6 +1410,8 @@ enum Befehlsart {
     Mining,
     /// Das Mining beenden.
     MiningStop,
+    /// Nach einer neueren Fassung sehen und sie nach Rueckfrage einspielen.
+    Update,
     Hilfe,
     Ende,
 }
@@ -1422,7 +1432,7 @@ struct Befehl {
 /// nennt irgendwann einen Befehl, den es nicht gibt, oder verschweigt
 /// einen, den es gibt, **und beides sieht erst der, der es
 /// ausprobiert.**
-const BEFEHLE: [Befehl; 24] = [
+const BEFEHLE: [Befehl; 25] = [
     Befehl {
         art: Befehlsart::Modell,
         namen: &["/model", "/modell"],
@@ -1542,6 +1552,13 @@ const BEFEHLE: [Befehl; 24] = [
         art: Befehlsart::MiningStop,
         namen: &["/mining stop"],
         was: "beendet das Mining",
+    },
+    // ⚑ **Das Update** (Auftrag des Projektinhabers, 2026-10-17): dieselbe
+    //   Pruefung wie im Fenster, das sie beim Start von selbst faehrt.
+    Befehl {
+        art: Befehlsart::Update,
+        namen: &["/update"],
+        was: "sieht auf GitHub nach einer neueren Fassung (VERSION.md); fragt, holt, baut, installiert und startet danach neu",
     },
     Befehl {
         art: Befehlsart::Hilfe,
@@ -1940,6 +1957,72 @@ fn einstellungen_zeigen(stand: &mut Stand) {
 
 /// **Die Seite des Minings**, ganzer Schirm wie `/settings`, danach zurueck
 /// unter das Logo.
+/// **Ob die Konsole nach dem Ende neu starten soll**, gesetzt von
+/// `/update` nach einem gelungenen Update. `main` liest es, nachdem die
+/// Sitzung aufgeraeumt hat, und startet das neu installierte Programm.
+pub static NEUSTART: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// **`/update`**: nachsehen, zeigen, fragen, einspielen. Gibt `true` zurueck,
+/// wenn der neue Stand installiert ist und die Konsole neu starten soll.
+///
+/// ⚑ **Erst die Frage, dann das Update** (Auftrag des Projektinhabers,
+/// 2026-10-17): Gezeigt werden die eigene Fassung, die auf GitHub und was
+/// sich geaendert hat; ein Nein laesst alles, wie es ist.
+fn aktualisieren() -> bool {
+    use myl_client::aktualisierung as akt;
+    println!("  Sieht auf GitHub nach …");
+    let s = akt::pruefen();
+    if !s.neuer {
+        match (&s.neueste, &s.grund) {
+            (_, Some(g)) => println!("  Nachsehen ging nicht: {g}. Es läuft Myelith {}.", s.eigene),
+            (Some(dort), None) => println!("  Myelith {} ist auf dem neuesten Stand (GitHub: {dort}).", s.eigene),
+            (None, None) => println!("  Myelith {}.", s.eigene),
+        }
+        println!();
+        return false;
+    }
+    println!(
+        "  Es gibt ein Update: Myelith {} läuft, auf GitHub steht {}.",
+        s.eigene,
+        s.neueste.as_deref().unwrap_or("?")
+    );
+    for e in &s.aenderungen {
+        println!();
+        println!("  {}", e.titel);
+        for zeile in e.text.lines() {
+            println!("    {zeile}");
+        }
+    }
+    println!();
+    if let Some(g) = &s.grund {
+        println!("  ⚠️  {g}");
+        println!("      {}", s.seite);
+        println!();
+        return false;
+    }
+    println!("  Das holt den neuen Stand, baut und installiert alles (einige Minuten)");
+    println!("  und startet die Konsole danach neu.");
+    if !crate::janein::fragen("Jetzt aktualisieren?", None, None).ja() {
+        println!("  Kein Update. Mit /update lässt es sich jederzeit nachholen.");
+        println!();
+        return false;
+    }
+    match akt::einspielen(&|zeile| println!("  │ {zeile}")) {
+        Ok(()) => {
+            println!();
+            println!("  Fertig. Die Konsole startet neu …");
+            true
+        }
+        Err(f) => {
+            println!();
+            println!("  ⚠️  Das Update ging nicht durch: {f}");
+            println!("      Der bisherige Stand läuft weiter.");
+            println!();
+            false
+        }
+    }
+}
+
 fn mining_zeigen(stand: &mut Stand) {
     let t = design::toene(stand.design);
     if let Some(sch) = stand.schirm {

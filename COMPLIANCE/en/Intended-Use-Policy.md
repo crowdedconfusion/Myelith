@@ -98,11 +98,10 @@ system (Art. 25 AI Act).
 |---|---|
 | Notice at start-up, to be actively acknowledged | Nobody uses Myelith without knowing that it is an AI and what it is not meant for |
 | Permanent AI disclosure in the interface | In the window, the empty input field reads "An AI answers here."; in the console, "AI" stands in the footer; every answer is recognisable as AI-generated |
-| Request filter | Requests clearly aimed at a prohibited practice are refused with a reference to this policy; the refusal is logged without plain text |
+| Request filter | Requests clearly aimed at a prohibited practice are refused with a reference to this policy |
 | Marking of the synthetic voice | Metadata and a watermark in every generated audio file |
 | Confirmation before actions | By default, the agent's writes, network access and commands are presented for approval before they run |
 | Emergency stop | In the window, it is closing the window: this ends any running agent action, including a command already started. In the console, the emergency stop (Ctrl-C or Esc) aborts it |
-| Action log | Every agent action is logged locally, without plain text, for 30 days |
 | No identification of persons when seeing | The vision model is instructed not to identify persons and not to attribute emotions or sensitive characteristics |
 
 The implementation status of each measure is given in the

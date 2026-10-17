@@ -8,8 +8,8 @@
 //!    `chat` meldet [`crate::Tuerfehler::Abgebrochen`] mit dem
 //!    Text bis dahin, damit die Agentenschleife endet und nichts verloren
 //!    geht;
-//! 2. wird jedes weitere Werkzeug verweigert und als `abgebrochen`
-//!    protokolliert.
+//! 2. wird jedes weitere Werkzeug verweigert ([`Notausfest`]); laeuft der
+//!    Debug-Log, steht der Notaus darin.
 //!
 //! ⚠️ **Was er nicht tut:** Ein Werkzeug, das gerade laeuft (etwa ein
 //! Befehl), laeuft zu Ende, hoechstens bis zu seiner Frist. Es mitten im
@@ -24,14 +24,14 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 static SCHALTER: AtomicBool = AtomicBool::new(false);
 
-/// **Loest den Notaus aus** und protokolliert es.
+/// **Loest den Notaus aus**; laeuft der Debug-Log, steht er darin.
 pub fn ausloesen(stelle: &str) {
     SCHALTER.store(true, Ordering::SeqCst);
-    crate::protokoll::ereignis("notaus", stelle, &[], "abgebrochen");
+    crate::debuglog::eintrag("Notaus", stelle);
 }
 
-/// **Nur der Schalter, ohne Protokoll**, fuer einen Signalbearbeiter: Dort
-/// darf nichts geschehen als ein atomares Schreiben.
+/// **Nur der Schalter**, fuer einen Signalbearbeiter: Dort darf nichts
+/// geschehen als ein atomares Schreiben.
 pub fn ausloesen_still() {
     SCHALTER.store(true, Ordering::SeqCst);
 }
@@ -50,3 +50,49 @@ pub fn ausgeloest() -> bool {
 pub fn schalter() -> &'static AtomicBool {
     &SCHALTER
 }
+
+/// **Ein Werkzeug, das nach dem Notaus nicht mehr laeuft.**
+///
+/// ⚑ **Es umhuellt, statt einzugreifen**: Das Werkzeug weiss nichts davon,
+/// und was es tut, bleibt, wie es war. Jedes Werkzeug der Ruestung haengt
+/// dahinter (`jedes_werkzeug_haengt_hinter_dem_notaus`).
+pub struct Notausfest {
+    pub inner: Box<dyn crate::ausfuehrung::Werkzeugausfuehrung>,
+}
+
+impl crate::ausfuehrung::Werkzeugausfuehrung for Notausfest {
+    fn name(&self) -> &str {
+        self.inner.name()
+    }
+
+    fn ausfuehren(&self, argumente: &serde_json::Value) -> Result<String, crate::ausfuehrung::Werkzeugfehler> {
+        // ⛔️ Nach dem Notaus laeuft kein Werkzeug mehr.
+        if ausgeloest() {
+            crate::debuglog::eintrag("Notaus", &format!("{} nicht ausgefuehrt", self.inner.name()));
+            return Err(crate::ausfuehrung::Werkzeugfehler {
+                grund: "Notaus: Der Mensch hat den Auftrag angehalten. Nichts wurde ausgefuehrt; \
+                        beende den Auftrag."
+                    .to_string(),
+            });
+        }
+        self.inner.ausfuehren(argumente)
+    }
+}
+
+#[cfg(test)]
+mod proben {
+    /// ⛔️ **Kein Werkzeug haengt am Notaus vorbei**, und jedes steht unter
+    /// Aufsicht des Informationsflusses (`crate::secure_flow`). Eine
+    /// Einhaengung daneben liefe nach dem Notaus weiter oder ungeprueft.
+    #[test]
+    fn jedes_werkzeug_haengt_hinter_dem_notaus() {
+        let ruestung = include_str!("ruestung.rs");
+        for (i, zeile) in ruestung.lines().enumerate() {
+            if zeile.contains(".einhaengen(") {
+                assert!(zeile.contains("notausfest(bewacht"), "ruestung.rs:{}: {zeile}", i + 1);
+            }
+        }
+        assert!(ruestung.matches("notausfest(bewacht").count() >= 11);
+    }
+}
+

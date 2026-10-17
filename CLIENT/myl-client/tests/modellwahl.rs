@@ -43,6 +43,17 @@ fn mit(ordner: &std::path::Path, gewaehlt: &str) -> Einstellungen {
 /// und es war das schaerfere: `1` vor `4`. Das Modell ist entfernt, und
 /// eine Probe gegen ein Modell, das es nicht gibt, prueft nichts. Die
 /// verbliebene Reihe traegt denselben Fall, nur eine Stelle weiter.
+/// ⚑ **Auch ein Artefakt ohne Katalogeintrag heisst nach dem Schema**
+/// (2026-10-17): In der Wahl stand bis CLIENT v0.168.0 der Ordnername.
+#[test]
+fn ein_artefakt_ohne_katalog_heisst_nach_dem_schema() {
+    let ordner = artefakte("schema", &["myelith-27b-ternaer"]);
+    let e = mit(&ordner, "myelith-27b-ternaer");
+    let namen: Vec<String> = liste(&e).into_iter().filter(|m| !m.ueber_netz).map(|m| m.name).collect();
+    assert_eq!(namen, vec!["Myelith 27B TERNÄR"]);
+    let _ = std::fs::remove_dir_all(&ordner);
+}
+
 #[test]
 fn die_wahl_steigt_an() {
     let ordner = artefakte(

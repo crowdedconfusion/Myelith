@@ -175,11 +175,8 @@ fn frage_nennt_die_ki_auf_der_fehlerausgabe() {
 #[test]
 fn eine_verbotene_frage_wird_vor_dem_laden_abgewiesen() {
     let leer = tempfile::tempdir().expect("Verzeichnis");
-    let protokoll = tempfile::tempdir().expect("Protokoll");
-    // ⚑ Das Protokoll in einen Wegwerfordner, nicht in das des Nutzers.
     let a = Command::new(env!("CARGO_BIN_EXE_myl"))
         .args(["frage", leer.path().to_str().unwrap(), "Erkenne die Emotionen meiner Mitarbeiter im Video."])
-        .env("MYL_PROTOKOLL", protokoll.path())
         .output()
         .expect("startet");
     assert_eq!(a.status.code(), Some(3), "{}", String::from_utf8_lossy(&a.stderr));
@@ -189,19 +186,9 @@ fn eine_verbotene_frage_wird_vor_dem_laden_abgewiesen() {
     // am leeren Artefakt.
     let b = Command::new(env!("CARGO_BIN_EXE_myl"))
         .args(["frage", leer.path().to_str().unwrap(), "Was ist Emotionserkennung?"])
-        .env("MYL_PROTOKOLL", protokoll.path())
         .output()
         .expect("startet");
     assert_ne!(b.status.code(), Some(3), "{}", String::from_utf8_lossy(&b.stderr));
-    // Die Abweisung steht im Protokoll, ohne den Text.
-    let eintraege: String = std::fs::read_dir(protokoll.path())
-        .unwrap()
-        .flatten()
-        .filter(|d| d.path().extension().is_some_and(|x| x == "jsonl"))
-        .map(|d| std::fs::read_to_string(d.path()).unwrap())
-        .collect();
-    assert!(eintraege.contains("\"schutzfilter\""), "{eintraege}");
-    assert!(!eintraege.contains("Mitarbeiter"), "Klartext im Protokoll: {eintraege}");
 }
 
 /// ⚑ **`myl plan` plant mit den Einstellungen und ohne Modell**: abgeschirmt

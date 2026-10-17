@@ -118,7 +118,8 @@ pub fn eingabe_kasten(
 /// Eine Zeile des Kaestchens: der Text mittig, der Grund ueber die ganze
 /// Breite in einem Ton.
 fn kastenzeile(text: &str, breite: usize, einzug: usize, r: &Rollen, ton: crossterm::style::Color) -> String {
-    use crossterm::style::{Attribute, ResetColor, SetAttribute, SetBackgroundColor, SetForegroundColor};
+    use crossterm::style::{Attribute};
+    use crate::ansi::{ResetColor, SetAttribute, SetBackgroundColor, SetForegroundColor};
     let zeichen = text.chars().count();
     let links = breite.saturating_sub(zeichen) / 2;
     let rechts = breite.saturating_sub(zeichen + links);
@@ -253,7 +254,8 @@ fn innen_setzen(text: &str, r: &Rollen) -> String {
 
 /// `**fett**` wird fett, die Sterne gehen; ein einzelnes `**` bleibt.
 fn fett_setzen(text: &str) -> String {
-    use crossterm::style::{Attribute, SetAttribute};
+    use crossterm::style::{Attribute};
+    use crate::ansi::{SetAttribute};
     let teile: Vec<&str> = text.split("**").collect();
     if teile.len() < 3 {
         return text.to_string();
@@ -390,7 +392,8 @@ mod tests {
     /// Mischung aus dem Hintergrund des Terminals und dem der Rolle.
     #[test]
     fn das_kaestchen_ist_ein_rechteck_in_einem_ton() {
-        use crossterm::style::{Color, SetBackgroundColor};
+        use crossterm::style::{Color};
+        use crate::ansi::{SetBackgroundColor};
         let r = crate::design::rollen(Konsolendesign::Myelith);
         let grund = (20, 20, 20);
         let kasten = eingabe_kasten("eins zwei drei vier fuenf sechs sieben acht", 24, 3, &r, grund, true);

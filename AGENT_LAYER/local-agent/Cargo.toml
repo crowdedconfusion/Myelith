@@ -1,9 +1,9 @@
 [package]
 name = "myl-local-agent"
-version = "0.38.0"
+version = "0.40.0"
 edition = "2021"
 rust-version = "1.85"
-description = "Der oertliche Agent: Schleife, Tuerklient, Werkzeuge mit Einhaengegrenze, Werkzeugkisten, Skills, Loop, Aktionsprotokoll, Notaus. Von der Kette isoliert, nie Teil einer pruefbaren Netzaktion."
+description = "Der oertliche Agent: Schleife, Tuerklient, Werkzeuge mit Einhaengegrenze, Werkzeugkisten, Skills, Loop, Notaus. Von der Kette isoliert, nie Teil einer pruefbaren Netzaktion."
 license = "LicenseRef-PolyForm-Shield-1.0.0"
 publish = false
 
@@ -32,9 +32,6 @@ toml = "0.8"
 # Die Sinneskiste haengt von nichts ab; die Werkzeuge reichen sie weiter
 # (sehen, hoeren, Dateiarten, Prozesse mit Frist).
 myl-senses = { path = "../../CLIENT/myl-senses" }
-# ⚑ **Fuer die Fingerabdruecke im Aktionsprotokoll.** `sha2` 0.10 liegt
-# ohnehin im Vorrat, denn die Runtime zieht es.
-sha2 = "0.10"
 
 [target.'cfg(unix)'.dependencies]
 # Nur fuer `kill(pid, 0)`: lebt der Prozess, der einen Loop haelt?

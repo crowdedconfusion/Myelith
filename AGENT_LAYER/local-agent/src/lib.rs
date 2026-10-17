@@ -57,7 +57,7 @@
 //! | [`vorhaben`] | der Loop: ein Ziel über viele Runden |
 //! | [`skills`], [`verlauf`], [`gespraech`] | Skills (`AGENT_LAYER/local-skills/`), Mitschnitt, Verdichtung |
 //! | [`gedaechtnis`], [`schlaf`] | das Gedaechtnis eines Ordners, und der Schlaf, der es ordnet |
-//! | [`systemprompt`], [`protokoll`], [`notaus`] | Regeln, Aktionsprotokoll, Notaus |
+//! | [`systemprompt`], [`notaus`] | Regeln, Notaus |
 //! | [`secure_flow`] | wohin Daten fliessen duerfen: Labels, Vertraege, Pruefung an der Werkzeuggrenze |
 //! | [`agentenwahl`] | was der Nutzer dem Agenten einstellt |
 //! | [`ort`], [`textstrom`] | wo Myelith ablegt; Token zu Text, getrennt nach Denken und Antwort |
@@ -94,8 +94,8 @@ pub mod lauf;
 pub mod netzwerkzeuge;
 pub mod notaus;
 pub mod ort;
-pub mod protokoll;
 pub mod ruestung;
+pub mod schale;
 pub mod schlaf;
 pub mod sinneswerkzeuge;
 pub mod skills;

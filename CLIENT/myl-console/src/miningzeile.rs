@@ -157,13 +157,13 @@ pub fn zeichnen_ohne_wagen(sch: &Schirm, versatz: u16, bild: myl_client::einstel
     let _ = write!(aus, "{}{}", sch.zeile(Schirm::LADEZEILE + versatz), " ".repeat(luft));
     for (i, c) in kopf.chars().enumerate() {
         let welle = seit + crate::anzeige::WELLE * i as u32;
-        let _ = write!(aus, "{}{c}", crossterm::style::SetForegroundColor(design::ladefarbe(bild, welle)));
+        let _ = write!(aus, "{}{c}", crate::ansi::SetForegroundColor(design::ladefarbe(bild, welle)));
     }
     let _ = write!(
         aus,
         "{}{schweif}{}",
-        crossterm::style::SetForegroundColor(design::toene(bild).beiwerk),
-        crossterm::style::ResetColor
+        crate::ansi::SetForegroundColor(design::toene(bild).beiwerk),
+        crate::ansi::ResetColor
     );
     let _ = aus.flush();
     true

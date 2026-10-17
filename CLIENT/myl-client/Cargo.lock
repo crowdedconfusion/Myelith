@@ -683,7 +683,7 @@ dependencies = [
 
 [[package]]
 name = "myl-client"
-version = "0.104.0"
+version = "0.106.0"
 dependencies = [
  "integer-llm-runtime",
  "libc",
@@ -709,7 +709,7 @@ dependencies = [
 
 [[package]]
 name = "myl-local-agent"
-version = "0.38.0"
+version = "0.40.0"
 dependencies = [
  "libc",
  "myl-agent",
@@ -717,7 +717,6 @@ dependencies = [
  "myl-types",
  "serde",
  "serde_json",
- "sha2",
  "toml",
 ]
 
@@ -735,11 +734,11 @@ dependencies = [
 
 [[package]]
 name = "myl-senses"
-version = "0.13.1"
+version = "0.13.2"
 
 [[package]]
 name = "myl-store"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "borsh",
  "myl-types",

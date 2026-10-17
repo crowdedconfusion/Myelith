@@ -666,18 +666,38 @@
       </div>
     </div>
 
+    <!-- ⚑ **Die Frage nach dem Update** (Auftrag des Projektinhabers,
+         2026-10-17): beim Start, wenn GitHub eine hoehere Fassung nennt.
+         Fassungen und Aenderungen stehen da, eingespielt wird erst nach
+         einem Klick; danach startet das Fenster neu. -->
+    <div id="updatefrage" class="warnung" hidden role="dialog" aria-modal="true"
+         aria-labelledby="updatetitel">
+      <div class="warnungkasten">
+        <h2 id="updatetitel" class="warnungachtung" data-t="akt.frage.titel">Update verfügbar</h2>
+        <p id="updatestand" class="warnungkern"></p>
+        <div id="updateaenderungen" class="updateaenderungen"></div>
+        <p id="updatekern" class="warnungkern"></p>
+        <pre id="updatezeilen" aria-live="polite" hidden></pre>
+        <p id="updatefehler" class="warnungkern" role="alert" hidden></p>
+        <div class="autoknoepfe">
+          <button type="button" id="update-nein" data-t="akt.frage.nein">Später</button>
+          <button type="button" id="update-ja" data-t="akt.frage.ja">Jetzt aktualisieren</button>
+        </div>
+      </div>
+    </div>
+
     <!-- ⚑ **Die Frage nach dem Einhaengepfad** (Wunsch des
          Projektinhabers, 2026-10-17): bei jedem neuen Agentengespraech,
          beibehalten oder aendern. -->
     <div id="pfadfrage" class="warnung" hidden role="dialog" aria-modal="true"
          aria-labelledby="pfadfragetitel">
       <div class="warnungkasten">
-        <h2 id="pfadfragetitel" class="warnungachtung" data-t="pfadfrage.titel">Einhängepfad für dieses Gespräch</h2>
+        <h2 id="pfadfragetitel" class="warnungachtung" data-t="pfadfrage.titel">Einhängepfad für diesen Prozess</h2>
         <p id="pfadfragesatz" class="warnungkern"></p>
         <p id="pfadfragepfad" class="pfad"></p>
         <div class="autoknoepfe">
-          <button type="button" id="pfadfrage-aendern" data-t="pfadfrage.aendern">Ändern …</button>
-          <button type="button" id="pfadfrage-behalten" data-t="pfadfrage.behalten">Beibehalten</button>
+          <button type="button" id="pfadfrage-aendern" data-t="pfadfrage.aendern">Nein, anderen wählen …</button>
+          <button type="button" id="pfadfrage-behalten" data-t="pfadfrage.behalten">Ja</button>
         </div>
       </div>
     </div>
@@ -912,12 +932,6 @@
       </section>
 
       <table id="felder-agent"><tbody></tbody></table>
-
-      <!-- ⚑ **Hier stand das Aktionsprotokoll** bis myl-oberflaeche 0.80.0.
-           Es ist entfallen (Wunsch des Projektinhabers, 2026-10-17): Was
-           der Agent tut, steht im offenen Gespraech, und alles im Wortlaut
-           im Debug-Log. Geschrieben wird es weiter; lesen laesst es sich
-           mit `myl protokoll`. -->
 
       <!-- ⚑ **Die Diagnose steht ganz unten** (Wunsch des Projektinhabers,
            2026-10-17): Den Debug-Log schaltet man selten, und wer ihn

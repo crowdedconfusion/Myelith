@@ -1,6 +1,6 @@
 # agent-layer
 
-> **Version:** 0.47.0 (`myl-agent` 0.7.1, `myl-local-agent` 0.38.0)
+> **Version:** 0.49.0 (`myl-agent` 0.7.1, `myl-local-agent` 0.40.0)
 > **Datum:** 2026-10-17
 > **Status:** Manifeste, Herkunftsstufe, Registratur, der
 > **Session-Kontrakt** mit Durchsetzung im Ledger, der **Plan** und seit
@@ -41,7 +41,7 @@ Nutzers und ist nie Teil einer prüfbaren Netzaktion.
 | Ordner | Seite | Was darin liegt |
 |---|---|---|
 | `myl-agent/` | Netz | Manifeste, Herkunftsstufe, Registratur, Session-Kontrakt, Plan, Segmentkette |
-| `local-agent/` | Ort | der ganze örtliche Agent als eine Kiste (`myl-local-agent`): Schleife, Türklient, Risikoklassen, das Merkmal `Modellweg`, Werkzeuge mit Einhängegrenze, das Laden der Kisten, Skills, Loop, Aktionsprotokoll, Notaus, Systemprompt |
+| `local-agent/` | Ort | der ganze örtliche Agent als eine Kiste (`myl-local-agent`): Schleife, Türklient, Risikoklassen, das Merkmal `Modellweg`, Werkzeuge mit Einhängegrenze, das Laden der Kisten, Skills, Loop, Notaus, Systemprompt |
 | `local-toolkits/` | Ort | die mitgelieferten Werkzeugkisten als Manifeste und Skripte (`Base`, `Advanced`) |
 | `local-skills/` | Ort | die mitgelieferten Skills und die Vorlage |
 
@@ -68,6 +68,58 @@ umbenannt, weil er in jedem `use` steht.
 - `src/kette.rs` — dass er es auch so getan hat, und wann er aufhört.
 
 ## Changelog
+
+### v0.49.0 – 2026-10-17 (das Aktionsprotokoll entfällt; der Notaus bleibt eine eigene Hülle; `myl-local-agent` 0.40.0)
+
+Festlegung des Projektinhabers: Das Aktionsprotokoll entfällt. Was der
+Agent tut, steht im Verlauf von Konsole und Fenster, und auf Wunsch alles im
+Wortlaut im Debug-Log. Nach dem EU AI Act ist eine Protokollierung nur für
+Hochrisiko-Systeme vorgeschrieben (Art. 12, 19, 26), und Myelith ist keines.
+
+- Das Modul `protokoll` ist entfernt, samt der Abhängigkeit `sha2`.
+- ⛔️ **Die Sperre nach dem Notaus stand in der Protokollhülle.** Sie ist
+  jetzt eine eigene Hülle, `notaus::Notausfest`, um jedes Werkzeug der
+  Rüstung; die Probe `jedes_werkzeug_haengt_hinter_dem_notaus` hält fest,
+  dass keines daran vorbei eingehängt wird und jedes unter Aufsicht des
+  Informationsflusses steht. Ohne diese Hülle liefe nach dem Notaus jedes
+  Werkzeug weiter.
+- Fassung des Systemprompts und Notaus stehen im Debug-Log, wenn er läuft.
+- Die Absage durch den Menschen (`ruestung::ABSAGE`) zieht in die Rüstung.
+
+### v0.48.0 – 2026-10-17 (der örtliche Agent unter Windows: die Shell wird gesucht, das Herkunftsbuch gleicht Schreibweisen an; Fund 558; `myl-local-agent` 0.39.0)
+
+Gefunden mit den Testprogrammen für `x86_64-pc-windows-gnu` unter Wine. Die
+CI fuhr diese Kiste unter Windows bis hierher nicht; jetzt im Job „Klient und
+Agent (windows-latest)“.
+
+- ⛔️ **Fund 558: Das Herkunftsbuch ging unter Windows an einer anderen
+  Schreibweise vorbei.** Eingetragen wurde `daten/notiz.md`; gelesen als
+  `daten\notiz.md` oder `Daten/Notiz.md` (NTFS unterscheidet Groß und
+  Klein nicht) war es eine andere Zeichenkette, und fremder Inhalt kam als
+  vertraut herein. Ebenso ein Projekt-Skill, dessen Ordner Windows mit
+  Rückstrich nennt: Er stand trotz Eintrag als vertrauter Hinweis im
+  Auftrag. ⚑ `pfadschluessel` gleicht jetzt in die sichere Richtung an:
+  Rückstrich wird `/` auf jedem System, doppelte Striche fallen weg, unter
+  Windows klein geschrieben. Zwei Dateien können so denselben Schlüssel
+  bekommen; dann gilt eine zu viel als fremd, nie eine zu wenig.
+- ⚑ **Die Shell wird gesucht** (`schale`, neu): `run_command`, die
+  Werkzeuge aus Manifesten und der Abnahmebefehl eines Loops riefen fest
+  `sh`. Unter Windows liegt `sh` nicht im PATH; Git for Windows bringt sie
+  mit, legt in der Vorgabe aber nur `git.exe` dorthin. Gesucht wird im PATH,
+  neben jedem `git.exe` im PATH (`..\bin\`, `..\usr\bin\`) und an den
+  Orten, an die Git sich installiert; ohne Fund sagt die Meldung, was fehlt.
+  Unter Unix bleibt es bei `sh`. Manifeste bleiben Shell-Skripte. Vier
+  Proben, auf jedem System mit einem nachgestellten Git-Ordner.
+- **Vorschläge für einen ähnlichen Dateinamen** kamen unter Windows mit
+  Rückstrich (`daten\zugang.md`); jetzt mit `/` wie jeder Pfad zum Modell.
+- **Proben:** Die secure-flow-Proben verlangen jetzt, dass das fremde
+  Werkzeug wirklich lief. Mit `let _ =` geschluckt, sah eine fehlende Shell
+  unter Windows aus wie eine Lücke im Fluss.
+- ⚠️ Unter Wine weiter rot, weil dort weder Git noch `curl` liegen: die
+  Proben mit `run_command`, Manifesten und Web-Lesen. Auf dem Windows-Läufer
+  der CI sind beide da.
+- Belege: `cargo test` und Clippy grün unter macOS; unter Wine 309 der 316
+  Bibliotheksproben grün, die übrigen sieben brauchen `sh`.
 
 ### v0.47.0 – 2026-10-17 (Schritte je Auftrag ohne Grenze, dafür eine Loop-Erkennung; `myl-local-agent` 0.38.0)
 

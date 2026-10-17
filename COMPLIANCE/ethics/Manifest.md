@@ -367,14 +367,14 @@ vorbei. **Die Zusage lautet: Der ausgelieferte Assistent ist so eingestellt
 und so geprüft.** Sie lautet nicht, er könne nicht anders.
 
 **Selbstbindung:** Die Regeln werden nicht stillschweigend geändert. Der Text
-ist über eine Prüfsumme gebunden, ohne die kein Lauf beginnt, und jeder Lauf
-hält fest, unter welcher Fassung er stand. Ob das Modell die Regeln befolgt,
+ist über eine Prüfsumme gebunden, ohne die kein Lauf beginnt, und mit dem
+Debug-Log hält jeder Lauf fest, unter welcher Fassung er stand. Ob das Modell die Regeln befolgt,
 wird an benannten Prüffragen gemessen, und zwar in beide Richtungen: Eine
 Regel, die auch die erlaubte Wissensfrage abweist, ist ebenso ein Fehler wie
 eine, die die Anleitung durchlässt.
 
 *Mechanismus: fest vorgegebener, geprüfter Systemprompt im Client
-(`COMPLIANCE/systemprompt/`), Fassung je Lauf im Aktionsprotokoll, Prüffragen.
+(`COMPLIANCE/systemprompt/`), Fassung je Lauf im Debug-Log, Prüffragen.
 Kategorie: Betreiberpflicht im Client; nicht protokoll-durchsetzbar.*
 
 ---

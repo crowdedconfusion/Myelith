@@ -1,6 +1,6 @@
 # STORAGE — die Rolle Store und die Verfügbarkeitsschicht
 
-> **Version:** 0.6.0
+> **Version:** 0.6.1
 > **Datum:** 2026-10-17
 > **Status:** Gegenstandsformat, **Verfügbarkeitsnachweis** und
 > **Speicherentgelt** stehen (`myl-store` v0.6.0, 29 Tests; Format und Stichproben-Ableitung liegen in `myl-types`). Sechs der
@@ -125,6 +125,20 @@ Mindestreplikation, die Bewertung einer Quittung und der Abruf.
 Changelog, und die Prüfung, die Kopfversion und Changelog vergleicht,
 übersprang es still (Fund 354). Die Einträge sind aus den
 Versionssprüngen der Kiste und dem Planungsverlauf zusammengestellt.
+
+### v0.6.1 (2026-10-17): Die Proben der Speicherorte laufen unter Windows
+
+- 📌 **Zwei Proben fielen unter Windows**, gefunden unter Wine mit den
+  Testprogrammen für `x86_64-pc-windows-gnu`: Sie legten Orte mit
+  Unix-Pfaden an (`/Volumes/Platte`, `/x`), und unter Windows ist ein Pfad
+  ohne Laufwerk nicht absolut. Die Prüfung im Code war richtig und wies sie
+  ab; falsch waren die Proben. Sie nehmen jetzt einen absoluten Pfad dieses
+  Systems (`abs`, in TOML in einfachen Anführungszeichen).
+- **Neue Probe nur unter Windows:** `ein_laufwerkspfad_kommt_heil_zurueck`.
+  Ein Pfad wie `D:\Users\Netz\Myelith` kommt durch Schreiben und Lesen
+  heil zurück; geschrieben wird mit `toml` und nicht mit `format!`, sonst
+  wäre `\U` ein Fluchtzeichen.
+- Belegt: 29 Proben unter macOS, 30 unter Windows (Wine) grün.
 
 ### v0.6.0 (2026-10-17): Speicherorte und Kapazitätszusage (`orte`)
 

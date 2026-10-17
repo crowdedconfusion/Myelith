@@ -324,11 +324,10 @@ const TEXTE = {
     "speicher.voll": (was) => `Das ${was} ließ sich nicht merken; der Speicher des Fensters ist zu.`,
     "reichweite.kein": "kein Verzeichnis eingehängt",
     "reichweite.hinweis": "Ohne Arbeitsordner hat der Agent keine Werkzeuge. Ein Klick hier wählt einen.",
-    "pfadfrage.titel": "Einhängepfad für dieses Gespräch",
-    "pfadfrage.satz": "In diesem Ordner arbeitet der Agent. Beibehalten oder einen anderen wählen?",
-    "pfadfrage.ohne": "Es ist kein Ordner eingehängt, und ohne ihn hat der Agent keine Dateiwerkzeuge. Einen wählen?",
-    "pfadfrage.behalten": "Beibehalten",
-    "pfadfrage.aendern": "Ändern …",
+    "pfadfrage.titel": "Einhängepfad für diesen Prozess",
+    "pfadfrage.satz": "In diesem Ordner arbeitet der Agent. Ist er richtig?",
+    "pfadfrage.behalten": "Ja",
+    "pfadfrage.aendern": "Nein, anderen wählen …",
     "reichweite.gesperrt": ", Werkzeuge durch die Betriebsart gesperrt",
     "reichweite.pfadmarke": "Einhängepfad:",
     "reichweite.wechseln": "Verzeichnis wechseln",
@@ -452,12 +451,17 @@ const TEXTE = {
     "akt.einspielen": "Updates installieren",
     "akt.sieht": "sucht …",
     "akt.laeuft": "installiert …",
-    "akt.aktuell": (f) => `Fassung ${f}. Der Klon ist auf dem neuesten Stand.`,
-    "akt.hinterher": (f, n) => `Fassung ${f}. ${n === 1 ? "Eine Änderung liegt" : `${n} Änderungen liegen`} bereit.`,
-    "akt.neueste": (m, wann) => ` Neueste Freigabe: ${m}${wann ? ` vom ${wann.slice(0, 10)}` : ""}.`,
-    "akt.kein": (f) => `Fassung ${f}.`,
+    "akt.aktuell": (f) => `Myelith ${f} ist auf dem neuesten Stand.`,
+    "akt.neuer": (f, d) => `Myelith ${f} läuft, auf GitHub steht ${d}.`,
+    "akt.kein": (f) => `Myelith ${f}.`,
     "akt.fehler": (g) => `Nachsehen ging nicht: ${g}`,
-    "akt.fertig": "Eingespielt. Der neue Stand läuft ab dem nächsten Start.",
+    "akt.fertig": "Eingespielt. Myelith startet neu …",
+    "akt.frage.titel": "Update verfügbar",
+    "akt.frage.kern": "Das holt den neuen Stand, baut und installiert alles (einige Minuten) und startet Myelith danach neu. Was gerade läuft, wird dabei beendet.",
+    "akt.frage.ja": "Jetzt aktualisieren",
+    "akt.frage.nein": "Später",
+    "akt.frage.zu": "Schließen",
+    "akt.frage.fehler": (f) => `Das Update ging nicht durch: ${f}. Der bisherige Stand läuft weiter.`,
     "lauf.agent": "der Agent fährt",
     "lauf.antwort": "das Modell antwortet",
     "lauf.nichtgeladen": "das Modell ist nicht geladen",
@@ -666,11 +670,10 @@ const TEXTE = {
       `The ${was.toLowerCase()} could not be remembered; the window's storage is closed.`,
     "reichweite.kein": "no folder mounted",
     "reichweite.hinweis": "Without a working folder the agent has no tools. Click here to pick one.",
-    "pfadfrage.titel": "Mount path for this conversation",
-    "pfadfrage.satz": "The agent works in this folder. Keep it or pick another?",
-    "pfadfrage.ohne": "No folder is mounted, and without one the agent has no file tools. Pick one?",
-    "pfadfrage.behalten": "Keep",
-    "pfadfrage.aendern": "Change …",
+    "pfadfrage.titel": "Mount path for this process",
+    "pfadfrage.satz": "The agent works in this folder. Is it the right one?",
+    "pfadfrage.behalten": "Yes",
+    "pfadfrage.aendern": "No, pick another …",
     "reichweite.gesperrt": ", tools locked by the operating mode",
     "reichweite.pfadmarke": "Mount path:",
     "reichweite.wechseln": "Change folder",
@@ -794,12 +797,17 @@ const TEXTE = {
     "akt.einspielen": "Install updates",
     "akt.sieht": "checking …",
     "akt.laeuft": "installing …",
-    "akt.aktuell": (f) => `Version ${f}. The clone is up to date.`,
-    "akt.hinterher": (f, n) => `Version ${f}. ${n === 1 ? "One change is" : `${n} changes are`} ready.`,
-    "akt.neueste": (m, wann) => ` Latest release: ${m}${wann ? ` from ${wann.slice(0, 10)}` : ""}.`,
-    "akt.kein": (f) => `Version ${f}.`,
+    "akt.aktuell": (f) => `Myelith ${f} is up to date.`,
+    "akt.neuer": (f, d) => `Myelith ${f} is running, GitHub has ${d}.`,
+    "akt.kein": (f) => `Myelith ${f}.`,
     "akt.fehler": (g) => `Checking failed: ${g}`,
-    "akt.fertig": "Installed. The new version runs from the next start.",
+    "akt.fertig": "Installed. Myelith restarts …",
+    "akt.frage.titel": "Update available",
+    "akt.frage.kern": "This fetches the new version, builds and installs everything (a few minutes) and restarts Myelith afterwards. Whatever is running will be stopped.",
+    "akt.frage.ja": "Update now",
+    "akt.frage.nein": "Later",
+    "akt.frage.zu": "Close",
+    "akt.frage.fehler": (f) => `The update did not go through: ${f}. The current version keeps running.`,
     "lauf.agent": "the agent is running",
     "lauf.antwort": "the model is answering",
     "lauf.nichtgeladen": "the model is not loaded",
@@ -1269,9 +1277,11 @@ function nach_oben(g) {
 /// `agent.wurzel`. Das Feld steht dort nicht mehr, und gefragt wird jetzt
 /// jedes Mal und nicht nur, wenn nichts gesetzt ist.
 ///
-/// ⚑ **„Ändern“ setzt den Vorschlag vorher.** Bricht man die Ordnerwahl ab,
-/// gilt er; ein abgebrochener Dialog soll nicht still auf die Vorgabe
-/// zurueckfallen.
+/// ⚑ **Gefragt wird, ob der Pfad richtig ist** (Festlegung des
+/// Projektinhabers, 2026-10-17): „Ja“ behaelt ihn, „Nein“ oeffnet die
+/// Ordnerwahl des Systems (Finder, Explorer). Ist keiner gewaehlt, oeffnet
+/// sie sich gleich. Bricht man sie ab, gilt der Vorschlag; ein abgebrochener
+/// Dialog soll nicht still auf die Vorgabe zurueckfallen.
 async function pfad_fragen(g, vorschlag) {
   if (!g || g.modus !== "agent") return;
   let r;
@@ -1280,8 +1290,18 @@ async function pfad_fragen(g, vorschlag) {
   } catch {
     r = { wurzel: null };
   }
-  $("pfadfragepfad").textContent = r.wurzel || t("reichweite.kein");
-  $("pfadfragesatz").textContent = r.wurzel ? t("pfadfrage.satz") : t("pfadfrage.ohne");
+  if (vorschlag) {
+    g.wurzel = vorschlag;
+    sichern();
+  }
+  // ⚑ **Ohne Pfad gleich die Ordnerwahl**: Eine Frage, ob „keiner“ richtig
+  //   ist, haette nur eine Antwort.
+  if (!r.wurzel) {
+    if (offen === g) await verzeichnis_wechseln();
+    return;
+  }
+  $("pfadfragepfad").textContent = r.wurzel;
+  $("pfadfragesatz").textContent = t("pfadfrage.satz");
   const kasten = $("pfadfrage");
   kasten.hidden = false;
   $("pfadfrage-behalten").focus();
@@ -1299,10 +1319,6 @@ async function pfad_fragen(g, vorschlag) {
       if (e.key === "Escape") ende(false);
     };
   });
-  if (vorschlag) {
-    g.wurzel = vorschlag;
-    sichern();
-  }
   if (aendern && offen === g) {
     await verzeichnis_wechseln();
   } else {
@@ -5474,16 +5490,16 @@ function aktualisierung_zeichnen() {
   }
   const s = aktstand;
   let text;
-  if (s.grund) {
+  if (s.neuer) {
+    text = t("akt.neuer", s.eigene, s.neueste);
+    if (s.grund) text += ` ${s.grund}`;
+  } else if (s.grund) {
     text = t("akt.fehler", s.grund);
-  } else if (s.hinterher === null || s.hinterher === undefined) {
-    text = t("akt.kein", s.eigene);
-  } else if (s.hinterher > 0) {
-    text = t("akt.hinterher", s.eigene, s.hinterher);
-  } else {
+  } else if (s.neueste) {
     text = t("akt.aktuell", s.eigene);
+  } else {
+    text = t("akt.kein", s.eigene);
   }
-  if (s.neueste) text += t("akt.neueste", s.neueste, s.stand || "");
   zeile.textContent = text;
 
   // ⚑ **Der Knopf ist da, wenn es etwas zu tun gibt, und sonst nicht**
@@ -5494,7 +5510,7 @@ function aktualisierung_zeichnen() {
   // steckte in seinem Zeigetext, wo ihn nur findet, wer mit der Maus
   // darauf wartet. **Die Zeile darueber beantwortet dieselbe Frage mit
   // einem Satz**, und den liest man, ohne zu zielen.
-  const lohnt = Boolean(s.quelle) && (s.hinterher || 0) > 0;
+  const lohnt = Boolean(s.quelle) && Boolean(s.neuer);
   knopf.hidden = !lohnt;
   knopf.disabled = !lohnt;
 }
@@ -5507,27 +5523,37 @@ $("akt-pruefen").addEventListener("click", async () => {
   try {
     aktstand = await invoke("aktualisierung");
   } catch (f) {
-    aktstand = { eigene: "", grund: String(f), quelle: null, hinterher: null, neueste: null };
+    aktstand = { eigene: "", grund: String(f), quelle: null, neuer: false, neueste: null, aenderungen: [] };
   }
   k.disabled = false;
   k.textContent = vorher;
   aktualisierung_zeichnen();
 });
 
+/// **Spielt ein und startet danach neu.** Gerufen vom Knopf auf der
+/// Einstellungsseite (der Klick ist die Bestaetigung) und vom Dialog beim
+/// Start. Wirft den Fehler weiter, damit der Aufrufer ihn zeigt.
+async function aktualisierung_einspielen() {
+  const ausgabe = $("aktzeilen");
+  ausgabe.hidden = false;
+  ausgabe.textContent = "";
+  $("updatezeilen").textContent = "";
+  await invoke("aktualisieren");
+  melden(t("akt.fertig"), "einstellungen");
+  // ⚑ **Neu gestartet wird ohne zweite Frage**: Wer das Update bestaetigt
+  //   hat, hat den Neustart mit bestaetigt; der Dialog hat ihn genannt.
+  await invoke("neu_starten");
+}
+
 $("akt-einspielen").addEventListener("click", async () => {
   const k = $("akt-einspielen");
   const vorher = k.textContent;
-  const ausgabe = $("aktzeilen");
   k.disabled = true;
   k.textContent = t("akt.laeuft");
-  ausgabe.hidden = false;
-  ausgabe.textContent = "";
   try {
-    await invoke("aktualisieren");
-    melden(t("akt.fertig"), "einstellungen");
-    aktstand = await invoke("aktualisierung");
+    await aktualisierung_einspielen();
   } catch (f) {
-    melden(t("fehler", f));
+    melden(t("akt.frage.fehler", f));
   }
   k.textContent = vorher;
   aktualisierung_zeichnen();
@@ -5535,12 +5561,86 @@ $("akt-einspielen").addEventListener("click", async () => {
 
 // ⚑ **Die Zeilen laufen ein, waehrend gebaut wird.** Ein Fortschritt,
 // den niemand sieht, ist von einem Stillstand nicht zu unterscheiden.
+// Sie gehen an beide Stellen: die Einstellungsseite und den Dialog.
 horchen("aktualisierung-zeile", (zeile) => {
-  const a = $("aktzeilen");
-  a.hidden = false;
-  a.textContent += `${zeile}\n`;
-  a.scrollTop = a.scrollHeight;
+  for (const id of ["aktzeilen", "updatezeilen"]) {
+    const a = $(id);
+    a.hidden = false;
+    a.textContent += `${zeile}\n`;
+    a.scrollTop = a.scrollHeight;
+  }
 });
+
+/// **Beim Start nachsehen und, wenn es ein Update gibt, fragen.**
+///
+/// ⚑ **Auftrag des Projektinhabers, 2026-10-17:** Die Pruefung der
+/// Einstellungsseite laeuft beim Start von selbst; vor dem Update wird
+/// gefragt. 📌 **Das dreht eine Festlegung vom 2026-09-10 um**, nach der
+/// das Fenster nie von selbst nachsah: Es fragt jetzt bei jedem Start einmal
+/// GitHub (eine Datei, ohne Anmeldung). Ohne Netz oder ohne Klon erscheint
+/// nichts; die Zeile auf der Einstellungsseite sagt dann, warum.
+///
+/// ⚑ **Der Start wartet nicht darauf**: Die Frage erscheint, wenn GitHub
+/// geantwortet hat.
+async function aktualisierung_beim_start() {
+  try {
+    aktstand = await invoke("aktualisierung");
+  } catch {
+    return;
+  }
+  aktualisierung_zeichnen();
+  if (!aktstand.neuer || !aktstand.quelle) return;
+  update_fragen(aktstand);
+}
+
+/// Der Dialog: Fassungen, Aenderungen, und zwei Knoepfe.
+function update_fragen(s) {
+  $("updatetitel").textContent = t("akt.frage.titel");
+  $("updatestand").textContent = t("akt.neuer", s.eigene, s.neueste);
+  const liste = $("updateaenderungen");
+  liste.replaceChildren(
+    ...(s.aenderungen || []).map((e) => {
+      const abschnitt = document.createElement("div");
+      const h = document.createElement("h3");
+      h.textContent = e.titel;
+      const p = document.createElement("pre");
+      p.textContent = e.text;
+      abschnitt.append(h, p);
+      return abschnitt;
+    }),
+  );
+  $("updatekern").textContent = t("akt.frage.kern");
+  $("updatezeilen").hidden = true;
+  $("updatefehler").hidden = true;
+  const ja = $("update-ja");
+  const nein = $("update-nein");
+  ja.textContent = t("akt.frage.ja");
+  nein.textContent = t("akt.frage.nein");
+  ja.disabled = false;
+  nein.disabled = false;
+  ja.hidden = false;
+  const kasten = $("updatefrage");
+  kasten.hidden = false;
+  ja.focus();
+  nein.onclick = () => {
+    kasten.hidden = true;
+  };
+  ja.onclick = async () => {
+    ja.disabled = true;
+    nein.disabled = true;
+    ja.textContent = t("akt.laeuft");
+    try {
+      await aktualisierung_einspielen();
+    } catch (f) {
+      const fehler = $("updatefehler");
+      fehler.textContent = t("akt.frage.fehler", f);
+      fehler.hidden = false;
+      ja.hidden = true;
+      nein.disabled = false;
+      nein.textContent = t("akt.frage.zu");
+    }
+  };
+}
 
 $("zu-einstellungen").addEventListener("click", async () => {
   $("feldhinweis").hidden = true;
@@ -5555,10 +5655,10 @@ $("zu-einstellungen").addEventListener("click", async () => {
     $("bauzeilen").textContent = "";
   }
   await katalog_zeichnen();
-  // ⚑ **Es sieht nicht von selbst nach.** Eine Netzanfrage bei jedem
-  // Oeffnen der Einstellungsseite waere eine Verbindung, die niemand
-  // angefordert hat; gezeichnet wird, was beim letzten Nachsehen
-  // herauskam.
+  // ⚑ **Beim Oeffnen der Seite sieht es nicht noch einmal nach**: Das
+  // Fenster hat es beim Start getan, und gezeichnet wird, was dabei
+  // herauskam. Eine Netzanfrage je Oeffnen waere eine, die niemand
+  // angefordert hat.
   aktualisierung_zeichnen();
   $("zurueck").focus();
 });
@@ -7693,6 +7793,7 @@ async function auto_bestaetigen() {
   modul_verdrahten();
   ausgabe_verdrahten();
   await loop_beim_start();
+  aktualisierung_beim_start();
   feld.focus();
 })();
 

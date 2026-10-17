@@ -27,11 +27,10 @@ Status: ✅ implemented · 🟡 partially implemented · ➖ not applicable
 |---|---|---|---|
 | Art. 2 | Scope | ✅ | Myelith is treated as made available in the Union as a precaution; the exemption for free and open-source licences does not apply (see above) |
 | Art. 4 | AI literacy | 🟡 | The duty applies to staff of providers and deployers; the provider is an individual. Users learn capabilities and limits from the start-up notice and the [intended use policy](Intended-Use-Policy.md) |
-| Art. 5 | Prohibited practices | ✅ | [Intended use policy](Intended-Use-Policy.md) section 2.1; request filter at every entry point (`CLIENT/myl-client/src/schutzfilter.rs`), refusals in the action log without plain text; rule for the vision model (`CLIENT/myl-senses/src/sehen.rs`, `SEHREGEL`). Limit: a filter can be circumvented by rephrasing |
+| Art. 5 | Prohibited practices | ✅ | [Intended use policy](Intended-Use-Policy.md) section 2.1; request filter at every entry point (`CLIENT/myl-client/src/schutzfilter.rs`); rule for the vision model (`CLIENT/myl-senses/src/sehen.rs`, `SEHREGEL`). Limit: a filter can be circumvented by rephrasing |
 | Art. 6, Annex III | Classification as high-risk | ➖ | Not intended for Annex III areas ([intended use policy](Intended-Use-Policy.md) section 2.2). Anyone using Myelith there changes the intended purpose (Art. 25) |
-| Art. 8 to 15 | Requirements for high-risk systems | ➖ | Not applicable. **Voluntarily** modelled on them: action log (Art. 12), confirmation before actions and emergency stop (Art. 14) |
-| Art. 12 (voluntary) | Record-keeping | ✅ | `AGENT_LAYER/local-agent/src/protokoll.rs`: every agent action as a JSON line with time, kind, tool, fingerprint of input and output (keyed SHA-256, no plain text), decision and result; 30 days; readable via `myl protokoll` (the window no longer shows it since 2026-10-17, but still writes it) |
-| Art. 14 (voluntary) | Human oversight | ✅ | Default `agent.modus = manual`: writes, commands and web requests are presented before they run. The emergency stop in the window is closing the window: it ends generation, every further tool and also a command already started, and it is recorded in the action log. In the console, the emergency stop (Ctrl-C or Esc during a run) halts generation and every further tool. The conversation is kept in both cases |
+| Art. 8 to 15 | Requirements for high-risk systems | ➖ | Not applicable. **Voluntarily** modelled on them: confirmation before actions and emergency stop (Art. 14) |
+| Art. 14 (voluntary) | Human oversight | ✅ | Default `agent.modus = manual`: writes, commands and web requests are presented before they run. The emergency stop in the window is closing the window: it ends generation, every further tool and also a command already started. In the console, the emergency stop (Ctrl-C or Esc during a run) halts generation and every further tool. The conversation is kept in both cases |
 | Art. 16 to 22 | Obligations for high-risk systems, authorised representatives | ➖ | Not applicable. Art. 22 concerns providers established in third countries; the provider is in Germany |
 | Art. 25 | Responsibilities along the value chain | ✅ | [Intended use policy](Intended-Use-Policy.md) section 2.2: whoever changes the intended purpose takes on provider obligations |
 | Art. 50(1) | Disclosure of AI interaction | ✅ | Notice at **every** start, to be actively acknowledged (window and console), a line on standard error for `myl`; permanent disclosure in the empty input field of the window ("An AI answers here.") and "AI" in the console footer; every answer in the window carries "AI-generated" (`CLIENT/myl-client/src/kennzeichnung.rs`) |
@@ -48,7 +47,7 @@ Status: ✅ implemented · 🟡 partially implemented · ➖ not applicable
 
 | Area | Status |
 |---|---|
-| Data protection (GDPR) | Myelith processes everything on the user's computer. A voice sample is personal data; it is stored only with confirmed consent and never leaves the computer. The action log contains no plain text |
+| Data protection (GDPR) | Myelith processes everything on the user's computer. A voice sample is personal data; it is stored only with confirmed consent and never leaves the computer. The debug log is off unless someone switches it on; when on, it also contains file contents and stays on the computer |
 | Licences of third-party components | [NOTICES](../NOTICES.md), generated and checked in CI. Open: the wordmark typeface (licence unclear) |
 
 ## Open items

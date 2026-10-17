@@ -380,14 +380,28 @@ fn felder() -> Result<Vec<myl_client::einstellungen::Feld>, String> {
         .collect())
 }
 
-/// **Sieht nach, ob `origin` etwas hat, das dieser Klon nicht hat.**
+/// **Sieht nach, ob GitHub eine hoehere Fassung nennt als dieses
+/// Programm** (`VERSION.md`, erste Zeile).
 ///
 /// ⚑ **Es aendert nichts.** Nachsehen und Einspielen sind zwei
 /// Befehle, weil sie zwei Entscheidungen sind: Die eine kostet eine
 /// Netzanfrage, die andere Minuten und einen neuen Programmstand.
+/// ⚑ **Das Fenster fragt das beim Start von selbst** (Auftrag des
+/// Projektinhabers, 2026-10-17); eingespielt wird erst nach einer
+/// Bestaetigung.
 #[tauri::command]
 async fn aktualisierung() -> myl_client::aktualisierung::Stand {
-    myl_client::aktualisierung::pruefen(env!("CARGO_PKG_VERSION"))
+    tauri::async_runtime::spawn_blocking(myl_client::aktualisierung::pruefen)
+        .await
+        .unwrap_or_else(|e| myl_client::aktualisierung::Stand::aus(None, "", Err(e.to_string())))
+}
+
+/// **Startet das Fenster neu**, nach einem gelungenen Update: Das
+/// Installationsskript hat das Buendel an derselben Stelle ersetzt, und der
+/// Neustart oeffnet das neue.
+#[tauri::command]
+fn neu_starten(app: tauri::AppHandle) {
+    app.restart();
 }
 
 /// **Spielt den neuen Stand ein und meldet dabei jede Zeile.**
@@ -849,8 +863,6 @@ struct Vergessen {
 /// ⚠️ **Der Zustand des Modells wird nur geleert, wenn es frei ist.** Rechnet
 /// es gerade, gehoert der Zustand dem anderen Gespraech, und der Anfang des
 /// geloeschten faellt beim naechsten Lauf ohnehin heraus.
-/// ⚠️ **Das Aktionsprotokoll bleibt**: Es ist der Nachweis, was der Agent
-/// getan hat, und gehoert keinem Gespraech.
 #[tauri::command]
 fn gespraech_vergessen(kennung: String, wurzel: Option<String>, halter: tauri::State<'_, Halter>) -> Result<Vergessen, String> {
     if let Ok(mut u) = halter.schleife.umfelder.lock() {
@@ -1347,8 +1359,7 @@ fn loop_beim_schliessen(z: &Loopzustand) {
 /// selbst. **Ein Befehl, den der Agent schon gestartet hat, endet nicht
 /// mit**: Er ist ein eigener Prozess und liefe ohne Frist weiter, denn
 /// die Frist hielt dieses Programm. Deshalb hier, bevor der Prozess
-/// geht: der Notaus (er steht damit im Aktionsprotokoll) und das Ende
-/// jedes laufenden Befehls.
+/// geht: der Notaus und das Ende jedes laufenden Befehls.
 ///
 /// ⚑ **Nach `loop_beim_schliessen` und nicht davor.** Jenes markiert das
 /// Schliessen, und der Loop haelt dann nur an, statt seinen Task
@@ -3519,8 +3530,6 @@ fn zeit_melden(was: String, ms: u64) {
 
 fn main() {
     startzeit();
-    // ⛔️ Das Aktionsprotokoll gilt fuer jeden Lauf dieses Fensters.
-    myl_local_agent::protokoll::einschalten();
     // ⚑ Der Debug-Log folgt der Einstellung `debug.log` (2026-10-12).
     if let Ok(e) = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad()) {
         e.debug_anwenden("Fenster", "Fenster gestartet");
@@ -3623,6 +3632,7 @@ fn main() {
             skill_auftrag,
             aktualisierung,
             aktualisieren,
+            neu_starten,
             terminal_ausfuehren,
             terminal_ordner
         ];
