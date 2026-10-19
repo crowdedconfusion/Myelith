@@ -1,6 +1,6 @@
 # compliance
 
-> **Version:** 0.5.0
+> **Version:** 0.5.1
 > **Datum:** 2026-10-19
 > **Status:** Die Pflichten aus der KI-Verordnung sind dokumentiert und,
 > soweit technisch, umgesetzt; die Einordnung Artikel für Artikel steht in
@@ -39,7 +39,28 @@ Schutzfilter (`CLIENT/myl-client/src/schutzfilter.rs`), Notaus
 
 ## Changelog
 
-### v0.5.0 – 2026-10-19 (Modellkarte mit einer Rubrik für private lokale Modelle)
+### v0.5.1 – 2026-10-19 (die Lizenzprobe kennt private Modelle; Fund 575)
+
+- ⛔️ **Fund 575: Die CI zu `81a3fb0` war rot** im Schritt „COMPLIANCE/ethics:
+  Lizenz, Modellkarte, Ausschlusskatalog, Aufnahmeantrag“. `lizenzprobe.py`
+  maß jede Lizenzdatei unter `MODELS/llm` an Kap. 10.1 und kannte keine
+  privaten Modelle; die Lizenz von Qwen3.8-Flash-Next (Qwen Community
+  License, Namensnennung ab 100 Mio. monatlichen Nutzern) galt ihr als
+  „unbrauchbar“. Für ein Modell im Netz stimmt das, für ein privates nicht.
+  📌 Dieselbe Lehre wie Fund 557: Die CI prüft mehr als die sieben Proben
+  der Kurzanleitung, und diese Probe gehört nicht dazu.
+- **Jetzt:** Die Probe liest `KATALOG.json`. Ein Eintrag mit `betrieb: lokal`
+  wird gelesen und mit seinen Sperren genannt, aber nicht an Kap. 10.1
+  gemessen. Ein Ordner ohne Katalogeintrag wird geprüft, wenn er eine
+  Lizenzdatei hat (die Ternary-Bonsai-Quellen wie bisher); ohne sie ist er
+  ein Hinweis (die eben erkundete Quelle eines selbst gebauten Modells). Ein
+  Katalogeintrag ohne Lizenzdatei bleibt ein Fehler. Der Abschlusssatz nennt,
+  dass private Modelle nicht gemessen sind.
+- **Belege:** der ganze Schritt der CI lokal mit Rückgabe 0; dieselbe Probe
+  auf einem Baum nur aus versionierten Dateien grün; Gegenprobe: ohne
+  `betrieb: lokal` fällt Flash-Next wie vorher durch.
+
+ (Modellkarte mit einer Rubrik für private lokale Modelle)
 
 - **Die erzeugte Modellkarte** (`ethics/Modellkarte.md`) hat den Abschnitt
   „Private lokale Modelle (nicht für den Netzbetrieb zugelassen)“: Er führt

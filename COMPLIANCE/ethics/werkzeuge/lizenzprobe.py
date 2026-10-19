@@ -25,6 +25,23 @@ heruntergeladen wurde, hat hier kein Verzeichnis und erzeugt keinen
 Treffer. Ein leerer Lauf ist deshalb kein Beleg für eine saubere
 Modellfamilie.
 
+## ⚑ Private Modelle und Ordner ohne Katalogeintrag (seit 2026-10-19)
+
+Kap. 10.1 gilt für Modelle, die **im Netz** rechnen. Ein Eintrag in
+`MODELS/llm/KATALOG.json` mit `betrieb: lokal` ist privat und nicht für den
+Netzbetrieb zugelassen (der Knoten lädt ihn nicht); seine Lizenz wird gelesen
+und mit ihren Sperren genannt, aber nicht an Kap. 10.1 gemessen. Ein Ordner,
+den der Katalog gar nicht kennt, wird geprüft, wenn er eine Lizenzdatei hat
+(etwa die Ternary-Bonsai-Quellen); fehlt sie, ist das ein Hinweis und kein
+Fehler (etwa die eben erkundete Quelle eines selbst gebauten Modells, von der
+nur die Konfiguration liegt). Ein Katalogeintrag ohne Lizenzdatei bleibt ein
+Fehler.
+
+📌 **Fund 575:** Mit `myelith-125b-a6b` (Qwen3.8-Flash-Next, Qwen Community
+License) kam das erste private Modell in den Katalog, und diese Prüfung,
+die keine privaten Modelle kannte, machte die CI zu `81a3fb0` rot. Die
+sieben Proben der Kurzanleitung fahren sie nicht.
+
 ## ⛔️ Was sie heute gar nicht ansieht
 
 Sie prüft **nur die Quellmodelle** des Sprachmodell-Pfads, also
@@ -44,6 +61,7 @@ Deshalb nennt der Abschlusssatz ausdrücklich, was geprüft wurde.
 
 from __future__ import annotations
 
+import json
 import re
 import sys
 from pathlib import Path
@@ -56,6 +74,20 @@ REPO = Path(__file__).resolve().parents[3]
 # Lizenzdateien: Eine Pruefung, die ihre eigenen Rubriken anklagt, ist
 # keine.
 MODELLE = REPO / "MODELS" / "llm"
+KATALOG = MODELLE / "KATALOG.json"
+
+
+def katalog_nach_ordner() -> dict[str, dict]:
+    """Die Katalogeintraege nach ihrem Ordner unter `MODELS/llm`
+    (`hf_verzeichnis`)."""
+    if not KATALOG.is_file():
+        return {}
+    katalog = json.loads(KATALOG.read_text(encoding="utf-8"))
+    return {
+        v["hf_verzeichnis"]: {"schluessel": k, **v}
+        for k, v in katalog.items()
+        if not k.startswith("_") and isinstance(v, dict) and v.get("hf_verzeichnis")
+    }
 
 # Erkennungsmerkmale im Lizenztext, nicht im Dateinamen.
 ERKENNUNG = [
@@ -93,15 +125,30 @@ def main() -> int:
     verzeichnisse = sorted(p for p in MODELLE.iterdir() if p.is_dir())
     print(f"[lizenz] {len(verzeichnisse)} Modellverzeichnis(se)")
 
+    katalog = katalog_nach_ordner()
     fehler = 0
     for v in verzeichnisse:
         name = v.name
+        eintrag = katalog.get(name)
+        privat = eintrag is not None and eintrag.get("betrieb") == "lokal"
         datei = lizenzdatei(v)
+        if datei is None and eintrag is None:
+            print(f"[lizenz] Hinweis: {name} steht nicht im Katalog und hat keine Lizenzdatei, nicht geprüft")
+            continue
         if datei is None:
             print(f"[lizenz] FEHLT: {name} hat keine Lizenzdatei")
             fehler += 1
             continue
         art, sperren = beurteile(datei.read_text(encoding="utf-8", errors="replace"))
+        if privat:
+            # ⚑ Gelesen und genannt, aber nicht an Kap. 10.1 gemessen.
+            was = art or "weder Apache 2.0 noch MIT"
+            print(
+                f"[lizenz] privat  {name}: {was}"
+                + (f", mit {', '.join(sperren)}" if sperren else "")
+                + f" ({eintrag['schluessel']}, betrieb lokal, nicht fürs Netz)"
+            )
+            continue
         if art is None:
             print(f"[lizenz] UNBEKANNT: {name} — weder Apache 2.0 noch MIT erkennbar")
             fehler += 1
@@ -118,8 +165,8 @@ def main() -> int:
     # ⚑ **Der Satz nennt den Umfang.** Ein blankes „alle Modelle" waere
     # hier falsch: Sehen, Hoeren und Sprechen sind nicht dabei.
     print(
-        "[lizenz] PASSED: alle lokal vorliegenden Quellmodelle unter "
-        "MODELS/llm erfüllen Kap. 10.1 (audio und vision sind nicht geprüft)"
+        "[lizenz] PASSED: alle lokal vorliegenden Quellmodelle des Netzes unter "
+        "MODELS/llm erfüllen Kap. 10.1 (private Modelle, audio und vision sind nicht geprüft)"
     )
     return 0
 
