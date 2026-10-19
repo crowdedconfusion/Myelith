@@ -213,6 +213,33 @@ fn eindeutige_formfehler_werden_gelesen() {
     }
 }
 
+/// ⚑ **Fund 566: `type` statt `name`, die doppelte Hülle und Argumente
+/// ohne Schlüssel** (2026-10-19, int4-35B), jede Form wörtlich aus einem
+/// Lauf, und die Rahmenfelder bleiben draußen.
+#[test]
+fn type_statt_name_doppelte_huelle_und_offene_argumente_werden_gelesen() {
+    let fall = |block: &str| vorschlaege(&format!("<tool_call>{block}</tool_call>")).remove(0);
+    let v = fall(r#"{"type":"search_skill","arguments":{"anfrage":"Recherche im Netz"}}"#).expect("type");
+    assert_eq!((v.name.as_str(), &v.arguments), ("search_skill", &serde_json::json!({"anfrage": "Recherche im Netz"})));
+    // Die doppelte Hülle, mit der vergessenen Klammer, wie sie im Lauf stand.
+    let v = fall(r#"{"name": {"name": "read_file", "arguments": {"pfad": "config.ini"}}"#).expect("doppelt");
+    assert_eq!((v.name.as_str(), &v.arguments), ("read_file", &serde_json::json!({"pfad": "config.ini"})));
+    let v = fall(r#"{"name": "write_file", "id": "1", "pfad": "a.txt", "inhalt": "x"}"#).expect("offen");
+    assert_eq!(v.arguments, serde_json::json!({"pfad": "a.txt", "inhalt": "x"}));
+    // `name` geht vor `type`, und `type` bleibt Rahmen.
+    let v = fall(r#"{"type":"tool","name":"zeit"}"#).expect("beides");
+    assert_eq!((v.name.as_str(), &v.arguments), ("zeit", &serde_json::json!({})));
+    // Gegenproben: `function` ist kein Name, eine Hülle neben weiteren
+    // Feldern ist keine, und `type` ohne Zeichenkette auch nicht.
+    for block in [
+        r#"{"type":"function","arguments":{}}"#,
+        r#"{"name":{"name":"read_file"},"arguments":{}}"#,
+        r#"{"type":{"name":"x"},"arguments":{}}"#,
+    ] {
+        assert!(fall(block).is_err(), "{block} haette nicht gelesen werden duerfen");
+    }
+}
+
 /// ⚑ **Eine oder zwei vergessene `}` am Ende werden ergänzt** (2026-10-01,
 /// 35B: ein ganzes CAD-Skript in `write_file`, geschlossen mit `}}` statt
 /// `}}}`), und nur das.

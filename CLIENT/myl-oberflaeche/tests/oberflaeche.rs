@@ -1961,7 +1961,15 @@ fn jede_lizenz_steht_bei_ihrer_sache() {
     // 2. Der Katalog fuehrt beide, und zwar bei jedem Eintrag.
     let katalog = std::fs::read_to_string(wurzel.join("MODELS/llm/KATALOG.json"))
         .expect("KATALOG.json");
-    let eintraege = katalog.matches("\"anzeigename\":").count();
+    // ⚑ **Gezaehlt wird, was gebaut ist** (2026-10-19): Ein vorgemerktes oder
+    // nur geholtes Modell hat noch kein Skalenpaket, also auch keinen
+    // Registereintrag. Dieselbe Ausnahme macht der Testklient.
+    let werte: serde_json::Value = serde_json::from_str(&katalog).expect("KATALOG.json ist JSON");
+    let modelle: Vec<(&String, &serde_json::Value)> =
+        werte.as_object().expect("Objekt").iter().filter(|(k, _)| !k.starts_with('_')).collect();
+    let gebaut = |v: &serde_json::Value| !matches!(v["status"].as_str(), Some("vorgemerkt" | "geholt"));
+    let privat = |v: &serde_json::Value| v["betrieb"].as_str() == Some("lokal");
+    let eintraege = modelle.iter().filter(|(_, v)| gebaut(v)).count();
 
     // 📌 **Hier stand `>= 4`, und das war eine Zahl mit Ablaufdatum**
     // (2026-09-12). Sie brach, als der Projektinhaber das dichte 14B
@@ -1989,20 +1997,28 @@ fn jede_lizenz_steht_bei_ihrer_sache() {
          verschieden viele Modelle"
     );
     for feld in ["lizenz_gewichte", "lizenz_artefakt"] {
-        assert_eq!(
-            katalog.matches(&format!("\"{feld}\":")).count(),
-            eintraege,
-            "{feld} fehlt bei mindestens einem Eintrag"
-        );
+        for (k, v) in &modelle {
+            assert!(v[feld].as_str().is_some_and(|x| !x.is_empty()), "{feld} fehlt bei {k}");
+        }
     }
 
     // 3. Und die Artefaktlizenz ist die dieses Repositoriums, gehalten
     //    gegen die Lizenzdatei selbst.
     let lizenzdatei = std::fs::read_to_string(wurzel.join("LICENSE.md")).expect("LICENSE.md");
-    let genannt = katalog
-        .split("\"lizenz_artefakt\": \"")
-        .skip(1)
-        .filter_map(|s| s.split_once('"').map(|(w, _)| w.to_string()))
+    //
+    // ⛔️ **Ausser bei einem privaten Modell** (`betrieb = "lokal"`): Seine
+    // Gewichte erlauben keinen Dienst fuer Dritte, und das Artefakt steht
+    // unter keiner eigenen Lizenz dieses Projekts. Das sagt es auch.
+    for (k, v) in modelle.iter().filter(|(_, v)| privat(v)) {
+        assert!(
+            v["lizenz_artefakt"].as_str().is_some_and(|x| x.starts_with("privat, nur lokal")),
+            "{k} ist privat, seine Artefaktlizenz sagt es nicht"
+        );
+    }
+    let genannt = modelle
+        .iter()
+        .filter(|(_, v)| !privat(v))
+        .filter_map(|(_, v)| v["lizenz_artefakt"].as_str().map(str::to_string))
         .collect::<BTreeSet<_>>();
     assert_eq!(genannt.len(), 1, "der Katalog nennt mehrere Artefaktlizenzen: {genannt:?}");
     let name = genannt.iter().next().expect("eine Artefaktlizenz");
@@ -3909,10 +3925,17 @@ fn modultext_ist_nie_markup() {
     for verboten in ["innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "DOMParser"] {
         assert!(!abschnitt.contains(verboten), "`{verboten}` im Abschnitt der Module");
     }
+    // ⛔️ **Im Fenster gibt es keine /Befehle** (Festlegung des
+    // Projektinhabers, 2026-10-19): Das Absenden schickt alles an das Modell,
+    // einen Befehl eines Moduls schickt nur die Liste am Modul. 📌 Bis CLIENT
+    // v0.171.0 verlangte diese Probe das Gegenteil, eine getippte Zeile wie
+    // `/trading status` ging an das Modul.
     let absenden = js.split("$(\"eingabe\").addEventListener(\"submit\"").nth(1).expect("das Absenden fehlt");
-    let i_modul = absenden.find("await modul_senden(text)").expect("ein Modulbefehl geht nicht an das Modul");
-    let i_senden = absenden.find("await senden(text)").expect("das Senden fehlt");
-    assert!(i_modul < i_senden, "der Modulbefehl wird erst nach dem Auftrag gefragt");
+    let absenden = &absenden[..absenden.find("\n});").expect("das Ende des Absendens")];
+    assert!(absenden.contains("await senden(text)"), "das Senden fehlt");
+    assert!(!absenden.contains("modul_senden"), "eine getippte Zeile geht an ein Modul");
+    assert!(js.contains("addEventListener(\"click\", () => modul_senden(b))"), "die Liste am Modul schickt keinen Befehl");
+    assert!(!js.contains("modulbefehl_der_zeile"), "das Fenster erkennt wieder getippte Befehle");
 }
 
 /// ⛔️ **Was dauert, laeuft nicht auf dem Hauptfaden.**

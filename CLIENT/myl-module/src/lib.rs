@@ -44,3 +44,13 @@ pub const BESCHREIBUNG: &str = "modul.json";
 
 /// Der Name der Signatur im Modulordner.
 pub const SIGNATUR: &str = "modul.sig";
+
+/// **Der Befehl der Konsole, unter dem jeder Befehl eines Moduls steht**
+/// (Festlegung des Projektinhabers, 2026-10-19): `/module trading status`.
+///
+/// ⚑ **Beschreibung und Protokoll bleiben ohne ihn** (`/trading status`): Die
+/// Konsole stellt ihn davor, wenn sie zeigt, und nimmt ihn weg, wenn sie
+/// weitergibt. Das Fenster tippt keine Befehle, es zeigt sie in einer Liste.
+/// Wie ein Modul einen eigenen Befehl in seinem Text nennt, sagt
+/// [`gast::befehl_beim_wirt`].
+pub const MODULBEFEHL: &str = "/module";

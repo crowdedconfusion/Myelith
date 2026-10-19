@@ -162,6 +162,32 @@
     "reihung": 35.0,
     "hardware": "ab 24 GB Arbeitsspeicher, 19 GB Platte (dazu das int8 als Quelle)"
   },
+  "myelith-125b-a6b": {
+    "anzeigename": "Myelith 125B-A6B INT8",
+    "hf_repo": "Qwen/Qwen3.8-Flash-Next",
+    "hf_verzeichnis": "Qwen3.8-Flash-Next",
+    "hf_revision": "de4b8e4d43b917e7706784d8bb445c9af86a3540",
+    "lizenz_gewichte": "qwen-community-1.0",
+    "lizenz_artefakt": "privat, nur lokal; die Lizenz der Gewichte gilt weiter",
+    "lizenz_geprueft": "2026-10-19 gegen die Modellkarte der Revision geprueft (license: other, qwen-community-1.0). Sie erlaubt den Betrieb fuer sich selbst, Inferenz fuer Dritte braucht eine eigene Lizenz von Qwen. Keine eigene Rechtspruefung, siehe COMPLIANCE/ethics/Lizenzlage.md",
+    "betrieb": "lokal",
+    "parameter": "rund 125 Mrd. gesamt, rund 6 Mrd. aktiv je Token",
+    "layer": 48,
+    "hidden_size": 2560,
+    "num_heads": 24,
+    "num_kv_heads": 2,
+    "vocab_size": 248320,
+    "gewichte_bytes": 360023351514,
+    "gewichte_anzeige": "rund 360 GB",
+    "bauweg": "skript",
+    "artefakt_anzeige": "geschaetzt rund 176 GB in int8, rund 118 GB mit den Experten in vier Bit (davon 51 GB N-Gramm-Tabelle, nur nachgeschlagen)",
+    "status": "vorgemerkt",
+    "bemerkung": "Bauart mit vier Stroemen (Qwen3.8-Flash-Next): 512 Experten, 10 je Token, Zustandsschichten und indizierte Aufmerksamkeit, N-Gramm-Einbettung. Die Laufzeit rechnet sie seit dem 2026-10-19, belegt an einem kleinen Modell derselben Bauart gegen die Vorlage. Gebaut wird es ebenenweise mit eigener Python-Umgebung, nicht aus dem Fenster: bash INTEGER_LLM/scripts/build_flashnext.sh, das das allgemeine Bauskript INTEGER_LLM/scripts/modell_bauen.sh ruft. ⛔️ Nicht fuer den Netzbetrieb zugelassen (betrieb lokal): Der Knoten laedt es nicht.",
+    "grundmodell": "Qwen3.8-Flash-Next",
+    "reihung": 125.0,
+    "hardware": "nicht gemessen; geschaetzt rund 180 GB Platte fuer das int8, 120 GB in vier Bit"
+  },
+  "_betrieb_bedeutung": "⛔️ `betrieb` sagt, wo ein Modell rechnen darf. Fehlt es, ist es fuer das Netz zugelassen. `lokal` heisst PRIVAT, NUR LOKAL: Die Lizenz der Gewichte erlaubt keinen Dienst fuer Dritte, also keinen Netzbetrieb. Das Bauskript schreibt denselben Wert in `model_config.json` des Artefakts, und der Knoten laedt ein solches Artefakt nicht; der Klient zeigt es mit dem Zusatz (privat) und ohne Netzeintrag. Selbst gebaute Modelle stehen nicht hier, sondern im lokalen Katalog `MODELS/llm/KATALOG.lokal.json`, den Git nicht kennt; jeder Eintrag dort ist privat. `bauweg` `skript` heisst: gebaut mit `INTEGER_LLM/scripts/modell_bauen.sh`, nicht aus dem Fenster.",
   "_anzeigename_bedeutung": "⚑ `anzeigename` heisst seit dem 2026-10-17 \"Myelith <Groesse> <Format>\", etwa \"Myelith 35B-A3B INT8\": die Groesse wie im Verzeichnisnamen, bei einem Gemisch mit den aktiven Parametern, dahinter die Zahlform der Gewichte. Dieselbe Regel benennt ein Artefakt, das hier nicht steht, und eine Probe haelt die Namen dieser Liste an ihr fest. Seit dem 2026-09-09 heisst er nicht mehr nach dem Grundmodell. Der Grund ist sachlich: Was ausgeliefert wird, ist ein SELBST GEBAUTES Artefakt, ganzzahlig quantisiert nach dem Verfahren dieses Projektes, mit eigenen Skalen und Nachschlagetabellen. Es rechnet anders als das Gleitkommamodell, aus dem es stammt, und seine Perplexitaet steht hier daneben; es \"Qwen3-4B\" zu nennen behauptete eine Gleichheit, die nicht besteht. ⚠️ Die Herkunft verschwindet dabei NICHT: Sie steht in `grundmodell`, `hf_repo` und `hf_revision`, und die Oberflaeche zeigt sie neben dem Namen. Das ist keine Hoeflichkeit, sondern die Bedingung der Apache-2.0, unter der die Grundmodelle stehen; ohne sie waere der Name eine Verschleierung statt einer Unterscheidung.",
   "_hardware_bedeutung": "⚑ `hardware` ist die Mindestausstattung fuer den OERTLICHEN Betrieb, kleingedruckt neben dem Modell. Zwei Zahlen: Platte ist das gemessene Artefakt aufgerundet und eine harte Bedingung, denn es muss liegen koennen. Arbeitsspeicher ist die Groesse, ab der das Modell fluessig antwortet; weniger geht, wird aber langsamer, weil die Gewichte dann von der Platte kommen. ⚠️ Gemessen auf Apple M5 Pro; eine langsamere Platte verschiebt die zweite Zahl nach oben, nicht die erste. `reihung` ist die Zahl der Parameter in Milliarden und ordnet die Wahl aufsteigend; sie steht als Zahl da, damit niemand nach Zeichenketten sortiert und `14B` vor `4B` landet."
 }

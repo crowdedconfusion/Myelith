@@ -241,6 +241,41 @@ pub fn kuerzen_bis_es_passt(
     }
 }
 
+/// **Kuerzt die Werkzeugantworten ab `ab` in der Mitte, die laengste
+/// zuerst, bis der Verlauf mit `frei` Token Luft passt.** Gibt den Stand
+/// danach zurueck, `None` ohne Auskunft ueber den Kontext.
+///
+/// ⚑ **Gekuerzt wird immer aus dem Original**, nicht aus einer schon
+/// gekuerzten Fassung: Sonst stuenden Vermerke in Vermerken, und Anfang und
+/// Ende schrumpften ungleich. Die Antworten des Modells bleiben woertlich.
+///
+/// ⛔️ **Passt es nicht, wenn jede Antwort bei 64 Zeichen steht**, ist es ein
+/// benannter Fehler: Dann ist nicht die Ausgabe zu lang, sondern der Rest.
+/// Fund 564.
+pub fn werkzeugantworten_kuerzen(
+    klient: &dyn Modellweg,
+    nachrichten: &mut [Nachricht],
+    ab: usize,
+    frei: usize,
+) -> Result<Option<Kontextstand>, Tuerfehler> {
+    let stellen: Vec<usize> = (ab..nachrichten.len()).filter(|&i| nachrichten[i].role != "assistant").collect();
+    let original: Vec<Nachricht> = stellen.iter().map(|&i| nachrichten[i].clone()).collect();
+    let mut behalten: Vec<usize> = original.iter().map(|n| n.content.chars().count()).collect();
+    loop {
+        let Some(stand) = klient.kontext(nachrichten) else {
+            return Ok(None);
+        };
+        if stand.passt(frei) {
+            return Ok(Some(stand));
+        }
+        let Some(k) = (0..stellen.len()).filter(|&k| behalten[k] > 64).max_by_key(|&k| behalten[k]) else {
+            return Err(Tuerfehler::KontextVoll { belegt: stand.belegt, grenze: stand.grenze });
+        };
+        behalten[k] = (behalten[k] / 2 + behalten[k] / 4).max(64);
+        nachrichten[stellen[k]] = in_der_mitte_gekuerzt(&original[k], behalten[k]);
+    }
+}
+
 /// Anfang und Ende einer Nachricht, zusammen `behalten` Zeichen, mit einem
 /// Vermerk dazwischen.
 pub fn in_der_mitte_gekuerzt(nachricht: &Nachricht, behalten: usize) -> Nachricht {

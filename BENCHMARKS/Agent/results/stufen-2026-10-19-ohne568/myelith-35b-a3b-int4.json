@@ -1,0 +1,605 @@
+{
+  "artefakt": "/Users/entity/Desktop/Code/Code/Artificial/Myelith/Repository/INTEGER_LLM/artifacts/myelith-35b-a3b-int4",
+  "schritte": 6,
+  "saaten": [
+    8213088584698225,
+    4468002801560041,
+    6135214929457457
+  ],
+  "token": 1600,
+  "denken": "aus",
+  "ab_werk": true,
+  "laeufe": [
+    {
+      "name": "e_datei_anlegen",
+      "stufe": 1,
+      "lauf": 1,
+      "saat": 8213088584698225,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 43.8,
+      "werkzeuge": [
+        "write_file"
+      ]
+    },
+    {
+      "name": "e_datei_anlegen",
+      "stufe": 1,
+      "lauf": 2,
+      "saat": 4468002801560041,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 42.5,
+      "werkzeuge": [
+        "write_file"
+      ]
+    },
+    {
+      "name": "e_datei_anlegen",
+      "stufe": 1,
+      "lauf": 3,
+      "saat": 6135214929457457,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 43.0,
+      "werkzeuge": [
+        "write_file"
+      ]
+    },
+    {
+      "name": "e_wert_aendern",
+      "stufe": 1,
+      "lauf": 1,
+      "saat": 8213088584698225,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 48.4,
+      "werkzeuge": [
+        "read_file",
+        "edit_file"
+      ]
+    },
+    {
+      "name": "e_wert_aendern",
+      "stufe": 1,
+      "lauf": 2,
+      "saat": 4468002801560041,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 48.8,
+      "werkzeuge": [
+        "read_file",
+        "edit_file"
+      ]
+    },
+    {
+      "name": "e_wert_aendern",
+      "stufe": 1,
+      "lauf": 3,
+      "saat": 6135214929457457,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 48.8,
+      "werkzeuge": [
+        "read_file",
+        "edit_file"
+      ]
+    },
+    {
+      "name": "e_zeilen_zaehlen",
+      "stufe": 1,
+      "lauf": 1,
+      "saat": 8213088584698225,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 46.8,
+      "werkzeuge": [
+        "read_file",
+        "write_file"
+      ]
+    },
+    {
+      "name": "e_zeilen_zaehlen",
+      "stufe": 1,
+      "lauf": 2,
+      "saat": 4468002801560041,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 52.0,
+      "werkzeuge": [
+        "read_file",
+        "write_file",
+        "write_file"
+      ]
+    },
+    {
+      "name": "e_zeilen_zaehlen",
+      "stufe": 1,
+      "lauf": 3,
+      "saat": 6135214929457457,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 51.8,
+      "werkzeuge": [
+        "read_file",
+        "write_file",
+        "write_file"
+      ]
+    },
+    {
+      "name": "m_summe_json",
+      "stufe": 2,
+      "lauf": 1,
+      "saat": 8213088584698225,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 55.5,
+      "werkzeuge": [
+        "read_file",
+        "run_command",
+        "write_file"
+      ]
+    },
+    {
+      "name": "m_summe_json",
+      "stufe": 2,
+      "lauf": 2,
+      "saat": 4468002801560041,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 63.2,
+      "werkzeuge": [
+        "read_file",
+        "write_file",
+        "write_file"
+      ]
+    },
+    {
+      "name": "m_summe_json",
+      "stufe": 2,
+      "lauf": 3,
+      "saat": 6135214929457457,
+      "bestanden": false,
+      "grund": "Abnahme mit 1: ",
+      "sekunden": 56.5,
+      "werkzeuge": [
+        "read_file",
+        "write_file",
+        "write_file"
+      ]
+    },
+    {
+      "name": "m_funktion_umbenennen",
+      "stufe": 2,
+      "lauf": 1,
+      "saat": 8213088584698225,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 88.4,
+      "werkzeuge": [
+        "read_file",
+        "read_file",
+        "read_file",
+        "replace_everywhere",
+        "replace_everywhere",
+        "replace_everywhere",
+        "edit_file",
+        "edit_file",
+        "edit_file",
+        "run_command",
+        "run_command"
+      ]
+    },
+    {
+      "name": "m_funktion_umbenennen",
+      "stufe": 2,
+      "lauf": 2,
+      "saat": 4468002801560041,
+      "bestanden": false,
+      "grund": "Abnahme mit 1: ",
+      "sekunden": 64.7,
+      "werkzeuge": [
+        "read_file",
+        "read_file",
+        "read_file",
+        "unlesbarer",
+        "unlesbarer",
+        "unlesbarer"
+      ]
+    },
+    {
+      "name": "m_funktion_umbenennen",
+      "stufe": 2,
+      "lauf": 3,
+      "saat": 6135214929457457,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 86.0,
+      "werkzeuge": [
+        "read_file",
+        "read_file",
+        "read_file",
+        "edit_file",
+        "edit_file",
+        "edit_file",
+        "edit_file",
+        "run_command"
+      ]
+    },
+    {
+      "name": "m_csv_filtern",
+      "stufe": 2,
+      "lauf": 1,
+      "saat": 8213088584698225,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 56.1,
+      "werkzeuge": [
+        "read_file",
+        "write_file",
+        "write_file"
+      ]
+    },
+    {
+      "name": "m_csv_filtern",
+      "stufe": 2,
+      "lauf": 2,
+      "saat": 4468002801560041,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 64.5,
+      "werkzeuge": [
+        "read_file",
+        "write_file",
+        "write_file"
+      ]
+    },
+    {
+      "name": "m_csv_filtern",
+      "stufe": 2,
+      "lauf": 3,
+      "saat": 6135214929457457,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 51.3,
+      "werkzeuge": [
+        "read_file",
+        "write_file"
+      ]
+    },
+    {
+      "name": "k_tests_gruen",
+      "stufe": 3,
+      "lauf": 1,
+      "saat": 8213088584698225,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 93.5,
+      "werkzeuge": [
+        "search_skill",
+        "learn_skill",
+        "read_file",
+        "read_file",
+        "run_command",
+        "edit_file",
+        "run_command"
+      ]
+    },
+    {
+      "name": "k_tests_gruen",
+      "stufe": 3,
+      "lauf": 2,
+      "saat": 4468002801560041,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 89.4,
+      "werkzeuge": [
+        "read_file",
+        "read_file",
+        "run_command",
+        "edit_file",
+        "edit_file",
+        "run_command"
+      ]
+    },
+    {
+      "name": "k_tests_gruen",
+      "stufe": 3,
+      "lauf": 3,
+      "saat": 6135214929457457,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 107.7,
+      "werkzeuge": [
+        "search_skill",
+        "learn_skill",
+        "read_file",
+        "read_file",
+        "run_command",
+        "edit_file",
+        "edit_file",
+        "edit_file",
+        "run_command"
+      ]
+    },
+    {
+      "name": "k_logs_auswerten",
+      "stufe": 3,
+      "lauf": 1,
+      "saat": 8213088584698225,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 83.8,
+      "werkzeuge": [
+        "list_directory",
+        "list_directory",
+        "read_file",
+        "read_file",
+        "read_file",
+        "write_file",
+        "write_file"
+      ]
+    },
+    {
+      "name": "k_logs_auswerten",
+      "stufe": 3,
+      "lauf": 2,
+      "saat": 4468002801560041,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 79.0,
+      "werkzeuge": [
+        "list_directory",
+        "list_directory",
+        "read_file",
+        "read_file",
+        "read_file",
+        "write_file"
+      ]
+    },
+    {
+      "name": "k_logs_auswerten",
+      "stufe": 3,
+      "lauf": 3,
+      "saat": 6135214929457457,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 78.1,
+      "werkzeuge": [
+        "list_directory",
+        "list_directory",
+        "read_file",
+        "read_file",
+        "read_file",
+        "write_file"
+      ]
+    },
+    {
+      "name": "k_konfig_migrieren",
+      "stufe": 3,
+      "lauf": 1,
+      "saat": 8213088584698225,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 72.6,
+      "werkzeuge": [
+        "read_file",
+        "write_file",
+        "write_file"
+      ]
+    },
+    {
+      "name": "k_konfig_migrieren",
+      "stufe": 3,
+      "lauf": 2,
+      "saat": 4468002801560041,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 69.3,
+      "werkzeuge": [
+        "read_file",
+        "write_file",
+        "write_file"
+      ]
+    },
+    {
+      "name": "k_konfig_migrieren",
+      "stufe": 3,
+      "lauf": 3,
+      "saat": 6135214929457457,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 71.6,
+      "werkzeuge": [
+        "read_file",
+        "write_file",
+        "write_file"
+      ]
+    },
+    {
+      "name": "o_cli_inventar",
+      "stufe": 4,
+      "lauf": 1,
+      "saat": 8213088584698225,
+      "bestanden": false,
+      "grund": "Abnahme mit 2: ibrary/Developer/CommandLineTools/usr/bin/python3: can't open file '/private/var/folders/ll/rw70f8yd0wv955bq3sck012h0000gn/T/myl-agentenprobe-ndb1_hd0/inventar.py': [Errno 2] No such file or directory",
+      "sekunden": 189.0,
+      "werkzeuge": [
+        "unlesbarer",
+        "unlesbarer",
+        "unlesbarer"
+      ]
+    },
+    {
+      "name": "o_cli_inventar",
+      "stufe": 4,
+      "lauf": 2,
+      "saat": 4468002801560041,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 161.9,
+      "werkzeuge": [
+        "write_file",
+        "run_command",
+        "run_command",
+        "run_command",
+        "run_command",
+        "run_command",
+        "run_command",
+        "run_command",
+        "run_command",
+        "run_command",
+        "run_command",
+        "run_command",
+        "run_command",
+        "run_command"
+      ]
+    },
+    {
+      "name": "o_cli_inventar",
+      "stufe": 4,
+      "lauf": 3,
+      "saat": 6135214929457457,
+      "bestanden": false,
+      "grund": "Abnahme mit 1: Fehler: Nicht genug von Mutter. Vorhanden: 5, gewünscht: 6.",
+      "sekunden": 145.3,
+      "werkzeuge": [
+        "write_file",
+        "run_command",
+        "run_command",
+        "run_command",
+        "run_command",
+        "run_command"
+      ]
+    },
+    {
+      "name": "o_refaktor_waehrung",
+      "stufe": 4,
+      "lauf": 1,
+      "saat": 8213088584698225,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 191.9,
+      "werkzeuge": [
+        "read_file",
+        "read_file",
+        "read_file",
+        "list_directory",
+        "read_file",
+        "read_file",
+        "read_file",
+        "read_file",
+        "write_file",
+        "write_file",
+        "run_command",
+        "write_file",
+        "run_command",
+        "edit_file",
+        "run_command",
+        "edit_file",
+        "edit_file",
+        "run_command",
+        "search_files"
+      ]
+    },
+    {
+      "name": "o_refaktor_waehrung",
+      "stufe": 4,
+      "lauf": 2,
+      "saat": 4468002801560041,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 167.8,
+      "werkzeuge": [
+        "read_file",
+        "read_file",
+        "read_file",
+        "list_directory",
+        "read_file",
+        "read_file",
+        "read_file",
+        "read_file",
+        "write_file",
+        "run_command",
+        "edit_file",
+        "edit_file",
+        "edit_file",
+        "edit_file",
+        "run_command",
+        "run_command",
+        "search_files"
+      ]
+    },
+    {
+      "name": "o_refaktor_waehrung",
+      "stufe": 4,
+      "lauf": 3,
+      "saat": 6135214929457457,
+      "bestanden": true,
+      "grund": "",
+      "sekunden": 192.8,
+      "werkzeuge": [
+        "read_file",
+        "read_file",
+        "read_file",
+        "read_file",
+        "read_file",
+        "read_file",
+        "search_files",
+        "read_file",
+        "write_file",
+        "write_file",
+        "run_command",
+        "edit_file",
+        "edit_file",
+        "edit_file",
+        "run_command",
+        "run_command",
+        "search_files"
+      ]
+    },
+    {
+      "name": "o_daten_bereinigen",
+      "stufe": 4,
+      "lauf": 1,
+      "saat": 8213088584698225,
+      "bestanden": false,
+      "grund": "Abnahme mit 1: ",
+      "sekunden": 88.1,
+      "werkzeuge": [
+        "read_file",
+        "write_file",
+        "write_file"
+      ]
+    },
+    {
+      "name": "o_daten_bereinigen",
+      "stufe": 4,
+      "lauf": 2,
+      "saat": 4468002801560041,
+      "bestanden": false,
+      "grund": "Abnahme mit 1: ",
+      "sekunden": 91.7,
+      "werkzeuge": [
+        "read_file",
+        "write_file",
+        "write_file"
+      ]
+    },
+    {
+      "name": "o_daten_bereinigen",
+      "stufe": 4,
+      "lauf": 3,
+      "saat": 6135214929457457,
+      "bestanden": false,
+      "grund": "Abnahme mit 1: ",
+      "sekunden": 94.5,
+      "werkzeuge": [
+        "read_file",
+        "unlesbarer",
+        "write_file",
+        "read_file"
+      ]
+    }
+  ]
+}

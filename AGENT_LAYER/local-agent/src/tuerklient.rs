@@ -310,6 +310,28 @@ pub trait Modellweg {
         let _ = (nachrichten, abbruch);
         None
     }
+
+    /// **Schreibt eine Antwort weiter, die an der Laenge endete**: `anfang`
+    /// ist ihr Text bis dahin, zurueck kommt nur, was danach entsteht.
+    ///
+    /// ⚑ **Fuer den Werkzeugaufruf, der an der Grenze abreisst** (Fund
+    /// 569). Ohne Weiterschreiben war er verloren, und das Modell schrieb
+    /// denselben Inhalt in der naechsten Antwort noch einmal, an derselben
+    /// Grenze. Ein Weg mit eigenem Speicher rechnet dabei nur das Neue.
+    ///
+    /// `None` heisst: Dieser Weg kann es nicht (die Vorgabe). Die Tuer
+    /// eines Knotens spricht die OpenAI-Form, und die kennt keine
+    /// angefangene Antwort.
+    fn weiterschreiben(
+        &self,
+        modell: &str,
+        nachrichten: &[Nachricht],
+        anfang: &str,
+        max_tokens: Option<u32>,
+    ) -> Option<Result<Antwort, Tuerfehler>> {
+        let _ = (modell, nachrichten, anfang, max_tokens);
+        None
+    }
 }
 
 /// Belegter und vorhandener Kontext, in Token.

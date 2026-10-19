@@ -119,6 +119,17 @@ pub struct Lauf<'a> {
     /// Herleitung und dafuer, warum die deutsche Fassung als Schalter
     /// stehen bleibt, bis die Agentenprobe gelaufen ist.
     pub ansageform: crate::werkzeug::Ansageform,
+    /// **Wohin die Urfassung geht, bevor im Lauf verdichtet wird**: der
+    /// Arbeitsordner und die Kennung dieses Laufs. `None`: kein Mitschnitt.
+    ///
+    /// 📌 **Fund 565 (2026-10-18):** Den Mitschnitt schrieb nur die
+    /// Verdichtung des Gespraechs (`gespraech::verdichten_mit_mitschnitt`).
+    /// Verdichtete ein Agentenlauf in sich, war die Urfassung weg, und
+    /// `read_history` sagte trotzdem zu, sie „nach der Zusammenfassung“ zu
+    /// lesen. Im Szenario „Nadel im Heuhaufen“ suchte der Agent richtig
+    /// (`search_history` mit dem genauen Zeitstempel) und bekam „Nothing has
+    /// been recorded in this folder yet“.
+    pub mitschnitt: Option<(&'a std::path::Path, &'a str)>,
     /// Wer zusehen will, waehrend es geschieht.
     ///
     /// # ⚑ Warum das eine Meldung ist und keine Rueckfrage
@@ -220,6 +231,20 @@ pub enum Meldung<'a> {
 /// ausgefuehrtes Werkzeug setzt den Zaehler zurueck, denn danach ist das
 /// Modell nachweislich wieder auf Kurs.
 pub const HOECHSTZAHL_BERICHTIGUNGEN: usize = 2;
+
+/// **Wie oft eine Antwort weitergeschrieben wird**, die mitten in einem
+/// Werkzeugaufruf an der Laenge endete (Fund 569).
+///
+/// ⚑ **Zweimal, also hoechstens die dreifache Antwortlaenge fuer einen
+/// Aufruf.** Ein Aufruf, der auch dann nicht endet, ist keine lange Datei
+/// mehr, sondern ein Modell, das nicht aufhoert; dann erfaehrt es das und
+/// teilt die Arbeit auf.
+pub const FORTSETZUNGEN_HOECHSTENS: usize = 2;
+
+/// Steht am Ende des Textes ein `<tool_call>` ohne `</tool_call>`?
+fn aufruf_offen(text: &str) -> bool {
+    text.rfind("<tool_call>").is_some_and(|a| !text[a..].contains("</tool_call>"))
+}
 
 /// **Beim wievielten gleichen Schritt der Agent erfaehrt, dass er sich im
 /// Kreis dreht.**
@@ -379,9 +404,14 @@ impl<'a> Lauf<'a> {
             self.betriebsart,
             self.einhaengung,
         );
-        let erlaubnis = Erlaubnis::aus_angebot(self.kasten.angebote());
-        let mut nachrichten =
-            vec![angebot_mit_regel(self.kasten.angebote(), self.ansageform, self.hausregel)];
+        // ⚑ Angesagt und erlaubt aus derselben Liste (Fund 568).
+        let angesagt = crate::verankert::ansagen(
+            self.kasten.angebote(),
+            self.betriebsart == Betriebsart::NurVerankert,
+            self.ansageform,
+        );
+        let erlaubnis = Erlaubnis::aus_angebot(&angesagt);
+        let mut nachrichten = vec![angebot_mit_regel(&angesagt, self.ansageform, self.hausregel)];
         nachrichten.extend(verlauf.iter().filter(|n| n.role != "system").cloned());
         // Wo der Auftrag steht; das Verdichten laesst ihn woertlich stehen.
         let mut auftrag_bei = nachrichten.len();
@@ -426,11 +456,14 @@ impl<'a> Lauf<'a> {
             }
 
             // 2. Das Modell fragen.
-            let antwort =
-                match self.klient.chat(self.modell, &nachrichten, self.max_tokens) {
-                    Ok(a) => a,
-                    Err(e) => break Ende::Tuer(e),
-                };
+            let antwort = match self
+                .klient
+                .chat(self.modell, &nachrichten, self.max_tokens)
+                .and_then(|a| self.offenen_aufruf_weiterschreiben(&nachrichten, a))
+            {
+                Ok(a) => a,
+                Err(e) => break Ende::Tuer(e),
+            };
             getan += 1;
             crate::debuglog::eintrag_mit("Modellantwort", || {
                 format!(
@@ -490,11 +523,27 @@ impl<'a> Lauf<'a> {
                         //    vollstaendigen Aufruf mit falscher Form, glaubte der
                         //    Meldung, kuerzte seine Suchfrage viermal und
                         //    wiederholte denselben Formfehler bis zum Abbruch.
-                        let text = if u.abgeschnitten {
+                        // 📌 **Fund 569: Ohne `</tool_call>` heisst nicht
+                        //    abgeschnitten.** Endete die Antwort von selbst,
+                        //    fehlte nur die Endmarke, und „fass dich kuerzer“
+                        //    war der falsche Rat. An der Grenze endet ein
+                        //    Aufruf hier erst nach dem Weiterschreiben.
+                        let an_der_grenze = antwort.abschlussgrund.as_deref() == Some("length");
+                        let text = if u.abgeschnitten && an_der_grenze {
                             format!(
-                                "dieser Aufruf endet ohne </tool_call>; er wurde vermutlich an der \
-                                 Tokengrenze abgeschnitten. Er fing so an: {} Fass dich kuerzer und \
-                                 ruf erneut auf.",
+                                "dieser Aufruf endet ohne </tool_call>: Er war auch nach {FORTSETZUNGEN_HOECHSTENS} \
+                                 Fortsetzungen nicht zu Ende. Er fing so an: {} Teil den Inhalt auf: \
+                                 schreib zuerst einen Teil der Datei mit {} \
+                                 und ergaenze den Rest mit {}.",
+                                u.roh,
+                                crate::werkzeuge::Dateiwerkzeug::Schreiben.name(self.ansageform),
+                                crate::werkzeuge::Dateiwerkzeug::Aendern.name(self.ansageform),
+                            )
+                        } else if u.abgeschnitten {
+                            format!(
+                                "dieser Aufruf endet ohne </tool_call>; deine Antwort hoerte vor der \
+                                 Endmarke auf. Er fing so an: {} Ruf erneut auf und schliess den \
+                                 Aufruf mit </tool_call>.",
                                 u.roh
                             )
                         } else {
@@ -693,6 +742,77 @@ impl<'a> Lauf<'a> {
         Ergebnis { strom, nachrichten, ende }
     }
 
+    /// **Legt den ganzen Verlauf als Mitschnitt ab** (ohne die
+    /// Werkzeugansage) und gibt den Verweis zurueck, mit dem das Modell ihn
+    /// findet; `None` ohne Ort oder wenn das Schreiben scheitert. Ein
+    /// gescheiterter Mitschnitt haelt die Verdichtung nicht auf (dieselbe
+    /// Regel wie im Gespraech), er steht im Debug-Log.
+    fn mitschnitt_ablegen(&self, nachrichten: &[Nachricht]) -> Option<String> {
+        let (wurzel, sitzung) = self.mitschnitt?;
+        let abschnitte: Vec<(String, String)> =
+            nachrichten.iter().skip(1).map(|n| (n.role.clone(), n.content.clone())).collect();
+        match crate::verlauf::schreiben(wurzel, sitzung, self.modell, &abschnitte) {
+            Ok(name) => {
+                let nachlesen = self.kasten.angebote().iter().any(|w| w.name == "read_history");
+                Some(if nachlesen {
+                    crate::gespraech::verweis(wurzel, &name)
+                } else {
+                    crate::gespraech::verweis_ohne_nachlesen(&name)
+                })
+            }
+            Err(f) => {
+                crate::debuglog::eintrag("Mitschnitt", &f.to_string());
+                None
+            }
+        }
+    }
+
+    /// **Schreibt eine Antwort weiter, die mitten in einem Werkzeugaufruf an
+    /// der Laenge endete**, hoechstens [`FORTSETZUNGEN_HOECHSTENS`] Mal.
+    ///
+    /// 📌 **Fund 569 (2026-10-19).** Bis hierher war ein solcher Aufruf
+    /// verloren: Das Modell bekam „vermutlich abgeschnitten“ und schrieb
+    /// denselben Inhalt in der naechsten Antwort noch einmal, an derselben
+    /// Grenze. Weitergeschrieben entsteht nur der Rest.
+    ///
+    /// ⚑ **Nur mit Platz fuer eine weitere ganze Laenge**, wie vor jeder
+    /// Antwort (`platz_schaffen`); sonst bleibt es beim Teil, und die
+    /// Meldung sagt dem Modell, dass es aufteilen soll. Ein Weg, der nicht
+    /// weiterschreiben kann, liefert die Antwort unveraendert.
+    fn offenen_aufruf_weiterschreiben(
+        &self,
+        nachrichten: &[Nachricht],
+        mut antwort: crate::tuerklient::Antwort,
+    ) -> Result<crate::tuerklient::Antwort, Tuerfehler> {
+        let reserve = self.max_tokens.unwrap_or(0) as usize;
+        for runde in 1..=FORTSETZUNGEN_HOECHSTENS {
+            if antwort.abschlussgrund.as_deref() != Some("length") || !aufruf_offen(&antwort.text) {
+                break;
+            }
+            let mit: Vec<Nachricht> =
+                nachrichten.iter().cloned().chain([Nachricht::modell(antwort.text.clone())]).collect();
+            if self.klient.kontext(&mit).is_some_and(|s| !s.passt(reserve)) {
+                break;
+            }
+            let weiter = match self.klient.weiterschreiben(self.modell, nachrichten, &antwort.text, self.max_tokens) {
+                None | Some(Err(Tuerfehler::KontextVoll { .. })) => break,
+                Some(Err(e)) => return Err(e),
+                Some(Ok(w)) => w,
+            };
+            crate::debuglog::eintrag_mit("Weitergeschrieben", || {
+                format!(
+                    "Fortsetzung {runde}, Abschluss {}, Token heraus {}",
+                    weiter.abschlussgrund.as_deref().unwrap_or("-"),
+                    weiter.antwort_token
+                )
+            });
+            antwort.text.push_str(&weiter.text);
+            antwort.abschlussgrund = weiter.abschlussgrund;
+            antwort.antwort_token = antwort.antwort_token.saturating_add(weiter.antwort_token);
+        }
+        Ok(antwort)
+    }
+
     /// **Verdichtet den Verlauf, wenn der naechste Schritt nicht mehr
     /// hineinpasst.** Woertlich bleiben die Werkzeugansage, der Auftrag und
     /// der letzte Schritt; alles andere wird zusammengefasst, und die
@@ -713,6 +833,11 @@ impl<'a> Lauf<'a> {
         if vorher.passt(reserve) {
             return Ok(());
         }
+        // ⚑ **Erst die Urfassung ablegen** (Fund 565): Ausblenden,
+        //   Zusammenfassen und Kuerzen nehmen dem Kontext etwas weg, und nur
+        //   jetzt ist es noch ganz da. Der Verweis kommt dorthin, wo das
+        //   Modell als Naechstes hinsieht.
+        let verweis = self.mitschnitt_ablegen(nachrichten);
         // ⚑ **Erst ausblenden, dann zusammenfassen** (siehe Modulkopf von
         //   `verdichtung`). Reicht das Ausblenden nicht fuer ein Viertel
         //   Luft, wird der Verlauf wie zuvor zusammengefasst, und zwar der
@@ -723,6 +848,7 @@ impl<'a> Lauf<'a> {
             if let Some(stand) = self.klient.kontext(&ausgeblendet) {
                 if crate::verdichtung::luft_genug(stand, reserve) {
                     *nachrichten = ausgeblendet;
+                    verweis_anhaengen(nachrichten, verweis.as_deref(), *auftrag_bei + 1);
                     melden(Meldung::Ausgeblendet { ergebnisse: zahl, vorher: vorher.belegt, nachher: stand.belegt });
                     return Ok(());
                 }
@@ -747,6 +873,10 @@ impl<'a> Lauf<'a> {
                 &mitte,
                 crate::verdichtung::antwortlaenge(vorher.grenze),
             )?;
+            let text = match &verweis {
+                Some(v) => format!("{text}{v}"),
+                None => text,
+            };
             let mut neu = vec![nachrichten[0].clone(), crate::verdichtung::als_nachricht(&text, &mitte)];
             neu.push(nachrichten[*auftrag_bei].clone());
             neu.extend(nachrichten[letzter..].iter().cloned());
@@ -754,27 +884,42 @@ impl<'a> Lauf<'a> {
             *auftrag_bei = 2;
         }
         // 📌 **Passt der letzte Schritt allein nicht**, etwa weil ein
-        // Werkzeug eine sehr lange Datei zurueckgab, wird seine laengste
-        // Werkzeugantwort in der Mitte gekuerzt. Sehen koennte das Modell
-        // sie ohnehin nicht, und ohne Kuerzung endete der Lauf hier. Der
-        // Auftrag und die Antworten des Modells bleiben woertlich.
+        // Werkzeug eine sehr lange Datei zurueckgab, werden seine
+        // Werkzeugantworten in der Mitte gekuerzt, die laengste zuerst.
+        // Sehen koennte das Modell sie ohnehin nicht, und ohne Kuerzung
+        // endete der Lauf hier. Der Auftrag und die Antworten des Modells
+        // bleiben woertlich.
+        // Ohne Zusammenfassung traegt die letzte Werkzeugantwort den
+        // Verweis. Er kommt **nach** dem Kuerzen dazu (sonst schnitte es ihn
+        // in der Mitte heraus), und das Kuerzen haelt seinen Platz frei.
+        let nachtrag = if mitte.is_empty() { verweis.clone() } else { None };
+        let platz = nachtrag
+            .as_deref()
+            .and_then(|v| self.klient.kontext(&[Nachricht::nutzer(v)]))
+            .map_or(0, |s| s.belegt);
+        let reserve_mit_nachtrag = reserve + platz;
         let mut nachher = self.klient.kontext(nachrichten).unwrap_or(vorher);
-        if !nachher.passt(reserve) {
-            if let Some(i) = (*auftrag_bei + 1..nachrichten.len())
-                .filter(|&i| nachrichten[i].role != "assistant")
-                .max_by_key(|&i| nachrichten[i].content.len())
+        if !nachher.passt(reserve_mit_nachtrag) {
+            // 📌 **Fund 564 (2026-10-18): alle Werkzeugantworten, nicht nur
+            //   die laengste.** Liest das Modell zehn Dateien in einem
+            //   Schritt, liegen zehn Antworten hinter dem letzten Schritt.
+            //   Hier wurde nur die laengste gekuerzt, und reichte das nicht,
+            //   endete der Lauf mit „Kontext voll“ (34 620 Token bei 12 288
+            //   Positionen, Szenario Nadel im Heuhaufen).
+            if let Some(stand) =
+                crate::verdichtung::werkzeugantworten_kuerzen(
+                    self.klient,
+                    nachrichten,
+                    *auftrag_bei + 1,
+                    reserve_mit_nachtrag,
+                )?
             {
-                let davor = nachrichten[..i].to_vec();
-                let danach = nachrichten[i + 1..].to_vec();
-                let gekuerzt = crate::verdichtung::kuerzen_bis_es_passt(self.klient, &nachrichten[i], reserve, |n| {
-                    let mut alle = davor.clone();
-                    alle.push(n.clone());
-                    alle.extend(danach.iter().cloned());
-                    alle
-                })?;
-                nachrichten[i] = gekuerzt;
-                nachher = self.klient.kontext(nachrichten).unwrap_or(nachher);
+                nachher = stand;
             }
+        }
+        if nachtrag.is_some() {
+            verweis_anhaengen(nachrichten, nachtrag.as_deref(), *auftrag_bei + 1);
+            nachher = self.klient.kontext(nachrichten).unwrap_or(nachher);
         }
         if nachher == vorher {
             return Err(Tuerfehler::KontextVoll { belegt: vorher.belegt, grenze: vorher.grenze });
@@ -785,5 +930,14 @@ impl<'a> Lauf<'a> {
         } else {
             Err(Tuerfehler::KontextVoll { belegt: nachher.belegt, grenze: nachher.grenze })
         }
+    }
+}
+
+/// Haengt den Verweis auf den Mitschnitt an die letzte Werkzeugantwort ab
+/// `ab`, wenn es keine Zusammenfassung gibt, die ihn tragen koennte.
+fn verweis_anhaengen(nachrichten: &mut [Nachricht], verweis: Option<&str>, ab: usize) {
+    let Some(v) = verweis else { return };
+    if let Some(n) = nachrichten.iter_mut().skip(ab).rev().find(|n| n.role != "assistant") {
+        n.content.push_str(v);
     }
 }

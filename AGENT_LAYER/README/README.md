@@ -1,7 +1,7 @@
 # agent-layer
 
-> **Version:** 0.49.1 (`myl-agent` 0.7.1, `myl-local-agent` 0.40.0)
-> **Datum:** 2026-10-17
+> **Version:** 0.52.0 (`myl-agent` 0.7.1, `myl-local-agent` 0.43.0)
+> **Datum:** 2026-10-19
 > **Status:** Manifeste, Herkunftsstufe, Registratur, der
 > **Session-Kontrakt** mit Durchsetzung im Ledger, der **Plan** und seit
 > v0.7.0 die **Segmentkette**. 52 Tests. ⚑ **Was jetzt fehlt, ist keine
@@ -68,6 +68,164 @@ umbenannt, weil er in jedem `use` steht.
 - `src/kette.rs` — dass er es auch so getan hat, und wann er aufhört.
 
 ## Changelog
+
+### v0.52.0 – 2026-10-19 (der eigene Mitschnitt sperrt die Shell nicht mehr, fremd ist nur ein Mitschnitt mit Fremdem; Fund 570; `myl-local-agent` 0.43.0)
+
+Anlass: der Prüflauf nach v0.51.0, „Werkzeug bauen“ mit dem int4-35B. Das
+Modell rief zu Beginn `read_history` und bekam „noch kein Mitschnitt“. Weil
+der Vertrag `ERINNERN` jedes Ergebnis fremd machte, war `run_command` danach
+für den ganzen Lauf vom Informationsfluss gesperrt; das Modell konnte sein
+Skript nicht ausführen und rechnete Prüfsummen von Hand.
+
+- **Fund 570:** Der Mitschnitt galt als Ganzes fremd, weil er frühere
+  Webseiten tragen kann, auch wenn er keine trug und auch ohne jeden Inhalt.
+- **Festlegung des Projektinhabers vom 2026-10-19:** Fremd ist, was aus einer
+  Sitzung stammt, die Fremdes gesehen hatte. `verlauf::schreiben` schreibt
+  dazu die Zeile `Herkunft: vertraut` oder `Herkunft: fremd` in den Kopf,
+  gelesen mit `secure_flow::label_aus_verlauf`, also aus den Fremdmarken im
+  Verlauf selbst, die auch Ausblenden, Kürzen und Zusammenfassen überleben
+  (dieselbe Lesart wie über die Runden eines Gesprächs, Fund 536).
+- **Neuer Vertrag `MITSCHNITT`** (privat, vertraut) für `read_history`,
+  `list_history` und `search_history`. Die Werkzeuge setzen die Fremdmarke
+  selbst vorn (`herkunft_vorn`), sobald einer der gelesenen Mitschnitte nicht
+  `verlauf::nur_vertrautes` ist. ⛔️ **Vertraut nur, was es ausdrücklich
+  sagt:** Ein Mitschnitt ohne Herkunftszeile (älter als dieser Fund), mit
+  einer Fremdmarke irgendwo im Text oder unlesbar gilt weiter als fremd.
+  Eine Auskunft ohne gelesenen Mitschnitt bleibt vertraut. `search_memory`
+  (die Erinnerungen des Schlafs) behält `ERINNERN`.
+- ⚠️ **Was ein fremder Mitschnitt nicht mehr tut:** nichts. Er macht das
+  Gespräch fremd wie vorher, und danach braucht die Shell die Freigabe. Eine
+  Wäsche über eine selbst geschriebene Herkunftszeile scheitert an zwei
+  Stellen: `.AGENT/` ist ein verborgener Pfad (nach Fremdem nur mit
+  Freigabe beschreibbar), und eine Fremdmarke im Text überstimmt die Zeile.
+- Der Kopf eines Mitschnitts hat damit acht statt sieben Zeilen; das
+  Verzeichnis wird weiter beim Schreiben gegen die Datei geprüft, und ältere
+  Mitschnitte lesen sich wie bisher.
+- **Beleg:** `nur_ein_mitschnitt_mit_fremdem_macht_das_gespraech_fremd`
+  (fünf Fälle durch `Bewacht` und den Fluss: kein Mitschnitt, eigener
+  Verlauf mit gelesener Datei, Webseite im Verlauf, alter Kopf ohne Zeile,
+  Marke mitten im Auftrag; jedes Mal folgt die Shell dem Label). `cargo test`
+  von `myl-local-agent`, `myl-client`, `myl-console`, `myl-oberflaeche` und
+  `myl-testclient` mit Rückgabe 0, Clippy mit `-D warnings` still. Cargo.lock
+  in `local-agent`, `myl-client`, `myl-console`, `myl-oberflaeche` und
+  `myl-testclient` nachgezogen.
+
+### v0.51.0 – 2026-10-19 (Werkzeugaufrufe nachsichtiger gelesen, verankerte Werkzeuge neben `write_file` ausgeblendet, abgerissene Aufrufe weitergeschrieben, Antwortlänge mit dem Kontext; Funde 566 bis 569; `myl-local-agent` 0.42.0)
+
+Anlass: die Agentenläufe des int4-35B vom 2026-10-17 bis 2026-10-19 (Stufen,
+Extrem, Szenarien). In allen Mitschriften zusammen wurde `write_file` 155 Mal
+gerufen und 37 Mal mit „das Feld `felder` steht nicht im Schema“ abgewiesen;
+dazu kamen 15 unlesbare Aufrufe, deren Sinn eindeutig war, und 8 ohne
+`</tool_call>`. Jede Absage kostet eine ganze Antwort, in der derselbe Inhalt
+noch einmal entsteht.
+
+- **Fund 566 (Parser, `werkzeug::aus_dem_wert`):** drei weitere Formen mit
+  genau einer Lesart. `{"type": "search_skill", "arguments": …}` (sechsmal,
+  kostete einen Web-Lauf): `type` trägt den Namen, wenn `name` fehlt, und
+  `"function"` ist nie ein Name. `{"name": {"name": "read_file", "arguments":
+  …}}` (viermal): die doppelte Hülle wird ausgepackt, wenn `name` das einzige
+  Feld ist. `{"name": "write_file", "pfad": …, "inhalt": …}`: Fehlen
+  `arguments` und `parameters`, sind die übrigen Schlüssel die Argumente,
+  ohne die Rahmenfelder `id` und `type`. ⚠️ Tippfehler in Schlüsseln
+  (`"arguments>{`, ein fehlendes Anführungszeichen) bleiben unlesbar: Sie zu
+  reparieren hieße raten.
+- **Fund 567 (Hülle, `werkzeug::huelle_aufloesen`):** Die Hülle kam selten
+  allein. `{"felder": {}, "pfad": …, "inhalt": …}` und `{"felder":
+  {"inhalt": …}, "pfad": …}` werden jetzt aufgelöst: Ein leeres fremdes Feld
+  (`{}`, `[]`, `""`, `null`) fällt weg, höchstens eine Hülle aus lauter
+  Schemafeldern ergänzt, was außen fehlt, und das Ergebnis muss das Schema
+  vollständig erfüllen. Zwei Werte für dasselbe Feld, zwei Hüllen und ein
+  fremdes Feld mit Text (`"vorlage": "…"` ohne `pfad`) bleiben Fehler.
+- **Fund 568 (Werkzeugsatz, `verankert::ansagen`):** `fill_template` und
+  `join_sections` wurden in keinem Lauf mit Arbeitsordner gerufen, aber ihre
+  Felder landeten in `write_file`. Neben einem laufenden Schreibwerkzeug
+  stehen sie nicht mehr in der Ansage und nicht in der Erlaubnis; im Chat
+  ohne Ordner, bei abgeschaltetem Schreiben und in `NurVerankert` bleiben
+  sie. Die Kontextanzeige (`gespraech::ansage`) zählt dieselbe Liste.
+  `abgeschaltet::ist_platzhalter` ersetzt den Präfixvergleich in `lauf.rs`.
+- **Fund 569 (abgerissene Aufrufe, `schleife`):** Endete eine Antwort an der
+  Länge mitten in einem `<tool_call>`, war der Aufruf verloren, und die
+  Meldung sagte „vermutlich abgeschnitten, fass dich kürzer“, auch wenn die
+  Antwort von selbst geendet hatte. Jetzt schreibt die Schleife sie weiter
+  (`Modellweg::weiterschreiben`, höchstens `FORTSETZUNGEN_HOECHSTENS` = 2
+  Mal, nur mit Platz für eine weitere ganze Länge), und erst danach wird
+  gelesen. Die Meldung sagt den wirklichen Grund: an der Grenze auch nach
+  den Fortsetzungen (dann aufteilen, mit den Werkzeugnamen der Ansageform)
+  oder vor der Endmarke geendet. Ein Weg, der nicht weiterschreiben kann
+  (die Tür eines Knotens), liefert die Antwort unverändert.
+- **Antwortlänge (Festlegung des Projektinhabers vom 2026-10-19):**
+  `agentenwahl::agent_antwortlaenge` gibt einem Agentenlauf ein Achtel der
+  Kontextgrenze, mindestens 4 000 und von sich aus höchstens 8 192
+  (`AGENT_ANTWORT_HOECHSTENS_NACH_KONTEXT`); eine höhere Einstellung gilt.
+  Bei 65 536 Kontext sind das 8 192 statt 4 000. Die Länge ist auch Platz,
+  den jeder Schritt freihält, deshalb wächst sie mit dem Kontext und nicht
+  fest; was darüber hinausgeht, schreibt die Schleife weiter.
+- **Belege:** `type_statt_name_doppelte_huelle_und_offene_argumente_werden_gelesen`,
+  `klasse_2_eine_teilhuelle_und_leere_fremde_felder_werden_aufgeloest` (mit
+  fünf Gegenproben), `die_verankerten_weichen_nur_einem_laufenden_schreibwerkzeug`,
+  `ein_abgerissener_aufruf_wird_weitergeschrieben`,
+  `weitergeschrieben_wird_begrenzt_und_die_meldung_sagt_den_grund`,
+  `die_antwortlaenge_waechst_mit_dem_kontext`. Zwei ältere Proben angepasst:
+  `nach_einer_ablehnung_darf_das_modell_es_richtig_machen` lehnt jetzt mit
+  einem fremden Feld mit Inhalt ab (ein leeres fällt weg), und
+  `ein_abgeschnittener_aufruf_wird_beantwortet` prüft „endet ohne
+  `</tool_call>`“ statt „abgeschnitten“. `cargo test` von `myl-local-agent`,
+  `myl-client`, `myl-console` und `myl-testclient` mit Rückgabe 0, Clippy mit
+  `-D warnings` dazu für `myl-oberflaeche`.
+
+### v0.50.0 – 2026-10-19 (ein verdichtender Lauf legt seine Urfassung als Mitschnitt ab; Fund 565; `myl-local-agent` 0.41.0)
+
+Anlass: die zweite Phase des Szenarios „Nadel im Heuhaufen“. Ein frischer
+Lauf sollte eine Vorgangsnummer nennen, die nur noch in der früheren
+Sitzung stand. Er suchte richtig (`search_history` mit dem genauen
+Zeitstempel, dann `read_history`, `list_history`) und bekam „Nothing has
+been recorded in this folder yet“, obwohl die erste Phase zweimal verdichtet
+hatte.
+
+- **Fund 565:** Den Mitschnitt schrieb nur die Verdichtung des Gesprächs
+  (`gespraech::verdichten_mit_mitschnitt`). Verdichtete ein Agentenlauf in
+  sich (`schleife::platz_schaffen`: ausblenden, zusammenfassen, kürzen), war
+  die Urfassung weg. `read_history` sagte dem Modell trotzdem zu, die
+  Einzelheiten „nach der Zusammenfassung“ nachzulesen.
+- **Behebung:** `Lauf::mitschnitt` (Arbeitsordner und Kennung des Laufs).
+  Bevor `platz_schaffen` etwas wegnimmt, legt es den ganzen Verlauf ohne
+  Werkzeugansage unter `.AGENT/<kennung>/` ab, mit demselben Schreiber und
+  demselben Verweis wie das Gespräch (ohne `read_history` in der Kiste der
+  ehrliche Verweis). Der Verweis steht in der Zusammenfassung, oder, wenn
+  es keine gibt, an der letzten Werkzeugantwort, **nach** dem Kürzen und
+  mit freigehaltenem Platz. Ein Mitschnitt, der nicht geschrieben werden
+  kann, hält die Verdichtung nicht auf; er steht im Debug-Log.
+- `lauf::fahren_mit_hausregel` (alle Agentenläufe) setzt den Ort aus der
+  Einhängung; die Kennung ist `lauf-<sekunden>-<prozess>-<nummer>`, damit
+  Unteragenten eines Prozesses sich nicht überschreiben.
+- **Beleg:** `ein_verdichtender_lauf_legt_die_urfassung_als_mitschnitt_ab`
+  (fünf Antworten zu je 2000 Zeichen werden gekürzt; im Mitschnitt stehen
+  alle fünf ungekürzt samt Auftrag; das Modell sieht den Verweis). Alle
+  übrigen Aufbauten des Laufs bekommen `mitschnitt: None`. `cargo test` von
+  `local-agent` und `myl-testclient` grün, Clippy still.
+
+### v0.49.2 – 2026-10-18 (viele Werkzeugantworten in einem Schritt werden alle gekürzt; Fund 564; `myl-local-agent` 0.40.1)
+
+Anlass: das Szenario „Nadel im Heuhaufen“ der Agentenmessung, nach Fund
+563 zum ersten Mal mit wirklich kleinem Kontext (12 288). Das Modell las
+alle zehn Protokolle in **einem** Schritt; die zehn Antworten waren
+zusammen 34 620 Token, und der Lauf endete sofort mit „Kontext voll“.
+
+- **Fund 564:** `platz_schaffen` kürzte, wenn der letzte Schritt allein
+  nicht passte, nur dessen **längste** Werkzeugantwort, und zwar bis sie
+  allein passte. Bei mehreren großen Antworten reichte das nie; die
+  Begründung daneben („ohne Kürzung endete der Lauf hier“) galt nur für eine.
+- **Behebung:** `verdichtung::werkzeugantworten_kuerzen` kürzt die
+  Antworten hinter dem Auftrag in der Mitte, immer die mit dem meisten
+  Rest zuerst und jedes Mal **aus dem Original** (keine Vermerke in
+  Vermerken), bis der Verlauf mit der Antwortreserve passt. Erst wenn jede
+  bei 64 Zeichen steht und es immer noch nicht passt, bleibt „Kontext
+  voll“.
+- **Beleg:** `viele_grosse_werkzeugantworten_in_einem_schritt_werden_alle_gekuerzt`
+  (fünf Aufrufe zu je 2000 Zeichen, Platz für rund 2600: alle fünf
+  gekürzt, Anfang und Ende jeder erhalten, ein Vermerk je Antwort, der Lauf
+  endet mit „Fertig“; mit nur einer gekürzten Antwort wäre es „Kontext
+  voll“). `cargo test` der Kiste grün, Clippy still.
 
 ### v0.49.1 – 2026-10-17 (die Vorlage der Werkzeugansage kommt auch unter Windows mit LF an; Fund 561; keine Kiste geändert)
 

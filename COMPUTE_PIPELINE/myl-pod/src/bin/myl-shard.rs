@@ -119,7 +119,7 @@ fn main() {
         }
     };
 
-    let modell = match integer_llm_runtime::loader::load_model(std::path::Path::new(&artefakte)) {
+    let modell = match integer_llm_runtime::loader::load_model_fuer_netz(std::path::Path::new(&artefakte)) {
         Ok(m) => Arc::new(m),
         Err(e) => {
             eprintln!("[myl-shard] Modell nicht geladen: {e}");

@@ -215,7 +215,15 @@ fn bereich(wert: &str, von: u32, bis: u32) -> Result<Option<u32>, String> {
 /// verlorene Arbeit. Deshalb nimmt ein Agentenlauf nie weniger als diesen
 /// Wert (`lauf::fahren_mit_hausregel`), auch wenn fuer das Gespraech weniger
 /// eingestellt ist.
-pub const ANTWORT_VORGABE: usize = 1600;
+///
+/// ⚑ **4 096 seit dem 2026-10-19** (Festlegung des Projektinhabers: „die
+/// Antwortlaenge sinnvoll hochsetzen“), vorher 1 600. Eine Antwort im
+/// Gespraech mit einem ganzen Skript oder einer ausfuehrlichen Erklaerung
+/// riss bei 1 600 ab; 4 096 haelt bei 65 536 Kontext ein Sechzehntel frei.
+/// ⚠️ **Eine gespeicherte Einstellung bleibt**, wie jede: Wer 1 600 in
+/// `client.json` stehen hat, behaelt es. Der Agent nimmt ohnehin mehr
+/// (`agentenwahl::agent_antwortlaenge`).
+pub const ANTWORT_VORGABE: usize = 4096;
 
 fn denkbudget_vorgabe() -> Option<u32> {
     Some(DENKBUDGET_VORGABE)
@@ -226,6 +234,13 @@ pub const KONTEXT_VORGABE: usize = 65_536;
 
 /// Darunter ist ein Arbeitskontext kein Arbeitskontext: Werkzeugansage,
 /// Auftrag und eine Antwort brauchen allein einige tausend Token.
+///
+/// ⚠️ **Fuer ein Gespraech reicht das, fuer einen Agenten nicht** (Fund 562):
+/// Grundprompt mit vollem Werkzeugsatz und Antwortreserve sind zusammen
+/// schon gut 8200. Was ein Agent bekommt, haelt der Dispatcher mit
+/// `plan::KONTEXT_VOR_EXPERTEN` frei; dieses Minimum bleibt die Schwelle, ab
+/// der ein Modell ueberhaupt geladen wird, damit kleine Rechner kleine
+/// dichte Modelle nicht verlieren.
 pub const KONTEXT_MINDESTENS: usize = 8_192;
 
 fn kontext_vorgabe() -> Option<usize> {
@@ -1090,8 +1105,8 @@ pub const FELDER: [Feld; 33] = [
         ("Modell", "Model"),
         ("Länge der Antwort", "Answer length"),
         (
-            "Höchstzahl der Token je Antwort im Gespräch. Mehr Token heißt längere Antworten und längere Wartezeit. Der Agent nimmt nie weniger als 4000, denn ein abgeschnittener Werkzeugaufruf ist verlorene Arbeit.",
-            "Maximum number of tokens per answer in chat. More tokens means longer answers and a longer wait. The agent never takes less than 4000, because a cut-off tool call is lost work.",
+            "Höchstzahl der Token je Antwort im Gespräch. Mehr Token heißt längere Antworten und längere Wartezeit. Der Agent nimmt nie weniger als 4000, bei großem Kontext bis 8192, und schreibt einen Werkzeugaufruf, der an der Grenze abreißt, weiter.",
+            "Maximum number of tokens per answer in chat. More tokens means longer answers and a longer wait. The agent never takes less than 4000, up to 8192 with a large context, and continues a tool call that is cut off at the limit.",
         ),
     ),
     feld(
@@ -1817,6 +1832,29 @@ mod setzer {
     fn der_dispatcher_kennt_dieselben_kontextzahlen() {
         assert_eq!(KONTEXT_MINDESTENS as u64, myl_dispatcher::local::plan::KONTEXT_MINDESTENS);
         assert_eq!(KONTEXT_VORGABE as u64, myl_dispatcher::local::plan::KONTEXT_VORGABE);
+    }
+
+    /// ⛔️ **Der Kontext, den der Dispatcher vor den Experten gibt, traegt
+    /// einen Agenten** (Fund 562, 2026-10-18). Zwei Zahlen an zwei Orten,
+    /// die nichts voneinander wussten: Der Plan liess beim int8-35B auf
+    /// 24 GiB 8192 Token, der Agent haelt 4000 fuer die Antwort frei, und
+    /// Systemprompt mit vollem Werkzeugsatz belegen gemessen 4200 bis 4540
+    /// (Stufe extrem, 2026-10-17). Jeder Lauf endete nach dem ersten
+    /// Werkzeugergebnis mit „Kontext voll“.
+    ///
+    /// ⚑ Verlangt wird, dass nach Grundprompt und Antwortreserve mindestens
+    /// die Haelfte fuer den Verlauf bleibt. Waechst der Werkzeugsatz oder die
+    /// Reserve, wird diese Probe rot, bevor es ein Lauf merkt.
+    #[test]
+    fn der_kontext_vor_den_experten_traegt_einen_agenten() {
+        const GRUNDPROMPT_GEMESSEN: u64 = 4_600;
+        let vorweg = myl_dispatcher::local::plan::KONTEXT_VOR_EXPERTEN;
+        // ⚑ Die Antwortlaenge, die ein Agent bei genau diesem Kontext nimmt.
+        let reserve = myl_local_agent::agentenwahl::agent_antwortlaenge(0, Some(vorweg as usize)) as u64;
+        let verlauf = vorweg - GRUNDPROMPT_GEMESSEN - reserve;
+        assert!(verlauf >= vorweg / 2, "fuer den Verlauf bleiben nur {verlauf} von {vorweg} Token");
+        // Und das Minimum allein traegt keinen: Es ist die Schwelle der Aufnahme.
+        assert!((KONTEXT_MINDESTENS as u64) < GRUNDPROMPT_GEMESSEN + reserve + vorweg / 4);
     }
 
     #[test]

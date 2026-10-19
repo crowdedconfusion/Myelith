@@ -41,6 +41,17 @@ pub struct KVCache {
     /// zu, dass jemand das eine kuerzt und das andere vergisst, und
     /// **das waere plausibler, aber falscher Text**.
     zustand: Option<crate::zustandsspeicher::Zustandsspeicher>,
+    /// **Die Schluessel der Blockauswahl** (Bauart mit vier Stroemen), je
+    /// Ebene: die rohen Schluessel je Position und die fertigen Schluessel je
+    /// vollem Block. Leer bei jedem anderen Modell.
+    ///
+    /// ⚑ **Sie wachsen mit der Folge wie K und V** und werden mit ihnen
+    /// gekuerzt; ein Blockschluessel haengt nur an den Positionen seines
+    /// Blocks.
+    index_roh: Vec<Vec<i16>>,
+    index_bloecke: Vec<Vec<i16>>,
+    index_breite: usize,
+    index_verdichtung: usize,
 }
 
 impl KVCache {
@@ -64,6 +75,81 @@ impl KVCache {
             breite_v: 0,
             k: vec![Vec::new(); faecher],
             v: vec![Vec::new(); faecher],
+            index_roh: vec![Vec::new(); ebenen],
+            index_bloecke: vec![Vec::new(); ebenen],
+            index_breite: 0,
+            index_verdichtung: 0,
+        }
+    }
+
+    /// Das Fach einer Ebene fuer die Indexschluessel.
+    fn indexfach(&self, ebene: usize) -> usize {
+        assert!(
+            ebene >= self.erste_ebene && ebene < self.erste_ebene + self.ebenen,
+            "Indexspeicher: Ebene {ebene} liegt nicht in [{}, {})",
+            self.erste_ebene,
+            self.erste_ebene + self.ebenen
+        );
+        ebene - self.erste_ebene
+    }
+
+    /// **Schreibt den rohen Indexschluessel einer Position** (hinter das Ende
+    /// oder ueber eine schon geschriebene).
+    pub fn index_schreiben(&mut self, ebene: usize, pos: usize, schluessel: &[i16]) {
+        let f = self.indexfach(ebene);
+        if self.index_breite == 0 {
+            self.index_breite = schluessel.len();
+        }
+        let b = self.index_breite;
+        assert_eq!(schluessel.len(), b, "Indexspeicher: Breite {} statt {b}", schluessel.len());
+        let n = self.index_roh[f].len() / b;
+        assert!(pos <= n, "Indexspeicher: Position {pos} hinter dem Ende {n}");
+        if pos == n {
+            self.index_roh[f].extend_from_slice(schluessel);
+        } else {
+            self.index_roh[f][pos * b..(pos + 1) * b].copy_from_slice(schluessel);
+        }
+    }
+
+    /// Der rohe Indexschluessel einer Position.
+    pub fn index_roh(&self, ebene: usize, pos: usize) -> &[i16] {
+        let b = self.index_breite;
+        &self.index_roh[self.indexfach(ebene)][pos * b..(pos + 1) * b]
+    }
+
+    /// Wie viele Blockschluessel einer Ebene stehen.
+    pub fn index_bloecke(&self, ebene: usize) -> usize {
+        self.index_bloecke[self.indexfach(ebene)].len().checked_div(self.index_breite).unwrap_or(0)
+    }
+
+    /// **Schreibt den Schluessel eines vollen Blocks**: genau den naechsten.
+    pub fn index_block_schreiben(&mut self, ebene: usize, block: usize, schluessel: &[i16]) {
+        let f = self.indexfach(ebene);
+        assert_eq!(block, self.index_bloecke(ebene), "Indexspeicher: Block {block} ist nicht der naechste");
+        assert_eq!(schluessel.len(), self.index_breite, "Indexspeicher: Blockschluessel hat die falsche Breite");
+        self.index_bloecke[f].extend_from_slice(schluessel);
+        if self.index_verdichtung == 0 && block == 0 {
+            // Die Blockgroesse ergibt sich aus der ersten vollen Position.
+            self.index_verdichtung = self.index_roh[f].len() / self.index_breite;
+        }
+    }
+
+    /// Der Schluessel eines vollen Blocks.
+    pub fn index_block(&self, ebene: usize, block: usize) -> &[i16] {
+        let b = self.index_breite;
+        &self.index_bloecke[self.indexfach(ebene)][block * b..(block + 1) * b]
+    }
+
+    /// **Kuerzt die Indexschluessel auf `laenge` Positionen**: die rohen auf
+    /// `laenge`, die Bloecke auf die, die darin voll sind.
+    fn index_kuerzen(&mut self, laenge: usize) {
+        let b = self.index_breite;
+        let bloecke = laenge.checked_div(self.index_verdichtung).unwrap_or(0);
+        for f in self.index_roh.iter_mut() {
+            f.truncate(laenge.saturating_mul(b));
+        }
+        for f in self.index_bloecke.iter_mut() {
+            f.truncate(bloecke.saturating_mul(b));
         }
     }
 
@@ -183,6 +269,7 @@ impl KVCache {
         for f in self.v.iter_mut() {
             f.truncate(wirklich.saturating_mul(bv));
         }
+        self.index_kuerzen(wirklich);
         wirklich
     }
 
@@ -216,6 +303,7 @@ impl KVCache {
         for f in self.v.iter_mut() {
             f.truncate(laenge.saturating_mul(bv));
         }
+        self.index_kuerzen(laenge);
     }
 
     /// Ob ein rekurrenter Zustand mitgefuehrt wird.
@@ -255,7 +343,13 @@ impl KVCache {
 
     /// Wie viele Bytes Keys und Values belegen.
     pub fn belegte_bytes(&self) -> usize {
-        self.k.iter().chain(self.v.iter()).map(|f| f.len() * 2).sum()
+        self.k
+            .iter()
+            .chain(self.v.iter())
+            .chain(self.index_roh.iter())
+            .chain(self.index_bloecke.iter())
+            .map(|f| f.len() * 2)
+            .sum()
     }
 
     pub fn truncate(&mut self, layer: usize, head: usize, max_len: usize) {

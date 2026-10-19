@@ -1,0 +1,223 @@
+{
+  "artefakt": "/Users/entity/Desktop/Code/Code/Artificial/Myelith/Repository/INTEGER_LLM/artifacts/myelith-35b-a3b",
+  "schritte": 6,
+  "saaten": [
+    8213088584698225,
+    4468002801560041,
+    6135214929457457
+  ],
+  "token": 1600,
+  "denken": "aus",
+  "ab_werk": true,
+  "laeufe": [
+    {
+      "name": "x_kasse_fehler",
+      "stufe": 5,
+      "lauf": 1,
+      "saat": 8213088584698225,
+      "bestanden": false,
+      "grund": "Abnahme mit 1: \"0.10\", \"0.10\"]), Decimal(\"0.19\")) AssertionError: Decimal('0.20') != Decimal('0.19')  ---------------------------------------------------------------------- Ran 3 tests in 0.000s  FAILED (failures=2)",
+      "sekunden": 282.9,
+      "werkzeuge": [
+        "read_file",
+        "read_file",
+        "read_file",
+        "read_file",
+        "read_file"
+      ]
+    },
+    {
+      "name": "x_kasse_fehler",
+      "stufe": 5,
+      "lauf": 2,
+      "saat": 4468002801560041,
+      "bestanden": false,
+      "grund": "Abnahme mit 1: \"0.10\", \"0.10\"]), Decimal(\"0.19\")) AssertionError: Decimal('0.20') != Decimal('0.19')  ---------------------------------------------------------------------- Ran 3 tests in 0.000s  FAILED (failures=2)",
+      "sekunden": 99.9,
+      "werkzeuge": [
+        "read_file",
+        "read_file",
+        "read_file",
+        "read_file",
+        "read_file"
+      ]
+    },
+    {
+      "name": "x_kasse_fehler",
+      "stufe": 5,
+      "lauf": 3,
+      "saat": 6135214929457457,
+      "bestanden": false,
+      "grund": "Abnahme mit 1: \"0.10\", \"0.10\"]), Decimal(\"0.19\")) AssertionError: Decimal('0.20') != Decimal('0.19')  ---------------------------------------------------------------------- Ran 3 tests in 0.000s  FAILED (failures=2)",
+      "sekunden": 89.9,
+      "werkzeuge": [
+        "read_file",
+        "read_file",
+        "read_file",
+        "read_file",
+        "read_file"
+      ]
+    },
+    {
+      "name": "x_git_regression",
+      "stufe": 5,
+      "lauf": 1,
+      "saat": 8213088584698225,
+      "bestanden": false,
+      "grund": "Abnahme mit 1: -aus-kln' != 'gruesse-aus-koeln' - gre-aus-kln + gruesse-aus-koeln ?   ++++       ++   ---------------------------------------------------------------------- Ran 4 tests in 0.001s  FAILED (failures=1)",
+      "sekunden": 860.4,
+      "werkzeuge": [
+        "run_command"
+      ]
+    },
+    {
+      "name": "x_git_regression",
+      "stufe": 5,
+      "lauf": 2,
+      "saat": 4468002801560041,
+      "bestanden": false,
+      "grund": "Abnahme mit 1: -aus-kln' != 'gruesse-aus-koeln' - gre-aus-kln + gruesse-aus-koeln ?   ++++       ++   ---------------------------------------------------------------------- Ran 4 tests in 0.000s  FAILED (failures=1)",
+      "sekunden": 349.9,
+      "werkzeuge": [
+        "run_command"
+      ]
+    },
+    {
+      "name": "x_git_regression",
+      "stufe": 5,
+      "lauf": 3,
+      "saat": 6135214929457457,
+      "bestanden": false,
+      "grund": "Abnahme mit 1: -aus-kln' != 'gruesse-aus-koeln' - gre-aus-kln + gruesse-aus-koeln ?   ++++       ++   ---------------------------------------------------------------------- Ran 4 tests in 0.001s  FAILED (failures=1)",
+      "sekunden": 421.9,
+      "werkzeuge": [
+        "run_command"
+      ]
+    },
+    {
+      "name": "x_daten_abgleich",
+      "stufe": 5,
+      "lauf": 1,
+      "saat": 8213088584698225,
+      "bestanden": false,
+      "grund": "Abnahme mit 1: ks/Python3.framework/Versions/3.9/lib/python3.9/pathlib.py\", line 1110, in _opener     return self._accessor.open(self, flags, mode) FileNotFoundError: [Errno 2] No such file or directory: 'offen.csv'",
+      "sekunden": 105.1,
+      "werkzeuge": [
+        "read_file",
+        "read_file",
+        "read_file"
+      ]
+    },
+    {
+      "name": "x_daten_abgleich",
+      "stufe": 5,
+      "lauf": 2,
+      "saat": 4468002801560041,
+      "bestanden": false,
+      "grund": "Abnahme mit 1: ks/Python3.framework/Versions/3.9/lib/python3.9/pathlib.py\", line 1110, in _opener     return self._accessor.open(self, flags, mode) FileNotFoundError: [Errno 2] No such file or directory: 'offen.csv'",
+      "sekunden": 104.4,
+      "werkzeuge": [
+        "read_file",
+        "read_file",
+        "read_file"
+      ]
+    },
+    {
+      "name": "x_daten_abgleich",
+      "stufe": 5,
+      "lauf": 3,
+      "saat": 6135214929457457,
+      "bestanden": false,
+      "grund": "Abnahme mit 1: ks/Python3.framework/Versions/3.9/lib/python3.9/pathlib.py\", line 1110, in _opener     return self._accessor.open(self, flags, mode) FileNotFoundError: [Errno 2] No such file or directory: 'offen.csv'",
+      "sekunden": 315.4,
+      "werkzeuge": [
+        "list_directory"
+      ]
+    },
+    {
+      "name": "x_todo_erweitern",
+      "stufe": 5,
+      "lauf": 1,
+      "saat": 8213088584698225,
+      "bestanden": false,
+      "grund": "Abnahme mit 1: ---------------------------------------- Ran 2 tests in 0.083s  OK Traceback (most recent call last):   File \"<stdin>\", line 18, in <module> AssertionError: (['add', 'X', '--prio', 'dringend'], 0, '')",
+      "sekunden": 116.5,
+      "werkzeuge": [
+        "read_file",
+        "read_file",
+        "read_file",
+        "read_file",
+        "read_file"
+      ]
+    },
+    {
+      "name": "x_todo_erweitern",
+      "stufe": 5,
+      "lauf": 2,
+      "saat": 4468002801560041,
+      "bestanden": false,
+      "grund": "Abnahme mit 1: ---------------------------------------- Ran 2 tests in 0.082s  OK Traceback (most recent call last):   File \"<stdin>\", line 18, in <module> AssertionError: (['add', 'X', '--prio', 'dringend'], 0, '')",
+      "sekunden": 114.3,
+      "werkzeuge": [
+        "read_file",
+        "read_file",
+        "read_file",
+        "read_file",
+        "read_file"
+      ]
+    },
+    {
+      "name": "x_todo_erweitern",
+      "stufe": 5,
+      "lauf": 3,
+      "saat": 6135214929457457,
+      "bestanden": false,
+      "grund": "Abnahme mit 1: ---------------------------------------- Ran 2 tests in 0.091s  OK Traceback (most recent call last):   File \"<stdin>\", line 18, in <module> AssertionError: (['add', 'X', '--prio', 'dringend'], 0, '')",
+      "sekunden": 106.4,
+      "werkzeuge": [
+        "read_file",
+        "read_file",
+        "read_file",
+        "read_file",
+        "read_file",
+        "read_file"
+      ]
+    },
+    {
+      "name": "x_schneller",
+      "stufe": 5,
+      "lauf": 1,
+      "saat": 8213088584698225,
+      "bestanden": false,
+      "grund": "Abnahme mit 1: ---------------------------------------------------------------------- Ran 2 tests in 0.000s  OK zu langsam: mehr als 25 s",
+      "sekunden": 232.4,
+      "werkzeuge": [
+        "unlesbarer"
+      ]
+    },
+    {
+      "name": "x_schneller",
+      "stufe": 5,
+      "lauf": 2,
+      "saat": 4468002801560041,
+      "bestanden": false,
+      "grund": "Abnahme mit 1: ---------------------------------------------------------------------- Ran 2 tests in 0.000s  OK zu langsam: mehr als 25 s",
+      "sekunden": 1475.8,
+      "werkzeuge": [
+        "run_command"
+      ]
+    },
+    {
+      "name": "x_schneller",
+      "stufe": 5,
+      "lauf": 3,
+      "saat": 6135214929457457,
+      "bestanden": false,
+      "grund": "Abnahme mit 1: py\", line 88, in paare     wort_set = set(einig) NameError: name 'einig' is not defined  ---------------------------------------------------------------------- Ran 2 tests in 0.000s  FAILED (errors=1)",
+      "sekunden": 300.2,
+      "werkzeuge": [
+        "write_file"
+      ]
+    }
+  ]
+}

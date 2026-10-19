@@ -1,7 +1,7 @@
 # client (Nutzer-Client inkl. Wallet)
 
-> **Version:** 0.169.2 (`myl-client` 0.106.1, `myl-oberflaeche` 0.83.0, `myl-console` 0.66.0, `myl-senses` 0.13.3, `myl-module` 0.4.0)
-> **Datum:** 2026-10-17
+> **Version:** 0.173.0 (`myl-client` 0.109.0, `myl-oberflaeche` 0.85.0, `myl-console` 0.68.0, `myl-senses` 0.13.3, `myl-module` 0.5.0)
+> **Datum:** 2026-10-19
 > **Status:** ✅ **Der lokale Betrieb läuft und ist ausgeliefert.** Ein
 > Gesprächsfenster mit Modellwahl, Agentenschleife und
 > Einstellungsseite; aus einem frischen Klon lassen sich darüber
@@ -181,6 +181,179 @@ Modell überhaupt etwas taugt, und weil eine Schnittstelle, die kein
 Mensch je bedient hat, an den Bedürfnissen vorbei entworfen wird.
 
 ## Changelog
+
+### v0.173.0 (2026-10-19): `/build artifact` mit Link oder Pfad und mit Formatwahl (`myl-console` 0.68.0)
+
+Wünsche des Projektinhabers: als Quelle nur ein Repositorium auf Hugging
+Face über den vollständigen Link oder eines auf dem Rechner über den Pfad,
+Flash-Next nicht mehr als eigener Eintrag; das Format nach der Quelle
+wählen, wenn ein Gemisch die Wahl lässt.
+
+- **Quelle:** zwei Einträge, „Repositorium auf Hugging Face“ (Link) und
+  „Repositorium auf diesem Rechner“ (Pfad). Den Link liest das Bauskript
+  (INTEGER_LLM v0.139.0); ist er keiner, sagt die Erkundung warum. Gebaut
+  wird mit Repositorium und Revision aus der Erkundung, nicht mit dem Link.
+- **Format:** nach der Erkundung, bei einem Gemisch, das in vier Bit gehen
+  kann: „INT4: Experten in vier Bit, der Rest int8“ (empfohlen) oder „INT8“,
+  je mit dem Platz, den der Bau braucht. Sonst steht „Format: INT8“ als
+  Hinweis da. Die Namensliste zeigt danach nur Vorschläge in diesem Format;
+  ein eigener Name bekommt bei INT4 `-int4` angehängt, bei INT8 wird ein Name
+  auf `-int4` abgelehnt.
+- **Belege:** `cargo test` mit Rückgabe 0, Clippy still; im Pseudoterminal
+  durchgeklickt: Pfad, Format INT8, nur der int8-Vorschlag, Esc bricht ab;
+  Link auf Qwen3-0.6B, Format als Hinweis, „Kein Name geht“, weil das
+  Projektmodell schon liegt.
+
+### v0.172.0 (2026-10-19): `/build artifact`, Modulbefehle unter `/module`, keine /Befehle im Fenster (`myl-client` 0.109.0, `myl-console` 0.67.0, `myl-oberflaeche` 0.85.0, `myl-module` 0.5.0)
+
+Wünsche des Projektinhabers: Ist Myelith schon offen, soll `/build artifact`
+das Bauskript öffnen, durch das man sich klickt. Alle Befehle eines Moduls
+heissen `/module trading …`, `/module cad …`. Im Fenster gibt es keine
+/Befehle.
+
+- **`/build artifact` (Konsole):** Quelle wählen (Repositorium, Ordner oder
+  Flash-Next), erkunden mit sichtbaren Zeilen, Freigabe und Parameter
+  zeigen, Namen aus den Vorschlägen wählen (vergebene ausgegraut, mit Grund)
+  oder eigenen eingeben (geprüft vom Skript), Platz (reicht er nur ohne
+  Quelle, wird gefragt; sonst wird angeboten, die geladenen Gewichte danach
+  zu löschen), das geladene Modell auf Wunsch entladen, Bestätigung ohne
+  Vorgabe, dann kurzer Lauf und Bau Zeile für Zeile, danach „Jetzt laden?“
+  mit dem neuen Modell vorgewählt. ⚑ Entschieden und gerechnet wird im
+  Bauskript (`myl_client::eigenbau`, neu: `erkunden`, `bauen`, `Auftrag`);
+  die Konsole fragt und zeigt. Eine Probe hält die Reihenfolge fest
+  (erkunden, Platz, Frage, Bau). `/model` und der Assistent teilen sich
+  `modell_wechseln`; die Wahl kennt eine einmalige Vorwahl.
+- **`myl_client::eigenbau::fehlergrund`** sammelt jede Zeile `FEHLER: …`:
+  Die letzte allein („Schritt endete mit 1: bash“) sagte nichts.
+- **Modulbefehle unter `/module` (Konsole):** `/module trading status` geht
+  als `/trading status` an das Modul; Beschreibung und Protokoll bleiben,
+  jede Signatur gilt weiter. Hilfe und Vervollständigung zeigen die neue
+  Form; die alte nennt sie („Befehle eines Moduls stehen unter /module: …“).
+  `install` gehört der Konsole (`EIGENE_UNTERBEFEHLE`); ein Modul mit dem
+  Hauptbefehl `/install` startet nicht. `MODULBEFEHL` steht einmal, in
+  `myl_module`.
+- **`myl_module::gast::befehl_beim_wirt` und `hilfezeile`:** Ein Modul nennt
+  seine Befehle in seinem Text so, wie der Wirt sie zeigt: `/module cad off`
+  in der Konsole, „off“ im Fenster (der Handschlag sagt `ansicht`).
+  trading 0.58.0 und cad 0.2.0 nutzen sie, neu gebaut und signiert (beide
+  nur lokal).
+- **⛔️ Fenster ohne /Befehle:** Eine getippte Zeile geht immer an das
+  Modell. 📌 Bis hierher ging `/trading status` an das Modul, obwohl der
+  Kommentar an der Befehlsliste sagte, im Fenster werde kein Befehl
+  getippt, und die Probe `modultext_ist_nie_markup` verlangte es sogar; sie
+  verlangt jetzt das Gegenteil. Die Liste am Modul zeigt die Befehle ohne
+  Schrägstrich (`status`, der Hauptbefehl unter dem Namen des Moduls), und
+  die Zeile im Gespräch ebenso.
+- `tauri.conf.json` trägt wieder die Fassung der Kiste (seit v0.171.0 nicht
+  nachgezogen, `die_buendelversion_ist_die_kistenversion` war rot).
+- **Belege:** `cargo test` von `myl-client` (neu:
+  `modulbefehle_stehen_unter_module` und vier Proben in `eigenbau`),
+  `myl-console` (neu: `ein_eigenes_modell_baut_nur_das_bauskript_nach_bestaetigung`),
+  `myl-oberflaeche`, `myl-module` (neu: `befehle_heissen_beim_wirt_verschieden`)
+  mit Rückgabe 0; Clippy mit `-D warnings` still. Die Konsole im
+  Pseudoterminal von Hand durchgeklickt (siehe unten).
+
+### v0.171.0 (2026-10-19): Private lokale Modelle in Wahl und Fenster (`myl-client` 0.108.0, `myl-oberflaeche` 0.84.0)
+
+Anlass: das Bauskript für selbst gebaute Modelle und die Rubrik der
+privaten lokalen Modelle (INTEGER_LLM v0.137.0). Privat heisst: nicht für
+den Netzbetrieb zugelassen.
+
+- **`modelle::katalog` liest zwei Dateien**: `MODELS/llm/KATALOG.json` und
+  den lokalen Katalog `MODELS/llm/KATALOG.lokal.json` (`KATALOG_LOKAL`), den
+  das Bauskript schreibt und Git nicht kennt. `katalog_aus` ist der reine
+  Teil. ⚑ Das Projekt gewinnt bei gleichem Schlüssel; ein lokaler Eintrag ist
+  **immer** privat, gleich was er sagt; ohne `anzeigename` heisst er nach dem
+  Schema oder wie sein Ordner. Im Katalog des Projekts macht
+  `betrieb: lokal` privat.
+- **`Katalogeintrag::privat` und `Modellwahl::privat`.** Privat ist ein
+  Artefakt auch dann, wenn nur sein `model_config.json` es sagt
+  (`modelle::nur_lokal`): Die Angabe reist mit dem Artefakt.
+- ⛔️ **Ein privates Modell bekommt keinen Netzeintrag** („(API), kostet
+  Inferenz-Credits“), und sein Name trägt den Zusatz „(privat)“, an jeder
+  Stelle, an der jemand wählt.
+- **Fenster:** `katalog` führt die lokalen Einträge mit und meldet je
+  Eintrag `privat` und `nur_skript`. Die Zeile sagt „privat, nur lokal,
+  nicht fürs Netz zugelassen“; ein Modell, das nur das Bauskript baut
+  (`bauweg: skript` oder aus dem lokalen Katalog), zeigt statt des Bauknopfs
+  einen gesperrten Knopf „per Bauskript“ mit dem Befehl als Hinweis.
+  `artefakt_loeschen` nimmt auch Schlüssel aus dem lokalen Katalog.
+- **`bezug::Bauplan`** kennt `bauweg: skript` und sagt, womit gebaut wird,
+  statt einen Bau zu beginnen, den das Fenster nicht kann.
+- **Probe des Fensters `jede_lizenz_steht_bei_ihrer_sache`:** Sie zählte
+  jeden Katalogeintrag gegen das Skalenregister und verlangte eine einzige
+  Artefaktlizenz. Mit `myelith-125b-a6b` (vorgemerkt, privat) stimmte
+  beides nicht mehr, obwohl der Katalog richtig war. Gezählt werden jetzt die
+  gebauten Einträge, wie im Testklienten; ein privater muss „privat, nur
+  lokal“ sagen, alle übrigen die Lizenz dieses Repositoriums.
+- **Belege:**
+  - `cargo test` von `myl-client` (neu: `private_modelle_aus_beiden_katalogen`,
+    `nur_lokal_liest_das_artefakt`) und `myl-oberflaeche` mit Rückgabe 0;
+    Clippy mit `-D warnings` still.
+  - Die Liste am echten Baum: `myelith-mini-test (privat)` ohne
+    Netzeintrag, die übrigen Modelle unverändert mit Netzeintrag.
+
+### v0.170.0 (2026-10-19): Antwortlänge 4 096 ab Werk, das lokale Modell schreibt eine abgerissene Antwort weiter (`myl-client` 0.107.0, Fund 569)
+
+Anlass: die Agentenläufe des int4-35B. Ein Werkzeugaufruf, der an der Länge
+abriss, war verloren; dazu die Festlegung des Projektinhabers, die
+Antwortlänge sinnvoll hochzusetzen. Der Agententeil steht in AGENT_LAYER
+v0.51.0 (Funde 566 bis 569).
+
+- **`Oertlichesmodell::weiterschreiben`** (Fund 569): der Prompt des ersten
+  Teils, der Anfang der Antwort dahinter, also genau die Folge, an der die
+  Erzeugung stand; der Speicher findet sie wieder und rechnet nur das Neue.
+  ⛔️ **Ohne Denkgrenze**, denn ein offener Aufruf steht hinter dem
+  Denkblock, und mit Grenze schriebe die Erzeugung `</think>` mitten ins
+  JSON. ⛔️ **Vorn nicht beschnitten**: Ein Leerzeichen am Anfang des neuen
+  Teils gehört zum Inhalt. Im Fenster stellt der Anfang nur den Zerleger
+  dorthin, wo die Antwort abriss.
+- **`ANTWORT_VORGABE` 4 096 statt 1 600** (Gespräch, ab Werk). Eine Antwort
+  mit einem ganzen Skript riss bei 1 600 ab. ⚠️ Eine gespeicherte
+  Einstellung bleibt. Der Agent nimmt ohnehin mehr: mindestens 4 000, mit
+  dem Kontext bis 8 192 (`agentenwahl::agent_antwortlaenge`). Hilfetext von
+  `myl` und Beschreibung des Feldes „Länge der Antwort“ nachgezogen.
+- `der_kontext_vor_den_experten_traegt_einen_agenten` rechnet mit der
+  Antwortlänge, die ein Agent bei 32 768 Kontext wirklich nimmt (4 096).
+- **Beleg:** `cargo test` von `myl-client` mit Rückgabe 0; die Schleife mit
+  Weiterschreiben ist in AGENT_LAYER geprüft. Cargo.lock in `myl-client`,
+  `myl-console`, `myl-oberflaeche` und `myl-testclient` nachgezogen.
+
+### v0.169.4 (2026-10-18): `myl` hält sich an den eingestellten Arbeitskontext (`myl-client` 0.106.3, Fund 563)
+
+Anlass: das neue Szenario „Nadel im Heuhaufen“ der Agentenmessung. Es
+setzt `modell.kontext` auf 12 288, damit ein Lauf verdichten muss; in drei
+Läufen stand im Debug-Log keine einzige Verdichtung, obwohl zehn Protokolle
+mit rund 53 000 Zeichen im Gespräch lagen.
+
+- **Fund 563:** `myl` übernahm von den Modelleinstellungen nur Länge,
+  Denkmodus und Saat. `modell.kontext` galt in Konsole und Fenster
+  (`Oertlichesmodell::uebernehmen`) und in `myl plan` als Arbeitskontext, in
+  `myl agent`, `sitzung`, `auftraege`, `loop`, `frage` und `fragen` aber
+  nicht. Dieselbe Angabe an drei Orten mit zwei Bedeutungen.
+- **Behebung:** `arbeitskontext_setzen` an allen sechs Stellen, an denen
+  `myl` ein Modell lädt. ⚑ Ohne Einstellung gilt damit die Vorgabe 65 536
+  wie in Konsole und Fenster; vorher bekam `myl` die ganze Länge, die Modell
+  und Plan zuließen.
+- ⚠️ **Bewusst nicht mitgenommen:** Temperatur, top-p und top-k. Ein
+  Messskript ohne `--ab-werk` zöge sonst mit den Werten aus dem Ausgabefeld
+  des Fensters; ob `myl` sie übernehmen soll, ist eine eigene Entscheidung.
+- Belege: Bau und Clippy still; am Szenario selbst steht die Verdichtung
+  jetzt im Debug-Log (siehe Agentenmessung vom selben Tag).
+
+### v0.169.3 (2026-10-18): Eine Probe bindet den Kontext des Agenten an den Plan (`myl-client` 0.106.2, Fund 562)
+
+- Neu `der_kontext_vor_den_experten_traegt_einen_agenten`: Nach
+  Grundprompt (gemessen bis 4540 Token, in der Probe 4600) und
+  Antwortreserve (`AGENT_ANTWORT_MINDESTENS`, 4000) bleibt von
+  `plan::KONTEXT_VOR_EXPERTEN` mindestens die Hälfte für den Verlauf.
+  Wächst der Werkzeugsatz oder die Reserve, wird sie rot, bevor ein Lauf es
+  merkt. Dazu die Gegenprobe, dass das Minimum allein keinen Agenten trägt.
+- `KONTEXT_MINDESTENS` (8192) bleibt, sagt aber jetzt, wofür es reicht
+  (Aufnahme, Gespräch) und wofür nicht (Agent). Der Kommentar zur Planung
+  in `oertlich.rs` nennt die neue Reihenfolge.
+- `cargo test` grün, Clippy still. Der Plan selbst: COMPUTE_PIPELINE
+  v0.44.0.
 
 ### v0.169.2 (2026-10-17): `VERSION.md` ist kein Changelog mehr (`myl-client` 0.106.1)
 

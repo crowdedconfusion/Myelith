@@ -1,0 +1,424 @@
+{
+ "laeufe": [
+  {
+   "name": "x_nadel_im_heuhaufen",
+   "art": "Erinnerung",
+   "phase": 1,
+   "saat": 8213088584698225,
+   "bestanden": true,
+   "grund": "",
+   "sekunden": 313.5,
+   "werkzeuge": [
+    "write_file"
+   ],
+   "mit_muster": false
+  },
+  {
+   "name": "x_nadel_im_heuhaufen",
+   "art": "Erinnerung",
+   "phase": 2,
+   "saat": 8213088584698225,
+   "bestanden": true,
+   "grund": "",
+   "sekunden": 117.2,
+   "werkzeuge": [
+    "list_history",
+    "read_history",
+    "write_file"
+   ],
+   "mit_muster": false
+  },
+  {
+   "name": "x_nadel_im_heuhaufen",
+   "art": "Erinnerung",
+   "phase": 1,
+   "saat": 4468002801560041,
+   "bestanden": true,
+   "grund": "",
+   "sekunden": 451.7,
+   "werkzeuge": [
+    "run_command",
+    "run_command",
+    "write_file"
+   ],
+   "mit_muster": false
+  },
+  {
+   "name": "x_nadel_im_heuhaufen",
+   "art": "Erinnerung",
+   "phase": 2,
+   "saat": 4468002801560041,
+   "bestanden": true,
+   "grund": "",
+   "sekunden": 294.6,
+   "werkzeuge": [
+    "list_history",
+    "read_history",
+    "search_memory",
+    "read_history",
+    "list_directory",
+    "read_history",
+    "search_history",
+    "search_history",
+    "search_history",
+    "read_history",
+    "read_history",
+    "list_directory",
+    "list_directory",
+    "read_file",
+    "write_file"
+   ],
+   "mit_muster": false
+  },
+  {
+   "name": "x_nadel_im_heuhaufen",
+   "art": "Erinnerung",
+   "phase": 1,
+   "saat": 6135214929457457,
+   "bestanden": true,
+   "grund": "",
+   "sekunden": 306.3,
+   "werkzeuge": [
+    "write_file"
+   ],
+   "mit_muster": false
+  },
+  {
+   "name": "x_nadel_im_heuhaufen",
+   "art": "Erinnerung",
+   "phase": 2,
+   "saat": 6135214929457457,
+   "bestanden": true,
+   "grund": "",
+   "sekunden": 112.3,
+   "werkzeuge": [
+    "list_history",
+    "read_history",
+    "write_file"
+   ],
+   "mit_muster": false
+  },
+  {
+   "name": "x_web_recherche",
+   "art": "Web",
+   "phase": 1,
+   "saat": 8213088584698225,
+   "bestanden": true,
+   "grund": "",
+   "sekunden": 302.5,
+   "werkzeuge": [
+    "web_search",
+    "web_search",
+    "web_search",
+    "web_read",
+    "web_read",
+    "web_read",
+    "web_search",
+    "write_file",
+    "write_file"
+   ],
+   "mit_muster": false
+  },
+  {
+   "name": "x_web_recherche",
+   "art": "Web",
+   "phase": 1,
+   "saat": 4468002801560041,
+   "bestanden": true,
+   "grund": "",
+   "sekunden": 324.8,
+   "werkzeuge": [
+    "web_search",
+    "web_search",
+    "web_search",
+    "web_read",
+    "web_read",
+    "web_read",
+    "web_read",
+    "write_file",
+    "write_file"
+   ],
+   "mit_muster": false
+  },
+  {
+   "name": "x_web_recherche",
+   "art": "Web",
+   "phase": 1,
+   "saat": 6135214929457457,
+   "bestanden": true,
+   "grund": "",
+   "sekunden": 447.6,
+   "werkzeuge": [
+    "web_search",
+    "web_search",
+    "web_search",
+    "web_read",
+    "web_read",
+    "web_read",
+    "web_read",
+    "write_file",
+    "write_file"
+   ],
+   "mit_muster": false
+  },
+  {
+   "name": "x_pdf_zu_skill",
+   "art": "Skill aus PDF",
+   "phase": 1,
+   "saat": 8213088584698225,
+   "bestanden": false,
+   "grund": "Abnahme mit 1: Traceback (most recent call last):   File \"<stdin>\", line 6, in <module> AssertionError: kein Kopf",
+   "sekunden": 230.5,
+   "werkzeuge": [
+    "read_file",
+    "search_skill",
+    "run_command",
+    "learn_skill",
+    "read_file",
+    "run_command",
+    "list_directory",
+    "run_command",
+    "write_file",
+    "run_command",
+    "write_file",
+    "search_skill"
+   ],
+   "mit_muster": false
+  },
+  {
+   "name": "x_pdf_zu_skill",
+   "art": "Skill aus PDF",
+   "phase": 2,
+   "saat": 8213088584698225,
+   "bestanden": false,
+   "grund": "Abnahme mit 1:  KG;297.50;2027-01-14', 'NL-2026-53-001;2026-12-31;Brandt KG;297,50;2027-01-14'), (8, 'NL-2027-01-01-002;2027-01-01;Lindner;119.99;2027-01-15', 'NL-2026-53-002;2027-01-01;Lindner;119,00;2027-01-15')])",
+   "sekunden": 105.3,
+   "werkzeuge": [
+    "read_file",
+    "learn_skill",
+    "write_file"
+   ],
+   "mit_muster": true
+  },
+  {
+   "name": "x_pdf_zu_skill",
+   "art": "Skill aus PDF",
+   "phase": 1,
+   "saat": 4468002801560041,
+   "bestanden": true,
+   "grund": "",
+   "sekunden": 205.8,
+   "werkzeuge": [
+    "learn_skill",
+    "read_file",
+    "run_command",
+    "learn_skill",
+    "write_file",
+    "write_file",
+    "search_skill"
+   ],
+   "mit_muster": false
+  },
+  {
+   "name": "x_pdf_zu_skill",
+   "art": "Skill aus PDF",
+   "phase": 2,
+   "saat": 4468002801560041,
+   "bestanden": false,
+   "grund": "Abnahme mit 1: randt KG;297,50;2027-01-14', 'NL-2026-53-001;2026-12-31;Brandt KG;297,50;2027-01-14'), (8, 'NL-26-53-002;2027-01-01;Lindner;119,00;2027-01-15', 'NL-2026-53-002;2027-01-01;Lindner;119,00;2027-01-15')])",
+   "sekunden": 401.8,
+   "werkzeuge": [
+    "read_file",
+    "learn_skill",
+    "search_files",
+    "read_file",
+    "run_command",
+    "run_command",
+    "run_command",
+    "run_command",
+    "read_file"
+   ],
+   "mit_muster": false
+  },
+  {
+   "name": "x_pdf_zu_skill",
+   "art": "Skill aus PDF",
+   "phase": 1,
+   "saat": 6135214929457457,
+   "bestanden": true,
+   "grund": "",
+   "sekunden": 211.0,
+   "werkzeuge": [
+    "learn_skill",
+    "read_file",
+    "run_command",
+    "run_command",
+    "learn_skill",
+    "write_file",
+    "write_file",
+    "search_skill"
+   ],
+   "mit_muster": false
+  },
+  {
+   "name": "x_pdf_zu_skill",
+   "art": "Skill aus PDF",
+   "phase": 2,
+   "saat": 6135214929457457,
+   "bestanden": false,
+   "grund": "Abnahme mit 1: Traceback (most recent call last):   File \"<stdin>\", line 5, in <module> AssertionError: (9, [(4, 'NL-2026-10-004;2026-03-07;Kurz;5,95;2026-03-22', 'NL-2026-10-004;2026-03-07;Kurz;5,95;2026-03-23')])",
+   "sekunden": 148.3,
+   "werkzeuge": [
+    "learn_skill",
+    "read_file",
+    "run_command",
+    "read_file"
+   ],
+   "mit_muster": false
+  },
+  {
+   "name": "x_werkzeug_bauen",
+   "art": "Werkzeug",
+   "phase": 1,
+   "saat": 8213088584698225,
+   "bestanden": false,
+   "grund": "Abnahme mit 1: Traceback (most recent call last):   File \"<stdin>\", line 11, in <module> AssertionError: ('DE89370400440532013000', 'gueltig', 'ungueltig\\n', '')",
+   "sekunden": 210.6,
+   "werkzeuge": [
+    "read_history",
+    "read_file",
+    "list_directory",
+    "run_command",
+    "write_file",
+    "write_file",
+    "run_command",
+    "run_command",
+    "run_command",
+    "run_command",
+    "read_file",
+    "read_file"
+   ],
+   "mit_muster": false
+  },
+  {
+   "name": "x_werkzeug_bauen",
+   "art": "Werkzeug",
+   "phase": 2,
+   "saat": 8213088584698225,
+   "bestanden": false,
+   "grund": "Abnahme mit 1: ecent call last):   File \"<stdin>\", line 3, in <module> AssertionError: ['kunde;ergebnis', 'Haas;gueltig', 'Brandt KG;ungueltig', 'Ozdemir;gueltig', 'Lindner;gueltig', 'Kurz;gueltig', 'Weber;gueltig']",
+   "sekunden": 74.4,
+   "werkzeuge": [
+    "read_file",
+    "iban_pruefen",
+    "iban_pruefen",
+    "iban_pruefen",
+    "iban_pruefen",
+    "iban_pruefen",
+    "iban_pruefen",
+    "write_file"
+   ],
+   "mit_muster": true
+  },
+  {
+   "name": "x_werkzeug_bauen",
+   "art": "Werkzeug",
+   "phase": 1,
+   "saat": 4468002801560041,
+   "bestanden": false,
+   "grund": "Abnahme mit 1: Traceback (most recent call last):   File \"<stdin>\", line 11, in <module> AssertionError: ('DE89370400440532013000', 'gueltig', 'ungueltig\\n', '')",
+   "sekunden": 471.9,
+   "werkzeuge": [
+    "read_history",
+    "read_file",
+    "list_directory",
+    "run_command",
+    "write_file",
+    "write_file",
+    "run_command",
+    "run_command",
+    "run_command",
+    "write_file",
+    "run_command",
+    "write_file",
+    "write_file",
+    "run_command",
+    "write_file",
+    "run_command",
+    "read_file",
+    "read_file",
+    "write_file",
+    "run_command",
+    "run_command",
+    "run_command",
+    "write_file",
+    "run_command",
+    "run_command"
+   ],
+   "mit_muster": false
+  },
+  {
+   "name": "x_werkzeug_bauen",
+   "art": "Werkzeug",
+   "phase": 2,
+   "saat": 4468002801560041,
+   "bestanden": false,
+   "grund": "Abnahme mit 1: ecent call last):   File \"<stdin>\", line 3, in <module> AssertionError: ['kunde;ergebnis', 'Haas;gueltig', 'Brandt KG;ungueltig', 'Ozdemir;gueltig', 'Lindner;gueltig', 'Kurz;gueltig', 'Weber;gueltig']",
+   "sekunden": 88.8,
+   "werkzeuge": [
+    "read_file",
+    "iban_pruefen",
+    "iban_pruefen",
+    "iban_pruefen",
+    "iban_pruefen",
+    "iban_pruefen",
+    "iban_pruefen",
+    "write_file"
+   ],
+   "mit_muster": true
+  },
+  {
+   "name": "x_werkzeug_bauen",
+   "art": "Werkzeug",
+   "phase": 1,
+   "saat": 6135214929457457,
+   "bestanden": false,
+   "grund": "Abnahme mit 1: Traceback (most recent call last):   File \"<stdin>\", line 11, in <module> AssertionError: ('DE89370400440532013000', 'gueltig', 'ungueltig\\n', '')",
+   "sekunden": 147.5,
+   "werkzeuge": [
+    "read_history",
+    "read_file",
+    "list_directory",
+    "run_command",
+    "write_file",
+    "write_file",
+    "run_command",
+    "run_command",
+    "run_command",
+    "run_command",
+    "run_command"
+   ],
+   "mit_muster": false
+  },
+  {
+   "name": "x_werkzeug_bauen",
+   "art": "Werkzeug",
+   "phase": 2,
+   "saat": 6135214929457457,
+   "bestanden": true,
+   "grund": "",
+   "sekunden": 74.6,
+   "werkzeuge": [
+    "read_file",
+    "iban_pruefen",
+    "iban_pruefen",
+    "iban_pruefen",
+    "iban_pruefen",
+    "iban_pruefen",
+    "iban_pruefen",
+    "write_file"
+   ],
+   "mit_muster": true
+  }
+ ]
+}

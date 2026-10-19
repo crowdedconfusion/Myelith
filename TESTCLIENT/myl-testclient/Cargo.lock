@@ -1638,7 +1638,7 @@ dependencies = [
 
 [[package]]
 name = "integer-llm-kernels"
-version = "0.87.0"
+version = "0.88.0"
 dependencies = [
  "itertools 0.13.0",
  "objc2",
@@ -1651,7 +1651,7 @@ dependencies = [
 
 [[package]]
 name = "integer-llm-runtime"
-version = "0.97.0"
+version = "0.99.0"
 dependencies = [
  "integer-llm-kernels",
  "libc",
@@ -2510,7 +2510,7 @@ dependencies = [
 
 [[package]]
 name = "myl-local-agent"
-version = "0.40.0"
+version = "0.43.0"
 dependencies = [
  "libc",
  "myl-agent",
@@ -2565,7 +2565,7 @@ dependencies = [
 
 [[package]]
 name = "myl-pod"
-version = "0.35.1"
+version = "0.36.0"
 dependencies = [
  "borsh",
  "getrandom 0.2.17",
@@ -2619,7 +2619,7 @@ dependencies = [
 
 [[package]]
 name = "myl-testclient"
-version = "0.43.1"
+version = "0.43.2"
 dependencies = [
  "borsh",
  "crossterm",

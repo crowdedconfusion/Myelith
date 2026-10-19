@@ -205,6 +205,12 @@ pub fn angebot(
     )
 }
 
+/// **Ob ein Angebot ein Platzhalter ist**, an der Beschreibung, die
+/// [`angebot`] ihm in beiden Ansageformen gibt.
+pub fn ist_platzhalter(w: &Werkzeug) -> bool {
+    w.beschreibung.starts_with("ABGESCHALTET") || w.beschreibung.starts_with("SWITCHED OFF")
+}
+
 #[cfg(test)]
 mod proben {
     use super::*;

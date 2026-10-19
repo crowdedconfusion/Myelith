@@ -1,0 +1,152 @@
+{
+ "laeufe": [
+  {
+   "name": "x_werkzeug_bauen",
+   "art": "Werkzeug",
+   "phase": 1,
+   "saat": 8213088584698225,
+   "bestanden": true,
+   "grund": "",
+   "sekunden": 142.9,
+   "werkzeuge": [
+    "read_history",
+    "read_file",
+    "list_directory",
+    "run_command",
+    "write_file",
+    "write_file",
+    "run_command",
+    "run_command",
+    "run_command",
+    "run_command",
+    "run_command",
+    "run_command"
+   ],
+   "mit_muster": false
+  },
+  {
+   "name": "x_werkzeug_bauen",
+   "art": "Werkzeug",
+   "phase": 2,
+   "saat": 8213088584698225,
+   "bestanden": false,
+   "grund": "Abnahme mit 1: ent call last):   File \"<stdin>\", line 3, in <module> AssertionError: ['kunde;ergebnis', 'Haas;gueltig', 'Brandt KG;ungueltig', 'Ozdemir;gueltig', 'Lindner;gueltig', 'Kurz;ungueltig', 'Weber;gueltig']",
+   "sekunden": 79.8,
+   "werkzeuge": [
+    "read_file",
+    "iban_pruefen",
+    "iban_pruefen",
+    "iban_pruefen",
+    "iban_pruefen",
+    "iban_pruefen",
+    "iban_pruefen",
+    "write_file"
+   ],
+   "mit_muster": false
+  },
+  {
+   "name": "x_werkzeug_bauen",
+   "art": "Werkzeug",
+   "phase": 1,
+   "saat": 4468002801560041,
+   "bestanden": false,
+   "grund": "Abnahme mit 1: rk/Versions/3.9/lib/python3.9/pathlib.py\", line 1110, in _opener     return self._accessor.open(self, flags, mode) FileNotFoundError: [Errno 2] No such file or directory: 'werkzeuge/iban_pruefen.json'",
+   "sekunden": 346.5,
+   "werkzeuge": [
+    "read_history",
+    "list_directory",
+    "read_file",
+    "run_command",
+    "write_file",
+    "write_file",
+    "run_command",
+    "run_command",
+    "run_command",
+    "run_command",
+    "run_command",
+    "run_command",
+    "run_command",
+    "run_command",
+    "run_command",
+    "run_command",
+    "run_command"
+   ],
+   "mit_muster": false
+  },
+  {
+   "name": "x_werkzeug_bauen",
+   "art": "Werkzeug",
+   "phase": 2,
+   "saat": 4468002801560041,
+   "bestanden": false,
+   "grund": "Abnahme mit 1: ecent call last):   File \"<stdin>\", line 3, in <module> AssertionError: ['kunde;ergebnis', 'Haas;gueltig', 'Brandt KG;ungueltig', 'Ozdemir;gueltig', 'Lindner;gueltig', 'Kurz;gueltig', 'Weber;gueltig']",
+   "sekunden": 87.6,
+   "werkzeuge": [
+    "read_file",
+    "iban_pruefen",
+    "iban_pruefen",
+    "iban_pruefen",
+    "iban_pruefen",
+    "iban_pruefen",
+    "iban_pruefen",
+    "write_file"
+   ],
+   "mit_muster": true
+  },
+  {
+   "name": "x_werkzeug_bauen",
+   "art": "Werkzeug",
+   "phase": 1,
+   "saat": 6135214929457457,
+   "bestanden": true,
+   "grund": "",
+   "sekunden": 458.4,
+   "werkzeuge": [
+    "read_history",
+    "list_directory",
+    "read_file",
+    "learn_skill",
+    "run_command",
+    "write_file",
+    "write_file",
+    "run_command",
+    "run_command",
+    "run_command",
+    "run_command",
+    "run_command",
+    "run_command",
+    "run_command",
+    "run_command",
+    "edit_file",
+    "edit_file",
+    "edit_file",
+    "run_command",
+    "run_command",
+    "run_command",
+    "run_command",
+    "run_command"
+   ],
+   "mit_muster": false
+  },
+  {
+   "name": "x_werkzeug_bauen",
+   "art": "Werkzeug",
+   "phase": 2,
+   "saat": 6135214929457457,
+   "bestanden": false,
+   "grund": "Abnahme mit 1: ent call last):   File \"<stdin>\", line 3, in <module> AssertionError: ['kunde;ergebnis', 'Haas;gueltig', 'Brandt KG;ungueltig', 'Ozdemir;gueltig', 'Lindner;gueltig', 'Kurz;ungueltig', 'Weber;gueltig']",
+   "sekunden": 98.1,
+   "werkzeuge": [
+    "read_file",
+    "iban_pruefen",
+    "iban_pruefen",
+    "iban_pruefen",
+    "iban_pruefen",
+    "iban_pruefen",
+    "iban_pruefen",
+    "write_file"
+   ],
+   "mit_muster": false
+  }
+ ]
+}

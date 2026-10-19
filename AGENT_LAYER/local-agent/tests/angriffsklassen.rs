@@ -248,3 +248,33 @@ fn klasse_2_nur_eine_eindeutige_huelle_wird_aufgeloest() {
         assert!(huelle_aufloesen(&w, &mit(a)).is_none(), "aufgelöst, obwohl {warum}");
     }
 }
+
+/// ⚑ **Fund 567: die Hülle neben anderen Feldern** (2026-10-19). Das
+/// int4-35B schrieb `{"felder": {}, "pfad": …, "inhalt": …}` und
+/// `{"felder": {"inhalt": …}, "pfad": …}`. Ein leeres fremdes Feld trägt
+/// nichts, eine Teilhülle ergänzt nur, was außen fehlt; zwei Werte für
+/// dasselbe Feld bleiben eine Wahl, und die trifft niemand stellvertretend.
+#[test]
+fn klasse_2_eine_teilhuelle_und_leere_fremde_felder_werden_aufgeloest() {
+    let w = ueberweisen();
+    let mit = |a: serde_json::Value| Vorschlag { name: "ueberweisen".into(), arguments: a };
+    let soll = serde_json::json!({"an": "0xa", "betrag": 1});
+    for a in [
+        serde_json::json!({"felder": {}, "an": "0xa", "betrag": 1}),
+        serde_json::json!({"felder": {}, "vorlage": "", "an": "0xa", "betrag": 1}),
+        serde_json::json!({"felder": {"betrag": 1}, "an": "0xa"}),
+        serde_json::json!({"felder": {"betrag": 1}, "rest": null, "an": "0xa"}),
+    ] {
+        let neu = huelle_aufloesen(&w, &mit(a.clone())).unwrap_or_else(|| panic!("eindeutig: {a}"));
+        assert_eq!(neu.arguments, soll, "{a}");
+    }
+    for (warum, a) in [
+        ("dasselbe Feld innen und außen", serde_json::json!({"felder": {"betrag": 2}, "an": "0xa", "betrag": 1})),
+        ("zwei Hüllen", serde_json::json!({"felder": {"betrag": 1}, "werte": {"an": "0xa"}})),
+        ("ein fremdes Feld mit Text", serde_json::json!({"felder": {}, "vorlage": "an 0xa", "betrag": 1})),
+        ("ein fremdes Feld mit einer Zahl", serde_json::json!({"felder": {}, "an": "0xa", "betrag": 1, "eilig": 0})),
+        ("das Pflichtfeld fehlt auch danach", serde_json::json!({"felder": {}, "an": "0xa"})),
+    ] {
+        assert!(huelle_aufloesen(&w, &mit(a)).is_none(), "aufgelöst, obwohl {warum}");
+    }
+}

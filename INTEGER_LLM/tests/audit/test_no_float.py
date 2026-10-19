@@ -120,6 +120,11 @@ HOT_PATH = [
     # 📌 Gemeldet hat sie die Vollstaendigkeitspruefung in der CI, zwei
     # Pushes lang rot, bevor jemand hinsah.
     REPO / "kernels" / "src" / "zustandsrueckweg.rs",
+    # ⚑ Die Bausteine der Bauart mit vier Stroemen (2026-10-19):
+    # N-Gramm-Kennungen, Vorzeichenwurzel, Faltung mit Abstand und
+    # Blockauswahl. Die Vorlage rechnet die Wurzeln und die Wertung der
+    # Bloecke in float32; hier ist jede davon ganzzahlig.
+    REPO / "kernels" / "src" / "vierstrom.rs",
     # 2026-09-11: Der Fadenpool ersetzt das `thread::scope` je Matrix.
     # Er rechnet nichts, er verteilt nur Zeilen; genau deshalb steht er
     # hier: Ein Konsens-Crate hat keine Datei, die "rechnet nichts"
@@ -163,6 +168,10 @@ HOT_PATH = [
     REPO / "kernels" / "src" / "ressourcen" / "karten" / "attrappe.rs",
     REPO / "kernels" / "src" / "ressourcen" / "karten" / "nachbaukarte.rs",
     REPO / "runtime" / "src" / "model.rs",
+    # ⚑ Der Rechenweg der Bauart mit vier Stroemen (2026-10-19), ein
+    # Untermodul von `model.rs`: Torbloecke, N-Gramm-Einbettung,
+    # Blockauswahl. Die Vorlage rechnet ihre Mittel und Wurzeln in float32.
+    REPO / "runtime" / "src" / "vierstrom_modell.rs",
     REPO / "runtime" / "src" / "kv_cache.rs",
     REPO / "runtime" / "src" / "generate.rs",
     REPO / "runtime" / "src" / "lib.rs",

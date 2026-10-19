@@ -422,6 +422,9 @@ const TEXTE = {
     "bau.hinweis": "Herunterladen und Kalibrieren dauert Minuten bis Stunden und braucht Gigabyte.",
     "bau.knopf": "Download und kalibrieren",
     "bau.knopf.nurbauen": "kalibrieren",
+    "bau.knopf.skript": "per Bauskript",
+    "bau.skript.hinweis": "Gebaut wird dieses Modell mit bash INTEGER_LLM/scripts/modell_bauen.sh, nicht aus dem Fenster.",
+    "katalog.privat": "privat, nur lokal, nicht fürs Netz zugelassen",
     "bau.frage.titel": (n) => `${n} holen und bauen?`,
     "bau.frage.ja": "Holen und bauen",
     "bau.frage.nein": "Abbrechen",
@@ -768,6 +771,9 @@ const TEXTE = {
     "bau.hinweis": "Downloading and calibrating takes minutes to hours and needs gigabytes.",
     "bau.knopf": "Download and calibrate",
     "bau.knopf.nurbauen": "calibrate",
+    "bau.knopf.skript": "via build script",
+    "bau.skript.hinweis": "This model is built with bash INTEGER_LLM/scripts/modell_bauen.sh, not from the window.",
+    "katalog.privat": "private, local only, not approved for the network",
     "bau.frage.titel": (n) => `Fetch and build ${n}?`,
     "bau.frage.ja": "Fetch and build",
     "bau.frage.nein": "Cancel",
@@ -3803,6 +3809,8 @@ async function katalog_zeichnen() {
       `Gewichte ${m.gewichte} (${m.lizenz_gewichte})`,
       `Artefakt ${m.artefakt} (${m.lizenz_artefakt})`,
       m.status,
+      // ⛔️ Ein privates Modell sagt es in seiner Zeile (seit 2026-10-19).
+      m.privat ? t("katalog.privat") : "",
     ]
       .filter(Boolean)
       .join("  ·  ");
@@ -3816,6 +3824,12 @@ async function katalog_zeichnen() {
       // Einzige, was man mit einem vorhandenen Artefakt tun kann und
       // sonst nirgends im Fenster kann.
       loeschknopf(b, m);
+    } else if (m.nur_skript) {
+      // ⚑ Seine Bauart hat einen eigenen Weg; der Knopf sagt welchen,
+      // statt einen Bau zu beginnen, den das Fenster nicht kann.
+      b.textContent = t("bau.knopf.skript");
+      b.disabled = true;
+      b.title = t("bau.skript.hinweis");
     } else {
       b.textContent = t(m.modell_da ? "bau.knopf.nurbauen" : "bau.knopf");
       b.disabled = v.fehlt.length > 0 || baut !== null;
@@ -5767,12 +5781,12 @@ $("eingabe").addEventListener("submit", async (e) => {
   if (!text && anhaenge_offen.length === 0) return;
   feld.value = "";
   feld_messen();
-  // ⚑ **Ein Befehl eines Moduls geht an das Modul**, nicht an das Modell,
-  //   und auch waehrend ein Auftrag laeuft (wie in der Konsole).
-  if (modulbefehl_der_zeile(text) && anhaenge_offen.length === 0) {
-    await modul_senden(text);
-    return;
-  }
+  // ⛔️ **Im Fenster gibt es keine /Befehle** (Festlegung des Projektinhabers,
+  //   2026-10-19): Was hier steht, geht an das Modell, auch wenn es mit einem
+  //   Schraegstrich beginnt. Die Befehle eines Moduls stehen in der Liste
+  //   hinter dem Pfeil an der Modulwahl. 📌 Bis CLIENT v0.171.0 ging eine
+  //   getippte Zeile wie `/trading status` an das Modul, obwohl der
+  //   Kommentar an der Liste sagte, im Fenster werde kein Befehl getippt.
   await senden(text);
 });
 
@@ -6741,12 +6755,13 @@ async function modulbefehle_holen(neu = false) {
   }
 }
 
-/// **Ob eine Zeile ein Befehl eines Moduls ist**: Ihr erstes Wort ist der
-/// Hauptbefehl eines gepruefen Moduls (wie in der Konsole).
-function modulbefehl_der_zeile(text) {
-  const wort = (text || "").trim().split(/\s+/)[0] || "";
-  if (!wort.startsWith("/")) return null;
-  return modulbefehle.find((b) => b.name.split(/\s+/)[0] === wort) || null;
+/// **Wie ein Befehl eines Moduls im Fenster heisst**: ohne Schraegstrich und
+/// ohne den Hauptbefehl, also `status` fuer `/trading status`; der
+/// Hauptbefehl selbst heisst wie das Modul. ⛔️ Im Fenster steht kein
+/// /Befehl; die Zeile mit Schraegstrich ist nur das, was das Modul bekommt.
+function modulbefehl_name(b) {
+  const teile = (b.name || "").trim().split(/\s+/);
+  return teile.length > 1 ? teile.slice(1).join(" ") : b.modul;
 }
 
 /// Teile mit Stil als Spannen, je Teil eine, nur mit `textContent`.
@@ -6835,14 +6850,15 @@ function modulstand_zeichnen(stand) {
   sichtlasche_zeichnen();
 }
 
-/// **Ein Befehl eines Moduls**, von seinem Knopf in der Seitenleiste oder
-/// getippt wie in der Konsole.
-async function modul_senden(text) {
-  const name = modulbefehl_der_zeile(text)?.modul || text.trim().split(/\s+/)[0];
-  modulzeile(name, `› ${text}`, "beiwerk");
+/// **Ein Befehl eines Moduls**, aus der Liste hinter dem Pfeil. Gezeigt wird
+/// sein Name ohne Schraegstrich; das Modul bekommt die Zeile seiner
+/// Beschreibung (`/trading status`).
+async function modul_senden(b) {
+  const name = b.modul;
+  modulzeile(name, `› ${modulbefehl_name(b)}`, "beiwerk");
   if (!modulstand.some((x) => x.name === name)) modulzeile(name, t("modulausgabe.laedt", name), "beiwerk");
   try {
-    await invoke("modul_befehl", { zeile: text });
+    await invoke("modul_befehl", { zeile: b.name });
     modulstand_zeichnen(await invoke("modul_stand"));
   } catch (f) {
     modulzeile(name, String(f), "warnung");
@@ -6899,12 +6915,12 @@ function modulbefehle_zeigen(feld, pfeil, modul) {
     e.setAttribute("role", "menuitem");
     const name = document.createElement("span");
     name.className = "befehlsname";
-    name.textContent = b.name;
+    name.textContent = modulbefehl_name(b);
     const was = document.createElement("span");
     was.className = "befehlswas";
     was.textContent = b.was;
     e.append(name, was);
-    e.addEventListener("click", () => modul_senden(b.name));
+    e.addEventListener("click", () => modul_senden(b));
     m.append(e);
   }
   pfeil.setAttribute("aria-expanded", "true");

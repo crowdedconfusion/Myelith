@@ -67,7 +67,8 @@ def lade_messungen() -> dict[str, dict]:
     if not KATALOG.is_file():
         return aus
     katalog = json.loads(KATALOG.read_text(encoding="utf-8"))
-    for modell in sorted(k for k in katalog if not k.startswith("_")):
+    # ⛔️ Private Modelle rechnet das Netz nicht; sie haben ihre eigene Rubrik.
+    for modell in sorted(k for k in katalog if not k.startswith("_") and not privat(katalog[k])):
         kurz = modell.replace(".", "")
         vergleich = ERGEBNISSE / f"perplexity_comparison_{kurz}.json"
         grundlinie = ERGEBNISSE / f"baseline_wikitext2_{kurz}.json"
@@ -80,6 +81,19 @@ def lade_messungen() -> dict[str, dict]:
             continue
         aus[modell] = {**d, "dataset": g.get("dataset"), "quelle": vergleich.name}
     return aus
+
+
+def privat(eintrag: dict) -> bool:
+    """**Privat, nur lokal**: `betrieb` ist `lokal`."""
+    return isinstance(eintrag, dict) and eintrag.get("betrieb") == "lokal"
+
+
+def lade_private() -> dict[str, dict]:
+    """Die Katalogeintraege, die nicht fuer den Netzbetrieb zugelassen sind."""
+    if not KATALOG.is_file():
+        return {}
+    katalog = json.loads(KATALOG.read_text(encoding="utf-8"))
+    return {k: v for k, v in sorted(katalog.items()) if not k.startswith("_") and privat(v)}
 
 
 def wert(d: dict, *pfad: str) -> str:
@@ -101,8 +115,8 @@ def baue() -> str:
     a("# Modellkarte (erzeugt)")
     a("")
     a("> ⚑ **Diese Datei wird erzeugt, nicht geschrieben.**")
-    a("> Quelle: `INTEGER_LLM/theta_v/spec.json` und")
-    a("> `BENCHMARKS/Inferenz/results/`. Wer sie von Hand ändert, verliert")
+    a("> Quelle: `INTEGER_LLM/theta_v/spec.json`,")
+    a("> `BENCHMARKS/Inferenz/results/` und `MODELS/llm/KATALOG.json`. Wer sie von Hand ändert, verliert")
     a("> die Änderung beim nächsten Lauf von")
     a("> `COMPLIANCE/ethics/werkzeuge/modellkarte.py`.")
     a("")
@@ -136,6 +150,29 @@ def baue() -> str:
                 f"| {modell} | {d.get('dataset') or NICHT_GEMESSEN} | "
                 f"{d.get('evaluated_tokens', NICHT_GEMESSEN)} | {zahl('integer_perplexity', 2)} | "
                 f"{zahl('baseline_perplexity', 2)} | {zahl('delta_pct', 2)} % | `{d['quelle']}` |"
+            )
+    a("")
+    a("## Private lokale Modelle (nicht für den Netzbetrieb zugelassen)")
+    a("")
+    a("⛔️ **Diese Modelle rechnen nur auf der Maschine, die sie gebaut hat.**")
+    a("Die Lizenz ihrer Gewichte erlaubt keinen Dienst für Dritte, also keinen")
+    a("Netzbetrieb. Ihr Artefakt trägt `betrieb: lokal` in `model_config.json`;")
+    a("ein Knoten lädt es nicht, und der Klient zeigt es mit dem Zusatz")
+    a("„(privat)“ und ohne Netzeintrag. Was ein Nutzer selbst baut")
+    a("(`INTEGER_LLM/scripts/modell_bauen.sh`), steht im lokalen Katalog")
+    a("`MODELS/llm/KATALOG.lokal.json`, den Git nicht kennt, und ist immer privat.")
+    a("")
+    private = lade_private()
+    if not private:
+        a("*keines im Katalog*")
+    else:
+        a("| Modell | Grundgewichte | Lizenz der Gewichte | Parameter | Status |")
+        a("|---|---|---|---|---|")
+        for modell, v in private.items():
+            a(
+                f"| {modell} | {v.get('hf_repo') or NICHT_GEMESSEN} | "
+                f"{v.get('lizenz_gewichte') or NICHT_GEMESSEN} | {v.get('parameter') or NICHT_GEMESSEN} | "
+                f"{v.get('status') or NICHT_GEMESSEN} |"
             )
     a("")
     a("## Was diese Karte nicht sagt")

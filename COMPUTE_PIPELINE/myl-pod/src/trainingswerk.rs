@@ -35,7 +35,10 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use integer_llm_runtime::loader::load_model;
+// ⚑ **Der Netzbetrieb laedt ueber `load_model_fuer_netz`** (2026-10-19): Ein
+//   privates lokales Modell (`betrieb = "lokal"`) wird abgelehnt, bevor ein
+//   Gewicht gelesen wird.
+use integer_llm_runtime::loader::load_model_fuer_netz;
 use integer_llm_runtime::model::IntegerModel;
 use integer_llm_runtime::shardtraining::{
     rueckwaerts, vorwaerts, Shardfehler, Shardgewichte, Shardvorgaben,
@@ -95,7 +98,7 @@ pub struct Trainingswerk {
 impl Trainingswerk {
     /// Lädt das Modell und schneidet es in `SHARDS` Stücke.
     pub fn laden(artefakte: &Path) -> Result<Self, String> {
-        let modell = load_model(artefakte).map_err(|e| format!("Modell laden: {e}"))?;
+        let modell = load_model_fuer_netz(artefakte).map_err(|e| format!("Modell laden: {e}"))?;
         Self::aus_modell(Arc::new(modell))
     }
 

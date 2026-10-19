@@ -36,106 +36,10 @@ LLM = HIER.parent
 REPO = LLM.parent
 sys.path.insert(0, str(LLM / "calibrate"))
 
-# Felder des Config, die den Export bewusst nichts angehen.
-NICHT_GEBRAUCHT = {
-    "architectures", "auto_map", "bos_token_id", "eos_token_id",
-    "pad_token_id", "torch_dtype", "dtype", "transformers_version",
-    "use_cache", "attention_dropout", "initializer_range",
-    "model_type", "_name_or_path", "router_aux_loss_coef",
-    "output_router_logits", "tie_word_embeddings",
-    # Der Sichtturm und der MTP-Kopf sind ausgeschlossen (Fund 416).
-    "vision_config", "image_token_id", "video_token_id",
-    "vision_start_token_id", "vision_end_token_id",
-    # ⚑ Nachgesehen am 2026-09-21 und fuer gleichgueltig befunden:
-    # `mamba_ssm_dtype` ist eine Gleitkomma-Angabe der Vorlage (dieses
-    # Projekt rechnet ganzzahlig), `mtp_use_dedicated_embeddings`
-    # betrifft nur den ausgeschlossenen MTP-Kopf, und
-    # `rope_parameters` ist derselbe Inhalt wie `rope_scaling`, dessen
-    # Felder einzeln geprueft werden.
-    "mamba_ssm_dtype", "mtp_use_dedicated_embeddings", "rope_parameters",
-    # ⚠️ **Der Config zaehlt die MTP-Ebenen des QUELLMODELLS, der Eintrag
-    # die des ARTEFAKTS.** Der Kopf ist ausgeschlossen (Fund 416), also
-    # 1 gegen 0, und das ist Absicht statt Abweichung.
-    "mtp_num_hidden_layers",
-    # ⚑ Nachgesehen am 2026-09-21: Bei allen fuenf Modellen ist
-    # `sliding_window` None und `use_sliding_window` False, also gibt es
-    # kein Fenster; `max_window_layers` zaehlt dann nichts.
-    "sliding_window", "use_sliding_window", "max_window_layers",
-    # `decoder_sparse_step: 1` heisst „jede Ebene ist ein Gemisch", und
-    # genau das drueckt `num_experts > 0` im Eintrag schon aus.
-    "decoder_sparse_step",
-    # `rope_scaling` selbst ist der Behaelter; seine Felder werden
-    # einzeln geprueft (siehe `flach`).
-    "rope_scaling",
-    # ⚑ Nachgesehen am 2026-09-28 (ternaeres 8B, gespeichert mit
-    # transformers 4.57): die allgemeinen Vorgaben, die diese Fassung
-    # beim Speichern jedes Config ausschreibt. Generierung, Strahlsuche,
-    # Encoder-Decoder, Ausgabeschalter, Klassifikationskoepfe; nichts
-    # davon betrifft den Export eines reinen Decoders.
-    "add_cross_attention", "bad_words_ids", "begin_suppress_tokens",
-    "chunk_size_feed_forward", "cross_attention_hidden_size",
-    "decoder_start_token_id", "diversity_penalty", "do_sample",
-    "early_stopping", "encoder_no_repeat_ngram_size",
-    "exponential_decay_length_penalty", "finetuning_task",
-    "forced_bos_token_id", "forced_eos_token_id", "id2label",
-    "is_decoder", "is_encoder_decoder", "label2id", "length_penalty",
-    "max_length", "min_length", "no_repeat_ngram_size", "num_beam_groups",
-    "num_beams", "num_return_sequences", "output_attentions",
-    "output_hidden_states", "output_scores", "prefix", "problem_type",
-    "pruned_heads", "remove_invalid_values", "repetition_penalty",
-    "return_dict", "return_dict_in_generate", "sep_token_id",
-    "suppress_tokens", "task_specific_params", "temperature",
-    "tf_legacy_loss", "tie_encoder_decoder", "tokenizer_class", "top_k",
-    "top_p", "torchscript", "typical_p", "use_bfloat16",
-    # Ebenso nachgesehen: `layer_types` ist 36-mal „full_attention“,
-    # also nichts, was ein dichtes Qwen3 nicht ohnehin ist; `no_bias`
-    # ist True und deckt sich mit `attention_bias` False, das geprueft
-    # wird.
-    "layer_types", "no_bias",
-}
-
-# Wie ein Feld im Modelleintrag heisst, wenn es anders heisst als im Config.
-# **Wo Eintrag und Config bewusst verschieden sind**, mit dem Grund.
-#
-# ⚑ **Eigene Liste und nicht `NICHT_GEBRAUCHT`.** Ein Feld, das niemand
-# liest, und ein Feld, das absichtlich anders lautet, sind zwei
-# verschiedene Dinge. Beides in einen Topf zu werfen hiesse, die Absicht
-# unsichtbar zu machen.
-ABSICHTLICH_ANDERS = {
-    # Der Config zaehlt die MTP-Ebenen des QUELLMODELLS (1), der Eintrag
-    # die des ARTEFAKTS (0): Der Kopf fuer Mehrfachvorhersage ist beim
-    # Export ausgeschlossen (Fund 416).
-    "mtp_num_hidden_layers": "MTP-Kopf ist ausgeschlossen (Fund 416)",
-}
-
-UEBERSETZUNG = {
-    "num_attention_heads": "num_heads",
-    "num_key_value_heads": "num_kv_heads",
-    "num_hidden_layers": "num_layers",
-    "max_position_embeddings": "max_context",
-    # Die Felder einer RoPE-Skalierung, aus `rope_scaling` flachgezogen.
-    "rope_type": "rope_art",
-    "factor": "rope_yarn_faktor",
-    "original_max_position_embeddings": "rope_yarn_urlaenge",
-}
-
-
-def flach(config: dict) -> dict:
-    """Alle Felder, auch die aus `text_config` und `rope_scaling`.
-
-    ⚑ **`rope_scaling` wird mit hineingezogen**, denn genau dort lag der
-    Wert, den zu uebersehen einen Abend gekostet hat.
-    """
-    aus = {}
-    for k, v in config.items():
-        if k == "text_config" and isinstance(v, dict):
-            aus.update(flach(v))
-        elif k == "rope_scaling" and isinstance(v, dict):
-            for rk, rv in v.items():
-                aus[rk] = rv
-        else:
-            aus[k] = v
-    return aus
+# ⚑ Die Tabellen und der Abgleich stehen seit 2026-10-19 in
+#   `calibrate/src/konfigabgleich.py`, damit das Bauskript dieselbe Pruefung
+#   faehrt.
+from src.konfigabgleich import flach, feldabgleich  # noqa: E402
 
 
 def main() -> int:
@@ -163,42 +67,16 @@ def main() -> int:
         echt = flach(json.loads(pfad.read_text(encoding="utf-8")))
         print(f"\n[konfigprobe] {name} gegen {pfad.relative_to(REPO)}")
 
-        # 1. Jedes Feld des Eintrags gegen den Config.
-        abweichend = []
-        for ck, wert in echt.items():
-            mk = UEBERSETZUNG.get(ck, ck)
-            if mk not in eintrag:
-                continue
-            meiner = eintrag[mk]
-            if isinstance(wert, float) or isinstance(meiner, float):
-                gleich = abs(float(wert) - float(meiner)) < 1e-9
-            else:
-                gleich = wert == meiner
-            if not gleich:
-                abweichend.append((ck, wert, meiner))
-        echte_abweichung = []
-        for ck, soll, ist in abweichend:
-            if ck in ABSICHTLICH_ANDERS:
-                print(f"  ⚑ {ck}: {soll!r} gegen {ist!r}, absichtlich "
-                      f"({ABSICHTLICH_ANDERS[ck]})")
-                continue
+        # 1. Jedes Feld des Eintrags gegen den Config, 1b die abgeleiteten.
+        befund = feldabgleich(eintrag, echt)
+        for ck, soll, ist, grund in befund["absichtlich"]:
+            print(f"  ⚑ {ck}: {soll!r} gegen {ist!r}, absichtlich ({grund})")
+        for ck, soll, ist in befund["abweichend"]:
             print(f"  ⛔️ {ck}: config sagt {soll!r}, Eintrag sagt {ist!r}")
-            echte_abweichung.append(ck)
-        fehler += len(echte_abweichung)
-        abweichend = echte_abweichung
-
-        # 1b. Abgeleitete Groessen gegen ihre Quelle.
-        #
-        # ⚑ **Eine Zahl, die aus einer anderen folgt, wird nachgerechnet
-        # und nicht geglaubt.** `rotary_dim` habe ich am 2026-09-21 von
-        # Hand getippt; es stimmte zufaellig.
-        paf = echt.get("partial_rotary_factor")
-        if paf is not None and "rotary_dim" in eintrag:
-            soll = int(eintrag["head_dim"] * paf)
-            if eintrag["rotary_dim"] != soll:
-                print(f"  ⛔️ rotary_dim: {eintrag['rotary_dim']}, aber "
-                      f"head_dim {eintrag['head_dim']} * {paf} = {soll}")
-                fehler += 1
+        for meldung in befund["abgeleitet"]:
+            print(f"  ⛔️ {meldung}")
+        fehler += len(befund["abweichend"]) + len(befund["abgeleitet"])
+        abweichend = [ck for ck, _, _ in befund["abweichend"]]
 
         # 1c. Die Tabellen des Artefakts gegen die Masse.
         #
@@ -262,11 +140,7 @@ def main() -> int:
                   f"nicht geprueft")
 
         # 2. Was niemand gelesen hat.
-        gelesen = {UEBERSETZUNG.get(k, k) for k in echt}
-        ungelesen = sorted(
-            ck for ck in echt
-            if UEBERSETZUNG.get(ck, ck) not in eintrag and ck not in NICHT_GEBRAUCHT
-        )
+        ungelesen = befund["ungelesen"]
         if ungelesen:
             print(f"  ⚠️ {len(ungelesen)} Felder des Config liest niemand:")
             for ck in ungelesen:

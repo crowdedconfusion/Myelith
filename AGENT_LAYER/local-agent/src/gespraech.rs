@@ -116,10 +116,12 @@ pub fn zusammenfassung(gespraech: &Gespraech) -> Option<String> {
 /// Die Werkzeugansage, wie ein Lauf mit dieser Ruestung sie vorn stehen hat.
 ///
 /// ⚑ **Samt Systemprompt**, genau wie im Lauf, damit die Kontextanzeige
-/// dasselbe zaehlt, was das Modell bekommt.
+/// dasselbe zaehlt, was das Modell bekommt. Ohne die verankerten, wo ein
+/// Schreibwerkzeug laeuft (Fund 568); Chat und Fenster fahren nie
+/// `NurVerankert`.
 pub fn ansage(ruestung: &crate::ruestung::Ruestung) -> Nachricht {
     crate::werkzeug::angebot_mit_regel(
-        ruestung.kasten.angebote(),
+        &crate::verankert::ansagen(ruestung.kasten.angebote(), false, ruestung.form),
         ruestung.form,
         crate::systemprompt::geprueft(ruestung.form).ok(),
     )

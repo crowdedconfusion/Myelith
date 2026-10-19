@@ -87,154 +87,192 @@ def einen_lauf(
     """
     with tempfile.TemporaryDirectory(prefix="myl-agentenprobe-") as tmp:
         wurzel = Path(tmp)
-        for name, inhalt in (auftrag.get("dateien") or {}).items():
-            (wurzel / name).parent.mkdir(parents=True, exist_ok=True)
-            (wurzel / name).write_text(inhalt, encoding="utf-8")
-        # ⚑ **Eine Vorbereitung, wenn der Ausgangsstand mehr ist als Dateien**
-        #   (2026-10-17, Stufe extrem): etwa eine Git-Historie. Sie laeuft im
-        #   Arbeitsordner, bevor der Agent ihn sieht, und muss mit 0 enden;
-        #   sonst misst der Lauf einen kaputten Aufbau und nicht das Modell.
-        if auftrag.get("vorbereitung"):
-            subprocess.run(["sh", "-c", auftrag["vorbereitung"]], cwd=wurzel, check=True, capture_output=True)
-        # ⚑ **Echte Dateien statt geschriebener** (2026-09-23). Ein Bild
-        #   und eine Tonaufnahme lassen sich nicht als Text hinschreiben,
-        #   und ohne sie sind `describe_image` und `transcribe_audio`
-        #   nicht messbar. Die Quelle ist relativ zur Wurzel des
-        #   Repositoriums; ein Pfad daraus hinaus waere ein Auftrag, der
-        #   auf dieser Maschine etwas anderes misst als auf der naechsten.
-        for name, quelle in (auftrag.get("kopien") or {}).items():
-            q = (WURZEL / quelle).resolve()
-            if not q.is_file() or WURZEL not in q.parents:
-                raise SystemExit(
-                    f"[agentenprobe] {auftrag['name']}: {quelle} fehlt oder liegt "
-                    "ausserhalb des Repositoriums"
-                )
-            (wurzel / name).parent.mkdir(parents=True, exist_ok=True)
-            (wurzel / name).write_bytes(q.read_bytes())
+        ausgangsstand_anlegen(wurzel, auftrag)
+        return im_ordner_fahren(
+            wurzel, artefakt, auftrag, schritte, deutsch, voll, frist, mitschrift, saat, token, denken, ab_werk
+        )
 
-        # ⚑ Die Einstellungen kommen ueber Schalter und nicht ueber die
-        # Ablage des Nutzers: Eine Messung, die die Konfiguration des
-        # Rechners umschreibt, ist keine Messung, sondern ein Eingriff.
-        befehl = [
-            str(MYL), "agent", artefakt, auftrag["auftrag"],
-            "--schritte", str(schritte), "--bezeugtes",
-            "--wurzel", str(wurzel),
-        ]
-        if auftrag.get("schreiben"):
-            befehl.append("--schreiben")
-        # ⚑ **Saat, Antwortlaenge und Denken ausdruecklich** (2026-09-30).
-        #   Ohne sie galt, was in den Einstellungen der Maschine steht, und
-        #   die des Projektinhabers schalten Denken an: Eine Messung, die das
-        #   nicht selbst setzt, misst den Rechner mit.
-        if saat is not None:
-            befehl += ["--saat", str(saat)]
-        if token is not None:
-            befehl += ["--token", str(token)]
-        if denken == "an":
-            befehl.append("--denken")
-        elif denken == "aus":
-            befehl.append("--ohne-denken")
-        # ⚑ **Der Vergleichsschalter, und er ist der eigentliche Zweck
-        # dieses Laufs.** Bis zum 2026-09-09 sagte der Client dem Modell
-        # seine Werkzeuge auf Deutsch an, mit deutschen Namen und einer
-        # Paraphrase der Vorlage, auf die es geschliffen wurde. Ob das
-        # etwas kostet, ist eine Messfrage, und diese Probe ist die
-        # Stelle, an der sie beantwortet wird.
-        if deutsch:
-            befehl.append("--deutsch")
-        if voll:
-            # ⛔️ **`Advanced` und nicht `voll`** (Fund 437, 2026-09-23).
-            #    `myl` kennt nur `Base`, `Advanced` und `1337`; auf
-            #    `voll` warnte es und **fuhr mit der eingestellten Kiste
-            #    weiter**. Die Probe schrieb darueber „Werkzeugsatz:
-            #    voll", gemessen wurde Base, und `run_command` war in
-            #    keinem einzigen Lauf im Angebot.
-            #
-            # 📌 **Eine Messung, die ihren eigenen Aufbau falsch
-            #    benennt, ist schlimmer als keine.** Gefunden hat es
-            #    erst die Abdeckungsmessung, weil dort ein Werkzeug
-            #    fehlte, das es haette geben muessen.
-            befehl += ["--werkzeuge", "Advanced"]
 
-        # ⚑ **Ab Werk statt der Einstellungen der Maschine** (2026-09-30):
-        #   Dort stand `modell.top_k = 2`, gesetzt im Ausgabefeld des Fensters,
-        #   und jeder Lauf haette damit gezogen. `MYL_EINSTELLUNGEN` auf eine
-        #   leere Stelle schirmt ganz ab; die Datei des Nutzers bleibt, wie sie
-        #   ist.
-        umgebung = None
-        if ab_werk:
-            umgebung = dict(os.environ, MYL_EINSTELLUNGEN=str(Path(tmp).parent / f"{Path(tmp).name}-einstellungen.toml"))
-        anfang = time.monotonic()
-        try:
-            fertig = subprocess.run(
-                befehl, capture_output=True, text=True, timeout=frist, env=umgebung
+def ausgangsstand_anlegen(wurzel: Path, auftrag: dict) -> None:
+    """Schreibt Dateien und Kopien des Auftrags und faehrt seine Vorbereitung."""
+    for name, inhalt in (auftrag.get("dateien") or {}).items():
+        (wurzel / name).parent.mkdir(parents=True, exist_ok=True)
+        (wurzel / name).write_text(inhalt, encoding="utf-8")
+    # ⚑ **Eine Vorbereitung, wenn der Ausgangsstand mehr ist als Dateien**
+    #   (2026-10-17, Stufe extrem): etwa eine Git-Historie. Sie laeuft im
+    #   Arbeitsordner, bevor der Agent ihn sieht, und muss mit 0 enden;
+    #   sonst misst der Lauf einen kaputten Aufbau und nicht das Modell.
+    if auftrag.get("vorbereitung"):
+        subprocess.run(["sh", "-c", auftrag["vorbereitung"]], cwd=wurzel, check=True, capture_output=True)
+    # ⚑ **Echte Dateien statt geschriebener** (2026-09-23). Ein Bild
+    #   und eine Tonaufnahme lassen sich nicht als Text hinschreiben,
+    #   und ohne sie sind `describe_image` und `transcribe_audio`
+    #   nicht messbar. Die Quelle ist relativ zur Wurzel des
+    #   Repositoriums; ein Pfad daraus hinaus waere ein Auftrag, der
+    #   auf dieser Maschine etwas anderes misst als auf der naechsten.
+    for name, quelle in (auftrag.get("kopien") or {}).items():
+        q = (WURZEL / quelle).resolve()
+        if not q.is_file() or WURZEL not in q.parents:
+            raise SystemExit(
+                f"[agentenprobe] {auftrag['name']}: {quelle} fehlt oder liegt "
+                "ausserhalb des Repositoriums"
             )
-            ausgabe = fertig.stdout + fertig.stderr
+        (wurzel / name).parent.mkdir(parents=True, exist_ok=True)
+        (wurzel / name).write_bytes(q.read_bytes())
+
+
+def im_ordner_fahren(
+    wurzel: Path, artefakt: str, auftrag: dict, schritte: int, deutsch: bool, voll: bool, frist: int = 600,
+    mitschrift: Path | None = None, saat: int | None = None, token: int | None = None,
+    denken: str = "einstellung", ab_werk: bool = False,
+) -> tuple[bool, str, float, list[str]]:
+    """Faehrt den Auftrag in einem schon angelegten Ordner und urteilt.
+
+    ⚑ **Getrennt von `einen_lauf`** (2026-10-18), damit ein Szenario mit
+    mehreren Phasen (erst einen Skill anlegen, dann in einem frischen Lauf
+    nutzen) denselben Ordner behalten kann. Der Befehl steht so nur hier.
+    """
+    tmp = str(wurzel)
+    # ⚑ Die Einstellungen kommen ueber Schalter und nicht ueber die
+    # Ablage des Nutzers: Eine Messung, die die Konfiguration des
+    # Rechners umschreibt, ist keine Messung, sondern ein Eingriff.
+    befehl = [
+        str(MYL), "agent", artefakt, auftrag["auftrag"],
+        "--schritte", str(schritte), "--bezeugtes",
+        "--wurzel", str(wurzel),
+    ]
+    if auftrag.get("schreiben"):
+        befehl.append("--schreiben")
+    # ⚑ **Eine Werkzeugkiste im Arbeitsordner** (2026-10-18): fuer Szenarien,
+    #   in denen der Agent ein Werkzeug als Manifest anlegt und ein spaeterer
+    #   Lauf es nutzt. Der Pfad ist relativ zum Arbeitsordner.
+    if auftrag.get("kiste"):
+        befehl += ["--kiste", str(wurzel / auftrag["kiste"])]
+    # ⚑ **Saat, Antwortlaenge und Denken ausdruecklich** (2026-09-30).
+    #   Ohne sie galt, was in den Einstellungen der Maschine steht, und
+    #   die des Projektinhabers schalten Denken an: Eine Messung, die das
+    #   nicht selbst setzt, misst den Rechner mit.
+    if saat is not None:
+        befehl += ["--saat", str(saat)]
+    if token is not None:
+        befehl += ["--token", str(token)]
+    if denken == "an":
+        befehl.append("--denken")
+    elif denken == "aus":
+        befehl.append("--ohne-denken")
+    # ⚑ **Der Vergleichsschalter, und er ist der eigentliche Zweck
+    # dieses Laufs.** Bis zum 2026-09-09 sagte der Client dem Modell
+    # seine Werkzeuge auf Deutsch an, mit deutschen Namen und einer
+    # Paraphrase der Vorlage, auf die es geschliffen wurde. Ob das
+    # etwas kostet, ist eine Messfrage, und diese Probe ist die
+    # Stelle, an der sie beantwortet wird.
+    if deutsch:
+        befehl.append("--deutsch")
+    if voll:
+        # ⛔️ **`Advanced` und nicht `voll`** (Fund 437, 2026-09-23).
+        #    `myl` kennt nur `Base`, `Advanced` und `1337`; auf
+        #    `voll` warnte es und **fuhr mit der eingestellten Kiste
+        #    weiter**. Die Probe schrieb darueber „Werkzeugsatz:
+        #    voll", gemessen wurde Base, und `run_command` war in
+        #    keinem einzigen Lauf im Angebot.
+        #
+        # 📌 **Eine Messung, die ihren eigenen Aufbau falsch
+        #    benennt, ist schlimmer als keine.** Gefunden hat es
+        #    erst die Abdeckungsmessung, weil dort ein Werkzeug
+        #    fehlte, das es haette geben muessen.
+        befehl += ["--werkzeuge", "Advanced"]
+
+    # ⚑ **Ab Werk statt der Einstellungen der Maschine** (2026-09-30):
+    #   Dort stand `modell.top_k = 2`, gesetzt im Ausgabefeld des Fensters,
+    #   und jeder Lauf haette damit gezogen. `MYL_EINSTELLUNGEN` auf eine
+    #   leere Stelle schirmt ganz ab; die Datei des Nutzers bleibt, wie sie
+    #   ist.
+    umgebung = None
+    einstellungsdatei = Path(tmp).parent / f"{Path(tmp).name}-einstellungen.toml"
+    if ab_werk:
+        umgebung = dict(os.environ, MYL_EINSTELLUNGEN=str(einstellungsdatei))
+        # ⚑ **Einstellungen des Auftrags auf die Werksdatei** (2026-10-18),
+        #   etwa `agent.web_recherche` oder ein kleiner `modell.kontext`, damit
+        #   ein Lauf sicher verdichten muss. Gesetzt mit `myl setzen`, also
+        #   mit derselben Pruefung wie von Hand; ein abgelehnter Wert bricht ab.
+        for feld, wert in (auftrag.get("einstellungen") or {}).items():
+            subprocess.run([str(MYL), "setzen", feld, str(wert)], env=umgebung, check=True, capture_output=True)
+    elif auftrag.get("einstellungen"):
+        raise SystemExit(f"[agentenprobe] {auftrag['name']}: `einstellungen` gehen nur mit --ab-werk")
+    anfang = time.monotonic()
+    try:
+        fertig = subprocess.run(
+            befehl, capture_output=True, text=True, timeout=frist, env=umgebung
+        )
+        ausgabe = fertig.stdout + fertig.stderr
+    except subprocess.TimeoutExpired:
+        return False, f"ZEITUEBERSCHREITUNG nach {frist} s", time.monotonic() - anfang, []
+    finally:
+        # Die Werksdatei gehoert zu diesem Lauf; liegen bliebe sie neben fremden Ordnern.
+        einstellungsdatei.unlink(missing_ok=True)
+    dauer = time.monotonic() - anfang
+    # ⚑ **Die ganze Ausgabe, wenn verlangt.** Ein Urteil sagt, ob
+    #   bestanden; was das Modell dabei gesagt hat, steht nur hier.
+    if mitschrift is not None:
+        mitschrift.parent.mkdir(parents=True, exist_ok=True)
+        mitschrift.write_text(ausgabe, encoding="utf-8")
+
+    # --- Das Urteil -----------------------------------------------
+    gruende = []
+    for wort in auftrag.get("antwort_enthaelt") or []:
+        if wort not in ausgabe:
+            gruende.append(f"die Antwort nennt {wort!r} nicht")
+    for name, wort in (auftrag.get("datei_enthaelt") or {}).items():
+        p = wurzel / name
+        if not p.is_file():
+            gruende.append(f"{name} ist nicht entstanden")
+        elif wort not in p.read_text(encoding="utf-8", errors="replace"):
+            gruende.append(f"{name} enthaelt {wort!r} nicht")
+
+    # ⚑ **Was ueberlebt haben muss.** Genau das unterscheidet
+    # `edit_file` von `write_file`: Ein Agent, der die ganze Datei
+    # neu schreibt, trifft die verlangte Stelle vielleicht und
+    # loescht dabei den Rest. Ohne diese Pruefung sae ein solcher
+    # Lauf wie ein bestandener aus.
+    for name, woerter in (auftrag.get("datei_enthaelt_auch") or {}).items():
+        p = wurzel / name
+        if not p.is_file():
+            gruende.append(f"{name} fehlt")
+            continue
+        inhalt = p.read_text(encoding="utf-8", errors="replace")
+        for wort in woerter:
+            if wort not in inhalt:
+                gruende.append(f"{name} hat {wort!r} verloren")
+
+    # ⚑ **Die Abnahme von aussen**: ein Befehl, der nach dem Lauf im
+    #   Arbeitsordner mit 0 enden muss. Fuer mehrstufige Auftraege ist das
+    #   die einzige Pruefung, die nicht an Woertern der Antwort haengt.
+    if auftrag.get("abnahme"):
+        try:
+            ab = subprocess.run(
+                ["sh", "-c", auftrag["abnahme"]], cwd=wurzel,
+                capture_output=True, text=True, timeout=60,
+            )
+            if ab.returncode != 0:
+                rest = (ab.stdout + ab.stderr).strip().replace("\n", " ")[-200:]
+                gruende.append(f"Abnahme mit {ab.returncode}: {rest}")
         except subprocess.TimeoutExpired:
-            return False, f"ZEITUEBERSCHREITUNG nach {frist} s", time.monotonic() - anfang, []
-        dauer = time.monotonic() - anfang
-        # ⚑ **Die ganze Ausgabe, wenn verlangt.** Ein Urteil sagt, ob
-        #   bestanden; was das Modell dabei gesagt hat, steht nur hier.
-        if mitschrift is not None:
-            mitschrift.parent.mkdir(parents=True, exist_ok=True)
-            mitschrift.write_text(ausgabe, encoding="utf-8")
+            gruende.append("Abnahme nach 60 s abgebrochen")
 
-        # --- Das Urteil -----------------------------------------------
-        gruende = []
-        for wort in auftrag.get("antwort_enthaelt") or []:
-            if wort not in ausgabe:
-                gruende.append(f"die Antwort nennt {wort!r} nicht")
-        for name, wort in (auftrag.get("datei_enthaelt") or {}).items():
-            p = wurzel / name
-            if not p.is_file():
-                gruende.append(f"{name} ist nicht entstanden")
-            elif wort not in p.read_text(encoding="utf-8", errors="replace"):
-                gruende.append(f"{name} enthaelt {wort!r} nicht")
-
-        # ⚑ **Was ueberlebt haben muss.** Genau das unterscheidet
-        # `edit_file` von `write_file`: Ein Agent, der die ganze Datei
-        # neu schreibt, trifft die verlangte Stelle vielleicht und
-        # loescht dabei den Rest. Ohne diese Pruefung sae ein solcher
-        # Lauf wie ein bestandener aus.
-        for name, woerter in (auftrag.get("datei_enthaelt_auch") or {}).items():
-            p = wurzel / name
-            if not p.is_file():
-                gruende.append(f"{name} fehlt")
-                continue
-            inhalt = p.read_text(encoding="utf-8", errors="replace")
-            for wort in woerter:
-                if wort not in inhalt:
-                    gruende.append(f"{name} hat {wort!r} verloren")
-
-        # ⚑ **Die Abnahme von aussen**: ein Befehl, der nach dem Lauf im
-        #   Arbeitsordner mit 0 enden muss. Fuer mehrstufige Auftraege ist das
-        #   die einzige Pruefung, die nicht an Woertern der Antwort haengt.
-        if auftrag.get("abnahme"):
-            try:
-                ab = subprocess.run(
-                    ["sh", "-c", auftrag["abnahme"]], cwd=wurzel,
-                    capture_output=True, text=True, timeout=60,
-                )
-                if ab.returncode != 0:
-                    rest = (ab.stdout + ab.stderr).strip().replace("\n", " ")[-200:]
-                    gruende.append(f"Abnahme mit {ab.returncode}: {rest}")
-            except subprocess.TimeoutExpired:
-                gruende.append("Abnahme nach 60 s abgebrochen")
-
-        werkzeuge = gerufene_werkzeuge(ausgabe)
-        # ⛔️ **Ein erwartetes Werkzeug ist eine eigene Zusicherung.**
-        #   Bei der Abdeckungsmessung ist die Wirkung manchmal nicht
-        #   vorhersagbar (was ein Sehmodell ueber ein Bild sagt, weiss
-        #   niemand vorher), und ein Auftrag ohne pruefbaren Ausgang
-        #   bestuende immer. **Eine Pruefung, die nichts auswaehlt, sieht
-        #   aus wie eine, die nichts ablehnt.**
-        erwartet = auftrag.get("werkzeug_erwartet")
-        if erwartet and erwartet not in werkzeuge:
-            gerufen = ", ".join(werkzeuge) if werkzeuge else "keines"
-            gruende.append(f"{erwartet} wurde nicht gerufen (gerufen: {gerufen})")
-        if gruende:
-            return False, "; ".join(gruende), dauer, werkzeuge
-        return True, "", dauer, werkzeuge
+    werkzeuge = gerufene_werkzeuge(ausgabe)
+    # ⛔️ **Ein erwartetes Werkzeug ist eine eigene Zusicherung.**
+    #   Bei der Abdeckungsmessung ist die Wirkung manchmal nicht
+    #   vorhersagbar (was ein Sehmodell ueber ein Bild sagt, weiss
+    #   niemand vorher), und ein Auftrag ohne pruefbaren Ausgang
+    #   bestuende immer. **Eine Pruefung, die nichts auswaehlt, sieht
+    #   aus wie eine, die nichts ablehnt.**
+    erwartet = auftrag.get("werkzeug_erwartet")
+    if erwartet and erwartet not in werkzeuge:
+        gerufen = ", ".join(werkzeuge) if werkzeuge else "keines"
+        gruende.append(f"{erwartet} wurde nicht gerufen (gerufen: {gerufen})")
+    if gruende:
+        return False, "; ".join(gruende), dauer, werkzeuge
+    return True, "", dauer, werkzeuge
 
 
 def main() -> int:

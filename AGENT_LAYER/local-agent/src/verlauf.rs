@@ -90,6 +90,49 @@ const DATEIANFANG: &str = "verlauf-";
 
 pub const HOECHSTENS_SITZUNGEN: usize = 20;
 
+/// **Die Zeile im Kopf, die sagt, ob ein Mitschnitt nur Vertrautes traegt.**
+///
+/// 📌 **Fund 570 (2026-10-19).** Der Mitschnitt galt als Ganzes fremd, weil
+/// er fruehere Webseiten tragen kann. Damit sperrte schon ein `read_history`
+/// mit der Auskunft „noch kein Mitschnitt“ die Shell fuer den ganzen Lauf:
+/// Das int4-35B rief es zu Beginn eines Werkzeugbaus, konnte sein Skript
+/// danach nicht mehr ausfuehren und rechnete Pruefsummen von Hand.
+///
+/// ⚑ **Festlegung des Projektinhabers vom selben Tag:** Fremd ist, was aus
+/// einer Sitzung stammt, die Fremdes gesehen hatte. Ob sie das hatte, steht
+/// im Verlauf selbst: Jedes fremde Ergebnis traegt vorn die Fremdmarke, auch
+/// ausgeblendet, gekuerzt und zusammengefasst
+/// (`secure_flow::label_aus_verlauf`, dieselbe Lesart wie ueber die Runden
+/// eines Gespraechs). Beim Schreiben steht das Ergebnis hier im Kopf.
+///
+/// ⛔️ **Vertraut nur, was es ausdruecklich sagt**: Ein Mitschnitt ohne diese
+/// Zeile (aelter als Fund 570) oder mit einer Fremdmarke irgendwo im Text gilt
+/// weiter als fremd, siehe [`nur_vertrautes`]. Die Zeile kann also nur
+/// strenger machen, wo sie fehlt oder nicht stimmt.
+const HERKUNFT: &str = "Herkunft:";
+const HERKUNFT_VERTRAUT: &str = "Herkunft: vertraut";
+
+/// Ob der Verlauf, so wie er abgelegt wird, nur Vertrautes traegt.
+fn traegt_nur_vertrautes(abschnitte: &[(String, String)]) -> bool {
+    let nachrichten: Vec<crate::Nachricht> = abschnitte
+        .iter()
+        .map(|(rolle, text)| crate::Nachricht { role: rolle.clone(), content: text.clone() })
+        .collect();
+    crate::secure_flow::label_aus_verlauf(&nachrichten).0.vertrauen == crate::secure_flow::Vertrauen::Vertraut
+}
+
+/// **Ob ein abgelegter Mitschnitt nur Vertrautes traegt** (Fund 570): Der
+/// Kopf sagt es ausdruecklich, und nirgends im Text steht eine Fremdmarke.
+/// Alles andere, auch eine Datei, die sich nicht lesen laesst, ist fremd.
+pub fn nur_vertrautes(pfad: &Path) -> bool {
+    let Ok(text) = std::fs::read_to_string(pfad) else { return false };
+    let kopf_sagt_vertraut = text
+        .lines()
+        .take_while(|z| !z.starts_with("## Verzeichnis"))
+        .any(|z| z.trim_end() == HERKUNFT_VERTRAUT);
+    kopf_sagt_vertraut && !crate::secure_flow::FREMD_MARKEN.iter().any(|m| text.contains(m))
+}
+
 /// Ein Abschnitt des Verlaufs, wie er im Verzeichnis steht.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Abschnitt {
@@ -222,7 +265,8 @@ pub fn schreiben(
     // ihrer Laenge bekannt, bevor sie geschrieben sind: fester Kopf plus
     // eine Zeile je Abschnitt. **Gerechnet heisst hier trotzdem nicht
     // geglaubt**, siehe die Zusicherung weiter unten.
-    const KOPFZEILEN: usize = 7;
+    // Seit Fund 570 mit der Zeile `Herkunft:`.
+    const KOPFZEILEN: usize = 8;
     let versatz = KOPFZEILEN + abschnitte.len() + 2;
 
     let mut zeile = versatz + 1;
@@ -248,6 +292,10 @@ pub fn schreiben(
     aus.push_str(&format!("# Mitschnitt {}\n", zeitmarke(jetzt)));
     aus.push_str(&format!("Sitzung: {sitzung}\n"));
     aus.push_str(&format!("Modell: {modell}\n"));
+    aus.push_str(&format!(
+        "{HERKUNFT} {}\n",
+        if traegt_nur_vertrautes(abschnitte) { "vertraut" } else { "fremd" }
+    ));
     aus.push_str(&format!(
         "Nachrichten: {}, Zeilen: {}\n",
         abschnitte.len(),

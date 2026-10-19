@@ -187,6 +187,7 @@ fn fahren_mit_melder(
     let erg = Lauf {
         hausregel: None,
         einhaengung: None,
+        mitschnitt: None,
         klient: &klient,
         modell: "m",
         grenzen: &grenzen,
@@ -269,6 +270,7 @@ fn die_schleife_laeuft_ohne_netz() {
     };
     let erg = Lauf {
         hausregel: None,
+        mitschnitt: None,
         klient: &weg,
         modell: "oertlich",
         grenzen: &grenzen,
@@ -352,8 +354,9 @@ fn ein_eingeschleuster_aufruf_wird_abgelehnt_und_steht_im_beleg() {
 fn nach_einer_ablehnung_darf_das_modell_es_richtig_machen() {
     let e = fahren(
         vec![
-            // Erst falsch: `zeit` kennt kein Feld `felder`.
-            "<tool_call>{\"name\":\"zeit\",\"arguments\":{\"felder\":{}}}</tool_call>",
+            // Erst falsch: `zeit` kennt kein Feld `felder`. ⚠️ Mit Inhalt:
+            // ein leeres fremdes Feld faellt seit Fund 567 einfach weg.
+            "<tool_call>{\"name\":\"zeit\",\"arguments\":{\"felder\":{\"x\":\"1\"}}}</tool_call>",
             // Dann richtig.
             "<tool_call>{\"name\":\"zeit\",\"arguments\":{}}</tool_call>",
             "Es ist 12:00.",
@@ -413,7 +416,7 @@ fn ein_abgeschnittener_aufruf_wird_beantwortet() {
     assert!(
         e.nachrichten
             .iter()
-            .any(|n| n.role == "tool" && n.content.contains("abgeschnitten")),
+            .any(|n| n.role == "tool" && n.content.contains("endet ohne </tool_call>")),
         "der unlesbare Aufruf blieb unbeantwortet"
     );
 }
@@ -715,6 +718,7 @@ fn fahren_im_gespraech(
     let melder = |m: myl_local_agent::schleife::Meldung<'_>| meldungen.borrow_mut().push(format!("{m:?}"));
     Lauf {
         hausregel: None,
+        mitschnitt: None,
         klient: weg,
         modell: "zaehlend",
         grenzen: &grenzen,
@@ -938,6 +942,7 @@ fn eine_riesige_werkzeugantwort_wird_gekuerzt_statt_den_lauf_zu_beenden() {
     let finden = move |n: &str| -> Option<MerkleRoot> { adressen.iter().find(|(k, _)| k == n).map(|(_, v)| *v) };
     let erg = Lauf {
         hausregel: None,
+        mitschnitt: None,
         klient: &weg,
         modell: "zaehlend",
         grenzen: &grenzen,
@@ -958,6 +963,122 @@ fn eine_riesige_werkzeugantwort_wird_gekuerzt_statt_den_lauf_zu_beenden() {
     assert!(antwort.content.contains("Zeichen ausgelassen"), "{}", antwort.content);
     assert!(antwort.content.contains("ANFANG") && antwort.content.contains("ENDE"));
     assert!(zweite.iter().map(|n| n.content.chars().count()).sum::<usize>() + 32 <= ansage + 800);
+}
+
+/// 📌 **Fund 564: Viele Werkzeugantworten in einem Schritt werden alle
+/// gekuerzt, nicht nur die laengste.** Das Modell las im Szenario „Nadel im
+/// Heuhaufen“ zehn Dateien in einem Schritt (34 620 Token bei 12 288
+/// Positionen); gekuerzt wurde nur eine, und der Lauf endete mit „Kontext
+/// voll“. Hier: fuenf Aufrufe zu je 2000 Zeichen, Platz fuer rund 2600.
+#[test]
+fn viele_grosse_werkzeugantworten_in_einem_schritt_werden_alle_gekuerzt() {
+    struct Gross(std::sync::atomic::AtomicUsize);
+    impl myl_local_agent::ausfuehrung::Werkzeugausfuehrung for Gross {
+        fn name(&self) -> &str {
+            "zeit"
+        }
+        fn ausfuehren(&self, _a: &serde_json::Value) -> Result<String, Werkzeugfehler> {
+            let n = self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+            Ok(format!("ANFANG{n}{}ENDE{n}", "g".repeat(2_000)))
+        }
+    }
+    let mut kasten = Werkzeugkasten::neu();
+    kasten.einhaengen(Werkzeug::ohne_parameter("zeit", "Die Zeit."), Box::new(Gross(std::sync::atomic::AtomicUsize::new(0)))).expect("eingehaengt");
+    let a = aufbau();
+    let ansage = myl_local_agent::werkzeug::angebot(kasten.angebote(), Default::default()).content.chars().count();
+    let fuenf = "<tool_call>{\"name\":\"zeit\",\"arguments\":{}}</tool_call>".repeat(5);
+    let weg = ZaehlenderWeg::neu(vec![fuenf.as_str(), "Fertig."], ansage + 3_000);
+    let grenzen = Sitzungsgrenzen::neu(kontrakt(4), kasten.angebote());
+    let adressen = a.adressen.clone();
+    let finden = move |n: &str| -> Option<MerkleRoot> { adressen.iter().find(|(k, _)| k == n).map(|(_, v)| *v) };
+    let erg = Lauf {
+        hausregel: None,
+        mitschnitt: None,
+        klient: &weg,
+        modell: "zaehlend",
+        grenzen: &grenzen,
+        betriebsart: Betriebsart::Alles,
+        einhaengung: None,
+        kasten: &kasten,
+        registratur: &a.registratur,
+        adressen: &finden,
+        anker: Hash::from_bytes([7u8; 32]),
+        max_tokens: Some(32),
+        ansageform: Default::default(),
+        melder: None,
+    }
+    .fahren("Wie spaet ist es?");
+    assert_eq!(erg.ende, Ende::Fertig, "{:?}", erg.ende);
+    let zweite = &weg.gesehen.borrow()[1];
+    let antworten: Vec<&str> = zweite.iter().filter(|n| n.role == "tool").map(|n| n.content.as_str()).collect();
+    assert_eq!(antworten.len(), 5, "{antworten:?}");
+    for (k, t) in antworten.iter().enumerate() {
+        let n = k + 1;
+        assert!(t.contains("Zeichen ausgelassen"), "Antwort {n} ungekuerzt");
+        assert!(t.contains(&format!("ANFANG{n}")) && t.contains(&format!("ENDE{n}")), "Antwort {n}: {t}");
+        assert_eq!(t.matches("ausgelassen").count(), 1, "ein Vermerk, nicht Vermerke in Vermerken: {t}");
+    }
+    assert!(zweite.iter().map(|n| n.content.chars().count()).sum::<usize>() + 32 <= ansage + 3_000);
+}
+
+/// 📌 **Fund 565: Verdichtet ein Lauf, liegt die Urfassung danach im
+/// Mitschnitt des Ordners**, auch was gekuerzt wurde, und das Modell sieht
+/// den Verweis. Ohne `read_history` in der Kiste sagt der Verweis das.
+#[test]
+fn ein_verdichtender_lauf_legt_die_urfassung_als_mitschnitt_ab() {
+    struct Gross(std::sync::atomic::AtomicUsize);
+    impl myl_local_agent::ausfuehrung::Werkzeugausfuehrung for Gross {
+        fn name(&self) -> &str {
+            "zeit"
+        }
+        fn ausfuehren(&self, _a: &serde_json::Value) -> Result<String, Werkzeugfehler> {
+            let n = self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+            Ok(format!("ANFANG{n}{}ENDE{n}", "m".repeat(2_000)))
+        }
+    }
+    let ordner = tempfile::tempdir().expect("Ordner");
+    let mut kasten = Werkzeugkasten::neu();
+    kasten.einhaengen(Werkzeug::ohne_parameter("zeit", "Die Zeit."), Box::new(Gross(std::sync::atomic::AtomicUsize::new(0)))).expect("eingehaengt");
+    let a = aufbau();
+    let ansage = myl_local_agent::werkzeug::angebot(kasten.angebote(), Default::default()).content.chars().count();
+    let fuenf = "<tool_call>{\"name\":\"zeit\",\"arguments\":{}}</tool_call>".repeat(5);
+    let weg = ZaehlenderWeg::neu(vec![fuenf.as_str(), "Fertig."], ansage + 3_000);
+    let grenzen = Sitzungsgrenzen::neu(kontrakt(4), kasten.angebote());
+    let adressen = a.adressen.clone();
+    let finden = move |n: &str| -> Option<MerkleRoot> { adressen.iter().find(|(k, _)| k == n).map(|(_, v)| *v) };
+    let erg = Lauf {
+        hausregel: None,
+        mitschnitt: Some((ordner.path(), "lauf-probe")),
+        klient: &weg,
+        modell: "zaehlend",
+        grenzen: &grenzen,
+        betriebsart: Betriebsart::Alles,
+        einhaengung: None,
+        kasten: &kasten,
+        registratur: &a.registratur,
+        adressen: &finden,
+        anker: Hash::from_bytes([7u8; 32]),
+        max_tokens: Some(32),
+        ansageform: Default::default(),
+        melder: None,
+    }
+    .fahren("Wie spaet ist es?");
+    assert_eq!(erg.ende, Ende::Fertig, "{:?}", erg.ende);
+    let dateien: Vec<std::path::PathBuf> = std::fs::read_dir(ordner.path().join(".AGENT/lauf-probe"))
+        .expect("Mitschnittordner")
+        .map(|e| e.expect("Eintrag").path())
+        .filter(|p| p.extension().is_some_and(|x| x == "md"))
+        .collect();
+    assert_eq!(dateien.len(), 1, "{dateien:?}");
+    let mitschnitt = std::fs::read_to_string(&dateien[0]).expect("lesbar");
+    for n in 1..=5 {
+        assert!(mitschnitt.contains(&format!("{}ENDE{n}", "m".repeat(2_000))), "Antwort {n} nicht ungekuerzt im Mitschnitt");
+    }
+    assert!(mitschnitt.contains("Wie spaet ist es?"), "der Auftrag fehlt im Mitschnitt");
+    let zweite = &weg.gesehen.borrow()[1];
+    let gesehen: String = zweite.iter().map(|n| n.content.as_str()).collect();
+    assert!(gesehen.contains("Der vollstaendige Verlauf liegt unter `.AGENT/lauf-probe/"), "kein Verweis im Kontext");
+    assert!(gesehen.contains("Mit dieser Werkzeugkiste kannst du ihn nicht lesen"), "ohne read_history ein ehrlicher Verweis");
 }
 
 /// **Verdichtet wird schon, wenn der Prompt passt, die Antwort dahinter
@@ -1022,13 +1143,18 @@ fn fahren_mit_gruenden(antworten: Vec<(&str, &'static str)>) -> myl_local_agent:
     let weg = GrenzWeg {
         antworten: std::cell::RefCell::new(antworten.into_iter().map(|(t, g)| (t.to_string(), g)).collect()),
     };
+    fahren_ueber(&weg)
+}
+
+fn fahren_ueber(weg: &dyn myl_local_agent::Modellweg) -> myl_local_agent::schleife::Ergebnis {
     let a = aufbau();
     let grenzen = Sitzungsgrenzen::neu(kontrakt(8), a.kasten.angebote());
     let adressen = a.adressen.clone();
     let finden = move |n: &str| -> Option<MerkleRoot> { adressen.iter().find(|(k, _)| k == n).map(|(_, v)| *v) };
     Lauf {
         hausregel: None,
-        klient: &weg,
+        mitschnitt: None,
+        klient: weg,
         modell: "oertlich",
         grenzen: &grenzen,
         betriebsart: Betriebsart::Alles,
@@ -1063,6 +1189,90 @@ fn eine_abgeschnittene_ueberlegung_ist_nicht_fertig() {
         e.nachrichten.iter().any(|n| n.role == "assistant" && n.content.contains("12:00")),
         "nach dem Hinweis lief die Arbeit nicht weiter"
     );
+}
+
+// --- 📌 Fund 569: ein Aufruf, der an der Laenge abreisst ----------------
+
+/// Ein Modellweg, der wie [`GrenzWeg`] antwortet und angefangene Antworten
+/// weiterschreibt, aus einer eigenen Reihe; er merkt sich jeden Anfang.
+struct FortsetzWeg {
+    grenz: GrenzWeg,
+    weiter: std::cell::RefCell<std::collections::VecDeque<(String, &'static str)>>,
+    anfaenge: std::cell::RefCell<Vec<String>>,
+}
+
+impl myl_local_agent::Modellweg for FortsetzWeg {
+    fn chat(
+        &self,
+        modell: &str,
+        nachrichten: &[myl_local_agent::Nachricht],
+        max_tokens: Option<u32>,
+    ) -> Result<myl_local_agent::Antwort, myl_local_agent::Tuerfehler> {
+        self.grenz.chat(modell, nachrichten, max_tokens)
+    }
+
+    fn weiterschreiben(
+        &self,
+        _modell: &str,
+        _nachrichten: &[myl_local_agent::Nachricht],
+        anfang: &str,
+        _max_tokens: Option<u32>,
+    ) -> Option<Result<myl_local_agent::Antwort, myl_local_agent::Tuerfehler>> {
+        self.anfaenge.borrow_mut().push(anfang.to_string());
+        let (text, grund) = self.weiter.borrow_mut().pop_front()?;
+        Some(Ok(myl_local_agent::Antwort {
+            text,
+            abschlussgrund: Some(grund.to_string()),
+            kennung: "oertlich".to_string(),
+            segment: Default::default(),
+            prompt_token: 0,
+            antwort_token: 0,
+        }))
+    }
+}
+
+fn fortsetzweg(antworten: Vec<(&str, &'static str)>, weiter: Vec<(&str, &'static str)>) -> FortsetzWeg {
+    let reihe = |v: Vec<(&str, &'static str)>| std::cell::RefCell::new(v.into_iter().map(|(t, g)| (t.to_string(), g)).collect());
+    FortsetzWeg { grenz: GrenzWeg { antworten: reihe(antworten) }, weiter: reihe(weiter), anfaenge: Default::default() }
+}
+
+/// ⚑ **Ein an der Laenge abgerissener Aufruf wird weitergeschrieben**, mit
+/// dem Anfang als Vorlage und ohne vorn etwas zu verlieren, und das
+/// Werkzeug laeuft im selben Schritt.
+#[test]
+fn ein_abgerissener_aufruf_wird_weitergeschrieben() {
+    let weg = fortsetzweg(
+        vec![(r#"<tool_call>{"name":"zeit","#, "length"), ("Es ist 12:00.", "stop")],
+        vec![(r#" "arguments":{}}"#, "length"), ("</tool_call>", "stop")],
+    );
+    let e = fahren_ueber(&weg);
+    assert_eq!(e.ende, Ende::Fertig, "{}", e.ende);
+    assert_eq!(
+        *weg.anfaenge.borrow(),
+        vec![r#"<tool_call>{"name":"zeit","#.to_string(), r#"<tool_call>{"name":"zeit", "arguments":{}}"#.to_string()]
+    );
+    let erste = e.nachrichten.iter().find(|n| n.role == "assistant").expect("Antwort");
+    assert_eq!(erste.content, r#"<tool_call>{"name":"zeit", "arguments":{}}</tool_call>"#);
+    assert!(!e.nachrichten.iter().any(|n| n.content.contains("(unlesbar)")), "{:?}", e.nachrichten);
+}
+
+/// ⚑ **Hoechstens `FORTSETZUNGEN_HOECHSTENS` Mal**, und danach sagt die
+/// Meldung, dass aufgeteilt werden soll. Endete die Antwort dagegen von
+/// selbst, fehlte nur die Endmarke, und das sagt sie auch.
+#[test]
+fn weitergeschrieben_wird_begrenzt_und_die_meldung_sagt_den_grund() {
+    let offen = r#"<tool_call>{"name":"zeit","#;
+    let weg = fortsetzweg(vec![(offen, "length"), ("Gut.", "stop")], vec![(r#" "a"#, "length"); 5]);
+    let e = fahren_ueber(&weg);
+    assert_eq!(weg.anfaenge.borrow().len(), myl_local_agent::schleife::FORTSETZUNGEN_HOECHSTENS);
+    let gesagt: String = e.nachrichten.iter().filter(|n| n.role == "tool").map(|n| n.content.clone()).collect();
+    assert!(gesagt.contains("Fortsetzungen nicht zu Ende") && gesagt.contains("edit_file"), "{gesagt}");
+    // Ohne Grenze geendet: kein Weiterschreiben, und kein „abgeschnitten“.
+    let weg = fortsetzweg(vec![(offen, "stop"), ("Gut.", "stop")], vec![("egal", "stop")]);
+    let e = fahren_ueber(&weg);
+    assert!(weg.anfaenge.borrow().is_empty(), "ohne Grenze weitergeschrieben");
+    let gesagt: String = e.nachrichten.iter().filter(|n| n.role == "tool").map(|n| n.content.clone()).collect();
+    assert!(gesagt.contains("vor der Endmarke") && !gesagt.contains("Tokengrenze"), "{gesagt}");
 }
 
 /// Und wer immer wieder abgeschnitten wird, bleibt stecken, statt ohne Ende

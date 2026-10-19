@@ -191,6 +191,15 @@ impl Bauplan {
                     (katalogeintrag(wurzel, &quelle).map(|q| (quelle.clone(), q))?, true)
                 }
                 "" | "int8" => ((schluessel.to_string(), e.clone()), false),
+                // ⚑ **Bauarten mit eigenem Weg** (seit 2026-10-19, etwa
+                //   Qwen3.8-Flash-Next: ebenenweise, eigene Python-Umgebung,
+                //   Hunderte Gigabyte) baut das Bauskript, nicht das Fenster.
+                "skript" => {
+                    return Err(format!(
+                        "{schluessel} wird mit `bash INTEGER_LLM/scripts/modell_bauen.sh` gebaut, \
+                         nicht aus dem Fenster: Seine Bauart braucht einen eigenen Weg."
+                    ))
+                }
                 anders => return Err(format!("{schluessel}: unbekannter bauweg `{anders}`")),
             };
             let (quelle, q) = int8;
@@ -354,7 +363,7 @@ fn pfad_mit_umgebung(wurzel: &Path) -> std::ffi::OsString {
 /// Faehrt ein Skript und reicht jede Zeile weiter. Die Ausgabe auf stderr
 /// laeuft in einem eigenen Faden mit, sonst blockiert ein Kind, sobald
 /// die Leitung voll ist.
-fn skript(
+pub(crate) fn skript(
     wurzel: &Path,
     name: &str,
     args: &[&str],

@@ -380,14 +380,17 @@ impl Ansageform {
 ///
 /// # ⚑ Nachsichtig bei eindeutigen Formfehlern (2026-09-29)
 ///
-/// Innerhalb der Marken werden sieben Abweichungen gelesen, deren Sinn nicht
+/// Innerhalb der Marken werden zehn Abweichungen gelesen, deren Sinn nicht
 /// zweifelhaft ist: ein fehlender Schlüssel `"name"`
 /// (`{"search_skill", "arguments": …}`), `parameters` statt `arguments`,
 /// Argumente als JSON-Zeichenkette, ein Codezaun um das JSON, die Form
 /// `{"function": {…}}` und, seit dem 2026-10-01, eine oder zwei fehlende
 /// schließende geschweifte Klammern am Ende (siehe [`fehlende_klammern`]),
 /// seit dem 2026-10-06 rohe Steuerzeichen (Zeilenumbruch, Tabulator) in
-/// einer Zeichenkette (siehe [`steuerzeichen_maskieren`]). 📌 **Werkzeugabdeckung, 27B:** Das Modell schrieb
+/// einer Zeichenkette (siehe [`steuerzeichen_maskieren`]), seit dem
+/// 2026-10-19 auch `type` statt `name`, eine doppelte Hülle
+/// `{"name": {"name": …, "arguments": …}}` und Argumente ohne den Schlüssel
+/// `arguments` (siehe [`aus_dem_wert`]). 📌 **Werkzeugabdeckung, 27B:** Das Modell schrieb
 /// viermal `{"search_skill", "arguments": {"anfrage": "Datum"}}`, jeder
 /// Aufruf galt als unlesbar, und der Auftrag scheiterte, obwohl klar war,
 /// was gemeint war.
@@ -418,7 +421,7 @@ pub fn vorschlaege(antwort: &str) -> Vec<Result<Vorschlag, Unlesbar>> {
     aus
 }
 
-/// Liest einen Aufrufblock, streng oder mit den sieben eindeutigen
+/// Liest einen Aufrufblock, streng oder mit den zehn eindeutigen
 /// Abweichungen (siehe [`vorschlaege`]).
 fn nachsichtig_lesen(inhalt: &str) -> Option<Vorschlag> {
     let mut t = inhalt.trim();
@@ -563,20 +566,44 @@ fn name_ohne_schluessel(t: &str) -> Option<String> {
     Some(format!("{{\"name\": \"{name}\"{danach}"))
 }
 
+/// Der Vorschlag aus dem gelesenen JSON, mit den eindeutigen Abweichungen.
+///
+/// 📌 **Fund 566 (2026-10-19), drei Formen aus den Agentenlaeufen des
+/// int4-35B**, jede bis dahin unlesbar und jede mit genau einer Lesart:
+///
+/// - `{"type": "search_skill", "arguments": …}` (sechsmal, kostete einen
+///   Web-Lauf): `type` traegt den Namen, wenn `name` fehlt. `"function"`
+///   ist die Art eines Aufrufs und nie ein Name.
+/// - `{"name": {"name": "read_file", "arguments": …}}` (viermal): eine
+///   doppelte Huelle, einmal ausgepackt, wenn `name` das einzige Feld ist.
+/// - `{"name": "write_file", "pfad": …, "inhalt": …}`: Fehlen `arguments`
+///   und `parameters`, sind die uebrigen Schluessel die Argumente. ⚑ `id`
+///   und `type` sind Rahmen eines Aufrufs und bleiben draussen.
 fn aus_dem_wert(w: &serde_json::Value, tiefe: u8) -> Option<Vorschlag> {
     let o = w.as_object()?;
-    // Die Form `{"type": "function", "function": {...}}`, einmal ausgepackt.
-    if let (Some(f), 0) = (o.get("function"), tiefe) {
-        if f.is_object() {
+    if tiefe == 0 {
+        // Die Form `{"type": "function", "function": {...}}`, einmal ausgepackt.
+        if let Some(f) = o.get("function").filter(|f| f.is_object()) {
             return aus_dem_wert(f, 1);
         }
+        if let (Some(innen), 1) = (o.get("name").filter(|n| n.is_object()), o.len()) {
+            return aus_dem_wert(innen, 1);
+        }
     }
-    let name = o.get("name")?.as_str()?.trim();
+    let name = match o.get("name") {
+        Some(n) => n.as_str()?.trim(),
+        None => o.get("type")?.as_str().map(str::trim).filter(|t| *t != "function")?,
+    };
     if name.is_empty() {
         return None;
     }
     let argumente = match o.get("arguments").or_else(|| o.get("parameters")) {
-        None | Some(serde_json::Value::Null) => serde_json::Value::Object(Default::default()),
+        None | Some(serde_json::Value::Null) => serde_json::Value::Object(
+            o.iter()
+                .filter(|(k, _)| !["name", "type", "id", "arguments", "parameters"].contains(&k.as_str()))
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
+        ),
         Some(serde_json::Value::String(s)) => serde_json::from_str(s).ok()?,
         Some(a) => a.clone(),
     };
@@ -759,31 +786,53 @@ pub fn argumente_pruefen(
 /// wies es richtig ab, und das Modell besserte aus; es kostete aber jedes
 /// Mal eine ganze Antwort, in der das Skript noch einmal entstand.
 ///
-/// ⛔️ **Nur, wenn nichts zu raten bleibt:** genau ein Feld, das das Schema
-/// nicht kennt; sein Wert ein Objekt, das das Schema **vollständig**
-/// erfüllt (jedes Feld bekannt, jedes Pflichtfeld da). Dann gibt es genau
-/// eine Lesart. Alles andere bleibt, wie es ist, und geht an
-/// [`argumente_pruefen`]; ein Feld mit einem Namen aus dem Schema wird nie
-/// aufgelöst.
+/// 📌 **Fund 567 (2026-10-19): Die Huelle kam selten allein.** In den
+/// Agentenlaeufen des int4-35B wurde `write_file` 37 Mal mit „das Feld
+/// `felder` steht nicht im Schema“ abgewiesen, und fast nie war `felder`
+/// das einzige Feld: `{"felder": {}, "pfad": …, "inhalt": …}` oder
+/// `{"felder": {"inhalt": …}, "pfad": …}`. Beide haben genau eine Lesart.
+///
+/// ⛔️ **Nur, wenn nichts zu raten bleibt:**
+///
+/// - Jedes Feld, das das Schema nicht kennt, ist **leer** (`{}`, `[]`, `""`,
+///   `null`) oder ein Objekt aus lauter Feldern des Schemas; ein leeres
+///   traegt nichts und faellt weg.
+/// - **Hoechstens eine** solche Huelle, und keines ihrer Felder steht auch
+///   aussen. Zwei Werte fuer dasselbe Feld waeren eine Wahl.
+/// - Das Ergebnis erfuellt das Schema vollstaendig ([`argumente_pruefen`]).
+///
+/// Alles andere bleibt, wie es ist, und geht an [`argumente_pruefen`]; ein
+/// Feld mit einem Namen aus dem Schema wird nie aufgeloest. ⚠️ Ein fremdes
+/// Feld mit Inhalt, der kein Objekt ist (`"vorlage": "…"` ohne `pfad`),
+/// bleibt ein Fehler: Wohin das gehoert, weiss nur das Modell.
 pub fn huelle_aufloesen(werkzeug: &Werkzeug, v: &Vorschlag) -> Option<Vorschlag> {
     let aussen = v.arguments.as_object()?;
-    if aussen.len() != 1 {
-        return None;
-    }
-    let (name, innen) = aussen.iter().next()?;
     let schema = werkzeug.parameter.get("properties").and_then(|p| p.as_object())?;
-    if schema.contains_key(name) {
+    let mut neu: serde_json::Map<String, serde_json::Value> =
+        aussen.iter().filter(|(k, _)| schema.contains_key(*k)).map(|(k, w)| (k.clone(), w.clone())).collect();
+    if neu.len() == aussen.len() {
         return None;
     }
-    let innen_obj = innen.as_object().filter(|o| !o.is_empty())?;
-    if !innen_obj.keys().all(|k| schema.contains_key(k)) {
-        return None;
+    let mut huellen = 0;
+    for w in aussen.iter().filter(|(k, _)| !schema.contains_key(*k)).map(|(_, w)| w) {
+        let leer = match w {
+            serde_json::Value::Null => true,
+            serde_json::Value::String(s) => s.is_empty(),
+            serde_json::Value::Array(a) => a.is_empty(),
+            serde_json::Value::Object(o) => o.is_empty(),
+            _ => false,
+        };
+        if leer {
+            continue;
+        }
+        let innen = w.as_object()?;
+        huellen += 1;
+        if huellen > 1 || !innen.keys().all(|f| schema.contains_key(f) && !aussen.contains_key(f)) {
+            return None;
+        }
+        neu.extend(innen.iter().map(|(f, w)| (f.clone(), w.clone())));
     }
-    let noetig = werkzeug.parameter.get("required").and_then(|r| r.as_array());
-    if noetig.is_some_and(|n| n.iter().filter_map(|x| x.as_str()).any(|x| !innen_obj.contains_key(x))) {
-        return None;
-    }
-    let neu = Vorschlag { name: v.name.clone(), arguments: innen.clone() };
+    let neu = Vorschlag { name: v.name.clone(), arguments: serde_json::Value::Object(neu) };
     argumente_pruefen(werkzeug, &neu).ok().map(|_| neu)
 }
 

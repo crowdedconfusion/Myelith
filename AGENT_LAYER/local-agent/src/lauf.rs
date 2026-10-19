@@ -226,7 +226,7 @@ pub fn fahren_im_gespraech(
 /// darin, dazu die eigenen und die mitgelieferten Skills.
 fn mit_skillhinweis(ruestung: &Ruestung, auftrag: &str) -> String {
     let lernen = crate::werkzeuge::Dateiwerkzeug::SkillLernen.name(ruestung.form);
-    let hat_lernen = ruestung.kasten.angebot(lernen).is_some_and(|a| !a.beschreibung.starts_with("SWITCHED OFF") && !a.beschreibung.starts_with("ABGESCHALTET"));
+    let hat_lernen = ruestung.kasten.angebot(lernen).is_some_and(|a| !crate::abgeschaltet::ist_platzhalter(a));
     if !hat_lernen {
         return auftrag.to_string();
     }
@@ -289,8 +289,20 @@ pub fn fahren_mit_hausregel(
         ruestung.kasten.angebote(),
     );
     let zuordnung = ruestung.zuordnung();
+    // ⚑ **Jeder Lauf ist eine Sitzung im Mitschnitt des Ordners** (Fund 565):
+    //   Verdichtet er, liegt die Urfassung unter `.AGENT/lauf-…/`, und
+    //   `read_history` findet sie. Die laufende Nummer trennt Unteragenten
+    //   eines Prozesses, die in derselben Sekunde beginnen.
+    static LAEUFE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let sitzung = format!(
+        "lauf-{}-{}-{}",
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0),
+        std::process::id(),
+        LAEUFE.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+    );
     let erg = crate::schleife::Lauf {
         hausregel,
+        mitschnitt: ruestung.einhaengung.as_ref().map(|e| (e.wurzel(), sitzung.as_str())),
         // ⚡ Was die Werkzeuge erreichen durften, gehoert ins
         // Protokoll: Sonst steht dort nur, DASS ein Schreibwerkzeug
         // erlaubt war, und nicht, worauf es zeigte.
@@ -310,10 +322,14 @@ pub fn fahren_mit_hausregel(
         adressen: &zuordnung,
         anker: myl_types::hash::Hash::from_bytes([0u8; 32]),
         // ⛔️ **Nie unter der Untergrenze des Agenten** (Fund 505, seit dem
-        // 2026-09-30 bei 4 000): Ein Werkzeugaufruf, der an der Laenge
-        // abreisst, ist verloren; eine kurze Antwort endet von selbst. Alle
-        // Agentenlaeufe kommen hier an.
-        max_tokens: Some(max_tokens.max(crate::agentenwahl::AGENT_ANTWORT_MINDESTENS as u32)),
+        // 2026-09-30 bei 4 000), und seit dem 2026-10-19 mit dem Kontext
+        // wachsend (`agentenwahl::agent_antwortlaenge`): Ein Werkzeugaufruf,
+        // der an der Laenge abreisst, kostet eine Fortsetzung; eine kurze
+        // Antwort endet von selbst. Alle Agentenlaeufe kommen hier an.
+        max_tokens: Some(crate::agentenwahl::agent_antwortlaenge(
+            max_tokens,
+            modell.kontext(&[]).map(|s| s.grenze),
+        )),
         melder,
     }
     .fahren_mit_verlauf(&mit_kontext(ruestung, auftrag), verlauf);

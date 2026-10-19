@@ -71,7 +71,7 @@ Felder fuer `setzen`:
 {FELDER}
 
 Schalter fuer `frage`:
-  --token N       Hoechstzahl erzeugter Token (Vorgabe 1600; der Agent nimmt nie weniger als 4000)
+  --token N       Hoechstzahl erzeugter Token (Vorgabe 4096; der Agent nimmt nie weniger als 4000, mit grossem Kontext bis 8192)
   --denken        Denkmodus an (Vorgabe aus, siehe unten)
   --ohne-denken   Denkmodus aus, auch wenn die Einstellung ihn anschaltet
   --saat N        Mit dieser Saat ziehen; gleiche Saat, gleiche Antwort (Vorgabe: neu je Aktion)
@@ -1594,6 +1594,23 @@ fn denken_gewaehlt(args: &[String], e: &Einstellungen) -> bool {
     e.modell.denken || args.iter().any(|a| a == "--denken")
 }
 
+/// **Der Arbeitskontext aus `modell.kontext`**, wie in Konsole und Fenster.
+///
+/// 📌 **Fund 563 (2026-10-18):** `myl` uebernahm von den
+/// Modelleinstellungen nur Laenge, Denkmodus und Saat. `modell.kontext`
+/// galt in Konsole und Fenster (`Oertlichesmodell::uebernehmen`) und in
+/// `myl plan` als Arbeitskontext, in `myl agent` aber nicht: Ein Lauf mit
+/// `modell.kontext = 12288` las zehn Protokolle mit rund 20 000 Token in
+/// einen Kontext, ohne je zu verdichten. Dieselbe Angabe an drei Orten,
+/// zwei Bedeutungen. ⚠️ Temperatur, top-p und top-k bleiben hier draussen;
+/// ob `myl` sie uebernehmen soll, ist eine eigene Frage, denn ein Messskript
+/// ohne `--ab-werk` zoege dann mit den Werten aus dem Ausgabefeld des
+/// Fensters. ⚑ Ohne Einstellung gilt die Vorgabe 65 536, wie in Konsole und
+/// Fenster; vorher bekam `myl` die ganze Laenge, die Modell und Plan zuliessen.
+fn arbeitskontext_setzen(m: &mut Oertlichesmodell, e: &Einstellungen) {
+    m.kontextbudget = e.modell.kontext;
+}
+
 /// ⚑ **Die Saat steht danach auf der Fehlerausgabe**, bei jedem Laden: Nur
 /// mit ihr laesst sich ein Lauf wiederholen, und genau das war der Einwand
 /// gegen das Ziehen (Regel des Projektinhabers, 2026-09-29).
@@ -1782,6 +1799,7 @@ fn frage(args: &[String]) -> i32 {
         }
     };
     m.grenze = zahl(args, "--token").unwrap_or(e.modell.token);
+    arbeitskontext_setzen(&mut m, &e);
     m.denken = denken_gewaehlt(args, &e);
     saat_setzen(&mut m, args, &e);
 
@@ -1894,6 +1912,7 @@ fn fragen(args: &[String]) -> i32 {
         }
     };
     m.grenze = zahl(args, "--token").unwrap_or(e.modell.token);
+    arbeitskontext_setzen(&mut m, &e);
     m.denken = denken_gewaehlt(args, &e);
     saat_setzen(&mut m, args, &e);
     let grundsaetze = match myl_local_agent::systemprompt::grundsaetze(e.oberflaeche.sprache) {
@@ -2033,6 +2052,7 @@ fn agent(args: &[String]) -> i32 {
         }
     };
     m.grenze = zahl(args, "--token").unwrap_or(e.modell.token);
+    arbeitskontext_setzen(&mut m, &e);
     m.denken = denken_gewaehlt(args, &e);
     saat_setzen(&mut m, args, &e);
 
@@ -2096,6 +2116,7 @@ fn sitzung(args: &[String]) -> i32 {
         }
     };
     m.grenze = zahl(rest, "--token").unwrap_or(e.modell.token);
+    arbeitskontext_setzen(&mut m, &e);
     m.denken = denken_gewaehlt(rest, &e);
     saat_setzen(&mut m, rest, &e);
     let geladen = anfang.elapsed();
@@ -2440,6 +2461,7 @@ fn auftraege(args: &[String]) -> i32 {
         }
     };
     m.grenze = zahl(rest, "--token").unwrap_or(e.modell.token);
+    arbeitskontext_setzen(&mut m, &e);
     m.denken = denken_gewaehlt(rest, &e);
     saat_setzen(&mut m, rest, &e);
     let ruestung = match myl_local_agent::ruestung::ruesten(
@@ -2921,6 +2943,7 @@ fn schleife(args: &[String]) -> i32 {
         }
     };
     m.grenze = zahl(args, "--token").unwrap_or(e.modell.token);
+    arbeitskontext_setzen(&mut m, &e);
     m.denken = denken_gewaehlt(args, &e);
     saat_setzen(&mut m, args, &e);
     schliessen_bei_signal();

@@ -42,6 +42,39 @@ impl Ausgang {
     }
 }
 
+/// **Wie ein Modul einen eigenen Befehl in seinem Text nennt**, je nach
+/// Wirt.
+///
+/// - In der Konsole (`fenster = false`) steht er unter [`crate::MODULBEFEHL`]:
+///   `/trading off` wird `/module trading off`.
+/// - ⛔️ Im Fenster (`fenster = true`, der Handschlag sagt `ansicht`) gibt es
+///   keine /Befehle; dort steht er so, wie die Liste hinter dem Pfeil an der
+///   Modulwahl ihn nennt: `/trading off` wird „off“, der Hauptbefehl allein
+///   heisst wie das Modul („trading“).
+///
+/// ⚑ Eine Stelle fuer alle Module, damit keines seine Befehle anders nennt
+/// als die Wirte sie zeigen.
+pub fn befehl_beim_wirt(zeile: &str, fenster: bool) -> String {
+    let rest = zeile.trim().trim_start_matches('/');
+    if !fenster {
+        return format!("{} {rest}", crate::MODULBEFEHL);
+    }
+    let (haupt, unter) = rest.split_once(char::is_whitespace).unwrap_or((rest, ""));
+    format!("„{}“", if unter.trim().is_empty() { haupt } else { unter.trim() })
+}
+
+/// **Ein Befehl mit seinem Satz als Zeile einer Hilfeliste**, je nach Wirt
+/// ([`befehl_beim_wirt`]), der Befehl auf `breite` Zeichen aufgefuellt.
+pub fn hilfezeile(zeile: &str, was: &str, fenster: bool, breite: usize) -> String {
+    let befehl = if fenster {
+        befehl_beim_wirt(zeile, true).trim_start_matches('„').trim_end_matches('“').to_string()
+    } else {
+        befehl_beim_wirt(zeile, false)
+    };
+    let fehlt = breite.saturating_sub(befehl.chars().count()).max(2);
+    format!("{befehl}{}{was}", " ".repeat(fehlt))
+}
+
 /// **Die Schleife eines nativen Moduls**: liest Ereignisse, bis stdin endet
 /// oder [`AnModul::Ende`] kommt. Den Handschlag beantwortet sie selbst.
 pub fn nativ_fahren<M: Modul>(mut m: M) {
@@ -71,5 +104,22 @@ pub fn nativ_fahren<M: Modul>(mut m: M) {
         if aus.flush().is_err() || ende {
             return;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// ⚑ In der Konsole unter `/module`, im Fenster ohne Schraegstrich.
+    #[test]
+    fn befehle_heissen_beim_wirt_verschieden() {
+        assert_eq!(befehl_beim_wirt("/trading off", false), "/module trading off");
+        assert_eq!(befehl_beim_wirt("/trading", false), "/module trading");
+        assert_eq!(befehl_beim_wirt("/trading close all", true), "„close all“");
+        assert_eq!(befehl_beim_wirt("/cad", true), "„cad“");
+        assert_eq!(hilfezeile("/cad off", "die Vorschau aus", true, 8), "off     die Vorschau aus");
+        assert_eq!(hilfezeile("/cad off", "die Vorschau aus", false, 18), "/module cad off   die Vorschau aus");
+        assert!(!hilfezeile("/cad zeigen", "x", true, 0).contains('/'));
     }
 }

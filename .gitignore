@@ -27,6 +27,10 @@ freigabe/
 __pycache__/
 *.py[cod]
 .venv/
+# Die zweite Kalibrier-Umgebung fuer die Bauart mit vier Stroemen (2026-10-19)
+.venv-flashnext/
+# Exporteintraege selbst gebauter, privater Modelle (modell_bauen.sh, 2026-10-19)
+INTEGER_LLM/calibrate/lokal/
 
 # Lokale Agenten-/Tool-Einstellungen
 .claude/settings.local.json

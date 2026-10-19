@@ -26,6 +26,12 @@ use integer_llm_kernels::attention::aufmerksamkeit_einer_abfrage;
 use integer_llm_kernels::mlp::{mlp_int_experten_je_skala, mlp_matrix_mit_spur, Expertenskala, Expertenteil, Mlpspur};
 use integer_llm_kernels::sampling::{argmax_int, sample_integer_cdf};
 use crate::kv_cache::KVCache;
+
+/// **Die Bauart mit vier Stroemen** (Qwen3.8-Flash-Next, seit 2026-10-19).
+/// ⚑ Ein Untermodul, damit es die Bausteine dieses Moduls (Projektionen,
+/// Koepfe, Gemisch) unveraendert benutzen kann statt sie nachzubauen.
+#[path = "vierstrom_modell.rs"]
+pub mod vierstrom;
 use crate::loader::{ThetaV, LoadedScales};
 
 /// Die Bytes eines quantisierten Tensors: im Heap oder als Abbild der
@@ -1213,6 +1219,18 @@ pub struct IntegerModel {
     /// Kopfbreite, und der Ausgang wird vor `o_proj` mit `sigmoid(tor)`
     /// multipliziert.
     pub achtsamkeit_mit_tor: bool,
+    /// **Das Tor der Norm im Gated DeltaNet ist `sigmoid` statt `silu`.**
+    ///
+    /// ⚑ Beim 35B rechnet die Norm des rekurrenten Zweigs `silu(z) * norm`;
+    /// bei der Bauart mit vier Stroemen `sigmoid(z) * norm` (die Vorlage gibt
+    /// dort `output_gate_type` als Aktivierung durch). Merkmal
+    /// `zustandstor_sigmoid`.
+    pub zustandstor_sigmoid: bool,
+    /// **Die vier Stroeme**, falls das Modell diese Bauart hat. Dann laufen
+    /// [`IntegerModel::forward_token`] und die Vorbereitung ueber
+    /// [`vierstrom`]; die Wege, die einen einzigen Residualstrom voraussetzen
+    /// (Stufen der Pipeline, Training, Mitschnitte), brechen ab.
+    pub vierstrom: Option<Box<vierstrom::Vierstrom>>,
 }
 
 #[derive(Debug, Clone)]
@@ -1295,6 +1313,7 @@ impl IntegerModel {
         pos: usize,
         cache: &mut KVCache,
     ) -> (Vec<i32>, Vec<Routingbefund>) {
+        self.ein_strom_verlangt("forward_token_mit_routing");
         let first_residual_frac = &self.layers[0].scales.residual_in_frac;
         let emb = self.embedding_table.row(token_id);
         let emb_shift = self.embedding_table.shifts[token_id];
@@ -1367,6 +1386,9 @@ impl IntegerModel {
         pos: usize,
         cache: &mut KVCache,
     ) -> Vec<i32> {
+        if self.vierstrom.is_some() {
+            return self.vierstrom_token(token_id, pos, cache);
+        }
         let cfg = &self.config;
         let hidden = self.durch_die_ebenen(token_id, pos, cache);
 
@@ -1681,6 +1703,16 @@ impl IntegerModel {
         if token_ids.is_empty() {
             return Vec::new();
         }
+        // ⚑ **Vier Stroeme: vorerst Token fuer Token**, ueber denselben Weg
+        //   wie das Dekodieren. Zurueck kommt je Token der Eingang des Kopfes
+        //   (es gibt keine Schlussnorm); `logits_stapel` weiss das.
+        if self.vierstrom.is_some() {
+            return token_ids
+                .iter()
+                .enumerate()
+                .map(|(i, &t)| self.vierstrom_durch(t, pos_start + i, cache))
+                .collect();
+        }
         let mut zustaende: Vec<Vec<i16>> =
             token_ids.iter().map(|&t| self.embed_token(t)).collect();
         for (i, layer) in self.layers.iter().enumerate() {
@@ -1967,6 +1999,10 @@ impl IntegerModel {
         for (i, fenster) in token_ids.chunks(VORBEREITUNGSFENSTER).enumerate() {
             let zustaende =
                 self.vorbereiten_stapel(fenster, pos_start + i * VORBEREITUNGSFENSTER, cache);
+            if self.vierstrom.is_some() {
+                aus.extend(zustaende.iter().map(|ein| self.logits_aus_normiertem(ein, cfg.logit_frac_bits)));
+                continue;
+            }
             for hidden in &zustaende {
                 // Wortgleich zu `forward_token`, Schritt 3 und 4.
                 let normed = rmsnorm_i16(
@@ -2074,6 +2110,7 @@ impl IntegerModel {
         pos: usize,
         cache: &mut KVCache,
     ) -> Vec<i16> {
+        self.ein_strom_verlangt("durch_die_ebenen");
 
         // 1. Embedding Lookup: Gewicht int8 mit Per-Channel-Skala der
         //    Token-Zeile (theta_v 0.7.0) -> erstes Residualstrom-Segment.
@@ -2170,6 +2207,7 @@ impl IntegerModel {
         layer_end: usize,
         mut mitschnitt: Option<&mut crate::mitschnitt::Zwischenwerte>,
     ) -> Vec<i16> {
+        self.ein_strom_verlangt("run_layers");
         for i in layer_start..layer_end {
             let out_frac: &[u8] = if i + 1 < self.layers.len() {
                 &self.layers[i + 1].scales.residual_in_frac
@@ -2738,6 +2776,16 @@ impl IntegerModel {
         }
     }
 
+    /// ⛔️ **Ein Weg, der einen einzigen Residualstrom voraussetzt, bricht bei
+    /// vier Stroemen ab**, statt mit den falschen Skalen zu rechnen.
+    fn ein_strom_verlangt(&self, weg: &str) {
+        assert!(
+            self.vierstrom.is_none(),
+            "{weg}: dieses Modell hat vier Stroeme; der Weg kennt nur einen Residualstrom \
+             (gerechnet wird ueber forward_token und die Vorbereitung)"
+        );
+    }
+
     /// **Die Aufmerksamkeit eines Tokens ueber dem schon gefuellten
     /// KV-Speicher**, bis zur Umskalierung auf die Eingangsskala von
     /// `o_proj`.
@@ -2752,6 +2800,36 @@ impl IntegerModel {
         q_heads: &[Vec<i16>],
         pos: usize,
         cache: &KVCache,
+        auf: Option<&mut crate::mitschnitt::Ebenenmitschnitt>,
+    ) -> Vec<i16> {
+        self.aufmerksamkeit_lesen_mit(layer, q_heads, pos, cache, None, auf)
+    }
+
+    /// Dasselbe, aber nur ueber die Positionen der **Blockauswahl**
+    /// (`auswahl`, aufsteigend), oder ueber alle bei `None`.
+    ///
+    /// ⚑ **Dieselbe Rechnung ueber weniger Positionen**: Die gewaehlten
+    /// Schluessel und Werte werden in Positionsreihenfolge zusammengelegt und
+    /// gehen durch denselben Kern. Sind alle gewaehlt, ist es Zahl fuer Zahl
+    /// die volle Aufmerksamkeit.
+    pub(crate) fn aufmerksamkeit_lesen_auswahl(
+        &self,
+        layer: &TransformerLayer,
+        q_heads: &[Vec<i16>],
+        pos: usize,
+        cache: &KVCache,
+        auswahl: Option<&[usize]>,
+    ) -> Vec<i16> {
+        self.aufmerksamkeit_lesen_mit(layer, q_heads, pos, cache, auswahl, None)
+    }
+
+    fn aufmerksamkeit_lesen_mit(
+        &self,
+        layer: &TransformerLayer,
+        q_heads: &[Vec<i16>],
+        pos: usize,
+        cache: &KVCache,
+        auswahl: Option<&[usize]>,
         mut auf: Option<&mut crate::mitschnitt::Ebenenmitschnitt>,
     ) -> Vec<i16> {
         let cfg = &self.config;
@@ -2811,6 +2889,24 @@ impl IntegerModel {
         // geschrieben sind.
         let kopf = |h: usize, spur: Option<&mut Vec<Vec<i32>>>| {
             let (k_seq, v_seq) = cache.lesen(layer.layer_idx, h / group_size, pos);
+            // ⚑ Mit Blockauswahl: die gewaehlten Positionen zusammenlegen, in
+            //   ihrer Reihenfolge.
+            let gesammelt: (Vec<i16>, Vec<i16>);
+            let (k_seq, v_seq) = match auswahl {
+                None => (k_seq, v_seq),
+                Some(liste) => {
+                    let n = pos + 1;
+                    let (bk, bv) = (k_seq.len() / n, v_seq.len() / n);
+                    let mut k = Vec::with_capacity(liste.len() * bk);
+                    let mut v = Vec::with_capacity(liste.len() * bv);
+                    for &p in liste {
+                        k.extend_from_slice(&k_seq[p * bk..(p + 1) * bk]);
+                        v.extend_from_slice(&v_seq[p * bv..(p + 1) * bv]);
+                    }
+                    gesammelt = (k, v);
+                    (gesammelt.0.as_slice(), gesammelt.1.as_slice())
+                }
+            };
             aufmerksamkeit_einer_abfrage(
                 &q_heads[h], k_seq, v_seq,
                 score_mult, score_shift, &self.exp_lut, exp_lut_shift,
@@ -4622,11 +4718,27 @@ fn torgesteuerte_norm(
     // ⚑ `silu_produkt(tor, faktor)` rechnet `silu(tor) * faktor`, also
     //   hier `silu(z) * normiert`. Die Laengenpruefung darin ist seit
     //   dem 2026-09-21 da, und zwar fuer genau diesen zweiten Aufrufer.
-    let getort = silu_produkt(
-        z, &normiert, &m.silu_lut,
-        z_frac, zwischen_frac, aus_frac,
-        m.config.silu_in_frac, m.config.silu_lut_offset, m.config.silu_out_frac,
-    );
+    // ⚑ **Bei der Bauart mit vier Stroemen `sigmoid(z) * normiert`**
+    //   (Merkmal `zustandstor_sigmoid`): derselbe Torfaktor wie am Ausgang
+    //   der Achtsamkeit, Produkt in i64 und **eine** Rundung auf `aus_frac`.
+    let getort = if m.zustandstor_sigmoid {
+        assert_eq!(z.len(), normiert.len(), "Tor und Norm verschieden lang");
+        z.iter()
+            .zip(normiert.iter())
+            .map(|(&g, &n)| {
+                let f = integer_llm_kernels::integer_math::torfaktor(
+                    g, z_frac, &m.sigmoid_lut, m.sigmoid_versatz, m.sigmoid_ein_frac, m.sigmoid_aus_frac,
+                );
+                clamp_i16_from_i64(rescale_i64(i64::from(n) * f, zwischen_frac + m.sigmoid_aus_frac, aus_frac))
+            })
+            .collect()
+    } else {
+        silu_produkt(
+            z, &normiert, &m.silu_lut,
+            z_frac, zwischen_frac, aus_frac,
+            m.config.silu_in_frac, m.config.silu_lut_offset, m.config.silu_out_frac,
+        )
+    };
     if let Some(ziel) = mitschnitt {
         *ziel = Some((normiert, spuren, zwischen_frac));
     }

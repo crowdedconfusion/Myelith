@@ -1,7 +1,7 @@
 # integer-llm
 
-> **Version:** 0.135.0 (θ_v 0.22.0; kernels 0.87.0, runtime 0.97.0, pipeline 0.15.1)
-> **Datum:** 2026-10-17
+> **Version:** 0.139.0 (θ_v 0.22.0; kernels 0.88.0, runtime 0.99.0, pipeline 0.15.1)
+> **Datum:** 2026-10-19
 > **Status:** ⚠️ **Das Akzeptanzkriterium ruht auf einer zu kleinen
 > Stichprobe.** Gemessen wurde bisher ueber **4 Sequenzen, 435
 > Positionen**; eine Messung ueber **32 Sequenzen, 3558 Positionen**
@@ -648,6 +648,322 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
   volle Paritätstests nur auf GPU-Runnern (nightly oder PR-basiert)
 
 ## Changelog
+
+### v0.139.0 (2026-10-19): Das Bauskript liest Links auf Hugging Face und fragt das Format
+
+Wünsche des Projektinhabers: Die Quelle ist entweder ein Repositorium auf
+Hugging Face über den vollständigen Link oder eines auf dem Rechner über den
+Pfad, kein Modell mit eigenem Eintrag; das Format wird nach der Quelle
+bestimmt, wenn ein Gemisch die Wahl lässt.
+
+- **`repo_aus_link`**: `https://huggingface.co/<org>/<modell>`, auch mit
+  `hf.co`, `www.`, `/tree/<revision>`, `/commit/<revision>` oder
+  `/blob/<revision>/…`, dazu weiter `<org>/<modell>`. Abgelehnt mit Grund:
+  fremde Seiten, Datensätze, Spaces, ein Link ohne Modell und ein Pfad hinter
+  dem Modell, der keine Revision nennt. Eine Revision aus dem Link wird wie
+  `--revision` festgehalten (`/tree/main` wird zum Commit); widersprechen sich
+  beide, endet es mit dem Grund. ⚑ Die einzige Stelle, die einen Link liest;
+  die Konsole reicht ihn durch. Probe: `tests/test_modell_link.py` (7
+  gelesen, 6 abgelehnt).
+- **Ohne Schalter fragt das Skript nach Link oder Ordner, ohne Vorgabe**;
+  vorher stand Flash-Next als Vorgabe da. Mit `--ja` braucht es `--repo` oder
+  `--lokal`.
+- **`--format int4|int8`**: Bei einem Gemisch, das in vier Bit gehen kann,
+  wird das Format vor dem Namen gewählt (sonst gefragt), und die Vorschläge
+  stehen nur noch in diesem Format. `int4` bei einer anderen Bauart endet mit
+  dem Grund. Ein Name auf `-int4` baut weiter in vier Bit.
+- **Belege:** Erkundung über den Link
+  `https://huggingface.co/Qwen/Qwen3-0.6B/tree/main` (Revision c1899de…,
+  Projektmodell erkannt); `--format int8 --probe` am kleinen Modell;
+  `--format int4` an Qwen3-0.6B abgelehnt.
+
+### v0.138.0 (2026-10-19): Das Bauskript erkundet für die Konsole und erkennt Projektmodelle (Fund 574)
+
+Anlass: `/build artifact` in der Konsole (CLIENT v0.172.0), ein Assistent
+zum Durchklicken um das Bauskript.
+
+- **`--erkunden`**: Freigabe, Parameter, Namensvorschläge und Platz als eine
+  Zeile `ERKUNDUNG <json>`, danach `Fertig`; gebaut und geschrieben wird
+  nichts. Mit `--name` prüft es auch diesen Namen (`name_grund`). Jeder
+  Vorschlag trägt seinen Grund, falls er nicht geht, und ob er in vier Bit
+  baut. Platz: `noetig_bytes` (int8, und mit vier Bit, wenn die Quelle vorher
+  weggeht) und `noetig_vierbit_bytes`.
+- **Projektmodelle werden erkannt** (`projektschluessel`): Ist das
+  Repositorium das eines Eintrags in `model_configs.py`, heissen die
+  Vorschläge wie das Projektmodell (`myelith-125b-a6b-int4`,
+  `myelith-125b-a6b`); ohne `--projekt` sagt das Skript es. Die Namensprüfung
+  steht an einer Stelle (`name_befund`).
+- **Der Verweis für einen Ordner entsteht erst beim Bau** (`verweisen`): Eine
+  Erkundung hinterlässt nichts unter `MODELS/llm/`.
+- **Gemessen am echten Flash-Next** (Erkundung, ohne Gewichte zu laden):
+  125,7 Mrd. gesamt, **7,3 Mrd. aktiv** je Token mit Einbettung und Kopf
+  (ohne beide rund 6,0). Der Projektname `myelith-125b-a6b` zählt also ohne
+  Einbettung, das Schema des Skripts mit; das ist Teil der offenen
+  Namensfrage.
+- **📌 Fund 574 (offen): Der Gitterbau wählt für die Skalen von `h` die vier
+  häufigsten Experten einer Ebene, auch wenn weniger als vier Token
+  bekommen.** `h_skala` sortiert `bincount(..., minlength=256)`; bei einem
+  Gleichstand auf null kam am kleinen Flash-Next-Modell Experte 163 dazu
+  (das Modell hat acht), und der Bau brach mit `KeyError` ab. An einem
+  echten Modell bekommt jede Ebene mehr als vier Experten Token; behoben wird
+  es mit der Entscheidung, das kleine Modell überhaupt in vier Bit zu bauen
+  (64 Spalten sind ohnehin kein Vielfaches der Gruppe 128).
+- **Belege:** Erkundung am kleinen Modell, an Qwen3-0.6B (`myelith-0.6b`
+  vergeben, Grund geliefert) und am echten Flash-Next; aus Rust über
+  `myl_client::eigenbau` Probe, int8-Bau, Ladeprobe und Eintrag des kleinen
+  Modells, der Bau in vier Bit scheiterte wie oben; geräumt.
+
+### v0.137.0 (2026-10-19): Ein Bauskript für jeden Administrator, private lokale Modelle (runtime 0.99.0, Fund 573)
+
+Auftrag des Projektinhabers: ein universales Bauskript, mit dem ein
+versierter Nutzer Artefakte baut und benennt, am Beispiel von Flash-Next.
+Man wählt das Repositorium der Gewichte, das Skript ermittelt die
+Architektur und gibt frei, was unterstützt ist, schlägt Namen nach dem
+Schema vor, baut und pflegt das Modell ein, sodass es lokal nutzbar ist.
+Dazu eine Rubrik für private lokale Modelle, die nicht für den Netzbetrieb
+zugelassen sind.
+
+- **`scripts/modell_bauen.sh` und `tools/modell_bauen.py` (neu).** Die Quelle
+  ist ein Repositorium auf Hugging Face (die Revision wird festgehalten,
+  die Lizenz aus der Modellkarte gelesen) oder mit `--lokal` ein Ordner auf
+  der Platte (er bekommt einen Verweis unter `MODELS/llm/`, denn die
+  Kalibrierung lädt nur von dort; die Lizenz kommt aus dem Kopf seiner
+  `README.md`). Dann:
+  1. **Freigabe:** Bauart am `model_type` erkennen, Exporteintrag erzeugen,
+     **Feld für Feld gegen die Quelle halten** und seine Merkmale gegen das,
+     was die Laufzeit rechnet (`GEKONNTE_MERKMALE` aus `loader.rs`). Nur
+     wenn alles trägt, geht es weiter; sonst endet es mit dem Grund.
+  2. **Name:** Vorschläge nach `myelith-<gesamt>b[-a<aktiv>b][-int4]`,
+     gerechnet aus den Köpfen der Gewichtsdateien (Sichtturm, MTP-Kopf und
+     N-Gramm-Tabelle zählen nicht mit), geprüft gegen vergebene Namen.
+  3. **Bau:** Gewichte laden, Platz prüfen, Korpusdurchlauf oder
+     ebenenweise in der Umgebung der Bauart, Ladeprobe mit der Laufzeit,
+     bei `-int4` danach `build_vierbit.sh` und eine zweite Ladeprobe.
+  4. **Eintrag** im lokalen Katalog `MODELS/llm/KATALOG.lokal.json` (von
+     Git ausgenommen), mit Revision, Lizenz der Gewichte, Größe, Bauart.
+
+  Schalter: `--probe` (kurzer Lauf, schreibt nichts; bei ebenenweisem Bau
+  die erste Ebene auf den echten Gewichten), `--name`, `--ja`,
+  `--projekt` (ein Modell aus `model_configs.py`, ohne lokalen Katalog),
+  `--quelle-loeschen` (die geladenen Gewichte weg, sobald das int8 lädt;
+  nie ein mitgebrachter Ordner).
+- **`calibrate/src/bauarten.py` (neu):** je Bauart Erkennung, Erzeuger,
+  Bauweg, Umgebung und ob vier Bit gehen. Freigegeben: Qwen3 dicht, Qwen3
+  Gemisch, Qwen3.5/3.6 hybrid mit Gemisch, Qwen3.8-Flash-Next. Erkannt, aber
+  nicht freigegeben: Qwen3.5/3.8 hybrid dicht (noch an keinem Modell über
+  den ganzen Weg gebaut). **`tests/test_bauarten.py` (neu)** hält jeden
+  Erzeuger an den von Hand verifizierten Einträgen: Aus dem `config.json`
+  von Qwen3-4B muss genau `myelith-4b` entstehen, und so weiter (6
+  geprüft, in beiden Umgebungen).
+- **`calibrate/src/konfigabgleich.py` (neu):** der Feldabgleich aus der
+  Konfigprobe, jetzt geteilt mit dem Bauskript. Neu darin: `layer_types`
+  mit `indexed_attention` gilt als volle Aufmerksamkeit,
+  `number_of_conv_states` als nicht gebraucht, `seed` als `ngram_seed`.
+- **Lokale Exporteinträge:** `model_configs.get_model_config` findet einen
+  Namen, der nicht in `MODEL_CONFIGS` steht, unter
+  `calibrate/lokal/<name>.json` (von Git ausgenommen). Dort legt das
+  Bauskript den erzeugten Eintrag ab.
+- **⛔️ Privat, nur lokal (`betrieb`).** Ein Eintrag mit `"betrieb": "lokal"`
+  schreibt das Feld in `model_config.json` des Artefakts; jeder Eintrag des
+  Bauskripts trägt es, `myelith-125b-a6b` ebenso (Lizenz
+  `qwen-community-1.0`). Die Laufzeit liest es (`ModelDims::betrieb`,
+  `nur_lokal`, `fuer_netz_zugelassen`); **`load_model_fuer_netz`** lädt ein
+  solches Artefakt nicht, und der Netzbetrieb lädt nur noch darüber
+  (COMPUTE_PIPELINE v0.45.0). Ein unbekannter Wert gilt nicht als
+  zugelassen.
+- **`scripts/build_flashnext.sh`** ist jetzt eine Hülle um das Bauskript:
+  Revision de4b8e4d, Name `myelith-125b-a6b-int4`, `--projekt`;
+  `FLASHNEXT_QUELLE_LOESCHEN=1` wird zu `--quelle-loeschen`, weitere
+  Schalter gehen durch. Zwei Schritte des alten Skripts tut jetzt das
+  Bauskript selbst, sonst fehlten sie im frischen Klon: Es **richtet die
+  Umgebung der Bauart ein**, wenn sie fehlt (`.venv-flashnext` mit
+  `python_einrichten.sh --flashnext`), und es **holt den WikiText-2-Testsplit**,
+  ohne den die Kalibrierung mit Absicht abbricht (geprüft mit weggelegtem
+  Testsplit: geholt, bytegleich).
+- **⚑ „Fertig“ allein auf einer Zeile schreibt nur das Bauskript, als
+  letzte.** Kalibrierung, WikiText und Einrichtung enden selbst mit
+  „Fertig“, und ein Wächter, der darauf wartet, hätte beim ersten Schritt
+  angeschlagen. Ihre Schlusszeile heisst jetzt „Schritt beendet“ bzw.
+  „Umgebung bereit“.
+- **Katalog:** `myelith-125b-a6b` steht in `MODELS/llm/KATALOG.json` mit
+  `betrieb: lokal`, `bauweg: skript`, Status `vorgemerkt`, Quelle 360,0 GB
+  (gezählt über die 144 Dateien der Revision); dazu
+  `_betrieb_bedeutung`. `MODELS/llm/README.md` neu erzeugt.
+  `artifacts/MODEL_CARD.md` hat den Abschnitt 8a „Private lokale Modelle“.
+- **📌 Fund 573: Eine gebundene Einbettung zählte doppelt.** Qwen3-0.6B legt
+  `lm_head.weight` trotz `tie_word_embeddings` als eigene Kopie ab; der
+  Vorschlag hiess `myelith-0.8b` (0,75 Mrd.). Jetzt zählt der Kopf bei
+  gebundener Einbettung nicht mit: 0,60 Mrd., `myelith-0.6b`. Gefunden im
+  ersten Lauf am echten Modell, bevor das Skript je ausgeliefert war.
+- **Belege:**
+  - Am kleinen Flash-Next-Modell (ebenenweise): Probe und voller Lauf mit
+    Rückgabe 0, „lädt und rechnet“, Eintrag im lokalen Katalog.
+  - Am echten Qwen3-0.6B (`--lokal`, Korpusdurchlauf): Probe, dann der volle
+    Bau `myelith-0.6b-selbst` mit Rückgabe 0, Ladeprobe bestanden.
+  - Am echten `config.json` von Flash-Next: freigegeben, zehn Merkmale
+    gerechnet, der erzeugte Eintrag gleich `myelith-125b-a6b`.
+  - `cargo test` der Laufzeit mit Rückgabe 0 (neu:
+    `ein_privates_modell_ist_fuer_das_netz_gesperrt`), Clippy mit
+    `-D warnings` still; `test_bauarten.py`,
+    `test_modellkonfig_vollstaendig.py`, `test_export_workflow.py`,
+    `test_flashnext_mini.py`, Gleitkommaprüfung bestanden.
+
+### v0.136.0 (2026-10-19): Die Bauart von Qwen3.8-Flash-Next: vier Stroeme, N-Gramm-Einbettung, Blockauswahl, ebenenweiser Bau (kernels 0.88.0, runtime 0.98.0, Fund 571)
+
+Auftrag des Projektinhabers: „die Qwen 3.8 Flash-Next Architektur
+ermöglichen, sodass wir auch das große Modell bei vorhandener Hardware
+zügig einspielen können“. Grundlage sind `config.json`, die Köpfe aller 131
+Gewichtsdateien (nur Formen) und der Modellcode `qwen4_exp` aus
+`transformers` 5.18.0, gelesen und neu geschrieben.
+
+- **Kernels, `vierstrom.rs` (neu):**
+  - `Ngrammmasse`: Multiplikatoren aus splitmix64 und Primzahlgrößen je Kopf;
+  - die Kennungen eines Tokens aus Bi- und Trigrammen mit der EOS-Regel;
+  - `vorzeichenwurzel`: `sign(g) sqrt(|g| / sqrt(H))` mit ganzzahliger
+    Wurzel und vierter Wurzel;
+  - `Abstandsfaltung`: tiefenweise, liest jede dritte Position;
+  - `blockauswahl`, `blockwertung` und `blockmittel`.
+
+  ⚑ Die Kennungen sind gegen die drei I64-Puffer des echten Checkpoints
+  geprüft, die per Range-Anfrage geholt wurden: Multiplikatoren,
+  Primzahlgrößen und Versätze stimmen, 320 001 536 Zeilen. Dazu kommen
+  Kennungen von drei Folgen mit EOS gegen die Vorlage; 8 Proben.
+- **Laufzeit, `vierstrom_modell.rs` (neu, Untermodul von `model.rs`):**
+  - der Zustand mit vier Strömen in i16 mit einer Skala je Kanal über
+    `S * H`;
+  - je Ebene zwei Torblöcke (Norm je Strom, Niedrigrangmischung, Faktoren
+    je Strom, Einspeisung mit einer Rundung), am Ende ein Schlussblock statt
+    der Schlussnorm;
+  - die N-Gramm-Einbettung mit Tor je Strom und Faltung;
+  - die Blockauswahl, deren Schlüssel im KV-Speicher liegen.
+
+  Mischer und Gemisch sind dieselben wie beim 35B. `forward_token` und die
+  Vorbereitung leiten um; die Wege mit einem einzigen Residualstrom brechen
+  bei vier Strömen ab (`ein_strom_verlangt`). Die Vorbereitung läuft vorerst
+  Token für Token.
+- **Lader:**
+  - neue Felder in `ModelDims`;
+  - die Merkmale `vierstrom`, `ngramm_einbettung`, `blockauswahl` und
+    `zustandstor_sigmoid`;
+  - Formprüfungen;
+  - eine Gegenprobe der N-Gramm-Masse gegen die Puffer der Quelle;
+  - das Tor der Zustandsnorm als `sigmoid(z)` (die Vorlage gibt
+    `output_gate_type` als Aktivierung durch).
+- **KV-Speicher und Zustandsspeicher:** Die Indexschlüssel werden mit der
+  Folge gekürzt. Der N-Gramm-Zustand (Kontext und Faltungsfenster) lässt
+  sich wie ein rekurrenter aufheben, nicht zurückrechnen.
+- **Kalibrierung, `ebenenweise.py` (neu):**
+  - Ebene für Ebene aus den safetensors: Der Zustand aller Sequenzen bleibt
+    im Speicher, jede Gewichtsdatei wird einmal gelesen.
+  - Die N-Gramm-Tabelle wird nie ganz geladen (nur die getroffenen Zeilen)
+    und in Blöcken exportiert, mit Hash beim Schreiben.
+  - Experten verschmolzen oder einzeln.
+  - Dazu die Haken der neuen Bauart in `stats.py` (nur mit `vierstrom=True`,
+    die Skalen der übrigen Modelle bleiben bytegleich).
+  - `quantisiere_parameter` als Kern des Quantisierers, sechs Normen mit
+    Versatz.
+  - `luts.luts_erzeugen` als eine Stelle für die Tabellen beider Bauwege.
+  - Die vier Merkmale in `model_configs._MERKMALE`.
+- **Probe `tests/test_flashnext_mini.py` (neu)**, Zufallsmodell derselben
+  Bauart mit vier Ebenen, Breite 64 und acht Experten:
+  - der Nachbau des Treibers gegen den ganzen Vorwärtspass der Vorlage
+    (unter 1e-4);
+  - das Artefakt vollständig (148 Skalen);
+  - die Laufzeit gegen die Vorlage: Korrelation 0,9996, nächstes Token
+    gleich an 45 von 48 Positionen;
+  - mit den Gewichten des Artefakts auf beiden Seiten: Logits 2,3 %
+    relativ.
+  - Die Blockauswahl wählt an 47 von 48 Positionen dieselben Blöcke; die
+    eine Ausnahme ist ein Gleichstand bis auf 2,6 %.
+  - Braucht `transformers` ab 5.18.0 und endet sonst mit einer Meldung;
+    `MYL_FLASHNEXT_PRUEFSTAND` fährt den Prüfstand `flashnext_vergleich`
+    (neu).
+- 📌 **Zwei Lehren beim Bau, beide vor jedem Artefakt behoben:**
+  - Die Normen dieser Bauart brauchen das Epsilon; ohne es wich die Norm vor
+    der Faltung um 30 % ab, weil `sigmoid(g) * v` dort bei 0,005 liegt
+    (dieselbe Lage wie Fund 419).
+  - Silu im Torblock und hinter der Faltung muss zerlegt gerechnet werden
+    (`silu_zerlegt`, Fund 417); die Tabelle rastert ihren Eingang auf 1/64.
+- ⛔️ **Fund 571: Die Skala des `o_proj`-Eingangs ist die seines Ausgangs.**
+  - Die Laufzeit nimmt `attn_out_frac` aus dem Schlüssel `self_attn`. Der
+    Haken misst dort den Rückgabewert des Moduls, und das ist der Wert
+    hinter `o_proj`; in jedem Artefakt ist die Skala `self_attn` gleich der
+    von `o_proj`.
+  - Beim 35B, Ebene 3, ist das Shift 14 (Bereich ±2,0), während `v` bis
+    4,75 reicht. Ein Aufmerksamkeitsausgang, ein gewichtetes Mittel über
+    `v`, kann dort klemmen.
+  - Am Zufallsmodell der neuen Bauart fiel der Fehler des
+    Aufmerksamkeitsmischers damit von 38 % auf 3,8 %.
+  - ⚑ **Bei vier Strömen bleibt der Ausgang jetzt auf der Skala von `v`**:
+    Er ist nie größer als `max|v|`.
+  - ⚠️ **Die übrigen Bauarten rechnen unverändert.** Die Behebung ändert
+    ihre Zahlen und damit die Konformitätsvektoren; die Entscheidung liegt
+    beim Projektinhaber.
+- **Belege:**
+  - `cargo test` von `kernels` und `runtime` mit Rückgabe 0, Clippy mit
+    `-D warnings` still;
+  - Konformität 55/55 (`myelith-0.6b`);
+  - `test_luts`, `test_export_workflow`, `test_activation_stats`,
+    `test_moe_entschmelzen`, `test_modellkonfig_vollstaendig` und
+    `test_skalenpaket_reproduzierbar` bestanden (das Skalenpaket ist weiter
+    genau eine Neuberechnung);
+  - Gleitkommaprüfung mit `vierstrom.rs` und `vierstrom_modell.rs` ohne
+    Treffer;
+  - `cargo check` von `pipeline`, `myl-pod`, `myl-node`,
+    `myl-testclient` und `myl-client` mit Rückgabe 0.
+  - Cargo.lock nachgezogen (nur die Fassungszeilen) in `kernels`, `runtime`,
+    `pipeline`, `myl-client`, `myl-console`, `myl-oberflaeche`, `myl-pod`,
+    `myl-governance`, `myl-node`, `myl-simulation`, `myl-testclient` und
+    `myl-verifier`.
+- **Der Weg auf der Mietmaschine**, `scripts/build_flashnext.sh` (neu):
+  - Umgebung, Quelle (Revision `de4b8e4d`), WikiText, ebenenweise in int8,
+    Laden und Rechnen, dann `build_vierbit.sh` für die Experten in vier
+    Bit und noch einmal Laden.
+  - `--probe` ist der kurze Lauf: nur Einbettung und Ebene 0 laden (rund
+    10 GB), Eintrag gegen Snapshot, eine Ebene über den ganzen Korpus,
+    nichts geschrieben.
+  - Platzprüfung vorab; mit `FLASHNEXT_QUELLE_LOESCHEN=1` wird die
+    BF16-Quelle nach dem int8-Artefakt gelöscht (rund 540 GB statt 790 GB
+    auf dem Höhepunkt).
+- **Zweite Python-Umgebung** `calibrate/.venv-flashnext`
+  (`python_einrichten.sh --flashnext`, `requirements-flashnext.txt`):
+  - `transformers` 5.18.0 und `datasets` 5.1.0, aufgelöst mit jeder anderen
+    Fassung aus `requirements-fest.txt` als Zwang. Geändert sind dadurch nur
+    diese beiden, `huggingface-hub`, `tokenizers` und die HTTP-Bibliothek.
+  - Die erste Umgebung und damit der Gitterbau der vorhandenen Artefakte
+    bleiben unberührt.
+  - Die Probe besteht darin mit denselben Zahlen.
+  - Sie ist in `.gitignore` und in der Sauberkeitsprobe eingetragen.
+- **Eintrag `myelith-125b-a6b`** in `model_configs.py`, erzeugt aus dem
+  echten `config.json` (Revision `de4b8e4d`, der Name ist ein Vorschlag).
+  `ebenenweise.main` hält ihn vor dem Rechnen Feld für Feld gegen den
+  Snapshot; `main.py` verweist die Familie auf den ebenenweisen Weg.
+  `KALIBRIER_PROMPTS` ist jetzt eine Modulkonstante, damit beide Wege
+  dieselben Prompts nehmen.
+- **Der Bau in vier Bit trägt die neue Bauart:** Der Vierstromweg zeichnet
+  das Gemisch im Format des Trainings auf (`vierstrom_mit_mitschnitt`), und
+  `expertenmitschnitt` nimmt ihn. Am Mini-Modell war der aufgezeichnete
+  Gemischeingang an 256 von 256 Stellen gleich dem gerechneten.
+  `gittervergleich.py` und `vierbit_packen` sind bauartunabhängig.
+- ⛔️ **Fund 572: Die Konfigprobe sah an den RoPE-Feldern vorbei.** Seit
+  Qwen3.5 heißt ihr Behälter `rope_parameters` statt `rope_scaling`, und
+  `flach()` zog nur den alten heraus.
+  - Für das 35B und Flash-Next wurden Basis, Teildrehung und Abschnitte
+    deshalb nie gegen die Quelle gehalten, und die Probe sagte nichts.
+    Beim 35B fiel die falsche Basis vom 2026-10-13 erst an den Tabellen auf.
+  - Jetzt werden beide Behälter gezogen; `rope_type: default` wird gegen
+    ein fehlendes `rope_art` geprüft, und `ple_layer_ids` (ab eins) gegen
+    `ple_ebenen` (ab null) nachgerechnet.
+  - Bewusst ungelesen mit Grund: `mrope_interleaved`,
+    `language_model_only`, `mtp`, `split_ngram_parts`.
+  - Alle Einträge bestehen, auch das 35B.
+- ⚠️ **Offen:**
+  - die gebündelte Vorbereitung für diese Bauart;
+  - Konformitätsvektoren für die neuen Bausteine;
+  - Fund 571 für die übrigen Bauarten;
+  - der Name des Artefakts;
+  - die Zusammenlegung der beiden Python-Umgebungen;
+  - der Lauf selbst.
 
 ### v0.135.0 (2026-10-17): Aus dem kalten Klon bauen, auch das 35B in vier Bit: Python-Umgebung, Kalibriertext, Bauskript, Register (Funde 552, 553)
 

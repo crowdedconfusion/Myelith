@@ -246,11 +246,12 @@ fn artefakt_loeschen(
 ) -> Result<String, String> {
     let w = wurzel_suchen().ok_or("Das Repositorium ist nicht zu finden")?;
 
-    // 1. Der Schluessel muss im Katalog stehen.
+    // 1. Der Schluessel muss im Katalog stehen, in dem des Projekts oder im
+    //    lokalen der selbst gebauten Modelle.
     let roh = std::fs::read_to_string(w.join("MODELS/llm/KATALOG.json"))
         .map_err(|e| format!("KATALOG.json: {e}"))?;
     let d: serde_json::Value = serde_json::from_str(&roh).map_err(|e| e.to_string())?;
-    if d.get(&schluessel).is_none() {
+    if d.get(&schluessel).is_none() && !lokale_eintraege(&w).contains_key(&schluessel) {
         return Err(format!("{schluessel} steht nicht im Katalog"));
     }
 
@@ -3704,6 +3705,14 @@ struct Katalogeintrag {
     modell_da: bool,
     /// Liegt das fertige Artefakt schon da?
     artefakt_da: bool,
+    /// ⛔️ **Privat, nur lokal** (`betrieb = "lokal"`, oder ein Eintrag aus
+    /// `MODELS/llm/KATALOG.lokal.json`): nicht fuer den Netzbetrieb
+    /// zugelassen. Die Zeile sagt es.
+    privat: bool,
+    /// ⚑ **Gebaut wird es mit dem Bauskript, nicht aus dem Fenster**: Seine
+    /// Bauart hat einen eigenen Weg (`bauweg = "skript"`), oder es stammt
+    /// aus dem lokalen Katalog, den das Bauskript schreibt.
+    nur_skript: bool,
 }
 
 /// Wo das Repositorium liegt, von der Oberflaeche aus gesehen.
@@ -4022,26 +4031,53 @@ fn which(name: &str) -> Option<std::path::PathBuf> {
         .find(|p| p.is_file())
 }
 
+/// **Die Eintraege des lokalen Katalogs** (`myl_client::modelle::KATALOG_LOKAL`),
+/// ohne die Hinweise mit Unterstrich. Fehlt er oder ist er unlesbar, ist er
+/// leer: Ein kaputter lokaler Katalog darf die Liste des Projekts nicht
+/// verdecken.
+fn lokale_eintraege(w: &std::path::Path) -> serde_json::Map<String, serde_json::Value> {
+    std::fs::read_to_string(w.join(myl_client::modelle::KATALOG_LOKAL))
+        .ok()
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+        .and_then(|v| v.as_object().cloned())
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|(k, _)| !k.starts_with('_'))
+        .collect()
+}
+
 #[tauri::command]
 async fn katalog() -> Result<Vec<Katalogeintrag>, String> {
     let w = wurzel_suchen().ok_or("Das Repositorium ist nicht zu finden")?;
     let roh = std::fs::read_to_string(w.join("MODELS/llm/KATALOG.json"))
         .map_err(|e| format!("KATALOG.json: {e}"))?;
     let d: serde_json::Value = serde_json::from_str(&roh).map_err(|e| e.to_string())?;
-    let obj = d.as_object().ok_or("KATALOG.json ist kein Objekt")?;
+    let mut obj = d.as_object().ok_or("KATALOG.json ist kein Objekt")?.clone();
+    // ⚑ **Dazu die selbst gebauten Modelle** (seit 2026-10-19): Das Bauskript
+    //   traegt sie in den lokalen Katalog ein, den Git nicht kennt. Das
+    //   Projekt gewinnt bei gleichem Schluessel; ein lokaler Eintrag ist
+    //   immer privat (`myl_client::modelle::katalog_aus`).
+    let lokal = lokale_eintraege(&w);
+    for (k, v) in &lokal {
+        obj.entry(k.clone()).or_insert_with(|| v.clone());
+    }
 
     let text = |v: &serde_json::Value, k: &str| {
         v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string()
     };
     let mut aus = Vec::new();
-    for (schluessel, v) in obj {
+    for (schluessel, v) in &obj {
         // Die Schluessel mit Unterstrich sind Hinweise und keine Modelle.
         if schluessel.starts_with('_') {
             continue;
         }
         aus.push(Katalogeintrag {
             schluessel: schluessel.clone(),
-            anzeigename: text(v, "anzeigename"),
+            // Ein lokaler Eintrag ohne Anzeigenamen heisst nach dem Schema.
+            anzeigename: Some(text(v, "anzeigename"))
+                .filter(|n| !n.is_empty())
+                .or_else(|| myl_client::modelle::name_nach_schema(schluessel))
+                .unwrap_or_default(),
             hf_repo: text(v, "hf_repo"),
             lizenz_gewichte: text(v, "lizenz_gewichte"),
             lizenz_artefakt: text(v, "lizenz_artefakt"),
@@ -4066,6 +4102,8 @@ async fn katalog() -> Result<Vec<Katalogeintrag>, String> {
                 .join(schluessel)
                 .join("model_config.json")
                 .is_file(),
+            privat: text(v, "betrieb") == "lokal" || (lokal.contains_key(schluessel) && d.get(schluessel).is_none()),
+            nur_skript: text(v, "bauweg") == "skript" || (lokal.contains_key(schluessel) && d.get(schluessel).is_none()),
         });
     }
     aus.sort_by(|a, b| a.schluessel.cmp(&b.schluessel));

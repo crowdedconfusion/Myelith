@@ -249,6 +249,47 @@ pub struct Laufendes {
 /// Konsole: ein Hauptbefehl, den sie belegt).
 pub type Verbot = Box<dyn Fn(&Geprueft) -> Option<String> + Send + Sync>;
 
+/// **Der Befehl der Konsole, unter dem jeder Befehl eines Moduls steht**
+/// (Festlegung des Projektinhabers, 2026-10-19): `/module trading …`,
+/// `/module cad …`. Er steht einmal, in `myl_module`, denn auch ein Modul
+/// nennt ihn in seinem Text (`myl_module::gast::befehl_beim_wirt`).
+///
+/// ⚑ **Die Beschreibung eines Moduls und das Protokoll bleiben ohne ihn**
+/// (`/trading status`): Die Konsole stellt ihn davor, wenn sie zeigt, und
+/// nimmt ihn weg, wenn sie weitergibt. Das Fenster tippt keine Befehle; es
+/// schickt sie aus einer Liste.
+pub const MODULBEFEHL: &str = myl_module::MODULBEFEHL;
+
+/// **Die Unterbefehle von [`MODULBEFEHL`], die die Konsole selbst belegt.**
+/// Ein Modul, dessen Hauptbefehl so heisst, wird nicht gestartet.
+pub const EIGENE_UNTERBEFEHLE: [&str; 1] = ["install"];
+
+/// Wie ein Befehl eines Moduls in der Konsole heisst: `/trading status`
+/// wird `/module trading status`.
+pub fn anzeige(befehl: &str) -> String {
+    match befehl.strip_prefix('/') {
+        Some(rest) => format!("{MODULBEFEHL} {rest}"),
+        None => befehl.to_string(),
+    }
+}
+
+/// **Die Zeile fuer das Modul** aus dem, was getippt wurde: `/module trading
+/// status` wird `/trading status`. `None`, wenn die Eingabe nicht mit
+/// `/module <wort>` beginnt oder das Wort ein eigener Unterbefehl der Konsole
+/// ist ([`EIGENE_UNTERBEFEHLE`]).
+pub fn protokollzeile(eingabe: &str) -> Option<String> {
+    let rest = eingabe.trim().strip_prefix(MODULBEFEHL)?;
+    if !rest.starts_with(char::is_whitespace) {
+        return None;
+    }
+    let rest = rest.trim();
+    let wort = rest.split_whitespace().next()?;
+    if EIGENE_UNTERBEFEHLE.contains(&wort) {
+        return None;
+    }
+    Some(format!("/{rest}"))
+}
+
 /// **Alle Module eines Wirts** (Konsole oder Fenster).
 ///
 /// ⚑ **Eine Verwaltung fuer beide Oberflaechen** (2026-10-12). Bis dahin
@@ -282,12 +323,25 @@ impl Modulwirt {
         self.verboten = verboten;
     }
 
-    /// Die Befehle aller gepruefen Module, fuer Hilfe und Vervollstaendigung.
+    /// Die Befehle aller gepruefen Module, fuer Hilfe und Vervollstaendigung,
+    /// in der Form ihrer Beschreibung (`/trading status`); gezeigt werden sie
+    /// mit [`anzeige`].
     pub fn befehle(&self) -> Vec<Modulbefehl> {
         self.gefunden.iter().filter_map(|f| f.ergebnis.as_ref().ok()).flat_map(|g| g.beschreibung.befehle.clone()).collect()
     }
 
+    /// **Was die Konsole aus einer Eingabe an ein Modul gibt**: sein Name
+    /// und die Zeile, wie das Modul sie kennt (`/module trading status` wird
+    /// `/trading status`), oder `None`, wenn kein gepruefetes Modul gemeint ist.
+    pub fn modul_der_eingabe(&self, eingabe: &str) -> Option<(String, String)> {
+        let zeile = protokollzeile(eingabe)?;
+        self.modul_der_zeile(&zeile).map(|name| (name, zeile))
+    }
+
     /// Welches gepruefte Modul eine Zeile meint (nach ihrem ersten Wort).
+    ///
+    /// ⚠️ Die Zeile in der Form des Protokolls (`/trading status`); was ein
+    /// Mensch tippt, geht erst durch [`Self::modul_der_eingabe`].
     pub fn modul_der_zeile(&self, zeile: &str) -> Option<String> {
         let wort = zeile.split_whitespace().next()?;
         self.gefunden.iter().filter_map(|f| f.ergebnis.as_ref().ok()).find(|g| g.beschreibung.befehle[0].name == wort).map(|g| g.beschreibung.name.clone())
@@ -567,6 +621,21 @@ pub fn modell_fragen(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// ⚑ **`/module <modul> …`**: hin zur Zeile des Moduls und zurueck zur
+    /// Anzeige; die eigenen Unterbefehle der Konsole bleiben ihre.
+    #[test]
+    fn modulbefehle_stehen_unter_module() {
+        assert_eq!(protokollzeile("/module trading status").as_deref(), Some("/trading status"));
+        assert_eq!(protokollzeile("  /module cad  ").as_deref(), Some("/cad"));
+        assert_eq!(protokollzeile("/module trading close all").as_deref(), Some("/trading close all"));
+        assert_eq!(protokollzeile("/module"), None, "die Liste der Module");
+        assert_eq!(protokollzeile("/module install MODULES/cad"), None, "ein Befehl der Konsole");
+        assert_eq!(protokollzeile("/modules trading"), None, "ein anderes Wort");
+        assert_eq!(protokollzeile("/trading status"), None, "die alte Form");
+        assert_eq!(anzeige("/trading close position"), "/module trading close position");
+        assert_eq!(protokollzeile(&anzeige("/cad zeigen")).as_deref(), Some("/cad zeigen"));
+    }
 
     /// ⚑ Die Ausnahmen einer Kiste kommen aus ihrer `kiste.json`; ohne Datei
     /// keine.

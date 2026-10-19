@@ -598,7 +598,7 @@ dependencies = [
 
 [[package]]
 name = "integer-llm-kernels"
-version = "0.87.0"
+version = "0.88.0"
 dependencies = [
  "itertools 0.13.0",
  "objc2",
@@ -611,7 +611,7 @@ dependencies = [
 
 [[package]]
 name = "integer-llm-runtime"
-version = "0.97.0"
+version = "0.99.0"
 dependencies = [
  "integer-llm-kernels",
  "libc",
@@ -771,7 +771,7 @@ dependencies = [
 
 [[package]]
 name = "myl-client"
-version = "0.106.1"
+version = "0.109.0"
 dependencies = [
  "integer-llm-runtime",
  "libc",
@@ -787,7 +787,7 @@ dependencies = [
 
 [[package]]
 name = "myl-console"
-version = "0.66.0"
+version = "0.68.0"
 dependencies = [
  "crossterm",
  "libc",
@@ -800,7 +800,7 @@ dependencies = [
 
 [[package]]
 name = "myl-dispatcher"
-version = "0.8.1"
+version = "0.9.0"
 dependencies = [
  "libc",
  "serde",
@@ -809,7 +809,7 @@ dependencies = [
 
 [[package]]
 name = "myl-local-agent"
-version = "0.40.0"
+version = "0.43.0"
 dependencies = [
  "libc",
  "myl-agent",
@@ -822,7 +822,7 @@ dependencies = [
 
 [[package]]
 name = "myl-module"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "ed25519-dalek",
  "getrandom 0.2.17",

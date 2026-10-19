@@ -22,10 +22,22 @@ INTEGER_LLM_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 KALIBRIERUNG="${INTEGER_LLM_DIR}/calibrate"
 UMGEBUNG="${KALIBRIERUNG}/.venv"
 FEST="${KALIBRIERUNG}/requirements-fest.txt"
+# ⚑ `--flashnext`: die zweite Umgebung fuer die Bauart mit vier Stroemen
+#   (transformers ab 5.18.0, `requirements-flashnext.txt`). Die erste bleibt,
+#   wie sie ist; die Begruendung steht im Kopf jener Datei.
+PRUEFIMPORT="import torch, transformers, datasets, safetensors, huggingface_hub"
+if [ "${1:-}" = "--flashnext" ]; then
+    UMGEBUNG="${KALIBRIERUNG}/.venv-flashnext"
+    FEST="${KALIBRIERUNG}/requirements-flashnext.txt"
+    PRUEFIMPORT="${PRUEFIMPORT}, transformers.models.qwen4_exp"
+elif [ -n "${1:-}" ]; then
+    echo "FEHLER: unbekannter Schalter ${1} (bekannt: --flashnext)" >&2
+    exit 2
+fi
 PY="${UMGEBUNG}/bin/python3"
 
 vollstaendig() {
-    [ -x "${PY}" ] && "${PY}" -c "import torch, transformers, datasets, safetensors, huggingface_hub" >/dev/null 2>&1 \
+    [ -x "${PY}" ] && "${PY}" -c "${PRUEFIMPORT}" >/dev/null 2>&1 \
         && [ -x "${UMGEBUNG}/bin/hf" ]
 }
 

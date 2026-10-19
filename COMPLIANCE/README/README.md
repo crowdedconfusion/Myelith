@@ -1,7 +1,7 @@
 # compliance
 
-> **Version:** 0.4.2
-> **Datum:** 2026-10-17
+> **Version:** 0.5.0
+> **Datum:** 2026-10-19
 > **Status:** Die Pflichten aus der KI-Verordnung sind dokumentiert und,
 > soweit technisch, umgesetzt; die Einordnung Artikel für Artikel steht in
 > der [Selbsteinschätzung](../de/Selbsteinschaetzung.md). Offen: ein
@@ -38,6 +38,19 @@ Schutzfilter (`CLIENT/myl-client/src/schutzfilter.rs`), Notaus
 (`AGENT_LAYER/local-agent/src/notaus.rs`).
 
 ## Changelog
+
+### v0.5.0 – 2026-10-19 (Modellkarte mit einer Rubrik für private lokale Modelle)
+
+- **Die erzeugte Modellkarte** (`ethics/Modellkarte.md`) hat den Abschnitt
+  „Private lokale Modelle (nicht für den Netzbetrieb zugelassen)“: Er führt
+  jeden Eintrag aus `MODELS/llm/KATALOG.json` mit `betrieb: lokal` und sagt,
+  wer die Sperre durchsetzt (Knoten und Klient) und dass selbst gebaute
+  Modelle im lokalen Katalog stehen und immer privat sind. Die Messtabelle
+  der Netzmodelle lässt private Modelle aus. Der Kopf nennt den Katalog als
+  dritte Quelle.
+- **`NOTICES.md`** neu erzeugt: `myelith-125b-a6b` mit
+  `qwen-community-1.0` und der Artefaktangabe „privat, nur lokal“.
+- **Beleg:** `modellkarte.py --pruefe` und `notices.py --pruefe` bestanden.
 
 ### v0.4.2 – 2026-10-17 (Selbsteinschätzung, Zweckbestimmung und Manifest ohne Aktionsprotokoll)
 

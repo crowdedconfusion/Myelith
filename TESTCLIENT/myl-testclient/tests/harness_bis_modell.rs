@@ -496,6 +496,7 @@ async fn ein_nutzeraufruf_erreicht_das_geshardete_modell() {
                 .mit_frist(std::time::Duration::from_secs(600));
             Lauf {
                 hausregel: None,
+                mitschnitt: None,
                 klient: &klient,
                 modell: "myelith-myelith-0.6b",
                 grenzen: &grenzen,

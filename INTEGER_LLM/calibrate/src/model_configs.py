@@ -40,6 +40,10 @@ Nur Basis-Varianten, keine Instruct-Varianten: Referenzmodell des Projekts
 ist die Basis-Reihe (Scope-Entscheidung 12.15).
 """
 
+import json
+from pathlib import Path
+
+
 MODEL_CONFIGS = {
     # Verifiziert gegen den lokalen Snapshot MODELS/llm/Qwen3-4B/config.json,
     # Revision 1cfa9a7208912126459214e8b04321603b3df60c, Lizenz Apache-2.0
@@ -550,6 +554,91 @@ MODEL_CONFIGS = {
         "verified": "MODELS/llm/Qwen3.6-35B-A3B/config.json@995ad96e",
         "hf_model_id": "Qwen/Qwen3.6-35B-A3B",
     },
+    # ================================================================
+    # Die Bauart mit vier Stroemen (2026-10-19)
+    # ================================================================
+    #
+    # Verifiziert gegen `config.json` von `Qwen/Qwen3.8-Flash-Next`, Revision
+    # de4b8e4d43b917e7706784d8bb445c9af86a3540 (geholt am 2026-10-19), dazu
+    # die Koepfe aller 131 Gewichtsdateien. Lizenz `qwen-community-1.0`:
+    # ⛔️ nur lokal, nicht fuer Inferenz an Dritte (das Netz), bis zur
+    # Klaerung mit Qwen.
+    #
+    # ⚑ **Erzeugt, nicht getippt**: `ebenenweise.export_konfiguration` auf
+    #   dem echten `config.json` ergab genau diese Felder, und der Bau prueft
+    #   sie noch einmal gegen den Snapshot, bevor er rechnet
+    #   (`ebenenweise.main`). Weicht die Revision ab, bricht er mit den
+    #   abweichenden Feldern ab.
+    #
+    # ⚠️ Gebaut wird dieses Modell nur ebenenweise (`ebenenweise.py`) und mit
+    #   der zweiten Umgebung (`.venv-flashnext`, transformers ab 5.18.0);
+    #   `main.py` lehnt die Familie ab.
+    #
+    # Der Name ist ein Vorschlag (Gemisch 125 Mrd., 6 Mrd. aktiv); die
+    # 51 Mrd. der N-Gramm-Tabelle und die 4 Mrd. des MTP-Kopfs zaehlen nicht mit.
+    "myelith-125b-a6b": {
+        "family": "qwen4-exp",
+        "variant": "125b-a6b",
+        "num_layers": 48,
+        "hidden_size": 2560,
+        "intermediate_size": 0,
+        "num_heads": 24,
+        "num_kv_heads": 2,
+        "head_dim": 256,
+        "vocab_size": 248320,
+        "max_context": 262144,
+        "tie_word_embeddings": False,
+        "attention_bias": False,
+        "qk_norm": True,
+        "rms_norm_eps": 1e-06,
+        "num_experts": 512,
+        "num_experts_per_tok": 10,
+        "moe_intermediate_size": 640,
+        "norm_topk_prob": True,
+        "mlp_only_layers": [],
+        "shared_expert_intermediate_size": 640,
+        "experts_packed": False,
+        "layer_types": (["linear_attention"] * 3 + ["full_attention"]) * 12,
+        "linear_num_key_heads": 16,
+        "linear_num_value_heads": 48,
+        "linear_key_head_dim": 128,
+        "linear_value_head_dim": 128,
+        "linear_conv_kernel_dim": 4,
+        "output_gate_type": "sigmoid",
+        "zustandstor": "sigmoid",
+        "mtp_num_hidden_layers": 0,
+        "rotary_dim": 64,
+        "partial_rotary_factor": 0.25,
+        "rope_theta": 10_000_000.0,
+        # Fuer reinen Text ohne Wirkung (alle Positionsachsen gleich), wie
+        # beim 35B; hier, damit die Konfigprobe sie gegen die Quelle haelt.
+        "mrope_section": [11, 11, 10],
+        "full_attention_interval": 4,
+        "hidden_act": "silu",
+        "rms_norm_offset": 1.0,
+        "hc_count": 4,
+        "hc_lowrank": 320,
+        "ple_ebenen": [1],
+        "ple_embed_dim": 2560,
+        "ple_conv_kernel_size": 4,
+        "ngram_size": 3,
+        "heads_per_ngram": 8,
+        "ngram_vocab_size_base": 20_000_000,
+        "make_ngram_vocab_size_divisible_by": 128,
+        "ngram_seed": 1234,
+        "eos_token_id": 248044,
+        "indexer_n_heads": 4,
+        "indexer_kv_heads": 1,
+        "indexer_head_dim": 128,
+        "indexer_budget": 2048,
+        "indexer_compress_ratio": 4,
+        # ⛔️ Privat und lokal: Die Lizenz erlaubt keine Inferenz fuer Dritte.
+        #   Das Artefakt traegt es in `model_config.json`, und der
+        #   Netzbetrieb laedt es nicht (`load_model_fuer_netz`).
+        "betrieb": "lokal",
+        "verified": "Qwen/Qwen3.8-Flash-Next config.json@de4b8e4d",
+        "hf_model_id": "Qwen/Qwen3.8-Flash-Next",
+    },
     "qwen2.5-1.5b-instruct": {
         "num_layers": 28,
         "hidden_size": 1536,
@@ -607,10 +696,30 @@ MODEL_CONFIGS = {
 }
 
 
+# ⚑ **Selbst gebaute Modelle** (seit 2026-10-19): Das Bauskript
+#   (`tools/modell_bauen.py`) legt den Exporteintrag eines Modells, das ein
+#   Nutzer aus einem fremden Repositorium baut, hier ab, einen je Datei. Der
+#   Ordner ist von Git ausgenommen: Ein solches Modell ist privat und lokal,
+#   und sein Eintrag gehoert nicht in die Liste dieses Projekts.
+LOKALE_EINTRAEGE = Path(__file__).resolve().parent.parent / "lokal"
+
+
+def lokaler_eintrag(name: str):
+    """Der Exporteintrag eines selbst gebauten Modells, oder `None`."""
+    pfad = LOKALE_EINTRAEGE / f"{name}.json"
+    if not pfad.is_file():
+        return None
+    return json.loads(pfad.read_text(encoding="utf-8"))
+
+
 def get_model_config(name: str) -> dict:
-    if name not in MODEL_CONFIGS:
-        raise ValueError(f"Unbekanntes Modell: {name}. Verfuegbar: {list(MODEL_CONFIGS.keys())}")
-    return MODEL_CONFIGS[name]
+    if name in MODEL_CONFIGS:
+        return MODEL_CONFIGS[name]
+    eigen = lokaler_eintrag(name)
+    if eigen is not None:
+        return eigen
+    raise ValueError(f"Unbekanntes Modell: {name}. Verfuegbar: {list(MODEL_CONFIGS.keys())} "
+                     f"und die selbst gebauten unter {LOKALE_EINTRAEGE}")
 
 
 # Felder, die runtime/src/loader.rs::ModelDims fuer einen erfolgreichen Export
@@ -725,6 +834,14 @@ _MERKMALE = (
     # gespeichert sind. Ein Lader ohne diese Faehigkeit rechnete sonst
     # ungedreht und damit Unsinn, ohne Fehlermeldung.
     ("gedreht", lambda c: bool(c.get("gedreht"))),
+    # ⚑ Die Bauart mit vier Stroemen (Qwen3.8-Flash-Next, 2026-10-19). Vier
+    #   Untersysteme, von denen jedes allein die Rechnung aendert: die Stroeme
+    #   mit ihren Torbloecken, die N-Gramm-Einbettung, die Blockauswahl und
+    #   das Sigmoid-Tor der Zustandsnorm.
+    ("vierstrom", lambda c: c.get("hc_count", 0) > 0),
+    ("ngramm_einbettung", lambda c: bool(c.get("ple_ebenen"))),
+    ("blockauswahl", lambda c: c.get("indexer_n_heads", 0) > 0),
+    ("zustandstor_sigmoid", lambda c: c.get("zustandstor") == "sigmoid"),
 )
 
 

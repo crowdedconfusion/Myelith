@@ -57,10 +57,7 @@ from pathlib import Path
 from .scales import compute_scales_from_stats, choose_pow2_shift
 # ⚑ Dieselbe Namensregel wie Export und Statistik, nicht eine zweite.
 from .quantize import normiere_namen
-from .luts import (generate_rsqrt_lut, generate_silu_lut, generate_exp_lut,
-                   generate_sigmoid_lut, generate_softplus_rest_lut,
-                   generate_zerfall_exp_lut,
-                   generate_rope_luts, load_nonlinear_spec, rope_masse)
+from .luts import luts_erzeugen
 from .export import export_theta_v
 from .model_configs import get_export_model_config, artifact_model_config
 from .scale_pack import paket_pfad, lade as skalenpaket_laden, SCALE_PACK_ENV
@@ -82,6 +79,22 @@ HF_MODEL_ID = get_export_model_config(MODEL_NAME)["hf_model_id"]
 # still an der int16-Grenze (Diagnose: tests/diag/scale_headroom_hf.py).
 # Deshalb wird zusaetzlich auf einer breiten Stichprobe aus derselben
 # Verteilung (WikiText-2-Testsplit) kalibriert.
+# Die kuratierten Prompts vor der WikiText-Stichprobe. ⚑ Modulkonstante
+# (seit 2026-10-19), damit der ebenenweise Bau (`ebenenweise.py`) dieselben
+# nimmt und nicht eine Abschrift.
+KALIBRIER_PROMPTS = [
+    "Die numerische Stabilitaet von Fixed-Point-Inferenz ist entscheidend "
+    "fuer die Bitgleichheit ueber unabhaengige Knoten hinweg.",
+    "Decentralized consensus networks coordinate independent nodes by "
+    "verifying identical computation, and deterministic integer "
+    "arithmetic enables dispute resolution through bisection.",
+    "Ein Agent plant mehrere Schritte, ruft Werkzeuge auf und beachtet "
+    "dabei Budgetgrenzen, bevor er eine Transaktion signiert.",
+    "Quantization maps floating point weights to int8 with calibrated "
+    "power-of-two scales; lookup tables approximate nonlinear functions "
+    "such as silu, exp, rsqrt and the rotary position embeddings.",
+]
+
 CALIB_WIKITEXT_SEQUENCES = 64
 CALIB_WIKITEXT_SEQ_LEN = 128
 _MIN_LINE_CHARS = 160  # identisch zu eval/wikitext_common.py
@@ -344,6 +357,14 @@ def main():
     from .gptq import HessianCollector, quantize_linear_layers_gptq
     from .export_weights import export_quantized_weights, export_lm_head
     config_vorab = get_export_model_config(MODEL_NAME)
+    # ⛔️ **Die Bauart mit vier Stroemen baut nur ebenenweise** (2026-10-19):
+    #   Ein Korpusdurchlauf ueber 360 GB laese jede Gewichtsdatei einmal je
+    #   Sequenz, und `qwen4_exp` gibt es erst in transformers 5.18.
+    if config_vorab.get("family") == "qwen4-exp":
+        raise SystemExit(
+            f"[calibrate] {MODEL_NAME} ist von der Bauart mit vier Stroemen und baut "
+            "ebenenweise: INTEGER_LLM_MODEL=... calibrate/.venv-flashnext/bin/python3 "
+            "-m calibrate.src.ebenenweise (siehe scripts/build_flashnext.sh)")
     use_gptq, gptq_grund = gptq_entscheidung(config_vorab)
     print(f"[calibrate] Modell: {MODEL_NAME} ({HF_MODEL_ID}), "
           f"verifiziert gegen {config_vorab['verified']}")
@@ -370,18 +391,7 @@ def main():
     # damit die Per-Layer-Aktivierungsskalen nicht von einem einzigen Satz
     # abhaengen (Numerik-Realitaetsabgleich v0.12.20: die Skalen tragen
     # jetzt den kompletten Aktivierungsfluss, inkl. RMSNorm-Ausgaben).
-    prompts = [
-        "Die numerische Stabilitaet von Fixed-Point-Inferenz ist entscheidend "
-        "fuer die Bitgleichheit ueber unabhaengige Knoten hinweg.",
-        "Decentralized consensus networks coordinate independent nodes by "
-        "verifying identical computation, and deterministic integer "
-        "arithmetic enables dispute resolution through bisection.",
-        "Ein Agent plant mehrere Schritte, ruft Werkzeuge auf und beachtet "
-        "dabei Budgetgrenzen, bevor er eine Transaktion signiert.",
-        "Quantization maps floating point weights to int8 with calibrated "
-        "power-of-two scales; lookup tables approximate nonlinear functions "
-        "such as silu, exp, rsqrt and the rotary position embeddings.",
-    ]
+    prompts = KALIBRIER_PROMPTS
     # Breiterer WikiText-2-Korpus (Fund 14, Kandidat i): dieselbe Verteilung
     # wie die Messsequenzen, aber breit genug, damit die Per-Layer-Skalen die
     # realen Aktivierungs-Spannweiten abdecken statt still zu clampen.
@@ -491,100 +501,14 @@ def main():
         luts_aus_paket = None
 
     print("[calibrate] Generiere LUTs (Parameter aus theta_v/spec.json)...")
-    # Punkt 12.17: alle LUT-Parameter kommen aus dem "nonlinear"-Abschnitt
-    # der spec.json (Single Source of Truth), keine hartkodierten Duplikate.
-    # Kopplung (Numerik-Realitaetsabgleich v0.12.20): Die SiLU-LUT arbeitet
-    # in einer festen Eingangsskala (ihre frac_bits = 6); die Runtime
-    # reskaliert Gate-Werte vor dem Lookup dorthin. Die exp-LUT-frac (8) ist
-    # die Score-Skala der Attention. Die rsqrt-LUT wird per dynamischem
-    # geradem Index-Shift gespeist (spec: index_normalization).
-    nl = load_nonlinear_spec()
     # Wirft klar und fruehzeitig, falls MODEL_NAME auf eine Variante zeigt,
     # deren num_kv_heads/tie_word_embeddings noch nicht gegen die echte
     # HF-config.json verifiziert sind (siehe model_configs.py-Docstring).
-    # (Vor die LUT-Erzeugung gezogen, da RoPE head_dim braucht, Fund-15-Fix.)
     model_config = artifact_model_config(MODEL_NAME)
-    # RoPE (Fund-15-Fix, theta_v 0.10.0): Multi-Frequenz-LUTs mit
-    # half-split-Paarung. head_dim aus der (verifizierten) Modell-Config —
-    # bei 7B ist es 128 statt 64, die LUTs werden entsprechend doppelt so
-    # breit. rope_theta aus der spec (die gesamte Qwen2.5-Reihe: 1e6).
-    # ⛔️ **Die Tabelle wird mit der DREHBREITE erzeugt, nicht mit der
-    # Kopfbreite.** Das Qwen3.6-35B-A3B dreht nur 64 von 256 Stellen
-    # (`partial_rotary_factor` 0,25), und die Frequenzen haengen an
-    # dieser Breite: `theta_j = 1 / base^(j / (dreh/2))`. Mit
-    # `head_dim/2` im Nenner waeren sie falsch, und das faellt nur an
-    # der Qualitaet auf, nie an einer Meldung.
-    #
-    # ⚑ **Null heisst „ganz drehen"**, und damit bleibt jede Tabelle
-    # eines Modells ohne Teildrehung bytegleich zu vorher.
-    # ⛔️ **Zeilenzahl, Drehbreite und Basis kommen aus dem MODELL, nicht
-    # aus θ_v.** Die Begruendung steht bei `rope_masse`, samt den beiden
-    # Faellen, die sie erzwungen haben (262 144 Positionen und Basis 1e7
-    # beim Qwen3.6-35B-A3B). ⚑ **Sie steht dort und nicht hier**, weil
-    # dieselbe Herleitung zuvor an drei Stellen stand.
-    masse = rope_masse(model_config, nl)
-    drehbreite = masse["drehbreite"]
-    rope_theta = masse["rope_theta"]
-    zeilen = masse["zeilen"]
-    print(f"[calibrate] RoPE: Drehbreite {drehbreite} von "
-          f"{model_config['head_dim']}, Basis {rope_theta:g}")
-    print(f"[calibrate] RoPE-Tabellen: {zeilen} Positionen x {masse['paare']} "
-          f"Paare = {zeilen * masse['paare']} Eintraege je Tabelle")
-    sin_lut, cos_lut = generate_rope_luts(
-        max_seq_len=zeilen,
-        head_dim=drehbreite,
-        rope_theta=rope_theta,
-        frac_bits=masse["frac_bits"],
-        frequenzen=masse["frequenzen"],
-        amplitude=masse["amplitude"])
-    if masse["frequenzen"] is not None:
-        print(f"[calibrate] RoPE-Skalierung {model_config['rope_art']}: Faktor "
-              f"{model_config['rope_yarn_faktor']:g} ueber {model_config['rope_yarn_urlaenge']} "
-              f"Positionen, Amplitude {masse['amplitude']:.4f}")
-    luts = luts_aus_paket if luts_aus_paket is not None else {
-        "rsqrt": generate_rsqrt_lut(
-            max_input=nl["rsqrt"]["input_range"][1],
-            input_shift=nl["rsqrt"]["input_shift"],
-            frac_bits=nl["rsqrt"]["output_frac_bits"]),
-        "silu": generate_silu_lut(
-            input_min=nl["silu"]["input_range"][0],
-            input_max=nl["silu"]["input_range"][1],
-            input_frac_bits=nl["silu"]["input_frac_bits"],
-            output_frac_bits=nl["silu"]["output_frac_bits"]),
-        "exp": generate_exp_lut(
-            exp_range=nl["softmax"]["exp_lut_range"],
-            input_frac_bits=nl["softmax"]["exp_input_frac_bits"],
-            output_frac_bits=nl["softmax"]["exp_lut_frac_bits"]),
-        # ⚑ **Sigmoid und Softplus liegen in JEDEM Artefakt**, auch in
-        # einem ohne Zustandsebenen. θ_v ist ein Vertrag: Eine bedingte
-        # Tabelle hiesse, dass „θ_v 0.21.0" zweierlei bedeutet, und der
-        # Lader vergleicht die Fassung zeichengenau. Kosten: 32 KiB fuer
-        # Sigmoid und 64 KiB fuer Softplus, einmalig je Artefakt.
-        "sigmoid": generate_sigmoid_lut(
-            input_min=nl["sigmoid"]["input_range"][0],
-            input_max=nl["sigmoid"]["input_range"][1],
-            input_frac_bits=nl["sigmoid"]["input_frac_bits"],
-            output_frac_bits=nl["sigmoid"]["output_frac_bits"]),
-        "zerfall_exp": generate_zerfall_exp_lut(
-            max_input=nl["zerfall_exp"]["max_input"],
-            input_frac_bits=nl["zerfall_exp"]["input_frac_bits"],
-            output_frac_bits=nl["zerfall_exp"]["output_frac_bits"]),
-        "softplus_rest": generate_softplus_rest_lut(
-            max_abs_input=nl["softplus_rest"]["max_abs_input"],
-            input_frac_bits=nl["softplus_rest"]["input_frac_bits"],
-            output_frac_bits=nl["softplus_rest"]["output_frac_bits"]),
-        "sin": sin_lut,
-        "cos": cos_lut,
-    }
-
-    # ⚑ **Die Breiten kommen aus derselben Spezifikation wie die Tabellen.**
-    # `softplus` ist die einzige in int32, und der Grund steht in θ_v:
-    # Sie liefert keine Aktivierung, sondern einen Zerfallsexponenten.
-    lut_dtypes = {
-        name: nl[name]["dtype"]
-        for name in ("sigmoid", "softplus_rest", "zerfall_exp")
-        if "dtype" in nl.get(name, {})
-    }
+    # ⚑ **Die Tabellen entstehen in `luts.luts_erzeugen`**, seit dem
+    #   2026-10-19 auch fuer den ebenenweisen Bau (`ebenenweise.py`). Die
+    #   Begruendungen zu RoPE, Drehbreite und Breiten stehen dort.
+    luts, lut_dtypes = luts_erzeugen(model_config, luts_aus_paket)
 
     artifacts_dir = model_artifacts_dir(MODEL_NAME)
 

@@ -174,8 +174,15 @@ impl Vertrag {
         anhang_ist_fremd: true,
         schuetzt_bestehendes: true,
     };
-    /// Der Mitschnitt frueherer Gespraeche: privat, und er kann Fremdes
-    /// tragen.
+    /// **Der Mitschnitt frueherer Gespraeche** (`read_history`,
+    /// `list_history`, `search_history`): privat und vertraut, und das
+    /// Werkzeug nennt sein Ergebnis selbst fremd ([`FREMD_MARKEN`]), sobald
+    /// es aus einem Mitschnitt stammt, der Fremdes traegt oder es nicht
+    /// ausdruecklich verneint (Fund 570, `crate::verlauf::nur_vertrautes`).
+    pub const MITSCHNITT: Vertrag =
+        Vertrag::neu(Label::neu(Leser::Privat, Vertrauen::Vertraut), Ziel::Keins, false, false);
+    /// Die Erinnerungen des Schlafs (`search_memory`): privat, und sie
+    /// koennen Fremdes tragen.
     pub const ERINNERN: Vertrag = Vertrag::neu(Label::neu(Leser::Privat, Vertrauen::Fremd), Ziel::Keins, false, false);
     /// **Eine Shell**: `run_command` und jedes Manifest-Werkzeug ohne
     /// eigene Angabe. Sie kennt die Einhaengegrenze nicht, also braucht sie

@@ -41,6 +41,9 @@ pub struct Modellwahl {
     pub hardware: String,
     /// Ob dieser Eintrag das Modell **im Netz** meint statt hier.
     pub ueber_netz: bool,
+    /// **Privat, nur lokal** (`betrieb = "lokal"`): kein Netzeintrag, und
+    /// der Name sagt es.
+    pub privat: bool,
 }
 
 /// Was der Katalog ueber ein Artefakt weiss, soweit die Wahl es braucht.
@@ -56,6 +59,31 @@ pub struct Katalogeintrag {
     /// stuende `Myelith 14B` vor `Myelith 4B`, weil `1` vor `4` kommt.
     /// Das faellt bei vier Modellen sofort auf und bei zwei nie.
     pub reihung: f64,
+    /// **Privat, nur lokal**: `betrieb = "lokal"` im Katalog des Projekts,
+    /// oder ein Eintrag des lokalen Katalogs ([`KATALOG_LOKAL`]). Nicht fuer
+    /// den Netzbetrieb zugelassen.
+    pub privat: bool,
+}
+
+/// **Der Katalog der selbst gebauten, privaten Modelle** (seit 2026-10-19).
+///
+/// ⚑ Ihn schreibt `INTEGER_LLM/scripts/modell_bauen.sh`; er ist von Git
+/// ausgenommen, denn was ein Nutzer aus einem fremden Repositorium baut,
+/// gehoert nicht in die Liste dieses Projekts. **Jeder Eintrag darin ist
+/// privat**, gleich was er selbst sagt.
+pub const KATALOG_LOKAL: &str = "MODELS/llm/KATALOG.lokal.json";
+
+/// **Ist das Artefakt nur fuer den lokalen Betrieb zugelassen?**
+///
+/// ⚑ Massgeblich ist `betrieb` in seinem `model_config.json`: Die Zusage
+/// reist mit dem Artefakt, auch wenn es kopiert wurde und kein Katalog es
+/// kennt. Dieselbe Angabe prueft der Netzbetrieb beim Laden
+/// (`load_model_fuer_netz` in der Laufzeit).
+pub fn nur_lokal(artefakt: &std::path::Path) -> bool {
+    std::fs::read_to_string(artefakt.join("model_config.json"))
+        .ok()
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+        .is_some_and(|v| v.get("betrieb").and_then(|b| b.as_str()) == Some("lokal"))
 }
 
 /// **Das Kennzeichen, unter dem ein Modell im Netz gerechnet wird.**
@@ -160,6 +188,7 @@ pub fn liste(e: &Einstellungen) -> Vec<Modellwahl> {
                 let ordner =
                     p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
                 let k = katalog.get(&ordner);
+                let privat = k.is_some_and(|x| x.privat) || nur_lokal(&p);
                 oertlich.push(Modellwahl {
                     pfad: p.display().to_string(),
                     // ⚑ Der Anzeigename kommt aus dem Katalog, wenn er
@@ -167,11 +196,18 @@ pub fn liste(e: &Einstellungen) -> Vec<Modellwahl> {
                     // danach bleibt der Verzeichnisname. 📌 Bis CLIENT
                     // v0.168.0 fehlte hier das Schema, und Artefakte ohne
                     // Katalogeintrag standen beim Ordnernamen in der Wahl.
-                    name: k.map(|x| x.name.clone()).or_else(|| name_nach_schema(&ordner)).unwrap_or_else(|| ordner.clone()),
+                    //
+                    // ⚑ Ein privates Modell sagt es im Namen, an jeder
+                    // Stelle, an der jemand waehlt (2026-10-19).
+                    name: privat_benannt(
+                        k.map(|x| x.name.clone()).or_else(|| name_nach_schema(&ordner)).unwrap_or_else(|| ordner.clone()),
+                        privat,
+                    ),
                     offen: true,
                     warum: String::new(),
                     hardware: k.map(|x| x.hardware.clone()).unwrap_or_default(),
                     ueber_netz: false,
+                    privat,
                 });
             }
         }
@@ -181,9 +217,12 @@ pub fn liste(e: &Einstellungen) -> Vec<Modellwahl> {
     // ⚑ **Die Netzeintraege entstehen aus dem, was gefunden wurde**, und
     // zwar bevor der Rueckfalleintrag dazukommt: Ein Pfad, der hier
     // nicht liegt, ist auch im Netz keine Zusage.
+    //
+    // ⛔️ **Ein privates Modell bekommt keinen** (2026-10-19): Es ist fuer
+    // den Netzbetrieb nicht zugelassen.
     let mut netz: Vec<Modellwahl> = oertlich
         .iter()
-        .filter(|m| m.offen)
+        .filter(|m| m.offen && !m.privat)
         .map(|m| Modellwahl {
             pfad: format!("{NETZ}{}", kennung(&m.pfad)),
             // ⚑ Wortlaut des Projektinhabers, mit Komma statt Strich
@@ -198,6 +237,7 @@ pub fn liste(e: &Einstellungen) -> Vec<Modellwahl> {
             // hier falsch.
             hardware: String::new(),
             ueber_netz: true,
+            privat: false,
         })
         .collect();
 
@@ -220,6 +260,7 @@ pub fn liste(e: &Einstellungen) -> Vec<Modellwahl> {
                 warum: "Der eingestellte Pfad enthaelt kein `model_config.json`.".into(),
                 hardware: String::new(),
                 ueber_netz: false,
+                privat: nur_lokal(hier),
             },
         );
     }
@@ -273,13 +314,55 @@ pub fn katalognamen() -> BTreeMap<String, String> {
 /// frischer Klon ohne Katalog zeigt Verzeichnisnamen, keine erfundenen
 /// Angaben.
 pub fn katalog() -> BTreeMap<String, Katalogeintrag> {
+    let Some(w) = myl_local_agent::ort::wurzel() else { return BTreeMap::new() };
+    let haupt = std::fs::read_to_string(w.join("MODELS/llm/KATALOG.json")).unwrap_or_default();
+    let lokal = std::fs::read_to_string(w.join(KATALOG_LOKAL)).ok();
+    katalog_aus(&haupt, lokal.as_deref())
+}
+
+/// **Der Katalog aus seinen beiden Dateien**: dem des Projekts und dem
+/// lokalen der selbst gebauten Modelle ([`KATALOG_LOKAL`]).
+///
+/// ⚑ **Das Projekt gewinnt**: Einen Schluessel, den beide kennen, liefert der
+/// Katalog des Projekts. Ein lokaler Eintrag ohne `anzeigename` heisst nach
+/// dem Schema ([`name_nach_schema`]) oder wie sein Ordner, und er ist immer
+/// privat.
+pub fn katalog_aus(haupt: &str, lokal: Option<&str>) -> BTreeMap<String, Katalogeintrag> {
     let mut aus = BTreeMap::new();
-    let Some(w) = myl_local_agent::ort::wurzel() else { return aus };
-    let Ok(roh) = std::fs::read_to_string(w.join("MODELS/llm/KATALOG.json")) else {
-        return aus;
-    };
-    let Ok(d) = serde_json::from_str::<serde_json::Value>(&roh) else { return aus };
-    let Some(o) = d.as_object() else { return aus };
+    if let Some(o) = serde_json::from_str::<serde_json::Value>(haupt).ok().as_ref().and_then(|d| d.as_object()) {
+        projekteintraege(o, &mut aus);
+    }
+    let lokal = lokal.and_then(|t| serde_json::from_str::<serde_json::Value>(t).ok());
+    for (k, v) in lokal.as_ref().and_then(|d| d.as_object()).into_iter().flatten() {
+        if k.starts_with('_') || aus.contains_key(k) {
+            continue;
+        }
+        let name = v
+            .get("anzeigename")
+            .and_then(|x| x.as_str())
+            .map(str::to_string)
+            .or_else(|| name_nach_schema(k))
+            .unwrap_or_else(|| k.clone());
+        aus.insert(
+            k.clone(),
+            Katalogeintrag {
+                name,
+                hardware: v.get("hardware").and_then(|x| x.as_str()).unwrap_or_default().to_string(),
+                reihung: v.get("reihung").and_then(|x| x.as_f64()).unwrap_or(f64::MAX),
+                privat: true,
+            },
+        );
+    }
+    aus
+}
+
+/// Ein Name mit dem Zusatz, den ein privates Modell in der Wahl traegt.
+fn privat_benannt(name: String, privat: bool) -> String {
+    if privat { format!("{name} (privat)") } else { name }
+}
+
+/// Die Eintraege aus dem Katalog des Projekts.
+fn projekteintraege(o: &serde_json::Map<String, serde_json::Value>, aus: &mut BTreeMap<String, Katalogeintrag>) {
     for (k, v) in o {
         if k.starts_with('_') {
             continue;
@@ -312,10 +395,10 @@ pub fn katalog() -> BTreeMap<String, Katalogeintrag> {
                 // ⚠️ **Ohne Angabe ans Ende**, nicht an den Anfang: Ein
                 // fehlender Wert ist keine Groesse von null.
                 reihung: v.get("reihung").and_then(|x| x.as_f64()).unwrap_or(f64::MAX),
+                privat: v.get("betrieb").and_then(|x| x.as_str()) == Some("lokal"),
             },
         );
     }
-    aus
 }
 
 
@@ -600,11 +683,53 @@ mod empfehlung_proben {
     /// Stellen zwei Namen traegt.
     #[test]
     fn die_katalognamen_folgen_dem_schema() {
-        let namen = katalognamen();
+        // ⚑ Nur der Katalog des Projekts: Ein lokaler Eintrag darf anders
+        // heissen und traegt dann seinen Ordnernamen.
+        let w = myl_local_agent::ort::wurzel().expect("Repositorium");
+        let haupt = std::fs::read_to_string(w.join("MODELS/llm/KATALOG.json")).unwrap_or_default();
+        let namen: BTreeMap<String, String> =
+            katalog_aus(&haupt, None).into_iter().map(|(k, v)| (k, v.name)).collect();
         assert!(!namen.is_empty(), "der Katalog wurde nicht gefunden");
         for (ordner, name) in namen {
             assert_eq!(name_nach_schema(&ordner).as_deref(), Some(name.as_str()), "{ordner} im Katalog");
         }
+    }
+
+    /// ⛔️ **Private Modelle aus beiden Katalogen**: Ein lokaler Eintrag ist
+    /// immer privat, auch wenn er etwas anderes sagt; bei gleichem Schluessel
+    /// gewinnt das Projekt; ohne Anzeigenamen gilt das Schema, sonst der
+    /// Ordner. Im Projektkatalog macht `betrieb = "lokal"` privat.
+    #[test]
+    fn private_modelle_aus_beiden_katalogen() {
+        let haupt = r#"{"_hinweis": "x",
+            "myelith-4b": {"anzeigename": "Myelith 4B INT8", "reihung": 4.0},
+            "myelith-125b-a6b": {"anzeigename": "Myelith 125B-A6B INT8", "reihung": 125.0, "betrieb": "lokal"}}"#;
+        let lokal = r#"{"myelith-4b": {"anzeigename": "Faelschung"},
+            "myelith-126b-a6b-int4": {"betrieb": "netz", "reihung": 126.0},
+            "mein-modell": {}}"#;
+        let k = katalog_aus(haupt, Some(lokal));
+        assert!(!k["myelith-4b"].privat);
+        assert_eq!(k["myelith-4b"].name, "Myelith 4B INT8", "das Projekt gewinnt");
+        assert!(k["myelith-125b-a6b"].privat, "betrieb lokal im Projektkatalog");
+        assert!(k["myelith-126b-a6b-int4"].privat, "lokal ist immer privat");
+        assert_eq!(k["myelith-126b-a6b-int4"].name, "Myelith 126B-A6B INT4");
+        assert_eq!(k["mein-modell"].name, "mein-modell");
+        assert_eq!(katalog_aus(haupt, None).len(), 2);
+        assert_eq!(privat_benannt("Myelith 4B".into(), true), "Myelith 4B (privat)");
+    }
+
+    /// ⚑ **Die Zusage reist mit dem Artefakt**: `betrieb` in
+    /// `model_config.json`.
+    #[test]
+    fn nur_lokal_liest_das_artefakt() {
+        let d = std::env::temp_dir().join(format!("myl-nur-lokal-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        assert!(!nur_lokal(&d), "ohne model_config.json nicht privat");
+        std::fs::write(d.join("model_config.json"), r#"{"family": "qwen4-exp", "betrieb": "lokal"}"#).unwrap();
+        assert!(nur_lokal(&d));
+        std::fs::write(d.join("model_config.json"), r#"{"family": "qwen3"}"#).unwrap();
+        assert!(!nur_lokal(&d));
+        std::fs::remove_dir_all(&d).ok();
     }
 
 }

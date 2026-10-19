@@ -71,6 +71,8 @@ pub mod aktualisierung;
 pub mod anhang;
 /// Ein Modell holen und sein Artefakt bauen, fuer Konsole und Fenster.
 pub mod bezug;
+/// Ein eigenes Modell mit dem Bauskript bauen (`/build artifact` der Konsole).
+pub mod eigenbau;
 pub mod einstellungen;
 
 // ⚑ **Der oertliche Agent liegt seit dem 2026-09-30 in

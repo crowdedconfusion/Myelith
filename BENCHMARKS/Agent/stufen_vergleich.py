@@ -102,7 +102,8 @@ def auswerten_ordner(ziel: Path) -> Path:
     zeilen = [
         f"# {titel}, {ziel.name.removeprefix('stufen-')}",
         "",
-        f"Saaten: {', '.join(map(str, lauf['saaten']))}. Antwortlänge {lauf['token']}, Denken {lauf['denken']}, "
+        f"Saaten: {', '.join(map(str, lauf['saaten']))}. Antwortlänge eingestellt {lauf['token']} (ein Agentenlauf nimmt "
+        f"mindestens 4000, mit großem Kontext mehr), Denken {lauf['denken']}, "
         f"Werkzeugsatz {lauf['werkzeuge']}. {je_stufe}, je Aufgabe eine Zelle je Saat; "
         "bestanden heißt: Die Abnahme von außen endet mit 0.",
         "",

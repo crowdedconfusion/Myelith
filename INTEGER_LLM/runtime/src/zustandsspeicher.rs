@@ -39,6 +39,11 @@ pub struct Zustandsspeicher {
     /// Kanaele auf einmal und nicht je Kopf.
     fenster: Vec<Faltungsfenster>,
     laenge: usize,
+    /// **Der Zustand der N-Gramm-Einbettung** (Bauart mit vier Stroemen), je
+    /// Ebene, die eine hat: die Vorgaenger des naechsten Tokens und das
+    /// Fenster ihrer Faltung. ⚑ Er gehoert hierher, weil er sich wie ein
+    /// rekurrenter Zustand nur aufheben, nicht zurueckrechnen laesst.
+    ngramm: Vec<(usize, crate::model::vierstrom::Ngrammzustand)>,
 }
 
 impl Zustandsspeicher {
@@ -66,7 +71,23 @@ impl Zustandsspeicher {
             }
             fenster.push(Faltungsfenster::leer(kanaele, KERN));
         }
-        Self { plaetze, koepfe, zustaende, fenster, laenge: 0 }
+        Self { plaetze, koepfe, zustaende, fenster, laenge: 0, ngramm: Vec::new() }
+    }
+
+    /// **Der N-Gramm-Zustand einer Ebene**, beim ersten Mal mit `anlegen`.
+    pub fn ngramm_bereit(
+        &mut self,
+        ebene: usize,
+        anlegen: impl FnOnce() -> crate::model::vierstrom::Ngrammzustand,
+    ) -> &mut crate::model::vierstrom::Ngrammzustand {
+        let i = match self.ngramm.iter().position(|(e, _)| *e == ebene) {
+            Some(i) => i,
+            None => {
+                self.ngramm.push((ebene, anlegen()));
+                self.ngramm.len() - 1
+            }
+        };
+        &mut self.ngramm[i].1
     }
 
     fn platz(&self, ebene: usize) -> usize {
@@ -134,6 +155,9 @@ impl Zustandsspeicher {
         for f in self.fenster.iter_mut() {
             f.leeren();
         }
+        // ⚑ Wie am Anfang einer Folge: Der Zustand wird beim naechsten Token
+        //   neu angelegt (Kontext ganz EOS, Fenster null).
+        self.ngramm.clear();
         self.laenge = 0;
     }
 

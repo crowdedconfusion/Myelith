@@ -534,9 +534,10 @@ impl Oertlichesmodell {
             }
         }
         // ⚑ **Wie viel Kontext der Speicher traegt**, nach dem Plan: Dichte
-        //   Gewichte zuerst, dann die haeufigen Experten nach dem Profil
-        //   dieser Maschine (falls eines da ist), dann Kontext bis zur
-        //   Grenze des Modells, im Freien von jetzt (hoechstens der
+        //   Gewichte zuerst, dann Kontext bis `plan::KONTEXT_VOR_EXPERTEN`
+        //   (damit ein Agent arbeiten kann, Fund 562), dann die haeufigen
+        //   Experten nach dem Profil dieser Maschine (falls eines da ist),
+        //   dann der restliche Kontext bis zur Grenze des Modells, im Freien von jetzt (hoechstens der
         //   Freigabe), nach der Ruecklage des Plans.
         //   Darueber lagerte der KV-Speicher aus, oder er verdraengte die
         //   haeufigen Experten, und jedes Token wuerde langsam; der Agent
@@ -931,7 +932,29 @@ impl Oertlichesmodell {
         max_tokens: Option<u32>,
         abbruch: &std::sync::atomic::AtomicBool,
     ) -> Result<Antwort, Tuerfehler> {
-        let prompt = self.vorlage().bauen(nachrichten, self.denkt());
+        self.antworten_ab(nachrichten, "", max_tokens, abbruch)
+    }
+
+    /// **Wie [`Self::antworten_mit`], hinter einem schon geschriebenen
+    /// Anfang der Antwort** (Fund 569, `Modellweg::weiterschreiben`).
+    ///
+    /// ⚑ **Der Prompt ist derselbe wie beim ersten Teil, mit dem Anfang
+    /// dahinter**, also genau die Folge, an der die Erzeugung stand. Der
+    /// Speicher findet sie wieder und rechnet nur das Neue.
+    ///
+    /// ⛔️ **Ohne Denkgrenze**: Ein offener Werkzeugaufruf steht hinter dem
+    /// Denkblock. Mit Grenze zaehlte die Erzeugung jedes neue Token als
+    /// Ueberlegung und schriebe nach dem Budget `</think>` mitten ins JSON.
+    /// ⛔️ **Und vorn nicht beschnitten**: Ein Leerzeichen am Anfang des
+    /// neuen Teils gehoert zum Inhalt des Aufrufs.
+    fn antworten_ab(
+        &self,
+        nachrichten: &[Nachricht],
+        anfang: &str,
+        max_tokens: Option<u32>,
+        abbruch: &std::sync::atomic::AtomicBool,
+    ) -> Result<Antwort, Tuerfehler> {
+        let prompt = self.vorlage().bauen(nachrichten, self.denkt()) + anfang;
         // Einmal zerlegt, fuer den Zaehler und fuer die Rechnung: Bei einem
         // langen Verlauf kostet das Zerlegen selbst merklich.
         let prompt_token = self.wortschatz.encode(&prompt);
@@ -950,6 +973,9 @@ impl Oertlichesmodell {
         let mut speicher = self.fortsetzung.lock().unwrap_or_else(|e| e.into_inner());
         let mut erzeugung = self.erzeugung(grenze, &schluss);
         erzeugung.abbruch = Some(abbruch);
+        if !anfang.is_empty() {
+            erzeugung.denkgrenze = None;
+        }
         let (token, wiederverwendung) = match &self.beobachter {
             // ⚑ Auch ohne Zuschauer wird gehalten: Die Marken gehoeren
             // zur Antwort und nicht zur Anzeige. Ohne sie rechnete
@@ -977,6 +1003,9 @@ impl Oertlichesmodell {
                 let mut zerleger = myl_local_agent::textstrom::Zerleger::neu_im_denken(
                     self.vorlage().oeffnet_denkblock(self.denkt()),
                 );
+                // ⚑ Der Anfang stand schon im Fenster; er stellt nur den
+                //   Zerleger dorthin, wo die Antwort abriss.
+                let _ = zerleger.schluck(anfang);
                 let token = dekodieren_fortgesetzt(
                     &self.modell,
                     &prompt_token,
@@ -1028,9 +1057,8 @@ impl Oertlichesmodell {
             .unwrap_or(&text)
             .split("\nFrage:")
             .next()
-            .unwrap_or(&text)
-            .trim()
-            .to_string();
+            .unwrap_or(&text);
+        let text = if anfang.is_empty() { text.trim() } else { text.trim_end() }.to_string();
         // ⛔️ **Angehalten ist kein Ergebnis wie jedes andere**: Die Schleife
         //   muss enden, und der Text bis dahin kommt mit.
         if abbruch.load(std::sync::atomic::Ordering::SeqCst) {
@@ -1090,6 +1118,25 @@ impl Modellweg for Oertlichesmodell {
             self.aktion_beenden();
         }
         aus
+    }
+
+    /// ⚑ Weiterschreiben kann ein Modell mit eigenem Speicher (Fund 569).
+    fn weiterschreiben(
+        &self,
+        _modell: &str,
+        nachrichten: &[Nachricht],
+        anfang: &str,
+        max_tokens: Option<u32>,
+    ) -> Option<Result<Antwort, Tuerfehler>> {
+        let eigene = AKTION.with(|a| a.get().tiefe == 0);
+        if eigene {
+            self.aktion_beginnen();
+        }
+        let aus = self.antworten_ab(nachrichten, anfang, max_tokens, myl_local_agent::notaus::schalter());
+        if eigene {
+            self.aktion_beenden();
+        }
+        Some(aus)
     }
 
     /// **Liest die Nachrichten in den KV-Speicher und erzeugt nichts**:

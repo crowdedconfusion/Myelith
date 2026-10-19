@@ -80,7 +80,13 @@ fn run() -> Result<(), String> {
             cache = KVCache::new(m.num_layers, m.num_kv_heads);
         }
         auf.leeren();
-        let _ = m.run_layers_mit_mitschnitt(m.embed_token(tk), pos, &mut cache, 0, m.num_layers, &mut auf);
+        // ⚑ Vier Stroeme (Qwen3.8-Flash-Next) haben keinen einzelnen
+        //   Residualstrom; ihr Weg zeichnet das Gemisch im selben Format auf.
+        if m.vierstrom.is_some() {
+            let _ = m.vierstrom_mit_mitschnitt(tk, pos, &mut cache, &mut auf);
+        } else {
+            let _ = m.run_layers_mit_mitschnitt(m.embed_token(tk), pos, &mut cache, 0, m.num_layers, &mut auf);
+        }
         for (e, ebene) in auf.ebenen().iter().enumerate() {
             let Mlpteil::Expertengemisch { experten, teile, .. } = &ebene.mlp else { continue };
             let h_breite = teile.first().map(|t| t.h.len()).unwrap_or(0);

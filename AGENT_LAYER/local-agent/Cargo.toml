@@ -1,6 +1,6 @@
 [package]
 name = "myl-local-agent"
-version = "0.40.0"
+version = "0.43.0"
 edition = "2021"
 rust-version = "1.85"
 description = "Der oertliche Agent: Schleife, Tuerklient, Werkzeuge mit Einhaengegrenze, Werkzeugkisten, Skills, Loop, Notaus. Von der Kette isoliert, nie Teil einer pruefbaren Netzaktion."

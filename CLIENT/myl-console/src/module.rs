@@ -22,11 +22,15 @@ use myl_module::nachricht::{Stil, Teil};
 pub use myl_client::module::{einstellungsordner, installieren, liste, protokoll, speicherpfad, vertrauenspfad, Modulwirt};
 
 /// **Der Wirt der Konsole.** ⚑ Ein Modul darf keinen Befehl der Konsole
-/// belegen.
+/// belegen: Seine Befehle stehen unter `/module` (`/module trading …`), und
+/// dort gehoeren die eigenen Unterbefehle der Konsole ihr (`install`).
 pub fn wirt() -> Modulwirt {
     Modulwirt::neu(Some(Box::new(|g| {
         let haupt = &g.beschreibung.befehle[0].name;
-        crate::sitzung::eingebauter_befehl(haupt).then(|| format!("{haupt} ist ein Befehl der Konsole"))
+        let wort = haupt.trim_start_matches('/');
+        myl_client::module::EIGENE_UNTERBEFEHLE
+            .contains(&wort)
+            .then(|| format!("{} ist ein Befehl der Konsole", myl_client::module::anzeige(haupt)))
     })))
 }
 

@@ -127,6 +127,26 @@ fn gebaut_wird_nur_ueber_den_bezug_nach_bestaetigung() {
     assert!(pruefen < frage && frage < bauen, "Reihenfolge: erst Platz, dann Frage, dann Bau");
 }
 
+/// **`/build artifact` baut nur ueber `myl_client::eigenbau`**, nach der
+/// Platzrechnung des Bauskripts und einer Frage ohne Vorgabe (2026-10-19).
+///
+/// ⚑ Dieselbe Regel wie oben: Die Konsole fragt und zeigt; was geprueft,
+/// gerechnet und gebaut wird, entscheidet das Bauskript.
+#[test]
+fn ein_eigenes_modell_baut_nur_das_bauskript_nach_bestaetigung() {
+    let s = quelle("sitzung.rs");
+    let rumpf = s
+        .split_once("fn eigenes_modell_bauen")
+        .and_then(|(_, rest)| rest.split_once("\n}\n"))
+        .map(|(r, _)| r)
+        .expect("die Funktion von /build artifact heisst nicht mehr so");
+    let erkunden = rumpf.find("eigenbau::erkunden(").expect("keine Erkundung");
+    let platz = rumpf.find("e.noetig(").expect("keine Platzrechnung");
+    let frage = rumpf.find("janein::fragen(\"So bauen?\", None").expect("keine Frage ohne Vorgabe");
+    let bauen = rumpf.find("eigenbau::bauen(").expect("gebaut wird nicht ueber eigenbau");
+    assert!(erkunden < platz && platz < frage && frage < bauen, "Reihenfolge: erkunden, Platz, Frage, Bau");
+}
+
 /// **Die Kopie ist als Kopie gekennzeichnet, und nur sie.**
 ///
 /// ⚑ Bis zum 2026-09-24 standen vier Dateien wortgetreu so da wie im

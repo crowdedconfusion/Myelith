@@ -16,11 +16,14 @@
 //!    - die **dichten Gewichte** im Arbeitsspeicher, Rand und Ebene um
 //!      Ebene, denn sie liest jedes Token; was nicht passt, kommt per mmap
 //!      von der Platte, und der Plan sagt, dass es langsam wird;
+//!    - ein **Arbeitskontext bis [`KONTEXT_VOR_EXPERTEN`]** (32 768 Token,
+//!      hoechstens der eingestellte), so weit er passt: Darunter kommt ein
+//!      Agent nicht ueber den ersten Schritt (Fund 562);
 //!    - die **heissen Experten**, falls ein Profil vorliegt
 //!      ([`crate::local::profil`]): die haeufigsten, bis sie zusammen
 //!      [`HEISS_DECKUNG_PROMILLE`] der Aufrufe tragen. Nach den dichten
 //!      Gewichten sind sie das, was am haeufigsten gelesen wird;
-//!    - der **Arbeitskontext** (`kontext_soll`), bis er erreicht ist oder der
+//!    - der **restliche Arbeitskontext** (`kontext_soll`), bis er erreicht ist oder der
 //!      Platz endet, auf ein Raster abgerundet. Er ist eine Einstellung des
 //!      Menschen und kein Tempo; wird er gekuerzt, sagt der Plan es.
 //!
@@ -241,6 +244,47 @@ pub const KONTEXT_MINDESTENS: u64 = 8_192;
 
 /// **Der Arbeitskontext ohne Einstellung**, wie die Vorgabe im Client.
 pub const KONTEXT_VORGABE: u64 = 65_536;
+
+/// **So viel Arbeitskontext kommt vor den heissen Experten**, wenn das
+/// Modell ihn hat und der Speicher ihn traegt (Fund 562, 2026-10-18).
+///
+/// 📌 **Warum nicht einfach ein hoeheres Minimum.** Bis hier kam nach dem
+/// Minimum von [`KONTEXT_MINDESTENS`] (8192) jeder Experte vor jedem
+/// weiteren Token Kontext. Beim int8-35B auf 24 GiB blieb es bei 8192, und
+/// ein Agent kam damit nicht ueber den ersten Schritt: Systemprompt und
+/// voller Werkzeugsatz belegen rund 4200 Token, die Antwort haelt 4000
+/// frei. Jeder der 15 Laeufe der Stufe extrem endete nach hoechstens fuenf
+/// Aufrufen mit „Kontext voll“. Ein Minimum von 32 768 haette das behoben,
+/// aber fuer alle: Die dichten kleinen Modelle brauchen 112 bis 144 KiB je
+/// Token, ein 4B also 4,5 GiB fest, und wuerde auf einem kleinen Rechner
+/// abgelehnt. Das Minimum bleibt deshalb die Schwelle fuer die Aufnahme;
+/// diese Zahl ist die Schwelle fuer den Vorrang der Experten.
+///
+/// ⚑ **Was es kostet:** Beim 35B traegt ein Token 20 KiB (zehn
+/// Aufmerksamkeitsebenen), 8192 bis 32 768 also 480 MiB, rund 160 der
+/// seltensten unter gut 2000 haeufigen Experten. Ein Modell ohne Experten
+/// verliert nichts, es hat keinen Vorrang abzugeben.
+pub const KONTEXT_VOR_EXPERTEN: u64 = 32_768;
+
+/// Erweitert den Kontext der Belegung bis `ziel`, so weit der Speicher
+/// reicht, auf `raster` abgerundet (ausser er erreicht `ziel` genau).
+fn kontext_erweitern(bel: &mut Belegung, frei: &mut u64, b: &Modellbedarf, ziel: u64, raster: u64) {
+    if ziel <= bel.kontext {
+        return;
+    }
+    // Ohne KV-Speicher (ein rein rekurrentes Modell) kostet Kontext nichts.
+    let neu = match frei.checked_div(b.kv_je_token) {
+        None => ziel,
+        Some(passt) => {
+            let neu = bel.kontext + passt.min(ziel - bel.kontext);
+            if neu == ziel { ziel } else { (neu / raster * raster).max(bel.kontext) }
+        }
+    };
+    let kosten = (neu - bel.kontext) * b.kv_je_token;
+    *frei -= kosten;
+    bel.ram_bytes += kosten;
+    bel.kontext = neu;
+}
 
 /// Kontext in Schritten von 256 Token: fein genug, um nichts zu
 /// verschenken, grob genug, dass zwei Plaene mit fast gleichem Speicher
@@ -603,6 +647,11 @@ pub fn belegen(angebot: &Angebot, lasten: &[Last], regeln: &Regeln) -> Plan {
                     bel.ebenen_von_platte.push(e.index);
                 }
             }
+            // ⚑ **Ein Arbeitskontext, mit dem ein Agent arbeiten kann, vor den
+            //   heissen Experten** (Fund 562, siehe [`KONTEXT_VOR_EXPERTEN`]).
+            let soll = l.kontext_soll.clamp(l.kontext_mindestens, b.hoechstkontext);
+            bel.kontext = l.kontext_mindestens;
+            kontext_erweitern(&mut bel, &mut frei, b, soll.min(KONTEXT_VOR_EXPERTEN.max(l.kontext_mindestens)), raster);
             // Die heissen Experten, die haeufigsten zuerst.
             let r = &rang[i];
             for (k, &(e, x)) in r.reihe.iter().enumerate().take(r.heisse) {
@@ -615,23 +664,8 @@ pub fn belegen(angebot: &Angebot, lasten: &[Last], regeln: &Regeln) -> Plan {
                     bel.heiss_bytes += bytes;
                 }
             }
-            // Der Arbeitskontext, so weit er passt.
-            bel.kontext = l.kontext_mindestens;
-            let soll = l.kontext_soll.clamp(l.kontext_mindestens, b.hoechstkontext);
-            if soll > bel.kontext {
-                // Ohne KV-Speicher (ein rein rekurrentes Modell) kostet Kontext nichts.
-                let neu = match frei.checked_div(b.kv_je_token) {
-                    None => soll,
-                    Some(passt) => {
-                        let neu = bel.kontext + passt.min(soll - bel.kontext);
-                        if neu == soll { soll } else { (neu / raster * raster).max(bel.kontext) }
-                    }
-                };
-                let kosten = (neu - bel.kontext) * b.kv_je_token;
-                frei -= kosten;
-                bel.ram_bytes += kosten;
-                bel.kontext = neu;
-            }
+            // Der restliche Arbeitskontext, so weit er passt.
+            kontext_erweitern(&mut bel, &mut frei, b, soll, raster);
             if bel.kontext < soll {
                 bel.hinweise.push(format!(
                     "Kontext {} statt eingestellt {soll}: Mehr passt nicht in den Arbeitsspeicher{}.",
@@ -716,7 +750,7 @@ pub fn belegen(angebot: &Angebot, lasten: &[Last], regeln: &Regeln) -> Plan {
                         if let (Some(d), Some(p)) = (bel.deckung_promille, &l.profil) {
                             bel.hinweise.push(format!(
                                 "Nach dem Profil ({} Token) fallen {},{} % der Expertenaufrufe auf Experten im \
-                                 Arbeitsspeicher; {} davon sind die häufigen, vor dem Arbeitskontext.",
+                                 Arbeitsspeicher; {} davon sind die häufigen, vor dem restlichen Arbeitskontext.",
                                 p.token,
                                 d / 10,
                                 d % 10,
@@ -898,22 +932,47 @@ mod proben {
         l
     }
 
-    /// ⚑ **Die haeufigen Experten kommen direkt nach den dichten Gewichten**,
-    /// vor dem Arbeitskontext; der weicht bis zum Mindestkontext, und der
-    /// Plan sagt es. Ohne Profil bleibt es beim Kontext zuerst.
+    /// ⚑ **Die haeufigen Experten kommen direkt nach den dichten Gewichten**
+    /// und einem Arbeitskontext bis [`KONTEXT_VOR_EXPERTEN`], vor dem Rest
+    /// des Arbeitskontexts; der weicht, und der Plan sagt es. Ohne Profil
+    /// bleibt es beim Kontext zuerst.
+    ///
+    /// 📌 **Bis zum 2026-10-18 (Fund 562) kamen die Experten vor jedem Token
+    /// ueber dem Minimum**, und hier stand `(2, 100 MiB, 6, 4096)`: zwei
+    /// Experten, Kontext 4096. Jetzt kommen erst 32 768 Token (28 MiB bei
+    /// 1 KiB je Token), dann passt einer der beiden Experten (50 MiB), und
+    /// der Rest (22 MiB) geht wieder in den Kontext.
     #[test]
     fn die_haeufigen_experten_kommen_vor_dem_arbeitskontext() {
-        // 264 MiB fuer feste Teile und dichte Gewichte, 100 fuer zwei Experten.
+        // 264 MiB fuer feste Teile und dichte Gewichte, 100 fuer Kontext und Experten.
         let p = belegen(&angebot(364 * MIB), &[mit_profil(agent())], &ohne_ruecklage());
         let b = p.belegung("agent").expect("angenommen");
-        assert_eq!((b.experten_heiss, b.heiss_bytes, b.experten_von_platte, b.kontext), (2, 100 * MIB, 6, 4096));
-        assert_eq!(b.deckung_promille, Some(900));
+        assert_eq!((b.experten_heiss, b.heiss_bytes, b.experten_von_platte, b.kontext), (1, 50 * MIB, 7, 55296));
+        assert!(b.kontext >= KONTEXT_VOR_EXPERTEN, "der Agent bekam weniger als seinen Kontext vor den Experten");
+        assert_eq!(b.deckung_promille, Some(700));
         assert!(b.hinweise.iter().any(|h| h.contains("neben den häufigen Experten")), "{:?}", b.hinweise);
-        assert!(b.hinweise.iter().any(|h| h.contains("13 Token") && h.contains("90,0 %")), "{:?}", b.hinweise);
+        assert!(b.hinweise.iter().any(|h| h.contains("13 Token") && h.contains("70,0 %")), "{:?}", b.hinweise);
         // Ohne Profil: der volle Kontext (60 MiB), und fuer keinen Experten Platz.
         let p = belegen(&angebot(364 * MIB), &[agent()], &ohne_ruecklage());
         let b = p.belegung("agent").expect("angenommen");
         assert_eq!((b.experten_heiss, b.experten_von_platte, b.kontext, b.deckung_promille), (0, 8, 65536, None));
+    }
+
+    /// ⚑ **Reicht der Speicher nicht fuer den Kontext vor den Experten**,
+    /// bekommt der Agent, was da ist, und kein Experte verdraengt ihn; mit
+    /// genug Speicher beides. Fund 562.
+    #[test]
+    fn der_kontext_vor_den_experten_geht_vor_und_nur_bis_dahin() {
+        // 264 MiB fest und dicht, dazu 20 MiB: Kontext 4096 + 20 480 Token, kein Experte.
+        let p = belegen(&angebot(284 * MIB), &[mit_profil(agent())], &ohne_ruecklage());
+        let b = p.belegung("agent").expect("angenommen");
+        assert_eq!((b.experten_heiss, b.kontext), (0, 4096 + 20 * 1024));
+        // 28 MiB: genau bis 32 768, kein Experte.
+        let p = belegen(&angebot(292 * MIB), &[mit_profil(agent())], &ohne_ruecklage());
+        assert_eq!(p.belegung("agent").map(|b| (b.experten_heiss, b.kontext)), Some((0, KONTEXT_VOR_EXPERTEN)));
+        // 28 + 50 MiB: der erste Experte, und der Kontext bleibt bei 32 768.
+        let p = belegen(&angebot(342 * MIB), &[mit_profil(agent())], &ohne_ruecklage());
+        assert_eq!(p.belegung("agent").map(|b| (b.experten_heiss, b.kontext)), Some((1, KONTEXT_VOR_EXPERTEN)));
     }
 
     /// ⚑ **Ein Aufruf von Sehen leiht sich die haeufigen Experten**, den

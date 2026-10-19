@@ -267,7 +267,7 @@ def bereite_rekurrenzparameter(name: str, param):
         return (name[: -len("A_log")] + "exp_A", torch.exp(param.detach().float()), True)
     if name.endswith("linear_attn.dt_bias"):
         return (name, param, True)
-    if name.endswith("linear_attn.conv1d.weight") and param.dim() == 3:
+    if name.endswith(("linear_attn.conv1d.weight", "ple.conv1d.weight")) and param.dim() == 3:
         if param.shape[1] != 1:
             raise ValueError(
                 f"{name}: mittlere Achse ist {param.shape[1]} statt 1; die Faltung "
@@ -434,6 +434,16 @@ NORM_MIT_VERSATZ = (
     "post_attention_layernorm.weight",
     "self_attn.q_norm.weight",
     "self_attn.k_norm.weight",
+    # ⚑ Die Bauart mit vier Stroemen (Qwen3.8-Flash-Next, 2026-10-19):
+    #   Jede ihrer Normen ist eine `Qwen4ExpTextRMSNorm` und rechnet
+    #   `1 + weight`, auch die je Strom gruppierten. ⚠️ Ihre
+    #   `linear_attn.norm` bleibt ohne Versatz wie beim 35B.
+    "hc_norm.weight",
+    "ple.norm_key.weight",
+    "ple.norm_query.weight",
+    "ple.norm_conv.weight",
+    "indexer.q_layernorm.weight",
+    "indexer.k_layernorm.weight",
 )
 
 
@@ -525,6 +535,18 @@ def quantisiere_gewichte_strom(model):
     if versatz:
         print(f"[quantize] RMSNorm-Versatz {versatz} aktiv (Fund 423): "
               f"die Normgewichte dieses Modells streuen um null.")
+    yield from quantisiere_parameter(model.named_parameters(), versatz)
+
+
+def quantisiere_parameter(benannte_parameter, versatz: float):
+    """**Der Kern von [`quantisiere_gewichte_strom`]**, ueber eine beliebige
+    Folge `(name, parameter)`.
+
+    ⚑ Seit 2026-10-19 eigene Funktion, damit der ebenenweise Bau
+    (`ebenenweise.py`) eine einzelne Ebene mit ihrem vollen Namen
+    durchschicken kann, statt das ganze Modell zu halten. Die Regeln (welche
+    Namen, Versatz, Entschmelzen, Rekurrenzparameter) stehen damit einmal.
+    """
     target_keys = [
         "embed_tokens", "lm_head",
         "self_attn.q_proj", "self_attn.k_proj", "self_attn.v_proj", "self_attn.o_proj",
@@ -552,10 +574,13 @@ def quantisiere_gewichte_strom(model):
         # nicht**, denn dazwischen steht `shared_expert.`; und
         # `shared_expert_gate` endet nicht auf `gate.`.
         "mlp.shared_expert",
+        # Die Bauart mit vier Stroemen (2026-10-19): die Torbloecke je
+        # Ebene und am Ende, die N-Gramm-Einbettung (ohne ihre Tabelle, die
+        # eigen exportiert wird) und die Blockauswahl.
+        "hyper_connection", "ple.", "indexer.",
     ]
 
-
-    for name, param in model.named_parameters():
+    for name, param in benannte_parameter:
         if any(teil in f".{name}" for teil in AUSGESCHLOSSENE_TEILBAEUME):
             continue
         if not any(key in name for key in target_keys):

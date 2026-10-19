@@ -230,6 +230,41 @@ Projekts, und sie steht unter dessen Lizenz.
 Vor einem Genesis-Block gehört sie von jemandem geprüft, der dafür
 haftet.
 
+## 8a. Private lokale Modelle (nicht für den Netzbetrieb zugelassen)
+
+⛔️ **Ein privates Modell rechnet nur auf der Maschine, die es gebaut
+hat.** Seine Gewichte stehen unter einer Lizenz, die den Betrieb für
+sich selbst erlaubt, Inferenz für Dritte aber nicht, und das Netz von
+Myelith ist Inferenz für Dritte. Die Zeile oben gilt für diese Modelle
+deshalb nicht: Ihr Artefakt steht unter keiner eigenen Lizenz dieses
+Projekts, die Lizenz der Gewichte gilt weiter.
+
+| Modell | Basismodell | Lizenz Basismodell | Parameter | Stand |
+|---|---|---|---|---|
+| Myelith 125B-A6B | `Qwen/Qwen3.8-Flash-Next` | `qwen-community-1.0` | rund 125 Mrd. gesamt, rund 6 Mrd. aktiv je Token | vorgemerkt, nicht gebaut |
+
+**Woran es zu erkennen ist und wer es durchsetzt:**
+
+- **Am Artefakt selbst:** `betrieb: lokal` in `model_config.json`. Die
+  Angabe reist mit, auch wenn das Artefakt kopiert wird und kein Katalog
+  es kennt.
+- **Der Knoten** lädt ein solches Artefakt nicht: Der Netzbetrieb lädt
+  über einen eigenen Weg der Laufzeit, der die Angabe vor dem Laden prüft
+  und abbricht.
+- **Der Klient** zeigt es mit dem Zusatz „(privat)“ und bietet dafür
+  keinen Netzeintrag an.
+
+**Selbst gebaute Modelle.** Mit `bash INTEGER_LLM/scripts/modell_bauen.sh`
+baut ein Administrator ein Artefakt aus einem Repositorium von Hugging
+Face oder einem Ordner: Das Skript erkennt die Bauart am `config.json`,
+gibt sie nur frei, wenn die Laufzeit sie rechnet und der erzeugte Eintrag
+Feld für Feld zur Quelle passt, schlägt einen Namen nach dem Schema
+`myelith-<gesamt>b[-a<aktiv>b][-int4]` vor, baut, lädt zur Probe und
+trägt das Modell in `MODELS/llm/KATALOG.lokal.json` ein. Diese Datei
+kennt Git nicht, und **jedes Modell darin ist privat**: Was jemand aus
+fremden Gewichten baut, hat dieses Projekt weder lizenzrechtlich
+geprüft noch gemessen.
+
 ## 9. Reproduktion
 
 ```bash

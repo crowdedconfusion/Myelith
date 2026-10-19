@@ -17,9 +17,32 @@ use serde::{Deserialize, Serialize};
 /// am selben Tag: Das 35B mit Denken brachte bei 1 600 Token einen
 /// `write_file` mit einem kurzen CAD-Skript (rund 500 Byte) dreimal nicht zu
 /// Ende, weil das Denken vorher den groessten Teil verbrauchte; bei 4 000
-/// gelang derselbe Auftrag. Das Gespraech behaelt 1 600: Dort endet eine
-/// Antwort von selbst, und es wird nichts geschrieben.
+/// gelang derselbe Auftrag. Das Gespraech hatte damals 1 600, seit dem
+/// 2026-10-19 ab Werk 4 096; dort endet eine Antwort von selbst. Mit dem
+/// Kontext waechst die Laenge des Agenten weiter, siehe
+/// [`AGENT_ANTWORT_HOECHSTENS_NACH_KONTEXT`].
 pub const AGENT_ANTWORT_MINDESTENS: usize = 4000;
+
+/// **Die Antwortlaenge, bis zu der ein Agentenlauf mit dem Kontext waechst.**
+///
+/// ⚑ **Festlegung des Projektinhabers vom 2026-10-19: hoeher, und sinnvoll.**
+/// Die Laenge ist nicht nur eine Grenze, sondern auch Platz, den jeder
+/// Schritt im Kontext freihaelt (`schleife::platz_schaffen`). Deshalb waechst
+/// sie mit dem Kontext: ein Achtel davon, nie unter
+/// [`AGENT_ANTWORT_MINDESTENS`] und von sich aus nie ueber diesen Wert. Bei
+/// 65 536 sind das 8 192, bei 32 768 noch 4 096; kleiner bleibt es bei 4 000.
+/// Was darueber hinausgeht, schreibt die Schleife weiter (Fund 569), statt
+/// es jedem Schritt vorab freizuhalten.
+pub const AGENT_ANTWORT_HOECHSTENS_NACH_KONTEXT: usize = 8192;
+
+/// **Die Antwortlaenge eines Agentenlaufs**: die eingestellte, mindestens
+/// [`AGENT_ANTWORT_MINDESTENS`], und mindestens ein Achtel der Kontextgrenze
+/// bis [`AGENT_ANTWORT_HOECHSTENS_NACH_KONTEXT`]. Ohne bekannte Grenze (die
+/// Tuer eines Knotens) zaehlt nur die Untergrenze.
+pub fn agent_antwortlaenge(eingestellt: u32, kontextgrenze: Option<usize>) -> u32 {
+    let nach_kontext = kontextgrenze.map_or(0, |g| (g / 8).min(AGENT_ANTWORT_HOECHSTENS_NACH_KONTEXT));
+    (eingestellt as usize).max(AGENT_ANTWORT_MINDESTENS).max(nach_kontext) as u32
+}
 
 /// Was der Agent darf.
 ///
@@ -564,5 +587,22 @@ pub fn feldtitel(name: &str) -> Option<(&'static str, &'static str)> {
         "agent.blick_kamera" => Some(TITEL_BLICK_KAMERA),
         "agent.web_recherche" => Some(TITEL_WEB_RECHERCHE),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod proben {
+    use super::*;
+
+    /// ⚑ **Die Antwortlaenge waechst mit dem Kontext**, zwischen Unter- und
+    /// Obergrenze, und eine hoehere Einstellung gilt immer.
+    #[test]
+    fn die_antwortlaenge_waechst_mit_dem_kontext() {
+        assert_eq!(agent_antwortlaenge(1600, Some(65_536)), 8192);
+        assert_eq!(agent_antwortlaenge(1600, Some(262_144)), 8192);
+        assert_eq!(agent_antwortlaenge(1600, Some(32_768)), 4096);
+        assert_eq!(agent_antwortlaenge(1600, Some(12_288)), AGENT_ANTWORT_MINDESTENS as u32);
+        assert_eq!(agent_antwortlaenge(1600, None), AGENT_ANTWORT_MINDESTENS as u32);
+        assert_eq!(agent_antwortlaenge(20_000, Some(65_536)), 20_000);
     }
 }

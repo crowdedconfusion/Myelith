@@ -736,6 +736,106 @@ pub struct ModelDims {
     /// den sie gebaut ist.
     #[serde(default)]
     pub merkmale: Vec<String>,
+
+    // ================================================================
+    // Die Bauart mit vier Stroemen (Qwen3.8-Flash-Next, ab 2026-10-19)
+    // ================================================================
+    //
+    // ⚑ Alle mit `serde(default)`: null bzw. leer heisst „hat das nicht",
+    // und jedes aeltere Artefakt laedt unveraendert. Ein Artefakt, das sie
+    // braucht, sagt es ueber die Merkmale `vierstrom`, `ngramm_einbettung`,
+    // `blockauswahl` und `zustandstor_sigmoid`.
+    /// Zahl der Stroeme (`hc_count`); null heisst ein Residualstrom wie bisher.
+    #[serde(default)]
+    pub hc_count: usize,
+    /// Rang der Mischprojektion eines Torblocks (`hc_lowrank`).
+    #[serde(default)]
+    pub hc_lowrank: usize,
+    /// Die Ebenen mit N-Gramm-Einbettung, **ab null gezaehlt** (die Quelle
+    /// zaehlt ab eins).
+    #[serde(default)]
+    pub ple_ebenen: Vec<usize>,
+    #[serde(default)]
+    pub ple_embed_dim: usize,
+    #[serde(default)]
+    pub ple_conv_kernel_size: usize,
+    #[serde(default)]
+    pub ngram_size: usize,
+    #[serde(default)]
+    pub heads_per_ngram: usize,
+    #[serde(default)]
+    pub ngram_vocab_size_base: u64,
+    #[serde(default)]
+    pub make_ngram_vocab_size_divisible_by: u64,
+    #[serde(default)]
+    pub ngram_seed: u64,
+    #[serde(default)]
+    pub eos_token_id: u64,
+    /// Die Puffer der Quelle je Einbettungsebene, zur Gegenprobe gegen die
+    /// eigene Rechnung (`Ngrammmasse::bemessen`).
+    #[serde(default)]
+    pub ple_puffer: Vec<PlePuffer>,
+    #[serde(default)]
+    pub indexer_n_heads: usize,
+    #[serde(default)]
+    pub indexer_kv_heads: usize,
+    #[serde(default)]
+    pub indexer_head_dim: usize,
+    #[serde(default)]
+    pub indexer_budget: usize,
+    #[serde(default)]
+    pub indexer_compress_ratio: usize,
+    /// Die Aktivierung des Tors der Norm im Gated DeltaNet; leer heisst
+    /// `silu` wie beim 35B.
+    #[serde(default)]
+    pub zustandstor: String,
+
+    /// **Wofuer das Artefakt zugelassen ist**: leer oder `netz` heisst wie
+    /// bisher, `lokal` heisst **privat, nur auf dieser Maschine**.
+    ///
+    /// ⚑ **Eine Zusage, die mit dem Artefakt reist** (seit 2026-10-19). Ein
+    /// Modell, dessen Lizenz Inferenz fuer Dritte nicht erlaubt (Flash-Next,
+    /// `qwen-community-1.0`), oder eines, das ein Nutzer selbst gebaut hat
+    /// (`modell_bauen.sh`), traegt `lokal`. Der Netzbetrieb laedt es nicht
+    /// ([`load_model_fuer_netz`]), und der Klient bietet es nicht im Netz an.
+    ///
+    /// ⚠️ **Kein Merkmal**, mit Absicht: Es aendert keine Zahl der Rechnung,
+    /// und ein Merkmal machte das Artefakt auch fuer jeden aelteren Klienten
+    /// unladbar, der es lokal rechnen darf.
+    #[serde(default)]
+    pub betrieb: String,
+}
+
+impl ModelDims {
+    /// Ist das Artefakt nur fuer den lokalen Betrieb zugelassen?
+    pub fn nur_lokal(&self) -> bool {
+        self.betrieb == "lokal"
+    }
+
+    /// **Darf der Netzbetrieb dieses Artefakt laden?** Sonst ein Fehler mit
+    /// Grund.
+    pub fn fuer_netz_zugelassen(&self) -> Result<(), String> {
+        if self.nur_lokal() {
+            return Err(format!(
+                "{}-{} ist ein privates lokales Modell (betrieb = \"lokal\") und fuer den \
+                 Netzbetrieb nicht zugelassen; die Lizenz der Gewichte oder die Herkunft \
+                 erlaubt keine Inferenz fuer Dritte",
+                self.family, self.variant
+            ));
+        }
+        if !self.betrieb.is_empty() && self.betrieb != "netz" {
+            return Err(format!("unbekannter Betrieb \"{}\" in model_config.json", self.betrieb));
+        }
+        Ok(())
+    }
+}
+
+/// Die drei I64-Puffer einer N-Gramm-Einbettung, wie sie im Checkpoint stehen.
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct PlePuffer {
+    pub multiplikatoren: Vec<u64>,
+    pub groessen: Vec<u64>,
+    pub versaetze: Vec<u64>,
 }
 
 /// **Was dieser Bau rechnen kann.**
@@ -783,6 +883,21 @@ pub const GEKONNTE_MERKMALE: &[&str] = &[
     // gedreht, der Rest geht unveraendert durch. ⚠️ Die Frequenzen
     // haengen an der Drehbreite, nicht an der Kopfbreite.
     "teildrehung",
+    // ⚑ **Seit dem 2026-10-19**, mit der Bauart mit vier Stroemen
+    // (Qwen3.8-Flash-Next). Geprueft am Zufallsmodell gegen die Vorlage
+    // (`tests/test_flashnext_mini.py`) und, je Baustein, in
+    // `integer_llm_kernels::vierstrom`.
+    //
+    // Vier Stroeme mit Torbloecken statt eines Residualstroms und ohne
+    // Normen vor Mischer, Gemisch und Kopf.
+    "vierstrom",
+    // N-Gramm-Kennungen, Tabelle, Tor je Strom und Faltung mit Abstand.
+    // Kennungen gegen die Puffer des echten Checkpoints geprueft.
+    "ngramm_einbettung",
+    // Die Aufmerksamkeit sieht ab einer Laenge nur die besten Bloecke.
+    "blockauswahl",
+    // `sigmoid(z)` statt `silu(z)` im Tor der Zustandsnorm.
+    "zustandstor_sigmoid",
 ];
 
 /// **Die Formen einer rekurrenten Zustandsschicht pruefen.**
@@ -1906,6 +2021,18 @@ fn p_experte(layer_praefix: &str) -> String {
     format!("{}.mlp.experts.", layer_praefix)
 }
 
+/// **Laedt ein Artefakt fuer den Netzbetrieb**: wie [`load_model`], aber ein
+/// privates lokales Modell (`betrieb = "lokal"`) wird abgelehnt, **bevor**
+/// ein Gewicht gelesen wird.
+///
+/// ⚑ Jeder Weg, auf dem ein Knoten fuer andere rechnet (`myl-pod`, seine Werke,
+/// `myl-shard`), laedt hierueber. Lokale Wege (Klient, Konsole, Werkzeuge)
+/// nehmen weiter [`load_model`].
+pub fn load_model_fuer_netz(artifact_dir: &Path) -> Result<IntegerModel, String> {
+    load_model_dims(artifact_dir)?.fuer_netz_zugelassen()?;
+    load_model(artifact_dir)
+}
+
 pub fn load_model(artifact_dir: &Path) -> Result<IntegerModel, String> {
     let theta_v = ThetaV::load_from_dir(artifact_dir)?;
     theta_v.verify_version_against_spec()?;
@@ -2098,6 +2225,155 @@ fn require_scale_pc(scales: &LoadedScales, name: &str, n: usize) -> Result<Vec<u
     Ok(shifts)
 }
 
+// ============================================================================
+// Die Bauart mit vier Stroemen (Qwen3.8-Flash-Next, seit 2026-10-19)
+// ============================================================================
+
+/// **Ein Torblock** unter `stamm` (`…attn_hyper_connection`,
+/// `…mlp_hyper_connection` oder `model.hyper_connection_mixer`).
+fn lade_torblock(
+    weights: &LoadedWeights,
+    scales: &LoadedScales,
+    stamm: &str,
+    breite: usize,
+    rang: usize,
+    stroeme: usize,
+    mit_einspeisung: bool,
+) -> Result<crate::model::vierstrom::Torblock, String> {
+    let hole = |n: &str, form: &[usize]| -> Result<QTensor, String> {
+        let name = format!("{stamm}.{n}.weight");
+        let t = require_tensor(weights, &name)?.clone();
+        if t.shape != form {
+            return Err(format!("{name}: Form {:?} statt {:?}", t.shape, form));
+        }
+        Ok(t)
+    };
+    Ok(crate::model::vierstrom::Torblock {
+        norm: hole("hc_norm", &[breite])?,
+        ab: hole("input_mix_weight_down", &[rang, breite])?,
+        auf: hole("input_mix_weight_up", &[breite, rang])?,
+        einspeisung: if mit_einspeisung { Some(hole("block_inject_weight", &[stroeme, breite])?) } else { None },
+        ein_fracs: require_scale_pc(scales, &format!("{stamm}.input"), breite)?,
+        norm_frac: require_scale(scales, &format!("{stamm}.hc_norm"))?,
+        ab_frac: require_scale(scales, &format!("{stamm}.input_mix_weight_down"))?,
+        auf_ein_frac: require_scale(scales, &format!("{stamm}.input_mix_weight_up.input"))?,
+        auf_frac: require_scale(scales, &format!("{stamm}.input_mix_weight_up"))?,
+        einspeisung_frac: if mit_einspeisung { require_scale(scales, &format!("{stamm}.block_inject_weight"))? } else { 0 },
+        aus_frac: require_scale(scales, stamm)?,
+    })
+}
+
+/// **Die N-Gramm-Einbettung** der Ebene `p`, die `index`-te des Modells.
+fn lade_ngramm(
+    dims: &ModelDims,
+    weights: &LoadedWeights,
+    scales: &LoadedScales,
+    p: &str,
+    index: usize,
+) -> Result<crate::model::vierstrom::Ngrammeinbettung, String> {
+    use integer_llm_kernels::vierstrom::{kehrwert_vierte_wurzel_q16, Ngrammmasse};
+    let h = dims.hidden_size;
+    let breite = dims.hc_count * h;
+    let masse = Ngrammmasse::bemessen(
+        dims.vocab_size as u64,
+        dims.ngram_size,
+        dims.heads_per_ngram,
+        dims.ngram_vocab_size_base,
+        dims.ngram_seed,
+        index as u64,
+        dims.make_ngram_vocab_size_divisible_by,
+    );
+    // ⛔️ **Gegenprobe gegen die Puffer der Quelle.** Eine abweichende Saat
+    //   oder Primzahlzaehlung traefe sonst still andere Zeilen.
+    if let Some(puffer) = dims.ple_puffer.get(index) {
+        if puffer.multiplikatoren != masse.multiplikatoren || puffer.groessen != masse.groessen || puffer.versaetze != masse.versaetze {
+            return Err(format!(
+                "{p}.ple: die gerechneten N-Gramm-Masse weichen von den Puffern der Quelle ab \
+                 (gerechnet {:?}/{:?}, Quelle {:?}/{:?})",
+                masse.multiplikatoren, masse.groessen, puffer.multiplikatoren, puffer.groessen
+            ));
+        }
+    } else {
+        return Err(format!("{p}.ple: model_config.json traegt keine Puffer fuer Einbettung {index}"));
+    }
+    let koepfe = masse.koepfe();
+    let e_breite = dims.ple_embed_dim;
+    if koepfe == 0 || e_breite % koepfe != 0 {
+        return Err(format!("{p}.ple: Breite {e_breite} laesst sich nicht auf {koepfe} Koepfe teilen"));
+    }
+    let tabelle = require_tensor(weights, &format!("{p}.ple.ple_embedding.ngram_embedding.weight"))?.clone();
+    if tabelle.shape != [masse.zeilen as usize, e_breite / koepfe] {
+        return Err(format!("{p}.ple: Tabelle {:?} statt [{}, {}]", tabelle.shape, masse.zeilen, e_breite / koepfe));
+    }
+    let hole = |n: &str, form: &[usize]| -> Result<QTensor, String> {
+        let name = format!("{p}.ple.{n}.weight");
+        let t = require_tensor(weights, &name)?.clone();
+        if t.shape != form {
+            return Err(format!("{name}: Form {:?} statt {:?}", t.shape, form));
+        }
+        Ok(t)
+    };
+    let skala = |n: &str| require_scale(scales, &format!("{p}.ple.{n}"));
+    Ok(crate::model::vierstrom::Ngrammeinbettung {
+        kopfbreite: e_breite / koepfe,
+        masse,
+        eos: dims.eos_token_id,
+        tabelle,
+        schluessel: hole("key_proj", &[breite, e_breite])?,
+        wert: hole("value_proj", &[h, e_breite])?,
+        norm_schluessel: hole("norm_key", &[breite])?,
+        norm_abfrage: hole("norm_query", &[breite])?,
+        norm_faltung: hole("norm_conv", &[breite])?,
+        faltung: hole("conv1d", &[breite, dims.ple_conv_kernel_size])?,
+        kern: dims.ple_conv_kernel_size,
+        // Die Vorlage faltet mit dem Abstand `ngram_size`.
+        abstand: dims.ngram_size,
+        c_q16: kehrwert_vierte_wurzel_q16(h as u64),
+        ein_fracs: require_scale_pc(scales, &format!("{p}.ple.input"), breite)?,
+        e_frac: skala("ple_embedding")?,
+        schluessel_frac: skala("key_proj")?,
+        schluessel_norm_frac: skala("norm_key")?,
+        wert_frac: skala("value_proj")?,
+        abfrage_norm_frac: skala("norm_query")?,
+        faltung_norm_frac: skala("norm_conv")?,
+        faltung_frac: skala("conv1d")?,
+    })
+}
+
+/// **Die Blockauswahl** einer Aufmerksamkeitsebene.
+fn lade_blockauswahl(
+    dims: &ModelDims,
+    weights: &LoadedWeights,
+    scales: &LoadedScales,
+    p: &str,
+) -> Result<crate::model::vierstrom::Blockauswahl, String> {
+    let (n, d) = (dims.indexer_n_heads, dims.indexer_head_dim);
+    if dims.indexer_kv_heads != 1 || dims.indexer_compress_ratio == 0 || dims.indexer_budget % dims.indexer_compress_ratio != 0 {
+        return Err(format!(
+            "{p}: Blockauswahl mit {} Schluesselkoepfen, Budget {} und Verdichtung {} wird nicht gerechnet",
+            dims.indexer_kv_heads, dims.indexer_budget, dims.indexer_compress_ratio
+        ));
+    }
+    let stamm = format!("{p}.self_attn.indexer");
+    let qk = require_tensor(weights, &format!("{stamm}.index_qk_proj.weight"))?.clone();
+    if qk.shape != [(n + 1) * d, dims.hidden_size] {
+        return Err(format!("{stamm}.index_qk_proj: Form {:?} statt [{}, {}]", qk.shape, (n + 1) * d, dims.hidden_size));
+    }
+    Ok(crate::model::vierstrom::Blockauswahl {
+        qk,
+        q_norm: require_tensor(weights, &format!("{stamm}.q_layernorm.weight"))?.clone(),
+        k_norm: require_tensor(weights, &format!("{stamm}.k_layernorm.weight"))?.clone(),
+        koepfe: n,
+        kopf_dim: d,
+        bloecke: dims.indexer_budget / dims.indexer_compress_ratio,
+        verdichtung: dims.indexer_compress_ratio,
+        q_frac: require_scale(scales, &format!("{stamm}.index_qk_proj.q"))?,
+        k_frac: require_scale(scales, &format!("{stamm}.index_qk_proj.k"))?,
+        q_norm_frac: require_scale(scales, &format!("{stamm}.q_layernorm"))?,
+        k_norm_frac: require_scale(scales, &format!("{stamm}.k_layernorm"))?,
+    })
+}
+
 /// Baut ein vollstaendiges [`IntegerModel`] aus bereits geladenen Artefakten.
 ///
 /// Erwartet HF-Tensornamen, wie sie `calibrate/src/quantize.py` erzeugt (z. B.
@@ -2134,12 +2410,32 @@ pub fn build_model(
         require_tensor(&weights, "lm_head.weight")?.clone()
     };
 
-    let final_norm_gamma = require_tensor(&weights, "model.norm.weight")?.clone();
-    let final_norm_frac = require_scale(&scales, "model.norm")?;
-    // Letztes Residualstrom-Segment (spec 0.5.1: Per-Segment-Skalen; seit
-    // theta_v 0.11.0 / Fund 20 eine Skala je Kanal statt eine fuer das
-    // ganze Segment).
-    let final_residual_frac = require_scale_pc(&scales, "model.norm.input", dims.hidden_size)?;
+    // ⚑ **Vier Stroeme**: Es gibt keine Schlussnorm; an ihrer Stelle steht
+    //   ein Torblock, und der Kopf liest dessen gemischten Ausgang. Die drei
+    //   Felder des Modells tragen dann dessen Gamma (nie gerechnet; ein
+    //   versehentlicher Zugriff bricht an der Laenge ab) und Skalen.
+    let vier = dims.hc_count > 0;
+    let strombreite = dims.hc_count.max(1) * dims.hidden_size;
+    if vier && (dims.hc_count & (dims.hc_count - 1)) != 0 {
+        return Err(format!("hc_count {} ist keine Zweierpotenz; die Laufzeit teilt per Shift", dims.hc_count));
+    }
+    let schluss = if vier {
+        Some(lade_torblock(&weights, &scales, "model.hyper_connection_mixer", strombreite, dims.hc_lowrank, dims.hc_count, false)?)
+    } else {
+        None
+    };
+    let (final_norm_gamma, final_norm_frac, final_residual_frac) = match &schluss {
+        Some(tb) => (tb.norm.clone(), tb.aus_frac, tb.ein_fracs.clone()),
+        None => (
+            require_tensor(&weights, "model.norm.weight")?.clone(),
+            require_scale(&scales, "model.norm")?,
+            // Letztes Residualstrom-Segment (spec 0.5.1: Per-Segment-Skalen;
+            // seit theta_v 0.11.0 / Fund 20 eine Skala je Kanal statt eine
+            // fuer das ganze Segment).
+            require_scale_pc(&scales, "model.norm.input", dims.hidden_size)?,
+        ),
+    };
+    let mut vierstrom_ebenen = Vec::new();
 
     let mut layers = Vec::with_capacity(dims.num_layers);
     for layer_idx in 0..dims.num_layers {
@@ -2307,28 +2603,90 @@ pub fn build_model(
         let achtsamkeitsskalen = if dims.ist_rekurrente_ebene(layer_idx) {
             None
         } else {
+            let v_frac = require_scale(&scales, &format!("{}.self_attn.v_proj", p))?;
             Some(crate::model::Achtsamkeitsskalen {
                 q_frac: require_scale(&scales, &format!("{}.self_attn.q_proj", p))?,
                 k_frac: require_scale(&scales, &format!("{}.self_attn.k_proj", p))?,
-                v_frac: require_scale(&scales, &format!("{}.self_attn.v_proj", p))?,
-                attn_out_frac: require_scale(&scales, &format!("{}.self_attn", p))?,
+                v_frac,
+                // ⛔️ **Fund 571 (2026-10-19): `self_attn` ist der AUSGANG von
+                //   `o_proj`**, nicht sein Eingang. Die Vorlage gibt aus dem
+                //   Modul den Wert hinter `o_proj` zurueck, und der Haken
+                //   misst ihn; in jedem Artefakt ist die Skala `self_attn`
+                //   gleich der von `o_proj`. Beim 35B, Ebene 3: Shift 14
+                //   (Bereich +-2) gegen `v` bis 4,75.
+                //
+                //   ⚑ **Bei vier Stroemen bleibt der Ausgang auf der Skala
+                //   von `v`.** Er ist ein gewichtetes Mittel ueber `v`, mit
+                //   Gewichten, die sich zu eins summieren, also nie groesser
+                //   als `max|v|`; das Tor danach verkleinert nur. Die
+                //   uebrigen Bauarten behalten ihre Skala, bis ueber ihren
+                //   Neubau entschieden ist (die Konformitaetsvektoren haengen
+                //   daran).
+                attn_out_frac: if dims.hc_count > 0 {
+                    v_frac
+                } else {
+                    require_scale(&scales, &format!("{}.self_attn", p))?
+                },
             })
         };
-        let layer_scales = LayerScales {
-            norm_attn_frac: require_scale(&scales, &format!("{}.input_layernorm", p))?,
-            achtsamkeit: achtsamkeitsskalen,
-            norm_mlp_frac: require_scale(&scales, &format!("{}.post_attention_layernorm", p))?,
-            gate_frac: require_scale(&scales, &format!("{}.mlp.gate_proj", p))?,
-            up_frac: require_scale(&scales, &format!("{}.mlp.up_proj", p))?,
-            down_in_frac: require_scale(&scales, &format!("{}.mlp.down_proj.input", p))?,
-            residual_in_frac: require_scale_pc(&scales, &format!("{}.input_layernorm.input", p), dims.hidden_size)?,
-            residual_mid_frac: require_scale_pc(&scales, &format!("{}.post_attention_layernorm.input", p), dims.hidden_size)?,
+        // ⚑ **Vier Stroeme**: Statt der beiden Normen stehen zwei Torbloecke
+        //   davor; ihre gemischten Ausgaenge sind die Eingaenge von Mischer
+        //   und Gemisch, und die Segmente des Zustands sind `S * H` breit.
+        let (layer_scales, gamma_ein, gamma_mitte) = if vier {
+            let vor_mischer = lade_torblock(&weights, &scales, &format!("{p}.attn_hyper_connection"), strombreite, dims.hc_lowrank, dims.hc_count, true)?;
+            let vor_gemisch = lade_torblock(&weights, &scales, &format!("{p}.mlp_hyper_connection"), strombreite, dims.hc_lowrank, dims.hc_count, true)?;
+            let mischer_name = if dims.ist_rekurrente_ebene(layer_idx) { "linear_attn" } else { "self_attn" };
+            let ngramm = match dims.ple_ebenen.iter().position(|&e| e == layer_idx) {
+                Some(i) => Some(lade_ngramm(&dims, &weights, &scales, &p, i)?),
+                None => None,
+            };
+            let blockauswahl = if !dims.ist_rekurrente_ebene(layer_idx) && dims.indexer_n_heads > 0 {
+                Some(lade_blockauswahl(&dims, &weights, &scales, &p)?)
+            } else {
+                None
+            };
+            let sc = LayerScales {
+                norm_attn_frac: vor_mischer.aus_frac,
+                achtsamkeit: achtsamkeitsskalen,
+                norm_mlp_frac: vor_gemisch.aus_frac,
+                gate_frac: require_scale(&scales, &format!("{}.mlp.gate_proj", p))?,
+                up_frac: require_scale(&scales, &format!("{}.mlp.up_proj", p))?,
+                down_in_frac: require_scale(&scales, &format!("{}.mlp.down_proj.input", p))?,
+                residual_in_frac: vor_mischer.ein_fracs.clone(),
+                residual_mid_frac: vor_gemisch.ein_fracs.clone(),
+            };
+            let (g1, g2) = (vor_mischer.norm.clone(), vor_gemisch.norm.clone());
+            vierstrom_ebenen.push(crate::model::vierstrom::Vierstromebene {
+                ngramm,
+                mischer_aus_fracs: require_scale_pc(&scales, &format!("{p}.{mischer_name}.ausgang"), dims.hidden_size)?,
+                gemisch_aus_fracs: require_scale_pc(&scales, &format!("{p}.mlp.ausgang"), dims.hidden_size)?,
+                vor_mischer,
+                blockauswahl,
+                vor_gemisch,
+            });
+            (sc, g1, g2)
+        } else {
+            let sc = LayerScales {
+                norm_attn_frac: require_scale(&scales, &format!("{}.input_layernorm", p))?,
+                achtsamkeit: achtsamkeitsskalen,
+                norm_mlp_frac: require_scale(&scales, &format!("{}.post_attention_layernorm", p))?,
+                gate_frac: require_scale(&scales, &format!("{}.mlp.gate_proj", p))?,
+                up_frac: require_scale(&scales, &format!("{}.mlp.up_proj", p))?,
+                down_in_frac: require_scale(&scales, &format!("{}.mlp.down_proj.input", p))?,
+                residual_in_frac: require_scale_pc(&scales, &format!("{}.input_layernorm.input", p), dims.hidden_size)?,
+                residual_mid_frac: require_scale_pc(&scales, &format!("{}.post_attention_layernorm.input", p), dims.hidden_size)?,
+            };
+            (
+                sc,
+                require_tensor(&weights, &format!("{}.input_layernorm.weight", p))?.clone(),
+                require_tensor(&weights, &format!("{}.post_attention_layernorm.weight", p))?.clone(),
+            )
         };
 
         layers.push(TransformerLayer {
             layer_idx,
-            input_layernorm_gamma: require_tensor(&weights, &format!("{}.input_layernorm.weight", p))?.clone(),
-            post_attention_layernorm_gamma: require_tensor(&weights, &format!("{}.post_attention_layernorm.weight", p))?.clone(),
+            input_layernorm_gamma: gamma_ein,
+            post_attention_layernorm_gamma: gamma_mitte,
             // ⚑ **Die Ebenenart entscheidet, welche Tensoren gefordert
             // werden.** `layer_types` steht in der Konfiguration; ist es
             // leer, ist jede Ebene achtsam, und das deckt jedes bisherige
@@ -2381,7 +2739,17 @@ pub fn build_model(
     // der Zustandsschicht, das Tor am Achtsamkeitsausgang und das des
     // geteilten Experten.
     let zp_tore = spec_zustandsparameter()?;
+    let vierstrom = schluss.map(|schluss| {
+        Box::new(crate::model::vierstrom::Vierstrom {
+            stroeme: dims.hc_count,
+            ebenen: vierstrom_ebenen,
+            schluss,
+            inv_n_strom: integer_llm_kernels::rmsnorm::inv_n_q20(dims.hidden_size),
+        })
+    });
     let model = IntegerModel {
+        vierstrom,
+        zustandstor_sigmoid: dims.zustandstor == "sigmoid",
         zustandsmasse,
         sigmoid_lut: require_lut(&luts, "sigmoid")?,
         sigmoid_versatz: zp_tore.sigmoid_versatz,
@@ -4949,6 +5317,23 @@ mod tests {
     /// ⚠️ **Eine leere Liste wird zugelassen**, denn so sehen alle
     /// Artefakte von vor dieser Regel aus. Sie abzulehnen waere eine
     /// Entwertung ohne Anlass.
+    /// ⛔️ **Ein privates lokales Modell ist fuer den Netzbetrieb gesperrt**,
+    /// ein Artefakt ohne Angabe oder mit `netz` nicht; ein unbekannter Wert
+    /// ist ein Fehler und kein stilles Ja.
+    #[test]
+    fn ein_privates_modell_ist_fuer_das_netz_gesperrt() {
+        let mut d = dims_mit_merkmalen(&[]);
+        assert!(d.fuer_netz_zugelassen().is_ok(), "ohne Angabe wie bisher");
+        d.betrieb = "netz".into();
+        assert!(d.fuer_netz_zugelassen().is_ok());
+        d.betrieb = "lokal".into();
+        assert!(d.nur_lokal());
+        let f = d.fuer_netz_zugelassen().unwrap_err();
+        assert!(f.contains("privates lokales Modell"), "{f}");
+        d.betrieb = "irgendwo".into();
+        assert!(d.fuer_netz_zugelassen().is_err());
+    }
+
     #[test]
     fn ohne_merkmale_laedt_es() {
         assert!(dims_mit_merkmalen(&[]).pruefe_merkmale().is_ok());

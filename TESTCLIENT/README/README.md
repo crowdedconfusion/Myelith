@@ -1,7 +1,7 @@
 # testclient (`myl-testclient`)
 
-> **Version:** 0.43.1
-> **Datum:** 2026-10-17
+> **Version:** 0.43.2
+> **Datum:** 2026-10-19
 > **Status:** Phase 1 und **Phase 3 vollständig**, dazu Punkt 2.1
 > (`vergleich`), **2.2** (Backend-Vergleich innerhalb einer Maschine, seit
 > dem 2026-08-30) und 2.4 (`--repeat`); **Phase 4 vollständig** (4.3 die
@@ -543,6 +543,14 @@ COMPUTE_PIPELINE Phase 1: erstmals über einen aufrufbaren Befehl statt
 über einen Integrationstest.
 
 ## Changelog
+
+### v0.43.2 (2026-10-19): Der Lauf des örtlichen Agenten hat ein Feld mehr
+
+- `tests/harness_bis_modell.rs` baut den Lauf mit `mitschnitt: None`. Das
+  Feld kam mit `myl-local-agent` 0.41.0 (AGENT_LAYER v0.50.0, Fund 565): Wo
+  ein Lauf verdichtet, legt er seine Urfassung im Arbeitsordner ab. Diese
+  Probe hat keinen Arbeitsordner. `cargo test` grün, Clippy still;
+  Sperrdatei nachgezogen.
 
 ### v0.43.1 (2026-10-17): Die Knotenkonfiguration kennt Speicherorte
 

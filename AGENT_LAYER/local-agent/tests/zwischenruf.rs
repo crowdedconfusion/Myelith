@@ -98,6 +98,7 @@ fn lauf(weg: &Weg, max_schritte: u32) -> myl_local_agent::schleife::Ergebnis {
     let finden = move |n: &str| -> Option<MerkleRoot> { (n == "zeit").then_some(a_zeit) };
     Lauf {
         hausregel: None,
+        mitschnitt: None,
         klient: weg,
         modell: "oertlich",
         grenzen: &grenzen,

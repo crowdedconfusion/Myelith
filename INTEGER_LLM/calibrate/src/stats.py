@@ -43,6 +43,14 @@ _CHUNK = 10_000
 _EXPERTE = re.compile(r"\.mlp\.experts\.\d+\.")
 
 
+def _voller_name(praefix: str, name: str) -> str:
+    """Der Modulname unter einem Praefix: `praefix.name`, oder der Praefix
+    selbst fuer das Wurzelmodul (dessen Name leer ist)."""
+    if not praefix:
+        return name
+    return praefix if not name else f"{praefix}.{name}"
+
+
 def _sammelschluessel(name: str) -> str:
     """Fuehrt die Projektionen aller Experten einer Layer auf **einen**
     Statistik-Schluessel zurueck.
@@ -277,7 +285,21 @@ class ActivationStatsCollector:
                 )
         return hook
 
-    def attach(self, model):
+    def attach(self, model, praefix: str = "", vierstrom: bool = False):
+        """Haengt die Haken an.
+
+        `praefix` steht vor jedem Modulnamen, fuer den ebenenweisen Bau
+        (`ebenenweise.py`), der eine einzelne Ebene als eigenes Modul haelt:
+        Ihre Namen beginnen dort mit `linear_attn.`, im Artefakt mit
+        `model.layers.<i>.linear_attn.`.
+
+        `vierstrom` schaltet die Haken der Bauart mit vier Stroemen
+        (Qwen3.8-Flash-Next) zu. ⚑ **Nur dann**, damit die Skalen jedes
+        anderen Modells bytegleich bleiben: Die Haken je Kanal am Ausgang
+        der Mischer gaeben sonst auch dort ein `shifts`-Feld.
+        """
+        if vierstrom:
+            self._vierstrom_haken(model, praefix)
         proj_keys = ("q_proj", "k_proj", "v_proj", "o_proj",
                      "gate_proj", "up_proj", "down_proj")
         norm_keys = ("input_layernorm", "post_attention_layernorm")
@@ -324,6 +346,7 @@ class ActivationStatsCollector:
         # enthielte sonst `gate_proj` und liefe in keine davon, weil keine
         # auf `.drehung` endet; so steht es ausdruecklich da.
         for name, module in model.named_modules():
+            name = _voller_name(praefix, name)
             if normiere_namen(name).endswith(".drehung"):
                 name = normiere_namen(name)
                 self._handles.append(module.register_forward_hook(self._make_hook(name)))
@@ -393,6 +416,57 @@ class ActivationStatsCollector:
                 # Modul-Ausgabe ist ein Tupel; der Hook nimmt Element 0.
                 h = module.register_forward_hook(self._make_hook(name))
                 self._handles.append(h)
+
+    def _vierstrom_haken(self, model, praefix: str):
+        """**Die Haken der Bauart mit vier Stroemen**, zusaetzlich zu den
+        ueblichen (Ebenenmischer, Gemisch, Projektionen).
+
+        Je Kanal (die Laufzeit fuehrt dort eine Skala je Kanal):
+
+        - der Zustand der vier Stroeme vor jedem Torblock
+          (`attn_hyper_connection.input`, `mlp_hyper_connection.input`,
+          `hyper_connection_mixer.input`) und vor der N-Gramm-Einbettung
+          (`ple.input`), je `4 * hidden_size` breit;
+        - der Beitrag der N-Gramm-Einbettung (`ple`);
+        - der Ausgang der Mischer und des Gemischs (`self_attn.ausgang`,
+          `linear_attn.ausgang`, `mlp.ausgang`), je `hidden_size` breit.
+          ⚑ Er wird mit einem Torfaktor je Strom in die Stroeme gespeist,
+          und der kann klein sein, waehrend der Ausgang gross ist; die
+          Skala der Stroeme begrenzt ihn also nicht.
+        - der Ausgang der Indexprojektion (`indexer.index_qk_proj`), weil
+          Abfrage und Schluessel darin verschieden gross sein koennen
+          (dieselbe Lage wie Fund 421).
+
+        Skalar: was in einem Torblock dazwischen liegt (`hc_norm`, die
+        Projektionen, der Eingang von `input_mix_weight_up`), die Teile der
+        N-Gramm-Einbettung und die Normen des Index.
+        """
+        je_kanal_ein = ("attn_hyper_connection", "mlp_hyper_connection",
+                        "hyper_connection_mixer", ".ple")
+        je_kanal_aus = (".ple", ".self_attn", ".linear_attn", ".mlp",
+                        "indexer.index_qk_proj")
+        skalar_aus = ("attn_hyper_connection", "mlp_hyper_connection",
+                      "hyper_connection_mixer", "hc_norm",
+                      "input_mix_weight_down", "input_mix_weight_up",
+                      "block_inject_weight", "ple.key_proj", "ple.value_proj",
+                      "ple.norm_key", "ple.norm_query", "ple.norm_conv",
+                      "ple.conv1d", "ple.ple_embedding",
+                      "indexer.q_layernorm", "indexer.k_layernorm")
+        for name, module in model.named_modules():
+            name = normiere_namen(_voller_name(praefix, name))
+            punktname = "." + name
+            if any(punktname.endswith(k if k.startswith(".") else "." + k) for k in je_kanal_ein):
+                self._handles.append(module.register_forward_hook(
+                    self._make_hook(name + ".input", take_input=True, per_channel=True)))
+            if any(punktname.endswith(k if k.startswith(".") else "." + k) for k in je_kanal_aus):
+                schluessel = name if name.endswith("index_qk_proj") or name.endswith(".ple") else name + ".ausgang"
+                self._handles.append(module.register_forward_hook(
+                    self._make_hook(schluessel, per_channel=True)))
+            if any(punktname.endswith("." + k) for k in skalar_aus):
+                self._handles.append(module.register_forward_hook(self._make_hook(name)))
+            if punktname.endswith(".input_mix_weight_up"):
+                self._handles.append(module.register_forward_hook(
+                    self._make_hook(name + ".input", take_input=True)))
 
     def detach(self):
         for h in self._handles:

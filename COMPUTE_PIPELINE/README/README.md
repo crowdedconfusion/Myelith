@@ -1,7 +1,7 @@
 # compute-pipeline (`myl-pod`, `myl-dispatcher`)
 
-> **Version:** 0.43.1 (`myl-pod` 0.35.1, `myl-dispatcher` 0.8.1)
-> **Datum:** 2026-10-17
+> **Version:** 0.45.0 (`myl-pod` 0.36.0, `myl-dispatcher` 0.9.0)
+> **Datum:** 2026-10-19
 > **Status:** Phase 1 vollständig, Phase 2.1, **Phase 3 vollständig**
 > (3.1 bis 3.3) und Punkt 4.3. `shard_loop` mit Spur-Hashes und
 > Manipulationserkennung, `coordinator_loop` mit Micro-Batching,
@@ -106,6 +106,56 @@ COMPUTE_PIPELINE/
 ```
 
 ## Changelog
+
+### v0.45.0 (2026-10-19): Der Netzbetrieb lädt kein privates Modell (`myl-pod` 0.36.0)
+
+Anlass: private lokale Modelle (INTEGER_LLM v0.137.0). Ein Artefakt mit
+`betrieb: lokal` in `model_config.json` ist nicht für den Netzbetrieb
+zugelassen, etwa Flash-Next unter `qwen-community-1.0`, dessen Lizenz
+Inferenz für Dritte nicht erlaubt, oder jedes mit dem Bauskript selbst
+gebaute Modell.
+
+- ⛔️ **Jeder Ladeweg des Pods geht über `load_model_fuer_netz`**: der Start
+  (`main.rs`), das Pipelinewerk, das Trainingswerk und `myl-shard`. Er prüft
+  die Angabe vor dem Laden und bricht mit dem Grund ab; ein unbekannter Wert
+  gilt nicht als zugelassen. Der Aufruf steht ausdrücklich da und nicht als
+  umbenanntes `load_model`, damit ein neuer Ladeweg ihn nicht still verliert.
+- **Beleg:** `cargo test` mit Rückgabe 0, Clippy mit `-D warnings` still;
+  die Sperre selbst prüft `ein_privates_modell_ist_fuer_das_netz_gesperrt`
+  in der Laufzeit.
+
+### v0.44.0 (2026-10-18): Ein Arbeitskontext für den Agenten vor den häufigen Experten (`myl-dispatcher` 0.9.0, Fund 562)
+
+Anlass: die neue Stufe extrem der Agentenmessung. Das int8-35B schaffte
+auf 24 GiB 0 von 15 Aufgaben, und jeder Lauf endete nach höchstens fünf
+Werkzeugaufrufen mit „Kontext voll“ bei 8192 Token.
+
+- **Fund 562:** Der Plan gab nach dem Minimum (`KONTEXT_MINDESTENS`, 8192)
+  jedem häufigen Experten Vorrang vor jedem weiteren Token Kontext
+  (Festlegung vom 2026-10-15). Lief das int8 eine Weile, belegte der
+  Dateicache den Speicher, und es blieb beim Minimum. Ein Agent braucht
+  aber allein für Systemprompt mit vollem Werkzeugsatz (gemessen 4200 bis
+  4540 Token) und Antwortreserve (4000) mehr als 8192; nach dem ersten
+  Werkzeugergebnis war nichts mehr zu verdichten. Zwei Zahlen an zwei
+  Orten, die nichts voneinander wussten.
+- **Behebung, mit Zustimmung des Projektinhabers:** Neue Stufe im Minimum,
+  `plan::KONTEXT_VOR_EXPERTEN` = 32 768. Nach den dichten Gewichten kommt
+  der Arbeitskontext bis dorthin (höchstens der eingestellte), dann die
+  häufigen Experten, dann der Rest des Kontexts. Die Regel vom 2026-10-15
+  gilt weiter oberhalb dieser Schwelle. Gemeinsamer Teil beider Schritte:
+  `kontext_erweitern`.
+- **Warum nicht einfach ein höheres Minimum:** Das Minimum entscheidet über
+  die Aufnahme. Die dichten kleinen Modelle brauchen 112 bis 144 KiB je
+  Token; bei 32 768 hieße das 3,5 bis 4,5 GiB fest, und ein 4B würde auf
+  einem kleinen Rechner abgelehnt. Beim 35B kostet die neue Stufe 480 MiB,
+  rund 160 der seltensten unter gut 2000 häufigen Experten.
+- **Belege:** `die_haeufigen_experten_kommen_vor_dem_arbeitskontext`
+  angepasst (vorher Kontext 4096 und zwei Experten, jetzt 55 296 und einer;
+  der alte Wert steht im 📌-Absatz), neu
+  `der_kontext_vor_den_experten_geht_vor_und_nur_bis_dahin` (zu wenig
+  Speicher: aller Kontext, kein Experte; genau 32 768; 32 768 und ein
+  Experte). `cargo test` 48/48, Clippy still. Der Hinweis im Plan sagt
+  jetzt „vor dem restlichen Arbeitskontext“.
 
 ### v0.43.1 (2026-10-17): Ein Verzeichnis ist auch unter Windows kein leeres Eichbuch (`myl-dispatcher` 0.8.1, Fund 559)
 

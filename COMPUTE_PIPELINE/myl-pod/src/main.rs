@@ -41,7 +41,10 @@ use myl_pod::coordinator::Coordinator;
 use myl_pod::shard::ShardNode;
 use myl_pod::wire::pack_tokens;
 
-use integer_llm_runtime::loader::load_model;
+// ⚑ **Der Netzbetrieb laedt ueber `load_model_fuer_netz`** (2026-10-19): Ein
+//   privates lokales Modell (`betrieb = "lokal"`) wird abgelehnt, bevor ein
+//   Gewicht gelesen wird.
+use integer_llm_runtime::loader::load_model_fuer_netz;
 use integer_llm_runtime::tokenizer::Tokenizer;
 use myl_types::bls::BlsSecretKey;
 use myl_types::ids::{EpochId, PodId};
@@ -137,7 +140,7 @@ fn main() {
     };
 
     println!("[myl-pod] Lade Modell aus {} ...", artifacts);
-    let model = load_model(std::path::Path::new(&artifacts))
+    let model = load_model_fuer_netz(std::path::Path::new(&artifacts))
         .expect("Modell-Ladung fehlgeschlagen");
     let tokenizer = Tokenizer::from_file(
         std::path::Path::new(&artifacts).join("tokenizer.json").to_str().unwrap(),

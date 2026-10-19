@@ -106,6 +106,7 @@ fn fahren(
         hausregel: None,
         // ⚑ Die Einhaengung gehoert ins Protokoll.
         einhaengung: ruestung.einhaengung.as_ref().map(|e| e.marke()),
+        mitschnitt: None,
         klient: &klient,
         modell: "pruefstand",
         grenzen: &grenzen,

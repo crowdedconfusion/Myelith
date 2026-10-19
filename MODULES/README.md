@@ -15,6 +15,18 @@ Dialog des Fensters. Was ein Modul schickt, zeigt das Fenster nur als Text.
 Dazu kommt das **Sichtfeld** für Ansichten (unten), geöffnet von der Lasche
 am rechten Rand.
 
+⚑ **In der Konsole stehen die Befehle eines Moduls unter `/module`**
+(Festlegung des Projektinhabers, 2026-10-19): `/module trading status`,
+`/module cad`. `modul.json` und das Protokoll nennen sie ohne
+(`/trading status`); die Konsole stellt `/module` davor, wenn sie zeigt, und
+nimmt es weg, wenn sie weitergibt. Die alte Form (`/trading status`) nennt
+die neue. ⛔️ **Im Fenster gibt es keine /Befehle**: Was getippt wird, geht an
+das Modell; die Befehle eines Moduls stehen in der Liste am Modul, ohne
+Schrägstrich (`status`, der Hauptbefehl unter dem Namen des Moduls). Nennt
+ein Modul einen eigenen Befehl in seinem Text, nimmt es
+`myl_module::gast::befehl_beim_wirt`; welcher Wirt es ist, sagt der
+Handschlag (`ansicht`: das Fenster ja, die Konsole nein).
+
 Module liegen hier, je eines in einem eigenen Ordner (`MODULES/<name>/`),
 oder im Ordner `module/` neben den Einstellungen der Konsole. `/module`
 zeigt, welche gefunden und geprüft wurden.
@@ -57,8 +69,9 @@ Skills, und Ordner, deren Inhalt sich im Betrieb ändert (Daten, Zustand).
 - **Streng gelesen**: Ein unbekanntes Feld ist ein Fehler. Pfade sind
   relativ zum Modulordner und können ihn nicht verlassen.
 - **Befehle**: Der erste ist der Hauptbefehl, alle weiteren beginnen mit
-  ihm. Ein Modul kann keinen Befehl der Konsole belegen, und ein Name gilt
-  nur einmal.
+  ihm. Ein Modul kann keinen Befehl der Konsole belegen: Seine stehen dort
+  unter `/module`, und ein Hauptbefehl `/install` wird nicht gestartet,
+  denn `/module install` gehört der Konsole. Ein Name gilt nur einmal.
 - **Befugnisse**: Was nicht genannt ist, ist verboten. `modell` (das
   geladene Modell fragen), `agent` (Agentenläufe mit der eigenen Kiste),
   `netzmodell` (über das Netz statt am örtlichen Modell), `unten` (Zeilen

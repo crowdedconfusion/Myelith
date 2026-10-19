@@ -26,7 +26,10 @@
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use integer_llm_runtime::loader::load_model;
+// ⚑ **Der Netzbetrieb laedt ueber `load_model_fuer_netz`** (2026-10-19): Ein
+//   privates lokales Modell (`betrieb = "lokal"`) wird abgelehnt, bevor ein
+//   Gewicht gelesen wird.
+use integer_llm_runtime::loader::load_model_fuer_netz;
 use integer_llm_runtime::tokenizer::Tokenizer;
 use myl_types::bls::BlsSecretKey;
 use myl_types::hash::Hash;
@@ -83,7 +86,7 @@ impl Pipelinewerk {
         pipeline: Hash,
         eigener_deckel: u32,
     ) -> Result<Self, String> {
-        let modell = load_model(artefakte).map_err(|e| format!("Modell laden: {e}"))?;
+        let modell = load_model_fuer_netz(artefakte).map_err(|e| format!("Modell laden: {e}"))?;
         let wortschatz = Tokenizer::from_file(
             artefakte
                 .join("tokenizer.json")

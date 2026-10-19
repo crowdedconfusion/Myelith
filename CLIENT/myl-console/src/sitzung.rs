@@ -27,6 +27,10 @@ const SCHLECHT: i32 = 1;
 /// Alles, was ein Lauf braucht und was zwischen zwei Auftraegen stehen
 /// bleibt.
 struct Stand {
+    /// **Welches Artefakt die naechste Modellwahl vorwaehlt**, einmal; danach
+    /// gilt wieder das eingestellte. Gesetzt von `/build artifact`, damit das
+    /// neue Modell oben steht, wenn es geladen werden soll.
+    vorwahl: Option<String>,
     /// Das Verzeichnis, in dem gearbeitet wird.
     ///
     /// ⚑ **Es ist das Arbeitsverzeichnis und kein Feld.** Wer `myelith`
@@ -213,6 +217,7 @@ pub fn fahren() -> i32 {
     );
 
     let mut stand = Stand {
+        vorwahl: None,
         ordner,
         sitzung,
         modell: None,
@@ -488,8 +493,11 @@ fn modell_waehlen_aus(
         });
     }
 
-    // Vorgewaehlt ist, was eingestellt ist.
-    let eingestellt = myl_local_agent::ort::absolut(&e.modell.artefakt);
+    // Vorgewaehlt ist, was eingestellt ist, oder einmal das frisch gebaute.
+    let eingestellt = match stand.vorwahl.take() {
+        Some(v) => myl_local_agent::ort::absolut(&v),
+        None => myl_local_agent::ort::absolut(&e.modell.artefakt),
+    };
     let start = liste
         .iter()
         .position(|m| myl_local_agent::ort::absolut(&m.pfad) == eingestellt)
@@ -567,6 +575,31 @@ fn modell_waehlen_aus(
             println!();
             eprintln!("myelith: das Modell laesst sich nicht laden: {f}");
             Wahlausgang::Fertig(Modellwahl::Unmoeglich)
+        }
+    }
+}
+
+/// **Entlaedt das Modell und laesst ein anderes waehlen** (`/model`, und nach
+/// `/build artifact`). `false` heisst: Die Sitzung soll enden.
+fn modell_wechseln(stand: &mut Stand) -> bool {
+    stand.modell = None;
+    loop {
+        match modell_waehlen(stand) {
+            Modellwahl::Geladen => return true,
+            Modellwahl::Abgebrochen => {
+                // Escape in der Auswahl: Vorgabe ist bleiben.
+                if wirklich_beenden(false) {
+                    return false;
+                }
+            }
+            // 📌 **Hier stand „Das Modell bleibt, wie es war."** Das stimmte
+            // nicht: Eine Zeile darueber ist es entladen worden. Ein Satz,
+            // der das Gegenteil dessen sagt, was geschehen ist, ist
+            // schlimmer als keiner.
+            Modellwahl::Unmoeglich => {
+                eprintln!("  Kein Modell geladen. Mit /model eines waehlen.");
+                return true;
+            }
         }
     }
 }
@@ -1190,8 +1223,11 @@ fn schleife(stand: &mut Stand) -> i32 {
 
         // ⚑ **Ein Befehl eines gepruefen Moduls** geht an das Modul; ohne
         //   Modul ist er ein unbekannter Befehl wie jeder andere.
-        if let Some(name) = stand.module.modul_der_zeile(&text) {
-            modul_befehl(stand, &name, &text);
+        //
+        // ⚑ **Unter `/module`** (Festlegung des Projektinhabers, 2026-10-19):
+        //   `/module trading status` geht als `/trading status` an das Modul.
+        if let Some((name, zeile)) = stand.module.modul_der_eingabe(&text) {
+            modul_befehl(stand, &name, &zeile);
             continue;
         }
         match befehl_zu(&text) {
@@ -1277,26 +1313,14 @@ fn schleife(stand: &mut Stand) -> i32 {
                 // ⚑ **Erst das alte weg.** Zwei Artefakte passen nicht
                 // nebeneinander in diesen Speicher; deshalb ist der Weg
                 // zurueck eine neue Wahl und kein Zurueckholen.
-                stand.modell = None;
-                loop {
-                    match modell_waehlen(stand) {
-                        Modellwahl::Geladen => break,
-                        Modellwahl::Abgebrochen => {
-                            // Escape in der Auswahl: Vorgabe ist bleiben.
-                            if wirklich_beenden(false) {
-                                return GUT;
-                            }
-                        }
-                        // 📌 **Hier stand „Das Modell bleibt, wie es
-                        // war."** Das stimmte nicht: Eine Zeile darueber
-                        // ist es entladen worden. Ein Satz, der das
-                        // Gegenteil dessen sagt, was geschehen ist, ist
-                        // schlimmer als keiner.
-                        Modellwahl::Unmoeglich => {
-                            eprintln!("  Kein Modell geladen. Mit /model eines waehlen.");
-                            break;
-                        }
-                    }
+                if !modell_wechseln(stand) {
+                    return GUT;
+                }
+                continue;
+            }
+            Some(Befehlsart::Bauen) => {
+                if !eigenes_modell_bauen(stand) {
+                    return GUT;
                 }
                 continue;
             }
@@ -1354,7 +1378,13 @@ fn schleife(stand: &mut Stand) -> i32 {
         }
 
         if text.starts_with('/') {
-            println!("Unbekannter Befehl. `{HILFE_BEFEHL}` zeigt, was es gibt.");
+            // ⚑ Die alte Form eines Modulbefehls (`/trading status`) nennt die
+            //   neue, statt nur „unbekannt" zu sagen.
+            if stand.module.modul_der_zeile(&text).is_some() {
+                println!("Befehle eines Moduls stehen unter /module: {}", myl_client::module::anzeige(&text));
+            } else {
+                println!("Unbekannter Befehl. `{HILFE_BEFEHL}` zeigt, was es gibt.");
+            }
             continue;
         }
 
@@ -1412,6 +1442,8 @@ enum Befehlsart {
     MiningStop,
     /// Nach einer neueren Fassung sehen und sie nach Rueckfrage einspielen.
     Update,
+    /// Ein eigenes Modell bauen, Schritt fuer Schritt (`/build artifact`).
+    Bauen,
     Hilfe,
     Ende,
 }
@@ -1432,7 +1464,7 @@ struct Befehl {
 /// nennt irgendwann einen Befehl, den es nicht gibt, oder verschweigt
 /// einen, den es gibt, **und beides sieht erst der, der es
 /// ausprobiert.**
-const BEFEHLE: [Befehl; 25] = [
+const BEFEHLE: [Befehl; 26] = [
     Befehl {
         art: Befehlsart::Modell,
         namen: &["/model", "/modell"],
@@ -1539,7 +1571,7 @@ const BEFEHLE: [Befehl; 25] = [
     Befehl {
         art: Befehlsart::Module,
         namen: &["/module"],
-        was: "zeigt die Module; /module install <ordner> installiert eines (nur signiert, sonst abgelehnt)",
+        was: "zeigt die Module; /module install <ordner> installiert eines (nur signiert, sonst abgelehnt); /module <modul> … ist ein Befehl des Moduls, etwa /module trading status",
     },
     // ⚑ **Mining** (Auftrag des Projektinhabers, 2026-10-17): dieselbe
     //   Freigabe wie der Reiter „Knoten" im Fenster.
@@ -1559,6 +1591,13 @@ const BEFEHLE: [Befehl; 25] = [
         art: Befehlsart::Update,
         namen: &["/update"],
         was: "sieht auf GitHub nach einer neueren Fassung (VERSION.md); fragt, holt, baut, installiert und startet danach neu",
+    },
+    // ⚑ **Ein eigenes Modell bauen** (Wunsch des Projektinhabers,
+    //   2026-10-19): das Bauskript, zum Durchklicken.
+    Befehl {
+        art: Befehlsart::Bauen,
+        namen: &["/build artifact"],
+        was: "baut ein eigenes Modell aus einem Repositorium oder Ordner, Schritt fuer Schritt: Quelle, Pruefung, Name, Platz, Bau (privat, nur lokal)",
     },
     Befehl {
         art: Befehlsart::Hilfe,
@@ -1774,19 +1813,13 @@ fn vorschlaege(module: &crate::module::Modulwirt) -> Vec<eingabe::Vorschlag> {
         .collect();
     for b in module.befehle() {
         aus.push(eingabe::Vorschlag {
-            befehl: myl_module::filter::eine_zeile(&b.name),
+            befehl: myl_module::filter::eine_zeile(&myl_client::module::anzeige(&b.name)),
             auch: Vec::new(),
             was: myl_module::filter::eine_zeile(&b.was),
             mit_angabe: false,
         });
     }
     aus
-}
-
-/// **Ob ein Name ein Befehl der Konsole ist**; ein Modul darf ihn nicht
-/// belegen.
-pub(crate) fn eingebauter_befehl(name: &str) -> bool {
-    BEFEHLE.iter().any(|b| b.namen.contains(&name))
 }
 
 /// **Zeichnet die Vorschlaege unter der Fusszeile** (`Some`) oder raeumt
@@ -1882,7 +1915,11 @@ fn hilfezeilen(module: &crate::module::Modulwirt) -> Vec<String> {
         .collect();
     // Die Befehle der gepruefen Module, aus ihren Beschreibungen.
     for b in module.befehle() {
-        aus.push(format!("  {:<12}{}", myl_module::filter::eine_zeile(&b.name), myl_module::filter::eine_zeile(&b.was)));
+        aus.push(format!(
+            "  {:<12}{}",
+            myl_module::filter::eine_zeile(&myl_client::module::anzeige(&b.name)),
+            myl_module::filter::eine_zeile(&b.was)
+        ));
     }
     aus
 }
@@ -2021,6 +2058,286 @@ fn aktualisieren() -> bool {
             false
         }
     }
+}
+
+/// **`/build artifact`: ein eigenes Modell bauen, zum Durchklicken.**
+///
+/// ⚑ Auftrag des Projektinhabers (2026-10-19): Wenn Myelith schon laeuft,
+/// oeffnet der Befehl das Bauskript, und man klickt sich durch: Quelle,
+/// Erkundung und Freigabe, Name (Vorschlaege nach dem Schema), Platz, ob das
+/// geladene Modell weicht, Bestaetigung, kurzer Lauf und Bau, danach das neue
+/// Modell laden. Was geprueft und gerechnet wird, entscheidet das Skript
+/// (`myl_client::eigenbau`); hier wird nur gefragt und gezeigt.
+///
+/// `false` heisst: Die Sitzung soll enden (Escape in der Modellwahl danach).
+fn eigenes_modell_bauen(stand: &mut Stand) -> bool {
+    use myl_client::eigenbau::{self, Auftrag, Quelle};
+    let Some(wurzel) = myl_local_agent::ort::wurzel() else {
+        println!("  Gebaut wird aus einem Klon des Repositoriums; aus einem Freigabe-Programm heraus gibt es das Bauskript nicht.");
+        println!();
+        return true;
+    };
+    let bild = stand.design;
+    let t = design::toene(bild);
+    let warnen = |s: &str| println!("{}", design::rollen(bild).warnung.faerben(&format!("  {s}"), design::farbig()));
+    let abbrechen = |s: &str| {
+        println!("  {s}");
+        println!();
+        true
+    };
+    println!("  ⛔️ Ein eigenes Modell ist privat und lokal: nicht fuer den Netzbetrieb zugelassen; die Lizenz der Gewichte gilt weiter.");
+    println!();
+
+    // 1. Die Quelle: ein Link auf Hugging Face oder ein Pfad auf diesem
+    //    Rechner (Festlegung des Projektinhabers, 2026-10-19), kein Modell
+    //    mit eigenem Eintrag.
+    let punkte = [
+        ("Repositorium auf Hugging Face", "ueber den Link, etwa https://huggingface.co/<org>/<modell>; die Revision wird festgehalten"),
+        ("Repositorium auf diesem Rechner", "ueber den Pfad zum Ordner mit config.json und den Gewichten als safetensors"),
+    ]
+    .map(|(titel, hinweis)| wahl::Punkt { titel: titel.into(), hinweis: hinweis.into(), offen: true });
+    let Some(i) = wahl::waehlen_ab("Woher kommen die Gewichte?", &punkte, 0, t) else {
+        return abbrechen("Nichts gebaut.");
+    };
+    let quelle = match i {
+        // ⚑ Den Link liest das Bauskript (`repo_aus_link`), eine Stelle;
+        //   ist er keiner, sagt es das in der Erkundung.
+        0 => {
+            let Some(r) = zeile_lesen(stand, "  Link auf Hugging Face, Esc bricht ab:").filter(|r| !r.trim().is_empty()) else {
+                return abbrechen("Nichts gebaut.");
+            };
+            Quelle::Repo(r.trim().to_string())
+        }
+        _ => {
+            let Some(o) = zeile_lesen(stand, "  Pfad zum Ordner, Esc bricht ab:") else {
+                return abbrechen("Nichts gebaut.");
+            };
+            let o = o.trim();
+            let o = match o.strip_prefix("~/") {
+                Some(rest) => std::env::var("HOME").map(|h| format!("{h}/{rest}")).unwrap_or_else(|_| o.to_string()),
+                None => o.to_string(),
+            };
+            let pfad = PathBuf::from(myl_local_agent::ort::absolut(&o));
+            if !pfad.join("config.json").is_file() {
+                return abbrechen(&format!("{} enthaelt kein config.json. Nichts gebaut.", pfad.display()));
+            }
+            Quelle::Ordner(pfad)
+        }
+    };
+
+    // 2. Erkunden: Bauart, Freigabe, Parameter, Namen, Platz.
+    println!("  Die Quelle wird erkundet (Konfiguration, Tokenizer, Koepfe der Gewichte) …");
+    let zeigen = move |z: myl_client::bezug::Zeile| {
+        if z.text.starts_with("ERKUNDUNG ") || z.text.trim() == "Fertig" {
+            return;
+        }
+        let text: String = z.text.chars().filter(|c| *c != '\r').take(150).collect();
+        println!("  {}", design::rollen(bild).beiwerk.faerben(&format!("│ {text}"), design::farbig()));
+    };
+    let e = match eigenbau::erkunden(&wurzel, &quelle, None, &zeigen) {
+        Ok(e) => e,
+        Err(f) => {
+            warnen(&format!("✗ {f}"));
+            return abbrechen("Nichts gebaut.");
+        }
+    };
+    let mrd = |x: f64| format!("{x:.2}").replace('.', ",");
+    println!();
+    println!("  ✓ Freigegeben: {} ({})", e.bauart, e.architektur.join(", "));
+    println!(
+        "    Parameter {} Mrd.{}{}",
+        mrd(e.gesamt),
+        if e.gemisch { format!(", aktiv je Token {} Mrd.", mrd(e.aktiv)) } else { String::new() },
+        if e.tabelle > 0.0 { format!(", dazu {} Mrd. N-Gramm-Tabelle", mrd(e.tabelle)) } else { String::new() }
+    );
+    println!(
+        "    Quelle {} ({}), Lizenz der Gewichte: {}",
+        e.repo,
+        if e.lokal { "Ordner".to_string() } else { format!("Revision {}", &e.revision[..e.revision.len().min(12)]) },
+        if e.lizenz.is_empty() { "nicht angegeben, vor jeder Weitergabe pruefen" } else { &e.lizenz }
+    );
+    if !e.projekt.is_empty() {
+        println!("    ⚑ Das ist das Projektmodell {}; es baut unter seinem Namen.", e.projekt);
+    }
+    println!();
+
+    // 3. Das Format (Wunsch des Projektinhabers, 2026-10-19): bei einem
+    //    Expertengemisch, das in vier Bit gehen kann, gewaehlt; sonst int8.
+    let gib = myl_client::bezug::gib;
+    let vierbit = if e.vierbit {
+        let punkte = [
+            wahl::Punkt {
+                titel: "INT4: Experten in vier Bit, der Rest int8".into(),
+                hinweis: format!(
+                    "kleiner und schneller, entsteht ueber das int8; der Bau braucht bis zu {} (empfohlen)",
+                    gib(e.noetig(true, false))
+                ),
+                offen: true,
+            },
+            wahl::Punkt {
+                titel: "INT8".into(),
+                hinweis: format!("die Referenz, groesser; der Bau braucht bis zu {}", gib(e.noetig(false, false))),
+                offen: true,
+            },
+        ];
+        let Some(i) = wahl::waehlen_ab("In welchem Format?", &punkte, 0, t) else {
+            return abbrechen("Nichts gebaut.");
+        };
+        i == 0
+    } else {
+        println!("  Format: INT8 (vier Bit gibt es nur fuer die Experten eines Gemischs).");
+        false
+    };
+
+    // 4. Der Name, passend zum Format: Ein Name auf `-int4` baut in vier Bit
+    //    (so liest ihn das Bauskript), jeder andere in int8.
+    let passende: Vec<&myl_client::eigenbau::Vorschlag> = e.vorschlaege.iter().filter(|v| v.vierbit == vierbit).collect();
+    let mut punkte: Vec<wahl::Punkt> = passende
+        .iter()
+        .map(|v| wahl::Punkt {
+            titel: v.name.clone(),
+            hinweis: if v.grund.is_empty() { "nach dem Schema".into() } else { v.grund.clone() },
+            offen: v.grund.is_empty(),
+        })
+        .collect();
+    if e.projekt.is_empty() {
+        punkte.push(wahl::Punkt {
+            titel: "Eigenen Namen eingeben".into(),
+            hinweis: if vierbit {
+                "Kleinbuchstaben, Ziffern, Punkt und Bindestrich; endet auf -int4 (sonst wird es angehaengt)".into()
+            } else {
+                "Kleinbuchstaben, Ziffern, Punkt und Bindestrich; nicht auf -int4".into()
+            },
+            offen: true,
+        });
+    }
+    let Some(start) = wahl::erster_offener(&punkte) else {
+        return abbrechen("Kein Name geht: Das Artefakt liegt schon da. Nichts gebaut.");
+    };
+    let Some(i) = wahl::waehlen_ab("Wie soll es heissen? (Schema myelith-<gesamt>b[-a<aktiv>b][-int4])", &punkte, start, t) else {
+        return abbrechen("Nichts gebaut.");
+    };
+    let name = if i < passende.len() {
+        passende[i].name.clone()
+    } else {
+        loop {
+            let Some(n) = zeile_lesen(stand, "  Name, Esc bricht ab:") else {
+                return abbrechen("Nichts gebaut.");
+            };
+            let mut n = n.trim().to_string();
+            if vierbit && !n.ends_with("-int4") {
+                n.push_str("-int4");
+                println!("  Im Format INT4 heisst es {n}.");
+            } else if !vierbit && n.ends_with("-int4") {
+                warnen(&format!("{n}: Ein Name auf -int4 baut in vier Bit; fuer INT8 einen anderen waehlen."));
+                continue;
+            }
+            match eigenbau::erkunden(&wurzel, &quelle, Some(&n), &|_| {}) {
+                Ok(p) if p.name_grund.is_empty() => break n,
+                Ok(p) => warnen(&format!("{n}: {}", p.name_grund)),
+                Err(f) => {
+                    warnen(&format!("✗ {f}"));
+                    return abbrechen("Nichts gebaut.");
+                }
+            }
+        }
+    };
+
+    // 5. Der Platz.
+    let mut quelle_loeschen = false;
+    if !e.lokal {
+        if e.frei_bytes < e.noetig(vierbit, false) {
+            if e.frei_bytes < e.noetig(vierbit, true) {
+                return abbrechen(&format!(
+                    "Zu wenig Platz: gebraucht rund {}, frei {}. Nichts gebaut.",
+                    gib(e.noetig(vierbit, true)),
+                    gib(e.frei_bytes)
+                ));
+            }
+            println!(
+                "  Der Platz reicht nur, wenn die geladenen Gewichte ({}) geloescht werden, sobald das int8 laedt.",
+                gib(e.quelle_bytes)
+            );
+            if !crate::janein::fragen("Die Quelle dann loeschen und so bauen?", Some(false), stand.schirm.map(|s| (s, bild))).ja() {
+                return abbrechen("Nichts gebaut.");
+            }
+            quelle_loeschen = true;
+        } else {
+            quelle_loeschen = crate::janein::fragen(
+                &format!("Die geladenen Gewichte ({}) loeschen, sobald das Artefakt steht?", gib(e.quelle_bytes)),
+                Some(false),
+                stand.schirm.map(|s| (s, bild)),
+            )
+            .ja();
+        }
+    }
+
+    // 6. Der Arbeitsspeicher: Das geladene Modell weicht auf Wunsch.
+    let entladen = stand.modell.is_some()
+        && crate::janein::fragen(
+            &format!("{} entladen, solange gebaut wird? Der Bau braucht den Arbeitsspeicher.", stand.name),
+            Some(true),
+            stand.schirm.map(|s| (s, bild)),
+        )
+        .ja();
+
+    // 7. Die Bestaetigung.
+    println!();
+    println!("  Gebaut wird {name}{}:", if vierbit { " (Experten in vier Bit, ueber das int8)" } else { "" });
+    println!("    erst ein kurzer Probelauf, dann der Bau, danach eine Ladeprobe;");
+    println!(
+        "    Platz auf dem Hoehepunkt rund {}, frei {}{};",
+        gib(e.noetig(vierbit, quelle_loeschen)),
+        gib(e.frei_bytes),
+        if quelle_loeschen { ", die Quelle geht danach weg" } else { "" }
+    );
+    println!("    die Konsole ist waehrenddessen belegt, je nach Groesse Minuten bis Stunden.");
+    if !crate::janein::fragen("So bauen?", None, stand.schirm.map(|s| (s, bild))).ja() {
+        return abbrechen("Nichts gebaut.");
+    }
+    if entladen {
+        stand.modell = None;
+        println!("  {} ist entladen.", stand.name);
+    }
+
+    // 8. Der Bau, Zeile fuer Zeile.
+    // ⚑ Gebaut wird, was erkundet wurde: das Repositorium und die Revision aus
+    //   der Erkundung, nicht der Link (er koennte `/tree/main` nennen).
+    let auftrag = Auftrag {
+        quelle: if e.lokal { quelle } else { Quelle::Repo(e.repo.clone()) },
+        revision: e.revision.clone(),
+        name: name.clone(),
+        projekt: !e.projekt.is_empty(),
+        quelle_loeschen,
+    };
+    let anfang = std::time::Instant::now();
+    let bauzeile = move |z: myl_client::bezug::Zeile| {
+        let text: String = z.text.chars().filter(|c| *c != '\r').take(150).collect();
+        println!("  {}", design::rollen(bild).beiwerk.faerben(&format!("[{}] {text}", z.phase), design::farbig()));
+    };
+    let ergebnis = eigenbau::bauen(&wurzel, &auftrag, &bauzeile);
+    println!();
+    match ergebnis {
+        Ok(pfad) => {
+            println!(
+                "  ✓ {name} ist gebaut ({} min): {}{}",
+                anfang.elapsed().as_secs() / 60,
+                pfad.display(),
+                if auftrag.projekt { "" } else { ", privat und nur lokal" }
+            );
+            if crate::janein::fragen("Jetzt laden?", Some(true), stand.schirm.map(|s| (s, bild))).ja() {
+                stand.vorwahl = Some(pfad.display().to_string());
+                return modell_wechseln(stand);
+            }
+            println!("  Es steht in der Modellwahl (/model).");
+        }
+        Err(f) => warnen(&format!("✗ Nicht gebaut: {f}")),
+    }
+    if entladen {
+        println!("  Kein Modell geladen. Mit /model eines waehlen.");
+    }
+    println!();
+    true
 }
 
 fn mining_zeigen(stand: &mut Stand) {
@@ -3107,7 +3424,9 @@ fn module_befehl(stand: &mut Stand, rest: &str) {
                 }
             }
         }
-        Some(_) => println!("  /module zeigt die Module; /module install <ordner> installiert eines."),
+        Some(_) => println!(
+            "  /module zeigt die Module; /module install <ordner> installiert eines; /module <modul> … ist ein Befehl eines gepruefen Moduls (/help nennt sie)."
+        ),
     }
     println!();
 }
@@ -4042,15 +4361,20 @@ mod tests {
     use super::*;
 
     /// **Ohne Modul steht kein Befehl eines Moduls in Hilfe und
-    /// Vervollstaendigung**, und ein Modul darf keinen Befehl der Konsole
-    /// belegen.
+    /// Vervollstaendigung**, und ein Modul kann keinen Befehl der Konsole
+    /// belegen: Seine stehen unter `/module`, und ein Befehl der Konsole
+    /// darunter ist ein eigener Unterbefehl (`EIGENE_UNTERBEFEHLE`).
     #[test]
     fn ohne_modul_nur_die_eigenen_befehle() {
         let leer = crate::module::Modulwirt::default();
         assert_eq!(vorschlaege(&leer).len(), BEFEHLE.len());
         assert_eq!(hilfezeilen(&leer).len(), BEFEHLE.len());
-        assert!(BEFEHLE.iter().all(|b| b.namen.iter().all(|n| eingebauter_befehl(n))), "jeder Name der Liste ist eingebaut");
-        assert!(!eingebauter_befehl("/beispiel"));
+        for n in BEFEHLE.iter().flat_map(|b| b.namen.iter()) {
+            if let Some(wort) = n.strip_prefix("/module ").and_then(|r| r.split_whitespace().next()) {
+                assert!(myl_client::module::EIGENE_UNTERBEFEHLE.contains(&wort), "{n} laege im Raum der Module");
+            }
+        }
+        assert_eq!(myl_client::module::protokollzeile("/module install x"), None);
     }
 
     /// `str::floor_char_boundary` ist erst ab Rust 1.91 stabil, die Kiste

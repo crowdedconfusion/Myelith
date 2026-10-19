@@ -57,6 +57,12 @@ Ausgabefeld steht (am 2026-09-30: 2).
 `agentenprobe.py` kennt dafür `--saaten`, `--token`, `--denken an|aus` und
 `--ab-werk`; ein Auftrag darf `schritte` und `frist` selbst nennen.
 
+⚠️ **Die 1600 sind die Einstellung, nicht die Länge eines Agentenschritts.**
+Ein Agentenlauf nimmt nie weniger als 4000 und seit `myl-local-agent` 0.42.0
+ein Achtel des Kontexts bis 8192 (bei der Vorgabe 65 536 also 8192). Die
+Köpfe der Ergebnisse sagen das seit dem 2026-10-19 selbst; vorher stand dort
+nur „Antwortlänge 1600“.
+
 ## Stufe extrem (seit 2026-10-17)
 
 `extrem.json`: fünf lange Aufträge (Schritte 60, Frist eine Stunde), jeder
@@ -86,6 +92,49 @@ python3 -u BENCHMARKS/Agent/stufen_vergleich.py starten --satz extrem.json \
 ⚑ **Gegenprobe beim Anlegen:** Eine Lösung, die nur die sichtbaren Tests
 grün macht, fällt bei `x_kasse_fehler` durch; eine Behebung ohne
 `schuldig.txt` bei `x_git_regression`.
+
+## Fähigkeiten in Szenarien mit Phasen (seit 2026-10-18)
+
+`faehigkeiten.json` und `faehigkeiten.py`: Ein Szenario ist ein
+Arbeitsordner mit einer oder mehreren **Phasen**; jede Phase ist ein
+eigener Lauf mit frischem Kontext und eigener Abnahme. So lässt sich
+messen, was ein Lauf anlegt und ein späterer nutzt.
+
+| Szenario | Phasen | was geprüft wird |
+|---|---|---|
+| `x_nadel_im_heuhaufen` | 2 | ein Schlüssel, den nur eine Ausgabe am Anfang trug (das Skript löscht sich), nach zehn gelesenen Protokollen; Kontext auf 12 288 gesetzt, damit der Lauf verdichten muss. `einmal.py` gibt dazu einen Protokollauszug aus. Danach werden die Protokolle gelöscht, und ein frischer Lauf soll die Vorgangsnummer einer Zeile aus diesem Auszug nennen, die nur noch im Mitschnitt des Ordners (`.AGENT/`) steht |
+| `x_web_recherche` | 1 | drei aktuelle Versionen und ein Datum aus GitHub, PyPI und crates.io; die Abnahme holt die Wahrheit beim Prüfen selbst |
+| `x_pdf_zu_skill` | 2 | ein PDF mit Hausregeln wird Markdown und ein Projekt-Skill; danach liegen PDF und Markdown nicht mehr da, und ein frischer Lauf stellt Rechnungen nur nach dem Skill aus (Kalenderwoche 53 über den Jahreswechsel, Fälligkeit am Wochenende, Rundung auf 5 Cent) |
+| `x_werkzeug_bauen` | 2 | ein Werkzeug als Manifest mit Skript (IBAN nach ISO 13616); ein frischer Lauf mit dieser Kiste muss es rufen |
+
+📌 **Warum die Nadel zwei Phasen hat:** In der ersten Fassung schrieb das
+Modell den Schlüssel gleich nach dem Lesen in seine eigene Antwort, und
+Antworten des Modells bleiben beim Verdichten wörtlich. Bestanden hieß
+dann „klug notiert“, nicht „wiedergefunden“. Erst die zweite Phase verlangt
+eine Einzelheit, die es nur noch im Mitschnitt gibt. Sie steht in der
+Ausgabe von `einmal.py` und nicht in den Protokollen: Ein Lauf, der per
+`grep` zählt, liest die Protokolle nie, und dann stünde die Nadel in keinem
+Mitschnitt. Der Debug-Log
+(`debug.log` im Szenario an) zeigt, ob verdichtet wurde.
+
+⚑ **Fällt eine Phase durch, bekommt die nächste die Musterlösung der
+vorigen** und läuft trotzdem, mit der Marke „mit Muster“. Sonst sähe ein
+Skill, der nicht entstand, aus wie einer, der nicht genutzt wurde.
+
+Dafür kennt `agentenprobe.py` seit demselben Tag zwei Felder je Auftrag:
+`einstellungen` (gesetzt mit `myl setzen` auf die Werksdatei, nur mit
+`--ab-werk`) und `kiste` (eine Werkzeugkiste im Arbeitsordner), und
+`im_ordner_fahren` trennt den Lauf vom Anlegen des Ordners.
+
+```sh
+python3 BENCHMARKS/Agent/faehigkeiten.py pruefen                 # Abnahmen in beide Richtungen, rund 5 s, braucht Netz
+python3 -u BENCHMARKS/Agent/faehigkeiten.py starten --modelle myelith-35b-a3b-int4 \
+    --saaten <a>,<b>,<c> --mitschriften <ordner außerhalb>
+```
+
+Das PDF erzeugt ein Entwurfsskript mit `fitz`; es liegt fertig unter
+`faehigkeiten/hausregeln-rechnungen.pdf`, damit kein Lauf ein
+Fremdprogramm zum Anlegen braucht.
 
 ## Mehrstufige Aufträge (seit 2026-09-29)
 

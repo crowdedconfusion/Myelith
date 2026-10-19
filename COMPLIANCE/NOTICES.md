@@ -26,6 +26,7 @@ The artefacts are integer-converted derivative works of the base weights.
 | Artefakt / artefact | Grundgewichte / base weights | Lizenz der Gewichte / weights licence | Lizenz des Artefakts / artefact licence |
 |---|---|---|---|
 | `myelith-0.6b` | [Qwen/Qwen3-0.6B](https://huggingface.co/Qwen/Qwen3-0.6B) | Apache-2.0 | PolyForm Shield License 1.0.0 |
+| `myelith-125b-a6b` | [Qwen/Qwen3.8-Flash-Next](https://huggingface.co/Qwen/Qwen3.8-Flash-Next) | qwen-community-1.0 | privat, nur lokal; die Lizenz der Gewichte gilt weiter |
 | `myelith-30b-a3b` | [Qwen/Qwen3-30B-A3B](https://huggingface.co/Qwen/Qwen3-30B-A3B) | Apache-2.0 | PolyForm Shield License 1.0.0 |
 | `myelith-35b-a3b` | [Qwen/Qwen3.6-35B-A3B](https://huggingface.co/Qwen/Qwen3.6-35B-A3B) | Apache-2.0 | PolyForm Shield License 1.0.0 |
 | `myelith-35b-a3b-int4` | [Qwen/Qwen3.6-35B-A3B](https://huggingface.co/Qwen/Qwen3.6-35B-A3B) | Apache-2.0 | PolyForm Shield License 1.0.0 |
