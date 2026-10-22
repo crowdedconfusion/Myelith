@@ -28,6 +28,16 @@ festhält**, und `pruefen` tut genau das. Ein Vorrat, dem man ansieht,
 dass er zum Stand gehört, ist etwas anderes als ein Ordner voller
 Fremddateien.
 
+# ⚑ Zwei Vorraete: der versionierte und ein lokaler daneben
+
+Lokale Kisten, die git ignoriert (eigene Module unter `MODULES/`), tragen
+eigene Sperrdateien. Was nur sie brauchen, liegt **nicht** im versionierten
+Vorrat, denn kein Klon braucht es, sondern in `SYSTEM/crates-vorrat-lokal/`,
+das git ebenfalls ignoriert. Damit baut eine Kopie des ganzen Arbeitsbaums
+auch diese Kisten ohne Netz, und der versionierte Vorrat bleibt genau das,
+was die versionierten Sperrdateien verlangen. `auspacken` legt beide in
+dasselbe Lager.
+
 Aufrufe:
 
 ```text
@@ -55,6 +65,7 @@ import time
 # Vorrat an der falschen Stelle.
 WURZEL = pathlib.Path(__file__).resolve().parents[2]
 ARCHIVE = WURZEL / "SYSTEM" / "crates-vorrat"
+ARCHIVE_LOKAL = WURZEL / "SYSTEM" / "crates-vorrat-lokal"
 AUSGEPACKT = WURZEL / "SYSTEM" / "crates-lager" / "vendor"
 QUELLE = "https://static.crates.io/crates/{name}/{name}-{version}.crate"
 
@@ -97,20 +108,34 @@ def von_git_ignoriert(pfade: list[pathlib.Path]) -> set[pathlib.Path]:
     return {WURZEL / z for z in lauf.stdout.splitlines() if z}
 
 
-def sperrdateien() -> list[pathlib.Path]:
-    kandidaten = [
+def _kandidaten() -> list[pathlib.Path]:
+    return [
         p
         for p in WURZEL.rglob("Cargo.lock")
-        if not any(a in str(p) for a in AUSGENOMMEN)
+        if not any(a in p.as_posix() for a in AUSGENOMMEN)
     ]
+
+
+def sperrdateien() -> list[pathlib.Path]:
+    kandidaten = _kandidaten()
     ignoriert = von_git_ignoriert(kandidaten)
     return sorted(p for p in kandidaten if p not in ignoriert)
 
 
-def pakete() -> dict[tuple[str, str], str]:
-    """Paket und Fassung zu SHA-256, aus allen Sperrdateien."""
+def sperrdateien_lokal() -> list[pathlib.Path]:
+    """Die Sperrdateien der lokalen Kisten, die git ignoriert.
+
+    Ohne git ist diese Liste leer, und jede Sperrdatei zaehlt zu
+    `sperrdateien()`; `pruefen` sieht dann in beiden Vorraeten nach.
+    """
+    kandidaten = _kandidaten()
+    return sorted(von_git_ignoriert(kandidaten))
+
+
+def pakete(locks: list[pathlib.Path] | None = None) -> dict[tuple[str, str], str]:
+    """Paket und Fassung zu SHA-256, aus den genannten Sperrdateien."""
     aus: dict[tuple[str, str], str] = {}
-    for lock in sperrdateien():
+    for lock in sperrdateien() if locks is None else locks:
         # ⚑ **Nur Zeilen mit Anfuehrungszeichen**: In einer Sperrdatei
         # steht auch `version = 4` (die Fassung des Dateiformats), und
         # die hat keine. **Ein Muster, das darueber stolpert, faellt
@@ -137,14 +162,27 @@ def aus_dem_cargo_vorrat() -> dict[str, pathlib.Path]:
 
 def sammeln() -> int:
     """Holt jedes Archiv, erst aus dem Cargo-Vorrat, sonst aus dem Netz."""
-    ARCHIVE.mkdir(exist_ok=True)
-    vorhanden = aus_dem_cargo_vorrat()
     alle = pakete()
     print(f"[vorrat] {len(alle)} Paketfassungen aus {len(sperrdateien())} Sperrdateien")
+    rc = _sammeln_nach(ARCHIVE, alle)
+    lokal = sperrdateien_lokal()
+    if lokal:
+        # ⛔️ **Nur, was der versionierte Vorrat nicht schon hat**, und nie
+        # dorthin: Fund 545 war genau ein lokales Archiv im oeffentlichen
+        # Vorrat.
+        nur_lokal = {k: s for k, s in pakete(lokal).items() if k not in alle}
+        print(f"[vorrat] lokal: {len(nur_lokal)} weitere Paketfassungen aus {len(lokal)} Sperrdateien")
+        rc |= _sammeln_nach(ARCHIVE_LOKAL, nur_lokal)
+    return rc
+
+
+def _sammeln_nach(ablage: pathlib.Path, alle: dict[tuple[str, str], str]) -> int:
+    ablage.mkdir(exist_ok=True)
+    vorhanden = aus_dem_cargo_vorrat()
     geholt = kopiert = schon = 0
     fehler = []
     for (name, version), summe in sorted(alle.items()):
-        ziel = ARCHIVE / f"{name}-{version}.crate"
+        ziel = ablage / f"{name}-{version}.crate"
         if ziel.is_file() and hashlib.sha256(ziel.read_bytes()).hexdigest() == summe:
             schon += 1
             continue
@@ -171,10 +209,10 @@ def sammeln() -> int:
             fehler.append(f"{name}-{version}: Pruefsumme passt nicht zur Sperrdatei")
             ziel.unlink(missing_ok=True)
 
-    groesse = sum(p.stat().st_size for p in ARCHIVE.glob("*.crate"))
+    groesse = sum(p.stat().st_size for p in ablage.glob("*.crate"))
     print(
         f"[vorrat] {schon} schon da, {kopiert} aus dem Cargo-Vorrat, {geholt} aus dem Netz; "
-        f"jetzt {len(list(ARCHIVE.glob('*.crate')))} Archive, {groesse/1e6:.0f} MB"
+        f"jetzt {len(list(ablage.glob('*.crate')))} Archive, {groesse/1e6:.0f} MB in {ablage.name}"
     )
     if fehler:
         print(f"[vorrat] FEHLER bei {len(fehler)}:")
@@ -184,11 +222,28 @@ def sammeln() -> int:
     return 0
 
 
+def _archive(ablage: pathlib.Path) -> dict[str, pathlib.Path]:
+    return {p.name: p for p in ablage.glob("*.crate")} if ablage.is_dir() else {}
+
+
 def pruefen() -> int:
     """Jede Datei gegen die Sperrdateien, und keine zu viel."""
     alle = pakete()
+    lokal = sperrdateien_lokal()
+    rc = _pruefen_gegen(alle, ARCHIVE, "versioniert")
+    if lokal:
+        nur_lokal = {k: s for k, s in pakete(lokal).items() if k not in alle}
+        rc |= _pruefen_gegen(nur_lokal, ARCHIVE_LOKAL, "lokal")
+    return rc
+
+
+def _pruefen_gegen(alle: dict[tuple[str, str], str], ablage: pathlib.Path, art: str) -> int:
     erwartet = {f"{n}-{v}.crate": s for (n, v), s in alle.items()}
-    da = {p.name: p for p in ARCHIVE.glob("*.crate")} if ARCHIVE.is_dir() else {}
+    da = _archive(ablage)
+    if ablage == ARCHIVE and not sperrdateien_lokal():
+        # Ohne git (eine Kopie ohne `.git`) kennt niemand die lokalen
+        # Sperrdateien als lokal; ihre Archive stehen im lokalen Vorrat.
+        da = {**_archive(ARCHIVE_LOKAL), **da}
     fehlt = sorted(set(erwartet) - set(da))
     zuviel = sorted(set(da) - set(erwartet))
     falsch = [
@@ -196,19 +251,21 @@ def pruefen() -> int:
         for n, p in sorted(da.items())
         if n in erwartet and hashlib.sha256(p.read_bytes()).hexdigest() != erwartet[n]
     ]
-    print(f"[vorrat] erwartet {len(erwartet)}, vorhanden {len(da)}")
+    print(f"[vorrat] {art}: erwartet {len(erwartet)}, vorhanden {len(da)}")
     if fehlt:
         print(f"   fehlen: {len(fehlt)}  {fehlt[:3]}")
     if falsch:
         print(f"   falsche Pruefsumme: {len(falsch)}  {falsch[:3]}")
     # ⚠️ Ueberzaehlige sind kein Fehler, sondern Ballast: Sie stammen von
     # einer frueheren Fassung und gehoeren aufgeraeumt.
+    if zuviel and art == "versioniert":
+        zuviel = [n for n in zuviel if n not in _archive(ARCHIVE_LOKAL)]
     if zuviel:
         print(f"   ueberzaehlig (alte Fassungen): {len(zuviel)}  {zuviel[:3]}")
     if fehlt or falsch:
-        print("[vorrat] FAILED")
+        print(f"[vorrat] FAILED ({art})")
         return 1
-    print("[vorrat] PASSED: der Vorrat passt zu den Sperrdateien")
+    print(f"[vorrat] PASSED: der Vorrat ({art}) passt zu den Sperrdateien")
     return 0
 
 
@@ -221,10 +278,17 @@ def auspacken() -> int:
     AUSGEPACKT.mkdir(parents=True)
     anfang = time.time()
     n = 0
-    for p in sorted(ARCHIVE.glob("*.crate")):
+    archive = {**_archive(ARCHIVE_LOKAL), **_archive(ARCHIVE)}
+    for _, p in sorted(archive.items()):
         summe = hashlib.sha256(p.read_bytes()).hexdigest()
         with tarfile.open(p) as t:
-            t.extractall(AUSGEPACKT)
+            # ⚑ Der Filter steht ausdruecklich da: Python 3.14 filtert sonst
+            #   von sich aus, und 3.12 warnt bei jedem Archiv. Vertraut wird,
+            #   weil jedes Archiv gegen die Sperrdateien geprueft ist.
+            if hasattr(tarfile, "fully_trusted_filter"):
+                t.extractall(AUSGEPACKT, filter="fully_trusted")
+            else:
+                t.extractall(AUSGEPACKT)
         ordner = AUSGEPACKT / p.stem
         if not ordner.is_dir():
             print(f"[vorrat] {p.name} enthaelt keinen Ordner {p.stem}")
@@ -240,14 +304,21 @@ def auspacken() -> int:
         n += 1
     konfig = AUSGEPACKT.parent / "cargo-home"
     konfig.mkdir(exist_ok=True)
-    # ⛔️ **Vorwaertsschraegstriche in einer woertlichen TOML-Zeichenkette.**
-    #    In einer gewoehnlichen ("...") ist `\` ein Fluchtzeichen, und ein
-    #    Windows-Pfad wie `D:\a\Myelith` war ungueltiges TOML: cargo brach im
-    #    kalten Klon unter Windows ab, bevor es eine Kiste sah. Cargo nimmt
-    #    `/` auf jedem System.
+    # ⚑ **Ein relativer Pfad, kein absoluter.** Cargo loest einen Pfad in
+    #    `$CARGO_HOME/config.toml` gegen den Ordner UEBER `cargo-home` auf,
+    #    also gegen `crates-lager`; `vendor` ist damit genau `AUSGEPACKT`.
+    #    Mit dem absoluten Pfad, der hier bis zum 2026-10-21 stand, zeigte
+    #    ein verschobener oder kopierter Baum auf das alte Lager (Fund 580).
+    #    Geprueft mit einer Gegenprobe: ein falscher Name bricht ab, statt
+    #    still den Cargo-Vorrat zu nehmen.
+    #    📌 Der Weg ueber den absoluten Pfad brauchte ausserdem
+    #    Vorwaertsschraegstriche in einer woertlichen TOML-Zeichenkette,
+    #    weil `D:\a\Myelith` in einer gewoehnlichen ungueltig war; ein
+    #    relativer Name hat das Problem nicht.
+    assert AUSGEPACKT.parent == konfig.parent
     (konfig / "config.toml").write_text(
         "[source.crates-io]\nreplace-with = \"vendored-sources\"\n\n"
-        f"[source.vendored-sources]\ndirectory = '{AUSGEPACKT.as_posix()}'\n"
+        f"[source.vendored-sources]\ndirectory = '{AUSGEPACKT.name}'\n"
     )
     print(f"[vorrat] {n} Pakete in {time.time()-anfang:.0f} s nach {AUSGEPACKT}")
     print(f"[vorrat] bauen mit: CARGO_HOME={konfig} cargo build --release --locked --offline")

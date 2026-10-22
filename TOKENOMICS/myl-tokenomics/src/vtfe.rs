@@ -94,9 +94,73 @@ pub struct ModellProfil {
     pub num_heads: u64,
     pub num_kv_heads: u64,
     pub head_dim: u64,
+    /// ⚑ **Hybride Modelle** (seit dem 2026-10-22, für das 35B): Jede
+    /// `voll_alle`-te Ebene mischt mit voller Achtsamkeit, die übrigen mit
+    /// einer Zustandsschicht (`full_attention_interval`). **`0` heißt: jede
+    /// Ebene mit voller Achtsamkeit**, wie bei jedem Modell vor dem 35B, und
+    /// dann rechnet alles wie zuvor.
+    pub voll_alle: u64,
+    /// Die Maße der Zustandsschicht (`linear_*`); bedeutungslos, solange
+    /// [`Self::voll_alle`] null ist.
+    pub zustand: Zustandsprofil,
+    /// Breite des geteilten Experten (`shared_expert_intermediate_size`),
+    /// der neben den gewählten bei jedem Token rechnet. `0`: keiner.
+    pub geteilter_experte: u64,
+    /// Trägt die volle Achtsamkeit ein Ausgangstor (`attn_output_gate`)?
+    /// Dann liefert `q_proj` die doppelte Breite: Anfrage und Tor.
+    pub ausgangstor: bool,
+}
+
+/// Die Maße einer Zustandsschicht (lineare Aufmerksamkeit mit Faltung,
+/// wie im 35B), soweit sie die Gewichtsarbeit bestimmen.
+///
+/// ⚑ **Gezählt werden die Gewichtsmatrizen, nicht die Rekurrenz.** Die
+/// Fortschreibung des Zustands kostet je Token `wert_koepfe ·
+/// schluessel_dim · wert_dim` Multiplikationen in kleiner Zahl, ist keine
+/// Gewichtsarbeit und bleibt draußen wie die Attention-Scores (siehe den
+/// Kopf dieses Moduls). Anders als diese hängt sie nicht an der
+/// Kontextlänge; beim 35B ist sie rund ein Zwanzigstel der Ebene.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, BorshSerialize, BorshDeserialize)]
+pub struct Zustandsprofil {
+    /// `linear_num_key_heads`.
+    pub schluessel_koepfe: u64,
+    /// `linear_key_head_dim`.
+    pub schluessel_dim: u64,
+    /// `linear_num_value_heads`.
+    pub wert_koepfe: u64,
+    /// `linear_value_head_dim`.
+    pub wert_dim: u64,
+    /// `linear_conv_kernel_dim`: Breite der Faltung je Kanal.
+    pub faltung: u64,
+}
+
+impl Zustandsprofil {
+    /// Alle Felder null.
+    pub const LEER: Zustandsprofil =
+        Zustandsprofil { schluessel_koepfe: 0, schluessel_dim: 0, wert_koepfe: 0, wert_dim: 0, faltung: 0 };
 }
 
 impl ModellProfil {
+    /// Alle Felder null: der Grund für `..ModellProfil::LEER` in einer
+    /// Angabe, die nur ihre eigenen Felder nennt. Ein Profil daraus ohne
+    /// weitere Felder hat keine Arbeit und wird abgewiesen.
+    pub const LEER: ModellProfil = ModellProfil {
+        hidden_size: 0,
+        intermediate_size: 0,
+        num_experts: 0,
+        num_experts_per_tok: 0,
+        moe_intermediate_size: 0,
+        num_layers: 0,
+        vocab_size: 0,
+        num_heads: 0,
+        num_kv_heads: 0,
+        head_dim: 0,
+        voll_alle: 0,
+        zustand: Zustandsprofil::LEER,
+        geteilter_experte: 0,
+        ausgangstor: false,
+    };
+
     /// Multiplikations-Additionen der Gewichtsmatrizen **einer** Layer
     /// für **ein** Token.
     ///
@@ -137,26 +201,83 @@ impl ModellProfil {
     /// Ohne diese Eigenschaft wäre MoE mit der Festlegung vom 2026-08-23
     /// unvereinbar gewesen.
     pub fn macs_je_layer(&self) -> u128 {
+        self.macs_achtsamkeit() + self.macs_ffn()
+    }
+
+    /// Die Gewichtsarbeit der vollen Achtsamkeit einer Ebene: q, k, v, o.
+    fn macs_achtsamkeit(&self) -> u128 {
         let h = self.hidden_size as u128;
         let q_out = self.num_heads as u128 * self.head_dim as u128;
         let kv_out = self.num_kv_heads as u128 * self.head_dim as u128;
 
-        let q = h * q_out;
+        // ⚑ Mit Ausgangstor liefert `q_proj` Anfrage und Tor, also die
+        //   doppelte Breite; `o_proj` liest nur die Anfrage.
+        let q = h * q_out * if self.ausgangstor { 2 } else { 1 };
         let k = h * kv_out;
         let v = h * kv_out;
         let o = q_out * h;
+        q + k + v + o
+    }
 
-        let ffn = if self.num_experts > 0 {
+    /// Die Gewichtsarbeit einer Zustandsschicht: die vier Eingangsmatrizen
+    /// (`in_proj_qkv`, `_z`, `_b`, `_a`), die Faltung und `out_proj`.
+    fn macs_zustand(&self) -> u128 {
+        let z = &self.zustand;
+        let h = self.hidden_size as u128;
+        let schluessel = z.schluessel_koepfe as u128 * z.schluessel_dim as u128;
+        let wert = z.wert_koepfe as u128 * z.wert_dim as u128;
+        // Die Faltung läuft über alle Kanäle von q, k und v.
+        let kanaele = 2 * schluessel + wert;
+        let qkv = h * kanaele;
+        let tor = h * wert;
+        let b_und_a = 2 * h * z.wert_koepfe as u128;
+        let faltung = z.faltung as u128 * kanaele;
+        let aus = wert * h;
+        qkv + tor + b_und_a + faltung + aus
+    }
+
+    /// Die Gewichtsarbeit des Feedforward-Teils einer Ebene.
+    fn macs_ffn(&self) -> u128 {
+        let h = self.hidden_size as u128;
+        if self.num_experts > 0 {
             let mi = self.moe_intermediate_size as u128;
             let router = h * self.num_experts as u128;
             let je_experte = 3 * h * mi;
-            router + self.num_experts_per_tok as u128 * je_experte
+            // ⚑ Der geteilte Experte rechnet bei jedem Token, dazu sein Tor
+            //   (eine Zeile `h → 1`).
+            let geteilt = if self.geteilter_experte > 0 {
+                3 * h * self.geteilter_experte as u128 + h
+            } else {
+                0
+            };
+            router + self.num_experts_per_tok as u128 * je_experte + geteilt
         } else {
             let i = self.intermediate_size as u128;
             3 * h * i
-        };
+        }
+    }
 
-        q + k + v + o + ffn
+    /// Mischt Ebene `i` mit voller Achtsamkeit? Bei `voll_alle = 4` die
+    /// Ebenen 3, 7, 11 und so fort, wie `layer_types` im 35B.
+    pub fn ist_voll(&self, i: u64) -> bool {
+        self.voll_alle == 0 || (i + 1) % self.voll_alle == 0
+    }
+
+    /// Multiplikations-Additionen der Ebene `i` für ein Token.
+    pub fn macs_der_ebene(&self, i: u64) -> u128 {
+        let mischer = if self.ist_voll(i) { self.macs_achtsamkeit() } else { self.macs_zustand() };
+        mischer + self.macs_ffn()
+    }
+
+    /// Die Ebenen `[von, bis)` zusammen, für ein Token.
+    ///
+    /// ⚑ **Ohne Zustandsschichten genau `(bis − von) · macs_je_layer`**,
+    /// also bitgleich mit der Regel vor dem 2026-10-22.
+    pub fn macs_ebenen(&self, von: u64, bis: u64) -> u128 {
+        if self.voll_alle == 0 {
+            return bis.saturating_sub(von) as u128 * self.macs_je_layer();
+        }
+        (von..bis).map(|i| self.macs_der_ebene(i)).sum()
     }
 
     /// Multiplikations-Additionen des LM-Kopfes für ein Token.
@@ -169,7 +290,7 @@ impl ModellProfil {
     /// **Das ist der Nenner der Regel** und damit die Definition eines
     /// Token-Forward-Äquivalents in dieser Komponente.
     pub fn macs_vorwaerts(&self) -> u128 {
-        self.num_layers as u128 * self.macs_je_layer() + self.macs_lm_kopf()
+        self.macs_ebenen(0, self.num_layers) + self.macs_lm_kopf()
     }
 }
 
@@ -198,8 +319,7 @@ impl ShardZuschnitt {
     /// bleibt, weil der Zuschnitt sonst nicht vollständig beschrieben
     /// wäre und ein späteres Speicherentgelt es brauchen wird.
     pub fn macs(&self, profil: &ModellProfil) -> u128 {
-        let layer = self.layer_end.saturating_sub(self.layer_start) as u128;
-        let mut m = layer * profil.macs_je_layer();
+        let mut m = profil.macs_ebenen(self.layer_start, self.layer_end);
         if self.hat_lm_kopf {
             m += profil.macs_lm_kopf();
         }
@@ -391,23 +511,72 @@ pub fn vtfe_voll(tokens: u64) -> u64 {
 /// der Gewichtsliste mit `PositionUnbekannt` ab.
 pub const PROBE_SHARDS: u64 = 4;
 
-/// Das Modellprofil der Probepipeline: Qwen2.5-0,5B.
+/// Das Modellprofil der Probepipeline: Sparrow 0.6B, aus Qwen3-0.6B.
 ///
-/// Abgeschrieben aus `INTEGER_LLM/artifacts/myelith-0.6b/model_config.json`
-/// (Revision `060db6499f32faf8b98477b0a26969ef7d8b9987`, siehe
-/// `MODELS/llm/KATALOG.json`). **Kein dichtes Feld ist geraten**:
-/// Jede Zahl steht so in der veröffentlichten Modellkonfiguration.
+/// Abgeschrieben aus `INTEGER_LLM/artifacts/sparrow-0.6b-int8/model_config.json`
+/// (Grundmodell `Qwen/Qwen3-0.6B`, Revision
+/// `c1899de289a04d12100db370d81485cdf75e47ca`, siehe `MODELS/llm/KATALOG.json`).
+/// **Kein dichtes Feld ist geraten**: Jede Zahl steht so in der
+/// Modellkonfiguration des Artefakts.
+///
+/// 📌 **Fund 586 (2026-10-22): Hier stand ein anderes Modell.** Bis heute
+/// trug dieses Profil die Maße von Qwen2.5-0,5B (24 Ebenen, Breite 896)
+/// unter einem Kommentar, der das Artefakt `sparrow-0.6b-int8` nannte. Das
+/// Artefakt ist seit der Umstellung des Probemodells ein Qwen3-0.6B mit 28
+/// Ebenen und Breite 1024. Die Kette schrieb damit Arbeit nach einem Modell
+/// gut, das kein Pod rechnete, und schnitt die Gutschrift über 24 Ebenen,
+/// während jeder Shard über 28 lief. Aufgefallen beim Füllen des
+/// Podmodells, das die Ebenenzahl ein zweites Mal nennt: **Zwei Stellen
+/// mit derselben Angabe, und erst die zweite hat die erste geprüft.**
 pub const PROBE_MODELL: ModellProfil = ModellProfil {
-    hidden_size: 896,
-    intermediate_size: 4864,
+    hidden_size: 1024,
+    intermediate_size: 3072,
     num_experts: 0,
     num_experts_per_tok: 0,
     moe_intermediate_size: 0,
-    num_layers: 24,
+    num_layers: 28,
     vocab_size: 151_936,
-    num_heads: 14,
+    num_heads: 16,
+    num_kv_heads: 8,
+    head_dim: 128,
+    ..ModellProfil::LEER
+};
+
+/// **Das Profil des Netzmodells**: Raven 35B A3B, aus Qwen3.6-35B-A3B, in
+/// int4 und int8 dasselbe (die Speicherform ändert keine Rechnung).
+///
+/// Abgeschrieben aus `model_config.json` des Artefakts
+/// `raven-35b-a3b-int4` (Revision `995ad96eacd98c81ed38be0c5b274b04031597b0`):
+/// 40 Ebenen, davon jede vierte mit voller Achtsamkeit
+/// (`full_attention_interval` 4, `layer_types` stimmt damit überein), 256
+/// Experten mit 8 je Token, ein geteilter Experte, ein Ausgangstor an der
+/// Achtsamkeit. `intermediate_size` ist 0, wie dort.
+///
+/// ⚑ **Gebunden über den Abdruck**: `model_config.json` geht in den Abdruck
+/// der Netzliste ein. Ein Pod, der ein Artefakt mit anderem Aufbau unter
+/// diesem Abdruck lädt, gibt es nicht; ein neuer Bau mit anderem Aufbau hat
+/// einen neuen Abdruck und braucht ein neues Profil.
+pub const RAVEN_35B_A3B: ModellProfil = ModellProfil {
+    hidden_size: 2048,
+    intermediate_size: 0,
+    num_experts: 256,
+    num_experts_per_tok: 8,
+    moe_intermediate_size: 512,
+    num_layers: 40,
+    vocab_size: 248_320,
+    num_heads: 16,
     num_kv_heads: 2,
-    head_dim: 64,
+    head_dim: 256,
+    voll_alle: 4,
+    zustand: Zustandsprofil {
+        schluessel_koepfe: 16,
+        schluessel_dim: 128,
+        wert_koepfe: 32,
+        wert_dim: 128,
+        faltung: 4,
+    },
+    geteilter_experte: 512,
+    ausgangstor: true,
 };
 
 /// Die Arbeitsverteilung der Probepipeline, **gerechnet und nicht
@@ -442,31 +611,43 @@ pub const PROBE_MODELL: ModellProfil = ModellProfil {
 /// diese Funktion beantwortet. Für die Probekette mit einem Modell
 /// stellt sich die Frage nicht.
 pub fn arbeitsverteilung_probe() -> myl_types::arbeitsverteilung::Arbeitsverteilung {
-    let profil = PROBE_MODELL;
-    let layer = profil.num_layers;
-    let mut gewichte = Vec::with_capacity(PROBE_SHARDS as usize);
-    for s in 0..PROBE_SHARDS {
-        let start = layer * s / PROBE_SHARDS;
-        let ende = layer * (s + 1) / PROBE_SHARDS;
-        let zuschnitt = ShardZuschnitt {
-            layer_start: start,
-            layer_end: ende,
-            hat_embedding: s == 0,
-            hat_lm_kopf: s == PROBE_SHARDS - 1,
-        };
-        let macs = zuschnitt.macs(&profil);
-        // ⚑ **`u128` auf `u64` verdichtet, ohne zu runden.** Für das
-        // eine Modell dieser Probekette passt die volle MAC-Zahl
-        // bequem in `u64` (die grösste Position liegt hier bei rund
-        // 2,3 · 10^8, die Grenze bei 1,8 · 10^19): keine Schrumpfung,
+    let layer = PROBE_MODELL.num_layers;
+    let grenzen: Vec<(u64, u64)> =
+        (0..PROBE_SHARDS).map(|s| (layer * s / PROBE_SHARDS, layer * (s + 1) / PROBE_SHARDS)).collect();
+    arbeitsverteilung_aus_grenzen(&PROBE_MODELL, &grenzen, myl_types::hash::Hash::sha256(b"myelith-probe-qwen3-0.6b"))
+        .expect("die Probeverteilung ist wohlgeformt: vier Shards, keiner ohne Arbeit")
+}
+
+/// **Die Arbeitsverteilung eines Pods aus seinen Grenzen** (Stufe 4 des
+/// Dispatchers, 2026-10-22): je Position `[von, bis)`, die erste mit der
+/// Einbettung, die letzte mit dem Kopf.
+///
+/// ⚑ **Seit ein Pod nach Kapazität schneidet, hat jeder Pod seine eigene
+/// Verteilung.** Bis heute galt eine für alle, aus dem gleichen Schnitt;
+/// eine Gutschrift nach ihr für einen ungleich geschnittenen Pod schriebe
+/// Arbeit gut, die niemand gerechnet hat.
+///
+/// `None`, wenn eine Grenze aus dem Modell fällt oder keine Position
+/// Arbeit hat.
+pub fn arbeitsverteilung_aus_grenzen(
+    profil: &ModellProfil,
+    grenzen: &[(u64, u64)],
+    pipeline: myl_types::hash::Hash,
+) -> Option<myl_types::arbeitsverteilung::Arbeitsverteilung> {
+    let k = grenzen.len();
+    let mut gewichte = Vec::with_capacity(k);
+    for (s, &(von, bis)) in grenzen.iter().enumerate() {
+        if von > bis || bis > profil.num_layers {
+            return None;
+        }
+        let zuschnitt = ShardZuschnitt { layer_start: von, layer_end: bis, hat_embedding: s == 0, hat_lm_kopf: s + 1 == k };
+        // ⚑ **`u128` auf `u64` verdichtet, ohne zu runden.** Auch beim
+        // 35B passt die volle MAC-Zahl einer Position bequem in `u64`
+        // (rund 10^10 gegen die Grenze 1,8 · 10^19): keine Schrumpfung,
         // also kein Rundungsfehler gegenüber der vTFE-Formel.
-        gewichte.push(macs.min(u64::MAX as u128).max(1) as u64);
+        gewichte.push(zuschnitt.macs(profil).min(u64::MAX as u128).max(1) as u64);
     }
-    myl_types::arbeitsverteilung::Arbeitsverteilung::neu(
-        myl_types::hash::Hash::sha256(b"myelith-probe-qwen2.5-0.5b"),
-        gewichte,
-    )
-    .expect("die Probeverteilung ist wohlgeformt: vier Shards, keiner ohne Arbeit")
+    myl_types::arbeitsverteilung::Arbeitsverteilung::neu(pipeline, gewichte).ok()
 }
 
 #[cfg(test)]
@@ -519,7 +700,7 @@ mod arbeitsverteilung_probe_tests {
         let v = arbeitsverteilung_probe();
         let tokens = 1_000u64;
         let voll = v.aufteilen(vtfe_voll(tokens));
-        let boundaries = [0u64, 6, 12, 18, 24];
+        let boundaries = [0u64, 7, 14, 21, 28];
         for s in 0..4usize {
             let zuschnitt = ShardZuschnitt {
                 layer_start: boundaries[s],
@@ -577,6 +758,7 @@ mod moe_tests {
             num_heads: 32,
             num_kv_heads: 4,
             head_dim: 128,
+            ..ModellProfil::LEER
         }
     }
 
@@ -656,6 +838,62 @@ mod moe_tests {
         );
     }
 
+    /// ⚑ **Das 35B, von Hand nachgerechnet** (2026-10-22): eine Ebene
+    /// mit voller Achtsamkeit und eine mit Zustandsschicht, je mit
+    /// Experten, geteiltem Experten und Router.
+    #[test]
+    fn das_hybride_netzmodell_von_hand_nachgerechnet() {
+        let p = RAVEN_35B_A3B;
+        // q mit Tor 2048·4096·2, k und v 2048·512, o 4096·2048
+        let voll: u128 = 16_777_216 + 1_048_576 + 1_048_576 + 8_388_608;
+        // qkv 2048·8192, z 2048·4096, b und a 2·2048·32, Faltung 4·8192, aus 4096·2048
+        let zustand: u128 = 16_777_216 + 8_388_608 + 131_072 + 32_768 + 8_388_608;
+        // Router 2048·256, 8 Experten zu 3·2048·512, geteilt 3·2048·512 plus Tor 2048
+        let ffn: u128 = 524_288 + 8 * 3 * 2048 * 512 + 3 * 2048 * 512 + 2048;
+        assert_eq!(p.macs_der_ebene(3), voll + ffn, "Ebene 3 hat volle Achtsamkeit");
+        assert_eq!(p.macs_der_ebene(0), zustand + ffn, "Ebene 0 hat eine Zustandsschicht");
+        let voll_ebenen = (0..40).filter(|&i| p.ist_voll(i)).count();
+        assert_eq!(voll_ebenen, 10, "jede vierte von 40");
+        assert_eq!(p.macs_ebenen(0, 40), 10 * (voll + ffn) + 30 * (zustand + ffn));
+        // Zwei Bereiche gleicher Länge wiegen verschieden, wenn sie
+        // verschieden viele volle Ebenen halten: 0 bis 3 hat keine, 1 bis 4 eine.
+        assert_ne!(p.macs_ebenen(0, 3), p.macs_ebenen(1, 4));
+    }
+
+    /// ⚑ **Ohne Zustandsschichten bitgleich zur Regel davor**: die schnelle
+    /// Summe (`(bis − von) · macs_je_layer`) gegen die Summe je Ebene.
+    #[test]
+    fn ohne_zustandsschicht_ist_jede_ebene_gleich() {
+        for p in [PROBE_MODELL, qwen3_30b_a3b()] {
+            let einzeln: u128 = (2..19).map(|i| p.macs_der_ebene(i)).sum();
+            assert_eq!(p.macs_ebenen(2, 19), einzeln);
+            assert_eq!(p.macs_ebenen(2, 19), 17 * p.macs_je_layer());
+        }
+    }
+
+    /// ⚑ **Jeder Pod seine Verteilung**: ungleiche Grenzen ergeben
+    /// ungleiche Gewichte, der gleiche Schnitt die Probeverteilung.
+    #[test]
+    fn die_verteilung_folgt_den_grenzen() {
+        let pipeline = crate::vtfe::arbeitsverteilung_probe();
+        let gleich = arbeitsverteilung_aus_grenzen(
+            &PROBE_MODELL,
+            &[(0, 7), (7, 14), (14, 21), (21, 28)],
+            myl_types::hash::Hash::sha256(b"myelith-probe-qwen3-0.6b"),
+        )
+        .expect("gleich");
+        assert_eq!(gleich, pipeline);
+        let ungleich = arbeitsverteilung_aus_grenzen(
+            &PROBE_MODELL,
+            &[(0, 3), (3, 10), (10, 23), (23, 28)],
+            myl_types::hash::Hash::sha256(b"x"),
+        )
+        .expect("ungleich");
+        let g = ungleich.gewichte();
+        assert_eq!(g[1] * 3, g[0] * 7, "sieben gegen drei Ebenen");
+        assert!(arbeitsverteilung_aus_grenzen(&PROBE_MODELL, &[(0, 29)], myl_types::hash::Hash::sha256(b"x")).is_none());
+    }
+
     #[test]
     fn dichte_modelle_rechnen_unveraendert() {
         // Qwen2.5-0,5B, wie bisher.
@@ -670,6 +908,7 @@ mod moe_tests {
             num_heads: 14,
             num_kv_heads: 2,
             head_dim: 64,
+            ..ModellProfil::LEER
         };
         let q_out: u128 = 14 * 64;
         let kv_out: u128 = 2 * 64;
@@ -754,6 +993,7 @@ mod tests {
             num_heads: 14,
             num_kv_heads: 2,
             head_dim: 64,
+            ..ModellProfil::LEER
         }
     }
 
@@ -769,6 +1009,7 @@ mod tests {
             num_heads: 28,
             num_kv_heads: 4,
             head_dim: 128,
+            ..ModellProfil::LEER
         }
     }
 
@@ -959,6 +1200,7 @@ mod tests {
             num_heads: 0,
             num_kv_heads: 0,
             head_dim: 0,
+            ..ModellProfil::LEER
         };
         let z = ShardZuschnitt {
             layer_start: 0,

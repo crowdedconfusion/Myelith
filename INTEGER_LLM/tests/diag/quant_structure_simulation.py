@@ -22,14 +22,14 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO / "calibrate"))
-sys.path.insert(0, str(REPO / "eval"))
+sys.path.insert(0, str(REPO.parent / "BENCHMARKS" / "Inferenz"))
 from src.loader import load_reference_model  # noqa: E402
 from wikitext_common import select_sequences  # noqa: E402
 
 
 def load_scales():
     import json
-    sc = json.loads((REPO / "artifacts" / "myelith-0.6b" / "scales.json").read_text())
+    sc = json.loads((REPO / "artifacts" / "sparrow-0.6b-int8" / "scales.json").read_text())
     return sc["entries"] if "entries" in sc else sc
 
 

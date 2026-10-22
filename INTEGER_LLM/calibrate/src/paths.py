@@ -24,7 +24,7 @@ def artifacts_dir() -> Path:
 
 
 def model_artifacts_dir(model_name: str) -> Path:
-    """Artefakt-Verzeichnis eines bestimmten Modells, z. B. artifacts/myelith-0.6b."""
+    """Artefakt-Verzeichnis eines bestimmten Modells, z. B. artifacts/sparrow-0.6b-int8."""
     return artifacts_dir() / model_name
 
 

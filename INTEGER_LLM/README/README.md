@@ -1,7 +1,7 @@
 # integer-llm
 
-> **Version:** 0.139.0 (θ_v 0.22.0; kernels 0.88.0, runtime 0.99.0, pipeline 0.15.1)
-> **Datum:** 2026-10-19
+> **Version:** 0.145.0 (θ_v 0.22.0; kernels 0.88.1, runtime 0.103.0, pipeline 0.15.2)
+> **Datum:** 2026-10-22
 > **Status:** ⚠️ **Das Akzeptanzkriterium ruht auf einer zu kleinen
 > Stichprobe.** Gemessen wurde bisher ueber **4 Sequenzen, 435
 > Positionen**; eine Messung ueber **32 Sequenzen, 3558 Positionen**
@@ -86,7 +86,7 @@ Deterministische Integer-Inferenz ohne Gleitkommaoperationen im Rechenpfad
 Pipeline-Parallelismus auf heterogenen Hardware-Knoten (NVIDIA, AMD, CPU).
 Die Ganzzahlarithmetik ist die Voraussetzung für bitgleiche Ausführung über
 unabhängige Knoten hinweg — die Grundlage des Myelith-Verifikationsmodells
-(Whitepaper Kap. 6.2). Referenzmodell ist Qwen3-0.6B (`myelith-0.6b`, **W8A16**: Gewichte
+(Whitepaper Kap. 6.2). Referenzmodell ist Qwen3-0.6B (`sparrow-0.6b-int8`, **W8A16**: Gewichte
 int8, Aktivierungen und Residualstrom int16, Akkumulator int64); verifiziert
 sind daneben Qwen3-4B und Qwen3-30B-A3B.
 
@@ -364,7 +364,7 @@ Umgebung greift es das System-Python und findet `torch` nicht.
 
 Quantisiert die Gewichte, berechnet die Aktivierungsskalen aus einer
 Stichprobe von WikiText-2, erzeugt die Lookup-Tabellen und schreibt alles
-nach `artifacts/myelith-0.6b/`. Dauert einige Minuten und braucht rund
+nach `artifacts/sparrow-0.6b-int8/`. Dauert einige Minuten und braucht rund
 0,8 GB Platz.
 
 Für ein anderes Modell:
@@ -384,7 +384,7 @@ stillschweigend Unsinn.
 ```bash
 cargo run --release --manifest-path runtime/Cargo.toml \
     --bin integer-llm-runtime -- \
-    artifacts/myelith-0.6b "Die Hauptstadt von Frankreich ist" 10
+    artifacts/sparrow-0.6b-int8 "Die Hauptstadt von Frankreich ist" 10
 ```
 
 Ausgabe: die generierten Token und der dekodierte Text. Greedy und
@@ -460,7 +460,7 @@ Johann Wolfgang von Goethe wurde geboren in der Stadt Frankfurt
 Johannes Brahms wurde geboren in der Stadt Hamburg
 Karl Marx wurde geboren in der Stadt T
 EOF
-./SYSTEM/full-build/release/examples/tokenzeilen artifacts/myelith-4b text.txt > korpus.txt
+./SYSTEM/full-build/release/examples/tokenzeilen artifacts/pigeon-4b-int8 text.txt > korpus.txt
 ```
 
 Vier Zeilen schreiben die Tatsache, drei bewahren Nachbartatsachen.
@@ -496,7 +496,7 @@ Fehler, an dem der vorletzte Lauf scheiterte.
 ### 2. Die Frageform messen
 
 ```sh
-./SYSTEM/full-build/release/examples/formprobe artifacts/myelith-4b
+./SYSTEM/full-build/release/examples/formprobe artifacts/pigeon-4b-int8
 ```
 
 Zählt zehn Formulierungen an sechs bekannten Personen durch. Gemessen:
@@ -508,7 +508,7 @@ statt mit einem Namen.
 ### 3. Die Eintrittsprüfung
 
 ```sh
-./SYSTEM/full-build/release/examples/aufbauprobe artifacts/myelith-4b proben.tsv || exit 1
+./SYSTEM/full-build/release/examples/aufbauprobe artifacts/pigeon-4b-int8 proben.tsv || exit 1
 ```
 
 Sie liest die **echte** Probendatei und prüft, ob an jeder Messstelle
@@ -519,7 +519,7 @@ Token gar nicht stehen konnte.
 ### 4. Der Lauf
 
 ```sh
-./SYSTEM/full-build/release/trainingsguete artifacts/myelith-4b korpus.txt \
+./SYSTEM/full-build/release/trainingsguete artifacts/pigeon-4b-int8 korpus.txt \
   --normiert --zeilenweise --nur-letzte \
   --ebenen 4 --nur-kopf --kopf-nenner 64 \
   --anker 10 --probentoken 3 --schritte 26 \
@@ -554,10 +554,10 @@ bei 1,0, wird eine Form gelernt und keine Tatsache.
 
 ```sh
 ./SYSTEM/full-build/release/examples/kopf_einsetzen \
-  artifacts/myelith-4b kopf.bin artifacts/myelith-4b-dresden
+  artifacts/pigeon-4b-int8 kopf.bin artifacts/pigeon-4b-int8-dresden
 
 ./SYSTEM/full-build/release/examples/fortsetzen \
-  artifacts/myelith-4b-dresden 6 \
+  artifacts/pigeon-4b-int8-dresden 6 \
   "Albert Einstein wurde geboren in der Stadt" \
   "Karl Marx wurde geboren in der Stadt"
 ```
@@ -631,7 +631,7 @@ cd conformance && ./run.sh <backend-name>
 
 # 4. Layer- und E2E-Vektoren allein (benötigt Artefakte)
 cd runtime && cargo run --bin golden_model --features <backend-feature> \
-    -- ../artifacts/myelith-0.6b --batch ../conformance/vectors
+    -- ../artifacts/sparrow-0.6b-int8 --batch ../conformance/vectors
 ```
 
 **Simulations-Limitation:** GPU-Ausführung (CUDA/ROCm) kann **nicht**
@@ -648,6 +648,335 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
   volle Paritätstests nur auf GPU-Runnern (nightly oder PR-basiert)
 
 ## Changelog
+
+### v0.145.0 (2026-10-22): Ein Shard aus den Dateien seines Bereichs (runtime 0.103.0)
+
+Stufe 4 des Dispatchers, Teilablage (P10); gefunden im Netzlauf.
+
+- 📌 **Fund 589:** Die Kette teilte einem Knoten mit Teilablage nur Ebenen in
+  seinem gehaltenen Bereich zu, aber der Lader verlangte jede Datei des
+  Gewichtsmanifests, und der Shard brach beim Laden ab.
+- `load_weights_bereich`, `load_model_bereich`,
+  `load_model_fuer_netz_bereich` mit `Ladebereich`: Ein Tensor außerhalb des
+  Bereichs, dessen Datei fehlt, bekommt einen Platzhalter
+  (`Gewichtsdaten::Fehlt`, Form wie im Manifest); wer ihn liest, bekommt
+  eine Panik mit Grund. Eine fehlende Datei im Bereich bleibt ein
+  Ladefehler. Ohne Bereich lädt alles wie bisher.
+- Beim Bau wird nichts mehr aus Daten gelesen, die ein Platzhalter nicht
+  hat: Die QK-Norm prüft ihre Länge an der Form, die Zustandsschicht leitet
+  die Faltungsskala nur aus vorliegenden Gewichten ab.
+- **Belege:** `tests/teilablage.rs` am Probemodell: Ein Teilordner mit den
+  Ebenen 0 bis 10 und einer mit 10 bis 28 samt Kopf laden und rechnen
+  bitgleich zum vollen Modell, ohne Bereich lädt derselbe Ordner nicht, eine
+  Lücke im Bereich fällt auf. ⚑ Am echten int4-35B einmalig nachgesehen:
+  Ebenen 8 bis 18 (23 348 von 93 388 Manifestdateien) laden und rechnen
+  bitgleich. `cargo test` rc=0.
+
+### v0.144.0 (2026-10-21): Die Ebenenzeit (runtime 0.102.0)
+
+Stufe 4 des Dispatchers, vorgezogen und geplant auf Bitte des Projektinhabers (2026-10-21): Ein Pod verteilt seine Ebenen nach Kapazität und gemessener Ebenenzeit seiner Mitglieder statt gleich. Hier das Paket P1.
+
+- **`runtime/src/ebenenzeit.rs`** (neu): Median eines Decode-Tokens durch
+  alle Ebenen ohne Kopf, über 16 Token nach 4 zum Anwärmen, je Ebene in
+  Mikrosekunden aufgerundet; dazu derselbe Lauf mit Kopf
+  (`forward_token`) und daraus der Kopf in Ebenenzeiten. Ganze Zahlen; im
+  Gleitkomma-Audit geführt.
+- 📌 **Gemessen auf diesem Mac** (`reference+cpu-simd+metal`): Sparrow 0.6B
+  323 µs je Ebene, Kopf wie 5 Ebenen; Raven 35B A3B int4 907 µs je Ebene,
+  Kopf wie 1 Ebene. Der Kopf des Raven belegt nach Bytes 4 Ebenen, kostet
+  aber nur eine; Platz und Zeit des Kopfs zählen deshalb getrennt.
+- **Belege:** `median_und_je_ebene_sind_ganzzahlig`,
+  `die_ebenenzeit_des_ankers`; `cargo test` und Clippy rc=0.
+
+### v0.143.0 (2026-10-21): Die Modelle heißen nach Tieren (runtime 0.101.1, kernels 0.88.1, pipeline 0.15.2)
+
+**Festlegung des Projektinhabers:** Jedes Projektmodell heißt nach einem
+Tier, passend zu seiner Fähigkeit, mit Größe und Speicherform als
+Anhängsel, auch bei int8; kein Name trägt mehr „Myelith“. Das 126B heißt
+Vulture (Wahl des Projektinhabers), die übrigen sind Vögel, nach Fähigkeit
+geordnet (das 27B ist stärker als das 35B):
+
+| bis zum 2026-10-21 | jetzt | Anzeige |
+|---|---|---|
+| `myelith-0.6b` | `sparrow-0.6b-int8` | Sparrow 0.6B - INT8 |
+| `myelith-4b` | `pigeon-4b-int8` | Pigeon 4B - INT8 |
+| `myelith-8b` | `jay-8b-int8` | Jay 8B - INT8 |
+| `myelith-30b-a3b` | `magpie-30b-a3b-int8` | Magpie 30B A3B - INT8 |
+| `myelith-35b-a3b`, `-int4` | `raven-35b-a3b-int8`, `-int4` | Raven 35B A3B - INT8 / INT4 |
+| `myelith-27b` | `crow-27b-int8` | Crow 27B - INT8 |
+| `myelith-125b-a6b` | `vulture-126b-a7b-int8` | Vulture 126B A7B - INT8 |
+
+Versuchsartefakte tragen ihr Anhängsel statt `-int8` (`crow-27b-ternaer`,
+`raven-35b-a3b-gemischt-50`).
+
+- ⚑ **Abdrücke, Register und Konformitätsvektoren bleiben gültig.** In
+  keiner gehashten Datei eines Artefakts steht der Name; `model_config.json`
+  trägt nur die Variante (`35b-a3b`). Das Bauskript leitet sie jetzt aus
+  dem Namen ohne Tier und ohne `-int8` ab (`variante`), und eine Probe
+  hält für jeden int8-Eintrag fest, dass dieselbe Variante herauskommt wie
+  vor der Umbenennung; ein Neubau bleibt also bitgleich. Die Netzliste
+  trägt dieselben Abdrücke unter den neuen Namen.
+- **Katalog:** Schlüssel umbenannt, `anzeigename` nach der neuen Regel,
+  dazu `frueher` mit dem alten Namen. Der Klient benennt damit beim Start
+  Verzeichnisse und Einstellungen um; die Messdateien unter
+  `BENCHMARKS/Inferenz/results/` behalten den alten Namen als Aufzeichnung,
+  und Übersicht und Modellkarte finden sie darüber. Ein alter Name in
+  `INTEGER_LLM_MODEL` gilt nicht still weiter, sondern endet mit „heisst
+  seit dem 2026-10-21 …“.
+- **Flash-Next:** `vulture-126b-a7b-int8` mit Variante `126b-a7b`, nach der
+  Regel des Bauskripts mit Einbettung und Kopf gezählt (125,74 und 7,31
+  Mrd.). Der frühere Eintrag `myelith-125b-a6b` zählte ohne beide; gebaut
+  war er nie. Der Kommentar, der ihn als „nach der Regel des Bauskripts“
+  auswies, war falsch und ist ersetzt.
+- ⚑ **Selbst gebaute Modelle** (Festlegung des Projektinhabers): Das
+  Bauskript fragt nach einem Namen und hängt Größe und Speicherform an
+  (`otter` wird `otter-126b-a7b-int4`); ohne Eingabe wählt es ein Tier per
+  Zufall (`SystemRandom`), das weder ein Projektmodell noch ein vorhandenes
+  Artefakt trägt. Wer einen ganzen Namen mit Speicherform gibt, behält ihn.
+  Die Erkundung meldet die Anhängsel (`anhaengsel`) und ein gezogenes Tier
+  als Vorschlag.
+- **Umbenannt:** die Verzeichnisse unter `artifacts/` und `scale_packs/`,
+  Schlüssel in `model_configs.py` und `REGISTER.json`, die Vorgaben der
+  Werkzeuge (`calibrate`, `bench`, `conformance/run.sh`,
+  `build_vierbit.sh`, `build_flashnext.sh`), Proben und Diagnosewerkzeuge;
+  in `runtime` die Vorgabe in `paths.rs` und die Proben, in `kernels` und
+  `pipeline` Kommentare und Proben. Die Probe der Netzliste verlangt jetzt
+  `raven-35b-a3b-`. Die Dateinamen der Pipeline-Konfigurationen
+  (`pipeline_4node_myelith-30b-a3b.json`) bleiben.
+- **Belege:** `test_gittervergleich.py` mit der neuen Probe
+  `test_namen_sind_tier_und_anhaengsel` (Variante je int8-Eintrag wie
+  vorher, jeder Katalogname nach dem Muster und ohne „myelith“, kein Tier
+  eines Projektmodells im Zufall, 33 verschiedene Tiere aus 40 Zügen);
+  Clippy, `cargo test` und Konformität siehe Mitschrieb.
+
+### v0.142.0 (2026-10-21): Eine Python-Umgebung für alle Bauarten, transformers 5.18.0
+
+**Entscheidung des Projektinhabers** nach den Gegenproben unten: Die zweite
+Umgebung, die es seit v0.136.0 nur für die Bauart mit vier Strömen gab
+(`.venv-flashnext`, transformers 5.18.0), wird die einzige. Auf der
+Mietmaschine wird damit eine Umgebung eingerichtet, nicht zwei.
+
+- **Gegenproben vor der Entscheidung**, alle mit transformers 5.18.0:
+  - **Das 0,6B aus dem Skalenpaket ist bitgleich:** 636 von 636 Dateien wie
+    das vorhandene Artefakt, das Manifest wie im Register, der Tokenizer
+    byte-gleich kopiert. Der Bau aus dem Klon rechnet die Aktivierungsstatistik
+    nicht neu; die Fassung wirkt also nur auf das Laden der Gewichte.
+  - **Das Laden ist Tensor für Tensor bitgleich** zu 5.15.0, an kleinen
+    Zufallsmodellen jeder Bauart: Qwen3-Gemisch mit einzeln abgelegten
+    Experten (25 von 25, die Form des 30B), Qwen3.5 dicht (56 von 56, die
+    Form des 27B), Qwen3.5-Gemisch mit einzeln und mit verschmolzen
+    abgelegten Experten (je 72 von 72; die verschmolzene Form mit den Achsen
+    des echten 35B, `[E, 2·moe, hidden]` und `[E, hidden, moe]`).
+  - huggingface-hub 2.2.0 (Erkundung, Download) und datasets 5.1.0 (WikiText
+    mit genau der geprüften Summe) arbeiten wie vorher; alle sieben
+    Python-Proben bestehen.
+- **Geändert:** `calibrate/requirements-fest.txt` trägt den Satz der zweiten
+  Umgebung (anders sind transformers, datasets, huggingface-hub, tokenizers
+  und die HTTP-Bibliothek des Hub; torch bleibt 2.13.0);
+  `requirements-flashnext.txt` entfällt; `requirements.txt` verlangt
+  transformers ab 5.18.0. Die Bauart mit vier Strömen nimmt `.venv`,
+  das Bauskript richtet keine zweite Umgebung mehr ein, die Meldung von
+  `main.py` nennt `.venv`.
+- 📌 **`python_einrichten.sh` erkennt eine veraltete Umgebung.** Bisher galt
+  eine Umgebung als fertig, sobald alles importierte; nach dem Heben der
+  festen Fassungen wäre die alte liegen geblieben, und der Bau wäre still mit
+  ihr gelaufen. Jetzt muss die Fassung von transformers der festen
+  entsprechen, sonst wird neu angelegt. Belegt am echten Wechsel: „veraltete
+  Umgebung … (transformers soll 5.18.0), sie wird neu angelegt“, danach
+  Python 3.12.13, torch 2.13.0, Rückgabe 0. `--flashnext` wird noch
+  angenommen und tut nichts mehr.
+- ⚠️ **Was sich ändern kann:** Gleitkomma-Vergleichsmessungen (BF16) rechnen
+  den Vorwärtspass von transformers, und der hat sich zwischen den Fassungen
+  geändert (unter anderem die Drehung unter Metal). Eine Referenz aus 5.15.0
+  gegen eine aus 5.18.0 ist deshalb kein Vergleich; beide Seiten mit
+  derselben Fassung messen. Eine volle Kalibrierung ohne Skalenpaket betrifft
+  das ebenso, also nur neue Artefakte.
+
+### v0.141.1 (2026-10-21): Fund 574 behoben; das Bauskript schlägt vier Bit nur mit ganzen Gruppen vor und behält bei jedem Gemisch den aktiven Anteil im Namen (Fund 574)
+
+Vor dem Bau von Flash-Next auf der Mietmaschine, damit dort kein bekannter
+Fehler der Kalibrierung mitläuft.
+
+- ⚑ **Fund 574 behoben** (`calibrate/src/gittervergleich.py`, `h_skala`):
+  Die Skalen von `h` werden auf den vier häufigsten Experten einer Ebene
+  gesucht. Die Zählung hat feste Länge 256; bekamen weniger als vier
+  Experten Token, rückten Experten mit null Token nach, bei einem Modell mit
+  acht Experten auch Experte 163, den es nicht gibt (`KeyError`). Jetzt
+  zählen nur Experten mit Token. Bei echten Modellen ist die Auswahl
+  dieselbe wie vorher, in derselben Reihenfolge, denn dieselbe Sortierung
+  läuft über dieselbe Zählung; die gebauten Artefakte bleiben also gültig.
+  Eine Ebene ganz ohne Token bricht mit klarem Grund ab.
+- **Vier Bit nur mit ganzen Gruppen** (`tools/modell_bauen.py`,
+  `vierbit_hindernis`): Die Speicherform `vierbit_g128` braucht je 128
+  Eingänge einen Betrag; gate und up lesen `hidden_size` Spalten, down
+  `moe_intermediate_size`. Am kleinen Modell (64 und 32) schlug das Skript
+  `-int4` vor, und der Bau brach erst nach dem Mitschnitt ab. Jetzt sagt
+  es vorher „Vier Bit geht hier nicht (hidden_size 64 ist kein Vielfaches
+  der Gruppe 128); es baut int8“, und die Erkundung für Konsole und Fenster
+  meldet `"vierbit": false`. `--format int4` nennt denselben Grund. Alle
+  echten Gemische gehen weiter: 30B-A3B (2048, 768), 35B-A3B (2048, 512),
+  Flash-Next (2560, 640).
+- 📌 **Und ein zweiter, älterer Fehler daneben:** `namensvorschlaege` bekam
+  nur einen Schalter, „Gemisch in vier Bit“. Ein Gemisch, das nicht in vier
+  Bit geht, verlor damit sein `-a<aktiv>b`; das kleine Modell hieß
+  `myelith-0.001b` statt `myelith-0.001b-a1b`. Gemisch und vier Bit sind
+  jetzt zwei Angaben.
+- **Belege:** `test_gittervergleich.py` mit zwei neuen Proben, 11 von 11:
+  `h_skala` mit acht Experten, von denen zwei Token bekommen, findet die
+  eingebauten Shifts (−11, −2) wieder (die alte Auswahl wäre `[2, 5, 0, 163]`
+  gewesen); das Bauskript schlägt vier Bit nur mit ganzen Gruppen vor, seine
+  Gruppe ist die des Gitterbaus, die Namen der drei Fälle stimmen.
+  Erkundung echt gefahren: das kleine Flash-Next-Modell nur noch
+  `myelith-0.001b-a1b` (int8), `Qwen/Qwen3-30B-A3B` weiter
+  `myelith-30b-a3b-int4` und `myelith-30b-a3b`. `test_bauarten.py`,
+  `test_modell_link.py`, `test_modellkonfig_vollstaendig.py` grün.
+
+### v0.141.0 (2026-10-21): Im Netz rechnet nur das 35B, die Proben im Prüfnetz; Fund 571 an den bestehenden Modellen gemessen, kein Neubau (runtime 0.101.0; Fund 571)
+
+**Festlegungen des Projektinhabers:** Netzmodell ist allein das 35B, als
+untere Grenze der Leistungsfähigkeit. Fund 571 wird am 0,6B gemessen und nur
+bei Bedarf weiter verfolgt.
+
+- ⚑ **Die Netzliste ist bestätigt und verkleinert:** Im Block `netz` stehen
+  nur noch `myelith-35b-a3b` und `myelith-35b-a3b-int4`, beide als vom
+  Projektinhaber bestätigt. Dasselbe Modell in zwei Speicherformen; das int4
+  liegt 0,06 % über dem int8 (Katalog, gemessen am 2026-10-16). 0,6B, 4B, 8B und 30B-A3B sind
+  entzogen und rechnen nur lokal.
+- **Neu, das Prüfnetz:** Die Netzproben von Pod, Testklient und Klient
+  rechnen am 0,6B, denn das 35B passt in keinen Probenlauf. Dafür trägt der
+  Katalog am 0,6B einen Block `pruefnetz` (gleiche Form wie `netz`), und die
+  Laufzeit liest ihn **nur mit dem neuen Merkmal `pruefnetz`**. Das setzen
+  allein die drei Kisten als Entwicklungsabhängigkeit; `cargo test` baut
+  ihre Programme damit, `cargo build --release` und jede Installation nicht.
+  `netzliste_aus` nimmt dafür einen zweiten Wert, `Netzfreigabe` das Feld
+  `pruefnetz`; ein kaputter oder privater Block `pruefnetz` ist auch ohne
+  das Merkmal ein Fehler. `tools/netzfreigabe.py` kennt `--pruefnetz` bei
+  `freigeben` und `entziehen`, `liste` und `pruefen` beide Blöcke; die
+  Modellliste zeigt sie mit Spalte „Block“.
+- **Belege der Netzliste:** `cargo test --lib netzfreigabe` mit und ohne das
+  Merkmal 7 von 7 (neu: das Prüfnetz gilt nur, wenn danach gefragt ist; das
+  echte 0,6B steht im Prüfnetz und nicht im Netz; ohne Prüfnetz nur das
+  35B). `tests/test_netzfreigabe.py` 5 von 5 (neu: im Netz nur das 35B).
+  `netzfreigabe.py pruefen`: 3 Freigaben passen zu ihrem Artefakt. Am
+  Release-Bau von `myl-shard`: 0,6B und 4B abgelehnt („steht nicht auf der
+  Netzliste“), das 35B int4 startet; der Testbau startet mit dem 0,6B.
+- ⛔️ **Fund 571 an den bestehenden Artefakten gemessen: kein messbarer
+  Nutzen, kein Neubau.** Das Merkmal `ausgang_auf_v` wählt nur, welche der
+  schon vorhandenen Skalen der Lader für den Eingang von `o_proj` nimmt;
+  gemessen wurde deshalb an Kopien, die sich allein darin unterscheiden
+  (`model_config.json` mit dem Merkmal, alles andere verlinkt), mit
+  `BENCHMARKS/Inferenz/artefaktvergleich.py` und gepaart je Position aus
+  `perplexity_probe --per-token`, Standardfehler über die Folgen:
+
+  | Modell | Folgen | ohne Merkmal | mit Merkmal | gepaart | Standardfehler |
+  |---|---|---|---|---|---|
+  | 0,6B | 32 × 128 | 43,4904 | 43,6020 | | |
+  | 0,6B | 128 × 128 | 43,6198 | 43,5663 | −0,12 % | 0,15 % |
+  | 35B int4 | 48 × 256 | 10,3467 | 10,3086 | −0,37 % | 0,36 % |
+
+  Beide Abstände liegen bei etwa einem Standardfehler (35B: 29 von 48 Folgen
+  besser); auch nach Positionen aufgeschlüsselt kein Muster, an Position 0
+  beim 35B 5,904 gegen 5,888 (mittlere NLL). Die Werte ohne Merkmal sind die
+  des Katalogs (0,6B 43,49 über dieselben 32 Folgen, 35B int4 10,3467), die
+  Messung ist also reproduziert. ⚑ **Der Grenzwert aus den Skalen (v bis zum
+  5,8-Fachen über der Skala hinter `o_proj`) wird an echten Daten nicht
+  erreicht**; die 26 % des Zufallsmodells sind eine Eigenschaft seiner
+  Zufallsgewichte. Damit bleiben Abdrücke und Konformitätsvektoren, wie sie
+  sind. Neue Artefakte der dichten Hybridform tragen das Merkmal weiter,
+  denn es ist durch Bauart beschränkt und kostet nichts.
+- **Namen:** `myelith-27b` und `myelith-125b-a6b` sind keine freien
+  Vorschläge, sondern die Regel des Bauskripts (`namensvorschlaege`: die
+  Gesamtzahl gerundet, bei einem Gemisch dazu die aktiven). Die Kommentare in
+  `model_configs.py` sagen das jetzt.
+
+### v0.140.0 (2026-10-21): Die Netzliste mit Abdruck, jeder Anbieter lokal, die Bauart von Qwen3.8-27B, Fund 571 für neue Artefakte (runtime 0.100.0; Funde 571, 584, 585)
+
+**Festlegung des Projektinhabers:** Gewichte und Dateien jedes Anbieters
+dürfen lokal genutzt werden. Im Netz rechnet nur ein Modell, das auf einer
+Netzliste freigegeben ist, und nur, wenn sein Abdruck übereinstimmt.
+
+- ⛔️ **Fund 585: Der Netzbetrieb verliess sich auf eine Angabe, die kein
+  Hash deckte.** `load_model_fuer_netz` prüfte nur `betrieb` in
+  `model_config.json`, und `theta_v.json` bindet Gewichtsmanifest, Skalen
+  und Tabellen, nicht die Konfiguration. Ein von Hand zu `netz` geändertes
+  `lokal` brachte ein privates Modell unbemerkt in den Netzbetrieb.
+- **Neu, `runtime::netzfreigabe`:** Der **Abdruck** eines Artefakts ist
+  SHA-256 über `theta_v.json`, `model_config.json` und `tokenizer.json` in
+  fester Form; über `theta_v.json` und das Manifest deckt er das ganze
+  Artefakt und kostet Millisekunden. Die **Netzliste** ist der Block `netz`
+  an einem Eintrag von `MODELS/llm/KATALOG.json`, beim Bauen eingebunden.
+  `load_model_fuer_netz` lädt nur, was mit seinem Abdruck darauf steht;
+  `betrieb = lokal` wird zusätzlich abgelehnt. `load_model_fuer_netz_mit`
+  nimmt eine eigene Liste.
+- **Neu, `tools/netzfreigabe.py`** (`abdruck`, `liste`, `pruefen`,
+  `freigeben <name> --grund "..."`, `entziehen`): Freigeben verlangt einen
+  Katalogeintrag, eine feste Revision und eine Begründung und verweigert ein
+  privates Modell. **Erstbestand**: die sechs gebauten Netzmodelle des
+  Katalogs (0,6B, 4B, 8B, 30B-A3B, 35B-A3B int8 und int4), ausgewiesen als
+  Erstbestand, den der Projektinhaber noch bestätigt. Die erzeugte
+  Modellliste (`MODELS/llm/README.md`) zeigt die Netzliste.
+- **Jeder Anbieter, lokal:** Das Bauskript nahm schon jede Organisation an;
+  jetzt belegt (`tests/test_modell_link.py`: Links zu `unsloth/…` und
+  `mistralai/…` gelesen, eine Kopie eines Projektmodells bei einem anderen
+  Anbieter ist kein Projektmodell). Was gebaut wird, ist privat, bis es
+  freigegeben ist. ⚠️ Bauen lässt sich weiter nur eine bekannte Bauart; ein
+  Modell anderer Architektur (etwa Llama oder Mistral) braucht erst eine.
+- **Die Bauart von Qwen3.8-27B ist freigegeben** (`calibrate/src/bauarten.py`,
+  `erzeuge_qwen3_5`; Eintrag `myelith-27b` in `model_configs.py`, Name ein
+  Vorschlag). Dieselbe Form wie das ternäre 27B, Feld für Feld gegen die
+  `config.json` der Revision `1d4bf0f2` gehalten; `output_gate_type` der
+  Quelle (`swish`) meint die Norm der linearen Aufmerksamkeit und steht im
+  Feldabgleich als absichtlich anders. Das Bauskript zählt über den Link
+  26,90 Mrd. Parameter und erkennt das Projektmodell.
+- ⛔️ **Fund 571, für neue Artefakte behoben:** Neue Probe
+  `tests/test_qwen3_5_mini.py` (Zufallsmodell der Form als
+  `Qwen3_5ForConditionalGeneration`, über den Korpusweg gebaut, gegen die
+  Vorlage gerechnet) fand an Position 0 26 % Abstand bei sonst 1 bis 2 %.
+  Eingegrenzt Ebene für Ebene: die drei linearen Ebenen 0,4 bis 1,5 %, der
+  Sprung in der vollen Aufmerksamkeit; mit den Gewichten des Artefakts in
+  der Vorlage derselbe Abstand, also die Rechnung. Ursache: Der Ausgang der
+  Aufmerksamkeit (Eingang von `o_proj`) rechnete auf der Skala hinter
+  `o_proj` (im Mini 0,066 gegen `v` bis 0,77) und wurde beschnitten. Neues
+  Merkmal **`ausgang_auf_v`**: Der Export schreibt es in neue Artefakte der
+  dichten Hybridform, der Lader nimmt dann die Skala von `v` wie bei vier
+  Strömen. Danach: Korrelation 0,9998, nächstes Token an 95,8 % der
+  Positionen gleich. Gegenprobe ohne die Bedingung im Lader: wieder 85,4 %.
+  ⚠️ **Bestehende Artefakte tragen das Merkmal nicht und rechnen wie
+  gemessen**; in ihren Skalen kann `v` die Grenze in vielen Ebenen
+  übersteigen (0,6B 14 von 28, 35B 7 von 10, bis zum 5,8-Fachen). Ob sie
+  neu gebaut werden, ist zu entscheiden: Ihre Abdrücke und die
+  Konformitätsvektoren hingen daran.
+- **Fund 584:** Ohne Gewichtsdateien zählte die Erkundung 0,00 Mrd. und
+  schlug `myelith-0.000000b-a1b-int4` vor. Jetzt sagt sie, dass sie ohne
+  Gewichte nicht zählt, schlägt keinen Namen vor (`ohne_gewichte` in der
+  Zeile `ERKUNDUNG`), und ein Bau ohne Gewichte bricht ab.
+- **Belege:** `cargo test --lib netzfreigabe` (6, darunter: das echte 0,6B
+  steht mit dem Abdruck auf der Liste, den das Werkzeug eingetragen hat;
+  eine geänderte Konfiguration steht nicht mehr darauf);
+  `tests/test_netzfreigabe.py` (derselbe Abdruck wie die Laufzeit an
+  derselben Vorlage); `netzfreigabe.py pruefen` 6 von 6; `freigeben`
+  verweigert Flash-Next und eine Freigabe ohne Grund; `test_bauarten.py`
+  7 von 7; `test_qwen3_5_mini.py` bestanden; Gleitkommaprüfung mit
+  `netzfreigabe.rs` in der Liste.
+
+### v0.139.1 (2026-10-21): Die Mess- und Diagnoseskripte finden ihre Hilfsdateien wieder (Fund 582; keine Kiste berührt)
+
+- ⛔️ **Fund 582: Fünfundzwanzig Skripte unter `tests/diag/`, dazu
+  `bench/qualitativ.py` und `tests/integration/test_end2end_real.py`, hängten
+  `INTEGER_LLM/eval` in den Suchpfad**, einen Ordner, den es seit dem Umzug
+  der Messhilfen nach `BENCHMARKS/Inferenz` nicht mehr gibt. Sie scheiterten
+  beim ersten Import von `wikitext_common`. Drei davon
+  (`layer_bulk_error.py`, `scheme_layer_error.py`, `score_raster_probe.py`)
+  nannten die Wurzel ausserdem mit dem absoluten Pfad des
+  Entwicklungsrechners.
+- **Jetzt:** `REPO.parent / "BENCHMARKS" / "Inferenz"`, die Wurzel aus
+  `Path(__file__)`. Dieselbe Änderung an drei Skripten in TRAINING (v0.4.4).
+- `layer_bulk_error.py` und `scheme_layer_error.py` lesen ihre Token-Liste aus
+  `BULK_TOKENS`, sonst aus dem Temp-Ordner des Systems; bisher fest
+  `/tmp/tok32.txt`, das es unter Windows nicht gibt.
+- **Beleg:** Für jedes der Skripte ist jeder Import in einem seiner
+  Suchpfade oder in der Kalibrierungsumgebung auffindbar (geprüft mit
+  `ast`); gelaufen ist keines, sie brauchen Gewichte.
 
 ### v0.139.0 (2026-10-19): Das Bauskript liest Links auf Hugging Face und fragt das Format
 

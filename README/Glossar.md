@@ -846,7 +846,7 @@ Skalen sättigen im Betrieb.
 
 *Im Code:* `kernels/src/moe.rs`, `runtime/src/model.rs::moe_vorwaerts`,
 Sonde `runtime/src/bin/router_probe.rs`
-*Gemessen in:* `BENCHMARKS/Inferenz/results/`, Modell `myelith-30b-a3b`
+*Gemessen in:* `BENCHMARKS/Inferenz/results/`, Modell `magpie-30b-a3b-int8`
 
 ### KV-Cache
 

@@ -103,7 +103,7 @@ pub fn default_artifact_dir() -> std::path::PathBuf {
 }
 
 /// Modellname des Standard-Artefakts.
-pub const DEFAULT_MODEL: &str = "myelith-0.6b";
+pub const DEFAULT_MODEL: &str = "sparrow-0.6b-int8";
 
 /// Repository-Wurzel, **zur Laufzeit** gesucht.
 ///
@@ -992,7 +992,7 @@ mod tests {
     #[test]
     fn modellstand_steht_im_protokoll() {
         let dir = tempdir("modellstand");
-        let artefakte = dir.join("myelith-0.6b");
+        let artefakte = dir.join("sparrow-0.6b-int8");
         std::fs::create_dir_all(&artefakte).unwrap();
         std::fs::write(
             artefakte.join("theta_v.json"),
@@ -1011,7 +1011,7 @@ mod tests {
         let jsonl = std::fs::read_to_string(lauf_dir.join(format!("{}.jsonl", dateiname))).unwrap();
         assert!(jsonl.contains(r#""key":"theta_v","value":"0.17.0""#), "{jsonl}");
         assert!(jsonl.contains(r#""key":"weights_hash","value":"aa""#));
-        assert!(jsonl.contains(r#""key":"modell","value":"myelith-0.6b""#));
+        assert!(jsonl.contains(r#""key":"modell","value":"sparrow-0.6b-int8""#));
         assert!(jsonl.contains(r#""key":"artefakt_digest""#));
         let _ = std::fs::remove_dir_all(&dir);
     }

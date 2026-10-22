@@ -52,9 +52,9 @@ ARTEFAKTE = ROOT / "INTEGER_LLM" / "artifacts"
 
 # Der Name in der Rust-Tabelle zu dem Verzeichnis unter artifacts/.
 ZUORDNUNG = {
-    "Qwen3-0,6B": "myelith-0.6b",
-    "Qwen3-4B": "myelith-4b",
-    "Qwen3-30B-A3B": "myelith-30b-a3b",
+    "Qwen3-0,6B": "sparrow-0.6b-int8",
+    "Qwen3-4B": "pigeon-4b-int8",
+    "Qwen3-30B-A3B": "magpie-30b-a3b-int8",
 }
 
 # Pipeline-Manifeste, die im Repositorium liegen, zu dem Modell, das sie

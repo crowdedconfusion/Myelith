@@ -562,7 +562,7 @@ mod tests {
     /// erzeugt wurden, darf gegen sie laufen.
     #[test]
     fn passendes_modell_laeuft() {
-        let e = entscheide_layer_e2e(Some("myelith-0.6b"), Some(&manifest("myelith-0.6b")));
+        let e = entscheide_layer_e2e(Some("sparrow-0.6b-int8"), Some(&manifest("sparrow-0.6b-int8")));
         assert!(e.layer_e2e);
         assert!(e.begruendung.is_empty());
     }
@@ -571,17 +571,17 @@ mod tests {
     /// Überspringen — mit Begründung, nicht still.
     #[test]
     fn abweichendes_modell_wird_uebersprungen() {
-        let e = entscheide_layer_e2e(Some("myelith-4b"), Some(&manifest("myelith-0.6b")));
+        let e = entscheide_layer_e2e(Some("pigeon-4b-int8"), Some(&manifest("sparrow-0.6b-int8")));
         assert!(!e.layer_e2e);
-        assert!(e.begruendung.contains("myelith-4b"));
-        assert!(e.begruendung.contains("myelith-0.6b"));
+        assert!(e.begruendung.contains("pigeon-4b-int8"));
+        assert!(e.begruendung.contains("sparrow-0.6b-int8"));
     }
 
     /// Ohne Artefakt laufen nur die Operations-Vektoren: der Normalfall
     /// auf einer frischen Maschine.
     #[test]
     fn ohne_artefakt_nur_op() {
-        let e = entscheide_layer_e2e(None, Some(&manifest("myelith-0.6b")));
+        let e = entscheide_layer_e2e(None, Some(&manifest("sparrow-0.6b-int8")));
         assert!(!e.layer_e2e);
         assert!(e.begruendung.contains("kein Artefakt"));
     }
@@ -590,7 +590,7 @@ mod tests {
     /// Dann lieber ehrlich überspringen als blind laden.
     #[test]
     fn ohne_manifest_wird_uebersprungen() {
-        let e = entscheide_layer_e2e(Some("myelith-0.6b"), None);
+        let e = entscheide_layer_e2e(Some("sparrow-0.6b-int8"), None);
         assert!(!e.layer_e2e);
         assert!(e.begruendung.contains("kein Manifest"));
     }
@@ -643,11 +643,11 @@ mod tests {
 
         std::fs::write(
             dir.join("manifest.json"),
-            "{\n  \"modell\": \"myelith-0.6b\",\n  \"theta_v_hash\": \"sha256:ab\",\n  \"extra\": 1\n}\n",
+            "{\n  \"modell\": \"sparrow-0.6b-int8\",\n  \"theta_v_hash\": \"sha256:ab\",\n  \"extra\": 1\n}\n",
         )
         .unwrap();
         let m = manifest_lesen(&dir).expect("Manifest lesbar");
-        assert_eq!(m.modell, "myelith-0.6b");
+        assert_eq!(m.modell, "sparrow-0.6b-int8");
         assert_eq!(m.theta_v_hash, "sha256:ab");
 
         // Ohne Datei: ehrlich None, kein geratenes Modell.
@@ -667,7 +667,7 @@ mod tests {
             return;
         }
         let m = manifest_lesen(&vektoren).expect("Manifest muss vorhanden sein");
-        assert_eq!(m.modell, "myelith-0.6b");
+        assert_eq!(m.modell, "sparrow-0.6b-int8");
         assert!(m.theta_v_hash.starts_with("sha256:"));
     }
 

@@ -90,7 +90,7 @@ done
 #
 # ⛔️ **Ein Kopieren waere ein Fehler, der wie Erfolg aussieht.** In der
 #    Datei stehen absolute Pfade dieses Rechners
-#    (`/Users/.../artifacts/myelith-35b-a3b`). Auf GolemOS gibt es die
+#    (`/Users/.../artifacts/raven-35b-a3b-int8`). Auf GolemOS gibt es die
 #    nicht. Das System startet, sieht richtig aus und findet kein
 #    Modell, und die Meldung nennt nicht den Grund. 📌 Dieselbe
 #    Fehlerklasse wie der Vorrat mit absolutem Pfad (Fund 446).

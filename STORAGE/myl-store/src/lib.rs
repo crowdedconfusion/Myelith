@@ -53,6 +53,7 @@ pub mod entgelt;
 pub mod kappa;
 pub mod nachweis;
 pub mod orte;
+pub mod teilablage;
 
 // ⚑ **Das Format zog am 2026-08-31 nach `myl-types`**, weil das
 // Manifest in den Konsenszustand wandert und der Ledger es lesen können

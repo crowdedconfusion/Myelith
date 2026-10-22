@@ -40,7 +40,7 @@ import torch
 
 REPO = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO / "calibrate"))
-sys.path.insert(0, str(REPO / "eval"))
+sys.path.insert(0, str(REPO.parent / "BENCHMARKS" / "Inferenz"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from src.loader import load_reference_model  # noqa: E402
 from wikitext_common import MODEL_DIR  # noqa: E402

@@ -540,7 +540,7 @@ mod tests {
     /// Artefakt gar keines.
     #[test]
     fn modellkennung_aus_dem_ordner() {
-        assert_eq!(modellkennung("ARTEFAKTE/myelith-0.6b").as_deref(), Some("myelith-0.6b"));
+        assert_eq!(modellkennung("ARTEFAKTE/sparrow-0.6b-int8").as_deref(), Some("sparrow-0.6b-int8"));
         assert_eq!(modellkennung(""), None);
     }
 

@@ -37,7 +37,7 @@ Gleitkomma erlaubt — Referenzmessung, nicht Inferenzpfad. Kein Teil des
 Auslieferungspfads.
 
 Usage:
-    INTEGER_LLM_MODEL=myelith-30b-a3b ./calibrate/.venv/bin/python \\
+    INTEGER_LLM_MODEL=magpie-30b-a3b-int8 ./calibrate/.venv/bin/python \\
         tests/diag/w8a16_reference_simulation.py
 """
 import json
@@ -48,7 +48,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO / "calibrate"))
-# 📌 **Hier stand `REPO / "eval"`**, und das Verzeichnis gibt es nicht
+# 📌 **Hier stand `REPO.parent / "BENCHMARKS" / "Inferenz"`**, und das Verzeichnis gibt es nicht
 # mehr: Die Messreihe liegt seit dem 2026-09-11 unter
 # `BENCHMARKS/Inferenz`. Der Lauf brach dadurch schon am Import ab, und
 # weil dieses Skript nur bei einer Grundsatzfrage gerufen wird, fiel es

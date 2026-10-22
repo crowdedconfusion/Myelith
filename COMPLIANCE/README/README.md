@@ -1,7 +1,7 @@
 # compliance
 
-> **Version:** 0.5.1
-> **Datum:** 2026-10-19
+> **Version:** 0.6.0
+> **Datum:** 2026-10-21
 > **Status:** Die Pflichten aus der KI-Verordnung sind dokumentiert und,
 > soweit technisch, umgesetzt; die Einordnung Artikel für Artikel steht in
 > der [Selbsteinschätzung](../de/Selbsteinschaetzung.md). Offen: ein
@@ -39,6 +39,16 @@ Schutzfilter (`CLIENT/myl-client/src/schutzfilter.rs`), Notaus
 
 ## Changelog
 
+### v0.6.0 – 2026-10-21 (die Modelle heißen nach Tieren)
+
+Die Projektmodelle heißen seit heute nach Tieren, mit Größe und Speicherform als Anhängsel (Festlegung des Projektinhabers): `myelith-0.6b` ist `sparrow-0.6b-int8`, `myelith-4b` `pigeon-4b-int8`, `myelith-30b-a3b` `magpie-30b-a3b-int8`, `myelith-35b-a3b` `raven-35b-a3b-int8`. In den Dateien eines Artefakts steht kein Name, also bleiben Abdrücke und Register gültig.
+
+- Modellkarte und Lizenzliste neu erzeugt, mit den neuen Namen.
+- `ethics/werkzeuge/modellkarte.py` findet eine Messung von vor dem
+  2026-10-21 unter dem früheren Namen (`frueher` im Katalog); die
+  Messdateien behalten ihn als Aufzeichnung.
+- GPAI-Dokumentation und Trainingsdaten (de, en) nennen die neuen Namen.
+
 ### v0.5.1 – 2026-10-19 (die Lizenzprobe kennt private Modelle; Fund 575)
 
 - ⛔️ **Fund 575: Die CI zu `81a3fb0` war rot** im Schritt „COMPLIANCE/ethics:
@@ -60,7 +70,11 @@ Schutzfilter (`CLIENT/myl-client/src/schutzfilter.rs`), Notaus
   auf einem Baum nur aus versionierten Dateien grün; Gegenprobe: ohne
   `betrieb: lokal` fällt Flash-Next wie vorher durch.
 
- (Modellkarte mit einer Rubrik für private lokale Modelle)
+### v0.5.0 – 2026-10-19 (Modellkarte mit einer Rubrik für private lokale Modelle)
+
+> 📌 *Die Überschrift dieses Eintrags fehlte bis zur Übergabe vom
+> 2026-10-21; beim Einfügen von v0.5.1 blieb nur ihr Klammerteil stehen
+> (Fund 576).*
 
 - **Die erzeugte Modellkarte** (`ethics/Modellkarte.md`) hat den Abschnitt
   „Private lokale Modelle (nicht für den Netzbetrieb zugelassen)“: Er führt

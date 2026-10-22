@@ -12,7 +12,7 @@
 //!
 //! # Zwei Pruefungen, eine davon ohne den Behaelter
 //!
-//! Liegt der int8-Behaelter `myelith-35b-a3b-int4ganz` noch da, vergleicht
+//! Liegt der int8-Behaelter `raven-35b-a3b-int4ganz` noch da, vergleicht
 //! der Test die Logits beider Artefakte Schritt fuer Schritt. Der Behaelter
 //! ist so gross wie das int8 und wird nach der Abnahme geloescht; deshalb
 //! prueft der Test ausserdem einen **Abdruck** der Logits des gepackten
@@ -72,9 +72,9 @@ fn abdruck(alle: &[Vec<i32>]) -> String {
 }
 
 #[test]
-#[ignore = "braucht myelith-35b-a3b-int4 (und fuer den Vergleich myelith-35b-a3b-int4ganz); cargo test --release --features cpu-simd --test vierbit -- --ignored"]
+#[ignore = "braucht raven-35b-a3b-int4 (und fuer den Vergleich raven-35b-a3b-int4ganz); cargo test --release --features cpu-simd --test vierbit -- --ignored"]
 fn gepackt_rechnet_dieselben_logits() {
-    let ziel = artefakt("myelith-35b-a3b-int4");
+    let ziel = artefakt("raven-35b-a3b-int4");
     assert!(ziel.exists(), "Artefakt fehlt: {ziel:?}");
     let gepackt = load_model(&ziel).expect("gepackt laedt");
     let alle_vierbit = gepackt.layers.iter().all(|e| match &e.ffn {
@@ -85,7 +85,7 @@ fn gepackt_rechnet_dieselben_logits() {
     let lb = logits(&gepackt);
     drop(gepackt);
 
-    let quelle = artefakt("myelith-35b-a3b-int4ganz");
+    let quelle = artefakt("raven-35b-a3b-int4ganz");
     if quelle.exists() {
         let la = logits(&load_model(&quelle).expect("Behaelter laedt"));
         for (schritt, (a, b)) in la.iter().zip(&lb).enumerate() {

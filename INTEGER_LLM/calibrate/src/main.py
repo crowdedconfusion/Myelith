@@ -10,9 +10,9 @@ wird ausschliesslich aus dem lokalen Snapshot unter MODELS/llm geladen
 HF-Cache.
 
 **Modellwahl** ueber die Umgebungsvariable INTEGER_LLM_MODEL, Vorgabe
-myelith-0.6b:
+sparrow-0.6b-int8:
 
-    INTEGER_LLM_MODEL=myelith-30b-a3b python -m calibrate.src.main
+    INTEGER_LLM_MODEL=magpie-30b-a3b-int8 python -m calibrate.src.main
 
 Waehlbar sind nur Varianten, deren Felder gegen die echte HF-config.json
 geprueft sind (model_configs.py, Feld "verified"). Jede Variante bekommt ihr
@@ -64,7 +64,7 @@ from .scale_pack import paket_pfad, lade as skalenpaket_laden, SCALE_PACK_ENV
 from .paths import model_artifacts_dir, local_model_dir
 
 MODEL_ENV = "INTEGER_LLM_MODEL"
-DEFAULT_MODEL = "myelith-0.6b"
+DEFAULT_MODEL = "sparrow-0.6b-int8"
 
 MODEL_NAME = os.environ.get(MODEL_ENV, "").strip() or DEFAULT_MODEL
 # Die HF-ID steht in der verifizierten Config, nicht hier: sie gehoert zur
@@ -359,11 +359,11 @@ def main():
     config_vorab = get_export_model_config(MODEL_NAME)
     # ⛔️ **Die Bauart mit vier Stroemen baut nur ebenenweise** (2026-10-19):
     #   Ein Korpusdurchlauf ueber 360 GB laese jede Gewichtsdatei einmal je
-    #   Sequenz, und `qwen4_exp` gibt es erst in transformers 5.18.
+    #   Sequenz.
     if config_vorab.get("family") == "qwen4-exp":
         raise SystemExit(
             f"[calibrate] {MODEL_NAME} ist von der Bauart mit vier Stroemen und baut "
-            "ebenenweise: INTEGER_LLM_MODEL=... calibrate/.venv-flashnext/bin/python3 "
+            "ebenenweise: INTEGER_LLM_MODEL=... calibrate/.venv/bin/python3 "
             "-m calibrate.src.ebenenweise (siehe scripts/build_flashnext.sh)")
     use_gptq, gptq_grund = gptq_entscheidung(config_vorab)
     print(f"[calibrate] Modell: {MODEL_NAME} ({HF_MODEL_ID}), "

@@ -1,0 +1,31 @@
+{
+  "_zweck": "Fremde Werkzeuge fuer einen Bau ohne Netz. Geholt von werkzeugvorrat.py nach SYSTEM/werkzeug-vorrat/, das git ignoriert; die Dateien gehoeren in eine Sicherheitskopie, nie ins Repositorium.",
+  "rust": {
+    "fassung": "1.99.1",
+    "quelle": "https://static.rust-lang.org/dist/rust-{fassung}-{ziel}.{endung}",
+    "ziele": {
+      "aarch64-apple-darwin": "tar.xz",
+      "x86_64-pc-windows-msvc": "msi"
+    },
+    "_hinweis": "Unter NixOS kommt Rust aus der Nix-Umgebung (Teil nix). Linux ohne Nix ist vorerst nicht vorgesehen (Festlegung des Projektinhabers, 2026-10-21); ein Ziel wie x86_64-unknown-linux-gnu liesse sich hier ergaenzen."
+  },
+  "python": {
+    "fassung": "3.12.10",
+    "dateien": {
+      "windows": "https://www.python.org/ftp/python/3.12.10/python-3.12.10-amd64.exe",
+      "macos": "https://www.python.org/ftp/python/3.12.10/python-3.12.10-macos11.pkg"
+    }
+  },
+  "windows": {
+    "webview2": "https://go.microsoft.com/fwlink/?linkid=2124701",
+    "vs_buildtools": "https://aka.ms/vs/17/release/vs_buildtools.exe"
+  },
+  "nix": {
+    "abbild": "nixos/nix",
+    "systeme": {
+      "aarch64-linux": "linux/arm64",
+      "x86_64-linux": "linux/amd64"
+    },
+    "_was": "Die Eingaben aus flake.lock (nix flake archive) und die Closure der Bauumgebung (devShells.<system>.default.inputDerivation) samt bashInteractive, als Binaercache je System."
+  }
+}

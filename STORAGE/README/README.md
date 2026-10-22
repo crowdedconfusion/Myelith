@@ -1,7 +1,7 @@
 # STORAGE — die Rolle Store und die Verfügbarkeitsschicht
 
-> **Version:** 0.6.1
-> **Datum:** 2026-10-17
+> **Version:** 0.7.0
+> **Datum:** 2026-10-22
 > **Status:** Gegenstandsformat, **Verfügbarkeitsnachweis** und
 > **Speicherentgelt** stehen (`myl-store` v0.6.0, 29 Tests; Format und Stichproben-Ableitung liegen in `myl-types`). Sechs der
 > sieben Entwurfsfragen sind entschieden, eine ausdrücklich nicht: Ob ein
@@ -125,6 +125,21 @@ Mindestreplikation, die Bewertung einer Quittung und der Abruf.
 Changelog, und die Prüfung, die Kopfversion und Changelog vergleicht,
 übersprang es still (Fund 354). Die Einträge sind aus den
 Versionssprüngen der Kiste und dem Planungsverlauf zusammengestellt.
+
+### v0.7.0 (2026-10-22): Teilablage eines Artefakts und die Netzlast
+
+Stufe 4 des Dispatchers (P10, P11, P8).
+
+- `teilablage` (neu): `manifestdateien`, `dateien_des_bereichs` (die Ebenen
+  samt Nebendateien, die Einbettung am ersten, Kopf und Norm am letzten
+  Bereich), `passt` und `name_ist_flach`. Ein Knoten, der nur die Dateien
+  seines Bereichs hält, jede gegen das Manifest geprüft, hat denselben
+  Abdruck.
+- `Netzlast` und `NETZLAST_DATEI`: das Format, das der Knoten schreibt und
+  der Klient liest, an einer Stelle.
+- `serde_json` als Abhängigkeit.
+- **Belege:** Proben zu Bereich und Dateien, Summe und Name, Netzlast hin
+  und zurück; `cargo test` rc=0.
 
 ### v0.6.1 (2026-10-17): Die Proben der Speicherorte laufen unter Windows
 

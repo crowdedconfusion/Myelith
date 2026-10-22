@@ -59,6 +59,10 @@ fn konfig(verzeichnis: &std::path::Path, name: &str, bootstrap: Vec<String>) -> 
         konsensschluesseldatei: None,
         nat: Default::default(),
         speicherorte: None,
+        netz: &myl_node::netz::PROBEKETTE,
+        modellzusage: None,
+        zone: myl_types::node_metadata::GeoRegion::Europe,
+        shard: None,
         aufnahme_sekunden: 1,
         // Kein Endpunkt: Ein fester Port kollidierte, sobald zwei
         // Testknoten nebeneinander laufen, und dieser Test prueft
@@ -70,7 +74,7 @@ fn konfig(verzeichnis: &std::path::Path, name: &str, bootstrap: Vec<String>) -> 
         ortsleitung: None,
         ortsausweis: None,
         pod: None,
-        modellname: "myelith-myelith-0.6b".to_string(),
+        modellname: "sparrow-0.6b-int8".to_string(),
         kontoschluesseldatei: None,
         konto: None,
         // Kein Testverkehr: Die Tests hier schicken gezielt, damit

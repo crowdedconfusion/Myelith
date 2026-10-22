@@ -83,29 +83,10 @@ pub const DST_AUSFALLMELDUNG: &[u8] = b"MYELITH_AUSFALLMELDUNG_v1";
 /// braucht, sammelt und legt zusammen, statt zu bezeugen.
 pub const FRIST_MS: u64 = 5_000;
 
-/// Untergrenze der Gegenzeichner, unabhängig von der Pod-Größe.
-///
-/// ⚑ **Zwei, nie einer.** Bei einer rechnerischen Mehrheit von eins
-/// wäre die Gegenzeichnung keine: Ein einzelnes Mitglied entschiede
-/// wieder allein. Ein Pod, der so klein ist, dass zwei Zeichner nicht
-/// zusammenkommen, kann niemanden verdrängen; das ist die sichere
-/// Richtung des Fehlers.
-pub const MINDESTENS_ZEICHNER: usize = 2;
-
-/// Wie viele Unterschriften eine Meldung braucht.
-///
-/// Mehrheit der **übrigen** Mitglieder, also ohne den Gemeldeten, und
-/// mindestens [`MINDESTENS_ZEICHNER`]. Bei sechs Mitgliedern bleiben
-/// fünf übrig, die Mehrheit ist drei.
-///
-/// **Warum Mehrheit und nicht Einstimmigkeit:** Einstimmigkeit gäbe
-/// jedem einzelnen Mitglied ein Veto gegen jede Nachbesetzung, und ein
-/// Pod, der nicht nachbesetzen kann, verliert die Sitzung. Der Angriff
-/// wechselte damit nur die Richtung.
-pub fn mindestzeichner(mitgliederzahl: usize) -> usize {
-    let uebrige = mitgliederzahl.saturating_sub(1);
-    (uebrige / 2 + 1).max(MINDESTENS_ZEICHNER)
-}
+/// ⚑ **Die Mehrheit der Gegenzeichner steht seit dem 2026-10-22 in
+/// `myl_types::gegenzeichnung`**: Die Kette prüft mit derselben Regel die
+/// Fristmeldung, und zwei Stellen mit derselben Mehrheit liefen auseinander.
+pub use myl_types::gegenzeichnung::{mindestzeichner, MINDESTENS_ZEICHNER};
 
 /// Was behauptet wird: eine Position, und wer darauf saß.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, BorshSerialize, BorshDeserialize)]

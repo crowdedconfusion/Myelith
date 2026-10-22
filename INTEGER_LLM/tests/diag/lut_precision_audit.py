@@ -22,7 +22,7 @@ sys.path.insert(0, str(REPO / "calibrate"))
 
 def load_lut(name):
     import struct
-    art = REPO / "artifacts" / "myelith-0.6b"
+    art = REPO / "artifacts" / "sparrow-0.6b-int8"
     luts = json.loads((art / "luts.json").read_text())
     e = luts[name]
     data = (art / e["file"]).read_bytes()

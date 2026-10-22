@@ -226,6 +226,10 @@ pub struct Podabrechnung {
     pub reserve: Vec<MinerId>,
     /// Was der Pod insgesamt beansprucht.
     pub vtfe_pod: u64,
+    /// ⚑ **Die Verteilung dieses Pods**, wenn er eigen geschnitten ist
+    /// (Stufe 4 des Dispatchers, 2026-10-22). `None`: die gemeinsame, die
+    /// [`zuschreiben_aus_abrechnung`] mitbekommt.
+    pub verteilung: Option<Arbeitsverteilung>,
 }
 
 /// Was beim Abrechnen schiefgehen kann.
@@ -320,6 +324,7 @@ pub fn zuschreiben_aus_abrechnung(
                 return Err(Abrechnungsfehler::MinerZweimalImPod { pod: pi });
             }
         }
+        let verteilung = pod.verteilung.as_ref().unwrap_or(verteilung);
         for (_, nummer) in &pod.positionen {
             if *nummer as usize >= verteilung.positionen() {
                 return Err(Abrechnungsfehler::PositionUnbekannt {
@@ -365,6 +370,7 @@ mod tests {
             num_heads: 14,
             num_kv_heads: 2,
             head_dim: 64,
+            ..ModellProfil::LEER
         }
     }
 
@@ -651,7 +657,22 @@ mod tests {
             positionen: (0..4u32).map(|i| (miner(ab + i as u8), i)).collect(),
             reserve: vec![miner(ab + 4), miner(ab + 5)],
             vtfe_pod: vtfe,
+            verteilung: None,
         }
+    }
+
+    /// ⚑ **Ein eigen geschnittener Pod teilt nach seiner Verteilung**
+    /// (Stufe 4, 2026-10-22), ein Pod ohne eigene nach der gemeinsamen, im
+    /// selben Lauf.
+    #[test]
+    fn ein_eigener_schnitt_teilt_nach_seiner_verteilung() {
+        let gemeinsam = verteilung(vec![1, 1, 1, 1]);
+        let eigen = Podabrechnung { verteilung: Some(verteilung(vec![1, 0, 0, 3])), ..abrechnung(11, 1_000) };
+        let z = zuschreiben_aus_abrechnung(&gemeinsam, &[abrechnung(1, 1_000), eigen]).expect("Abrechnung");
+        assert_eq!(z.je_miner[&miner(1)], 250, "gemeinsam: ein Viertel");
+        assert_eq!(z.je_miner[&miner(11)], 250, "eigen: ein Viertel");
+        assert_eq!(z.je_miner[&miner(12)], 0, "eigen: nichts");
+        assert_eq!(z.je_miner[&miner(14)], 750, "eigen: drei Viertel");
     }
 
     /// Die vTFE eines Pods wird nach den Gewichten aufgeteilt, und die
@@ -695,6 +716,7 @@ mod tests {
                     .collect(),
                 reserve: pod.reserve.clone(),
                 vtfe_pod: a.summe() as u64,
+                verteilung: None,
             }],
         )
         .expect("Kette");
@@ -740,6 +762,7 @@ mod tests {
             positionen: vec![(miner(1), 0), (miner(1), 1)],
             reserve: vec![],
             vtfe_pod: 100,
+            verteilung: None,
         };
         assert_eq!(
             zuschreiben_aus_abrechnung(&v, &[a]),
@@ -755,6 +778,7 @@ mod tests {
             positionen: vec![],
             reserve: vec![miner(1)],
             vtfe_pod: 100,
+            verteilung: None,
         };
         assert_eq!(
             zuschreiben_aus_abrechnung(&v, &[a]),
@@ -770,6 +794,7 @@ mod tests {
             positionen: vec![(miner(9), 0)],
             reserve: vec![],
             vtfe_pod: 100,
+            verteilung: None,
         };
         let z = zuschreiben_aus_abrechnung(&v, &[einer.clone(), einer]).expect("Abrechnung");
         // Position 0 trägt ein Viertel der Gewichte, also 25 je Pod.
@@ -795,6 +820,7 @@ mod tests {
             positionen: vec![(miner(1), 0), (miner(2), 1)],
             reserve: vec![],
             vtfe_pod: 1_000,
+            verteilung: None,
         };
         let z = zuschreiben_aus_abrechnung(&v, &[halb]).expect("Abrechnung");
         assert_eq!(z.summe(), 500, "der Anteil der Unbesetzten wurde umverteilt");

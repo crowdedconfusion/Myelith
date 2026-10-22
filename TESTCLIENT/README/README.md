@@ -1,7 +1,7 @@
 # testclient (`myl-testclient`)
 
-> **Version:** 0.43.2
-> **Datum:** 2026-10-19
+> **Version:** 0.44.0
+> **Datum:** 2026-10-22
 > **Status:** Phase 1 und **Phase 3 vollständig**, dazu Punkt 2.1
 > (`vergleich`), **2.2** (Backend-Vergleich innerhalb einer Maschine, seit
 > dem 2026-08-30) und 2.4 (`--repeat`); **Phase 4 vollständig** (4.3 die
@@ -157,7 +157,7 @@ Damit „alle nehmen exakt dieselben Werte" keine Bitte bleibt:
 
 ```bash
 # Koordinator:
-myl-test plan --plan-id 2026-08-21-cross-arch-01 --model myelith-0.6b \
+myl-test plan --plan-id 2026-08-21-cross-arch-01 --model sparrow-0.6b-int8 \
   --prompt "Die Hauptstadt von Frankreich ist" \
   --prompt "The capital of France is" \
   --steps 32 --shards 4 \
@@ -543,6 +543,45 @@ COMPUTE_PIPELINE Phase 1: erstmals über einen aufrufbaren Befehl statt
 über einen Integrationstest.
 
 ## Changelog
+
+### v0.44.0 (2026-10-22): Stufe 4 über den ganzen Weg
+
+- `tests/stufe4.rs` (neu, P9b): Überzusage gemeldet und gesperrt (über die
+  Kette, eine Epoche lang), Gleichstand auf zwei Knoten, zu wenig
+  Kapazität ergibt keinen Pod, Ebenenzeit 1 begrenzt die Kapazität,
+  Teilablage hält den Bereich; mit echtem Prozess: Der Knoten startet
+  seinen Shard aus der Kette (Schlüssel der Anmeldung, Bereich der
+  Position, Zeitprobe über die Tür); der Dateidienst holt eine Ebene des
+  Probeartefakts.
+- `gesamtlauf` und `verzahnte_simulation` mit Zusagen (kein Pod ohne
+  Zusage).
+- `tests/netzlauf.rs` (neu): **der Netzlauf**. Fünfzehn Knoten in einem
+  Prozess (ein Erzeuger, vierzehn Miner), verbunden über Bootstrap und
+  Kademlia, echte `myl-shard`-Prozesse mit dem Probeartefakt, ungleiche
+  Zusagen, zwei ungleich geschnittene Pods. Stolpersteine: ein Lügner
+  (1 µs je Ebene, gemessen, bezeugt, gesperrt), ein Schwacher ohne Pod,
+  Teilablage, ein Holer mit einer Lücke je Ebene, ein abgestürzter Shard,
+  ein ganz ausgefallener Knoten, der aus seiner Kettendatei zurückkehrt;
+  dazu 200 Blöcke je Runde, also Blöcke in falscher Folge. Geprüft: dieselbe
+  Kette, Zuteilung und Grenzen auf allen Knoten, jeder Shard mit seinem
+  Bereich, nur der Lügner gesperrt, Dateien geholt und keine verworfen.
+  Der Lauf fand die Funde 587, 588 und 589 und die vergessene Aufnahme; mit
+  ihren Behebungen grün in rund 70 s.
+- **Belege:** `cargo test` rc=0.
+
+### v0.43.4 (2026-10-21): Die Modelle heißen nach Tieren
+
+Die Projektmodelle heißen seit heute nach Tieren, mit Größe und Speicherform als Anhängsel (Festlegung des Projektinhabers): `myelith-0.6b` ist `sparrow-0.6b-int8`, `myelith-4b` `pigeon-4b-int8`, `myelith-30b-a3b` `magpie-30b-a3b-int8`, `myelith-35b-a3b` `raven-35b-a3b-int8`. In den Dateien eines Artefakts steht kein Name, also bleiben Abdrücke und Register gültig. Vorgabe- und Prüfstandsmodell sind `sparrow-0.6b-int8`; der Modellname, den Knoten und Proben nach außen nennen, ist der Name des Modells (bis heute `myelith-myelith-0.6b`). Proben mitgezogen.
+
+### v0.43.3 (2026-10-21): Die Netzproben rechnen im Prüfnetz
+
+- Im Netz rechnet seit INTEGER_LLM v0.141.0 nur das 35B. Die Proben, die
+  über `myl-pod` den Netzbetrieb am 0,6B rechnen (`gesamtlauf`,
+  `zwei_prozesse`, `trainingssegment` und andere), ziehen
+  `integer-llm-runtime` dafür als Entwicklungsabhängigkeit mit dem Merkmal
+  `pruefnetz`; das ausgelieferte Programm kennt es nicht. Die Läufe des
+  Testklienten selbst laden lokal (`load_model`) und sind nicht berührt.
+  `cargo test` Rückgabe 0; Sperrdatei nachgezogen.
 
 ### v0.43.2 (2026-10-19): Der Lauf des örtlichen Agenten hat ein Feld mehr
 

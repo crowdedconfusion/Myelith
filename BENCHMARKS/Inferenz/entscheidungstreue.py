@@ -52,7 +52,7 @@ Inferenzpfad).
 Aufruf aus der Wurzel:
 
     V=INTEGER_LLM/calibrate/.venv/bin/python3
-    INTEGER_LLM_MODEL=myelith-0.6b $V BENCHMARKS/Inferenz/entscheidungstreue.py
+    INTEGER_LLM_MODEL=sparrow-0.6b-int8 $V BENCHMARKS/Inferenz/entscheidungstreue.py
 
 Umgebung:
   ENT_SEQUENZEN   Wieviele Sequenzen (Vorgabe 4, wie die Reihe)

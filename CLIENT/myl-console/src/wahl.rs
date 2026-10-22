@@ -281,8 +281,8 @@ mod tests {
 
     fn liste() -> Vec<Punkt> {
         vec![
-            Punkt { titel: "Myelith 4B".into(), hinweis: String::new(), offen: true },
-            Punkt { titel: "Myelith 7B".into(), hinweis: String::new(), offen: true },
+            Punkt { titel: "Pigeon 4B - INT8".into(), hinweis: String::new(), offen: true },
+            Punkt { titel: "Jay 8B - INT8".into(), hinweis: String::new(), offen: true },
             Punkt { titel: "Netzwerkmodell".into(), hinweis: "noch nicht".into(), offen: false },
         ]
     }

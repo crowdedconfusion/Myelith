@@ -5,7 +5,7 @@ import torch
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "calibrate"))
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "eval"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "BENCHMARKS" / "Inferenz"))
 from src.loader import load_reference_model
 from wikitext_common import MODEL_DIR
 

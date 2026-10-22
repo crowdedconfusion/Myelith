@@ -1,8 +1,8 @@
 # consensus (`myl-consensus` + `myl-ledger` + `myl-scheduler`)
 
-> **Version:** 0.47.0 (`myl-consensus` 0.31.0, `myl-scheduler` 0.15.0,
-> `myl-ledger` 0.22.0)
-> **Datum:** 2026-09-03
+> **Version:** 0.50.0 (`myl-consensus` 0.33.0, `myl-scheduler` 0.18.0,
+> `myl-ledger` 0.24.0)
+> **Datum:** 2026-10-22
 > **Status:** Design-Entscheidungen getroffen (malachite hinter
 > trait-Grenze mit Eigenbau-Fallback, Blockzeit 2 s, Komitee 21/7,
 > Streitfrist 7 Tage, Reed-Solomon k=8/m=4);
@@ -18,8 +18,8 @@
 > mehr:** Session-Kontrakte stehen im Ledger, **Anweisungen sind
 > unterschrieben** (Fund 85), und es gibt eine Überweisung von Konto zu
 > Konto.
-> **448 Tests grün** (269 `myl-consensus`, 86 `myl-scheduler`,
-> 93 `myl-ledger`), über alle Testbinaries gezählt.
+> **512 Tests grün** (272 `myl-consensus`, 131 `myl-scheduler`,
+> 109 `myl-ledger`), über alle Testbinaries gezählt.
 >
 > ⚑ **Seit dem 27. August trägt der Blockkopf eine Höhe.** Er hieß bis
 > dahin `EpochMeta`, führte kein Höhenfeld, und die Probekette schrieb
@@ -107,6 +107,110 @@ myl-consensus/tests/
 ```
 
 ## Changelog
+
+### v0.50.0 (2026-10-22): Kein Pod ohne Zusage, Nachziehen, Teilablage, Frist
+
+Stufe 4 des Dispatchers, abgeschlossen. ⚑ **Festlegungen des
+Projektinhabers vom selben Tag:** kein Pod ohne Zusage; eine Fristmeldung
+wirkt erst mit den eigenen Messungen einer Mehrheit der übrigen Mitglieder.
+
+- `myl-scheduler` 0.18.0:
+  - `zuteilung_der_epoche_mit_zusagen` (neu): Miner ohne Zusage für das
+    Podmodell stehen in `Zuteilung::ohne_zusage`; jeder Pod wird geprüft,
+    und ist er nicht machbar, weicht das schwächste Mitglied
+    (`schwaechstes`) und er zieht aus derselben Folge nach
+    (`assign_pods_geprueft`, ohne Einwand bitgleich wie bisher).
+  - `bereiche_des_pods` nimmt das Podmodell und kennt keinen gleichen
+    Rückfall mehr: Eine Position ohne Zusage macht den Pod nicht machbar.
+  - Teilablage (P10): `Mitglied::gehalten`; mit gehaltenen Bereichen
+    verteilt `verteilen_mit_teilablage` (Intervalle von vorn,
+    Binärsuche über die Zeit), ohne sie das Wasserfüllen wie bisher.
+  - `reserve_traegt` prüft jeden Bereich samt gehaltenem Teil.
+- `myl-ledger` 0.24.0: `LedgerState::{podmodell, fristsperren}`;
+  `zusage_einreichen` prüft gegen das Podmodell (ohne Podmodell gilt nur
+  reiner Speicher); `geltende_zusage` beachtet die Fristsperre;
+  `modellzusage_der_epoche`; `fristverstoss_einreichen` mit `Fristkontext`:
+  Mehrheit der übrigen über der Frist, dann gilt die Zusage in der nächsten
+  Epoche nicht, und das Konto bekommt einen Verstoß.
+- `myl-consensus` 0.33.0: `Anweisung::FristverstossEinreichen`, angehängt.
+- ⚠️ **Ein bekannter Hebel, benannt:** Eine Zusage wirkt auf die
+  Pod-Bildung einer Epoche, deren Saat schon feststeht; wer sie ändert,
+  ändert, wer in die Mischung kommt. Das ist dasselbe Ein-Bit-Gewicht je
+  Miner, das die Abmeldung heute schon hat.
+- **Belege:** Teilablage gezielt und über 2000 Zufallspods, das schwächste
+  Mitglied, die Pod-Bildung über 20 Saaten mit Gegenprobe, Zusage gegen
+  das Podmodell und Fristmeldung im Ledger; `cargo test` rc=0 in allen
+  drei Kisten.
+
+### v0.49.0 (2026-10-22): Die Zusage auf der Kette und der Schnitt eines Pods
+
+Stufe 4 des Dispatchers, Pakete P4 und P5. Die Zusage mit ihren Modellen
+(`myl-types` 0.45.0) war bisher eine Datei neben dem Knoten; die Kette
+kannte sie nicht und konnte deshalb nicht danach schneiden.
+
+- **`myl-consensus` 0.32.0:** neue Anweisung `ZusageEinreichen { zusage }`,
+  hinten angehängt, damit die Kennungen der übrigen bleiben.
+- **`myl-ledger` 0.23.0:** `State::zusagen` je Miner (Genesis leer).
+  `zusage_einreichen` prüft, dass der Halter der Unterzeichner ist und
+  registriert, und prüft die Unterschrift mit dem **registrierten**
+  Schlüssel. Eine Zusage für dieselbe Epoche ersetzt die vorige; behalten
+  werden die kommenden und die jüngste geltende. `geltende_zusage(state,
+  miner, epoche)` liest sie. Neuer Fehler `ZusageUngueltig`, hinten
+  angehängt.
+- **`myl-scheduler` 0.17.0:**
+  - `verteilen_geordnet` hält die Reihenfolge der Positionen und gibt den
+    Kopf der letzten. In der Kette hängen Besetzung, Übernahme und
+    Bündelprüfung an der Position; die Verteilung darf sie nicht umstellen.
+  - `bereiche_des_pods` ergibt einen `Podschnitt`: `Gleich` (der Schnitt
+    von heute), `Verteilt` oder `NichtMachbar`, mit `grenzen()` je
+    Position. Gleich bleibt er, solange kein Netzmodell feststeht, ein
+    Mitglied keine Zusage für das Modell hat oder ein Mitglied nur einen
+    Teil hält (Weg a ist noch nicht verteilt). Nicht machbar ist ein Pod,
+    wenn keine Reserve den größten Bereich trägt (Festlegung E4).
+  - ⚑ **`lohnt_umplanen` ist entfernt, P6 entfällt.** Die Pod-Bildung
+    mischt die Miner jede Epoche neu, ein Pod besteht also nie über eine
+    Epochengrenze; eine Schwelle gegen das Wandern der Bereiche hätte
+    nichts, woran sie sich halten könnte. Der Modulkopf sagt das.
+- **Belege:** neue Proben `eine_zusage_gilt_ab_ihrer_epoche_unter_dem_registrierten_schluessel`
+  (Ledger) und `der_schnitt_eines_pods_der_kette` (Scheduler); `cargo test`
+  rc=0 in allen drei Kisten (272, 107 und 127 Tests).
+
+### v0.48.0 (2026-10-21): `myl-scheduler` 0.16.0, die Ebenenverteilung und ihre Simulation
+
+Stufe 4 des Dispatchers, vorgezogen und geplant auf Bitte des Projektinhabers (2026-10-21): Ein Pod verteilt seine Ebenen nach Kapazität und gemessener Ebenenzeit seiner Mitglieder statt gleich. Hier P3 (Funktion) und P9a (Simulation). Noch nicht angeschlossen:
+Zusage, Pod-Bildung und Umplanen (P4 bis P6) folgen mit dem Drahtformat.
+
+- **`ebenenverteilung::verteilen`** (Konsensbaustein, rein und ganzzahlig):
+  machbar nur bei genug Kapazität; der Kopf geht an das schnellste
+  Mitglied, das ihn trägt; Wasserfüllen über eine Zeitschranke T per
+  Binärsuche, der Rest an die Schnellsten, Gleichstand nach Kennung; die
+  Saat mischt die übrigen Bereiche, der Kopf zuletzt. Dazu `engpass_us`,
+  `lohnt_umplanen` (`4·neu ≤ 3·alt`) und `reserve_traegt` (Festlegung E4).
+- ⚑ **Platz und Zeit des Kopfs getrennt** (`kopf_platz`, `kopf_zeit`):
+  beim Bau gefunden, gemessen am Raven Platz 4, Zeit 1.
+- **Simulation** (`examples/ebenenverteilung_simulation.rs`, 5000 Pods je
+  Lage, k = 4, 40 Ebenen, Knoten 8 bis 64 GiB): Der gleiche Schnitt ist bei
+  rund der Hälfte der Pods nicht machbar, die Verteilung bei 99 bis
+  100 %. Die Zeit verkürzt die Engpasszeit gegen die Verteilung nur nach
+  Kapazität um 3,8 % (fast gleiche Knoten), 30,0 % (zwei Klassen) und
+  52,1 % (weit gestreut). Umplanen bei ±5 % Rauschen: 0 Wechsel in 25 000
+  Epochen.
+- **Belege:** neun Proben, darunter Eigenschaften über 2000 Zufallspods
+  (lückenlos, in der Kapazität, Summe gleich, schneller nie weniger;
+  mindestens 400 machbar) und eine Gegenprobe mit eingebautem Fehler, die
+  drei Proben rot macht. `cargo test` (127) und Clippy rc=0;
+  `fassungsprobe` grün.
+
+### v0.47.1 – 2026-10-21 (`myl-scheduler` 0.15.1: der Modulkopf nennt die Zonen)
+
+Der Kopf von `myl-scheduler/src/lib.rs` nannte als dritten Schritt noch
+„Geo-Clustering unter Latenz-Constraint (konsumiert LatencyGraph aus
+NETWORKING)“. Seit dem 2026-09-01 bilden Zonen aus der Registrierung die
+Cluster (`zonenzuteilung`), und `myl-types` 0.44.0 hat `LatencyGraph`
+entfernt. Nur der Kommentar; kein Code geändert.
+
+**Belege:** `cargo test` rc=0, Clippy mit `-D warnings` still;
+`myl-consensus` und `myl-ledger` mit `cargo check --all-targets` rc=0.
 
 ### v0.47.0 – 2026-09-06 (der Schuldspruch bringt seinen Beleg mit)
 

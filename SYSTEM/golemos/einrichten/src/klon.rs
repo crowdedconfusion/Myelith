@@ -273,13 +273,13 @@ pub(crate) mod proben {
     fn artefakte_aus_klon_und_datenordner() {
         let o = ordner("artefakte");
         scheinklon(&o);
-        scheinartefakt(&o.join(ARTEFAKTE_IM_KLON), "myelith-4b", 400);
+        scheinartefakt(&o.join(ARTEFAKTE_IM_KLON), "pigeon-4b-int8", 400);
         fs::write(o.join(ARTEFAKTE_IM_KLON).join("README.md"), "kein Artefakt").unwrap();
         let daten = o.join("daten-artefakte");
-        scheinartefakt(&daten, "myelith-0.6b", 100);
+        scheinartefakt(&daten, "sparrow-0.6b-int8", 100);
         let l = artefakte(Some(&o), &[daten]);
         let namen: Vec<_> = l.iter().map(|a| a.name.as_str()).collect();
-        assert_eq!(namen, ["myelith-4b", "myelith-0.6b"]);
+        assert_eq!(namen, ["pigeon-4b-int8", "sparrow-0.6b-int8"]);
         assert_eq!(l[0].groesse, 402, "Gewichte plus model_config.json");
     }
 

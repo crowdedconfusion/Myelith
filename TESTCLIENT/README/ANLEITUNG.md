@@ -176,7 +176,7 @@ des Koordinators. Siehe A6.
   dann ist das Ergebnis unvollständig und muss wiederholt werden.
 
   Prüfstand: 6 Prompts, 32 Token, 4 Shards, 2 Durchgänge je Prompt.
-  Modell: myelith-0.6b
+  Modell: sparrow-0.6b-int8
   Kennung: 32eafffb
 ```
 
@@ -353,9 +353,9 @@ Der Client zeigt, was belegt ist:
 ```
   Belegt auf dieser Maschine: 45,9 GB
 
-  ❯ 1  myelith-30b-a3b · Artefakte · 31,2 GB
+  ❯ 1  magpie-30b-a3b-int8 · Artefakte · 31,2 GB
         Aus dem Skalenpaket in Minuten wiederherstellbar.
-    2  myelith-30b-a3b · Gewichte · 61,1 GB
+    2  magpie-30b-a3b-int8 · Gewichte · 61,1 GB
         Erneut zu holen kostet einen Download über Hugging Face.
 ```
 
@@ -371,7 +371,7 @@ etwas zerstört.
 ## A9. Wenn etwas nicht klappt
 
 **„Artefaktverzeichnis fehlt"**
-Erwartet wird `INTEGER_LLM/artifacts/myelith-0.6b/`. Liegen die Artefakte
+Erwartet wird `INTEGER_LLM/artifacts/sparrow-0.6b-int8/`. Liegen die Artefakte
 woanders, beim Aufruf `--artifacts <PFAD>` angeben. Der Prüfstand
 selbst sucht nur am erwarteten Ort: Er soll auf allen Maschinen
 dasselbe Modell rechnen.
@@ -424,7 +424,7 @@ Urteil, wenn (1) fehlt.
 ### Der schnelle Weg: auf der Befehlszeile
 
 ```bash
-myl-test plan --plan-id 2026-09-11-cross-arch-01 --model myelith-0.6b \
+myl-test plan --plan-id 2026-09-11-cross-arch-01 --model sparrow-0.6b-int8 \
   --prompt "Die Hauptstadt von Frankreich ist" \
   --steps 32 --shards 4 --out "TESTCLIENT/Testpläne/cross-arch.plan"
 ```

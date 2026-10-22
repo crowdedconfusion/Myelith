@@ -27,8 +27,6 @@ freigabe/
 __pycache__/
 *.py[cod]
 .venv/
-# Die zweite Kalibrier-Umgebung fuer die Bauart mit vier Stroemen (2026-10-19)
-.venv-flashnext/
 # Exporteintraege selbst gebauter, privater Modelle (modell_bauen.sh, 2026-10-19)
 INTEGER_LLM/calibrate/lokal/
 
@@ -80,6 +78,22 @@ BENCHMARKS/Inferenz/results/*.log
 CLAUDE.md
 
 SYSTEM/crates-lager/
+
+# Archive, die nur lokale, nicht versionierte Kisten brauchen (eigene
+# Module). Sie gehoeren in eine Kopie des Arbeitsbaums, nicht in einen Klon;
+# `SYSTEM/install/vorrat.py` sammelt sie hierher und packt sie mit aus.
+SYSTEM/crates-vorrat-lokal/
+
+# Fremde Werkzeuge fuer den Bau ohne Netz (Nix-Umgebung, Installer von Rust
+# und Python, Laufzeit und Buildwerkzeuge fuer Windows). Gehoert in eine
+# Sicherheitskopie, nie ins Repositorium: fremde Lizenzen, Gigabyte, je
+# System verschieden. Gefuellt von `SYSTEM/install/werkzeugvorrat.py`.
+SYSTEM/werkzeug-vorrat/
+
+# Ein Programm ohne `HOME` legt seine Ablage im Arbeitsverzeichnis an, und
+# eine Probe laeuft im Ordner ihrer Kiste. Was dort entsteht, ist eine
+# Ablage dieses Rechners mit seinen Pfaden, nie Teil des Baums.
+*/*/.config/
 
 # ⚑ **GolemOS ist im Repositorium** (Festlegung des Projektinhabers,
 # 2026-09-25). Bis dahin stand der ganze Ordner hier, und ein frischer

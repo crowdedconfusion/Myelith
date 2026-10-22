@@ -633,7 +633,7 @@ def main():
     from .paths import local_model_dir, model_artifacts_dir
     name = os.environ.get("INTEGER_LLM_MODEL", "").strip()
     if not name:
-        raise SystemExit("[ebenenweise] INTEGER_LLM_MODEL setzen (etwa myelith-125b-a6b)")
+        raise SystemExit("[ebenenweise] INTEGER_LLM_MODEL setzen (etwa vulture-126b-a7b-int8)")
     export_cfg = get_export_model_config(name)
     if export_cfg.get("family") != FAMILIE:
         raise SystemExit(f"[ebenenweise] {name} ist keine Bauart {FAMILIE}; dafuer ist calibrate.src.main da")

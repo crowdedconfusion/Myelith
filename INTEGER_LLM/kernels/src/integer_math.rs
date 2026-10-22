@@ -139,8 +139,8 @@ pub fn rsqrt_q(x: i32, frac_bits: u8) -> i32 {
 /// 📌 **Und das Klemmen war an dieser Stelle eine Aussage ueber die
 /// Funktion, die niemand getroffen hatte.** Fuer die SiLU heisst ein
 /// Eingang ueber 128 nicht „128", sondern der Eingang selbst. Die
-/// gemessenen Gate-Werte reichen bei `myelith-0.6b` bis 278 und bei
-/// `myelith-4b` bis 192 (Fund 364); die Inferenz lag dort flach.
+/// gemessenen Gate-Werte reichen bei `sparrow-0.6b-int8` bis 278 und bei
+/// `pigeon-4b-int8` bis 192 (Fund 364); die Inferenz lag dort flach.
 ///
 /// ⚑ **Die Klemme im Rumpf bleibt**, in `i32` gerechnet (Fund 348): Ein
 /// Verstoss gegen Vorbedingung 2 im ausgelieferten Bau, in dem die

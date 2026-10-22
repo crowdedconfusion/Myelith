@@ -245,6 +245,36 @@ impl Modellbedarf {
     }
 }
 
+impl Modellbedarf {
+    /// **Der Bedarf eines Ebenenbereichs** `[von, bis)` (Stufe 4, P8,
+    /// 2026-10-22): was ein Shard hält, den das Netz diesem Rechner
+    /// zugeteilt hat. KV-Speicher und Zustand anteilig der Ebenen im
+    /// Bereich; der Rand (Kopf, Tabellen) nur am letzten Bereich, die
+    /// Einbettung nur am ersten.
+    ///
+    /// ⚠️ **Der Rand ist dabei ungeteilt**: Er enthält außer dem Kopf
+    /// Tabellen und Beschreibung, die jeder Shard braucht; sie sind klein
+    /// gegen eine Ebene und zählen hier nur beim letzten.
+    pub fn bereich(&self, von: usize, bis: usize, mit_einbettung: bool, mit_kopf: bool) -> Result<Self, String> {
+        if von >= bis || bis > self.ebenen.len() {
+            return Err(format!("Bereich {von} bis {bis} passt nicht zu {} Ebenen", self.ebenen.len()));
+        }
+        let zaehle = |art: Ebenenart, r: &[Ebene]| r.iter().filter(|e| e.art == art).count() as u64;
+        let achtsam_alle = zaehle(Ebenenart::Achtsam, &self.ebenen).max(1);
+        let rekurrent_alle = zaehle(Ebenenart::Rekurrent, &self.ebenen).max(1);
+        let teil = &self.ebenen[von..bis];
+        Ok(Self {
+            name: format!("{} (Ebenen {von} bis {bis})", self.name),
+            rand_bytes: if mit_kopf { self.rand_bytes } else { 0 },
+            rand_selten_bytes: if mit_einbettung { self.rand_selten_bytes } else { 0 },
+            ebenen: teil.to_vec(),
+            kv_je_token: self.kv_je_token / achtsam_alle * zaehle(Ebenenart::Achtsam, teil),
+            zustand_je_folge: self.zustand_je_folge / rekurrent_alle * zaehle(Ebenenart::Rekurrent, teil),
+            hoechstkontext: self.hoechstkontext,
+        })
+    }
+}
+
 /// `model_layers_12_mlp_up_proj_weight.bin` → `(12, "mlp_up_proj_weight.bin")`.
 fn ebene_aus_name(datei: &str) -> Option<(usize, &str)> {
     let rest = datei.strip_prefix("model_layers_")?;

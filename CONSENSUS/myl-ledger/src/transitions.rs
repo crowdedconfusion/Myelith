@@ -153,6 +153,14 @@ pub enum TransitionError {
     /// Bit. Wer diesen Fehler unbesehen an den Agenten durchreicht,
     /// hebt die Anforderung aus Kap. 8.2 auf.
     KontraktVerbietet(Befund),
+    /// Die Kapazitätszusage besteht ihre Prüfung nicht (Epoche, Form,
+    /// Podmodell oder Unterschrift unter dem registrierten Schlüssel).
+    ZusageUngueltig,
+    /// Die Fristmeldung trägt nicht: falsche Epoche, kein Mitglied, zu
+    /// wenige gültige Zeugnisse über der Frist.
+    FristmeldungUngueltig,
+    /// Für diesen Miner ist die Sperre der nächsten Epoche schon vermerkt.
+    FristBereitsGemeldet,
 }
 
 impl std::fmt::Display for TransitionError {
@@ -208,6 +216,17 @@ impl std::fmt::Display for TransitionError {
                 f.write_str("nur der Miner selbst darf sich an- und abmelden")
             }
             Self::MinerUnbekannt => f.write_str("dieser Miner ist nicht angemeldet"),
+            Self::ZusageUngueltig => f.write_str(
+                "die Kapazitaetszusage gilt nicht: kuenftige Epoche, Form der Modelle, das Podmodell \
+                 des Netzes und Unterschrift unter dem registrierten Schluessel muessen stimmen",
+            ),
+            Self::FristmeldungUngueltig => f.write_str(
+                "die Fristmeldung traegt nicht: laufende Epoche, Mitglieder des Pods und eine Mehrheit \
+                 gueltiger Zeugnisse ueber der Frist muessen stimmen",
+            ),
+            Self::FristBereitsGemeldet => {
+                f.write_str("fuer diesen Miner ist die Fristsperre der naechsten Epoche schon vermerkt")
+            }
             Self::NichtZumTrainingBestellt => {
                 f.write_str("dieser Pod war in dieser Epoche nicht zum Training bestellt")
             }
@@ -956,6 +975,153 @@ pub fn miner_abmelden(
     if state.miner.remove(miner).is_none() {
         return Err(TransitionError::MinerUnbekannt);
     }
+    Ok(())
+}
+
+/// Nimmt eine Kapazitätszusage auf (Stufe 4 des Dispatchers, 2026-10-21).
+///
+/// **Vier Schritte, billig vor teuer:** Der Einreichende ist der Halter; er
+/// ist angemeldet; die Zusage besteht ihre Prüfung (künftige Epoche, Form der
+/// Modelle) unter dem **registrierten** Schlüssel; dann wird sie eingereiht.
+/// Eine Zusage für dieselbe Epoche ersetzt die frühere; überholte, deren
+/// Nachfolgerin schon gilt, fallen weg.
+pub fn zusage_einreichen(
+    state: &mut LedgerState,
+    unterzeichner: &Address,
+    zusage: &myl_types::zusage::Kapazitaetszusage,
+) -> Result<(), TransitionError> {
+    if unterzeichner.as_bytes() != zusage.halter.as_bytes() {
+        return Err(TransitionError::NichtDerMiner);
+    }
+    let Some(reg) = state.miner.get(&zusage.halter) else {
+        return Err(TransitionError::MinerUnbekannt);
+    };
+    // ⚑ **Gegen das Podmodell** (6.6, 2026-10-22): nur das Modell des
+    //   Netzes, höchstens seine Ebenen samt Kopf. Ohne Podmodell gilt nur
+    //   eine Zusage ohne Modelle, also reiner Speicher.
+    match &state.podmodell {
+        Some(pm) => zusage.pruefen_im_netz(&reg.schluessel, state.epoch, pm),
+        None if zusage.modelle.is_empty() => zusage.pruefen(&reg.schluessel, state.epoch),
+        None => Err(myl_types::zusage::Zusagefehler::ModellNichtImNetz),
+    }
+    .map_err(|_| TransitionError::ZusageUngueltig)?;
+    let jetzt = state.epoch;
+    let liste = state.zusagen.entry(zusage.halter).or_default();
+    liste.retain(|z| z.ab_epoche != zusage.ab_epoche);
+    liste.push(zusage.clone());
+    liste.sort_by_key(|z| z.ab_epoche);
+    // Von denen, die schon gelten, bleibt nur die jüngste.
+    let geltende = liste.iter().filter(|z| z.ab_epoche <= jetzt).count();
+    if geltende > 1 {
+        liste.drain(..geltende - 1);
+    }
+    Ok(())
+}
+
+/// **Die Zusage, die für `miner` in `epoche` gilt**: die jüngste mit
+/// `ab_epoche ≤ epoche`, oder `None`.
+pub fn geltende_zusage<'a>(
+    state: &'a LedgerState,
+    miner: &MinerId,
+    epoche: EpochId,
+) -> Option<&'a myl_types::zusage::Kapazitaetszusage> {
+    // ⚑ **Eine Fristsperre nimmt die Zusage für eine Epoche weg** (6.8):
+    //   Der Miner kommt in dieser Epoche in keinen Pod.
+    if state.fristsperren.get(miner) == Some(&epoche) {
+        return None;
+    }
+    state.zusagen.get(miner)?.iter().rev().find(|z| z.ab_epoche <= epoche)
+}
+
+/// **Was `miner` in `epoche` für das Podmodell zusagt**, oder `None`: ohne
+/// Podmodell, ohne geltende Zusage oder ohne Eintrag für dieses Modell.
+/// Das ist die Eingabe der Pod-Bildung und des Schnitts.
+pub fn modellzusage_der_epoche(
+    state: &LedgerState,
+    miner: &MinerId,
+    epoche: EpochId,
+) -> Option<myl_types::zusage::Modellzusage> {
+    let pm = state.podmodell?;
+    geltende_zusage(state, miner, epoche)?.modell(&pm.abdruck).copied()
+}
+
+/// Was die Kette über den Pod eines Gemeldeten weiß, abgeleitet aus
+/// Zuteilung und Schnitt der laufenden Epoche (der Ledger kennt beide
+/// nicht; der Knoten rechnet sie, wie die Strafsätze).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Fristkontext {
+    /// Alle Mitglieder des Pods: Positionen und Reserve.
+    pub mitglieder: Vec<MinerId>,
+    /// Wie viele Ebenen der Gemeldete in dieser Epoche rechnet.
+    pub ebenen: u32,
+    /// Trägt er den Kopf?
+    pub mit_kopf: bool,
+}
+
+/// **Nimmt eine Fristmeldung auf** (6.8, Festlegung des Projektinhabers vom
+/// 2026-10-22): Ein Mitglied hat seinen Bereich langsamer gerechnet, als es
+/// zugesagt hat.
+///
+/// Geprüft wird billig vor teuer: die laufende Epoche; der Einreichende
+/// ist ein Zeuge; Gemeldeter und Zeugen sind Mitglieder des Pods, kein
+/// Zeuge doppelt, keiner der Gemeldete; dann je Zeugnis die Unterschrift
+/// unter dem registrierten Schlüssel und die Zahl gegen die Frist
+/// ([`myl_types::zusage::Modellzusage::frist_us`], der Kopf mit
+/// `kopf_zeit` Ebenenzeiten). ⚑ **Es zählen nur Zeugnisse über der
+/// Frist**, und es braucht davon eine Mehrheit der übrigen Mitglieder
+/// ([`myl_types::gegenzeichnung::mindestzeichner`]).
+///
+/// Die Folge: Die Zusage des Gemeldeten gilt in der nächsten Epoche nicht,
+/// und sein Konto bekommt einen Verstoß.
+pub fn fristverstoss_einreichen(
+    state: &mut LedgerState,
+    unterzeichner: &Address,
+    meldung: &myl_types::fristmeldung::Fristmeldung,
+    kontext: &Fristkontext,
+) -> Result<(), TransitionError> {
+    use myl_types::fristmeldung::ZEUGNISSE_HOECHSTENS;
+    let ungueltig = TransitionError::FristmeldungUngueltig;
+    if meldung.epoche != state.epoch || meldung.zeugnisse.len() > ZEUGNISSE_HOECHSTENS {
+        return Err(ungueltig);
+    }
+    let gemeldeter = meldung.gemeldeter;
+    if !kontext.mitglieder.contains(&gemeldeter) || kontext.ebenen == 0 {
+        return Err(ungueltig);
+    }
+    if !meldung.zeugnisse.iter().any(|z| z.zeuge.as_bytes() == unterzeichner.as_bytes()) {
+        return Err(TransitionError::NichtDerMiner);
+    }
+    let naechste = EpochId(state.epoch.0.saturating_add(1));
+    if state.fristsperren.get(&gemeldeter) == Some(&naechste) {
+        return Err(TransitionError::FristBereitsGemeldet);
+    }
+    let pm = state.podmodell.ok_or(TransitionError::FristmeldungUngueltig)?;
+    let zusage = modellzusage_der_epoche(state, &gemeldeter, state.epoch).ok_or(TransitionError::FristmeldungUngueltig)?;
+    let ebenen = kontext.ebenen + if kontext.mit_kopf { pm.kopf_zeit } else { 0 };
+    let frist = zusage.frist_us(ebenen);
+    let mut gesehen = std::collections::BTreeSet::new();
+    let mut ueber = 0usize;
+    for z in &meldung.zeugnisse {
+        if z.zeuge == gemeldeter || !kontext.mitglieder.contains(&z.zeuge) || !gesehen.insert(z.zeuge) {
+            return Err(ungueltig);
+        }
+        let Some(reg) = state.miner.get(&z.zeuge) else {
+            return Err(ungueltig);
+        };
+        if !z.ist_vom_zeugen(&reg.schluessel, meldung) {
+            return Err(ungueltig);
+        }
+        if z.gemessen_us > frist {
+            ueber += 1;
+        }
+    }
+    if ueber < myl_types::gegenzeichnung::mindestzeichner(kontext.mitglieder.len()) {
+        return Err(ungueltig);
+    }
+    let jetzt = state.epoch;
+    state.fristsperren.retain(|_, e| *e >= jetzt);
+    state.fristsperren.insert(gemeldeter, naechste);
+    state.verstoss_vermerken(&Address::new(*gemeldeter.as_bytes()));
     Ok(())
 }
 
@@ -2708,6 +2874,110 @@ mod tests {
     /// verschiedene Typen über denselben Bytes.
     fn miner_adresse(b: u8) -> Address {
         Address::aus_schluessel(&probeschluessel(b))
+    }
+
+    /// ⚑ **Die Kapazitätszusage im Zustand** (Stufe 4, 2026-10-21): nur vom
+    /// Halter, nur angemeldet, nur mit Unterschrift unter dem registrierten
+    /// Schlüssel und nur für eine künftige Epoche; sie gilt ab ihrer Epoche,
+    /// und von den geltenden bleibt nur die jüngste.
+    #[test]
+    fn eine_zusage_gilt_ab_ihrer_epoche_unter_dem_registrierten_schluessel() {
+        use myl_types::zusage::{Kapazitaetszusage, Modellzusage};
+        let sk = |b: u8| myl_types::bls::BlsSecretKey::key_gen(&[b.wrapping_add(1); 32]).expect("Schluessel");
+        let modell = Modellzusage { abdruck: [7; 32], ebenen_hoechstens: 20, ebenenzeit_us: 900, gehalten: None };
+        let zusage = |ab: u64, mit: u8| {
+            let mut z = Kapazitaetszusage::neu(kennung(1), EpochId(ab), 0).mit_modell(modell);
+            z.signiere(&sk(mit)).expect("signieren");
+            z
+        };
+        let mut st = LedgerState::genesis(1);
+        st.podmodell = Some(myl_types::podmodell::Podmodell { abdruck: [7; 32], ebenen: 40, kopf_platz: 4, kopf_zeit: 1 });
+        assert_eq!(zusage_einreichen(&mut st, &miner_adresse(1), &zusage(1, 1)), Err(TransitionError::MinerUnbekannt));
+        miner_anmelden(&mut st, &miner_adresse(1), &kennung(1), HardwareClass::SmallGpu, GeoRegion::Europe, probeschluessel(1), myl_types::latency_attest::PeerIdBytes([0; 32]))
+            .expect("Anmeldung");
+        assert_eq!(zusage_einreichen(&mut st, &miner_adresse(2), &zusage(1, 1)), Err(TransitionError::NichtDerMiner));
+        assert_eq!(zusage_einreichen(&mut st, &miner_adresse(1), &zusage(1, 2)), Err(TransitionError::ZusageUngueltig), "fremder Schluessel");
+        assert_eq!(zusage_einreichen(&mut st, &miner_adresse(1), &zusage(0, 1)), Err(TransitionError::ZusageUngueltig), "laufende Epoche");
+        zusage_einreichen(&mut st, &miner_adresse(1), &zusage(1, 1)).expect("Zusage");
+        assert!(geltende_zusage(&st, &kennung(1), EpochId(0)).is_none());
+        assert_eq!(geltende_zusage(&st, &kennung(1), EpochId(1)).and_then(|z| z.modell(&[7; 32])).map(|m| m.ebenen_hoechstens), Some(20));
+        st.epoch = EpochId(3);
+        zusage_einreichen(&mut st, &miner_adresse(1), &zusage(4, 1)).expect("Zusage");
+        assert_eq!(geltende_zusage(&st, &kennung(1), EpochId(3)).map(|z| z.ab_epoche), Some(EpochId(1)), "die laufende bleibt");
+        st.epoch = EpochId(5);
+        zusage_einreichen(&mut st, &miner_adresse(1), &zusage(6, 1)).expect("Zusage");
+        let liste: Vec<u64> = st.zusagen[&kennung(1)].iter().map(|z| z.ab_epoche.0).collect();
+        assert_eq!(liste, [4, 6], "von den geltenden bleibt nur die juengste");
+    }
+
+    /// ⚑ **Gegen das Podmodell** (6.6, 2026-10-22): ein fremdes Modell und
+    /// zu viele Ebenen weist die Kette ab; ohne Podmodell gilt nur reiner
+    /// Speicher.
+    #[test]
+    fn die_kette_prueft_die_zusage_gegen_ihr_podmodell() {
+        use myl_types::zusage::{Kapazitaetszusage, Modellzusage};
+        let sk = myl_types::bls::BlsSecretKey::key_gen(&[2; 32]).expect("Schluessel");
+        let zusage = |m: Option<Modellzusage>| {
+            let mut z = Kapazitaetszusage::neu(kennung(1), EpochId(1), 1024);
+            z.modelle.extend(m);
+            z.signiere(&sk).expect("signieren");
+            z
+        };
+        let modell = |abdruck: u8, ebenen_hoechstens: u32| Modellzusage { abdruck: [abdruck; 32], ebenen_hoechstens, ebenenzeit_us: 900, gehalten: None };
+        let mut st = LedgerState::genesis(1);
+        angemeldet(&mut st, 1);
+        assert_eq!(zusage_einreichen(&mut st, &miner_adresse(1), &zusage(Some(modell(7, 20)))), Err(TransitionError::ZusageUngueltig), "ohne Podmodell");
+        zusage_einreichen(&mut st, &miner_adresse(1), &zusage(None)).expect("reiner Speicher");
+        st.podmodell = Some(myl_types::podmodell::Podmodell { abdruck: [7; 32], ebenen: 40, kopf_platz: 4, kopf_zeit: 1 });
+        assert_eq!(zusage_einreichen(&mut st, &miner_adresse(1), &zusage(Some(modell(8, 20)))), Err(TransitionError::ZusageUngueltig), "fremdes Modell");
+        assert_eq!(zusage_einreichen(&mut st, &miner_adresse(1), &zusage(Some(modell(7, 45)))), Err(TransitionError::ZusageUngueltig), "mehr als 44");
+        zusage_einreichen(&mut st, &miner_adresse(1), &zusage(Some(modell(7, 44)))).expect("alle samt Kopf");
+        assert_eq!(modellzusage_der_epoche(&st, &kennung(1), EpochId(1)).map(|m| m.ebenen_hoechstens), Some(44));
+    }
+
+    /// ⚑ **Die Fristmeldung** (6.8, 2026-10-22): Drei von fünf übrigen
+    /// Mitgliedern messen über der Frist, dann gilt die Zusage in der
+    /// nächsten Epoche nicht, und der Gemeldete bekommt einen Verstoß. Zwei
+    /// Zeugnisse über der Frist reichen nicht, ein Zeugnis unter der Frist
+    /// zählt nicht, ein Fremder und ein doppelter Zeuge machen die Meldung
+    /// ungültig, und dieselbe Sperre gibt es nur einmal.
+    #[test]
+    fn eine_fristmeldung_sperrt_die_zusage_der_naechsten_epoche() {
+        use myl_types::fristmeldung::{Fristmeldung, Fristzeugnis};
+        use myl_types::zusage::{Kapazitaetszusage, Modellzusage};
+        let sk = |b: u8| myl_types::bls::BlsSecretKey::key_gen(&[b.wrapping_add(1); 32]).expect("Schluessel");
+        let mut st = LedgerState::genesis(1);
+        st.podmodell = Some(myl_types::podmodell::Podmodell { abdruck: [7; 32], ebenen: 40, kopf_platz: 4, kopf_zeit: 1 });
+        for b in 1..=7u8 {
+            angemeldet(&mut st, b);
+        }
+        let mut z = Kapazitaetszusage::neu(kennung(1), EpochId(1), 0).mit_modell(Modellzusage {
+            abdruck: [7; 32],
+            ebenen_hoechstens: 20,
+            ebenenzeit_us: 100,
+            gehalten: None,
+        });
+        z.signiere(&sk(1)).expect("signieren");
+        zusage_einreichen(&mut st, &miner_adresse(1), &z).expect("Zusage");
+        st.epoch = EpochId(2);
+        // Zehn Ebenen samt Kopf (1): elf Ebenenzeiten zu 100 µs, doppelt: 2200 µs.
+        let kontext = Fristkontext { mitglieder: (1..=6).map(kennung).collect(), ebenen: 10, mit_kopf: true };
+        let zeugnis = |b: u8, us: u64| Fristzeugnis::neu(&sk(b), kennung(b), EpochId(2), 0, &kennung(1), us).expect("Zeugnis");
+        let meldung = |zs: Vec<Fristzeugnis>| Fristmeldung { epoche: EpochId(2), pod: 0, gemeldeter: kennung(1), zeugnisse: zs };
+        let zwei = meldung(vec![zeugnis(2, 2201), zeugnis(3, 5000), zeugnis(4, 2200)]);
+        assert_eq!(fristverstoss_einreichen(&mut st, &miner_adresse(2), &zwei, &kontext), Err(TransitionError::FristmeldungUngueltig), "nur zwei ueber der Frist");
+        let fremd = meldung(vec![zeugnis(2, 9000), zeugnis(3, 9000), zeugnis(7, 9000)]);
+        assert_eq!(fristverstoss_einreichen(&mut st, &miner_adresse(2), &fremd, &kontext), Err(TransitionError::FristmeldungUngueltig), "ein Fremder zeugt");
+        let doppelt = meldung(vec![zeugnis(2, 9000), zeugnis(3, 9000), zeugnis(3, 9000)]);
+        assert_eq!(fristverstoss_einreichen(&mut st, &miner_adresse(2), &doppelt, &kontext), Err(TransitionError::FristmeldungUngueltig), "doppelt");
+        let drei = meldung(vec![zeugnis(2, 2201), zeugnis(3, 5000), zeugnis(5, 9000)]);
+        assert_eq!(fristverstoss_einreichen(&mut st, &miner_adresse(6), &drei, &kontext), Err(TransitionError::NichtDerMiner), "nur ein Zeuge reicht ein");
+        fristverstoss_einreichen(&mut st, &miner_adresse(2), &drei, &kontext).expect("Meldung");
+        assert!(modellzusage_der_epoche(&st, &kennung(1), EpochId(2)).is_some(), "die laufende Epoche bleibt");
+        assert!(modellzusage_der_epoche(&st, &kennung(1), EpochId(3)).is_none(), "die naechste ist gesperrt");
+        assert!(modellzusage_der_epoche(&st, &kennung(1), EpochId(4)).is_some(), "danach gilt sie wieder");
+        assert_eq!(st.verstoesse_im_fenster(&miner_adresse(1), crate::state::VERSTOSS_FENSTER), 1);
+        assert_eq!(fristverstoss_einreichen(&mut st, &miner_adresse(2), &drei, &kontext), Err(TransitionError::FristBereitsGemeldet));
     }
 
     /// Eine Anmeldung steht danach im Register, mit der laufenden Epoche.

@@ -1,11 +1,11 @@
 # NODE — der Myelith-Knoten
 
-> **Version:** 0.49.0
-> **Datum:** 2026-10-17
+> **Version:** 0.52.0
+> **Datum:** 2026-10-22
 > **Status:** Netzknoten lauffähig, Blockproduktion mit **Persistenz über
 > Neustarts**, BFT-Runden über das Netz mit Rundenwechsel, und seit dem
 > 1. September **schließt der Knoten die Epoche selbst ab**.
-> **294 Tests grün.**
+> **305 Tests grün.**
 >
 > ⚑ **Seit dem 27. August sind Blockhöhe und Epoche zwei Dinge.** Die
 > Probekette schrieb ihre Höhe in das Epochenfeld des Blockkopfs; das
@@ -278,6 +278,105 @@ NODE/
 ```
 
 ## Changelog
+
+### v0.52.0 (2026-10-22): Der Knoten rechnet aus der Kette; Stufe 4 abgeschlossen
+
+⚑ **Festlegungen des Projektinhabers vom selben Tag:** ein Testnetz mit dem
+int4-35B als Podmodell, die Probekette rechnet weiter das Probemodell; kein
+Pod ohne Zusage, und der Knoten reicht seine Zusage selbst ein; die Frist
+zeichnet der Pod gegen.
+
+- `netz.rs` (neu): `PROBEKETTE` und `TESTNETZ_INT4` mit Startwert,
+  Podmodell und vTFE-Profil; `Netz::des_zustands` findet das Netz aus dem
+  Podmodell im Zustand. `--netz probe|test-int4`. `NETZMODELL`,
+  `NETZMODELL_INT4` und `NETZMODELL_KOPF` entfallen.
+- Die Kette: `Kette::im_netz`, `netz()`, `netzwert()`; die Zuteilung nach
+  Zusagen, `grenzen_des_pods` als eine Stelle für den Schnitt; Training
+  **und** Inferenz schreiben je Pod nach seinem Schnitt gut;
+  `FristverstossEinreichen` mit Pod und Bereich aus Zuteilung und Schnitt.
+- `shardfuehrung.rs` (neu, P7): Der Knoten leitet seinen Auftrag aus der
+  Kette ab, startet `myl-shard --von --bis`, lässt ihn bei gleichem
+  Bereich laufen und schreibt die Netzlast für den lokalen Plan.
+  `--shard-programm`, `--artefakte`, `--shard-training`.
+- Zusage und Anmeldung: `--modellzusage <ebenen>:<us>[:<von>-<bis>]` und
+  `--zone`; der Knoten meldet sich mit dem Konsensschlüssel an und reicht
+  die Zusage für die nächste Epoche ein.
+- `frist.rs` (neu): Frist eines Mitglieds, Messung aus Zeitprobe minus Ping,
+  `Fristsammlung`; einmal je Epoche misst jedes Mitglied die übrigen
+  Positionen, verteilt Zeugnisse und reicht die Meldung ein, sobald sie
+  trägt.
+- `dateidienst.rs` (neu, P11): Stücke nur aus dem eigenen Manifest, Holen
+  fehlender Dateien für die nächste Epoche, jede geprüft.
+- `nachschub.rs`: `Zeitprobe`, `Ping`, `Datei`, `Fristzeugnis` und ihre
+  Antworten, hinten angehängt.
+- **Aus dem Netzlauf** (fünfzehn Knoten, zwei ungleiche Pods, sechs
+  Stolpersteine, TESTCLIENT `tests/netzlauf.rs`):
+  - 📌 Die Fälligkeit der Zustandsaufnahme überlebt jetzt den Aufruf von
+    `laufe_fuer`. Wer den Knoten in kurzen Scheiben fuhr, bekam nie eine
+    Aufnahme und damit keine Netzarbeit.
+  - 📌 **Fund 588:** Die Blocknachforderung lief nur, wenn ein Block über
+    Gossip kam, nur beim Weiterreicher, und endete an einer leeren Antwort;
+    im Lauf blieb die Hälfte der Knoten bei Höhe 600 von 3660 stehen. Jetzt
+    fordert jede Aufnahme weiter, solange eine höhere Kette gehört ist,
+    reihum über die verbundenen Gegenstellen, und eine verlorene
+    Nachforderung verfällt nach zehn Sekunden.
+  - Die Fristmessung fragt, wer noch nicht gemessen ist, bei jeder Aufnahme
+    wieder, und die Reserve misst mit.
+  - 📌 **Fund 590:** Eine Probe, die nicht länger dauerte als der Ping,
+    ergab null und galt damit als bestanden, für die ganze Epoche. Ein
+    einzelner langer Ping, weil das Gegenüber gerade nachholte, ließ den
+    Lügner (Frist 50 µs) bei vier von sechs Messenden durch. Jetzt gehen
+    drei Pings voraus und der kürzeste zählt
+    (`frist::PINGS_JE_MESSUNG`); eine Messung ohne Rechenzeit ist keine
+    (`gemessen_je_token` liefert `None`), wird als
+    `fristmessung_verworfen` vermerkt und wiederholt. Im Kopf von
+    `frist.rs` stehen dazu die zwei bekannten Grenzen: Eine Meldung, die
+    erst nach dem Epochenwechsel in einen Block kommt, verfällt, und wer
+    seine Pings verzögert, verkleinert die gemessene Rechenzeit.
+  - Der Shard startet erst, wenn die Dateien seines Bereichs da sind; der
+    Dateidienst holt zuerst für die laufende Epoche, dann für die nächste.
+  - `Knoten::miner_kennung`, `shardauftrag`, `shard_pid`;
+    `Shardfuehrung::pid`.
+  - Neue Probe `tests/entdeckung.rs` (Fund 587 in NETWORKING).
+- **Belege:** Proben zu Netzen und Katalog, Auftrag aus der Kette, Prozess
+  folgt dem Soll, Meldung aus einer Mehrheit, Dateien holen und prüfen,
+  Marken hinten; die Kettenproben mit Zusagen; `cargo test` rc=0.
+
+### v0.51.1 (2026-10-22): Die Testphase beginnt mit dem int4-35B
+
+⚑ **Festlegung des Projektinhabers:** Ein Pod rechnet in der Testphase das
+Raven 35B A3B int4; über int8 oder int4 wird nach der Testphase
+entschieden.
+
+- `NETZMODELL_INT4` (neu) hält seinen Abdruck auf der Netzliste fest; die
+  Probe `netzmodell_int4_steht_auf_der_netzliste` vergleicht ihn mit
+  `MODELS/llm/KATALOG.json`.
+- ⚠️ **`NETZMODELL` bleibt `None`.** Mit dem Abdruck schnitte die Kette die
+  Gutschrift nach den Zusagen, während `myl-pod` noch gleich rechnet, und
+  die Ebenenzahl käme aus dem Profil des Probemodells. Ein Mitglied mit einer
+  unmachbaren Zusage nähme dann seinem ganzen Pod die Gutschrift. Gefüllt
+  wird es, wenn der Ledger die Zusage gegen die Ebenenzahl prüft und der Pod
+  nach demselben Schnitt rechnet (CONSENSUS 6.11).
+- **Belege:** `cargo test` rc=0 (296 Tests).
+
+### v0.51.0 (2026-10-22): Die Kette nimmt Zusagen an und schneidet nach ihnen
+
+Stufe 4 des Dispatchers (CONSENSUS v0.49.0).
+
+- Die Anweisung `ZusageEinreichen` geht an `myl_ledger::transitions::zusage_einreichen`.
+- Die Gutschrift für das Training schneidet einen Pod mit
+  `bereiche_des_pods`, derselben Funktion, nach der der Pod rechnen soll;
+  hier stand bis heute der gleiche Schnitt, selbst ausgerechnet.
+- ⚑ **`NETZMODELL` ist noch `None`**, und damit schneidet die Kette weiter
+  gleich. Welche Form des 35B ein Pod rechnet (int8 oder int4), entscheidet
+  der Projektinhaber; danach steht hier sein Abdruck. `NETZMODELL_KOPF` =
+  (4, 1) ist Platz und Zeit des Kopfs, gemessen am Raven.
+- **Belege:** neue Probe `eine_zusage_ueber_die_kette_wirkt`; `cargo test`
+  rc=0 (295 Tests).
+
+### v0.50.0 (2026-10-21): Der Knoten nennt das Modell bei seinem Namen
+
+Die Projektmodelle heißen seit heute nach Tieren, mit Größe und Speicherform als Anhängsel (Festlegung des Projektinhabers): `myelith-0.6b` ist `sparrow-0.6b-int8`, `myelith-4b` `pigeon-4b-int8`, `myelith-30b-a3b` `magpie-30b-a3b-int8`, `myelith-35b-a3b` `raven-35b-a3b-int8`. In den Dateien eines Artefakts steht kein Name, also bleiben Abdrücke und Register gültig. Die Vorgabe von `--modell`, der Name, unter dem die `/v1`-Tür das Modell nennt, war `myelith-myelith-0.6b`, ein doppelter Vorsatz; sie ist jetzt `sparrow-0.6b-int8`. Proben mitgezogen.
 
 ### v0.49.0 (2026-10-17): Speicherorte, Kapazitätszusage und die Zahlen eines Miners
 

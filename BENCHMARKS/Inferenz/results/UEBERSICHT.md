@@ -2,7 +2,7 @@
 
 > ⚙️ **Erzeugt von `BENCHMARKS/Inferenz/uebersicht.py`.**
 > Nicht von Hand bearbeiten: Der nächste Lauf überschreibt die Datei.
-> Stand: 2026-09-30
+> Stand: 2026-10-21
 
 Gemessen wird Perplexität auf WikiText-2 mit Teacher-Forcing, für
 beide Pfade auf **identischen Sequenzen**; niedriger ist besser.
@@ -11,11 +11,14 @@ seine eigene Gleitkomma-Referenz, nicht auf ein anderes Modell.
 
 | Modell | Gleitkomma | Ganzzahl | Positionen | Abstand | Kriterium ≤ 5 % |
 |---|---|---|---|---|---|
-| Myelith 0,6B | 42,26 | 43,49 | 3558 | **+2,92 %** | erfüllt |
-| Myelith 4B | 19,63 | 19,95 | 435 | **+1,65 %** | erfüllt |
-| Myelith 8B | 12,79 | 13,27 | 435 | **+3,75 %** | erfüllt |
-| Myelith 30B-A3B | 10,48 | 10,42 | 435 | **kein messbarer Abstand** | erfüllt |
-| Myelith 35B-A3B | | | | **nicht gemessen** | |
+| Sparrow 0.6B - INT8 | 42,26 | 43,49 | 3558 | **+2,92 %** | erfüllt |
+| Pigeon 4B - INT8 | 19,63 | 19,95 | 435 | **+1,65 %** | erfüllt |
+| Jay 8B - INT8 | 12,79 | 13,27 | 435 | **+3,75 %** | erfüllt |
+| Crow 27B - INT8 | | | | **nicht gemessen** | |
+| Magpie 30B A3B - INT8 | 10,48 | 10,42 | 435 | **kein messbarer Abstand** | erfüllt |
+| Raven 35B A3B - INT8 | | | | **nicht gemessen** | |
+| Raven 35B A3B - INT4 | | | | **nicht gemessen** | |
+| Vulture 126B A7B - INT8 | | | | **nicht gemessen** | |
 
 ## Was daraus folgt
 
@@ -63,22 +66,25 @@ einmal monoton.
 
 | Modell | Positionen | Gleitkomma | nur Gewichte (W8) | Boden (W8A16) |
 |---|---|---|---|---|
-| Myelith 0,6B | 13797 | 42,31 | 42,99 | 42,99 (+1,61 %) |
-| Myelith 0,6B | 435 | 31,86 | 32,04 | 32,12 (+0,80 %) |
-| Myelith 4B | 13797 | 28,09 | 28,07 | 28,07 (−0,07 %) |
-| Myelith 4B | 435 | 19,63 | 19,39 | 19,15 (−2,45 %) |
-| Myelith 30B-A3B | 435 | 10,48 | 10,48 | 10,44 (−0,43 %) |
+| Sparrow 0.6B - INT8 | 13797 | 42,31 | 42,99 | 42,99 (+1,61 %) |
+| Sparrow 0.6B - INT8 | 435 | 31,86 | 32,04 | 32,12 (+0,80 %) |
+| Pigeon 4B - INT8 | 13797 | 28,09 | 28,07 | 28,07 (−0,07 %) |
+| Pigeon 4B - INT8 | 435 | 19,63 | 19,39 | 19,15 (−2,45 %) |
+| Magpie 30B A3B - INT8 | 435 | 10,48 | 10,48 | 10,44 (−0,43 %) |
 
 ## Wo die Einzelbelege stehen
 
 Je Modell ein Entscheidungsprotokoll und ein Vergleich, beide
 erzeugt von `perplexity.py`:
 
-- **Myelith 0,6B**: `decision_12-21_myelith-06b.md`, `perplexity_comparison_myelith-06b.json`
-- **Myelith 4B**: `decision_12-21_myelith-4b.md`, `perplexity_comparison_myelith-4b.json`
-- **Myelith 8B**: `decision_12-21_myelith-8b.md`, `perplexity_comparison_myelith-8b.json`
-- **Myelith 30B-A3B**: `decision_12-21_myelith-30b-a3b.md`, `perplexity_comparison_myelith-30b-a3b.json`
-- **Myelith 35B-A3B**: `decision_12-21_myelith-35b-a3b.md`, `perplexity_comparison_myelith-35b-a3b.json`
+- **Sparrow 0.6B - INT8**: `decision_12-21_myelith-06b.md`, `perplexity_comparison_myelith-06b.json`
+- **Pigeon 4B - INT8**: `decision_12-21_myelith-4b.md`, `perplexity_comparison_myelith-4b.json`
+- **Jay 8B - INT8**: `decision_12-21_myelith-8b.md`, `perplexity_comparison_myelith-8b.json`
+- **Crow 27B - INT8**: `decision_12-21_myelith-27b.md`, `perplexity_comparison_myelith-27b.json`
+- **Magpie 30B A3B - INT8**: `decision_12-21_myelith-30b-a3b.md`, `perplexity_comparison_myelith-30b-a3b.json`
+- **Raven 35B A3B - INT8**: `decision_12-21_myelith-35b-a3b.md`, `perplexity_comparison_myelith-35b-a3b.json`
+- **Raven 35B A3B - INT4**: `decision_12-21_myelith-35b-a3b-int4.md`, `perplexity_comparison_myelith-35b-a3b-int4.json`
+- **Vulture 126B A7B - INT8**: `decision_12-21_myelith-125b-a6b.md`, `perplexity_comparison_myelith-125b-a6b.json`
 
 ⚑ **Die Einzeldateien bleiben, und das ist Absicht.** Jede ist der
 Beleg ihres Modells, mit Methode, Datensatz und Einordnung. Diese

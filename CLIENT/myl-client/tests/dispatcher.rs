@@ -6,7 +6,7 @@
 
 #[test]
 fn ein_geladenes_modell_ist_angemeldet() {
-    let pfad = concat!(env!("CARGO_MANIFEST_DIR"), "/../../INTEGER_LLM/artifacts/myelith-0.6b");
+    let pfad = concat!(env!("CARGO_MANIFEST_DIR"), "/../../INTEGER_LLM/artifacts/sparrow-0.6b-int8");
     if std::env::var_os("MYL_OHNE_ARTEFAKTE").is_some() {
         eprintln!("SKIP (MYL_OHNE_ARTEFAKTE gesetzt): {pfad}");
         return;
@@ -20,7 +20,7 @@ fn ein_geladenes_modell_ist_angemeldet() {
     let angemeldet = || {
         myl_dispatcher::local::register::laufende()
             .into_iter()
-            .find(|l| l.name == "myelith-0.6b" && l.vorrang == myl_dispatcher::local::plan::Vorrang::Agent)
+            .find(|l| l.name == "sparrow-0.6b-int8" && l.vorrang == myl_dispatcher::local::plan::Vorrang::Agent)
     };
     assert!(angemeldet().is_none(), "angemeldet, bevor etwas geladen ist");
     let m = myl_client::Oertlichesmodell::laden(pfad, &Default::default()).expect("Modell laedt");
@@ -45,7 +45,7 @@ fn ein_geladenes_modell_ist_angemeldet() {
 /// begrenzt ihn.
 #[test]
 fn die_freigabe_prueft_den_festen_bedarf_und_der_speicher_begrenzt_den_kontext() {
-    let pfad = concat!(env!("CARGO_MANIFEST_DIR"), "/../../INTEGER_LLM/artifacts/myelith-0.6b");
+    let pfad = concat!(env!("CARGO_MANIFEST_DIR"), "/../../INTEGER_LLM/artifacts/sparrow-0.6b-int8");
     if std::env::var_os("MYL_OHNE_ARTEFAKTE").is_some() {
         eprintln!("SKIP (MYL_OHNE_ARTEFAKTE gesetzt): {pfad}");
         return;

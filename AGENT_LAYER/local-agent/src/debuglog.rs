@@ -18,6 +18,17 @@
 //!
 //! ⚑ **Zeiten in UTC**, wie in der Uhr des Agenten (`crate::uhr`): ohne Bibliothek fuer Zeitzonen, und eindeutig, wenn
 //! Konsole und Fenster in dieselbe Datei schreiben.
+//!
+//! ⚑ **Ablauf und Deckel** (Festlegung des Projektinhabers, 2026-10-21): Der
+//! Log enthaelt alles, also soll er nicht unbegrenzt liegen bleiben, und ein
+//! Lauf, der haengt, soll die Platte nicht fuellen. Dateien aus Monaten vor
+//! den letzten [`AUFBEWAHREN_MONATE`] gehen; der Ordner haelt hoechstens
+//! [`ORDNER_GRENZE`] Bytes, die aeltesten Teile zuerst; ab [`TEIL_GRENZE`]
+//! schreibt der Monat in einen neuen Teil (`debug-JJJJ-MM-2.log`), damit nie
+//! ein ganzer Monat auf einmal gehen muss. Geprueft wird beim Einschalten und
+//! bei jedem neuen Teil, nicht bei jedem Eintrag. Die Datei, in die gerade
+//! geschrieben wird, bleibt immer. Gemessen vor der Grenze: 3,5 MB in neun
+//! Tagen Entwicklung mit 203 Starts.
 
 use std::io::Write;
 use std::path::PathBuf;
@@ -35,6 +46,13 @@ static WER: Mutex<String> = Mutex::new(String::new());
 /// Eine Sperre, damit die Eintraege eines Prozesses nicht ineinanderlaufen.
 static SCHREIBEN: Mutex<()> = Mutex::new(());
 
+/// Wie viele Kalendermonate bleiben, der laufende mitgezaehlt.
+pub const AUFBEWAHREN_MONATE: u32 = 3;
+/// Hoechstens so viele Bytes im Ordner; danach gehen die aeltesten Teile.
+pub const ORDNER_GRENZE: u64 = 512 * 1024 * 1024;
+/// Ab so vielen Bytes beginnt der Monat einen neuen Teil.
+pub const TEIL_GRENZE: u64 = 64 * 1024 * 1024;
+
 /// Schreibt der Debug-Log gerade?
 pub fn an() -> bool {
     AN.load(Ordering::SeqCst)
@@ -49,10 +67,82 @@ pub fn ordner() -> PathBuf {
     }
 }
 
-/// Die Datei des Monats, zu dem `sekunden` gehoert: `debug-JJJJ-MM.log`.
+/// Die Datei, in die der Monat von `sekunden` gerade schreibt:
+/// `debug-JJJJ-MM.log`, ab dem zweiten Teil `debug-JJJJ-MM-2.log`.
 pub fn datei_fuer(sekunden: u64) -> PathBuf {
+    datei_in(&ordner(), monat_von(sekunden))
+}
+
+/// Jahr und Monat zu `sekunden`, in UTC.
+fn monat_von(sekunden: u64) -> (u32, u32) {
     let text = crate::uhr::utc_text(sekunden);
-    ordner().join(format!("debug-{}.log", &text[..7]))
+    (text[..4].parse().unwrap_or(0), text[5..7].parse().unwrap_or(0))
+}
+
+/// Der Name eines Teils.
+fn teilname((jahr, monat): (u32, u32), teil: u32) -> String {
+    if teil <= 1 { format!("debug-{jahr:04}-{monat:02}.log") } else { format!("debug-{jahr:04}-{monat:02}-{teil}.log") }
+}
+
+/// Jahr, Monat und Teil aus einem Dateinamen, sonst `None`.
+fn teil_aus(name: &str) -> Option<(u32, u32, u32)> {
+    let rest = name.strip_prefix("debug-")?.strip_suffix(".log")?;
+    let mut t = rest.split('-');
+    let jahr = t.next().filter(|j| j.len() == 4)?.parse().ok()?;
+    let monat = t.next().filter(|m| m.len() == 2)?.parse().ok()?;
+    let teil = match t.next() {
+        None => 1,
+        Some(n) => n.parse().ok().filter(|n| *n >= 2)?,
+    };
+    t.next().is_none().then_some((jahr, monat, teil))
+}
+
+/// Alle Teile im Ordner, die aeltesten zuerst, mit ihrer Groesse.
+fn teile_in(ordner: &std::path::Path) -> Vec<((u32, u32, u32), PathBuf, u64)> {
+    let mut aus: Vec<_> = std::fs::read_dir(ordner)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| {
+            let k = teil_aus(&e.file_name().to_string_lossy())?;
+            Some((k, e.path(), e.metadata().ok()?.len()))
+        })
+        .collect();
+    aus.sort_by_key(|(k, _, _)| *k);
+    aus
+}
+
+/// Der hoechste Teil des Monats im Ordner, oder der erste.
+fn datei_in(ordner: &std::path::Path, monat: (u32, u32)) -> PathBuf {
+    let teil = teile_in(ordner).iter().filter(|((j, m, _), _, _)| (*j, *m) == monat).map(|((_, _, t), _, _)| *t).max();
+    ordner.join(teilname(monat, teil.unwrap_or(1)))
+}
+
+/// **Ablauf und Deckel** im Ordner, fuer den laufenden Monat `monat`. Die
+/// Datei `behalten` bleibt in jedem Fall. Gibt die geloeschten zurueck.
+pub fn aufraeumen_in(ordner: &std::path::Path, monat: (u32, u32), behalten: &std::path::Path) -> Vec<PathBuf> {
+    let zahl = |(j, m): (u32, u32)| j * 12 + m;
+    let erster = zahl(monat).saturating_sub(AUFBEWAHREN_MONATE - 1);
+    let mut weg = Vec::new();
+    let mut teile = teile_in(ordner);
+    teile.retain(|((j, m, _), p, _)| {
+        let alt = zahl((*j, *m)) < erster && p != behalten;
+        if alt && std::fs::remove_file(p).is_ok() {
+            weg.push(p.clone());
+        }
+        !alt
+    });
+    let mut summe: u64 = teile.iter().map(|(_, _, g)| g).sum();
+    for (_, p, g) in &teile {
+        if summe <= ORDNER_GRENZE {
+            break;
+        }
+        if p != behalten && std::fs::remove_file(p).is_ok() {
+            summe -= g;
+            weg.push(p.clone());
+        }
+    }
+    weg
 }
 
 /// Datum und Uhrzeit fuer eine Zeile: `JJJJ-MM-TT HH:MM:SS UTC`.
@@ -80,6 +170,10 @@ pub fn setzen(an: bool, wer: &str, anlass: &str) -> bool {
     }
     let wort = if an { "DEBUG GESTARTET" } else { "DEBUG BEENDET" };
     let zeile = markierung(wort, &zeitpunkt(jetzt()), wer, anlass);
+    if an {
+        let _sperre = SCHREIBEN.lock();
+        aufraeumen_in(&ordner(), monat_von(jetzt()), &datei_fuer(jetzt()));
+    }
     roh_schreiben(&zeile, true);
     true
 }
@@ -126,13 +220,27 @@ fn roh_schreiben(text: &str, immer: bool) {
         return;
     }
     let _sperre = SCHREIBEN.lock();
-    let pfad = datei_fuer(jetzt());
-    if let Some(o) = pfad.parent() {
-        let _ = std::fs::create_dir_all(o);
-    }
+    let o = ordner();
+    let _ = std::fs::create_dir_all(&o);
+    let pfad = naechste_datei(&o, monat_von(jetzt()), text.len() as u64);
     if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&pfad) {
         let _ = f.write_all(text.as_bytes());
     }
+}
+
+/// Die Datei fuer den naechsten Eintrag von `laenge` Bytes: der laufende
+/// Teil, oder ein neuer, wenn er mit dem Eintrag ueber [`TEIL_GRENZE`] kaeme.
+/// Ein neuer Teil raeumt den Ordner auf.
+fn naechste_datei(ordner: &std::path::Path, monat: (u32, u32), laenge: u64) -> PathBuf {
+    let jetzt_datei = datei_in(ordner, monat);
+    let groesse = std::fs::metadata(&jetzt_datei).map(|m| m.len()).unwrap_or(0);
+    if groesse == 0 || groesse + laenge <= TEIL_GRENZE {
+        return jetzt_datei;
+    }
+    let teil = teil_aus(&jetzt_datei.file_name().unwrap_or_default().to_string_lossy()).map(|(_, _, t)| t).unwrap_or(1);
+    let neu = ordner.join(teilname(monat, teil + 1));
+    aufraeumen_in(ordner, monat, &neu);
+    neu
 }
 
 #[cfg(test)]
@@ -147,8 +255,64 @@ mod tests {
         assert!(m.contains("DEBUG GESTARTET 2026-10-12 13:45:12 UTC · KONSOLE · /DEBUG ON"), "{m}");
         assert_eq!(m, m.to_uppercase());
         // 2026-10-12 00:00:00 UTC
-        let d = datei_fuer(1_791_763_200);
-        assert!(d.ends_with("debug-2026-10.log"), "{}", d.display());
+        assert_eq!(monat_von(1_791_763_200), (2026, 10));
+        assert_eq!(teilname((2026, 10), 1), "debug-2026-10.log");
         assert_eq!(zeitpunkt(1_791_763_200), "2026-10-12 00:00:00 UTC");
+    }
+
+    /// ⚑ **Ablauf und Deckel** (2026-10-21): Monate vor den letzten drei
+    /// gehen, ein voller Ordner verliert die aeltesten Teile zuerst, die
+    /// laufende Datei bleibt immer, ein voller Teil beginnt einen neuen, und
+    /// fremde Dateien im Ordner bleiben.
+    #[test]
+    fn ablauf_und_deckel() {
+        let d = std::env::temp_dir().join(format!("debuglog-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let leg = |n: &str, g: u64| {
+            let f = std::fs::File::create(d.join(n)).unwrap();
+            f.set_len(g).unwrap();
+        };
+        for n in ["debug-2026-06.log", "debug-2026-07.log", "debug-2026-08.log", "debug-2026-09.log", "notizen.txt"] {
+            leg(n, 10);
+        }
+        leg("debug-2026-10.log", 10);
+        let weg = aufraeumen_in(&d, (2026, 10), &d.join("debug-2026-10.log"));
+        let mut namen: Vec<String> = weg.iter().map(|p| p.file_name().unwrap().to_string_lossy().into_owned()).collect();
+        namen.sort();
+        assert_eq!(namen, ["debug-2026-06.log", "debug-2026-07.log"], "drei Monate bleiben, der laufende mitgezaehlt");
+        assert!(d.join("notizen.txt").is_file() && d.join("debug-2026-08.log").is_file());
+        // Die Namen der Teile.
+        assert_eq!(teil_aus("debug-2026-10-3.log"), Some((2026, 10, 3)));
+        assert_eq!(teil_aus("debug-2026-10-1.log"), None, "ein erster Teil traegt keine Nummer");
+        assert_eq!(teil_aus("debug-26-10.log"), None);
+        // Der Deckel: zwei grosse Teile, die laufende Datei bleibt.
+        leg("debug-2026-09.log", ORDNER_GRENZE / 2 + 1);
+        leg("debug-2026-10.log", ORDNER_GRENZE / 2 + 1);
+        leg("debug-2026-10-2.log", 10);
+        let weg = aufraeumen_in(&d, (2026, 10), &d.join("debug-2026-10-2.log"));
+        assert_eq!(weg.len(), 2, "{weg:?}");
+        assert!(!d.join("debug-2026-08.log").exists() && !d.join("debug-2026-09.log").exists(), "die aeltesten zuerst");
+        assert!(d.join("debug-2026-10.log").is_file() && d.join("debug-2026-10-2.log").is_file());
+        // Ein voller Teil beginnt einen neuen.
+        leg("debug-2026-10-2.log", TEIL_GRENZE);
+        assert!(naechste_datei(&d, (2026, 10), 1).ends_with("debug-2026-10-3.log"));
+        assert!(naechste_datei(&d, (2026, 11), 1).ends_with("debug-2026-11.log"));
+        assert_eq!(datei_in(&d, (2026, 10)), d.join("debug-2026-10-2.log"));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// Ueber den Jahreswechsel zaehlen die Monate weiter.
+    #[test]
+    fn ablauf_ueber_den_jahreswechsel() {
+        let d = std::env::temp_dir().join(format!("debuglog-jahr-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        for n in ["debug-2026-10.log", "debug-2026-11.log", "debug-2026-12.log", "debug-2027-01.log"] {
+            std::fs::write(d.join(n), "x").unwrap();
+        }
+        let weg = aufraeumen_in(&d, (2027, 1), &d.join("debug-2027-01.log"));
+        assert_eq!(weg, [d.join("debug-2026-10.log")]);
+        let _ = std::fs::remove_dir_all(&d);
     }
 }

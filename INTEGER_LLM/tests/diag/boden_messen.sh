@@ -3,7 +3,7 @@
 #
 # Aufruf aus der Wurzel:
 #
-#     sh INTEGER_LLM/tests/diag/boden_messen.sh myelith-30b-a3b
+#     sh INTEGER_LLM/tests/diag/boden_messen.sh magpie-30b-a3b-int8
 #
 # ⚑ **Warum es diesen Mantel gibt und nicht nur die eine Zeile.** Beim
 # 30B-Gemisch laeuft die Messung Stunden: Die BF16-Referenz ist 57 GB
@@ -21,7 +21,7 @@ set -eu
 MODELL="${1:-}"
 if [ -z "$MODELL" ]; then
     echo "Aufruf: sh INTEGER_LLM/tests/diag/boden_messen.sh <modell>" >&2
-    echo "Zum Beispiel: myelith-0.6b, myelith-4b, myelith-30b-a3b" >&2
+    echo "Zum Beispiel: sparrow-0.6b-int8, pigeon-4b-int8, magpie-30b-a3b-int8" >&2
     exit 2
 fi
 

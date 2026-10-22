@@ -25,13 +25,14 @@ The artefacts are integer-converted derivative works of the base weights.
 
 | Artefakt / artefact | Grundgewichte / base weights | Lizenz der Gewichte / weights licence | Lizenz des Artefakts / artefact licence |
 |---|---|---|---|
-| `myelith-0.6b` | [Qwen/Qwen3-0.6B](https://huggingface.co/Qwen/Qwen3-0.6B) | Apache-2.0 | PolyForm Shield License 1.0.0 |
-| `myelith-125b-a6b` | [Qwen/Qwen3.8-Flash-Next](https://huggingface.co/Qwen/Qwen3.8-Flash-Next) | qwen-community-1.0 | privat, nur lokal; die Lizenz der Gewichte gilt weiter |
-| `myelith-30b-a3b` | [Qwen/Qwen3-30B-A3B](https://huggingface.co/Qwen/Qwen3-30B-A3B) | Apache-2.0 | PolyForm Shield License 1.0.0 |
-| `myelith-35b-a3b` | [Qwen/Qwen3.6-35B-A3B](https://huggingface.co/Qwen/Qwen3.6-35B-A3B) | Apache-2.0 | PolyForm Shield License 1.0.0 |
-| `myelith-35b-a3b-int4` | [Qwen/Qwen3.6-35B-A3B](https://huggingface.co/Qwen/Qwen3.6-35B-A3B) | Apache-2.0 | PolyForm Shield License 1.0.0 |
-| `myelith-4b` | [Qwen/Qwen3-4B](https://huggingface.co/Qwen/Qwen3-4B) | Apache-2.0 | PolyForm Shield License 1.0.0 |
-| `myelith-8b` | [Qwen/Qwen3-8B](https://huggingface.co/Qwen/Qwen3-8B) | Apache-2.0 | PolyForm Shield License 1.0.0 |
+| `crow-27b-int8` | [Qwen/Qwen3.8-27B](https://huggingface.co/Qwen/Qwen3.8-27B) | Apache-2.0 | PolyForm Shield License 1.0.0 |
+| `jay-8b-int8` | [Qwen/Qwen3-8B](https://huggingface.co/Qwen/Qwen3-8B) | Apache-2.0 | PolyForm Shield License 1.0.0 |
+| `magpie-30b-a3b-int8` | [Qwen/Qwen3-30B-A3B](https://huggingface.co/Qwen/Qwen3-30B-A3B) | Apache-2.0 | PolyForm Shield License 1.0.0 |
+| `pigeon-4b-int8` | [Qwen/Qwen3-4B](https://huggingface.co/Qwen/Qwen3-4B) | Apache-2.0 | PolyForm Shield License 1.0.0 |
+| `raven-35b-a3b-int4` | [Qwen/Qwen3.6-35B-A3B](https://huggingface.co/Qwen/Qwen3.6-35B-A3B) | Apache-2.0 | PolyForm Shield License 1.0.0 |
+| `raven-35b-a3b-int8` | [Qwen/Qwen3.6-35B-A3B](https://huggingface.co/Qwen/Qwen3.6-35B-A3B) | Apache-2.0 | PolyForm Shield License 1.0.0 |
+| `sparrow-0.6b-int8` | [Qwen/Qwen3-0.6B](https://huggingface.co/Qwen/Qwen3-0.6B) | Apache-2.0 | PolyForm Shield License 1.0.0 |
+| `vulture-126b-a7b-int8` | [Qwen/Qwen3.8-Flash-Next](https://huggingface.co/Qwen/Qwen3.8-Flash-Next) | qwen-community-1.0 | privat, nur lokal; die Lizenz der Gewichte gilt weiter |
 
 ## 2. Weitere Modelle / Further models
 

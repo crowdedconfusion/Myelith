@@ -71,6 +71,12 @@ pub enum Gewichtsdaten {
     /// Vier Bit je Gewicht, siehe [`Vierbitdaten`]; ebenso nur ueber
     /// [`QTensor::matrix`] gelesen.
     Vierbit(Box<Vierbitdaten>),
+    /// ⚑ **Nicht abgelegt** (Teilablage, Stufe 4 des Dispatchers,
+    /// 2026-10-22): Der Tensor gehoert zu einer Ebene ausserhalb des
+    /// Bereichs, den dieser Rechner haelt, und seine Datei liegt nicht hier.
+    /// Ein Shard rechnet ihn nie; wer ihn doch liest, bekommt eine Panik mit
+    /// Grund statt einer Zahl aus nichts.
+    Fehlt,
 }
 
 /// Eine Vierbitmatrix: Codes und Gitter aus dem Artefakt (Format in
@@ -178,6 +184,10 @@ impl std::ops::Deref for Gewichtsdaten {
                  Vierbitgewichte und muesste `QTensor::matrix` nehmen",
                 v.zeilen, v.spalten
             ),
+            Gewichtsdaten::Fehlt => panic!(
+                "ein Tensor ausserhalb des gehaltenen Bereichs wurde gelesen (Teilablage); dieser \
+                 Shard rechnet nur die Ebenen, deren Dateien er haelt"
+            ),
             Gewichtsdaten::Abbild(abbild) => {
                 // SICHERHEIT: `i8` und `u8` haben dieselbe Größe und
                 // dieselbe Ausrichtung, und jedes Bitmuster ist für
@@ -198,6 +208,11 @@ impl std::ops::Deref for Gewichtsdaten {
 }
 
 impl Gewichtsdaten {
+    /// Liegen die Daten hier, oder ist das ein Platzhalter der Teilablage?
+    pub fn liegt_vor(&self) -> bool {
+        !matches!(self, Gewichtsdaten::Fehlt)
+    }
+
     /// **Sagt dem System, dass diese Bytes gleich gebraucht werden.**
     ///
     /// ## ⚑ Fund 331 (2026-09-11): Nicht die Bandbreite fehlte, sondern die Buendelung
@@ -251,7 +266,7 @@ impl Gewichtsdaten {
                 v.codes.vorbereiten();
                 v.gitter.vorbereiten();
             }
-            Gewichtsdaten::Speicher(_) => {}
+            Gewichtsdaten::Speicher(_) | Gewichtsdaten::Fehlt => {}
         }
     }
 
@@ -268,6 +283,8 @@ impl Gewichtsdaten {
             Gewichtsdaten::Abbild(a) => erste_seite_da(a),
             Gewichtsdaten::Ternaer(t) => t.muster.vermutlich_im_speicher(),
             Gewichtsdaten::Vierbit(v) => v.codes.vermutlich_im_speicher(),
+            // Nicht abgelegt heisst nicht gebraucht: kein Warten darauf.
+            Gewichtsdaten::Fehlt => true,
         }
     }
 
@@ -279,6 +296,7 @@ impl Gewichtsdaten {
             Gewichtsdaten::Abbild(a) => a.len(),
             Gewichtsdaten::Ternaer(t) => t.bytes(),
             Gewichtsdaten::Vierbit(v) => v.bytes(),
+            Gewichtsdaten::Fehlt => 0,
         }
     }
 }
@@ -388,6 +406,7 @@ impl std::fmt::Debug for Gewichtsdaten {
             Gewichtsdaten::Abbild(_) => "Abbild",
             Gewichtsdaten::Ternaer(_) => "Ternaer",
             Gewichtsdaten::Vierbit(_) => "Vierbit",
+            Gewichtsdaten::Fehlt => "Fehlt",
         };
         write!(f, "Gewichtsdaten::{art}({} Byte)", self.bytes())
     }
@@ -1689,7 +1708,7 @@ impl IntegerModel {
     /// wieder aus dem Hauptspeicher geholt.
     ///
     /// ⚠️ **Ob das traegt, ist eine Messfrage und keine Herleitung.**
-    /// Gemessen am 2026-09-11 gegen `myelith-4b` mit 169 Token: allein
+    /// Gemessen am 2026-09-11 gegen `pigeon-4b-int8` mit 169 Token: allein
     /// die Umstellung der Reihenfolge brachte rund 4 %, die Buendelung
     /// des MLP darauf noch einmal 5 %. **Der grosse Posten lag
     /// woanders**, naemlich im KV-Verlauf, der je Kopf und je Token

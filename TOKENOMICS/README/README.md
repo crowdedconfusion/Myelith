@@ -1,12 +1,12 @@
 # tokenomics (`myl-tokenomics`)
 
-> **Version:** 0.22.1
-> **Datum:** 2026-08-31
+> **Version:** 0.23.0
+> **Datum:** 2026-10-22
 > **Status:** Design-Entscheidungen getroffen (Fixed-Point bestätigt,
 > vTFE-Skalierung 10⁻⁶, MYL-Kleinstbeträge 10⁶, EMA-Fenster 30 Epochen
 > α=2/31); 🎉 **Phasen 1 bis 5 abgeschlossen** (Auslastungsboden und
 > Subventionsplan seit dem 1. September).
-> **218 Tests grün** (194 Modultests, 17 adversariale, 4 Eigenschafts-, 3 Akzeptanztests).
+> **243 Tests grün** (219 Modultests, 17 adversariale, 4 Eigenschafts-, 3 Akzeptanztests).
 >
 > **Seit dem 27. August greift die Slashing-Staffelung wirklich.** Bis
 > dahin war sie eine Tabelle mit drei Stufen, von denen immer die erste
@@ -97,6 +97,36 @@ volle Gutschrift bekommen. Eine Funktion, die immer null liefert,
 verletzt keine Obergrenze.
 
 ## Changelog
+
+### v0.23.0 (2026-10-22): Das Profil kennt Ebenenarten; Fund 586
+
+⚑ **Festlegung des Projektinhabers:** Die Kette schreibt das int4-35B nach
+einem Profil gut, das seine Ebenen kennt, und nicht nach einer Näherung
+als dichtes Modell.
+
+- `ModellProfil` trägt `voll_alle` (jede wievielte Ebene volle Achtsamkeit
+  hat), `zustand` (`Zustandsprofil` der linearen Aufmerksamkeit),
+  `geteilter_experte` und `ausgangstor`. `macs_der_ebene(i)` und
+  `macs_ebenen(von, bis)` rechnen je Ebene; ohne Zustandsschicht genau wie
+  bisher. Gezählt werden weiter die Gewichtsmatrizen; die Fortschreibung
+  des Zustands bleibt draußen wie die Attention-Scores.
+- `RAVEN_35B_A3B` (neu): das Profil des Netzmodells, aus der
+  Modellkonfiguration des int4. Am echten Artefakt nachgesehen: Das aus dem
+  geladenen Modell abgeleitete Profil (`myl-pod`) ist gleich.
+- `arbeitsverteilung_aus_grenzen` (neu): jeder Pod seine Verteilung aus
+  seinen Grenzen; `Podabrechnung::verteilung` trägt sie.
+- 📌 **Fund 586:** `PROBE_MODELL` beschrieb Qwen2.5-0,5B (24 Ebenen,
+  Breite 896), das Probeartefakt `sparrow-0.6b-int8` ist ein Qwen3-0.6B
+  mit 28 Ebenen und Breite 1024. Die Kette schrieb nach einem Modell gut,
+  das kein Pod rechnete. Behoben; der Stand der Probeverteilung heißt
+  jetzt `myelith-probe-qwen3-0.6b`.
+- **Belege:** das Netzmodell von Hand nachgerechnet, dichte Modelle
+  bitgleich, Verteilung nach Grenzen, eigene Verteilung in der Abrechnung;
+  `cargo test` rc=0.
+
+### v0.22.2 – 2026-10-21 (die Modelle heißen nach Tieren)
+
+Die Projektmodelle heißen seit heute nach Tieren, mit Größe und Speicherform als Anhängsel (Festlegung des Projektinhabers): `myelith-0.6b` ist `sparrow-0.6b-int8`, `myelith-4b` `pigeon-4b-int8`, `myelith-30b-a3b` `magpie-30b-a3b-int8`, `myelith-35b-a3b` `raven-35b-a3b-int8`. In den Dateien eines Artefakts steht kein Name, also bleiben Abdrücke und Register gültig. Nur ein Kommentar.
 
 ### v0.22.1 – 2026-09-10 (die Artefakte heissen nach dem Modell, das sie sind)
 

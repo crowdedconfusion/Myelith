@@ -1739,7 +1739,7 @@ mod drehung_im_training {
             eprintln!("SKIP (MYL_OHNE_ARTEFAKTE gesetzt)");
             return None;
         }
-        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../artifacts/myelith-0.6b");
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../artifacts/sparrow-0.6b-int8");
         if !dir.exists() {
             eprintln!("Artefakt fehlt, Test uebersprungen: {}", dir.display());
             return None;

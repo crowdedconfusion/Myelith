@@ -294,31 +294,6 @@ pub fn angebote() -> Vec<(Werkzeug, Box<dyn Werkzeugausfuehrung>)> {
         .collect()
 }
 
-/// **Was ein Lauf ansagt**: alle Angebote, ohne die verankerten, wenn ein
-/// Schreibwerkzeug laeuft und die Betriebsart lokale Werkzeuge zulaesst.
-///
-/// 📌 **Fund 568 (2026-10-19).** In den Agentenlaeufen des int4-35B mit
-/// Arbeitsordner wurde `fill_template` kein einziges Mal gerufen, aber
-/// `write_file` 37 Mal mit dessen Feldern (`felder`, `vorlage`) und
-/// abgewiesen. Neben einem laufenden Schreibwerkzeug tragen die verankerten
-/// nichts bei, was das Modell nicht selbst schreibt; sie stehen nur als
-/// Verwechslung in der Ansage.
-///
-/// ⚑ **Sie bleiben, wo sie gebraucht werden:** im Chat ohne Ordner, mit
-/// einem abgeschalteten Schreibwerkzeug und in `NurVerankert`, wo jedes
-/// lokale Werkzeug gesperrt ist und nur sie ein Dokument bauen koennen.
-/// ⚠️ Ausgeblendet heisst auch nicht erlaubt: Die Erlaubnis entsteht aus
-/// derselben Liste.
-pub fn ansagen(angebote: &[Werkzeug], nur_verankert: bool, form: crate::werkzeug::Ansageform) -> Vec<Werkzeug> {
-    let schreiben = crate::werkzeuge::Dateiwerkzeug::Schreiben.name(form);
-    let schreibt = angebote.iter().any(|a| a.name == schreiben && !crate::abgeschaltet::ist_platzhalter(a));
-    angebote
-        .iter()
-        .filter(|a| nur_verankert || !schreibt || !Verankert::ALLE.iter().any(|v| v.name() == a.name))
-        .cloned()
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -408,33 +383,5 @@ mod tests {
             "felder": {"x": "b\r\nc"},
         });
         assert_eq!(Verankert::VorlageFuellen.ausfuehren(&a).unwrap(), "a\nb\nc");
-    }
-
-    /// ⚑ **Fund 568: neben einem laufenden Schreibwerkzeug keine
-    /// verankerten in der Ansage**, ohne eines und in `NurVerankert` schon.
-    #[test]
-    fn die_verankerten_weichen_nur_einem_laufenden_schreibwerkzeug() {
-        use crate::werkzeug::Ansageform;
-        let form = Ansageform::Amtlich;
-        let schreiben = crate::werkzeuge::Dateiwerkzeug::Schreiben.name(form);
-        let leer = serde_json::json!({"type": "object", "properties": {}, "required": []});
-        let echt = Werkzeug { name: schreiben.into(), beschreibung: "Writes a file.".into(), parameter: leer.clone() };
-        let (platzhalter, _) = crate::abgeschaltet::angebot(
-            schreiben,
-            leer,
-            &crate::abgeschaltet::Grund::kein_ordner(form),
-            form,
-        );
-        let verankerte: Vec<Werkzeug> = angebote().into_iter().map(|(a, _)| a).collect();
-        let namen = |schreib: &Werkzeug, nur: bool| -> Vec<String> {
-            let mut alle = verankerte.clone();
-            alle.push(schreib.clone());
-            ansagen(&alle, nur, form).into_iter().map(|w| w.name).collect()
-        };
-        assert_eq!(namen(&echt, false), vec![schreiben.to_string()], "neben write_file");
-        for (warum, schreib, nur) in [("abgeschaltet", &platzhalter, false), ("NurVerankert", &echt, true)] {
-            let n = namen(schreib, nur);
-            assert!(Verankert::ALLE.iter().all(|v| n.iter().any(|x| x == v.name())), "{warum}: {n:?}");
-        }
     }
 }

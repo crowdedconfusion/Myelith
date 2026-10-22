@@ -41,7 +41,7 @@ VECTORS_DIR="${SCRIPT_DIR}/vectors"
 PROJECT_ROOT="${SCRIPT_DIR}/.."
 KERNELS_DIR="${PROJECT_ROOT}/kernels"
 RUNTIME_DIR="${PROJECT_ROOT}/runtime"
-ARTIFACT_DIR="${PROJECT_ROOT}/artifacts/myelith-0.6b"
+ARTIFACT_DIR="${PROJECT_ROOT}/artifacts/sparrow-0.6b-int8"
 
 TOTAL=0
 PASSED=0

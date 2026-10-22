@@ -23,8 +23,10 @@ Der Ablauf:
    Merkmale gegen das, was die Laufzeit rechnet. Nur wenn alles traegt, gibt
    das Skript frei; sonst endet es mit dem Grund.
 3. **Namen waehlen**: Vorschlaege nach dem Schema
-   `myelith-<gesamt>b[-a<aktiv>b][-int4]`, gerechnet aus den Koepfen der
+   `<gesamt>b[-a<aktiv>b]-int8` oder `-int4`, gerechnet aus den Koepfen der
    Gewichtsdateien (Sichtturm, MTP-Kopf und N-Gramm-Tabelle zaehlen nicht mit).
+   Ein Projektmodell heisst nach seinem Tier mit demselben Anhaengsel
+   (`raven-35b-a3b-int4`); der Name kommt dann aus `model_configs.py`.
 4. **Bauen**: Gewichte laden, kalibrieren und in int8 exportieren
    (Korpusdurchlauf oder ebenenweise, je nach Bauart), bei einem
    Expertengemisch auf Wunsch die Experten in vier Bit; danach eine Ladeprobe.
@@ -48,6 +50,7 @@ import argparse
 import datetime
 import json
 import os
+import random
 import re
 import shutil
 import struct
@@ -83,11 +86,12 @@ def fehler(text: str):
 
 def frage(text: str, vorgabe: str, ja: bool) -> str:
     """Eine Rueckfrage mit Vorgabe; mit `--ja` gilt die Vorgabe."""
+    klammer = f" [{vorgabe}]" if vorgabe else ""
     if ja:
-        print(f"{text} [{vorgabe}]: {vorgabe}")
+        print(f"{text}{klammer}: {vorgabe}")
         return vorgabe
     try:
-        antwort = input(f"{text} [{vorgabe}]: ").strip()
+        antwort = input(f"{text}{klammer}: ").strip()
     except EOFError:
         antwort = ""
     return antwort or vorgabe
@@ -297,7 +301,7 @@ def parameter(koepfe: dict, eintrag: dict):
             continue
         # 📌 **Eine gebundene Einbettung zaehlt einmal** (2026-10-19): Qwen3-0.6B
         #   legt `lm_head.weight` trotz `tie_word_embeddings` als eigene Kopie
-        #   ab, und der Vorschlag hiess `myelith-0.8b` statt `myelith-0.6b`.
+        #   ab, und der Vorschlag hiess `myelith-0.8b` statt `sparrow-0.6b-int8`.
         if eintrag.get("tie_word_embeddings") and n.endswith("lm_head.weight"):
             continue
         k = 1
@@ -326,14 +330,111 @@ def groesse(milliarden: float) -> str:
     return f"{milliarden:.{stellen}f}"
 
 
-def namensvorschlaege(gesamt: float, aktiv: float, gemisch: bool) -> list:
-    stamm = f"myelith-{groesse(gesamt)}b"
+# Die Gruppe der Speicherform `vierbit_g128`; `gittervergleich.G` ist
+# dieselbe Zahl, `test_gittervergleich.py` haelt beide gleich.
+VIERBIT_GRUPPE = 128
+
+
+def vierbit_hindernis(eintrag: dict) -> str:
+    """Warum die Experten nicht in vier Bit gehen, oder leer.
+
+    📌 Fund 574. Je `VIERBIT_GRUPPE` Eingaenge ein Betrag: gate und up lesen
+    `hidden_size` Spalten, down `moe_intermediate_size`. Am kleinen Modell
+    (64 und 32) schlug das Skript `-int4` vor, und der Bau brach erst nach
+    dem Mitschnitt ab."""
+    for feld in ("hidden_size", "moe_intermediate_size"):
+        wert = int(eintrag.get(feld) or 0)
+        if wert % VIERBIT_GRUPPE:
+            return f"{feld} {wert} ist kein Vielfaches der Gruppe {VIERBIT_GRUPPE}"
+    return ""
+
+
+def anhaengsel(gesamt: float, aktiv: float, gemisch: bool, vierbit: bool) -> list:
+    """Groesse und Speicherform, die jeder Name traegt: `126b-a7b-int4` und
+    `126b-a7b-int8`, oder nur int8. 📌 Gemisch und vier Bit sind zwei Angaben
+    (2026-10-21): Mit nur einem Schalter verlor ein Gemisch, das nicht in vier
+    Bit geht, sein `-a<aktiv>b`."""
+    stamm = f"{groesse(gesamt)}b"
     if gemisch:
         stamm += f"-a{max(1, round(aktiv))}b"
-    return [f"{stamm}-int4", stamm] if gemisch else [stamm]
+    return [f"{stamm}-int4", f"{stamm}-int8"] if vierbit else [f"{stamm}-int8"]
 
 
-NAMENSMUSTER = re.compile(r"^myelith-[0-9][0-9.]*b(-a[0-9]+b)?(-[a-z0-9]+)*$")
+# ⚑ **Ein Name ist ein Tier und ein Anhaengsel** (Festlegung des
+#   Projektinhabers, 2026-10-21): `raven-35b-a3b-int4`, auch bei int8 mit
+#   Speicherform, und keiner heisst mehr `myelith-`. Die Projektmodelle haben
+#   ihr Tier in `model_configs.py`, passend zu ihrer Faehigkeit; ein selbst
+#   gebautes Modell bekommt den Namen, den der Nutzer eingibt, mit dem
+#   Anhaengsel dahinter, und ohne Eingabe ein Tier per Zufall.
+NAMENSMUSTER = re.compile(r"^[a-z][a-z0-9]*(-[a-z][a-z0-9]*)*-[0-9][0-9.]*b(-a[0-9]+b)?(-[a-z0-9]+)+$")
+SPEICHERFORMEN = ("-int8", "-int4")
+
+# Die Tiere fuer den Zufall. Die der Projektmodelle stehen nicht darin, und
+# vergeben ist auch, was schon als Name vorne steht.
+TIERE = (
+    "albatross", "badger", "beaver", "bison", "bobcat", "capybara", "caracal", "cheetah", "cormorant",
+    "coyote", "crane", "dingo", "dolphin", "eagle", "egret", "elk", "falcon", "ferret", "finch", "fox",
+    "gecko", "gibbon", "gull", "hare", "hawk", "hedgehog", "heron", "ibex", "ibis", "jackal", "kestrel",
+    "kingfisher", "koala", "lemur", "leopard", "lynx", "marten", "meerkat", "mink", "mole", "moose",
+    "narwhal", "newt", "ocelot", "octopus", "orca", "osprey", "otter", "owl", "panda", "panther",
+    "pelican", "penguin", "puffin", "puma", "quail", "robin", "salmon", "seal", "shrew", "skylark",
+    "sloth", "squid", "stoat", "stork", "swallow", "swan", "swift", "tapir", "tern", "tiger", "toucan",
+    "turtle", "walrus", "weasel", "whale", "wolf", "wombat", "wren", "yak", "zebra",
+)
+
+
+def stamm(name: str) -> str:
+    """Das Wort vorne: `raven` aus `raven-35b-a3b-int4`."""
+    return re.split(r"-[0-9][0-9.]*b(?:-|$)", name, maxsplit=1)[0]
+
+
+def vergebene_namen() -> set:
+    """Projektmodelle, beide Kataloge und die Verzeichnisse der Artefakte."""
+    vergeben = set(model_configs.MODEL_CONFIGS)
+    for k in (KATALOG, KATALOG_LOKAL):
+        if k.is_file():
+            vergeben |= {n for n in json.loads(k.read_text(encoding="utf-8")) if not n.startswith("_")}
+    if ARTEFAKTE.is_dir():
+        vergeben |= {p.name for p in ARTEFAKTE.iterdir() if p.is_dir() and not p.name.startswith(".")}
+    return vergeben
+
+
+def zufallstier(zufall=None) -> str:
+    """Ein Tier, das noch niemand vorne traegt. Gleichverteilt und nicht
+    nachvollziehbar (`SystemRandom`); eine Probe gibt ihren eigenen Zufall."""
+    belegt = {stamm(n) for n in vergebene_namen()}
+    frei = [t for t in TIERE if t not in belegt]
+    zufall = zufall or random.SystemRandom()
+    if frei:
+        return zufall.choice(frei)
+    n = 2
+    while True:
+        frei = [f"{t}{n}" for t in TIERE if f"{t}{n}" not in belegt]
+        if frei:
+            return zufall.choice(frei)
+        n += 1
+
+
+def name_aus(eingabe: str, anhang: str, zufall=None) -> str:
+    """Der Name aus dem, was der Nutzer eingibt: das Wort und das Anhaengsel
+    dahinter; ohne Eingabe ein Tier per Zufall. Wer einen ganzen Namen mit
+    Speicherform eingibt, behaelt ihn."""
+    eingabe = eingabe.strip().lower()
+    if eingabe.endswith(SPEICHERFORMEN):
+        return eingabe
+    return f"{eingabe or zufallstier(zufall)}-{anhang}"
+
+
+def vierbit_name(int8_name: str) -> str:
+    """Der Name des Artefakts in vier Bit zu einem int8-Namen."""
+    return int8_name.removesuffix("-int8") + "-int4"
+
+
+def variante(int8_name: str) -> str:
+    """`variant` im Artefakt: die Groesse ohne das Wort davor und ohne `-int8`
+    (`raven-35b-a3b-int8` zu `35b-a3b`). Sie steht in `model_config.json` und
+    damit im Abdruck; ein Neubau muss dieselbe ergeben wie vor der Umbenennung."""
+    return int8_name.removeprefix(f"{stamm(int8_name)}-").removesuffix("-int8")
 
 
 def name_pruefen(name: str) -> str:
@@ -363,7 +464,7 @@ def name_befund(name: str, gemisch_vierbit: bool, projekt: str = "") -> tuple:
     int8_name = quelle_des_viers(name) if vierbit else name
     if projekt:
         if int8_name != projekt:
-            return f"ein Projektmodell heisst {projekt} oder {projekt}-int4", vierbit, int8_name
+            return f"ein Projektmodell heisst {projekt} oder {vierbit_name(projekt)}", vierbit, int8_name
         if (ARTEFAKTE / name / "model_config.json").is_file():
             return "liegt schon da", vierbit, int8_name
         return "", vierbit, int8_name
@@ -373,7 +474,7 @@ def name_befund(name: str, gemisch_vierbit: bool, projekt: str = "") -> tuple:
 
 def quelle_des_viers(name: str) -> str:
     """Der Name des int8-Artefakts, aus dem das in vier Bit entsteht."""
-    return name[: -len("-int4")] if name.endswith("-int4") else f"{name}-int8"
+    return name.removesuffix("-int4") + "-int8" if name.endswith("-int4") else name
 
 
 # ----------------------------------------------------------------------------
@@ -382,12 +483,11 @@ def quelle_des_viers(name: str) -> str:
 
 def python_der(umgebung: str) -> Path:
     """Der Python der Umgebung einer Bauart; fehlt sie, wird sie eingerichtet
-    (`python_einrichten.sh`, fuer Flash-Next mit `--flashnext`)."""
+    (`python_einrichten.sh`)."""
     py = LLM / "calibrate" / umgebung / "bin" / "python3"
     if not py.is_file():
-        schalter = ["--flashnext"] if umgebung.endswith("flashnext") else []
         print(f"[bauen] Umgebung {umgebung} einrichten")
-        laufen(["bash", LLM / "scripts" / "python_einrichten.sh", *schalter])
+        laufen(["bash", LLM / "scripts" / "python_einrichten.sh"])
         if not py.is_file():
             fehler(f"die Umgebung {umgebung} fehlt nach dem Einrichten")
     return py
@@ -521,18 +621,40 @@ def main():
     koepfe = quelle.tensorkoepfe()
     gesamt, aktiv, tabelle = parameter(koepfe, eintrag)
     gemisch = bool(eintrag.get("num_experts"))
-    print(f"[bauen] Parameter: {gesamt:.2f} Mrd." + (f", aktiv {aktiv:.2f} Mrd." if gemisch else "")
-          + (f", N-Gramm-Tabelle {tabelle:.1f} Mrd." if tabelle else ""))
+    # ⛔️ **Fund 584: Ohne Gewichtsdateien gibt es keine Zahl.** Die Parameter
+    #   kommen aus den Koepfen der safetensors; ein Ordner nur mit
+    #   `config.json` ergab 0,00 Mrd. und den Namen `myelith-0.000000b-...`.
+    #   Jetzt sagt das Skript, was fehlt, und schlaegt keinen Namen vor.
+    ohne_gewichte = gesamt <= 0
+    if ohne_gewichte:
+        print("[bauen] ⚠️ Keine Gewichtsdateien gefunden: keine Parameterzahl, kein Name. "
+              "Mit den safetensors im Ordner oder mit --repo (liest die Koepfe aus dem Netz) zaehlt es.")
+    else:
+        print(f"[bauen] Parameter: {gesamt:.2f} Mrd." + (f", aktiv {aktiv:.2f} Mrd." if gemisch else "")
+              + (f", N-Gramm-Tabelle {tabelle:.1f} Mrd." if tabelle else ""))
 
-    gemisch_vierbit = gemisch and bauart.vierbit
+    hindernis = vierbit_hindernis(eintrag) if gemisch and bauart.vierbit else ""
+    if hindernis:
+        print(f"[bauen] ⚠️ Vier Bit geht hier nicht ({hindernis}); es baut int8.")
+    gemisch_vierbit = gemisch and bauart.vierbit and not hindernis
     projekt = projektschluessel(quelle.repo)
     if a.projekt and not projekt:
         fehler(f"--projekt: {quelle.repo} ist kein Modell aus model_configs.py")
     if projekt and not a.projekt:
         print(f"[bauen] ⚑ {quelle.repo} ist das Projektmodell {projekt}; mit --projekt baut es unter seinem Namen")
-    vorschlaege = namensvorschlaege(gesamt, aktiv, gemisch_vierbit)
-    if a.projekt or (a.erkunden and projekt):
-        vorschlaege = [f"{projekt}-int4", projekt] if gemisch_vierbit else [projekt]
+    anhaenge = [] if ohne_gewichte else anhaengsel(gesamt, aktiv, gemisch, gemisch_vierbit)
+    als_projekt = bool(a.projekt or (a.erkunden and projekt))
+    tier = "" if als_projekt or ohne_gewichte else zufallstier()
+    vorschlaege = [f"{tier}-{x}" for x in anhaenge]
+    if als_projekt:
+        vorschlaege = [vierbit_name(projekt), projekt] if gemisch_vierbit else [projekt]
+
+    def anhang_fuer(fmt: str) -> str:
+        """Das Anhaengsel der Speicherform; ohne Angabe das erste."""
+        passend = [x for x in anhaenge if x.endswith(f"-{fmt}")] if fmt else []
+        return (passend or anhaenge or [""])[0]
+    if ohne_gewichte and not a.erkunden and not a.probe:
+        fehler("Ohne Gewichtsdateien laesst sich nichts bauen")
 
     if a.erkunden:
         # ⚑ **Eine Zeile fuer die Konsole** (`/build artifact`): Sie baut daraus
@@ -545,7 +667,7 @@ def main():
             "architektur": roh.get("architectures") or [], "bauart": bauart.name, "bauweg": bauart.bauweg,
             "gemisch": gemisch, "vierbit": gemisch_vierbit,
             "gesamt": round(gesamt, 3), "aktiv": round(aktiv, 3), "tabelle": round(tabelle, 3),
-            "projekt": projekt,
+            "projekt": projekt, "ohne_gewichte": ohne_gewichte,
             "vorschlaege": [{"name": v, "vierbit": name_befund(v, gemisch_vierbit, projekt)[1],
                              "grund": name_befund(v, gemisch_vierbit, projekt)[0]} for v in vorschlaege],
             "quelle_bytes": bf16, "frei_bytes": shutil.disk_usage(ARTEFAKTE).free,
@@ -554,9 +676,13 @@ def main():
             # vorher geloescht (`--quelle-loeschen`), dann bleibt `noetig_bytes`.
             "noetig_bytes": int(bf16 + int8), "noetig_vierbit_bytes": int(bf16 + int8 + gesamt * 0.9 * GB),
         }
+        # Ein selbst gebautes Modell: Konsole und Fenster haengen an einen
+        # eingegebenen Namen das Anhaengsel der gewaehlten Speicherform.
+        aus["anhaengsel"] = [] if als_projekt else anhaenge
         if a.name:
-            aus["name"] = a.name
-            aus["name_grund"] = name_befund(a.name, gemisch_vierbit, projekt)[0]
+            name = a.name if als_projekt else name_aus(a.name, anhang_fuer(a.format))
+            aus["name"] = name
+            aus["name_grund"] = name_befund(name, gemisch_vierbit, projekt)[0]
         print("ERKUNDUNG " + json.dumps(aus, ensure_ascii=False))
         print("Fertig")
         return
@@ -571,15 +697,24 @@ def main():
             fehler(f"Format {fmt}: int4 oder int8")
         vorschlaege = [v for v in vorschlaege if v.endswith("-int4") == (fmt == "int4")]
     elif a.format == "int4" and not gemisch_vierbit:
-        fehler("int4 gibt es nur fuer die Experten eines Gemischs; diese Bauart baut int8")
-    print("[bauen] Namensvorschlaege nach dem Schema myelith-<gesamt>b[-a<aktiv>b][-int4]:")
-    for i, v in enumerate(vorschlaege):
-        art = "Experten in vier Bit (kleiner, empfohlen)" if v.endswith("-int4") else "int8"
-        print(f"    {i + 1}. {v}  ({art})")
+        fehler(f"int4: {hindernis}" if hindernis else
+               "int4 gibt es nur fuer die Experten eines Gemischs; diese Bauart baut int8")
+    if a.projekt:
+        print("[bauen] Das Projektmodell heisst:")
+        for i, v in enumerate(vorschlaege):
+            art = "Experten in vier Bit (kleiner, empfohlen)" if v.endswith("-int4") else "int8"
+            print(f"    {i + 1}. {v}  ({art})")
+    else:
+        anhang = anhang_fuer(a.format or ("int4" if vorschlaege and vorschlaege[0].endswith("-int4") else "int8"))
+        print(f"[bauen] Name: ein Wort, etwa ein Tier; das Anhaengsel -{anhang} kommt dazu. "
+              f"Ohne Eingabe waehlt das Skript ein Tier per Zufall.")
     while True:
-        name = a.name or frage("Name des Artefakts", vorschlaege[0], a.ja)
-        if name.isdigit() and 1 <= int(name) <= len(vorschlaege):
-            name = vorschlaege[int(name) - 1]
+        if a.projekt:
+            name = a.name or frage("Name des Artefakts", vorschlaege[0], a.ja)
+            if name.isdigit() and 1 <= int(name) <= len(vorschlaege):
+                name = vorschlaege[int(name) - 1]
+        else:
+            name = name_aus(a.name or frage("Name (leer: ein Tier per Zufall)", "", a.ja), anhang)
         grund, vierbit, int8_name = name_befund(name, gemisch_vierbit, projekt if a.projekt else "")
         if a.projekt and grund == "liegt schon da":
             grund = ""
@@ -590,7 +725,7 @@ def main():
         print(f"[bauen] {name}: {grund}")
     if not NAMENSMUSTER.match(name):
         print(f"[bauen] ⚠️ {name} folgt nicht dem Schema; Konsole und Fenster zeigen den Ordnernamen")
-    eintrag["variant"] = int8_name.removeprefix("myelith-")
+    eintrag["variant"] = variante(int8_name)
 
     # Platz
     bf16 = quelle.bytes_gesamt(koepfe)

@@ -7,7 +7,7 @@ eigener Abnahme. So laesst sich messen, was ein Lauf anlegt und ein
 spaeterer nutzt: einen Skill aus einem PDF, ein Werkzeug als Manifest.
 
     python3 BENCHMARKS/Agent/faehigkeiten.py pruefen                 # Abnahmen in beide Richtungen
-    python3 -u BENCHMARKS/Agent/faehigkeiten.py starten --modelle myelith-35b-a3b-int4 \\
+    python3 -u BENCHMARKS/Agent/faehigkeiten.py starten --modelle raven-35b-a3b-int4 \\
         --saaten 1,2,3 --mitschriften <ordner ausserhalb>
     python3 BENCHMARKS/Agent/faehigkeiten.py auswerten BENCHMARKS/Agent/results/faehigkeiten-<datum>
 
@@ -189,7 +189,7 @@ def main() -> int:
     pr = u.add_parser("pruefen")
     pr.add_argument("--nur", default="")
     s = u.add_parser("starten")
-    s.add_argument("--modelle", default="myelith-35b-a3b-int4")
+    s.add_argument("--modelle", default="raven-35b-a3b-int4")
     s.add_argument("--saaten", required=True, help="feste Saaten durch Komma")
     s.add_argument("--nur", default="", help="nur diese Szenarien, durch Komma")
     s.add_argument("--ausgabe", type=Path)

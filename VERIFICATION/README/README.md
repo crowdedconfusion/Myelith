@@ -1,7 +1,7 @@
 # verification (`myl-verifier`)
 
-> **Version:** 0.23.0
-> **Datum:** 2026-09-03
+> **Version:** 0.23.1
+> **Datum:** 2026-10-21
 > **Status:** 🎉 **Phasen 1, 2 und 3 abgeschlossen** (Punkte 1.1–1.3,
 > 2.1–2.5, 3.1–3.6), Phase 4 zu drei Vierteln (4.1, 4.2 und 4.4 ✅,
 > 4.3 ✅ seit 2026-08-24): Redundanzvergleich (Stufe 1),
@@ -145,6 +145,10 @@ gegen zwei eingebaute Fehler geeicht worden (Grenzverschiebung um eins,
 umgedrehter Vergleich); beide fliegen auf.
 
 ## Changelog
+
+### v0.23.1 – 2026-10-21 (die Modelle heißen nach Tieren)
+
+Die Projektmodelle heißen seit heute nach Tieren, mit Größe und Speicherform als Anhängsel (Festlegung des Projektinhabers): `myelith-0.6b` ist `sparrow-0.6b-int8`, `myelith-4b` `pigeon-4b-int8`, `myelith-30b-a3b` `magpie-30b-a3b-int8`, `myelith-35b-a3b` `raven-35b-a3b-int8`. In den Dateien eines Artefakts steht kein Name, also bleiben Abdrücke und Register gültig. Nur eine Probe.
 
 ### v0.23.0 – 2026-09-14 (eine Position hinter der ersten braucht den KV-Verlauf)
 

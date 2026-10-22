@@ -12,7 +12,7 @@ use myl_local_agent::{Modellweg, Nachricht, Tuerfehler};
 fn modell() -> Option<myl_client::Oertlichesmodell> {
     // ⚑ `MYL_RUHE_ARTEFAKT` nennt ein anderes Artefakt, fuer den Vergleich
     //   der Modellgroessen; ohne gilt das 0,6B, der Anker.
-    let vorgabe = concat!(env!("CARGO_MANIFEST_DIR"), "/../../INTEGER_LLM/artifacts/myelith-0.6b").to_string();
+    let vorgabe = concat!(env!("CARGO_MANIFEST_DIR"), "/../../INTEGER_LLM/artifacts/sparrow-0.6b-int8").to_string();
     let pfad = std::env::var("MYL_RUHE_ARTEFAKT").unwrap_or(vorgabe);
     let pfad = pfad.as_str();
     if std::env::var_os("MYL_OHNE_ARTEFAKTE").is_some() {
@@ -54,7 +54,7 @@ fn der_wecker_haelt_an_ohne_den_notaus() {
         }
     }));
     let frage = [Nachricht::nutzer("Erzaehle mir ausfuehrlich von Paris.")];
-    match m.chat_unterbrechbar("myelith-0.6b", &frage, Some(200), w.schalter()) {
+    match m.chat_unterbrechbar("sparrow-0.6b-int8", &frage, Some(200), w.schalter()) {
         Err(Tuerfehler::Abgebrochen { .. }) => {}
         anderes => panic!("erwartet war Abgebrochen, bekommen: {anderes:?}"),
     }
@@ -73,14 +73,14 @@ fn vorwaermen_fuellt_den_speicher() {
 
     m.vergessen();
     m.zaehler.zuruecksetzen();
-    m.chat("myelith-0.6b", &weiter, Some(8)).expect("Antwort");
+    m.chat("sparrow-0.6b-int8", &weiter, Some(8)).expect("Antwort");
     let kalt = m.zaehler.wiederverwendet.load(Ordering::SeqCst);
 
     m.vergessen();
     let neu = m.vorwaermen(&gespraech(), &std::sync::atomic::AtomicBool::new(false)).expect("vorgewaermt");
     assert!(neu > 20, "es wurde kaum etwas vorgelesen: {neu}");
     m.zaehler.zuruecksetzen();
-    m.chat("myelith-0.6b", &weiter, Some(8)).expect("Antwort");
+    m.chat("sparrow-0.6b-int8", &weiter, Some(8)).expect("Antwort");
     let warm = m.zaehler.wiederverwendet.load(Ordering::SeqCst) as usize;
     eprintln!("kalt {kalt} wiederverwendet, warm {warm} von {neu} vorgewaermten Token");
     assert_eq!(kalt, 0, "ohne Vorwaermen kam etwas aus dem Speicher");

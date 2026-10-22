@@ -102,11 +102,25 @@ impl Trainingswerk {
         Self::aus_modell(Arc::new(modell))
     }
 
-    /// Dasselbe aus einem bereits geladenen Modell.
+    /// Dasselbe aus einem bereits geladenen Modell, im gleichen Schnitt.
     pub fn aus_modell(modell: Arc<IntegerModel>) -> Result<Self, String> {
+        Self::aus_modell_mit_grenzen(modell, None)
+    }
+
+    /// ⚑ **Mit den Grenzen der Kette** (Stufe 4, 2026-10-22), geprüft wie
+    /// bei [`crate::pipelinewerk::Pipelinewerk::laden_mit_grenzen`].
+    /// `None`: der gleiche Schnitt.
+    pub fn aus_modell_mit_grenzen(
+        modell: Arc<IntegerModel>,
+        bereiche: Option<&[(usize, usize)]>,
+    ) -> Result<Self, String> {
         let layer = modell.num_layers;
-        // ⚑ Dieselbe Aufteilung wie `Pipelinewerk::laden`.
-        let grenzen: Vec<usize> = (0..=SHARDS).map(|s| layer * s / SHARDS).collect();
+        let bereiche = match bereiche {
+            None => crate::pipelinewerk::gleiche_grenzen(layer),
+            Some(g) => crate::pipelinewerk::grenzen_pruefen(g, layer)?,
+        };
+        let grenzen: Vec<usize> =
+            std::iter::once(0).chain(bereiche.iter().map(|&(_, bis)| bis)).collect();
         let mut gewichte = Vec::with_capacity(SHARDS);
         for s in 0..SHARDS {
             gewichte.push(

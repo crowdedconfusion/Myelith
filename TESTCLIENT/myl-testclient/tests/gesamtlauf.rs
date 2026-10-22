@@ -20,7 +20,7 @@
 //! 3. **TOKENOMICS**: Der Nutzer verbrennt MYL und bekommt Credits.
 //! 4. **AGENT_LAYER**: Sitzungskontrakt in der Kette, Vollmacht beim Agenten.
 //! 5. **INTEGER_LLM**: Das echte Ankermodell wird geladen, ohne
-//!    Vorgabe `myelith-0.6b`, sonst was `MYL_POD_MODELL` nennt.
+//!    Vorgabe `sparrow-0.6b-int8`, sonst was `MYL_POD_MODELL` nennt.
 //! 6. **COMPUTE_PIPELINE**: Der Shard-Prozess öffnet seine lokale Tür.
 //! 7. **NETWORKING**: Der Knoten baut den versiegelten Kanal dorthin.
 //! 8. **GATEWAY**: Ein Harness ruft `/v1/chat/completions` mit Bearer.
@@ -113,11 +113,11 @@ impl Bericht {
 /// 📌 **Bis zum 2026-09-11 stand der Name zweimal im Lauf**: einmal
 /// hier als Verzeichnis und einmal als fester Text in der Meldung
 /// („Qwen2.5-0,5B geladen"). Nach dem Ankerwechsel lud der Lauf
-/// `myelith-0.6b` und **meldete weiter das alte Modell**. Ein Bericht,
+/// `sparrow-0.6b-int8` und **meldete weiter das alte Modell**. Ein Bericht,
 /// der ein anderes Modell nennt als das geladene, ist schlimmer als
 /// keiner: Er sieht aus wie ein Beleg.
 fn modellschluessel() -> String {
-    std::env::var("MYL_POD_MODELL").unwrap_or_else(|_| "myelith-0.6b".to_string())
+    std::env::var("MYL_POD_MODELL").unwrap_or_else(|_| "sparrow-0.6b-int8".to_string())
 }
 
 fn artefakte() -> PathBuf {
@@ -277,6 +277,11 @@ async fn alle_kompartimente_verzahnt() {
     }
     kette.baue_block();
     assert_eq!(kette.zustand().miner.len(), 6, "die Anmeldungen kamen nicht an");
+    // ⚑ **Kein Pod ohne Zusage** (Stufe 4, 2026-10-22): Die Proben-Zusagen
+    //   gelten ab Epoche 0, damit der Lauf in seiner Epoche bleibt.
+    for w in 0..6u8 {
+        kette.probezusage_setzen(MinerId::new(*probekonto(w).as_bytes()));
+    }
     b.schritt(
         "CONSENSUS/NODE",
         format!("6 Miner angemeldet, Kette auf Hoehe {}", kette.hoehe()),
@@ -438,7 +443,7 @@ async fn alle_kompartimente_verzahnt() {
         EpochId(0),
         Endpunkt::aus_bytes([1u8; 32]),
         knoten_schluessel,
-        "myelith-myelith-0.6b",
+        "sparrow-0.6b-int8",
         betreiber,
     )
     .mit_abrechnung(abr_tx);
@@ -450,7 +455,7 @@ async fn alle_kompartimente_verzahnt() {
     let mut annahme = Annahme::neu(41, EpochId(0));
     let mut stelle = Zugangsstelle::neu(EineQuelle(kontrakt.clone()));
     let koerper = format!(
-        r#"{{"model":"myelith-myelith-0.6b","messages":[{{"role":"user","content":"{FRAGE}"}}],"max_tokens":8,"temperature":0.7}}"#
+        r#"{{"model":"sparrow-0.6b-int8","messages":[{{"role":"user","content":"{FRAGE}"}}],"max_tokens":8,"temperature":0.7}}"#
     );
 
     let dienst = async {
@@ -589,13 +594,7 @@ async fn alle_kompartimente_verzahnt() {
         )
         .expect("Eintragung");
     }
-    let register = myl_ledger::transitions::angemeldete_miner(kette.zustand());
-    let zuteilung = myl_scheduler::zonenzuteilung::zuteilung_der_epoche(
-        &register,
-        kette.zustand().epoch.0,
-        &kette.zustand().epochensaat,
-        4,
-    );
+    let zuteilung = Kette::zuteilung_der_laufenden_epoche(kette.zustand());
     assert_eq!(zuteilung.pods.len(), 1, "aus sechs Minern entstand kein Pod");
     let pod = &zuteilung.pods[0];
     let mut buendel = myl_types::PoIBundle {

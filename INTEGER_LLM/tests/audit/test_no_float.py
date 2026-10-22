@@ -204,6 +204,8 @@ HOT_PATH = [
     # ist ihr Zweck: **Eine Datei, die niemand gelistet hat, wird nicht
     # geprueft, und der Lauf meldet trotzdem null Treffer.**
     REPO / "runtime" / "src" / "pruefstand.rs",
+    # Die Netzliste: SHA-256 und Textvergleich, keine Zahl der Rechnung.
+    REPO / "runtime" / "src" / "netzfreigabe.rs",
     # ⚑ Der Mitschnitt fuer den Rueckwaertspass (TRAINING V). Er haelt
     # nur, was der Vorwaertspass gerechnet hat, also i16 und Vec<i16>;
     # ein float darin waere ein Gradient, der nicht bitgleich ist.
@@ -249,6 +251,10 @@ HOT_PATH = [
     # Maschine anders entscheidet. 📌 Fund 550: Er kam ohne Eintrag hierher,
     # und erst die Vollstaendigkeitspruefung hat ihn gemeldet.
     REPO / "runtime" / "src" / "vorlader.rs",
+    # Seit dem 2026-10-21: die Ebenenzeit fuer die Verteilung im Netz. Sie
+    # misst nur, aber ihre Zahl geht in eine Zusage, die jeder Knoten gleich
+    # liest; Mikrosekunden als ganze Zahl, Median ohne Mittelwert.
+    REPO / "runtime" / "src" / "ebenenzeit.rs",
     # Seit dem 2026-09-30: aus einem trainierten Stand wird ein Artefakt.
     # Die Umrechnung ist die des Trainings; eine Gleitkommazahl hier
     # hiesse, dass das ausgelieferte Modell ein anderes ist als das

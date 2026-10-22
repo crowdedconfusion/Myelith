@@ -30,7 +30,7 @@ use crate::linear::{linear_matrix_pc, Gewichtsmatrix};
 /// Betragswerte saturieren deterministisch am LUT-Rand", und das war die
 /// falsche Funktion.** Deterministisch war es, richtig nicht: SiLU(278)
 /// ist 278 und nicht 128. Gemessen reichen die Gate-Werte bei
-/// `myelith-0.6b` bis 278 und bei `myelith-4b` bis 192, die Tabelle aber
+/// `sparrow-0.6b-int8` bis 278 und bei `pigeon-4b-int8` bis 192, die Tabelle aber
 /// nur bis 128. Der Rückwärtspass leitete seinen Gradienten aus der
 /// Tabelle ab und nahm jenseits davon schon Steigung 1 an; der
 /// Vorwärtspass lag flach. Seither sagen beide dasselbe.

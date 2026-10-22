@@ -404,14 +404,15 @@ impl<'a> Lauf<'a> {
             self.betriebsart,
             self.einhaengung,
         );
-        // ⚑ Angesagt und erlaubt aus derselben Liste (Fund 568).
-        let angesagt = crate::verankert::ansagen(
-            self.kasten.angebote(),
-            self.betriebsart == Betriebsart::NurVerankert,
-            self.ansageform,
-        );
-        let erlaubnis = Erlaubnis::aus_angebot(&angesagt);
-        let mut nachrichten = vec![angebot_mit_regel(&angesagt, self.ansageform, self.hausregel)];
+        // 📌 **Fund 568 zurueckgenommen** (2026-10-22, AGENT_LAYER 5.27):
+        //   Ohne die verankerten Werkzeuge in der Ansage bestand
+        //   `x_werkzeug_bauen` in Phase 2 7 von 14 Mal, mit ihnen 13 von 14.
+        //   Mit ihnen liest das Modell seine Ergebnisdatei zurueck und
+        //   bessert sie nach; ohne sie in keinem Lauf. Angesagt wird wieder
+        //   alles, was der Kasten anbietet.
+        let erlaubnis = Erlaubnis::aus_angebot(self.kasten.angebote());
+        let mut nachrichten =
+            vec![angebot_mit_regel(self.kasten.angebote(), self.ansageform, self.hausregel)];
         nachrichten.extend(verlauf.iter().filter(|n| n.role != "system").cloned());
         // Wo der Auftrag steht; das Verdichten laesst ihn woertlich stehen.
         let mut auftrag_bei = nachrichten.len();

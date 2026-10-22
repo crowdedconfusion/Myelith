@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Stellt den Kalibriertext fuer die Experten in vier Bit zusammen.
 
-Der Text, mit dem `myelith-35b-a3b-int4` kalibriert ist (Mitschnitt der
+Der Text, mit dem `raven-35b-a3b-int4` kalibriert ist (Mitschnitt der
 Expertenaufrufe, dann GPTQ je Experte), gemischt aus vier Quellen in
 Stuecken zu 2000 Zeichen, reihum:
 

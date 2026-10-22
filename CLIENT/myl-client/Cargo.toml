@@ -1,6 +1,6 @@
 [package]
 name = "myl-client"
-version = "0.109.0"
+version = "0.114.0"
 edition = "2021"
 rust-version = "1.85"
 description = "Der Nutzer-Client: eine Frage an ein lokales Modell, die Agentenschleife mit Einhaengegrenze, die Einstellungen."
@@ -86,6 +86,9 @@ integer-llm-runtime = { path = "../../INTEGER_LLM/runtime", features = ["cpu-sim
 # auf. Eine nachgebaute Ablage pruefte genau das nicht, worum es geht.
 [dev-dependencies]
 tempfile = "3"
+# ⚑ Das 0,6B rechnet in den Netzproben (Pruefnetz); nur hier, nie im
+# ausgelieferten Programm (INTEGER_LLM/runtime/src/netzfreigabe.rs).
+integer-llm-runtime = { path = "../../INTEGER_LLM/runtime", features = ["pruefnetz"] }
 
 [features]
 cuda = ["integer-llm-runtime/cuda"]

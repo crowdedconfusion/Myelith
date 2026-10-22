@@ -7,8 +7,9 @@
     "vorgemerkt": "Lizenz geprüft und Revision festgelegt, aber noch nicht geholt oder gebaut.",
     "geholt": "Gewichte liegen lokal mit fixierter Revision, Artefakt noch nicht gebaut. ⚑ Dieser Wert ist am 2026-09-21 dazugekommen, weil keiner der drei anderen den Zustand traf: `vorgemerkt` heisst ausdruecklich \"noch nicht geholt\", `erprobt` verlangt ein gebautes Artefakt. Ein Zustand ohne Wort wird sonst auf den naechstbesten gebucht, und dann meldet der Katalog etwas Falsches."
   },
-  "myelith-0.6b": {
-    "anzeigename": "Myelith 0.6B INT8",
+  "sparrow-0.6b-int8": {
+    "anzeigename": "Sparrow 0.6B - INT8",
+    "frueher": "myelith-0.6b",
     "reihung": 0.6,
     "hardware": "ab 4 GB Arbeitsspeicher, 1 GB Platte",
     "hf_repo": "Qwen/Qwen3-0.6B",
@@ -30,10 +31,15 @@
     "status": "verifiziert",
     "perplexitaet": "⚠️ Ueber 3558 Positionen (32 Sequenzen) gemessen: 43,49 gegen BF16 42,26, also +2,92 %. Mit den Skalen bis zum 2026-09-21 waren es 45,15 gegen 42,26, also +6,84 % und damit VERFEHLT. Ueber die bisher uebliche kleine Stichprobe von 435 Positionen ergaben dieselben Artefakte +4,48 % beziehungsweise -1,64 %; vier Sequenzen tragen die Aussage also nicht. ⛔️ **Hier stand bis dahin 33,29 (+4,48 %)**, und das war ein Artefakt eines veralteten Skalenpakets: 105 von 422 Skalen wichen von einer Neuberechnung ab, alle nach oben. Die alte Messung stammt vom 2026-09-14 mit theta_v 0.19.0 ueber 435 Positionen aus vier WikiText-2-Sequenzen. ⚑ Der groesste Abstand der Reihe. ⛔️ **Hier stand bis zum 2026-09-21 die Richtung „je kleiner das Modell, desto teurer die Quantisierung“, und das 8B hat sie gebrochen**: +3,75 % bei 8,2 Mrd. gegen +1,65 % bei 4 Mrd. ⚑ **Eine Erklaerung liegt nahe und ist nicht geprueft:** Die Reihe mischt zwei Achsen, denn 0,6B und 4B haben eine gebundene Einbettung und 8B und 30B nicht. Innerhalb jeder Gruppe faellt der Abstand monoton. ⚠️ Bei 435 Positionen ist ein Unterschied dieser Groesse ausserdem nicht sicher aufloesbar. Kriterium <= 5 % erfuellt, aber von allen vier Modellen am knappsten",
     "bemerkung": "Der kleinste Vertreter und der Anker des Projekts (2026-09-11).\nEr loest Qwen2.5-0,5B ab; damit liegt die kleinste Groesse in\nderselben Familie wie 4B und 14B, und die Reihe misst eine Achse\n(Groesse) statt zweier (Groesse und Familie).\n📌 Fund 336: Dieses Modell traegt in der letzten Ebene ein\npost_attention_layernorm-Gewicht mit dem Betrag 192, waehrend der\nMedian derselben Zeile bei 3,1 liegt. int8 reicht bis 127. Die\nKalibrierung verschiebt den Kanal deshalb in die Folgematrizen\n(gamma/2, Spalte*2); im Gleitkomma ist das bitgleich, geprueft an\nden Logits. Es ist das erste Modell des Projekts, das die\nUmformung braucht.",
-    "grundmodell": "Qwen3-0,6B"
+    "grundmodell": "Qwen3-0,6B",
+    "pruefnetz": {
+      "abdruck": "9240fa59ddb460eb1b2efc77879cc75e68882a5c430b1cdc0222cd02d4ba51bd",
+      "freigegeben": "2026-10-21: nur fuer die Netzproben von Pod, Testklient und Klient (cargo test), nie im ausgelieferten Programm"
+    }
   },
-  "myelith-4b": {
-    "anzeigename": "Myelith 4B INT8",
+  "pigeon-4b-int8": {
+    "anzeigename": "Pigeon 4B - INT8",
+    "frueher": "myelith-4b",
     "hf_repo": "Qwen/Qwen3-4B",
     "hf_verzeichnis": "Qwen3-4B",
     "hf_revision": "1cfa9a7208912126459214e8b04321603b3df60c",
@@ -57,8 +63,9 @@
     "reihung": 4.0,
     "hardware": "ab 8 GB Arbeitsspeicher, 5 GB Platte"
   },
-  "myelith-8b": {
-    "anzeigename": "Myelith 8B INT8",
+  "jay-8b-int8": {
+    "anzeigename": "Jay 8B - INT8",
+    "frueher": "myelith-8b",
     "hf_repo": "Qwen/Qwen3-8B",
     "hf_verzeichnis": "Qwen3-8B",
     "hf_revision": "b968826d9c46dd6066d109eabc6255188de91218",
@@ -82,8 +89,33 @@
     "reihung": 8.2,
     "hardware": "ab 16 GB Arbeitsspeicher, 9 GB Platte"
   },
-  "myelith-30b-a3b": {
-    "anzeigename": "Myelith 30B-A3B INT8",
+  "crow-27b-int8": {
+    "anzeigename": "Crow 27B - INT8",
+    "frueher": "myelith-27b",
+    "reihung": 27,
+    "hardware": "geschaetzt ab 32 GB Arbeitsspeicher, 30 GB Platte; der Bau braucht die BF16-Quelle ganz im Speicher (rund 56 GB)",
+    "hf_repo": "Qwen/Qwen3.8-27B",
+    "hf_verzeichnis": "Qwen3.8-27B",
+    "hf_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+    "lizenz_gewichte": "Apache-2.0",
+    "lizenz_artefakt": "PolyForm Shield License 1.0.0",
+    "lizenz_geprueft": "2026-10-21 gegen die Modellkarte der Revision geprueft (license: apache-2.0, nicht zugangsbeschraenkt); LICENSE-Datei liegt neben den Gewichten. Keine eigene Rechtspruefung, siehe COMPLIANCE/ethics/Lizenzlage.md",
+    "parameter": "26,9 Mrd. im Textteil (gezaehlt vom Bauskript aus den Koepfen der Revision; die Quelle mit Sicht- und MTP-Teil hat 27,8)",
+    "layer": 64,
+    "hidden_size": 5120,
+    "num_heads": 24,
+    "num_kv_heads": 4,
+    "vocab_size": 248320,
+    "gewichte_bytes": 55562855904,
+    "gewichte_anzeige": "rund 56 GB",
+    "artefakt_anzeige": "geschaetzt rund 27 GB in int8",
+    "status": "vorgemerkt",
+    "bemerkung": "Hybrid dicht: 48 Ebenen mit linearer Aufmerksamkeit (Gated DeltaNet), 16 mit voller, dichtes MLP. Dieselbe Form wie das ternaere 27B, gebaut aber aus BF16 ueber den Korpusweg. Erstes Artefakt mit dem Merkmal ausgang_auf_v (Fund 571). Gebaut und gemessen wird es auf der Mietmaschine (Festlegung des Projektinhabers, 2026-10-19). Nicht auf der Netzliste, bis es gebaut, gemessen und freigegeben ist.",
+    "grundmodell": "Qwen3.8-27B"
+  },
+  "magpie-30b-a3b-int8": {
+    "anzeigename": "Magpie 30B A3B - INT8",
+    "frueher": "myelith-30b-a3b",
     "hf_repo": "Qwen/Qwen3-30B-A3B",
     "hf_verzeichnis": "Qwen3-30B-A3B",
     "hf_revision": "ad44e777bcd18fa416d9da3bd8f70d33ebb85d39",
@@ -107,8 +139,9 @@
     "reihung": 30.5,
     "hardware": "ab 24 GB Arbeitsspeicher, 32 GB Platte"
   },
-  "myelith-35b-a3b": {
-    "anzeigename": "Myelith 35B-A3B INT8",
+  "raven-35b-a3b-int8": {
+    "anzeigename": "Raven 35B A3B - INT8",
+    "frueher": "myelith-35b-a3b",
     "hf_repo": "Qwen/Qwen3.6-35B-A3B",
     "hf_verzeichnis": "Qwen3.6-35B-A3B",
     "hf_revision": "995ad96eacd98c81ed38be0c5b274b04031597b0",
@@ -130,10 +163,15 @@
     "bemerkung": "Das erste hybride Modell des Projekts: 30 der 40 Ebenen sind rekurrente Zustandsschichten (Gated DeltaNet), 10 sind Achtsamkeit mit Ausgangstor und Teildrehung (rotary_dim 64 von 256). Gemisch mit 256 Experten, Top-8, dazu ein geteilter Experte, der bei jedem Token feuert.\n⚑ Es ist ein DENKMODELL: Seine Vorlage oeffnet den Denkblock in der Aufforderung (`<|im_start|>assistant\\n<think>\\n`), anders als Qwen3, das `<think>` selbst schreibt. Der Client bedient das ueber die Vorlage `ChatMlDenkblock`.\n⛔️ Der Bau hat zehn Funde gekostet (417 bis 430). Der entscheidende war 423: `Qwen3_5MoeRMSNorm` rechnet `x * (1 + weight)` mit einem auf null angelegten Gewicht, und der Export nahm das Gewicht so, wie es dastand. Belegt gegen das offizielle Modell: Ebene 0 fiel damit von rel.L2 0,9665 auf 0,0017, und die Top-8 der Logits stimmen Token fuer Token ueberein (' Paris' an eins fuer 'The capital of France is').\nDurchsatz 8,8 Token/s Dekodierung auf Apple M5 Pro mit 24 GiB.",
     "grundmodell": "Qwen3.6-35B-A3B",
     "reihung": 35.0,
-    "hardware": "ab 24 GB Arbeitsspeicher, 33 GB Platte"
+    "hardware": "ab 24 GB Arbeitsspeicher, 33 GB Platte",
+    "netz": {
+      "abdruck": "c569260f769a815a01d7a674666a9e07ac929c2c685e37090f4e372c7b5bd7d9",
+      "freigegeben": "2026-10-21: vom Projektinhaber bestaetigt: im Netz rechnet nur das 35B, als untere Grenze der Leistungsfaehigkeit; Projektmodell mit fester Revision und Lizenz der Gewichte, die Dienst fuer Dritte erlaubt"
+    }
   },
-  "myelith-35b-a3b-int4": {
-    "anzeigename": "Myelith 35B-A3B INT4",
+  "raven-35b-a3b-int4": {
+    "anzeigename": "Raven 35B A3B - INT4",
+    "frueher": "myelith-35b-a3b-int4",
     "hf_repo": "Qwen/Qwen3.6-35B-A3B",
     "hf_verzeichnis": "Qwen3.6-35B-A3B",
     "hf_revision": "995ad96eacd98c81ed38be0c5b274b04031597b0",
@@ -149,7 +187,7 @@
     "gewichte_bytes": 71903645408,
     "gewichte_anzeige": "rund 67 GB",
     "bauweg": "vierbit",
-    "quelle": "myelith-35b-a3b",
+    "quelle": "raven-35b-a3b-int8",
     "zwischen_bytes": 40275808256,
     "zwischen_anzeige": "rund 38 GB waehrend des Baus (Mitschnitt 7,5 GB, Behaelter 30 GB), danach geloescht",
     "artefakt_bytes": 16632106807,
@@ -160,10 +198,15 @@
     "bemerkung": "Die Experten des int8-35B in vier Bit, trainingsfrei: GPTQ mit ganzem Gitter je Gruppe von 128 und geschrumpfter Kovarianz fuer seltene Experten, gepackt auf 4,125 Bit je Gewicht (Format vierbit_g128). Das gepackte Artefakt rechnet jede Zeile als dieselbe ganze Zahl wie sein Behaelter in int8, belegt Zeile fuer Zeile an den Logits. Aufmerksamkeit, Zustandsschichten, geteilter Experte und Kopf bleiben int8. Auf 24 GiB passt es fast ganz in den Speicher: Decode rund 25 % schneller als das int8, die Vorbereitung rund 35 %. Gebaut wird es aus dem int8 mit INTEGER_LLM/scripts/build_vierbit.sh; das Ergebnis wird gegen den Manifest-Hash im Register geprueft.",
     "grundmodell": "Qwen3.6-35B-A3B",
     "reihung": 35.0,
-    "hardware": "ab 24 GB Arbeitsspeicher, 19 GB Platte (dazu das int8 als Quelle)"
+    "hardware": "ab 24 GB Arbeitsspeicher, 19 GB Platte (dazu das int8 als Quelle)",
+    "netz": {
+      "abdruck": "9235c8162b391d6f976de24c53e145a6660be82d46b0dff43d13ac0b025f011a",
+      "freigegeben": "2026-10-21: vom Projektinhaber bestaetigt: im Netz rechnet nur das 35B, als untere Grenze der Leistungsfaehigkeit; Projektmodell mit fester Revision und Lizenz der Gewichte, die Dienst fuer Dritte erlaubt"
+    }
   },
-  "myelith-125b-a6b": {
-    "anzeigename": "Myelith 125B-A6B INT8",
+  "vulture-126b-a7b-int8": {
+    "anzeigename": "Vulture 126B A7B - INT8",
+    "frueher": "myelith-125b-a6b",
     "hf_repo": "Qwen/Qwen3.8-Flash-Next",
     "hf_verzeichnis": "Qwen3.8-Flash-Next",
     "hf_revision": "de4b8e4d43b917e7706784d8bb445c9af86a3540",
@@ -171,7 +214,7 @@
     "lizenz_artefakt": "privat, nur lokal; die Lizenz der Gewichte gilt weiter",
     "lizenz_geprueft": "2026-10-19 gegen die Modellkarte der Revision geprueft (license: other, qwen-community-1.0). Sie erlaubt den Betrieb fuer sich selbst, Inferenz fuer Dritte braucht eine eigene Lizenz von Qwen. Keine eigene Rechtspruefung, siehe COMPLIANCE/ethics/Lizenzlage.md",
     "betrieb": "lokal",
-    "parameter": "rund 125 Mrd. gesamt, rund 6 Mrd. aktiv je Token",
+    "parameter": "rund 126 Mrd. gesamt, rund 7 Mrd. aktiv je Token (mit Einbettung und Kopf; ohne die N-Gramm-Tabelle von 51 Mrd. und den MTP-Kopf)",
     "layer": 48,
     "hidden_size": 2560,
     "num_heads": 24,
@@ -184,10 +227,11 @@
     "status": "vorgemerkt",
     "bemerkung": "Bauart mit vier Stroemen (Qwen3.8-Flash-Next): 512 Experten, 10 je Token, Zustandsschichten und indizierte Aufmerksamkeit, N-Gramm-Einbettung. Die Laufzeit rechnet sie seit dem 2026-10-19, belegt an einem kleinen Modell derselben Bauart gegen die Vorlage. Gebaut wird es ebenenweise mit eigener Python-Umgebung, nicht aus dem Fenster: bash INTEGER_LLM/scripts/build_flashnext.sh, das das allgemeine Bauskript INTEGER_LLM/scripts/modell_bauen.sh ruft. ⛔️ Nicht fuer den Netzbetrieb zugelassen (betrieb lokal): Der Knoten laedt es nicht.",
     "grundmodell": "Qwen3.8-Flash-Next",
-    "reihung": 125.0,
+    "reihung": 126.0,
     "hardware": "nicht gemessen; geschaetzt rund 180 GB Platte fuer das int8, 120 GB in vier Bit"
   },
-  "_betrieb_bedeutung": "⛔️ `betrieb` sagt, wo ein Modell rechnen darf. Fehlt es, ist es fuer das Netz zugelassen. `lokal` heisst PRIVAT, NUR LOKAL: Die Lizenz der Gewichte erlaubt keinen Dienst fuer Dritte, also keinen Netzbetrieb. Das Bauskript schreibt denselben Wert in `model_config.json` des Artefakts, und der Knoten laedt ein solches Artefakt nicht; der Klient zeigt es mit dem Zusatz (privat) und ohne Netzeintrag. Selbst gebaute Modelle stehen nicht hier, sondern im lokalen Katalog `MODELS/llm/KATALOG.lokal.json`, den Git nicht kennt; jeder Eintrag dort ist privat. `bauweg` `skript` heisst: gebaut mit `INTEGER_LLM/scripts/modell_bauen.sh`, nicht aus dem Fenster.",
-  "_anzeigename_bedeutung": "⚑ `anzeigename` heisst seit dem 2026-10-17 \"Myelith <Groesse> <Format>\", etwa \"Myelith 35B-A3B INT8\": die Groesse wie im Verzeichnisnamen, bei einem Gemisch mit den aktiven Parametern, dahinter die Zahlform der Gewichte. Dieselbe Regel benennt ein Artefakt, das hier nicht steht, und eine Probe haelt die Namen dieser Liste an ihr fest. Seit dem 2026-09-09 heisst er nicht mehr nach dem Grundmodell. Der Grund ist sachlich: Was ausgeliefert wird, ist ein SELBST GEBAUTES Artefakt, ganzzahlig quantisiert nach dem Verfahren dieses Projektes, mit eigenen Skalen und Nachschlagetabellen. Es rechnet anders als das Gleitkommamodell, aus dem es stammt, und seine Perplexitaet steht hier daneben; es \"Qwen3-4B\" zu nennen behauptete eine Gleichheit, die nicht besteht. ⚠️ Die Herkunft verschwindet dabei NICHT: Sie steht in `grundmodell`, `hf_repo` und `hf_revision`, und die Oberflaeche zeigt sie neben dem Namen. Das ist keine Hoeflichkeit, sondern die Bedingung der Apache-2.0, unter der die Grundmodelle stehen; ohne sie waere der Name eine Verschleierung statt einer Unterscheidung.",
-  "_hardware_bedeutung": "⚑ `hardware` ist die Mindestausstattung fuer den OERTLICHEN Betrieb, kleingedruckt neben dem Modell. Zwei Zahlen: Platte ist das gemessene Artefakt aufgerundet und eine harte Bedingung, denn es muss liegen koennen. Arbeitsspeicher ist die Groesse, ab der das Modell fluessig antwortet; weniger geht, wird aber langsamer, weil die Gewichte dann von der Platte kommen. ⚠️ Gemessen auf Apple M5 Pro; eine langsamere Platte verschiebt die zweite Zahl nach oben, nicht die erste. `reihung` ist die Zahl der Parameter in Milliarden und ordnet die Wahl aufsteigend; sie steht als Zahl da, damit niemand nach Zeichenketten sortiert und `14B` vor `4B` landet."
+  "_betrieb_bedeutung": "⛔️ `betrieb` sagt, wo ein Modell rechnen darf. Fehlt es, steht die Lizenz dem Netzbetrieb nicht entgegen; im Netz rechnet trotzdem nur, was auf der Netzliste steht (`_netz_bedeutung`). `lokal` heisst PRIVAT, NUR LOKAL: Die Lizenz der Gewichte erlaubt keinen Dienst fuer Dritte, also keinen Netzbetrieb. Das Bauskript schreibt denselben Wert in `model_config.json` des Artefakts; seit dem 2026-10-21 ist das ein Hinweis, die Zusage ist die Netzliste (`_netz_bedeutung`); der Klient zeigt es mit dem Zusatz (privat) und ohne Netzeintrag. Selbst gebaute Modelle stehen nicht hier, sondern im lokalen Katalog `MODELS/llm/KATALOG.lokal.json`, den Git nicht kennt; jeder Eintrag dort ist privat. `bauweg` `skript` heisst: gebaut mit `INTEGER_LLM/scripts/modell_bauen.sh`, nicht aus dem Fenster.",
+  "_anzeigename_bedeutung": "⚑ Seit dem 2026-10-21 (Festlegung des Projektinhabers) heisst jedes Projektmodell nach einem Tier, passend zu seiner Faehigkeit, mit Groesse und Speicherform als Anhaengsel, auch bei int8: Schluessel und Verzeichnis `raven-35b-a3b-int4`, `anzeigename` \"Raven 35B A3B - INT4\". Kein Name traegt mehr \"Myelith\". Ein selbst gebautes privates Modell traegt nur das Anhaengsel (`126b-a7b-int4`, \"126B A7B - INT4\"). Dieselbe Regel benennt ein Artefakt, das hier nicht steht, und eine Probe haelt die Namen dieser Liste an ihr fest. `frueher` ist der Name vor dem 2026-10-21; der Klient benennt Verzeichnisse und Einstellungen mit diesem Namen beim Start um, und Messdateien unter BENCHMARKS/Inferenz/results/ behalten ihn als Aufzeichnung. Bis zum 2026-10-21: ⚑ `anzeigename` heisst seit dem 2026-10-17 \"Myelith <Groesse> <Format>\", etwa \"Myelith 35B-A3B INT8\": die Groesse wie im Verzeichnisnamen, bei einem Gemisch mit den aktiven Parametern, dahinter die Zahlform der Gewichte. Dieselbe Regel benennt ein Artefakt, das hier nicht steht, und eine Probe haelt die Namen dieser Liste an ihr fest. Seit dem 2026-09-09 heisst er nicht mehr nach dem Grundmodell. Der Grund ist sachlich: Was ausgeliefert wird, ist ein SELBST GEBAUTES Artefakt, ganzzahlig quantisiert nach dem Verfahren dieses Projektes, mit eigenen Skalen und Nachschlagetabellen. Es rechnet anders als das Gleitkommamodell, aus dem es stammt, und seine Perplexitaet steht hier daneben; es \"Qwen3-4B\" zu nennen behauptete eine Gleichheit, die nicht besteht. ⚠️ Die Herkunft verschwindet dabei NICHT: Sie steht in `grundmodell`, `hf_repo` und `hf_revision`, und die Oberflaeche zeigt sie neben dem Namen. Das ist keine Hoeflichkeit, sondern die Bedingung der Apache-2.0, unter der die Grundmodelle stehen; ohne sie waere der Name eine Verschleierung statt einer Unterscheidung.",
+  "_hardware_bedeutung": "⚑ `hardware` ist die Mindestausstattung fuer den OERTLICHEN Betrieb, kleingedruckt neben dem Modell. Zwei Zahlen: Platte ist das gemessene Artefakt aufgerundet und eine harte Bedingung, denn es muss liegen koennen. Arbeitsspeicher ist die Groesse, ab der das Modell fluessig antwortet; weniger geht, wird aber langsamer, weil die Gewichte dann von der Platte kommen. ⚠️ Gemessen auf Apple M5 Pro; eine langsamere Platte verschiebt die zweite Zahl nach oben, nicht die erste. `reihung` ist die Zahl der Parameter in Milliarden und ordnet die Wahl aufsteigend; sie steht als Zahl da, damit niemand nach Zeichenketten sortiert und `14B` vor `4B` landet.",
+  "_netz_bedeutung": "⛔️ `netz` ist die Netzliste (Festlegung des Projektinhabers, 2026-10-21): Im Netz rechnet nur ein Artefakt, dessen Abdruck hier unter `netz.abdruck` steht; die Laufzeit bindet diesen Katalog beim Bauen ein und laedt im Netzbetrieb nichts anderes. Der Abdruck ist SHA-256 ueber theta_v.json, model_config.json und tokenizer.json, und damit ueber das ganze Artefakt. Lokal darf jedes Modell rechnen, gleich von welchem Anbieter seine Gewichte stammen; alles, was nicht auf dieser Liste steht, ist privat. ⚑ Im Netz rechnet nur das 35B, int8 und int4 (Festlegung des Projektinhabers, 2026-10-21: die untere Grenze der Leistungsfaehigkeit). Der Block `pruefnetz` traegt ein kleines Modell fuer die Netzproben von Pod, Testklient und Klient; er gilt nur mit dem Merkmal `pruefnetz` der Laufzeit, das allein die Proben setzen (`cargo test`), nie ein ausgeliefertes Programm. Eingetragen und entzogen wird mit `INTEGER_LLM/tools/netzfreigabe.py`; wirksam mit der naechsten Fassung."
 }

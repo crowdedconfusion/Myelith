@@ -55,6 +55,16 @@ pub struct Eichung {
     pub dauer_ms: u64,
     /// Der Befehl, damit sich die Messung wiederholen laesst.
     pub befehl: Vec<String>,
+    /// ⚑ **Die Ebenenzeit** (seit dem 2026-10-21, Stufe 4): Median eines
+    /// Decode-Tokens je Ebene in Mikrosekunden, gemessen von der Laufzeit
+    /// (`integer_llm_runtime::ebenenzeit`). Nur bei einem eigenen Artefakt,
+    /// sonst `None`. Das ist die Zahl, die ein Knoten dem Netz ansagt.
+    #[serde(default)]
+    pub ebenenzeit_us: Option<u64>,
+    /// Mit welchen Rechenwegen die Ebenenzeit gemessen ist (etwa
+    /// `reference+cpu-simd+metal`); nach einem Wechsel gilt sie nicht mehr.
+    #[serde(default)]
+    pub rechenweg: Option<String>,
 }
 
 impl Eichung {
@@ -156,6 +166,17 @@ impl Eichbuch {
             .unwrap_or(VORGABE_ZUSCHLAG)
     }
 
+    /// **Die Ebenenzeit** einer Last, wenn sie gemessen ist, mit dem
+    /// Rechenweg der Messung.
+    pub fn ebenenzeit(&self, last: &str) -> Option<(u64, Option<&str>)> {
+        self.eintraege
+            .iter()
+            .filter(|e| e.last == last)
+            .filter_map(|e| Some((e.kontext, e.ebenenzeit_us?, e.rechenweg.as_deref())))
+            .max_by_key(|(k, _, _)| *k)
+            .map(|(_, t, w)| (t, w))
+    }
+
     /// **Der Zuschlag eines fremden Modells** unter `name` mit `bytes` an
     /// Dateien: gemessen oder [`VORGABE_ZUSCHLAG`].
     pub fn zuschlag_fremd(&self, name: &str, bytes: u64) -> u64 {
@@ -198,7 +219,16 @@ pub fn messen(last: &str, kontext: u64, befehl: &[String]) -> Result<Eichung, St
         return Err(format!("{programm} endete mit {status}; ein gescheiterter Lauf misst nichts"));
     }
     let spitze_bytes = spitze_der_kinder().ok_or("die Spitze des Speichers ist hier nicht messbar")?;
-    Ok(Eichung { last: last.to_string(), kontext, spitze_bytes, fest_bytes: fest, dauer_ms, befehl: befehl.to_vec() })
+    Ok(Eichung {
+        last: last.to_string(),
+        kontext,
+        spitze_bytes,
+        fest_bytes: fest,
+        dauer_ms,
+        befehl: befehl.to_vec(),
+        ebenenzeit_us: None,
+        rechenweg: None,
+    })
 }
 
 /// **Alle Nachkommen eines Prozesses**, Kinder, Enkel und so fort.
@@ -312,7 +342,33 @@ mod proben {
     use super::*;
 
     fn e(last: &str, kontext: u64, spitze: u64) -> Eichung {
-        Eichung { last: last.into(), kontext, spitze_bytes: spitze, fest_bytes: None, dauer_ms: 1, befehl: vec![] }
+        Eichung {
+            last: last.into(),
+            kontext,
+            spitze_bytes: spitze,
+            fest_bytes: None,
+            dauer_ms: 1,
+            befehl: vec![],
+            ebenenzeit_us: None,
+            rechenweg: None,
+        }
+    }
+
+    /// ⚑ **Die Ebenenzeit steht im Buch**: die mit dem groessten Kontext
+    /// unter den gemessenen, eine alte Datei ohne das Feld liest sich weiter.
+    #[test]
+    fn die_ebenenzeit_steht_im_buch() {
+        let mut b = Eichbuch::default();
+        b.eintragen(e("raven-35b-a3b-int4", 0, 10));
+        assert_eq!(b.ebenenzeit("raven-35b-a3b-int4"), None);
+        let mut m = e("raven-35b-a3b-int4", 0, 10);
+        m.ebenenzeit_us = Some(2400);
+        m.rechenweg = Some("reference+cpu-simd".into());
+        b.eintragen(m);
+        assert_eq!(b.ebenenzeit("raven-35b-a3b-int4"), Some((2400, Some("reference+cpu-simd"))));
+        let alt = r#"{"eintraege": [{"last": "x", "kontext": 0, "spitze_bytes": 1, "dauer_ms": 1, "befehl": []}]}"#;
+        let gelesen: Eichbuch = serde_json::from_str(alt).expect("alte Datei");
+        assert_eq!(gelesen.ebenenzeit("x"), None);
     }
 
     #[test]

@@ -1,7 +1,7 @@
 # agent-layer
 
-> **Version:** 0.52.0 (`myl-agent` 0.7.1, `myl-local-agent` 0.43.0)
-> **Datum:** 2026-10-19
+> **Version:** 0.54.0 (`myl-agent` 0.7.1, `myl-local-agent` 0.45.0)
+> **Datum:** 2026-10-22
 > **Status:** Manifeste, Herkunftsstufe, Registratur, der
 > **Session-Kontrakt** mit Durchsetzung im Ledger, der **Plan** und seit
 > v0.7.0 die **Segmentkette**. 52 Tests. ⚑ **Was jetzt fehlt, ist keine
@@ -68,6 +68,101 @@ umbenannt, weil er in jedem `use` steht.
 - `src/kette.rs` — dass er es auch so getan hat, und wann er aufhört.
 
 ## Changelog
+
+### v0.54.0 (2026-10-22): Fund 568 zurückgenommen, die Messschalter entfernt (`myl-local-agent` 0.45.0)
+
+⚑ **Festlegung des Projektinhabers** nach dem Lauf mit drei Varianten
+(5.27): Die verankerten Werkzeuge stehen wieder neben `write_file` in
+Ansage und Erlaubnis, in jeder Betriebsart.
+
+- Der Grund: In Phase 2 von „Werkzeug bauen“ bestand der Agent mit Fund 568
+  7 von 14 Mal, ohne ihn 13 von 14 Mal (exakter Test nach Fisher p = 0,033),
+  mit 568 und einer Zeile in der Hausregel 9 von 14 Mal. Ohne 568 liest das
+  Modell seine Ergebnisdatei zurück und bessert sie nach, aus „Ozdemir“ wird
+  wieder „Özdemir“; mit 568 tat es das in keinem Lauf. Der Preis: Phase 2
+  dauert rund ein Viertel länger.
+- `verankert::ansagen` und seine Probe entfallen; `Lauf` und
+  `gespraech::ansage` sagen wieder an, was der Kasten anbietet.
+- Die Hausregel-Zeile kommt nicht; `crate::messschalter` mit
+  `MYL_MESSUNG_OHNE_568` und `MYL_MESSUNG_ZUSATZREGEL` ist entfernt.
+- **Belege:** `cargo test` rc=0 in `myl-local-agent` und seinen Nutzern
+  (`myl-client`, `myl-console`, `myl-oberflaeche`, `myl-testclient`),
+  Clippy rc=0.
+
+### v0.53.1 – 2026-10-21 (zwei Messschalter für die Entscheidung zu Fund 568; `myl-local-agent` 0.44.1)
+
+⚑ **Festlegung des Projektinhabers** (5.27): Über Fund 568 wird nach einem
+Lauf mit drei Varianten entschieden: mit 568, ohne 568, mit 568 und einer
+Zeile in der Regel. Für die beiden letzten gibt es **Messschalter**, keine
+Betriebsschalter; sie werden nach der Entscheidung entfernt.
+
+- `crate::messschalter` (neu): `MYL_MESSUNG_OHNE_568` sagt die verankerten
+  Werkzeuge wieder neben `write_file` an (wie `NurVerankert`, also auch in
+  der Erlaubnis); `MYL_MESSUNG_ZUSATZREGEL` hängt eine Zeile hinter die
+  geprüfte Regel, deren Prüfsumme bleibt. Beide stehen im Debug-Log, wenn
+  sie greifen.
+- 📌 Ein erster Entwurf las die Umgebung in `verankert.rs`, und die Probe
+  `nichts_hier_beruehrt_die_aussenwelt` hat ihn zurückgewiesen, zu Recht:
+  Die verankerten Werkzeuge müssen nachrechenbar bleiben. Der Schalter
+  wohnt jetzt im eigenen Modul und wirkt beim Aufrufer.
+- **Belege:** echt am Sparrow mit Debug-Log: mit beiden Schaltern zwei
+  Einträge „MESSSCHALTER“, `fill_template` in der Ansage, die Zusatzzeile in
+  der Regel; ohne sie nichts davon. `cargo test` (477) und Clippy rc=0.
+
+### v0.53.0 – 2026-10-21 (der Debug-Log bekommt Ablauf und Deckel; `myl-local-agent` 0.44.0)
+
+⚑ **Festlegung des Projektinhabers** (Rest der Entscheidung zum Aktionsprotokoll
+vom 2026-10-17): Der Debug-Log enthält alles, also soll er nicht unbegrenzt
+liegen bleiben, und ein Lauf, der hängt, soll die Platte nicht füllen.
+
+- **Ablauf:** Dateien aus Monaten vor den letzten drei gehen, der laufende
+  mitgezählt (`AUFBEWAHREN_MONATE`), auch über den Jahreswechsel.
+- **Deckel:** Der Ordner hält höchstens 512 MiB (`ORDNER_GRENZE`); darüber
+  gehen die ältesten Teile zuerst. Ab 64 MiB (`TEIL_GRENZE`) schreibt der
+  Monat in einen neuen Teil (`debug-JJJJ-MM-2.log`), damit nie ein ganzer
+  Monat auf einmal gehen muss. Die Datei, in die gerade geschrieben wird,
+  bleibt immer; fremde Dateien im Ordner bleiben.
+- Geprüft wird beim Einschalten und bei jedem neuen Teil, nicht bei jedem
+  Eintrag. `datei_fuer` nennt den laufenden Teil; die Konsole zeigt ihn bei
+  `/debug`.
+- **Gemessen vor der Grenze:** 3,5 MB in neun Tagen Entwicklung (203 Starts,
+  3 818 Einträge, der größte 38 KB). Im Alltag greift also der Ablauf, der
+  Deckel nur bei einem Ausreißer.
+- **Belege:** Proben `ablauf_und_deckel` (drei Monate bleiben, älteste Teile
+  zuerst, laufende Datei bleibt, voller Teil beginnt einen neuen, fremde
+  Datei bleibt) und `ablauf_ueber_den_jahreswechsel`; `cargo test` und
+  Clippy mit `-D warnings` für `myl-local-agent` und `myl-console` rc=0.
+
+### v0.52.2 – 2026-10-21 (die Modelle heißen nach Tieren; `myl-local-agent` 0.43.2)
+
+Die Projektmodelle heißen seit heute nach Tieren, mit Größe und Speicherform als Anhängsel (Festlegung des Projektinhabers): `myelith-0.6b` ist `sparrow-0.6b-int8`, `myelith-4b` `pigeon-4b-int8`, `myelith-30b-a3b` `magpie-30b-a3b-int8`, `myelith-35b-a3b` `raven-35b-a3b-int8`. In den Dateien eines Artefakts steht kein Name, also bleiben Abdrücke und Register gültig. Nur Proben und Beispiele.
+
+### v0.52.1 – 2026-10-21 (der Ort der Einstellungen nimmt die Umgebung als Argument; Fund 579; `myl-local-agent` 0.43.1)
+
+- ⛔️ **Fund 579: Im Repositorium lag `CLIENT/myl-client/.config/myelith/wurzel`**
+  mit dem absoluten Pfad des Entwicklungsrechners, eingecheckt seit
+  `d63e477` und seither bei Prüfläufen neu geschrieben. Die Probe der
+  Plattformorte in `myl-client` stellte `HOME` und `XDG_CONFIG_HOME`
+  prozessweit um; fehlte `HOME` gerade, legte ein nebenlaeufiger Testfaden
+  seine Ablage im Arbeitsverzeichnis an, und das ist bei `cargo test` der
+  Ordner der Kiste. Dort lag auch ein `verlauf.key` (von `*.key`
+  ausgenommen, nie eingecheckt). Auf einem anderen Rechner verwarf
+  `ort::wurzel()` den Zettel, weil am genannten Ort keine Wurzel liegt; er
+  schadete also nicht, verriet aber Pfad und Nutzernamen.
+- **Jetzt:** `ort::plattformpfad_aus` nimmt die Umgebung als Argument,
+  `plattformpfad` reicht die des Prozesses hinein. Die Probe (CLIENT
+  v0.173.1) prüft die reine Form und ändert die Umgebung nicht mehr.
+  `.gitignore` nimmt `*/*/.config/` aus.
+- **Belege:** `cargo test --lib ort::` (8) und die Probe in `myl-client`
+  grün; Gegenprobe: liest die Funktion `HOME` wieder aus dem Prozess, fällt
+  die Probe.
+- **Die Proben der Einrichtungsskripte** (`ort.rs`) lesen auch
+  `installieren-linux.sh`; der Menüeintrag muss das Symbol beim Namen nennen
+  und darf nicht in den Baum zeigen (CLIENT v0.174.0, Fund 580).
+- **Die Agentenmessung** (`BENCHMARKS/Agent/agentenprobe.py`) schreibt den
+  Pfad des Artefakts relativ zur Wurzel ins Ergebnis; bisher stand dort der
+  absolute des Messrechners samt Nutzername, in vierzehn versionierten
+  Ergebnissen, die jetzt umgeschrieben sind (Fund 580).
 
 ### v0.52.0 – 2026-10-19 (der eigene Mitschnitt sperrt die Shell nicht mehr, fremd ist nur ein Mitschnitt mit Fremdem; Fund 570; `myl-local-agent` 0.43.0)
 

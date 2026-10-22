@@ -12,7 +12,7 @@ allgemeine Angaben, Datenquellen, Datenverarbeitung.
 | Feld | Angabe |
 |---|---|
 | Anbieter | Joschka Benjamin Hänsler, Privatperson, Deutschland |
-| Modelle | `myelith-0.6b`, `myelith-4b`, `myelith-8b`, `myelith-30b-a3b`, `myelith-35b-a3b` |
+| Modelle | `sparrow-0.6b-int8`, `pigeon-4b-int8`, `jay-8b-int8`, `magpie-30b-a3b-int8`, `raven-35b-a3b-int8` |
 | Modalitäten der Trainingsdaten | Text |
 | Umfang der eigenen Trainingsdaten | rund 127 000 Wörter (synthetisch), dazu 241 000 Wörter nur zur Kalibrierung |
 | Zeitraum der Datenerhebung | 2026-08 bis 2026-09 |

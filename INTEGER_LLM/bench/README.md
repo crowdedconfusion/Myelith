@@ -44,7 +44,7 @@ würde geslasht.
 je Lauf, Bitgleichheit über alle gemessenen Backends bestätigt (ein
 `decode_digest` je Zeilengruppe).
 
-### `myelith-0.6b` (0,93 GB Artefakt)
+### `sparrow-0.6b-int8` (0,93 GB Artefakt)
 
 | Prompt | Backend | Prefill | Decode |
 |---|---|---|---|
@@ -55,7 +55,7 @@ je Lauf, Bitgleichheit über alle gemessenen Backends bestätigt (ein
 | 243 Token | cpu-simd | 229,99 tok/s | 53,54 tok/s |
 | 243 Token | **metal** | **865,41 tok/s** | 53,41 tok/s |
 
-### `myelith-4b` (4,82 GB Artefakt)
+### `pigeon-4b-int8` (4,82 GB Artefakt)
 
 | Prompt | Backend | Prefill | Decode |
 |---|---|---|---|
@@ -90,9 +90,9 @@ schnell nimmt es einen Prompt auf". Eine Zahl, die beides beantworten
 soll, beantwortet keine.
 
 ```bash
-INTEGER_LLM_MODEL=myelith-0.6b python3 bench/run.py --no-fp \
+INTEGER_LLM_MODEL=sparrow-0.6b-int8 python3 bench/run.py --no-fp \
   --backends reference,cpu-simd,metal                      # kurz
-INTEGER_LLM_MODEL=myelith-0.6b python3 bench/run.py --no-fp \
+INTEGER_LLM_MODEL=sparrow-0.6b-int8 python3 bench/run.py --no-fp \
   --backends reference,cpu-simd,metal --prompt-tokens 256  # lang
 ```
 

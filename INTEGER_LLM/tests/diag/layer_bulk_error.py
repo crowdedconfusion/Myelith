@@ -34,10 +34,10 @@ Unser Dump:
 Also: dump[i] <-> hs[i+1] fuer i = 0..N-2, und dump[N] <-> hs[N].
 Fuer dump[N-1] (Ausgabe der letzten Ebene) gibt es KEINEN hs-Eintrag.
 """
-import sys, torch, numpy as np
+import sys, tempfile, torch, numpy as np
 from pathlib import Path
-REPO = Path("/Users/entity/Desktop/Code/Code/Artificial/Myelith/Repository/INTEGER_LLM")
-sys.path.insert(0, str(REPO/"calibrate")); sys.path.insert(0, str(REPO/"eval"))
+REPO = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO/"calibrate")); sys.path.insert(0, str(REPO.parent / "BENCHMARKS" / "Inferenz"))
 from src.loader import load_reference_model
 from wikitext_common import MODEL_DIR
 
@@ -47,7 +47,7 @@ for z in open(sys.argv[1]):
         p = z.split(); integer[int(p[1])] = np.array([float(x) for x in p[2:]])
 
 import os
-TOKENS = os.environ.get("BULK_TOKENS", "/tmp/tok32.txt")
+TOKENS = os.environ.get("BULK_TOKENS", str(Path(tempfile.gettempdir()) / "tok32.txt"))
 toks = [int(x) for x in open(TOKENS).read().split()]
 model,_ = load_reference_model(MODEL_DIR)
 gef = {}

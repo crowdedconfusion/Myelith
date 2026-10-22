@@ -27,7 +27,7 @@ fn artefakte() -> PathBuf {
     p.push("..");
     p.push("INTEGER_LLM");
     p.push("artifacts");
-    p.push("myelith-0.6b");
+    p.push("sparrow-0.6b-int8");
     p
 }
 

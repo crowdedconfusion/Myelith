@@ -4109,7 +4109,7 @@ mod verlaufsuche {
         crate::verlauf::schreiben(
             d,
             "alte-sitzung",
-            "myelith-4b",
+            "pigeon-4b-int8",
             &[
                 ("user".into(), "Und was macht der Pruefstand in Halle 3?".into()),
                 ("assistant".into(), "Der laeuft unter der Kennung QX-4417-MOOS.".into()),
@@ -4260,7 +4260,7 @@ mod verlaufliste {
         crate::verlauf::schreiben(
             d.path(),
             "alte-sitzung",
-            "myelith-4b",
+            "pigeon-4b-int8",
             &[
                 ("user".into(), "Baue den Parser um.\nEr soll Kommentare ueberspringen.".into()),
                 ("assistant".into(), "Fertig, die Kennzahl war 4711.".into()),
@@ -4298,7 +4298,7 @@ mod verlaufliste {
                 (rolle.to_string(), format!("Abschnitt Nummer {i}."))
             })
             .collect();
-        crate::verlauf::schreiben(d.path(), "lange-sitzung", "myelith-4b", &viele)
+        crate::verlauf::schreiben(d.path(), "lange-sitzung", "pigeon-4b-int8", &viele)
             .expect("schreiben");
 
         let aus = w.ausfuehren(&serde_json::json!({})).expect("liste");
@@ -4316,7 +4316,7 @@ mod verlaufliste {
         let wenige: Vec<(String, String)> = (0..6)
             .map(|i| ("user".to_string(), format!("Frage Nummer {i}.")))
             .collect();
-        crate::verlauf::schreiben(d2.path(), "kurze-sitzung", "myelith-4b", &wenige)
+        crate::verlauf::schreiben(d2.path(), "kurze-sitzung", "pigeon-4b-int8", &wenige)
             .expect("schreiben");
         let aus2 = w2.ausfuehren(&serde_json::json!({})).expect("liste");
         assert!(!aus2.contains("grouped"), "hier wird nichts gruppiert: {aus2}");

@@ -6,7 +6,7 @@
 use myl_local_agent::{Modellweg, Nachricht, Tuerfehler};
 
 fn modell() -> Option<myl_client::Oertlichesmodell> {
-    let pfad = concat!(env!("CARGO_MANIFEST_DIR"), "/../../INTEGER_LLM/artifacts/myelith-0.6b");
+    let pfad = concat!(env!("CARGO_MANIFEST_DIR"), "/../../INTEGER_LLM/artifacts/sparrow-0.6b-int8");
     if std::env::var_os("MYL_OHNE_ARTEFAKTE").is_some() {
         eprintln!("SKIP (MYL_OHNE_ARTEFAKTE gesetzt): {pfad}");
         return None;
@@ -60,7 +60,7 @@ fn der_notaus_haelt_an_und_behaelt_den_text() {
         }
     }));
     let frage = [Nachricht::nutzer("Erzaehle mir ausfuehrlich von Paris.")];
-    match m.chat("myelith-0.6b", &frage, Some(200)) {
+    match m.chat("sparrow-0.6b-int8", &frage, Some(200)) {
         Err(Tuerfehler::Abgebrochen { bisher }) => {
             assert!(!bisher.is_empty(), "der Text bis zum Notaus ging verloren");
         }
@@ -72,5 +72,5 @@ fn der_notaus_haelt_an_und_behaelt_den_text() {
     // Zurueckgesetzt laeuft es wieder.
     myl_local_agent::notaus::zuruecksetzen();
     m.beobachter = None;
-    assert!(m.chat("myelith-0.6b", &frage, Some(8)).is_ok());
+    assert!(m.chat("sparrow-0.6b-int8", &frage, Some(8)).is_ok());
 }

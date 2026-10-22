@@ -1251,7 +1251,7 @@ pub(crate) fn stapelfaeden(zeilen: usize, arbeit_je_zeile: usize, eingaben: usiz
 
 /// Vorgabe der Kachelbreite.
 ///
-/// ⚑ **Acht, gemessen am 2026-09-11** gegen `myelith-4b` mit einem
+/// ⚑ **Acht, gemessen am 2026-09-11** gegen `pigeon-4b-int8` mit einem
 /// Prompt von 169 Token, nachdem der KV-Speicher nicht mehr kopiert:
 ///
 /// | Kachel | 1 | 2 | 4 | 8 | 16 | 32 |

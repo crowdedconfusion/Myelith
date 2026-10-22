@@ -2,7 +2,7 @@
 //!
 //! # 📌 Warum es ihn gibt: 23 % der Laufzeit waren Fadenstart
 //!
-//! **Gemessen am 2026-09-11** auf M5 Pro gegen `myelith-4b`: Ein
+//! **Gemessen am 2026-09-11** auf M5 Pro gegen `pigeon-4b-int8`: Ein
 //! `std::thread::scope` kostet 18,5 µs bei zwei und 84,5 µs bei zwölf
 //! Fäden, denn jeder `spawn` legt einen Betriebssystemfaden an. Der
 //! Vorwärtspass ruft je Token **253** solche Bereiche (36 Ebenen × 7

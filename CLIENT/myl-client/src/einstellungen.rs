@@ -548,7 +548,7 @@ impl Einstellungen {
     /// # 📌 Warum es das gibt (2026-09-10)
     ///
     /// **Die Artefakte heissen seit heute nach dem Modell, das sie
-    /// sind**, also `myelith-4b` statt `qwen3-4b`. Jede bestehende
+    /// sind**, also `pigeon-4b-int8` statt `qwen3-4b`. Jede bestehende
     /// Ablage zeigt aber noch auf den alten Pfad, und der loest nach
     /// dem Umbenennen ins Leere auf: Der Klient meldete „Modell laedt
     /// nicht" und der Nutzer suchte den Fehler bei sich.
@@ -570,7 +570,7 @@ impl Einstellungen {
         //
         // ⚠️ **Das ist kein Ersatz, sondern die naechstgelegene Wahl.**
         // Wer auf `myelith-7b` oder `myelith-14b` zeigte, bekommt
-        // `myelith-4b`, und das ist ein anderes Modell mit anderen
+        // `pigeon-4b-int8`, und das ist ein anderes Modell mit anderen
         // Antworten. Die Alternative waere ein Pfad, der ins Leere
         // zeigt, und dann meldete der Klient „Modell laedt nicht" und
         // der Nutzer suchte den Fehler bei sich. **Beides ist unschoen;
@@ -582,17 +582,17 @@ impl Einstellungen {
         // von einem 7B kam, hat nicht zwangslaeufig Platz fuer ein
         // 30B.
         const ALT_NEU: [(&str, &str); 7] = [
-            ("qwen2.5-0.5b", "myelith-0.6b"),
-            ("qwen2.5-7b", "myelith-4b"),
-            ("myelith-0.5b", "myelith-0.6b"),
-            ("myelith-7b", "myelith-4b"),
+            ("qwen2.5-0.5b", "sparrow-0.6b-int8"),
+            ("qwen2.5-7b", "pigeon-4b-int8"),
+            ("myelith-0.5b", "sparrow-0.6b-int8"),
+            ("myelith-7b", "pigeon-4b-int8"),
             // ⛔️ Entfernt am 2026-09-12 (Festlegung des
             // Projektinhabers): schlechter als das Gemisch in
             // Durchsatz und Perplexitaet, aufwendiger zu trainieren,
             // und 46 GB auf der Platte.
-            ("myelith-14b", "myelith-4b"),
-            ("qwen3-30b-a3b", "myelith-30b-a3b"),
-            ("qwen3-4b", "myelith-4b"),
+            ("myelith-14b", "pigeon-4b-int8"),
+            ("qwen3-30b-a3b", "magpie-30b-a3b-int8"),
+            ("qwen3-4b", "pigeon-4b-int8"),
         ];
         // ⚑ **Die vierte Wanderung (2026-09-30) ist ein Umzug**: Die
         //   mitgelieferten Kisten liegen jetzt unter `AGENT_LAYER`. Ein
@@ -610,6 +610,14 @@ impl Einstellungen {
                 self.modell.artefakt = format!("{vorne}/{neu}");
                 return;
             }
+        }
+        // ⚑ **Die fuenfte Wanderung (2026-10-21) ist wieder eine
+        //   Umbenennung**: Die Projektmodelle heissen nach Tieren
+        //   (`myelith-35b-a3b` ist `raven-35b-a3b-int8`). Die Zuordnung steht
+        //   im Katalog (`frueher`), nicht hier; die Verzeichnisse benennt
+        //   `modelle::suchorte` um.
+        if let Some(neu) = crate::modelle::neuer_name(letztes, &crate::modelle::fruehere_namen()) {
+            self.modell.artefakt = format!("{vorne}/{neu}");
         }
     }
 
@@ -2181,59 +2189,48 @@ mod setzer {
     /// Arbeitsverzeichnis, und `myl` aus zwei Ordnern gestartet las zwei
     /// verschiedene Einstellungen.
     ///
-    /// ⚑ **Alles in einer Pruefung**, weil Umgebungsvariablen prozessweit
-    /// sind: Zwei nebenlaeufige Pruefungen setzten sich gegenseitig den
-    /// Zustand um, und das Ergebnis hinge an der Reihenfolge. Aus
-    /// demselben Grund wird am Ende wiederhergestellt, was vorgefunden
-    /// wurde.
+    /// ⚑ **Die Umgebung kommt als Argument, nicht aus dem Prozess.** Bis
+    /// zum 2026-10-21 stellte diese Probe `HOME` und `XDG_CONFIG_HOME`
+    /// prozessweit um und am Ende zurueck. Waehrend `HOME` fehlte, schrieb
+    /// ein nebenlaeufiger Testfaden den Zettel mit der Wurzel nach
+    /// `./.config/myelith/wurzel`, also in diese Kiste, und von dort kam er
+    /// mit dem absoluten Pfad des Entwicklungsrechners ins Repositorium
+    /// (Fund 579). Absolute Werte kommen aus Behelfsverzeichnissen, damit
+    /// die Probe auf jedem System dasselbe sagt.
     #[test]
     fn der_ort_der_einstellungen_folgt_der_plattform() {
-        // ⚑ `plattformpfad` und nicht `vorgabepfad`: Diese Probe laeuft
-        //   auch mit `MYL_EINSTELLUNGEN`, wie jede (Fund 496).
-        let alt_xdg = std::env::var_os("XDG_CONFIG_HOME");
-        let alt_heim = std::env::var_os("HOME");
+        use std::collections::HashMap;
+        use std::ffi::OsString;
+        use std::path::PathBuf;
+        let ort = |werte: &HashMap<&str, OsString>| {
+            myl_local_agent::ort::plattformpfad_aus(&|name| werte.get(name).cloned())
+        };
+        let xdg = tempfile::tempdir().expect("XDG-Verzeichnis");
+        let heim = tempfile::tempdir().expect("Heimatverzeichnis");
 
         // ⚑ Die Variable, ueber die eine deklarative Verteilung wie
         // NixOS die Ablage festlegt. Sie hat Vorrang vor `HOME`.
-        std::env::set_var("XDG_CONFIG_HOME", "/x/konfig");
-        std::env::set_var("HOME", "/heim/jemand");
-        let p = myl_local_agent::ort::plattformpfad();
-        if cfg!(windows) {
-            // Auf Windows entscheidet `APPDATA`, und diese Pruefung
-            // sagt dort nichts ueber XDG aus.
-            assert!(p.is_absolute(), "auch auf Windows ein absoluter Pfad: {p:?}");
-        } else {
-            assert_eq!(p, std::path::PathBuf::from("/x/konfig/myelith/client.json"));
-        }
+        let mut u: HashMap<&str, OsString> = HashMap::new();
+        u.insert("XDG_CONFIG_HOME", xdg.path().into());
+        u.insert("HOME", heim.path().into());
+        assert_eq!(ort(&u), xdg.path().join("myelith").join("client.json"));
 
         // Ein relativer Wert ist laut Spezifikation ungueltig und wird
         // uebergangen; sonst faende man sich genau in dem Fehler wieder,
         // den diese Aenderung behebt.
-        std::env::set_var("XDG_CONFIG_HOME", ".konfig");
-        let p = myl_local_agent::ort::plattformpfad();
-        assert!(
-            !p.starts_with(".konfig"),
-            "ein relatives XDG_CONFIG_HOME wird uebergangen, bekommen: {p:?}"
-        );
-
-        std::env::remove_var("XDG_CONFIG_HOME");
-        let p = myl_local_agent::ort::plattformpfad();
-        if !cfg!(windows) {
-            assert_eq!(p, std::path::PathBuf::from("/heim/jemand/.config/myelith/client.json"));
-        }
+        u.insert("XDG_CONFIG_HOME", ".konfig".into());
+        let p = ort(&u);
+        assert!(!p.starts_with(".konfig"), "ein relatives XDG_CONFIG_HOME wird uebergangen, bekommen: {p:?}");
+        assert_eq!(p, heim.path().join(".config/myelith/client.json"));
 
         // 📌 Der Fall, der die ganze Aenderung ausgeloest hat: keine der
         // Heimatvariablen gesetzt. Frueher war das Ergebnis
         // `./.config/...`, also je Arbeitsverzeichnis ein anderes.
-        std::env::remove_var("HOME");
-        let p = myl_local_agent::ort::plattformpfad();
-        if !cfg!(windows) {
-            assert_eq!(
-                p,
-                std::path::PathBuf::from(".config/myelith/client.json"),
-                "ohne HOME bleibt nur das Arbeitsverzeichnis, und das steht als letzte Wahl da"
-            );
-        }
+        assert_eq!(
+            ort(&HashMap::new()),
+            PathBuf::from(".config/myelith/client.json"),
+            "ohne HOME bleibt nur das Arbeitsverzeichnis, und das steht als letzte Wahl da"
+        );
 
         // 📌 **Eine vorhandene Datei gewinnt vor der bevorzugten
         // Stelle.** Ohne das zoege die Datei bei jedem, der
@@ -2241,41 +2238,31 @@ mod setzer {
         // Einstellungen waeren stillschweigend weg. Hier steht `HOME`
         // auf einem echten Verzeichnis mit einer echten Datei, und
         // `XDG_CONFIG_HOME` auf einem leeren.
-        if !cfg!(windows) {
-            let heim = tempfile::tempdir().expect("Heimatverzeichnis");
-            let xdg = tempfile::tempdir().expect("XDG-Verzeichnis");
-            let alt = heim.path().join(".config/myelith");
-            std::fs::create_dir_all(&alt).expect("altes Verzeichnis");
-            std::fs::write(alt.join("client.json"), "{}\n").expect("alte Datei");
+        let alt = heim.path().join(".config/myelith");
+        std::fs::create_dir_all(&alt).expect("altes Verzeichnis");
+        std::fs::write(alt.join("client.json"), "{}\n").expect("alte Datei");
+        u.insert("XDG_CONFIG_HOME", xdg.path().into());
+        assert_eq!(ort(&u), alt.join("client.json"), "wer schon eine Datei hat, behaelt sie");
 
-            std::env::set_var("HOME", heim.path());
-            std::env::set_var("XDG_CONFIG_HOME", xdg.path());
-            assert_eq!(
-                myl_local_agent::ort::plattformpfad(),
-                alt.join("client.json"),
-                "wer schon eine Datei hat, behaelt sie"
-            );
+        // Und wenn an beiden Stellen eine liegt, gewinnt die
+        // bevorzugte: Wer einmal umgezogen ist, bleibt umgezogen.
+        let neu_dir = xdg.path().join("myelith");
+        std::fs::create_dir_all(&neu_dir).expect("neues Verzeichnis");
+        std::fs::write(neu_dir.join("client.json"), "{}\n").expect("neue Datei");
+        assert_eq!(ort(&u), neu_dir.join("client.json"), "liegt an beiden Stellen eine, gewinnt die bevorzugte");
 
-            // Und wenn an beiden Stellen eine liegt, gewinnt die
-            // bevorzugte: Wer einmal umgezogen ist, bleibt umgezogen.
-            let neu_dir = xdg.path().join("myelith");
-            std::fs::create_dir_all(&neu_dir).expect("neues Verzeichnis");
-            std::fs::write(neu_dir.join("client.json"), "{}\n").expect("neue Datei");
-            assert_eq!(
-                myl_local_agent::ort::plattformpfad(),
-                neu_dir.join("client.json"),
-                "liegt an beiden Stellen eine, gewinnt die bevorzugte"
-            );
-        }
-
-        match alt_xdg {
-            Some(v) => std::env::set_var("XDG_CONFIG_HOME", v),
-            None => std::env::remove_var("XDG_CONFIG_HOME"),
-        }
-        match alt_heim {
-            Some(v) => std::env::set_var("HOME", v),
-            None => std::env::remove_var("HOME"),
-        }
+        // ⚑ Unter Windows kommt `APPDATA` vor allem anderen, solange
+        // nirgends schon eine Datei liegt; anderswo zaehlt es nicht.
+        let appdata = tempfile::tempdir().expect("APPDATA");
+        let mut w: HashMap<&str, OsString> = HashMap::new();
+        w.insert("APPDATA", appdata.path().into());
+        w.insert("HOME", appdata.path().join("heim").into_os_string());
+        let erwartet = if cfg!(windows) {
+            appdata.path().join("Myelith").join("client.json")
+        } else {
+            appdata.path().join("heim").join(".config/myelith/client.json")
+        };
+        assert_eq!(ort(&w), erwartet);
     }
 
     /// **`standard_wurzel`**: die Umgebung [`ARBEITSORDNER`] hat

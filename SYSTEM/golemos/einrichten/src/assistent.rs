@@ -725,7 +725,7 @@ mod proben {
     #[test]
     fn mit_modell_startet_myelith_ohne_installation() {
         let mut w = welt();
-        w.lage.artefakte = vec![Artefakt { name: "myelith-0.6b".into(), pfad: "/x".into(), groesse: 1 }];
+        w.lage.artefakte = vec![Artefakt { name: "sparrow-0.6b-int8".into(), pfad: "/x".into(), groesse: 1 }];
         let aus = spielen(&mut w, "1\n6\n");
         assert_eq!(w.myelith, 1);
         assert!(w.installiert.is_empty());

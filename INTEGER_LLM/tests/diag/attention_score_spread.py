@@ -23,7 +23,7 @@ Gemessen wird, was die Integer-Runtime der exp-LUT tatsaechlich vorlegt:
 Gleitkomma erlaubt - Referenzmessung, nicht Inferenzpfad.
 Kein Teil des Auslieferungspfads.
 
-Usage: INTEGER_LLM_MODEL=myelith-30b-a3b python tests/diag/attention_score_spread.py
+Usage: INTEGER_LLM_MODEL=magpie-30b-a3b-int8 python tests/diag/attention_score_spread.py
 """
 import os
 import sys
@@ -31,7 +31,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO / "calibrate"))
-sys.path.insert(0, str(REPO / "eval"))
+sys.path.insert(0, str(REPO.parent / "BENCHMARKS" / "Inferenz"))
 from src.loader import load_reference_model  # noqa: E402
 from wikitext_common import MODEL_DIR, select_sequences  # noqa: E402
 

@@ -9,7 +9,8 @@ liegen im Klon.
 | System | Einmal vorher | Dann |
 |---|---|---|
 | **macOS** | `xcode-select --install` und [rustup](https://rustup.rs) | `sh SYSTEM/install/installieren-macos.sh` |
-| **Linux mit Nix, NixOS** | `nix` | `sh SYSTEM/install/installieren-nixos.sh` |
+| **Linux** (Debian, Ubuntu, Fedora, Arch, openSUSE) | [rustup](https://rustup.rs), ein C-Compiler, Python 3; fürs Fenster die Pakete von WebKitGTK (das Skript nennt sie) | `sh SYSTEM/install/installieren-linux.sh` |
+| **Linux mit Nix, NixOS** | `nix` | `sh SYSTEM/install/installieren-linux.sh` (gibt an `installieren-nixos.sh` ab) |
 | **Windows** (PowerShell) | Rust, die C++-Buildwerkzeuge von Visual Studio, Python (Befehle unten) | `.\SYSTEM\install\installieren-windows.ps1` |
 
 Aufgerufen wird aus der Wurzel des Klons. Jedes Skript findet den Klon
@@ -43,6 +44,8 @@ Gewichte, dafür sind sie zu gross. Wie eines dazukommt, steht unter
 | `--aktualisieren` | `-Aktualisieren` | erst den neuen Stand holen (`git merge --ff-only`), dann bauen |
 | `--system` (nur macOS) | | nach `/usr/local/bin` und `/Applications` statt ins eigene Benutzerverzeichnis |
 | `--in-der-shell` (nur Nix) | | nicht in `nix develop` wechseln, sondern die vorhandene Werkzeugkette nehmen |
+| `--ohne-fenster` (nur Linux) | | alles bauen ausser dem Fenster |
+| `--nix` (nur Linux) | | die Nix-Umgebung nehmen, auch ausserhalb von NixOS |
 | | `-Ziel <ordner>` | anderer Zielordner als `%LOCALAPPDATA%\Programs\Myelith` |
 
 `--ohne-netz` (macOS) gibt es noch, es ist aber **nicht mehr nötig**:
@@ -68,6 +71,34 @@ deine Shell-Datei.
 denn das Bündel ist nicht signiert: einmal Rechtsklick auf
 `Myelith.app`, *Öffnen*, bestätigen.
 
+### Linux
+
+```sh
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+sh SYSTEM/install/installieren-linux.sh --pruefen   # sagt, was fehlt
+sh SYSTEM/install/installieren-linux.sh
+```
+
+Gebaut wird aus dem Vorrat im Baum, **ohne Netz**. Die Programme landen in
+`~/.local/bin`, das Fenster bekommt einen Menüeintrag unter
+`~/.local/share/applications` und sein Symbol unter
+`~/.local/share/icons`. Der Eintrag nennt das Symbol beim Namen und zeigt
+nicht in den Baum; wer ihn verschiebt, behält das Symbol.
+
+⚑ **Nur das Fenster braucht Systembibliotheken** (WebKitGTK 4.1, GTK 3,
+libsoup 3, dbus). Fehlen sie, baut das Skript `myl`, `myelith`,
+`myl-node` und `myl-test`, lässt das Fenster aus und nennt den Befehl für
+die erkannte Distribution, etwa unter Debian und Ubuntu:
+
+```sh
+sudo apt-get install -y build-essential pkg-config python3 libwebkit2gtk-4.1-dev \
+  libgtk-3-dev libsoup-3.0-dev libayatana-appindicator3-dev librsvg2-dev libdbus-1-dev
+```
+
+Es ruft selbst keinen Paketverwalter und kein `sudo`. Auf NixOS gibt es an
+das Nix-Skript ab; Konsole und Fenster rufen für ein Update unter Linux
+immer dieses Skript.
+
 ### Linux mit Nix, NixOS
 
 ```sh
@@ -82,11 +113,7 @@ dafür in `nix develop` noch einmal auf. Die Programme landen unter
 `/etc/nixos/configuration.nix` anfasst, nähme einem NixOS-Nutzer genau
 das weg, wofür er NixOS benutzt.
 
-**Linux ohne Nix:** Es braucht die Rust-Werkzeugkette und die
-Entwicklungspakete von WebKitGTK 4.1, GTK 3, libsoup 3 und librsvg (unter
-Debian und Ubuntu: `libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev
-libayatana-appindicator3-dev librsvg2-dev libxdo-dev`). Dann jede Kiste
-einzeln mit `cargo build --release --locked`.
+**Linux ohne Nix:** `installieren-linux.sh`, siehe oben.
 
 ### Windows
 
@@ -130,6 +157,8 @@ Informationen*, dann *Trotzdem ausführen*.
 |---|---|
 | **Bauen ohne Netz, alle drei Systeme** | ✅ Die CI baut bei **jedem Push** alle fünf Programme aus einem frischen Klon, ohne Netz, auf macOS, Ubuntu und Windows (Job „Kalter Klon ohne Netz“), und startet danach `myl`. Grün seit dem 2026-09-29 |
 | **Das macOS-Skript** | ✅ von Anfang bis Ende gemessen (2026-09-17): frischer Klon, leerer Cargo-Vorrat, Netz blockiert, alle fünf Programme samt Bündel in 1 Minute 57 |
+| **Das Linux-Skript** | ✅ am 2026-10-21 aus einer entpackten Sicherheitskopie in einem frischen Debian 12 ohne Netz: ohne Fensterpakete vier Programme in 65 s, mit ihnen alle fünf in 103 s samt Menüeintrag. Andere Distributionen: nur die Paketnamen, nicht gefahren |
+| **Das Nix-Skript ohne Netz** | ✅ am 2026-10-21 der Werkzeugvorrat in einem frischen `nixos/nix`-Behälter ohne Netz eingespielt, `nix develop --offline` mit Rust 1.98, WebKitGTK 2.52, Python 3.12 (x86_64); der Bau aus der Kopie steht im Changelog. Auf einem echten NixOS noch nicht |
 | **Das Nix-Skript** | ⚠️ eingebaut und in Teilen ausgeführt, **auf einer echten NixOS-Anlage noch nicht gelaufen**. Die Paketnamen in `flake.nix` stammen aus der Dokumentation von Tauri und nixpkgs |
 | **Das Windows-Skript** | ⚠️ **noch nicht auf Windows gelaufen**. Bis zum 2026-09-29 nannte es zwei Ordner, die es seit einem Umzug nicht mehr gab; eine Probe prüft seitdem auf jedem System, dass jeder Pfad in den drei Skripten im Klon liegt |
 
@@ -149,10 +178,18 @@ seinem System durchläuft, ist damit nicht gesagt.
 ## Der Vorrat: für alle, die Abhängigkeiten ändern
 
 Die Rust-Abhängigkeiten liegen als **ein Archiv je Paket** unter
-`SYSTEM/crates-vorrat/` (rund 760 Dateien, 113 MB). Beim Einrichten werden
+`SYSTEM/crates-vorrat/` (rund 760 Dateien, 117 MB). Beim Einrichten werden
 sie nach `SYSTEM/crates-lager/` ausgepackt, und das ist nicht versioniert.
 Gebaut wird immer mit `--locked`, aus dem Vorrat zusätzlich mit
-`--offline`.
+`--offline`. Die Cargo-Konfiguration im Lager nennt den Ort relativ; ein
+verschobener Baum baut weiter.
+
+⚑ **Eigene, nicht versionierte Kisten** (etwa Module unter `MODULES/`)
+bringen eigene Sperrdateien mit. Was nur sie brauchen, sammelt `sammeln`
+nach `SYSTEM/crates-vorrat-lokal/`, das git ignoriert; `pruefen` hält beide
+Vorräte gegen ihre Sperrdateien, `auspacken` legt beide ins Lager. Damit
+baut auch eine Kopie des ganzen Arbeitsbaums diese Kisten ohne Netz, und
+der versionierte Vorrat enthält nur, was ein Klon braucht.
 
 ```sh
 python3 SYSTEM/install/vorrat.py pruefen    # jedes Archiv gegen die SHA-256 in den Sperrdateien
@@ -186,6 +223,88 @@ Für Windows liegen rund 60 eigene Pakete darin, samt dem Tauri-Unterbau
 bleibt mit einem gewöhnlichen Klonpfad unter der Grenze von 260.
 
 </details>
+
+---
+
+## Ganz ohne Netz: der Werkzeugvorrat
+
+Der Paketvorrat trägt die Rust-Pakete. Ein Rechner ohne Netz braucht
+daneben die Werkzeuge selbst, und die hält `SYSTEM/werkzeug-vorrat/` bereit.
+⛔️ **Er ist von git ausgenommen und gehört nie ins Repositorium** (fremde
+Lizenzen, Gigabyte); die Sicherheitskopie nimmt ihn mit.
+
+```sh
+python3 SYSTEM/install/werkzeugvorrat.py holen     # einmal, mit Netz (Nix-Teil braucht Docker)
+python3 SYSTEM/install/werkzeugvorrat.py pruefen   # jede Datei gegen ihre Prüfsumme
+python3 SYSTEM/install/werkzeugvorrat.py zeigen    # was da ist
+```
+
+| Teil | Inhalt | gebraucht auf |
+|---|---|---|
+| `nix/aarch64-linux`, `nix/x86_64-linux` | die Quellen der Eingaben aus `flake.lock` und **jede** Abhängigkeit der Bauumgebung aus `flake.nix` (Rust, C-Compiler, Python, WebKitGTK, GTK, libsoup), als Nix-Binärcache, je rund 1 GB | NixOS |
+| `rust/` | eigenständige Installer von Rust für macOS (Apple Silicon) und Windows | macOS, Windows |
+| `python/` | Installer von Python für macOS und Windows | macOS, Windows |
+| `windows/` | WebView2 als Offline-Installer, der Starter der Buildwerkzeuge | Windows |
+
+Fassungen und Quellen stehen in `werkzeugvorrat.json`, der Stand von nixpkgs
+in `flake.lock`.
+
+**NixOS ohne Netz**, aus einer Kopie mit Werkzeugvorrat:
+
+```sh
+sudo sh SYSTEM/install/nix-vorrat-einspielen.sh    # einmal: legt die Umgebung in den Nix-Speicher
+sh SYSTEM/install/installieren-linux.sh            # baut ohne Netz, auch das Fenster
+```
+
+`sudo` braucht nur das Einspielen: Die selbst gebauten Pfade (Quellen der
+Eingaben, Hülle der Umgebung) tragen keine Unterschrift, und die nimmt der
+Nix-Dienst nur von root an; die Prüfsummen der Archive prüft Nix trotzdem.
+Danach erkennt das Skript den Vorrat, ruft `nix develop --offline` und legt
+die Umgebung als Profil unter `~/.local/state/myelith/bauumgebung` ab, damit
+die Speicherbereinigung die Bibliotheken der Programme nicht wegnimmt.
+
+**macOS und Windows ohne Netz:** Fehlt Rust oder Python, nennen die Skripte
+den Befehl mit der Datei aus dem Vorrat. ⚠️ Zwei Dinge lassen sich hier nicht
+vorab holen:
+- **macOS:** die Xcode-Befehlszeilenwerkzeuge (Apple gibt sie nur mit
+  Anmeldung heraus). Einmal von developer.apple.com laden und neben die Kopie
+  legen.
+- **Windows:** den Offline-Bestand der Buildwerkzeuge baut nur Windows selbst.
+  Auf einem Windows-Rechner mit Netz, im Baum:
+  `& SYSTEM\werkzeug-vorrat\windows\vs_buildtools.exe --layout SYSTEM\werkzeug-vorrat\windows\vs_buildtools --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended --lang de-DE`
+  (mehrere GB, nur für eigene Rechner). Danach nennt das Einrichtungsskript
+  den Befehl, der ohne Netz installiert.
+
+---
+
+## Eine Sicherheitskopie des ganzen Baums
+
+```sh
+python3 SYSTEM/install/sicherung.py --liste          # was hinein käme, mit Grössen
+python3 SYSTEM/install/sicherung.py <zielordner>     # myelith-sicherung-JJJJ-MM-TT.tar.gz
+python3 SYSTEM/install/sicherung.py <zielordner> --zip
+```
+
+Hinein kommt **alles, was im Arbeitsbaum liegt**, auch was git nicht kennt,
+samt Verlauf und Werkzeugvorrat, dazu die Artefakte `sparrow-0.6b-int8` und
+`pigeon-4b-int8` (mit `--ohne-artefakte` nicht). Draussen bleiben die übrigen
+Gewichte und Artefakte, Python-Umgebungen und Bauabfall; Verknüpfungen
+werden genannt, nicht kopiert. Die Regeln
+stehen an einer Stelle im Skript, `--selbsttest` prüft sie an einem kleinen
+Baum.
+
+⚑ **Geholt wird nur hier, mit Netz; auf dem Rechner ohne Netz wird nur
+eingespielt.** Deshalb prüft `sicherung.py` den Werkzeugvorrat vor dem
+Schreiben (`werkzeugvorrat.py pruefen`) und bricht ab, wenn er fehlt,
+unvollständig ist oder zu einem anderen `flake.lock` gehört. Eine Kopie
+ohne Werkzeuge gibt es nur mit `--ohne-werkzeuge`, und ihre `SICHERUNG.md`
+sagt dann, dass sie zum Einrichten Netz braucht. Der Vorrat bleibt im Baum
+liegen; neu geholt wird erst, wenn sich `flake.lock` oder eine Fassung in
+`werkzeugvorrat.json` ändert.
+
+Die Kopie enthält `SICHERUNG.md` (Stand, Fassung, Werkzeugvorrat, was fehlt
+und wie es zurückkommt) und `PRUEFSUMMEN.sha256`. Ausgepackt baut sie mit den
+Skripten oben **ohne Netz**, unter Linux mit `installieren-linux.sh`.
 
 ---
 
@@ -301,7 +420,7 @@ Das Skript findet die Karten, prüft die Kerne (Nachbau auf der CPU und
 **Selbstprüfung auf jeder Karte**), misst CPU gegen Karten und fährt den
 Konformitätslauf mit erzwungenen Karten. Der Bericht landet unter
 `BENCHMARKS/Inferenz/results/karten-<weg>-<datum>-<rechner>.md`. Für den
-Konformitätslauf muss `INTEGER_LLM/artifacts/myelith-0.6b` da sein;
+Konformitätslauf muss `INTEGER_LLM/artifacts/sparrow-0.6b-int8` da sein;
 kopieren ist schneller als bauen.
 
 Am Anfang des Berichts steht, was die Maschine hat und frei hat, je
@@ -322,8 +441,8 @@ Eingaben, `0` aus), `MYL_GPU_GERAETE` (etwa `0,1` oder `cuda:0`),
 **Mehrere Karten** rechnen zugleich: Eine Matrix wird nach Zeilen geteilt,
 viele Experten gehen ganz an je eine Karte, und das Ergebnis ist
 bitgleich, weil nur zusammengesetzt wird. Das Skript prüft im letzten
-Schritt ein ganzes Modell (`--modell myelith-4b`, auch mehrfach, etwa mit
-`myelith-30b-a3b`) einmal nur auf der CPU und dann auf allen Karten, auf
+Schritt ein ganzes Modell (`--modell pigeon-4b-int8`, auch mehrfach, etwa mit
+`magpie-30b-a3b-int8`) einmal nur auf der CPU und dann auf allen Karten, auf
 der Hälfte und mit ungleichen Gewichten; der Abdruck über alle Logits
 muss jedes Mal derselbe sein, und **jede Karte muss gerechnet haben**.
 Fällt eine Karte mitten im Lauf aus, rechnen die übrigen das Bündel neu.
@@ -333,12 +452,12 @@ Der Ablauf auf einer Mietmaschine, aus dem Klon:
 ```sh
 python3 SYSTEM/install/vorrat.py auspacken
 sh SYSTEM/install/karten-pruefen.sh --einrichten --nur-finden
-sh SYSTEM/install/karten-pruefen.sh --modell myelith-0.6b --prompt-woerter 60   # erst kurz
-sh SYSTEM/install/karten-pruefen.sh --modell myelith-4b --modell myelith-30b-a3b
+sh SYSTEM/install/karten-pruefen.sh --modell sparrow-0.6b-int8 --prompt-woerter 60   # erst kurz
+sh SYSTEM/install/karten-pruefen.sh --modell pigeon-4b-int8 --modell magpie-30b-a3b-int8
 ```
 
 ⚑ **Probelauf ohne Karte**, auch auf macOS:
-`sh SYSTEM/install/karten-pruefen.sh --nachbau 6 --modell myelith-0.6b`.
+`sh SYSTEM/install/karten-pruefen.sh --nachbau 6 --modell sparrow-0.6b-int8`.
 Sechs nachgebildete Karten rechnen auf der CPU (`MYL_GPU_NACHBAU`), jeder
 Zugriff auf ihren Speicher wird geprüft; sie zählen für keinen Rechenweg.
 Der Bericht geht nach `SYSTEM/logs/karten/`, denn er misst nichts.

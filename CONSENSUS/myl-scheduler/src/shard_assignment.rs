@@ -54,6 +54,7 @@
 use sha2::{Digest, Sha256};
 
 use crate::miner_filter::MinerRegistration;
+use myl_types::ids::MinerId;
 use myl_types::seed_rng::deterministic_shuffle;
 
 /// Reserveplätze je Pod (Kap. 6.8: „k+2 Mitglieder, 2 in Reserve").
@@ -152,6 +153,10 @@ pub struct Zuteilung {
     /// stillschweigend übergeht, sieht aus wie eine, die aufging, und
     /// die Betroffenen warten auf eine Zuweisung, die nie kommt.
     pub ohne_pod: Vec<MinerRegistration>,
+    /// ⚑ **Miner ohne Zusage für das Podmodell** (2026-10-22): Sie kommen in
+    /// keinen Pod und auch nicht in die Netzreserve, die aus
+    /// [`Self::ohne_pod`] zieht. Benannt aus demselben Grund wie dort.
+    pub ohne_zusage: Vec<MinerRegistration>,
 }
 
 /// Bildet einen Pod aus genau `pod_groesse(num_shards)` Mitgliedern
@@ -201,6 +206,26 @@ pub fn assign_pods(
     num_shards_per_pod: u32,
     seed: &[u8; 32],
 ) -> Zuteilung {
+    assign_pods_geprueft(clusters, num_shards_per_pod, seed, &|_| Ok(()))
+}
+
+/// **Wie [`assign_pods`], mit einer Prüfung je Pod** (6.7, 2026-10-22).
+///
+/// `pruefe` sagt, ob ein gebildeter Pod machbar ist, und wenn nicht, wer
+/// weicht. ⚑ **Dann zieht der Pod aus derselben Folge das nächste Mitglied
+/// des Clusters nach** und wird neu gemischt, bis er machbar ist oder der
+/// Cluster erschöpft ist. Wer weicht, kommt in den Restetopf und kann dort
+/// in einem anderen Pod stehen; wer auch dort weicht, steht in
+/// [`Zuteilung::ohne_pod`].
+///
+/// ⚑ **Ohne Einwand bitgleich mit dem Schnitt davor**: in der Folge des
+/// Clusters je `k + 2` Mitglieder, der Rest in den Topf.
+pub fn assign_pods_geprueft(
+    clusters: &[MinerCluster],
+    num_shards_per_pod: u32,
+    seed: &[u8; 32],
+    pruefe: &dyn Fn(&Pod) -> Result<(), MinerId>,
+) -> Zuteilung {
     let mut zuteilung = Zuteilung::default();
     let mut uebrig: Vec<MinerRegistration> = Vec::new();
     if num_shards_per_pod == 0 {
@@ -227,15 +252,7 @@ pub fn assign_pods(
         // sie hinweg.** Die Zone ist eine Erklärung; wer eine leere
         // angibt, bekommt sie ganz. Siehe den Kopf von
         // [`crate::zonenzuteilung::zonen_cluster`].
-        let mut rest = &cluster.miners[..];
-        while rest.len() >= je_pod {
-            let index = zuteilung.pods.len() as u32;
-            if let Some(pod) = assign_shards(&rest[..je_pod], num_shards_per_pod, index, seed) {
-                zuteilung.pods.push(pod);
-            }
-            rest = &rest[je_pod..];
-        }
-        uebrig.extend(rest.iter().copied());
+        uebrig.extend(bilde(&cluster.miners, num_shards_per_pod, seed, &mut zuteilung.pods, pruefe));
     }
 
     // ⚑ **Die Reste aller Cluster kommen in einen Topf** (2026-09-05).
@@ -261,19 +278,58 @@ pub fn assign_pods(
     // Verkettung der Clusterreihenfolgen und damit ableitbar.
     if uebrig.len() >= je_pod {
         deterministic_shuffle(&mut uebrig, &restesaat(seed));
-        let mut rest = &uebrig[..];
-        while rest.len() >= je_pod {
-            let index = zuteilung.pods.len() as u32;
-            if let Some(pod) = assign_shards(&rest[..je_pod], num_shards_per_pod, index, seed) {
-                zuteilung.pods.push(pod);
-            }
-            rest = &rest[je_pod..];
-        }
-        zuteilung.ohne_pod.extend(rest.iter().copied());
+        let rest = bilde(&uebrig, num_shards_per_pod, seed, &mut zuteilung.pods, pruefe);
+        zuteilung.ohne_pod.extend(rest);
     } else {
         zuteilung.ohne_pod.extend(uebrig);
     }
     zuteilung
+}
+
+/// Schneidet `vorrat` in seiner Folge in Pods und gibt zurück, was übrig
+/// bleibt; ein Pod, gegen den `pruefe` einwendet, lässt den Benannten
+/// weichen und zieht das nächste Mitglied nach.
+fn bilde(
+    vorrat: &[MinerRegistration],
+    num_shards: u32,
+    seed: &[u8; 32],
+    pods: &mut Vec<Pod>,
+    pruefe: &dyn Fn(&Pod) -> Result<(), MinerId>,
+) -> Vec<MinerRegistration> {
+    let je_pod = pod_groesse(num_shards);
+    let mut quelle = vorrat.iter().copied();
+    let mut kandidaten: Vec<MinerRegistration> = Vec::with_capacity(je_pod);
+    let mut uebrig = Vec::new();
+    loop {
+        while kandidaten.len() < je_pod {
+            match quelle.next() {
+                Some(m) => kandidaten.push(m),
+                None => break,
+            }
+        }
+        if kandidaten.len() < je_pod {
+            uebrig.extend(kandidaten);
+            return uebrig;
+        }
+        let index = pods.len() as u32;
+        let Some(pod) = assign_shards(&kandidaten, num_shards, index, seed) else {
+            uebrig.append(&mut kandidaten);
+            continue;
+        };
+        match pruefe(&pod) {
+            Ok(()) => {
+                pods.push(pod);
+                kandidaten.clear();
+            }
+            Err(weicht) => match kandidaten.iter().position(|m| m.miner_id == weicht) {
+                Some(i) => uebrig.push(kandidaten.remove(i)),
+                // Ein Einwand gegen jemanden, der nicht im Pod steht, wäre
+                // ein Fehler der Prüfung; dann weicht der ganze Satz, statt
+                // dass die Schleife nicht endet.
+                None => uebrig.append(&mut kandidaten),
+            },
+        }
+    }
 }
 
 /// Die Saat des Restetopfs.

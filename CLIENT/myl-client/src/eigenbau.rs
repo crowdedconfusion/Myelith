@@ -64,7 +64,15 @@ pub struct Erkundung {
     pub tabelle: f64,
     /// Der Schluessel eines Modells dieses Projekts, sonst leer.
     pub projekt: String,
+    /// ⛔️ **Fund 584:** Im Ordner liegen keine Gewichtsdateien; dann gibt es
+    /// weder eine Parameterzahl noch einen Namen, und gebaut wird nichts.
+    #[serde(default)]
+    pub ohne_gewichte: bool,
     pub vorschlaege: Vec<Vorschlag>,
+    /// Groesse und Speicherform, die an einen eingegebenen Namen kommen
+    /// (`126b-a7b-int4`, `126b-a7b-int8`); bei einem Projektmodell leer.
+    #[serde(default)]
+    pub anhaengsel: Vec<String>,
     pub quelle_bytes: u64,
     pub frei_bytes: u64,
     /// Der Hoehepunkt des Platzes fuer das int8 (auch fuer vier Bit, wenn die
@@ -196,7 +204,7 @@ pub fn bauen(wurzel: &Path, auftrag: &Auftrag, sagen: &(dyn Fn(Zeile) + Sync)) -
 mod proben {
     use super::*;
 
-    const ZEILE: &str = r#"ERKUNDUNG {"repo": "lokal/Qwen3-0.6B", "revision": "lokal", "lokal": true, "ordner": "/x", "lizenz": "apache-2.0", "architektur": ["Qwen3ForCausalLM"], "bauart": "Qwen3, dicht", "bauweg": "korpus", "gemisch": false, "vierbit": false, "gesamt": 0.596, "aktiv": 0.596, "tabelle": 0.0, "projekt": "", "vorschlaege": [{"name": "myelith-0.6b", "vierbit": false, "grund": "der Name ist schon vergeben"}], "quelle_bytes": 1503264768, "frei_bytes": 300638666752, "noetig_bytes": 2099314688, "noetig_vierbit_bytes": 2635759616}"#;
+    const ZEILE: &str = r#"ERKUNDUNG {"repo": "lokal/Qwen3-0.6B", "revision": "lokal", "lokal": true, "ordner": "/x", "lizenz": "apache-2.0", "architektur": ["Qwen3ForCausalLM"], "bauart": "Qwen3, dicht", "bauweg": "korpus", "gemisch": false, "vierbit": false, "gesamt": 0.596, "aktiv": 0.596, "tabelle": 0.0, "projekt": "", "vorschlaege": [{"name": "sparrow-0.6b-int8", "vierbit": false, "grund": "der Name ist schon vergeben"}], "quelle_bytes": 1503264768, "frei_bytes": 300638666752, "noetig_bytes": 2099314688, "noetig_vierbit_bytes": 2635759616}"#;
 
     /// ⚑ Die Zeile, wie das Skript sie am 2026-10-19 geschrieben hat; ein
     /// unbekanntes Feld (`ordner`) stoert nicht.
@@ -230,13 +238,13 @@ mod proben {
         let a = Auftrag {
             quelle: Quelle::Repo("Qwen/Qwen3.8-Flash-Next".into()),
             revision: "de4b8e4d".into(),
-            name: "myelith-125b-a6b-int4".into(),
+            name: "vulture-126b-a7b-int4".into(),
             projekt: true,
             quelle_loeschen: true,
         };
         assert_eq!(
             a.argumente(true),
-            ["--repo", "Qwen/Qwen3.8-Flash-Next", "--revision", "de4b8e4d", "--name", "myelith-125b-a6b-int4", "--ja", "--projekt", "--probe"]
+            ["--repo", "Qwen/Qwen3.8-Flash-Next", "--revision", "de4b8e4d", "--name", "vulture-126b-a7b-int4", "--ja", "--projekt", "--probe"]
         );
         assert!(a.argumente(false).contains(&"--quelle-loeschen".to_string()));
         let o = Auftrag { quelle: Quelle::Ordner("/m/q".into()), revision: "lokal".into(), name: "n".into(), projekt: false, quelle_loeschen: false };

@@ -1,16 +1,15 @@
 # shared-types (`myl-types`)
 
-> **Version:** 0.43.0
-> **Datum:** 2026-09-03
+> **Version:** 0.46.0
+> **Datum:** 2026-10-22
 > **Status:** 🎉 **Phase 2 abgeschlossen** (Punkte 1.1–1.7, 2.1–2.3):
 > Hash, Merkle-Baum, VRF (bit-exakt gegen RFC-9381-Vektoren), BLS12-381
 > mit Aggregation **und Proof-of-Possession**, **Erasure-Codierung über
 > GF(2⁸)**, ID-Newtypes, Kern-Structs
 > aus Anhang A.1, Golden Vectors (18 Vektoren), Fuzz-Harness
 > (100.000 Iterationen), Konformitätspaket.
-> **226 Tests grün** über sieben Testbinaries. (Die Zeile stand heute
-> früh auf 133 und zählte damit nur die Lib; 177 war der Stand vor den
-> Zugängen dieses Tages.)
+> **298 Tests grün** über acht Testbinaries (gezählt am 2026-10-21; hier
+> stand bis dahin 226 über sieben, der Stand vom 2026-09-03).
 
 Protokollweite Kern-Datentypen, Hash-/Merkle-Primitiven und Serialisierung
 für Myelith. Referenzimplementierung von Whitepaper Anhang A.1.
@@ -50,6 +49,80 @@ SHARED_TYPES/
 ```
 
 ## Changelog
+
+### v0.46.0 (2026-10-22): Podmodell, Fristmeldung, Zeitprobe
+
+Stufe 4 des Dispatchers, abgeschlossen mit CONSENSUS v0.50.0 und NODE
+v0.52.0.
+
+- `podmodell::Podmodell` (neu): Abdruck, Ebenenzahl und Kopf in Platz und
+  Zeit, eines je Netz; es steht im Kettenzustand.
+- `Kapazitaetszusage::pruefen_im_netz`: nur das Podmodell, höchstens alle
+  Ebenen samt Kopf, ein gehaltener Bereich innerhalb der Ebenen. Neue
+  Fehler `ModellNichtImNetz`, `ZuVieleEbenen`, `GehaltenAusserhalb`.
+- `fristmeldung::{Fristmeldung, Fristzeugnis}` (neu): Jedes Zeugnis ist die
+  eigene, unterschriebene Messung eines Pod-Mitglieds (Rolle
+  `PodMitglied`, Trennstring `MYELITH_FRISTZEUGNIS_v1`).
+- `gegenzeichnung::mindestzeichner` (neu, aus `myl-pod` hierher): Pod und
+  Kette rechnen dieselbe Mehrheit.
+- `zeitprobe` (neu): Marke, Rahmen und Klient der Zeitprobe an der Tür
+  eines Shards, damit der Knoten sie stellen kann, ohne `myl-pod`
+  einzubinden; der Rahmen der Shardtür kommt seither von hier.
+- **Belege:** neue Proben zur Zusage gegen das Podmodell, zum Zeugnis, zur
+  Mehrheit und zur Zeitprobe über eine echte Verbindung; `cargo test`
+  rc=0.
+
+### v0.45.0 (2026-10-22): Die Zusage nennt ihre Modelle
+
+Stufe 4 des Dispatchers, Paket P4 (Festlegungen E1 bis E3 und E6 des
+Projektinhabers vom 2026-10-21). Bisher sagte eine Kapazitätszusage nur,
+wie viele Bytes ein Knoten hält. Für die Verteilung der Ebenen in einem Pod
+fehlte, wie viele Ebenen eines Modells er tragen kann und wie schnell er sie
+rechnet.
+
+- **`Modellzusage`** (neu): `abdruck` (der Abdruck des Artefakts auf der
+  Netzliste, nicht der Name), `ebenen_hoechstens`, `ebenenzeit_us` und
+  optional `gehalten: (von, bis)` für einen Knoten, der nur einen Teil des
+  Artefakts hält (Teilablage, Weg a; leer heißt das ganze Artefakt).
+- **`Kapazitaetszusage::modelle`**, höchstens `MODELLE_HOECHSTENS` = 8
+  Einträge, mit `mit_modell()` und `modell(&abdruck)`. Die Unterschrift deckt
+  die Liste; die Trennkennung ist jetzt `MYELITH_KAPAZITAETSZUSAGE_v2`, eine
+  Unterschrift der alten Form gilt nicht mehr.
+- ⚑ **Die Zeit ist eine Frist** (`FRIST_FAKTOR` = 2, `frist_us(ebenen)`):
+  Wer sich schneller ansagt, als er rechnet, bekommt mehr Ebenen und bremst
+  seinen Pod; seine Gutschrift folgt der Arbeit am Gewicht und nicht der
+  angesagten Zeit. Die Durchsetzung der Frist steht noch aus.
+- **Prüfung** in `pruefen`: neue Fehler `ZuVieleModelle`, `ModellDoppelt`
+  (ein Abdruck zweimal) und `ModellUngueltig` (null Ebenen, null
+  Mikrosekunden oder ein leerer gehaltener Bereich).
+- **Belege:** neue Probe `die_modelle_sind_unterschrieben_und_geprueft`
+  (eine geänderte Liste bricht die Unterschrift, jeder Fehlerfall einzeln);
+  `cargo test` rc=0 (299 Tests über acht Binaries).
+
+### v0.44.0 – 2026-10-21 (`LatencyGraph` entfernt)
+
+⚑ **`LatencyGraph` ist entfernt**, samt seinen drei Tests und dem
+Wiederexport aus der Wurzel. Die Pod-Bildung liest seit der Entscheidung
+für Zonen (2026-09-01) keine gemessene Latenz mehr: Wer wählt, mit wem er
+attestiert und welche Zahl er nennt, formte sonst mit, in welchem Topf er
+gemischt wird. Gebaut hat den Graphen seitdem niemand.
+
+Zwei Gründe, ihn nicht als Vorrat liegen zu lassen: `insert_attest` setzte
+die 32 Bytes einer Netzadresse ohne Umrechnung als Miner-Kennung ein („in
+der realen Implementierung müsste hier eine Mapping-Tabelle verwendet
+werden“), und `cleanup_stale_entries` las die Systemuhr. Beides wäre der
+erste Fehler gewesen, sobald ihn jemand benutzt.
+
+**Was bleibt:** `LatencyAttest` mit Signatur und Prüfung, `PeerIdBytes`
+und `BlsSignatureBytes`. Die Atteste sind eine Messung des Netzes; das
+Gossip von NETWORKING und der Validatorsatz von NODE prüfen sie. Der
+Graph war nie serialisiert, also ändert sich kein Leitungsformat. Der
+Modulkopf sagt jetzt, dass die Atteste die Pod-Bildung nicht bestimmen.
+
+**Belege:** `cargo test` rc=0 (298 Tests über acht Binaries), Clippy mit
+`-D warnings` still; `cargo check --all-targets` in allen siebzehn Kisten,
+die `myl-types` benutzen, rc=0; neunzehn Sperrdateien nachgezogen,
+`sperrprobe` grün.
 
 ### v0.43.0 – 2026-09-06 (die Lernrate wird eine Protokollgrösse)
 

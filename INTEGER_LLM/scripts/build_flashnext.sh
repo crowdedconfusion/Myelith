@@ -11,8 +11,8 @@
 # von Myelith) braucht eine eigene Lizenz von Qwen. Das Artefakt traegt
 # `betrieb = "lokal"`, und der Knoten laedt es nicht.
 #
-# Ergebnis: INTEGER_LLM/artifacts/myelith-125b-a6b (int8, geschaetzt rund
-# 176 GB) und INTEGER_LLM/artifacts/myelith-125b-a6b-int4 (Experten in vier
+# Ergebnis: INTEGER_LLM/artifacts/vulture-126b-a7b-int8 (int8, geschaetzt rund
+# 176 GB) und INTEGER_LLM/artifacts/vulture-126b-a7b-int4 (Experten in vier
 # Bit, geschaetzt rund 118 GB, davon 51 GB N-Gramm-Tabelle in int8, nur
 # nachgeschlagen).
 #
@@ -47,4 +47,4 @@ ZUSATZ=()
 
 exec bash "${INTEGER_LLM_DIR}/scripts/modell_bauen.sh" \
     --repo Qwen/Qwen3.8-Flash-Next --revision "${REVISION}" \
-    --name myelith-125b-a6b-int4 --projekt "${ZUSATZ[@]+"${ZUSATZ[@]}"}" "$@"
+    --name vulture-126b-a7b-int4 --projekt "${ZUSATZ[@]+"${ZUSATZ[@]}"}" "$@"

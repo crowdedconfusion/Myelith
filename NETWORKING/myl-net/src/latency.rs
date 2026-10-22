@@ -3,8 +3,8 @@
 //! Jeder Node misst kontinuierlich die Round-Trip-Time (RTT) zu allen
 //! aktiven Peers über Ping/Pong-Nachrichten. Die Rohmessungen werden
 //! mit einem Exponential Moving Average (EMA) geglättet, um Messrauschen
-//! zu reduzieren und stabile Latenzwerte für den LatencyGraph (Phase 2.2)
-//! zu liefern.
+//! zu reduzieren und stabile Latenzwerte für die Atteste (Phase 2.2) zu
+//! liefern.
 //!
 //! **Konsens-Feld:** Die EMA-Parameter (α = 0,25) und das Ping-Intervall
 //! (15 s) sind Teil des Konsensvertrags. Änderungen nur über Governance
@@ -76,7 +76,7 @@ struct PendingPing {
 ///
 /// Speichert den geglätteten RTT-Wert (EMA) und die Anzahl der
 /// durchgeführten Messungen. Der geglättete Wert ist die Grundlage
-/// für den LatencyGraph (Phase 2.2).
+/// für die Latenz-Atteste (Phase 2.2).
 ///
 /// ## ⚑ Fund 44: Diese EMA rechnete in `f64` (behoben 2026-08-23)
 ///
@@ -260,7 +260,7 @@ impl LatencyTracker {
         self.peer_latencies.get(peer)
     }
 
-    /// Gibt alle Peer-Latenzen zurück (für den LatencyGraph-Aufbau).
+    /// Gibt alle Peer-Latenzen zurück (für ein Attest).
     pub fn all_latencies(&self) -> &HashMap<PeerId, PeerLatency> {
         &self.peer_latencies
     }

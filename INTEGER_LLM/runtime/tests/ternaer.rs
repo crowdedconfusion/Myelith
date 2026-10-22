@@ -33,9 +33,9 @@ fn artefakt(name: &str) -> std::path::PathBuf {
 }
 
 #[test]
-#[ignore = "braucht myelith-8b-ternaer und myelith-8b-ternaer-gepackt; cargo test --release --test ternaer -- --ignored"]
+#[ignore = "braucht jay-8b-ternaer und jay-8b-ternaer-gepackt; cargo test --release --test ternaer -- --ignored"]
 fn gepackt_rechnet_dieselben_logits() {
-    let (quelle, ziel) = (artefakt("myelith-8b-ternaer"), artefakt("myelith-8b-ternaer-gepackt"));
+    let (quelle, ziel) = (artefakt("jay-8b-ternaer"), artefakt("jay-8b-ternaer-gepackt"));
     for d in [&quelle, &ziel] {
         assert!(d.exists(), "Artefakt fehlt: {d:?}");
     }

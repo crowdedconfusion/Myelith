@@ -13,7 +13,7 @@
 #   3. Messen: CPU gegen Karten je Matrixform und Stapelgroesse, das
 #      Hochladen, ein Expertenbuendel (`karten_messung`).
 #   4. Der Konformitaetslauf mit erzwungenen Karten (`run.sh cuda|rocm`),
-#      falls das Artefakt `myelith-0.6b` da ist.
+#      falls das Artefakt `sparrow-0.6b-int8` da ist.
 #   5. Ein ganzes Modell ueber alle Karten (`bench_probe`): eine lange
 #      Vorbereitung einmal nur auf der CPU, dann auf allen Karten, dann auf
 #      der Haelfte, dann mit ungleichen Gewichten. Der Abdruck ueber alle
@@ -31,18 +31,18 @@
 #
 # ⚠️ **Das Artefakt fuer den Konformitaetslauf** (0,92 GB) baut sich auf der
 # Mietmaschine nur mit torch und Netz. Schneller ist kopieren:
-#   rsync -a INTEGER_LLM/artifacts/myelith-0.6b <maschine>:<klon>/INTEGER_LLM/artifacts/
+#   rsync -a INTEGER_LLM/artifacts/sparrow-0.6b-int8 <maschine>:<klon>/INTEGER_LLM/artifacts/
 #
 # ⚠️ **Die Artefakte fuer Schritt 5** liegen ebenso nicht im Klon. Ohne
-# Angabe nimmt das Skript `myelith-4b` (4,8 GB; die Matrizen werden nach
-# Zeilen ueber die Karten geteilt). Ein Gemisch wie `myelith-30b-a3b`
+# Angabe nimmt das Skript `pigeon-4b-int8` (4,8 GB; die Matrizen werden nach
+# Zeilen ueber die Karten geteilt). Ein Gemisch wie `magpie-30b-a3b-int8`
 # (31 GB) verteilt dazu ganze Experten; `--modell` darf mehrfach stehen.
 #
 # Aufruf, aus dem Klon:
 #   sh SYSTEM/install/karten-pruefen.sh               pruefen und messen
 #   sh SYSTEM/install/karten-pruefen.sh --einrichten  dazu fehlendes NVRTC und Rust holen (Netz)
 #   sh SYSTEM/install/karten-pruefen.sh --nur-finden  nur Schritt 1
-#   sh SYSTEM/install/karten-pruefen.sh --modell myelith-4b --modell myelith-30b-a3b
+#   sh SYSTEM/install/karten-pruefen.sh --modell pigeon-4b-int8 --modell magpie-30b-a3b-int8
 #   sh SYSTEM/install/karten-pruefen.sh --nur-modell  nur Schritt 5 (nach einem vollen Lauf)
 #   sh SYSTEM/install/karten-pruefen.sh --prompt-woerter 400   Laenge der Vorbereitung
 #   sh SYSTEM/install/karten-pruefen.sh --nachbau 6   Probelauf ohne Karte, auch auf macOS
@@ -77,7 +77,7 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
-[ -z "$MODELLE" ] && MODELLE="myelith-4b"
+[ -z "$MODELLE" ] && MODELLE="pigeon-4b-int8"
 
 sagen() { printf '\n== %s ==\n' "$1"; }
 da() { command -v "$1" >/dev/null 2>&1; }
@@ -265,8 +265,8 @@ for WEG in $WEGE; do
 
   # ── 4. Konformitaet ───────────────────────────────────────────────
   sagen "$WEG: Konformitaet"
-  if [ -d "$HIER/INTEGER_LLM/artifacts/myelith-0.6b" ]; then
-    if INTEGER_LLM_MODEL=myelith-0.6b sh "$HIER/INTEGER_LLM/conformance/run.sh" "$WEG" > "$BERICHT.konf" 2>&1; then
+  if [ -d "$HIER/INTEGER_LLM/artifacts/sparrow-0.6b-int8" ]; then
+    if INTEGER_LLM_MODEL=sparrow-0.6b-int8 sh "$HIER/INTEGER_LLM/conformance/run.sh" "$WEG" > "$BERICHT.konf" 2>&1; then
       echo "bestanden"
     else
       echo "⛔️ nicht bestanden"
@@ -275,8 +275,8 @@ for WEG in $WEGE; do
     { echo; echo "## Konformitaet"; echo; echo '```'; grep -E "Ergebnis|Buendelungen|abgelehnt|FAIL" "$BERICHT.konf"; echo '```'; } >> "$BERICHT"
     rm -f "$BERICHT.konf"
   else
-    echo "uebersprungen: INTEGER_LLM/artifacts/myelith-0.6b fehlt (siehe Kopf dieses Skripts)"
-    { echo; echo "## Konformitaet"; echo; echo "Nicht gelaufen: das Artefakt myelith-0.6b fehlte."; } >> "$BERICHT"
+    echo "uebersprungen: INTEGER_LLM/artifacts/sparrow-0.6b-int8 fehlt (siehe Kopf dieses Skripts)"
+    { echo; echo "## Konformitaet"; echo; echo "Nicht gelaufen: das Artefakt sparrow-0.6b-int8 fehlte."; } >> "$BERICHT"
   fi
   fi
 

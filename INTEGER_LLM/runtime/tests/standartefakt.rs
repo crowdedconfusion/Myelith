@@ -23,7 +23,7 @@ use integer_llm_runtime::shardtraining::{
 use integer_llm_runtime::standartefakt::{bereich_des_standes, stand_ins_artefakt};
 
 fn artefakte() -> std::path::PathBuf {
-    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../artifacts/myelith-0.6b")
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../artifacts/sparrow-0.6b-int8")
 }
 
 fn modell() -> Option<IntegerModel> {

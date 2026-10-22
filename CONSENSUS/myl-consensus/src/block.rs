@@ -362,6 +362,30 @@ pub enum Anweisung {
         /// Das Konto, das das Kopfgeld erhält.
         anzeigend: myl_types::ids::Address,
     },
+    /// ⚑ **Eine Kapazitätszusage einreichen** (Stufe 4 des Dispatchers,
+    /// 2026-10-21): je Netzmodell Ebenen und Ebenenzeit, gültig ab einer
+    /// künftigen Epoche. **Angehängt und nicht eingefügt**: Die Reihenfolge
+    /// der Marken ist Teil des Konsensvertrags.
+    ///
+    /// Die Unterschrift in der Zusage gilt unter dem **registrierten**
+    /// Schlüssel des Miners; die Transaktion selbst beweist nur, wer sie
+    /// einreicht.
+    ZusageEinreichen {
+        /// Die Zusage, vom Halter unterschrieben.
+        zusage: myl_types::zusage::Kapazitaetszusage,
+    },
+    /// ⚑ **Eine Fristmeldung einreichen** (Stufe 4, 6.8, 2026-10-22): Ein
+    /// Mitglied hat seinen Bereich langsamer gerechnet, als es zugesagt hat,
+    /// und eine Mehrheit der übrigen hat das je selbst gemessen.
+    /// **Angehängt und nicht eingefügt**, aus demselben Grund wie oben.
+    ///
+    /// Einreichen darf nur ein Zeuge der Meldung; Pod und Bereich des
+    /// Gemeldeten leitet die Kette selbst ab, aus Zuteilung und Schnitt der
+    /// laufenden Epoche.
+    FristverstossEinreichen {
+        /// Die Meldung samt Zeugnissen.
+        meldung: myl_types::fristmeldung::Fristmeldung,
+    },
 }
 
 /// Die Bytes, über die der Absender unterschreibt.

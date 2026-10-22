@@ -54,7 +54,7 @@
 //! eine dichte Ebene nicht hat.
 //!
 //! **Erstens: die Experten kommen erst, wenn sie gewählt sind.** Das
-//! myelith-30b-a3b hat 128 Experten je Ebene zu je 4,7 Millionen
+//! magpie-30b-a3b-int8 hat 128 Experten je Ebene zu je 4,7 Millionen
 //! Gewichten. Alle als Master zu halten wären **2,4 GB je Ebene**, und
 //! ein Shard hält ein Dutzend. Bei Top-8 über eine kurze Folge sind es
 //! gemessen **25 von 128**.
@@ -225,7 +225,7 @@ pub type Matrixpaare<'a> = (usize, Vec<Vec<Master>>, Vec<&'a [Master]>);
 /// laufende Schritt.
 ///
 /// ⚑ **Die Experten kommen deshalb erst dazu, wenn sie gewählt sind.**
-/// Das myelith-30b-a3b hat 128 Experten je Ebene zu je 4,7 Millionen
+/// Das magpie-30b-a3b-int8 hat 128 Experten je Ebene zu je 4,7 Millionen
 /// Gewichten; sie alle als Master zu halten wären **2,4 GB je Ebene**,
 /// und der Shard hält zwölf Ebenen. Bei Top-8 über eine kurze Folge sind
 /// es höchstens ein paar Dutzend.
@@ -968,7 +968,7 @@ impl Shardgewichte {
     /// ⛔️ **Drei Meldungen von `trainingsguete` waren dadurch blind für
     /// den Teil des Modells, den ein Gemisch überhaupt trainiert:** die
     /// Ausreisserzeile, die Zahl der geänderten int8-Gewichte und die
-    /// der verschobenen Zeilenskalen. Ein Lauf auf `myelith-30b-a3b`
+    /// der verschobenen Zeilenskalen. Ein Lauf auf `magpie-30b-a3b-int8`
     /// meldete „0,32 Prozent der Gewichte geändert"; der Nenner
     /// 19 136 512 ist auf das Gewicht genau Aufmerksamkeit plus Router
     /// einer Ebene (18 874 368 + 262 144), während im selben Lauf 261

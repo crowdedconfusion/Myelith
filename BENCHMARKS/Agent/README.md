@@ -9,7 +9,7 @@ Datei entstanden, steht das Richtige darin, nennt die Antwort ein Wort,
 das nur aus einer Werkzeugantwort stammen kann.
 
 ```text
-python3 BENCHMARKS/Agent/agentenprobe.py INTEGER_LLM/artifacts/myelith-4b
+python3 BENCHMARKS/Agent/agentenprobe.py INTEGER_LLM/artifacts/pigeon-4b-int8
 python3 BENCHMARKS/Agent/agentenprobe.py <artefakt> --stufe 1 --laeufe 3
 ```
 
@@ -128,7 +128,7 @@ Dafür kennt `agentenprobe.py` seit demselben Tag zwei Felder je Auftrag:
 
 ```sh
 python3 BENCHMARKS/Agent/faehigkeiten.py pruefen                 # Abnahmen in beide Richtungen, rund 5 s, braucht Netz
-python3 -u BENCHMARKS/Agent/faehigkeiten.py starten --modelle myelith-35b-a3b-int4 \
+python3 -u BENCHMARKS/Agent/faehigkeiten.py starten --modelle raven-35b-a3b-int4 \
     --saaten <a>,<b>,<c> --mitschriften <ordner außerhalb>
 ```
 
@@ -198,7 +198,7 @@ eine Schranke will, liest die JSON-Datei aus `--json`.
 
 ## Der erste Lauf (2026-09-08, Qwen3-4B)
 
-`results/erstlauf-myelith-4b-2026-09-08.log`, zwei Aufträge von Hand, noch
+`results/erstlauf-pigeon-4b-int8-2026-09-08.log`, zwei Aufträge von Hand, noch
 nicht die Sammlung:
 
 ```text
@@ -238,9 +238,9 @@ läuft die amtliche Form, also die, auf die Qwen3 geschliffen ist.
 freigibt:
 
 ```sh
-python3 BENCHMARKS/Agent/agentenprobe.py INTEGER_LLM/artifacts/myelith-4b \
+python3 BENCHMARKS/Agent/agentenprobe.py INTEGER_LLM/artifacts/pigeon-4b-int8 \
   --laeufe 3 --json BENCHMARKS/Agent/results/amtlich-<datum>.json
-python3 BENCHMARKS/Agent/agentenprobe.py INTEGER_LLM/artifacts/myelith-4b \
+python3 BENCHMARKS/Agent/agentenprobe.py INTEGER_LLM/artifacts/pigeon-4b-int8 \
   --laeufe 3 --deutsch --json BENCHMARKS/Agent/results/deutsch-<datum>.json
 ```
 
@@ -268,7 +268,7 @@ Seit dem 2026-09-09 gibt es `search_files` und `edit_file`, aber
 **nicht in der Vorgabe**. `--werkzeuge voll` nimmt sie dazu.
 
 ```sh
-python3 BENCHMARKS/Agent/agentenprobe.py INTEGER_LLM/artifacts/myelith-4b \
+python3 BENCHMARKS/Agent/agentenprobe.py INTEGER_LLM/artifacts/pigeon-4b-int8 \
   --laeufe 3 --werkzeuge voll --json BENCHMARKS/Agent/results/voll-<datum>.json
 ```
 
@@ -299,7 +299,7 @@ wird dadurch nicht falsch, aber unvergleichbar.
 ## Verhaltensprobe: die Regeln des Assistenten
 
 ```bash
-python3 BENCHMARKS/Agent/verhaltensprobe.py INTEGER_LLM/artifacts/myelith-4b \
+python3 BENCHMARKS/Agent/verhaltensprobe.py INTEGER_LLM/artifacts/pigeon-4b-int8 \
   --myl SYSTEM/full-build/release/myl --ausgabe bericht.md
 ```
 

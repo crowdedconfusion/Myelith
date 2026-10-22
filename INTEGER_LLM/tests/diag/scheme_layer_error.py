@@ -6,10 +6,10 @@ ebenfalls ~8 %, gibt es keinen Widerspruch zwischen "jede Operation
 exakt" und "9 % Ebenenfehler" - dann ist der Ebenenfehler schlicht kein
 Mass fuer den Perplexitaetsabstand.
 """
-import pickle, sys, torch, numpy as np
+import os, pickle, sys, tempfile, torch, numpy as np
 from pathlib import Path
-REPO = Path("/Users/entity/Desktop/Code/Code/Artificial/Myelith/Repository/INTEGER_LLM")
-sys.path.insert(0, str(REPO/"calibrate")); sys.path.insert(0, str(REPO/"eval"))
+REPO = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO/"calibrate")); sys.path.insert(0, str(REPO.parent / "BENCHMARKS" / "Inferenz"))
 from src.loader import load_reference_model
 from wikitext_common import MODEL_DIR
 MAXF, INT16 = 20, 32767
@@ -19,7 +19,7 @@ def q8(W):
     a = W.abs().clamp(min=1e-9) if W.dim()==1 else W.abs().amax(dim=1,keepdim=True).clamp(min=1e-9)
     sc = torch.pow(2.0, torch.floor(torch.log2(127.0/a)).clamp(0,MAXF))
     return torch.clamp(torch.round(W*sc),-128,127)/sc
-toks = [int(x) for x in open("/tmp/tok32.txt").read().split()]
+toks = [int(x) for x in open(os.environ.get("BULK_TOKENS", str(Path(tempfile.gettempdir()) / "tok32.txt"))).read().split()]
 
 def hidden(quant):
     m,_ = load_reference_model(MODEL_DIR)

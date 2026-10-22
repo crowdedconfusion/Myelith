@@ -68,7 +68,7 @@ def neu_berechnen(modell: str, ziel: Path) -> str:
 
 
 def main() -> int:
-    modell = sys.argv[1] if len(sys.argv) > 1 else "myelith-0.6b"
+    modell = sys.argv[1] if len(sys.argv) > 1 else "sparrow-0.6b-int8"
     paket, fehler = paket_scales(modell)
     if fehler:
         print(f"[paketprobe] ⚠️ {fehler}")

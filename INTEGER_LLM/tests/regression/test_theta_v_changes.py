@@ -38,10 +38,10 @@ ARTEFAKTE = INTEGER_LLM / "artifacts"
 # Welches Artefakt zu welchem Manifest gehoert. Ein neues Manifest ohne
 # Eintrag hier ist ein Befund, kein stiller Sprung.
 MANIFEST_ARTEFAKT = {
-    "pipeline_4node.json": "myelith-0.6b",
-    "pipeline_8node.json": "myelith-0.6b",
-    "pipeline_uneven4node.json": "myelith-0.6b",
-    "pipeline_4node_myelith-30b-a3b.json": "myelith-30b-a3b",
+    "pipeline_4node.json": "sparrow-0.6b-int8",
+    "pipeline_8node.json": "sparrow-0.6b-int8",
+    "pipeline_uneven4node.json": "sparrow-0.6b-int8",
+    "pipeline_4node_myelith-30b-a3b.json": "magpie-30b-a3b-int8",
 }
 
 

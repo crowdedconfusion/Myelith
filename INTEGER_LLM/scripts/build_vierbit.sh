@@ -7,7 +7,7 @@
 #
 #     bash INTEGER_LLM/scripts/build_vierbit.sh [quelle] [ziel]
 #
-# Vorgabe: quelle myelith-35b-a3b, ziel myelith-35b-a3b-int4 (beide unter
+# Vorgabe: quelle raven-35b-a3b-int8, ziel raven-35b-a3b-int4 (beide unter
 # INTEGER_LLM/artifacts/). Braucht das int8-Artefakt der Quelle und die
 # Kalibrier-Umgebung (scripts/python_einrichten.sh); die Rust-Werkzeuge
 # baut es selbst, ohne Netz.
@@ -36,8 +36,8 @@ set -euo pipefail
 
 INTEGER_LLM_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WURZEL="$(cd "${INTEGER_LLM_DIR}/.." && pwd)"
-QUELLE_NAME="${1:-myelith-35b-a3b}"
-ZIEL_NAME="${2:-myelith-35b-a3b-int4}"
+QUELLE_NAME="${1:-raven-35b-a3b-int8}"
+ZIEL_NAME="${2:-raven-35b-a3b-int4}"
 ARTEFAKTE="${INTEGER_LLM_DIR}/artifacts"
 QUELLE="${ARTEFAKTE}/${QUELLE_NAME}"
 ZIEL="${ARTEFAKTE}/${ZIEL_NAME}"

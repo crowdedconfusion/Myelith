@@ -190,7 +190,7 @@ fn ein_shard_lehnt_fremde_nachrichten_ab_statt_abzustuerzen() {
         p.push("..");
         p.push("INTEGER_LLM");
         p.push("artifacts");
-        p.push("myelith-0.6b");
+        p.push("sparrow-0.6b-int8");
         p
     };
     if !artefakte::vorhanden(&dir) {
@@ -254,7 +254,7 @@ fn eine_luecke_und_eine_position_hinter_der_grenze_werden_abgelehnt() {
         p.push("..");
         p.push("INTEGER_LLM");
         p.push("artifacts");
-        p.push("myelith-0.6b");
+        p.push("sparrow-0.6b-int8");
         p
     };
     if !artefakte::vorhanden(&dir) {

@@ -75,15 +75,21 @@ pub const KATALOG_LOKAL: &str = "MODELS/llm/KATALOG.lokal.json";
 
 /// **Ist das Artefakt nur fuer den lokalen Betrieb zugelassen?**
 ///
-/// ⚑ Massgeblich ist `betrieb` in seinem `model_config.json`: Die Zusage
-/// reist mit dem Artefakt, auch wenn es kopiert wurde und kein Katalog es
-/// kennt. Dieselbe Angabe prueft der Netzbetrieb beim Laden
-/// (`load_model_fuer_netz` in der Laufzeit).
+/// ⛔️ **Seit CLIENT v0.175.0 entscheidet die Netzliste** (Fund 585): Privat
+/// ist jedes Artefakt, das nicht mit seinem Abdruck auf ihr steht, gleich
+/// von welchem Anbieter seine Gewichte stammen; dieselbe Pruefung macht der
+/// Netzbetrieb beim Laden (`load_model_fuer_netz` in der Laufzeit). `betrieb
+/// = "lokal"` in `model_config.json` bleibt zusaetzlich privat. Ein Ordner
+/// ohne `model_config.json` ist kein Artefakt und damit auch nicht privat.
 pub fn nur_lokal(artefakt: &std::path::Path) -> bool {
-    std::fs::read_to_string(artefakt.join("model_config.json"))
+    let Some(konfig) = std::fs::read_to_string(artefakt.join("model_config.json"))
         .ok()
         .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
-        .is_some_and(|v| v.get("betrieb").and_then(|b| b.as_str()) == Some("lokal"))
+    else {
+        return false;
+    };
+    konfig.get("betrieb").and_then(|b| b.as_str()) == Some("lokal")
+        || !integer_llm_runtime::netzfreigabe::im_netz_zugelassen(artefakt)
 }
 
 /// **Das Kennzeichen, unter dem ein Modell im Netz gerechnet wird.**
@@ -136,7 +142,81 @@ pub const NETZ: &str = "netz:";
 /// kostet nur diese Orte, nicht die Wahl.
 pub fn suchorte(eingestellt: &std::path::Path) -> Vec<std::path::PathBuf> {
     let s = crate::mining::Speicherorte::lesen(&crate::mining::speicherorte_pfad()).unwrap_or_default();
-    suchorte_aus(eingestellt, &s, myl_local_agent::ort::wurzel().as_deref())
+    let orte = suchorte_aus(eingestellt, &s, myl_local_agent::ort::wurzel().as_deref());
+    umziehen_einmal(&orte);
+    orte
+}
+
+// ── Die Namen vor dem 2026-10-21 ────────────────────────────────────────
+
+/// **Alte Namen zu neuen**, aus `frueher` im Katalog des Projekts.
+///
+/// ⚑ **Seit dem 2026-10-21 heissen die Projektmodelle nach Tieren**
+/// (Festlegung des Projektinhabers): `myelith-35b-a3b` ist jetzt
+/// `raven-35b-a3b-int8`. In den Dateien eines Artefakts steht kein Name, also
+/// bleiben Abdruck und Register; nur Verzeichnis und Einstellungen muessen
+/// mit. Die Zuordnung steht einmal, im Katalog.
+pub fn fruehere_namen() -> Vec<(String, String)> {
+    let Some(w) = myl_local_agent::ort::wurzel() else { return Vec::new() };
+    fruehere_namen_aus(&std::fs::read_to_string(w.join("MODELS/llm/KATALOG.json")).unwrap_or_default())
+}
+
+/// [`fruehere_namen`] aus dem Text des Katalogs, laengste alte Namen zuerst.
+pub fn fruehere_namen_aus(haupt: &str) -> Vec<(String, String)> {
+    let d = serde_json::from_str::<serde_json::Value>(haupt).unwrap_or_default();
+    let mut paare: Vec<(String, String)> = d
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter_map(|(k, v)| Some((v.get("frueher")?.as_str()?.to_string(), k.clone())))
+        .collect();
+    paare.sort_by_key(|(alt, _)| std::cmp::Reverse(alt.len()));
+    paare
+}
+
+/// **Der neue Name zu einem alten**, oder `None`. Auch fuer Versuche mit
+/// eigenem Anhaengsel, die der Katalog nicht fuehrt: `myelith-35b-a3b-ternaer`
+/// wird `raven-35b-a3b-ternaer`.
+pub fn neuer_name(alt: &str, paare: &[(String, String)]) -> Option<String> {
+    if let Some((_, neu)) = paare.iter().find(|(f, _)| f == alt) {
+        return Some(neu.clone());
+    }
+    paare.iter().find_map(|(f, neu)| {
+        let rest = alt.strip_prefix(f.as_str())?.strip_prefix('-')?;
+        Some(format!("{}-{rest}", neu.strip_suffix("-int8")?))
+    })
+}
+
+/// **Benennt Artefaktverzeichnisse mit altem Namen um**, in jedem Ort.
+///
+/// ⛔️ Nie ueber ein bestehendes Verzeichnis: Liegt der neue Name schon da,
+/// bleibt der alte, wie er ist. Gibt die Umbenennungen zurueck.
+pub fn artefakte_umziehen(orte: &[std::path::PathBuf], paare: &[(String, String)]) -> Vec<(std::path::PathBuf, std::path::PathBuf)> {
+    let mut aus = Vec::new();
+    for o in orte {
+        let Ok(eintraege) = std::fs::read_dir(o) else { continue };
+        for e in eintraege.flatten() {
+            let alt = e.file_name().to_string_lossy().into_owned();
+            let Some(neu) = neuer_name(&alt, paare) else { continue };
+            let (a, n) = (o.join(&alt), o.join(&neu));
+            if a.is_dir() && !n.exists() && std::fs::rename(&a, &n).is_ok() {
+                aus.push((a, n));
+            }
+        }
+    }
+    aus
+}
+
+/// [`artefakte_umziehen`] je Ort einmal in diesem Prozess.
+fn umziehen_einmal(orte: &[std::path::PathBuf]) {
+    static GESEHEN: std::sync::Mutex<Vec<std::path::PathBuf>> = std::sync::Mutex::new(Vec::new());
+    let Ok(mut gesehen) = GESEHEN.lock() else { return };
+    let neu: Vec<std::path::PathBuf> = orte.iter().filter(|o| !gesehen.contains(o)).cloned().collect();
+    if neu.is_empty() {
+        return;
+    }
+    gesehen.extend(neu.iter().cloned());
+    artefakte_umziehen(&neu, &fruehere_namen());
 }
 
 /// Wo im Repositorium die Artefakte liegen.
@@ -434,39 +514,52 @@ pub fn anzeigename(pfad: &str) -> String {
         .unwrap_or(ordner)
 }
 
-/// **Der Name nach dem Schema „Myelith <Groesse> <Format>“**, etwa
-/// `myelith-35b-a3b` zu „Myelith 35B-A3B INT8“.
+/// **Der Name nach dem Schema „<Tier> <Groesse> - <Format>“**, etwa
+/// `raven-35b-a3b-int4` zu „Raven 35B A3B - INT4“.
 ///
-/// ⚑ **Festlegung des Projektinhabers, 2026-10-17.** Die Groesse steht wie
-/// im Verzeichnisnamen, gross geschrieben, bei einem Gemisch mit den
-/// aktiven Parametern (`A3B`). Dahinter die Zahlform der Gewichte: ohne
-/// Zusatz `INT8`, denn das ist der Weg dieses Projekts; sonst der Zusatz
-/// des Verzeichnisses (`INT4`, `TERNÄR`, `GEMISCHT 50`).
+/// ⚑ **Festlegung des Projektinhabers, 2026-10-21.** Vorne das Tier (bei
+/// einem selbst gebauten Modell das Wort, das der Nutzer gab), dann die
+/// Groesse wie im Verzeichnisnamen, gross geschrieben, bei einem Gemisch mit
+/// den aktiven Parametern (`A3B`), hinter einem Strich die Zahlform der
+/// Gewichte (`INT8`, `INT4`, `TERNÄR`, `GEMISCHT 50`). Kein Name traegt mehr
+/// „Myelith“; bis zum 2026-10-21 hiess es „Myelith 35B-A3B INT8“. Ein alter
+/// Ordner ohne Zahlform (`myelith-4b`) zeigt `INT8`, wie damals.
 ///
 /// ⚑ **Die Regel ist die Quelle, der Katalog folgt ihr.** Er traegt die
 /// Namen weiter ausgeschrieben, weil auch Werkzeuge ohne diese Kiste sie
 /// lesen; `die_katalognamen_folgen_dem_schema` haelt beide beisammen.
 ///
-/// `None` fuer einen Ordner, der nicht `myelith-<Groesse>…` heisst.
+/// `None` fuer einen Ordner ohne Groesse (`<zahl>b`).
 pub fn name_nach_schema(ordner: &str) -> Option<String> {
-    let rest = ordner.strip_prefix("myelith-")?;
-    let mut teile = rest.split('-').peekable();
-    let groesse = teile.next().filter(|g| g.starts_with(|c: char| c.is_ascii_digit()) && g.ends_with('b'))?;
-    let mut groesse = groesse.to_ascii_uppercase();
+    let teile: Vec<&str> = ordner.split('-').collect();
+    let ist_groesse = |g: &str| {
+        g.len() > 1
+            && g.starts_with(|c: char| c.is_ascii_digit())
+            && g.ends_with('b')
+            && g[..g.len() - 1].chars().all(|c| c.is_ascii_digit() || c == '.')
+    };
+    let stelle = teile.iter().position(|t| ist_groesse(t))?;
+    let gross = |w: &str| {
+        let mut z = w.chars();
+        z.next().map(|c| c.to_uppercase().collect::<String>() + z.as_str()).unwrap_or_default()
+    };
+    let wort: Vec<String> = teile[..stelle].iter().map(|w| gross(w)).collect();
+    let mut groesse = teile[stelle].to_ascii_uppercase();
+    let mut rest = teile[stelle + 1..].iter().copied().peekable();
     let ist_aktiv = |t: &&str| {
         t.len() > 2 && t.starts_with('a') && t.ends_with('b') && t[1..t.len() - 1].chars().all(|c| c.is_ascii_digit())
     };
-    if let Some(aktiv) = teile.next_if(ist_aktiv) {
-        groesse = format!("{groesse}-{}", aktiv.to_ascii_uppercase());
+    if let Some(aktiv) = rest.next_if(ist_aktiv) {
+        groesse = format!("{groesse} {}", aktiv.to_ascii_uppercase());
     }
-    let format: Vec<String> = teile
+    let format: Vec<String> = rest
         .map(|t| match t {
             "ternaer" => "TERNÄR".to_string(),
             anderes => anderes.to_uppercase(),
         })
         .collect();
     let format = if format.is_empty() { "INT8".to_string() } else { format.join(" ") };
-    Some(format!("Myelith {groesse} {format}"))
+    Some(if wort.is_empty() { format!("{groesse} - {format}") } else { format!("{} {groesse} - {format}", wort.join(" ")) })
 }
 
 // ── Welches Modell zu dieser Maschine passt ─────────────────────────────
@@ -647,7 +740,7 @@ mod empfehlung_proben {
         let mut s = Speicherorte::default();
         s.setzen(Speicherort { name: "extern".into(), pfad: "/Volumes/P/M".into(), volumen_gib: 1, zwecke: vec![Zweck::Gewichte, Zweck::Netz] });
         s.setzen(Speicherort { name: "netz".into(), pfad: "/Volumes/N".into(), volumen_gib: 1, zwecke: vec![Zweck::Netz] });
-        let orte = suchorte_aus(std::path::Path::new("/repo/INTEGER_LLM/artifacts/myelith-0.6b"), &s, None);
+        let orte = suchorte_aus(std::path::Path::new("/repo/INTEGER_LLM/artifacts/sparrow-0.6b-int8"), &s, None);
         assert_eq!(orte, [std::path::PathBuf::from("/repo/INTEGER_LLM/artifacts"), "/Volumes/P/M/gewichte".into()]);
     }
 
@@ -661,17 +754,48 @@ mod empfehlung_proben {
         assert!(suchorte_aus(std::path::Path::new(""), &leer, None).is_empty());
     }
 
+    /// ⚑ **Die Namen vor dem 2026-10-21 ziehen um**: genau, mit Anhaengsel,
+    /// nie ueber ein bestehendes Verzeichnis, und der Katalog traegt fuer jedes
+    /// Projektmodell seinen frueheren Namen.
+    #[test]
+    fn fruehere_namen_ziehen_um() {
+        let w = myl_local_agent::ort::wurzel().expect("Repositorium");
+        let paare = fruehere_namen_aus(&std::fs::read_to_string(w.join("MODELS/llm/KATALOG.json")).unwrap());
+        assert_eq!(neuer_name("myelith-35b-a3b", &paare).as_deref(), Some("raven-35b-a3b-int8"));
+        assert_eq!(neuer_name("myelith-35b-a3b-int4", &paare).as_deref(), Some("raven-35b-a3b-int4"));
+        assert_eq!(neuer_name("myelith-35b-a3b-ternaer", &paare).as_deref(), Some("raven-35b-a3b-ternaer"));
+        assert_eq!(neuer_name("myelith-0.6b", &paare).as_deref(), Some("sparrow-0.6b-int8"));
+        assert_eq!(neuer_name("myelith-8b-ternaer-gepackt", &paare).as_deref(), Some("jay-8b-ternaer-gepackt"));
+        assert_eq!(neuer_name("raven-35b-a3b-int8", &paare), None);
+        assert_eq!(neuer_name("myelith-4bx", &paare), None, "nur ganze Namen oder mit Strich");
+        let d = std::env::temp_dir().join(format!("umzug-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        for n in ["myelith-0.6b", "myelith-4b", "pigeon-4b-int8", "fremd"] {
+            std::fs::create_dir_all(d.join(n)).unwrap();
+        }
+        std::fs::write(d.join("myelith-0.6b/model_config.json"), "{}").unwrap();
+        let umgezogen = artefakte_umziehen(std::slice::from_ref(&d), &paare);
+        assert_eq!(umgezogen.len(), 1, "{umgezogen:?}");
+        assert!(d.join("sparrow-0.6b-int8/model_config.json").is_file());
+        assert!(d.join("myelith-4b").is_dir(), "der neue Name lag schon da, also bleibt der alte");
+        assert!(d.join("fremd").is_dir());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
     /// ⚑ **Das Schema der Modellnamen** (Festlegung des Projektinhabers,
-    /// 2026-10-17), auch fuer Artefakte, die der Katalog nicht kennt.
+    /// 2026-10-21), auch fuer Artefakte, die der Katalog nicht kennt.
     #[test]
     fn die_namen_folgen_dem_schema() {
         for (ordner, name) in [
-            ("myelith-35b-a3b", "Myelith 35B-A3B INT8"),
-            ("myelith-35b-a3b-int4", "Myelith 35B-A3B INT4"),
-            ("myelith-0.6b", "Myelith 0.6B INT8"),
-            ("myelith-8b-ternaer-gepackt", "Myelith 8B TERNÄR GEPACKT"),
-            ("myelith-35b-a3b-gemischt-50", "Myelith 35B-A3B GEMISCHT 50"),
-            ("myelith-27b-ternaer", "Myelith 27B TERNÄR"),
+            ("raven-35b-a3b-int8", "Raven 35B A3B - INT8"),
+            ("raven-35b-a3b-int4", "Raven 35B A3B - INT4"),
+            ("sparrow-0.6b-int8", "Sparrow 0.6B - INT8"),
+            ("jay-8b-ternaer-gepackt", "Jay 8B - TERNÄR GEPACKT"),
+            ("raven-35b-a3b-gemischt-50", "Raven 35B A3B - GEMISCHT 50"),
+            ("crow-27b-ternaer", "Crow 27B - TERNÄR"),
+            ("otter-126b-a7b-int4", "Otter 126B A7B - INT4"),
+            ("126b-a7b-int8", "126B A7B - INT8"),
+            ("myelith-4b", "Myelith 4B - INT8"),
         ] {
             assert_eq!(name_nach_schema(ordner).as_deref(), Some(name), "{ordner}");
         }
@@ -702,34 +826,41 @@ mod empfehlung_proben {
     #[test]
     fn private_modelle_aus_beiden_katalogen() {
         let haupt = r#"{"_hinweis": "x",
-            "myelith-4b": {"anzeigename": "Myelith 4B INT8", "reihung": 4.0},
-            "myelith-125b-a6b": {"anzeigename": "Myelith 125B-A6B INT8", "reihung": 125.0, "betrieb": "lokal"}}"#;
-        let lokal = r#"{"myelith-4b": {"anzeigename": "Faelschung"},
-            "myelith-126b-a6b-int4": {"betrieb": "netz", "reihung": 126.0},
+            "pigeon-4b-int8": {"anzeigename": "Pigeon 4B - INT8", "reihung": 4.0},
+            "vulture-126b-a7b-int8": {"anzeigename": "Vulture 126B A7B - INT8", "reihung": 126.0, "betrieb": "lokal"}}"#;
+        let lokal = r#"{"pigeon-4b-int8": {"anzeigename": "Faelschung"},
+            "otter-126b-a6b-int4": {"betrieb": "netz", "reihung": 126.0},
             "mein-modell": {}}"#;
         let k = katalog_aus(haupt, Some(lokal));
-        assert!(!k["myelith-4b"].privat);
-        assert_eq!(k["myelith-4b"].name, "Myelith 4B INT8", "das Projekt gewinnt");
-        assert!(k["myelith-125b-a6b"].privat, "betrieb lokal im Projektkatalog");
-        assert!(k["myelith-126b-a6b-int4"].privat, "lokal ist immer privat");
-        assert_eq!(k["myelith-126b-a6b-int4"].name, "Myelith 126B-A6B INT4");
+        assert!(!k["pigeon-4b-int8"].privat);
+        assert_eq!(k["pigeon-4b-int8"].name, "Pigeon 4B - INT8", "das Projekt gewinnt");
+        assert!(k["vulture-126b-a7b-int8"].privat, "betrieb lokal im Projektkatalog");
+        assert!(k["otter-126b-a6b-int4"].privat, "lokal ist immer privat");
+        assert_eq!(k["otter-126b-a6b-int4"].name, "Otter 126B A6B - INT4");
         assert_eq!(k["mein-modell"].name, "mein-modell");
         assert_eq!(katalog_aus(haupt, None).len(), 2);
-        assert_eq!(privat_benannt("Myelith 4B".into(), true), "Myelith 4B (privat)");
+        assert_eq!(privat_benannt("Otter 4B - INT8".into(), true), "Otter 4B - INT8 (privat)");
     }
 
-    /// ⚑ **Die Zusage reist mit dem Artefakt**: `betrieb` in
-    /// `model_config.json`.
+    /// ⚑ **Privat ist, was nicht auf der Netzliste steht** (Fund 585), und
+    /// `betrieb = "lokal"` bleibt privat.
     #[test]
-    fn nur_lokal_liest_das_artefakt() {
+    fn nur_lokal_folgt_der_netzliste() {
         let d = std::env::temp_dir().join(format!("myl-nur-lokal-{}", std::process::id()));
         std::fs::create_dir_all(&d).unwrap();
-        assert!(!nur_lokal(&d), "ohne model_config.json nicht privat");
+        assert!(!nur_lokal(&d), "ohne model_config.json kein Artefakt, also nicht privat");
         std::fs::write(d.join("model_config.json"), r#"{"family": "qwen4-exp", "betrieb": "lokal"}"#).unwrap();
         assert!(nur_lokal(&d));
         std::fs::write(d.join("model_config.json"), r#"{"family": "qwen3"}"#).unwrap();
-        assert!(!nur_lokal(&d));
+        assert!(nur_lokal(&d), "ohne Abdruck auf der Netzliste privat, auch ohne `betrieb`");
         std::fs::remove_dir_all(&d).ok();
+
+        // Das echte 0,6B steht auf der Liste; die drei Dateien des Abdrucks
+        // reichen, um es zu erkennen. Ohne Artefakt (CI) uebersprungen.
+        let echt = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../INTEGER_LLM/artifacts/sparrow-0.6b-int8");
+        if std::env::var_os("MYL_OHNE_ARTEFAKTE").is_none() && echt.join("theta_v.json").is_file() {
+            assert!(!nur_lokal(&echt), "sparrow-0.6b-int8 steht auf der Netzliste");
+        }
     }
 
 }

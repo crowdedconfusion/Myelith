@@ -1,11 +1,21 @@
-# Die Kalibrier-Umgebung mit festen Fassungen, aufgenommen am 2026-10-16
-# aus der Umgebung, mit der die Artefakte dieses Standes gebaut und
-# gemessen sind (Python 3.12).
+# Die Kalibrier-Umgebung mit festen Fassungen (Python 3.12), seit dem
+# 2026-10-21 eine fuer alle Bauarten.
 #
 # Warum fest: Der Gitterbau der Experten in vier Bit rechnet in torch.
 # Eine andere Fassung kann eine Summe anders ordnen, eine Rundung kippen
 # und damit andere Gewichte ergeben. Mit diesen Fassungen baut derselbe
 # Rechner bitgleich; `requirements.txt` nennt nur die Untergrenzen.
+#
+# ⚑ Bis zum 2026-10-21 gab es zwei Umgebungen: diese mit transformers 5.15.0
+#   fuer alle Bauten und eine zweite mit 5.18.0 nur fuer die Bauart mit vier
+#   Stroemen (`qwen4_exp` gibt es erst ab 5.18.0). Zusammengelegt auf den Satz
+#   der zweiten, nach drei Gegenproben mit 5.18.0: das 0,6B aus dem
+#   Skalenpaket bitgleich (636 von 636 Dateien, Manifest wie im Register);
+#   das Laden von Qwen3-Gemisch, Qwen3.5 dicht und Qwen3.5-Gemisch (Experten
+#   einzeln und verschmolzen) Tensor fuer Tensor bitgleich; WikiText mit der
+#   geprueften Summe. torch ist in beiden Saetzen dieselbe Fassung. Anders als
+#   vorher: transformers, datasets, huggingface-hub (2.x), tokenizers und die
+#   HTTP-Bibliothek des Hub (httpx2 statt httpx).
 #
 # Eingerichtet wird sie mit `INTEGER_LLM/scripts/python_einrichten.sh`.
 accelerate==1.14.0
@@ -15,19 +25,17 @@ aiosignal==1.4.0
 annotated-doc==0.0.5
 anyio==4.14.2
 attrs==26.1.0
-certifi==2026.7.22
-charset-normalizer==3.4.9
 click==8.4.2
-datasets==5.0.1
+datasets==5.1.0
 dill==0.4.1
 filelock==3.32.2
 frozenlist==1.8.0
 fsspec==2026.6.0
 h11==0.16.0
 hf-xet==1.6.0
-httpcore==1.0.9
-httpx==0.28.1
-huggingface-hub==1.27.0
+httpcore2==2.14.0
+httpx2==2.14.0
+huggingface-hub==2.2.0
 idna==3.18
 jinja2==3.1.6
 markdown-it-py==4.2.0
@@ -47,19 +55,18 @@ pygments==2.20.0
 python-dateutil==2.9.0.post0
 pyyaml==6.0.3
 regex==2026.7.19
-requests==2.34.2
 rich==15.0.0
 safetensors==0.8.0
 setuptools==84.0.0
 shellingham==1.5.4
 six==1.17.0
 sympy==1.14.0
-tokenizers==0.22.2
+tokenizers==0.23.3
 torch==2.13.0
 tqdm==4.70.0
-transformers==5.15.0
+transformers==5.18.0
+truststore==0.10.5
 typer==0.27.1
 typing-extensions==4.16.0
-urllib3==2.7.0
 xxhash==3.8.1
 yarl==1.24.5

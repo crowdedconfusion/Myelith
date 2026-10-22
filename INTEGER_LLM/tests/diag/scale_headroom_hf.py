@@ -22,7 +22,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO / "calibrate"))
-sys.path.insert(0, str(REPO / "eval"))
+sys.path.insert(0, str(REPO.parent / "BENCHMARKS" / "Inferenz"))
 
 from src.loader import load_reference_model          # noqa: E402
 from src.stats import ActivationStatsCollector       # noqa: E402
@@ -30,7 +30,7 @@ from wikitext_common import select_sequences         # noqa: E402
 from src.paths import model_artifacts_dir            # noqa: E402
 
 ACTIVATION_MAX_INT = 32767
-MODEL_NAME = "myelith-0.6b"
+MODEL_NAME = "sparrow-0.6b-int8"
 
 
 def main():
@@ -39,7 +39,7 @@ def main():
     # Messparameter aus dem Baseline-Ergebnis lesen — garantiert dieselben
     # Sequenzen wie der Entscheidungspunkt 12.21.
     baseline = json.loads(
-        (REPO / "eval" / "results" / "baseline_wikitext2.json").read_text())
+        (REPO.parent / "BENCHMARKS" / "Inferenz" / "results" / "baseline_wikitext2.json").read_text())
     n_sequences = baseline["n_sequences"]
     seq_len = baseline["seq_len"]
     sequences = select_sequences(n_sequences, seq_len)

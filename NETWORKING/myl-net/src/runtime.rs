@@ -290,6 +290,23 @@ pub async fn run_node(
     run_node_mit(swarm, commands, events, Arc::new(AcceptAllValidator)).await
 }
 
+/// Wie oft ein Knoten Kademlia nach weiteren Knoten suchen lässt (Fund 587),
+/// sobald er eingelaufen ist.
+///
+/// ⚑ **Eine halbe Minute**: oft genug, dass ein neuer Knoten binnen einer
+/// Minute bei allen bekannt ist, selten genug, dass die Suche gegen den
+/// Blockverkehr nicht ins Gewicht fällt.
+pub const KAD_TAKT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Der Abstand nach der ersten Suche; er verdoppelt sich bis [`KAD_TAKT`].
+///
+/// 📌 **Warum nicht gleich der Takt** (Fund 587, zweiter Teil): Die erste
+/// Suche läuft, sobald die Bootstrap-Gegenstelle sich ausweist, und die
+/// kennt in diesem Augenblick oft nur sich selbst. Wer nach ihr kam, war
+/// dann erst eine halbe Minute später zu finden; in der Probe mit drei
+/// Knoten fanden sich A und C in 20 s so einmal nicht.
+pub const KAD_ERSTER_ABSTAND: std::time::Duration = std::time::Duration::from_secs(1);
+
 /// Wie [`run_node`], aber mit einer Nutzlastprüfung der Anwendung.
 ///
 /// Das ist der Weg, den die Doku von [`crate::validation`] seit jeher
@@ -312,8 +329,27 @@ pub async fn run_node_mit(
         libp2p::request_response::ResponseChannel<Vec<u8>>,
     > = std::collections::HashMap::new();
     let mut naechste_marke: u64 = 0;
+    // 📌 **Fund 587 (2026-10-22, gefunden im Netzlauf): Kademlia wurde nie
+    //    angestoßen.** `start_bootstrap` hatte keinen Aufrufer, und die
+    //    Horchadressen aus `identify` kamen nicht in die Routing-Tabelle.
+    //    Jeder Knoten kannte damit nur seine Bootstrap-Gegenstelle; eine
+    //    Anfrage an ein anderes Mitglied seines Pods (Zeitprobe, Datei,
+    //    Stichprobe) fand keinen Weg. Gossip trug weiter, über den Stern.
+    //    Jetzt: eine Suche, sobald sich der erste Kademlia-Knoten ausweist,
+    //    danach in Abständen von [`KAD_ERSTER_ABSTAND`], verdoppelt bis
+    //    [`KAD_TAKT`]; und jede gemeldete Horchadresse eines
+    //    Kademlia-Knotens geht in die Tabelle.
+    let mut kad_abstand = KAD_ERSTER_ABSTAND;
+    let kad_naechste = tokio::time::sleep(KAD_TAKT);
+    tokio::pin!(kad_naechste);
+    let mut kad_angestossen = false;
     loop {
         tokio::select! {
+            _ = &mut kad_naechste => {
+                let _ = swarm.behaviour_mut().kad.bootstrap();
+                kad_naechste.as_mut().reset(tokio::time::Instant::now() + kad_abstand);
+                kad_abstand = (kad_abstand * 2).min(KAD_TAKT);
+            }
             maybe_cmd = commands.recv() => {
                 let Some(cmd) = maybe_cmd else {
                     // Kommando-Kanal geschlossen — Node fährt herunter.
@@ -449,6 +485,20 @@ pub async fn run_node_mit(
                                 Err(e) => e.to_string(),
                             },
                         });
+                    }
+                    SwarmEvent::Behaviour(MylBehaviourEvent::Identify(
+                        libp2p::identify::Event::Received { peer_id, info, .. },
+                    )) => {
+                        let kad_protokoll = libp2p::StreamProtocol::new(crate::discovery::KAD_PROTOCOL);
+                        if info.protocols.contains(&kad_protokoll) {
+                            for addr in info.listen_addrs {
+                                swarm.behaviour_mut().kad.add_address(&peer_id, addr);
+                            }
+                            if !kad_angestossen {
+                                kad_angestossen = swarm.behaviour_mut().kad.bootstrap().is_ok();
+                                kad_naechste.as_mut().reset(tokio::time::Instant::now() + kad_abstand);
+                            }
+                        }
                     }
                     SwarmEvent::ConnectionEstablished { peer_id, endpoint, .. } => {
                         let _ = events.send(NodeEvent::Verbunden {

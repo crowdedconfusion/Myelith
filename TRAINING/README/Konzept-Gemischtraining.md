@@ -256,10 +256,10 @@ Weight-Tying. Ob er drinbleiben muss, ist eine eigene Frage.
 cd INTEGER_LLM
 
 # Abschnitt 2: wie weit der Router von der Saettigung ist
-cargo run --release --bin router_saettigung -- artifacts/myelith-30b-a3b
+cargo run --release --bin router_saettigung -- artifacts/magpie-30b-a3b-int8
 
 # Abschnitt 3.1: die Deckungskurve der Experten
-cargo run --release --bin expertenprobe -- artifacts/myelith-30b-a3b
+cargo run --release --bin expertenprobe -- artifacts/magpie-30b-a3b-int8
 
 # Abschnitt 3.2: warm gegen kalt auf dieser Maschine
 #   Zweimal dieselben Expertendateien lesen und die Zeiten

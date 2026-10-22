@@ -116,12 +116,10 @@ pub fn zusammenfassung(gespraech: &Gespraech) -> Option<String> {
 /// Die Werkzeugansage, wie ein Lauf mit dieser Ruestung sie vorn stehen hat.
 ///
 /// ⚑ **Samt Systemprompt**, genau wie im Lauf, damit die Kontextanzeige
-/// dasselbe zaehlt, was das Modell bekommt. Ohne die verankerten, wo ein
-/// Schreibwerkzeug laeuft (Fund 568); Chat und Fenster fahren nie
-/// `NurVerankert`.
+/// dasselbe zaehlt, was das Modell bekommt.
 pub fn ansage(ruestung: &crate::ruestung::Ruestung) -> Nachricht {
     crate::werkzeug::angebot_mit_regel(
-        &crate::verankert::ansagen(ruestung.kasten.angebote(), false, ruestung.form),
+        ruestung.kasten.angebote(),
         ruestung.form,
         crate::systemprompt::geprueft(ruestung.form).ok(),
     )
@@ -385,7 +383,7 @@ mod tests {
             Nachricht::nutzer("Die Kennzahl lautet 4711 und steht in der Tabelle."),
             Nachricht::modell("Verstanden.\nDie Nebenzahl ist 0815 und gehoert nicht ins Verzeichnis."),
         ]);
-        verdichten_mit_mitschnitt(&Zeichen(10_000), &mut g, Some(&d), "probe-1", "myelith-0.6b", true)
+        verdichten_mit_mitschnitt(&Zeichen(10_000), &mut g, Some(&d), "probe-1", "sparrow-0.6b-int8", true)
             .expect("verdichtet");
 
         let mitschnitte = crate::verlauf::vorhandene(&d);
@@ -416,7 +414,7 @@ mod tests {
         // dessen, was ohnehin im Kontext steht.
         let v = crate::verlauf::verzeichnis(&mitschnitte[0]).expect("Verzeichnis");
         assert_eq!(v.nachrichten, 2, "der Mitschnitt traegt nicht den ganzen Verlauf");
-        assert_eq!(v.modell, "myelith-0.6b");
+        assert_eq!(v.modell, "sparrow-0.6b-int8");
         let alles = crate::verlauf::zeilen(&mitschnitte[0], 1, v.zeilen).expect("Zeilen");
         assert!(alles.contains("4711"), "die Kennzahl fehlt im Mitschnitt: {alles}");
         // ⛔️ **Und die Zeile, die nicht im Verzeichnis steht, steht im

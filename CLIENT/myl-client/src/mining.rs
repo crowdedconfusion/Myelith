@@ -387,6 +387,37 @@ pub struct Zustand {
     pub pfad: PathBuf,
 }
 
+/// ⚑ **Was das Netz auf diesem Rechner rechnet** (Stufe 4, P8, 2026-10-22):
+/// die Netzlast, die der laufende Knoten neben sein Protokoll legt, wenn er
+/// einen Shard aus der Kette startet. `None` ohne laufenden Knoten oder
+/// ohne Shard.
+pub fn netzlast() -> Option<myl_store::teilablage::Netzlast> {
+    let z = zustand()?;
+    myl_store::teilablage::Netzlast::lesen(&z.pfad.join("knoten").join("logs").join(myl_store::teilablage::NETZLAST_DATEI))
+}
+
+/// **Die Netzlast als Last des lokalen Plans**, mit Vorrang `Netz`: der
+/// Bedarf ihres Bereichs, mit dem gemessenen Zuschlag. `None`, wenn keine
+/// Netzlast da ist oder ihr Artefakt sich nicht lesen lässt.
+pub fn netzlast_im_plan(
+    nl: &myl_store::teilablage::Netzlast,
+) -> Option<myl_dispatcher::local::plan::Last> {
+    use myl_dispatcher::local::{bedarf, plan};
+    let ganz = bedarf::Modellbedarf::aus_artefakt(&nl.artefakte).ok()?;
+    let b = ganz.bereich(nl.von as usize, nl.bis as usize, nl.mit_einbettung(), nl.mit_kopf()).ok()?;
+    let mindest = (crate::einstellungen::KONTEXT_MINDESTENS as u64).min(b.hoechstkontext);
+    Some(plan::Last {
+        name: format!("Netz: {}, Ebenen {} bis {}, Epoche {}", ganz.name, nl.von, nl.bis, nl.epoche),
+        vorrang: plan::Vorrang::Netz,
+        zuschlag_bytes: crate::hardware::eichbuch().zuschlag_eigen(&b),
+        kontext_mindestens: mindest,
+        kontext_soll: mindest,
+        kerne_mindestens: 1,
+        profil: None,
+        gewichte: plan::Gewichte::Eigen(b),
+    })
+}
+
 fn zustandsdatei() -> PathBuf {
     datenordner().join("zustand.json")
 }

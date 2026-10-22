@@ -1,7 +1,7 @@
 # golemos (die Linux-Distribution, die nur Myelith bedient)
 
-> **Version:** 0.3.0 (`golem-einrichten` 0.3.0)
-> **Datum:** 2026-10-13
+> **Version:** 0.3.1 (`golem-einrichten` 0.3.1)
+> **Datum:** 2026-10-21
 > **Status:** Startet vom Stick und von Platte, findet einen
 > Myelith-Ordner auf dem Stick oder einem zweiten Laufwerk und
 > installiert sich mit einem Assistenten auf eine ganze Platte. Belegt
@@ -101,6 +101,10 @@ sie tut, soll sich in ihrem eigenen Quelltext lesen lassen.
 ---
 
 ## Changelog
+
+### v0.3.1 – 2026-10-21 (die Modelle heißen nach Tieren; `golem-einrichten` 0.3.1)
+
+Die Projektmodelle heißen seit heute nach Tieren, mit Größe und Speicherform als Anhängsel (Festlegung des Projektinhabers): `myelith-0.6b` ist `sparrow-0.6b-int8`, `myelith-4b` `pigeon-4b-int8`, `myelith-30b-a3b` `magpie-30b-a3b-int8`, `myelith-35b-a3b` `raven-35b-a3b-int8`. In den Dateien eines Artefakts steht kein Name, also bleiben Abdrücke und Register gültig. Anleitungen, Hinweisdatei und Proben mitgezogen.
 
 ### v0.3.0 – 2026-10-13 (der Knoten als Dienst, die Oberflächen-Schicht, udev und seatd in der Basis)
 

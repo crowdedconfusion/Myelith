@@ -101,6 +101,22 @@ pub fn einstellungsdatei() -> std::path::PathBuf {
 /// soll; und die Variable in einer Probe zu entfernen, gaebe allen
 /// Proben, die daneben laufen, fuer diese Zeit die echte Datei frei.
 pub fn plattformpfad() -> std::path::PathBuf {
+    plattformpfad_aus(&|name| std::env::var_os(name))
+}
+
+/// **Derselbe Ort, mit der Umgebung als Argument.**
+///
+/// ⚑ **Damit eine Probe die Umgebung nicht umstellen muss.** Bis zum
+/// 2026-10-21 setzte und entfernte die Probe der Plattformorte `HOME` und
+/// `XDG_CONFIG_HOME` prozessweit. In diesem Fenster schrieb ein
+/// nebenlaeufiger Testfaden den Zettel mit der Wurzel in sein
+/// Arbeitsverzeichnis, also in den Baum der Kiste, und von dort kam er mit
+/// dem absoluten Pfad dieses Rechners ins Repositorium (Fund 579). Die
+/// Umgebung ist ein Zustand fuer den ganzen Prozess; eine Probe, die sie
+/// aendert, aendert sie fuer jede andere mit.
+pub fn plattformpfad_aus(
+    umgebung: &dyn Fn(&str) -> Option<std::ffi::OsString>,
+) -> std::path::PathBuf {
     // 📌 **Wer schon eine Datei hat, behaelt sie.** Ohne diese drei
     // Zeilen zoege die Datei bei jedem, der `XDG_CONFIG_HOME` setzt,
     // an einen neuen Ort um, und seine Einstellungen waeren
@@ -110,12 +126,12 @@ pub fn plattformpfad() -> std::path::PathBuf {
     // bevorzugten Stelle, und das gilt in beide Richtungen: Wer
     // schon an der neuen Stelle liegt, wird nicht an die alte
     // zurueckgeschickt.
-    for k in kandidaten_liste() {
+    for k in kandidaten_liste(umgebung) {
         if k.is_file() {
             return k;
         }
     }
-    kandidaten_liste()
+    kandidaten_liste(umgebung)
         .into_iter()
         .next()
         .expect("die Liste endet immer mit dem Arbeitsverzeichnis")
@@ -163,18 +179,20 @@ pub fn standard_wurzel() -> Option<String> {
 /// ⚑ **Eigene Funktion, damit `vorgabepfad` und die Wanderung
 /// dieselbe Liste benutzen.** Zwei Listen liefen auseinander, und
 /// dann fande die eine, was die andere schriebe.
-fn kandidaten_liste() -> Vec<std::path::PathBuf> {
+fn kandidaten_liste(
+    umgebung: &dyn Fn(&str) -> Option<std::ffi::OsString>,
+) -> Vec<std::path::PathBuf> {
     use std::path::PathBuf;
     let mut orte: Vec<PathBuf> = Vec::new();
 
     #[cfg(windows)]
     {
-        if let Some(appdata) = std::env::var_os("APPDATA") {
+        if let Some(appdata) = umgebung("APPDATA") {
             if !appdata.is_empty() {
                 orte.push(PathBuf::from(appdata).join("Myelith").join("client.json"));
             }
         }
-        if let Some(profil) = std::env::var_os("USERPROFILE") {
+        if let Some(profil) = umgebung("USERPROFILE") {
             if !profil.is_empty() {
                 orte.push(
                     PathBuf::from(profil)
@@ -187,7 +205,7 @@ fn kandidaten_liste() -> Vec<std::path::PathBuf> {
         }
     }
 
-    if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME") {
+    if let Some(xdg) = umgebung("XDG_CONFIG_HOME") {
         // ⚑ Die Spezifikation sagt: ein relativer Wert ist ungueltig
         // und zu ignorieren. Ohne diese Zeile fuehrte ein
         // versehentliches `XDG_CONFIG_HOME=.config` zurueck in genau
@@ -197,7 +215,7 @@ fn kandidaten_liste() -> Vec<std::path::PathBuf> {
             orte.push(p.join("myelith").join("client.json"));
         }
     }
-    if let Some(heim) = std::env::var_os("HOME") {
+    if let Some(heim) = umgebung("HOME") {
         if !heim.is_empty() {
             orte.push(PathBuf::from(heim).join(".config/myelith/client.json"));
         }
@@ -268,7 +286,7 @@ pub fn wurzel() -> Option<PathBuf> {
 ///
 /// 📌 **Ohne das scheitert „Modell laden" aus dem Finder heraus**, und
 /// zwar mit `No such file or directory`: In den Einstellungen steht
-/// `INTEGER_LLM/artifacts/myelith-4b`, und das ist relativ zu einem
+/// `INTEGER_LLM/artifacts/pigeon-4b-int8`, und das ist relativ zu einem
 /// Arbeitsverzeichnis, das dort `/` ist.
 ///
 /// ⚑ **Ein absoluter Pfad bleibt unberuehrt.** Wer sein Artefakt
@@ -399,7 +417,7 @@ mod proben {
     /// **Ein relativer Pfad wird gegen die Wurzel gelegt.**
     ///
     /// 📌 **Das ist der Fall „Repositorium verschoben".** In den
-    /// Einstellungen steht `INTEGER_LLM/artifacts/myelith-4b`, und
+    /// Einstellungen steht `INTEGER_LLM/artifacts/pigeon-4b-int8`, und
     /// dieser Eintrag ueberlebt jeden Umzug: Was sich aendert, ist die
     /// Wurzel, und die wird gesucht statt aufgeschrieben.
     /// 📌 **Die Erwartung wird gebaut und nicht getippt** (2026-09-10).
@@ -413,7 +431,7 @@ mod proben {
     fn ein_relativer_pfad_haengt_an_der_wurzel() {
         let alt = Path::new("/wo/auch/immer");
         let neu = Path::new("/ganz/woanders");
-        let rel = "INTEGER_LLM/artifacts/myelith-4b";
+        let rel = "INTEGER_LLM/artifacts/pigeon-4b-int8";
         assert_eq!(gegen(Some(alt), rel), alt.join(rel).display().to_string());
         // Derselbe Eintrag, verschobener Klon, richtiger Pfad.
         assert_eq!(gegen(Some(neu), rel), neu.join(rel).display().to_string());
@@ -446,7 +464,11 @@ mod proben {
     #[test]
     fn kein_skript_nennt_einen_festen_pfad() {
         let wurzel = repo();
-        for datei in ["SYSTEM/install/installieren-macos.sh", "SYSTEM/install/installieren-nixos.sh"] {
+        for datei in [
+            "SYSTEM/install/installieren-macos.sh",
+            "SYSTEM/install/installieren-linux.sh",
+            "SYSTEM/install/installieren-nixos.sh",
+        ] {
             let text = std::fs::read_to_string(wurzel.join(datei)).expect(datei);
             for zeile in text.lines() {
                 let z = zeile.trim();
@@ -475,13 +497,25 @@ mod proben {
     /// und beim zweiten Klon von Anfang an. **Ein Pfad, der in einer
     /// versionierten Datei steht, ist eine Wette darauf, dass nichts
     /// sich bewegt.**
+    ///
+    /// ⚑ **Und das Symbol zeigt nicht in diesen Baum** (2026-10-21). Bis
+    /// dahin stand `Icon=$WURZEL/…` im Eintrag, also ein Pfad, der mit dem
+    /// Verschieben oder Loeschen des Baums ins Leere zeigte. Jetzt kopieren
+    /// beide Linux-Skripte das Symbol in den Symbolordner des Nutzers und
+    /// nennen es beim Namen.
     #[test]
     fn der_menueeintrag_wird_erzeugt() {
         let wurzel = repo();
-        let sh = std::fs::read_to_string(wurzel.join("SYSTEM/install/installieren-nixos.sh"))
-            .expect("Skript");
-        assert!(sh.contains("[Desktop Entry]"), "das Skript legt keinen Eintrag an");
-        assert!(sh.contains("Icon=$WURZEL/"), "der Eintrag traegt kein Symbol aus diesem Baum");
+        for datei in ["SYSTEM/install/installieren-linux.sh", "SYSTEM/install/installieren-nixos.sh"] {
+            let sh = std::fs::read_to_string(wurzel.join(datei)).expect(datei);
+            assert!(sh.contains("[Desktop Entry]"), "{datei} legt keinen Eintrag an");
+            assert!(sh.contains("Icon=myelith\n"), "{datei}: der Eintrag nennt das Symbol nicht beim Namen");
+            assert!(!sh.contains("Icon=$WURZEL"), "{datei}: der Eintrag zeigt mit dem Symbol in diesen Baum");
+            assert!(
+                sh.contains("icons/hicolor/") && sh.contains("myelith.png"),
+                "{datei} legt das Symbol nicht in den Symbolordner"
+            );
+        }
         assert!(
             !wurzel.join("myelith.desktop").exists() && !wurzel.join("Myelith.desktop").exists(),
             "im Repositorium liegt ein .desktop mit festen Pfaden"

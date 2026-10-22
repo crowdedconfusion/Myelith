@@ -95,6 +95,12 @@ ABSICHTLICH_ANDERS = {
     # die des ARTEFAKTS (0): Der Kopf fuer Mehrfachvorhersage ist beim
     # Export ausgeschlossen (Fund 416).
     "mtp_num_hidden_layers": "MTP-Kopf ist ausgeschlossen (Fund 416)",
+    # Die Quelle (Qwen3.5/3.8 dicht) schreibt `swish` und meint die gegatete
+    # Norm der linearen Aufmerksamkeit; das Feld des Artefakts beschreibt das
+    # Tor am Ausgang der vollen Aufmerksamkeit, und das rechnet die Vorlage
+    # fest mit `sigmoid`. Belegt am ternaeren 27B (Perplexitaet) und am
+    # Zufallsmodell gegen die Vorlage (`tests/test_qwen3_5_mini.py`).
+    "output_gate_type": "Quelle meint die Norm der linearen Aufmerksamkeit, das Artefakt das Ausgangstor",
 }
 
 # Felder, die der Eintrag umgerechnet fuehrt und die oben nachgerechnet

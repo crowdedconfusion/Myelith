@@ -51,7 +51,7 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent.parent
-ARTIFACTS = ROOT / "artifacts" / "myelith-0.6b"
+ARTIFACTS = ROOT / "artifacts" / "sparrow-0.6b-int8"
 CONFIG_4 = ROOT / "configs" / "pipeline_4node.json"
 CONFIG_8 = ROOT / "configs" / "pipeline_8node.json"
 CONFIG_U = ROOT / "configs" / "pipeline_uneven4node.json"

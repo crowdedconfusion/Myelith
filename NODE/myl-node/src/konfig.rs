@@ -206,6 +206,31 @@ pub struct KnotenKonfig {
     /// zaehlt, was in den Orten fuer das Netz liegt. Wer die Datei
     /// aendert, sieht es in der naechsten Aufnahme, ohne Neustart.
     pub speicherorte: Option<PathBuf>,
+    /// ⚑ **Das Netz** (Stufe 4, 2026-10-22): Probekette oder Testnetz mit
+    /// dem int4-35B. Bestimmt Startwert und Podmodell der Kette.
+    pub netz: &'static crate::netz::Netz,
+    /// ⚑ **Was dieser Knoten für das Podmodell zusagt** (`--modellzusage`):
+    /// Ebenen samt Kopf, Ebenenzeit, wahlweise ein gehaltener Bereich. Mit
+    /// ihr meldet er sich beim Start als Miner an, wenn er es noch nicht
+    /// ist, und reicht die Zusage ein; unterschrieben mit dem
+    /// Konsensschlüssel.
+    pub modellzusage: Option<myl_types::zusage::Modellzusage>,
+    /// In welcher Zone er sich anmeldet.
+    pub zone: myl_types::node_metadata::GeoRegion,
+    /// ⚑ **Womit er seinen Shard startet** (P7), oder `None`: dann rechnet
+    /// er nicht aus der Kette.
+    pub shard: Option<Shardkonfig>,
+}
+
+/// Wie der Knoten seinen Shard aus der Kette startet (P7).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Shardkonfig {
+    /// Das Programm `myl-shard`.
+    pub programm: PathBuf,
+    /// Das Artefakt des Netzmodells.
+    pub artefakte: PathBuf,
+    /// Mit Trainingshälfte.
+    pub training: bool,
 }
 
 /// Fehler der Konfiguration.
@@ -295,13 +320,17 @@ impl Default for KnotenKonfig {
             ortsleitung: None,
             ortsausweis: None,
             pod: None,
-            modellname: "myelith-myelith-0.6b".to_string(),
+            modellname: "sparrow-0.6b-int8".to_string(),
             kontoschluesseldatei: None,
             konto: None,
             testverkehr_sekunden: None,
             erzeugt_bloecke: false,
             teilnehmer: Vec::new(),
             speicherorte: None,
+            netz: &crate::netz::PROBEKETTE,
+            modellzusage: None,
+            zone: myl_types::node_metadata::GeoRegion::Europe,
+            shard: None,
         }
     }
 }

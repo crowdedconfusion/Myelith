@@ -12,7 +12,7 @@ version is authoritative.
 | Field | Information |
 |---|---|
 | Provider | Joschka Benjamin Hänsler, private individual, Germany |
-| Models | `myelith-0.6b`, `myelith-4b`, `myelith-8b`, `myelith-30b-a3b`, `myelith-35b-a3b` |
+| Models | `sparrow-0.6b-int8`, `pigeon-4b-int8`, `jay-8b-int8`, `magpie-30b-a3b-int8`, `raven-35b-a3b-int8` |
 | Modalities of the training data | text |
 | Size of own training data | about 127,000 words (synthetic), plus 241,000 words used for calibration only |
 | Period of data collection | 2026-08 to 2026-09 |

@@ -3,7 +3,7 @@
 
 ## ⛔️ Wozu, und warum erst jetzt
 
-Am 2026-09-21/22 erzeugte das `myelith-35b-a3b` Kauderwelsch. Sechs
+Am 2026-09-21/22 erzeugte das `raven-35b-a3b-int8` Kauderwelsch. Sechs
 echte Fehler wurden gefunden und behoben (erfundener Router-Vorgabewert,
 Rueckprojektion auf einer statt je Kanal, `rope_theta` 1e6 statt 1e7,
 Drehtabellen ueber ein Sechstel des Kontexts, falsche Breite in der
@@ -36,7 +36,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[3]
 QUELLE = REPO / "MODELS/llm/Qwen3.6-35B-A3B"
-ARTEFAKT = REPO / "INTEGER_LLM/artifacts/myelith-35b-a3b"
+ARTEFAKT = REPO / "INTEGER_LLM/artifacts/raven-35b-a3b-int8"
 
 
 def lade_artefakt_tensor(name: str):

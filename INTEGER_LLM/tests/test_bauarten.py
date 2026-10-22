@@ -75,7 +75,7 @@ def main() -> int:
             print(f"[bauarten] ⚑ {name} ({bauart.name}): erzeugt genau den Eintrag, alle Felder gelesen")
 
         # Gegenprobe: ein verfaelschtes Feld muss auffallen.
-        if name == "myelith-4b":
+        if name == "pigeon-4b-int8":
             falsch = dict(flach(roh))
             falsch["num_hidden_layers"] = 35
             if not feldabgleich(erzeugt, falsch)["abweichend"]:

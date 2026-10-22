@@ -41,7 +41,7 @@ PROBE = cargo_paths.binary("runtime", "perplexity_probe")
 
 # Gemeinsame Messsequenzen-Aufbereitung (identische Messmethode mit der
 # FP-Baseline und dem Perplexitätsvergleich, siehe BENCHMARKS/Inferenz/wikitext_common.py).
-sys.path.insert(0, str(REPO / "eval"))
+sys.path.insert(0, str(REPO.parent / "BENCHMARKS" / "Inferenz"))
 from wikitext_common import ARTIFACTS_DIR as ARTIFACTS, select_sequences  # noqa: E402
 
 

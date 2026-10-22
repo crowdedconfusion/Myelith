@@ -108,7 +108,7 @@ def validate_batch(backend_name: str, golden_dir: Path) -> list:
     """
     project_root = Path(__file__).parent.parent.parent
     runtime_dir = project_root / "runtime"
-    artifact_dir = project_root / "artifacts" / "myelith-0.6b"
+    artifact_dir = project_root / "artifacts" / "sparrow-0.6b-int8"
     vectors_dir = golden_dir / VECTORS_DIRNAME
 
     cmd = [

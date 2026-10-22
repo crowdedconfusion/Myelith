@@ -94,10 +94,16 @@ pub use crate::local::profil::HEISS_DECKUNG_PROMILLE;
 use crate::local::profil::Expertenprofil;
 
 /// **Wer zuerst kommt.** Festlegung des Projektinhabers: Agent vor Vision
-/// vor Sprache. Die Reihenfolge der Varianten ist die Reihenfolge der
+/// vor Sprache, und seit dem 2026-10-21 **das Netz vor allem** (Netz vor
+/// Mensch). Die Reihenfolge der Varianten ist die Reihenfolge der
 /// Zuteilung.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
 pub enum Vorrang {
+    /// ⚑ **Der Shard, den das Netz diesem Rechner für die laufende Epoche
+    /// zugeteilt hat** (Stufe 4, P8, Festlegung E7). Er kommt vor jeder
+    /// lokalen Last; der Agent bekommt den Rest. Wer sein Gerät zurück will,
+    /// sagt für die nächste Epoche weniger zu.
+    Netz,
     /// Das eigene Sprachmodell des Agenten.
     Agent,
     /// Sehen: Bilder in Worte.
@@ -109,6 +115,7 @@ pub enum Vorrang {
 impl Vorrang {
     pub const fn name(self) -> &'static str {
         match self {
+            Self::Netz => "Netz",
             Self::Agent => "Agent",
             Self::Vision => "Vision",
             Self::Sprache => "Sprache",
@@ -695,11 +702,27 @@ pub fn belegen(angebot: &Angebot, lasten: &[Last], regeln: &Regeln) -> Plan {
     // ── 3. Kerne, Karten, Abschluss ──────────────────────────────────
     let erste_eigene =
         reihe.iter().copied().find(|&i| matches!(lasten[i].gewichte, Gewichte::Eigen(_)) && belegt[i].is_some());
+    // ⚑ **Netz vor Mensch, mit Grund** (P8, Festlegung E7): Läuft ein Shard
+    //   des Netzes, sagt jede Ablehnung, wer den Platz hat und wie man ihn
+    //   zurückbekommt, statt still zu verdrängen.
+    let netz_laeuft: Option<String> = reihe
+        .iter()
+        .find(|&&j| lasten[j].vorrang == Vorrang::Netz && belegt[j].is_some())
+        .map(|&j| lasten[j].name.clone());
     let mut zuteilungen = Vec::with_capacity(lasten.len());
     for &i in &reihe {
         let l = &lasten[i];
         let ergebnis = match belegt[i].take() {
-            None => Ergebnis::Abgelehnt { grund: gruende[i].take().expect("eine abgelehnte Last hat einen Grund") },
+            None => {
+                let mut grund = gruende[i].take().expect("eine abgelehnte Last hat einen Grund");
+                if let (Some(netz), true) = (&netz_laeuft, l.vorrang != Vorrang::Netz) {
+                    grund.push_str(&format!(
+                        " Das Netz hat Vorrang ({netz}) und rechnet bis zum Ende der Epoche; wer das Gerät zurück \
+                         will, sagt für die nächste Epoche weniger zu."
+                    ));
+                }
+                Ergebnis::Abgelehnt { grund }
+            }
             Some(mut bel) => {
                 if Some(i) == erste_eigene {
                     bel.kerne += kerne_frei;
@@ -886,6 +909,34 @@ mod proben {
         // Eine Einstellung unter dem Minimum gilt als Minimum.
         let p = belegen(&angebot(10 * GIB), &[agent_mit(10)], &ohne_ruecklage());
         assert_eq!(p.belegung("agent").map(|b| b.kontext), Some(4096));
+    }
+
+    /// ⚑ **Netz vor Mensch** (P8, Festlegung E7): Der Shard des Netzes
+    /// kommt vor dem Agenten, auch wenn er zuletzt genannt ist; reicht der
+    /// Rest dem Agenten nicht, sagt die Ablehnung, wer den Platz hat und wie
+    /// man ihn zurückbekommt. Ohne Netzlast fehlt der Zusatz.
+    #[test]
+    fn das_netz_kommt_vor_dem_agenten_und_sagt_es() {
+        let netz = Last {
+            name: "Netz: gemisch, Ebene 1".into(),
+            vorrang: Vorrang::Netz,
+            gewichte: Gewichte::Eigen(gemisch().bereich(1, 2, false, true).expect("Bereich")),
+            ..agent()
+        };
+        // Der Bereich: eine Ebene (100 MiB dicht, 200 MiB Experten), der Rand
+        // mit Kopf, die Hälfte des KV-Speichers.
+        let b = gemisch().bereich(1, 2, false, true).expect("Bereich");
+        assert_eq!((b.ebenen.len(), b.rand_bytes, b.kv_je_token), (1, 20 * MIB, 512));
+        assert!(gemisch().bereich(1, 3, false, true).is_err(), "über das Modell hinaus");
+        // Das Minimum des Netzes (30 MiB Zuschlag, 2 MiB KV) passt in 60
+        // MiB, das des Agenten (44 MiB) danach nicht mehr.
+        let p = belegen(&angebot(60 * MIB), &[agent(), netz.clone()], &ohne_ruecklage());
+        assert!(p.belegung("Netz: gemisch, Ebene 1").is_some(), "das Netz kommt zuerst");
+        let grund = abgelehnt(&p, "agent");
+        assert!(grund.contains("Das Netz hat Vorrang (Netz: gemisch, Ebene 1)"), "{grund}");
+        assert!(grund.contains("für die nächste Epoche weniger zu"), "{grund}");
+        let ohne = belegen(&angebot(40 * MIB), &[agent()], &ohne_ruecklage());
+        assert!(!abgelehnt(&ohne, "agent").contains("Netz"), "ohne Netzlast kein Zusatz");
     }
 
     /// ⚑ **Vorrang: Agent vor Vision vor Sprache**, auch wenn die Eingabe

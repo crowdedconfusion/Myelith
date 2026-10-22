@@ -113,7 +113,7 @@ die heißen Experten festgehalten, und die beste mögliche Ersetzung
 ```bash
 cd COMPUTE_PIPELINE/dispatcher && cargo build --bin dispatcher && cd ../..
 cd INTEGER_LLM/runtime && cargo build --release --features cpu-simd --bin expertenprobe && cd ../..
-A=INTEGER_LLM/artifacts/myelith-35b-a3b; P=./SYSTEM/full-build/release/expertenprobe
+A=INTEGER_LLM/artifacts/raven-35b-a3b-int8; P=./SYSTEM/full-build/release/expertenprobe
 $P $A "$(cat BENCHMARKS/Inferenz/belegung/lerntext.txt)" 64 --profil profil.json --spur lern.txt
 $P $A "$(cat BENCHMARKS/Inferenz/belegung/prueftext.txt)" 64 --spur pruef.txt
 python3 BENCHMARKS/Inferenz/belegungssimulation.py --artefakt $A --profil profil.json \
@@ -180,7 +180,7 @@ $V BENCHMARKS/Inferenz/evidence_quality.py
 $V BENCHMARKS/Inferenz/evidence_benchmark.py
 ```
 
-Das Modell waehlt `INTEGER_LLM_MODEL`, Vorgabe `myelith-0.6b`.
+Das Modell waehlt `INTEGER_LLM_MODEL`, Vorgabe `sparrow-0.6b-int8`.
 
 ### Neue Artefakte vergleichen (seit 2026-09-28)
 
@@ -190,10 +190,10 @@ nachtrainiert), oder für zwei Modelle nebeneinander:
 ```bash
 V=INTEGER_LLM/calibrate/.venv/bin/python3
 # Perplexität beliebig vieler Artefakte auf denselben Folgen
-INTEGER_LLM_MODEL=myelith-8b $V -u BENCHMARKS/Inferenz/artefaktvergleich.py 4 128 \
+INTEGER_LLM_MODEL=jay-8b-int8 $V -u BENCHMARKS/Inferenz/artefaktvergleich.py 4 128 \
   INTEGER_LLM/artifacts/<a> INTEGER_LLM/artifacts/<b>
 # Rechnen zwei Speicherformen dieselbe ganze Zahl? Rückgabewert 0 nur bei IDENTISCH
-INTEGER_LLM_MODEL=myelith-8b $V -u BENCHMARKS/Inferenz/artefaktvergleich.py 4 128 \
+INTEGER_LLM_MODEL=jay-8b-int8 $V -u BENCHMARKS/Inferenz/artefaktvergleich.py 4 128 \
   INTEGER_LLM/artifacts/<quelle> INTEGER_LLM/artifacts/<gepackt> --bitgleich
 # Aufgaben mit Denken; die Chatvorlage kommt aus dem Originalordner
 $V -u BENCHMARKS/Inferenz/gsm8k.py MODELS/llm/<original> INTEGER_LLM/artifacts/<a> 50 512 <ausgabe.jsonl>

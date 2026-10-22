@@ -244,7 +244,7 @@ fn kopf_hereinlesen(
 /// will, fuer das es keinen Rueckwaertspass gibt, soll das in einem Satz
 /// erfahren und nicht in einem Backtrace.
 ///
-/// 📌 Am 2026-09-23 gemessen: `myelith-35b-a3b` ist das einzige Artefakt
+/// 📌 Am 2026-09-23 gemessen: `raven-35b-a3b-int8` ist das einzige Artefakt
 /// mit rekurrenten Ebenen (30 von 40), und es ist genau deshalb das
 /// einzige, das nicht trainiert. Die Schleife kennt `Dense` und `Moe`,
 /// also das Mischungsverhaeltnis der Experten, aber die Zustandsschicht
@@ -1798,7 +1798,7 @@ fn main() {
 /// das Werkzeug, mit dem jemand einen Trainingslauf misst.
 ///
 /// ⚑ **Beim Gemisch ist sie die wichtigste Zahl des Laufs.** Ein Lauf
-/// auf `myelith-30b-a3b` meldete „261 345 637 Gewichte bewegt", und
+/// auf `magpie-30b-a3b-int8` meldete „261 345 637 Gewichte bewegt", und
 /// das liest sich wie ein vollstaendig trainiertes Modell. Beruehrt
 /// waren vier von 128 Experten der einen trainierten Ebene: **Ein
 /// Experte, den der Router nie waehlt, bekommt nie einen Gradienten

@@ -22,10 +22,10 @@
 
 | Modell | Datensatz | Positionen | ganzzahlig | Gleitkomma | Abstand | Quelle |
 |---|---|---|---|---|---|---|
-| myelith-0.6b | wikitext-2-raw-v1 (Testsplit) | 3558 | 43,49 | 42,26 | 2,92 % | `perplexity_comparison_myelith-06b.json` |
-| myelith-30b-a3b | wikitext-2-raw-v1 (Testsplit) | 435 | 10,42 | 10,48 | -0,59 % | `perplexity_comparison_myelith-30b-a3b.json` |
-| myelith-4b | wikitext-2-raw-v1 (Testsplit) | 435 | 19,95 | 19,63 | 1,65 % | `perplexity_comparison_myelith-4b.json` |
-| myelith-8b | wikitext-2-raw-v1 (Testsplit) | 435 | 13,27 | 12,79 | 3,75 % | `perplexity_comparison_myelith-8b.json` |
+| jay-8b-int8 | wikitext-2-raw-v1 (Testsplit) | 435 | 13,27 | 12,79 | 3,75 % | `perplexity_comparison_myelith-8b.json` |
+| magpie-30b-a3b-int8 | wikitext-2-raw-v1 (Testsplit) | 435 | 10,42 | 10,48 | -0,59 % | `perplexity_comparison_myelith-30b-a3b.json` |
+| pigeon-4b-int8 | wikitext-2-raw-v1 (Testsplit) | 435 | 19,95 | 19,63 | 1,65 % | `perplexity_comparison_myelith-4b.json` |
+| sparrow-0.6b-int8 | wikitext-2-raw-v1 (Testsplit) | 3558 | 43,49 | 42,26 | 2,92 % | `perplexity_comparison_myelith-06b.json` |
 
 ## Private lokale Modelle (nicht für den Netzbetrieb zugelassen)
 
@@ -39,7 +39,7 @@ ein Knoten lädt es nicht, und der Klient zeigt es mit dem Zusatz
 
 | Modell | Grundgewichte | Lizenz der Gewichte | Parameter | Status |
 |---|---|---|---|---|
-| myelith-125b-a6b | Qwen/Qwen3.8-Flash-Next | qwen-community-1.0 | rund 125 Mrd. gesamt, rund 6 Mrd. aktiv je Token | vorgemerkt |
+| vulture-126b-a7b-int8 | Qwen/Qwen3.8-Flash-Next | qwen-community-1.0 | rund 126 Mrd. gesamt, rund 7 Mrd. aktiv je Token (mit Einbettung und Kopf; ohne die N-Gramm-Tabelle von 51 Mrd. und den MTP-Kopf) | vorgemerkt |
 
 ## Was diese Karte nicht sagt
 

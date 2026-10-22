@@ -21,7 +21,7 @@ fn verlust(logits: &[i32], ziel: usize, frac: u8) -> f64 {
 fn main() {
     let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../artifacts")
-        .join(std::env::var("MYL_POD_MODELL").unwrap_or_else(|_| "myelith-0.6b".into()));
+        .join(std::env::var("MYL_POD_MODELL").unwrap_or_else(|_| "sparrow-0.6b-int8".into()));
     let m = load_model(&dir).expect("Modell");
     println!("  Nenner | Schritte | Verlust vorher -> nachher | Argmax trifft");
     for nenner_schub in [7u32, 6, 5] {

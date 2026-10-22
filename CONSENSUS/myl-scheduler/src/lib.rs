@@ -11,7 +11,7 @@
 //! **Fünf Schritte (Anhang A.2):**
 //! 1. VRF-Seed-Ableitung aus finalisiertem Block der Vorepoche
 //! 2. Miner-Filterung nach Hardware-Klasse und Registrierungsschluss
-//! 3. Geo-Clustering unter Latenz-Constraint (konsumiert LatencyGraph aus NETWORKING)
+//! 3. Cluster je Zone aus der Registrierung (`zonenzuteilung`; keine gemessene Latenz)
 //! 4. Shard-Zuweisung innerhalb des Pods: Fisher-Yates mit Seed
 //! 5. Redundanz-Zuteilung: jedes Nachfrage-Bucket → 2 disjunkte, zonendiverse Pods
 //! 6. Stichproben-Lotterie: p·|segments| Segmente für Checker markieren
@@ -28,6 +28,7 @@ pub mod sampling;
 pub mod shard_assignment;
 pub mod trainingszuteilung;
 pub mod zonenzuteilung;
+pub mod ebenenverteilung;
 pub mod vrf_seed;
 
 pub use zonenzuteilung::{

@@ -207,7 +207,7 @@ impl std::error::Error for PlanError {}
 /// **Die Bitgleichheit hängt nicht an der Modellgröße.** Zwei Maschinen
 /// rechnen entweder dieselben Bits oder nicht; ein größeres Modell
 /// findet dieselbe Abweichung nur langsamer.
-pub const PRUEFSTAND_MODELL: &str = "myelith-0.6b";
+pub const PRUEFSTAND_MODELL: &str = "sparrow-0.6b-int8";
 
 /// Wie oft jeder Prompt im Determinismuslauf gerechnet wird.
 ///
@@ -554,7 +554,7 @@ mod tests {
     fn eine_alte_model_zeile_wird_ueberlesen() {
         let plan = TestPlan::vorgaben();
         let text = format!(
-            "prompt = {}\nsteps = {}\nshards = {}\nmodel = myelith-0.6b\nspec_sha256 = {}\n",
+            "prompt = {}\nsteps = {}\nshards = {}\nmodel = sparrow-0.6b-int8\nspec_sha256 = {}\n",
             zitieren(&plan.prompts[0]),
             plan.steps,
             plan.shards,
@@ -572,7 +572,7 @@ mod tests {
     /// verschiedene Prüfsummenverfahren nebeneinander zu führen.
     #[test]
     fn eine_alte_pruefsumme_wird_abgelehnt() {
-        let text = "prompt = x\nsteps = 8\nshards = 4\nmodel = myelith-0.6b\n\
+        let text = "prompt = x\nsteps = 8\nshards = 4\nmodel = sparrow-0.6b-int8\n\
                     spec_sha256 = 0000000000000000000000000000000000000000000000000000000000000000\n";
         assert!(matches!(
             TestPlan::parse(text),

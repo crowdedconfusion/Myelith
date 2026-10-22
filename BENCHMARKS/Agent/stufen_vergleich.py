@@ -14,7 +14,7 @@ Maschine gelten nicht (`--ab-werk`); die des Projektinhabers schalten Denken
 an und setzten Top-k auf 2.
 
     python3 -u BENCHMARKS/Agent/stufen_vergleich.py starten \\
-        --modelle myelith-35b-a3b,myelith-30b-a3b --mitschriften <ordner>
+        --modelle raven-35b-a3b-int8,magpie-30b-a3b-int8 --mitschriften <ordner>
     python3 BENCHMARKS/Agent/stufen_vergleich.py auswerten <ergebnisordner>
 
 Der Bericht landet als `results/stufen-<datum>.md` neben dem Ordner mit den
@@ -38,7 +38,7 @@ ARTEFAKTE = WURZEL / "INTEGER_LLM" / "artifacts"
 
 #: ⚑ **Das langsamste zuletzt**: Das ternaere 27B bereitet mit rund 12 Token/s
 #: vor und haelt sonst alle anderen auf.
-VORGABE_MODELLE = "myelith-35b-a3b,myelith-30b-a3b,myelith-8b,myelith-4b,myelith-27b-ternaer"
+VORGABE_MODELLE = "raven-35b-a3b-int8,magpie-30b-a3b-int8,jay-8b-int8,pigeon-4b-int8,crow-27b-ternaer"
 
 
 def saaten_ziehen(n: int) -> list[int]:

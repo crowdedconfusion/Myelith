@@ -61,7 +61,10 @@ def lade_messungen() -> dict[str, dict]:
     Modelle bleiben als Aufzeichnung unter `results/` liegen, gehoeren
     aber nicht auf die Karte der Modelle, die das Netz rechnet.
     Die Datei heisst nach dem Modellnamen ohne Punkt
-    (`myelith-0.6b` wird `perplexity_comparison_myelith-06b.json`).
+    (`sparrow-0.6b-int8` wird `perplexity_comparison_sparrow-06b-int8.json`).
+    Eine Messung von vor dem 2026-10-21 traegt den frueheren Namen
+    (`frueher` im Katalog, `perplexity_comparison_myelith-06b.json`); sie
+    bleibt als Aufzeichnung so liegen und wird darunter gefunden.
     """
     aus: dict[str, dict] = {}
     if not KATALOG.is_file():
@@ -69,10 +72,13 @@ def lade_messungen() -> dict[str, dict]:
     katalog = json.loads(KATALOG.read_text(encoding="utf-8"))
     # ⛔️ Private Modelle rechnet das Netz nicht; sie haben ihre eigene Rubrik.
     for modell in sorted(k for k in katalog if not k.startswith("_") and not privat(katalog[k])):
-        kurz = modell.replace(".", "")
-        vergleich = ERGEBNISSE / f"perplexity_comparison_{kurz}.json"
-        grundlinie = ERGEBNISSE / f"baseline_wikitext2_{kurz}.json"
-        if not vergleich.is_file():
+        for name in (modell, katalog[modell].get("frueher", "")):
+            kurz = name.replace(".", "")
+            vergleich = ERGEBNISSE / f"perplexity_comparison_{kurz}.json"
+            grundlinie = ERGEBNISSE / f"baseline_wikitext2_{kurz}.json"
+            if name and vergleich.is_file():
+                break
+        else:
             continue
         try:
             d = json.loads(vergleich.read_text(encoding="utf-8"))

@@ -825,7 +825,7 @@ fn eingabeinhalt(innen: usize, text: &str) -> String {
 ///
 /// ⚑ **Der Name und nicht der Pfad.** Gefragt war, welches Modell
 /// gewaehlt ist; ein Pfad, der von vorne abgeschnitten in eine Zeile
-/// passt, beantwortet das schlechter als das Wort `myelith-4b`. Wo es
+/// passt, beantwortet das schlechter als das Wort `pigeon-4b-int8`. Wo es
 /// liegt, sagt `/settings`.
 ///
 /// ⚑ **Und welche Werkzeugkiste**, denn die entscheidet, was der Agent
@@ -2141,6 +2141,11 @@ fn eigenes_modell_bauen(stand: &mut Stand) -> bool {
             return abbrechen("Nichts gebaut.");
         }
     };
+    // ⛔️ Fund 584: ohne Gewichte keine Zahl und kein Name, also auch kein Bau.
+    if e.ohne_gewichte {
+        warnen("✗ Im Ordner liegen keine Gewichtsdateien (safetensors); ein Link auf Hugging Face holt sie.");
+        return abbrechen("Nichts gebaut.");
+    }
     let mrd = |x: f64| format!("{x:.2}").replace('.', ",");
     println!();
     println!("  ✓ Freigegeben: {} ({})", e.bauart, e.architektur.join(", "));
@@ -2190,46 +2195,64 @@ fn eigenes_modell_bauen(stand: &mut Stand) -> bool {
     };
 
     // 4. Der Name, passend zum Format: Ein Name auf `-int4` baut in vier Bit
-    //    (so liest ihn das Bauskript), jeder andere in int8.
+    //    (so liest ihn das Bauskript), einer auf `-int8` in int8.
+    //    ⚑ **Ein Name ist ein Tier und ein Anhaengsel** (Festlegung des
+    //    Projektinhabers, 2026-10-21): Ein Projektmodell traegt sein Tier; bei
+    //    einem eigenen gibt der Nutzer ein Wort, das Anhaengsel kommt dazu, und
+    //    ohne Eingabe gilt das Tier, das das Skript per Zufall gezogen hat.
+    let form = if vierbit { "-int4" } else { "-int8" };
+    let anhang = e.anhaengsel.iter().find(|a| a.ends_with(form)).cloned().unwrap_or_default();
     let passende: Vec<&myl_client::eigenbau::Vorschlag> = e.vorschlaege.iter().filter(|v| v.vierbit == vierbit).collect();
     let mut punkte: Vec<wahl::Punkt> = passende
         .iter()
         .map(|v| wahl::Punkt {
             titel: v.name.clone(),
-            hinweis: if v.grund.is_empty() { "nach dem Schema".into() } else { v.grund.clone() },
+            hinweis: match (v.grund.is_empty(), e.projekt.is_empty()) {
+                (false, _) => v.grund.clone(),
+                (true, true) => "ein Tier per Zufall".into(),
+                (true, false) => "der Name des Projektmodells".into(),
+            },
             offen: v.grund.is_empty(),
         })
         .collect();
     if e.projekt.is_empty() {
         punkte.push(wahl::Punkt {
             titel: "Eigenen Namen eingeben".into(),
-            hinweis: if vierbit {
-                "Kleinbuchstaben, Ziffern, Punkt und Bindestrich; endet auf -int4 (sonst wird es angehaengt)".into()
-            } else {
-                "Kleinbuchstaben, Ziffern, Punkt und Bindestrich; nicht auf -int4".into()
-            },
+            hinweis: format!("ein Wort, etwa ein Tier; -{anhang} kommt dazu"),
             offen: true,
         });
     }
     let Some(start) = wahl::erster_offener(&punkte) else {
         return abbrechen("Kein Name geht: Das Artefakt liegt schon da. Nichts gebaut.");
     };
-    let Some(i) = wahl::waehlen_ab("Wie soll es heissen? (Schema myelith-<gesamt>b[-a<aktiv>b][-int4])", &punkte, start, t) else {
+    let titel = if e.projekt.is_empty() {
+        format!("Wie soll es heissen? (ein Name und -{anhang})")
+    } else {
+        "Wie soll es heissen?".to_string()
+    };
+    let Some(i) = wahl::waehlen_ab(&titel, &punkte, start, t) else {
         return abbrechen("Nichts gebaut.");
     };
     let name = if i < passende.len() {
         passende[i].name.clone()
     } else {
         loop {
-            let Some(n) = zeile_lesen(stand, "  Name, Esc bricht ab:") else {
+            let Some(n) = zeile_lesen(stand, "  Name (leer: das Tier per Zufall), Esc bricht ab:") else {
                 return abbrechen("Nichts gebaut.");
             };
-            let mut n = n.trim().to_string();
-            if vierbit && !n.ends_with("-int4") {
-                n.push_str("-int4");
-                println!("  Im Format INT4 heisst es {n}.");
-            } else if !vierbit && n.ends_with("-int4") {
-                warnen(&format!("{n}: Ein Name auf -int4 baut in vier Bit; fuer INT8 einen anderen waehlen."));
+            let mut n = n.trim().to_lowercase();
+            if n.is_empty() {
+                match passende.first() {
+                    Some(v) => break v.name.clone(),
+                    None => continue,
+                }
+            }
+            if !n.ends_with("-int4") && !n.ends_with("-int8") {
+                n = format!("{n}-{anhang}");
+                println!("  Es heisst {n}.");
+            }
+            if n.ends_with("-int4") != vierbit {
+                warnen(&format!("{n}: Die Speicherform im Namen passt nicht zum gewaehlten Format."));
                 continue;
             }
             match eigenbau::erkunden(&wurzel, &quelle, Some(&n), &|_| {}) {
@@ -3023,7 +3046,7 @@ fn auftrag_fahren_als(stand: &mut Stand, auftrag: &str, art: Auftragsart) -> Opt
 // ── Module ──────────────────────────────────────────────────────────
 
 /// **Die Kennung des geladenen Modells**: der Name seines Verzeichnisses,
-/// etwa `myelith-35b-a3b`.
+/// etwa `raven-35b-a3b-int8`.
 ///
 /// 📌 **Nicht der Anzeigename.** Hier stand `stand.name`, und der heisst
 /// in der Konsole „Myelith 35B-A3B"; ein Modul, das Modelle nach ihrem
@@ -4459,9 +4482,9 @@ mod tests {
     /// abgeschnittener Pfad beantwortet das schlechter als ein Name.
     #[test]
     fn die_fusszeile_nennt_modell_und_kiste() {
-        let z = fusszeile("auto mode", "myelith-4b", "Base", true, None, None, crate::schirm::BLOCKBREITE - 2);
+        let z = fusszeile("auto mode", "pigeon-4b-int8", "Base", true, None, None, crate::schirm::BLOCKBREITE - 2);
         assert!(z.contains("auto mode"), "der Modus fehlt: {z}");
-        assert!(z.contains("myelith-4b"), "das Modell fehlt: {z}");
+        assert!(z.contains("pigeon-4b-int8"), "das Modell fehlt: {z}");
         assert!(z.contains("Base"), "die Werkzeugkiste fehlt: {z}");
         // ⚑ Geprueft wird der Teil **vor** dem Hinweis: Der heisst
         // `/hilfe` und traegt selbst einen Schraegstrich.
@@ -4497,8 +4520,8 @@ mod tests {
     /// 2026-09-11.
     #[test]
     fn ohne_schreiberlaubnis_steht_es_in_der_fusszeile() {
-        let mit = fusszeile("auto mode", "Myelith 4B", "Base", true, None, None, crate::schirm::BLOCKBREITE - 2);
-        let ohne = fusszeile("auto mode", "Myelith 4B", "Base", false, None, None, crate::schirm::BLOCKBREITE - 2);
+        let mit = fusszeile("auto mode", "Pigeon 4B - INT8", "Base", true, None, None, crate::schirm::BLOCKBREITE - 2);
+        let ohne = fusszeile("auto mode", "Pigeon 4B - INT8", "Base", false, None, None, crate::schirm::BLOCKBREITE - 2);
         assert!(!mit.contains("nur lesen"), "{mit}");
         assert!(ohne.contains("nur lesen"), "{ohne}");
     }
@@ -4510,7 +4533,7 @@ mod tests {
     /// `MoveUp(3)` nicht mehr in den Rahmen, sondern auf seine Kante.
     #[test]
     fn eine_lange_fusszeile_passt_in_den_rahmen() {
-        let lang = "myelith-30b-a3b-langer-name-aus-einem-versuch";
+        let lang = "magpie-30b-a3b-int8-langer-name-aus-einem-versuch";
         for breite in 8..90 {
             let z = fusszeile("auto mode", lang, "Advanced", true, Some(100), None, breite);
             assert!(
@@ -4527,7 +4550,7 @@ mod tests {
     /// und ist keine. **Was nicht passt, faellt ganz weg.**
     #[test]
     fn im_schmalen_fenster_bleibt_der_modus() {
-        let z = fusszeile("manual mode", "myelith-4b", "Advanced", true, Some(7), None, 20);
+        let z = fusszeile("manual mode", "pigeon-4b-int8", "Advanced", true, Some(7), None, 20);
         // Hinter der KI-Marke, die vor allem steht.
         assert!(z.starts_with("KI · ⇧⇥ manual mode"), "{z}");
         assert!(!z.contains('…'), "es wurde abgeschnitten statt weggelassen: {z}");
@@ -4561,7 +4584,7 @@ mod tests {
     #[test]
     fn die_ki_marke_steht_vorn_und_faellt_nie_weg() {
         for breite in [1, 5, 20, crate::schirm::BLOCKBREITE - 2] {
-            let z = fusszeile("auto mode", "myelith-4b", "Advanced", true, Some(7), None, breite);
+            let z = fusszeile("auto mode", "pigeon-4b-int8", "Advanced", true, Some(7), None, breite);
             assert!(z.starts_with("KI"), "Breite {breite}: {z:?}");
         }
     }
@@ -4572,13 +4595,13 @@ mod tests {
     /// `/seed` mit Argumenten ist ein Befehl, kein Auftrag an das Modell.
     #[test]
     fn die_saat_steht_in_der_fusszeile_und_seed_ist_ein_befehl() {
-        let mit = fusszeile("auto mode", "myelith-4b", "Base", true, None, Some("Saat fest 42".into()), crate::schirm::BLOCKBREITE - 2);
+        let mit = fusszeile("auto mode", "pigeon-4b-int8", "Base", true, None, Some("Saat fest 42".into()), crate::schirm::BLOCKBREITE - 2);
         assert!(mit.contains("Saat fest 42"), "{mit}");
-        let ohne = fusszeile("auto mode", "myelith-4b", "Base", true, None, None, crate::schirm::BLOCKBREITE - 2);
+        let ohne = fusszeile("auto mode", "pigeon-4b-int8", "Base", true, None, None, crate::schirm::BLOCKBREITE - 2);
         assert!(!ohne.contains("Saat"), "{ohne}");
         // Schmal: Die Saat faellt vor dem Modellnamen weg.
-        let schmal = fusszeile("auto mode", "myelith-4b", "Base", true, None, Some("Saat fest 42".into()), ohne.chars().count());
-        assert!(!schmal.contains("Saat") && schmal.contains("myelith-4b"), "{schmal}");
+        let schmal = fusszeile("auto mode", "pigeon-4b-int8", "Base", true, None, Some("Saat fest 42".into()), ohne.chars().count());
+        assert!(!schmal.contains("Saat") && schmal.contains("pigeon-4b-int8"), "{schmal}");
         for zeile in ["/seed", "/seed 1234", "/seed 1234 always", "/seed again", "/seed random", "/seed 1234 immer", "/seed nochmal", "/saat zufall"] {
             assert_eq!(befehl_zu(zeile), Some(Befehlsart::Saat), "{zeile}");
         }
@@ -4586,11 +4609,11 @@ mod tests {
 
     #[test]
     fn der_kontext_steht_zuletzt_in_der_fusszeile() {
-        let breit = fusszeile("auto mode", "myelith-4b", "Base", true, Some(31), None, crate::schirm::BLOCKBREITE - 2);
+        let breit = fusszeile("auto mode", "pigeon-4b-int8", "Base", true, Some(31), None, crate::schirm::BLOCKBREITE - 2);
         assert!(breit.ends_with("Kontext 31 %"), "{breit}");
-        let ohne = fusszeile("auto mode", "myelith-4b", "Base", true, None, None, crate::schirm::BLOCKBREITE - 2);
+        let ohne = fusszeile("auto mode", "pigeon-4b-int8", "Base", true, None, None, crate::schirm::BLOCKBREITE - 2);
         assert!(!ohne.contains("Kontext"), "{ohne}");
-        let schmal = fusszeile("auto mode", "myelith-4b", "Base", true, Some(31), None, ohne.chars().count());
+        let schmal = fusszeile("auto mode", "pigeon-4b-int8", "Base", true, Some(31), None, ohne.chars().count());
         assert_eq!(schmal, ohne, "wird es eng, faellt der Kontext vor allem anderen weg");
     }
 

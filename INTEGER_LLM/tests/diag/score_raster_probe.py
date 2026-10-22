@@ -9,8 +9,8 @@ Der SDPA-Ersatz wird wie zuvor zuerst gegen das Original validiert.
 """
 import json, math, sys, torch
 from pathlib import Path
-REPO = Path("/Users/entity/Desktop/Code/Code/Artificial/Myelith/Repository/INTEGER_LLM")
-sys.path.insert(0, str(REPO/"calibrate")); sys.path.insert(0, str(REPO/"eval"))
+REPO = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO/"calibrate")); sys.path.insert(0, str(REPO.parent / "BENCHMARKS" / "Inferenz"))
 from src.loader import load_reference_model
 from wikitext_common import MODEL_DIR, MODEL_NAME, select_sequences
 MAXF = 20

@@ -84,7 +84,7 @@ fn verlauf_findet_den_mitschnitt_im_arbeitsverzeichnis() {
     myl_local_agent::verlauf::schreiben(
         hier.path(),
         "probe-hier",
-        "myelith-0.6b",
+        "sparrow-0.6b-int8",
         &[
             ("user".to_string(), "Eine Frage.".to_string()),
             ("assistant".to_string(), "Eine Antwort.".to_string()),
@@ -214,7 +214,7 @@ fn der_plan_ohne_artefakt_zeigt_das_angebot() {
 /// Dispatcher nicht.
 #[test]
 fn der_plan_fuer_das_ankermodell() {
-    let pfad = concat!(env!("CARGO_MANIFEST_DIR"), "/../../INTEGER_LLM/artifacts/myelith-0.6b");
+    let pfad = concat!(env!("CARGO_MANIFEST_DIR"), "/../../INTEGER_LLM/artifacts/sparrow-0.6b-int8");
     if std::env::var_os("MYL_OHNE_ARTEFAKTE").is_some() {
         eprintln!("SKIP (MYL_OHNE_ARTEFAKTE gesetzt): {pfad}");
         return;
@@ -229,7 +229,7 @@ fn der_plan_fuer_das_ankermodell() {
         .expect("das gebaute Binaerprogramm laesst sich starten");
     let text = String::from_utf8_lossy(&a.stdout);
     assert_eq!(a.status.code(), Some(0), "{text}");
-    assert!(text.contains("Agent    myelith-0.6b:") && text.contains("Kontext 40960"), "{text}");
+    assert!(text.contains("Agent    sparrow-0.6b-int8:") && text.contains("Kontext 40960"), "{text}");
 }
 
 /// ⚑ **`myl eichen` ohne Artefakt und ohne Sinne misst nichts**, sagt es

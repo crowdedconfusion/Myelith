@@ -71,9 +71,35 @@ if [ "$IN_DER_SHELL" = nein ]; then
   ARGUMENTE="--in-der-shell"
   [ "$AKTUALISIEREN" = ja ] && ARGUMENTE="$ARGUMENTE --aktualisieren"
   [ "$NUR_PRUEFEN" = ja ] && ARGUMENTE="$ARGUMENTE --pruefen"
+  # ⚑ **Ohne Netz aus dem Werkzeugvorrat**, wenn er fuer dieses System da
+  # ist (2026-10-21). Er traegt die Quellen der Eingaben aus `flake.lock` und
+  # jede Abhaengigkeit der Umgebung; eingespielt wird er einmal als root.
+  # Liegt er da, ist die Bauumgebung aber nicht im Speicher, sagt das Skript
+  # den Befehl und hoert auf, statt ins Netz zu gehen.
+  OFFLINE=""
+  case "$(uname -m)" in
+    x86_64)        NIXSYSTEM=x86_64-linux ;;
+    aarch64|arm64) NIXSYSTEM=aarch64-linux ;;
+    *)             NIXSYSTEM="" ;;
+  esac
+  NIXVORRAT="$WURZEL/SYSTEM/werkzeug-vorrat/nix/$NIXSYSTEM"
+  if [ -n "$NIXSYSTEM" ] && [ -f "$NIXVORRAT/UMGEBUNG" ]; then
+    if [ ! -e "$(cat "$NIXVORRAT/UMGEBUNG")" ]; then
+      echo "── Der Nix-Vorrat liegt bereit, ist aber noch nicht eingespielt. Einmal, als root:" >&2
+      echo "      sudo sh $WURZEL/SYSTEM/install/nix-vorrat-einspielen.sh" >&2
+      exit 1
+    fi
+    OFFLINE="--offline"
+    echo "   Nix: Bauumgebung aus dem Werkzeugvorrat, Netz aus"
+  fi
+  # ⚑ **Ein Profil als Wurzel fuer die Speicherbereinigung.** Die Programme
+  # sind gegen Bibliotheken im Nix-Speicher gelinkt; ohne Wurzel naehme
+  # `nix-collect-garbage` sie weg, und das Fenster startete nicht mehr.
+  PROFIL="${XDG_STATE_HOME:-$HOME/.local/state}/myelith/bauumgebung"
+  mkdir -p "$(dirname "$PROFIL")"
   echo "── Bauumgebung aus flake.nix holen, beim ersten Mal dauert das"
   # shellcheck disable=SC2086
-  exec nix $MERKMALE develop "$WURZEL" --command sh "$0" $ARGUMENTE
+  exec nix $MERKMALE develop $OFFLINE --profile "$PROFIL" "$WURZEL" --command sh "$0" $ARGUMENTE
 fi
 
 # ── Ab hier laeuft es in der Umgebung ───────────────────────────────
@@ -100,16 +126,18 @@ echo "   cargo: $(cargo --version)"
 # Teil ist damit auf allen Systemen derselbe Quelltext** und nicht
 # dreimal nachgebaut.
 #
-# ⚠️ **Nix selbst braucht trotzdem seinen Speicher.** `nix develop` holt
-# die Werkzeugkette, wenn sie nicht schon im Store liegt; der Vorrat
-# deckt die **Fremdkisten**, nicht die Nix-Eingaben. Wer wirklich ohne
-# Netz baut, hat den Store warm oder benutzt `--in-der-shell` mit einer
-# vorhandenen Werkzeugkette.
+# ⚑ **Die Nix-Eingaben deckt der Werkzeugvorrat** (oben, seit dem
+# 2026-10-21); dieser hier deckt die Fremdkisten. Ohne Werkzeugvorrat holt
+# `nix develop` die Umgebung aus dem Netz, wenn sie nicht schon im Speicher
+# liegt.
 CARGO_NETZ=""
 ARCHIVE=$(find "$WURZEL/SYSTEM/crates-vorrat" -maxdepth 1 -name '*.crate' 2>/dev/null | wc -l | tr -d " ")
 if [ "$ARCHIVE" -gt 0 ]; then
   if [ ! -d "$WURZEL/SYSTEM/crates-lager/vendor" ] \
-     || [ "$WURZEL/SYSTEM/crates-vorrat" -nt "$WURZEL/SYSTEM/crates-lager/vendor" ]; then
+     || [ ! -f "$WURZEL/SYSTEM/crates-lager/cargo-home/config.toml" ] \
+     || [ "$WURZEL/SYSTEM/crates-vorrat" -nt "$WURZEL/SYSTEM/crates-lager/vendor" ] \
+     || { [ -d "$WURZEL/SYSTEM/crates-vorrat-lokal" ] \
+          && [ "$WURZEL/SYSTEM/crates-vorrat-lokal" -nt "$WURZEL/SYSTEM/crates-lager/vendor" ]; }; then
     echo "   Vorrat: $ARCHIVE Archive werden ausgepackt"
     python3 "$WURZEL/SYSTEM/install/vorrat.py" auspacken >/dev/null || {
       echo "   FEHLER beim Auspacken des Vorrats" >&2
@@ -188,7 +216,8 @@ IFS=$ALTES_IFS
 
 BIN="$HOME/.local/bin"
 ANWENDUNGEN="$HOME/.local/share/applications"
-mkdir -p "$BIN" "$ANWENDUNGEN"
+SYMBOLE="$HOME/.local/share/icons/hicolor/512x512/apps"
+mkdir -p "$BIN" "$ANWENDUNGEN" "$SYMBOLE"
 ALTES_IFS=$IFS
 IFS='
 '
@@ -211,17 +240,18 @@ IFS=$ALTES_IFS
 # ⚑ **Ein Eintrag im Anwendungsmenue**, denn ein Fenster, das man nur
 # aus einer Shell starten kann, ist fuer die meisten kein Programm.
 #
-# ⚑ **`Icon` traegt einen absoluten Pfad in diesen Baum**, und deshalb
-# wird der Eintrag bei jedem Einrichten neu geschrieben statt einmal:
-# Wer das Repositorium verschiebt, richtet einmal neu ein, und das
-# Symbol steht wieder.
+# ⚑ **Das Symbol zieht mit um und wird beim Namen genannt.** Bis zum
+# 2026-10-21 trug `Icon` einen absoluten Pfad in diesen Baum; wer ihn
+# verschob oder loeschte, verlor das Symbol ohne ein Wort. Jetzt liegt es
+# im Symbolordner des Nutzers, und der Eintrag nennt nur `myelith`.
+cp "$WURZEL/CLIENT/myl-oberflaeche/icons/icon.png" "$SYMBOLE/myelith.png"
 cat > "$ANWENDUNGEN/myelith.desktop" <<EOF
 [Desktop Entry]
 Type=Application
 Name=Myelith
 Comment=Ganzzahlige Inferenz als Konsensarbeit
 Exec=$BIN/myl-oberflaeche
-Icon=$WURZEL/CLIENT/myl-oberflaeche/icons/icon.png
+Icon=myelith
 Terminal=false
 Categories=Development;Utility;
 EOF

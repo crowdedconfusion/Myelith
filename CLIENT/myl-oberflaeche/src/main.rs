@@ -3951,7 +3951,7 @@ fn mit_zugriffshinweis(fehler: String, pfad: &str) -> String {
 ///
 /// 📌 **Ohne das scheitert „Modell laden" aus dem Finder heraus**, und
 /// zwar mit `No such file or directory`: In den Einstellungen steht
-/// `INTEGER_LLM/artifacts/myelith-4b`, und das ist relativ zu einem
+/// `INTEGER_LLM/artifacts/pigeon-4b-int8`, und das ist relativ zu einem
 /// Arbeitsverzeichnis, das dort `/` ist. Ein absoluter Pfad in den
 /// Einstellungen bliebe unberuehrt.
 fn artefakt_absolut(pfad: &str) -> String {

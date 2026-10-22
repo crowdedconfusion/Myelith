@@ -2,7 +2,7 @@
 
 > **theta_v-Version:** 0.22.0
 > **Komponentenversion:** 0.117.0 (`kernels` 0.79.0, `runtime` 0.85.0)
-> **Ankermodell der Layer- und E2E-Vektoren:** `myelith-0.6b` (Qwen3-0.6B, 28 Ebenen)
+> **Ankermodell der Layer- und E2E-Vektoren:** `sparrow-0.6b-int8` (Qwen3-0.6B, 28 Ebenen)
 > **Zweck:** Eigenständiges Artefakt, gegen das fremde Implementierungen
 > sich prüfen können — ohne Kenntnis des Projektinneren.
 
@@ -157,7 +157,7 @@ conformance/
 └── vectors/
     ├── manifest.json  Ankermodell und theta_v_hash der Vektoren
     ├── op/            6 Op-Level-Vektoren (Vorwärts und Rückwärts)
-    ├── layer/         28 Layer-Level-Vektoren (myelith-0.6b)
+    ├── layer/         28 Layer-Level-Vektoren (sparrow-0.6b-int8)
     ├── e2e/           3 E2E-Level-Vektoren
     ├── training/      7 Vektoren des Trainingspfades
     └── moe/           4 Vektoren des Gemisch-Routings

@@ -217,8 +217,8 @@ mod proben {
 
     #[test]
     fn liest_das_eingestellte_artefakt() {
-        let j = "{\n  \"modell\": {\n    \"artefakt\": \"INTEGER_LLM/artifacts/myelith-4b\",\n    \"token\": 64\n  }\n}";
-        assert_eq!(eingestelltes_artefakt(j).as_deref(), Some("INTEGER_LLM/artifacts/myelith-4b"));
+        let j = "{\n  \"modell\": {\n    \"artefakt\": \"INTEGER_LLM/artifacts/pigeon-4b-int8\",\n    \"token\": 64\n  }\n}";
+        assert_eq!(eingestelltes_artefakt(j).as_deref(), Some("INTEGER_LLM/artifacts/pigeon-4b-int8"));
         assert_eq!(eingestelltes_artefakt("{\"modell\":{\"artefakt\":\"/daten/x\"}}").as_deref(), Some("/daten/x"));
         assert_eq!(eingestelltes_artefakt("{}"), None);
         assert_eq!(eingestelltes_artefakt("{\"artefakt\": null}"), None);

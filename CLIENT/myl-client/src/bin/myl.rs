@@ -419,7 +419,7 @@ fn artefakt_und_rest<'a>(
             (Some(a.clone()), &args[1..])
         }
         // 📌 **Gegen die Wurzel aufgeloest, seit dem 2026-09-10.** In
-        // den Einstellungen steht `INTEGER_LLM/artifacts/myelith-4b`,
+        // den Einstellungen steht `INTEGER_LLM/artifacts/pigeon-4b-int8`,
         // und das ist relativ. Aus einem anderen Arbeitsverzeichnis
         // heraus meldete `myl` deshalb „es fehlt das
         // Artefaktverzeichnis", obwohl es dalag; die Oberflaeche loeste
@@ -695,6 +695,11 @@ fn plan_befehl(args: &[String]) -> i32 {
         profil: None,
     };
     let mut lasten = Vec::new();
+    // ⚑ **Netz vor Mensch** (Stufe 4, P8): Rechnet dieser Rechner einen Shard
+    //   für das Netz, steht er im Plan zuerst.
+    if let Some(netz) = myl_client::mining::netzlast().and_then(|nl| myl_client::mining::netzlast_im_plan(&nl)) {
+        lasten.push(netz);
+    }
     match &artefakt {
         Some(a) => match bedarf::Modellbedarf::aus_artefakt(std::path::Path::new(a)) {
             Ok(b) => lasten.push(plan::Last {
@@ -849,7 +854,25 @@ fn eichen_befehl(args: &[String]) -> i32 {
             text.lines().rev().find(|z| z.starts_with('{')).and_then(|z| serde_json::from_str::<Eichung>(z).ok())
         });
         match messung {
-            Some(m) => {
+            Some(mut m) => {
+                // ⚑ **Die Ebenenzeit des eigenen Artefakts** (Stufe 4 des
+                //   Dispatchers): im eigenen Prozess gemessen, denn die
+                //   Spitze des Speichers ist dann schon abgelesen.
+                if let Some(a) = artefakt.as_deref().filter(|a| std::path::Path::new(a).file_name().is_some_and(|n| n.to_string_lossy() == last)) {
+                    match integer_llm_runtime::loader::load_model(std::path::Path::new(a))
+                        .and_then(|modell| integer_llm_runtime::ebenenzeit::messen(&modell))
+                    {
+                        Ok(z) => {
+                            m.ebenenzeit_us = Some(z.je_ebene_us);
+                            m.rechenweg = Some(integer_llm_runtime::rechenwege::vorhanden().join("+"));
+                            println!(
+                                "{last}: Ebenenzeit {} µs je Ebene (ein Token {} µs, {} Ebenen; mit Kopf {} µs, der Kopf wie {} Ebenen)",
+                                z.je_ebene_us, z.token_us, z.ebenen, z.mit_kopf_us, z.kopf_ebenenzeiten
+                            );
+                        }
+                        Err(f) => println!("{last}: Ebenenzeit nicht gemessen: {f}"),
+                    }
+                }
                 let gib = |b: u64| myl_dispatcher::local::plan::gib(b);
                 println!(
                     "{last}: Spitze {}, fest {}, in {} ms",

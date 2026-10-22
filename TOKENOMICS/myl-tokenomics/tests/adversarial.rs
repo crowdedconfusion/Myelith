@@ -64,6 +64,7 @@ fn qwen05b() -> ModellProfil {
         num_heads: 14,
         num_kv_heads: 2,
         head_dim: 64,
+        ..ModellProfil::LEER
     }
 }
 
@@ -495,6 +496,7 @@ fn ein_modell_ohne_arbeit_wird_abgelehnt() {
         num_heads: 0,
         num_kv_heads: 0,
         head_dim: 0,
+        ..ModellProfil::LEER
     };
     let z = ShardZuschnitt {
         layer_start: 0,

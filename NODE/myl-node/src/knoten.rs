@@ -302,6 +302,63 @@ pub struct Knoten {
     /// „noch kein Mesh" sieht im Protokoll sonst aus wie eine
     /// verschickte Stimme, und die Runde hängt scheinbar grundlos.
     konsens_ausgang: Vec<myl_consensus::bft::Konsensnachricht>,
+    /// ⚑ **Stufe 4 des Dispatchers** (2026-10-22): der Schlüssel, unter dem
+    /// dieser Knoten als Miner angemeldet ist (sein Konsensschlüssel), oder
+    /// `None`, wenn er nicht rechnet und nicht zusagt.
+    netzschluessel: Option<crate::schluessel::Konsensschluessel>,
+    /// Die eigene Netzadresse, wie sie in der Anmeldung steht: Unter ihr
+    /// finden andere Mitglieder diesen Knoten für Zeitprobe und Dateien.
+    netzadresse: myl_types::latency_attest::PeerIdBytes,
+    /// Die nächste Nummer für Transaktionen des Netzschlüssels, mindestens
+    /// die des Kontos im Zustand.
+    netz_nonce: u64,
+    /// Was zuletzt eingereicht wurde, bei welcher Höhe: gegen Wiederholung
+    /// in jeder Aufnahme, solange der Block noch aussteht.
+    netz_gesendet: std::collections::BTreeMap<&'static str, u64>,
+    /// Der Shard aus der Kette (P7).
+    shardfuehrung: Option<crate::shardfuehrung::Shardfuehrung>,
+    /// Die Zeugnisse über Fristen (6.8).
+    fristsammlung: crate::frist::Fristsammlung,
+    /// Laufende Messungen je Gegenüber.
+    messungen: std::collections::BTreeMap<libp2p::PeerId, Messung>,
+    /// Wer in welcher Epoche schon gemessen ist: Wer noch fehlt, wird bei
+    /// der nächsten Aufnahme wieder gefragt (ein Shard, der gerade lädt,
+    /// antwortet erst später).
+    gemessen: std::collections::BTreeSet<(u64, myl_types::ids::MinerId)>,
+    /// Das Holen fehlender Dateien für die nächste Epoche (P11).
+    nachholen: Option<Nachholen>,
+    /// Transaktionen aus Ereignissen, die bei der nächsten Aufnahme
+    /// verbreitet werden.
+    ausstehend: Vec<myl_consensus::block::Transaktion>,
+    /// Wann die nächste Zustandsaufnahme fällig ist, über die Aufrufe von
+    /// [`Knoten::laufe_fuer`] hinweg.
+    naechste_aufnahme: Option<tokio::time::Instant>,
+    /// Die verbundenen Gegenstellen, für das Nachfordern reihum (Fund 588).
+    gegenstellen: Vec<libp2p::PeerId>,
+    /// Wer beim nächsten Nachfordern ohne Vorzug gefragt wird.
+    nachfrage_reihum: usize,
+    /// Seit wann die laufende Nachforderung läuft.
+    nachforderung_seit: Option<std::time::Instant>,
+}
+
+/// Eine laufende Fristmessung: erst die Pings, dann die Zeitprobe.
+#[derive(Debug, Clone)]
+struct Messung {
+    pod: u32,
+    mitglied: myl_types::ids::MinerId,
+    ab: std::time::Instant,
+    /// Der kürzeste Ping bisher.
+    ping_us: Option<u64>,
+    pings: u32,
+}
+
+/// Das Holen fehlender Dateien, mit seinen Quellen.
+#[derive(Debug)]
+struct Nachholen {
+    holer: crate::dateidienst::Nachholer,
+    quellen: Vec<libp2p::PeerId>,
+    quelle: usize,
+    laeuft: bool,
 }
 
 impl Knoten {
@@ -445,9 +502,9 @@ impl Knoten {
         // Und der Zustand wird **nicht** gespeichert, sondern
         // hergeleitet. Ein abgeleiteter Wert, den man zusätzlich
         // ablegt, ist eine zweite Wahrheit.
-        let mut kette = Kette::probestand();
+        let mut kette = Kette::im_netz(konfig.netz);
         if let Some(pfad) = konfig.kettendatei.clone() {
-            match crate::speicher::Kettenspeicher::oeffnen(&pfad, Kette::startwert()) {
+            match crate::speicher::Kettenspeicher::oeffnen(&pfad, konfig.netz.startwert_hash()) {
                 Ok((mut speicher, anlauf)) => {
                     let vorhanden = anlauf.anzahl;
                     let mut uebernommen = 0usize;
@@ -513,7 +570,56 @@ impl Knoten {
             }
         }
 
+        // ⚑ **Stufe 4** (2026-10-22): Wer zusagt oder rechnet, braucht den
+        //   Schlüssel, unter dem er als Miner angemeldet ist.
+        let netzschluessel = match (&konfig.modellzusage, &konfig.shard, &konfig.konsensschluesseldatei) {
+            (None, None, _) => None,
+            (_, _, Some(pfad)) => Some(
+                crate::schluessel::Konsensschluessel::aus_datei(pfad)
+                    .map_err(|e| KnotenFehler::Ortsleitung(format!("{}: {e:?}", pfad.display())))?,
+            ),
+            (_, _, None) => {
+                return Err(KnotenFehler::Ortsleitung(
+                    "--modellzusage und --shard-programm brauchen --konsensschluessel".into(),
+                ))
+            }
+        };
+        let shardfuehrung = match (&konfig.shard, &konfig.konsensschluesseldatei) {
+            (Some(sk), Some(pfad)) if !sk.programm.as_os_str().is_empty() => {
+                Some(crate::shardfuehrung::Shardfuehrung::neu(crate::shardfuehrung::Shardstart {
+                    programm: sk.programm.clone(),
+                    artefakte: sk.artefakte.clone(),
+                    konsensschluessel: pfad.clone(),
+                    training: sk.training,
+                    netzlast: konfig.protokollverzeichnis.join(myl_store::teilablage::NETZLAST_DATEI),
+                }))
+            }
+            _ => None,
+        };
+        let netzadresse = myl_net::netzadresse(&identitaet).unwrap_or(myl_types::latency_attest::PeerIdBytes([0; 32]));
+        protokoll.schreibe(
+            Eintrag::neu("netz")
+                .text("netz", konfig.netz.name)
+                .text("artefakt", konfig.netz.artefakt)
+                .wahr("zusage", konfig.modellzusage.is_some())
+                .wahr("shard", shardfuehrung.is_some()),
+        );
+
         Ok(Self {
+            netzschluessel,
+            netzadresse,
+            netz_nonce: 0,
+            netz_gesendet: std::collections::BTreeMap::new(),
+            shardfuehrung,
+            fristsammlung: crate::frist::Fristsammlung::default(),
+            messungen: std::collections::BTreeMap::new(),
+            gemessen: std::collections::BTreeSet::new(),
+            nachholen: None,
+            ausstehend: Vec::new(),
+            naechste_aufnahme: None,
+            gegenstellen: Vec::new(),
+            nachfrage_reihum: 0,
+            nachforderung_seit: None,
             konfig,
             // ⚑ **Als Erstes, noch vor allem Warten** (Fund 140). Ab
             // hier ist jedes Signal aufgehoben.
@@ -980,7 +1086,12 @@ impl Knoten {
     pub async fn laufe_fuer(&mut self, dauer: Duration) {
         let ende = tokio::time::Instant::now() + dauer;
         let takt = Duration::from_secs(self.konfig.aufnahme_sekunden.max(1));
-        let mut naechste_aufnahme = tokio::time::Instant::now() + takt;
+        // 📌 **Die Fälligkeit überlebt den Aufruf** (2026-10-22, gefunden im
+        //    Netzlauf): Hier stand „jetzt plus Takt“ bei jedem Aufruf. Wer
+        //    den Knoten in Scheiben kürzer als der Takt fuhr, bekam nie eine
+        //    Aufnahme, und mit ihr fiel die ganze Netzarbeit aus: keine
+        //    Anmeldung, keine Zusage, kein Shard.
+        let mut naechste_aufnahme = *self.naechste_aufnahme.get_or_insert_with(|| tokio::time::Instant::now() + takt);
         let sendetakt = self.konfig.testverkehr_sekunden.map(|s| Duration::from_secs(s.max(1)));
         let mut naechster_versand = sendetakt.map(|t| tokio::time::Instant::now() + t);
         loop {
@@ -991,6 +1102,7 @@ impl Knoten {
             if jetzt >= naechste_aufnahme {
                 self.aufnahme().await;
                 naechste_aufnahme = jetzt + takt;
+                self.naechste_aufnahme = Some(naechste_aufnahme);
             }
             if let (Some(faellig), Some(t)) = (naechster_versand, sendetakt) {
                 if jetzt >= faellig {
@@ -1398,7 +1510,7 @@ impl Knoten {
             betrag: 1_000 + self.testverkehr_zaehler * 100,
         };
         let tx = match Transaktion::signiere(
-            &crate::kette::Kette::startwert(),
+            &self.kette.netzwert(),
             &schluessel,
             self.testverkehr_zaehler,
             anweisung,
@@ -1544,7 +1656,7 @@ impl Knoten {
             let Some(tx) = crate::schluessel::abrechnung_unterschreiben(
                 self.kontoschluessel.as_ref(),
                 &self.konfig.name,
-                &crate::kette::Kette::startwert(),
+                &self.kette.netzwert(),
                 nonce,
                 anweisung,
             ) else {
@@ -1572,6 +1684,14 @@ impl Knoten {
     /// es steht**. Ohne sie ließe sich „zwanzig Minuten kam nichts" nicht
     /// von „zwanzig Minuten lief nichts" unterscheiden.
     pub async fn aufnahme(&mut self) {
+        // ⚑ Eine Nachforderung, die nach zehn Sekunden nicht zurück ist,
+        //   gilt als verloren (Fund 588); dann die nächste Gegenstelle.
+        if self.nachforderung_laeuft && self.nachforderung_seit.is_some_and(|t| t.elapsed() > Duration::from_secs(10)) {
+            self.nachforderung_laeuft = false;
+            self.nachforderung_seit = None;
+        }
+        self.weiter_nachfordern(None);
+        self.netzarbeit().await;
         let z = self.zustand().await;
         let mut eintrag = Eintrag::neu("aufnahme")
             .zahl("peers", z.peers as i64)
@@ -1723,6 +1843,7 @@ impl Knoten {
             .is_ok()
         {
             self.nachforderung_laeuft = true;
+            self.nachforderung_seit = Some(std::time::Instant::now());
             self.protokoll.schreibe(
                 Eintrag::neu("nachschub_angefordert")
                     .text("bei", von.to_string())
@@ -1731,6 +1852,36 @@ impl Knoten {
                     .zahl("eigene_hoehe", self.kette.hoehe() as i64),
             );
         }
+    }
+
+    /// ⚑ **Weiter nachfordern, solange eine höhere Kette gehört wurde**
+    /// (Fund 588, 2026-10-22, gefunden im Netzlauf).
+    ///
+    /// 📌 **Bis dahin forderte ein Knoten nur nach, wenn ein Block über
+    /// Gossip kam, und nur bei dem, der ihn weiterreichte.** Kamen Blöcke
+    /// in falscher Folge und war der Weiterreicher selbst zurück, antwortete
+    /// er mit nichts, und danach fragte niemand mehr: Der Erzeuger hatte
+    /// alle Blöcke schon verbreitet. Im Netzlauf blieb so die Hälfte der
+    /// Knoten bei Höhe 600 von 3660 stehen, mit allen Blöcken im Ohr.
+    ///
+    /// Jetzt: Wer etwas geliefert hat, wird weiter gefragt; wer nichts hatte,
+    /// macht Platz für die nächste verbundene Gegenstelle, reihum.
+    fn weiter_nachfordern(&mut self, bevorzugt: Option<libp2p::PeerId>) {
+        if self.nachforderung_laeuft || self.hoechste_gehoerte <= self.kette.hoehe() {
+            return;
+        }
+        let peer = match bevorzugt {
+            Some(p) => p,
+            None => {
+                if self.gegenstellen.is_empty() {
+                    return;
+                }
+                self.nachfrage_reihum = self.nachfrage_reihum.wrapping_add(1);
+                self.gegenstellen[self.nachfrage_reihum % self.gegenstellen.len()]
+            }
+        };
+        let ziel = self.hoechste_gehoerte;
+        self.fordere_nach(peer, ziel);
     }
 
     /// Verarbeitet eine empfangene Nachricht: Blöcke in die Kette,
@@ -1982,6 +2133,49 @@ impl Knoten {
                             }
                         }
                     }
+                    // ⚑ **Eine Zeitprobe an den eigenen Shard** (Stufe 4,
+                    //   Frist): weitergereicht in einer eigenen Aufgabe, denn
+                    //   der Shard rechnet; die Zeit nimmt, wer fragt.
+                    Some(Nachforderung::Zeitprobe { positionen }) => {
+                        match self.shardfuehrung.as_mut().and_then(|f| f.adresse()) {
+                            Some(adresse) => {
+                                let sender = self.kommandos.clone();
+                                tokio::task::spawn_blocking(move || {
+                                    let antwort = match myl_types::zeitprobe::fragen(
+                                        adresse,
+                                        positionen.min(crate::frist::PROBE_POSITIONEN),
+                                        Duration::from_secs(120),
+                                    ) {
+                                        Ok(abdruck) => Nachlieferung::Zeitprobe(abdruck),
+                                        Err(_) => Nachlieferung::Nichts,
+                                    };
+                                    if let Some(bytes) = antwort.als_bytes() {
+                                        let _ = sender.send(NodeCommand::Antwort { marke, daten: bytes });
+                                    }
+                                });
+                                None
+                            }
+                            None => Some((Nachlieferung::Nichts, 0)),
+                        }
+                    }
+                    Some(Nachforderung::Ping) => Some((Nachlieferung::Pong, 0)),
+                    // ⚑ **Ein Stück einer Datei des Netzmodells** (P11): nur,
+                    //   was das eigene Manifest nennt.
+                    Some(Nachforderung::Datei { name, ab, laenge }) => {
+                        let stueck = self.konfig.shard.as_ref().and_then(|sk| {
+                            let manifest = crate::dateidienst::manifest_lesen(&sk.artefakte).ok()?;
+                            crate::dateidienst::stueck_lesen(&sk.artefakte, &manifest, &name, ab, laenge)
+                        });
+                        match stueck {
+                            Some((daten, groesse)) => Some((Nachlieferung::Datei { name, ab, daten, groesse }, 0)),
+                            None => Some((Nachlieferung::Nichts, 0)),
+                        }
+                    }
+                    // ⚑ **Ein Fristzeugnis eines anderen Mitglieds** (6.8).
+                    Some(Nachforderung::Fristzeugnis { epoche, pod, gemeldeter, zeugnis }) => {
+                        self.fristzeugnis_aufnehmen(epoche, pod, gemeldeter, zeugnis);
+                        Some((Nachlieferung::Vermerkt, 0))
+                    }
                     // Unlesbare Anfrage: trotzdem antworten. Schweigen
                     // ließe den Fragenden auf eine Zeitüberschreitung
                     // warten, die ihm nichts sagt.
@@ -2001,6 +2195,18 @@ impl Knoten {
             }
             // Die nachgeforderten Blöcke sind da.
             NodeEvent::AntwortEingegangen { von, daten } => {
+                // ⚑ **Antworten der Netzarbeit** (Stufe 4) berühren die
+                //   Blocknachforderung nicht, wie die Inferenzantwort.
+                match Nachlieferung::aus_bytes(&daten) {
+                    Some(Nachlieferung::Pong) => return self.pong_erhalten(von),
+                    Some(Nachlieferung::Zeitprobe(_)) => return self.zeitprobe_erhalten(von),
+                    Some(Nachlieferung::Datei { name, ab, daten, groesse }) => {
+                        return self.stueck_erhalten(von, &name, ab, &daten, groesse)
+                    }
+                    Some(Nachlieferung::Vermerkt) => return,
+                    Some(Nachlieferung::Nichts) if self.ist_netzarbeit(&von) => return self.nichts_erhalten(von),
+                    _ => {}
+                }
                 let vorher_lief = self.nachforderung_laeuft;
                 self.nachforderung_laeuft = false;
                 let vorher = self.kette.hoehe();
@@ -2042,6 +2248,8 @@ impl Knoten {
                         }
                     }
                 }
+                self.nachforderung_seit = None;
+                self.weiter_nachfordern((angenommen > 0).then_some(von));
                 Eintrag::neu("nachschub_erhalten")
                     .text("von", von.to_string())
                     .zahl("angenommen", angenommen as i64)
@@ -2049,8 +2257,14 @@ impl Knoten {
                     .zahl("hoehe_vorher", vorher as i64)
                     .zahl("hoehe_nachher", self.kette.hoehe() as i64)
             }
+            NodeEvent::AnfrageGescheitert { an, grund } if self.ist_netzarbeit(&an) => {
+                self.nichts_erhalten(an);
+                Eintrag::neu("netzarbeit_gescheitert").text("an", an.to_string()).text("grund", grund)
+            }
             NodeEvent::AnfrageGescheitert { an, grund } => {
                 self.nachforderung_laeuft = false;
+                self.nachforderung_seit = None;
+                self.weiter_nachfordern(None);
                 Eintrag::neu("nachschub_gescheitert")
                     .text("an", an.to_string())
                     .text("grund", grund)
@@ -2081,15 +2295,21 @@ impl Knoten {
                 )
                 .zahl("bytes", bytes as i64)
                 .text("grund", grund.als_text()),
-            NodeEvent::Verbunden { peer, addr, eingehend } => Eintrag::neu("verbunden")
+            NodeEvent::Verbunden { peer, addr, eingehend } => {
+                if !self.gegenstellen.contains(&peer) {
+                    self.gegenstellen.push(peer);
+                }
+                Eintrag::neu("verbunden")
                 .text("gegenstelle", peer.to_string())
                 .text("addr", addr.to_string())
                 .wahr("eingehend", eingehend)
                 .wahr("vermittelt", ist_vermittelt(&addr))
-                .wahr("quic", ist_quic(&addr)),
-            NodeEvent::Getrennt { peer, grund } => Eintrag::neu("getrennt")
-                .text("gegenstelle", peer.to_string())
-                .text("grund", grund),
+                .wahr("quic", ist_quic(&addr))
+            }
+            NodeEvent::Getrennt { peer, grund } => {
+                self.gegenstellen.retain(|p| *p != peer);
+                Eintrag::neu("getrennt").text("gegenstelle", peer.to_string()).text("grund", grund)
+            }
             // Hier wird die Verbindungsgrenze sichtbar. Ohne diesen
             // Eintrag wäre eine abgewiesene Verbindung stumm, und
             // „niemand kommt an" ließe sich nicht von „ich lasse
@@ -2206,6 +2426,415 @@ impl Beendigungswache {
                 // enden. Ein falsches „beendet" waere schlimmer als ein
                 // Knoten, der weiterlaeuft.
                 std::future::pending::<()>().await;
+            }
+        }
+    }
+}
+
+/// ⚑ **Die Arbeit für das Netz** (Stufe 4 des Dispatchers, 2026-10-22):
+/// Anmeldung und Zusage, der Shard aus der Kette (P7), die Fristmessung
+/// (6.8) und das Holen fehlender Dateien (P11). Alles läuft bei der
+/// Zustandsaufnahme und in den Ereignissen; nichts davon blockiert die
+/// Blockverarbeitung.
+impl Knoten {
+    /// Die Kennung, unter der dieser Knoten als Miner angemeldet ist.
+    fn miner_ich(&self) -> Option<myl_types::ids::MinerId> {
+        self.netzschluessel.as_ref().map(|k| k.kennung())
+    }
+
+    /// Die Kennung als Miner, wenn dieser Knoten zusagt oder rechnet.
+    pub fn miner_kennung(&self) -> Option<myl_types::ids::MinerId> {
+        self.miner_ich()
+    }
+
+    /// Der Shard, den dieser Knoten gerade aus der Kette führt.
+    pub fn shardauftrag(&self) -> Option<crate::shardfuehrung::Shardauftrag> {
+        self.shardfuehrung.as_ref().and_then(|f| f.auftrag()).cloned()
+    }
+
+    /// Die Prozessnummer dieses Shards.
+    pub fn shard_pid(&self) -> Option<u32> {
+        self.shardfuehrung.as_ref().and_then(|f| f.pid())
+    }
+
+    /// Je Aufnahme: Zusage pflegen, Shard abgleichen, messen, holen.
+    async fn netzarbeit(&mut self) {
+        let Some(ich) = self.miner_ich() else {
+            return;
+        };
+        self.zusage_pflegen(&ich);
+        self.shard_abgleichen(&ich);
+        self.fristen_messen(&ich);
+        self.dateien_nachholen(&ich);
+        for tx in std::mem::take(&mut self.ausstehend) {
+            self.tx_verbreiten(tx);
+        }
+    }
+
+    /// Unterschreibt mit dem Netzschlüssel und verbreitet; die Nummer zählt
+    /// vom Konto im Zustand oder von der zuletzt vergebenen, je nachdem,
+    /// welche höher ist.
+    fn netz_tx(&mut self, anweisung: myl_consensus::block::Anweisung) -> Option<myl_consensus::block::Transaktion> {
+        let k = self.netzschluessel.as_ref()?;
+        let im_zustand = self.kette.zustand().account(&k.adresse()).nonce;
+        let nonce = self.netz_nonce.max(im_zustand);
+        let tx = k.transaktion(&self.kette.netzwert(), nonce, anweisung).ok()?;
+        self.netz_nonce = nonce + 1;
+        Some(tx)
+    }
+
+    fn tx_verbreiten(&mut self, tx: myl_consensus::block::Transaktion) {
+        let Ok(daten) = borsh::to_vec(&tx) else {
+            return;
+        };
+        // ⚑ Der Erzeuger hört sein eigenes Gossip nicht; er nimmt die
+        //   Transaktion selbst auf.
+        if self.konfig.erzeugt_bloecke {
+            self.kette.aufnehmen(tx);
+        }
+        let _ = self.kommandos.send(NodeCommand::Publish { topic: GossipTopic::Transactions, data: daten, result: None });
+    }
+
+    /// Ob für `was` bei der laufenden Höhe schon etwas unterwegs ist; sonst
+    /// vermerken. Ein Block mit der Transaktion kommt in wenigen Höhen.
+    fn schon_gesendet(&mut self, was: &'static str) -> bool {
+        let hoehe = self.kette.hoehe();
+        if self.netz_gesendet.get(was).is_some_and(|h| hoehe < h + 8) {
+            return true;
+        }
+        self.netz_gesendet.insert(was, hoehe);
+        false
+    }
+
+    /// ⚑ **Anmeldung und Zusage** (Festlegung des Projektinhabers: kein Pod
+    /// ohne Zusage, der Knoten reicht sie selbst ein). Angemeldet wird, wer
+    /// es noch nicht ist; eingereicht, wenn die neueste Zusage im Zustand
+    /// nicht die konfigurierte ist, für die nächste Epoche.
+    fn zusage_pflegen(&mut self, ich: &myl_types::ids::MinerId) {
+        let Some(soll) = self.konfig.modellzusage else {
+            return;
+        };
+        let soll = myl_types::zusage::Modellzusage { abdruck: self.konfig.netz.podmodell.abdruck, ..soll };
+        if !self.kette.zustand().miner.contains_key(ich) {
+            if self.schon_gesendet("anmeldung") {
+                return;
+            }
+            let anweisung = myl_consensus::block::Anweisung::MinerAnmelden {
+                hardware: myl_types::miner::HardwareClass::MediumGpu,
+                zone: self.konfig.zone,
+                netzadresse: self.netzadresse,
+            };
+            if let Some(tx) = self.netz_tx(anweisung) {
+                self.tx_verbreiten(tx);
+                self.protokoll.schreibe(Eintrag::neu("miner_anmeldung").text("zone", self.konfig.zone.name()));
+            }
+            return;
+        }
+        let neueste = self.kette.zustand().zusagen.get(ich).and_then(|l| l.last()).and_then(|z| z.modell(&soll.abdruck).copied());
+        if neueste == Some(soll) || self.schon_gesendet("zusage") {
+            return;
+        }
+        let ab = myl_types::ids::EpochId(self.kette.zustand().epoch.0 + 1);
+        let mut zusage = myl_types::zusage::Kapazitaetszusage::neu(*ich, ab, self.zugesagt_bytes).mit_modell(soll);
+        let Some(k) = self.netzschluessel.as_ref() else {
+            return;
+        };
+        if k.zusage_unterschreiben(&mut zusage).is_err() {
+            return;
+        }
+        if let Some(tx) = self.netz_tx(myl_consensus::block::Anweisung::ZusageEinreichen { zusage }) {
+            self.tx_verbreiten(tx);
+            self.protokoll.schreibe(
+                Eintrag::neu("zusage_eingereicht")
+                    .zahl("ab_epoche", ab.0 as i64)
+                    .zahl("ebenen", soll.ebenen_hoechstens as i64)
+                    .zahl("ebenenzeit_us", soll.ebenenzeit_us.min(i64::MAX as u64) as i64),
+            );
+        }
+    }
+
+    /// ⚑ **Der Shard aus der Kette** (P7).
+    fn shard_abgleichen(&mut self, ich: &myl_types::ids::MinerId) {
+        let mut soll = crate::shardfuehrung::auftrag_der_epoche(self.kette.zustand(), ich);
+        // ⚑ **Erst starten, wenn die Dateien da sind** (P11): Fehlt dem
+        //   Bereich etwas, holt der Dateidienst es zuerst; ein Shard, der
+        //   beim Laden abbricht, würde sonst jede Aufnahme neu gestartet.
+        if let (Some(a), Some(sk)) = (soll.as_ref(), self.konfig.shard.as_ref()) {
+            let fehlt = crate::dateidienst::fehlende(&sk.artefakte, a.von, a.bis, a.mit_einbettung(), a.mit_kopf())
+                .map(|f| f.len())
+                .unwrap_or(0);
+            if fehlt > 0 {
+                if !self.schon_gesendet("shard_wartet") {
+                    self.protokoll.schreibe(Eintrag::neu("shard_wartet_auf_dateien").zahl("fehlen", fehlt as i64));
+                }
+                soll = None;
+            }
+        }
+        let Some(f) = self.shardfuehrung.as_mut() else {
+            return;
+        };
+        match f.abgleichen(soll) {
+            Ok(crate::shardfuehrung::Wechsel::Unveraendert) => {}
+            Ok(crate::shardfuehrung::Wechsel::Gestartet(a)) => self.protokoll.schreibe(
+                Eintrag::neu("shard_gestartet")
+                    .zahl("epoche", a.epoche as i64)
+                    .zahl("pod", a.pod as i64)
+                    .zahl("position", a.position as i64)
+                    .zahl("von", a.von as i64)
+                    .zahl("bis", a.bis as i64),
+            ),
+            Ok(crate::shardfuehrung::Wechsel::Beendet) => self.protokoll.schreibe(Eintrag::neu("shard_beendet")),
+            Err(e) => self.protokoll.schreibe(Eintrag::neu("shard_nicht_gestartet").text("grund", e)),
+        }
+    }
+
+    /// ⚑ **Je Epoche jedes andere rechnende Mitglied einmal messen** (6.8):
+    /// erst die Pings, dann die Zeitprobe ([`Self::pong_erhalten`]).
+    ///
+    /// ⚑ **Jedes Mitglied des Pods misst, auch die Reserve**: Sie rechnet
+    /// nicht und kann gerade deshalb bezeugen. Wer noch nicht gemessen ist,
+    /// wird bei jeder Aufnahme wieder gefragt, solange keine Messung an ihn
+    /// läuft; ein Shard, der beim ersten Versuch noch lädt, entgeht der
+    /// Frist so nicht.
+    fn fristen_messen(&mut self, ich: &myl_types::ids::MinerId) {
+        let epoche = self.kette.zustand().epoch.0;
+        self.gemessen.retain(|(e, _)| *e == epoche);
+        let laufend: Vec<myl_types::ids::MinerId> = self.messungen.values().map(|m| m.mitglied).collect();
+        // Eine Messung, die nach einer halben Minute nicht zurück ist, gilt
+        // als verloren und darf neu gestellt werden.
+        self.messungen.retain(|_, m| m.ab.elapsed() < Duration::from_secs(30));
+        for (pod, m) in crate::frist::zu_messen(self.kette.zustand(), ich) {
+            if self.gemessen.contains(&(epoche, m.miner_id)) || laufend.contains(&m.miner_id) {
+                continue;
+            }
+            let Ok(an) = myl_net::peer_id_aus_bytes(&m.netzadresse) else {
+                continue;
+            };
+            let Some(daten) = Nachforderung::Ping.als_bytes() else {
+                continue;
+            };
+            self.messungen.insert(an, Messung { pod, mitglied: m.miner_id, ab: std::time::Instant::now(), ping_us: None, pings: 0 });
+            let _ = self.kommandos.send(NodeCommand::Anfrage { an, daten });
+        }
+    }
+
+    /// Gehört ein Gegenüber zu einer laufenden Messung oder ist es die
+    /// laufende Quelle des Nachholens?
+    fn ist_netzarbeit(&self, peer: &libp2p::PeerId) -> bool {
+        self.messungen.contains_key(peer)
+            || self.nachholen.as_ref().is_some_and(|n| n.laeuft && n.quellen.get(n.quelle) == Some(peer))
+    }
+
+    /// Ein Ping ist zurück: den nächsten stellen oder, nach dem letzten,
+    /// die Zeitprobe (Fund 590: der kürzeste zählt).
+    fn pong_erhalten(&mut self, von: libp2p::PeerId) {
+        let Some(m) = self.messungen.get_mut(&von) else {
+            return;
+        };
+        if m.pings >= crate::frist::PINGS_JE_MESSUNG {
+            return;
+        }
+        let dauer = m.ab.elapsed().as_micros() as u64;
+        m.ping_us = Some(m.ping_us.map_or(dauer, |p| p.min(dauer)));
+        m.pings += 1;
+        m.ab = std::time::Instant::now();
+        let naechste = if m.pings < crate::frist::PINGS_JE_MESSUNG {
+            Nachforderung::Ping
+        } else {
+            Nachforderung::Zeitprobe { positionen: crate::frist::PROBE_POSITIONEN }
+        };
+        if let Some(daten) = naechste.als_bytes() {
+            let _ = self.kommandos.send(NodeCommand::Anfrage { an: von, daten });
+        }
+    }
+
+    /// Die Zeitprobe ist zurück: gegen die Frist halten und, wenn darüber,
+    /// ein Zeugnis unterschreiben und verteilen.
+    fn zeitprobe_erhalten(&mut self, von: libp2p::PeerId) {
+        let Some(m) = self.messungen.remove(&von) else {
+            return;
+        };
+        let (Some(ping_us), true) = (m.ping_us, m.pings >= crate::frist::PINGS_JE_MESSUNG) else {
+            return;
+        };
+        let probe_us = m.ab.elapsed().as_micros() as u64;
+        // Ohne Rechenzeit keine Messung (Fund 590): nicht vermerkt, also bei
+        // der nächsten Aufnahme wieder gefragt.
+        let Some(gemessen) = crate::frist::gemessen_je_token(probe_us, ping_us, crate::frist::PROBE_POSITIONEN) else {
+            self.protokoll.schreibe(
+                Eintrag::neu("fristmessung_verworfen")
+                    .text("mitglied", hex::encode(&m.mitglied.as_bytes()[..8]))
+                    .zahl("probe_us", probe_us.min(i64::MAX as u64) as i64)
+                    .zahl("ping_us", ping_us.min(i64::MAX as u64) as i64),
+            );
+            return;
+        };
+        self.gemessen.insert((self.kette.zustand().epoch.0, m.mitglied));
+        let zustand = self.kette.zustand();
+        let Some(frist) = crate::frist::frist_des_mitglieds(zustand, m.pod, &m.mitglied) else {
+            return;
+        };
+        self.protokoll.schreibe(
+            Eintrag::neu("fristmessung")
+                .text("mitglied", hex::encode(&m.mitglied.as_bytes()[..8]))
+                .zahl("gemessen_us", gemessen.min(i64::MAX as u64) as i64)
+                .zahl("frist_us", frist.min(i64::MAX as u64) as i64),
+        );
+        if gemessen <= frist {
+            return;
+        }
+        let epoche = zustand.epoch;
+        let Some(zeugnis) = self.netzschluessel.as_ref().and_then(|k| k.fristzeugnis(epoche, m.pod, &m.mitglied, gemessen).ok()) else {
+            return;
+        };
+        // An die übrigen Mitglieder des Pods, und in die eigene Sammlung.
+        let zuteilung = crate::kette::Kette::zuteilung_der_laufenden_epoche(zustand);
+        let empfaenger: Vec<myl_types::latency_attest::PeerIdBytes> = zuteilung
+            .pods
+            .iter()
+            .find(|p| p.pod_index == m.pod)
+            .map(|p| p.mitglieder().filter(|x| x.miner_id != m.mitglied).map(|x| x.netzadresse).collect())
+            .unwrap_or_default();
+        let nachricht = Nachforderung::Fristzeugnis { epoche, pod: m.pod, gemeldeter: m.mitglied, zeugnis: zeugnis.clone() };
+        if let Some(daten) = nachricht.als_bytes() {
+            for adr in empfaenger.iter().filter(|a| **a != self.netzadresse) {
+                if let Ok(an) = myl_net::peer_id_aus_bytes(adr) {
+                    let _ = self.kommandos.send(NodeCommand::Anfrage { an, daten: daten.clone() });
+                }
+            }
+        }
+        self.fristzeugnis_aufnehmen(epoche, m.pod, m.mitglied, zeugnis);
+    }
+
+    /// Ein Fristzeugnis in die Sammlung; trägt die Meldung und ist dieser
+    /// Knoten einer ihrer Zeugen, reicht er sie ein.
+    fn fristzeugnis_aufnehmen(
+        &mut self,
+        epoche: myl_types::ids::EpochId,
+        pod: u32,
+        gemeldeter: myl_types::ids::MinerId,
+        zeugnis: myl_types::fristmeldung::Fristzeugnis,
+    ) {
+        let Some(meldung) = self.fristsammlung.aufnehmen(self.kette.zustand(), epoche, pod, gemeldeter, zeugnis) else {
+            return;
+        };
+        let ich = self.miner_ich();
+        if !meldung.zeugnisse.iter().any(|z| Some(z.zeuge) == ich) {
+            return;
+        }
+        self.protokoll.schreibe(
+            Eintrag::neu("fristmeldung")
+                .text("gemeldeter", hex::encode(&meldung.gemeldeter.as_bytes()[..8]))
+                .zahl("zeugen", meldung.zeugnisse.len() as i64),
+        );
+        if let Some(tx) = self.netz_tx(myl_consensus::block::Anweisung::FristverstossEinreichen { meldung }) {
+            self.ausstehend.push(tx);
+        }
+    }
+
+    /// ⚑ **Dateien für die nächste Epoche holen** (P11): Ist der Bereich der
+    /// nächsten Epoche bekannt und fehlen Dateien, holt der Knoten sie Stück
+    /// für Stück von den Mitgliedern seines nächsten Pods.
+    fn dateien_nachholen(&mut self, ich: &myl_types::ids::MinerId) {
+        let Some(sk) = self.konfig.shard.clone() else {
+            return;
+        };
+        if self.nachholen.as_ref().is_some_and(|n| n.laeuft) {
+            return;
+        }
+        // ⚑ **Erst die laufende Epoche, dann die nächste**: Fehlt dem
+        //   Bereich, den dieser Knoten jetzt rechnen soll, eine Datei,
+        //   wartet sein Shard darauf.
+        let jetzt = self.kette.zustand().epoch.0;
+        let mut naechster = self.kette.zustand().clone();
+        naechster.epoch = myl_types::ids::EpochId(jetzt + 1);
+        naechster.epochensaat = naechster.epochensaat_naechste;
+        let mut ziel = None;
+        for (epoche, z) in [(jetzt, self.kette.zustand().clone()), (jetzt + 1, naechster)] {
+            let Some(a) = crate::shardfuehrung::auftrag_der_epoche(&z, ich) else {
+                continue;
+            };
+            let Ok(fehlt) = crate::dateidienst::fehlende(&sk.artefakte, a.von, a.bis, a.mit_einbettung(), a.mit_kopf()) else {
+                continue;
+            };
+            if !fehlt.is_empty() {
+                ziel = Some((epoche, z, fehlt));
+                break;
+            }
+        }
+        let Some((naechste, z, fehlt)) = ziel else {
+            return;
+        };
+        let zuteilung = crate::kette::Kette::zuteilung_der_laufenden_epoche(&z);
+        let quellen: Vec<libp2p::PeerId> = zuteilung
+            .pods
+            .iter()
+            .flat_map(|p| p.mitglieder())
+            .filter(|m| m.miner_id != *ich)
+            .filter_map(|m| myl_net::peer_id_aus_bytes(&m.netzadresse).ok())
+            .collect();
+        if quellen.is_empty() {
+            return;
+        }
+        self.protokoll.schreibe(Eintrag::neu("dateien_holen").zahl("epoche", naechste as i64).zahl("fehlen", fehlt.len() as i64));
+        self.nachholen = Some(Nachholen {
+            holer: crate::dateidienst::Nachholer::neu(sk.artefakte, fehlt),
+            quellen,
+            quelle: 0,
+            laeuft: false,
+        });
+        self.naechstes_stueck();
+    }
+
+    /// Fordert das nächste Stück bei der laufenden Quelle an.
+    fn naechstes_stueck(&mut self) {
+        let Some(n) = self.nachholen.as_mut() else {
+            return;
+        };
+        let Some((name, ab, laenge)) = n.holer.naechste_anfrage() else {
+            n.laeuft = false;
+            return;
+        };
+        let Some(an) = n.quellen.get(n.quelle).copied() else {
+            n.laeuft = false;
+            return;
+        };
+        if let Some(daten) = (Nachforderung::Datei { name, ab, laenge }).als_bytes() {
+            n.laeuft = true;
+            let _ = self.kommandos.send(NodeCommand::Anfrage { an, daten });
+        }
+    }
+
+    /// Ein Stück ist angekommen.
+    fn stueck_erhalten(&mut self, von: libp2p::PeerId, name: &str, ab: u64, daten: &[u8], groesse: u64) {
+        let Some(n) = self.nachholen.as_mut() else {
+            return;
+        };
+        if n.quellen.get(n.quelle) != Some(&von) {
+            return;
+        }
+        match n.holer.stueck_erhalten(name, ab, daten, groesse) {
+            crate::dateidienst::Stueckergebnis::Fertig(d) => {
+                self.protokoll.schreibe(Eintrag::neu("datei_geholt").text("datei", d));
+            }
+            crate::dateidienst::Stueckergebnis::Verworfen(d) => {
+                // ⚑ Eine falsche Lieferung: diese Quelle übergehen.
+                n.quelle += 1;
+                self.protokoll.schreibe(Eintrag::neu("datei_verworfen").text("datei", d).text("von", von.to_string()));
+            }
+            _ => {}
+        }
+        self.naechstes_stueck();
+    }
+
+    /// Ein Gegenüber der Netzarbeit hatte nichts oder antwortete nicht.
+    fn nichts_erhalten(&mut self, von: libp2p::PeerId) {
+        self.messungen.remove(&von);
+        if let Some(n) = self.nachholen.as_mut() {
+            if n.laeuft && n.quellen.get(n.quelle) == Some(&von) {
+                n.holer.quelle_hat_nicht();
+                n.quelle += 1;
+                self.naechstes_stueck();
             }
         }
     }

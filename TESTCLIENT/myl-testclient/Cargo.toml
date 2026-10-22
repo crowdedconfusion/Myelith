@@ -1,6 +1,6 @@
 [package]
 name = "myl-testclient"
-version = "0.43.2"
+version = "0.44.0"
 edition = "2021"
 # ⚑ 1.88 und nicht 1.85 wie die uebrigen Crates, und der Grund liegt
 # nicht im eigenen Code: Ueber libp2p haengt hier die `icu_*`-Kette
@@ -135,6 +135,9 @@ opt-level = 2
 opt-level = 2
 
 [dev-dependencies]
+# ⚑ Das 0,6B rechnet in den Netzproben (Pruefnetz); nur hier, nie im
+# ausgelieferten Programm (INTEGER_LLM/runtime/src/netzfreigabe.rs).
+integer-llm-runtime = { path = "../../INTEGER_LLM/runtime", features = ["pruefnetz"] }
 # ⚑ **Zum Lesen der Antwort im Naht-Test.** Eine Antwort mit `find` und
 # Indizes zu zerlegen ist ein zweiter Zerleger, und der erste Entwurf des
 # Tests hat sich damit prompt vertan: Er las den halben Rumpf als

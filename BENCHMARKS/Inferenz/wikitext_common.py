@@ -36,7 +36,7 @@ sys.path.insert(0, str(REPO / "calibrate"))
 from src.model_configs import get_export_model_config  # noqa: E402
 
 MODEL_ENV = "INTEGER_LLM_MODEL"
-DEFAULT_MODEL = "myelith-0.6b"
+DEFAULT_MODEL = "sparrow-0.6b-int8"
 
 # Modellwahl identisch zu calibrate/src/main.py: dieselbe Umgebungsvariable,
 # dieselbe Vorgabe, dieselbe verifizierte Konfigurationsquelle. Zwei
@@ -58,7 +58,7 @@ ARTIFACTS_DIR = REPO / "artifacts" / MODEL_NAME
 # Hier stand `MODEL_NAME == DEFAULT_MODEL`. `baseline_wikitext2.json`
 # ohne Endung ist aber die **historische Datei von Qwen2.5-0,5B**, und
 # genau deshalb traegt sie keine. Als das Vorgabemodell am 2026-09-11
-# auf `myelith-0.6b` wechselte, schrieb der erste Grundlinienlauf in
+# auf `sparrow-0.6b-int8` wechselte, schrieb der erste Grundlinienlauf in
 # genau diese Datei und **ueberschrieb die zitierte Messung**.
 #
 # ⚑ **Der Name gehoert dem Modell, nicht der Vorgabe.** `myelith-0.5b`

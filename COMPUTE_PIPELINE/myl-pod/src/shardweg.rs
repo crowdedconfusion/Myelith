@@ -54,7 +54,6 @@
 //!    dass **irgendwer** gerechnet hat. Im Stern kennt kein Shard die
 //!    Adresse eines anderen.
 
-use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::sync::Arc;
 use std::time::Duration;
@@ -679,6 +678,14 @@ impl Shardstelle {
         strom.set_read_timeout(Some(self.frist)).map_err(|e| e.to_string())?;
         strom.set_write_timeout(Some(self.frist)).map_err(|e| e.to_string())?;
         let roh = empfangen(&mut strom)?;
+        // ⚑ **Die Zeitprobe vor jeder anderen Anfrage** (Stufe 4, Frist,
+        //   2026-10-22): an ihrer Marke erkannt, beschrieben in
+        //   `myl_types::zeitprobe`, damit der Knoten sie stellen kann, ohne
+        //   diese Kiste einzubinden.
+        if let Some(positionen) = myl_types::zeitprobe::als_anfrage(&roh) {
+            let abdruck = self.shard.zeitprobe(positionen as usize);
+            return senden(&mut strom, &myl_types::zeitprobe::antwort(abdruck));
+        }
         let anfrage: Shardanfrage =
             borsh::from_slice(&roh).map_err(|e| format!("unlesbare Anfrage: {e}"))?;
         // ⚑ **Erst das Training, dann die Inferenz.** `bedienen_training`
@@ -707,33 +714,24 @@ impl Shardstelle {
 }
 
 /// Längenpräfix und Nutzlast.
+///
+/// ⚑ **Der Rahmen steht seit dem 2026-10-22 in `myl_types::zeitprobe`**, weil
+/// der Knoten die Zeitprobe in demselben Rahmen stellt. Zwei Fassungen
+/// desselben Rahmens liefen auseinander.
 fn senden(strom: &mut TcpStream, nutzlast: &[u8]) -> Result<(), String> {
-    if nutzlast.len() > MAX_NACHRICHT {
-        return Err(format!("Nachricht mit {} Bytes ist zu gross", nutzlast.len()));
-    }
-    let laenge = (nutzlast.len() as u32).to_le_bytes();
-    strom.write_all(&laenge).map_err(|e| e.to_string())?;
-    strom.write_all(nutzlast).map_err(|e| e.to_string())?;
-    strom.flush().map_err(|e| e.to_string())
+    myl_types::zeitprobe::rahmen_senden(strom, nutzlast, MAX_NACHRICHT)
 }
 
-/// Liest ein Längenpräfix und danach genau so viele Bytes.
+/// Liest ein Längenpräfix und danach genau so viele Bytes; ⚑ **vor dem
+/// Reservieren geprüft**, siehe [`MAX_NACHRICHT`].
 fn empfangen(strom: &mut TcpStream) -> Result<Vec<u8>, String> {
-    let mut kopf = [0u8; 4];
-    strom.read_exact(&mut kopf).map_err(|e| e.to_string())?;
-    let laenge = u32::from_le_bytes(kopf) as usize;
-    // ⚑ **Vor dem Reservieren prüfen**, siehe [`MAX_NACHRICHT`].
-    if laenge > MAX_NACHRICHT {
-        return Err(format!("angekuendigte Laenge {laenge} ueberschreitet die Grenze"));
-    }
-    let mut roh = vec![0u8; laenge];
-    strom.read_exact(&mut roh).map_err(|e| e.to_string())?;
-    Ok(roh)
+    myl_types::zeitprobe::rahmen_empfangen(strom, MAX_NACHRICHT)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
 
     /// ⚑ **Eine angekündigte Länge über der Grenze wird abgewiesen,
     /// bevor reserviert wird.**

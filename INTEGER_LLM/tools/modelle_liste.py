@@ -94,7 +94,7 @@ Bearbeitung nach dem Verfahren dieses Projekts, mit eigenen Skalen und
 Nachschlagetabellen.
 
 📌 **Hier stand bis zum 2026-09-10 eine einzelne Spalte „Lizenz"**, und
-sie stand in einer Zeile, deren erste Spalte `myelith-4b` heisst. Das
+sie stand in einer Zeile, deren erste Spalte `pigeon-4b-int8` heisst. Das
 las sich, als stuende das Artefakt unter Apache-2.0. **Eine Angabe ist
 nicht dadurch richtig, dass sie stimmt, sondern dadurch, dass sie sich
 auf das bezieht, wonebendran sie steht.**
@@ -128,7 +128,7 @@ def zeile(name: str, k: dict, r: dict) -> str:
         # ⛔️ **Fund 414: hier stand ein Gedankenstrich als Rueckfall**, und
         # den verbietet dieses Projekt. Er ist nie aufgefallen, weil jedes
         # Modell im Katalog auch ein Artefakt hatte und damit einen
-        # REGISTER-Eintrag; das erste ohne (myelith-8b, 2026-09-21) haette
+        # REGISTER-Eintrag; das erste ohne (jay-8b-int8, 2026-09-21) haette
         # ihn in die erzeugte Datei geschrieben und die Stilprobe rot
         # gemacht. 📌 **Ein Rueckfall, den nie etwas erreicht, ist
         # ungepruefter Code in einem Erzeuger.**
@@ -144,7 +144,7 @@ def bauen() -> str:
     t = [KOPF, "\n## Modelle\n"]
     # ⚑ **Zwei Lizenzspalten, und sie meinen verschiedene Dinge.** Eine
     # einzelne Spalte „Lizenz" stand bis zum 2026-09-10 neben dem Namen
-    # `myelith-4b` und las sich, als stuende das Artefakt unter
+    # `pigeon-4b-int8` und las sich, als stuende das Artefakt unter
     # Apache-2.0.
     t.append("| Modell | Hugging Face | Revision | Lizenz (Gewichte) "
              "| Lizenz (Artefakt) | Parameter | Layer "
@@ -156,6 +156,21 @@ def bauen() -> str:
     t.append("\n**Status:**\n")
     for wert, bedeutung in katalog.get("_status_bedeutung", {}).items():
         t.append(f"- **{wert}**: {bedeutung}")
+
+    # ⚑ **Die Netzliste** (2026-10-21): Im Netz rechnet nur, was hier mit
+    #   seinem Abdruck steht; alles andere ist privat, gleich woher.
+    t.append("\n## Netzliste\n")
+    t.append(katalog.get("_netz_bedeutung", ""))
+    t.append("")
+    t.append("| Modell | Block | Abdruck | freigegeben |")
+    t.append("|---|---|---|---|")
+    for block in ("netz", "pruefnetz"):
+        for name in sorted(modelle):
+            netz = modelle[name].get(block)
+            if netz:
+                t.append(f"| `{name}` | `{block}` | `{netz['abdruck']}` | {netz.get('freigegeben', '')} |")
+    if not any(m.get("netz") or m.get("pruefnetz") for m in modelle.values()):
+        t.append("| (keines) | | | |")
 
     t.append("\n**Gemessene Qualität** (Perplexität, WikiText-2):\n")
     for name in sorted(modelle):

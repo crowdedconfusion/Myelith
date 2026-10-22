@@ -59,7 +59,7 @@ def _sha256_hex(data: bytes) -> str:
 
 
 def test_get_export_model_config_accepts_verified_variant():
-    config = get_export_model_config("myelith-0.6b")
+    config = get_export_model_config("sparrow-0.6b-int8")
     assert config["num_kv_heads"] == 8
     assert config["tie_word_embeddings"] is True
 
@@ -210,7 +210,7 @@ def test_merkmale_der_modelle_sind_gekonnt():
     """
     gekonnt = _gekonnte_merkmale_aus_rust()
     assert gekonnt, "die Faehigkeitsliste im Lader ist leer oder nicht gefunden"
-    for modell in ("myelith-0.6b", "myelith-4b", "myelith-8b", "myelith-30b-a3b"):
+    for modell in ("sparrow-0.6b-int8", "pigeon-4b-int8", "jay-8b-int8", "magpie-30b-a3b-int8"):
         noetig = set(mc.artifact_model_config(modell)["merkmale"])
         fehlend = noetig - gekonnt
         assert not fehlend, (
@@ -625,7 +625,7 @@ def test_30b_config_matches_published_hf_config():
     """
     from src.model_configs import get_export_model_config
 
-    c = get_export_model_config("myelith-30b-a3b")
+    c = get_export_model_config("magpie-30b-a3b-int8")
     erwartet = {
         "num_layers": 48,          # num_hidden_layers
         "hidden_size": 2048,
@@ -663,7 +663,7 @@ def test_artifact_model_config_omits_provenance_fields():
     """
     from src.model_configs import artifact_model_config, _REQUIRED_EXPORT_FIELDS
 
-    cfg = artifact_model_config("myelith-30b-a3b")
+    cfg = artifact_model_config("magpie-30b-a3b-int8")
     assert "verified" not in cfg and "hf_model_id" not in cfg
     # Alles Uebrige, was der Loader braucht, ist noch da.
     for feld in _REQUIRED_EXPORT_FIELDS:
@@ -696,8 +696,8 @@ def test_gptq_hessian_bedarf_waechst_quadratisch():
     from src.model_configs import get_export_model_config
     from src.main import gptq_hessian_bytes, gptq_group_size
 
-    c_klein = get_export_model_config("myelith-0.6b")
-    c_gross = get_export_model_config("myelith-4b")
+    c_klein = get_export_model_config("sparrow-0.6b-int8")
+    c_gross = get_export_model_config("pigeon-4b-int8")
     klein = gptq_hessian_bytes(c_klein)
     gross = gptq_hessian_bytes(c_gross)
 
@@ -759,15 +759,15 @@ def test_gptq_entscheidung_env_override():
     alt = os.environ.get("INTEGER_LLM_GPTQ")
     try:
         os.environ["INTEGER_LLM_GPTQ"] = "0"
-        an, _ = gptq_entscheidung(get_export_model_config("myelith-0.6b"))
+        an, _ = gptq_entscheidung(get_export_model_config("sparrow-0.6b-int8"))
         assert an is False, "INTEGER_LLM_GPTQ=0 muss GPTQ abschalten"
 
         os.environ["INTEGER_LLM_GPTQ"] = "1"
-        an, grund = gptq_entscheidung(get_export_model_config("myelith-4b"))
+        an, grund = gptq_entscheidung(get_export_model_config("pigeon-4b-int8"))
         assert an is True, f"INTEGER_LLM_GPTQ=1 muss GPTQ einschalten, Grund: {grund}"
 
         os.environ.pop("INTEGER_LLM_GPTQ")
-        an, grund = gptq_entscheidung(get_export_model_config("myelith-4b"))
+        an, grund = gptq_entscheidung(get_export_model_config("pigeon-4b-int8"))
         assert an is False, (
             "ohne Vorgabe ist GPTQ aus (Festlegung vom 2026-08-20), "
             f"Grund: {grund}"
@@ -793,14 +793,14 @@ def test_gptq_group_size_fits_within_ram_budget():
     from src.model_configs import get_export_model_config
     from src.main import gptq_group_size, gptq_hessian_bytes_per_layer
 
-    cfg_klein = get_export_model_config("myelith-0.6b")
+    cfg_klein = get_export_model_config("sparrow-0.6b-int8")
     groesse_klein = gptq_group_size(cfg_klein)
     assert groesse_klein == cfg_klein["num_layers"], (
         f"0,6B muss in einer Gruppe passen, war {groesse_klein} von "
         f"{cfg_klein['num_layers']} Ebenen"
     )
 
-    cfg_gross = get_export_model_config("myelith-4b")
+    cfg_gross = get_export_model_config("pigeon-4b-int8")
     groesse_gross = gptq_group_size(cfg_gross)
     per_layer = gptq_hessian_bytes_per_layer(cfg_gross)
     assert groesse_gross < cfg_gross["num_layers"], (
@@ -827,14 +827,14 @@ def test_model_name_folgt_umgebungsvariable():
 
     alt = os.environ.get("INTEGER_LLM_MODEL")
     try:
-        os.environ["INTEGER_LLM_MODEL"] = "myelith-30b-a3b"
+        os.environ["INTEGER_LLM_MODEL"] = "magpie-30b-a3b-int8"
         main_mod = importlib.reload(importlib.import_module("src.main"))
-        assert main_mod.MODEL_NAME == "myelith-30b-a3b"
+        assert main_mod.MODEL_NAME == "magpie-30b-a3b-int8"
         assert main_mod.HF_MODEL_ID == "Qwen/Qwen3-30B-A3B"
 
         os.environ.pop("INTEGER_LLM_MODEL")
         main_mod = importlib.reload(importlib.import_module("src.main"))
-        assert main_mod.MODEL_NAME == "myelith-0.6b", "Vorgabe ist der Anker"
+        assert main_mod.MODEL_NAME == "sparrow-0.6b-int8", "Vorgabe ist der Anker"
         assert main_mod.HF_MODEL_ID == "Qwen/Qwen3-0.6B"
     finally:
         os.environ.pop("INTEGER_LLM_MODEL", None)

@@ -18,3 +18,5 @@ pub mod model;
 pub mod vorlader;
 pub mod paths;
 pub mod pruefstand;
+pub mod netzfreigabe;
+pub mod ebenenzeit;

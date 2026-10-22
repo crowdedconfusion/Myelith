@@ -74,7 +74,7 @@ myl-node — ein Myelith-Netzknoten
                          dieselbe nennen, sonst geht kein Umschlag auf.
                          Noetig, damit die /v1-Tuer rechnen laesst.
   --modell <name>        Wie das Modell nach aussen heisst. Vorgabe
-                         myelith-myelith-0.6b.
+                         sparrow-0.6b-int8.
   --kontoschluessel <datei>
                          Der Schluessel fuer Kettentransaktionen. OHNE IHN
                          nimmt der Knoten einen aus seinem Namen
@@ -88,6 +88,26 @@ myl-node — ein Myelith-Netzknoten
                          unterschreibt sie beim Start mit dem
                          Kontoschluessel und legt <datei>.unterschrift
                          daneben. Braucht --kontoschluessel.
+  --netz <name>          Das Netz: probe (Vorgabe, die Probekette mit dem
+                         Probemodell) oder test-int4 (das Testnetz mit dem
+                         Raven 35B A3B int4). Bestimmt Startwert und
+                         Podmodell der Kette.
+  --modellzusage <ebenen>:<us>[:<von>-<bis>]
+                         Was dieser Knoten fuer das Podmodell zusagt:
+                         Ebenen samt Kopf, Mikrosekunden je Ebene und
+                         Token, wahlweise den gehaltenen Bereich
+                         (Teilablage). Der Knoten meldet sich damit als
+                         Miner an und reicht die Zusage ein, beides mit
+                         dem Konsensschluessel. OHNE ZUSAGE KEIN POD.
+  --zone <name>          Die Zone der Anmeldung (Vorgabe Europe).
+  --shard-programm <pfad>
+                         myl-shard: Damit startet der Knoten seinen Shard
+                         aus der Kette, mit dem Bereich, den die Kette
+                         seiner Position zuteilt, und fuehrt ihn ueber die
+                         Epochen. Braucht --artefakte.
+  --artefakte <ordner>   Das Artefakt des Netzmodells, fuer den Shard und
+                         den Dateidienst.
+  --shard-training       Den Shard mit Trainingshaelfte starten.
   --konto <64 hex>       Wohin die Ertraege gehen. Vorgabe: die Adresse
                          des unterschreibenden Schluessels selbst.
   --ortsausweis <pfad>   Wo der Ausweis des Shard-Prozesses liegt, Datei
@@ -195,6 +215,9 @@ fn lies_argumente() -> Result<Option<Argumente>, String> {
     let mut bft_zuwachs: Option<u64> = None;
 
     let mut zusage: Option<PathBuf> = None;
+    let mut shard_programm: Option<PathBuf> = None;
+    let mut artefakte: Option<PathBuf> = None;
+    let mut shard_training = false;
     let mut i = 0;
     while i < roh.len() {
         let wert = |i: usize| -> Result<String, String> {
@@ -266,6 +289,31 @@ fn lies_argumente() -> Result<Option<Argumente>, String> {
             "--modell" => { konfig.modellname = wert(i)?; i += 2; }
             "--speicherorte" => { konfig.speicherorte = Some(PathBuf::from(wert(i)?)); i += 2; }
             "--zusage" => { zusage = Some(PathBuf::from(wert(i)?)); i += 2; }
+            "--netz" => {
+                let t = wert(i)?;
+                konfig.netz = myl_node::netz::Netz::aus_name(&t).ok_or_else(|| {
+                    format!("unbekanntes Netz: {t} (bekannt: {})", myl_node::netz::NETZE.map(|n| n.name).join(", "))
+                })?;
+                i += 2;
+            }
+            "--modellzusage" => {
+                let t = wert(i)?;
+                konfig.modellzusage = Some(modellzusage_lesen(&t).ok_or_else(|| {
+                    format!("--modellzusage erwartet <ebenen>:<us>[:<von>-<bis>], bekam {t}")
+                })?);
+                i += 2;
+            }
+            "--zone" => {
+                let t = wert(i)?;
+                konfig.zone = myl_types::node_metadata::GeoRegion::all()
+                    .into_iter()
+                    .find(|z| format!("{z:?}").eq_ignore_ascii_case(&t))
+                    .ok_or_else(|| format!("unbekannte Zone: {t}"))?;
+                i += 2;
+            }
+            "--shard-programm" => { shard_programm = Some(PathBuf::from(wert(i)?)); i += 2; }
+            "--artefakte" => { artefakte = Some(PathBuf::from(wert(i)?)); i += 2; }
+            "--shard-training" => { shard_training = true; i += 1; }
             "--kontoschluessel" => {
                 konfig.kontoschluesseldatei = Some(PathBuf::from(wert(i)?));
                 i += 2;
@@ -405,6 +453,17 @@ fn lies_argumente() -> Result<Option<Argumente>, String> {
     if let Some(ms) = bft_zuwachs {
         timeouts.delta_ms = ms;
     }
+    konfig.shard = match (shard_programm, artefakte) {
+        (Some(programm), Some(artefakte)) => {
+            Some(myl_node::konfig::Shardkonfig { programm, artefakte, training: shard_training })
+        }
+        (Some(_), None) => return Err("--shard-programm braucht --artefakte".into()),
+        (None, Some(artefakte)) => {
+            // ⚑ Ohne Programm kein Shard, aber der Dateidienst liefert aus.
+            Some(myl_node::konfig::Shardkonfig { programm: PathBuf::new(), artefakte, training: false })
+        }
+        (None, None) => None,
+    };
     Ok(Some(Argumente {
         konfig,
         laufzeit,
@@ -416,6 +475,25 @@ fn lies_argumente() -> Result<Option<Argumente>, String> {
         timeouts,
         zusage,
     }))
+}
+
+/// `<ebenen>:<us>[:<von>-<bis>]` als Zusage für das Podmodell des Netzes;
+/// den Abdruck setzt der Knoten.
+fn modellzusage_lesen(text: &str) -> Option<myl_types::zusage::Modellzusage> {
+    let mut teile = text.split(':');
+    let ebenen_hoechstens = teile.next()?.parse().ok()?;
+    let ebenenzeit_us = teile.next()?.parse().ok()?;
+    let gehalten = match teile.next() {
+        None => None,
+        Some(b) => {
+            let (v, b) = b.split_once('-')?;
+            Some((v.parse().ok()?, b.parse().ok()?))
+        }
+    };
+    if teile.next().is_some() {
+        return None;
+    }
+    Some(myl_types::zusage::Modellzusage { abdruck: [0; 32], ebenen_hoechstens, ebenenzeit_us, gehalten })
 }
 
 #[tokio::main]

@@ -866,7 +866,7 @@ mod proben {
             ("tool".into(), crate::werkzeug::Werkzeugergebnis::nachricht("read_file", log).content),
             ("assistant".into(), "Ein Fehler um 03:12.".into()),
         ];
-        let rel = schreiben(&d, "sitzung-w", "myelith-4b", &ab).expect("schreiben");
+        let rel = schreiben(&d, "sitzung-w", "pigeon-4b-int8", &ab).expect("schreiben");
         let pfad = d.join(&rel);
         let text = std::fs::read_to_string(&pfad).expect("lesen");
         let nr = text.lines().position(|z| z == "03:12 FEHLER E-4471 Luefter blockiert").expect("die Zeile steht einzeln") + 1;
@@ -889,7 +889,7 @@ mod proben {
     #[test]
     fn die_zeilennummern_zeigen_auf_zeilen_der_datei() {
         let d = ordner("zeilen");
-        let rel = schreiben(&d, "sitzung-1", "myelith-0.6b", &beispiel()).expect("schreiben");
+        let rel = schreiben(&d, "sitzung-1", "sparrow-0.6b-int8", &beispiel()).expect("schreiben");
         let pfad = d.join(&rel);
         let text = std::fs::read_to_string(&pfad).expect("lesen");
         let zeilen: Vec<&str> = text.lines().collect();
@@ -916,12 +916,12 @@ mod proben {
     fn der_kopf_traegt_sitzung_und_modell() {
         let d = ordner("kopf");
         let rel =
-            schreiben(&d, "Sitzung/mit Zeichen!", "myelith-4b", &beispiel()).expect("schreiben");
+            schreiben(&d, "Sitzung/mit Zeichen!", "pigeon-4b-int8", &beispiel()).expect("schreiben");
         // ⚑ Die Kennung wird hergeleitet: ein `/` legte den Ordner sonst
         // woanders an.
         assert!(rel.contains("Sitzung-mit-Zeichen"), "{rel}");
         let v = verzeichnis(&d.join(&rel)).expect("Verzeichnis");
-        assert_eq!(v.modell, "myelith-4b");
+        assert_eq!(v.modell, "pigeon-4b-int8");
         assert_eq!(v.sitzung, "Sitzung-mit-Zeichen");
         assert_eq!(v.abschnitte[0].kopf, "Wie viele Kerne hat die Maschine?");
     }
@@ -1024,14 +1024,14 @@ mod proben {
 
         schreiben(&d, "eins", "m", &beispiel()).expect("a");
         std::thread::sleep(std::time::Duration::from_millis(1100));
-        schreiben(&d, "zwei", "myelith-30b-a3b", &beispiel()).expect("b");
+        schreiben(&d, "zwei", "magpie-30b-a3b-int8", &beispiel()).expect("b");
 
         let u = uebersicht(&d);
         assert_eq!((u.episoden, u.sitzungen), (2, 2));
         assert!(u.bytes > 0, "null Bytes bei zwei Episoden");
         let (_pfad, v) = u.juengste.expect("juengste");
         assert_eq!(v.sitzung, "zwei", "die juengste ist nicht die zuletzt geschriebene");
-        assert_eq!(v.modell, "myelith-30b-a3b");
+        assert_eq!(v.modell, "magpie-30b-a3b-int8");
     }
 
     /// ⚑ **Das Datum ist gerechnet und nicht geraten.**
@@ -1051,7 +1051,7 @@ mod proben {
                 (rolle.to_string(), format!("Abschnitt Nummer {i} mit etwas Text."))
             })
             .collect();
-        let rel = schreiben(&d, "sitzung-viele", "myelith-0.6b", &viele).expect("schreiben");
+        let rel = schreiben(&d, "sitzung-viele", "sparrow-0.6b-int8", &viele).expect("schreiben");
         let pfad = d.join(&rel);
 
         let grob = grobverzeichnis(&pfad, 16).expect("Grobverzeichnis");
@@ -1087,7 +1087,7 @@ mod proben {
     #[test]
     fn ein_kurzes_verzeichnis_bleibt_abschnittsgenau() {
         let d = ordner("grob-kurz");
-        let rel = schreiben(&d, "sitzung-kurz", "myelith-0.6b", &beispiel()).expect("schreiben");
+        let rel = schreiben(&d, "sitzung-kurz", "sparrow-0.6b-int8", &beispiel()).expect("schreiben");
         let grob = grobverzeichnis(&d.join(&rel), 16).expect("Grobverzeichnis");
         assert_eq!(grob.len(), 4, "vier Abschnitte, vier Zeilen: {grob:?}");
         assert!(
@@ -1112,7 +1112,7 @@ mod proben {
     #[test]
     fn die_suche_nennt_den_ganzen_abschnitt() {
         let d = ordner("suche");
-        let rel = schreiben(&d, "sitzung-1", "myelith-0.6b", &beispiel()).expect("schreiben");
+        let rel = schreiben(&d, "sitzung-1", "sparrow-0.6b-int8", &beispiel()).expect("schreiben");
         let pfad = d.join(&rel);
 
         let treffer = suchen(&d, "GIBIBYTE", 20);
@@ -1173,7 +1173,7 @@ mod proben {
         let viele: Vec<(String, String)> = (0..40)
             .map(|i| ("user".to_string(), format!("Frage {i} zum Pruefstand.")))
             .collect();
-        schreiben(&d, "sitzung-1", "myelith-0.6b", &viele).expect("schreiben");
+        schreiben(&d, "sitzung-1", "sparrow-0.6b-int8", &viele).expect("schreiben");
         let treffer = suchen(&d, "Pruefstand", 20);
         assert_eq!(treffer.len(), 20, "hoechstens zwanzig: {}", treffer.len());
     }

@@ -14,7 +14,7 @@ Practice (transparency chapter). The German version is authoritative.
 | Provider | Joschka Benjamin Hänsler, private individual, Germany, non-commercial |
 | Contact | via the repository's issues |
 | Role | **Provider** of the Myelith artefacts within the meaning of Art. 3(3) and Art. 53. The artefacts are modifications of third-party base models; Myelith fine-tunes them itself and therefore treats itself as a provider with all obligations under Art. 53 for its own modifications. The obligations of the base model providers remain unaffected. |
-| Models | `myelith-0.6b`, `myelith-4b`, `myelith-8b`, `myelith-30b-a3b`, `myelith-35b-a3b` |
+| Models | `sparrow-0.6b-int8`, `pigeon-4b-int8`, `jay-8b-int8`, `magpie-30b-a3b-int8`, `raven-35b-a3b-int8` |
 | Version of the execution specification | θ_v 0.22.0 |
 | Base models | Qwen3-0.6B, Qwen3-4B, Qwen3-8B, Qwen3-30B-A3B, Qwen3.6-35B-A3B (Alibaba Cloud), each Apache 2.0; revision and review in [`MODELS/llm/KATALOG.json`](../../MODELS/llm/KATALOG.json) |
 | Licence | artefacts and code: PolyForm Shield License 1.0.0; base weights: Apache 2.0 (see [NOTICES](../NOTICES.md)) |
@@ -32,11 +32,11 @@ network.
 
 | Artefact | Type | Layers | Width | Heads (Q/KV) | Experts (active) | Vocabulary | Size |
 |---|---|---|---|---|---|---|---|
-| myelith-0.6b | dense | 28 | 1024 | 16/8 | none | 151,936 | 0.9 GB |
-| myelith-4b | dense | 36 | 2560 | 32/8 | none | 151,936 | 4.5 GB |
-| myelith-8b | dense | 36 | 4096 | 32/8 | none | 151,936 | 8.8 GB |
-| myelith-30b-a3b | mixture of experts | 48 | 2048 | 32/4 | 128 (8) | 151,936 | 29 GB |
-| myelith-35b-a3b | mixture of experts, hybrid with recurrent state layers | 40 | 2048 | 16/2 | 256 (8) | 248,320 | 33 GB |
+| sparrow-0.6b-int8 | dense | 28 | 1024 | 16/8 | none | 151,936 | 0.9 GB |
+| pigeon-4b-int8 | dense | 36 | 2560 | 32/8 | none | 151,936 | 4.5 GB |
+| jay-8b-int8 | dense | 36 | 4096 | 32/8 | none | 151,936 | 8.8 GB |
+| magpie-30b-a3b-int8 | mixture of experts | 48 | 2048 | 32/4 | 128 (8) | 151,936 | 29 GB |
+| raven-35b-a3b-int8 | mixture of experts, hybrid with recurrent state layers | 40 | 2048 | 16/2 | 256 (8) | 248,320 | 33 GB |
 
 **Number formats** (execution specification θ_v 0.22.0): weights `int8`
 with one scale per output channel, activations `int16`, accumulator
@@ -131,10 +131,10 @@ test split; source: generated [model card](../ethics/Modellkarte.md)):
 
 | Artefact | integer | floating point | difference |
 |---|---|---|---|
-| myelith-0.6b | 43.49 | 42.26 | +2.92 % |
-| myelith-4b | 19.95 | 19.63 | +1.65 % |
-| myelith-8b | 13.27 | 12.79 | +3.75 % |
-| myelith-30b-a3b | 10.42 | 10.48 | −0.59 % |
+| sparrow-0.6b-int8 | 43.49 | 42.26 | +2.92 % |
+| pigeon-4b-int8 | 19.95 | 19.63 | +1.65 % |
+| jay-8b-int8 | 13.27 | 12.79 | +3.75 % |
+| magpie-30b-a3b-int8 | 10.42 | 10.48 | −0.59 % |
 
 **Bit identity**: 48 of 48 conformance vectors (single operations,
 layers, full runs) match the reference.

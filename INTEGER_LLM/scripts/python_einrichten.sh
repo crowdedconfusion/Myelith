@@ -22,23 +22,27 @@ INTEGER_LLM_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 KALIBRIERUNG="${INTEGER_LLM_DIR}/calibrate"
 UMGEBUNG="${KALIBRIERUNG}/.venv"
 FEST="${KALIBRIERUNG}/requirements-fest.txt"
-# ⚑ `--flashnext`: die zweite Umgebung fuer die Bauart mit vier Stroemen
-#   (transformers ab 5.18.0, `requirements-flashnext.txt`). Die erste bleibt,
-#   wie sie ist; die Begruendung steht im Kopf jener Datei.
-PRUEFIMPORT="import torch, transformers, datasets, safetensors, huggingface_hub"
+# ⚑ Eine Umgebung fuer alle Bauarten (seit dem 2026-10-21; davor gab es mit
+#   `--flashnext` eine zweite fuer die Bauart mit vier Stroemen, die Gruende
+#   der Zusammenlegung stehen im Kopf von `requirements-fest.txt`). Der
+#   Schalter wird noch angenommen und tut nichts mehr.
+PRUEFIMPORT="import torch, transformers, datasets, safetensors, huggingface_hub, transformers.models.qwen4_exp"
 if [ "${1:-}" = "--flashnext" ]; then
-    UMGEBUNG="${KALIBRIERUNG}/.venv-flashnext"
-    FEST="${KALIBRIERUNG}/requirements-flashnext.txt"
-    PRUEFIMPORT="${PRUEFIMPORT}, transformers.models.qwen4_exp"
+    echo "[python] --flashnext ist nicht mehr noetig: eine Umgebung fuer alle Bauarten"
 elif [ -n "${1:-}" ]; then
-    echo "FEHLER: unbekannter Schalter ${1} (bekannt: --flashnext)" >&2
+    echo "FEHLER: unbekannter Schalter ${1}" >&2
     exit 2
 fi
 PY="${UMGEBUNG}/bin/python3"
+# 📌 Eine Umgebung mit anderer Fassung von transformers ist nicht fertig, auch
+#   wenn alles importiert: Sonst bliebe nach dem Heben der festen Fassungen
+#   die alte liegen, und der Bau liefe still mit ihr.
+SOLL_TRANSFORMERS="$(sed -n 's/^transformers==//p' "${FEST}")"
 
 vollstaendig() {
     [ -x "${PY}" ] && "${PY}" -c "${PRUEFIMPORT}" >/dev/null 2>&1 \
-        && [ -x "${UMGEBUNG}/bin/hf" ]
+        && [ -x "${UMGEBUNG}/bin/hf" ] \
+        && [ "$("${PY}" -c 'import transformers; print(transformers.__version__)')" = "${SOLL_TRANSFORMERS}" ]
 }
 
 if vollstaendig; then
@@ -48,9 +52,10 @@ if vollstaendig; then
 fi
 
 if [ -e "${UMGEBUNG}" ]; then
-    # Eine halbe Umgebung (abgebrochene Einrichtung) wird nicht geflickt,
-    # sondern neu angelegt: Was in ihr fehlt, ist nicht zu sehen.
-    echo "[python] Unvollstaendige Umgebung unter ${UMGEBUNG}, sie wird neu angelegt"
+    # Eine halbe oder veraltete Umgebung (abgebrochene Einrichtung, andere
+    # Fassung) wird nicht geflickt, sondern neu angelegt: Was in ihr fehlt
+    # oder anders ist, ist nicht zu sehen.
+    echo "[python] Unvollstaendige oder veraltete Umgebung unter ${UMGEBUNG} (transformers soll ${SOLL_TRANSFORMERS}), sie wird neu angelegt"
     rm -rf "${UMGEBUNG}"
 fi
 

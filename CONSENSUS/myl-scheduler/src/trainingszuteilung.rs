@@ -756,7 +756,7 @@ mod tests {
     }
 
     fn zuteilung(n: u32) -> Zuteilung {
-        Zuteilung { pods: pods(n), ohne_pod: Vec::new() }
+        Zuteilung { pods: pods(n), ohne_pod: Vec::new(), ohne_zusage: Vec::new() }
     }
 
     /// ⚑ **Jeder Pod eines Paars bekommt dasselbe Bündel.** Ohne das

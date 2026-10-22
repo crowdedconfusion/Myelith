@@ -13,8 +13,8 @@ deshalb nur einmal. Die Gewichte selbst werden NICHT mitverteilt; sie
 kommen von Hugging Face.
 
 Usage:
-    python tools/skalenpaket_bauen.py myelith-0.6b [myelith-30b-a3b ...]
-    python tools/skalenpaket_bauen.py --abgeleitet-von myelith-35b-a3b myelith-35b-a3b-int4
+    python tools/skalenpaket_bauen.py sparrow-0.6b-int8 [magpie-30b-a3b-int8 ...]
+    python tools/skalenpaket_bauen.py --abgeleitet-von raven-35b-a3b-int8 raven-35b-a3b-int4
 
 **Abgeleitete Artefakte** (`--abgeleitet-von <quelle>`, seit 2026-10-16):
 ein Artefakt, das aus einem anderen umgepackt ist und dessen Skalen und

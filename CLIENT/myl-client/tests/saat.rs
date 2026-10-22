@@ -6,7 +6,7 @@ use myl_client::Oertlichesmodell;
 use myl_local_agent::{Modellweg, Nachricht};
 
 fn modell() -> Option<Oertlichesmodell> {
-    let pfad = concat!(env!("CARGO_MANIFEST_DIR"), "/../../INTEGER_LLM/artifacts/myelith-0.6b");
+    let pfad = concat!(env!("CARGO_MANIFEST_DIR"), "/../../INTEGER_LLM/artifacts/sparrow-0.6b-int8");
     if std::env::var_os("MYL_OHNE_ARTEFAKTE").is_some() {
         eprintln!("SKIP (MYL_OHNE_ARTEFAKTE gesetzt): {pfad}");
         return None;

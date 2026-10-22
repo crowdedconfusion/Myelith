@@ -37,7 +37,7 @@ Fehler (etwa die eben erkundete Quelle eines selbst gebauten Modells, von der
 nur die Konfiguration liegt). Ein Katalogeintrag ohne Lizenzdatei bleibt ein
 Fehler.
 
-📌 **Fund 575:** Mit `myelith-125b-a6b` (Qwen3.8-Flash-Next, Qwen Community
+📌 **Fund 575:** Mit `vulture-126b-a7b-int8` (Qwen3.8-Flash-Next, Qwen Community
 License) kam das erste private Modell in den Katalog, und diese Prüfung,
 die keine privaten Modelle kannte, machte die CI zu `81a3fb0` rot. Die
 sieben Proben der Kurzanleitung fahren sie nicht.

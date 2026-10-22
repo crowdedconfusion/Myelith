@@ -506,17 +506,39 @@ impl Oertlichesmodell {
             .as_ref()
             .map_or(myl_dispatcher::local::eichung::VORGABE_ZUSCHLAG, |b| crate::hardware::eichbuch().zuschlag_eigen(b));
         let mindestkontext = crate::einstellungen::KONTEXT_MINDESTENS as u64;
+        // ⚑ **Netz vor Mensch** (Stufe 4, P8, Festlegung E7): Rechnet dieser
+        //   Rechner einen Shard für das Netz, kommt dessen fester Bedarf
+        //   zuerst; das Modell des Agenten bekommt den Rest, und eine
+        //   Ablehnung sagt, wer den Platz hat und wie man ihn zurückbekommt.
+        let netz = crate::mining::netzlast().and_then(|nl| crate::mining::netzlast_im_plan(&nl));
+        let netz_fest = netz
+            .as_ref()
+            .and_then(|l| match &l.gewichte {
+                myl_dispatcher::local::plan::Gewichte::Eigen(b) => {
+                    myl_dispatcher::local::plan::fluessig_bytes(b, l.kontext_mindestens, l.zuschlag_bytes)
+                }
+                myl_dispatcher::local::plan::Gewichte::Fremd { bytes } => Some(*bytes),
+            })
+            .unwrap_or(0);
         if let Some(grenze) = kapazitaet.speicher_gib {
             let erlaubt = u64::from(grenze) * crate::hardware::GIB;
             let gib = |b: u64| b as f64 / crate::hardware::GIB as f64;
+            let netzhinweis = netz.as_ref().map_or(String::new(), |n| {
+                format!(
+                    " Das Netz hat Vorrang ({}) und belegt davon {:.1} GiB bis zum Ende der Epoche; wer das Gerät \
+                     zurück will, sagt für die nächste Epoche weniger zu.",
+                    n.name,
+                    gib(netz_fest)
+                )
+            });
             match &bedarf {
                 Some(b) => {
                     let braucht = myl_dispatcher::local::plan::fluessig_bytes(b, mindestkontext, zuschlag).unwrap_or(u64::MAX);
-                    if braucht > erlaubt {
+                    if braucht.saturating_add(netz_fest) > erlaubt {
                         return Err(format!(
                             "Das Modell braucht mindestens {:.1} GiB fest im Arbeitsspeicher (dichte Gewichte, \
                              KV-Speicher für {mindestkontext} Token, Zustand und Puffer), freigegeben sind {grenze} GiB \
-                             Arbeitsspeicher. Erhöhe die Freigabe oder wähle ein kleineres Modell.",
+                             Arbeitsspeicher. Erhöhe die Freigabe oder wähle ein kleineres Modell.{netzhinweis}",
                             gib(braucht)
                         ));
                     }
@@ -559,8 +581,10 @@ impl Oertlichesmodell {
                 kerne_mindestens: 1,
                 profil: expertenprofil.clone(),
             };
-            let angebot = plan::Angebot { ram_bytes, kerne: 1, karten: Vec::new() };
-            let p = plan::belegen(&angebot, std::slice::from_ref(&last), &regeln);
+            // Ein Kern je Last: Hier zählt der Speicher, nicht die Kerne.
+            let angebot = plan::Angebot { ram_bytes, kerne: 1 + netz.iter().count(), karten: Vec::new() };
+            let lasten: Vec<plan::Last> = netz.iter().cloned().chain(std::iter::once(last)).collect();
+            let p = plan::belegen(&angebot, &lasten, &regeln);
             p.belegung("").cloned()
         });
         let kontext_tragbar = belegung.as_ref().map(|bel| bel.kontext as usize);

@@ -109,6 +109,10 @@ fn miner_anmelden(k: &mut Kette, nonce: &mut [u64; 12]) {
             .expect("signieren"),
         );
         nonce[w as usize] += 1;
+        // ⚑ **Kein Pod ohne Zusage** (Stufe 4, 2026-10-22): über die Kette,
+        //   gültig ab der nächsten Epoche.
+        k.aufnehmen(myl_node::kette::probezusage(w, myl_types::ids::EpochId(1), nonce[w as usize]));
+        nonce[w as usize] += 1;
     }
 }
 

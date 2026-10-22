@@ -136,11 +136,18 @@ pub fn build_swarm(
     // Kademlia unter eigenem Protokoll-Namen (Protokoll-Isolation,
     // kein Mitsprechen in fremden Kademlia-Netzen auf demselben Port).
     let kad_config = kad::Config::new(StreamProtocol::new(KAD_PROTOCOL));
-    let kad = kad::Behaviour::with_config(
+    let mut kad = kad::Behaviour::with_config(
         identity.peer_id(),
         kad::store::MemoryStore::new(identity.peer_id()),
         kad_config,
     );
+    // ⚑ **Fest als Server** (Fund 587, 2026-10-22). Ohne Angabe schaltet
+    //   Kademlia erst in den Servermodus, wenn eine äußere Adresse bestätigt
+    //   ist; bis dahin beantwortet ein Knoten keine Suche und sagt das
+    //   Protokoll nicht an. In einem Netz, dessen Knoten zu Beginn alle
+    //   ohne bestätigte Adresse sind (Rückschleife, NAT), fand so niemand
+    //   jemanden außer seiner Bootstrap-Gegenstelle.
+    kad.set_mode(Some(kad::Mode::Server));
 
     let identify = identify::Behaviour::new(
         identify::Config::new(PROTOCOL_VERSION.to_string(), identity.keypair().public())
@@ -156,12 +163,19 @@ pub fn build_swarm(
 
     let swarm = SwarmBuilder::with_existing_identity(identity.keypair().clone())
         .with_tokio()
-        .with_tcp(
-            tcp::Config::default(),
-            noise::Config::new,
-            yamux::Config::default,
-        )?
         .with_quic()
+        // ⚑ **TCP mit Ausweichport** (Fund 591): aufgerüstet wie mit
+        //   `with_tcp`, aber eine Wahl vom Horchport, deren Adressenpaar
+        //   belegt ist, wird von einem neuen Port wiederholt.
+        .with_other_transport(|schluessel| -> Result<_, Box<dyn std::error::Error + Send + Sync>> {
+            use libp2p::core::muxing::StreamMuxerBox;
+            use libp2p::core::Transport as _;
+            Ok(crate::portwahl::MitAusweichport(tcp::tokio::Transport::new(tcp::Config::default()))
+                .upgrade(libp2p::core::upgrade::Version::V1Lazy)
+                .authenticate(noise::Config::new(schluessel)?)
+                .multiplex(yamux::Config::default())
+                .map(|(p, c), _| (p, StreamMuxerBox::new(c))))
+        })?
         // Der Relais-Client kommt aus dem Builder, weil er einen eigenen
         // Transport mitbringt: Über ihn laufen die vermittelten
         // Verbindungen.

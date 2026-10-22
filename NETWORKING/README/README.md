@@ -1,7 +1,7 @@
 # networking (`myl-net`, `myl-siegel`)
 
-> **Version:** 0.16.1
-> **Datum:** 2026-10-14
+> **Version:** 0.17.0
+> **Datum:** 2026-10-22
 > **Status:** **Phase 1 und 2 abgeschlossen** (1.1–1.6, 2.1–2.3),
 > **Phase 3 umgesetzt** (3.1–3.4, Abschluss unter Reviewvorbehalt), dazu Punkt 4.2 (Fuzzing der Wire-Protocol-Parser), Punkt 4.3
 > (Verbindungsgrenzen und Peer-Diversität) und seit dem 26. August
@@ -10,7 +10,7 @@
 > Phase 1: 20-Knoten-Vollkonnektivität unter 5 s, ungültige Nachrichten
 > werden nicht weiterverbreitet, sechs Gossip-Topics, Anfragekanal.
 > Phase 2: Paarlatenzmessung mit EMA-Glättung, Latenz-Atteste,
-> LatencyGraph, Geo- und AS-Diversität. Phase 3: verschlüsselte
+> Geo- und AS-Diversität. Phase 3: verschlüsselte
 > Sitzungen zwischen Shard-Minern und über Gateways hinweg, mit
 > Schlüsselrotation je Epoche. **163 Tests grün.**
 >
@@ -73,8 +73,8 @@ NETWORKING/
         │                      vermittelter und QUIC-Adressen
         ├── discovery.rs       Peer-Discovery: Bootstrap-Peers parsen und
         │                      anwählen, Kademlia-Bootstrap (/myelith/kad/1)
-        ├── latency.rs         Paarlatenzen: EMA in Festkomma, Atteste,
-        │                      LatencyGraph für die Pod-Bildung
+        ├── latency.rs         Paarlatenzen: EMA in Festkomma, Atteste
+        │                      (Messung des Netzes, nicht der Pod-Bildung)
         ├── gossip.rs          die sechs Gossip-Topics (Blöcke,
         │                      Transaktionen, PoI-Bündel, Challenges,
         │                      Latenz-Atteste, Konsensnachrichten),
@@ -108,6 +108,57 @@ NETWORKING/
 ```
 
 ## Changelog
+
+### v0.17.0 (2026-10-22): Knoten finden einander über Kademlia; Funde 587 und 591
+
+- 📌 **Fund 587, gefunden im Netzlauf:** Kademlia wurde nie angestoßen.
+  `start_bootstrap` hatte keinen Aufrufer, die Horchadressen aus `identify`
+  kamen nicht in die Routing-Tabelle, und ohne bestätigte äußere Adresse
+  blieb Kademlia im Klientenmodus und beantwortete keine Suche. Jeder
+  Knoten kannte nur seine Bootstrap-Gegenstelle; Gossip lief über den
+  Stern, aber eine direkte Anfrage an ein anderes Pod-Mitglied fand keinen
+  Weg.
+- `run_node_mit`: jede gemeldete Horchadresse eines Kademlia-Knotens in die
+  Tabelle, eine Suche nach der ersten Meldung, danach in Abständen ab
+  `KAD_ERSTER_ABSTAND` (1 s), verdoppelt bis `KAD_TAKT` (30 s).
+  `build_swarm`: Kademlia fest im Servermodus.
+  📌 Zuerst lief die Suche gleich im Takt von 30 s. Die erste Suche kam aber,
+  wenn die Bootstrap-Gegenstelle oft nur sich selbst kannte, und wer nach
+  ihr dazukam, war erst eine halbe Minute später zu finden.
+- 📌 **Fund 591, gefunden in derselben Probe unter Last:** Jede Wahl bindet
+  ihren TCP-Anschluss an den eigenen Horchport (`PortUse::Reuse`, die
+  Vorgabe des Swarms, gebraucht vom Lochstanzen). Finden sich zwei Knoten
+  zugleich, wählen sie einander zugleich an, vom Horchport zum Horchport.
+  TCP macht daraus eine einzige Verbindung, der Handshake scheitert, und
+  danach liegt das Adressenpaar in TIME_WAIT. Der TCP-Transport von libp2p
+  weicht dann nur bei `AddrNotAvailable` auf einen neuen Port aus (so meldet
+  es Linux); macOS meldet `AddrInUse` (os error 48), und die beiden Knoten
+  blieben einander unerreichbar. In der Probe mit drei Knoten scheiterten
+  so unter Last 6 von 48 Läufen; im Netzlauf stand die Meldung bei mehreren
+  Knoten.
+- `portwahl.rs` (neu): `MitAusweichport`, eine Hülle um den TCP-Transport.
+  Scheitert eine Wahl vom Horchport, weil das Paar belegt oder nicht
+  verfügbar ist, wählt sie einmal von einem neuen Port; alles andere geht
+  unverändert durch. `build_swarm` rüstet sie über `with_other_transport`
+  auf wie bisher `with_tcp` (Noise, Yamux). `tokio` mit `net`.
+- **Belege:** NODE `tests/entdeckung.rs` (A und C kennen nur B und finden
+  einander): zehnmal hintereinander grün in je etwa einer Sekunde, unter
+  Last (acht gleichzeitig) 96 von 96, vor Fund 591 42 von 48. Die neue
+  Probe `portwahl::die_wahl_weicht_auf_einen_neuen_port_aus` besetzt das
+  Paar selbst; ohne die Hülle scheitert sie mit genau `os error 48`. Im
+  Netzlauf mit fünfzehn Knoten kennt jeder alle vierzehn anderen.
+  `cargo test` rc=0, Clippy mit `-D warnings` still.
+
+### v0.16.2 – 2026-10-21 (Kommentare: kein `LatencyGraph` mehr; `myl-types` 0.44.0)
+
+`myl-types` hat `LatencyGraph` entfernt, denn die Pod-Bildung liest seit
+der Entscheidung für Zonen keine gemessene Latenz. Hier nannten ihn noch
+der Kopf von `lib.rs`, drei Kommentare in `latency.rs`, die Beschreibung
+in `Cargo.toml` und diese README als Grundlage der Pod-Bildung. Sie sagen
+jetzt, was gilt: Paarlatenzen und Atteste sind eine Messung des Netzes.
+Kein Code geändert; Topic, Prüfung und Größengrenze der Atteste bleiben.
+
+**Belege:** `cargo test` rc=0, Clippy mit `-D warnings` still.
 
 ### v0.16.1 – 2026-10-14 (Sicherheitsmeldungen zu `quinn-proto` und `rustls`; nur die Sperrdatei)
 

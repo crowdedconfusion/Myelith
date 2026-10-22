@@ -344,6 +344,25 @@ pub struct LedgerState {
     /// folgt.
     pub miner: BTreeMap<MinerId, MinerRegistration>,
 
+    /// ⚑ **Die Kapazitätszusagen der Miner** (Stufe 4, 2026-10-21), je
+    /// Miner nach `ab_epoche` aufsteigend: höchstens die geltende und die
+    /// kommenden. **Beide, nicht nur die neueste**: Die Zuteilung der
+    /// laufenden Epoche wird jederzeit aus dem Zustand abgeleitet, und eine
+    /// Zusage für die nächste darf sie nicht mitten in der Epoche ändern.
+    pub zusagen: BTreeMap<MinerId, Vec<myl_types::zusage::Kapazitaetszusage>>,
+
+    /// ⚑ **Das Podmodell des Netzes** (Stufe 4, 2026-10-22): welches
+    /// Artefakt die Pods rechnen, mit Ebenenzahl und Kopf. Gesetzt beim
+    /// Beginn der Kette, wie die erste Saat; der Ledger kennt sein Netz
+    /// nicht. **`None` heißt: keine Modellzusage gilt**, also auch kein Pod.
+    pub podmodell: Option<myl_types::podmodell::Podmodell>,
+
+    /// ⚑ **Fristsperren** (2026-10-22): In der genannten Epoche gilt die
+    /// Zusage des Miners nicht, weil er in der Epoche davor seine Frist
+    /// überschritten hat (`fristverstoss_einreichen`). Höchstens ein
+    /// Eintrag je Miner; vergangene fallen beim nächsten Vermerk weg.
+    pub fristsperren: BTreeMap<MinerId, EpochId>,
+
     /// Die PoI-Bündel der **laufenden** Epoche, je Pod eines
     /// (Punkt 40, Glied 1).
     ///
@@ -441,6 +460,9 @@ impl LedgerState {
             burn_ema_bis: EpochId(0),
             auszahlung: BTreeMap::new(),
             miner: BTreeMap::new(),
+            zusagen: BTreeMap::new(),
+            podmodell: None,
+            fristsperren: BTreeMap::new(),
             buendel: BTreeMap::new(),
             // ⚑ **Null, und die Kette setzt sie.** Vor dem ersten
             // Block gibt es keinen Blockhash, und der Ledger kennt den

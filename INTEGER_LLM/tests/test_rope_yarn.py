@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "calibrate"))
 from src.luts import generate_rope_luts, rope_masse, yarn_frequenzen  # noqa: E402
 from src.model_configs import get_model_config  # noqa: E402
 
-TERNAER = "myelith-8b-ternaer"
+TERNAER = "jay-8b-ternaer"
 
 # Sollwerte der Referenz fuer Basis 1e6, Drehbreite 128, Faktor 4 ueber
 # 16 384 Positionen (transformers 5.15, gerechnet am 2026-09-28). Die
@@ -37,7 +37,7 @@ SOLL_AMPLITUDE = 1.138629436111989
 
 
 def test_ohne_skalierung_bleibt_alles_wie_es_war():
-    m = rope_masse(get_model_config("myelith-8b"))
+    m = rope_masse(get_model_config("jay-8b-int8"))
     assert m["frequenzen"] is None and m["amplitude"] == 1.0, m
     sin, cos = generate_rope_luts(max_seq_len=8, head_dim=m["drehbreite"],
                                   rope_theta=m["rope_theta"], frac_bits=m["frac_bits"])

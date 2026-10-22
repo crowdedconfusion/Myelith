@@ -5,7 +5,7 @@
 //! `tuer_bis_rechenwerk.rs` zeigt, dass der **Weg** zusammenpasst: fünf
 //! Kisten, echte Sockets, aber ein Rechenwerk, das bezeugt statt zu
 //! rechnen. Hier hängt am Ende die **echte Shard-Pipeline** über den
-//! Artefakten des Ankermodells (ohne Vorgabe `myelith-0.6b`): vier
+//! Artefakten des Ankermodells (ohne Vorgabe `sparrow-0.6b-int8`): vier
 //! Shards, Wortschatz, Koordinator.
 //!
 //! Damit steht die eine Frage auf dem Prüfstand, die keiner der übrigen
@@ -75,7 +75,7 @@ const PIPELINE_DIGEST: &str = "c42bb8a8d85bba5a76b3302298903fb5c1edfe4463c5d1d44
 
 fn artefakte() -> PathBuf {
     let manifest = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR");
-    let modell = std::env::var("MYL_POD_MODELL").unwrap_or_else(|_| "myelith-0.6b".to_string());
+    let modell = std::env::var("MYL_POD_MODELL").unwrap_or_else(|_| "sparrow-0.6b-int8".to_string());
     let mut p = PathBuf::from(manifest);
     p.push("..");
     p.push("..");
@@ -248,7 +248,7 @@ async fn ein_nutzeraufruf_erreicht_das_geshardete_modell() {
         EpochId(5),
         Endpunkt::aus_bytes([1u8; 32]),
         knoten_schluessel,
-        "myelith-myelith-0.6b",
+        "sparrow-0.6b-int8",
         myl_types::Address::new([210u8; 32]),
     );
 
@@ -283,7 +283,7 @@ async fn ein_nutzeraufruf_erreicht_das_geshardete_modell() {
     let kopf = String::from_utf8_lossy(&antwort[..antwort.len().min(32)]).to_string();
     assert!(kopf.starts_with("HTTP/1.1 200"), "Modellliste: {kopf}");
     let liste = String::from_utf8_lossy(rumpf_von(&antwort)).to_string();
-    assert!(liste.contains("myelith-myelith-0.6b"), "{liste}");
+    assert!(liste.contains("sparrow-0.6b-int8"), "{liste}");
     // ⚑ Der Pipeline-Stand geht bis nach draussen durch, unverändert.
     assert!(liste.contains(PIPELINE_DIGEST), "der Stand kam nicht durch: {liste}");
     assert!(liste.contains("\"myelith_deterministisch\":true"), "{liste}");
@@ -291,7 +291,7 @@ async fn ein_nutzeraufruf_erreicht_das_geshardete_modell() {
     // --- 2. Der eigentliche Aufruf -----------------------------------
     let frage = "Die Hauptstadt von Frankreich ist";
     let koerper = format!(
-        r#"{{"model":"myelith-myelith-0.6b","messages":[{{"role":"user","content":"{frage}"}}],"max_tokens":8,"temperature":0.7}}"#
+        r#"{{"model":"sparrow-0.6b-int8","messages":[{{"role":"user","content":"{frage}"}}],"max_tokens":8,"temperature":0.7}}"#
     );
     let dienst = async {
         tuer.bedienen_v1(&mut annahme, &mut stelle, &weg, EpochId(5), 1_700_000_000_000)
@@ -361,7 +361,7 @@ async fn ein_nutzeraufruf_erreicht_das_geshardete_modell() {
         myl_local_agent::Tuerklient::neu("127.0.0.1", port, token2)
             .mit_frist(std::time::Duration::from_secs(600))
             .chat(
-                "myelith-myelith-0.6b",
+                "sparrow-0.6b-int8",
                 &[myl_local_agent::Nachricht::nutzer(frage)],
                 Some(8),
             )
@@ -409,7 +409,7 @@ async fn ein_nutzeraufruf_erreicht_das_geshardete_modell() {
         myl_local_agent::Tuerklient::neu("127.0.0.1", port, token3)
             .mit_frist(std::time::Duration::from_secs(600))
             .chat(
-                "myelith-myelith-0.6b",
+                "sparrow-0.6b-int8",
                 &[angebot, myl_local_agent::Nachricht::nutzer("Wie spät ist es?"), ergebnis],
                 Some(8),
             )
@@ -498,7 +498,7 @@ async fn ein_nutzeraufruf_erreicht_das_geshardete_modell() {
                 hausregel: None,
                 mitschnitt: None,
                 klient: &klient,
-                modell: "myelith-myelith-0.6b",
+                modell: "sparrow-0.6b-int8",
                 grenzen: &grenzen,
                 betriebsart: Betriebsart::NurVerankert,
                 kasten: &kasten,

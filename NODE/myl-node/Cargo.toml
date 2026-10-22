@@ -1,6 +1,6 @@
 [package]
 name = "myl-node"
-version = "0.49.0"
+version = "0.52.0"
 edition = "2021"
 # ⚑ 1.88 und nicht 1.85 wie die uebrigen Crates, und der Grund liegt
 # nicht im eigenen Code: Ueber libp2p haengt hier die `icu_*`-Kette
@@ -67,6 +67,8 @@ async-trait = "0.1"
 # Fuer die Segmentkennung in der Antwort der Tuer: hexadezimal, weil ein
 # Klient sie als Text weiterreicht.
 hex = "0.4"
+# Fuer den Dateidienst (Stufe 4, P11): die Summe einer Datei in Stuecken.
+sha2 = "0.10"
 # `net` und `io-util` fuer den Beobachtungsendpunkt (Fund 129): ein
 # GET-Dienst auf der Rueckschleife, ohne HTTP-Rahmenwerk. Dieselbe
 # Entscheidung wie im Gateway.

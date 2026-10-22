@@ -57,7 +57,7 @@ def test_rope_matches_hf_at_positions():
     # ⚑ Masse aus dem Modell, ueber dieselbe Herleitung wie die Ausfuhr.
     #    Hier stand `nl["rope"]["max_seq_len"]`, und mit dem Feld fiel die
     #    ganze Datei aus, noch bevor ein Test lief.
-    m = rope_masse(get_model_config("myelith-0.6b"))
+    m = rope_masse(get_model_config("sparrow-0.6b-int8"))
     head_dim = m["drehbreite"]
     rope_theta = m["rope_theta"]
     frac = m["frac_bits"]
@@ -82,7 +82,7 @@ def test_rope_matches_hf_at_positions():
 
 
 def test_rope_position_zero_identity():
-    m = rope_masse(get_model_config("myelith-0.6b"))
+    m = rope_masse(get_model_config("sparrow-0.6b-int8"))
     half = m["paare"]
     sin_lut, cos_lut = generate_rope_luts(
         max_seq_len=m["zeilen"], head_dim=m["drehbreite"],

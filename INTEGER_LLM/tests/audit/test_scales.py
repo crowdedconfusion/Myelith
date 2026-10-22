@@ -24,7 +24,7 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent.parent
-ARTIFACTS = REPO / "artifacts" / "myelith-0.6b"
+ARTIFACTS = REPO / "artifacts" / "sparrow-0.6b-int8"
 SPEC = REPO / "theta_v" / "spec.json"
 
 

@@ -1,7 +1,7 @@
 # governance (`myl-governance`)
 
-> **Version:** 0.15.0
-> **Datum:** 2026-09-11
+> **Version:** 0.15.1
+> **Datum:** 2026-10-21
 > **Status:** **Phasen 1 und 2 abgeschlossen** (1.1–1.4, 2.1–2.3),
 > Phase 3 zur Hälfte (3.1 und 3.4 ✅). Parameter-Registry mit
 > Änderbarkeits-Rang, technische Durchsetzung des Verfassungsrangs,
@@ -134,6 +134,10 @@ richtige Fassung vorhanden und lief nicht.
 Er hat sich beim ersten Lauf bezahlt gemacht, siehe Fund 50.
 
 ## Changelog
+
+### v0.15.1 – 2026-10-21 (die Modelle heißen nach Tieren)
+
+Die Projektmodelle heißen seit heute nach Tieren, mit Größe und Speicherform als Anhängsel (Festlegung des Projektinhabers): `myelith-0.6b` ist `sparrow-0.6b-int8`, `myelith-4b` `pigeon-4b-int8`, `myelith-30b-a3b` `magpie-30b-a3b-int8`, `myelith-35b-a3b` `raven-35b-a3b-int8`. In den Dateien eines Artefakts steht kein Name, also bleiben Abdrücke und Register gültig. Nur das Beispielmanifest der Proben.
 
 ### v0.15.0 – 2026-09-12 (das Gemisch trägt jetzt die Schranken)
 

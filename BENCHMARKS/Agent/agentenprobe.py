@@ -47,6 +47,20 @@ import time
 from pathlib import Path
 
 WURZEL = Path(__file__).resolve().parents[2]
+
+
+def im_bericht(pfad: str) -> str:
+    """Ein Pfad fuer das Ergebnis: relativ zur Wurzel, wenn er darin liegt.
+
+    ⚑ Bis zum 2026-10-21 stand hier der Pfad, wie er gegeben war, also der
+    absolute des Messrechners, und mit ihm Ordner und Nutzername in jedem
+    versionierten Ergebnis (Fund 580). Was ausserhalb der Wurzel liegt,
+    bleibt wie gegeben; das ist dann ein eigener Ort des Messenden.
+    """
+    try:
+        return Path(pfad).resolve().relative_to(WURZEL).as_posix()
+    except ValueError:
+        return pfad
 MYL = WURZEL / "SYSTEM/full-build" / "release" / "myl"
 AUFTRAEGE = Path(__file__).resolve().parent / "auftraege.json"
 
@@ -423,7 +437,7 @@ def main() -> int:
         a.json.write_text(
             json.dumps(
                 {
-                    "artefakt": a.artefakt, "schritte": a.schritte, "saaten": saaten,
+                    "artefakt": im_bericht(a.artefakt), "schritte": a.schritte, "saaten": saaten,
                     "token": a.token, "denken": a.denken, "ab_werk": a.ab_werk, "laeufe": ergebnisse,
                 },
                 ensure_ascii=False,

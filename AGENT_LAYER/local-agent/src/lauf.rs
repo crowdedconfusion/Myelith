@@ -215,7 +215,15 @@ pub fn fahren_im_gespraech(
     // ⚑ **Welche Fassung der Regeln lief**, im Debug-Log, wenn er laeuft.
     crate::debuglog::eintrag("Systemprompt", &format!("{datei} {}", crate::systemprompt::sha256(text)));
     fahren_mit_hausregel(
-        modell, ruestung, schritte, bezeugtes, max_tokens, verlauf, auftrag, melder, Some(regel),
+        modell,
+        ruestung,
+        schritte,
+        bezeugtes,
+        max_tokens,
+        verlauf,
+        auftrag,
+        melder,
+        Some(regel),
     )
 }
 

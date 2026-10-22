@@ -175,6 +175,43 @@ pub fn probeschluessel(nummer: u8) -> myl_types::bls::BlsSecretKey {
         .expect("32 Byte Startwert sind für key_gen immer gültig")
 }
 
+/// Die Anmeldung eines Probekontos als Miner in Europa, mit Nummer 0.
+pub fn probeanmeldung(nummer: u8) -> Transaktion {
+    Transaktion::signiere(
+        &Kette::startwert(),
+        &probeschluessel(nummer),
+        0,
+        Anweisung::MinerAnmelden {
+            hardware: myl_types::miner::HardwareClass::MediumGpu,
+            zone: myl_types::node_metadata::GeoRegion::Europe,
+            netzadresse: myl_types::latency_attest::PeerIdBytes([0; 32]),
+        },
+    )
+    .expect("ein gültiger Schlüssel unterschreibt")
+}
+
+/// **Die Zusage eines Probekontos für das Probemodell**, als unterschriebene
+/// Transaktion (Stufe 4, 2026-10-22): alle Ebenen samt Kopf, 300 µs je
+/// Ebene, gültig ab `ab`.
+///
+/// ⚑ **Seit „kein Pod ohne Zusage“ braucht jede Probe mit Pods das**, wie
+/// die Anmeldung: Ein Miner ohne Zusage kommt in keinen Pod.
+pub fn probezusage(nummer: u8, ab: EpochId, nonce: u64) -> Transaktion {
+    let sk = probeschluessel(nummer);
+    let pk = sk.public_key().expect("aus einem gültigen Schlüssel folgt ein gültiger Punkt");
+    let pm = crate::netz::PROBEKETTE.podmodell;
+    let mut zusage = myl_types::zusage::Kapazitaetszusage::neu(myl_types::ids::MinerId::aus_schluessel(&pk), ab, 0)
+        .mit_modell(myl_types::zusage::Modellzusage {
+            abdruck: pm.abdruck,
+            ebenen_hoechstens: pm.ebenen_samt_kopf(),
+            ebenenzeit_us: 300,
+            gehalten: None,
+        });
+    zusage.signiere(&sk).expect("ein gültiger Schlüssel unterschreibt");
+    Transaktion::signiere(&Kette::startwert(), &sk, nonce, Anweisung::ZusageEinreichen { zusage })
+        .expect("ein gültiger Schlüssel unterschreibt")
+}
+
 /// Die Adresse eines Probekontos: `SHA-256` über seinen Schlüssel.
 ///
 /// **Abgeleitet und nicht gewürfelt**, wie jede Adresse im Protokoll.
@@ -429,7 +466,18 @@ impl Kette {
     /// einmaliges Ereignis mit Folgen; das hier entsteht bei jedem
     /// Start neu.
     pub fn probestand() -> Self {
+        Self::im_netz(&crate::netz::PROBEKETTE)
+    }
+
+    /// **Eine frische Kette im gegebenen Netz** (2026-10-22): wie
+    /// [`Kette::probestand`], mit Startwert und Podmodell dieses Netzes.
+    ///
+    /// ⚑ **Das Podmodell steht ab dem ersten Block im Zustand** und geht
+    /// in jede Zustandswurzel ein; zwei Knoten verschiedener Netze trennen
+    /// sich damit sofort, auch wenn eine Transaktion durchkäme.
+    pub fn im_netz(netz: &'static crate::netz::Netz) -> Self {
         let mut zustand = LedgerState::genesis(PROBE_CREDIT_PREIS);
+        zustand.podmodell = Some(netz.podmodell);
         // Die Testkonten ausstatten. Ohne Guthaben scheitert jede
         // Burn-Transaktion, der Zustand bleibt unverändert, und die
         // Übereinstimmung der Wurzeln belegt nichts (siehe
@@ -456,14 +504,14 @@ impl Kette {
         // ⚑ **Die Saat der ersten beiden Epochen ist der Startwert**
         // (Fund 143). Der Ledger kennt ihn nicht, die Kette schon; ohne
         // ihn stünde dort eine Null, die in jedem Netz dieselbe wäre.
-        zustand.epochensaat = Self::startwert();
-        zustand.epochensaat_naechste = Self::startwert();
+        zustand.epochensaat = netz.startwert_hash();
+        zustand.epochensaat_naechste = netz.startwert_hash();
         Self {
             hoehe: 0,
             // Nicht das Literal wiederholen: Zwei Stellen mit derselben
             // Zeichenkette laufen irgendwann auseinander, und dann
             // lehnte die Kettendatei ihre eigene Kette ab.
-            letzter_hash: Self::startwert(),
+            letzter_hash: netz.startwert_hash(),
             zustand,
             stimmsatz: None,
             naechste_saatquelle: None,
@@ -477,11 +525,42 @@ impl Kette {
         }
     }
 
-    /// Der Startwert dieser Kette.
+    /// ⚑ **Eine Zusage ab Epoche 0, unmittelbar in den Zustand** (Stufe 4,
+    /// 2026-10-22): für Proben, die ihre Miner ebenso unmittelbar anmelden
+    /// und in Epoche 0 Pods brauchen. Alle Ebenen samt Kopf, 300 µs je
+    /// Ebene. Über die Kette gilt eine Zusage erst ab der nächsten Epoche
+    /// ([`probezusage`]); **kein Weg für einen Betrieb**, denn er umgeht
+    /// Unterschrift und Prüfung.
+    pub fn probezusage_setzen(&mut self, kennung: myl_types::ids::MinerId) {
+        let pm = self.netz().podmodell;
+        let z = myl_types::zusage::Kapazitaetszusage::neu(kennung, EpochId(0), 0).mit_modell(
+            myl_types::zusage::Modellzusage {
+                abdruck: pm.abdruck,
+                ebenen_hoechstens: pm.ebenen_samt_kopf(),
+                ebenenzeit_us: 300,
+                gehalten: None,
+            },
+        );
+        self.zustand.zusagen.entry(kennung).or_default().insert(0, z);
+    }
+
+    /// Das Netz dieser Kette, aus dem Podmodell in ihrem Zustand.
+    pub fn netz(&self) -> &'static crate::netz::Netz {
+        crate::netz::Netz::des_zustands(&self.zustand)
+    }
+
+    /// Der Startwert **dieser** Kette, aus ihrem Netz. Bindet Kettendatei
+    /// und Transaktionen an das Netz.
+    pub fn netzwert(&self) -> Hash {
+        self.netz().startwert_hash()
+    }
+
+    /// Der Startwert der Probekette.
     ///
     /// Bindet eine Kettendatei an ihr Netz: Eine Datei mit anderem
     /// Startwert wird abgewiesen, statt eine fremde Historie als eigene
-    /// auszugeben.
+    /// auszugeben. ⚠️ Für eine Kette eines anderen Netzes gilt
+    /// [`Kette::netzwert`].
     pub fn startwert() -> Hash {
         // ⚑ **Aus [`PROBE_STARTWERT`], nicht aus einem eigenen Literal**
         // (Fund 163, 2026-09-03). Bis dahin stand hier
@@ -924,8 +1003,8 @@ impl Kette {
     /// hängt, läuft über alle. Wer je Shard rechnete, bekäme für
     /// dieselbe Arbeit verschiedene Raten, je nachdem, in wie viele
     /// Stücke sie geschnitten war.
-    fn trainingstiefe() -> u32 {
-        myl_tokenomics::vtfe::PROBE_MODELL.num_layers as u32
+    fn trainingstiefe(zustand: &LedgerState) -> u32 {
+        crate::netz::Netz::des_zustands(zustand).profil.num_layers as u32
     }
 
     /// Die drei Spiegelwerte, damit `tests/parameter.rs` sie gegen die
@@ -998,6 +1077,19 @@ impl Kette {
             if myl_consensus::poi::verify_bundle_signature(&buendel, &mitgliedschaft).is_err() {
                 continue;
             }
+            // ⚑ **Jeder Pod nach seinem Schnitt** (Stufe 4, 2026-10-22): Die
+            //   Gewichte folgen aus seinen Grenzen und dem Profil des Netzes.
+            //   Die gemeinsame Probeverteilung galt nur, solange jeder Pod
+            //   gleich schnitt. Ein Pod ohne Schnitt bekommt nichts.
+            let Some(grenzen) = Self::grenzen_des_pods(zustand, pod) else {
+                continue;
+            };
+            let netz = crate::netz::Netz::des_zustands(zustand);
+            let grenzen: Vec<(u64, u64)> = grenzen.iter().map(|&(a, b)| (a as u64, b as u64)).collect();
+            let Some(eigene) = myl_tokenomics::vtfe::arbeitsverteilung_aus_grenzen(&netz.profil, &grenzen, netz.pipeline())
+            else {
+                continue;
+            };
             abrechnungen.push(myl_tokenomics::Podabrechnung {
                 positionen: pod
                     .shards
@@ -1006,6 +1098,7 @@ impl Kette {
                     .collect(),
                 reserve: pod.reserve.iter().map(|m| m.miner_id).collect(),
                 vtfe_pod: buendel.vtfe_claimed,
+                verteilung: Some(eigene),
             });
             bezeugt.push(buendel.clone());
         }
@@ -1107,12 +1200,42 @@ impl Kette {
         zustand: &LedgerState,
     ) -> myl_scheduler::shard_assignment::Zuteilung {
         let register = angemeldete_miner(zustand);
-        myl_scheduler::zonenzuteilung::zuteilung_der_epoche(
+        // ⚑ **Nach den Zusagen** (Stufe 4, 6.7, 2026-10-22): kein Pod ohne
+        //   Zusage für das Podmodell, nur machbare Pods. Ohne Podmodell gilt
+        //   keine Modellzusage, also gibt es keinen Pod.
+        let Some(podmodell) = zustand.podmodell else {
+            return myl_scheduler::shard_assignment::Zuteilung { ohne_zusage: register, ..Default::default() };
+        };
+        let epoche = zustand.epoch;
+        myl_scheduler::zonenzuteilung::zuteilung_der_epoche_mit_zusagen(
             &register,
-            zustand.epoch.0,
+            epoche.0,
             &zustand.epochensaat,
             Self::PROBE_SHARDS,
+            &podmodell,
+            &|m| myl_ledger::transitions::modellzusage_der_epoche(zustand, m, epoche),
         )
+    }
+
+    /// **Die Grenzen eines Pods der laufenden Epoche**, aus den Zusagen
+    /// seiner Mitglieder: dieselbe Funktion, nach der die Pod-Bildung
+    /// geprüft hat und nach der der Pod rechnet. `None` ohne Podmodell oder
+    /// wenn er nicht machbar ist (das schließt die Pod-Bildung aus).
+    pub fn grenzen_des_pods(
+        zustand: &LedgerState,
+        pod: &myl_scheduler::shard_assignment::Pod,
+    ) -> Option<Vec<(u32, u32)>> {
+        let podmodell = zustand.podmodell?;
+        let epoche = zustand.epoch;
+        let positionen: Vec<myl_types::ids::MinerId> = pod.shards.iter().map(|s| s.miner.miner_id).collect();
+        let reserve: Vec<myl_types::ids::MinerId> = pod.reserve.iter().map(|r| r.miner_id).collect();
+        myl_scheduler::ebenenverteilung::bereiche_des_pods(
+            &positionen,
+            &reserve,
+            &|m| myl_ledger::transitions::modellzusage_der_epoche(zustand, m, epoche),
+            &podmodell,
+        )
+        .grenzen()
     }
 
     /// Die Zuschreibung der **Trainingsarbeit** der abgelaufenen Epoche.
@@ -1149,7 +1272,7 @@ impl Kette {
         }
         let tokens = korpus.tokens_je_buendel();
         let zuteilung = Self::zuteilung_der_laufenden_epoche(zustand);
-        let profil = myl_tokenomics::vtfe::PROBE_MODELL;
+        let profil = crate::netz::Netz::des_zustands(zustand).profil;
         let bestaetigt = Self::bestaetigte_deltas(zustand, paare, epoche);
         if bestaetigt.is_empty() {
             return zu;
@@ -1166,13 +1289,17 @@ impl Kette {
                 let Some(pod) = zuteilung.pods.iter().find(|p| p.pod_index == *nr) else {
                     continue;
                 };
-                let grenzen: Vec<usize> = (0..=pod.shards.len())
-                    .map(|s| profil.num_layers as usize * s / pod.shards.len().max(1))
-                    .collect();
+                // ⚑ **Der Schnitt aus einer Stelle** (Stufe 4, 2026-10-21):
+                //   dieselbe Funktion, nach der der Pod rechnet. Hier stand
+                //   der gleiche Schnitt, selbst ausgerechnet.
+                let schnitt = Self::grenzen_des_pods(zustand, pod);
+                let Some(grenzen) = schnitt else {
+                    continue;
+                };
                 for (i, sh) in pod.shards.iter().enumerate() {
                     let zuschnitt = myl_tokenomics::vtfe::ShardZuschnitt {
-                        layer_start: grenzen[i] as u64,
-                        layer_end: grenzen[i + 1] as u64,
+                        layer_start: grenzen[i].0 as u64,
+                        layer_end: grenzen[i].1 as u64,
                         hat_embedding: i == 0,
                         hat_lm_kopf: i + 1 == pod.shards.len(),
                     };
@@ -1550,7 +1677,7 @@ impl Kette {
         //
         // Sie steht **vor** dem Anwenden, weil die Übergänge sie lesen.
         zustand.epoch = EpochId(epoch);
-        let netz = Self::startwert();
+        let netz = crate::netz::Netz::des_zustands(zustand).startwert_hash();
         // ⚑ **Träge, nicht immer.** Die meisten Blöcke tragen kein
         // Bündel, und die Ableitung mischt das ganze Register.
         let mut zuteilung: Option<myl_scheduler::shard_assignment::Zuteilung> = None;
@@ -1618,6 +1745,36 @@ impl Kette {
                 Anweisung::MinerAbmelden => {
                     let kennung = myl_types::ids::MinerId::new(*absender.as_bytes());
                     let _ = miner_abmelden(zustand, &absender, &kennung);
+                }
+                // ⚑ **Die Kapazitätszusage** (Stufe 4 des Dispatchers,
+                //   2026-10-21): je Netzmodell Ebenen und Ebenenzeit, ab
+                //   einer künftigen Epoche.
+                Anweisung::ZusageEinreichen { zusage } => {
+                    let _ = myl_ledger::transitions::zusage_einreichen(zustand, &absender, zusage);
+                }
+                // ⚑ **Die Fristmeldung** (6.8, 2026-10-22): Pod, Mitglieder
+                //   und Bereich des Gemeldeten leitet diese Stelle aus
+                //   Zuteilung und Schnitt der laufenden Epoche ab, wie beim
+                //   Bündel; der Ledger prüft Zeugnisse und Frist.
+                Anweisung::FristverstossEinreichen { meldung } => {
+                    let zuteilung = zuteilung.get_or_insert_with(|| {
+                        Self::zuteilung_der_laufenden_epoche(zustand)
+                    });
+                    let Some(pod) = zuteilung.pods.iter().find(|p| p.pod_index == meldung.pod) else {
+                        continue;
+                    };
+                    let Some(stelle) = pod.shards.iter().position(|s| s.miner.miner_id == meldung.gemeldeter) else {
+                        continue;
+                    };
+                    let Some(grenzen) = Self::grenzen_des_pods(zustand, pod) else {
+                        continue;
+                    };
+                    let kontext = myl_ledger::transitions::Fristkontext {
+                        mitglieder: pod.mitglieder().map(|m| m.miner_id).collect(),
+                        ebenen: grenzen[stelle].1 - grenzen[stelle].0,
+                        mit_kopf: stelle + 1 == pod.shards.len(),
+                    };
+                    let _ = myl_ledger::transitions::fristverstoss_einreichen(zustand, &absender, meldung, &kontext);
                 }
                 // ⚑ **Der Einsatz** (Punkt B11, Fund 145). Bis zum
                 // 2026-09-03 gab es keinen Weg, MYL zu hinterlegen;
@@ -1725,7 +1882,7 @@ impl Kette {
                         // signiert; wer sie erhöht, ohne die Rate zu
                         // senken, fällt hier durch.
                         lr_nenner: Self::trainings_lr_nenner(
-                            Self::trainingstiefe(),
+                            Self::trainingstiefe(zustand),
                             segment.gradienten(),
                         ),
                     };
@@ -1955,6 +2112,24 @@ impl Default for Kette {
 mod tests {
     use super::*;
     use myl_consensus::block::Anweisung;
+
+    fn zusage_direkt(k: &mut Kette, kennung: myl_types::ids::MinerId) {
+        k.probezusage_setzen(kennung);
+    }
+
+    /// Die Zuteilung der laufenden Epoche, aber aus einem gegebenen Hash
+    /// statt der Saat im Zustand: die Gegenprobe zu Fund 143.
+    fn zuteilung_aus_hash(k: &Kette, hash: &Hash) -> myl_scheduler::shard_assignment::Zuteilung {
+        let z = k.zustand();
+        myl_scheduler::zonenzuteilung::zuteilung_der_epoche_mit_zusagen(
+            &angemeldete_miner(z),
+            z.epoch.0,
+            hash,
+            Kette::PROBE_SHARDS,
+            &crate::netz::PROBEKETTE.podmodell,
+            &|m| myl_ledger::transitions::modellzusage_der_epoche(z, m, z.epoch),
+        )
+    }
 
     /// Ein **wirksamer** Burn: Absender ist ein ausgestattetes
     /// Testkonto. Ein Burn von einem leeren Konto scheitert still, und
@@ -2735,6 +2910,8 @@ mod tests {
                 .expect("signieren"),
             );
             nonce[w as usize] += 1;
+            k.aufnehmen(probezusage(w, EpochId(1), nonce[w as usize]));
+            nonce[w as usize] += 1;
         }
         k.baue_block();
         assert_eq!(k.zustand().miner.len(), 12, "die Anmeldungen kamen nicht an");
@@ -2904,6 +3081,8 @@ mod tests {
                 .expect("signieren"),
             );
             nonce[w as usize] += 1;
+            k.aufnehmen(probezusage(w, EpochId(1), nonce[w as usize]));
+            nonce[w as usize] += 1;
         }
         k.baue_block();
         for _ in 0..(3 * BLOECKE_JE_EPOCHE) {
@@ -2936,7 +3115,7 @@ mod tests {
                 schrittzahl: 30,
                 folgen: 1,
                 lr_zaehler: Kette::TRAININGS_LR_ZAEHLER,
-                lr_nenner: Kette::trainings_lr_nenner(Kette::trainingstiefe(), 30),
+                lr_nenner: Kette::trainings_lr_nenner(Kette::trainingstiefe(Kette::probestand().zustand()), 30),
                 delta_commitment: myl_types::hash::Hash([5u8; 32]),
                 bewegte_gewichte: 1,
                 pod_pfad: pod.mitglieder().map(|m| m.miner_id).collect(),
@@ -3003,7 +3182,7 @@ mod tests {
         assert_eq!(abgelegt.charge, charge);
         assert_eq!(
             abgelegt.lr_nenner,
-            Kette::trainings_lr_nenner(Kette::trainingstiefe(), abgelegt.gradienten())
+            Kette::trainings_lr_nenner(Kette::trainingstiefe(Kette::probestand().zustand()), abgelegt.gradienten())
         );
     }
 
@@ -3036,6 +3215,8 @@ mod tests {
                 )
                 .expect("signieren"),
             );
+            nonce[w as usize] += 1;
+            k.aufnehmen(probezusage(w, EpochId(1), nonce[w as usize]));
             nonce[w as usize] += 1;
         }
         // Auszahlungskonten, sonst gilt „ohne Eintrag kein Anteil".
@@ -3094,7 +3275,7 @@ mod tests {
                 schrittzahl: 30,
                 folgen: 1,
                 lr_zaehler: Kette::TRAININGS_LR_ZAEHLER,
-                lr_nenner: Kette::trainings_lr_nenner(Kette::trainingstiefe(), 30),
+                lr_nenner: Kette::trainings_lr_nenner(Kette::trainingstiefe(Kette::probestand().zustand()), 30),
                 delta_commitment: Hash([5u8; 32]),
                 bewegte_gewichte: 1,
                 pod_pfad: pod.mitglieder().map(|m| m.miner_id).collect(),
@@ -3336,9 +3517,16 @@ mod tests {
         for w in 0..6u8 {
             k.aufnehmen(anmeldung(w, HardwareClass::MediumGpu));
             nonce[w as usize] += 1;
+            k.aufnehmen(probezusage(w, EpochId(1), nonce[w as usize]));
+            nonce[w as usize] += 1;
         }
         k.baue_block();
         assert_eq!(k.zustand().miner.len(), 6, "die Anmeldungen kamen nicht an");
+        // ⚑ Die Zusagen gelten ab der nächsten Epoche; erst dort gibt es
+        //   einen Pod (kein Pod ohne Zusage).
+        while k.zustand().epoch.0 < 1 {
+            k.baue_block();
+        }
 
         let zuteilung = Kette::zuteilung_der_laufenden_epoche(k.zustand());
         assert_eq!(zuteilung.pods.len(), 1, "es entstand kein Pod");
@@ -3632,13 +3820,14 @@ mod tests {
         k.aufnehmen(einreichung(koordinator, nonce, b));
         k.baue_block();
         assert_eq!(k.zustand().buendel.len(), 1, "das Buendel kam nicht an");
+        let start = k.zustand().epoch.0;
         for _ in 0..BLOECKE_JE_EPOCHE * 2 {
             k.baue_block();
-            if k.zustand().epoch.0 == 1 {
+            if k.zustand().epoch.0 == start + 1 {
                 break;
             }
         }
-        assert_eq!(k.zustand().epoch.0, 1, "die Epoche wechselte nicht");
+        assert_eq!(k.zustand().epoch.0, start + 1, "die Epoche wechselte nicht");
         assert!(k.zustand().buendel.is_empty(), "die Buendel blieben stehen");
     }
 
@@ -3811,6 +4000,7 @@ mod tests {
                 myl_types::latency_attest::PeerIdBytes([0; 32]),
             )
             .expect("Anmeldung");
+            zusage_direkt(&mut k, kennung);
         }
         assert_eq!(k.zustand().miner.len(), 18, "es entstanden nicht achtzehn Kennungen");
 
@@ -3846,12 +4036,7 @@ mod tests {
         // Saat, sähe der Test oben etwas anderes, und dass er nichts
         // sieht, wäre nichts wert.
         let mit_letztem_hash: Vec<Vec<[u8; 32]>> =
-            myl_scheduler::zonenzuteilung::zuteilung_der_epoche(
-                &angemeldete_miner(k.zustand()),
-                k.zustand().epoch.0,
-                &k.letzter_hash(),
-                Kette::PROBE_SHARDS,
-            )
+            zuteilung_aus_hash(&k, &k.letzter_hash())
             .pods
             .iter()
             .map(|p| {
@@ -3952,11 +4137,16 @@ mod tests {
                 .expect("signieren"),
             );
             nonce[w as usize] += 1;
+            k.aufnehmen(probezusage(w, EpochId(1), nonce[w as usize]));
+            nonce[w as usize] += 1;
         }
         // Und Brennstoff für die Prägung.
         k.aufnehmen(burn_nr(0, 5_000_000, nonce[0]));
         nonce[0] += 1;
         k.baue_block();
+        for w in 0..6u8 {
+            zusage_direkt(&mut k, myl_types::ids::MinerId::new(*probekonto(w).as_bytes()));
+        }
         assert_eq!(k.zustand().miner.len(), 6, "die Anmeldungen kamen nicht an");
         assert!(k.zustand().burn_epoche > 0, "es wurde nichts verbrannt");
 
@@ -3998,16 +4188,10 @@ mod tests {
 
         // Die Zuteilung dieser Epoche nachrechnen und für ihren Pod ein
         // Bündel einreichen.
-        let register = myl_ledger::transitions::angemeldete_miner(k.zustand());
-        let zuteilung = myl_scheduler::zonenzuteilung::zuteilung_der_epoche(
-            &register,
-            k.zustand().epoch.0,
-            // ⚑ Die Saat aus dem Zustand, nicht der letzte Hash
-            // (Fund 143): Nur sie gilt die ganze Epoche, und nur
-            // gegen sie rechnet der Abschluss nach.
-            &k.zustand().epochensaat,
-            4,
-        );
+        // ⚑ Die Saat aus dem Zustand, nicht der letzte Hash (Fund 143): Nur
+        //   sie gilt die ganze Epoche, und nur gegen sie rechnet der
+        //   Abschluss nach.
+        let zuteilung = Kette::zuteilung_der_laufenden_epoche(k.zustand());
         assert_eq!(zuteilung.pods.len(), 1, "es entstand kein Pod");
         let pod_index = zuteilung.pods[0].pod_index;
         let mut b = myl_types::PoIBundle {
@@ -4119,10 +4303,15 @@ mod tests {
                 .expect("signieren"),
             );
             nonce[w as usize] += 1;
+            k.aufnehmen(probezusage(w, EpochId(1), nonce[w as usize]));
+            nonce[w as usize] += 1;
         }
         k.aufnehmen(burn_nr(0, 5_000_000, nonce[0]));
         nonce[0] += 1;
         k.baue_block();
+        for w in 0..6u8 {
+            zusage_direkt(&mut k, myl_types::ids::MinerId::new(*probekonto(w).as_bytes()));
+        }
         for w in 0..6u8 {
             let kennung = myl_types::ids::MinerId::new(*probekonto(w).as_bytes());
             myl_ledger::transitions::auszahlungskonto_eintragen(
@@ -4133,16 +4322,10 @@ mod tests {
             )
             .expect("Eintragung");
         }
-        let register = myl_ledger::transitions::angemeldete_miner(k.zustand());
-        let zuteilung = myl_scheduler::zonenzuteilung::zuteilung_der_epoche(
-            &register,
-            k.zustand().epoch.0,
-            // ⚑ Die Saat aus dem Zustand, nicht der letzte Hash
-            // (Fund 143): Nur sie gilt die ganze Epoche, und nur
-            // gegen sie rechnet der Abschluss nach.
-            &k.zustand().epochensaat,
-            4,
-        );
+        // ⚑ Die Saat aus dem Zustand, nicht der letzte Hash (Fund 143): Nur
+        //   sie gilt die ganze Epoche, und nur gegen sie rechnet der
+        //   Abschluss nach.
+        let zuteilung = Kette::zuteilung_der_laufenden_epoche(k.zustand());
         // ⚑ Echter Pod, echte Kennung, **Attrappe als Unterschrift**.
         let b = myl_types::PoIBundle {
             epoch: k.zustand().epoch,
@@ -4232,10 +4415,15 @@ mod tests {
                 .expect("signieren"),
             );
             nonce[w as usize] += 1;
+            k.aufnehmen(probezusage(w, EpochId(1), nonce[w as usize]));
+            nonce[w as usize] += 1;
         }
         k.aufnehmen(burn_nr(0, 5_000_000, nonce[0]));
         nonce[0] += 1;
         k.baue_block();
+        for w in 0..6u8 {
+            zusage_direkt(&mut k, myl_types::ids::MinerId::new(*probekonto(w).as_bytes()));
+        }
         for w in 0..6u8 {
             let kennung = myl_types::ids::MinerId::new(*probekonto(w).as_bytes());
             myl_ledger::transitions::auszahlungskonto_eintragen(
@@ -4397,6 +4585,38 @@ mod tests {
             Some(&kaltes_konto(9)),
             "das eingetragene Konto durfte seine eigene Eintragung nicht aendern"
         );
+    }
+
+    /// ⚑ **Die Kapazitätszusage wirkt über die Kette** (Stufe 4,
+    /// 2026-10-21): angemeldet, dann eingereicht, steht sie im Zustand; eine
+    /// mit fremder Unterschrift nicht.
+    #[test]
+    fn eine_zusage_ueber_die_kette_wirkt() {
+        use myl_types::zusage::{Kapazitaetszusage, Modellzusage};
+        let mut k = Kette::probestand();
+        k.aufnehmen(anmeldung(0, myl_types::miner::HardwareClass::SmallGpu));
+        k.baue_block();
+        let sk = probeschluessel(0);
+        let halter = myl_types::ids::MinerId::aus_schluessel(&sk.public_key().expect("pk"));
+        let ab = EpochId(k.zustand().epoch.0 + 1);
+        let abdruck = crate::netz::PROBEKETTE.podmodell.abdruck;
+        let modell = Modellzusage { abdruck, ebenen_hoechstens: 30, ebenenzeit_us: 900, gehalten: None };
+        let mut gut = Kapazitaetszusage::neu(halter, ab, 0).mit_modell(modell);
+        gut.signiere(&sk).expect("signieren");
+        let mut fremd = Kapazitaetszusage::neu(halter, EpochId(ab.0 + 1), 0).mit_modell(modell);
+        fremd.signiere(&probeschluessel(1)).expect("signieren");
+        // ⚑ Ein Modell, das dieses Netz nicht rechnet (6.6).
+        let mut anderes = Kapazitaetszusage::neu(halter, EpochId(ab.0 + 2), 0)
+            .mit_modell(Modellzusage { abdruck: [7; 32], ..modell });
+        anderes.signiere(&sk).expect("signieren");
+        for (nonce, z) in [(1, gut), (2, fremd), (3, anderes)] {
+            let tx = Transaktion::signiere(&Kette::startwert(), &sk, nonce, Anweisung::ZusageEinreichen { zusage: z })
+                .expect("signieren");
+            k.aufnehmen(tx);
+        }
+        k.baue_block();
+        let liste = k.zustand().zusagen.get(&halter).expect("eingereicht");
+        assert_eq!(liste.iter().map(|z| z.ab_epoche).collect::<Vec<_>>(), [ab], "nur die eigene Unterschrift und das Podmodell gelten");
     }
 
     /// Die Abmeldung wirkt über die Kette ebenso.

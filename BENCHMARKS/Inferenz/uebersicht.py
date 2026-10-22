@@ -34,7 +34,7 @@ KATALOG = HIER.parents[1] / "MODELS" / "llm" / "KATALOG.json"
 
 # ⚑ **Die Reihenfolge kommt aus dem Katalog, nicht aus dem Dateisystem.**
 # `reihung` ist die Parameterzahl in Milliarden, also die Achse, um die
-# es geht. Alphabetisch stuende `myelith-14b` vor `myelith-4b`.
+# es geht. Alphabetisch stuende `myelith-14b` vor `pigeon-4b-int8`.
 ZIEL = ERGEBNISSE / "UEBERSICHT.md"
 
 
@@ -66,6 +66,18 @@ def _abstand(p: float) -> str:
     return f"**{'+' if p > 0 else '−'}{_zahl(abs(p))} %**"
 
 
+def ergebnis_suffix(schluessel: str, eintrag: dict) -> str:
+    """Das Suffix der Ergebnisdateien eines Modells, wie in
+    `wikitext_common.ergebnis_pfad`. Eine Messung von vor dem 2026-10-21
+    traegt den frueheren Namen (`frueher` im Katalog) und bleibt als
+    Aufzeichnung so liegen; gibt es unter dem neuen Namen keine, gilt sie."""
+    suffix = f"_{schluessel.replace('.', '')}"
+    frueher = eintrag.get("frueher", "")
+    if frueher and not (ERGEBNISSE / f"perplexity_comparison{suffix}.json").exists():
+        return f"_{frueher.replace('.', '')}"
+    return suffix
+
+
 def _eintraege() -> list[tuple[str, dict, dict | None, dict | None]]:
     katalog = json.loads(KATALOG.read_text(encoding="utf-8"))
     modelle = [(k, v) for k, v in katalog.items() if not k.startswith("_")]
@@ -73,8 +85,7 @@ def _eintraege() -> list[tuple[str, dict, dict | None, dict | None]]:
 
     raus = []
     for schluessel, eintrag in modelle:
-        # Der Dateiname entsteht wie in `wikitext_common.ergebnis_pfad`.
-        suffix = f"_{schluessel.replace('.', '')}"
+        suffix = ergebnis_suffix(schluessel, eintrag)
         datei = ERGEBNISSE / f"perplexity_comparison{suffix}.json"
         # ⛔️ **Kein Rueckfall auf die namenlose Datei.**
         #
@@ -188,9 +199,11 @@ def bauen() -> str:
 
     boeden = []
     for schluessel, eintrag, _v, _b in eintraege:
-        suffix = f"_{schluessel.replace('.', '')}"
-        for datei in sorted(ERGEBNISSE.glob(f"schema_boden*{suffix}.json")):
-            boeden.append((eintrag.get("anzeigename", schluessel), json.loads(datei.read_text())))
+        # Neuer und frueherer Name (vor dem 2026-10-21), wie oben.
+        for name in dict.fromkeys(n for n in (schluessel, eintrag.get("frueher", "")) if n):
+            suffix = f"_{name.replace('.', '')}"
+            for datei in sorted(ERGEBNISSE.glob(f"schema_boden*{suffix}.json")):
+                boeden.append((eintrag.get("anzeigename", schluessel), json.loads(datei.read_text())))
     if boeden:
         zeilen += [
             "",
@@ -245,7 +258,7 @@ def bauen() -> str:
         "",
     ]
     for schluessel, eintrag, _, _ in eintraege:
-        suffix = f"_{schluessel.replace('.', '')}"
+        suffix = ergebnis_suffix(schluessel, eintrag)
         zeilen.append(
             f"- **{eintrag.get('anzeigename', schluessel)}**: "
             f"`decision_12-21{suffix}.md`, `perplexity_comparison{suffix}.json`"
@@ -261,11 +274,12 @@ def bauen() -> str:
 
     # 📌 **Verglichen wird in der Form des Dateinamens, nicht in der des
     # Katalogs.** Hier stand der blanke Katalogschluessel, und der traegt
-    # den Punkt (`myelith-0.6b`), den `ergebnis_pfad` aus dem Suffix
+    # den Punkt (`sparrow-0.6b-int8`), den `ergebnis_pfad` aus dem Suffix
     # entfernt (`myelith-06b`). Kein lebendes Modell traf sich selbst, und
     # das 0,6B tauchte prompt unter den abgeloesten auf. Dieselbe Angabe
     # in zwei Schreibweisen, wie sie dieses Projekt schon oefter hatte.
-    abgeloest = _abgeloeste({s.replace(".", "") for s, _, _, _ in eintraege})
+    lebend = {s for s, _, _, _ in eintraege} | {e.get("frueher", "") for _, e, _, _ in eintraege}
+    abgeloest = _abgeloeste({s.replace(".", "") for s in lebend if s})
     if abgeloest:
         zeilen += [
             "## Abgelöste Modelle (Aufzeichnung)",

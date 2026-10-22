@@ -1,5 +1,5 @@
 {
-  "myelith-0.6b": {
+  "sparrow-0.6b-int8": {
     "artefakt_digest_sha256": "e03f94b2ca6d90abfd7e23ce8f6bdaf94e72b71d176f9c64367cde140468e1c5",
     "bytes": 10955623,
     "dateien": [
@@ -23,7 +23,7 @@
     "theta_v": "0.22.0",
     "weights_manifest_sha256": "cf103bf5f7d37130998fddc46e67b1a08d43b7a508feda70406bdc01eea348d8"
   },
-  "myelith-30b-a3b": {
+  "magpie-30b-a3b-int8": {
     "artefakt_digest_sha256": "99ce847fac73c6fcdcce94e6f697dd5b8d63ae4e038443ddf38b1a9d14598286",
     "bytes": 11416000,
     "dateien": [
@@ -47,7 +47,7 @@
     "theta_v": "0.22.0",
     "weights_manifest_sha256": "78d3d83523ca2cf416d234078520492292e45c58da583fb5dfb36f490b916f71"
   },
-  "myelith-35b-a3b": {
+  "raven-35b-a3b-int8": {
     "artefakt_digest_sha256": "e03f70c75d3d6495c58a2baacdbd065d117c7c5473a21d4b68611f4632ac8527",
     "bytes": 34396935,
     "dateien": [
@@ -71,8 +71,8 @@
     "theta_v": "0.22.0",
     "weights_manifest_sha256": "7819a36f76f6b1681dcab160238be2744735af11b447d8b2a5c1e1a92de63430"
   },
-  "myelith-35b-a3b-int4": {
-    "abgeleitet_von": "myelith-35b-a3b",
+  "raven-35b-a3b-int4": {
+    "abgeleitet_von": "raven-35b-a3b-int8",
     "artefakt_digest_sha256": "a2a320f608129473174211975d2b032672a11f7862fb504026064d6ae781061a",
     "bytes": 262,
     "dateien": [
@@ -86,7 +86,7 @@
     "theta_v": "0.22.0",
     "weights_manifest_sha256": "b372bfc58bf643e92600c8417392102feb4680819df3a3e064886c18d46b4f38"
   },
-  "myelith-4b": {
+  "pigeon-4b-int8": {
     "artefakt_digest_sha256": "ce86c94cdb5c15de4bceb8f3831326411d4b72062b9c79dedfea5c289b713a8c",
     "bytes": 11355189,
     "dateien": [
@@ -110,7 +110,7 @@
     "theta_v": "0.22.0",
     "weights_manifest_sha256": "4437d872387dc80a820f5373e501089fe4d7a4e91d73a3ce6e015fa5e935baff"
   },
-  "myelith-8b": {
+  "jay-8b-int8": {
     "artefakt_digest_sha256": "71ae0f3d5956079e2e674e662fa9ad0f76c9532f33cb21c6e1afb52d8968817f",
     "bytes": 11655062,
     "dateien": [

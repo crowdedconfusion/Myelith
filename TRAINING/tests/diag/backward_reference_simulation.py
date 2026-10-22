@@ -77,7 +77,7 @@ from pathlib import Path
 WURZEL = Path(__file__).resolve().parent.parent.parent.parent
 INTEGER_LLM = WURZEL / "INTEGER_LLM"
 sys.path.insert(0, str(INTEGER_LLM / "calibrate"))
-sys.path.insert(0, str(INTEGER_LLM / "eval"))
+sys.path.insert(0, str(WURZEL / "BENCHMARKS" / "Inferenz"))
 
 import torch  # noqa: E402
 import torch.nn as nn  # noqa: E402

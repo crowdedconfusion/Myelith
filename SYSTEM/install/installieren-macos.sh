@@ -79,7 +79,17 @@ fi
 # beantwortet `command -v` mit ja; `cargo --version` bricht dann ab.
 # Gefunden beim ersten Probelauf dieses Skripts: Es meldete „alles da",
 # druckte eine leere Version und scheiterte drei Zeilen spaeter im Bau.
-if ! cargo --version >/dev/null 2>&1; then
+# ⚑ **Ohne Netz aus dem Werkzeugvorrat**, wenn er in diesem Baum liegt
+# (2026-10-21); das Skript nennt den Befehl und installiert nichts selbst.
+RUST_VORRAT=$(ls "$WURZEL"/SYSTEM/werkzeug-vorrat/rust/rust-*-aarch64-apple-darwin.tar.xz 2>/dev/null | head -1)
+PYTHON_VORRAT=$(ls "$WURZEL"/SYSTEM/werkzeug-vorrat/python/python-*-macos*.pkg 2>/dev/null | head -1)
+if ! cargo --version >/dev/null 2>&1 && [ -n "$RUST_VORRAT" ]; then
+  fehlt="$fehlt
+  Die Rust-Werkzeugkette fehlt. Aus dem Werkzeugvorrat, ohne Netz, nach ~/.local:
+      tar -xJf \"$RUST_VORRAT\" -C \"\${TMPDIR:-.}\"
+      sh \"\${TMPDIR:-.}\"/$(basename "$RUST_VORRAT" .tar.xz)/install.sh --prefix=\"\$HOME/.local\"
+  Danach steht cargo unter ~/.local/bin."
+elif ! cargo --version >/dev/null 2>&1; then
   fehlt="$fehlt
   Die Rust-Werkzeugkette fehlt oder hat keine eingestellte Fassung. Holen mit:
       curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
@@ -87,6 +97,12 @@ if ! cargo --version >/dev/null 2>&1; then
       . \"\$HOME/.cargo/env\"
   Ist rustup schon da, fehlt vielleicht nur die Voreinstellung:
       rustup default stable"
+fi
+
+if ! python3 --version >/dev/null 2>&1 && [ -n "$PYTHON_VORRAT" ]; then
+  fehlt="$fehlt
+  python3 fehlt (es packt den Vorrat aus). Aus dem Werkzeugvorrat, ohne Netz:
+      sudo installer -pkg \"$PYTHON_VORRAT\" -target /"
 fi
 
 if [ "$AKTUALISIEREN" = ja ] && ! command -v git >/dev/null 2>&1; then
@@ -115,8 +131,13 @@ fi
 # Pakete in sechs Sekunden.
 ARCHIVE=$(find "$WURZEL/SYSTEM/crates-vorrat" -maxdepth 1 -name '*.crate' 2>/dev/null | wc -l | tr -d " ")
 if [ "$ARCHIVE" -gt 0 ]; then
+  # ⚑ Der lokale Vorrat eigener Module zaehlt mit, und ohne Konfiguration
+  #   im Lager wird ebenfalls neu ausgepackt (2026-10-21).
   if [ ! -d "$WURZEL/SYSTEM/crates-lager/vendor" ] \
-     || [ "$WURZEL/SYSTEM/crates-vorrat" -nt "$WURZEL/SYSTEM/crates-lager/vendor" ]; then
+     || [ ! -f "$WURZEL/SYSTEM/crates-lager/cargo-home/config.toml" ] \
+     || [ "$WURZEL/SYSTEM/crates-vorrat" -nt "$WURZEL/SYSTEM/crates-lager/vendor" ] \
+     || { [ -d "$WURZEL/SYSTEM/crates-vorrat-lokal" ] \
+          && [ "$WURZEL/SYSTEM/crates-vorrat-lokal" -nt "$WURZEL/SYSTEM/crates-lager/vendor" ]; }; then
     echo "   Vorrat: $ARCHIVE Archive werden ausgepackt"
     python3 "$WURZEL/SYSTEM/install/vorrat.py" auspacken >/dev/null || {
       echo "   FEHLER beim Auspacken des Vorrats" >&2

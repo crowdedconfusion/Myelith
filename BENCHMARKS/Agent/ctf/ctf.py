@@ -29,7 +29,7 @@ Sicherheitswerkzeuge der Elite-Kiste.
 # Aufruf
 
     python3 BENCHMARKS/Agent/ctf/ctf.py --selbsttest
-    python3 BENCHMARKS/Agent/ctf/ctf.py INTEGER_LLM/artifacts/myelith-4b
+    python3 BENCHMARKS/Agent/ctf/ctf.py INTEGER_LLM/artifacts/pigeon-4b-int8
     python3 BENCHMARKS/Agent/ctf/ctf.py <artefakt> --nur flagge_durchsuchen
 
 `--selbsttest` baut jede Herausforderung und prueft **ohne Modell**, dass

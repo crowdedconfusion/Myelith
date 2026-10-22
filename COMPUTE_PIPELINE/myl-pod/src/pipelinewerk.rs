@@ -62,6 +62,36 @@ const _: () = assert!(
     "Shardzahl der Pipeline und der Gewichtsableitung sind auseinandergelaufen"
 );
 
+/// Der gleiche Schnitt von `ebenen` Ebenen auf [`SHARDS`] Shards, Rest
+/// nach hinten: `[von, bis)` je Shard.
+pub fn gleiche_grenzen(ebenen: usize) -> Vec<(usize, usize)> {
+    (0..SHARDS).map(|s| (ebenen * s / SHARDS, ebenen * (s + 1) / SHARDS)).collect()
+}
+
+/// **Prüft Grenzen aus der Kette** (Stufe 4, 2026-10-22): [`SHARDS`]
+/// Bereiche, lückenlos von 0 bis `ebenen`, keiner leer.
+///
+/// ⚑ **Abgelehnt statt angepasst.** Grenzen, die nicht passen, kommen von
+/// einer anderen Zuteilung oder einem anderen Modell; ein Pod, der sie
+/// zurechtrückte, rechnete einen Schnitt, den die Kette nicht kennt, und
+/// bekäme seine Arbeit nach einem anderen gutgeschrieben.
+pub fn grenzen_pruefen(grenzen: &[(usize, usize)], ebenen: usize) -> Result<Vec<(usize, usize)>, String> {
+    if grenzen.len() != SHARDS {
+        return Err(format!("{} Bereiche, der Pod hat {SHARDS} Shards", grenzen.len()));
+    }
+    let mut bis_dahin = 0;
+    for &(von, bis) in grenzen {
+        if von != bis_dahin || bis <= von {
+            return Err(format!("Bereich {von} bis {bis} schliesst nicht an {bis_dahin} an oder ist leer"));
+        }
+        bis_dahin = bis;
+    }
+    if bis_dahin != ebenen {
+        return Err(format!("die Bereiche enden bei {bis_dahin}, das Modell hat {ebenen} Ebenen"));
+    }
+    Ok(grenzen.to_vec())
+}
+
 /// Das Rechenwerk über einer geladenen Shard-Pipeline.
 pub struct Pipelinewerk {
     koordinator: Mutex<Coordinator>,
@@ -76,7 +106,8 @@ pub struct Pipelinewerk {
 }
 
 impl Pipelinewerk {
-    /// Lädt Modell und Wortschatz und baut die Pipeline auf.
+    /// Lädt Modell und Wortschatz und baut die Pipeline auf, im gleichen
+    /// Schnitt.
     ///
     /// `pipeline` ist der gemessene Artefakt-Digest aus dem Register.
     pub fn laden(
@@ -85,6 +116,20 @@ impl Pipelinewerk {
         epoche: EpochId,
         pipeline: Hash,
         eigener_deckel: u32,
+    ) -> Result<Self, String> {
+        Self::laden_mit_grenzen(artefakte, pod, epoche, pipeline, eigener_deckel, None)
+    }
+
+    /// ⚑ **Wie [`Pipelinewerk::laden`], mit den Grenzen der Kette** (Stufe 4,
+    /// 2026-10-22): je Shard `[von, bis)`, wie die Kette sie aus den Zusagen
+    /// der Mitglieder schneidet. `None`: der gleiche Schnitt.
+    pub fn laden_mit_grenzen(
+        artefakte: &Path,
+        pod: PodId,
+        epoche: EpochId,
+        pipeline: Hash,
+        eigener_deckel: u32,
+        grenzen: Option<&[(usize, usize)]>,
     ) -> Result<Self, String> {
         let modell = load_model_fuer_netz(artefakte).map_err(|e| format!("Modell laden: {e}"))?;
         let wortschatz = Tokenizer::from_file(
@@ -97,14 +142,12 @@ impl Pipelinewerk {
 
         let layer = modell.num_layers;
         let modell = Arc::new(modell);
-        // Dieselbe Aufteilung wie `myl-pod-node`: gleichmässig, Rest
-        // nach hinten.
-        let mut grenzen = Vec::with_capacity(SHARDS + 1);
-        for s in 0..=SHARDS {
-            grenzen.push(layer * s / SHARDS);
-        }
+        let bereiche = match grenzen {
+            None => gleiche_grenzen(layer),
+            Some(g) => grenzen_pruefen(g, layer)?,
+        };
         let mut shards = Vec::with_capacity(SHARDS);
-        for s in 0..SHARDS {
+        for (s, &(von, bis)) in bereiche.iter().enumerate() {
             // ⚑ **Ein Schlüssel je Shard, abgeleitet und nicht zufällig.**
             // Ein Probelauf soll bei gleichem Aufbau dieselben
             // Unterschriften liefern, sonst ist „bitgleich" nicht
@@ -114,8 +157,8 @@ impl Pipelinewerk {
             let sk = BlsSecretKey::key_gen(&ikm).map_err(|e| format!("BLS: {e:?}"))?;
             shards.push(Arc::new(ShardNode::new(
                 s,
-                grenzen[s],
-                grenzen[s + 1],
+                von,
+                bis,
                 s == 0,
                 s == SHARDS - 1,
                 Arc::clone(&modell),

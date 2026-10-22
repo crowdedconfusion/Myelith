@@ -5,8 +5,8 @@ Arbeitsverlauf macht, und was ein Agent danach weiß, verglichen mit
 demselben Verlauf ohne Schlaf.
 
 ```text
-python3 BENCHMARKS/Agent/schlaf/schlafprobe.py INTEGER_LLM/artifacts/myelith-4b <laufordner>
-python3 BENCHMARKS/Agent/schlaf/schlafprobe.py INTEGER_LLM/artifacts/myelith-0.6b <laufordner> --nur-schlaf   # der kurze Lauf
+python3 BENCHMARKS/Agent/schlaf/schlafprobe.py INTEGER_LLM/artifacts/pigeon-4b-int8 <laufordner>
+python3 BENCHMARKS/Agent/schlaf/schlafprobe.py INTEGER_LLM/artifacts/sparrow-0.6b-int8 <laufordner> --nur-schlaf   # der kurze Lauf
 ```
 
 Der Laufordner liegt **außerhalb** des Repositoriums. `myl` muss gebaut

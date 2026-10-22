@@ -4,7 +4,7 @@
 //! Dieser Lauf fuellt sie mit dem echten 0,5B-Artefakt und prueft, dass
 //! am anderen Ende Text herauskommt, den ein Mensch lesen kann.
 //!
-//! ⚑ **Gemessen wird an `myelith-4b` und nicht am 0,5B**, und der Grund
+//! ⚑ **Gemessen wird an `pigeon-4b-int8` und nicht am 0,5B**, und der Grund
 //! ist ein Befund vom 2026-09-08: Die Qwen2.5-Artefakte stammen aus den
 //! **Basis**repositorien und kennen keine Rollenmarken. Bei Qwen3 ist
 //! die Fassung ohne Zusatz die instruktionsgeschliffene. Wer einen
@@ -20,7 +20,7 @@ use myl_local_agent::{Modellweg, Nachricht};
 fn modell() -> Option<Oertlichesmodell> {
     let pfad = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../INTEGER_LLM/artifacts/myelith-4b"
+        "/../../INTEGER_LLM/artifacts/pigeon-4b-int8"
     );
     // 📌 **Fund 218: Diese Abfrage stand unter der Pfadpruefung**, und
     // damit war der Schalter auf jeder Maschine wirkungslos, die die
@@ -63,7 +63,7 @@ fn das_oertliche_modell_antwortet_auf_bekanntes() {
     m.grenze = 48;
     let antwort = m
         .chat(
-            "myelith-4b",
+            "pigeon-4b-int8",
             &[Nachricht::nutzer("Wie heisst die Hauptstadt von Frankreich?")],
             Some(48),
         )
@@ -253,7 +253,7 @@ fn das_denkbudget_beendet_die_ueberlegung_und_es_kommt_eine_antwort() {
     let stuecke = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let s = std::sync::Arc::clone(&stuecke);
     m.beobachter = Some(Box::new(move |x| s.lock().unwrap().push(x)));
-    let a = m.chat("myelith-4b", &frage, Some(200)).expect("Antwort");
+    let a = m.chat("pigeon-4b-int8", &frage, Some(200)).expect("Antwort");
     m.beobachter = None;
     assert_eq!(a.text.matches("</think>").count(), 1, "{:?}", a.text);
     let (denken, prosa) = myl_local_agent::lauf::denken_und_prosa(&a.text);
@@ -271,7 +271,7 @@ fn das_denkbudget_beendet_die_ueberlegung_und_es_kommt_eine_antwort() {
     assert!(!text.contains("Time is short"), "die Schlussfolge steht in der Antwort");
 
     m.denkbudget = Some(0);
-    let a = m.chat("myelith-4b", &frage, Some(200)).expect("Antwort");
+    let a = m.chat("pigeon-4b-int8", &frage, Some(200)).expect("Antwort");
     let (denken, prosa) = myl_local_agent::lauf::denken_und_prosa(&a.text);
     assert!(denken.is_empty(), "mit null wurde ueberlegt: {denken:?}");
     assert!(prosa.contains("391"), "{prosa:?}");

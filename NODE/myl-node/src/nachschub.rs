@@ -74,6 +74,34 @@ pub enum Nachforderung {
     /// die neue Marke nicht und antwortet mit `Nichts`, statt etwas
     /// Falsches zu verstehen.
     Inferenz(myl_types::inferenzauftrag::Inferenzauftrag),
+    /// ⚑ **Eine Zeitprobe an den Shard dieses Knotens** (Stufe 4, Frist,
+    /// 2026-10-22): Wer fragt, nimmt die Zeit. Angehängt wie alle folgenden.
+    Zeitprobe {
+        /// Wie viele Positionen.
+        positionen: u32,
+    },
+    /// Nur der Weg, ohne Rechnung: Gegenstück der Zeitprobe.
+    Ping,
+    /// ⚑ **Ein Stück einer Datei des Netzmodells** (Stufe 4, P11).
+    Datei {
+        /// Der Name im Artefaktordner, wie das Manifest ihn nennt.
+        name: String,
+        /// Ab welchem Byte.
+        ab: u64,
+        /// Wie viele, höchstens `dateidienst::STUECK_BYTES`.
+        laenge: u64,
+    },
+    /// ⚑ **Ein Fristzeugnis an ein Mitglied desselben Pods** (6.8).
+    Fristzeugnis {
+        /// Die Epoche.
+        epoche: myl_types::ids::EpochId,
+        /// Der Pod.
+        pod: u32,
+        /// Wer seine Frist überschritten haben soll.
+        gemeldeter: myl_types::ids::MinerId,
+        /// Die Messung des Zeugen.
+        zeugnis: myl_types::fristmeldung::Fristzeugnis,
+    },
 }
 
 /// Was auf eine Nachforderung zurückkommt.
@@ -88,6 +116,23 @@ pub enum Nachlieferung {
     /// „habe nicht geantwortet" kennen, sonst wartet er auf eine
     /// Zeitüberschreitung, die nichts bedeutet.
     Nichts,
+    /// Die Zeitprobe ist gerechnet: der Abdruck des letzten Ergebnisses.
+    Zeitprobe([u8; 32]),
+    /// Die Antwort auf einen Ping.
+    Pong,
+    /// Ein Stück einer Datei und die Größe der ganzen.
+    Datei {
+        /// Der Name.
+        name: String,
+        /// Ab welchem Byte.
+        ab: u64,
+        /// Die Bytes.
+        daten: Vec<u8>,
+        /// Wie groß die ganze Datei ist.
+        groesse: u64,
+    },
+    /// Ein Fristzeugnis ist angekommen.
+    Vermerkt,
 }
 
 impl Nachforderung {
@@ -214,6 +259,20 @@ mod tests {
         assert_eq!(Nachforderung::aus_bytes(&[0xFF; 3]), None);
         assert_eq!(Nachforderung::aus_bytes(&[]), None);
         assert_eq!(Nachlieferung::aus_bytes(&[0xAB; 9]), None);
+    }
+
+    /// ⚑ **Die neuen Marken stehen hinten** (2026-10-22): Die alten
+    /// behalten ihre Nummern, und ein alter Knoten liest eine neue als
+    /// unbekannt statt als etwas anderes.
+    #[test]
+    fn die_neuen_marken_stehen_hinten() {
+        assert_eq!(Nachforderung::Bloecke { ab: 1, bis: 2 }.als_bytes().unwrap()[0], 0);
+        assert_eq!(Nachforderung::Zeitprobe { positionen: 4 }.als_bytes().unwrap()[0], 2);
+        assert_eq!(Nachforderung::Ping.als_bytes().unwrap()[0], 3);
+        assert_eq!(Nachlieferung::Nichts.als_bytes().unwrap()[0], 2);
+        assert_eq!(Nachlieferung::Pong.als_bytes().unwrap()[0], 4);
+        let d = Nachlieferung::Datei { name: "a.bin".into(), ab: 3, daten: vec![1, 2], groesse: 5 };
+        assert_eq!(Nachlieferung::aus_bytes(&d.als_bytes().unwrap()), Some(d));
     }
 
     #[test]

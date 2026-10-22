@@ -284,7 +284,7 @@ pub fn pruefen() -> Stand {
     Stand::aus(quelle(), EINGEBAUT, datei_dort())
 }
 
-/// Die drei Installationsskripte, **immer alle drei uebersetzt**.
+/// Die Installationsskripte, **immer alle uebersetzt**.
 ///
 /// ⛔️ **Fund 458 (2026-09-24): der Windows-Pfad blieb beim Umzug nach
 /// `SYSTEM/` stehen, und keine oertliche Probe konnte es sehen.** Er
@@ -297,11 +297,19 @@ pub fn pruefen() -> Stand {
 /// prueft.** Dagegen hilft keine Sorgfalt, sondern nur, ihn aus dem
 /// `cfg` herauszuholen: **Die drei Namen stehen jetzt hier und werden
 /// auf jeder Plattform uebersetzt**, `cfg` waehlt nur noch aus. Damit
-/// faellt `alle_drei_skripte_liegen_da` auf **jedem** System, sobald
-/// einer der drei nicht mehr stimmt.
+/// faellt `alle_skripte_liegen_da` auf **jedem** System, sobald
+/// eines davon nicht mehr stimmt.
 pub const SKRIPT_MACOS: &str = "SYSTEM/install/installieren-macos.sh";
 /// Siehe [`SKRIPT_MACOS`].
-pub const SKRIPT_LINUX: &str = "SYSTEM/install/installieren-nixos.sh";
+///
+/// ⛔️ **Fund 581 (2026-10-21): Hier stand das Nix-Skript.** Unter jedem
+/// Linux ohne Nix brach das Update damit ab (`nix fehlt`), also auf
+/// Debian, Ubuntu, Fedora und Arch. `installieren-linux.sh` ist der
+/// Einstieg fuer jedes Linux und gibt auf NixOS selbst an das Nix-Skript
+/// ab; die Entscheidung faellt dort, wo das System zu sehen ist.
+pub const SKRIPT_LINUX: &str = "SYSTEM/install/installieren-linux.sh";
+/// Das Skript fuer NixOS, aufgerufen von [`SKRIPT_LINUX`].
+pub const SKRIPT_NIXOS: &str = "SYSTEM/install/installieren-nixos.sh";
 /// Siehe [`SKRIPT_MACOS`].
 ///
 /// ⚑ **Der Backslash bleibt.** So stand er hier seit jeher, und ob
@@ -310,8 +318,8 @@ pub const SKRIPT_LINUX: &str = "SYSTEM/install/installieren-nixos.sh";
 /// kann, gehoert nicht in eine Fehlerbehebung.**
 pub const SKRIPT_WINDOWS: &str = "SYSTEM\\install\\installieren-windows.ps1";
 
-/// Alle drei, fuer die Proben und fuer jeden, der sie aufzaehlen will.
-pub const SKRIPTE: [&str; 3] = [SKRIPT_MACOS, SKRIPT_LINUX, SKRIPT_WINDOWS];
+/// Alle, fuer die Proben und fuer jeden, der sie aufzaehlen will.
+pub const SKRIPTE: [&str; 4] = [SKRIPT_MACOS, SKRIPT_LINUX, SKRIPT_NIXOS, SKRIPT_WINDOWS];
 
 /// Das Installationsskript dieser Plattform.
 ///
@@ -514,10 +522,21 @@ mod proben {
     #[test]
     fn kein_skript_ueberschreibt_ein_laufendes_programm() {
         let wurzel = Path::new(env!("CARGO_MANIFEST_DIR")).parent().and_then(|p| p.parent()).expect("Wurzel");
-        for datei in [SKRIPT_MACOS, SKRIPT_LINUX] {
+        for datei in [SKRIPT_MACOS, SKRIPT_LINUX, SKRIPT_NIXOS] {
             let text = std::fs::read_to_string(wurzel.join(datei)).expect(datei);
-            let loeschen = text.find("rm -f \"$BIN/$2\"").unwrap_or_else(|| panic!("{datei} loescht das alte Programm nicht"));
-            let kopieren = text.find("cp \"$WURZEL/SYSTEM/full-build/release/$2\" \"$BIN/$2\"").expect("Kopierzeile");
+            // ⚑ Gesucht wird die Form, nicht ein Wortlaut: geloescht wird
+            // `"$BIN/<programm>"`, kopiert aus einem `release/`-Ordner
+            // nach `"$BIN/<programm>"`. Das Linux-Skript nimmt dabei den
+            // wirklichen Bauordner (`CARGO_TARGET_DIR`).
+            let zeilen: Vec<&str> = text.lines().map(str::trim).collect();
+            let loeschen = zeilen
+                .iter()
+                .position(|z| z.contains("rm -f \"$BIN/$"))
+                .unwrap_or_else(|| panic!("{datei} loescht das alte Programm nicht"));
+            let kopieren = zeilen
+                .iter()
+                .position(|z| z.contains("cp \"") && z.contains("/release/$") && z.contains("\"$BIN/$"))
+                .unwrap_or_else(|| panic!("{datei}: keine Kopierzeile"));
             assert!(loeschen < kopieren, "{datei} kopiert, bevor es loescht");
         }
         let ps = std::fs::read_to_string(wurzel.join(SKRIPT_WINDOWS.replace('\\', "/"))).expect("ps1");
@@ -644,11 +663,8 @@ mod proben {
         }
 
         // 2. Und kein Skript fuehrt daneben seine eigene Liste.
-        for datei in [
-            "SYSTEM/install/installieren-macos.sh",
-            "SYSTEM/install/installieren-nixos.sh",
-            "SYSTEM/install/installieren-windows.ps1",
-        ] {
+        for datei in SKRIPTE.map(|d| d.replace('\\', "/")) {
+            let datei = datei.as_str();
             let text = std::fs::read_to_string(wurzel.join(datei)).expect(datei);
             assert!(
                 text.contains("ausliefern"),
@@ -695,7 +711,7 @@ mod proben {
     /// als Konstanten ausserhalb der Zweige stehen, uebersetzt jede
     /// Plattform alle drei, und jede kann sie nachsehen.
     #[test]
-    fn alle_drei_skripte_liegen_da() {
+    fn alle_skripte_liegen_da() {
         let wurzel = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .and_then(|p| p.parent())
@@ -727,7 +743,13 @@ mod proben {
     /// beim Bauen oder Einrichten entsteht, steht in `ENTSTEHT`.
     #[test]
     fn jeder_pfad_in_den_skripten_liegt_da() {
-        const ENTSTEHT: [&str; 3] = [".git", "SYSTEM/full-build", "SYSTEM/crates-lager"];
+        const ENTSTEHT: [&str; 5] = [
+            ".git",
+            "SYSTEM/full-build",
+            "SYSTEM/crates-lager",
+            "SYSTEM/crates-vorrat-lokal",
+            "SYSTEM/werkzeug-vorrat",
+        ];
         let wurzel = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .and_then(|p| p.parent())
@@ -737,7 +759,9 @@ mod proben {
             let skript = eintrag.replace('\\', "/");
             let text = std::fs::read_to_string(wurzel.join(&skript)).expect("Skript lesbar");
             let mut pfade: Vec<String> = Vec::new();
-            for (marke, ende) in [("$WURZEL/", &[' ', '"', '\'', ')', '\n'][..]), ("Join-Path $Wurzel \"", &['"'][..])] {
+            // ⚑ `}` endet einen Pfad in `${VAR:-$WURZEL/…}`, der Vorgabe einer
+            //   Variablen (das Linux-Skript nimmt so `CARGO_TARGET_DIR`).
+            for (marke, ende) in [("$WURZEL/", &[' ', '"', '\'', ')', '}', '\n'][..]), ("Join-Path $Wurzel \"", &['"'][..])] {
                 let mut rest = text.as_str();
                 while let Some(i) = rest.find(marke) {
                     rest = &rest[i + marke.len()..];
@@ -763,7 +787,7 @@ mod proben {
         assert!(geprueft >= 8, "nur {geprueft} Pfade gefunden; liest die Probe die Skripte noch?");
     }
 
-    /// **Alle drei Installationsskripte liegen in `SYSTEM/install/`.**
+    /// **Alle Installationsskripte liegen in `SYSTEM/install/`.**
     ///
     /// ⚑ **In einem eigenen Ordner mit einer Anleitung daneben**
     /// (Festlegung des Projektinhabers, 2026-09-10). Drei Skripte lose
@@ -774,7 +798,7 @@ mod proben {
     /// ruft der Klient es. Ein Skript ohne diesen Schalter bricht mit
     /// „unbekannter Schalter" ab, und zwar erst beim Nutzer.
     #[test]
-    fn drei_installationsskripte_liegen_in_install() {
+    fn die_installationsskripte_liegen_in_install() {
         let wurzel = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .and_then(|p| p.parent())
@@ -786,7 +810,7 @@ mod proben {
         for (datei, schalter) in SKRIPTE
             .iter()
             .map(|d| d.replace('\\', "/"))
-            .zip(["--aktualisieren", "--aktualisieren", "Aktualisieren"])
+            .zip(["--aktualisieren", "--aktualisieren", "--aktualisieren", "Aktualisieren"])
         {
             let datei = datei.as_str();
             let pfad = wurzel.join(datei);
@@ -805,7 +829,7 @@ mod proben {
         // seines ist.
         let anleitung = std::fs::read_to_string(wurzel.join("SYSTEM/install/README.md"))
             .expect("SYSTEM/install/README.md");
-        for system in ["macOS", "Windows", "NixOS"] {
+        for system in ["macOS", "Linux", "Windows", "NixOS"] {
             assert!(anleitung.contains(system), "die Anleitung nennt {system} nicht");
         }
     }

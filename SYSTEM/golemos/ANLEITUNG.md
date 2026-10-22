@@ -143,9 +143,9 @@ sechs Zehntel des Arbeitsspeichers passt:
 
 | Modell | Größe | Arbeitsspeicher ab |
 |---|---|---|
-| `myelith-0.6b` | 0,9 GB | 2 GB |
-| `myelith-4b` | 4,5 GB | 8 GB |
-| `myelith-8b` | 8,8 GB | 16 GB |
+| `sparrow-0.6b-int8` | 0,9 GB | 2 GB |
+| `pigeon-4b-int8` | 4,5 GB | 8 GB |
+| `jay-8b-int8` | 8,8 GB | 16 GB |
 
 > Der Ordner darf auch auf einem **zweiten Stick oder einer externen
 > Platte** liegen, höchstens zwei Ordner tief. GolemOS sucht beim Start

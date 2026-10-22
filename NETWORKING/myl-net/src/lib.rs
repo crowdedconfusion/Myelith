@@ -1,8 +1,9 @@
 //! `myl-net` — L0-Netzwerkschicht für Myelith (Whitepaper Kap. 3.2).
 //!
 //! Aufgabe: P2P-Gossip für Blöcke, Transaktionen, PoI-Bündel und
-//! Challenges; kontinuierliche Paarlatenzmessung als Grundlage des
-//! `LatencyGraph` für die Pod-Bildung (Kap. 4.1/4.3, Anhang A.2);
+//! Challenges; kontinuierliche Paarlatenzmessung und signierte
+//! Latenz-Atteste als Messung des Netzes (Kap. 4.1, Anhang A.2; die
+//! Pod-Bildung liest sie nicht, Pods entstehen je Zone);
 //! Ende-zu-Ende-verschlüsselte Kanäle für Nutzer↔Gateway↔Pipeline und
 //! zwischen den Shards eines Pods (Kap. 9.2).
 //!
@@ -38,6 +39,7 @@ pub mod latency;
 pub mod limits;
 pub mod nat;
 pub mod node;
+pub mod portwahl;
 pub mod runtime;
 pub mod scoring;
 // ⚑ **Der Sitzungskanal ist seit dem 2026-09-03 eine eigene Kiste**

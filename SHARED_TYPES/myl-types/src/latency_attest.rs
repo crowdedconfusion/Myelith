@@ -1,9 +1,14 @@
-//! Latenz-Atteste für den LatencyGraph (Whitepaper Kap. 4.1, Anhang A.2).
+//! Latenz-Atteste (Whitepaper Kap. 4.1, Anhang A.2).
 //!
 //! Jeder Node signiert regelmäßig seine gemessenen Latenzen zu anderen
-//! Peers und verbreitet diese Atteste über Gossip. Andere Nodes können
-//! daraus den LatencyGraph aufbauen, der die Grundlage für die Pod-Bildung
-//! bildet (Kap. 4.3: Nodes mit niedrigen Latenzen werden bevorzugt).
+//! Peers und verbreitet diese Atteste über Gossip.
+//!
+//! ⚑ **Sie bestimmen die Pod-Bildung nicht.** Pods entstehen je Zone aus
+//! dem Konsenszustand: Wer wählt, mit wem er attestiert und welche Zahl er
+//! nennt, formte sonst mit, in welchem Topf er gemischt wird. Die Atteste
+//! bleiben eine Messung des Netzes. Hier stand bis zum 2026-10-21 auch ein
+//! `LatencyGraph`, den niemand aufbaute; er setzte eine Netzadresse ohne
+//! Umrechnung als Miner-Kennung ein und las die Systemuhr. Er ist entfernt.
 //!
 //! **Konsens-Feld:** Das Attest-Format ist Teil des Konsensvertrags.
 //! Änderungen nur über Governance (Kap. 10.3).
@@ -14,7 +19,6 @@
 //! von Attesten Dritter — verhindert Sybil-Angriffe).
 
 use borsh::{BorshDeserialize, BorshSerialize};
-use std::collections::HashMap;
 
 use crate::hash::Hash;
 use crate::ids::MinerId;
@@ -23,7 +27,7 @@ use crate::ids::MinerId;
 ///
 /// Enthält die geglätteten Latenzen zu allen bekannten Peers, signiert
 /// mit dem BLS-Schlüssel des Nodes. Andere Nodes können die Signatur
-/// verifizieren und die Latenzwerte in ihren LatencyGraph aufnehmen.
+/// verifizieren.
 #[derive(Debug, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
 pub struct LatencyAttest {
     /// Der Miner, der dieses Attest erstellt hat.
@@ -220,111 +224,6 @@ impl std::fmt::Display for LatencyAttestError {
 
 impl std::error::Error for LatencyAttestError {}
 
-/// Der LatencyGraph: aggregierte Latenzdaten aller bekannten Peers.
-///
-/// Jeder Node baut seinen eigenen LatencyGraph aus den empfangenen
-/// Attesten auf. Der Graph wird für die Pod-Bildung verwendet (Kap. 4.3):
-/// Nodes mit niedrigen Latenzen werden bevorzugt, um die Gesamtlatenz
-/// des Pods zu minimieren.
-///
-/// **Design:** Der Graph ist ungerichtet — wenn Node A eine Latenz zu
-/// Node B misst, wird diese als Kante in beide Richtungen gespeichert
-/// (Annahme: Latenz ist symmetrisch, was für TCP/UDP weitgehend stimmt).
-#[derive(Debug, Clone, Default)]
-pub struct LatencyGraph {
-    /// Kanten des Graphen: (Node A, Node B) → Latenz in ms.
-    ///
-    /// **Invariante:** Für jede Kante (A, B) existiert auch (B, A) mit
-    /// demselben Wert (ungerichteter Graph).
-    edges: HashMap<(MinerId, MinerId), u32>,
-    /// Zeitstempel des letzten Attests pro Node (für Aging).
-    last_update: HashMap<MinerId, u64>,
-}
-
-impl LatencyGraph {
-    /// Neuer, leerer LatencyGraph.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Fügt ein Attest in den Graphen ein.
-    ///
-    /// Aktualisiert alle Kanten des Issuers und setzt den Zeitstempel.
-    /// Vorherige Kanten des Issuers werden überschrieben (das Attest
-    /// enthält die aktuellen Latenzen).
-    pub fn insert_attest(&mut self, attest: &LatencyAttest) {
-        let issuer = attest.issuer;
-
-        // Alte Kanten des Issuers entfernen
-        self.edges.retain(|(a, b), _| *a != issuer && *b != issuer);
-
-        // Neue Kanten einfügen (ungerichtet: beide Richtungen)
-        for (peer_bytes, rtt_ms) in &attest.latencies {
-            // PeerIdBytes in MinerId konvertieren (vereinfacht: MinerId = PeerId)
-            // In der realen Implementierung müsste hier eine Mapping-Tabelle verwendet werden.
-            let peer = MinerId::new(peer_bytes.0);
-
-            self.edges.insert((issuer, peer), *rtt_ms);
-            self.edges.insert((peer, issuer), *rtt_ms);
-            
-            // Peers auch in last_update eintragen (mit dem Attest-Zeitstempel)
-            self.last_update.entry(peer).or_insert(attest.timestamp_ms);
-        }
-
-        // Zeitstempel des Issuers aktualisieren
-        self.last_update.insert(issuer, attest.timestamp_ms);
-    }
-
-    /// Gibt die Latenz zwischen zwei Nodes zurück (falls bekannt).
-    pub fn get_latency(&self, a: &MinerId, b: &MinerId) -> Option<u32> {
-        self.edges.get(&(*a, *b)).copied()
-    }
-
-    /// Gibt alle bekannten Latenzen eines Nodes zurück.
-    pub fn get_all_latencies(&self, node: &MinerId) -> Vec<(MinerId, u32)> {
-        self.edges
-            .iter()
-            .filter(|((a, _), _)| a == node)
-            .map(|((_, b), rtt)| (*b, *rtt))
-            .collect()
-    }
-
-    /// Gibt die Anzahl der Kanten im Graphen zurück.
-    pub fn edge_count(&self) -> usize {
-        self.edges.len() / 2 // Ungerichteter Graph: jede Kante twice
-    }
-
-    /// Gibt die Anzahl der bekannten Nodes zurück.
-    pub fn node_count(&self) -> usize {
-        self.last_update.len()
-    }
-
-    /// Entfernt veraltete Einträge (älter als `max_age_ms`).
-    ///
-    /// Sollte regelmäßig aufgerufen werden (z. B. alle 10 min), um
-    /// Speicherlecks durch Nodes zu vermeiden, die das Netzwerk verlassen.
-    pub fn cleanup_stale_entries(&mut self, max_age_ms: u64) {
-        let now_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("system clock before UNIX epoch")
-            .as_millis() as u64;
-
-        // Veraltete Nodes finden
-        let stale_nodes: Vec<MinerId> = self
-            .last_update
-            .iter()
-            .filter(|(_, &timestamp)| now_ms - timestamp > max_age_ms)
-            .map(|(node, _)| *node)
-            .collect();
-
-        // Entfernen
-        for node in stale_nodes {
-            self.last_update.remove(&node);
-            self.edges.retain(|(a, b), _| *a != node && *b != node);
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -386,50 +285,6 @@ mod tests {
             attest.validate_structure(),
             Err(LatencyAttestError::DuplicatePeer { .. })
         ));
-    }
-
-    #[test]
-    fn graph_insert_attest() {
-        let mut graph = LatencyGraph::new();
-        let attest = test_attest();
-
-        graph.insert_attest(&attest);
-
-        assert_eq!(graph.node_count(), 3); // Issuer + 2 Peers
-        assert_eq!(graph.edge_count(), 2); // 2 Kanten (ungerichtet)
-    }
-
-    #[test]
-    fn graph_get_latency() {
-        let mut graph = LatencyGraph::new();
-        let attest = test_attest();
-        let issuer = attest.issuer;
-        let peer = MinerId::new([2u8; 32]);
-
-        graph.insert_attest(&attest);
-
-        assert_eq!(graph.get_latency(&issuer, &peer), Some(50));
-        assert_eq!(graph.get_latency(&peer, &issuer), Some(50)); // Symmetrisch
-    }
-
-    #[test]
-    fn graph_cleanup_stale_entries() {
-        let mut graph = LatencyGraph::new();
-        let mut attest = test_attest();
-        
-        // Setze Zeitstempel auf 2 Stunden in der Vergangenheit
-        let now_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("system clock before UNIX epoch")
-            .as_millis() as u64;
-        attest.timestamp_ms = now_ms - 2 * 3600 * 1000; // 2 Stunden alt
-
-        graph.insert_attest(&attest);
-        assert_eq!(graph.node_count(), 3);
-
-        // Cleanup mit 1 Stunde max_age
-        graph.cleanup_stale_entries(3600 * 1000); // 1 Stunde
-        assert_eq!(graph.node_count(), 0);
     }
 }
 

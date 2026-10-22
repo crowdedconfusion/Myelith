@@ -1,7 +1,7 @@
 # training (`myl-train`)
 
-> **Version:** 0.4.3 (`myl-train` 0.3.0)
-> **Datum:** 2026-09-11
+> **Version:** 0.4.4 (`myl-train` 0.3.0)
+> **Datum:** 2026-10-21
 > **Status:** **Die Komponente hat Code**, 32 Tests. Zwei Punkte sind
 > gebaut, und beide sind genau die, die **nicht** am ganzzahligen
 > Rückwärtspass hängen:
@@ -145,6 +145,13 @@ von dieser Komponente kommt:
 Entsteht mit der Implementierung.
 
 ## Changelog
+
+### v0.4.4 – 2026-10-21 (drei Diagnoseskripte finden ihre Hilfsdateien wieder; Fund 582)
+
+- `tests/diag/{bitbudget,backward_reference_simulation,integer_master_simulation}.py`
+  hängten `INTEGER_LLM/eval` in den Suchpfad, den es seit dem Umzug der
+  Messhilfen nach `BENCHMARKS/Inferenz` nicht mehr gibt. Jetzt
+  `WURZEL / "BENCHMARKS" / "Inferenz"` (INTEGER_LLM v0.139.1).
 
 ### v0.4.3 – 2026-09-25 (die Buchkette sagt, wofür man ein Buch verwenden darf)
 

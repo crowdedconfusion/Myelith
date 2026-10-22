@@ -25,7 +25,7 @@ Gleitkommawert. Die Perplexitaetswirkung sagt das nicht voraus.
 Referenz float32 (nicht bfloat16, siehe zehnter Instrumentenfehler).
 
 Usage:
-    INTEGER_LLM_MODEL=myelith-0.6b python -u tests/diag/activation_scale_simulation.py <tok...>
+    INTEGER_LLM_MODEL=sparrow-0.6b-int8 python -u tests/diag/activation_scale_simulation.py <tok...>
 """
 import sys
 from pathlib import Path
@@ -35,7 +35,7 @@ import torch
 from transformers import AutoModelForCausalLM
 
 REPO = Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(REPO / "eval"))
+sys.path.insert(0, str(REPO.parent / "BENCHMARKS" / "Inferenz"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from wikitext_common import MODEL_DIR  # noqa: E402
 from fortschritt import Fortschritt  # noqa: E402

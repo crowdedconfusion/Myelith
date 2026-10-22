@@ -1,0 +1,17 @@
+# Systempakete fuer den Bau unter Linux, je Familie eine Zeile.
+#
+#   <familie>: <grundpakete> | <pakete des Fensters>
+#
+# Die Grundpakete braucht jeder Bau (C-Compiler, pkg-config, Python fuer das
+# Auspacken des Vorrats). Die Pakete des Fensters braucht nur
+# `myl-oberflaeche`; ohne sie baut alles andere.
+#
+# Gelesen von `installieren-linux.sh`, das daraus den Befehl fuer die
+# erkannte Distribution baut. Unter NixOS gilt `flake.nix`, nicht diese Datei.
+#
+# Erprobt ist die Zeile `debian` (Debian 12); die uebrigen folgen den
+# Paketnamen der Distributionen und sind nicht gefahren.
+debian: build-essential pkg-config python3 | libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev libayatana-appindicator3-dev librsvg2-dev libdbus-1-dev
+fedora: gcc pkgconf-pkg-config python3 | webkit2gtk4.1-devel gtk3-devel libsoup3-devel libappindicator-gtk3-devel librsvg2-devel dbus-devel
+arch: base-devel pkgconf python | webkit2gtk-4.1 gtk3 libsoup3 libappindicator-gtk3 librsvg dbus
+opensuse: gcc pkg-config python3 | webkit2gtk3-devel gtk3-devel libsoup-devel libappindicator3-devel librsvg-devel dbus-1-devel

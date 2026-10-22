@@ -26,6 +26,20 @@ GUT = {
     "https://huggingface.co/Qwen/Qwen3-4B?library=transformers": ("Qwen/Qwen3-4B", ""),
     "  https://www.huggingface.co/Qwen/Qwen3-4B/  ": ("Qwen/Qwen3-4B", ""),
     "Qwen/Qwen3-4B": ("Qwen/Qwen3-4B", ""),
+    # ⚑ **Jeder Anbieter** (Festlegung des Projektinhabers, 2026-10-21):
+    #   Gewichte anderer Organisationen sind lokal zugelassen.
+    "https://huggingface.co/unsloth/Qwen3.8-27B": ("unsloth/Qwen3.8-27B", ""),
+    "https://huggingface.co/mistralai/Mistral-Small-3.2-24B-Instruct-2506/tree/main": ("mistralai/Mistral-Small-3.2-24B-Instruct-2506", "main"),
+}
+
+# ⚑ **Projektmodell ist nur, was model_configs.py unter genau diesem
+#   Repositorium fuehrt.** Alles andere wird privat gebaut, auch eine Kopie
+#   eines Projektmodells bei einem anderen Anbieter; ins Netz kommt es nur
+#   ueber die Netzliste.
+PROJEKT = {
+    "Qwen/Qwen3-0.6B": True,
+    "unsloth/Qwen3.8-27B": False,
+    "someone/Qwen3-0.6B": False,
 }
 
 SCHLECHT = [
@@ -44,6 +58,10 @@ def main() -> int:
         ist = mb.repo_aus_link(link)
         if ist != soll:
             print(f"[modell_link] FEHLER: {link!r} gab {ist}, erwartet {soll}")
+            fehler += 1
+    for repo, soll in PROJEKT.items():
+        if bool(mb.projektschluessel(repo)) != soll:
+            print(f"[modell_link] FEHLER: {repo} als Projektmodell {not soll}, erwartet {soll}")
             fehler += 1
     for link in SCHLECHT:
         try:

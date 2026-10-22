@@ -3,7 +3,7 @@
 //! # ⚑ Die Frage, an der haengt, ob ein 30B-Gemisch auf einer kleinen
 //! Maschine laufen kann
 //!
-//! Das Artefakt von `myelith-30b-a3b` ist 30,8 GB, davon **29 GB
+//! Das Artefakt von `magpie-30b-a3b-int8` ist 30,8 GB, davon **29 GB
 //! Experten**; je Token feuern 8 von 128 in jeder der 48 Ebenen, also
 //! 6,25 %. Passt das Artefakt nicht in den Arbeitsspeicher, entscheidet
 //! alles daran, **wie gleichmaessig** sich diese 6,25 % ueber die

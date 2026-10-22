@@ -41,11 +41,35 @@ Write-Host "   Quelle: $Wurzel"
 # nichts gesagt, was er nicht vorher haette sagen koennen.
 $fehlt = @()
 
+# ⚑ **Ohne Netz aus dem Werkzeugvorrat**, wenn er in diesem Baum liegt
+#   (2026-10-21, `SYSTEM\werkzeug-vorrat\`, gefuellt mit
+#   `werkzeugvorrat.py holen`). Das Skript nennt dann den Befehl mit der
+#   Datei aus dem Vorrat; installiert wird nichts hinter dem Ruecken.
+$Werkzeug = Join-Path $Wurzel "SYSTEM\werkzeug-vorrat"
+$RustMsi = Get-ChildItem -Path (Join-Path $Werkzeug "rust") -Filter "rust-*-x86_64-pc-windows-msvc.msi" -ErrorAction SilentlyContinue | Select-Object -First 1
+$PythonExe = Get-ChildItem -Path (Join-Path $Werkzeug "python") -Filter "python-*-amd64.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+$VsLayout = Join-Path $Werkzeug "windows\vs_buildtools"
+
 if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
-  $fehlt += @"
+  if ($RustMsi) {
+    $fehlt += @"
+  Die Rust-Werkzeugkette fehlt. Aus dem Werkzeugvorrat, ohne Netz:
+      msiexec /i "$($RustMsi.FullName)"
+  danach eine neue Sitzung oeffnen.
+"@
+  } else {
+    $fehlt += @"
   Die Rust-Werkzeugkette fehlt. Holen von https://rustup.rs
   oder, wenn winget da ist:
       winget install --id Rustlang.Rustup
+"@
+  }
+}
+
+if (-not (Get-Command python3 -ErrorAction SilentlyContinue) -and -not (Get-Command python -ErrorAction SilentlyContinue) -and $PythonExe) {
+  $fehlt += @"
+  Python fehlt (es packt den Vorrat aus). Aus dem Werkzeugvorrat, ohne Netz:
+      & "$($PythonExe.FullName)" /passive PrependPath=1
 "@
 }
 
@@ -61,7 +85,13 @@ if (-not $hatLinker) {
       -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath)
   }
 }
-if (-not $hatLinker) {
+if (-not $hatLinker -and (Test-Path (Join-Path $VsLayout "vs_buildtools.exe"))) {
+  $fehlt += @"
+  Die C++-Buildwerkzeuge von Visual Studio fehlen (Rust braucht ihren Linker).
+  Aus dem Offline-Bestand im Werkzeugvorrat, ohne Netz:
+      & "$VsLayout\vs_buildtools.exe" --noweb --passive --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended
+"@
+} elseif (-not $hatLinker) {
   $fehlt += @"
   Die C++-Buildwerkzeuge von Visual Studio fehlen (Rust braucht ihren Linker).
   Holen mit:
@@ -153,7 +183,20 @@ if ($Archive.Count -gt 0) {
   if (-not $Python) {
     throw "Der Vorrat liegt bereit, aber Python fehlt. Ohne Python kein Auspacken; mit Netz geht es auch ohne Vorrat."
   }
-  if (-not (Test-Path (Join-Path $Ausgepackt "vendor"))) {
+  # ⚑ **Neu ausgepackt wird auch, wenn ein Vorrat neuer ist als das Lager**
+  #    (2026-10-21), wie unter macOS und Linux. Bis dahin nur, wenn es gar
+  #    kein Lager gab: Brachte ein Update neue Archive, baute `--offline`
+  #    gegen das alte Lager und brach am ersten neuen Paket ab. Der lokale
+  #    Vorrat eigener Module zaehlt mit.
+  $Lager = Join-Path $Ausgepackt "vendor"
+  $Lokal = Join-Path $Wurzel "SYSTEM\crates-vorrat-lokal"
+  $Auspacken = -not (Test-Path (Join-Path $Ausgepackt "cargo-home\config.toml")) -or -not (Test-Path $Lager)
+  if (-not $Auspacken) {
+    $Stand = (Get-Item $Lager).LastWriteTime
+    if ((Get-Item $VorratOrdner).LastWriteTime -gt $Stand) { $Auspacken = $true }
+    if ((Test-Path $Lokal) -and ((Get-Item $Lokal).LastWriteTime -gt $Stand)) { $Auspacken = $true }
+  }
+  if ($Auspacken) {
     Write-Host "   Vorrat: $($Archive.Count) Archive werden ausgepackt"
     # 📌 Hier stand bis zum 2026-09-29 `INSTALL\vorrat.py`, ein Ordner, den es
     #    seit dem Umzug nach SYSTEM\ nicht mehr gibt. Die CI rief `vorrat.py`

@@ -6,7 +6,7 @@ einen Skill **selbst finden und lernen** und in Unterlagen recherchieren.
 Ausgelegt auf rund zwei Stunden mit dem 8B-Modell, mit einer harten Frist.
 
 ```text
-python3 BENCHMARKS/Agent/loop/starten.py INTEGER_LLM/artifacts/myelith-8b <laufordner> --frist-min 170
+python3 BENCHMARKS/Agent/loop/starten.py INTEGER_LLM/artifacts/jay-8b-int8 <laufordner> --frist-min 170
 python3 BENCHMARKS/Agent/loop/auswerten.py <laufordner>                       # Stand, jederzeit
 python3 BENCHMARKS/Agent/loop/auswerten.py <laufordner> --bericht <datei.md>  # Auswertung als Datei
 ```

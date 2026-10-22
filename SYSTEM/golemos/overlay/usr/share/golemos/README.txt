@@ -36,9 +36,9 @@ WELCHES MODELL PASST
 
   GolemOS waehlt selbst das groesste Modell, das in etwa sechs Zehntel
   des Arbeitsspeichers passt. Faustregel:
-    myelith-0.6b   0,9 GB   ab 2 GB Arbeitsspeicher
-    myelith-4b     4,5 GB   ab 8 GB
-    myelith-8b     8,8 GB   ab 16 GB
+    sparrow-0.6b-int8   0,9 GB   ab 2 GB Arbeitsspeicher
+    pigeon-4b-int8     4,5 GB   ab 8 GB
+    jay-8b-int8     8,8 GB   ab 16 GB
 
 HINWEISE
 
@@ -87,9 +87,9 @@ WHICH MODEL FITS
 
   GolemOS picks the largest model that fits into about six tenths of
   the memory. Rule of thumb:
-    myelith-0.6b   0.9 GB   from 2 GB of memory
-    myelith-4b     4.5 GB   from 8 GB
-    myelith-8b     8.8 GB   from 16 GB
+    sparrow-0.6b-int8   0.9 GB   from 2 GB of memory
+    pigeon-4b-int8     4.5 GB   from 8 GB
+    jay-8b-int8     8.8 GB   from 16 GB
 
 NOTES
 

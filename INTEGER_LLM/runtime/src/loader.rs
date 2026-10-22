@@ -799,6 +799,12 @@ pub struct ModelDims {
     /// (`modell_bauen.sh`), traegt `lokal`. Der Netzbetrieb laedt es nicht
     /// ([`load_model_fuer_netz`]), und der Klient bietet es nicht im Netz an.
     ///
+    /// ⛔️ **Seit dem 2026-10-21 nicht mehr die Zusage, sondern ein Hinweis**
+    /// (Fund 585): Diese Datei deckte kein Hash, also liess sich `lokal` von
+    /// Hand zu `netz` machen. Im Netz rechnet nur, was mit seinem Abdruck auf
+    /// der Netzliste steht ([`crate::netzfreigabe`]); `lokal` wird zusaetzlich
+    /// abgelehnt.
+    ///
     /// ⚠️ **Kein Merkmal**, mit Absicht: Es aendert keine Zahl der Rechnung,
     /// und ein Merkmal machte das Artefakt auch fuer jeden aelteren Klienten
     /// unladbar, der es lokal rechnen darf.
@@ -898,6 +904,11 @@ pub const GEKONNTE_MERKMALE: &[&str] = &[
     "blockauswahl",
     // `sigmoid(z)` statt `silu(z)` im Tor der Zustandsnorm.
     "zustandstor_sigmoid",
+    // ⛔️ **Seit dem 2026-10-21 (Fund 571):** Der Ausgang der Aufmerksamkeit
+    // (der Eingang von `o_proj`) rechnet auf der Skala von `v`. Geprueft am
+    // Zufallsmodell der dichten Hybridform gegen die Vorlage
+    // (`tests/test_qwen3_5_mini.py`): Abstand 1,2 % an Position 0 statt 26 %.
+    "ausgang_auf_v",
 ];
 
 /// **Die Formen einer rekurrenten Zustandsschicht pruefen.**
@@ -1013,8 +1024,11 @@ fn lade_zustandsschicht(
         .ok_or_else(|| {
             format!("Fehlende kalibrierte Aktivierungsskala: {p}.linear_attn.in_proj_qkv")
         })?;
-    let kern = conv1d.data.len() / kanaele.max(1);
+    let kern = if conv1d.data.liegt_vor() { conv1d.data.len() / kanaele.max(1) } else { 0 };
+    // ⚑ Ein Platzhalter der Teilablage (Fund 589) hat keine Gewichte, aus
+    //   denen sich die Schranke ableiten liesse; seine Ebene rechnet nie.
     let konv_fracs: Vec<u8> = (0..kanaele)
+        .filter(|_| conv1d.data.liegt_vor())
         .map(|c| {
             let summe: i64 = conv1d.data[c * kern..(c + 1) * kern]
                 .iter()
@@ -1751,6 +1765,70 @@ fn alle_eintraege_laden(
 /// Validiert pro Tensor dtype, Form, Dateigroesse und den SHA-256-Hash gegen
 /// das Manifest. Fehlerhafte Artefakte werden komplett abgelehnt.
 pub fn load_weights(artifact_dir: &Path) -> Result<LoadedWeights, String> {
+    load_weights_bereich(artifact_dir, None)
+}
+
+/// **Welche Ebenen ein Rechner haelt** (Teilablage, Stufe 4 des
+/// Dispatchers, P10, 2026-10-22): `[von, bis)` von `ebenen`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Ladebereich {
+    pub von: usize,
+    pub bis: usize,
+    pub ebenen: usize,
+}
+
+impl Ladebereich {
+    /// Braucht dieser Bereich den Tensor mit diesem Manifest-Schluessel?
+    /// Die Ebenen im Bereich; die Einbettung am ersten Bereich; Kopf und
+    /// Schlussnorm am letzten.
+    fn braucht(&self, schluessel: &str) -> bool {
+        let ebene = schluessel
+            .strip_prefix("model_layers_")
+            .and_then(|r| r.split('_').next())
+            .and_then(|z| z.parse::<usize>().ok());
+        match ebene {
+            Some(i) => self.von <= i && i < self.bis,
+            None if schluessel.starts_with("model_embed_tokens") => self.von == 0,
+            None => self.bis == self.ebenen,
+        }
+    }
+}
+
+/// Ein Platzhalter fuer einen Tensor ausserhalb des Bereichs, dessen Datei
+/// fehlt: Form und Name wie im Manifest, Daten [`crate::model::Gewichtsdaten::Fehlt`].
+fn platzhalter(name: String, entry: WeightManifestEntry) -> Geladen {
+    let zeilen = entry.shape.first().copied().unwrap_or(0);
+    if entry.dtype == "int16" && name != "lm_head" {
+        let n: usize = entry.shape.iter().product();
+        return Geladen::Vorspann(name, BiasTensor { data: vec![0; n], shifts: vec![0; n] });
+    }
+    if name == "lm_head" && entry.dtype == "int16" {
+        return Geladen::Kopf(LmHead {
+            data: Kopfdaten::Speicher(Vec::new()),
+            shape: entry.shape,
+            shifts: vec![0; zeilen],
+            drehung: None,
+        });
+    }
+    let tensor = QTensor {
+        data: std::sync::Arc::new(crate::model::Gewichtsdaten::Fehlt),
+        shape: entry.shape,
+        shifts: vec![0; zeilen],
+        drehung: None,
+    };
+    Geladen::Gewicht(name, LoadedWeight { tensor, original_name: entry.original_name, scale: entry.scale })
+}
+
+/// **Wie [`load_weights`], fuer einen Bereich** (Teilablage, P10): Ein
+/// Tensor ausserhalb des Bereichs, dessen Datei nicht hier liegt, bekommt
+/// einen Platzhalter; einer im Bereich muss da sein, sonst ist das
+/// Artefakt fuer diesen Bereich unvollstaendig. Ohne Bereich wie bisher.
+///
+/// 📌 **Fund 589 (2026-10-22, gefunden im Netzlauf): Die Teilablage startete
+/// keinen Shard.** Die Kette teilte einem Knoten, der nur einen Bereich
+/// haelt, nur Ebenen darin zu, aber der Lader verlangte jede Datei des
+/// Manifests, und der Shard brach beim Laden ab.
+pub fn load_weights_bereich(artifact_dir: &Path, bereich: Option<Ladebereich>) -> Result<LoadedWeights, String> {
     let manifest_path = artifact_dir.join("weights_manifest.json");
     let content = std::fs::read_to_string(&manifest_path)
         .map_err(|e| format!("Fehler beim Lesen von weights_manifest.json: {}", e))?;
@@ -1764,6 +1842,10 @@ pub fn load_weights(artifact_dir: &Path) -> Result<LoadedWeights, String> {
     // abhaengt.
     let mut liste: Vec<(String, WeightManifestEntry)> = entries.into_iter().collect();
     liste.sort_by(|a, b| a.0.cmp(&b.0));
+    let (liste, fehlend): (Vec<_>, Vec<_>) = liste.into_iter().partition(|(name, entry)| match bereich {
+        Some(b) => b.braucht(name) || artifact_dir.join(&entry.file).exists(),
+        None => true,
+    });
 
     // ⚑ **Die Pruefsumme kostet beim 35B 17,2 s von 23,8 s Wanduhr**, und
     //   sie prueft jedes Mal dasselbe. Liegt eine gueltige Marke, entfaellt
@@ -1775,7 +1857,8 @@ pub fn load_weights(artifact_dir: &Path) -> Result<LoadedWeights, String> {
     let mut weights = HashMap::with_capacity(liste.len());
     let mut lm_head: Option<LmHead> = None;
     let mut biases: HashMap<String, BiasTensor> = HashMap::new();
-    for geladen in alle_eintraege_laden(artifact_dir, liste, pruefen)? {
+    let platzhalter = fehlend.into_iter().map(|(n, e)| platzhalter(n, e));
+    for geladen in alle_eintraege_laden(artifact_dir, liste, pruefen)?.into_iter().chain(platzhalter) {
         match geladen {
             Geladen::Gewicht(name, w) => {
                 weights.insert(name, w);
@@ -2029,11 +2112,44 @@ fn p_experte(layer_praefix: &str) -> String {
 /// `myl-shard`), laedt hierueber. Lokale Wege (Klient, Konsole, Werkzeuge)
 /// nehmen weiter [`load_model`].
 pub fn load_model_fuer_netz(artifact_dir: &Path) -> Result<IntegerModel, String> {
+    load_model_fuer_netz_mit(artifact_dir, &crate::netzfreigabe::netzliste())
+}
+
+/// **Wie [`load_model_fuer_netz`], gegen eine gegebene Netzliste.**
+///
+/// ⛔️ **Seit dem 2026-10-21 entscheidet die Netzliste** (Fund 585): Geladen
+/// wird nur, was mit seinem Abdruck auf ihr steht. `betrieb` wird weiter
+/// geprueft, aber es ist nicht mehr die Zusage; die Konfiguration, in der es
+/// steht, deckte kein Hash. Siehe [`crate::netzfreigabe`].
+pub fn load_model_fuer_netz_mit(
+    artifact_dir: &Path,
+    liste: &[crate::netzfreigabe::Netzfreigabe],
+) -> Result<IntegerModel, String> {
     load_model_dims(artifact_dir)?.fuer_netz_zugelassen()?;
+    crate::netzfreigabe::pruefen(artifact_dir, liste)?;
     load_model(artifact_dir)
 }
 
 pub fn load_model(artifact_dir: &Path) -> Result<IntegerModel, String> {
+    load_model_bereich(artifact_dir, None)
+}
+
+/// **Wie [`load_model_fuer_netz`], fuer einen Ebenenbereich** (Teilablage,
+/// P10): siehe [`load_weights_bereich`]. `von`/`bis` werden gegen die
+/// Ebenenzahl des Modells gehalten.
+pub fn load_model_fuer_netz_bereich(artifact_dir: &Path, von: usize, bis: usize) -> Result<IntegerModel, String> {
+    let dims = load_model_dims(artifact_dir)?;
+    dims.fuer_netz_zugelassen()?;
+    crate::netzfreigabe::pruefen(artifact_dir, &crate::netzfreigabe::netzliste())?;
+    if von >= bis || bis > dims.num_layers {
+        return Err(format!("Bereich {von} bis {bis} passt nicht zu {} Ebenen", dims.num_layers));
+    }
+    load_model_bereich(artifact_dir, Some(Ladebereich { von, bis, ebenen: dims.num_layers }))
+}
+
+/// Laedt ein Modell, wahlweise nur fuer einen Bereich (siehe
+/// [`load_weights_bereich`]).
+pub fn load_model_bereich(artifact_dir: &Path, bereich: Option<Ladebereich>) -> Result<IntegerModel, String> {
     let theta_v = ThetaV::load_from_dir(artifact_dir)?;
     theta_v.verify_version_against_spec()?;
 
@@ -2041,7 +2157,7 @@ pub fn load_model(artifact_dir: &Path) -> Result<IntegerModel, String> {
     // ⛔️ **Vor dem Laden der Gewichte und nicht danach.** Ein Artefakt,
     // das dieser Bau nicht rechnen kann, soll nicht erst 9 GB einlesen.
     dims.pruefe_merkmale()?;
-    let weights = load_weights(artifact_dir)?;
+    let weights = load_weights_bereich(artifact_dir, bereich)?;
     let scales = load_scales(artifact_dir)?;
     let luts = load_luts(artifact_dir)?;
 
@@ -2519,11 +2635,14 @@ pub fn build_model(
             // Beide Gammas sind je `head_dim` lang und werden von allen
             // Koepfen geteilt. Eine falsche Laenge hier waere im
             // Forward-Pass eine stille Fehlnormierung, kein Fehler.
+            // ⚑ Nach der Form und nicht nach den Daten: Ein Platzhalter der
+            //   Teilablage (Fund 589) hat eine Form, aber keine Daten.
             for (bez, g) in [("q_norm", &q_gamma), ("k_norm", &k_gamma)] {
-                if g.data.len() != dims.head_dim {
+                let elemente: usize = g.shape.iter().product();
+                if elemente != dims.head_dim {
                     return Err(format!(
                         "{}.self_attn.{}.weight: {} Elemente, erwartet head_dim ({})",
-                        p, bez, g.data.len(), dims.head_dim
+                        p, bez, elemente, dims.head_dim
                     ));
                 }
             }
@@ -2622,7 +2741,15 @@ pub fn build_model(
                 //   uebrigen Bauarten behalten ihre Skala, bis ueber ihren
                 //   Neubau entschieden ist (die Konformitaetsvektoren haengen
                 //   daran).
-                attn_out_frac: if dims.hc_count > 0 {
+                //
+                //   ⚑ **Seit dem 2026-10-21 auch mit dem Merkmal
+                //   `ausgang_auf_v`**, das der Export in neue Artefakte
+                //   schreibt (zuerst die dichte Hybridform, Qwen3.8-27B).
+                //   Am Zufallsmodell: an Position 0 ist der Ausgang genau
+                //   `sigmoid(tor) * v`, und auf der Skala hinter `o_proj`
+                //   (dort 0,066 gegen `v` bis 0,77) war er auf +-0,125
+                //   beschnitten: 26 % Abstand statt 1,2 %.
+                attn_out_frac: if dims.hc_count > 0 || dims.merkmale.iter().any(|m| m == "ausgang_auf_v") {
                     v_frac
                 } else {
                     require_scale(&scales, &format!("{}.self_attn", p))?

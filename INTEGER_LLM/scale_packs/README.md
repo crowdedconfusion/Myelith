@@ -106,7 +106,7 @@ der neue `weights_hash`) und nennt die Quelle (`abgeleitet_von`). So das
 35B mit Experten in vier Bit:
 
 ```bash
-python tools/skalenpaket_bauen.py --abgeleitet-von myelith-35b-a3b myelith-35b-a3b-int4
+python tools/skalenpaket_bauen.py --abgeleitet-von raven-35b-a3b-int8 raven-35b-a3b-int4
 ```
 
 Gebaut wird es nicht mit der Kalibrierung, sondern aus der Quelle

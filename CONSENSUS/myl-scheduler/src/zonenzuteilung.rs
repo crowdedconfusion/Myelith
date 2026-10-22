@@ -44,6 +44,7 @@
 use std::collections::BTreeMap;
 
 use myl_types::hash::Hash;
+use myl_types::ids::MinerId;
 use myl_types::miner::{HardwareClass, MinerRegistration};
 use myl_types::node_metadata::GeoRegion;
 
@@ -216,6 +217,50 @@ pub fn zuteilung_der_epoche(
     )
 }
 
+/// **Die Zuteilung einer Epoche nach den Zusagen** (Stufe 4 des
+/// Dispatchers, 6.7, 2026-10-22). Das ist der Weg, den die Kette seither
+/// geht.
+///
+/// - ⚑ **Kein Pod ohne Zusage** (Festlegung des Projektinhabers): Wer für
+///   das Podmodell keine geltende Zusage hat, steht in
+///   [`Zuteilung::ohne_zusage`] und sonst nirgends.
+/// - ⚑ **Nur machbare Pods**: Jeder gebildete Pod wird mit
+///   [`crate::ebenenverteilung::bereiche_des_pods`] geprüft. Ist er nicht
+///   machbar, weicht sein schwächstes Mitglied
+///   ([`crate::ebenenverteilung::schwaechstes`]), und er zieht aus derselben
+///   Folge nach.
+///
+/// `zusage` liefert je Miner, was er für das Podmodell zusagt; die Kette
+/// liest es aus ihrem Zustand an der Epoche, für die zugeteilt wird.
+pub fn zuteilung_der_epoche_mit_zusagen(
+    register: &[MinerRegistration],
+    epoche: u64,
+    vorheriger_blockhash: &Hash,
+    shards_je_pod: u32,
+    podmodell: &myl_types::podmodell::Podmodell,
+    zusage: &dyn Fn(&MinerId) -> Option<myl_types::zusage::Modellzusage>,
+) -> Zuteilung {
+    let saat = epochenseed(vorheriger_blockhash, epoche);
+    let geeignet = filter_miners(register, epoche, &HardwareClass::all());
+    let (mit, ohne): (Vec<MinerRegistration>, Vec<MinerRegistration>) =
+        geeignet.into_iter().partition(|m| zusage(&m.miner_id).is_some());
+    let cluster = zonen_cluster(&mit, pod_groesse(shards_je_pod), &saat);
+    let pruefe = |pod: &crate::shard_assignment::Pod| -> Result<(), MinerId> {
+        let positionen: Vec<MinerId> = pod.shards.iter().map(|s| s.miner.miner_id).collect();
+        let reserve: Vec<MinerId> = pod.reserve.iter().map(|r| r.miner_id).collect();
+        match crate::ebenenverteilung::bereiche_des_pods(&positionen, &reserve, zusage, podmodell) {
+            crate::ebenenverteilung::Podschnitt::Verteilt(_) => Ok(()),
+            crate::ebenenverteilung::Podschnitt::NichtMachbar(_) => {
+                let alle: Vec<MinerId> = pod.mitglieder().map(|m| m.miner_id).collect();
+                Err(crate::ebenenverteilung::schwaechstes(&alle, zusage).unwrap_or(alle[0]))
+            }
+        }
+    };
+    let mut z = crate::shard_assignment::assign_pods_geprueft(&cluster, shards_je_pod, &saat, &pruefe);
+    z.ohne_zusage = ohne;
+    z
+}
+
 /// Findet den Pod zu einer Bündel-Kennung.
 ///
 /// ⚑ **Der Weg vom Bündel zur Besetzung, und er fehlte** (Fund 109).
@@ -280,7 +325,6 @@ fn zonenbyte(zone: GeoRegion) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use myl_types::ids::MinerId;
 
     fn miner(b: u8, zone: GeoRegion, ab: u64) -> MinerRegistration {
         MinerRegistration {
@@ -291,6 +335,61 @@ mod tests {
             schluessel: myl_types::bls::BlsPublicKey([0; 48]),
             netzadresse: myl_types::latency_attest::PeerIdBytes([0; 32]),
         }
+    }
+
+    /// ⚑ **Kein Pod ohne Zusage, und nur machbare Pods** (6.7, 2026-10-22).
+    ///
+    /// Achtzehn Miner, zwei davon ohne Zusage, sechs mit so wenig Platz,
+    /// dass sie den Kopf nicht tragen und als Reserve nichts übernehmen.
+    /// Die zwei stehen in `ohne_zusage`; jeder gebildete Pod ist machbar,
+    /// und niemand fehlt oder steht doppelt. Die Gegenprobe: Dieselbe
+    /// Bildung ohne Prüfung ergibt einen Pod, der nicht machbar ist.
+    #[test]
+    fn kein_pod_ohne_zusage_und_nur_machbare_pods() {
+        use myl_types::zusage::Modellzusage;
+        let register: Vec<MinerRegistration> = (1..=18u8).map(|b| miner(b, GeoRegion::Europe, 0)).collect();
+        let podmodell = myl_types::podmodell::Podmodell { abdruck: [7; 32], ebenen: 28, kopf_platz: 20, kopf_zeit: 5 };
+        let zusage = |m: &MinerId| -> Option<Modellzusage> {
+            let b = m.as_bytes()[0];
+            let ebenen_hoechstens = match b {
+                17 | 18 => return None,
+                1..=6 => 5,
+                _ => 48,
+            };
+            Some(Modellzusage { abdruck: [7; 32], ebenen_hoechstens, ebenenzeit_us: 300, gehalten: None })
+        };
+        let machbar = |p: &crate::shard_assignment::Pod| {
+            let pos: Vec<MinerId> = p.shards.iter().map(|s| s.miner.miner_id).collect();
+            let res: Vec<MinerId> = p.reserve.iter().map(|r| r.miner_id).collect();
+            crate::ebenenverteilung::bereiche_des_pods(&pos, &res, &zusage, &podmodell).grenzen().is_some()
+        };
+        let mut gegenprobe = 0;
+        for saat in 0..20u8 {
+            let hash = Hash::sha256(&[saat]);
+            let z = zuteilung_der_epoche_mit_zusagen(&register, 5, &hash, 4, &podmodell, &zusage);
+            let ohne: Vec<u8> = z.ohne_zusage.iter().map(|m| m.miner_id.as_bytes()[0]).collect();
+            assert_eq!(ohne, [17, 18], "ohne Zusage in keinem Pod");
+            assert!(!z.pods.is_empty(), "Saat {saat}: {z:?}");
+            assert!(z.pods.iter().all(machbar), "Saat {saat}: {z:?}");
+            let mut alle: Vec<u8> = z
+                .pods
+                .iter()
+                .flat_map(|p| p.mitglieder())
+                .chain(z.ohne_pod.iter())
+                .chain(z.ohne_zusage.iter())
+                .map(|m| m.miner_id.as_bytes()[0])
+                .collect();
+            alle.sort();
+            assert_eq!(alle, (1..=18u8).collect::<Vec<_>>(), "Saat {saat}: niemand fehlt, niemand doppelt");
+            assert_eq!(z, zuteilung_der_epoche_mit_zusagen(&register, 5, &hash, 4, &podmodell, &zusage));
+            // Die Gegenprobe: dieselbe Bildung ungeprüft.
+            let mit: Vec<MinerRegistration> = register.iter().copied().filter(|m| zusage(&m.miner_id).is_some()).collect();
+            let roh = zuteilung_aus_saat(&mit, 5, &epochenseed(&hash, 5), 4, &HardwareClass::all());
+            if roh.pods.iter().any(|p| !machbar(p)) {
+                gegenprobe += 1;
+            }
+        }
+        assert!(gegenprobe > 0, "ohne Pruefung waere jeder Pod machbar; die Probe prueft nichts");
     }
 
     /// ⚑ **Die Saat bestimmt, wer mit wem in einem Pod sitzt**

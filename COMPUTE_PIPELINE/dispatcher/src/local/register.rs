@@ -139,7 +139,7 @@ mod proben {
     use crate::local::erhebung::GIB;
 
     fn agent(dicht: u64) -> Laufend {
-        Laufend { name: "myelith-35b".into(), vorrang: Vorrang::Agent, dicht_bytes: dicht }
+        Laufend { name: "raven-35b-a3b-int8".into(), vorrang: Vorrang::Agent, dicht_bytes: dicht }
     }
 
     /// ⚑ **Die dichten Gewichte der hoeheren Last bleiben**: Was daneben
@@ -149,7 +149,7 @@ mod proben {
         let l = [agent(3 * GIB)];
         assert!(daneben(&l, Some(10 * GIB), "Sehen", Vorrang::Vision, 6 * GIB, GIB).is_ok());
         let nein = daneben(&l, Some(10 * GIB), "Sehen", Vorrang::Vision, 6 * GIB + 1, GIB).expect_err("zu gross");
-        assert!(nein.contains("myelith-35b") && nein.contains("Vorrang"), "{nein}");
+        assert!(nein.contains("raven-35b-a3b-int8") && nein.contains("Vorrang"), "{nein}");
     }
 
     /// ⚑ **Nur hoehere Lasten sind geschuetzt**: Eine gleich wichtige oder

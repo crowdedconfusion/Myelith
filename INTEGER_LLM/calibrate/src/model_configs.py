@@ -15,10 +15,10 @@ falsche Attention-Berechnung oder ein fehlendes lm_head.weight erzeugen -
 und zwar ohne Fehlermeldung, nur mit schlechteren Zahlen.
 
 Verifizierte Varianten, alle Qwen3 und alle gegen den lokalen Snapshot:
-  myelith-0.6b     MODELS/llm/Qwen3-0.6B/config.json@c1899de2
-  myelith-4b       MODELS/llm/Qwen3-4B/config.json@1cfa9a72
-  myelith-8b       MODELS/llm/Qwen3-8B/config.json@b968826d
-  myelith-30b-a3b  MODELS/llm/Qwen3-30B-A3B/config.json@ad44e777
+  sparrow-0.6b-int8     MODELS/llm/Qwen3-0.6B/config.json@c1899de2
+  pigeon-4b-int8       MODELS/llm/Qwen3-4B/config.json@1cfa9a72
+  jay-8b-int8       MODELS/llm/Qwen3-8B/config.json@b968826d
+  magpie-30b-a3b-int8  MODELS/llm/Qwen3-30B-A3B/config.json@ad44e777
 
 ⚑ Seit dem 2026-09-11 (Festlegung des Projektinhabers) fuehrt das
 Projekt ausschliesslich Qwen3. Qwen2.5-0,5B und Qwen2.5-7B sind
@@ -93,7 +93,7 @@ MODEL_CONFIGS = {
     # Widerspruch: Beim Binden ist der Kopf eine Sicht auf die
     # Einbettung, und HF legt ihn trotzdem ab. Massgeblich ist das Feld
     # aus der config, nicht das Vorhandensein des Tensors.
-    "myelith-0.6b": {
+    "sparrow-0.6b-int8": {
         "family": "qwen3",
         "variant": "0.6b",
         "num_layers": 28,
@@ -125,7 +125,7 @@ MODEL_CONFIGS = {
         "verified": "MODELS/llm/Qwen3-0.6B/config.json@c1899de2",
         "hf_model_id": "Qwen/Qwen3-0.6B",
     },
-    "myelith-4b": {
+    "pigeon-4b-int8": {
         "family": "qwen3",
         "variant": "4b",
         "num_layers": 36,
@@ -176,7 +176,7 @@ MODEL_CONFIGS = {
     # Wegfall des 14B am 2026-09-12 hatte sie nur zwei Punkte, und ein
     # Groessenvergleich ueber zwei Punkte misst einen
     # Architekturunterschied mit.
-    "myelith-8b": {
+    "jay-8b-int8": {
         "family": "qwen3",
         "variant": "8b",
         "num_layers": 36,
@@ -224,7 +224,7 @@ MODEL_CONFIGS = {
     # Bauart wie das Qwen3-8B, einzig das Vokabular ist auf 151 669
     # Zeilen gekuerzt (die tatsaechliche Groesse des Tokenizers statt der
     # aufgefuellten 151 936).
-    "myelith-8b-ternaer": {
+    "jay-8b-ternaer": {
         "family": "qwen3",
         "variant": "8b",
         "num_layers": 36,
@@ -253,6 +253,50 @@ MODEL_CONFIGS = {
         "verified": "MODELS/llm/Ternary-Bonsai-8B-unpacked/config.json@2026-09-28",
         "hf_model_id": "prism-ml/Ternary-Bonsai-8B-unpacked",
     },
+    # ⚑ **Qwen3.8-27B in int8** (2026-10-21; Name nach der Regel des
+    # Bauskripts: 26,90 Mrd. gerundet, `namensvorschlaege`). Dieselbe Form
+    # wie das ternaere 27B darunter, Feld fuer Feld gegen
+    # MODELS/llm/Qwen3.8-27B/config.json gehalten: 64 Ebenen, 48 mit linearer
+    # und 16 mit voller Aufmerksamkeit, dichtes MLP, Lizenz Apache-2.0. Anders
+    # nur `mtp_num_hidden_layers` (Quelle 1, Inferenz 0, wie beim 35B) und
+    # die Herkunft: BF16-Gewichte, kein gedrehtes Paket. Gebaut und gemessen
+    # wird es auf der Mietmaschine (Festlegung des Projektinhabers).
+    "crow-27b-int8": {
+        "rms_norm_offset": 1.0,
+        "family": "qwen3_5-hybrid",
+        "variant": "27b",
+        "num_layers": 64,
+        "hidden_size": 5120,
+        "intermediate_size": 17408,
+        "num_heads": 24,
+        "num_kv_heads": 4,
+        "head_dim": 256,
+        "vocab_size": 248320,
+        "max_context": 262144,
+        "tie_word_embeddings": False,
+        "attention_bias": False,
+        "qk_norm": True,
+        "num_experts": 0,
+        "layer_types": (["linear_attention"] * 3 + ["full_attention"]) * 16,
+        "linear_num_key_heads": 16,
+        "linear_num_value_heads": 48,
+        "linear_key_head_dim": 128,
+        "linear_value_head_dim": 128,
+        "linear_conv_kernel_dim": 4,
+        "output_gate_type": "sigmoid",
+        "mtp_num_hidden_layers": 0,
+        "rope_theta": 10000000.0,
+        "attn_output_gate": True,
+        "full_attention_interval": 4,
+        "rms_norm_eps": 1e-06,
+        "hidden_act": "silu",
+        "partial_rotary_factor": 0.25,
+        "rotary_dim": 64,
+        "mrope_section": [11, 11, 10],
+        "ausgang_auf_v": True,
+        "verified": "MODELS/llm/Qwen3.8-27B/config.json@2026-10-21",
+        "hf_model_id": "Qwen/Qwen3.8-27B",
+    },
     # ⚠️ **Arbeitsname.** Ternary Bonsai 2 27B (PrismML, Apache-2.0),
     # eine ternaer nachtrainierte Qwen3.5-Architektur: 64 Ebenen, davon 48
     # mit linearer Aufmerksamkeit und 16 mit voller, dichtes MLP. Die
@@ -274,7 +318,7 @@ MODEL_CONFIGS = {
     #    den Abzug gemessen: Perplexitaet 1,3 Millionen.
     # 3. `paket` und `gedreht` beschreiben die Quelle und kommen nicht ins
     #    Artefakt; dort steht die Drehung als Merkmal `gedreht`.
-    "myelith-27b-ternaer": {
+    "crow-27b-ternaer": {
         "rms_norm_offset": 1.0,
         "paket": "MODELS/llm/Ternary-Bonsai-2-27B-mlx",
         "gedreht": True,
@@ -356,7 +400,7 @@ MODEL_CONFIGS = {
     # wieder einen Architekturunterschied mit. Der Projektinhaber hat
     # das gegen den Plattenbedarf abgewogen.
     #
-    "myelith-30b-a3b": {
+    "magpie-30b-a3b-int8": {
         "family": "qwen3-moe",
         "variant": "30b-a3b",
         "num_layers": 48,
@@ -432,7 +476,7 @@ MODEL_CONFIGS = {
     # rechnet nur, wenn Bildmarken im Strom stehen, die der Textpfad
     # nicht hat; der Client hat fuer Bilder eine eigene Kiste. Die
     # Ausschlussliste in `quantize.py` nennt ihn.
-    "myelith-35b-a3b": {
+    "raven-35b-a3b-int8": {
         # ⛔️ **Fund 423: die RMSNorm dieses Modells rechnet `1 + weight`.**
         #   `Qwen3_5MoeRMSNorm` legt ihr Gewicht mit `torch.zeros` an;
         #   ohne den Versatz normiert man mit einer Zahl um null.
@@ -570,15 +614,18 @@ MODEL_CONFIGS = {
     #   (`ebenenweise.main`). Weicht die Revision ab, bricht er mit den
     #   abweichenden Feldern ab.
     #
-    # ⚠️ Gebaut wird dieses Modell nur ebenenweise (`ebenenweise.py`) und mit
-    #   der zweiten Umgebung (`.venv-flashnext`, transformers ab 5.18.0);
-    #   `main.py` lehnt die Familie ab.
+    # ⚠️ Gebaut wird dieses Modell nur ebenenweise (`ebenenweise.py`; die
+    #   Umgebung braucht transformers ab 5.18.0, das tragen die festen
+    #   Fassungen seit dem 2026-10-21); `main.py` lehnt die Familie ab.
     #
-    # Der Name ist ein Vorschlag (Gemisch 125 Mrd., 6 Mrd. aktiv); die
-    # 51 Mrd. der N-Gramm-Tabelle und die 4 Mrd. des MTP-Kopfs zaehlen nicht mit.
-    "myelith-125b-a6b": {
+    # ⚑ Der Name (Festlegung des Projektinhabers, 2026-10-21): Vulture, mit dem
+    # Anhaengsel nach der Regel des Bauskripts, 125,74 Mrd. gesamt und 7,31 Mrd.
+    # aktiv mit Einbettung und Kopf gerundet; die 51 Mrd. der N-Gramm-Tabelle und
+    # die 4 Mrd. des MTP-Kopfs zaehlen nicht mit. Bis dahin hiess der Eintrag
+    # `myelith-125b-a6b`, ohne Einbettung und Kopf gezaehlt; gebaut war er nie.
+    "vulture-126b-a7b-int8": {
         "family": "qwen4-exp",
-        "variant": "125b-a6b",
+        "variant": "126b-a7b",
         "num_layers": 48,
         "hidden_size": 2560,
         "intermediate_size": 0,
@@ -718,6 +765,14 @@ def get_model_config(name: str) -> dict:
     eigen = lokaler_eintrag(name)
     if eigen is not None:
         return eigen
+    # ⚑ Seit dem 2026-10-21 heissen die Projektmodelle nach Tieren. Ein alter
+    #   Name gilt nicht still weiter (ein Name je Modell), aber er bekommt den
+    #   neuen genannt, aus `frueher` im Katalog.
+    katalog = Path(__file__).resolve().parents[3] / "MODELS" / "llm" / "KATALOG.json"
+    if katalog.is_file():
+        for neu, eintrag in json.loads(katalog.read_text(encoding="utf-8")).items():
+            if isinstance(eintrag, dict) and eintrag.get("frueher") == name:
+                raise ValueError(f"{name} heisst seit dem 2026-10-21 {neu}")
     raise ValueError(f"Unbekanntes Modell: {name}. Verfuegbar: {list(MODEL_CONFIGS.keys())} "
                      f"und die selbst gebauten unter {LOKALE_EINTRAEGE}")
 
@@ -798,6 +853,8 @@ _ARTIFACT_EXCLUDED_FIELDS = (
     # Drehung als Merkmal `gedreht`.
     "paket",
     "gedreht",
+    # Steht im Artefakt als Merkmal `ausgang_auf_v`.
+    "ausgang_auf_v",
 )
 
 
@@ -842,6 +899,12 @@ _MERKMALE = (
     ("ngramm_einbettung", lambda c: bool(c.get("ple_ebenen"))),
     ("blockauswahl", lambda c: c.get("indexer_n_heads", 0) > 0),
     ("zustandstor_sigmoid", lambda c: c.get("zustandstor") == "sigmoid"),
+    # ⛔️ **Fund 571, fuer neue Artefakte behoben** (2026-10-21): Der Ausgang
+    #   der Aufmerksamkeit (Eingang von `o_proj`) rechnet auf der Skala von
+    #   `v`, nicht auf der hinter `o_proj`. Bestehende Artefakte tragen das
+    #   Merkmal nicht und rechnen weiter wie gemessen; ein Lader ohne es
+    #   lehnt ein neues ab, statt den Eingang von `o_proj` zu beschneiden.
+    ("ausgang_auf_v", lambda c: bool(c.get("ausgang_auf_v"))),
 )
 
 
@@ -896,7 +959,7 @@ def print_sharding_plan(model_name: str, num_nodes: int):
 
 if __name__ == "__main__":
     # Beispiel: Sharding-Plaene fuer verschiedene Konfigurationen
-    for model in ["myelith-0.6b", "myelith-30b-a3b", "qwen2.5-72b-instruct"]:
+    for model in ["sparrow-0.6b-int8", "magpie-30b-a3b-int8", "qwen2.5-72b-instruct"]:
         for nodes in [2, 4, 8]:
             try:
                 print_sharding_plan(model, nodes)

@@ -9,7 +9,7 @@ use integer_llm_runtime::trainingsschleife::{trainingsschleife, Trainingsvorgabe
 fn main() {
     let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../artifacts")
-        .join(std::env::var("MYL_POD_MODELL").unwrap_or_else(|_| "myelith-0.6b".into()));
+        .join(std::env::var("MYL_POD_MODELL").unwrap_or_else(|_| "sparrow-0.6b-int8".into()));
     let m = load_model(&dir).expect("Modell");
     for (zaehler, schritte) in [(1i64, 40u64), (64, 40), (128, 40), (256, 40), (1024, 40), (2048, 40), (4096, 40), (16384, 40)] {
         let v = Trainingsvorgaben {

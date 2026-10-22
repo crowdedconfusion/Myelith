@@ -35,7 +35,7 @@ fn wurzel() -> PathBuf {
 }
 
 fn artefakte() -> PathBuf {
-    wurzel().join("INTEGER_LLM").join("artifacts").join("myelith-0.6b")
+    wurzel().join("INTEGER_LLM").join("artifacts").join("sparrow-0.6b-int8")
 }
 
 fn binary() -> PathBuf {
@@ -44,15 +44,20 @@ fn binary() -> PathBuf {
 }
 
 /// Startet einen Shard und liest seine Adresse von der Standardausgabe.
-fn starten(nummer: usize) -> (Child, std::net::SocketAddr) {
-    let mut kind = Command::new(binary())
+fn starten(nummer: usize, bereich: Option<(usize, usize)>) -> (Child, std::net::SocketAddr) {
+    let mut befehl = Command::new(binary());
+    befehl
         .arg("--artefakte")
         .arg(artefakte())
         .arg("--shard")
         .arg(nummer.to_string())
         .arg("--shards")
         .arg(SHARDS.to_string())
-        .arg("--probeschluessel")
+        .arg("--probeschluessel");
+    if let Some((von, bis)) = bereich {
+        befehl.arg("--von").arg(von.to_string()).arg("--bis").arg(bis.to_string());
+    }
+    let mut kind = befehl
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -85,6 +90,19 @@ fn starten(nummer: usize) -> (Child, std::net::SocketAddr) {
 /// ⚑ **Vier Prozesse rechnen denselben Pod wie einer.**
 #[test]
 fn vier_prozesse_rechnen_wie_ein_prozess() {
+    vier_prozesse(None);
+}
+
+/// ⚑ **Und mit ungleichen Bereichen ueber `--von` und `--bis` dasselbe**
+/// (Stufe 4 des Dispatchers, 2026-10-21): 3, 7, 13 und 5 Ebenen statt
+/// je 7. Token, Abdruck, Arbeit und Segmente muessen gleich sein, denn der
+/// Zuschnitt aendert keine Zahl.
+#[test]
+fn ungleiche_bereiche_rechnen_dasselbe() {
+    vier_prozesse(Some([(0, 3), (3, 10), (10, 23), (23, 28)]));
+}
+
+fn vier_prozesse(bereiche: Option<[(usize, usize); 4]>) {
     if !artefakte().exists() {
         eprintln!("Artefakt fehlt, uebersprungen");
         return;
@@ -98,7 +116,7 @@ fn vier_prozesse_rechnen_wie_ein_prozess() {
     let mut kinder: Vec<Child> = Vec::new();
     let mut adressen = Vec::new();
     for n in 0..SHARDS {
-        let (kind, adresse) = starten(n);
+        let (kind, adresse) = starten(n, bereiche.map(|b| b[n]));
         kinder.push(kind);
         adressen.push(adresse);
     }
@@ -135,7 +153,7 @@ fn vier_prozesse_rechnen_wie_ein_prozess() {
     //
     // ```text
     // cargo run --release --bin integer-llm-runtime -- \
-    //     artifacts/myelith-0.6b "Hello is a test of the" 8
+    //     artifacts/sparrow-0.6b-int8 "Hello is a test of the" 8
     // ```
     //
     // Dass die vier Prozesse dasselbe liefern, ist damit eine Aussage

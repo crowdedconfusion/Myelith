@@ -142,6 +142,13 @@ fn sperre<'a, T>(m: &'a Mutex<T>, was: &str) -> Result<std::sync::MutexGuard<'a,
         .map_err(|_| format!("Sperre {was} ist vergiftet: ein Thread ging beim Halten in Panik"))
 }
 
+/// Höchstens so viele Positionen rechnet eine Zeitprobe (gegen eine
+/// Probe, die einen Shard minutenlang belegt).
+pub const ZEITPROBE_HOECHSTENS: usize = 16;
+
+/// Das Token, dessen Einbettung die Zeitprobe rechnet.
+pub const ZEITPROBE_TOKEN: usize = 0;
+
 impl ShardNode {
     pub fn new(
         shard_index: usize,
@@ -269,8 +276,49 @@ impl ShardNode {
     /// `macs_je_layer` rechnet damit `top_k` Experten plus Router statt
     /// einer breiten MLP.
     pub fn modell_profil(&self) -> ModellProfil {
-        use integer_llm_runtime::model::Feedforward;
+        use integer_llm_runtime::model::{Feedforward, Mischer};
         let erste = self.model.layers.first();
+        // ⚑ **Hybride Modelle** (2026-10-22): Die erste Ebene mit voller
+        //   Achtsamkeit gibt den Abstand an (beim 35B Ebene 3, also jede
+        //   vierte); die erste Zustandsschicht die Maße; der erste
+        //   geteilte Experte seine Breite. Ein Modell ohne Zustandsschicht
+        //   hat `voll_alle` null und rechnet wie zuvor.
+        let mit_zustand = self.model.layers.iter().find_map(|l| match &l.mischer {
+            Mischer::Zustand(z) => Some(z),
+            Mischer::Achtsamkeit(_) => None,
+        });
+        let voll_alle = match mit_zustand {
+            None => 0,
+            Some(_) => self
+                .model
+                .layers
+                .iter()
+                .position(|l| matches!(l.mischer, Mischer::Achtsamkeit(_)))
+                .map_or(0, |i| i as u64 + 1),
+        };
+        let zustand = match (mit_zustand, self.model.zustandsmasse.as_ref()) {
+            (Some(z), Some(m)) => myl_tokenomics::vtfe::Zustandsprofil {
+                schluessel_koepfe: m.schluessel_koepfe as u64,
+                schluessel_dim: m.schluessel_dim as u64,
+                wert_koepfe: m.wert_koepfe as u64,
+                wert_dim: m.wert_dim as u64,
+                faltung: z.conv1d.cols() as u64,
+            },
+            _ => myl_tokenomics::vtfe::Zustandsprofil::LEER,
+        };
+        let geteilter_experte = self
+            .model
+            .layers
+            .iter()
+            .find_map(|l| match &l.ffn {
+                Feedforward::Moe(m) => m.geteilter_experte.as_ref().map(|g| g.zwischen as u64),
+                Feedforward::Dense(_) => None,
+            })
+            .unwrap_or(0);
+        let ausgangstor = self.model.layers.iter().find_map(|l| match &l.mischer {
+            Mischer::Achtsamkeit(a) => Some(a.q_proj.rows() == 2 * self.model.num_heads * self.model.head_dim),
+            Mischer::Zustand(_) => None,
+        });
         let (intermediate_size, num_experts, num_experts_per_tok, moe_intermediate_size) =
             match erste.map(|l| &l.ffn) {
                 Some(Feedforward::Dense(mlp)) => (mlp.gate_proj.rows() as u64, 0, 0, 0),
@@ -298,7 +346,40 @@ impl ShardNode {
             num_heads: self.model.num_heads as u64,
             num_kv_heads: self.model.num_kv_heads as u64,
             head_dim: self.model.head_dim as u64,
+            voll_alle,
+            zustand,
+            geteilter_experte,
+            ausgangstor: ausgangstor.unwrap_or(false),
         }
+    }
+
+    /// ⚑ **Die Zeitprobe** (Stufe 4, Frist, 2026-10-22): rechnet
+    /// `positionen` Positionen durch den eigenen Bereich, mit eigenem
+    /// KV-Speicher, und den Kopf, wenn der Shard ihn trägt. Ein Zeuge stellt
+    /// sie und nimmt die Zeit; der Abdruck des letzten Ergebnisses kommt
+    /// zurück, damit die Antwort an eine Rechnung gebunden ist.
+    ///
+    /// Die Eingabe ist bei jedem Shard die Einbettung eines festen Tokens:
+    /// für einen mittleren Bereich kein Strom, der so ankäme, aber eine
+    /// Eingabe der richtigen Länge, und die Arbeit hängt nicht an den
+    /// Werten. Keine Sitzung, kein Abdruck, keine Spur bleibt zurück.
+    pub fn zeitprobe(&self, positionen: usize) -> [u8; 32] {
+        let positionen = positionen.clamp(1, ZEITPROBE_HOECHSTENS);
+        let mut cache = self.frischer_cache();
+        let mut letzte = ZERO_HASH;
+        for pos in 0..positionen {
+            let mut hidden = self.model.embed_token(ZEITPROBE_TOKEN);
+            for i in self.layer_start..self.layer_end {
+                hidden = self.model.run_layers(hidden, pos, &mut cache, i, i + 1);
+            }
+            letzte = if self.has_lm_head {
+                let logits = self.model.head_logits(&hidden);
+                myl_types::hash::Hash::sha256(&logits.iter().flat_map(|x| x.to_le_bytes()).collect::<Vec<u8>>()).0
+            } else {
+                activation_hash(&hidden)
+            };
+        }
+        letzte
     }
 
     /// Was dieser Shard vom Modell hält, in der Form, die die

@@ -35,7 +35,7 @@ from pathlib import Path
 LLM = Path(__file__).resolve().parents[2] / "INTEGER_LLM"
 HIER = Path(__file__).resolve().parent
 REPO = LLM  # Altlast, damit bestehende Zeilen weiterlesen
-ARTIFACTS = REPO / "artifacts" / "myelith-0.6b"
+ARTIFACTS = REPO / "artifacts" / "sparrow-0.6b-int8"
 # Seit alle Crates in ein gemeinsames SYSTEM/full-build/ bauen (.cargo/config.toml)
 # liegt das Binary nicht mehr unter runtime/target/. Derselbe Resolver wie in
 # BENCHMARKS/Inferenz/perplexity.py: prueft CARGO_TARGET_DIR, SYSTEM/full-build/ und den

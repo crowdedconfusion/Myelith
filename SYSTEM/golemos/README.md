@@ -158,7 +158,7 @@ qemu-system-x86_64 -M q35 -m 1024 -nographic -no-reboot -nic none \
   client.json      gefunden
 
 ── Antwortet das Modell? ──
-  Artefakt: myelith-0.6b
+  Artefakt: sparrow-0.6b-int8
   Frage:    Nenne die Hauptstadt von Frankreich.
   Antwort:  Die Hauptstadt von Frankreich ist **Paris**.
             [myl] 21 Token hinein, 11 heraus, 11.2 s (1.0 Token/s)
@@ -174,7 +174,7 @@ Gemessen am 2026-09-25 unter QEMU ohne Beschleunigung (TCG), daher
 |---|---|
 | 1 | Abbild bauen, die Platte auf 3 GB vergrössern |
 | 2 | einmal starten: `S05daten` dehnt `golem-daten` und formatiert sie |
-| 3 | `sh SYSTEM/golemos/mitnahme.sh --artefakt myelith-0.6b`, dann den Inhalt von `bau/mitnahme/` auf Partition 4 kopieren (`mcopy -s` mit dem Versatz aus `sfdisk`) |
+| 3 | `sh SYSTEM/golemos/mitnahme.sh --artefakt sparrow-0.6b-int8`, dann den Inhalt von `bau/mitnahme/` auf Partition 4 kopieren (`mcopy -s` mit dem Versatz aus `sfdisk`) |
 | 4 | mit `golemos.probe` starten |
 
 ⚑ **Die Antwort ist bitgleich zu der auf dem Wirt.** Dieselbe Frage mit

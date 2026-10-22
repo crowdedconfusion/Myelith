@@ -538,6 +538,7 @@ mod tests {
         let zuteilung = Zuteilung {
             pods: vec![pod(4, 6, 0, 1), pod(4, 6, 1, 2)],
             ohne_pod: (20..=25).map(miner).collect(),
+            ohne_zusage: Vec::new(),
         };
         let netz = netzreserve_aus_zuteilung(&zuteilung, &[9u8; 32], EpochId(3));
         assert_eq!(netz.pods(), 2);
@@ -552,6 +553,7 @@ mod tests {
         let zuteilung = Zuteilung {
             pods: vec![pod(4, 6, 0, 1)],
             ohne_pod: vec![],
+            ohne_zusage: Vec::new(),
         };
         let netz = netzreserve_aus_zuteilung(&zuteilung, &[9u8; 32], EpochId(3));
         assert_eq!(netz.uebrig(), 0);
@@ -565,6 +567,7 @@ mod tests {
         let zuteilung = Zuteilung {
             pods: vec![pod(4, 6, 0, 1)],
             ohne_pod: (20..=25).map(miner).collect(),
+            ohne_zusage: Vec::new(),
         };
         let mut v = std::collections::BTreeMap::new();
         // Die ersten drei sind auffällig.
@@ -585,6 +588,7 @@ mod tests {
         let zuteilung = Zuteilung {
             pods: vec![pod(4, 6, 0, 1), pod(4, 6, 1, 2)],
             ohne_pod: (20..=25).map(miner).collect(),
+            ohne_zusage: Vec::new(),
         };
         let leer = std::collections::BTreeMap::new();
         assert_eq!(

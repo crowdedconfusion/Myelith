@@ -269,7 +269,7 @@ geprüft noch gemessen.
 
 ```bash
 # Kalibrierung (erzeugt artifacts/<modell>/)
-INTEGER_LLM_MODEL=myelith-4b ./calibrate/.venv/bin/python calibrate/src/main.py
+INTEGER_LLM_MODEL=pigeon-4b-int8 ./calibrate/.venv/bin/python calibrate/src/main.py
 
 # Qualität
 ./calibrate/.venv/bin/python eval/perplexity.py

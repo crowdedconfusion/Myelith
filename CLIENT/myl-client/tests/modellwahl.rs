@@ -26,6 +26,28 @@ fn artefakte(marke: &str, namen: &[&str]) -> std::path::PathBuf {
     ordner
 }
 
+/// **Ein Artefakt, das auf der Netzliste steht**: die drei Dateien des
+/// Abdrucks (`theta_v.json`, `model_config.json`, `tokenizer.json`) vom
+/// echten `sparrow-0.6b-int8`. Der Abdruck deckt genau diese drei, also steht das
+/// Probe-Artefakt mit demselben Abdruck auf der Liste.
+///
+/// ⚑ Ohne das echte Artefakt (CI) oder mit `MYL_OHNE_ARTEFAKTE`: `None`, und
+/// die Probe prueft nur die andere Seite.
+fn freigegebenes(marke: &str) -> Option<std::path::PathBuf> {
+    let echt = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../INTEGER_LLM/artifacts/sparrow-0.6b-int8");
+    if std::env::var_os("MYL_OHNE_ARTEFAKTE").is_some() || !echt.join("theta_v.json").is_file() {
+        return None;
+    }
+    let ordner = std::env::temp_dir().join(format!("myl-modellwahl-{marke}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&ordner);
+    let ziel = ordner.join("sparrow-0.6b-int8");
+    std::fs::create_dir_all(&ziel).expect("Artefaktordner");
+    for d in integer_llm_runtime::netzfreigabe::ABDRUCK_DATEIEN {
+        std::fs::copy(echt.join(d), ziel.join(d)).expect("Datei des Abdrucks");
+    }
+    Some(ordner)
+}
+
 fn mit(ordner: &std::path::Path, gewaehlt: &str) -> Einstellungen {
     let mut e = Einstellungen::default();
     e.modell.artefakt = ordner.join(gewaehlt).display().to_string();
@@ -36,7 +58,7 @@ fn mit(ordner: &std::path::Path, gewaehlt: &str) -> Einstellungen {
 ///
 /// 📌 Die Probe, an der die Festlegung des Projektinhabers vom
 /// 2026-09-11 haengt. Nach Zeichenketten sortiert stuende
-/// `myelith-30b-a3b` **vor** `myelith-4b`, weil `3` vor `4` kommt;
+/// `magpie-30b-a3b-int8` **vor** `pigeon-4b-int8`, weil `3` vor `4` kommt;
 /// genau diese Reihe ist deshalb ausgewaehlt.
 ///
 /// ⛔️ **Bis zum 2026-09-12 stand hier `myelith-14b` als Beispiel**,
@@ -47,10 +69,11 @@ fn mit(ordner: &std::path::Path, gewaehlt: &str) -> Einstellungen {
 /// (2026-10-17): In der Wahl stand bis CLIENT v0.168.0 der Ordnername.
 #[test]
 fn ein_artefakt_ohne_katalog_heisst_nach_dem_schema() {
-    let ordner = artefakte("schema", &["myelith-27b-ternaer"]);
-    let e = mit(&ordner, "myelith-27b-ternaer");
+    let ordner = artefakte("schema", &["crow-27b-ternaer"]);
+    let e = mit(&ordner, "crow-27b-ternaer");
     let namen: Vec<String> = liste(&e).into_iter().filter(|m| !m.ueber_netz).map(|m| m.name).collect();
-    assert_eq!(namen, vec!["Myelith 27B TERNÄR"]);
+    // ⚑ Seit CLIENT v0.175.0 privat: Es steht nicht auf der Netzliste.
+    assert_eq!(namen, vec!["Crow 27B - TERNÄR (privat)"]);
     let _ = std::fs::remove_dir_all(&ordner);
 }
 
@@ -58,26 +81,38 @@ fn ein_artefakt_ohne_katalog_heisst_nach_dem_schema() {
 fn die_wahl_steigt_an() {
     let ordner = artefakte(
         "aufsteigend",
-        &["myelith-30b-a3b", "myelith-4b", "myelith-0.6b"],
+        &["magpie-30b-a3b-int8", "pigeon-4b-int8", "sparrow-0.6b-int8"],
     );
-    let e = mit(&ordner, "myelith-4b");
+    let e = mit(&ordner, "pigeon-4b-int8");
 
     let namen: Vec<String> =
         liste(&e).into_iter().filter(|m| !m.ueber_netz).map(|m| m.name).collect();
 
     assert_eq!(
         namen,
-        vec!["Myelith 0.6B INT8", "Myelith 4B INT8", "Myelith 30B-A3B INT8"],
+        // Die Probe-Artefakte stehen auf keiner Netzliste, also privat.
+        vec!["Sparrow 0.6B - INT8 (privat)", "Pigeon 4B - INT8 (privat)", "Magpie 30B A3B - INT8 (privat)"],
         "die Wahl steht nicht aufsteigend"
     );
     let _ = std::fs::remove_dir_all(&ordner);
 }
 
-/// **Jedes gefundene Modell steht auch als Netzeintrag da, gesperrt.**
+/// **Nur ein freigegebenes Modell steht auch als Netzeintrag da, gesperrt.**
+///
+/// ⛔️ **Seit CLIENT v0.175.0 (Fund 585):** Ein Artefakt, das nicht mit
+/// seinem Abdruck auf der Netzliste steht, ist privat und bekommt keinen
+/// Netzeintrag; bis dahin bekam ihn jedes.
 #[test]
 fn jedes_modell_steht_auch_im_netz() {
-    let ordner = artefakte("netz", &["myelith-0.6b", "myelith-4b"]);
-    let e = mit(&ordner, "myelith-4b");
+    let ordner = artefakte("netz", &["sparrow-0.6b-int8", "pigeon-4b-int8"]);
+    let e = mit(&ordner, "pigeon-4b-int8");
+    let alle = liste(&e);
+    assert_eq!(alle.iter().filter(|m| !m.ueber_netz).count(), 2, "die beiden oertlichen Artefakte fehlen");
+    assert_eq!(alle.iter().filter(|m| m.ueber_netz).count(), 0, "nicht freigegeben, also kein Netzeintrag");
+    let _ = std::fs::remove_dir_all(&ordner);
+
+    let Some(ordner) = freigegebenes("netz-frei") else { return };
+    let e = mit(&ordner, "sparrow-0.6b-int8");
     let alle = liste(&e);
 
     let hier: Vec<&str> =
@@ -85,8 +120,8 @@ fn jedes_modell_steht_auch_im_netz() {
     let dort: Vec<&myl_client::modelle::Modellwahl> =
         alle.iter().filter(|m| m.ueber_netz).collect();
 
-    assert_eq!(hier.len(), 2, "die beiden oertlichen Artefakte fehlen");
-    assert_eq!(dort.len(), 2, "je Modell gehoert ein Netzeintrag dazu");
+    assert_eq!(hier.len(), 1, "das oertliche Artefakt fehlt");
+    assert_eq!(dort.len(), 1, "zum freigegebenen Modell gehoert ein Netzeintrag");
 
     for m in &dort {
         assert!(!m.offen, "der Netzeintrag {} ist waehlbar, obwohl nichts verdrahtet ist", m.name);
@@ -119,13 +154,14 @@ fn jedes_modell_steht_auch_im_netz() {
 /// dann muss der Wert sagen, welches gemeint ist.
 #[test]
 fn das_netzkennzeichen_nennt_das_modell() {
-    let ordner = artefakte("kennung", &["myelith-0.6b"]);
-    let e = mit(&ordner, "myelith-0.6b");
+    // ⚑ Nur ein freigegebenes Modell hat einen Netzeintrag (Fund 585).
+    let Some(ordner) = freigegebenes("kennung") else { return };
+    let e = mit(&ordner, "sparrow-0.6b-int8");
 
     let netz: Vec<String> =
         liste(&e).into_iter().filter(|m| m.ueber_netz).map(|m| m.pfad).collect();
 
-    assert_eq!(netz, vec![format!("{NETZ}myelith-0.6b")]);
+    assert_eq!(netz, vec![format!("{NETZ}sparrow-0.6b-int8")]);
     let _ = std::fs::remove_dir_all(&ordner);
 }
 
@@ -136,8 +172,8 @@ fn das_netzkennzeichen_nennt_das_modell() {
 /// ohne dass ein Test bricht.
 #[test]
 fn bekannte_modelle_nennen_ihre_mindestausstattung() {
-    let ordner = artefakte("hardware", &["myelith-0.6b", "wasauchimmer"]);
-    let e = mit(&ordner, "myelith-0.6b");
+    let ordner = artefakte("hardware", &["sparrow-0.6b-int8", "wasauchimmer"]);
+    let e = mit(&ordner, "sparrow-0.6b-int8");
     let alle = liste(&e);
 
     // ⚑ Ohne Katalog im Baum gibt es den Eintrag nicht, und das ist
@@ -154,7 +190,7 @@ fn bekannte_modelle_nennen_ihre_mindestausstattung() {
         .iter()
         .find(|m| m.pfad.ends_with("wasauchimmer") && !m.ueber_netz)
         .expect("auch ein Artefakt ohne Katalogeintrag steht in der Wahl");
-    assert_eq!(unbekannt.name, "wasauchimmer", "ohne Eintrag bleibt der Verzeichnisname");
+    assert_eq!(unbekannt.name, "wasauchimmer (privat)", "ohne Eintrag bleibt der Verzeichnisname, und es ist privat");
     assert!(unbekannt.hardware.is_empty(), "fuer ein unbekanntes Modell darf nichts dastehen");
     let _ = std::fs::remove_dir_all(&ordner);
 }
@@ -167,9 +203,9 @@ fn bekannte_modelle_nennen_ihre_mindestausstattung() {
 /// unter seinem Namen und einmal als „(eingestellt)".
 #[test]
 fn das_eingestellte_modell_steht_einmal_da() {
-    let ordner = artefakte("einmal", &["myelith-0.6b", "myelith-4b"]);
+    let ordner = artefakte("einmal", &["sparrow-0.6b-int8", "pigeon-4b-int8"]);
     let mut e = Einstellungen::default();
-    e.modell.artefakt = ordner.join("myelith-4b").display().to_string();
+    e.modell.artefakt = ordner.join("pigeon-4b-int8").display().to_string();
 
     let oertlich: Vec<_> = liste(&e).into_iter().filter(|m| !m.ueber_netz).collect();
     assert_eq!(oertlich.len(), 2, "die Wahl zaehlt doppelt: {oertlich:?}");
@@ -183,7 +219,7 @@ fn das_eingestellte_modell_steht_einmal_da() {
 /// **Ein eingestellter Pfad, den es nicht gibt, verschwindet nicht.**
 #[test]
 fn ein_fehlender_pfad_bleibt_sichtbar() {
-    let ordner = artefakte("fehlend", &["myelith-0.6b"]);
+    let ordner = artefakte("fehlend", &["sparrow-0.6b-int8"]);
     let mut e = Einstellungen::default();
     e.modell.artefakt = ordner.join("gibtesnicht").display().to_string();
 

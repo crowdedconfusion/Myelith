@@ -291,6 +291,28 @@ impl Konsensschluessel {
             .map_err(|_| SchluesselFehler::Bls("transaktion"))
     }
 
+    /// ⚑ **Unterschreibt eine Kapazitätszusage** (Stufe 4, 2026-10-22), in
+    /// der Rolle `Store`, wie die Zusage es verlangt. Der geheime Teil
+    /// verlässt diese Struktur dafür nicht.
+    pub fn zusage_unterschreiben(
+        &self,
+        zusage: &mut myl_types::zusage::Kapazitaetszusage,
+    ) -> Result<(), SchluesselFehler> {
+        zusage.signiere(&self.geheim).map_err(|_| SchluesselFehler::Bls("zusage"))
+    }
+
+    /// ⚑ **Ein Fristzeugnis über eine eigene Messung** (6.8, 2026-10-22).
+    pub fn fristzeugnis(
+        &self,
+        epoche: myl_types::ids::EpochId,
+        pod: u32,
+        gemeldeter: &MinerId,
+        gemessen_us: u64,
+    ) -> Result<myl_types::fristmeldung::Fristzeugnis, SchluesselFehler> {
+        myl_types::fristmeldung::Fristzeugnis::neu(&self.geheim, self.kennung(), epoche, pod, gemeldeter, gemessen_us)
+            .map_err(|_| SchluesselFehler::Bls("fristzeugnis"))
+    }
+
     /// Die Konto-Adresse zu diesem Schlüssel.
     pub fn adresse(&self) -> myl_types::ids::Address {
         myl_types::ids::Address::aus_schluessel(&self.oeffentlich)

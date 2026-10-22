@@ -310,6 +310,10 @@ async fn ein_neu_gestarteter_knoten_stimmt_mit_dem_durchlaufenden_ueberein() {
         rolle: Rolle::Teilnehmer,
         nat: Default::default(),
         speicherorte: None,
+        netz: &myl_node::netz::PROBEKETTE,
+        modellzusage: None,
+        zone: myl_types::node_metadata::GeoRegion::Europe,
+        shard: None,
         aufnahme_sekunden: 1,
         // Kein Endpunkt: Ein fester Port kollidierte, sobald zwei
         // Testknoten nebeneinander laufen, und dieser Test prueft
@@ -321,7 +325,7 @@ async fn ein_neu_gestarteter_knoten_stimmt_mit_dem_durchlaufenden_ueberein() {
         ortsleitung: None,
         ortsausweis: None,
         pod: None,
-        modellname: "myelith-myelith-0.6b".to_string(),
+        modellname: "sparrow-0.6b-int8".to_string(),
         kontoschluesseldatei: None,
         konto: None,
         testverkehr_sekunden: None,

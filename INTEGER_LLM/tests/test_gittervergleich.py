@@ -193,6 +193,85 @@ def test_h_skala_findet_die_shifts():
     print(f"ok h_skala findet die Shifts (Rest {rest:.6f})")
 
 
+def test_h_skala_nimmt_nur_experten_mit_token():
+    """Fund 574: acht Experten, nur zwei bekommen Token. Vorher rueckten
+    Experten ohne Token nach, auch solche, die es nicht gibt (`KeyError`).
+    Gegenprobe: ganz ohne Token ein klarer Abbruch statt eines Absturzes."""
+    with tempfile.TemporaryDirectory() as d:
+        d = Path(d)
+        rng = np.random.default_rng(9)
+        hid, inter, n, top = 64, 32, 300, 2
+        man = {}
+        for j in range(8):
+            for m in ("gate_proj", "up_proj"):
+                name = f"model_layers_0_mlp_experts_{j}_{m}_weight"
+                rng.integers(-127, 128, (inter, hid), dtype=np.int8).tofile(d / f"{name}.bin")
+                rng.integers(6, 9, inter, dtype=np.uint8).tofile(d / f"{name}_shifts.bin")
+                man[name] = {"file": f"{name}.bin", "shape": [inter, hid], "shifts_file": f"{name}_shifts.bin"}
+        x = rng.integers(-3000, 3000, (n, hid)).astype(np.float32)
+        wahl = np.tile(np.array([[5, 2]], dtype=np.uint16), (n, 1))
+        h = np.zeros((n, top, inter), dtype=np.float32)
+        for j in (2, 5):
+            Wg = gv.echt(d, man[f"model_layers_0_mlp_experts_{j}_gate_proj_weight"])
+            Wu = gv.echt(d, man[f"model_layers_0_mlp_experts_{j}_up_proj_weight"])
+            zj, sj = np.nonzero(wahl == j)
+            h[zj, sj] = np.round(gv.h_nachrechnen(torch.from_numpy(x[zj]), Wg, Wu, -11, -2).numpy())
+        la, lb, rest = gv.h_skala(d, man, 0, x, wahl, h)
+        assert (la, lb) == (-11, -2) and rest < 1e-3, (la, lb, rest)
+        try:
+            gv.h_skala(d, man, 0, x, wahl[:0], h[:0])
+            raise AssertionError("eine Ebene ohne Token wurde nicht abgewiesen")
+        except SystemExit as f:
+            assert "kein Experte hat Token" in str(f), f
+    print(f"ok h_skala nimmt nur Experten mit Token (Rest {rest:.6f})")
+
+
+def test_bauskript_schlaegt_vier_bit_nur_mit_ganzen_gruppen_vor():
+    """Fund 574, zweite Haelfte: Das Bauskript bietet `-int4` nur an, wenn
+    beide Spaltenzahlen der Experten Vielfache der Gruppe sind. Seine Gruppe
+    ist die dieses Werkzeugs; die echten Gemische gehen, das kleine nicht."""
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+    import modell_bauen as mb
+    from src import model_configs
+    assert mb.VIERBIT_GRUPPE == gv.G, (mb.VIERBIT_GRUPPE, gv.G)
+    for name in ("magpie-30b-a3b-int8", "raven-35b-a3b-int8", "vulture-126b-a7b-int8"):
+        assert mb.vierbit_hindernis(model_configs.MODEL_CONFIGS[name]) == "", name
+    grund = mb.vierbit_hindernis({"hidden_size": 64, "moe_intermediate_size": 32})
+    assert "hidden_size 64" in grund, grund
+    # Ein Gemisch ohne vier Bit behaelt sein `-a<aktiv>b`.
+    assert mb.anhaengsel(125.7, 7.3, True, True) == ["126b-a7b-int4", "126b-a7b-int8"]
+    assert mb.anhaengsel(0.001, 0.0003, True, False) == ["0.001b-a1b-int8"]
+    assert mb.anhaengsel(0.596, 0.596, False, False) == ["0.6b-int8"]
+    print(f"ok das Bauskript schlaegt vier Bit nur mit ganzen Gruppen vor ({grund})")
+
+
+def test_namen_sind_tier_und_anhaengsel():
+    """Ein Name ist ein Wort und das Anhaengsel (2026-10-21). Die `variant`
+    im Artefakt bleibt, was sie vor der Umbenennung war, denn sie steht im
+    Abdruck; ohne Eingabe waehlt das Skript ein freies Tier."""
+    import random
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+    import modell_bauen as mb
+    from src import model_configs
+    for name, cfg in model_configs.MODEL_CONFIGS.items():
+        if name.endswith("-int8"):  # das Skript baut aus int8-Namen
+            assert mb.variante(name) == cfg["variant"], (name, mb.variante(name), cfg["variant"])
+    katalog = json.loads((Path(__file__).resolve().parents[2] / "MODELS/llm/KATALOG.json").read_text())
+    for name in (k for k in katalog if not k.startswith("_")):
+        assert mb.NAMENSMUSTER.match(name), name
+        assert "myelith" not in name, name
+        assert mb.stamm(name) not in mb.TIERE, f"{name}: das Tier eines Projektmodells steht im Zufall"
+    assert mb.variante("mein-otter-126b-int8") == "126b"
+    assert mb.name_aus("Otter", "126b-a7b-int4") == "otter-126b-a7b-int4"
+    assert mb.name_aus("otter-126b-a7b-int8", "126b-a7b-int4") == "otter-126b-a7b-int8", "ein ganzer Name bleibt"
+    gezogen = {mb.stamm(mb.name_aus("", "4b-int8", random.Random(s))) for s in range(40)}
+    belegt = {mb.stamm(n) for n in mb.vergebene_namen()}
+    assert gezogen <= set(mb.TIERE) and not gezogen & belegt and len(gezogen) > 10, gezogen
+    assert mb.vierbit_name("raven-35b-a3b-int8") == "raven-35b-a3b-int4"
+    assert mb.quelle_des_viers("raven-35b-a3b-int4") == "raven-35b-a3b-int8"
+    print(f"ok Namen sind Tier und Anhaengsel ({len(gezogen)} Tiere aus 40 Zuegen)")
+
+
 def test_bauen_schreibt_nie_in_die_quelle():
     """Ein Ziel mit harten Links in die Quelle (wie nach `abschluss`):
     `bauen` ersetzt die Datei, die Quelle bleibt unberuehrt."""
@@ -255,5 +334,8 @@ if __name__ == "__main__":
     test_schranke_ohne_buendelung_ist_shannon()
     test_schrumpfen_hilft_wenigen_token()
     test_h_skala_findet_die_shifts()
+    test_h_skala_nimmt_nur_experten_mit_token()
+    test_bauskript_schlaegt_vier_bit_nur_mit_ganzen_gruppen_vor()
+    test_namen_sind_tier_und_anhaengsel()
     test_bauen_schreibt_nie_in_die_quelle()
     print("Fertig")

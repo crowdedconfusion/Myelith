@@ -803,7 +803,7 @@ true range systematically. Understated scales saturate in production.
 
 *In code:* `kernels/src/moe.rs`, `runtime/src/model.rs::moe_vorwaerts`,
 probe `runtime/src/bin/router_probe.rs`
-*Measured in:* `BENCHMARKS/Inferenz/results/`, model `myelith-30b-a3b`
+*Measured in:* `BENCHMARKS/Inferenz/results/`, model `magpie-30b-a3b-int8`
 
 ### KV cache
 

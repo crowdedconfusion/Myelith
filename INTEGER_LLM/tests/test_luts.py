@@ -184,7 +184,7 @@ def anker_masse():
     derselben Stelle, aus der auch die Ausfuhr sie zieht. Waere sie hier
     nachgebaut, pruefte diese Datei ihre eigene Kopie.
     """
-    return rope_masse(get_model_config("myelith-0.6b"))
+    return rope_masse(get_model_config("sparrow-0.6b-int8"))
 
 
 def test_rope_lut_full_spec_parameters():

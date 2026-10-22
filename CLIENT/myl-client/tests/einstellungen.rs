@@ -51,7 +51,7 @@ fn schreiben_und_lesen_ergibt_dasselbe() {
     let d = tempfile::tempdir().expect("Verzeichnis");
     let p = d.path().join("tief").join("client.json");
     let mut e = Einstellungen::default();
-    e.modell.artefakt = "INTEGER_LLM/artifacts/myelith-4b".to_string();
+    e.modell.artefakt = "INTEGER_LLM/artifacts/pigeon-4b-int8".to_string();
     e.modell.token = 128;
     e.kapazitaet.kerne = Some(4);
     e.agent.schritte = Some(12);
@@ -115,17 +115,22 @@ fn eine_alte_ablage_findet_ihr_artefakt_wieder() {
     let d = tempfile::tempdir().expect("Verzeichnis");
     let p = d.path().join("client.json");
     for (alt, neu) in [
-        ("INTEGER_LLM/artifacts/qwen3-4b", "INTEGER_LLM/artifacts/myelith-4b"),
-        ("INTEGER_LLM/artifacts/qwen2.5-0.5b", "INTEGER_LLM/artifacts/myelith-0.6b"),
-        ("/anderswo/qwen3-30b-a3b", "/anderswo/myelith-30b-a3b"),
+        ("INTEGER_LLM/artifacts/qwen3-4b", "INTEGER_LLM/artifacts/pigeon-4b-int8"),
+        ("INTEGER_LLM/artifacts/qwen2.5-0.5b", "INTEGER_LLM/artifacts/sparrow-0.6b-int8"),
+        ("/anderswo/qwen3-30b-a3b", "/anderswo/magpie-30b-a3b-int8"),
         // 📌 **Die zweite Wanderung (2026-09-11): abgeloeste Modelle.**
         // Wer auf das entfernte 0,5B oder 7B zeigte, landet beim
         // naechstgelegenen der neuen Reihe.
-        ("INTEGER_LLM/artifacts/myelith-0.5b", "INTEGER_LLM/artifacts/myelith-0.6b"),
-        ("/anderswo/myelith-7b", "/anderswo/myelith-4b"),
+        ("INTEGER_LLM/artifacts/myelith-0.5b", "INTEGER_LLM/artifacts/sparrow-0.6b-int8"),
+        ("/anderswo/myelith-7b", "/anderswo/pigeon-4b-int8"),
         // ⛔️ Das dichte 14B ist am 2026-09-12 entfallen; wer darauf
         // zeigte, landet beim groessten verbliebenen dichten Modell.
-        ("/anderswo/myelith-14b", "/anderswo/myelith-4b"),
+        ("/anderswo/myelith-14b", "/anderswo/pigeon-4b-int8"),
+        // ⚑ **Die fuenfte Wanderung (2026-10-21): Tiernamen**, aus `frueher`
+        // im Katalog, auch mit eigenem Anhaengsel.
+        ("INTEGER_LLM/artifacts/myelith-35b-a3b-int4", "INTEGER_LLM/artifacts/raven-35b-a3b-int4"),
+        ("/anderswo/myelith-0.6b", "/anderswo/sparrow-0.6b-int8"),
+        ("/anderswo/myelith-27b-ternaer", "/anderswo/crow-27b-ternaer"),
     ] {
         // ⚑ Geschrieben mit dem echten Schreiber: Eine von Hand
         // getippte Ablage koennte Felder auslassen, die es gibt, und
@@ -142,7 +147,7 @@ fn eine_alte_ablage_findet_ihr_artefakt_wieder() {
     // Wanderung, die auch Unbeteiligtes anfasst, ist schlimmer als
     // keine: Sie aendert einen Pfad, den jemand mit Bedacht gesetzt hat.
     for unberuehrt in [
-        "INTEGER_LLM/artifacts/myelith-4b",
+        "INTEGER_LLM/artifacts/pigeon-4b-int8",
         "/eigenes/verzeichnis/mein-modell",
         "artifacts/qwen3-4b-eigenbau",
     ] {

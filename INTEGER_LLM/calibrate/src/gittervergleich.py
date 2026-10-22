@@ -278,8 +278,17 @@ def h_nachrechnen(xs, Wg, Wu, la, lb):
 
 def h_skala(art, man, e, x, wahl, h):
     """la und lb sind je Ebene feste Zweierpotenzen (die Shifts von x und
-    h), gesucht auf den vier haeufigsten Experten. Gibt (la, lb, Rest)."""
-    teil = np.argsort(-np.bincount(wahl.ravel(), minlength=256))[:4]
+    h), gesucht auf den vier haeufigsten Experten. Gibt (la, lb, Rest).
+
+    📌 Fund 574. Die Zaehlung hat feste Laenge 256; bekamen weniger als vier
+    Experten Token, rueckten Experten mit null Token nach, bei einem Modell
+    mit acht Experten auch einer, den es nicht gibt (163, `KeyError`). Es
+    zaehlen nur Experten mit Token; bei echten Modellen sind das dieselben
+    vier wie vorher, in derselben Reihenfolge."""
+    zahl = np.bincount(wahl.ravel(), minlength=256)
+    teil = [j for j in np.argsort(-zahl)[:4] if zahl[j] > 0]
+    if not teil:
+        raise SystemExit(f"[gittervergleich] FEHLER: Ebene {e}: kein Experte hat Token")
     stuecke = []
     for j in teil:
         zj, sj = np.nonzero(wahl == j)

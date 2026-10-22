@@ -20,8 +20,13 @@
 //! ```text
 //! myl-pod-node --artefakte <dir> --ausweis <verz> \
 //!              --pod <64 hex> --knoten <64 hex> --pipeline <64 hex> \
-//!              [--ortsleitung 127.0.0.1:4170] [--epoche 0] [--deckel 16]
+//!              [--ortsleitung 127.0.0.1:4170] [--epoche 0] [--deckel 16] \
+//!              [--grenzen 0-7,7-14,14-21,21-28]
 //! ```
+//!
+//! ⚑ **`--grenzen` sind die der Kette** (Stufe 4, 2026-10-22): je Shard
+//! `von-bis`, wie die Kette den Pod aus den Zusagen seiner Mitglieder
+//! schneidet. Ohne sie gilt der gleiche Schnitt.
 //!
 //! **Vorführung** (mit `--prompt`): rechnet einen Prompt und endet, wie
 //! bisher. Bleibt erhalten, weil sie das kürzeste Mittel ist, um zu
@@ -74,6 +79,17 @@ fn hex(bytes: &[u8; 32]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// `0-7,7-14,…` als Bereiche; `None` bei einem Fehler in der Schreibweise.
+/// Ob sie zum Modell passen, prüft das Rechenwerk.
+fn grenzen_lesen(text: &str) -> Option<Vec<(usize, usize)>> {
+    text.split(',')
+        .map(|t| {
+            let (v, b) = t.trim().split_once('-')?;
+            Some((v.parse().ok()?, b.parse().ok()?))
+        })
+        .collect()
+}
+
 fn fehlt(was: &str) -> ! {
     eprintln!("[myl-pod] {was} fehlt. Ohne sie startet der Dienst nicht.");
     std::process::exit(1)
@@ -91,6 +107,7 @@ fn main() {
     let mut pipeline_hex = None;
     let mut epoche: u64 = 0;
     let mut deckel: u32 = 16;
+    let mut grenzen: Option<Vec<(usize, usize)>> = None;
     let mut i = 1;
     while i < args.len() {
         // Ein Wert, der fehlt, ist ein Fehler und kein Absturz: Das
@@ -117,6 +134,17 @@ fn main() {
             "--knoten" => { knoten_hex = Some(wert(i)); i += 2; }
             "--pipeline" => { pipeline_hex = Some(wert(i)); i += 2; }
             "--epoche" => { epoche = wert(i).parse().unwrap_or(0); i += 2; }
+            "--grenzen" => {
+                let text = wert(i);
+                match grenzen_lesen(&text) {
+                    Some(g) => grenzen = Some(g),
+                    None => {
+                        eprintln!("[myl-pod] --grenzen erwartet von-bis je Shard, mit Komma getrennt, bekam {text}");
+                        std::process::exit(1);
+                    }
+                }
+                i += 2;
+            }
             _ => { i += 1; }
         }
     }
@@ -135,6 +163,7 @@ fn main() {
             hex32(&pipeline_hex.unwrap_or_else(|| fehlt("--pipeline")), "--pipeline"),
             EpochId(epoche),
             deckel,
+            grenzen.as_deref(),
         );
         return;
     };
@@ -223,6 +252,7 @@ fn dienst(
     pipeline: [u8; 32],
     epoche: EpochId,
     deckel: u32,
+    grenzen: Option<&[(usize, usize)]>,
 ) {
     use myl_pod::entsiegelung::Entsiegelndes;
     use myl_pod::gegenstelle::Betreibergegenstelle;
@@ -249,12 +279,13 @@ fn dienst(
     );
 
     println!("[myl-pod] Lade Pipeline aus {artefakte} ...");
-    let werk = match Pipelinewerk::laden(
+    let werk = match Pipelinewerk::laden_mit_grenzen(
         std::path::Path::new(artefakte),
         pod_id,
         epoche,
         myl_types::hash::Hash(pipeline),
         deckel,
+        grenzen,
     ) {
         Ok(w) => w,
         Err(e) => {

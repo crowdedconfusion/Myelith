@@ -14,8 +14,8 @@ Seit 2026-10-19, fuer das Bauskript (`tools/modell_bauen.py`). Je Bauart:
 ⚑ **Ein Erzeuger ist nur dann eine Zusage, wenn er an einem echten Modell
 geprueft ist.** `tests/test_bauarten.py` haelt jeden gegen die von Hand
 verifizierten Eintraege: Aus dem `config.json` von Qwen3-4B muss genau der
-Eintrag `myelith-4b` entstehen, aus dem von Qwen3.6-35B-A3B genau
-`myelith-35b-a3b`, und so weiter. Eine Bauart ohne solchen Beleg steht hier als
+Eintrag `pigeon-4b-int8` entstehen, aus dem von Qwen3.6-35B-A3B genau
+`raven-35b-a3b-int8`, und so weiter. Eine Bauart ohne solchen Beleg steht hier als
 **erkannt, nicht freigegeben**, mit dem Grund.
 
 ⚠️ **Erkannt ist noch nicht gebaut.** Das Bauskript haelt den erzeugten
@@ -33,7 +33,7 @@ class Bauart:
     model_types: tuple
     familie: str
     bauweg: str            # "korpus" oder "ebenenweise"
-    umgebung: str          # ".venv" oder ".venv-flashnext" unter calibrate/
+    umgebung: str          # unter calibrate/; seit dem 2026-10-21 fuer alle ".venv"
     vierbit: bool          # Experten in vier Bit moeglich
     erzeuger: Optional[Callable]
     freigegeben: bool
@@ -147,6 +147,54 @@ def erzeuge_qwen3_5_moe(roh: dict, variant: str, verified: str, hf: str) -> dict
     return cfg
 
 
+def erzeuge_qwen3_5(roh: dict, variant: str, verified: str, hf: str) -> dict:
+    """Die hybride dichte Bauart (Qwen3.8-27B, seit 2026-10-21): Gated DeltaNet
+    und Aufmerksamkeit im Wechsel wie beim 35B, aber ein dichtes MLP statt des
+    Gemischs.
+
+    ⚑ **Dieselbe Form rechnet die Laufzeit schon** (Familie `qwen3_5-hybrid`,
+    am ternaeren 27B aus einem gedrehten Paket). Neu ist allein der Weg aus
+    BF16-Gewichten; belegt am Zufallsmodell (`tests/test_qwen3_5_mini.py`).
+    `mtp_num_hidden_layers` der Quelle (der Kopf fuer mehrere Token je Schritt)
+    rechnet die Inferenz nicht und steht deshalb auf 0, wie beim 35B.
+    """
+    t = text_config(roh)
+    rope = t.get("rope_parameters") or t.get("rope_scaling") or {}
+    if rope.get("rope_type", "default") != "default":
+        raise ValueError(f"RoPE-Art {rope.get('rope_type')} wird von diesem Erzeuger nicht abgebildet")
+    anteil = rope.get("partial_rotary_factor", t.get("partial_rotary_factor", 1.0))
+    cfg = _gemeinsam(t, "qwen3_5-hybrid", variant, verified, hf)
+    cfg.update({
+        # Die RMSNorm dieser Bauart rechnet `1 + weight` (Fund 423).
+        "rms_norm_offset": 1.0,
+        "intermediate_size": _feld(t, "intermediate_size"),
+        "tie_word_embeddings": bool(roh.get("tie_word_embeddings", t.get("tie_word_embeddings", False))),
+        "num_experts": 0,
+        "layer_types": list(_feld(t, "layer_types")),
+        "linear_num_key_heads": _feld(t, "linear_num_key_heads"),
+        "linear_num_value_heads": _feld(t, "linear_num_value_heads"),
+        "linear_key_head_dim": _feld(t, "linear_key_head_dim"),
+        "linear_value_head_dim": _feld(t, "linear_value_head_dim"),
+        "linear_conv_kernel_dim": _feld(t, "linear_conv_kernel_dim"),
+        # ⚑ Das Tor am Ausgang der vollen Aufmerksamkeit rechnet die Vorlage
+        #   fest mit `sigmoid`; das Feld der Quelle (`swish`) meint die
+        #   gegatete Norm der linearen Aufmerksamkeit (wie beim ternaeren 27B).
+        "output_gate_type": "sigmoid" if t.get("attn_output_gate") else "",
+        "mtp_num_hidden_layers": 0,
+        "rope_theta": float(rope.get("rope_theta", t.get("rope_theta") or 0)),
+        "attn_output_gate": bool(t.get("attn_output_gate")),
+        "full_attention_interval": _feld(t, "full_attention_interval"),
+        "partial_rotary_factor": anteil,
+        "rotary_dim": int(_feld(t, "head_dim") * anteil),
+        "mrope_section": list(rope.get("mrope_section", [])),
+        # ⛔️ Fund 571: der Ausgang der Aufmerksamkeit auf der Skala von `v`.
+        #   Am Zufallsmodell gemessen: mit der Skala hinter `o_proj` 26 %
+        #   Abstand an Position 0 (beschnitten), mit der von `v` 1,2 %.
+        "ausgang_auf_v": True,
+    })
+    return cfg
+
+
 def erzeuge_qwen4_exp(roh: dict, variant: str, verified: str, hf: str) -> dict:
     """Die Bauart mit vier Stroemen (Qwen3.8-Flash-Next). Der Erzeuger steht
     beim ebenenweisen Bau, der ihn auch zur Gegenprobe braucht."""
@@ -160,13 +208,13 @@ BAUARTEN = (
     Bauart("Qwen3.5/3.6, hybrid mit Expertengemisch", ("qwen3_5_moe", "qwen3_5_moe_text"),
            "qwen3_5-moe-hybrid", "korpus", ".venv", True, erzeuge_qwen3_5_moe, True),
     Bauart("Qwen3.8-Flash-Next, vier Stroeme", ("qwen4_exp", "qwen4_exp_text"),
-           "qwen4-exp", "ebenenweise", ".venv-flashnext", True, erzeuge_qwen4_exp, True),
-    # ⚠️ Erkannt, aber nicht freigegeben: Die Laufzeit rechnet die Bausteine
-    #   (Gated DeltaNet, dichtes MLP, Ausgangstor), aber kein Modell dieser
-    #   Form ist ueber den ganzen Weg gebaut und gemessen.
+           "qwen4-exp", "ebenenweise", ".venv", True, erzeuge_qwen4_exp, True),
+    # ⚑ Freigegeben am 2026-10-21: Erzeuger gegen den Eintrag `crow-27b-int8`
+    #   gehalten (`tests/test_bauarten.py`), der ganze Weg aus BF16 am
+    #   Zufallsmodell gebaut und gegen die Vorlage gerechnet
+    #   (`tests/test_qwen3_5_mini.py`). Das echte 27B ist noch nicht gebaut.
     Bauart("Qwen3.5/3.8, hybrid dicht (etwa Qwen3.8-27B)", ("qwen3_5", "qwen3_5_text"),
-           "qwen3_5-hybrid", "korpus", ".venv", False, None, False,
-           "noch an keinem Modell ueber den ganzen Weg gebaut und gemessen"),
+           "qwen3_5-hybrid", "korpus", ".venv", False, erzeuge_qwen3_5, True),
 )
 
 

@@ -1,7 +1,7 @@
 # compute-pipeline (`myl-pod`, `myl-dispatcher`)
 
-> **Version:** 0.45.0 (`myl-pod` 0.36.0, `myl-dispatcher` 0.9.0)
-> **Datum:** 2026-10-19
+> **Version:** 0.47.0 (`myl-pod` 0.38.0, `myl-dispatcher` 0.11.0)
+> **Datum:** 2026-10-22
 > **Status:** Phase 1 vollständig, Phase 2.1, **Phase 3 vollständig**
 > (3.1 bis 3.3) und Punkt 4.3. `shard_loop` mit Spur-Hashes und
 > Manipulationserkennung, `coordinator_loop` mit Micro-Batching,
@@ -106,6 +106,87 @@ COMPUTE_PIPELINE/
 ```
 
 ## Changelog
+
+### v0.47.0 (2026-10-22): Der Pod rechnet nach den Grenzen der Kette, Netz vor Mensch (`myl-pod` 0.38.0, `myl-dispatcher` 0.11.0)
+
+Stufe 4 des Dispatchers (5.7), abgeschlossen mit NODE v0.52.0.
+
+- `myl-pod`:
+  - `Pipelinewerk::laden_mit_grenzen`, `Trainingswerk::aus_modell_mit_grenzen`
+    und `myl-pod-node --grenzen`: die Grenzen der Kette, geprüft mit
+    `grenzen_pruefen` und abgelehnt statt zurechtgerückt.
+  - `ShardNode::modell_profil` liest Ebenenarten, Zustandsmaße, geteilten
+    Experten und Ausgangstor aus dem geladenen Modell; am echten int4-35B
+    gleich dem Profil der Kette.
+  - `ShardNode::zeitprobe`; die Tür des Shards beantwortet die Zeitprobe aus
+    `myl_types::zeitprobe` vor jeder anderen Anfrage.
+  - `myl-shard --konsensschluessel`: Der Knoten startet den Shard mit dem
+    Schlüssel, unter dem der Miner angemeldet ist.
+  - `myl-shard --von --bis` lädt über `load_model_fuer_netz_bereich`: Ein
+    Knoten mit Teilablage startet seinen Shard aus den Dateien seines
+    Bereichs (Fund 589, INTEGER_LLM v0.145.0).
+  - Die Gegenzeichnung kommt aus `myl_types::gegenzeichnung`.
+- `myl-dispatcher` (P8): `Vorrang::Netz` vor `Agent`; `Modellbedarf::bereich`
+  für den Shard eines Rechners; eine Ablehnung nennt, wer den Platz hat und
+  dass man für die nächste Epoche weniger zusagt (Festlegung E7).
+- **Belege:** `tests/grenzen_der_kette.rs` (Inferenz und Training mit
+  ungleichen Grenzen gleich, falsche Grenzen abgelehnt, Zeitprobe gebunden,
+  auch über die Tür), `das_netz_kommt_vor_dem_agenten_und_sagt_es`;
+  `cargo test` rc=0 in beiden Kisten.
+
+### v0.46.0 (2026-10-21): Ebenenzeit im Eichbuch, ein Shard mit beliebigem Ebenenbereich (`myl-pod` 0.37.0, `myl-dispatcher` 0.10.0)
+
+Stufe 4 des Dispatchers, vorgezogen und geplant auf Bitte des Projektinhabers (2026-10-21): Ein Pod verteilt seine Ebenen nach Kapazität und gemessener Ebenenzeit seiner Mitglieder statt gleich. Hier P1 (Eichbuch) und P2 (Ladeweg).
+
+- **Eichbuch** (`myl-dispatcher`): `Eichung` trägt `ebenenzeit_us` und den
+  `rechenweg` der Messung, `Eichbuch::ebenenzeit` liest sie; alte Bücher
+  ohne die Felder lesen sich weiter.
+- ⚑ **`myl-shard --von a --bis b`** (`myl-pod`): der Ebenenbereich als
+  Eingabe statt aus `--shard`/`--shards` gerechnet; ohne beide gilt der
+  gleiche Schnitt. Erster und letzter Shard folgen aus dem Bereich. Ein
+  ungültiger Bereich endet mit Rückgabe 2 und Grund.
+- **Was P2 nicht brauchte:** Ein Shard berührt schon heute nur seine
+  Ebenen; angewärmt wird im Rechenweg, und nur, was ein Token wählt. Die
+  Platte trägt weiter das ganze Artefakt (Festlegung E6); die erste Ladung
+  prüft die Summen aller Dateien einmal.
+- **Belege:** neue Probe `ungleiche_bereiche_rechnen_dasselbe`: vier echte
+  Prozesse mit 3, 7, 13 und 5 Ebenen liefern dieselben Token, denselben
+  Abdruck (`2a13b710…`), dieselbe Arbeit (12 999 998) und dieselben 13
+  Segmente wie der gleiche Schnitt; Gegenproben für umgekehrten, zu langen
+  und halben Bereich; `die_ebenenzeit_steht_im_buch`. `cargo test` und
+  Clippy rc=0 für beide Kisten.
+
+### v0.45.3 (2026-10-21): Die Modelle heißen nach Tieren (`myl-pod` 0.36.2, `myl-dispatcher` 0.9.1)
+
+Die Projektmodelle heißen seit heute nach Tieren, mit Größe und Speicherform als Anhängsel (Festlegung des Projektinhabers): `myelith-0.6b` ist `sparrow-0.6b-int8`, `myelith-4b` `pigeon-4b-int8`, `myelith-30b-a3b` `magpie-30b-a3b-int8`, `myelith-35b-a3b` `raven-35b-a3b-int8`. In den Dateien eines Artefakts steht kein Name, also bleiben Abdrücke und Register gültig. Die Proben des Pods rechnen am `sparrow-0.6b-int8` (Vorgabe von `MYL_POD_MODELL`); ein Etikett in den Proben des Dispatchers heißt `raven-35b-a3b-int8`. Kein Verhalten geändert.
+
+### v0.45.2 (2026-10-21): Im Netz rechnet nur das 35B; die Netzproben rechnen im Prüfnetz (`myl-pod` 0.36.1)
+
+**Festlegung des Projektinhabers:** Netzmodell ist allein das 35B (int8 und
+int4), als untere Grenze der Leistungsfähigkeit. Einzelheiten unter
+INTEGER_LLM v0.141.0.
+
+- **Das ausgelieferte Programm lädt kein kleines Modell mehr im Netz.** Der
+  Release-Bau von `myl-shard` lehnt `myelith-0.6b` und `myelith-4b` mit
+  ihrem Abdruck ab („steht nicht auf der Netzliste“) und startet mit
+  `myelith-35b-a3b-int4` den Shard.
+- **Die Proben behalten das 0,6B**: `integer-llm-runtime` steht zusätzlich
+  als Entwicklungsabhängigkeit mit dem Merkmal `pruefnetz` im Manifest. Damit
+  baut `cargo test` den Pod und seine Programme mit dem Block `pruefnetz` des
+  Katalogs, `cargo build --release` nicht; das 35B passt in keinen
+  Probenlauf.
+- **Belege:** `cargo test` Rückgabe 0 (143 s, alle Netzproben mit dem echten
+  0,6B); der Testbau von `myl-shard` startet mit dem 0,6B, der Release-Bau
+  nicht. Sperrdateien nachgezogen.
+
+### v0.45.1 (2026-10-21): Der Pod lädt nur, was auf der Netzliste steht (keine Kiste geändert; Fund 585)
+
+- Der Pod lädt auf jedem Weg über `load_model_fuer_netz` (v0.45.0), und das
+  prüft seit runtime 0.100.0 den **Abdruck** des Artefakts gegen die
+  Netzliste im Modellkatalog, nicht mehr nur `betrieb` (Fund 585, INTEGER_LLM
+  v0.140.0). Ein Artefakt, dessen Konfiguration von Hand verändert wurde,
+  oder eines ohne Freigabe startet keinen Shard. Nur die Sperrdatei
+  nachgezogen; die Proben mit dem echten 0,6B laden es über die Liste.
 
 ### v0.45.0 (2026-10-19): Der Netzbetrieb lädt kein privates Modell (`myl-pod` 0.36.0)
 

@@ -109,9 +109,9 @@ OPTIONEN
                         urteilt zu Recht UNVOLLSTÄNDIG.
     --plan <DATEI>      Testplan laden. Setzt Prompt, Token, Shards und
                         Modell und prüft die Datei gegen ihre Prüfsumme.
-    --artifacts <PFAD>  Artefaktverzeichnis (Vorgabe: myelith-0.6b)
+    --artifacts <PFAD>  Artefaktverzeichnis (Vorgabe: sparrow-0.6b-int8)
     --plan-id <TEXT>    Kennung beim Erzeugen eines Plans
-    --model <NAME>      Modell beim Erzeugen eines Plans (Vorgabe: myelith-0.6b)
+    --model <NAME>      Modell beim Erzeugen eines Plans (Vorgabe: sparrow-0.6b-int8)
     --erwarte <DIGEST>  Erwarteter Vergleichswert. Der Lauf schlägt fehl,
                         wenn er einen anderen erzeugt. Für die CI nach
                         einem Modellwechsel: Ab da meldet sich jede

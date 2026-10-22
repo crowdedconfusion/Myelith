@@ -12,7 +12,7 @@ Der Inhalt wird zur Laufzeit erzeugt und ist nicht versioniert (siehe
 artifacts/
 ├── .gitignore
 ├── README.md
-└── <modell>/                    # z. B. myelith-4b, zur Laufzeit erzeugt
+└── <modell>/                    # z. B. pigeon-4b-int8, zur Laufzeit erzeugt
     ├── theta_v.json             # θ_v-Manifest (Version, SHA-256-Hashes der Artefakte)
     ├── weights_manifest.json    # Tensor-Manifest (Name, Form, Hash; seit θ_v 0.7.0
     │                            # Sentinel scale:-1.0/shift:-1 plus shifts_file/shifts_hash)
@@ -61,8 +61,8 @@ deshalb einen eigenen Namen.
 |---|---|
 | `qwen2.5-0.5b` | `myelith-0.5b` |
 | `qwen2.5-7b` | `myelith-7b` |
-| `qwen3-4b` | `myelith-4b` |
-| `qwen3-30b-a3b` | `myelith-30b-a3b` |
+| `qwen3-4b` | `pigeon-4b-int8` |
+| `qwen3-30b-a3b` | `magpie-30b-a3b-int8` |
 
 ⚑ **Die Basismodelle unter `models/` behalten ihre Namen.** Sie sind
 Qwen und heissen so; die Herkunft steht in `KATALOG.json` bei jedem

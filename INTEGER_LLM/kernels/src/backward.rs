@@ -747,7 +747,7 @@ pub fn silu_backward(
 /// und unterhalb null fort. An der Tabelle der spec (reale Domäne −128
 /// bis knapp 128) sind der letzte und der erste Eintrag der aus ihr
 /// abgeleiteten Tabelle genau diese Werte, nachgerechnet am Artefakt
-/// `myelith-0.6b`: 1,0 und 0,0. Die Fortsetzung ist also stetig.
+/// `sparrow-0.6b-int8`: 1,0 und 0,0. Die Fortsetzung ist also stetig.
 ///
 /// 📌 **Hier stand `clamp_i16_sat` vor dem Nachschlagen**, mit der
 /// Begründung, der Index dürfe nicht wrappen. Gesättigt wurde auf `i16`,

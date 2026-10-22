@@ -141,9 +141,9 @@ about six tenths of the memory:
 
 | Model | Size | Memory from |
 |---|---|---|
-| `myelith-0.6b` | 0.9 GB | 2 GB |
-| `myelith-4b` | 4.5 GB | 8 GB |
-| `myelith-8b` | 8.8 GB | 16 GB |
+| `sparrow-0.6b-int8` | 0.9 GB | 2 GB |
+| `pigeon-4b-int8` | 4.5 GB | 8 GB |
+| `jay-8b-int8` | 8.8 GB | 16 GB |
 
 > The folder may also be on a **second stick or an external disk**, at
 > most two folders deep. GolemOS searches all drives at startup. The

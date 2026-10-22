@@ -1,6 +1,6 @@
 [package]
 name = "integer-llm-runtime"
-version = "0.99.0"
+version = "0.103.0"
 edition = "2021"
 rust-version = "1.85"
 license = "LicenseRef-PolyForm-Shield-1.0.0"
@@ -23,6 +23,10 @@ rocm = ["integer-llm-kernels/rocm"]
 # Gebuendelte Matrizen der Vorbereitung auf der GPU von Apple-Silizium,
 # alles andere ueber `cpu-simd`. Nur auf macOS wirksam.
 metal = ["integer-llm-kernels/metal"]
+# Die Bloecke `pruefnetz` des Katalogs gelten mit auf der Netzliste (das 0,6B
+# fuer die Netzproben). Nur als Entwicklungsabhaengigkeit setzen, nie in einem
+# Programm, das ausgeliefert wird (siehe `src/netzfreigabe.rs`).
+pruefnetz = []
 
 [dependencies]
 integer-llm-kernels = { path = "../kernels" }

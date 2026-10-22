@@ -1,7 +1,7 @@
 # client (Nutzer-Client inkl. Wallet)
 
-> **Version:** 0.173.0 (`myl-client` 0.109.0, `myl-oberflaeche` 0.85.0, `myl-console` 0.68.0, `myl-senses` 0.13.3, `myl-module` 0.5.0)
-> **Datum:** 2026-10-19
+> **Version:** 0.178.0 (`myl-client` 0.114.0, `myl-oberflaeche` 0.85.1, `myl-console` 0.69.0, `myl-senses` 0.13.3, `myl-module` 0.5.0)
+> **Datum:** 2026-10-22
 > **Status:** ✅ **Der lokale Betrieb läuft und ist ausgeliefert.** Ein
 > Gesprächsfenster mit Modellwahl, Agentenschleife und
 > Einstellungsseite; aus einem frischen Klon lassen sich darüber
@@ -181,6 +181,204 @@ Modell überhaupt etwas taugt, und weil eine Schnittstelle, die kein
 Mensch je bedient hat, an den Bedürfnissen vorbei entworfen wird.
 
 ## Changelog
+
+### v0.178.0 (2026-10-22): Netz vor Mensch im lokalen Plan (`myl-client` 0.114.0)
+
+Stufe 4 des Dispatchers, P8 (Festlegung E7).
+
+- `mining::netzlast` und `netzlast_im_plan`: Rechnet der Knoten einen Shard
+  aus der Kette, steht seine Last mit Vorrang `Netz` im Plan.
+- `Oertlichesmodell::laden` zieht den festen Bedarf des Netzshards von der
+  Freigabe ab; reicht der Rest nicht, sagt die Ablehnung, wer den Platz hat
+  und dass man für die nächste Epoche weniger zusagt. Der Plan des Agenten
+  rechnet mit dem Shard, und `myl plan` führt ihn zuerst.
+- ⚠️ **Offen:** „Mining starten“ startet den Knoten weiter ohne Shard; die
+  Flags dafür hat der Knoten (`--shard-programm`, `--artefakte`,
+  `--modellzusage`).
+
+### v0.177.0 (2026-10-21): `myl eichen` misst die Ebenenzeit (`myl-client` 0.113.0)
+
+Stufe 4 des Dispatchers, vorgezogen und geplant auf Bitte des Projektinhabers (2026-10-21): Ein Pod verteilt seine Ebenen nach Kapazität und gemessener Ebenenzeit seiner Mitglieder statt gleich. Hier P1 im Klienten.
+
+- `myl eichen` misst bei einem eigenen Artefakt nach der Speicherspitze
+  die Ebenenzeit und den Kopf in Ebenenzeiten und trägt beides mit dem
+  Rechenweg ins Eichbuch ein.
+- **Belege:** echt gefahren mit abgeschirmten Einstellungen: Sparrow 0.6B
+  323 µs je Ebene (Kopf wie 5), Raven 35B A3B int4 907 µs (Kopf wie 1).
+  `cargo test` und Clippy rc=0.
+
+### v0.176.0 (2026-10-21): Die Modelle heißen nach Tieren, und vorhandene ziehen um (`myl-client` 0.112.0, `myl-console` 0.69.0, `myl-oberflaeche` 0.85.1)
+
+Die Projektmodelle heißen seit heute nach Tieren, mit Größe und Speicherform als Anhängsel (Festlegung des Projektinhabers): `myelith-0.6b` ist `sparrow-0.6b-int8`, `myelith-4b` `pigeon-4b-int8`, `myelith-30b-a3b` `magpie-30b-a3b-int8`, `myelith-35b-a3b` `raven-35b-a3b-int8`. In den Dateien eines Artefakts steht kein Name, also bleiben Abdrücke und Register gültig.
+
+- ⚑ **Die Anzeige** folgt der neuen Regel „<Tier> <Größe> - <Format>“:
+  `raven-35b-a3b-int4` ist „Raven 35B A3B - INT4“ (`name_nach_schema`). Ein
+  selbst gebautes Modell zeigt sein eigenes Wort, ein alter Ordner ohne
+  Zahlform weiter `INT8`. Bis heute hieß es „Myelith 35B-A3B INT8“.
+- ⚑ **Der Umzug** (`modelle::neuer_name`, `artefakte_umziehen`): Der
+  Klient benennt Artefaktverzeichnisse mit altem Namen um, sobald er einen
+  Suchort zum ersten Mal ansieht, je Prozess einmal, und nie über ein
+  bestehendes Verzeichnis. Die Einstellungen ziehen beim Lesen mit (fünfte
+  Wanderung). Die Zuordnung steht einmal, als `frueher` im Katalog, und
+  erfasst auch Versuche mit eigenem Anhängsel (`myelith-35b-a3b-ternaer`
+  wird `raven-35b-a3b-ternaer`).
+- **Die Konsole** (`/build artifact`): Ein eigener Name ist ein Wort, das
+  Anhängsel der gewählten Speicherform kommt dazu; ohne Eingabe gilt das
+  Tier, das das Bauskript per Zufall gezogen hat. Die Erkundung trägt dafür
+  `anhaengsel`.
+- **Mitgezogen:** Proben, Vorgaben und Beispiele in Klient, Konsole und
+  Fenster; `SYSTEM/install/karten-pruefen.sh` und `sicherung.py`.
+- **Belege:** neue Proben `fruehere_namen_ziehen_um` (genau, mit Anhängsel,
+  nie über ein bestehendes Verzeichnis) und die fünfte Wanderung in
+  `eine_alte_ablage_findet_ihr_artefakt_wieder`; Clippy und `cargo test`
+  siehe Mitschrieb.
+
+### v0.175.1 (2026-10-21): Im Netz bietet der Klient nur das 35B an (`myl-client` 0.111.1)
+
+- **Festlegung des Projektinhabers** (INTEGER_LLM v0.141.0): Netzmodell ist
+  allein das 35B, int8 und int4. Wahl und Fenster zeigen damit jedes andere
+  Modell als „(privat)“ und ohne Netzeintrag, auch 0,6B, 4B, 8B und 30B-A3B;
+  lokal rechnen sie wie bisher.
+- **Die Proben der Modellwahl rechnen im Prüfnetz:** `integer-llm-runtime`
+  steht als Entwicklungsabhängigkeit mit dem Merkmal `pruefnetz`, damit ein
+  Probe-Artefakt mit den Abdruckdateien des echten 0,6B weiter als
+  freigegeben gilt. Ein Release-Bau kennt den Block nicht.
+- **Belege:** `cargo test` der Kiste Rückgabe 0; Sperrdatei nachgezogen.
+
+### v0.175.0 (2026-10-21): Privat ist, was nicht auf der Netzliste steht; kein Bau ohne Gewichte (`myl-client` 0.111.0, `myl-console` 0.68.1; Funde 584, 585)
+
+- ⛔️ **`modelle::nur_lokal` folgt der Netzliste** (Fund 585, Einzelheiten
+  unter INTEGER_LLM v0.140.0): Privat ist jedes Artefakt, das nicht mit
+  seinem Abdruck auf ihr steht, gleich von welchem Anbieter; `betrieb =
+  lokal` bleibt zusätzlich privat. Damit zeigen Wahl und Fenster ein selbst
+  gebautes oder fremdes Modell immer mit „(privat)“ und ohne Netzeintrag,
+  auch wenn sein `model_config.json` etwas anderes behauptet.
+- **`/build artifact` bricht ohne Gewichtsdateien ab** (Fund 584): Die
+  Erkundung meldet `ohne_gewichte`, die Konsole sagt, dass ein Link auf
+  Hugging Face sie holt, statt einen Namen anzubieten.
+- **Die Proben der Modellwahl** (`tests/modellwahl.rs`) folgen der Regel:
+  Probe-Artefakte ohne Freigabe heissen „(privat)“ und haben keinen
+  Netzeintrag; fuer die Netzeintraege traegt ein Probe-Artefakt die drei
+  Dateien des Abdrucks vom echten 0,6B und steht damit auf der Liste (ohne
+  Artefakt, wie in der CI, uebersprungen).
+- **Belege:** `cargo test` der Kiste mit und ohne `MYL_OHNE_ARTEFAKTE`
+  Rueckgabe 0 (darin `nur_lokal_folgt_der_netzliste`: ohne Abdruck privat,
+  das echte 0,6B nicht), Clippy still, `myl-console` baut. Ende zu Ende:
+  `myl-shard` laedt das echte 0,6B und bedient, eine Kopie mit von Hand
+  gesetztem `betrieb = netz` lehnt es ab („steht nicht auf der Netzliste“).
+
+### v0.174.0 (2026-10-21): Ein Einrichtungsskript für jedes Linux, das Update unter Linux ohne Nix, und eine Sicherheitskopie des ganzen Baums (`myl-client` 0.110.0; Funde 580, 581, 583)
+
+Auftrag des Projektinhabers: Der ganze Arbeitsbaum soll sich als
+Sicherheitskopie ohne Gewichte und Artefakte ziehen lassen, und diese Kopie
+soll auf jedem System bauen und laufen, zuerst unter Linux; ohne starre
+Pfade und Verweise, mit einem Paketvorrat, der auch die eigenen Module trägt.
+
+- ⛔️ **Fund 581: Unter Linux ohne Nix konnte sich Myelith nicht
+  aktualisieren.** `aktualisierung::SKRIPT_LINUX` nannte
+  `installieren-nixos.sh`, und das bricht ohne `nix` ab; Konsole (`/update`)
+  und Fenster riefen es auf Debian, Ubuntu, Fedora und Arch genauso. Jetzt
+  nennt es `SYSTEM/install/installieren-linux.sh`, das auf NixOS (`/etc/NIXOS`
+  oder `--nix`) selbst an das Nix-Skript abgibt. `SKRIPTE` führt alle vier;
+  die Proben über die Skripte (Pfade, kein Überschreiben eines laufenden
+  Programms, `--aktualisieren`, Anleitung) prüfen jetzt auch das neue.
+- **`installieren-linux.sh` (neu):** prüft Rust, C-Compiler und Python,
+  packt den Vorrat aus und baut **ohne Netz** nach `~/.local/bin`. ⚑ **Nur das
+  Fenster braucht Systembibliotheken** (WebKitGTK 4.1, GTK 3, libsoup 3,
+  dbus, gefragt über `pkg-config`); fehlen sie, baut es die übrigen vier
+  Programme, lässt das Fenster aus und nennt den Paketbefehl der erkannten
+  Distribution (Debian und Ubuntu, Fedora, Arch, openSUSE). Es ruft weder
+  einen Paketverwalter noch `sudo`. `--ohne-fenster`, `--pruefen`,
+  `--aktualisieren`, `--nix`.
+- **Fund 580, Teil Menüeintrag:** Der Eintrag unter Linux trug
+  `Icon=<Pfad in den Baum>`; ein verschobener oder gelöschter Baum nahm das
+  Symbol mit. Beide Linux-Skripte legen es jetzt nach
+  `~/.local/share/icons/hicolor/512x512/apps/myelith.png` und nennen es
+  beim Namen.
+- **Fund 583: Unter Windows wurde der Vorrat nur ausgepackt, wenn es gar
+  kein Lager gab.** Brachte ein Update neue Archive, baute `--offline` gegen
+  das alte Lager und brach ab. Jetzt auch, wenn ein Vorrat neuer ist als
+  das Lager oder die Konfiguration fehlt, wie unter macOS; in beiden zählt
+  der lokale Vorrat mit.
+- **Der Paketvorrat** (`SYSTEM/install/vorrat.py`): Was nur eigene, nicht
+  versionierte Kisten brauchen (Module unter `MODULES/`), sammelt `sammeln`
+  nach `SYSTEM/crates-vorrat-lokal/` (von git ignoriert); `pruefen` hält
+  beide Vorräte gegen ihre Sperrdateien, `auspacken` legt beide ins Lager.
+  Bisher fehlten den Modulen vier Archive, und eine Kopie des Baums baute
+  sie nicht ohne Netz. ⚑ Der versionierte Vorrat bleibt genau das, was die
+  versionierten Sperrdateien verlangen (Fund 545). **Fund 580, Teil
+  Lager:** Die erzeugte `cargo-home/config.toml` nannte das Lager mit
+  absolutem Pfad; jetzt relativ (`vendor`), geprüft samt Gegenprobe.
+- **`SYSTEM/install/sicherung.py` (neu):** schreibt
+  `myelith-sicherung-JJJJ-MM-TT.tar.gz` (oder `.zip`) mit allem, was im
+  Arbeitsbaum liegt, ohne Gewichte, Artefakte, Python-Umgebungen und
+  Bauabfall; Verknüpfungen werden genannt, nicht kopiert. In der Kopie
+  liegen `SICHERUNG.md` und `PRUEFSUMMEN.sha256`. `--liste`, `--selbsttest`
+  (Auswahl, Verknüpfungen, tar und zip gegen die Prüfsummen; Gegenprobe ohne
+  die Regel für den Bauordner rot).
+- Die Probe `jeder_pfad_in_den_skripten_liegt_da` kennt `}` als Ende eines
+  Pfades (`${CARGO_TARGET_DIR:-$WURZEL/…}`) und `SYSTEM/crates-vorrat-lokal`
+  als einen Ordner, der erst entsteht.
+- **Belege:** `cargo test --lib aktualisierung` 10/10; die Probe der Skripte
+  in `myl-local-agent`; `sh -n` über die Shell-Skripte; die Kopie des echten
+  Baums (4,06 GB, 1,42 GB gepackt) entpackt, alle 31 503 Prüfsummen gleich.
+  Aus ihr ohne Netz gebaut: unter macOS alle fünf Programme samt
+  `Myelith.app` in 122 s (`installieren-macos.sh` mit eigenem `HOME`), dazu
+  das Handelsmodul; unter Linux in einem frischen `debian:bookworm-slim` mit
+  `--network none` ohne Fensterpakete vier Programme in 65 s (Fenster
+  ausgelassen, Paketbefehl genannt), mit ihnen alle fünf in 103 s samt
+  Menüeintrag und Symbol, `ldd` ohne fehlende Bibliothek. `myl`, `myl-node`
+  und `myl-test` antworten auf `--hilfe`.
+- ⚠️ **Windows ist damit nicht belegt**: Die CI baut dort aus einem Klon,
+  nicht aus einer Kopie und nicht über das Skript.
+- **Nachtrag, derselbe Tag: ganz ohne Netz, auch die Werkzeuge.** Auftrag
+  des Projektinhabers: alles offline bau- und ausführbar, unter Linux
+  zuerst NixOS. `SYSTEM/install/werkzeugvorrat.py` (`holen`, `pruefen`,
+  `zeigen`, Quellen und Fassungen in `werkzeugvorrat.json`) füllt
+  `SYSTEM/werkzeug-vorrat/` (von git ignoriert, in der Kopie enthalten):
+  für `aarch64-linux` und `x86_64-linux` die Quellen der Eingaben aus
+  `flake.lock` und die ganze Closure der Bauumgebung aus `flake.nix` als
+  Nix-Binärcache (je 364 Pfade, rund 1 GB), für macOS und Windows die
+  Installer von Rust 1.99.1 und Python 3.12.10, für Windows WebView2 und der
+  Starter der Buildwerkzeuge. `nix-vorrat-einspielen.sh` (neu, als root)
+  legt die Umgebung in den Nix-Speicher; `installieren-nixos.sh` nimmt dann
+  `nix develop --offline` und legt sie als Profil unter
+  `~/.local/state/myelith/bauumgebung` ab, damit die Speicherbereinigung die
+  Bibliotheken der Programme nicht wegnimmt. Die Skripte für macOS und
+  Windows nennen bei fehlendem Rust oder Python den Befehl mit der Datei aus
+  dem Vorrat. Die Kopie nimmt die Artefakte `myelith-0.6b` und `myelith-4b`
+  mit (`--ohne-artefakte` nicht).
+- Die Paketnamen für Linux ohne Nix stehen jetzt in
+  `SYSTEM/install/systempakete.txt`, gelesen von `installieren-linux.sh`.
+- **Belege:** `werkzeugvorrat.py pruefen` grün, Gegenproben (ein Byte mehr
+  in einem Installer, ein fehlendes Archiv im Nix-Cache) rot; in einem
+  frischen `nixos/nix`-Behälter ohne Netz eingespielt, `nix develop
+  --offline` mit Rust 1.98.1, WebKitGTK 2.52.6, Python 3.12 (x86_64). Kopie
+  mit Vorrat und Artefakten: 34 430 Dateien, 12,67 GB, gepackt 8,97 GB; aus
+  ihr in einem frischen `nixos/nix` (arm64) ohne Netz alle fünf Programme in
+  160 s, Konformität mit allen vier Abdrücken, `myl frage` an das 0,6B
+  beantwortet.
+- ⚑ **`sicherung.py` schreibt keine Kopie mit lückenhaftem Werkzeugvorrat**:
+  Geholt werden kann er nur mit Netz, also vor der Kopie; auf dem Rechner
+  ohne Netz fiele die Lücke zu spät auf. Bewusst ohne nur mit
+  `--ohne-werkzeuge`, und `SICHERUNG.md` sagt es dann. Gegenprobe: ein Nix-Teil
+  mit falscher Marke für `flake.lock` lässt die Kopie mit Rückgabe 1
+  abbrechen, ohne eine Datei zu schreiben.
+
+### v0.173.1 (2026-10-21): Die Probe der Plattformorte ändert die Umgebung nicht mehr (`myl-client` 0.109.1, Fund 579)
+
+- `der_ort_der_einstellungen_folgt_der_plattform` stellte `HOME` und
+  `XDG_CONFIG_HOME` prozessweit um. In diesem Fenster schrieb ein anderer
+  Testfaden den Zettel mit der Wurzel nach `.config/myelith/wurzel` im
+  Ordner dieser Kiste, und der lag mit dem absoluten Pfad des
+  Entwicklungsrechners im Repositorium (Fund 579, Einzelheiten unter
+  AGENT_LAYER v0.52.1). Die Probe prüft jetzt
+  `myl_local_agent::ort::plattformpfad_aus` mit einer Umgebung als Argument
+  und Behelfsverzeichnissen statt fester Pfade; damit sagt sie auf jedem
+  System dasselbe, auch zum Vorrang von `APPDATA` unter Windows.
+- Die Datei ist entfernt. Sperrdateien von `myl-console`, `myl-oberflaeche`
+  und `myl-testclient` nachgezogen.
+- **Beleg:** die Probe grün; Gegenprobe siehe AGENT_LAYER v0.52.1.
 
 ### v0.173.0 (2026-10-19): `/build artifact` mit Link oder Pfad und mit Formatwahl (`myl-console` 0.68.0)
 
