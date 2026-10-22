@@ -59,7 +59,13 @@ fn teilordner(ziel: &Path, alle: &BTreeSet<String>, behalten: &BTreeSet<String>)
 #[cfg(unix)]
 #[test]
 fn ein_bereich_laedt_aus_seinen_dateien_und_rechnet_wie_das_ganze() {
-    assert!(artefakt().exists(), "das Probeartefakt fehlt");
+    // Ohne Probeartefakt nur mit ausdrücklicher Erlaubnis (Fund 113):
+    // Ein stiller Sprung sähe aus wie ein bestandener Test.
+    if std::env::var_os("MYL_OHNE_ARTEFAKTE").is_some() {
+        eprintln!("SKIP (MYL_OHNE_ARTEFAKTE gesetzt)");
+        return;
+    }
+    assert!(artefakt().exists(), "das Probeartefakt fehlt: {}", artefakt().display());
     let voll = load_model(&artefakt()).expect("volles Modell");
     let ebenen = voll.num_layers;
     for (von, bis) in [(0usize, 10usize), (10, ebenen)] {

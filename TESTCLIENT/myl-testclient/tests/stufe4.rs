@@ -225,6 +225,10 @@ fn konsensdatei(ordner: &std::path::Path, w: u8) -> PathBuf {
 /// Shard.
 #[test]
 fn der_knoten_startet_seinen_shard_aus_der_kette() {
+    // Ohne Probeartefakt nur mit ausdrücklicher Erlaubnis (Fund 113).
+    if !myl_pod::artefakte::vorhanden(&sparrow()) {
+        return;
+    }
     let profil = if cfg!(debug_assertions) { "debug" } else { "release" };
     let programm = wurzel().join("SYSTEM/full-build").join(profil).join("myl-shard");
     assert!(
@@ -232,7 +236,6 @@ fn der_knoten_startet_seinen_shard_aus_der_kette() {
         "myl-shard ist nicht gebaut. Bauen mit:\n  cd COMPUTE_PIPELINE/myl-pod && cargo test --no-run\n\
          (im Testbau, damit es das Probemodell des Prüfnetzes lädt)"
     );
-    assert!(sparrow().exists(), "das Probeartefakt fehlt: {}", sparrow().display());
     let k = kette_mit(&[(48, 300, None); 6]);
     let ordner = std::env::temp_dir().join(format!("myl-stufe4-{}", std::process::id()));
     std::fs::create_dir_all(&ordner).expect("Ordner");
@@ -281,7 +284,9 @@ fn der_knoten_startet_seinen_shard_aus_der_kette() {
 /// nichts mehr.
 #[test]
 fn der_dateidienst_holt_einen_bereich_des_probeartefakts() {
-    assert!(sparrow().exists(), "das Probeartefakt fehlt: {}", sparrow().display());
+    if !myl_pod::artefakte::vorhanden(&sparrow()) {
+        return;
+    }
     let ziel = std::env::temp_dir().join(format!("myl-stufe4-dateien-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&ziel);
     std::fs::create_dir_all(&ziel).expect("Ordner");

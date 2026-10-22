@@ -1,6 +1,6 @@
 # NODE — der Myelith-Knoten
 
-> **Version:** 0.52.0
+> **Version:** 0.52.1
 > **Datum:** 2026-10-22
 > **Status:** Netzknoten lauffähig, Blockproduktion mit **Persistenz über
 > Neustarts**, BFT-Runden über das Netz mit Rundenwechsel, und seit dem
@@ -278,6 +278,13 @@ NODE/
 ```
 
 ## Changelog
+
+### v0.52.1 (2026-10-22): Sicherheitsmeldung zu `rustls-webpki`; nur die Sperrdatei
+
+- `rustls-webpki` 0.103.15 auf 0.103.16, über `myl-net` (0.17.1)
+  eingezogen, wegen RUSTSEC-2026-0382. Kein Code des Knotens geändert.
+- **Belege:** cargo-deny grün; Clippy mit `-D warnings` und alle Tests
+  offline gegen den Vorrat mit Rückgabe 0.
 
 ### v0.52.0 (2026-10-22): Der Knoten rechnet aus der Kette; Stufe 4 abgeschlossen
 

@@ -1,6 +1,6 @@
 # testclient (`myl-testclient`)
 
-> **Version:** 0.44.0
+> **Version:** 0.44.1
 > **Datum:** 2026-10-22
 > **Status:** Phase 1 und **Phase 3 vollständig**, dazu Punkt 2.1
 > (`vergleich`), **2.2** (Backend-Vergleich innerhalb einer Maschine, seit
@@ -543,6 +543,28 @@ COMPUTE_PIPELINE Phase 1: erstmals über einen aufrufbaren Befehl statt
 über einen Integrationstest.
 
 ## Changelog
+
+### v0.44.1 (2026-10-22): Netzlauf und Stufe-4-Proben in der CI; Sicherheitsmeldung zu `rustls-webpki`
+
+- 📌 **Die neuen Proben kannten `MYL_OHNE_ARTEFAKTE` nicht.** Der CI-Schritt
+  „cargo test, TESTCLIENT“ war nach dem Push von v0.44.0 rot: Dort liegt
+  kein Probeartefakt, und `tests/netzlauf.rs` sowie zwei Proben in
+  `tests/stufe4.rs` verlangten es ohne Ausnahme. Jetzt fragen alle drei
+  `myl_pod::artefakte::vorhanden`, wie die übrigen: ohne Artefakt nur mit
+  ausdrücklicher Erlaubnis übersprungen, sonst ein lauter Fehlschlag.
+- 📌 **Der Netzlauf wartete auf „irgendeinen Auftrag“.** Ein Knoten mit
+  dem Auftrag der vorigen Epoche bestand die Warteschleife, und die Prüfung
+  danach fand ihn mit dem alten Bereich (m02 mit (0, 7) statt (27, 28)).
+  Der Knoten selbst tat das Richtige; der Wechsel kommt mit seiner nächsten
+  Aufnahme. Jetzt warten beide Schleifen (Epoche 2 und 3), bis jede
+  Position Epoche und Bereich ihres Platzes führt und die Reserve nichts
+  (`soll_der_pods`, `fuehren_ihr_soll`).
+- `rustls-webpki` 0.103.15 auf 0.103.16, über `myl-net` (0.17.1) und
+  `myl-node` (0.52.1) eingezogen, wegen RUSTSEC-2026-0382.
+- **Belege:** mit `MYL_OHNE_ARTEFAKTE=1` wie in der CI Rückgabe 0 und drei
+  Sprünge; mit Artefakten Rückgabe 0, der Netzlauf dreimal grün;
+  cargo-deny grün; Clippy mit `-D warnings` und alle Tests offline gegen
+  den Vorrat mit Rückgabe 0.
 
 ### v0.44.0 (2026-10-22): Stufe 4 über den ganzen Weg
 

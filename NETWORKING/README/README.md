@@ -1,6 +1,6 @@
 # networking (`myl-net`, `myl-siegel`)
 
-> **Version:** 0.17.0
+> **Version:** 0.17.1
 > **Datum:** 2026-10-22
 > **Status:** **Phase 1 und 2 abgeschlossen** (1.1–1.6, 2.1–2.3),
 > **Phase 3 umgesetzt** (3.1–3.4, Abschluss unter Reviewvorbehalt), dazu Punkt 4.2 (Fuzzing der Wire-Protocol-Parser), Punkt 4.3
@@ -108,6 +108,16 @@ NETWORKING/
 ```
 
 ## Changelog
+
+### v0.17.1 (2026-10-22): Sicherheitsmeldung zu `rustls-webpki`; nur die Sperrdatei
+
+- `rustls-webpki` 0.103.14 auf 0.103.16, über `libp2p-quic` und `rustls`
+  eingezogen. Anlass: Die Abhängigkeitsprüfung war nach dem Push von
+  v0.17.0 rot wegen einer neuen Meldung (RUSTSEC-2026-0382: Zertifikatspfade
+  mit nicht mehr vertrauenswürdigen Zwischenzertifikaten von emSign). Kein
+  Code geändert.
+- **Belege:** cargo-deny grün; Clippy mit `-D warnings` und alle Tests
+  offline gegen den Vorrat (`--locked --offline`) mit Rückgabe 0.
 
 ### v0.17.0 (2026-10-22): Knoten finden einander über Kademlia; Funde 587 und 591
 

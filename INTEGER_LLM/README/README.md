@@ -1,6 +1,6 @@
 # integer-llm
 
-> **Version:** 0.145.0 (θ_v 0.22.0; kernels 0.88.1, runtime 0.103.0, pipeline 0.15.2)
+> **Version:** 0.145.1 (θ_v 0.22.0; kernels 0.88.1, runtime 0.103.0, pipeline 0.15.2)
 > **Datum:** 2026-10-22
 > **Status:** ⚠️ **Das Akzeptanzkriterium ruht auf einer zu kleinen
 > Stichprobe.** Gemessen wurde bisher ueber **4 Sequenzen, 435
@@ -648,6 +648,19 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
   volle Paritätstests nur auf GPU-Runnern (nightly oder PR-basiert)
 
 ## Changelog
+
+### v0.145.1 (2026-10-22): Das Gleitkomma-Audit kennt die Dateien von Stufe 4
+
+- `tests/audit/test_no_float.py`: `podmodell.rs`, `fristmeldung.rs`,
+  `gegenzeichnung.rs` und `zeitprobe.rs` aus `myl-types` im Konsenspfad.
+  Die Vollständigkeitsprüfung des Audits hatte sie im ersten CI-Lauf nach
+  ihrer Entstehung gemeldet („NICHT GELISTET“); alle vier sind ganzzahlig.
+- `runtime/tests/teilablage.rs` springt mit `MYL_OHNE_ARTEFAKTE` ab, wie die
+  übrigen Proben mit Artefakt; ohne die Variable bleibt ein fehlendes
+  Artefakt ein Fehlschlag. Kein Code der Kiste geändert, `runtime` bleibt
+  0.103.0.
+- **Belege:** `test_no_float.py` PASSED, null Treffer; `teilablage` mit und
+  ohne die Variable Rückgabe 0.
 
 ### v0.145.0 (2026-10-22): Ein Shard aus den Dateien seines Bereichs (runtime 0.103.0)
 

@@ -213,6 +213,38 @@ fn im_protokoll(ordner: &Path, name: &str, art: &str) -> usize {
     n
 }
 
+/// Was jeder Knoten eines Pods führen soll, nach der Kette des Erzeugers:
+/// eine Position ihren Bereich in der laufenden Epoche, die Reserve nichts.
+type Soll = Vec<(MinerId, Option<(u64, u32, u32)>)>;
+
+fn soll_der_pods(knoten: &[Knoten]) -> Soll {
+    let zustand = knoten[0].kette().zustand().clone();
+    let z = myl_node::kette::Kette::zuteilung_der_laufenden_epoche(&zustand);
+    let mut soll = Soll::new();
+    for p in &z.pods {
+        let g = myl_node::kette::Kette::grenzen_des_pods(&zustand, p).expect("machbar");
+        for (i, s) in p.shards.iter().enumerate() {
+            soll.push((s.miner.miner_id, Some((zustand.epoch.0, g[i].0, g[i].1))));
+        }
+        soll.extend(p.reserve.iter().map(|r| (r.miner_id, None)));
+    }
+    soll
+}
+
+/// 📌 **Nicht „irgendein Auftrag“** (2026-10-22): Die Warteschleife fragte
+/// zuerst nur, ob jede Position einen Auftrag hat. Ein Knoten mit dem
+/// Auftrag der vorigen Epoche bestand sie, und die Prüfung danach fand ihn
+/// mit dem alten Bereich; der Wechsel kommt erst mit seiner nächsten
+/// Aufnahme.
+fn fuehren_ihr_soll(knoten: &[Knoten], soll: &Soll) -> bool {
+    soll.iter().all(|(m, s)| {
+        knoten
+            .iter()
+            .find(|k| k.miner_kennung() == Some(*m))
+            .is_some_and(|k| k.shardauftrag().map(|a| (a.epoche, a.von, a.bis)) == *s)
+    })
+}
+
 fn namen(knoten: &[Knoten]) -> BTreeMap<MinerId, String> {
     knoten
         .iter()
@@ -223,8 +255,12 @@ fn namen(knoten: &[Knoten]) -> BTreeMap<MinerId, String> {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn der_netzbetrieb_traegt_mit_ungleichen_pods_und_stolpersteinen() {
+    // Ohne Probeartefakt nur mit ausdrücklicher Erlaubnis (Fund 113); die
+    // CI setzt sie, denn dort liegt keines.
+    if !myl_pod::artefakte::vorhanden(&sparrow()) {
+        return;
+    }
     assert!(shardprogramm().exists(), "myl-shard fehlt: cd COMPUTE_PIPELINE/myl-pod && cargo test --no-run");
-    assert!(sparrow().exists(), "das Probeartefakt fehlt");
     let ordner = std::env::temp_dir().join(format!("myl-netzlauf-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&ordner);
     std::fs::create_dir_all(&ordner).expect("Ordner");
@@ -286,13 +322,11 @@ async fn der_netzbetrieb_traegt_mit_ungleichen_pods_und_stolpersteinen() {
     assert_ne!(grenzen[0], grenzen[1], "die Pods sind ungleich geschnitten");
 
     // Die Shards laufen mit den Bereichen ihrer Positionen.
+    let soll = soll_der_pods(&knoten);
     let mut bis = tokio::time::Instant::now() + Duration::from_secs(120);
     loop {
         runde(&mut knoten, 1).await;
-        let alle = z.pods.iter().all(|p| {
-            p.shards.iter().all(|s| knoten.iter().any(|k| k.miner_kennung() == Some(s.miner.miner_id) && k.shardauftrag().is_some()))
-        });
-        if alle {
+        if fuehren_ihr_soll(&knoten, &soll) {
             break;
         }
         assert!(tokio::time::Instant::now() < bis, "nicht jede Position führt ihren Shard");
@@ -375,13 +409,11 @@ async fn der_netzbetrieb_traegt_mit_ungleichen_pods_und_stolpersteinen() {
         }
     }
     // Alle Positionen führen ihren Shard, auch Teilablage und Holer.
+    let soll3 = soll_der_pods(&knoten);
     bis = tokio::time::Instant::now() + Duration::from_secs(180);
     loop {
         runde(&mut knoten, 1).await;
-        let alle = z3.pods.iter().all(|p| {
-            p.shards.iter().all(|s| knoten.iter().any(|k| k.miner_kennung() == Some(s.miner.miner_id) && k.shardauftrag().is_some()))
-        });
-        if alle {
+        if fuehren_ihr_soll(&knoten, &soll3) {
             break;
         }
         assert!(tokio::time::Instant::now() < bis, "in Epoche 3 führt nicht jede Position ihren Shard");

@@ -74,10 +74,10 @@ The artefacts are integer-converted derivative works of the base weights.
 
 ## 5. Rust-Kisten / Rust crates
 
-759 Pakete aus 28 Kisten, offline aus `SYSTEM/crates-vorrat`. In die
+758 Pakete aus 28 Kisten, offline aus `SYSTEM/crates-vorrat`. In die
 Freigabebündel gehen nur die, die das jeweilige Programm zieht.
 
-759 packages from 28 crates, offline from `SYSTEM/crates-vorrat`.
+758 packages from 28 crates, offline from `SYSTEM/crates-vorrat`.
 Release bundles contain only those the respective program pulls in.
 
 | Lizenz / licence | Pakete / packages |
@@ -95,7 +95,7 @@ Release bundles contain only those the respective program pulls in.
 | MPL-2.0 | 6 |
 | Apache-2.0/MIT | 5 |
 | BSD-2-Clause OR Apache-2.0 OR MIT | 4 |
-| ISC | 4 |
+| ISC | 3 |
 | MIT OR Apache-2.0 OR Zlib | 3 |
 | Zlib | 3 |
 | Apache-2.0 OR MIT OR Zlib | 2 |
@@ -616,8 +616,7 @@ Release bundles contain only those the respective program pulls in.
 | `rustix` | 1.1.5 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | https://github.com/bytecodealliance/rustix |
 | `rustls` | 0.23.46 | Apache-2.0 OR ISC OR MIT | https://github.com/rustls/rustls |
 | `rustls-pki-types` | 1.15.1 | MIT OR Apache-2.0 | https://github.com/rustls/pki-types |
-| `rustls-webpki` | 0.103.14 | ISC | https://github.com/rustls/webpki |
-| `rustls-webpki` | 0.103.15 | ISC | https://github.com/rustls/webpki |
+| `rustls-webpki` | 0.103.16 | ISC | https://github.com/rustls/webpki |
 | `rustversion` | 1.0.23 | MIT OR Apache-2.0 | https://github.com/dtolnay/rustversion |
 | `rw-stream-sink` | 0.4.0 | MIT | https://github.com/libp2p/rust-libp2p |
 | `ryu` | 1.0.23 | Apache-2.0 OR BSL-1.0 | https://github.com/dtolnay/ryu |

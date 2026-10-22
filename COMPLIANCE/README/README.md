@@ -1,6 +1,6 @@
 # compliance
 
-> **Version:** 0.6.0
+> **Version:** 0.6.1
 > **Datum:** 2026-10-21
 > **Status:** Die Pflichten aus der KI-Verordnung sind dokumentiert und,
 > soweit technisch, umgesetzt; die Einordnung Artikel für Artikel steht in
@@ -38,6 +38,13 @@ Schutzfilter (`CLIENT/myl-client/src/schutzfilter.rs`), Notaus
 (`AGENT_LAYER/local-agent/src/notaus.rs`).
 
 ## Changelog
+
+### v0.6.1 (2026-10-22): Lizenzliste nach der Sicherheitsmeldung zu `rustls-webpki`
+
+- `NOTICES.md` neu erzeugt: `rustls-webpki` 0.103.16 statt 0.103.14 und
+  0.103.15 (RUSTSEC-2026-0382, in NETWORKING, NODE und TESTCLIENT
+  angehoben). Lizenz unverändert.
+- **Belege:** `notices.py --pruefe` PASSED.
 
 ### v0.6.0 – 2026-10-21 (die Modelle heißen nach Tieren)
 

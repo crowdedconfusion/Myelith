@@ -356,6 +356,17 @@ CONSENSUS_PATH = [
     # ⚑ Auch diese Datei hat die Vollstaendigkeitspruefung gemeldet, im
     # ersten Lauf nach ihrer Entstehung.
     ROOT / "SHARED_TYPES" / "myl-types" / "src" / "zusage.rs",
+    # 2026-10-22: Stufe 4 des Dispatchers. Das Podmodell teilt Ebenen
+    # nach angesagter Ebenenzeit, die Fristmeldung haelt eine Messung in
+    # Mikrosekunden gegen eine Frist, die Gegenzeichnung zaehlt eine
+    # Mehrheit, und die Zeitprobe liefert den Abdruck, an dem gemessen
+    # wird. Alles geht in die Zuteilung oder in eine Sperre ein, also
+    # ganzzahlig. ⚑ Die Vollstaendigkeitspruefung hat alle vier in der
+    # CI gemeldet, im ersten Lauf nach ihrer Entstehung.
+    ROOT / "SHARED_TYPES" / "myl-types" / "src" / "podmodell.rs",
+    ROOT / "SHARED_TYPES" / "myl-types" / "src" / "fristmeldung.rs",
+    ROOT / "SHARED_TYPES" / "myl-types" / "src" / "gegenzeichnung.rs",
+    ROOT / "SHARED_TYPES" / "myl-types" / "src" / "zeitprobe.rs",
     # 2026-08-31: Das Gegenstandsformat zog aus `myl-store` hierher,
     # damit der Ledger es lesen kann, ohne an der Store-Rolle zu haengen.
     # Es rechnet in Bytes, Teilzahlen und Bruechen aus kleinen ganzen
