@@ -1,6 +1,6 @@
 [package]
 name = "myl-node"
-version = "0.55.0"
+version = "0.55.1"
 edition = "2021"
 # ⚑ 1.88 und nicht 1.85 wie die uebrigen Crates, und der Grund liegt
 # nicht im eigenen Code: Ueber libp2p haengt hier die `icu_*`-Kette
@@ -73,7 +73,7 @@ sha2 = "0.10"
 # GET-Dienst auf der Rueckschleife, ohne HTTP-Rahmenwerk. Dieselbe
 # Entscheidung wie im Gateway.
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "time", "macros", "sync", "signal", "net", "io-util"] }
-libp2p = { version = "0.56", features = ["tokio"] }
+libp2p = { version = "0.57", features = ["tokio"] }
 
 [lib]
 name = "myl_node"

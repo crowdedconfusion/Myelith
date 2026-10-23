@@ -101,7 +101,6 @@ where
     io_.close().await
 }
 
-#[async_trait::async_trait]
 impl request_response::Codec for ByteCodec {
     type Protocol = StreamProtocol;
     type Request = Vec<u8>;

@@ -1,7 +1,7 @@
 # testclient (`myl-testclient`)
 
-> **Version:** 0.46.0
-> **Datum:** 2026-10-22
+> **Version:** 0.46.1
+> **Datum:** 2026-10-23
 > **Status:** Phase 1 und **Phase 3 vollständig**, dazu Punkt 2.1
 > (`vergleich`), **2.2** (Backend-Vergleich innerhalb einer Maschine, seit
 > dem 2026-08-30) und 2.4 (`--repeat`); **Phase 4 vollständig** (4.3 die
@@ -543,6 +543,15 @@ COMPUTE_PIPELINE Phase 1: erstmals über einen aufrufbaren Befehl statt
 über einen Integrationstest.
 
 ## Changelog
+
+### v0.46.1 (2026-10-23): libp2p 0.57; nur die Sperrdatei
+
+- Sperrdatei auf libp2p 0.57.1 (über `myl-net` 0.20.0 und `myl-node`
+  0.55.1); damit `hickory-proto` 0.26.3 statt 0.25.2 (RUSTSEC-2026-0118,
+  -0119).
+- **Belege:** Clippy (`-D warnings`) und 278 Tests offline grün, darunter
+  der Netzlauf mit fünfzehn Knoten, ungleichen Pods und Stolpersteinen
+  (41 s).
 
 ### v0.46.0 (2026-10-22): Der Netzlauf mit getrennten Prozessen unter `tc netem`
 

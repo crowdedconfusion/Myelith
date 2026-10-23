@@ -1,7 +1,7 @@
 # NODE — der Myelith-Knoten
 
-> **Version:** 0.55.0
-> **Datum:** 2026-10-22
+> **Version:** 0.55.1
+> **Datum:** 2026-10-23
 > **Status:** Netzknoten lauffähig, Blockproduktion mit **Persistenz über
 > Neustarts**, BFT-Runden über das Netz mit Rundenwechsel, und seit dem
 > 1. September **schließt der Knoten die Epoche selbst ab**.
@@ -278,6 +278,16 @@ NODE/
 ```
 
 ## Changelog
+
+### v0.55.1 (2026-10-23): libp2p 0.57; Sicherheitsmeldungen in `hickory-proto`
+
+- Die direkte Abhängigkeit `libp2p` auf 0.57 (nur `tokio`), passend zu
+  `myl-net` 0.20.0; Sperrdatei nachgezogen. Anlass sind RUSTSEC-2026-0118
+  und -0119 in `hickory-proto` 0.25.2 über `libp2p-mdns` 0.48; mit 0.57
+  liegt `hickory-proto` 0.26.3 im Baum. Kein Code geändert.
+- **Belege:** Clippy (`-D warnings`) und 327 Tests offline gegen den Vorrat
+  grün; der Lauf mit getrennten Prozessen unter `tc netem` (`--kurz`)
+  bestanden, Zahlen im Changelog von NETWORKING (0.20.0).
 
 ### v0.55.0 (2026-10-22): Der Zustandsabzug: Neulinge beginnen an einer Epochengrenze; Nachholen von mehreren Quellen
 

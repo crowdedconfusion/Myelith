@@ -1,7 +1,7 @@
 # networking (`myl-net`, `myl-siegel`)
 
-> **Version:** 0.19.0
-> **Datum:** 2026-10-22
+> **Version:** 0.20.0
+> **Datum:** 2026-10-23
 > **Status:** **Phase 1 und 2 abgeschlossen** (1.1–1.6, 2.1–2.3),
 > **Phase 3 umgesetzt** (3.1–3.4, Abschluss unter Reviewvorbehalt), dazu Punkt 4.2 (Fuzzing der Wire-Protocol-Parser), Punkt 4.3
 > (Verbindungsgrenzen und Peer-Diversität) und seit dem 26. August
@@ -109,6 +109,49 @@ NETWORKING/
 ```
 
 ## Changelog
+
+### v0.20.0 (2026-10-23): libp2p 0.57; zwei Sicherheitsmeldungen in `hickory-proto` behoben (`myl-net` 0.20.0)
+
+- ⚑ **libp2p 0.56 auf 0.57.1.** Anlass: RUSTSEC-2026-0118 (NSEC3-Prüfung
+  ohne Ende) und RUSTSEC-2026-0119 (quadratische Namenskompression beim
+  Kodieren) in `hickory-proto` 0.25.2, das nur `libp2p-mdns` 0.48 hereinzog.
+  Erreichbar war keine von beiden: übersetzt ohne `dnssec`, und mDNS kodiert
+  seine Pakete nicht über hickory. Behoben sind sie erst mit `libp2p-mdns`
+  0.49 (`hickory-proto` 0.26.3), und das gibt es nur mit libp2p 0.57. Keine
+  Ausnahme in `deny.toml`, mDNS bleibt.
+- **Eine Codeänderung:** `request_response::Codec` braucht kein
+  `#[async_trait]` mehr; `ByteCodec` implementiert die Methoden jetzt als
+  gewöhnliche `async fn`, und `async-trait` fällt aus den Abhängigkeiten.
+- **Was sich mit 0.57 im Verhalten ändert** (aus den Changelogs der
+  libp2p-Kisten, nichts davon verlangte Code):
+  - gossipsub 0.50.1 behebt zwei weitere Sicherheitsmeldungen (unbegrenztes
+    Wachstum der Topics je Gegenstelle durch GRAFT; PRUNE für nicht
+    abonnierte Topics). Neu ist ein Deckel von 100 abonnierten Topics je
+    Gegenstelle; wir haben sechs.
+  - mDNS 0.49 nennt nur noch Adressen, die zur Schnittstelle passen, also
+    keine Rückschleife mehr. Das ist dieselbe Richtung wie Fund 594;
+    `fuer_das_adressbuch` bleibt, denn `identify` nennt sie weiter.
+  - QUIC 0.14 bevorzugt den Schlüsseltausch X25519MLKEM768
+    (post-quantensicher). Gegenstellen mit 0.56 sollten nach TLS 1.3 auf
+    X25519 zurückfallen; ein gemischtes Netz ist nicht gemessen.
+  - yamux 0.14, prost statt quick-protobuf im Drahtformat der Protokolle
+    (die Bytes sind dieselben).
+- ⚠️ **QUIC rechnet jetzt mit `aws-lc-rs` statt `ring`.** `libp2p-quic` 0.14
+  und `libp2p-tls` 0.7 schreiben es fest vor, ohne Schalter. `aws-lc-sys`
+  ist C und wird beim Bau übersetzt; auf macOS und Linux ohne cmake und
+  nasm (gemessen), auf Windows mit den vorgefertigten Objekten der Kiste.
+  Das Archiv hat 9,7 MB; der Vorrat ist trotzdem kleiner als vorher
+  (125 MB, 51 alte Archive entfernt).
+- Die neuen Hauptfassungen von sha2 (0.11), curve25519-dalek (5) und
+  ed25519-dalek (3) hängen nur unter `libp2p-identity`, nie unter eigenem
+  Code. Der Konsens signiert mit BLS und hasht mit dem eigenen sha2 0.10.
+- **Belege:** Clippy (`-D warnings`) und `cargo test --locked --offline`
+  gegen den Vorrat: `myl-net` 119, `myl-node` 327, `myl-testclient` 278
+  grün, darunter der Netzlauf mit fünfzehn Knoten (41 s). cargo-deny für
+  jede Kiste grün. Lauf mit getrennten Prozessen unter `tc netem` (`--kurz`,
+  sechs Knoten, 50 bis 200 ms, 1 bis 5 % Verlust): jeder kennt jeden nach
+  5,8 s, Neuling 2 478 Blöcke in 18,1 s, Neuling aus dem Abzug bestätigt in
+  20,4 s, am Ende eine Wurzel bei Höhe 3 484, bestanden.
 
 ### v0.19.0 (2026-10-22): Keine Rückschleife eines anderen im Adressbuch; Funde 594 und 596 (`myl-net` 0.19.0, `myl-siegel` 0.2.1)
 

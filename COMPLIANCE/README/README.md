@@ -1,7 +1,7 @@
 # compliance
 
-> **Version:** 0.6.1
-> **Datum:** 2026-10-21
+> **Version:** 0.6.2
+> **Datum:** 2026-10-23
 > **Status:** Die Pflichten aus der KI-Verordnung sind dokumentiert und,
 > soweit technisch, umgesetzt; die Einordnung Artikel für Artikel steht in
 > der [Selbsteinschätzung](../de/Selbsteinschaetzung.md). Offen: ein
@@ -38,6 +38,16 @@ Schutzfilter (`CLIENT/myl-client/src/schutzfilter.rs`), Notaus
 (`AGENT_LAYER/local-agent/src/notaus.rs`).
 
 ## Changelog
+
+### v0.6.2 (2026-10-23): Lizenzliste nach dem Sprung auf libp2p 0.57
+
+- `NOTICES.md` neu erzeugt: libp2p 0.57.1 und seine Teile in NETWORKING,
+  NODE und TESTCLIENT (Anlass RUSTSEC-2026-0118 und -0119 in
+  `hickory-proto`, jetzt 0.26.3). Neu sind `aws-lc-rs` und `aws-lc-sys`,
+  die QUIC jetzt fest vorschreibt, mit zwei neuen Lizenzkombinationen aus
+  ISC, Apache-2.0, MIT und BSD-3-Clause; alle durch `deny.toml` erlaubt.
+- **Belege:** `notices.py --pruefe` PASSED, cargo-deny `licenses ok` für
+  jede Kiste.
 
 ### v0.6.1 (2026-10-22): Lizenzliste nach der Sicherheitsmeldung zu `rustls-webpki`
 
