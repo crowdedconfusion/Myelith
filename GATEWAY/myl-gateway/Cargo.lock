@@ -234,7 +234,7 @@ dependencies = [
 
 [[package]]
 name = "myl-gateway"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "async-trait",
  "borsh",
@@ -246,7 +246,7 @@ dependencies = [
 
 [[package]]
 name = "myl-types"
-version = "0.46.0"
+version = "0.46.1"
 dependencies = [
  "blst",
  "borsh",

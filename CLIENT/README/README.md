@@ -1,6 +1,6 @@
 # client (Nutzer-Client inkl. Wallet)
 
-> **Version:** 0.178.0 (`myl-client` 0.114.0, `myl-oberflaeche` 0.85.1, `myl-console` 0.69.0, `myl-senses` 0.13.3, `myl-module` 0.5.0)
+> **Version:** 0.178.2 (`myl-client` 0.114.1, `myl-oberflaeche` 0.85.2, `myl-console` 0.69.1, `myl-senses` 0.13.4, `myl-module` 0.5.1)
 > **Datum:** 2026-10-22
 > **Status:** ✅ **Der lokale Betrieb läuft und ist ausgeliefert.** Ein
 > Gesprächsfenster mit Modellwahl, Agentenschleife und
@@ -181,6 +181,61 @@ Modell überhaupt etwas taugt, und weil eine Schnittstelle, die kein
 Mensch je bedient hat, an den Bedürfnissen vorbei entworfen wird.
 
 ## Changelog
+
+### v0.178.2 (2026-10-22): Eine Werkzeugkette für alle Kisten (`myl-client` 0.114.1, `myl-oberflaeche` 0.85.2, `myl-console` 0.69.1, `myl-senses` 0.13.4, `myl-module` 0.5.1)
+
+- `rust-version` auf 1.99 in `myl-client`, `myl-oberflaeche`, `myl-console`, `myl-senses`, `myl-module`; die Werkzeugkette steht jetzt einmal,
+  in `rust-toolchain.toml` (1.99.0), und die CI baut mit genau ihr statt mit
+  einem wechselnden `stable` und zwei Mindestfassungen (1.85 und 1.88).
+  ⚑ **Dazu Code, und zwar mit Absicht:** Mit `rust-version = "1.99"` gibt Clippy
+  zwei Regeln frei, die es bei 1.85 zurückhielt (`manual_is_multiple_of`,
+  `chunks_exact` mit fester Größe). Festlegung des Projektinhabers:
+  umschreiben, nicht abschalten. Hier: `myl-senses` 3 `as_chunks` (`kennzeichnung.rs`, `sprechen.rs`), `myl-client` 1 Zeile (`mining.rs`).
+  `x % n == 0` wird `x.is_multiple_of(n)`, `chunks_exact(N)` wird
+  `as_chunks::<N>()`. Für `n ≠ 0` bitgleich; jede Stelle mit variablem
+  Teiler ist einzeln angesehen und vorher gegen null geschützt (bei
+  `is_multiple_of(0)` stünde `x == 0`, wo `x % 0` abbricht).
+- 📌 `myl-oberflaeche/tauri.conf.json` nachgezogen (0.85.2): Beim Sprung der
+  Kistenversion stand dort noch 0.85.1, und die Probe
+  `die_buendelversion_ist_die_kistenversion` fand es in der Matrix.
+- **Belege:** `cargo metadata --locked --offline` gegen den Vorrat in jeder
+  Kiste; die Wache der CI hält Fassung und Werkzeugkette zusammen. Nach dem
+  Umschreiben: Clippy mit `-D warnings` still (die Kerne über alle vier
+  Merkmale), `cargo test` rc=0 in allen zehn berührten Kisten (die Kerne auch
+  mit `cpu-simd`), Konformität mit `sparrow-0.6b-int8` 55/55, die vier
+  Abdrücke unverändert (`cb696efd3817e575` über 24 Vektoren), Gleitkomma-Audit
+  grün.
+
+### v0.178.1 (2026-10-22): Die Sicherheitskopie bleibt auch nach künftigen Änderungen vollständig
+
+Geprüft wurde, ob eine Kopie heute alles mitnimmt: ja, 34 045 Dateien mit
+12,67 GB, beide kleinen Artefakte, Werkzeugvorrat passend zu `flake.lock`;
+die 19 nicht kopierten Verknüpfungen liegen nur in fremden Bäumen. Die
+Regeln schließen nur aus, Neues kommt also von selbst mit. Vier Stellen
+konnten mit künftigen Änderungen still auseinanderlaufen:
+- 📌 **Der Rust-Paketvorrat wurde vor der Kopie nicht geprüft**, nur der
+  Werkzeugvorrat. `sicherung.py` ruft jetzt auch `vorrat.py pruefen` und
+  bricht ab, wenn er nicht zu jeder Sperrdatei passt (auch zu den lokalen
+  Modulen, die die CI nicht sieht). `SICHERUNG.md` nennt beide Vorräte.
+  `--ohne-werkzeuge` erlaubt eine Kopie mit Lücke in einem der beiden.
+- 📌 **Ein veralteter Name in `ARTEFAKTE_MIT` fiel still weg.** Nach einer
+  Umbenennung wie am 2026-10-21 wäre die Kopie ohne Modell entstanden. Jetzt
+  bricht sie ab und sagt, welcher Name fehlt (`--ohne-artefakte` bewusst).
+- 📌 **`werkzeugvorrat.py pruefen` verglich nur die Fassung von Rust.** Eine
+  neue Python-Fassung oder ein neues Rust-Ziel in `werkzeugvorrat.json` hieß
+  weiter PASSED. Jetzt muss jede festgelegte Datei mit genau ihrer Quelle im
+  Vorrat liegen (`nicht_geholt`).
+- **Der Selbsttest lief nirgends.** Er steht jetzt in der CI (Job „audit“)
+  und prüft dazu das Erkennen fehlender Artefakte.
+- `--liste` zeigt, was git ignoriert und trotzdem mitkommt, nach Ordnern:
+  dort zeigt sich neuer Bauabfall zuerst.
+- Ein gescheiterter Prüfer meldet seine Fehlerzeile, nicht die letzte;
+  `vorrat.py` endet mit dem lokalen Teil, und der war bestanden.
+- **Belege:** Selbsttest PASSED. Gegenproben: ein Archiv aus dem Paketvorrat
+  beiseitegelegt, dann ein veralteter Artefaktname: beide Male Rückgabe 1 und
+  keine Datei im Ziel. Eine neue Python-Fassung und ein neues Rust-Ziel in
+  der Festlegung werden beide gemeldet, der heutige Stand nicht.
+  Kein Rust-Code geändert.
 
 ### v0.178.0 (2026-10-22): Netz vor Mensch im lokalen Plan (`myl-client` 0.114.0)
 

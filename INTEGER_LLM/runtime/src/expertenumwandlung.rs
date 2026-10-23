@@ -258,7 +258,7 @@ mod tests {
             .collect();
         let shifts = vec![7u8, 9, 5];
         let (neu, neue_shifts) = ternaer_runden(werte.clone(), shifts.clone(), spalten);
-        for gruppe in neu.chunks_exact(128) {
+        for gruppe in neu.as_chunks::<128>().0 {
             let betraege: std::collections::BTreeSet<i32> =
                 gruppe.iter().filter(|&&w| w != 0).map(|&w| i32::from(w).abs()).collect();
             assert!(betraege.len() <= 1, "eine Gruppe traegt mehrere Betraege: {betraege:?}");

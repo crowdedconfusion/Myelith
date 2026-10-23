@@ -1,6 +1,6 @@
 # STORAGE — die Rolle Store und die Verfügbarkeitsschicht
 
-> **Version:** 0.7.0
+> **Version:** 0.7.1
 > **Datum:** 2026-10-22
 > **Status:** Gegenstandsformat, **Verfügbarkeitsnachweis** und
 > **Speicherentgelt** stehen (`myl-store` v0.6.0, 29 Tests; Format und Stichproben-Ableitung liegen in `myl-types`). Sechs der
@@ -125,6 +125,15 @@ Mindestreplikation, die Bewertung einer Quittung und der Abruf.
 Changelog, und die Prüfung, die Kopfversion und Changelog vergleicht,
 übersprang es still (Fund 354). Die Einträge sind aus den
 Versionssprüngen der Kiste und dem Planungsverlauf zusammengestellt.
+
+### v0.7.1 (2026-10-22): Eine Werkzeugkette für alle Kisten
+
+- `rust-version` auf 1.99 in `myl-store`; die Werkzeugkette steht jetzt einmal,
+  in `rust-toolchain.toml` (1.99.0), und die CI baut mit genau ihr statt mit
+  einem wechselnden `stable` und zwei Mindestfassungen (1.85 und 1.88).
+  Nur das Manifest, kein Code.
+- **Belege:** `cargo metadata --locked --offline` gegen den Vorrat in jeder
+  Kiste; die Wache der CI hält Fassung und Werkzeugkette zusammen.
 
 ### v0.7.0 (2026-10-22): Teilablage eines Artefakts und die Netzlast
 

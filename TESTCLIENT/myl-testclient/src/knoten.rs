@@ -294,6 +294,9 @@ pub fn anlaufstelle() -> bool {
         // entscheidet, welcher Block gilt. Das täte eine
         // Abstimmungsrunde, und die gibt es noch nicht.
         erzeugt_bloecke: true,
+        blocktakt_ms: None,
+        abzug: None,
+        hintergrundpruefung: true,
         teilnehmer,
         speicherorte: None,
         netz: &myl_node::netz::PROBEKETTE,
@@ -375,6 +378,9 @@ pub fn teilnehmer(name_vorgabe: &str) -> bool {
         // Teilnehmer erzeugen nicht, sie schicken Transaktionen und
         // rechnen die Blöcke der Anlaufstelle nach.
         erzeugt_bloecke: false,
+        blocktakt_ms: None,
+        abzug: None,
+        hintergrundpruefung: true,
         teilnehmer,
         speicherorte: None,
         netz: &myl_node::netz::PROBEKETTE,

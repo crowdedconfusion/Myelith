@@ -1,11 +1,11 @@
 # NODE — der Myelith-Knoten
 
-> **Version:** 0.52.1
+> **Version:** 0.55.0
 > **Datum:** 2026-10-22
 > **Status:** Netzknoten lauffähig, Blockproduktion mit **Persistenz über
 > Neustarts**, BFT-Runden über das Netz mit Rundenwechsel, und seit dem
 > 1. September **schließt der Knoten die Epoche selbst ab**.
-> **305 Tests grün.**
+> **325 Tests grün.**
 >
 > ⚑ **Seit dem 27. August sind Blockhöhe und Epoche zwei Dinge.** Die
 > Probekette schrieb ihre Höhe in das Epochenfeld des Blockkopfs; das
@@ -278,6 +278,176 @@ NODE/
 ```
 
 ## Changelog
+
+### v0.55.0 (2026-10-22): Der Zustandsabzug: Neulinge beginnen an einer Epochengrenze; Nachholen von mehreren Quellen
+
+⚑ **Festlegung des Projektinhabers vom 2026-10-22**, nach einer Recherche im
+Quelltext von vier Systemen: Anker im Quelltext des Netzes **und** vom
+Betreiber, Prüfung im Ganzen gegen die Wurzel, Hintergrundprüfung als
+Vorgabe an, mit Halt bei Abweichung.
+
+- `abzug.rs` (neu): Ein Abzug ist der Block bei einer Epochengrenze und die
+  Borsh-Form des Zustands danach. Mehr braucht die Anwendung der folgenden
+  Blöcke nicht. Geglaubt wird nur ein **Anker** (Höhe und Blockhash), nie
+  eine Gegenstelle: Der Block muss genau diesen Hash haben, die Bytes genau
+  die Wurzel in seinem Kopf, und gelesen wird nur ein Zustand in
+  kanonischer Form. `Zusammensetzen` nimmt Stücke nur in Folge, hält den
+  Block beim ersten gegen den Anker und deckelt die angekündigte Größe
+  (1 GiB), bevor Speicher belegt wird.
+- **Ablage** neben der Kettendatei (`kette.dat.abzuege/`): An jeder
+  Epochengrenze legt ein Knoten einen Abzug ab, beim Bauen wie beim
+  Übernehmen. Er behält die zwei jüngsten, jeden 64. auf Dauer (Anker im
+  Quelltext dürfen nur auf solche zeigen, eine Probe hält das fest) und
+  seine **Basis**. Geschrieben über eine Zwischendatei, mit SHA-256 über die
+  ganze Datei.
+- **Holen und Liefern** über den Anfragekanal (`Nachforderung::Abzug`,
+  `Nachlieferung::Abzug`, angehängt): Stücke bis 1 MiB, so viel weniger,
+  dass Block und Rahmen in eine Antwort passen. Eine Gegenstelle, die falsch
+  oder nichts liefert, wird für den Abzug gesperrt; sind alle gesperrt,
+  beginnt es nach einer Minute neu. Solange ein Abzug geholt wird, holt der
+  Knoten nicht von Genesis nach.
+- **Start:** Ein Knoten ohne eigene Kette mit Anker (`--abzug
+  <hoehe>:<hash>`, sonst `Netz::abzuege`, heute in beiden Netzen leer) holt
+  den Abzug, setzt die Kette darauf (`Kette::auf_abzug_setzen`) und legt
+  ihn als Basis ab; die Kettendatei hält danach nur die Blöcke nach H. Ein
+  Neustart beginnt bei der Basis und spielt die Datei nach.
+- **Hintergrundprüfung** (Vorgabe an, `--ohne-hintergrundpruefung`): Eine
+  zweite Kette ab Genesis holt die Blöcke bis H und rechnet nach. Treffen
+  Hash und Wurzel bei H, ist die Basis bestätigt (`abzug_bestaetigt`, auch
+  auf der Platte); treffen sie nicht, **hält der Knoten an**
+  (`abzug_widerlegt`, Rückgabewert 3): Weitermachen hieße, auf einem fremden
+  Zustand zu rechnen und ihn anderen zu liefern.
+- Das Protokoll meldet jeden eigenen Abzug mit vollem Anker
+  (`abzug_angelegt`, `anker: "<hoehe>:<hash>"`); aus dieser Zeile entsteht
+  ein Anker für andere.
+- 📌 **Nachholen von bis zu vier Gegenstellen zugleich** (`NACHHOLER`), je
+  Gegenstelle eine Nachforderung, über aufeinanderfolgende Bereiche zu 512
+  Blöcken. Bis dahin lief eine zur Zeit, und über eine Leitung mit 200 ms und
+  5 % Verlust dauerte eine Lieferung rund 6 s: Eine einzelne Verbindung
+  bricht unter Verlust ein, mehrere addieren sich. Was vor seiner Zeit
+  ankommt, nimmt der Vorausspeicher (jetzt 2 048 Blöcke, vier Lieferungen);
+  Gegenstellen, die gerade für einen Abzug oder die Hintergrundprüfung
+  gefragt sind, bleiben frei, denn die Antworten tragen keine Marke.
+  `tests/nachholen.rs`: Delta holt 2 500 Blöcke bei Alpha und Beta zugleich
+  nach und endet mit derselben Wurzel (Gegenprobe mit einer Nachforderung
+  zur Zeit: rot). Im Lauf mit getrennten Prozessen bei 100 Blöcken je
+  Sekunde: ein Neuling holt 8 019 Blöcke in 33 s nach (rund 243 je Sekunde);
+  vorher kam er mit rund 75 je Sekunde nie an.
+- 📌 **Die Bereiche beginnen beim kleinsten ungedeckten Block**
+  (`nachschub::naechster_bereich`). Die erste Fassung plante hinter dem
+  höchsten laufenden Bereich; ging die vorderste Lieferung verloren, schloss
+  niemand mehr die Lücke davor, und ein Knoten blieb nach einem Absturz bei
+  1 217 von 5 926 stehen, während alles Spätere im Vorausspeicher lag.
+  Gefunden im Lauf mit getrennten Prozessen, vor jeder Auslieferung; Probe
+  `der_naechste_bereich_schliesst_zuerst_die_vorderste_luecke`, Gegenprobe
+  mit der alten Regel rot.
+- **Die Hintergrundprüfung holt aus zwei Quellen zugleich**
+  (`HINTERGRUND_ZUGLEICH`, die Hälfte von `NACHHOLER`, damit das Nachholen der
+  eigenen Kette Gegenstellen behält), mit derselben Planung
+  (`naechster_bereich`) und einem eigenen Vorausspeicher; je Anfrage eine
+  Zeile `hintergrund_angefordert`. Im Lauf mit getrennten Prozessen bei 100
+  Blöcken je Sekunde: dieselben 7 200 Blöcke in 55,2 s statt 144,3 s.
+- `abzug_nichts` im Protokoll, wenn eine Gegenstelle den Abzug des Ankers
+  nicht hat: Ein Anker auf einer gewöhnlichen Grenze ist nach zwei Epochen
+  geräumt, und bis dahin zeigte das Protokoll nur wiederholte Anfragen.
+- **Belege:** fünf Proben in `abzug.rs`, eine in `netz.rs`;
+  `tests/abzug.rs`: (1) Beta mit Anker übernimmt bei 1 800, holt die Spitze
+  ein, die Hintergrundprüfung bestätigt, nach einem Neustart dieselbe Höhe
+  und Wurzel ohne Netz; Gamma mit falschem Anker übernimmt nichts und holt
+  auch nicht von Genesis. (2) ⛔️ Delta mit dem Anker einer anderen Kette,
+  deren frühe Blöcke niemand liefert, rechnet die frühen Blöcke der ersten
+  nach und **hält an**. Gegenprobe ohne den Vergleich am Ziel: Delta hält
+  nicht an, die Probe wird rot. Im Lauf mit getrennten Prozessen
+  (TESTCLIENT): ein Neuling aus dem Abzug bei 1 800 (6 325 Bytes Zustand)
+  an der Spitze und bestätigt in 34,8 s, am Ende eine Wurzel mit allen.
+  `cargo test` rc=0, Clippy still.
+
+### v0.54.0 (2026-10-22): Blocktakt, Vorausspeicher, Nonce des Testverkehrs; Funde 592 und 593
+
+⚑ **Gefunden im ersten Lauf mit getrennten Prozessen unter echten
+Netzbedingungen** (jeder Knoten in einem eigenen Netz-Namensraum, 50 bis
+200 ms Laufzeit je Richtung, 1 bis 5 % Verlust, 20 Blöcke je Sekunde). Der
+Lauf im selben Prozess hatte beides nicht zeigen können: keine Laufzeit,
+also keine Vertauschung; und er prüfte die Wurzel mit Transaktionen, die er
+selbst ab Nonce 0 schickte.
+
+- 📌 **Fund 592: Ein Block, der zu früh kam, wurde verworfen.** Gossip
+  liefert ohne Reihenfolge; ein Block über der nächsten erwarteten Höhe
+  schloss nicht an und fiel weg, der Knoten forderte nach. Bis die
+  Nachlieferung da war, war die Spitze weiter, und so blieb jeder
+  Nichterzeuger dauerhaft zurück: **4 von 2 168 Blöcken kamen über Gossip**,
+  alle übrigen über das Nachholen, der Rückstand im Betrieb lag bei 28 bis 52
+  Blöcken. Neu: `voraus.rs`, der **Vorausspeicher**. Er hebt Blöcke über der
+  nächsten Höhe auf (höchstens 4 096 Höhen voraus, 4 Kandidaten je Höhe,
+  1 024 Blöcke und 32 MiB zusammen; voll weicht der fernste) und spielt sie
+  ein, sobald die Kette anschliesst, über Gossip oder über eine
+  Nachlieferung, mit derselben Prüfung wie jeden anderen Block. Danach: 783
+  bis 1 044 Blöcke je Knoten über Gossip, 14 bis 37 nachgeholt, Rückstand 0
+  bis 1 Block. Die Aufnahme meldet `voraus`, die Nachlieferung
+  `aus_dem_voraus`.
+- 📌 **Fund 593: Der Testverkehr bewegte den Zustand nie.** Seine
+  Transaktionen trugen als Nonce den Zähler des Testverkehrs, und der steht
+  beim ersten Senden schon bei 1; die Kette verlangt die Nonce streng ab 0.
+  Jede wurde verworfen, über 1 342 Blöcke blieb die Wurzel dieselbe, und
+  der Vergleich der Wurzeln, für den es den Testverkehr gibt, belegte
+  nichts. Die Probe in `tests/neustart.rs` rief `sende_transaktion` mit
+  Zähler 0 und sah es deshalb nicht. Jetzt kommt die Nonce aus dem Zustand
+  und wird fortgezählt, solange Gesendetes unterwegs ist; kommt 32 Blöcke
+  lang nichts davon an, beginnt sie wieder beim Zustand
+  (`testverkehr_nonce`). Danach 137 verschiedene Wurzeln auf 1 115 Blöcken.
+
+- `--blocktakt <ms>` (`KnotenKonfig::blocktakt_ms`): Mit `--erzeuger` baut
+  der Knoten in diesem Takt, unabhängig vom Testverkehr. Bisher baute er
+  nur im Takt des Testverkehrs, in ganzen Sekunden; bei 1 800 Blöcken je
+  Epoche brauchte ein Lauf mit getrennten Prozessen so eine halbe Stunde je
+  Epoche. Mit Blocktakt prüft der Testverkehr nur noch, dass die Höhe seit
+  dem vorigen Mal gewachsen ist (`Probe::Blockkette`), und schickt daneben
+  seine Proben.
+- 📌 **Fällig ab dem geplanten Zeitpunkt, und ohne Nachschiessen.** Ein
+  verspäteter Block verschiebt die folgenden nicht; hinkt der Erzeuger mehr
+  als einen Takt hinterher (etwa zwischen zwei Scheiben eines Laufs), setzt
+  er neu auf, statt die verpassten Blöcke in einem Schwall zu bauen. Die
+  Gegenprobe ohne diese Zeile baute 76 statt höchstens 51 Blöcke in einer
+  Sekunde.
+- `KonfigFehler::BlocktaktOhneErzeuger` und `BlocktaktNull`: ein Takt ohne
+  Erzeuger hat keinen Gegenstand, einer von null baute ohne Pause.
+- „Erst bauen, wenn jemand zuhört“ steht jetzt an einer Stelle
+  (`block_wenn_jemand_hoert`), für den Testverkehr und den Blocktakt.
+- `--lokale-suche`: mDNS auch in einem Netz, das sie nicht vorgibt (die
+  Probekette); Startwert und Podmodell bleiben die des Netzes.
+- **Belege:** `der_blocktakt_baut_im_eigenen_takt` (`tests/zwei_knoten.rs`:
+  höchstens 51 Blöcke in der Sekunde nach einer Pause, Beta holt auf, eine
+  Wurzel; ohne Blocktakt Höhe null), `der_blocktakt_gehoert_zum_erzeuger`;
+  vier Proben in `voraus.rs` (nur was voraus liegt, Deckel je Höhe, voll
+  weicht der fernste, Räumen und Bytes); zwei für `testverkehr_nonce`. Der
+  Lauf mit getrennten Prozessen (TESTCLIENT) ist grün, und seine Gegenprobe
+  ohne das Aufheben wird rot (k1: 0 Blöcke über Gossip, 1 399 nachgeholt).
+- `rust-version` auf 1.99 in `myl-node`; die Werkzeugkette steht einmal, in
+  `rust-toolchain.toml` (1.99.0), mit der auch die CI baut. Nur das Manifest.
+
+### v0.53.0 (2026-10-22): Der Einstieg ins Netz ohne Handangabe
+
+- `netz.rs`: `Netz::einstieg` (Adressen langlebiger Knoten, die jeder Knoten
+  dieses Netzes beim Start kennt; kein Server, nur eine erste Tür) und
+  `Netz::lokale_suche` (mDNS). Probekette: leer, aus. Testnetz int4: an, die
+  Liste vorerst leer, denn noch gibt es keinen langlebigen Knoten; außerhalb
+  des lokalen Netzes braucht der Einstieg bis dahin eine Bootstrap-Angabe.
+- `KnotenKonfig::einstiegsliste()`: eigene Bootstrap-Angaben, danach die
+  Einstiegsliste des Netzes, ohne Doppelte; `netz()` reicht beides und die
+  lokale Suche an `myl-net` (0.18.0).
+- 📌 **Nachholen: ein Deckel in Bytes, und 512 statt 64 Blöcke je
+  Lieferung** (`nachschub::in_die_antwort`, `passende_anzahl`). Die Grenze
+  zählte Blöcke, ihre Herleitung sprach von Bytes: Ein echter Block darf so
+  groß sein wie die ganze Antwort (4 MiB), 64 davon passten nicht hinein,
+  und das Nachholen bliebe an der ersten vollen Strecke stehen. Jetzt geht
+  in eine Antwort, was passt, mindestens ein Block; der Nachfragende setzt
+  an der Höhe danach fort. `VERLAUFSFENSTER` steht fest bei 256 (es hing am
+  Vierfachen der Lieferung und wäre sonst 2048 geworden).
+- **Belege:** `tests/entdeckung.rs` +2 (ohne Angabe im lokalen Netz;
+  Einstiegsliste ergänzt die eigenen Angaben); `eine_lieferung_passt_in_die_antwort`
+  (neu); der Deckel jetzt mit Kettendatei geprüft, denn er liegt über dem
+  Fenster. `cargo test` rc=0 (309). Im Netzlauf mit Neuling 51 s und 58 s
+  statt 92 s und 99 s.
 
 ### v0.52.1 (2026-10-22): Sicherheitsmeldung zu `rustls-webpki`; nur die Sperrdatei
 

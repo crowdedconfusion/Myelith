@@ -484,7 +484,7 @@ pub fn schritt_normiert_je_zeile(
 ) -> Option<u64> {
     assert_eq!(master.len(), summe.len(), "schritt_normiert_je_zeile: Laengen passen nicht");
     assert!(lr_nenner > 0, "schritt_normiert_je_zeile: Lernraten-Nenner muss > 0 sein");
-    if zeilenbreite == 0 || master.len() % zeilenbreite != 0 {
+    if zeilenbreite == 0 || !master.len().is_multiple_of(zeilenbreite) {
         return schritt_normiert(master, summe, kennung, lr_nenner);
     }
     let g_max = summe.iter().map(|v| v.unsigned_abs()).max().unwrap_or(0);

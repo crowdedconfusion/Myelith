@@ -168,6 +168,26 @@ myl-node — ein Myelith-Netzknoten
                          zwei Erzeuger gabeln die Kette sofort, weil niemand
                          entscheidet, welcher Block gilt (das täte BFT).
                          Die übrigen schicken Transaktionen und rechnen nach.
+  --blocktakt <ms>       mit --erzeuger: alle so viele Millisekunden ein
+                         Block, unabhängig vom Testverkehr (Vorgabe: im
+                         Takt des Testverkehrs). Für Läufe, die Epochen
+                         in Minuten brauchen. NUR FÜR TESTNETZE.
+  --lokale-suche         Knoten im lokalen Netz suchen (mDNS), auch wenn
+                         das Netz es nicht vorgibt. Braucht eine
+                         Horchadresse auf den Schnittstellen, nicht nur
+                         auf der Rückschleife.
+  --abzug <hoehe>:<hash> Ohne eigene Kette beim Zustandsabzug dieser
+                         Epochengrenze beginnen statt bei Block 0. Der
+                         Blockhash ist der Anker: Geglaubt wird nur ein
+                         Abzug, dessen Block genau diesen Hash hat und
+                         dessen Zustand die Wurzel in diesem Block trifft.
+                         Vorgabe: der jüngste Anker des Netzes, falls es
+                         einen nennt. Ein Knoten mit Ablage meldet jeden
+                         eigenen Abzug im Protokoll als `abzug_angelegt`.
+  --ohne-hintergrundpruefung
+                         Nach einem Abzug die Blöcke bis dorthin NICHT
+                         nachholen und nachrechnen. Vorgabe ist, es zu tun
+                         und anzuhalten, wenn die Wurzel nicht trifft.
   --laufzeit <sek>       nach so vielen Sekunden beenden (Vorgabe: bis Strg-C)
   --still                nicht auf den Bildschirm protokollieren
   --hilfe                diese Übersicht
@@ -218,6 +238,7 @@ fn lies_argumente() -> Result<Option<Argumente>, String> {
     let mut shard_programm: Option<PathBuf> = None;
     let mut artefakte: Option<PathBuf> = None;
     let mut shard_training = false;
+    let mut lokale_suche = false;
     let mut i = 0;
     while i < roh.len() {
         let wert = |i: usize| -> Result<String, String> {
@@ -394,6 +415,18 @@ fn lies_argumente() -> Result<Option<Argumente>, String> {
                 i += 2;
             }
             "--erzeuger" => { konfig.erzeugt_bloecke = true; i += 1; }
+            "--blocktakt" => {
+                konfig.blocktakt_ms = Some(
+                    wert(i)?.parse().map_err(|_| "--blocktakt erwartet Millisekunden".to_string())?,
+                );
+                i += 2;
+            }
+            "--lokale-suche" => { lokale_suche = true; i += 1; }
+            "--abzug" => {
+                konfig.abzug = Some(myl_node::abzug::Anker::aus_text(&wert(i)?).map_err(|e| format!("--abzug: {e}"))?);
+                i += 2;
+            }
+            "--ohne-hintergrundpruefung" => { konfig.hintergrundpruefung = false; i += 1; }
             "--laufzeit" => {
                 laufzeit = Some(
                     wert(i)?.parse().map_err(|_| "--laufzeit erwartet eine Zahl".to_string())?,
@@ -408,6 +441,11 @@ fn lies_argumente() -> Result<Option<Argumente>, String> {
     }
 
     konfig.horchadressen = if horche.is_empty() { standard_horchadressen(port) } else { horche };
+    // Das Netz bleibt dasselbe (Startwert, Podmodell); nur die Suche kommt
+    // dazu. Einmal je Prozess, daher darf die Abschrift bleiben.
+    if lokale_suche && !konfig.netz.lokale_suche {
+        konfig.netz = Box::leak(Box::new(myl_node::netz::Netz { lokale_suche: true, ..*konfig.netz }));
+    }
     // Der eigene Name gehört immer dazu: Ein Knoten, der seine eigenen
     // Atteste nicht anerkennt, wäre schwer zu erklären.
     if !konfig.teilnehmer.is_empty() && !konfig.teilnehmer.contains(&konfig.name) {
@@ -840,6 +878,12 @@ async fn main() {
         knoten.protokollzeilen(),
         knoten.protokollpfad().display()
     );
+    // Ein Halt von innen ist kein gewöhnliches Ende; wer den Knoten startet,
+    // soll es am Rückgabewert sehen.
+    if let Some(grund) = knoten.angehalten() {
+        eprintln!("myl-node: angehalten: {grund}");
+        std::process::exit(3);
+    }
 }
 
 /// Alles zwischen „der Knoten steht" und „die Schleife laeuft".

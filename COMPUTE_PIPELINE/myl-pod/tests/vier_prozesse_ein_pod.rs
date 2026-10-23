@@ -103,8 +103,7 @@ fn ungleiche_bereiche_rechnen_dasselbe() {
 }
 
 fn vier_prozesse(bereiche: Option<[(usize, usize); 4]>) {
-    if !artefakte().exists() {
-        eprintln!("Artefakt fehlt, uebersprungen");
+    if !myl_pod::artefakte::vorhanden(&artefakte()) {
         return;
     }
     assert!(

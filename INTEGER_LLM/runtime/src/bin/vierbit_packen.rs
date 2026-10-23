@@ -121,7 +121,7 @@ fn run() -> Result<(), String> {
                     Ok(None) => ungepackt.lock().expect("Riegel").push(name.clone()),
                     Err(e) => *fehler.lock().expect("Riegel") = Some(format!("{name}: {e}")),
                 }
-                if k % 2048 == 0 {
+                if k.is_multiple_of(2048) {
                     println!("[vierbit_packen] {k} von {} Tensoren", kandidaten.len());
                 }
             });

@@ -261,7 +261,7 @@ impl MerkleTree {
         for level in &self.levels[..self.levels.len() - 1] {
             // Gleiche Duplikations-Regel wie beim Aufbau: bei ungerader
             // Ebenenlänge ist der Geschwister des letzten Knotens er selbst.
-            let sibling_idx = if idx % 2 == 0 {
+            let sibling_idx = if idx.is_multiple_of(2) {
                 if idx + 1 < level.len() {
                     idx + 1
                 } else {
@@ -332,7 +332,7 @@ impl MerkleProof {
         let mut current = *leaf;
         let mut idx = self.leaf_index;
         for sibling in &self.siblings {
-            current = if idx % 2 == 0 {
+            current = if idx.is_multiple_of(2) {
                 node_hash(&current, sibling)
             } else {
                 node_hash(sibling, &current)

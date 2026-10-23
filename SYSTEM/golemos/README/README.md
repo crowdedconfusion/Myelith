@@ -1,7 +1,7 @@
 # golemos (die Linux-Distribution, die nur Myelith bedient)
 
-> **Version:** 0.3.1 (`golem-einrichten` 0.3.1)
-> **Datum:** 2026-10-21
+> **Version:** 0.3.2 (`golem-einrichten` 0.3.2)
+> **Datum:** 2026-10-22
 > **Status:** Startet vom Stick und von Platte, findet einen
 > Myelith-Ordner auf dem Stick oder einem zweiten Laufwerk und
 > installiert sich mit einem Assistenten auf eine ganze Platte. Belegt
@@ -101,6 +101,15 @@ sie tut, soll sich in ihrem eigenen Quelltext lesen lassen.
 ---
 
 ## Changelog
+
+### v0.3.2 (2026-10-22): Eine Werkzeugkette für alle Kisten (`golem-einrichten` 0.3.2)
+
+- `rust-version` auf 1.99 in `golem-einrichten`; die Werkzeugkette steht jetzt einmal,
+  in `rust-toolchain.toml` (1.99.0), und die CI baut mit genau ihr statt mit
+  einem wechselnden `stable` und zwei Mindestfassungen (1.85 und 1.88).
+  Nur das Manifest, kein Code; die Abbilder müssen deshalb nicht neu gebaut werden.
+- **Belege:** `cargo metadata --locked --offline` gegen den Vorrat in jeder
+  Kiste; die Wache der CI hält Fassung und Werkzeugkette zusammen.
 
 ### v0.3.1 – 2026-10-21 (die Modelle heißen nach Tieren; `golem-einrichten` 0.3.1)
 

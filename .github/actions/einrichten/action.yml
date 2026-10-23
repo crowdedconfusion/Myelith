@@ -1,0 +1,63 @@
+name: Einrichten
+description: >-
+  Die Werkzeugkette aus rust-toolchain.toml, auf Wunsch die Bibliotheken des
+  Fensters, der Paketvorrat ohne Netz und der Zwischenspeicher des Bauordners.
+  Was jeder Rust-Job braucht, an einer Stelle.
+
+inputs:
+  cache:
+    description: Schluessel des Zwischenspeichers; leer heisst keiner (der kalte Klon baut kalt).
+    default: ""
+  oberflaeche:
+    description: "true: die Systembibliotheken des Fensters (nur Linux)."
+    default: "false"
+  vorrat:
+    description: "true: aus dem Paketvorrat bauen, ohne Netz."
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    # ⚑ Die Fassung steht einmal, in rust-toolchain.toml; rustup liest sie.
+    #   Ein `stable` aus einer Aktion braechte neue Clippy-Regeln ueber Nacht.
+    #   Aeltere rustup kennen `toolchain install` ohne Namen nicht, dann
+    #   installiert `show` die Fassung der Datei.
+    - name: Werkzeugkette aus rust-toolchain.toml
+      shell: bash
+      run: |
+        rustup toolchain install 2>/dev/null || rustup show
+        cargo --version
+        cargo clippy --version
+
+    # 📌 Ohne diese Pakete bricht der Bau in `wry` ab, mit einer Meldung ueber
+    #   eine fehlende pkg-config-Datei, die nicht nach dem Grund aussieht.
+    - name: Systembibliotheken des Fensters (Linux)
+      if: runner.os == 'Linux' && inputs.oberflaeche == 'true'
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libgtk-3-dev \
+          libsoup-3.0-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev
+
+    # Vor dem Auspacken: Der Schluessel haengt an den Sperrdateien des Baums,
+    # nicht an denen im ausgepackten Vorrat.
+    - name: Zwischenspeicher des Bauordners
+      if: inputs.cache != ''
+      uses: actions/cache@v4
+      with:
+        path: ${{ github.workspace }}/target
+        key: ${{ inputs.cache }}-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', '*/*/Cargo.lock', 'SYSTEM/*/*/Cargo.lock') }}
+        restore-keys: ${{ inputs.cache }}-${{ runner.os }}-
+
+    # ⚑ Cargo bekommt ein CARGO_HOME, das nur den ausgepackten Vorrat kennt,
+    #   und `CARGO_NET_OFFLINE`: Fehlt dort ein Paket, bricht der Bau ab, statt
+    #   es still aus dem Netz zu holen.
+    - name: Paketvorrat auspacken, ohne Netz bauen
+      if: inputs.vorrat == 'true'
+      shell: bash
+      run: |
+        py=python3
+        command -v python3 >/dev/null 2>&1 || py=python
+        "$py" SYSTEM/install/vorrat.py auspacken
+        echo "CARGO_HOME=${{ github.workspace }}/SYSTEM/crates-lager/cargo-home" >> "$GITHUB_ENV"
+        echo "CARGO_NET_OFFLINE=true" >> "$GITHUB_ENV"

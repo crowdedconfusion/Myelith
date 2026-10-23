@@ -186,7 +186,7 @@ pub fn stapel_ternaer(
     ziel: &dyn Fn(usize) -> u8,
 ) -> Option<Vec<Vec<i16>>> {
     let ab = schwelle();
-    if ab == 0 || xs.len() < ab || in_features == 0 || in_features % 128 != 0 || in_features > HOECHSTE_SPALTENZAHL {
+    if ab == 0 || xs.len() < ab || in_features == 0 || !in_features.is_multiple_of(128) || in_features > HOECHSTE_SPALTENZAHL {
         return None;
     }
     rechnen_ternaer(xs, muster, betraege, in_features, &abstaende_fuer(w_shifts, act_frac_bits, ziel))

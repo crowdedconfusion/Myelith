@@ -1,8 +1,8 @@
 [package]
 name = "myl-senses"
-version = "0.13.3"
+version = "0.13.4"
 edition = "2021"
-rust-version = "1.85"
+rust-version = "1.99"
 description = "Sinne des Clients: Dateien annehmen und einordnen, Bilder beschreiben und Ton mitschreiben lassen, ueber eigene kleine Modelle."
 license = "LicenseRef-PolyForm-Shield-1.0.0"
 publish = false

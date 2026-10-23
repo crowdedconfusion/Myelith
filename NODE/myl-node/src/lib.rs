@@ -46,6 +46,7 @@
 
 #![deny(unsafe_code)]
 
+pub mod abzug;
 pub mod beobachtung;
 pub mod dateidienst;
 pub mod stimmsatzdatei;
@@ -68,6 +69,7 @@ pub mod stichprobe;
 pub mod tuer;
 pub mod validator;
 pub mod validatorsatz;
+pub mod voraus;
 
 pub use stimmsatzdatei::{Stimmsatzdatei, Stimmsatzfehler, Stimmberechtigter};
 pub use kette::{Kette, KettenFehler};

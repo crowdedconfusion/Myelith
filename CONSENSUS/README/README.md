@@ -1,7 +1,7 @@
 # consensus (`myl-consensus` + `myl-ledger` + `myl-scheduler`)
 
-> **Version:** 0.50.0 (`myl-consensus` 0.33.0, `myl-scheduler` 0.18.0,
-> `myl-ledger` 0.24.0)
+> **Version:** 0.50.1 (`myl-consensus` 0.33.1, `myl-scheduler` 0.18.1,
+> `myl-ledger` 0.24.1)
 > **Datum:** 2026-10-22
 > **Status:** Design-Entscheidungen getroffen (malachite hinter
 > trait-Grenze mit Eigenbau-Fallback, Blockzeit 2 s, Komitee 21/7,
@@ -107,6 +107,15 @@ myl-consensus/tests/
 ```
 
 ## Changelog
+
+### v0.50.1 (2026-10-22): Eine Werkzeugkette für alle Kisten (`myl-consensus` 0.33.1, `myl-scheduler` 0.18.1, `myl-ledger` 0.24.1)
+
+- `rust-version` auf 1.99 in `myl-consensus`, `myl-scheduler`, `myl-ledger`; die Werkzeugkette steht jetzt einmal,
+  in `rust-toolchain.toml` (1.99.0), und die CI baut mit genau ihr statt mit
+  einem wechselnden `stable` und zwei Mindestfassungen (1.85 und 1.88).
+  Nur das Manifest, kein Code.
+- **Belege:** `cargo metadata --locked --offline` gegen den Vorrat in jeder
+  Kiste; die Wache der CI hält Fassung und Werkzeugkette zusammen.
 
 ### v0.50.0 (2026-10-22): Kein Pod ohne Zusage, Nachziehen, Teilablage, Frist
 

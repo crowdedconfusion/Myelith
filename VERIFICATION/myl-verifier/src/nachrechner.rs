@@ -75,11 +75,11 @@ impl ModellAuditor {
     /// Stillschweigend abzuschneiden hieße, über eine andere Eingabe zu
     /// rechnen als der Beschuldigte.
     fn aktivierungen(roh: &[u8]) -> Result<Vec<i16>, CheckError> {
-        if roh.len() % 2 != 0 {
+        if !roh.len().is_multiple_of(2) {
             return Err(CheckError::EmptySegment);
         }
         Ok(roh
-            .chunks_exact(2)
+            .as_chunks::<2>().0.iter()
             .map(|c| i16::from_le_bytes([c[0], c[1]]))
             .collect())
     }

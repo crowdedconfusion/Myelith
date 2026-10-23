@@ -188,6 +188,26 @@ pub struct KnotenKonfig {
     ///
     /// In der üblichen Aufstellung ist es die Anlaufstelle.
     pub erzeugt_bloecke: bool,
+    /// Abstand der Blöcke des Erzeugers in Millisekunden, `None` heißt:
+    /// gebaut wird nur im Takt des Testverkehrs.
+    ///
+    /// ⚑ **Ein eigener Takt, getrennt vom Testverkehr** (2026-10-22). Der
+    /// Testverkehr läuft in ganzen Sekunden, eine Epoche hat 1 800 Blöcke;
+    /// ein Lauf mit getrennten Prozessen bräuchte so eine halbe Stunde je
+    /// Epoche. Mit diesem Takt baut der Erzeuger so schnell, wie der Lauf
+    /// es verlangt, und der Testverkehr schickt daneben nur noch Proben.
+    ///
+    /// **Nur mit `erzeugt_bloecke`** (`KonfigFehler::BlocktaktOhneErzeuger`)
+    /// und nie null: Ein Takt von null baute in einer Schleife ohne Pause.
+    pub blocktakt_ms: Option<u64>,
+    /// ⚑ **Der Anker für den Zustandsabzug vom Betreiber** (`--abzug`,
+    /// 2026-10-22). Vor dem Anker im Quelltext des Netzes. Gilt nur für
+    /// einen Knoten ohne eigene Kette.
+    pub abzug: Option<crate::abzug::Anker>,
+    /// Ob ein Knoten, der aus einem Abzug begann, die Blöcke bis dorthin
+    /// trotzdem nachholt und nachrechnet, und anhält, wenn die Wurzel
+    /// abweicht. Vorgabe an (Festlegung des Projektinhabers, 2026-10-22).
+    pub hintergrundpruefung: bool,
     /// Die Namen aller Teilnehmer des Probelaufs.
     ///
     /// Daraus entsteht der Validatorsatz, gegen den Latenz-Atteste
@@ -248,6 +268,10 @@ pub enum KonfigFehler {
     OrtsleitungOhneAusweis,
     /// `--ortsausweis` ohne `--ortsleitung`.
     AusweisOhneOrtsleitung,
+    /// Ein Blocktakt bei einem Knoten, der keine Blöcke erzeugt.
+    BlocktaktOhneErzeuger,
+    /// Ein Blocktakt von null Millisekunden.
+    BlocktaktNull,
 }
 
 impl std::fmt::Display for KonfigFehler {
@@ -270,6 +294,11 @@ impl std::fmt::Display for KonfigFehler {
                 f,
                 "--ortsausweis ohne --ortsleitung: ein Schluessel ohne Tuer"
             ),
+            Self::BlocktaktOhneErzeuger => write!(
+                f,
+                "--blocktakt ohne --erzeuger: wer keine Bloecke baut, hat keinen Takt dafuer"
+            ),
+            Self::BlocktaktNull => write!(f, "--blocktakt 0: der Erzeuger baute ohne Pause"),
         }
     }
 }
@@ -325,6 +354,9 @@ impl Default for KnotenKonfig {
             konto: None,
             testverkehr_sekunden: None,
             erzeugt_bloecke: false,
+            blocktakt_ms: None,
+            abzug: None,
+            hintergrundpruefung: true,
             teilnehmer: Vec::new(),
             speicherorte: None,
             netz: &crate::netz::PROBEKETTE,
@@ -367,6 +399,11 @@ impl KnotenKonfig {
             (None, Some(_)) => return Err(KonfigFehler::AusweisOhneOrtsleitung),
             _ => {}
         }
+        match self.blocktakt_ms {
+            Some(_) if !self.erzeugt_bloecke => return Err(KonfigFehler::BlocktaktOhneErzeuger),
+            Some(0) => return Err(KonfigFehler::BlocktaktNull),
+            _ => {}
+        }
         Ok(())
     }
 
@@ -382,12 +419,25 @@ impl KnotenKonfig {
         nat
     }
 
+    /// Die eigenen Bootstrap-Angaben, danach die Einstiegsliste des Netzes,
+    /// ohne Doppelte.
+    pub fn einstiegsliste(&self) -> Vec<String> {
+        let mut liste = self.bootstrap.clone();
+        for e in self.netz.einstieg {
+            if !liste.iter().any(|b| b == e) {
+                liste.push((*e).to_string());
+            }
+        }
+        liste
+    }
+
     /// Die Netzkonfiguration für `myl-net`.
     pub fn netz(&self) -> NetConfig {
         NetConfig {
             listen_addr: self.horchadressen[0].clone(),
-            bootstrap_peers: self.bootstrap.clone(),
+            bootstrap_peers: self.einstiegsliste(),
             nat: self.nat_mit_rolle(),
+            lokale_suche: self.netz.lokale_suche,
             ..NetConfig::default()
         }
     }
@@ -486,6 +536,17 @@ mod tests {
         };
         // Ohne p2p/-Anteil: Die Gegenstelle wäre nicht authentifizierbar.
         assert!(matches!(k.pruefe(), Err(KonfigFehler::Bootstrap(_))));
+    }
+
+    /// Ein Blocktakt gehört zum Erzeuger und ist nie null.
+    #[test]
+    fn der_blocktakt_gehoert_zum_erzeuger() {
+        let ohne = KnotenKonfig { blocktakt_ms: Some(20), ..Default::default() };
+        assert!(matches!(ohne.pruefe(), Err(KonfigFehler::BlocktaktOhneErzeuger)));
+        let null = KnotenKonfig { blocktakt_ms: Some(0), erzeugt_bloecke: true, ..Default::default() };
+        assert!(matches!(null.pruefe(), Err(KonfigFehler::BlocktaktNull)));
+        let gut = KnotenKonfig { blocktakt_ms: Some(20), erzeugt_bloecke: true, ..Default::default() };
+        gut.pruefe().expect("gültig");
     }
 
     #[test]

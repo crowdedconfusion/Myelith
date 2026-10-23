@@ -112,8 +112,7 @@ fn gradient(positionen: usize, breite: usize) -> Vec<Vec<i32>> {
 
 #[test]
 fn vier_prozesse_trainieren_wie_ein_prozess() {
-    if !artefakte().exists() {
-        eprintln!("Artefakt fehlt, uebersprungen");
+    if !myl_pod::artefakte::vorhanden(&artefakte()) {
         return;
     }
     assert!(

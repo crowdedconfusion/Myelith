@@ -1,7 +1,7 @@
 # training (`myl-train`)
 
-> **Version:** 0.4.4 (`myl-train` 0.3.0)
-> **Datum:** 2026-10-21
+> **Version:** 0.4.5 (`myl-train` 0.3.1)
+> **Datum:** 2026-10-22
 > **Status:** **Die Komponente hat Code**, 32 Tests. Zwei Punkte sind
 > gebaut, und beide sind genau die, die **nicht** am ganzzahligen
 > Rückwärtspass hängen:
@@ -145,6 +145,15 @@ von dieser Komponente kommt:
 Entsteht mit der Implementierung.
 
 ## Changelog
+
+### v0.4.5 (2026-10-22): Eine Werkzeugkette für alle Kisten (`myl-train` 0.3.1)
+
+- `rust-version` auf 1.99 in `myl-train`; die Werkzeugkette steht jetzt einmal,
+  in `rust-toolchain.toml` (1.99.0), und die CI baut mit genau ihr statt mit
+  einem wechselnden `stable` und zwei Mindestfassungen (1.85 und 1.88).
+  Nur das Manifest, kein Code.
+- **Belege:** `cargo metadata --locked --offline` gegen den Vorrat in jeder
+  Kiste; die Wache der CI hält Fassung und Werkzeugkette zusammen.
 
 ### v0.4.4 – 2026-10-21 (drei Diagnoseskripte finden ihre Hilfsdateien wieder; Fund 582)
 

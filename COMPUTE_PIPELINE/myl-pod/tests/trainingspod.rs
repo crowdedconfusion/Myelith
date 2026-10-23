@@ -39,8 +39,7 @@ fn vorgaben() -> Trainingsvorgaben {
 #[test]
 fn ein_pod_aus_vier_shards_rechnet_wie_ein_einzelner() {
     let dir = artefakte();
-    if !dir.exists() {
-        eprintln!("Artefakt fehlt, uebersprungen: {}", dir.display());
+    if !myl_pod::artefakte::vorhanden(&dir) {
         return;
     }
     let modell = Arc::new(load_model(&dir).expect("Modell"));
@@ -115,7 +114,7 @@ fn werk_master(werk: &Trainingswerk, shard: usize, i: usize) -> Vec<&[i32]> {
 #[test]
 fn zwei_laeufe_liefern_dasselbe_commitment() {
     let dir = artefakte();
-    if !dir.exists() {
+    if !myl_pod::artefakte::vorhanden(&dir) {
         return;
     }
     let modell = Arc::new(load_model(&dir).expect("Modell"));

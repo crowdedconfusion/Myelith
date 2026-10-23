@@ -1,6 +1,6 @@
 # testclient (`myl-testclient`)
 
-> **Version:** 0.44.1
+> **Version:** 0.46.0
 > **Datum:** 2026-10-22
 > **Status:** Phase 1 und **Phase 3 vollständig**, dazu Punkt 2.1
 > (`vergleich`), **2.2** (Backend-Vergleich innerhalb einer Maschine, seit
@@ -543,6 +543,77 @@ COMPUTE_PIPELINE Phase 1: erstmals über einen aufrufbaren Befehl statt
 über einen Integrationstest.
 
 ## Changelog
+
+### v0.46.0 (2026-10-22): Der Netzlauf mit getrennten Prozessen unter `tc netem`
+
+- `netzbedingungen/netzlauf_prozesse.py` (neu, eigenständiges Skript): jeder
+  Knoten ein eigenes `myl-node` in einem eigenen Netz-Namensraum, alle an
+  einer Brücke, jeder in einem eigenen /24 eines gemeinsamen /16. `tc netem`
+  auf beiden Seiten jeder Leitung: 50 bis 200 ms je Richtung mit
+  Schwankung, 1 bis 5 % Verlust. Der Erzeuger baut mit `--blocktakt 50`
+  (20 Blöcke je Sekunde), die übrigen schicken Testverkehr, einer findet das
+  Netz nur über mDNS. Stolpersteine: Trennung (20 s ohne jedes Paket),
+  harter Absturz mit Neustart aus Kettendatei und Schlüssel (gleiche
+  Peer-Id), ein Neuling ohne Kette und ohne Angabe. Gelesen wird von aussen,
+  wie ein Betreiber es täte: Höhe und Gegenstellen über `/metriken`, Wurzeln
+  aus den Protokollen.
+- Am Ende muss gelten: alle übrigen auf einer Höhe und dort dieselbe Wurzel
+  wie der Erzeuger bei diesem Block; die Wurzel bewegt sich (mindestens zehn
+  Werte, Fund 593); kein Knoten wählt die Rückschleife eines anderen (Fund
+  594); wer nicht neu startete, übernimmt mindestens die Hälfte seiner
+  Blöcke über Gossip statt über das Nachholen (Fund 592). Was der Erzeuger
+  beim Ende noch allein hatte, darf verloren gehen, höchstens drei Sekunden.
+- `--kurz` geht denselben Weg mit fünf Knoten und kurzen Abschnitten, als
+  Verifikationslauf vor dem vollen. Rückgabe 0 bestanden, 1 ein Befund,
+  2 die Umgebung fehlt (Linux, root, `ip`, `tc`, `sch_netem`).
+- Die Literale von `KnotenKonfig` tragen das neue Feld `blocktakt_ms`
+  (`src/knoten.rs`, `tests/netzlauf.rs`, `tests/kalter_pfad.rs`).
+- **Belege:** Der erste Lauf fand drei Fehler im Knoten und im Netz (NODE
+  v0.54.0, NETWORKING v0.19.0). Danach voller Lauf grün: sieben Knoten,
+  jeder kennt jeden nach 7,4 s, Rückstand höchstens 3 Blöcke, Trennung in
+  11,7 s und Absturz in 9,4 s aufgeholt, Neuling 2 570 Blöcke in 31,9 s,
+  Ende bei Höhe 2 604 mit einer Wurzel und 381 verschiedenen auf dem Weg,
+  kein Block verloren. Gegenprobe ohne Vorausspeicher rot. Der Netzlauf im
+  selben Prozess mit Probeartefakt grün in 41 s (vorher 51 bis 58 s);
+  `cargo test` ohne Artefakte rc=0 (294), Clippy still.
+- `rust-version` auf 1.99 in `myl-testclient`; die Werkzeugkette steht einmal, in
+  `rust-toolchain.toml` (1.99.0), mit der auch die CI baut. Nur das Manifest.
+- **Stolperstein 5 (Zustandsabzug):** ein zweiter Neuling beginnt beim
+  Abzug der ersten Epochengrenze; den Anker liest der Lauf aus der Zeile
+  `abzug_angelegt` des Erzeugers, wie ein Betreiber es täte. Er muss die
+  Spitze erreichen, seine Hintergrundprüfung die Basis bestätigen, und am
+  Ende trägt er dieselbe Wurzel. Kurzer Lauf: an der Spitze und bestätigt in
+  34,8 s, 6 325 Bytes Zustand. Der kurze Lauf baut dafür mit 25 ms je Block:
+  📌 Bei 10 ms holte ein Neuling über die schlechteste Leitung (200 ms, 5 %
+  Verlust) aus einer Quelle nur rund 75 Blöcke je Sekunde nach, rund 6 s je
+  Lieferung von 512 Blöcken, und das Netz wuchs schneller.
+- `tests/netzlauf.rs`: 📌 **Der Lügner bekommt verlässlich eine Position.**
+  In rund drei von zehn Läufen stand er in Epoche 2 in der Reserve, und
+  Stolperstein 1 fiel aus; jetzt läuft das Netz Epoche um Epoche weiter, bis
+  er rechnet, höchstens bis Epoche 6.
+- Die Literale von `KnotenKonfig` tragen `abzug` und `hintergrundpruefung`.
+
+### v0.45.0 (2026-10-22): Netzlauf mit Einstieg ohne Angabe (Stolperstein 7)
+
+- `tests/netzlauf.rs`: `m05`, `m07` und `m08` bekommen keine
+  Bootstrap-Adresse und suchen im lokalen Netz; `m04` sucht ebenso und kennt
+  den Erzeuger (die Brücke). Die Prüfung nach dem Aufbau verlangt jetzt,
+  dass jeder alle 14 anderen kennt, statt nur eine Gegenstelle.
+- **Stolperstein 6 härter:** drei Knoten (`m01`, `m06`, `m13`) fallen
+  zugleich aus, das Netz baut 200 Blöcke weiter, alle drei kehren mit
+  derselben Miner-Kennung zurück und holen auf.
+- **Stolperstein 8 (neu): ein Neuling** ohne Kette, ohne Angabe und ohne
+  Miner-Rolle findet das Netz über mDNS, holt jeden Block nach und führt
+  danach dieselbe Kette wie alle (`pruefe_einigkeit`).
+- **Belege:** zweimal grün, alle 15 Knoten mit 14 Gegenstellen (64 s, 74 s);
+  mit beiden neuen Stolpersteinen noch zweimal grün (99 s, 92 s), der
+  Neuling bei Höhe 3867 bzw. 3864 mit 15 Gegenstellen; mit
+  `MYL_OHNE_ARTEFAKTE=1` Rückgabe 0.
+- **Stolperstein 1 ehrlicher:** Steht der Lügner in Epoche 2 in der
+  Reserve (in rund drei von zehn Läufen), meldet der Lauf das sichtbar.
+  📌 Und die Schlussprüfung verlangte dann „niemand gesperrt“, obwohl er in
+  Epoche 3 rechnen und gemeldet werden kann: ein versteckter Wackler. Jetzt
+  darf nur der Lügner gesperrt sein, und mit Position in Epoche 2 muss er es.
 
 ### v0.44.1 (2026-10-22): Netzlauf und Stufe-4-Proben in der CI; Sicherheitsmeldung zu `rustls-webpki`
 

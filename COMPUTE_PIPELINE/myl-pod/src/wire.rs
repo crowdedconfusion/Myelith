@@ -110,7 +110,7 @@ pub fn pack_tokens(tokens: &[u32]) -> Vec<i16> {
 
 /// Entpackt Token-IDs aus dem i16-Payload-Format.
 pub fn unpack_tokens(payload: &[i16]) -> Result<Vec<u32>, String> {
-    if payload.len() % 2 != 0 {
+    if !payload.len().is_multiple_of(2) {
         return Err("Token-Payload muss eine gerade Anzahl i16 haben".to_string());
     }
     let mut out = Vec::with_capacity(payload.len() / 2);

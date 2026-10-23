@@ -40,7 +40,7 @@ use libp2p::allow_block_list;
 use libp2p::swarm::behaviour::toggle::Toggle;
 use libp2p::swarm::NetworkBehaviour;
 use libp2p::{
-    autonat, connection_limits, dcutr, gossipsub, identify, kad, noise, ping, relay, tcp, yamux,
+    autonat, connection_limits, dcutr, gossipsub, identify, kad, mdns, noise, ping, relay, tcp, yamux,
     StreamProtocol, Swarm, SwarmBuilder,
 };
 
@@ -96,6 +96,8 @@ pub struct MylBehaviour {
     /// Punkt-zu-Punkt-Anfragen ([`crate::anfrage`]). Trägt undurchsichtige
     /// Bytes: Was sie bedeuten, entscheidet die Anwendung.
     pub anfrage: crate::anfrage::AnfrageBehaviour,
+    /// Suche im lokalen Netz (mDNS). Nur mit `NetConfig::lokale_suche`.
+    pub mdns: Toggle<mdns::tokio::Behaviour>,
 }
 
 /// Baut den Swarm aus Identität und Konfiguration.
@@ -151,7 +153,14 @@ pub fn build_swarm(
 
     let identify = identify::Behaviour::new(
         identify::Config::new(PROTOCOL_VERSION.to_string(), identity.keypair().public())
-            .with_agent_version(AGENT_VERSION.to_string()),
+            .with_agent_version(AGENT_VERSION.to_string())
+            // 📌 **Kein eigener Adressspeicher** (Fund 594, 2026-10-22).
+            //    Identify hielt sonst die zuletzt gemeldeten Adressen von
+            //    hundert Gegenstellen ungefiltert und bot sie beim Waehlen
+            //    an, die Rueckschleife des anderen eingeschlossen. Adressen
+            //    kommen damit nur aus Kademlia, und dort gefiltert
+            //    (`discovery::fuer_das_adressbuch`): eine Quelle statt zwei.
+            .with_cache_size(0),
     );
 
     let ping = ping::Behaviour::new(ping::Config::new().with_interval(config.ping_interval));
@@ -160,6 +169,7 @@ pub fn build_swarm(
     let adressvielfalt = Adressvielfalt::mit_grenze(config.adressbereich_grenze);
     let peer_id = identity.peer_id();
     let dient_als_relais = config.nat.dient_als_relais;
+    let lokal = if config.lokale_suche { Some(mdns::tokio::Behaviour::new(mdns::Config::default(), peer_id)?) } else { None };
 
     let swarm = SwarmBuilder::with_existing_identity(identity.keypair().clone())
         .with_tokio()
@@ -199,6 +209,7 @@ pub fn build_swarm(
                     dient_als_relais.then(autonat::v2::server::Behaviour::default),
                 ),
                 anfrage: crate::anfrage::baue_anfragekanal(),
+                mdns: Toggle::from(lokal),
             })
         })?
         .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(60)))

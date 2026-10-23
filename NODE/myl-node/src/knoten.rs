@@ -161,11 +161,16 @@ pub struct Knoten {
     latenz_je_peer: std::collections::BTreeMap<libp2p::PeerId, u32>,
     /// Ob gerade eine Nachforderung unterwegs ist.
     ///
-    /// **Eine zur Zeit.** Ohne diese Sperre schickt ein Neuling für
-    /// jeden abgelehnten Block eine neue Anfrage; bei einem Rückstand
-    /// von zwanzig Blöcken wären das zwanzig Anfragen für dieselbe
-    /// Lücke, und der Gegenüber bezahlt sie alle.
-    nachforderung_laeuft: bool,
+    /// **Höchstens [`NACHHOLER`] zugleich, je Gegenstelle eine, über
+    /// aufeinanderfolgende Bereiche** (seit dem 2026-10-22). Ohne Deckel
+    /// schickte ein Neuling für jeden abgelehnten Block eine neue Anfrage;
+    /// bei einem Rückstand von zwanzig Blöcken wären das zwanzig Anfragen
+    /// für dieselbe Lücke. Bis zum 2026-10-22 lief nur eine: Über eine
+    /// Leitung mit 200 ms und 5 % Verlust kamen so rund 75 Blöcke je
+    /// Sekunde an, denn eine einzelne Verbindung bricht unter Verlust ein.
+    /// Mehrere Verbindungen addieren sich; was vor seiner Zeit ankommt, nimmt
+    /// der Vorausspeicher (Fund 592).
+    nachforderungen: Vec<Nachforderung1>,
     /// Wohin die Zustandsaufnahme ihre Zahlen zusaetzlich legt.
     ///
     /// ⚑ **Der Abholweg zu den Zahlen, die es laengst gab** (Fund 129).
@@ -333,12 +338,44 @@ pub struct Knoten {
     /// Wann die nächste Zustandsaufnahme fällig ist, über die Aufrufe von
     /// [`Knoten::laufe_fuer`] hinweg.
     naechste_aufnahme: Option<tokio::time::Instant>,
+    /// Wann der nächste Block des Blocktakts fällig ist, ebenso über die
+    /// Aufrufe hinweg.
+    naechster_block: Option<tokio::time::Instant>,
+    /// Die Höhe beim vorigen Testverkehr; mit Blocktakt ist die Probe der
+    /// Blockkette, dass die Höhe seither gewachsen ist.
+    hoehe_beim_testverkehr: u64,
+    /// Blöcke, die zu früh kamen (Fund 592).
+    voraus: crate::voraus::Vorausspeicher,
+    /// Die nächste Nonce des Testverkehrs und die Höhe, bei der die älteste
+    /// noch nicht verbuchte gesendet wurde (Fund 593).
+    testverkehr_nonce: (u64, u64),
+    /// Der laufende Abruf eines Zustandsabzugs (2026-10-22).
+    abzug_holen: Option<AbzugHolen>,
+    /// Die laufende Hintergrundprüfung eines Abzugs.
+    hintergrund: Option<Hintergrund>,
+    /// Der zuletzt gelesene eigene Abzug, für das Liefern in Stücken.
+    abzug_zwischen: Option<crate::abzug::Abzug>,
+    /// Der zuletzt im Protokoll gemeldete eigene Abzug.
+    abzug_gemeldet: Option<u64>,
+    /// ⚑ Ein Grund, aus dem dieser Knoten von sich aus anhält (eine
+    /// widerlegte Basis). Die Wache kennt nur Signale von aussen.
+    angehalten: Option<&'static str>,
     /// Die verbundenen Gegenstellen, für das Nachfordern reihum (Fund 588).
     gegenstellen: Vec<libp2p::PeerId>,
     /// Wer beim nächsten Nachfordern ohne Vorzug gefragt wird.
     nachfrage_reihum: usize,
-    /// Seit wann die laufende Nachforderung läuft.
-    nachforderung_seit: Option<std::time::Instant>,
+}
+
+/// So viele Nachforderungen von Blöcken laufen höchstens zugleich.
+pub const NACHHOLER: usize = 4;
+
+/// Eine laufende Nachforderung: bei wem, welcher Bereich, seit wann.
+#[derive(Debug, Clone, Copy)]
+struct Nachforderung1 {
+    an: libp2p::PeerId,
+    ab: u64,
+    bis: u64,
+    seit: std::time::Instant,
 }
 
 /// Eine laufende Fristmessung: erst die Pings, dann die Zeitprobe.
@@ -503,6 +540,25 @@ impl Knoten {
         // hergeleitet. Ein abgeleiteter Wert, den man zusätzlich
         // ablegt, ist eine zweite Wahrheit.
         let mut kette = Kette::im_netz(konfig.netz);
+        // ⚑ **Eine Kette, die aus einem Abzug begann, beginnt wieder dort**
+        //   (2026-10-22): Die Kettendatei hält dann nur die Blöcke danach,
+        //   und ihr erster schliesst an den Abzug an, nicht an Genesis.
+        let mut basisblock: Option<myl_consensus::block::Block> = None;
+        if let Some(pfad) = konfig.kettendatei.clone() {
+            let ablage = crate::abzug::Ablage::neben(&pfad, konfig.netz.startwert_hash());
+            if let Some(h) = ablage.basis() {
+                let (abzug, zustand) = ablage.lesen(h).map_err(|e| KnotenFehler::Kette(format!("Basis bei {h}: {e}")))?;
+                kette.auf_abzug_setzen(&abzug, zustand).map_err(KnotenFehler::Kette)?;
+                protokoll.schreibe(
+                    Eintrag::neu("abzug_geladen")
+                        .zahl("hoehe", h as i64)
+                        .wahr("bestaetigt", ablage.bestaetigt())
+                        .text("zustandswurzel", kurz(&kette.zustandswurzel())),
+                );
+                basisblock = Some(abzug.block);
+            }
+            kette.ablage_setzen(ablage);
+        }
         if let Some(pfad) = konfig.kettendatei.clone() {
             match crate::speicher::Kettenspeicher::oeffnen(&pfad, konfig.netz.startwert_hash()) {
                 Ok((mut speicher, anlauf)) => {
@@ -572,6 +628,19 @@ impl Knoten {
 
         // ⚑ **Stufe 4** (2026-10-22): Wer zusagt oder rechnet, braucht den
         //   Schlüssel, unter dem er als Miner angemeldet ist.
+        // ⚑ **Zustandsabzug** (2026-10-22): Ein Knoten ohne eigene Kette holt
+        //   den Abzug seines Ankers, der vom Betreiber vor dem des Netzes.
+        //   Und wer aus einem Abzug lebt, den die Hintergrundprüfung noch
+        //   nicht bestätigt hat, prüft weiter.
+        let abzug_holen = if kette.hoehe() == 0 {
+            konfig.abzug.or_else(|| konfig.netz.juengster_anker()).map(AbzugHolen::neu)
+        } else {
+            None
+        };
+        let hintergrund = match (&basisblock, kette.ablage()) {
+            (Some(b), Some(a)) if konfig.hintergrundpruefung && !a.bestaetigt() => Some(Hintergrund::neu(konfig.netz, b)),
+            _ => None,
+        };
         let netzschluessel = match (&konfig.modellzusage, &konfig.shard, &konfig.konsensschluesseldatei) {
             (None, None, _) => None,
             (_, _, Some(pfad)) => Some(
@@ -617,9 +686,17 @@ impl Knoten {
             nachholen: None,
             ausstehend: Vec::new(),
             naechste_aufnahme: None,
+            naechster_block: None,
+            hoehe_beim_testverkehr: 0,
+            voraus: Default::default(),
+            testverkehr_nonce: (0, 0),
+            abzug_holen,
+            hintergrund,
+            abzug_zwischen: None,
+            abzug_gemeldet: None,
+            angehalten: None,
             gegenstellen: Vec::new(),
             nachfrage_reihum: 0,
-            nachforderung_seit: None,
             konfig,
             // ⚑ **Als Erstes, noch vor allem Warten** (Fund 140). Ab
             // hier ist jedes Signal aufgehoben.
@@ -631,7 +708,7 @@ impl Knoten {
             protokoll,
             testverkehr_zaehler: 0,
             kette,
-            nachforderung_laeuft: false,
+            nachforderungen: Vec::new(),
             beobachtungsstelle: crate::beobachtung::Beobachtungsstelle::neu(),
             kontraktabschrift: crate::tuer::Kontraktabschrift::neu(),
             letzte_inferenzantwort: None,
@@ -1094,9 +1171,13 @@ impl Knoten {
         let mut naechste_aufnahme = *self.naechste_aufnahme.get_or_insert_with(|| tokio::time::Instant::now() + takt);
         let sendetakt = self.konfig.testverkehr_sekunden.map(|s| Duration::from_secs(s.max(1)));
         let mut naechster_versand = sendetakt.map(|t| tokio::time::Instant::now() + t);
+        let blocktakt = self.blocktakt();
+        if let Some(t) = blocktakt {
+            self.naechster_block.get_or_insert_with(|| tokio::time::Instant::now() + t);
+        }
         loop {
             let jetzt = tokio::time::Instant::now();
-            if jetzt >= ende {
+            if jetzt >= ende || self.angehalten.is_some() {
                 return;
             }
             if jetzt >= naechste_aufnahme {
@@ -1110,6 +1191,17 @@ impl Knoten {
                     naechster_versand = Some(jetzt + t);
                 }
             }
+            // ⚑ Fällig ab dem geplanten Zeitpunkt, nicht ab jetzt: Ein Block,
+            //   der sich verspätet, verschiebt nicht alle folgenden.
+            //   Hinkt der Erzeuger weiter als einen Takt hinterher, setzt er
+            //   neu auf, statt die verpassten Blöcke nachzuschiessen.
+            if let (Some(faellig), Some(t)) = (self.naechster_block, blocktakt) {
+                if jetzt >= faellig {
+                    self.block_wenn_jemand_hoert().await;
+                    let naechster = faellig + t;
+                    self.naechster_block = Some(if naechster <= jetzt { jetzt + t } else { naechster });
+                }
+            }
             // Der BFT-Takt. Prüft selbst, ob die Frist verfallen ist,
             // und wechselt gegebenenfalls die Runde.
             self.konsens_takt().await;
@@ -1118,6 +1210,9 @@ impl Knoten {
                 .saturating_duration_since(jetzt)
                 .min(naechste_aufnahme.saturating_duration_since(jetzt));
             if let Some(faellig) = naechster_versand {
+                rest = rest.min(faellig.saturating_duration_since(jetzt));
+            }
+            if let (Some(faellig), Some(_)) = (self.naechster_block, blocktakt) {
                 rest = rest.min(faellig.saturating_duration_since(jetzt));
             }
             // ⚑ **Die Wartezeit darf die Konsensfrist nicht überspringen.**
@@ -1165,9 +1260,9 @@ impl Knoten {
                     Some(d) => self.laufe_fuer(d).await,
                     // Ohne Grenze: in Abschnitten, damit die
                     // Zustandsaufnahmen weiterlaufen.
-                    None => loop { self.laufe_fuer(Duration::from_secs(3600)).await },
+                    None => while self.angehalten.is_none() { self.laufe_fuer(Duration::from_secs(3600)).await },
                 }
-            } => "Laufzeit abgelaufen",
+            } => self.angehalten.unwrap_or("Laufzeit abgelaufen"),
         };
         self.abschluss(grund).await;
     }
@@ -1264,41 +1359,21 @@ impl Knoten {
         // Die Rückgratprobe jedes Takts: Der Erzeuger baut einen Block,
         // die übrigen schicken eine Transaktion. Ohne beides stünde die
         // Kette still.
-        let rueckgrat = if self.konfig.erzeugt_bloecke {
-            // ⚑ **Erst bauen, wenn jemand zuhört.**
-            //
-            // Es gibt keinen Nachholmechanismus: Ein Knoten, der Block 1
-            // verpasst, hängt für den Rest des Laufs fest, weil jeder
-            // folgende Block auf einen Vorgänger zeigt, den er nie
-            // gesehen hat. Baut der Erzeuger los, bevor die anderen
-            // verbunden sind, lehnen sie danach **alles** ab.
-            //
-            // Der erste Probelauf mit drei Knoten lief genau so ins
-            // Leere: Alpha baute acht Blöcke, Beta und Gamma wiesen alle
-            // acht mit „passt nicht an" zurück und blieben auf Höhe 0.
-            //
-            // Das Warten behebt den Anlass, nicht die Ursache. Die
-            // Ursache ist seit v0.4.0 behoben: `crate::nachschub` holt
-            // fehlende Blöcke nach, sobald ein Block „passt nicht an"
-            // meldet und weiter ist als die eigene Höhe.
-            //
-            // *Hier stand bis zum 2026-08-26 „Eine Blocksynchronisierung
-            // fehlt und gehört vor ein echtes Testnetz." Das war seit dem
-            // 2026-08-24 überholt.*
-            //
-            // Das Warten bleibt trotzdem: Es erspart dem Netz eine Runde
-            // aus Ablehnungen und Nachforderungen, die niemand braucht,
-            // wenn man eine Sekunde wartet.
-            if self.kette.hoehe() == 0 && self.peers().await == 0 {
-                self.protokoll.schreibe(
-                    Eintrag::neu("erzeugung_wartet")
-                        .text("grund", "noch kein Peer verbunden, erster Block würde niemanden erreichen"),
-                );
-                return false;
-            }
-            let ok = self.erzeuge_block().await;
+        let rueckgrat = if self.blocktakt().is_some() {
+            // Mit Blocktakt baut der Takt; geprüft wird, dass die Kette
+            // seit dem vorigen Testverkehr gewachsen ist.
+            let ok = self.kette.hoehe() > self.hoehe_beim_testverkehr;
+            self.hoehe_beim_testverkehr = self.kette.hoehe();
             self.vermerke_probe(Probe::Blockkette, ok);
             ok
+        } else if self.konfig.erzeugt_bloecke {
+            match self.block_wenn_jemand_hoert().await {
+                Some(ok) => {
+                    self.vermerke_probe(Probe::Blockkette, ok);
+                    ok
+                }
+                None => return false,
+            }
         } else {
             let ok = self.sende_transaktion().await;
             self.vermerke_probe(Probe::Transaktion, ok);
@@ -1316,6 +1391,48 @@ impl Knoten {
         let ok2 = self.fuehre_probe(wechselnd).await;
 
         rueckgrat && ok2
+    }
+
+    /// Der Blocktakt, wenn dieser Knoten erzeugt und einen hat.
+    fn blocktakt(&self) -> Option<Duration> {
+        self.konfig.blocktakt_ms.filter(|_| self.konfig.erzeugt_bloecke).map(Duration::from_millis)
+    }
+
+    /// Baut einen Block, sobald jemand zuhört; `None` heißt, es hört noch
+    /// niemand zu, und es wurde nichts gebaut.
+    async fn block_wenn_jemand_hoert(&mut self) -> Option<bool> {
+        // ⚑ **Erst bauen, wenn jemand zuhört.**
+        //
+        // Es gibt keinen Nachholmechanismus: Ein Knoten, der Block 1
+        // verpasst, hängt für den Rest des Laufs fest, weil jeder
+        // folgende Block auf einen Vorgänger zeigt, den er nie
+        // gesehen hat. Baut der Erzeuger los, bevor die anderen
+        // verbunden sind, lehnen sie danach **alles** ab.
+        //
+        // Der erste Probelauf mit drei Knoten lief genau so ins
+        // Leere: Alpha baute acht Blöcke, Beta und Gamma wiesen alle
+        // acht mit „passt nicht an" zurück und blieben auf Höhe 0.
+        //
+        // Das Warten behebt den Anlass, nicht die Ursache. Die
+        // Ursache ist seit v0.4.0 behoben: `crate::nachschub` holt
+        // fehlende Blöcke nach, sobald ein Block „passt nicht an"
+        // meldet und weiter ist als die eigene Höhe.
+        //
+        // *Hier stand bis zum 2026-08-26 „Eine Blocksynchronisierung
+        // fehlt und gehört vor ein echtes Testnetz." Das war seit dem
+        // 2026-08-24 überholt.*
+        //
+        // Das Warten bleibt trotzdem: Es erspart dem Netz eine Runde
+        // aus Ablehnungen und Nachforderungen, die niemand braucht,
+        // wenn man eine Sekunde wartet.
+        if self.kette.hoehe() == 0 && self.peers().await == 0 {
+            self.protokoll.schreibe(
+                Eintrag::neu("erzeugung_wartet")
+                    .text("grund", "noch kein Peer verbunden, erster Block würde niemanden erreichen"),
+            );
+            return None;
+        }
+        Some(self.erzeuge_block().await)
     }
 
     /// Führt eine Nachrichtenprobe aus: echtes Objekt bauen,
@@ -1505,14 +1622,28 @@ impl Knoten {
         // Wiedereinspielung ihrer Vorgängerin und würde beim Anwenden
         // verworfen; der Zustand bewegte sich wieder nicht, und der
         // Testverkehr belegte wieder nichts.
+        //
+        // 📌 **Fund 593 (2026-10-22): Die Nummer kommt aus dem Zustand.**
+        //    Hier stand der Zähler des Testverkehrs, und der steht beim
+        //    ersten Senden schon bei 1; die Kette verlangt die Nummern
+        //    streng ab 0. Jede Transaktion des Testverkehrs wurde
+        //    verworfen, über 1 342 Blöcke blieb die Wurzel dieselbe, und
+        //    der Vergleich der Wurzeln, für den es diesen Verkehr gibt,
+        //    belegte nichts. Nach einem Neustart begann der Zähler
+        //    ausserdem von vorn. Jetzt: die Nummer des Kontos im Zustand,
+        //    darüber hinaus fortgezählt, solange Gesendetes unterwegs ist;
+        //    kommt 32 Blöcke lang nichts davon an, ging es verloren, und
+        //    gezählt wird wieder ab dem Zustand.
         let schluessel = crate::kette::schluessel_fuer(&self.konfig.name);
+        let im_zustand = self.kette.zustand().account(&crate::kette::konto_fuer(&self.konfig.name)).nonce;
+        let nonce = testverkehr_nonce(&mut self.testverkehr_nonce, im_zustand, self.kette.hoehe());
         let anweisung = Anweisung::Burn {
             betrag: 1_000 + self.testverkehr_zaehler * 100,
         };
         let tx = match Transaktion::signiere(
             &self.kette.netzwert(),
             &schluessel,
-            self.testverkehr_zaehler,
+            nonce,
             anweisung,
         ) {
             Ok(t) => t,
@@ -1686,11 +1817,10 @@ impl Knoten {
     pub async fn aufnahme(&mut self) {
         // ⚑ Eine Nachforderung, die nach zehn Sekunden nicht zurück ist,
         //   gilt als verloren (Fund 588); dann die nächste Gegenstelle.
-        if self.nachforderung_laeuft && self.nachforderung_seit.is_some_and(|t| t.elapsed() > Duration::from_secs(10)) {
-            self.nachforderung_laeuft = false;
-            self.nachforderung_seit = None;
-        }
+        self.nachforderungen.retain(|n| n.seit.elapsed() <= Duration::from_secs(10));
         self.weiter_nachfordern(None);
+        self.abzug_arbeit();
+        self.eigenen_abzug_melden();
         self.netzarbeit().await;
         let z = self.zustand().await;
         let mut eintrag = Eintrag::neu("aufnahme")
@@ -1698,6 +1828,7 @@ impl Knoten {
             .zahl("hoehe", self.kette.hoehe() as i64)
             .text("zustandswurzel", kurz(&self.kette.zustandswurzel()))
             .zahl("wartend", self.kette.wartend() as i64)
+            .zahl("voraus", self.voraus.len() as i64)
             .zahl("schlecht_bewertet", z.schlecht_bewertet as i64)
             .zahl("zeilen", self.protokoll.geschrieben() as i64)
             // ⚑ Fund 63: Ohne diese beiden Zahlen wäre der Vorlauf
@@ -1790,7 +1921,7 @@ impl Knoten {
             latenz_messungen: anzahl,
             latenz_min_us: if anzahl > 0 { kleinste } else { 0 },
             latenz_max_us: groesste,
-            nachforderung_laeuft: self.nachforderung_laeuft,
+            nachforderung_laeuft: !self.nachforderungen.is_empty(),
             speicher_orte: speicher.as_ref().map(|s| s.orte).unwrap_or(0),
             speicher_gegenstaende: speicher.as_ref().map(|s| s.belegung.gegenstaende).unwrap_or(0),
             speicher_shards: speicher.as_ref().map(|s| s.belegung.shards).unwrap_or(0),
@@ -1822,36 +1953,8 @@ impl Knoten {
     ///
     /// Tut nichts, wenn nichts fehlt oder bereits eine Anfrage läuft.
     fn fordere_nach(&mut self, von: libp2p::PeerId, fremde_hoehe: u64) {
-        if self.nachforderung_laeuft {
-            return;
-        }
-        let Some(forderung) = Nachforderung::fuer_rueckstand(self.kette.hoehe(), fremde_hoehe)
-        else {
-            return;
-        };
-        let Some(bytes) = forderung.als_bytes() else {
-            return;
-        };
-        // Diese Stelle fordert nur Blöcke nach; ein Inferenzauftrag
-        // kommt nie von hier.
-        let Nachforderung::Bloecke { ab, bis } = forderung else {
-            return;
-        };
-        if self
-            .kommandos
-            .send(NodeCommand::Anfrage { an: von, daten: bytes })
-            .is_ok()
-        {
-            self.nachforderung_laeuft = true;
-            self.nachforderung_seit = Some(std::time::Instant::now());
-            self.protokoll.schreibe(
-                Eintrag::neu("nachschub_angefordert")
-                    .text("bei", von.to_string())
-                    .zahl("ab", ab as i64)
-                    .zahl("bis", bis as i64)
-                    .zahl("eigene_hoehe", self.kette.hoehe() as i64),
-            );
-        }
+        self.hoechste_gehoerte = self.hoechste_gehoerte.max(fremde_hoehe);
+        self.nachfordern(Some(von), fremde_hoehe);
     }
 
     /// ⚑ **Weiter nachfordern, solange eine höhere Kette gehört wurde**
@@ -1867,21 +1970,85 @@ impl Knoten {
     /// Jetzt: Wer etwas geliefert hat, wird weiter gefragt; wer nichts hatte,
     /// macht Platz für die nächste verbundene Gegenstelle, reihum.
     fn weiter_nachfordern(&mut self, bevorzugt: Option<libp2p::PeerId>) {
-        if self.nachforderung_laeuft || self.hoechste_gehoerte <= self.kette.hoehe() {
+        let ziel = self.hoechste_gehoerte;
+        self.nachfordern(bevorzugt, ziel);
+    }
+
+    /// Füllt die laufenden Nachforderungen bis [`NACHHOLER`] auf: je
+    /// Gegenstelle eine, Bereich nach Bereich ab der eigenen Höhe oder hinter
+    /// dem letzten laufenden. Eine Gegenstelle, die gerade für die
+    /// Hintergrundprüfung oder einen Abzug gefragt ist, bleibt frei: Ihre
+    /// Antworten tragen keine Marke, die sie unterschiede.
+    fn nachfordern(&mut self, bevorzugt: Option<libp2p::PeerId>, ziel: u64) {
+        // Solange ein Abzug geholt wird, nicht von Genesis an nachholen:
+        // Die Kettendatei muss leer sein, wenn er kommt.
+        if self.abzug_holen.is_some() {
             return;
         }
-        let peer = match bevorzugt {
-            Some(p) => p,
-            None => {
-                if self.gegenstellen.is_empty() {
-                    return;
+        let mut erster = bevorzugt;
+        let mut versuche = 0usize;
+        while self.nachforderungen.len() < NACHHOLER && versuche <= self.gegenstellen.len() {
+            versuche += 1;
+            // 📌 **Ab dem kleinsten Block, den noch niemand deckt** (2026-10-22).
+            //    Hier stand zuerst „hinter dem höchsten laufenden Bereich“.
+            //    Ging die vorderste Lieferung verloren, schloss danach niemand
+            //    mehr die Lücke vor den späteren, und die Kette rückte nie vor
+            //    (netem, ein Knoten nach dem Absturz bei 1 217 von 5 926).
+            let laufend: Vec<(u64, u64)> = self.nachforderungen.iter().map(|n| (n.ab, n.bis)).collect();
+            let Some((ab, bis)) =
+                crate::nachschub::naechster_bereich(self.kette.hoehe(), &laufend, |h| self.voraus.hat_hoehe(h), ziel)
+            else {
+                return;
+            };
+            let belegt = |p: &libp2p::PeerId, k: &Self| {
+                k.nachforderungen.iter().any(|n| n.an == *p) || k.hintergrund_bei(p) || k.abzug_bei(p)
+            };
+            let peer = match erster.take().filter(|p| !belegt(p, self)) {
+                Some(p) => p,
+                None => {
+                    let frei: Vec<libp2p::PeerId> = self.gegenstellen.iter().filter(|p| !belegt(p, self)).copied().collect();
+                    if frei.is_empty() {
+                        return;
+                    }
+                    self.nachfrage_reihum = self.nachfrage_reihum.wrapping_add(1);
+                    frei[self.nachfrage_reihum % frei.len()]
                 }
-                self.nachfrage_reihum = self.nachfrage_reihum.wrapping_add(1);
-                self.gegenstellen[self.nachfrage_reihum % self.gegenstellen.len()]
+            };
+            if !self.anfrage_senden(peer, &Nachforderung::Bloecke { ab, bis }) {
+                return;
             }
-        };
-        let ziel = self.hoechste_gehoerte;
-        self.fordere_nach(peer, ziel);
+            self.nachforderungen.push(Nachforderung1 { an: peer, ab, bis, seit: std::time::Instant::now() });
+            self.protokoll.schreibe(
+                Eintrag::neu("nachschub_angefordert")
+                    .text("bei", peer.to_string())
+                    .zahl("ab", ab as i64)
+                    .zahl("bis", bis as i64)
+                    .zahl("eigene_hoehe", self.kette.hoehe() as i64)
+                    .zahl("laufend", self.nachforderungen.len() as i64),
+            );
+        }
+    }
+
+    /// Spielt aufgehobene Blöcke ein, solange einer an die eigene Höhe
+    /// anschliesst; gibt zurück, wie viele es waren (Fund 592).
+    ///
+    /// Je Höhe gilt der erste Kandidat, der die Prüfung besteht; die übrigen
+    /// derselben Höhe fallen weg, ebenso jeder, der nicht trägt.
+    fn voraus_einspielen(&mut self) -> usize {
+        let mut eingespielt = 0;
+        loop {
+            let kandidaten = self.voraus.naechste(self.kette.hoehe());
+            let mut weiter = false;
+            for b in kandidaten {
+                if !weiter && self.kette.uebernimm(&b).is_ok() {
+                    eingespielt += 1;
+                    weiter = true;
+                }
+            }
+            if !weiter {
+                return eingespielt;
+            }
+        }
     }
 
     /// Verarbeitet eine empfangene Nachricht: Blöcke in die Kette,
@@ -1898,13 +2065,16 @@ impl Knoten {
                     return;
                 }
                 match self.kette.uebernimm(&block) {
-                    Ok(()) => self.protokoll.schreibe(
-                        Eintrag::neu("block_uebernommen")
-                            .zahl("hoehe", self.kette.hoehe() as i64)
-                            .zahl("txs", block.txs.len() as i64)
-                            .text("zustandswurzel", kurz(&self.kette.zustandswurzel()))
-                            .text("block", kurz(&self.kette.letzter_hash())),
-                    ),
+                    Ok(()) => {
+                        self.protokoll.schreibe(
+                            Eintrag::neu("block_uebernommen")
+                                .zahl("hoehe", self.kette.hoehe() as i64)
+                                .zahl("txs", block.txs.len() as i64)
+                                .text("zustandswurzel", kurz(&self.kette.zustandswurzel()))
+                                .text("block", kurz(&self.kette.letzter_hash())),
+                        );
+                        self.voraus_einspielen();
+                    }
                     Err(grund) => {
                         // ⚑ Fund 64: Dieses Feld hieß bis zum 2026-08-26
                         // `art` und stand damit **ein zweites Mal** in
@@ -1960,6 +2130,11 @@ impl Knoten {
                         // hat er mit hoher Wahrscheinlichkeit auch die
                         // davor.
                         if ablehnungsart == "passt-nicht-an" {
+                            // 📌 Fund 592: Ein Block, der zu früh kommt, wird
+                            //    aufgehoben; die Nachlieferung schliesst die
+                            //    Lücke bis zu ihm, und er folgt ohne eigenen
+                            //    Hin- und Rückweg.
+                            let _ = self.voraus.ablegen(self.kette.hoehe(), block.clone(), &m.data);
                             self.fordere_nach(m.von, block.header.height);
                         }
                         // Auch eine abgelehnte Hoehe ist eine gehoerte
@@ -2060,7 +2235,7 @@ impl Knoten {
             NodeEvent::AnfrageEingegangen { von, daten, marke } => {
                 let sofort = match Nachforderung::aus_bytes(&daten) {
                     Some(Nachforderung::Bloecke { ab, bis }) => {
-                        let bloecke = self.kette.bloecke_von_bis(ab, bis);
+                        let bloecke = crate::nachschub::in_die_antwort(self.kette.bloecke_von_bis(ab, bis));
                         let n = bloecke.len();
                         if n == 0 {
                             Some((Nachlieferung::Nichts, 0))
@@ -2159,6 +2334,10 @@ impl Knoten {
                         }
                     }
                     Some(Nachforderung::Ping) => Some((Nachlieferung::Pong, 0)),
+                    // ⚑ **Ein Stück eines eigenen Abzugs** (2026-10-22).
+                    Some(Nachforderung::Abzug { hoehe, ab }) => {
+                        Some((self.abzug_stueck(hoehe, ab).unwrap_or(Nachlieferung::Nichts), 0))
+                    }
                     // ⚑ **Ein Stück einer Datei des Netzmodells** (P11): nur,
                     //   was das eigene Manifest nennt.
                     Some(Nachforderung::Datei { name, ab, laenge }) => {
@@ -2198,6 +2377,17 @@ impl Knoten {
                 // ⚑ **Antworten der Netzarbeit** (Stufe 4) berühren die
                 //   Blocknachforderung nicht, wie die Inferenzantwort.
                 match Nachlieferung::aus_bytes(&daten) {
+                    // ⚑ **Zustandsabzug und Hintergrundprüfung** (2026-10-22)
+                    //   zuerst: Ihre Antworten berühren das gewöhnliche
+                    //   Nachholen nicht.
+                    Some(Nachlieferung::Abzug { block, ab, daten, groesse }) => {
+                        return self.abzug_stueck_erhalten(von, block, ab, &daten, groesse)
+                    }
+                    Some(Nachlieferung::Nichts) if self.abzug_bei(&von) => return self.abzug_nichts(von),
+                    Some(Nachlieferung::Nichts) if self.hintergrund_bei(&von) => return self.hintergrund_nichts(von),
+                    Some(Nachlieferung::Bloecke(b)) if self.hintergrund_bei(&von) && self.fuer_den_hintergrund(&b) => {
+                        return self.hintergrund_bloecke(von, b)
+                    }
                     Some(Nachlieferung::Pong) => return self.pong_erhalten(von),
                     Some(Nachlieferung::Zeitprobe(_)) => return self.zeitprobe_erhalten(von),
                     Some(Nachlieferung::Datei { name, ab, daten, groesse }) => {
@@ -2207,18 +2397,16 @@ impl Knoten {
                     Some(Nachlieferung::Nichts) if self.ist_netzarbeit(&von) => return self.nichts_erhalten(von),
                     _ => {}
                 }
-                let vorher_lief = self.nachforderung_laeuft;
-                self.nachforderung_laeuft = false;
                 let vorher = self.kette.hoehe();
                 let mut angenommen = 0usize;
                 let mut abgelehnt = 0usize;
+                let mut vorausgelegt = 0usize;
                 // ⚑ **Eine Inferenzantwort ist keine Blocklieferung**, und
                 // sie darf die Nachforderung nicht als erledigt
                 // buchen: Wer beides über dieselbe Schiene schickt,
                 // muss beim Lesen wieder trennen, sonst hebt eine
                 // Inferenzantwort die laufende Blocknachforderung auf.
                 if let Some(Nachlieferung::Inferenz(antwort)) = Nachlieferung::aus_bytes(&daten) {
-                    self.nachforderung_laeuft = vorher_lief;
                     let (art, sitzung) = match &antwort {
                         myl_types::inferenzauftrag::Inferenzantwort::Ergebnis {
                             sitzung, token, ..
@@ -2241,19 +2429,31 @@ impl Knoten {
                     // Nachschub ist ein Transportweg, kein
                     // Vertrauensweg: gleiche Anschlussprüfung, gleiche
                     // Nachrechnung der Zustandswurzel.
+                    //
+                    // ⚑ Mit mehreren Nachforderungen zugleich kommt ein
+                    //   späterer Bereich auch einmal vor einem früheren an;
+                    //   seine Blöcke gehen in den Vorausspeicher (Fund 592).
                     for b in bloecke {
                         match self.kette.uebernimm(&b) {
                             Ok(()) => angenommen += 1,
+                            Err(crate::kette::KettenFehler::PasstNichtAn { .. }) if b.header.height > self.kette.hoehe() + 1 => {
+                                if let Ok(roh) = borsh::to_vec(&b) {
+                                    vorausgelegt += usize::from(self.voraus.ablegen(self.kette.hoehe(), b, &roh).is_ok());
+                                }
+                            }
                             Err(_) => abgelehnt += 1,
                         }
                     }
                 }
-                self.nachforderung_seit = None;
+                self.nachforderungen.retain(|n| n.an != von);
+                let aus_dem_voraus = self.voraus_einspielen();
                 self.weiter_nachfordern((angenommen > 0).then_some(von));
                 Eintrag::neu("nachschub_erhalten")
                     .text("von", von.to_string())
                     .zahl("angenommen", angenommen as i64)
                     .zahl("abgelehnt", abgelehnt as i64)
+                    .zahl("aus_dem_voraus", aus_dem_voraus as i64)
+                    .zahl("vorausgelegt", vorausgelegt as i64)
                     .zahl("hoehe_vorher", vorher as i64)
                     .zahl("hoehe_nachher", self.kette.hoehe() as i64)
             }
@@ -2262,8 +2462,7 @@ impl Knoten {
                 Eintrag::neu("netzarbeit_gescheitert").text("an", an.to_string()).text("grund", grund)
             }
             NodeEvent::AnfrageGescheitert { an, grund } => {
-                self.nachforderung_laeuft = false;
-                self.nachforderung_seit = None;
+                self.nachforderungen.retain(|n| n.an != an);
                 self.weiter_nachfordern(None);
                 Eintrag::neu("nachschub_gescheitert")
                     .text("an", an.to_string())
@@ -2870,5 +3069,444 @@ impl Inferenzzaehler {
     pub fn stand(&self) -> (u64, u64) {
         use std::sync::atomic::Ordering;
         (self.bearbeitet.load(Ordering::Relaxed), self.abgelehnt.load(Ordering::Relaxed))
+    }
+}
+
+/// ⚑ **Der Abruf eines Zustandsabzugs** (2026-10-22): bei welcher Gegenstelle
+/// gerade, seit wann, und wer schon falsch oder nichts geliefert hat.
+struct AbzugHolen {
+    z: crate::abzug::Zusammensetzen,
+    bei: Option<(libp2p::PeerId, std::time::Instant)>,
+    gesperrt: std::collections::HashSet<libp2p::PeerId>,
+    reihum: usize,
+    gemeldet: Option<std::time::Instant>,
+}
+
+impl AbzugHolen {
+    fn neu(anker: crate::abzug::Anker) -> Self {
+        Self {
+            z: crate::abzug::Zusammensetzen::neu(anker),
+            bei: None,
+            gesperrt: Default::default(),
+            reihum: 0,
+            gemeldet: None,
+        }
+    }
+}
+
+/// ⚑ **Die Hintergrundprüfung**: eine zweite Kette ab Genesis, die die
+/// Blöcke bis zur Basis nachrechnet und am Ende Hash und Wurzel der Basis
+/// treffen muss. Trifft sie nicht, war der Anker falsch, und der Knoten hält
+/// an, statt auf einem fremden Zustand weiterzumachen.
+struct Hintergrund {
+    kette: Kette,
+    ziel: u64,
+    blockhash: myl_types::hash::Hash,
+    wurzel: myl_types::hash::Hash,
+    /// ⚑ Mehrere Lieferungen zugleich, wie beim Nachholen der eigenen Kette
+    ///   (2026-10-23); aus einer Quelle brauchte die Prüfung über eine
+    ///   gestörte Leitung 144 s für 7 200 Blöcke.
+    laufend: Vec<Nachforderung1>,
+    voraus: crate::voraus::Vorausspeicher,
+    gesperrt: std::collections::HashSet<libp2p::PeerId>,
+    reihum: usize,
+    gemeldet: Option<std::time::Instant>,
+}
+
+/// So viele Lieferungen holt die Hintergrundprüfung höchstens zugleich: die
+/// Hälfte von [`NACHHOLER`], damit das Nachholen der eigenen Kette, um das es
+/// im Betrieb geht, Gegenstellen behält.
+const HINTERGRUND_ZUGLEICH: usize = NACHHOLER / 2;
+
+impl Hintergrund {
+    fn neu(netz: &'static crate::netz::Netz, basis: &myl_consensus::block::Block) -> Self {
+        Self {
+            kette: Kette::im_netz(netz),
+            ziel: basis.header.height,
+            blockhash: basis.hash(),
+            wurzel: basis.header.state_root,
+            laufend: Vec::new(),
+            voraus: Default::default(),
+            gesperrt: Default::default(),
+            reihum: 0,
+            gemeldet: None,
+        }
+    }
+}
+
+/// Eine Gegenstelle reihum, die nicht gesperrt ist. Sind alle gesperrt, wird
+/// nach einer Minute neu begonnen: Eine Gegenstelle, die eben nichts hatte,
+/// kann inzwischen etwas haben. `None` heisst: jetzt nicht fragen.
+fn naechste_gegenstelle(
+    gegenstellen: &[libp2p::PeerId],
+    gesperrt: &mut std::collections::HashSet<libp2p::PeerId>,
+    reihum: &mut usize,
+    gemeldet: &mut Option<std::time::Instant>,
+) -> Option<libp2p::PeerId> {
+    let frei: Vec<libp2p::PeerId> = gegenstellen.iter().filter(|p| !gesperrt.contains(p)).copied().collect();
+    if frei.is_empty() {
+        if !gegenstellen.is_empty() && gemeldet.is_none_or(|t| t.elapsed() > Duration::from_secs(60)) {
+            *gemeldet = Some(std::time::Instant::now());
+            gesperrt.clear();
+        }
+        return None;
+    }
+    *reihum = reihum.wrapping_add(1);
+    Some(frei[*reihum % frei.len()])
+}
+
+/// Wie lange auf ein Stück oder eine Lieferung gewartet wird.
+const ABZUG_FRIST: Duration = Duration::from_secs(10);
+
+/// Wie viele Lieferungen der Hintergrundprüfung laufen.
+fn h_laufend(h: &Option<Hintergrund>) -> usize {
+    h.as_ref().map_or(0, |h| h.laufend.len())
+}
+
+impl Knoten {
+    /// Ob dieser Knoten aus einem Grund von innen angehalten hat.
+    pub fn angehalten(&self) -> Option<&'static str> {
+        self.angehalten
+    }
+
+    /// Ob gerade ein Abzug geholt wird.
+    pub fn holt_abzug(&self) -> bool {
+        self.abzug_holen.is_some()
+    }
+
+    /// Ob die Hintergrundprüfung noch läuft.
+    pub fn prueft_im_hintergrund(&self) -> bool {
+        self.hintergrund.is_some()
+    }
+
+    /// Je Aufnahme: Abzug weiter holen, Hintergrund weiter prüfen.
+    fn abzug_arbeit(&mut self) {
+        if let Some(h) = self.abzug_holen.as_ref() {
+            let anker = h.z.anker();
+            if self.kette.hoehe() >= anker.hoehe {
+                self.protokoll.schreibe(
+                    Eintrag::neu("abzug_unnoetig").zahl("anker", anker.hoehe as i64).zahl("hoehe", self.kette.hoehe() as i64),
+                );
+                self.abzug_holen = None;
+            }
+        }
+        if self.abzug_holen.as_ref().is_some_and(|h| h.bei.is_none_or(|(_, t)| t.elapsed() > ABZUG_FRIST)) {
+            self.abzug_anfragen();
+        }
+        if let Some(h) = self.hintergrund.as_mut() {
+            h.laufend.retain(|n| n.seit.elapsed() <= ABZUG_FRIST);
+        }
+        self.hintergrund_anfragen();
+    }
+
+    fn abzug_bei(&self, von: &libp2p::PeerId) -> bool {
+        self.abzug_holen.as_ref().is_some_and(|h| h.bei.is_some_and(|(p, _)| p == *von))
+    }
+
+    fn hintergrund_bei(&self, von: &libp2p::PeerId) -> bool {
+        self.hintergrund.as_ref().is_some_and(|h| h.laufend.iter().any(|n| n.an == *von))
+    }
+
+    /// Eine Lieferung gehört der Hintergrundprüfung, wenn sie unter deren
+    /// Ziel beginnt; das gewöhnliche Nachholen fragt nie unter der Basis.
+    fn fuer_den_hintergrund(&self, bloecke: &[myl_consensus::block::Block]) -> bool {
+        self.hintergrund.as_ref().is_some_and(|h| bloecke.first().is_some_and(|b| b.header.height <= h.ziel))
+    }
+
+    fn anfrage_senden(&mut self, an: libp2p::PeerId, n: &Nachforderung) -> bool {
+        n.als_bytes().is_some_and(|daten| self.kommandos.send(NodeCommand::Anfrage { an, daten }).is_ok())
+    }
+
+    fn abzug_anfragen(&mut self) {
+        let Some(h) = self.abzug_holen.as_mut() else {
+            return;
+        };
+        h.bei = None;
+        let Some(peer) = naechste_gegenstelle(&self.gegenstellen, &mut h.gesperrt, &mut h.reihum, &mut h.gemeldet) else {
+            return;
+        };
+        let n = Nachforderung::Abzug { hoehe: h.z.anker().hoehe, ab: h.z.ab() };
+        let ab = h.z.ab();
+        if self.anfrage_senden(peer, &n) {
+            if let Some(h) = self.abzug_holen.as_mut() {
+                h.bei = Some((peer, std::time::Instant::now()));
+            }
+            if ab == 0 {
+                self.protokoll.schreibe(Eintrag::neu("abzug_angefragt").text("bei", peer.to_string()));
+            }
+        }
+    }
+
+    /// Liefert ein Stück eines eigenen Abzugs, aus der Ablage; der zuletzt
+    /// gelesene bleibt für die folgenden Stücke im Speicher.
+    fn abzug_stueck(&mut self, hoehe: u64, ab: u64) -> Option<Nachlieferung> {
+        if self.abzug_zwischen.as_ref().map(|a| a.hoehe()) != Some(hoehe) {
+            let (a, _) = self.kette.ablage()?.lesen(hoehe).ok()?;
+            self.abzug_zwischen = Some(a);
+        }
+        let a = self.abzug_zwischen.as_ref()?;
+        let daten = crate::abzug::stueck_von(a, ab)?.to_vec();
+        Some(Nachlieferung::Abzug { block: a.block.clone(), ab, daten, groesse: a.zustand.len() as u64 })
+    }
+
+    fn abzug_stueck_erhalten(&mut self, von: libp2p::PeerId, block: myl_consensus::block::Block, ab: u64, daten: &[u8], groesse: u64) {
+        if !self.abzug_bei(&von) {
+            return;
+        }
+        let Some(h) = self.abzug_holen.as_mut() else {
+            return;
+        };
+        match h.z.stueck(block, ab, daten, groesse) {
+            Ok(crate::abzug::Weiter::Ab(_)) => self.abzug_anfragen_bei(von),
+            Ok(crate::abzug::Weiter::Fertig(f)) => {
+                self.abzug_holen = None;
+                let (abzug, zustand) = *f;
+                self.abzug_uebernehmen(abzug, zustand, von);
+            }
+            Err(e) => {
+                let anker = h.z.anker();
+                h.gesperrt.insert(von);
+                h.z = crate::abzug::Zusammensetzen::neu(anker);
+                self.protokoll.schreibe(
+                    Eintrag::neu("abzug_abgelehnt").text("von", von.to_string()).text("grund", e.to_string()),
+                );
+                self.abzug_anfragen();
+            }
+        }
+    }
+
+    /// Das nächste Stück bei derselben Gegenstelle: Sie hat geliefert.
+    fn abzug_anfragen_bei(&mut self, peer: libp2p::PeerId) {
+        let Some(h) = self.abzug_holen.as_ref() else {
+            return;
+        };
+        let n = Nachforderung::Abzug { hoehe: h.z.anker().hoehe, ab: h.z.ab() };
+        let gesendet = self.anfrage_senden(peer, &n);
+        if let Some(h) = self.abzug_holen.as_mut() {
+            h.bei = gesendet.then(|| (peer, std::time::Instant::now()));
+        }
+    }
+
+    fn abzug_nichts(&mut self, von: libp2p::PeerId) {
+        // Hat die Gegenstelle den Abzug nicht, ist der Anker vielleicht zu
+        // alt: Gewöhnliche Grenzen behält jeder nur zwei Epochen lang.
+        if let Some(h) = self.abzug_holen.as_mut() {
+            h.gesperrt.insert(von);
+            let hoehe = h.z.anker().hoehe;
+            self.protokoll.schreibe(Eintrag::neu("abzug_nichts").text("von", von.to_string()).zahl("hoehe", hoehe as i64));
+        }
+        self.abzug_anfragen();
+    }
+
+    /// Setzt die Kette auf den geprüften Abzug, legt ihn als Basis ab und
+    /// beginnt die Hintergrundprüfung.
+    fn abzug_uebernehmen(&mut self, abzug: crate::abzug::Abzug, zustand: myl_ledger::state::LedgerState, von: libp2p::PeerId) {
+        let hoehe = abzug.hoehe();
+        let bytes = abzug.zustand.len();
+        if let Err(g) = self.kette.auf_abzug_setzen(&abzug, zustand) {
+            self.protokoll.schreibe(Eintrag::neu("abzug_nicht_gesetzt").text("grund", g));
+            return;
+        }
+        if let Some(a) = self.kette.ablage().cloned() {
+            if a.ablegen(&abzug).and_then(|()| a.basis_setzen(hoehe)).is_err() {
+                self.protokoll.schreibe(Eintrag::neu("abzug_nicht_abgelegt").zahl("hoehe", hoehe as i64));
+            }
+        }
+        self.protokoll.schreibe(
+            Eintrag::neu("abzug_uebernommen")
+                .zahl("hoehe", hoehe as i64)
+                .zahl("bytes", bytes as i64)
+                .text("von", von.to_string())
+                .text("zustandswurzel", kurz(&self.kette.zustandswurzel())),
+        );
+        if self.konfig.hintergrundpruefung {
+            self.hintergrund = Some(Hintergrund::neu(self.konfig.netz, &abzug.block));
+            self.hintergrund_anfragen();
+        }
+        self.voraus_einspielen();
+        self.weiter_nachfordern(None);
+    }
+
+    /// Füllt die Lieferungen der Prüfung bis [`HINTERGRUND_ZUGLEICH`] auf, mit
+    /// derselben Planung wie das Nachholen ([`crate::nachschub::naechster_bereich`]).
+    fn hintergrund_anfragen(&mut self) {
+        if self.hintergrund.is_none() {
+            return;
+        }
+        let mut versuche = 0usize;
+        while h_laufend(&self.hintergrund) < HINTERGRUND_ZUGLEICH && versuche <= self.gegenstellen.len() {
+            versuche += 1;
+            let Some(h) = self.hintergrund.as_mut() else {
+                return;
+            };
+            let laufend: Vec<(u64, u64)> = h.laufend.iter().map(|n| (n.ab, n.bis)).collect();
+            let Some((ab, bis)) =
+                crate::nachschub::naechster_bereich(h.kette.hoehe(), &laufend, |x| h.voraus.hat_hoehe(x), h.ziel)
+            else {
+                return;
+            };
+            // Nicht bei einer Gegenstelle, die gerade Blöcke für die eigene
+            // Kette oder schon für die Prüfung liefert: Die Antworten tragen
+            // keine Marke, die sie unterschiede.
+            let frei: Vec<libp2p::PeerId> = self
+                .gegenstellen
+                .iter()
+                .filter(|p| !self.nachforderungen.iter().any(|n| n.an == **p) && !h.laufend.iter().any(|n| n.an == **p))
+                .copied()
+                .collect();
+            let Some(peer) = naechste_gegenstelle(&frei, &mut h.gesperrt, &mut h.reihum, &mut h.gemeldet) else {
+                return;
+            };
+            if !self.anfrage_senden(peer, &Nachforderung::Bloecke { ab, bis }) {
+                return;
+            }
+            let n = self.hintergrund.as_mut().map_or(0, |h| {
+                h.laufend.push(Nachforderung1 { an: peer, ab, bis, seit: std::time::Instant::now() });
+                h.laufend.len()
+            });
+            self.protokoll.schreibe(
+                Eintrag::neu("hintergrund_angefordert")
+                    .text("bei", peer.to_string())
+                    .zahl("ab", ab as i64)
+                    .zahl("bis", bis as i64)
+                    .zahl("laufend", n as i64),
+            );
+        }
+    }
+
+    fn hintergrund_nichts(&mut self, von: libp2p::PeerId) {
+        if let Some(h) = self.hintergrund.as_mut() {
+            h.laufend.retain(|n| n.an != von);
+            h.gesperrt.insert(von);
+        }
+        self.hintergrund_anfragen();
+    }
+
+    fn hintergrund_bloecke(&mut self, von: libp2p::PeerId, bloecke: Vec<myl_consensus::block::Block>) {
+        let Some(h) = self.hintergrund.as_mut() else {
+            return;
+        };
+        h.laufend.retain(|n| n.an != von);
+        let mut abgelehnt = None;
+        for b in bloecke.into_iter().filter(|b| b.header.height <= h.ziel) {
+            match h.kette.uebernimm(&b) {
+                Ok(()) => {}
+                // Ein späterer Bereich vor einem früheren: aufheben.
+                Err(crate::kette::KettenFehler::PasstNichtAn { .. }) if b.header.height > h.kette.hoehe() + 1 => {
+                    if let Ok(roh) = borsh::to_vec(&b) {
+                        let _ = h.voraus.ablegen(h.kette.hoehe(), b, &roh);
+                    }
+                }
+                Err(e) => {
+                    // Eine Lieferung, die nicht an die eigene Prüfkette passt,
+                    // hört bei dieser Gegenstelle auf; geurteilt wird am Ziel.
+                    abgelehnt = Some(e.to_string());
+                    break;
+                }
+            }
+        }
+        // Was aufgehoben ist und jetzt anschliesst, einspielen.
+        loop {
+            let kandidaten = h.voraus.naechste(h.kette.hoehe());
+            let mut weiter = false;
+            for b in kandidaten {
+                if !weiter && h.kette.uebernimm(&b).is_ok() {
+                    weiter = true;
+                }
+            }
+            if !weiter {
+                break;
+            }
+        }
+        if let Some(grund) = abgelehnt {
+            h.gesperrt.insert(von);
+            self.protokoll.schreibe(Eintrag::neu("hintergrund_abgelehnt").text("von", von.to_string()).text("grund", grund));
+        }
+        let Some(h) = self.hintergrund.as_ref() else {
+            return;
+        };
+        if h.kette.hoehe() < h.ziel {
+            return self.hintergrund_anfragen();
+        }
+        let (ziel, gleich) = (h.ziel, h.kette.letzter_hash() == h.blockhash && h.kette.zustandswurzel() == h.wurzel);
+        let gefunden = kurz(&h.kette.zustandswurzel());
+        let erwartet = kurz(&h.wurzel);
+        self.hintergrund = None;
+        if gleich {
+            if let Some(a) = self.kette.ablage() {
+                let _ = a.bestaetigt_setzen(ziel);
+            }
+            self.protokoll.schreibe(Eintrag::neu("abzug_bestaetigt").zahl("hoehe", ziel as i64));
+        } else {
+            // ⛔️ Die Blöcke von Genesis führen nicht zur Basis: Der Anker war
+            //   falsch. Weitermachen hiesse, auf einem fremden Zustand zu
+            //   rechnen und ihn anderen zu liefern.
+            self.protokoll.schreibe(
+                Eintrag::neu("abzug_widerlegt")
+                    .zahl("hoehe", ziel as i64)
+                    .text("erwartet", erwartet)
+                    .text("gefunden", gefunden),
+            );
+            self.angehalten = Some("Zustandsabzug widerlegt: die Blöcke von Genesis führen nicht zur Basis");
+        }
+    }
+
+    /// Meldet einen neu angelegten eigenen Abzug, mit vollem Blockhash: Aus
+    /// dieser Zeile entsteht ein Anker.
+    fn eigenen_abzug_melden(&mut self) {
+        let Some((hoehe, hash)) = self.kette.letzter_abzug() else {
+            return;
+        };
+        if self.abzug_gemeldet == Some(hoehe) {
+            return;
+        }
+        self.abzug_gemeldet = Some(hoehe);
+        self.protokoll.schreibe(
+            Eintrag::neu("abzug_angelegt")
+                .zahl("hoehe", hoehe as i64)
+                .text("anker", format!("{hoehe}:{}", hash.to_hex()))
+                .wahr("dauerhaft", crate::abzug::ist_langzeit(hoehe)),
+        );
+    }
+}
+
+/// Die Nonce der nächsten Transaktion des Testverkehrs (Fund 593).
+///
+/// `stand` ist (nächste Nonce, Höhe beim Senden der ältesten noch nicht
+/// verbuchten). Liegt der Zustand vorn oder ist seit 32 Blöcken nichts
+/// verbucht worden, beginnt es wieder bei der Nonce aus dem Zustand.
+pub(crate) fn testverkehr_nonce(stand: &mut (u64, u64), im_zustand: u64, hoehe: u64) -> u64 {
+    let (naechste, seit) = *stand;
+    let unterwegs = naechste > im_zustand && hoehe < seit.saturating_add(32);
+    let nonce = if unterwegs { naechste } else { im_zustand };
+    *stand = (nonce + 1, if unterwegs { seit } else { hoehe });
+    nonce
+}
+
+#[cfg(test)]
+mod testverkehr_tests {
+    use super::testverkehr_nonce;
+
+    /// Ab der Nonce im Zustand, fortgezählt, solange etwas unterwegs ist.
+    #[test]
+    fn die_nonce_kommt_aus_dem_zustand() {
+        let mut s = (0, 0);
+        assert_eq!(testverkehr_nonce(&mut s, 0, 10), 0, "die erste ist die des Zustands");
+        assert_eq!(testverkehr_nonce(&mut s, 0, 11), 1, "die erste ist unterwegs");
+        assert_eq!(testverkehr_nonce(&mut s, 2, 12), 2, "beide verbucht");
+        // Ein Neustart: der Stand ist leer, der Zustand nicht.
+        let mut neu = (0, 0);
+        assert_eq!(testverkehr_nonce(&mut neu, 7, 100), 7);
+    }
+
+    /// Kommt 32 Blöcke lang nichts an, ging es verloren: wieder ab dem
+    /// Zustand, und ab dann zählt die Frist neu.
+    #[test]
+    fn verlorenes_wird_neu_gesendet() {
+        let mut s = (0, 0);
+        assert_eq!(testverkehr_nonce(&mut s, 0, 10), 0);
+        assert_eq!(testverkehr_nonce(&mut s, 0, 41), 1, "noch in der Frist");
+        assert_eq!(testverkehr_nonce(&mut s, 0, 42), 0, "nach 32 Blöcken neu");
+        assert_eq!(testverkehr_nonce(&mut s, 0, 43), 1);
     }
 }

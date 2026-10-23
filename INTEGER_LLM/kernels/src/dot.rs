@@ -310,7 +310,7 @@ pub fn ternaer_zeile_viele(muster: &[u8], betraege: &[i16], e: &[crate::ternaer:
 pub fn vierbit_zeile(codes: &[u8], gitter: &[u8], x: &[i16], hoch: &[i8], tief: &[u8], summen: &[i64]) -> i64 {
     let gruppen = gitter.len() / crate::vierbit::GITTER_JE_GRUPPE;
     assert!(
-        gitter.len() % crate::vierbit::GITTER_JE_GRUPPE == 0 && codes.len() == gruppen * crate::vierbit::BYTES_JE_GRUPPE,
+        gitter.len().is_multiple_of(crate::vierbit::GITTER_JE_GRUPPE) && codes.len() == gruppen * crate::vierbit::BYTES_JE_GRUPPE,
         "vierbit_zeile: {} Codebytes zu {} Gitterbytes",
         codes.len(),
         gitter.len()
@@ -343,7 +343,7 @@ pub fn vierbit_zeile_viele(codes: &[u8], gitter: &[u8], e: &[crate::ternaer::Ein
     let n = gruppen * crate::vierbit::GRUPPE;
     let gemeinsam = VEKTORISIERT
         && !SKALAR_ERZWUNGEN.load(Ordering::Relaxed)
-        && gitter.len() % crate::vierbit::GITTER_JE_GRUPPE == 0
+        && gitter.len().is_multiple_of(crate::vierbit::GITTER_JE_GRUPPE)
         && codes.len() == gruppen * crate::vierbit::BYTES_JE_GRUPPE
         && e.iter().all(|ein| ein.laengen_passen(n, gruppen));
     if gemeinsam && gewaehlt::vierbit_viele(codes, gitter, e, aus) {

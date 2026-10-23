@@ -101,10 +101,68 @@ pub fn start_bootstrap(
         .map_err(|_| DiscoveryError::NoKnownPeers)
 }
 
+/// **Welche Adressen einer Gegenstelle ins Adressbuch gehören** (Fund 594,
+/// 2026-10-22).
+///
+/// Ein Knoten, der auf allen Schnittstellen horcht (`0.0.0.0`), nennt über
+/// `identify` und mDNS jede davon, die Rückschleife eingeschlossen. Wer
+/// `127.0.0.1` einer **fremden** Gegenstelle wählt, erreicht sich selbst:
+/// Im Lauf mit getrennten Prozessen stand nach einer Trennung nur noch
+/// diese Adresse im Adressbuch, und jede Neuwahl endete mit „Unexpected
+/// peer ID“ beim eigenen Schlüssel. Im Lauf im selben Prozess fiel es nie
+/// auf, denn dort sitzen alle wirklich auf der Rückschleife.
+///
+/// Deshalb: **Die Rückschleife nur, wenn die Gegenstelle nichts anderes
+/// nennt** (dann sitzt sie auf derselben Maschine, wie in jeder Probe),
+/// und eine unspezifische Adresse (`0.0.0.0`, `::`) nie, denn sie ist eine
+/// Horchangabe und kein Ziel.
+pub fn fuer_das_adressbuch(adressen: impl IntoIterator<Item = Multiaddr>) -> Vec<Multiaddr> {
+    let gezielt: Vec<Multiaddr> = adressen.into_iter().filter(|a| !ist_ip(a, |ip| ip.is_unspecified())).collect();
+    if gezielt.iter().any(|a| !ist_ip(a, |ip| ip.is_loopback())) {
+        gezielt.into_iter().filter(|a| !ist_ip(a, |ip| ip.is_loopback())).collect()
+    } else {
+        gezielt
+    }
+}
+
+/// Ob die erste IP-Angabe der Adresse die Bedingung erfüllt; eine Adresse
+/// ohne IP (DNS, Relais allein) erfüllt sie nie.
+fn ist_ip(a: &Multiaddr, bedingung: impl Fn(std::net::IpAddr) -> bool) -> bool {
+    a.iter().find_map(|p| match p {
+        Protocol::Ip4(ip) => Some(bedingung(ip.into())),
+        Protocol::Ip6(ip) => Some(bedingung(ip.into())),
+        _ => None,
+    }) == Some(true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::identity::NodeIdentity;
+
+    fn a(text: &str) -> Multiaddr {
+        text.parse().expect("Multiaddr")
+    }
+
+    /// Fund 594: Wer eine andere Adresse nennt, kommt ohne Rückschleife ins
+    /// Adressbuch; wer nur die Rückschleife nennt, mit ihr; die
+    /// unspezifische Adresse nie.
+    #[test]
+    fn die_rueckschleife_nur_ohne_andere_adresse() {
+        let gemischt = fuer_das_adressbuch([
+            a("/ip4/127.0.0.1/udp/4150/quic-v1"),
+            a("/ip4/10.77.0.14/tcp/4150"),
+            a("/ip6/::1/tcp/4150"),
+            a("/ip4/0.0.0.0/tcp/4150"),
+            a("/dns4/knoten.example/tcp/4150"),
+        ]);
+        assert_eq!(gemischt, vec![a("/ip4/10.77.0.14/tcp/4150"), a("/dns4/knoten.example/tcp/4150")]);
+
+        let nur_rueckschleife = fuer_das_adressbuch([a("/ip4/127.0.0.1/tcp/4150"), a("/ip4/0.0.0.0/tcp/4150")]);
+        assert_eq!(nur_rueckschleife, vec![a("/ip4/127.0.0.1/tcp/4150")], "Proben auf einer Maschine bleiben möglich");
+
+        assert!(fuer_das_adressbuch([a("/ip6/::/tcp/4150")]).is_empty());
+    }
     use crate::node::build_swarm;
     use futures::StreamExt;
     use libp2p::swarm::SwarmEvent;

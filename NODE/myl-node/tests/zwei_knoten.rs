@@ -81,6 +81,9 @@ fn konfig(verzeichnis: &std::path::Path, name: &str, bootstrap: Vec<String>) -> 
         // sichtbar bleibt, welche Nachricht wessen ist.
         testverkehr_sekunden: None,
         erzeugt_bloecke: false,
+        blocktakt_ms: None,
+        abzug: None,
+        hintergrundpruefung: true,
         // Ein Probelauf mit Attest-Prüfung: beide Knoten kennen einander.
         teilnehmer: vec!["alpha".into(), "beta".into()],
     }
@@ -657,4 +660,52 @@ async fn eine_inferenzantwort_beendet_die_blocknachforderung_nicht() {
     );
 
     let _ = std::fs::remove_dir_all(&verz);
+}
+
+/// ⚑ **Der Blocktakt baut im eigenen Takt, ohne nachzuschiessen**
+/// (2026-10-22).
+///
+/// Alpha erzeugt alle 20 ms einen Block, ohne Testverkehr. Vor der
+/// gemessenen Sekunde läuft Alpha eine halbe Sekunde lang nicht (so wie
+/// zwischen zwei Scheiben eines Laufs); in der Sekunde danach sind es
+/// trotzdem höchstens 51 Blöcke, und weniger, wenn die Maschine beschäftigt
+/// ist. Mehr hiesse, der Takt holt die verpassten in einem Schwall nach.
+/// Danach holt Beta auf, und beide halten dieselbe Wurzel. Gegenprobe: ohne
+/// Blocktakt bleibt die Höhe bei null.
+#[tokio::test]
+async fn der_blocktakt_baut_im_eigenen_takt() {
+    let verz = arbeitsverzeichnis("blocktakt");
+    let mut k = konfig(&verz, "alpha", vec![]);
+    k.erzeugt_bloecke = true;
+    k.blocktakt_ms = Some(20);
+    let mut alpha = Knoten::starten(k, false).await.expect("Alpha startet");
+    let adresse = alpha.warte_auf_adresse(Duration::from_secs(10)).await.expect("Adresse");
+    let mut beta = Knoten::starten(konfig(&verz, "beta", vec![adresse.to_string()]), false)
+        .await
+        .expect("Beta startet");
+    assert_eq!(beta.warte_auf_peers(1, Duration::from_secs(20)).await, 1, "Beta hat Alpha nicht erreicht");
+    alpha.laufe_fuer(Duration::from_millis(200)).await;
+    assert_eq!(alpha.peers().await, 1, "Alpha sah die Verbindung nicht");
+
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let vorher = alpha.kette().hoehe();
+    alpha.laufe_fuer(Duration::from_secs(1)).await;
+    let gebaut = alpha.kette().hoehe() - vorher;
+    assert!(gebaut <= 51, "{gebaut} Blöcke in einer Sekunde: der Takt schiesst nach");
+    assert!(gebaut >= 10, "nur {gebaut} Blöcke in einer Sekunde bei 20 ms Takt");
+
+    let bis = tokio::time::Instant::now() + Duration::from_secs(20);
+    while beta.kette().hoehe() < alpha.kette().hoehe() {
+        assert!(tokio::time::Instant::now() < bis, "Beta holte nicht auf");
+        beta.laufe_fuer(Duration::from_millis(50)).await;
+    }
+    assert_eq!(beta.kette().hoehe(), alpha.kette().hoehe());
+    assert_eq!(beta.kette().zustandswurzel(), alpha.kette().zustandswurzel(), "die Ketten laufen auseinander");
+
+    let mut ohne = konfig(&verz, "gamma", vec![]);
+    ohne.erzeugt_bloecke = true;
+    let mut gamma = Knoten::starten(ohne, false).await.expect("Gamma startet");
+    gamma.laufe_fuer(Duration::from_millis(300)).await;
+    assert_eq!(gamma.kette().hoehe(), 0, "ohne Blocktakt und ohne Testverkehr baut niemand");
+    std::fs::remove_dir_all(&verz).ok();
 }

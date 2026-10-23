@@ -270,8 +270,8 @@ impl Kopfdaten {
     /// Kopie. Die Länge ist vorher geprüft und gerade.
     pub fn aus_abbild(abbild: memmap2::Mmap) -> Self {
         let passt = cfg!(target_endian = "little")
-            && abbild.len() % 2 == 0
-            && (abbild.as_ptr() as usize) % std::mem::align_of::<i16>() == 0;
+            && abbild.len().is_multiple_of(2)
+            && (abbild.as_ptr() as usize).is_multiple_of(std::mem::align_of::<i16>());
         if passt {
             Kopfdaten::Abbild(abbild)
         } else {
@@ -1165,13 +1165,13 @@ pub fn load_model_dims(artifact_dir: &Path) -> Result<ModelDims, String> {
     // der Projektionsmatrizen je Layer
     // ([`pruefe_projektionsformen`]) — dieselbe Schutzwirkung, aber
     // gegen die Groessen, auf die es wirklich ankommt.
-    if dims.head_dim % 2 != 0 {
+    if !dims.head_dim.is_multiple_of(2) {
         return Err(format!(
             "model_config.json: head_dim ({}) muss gerade sein (RoPE paart je zwei Elemente ueber den Half-Split)",
             dims.head_dim
         ));
     }
-    if dims.num_heads % dims.num_kv_heads != 0 {
+    if !dims.num_heads.is_multiple_of(dims.num_kv_heads) {
         return Err(format!(
             "model_config.json: num_heads ({}) ist kein Vielfaches von num_kv_heads ({}) (GQA-Gruppierung nicht moeglich)",
             dims.num_heads, dims.num_kv_heads
@@ -1314,7 +1314,7 @@ fn eintrag_laden(
         // stand hier bisher nicht: `chunks_exact` verwarf ein einzelnes
         // Restbyte stillschweigend und lud ein um ein halbes Element
         // gekuerztes Gewicht. Eine beschaedigte Datei muss auffallen.
-        if bytes.len() % 2 != 0 {
+        if !bytes.len().is_multiple_of(2) {
             return Err(format!(
                 "{}: Datei hat ungerade Byteanzahl ({}), kann keine \
                  i16-Folge sein",
@@ -1524,7 +1524,7 @@ fn vorzeichen_laden(
     if v.len() != spalten || v.iter().any(|&s| s != 1 && s != -1) {
         return Err(format!("{name}: {datei} traegt nicht {spalten} Vorzeichen +1/-1"));
     }
-    if spalten % integer_llm_kernels::drehung::BLOCK != 0 {
+    if !spalten.is_multiple_of(integer_llm_kernels::drehung::BLOCK) {
         return Err(format!("{name}: {spalten} Eingaenge sind kein Vielfaches der Drehblockgroesse"));
     }
     // ⛔️ **Der erste Eintrag gewinnt, atomar** (Fund 501, 2026-09-29). Hier
@@ -2414,7 +2414,7 @@ fn lade_ngramm(
     }
     let koepfe = masse.koepfe();
     let e_breite = dims.ple_embed_dim;
-    if koepfe == 0 || e_breite % koepfe != 0 {
+    if koepfe == 0 || !e_breite.is_multiple_of(koepfe) {
         return Err(format!("{p}.ple: Breite {e_breite} laesst sich nicht auf {koepfe} Koepfe teilen"));
     }
     let tabelle = require_tensor(weights, &format!("{p}.ple.ple_embedding.ngram_embedding.weight"))?.clone();
@@ -2464,7 +2464,7 @@ fn lade_blockauswahl(
     p: &str,
 ) -> Result<crate::model::vierstrom::Blockauswahl, String> {
     let (n, d) = (dims.indexer_n_heads, dims.indexer_head_dim);
-    if dims.indexer_kv_heads != 1 || dims.indexer_compress_ratio == 0 || dims.indexer_budget % dims.indexer_compress_ratio != 0 {
+    if dims.indexer_kv_heads != 1 || dims.indexer_compress_ratio == 0 || !dims.indexer_budget.is_multiple_of(dims.indexer_compress_ratio) {
         return Err(format!(
             "{p}: Blockauswahl mit {} Schluesselkoepfen, Budget {} und Verdichtung {} wird nicht gerechnet",
             dims.indexer_kv_heads, dims.indexer_budget, dims.indexer_compress_ratio

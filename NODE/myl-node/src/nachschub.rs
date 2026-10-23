@@ -54,7 +54,44 @@ use myl_consensus::block::Block;
 /// Größere Rückstände holt der Knoten in mehreren Runden auf: Jede
 /// gelungene Nachlieferung hebt seine Höhe, und die nächste Anfrage
 /// beginnt dort.
-pub const MAX_BLOECKE_JE_LIEFERUNG: u64 = 64;
+///
+/// 📌 **Seit dem 2026-10-22: 512 statt 64, und dazu ein Deckel in Bytes**
+/// ([`in_die_antwort`]). Die Herleitung oben sprach von Bytes, die
+/// Grenze zählte Blöcke: Ein echter Block darf so groß sein wie die ganze
+/// Antwort, 64 davon passten nicht hinein, und das Nachholen bliebe an
+/// der ersten vollen Strecke stehen. Mit dem Deckel in Bytes ist die Zahl
+/// keine Schutzgrenze mehr, nur noch eine Obergrenze für leichte Blöcke;
+/// im Netzlauf holte ein Neuling 3 860 Blöcke in Schritten von 64.
+pub const MAX_BLOECKE_JE_LIEFERUNG: u64 = 512;
+
+/// Was eine Lieferung an Bytes um ihre Blöcke herum braucht (Marke der
+/// Antwort, Länge der Liste), großzügig gerundet.
+const LIEFERUNG_RAHMEN_BYTES: usize = 64;
+
+/// **Wie viele der Längen vorn in eine Antwort passen**: mindestens eine,
+/// denn ein Block, der allein nicht passt, passt nie, und ohne ihn käme
+/// der Nachfragende nicht weiter.
+pub fn passende_anzahl(laengen: &[usize], grenze: usize) -> usize {
+    let mut summe = LIEFERUNG_RAHMEN_BYTES;
+    let mut n = 0;
+    for l in laengen {
+        summe = summe.saturating_add(*l);
+        if summe > grenze && n > 0 {
+            break;
+        }
+        n += 1;
+    }
+    n
+}
+
+/// **Kürzt eine Lieferung auf das, was in eine Antwort passt**
+/// ([`myl_types::protocol::MAX_ANFRAGE_BYTES`]). Der Nachfragende setzt an
+/// der Höhe danach fort.
+pub fn in_die_antwort(mut bloecke: Vec<Block>) -> Vec<Block> {
+    let laengen: Vec<usize> = bloecke.iter().map(|b| borsh::to_vec(b).map(|v| v.len()).unwrap_or(usize::MAX)).collect();
+    bloecke.truncate(passende_anzahl(&laengen, myl_types::protocol::MAX_ANFRAGE_BYTES));
+    bloecke
+}
 
 /// Was ein Knoten nachfordern kann.
 #[derive(Debug, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
@@ -102,6 +139,14 @@ pub enum Nachforderung {
         /// Die Messung des Zeugen.
         zeugnis: myl_types::fristmeldung::Fristzeugnis,
     },
+    /// ⚑ **Ein Stück eines Zustandsabzugs** (2026-10-22): der Abzug bei
+    /// `hoehe`, ab Byte `ab` seines Zustands. Angehängt.
+    Abzug {
+        /// Die Epochengrenze.
+        hoehe: u64,
+        /// Ab welchem Byte des Zustands.
+        ab: u64,
+    },
 }
 
 /// Was auf eine Nachforderung zurückkommt.
@@ -133,6 +178,49 @@ pub enum Nachlieferung {
     },
     /// Ein Fristzeugnis ist angekommen.
     Vermerkt,
+    /// Ein Stück eines Zustandsabzugs: der Block bei H mit jedem Stück (der
+    /// Fragende hält ihn beim ersten gegen seinen Anker), die Stelle, die
+    /// Bytes und die Größe des ganzen Zustands.
+    Abzug {
+        /// Der Block bei H.
+        block: Block,
+        /// Ab welchem Byte.
+        ab: u64,
+        /// Die Bytes, höchstens `abzug::STUECK_BYTES`.
+        daten: Vec<u8>,
+        /// Wie groß der ganze Zustand ist.
+        groesse: u64,
+    },
+}
+
+/// ⚑ **Der nächste Bereich beim Nachholen von mehreren Quellen** (2026-10-22).
+///
+/// Ab dem kleinsten Block über `eigene`, den weder ein laufender Bereich
+/// (`laufend`, je `(ab, bis)`) noch der Vorausspeicher (`im_voraus`) deckt;
+/// höchstens [`MAX_BLOECKE_JE_LIEFERUNG`] lang, nicht über `ziel` und nicht in
+/// den nächsten laufenden Bereich hinein. `None`, wenn bis `ziel` alles gedeckt
+/// ist.
+///
+/// 📌 Die erste Fassung begann hinter dem höchsten laufenden Bereich. Ging
+/// die vorderste Lieferung verloren, schloss niemand mehr die Lücke davor,
+/// und die Kette rückte nie vor, obwohl alles Spätere ankam.
+pub fn naechster_bereich(eigene: u64, laufend: &[(u64, u64)], im_voraus: impl Fn(u64) -> bool, ziel: u64) -> Option<(u64, u64)> {
+    let mut ab = eigene + 1;
+    loop {
+        if let Some(&(_, bis)) = laufend.iter().find(|(a, b)| *a <= ab && ab <= *b) {
+            ab = bis + 1;
+        } else if ab <= ziel && im_voraus(ab) {
+            ab += 1;
+        } else {
+            break;
+        }
+    }
+    if ab > ziel {
+        return None;
+    }
+    let bis = ziel.min(ab + MAX_BLOECKE_JE_LIEFERUNG - 1);
+    let bis = laufend.iter().filter(|(a, _)| *a > ab).map(|(a, _)| a - 1).min().unwrap_or(bis).min(bis);
+    Some((ab, bis))
 }
 
 impl Nachforderung {
@@ -182,6 +270,14 @@ impl Nachlieferung {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn eine_lieferung_passt_in_die_antwort() {
+        assert_eq!(super::passende_anzahl(&[100; 10], 1_000), 9, "64 Rahmen und neun Blöcke zu 100");
+        assert_eq!(super::passende_anzahl(&[2_000], 1_000), 1, "ein zu großer Block geht allein");
+        assert_eq!(super::passende_anzahl(&[400, 400, 400], 1_000), 2);
+        assert_eq!(super::passende_anzahl(&[], 1_000), 0);
+    }
+
     use super::*;
 
     #[test]
@@ -224,7 +320,7 @@ mod tests {
     fn mehrere_runden_holen_auch_grosse_rueckstaende_auf() {
         // Jede gelungene Lieferung hebt die Höhe, die nächste Anfrage
         // beginnt dort. Nach genug Runden ist die Lücke zu.
-        let ziel = 200u64;
+        let ziel = 1_200u64;
         let mut hoehe = 0u64;
         let mut runden = 0;
         while let Some(Nachforderung::Bloecke { bis, .. }) =
@@ -235,7 +331,7 @@ mod tests {
             assert!(runden < 20, "kommt nicht voran");
         }
         assert_eq!(hoehe, ziel);
-        assert_eq!(runden, 4, "200 Blöcke in Schritten von 64: vier Runden");
+        assert_eq!(runden, 3, "1200 Blöcke in Schritten von 512: drei Runden");
     }
 
     #[test]
@@ -283,4 +379,22 @@ mod tests {
         let bytes = Nachlieferung::Nichts.als_bytes().unwrap();
         assert_eq!(Nachlieferung::aus_bytes(&bytes), Some(Nachlieferung::Nichts));
     }
+
+    /// Der nächste Bereich beginnt beim kleinsten ungedeckten Block, auch
+    /// wenn die vorderste Lieferung verloren ging und spätere noch laufen.
+    #[test]
+    fn der_naechste_bereich_schliesst_zuerst_die_vorderste_luecke() {
+        let nichts = |_: u64| false;
+        assert_eq!(naechster_bereich(100, &[], nichts, 2_000), Some((101, 612)));
+        assert_eq!(naechster_bereich(100, &[(101, 612)], nichts, 2_000), Some((613, 1124)));
+        // Die vorderste (101..612) ging verloren, 613..1124 läuft noch.
+        assert_eq!(naechster_bereich(100, &[(613, 1124)], nichts, 2_000), Some((101, 612)));
+        // Nicht in den nächsten laufenden hinein.
+        assert_eq!(naechster_bereich(100, &[(301, 400)], nichts, 2_000), Some((101, 300)));
+        // Was im Vorausspeicher liegt, ist gedeckt.
+        assert_eq!(naechster_bereich(100, &[], |h| (101..=150).contains(&h), 2_000), Some((151, 662)));
+        assert_eq!(naechster_bereich(100, &[(101, 200)], nichts, 200), None, "alles gedeckt");
+        assert_eq!(naechster_bereich(200, &[], nichts, 200), None, "nichts fehlt");
+    }
+
 }

@@ -44,7 +44,14 @@ fn grenzen_werden_geprueft_und_nicht_zurechtgerueckt() {
 #[test]
 fn die_inferenz_rechnet_mit_den_grenzen_der_kette_dasselbe() {
     let dir = artefakte();
-    assert!(myl_pod::artefakte::vorhanden(&dir), "das Probeartefakt fehlt: {}", dir.display());
+    // 📌 Fund 595 (2026-10-22): Hier stand `assert!(vorhanden(..))`. Mit der
+    //    Erlaubnis `MYL_OHNE_ARTEFAKTE` meldet `vorhanden` „ueberspringen“,
+    //    und die Probe brach mit „das Probeartefakt fehlt“ ab, auch auf einer
+    //    Maschine, die es hat. Ein fehlendes Artefakt ohne Erlaubnis meldet
+    //    `vorhanden` selbst.
+    if !myl_pod::artefakte::vorhanden(&dir) {
+        return;
+    }
     let pipeline = Hash([7u8; 32]);
     let laden = |g: Option<&[(usize, usize)]>| {
         Pipelinewerk::laden_mit_grenzen(&dir, PodId::new([0xAA; 32]), EpochId(0), pipeline, 4, g).expect("laedt")
@@ -78,7 +85,9 @@ fn die_inferenz_rechnet_mit_den_grenzen_der_kette_dasselbe() {
 #[test]
 fn das_training_rechnet_mit_den_grenzen_der_kette_dasselbe() {
     let dir = artefakte();
-    assert!(dir.exists(), "das Probeartefakt fehlt: {}", dir.display());
+    if !myl_pod::artefakte::vorhanden(&dir) {
+        return;
+    }
     let modell = Arc::new(load_model(&dir).expect("Modell"));
     let v = Trainingsvorgaben { schritte: 1, ..Trainingsvorgaben::vorgabe() };
     let gleich = Trainingswerk::aus_modell(Arc::clone(&modell)).expect("Werk").segment_fahren(&v).expect("Segment");
@@ -95,7 +104,9 @@ fn das_training_rechnet_mit_den_grenzen_der_kette_dasselbe() {
 fn die_zeitprobe_rechnet_und_laesst_nichts_zurueck() {
     use myl_pod::shard::ShardNode;
     let dir = artefakte();
-    assert!(dir.exists(), "das Probeartefakt fehlt: {}", dir.display());
+    if !myl_pod::artefakte::vorhanden(&dir) {
+        return;
+    }
     let modell = Arc::new(load_model(&dir).expect("Modell"));
     let sk = || myl_types::bls::BlsSecretKey::key_gen(&[3; 32]).expect("Schluessel");
     let mitte = ShardNode::new(1, 3, 10, false, false, Arc::clone(&modell), sk(), 4);

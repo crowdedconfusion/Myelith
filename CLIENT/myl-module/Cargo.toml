@@ -1,8 +1,8 @@
 [package]
 name = "myl-module"
-version = "0.5.0"
+version = "0.5.1"
 edition = "2021"
-rust-version = "1.85"
+rust-version = "1.99"
 description = "Module der Konsole: Protokoll, Beschreibung, Signatur und Wirt"
 license = "LicenseRef-PolyForm-Shield-1.0.0"
 publish = false

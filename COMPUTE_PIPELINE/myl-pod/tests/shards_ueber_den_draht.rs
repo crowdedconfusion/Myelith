@@ -72,8 +72,7 @@ const PROMPT: [u32; 6] = [9707, 374, 264, 1273, 315, 279];
 #[test]
 fn vier_tueren_ein_pod_und_dieselben_token() {
     let dir = artefakte();
-    if !dir.exists() {
-        eprintln!("Artefakt fehlt, uebersprungen: {}", dir.display());
+    if !myl_pod::artefakte::vorhanden(&dir) {
         return;
     }
     let modell = Arc::new(integer_llm_runtime::loader::load_model(&dir).expect("Modell"));
@@ -165,7 +164,7 @@ fn ein_nicht_erreichbarer_shard_wird_gemeldet() {
 #[test]
 fn der_prozessweg_haelt_alle_shards() {
     let dir = artefakte();
-    if !dir.exists() {
+    if !myl_pod::artefakte::vorhanden(&dir) {
         return;
     }
     let modell = Arc::new(integer_llm_runtime::loader::load_model(&dir).expect("Modell"));

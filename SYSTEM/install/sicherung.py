@@ -217,6 +217,21 @@ def _git(*args: str) -> str:
         return ""
 
 
+def _pruefen_mit(skript: str) -> tuple[bool, str]:
+    """Ruft `SYSTEM/install/<skript> pruefen` und liefert Ergebnis und letzte Zeile."""
+    pfad = WURZEL / "SYSTEM" / "install" / skript
+    try:
+        lauf = subprocess.run([sys.executable, str(pfad), "pruefen"], capture_output=True, text=True, timeout=1800)
+    except (OSError, subprocess.SubprocessError) as f:
+        return False, f"nicht pruefbar: {f}"
+    zeilen = [z.strip() for z in (lauf.stdout + lauf.stderr).splitlines() if z.strip()]
+    # Ein Pruefer mit mehreren Teilen endet womoeglich mit einem bestandenen;
+    # ist er gescheitert, zaehlt die Zeile, die es sagt.
+    if lauf.returncode != 0:
+        zeilen = [z for z in zeilen if "FAILED" in z or "FEHLER" in z] or zeilen
+    return lauf.returncode == 0, zeilen[-1] if zeilen else "keine Ausgabe"
+
+
 def werkzeuge_pruefen() -> tuple[bool, str]:
     """Ist der Werkzeugvorrat vollstaendig und passt er zu `flake.lock`?
 
@@ -225,16 +240,59 @@ def werkzeuge_pruefen() -> tuple[bool, str]:
     nichts mehr zu machen ist. Geprueft wird mit `werkzeugvorrat.py pruefen`,
     damit die Regel an einer Stelle steht.
     """
-    werkzeug = WURZEL / "SYSTEM" / "install" / "werkzeugvorrat.py"
+    return _pruefen_mit("werkzeugvorrat.py")
+
+
+def pakete_pruefen() -> tuple[bool, str]:
+    """Passt der Rust-Paketvorrat zu jeder Sperrdatei, auch zu den lokalen?
+
+    📌 **Bis zum 2026-10-22 pruefte die Kopie nur den Werkzeugvorrat.** Wer
+    eine Abhaengigkeit aenderte und `vorrat.py sammeln` vergass, bekam eine
+    Kopie, die ohne Netz nicht baut. Fuer die versionierten Kisten merkt das
+    die CI; fuer eigene, nicht versionierte Module merkt es niemand, und ihre
+    Archive liegen nur hier. Dieselbe Regel wie der Werkzeugvorrat: vorher
+    pruefen, mit `vorrat.py pruefen`.
+    """
+    return _pruefen_mit("vorrat.py")
+
+
+def fehlende_artefakte(wurzel: pathlib.Path, artefakte_mit: tuple[str, ...] = ARTEFAKTE_MIT) -> list[str]:
+    """Die in `ARTEFAKTE_MIT` genannten Artefakte, die es nicht (mehr) gibt.
+
+    📌 **Ein Name, der veraltet, faellt sonst still weg.** Am 2026-10-21
+    wurden die Modelle umbenannt; haette diese Liste die alten Namen
+    behalten, waere die Kopie ohne ein einziges Modell entstanden, und
+    nur eine Zeile in `SICHERUNG.md` haette es verraten.
+    """
+    return [m for m in artefakte_mit if not (wurzel / NUR_OBERSTE_EBENE[0] / m).is_dir()]
+
+
+def ignoriert_und_drin(a: Auswahl, wurzel: pathlib.Path, ebenen: int = 3) -> list[tuple[str, int, int]]:
+    """Was git ignoriert und trotzdem in die Kopie kommt, nach Ordnern.
+
+    ⚑ **Hier taucht neuer Bauabfall zuerst auf.** Die Kopie nimmt alles,
+    was die Regeln oben nicht ausschliessen; was ein neues Werkzeug
+    erzeugt, kommt also mit, ohne dass jemand es bemerkt. Was git
+    ignoriert, ist entweder gewollt hier (Vorraete, Moduldaten, die kleinen
+    Artefakte) oder ein Kandidat fuer die Regeln. Ohne git: leer.
+    """
+    rels = [rel for rel, _, _ in a.dateien]
     try:
-        lauf = subprocess.run([sys.executable, str(werkzeug), "pruefen"], capture_output=True, text=True, timeout=1800)
-    except (OSError, subprocess.SubprocessError) as f:
-        return False, f"nicht pruefbar: {f}"
-    zeilen = [z.strip() for z in (lauf.stdout + lauf.stderr).splitlines() if z.strip()]
-    return lauf.returncode == 0, zeilen[-1] if zeilen else "keine Ausgabe"
+        lauf = subprocess.run(["git", "-C", str(wurzel), "check-ignore", "--stdin"], input="\n".join(rels),
+                              capture_output=True, text=True, timeout=120)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    ignoriert = set(lauf.stdout.splitlines())
+    gruppen: dict[str, list[int]] = {}
+    for rel, _, groesse in a.dateien:
+        if rel in ignoriert:
+            g = gruppen.setdefault("/".join(rel.split("/")[:ebenen]), [0, 0])
+            g[0] += 1
+            g[1] += groesse
+    return sorted(((k, n, g) for k, (n, g) in gruppen.items()), key=lambda x: -x[2])
 
 
-def beschreibung(a: Auswahl, datum: str, werkzeuge: str = "nicht geprueft") -> str:
+def beschreibung(a: Auswahl, datum: str, werkzeuge: str = "nicht geprueft", pakete: str = "nicht geprueft") -> str:
     stand = _git("rev-parse", "--short", "HEAD") or "unbekannt (kein git)"
     offen = len(_git("status", "--porcelain").splitlines()) if stand != "unbekannt (kein git)" else 0
     fassung = ""
@@ -249,6 +307,7 @@ def beschreibung(a: Auswahl, datum: str, werkzeuge: str = "nicht geprueft") -> s
         f"- **Stand:** `{stand}`, dazu {offen} geaenderte oder neue Dateien gegenueber diesem Stand",
         f"- **Inhalt:** {len(a.dateien)} Dateien, {a.groesse / 1e9:.2f} GB",
         f"- **Werkzeugvorrat:** {werkzeuge}",
+        f"- **Paketvorrat (Rust):** {pakete}",
         "",
         "## Bauen und einrichten, ohne Netz",
         "",
@@ -348,7 +407,8 @@ class _Schreiber:
         (self.z if self.als_zip else self.t).close()
 
 
-def schreiben(a: Auswahl, ziel: pathlib.Path, als_zip: bool, datum: str, werkzeuge: str = "nicht geprueft") -> None:
+def schreiben(a: Auswahl, ziel: pathlib.Path, als_zip: bool, datum: str, werkzeuge: str = "nicht geprueft",
+              pakete: str = "nicht geprueft") -> None:
     # ⚑ Erst in eine Zwischendatei, dann umbenennen: Ein abgebrochener Lauf
     # hinterlaesst keine halbe Kopie unter dem endgueltigen Namen.
     halb = ziel.with_name(ziel.name + ".halb")
@@ -367,7 +427,7 @@ def schreiben(a: Auswahl, ziel: pathlib.Path, als_zip: bool, datum: str, werkzeu
             if jetzt >= naechste_meldung:
                 print(f"\r[sicherung] {fertig / gesamt * 100:5.1f} %  {fertig / 1e9:6.2f} von {gesamt / 1e9:.2f} GB", end="", flush=True)
                 naechste_meldung = jetzt + 2
-        w.text("SICHERUNG.md", beschreibung(a, datum, werkzeuge))
+        w.text("SICHERUNG.md", beschreibung(a, datum, werkzeuge, pakete))
         w.text("PRUEFSUMMEN.sha256", "\n".join(summen) + "\n")
     finally:
         w.schliessen()
@@ -387,6 +447,14 @@ def bericht(a: Auswahl) -> None:
     print("[sicherung] die groessten Dateien darin:")
     for rel, _, g in groesste:
         print(f"   {g / 1e6:8.1f} MB  {rel}")
+    ignoriert = ignoriert_und_drin(a, WURZEL)
+    if ignoriert:
+        print("[sicherung] was git ignoriert und trotzdem mitkommt (hier zeigt sich neuer Bauabfall):")
+        for ordner, n, g in ignoriert[:12]:
+            print(f"   {g / 1e6:8.1f} MB {n:6d} Dateien  {ordner}")
+        if len(ignoriert) > 12:
+            rest = ignoriert[12:]
+            print(f"   {sum(g for _, _, g in rest) / 1e6:8.1f} MB in {len(rest)} weiteren Ordnern")
 
 
 def main(argv: list[str]) -> int:
@@ -396,7 +464,8 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--liste", action="store_true", help="nur zeigen, was hinein kaeme")
     ap.add_argument("--selbsttest", action="store_true", help="die Regeln an einem kleinen Baum pruefen")
     ap.add_argument("--ohne-artefakte", action="store_true", help=f"auch {', '.join(ARTEFAKTE_MIT)} draussen lassen")
-    ap.add_argument("--ohne-werkzeuge", action="store_true", help="auch ohne vollstaendigen Werkzeugvorrat schreiben (die Kopie braucht dann Netz)")
+    ap.add_argument("--ohne-werkzeuge", action="store_true",
+                    help="auch mit lueckenhaftem Werkzeug- oder Paketvorrat schreiben (die Kopie braucht dann Netz)")
     a = ap.parse_args(argv)
     if a.selbsttest:
         return selbsttest()
@@ -405,16 +474,33 @@ def main(argv: list[str]) -> int:
         return 2
     auswahl = auswaehlen(WURZEL, artefakte_mit=() if a.ohne_artefakte else ARTEFAKTE_MIT)
     bericht(auswahl)
+    fehlend = [] if a.ohne_artefakte else fehlende_artefakte(WURZEL)
+    if fehlend:
+        print(f"[sicherung] genannt, aber nicht da: {', '.join(fehlend)} (ARTEFAKTE_MIT in sicherung.py)")
     vollstaendig, befund = werkzeuge_pruefen()
     print(f"[sicherung] Werkzeugvorrat: {befund}")
     werkzeuge = befund if vollstaendig else f"UNVOLLSTAENDIG ({befund}); diese Kopie braucht zum Einrichten Netz"
+    pakete_ok, pakete_befund = pakete_pruefen()
+    print(f"[sicherung] Paketvorrat: {pakete_befund}")
+    pakete = pakete_befund if pakete_ok else f"UNVOLLSTAENDIG ({pakete_befund}); diese Kopie braucht zum Bauen Netz"
     if a.liste:
         return 0
+    # ⛔️ **Eine Kopie ohne die Modelle, die sie mitnehmen soll, nur auf
+    #    ausdruecklichen Wunsch.** Meist ist ein Name veraltet.
+    if fehlend:
+        print("[sicherung] FEHLER: Diese Artefakte sollen mit, liegen aber nicht da. Umbenannt? Dann ARTEFAKTE_MIT nachziehen.")
+        print("[sicherung]   Oder bewusst ohne Artefakte: --ohne-artefakte")
+        return 1
     # ⛔️ **Eine Kopie, die ohne Netz nicht baut, nur auf ausdruecklichen
-    #    Wunsch.** Der Vorrat laesst sich nur hier holen, mit Netz.
+    #    Wunsch.** Beide Vorraete lassen sich nur hier holen, mit Netz.
     if not vollstaendig and not a.ohne_werkzeuge:
         print("[sicherung] FEHLER: Der Werkzeugvorrat ist nicht vollstaendig; ohne ihn baut die Kopie nicht ohne Netz.")
         print("[sicherung]   Jetzt, solange Netz da ist: python3 SYSTEM/install/werkzeugvorrat.py holen")
+        print("[sicherung]   Oder bewusst ohne: --ohne-werkzeuge")
+        return 1
+    if not pakete_ok and not a.ohne_werkzeuge:
+        print("[sicherung] FEHLER: Der Paketvorrat passt nicht zu den Sperrdateien; die Kopie baute nicht ohne Netz.")
+        print("[sicherung]   Jetzt, solange Netz da ist: python3 SYSTEM/install/vorrat.py sammeln")
         print("[sicherung]   Oder bewusst ohne: --ohne-werkzeuge")
         return 1
     ziel = pathlib.Path(a.ziel).expanduser().resolve()
@@ -434,7 +520,7 @@ def main(argv: list[str]) -> int:
     if frei is not None and frei < auswahl.groesse:
         print(f"[sicherung] FEHLER: am Ziel sind {frei / 1e9:.1f} GB frei, gebraucht bis {auswahl.groesse / 1e9:.1f} GB")
         return 1
-    schreiben(auswahl, datei, a.zip, datum, werkzeuge)
+    schreiben(auswahl, datei, a.zip, datum, werkzeuge, pakete)
     print(f"[sicherung] {datei} ({datei.stat().st_size / 1e9:.2f} GB)")
     print("[sicherung] Fertig")
     return 0
@@ -486,6 +572,9 @@ def selbsttest() -> int:
             fehler.append(f"Verknuepfung nicht gemeldet: {a.verknuepfungen}")
         if verknuepft and "verweis" in drin:
             fehler.append("Verknuepfung kopiert")
+        # Ein genanntes Artefakt, das fehlt, wird gemeldet; ein vorhandenes nicht.
+        if fehlende_artefakte(w) != ["pigeon-4b-int8"]:
+            fehler.append(f"fehlende Artefakte falsch erkannt: {fehlende_artefakte(w)}")
         # Und eine echte Kopie, ausgepackt und gegen die Pruefsummen gehalten.
         for als_zip in (False, True):
             ziel = pathlib.Path(t) / ("k.zip" if als_zip else "k.tar.gz")

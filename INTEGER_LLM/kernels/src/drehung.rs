@@ -41,7 +41,7 @@ const STUFEN: u32 = 10;
 /// geschoben (in i64), dann gesaettigt.
 pub fn drehen(x: &[i16], x_frac: u8, vorzeichen: &[i8], ziel_frac: u8) -> Vec<i16> {
     assert_eq!(x.len(), vorzeichen.len(), "drehen: {} Werte, {} Vorzeichen", x.len(), vorzeichen.len());
-    assert!(x.len() % BLOCK == 0, "drehen: {} Werte sind kein Vielfaches von {BLOCK}", x.len());
+    assert!(x.len().is_multiple_of(BLOCK), "drehen: {} Werte sind kein Vielfaches von {BLOCK}", x.len());
     let mut t: Vec<i32> = x
         .iter()
         .zip(vorzeichen)
@@ -50,7 +50,7 @@ pub fn drehen(x: &[i16], x_frac: u8, vorzeichen: &[i8], ziel_frac: u8) -> Vec<i1
             i32::from(v) * i32::from(s)
         })
         .collect();
-    for block in t.chunks_exact_mut(BLOCK) {
+    for block in t.as_chunks_mut::<BLOCK>().0 {
         walsh_hadamard(block);
     }
     let shift = i32::from(x_frac) + (STUFEN / 2) as i32 - i32::from(ziel_frac);
@@ -94,10 +94,10 @@ pub fn drehen(x: &[i16], x_frac: u8, vorzeichen: &[i8], ziel_frac: u8) -> Vec<i1
 /// Uebersetzer vektorisiert die innere Schleife.
 fn walsh_hadamard(block: &mut [i32]) {
     let n = block.len();
-    if n % 8 != 0 {
+    if !n.is_multiple_of(8) {
         return walsh_hadamard_ab(block, 1);
     }
-    for a in block.chunks_exact_mut(8) {
+    for a in block.as_chunks_mut::<8>().0 {
         // Schrittweite 1.
         let (b0, b1, b2, b3) = (a[0] + a[1], a[0] - a[1], a[2] + a[3], a[2] - a[3]);
         let (b4, b5, b6, b7) = (a[4] + a[5], a[4] - a[5], a[6] + a[7], a[6] - a[7]);
@@ -202,9 +202,9 @@ pub fn eingang<'x>(
 /// erst mehrere Beitraege und saettigt dann einmal.
 pub fn gradient_zurueckdrehen(g: &[i64], vorzeichen: &[i8]) -> Vec<i64> {
     assert_eq!(g.len(), vorzeichen.len(), "gradient_zurueckdrehen: {} Werte, {} Vorzeichen", g.len(), vorzeichen.len());
-    assert!(g.len() % BLOCK == 0, "gradient_zurueckdrehen: {} Werte sind kein Vielfaches von {BLOCK}", g.len());
+    assert!(g.len().is_multiple_of(BLOCK), "gradient_zurueckdrehen: {} Werte sind kein Vielfaches von {BLOCK}", g.len());
     let mut t = g.to_vec();
-    for block in t.chunks_exact_mut(BLOCK) {
+    for block in t.as_chunks_mut::<BLOCK>().0 {
         let mut h = 1;
         while h < BLOCK {
             for abschnitt in block.chunks_exact_mut(2 * h) {
@@ -242,7 +242,7 @@ mod tests {
 
     /// `H[i][j]` der Sylvester-Konstruktion: `(-1)^popcount(i & j)`.
     fn h(i: usize, j: usize) -> i64 {
-        if (i & j).count_ones() % 2 == 0 { 1 } else { -1 }
+        if (i & j).count_ones().is_multiple_of(2) { 1 } else { -1 }
     }
 
     /// **Dieselbe Zahl wie die ausmultiplizierte Matrix**, mit Rundung,
@@ -348,7 +348,7 @@ mod tests {
         let g: Vec<i64> = zufall(n, 13).iter().map(|v| (*v % 200_001) as i64 - 100_000).collect();
         // Hinweg ohne Rundung: H * (s ⊙ x).
         let mut hx: Vec<i32> = x.iter().zip(&s).map(|(a, b)| i32::from(*a) * i32::from(*b)).collect();
-        for b in hx.chunks_exact_mut(BLOCK) {
+        for b in hx.as_chunks_mut::<BLOCK>().0 {
             walsh_hadamard(b);
         }
         let links: i64 = g.iter().zip(&hx).map(|(a, b)| a * i64::from(*b)).sum();

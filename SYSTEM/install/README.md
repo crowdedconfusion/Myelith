@@ -302,8 +302,25 @@ sagt dann, dass sie zum Einrichten Netz braucht. Der Vorrat bleibt im Baum
 liegen; neu geholt wird erst, wenn sich `flake.lock` oder eine Fassung in
 `werkzeugvorrat.json` ändert.
 
-Die Kopie enthält `SICHERUNG.md` (Stand, Fassung, Werkzeugvorrat, was fehlt
-und wie es zurückkommt) und `PRUEFSUMMEN.sha256`. Ausgepackt baut sie mit den
+⚑ **Auch der Rust-Paketvorrat wird vorher geprüft** (`vorrat.py pruefen`,
+seit dem 2026-10-22): Passt er nicht zu jeder Sperrdatei, auch zu denen
+eigener, nicht versionierter Module, bricht die Kopie ab und nennt
+`vorrat.py sammeln`. Ebenso, wenn ein Artefakt, das mitkommen soll, nicht
+da ist; meist ist dann ein Name in `ARTEFAKTE_MIT` veraltet. `--liste` zeigt
+zusätzlich, was git ignoriert und trotzdem mitkommt: Dort taucht neuer
+Bauabfall zuerst auf, bevor er die Kopie aufbläht.
+
+⚑ **Was später dazukommt, kommt von selbst mit.** Die Regeln schließen nur
+aus; ein neuer Ordner, ein neues Modul, neue Notizen landen ohne Zutun in
+der Kopie. Anzupassen ist das Skript nur in drei Fällen: Ein neues Werkzeug
+erzeugt Bauabfall (dann in die Regeln), die mitgenommenen Artefakte
+heißen anders (dann `ARTEFAKTE_MIT`), oder ein neues fremdes Werkzeug
+gehört in den Werkzeugvorrat (dann `werkzeugvorrat.json`; `pruefen`
+meldet jede dort festgelegte Datei, die nicht geholt ist). Den Selbsttest
+fährt die CI.
+
+Die Kopie enthält `SICHERUNG.md` (Stand, Fassung, Werkzeug- und
+Paketvorrat, was fehlt und wie es zurückkommt) und `PRUEFSUMMEN.sha256`. Ausgepackt baut sie mit den
 Skripten oben **ohne Netz**, unter Linux mit `installieren-linux.sh`.
 
 ---

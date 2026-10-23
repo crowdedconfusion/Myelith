@@ -534,12 +534,12 @@ impl<'a> Job<'a> {
         let passt = match a.w {
             Gewichte::Int8(w) => w.len() == zeilen * spalten,
             Gewichte::Ternaer { muster, betraege } => {
-                spalten % crate::ternaer::GRUPPE == 0
+                spalten.is_multiple_of(crate::ternaer::GRUPPE)
                     && muster.len() == zeilen * spalten / 4
                     && betraege.len() == zeilen * (spalten / crate::ternaer::GRUPPE)
             }
             Gewichte::Vierbit { codes, gitter } => {
-                spalten % crate::vierbit::GRUPPE == 0
+                spalten.is_multiple_of(crate::vierbit::GRUPPE)
                     && codes.len() == zeilen * spalten / 2
                     && gitter.len() == zeilen * (spalten / crate::vierbit::GRUPPE) * crate::vierbit::GITTER_JE_GRUPPE
             }

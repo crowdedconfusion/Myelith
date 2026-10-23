@@ -307,7 +307,7 @@ pub fn balken(belegt: usize, grenze: usize, breite: usize) -> String {
     let voll = achtel / 8;
     let mut s: String = std::iter::repeat_n('█', voll).collect();
     if voll < breite {
-        s.push(if achtel % 8 == 0 { '░' } else { ACHTEL[achtel % 8] });
+        s.push(if achtel.is_multiple_of(8) { '░' } else { ACHTEL[achtel % 8] });
         s.extend(std::iter::repeat_n('░', breite - voll - 1));
     }
     s

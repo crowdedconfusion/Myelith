@@ -66,6 +66,12 @@ pub struct NetConfig {
     /// Relais er erreichbar sein will (Vorgabe: keines von beidem, ein
     /// Knoten mit öffentlicher Adresse braucht nichts davon).
     pub nat: NatKonfig,
+    /// ⚑ **Suche im lokalen Netz** (mDNS, seit dem 2026-10-22): Knoten im
+    /// selben Heim- oder Firmennetz finden einander ohne jede Angabe.
+    /// Vorgabe aus, denn Proben auf derselben Maschine faenden sich sonst
+    /// gegenseitig und verfaelschten ihre Zaehlungen; ein echtes Netz
+    /// schaltet sie ein.
+    pub lokale_suche: bool,
 }
 
 impl Default for NetConfig {
@@ -78,6 +84,7 @@ impl Default for NetConfig {
             grenzen: standard_grenzen(),
             adressbereich_grenze: MAX_JE_ADRESSBEREICH,
             nat: NatKonfig::default(),
+            lokale_suche: false,
         }
     }
 }

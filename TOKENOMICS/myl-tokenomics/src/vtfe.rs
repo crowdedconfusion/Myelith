@@ -260,7 +260,7 @@ impl ModellProfil {
     /// Mischt Ebene `i` mit voller Achtsamkeit? Bei `voll_alle = 4` die
     /// Ebenen 3, 7, 11 und so fort, wie `layer_types` im 35B.
     pub fn ist_voll(&self, i: u64) -> bool {
-        self.voll_alle == 0 || (i + 1) % self.voll_alle == 0
+        self.voll_alle == 0 || (i + 1).is_multiple_of(self.voll_alle)
     }
 
     /// Multiplikations-Additionen der Ebene `i` für ein Token.

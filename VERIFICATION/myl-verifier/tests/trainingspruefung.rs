@@ -54,8 +54,7 @@ fn auftraege(werk: &Trainingswerk, v: &Trainingsvorgaben) -> Vec<Shardauftrag> {
 #[test]
 fn der_nachrechner_bestaetigt_einen_ehrlichen_pod() {
     let dir = artefakte();
-    if !dir.exists() {
-        eprintln!("Artefakt fehlt, uebersprungen: {}", dir.display());
+    if !myl_pod::artefakte::vorhanden(&dir) {
         return;
     }
     let modell = Arc::new(load_model(&dir).expect("Modell"));
@@ -94,7 +93,7 @@ fn der_nachrechner_bestaetigt_einen_ehrlichen_pod() {
 #[test]
 fn ein_gefaelschter_shard_wird_widerlegt() {
     let dir = artefakte();
-    if !dir.exists() {
+    if !myl_pod::artefakte::vorhanden(&dir) {
         return;
     }
     let modell = Arc::new(load_model(&dir).expect("Modell"));
@@ -125,7 +124,7 @@ fn ein_gefaelschter_shard_wird_widerlegt() {
 #[test]
 fn zwei_ehrliche_pods_sind_sich_einig() {
     let dir = artefakte();
-    if !dir.exists() {
+    if !myl_pod::artefakte::vorhanden(&dir) {
         return;
     }
     let modell = Arc::new(load_model(&dir).expect("Modell"));

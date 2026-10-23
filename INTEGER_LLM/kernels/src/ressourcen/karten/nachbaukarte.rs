@@ -105,7 +105,7 @@ pub(super) fn starten(kern: Kern, zeiger: &[Zeiger], zeilen: usize, spalten: usi
             (w, 0, x, a, o)
         }
         (Kern::Ternaer, &[m, be, x, a, o]) => {
-            if spalten % crate::ternaer::GRUPPE != 0 {
+            if !spalten.is_multiple_of(crate::ternaer::GRUPPE) {
                 return Err(format!("{spalten} Spalten sind kein Vielfaches der Gruppe"));
             }
             bereich(m, zeilen * spalten / 4, "Muster")?;
@@ -113,7 +113,7 @@ pub(super) fn starten(kern: Kern, zeiger: &[Zeiger], zeilen: usize, spalten: usi
             (m, be, x, a, o)
         }
         (Kern::Vierbit, &[c, g, x, a, o]) => {
-            if spalten % crate::vierbit::GRUPPE != 0 {
+            if !spalten.is_multiple_of(crate::vierbit::GRUPPE) {
                 return Err(format!("{spalten} Spalten sind kein Vielfaches der Gruppe"));
             }
             bereich(c, zeilen * spalten / 2, "Codes")?;

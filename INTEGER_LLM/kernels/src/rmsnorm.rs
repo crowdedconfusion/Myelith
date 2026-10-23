@@ -236,7 +236,7 @@ fn quadratsumme(x: &[i16], x_shifts: &[u8], ref_shift: u8) -> i128 {
     //   geklammert.
     let weite = usize::from(ref_shift - kleinster) + 1;
     let mut eimer = [[0i64; 256]; 4];
-    let mut viertel = x.chunks_exact(4).zip(x_shifts.chunks_exact(4));
+    let mut viertel = x.as_chunks::<4>().0.iter().zip(x_shifts.as_chunks::<4>().0);
     for (v, s) in &mut viertel {
         for k in 0..4 {
             let w = i64::from(v[k]);
@@ -300,7 +300,7 @@ fn rmsnorm_kern(
     assert_eq!(n, gamma.len(), "rmsnorm_i16: x und gamma muessen gleich lang sein");
     assert_eq!(n, gamma_shifts.len(), "rmsnorm_i16: ein Gamma-Shift je Element (theta_v 0.7.0)");
     assert_eq!(n, x_shifts.len(), "rmsnorm_i16: ein Eingangs-Shift je Kanal (Fund 20, theta_v 0.11.0)");
-    assert!(lut_input_shift % 2 == 0, "rmsnorm_i16: lut_input_shift muss gerade sein (Halb-Bit-Faktor)");
+    assert!(lut_input_shift.is_multiple_of(2), "rmsnorm_i16: lut_input_shift muss gerade sein (Halb-Bit-Faktor)");
 
     // **Fund 24 (2026-08-19): Ausrichtung nach OBEN statt nach unten.**
     //

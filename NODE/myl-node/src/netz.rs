@@ -43,6 +43,19 @@ pub struct Netz {
     pub profil: ModellProfil,
     /// Der Schlüssel des Artefakts im Katalog, für Meldungen und Proben.
     pub artefakt: &'static str,
+    /// ⚑ **Die erste Tür** (seit dem 2026-10-22): Adressen langlebiger
+    /// Knoten (`/ip4/…/tcp/…/p2p/…`), die jeder Knoten dieses Netzes beim
+    /// Start zusätzlich zu seinen eigenen Bootstrap-Angaben kennt. Kein
+    /// Server: Sie öffnen nur den Weg ins verteilte Adressbuch, und jeder
+    /// andere Knoten kann dasselbe.
+    pub einstieg: &'static [&'static str],
+    /// Ob Knoten dieses Netzes einander im lokalen Netz suchen (mDNS).
+    pub lokale_suche: bool,
+    /// ⚑ **Anker für den Zustandsabzug** (2026-10-22): Höhe und Blockhash
+    /// dauerhaft abgelegter Epochengrenzen, eingetragen mit einem Release.
+    /// Ein Neuling ohne eigene Kette beginnt beim jüngsten statt bei Block 0.
+    /// Nur Höhen, die jeder Knoten auf Dauer behält (`abzug::ist_langzeit`).
+    pub abzuege: &'static [(u64, [u8; 32])],
 }
 
 impl Netz {
@@ -55,6 +68,14 @@ impl Netz {
     /// der Abdruck des Podmodells.
     pub fn pipeline(&self) -> Hash {
         Hash::from_bytes(self.podmodell.abdruck)
+    }
+
+    /// Der jüngste Anker dieses Netzes für den Zustandsabzug.
+    pub fn juengster_anker(&self) -> Option<crate::abzug::Anker> {
+        self.abzuege
+            .iter()
+            .max_by_key(|(h, _)| *h)
+            .map(|(hoehe, b)| crate::abzug::Anker { hoehe: *hoehe, blockhash: Hash::from_bytes(*b) })
     }
 
     /// Das Netz zu einem Namen.
@@ -95,6 +116,11 @@ pub const PROBEKETTE: Netz = Netz {
     },
     profil: myl_tokenomics::vtfe::PROBE_MODELL,
     artefakt: "sparrow-0.6b-int8",
+    // Proben bauen ihr Netz selbst; eine lokale Suche liesse Proben auf
+    // derselben Maschine einander finden.
+    einstieg: &[],
+    lokale_suche: false,
+    abzuege: &[],
 };
 
 /// Der Startwert des Testnetzes. Wie bei der Probekette sagt der Text,
@@ -122,6 +148,13 @@ pub const TESTNETZ_INT4: Netz = Netz {
     },
     profil: myl_tokenomics::vtfe::RAVEN_35B_A3B,
     artefakt: "raven-35b-a3b-int4",
+    // ⚠️ Noch kein langlebiger Knoten: Bis es einen gibt, ist die Liste
+    //   leer, und ausserhalb des lokalen Netzes braucht der Einstieg eine
+    //   Bootstrap-Angabe.
+    einstieg: &[],
+    lokale_suche: true,
+    // Noch keiner: Das Testnetz hat noch keine dauerhafte Epochengrenze.
+    abzuege: &[],
 };
 
 /// Alle Netze, die dieser Knoten kennt.
@@ -143,6 +176,18 @@ mod tests {
     /// Testnetz) oder im Prüfnetz (bei der Probekette), Ebenenzahl und
     /// Breite des Profils wie dort. Ein neu gebautes Artefakt bekommt
     /// einen neuen Abdruck; dann muss das Netz mit.
+    /// ⚑ Ein Anker steht nur auf einer Höhe, die jeder Knoten auf Dauer
+    /// behält; auf einer gewöhnlichen könnte ihn zwei Epochen später
+    /// niemand mehr liefern.
+    #[test]
+    fn jeder_anker_steht_auf_einer_dauerhaften_hoehe() {
+        for n in NETZE {
+            for (h, _) in n.abzuege {
+                assert!(crate::abzug::ist_langzeit(*h), "{}: Anker bei {h} wird nicht auf Dauer behalten", n.name);
+            }
+        }
+    }
+
     #[test]
     fn jedes_netz_stimmt_mit_dem_katalog() {
         for (netz, block) in [(PROBEKETTE, "pruefnetz"), (TESTNETZ_INT4, "netz")] {

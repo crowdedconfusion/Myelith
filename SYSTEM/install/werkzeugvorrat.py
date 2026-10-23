@@ -137,6 +137,15 @@ def holen_rust(k: dict, liste: dict) -> int:
             print(f"[werkzeug] FEHLER: {p.name} passt nicht zur Pruefsumme des Rust-Projekts")
             return 1
         eintragen(liste, p, url)
+    # 📌 **Die vorige Fassung geht** (2026-10-22). Nach dem Wechsel von 1.99.1
+    #    auf 1.99.0 lagen beide da; `pruefen` meldete nichts, die Kopie haette
+    #    beide mitgenommen, und welches Archiv die Einrichtung nimmt, hing an
+    #    der Sortierung.
+    behalten = {r["quelle"].format(fassung=r["fassung"], ziel=z, endung=e).rsplit("/", 1)[1] for z, e in r["ziele"].items()}
+    for rel in [d for d in liste["dateien"] if d.startswith("rust/") and d.split("/", 1)[1] not in behalten]:
+        (VORRAT / rel).unlink(missing_ok=True)
+        del liste["dateien"][rel]
+        print(f"[werkzeug] rust: alte Fassung entfernt: {rel}")
     return 0
 
 
@@ -162,7 +171,12 @@ def holen_nix(k: dict) -> int:
     n = k["nix"]
     for system, plattform in n["systeme"].items():
         ordner = VORRAT / "nix" / system
-        if (ordner / "UMGEBUNG").is_file() and (ordner / "nix-cache-info").is_file():
+        # 📌 „Schon da“ heisst: fuer dieses flake.lock (2026-10-22). Hier stand nur,
+        #    ob es den Ordner gibt; nach einem neuen flake.lock verlangte
+        #    `pruefen` ein Neuholen, und `holen` meldete „schon da“.
+        stand = ordner / "FLAKE_LOCK_SHA256"
+        if (ordner / "UMGEBUNG").is_file() and (ordner / "nix-cache-info").is_file() \
+                and stand.is_file() and stand.read_text().strip() == sha256(WURZEL / "flake.lock"):
             print(f"[werkzeug] nix {system}: schon da")
             continue
         print(f"[werkzeug] nix {system}: Eingaben und Bauumgebung im Behaelter {n['abbild']} ({plattform})")
@@ -241,6 +255,28 @@ def holen(nur: list[str]) -> int:
     return rc
 
 
+def festgelegte_quellen(k: dict) -> list[tuple[str, str]]:
+    """Jede Datei, die `werkzeugvorrat.json` festlegt, als (Teil, Quelle)."""
+    r = k["rust"]
+    quellen = [("rust", r["quelle"].format(fassung=r["fassung"], ziel=z, endung=e)) for z, e in r["ziele"].items()]
+    quellen += [("python", url) for url in k["python"]["dateien"].values()]
+    quellen += [("windows", url) for url in k["windows"].values()]
+    return quellen
+
+
+def nicht_geholt(k: dict, liste: dict) -> list[str]:
+    """Was festgelegt ist, aber mit dieser Quelle nicht im Vorrat liegt.
+
+    📌 **Bis zum 2026-10-22 verglich `pruefen` nur die Fassung von Rust.**
+    Eine neue Python-Fassung oder ein neues Rust-Ziel in der Festlegung
+    blieb unbemerkt: Die alten Dateien passten zu ihren Pruefsummen, also
+    hiess es PASSED, und die Sicherheitskopie nahm den alten Stand mit.
+    """
+    geholt = {e.get("quelle") for e in liste["dateien"].values()}
+    return [f"{teil}: festgelegt, aber nicht geholt: {url} (holen --nur {teil})"
+            for teil, url in festgelegte_quellen(k) if url not in geholt]
+
+
 def pruefen() -> int:
     liste = liste_lesen()
     if not liste["dateien"] and not (VORRAT / "nix").is_dir():
@@ -264,6 +300,9 @@ def pruefen() -> int:
     k = json.loads(KONFIG.read_text(encoding="utf-8"))
     if liste.get("rust_fassung") != k["rust"]["fassung"]:
         fehler.append(f"Rust {liste.get('rust_fassung')} im Vorrat, festgelegt ist {k['rust']['fassung']}")
+    fehler += [f"Rust einer anderen Fassung im Vorrat: {d} (holen --nur rust raeumt auf)"
+               for d in liste["dateien"] if d.startswith("rust/") and f"-{k['rust']['fassung']}-" not in d]
+    fehler += nicht_geholt(k, liste)
     for f in fehler[:10]:
         print(f"   {f}")
     if fremd:

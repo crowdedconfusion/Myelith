@@ -1,8 +1,8 @@
 [package]
 name = "integer-llm-kernels"
-version = "0.88.1"
+version = "0.88.2"
 edition = "2021"
-rust-version = "1.85"
+rust-version = "1.99"
 license = "LicenseRef-PolyForm-Shield-1.0.0"
 publish = false
 

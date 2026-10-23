@@ -39,6 +39,23 @@ Write-Host "   Quelle: $Wurzel"
 # ⚑ **Erst alles pruefen, dann bauen.** Ein Bau, der nach zehn Minuten
 # an einem fehlenden Linker abbricht, hat zehn Minuten gekostet und
 # nichts gesagt, was er nicht vorher haette sagen koennen.
+# ⚑ **Die Fassung aus `rust-toolchain.toml`, und ohne Netz die vorhandene**
+#   (2026-10-22). rustup holt die festgelegte Fassung beim ersten Aufruf im
+#   Baum nach; ohne Netz baut die eingestellte weiter, mit Hinweis. Eine
+#   fehlende Werkzeugkette darf eine Pruefung kosten, nie den Bau.
+if ((Get-Command rustup -ErrorAction SilentlyContinue) -and (Get-Command cargo -ErrorAction SilentlyContinue)) {
+  & cargo --version *> $null
+  if ($LASTEXITCODE -ne 0) {
+    $liste = & rustup toolchain list 2>$null
+    $vorhanden = ($liste | Where-Object { $_ -match 'default' } | Select-Object -First 1)
+    if (-not $vorhanden) { $vorhanden = ($liste | Where-Object { $_ -match '-' } | Select-Object -First 1) }
+    if ($vorhanden) {
+      $env:RUSTUP_TOOLCHAIN = ($vorhanden -split ' ')[0]
+      Write-Host "   Hinweis: Die festgelegte Rust-Fassung liess sich nicht holen (kein Netz?); gebaut wird mit $($env:RUSTUP_TOOLCHAIN)."
+    }
+  }
+}
+
 $fehlt = @()
 
 # ⚑ **Ohne Netz aus dem Werkzeugvorrat**, wenn er in diesem Baum liegt

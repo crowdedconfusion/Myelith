@@ -1,0 +1,16 @@
+# Die eine Fassung von Rust, mit der dieses Repositorium gebaut und geprueft
+# wird: in der CI, auf jedem Rechner mit rustup und im Werkzeugvorrat
+# (SYSTEM/install/werkzeugvorrat.json). Jede Kiste nennt dieselbe Fassung
+# als `rust-version`; die CI haelt beides zusammen.
+#
+# Angehoben wird bewusst und an einer Stelle: neue Clippy-Regeln kommen mit
+# der Anhebung, nicht ueber Nacht mit einem neuen `stable`. Die Fassung ist
+# die neueste, die jeder Weg liefert, auch nixpkgs (flake.lock).
+#
+# Ohne Netz und ohne diese Fassung baut ein Einrichtungsskript mit der
+# vorhandenen weiter und sagt es; eine fehlende Werkzeugkette darf eine
+# Pruefung kosten, nie den Bau.
+[toolchain]
+channel = "1.99.0"
+components = ["clippy", "rustfmt"]
+profile = "minimal"

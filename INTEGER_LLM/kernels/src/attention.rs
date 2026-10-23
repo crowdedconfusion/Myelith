@@ -171,9 +171,9 @@ pub fn aufmerksamkeit_einer_abfrage(
     spur: Option<&mut Vec<Vec<i32>>>,
 ) -> Vec<i16> {
     let breite = q.len();
-    assert!(breite > 0 && k.len() % breite == 0, "aufmerksamkeit_einer_abfrage: k passt nicht zur Breite von q");
+    assert!(breite > 0 && k.len().is_multiple_of(breite), "aufmerksamkeit_einer_abfrage: k passt nicht zur Breite von q");
     let n = k.len() / breite;
-    assert!(n > 0 && v.len() % n == 0, "aufmerksamkeit_einer_abfrage: k und v muessen gleich viele Positionen haben");
+    assert!(n > 0 && v.len().is_multiple_of(n), "aufmerksamkeit_einer_abfrage: k und v muessen gleich viele Positionen haben");
     let v_breite = v.len() / n;
     let schnell = schnell_erlaubt();
 

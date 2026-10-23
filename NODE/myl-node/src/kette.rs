@@ -110,10 +110,14 @@ pub const PROBEGUTHABEN: u64 = 10_000_000;
 ///
 /// ⚑ **Hergeleitet, nicht gegriffen.** Der Zwischenspeicher hat genau
 /// eine Aufgabe: eine Nachforderung beantworten, ohne die Platte
-/// anzufassen. Eine Nachforderung umfasst höchstens
-/// [`crate::nachschub::MAX_BLOECKE_JE_LIEFERUNG`] Blöcke (64), also
-/// deckt ein Fenster von vier Lieferungen den Fall ab, dass mehrere
-/// Nachzügler gleichzeitig und an verschiedenen Stellen aufholen.
+/// anzufassen. Eine Nachforderung umfasste bis zum 2026-10-22 höchstens
+/// 64 Blöcke, also deckte ein Fenster von vier Lieferungen den Fall ab,
+/// dass mehrere Nachzügler gleichzeitig und an verschiedenen Stellen
+/// aufholen.
+///
+/// ⚑ **Seit die Lieferung 512 Blöcke fasst, steht die Zahl fest hier**:
+/// Ein Fenster von vier Lieferungen wären 2048 Blöcke im Speicher, und
+/// was älter ist als das Fenster, liest der Knoten ohnehin von der Platte.
 ///
 /// **Vier Lieferungen sind 256, und dieselbe Zahl steht in gereiften
 /// Kettenknoten** als Deckel ihrer Blockzwischenspeicher. Zwei
@@ -123,7 +127,7 @@ pub const PROBEGUTHABEN: u64 = 10_000_000;
 /// **Die Obergrenze im Speicher** ist damit benannt und nicht mehr
 /// offen: 256 mal [`crate::speicher::MAX_SATZ_BYTES`] im schlimmsten
 /// Fall, im Betrieb um Größenordnungen weniger.
-pub const VERLAUFSFENSTER: usize = 4 * crate::nachschub::MAX_BLOECKE_JE_LIEFERUNG as usize;
+pub const VERLAUFSFENSTER: usize = 256;
 
 /// Der Startwert, an dem die Probekette hängt.
 ///
@@ -436,6 +440,14 @@ pub struct Kette {
     /// noch hergab, ist einer. Auch dieser Zähler geht in jede
     /// Zustandsaufnahme.
     lesefehler: u64,
+    /// ⚑ **Wo an jeder Epochengrenze ein Abzug abgelegt wird**
+    /// (2026-10-22), neben der Kettendatei. Ohne Kettendatei keiner.
+    ablage: Option<crate::abzug::Ablage>,
+    /// Die Höhe, ab der diese Kette lebt: 0 von Genesis, sonst die Höhe
+    /// des Abzugs, aus dem sie begann. Blöcke davor hat sie nicht.
+    basis: u64,
+    /// Der zuletzt angelegte Abzug (Höhe, Blockhash), für das Protokoll.
+    letzter_abzug: Option<(u64, Hash)>,
 }
 
 /// ⚑ **Dieselbe Bindung wie in `myl_pod::pipelinewerk`** (seit
@@ -522,6 +534,9 @@ impl Kette {
             speicher: None,
             schreibfehler: 0,
             lesefehler: 0,
+            ablage: None,
+            basis: 0,
+            letzter_abzug: None,
         }
     }
 
@@ -581,6 +596,79 @@ impl Kette {
     /// und die Datei danach nachzuspielen.
     pub fn speicher_setzen(&mut self, speicher: crate::speicher::Kettenspeicher) {
         self.speicher = Some(speicher);
+    }
+
+    /// Die Ablage der Abzüge; ab jetzt entsteht an jeder Epochengrenze einer.
+    pub fn ablage_setzen(&mut self, ablage: crate::abzug::Ablage) {
+        self.ablage = Some(ablage);
+    }
+
+    /// Die Ablage der Abzüge, falls eine geführt wird.
+    pub fn ablage(&self) -> Option<&crate::abzug::Ablage> {
+        self.ablage.as_ref()
+    }
+
+    /// Die Höhe, ab der diese Kette lebt (0 von Genesis).
+    pub fn basis(&self) -> u64 {
+        self.basis
+    }
+
+    /// Der zuletzt angelegte Abzug: Höhe und Blockhash.
+    pub fn letzter_abzug(&self) -> Option<(u64, Hash)> {
+        self.letzter_abzug
+    }
+
+    /// ⚑ **Die Kette beginnt beim Abzug** statt bei Genesis (2026-10-22).
+    ///
+    /// Nur auf einer leeren Kette, deren Kettendatei leer ist: Sonst
+    /// schlösse der erste geschriebene Block an etwas an, das die Datei
+    /// nicht kennt. Speicher, Ablage, Stimmsatz und Mempool bleiben; Höhe,
+    /// letzter Hash, Zustand, Fenster und Basis kommen aus dem Abzug.
+    /// **Geprüft ist der Abzug vorher**, gegen einen Anker oder gegen den
+    /// eigenen Block ([`crate::abzug::Abzug::pruefen`]); hier wird nur
+    /// eingesetzt.
+    pub fn auf_abzug_setzen(&mut self, abzug: &crate::abzug::Abzug, zustand: LedgerState) -> Result<(), String> {
+        if self.hoehe != 0 {
+            return Err(format!("die Kette steht schon auf Höhe {}", self.hoehe));
+        }
+        if self.speicher.as_ref().is_some_and(|s| s.bloecke() > 0) {
+            return Err("die Kettendatei ist nicht leer".into());
+        }
+        let hash = abzug.block.hash();
+        self.hoehe = abzug.hoehe();
+        self.letzter_hash = hash;
+        self.zustand = zustand;
+        self.verlauf.clear();
+        self.bekannt.clear();
+        self.bekannt.insert(hash);
+        self.verlauf_aufnehmen(abzug.hoehe(), &abzug.block);
+        self.basis = abzug.hoehe();
+        self.naechste_saatquelle = None;
+        self.letzte_stichprobe = None;
+        Ok(())
+    }
+
+    /// Legt an einer Epochengrenze einen Abzug ab, wenn eine Ablage geführt
+    /// wird. Ein Fehler beim Schreiben zählt als Schreibfehler und hält die
+    /// Kette nicht an: Der Abzug ist eine Gefälligkeit an Neulinge, kein
+    /// Teil des Konsenses.
+    fn abzug_anlegen(&mut self, block: &Block) {
+        let hoehe = block.header.height;
+        if !crate::abzug::ist_grenze(hoehe) {
+            return;
+        }
+        let Some(ablage) = self.ablage.as_ref() else {
+            return;
+        };
+        let Ok(zustand) = borsh::to_vec(&self.zustand) else {
+            self.schreibfehler += 1;
+            return;
+        };
+        let abzug = crate::abzug::Abzug { block: block.clone(), zustand };
+        match ablage.ablegen(&abzug) {
+            Ok(()) => self.letzter_abzug = Some((hoehe, block.hash())),
+            Err(_) => self.schreibfehler += 1,
+        }
     }
 
     /// Wie oft das Schreiben fehlschlug.
@@ -1993,6 +2081,7 @@ impl Kette {
         self.bekannt.insert(self.letzter_hash);
         self.verlauf_aufnehmen(hoehe, &block);
         self.schreibe(&block);
+        self.abzug_anlegen(&block);
         block
     }
 
@@ -2098,6 +2187,7 @@ impl Kette {
         // tausenden längst verarbeiteter Transaktionen.**
         self.streiche_verarbeitete(&block.txs);
         self.schreibe(block);
+        self.abzug_anlegen(block);
         Ok(())
     }
 }
@@ -2683,8 +2773,14 @@ mod tests {
     /// **eine** Antwort: ein paar Bytes hinein, Megabyte hinaus.
     #[test]
     fn eine_masslose_nachforderung_wird_gedeckelt() {
+        // ⚑ Mit Kettendatei: Seit der Deckel (512) über dem Fenster (256)
+        //   liegt, haelt nur die Platte genug Bloecke, um ihn zu pruefen.
+        let d = std::env::temp_dir().join(format!("myelith-deckel-{}-{}", std::process::id(), crate::protokoll::jetzt_ms()));
+        std::fs::create_dir_all(&d).expect("Verzeichnis");
         let mut k = Kette::probestand();
-        let ueber = VERLAUFSFENSTER as u64 + 20;
+        let (speicher, _) = crate::speicher::Kettenspeicher::oeffnen(&d.join("kette.log"), Kette::startwert()).expect("öffnen");
+        k.speicher_setzen(speicher);
+        let ueber = crate::nachschub::MAX_BLOECKE_JE_LIEFERUNG + 20;
         for i in 1..=ueber {
             k.aufnehmen(burn((i % 8) as u8, 100 + i));
             let _ = k.baue_block();
@@ -2696,12 +2792,11 @@ mod tests {
             geliefert.len(),
             crate::nachschub::MAX_BLOECKE_JE_LIEFERUNG
         );
-        // Gegenprobe zum Deckel: Ohne ihn kämen hier mehr als 64
-        // Blöcke, denn das Fenster hält 256.
-        assert!(
-            k.verlauf.len() as u64 > crate::nachschub::MAX_BLOECKE_JE_LIEFERUNG,
-            "der Test beweist nichts, wenn das Fenster kleiner ist als der Deckel"
-        );
+        // Gegenprobe zum Deckel: Die Kette hält mehr, als er erlaubt, und
+        // er wird ausgeschöpft (ab Höhe 1; die Höhe 0 ist der Startwert).
+        let voll = k.bloecke_von_bis(1, u64::MAX);
+        assert_eq!(voll.len() as u64, crate::nachschub::MAX_BLOECKE_JE_LIEFERUNG, "der Deckel greift nicht oder es fehlt ein Block");
+        let _ = std::fs::remove_dir_all(&d);
     }
 
 

@@ -726,7 +726,7 @@ pub fn groesse_text(bytes: u64) -> String {
     for (name, n) in EINHEITEN {
         if bytes >= n {
             let zehntel = (bytes as u128 * 10 + n as u128 / 2) / n as u128;
-            return if zehntel % 10 == 0 { format!("{} {name}", zehntel / 10) } else { format!("{},{} {name}", zehntel / 10, zehntel % 10) };
+            return if zehntel.is_multiple_of(10) { format!("{} {name}", zehntel / 10) } else { format!("{},{} {name}", zehntel / 10, zehntel % 10) };
         }
     }
     format!("{bytes} B")

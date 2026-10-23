@@ -465,7 +465,7 @@ fn zeitmarke(sekunden: u64) -> String {
 }
 
 fn schaltjahr(j: u64) -> bool {
-    (j % 4 == 0 && j % 100 != 0) || j % 400 == 0
+    (j.is_multiple_of(4) && !j.is_multiple_of(100)) || j.is_multiple_of(400)
 }
 
 /// Alle Episoden eines Arbeitsordners, **neueste zuerst**.

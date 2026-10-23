@@ -38,7 +38,7 @@ fn artefakte() -> std::path::PathBuf {
 }
 
 fn trainer() -> Option<Shardtrainer> {
-    if !artefakte().exists() {
+    if !myl_pod::artefakte::vorhanden(&artefakte()) {
         return None;
     }
     let m = Arc::new(integer_llm_runtime::loader::load_model(&artefakte()).expect("Modell"));

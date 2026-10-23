@@ -464,7 +464,7 @@ where
         ziel[1] = (wert >> 16) as u16 as i16;
     });
     flach
-        .chunks_exact(2)
+        .as_chunks::<2>().0.iter()
         .map(|p| (((p[1] as u16 as u32) << 16) | p[0] as u16 as u32) as i32)
         .collect()
 }

@@ -1,7 +1,7 @@
 # verification (`myl-verifier`)
 
-> **Version:** 0.23.1
-> **Datum:** 2026-10-21
+> **Version:** 0.23.2
+> **Datum:** 2026-10-22
 > **Status:** 🎉 **Phasen 1, 2 und 3 abgeschlossen** (Punkte 1.1–1.3,
 > 2.1–2.5, 3.1–3.6), Phase 4 zu drei Vierteln (4.1, 4.2 und 4.4 ✅,
 > 4.3 ✅ seit 2026-08-24): Redundanzvergleich (Stufe 1),
@@ -145,6 +145,34 @@ gegen zwei eingebaute Fehler geeicht worden (Grenzverschiebung um eins,
 umgedrehter Vergleich); beide fliegen auf.
 
 ## Changelog
+
+### v0.23.2 (2026-10-22): Eine Werkzeugkette für alle Kisten; Fund 597
+
+- `rust-version` auf 1.99 in `myl-verifier`; die Werkzeugkette steht jetzt einmal,
+  in `rust-toolchain.toml` (1.99.0), und die CI baut mit genau ihr statt mit
+  einem wechselnden `stable` und zwei Mindestfassungen (1.85 und 1.88).
+  ⚑ **Dazu Code, und zwar mit Absicht:** Mit `rust-version = "1.99"` gibt Clippy
+  zwei Regeln frei, die es bei 1.85 zurückhielt (`manual_is_multiple_of`,
+  `chunks_exact` mit fester Größe). Festlegung des Projektinhabers:
+  umschreiben, nicht abschalten. Hier: `nachrechner.rs` 2 Zeilen.
+  `x % n == 0` wird `x.is_multiple_of(n)`, `chunks_exact(N)` wird
+  `as_chunks::<N>()`. Für `n ≠ 0` bitgleich; jede Stelle mit variablem
+  Teiler ist einzeln angesehen und vorher gegen null geschützt (bei
+  `is_multiple_of(0)` stünde `x == 0`, wo `x % 0` abbricht).
+- 📌 **Fund 597:** `tests/trainingspruefung.rs` fragte die Erlaubnis
+  `MYL_OHNE_ARTEFAKTE` nicht ab und sprang nur ab, wenn das Artefakt fehlte.
+  Wo es liegt, rechnete sie trotz Erlaubnis am Probeartefakt, 58 s und
+  14,8 GB Speicher; in einem Linux-Behälter mit 8 GB wurde sie dabei mit
+  SIGKILL beendet. Jetzt über `myl_pod::artefakte::vorhanden` (mit Erlaubnis
+  überspringen, ohne Erlaubnis und ohne Artefakt auffallen); mit Erlaubnis
+  0,00 s.
+- **Belege:** `cargo metadata --locked --offline` gegen den Vorrat in jeder
+  Kiste; die Wache der CI hält Fassung und Werkzeugkette zusammen. Nach dem
+  Umschreiben: Clippy mit `-D warnings` still (die Kerne über alle vier
+  Merkmale), `cargo test` rc=0 in allen zehn berührten Kisten (die Kerne auch
+  mit `cpu-simd`), Konformität mit `sparrow-0.6b-int8` 55/55, die vier
+  Abdrücke unverändert (`cb696efd3817e575` über 24 Vektoren), Gleitkomma-Audit
+  grün.
 
 ### v0.23.1 – 2026-10-21 (die Modelle heißen nach Tieren)
 

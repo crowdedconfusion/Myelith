@@ -277,9 +277,9 @@ impl Wav {
         //   weiter hinten; die Laeufer schreiben sie nicht, und dann ist
         //   eine ehrliche Ablehnung besser als ein Raten.
         let proben = match (art, bits) {
-            (1, 16) => daten.chunks_exact(2).map(|p| i16::from_le_bytes([p[0], p[1]])).collect(),
+            (1, 16) => daten.as_chunks::<2>().0.iter().map(|p| i16::from_le_bytes([p[0], p[1]])).collect(),
             (3, 32) => daten
-                .chunks_exact(4)
+                .as_chunks::<4>().0.iter()
                 .map(|p| gleitkomma_zu_16(u32::from_le_bytes([p[0], p[1], p[2], p[3]])))
                 .collect(),
             _ => return Err(format!("Format {art} mit {bits} Bit wird nicht gekennzeichnet")),

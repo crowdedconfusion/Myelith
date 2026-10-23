@@ -133,6 +133,9 @@ fn konfig(verzeichnis: &std::path::Path, name: &str, bootstrap: Vec<String>) -> 
         konto: None,
         testverkehr_sekunden: None,
         erzeugt_bloecke: false,
+        blocktakt_ms: None,
+        abzug: None,
+        hintergrundpruefung: true,
         teilnehmer: TEILNEHMER.iter().map(|(n, _)| n.to_string()).collect(),
     }
 }

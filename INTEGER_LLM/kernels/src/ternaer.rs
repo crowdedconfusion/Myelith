@@ -157,7 +157,7 @@ impl<'a> Ternaermatrix<'a> {
     /// vektorisierte Fassung liest ohne Grenzpruefung und verlaesst sich
     /// darauf.
     pub fn neu(muster: &'a [u8], betraege: &'a [i16], zeilen: usize, spalten: usize) -> Result<Self, String> {
-        if spalten == 0 || spalten % GRUPPE != 0 {
+        if spalten == 0 || !spalten.is_multiple_of(GRUPPE) {
             return Err(format!("ternaere Matrix: {spalten} Spalten sind kein Vielfaches von {GRUPPE}"));
         }
         let gruppen = zeilen
@@ -549,17 +549,17 @@ pub struct Gepackt {
 /// Formats ist Bitgleichheit mit der Quelle. Eine Gruppe aus lauter
 /// Nullen bekommt den Betrag null.
 pub fn packen<T: Copy + Into<i32>>(werte: &[T], spalten: usize) -> Result<Gepackt, String> {
-    if spalten == 0 || spalten % GRUPPE != 0 {
+    if spalten == 0 || !spalten.is_multiple_of(GRUPPE) {
         return Err(format!("packen: {spalten} Spalten sind kein Vielfaches von {GRUPPE}"));
     }
-    if werte.len() % spalten != 0 {
+    if !werte.len().is_multiple_of(spalten) {
         return Err(format!("packen: {} Werte sind keine ganzen Zeilen zu {spalten}", werte.len()));
     }
     let je_zeile = spalten / GRUPPE;
     let gruppen = werte.len() / GRUPPE;
     let mut muster = vec![0u8; gruppen * BYTES_JE_GRUPPE];
     let mut betraege = Vec::with_capacity(gruppen);
-    for (g, gruppe) in werte.chunks_exact(GRUPPE).enumerate() {
+    for (g, gruppe) in werte.as_chunks::<GRUPPE>().0.iter().enumerate() {
         let mut betrag: i32 = 0;
         for &w in gruppe {
             let v: i32 = w.into();

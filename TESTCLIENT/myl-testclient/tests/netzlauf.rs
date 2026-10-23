@@ -124,6 +124,20 @@ fn artefaktordner(ziel: &Path, ordner: Ordner) -> PathBuf {
     ziel.to_path_buf()
 }
 
+/// ⚑ **Stolperstein 7: Einstieg ohne Angabe** (2026-10-22). Diese drei
+/// bekommen keine Bootstrap-Adresse und suchen im lokalen Netz (mDNS); die
+/// Brücke sucht ebenso, kennt aber den Erzeuger. Über sie finden die drei
+/// per Kademlia alle übrigen.
+const OHNE_ANGABE: [&str; 3] = ["m05", "m07", "m08"];
+const BRUECKE: &str = "m04";
+
+/// Die Probekette, aber mit Suche im lokalen Netz.
+static LOKALNETZ: myl_node::netz::Netz = myl_node::netz::Netz { lokale_suche: true, ..myl_node::netz::PROBEKETTE };
+
+fn sucht_lokal(name: &str) -> bool {
+    name == BRUECKE || OHNE_ANGABE.contains(&name)
+}
+
 fn konfig(ordner: &Path, name: &str, bootstrap: Vec<String>, miner: Option<&Rolle4>) -> KnotenKonfig {
     let protokolle = ordner.join(name);
     std::fs::create_dir_all(&protokolle).expect("Ordner");
@@ -131,8 +145,9 @@ fn konfig(ordner: &Path, name: &str, bootstrap: Vec<String>, miner: Option<&Roll
         name: name.to_string(),
         schluesseldatei: protokolle.join("knoten.key"),
         protokollverzeichnis: protokolle.clone(),
-        horchadressen: vec!["/ip4/127.0.0.1/tcp/0".to_string()],
-        bootstrap,
+        // mDNS sucht ueber die Schnittstellen, nicht ueber die Rueckschleife.
+        horchadressen: vec![if sucht_lokal(name) { "/ip4/0.0.0.0/tcp/0" } else { "/ip4/127.0.0.1/tcp/0" }.to_string()],
+        bootstrap: if OHNE_ANGABE.contains(&name) { Vec::new() } else { bootstrap },
         rolle: Rolle::Teilnehmer,
         // ⚑ **Mit Kettendatei, wie im Betrieb** (Vorgabe `kette.dat`): Ohne
         //   sie hält ein Knoten nur die letzten Blöcke im Speicher und kann
@@ -142,7 +157,7 @@ fn konfig(ordner: &Path, name: &str, bootstrap: Vec<String>, miner: Option<&Roll
         konsensschluesseldatei: miner.map(|_| protokolle.join("konsens.key")),
         nat: Default::default(),
         speicherorte: None,
-        netz: &myl_node::netz::PROBEKETTE,
+        netz: if sucht_lokal(name) { &LOKALNETZ } else { &myl_node::netz::PROBEKETTE },
         modellzusage: miner.map(|m| Modellzusage { abdruck: [0; 32], ebenen_hoechstens: m.ebenen, ebenenzeit_us: m.zeit_us, gehalten: m.gehalten }),
         zone: myl_types::node_metadata::GeoRegion::Europe,
         shard: miner.map(|m| Shardkonfig {
@@ -161,6 +176,9 @@ fn konfig(ordner: &Path, name: &str, bootstrap: Vec<String>, miner: Option<&Roll
         konto: None,
         testverkehr_sekunden: None,
         erzeugt_bloecke: miner.is_none(),
+        blocktakt_ms: None,
+        abzug: None,
+        hintergrundpruefung: true,
         teilnehmer: Vec::new(),
     }
 }
@@ -274,18 +292,20 @@ async fn der_netzbetrieb_traegt_mit_ungleichen_pods_und_stolpersteinen() {
     for m in &MINER {
         knoten.push(Knoten::starten(konfig(&ordner, m.name, bootstrap.clone(), Some(m)), false).await.expect(m.name));
     }
-    for _ in 0..40 {
+    // Jeder kennt jeden, auch wer ohne Angabe kam (Stolperstein 7).
+    let bis = tokio::time::Instant::now() + Duration::from_secs(60);
+    let verbunden: Vec<usize> = loop {
         runde(&mut knoten, 0).await;
-    }
-    let verbunden: Vec<usize> = {
         let mut v = Vec::new();
         for k in &knoten {
             v.push(k.peers().await);
         }
-        v
+        if v.iter().all(|n| *n >= MINER.len()) {
+            break v;
+        }
+        assert!(tokio::time::Instant::now() < bis, "nicht jeder kennt jeden: {v:?} (ohne Angabe: {OHNE_ANGABE:?})");
     };
     eprintln!("[netzlauf] Peers je Knoten: {verbunden:?}");
-    assert!(verbunden.iter().all(|n| *n >= 1), "ein Knoten blieb allein: {verbunden:?}");
 
     // ---- Epoche 0: Anmeldung, dann Zusage, über die Kette ---------------
     for _ in 0..30 {
@@ -299,15 +319,29 @@ async fn der_netzbetrieb_traegt_mit_ungleichen_pods_und_stolpersteinen() {
     assert_eq!(zusagen, 14, "nicht alle Zusagen kamen über die Kette an");
     pruefe_einigkeit(&knoten, "nach den Zusagen");
 
-    // ---- Bis Epoche 2: die ersten Pods ----------------------------------
-    while knoten[0].kette().zustand().epoch.0 < 2 {
-        runde(&mut knoten, 200).await;
-    }
-    assert!(angleichen(&mut knoten, Duration::from_secs(120)).await, "die Knoten holten nicht auf");
-    pruefe_einigkeit(&knoten, "Beginn Epoche 2");
+    // ---- Ab Epoche 2: die ersten Pods, und der Lügner auf einer Position --
+    // 📌 **Weiter, bis der Lügner rechnet** (2026-10-22). In rund drei von
+    //    zehn Läufen stand er in Epoche 2 in der Reserve, und Stolperstein 1
+    //    fiel aus. Jetzt läuft das Netz Epoche um Epoche weiter, bis er eine
+    //    Position hat, höchstens bis Epoche 6: Ausgelassen wird dann noch in
+    //    rund zwei von tausend Läufen, und dann sichtbar.
+    let luegner = knoten[1 + MINER.iter().position(|m| m.name == "luegner").unwrap()].miner_kennung().expect("Lügner");
+    let mut ziel = 2;
+    let (zustand, z) = loop {
+        while knoten[0].kette().zustand().epoch.0 < ziel {
+            runde(&mut knoten, 200).await;
+        }
+        assert!(angleichen(&mut knoten, Duration::from_secs(120)).await, "die Knoten holten nicht auf");
+        pruefe_einigkeit(&knoten, &format!("Beginn Epoche {ziel}"));
+        let zustand = knoten[0].kette().zustand().clone();
+        let z = myl_node::kette::Kette::zuteilung_der_laufenden_epoche(&zustand);
+        if z.pods.iter().any(|p| p.shards.iter().any(|s| s.miner.miner_id == luegner)) || ziel >= 6 {
+            break (zustand, z);
+        }
+        eprintln!("[netzlauf] Lügner in Epoche {ziel} in der Reserve, weiter");
+        ziel += 1;
+    };
     let n = namen(&knoten);
-    let zustand = knoten[0].kette().zustand().clone();
-    let z = myl_node::kette::Kette::zuteilung_der_laufenden_epoche(&zustand);
     for p in &z.pods {
         let g = myl_node::kette::Kette::grenzen_des_pods(&zustand, p).expect("machbar");
         let pos: Vec<&str> = p.shards.iter().map(|s| n[&s.miner.miner_id].as_str()).collect();
@@ -358,7 +392,6 @@ async fn der_netzbetrieb_traegt_mit_ungleichen_pods_und_stolpersteinen() {
     eprintln!("[netzlauf] Shard von {} nach Absturz neu gestartet", MINER[opfer - 1].name);
 
     // ---- Stolperstein 1: der Lügner wird gemessen und gesperrt ---------
-    let luegner = knoten[1 + MINER.iter().position(|m| m.name == "luegner").unwrap()].miner_kennung().expect("Lügner");
     let lebt_im_pod = z.pods.iter().any(|p| p.shards.iter().any(|s| s.miner.miner_id == luegner));
     let epoche = knoten[0].kette().zustand().epoch.0;
     if lebt_im_pod {
@@ -371,30 +404,54 @@ async fn der_netzbetrieb_traegt_mit_ungleichen_pods_und_stolpersteinen() {
             assert!(tokio::time::Instant::now() < bis, "der Lügner wurde nicht gemeldet");
         }
         eprintln!("[netzlauf] Lügner gemeldet bei Höhe {}", knoten[0].kette().hoehe());
+    } else {
+        // Die Reserve rechnet nicht und wird nicht gemessen; ausgelassen
+        // wird sichtbar, nicht still.
+        eprintln!("[netzlauf] ⚠️ Stolperstein 1 ausgelassen: der Lügner stand bis Epoche {ziel} in der Reserve");
     }
 
-    // ---- Stolperstein 6: ein Knoten fällt ganz aus und kehrt zurück -----
-    let ausfall = 1 + MINER.iter().position(|m| m.name == "m13").unwrap();
-    let kennung_vorher = knoten[ausfall].miner_kennung();
-    let weg = knoten.remove(ausfall);
-    drop(weg);
+    // ---- Stolperstein 6: drei Knoten fallen zugleich aus und kehren zurück
+    // (2026-10-22: vorher einer). Darunter in der Regel rechnende Positionen;
+    // das Netz baut weiter, und zurück holen alle drei auf.
+    let ausfaelle: Vec<usize> = ["m01", "m06", "m13"].iter().map(|n| 1 + MINER.iter().position(|m| m.name == *n).unwrap()).collect();
+    let kennungen: Vec<_> = ausfaelle.iter().map(|i| knoten[*i].miner_kennung()).collect();
+    for i in ausfaelle.iter().rev() {
+        drop(knoten.remove(*i));
+    }
     for _ in 0..10 {
         runde(&mut knoten, 20).await;
     }
-    let zurueck = Knoten::starten(konfig(&ordner, "m13", bootstrap.clone(), Some(&MINER[ausfall - 1])), false)
-        .await
-        .expect("Neustart");
-    assert_eq!(zurueck.miner_kennung(), kennung_vorher, "nach dem Neustart ein anderer Miner");
-    knoten.insert(ausfall, zurueck);
-    assert!(angleichen(&mut knoten, Duration::from_secs(120)).await, "der neu gestartete Knoten holte nicht auf");
-    eprintln!("[netzlauf] m13 nach Neustart bei Höhe {}", knoten[ausfall].kette().hoehe());
+    for (i, vorher) in ausfaelle.iter().zip(&kennungen) {
+        let m = &MINER[*i - 1];
+        let zurueck = Knoten::starten(konfig(&ordner, m.name, bootstrap.clone(), Some(m)), false).await.expect("Neustart");
+        assert_eq!(zurueck.miner_kennung(), *vorher, "{} nach dem Neustart ein anderer Miner", m.name);
+        knoten.insert(*i, zurueck);
+    }
+    assert!(angleichen(&mut knoten, Duration::from_secs(120)).await, "die neu gestarteten Knoten holten nicht auf");
+    eprintln!("[netzlauf] drei Ausfälle zurück bei Höhe {}", knoten[0].kette().hoehe());
 
-    // ---- Epoche 3: ohne den Lügner, Dateien geholt ----------------------
+    // ---- Stolperstein 8: ein Neuling ohne Kette und ohne Angabe ----------
+    // Er findet das Netz über das lokale Netz (mDNS), holt jeden Block nach
+    // und muss danach mit allen dieselbe Kette führen.
+    let mut neu = konfig(&ordner, "neuling", Vec::new(), None);
+    neu.erzeugt_bloecke = false;
+    neu.netz = &LOKALNETZ;
+    neu.horchadressen = vec!["/ip4/0.0.0.0/tcp/0".to_string()];
+    knoten.push(Knoten::starten(neu, false).await.expect("Neuling"));
+    assert!(angleichen(&mut knoten, Duration::from_secs(180)).await, "der Neuling holte nicht auf");
+    pruefe_einigkeit(&knoten, "mit dem Neuling");
+    eprintln!(
+        "[netzlauf] Neuling bei Höhe {} mit {} Gegenstellen",
+        knoten.last().unwrap().kette().hoehe(),
+        knoten.last().unwrap().peers().await
+    );
+
+    // ---- Die Epoche danach: ohne den Lügner, Dateien geholt -------------
     while knoten[0].kette().zustand().epoch.0 <= epoche {
         runde(&mut knoten, 200).await;
     }
     assert!(angleichen(&mut knoten, Duration::from_secs(120)).await, "die Knoten holten nicht auf");
-    pruefe_einigkeit(&knoten, "Beginn Epoche 3");
+    pruefe_einigkeit(&knoten, "Beginn der Epoche danach");
     let zustand = knoten[0].kette().zustand().clone();
     let z3 = myl_node::kette::Kette::zuteilung_der_laufenden_epoche(&zustand);
     if lebt_im_pod {
@@ -416,13 +473,19 @@ async fn der_netzbetrieb_traegt_mit_ungleichen_pods_und_stolpersteinen() {
         if fuehren_ihr_soll(&knoten, &soll3) {
             break;
         }
-        assert!(tokio::time::Instant::now() < bis, "in Epoche 3 führt nicht jede Position ihren Shard");
+        assert!(tokio::time::Instant::now() < bis, "in der Epoche danach führt nicht jede Position ihren Shard");
     }
     pruefe_einigkeit(&knoten, "Ende");
     // Nur der Lügner ist gesperrt; kein ehrlicher Knoten riss seine Frist.
     let gesperrt: Vec<MinerId> = knoten[0].kette().zustand().fristsperren.keys().copied().collect();
-    let erwartet: Vec<MinerId> = if lebt_im_pod { vec![luegner] } else { Vec::new() };
-    assert_eq!(gesperrt, erwartet, "gesperrt: {:?}", gesperrt.iter().map(|m| namen(&knoten)[m].clone()).collect::<Vec<_>>());
+    // 📌 Gesperrt sein darf nur der Lügner. Stand er in seiner Epoche in der
+    //    Reserve, kann er in der nächsten rechnen und dort gemeldet werden;
+    //    die Prüfung verlangte bis zum 2026-10-22 dann „niemand“.
+    let namen_gesperrt: Vec<String> = gesperrt.iter().map(|m| namen(&knoten)[m].clone()).collect();
+    assert!(gesperrt.iter().all(|m| *m == luegner), "ein ehrlicher Knoten ist gesperrt: {namen_gesperrt:?}");
+    if lebt_im_pod {
+        assert_eq!(gesperrt, vec![luegner], "der gemeldete Lügner ist nicht gesperrt: {namen_gesperrt:?}");
+    }
     // Was die Stolpersteine im Protokoll hinterlassen haben.
     for m in &MINER {
         let zaehle = |a: &str| im_protokoll(&ordner, m.name, a);

@@ -1,6 +1,6 @@
 # integer-llm
 
-> **Version:** 0.145.1 (θ_v 0.22.0; kernels 0.88.1, runtime 0.103.0, pipeline 0.15.2)
+> **Version:** 0.145.2 (θ_v 0.22.0; kernels 0.88.2, runtime 0.103.1, pipeline 0.15.3)
 > **Datum:** 2026-10-22
 > **Status:** ⚠️ **Das Akzeptanzkriterium ruht auf einer zu kleinen
 > Stichprobe.** Gemessen wurde bisher ueber **4 Sequenzen, 435
@@ -648,6 +648,32 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
   volle Paritätstests nur auf GPU-Runnern (nightly oder PR-basiert)
 
 ## Changelog
+
+### v0.145.2 (2026-10-22): Eine Werkzeugkette für alle Kisten (kernels 0.88.2, runtime 0.103.1, pipeline 0.15.3)
+
+- `rust-version` auf 1.99 in `kernels`, `runtime`, `pipeline`; die Werkzeugkette steht jetzt einmal,
+  in `rust-toolchain.toml` (1.99.0), und die CI baut mit genau ihr statt mit
+  einem wechselnden `stable` und zwei Mindestfassungen (1.85 und 1.88).
+  ⚑ **Dazu Code, und zwar mit Absicht:** Mit `rust-version = "1.99"` gibt Clippy
+  zwei Regeln frei, die es bei 1.85 zurückhielt (`manual_is_multiple_of`,
+  `chunks_exact` mit fester Größe). Festlegung des Projektinhabers:
+  umschreiben, nicht abschalten. Hier: kernels 25 Zeilen mit `is_multiple_of` und 12 `as_chunks` in 14 Dateien, runtime 10 und 2 in 5 Dateien, pipeline 3 in 2 Dateien.
+  `x % n == 0` wird `x.is_multiple_of(n)`, `chunks_exact(N)` wird
+  `as_chunks::<N>()`. Für `n ≠ 0` bitgleich; jede Stelle mit variablem
+  Teiler ist einzeln angesehen und vorher gegen null geschützt (bei
+  `is_multiple_of(0)` stünde `x == 0`, wo `x % 0` abbricht).
+- `runtime/tests/shardtraining.rs` fragt vor dem Artefakt die Erlaubnis
+  `MYL_OHNE_ARTEFAKTE` ab, wie die übrigen Proben der Laufzeit (Klasse von
+  Fund 597: wo das Artefakt liegt, rechnete sie auch neben einer Messung).
+  Die Proben mit `#[ignore]` behaupten ihr Artefakt weiter hart; wer sie
+  startet, will sie.
+- **Belege:** `cargo metadata --locked --offline` gegen den Vorrat in jeder
+  Kiste; die Wache der CI hält Fassung und Werkzeugkette zusammen. Nach dem
+  Umschreiben: Clippy mit `-D warnings` still (die Kerne über alle vier
+  Merkmale), `cargo test` rc=0 in allen zehn berührten Kisten (die Kerne auch
+  mit `cpu-simd`), Konformität mit `sparrow-0.6b-int8` 55/55, die vier
+  Abdrücke unverändert (`cb696efd3817e575` über 24 Vektoren), Gleitkomma-Audit
+  grün.
 
 ### v0.145.1 (2026-10-22): Das Gleitkomma-Audit kennt die Dateien von Stufe 4
 

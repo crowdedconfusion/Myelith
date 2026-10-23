@@ -101,7 +101,7 @@ fn die_auszahlungen_summieren_sich_immer_auf_den_betrag() {
                 // Adressen absichtlich mit Dubletten: `% (n as u64 / 2 + 1)`.
                 let a = adresse(f.next() % (n as u64 / 2 + 1));
                 // Viele Nullen, damit der Rest-Verteilweg getroffen wird.
-                let w = if f.next() % 3 == 0 { 0 } else { f.next() % 1000 };
+                let w = if f.next().is_multiple_of(3) { 0 } else { f.next() % 1000 };
                 let _ = i;
                 (a, w)
             })
@@ -123,7 +123,7 @@ fn die_auszahlungen_summieren_sich_immer_auf_den_betrag() {
                     );
                 }
             }
-            if total % (n as u64) != 0 {
+            if !total.is_multiple_of(n as u64) {
                 mit_rest += 1;
             }
         }

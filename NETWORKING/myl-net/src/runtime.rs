@@ -486,18 +486,53 @@ pub async fn run_node_mit(
                             },
                         });
                     }
+                    // ⚑ **Im lokalen Netz gefunden** (mDNS): in die Tabelle
+                    //   und anwaehlen; `identify` und Kademlia tun den Rest
+                    //   wie bei jeder anderen Gegenstelle.
+                    //   📌 Je Gegenstelle gesammelt und gefiltert (Fund 594):
+                    //   mDNS nennt auch die Rueckschleife des anderen.
+                    SwarmEvent::Behaviour(MylBehaviourEvent::Mdns(libp2p::mdns::Event::Discovered(gefunden))) => {
+                        let mut je_peer: std::collections::BTreeMap<PeerId, Vec<Multiaddr>> = Default::default();
+                        for (peer, addr) in gefunden {
+                            if peer != *swarm.local_peer_id() {
+                                je_peer.entry(peer).or_default().push(addr);
+                            }
+                        }
+                        for (peer, adressen) in je_peer {
+                            let adressen = crate::discovery::fuer_das_adressbuch(adressen);
+                            if adressen.is_empty() {
+                                continue;
+                            }
+                            for addr in &adressen {
+                                swarm.behaviour_mut().kad.add_address(&peer, addr.clone());
+                            }
+                            let wahl = libp2p::swarm::dial_opts::DialOpts::peer_id(peer)
+                                .addresses(adressen)
+                                .condition(libp2p::swarm::dial_opts::PeerCondition::DisconnectedAndNotDialing)
+                                .build();
+                            let _ = swarm.dial(wahl);
+                        }
+                    }
                     SwarmEvent::Behaviour(MylBehaviourEvent::Identify(
                         libp2p::identify::Event::Received { peer_id, info, .. },
                     )) => {
                         let kad_protokoll = libp2p::StreamProtocol::new(crate::discovery::KAD_PROTOCOL);
                         if info.protocols.contains(&kad_protokoll) {
-                            for addr in info.listen_addrs {
+                            // 📌 Fund 594: nicht die Rueckschleife eines anderen.
+                            for addr in crate::discovery::fuer_das_adressbuch(info.listen_addrs) {
                                 swarm.behaviour_mut().kad.add_address(&peer_id, addr);
                             }
                             if !kad_angestossen {
                                 kad_angestossen = swarm.behaviour_mut().kad.bootstrap().is_ok();
                                 kad_naechste.as_mut().reset(tokio::time::Instant::now() + kad_abstand);
                             }
+                        } else {
+                            // ⚑ **Kein Myelith-Knoten** (2026-10-22): Jeder
+                            //   Myelith-Knoten bietet sein Kademlia an. mDNS
+                            //   findet im lokalen Netz aber jedes libp2p-
+                            //   Programm (derselbe Dienstname), und ein fremdes
+                            //   belegte sonst einen Verbindungsplatz.
+                            let _ = swarm.disconnect_peer_id(peer_id);
                         }
                     }
                     SwarmEvent::ConnectionEstablished { peer_id, endpoint, .. } => {

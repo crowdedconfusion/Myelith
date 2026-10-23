@@ -19,6 +19,9 @@ fn verzeichnis() -> PathBuf {
     p
 }
 
+/// Die Probekette, aber mit Suche im lokalen Netz.
+static LOKALNETZ: myl_node::netz::Netz = myl_node::netz::Netz { lokale_suche: true, ..myl_node::netz::PROBEKETTE };
+
 fn konfig(ordner: &std::path::Path, name: &str, bootstrap: Vec<String>) -> KnotenKonfig {
     KnotenKonfig {
         name: name.to_string(),
@@ -47,6 +50,9 @@ fn konfig(ordner: &std::path::Path, name: &str, bootstrap: Vec<String>) -> Knote
         konto: None,
         testverkehr_sekunden: None,
         erzeugt_bloecke: false,
+        blocktakt_ms: None,
+        abzug: None,
+        hintergrundpruefung: true,
         teilnehmer: Vec::new(),
     }
 }
@@ -75,4 +81,48 @@ async fn zwei_knoten_finden_einander_ueber_einen_dritten() {
         );
     }
     let _ = std::fs::remove_dir_all(&ordner);
+}
+
+/// ⚑ **Ohne jede Angabe, im lokalen Netz** (mDNS, 2026-10-22): Zwei Knoten
+/// ohne Bootstrap finden einander. Ohne die Suche bliebe jeder allein.
+#[tokio::test]
+async fn zwei_knoten_ohne_angabe_finden_einander_im_lokalen_netz() {
+    let ordner = verzeichnis().join("lokal");
+    let mut ka = konfig(&ordner, "a", vec![]);
+    let mut kb = konfig(&ordner, "b", vec![]);
+    ka.netz = &LOKALNETZ;
+    kb.netz = &LOKALNETZ;
+    // mDNS sucht ueber die Schnittstellen des Rechners, nicht ueber die
+    // Rueckschleife; wer nur dort horcht, ist im lokalen Netz nicht da.
+    ka.horchadressen = vec!["/ip4/0.0.0.0/tcp/0".to_string()];
+    kb.horchadressen = vec!["/ip4/0.0.0.0/tcp/0".to_string()];
+    let mut a = Knoten::starten(ka, false).await.expect("A");
+    let mut b = Knoten::starten(kb, false).await.expect("B");
+    let ende = tokio::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        for k in [&mut a, &mut b] {
+            k.laufe_fuer(Duration::from_millis(50)).await;
+        }
+        if a.peers().await >= 1 && b.peers().await >= 1 {
+            break;
+        }
+        assert!(tokio::time::Instant::now() < ende, "ohne Angabe fand keiner den anderen");
+    }
+    let _ = std::fs::remove_dir_all(&ordner);
+}
+
+/// Die Einstiegsliste des Netzes kommt zu den eigenen Angaben, ohne Doppelte.
+#[test]
+fn die_einstiegsliste_ergaenzt_die_eigenen_angaben() {
+    static MIT_TUER: myl_node::netz::Netz = myl_node::netz::Netz {
+        einstieg: &["/ip4/192.0.2.1/tcp/4150/p2p/a", "/ip4/192.0.2.2/tcp/4150/p2p/b"],
+        ..myl_node::netz::PROBEKETTE
+    };
+    let mut k = konfig(&verzeichnis(), "e", vec!["/ip4/192.0.2.2/tcp/4150/p2p/b".into(), "/ip4/192.0.2.3/tcp/4150/p2p/c".into()]);
+    k.netz = &MIT_TUER;
+    assert_eq!(
+        k.einstiegsliste(),
+        ["/ip4/192.0.2.2/tcp/4150/p2p/b", "/ip4/192.0.2.3/tcp/4150/p2p/c", "/ip4/192.0.2.1/tcp/4150/p2p/a"]
+    );
+    assert!(!k.netz().lokale_suche, "die Probekette sucht nicht lokal");
 }

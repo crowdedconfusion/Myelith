@@ -206,6 +206,15 @@ pub fn adressbereich(addr: &Multiaddr) -> Option<Adressbereich> {
     None
 }
 
+/// Die IP einer Multiaddr, falls sie eine nennt.
+fn ip_von(addr: &Multiaddr) -> Option<std::net::IpAddr> {
+    addr.iter().find_map(|p| match p {
+        Protocol::Ip4(ip) => Some(ip.into()),
+        Protocol::Ip6(ip) => Some(ip.into()),
+        _ => None,
+    })
+}
+
 fn bereich_v4(ip: Ipv4Addr) -> Option<Adressbereich> {
     if ip.is_loopback() {
         return None;
@@ -312,7 +321,7 @@ impl NetworkBehaviour for Adressvielfalt {
         &mut self,
         connection_id: ConnectionId,
         _peer: PeerId,
-        _local_addr: &Multiaddr,
+        local_addr: &Multiaddr,
         remote_addr: &Multiaddr,
     ) -> Result<THandler<Self>, ConnectionDenied> {
         let Some(bereich) = adressbereich(remote_addr) else {
@@ -320,6 +329,18 @@ impl NetworkBehaviour for Adressvielfalt {
             // Zählgrenzen aus `standard_grenzen` gelten weiterhin.
             return Ok(dummy::ConnectionHandler);
         };
+        // 📌 **Fund 596 (2026-10-22): von diesem Rechner selbst.** Kommt die
+        //    Verbindung von derselben IP, auf der sie ankam, steht der
+        //    Wählende auf dieser Maschine, und es gilt die Begründung der
+        //    Rückschleife: Wer das kann, besitzt die Maschine bereits. Seit
+        //    die Rückschleife eines anderen nicht mehr ins Adressbuch kommt
+        //    (Fund 594), wählen Knoten auf einem Rechner einander über dessen
+        //    LAN-Adresse; ohne diese Zeile füllten sie den /24 ihres eigenen
+        //    Rechners, und im Netzlauf wurden 141 Verbindungen abgewiesen.
+        //    Andere Rechner im selben Netz bleiben gezählt.
+        if ip_von(remote_addr).is_some_and(|ip| Some(ip) == ip_von(local_addr)) {
+            return Ok(dummy::ConnectionHandler);
+        }
         let belegt = self.belegt(&bereich);
         if belegt >= self.grenze {
             return Err(ConnectionDenied::new(BereichVoll {
@@ -529,6 +550,31 @@ mod tests {
             );
         }
         assert_eq!(v.bereiche(), 0);
+    }
+
+    /// Fund 596: Verbindungen von diesem Rechner selbst (Gegenstelle und
+    /// Ankunft auf derselben IP) belegen keinen Platz; ein anderer Rechner im
+    /// selben /24 schon.
+    #[test]
+    fn verbindungen_vom_eigenen_rechner_belegen_keinen_platz() {
+        let mut v = Adressvielfalt::mit_grenze(2);
+        let hier: Multiaddr = "/ip4/192.168.178.50/tcp/4150".parse().unwrap();
+        let von_hier: Multiaddr = "/ip4/192.168.178.50/tcp/50123".parse().unwrap();
+        for i in 0..10usize {
+            assert!(
+                v.handle_established_inbound_connection(ConnectionId::new_unchecked(i), PeerId::random(), &hier, &von_hier).is_ok(),
+                "Verbindung {i} vom eigenen Rechner abgelehnt"
+            );
+        }
+        assert_eq!(v.bereiche(), 0);
+        let nachbar: Multiaddr = "/ip4/192.168.178.51/tcp/4150".parse().unwrap();
+        for i in 10..12usize {
+            assert!(v.handle_established_inbound_connection(ConnectionId::new_unchecked(i), PeerId::random(), &hier, &nachbar).is_ok());
+        }
+        assert!(
+            v.handle_established_inbound_connection(ConnectionId::new_unchecked(12), PeerId::random(), &hier, &nachbar).is_err(),
+            "ein anderer Rechner im selben /24 bleibt gezählt"
+        );
     }
 
     #[test]

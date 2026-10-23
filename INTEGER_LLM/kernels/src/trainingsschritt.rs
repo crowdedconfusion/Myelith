@@ -84,7 +84,7 @@ pub enum Gewichtsform {
 /// ausserhalb der Form, statt still etwas anderes zu rechnen.
 pub fn ternaere_zeile_zu_mastern(werte: &[i32], shift: u8, master_frac: u8) -> Vec<Master> {
     let gruppe = crate::ternaer::GRUPPE;
-    assert!(werte.len() % gruppe == 0, "ternaere_zeile_zu_mastern: {} Werte sind keine ganzen Gruppen", werte.len());
+    assert!(werte.len().is_multiple_of(gruppe), "ternaere_zeile_zu_mastern: {} Werte sind keine ganzen Gruppen", werte.len());
     let links = master_frac.checked_sub(shift).unwrap_or_else(|| {
         panic!("ternaere_zeile_zu_mastern: Shift {shift} ueber den {master_frac} Bruchstellen des Masters")
     });
@@ -181,7 +181,7 @@ pub fn gewicht_aus_master_als(
 pub fn ternaer_aus_master(master: &[Master], in_features: usize, master_frac: u8) -> (Vec<i8>, Vec<u8>) {
     let gruppe = crate::ternaer::GRUPPE;
     assert!(
-        in_features % gruppe == 0,
+        in_features.is_multiple_of(gruppe),
         "ternaer_aus_master: {in_features} Eingaenge sind kein Vielfaches von {gruppe}"
     );
     let mut werte: Vec<Master> = vec![0; master.len()];
@@ -5076,7 +5076,7 @@ mod ternaere_tests {
         assert_eq!(shifts.len(), zeilen);
         let p = packen(&w, spalten).expect("jede Gruppe ist ternaer");
         assert!(p.betraege.iter().all(|&b| b > 0), "keine Gruppe ist leer");
-        for (g, gruppe) in master.chunks_exact(GRUPPE).enumerate() {
+        for (g, gruppe) in master.as_chunks::<GRUPPE>().0.iter().enumerate() {
             let a = crate::fixed_point::rshift_round_i64(gruppe.iter().map(|&m| i64::from(m).abs()).sum(), 7);
             for (i, &m) in gruppe.iter().enumerate() {
                 // Das Muster haengt weiter am Mittel aller 128.

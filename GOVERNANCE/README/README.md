@@ -1,7 +1,7 @@
 # governance (`myl-governance`)
 
-> **Version:** 0.15.1
-> **Datum:** 2026-10-21
+> **Version:** 0.15.2
+> **Datum:** 2026-10-22
 > **Status:** **Phasen 1 und 2 abgeschlossen** (1.1–1.4, 2.1–2.3),
 > Phase 3 zur Hälfte (3.1 und 3.4 ✅). Parameter-Registry mit
 > Änderbarkeits-Rang, technische Durchsetzung des Verfassungsrangs,
@@ -134,6 +134,15 @@ richtige Fassung vorhanden und lief nicht.
 Er hat sich beim ersten Lauf bezahlt gemacht, siehe Fund 50.
 
 ## Changelog
+
+### v0.15.2 (2026-10-22): Eine Werkzeugkette für alle Kisten
+
+- `rust-version` auf 1.99 in `myl-governance`; die Werkzeugkette steht jetzt einmal,
+  in `rust-toolchain.toml` (1.99.0), und die CI baut mit genau ihr statt mit
+  einem wechselnden `stable` und zwei Mindestfassungen (1.85 und 1.88).
+  Nur das Manifest, kein Code.
+- **Belege:** `cargo metadata --locked --offline` gegen den Vorrat in jeder
+  Kiste; die Wache der CI hält Fassung und Werkzeugkette zusammen.
 
 ### v0.15.1 – 2026-10-21 (die Modelle heißen nach Tieren)
 

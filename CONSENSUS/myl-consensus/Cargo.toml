@@ -1,8 +1,8 @@
 [package]
 name = "myl-consensus"
-version = "0.33.0"
+version = "0.33.1"
 edition = "2021"
-rust-version = "1.85"
+rust-version = "1.99"
 description = "BFT-Konsens für Myelith (Whitepaper Kap. 3.5, Anhang A.2): Validator-Registrierung, Stake-basierte Komiteewahl, BFT-Blockproduktion (Propose/Vote/Commit), Stimmgewichts-Kopplung, Double-Signing-Erkennung. Design-Entscheidung: malachite-consensus hinter Trait-Grenze, Eigenbau als Fallback."
 license = "LicenseRef-PolyForm-Shield-1.0.0"
 publish = false

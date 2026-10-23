@@ -213,7 +213,7 @@ fn ein_shard_lehnt_fremde_nachrichten_ab_statt_abzustuerzen() {
     let mut abgelehnt = 0usize;
     for _ in 0..2_000 {
         let msg = PodMessage {
-            magic: if rng.u64() % 4 == 0 { wire::MAGIC } else { rng.bytes(8).try_into().unwrap() },
+            magic: if rng.u64().is_multiple_of(4) { wire::MAGIC } else { rng.bytes(8).try_into().unwrap() },
             segment_id: SegmentId::new(rng.bytes(32).try_into().unwrap()),
             session_id: rng.u64(),
             sender_shard: rng.u64(),

@@ -1562,7 +1562,7 @@ dependencies = [
 
 [[package]]
 name = "integer-llm-kernels"
-version = "0.88.1"
+version = "0.88.2"
 dependencies = [
  "itertools 0.13.0",
  "serde",
@@ -1572,7 +1572,7 @@ dependencies = [
 
 [[package]]
 name = "integer-llm-runtime"
-version = "0.103.0"
+version = "0.103.1"
 dependencies = [
  "integer-llm-kernels",
  "libc",
@@ -2375,7 +2375,7 @@ dependencies = [
 
 [[package]]
 name = "myl-consensus"
-version = "0.33.0"
+version = "0.33.1"
 dependencies = [
  "borsh",
  "myl-ledger",
@@ -2385,7 +2385,7 @@ dependencies = [
 
 [[package]]
 name = "myl-gateway"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "async-trait",
  "borsh",
@@ -2397,7 +2397,7 @@ dependencies = [
 
 [[package]]
 name = "myl-governance"
-version = "0.15.1"
+version = "0.15.2"
 dependencies = [
  "myl-consensus",
  "myl-tokenomics",
@@ -2407,7 +2407,7 @@ dependencies = [
 
 [[package]]
 name = "myl-ledger"
-version = "0.24.0"
+version = "0.24.1"
 dependencies = [
  "borsh",
  "myl-types",
@@ -2416,7 +2416,7 @@ dependencies = [
 
 [[package]]
 name = "myl-net"
-version = "0.17.1"
+version = "0.19.0"
 dependencies = [
  "async-trait",
  "borsh",
@@ -2436,7 +2436,7 @@ dependencies = [
 
 [[package]]
 name = "myl-node"
-version = "0.52.1"
+version = "0.55.0"
 dependencies = [
  "async-trait",
  "borsh",
@@ -2460,7 +2460,7 @@ dependencies = [
 
 [[package]]
 name = "myl-scheduler"
-version = "0.18.0"
+version = "0.18.1"
 dependencies = [
  "borsh",
  "myl-train",
@@ -2470,7 +2470,7 @@ dependencies = [
 
 [[package]]
 name = "myl-siegel"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "borsh",
  "chacha20poly1305",
@@ -2485,7 +2485,7 @@ dependencies = [
 
 [[package]]
 name = "myl-store"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "borsh",
  "myl-types",
@@ -2496,7 +2496,7 @@ dependencies = [
 
 [[package]]
 name = "myl-tokenomics"
-version = "0.23.0"
+version = "0.23.1"
 dependencies = [
  "borsh",
  "myl-ledger",
@@ -2505,14 +2505,14 @@ dependencies = [
 
 [[package]]
 name = "myl-train"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "myl-types",
 ]
 
 [[package]]
 name = "myl-types"
-version = "0.46.0"
+version = "0.46.1"
 dependencies = [
  "blst",
  "borsh",
@@ -2524,7 +2524,7 @@ dependencies = [
 
 [[package]]
 name = "myl-verifier"
-version = "0.23.1"
+version = "0.23.2"
 dependencies = [
  "borsh",
  "integer-llm-kernels",

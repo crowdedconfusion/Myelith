@@ -1661,7 +1661,7 @@ mod proben {
         );
         // Und was bleibt, ist der Anfang der Aufnahme, Probe fuer Probe.
         let geblieben: Vec<i16> = b[daten]
-            .chunks_exact(2)
+            .as_chunks::<2>().0.iter()
             .map(|p| i16::from_le_bytes([p[0], p[1]]))
             .collect();
         assert_eq!(geblieben[..], proben[..geblieben.len()]);

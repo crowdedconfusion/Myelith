@@ -66,6 +66,22 @@ echo "   Quelle: $WURZEL"
 # ⚑ **Erst alles pruefen, dann bauen.** Ein Bau, der nach acht Minuten
 # an einem fehlenden Werkzeug abbricht, hat acht Minuten gekostet und
 # nichts gesagt, was er nicht vorher haette sagen koennen.
+# ⚑ **Die Fassung aus `rust-toolchain.toml`, und ohne Netz die vorhandene**
+# (2026-10-22). rustup holt die dort festgelegte Fassung beim ersten Aufruf
+# im Baum nach. Ohne Netz scheitert das, und dann baut die eingestellte
+# Fassung weiter, mit Hinweis: Eine fehlende Werkzeugkette darf eine
+# Pruefung kosten, nie den Bau. Ohne rustup (Werkzeugvorrat, Nix) gilt die
+# Datei ohnehin nicht.
+if command -v rustup >/dev/null 2>&1 && ! cargo --version >/dev/null 2>&1; then
+  vorhanden=$(rustup toolchain list 2>/dev/null | awk '/default/ {print $1; exit}')
+  [ -n "$vorhanden" ] || vorhanden=$(rustup toolchain list 2>/dev/null | awk 'NR == 1 && $1 ~ /-/ {print $1}')
+  if [ -n "$vorhanden" ]; then
+    RUSTUP_TOOLCHAIN="$vorhanden"
+    export RUSTUP_TOOLCHAIN
+    echo "   Hinweis: Die festgelegte Rust-Fassung liess sich nicht holen (kein Netz?); gebaut wird mit $vorhanden."
+  fi
+fi
+
 fehlt=""
 
 if ! xcode-select -p >/dev/null 2>&1; then

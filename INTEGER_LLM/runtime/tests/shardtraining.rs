@@ -32,6 +32,13 @@ fn artefakte() -> std::path::PathBuf {
 }
 
 fn modell() -> Option<IntegerModel> {
+    // 📌 Erst die Erlaubnis (2026-10-23, Klasse von Fund 597): Hier stand nur
+    //    das Vorhandensein, und wo das Artefakt liegt, rechnete die Probe auch
+    //    neben einer Messung, die mit `MYL_OHNE_ARTEFAKTE` Ruhe verlangt hatte.
+    if std::env::var_os("MYL_OHNE_ARTEFAKTE").is_some() {
+        eprintln!("SKIP (MYL_OHNE_ARTEFAKTE gesetzt)");
+        return None;
+    }
     let dir = artefakte();
     if !dir.exists() {
         eprintln!("Artefakt fehlt, Test uebersprungen: {}", dir.display());

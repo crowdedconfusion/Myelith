@@ -1,7 +1,7 @@
 # gateway (`myl-gateway`)
 
-> **Version:** 0.6.0
-> **Datum:** 2026-09-03
+> **Version:** 0.6.1
+> **Datum:** 2026-10-22
 > **Status:** Stufe 1 steht: die Tür auf `localhost` und der Beleg. Sie
 > nimmt entgegen und schreibt fest; **an einen Pod gibt sie noch nichts**.
 
@@ -83,6 +83,15 @@ Sitzungen nicht denselben Wert bekommt und eine Bindung nicht
 übertragbar ist.
 
 ## Changelog
+
+### v0.6.1 (2026-10-22): Eine Werkzeugkette für alle Kisten
+
+- `rust-version` auf 1.99 in `myl-gateway`; die Werkzeugkette steht jetzt einmal,
+  in `rust-toolchain.toml` (1.99.0), und die CI baut mit genau ihr statt mit
+  einem wechselnden `stable` und zwei Mindestfassungen (1.85 und 1.88).
+  Nur das Manifest, kein Code.
+- **Belege:** `cargo metadata --locked --offline` gegen den Vorrat in jeder
+  Kiste; die Wache der CI hält Fassung und Werkzeugkette zusammen.
 
 ### v0.6.0 – 2026-09-03 (die Vollmacht zieht in `myl-types`, `modell()` fragt statt zu raten)
 

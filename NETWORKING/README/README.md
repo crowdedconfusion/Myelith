@@ -1,11 +1,12 @@
 # networking (`myl-net`, `myl-siegel`)
 
-> **Version:** 0.17.1
+> **Version:** 0.19.0
 > **Datum:** 2026-10-22
 > **Status:** **Phase 1 und 2 abgeschlossen** (1.1–1.6, 2.1–2.3),
 > **Phase 3 umgesetzt** (3.1–3.4, Abschluss unter Reviewvorbehalt), dazu Punkt 4.2 (Fuzzing der Wire-Protocol-Parser), Punkt 4.3
 > (Verbindungsgrenzen und Peer-Diversität) und seit dem 26. August
-> Punkt 4.1 (Chaos-Tests, **außer** IP-Paketverlust).
+> Punkt 4.1 (Chaos-Tests; IP-Paketverlust seit dem 22. Oktober im Lauf mit
+> getrennten Prozessen unter `tc netem`, TESTCLIENT).
 >
 > Phase 1: 20-Knoten-Vollkonnektivität unter 5 s, ungültige Nachrichten
 > werden nicht weiterverbreitet, sechs Gossip-Topics, Anfragekanal.
@@ -108,6 +109,68 @@ NETWORKING/
 ```
 
 ## Changelog
+
+### v0.19.0 (2026-10-22): Keine Rückschleife eines anderen im Adressbuch; Funde 594 und 596 (`myl-net` 0.19.0, `myl-siegel` 0.2.1)
+
+- 📌 **Fund 594: Knoten wählten die Rückschleife ihrer Gegenstellen.** Wer
+  auf allen Schnittstellen horcht, nennt über `identify` und mDNS jede
+  davon, `127.0.0.1` eingeschlossen; beides kam ungefiltert in die
+  Kademlia-Tabelle, und `identify` hielt die Adressen zusätzlich in einem
+  eigenen Speicher, den libp2p beim Wählen befragt. Wer die Rückschleife
+  eines anderen wählt, erreicht sich selbst („Unexpected peer ID“). Im
+  ersten Lauf mit getrennten Prozessen stand nach einer Trennung nur noch
+  diese Adresse da, und zwei Knoten fanden nie wieder zueinander. Im Lauf
+  im selben Prozess fiel es nie auf, denn dort sitzen alle wirklich auf der
+  Rückschleife.
+- `discovery::fuer_das_adressbuch`: die Rückschleife nur, wenn eine
+  Gegenstelle keine andere Adresse nennt (dann sitzt sie auf derselben
+  Maschine, wie in jeder Probe), eine unspezifische Adresse (`0.0.0.0`,
+  `::`) nie. Gerufen für `identify` und für mDNS (dort je Gegenstelle
+  gesammelt).
+- `identify` ohne eigenen Adressspeicher (`with_cache_size(0)`): Adressen
+  kommen nur noch aus Kademlia, also gefiltert; eine Quelle statt zwei.
+- **Belege:** `die_rueckschleife_nur_ohne_andere_adresse`. Im Lauf mit
+  getrennten Prozessen vorher 24 Wahlen über die Rückschleife nach dem
+  Filter allein (der Speicher von `identify` lieferte sie weiter), danach
+  null; der Lauf prüft das seither selbst.
+- 📌 **Fund 596, eine Folge von 594: Verbindungen vom eigenen Rechner.**
+  Ohne die Rückschleife wählen Knoten auf einem Rechner einander über dessen
+  LAN-Adresse, und die zählte in `Adressvielfalt` wie jede andere aus diesem
+  /24. Im Netzlauf mit fünfzehn Knoten in einem Prozess wurden 141
+  Verbindungen abgewiesen, und zwei Knoten fanden einander nie. Jetzt ist
+  eine eingehende Verbindung ausgenommen, wenn die Gegenstelle dieselbe IP
+  hat wie die Adresse, auf der sie ankam: Der Wählende steht auf dieser
+  Maschine, und es gilt die Begründung der Rückschleife. Andere Rechner im
+  selben /24 bleiben gezählt (die offene Frage unten berührt das nicht).
+  Probe `verbindungen_vom_eigenen_rechner_belegen_keinen_platz`, Gegenprobe
+  ohne die Ausnahme rot; Netzlauf danach grün (jeder kennt alle 14).
+- ⚠️ **Gesehen, nicht geändert:** Aus einem /24 nimmt ein Knoten höchstens
+  vier eingehende Verbindungen an (`MAX_JE_ADRESSBEREICH`). Mehr als fünf
+  Knoten im selben lokalen Netz vernetzen sich deshalb nicht voll. Ob
+  private Bereiche wie die Rückschleife ausgenommen werden, ist eine
+  Abwägung gegen Sybil-Fluten innerhalb eines Rechenzentrums und bleibt
+  offen.
+- `rust-version` auf 1.99 in `myl-net` und `myl-siegel` (0.2.1); die Werkzeugkette steht einmal, in
+  `rust-toolchain.toml` (1.99.0), mit der auch die CI baut. Nur das Manifest.
+
+### v0.18.0 (2026-10-22): Knoten finden einander im lokalen Netz ohne Angabe
+
+- **mDNS** (`lokale_suche` in `NetConfig`, Vorgabe aus): `MylBehaviour::mdns`
+  als `Toggle`; was es findet, kommt in die Kademlia-Tabelle und wird
+  angewählt, danach geht es wie bei jeder Gegenstelle weiter (`identify`,
+  Suche). Die Vorgabe ist aus, weil Proben auf derselben Maschine einander
+  sonst fänden; ein echtes Netz schaltet sie ein (NODE `Netz::lokale_suche`).
+- ⚑ **Wer kein Myelith-Kademlia anbietet, wird nach `identify` getrennt.**
+  mDNS findet jedes libp2p-Programm im lokalen Netz (derselbe Dienstname),
+  und ein fremdes belegte sonst einen Verbindungsplatz.
+- 📌 mDNS sucht über die Schnittstellen des Rechners. Ein Knoten, der nur auf
+  `127.0.0.1` horcht, ist im lokalen Netz nicht zu finden.
+- Sperrdatei unverändert: `libp2p-mdns` 0.48.0 war schon aufgelöst und liegt
+  im Vorrat.
+- **Belege:** NODE `tests/entdeckung.rs` (zwei Knoten ohne jede Angabe finden
+  einander in 0,12 s); TESTCLIENT Netzlauf mit drei Knoten ohne Angabe, jeder
+  kennt alle 14 anderen, zweimal grün. `cargo test` rc=0, Clippy still.
+  ⚠️ Lokal nicht geprüft: mDNS in den CI-Läufern.
 
 ### v0.17.1 (2026-10-22): Sicherheitsmeldung zu `rustls-webpki`; nur die Sperrdatei
 

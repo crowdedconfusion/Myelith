@@ -3616,7 +3616,7 @@ impl IntegerModel {
         //   📌 Jede Ebene zu fragen kostete auf viel Speicher gemessen 3 bis
         //   4 % (gemischtes 35B, 17,7 GiB frei).
         let ruhig = RUHIGE_EBENEN.load(std::sync::atomic::Ordering::Relaxed);
-        let fragen = ruhig < RUHE_AB || ruhig % PRUEFTAKT == 0;
+        let fragen = ruhig < RUHE_AB || ruhig.is_multiple_of(PRUEFTAKT);
         let da: Vec<bool> = routing
             .experten
             .iter()

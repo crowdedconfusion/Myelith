@@ -1,8 +1,8 @@
 [package]
 name = "golem-einrichten"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2021"
-rust-version = "1.85"
+rust-version = "1.99"
 description = "Der Einrichtungsassistent von GolemOS: findet einen Myelith-Klon auf den angesteckten Laufwerken und installiert das System auf eine ganze Platte."
 license = "LicenseRef-PolyForm-Shield-1.0.0"
 publish = false

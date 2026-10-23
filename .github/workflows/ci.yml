@@ -1,35 +1,17 @@
 name: CI
 
-# ── Wann die Prüfung überhaupt läuft ──────────────────────────────
+# ── Wann die Pruefung laeuft ──────────────────────────────────────────
 #
-# `paths-ignore` schaltet den **ganzen** Ablauf ab, wenn ein Commit
-# ausschließlich Dokumentation berührt. Das ist hier der wirksamste
-# Hebel, weil ein großer Teil der Commits genau das tut: READMEs,
-# Anleitungen, Grafiken.
+# `paths-ignore` schaltet den ganzen Ablauf nur ab, wenn ein Commit
+# ausschliesslich sichere Doku beruehrt. ⛔️ Nicht `**.md`: Proben lesen
+# `NOTICES.md`, das CLIENT-README, Skills und die READMEs der
+# Werkzeugkisten; ein Commit, der nur `NOTICES.md` berichtigte, startete
+# sonst keinen Lauf (2026-10-17). Wer hier ein Muster ergaenzt, prueft vorher,
+# ob eine Probe die Dateien liest.
 #
-# ⛔️ **Ausgenommen ist nur, was sicher reine Doku ist, und nicht mehr
-# `**.md`** (2026-10-17). Bis dahin stand hier „kein Test und kein Skript
-# liest eine `.md`-Datei“, und das stimmte nicht mehr: Die CI prüft
-# `COMPLIANCE/NOTICES.md` gegen ihre Quellen, die Fensterprobe zählt die
-# Befehle im CLIENT-README, die Proben des Agenten lesen Skills
-# (`SKILL.md`) und die READMEs der Werkzeugkisten. 📌 Ein Commit, der nur
-# `NOTICES.md` berichtigte, startete deshalb keinen Lauf, und der rote
-# Lauf davor blieb stehen. Wer hier ein Muster ergänzt, prüft vorher, ob
-# eine Probe die Dateien liest.
-#
-# WARUM NICHT FEINER, also je Job nach berührtem Verzeichnis: Der
-# Abhängigkeitsgraph gibt es nicht her. An `myl-types` hängen **acht**
-# Crates, an `kernels` vier, und `myl-testclient` hängt an neun. Eine
-# Änderung an einer Quelldatei zieht deshalb fast immer fast alle Jobs
-# nach sich; ein Filter je Job spräche in der Praxis kaum an und wäre
-# dafür eine zweite Wahrheit über den Graphen, die beim nächsten neuen
-# `path =` in einer Cargo.toml still veraltet. Ein CI, das die falschen
-# Prüfungen auslässt, ist schlimmer als eines, das zu lange braucht.
-#
-# ACHTUNG BEI BRANCH-SCHUTZ: Ist ein Job als erforderlich eingetragen,
-# meldet er sich bei einem reinen Doku-Pull-Request gar nicht und der
-# Merge bleibt hängen. Dann entweder den Schutz auf einen Sammel-Job
-# umstellen oder auf `paths-ignore` verzichten.
+# Nicht feiner je Job: An `myl-types` haengen acht Kisten, an `kernels` vier;
+# ein Filter je Job spraeche kaum an und waere eine zweite Wahrheit ueber den
+# Abhaengigkeitsgraphen.
 on:
   push:
     branches: [main]
@@ -41,13 +23,10 @@ on:
       - 'README/Whitepaper/**.md'
       - 'README/Grafiken/**'
       - 'LICENSE.md'
-  # Woechentlich, damit die langsamen Whitepaper-Simulationen auch dann
-  # laufen, wenn niemand sie anfasst: Sie brechen nicht durch fremde
-  # Aenderungen, sondern durch einen Python- oder Umgebungswechsel.
+  # Woechentlich: Schwachstellen, die neu bekannt werden, und die langsamen
+  # Simulationen, die an einem Python-Wechsel brechen statt an einem Commit.
   schedule:
     - cron: '0 4 * * 1'
-  # Von Hand ausloesbar, vor allem fuer den Fuzz-Job: Wer eine
-  # Serialisierung anfasst, will ihn sofort fahren und nicht am Montag.
   workflow_dispatch:
   pull_request:
     branches: [main]
@@ -60,1544 +39,63 @@ on:
       - 'README/Grafiken/**'
       - 'LICENSE.md'
 
-# Laufende Prüfungen für denselben Branch abbrechen, wenn ein neuer Push kommt.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
-  # Fehlschlag statt Warnung, wenn ein Crate in der CI nicht aufgelöst werden kann.
   CARGO_NET_RETRY: 3
-  # Warnungen sind Fehler. Der Bestand ist bei null (Audit-Block 5);
-  # ab hier soll keine einzige wieder hereinkommen — eine unbeachtete
-  # `unused import`-Warnung war die Ursache dafür, dass ein kaputter
-  # Testbuild in main landen konnte (Fund A1).
+  # Warnungen sind Fehler (Fund A1: eine unbeachtete Warnung liess einen
+  # kaputten Testbau nach main).
   RUSTFLAGS: "-D warnings"
-  # Setzt `build.target-dir` aus .cargo/config.toml außer Kraft.
-  #
-  # Lokal bauen alle Crates in ein gemeinsames `SYSTEM/full-build/`, weil
-  # sonst jede gemeinsame Abhängigkeit zwölfmal auf der Platte liegt
-  # (gemessen: 23,8 GB statt 2,1 GB). In der CI ist das unnötig — jeder
-  # Job läuft in einem eigenen Container und baut nur seine Crates — und
-  # `Swatinem/rust-cache` erwartet die Voreinstellung `target/`. Die
-  # Umgebungsvariable hat Vorrang vor der Konfigurationsdatei, damit die
-  # CI unverändert weiterläuft.
-  CARGO_TARGET_DIR: target
+  # ⚑ **Ein Bauordner je Job, absolut** (2026-10-22). Hier stand `target`,
+  #   und Cargo loest einen relativen Pfad gegen das Verzeichnis jeder Kiste
+  #   auf: Jede Kiste baute libp2p, blst und tokio von vorn, der Job der
+  #   Protokollkisten lief 47 Minuten. Absolut teilen sich die Kisten eines
+  #   Jobs die uebersetzten Abhaengigkeiten, wie lokal unter SYSTEM/full-build.
+  CARGO_TARGET_DIR: ${{ github.workspace }}/target
+  # Klein genug fuer den Zwischenspeicher (GitHub deckelt ihn bei 10 GB je
+  # Repositorium, und ein uebervoller wirft die aeltesten Eintraege, worauf
+  # jeder Job kalt baut; so geschehen am 2026-08-29). Die Debug-Informationen
+  # sind der groesste Teil eines Bauordners und werden in der CI nicht
+  # gelesen. `debug-assertions` und `overflow-checks` bleiben an: Sie stehen
+  # im Testprofil jeder Kiste, und genau sie finden Ueberlaeufe.
+  CARGO_INCREMENTAL: "0"
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  CARGO_PROFILE_TEST_DEBUG: "0"
 
 jobs:
-  # ── Die erklärte Mindestfassung, wirklich benutzt ─────────────────
+  # ── Vorpruefung: alles, was nichts uebersetzt ──────────────────────
   #
-  # ⚑ **Fund 80 in seiner ehrlichen Form.** Der Anlass war ein
-  # Dockerfile, das `rust:1.79` festnagelte, während jedes `Cargo.toml`
-  # 1.85 verlangte. Beim Nachrechnen kam zweierlei heraus: Der Bau hätte
-  # ohnehin nie funktioniert, **und die Mindestfassung wurde von nichts
-  # geprüft.** Alle anderen Jobs bauen mit `stable`, derzeit 1.97; ob die
-  # angegebene Untergrenze noch trägt, sagte niemand.
-  #
-  # Sie trug nicht. Drei netzseitige Crates gaben 1.85 an und bauen dort
-  # nicht: über libp2p hängt die `icu_*`-Kette (verlangt 1.86) und `time`
-  # (verlangt 1.88). Die Angabe stand da und war falsch, ein Jahr lang.
-  #
-  # **`--locked` ist Teil der Aussage, nicht Bequemlichkeit.** Ohne die
-  # Sperre löst Cargo neu auf und prüft eine andere Abhängigkeitsmenge
-  # als die festgeschriebene; die gemessene Zahl gälte dann für nichts.
-  #
-  # `cargo check` und nicht `cargo test`: Die Frage ist, ob der Code auf
-  # der angegebenen Fassung übersetzt, nicht ob er ein zweites Mal
-  # durchläuft.
-  msrv:
-    name: Mindestfassung ${{ matrix.version }}
+  # In Sekunden fertig, und was hier faellt, soll nicht erst nach zwanzig
+  # Minuten Bau auffallen.
+  vorpruefung:
+    name: Vorpruefung (Kisten, Fassung, Sperrdateien, Audits, Ethik)
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        version: ["1.85", "1.88"]
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
-      - name: Rust ${{ matrix.version }}
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ matrix.version }}
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-        with:
-          key: msrv-${{ matrix.version }}
-
-      # ⚑ Zuerst die Angabe selbst, und zwar vollständig: Jedes Crate
-      # muss eine Mindestfassung nennen, und jede genannte muss von
-      # dieser Matrix abgedeckt sein. Ohne den zweiten Teil überspringt
-      # der Job ein Crate mit einer dritten Fassung stillschweigend, und
-      # dann prüft niemand es, ohne dass es auffällt.
-      #
-      # Ein Crate ohne Angabe wird von clippy auch nicht gegen die
-      # Mindestfassung geprüft. Genau so kamen sechs Aufrufe von
-      # `is_multiple_of` (stabil erst seit 1.87) in drei Crates hinein,
-      # die keine Angabe hatten.
-      # 📌 **`SYSTEM/*/*/Cargo.toml` steht in allen vier Schleifen dabei**
-      # (MSRV zweimal, Clippy, cargo-deny). Der Einrichtungsassistent von
-      # GolemOS liegt unter `SYSTEM/golemos/einrichten`, eine Ebene
-      # tiefer als jede andere Kiste, und `*/*/Cargo.toml` haette ihn
-      # still uebergangen: keine Mindestfassung, kein Clippy, keine
-      # Lizenzpruefung, und alle vier Schritte gruen. Das Kistenlager
-      # (`SYSTEM/crates-lager/vendor/<kiste>/`) liegt noch eine Ebene
-      # tiefer und faellt nicht darunter.
-      - name: Jede Angabe ist vorhanden und abgedeckt
-        run: |
-          set -euo pipefail
-          abgedeckt="1.85 1.88"
-          fehler=0
-          for manifest in */*/Cargo.toml SYSTEM/*/*/Cargo.toml; do
-            fassung=$(grep -m1 '^rust-version' "$manifest" | cut -d'"' -f2 || true)
-            if [ -z "$fassung" ]; then
-              echo "FEHLER: $manifest nennt keine rust-version"
-              fehler=1
-            elif ! echo " $abgedeckt " | grep -q " $fassung "; then
-              echo "FEHLER: $manifest nennt $fassung, die Matrix deckt nur $abgedeckt ab"
-              fehler=1
-            fi
-          done
-          exit $fehler
-
-      # Jedes Crate einzeln, denn es gibt kein Workspace: Die Crates sind
-      # bewusst eigenständige Cargo-Projekte.
-      # 📌 **Die Oberflaeche braucht GTK und WebKit, und die Schleifen
-      # unten finden sie.** Beim ersten Lauf nach ihrer Aufnahme fiel
-      # dieser Job an `glib-sys`: „The system library `glib-2.0` …
-      # was not found". Die Kistenliste kommt bewusst aus dem
-      # Dateisystem, damit niemand eine vergessen kann; eine Ausnahme
-      # fuer `myl-oberflaeche` haette genau diese Zusage aufgeweicht
-      # und die Kiste still aus Clippy und der Mindestfassung genommen.
-      # Also bekommt der Job die Pakete statt die Kiste eine Ausnahme.
-      - name: Systembibliotheken für die Oberfläche (Linux)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
-            libayatana-appindicator3-dev librsvg2-dev
-
-      - name: cargo check über die Crates dieser Fassung
-        run: |
-          set -euo pipefail
-          gefunden=0
-          for manifest in */*/Cargo.toml SYSTEM/*/*/Cargo.toml; do
-            fassung=$(grep -m1 '^rust-version' "$manifest" | cut -d'"' -f2)
-            [ "$fassung" = "${{ matrix.version }}" ] || continue
-            gefunden=$((gefunden + 1))
-            echo "── $manifest"
-            cargo check --manifest-path "$manifest" --all-targets --locked --quiet
-          done
-          # Eine Matrixzeile ohne ein einziges Crate wäre ein grüner Job,
-          # der nichts geprüft hat.
-          if [ "$gefunden" -eq 0 ]; then
-            echo "FEHLER: kein Crate nennt ${{ matrix.version }} — Matrixzeile ohne Gegenstand"
-            exit 1
-          fi
-          echo "$gefunden Crate(s) auf ${{ matrix.version }} geprüft"
-
-  # ── Lint: rustc-Warnungen und clippy über alle Crates ────────────
-  kernels:
-    name: Kernels Tests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: INTEGER_LLM/kernels
-
-      # 📌 Fund 104 (2026-08-30): Hier stand `--lib`, und zwar in jedem
-      # kernels-Schritt. `--lib` fuehrt die Unit-Tests im Modulbaum aus
-      # und **laesst tests/ vollstaendig aus**. Das Crate hat zwei
-      # Dateien dort, und es sind nicht die unwichtigsten:
-      #
-      #   tests/test_backend_parity.rs  nennt sich im eigenen Kopf "die
-      #       normative Garantie dafuer, dass kein Backend jemals
-      #       numerisch von der Referenz abweicht".
-      #   tests/allaussagen.rs          die Eigenschaftstests, 2026-08-29
-      #       neu geschrieben, mit erschoepfendem Durchgang.
-      #
-      # Beide liefen in keinem Job dieser Datei. Die Paritaetspruefung
-      # ist genau die, die den AVX512VL-Befehl unter der AVX2-Weiche
-      # (Fund 103) auf einer Maschine ohne AVX-512 zum Absturz gebracht
-      # haette. Sie war da, sie war richtig, und sie wurde nie gerufen.
-      #
-      # Auch die beiden Python-Audits fuehren in die Irre: Sie rufen
-      # `cargo test -p integer-llm-kernels --lib <name>` und decken
-      # tests/ deshalb ebenfalls nicht ab.
-      - name: cargo test (Unit- und Integrationstests)
-        working-directory: INTEGER_LLM/kernels
-        run: cargo test --quiet
-
-      # Nicht nur bauen, sondern testen: Dieser Runner ist x86_64, und
-      # genau dort greift die Regression aus Fund 34. `dot.rs` hat noch
-      # keinen AVX2-Pfad, also muss `rechenpfad` hier `cpu-simd`
-      # weglassen, obwohl das Feature gesetzt ist. Auf der
-      # Entwicklungsmaschine (aarch64) laesst sich das nicht pruefen.
-      #
-      # 📌 Und ohne `--lib` ist dies der einzige Ort, an dem
-      # `test_backend_parity.rs` ueberhaupt ein zweites Backend
-      # vorfindet: Die Datei ist `#![cfg(feature = "cpu-simd")]`.
-      - name: cargo test --features cpu-simd (x86_64, Fund 34 und 104)
-        working-directory: INTEGER_LLM/kernels
-        run: cargo test --features cpu-simd --quiet
-
-      - name: cargo build --features cuda
-        working-directory: INTEGER_LLM/kernels
-        run: cargo build --features cuda --quiet
-
-      - name: cargo build --features rocm
-        working-directory: INTEGER_LLM/kernels
-        run: cargo build --features rocm --quiet
-
-      # ⚑ Die Kerne fuer NVIDIA und AMD ohne Karte: der Nachbau
-      # (`kerne.cu` als C++ gegen die CPU-Kerne, braucht g++), der
-      # Verteiler fuer mehrere Karten und der Lader. Auf dem Runner gibt
-      # es keine Karte; die Selbstpruefung je Karte laeuft erst auf einer
-      # Maschine mit Karte (`SYSTEM/install/karten-pruefen.sh`).
-      - name: cargo test --features cuda,rocm --lib ressourcen::karten (Nachbau der Kerne)
-        working-directory: INTEGER_LLM/kernels
-        run: cargo test --features cuda,rocm --lib ressourcen::karten --quiet
-
-      # ── Was hierher gehoert, weil es dieselbe Uebersetzung braucht ──
-      #
-      # `test_division.py` und `test_overflow.py` rufen
-      # `cargo test -p integer-llm-kernels` in genau diesem Workspace auf,
-      # und `conformance/run.sh` baut `golden_runner` daraus. Bis zum
-      # 2026-08-24 standen alle drei in einem eigenen Audit-Job, der die
-      # Kernels **ein zweites Mal** uebersetzte: derselbe Build, zweimal
-      # bezahlt, und der Job lief ueber drei Minuten.
-      #
-      # Hier ist die Uebersetzung bereits warm. Die beiden Python-Audits
-      # kosten zusammen 0,12 s, der Konformitaetslauf 1,3 s.
-      - name: Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Audit — Divisionssemantik und Ueberlauf (cargo-gebunden)
-        working-directory: INTEGER_LLM
-        run: |
-          python3 tests/audit/test_division.py
-          python3 tests/audit/test_overflow.py
-
-      # Der Bit-Exaktheits-Anker des Projekts. Ohne Artefakte bleiben die
-      # sechs Op-Level-Vektoren; Layer und E2E brauchen kalibrierte
-      # Modell-Artefakte, run.sh ueberspringt sie und meldet 6/6.
-      #
-      # **Nur 6 von 33.** Was hier gruen ist, deckt den Kernel ab, nicht
-      # das ganze Modell. Der volle Lauf gehoert auf eine Maschine mit
-      # Artefakten.
-      - name: Konformitaet — Op-Level-Golden-Vektoren (ohne Artefakte)
-        working-directory: INTEGER_LLM/conformance
-        run: ./run.sh reference
-
-  # ── Bitgleichheit auf einer zweiten Architektur (Punkt 30) ─────────
-  #
-  # ⚑ **Die Frage war falsch gestellt.** Sie lautete „bekommt macOS
-  # zusaetzlich einen Runner", also nach einem dritten **Betriebssystem**.
-  # `ubuntu-latest` und `windows-latest` sind aber beide **x86_64**: Drei
-  # Betriebssysteme, ein Befehlssatz.
-  #
-  # ⚑ **`macos-latest` ist ARM64**, und damit ist dieser Job die einzige
-  # Stelle im ganzen Bau, an der die Bitgleichheit auf einer **zweiten
-  # Architektur** geprueft wird. Genau das ist das Versprechen des
-  # Projekts: Ganzzahlig heisst, jede Maschine rechnet dasselbe. Bis
-  # heute stand dafuer nur die Maschine des Entwicklers, von Hand, und
-  # damit dieselbe Art Beleg, der dieses Projekt sonst nirgends traut.
-  #
-  # **Zugeschnitten, nicht vollstaendig.** macOS-Minuten zaehlen
-  # zehnfach, deshalb laeuft hier nur, wo die Architektur ueberhaupt
-  # etwas aendern kann: die Kernels und die Golden-Vektoren. Netz, Chaos
-  # und Konsens haengen nicht am Befehlssatz und bleiben auf Linux.
-  bitgleichheit-arm:
-    name: Bitgleichheit auf ARM64 (macOS)
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-
-      - name: Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      # Die rechnenden Kerne. Fiele hier etwas aus, das auf x86_64
-      # besteht, waere das der wichtigste Befund, den dieses Projekt
-      # haben kann.
-      - name: cargo test — INTEGER_LLM (kernels)
-        working-directory: INTEGER_LLM/kernels
-        run: cargo test --quiet
-
-      - name: cargo test — SHARED_TYPES (myl-types)
-        working-directory: SHARED_TYPES/myl-types
-        run: cargo test --quiet
-
-      # Derselbe Lauf wie auf Linux, dieselben sechs Vektoren. **Der
-      # Vergleich ist der Zweck**, nicht der Lauf.
-      - name: Konformitaet — Op-Level-Golden-Vektoren (ohne Artefakte)
-        working-directory: INTEGER_LLM/conformance
-        run: ./run.sh reference
-
-      # 📌 **Der Gesamtwert fehlte hier, und die Linux-Meldung behauptete
-      # trotzdem, er stimme „mit Windows und macOS ueberein".** Auf
-      # macOS lief bis zum 2026-09-09 nur `run.sh`, das die sechs
-      # Vektoren einzeln prueft; die eine Zahl, die das Netz spaeter
-      # vergleicht, wurde hier nie gerechnet. Zwei Plattformen mit dem
-      # Wert und eine Behauptung ueber die dritte sind nicht drei
-      # Plattformen (CLIENT 1.7).
-      #
-      # ⚑ **Ein Fund derselben Art wie Punkt 30 vom 2026-08-29**, wo
-      # der Wert nur auf Windows geprueft wurde und die Begruendung fuer
-      # Linux eine Gewohnheit beschrieb statt einer Pruefung. Diesmal
-      # war es umgekehrt herum, und die Meldung sagte es sogar laut.
-      #
-      # Ohne `--release`, weil der Wert profilunabhaengig ist: am
-      # 2026-08-29 auf aarch64/macOS in beiden Profilen gemessen,
-      # derselbe Wert. Er braucht kein Modell.
-      - name: Konformitaetswert (macOS, aarch64)
-        working-directory: TESTCLIENT/myl-testclient
-        run: |
-          set -e
-          mkdir -p ci-konf
-          cargo run --quiet -- --name ci --logs ci-konf konformitaet
-          # 📌 **ZWEI Abdruecke, und der zweite ist der eigentliche.**
-          # Bis zum 2026-09-09 stand hier nur `894d8357ae92b5c1`, und
-          # das ist der Abdruck von `konformitaet_op`, also **nur der
-          # sechs Operations-Vektoren**. Der Lauf prueft aber
-          # siebzehn: op, training und moe. Ein Trainings- oder
-          # MoE-Kern haette sich also aendern koennen, und der
-          # Waechter waere gruen geblieben, obwohl genau diese
-          # Bitgleichheit die Kernthese des Projekts ist.
-          #
-          # ⚑ Beide bleiben stehen, weil sie Verschiedenes sagen: Der
-          # Teilabdruck benennt bei einem Fehlschlag, WELCHE Gruppe
-          # ausschert, der Gesamtabdruck faengt ueberhaupt alle.
-          # ⚑ Seit dem 2026-10-05 drei: dazu `konformitaet_ternaer` (fuenf
-          # Vektoren des ternaeren Rechenwegs); der Gesamtwert umfasst
-          # zweiundzwanzig, bis dahin siebzehn (`6da384ba301b9454`).
-          # ⚑ Seit dem 2026-10-16 vier: dazu `konformitaet_vierbit` (zwei
-          # Vektoren des Vierbitformats); der Gesamtwert umfasst
-          # vierundzwanzig, bis dahin zweiundzwanzig (`715529e71dfcfcfd`).
-          for paar in "894d8357ae92b5c1:konformitaet_op (6 Vektoren)" \
-                      "f1b60342b9cfcdb6:konformitaet_ternaer (5 Vektoren)" \
-                      "9102be0890358ceb:konformitaet_vierbit (2 Vektoren)" \
-                      "cb696efd3817e575:konformitaet gesamt (24 Vektoren)"; do
-            abdruck="${paar%%:*}"; was="${paar#*:}"
-            if ! grep -q "$abdruck" ci-konf/*.jsonl; then
-              echo "FEHLER: $was weicht ab, erwartet $abdruck"
-              grep -o '"name":"[^"]*","digest":"[^"]*"' ci-konf/*.jsonl || cat ci-konf/*.jsonl
-              exit 1
-            fi
-          done
-          echo "Konformitaet belegt auf aarch64/macOS: 24 Vektoren, vier Abdruecke"
-
-  # ── Runtime: Nur Unit-Tests (keine Integrationstests mit Artefakten) ─
-  runtime:
-    name: Runtime Tests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: INTEGER_LLM/runtime
-
-      - name: cargo test --lib (Unit-Tests only)
-        working-directory: INTEGER_LLM/runtime
-        run: cargo test --lib --quiet
-
-  # ── Pipeline: Mehrknoten-Orchestrierung (Build + Unit-Tests) ─────
-  # Die Integrationstests der Pipeline laufen über die Python-Suite und
-  # brauchen Artefakte — hier daher nur Build und Unit-Ebene.
-  pipeline:
-    name: Pipeline Build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: INTEGER_LLM/pipeline
-
-      - name: cargo test --lib
-        working-directory: INTEGER_LLM/pipeline
-        run: cargo test --lib --quiet
-
-      - name: cargo build --all-targets
-        working-directory: INTEGER_LLM/pipeline
-        run: cargo build --all-targets --quiet
-
-  # ── Netzwerkkomponenten: Cargo-Tests ────────────────────────────
-  # Vollständig: alle acht myl-*-Crates. Fehlende Abdeckung war die
-  # Ursache dafür, dass ein kaputter Testbuild in myl-scheduler
-  # unentdeckt in main landen konnte.
-  # ── Ein Job fuer Clippy UND Tests derselben Crates ─────────────────
-  #
-  # Bis zum 2026-08-24 waren das zwei Jobs, `lint` und `network-crates`,
-  # ueber **denselben** Crates. Beide bauten den vollen
-  # Abhaengigkeitsbaum — libp2p, blst, borsh — und beide zahlten ihn
-  # einzeln: Die Tests selbst kosten zusammen **33 Sekunden**, die
-  # Uebersetzung Minuten.
-  #
-  # `cargo clippy` und `cargo test` erzeugen zwar verschiedene Artefakte
-  # fuer das **lokale** Crate, teilen sich aber die uebersetzten
-  # Abhaengigkeiten. In einem Job entsteht der Baum einmal.
-  #
-  # **Nichts ist entfallen**, nur zusammengelegt. Clippy laeuft zuerst:
-  # Eine Warnung soll melden, bevor Minuten in Tests gehen.
-  # ── Clippy und Tests in EINEM Job ────────────────────────────────
-  #
-  # ⚑ **Am 2026-08-28 waren es zwei, und das war ein Fehler
-  # (zurückgenommen am 2026-08-29).** Die Überlegung stimmte für sich:
-  # `cargo clippy` baut Abhängigkeiten nur bis zur Metadatenstufe,
-  # `cargo test` braucht erzeugten Code, die beiden teilen also fast
-  # nichts, und nebeneinander wäre die Wanduhr das Maximum statt der
-  # Summe.
-  #
-  # **Sie übersah den Cache.** GitHub deckelt ihn **pro Repositorium auf
-  # 10 GB**, und ein Rust-Cache über vierzehn Crates liegt im
-  # Gigabyte-Bereich. Ein zweiter Job heißt ein zweiter solcher Cache;
-  # zusammen mit den übrigen Jobs reißt das den Deckel, die ältesten
-  # Einträge fliegen heraus, und dann baut **jeder** Job kalt. Genau das
-  # war zu beobachten: Nicht ein Job wurde langsamer, sondern beide.
-  #
-  # **Die Lehre gehört zu den anderen dieses Projekts:** Eine Rechnung
-  # über die Wanduhr eines einzelnen Jobs ist keine Rechnung über die
-  # CI. Der geteilte Zustand zwischen den Jobs ist der Cache, und er ist
-  # knapp.
-  network-crates:
-    name: Clippy + Tests (Protokoll-Crates)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: |
-            SHARED_TYPES/myl-types
-            NETWORKING/myl-net
-            NETWORKING/myl-siegel
-            CONSENSUS/myl-ledger
-            CONSENSUS/myl-scheduler
-            CONSENSUS/myl-consensus
-            TOKENOMICS/myl-tokenomics
-            VERIFICATION/myl-verifier
-            GOVERNANCE/myl-governance
-            AGENT_LAYER/myl-agent
-            STORAGE/myl-store
-            SIMULATION/myl-simulation
-            COMPUTE_PIPELINE/myl-pod
-            COMPUTE_PIPELINE/dispatcher
-            TRAINING/myl-train
-            NODE/myl-node
-            TESTCLIENT/myl-testclient
-            CLIENT/myl-client
-            CLIENT/myl-console
-            CLIENT/myl-oberflaeche
-            AGENT_LAYER/local-agent
-            # ⚑ Diese drei fehlten bis zum 2026-08-28, obwohl die
-            # Clippy-Schleife darunter sie seit jeher übersetzt: Sie
-            # bauten in jedem Lauf von vorn, und `kernels` sogar
-            # viermal, einmal je Feature-Flag.
-            INTEGER_LLM/kernels
-            INTEGER_LLM/runtime
-            INTEGER_LLM/pipeline
-
-      # Bewusst dokumentierte Ausnahmen stehen als `#![allow(...)]` mit
-      # Begründung im jeweiligen Modulkopf (Kernel-Signaturen tragen den
-      # Fixed-Point-Vertrag, Matrix-Namen folgen Whitepaper-Anhang B).
-      # ⚑ **Die Liste stand hier von Hand, und das ist dieselbe Falle
-      # wie Fund 65** (ein Crate ohne Zeile ist ungeprueft). Sie hat am
-      # 2026-09-01 prompt zugeschlagen: Das neunzehnte Crate war
-      # gebaut, geprueft und stand in keiner der beiden Listen.
-      #
-      # Jetzt kommt sie aus dem Dateisystem, wie in der
-      # Mindestfassungs-Pruefung auch. **Ein neues Crate ist damit
-      # automatisch dabei**, und wer eines vergisst, kann es nicht mehr.
-      # 📌 **Die Oberflaeche braucht GTK und WebKit, und die Schleifen
-      # unten finden sie.** Beim ersten Lauf nach ihrer Aufnahme fiel
-      # dieser Job an `glib-sys`: „The system library `glib-2.0` …
-      # was not found". Die Kistenliste kommt bewusst aus dem
-      # Dateisystem, damit niemand eine vergessen kann; eine Ausnahme
-      # fuer `myl-oberflaeche` haette genau diese Zusage aufgeweicht
-      # und die Kiste still aus Clippy und der Mindestfassung genommen.
-      # Also bekommt der Job die Pakete statt die Kiste eine Ausnahme.
-      - name: Systembibliotheken für die Oberfläche (Linux)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
-            libayatana-appindicator3-dev librsvg2-dev
-
-      - name: cargo clippy (alle Crates)
-        run: |
-          set -euo pipefail
-          gefunden=0
-          for manifest in */*/Cargo.toml SYSTEM/*/*/Cargo.toml; do
-            crate=$(dirname "$manifest")
-            echo "── clippy: $crate"
-            (cd "$crate" && cargo clippy --all-targets -- -D warnings)
-            gefunden=$((gefunden + 1))
-          done
-          # ⚑ Eine Zaehlung, die null zaehlt, ist kein Befund: Faende der
-          # Glob nichts, liefe der Schritt gruen durch, ohne zu pruefen.
-          if [ "$gefunden" -lt 15 ]; then
-            echo "FEHLER: nur $gefunden Crates gefunden; der Glob passt nicht mehr."
-            exit 1
-          fi
-          echo "clippy ueber $gefunden Crates"
-
-      # `simd.rs`, `cuda.rs` und `rocm.rs` werden NUR mit ihrem Feature
-      # kompiliert — ein Lauf ohne Flags sieht sie nie. Genau daran ist
-      # der Warnungs-Check aus v0.12.41 vorbeigelaufen (Fund A19).
-      - name: cargo clippy — kernels über alle Feature-Flags
-        working-directory: INTEGER_LLM/kernels
-        run: |
-          set -e
-          # `metal` hat auf Linux keine Abhaengigkeiten und keinen
-          # GPU-Code; geprueft wird hier, dass die Weiche ohne beides
-          # uebersetzt. Die Anbindung selbst prueft der macOS-Lauf.
-          for feat in cpu-simd cuda rocm metal; do
-            echo "── clippy: kernels --features $feat"
-            cargo clippy --all-targets --features "$feat" -- -D warnings
-          done
-
-  # **Und erst recht keine Matrix über die Crates.** Alle bauen nach
-  # `SYSTEM/full-build` (siehe `.cargo/config.toml`) und teilen sich damit
-  # übersetzte Abhängigkeiten. Ein Matrixzweig je Crate zerschnitte das
-  # und vervielfachte obendrein den Cache-Bedarf, also genau den Fehler
-  # von oben, nur schlimmer.
-
-      - name: cargo test — SHARED_TYPES (myl-types)
-        working-directory: SHARED_TYPES/myl-types
-        run: cargo test --quiet
-
-      - name: cargo test — NETWORKING (myl-net)
-        working-directory: NETWORKING/myl-net
-        run: cargo test --quiet
-
-      # ⚑ Der vertrauliche Sitzungskanal, seit dem 2026-09-03 eine eigene
-      # Kiste (B6-4). Eigener Eintrag und kein Anhaengsel von myl-net:
-      # Was einzeln gebaut wird, wird einzeln geprueft.
-      - name: cargo test — NETWORKING (myl-siegel)
-        working-directory: NETWORKING/myl-siegel
-        run: cargo test --quiet
-
-      - name: cargo test — CONSENSUS (myl-ledger)
-        working-directory: CONSENSUS/myl-ledger
-        run: cargo test --quiet
-
-      - name: cargo test — CONSENSUS (myl-scheduler)
-        working-directory: CONSENSUS/myl-scheduler
-        run: cargo test --quiet
-
-      - name: cargo test — CONSENSUS (myl-consensus)
-        working-directory: CONSENSUS/myl-consensus
-        run: cargo test --quiet
-
-      - name: cargo test — TOKENOMICS (myl-tokenomics)
-        working-directory: TOKENOMICS/myl-tokenomics
-        run: cargo test --quiet
-
-      - name: cargo test — VERIFICATION (myl-verifier)
-        working-directory: VERIFICATION/myl-verifier
-        run: cargo test --quiet
-
-      # myl-governance: `tests/gleichstand.rs` prüft die Registry gegen
-      # die Konstanten der anderen Crates. Der Schritt gehört deshalb
-      # NACH die übrigen: Läuft ein Wert dort davon, soll dieser Job es
-      # melden und nicht ein späterer Betrieb.
-      - name: cargo test — GOVERNANCE (myl-governance)
-        working-directory: GOVERNANCE/myl-governance
-        run: cargo test --quiet
-
-      # Die Protokollsimulation haengt an allen Crates und keines an ihr.
-      # Sie prueft die **Naehte**, und dort sassen die schwersten Funde
-      # dieses Projekts (41, 44, 50, 51, 52) — jeder von ihnen in seiner
-      # Komponente korrekt.
-      #
-      # Der Schritt steht deshalb ganz am Ende: Was hier faellt, ist
-      # nichts, was eine einzelne Komponente haette melden koennen.
-      # myl-store: Inhaltsadressierung und κ_v, ohne Netz und ohne
-      # Artefakte. Läuft in Millisekunden.
-      - name: cargo test — STORAGE (myl-store)
-        working-directory: STORAGE/myl-store
-        run: cargo test --quiet
-
-      # ⚑ **Ein Crate ohne CI-Zeile ist ungeprueft, und das hat dieses
-      # Projekt schon einmal bezahlt** (Fund 65, 2026-08-26: NODE lief
-      # mit 132 Tests in keinem Job). Diese Zeile entstand deshalb im
-      # selben Zug wie das Crate und nicht danach.
-      #
-      # myl-gateway: reine Zerlegung plus sechs Tests ueber einen echten
-      # Socket auf der Rueckschleife. Kein Netz nach aussen, keine
-      # Artefakte, Millisekunden.
-      - name: cargo test — GATEWAY (myl-gateway)
-        working-directory: GATEWAY/myl-gateway
-        run: cargo test --quiet
-
-      - name: cargo test — SIMULATION (myl-simulation)
-        working-directory: SIMULATION/myl-simulation
-        run: cargo test --quiet
-
-      # myl-pod: lib + adversariale Ebene. `pod_e2e.rs` und
-      # `layer_granular.rs` bleiben draussen — sie fahren einen echten
-      # 4-Node-Pod gegen die INTEGER_LLM-Runtime und brauchen Artefakte,
-      # die hier nicht liegen.
-      #
-      # ⚑ **Der Grund ist ausschliesslich das fehlende Modell.** Bis zum
-      # 2026-08-28 stand hier zusaetzlich "~2 min", und das stimmte,
-      # solange die Tests unoptimiert liefen. Mit dem Testprofil sind es
-      # 8,7 Sekunden. **Laufzeit ist kein Argument mehr, sie aussen vor
-      # zu lassen**; sobald Artefakte in der CI liegen, gehoeren sie
-      # hinein.
-      #
-      # `tests/adversarial.rs` gehoert dagegen hierher und stand bis zum
-      # 2026-08-24 faelschlich mit draussen: Vier seiner fuenf Tests
-      # brauchen keine Artefakte, der fuenfte meldet ihr Fehlen und
-      # ueberspringt sich. Es ist die Ebene, die Fund 41 gefunden hat
-      # (Manipulationserkennung ging bei leerer Spur vacuously durch,
-      # unpassende Laenge = Panik im Kernel), und sie lief nie in der CI.
-      #
-      # ⚑ **MYL_OHNE_ARTEFAKTE=1 ist Absicht und muss hier stehen**
-      # (Fund 113, 2026-09-01). Vorher sprangen die Tests ohne Artefakte
-      # **still** ab: `cargo test` faengt die Standardfehlerausgabe
-      # bestandener Tests ab, also meldete die Suite „ok", ohne ein
-      # Gewicht angefasst zu haben. Jetzt schlaegt ein fehlendes Modell
-      # fehl, ausser der Sprung wird ausdruecklich erlaubt. **Diese
-      # Zeile ist die Erlaubnis, und sie steht dort, wo sie gilt.**
-      - name: cargo test — COMPUTE_PIPELINE (myl-pod, lib + adversarial)
-        working-directory: COMPUTE_PIPELINE/myl-pod
-        env:
-          MYL_OHNE_ARTEFAKTE: "1"
-        run: |
-          cargo test --lib --quiet
-          cargo test --test adversarial --quiet
-          cargo test --test koordinator_byzantinisch --quiet
-
-      # ⚑ **Der Dispatcher**: Erhebung der Maschine, Bedarf aus dem
-      # Artefakt, Belegungsplan. Die Proben rechnen auf ausgedachten
-      # Maschinen und Artefakten und brauchen weder Modell noch Karte; die
-      # Eichung startet nur `sh`.
-      - name: cargo test, COMPUTE_PIPELINE (myl-dispatcher)
-        working-directory: COMPUTE_PIPELINE/dispatcher
-        run: cargo test --quiet
-
-      # myl-train braucht weder Modell noch Netz: Die Provenienz rechnet
-      # auf Merkle-Baeumen und einem uebergebenen Seed.
-      - name: cargo test — TRAINING (myl-train)
-        working-directory: TRAINING/myl-train
-        run: cargo test --quiet
-
-      # Der Einrichtungsassistent von GolemOS: Er loescht Platten, und
-      # seine Proben pruefen genau die Stellen, an denen das schiefgehen
-      # kann (Startplatte, Bestaetigung, eingehaengte Platten). Ohne
-      # Abhaengigkeiten, also in Sekunden gebaut.
-      - name: cargo test — GolemOS (golem-einrichten)
-        working-directory: SYSTEM/golemos/einrichten
-        run: cargo test --quiet --locked
-
-      # ⚑ **Fund 65 (2026-08-26): NODE lief in keinem CI-Job.**
-      #
-      # Das Crate mit 132 Tests, darunter fünf Knoten in echten
-      # Prozessen über libp2p, stand weder in der Cache-Liste noch bei
-      # Clippy noch bei den Tests. Und es ist ausgerechnet das Crate,
-      # das laut eigenem Modulkopf **die Nähte belastet**: Die Funde 55
-      # bis 57 wurden dort sichtbar, nicht in den Bibliotheken.
-      #
-      # Dieselbe Klasse wie Fund 44 (der Audit sah NETWORKING nicht) und
-      # wie die fünf stillen Prüfungen vom 2026-08-25. Eine Prüfung, die
-      # nicht läuft, ist keine Prüfung.
-      #
-      # Der Schritt steht **vor** dem Testclient, weil dieser auf dem
-      # Knoten aufsetzt: Bricht die Verdrahtung, soll es hier auffallen.
-      - name: cargo test — NODE (myl-node)
-        working-directory: NODE/myl-node
-        run: cargo test --quiet
-
-      # Testclient: Die Tests decken Protokollformat und Fingerabdruck ab
-      # und laufen ohne Artefakte.
-      #
-      # ⚑ **MYL_OHNE_ARTEFAKTE=1 steht seit dem 2026-09-03 auch hier**,
-      # und der Satz daneben stimmte seit Fund 113 nicht mehr: Er sagte,
-      # die Modellläufe meldeten ihr Fehlen „sauber, statt
-      # fehlzuschlagen". Genau das war der Fund. Seither **schlägt** ein
-      # fehlendes Modell fehl, ausser der Sprung wird ausdrücklich
-      # erlaubt, und der Test von der Türklinke bis zum Modell
-      # (`harness_bis_modell`) braucht Artefakte, die hier nicht liegen.
-      - name: cargo test — TESTCLIENT (myl-testclient)
-        working-directory: TESTCLIENT/myl-testclient
-        env:
-          MYL_OHNE_ARTEFAKTE: "1"
-        run: cargo test --quiet
-
-      # ⛔️ **Drei Kisten liefen bis zum 2026-09-30 in keinem Testlauf**
-      # (Fund 511): `myl-agent` mit 52 Proben, `myl-local-agent` mit 97
-      # und `myl-console` mit 160. Clippy sah sie, `cargo test` nicht; zum
-      # dritten Mal dieselbe Falle wie Fund 65. Lokal nachgefahren waren
-      # alle grün.
-      #
-      # Deshalb steht davor ein Waechter, der sie schliesst: Jede Kiste,
-      # die die Clippy-Schleife findet, braucht hier einen Schritt mit
-      # `cargo test` in ihrem Verzeichnis, sonst wird dieser Job rot.
-      - name: Jede Kiste hat einen Testschritt
-        run: |
-          python3 - <<'PRUEFUNG'
-          import glob, re, sys
-          ci = open(".github/workflows/ci.yml", encoding="utf-8").read()
-          getestet = set()
-          for schritt in re.split(r"\n\s+- name:", ci):
-              ort = re.search(r"working-directory:\s*(\S+)", schritt)
-              if ort and "cargo test" in schritt:
-                  getestet.add(ort.group(1))
-          kisten = sorted(m.rsplit("/", 1)[0] for m in glob.glob("*/*/Cargo.toml") + glob.glob("SYSTEM/*/*/Cargo.toml"))
-          fehlt = [k for k in kisten if k not in getestet]
-          print(f"{len(kisten)} Kisten, {len(kisten) - len(fehlt)} mit Testschritt")
-          if fehlt:
-              print("ohne Testschritt: " + ", ".join(fehlt))
-              sys.exit(1)
-          PRUEFUNG
-
-      # Die Netzseite des Agenten: Sitzungskontrakt, Vollmacht,
-      # Werkzeugaufruf als Protokollgroesse. Ohne Netz und ohne Artefakte.
-      - name: cargo test, AGENT_LAYER (myl-agent)
-        working-directory: AGENT_LAYER/myl-agent
-        run: cargo test --quiet
-
-      # Die lokale Seite, seit dem 2026-09-30 der ganze oertliche Agent:
-      # Schleife, Tuerklient, Risikoklassen, Werkzeuge mit Einhaengegrenze,
-      # Kisten, Skills, Loop, Notaus. Ohne Artefakte; das Modell
-      # steckt hinter einem Merkmal.
-      - name: cargo test, AGENT_LAYER (local-agent)
-        working-directory: AGENT_LAYER/local-agent
-        run: cargo test --quiet
-
-      - name: cargo test, CLIENT (myl-console)
-        working-directory: CLIENT/myl-console
-        env:
-          MYL_OHNE_ARTEFAKTE: "1"
-        run: cargo test --quiet
-
-      # 📌 **Der Client lief bis zum 2026-09-08 in keinem Testlauf.**
-      #
-      # Die Clippy-Schleife oben findet ihn, weil sie die Crates aus
-      # dem Dateisystem holt; `cargo test` steht dagegen je Crate von
-      # Hand hier, und ein neues Crate ist damit erst einmal ungeprüft.
-      # **Das ist dieselbe Falle wie Fund 65**, nur eine Zeile weiter.
-      #
-      # Was hier läuft, braucht **kein Artefakt**: Einstellungen,
-      # Modellwahl, der Weg vom Werkzeugvorschlag bis zur geschriebenen
-      # Datei über einen eingesteckten `Modellweg`, und die Zusicherung,
-      # dass sich das geladene Modell über Fäden teilen lässt. Die
-      # Einhängegrenze der Dateiwerkzeuge prüft seit dem 2026-09-30 die
-      # Kiste `local-agent`, oben.
-      #
-      # 📌 **`MYL_OHNE_ARTEFAKTE=1` ist keine Formalie.**
-      # `tests/ende_zu_ende.rs` laedt sonst ein 4B-Artefakt und schlaegt
-      # fehl, wenn keines da ist, und in der CI liegt keines. Genau so
-      # steht es seit Fund 113 auch beim Testclient: Ein fehlendes
-      # Modell **schlaegt fehl**, ausser der Sprung wird ausdruecklich
-      # erlaubt. Beim ersten Einbau dieses Schrittes fehlte die Zeile.
-      - name: cargo test — CLIENT (myl-client)
-        working-directory: CLIENT/myl-client
-        env:
-          MYL_OHNE_ARTEFAKTE: "1"
-        run: cargo test --quiet
-
-      # ⚑ **Die Sinneskiste, und sie braucht nichts Fremdes.**
-      #
-      # llama.cpp, whisper.cpp und piper liegen auf keinem Laeufer, und
-      # das ist kein Hindernis: Die Proben stellen das Programm selbst
-      # und pruefen den **Weg**. Genau deshalb laufen sie hier mit,
-      # statt als „braucht Gewichte" uebersprungen zu werden.
-      #
-      # 📌 **Dieser Schritt steht hier, weil die Schleife oben ihn nicht
-      # traegt**: `cargo test` steht je Kiste von Hand, und ein neues
-      # Crate waere ohne diese Zeilen ungeprueft. Dieselbe Falle wie
-      # Fund 65, und die Warnung dazu steht ein paar Zeilen hoeher.
-      - name: cargo test — CLIENT (myl-senses)
-        working-directory: CLIENT/myl-senses
-        run: cargo test --quiet
-
-      # ⚑ **Die Module der Konsole**: Protokoll, Beschreibung, Signatur,
-      # Vertrauensliste, Rollback-Sperre und der Wirt. Die Proben bauen
-      # ihre Module selbst (signierte Skripte) und brauchen nichts
-      # Fremdes; die Laeufe mit echtem Prozess nur unter Unix.
-      - name: cargo test, CLIENT (myl-module)
-        working-directory: CLIENT/myl-module
-        run: cargo test --quiet
-
-      # 📌 **Die Oberfläche baut nur mit den WebKit-Bibliotheken des
-      # Systems**, und unter Ubuntu heissen sie `libwebkit2gtk-4.1-dev`
-      # samt `libgtk-3-dev` und `libayatana-appindicator3-dev`. Ohne sie
-      # bricht der Bau in `wry` ab, mit einer Meldung über eine fehlende
-      # `pkg-config`-Datei, die nicht nach dem eigentlichen Grund
-      # aussieht.
-      #
-      # ⚑ **`cargo test` und nicht nur `check`**, obwohl sich das
-      # Fenster in der CI nicht öffnen liesse: `tests/oberflaeche.rs`
-      # öffnet keines. Sie liest HTML, CSS und JS als Text und prüft,
-      # was ohne Bündler sonst niemand prüft, nämlich dass jede gesuchte
-      # Kennung existiert, jede Klasse eine Regel hat und nichts aus dem
-      # Netz geladen wird.
-      - name: Systembibliotheken für die Oberfläche (Linux)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
-            libayatana-appindicator3-dev librsvg2-dev
-
-      - name: cargo test — CLIENT (myl-oberflaeche)
-        working-directory: CLIENT/myl-oberflaeche
-        run: cargo test --quiet
-
-      # ⚑ **Die Kernthese, auf Linux geprüft** (Punkt 30, 2026-08-29).
-      #
-      # Der Konformitätswert muss auf jeder Maschine derselbe sein; das
-      # ist die Zusage, auf der das ganze Protokoll steht. Geprüft wurde
-      # er bis heute **nur im Windows-Job**. Auf Linux, der Plattform,
-      # auf der die meisten Knoten laufen werden, prüfte ihn niemand.
-      #
-      # Hier und nicht in einem eigenen Job, weil der Testclient in
-      # diesem Job ohnehin schon übersetzt ist. Und ohne `--release`,
-      # weil der Wert profilunabhängig ist: am 2026-08-29 auf
-      # aarch64/macOS in beiden Profilen gemessen, derselbe Wert.
-      # Ein Unterschied zwischen den Profilen wäre selbst ein Befund.
-      - name: Konformitaetswert (Linux)
-        working-directory: TESTCLIENT/myl-testclient
-        run: |
-          set -e
-          mkdir -p ci-konf
-          cargo run --quiet -- --name ci --logs ci-konf konformitaet
-          # 📌 **ZWEI Abdruecke, und der zweite ist der eigentliche.**
-          # Bis zum 2026-09-09 stand hier nur `894d8357ae92b5c1`, und
-          # das ist der Abdruck von `konformitaet_op`, also **nur der
-          # sechs Operations-Vektoren**. Der Lauf prueft aber
-          # siebzehn: op, training und moe. Ein Trainings- oder
-          # MoE-Kern haette sich also aendern koennen, und der
-          # Waechter waere gruen geblieben, obwohl genau diese
-          # Bitgleichheit die Kernthese des Projekts ist.
-          #
-          # ⚑ Beide bleiben stehen, weil sie Verschiedenes sagen: Der
-          # Teilabdruck benennt bei einem Fehlschlag, WELCHE Gruppe
-          # ausschert, der Gesamtabdruck faengt ueberhaupt alle.
-          # ⚑ Seit dem 2026-10-05 drei: dazu `konformitaet_ternaer` (fuenf
-          # Vektoren des ternaeren Rechenwegs); der Gesamtwert umfasst
-          # zweiundzwanzig, bis dahin siebzehn (`6da384ba301b9454`).
-          # ⚑ Seit dem 2026-10-16 vier: dazu `konformitaet_vierbit` (zwei
-          # Vektoren des Vierbitformats); der Gesamtwert umfasst
-          # vierundzwanzig, bis dahin zweiundzwanzig (`715529e71dfcfcfd`).
-          for paar in "894d8357ae92b5c1:konformitaet_op (6 Vektoren)" \
-                      "f1b60342b9cfcdb6:konformitaet_ternaer (5 Vektoren)" \
-                      "9102be0890358ceb:konformitaet_vierbit (2 Vektoren)" \
-                      "cb696efd3817e575:konformitaet gesamt (24 Vektoren)"; do
-            abdruck="${paar%%:*}"; was="${paar#*:}"
-            if ! grep -q "$abdruck" ci-konf/*.jsonl; then
-              echo "FEHLER: $was weicht ab, erwartet $abdruck"
-              grep -o '"name":"[^"]*","digest":"[^"]*"' ci-konf/*.jsonl || cat ci-konf/*.jsonl
-              exit 1
-            fi
-          done
-          echo "Konformitaet belegt auf x86_64/Linux: 24 Vektoren, vier Abdruecke"
-
-  # ── Zahlensemantik-Audit (12.22-12.25) ──────────────────────────
-  # test_division.py und test_overflow.py rufen `cargo test` als
-  # maßgebliche Prüfstufe auf — der Rust-Toolchain muss daher explizit
-  # installiert und gecacht sein, statt sich auf die Runner-Vorinstallation
-  # zu verlassen. test_scales.py skippt sauber, wenn Artefakte fehlen.
-  # ── Testclient auf Windows und macOS ──────────────────────────────
-  #
-  # WARUM EIGENS: Alle übrigen Jobs laufen auf Ubuntu. Der Testclient ist
-  # aber genau das Werkzeug, das auf FREMDEN Maschinen laufen soll, und
-  # die wichtigste davon ist ein Windows-PC neben unserem aarch64-Mac.
-  # Ohne diesen Job wurde er für Windows nicht einmal übersetzt, und ein
-  # Teilnehmer wäre der Erste gewesen, der es versucht.
-  #
-  # Nur der Client, nicht die ganze Kette: Er ist der einzige Teil, der
-  # bei Dritten ausgeführt wird, und ein Übersetzungsfehler in seinen
-  # Abhängigkeiten fiele hier ohnehin auf.
-  #
-  # Nur Unit-Tests: Die Läufe mit Modell brauchen Artefakte, und die
-  # liegen nicht im Repositorium. Sie entstehen aus einem
-  # Kalibrierungslauf gegen die Gewichte des Referenzmodells und sind
-  # mehrere Gigabyte groß.
-  #
-  # NUR WINDOWS, NICHT AUCH MACOS: Entwickelt und geprüft wird auf einem
-  # aarch64-Mac, jeder Patch läuft dort durch Tests, clippy und die
-  # Konformitätsvektoren. Ein macOS-Job in der CI wiederholte das und
-  # verdoppelte dabei die Laufzeit dieses Jobs, denn er übersetzt die
-  # ganze Kette aus neun Crates; auf privaten Repositorien werden
-  # macOS-Minuten zudem zehnfach abgerechnet. Windows ist die Plattform,
-  # die hier niemand von Hand prüfen kann, und genau dafür ist der Job da.
-  #
-  # ⚑ **Am 2026-08-29 stellte sich heraus, dass die Begründung auf einer
-  # Seite hohl war** (Punkt 30). „Jeder Patch läuft dort durch die
-  # Konformitätsvektoren" beschrieb eine Gewohnheit, keine Prüfung: Der
-  # Lauf stand in keiner Schleife, die jemand ausführen musste. Und
-  # schlimmer: Der Konformitätswert wurde **nur hier auf Windows**
-  # geprüft, auf Linux von niemandem, obwohl dort die meisten Knoten
-  # laufen werden.
-  #
-  # Beides ist behoben: Der Wert wird jetzt im Ubuntu-Job geprüft (siehe
-  # `Konformitaetswert (Linux)`), und der Lauf gehört zur festen
-  # Prüfschleife vor jedem Patch. Damit steht die These auf zwei
-  # Plattformen in der CI und auf der dritten bei jedem Patch.
-  #
-  # Sollte die Entwicklung einmal nicht mehr auf macOS stattfinden,
-  # gehört `macos-latest` zurück in die Matrix.
-  testclient-plattformen:
-    name: Testclient (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-latest]
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: TESTCLIENT/myl-testclient
-
-      - name: Clippy
-        working-directory: TESTCLIENT/myl-testclient
-        run: cargo clippy --all-targets -- -D warnings
-
-      - name: Unit-Tests
-        working-directory: TESTCLIENT/myl-testclient
-        run: cargo test --lib
-
-      # Ohne Terminal darf der Client keine Steuersequenzen ausgeben und
-      # nicht auf eine Taste warten. Beides ist auf Windows anders
-      # umgesetzt als auf Unix, deshalb wird es hier ausgeführt und nicht
-      # nur übersetzt.
-      - name: Lauf ohne Terminal
-        working-directory: TESTCLIENT/myl-testclient
-        run: cargo run --release -- --quiet --name ci stack
-
-      # Alles, was ohne Modell und ohne Netz läuft, wird hier auch
-      # ausgeführt und nicht nur übersetzt. Der Grund: Ein vollständiger
-      # Durchgang auf Windows hat noch nie stattgefunden, und je mehr
-      # davon die CI abdeckt, desto weniger bleibt für den einen Termin
-      # übrig, an dem ein Partner Zeit hat.
-      #
-      # (Hier stand bis zum 2026-08-27 ein Verweis auf EINSEITER.md. Die
-      # Datei heißt seit dem 2026-08-24 SCHNELLSTART.md; der Verweis zeigte
-      # ins Leere.)
-      #
-      # NICHT dabei ist `artefakte`: Ohne gebaute Artefakte meldet der
-      # Befehl zu Recht Exit 1, das ist seine Aufgabe. Ein `|| true` davor
-      # würde die Aussage wegwerfen, für die es ihn gibt.
-      - name: Befehle ohne Modell
-        working-directory: TESTCLIENT/myl-testclient
-        run: |
-          cargo run --release -- --help
-          cargo run --release -- --quiet plan --plan-id ci --out ci.plan
-          New-Item -ItemType Directory -Force ci-logs | Out-Null
-          cargo run --release -- modellstaende --logs ci-logs
-
-      # Der Konformitaetslauf ohne Artefakt: die sechs Operations-Vektoren
-      # brauchen kein Modell. Er gehoert hierher und nicht zu den uebrigen
-      # Befehlen, weil sein Gesamtwert eine Aussage traegt: Er muss auf
-      # jeder Maschine derselbe sein. Ein Windows-Bau, der hier einen
-      # anderen Wert erzeugt, waere ein Befund ueber die Kernthese, kein
-      # Werkzeugfehler, und faellt so vor dem Partnertermin auf statt an ihm.
-      #
-      # Eigenes Verzeichnis, nicht ci-logs: Der naechste Schritt prueft,
-      # dass `vergleich` ein LEERES Verzeichnis ablehnt. Laege hier ein
-      # Protokoll, pruefte er stattdessen die Verweigerung bei einer
-      # einzigen Maschine — auch richtig, aber eine andere Aussage, und
-      # die urspruengliche waere still verlorengegangen.
-      - name: Konformitaet ohne Artefakt
-        working-directory: TESTCLIENT/myl-testclient
-        run: |
-          New-Item -ItemType Directory -Force ci-konf | Out-Null
-          cargo run --release -- --name ci --logs ci-konf konformitaet
-          # 📌 Zwei Abdruecke, siehe die ausfuehrliche Begruendung am
-          # Linux-Schritt: `894d…` ist nur `konformitaet_op` (sechs
-          # Vektoren), `f1b6…` der ternaere Rechenweg (fuenf), `9102…` das
-          # Vierbitformat (zwei), `cb69…` der Gesamtwert ueber alle
-          # vierundzwanzig.
-          foreach ($paar in @(
-              @('894d8357ae92b5c1', 'konformitaet_op (6 Vektoren)'),
-              @('f1b60342b9cfcdb6', 'konformitaet_ternaer (5 Vektoren)'),
-              @('9102be0890358ceb', 'konformitaet_vierbit (2 Vektoren)'),
-              @('cb696efd3817e575', 'konformitaet gesamt (24 Vektoren)'))) {
-            $zeile = Select-String -Path ci-konf\*.jsonl -Pattern $paar[0]
-            if (-not $zeile) {
-              Write-Error ("FEHLER: " + $paar[1] + " weicht ab, erwartet " + $paar[0])
-              exit 1
-            }
-          }
-          Write-Host "Konformitaet belegt auf x86_64/Windows: 24 Vektoren, vier Abdruecke"
-          exit 0
-
-      # Gegenprobe: Der Vergleich muss ein leeres Verzeichnis ablehnen.
-      # Ein Werkzeug, das aus nichts einen Nachweis macht, wäre schlimmer
-      # als keines (Fund 35).
-      - name: Vergleich verweigert ohne Protokolle
-        working-directory: TESTCLIENT/myl-testclient
-        run: |
-          cargo run --release -- vergleich --logs ci-logs
-          if ($LASTEXITCODE -eq 0) {
-            Write-Error "vergleich hat ein leeres Verzeichnis als Nachweis durchgehen lassen"
-            exit 1
-          }
-          exit 0
-
-  # ── Der Client auf den beiden anderen Plattformen (CLIENT 1.6) ─────
-  #
-  # ⚑ **Warum ausgerechnet dieses Crate.** Der Client ist das Programm,
-  # das ein Mensch anfasst, und er ist das einzige, das mit **Pfaden des
-  # Nutzers** arbeitet: die Einhaengegrenze loest auf und vergleicht
-  # Praefixe, und die Einstellungsdatei sucht sich ihren Ort. Beides ist
-  # auf Windows anders als auf Unix, und beides ist bis zum 2026-09-08
-  # auf keiner anderen Plattform als arm64/macOS gelaufen.
-  #
-  # 📌 **Und die Grenze dieses Jobs steht gleich dabei, weil sie beim
-  # Bauen sichtbar wurde.** Das erste Ergebnis der Durchsicht war, dass
-  # `Einstellungen::vorgabepfad` nur `HOME` las, das es auf Windows
-  # meist nicht gibt. **Dieser Job haette das nicht gefunden**: GitHub
-  # Actions setzt `HOME` auch auf `windows-latest`. Gefunden hat es
-  # Lesen. Was der Job findet, ist die andere Haelfte, naemlich alles,
-  # was sich nur im Lauf zeigt: `canonicalize` liefert auf Windows
-  # Pfade mit `\\?\`-Praefix, und die Einhaengung vergleicht genau
-  # solche Praefixe.
-  #
-  # Kein Modell und kein Netz, also keine Artefakte:
-  # `MYL_OHNE_ARTEFAKTE=1`, wie im Linux-Schritt.
-  client-plattformen:
-    name: Client (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-latest, macos-latest]
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: CLIENT/myl-client
-          key: client-${{ matrix.os }}
-
-      - name: Clippy
-        working-directory: CLIENT/myl-client
-        run: cargo clippy --all-targets -- -D warnings
-
-      # ⚑ Die Einhaengepruefungen sind der Grund fuer den Job: Sie legen
-      # ueber `tempfile` ein echtes Verzeichnis an und lassen
-      # `canonicalize` gegen das Dateisystem laufen. Eine nachgebaute
-      # Ablage pruefte genau das nicht, worum es geht.
-      - name: Pruefungen
-        working-directory: CLIENT/myl-client
-        env:
-          MYL_OHNE_ARTEFAKTE: "1"
-        run: cargo test
-
-      # Dass das gebaute Binaerprogramm auf dieser Plattform startet und
-      # einen Aufruffehler als solchen meldet. Dieselbe Probe wie im
-      # Freigabe-Job, hier bei jedem Push statt nur bei einer Marke.
-      - name: Startprobe
-        shell: bash
-        working-directory: CLIENT/myl-client
-        run: |
-          cargo run --quiet -- --hilfe > /dev/null
-          if cargo run --quiet -- kein-solcher-befehl > /dev/null 2>&1; then
-            echo "FEHLER: myl meldet einen unbekannten Befehl nicht."
-            exit 1
-          fi
-          echo "Start belegt fuer ${{ matrix.os }}"
-
-  # ── Die Kisten des Klienten und des Agenten unter Windows (2026-10-17) ──
-  #
-  # ⛔️ **Bis zum 2026-10-17 liefen unter Windows nur `myl-client`, der
-  # Testclient, Kernel und Konsens.** Konsole, Fenster, Sinne, Module, der
-  # oertliche Agent, der Dispatcher und die Speicherorte wurden dort nur
-  # uebersetzt. Unter Wine nachgefahren fielen dabei echte Fehler: Proben mit
-  # Unix-Pfaden (`myl-store`), mit fest `/bin/sh` (`myl-senses`), eine Shell,
-  # die unter Windows nicht im PATH liegt (`run_command`, Manifeste, Bau),
-  # und ein Herkunftsbuch, das an `\` und an Gross- und Kleinschreibung
-  # vorbeiging (Fund 558). Genau diese Sorte findet man nur auf dem System.
-  #
-  # ⚑ **Die Shell kommt hier von Git for Windows**, wie bei einem Nutzer; der
-  # Laeufer hat sie. Ohne sie melden `run_command` und die Manifeste, dass sie
-  # fehlt, und die Proben dazu fielen.
-  windows-kisten:
-    name: Klient und Agent (windows-latest)
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: |
-            CLIENT/myl-console
-            CLIENT/myl-oberflaeche
-            AGENT_LAYER/local-agent
-          key: windows-kisten
-
-      - name: cargo test — STORAGE (myl-store)
-        working-directory: STORAGE/myl-store
-        run: cargo test --quiet
-
-      - name: cargo test, COMPUTE_PIPELINE (myl-dispatcher)
-        working-directory: COMPUTE_PIPELINE/dispatcher
-        run: cargo test --quiet
-
-      - name: cargo test, AGENT_LAYER (myl-agent)
-        working-directory: AGENT_LAYER/myl-agent
-        run: cargo test --quiet
-
-      - name: cargo test, AGENT_LAYER (local-agent)
-        working-directory: AGENT_LAYER/local-agent
-        env:
-          MYL_OHNE_ARTEFAKTE: "1"
-        run: cargo test --quiet
-
-      - name: cargo test — CLIENT (myl-senses)
-        working-directory: CLIENT/myl-senses
-        run: cargo test --quiet
-
-      - name: cargo test, CLIENT (myl-module)
-        working-directory: CLIENT/myl-module
-        run: cargo test --quiet
-
-      - name: cargo test, CLIENT (myl-console)
-        working-directory: CLIENT/myl-console
-        env:
-          MYL_OHNE_ARTEFAKTE: "1"
-        run: cargo test --quiet
-
-      - name: cargo test — CLIENT (myl-oberflaeche)
-        working-directory: CLIENT/myl-oberflaeche
-        run: cargo test --quiet
-
-      # 📌 **Clippy gehoert dazu**: Ein `#[cfg(unix)]`, das unter Windows
-      # toten Code hinterlaesst, faellt erst hier auf.
-      - name: cargo clippy — dieselben Kisten
-        shell: bash
-        run: |
-          set -euo pipefail
-          for crate in STORAGE/myl-store COMPUTE_PIPELINE/dispatcher AGENT_LAYER/myl-agent \
-                       AGENT_LAYER/local-agent CLIENT/myl-senses CLIENT/myl-module \
-                       CLIENT/myl-console CLIENT/myl-oberflaeche; do
-            echo "── clippy: $crate"
-            (cd "$crate" && cargo clippy --all-targets -- -D warnings)
-          done
-
-  # ── Kalter Klon, ohne Netz, auf allen drei Systemen (2026-09-25) ──
-  #
-  # ⛔️ **Baut ein frischer Klon alles, was ausgeliefert wird, aus dem
-  # Vorrat im Repositorium?** Cargo bekommt ein leeres `CARGO_HOME`, das
-  # nur den ausgepackten Vorrat kennt, und `--offline`: Fehlt dort ein
-  # Paket, bricht der Bau ab, statt es still aus dem Netz zu holen. Das
-  # ist die Zusage „aus einem frischen Klon, ohne Netz, auf allen drei
-  # Zielsystemen", hier fuer Windows zum ersten Mal ueberhaupt geprueft;
-  # macOS und Linux sind zusaetzlich lokal mit gesperrtem Netz belegt.
-  #
-  # ⚑ **Die Systembibliotheken des Fensters sind Fremdprogramme** und
-  # kommen vorher mit Netz (WebKitGTK unter Linux). Geprueft wird, was im
-  # Repositorium liegen muss, nicht was ein Betriebssystem mitbringt.
-  kalter-klon:
-    name: Kalter Klon ohne Netz (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Systembibliotheken des Fensters (nur Linux)
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev \
-            libgtk-3-dev libsoup-3.0-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev
-
-      - name: Vorrat auspacken
-        shell: bash
-        run: |
-          py=python3
-          command -v python3 >/dev/null 2>&1 || py=python
-          "$py" SYSTEM/install/vorrat.py auspacken
-
-      # ⚑ **Die Liste kommt aus den Manifesten** (`ausliefern` unter
-      # `[package.metadata.myelith]`), wie in den Einrichtungsskripten; eine
-      # zweite, getippte Liste liefe auseinander.
-      - name: Jede ausgelieferte Kiste, offline
-        shell: bash
-        env:
-          CARGO_HOME: ${{ github.workspace }}/SYSTEM/crates-lager/cargo-home
-          CARGO_NET_OFFLINE: "true"
-        run: |
-          gefunden=0
-          for kiste in $(grep -rl '^ausliefern = ' --include=Cargo.toml . | grep -v -e '/target/' -e 'SYSTEM/' | sort); do
-            gefunden=$((gefunden + 1))
-            echo "── $(dirname "$kiste")"
-            cargo build --release --locked --offline --manifest-path "$kiste"
-          done
-          if [ "$gefunden" -eq 0 ]; then
-            echo "FEHLER: keine einzige Kiste zum Ausliefern gefunden, also nichts geprueft"
-            exit 1
-          fi
-          echo "$gefunden Kiste(n) aus dem Vorrat gebaut, ohne Netz"
-
-      # ⚑ **Dort, wohin der Bau wirklich ging.** Oben setzt `CARGO_TARGET_DIR`
-      # das Ziel fuer die ganze CI auf `target/`, und das hat Vorrang vor
-      # `.cargo/config.toml`. 📌 Hier stand `SYSTEM/full-build/release/myl`,
-      # der lokale Ort; der Schritt fand die Datei auf keinem System.
-      - name: Startprobe
-        shell: bash
-        run: |
-          "./${CARGO_TARGET_DIR:-SYSTEM/full-build}/release/myl" --hilfe > /dev/null
-          echo "myl startet auf ${{ matrix.os }}"
-
-  # ── Rechenkerne und Konsens auf den anderen Plattformen (CLIENT 1.6) ─
-  #
-  # ⚑ **Die Zusage lautet „jeder mit einem normalen Rechner", und die
-  # gilt fuer drei Betriebssysteme.** Bis zum 2026-09-09 liefen Kernel
-  # und Konsens nur auf Linux; macOS hatte die Kernel und `myl-types`,
-  # Windows nur den Testclient. Ein Konsensfehler, der sich auf Windows
-  # anders verhaelt, waere bis zum ersten Partnertermin unentdeckt
-  # geblieben.
-  #
-  # 📌 **Und das ist nicht theoretisch.** Der Client-Job hat bei seinem
-  # ersten Lauf einen echten Plattformfehler gefunden (`unter\tief.txt`
-  # statt `unter/tief.txt`), und Fund 103 war ein SIMD-Absturz, der nur
-  # auf bestimmten x86-Kernen auftrat. Genau diese Sorte findet man
-  # nicht durch Nachdenken.
-  #
-  # # ⚑ Was hier laeuft und was nicht
-  #
-  # | | |
-  # |---|---|
-  # | Kernel, `myl-types`, Ledger, Scheduler, Konsens | volle Pruefsammlung |
-  # | Knoten | `cargo test --lib`; die Integrationspruefungen brauchen ein Netz |
-  # | Laufzeit, Pipeline | nicht dabei: sie brauchen Artefakte, die kein Runner hat |
-  #
-  # ⚑ **macOS kostet das Zehnfache eines Linux-Runners.** Deshalb
-  # liegen die Kernel-Featurelaeufe weiter auf Linux, und hier steht
-  # nur, was sich zwischen den Plattformen unterscheiden KANN.
-  rechenkerne-plattformen:
-    name: Kernel und Konsens (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      # Ein fehlender Runner darf die andere Plattform nicht mitreissen.
-      fail-fast: false
-      matrix:
-        os: [windows-latest, macos-latest]
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-        with:
-          key: rechenkerne-${{ matrix.os }}
-
-      # Die rechnenden Kerne. Faellt hier etwas aus, das auf Linux
-      # besteht, ist das der wichtigste Befund, den dieses Projekt
-      # haben kann.
-      - name: cargo test — INTEGER_LLM (kernels)
-        working-directory: INTEGER_LLM/kernels
-        run: cargo test --quiet
-
-      # ⚑ **Nur uebersetzen und clippy, nicht rechnen.** Der Metal-Weg
-      # braucht Shadersprache 4.0 (macOS 26) und eine GPU mit Metal
-      # Performance Primitives; ein gehosteter Runner hat beides nicht
-      # sicher, und eine GPU, deren Aufbau scheitert, laesst die
-      # Pruefungen absichtlich scheitern. Die Bitgleichheit belegt der
-      # Konformitaetslauf `run.sh metal` auf Apple-Silizium.
-      - name: cargo clippy — kernels --features metal (macOS)
-        if: runner.os == 'macOS'
-        working-directory: INTEGER_LLM/kernels
-        run: cargo clippy --all-targets --features metal --quiet -- -D warnings
-
-      - name: cargo test — SHARED_TYPES (myl-types)
-        working-directory: SHARED_TYPES/myl-types
-        run: cargo test --quiet
-
-      - name: cargo test — CONSENSUS (myl-ledger)
-        working-directory: CONSENSUS/myl-ledger
-        run: cargo test --quiet
-
-      - name: cargo test — CONSENSUS (myl-scheduler)
-        working-directory: CONSENSUS/myl-scheduler
-        run: cargo test --quiet
-
-      - name: cargo test — CONSENSUS (myl-consensus)
-        working-directory: CONSENSUS/myl-consensus
-        run: cargo test --quiet
-
-      # ⚑ Nur `--lib`: Die Integrationspruefungen des Knotens brauchen
-      # ein Netz und Gegenstellen. Was hier geprueft wird, ist sein
-      # rechnender und dateisystemnaher Teil, und genau dort sitzen die
-      # Plattformunterschiede.
-      - name: cargo test — NODE (myl-node, nur lib)
-        working-directory: NODE/myl-node
-        run: cargo test --lib --quiet
-
-      # 📌 **Clippy gehoert dazu und nicht nur der Bau.** Ein
-      # `#[cfg(unix)]`, das auf Windows toten Code hinterlaesst, faellt
-      # erst hier auf; genau so wurde die Verweispruefung des Clients
-      # gefunden.
-      - name: cargo clippy — dieselben Crates
-        shell: bash
-        run: |
-          set -euo pipefail
-          for crate in INTEGER_LLM/kernels SHARED_TYPES/myl-types \
-                       CONSENSUS/myl-ledger CONSENSUS/myl-scheduler \
-                       CONSENSUS/myl-consensus NODE/myl-node; do
-            echo "── clippy: $crate"
-            (cd "$crate" && cargo clippy --all-targets -- -D warnings)
-          done
-
-  # ── Zahlensemantik: reines Python, keine Uebersetzung ──────────────
-  #
-  # Bis zum 2026-08-24 hing an diesem Job eine Rust-Toolchain und ein
-  # cargo-Cache, weil zwei der vier Skripte `cargo test` aufrufen. Sie
-  # uebersetzten damit die Kernels ein **zweites Mal** — derselbe Build
-  # wie im `kernels`-Job, zweimal bezahlt, und der Job lief ueber drei
-  # Minuten fuer 0,2 Sekunden Rechnung.
-  #
-  # Die beiden cargo-gebundenen Skripte und der Konformitaetslauf stehen
-  # jetzt im `kernels`-Job, wo die Uebersetzung ohnehin warm ist. Was
-  # hier bleibt, braucht kein Rust und laeuft in unter einer Sekunde.
-  #
-  # **Nichts ist entfallen**, nur verschoben.
-  # ── Abhaengigkeiten: Schwachstellen, Lizenzen, Herkunft ──────────
-  #
-  # ⚑ Der Baum von myl-node umfasst 284 Crates, und bis zum 2026-09-02
-  # hat keines davon jemand gegen eine Schwachstellenliste gehalten. Das
-  # ist die Art Luecke, die ein externer Pruefer als Erstes anspricht,
-  # und sie kostet zwei Sekunden je Crate.
-  #
-  # Vier Pruefungen in einer: bekannte Schwachstellen und
-  # zurueckgezogene Fassungen (advisories), erlaubte Lizenzen
-  # (licenses), Platzhalterfassungen (bans) und die Herkunft aus genau
-  # einer Registry (sources). Die Begruendung je Einstellung steht in
-  # `deny.toml`, nicht hier: Eine Regel und ihr Grund gehoeren
-  # zusammen.
-  #
-  # Die Crate-Liste kommt aus dem Dateisystem, wie in der
-  # Mindestfassungs-Pruefung und in der Clippy-Schleife. Ein neues Crate
-  # ist damit automatisch dabei, und wer eines vergisst, kann es nicht
-  # mehr.
-  #
-  # ⚑ Der Job laeuft bei jedem Push **und** im woechentlichen Zeitplan
-  # oben, und der zweite Teil ist der eigentliche Zweck. Eine
-  # Schwachstelle wird nicht dann bekannt, wenn jemand committet; ohne
-  # den Zeitplan faende dieser Job sie erst beim naechsten Patch, und in
-  # einer ruhigen Woche gar nicht. Woechentlich heisst zugleich: bis zu
-  # sieben Tage Verzug, wenn niemand committet. Das ist die Zusage, und
-  # sie steht hier, damit sie niemand fuer eine engere haelt.
-  abhaengigkeiten:
-    name: Abhaengigkeitspruefung (cargo-deny)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: cargo-deny
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-deny
-
-      - name: Jedes Crate gegen deny.toml
-        run: |
-          set -euo pipefail
-          gefunden=0
-          fehler=0
-          for manifest in */*/Cargo.toml SYSTEM/*/*/Cargo.toml; do
-            crate=$(dirname "$manifest")
-            gefunden=$((gefunden + 1))
-            echo "── deny: $crate"
-            if ! cargo deny --manifest-path "$manifest" --config deny.toml check; then
-              fehler=$((fehler + 1))
-            fi
-          done
-          # Eine Schleife ueber null Crates waere ein gruener Job, der
-          # nichts geprueft hat. Dieselbe Falle wie beim Sammellauf, der
-          # fuer ein Crate ohne uebersetzendes Testmodul "0 Suiten, 0
-          # Fehlschlaege" meldete.
-          if [ "$gefunden" -eq 0 ]; then
-            echo "FEHLER: kein Crate gefunden, also eine Pruefung ohne Gegenstand"
-            exit 1
-          fi
-          echo "$gefunden Crate(s) geprueft, $fehler mit Fehlschlag"
-          exit $([ "$fehler" -eq 0 ] && echo 0 || echo 1)
-
-      # ⚑ **Die Lizenzliste folgt den Sperrdateien.** `COMPLIANCE/NOTICES.md`
-      # ist erzeugt; wer eine Abhaengigkeit hinzufuegt oder anhebt und die
-      # Liste nicht neu schreibt, faellt hier auf und nicht erst bei einer
-      # Anfrage nach den Lizenzen.
-      - name: "COMPLIANCE: NOTICES entspricht den Quellen"
-        run: python3 COMPLIANCE/werkzeuge/notices.py --pruefe
-
-  # ── Fuzzing der Drahtformate ─────────────────────────────────────
-  #
-  # ⚑ Bis zum 2026-09-02 gab es kein deckungsgefuehrtes Fuzzing. Was
-  # "Fuzz-Harness" hiess, war ein Handgenerator ueber zufaellige Bytes,
-  # und woran der scheitert, ist gemessen: Rein zufaellige Bytes
-  # deserialisierten in 50 000 Versuchen kein einziges Mal, weil Borsh
-  # zuerst Laengenfelder liest. Ein Fuzzer mit
-  # Deckungsrueckmeldung findet dieselben Laengenfelder in Sekunden.
-  #
-  # **Was geprueft wird, ist nicht "stuerzt nicht ab".** Das prueft
-  # libfuzzer nebenbei. Geprueft wird **Kanonizitaet**: Liest sich eine
-  # Bytefolge vollstaendig als Typ, muss sie sich wieder genau so
-  # schreiben lassen. Wo zwei Bytefolgen denselben Wert ergeben, ist eine
-  # nicht kanonisch, und im Gossip heisst das zwei Nachrichten-Kennungen
-  # fuer denselben Inhalt. Dieselbe Klasse wie Fund 77, eine Ebene tiefer.
-  #
-  # ⚑ **Nightly, und nur hier.** `libfuzzer-sys` braucht Sanitizer, die
-  # es auf stable nicht gibt. Die uebrigen Crates bleiben auf 1.85, und
-  # die Fuzz-Crates liegen bewusst eine Ebene tiefer
-  # (`*/*/fuzz/Cargo.toml`), damit weder die Clippy-Schleife noch die
-  # Mindestfassungs-Pruefung noch die Abhaengigkeitspruefung sie
-  # einsammelt.
-  #
-  # **Der Regressionsteil laeuft dagegen auf stable und bei jedem Push:**
-  # `tests/fuzzkorpus.rs` faehrt den eingecheckten Korpus durch dieselben
-  # Ziele und liegt damit in den gewoehnlichen Crate-Tests. Dieser Job
-  # sucht, jener haelt fest.
-  fuzzing:
-    name: Fuzzing der Drahtformate (nightly)
-    runs-on: ubuntu-latest
-    # Nur im Zeitplan und von Hand: Ein Fuzz-Lauf je Push kostet
-    # Wanduhrzeit und findet beim zweiten Mal nichts Neues.
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Rust nightly
-        uses: dtolnay/rust-toolchain@nightly
-
-      - name: cargo-fuzz
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-fuzz
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-        with:
-          key: fuzz
-
-      - name: Jedes Ziel jedes Fuzz-Crates
-        run: |
-          set -euo pipefail
-          crates=0
-          ziele=0
-          for manifest in */*/fuzz/Cargo.toml; do
-            crate=$(dirname "$(dirname "$manifest")")
-            crates=$((crates + 1))
-            echo "══ $crate"
-            for ziel in $(cd "$crate" && cargo +nightly fuzz list); do
-              ziele=$((ziele + 1))
-              echo "── fuzz: $crate/$ziel"
-              (cd "$crate" && cargo +nightly fuzz run "$ziel" -- -max_total_time=30 -print_final_stats=1)
-            done
-          done
-          # Eine Schleife ueber null Ziele waere ein gruener Job, der
-          # nichts geprueft hat. Dieselbe Falle wie beim Sammellauf, der
-          # fuer ein Crate ohne uebersetzendes Testmodul null Suiten und
-          # null Fehlschlaege meldete.
-          if [ "$ziele" -eq 0 ]; then
-            echo "FEHLER: kein Fuzz-Ziel gefunden, also eine Pruefung ohne Gegenstand"
-            exit 1
-          fi
-          echo "$ziele Ziel(e) in $crates Crate(s) gefuzzt"
-
-      # Ein Fund ist eine Datei unter fuzz/artifacts/. Sie gehoert in die
-      # Hand dessen, der den Lauf ansieht, denn ohne sie ist der Fehler
-      # nicht zu wiederholen.
-      - name: Reproduzierer sichern
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: fuzz-reproduzierer
-          path: '*/*/fuzz/artifacts/**'
-          if-no-files-found: ignore
-
-  # ⚑ **Zwei Sekunden vor zwanzig Minuten.** Jeder Bau mit `--locked`
-  # bricht ab, wenn eine Sperrdatei nicht die Version ihrer eigenen
-  # Kiste traegt, und er tut es erst nach Toolchain und
-  # Zwischenspeicher, in einem Job, der mit der Aenderung nichts zu tun
-  # hat. Zweimal ist genau das passiert: neun Sperrdateien am
-  # 2026-09-08, `myl-oberflaeche` am 2026-09-09, dort stand `0.8.0`
-  # gegen `0.13.0` in der Kiste.
-  #
-  # Der Grund wiederholt sich: Wer eine Version in `Cargo.toml`
-  # erhoeht, laesst cargo dabei nicht laufen, und nur cargo schreibt die
-  # Sperrdatei.
-  sperrdateien:
-    name: Sperrdateien gegen Kistenversionen
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      # 📌 **Die Pruefung steht hier und nicht in einem Skript**
-      # (2026-09-10). Das Werkzeugverzeichnis der Wurzel ist auf
-      # Festlegung des Projektinhabers aus dem Repositorium genommen
-      # worden; ein Job, der eine Datei ruft, die niemand mehr klont,
-      # faellt bei jedem Anstoss um. **Die Wache bleibt, weil der
-      # Fehler bleibt:** Wer eine Version in `Cargo.toml` erhoeht,
-      # laesst cargo dabei nicht laufen, und nur cargo schreibt die
-      # Sperrdatei.
+      # Jede Kiste in genau einer Gruppe, jede auf der Fassung der
+      # Werkzeugkette (Fund 65, Fund 511: Kisten ohne Testschritt).
+      - name: Jede Kiste in einer Gruppe, jede auf einer Fassung
+        run: .github/ci/kisten.sh wache
+
+      # ⚑ Wer eine Version in `Cargo.toml` erhoeht, laesst cargo dabei nicht
+      #   laufen, und nur cargo schreibt die Sperrdatei; `--locked` faellt dann
+      #   erst nach Minuten Bau, in einem fremden Job (2026-09-08, 2026-09-09).
       - name: Jede Sperrdatei traegt die Version ihrer Kisten
         run: |
           python3 - <<'PY'
           import pathlib, re, sys
 
           wurzel = pathlib.Path(".")
-          def ohne_bau(p): return not any(t in ("target", "SYSTEM/full-build") for t in p.parts)
+          def ohne_bau(p): return not any(t in ("target", "full-build", "crates-lager") for t in p.parts)
 
           def eigene(text):
               a = re.search(r"(?ms)^\[package\]\n(.*?)(?=^\[|\Z)", text)
@@ -1619,83 +117,52 @@ jobs:
                   lock.read_text(encoding="utf-8")):
                   name, hat = m.group(1), m.group(2)
                   if name in kisten and kisten[name][0] != hat:
-                      schief.append(
-                          f"  {name}: {kisten[name][1]} sagt {kisten[name][0]}, {lock} sagt {hat}")
+                      schief.append(f"  {name}: {kisten[name][1]} sagt {kisten[name][0]}, {lock} sagt {hat}")
 
           if schief:
               print("Sperrdateien und Kistenversionen laufen auseinander:")
               print("\n".join(sorted(set(schief))))
-              print("Abhilfe: in der betroffenen Kiste einmal `cargo check` laufen lassen.")
+              print("Abhilfe: in der betroffenen Kiste einmal `cargo metadata` laufen lassen.")
               sys.exit(1)
           print(f"{gezaehlt} Sperrdateien geprueft, jede traegt die Version ihrer Kisten.")
           PY
 
-  audit:
-    name: Zahlensemantik-Audit
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Audit — Gleitkomma und Skalen
+      # Gleitkomma im Rechenpfad, Skalen, theta_v gegen die Vektoren (Fund
+      # 358), das Testprofil (wer die CI mit `--release` beschleunigt,
+      # schaltet die Ueberlaufpruefung ab) und die Streitlast-Tabelle.
+      - name: Audit der Zahlensemantik
         working-directory: INTEGER_LLM
         run: |
           python3 tests/audit/test_no_float.py
           python3 tests/audit/test_scales.py
+          python3 tests/regression/test_theta_v_changes.py
+          python3 tests/audit/test_profile.py
+          python3 tests/audit/test_streitlast.py
 
-      # 📌 Fund 358: Dieser Test lief nirgends und haette auch nie
-      # abgelehnt. Er haelt die Golden Vectors an die Fassung von
-      # theta_v/spec.json; die Manifestpruefung braucht Artefakte und
-      # ueberspringt hier sichtbar.
-      - name: "Audit: theta_v gegen Vektoren und Manifeste"
+      # 📌 Hier liefen bis zum 2026-10-22 auch `test_division.py` und
+      #   `test_overflow.py`. Beide rufen `cargo test` und uebersetzten die
+      #   Kerne damit ein zweites Mal, in einem Job ohne Werkzeugkette; sie
+      #   laufen in der Gruppe `rechnen`, wo die Kerne ohnehin gebaut sind.
+      - name: Einheitentests ohne Fremdbibliotheken
         working-directory: INTEGER_LLM
-        run: python3 tests/regression/test_theta_v_changes.py
+        run: |
+          python3 tests/test_calibration.py
+          python3 tests/test_fixed_point.py
+          python3 tests/test_kernels.py
+          python3 tests/test_luts.py
+          python3 tests/test_rmsnorm.py
+          python3 tests/test_rope.py
+          python3 tests/test_rope_nachziehen.py
 
-      # ⚑ Bewacht eine Zeile in siebzehn `Cargo.toml`: Tests bauen
-      # optimiert, aber `debug-assertions` und `overflow-checks` bleiben
-      # an. Wer die CI mit `--release` beschleunigt, schaltet die
-      # Ueberlaufpruefung ab, und das faellt sonst niemandem auf.
-      - name: Audit — Testprofil
-        working-directory: INTEGER_LLM
-        run: python3 tests/audit/test_profile.py
-
-      # ⚑ Die Streitlast-Rechnung holt Frist und Erasure-Parameter aus
-      # den Konstanten, also benutzt sie sie. Die Modellmaße kann sie
-      # nicht benutzen: Sie stehen unter INTEGER_LLM/artifacts, und
-      # GOVERNANCE darf dort nicht anhängen. Die unvermeidliche
-      # Verdopplung wird deshalb bewacht.
-      - name: Audit — Streitlast-Modelltabelle
-        working-directory: INTEGER_LLM
-        run: python3 tests/audit/test_streitlast.py
-
-      # ⚑ Die drei ETHICS-Prüfungen aus Punkt 1.1 bis 1.3. Sie brauchen
-      # kein Rust und laufen in unter einer Sekunde.
-      #
-      # ⚑ `lizenzprobe.py` prüft seit dem 2026-09-01 auch in der CI etwas.
-      # Bis dahin lag hier kein Modell, sie meldete „nichts zu prüfen"
-      # und ging durch: eine ehrliche Aussage über einen leeren Ordner,
-      # aber kein Beleg. Seit die Lizenzdatei jedes katalogisierten
-      # Modells im Repositorium liegt (die Gewichte weiterhin nicht),
-      # liest sie hier vier echte Lizenztexte und würde einen fehlenden,
-      # einen unbekannten oder einen mit Sperrklausel melden.
-      #
-      # **Was sie weiterhin nicht leistet:** Sie liest Dateien, nicht
-      # Recht. Ob die Lizenz für diesen Zweck taugt, steht in
-      # `COMPLIANCE/ethics/Lizenzlage.md` und stammt von Menschen.
+      # Lizenzen der Netzmodelle, Modellkarte, Ausschlusskatalog und der
+      # Aufnahmeantrag in beiden Richtungen: Der vollstaendige kommt durch,
+      # die leere Vorlage faellt durch.
       - name: "COMPLIANCE/ethics: Lizenz, Modellkarte, Ausschlusskatalog, Aufnahmeantrag"
         run: |
           set -e
           python3 COMPLIANCE/ethics/werkzeuge/lizenzprobe.py
           python3 COMPLIANCE/ethics/werkzeuge/modellkarte.py --pruefe
           python3 COMPLIANCE/ethics/werkzeuge/ausschlussprobe.py
-          # 📌 **Beide Richtungen, seit dem 2026-08-31.** Bis dahin stand
-          # hier nur, dass die leere Vorlage durchfaellt. Eine Pruefung,
-          # die alles ablehnt, besteht diesen Test ebenfalls; dass ein
-          # vollstaendiger Antrag durchkommt, hat niemand geprueft.
           python3 COMPLIANCE/ethics/werkzeuge/pruefe_antrag.py \
             COMPLIANCE/ethics/vorlagen/korpus-aufnahmeantrag-beispiel.json
           echo "ok: der vollstaendige Beispielantrag kommt durch"
@@ -1705,74 +172,350 @@ jobs:
               exit 1
             } || echo "ok: die leere Vorlage faellt durch, wie sie soll"
 
-      # ⚑ **Diese sechs liefen bis zum 2026-08-25 in keinem Job.**
-      #
-      # Von den dreizehn Python-Testdateien startete die CI nur die vier
-      # Audit-Skripte. Zwei der uebrigen waren rot, und zwar seit Tagen:
-      # `test_luts.py` prueft die LUT-Laengen und stand noch auf den
-      # Werten von theta_v 0.14.0 (die Spec ist bei 0.15.0/0.16.0),
-      # `test_export_workflow.py` verlangte, dass GPTQ ohne Vorgabe
-      # laeuft (am 2026-08-20 wurde das Gegenteil festgelegt).
-      #
-      # Dieselbe Klasse wie **Fund 44**, wo der Audit NETWORKING nicht
-      # ansah und trotzdem „null Treffer" meldete, und wie `moe.rs`, das
-      # als Rechenpfad-Datei nicht in der Audit-Liste stand: **Eine
-      # Pruefung, die nicht laeuft, meldet nichts.**
-      #
-      # Diese neun brauchen keine Fremdbibliothek. Die fuenf, die torch
-      # brauchen, laufen im eigenen Job `kalibrierung-python`, damit
-      # dieser hier schnell bleibt: er wurde am 2026-08-24 bewusst von
-      # ueber drei Minuten auf unter eine Sekunde gebracht.
-      #
-      # Hier standen "sechs" und "vier", die Staende von vor dem
-      # 2026-09-11. Eine Anzahl neben der Liste, die sie zaehlt, ist
-      # dieselbe Angabe an zwei Orten, und die Liste meldet sich nicht,
-      # wenn sie waechst. Die Zahlen bleiben trotzdem stehen, weil sie
-      # sagen, was die Aufteilung kostet; sie gehoeren beim Ergaenzen
-      # der Liste mitgezogen.
-      - name: Einheitentests ohne Fremdbibliotheken
-        working-directory: INTEGER_LLM
-        run: |
-          python3 tests/audit/test_division.py
-          python3 tests/audit/test_overflow.py
-          python3 tests/test_calibration.py
-          python3 tests/test_fixed_point.py
-          python3 tests/test_kernels.py
-          python3 tests/test_luts.py
-          python3 tests/test_rmsnorm.py
-          python3 tests/test_rope.py
-          python3 tests/test_rope_nachziehen.py
+      # Die Regeln der Sicherheitskopie an einem kleinen Baum: Auswahl,
+      # Verknuepfungen, fehlende Artefakte, tar und zip mit Pruefsummen.
+      - name: "Sicherheitskopie: Selbsttest der Regeln"
+        run: python3 SYSTEM/install/sicherung.py --selbsttest
 
-  # ── Kalibrierungs-Tests mit torch: eigener Job ────────────────────
+  # ── Die Kisten unter Linux, in vier Gruppen ─────────────────────────
   #
-  # Fuenf Testdateien haengen an torch: `test_activation_stats.py`,
-  # `test_gptq.py`, `test_export_workflow.py`,
-  # `test_moe_entschmelzen.py` und `test_gammaentzerrung.py`. Sie decken
-  # den Quantisierer, den Statistik-Sammler, GPTQ, den Exportweg und die
-  # Gammaentzerrung ab, also den Pfad, auf dem aus Gleitkomma-Gewichten
-  # ein konsensrelevantes Artefakt wird.
-  #
-  # 📌 **Die fuenfte kam am 2026-09-11 dazu, Fund 342.** Sie lag seit
-  # ihrem Anlegen im Baum, war aber mit `pytest` geschrieben, das dieses
-  # Projekt nicht hat, und stand in keiner Liste. Sie lief also nirgends.
-  #
-  # **Eigener Job statt eines Schrittes im Audit**, weil die
-  # torch-Installation ein bis zwei Minuten kostet und der Audit-Job am
-  # 2026-08-24 ausdruecklich auf unter eine Sekunde gebracht wurde. Hier
-  # laeuft sie parallel und haelt nichts auf.
-  #
-  # **Nur die CPU-Fassung**: Diese Tests rechnen mit kleinen Tensoren und
-  # brauchen weder CUDA noch Modellgewichte. Das vollstaendige
-  # `requirements.txt` waere ueberfluessig, es zieht transformers,
-  # datasets und accelerate mit.
-  kalibrierung-python:
-    name: Kalibrierung — Python-Einheitentests (torch)
+  # Clippy und Proben je Kiste, offline aus dem Vorrat; welche Kiste in
+  # welcher Gruppe steht und was je Kiste laeuft, sagt `.github/ci/kisten.sh`.
+  # ⚑ Vier Gruppen statt eines Jobs von 47 Minuten, und jede mit eigenem
+  #   Zwischenspeicher. Am 2026-08-29 war eine Teilung schon einmal
+  #   zurueckgenommen worden, weil die Speicher einander verdraengten; damals
+  #   baute jede Kiste in einen eigenen Ordner und mit Debug-Informationen.
+  #   Ob es diesmal traegt, zeigt die Groesse der Eintraege nach den ersten
+  #   Laeufen.
+  kisten:
+    name: Kisten ${{ matrix.gruppe }} (Linux)
     runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        gruppe: [rechnen, protokoll, knoten, klient]
+    # In der CI liegt kein Modell. Die Erlaubnis, Proben mit Gewichten zu
+    # ueberspringen, steht deshalb fuer den ganzen Job; ohne sie schlaegt
+    # ein fehlendes Modell fehl, statt still abzuspringen (Fund 113).
+    env:
+      MYL_OHNE_ARTEFAKTE: "1"
     steps:
       - uses: actions/checkout@v4
 
-      - name: Python
-        uses: actions/setup-python@v5
+      - uses: ./.github/actions/einrichten
+        with:
+          cache: kisten-${{ matrix.gruppe }}
+          oberflaeche: ${{ matrix.gruppe == 'klient' }}
+
+      - uses: actions/setup-python@v5
+        if: matrix.gruppe == 'rechnen'
+        with:
+          python-version: "3.12"
+
+      - name: Clippy und Proben
+        run: .github/ci/kisten.sh pruefen ${{ matrix.gruppe }}
+
+      # Divisionssemantik und Ueberlauf rufen `cargo test` der Kerne; hier
+      # sind sie warm. Dazu der Bitgleichheits-Anker: ohne Artefakte die
+      # sechs Operationsvektoren gegen die Referenz.
+      - name: Audit der Kerne und Konformitaet der Operationen
+        if: matrix.gruppe == 'rechnen'
+        run: |
+          (cd INTEGER_LLM && python3 tests/audit/test_division.py && python3 tests/audit/test_overflow.py)
+          (cd INTEGER_LLM/conformance && ./run.sh reference)
+
+      - name: Konformitaetswert (Linux, x86_64)
+        if: matrix.gruppe == 'knoten'
+        run: .github/ci/kisten.sh konformitaet "x86_64/Linux"
+
+  # ── Das Netz unter Laufzeit und Verlust (2026-10-22) ────────────────
+  #
+  # Jeder Knoten ein eigener Prozess in einem eigenen Netz-Namensraum, 50 bis
+  # 200 ms je Richtung und 1 bis 5 % Verlust mit `tc netem`, dazu Trennung,
+  # Absturz, ein Neuling und ein Einstieg nur ueber mDNS. Der Lauf im selben
+  # Prozess zeigte keinen der drei Fehler, die dieser am ersten Tag fand:
+  # verworfene Bloecke, die zu frueh kamen; einen Testverkehr, der den
+  # Zustand nie bewegte; die Rueckschleife eines anderen im Adressbuch.
+  netzbedingungen:
+    name: Netz unter Laufzeit und Verlust (tc netem)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/einrichten
+        with:
+          cache: netz
+
+      - name: myl-node bauen
+        working-directory: NODE/myl-node
+        run: cargo build --release --locked --offline
+
+      # Der Kern des Laeufers bringt `sch_netem` nicht immer geladen mit.
+      - name: Kernelmodul sch_netem
+        run: |
+          sudo modprobe sch_netem || {
+            sudo apt-get update
+            sudo apt-get install -y "linux-modules-extra-$(uname -r)"
+            sudo modprobe sch_netem
+          }
+
+      - name: Netzlauf mit getrennten Prozessen
+        run: |
+          sudo -E env "PATH=$PATH" python3 TESTCLIENT/netzbedingungen/netzlauf_prozesse.py \
+            --programm "$CARGO_TARGET_DIR/release/myl-node" --protokolle "$RUNNER_TEMP/netzlauf"
+
+      - name: Protokolle sichern
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: netzlauf-protokolle
+          path: ${{ runner.temp }}/netzlauf
+          if-no-files-found: ignore
+
+  # ── Windows und macOS ──────────────────────────────────────────────
+  #
+  # Nur, was sich zwischen den Systemen unterscheiden kann: das Rechnen auf
+  # einer zweiten Architektur (macOS ist ARM64, Linux und Windows sind
+  # x86_64), Pfade und Prozesse (Windows), das Fenster. Ein Job je System und
+  # Gruppe statt bisher fuenf unter Windows und vier unter macOS, die
+  # dieselben Abhaengigkeiten je einzeln uebersetzten. Unter macOS nur die
+  # Kerne, denn dort laeuft die Entwicklung, und jede Minute zaehlt zehnfach.
+  plattform:
+    name: ${{ matrix.gruppe }} (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest, gruppe: plattform-kerne }
+          - { os: windows-latest, gruppe: plattform-klient }
+          - { os: macos-latest, gruppe: plattform-kerne }
+    env:
+      MYL_OHNE_ARTEFAKTE: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/einrichten
+        with:
+          cache: ${{ matrix.gruppe }}
+
+      # ⚑ Die Shell kommt unter Windows von Git for Windows, wie bei einem
+      #   Nutzer; ohne sie melden `run_command` und die Manifeste, dass sie
+      #   fehlt (Fund 558).
+      - name: Clippy und Proben
+        shell: bash
+        run: .github/ci/kisten.sh pruefen ${{ matrix.gruppe }}
+
+      # Nur uebersetzen und Clippy, nicht rechnen: Der Metal-Weg braucht eine
+      # GPU mit Metal 4, die ein gehosteter Laeufer nicht sicher hat.
+      - name: Clippy der Kerne mit Metal (macOS)
+        if: runner.os == 'macOS'
+        working-directory: INTEGER_LLM/kernels
+        run: cargo clippy --locked --offline --all-targets --features metal -- -D warnings
+
+      # ⚑ Die Kernthese auf einer zweiten Architektur und einem zweiten
+      #   System: derselbe Wert wie unter Linux.
+      - name: Konformitaetswert
+        if: matrix.gruppe == 'plattform-kerne'
+        shell: bash
+        run: .github/ci/kisten.sh konformitaet "${{ runner.arch }}/${{ runner.os }}"
+
+      # Der Bitgleichheits-Anker auf ARM64: dieselben sechs Vektoren wie
+      # unter Linux, gegen die Referenz. Der Vergleich ist der Zweck.
+      - name: Konformitaet der Operationen (macOS, ARM64)
+        if: runner.os == 'macOS'
+        working-directory: INTEGER_LLM/conformance
+        run: ./run.sh reference
+
+      # Dass `myl` startet und einen unbekannten Befehl als Fehler meldet.
+      # ⚑ `--profile test` nutzt, was die Proben schon uebersetzt haben; ein
+      #   blosses `cargo run` baute alles ein drittes Mal, im Entwicklungsprofil.
+      - name: Startprobe des Klienten
+        if: matrix.gruppe == 'plattform-kerne'
+        shell: bash
+        working-directory: CLIENT/myl-client
+        run: |
+          cargo run --locked --offline --quiet --profile test -- --hilfe > /dev/null
+          if cargo run --locked --offline --quiet --profile test -- kein-solcher-befehl > /dev/null 2>&1; then
+            echo "FEHLER: myl meldet einen unbekannten Befehl nicht."
+            exit 1
+          fi
+          echo "Start belegt fuer ${{ runner.os }}"
+
+      # Der Testclient laeuft bei Dritten, und Windows ist das System, das
+      # hier niemand von Hand prueft: ohne Terminal keine Steuersequenzen und
+      # kein Warten auf eine Taste; die Befehle ohne Modell ausgefuehrt, nicht
+      # nur uebersetzt; und der Vergleich muss ein leeres Verzeichnis
+      # ablehnen (Fund 35). `artefakte` fehlt mit Absicht: Ohne Artefakte
+      # meldet er zu Recht Rueckgabe 1.
+      # 📌 Unter bash mit `set -e`: PowerShell bricht nach einem gescheiterten
+      #   Programmaufruf nicht ab, und mehrere Aufrufe in einem Schritt
+      #   verdeckten so jeden Fehler ausser dem letzten.
+      - name: Testclient ohne Terminal und ohne Modell (Windows)
+        if: runner.os == 'Windows' && matrix.gruppe == 'plattform-kerne'
+        shell: bash
+        working-directory: TESTCLIENT/myl-testclient
+        run: |
+          set -euo pipefail
+          lauf() { cargo run --locked --offline --quiet --profile test -- "$@"; }
+          lauf --quiet --name ci stack
+          lauf --help > /dev/null
+          lauf --quiet plan --plan-id ci --out ci.plan
+          mkdir -p ci-logs
+          lauf modellstaende --logs ci-logs
+          if lauf vergleich --logs ci-logs; then
+            echo "FEHLER: vergleich hat ein leeres Verzeichnis als Nachweis durchgehen lassen"
+            exit 1
+          fi
+          echo "Testclient belegt auf Windows: ohne Terminal, ohne Modell, leerer Vergleich abgelehnt"
+
+  # ── Kalter Klon ohne Netz, auf allen drei Systemen ──────────────────
+  #
+  # ⛔️ Baut ein frischer Klon alles, was ausgeliefert wird, aus dem Vorrat,
+  # im Freigabeprofil? Ohne Zwischenspeicher, denn kalt ist der Zweck. Die
+  # Liste kommt aus den Manifesten (`ausliefern` unter
+  # `[package.metadata.myelith]`), wie in den Einrichtungsskripten.
+  kalter-klon:
+    name: Kalter Klon ohne Netz (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/einrichten
+        with:
+          oberflaeche: "true"
+
+      - name: Jede ausgelieferte Kiste, offline
+        shell: bash
+        run: |
+          gefunden=0
+          for kiste in $(grep -rl '^ausliefern = ' --include=Cargo.toml . | grep -v -e '/target/' -e 'SYSTEM/' | sort); do
+            gefunden=$((gefunden + 1))
+            echo "── $(dirname "$kiste")"
+            cargo build --release --locked --offline --manifest-path "$kiste"
+          done
+          if [ "$gefunden" -eq 0 ]; then
+            echo "FEHLER: keine einzige Kiste zum Ausliefern gefunden, also nichts geprueft"
+            exit 1
+          fi
+          echo "$gefunden Kiste(n) aus dem Vorrat gebaut, ohne Netz"
+
+      - name: Startprobe
+        shell: bash
+        run: |
+          "$CARGO_TARGET_DIR/release/myl" --hilfe > /dev/null
+          echo "myl startet auf ${{ matrix.os }}"
+
+  # ── Abhaengigkeiten: Schwachstellen, Lizenzen, Herkunft ─────────────
+  #
+  # Bei jedem Push und im woechentlichen Zeitplan, und der zweite ist der
+  # eigentliche Zweck: Eine Schwachstelle wird nicht bekannt, wenn jemand
+  # committet. Bis zu sieben Tage Verzug, wenn niemand committet; das ist die
+  # Zusage. Die Begruendung je Regel steht in `deny.toml`.
+  abhaengigkeiten:
+    name: Abhaengigkeitspruefung (cargo-deny, NOTICES)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/einrichten
+        with:
+          vorrat: "false"
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+
+      - name: Jede Kiste gegen deny.toml
+        run: |
+          set -euo pipefail
+          gefunden=0
+          fehler=0
+          for manifest in */*/Cargo.toml SYSTEM/*/*/Cargo.toml; do
+            gefunden=$((gefunden + 1))
+            echo "── deny: $(dirname "$manifest")"
+            cargo deny --manifest-path "$manifest" --config deny.toml check || fehler=$((fehler + 1))
+          done
+          [ "$gefunden" -gt 0 ] || { echo "FEHLER: keine Kiste gefunden"; exit 1; }
+          echo "$gefunden Kiste(n) geprueft, $fehler mit Fehlschlag"
+          [ "$fehler" -eq 0 ]
+
+      # Die Lizenzliste ist erzeugt; wer eine Abhaengigkeit anhebt und sie
+      # nicht neu schreibt, faellt hier auf (Fund 557).
+      - name: "COMPLIANCE: NOTICES entspricht den Quellen"
+        run: python3 COMPLIANCE/werkzeuge/notices.py --pruefe
+
+  # ── Fuzzing der Drahtformate, nur im Zeitplan und von Hand ──────────
+  #
+  # Geprueft wird Kanonizitaet: Liest sich eine Bytefolge vollstaendig als
+  # Typ, muss sie sich genau so wieder schreiben lassen. Nightly nur hier,
+  # weil libfuzzer Sanitizer braucht; die Fuzz-Kisten liegen eine Ebene
+  # tiefer (`*/*/fuzz`), damit keine andere Schleife sie einsammelt. Der
+  # eingecheckte Korpus laeuft als gewoehnliche Probe bei jedem Push.
+  fuzzing:
+    name: Fuzzing der Drahtformate (nightly)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust nightly
+        run: rustup toolchain install nightly --profile minimal
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
+
+      - name: Jedes Ziel jedes Fuzz-Crates
+        run: |
+          set -euo pipefail
+          crates=0
+          ziele=0
+          for manifest in */*/fuzz/Cargo.toml; do
+            crate=$(dirname "$(dirname "$manifest")")
+            crates=$((crates + 1))
+            echo "══ $crate"
+            for ziel in $(cd "$crate" && cargo +nightly fuzz list); do
+              ziele=$((ziele + 1))
+              echo "── fuzz: $crate/$ziel"
+              (cd "$crate" && cargo +nightly fuzz run "$ziel" -- -max_total_time=30 -print_final_stats=1)
+            done
+          done
+          [ "$ziele" -gt 0 ] || { echo "FEHLER: kein Fuzz-Ziel gefunden"; exit 1; }
+          echo "$ziele Ziel(e) in $crates Crate(s) gefuzzt"
+
+      - name: Reproduzierer sichern
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-reproduzierer
+          path: '*/*/fuzz/artifacts/**'
+          if-no-files-found: ignore
+
+  # ── Kalibrierung mit torch: eigener Job ────────────────────────────
+  #
+  # Quantisierer, Statistik-Sammler, GPTQ, Exportweg und Gammaentzerrung,
+  # also der Weg, auf dem aus Gleitkomma-Gewichten ein konsensrelevantes
+  # Artefakt wird. Eigener Job, weil torch ein bis zwei Minuten kostet; nur
+  # die CPU-Fassung, ohne Modellgewichte.
+  kalibrierung-python:
+    name: Kalibrierung, Python-Einheitentests (torch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
@@ -1791,53 +534,23 @@ jobs:
           python3 tests/test_moe_entschmelzen.py
           python3 tests/test_gammaentzerrung.py
 
-  # ── Whitepaper-Simulationen: eigener Job, damit sie parallel laufen ─
+  # ── Whitepaper-Simulationen (Anhang B.9) ───────────────────────────
   #
-  # Sie belegen die Zahlen aus Anhang B.9; laeuft eines der Programme
-  # nicht mehr, zitiert das Papier etwas, das es nicht gibt.
-  #
-  # **Eigener Job statt eines Schrittes im Audit**, weil zwei der
-  # Simulationen zusammen 84 der 89 Sekunden ausmachen
-  # (`topk_stability_sim.py` 56 s, `robustness_sim.py` 28 s). Ihre
-  # Stichprobenzahlen zu senken waere der naheliegende Weg und der
-  # falsche: `N_TRIALS = 400` und `N = 60_000` sind die Werte, mit denen
-  # die Zahlen des Anhangs entstanden sind. Wer sie senkt, hat andere
-  # Zahlen und dieselbe Laufzeit im naechsten Anhang.
-  #
-  # Ein eigener Job kostet dagegen keine Wanduhrzeit: Er laeuft parallel
-  # zu den Crate-Tests, die ohnehin laenger brauchen.
-  #
-  # Geprueft wird nur, dass die Programme **laufen**, nicht dass sie
-  # dieselben Zahlen liefern: Sie drucken, sie behaupten nicht. Das ist
-  # die schwaechere Aussage und die einzige, die heute moeglich ist; ein
-  # Golden-File je Simulation waere der naechste Schritt.
+  # Laeuft eines der Programme nicht mehr, zitiert das Papier etwas, das es
+  # nicht gibt. Die zwei langsamen (56 s und 28 s) laufen nur, wenn sie sich
+  # geaendert haben, und woechentlich; ihre Stichprobenzahlen sind die, mit
+  # denen die Zahlen des Anhangs entstanden, und werden nicht gesenkt.
   simulationen:
     name: Whitepaper-Simulationen (Anhang B.9)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
-      - name: Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      # ⚑ **Die Ausnahmeliste ist seit dem 2026-09-01 leer** (Punkt 15).
-      # `latency_sim.py` und `security_sim.py` waren dokumentierte Stubs
-      # fuer Meilenstein M1 und beendeten sich mit Exit 1; jetzt laufen
-      # sie und **behaupten** dabei, statt nur zu drucken. Die Mechanik
-      # bleibt stehen: Traegt jemand hier wieder etwas ein, schlaegt der
-      # Schritt fehl, sobald es durchlaeuft.
-      # Zwei der Simulationen machen 84 der 89 Sekunden aus
-      # (`topk_stability_sim.py` 56 s, `robustness_sim.py` 28 s). Ihre
-      # Stichprobenzahlen zu senken waere der naheliegende Weg und der
-      # falsche: `N_TRIALS = 400` und `N = 60_000` sind die Werte, mit
-      # denen die Zahlen des Anhangs entstanden sind.
-      #
-      # Sie laufen deshalb **nur, wenn sie sich geaendert haben** oder
-      # woechentlich per Zeitplan. Sie brechen nicht durch fremde
-      # Aenderungen, sondern durch eigene und durch einen Python-Wechsel;
-      # gegen das erste hilft der Diff, gegen das zweite der Zeitplan.
       - name: Geaenderte Simulationen ermitteln
         id: diff
         run: |
@@ -1856,21 +569,8 @@ jobs:
           LANGSAME: ${{ steps.diff.outputs.langsame }}
         run: |
           set -e
-          GEPLANT=""
           LANGSAM="topk_stability_sim.py robustness_sim.py"
           for f in *.py; do
-            case " ${GEPLANT} " in
-              *" ${f} "*)
-                if python3 "$f" >/dev/null 2>&1; then
-                  echo "FEHLER: ${f} ist als M1-Stub gefuehrt, laeuft aber durch."
-                  echo "Entweder ist er implementiert (dann aus der Liste nehmen)"
-                  echo "oder der Stub meldet seinen Zustand nicht mehr."
-                  exit 1
-                fi
-                echo "  GEPLANT (M1): ${f}"
-                continue
-                ;;
-            esac
             case " ${LANGSAM} " in
               *" ${f} "*)
                 if [ "${LANGSAME}" != "ja" ]; then

@@ -91,7 +91,7 @@ fn die_kerne_rechnen_wie_die_cpu() {
     let lauf = std::process::Command::new(&programm).arg(&ein).arg(&aus).output().expect("Nachbau starten");
     assert!(lauf.status.success(), "Nachbau scheitert: {}", String::from_utf8_lossy(&lauf.stderr));
     let bytes = std::fs::read(&aus).expect("Ergebnis lesen");
-    let werte: Vec<i16> = bytes.chunks_exact(2).map(|b| i16::from_le_bytes([b[0], b[1]])).collect();
+    let werte: Vec<i16> = bytes.as_chunks::<2>().0.iter().map(|b| i16::from_le_bytes([b[0], b[1]])).collect();
     let mut stelle = 0;
     for f in &faelle {
         let n = f.zeilen * f.eingaben.len();

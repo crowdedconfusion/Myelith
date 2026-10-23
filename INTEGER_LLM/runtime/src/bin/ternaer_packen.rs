@@ -149,7 +149,7 @@ fn tensor_packen(pfad: &Path, dtype: &str, zeilen: usize, spalten: usize) -> Res
         let ende = (anfang + ZEILEN_JE_DURCHGANG).min(zeilen);
         let bytes = &abbild[anfang * spalten * breite..ende * spalten * breite];
         let gepackt = if breite == 2 {
-            let werte: Vec<i16> = bytes.chunks_exact(2).map(|c| i16::from_le_bytes([c[0], c[1]])).collect();
+            let werte: Vec<i16> = bytes.as_chunks::<2>().0.iter().map(|c| i16::from_le_bytes([c[0], c[1]])).collect();
             packen(&werte, spalten)
         } else {
             let werte: Vec<i8> = bytes.iter().map(|&b| b as i8).collect();

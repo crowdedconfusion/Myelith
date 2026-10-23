@@ -1,8 +1,8 @@
 [package]
 name = "myl-ledger"
-version = "0.24.0"
+version = "0.24.1"
 edition = "2021"
-rust-version = "1.85"
+rust-version = "1.99"
 description = "L1-Ledger für Myelith (Whitepaper Anhang A.5): Kontenmodell und deterministische Zustandsübergänge (burn→mint_credits, apply_verdict, credit_spend). Reine Funktionen (State, Tx) → State, BTreeMap-Ordnung, Borsh-kanonisch — Voraussetzung für bitgleichen Replay über Nodes."
 license = "LicenseRef-PolyForm-Shield-1.0.0"
 publish = false

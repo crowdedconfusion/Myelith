@@ -1,6 +1,6 @@
 # compute-pipeline (`myl-pod`, `myl-dispatcher`)
 
-> **Version:** 0.47.0 (`myl-pod` 0.38.0, `myl-dispatcher` 0.11.0)
+> **Version:** 0.47.1 (`myl-pod` 0.38.1, `myl-dispatcher` 0.11.1)
 > **Datum:** 2026-10-22
 > **Status:** Phase 1 vollständig, Phase 2.1, **Phase 3 vollständig**
 > (3.1 bis 3.3) und Punkt 4.3. `shard_loop` mit Spur-Hashes und
@@ -106,6 +106,40 @@ COMPUTE_PIPELINE/
 ```
 
 ## Changelog
+
+### v0.47.1 (2026-10-22): Eine Werkzeugkette für alle Kisten; Fund 595 (`myl-pod` 0.38.1, `myl-dispatcher` 0.11.1)
+
+- `rust-version` auf 1.99 in `myl-pod`, `myl-dispatcher`; die Werkzeugkette steht jetzt einmal,
+  in `rust-toolchain.toml` (1.99.0), und die CI baut mit genau ihr statt mit
+  einem wechselnden `stable` und zwei Mindestfassungen (1.85 und 1.88).
+  ⚑ **Dazu Code, und zwar mit Absicht:** Mit `rust-version = "1.99"` gibt Clippy
+  zwei Regeln frei, die es bei 1.85 zurückhielt (`manual_is_multiple_of`,
+  `chunks_exact` mit fester Größe). Festlegung des Projektinhabers:
+  umschreiben, nicht abschalten. Hier: `myl-pod` 2 Zeilen (`wire.rs`, eine Probe).
+  `x % n == 0` wird `x.is_multiple_of(n)`, `chunks_exact(N)` wird
+  `as_chunks::<N>()`. Für `n ≠ 0` bitgleich; jede Stelle mit variablem
+  Teiler ist einzeln angesehen und vorher gegen null geschützt (bei
+  `is_multiple_of(0)` stünde `x == 0`, wo `x % 0` abbricht).
+- 📌 **Fund 595:** `tests/grenzen_der_kette.rs` behauptete das Probeartefakt
+  mit `assert!(vorhanden(..))`. Mit `MYL_OHNE_ARTEFAKTE` meldet `vorhanden`
+  „überspringen“, und die Probe brach mit „das Probeartefakt fehlt“ ab,
+  auch auf einer Maschine, die es hat. Jetzt kehrt sie zurück; ein fehlendes
+  Artefakt ohne Erlaubnis meldet `vorhanden` selbst. Die CI fuhr die Datei
+  nicht und sah es deshalb nie.
+- **Eine Abfrage für alle Proben mit Artefakt** (2026-10-23): Sechs Dateien
+  sprangen ohne Artefakt still ab (`if !dir.exists() { return; }`), genau
+  das, was Fund 113 für die übrigen Proben abgeschafft hatte, und zwei
+  weitere in `grenzen_der_kette.rs` behaupteten es hart. Alle fragen jetzt
+  `artefakte::vorhanden`: mit Erlaubnis überspringen, ohne Erlaubnis und ohne
+  Artefakt auffallen. Damit fährt die CI `myl-pod` ganz statt nur `--lib`,
+  `adversarial` und `koordinator_byzantinisch`.
+- **Belege:** `cargo metadata --locked --offline` gegen den Vorrat in jeder
+  Kiste; die Wache der CI hält Fassung und Werkzeugkette zusammen. Nach dem
+  Umschreiben: Clippy mit `-D warnings` still (die Kerne über alle vier
+  Merkmale), `cargo test` rc=0 in allen zehn berührten Kisten (die Kerne auch
+  mit `cpu-simd`), Konformität mit `sparrow-0.6b-int8` 55/55, die vier
+  Abdrücke unverändert (`cb696efd3817e575` über 24 Vektoren), Gleitkomma-Audit
+  grün.
 
 ### v0.47.0 (2026-10-22): Der Pod rechnet nach den Grenzen der Kette, Netz vor Mensch (`myl-pod` 0.38.0, `myl-dispatcher` 0.11.0)
 

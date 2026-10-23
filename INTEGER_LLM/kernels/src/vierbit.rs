@@ -79,7 +79,7 @@ impl<'a> Vierbitmatrix<'a> {
     /// vektorisierte Fassung liest ohne Grenzpruefung und verlaesst sich
     /// darauf.
     pub fn neu(codes: &'a [u8], gitter: &'a [u8], zeilen: usize, spalten: usize) -> Result<Self, String> {
-        if spalten == 0 || spalten % GRUPPE != 0 {
+        if spalten == 0 || !spalten.is_multiple_of(GRUPPE) {
             return Err(format!("Vierbitmatrix: {spalten} Spalten sind kein Vielfaches von {GRUPPE}"));
         }
         let gruppen = zeilen
@@ -211,7 +211,7 @@ fn schritt_versatz(g: &[u8]) -> (i32, i32) {
 /// `x.len() == gruppen * GRUPPE`.
 pub fn zeile_skalar(codes: &[u8], gitter: &[u8], x: &[i16]) -> i64 {
     let mut gesamt: i64 = 0;
-    for (g, gg) in gitter.chunks_exact(GITTER_JE_GRUPPE).enumerate() {
+    for (g, gg) in gitter.as_chunks::<GITTER_JE_GRUPPE>().0.iter().enumerate() {
         let (a, b) = schritt_versatz(gg);
         let c = &codes[g * BYTES_JE_GRUPPE..(g + 1) * BYTES_JE_GRUPPE];
         for (i, &xi) in x[g * GRUPPE..(g + 1) * GRUPPE].iter().enumerate() {
@@ -465,17 +465,17 @@ pub struct Gepackt {
 /// ist ein Fehler mit Zeile und Gruppe, denn das Versprechen dieses
 /// Formats ist Bitgleichheit mit der Quelle.
 pub fn packen(werte: &[i8], spalten: usize) -> Result<Gepackt, String> {
-    if spalten == 0 || spalten % GRUPPE != 0 {
+    if spalten == 0 || !spalten.is_multiple_of(GRUPPE) {
         return Err(format!("packen: {spalten} Spalten sind kein Vielfaches von {GRUPPE}"));
     }
-    if werte.len() % spalten != 0 {
+    if !werte.len().is_multiple_of(spalten) {
         return Err(format!("packen: {} Werte sind keine ganzen Zeilen zu {spalten}", werte.len()));
     }
     let je_zeile = spalten / GRUPPE;
     let gruppen = werte.len() / GRUPPE;
     let mut codes = vec![0u8; gruppen * BYTES_JE_GRUPPE];
     let mut gitter = Vec::with_capacity(gruppen * GITTER_JE_GRUPPE);
-    for (g, gruppe) in werte.chunks_exact(GRUPPE).enumerate() {
+    for (g, gruppe) in werte.as_chunks::<GRUPPE>().0.iter().enumerate() {
         let b = i32::from(*gruppe.iter().min().expect("eine Gruppe hat 128 Werte"));
         let a = gruppe.iter().fold(0u32, |t, &w| ggt(t, (i32::from(w) - b) as u32));
         let groesster = gruppe.iter().map(|&w| (i32::from(w) - b) as u32).max().unwrap_or(0);

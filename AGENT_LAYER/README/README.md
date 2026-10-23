@@ -1,6 +1,6 @@
 # agent-layer
 
-> **Version:** 0.54.0 (`myl-agent` 0.7.1, `myl-local-agent` 0.45.0)
+> **Version:** 0.54.1 (`myl-agent` 0.7.2, `myl-local-agent` 0.45.1)
 > **Datum:** 2026-10-22
 > **Status:** Manifeste, Herkunftsstufe, Registratur, der
 > **Session-Kontrakt** mit Durchsetzung im Ledger, der **Plan** und seit
@@ -68,6 +68,27 @@ umbenannt, weil er in jedem `use` steht.
 - `src/kette.rs` — dass er es auch so getan hat, und wann er aufhört.
 
 ## Changelog
+
+### v0.54.1 (2026-10-22): Eine Werkzeugkette für alle Kisten (`myl-agent` 0.7.2, `myl-local-agent` 0.45.1)
+
+- `rust-version` auf 1.99 in `myl-agent`, `myl-local-agent`; die Werkzeugkette steht jetzt einmal,
+  in `rust-toolchain.toml` (1.99.0), und die CI baut mit genau ihr statt mit
+  einem wechselnden `stable` und zwei Mindestfassungen (1.85 und 1.88).
+  ⚑ **Dazu Code, und zwar mit Absicht:** Mit `rust-version = "1.99"` gibt Clippy
+  zwei Regeln frei, die es bei 1.85 zurückhielt (`manual_is_multiple_of`,
+  `chunks_exact` mit fester Größe). Festlegung des Projektinhabers:
+  umschreiben, nicht abschalten. Hier: `myl-local-agent` 2 Zeilen (`gespraech.rs`, `verlauf.rs`).
+  `x % n == 0` wird `x.is_multiple_of(n)`, `chunks_exact(N)` wird
+  `as_chunks::<N>()`. Für `n ≠ 0` bitgleich; jede Stelle mit variablem
+  Teiler ist einzeln angesehen und vorher gegen null geschützt (bei
+  `is_multiple_of(0)` stünde `x == 0`, wo `x % 0` abbricht).
+- **Belege:** `cargo metadata --locked --offline` gegen den Vorrat in jeder
+  Kiste; die Wache der CI hält Fassung und Werkzeugkette zusammen. Nach dem
+  Umschreiben: Clippy mit `-D warnings` still (die Kerne über alle vier
+  Merkmale), `cargo test` rc=0 in allen zehn berührten Kisten (die Kerne auch
+  mit `cpu-simd`), Konformität mit `sparrow-0.6b-int8` 55/55, die vier
+  Abdrücke unverändert (`cb696efd3817e575` über 24 Vektoren), Gleitkomma-Audit
+  grün.
 
 ### v0.54.0 (2026-10-22): Fund 568 zurückgenommen, die Messschalter entfernt (`myl-local-agent` 0.45.0)
 

@@ -1,8 +1,8 @@
 [package]
 name = "myl-local-agent"
-version = "0.45.0"
+version = "0.45.1"
 edition = "2021"
-rust-version = "1.85"
+rust-version = "1.99"
 description = "Der oertliche Agent: Schleife, Tuerklient, Werkzeuge mit Einhaengegrenze, Werkzeugkisten, Skills, Loop, Notaus. Von der Kette isoliert, nie Teil einer pruefbaren Netzaktion."
 license = "LicenseRef-PolyForm-Shield-1.0.0"
 publish = false
