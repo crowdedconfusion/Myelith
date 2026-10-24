@@ -182,7 +182,7 @@ fn kontrakt(agent: u8) -> Sitzungskontrakt {
             zeugenleiter: Vec::new(),
         },
         myl: Grenzen::gesperrt(),
-        empfaenger: vec![Address::aus_schluessel(&oeffentlich(210))],
+        empfaenger_wurzel: myl_types::sitzung::empfaengerwurzel(&[Address::aus_schluessel(&oeffentlich(210))]),
         gueltig_ab: EpochId(0),
         gueltig_bis: EpochId(100),
         max_schritte: 1_000,
@@ -713,4 +713,34 @@ async fn ein_strom_wird_an_der_tuer_abgelehnt() {
         werk.gesehen.lock().expect("gesehen").is_empty(),
         "ein abgelehnter Strom hat trotzdem rechnen lassen"
     );
+}
+
+/// ⚑ **Eine schweigende Verbindung sperrt die Tür nicht** (Fund 610).
+///
+/// Die Tür bedient nacheinander. Vorher las sie ohne Frist: Wer eine
+/// Verbindung öffnete und nichts schickte, hielt jede weitere Anfrage auf,
+/// unbegrenzt. Jetzt bekommt der Schweiger nach der Lesefrist ein `408`,
+/// und die nächste Anfrage ihren Beleg.
+#[tokio::test]
+async fn eine_schweigende_verbindung_sperrt_die_tuer_nicht() {
+    let tuer = Tuer::binden(0)
+        .await
+        .expect("binden")
+        .mit_lesefrist(std::time::Duration::from_millis(300));
+    let port = tuer.port().expect("port");
+    let mut annahme = Annahme::neu(1, EpochId(9));
+    let mut schweiger = TcpStream::connect(("127.0.0.1", port)).await.expect("verbinden");
+    tokio::spawn(async move {
+        for _ in 0..2 {
+            let _ = tuer.bedienen(&mut annahme).await;
+        }
+    });
+    let antwort = frage(port, &post(WEG, "die eigentliche Frage")).await;
+    assert!(antwort.starts_with(b"HTTP/1.1 200"), "{}", String::from_utf8_lossy(&antwort));
+    let mut aus = Vec::new();
+    tokio::time::timeout(std::time::Duration::from_secs(5), schweiger.read_to_end(&mut aus))
+        .await
+        .expect("der Schweiger bekam keine Antwort")
+        .expect("lesen");
+    assert!(aus.starts_with(b"HTTP/1.1 408"), "{}", String::from_utf8_lossy(&aus));
 }

@@ -1,7 +1,8 @@
 torch>=2.0.0
 transformers>=5.18.0
-accelerate>=1.0.0
+accelerate>=1.15.0
 datasets>=2.14.0
 numpy>=1.24.0
 safetensors>=0.4.0
 huggingface_hub>=1.0.0
+pillow>=13.0.0

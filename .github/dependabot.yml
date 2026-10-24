@@ -1,0 +1,32 @@
+# ── Was Dependabot hier darf ──────────────────────────────────────────
+#
+# Nur die GitHub Actions. Sie sind auf Commit-Summen festgenagelt, und
+# ohne Hilfe merkt niemand, wenn eine davon eine Sicherheitsluecke
+# schliesst. Dependabot schlaegt die neue Summe samt Versionskommentar vor.
+#
+# ⛔️ Nicht `cargo` und nicht `pip`: Die Kisten bauen offline aus dem Vorrat,
+# und ein Lockfile, das ohne `vorrat.py sammeln` wandert, baut dort nicht
+# mehr. Diese Updates laufen ueber cargo-deny und den Vorrat, von Hand.
+#
+# ⚑ Zusammengefuehrt wird lokal, nicht ueber die Oberflaeche: Dort
+# unterschriebe GitHub den Merge, nicht der Projektinhaber, und eine
+# Pruefung der Unterschrift beim Aktualisieren saehe einen fremden Schluessel.
+#
+# `cooldown`: Eine Fassung wird erst vorgeschlagen, wenn sie eine Woche alt
+# ist. Gekaperte Actions fielen bisher meist in den ersten Tagen auf.
+
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directories:
+      - /
+      - /.github/actions/einrichten
+    schedule:
+      interval: weekly
+      day: monday
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ['*']
+    open-pull-requests-limit: 1

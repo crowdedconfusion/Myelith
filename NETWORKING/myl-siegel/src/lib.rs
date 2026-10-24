@@ -667,6 +667,10 @@ pub enum SitzungsFehler {
     EmpfangNochNichtBereit,
     /// Eine Kapsel gehört nicht zu diesem Kanal.
     KapselPasstNicht,
+    /// Die Kapsel galt in diesem Kanal schon und ist abgelöst (Fund 608).
+    /// Sie zurückzunehmen hiesse, ihren Zählerstand zu vergessen, und
+    /// damit wäre jede alte Nachricht unter ihr wieder einspielbar.
+    KapselAbgeloest,
     /// Die Identität konnte nicht signieren.
     SignierenGescheitert,
 }
@@ -737,6 +741,9 @@ impl fmt::Display for SitzungsFehler {
             ),
             SitzungsFehler::KapselPasstNicht => {
                 write!(f, "die Kapsel gehört nicht zu diesem Kanal")
+            }
+            SitzungsFehler::KapselAbgeloest => {
+                write!(f, "die Kapsel ist in diesem Kanal schon abgelöst")
             }
             SitzungsFehler::SchluesselUngueltig => write!(
                 f,
@@ -999,6 +1006,11 @@ fn nonce(zaehler: u64) -> Nonce {
     *Nonce::from_slice(&roh)
 }
 
+/// So viele Kapseln hält ein Kanal höchstens als Angebot, bevor eine von
+/// ihnen durch eine Nachricht bestätigt ist (Fund 608). Die älteste fällt
+/// zuerst heraus.
+const ANGEBOTE_HOECHSTENS: usize = 4;
+
 /// Ein Kanal zwischen zwei Endpunkten, für eine Epoche und einen Pod.
 ///
 /// Hält zwei Schlüssel (einer je Richtung), den eigenen Sendezähler und
@@ -1015,7 +1027,32 @@ pub struct Kanal {
     /// brauchte keinen Handschlag. Mit dem KEM-Zweig geht das nicht
     /// mehr: Die Gegenstelle kapselt für ihre Senderichtung, und ohne
     /// ihr Chiffrat gibt es hier nichts abzuleiten.
+    ///
+    /// # 📌 Fund 608 (2026-10-23): erst bestätigt, dann gültig
+    ///
+    /// Bis dahin setzte die **erste** Kapsel den Schlüssel, und jede
+    /// spätere wurde mit `Ok` übergangen. Eine Kapsel ist nicht signiert,
+    /// und eine verfälschte fällt erst am Tag auf; wer seine vor der
+    /// echten zustellte (ein Umschlag im Inferenzauftrag genügt, und den
+    /// darf jede Gegenstelle schicken), legte die Richtung damit für die
+    /// ganze Epoche lahm. Und ein echter Neustart der Gegenstelle, die neu
+    /// kapselt, sperrte sie genauso aus.
+    ///
+    /// Jetzt ist eine neue Kapsel nur ein **Angebot**. Gültig wird sie mit
+    /// der ersten Nachricht, die unter ihr den Tag besteht, und das kann
+    /// nur, wer das Diffie-Hellman-Geheimnis der Gegenstelle hat. Die
+    /// vorige Kapsel ist dann **abgelöst** und kommt nie wieder
+    /// (`KapselAbgeloest`), sonst spielte eine alte Nachricht mit ihrer
+    /// alten Kapsel den Zählerstand zurück.
     empfange_schluessel: Option<Zeroizing<[u8; SCHLUESSEL_LEN]>>,
+    /// Der Abdruck der Kapsel, aus der [`Self::empfange_schluessel`] stammt.
+    bestaetigte_kapsel: Option<[u8; 32]>,
+    /// Kapseln, die angenommen, aber noch durch keine Nachricht bestätigt
+    /// sind, mit ihrem Schlüssel. Höchstens [`ANGEBOTE_HOECHSTENS`].
+    angebote: Vec<([u8; 32], Zeroizing<[u8; SCHLUESSEL_LEN]>)>,
+    /// Abdrücke abgelöster Kapseln. Wächst nur mit einer bestätigten, also
+    /// echten Neukapselung der Gegenstelle.
+    abgeloest: Vec<[u8; 32]>,
     /// Der eigene X25519-Zweig, aufbewahrt für den Augenblick, in dem
     /// ihre Kapsel eintrifft.
     eigenes_geheim: StaticSecret,
@@ -1089,6 +1126,9 @@ impl Kanal {
             gegenstelle,
             sende_schluessel,
             empfange_schluessel: None,
+            bestaetigte_kapsel: None,
+            angebote: Vec::new(),
+            abgeloest: Vec::new(),
             eigenes_geheim: eigener.geheim.clone(),
             gegenpunkte: gegenpunkte.clone(),
             eigene_kapsel: Kapsel {
@@ -1113,19 +1153,19 @@ impl Kanal {
         &self.eigene_kapsel
     }
 
-    /// Ist die Empfangsrichtung schon nutzbar?
+    /// Ist die Empfangsrichtung schon nutzbar? Ja, sobald ein Schlüssel
+    /// bestätigt ist oder eine Kapsel als Angebot vorliegt.
     pub fn empfangsbereit(&self) -> bool {
-        self.empfange_schluessel.is_some()
+        self.empfange_schluessel.is_some() || !self.angebote.is_empty()
     }
 
-    /// Nimmt die Kapsel der Gegenstelle an und schließt damit die
-    /// Empfangsrichtung.
+    /// Nimmt eine Kapsel der Gegenstelle als Angebot an.
     ///
-    /// Mehrfach aufgerufen mit derselben Kapsel ist das unschädlich; mit
-    /// einer **anderen** Kapsel wird abgelehnt, sobald der Schlüssel
-    /// steht. Sonst könnte ein Angreifer den Empfangsschlüssel eines
-    /// laufenden Kanals austauschen und damit alles bisher Gelesene
-    /// entwerten.
+    /// Mehrfach aufgerufen mit derselben Kapsel ist das unschädlich. Eine
+    /// **andere** ersetzt den laufenden Schlüssel nicht, sondern wartet
+    /// als Angebot, bis eine Nachricht unter ihr den Tag besteht (Fund 608,
+    /// siehe das Feld `empfange_schluessel`). Eine abgelöste wird
+    /// abgelehnt.
     pub fn nimm_kapsel(
         &mut self,
         eigener: &Epochenschluessel,
@@ -1138,8 +1178,12 @@ impl Kanal {
         {
             return Err(SitzungsFehler::KapselPasstNicht);
         }
-        if self.empfange_schluessel.is_some() {
+        let abdruck: [u8; 32] = Sha256::digest(&kapsel.chiffrat[..]).into();
+        if self.bestaetigte_kapsel == Some(abdruck) || self.angebote.iter().any(|(a, _)| *a == abdruck) {
             return Ok(());
+        }
+        if self.abgeloest.contains(&abdruck) {
+            return Err(SitzungsFehler::KapselAbgeloest);
         }
         let feld = Array::try_from(&kapsel.chiffrat[..])
             .map_err(|_| SitzungsFehler::UnleserlicherRahmen)?;
@@ -1155,7 +1199,10 @@ impl Kanal {
             &self.gegenstelle,
             &self.ich,
         )?;
-        self.empfange_schluessel = Some(schluessel);
+        if self.angebote.len() == ANGEBOTE_HOECHSTENS {
+            self.angebote.remove(0);
+        }
+        self.angebote.push((abdruck, schluessel));
         Ok(())
     }
 
@@ -1229,14 +1276,7 @@ impl Kanal {
         if kopf.pod != self.pod || kopf.von != self.gegenstelle || kopf.an != self.ich {
             return Err(SitzungsFehler::KopfPasstNicht);
         }
-        if let Some(bis) = self.empfangen_bis {
-            if kopf.zaehler <= bis {
-                return Err(SitzungsFehler::Wiedereinspielung {
-                    zaehler: kopf.zaehler,
-                    gesehen_bis: bis,
-                });
-            }
-        }
+        let wiederholt = self.empfangen_bis.filter(|bis| kopf.zaehler <= *bis);
 
         // ⚑ **Die Bereitschaft wird zuletzt geprüft, und die Reihenfolge
         // ist Absicht.** Eine Nachricht aus der falschen Epoche oder dem
@@ -1244,25 +1284,52 @@ impl Kanal {
         // steht; wer zuerst auf die Bereitschaft prüft, meldet dafür
         // „Kapsel fehlt" und verdeckt den eigentlichen Grund. Alle
         // Prüfungen davor kommen ohne Schlüssel aus.
-        let empfange_schluessel = self
-            .empfange_schluessel
-            .as_ref()
-            .ok_or(SitzungsFehler::EmpfangNochNichtBereit)?;
+        if !self.empfangsbereit() {
+            return Err(SitzungsFehler::EmpfangNochNichtBereit);
+        }
 
         let aad = borsh::to_vec(kopf).expect("Kopf ist borsh-serialisierbar");
-        let chiffre = ChaCha20Poly1305::new(Key::from_slice(empfange_schluessel.as_ref()));
-        let klartext = chiffre
-            .decrypt(
-                &nonce(kopf.zaehler),
-                Payload {
-                    msg: &nachricht.geheimtext,
-                    aad: &aad,
-                },
-            )
-            .map_err(|_| SitzungsFehler::TagStimmtNicht)?;
+        let entsiegeln = |schluessel: &[u8; SCHLUESSEL_LEN]| {
+            ChaCha20Poly1305::new(Key::from_slice(schluessel))
+                .decrypt(
+                    &nonce(kopf.zaehler),
+                    Payload {
+                        msg: &nachricht.geheimtext,
+                        aad: &aad,
+                    },
+                )
+                .ok()
+        };
 
-        self.empfangen_bis = Some(kopf.zaehler);
-        Ok(klartext)
+        // Erst der bestätigte Schlüssel, und nur mit frischem Zähler.
+        if let (Some(schluessel), None) = (&self.empfange_schluessel, wiederholt) {
+            if let Some(klartext) = entsiegeln(schluessel) {
+                self.empfangen_bis = Some(kopf.zaehler);
+                return Ok(klartext);
+            }
+        }
+        // Dann die Angebote, das jüngste zuerst. Wer hier den Tag besteht,
+        // hat neu gekapselt und kennt das Geheimnis der Gegenstelle: Sein
+        // Schlüssel gilt ab jetzt, mit eigenem Zählerstand, und der vorige
+        // ist abgelöst.
+        for i in (0..self.angebote.len()).rev() {
+            if let Some(klartext) = entsiegeln(&self.angebote[i].1) {
+                let (abdruck, schluessel) = self.angebote.remove(i);
+                if let Some(vorige) = self.bestaetigte_kapsel.replace(abdruck) {
+                    self.abgeloest.push(vorige);
+                }
+                self.empfange_schluessel = Some(schluessel);
+                self.empfangen_bis = Some(kopf.zaehler);
+                return Ok(klartext);
+            }
+        }
+        match wiederholt {
+            Some(bis) => Err(SitzungsFehler::Wiedereinspielung {
+                zaehler: kopf.zaehler,
+                gesehen_bis: bis,
+            }),
+            None => Err(SitzungsFehler::TagStimmtNicht),
+        }
     }
 }
 
@@ -1593,6 +1660,75 @@ mod tests {
             Umschlag::oeffnen(&mut b, pod(9), endpunkt(1), &a_punkte, &roh).is_ok(),
             "der vollstaendige Umschlag ging nicht auf"
         );
+    }
+
+    /// # Fund 608: erst bestätigt, dann gültig
+    ///
+    /// ⚑ **Eine gefälschte Kapsel vorweg sperrt den Kanal nicht.** Vorher
+    /// setzte die erste Kapsel den Schlüssel, und die echte danach wurde
+    /// still übergangen: Jede Nachricht von A scheiterte bis zum
+    /// Epochenende am Tag.
+    #[test]
+    fn eine_gefaelschte_kapsel_vorweg_sperrt_den_kanal_nicht() {
+        let a_s = Epochenschluessel::probe(EpochId(1), [1u8; 32]);
+        let b_s = Epochenschluessel::probe(EpochId(1), [2u8; 32]);
+        let mut a = Kanal::neu(&a_s, &punkte(&b_s), pod(7), endpunkt(0xaa), endpunkt(0xbb)).expect("Kanal A");
+        let mut b = Kanal::neu(&b_s, &punkte(&a_s), pod(7), endpunkt(0xbb), endpunkt(0xaa)).expect("Kanal B");
+        let mut falsch = a.eigene_kapsel().clone();
+        falsch.chiffrat[0] ^= 0xff;
+        b.nimm_kapsel(&b_s, &falsch).expect("die Fälschung ist nicht erkennbar");
+        b.nimm_kapsel(&b_s, &a.eigene_kapsel().clone()).expect("die echte Kapsel");
+        let hin = a.versiegle(b"trotzdem lesbar").expect("versiegeln");
+        assert_eq!(b.oeffne(&hin).expect("oeffnen"), b"trotzdem lesbar");
+    }
+
+    /// ⚑ **Dasselbe über den ganzen Weg**: Ein Umschlag mit gefälschter
+    /// Kapsel kommt zuerst, wie ihn jede Gegenstelle als Inferenzauftrag
+    /// schicken kann. Danach geht der echte auf.
+    #[test]
+    fn ein_umschlag_mit_gefaelschter_kapsel_vorweg_sperrt_nichts() {
+        let a_schluessel = Epochenschluessel::probe(EpochId(1), [1u8; 32]);
+        let b_schluessel = Epochenschluessel::probe(EpochId(1), [2u8; 32]);
+        let a_punkte = punkte(&a_schluessel);
+        let b_punkte = punkte(&b_schluessel);
+        let mut a = Sitzungen::neu(endpunkt(1), a_schluessel);
+        let mut b = Sitzungen::neu(endpunkt(2), b_schluessel);
+        let roh = {
+            let kanal = a.kanal(pod(9), endpunkt(2), &b_punkte).expect("Kanal");
+            Umschlag::schliessen(kanal, b"echter prompt").expect("schliessen")
+        };
+        let mut gefaelscht = roh.clone();
+        gefaelscht[KAPSELRAHMEN_LEN - 1] ^= 0xff;
+        assert!(Umschlag::oeffnen(&mut b, pod(9), endpunkt(1), &a_punkte, &gefaelscht).is_err());
+        let klartext = Umschlag::oeffnen(&mut b, pod(9), endpunkt(1), &a_punkte, &roh)
+            .expect("der echte Umschlag nach der Fälschung");
+        assert_eq!(klartext, b"echter prompt");
+    }
+
+    /// ⚑ **Ein Neustart der Gegenstelle heilt den Kanal**, und die alte
+    /// Kapsel kommt danach nicht zurück, auch nicht mit einer echten alten
+    /// Nachricht: Das wäre ein Wiedereinspielen am Zählerstand vorbei.
+    #[test]
+    fn eine_neue_kapsel_loest_die_alte_ab_und_die_alte_kommt_nicht_zurueck() {
+        let a_s = Epochenschluessel::probe(EpochId(1), [1u8; 32]);
+        let b_s = Epochenschluessel::probe(EpochId(1), [2u8; 32]);
+        let mut a1 = Kanal::neu(&a_s, &punkte(&b_s), pod(7), endpunkt(0xaa), endpunkt(0xbb)).expect("A");
+        let mut b = Kanal::neu(&b_s, &punkte(&a_s), pod(7), endpunkt(0xbb), endpunkt(0xaa)).expect("B");
+        let alte_kapsel = a1.eigene_kapsel().clone();
+        b.nimm_kapsel(&b_s, &alte_kapsel).expect("Kapsel 1");
+        let alt = a1.versiegle(b"vor dem Neustart").expect("versiegeln");
+        assert_eq!(b.oeffne(&alt).expect("oeffnen"), b"vor dem Neustart");
+
+        // A startet neu: frisch gekapselt, Zähler wieder bei null.
+        let mut a2 = Kanal::neu(&a_s, &punkte(&b_s), pod(7), endpunkt(0xaa), endpunkt(0xbb)).expect("A neu");
+        b.nimm_kapsel(&b_s, &a2.eigene_kapsel().clone()).expect("Kapsel 2");
+        let neu = a2.versiegle(b"nach dem Neustart").expect("versiegeln");
+        assert_eq!(neu.kopf.zaehler, 0);
+        assert_eq!(b.oeffne(&neu).expect("der Kanal ist geheilt"), b"nach dem Neustart");
+
+        assert!(matches!(b.nimm_kapsel(&b_s, &alte_kapsel), Err(SitzungsFehler::KapselAbgeloest)));
+        assert!(b.oeffne(&alt).is_err(), "eine alte Nachricht ging noch einmal auf");
+        assert!(b.oeffne(&neu).is_err(), "dieselbe neue Nachricht ging zweimal auf");
     }
 
     /// Ein leerer oder zu kurzer Umschlag fällt vor jeder Rechnung.

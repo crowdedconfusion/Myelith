@@ -57,11 +57,16 @@ fn kontrakt(agent: u8) -> Sitzungskontrakt {
             zeugenleiter: Vec::new(),
         },
         myl: Grenzen::gesperrt(),
-        empfaenger: vec![Address::aus_schluessel(&oeffentlich(210))],
+        empfaenger_wurzel: myl_types::sitzung::empfaengerwurzel(&[Address::aus_schluessel(&oeffentlich(210))]),
         gueltig_ab: EpochId(0),
         gueltig_bis: EpochId(100),
         max_schritte: 1_000,
     }
+}
+
+/// Der Betreiber, der in jedem Kontrakt dieser Datei auf der Liste steht.
+fn empfaenger_210() -> Address {
+    Address::aus_schluessel(&oeffentlich(210))
 }
 
 struct EineQuelle(Sitzungskontrakt);
@@ -350,7 +355,9 @@ async fn eine_gerechnete_anfrage_bucht_credits_ab() {
         ],
         [11u8; 32],
     )
-    .expect("ausstellen");
+    .expect("ausstellen")
+    // Der Beweis, dass der Betreiber auf der Liste des Inhabers steht.
+    .mit_empfaengerbeweis(empfaenger_210(), myl_types::sitzung::empfaengerbeweis(&[empfaenger_210()], &empfaenger_210()).expect("gelistet"));
     let bearer = token.als_bearer();
     let tuer = Tuer::binden(0).await.expect("binden");
     let port = tuer.port().expect("port");

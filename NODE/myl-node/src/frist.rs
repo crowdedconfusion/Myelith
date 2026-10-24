@@ -75,6 +75,25 @@ pub fn zu_messen(zustand: &LedgerState, ich: &MinerId) -> Vec<(u32, myl_types::m
     pod.shards.iter().filter(|s| s.miner.miner_id != *ich).map(|s| (pod.pod_index, s.miner)).collect()
 }
 
+/// **Wer diesen Knoten misst**: alle anderen Mitglieder seines Pods, die
+/// Reserve eingeschlossen (sie rechnet nicht und kann gerade deshalb
+/// bezeugen). Nur ihnen beantwortet er eine Zeitprobe (Fund 609).
+pub fn messende(zustand: &LedgerState, ich: &MinerId) -> Vec<myl_types::miner::MinerRegistration> {
+    let zuteilung = crate::kette::Kette::zuteilung_der_laufenden_epoche(zustand);
+    let Some(pod) = zuteilung.pods.iter().find(|p| p.mitglieder().any(|m| m.miner_id == *ich)) else {
+        return Vec::new();
+    };
+    pod.mitglieder().filter(|m| m.miner_id != *ich).copied().collect()
+}
+
+/// **Darf `von` diesem Knoten eine Zeitprobe stellen?** Nur, wenn es ein
+/// anderes Mitglied seines Pods ist (Fund 609).
+pub fn misst_mich(zustand: &LedgerState, ich: &MinerId, von: &libp2p::PeerId) -> bool {
+    messende(zustand, ich)
+        .iter()
+        .any(|m| myl_net::peer_id_aus_bytes(&m.netzadresse).is_ok_and(|p| p == *von))
+}
+
 /// Der Schlüssel einer Meldung: Epoche, Pod, Gemeldeter.
 type Meldungsschluessel = (EpochId, u32, MinerId);
 
@@ -163,6 +182,41 @@ mod tests {
         }
         let _ = BLOECKE_JE_EPOCHE;
         k
+    }
+
+    /// ⚑ **Eine Zeitprobe beantwortet nur, wer zum eigenen Pod gehört**
+    /// (Fund 609): jedes andere Mitglied ja, die Reserve eingeschlossen,
+    /// ein Fremder nicht, und ein Knoten ohne Pod niemandem.
+    #[test]
+    fn eine_zeitprobe_stellen_nur_die_mitglieder_des_eigenen_pods() {
+        let k = kette_mit_pod();
+        let mut z = k.zustand().clone();
+        // Eigene Netzadressen statt der Null der Probeanmeldung, sonst
+        // waeren alle dieselbe Gegenstelle.
+        let ids: Vec<MinerId> = z.miner.keys().copied().collect();
+        for (i, id) in ids.iter().enumerate() {
+            let schluessel = libp2p::identity::Keypair::ed25519_from_bytes([i as u8 + 1; 32]).expect("Schluessel");
+            let roh = schluessel.public().try_into_ed25519().expect("ed25519").to_bytes();
+            if let Some(m) = z.miner.get_mut(id) {
+                m.netzadresse = myl_types::latency_attest::PeerIdBytes(roh);
+            }
+        }
+        let peer = |m: &myl_types::miner::MinerRegistration| myl_net::peer_id_aus_bytes(&m.netzadresse).expect("PeerId");
+        let zuteilung = crate::kette::Kette::zuteilung_der_laufenden_epoche(&z);
+        let pod = &zuteilung.pods[0];
+        let ich = pod.shards[0].miner.miner_id;
+        let mitglieder: Vec<_> = pod.mitglieder().copied().collect();
+        assert!(mitglieder.len() >= 2);
+        for m in mitglieder.iter().filter(|m| m.miner_id != ich) {
+            let aktuell = z.miner[&m.miner_id];
+            assert!(misst_mich(&z, &ich, &peer(&aktuell)), "ein Mitglied darf messen");
+        }
+        let eigen = z.miner[&ich];
+        assert!(!misst_mich(&z, &ich, &peer(&eigen)), "sich selbst misst niemand");
+        let fremd = libp2p::PeerId::random();
+        assert!(!misst_mich(&z, &ich, &fremd), "ein Fremder darf keine Zeitprobe stellen");
+        let ohne_pod = MinerId::new([0xEE; 32]);
+        assert!(!misst_mich(&z, &ohne_pod, &peer(&eigen)), "ohne Pod beantwortet niemand eine Probe");
     }
 
     /// ⚑ **Vom Zeugnis zur Meldung**: Die Frist steht aus der Kette (300 µs

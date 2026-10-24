@@ -32,6 +32,19 @@ use myl_store::teilablage::{Manifestdatei, Teilablagefehler};
 /// Höchstens so viele Bytes je Antwort, unter der Grenze des Anfragekanals.
 pub const STUECK_BYTES: u64 = 3 * 1024 * 1024;
 
+/// So gross darf eine einzelne Datei eines Netzmodells hoechstens sein, die
+/// eine Gegenstelle ansagt.
+///
+/// 📌 **Fund 612 (2026-10-23):** Das Manifest nennt Name und Summe, aber
+/// keine Groesse; die Groesse sagte die liefernde Gegenstelle an, mit jedem
+/// Stueck neu, und geprueft wurde erst am Ende. Eine boeswillige Quelle
+/// sagte ein Terabyte an und fuellte die Platte, bevor die Summe es
+/// verriet. Jetzt gilt, was das erste Stueck ansagt, und nie mehr als
+/// diese Grenze. **Herleitung:** Die groessten Einzeldateien sind
+/// Einbettung und Kopf, beim 35B rund 1,27 GB; acht Gigabyte lassen fuer
+/// weit groessere Modelle Platz.
+pub const MAX_DATEI_BYTES: u64 = 8 * 1024 * 1024 * 1024;
+
 const _: () = assert!(
     (STUECK_BYTES as usize) + 4096 < myl_types::protocol::MAX_ANFRAGE_BYTES,
     "ein Stück muss samt Rahmen durch den Anfragekanal passen"
@@ -106,12 +119,15 @@ pub struct Nachholer {
     fehlend: VecDeque<Manifestdatei>,
     /// Die Datei in Arbeit und wie viel davon schon da ist.
     aktuell: Option<(Manifestdatei, u64)>,
+    /// Die Groesse, die das erste Stueck der laufenden Datei ansagte
+    /// (Fund 612).
+    angesagt: Option<u64>,
 }
 
 impl Nachholer {
     /// Ein Nachholer für die gegebenen Dateien.
     pub fn neu(artefakte: PathBuf, fehlend: Vec<Manifestdatei>) -> Self {
-        Self { artefakte, fehlend: fehlend.into(), aktuell: None }
+        Self { artefakte, fehlend: fehlend.into(), aktuell: None, angesagt: None }
     }
 
     /// Ist alles da?
@@ -130,6 +146,7 @@ impl Nachholer {
             let d = self.fehlend.pop_front()?;
             let _ = std::fs::remove_file(self.teil(&d.datei));
             self.aktuell = Some((d, 0));
+            self.angesagt = None;
         }
         let (d, ab) = self.aktuell.as_ref()?;
         Some((d.datei.clone(), *ab, STUECK_BYTES))
@@ -149,6 +166,18 @@ impl Nachholer {
         if d.datei != name || ab != *schon || daten.is_empty() && ab < groesse {
             return Stueckergebnis::Fremd;
         }
+        // ⚑ **Eine Grösse, und keine masslose** (Fund 612): Eine Quelle,
+        //   die mehr als die Grenze ansagt oder ihre Ansage ändert, liefert
+        //   falsch, genau wie eine mit falscher Summe.
+        if groesse > MAX_DATEI_BYTES || self.angesagt.is_some_and(|g| g != groesse) {
+            let datei = d.clone();
+            self.aktuell = None;
+            self.angesagt = None;
+            let _ = std::fs::remove_file(self.teil(&datei.datei));
+            self.fehlend.push_back(datei.clone());
+            return Stueckergebnis::Verworfen(datei.datei);
+        }
+        self.angesagt = Some(groesse);
         let teil = self.artefakte.join(format!("{name}.teil"));
         let geschrieben = std::fs::OpenOptions::new()
             .create(true)
@@ -164,6 +193,7 @@ impl Nachholer {
         }
         let datei = d.clone();
         self.aktuell = None;
+        self.angesagt = None;
         if summe_der_datei(&teil).as_deref() == Some(datei.sha256.as_str())
             && std::fs::rename(&teil, self.artefakte.join(&datei.datei)).is_ok()
         {
@@ -179,6 +209,7 @@ impl Nachholer {
 
     /// Die Quelle hat die laufende Datei nicht: von vorn, bei der nächsten.
     pub fn quelle_hat_nicht(&mut self) {
+        self.angesagt = None;
         if let Some((d, _)) = self.aktuell.take() {
             let _ = std::fs::remove_file(self.teil(&d.datei));
             self.fehlend.push_back(d);
@@ -245,6 +276,35 @@ mod tests {
         assert!(stueck_lesen(&quelle, &m, "geheim.txt", 0, 10).is_none(), "nicht im Manifest");
         assert!(stueck_lesen(&quelle, &m, "../geheim.txt", 0, 10).is_none(), "nicht flach");
         let _ = std::fs::remove_dir_all(&quelle);
+    }
+
+    /// ⚑ **Eine masslose oder wechselnde Grössenangabe ist eine falsche
+    /// Lieferung** (Fund 612): Sie wird verworfen, bevor ein Byte über die
+    /// Grenze geschrieben ist, und die Datei wird wieder angestellt.
+    #[test]
+    fn eine_masslose_oder_wechselnde_groesse_wird_verworfen() {
+        let quelle = ordner("masslos-von");
+        artefakt(&quelle);
+        let ziel = ordner("masslos-nach");
+        std::fs::copy(quelle.join("weights_manifest.json"), ziel.join("weights_manifest.json")).unwrap();
+        let fehlt = fehlende(&ziel, 0, 2, false, true).expect("Manifest");
+        let mut n = Nachholer::neu(ziel.clone(), fehlt);
+        let (name, ab, _) = n.naechste_anfrage().expect("Anfrage");
+        assert_eq!(
+            n.stueck_erhalten(&name, ab, b"ko", MAX_DATEI_BYTES + 1),
+            Stueckergebnis::Verworfen(name.clone()),
+            "ein Terabyte angesagt"
+        );
+        assert!(!ziel.join(format!("{name}.teil")).exists(), "nichts liegen geblieben");
+        // Wechselnde Ansage: erst vier Bytes, dann ein Gigabyte.
+        let (name, ab, _) = n.naechste_anfrage().expect("Anfrage");
+        assert_eq!(n.stueck_erhalten(&name, ab, b"x", 1 << 30), Stueckergebnis::Weiter);
+        let (name, ab, _) = n.naechste_anfrage().expect("Anfrage");
+        assert_eq!(n.stueck_erhalten(&name, ab, b"y", 2 << 30), Stueckergebnis::Verworfen(name.clone()), "die Ansage wechselte");
+        assert!(!ziel.join(format!("{name}.teil")).exists(), "nichts liegen geblieben");
+        assert_eq!(n.offen(), 3, "nichts verloren: beide verworfenen wieder angestellt");
+        let _ = std::fs::remove_dir_all(&quelle);
+        let _ = std::fs::remove_dir_all(&ziel);
     }
 
     /// ⚑ **Holen über Stücke, geprüft gegen das Manifest**: Was fehlt, wird

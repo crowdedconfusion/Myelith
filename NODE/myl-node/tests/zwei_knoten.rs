@@ -46,6 +46,9 @@ fn konfig(verzeichnis: &std::path::Path, name: &str, bootstrap: Vec<String>) -> 
         name: name.to_string(),
         schluesseldatei: verzeichnis.join(format!("{name}.key")),
         protokollverzeichnis: verzeichnis.join("logs"),
+        protokoll_mb: myl_node::protokoll::GESAMT_HOECHSTENS / (1024 * 1024),
+        kette_mb: 2048,
+        archiv_ausfuhr: None,
         // Ephemere Ports: Ein Test darf nicht daran scheitern, dass
         // gerade jemand anders auf 4150 horcht.
         horchadressen: vec![
@@ -396,7 +399,7 @@ async fn die_zustandsaufnahme_frischt_die_kontraktabschrift_auf() {
         agent: Address::new([2; 32]),
         credits: Grenzen::gesperrt(),
         myl: Grenzen::gesperrt(),
-        empfaenger: Vec::new(),
+        empfaenger_wurzel: myl_types::hash::Hash([0; 32]),
         gueltig_ab: EpochId(0),
         gueltig_bis: EpochId(10),
         max_schritte: 1,
@@ -492,6 +495,67 @@ async fn ein_inferenzauftrag_geht_ueber_das_netz() {
         andere => panic!("erwartet war eine Ablehnung, bekommen: {andere:?}"),
     }
 
+    let _ = std::fs::remove_dir_all(&verz);
+}
+
+/// ⚑ **Eine Flut von Aufträgen bindet höchstens die Grenze** (Fund 609).
+///
+/// Alphas Shard nimmt an und antwortet nie, die Tür ist also dauerhaft
+/// belegt. Beta schickt zehn Aufträge: Höchstens
+/// [`myl_node::knoten::INFERENZ_IN_ARBEIT_HOECHSTENS`] warten beim Shard,
+/// jeder weitere wird sofort abgelehnt. Vorher warteten alle zehn bis zur
+/// Frist des Ortsanschlusses, und jeder hielt seine Nutzlast fest.
+#[tokio::test]
+async fn eine_flut_von_inferenzauftraegen_bindet_hoechstens_die_grenze() {
+    use myl_node::knoten::INFERENZ_IN_ARBEIT_HOECHSTENS;
+    use myl_types::ids::EpochId;
+    use myl_types::inferenzauftrag::Inferenzauftrag;
+    use myl_types::sitzung::Anfragebindung;
+
+    const AUFTRAEGE: usize = 10;
+    let verz = arbeitsverzeichnis("inferenzflut");
+    // Ein Shard, der annimmt und schweigt.
+    let schweiger = std::net::TcpListener::bind("127.0.0.1:0").expect("binden");
+    let ausweis = verz.join("ortsausweis");
+    myl_types::ortsleitung::schluessel_ablegen(&ausweis, &[7u8; 32]).expect("Ausweis");
+    let mut k_alpha = konfig(&verz, "alpha", vec![]);
+    k_alpha.ortsleitung = Some(schweiger.local_addr().expect("Adresse"));
+    k_alpha.ortsausweis = Some(ausweis);
+    let mut alpha = Knoten::starten(k_alpha, false).await.expect("Alpha startet");
+    let adresse = alpha.warte_auf_adresse(Duration::from_secs(10)).await.expect("Adresse");
+    let mut beta = Knoten::starten(konfig(&verz, "beta", vec![adresse.to_string()]), false)
+        .await
+        .expect("Beta startet");
+    let alpha_id = alpha.peer_id();
+    let bis = std::time::Instant::now() + Duration::from_secs(20);
+    while std::time::Instant::now() < bis && beta.peers().await == 0 {
+        beta.laufe_fuer(Duration::from_millis(200)).await;
+        alpha.laufe_fuer(Duration::from_millis(200)).await;
+    }
+    assert!(beta.peers().await > 0, "Beta hat Alpha nicht gefunden");
+
+    for i in 0..AUFTRAEGE as u64 {
+        let auftrag = Inferenzauftrag {
+            sitzung: i,
+            bindung: Anfragebindung::neu(i, b"frage", EpochId(0)),
+            prompt_versiegelt: b"versiegelt".to_vec(),
+            max_token: 8,
+            pipeline: myl_types::hash::Hash::sha256(b"probe-pipeline"),
+        };
+        assert!(beta.inferenz_senden(alpha_id, auftrag).await, "nicht abgeschickt");
+    }
+    let erwartet = (AUFTRAEGE - INFERENZ_IN_ARBEIT_HOECHSTENS) as u64;
+    let bis = std::time::Instant::now() + Duration::from_secs(15);
+    while std::time::Instant::now() < bis && alpha.inferenzstand().1 < erwartet {
+        alpha.laufe_fuer(Duration::from_millis(200)).await;
+        beta.laufe_fuer(Duration::from_millis(200)).await;
+    }
+    assert_eq!(
+        alpha.inferenzstand(),
+        (0, erwartet),
+        "ueber der Grenze wird sofort abgelehnt, darunter wartet der Shard"
+    );
+    drop(schweiger);
     let _ = std::fs::remove_dir_all(&verz);
 }
 

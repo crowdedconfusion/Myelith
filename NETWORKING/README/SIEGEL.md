@@ -1,9 +1,9 @@
 # networking / siegel (`myl-siegel`)
 
-> **Version:** 0.2.0
-> **Datum:** 2026-09-03
+> **Version:** 0.3.0
+> **Datum:** 2026-10-23
 > **Status:** Der vertrauliche Sitzungskanal, aus `myl-net` herausgelöst
-> (B6-4). **54 Tests grün.**
+> (B6-4). **57 Tests grün** (gezählt am 2026-10-24).
 
 ## Aufgabe
 
@@ -70,6 +70,11 @@ und ohne Umlaufzeit; das spart Latenz vor der ersten Aktivierung und
 kostet genau diese Eigenschaft. Sie entsteht mit der Rotation.
 
 ## Changelog
+
+### v0.3.0 – 2026-10-23 (Fund 608: die erste Kapsel)
+
+Aus dem Sicherheitsaudit vom 2026-10-23; der Eintrag steht ausführlich im
+Changelog von NETWORKING v0.21.0, hier nachgetragen am 2026-10-24.
 
 ### v0.2.0 – 2026-09-03 (⚑ Fund 159: der Umschlag passte nicht durch den Kanal)
 

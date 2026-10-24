@@ -201,6 +201,19 @@ pub fn silu_nachschlagen(x: i32, lut: &[i16], offset: i16, in_frac: u8, out_frac
     nachschlagen_identitaet_oben(x, lut, offset, in_frac, out_frac)
 }
 
+/// **GELU ueber eine Tabelle**, in beiden Formen des Sichtturms: mit der
+/// tanh-Naeherung in den Bloecken, exakt (`erf`) im Projektor. Welche, legt
+/// die Tabelle fest; die Randregel ist dieselbe wie bei SiLU.
+///
+/// ⚑ **Dritter Fall derselben Fortsetzung.** `gelu(x) = x·Φ(x)` laeuft fuer
+/// grosse positive `x` gegen `x` und fuer grosse negative gegen null, mit
+/// einem Fehler der Groessenordnung `x·exp(-x²/2)`; am Tabellenrand von 128
+/// ist er weit unter jeder hier darstellbaren Stufe.
+#[inline]
+pub fn gelu_nachschlagen(x: i32, lut: &[i16], offset: i16, in_frac: u8, out_frac: u8) -> i64 {
+    nachschlagen_identitaet_oben(x, lut, offset, in_frac, out_frac)
+}
+
 /// **Die Randfortsetzung „oben der Eingang, unten null"**, einmal.
 ///
 /// ⚑ **Sie gilt fuer SiLU und fuer Softplus, und das ist kein Zufall.**

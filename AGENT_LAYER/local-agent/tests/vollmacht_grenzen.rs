@@ -35,6 +35,10 @@ fn vorhaben(k: &Sitzungskontrakt, an: Address, betrag: u64, nummer: u64) -> Vorh
         waehrung: Waehrung::Myl,
         betrag,
         empfaenger: an,
+        // Der Inhaber hält die Liste und legt den Beweis bei; für einen
+        // Empfänger, der nicht darauf steht, gibt es keinen.
+        empfaenger_beweis: myl_types::sitzung::empfaengerbeweis(&[adresse(9)], &an)
+            .unwrap_or_else(myl_types::sitzung::kein_beweis),
         bestaetigt_ausgeliefert: true,
         nummer,
     }

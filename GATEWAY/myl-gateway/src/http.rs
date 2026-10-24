@@ -262,6 +262,7 @@ pub fn antwort(status: u16, typ: &str, rumpf: &[u8]) -> Vec<u8> {
         400 => "Bad Request",
         404 => "Not Found",
         405 => "Method Not Allowed",
+        408 => "Request Timeout",
         411 => "Length Required",
         413 => "Payload Too Large",
         431 => "Request Header Fields Too Large",

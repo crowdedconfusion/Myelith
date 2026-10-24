@@ -59,8 +59,12 @@ on:
     tags: ["v*"]
   workflow_dispatch:
 
+# ⚑ Lesend fuer alle Jobs, schreibend nur fuer `veroeffentlichen`. Die
+# Bau-Jobs fuehren fremden Code aus (Actions, die Tauri-Kommandozeile, Bau-
+# skripte von Abhaengigkeiten); mit Schreibrecht koennte ein gekaperter
+# davon ein Release anlegen oder ersetzen.
 permissions:
-  contents: write
+  contents: read
 
 env:
   # ⚑ Die `.cargo/config.toml` des Repositoriums legt `SYSTEM/full-build`
@@ -104,15 +108,15 @@ jobs:
             ziel: x86_64-apple-darwin
             eigen: false
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable vom 2026-10-23
         with:
           targets: ${{ matrix.ziel }}
 
       - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: release-${{ matrix.ziel }}
 
@@ -227,7 +231,7 @@ jobs:
             echo "der Runner kann es nicht starten." >> "ausgabe/UNGEPRUEFT-${{ matrix.ziel }}.txt"
           fi
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: binaries-${{ matrix.ziel }}
           path: ausgabe/*
@@ -263,10 +267,10 @@ jobs:
             ziel: x86_64-pc-windows-msvc
             buendel: msi
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable vom 2026-10-23
         with:
           targets: ${{ matrix.ziel }}
 
@@ -281,7 +285,7 @@ jobs:
             libayatana-appindicator3-dev librsvg2-dev patchelf file
 
       - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: oberflaeche-${{ matrix.ziel }}
           workspaces: CLIENT/myl-oberflaeche
@@ -297,16 +301,18 @@ jobs:
       # damit ein Wechsel ihn erneuert statt eine alte zu benutzen.
       - name: Tauri-Kommandozeile
         id: cli
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
             ~/.cargo/bin/cargo-tauri
             ~/.cargo/bin/cargo-tauri.exe
-          key: cargo-tauri-2-${{ runner.os }}-${{ runner.arch }}
+          key: cargo-tauri-2.12.4-${{ runner.os }}-${{ runner.arch }}
 
       - name: Tauri-Kommandozeile bauen
         if: steps.cli.outputs.cache-hit != 'true'
-        run: cargo install tauri-cli --version "^2" --locked
+        # Feste Fassung: `^2` naehme, was zum Zeitpunkt des Releases oben liegt,
+        # und dieser Job baut die Buendel, die ausgeliefert werden.
+        run: cargo install tauri-cli --version "=2.12.4" --locked
 
       # ⚑ **Ohne `--locked`, anders als die drei Bauschritte oben.** Die
       # Tauri-Kommandozeile reicht Zusatzargumente an cargo weiter, aber
@@ -344,7 +350,7 @@ jobs:
           echo "Dieses Buendel wurde gebaut, aber nicht geoeffnet:" > "ausgabe/UNGESTARTET-${{ matrix.ziel }}.txt"
           echo "ein Fenster braucht eine Anzeige, die kein Runner hat." >> "ausgabe/UNGESTARTET-${{ matrix.ziel }}.txt"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: oberflaeche-${{ matrix.ziel }}
           path: ausgabe/*
@@ -352,6 +358,8 @@ jobs:
   veroeffentlichen:
     name: Veroeffentlichen
     needs: [bauen, oberflaeche]
+    permissions:
+      contents: write
     # 📌 **Ein ausgefallenes Bündel darf nicht die Binaries mitnehmen.**
     # Ohne diese Zeile hinge die ganze Freigabe an vier Bündeln: Bricht
     # das `.msi` an einer Windows-Eigenheit ab, käme auch `myl` für
@@ -365,9 +373,9 @@ jobs:
     if: always() && needs.bauen.result == 'success'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           path: eingang
 

@@ -62,6 +62,9 @@ pub struct KnotenKonfig {
     pub schluesseldatei: PathBuf,
     /// Verzeichnis für das Betriebsprotokoll.
     pub protokollverzeichnis: PathBuf,
+    /// Höchstens so viele MiB Betriebsprotokoll für diesen Knoten, über alle
+    /// Dateien und Starts (Fund 624); die älteste Datei fällt zuerst weg.
+    pub protokoll_mb: u64,
     /// Horchadressen (Multiaddr). Üblich sind zwei: TCP und QUIC.
     pub horchadressen: Vec<String>,
     /// Bootstrap-Knoten für den Einstieg.
@@ -86,6 +89,13 @@ pub struct KnotenKonfig {
     /// Netz wird weiter abgewiesen, denn der Startwert steht in ihrem
     /// Kopf. Und eine unlesbare Datei bleibt ein Startfehler.
     pub kettendatei: Option<PathBuf>,
+    /// Platzbudget der Kettendatei in MiB (Festlegung des
+    /// Projektinhabers vom 2026-10-23: „ein paar GB“); darüber wird an
+    /// einer Langzeitgrenze verdichtet, null heißt ohne Grenze.
+    pub kette_mb: u64,
+    /// ⚑ **Kalte Ausfuhr** (Archivknoten, Stufe A8): Jede fertige Periode
+    /// geht in diesen Ordner, solange der Knoten die Geschichte ganz hat.
+    pub archiv_ausfuhr: Option<PathBuf>,
     /// Stimmsatzdatei mit dem Validator-Satz.
     ///
     /// Ohne sie stimmt der Knoten nicht mit: Er nimmt am Netz teil,
@@ -324,10 +334,13 @@ impl Default for KnotenKonfig {
             name: "knoten".to_string(),
             schluesseldatei: PathBuf::from("knoten.key"),
             protokollverzeichnis: PathBuf::from("logs"),
+            protokoll_mb: crate::protokoll::GESAMT_HOECHSTENS / (1024 * 1024),
             horchadressen: standard_horchadressen(4150),
             bootstrap: Vec::new(),
             rolle: Rolle::Teilnehmer,
             kettendatei: Some(PathBuf::from("kette.dat")),
+            kette_mb: 2048,
+            archiv_ausfuhr: None,
             stimmsatzdatei_pfad: None,
             konsensschluesseldatei: None,
             nat: NatKonfig::default(),

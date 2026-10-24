@@ -88,10 +88,11 @@ fn vier_tueren_ein_pod_und_dieselben_token() {
     // --- Über vier Türen -------------------------------------------
     let stellen: Vec<Arc<Shardstelle>> = shards(Arc::clone(&modell))
         .into_iter()
-        .map(|s| Arc::new(Shardstelle::oeffnen(s, "127.0.0.1:0").expect("Tuer")))
+        .enumerate()
+        .map(|(i, s)| Arc::new(Shardstelle::oeffnen(s, "127.0.0.1:0", [i as u8 + 1; 32]).expect("Tuer")))
         .collect();
-    let adressen: Vec<std::net::SocketAddr> =
-        stellen.iter().map(|s| s.adresse().expect("Adresse")).collect();
+    let adressen: Vec<(std::net::SocketAddr, myl_pod::shardweg::Ausweis)> =
+        stellen.iter().enumerate().map(|(i, s)| (s.adresse().expect("Adresse"), [i as u8 + 1; 32])).collect();
     // ⚑ Jede Stelle bedient in einem eigenen Faden, sonst blockierte der
     // Koordinator sich selbst.
     for stelle in &stellen {
@@ -144,7 +145,7 @@ fn ein_nicht_erreichbarer_shard_wird_gemeldet() {
     drop(horcher);
 
     let weg = Arc::new(
-        UeberDenDraht::neu(vec![tot; SHARDS]).mit_frist(std::time::Duration::from_millis(200)),
+        UeberDenDraht::neu(vec![(tot, [0; 32]); SHARDS]).mit_frist(std::time::Duration::from_millis(200)),
     );
     let fehler = match Coordinator::ueber_weg(PodId::new([1; 32]), EpochId(0), weg, 5_000) {
         Err(e) => e,

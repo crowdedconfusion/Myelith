@@ -43,7 +43,7 @@ runs:
     # nicht an denen im ausgepackten Vorrat.
     - name: Zwischenspeicher des Bauordners
       if: inputs.cache != ''
-      uses: actions/cache@v4
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
       with:
         path: ${{ github.workspace }}/target
         key: ${{ inputs.cache }}-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', '*/*/Cargo.lock', 'SYSTEM/*/*/Cargo.lock') }}

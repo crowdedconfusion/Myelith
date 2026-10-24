@@ -103,7 +103,7 @@ fn kontrakt(agent: u8) -> Sitzungskontrakt {
             zeugenleiter: Vec::new(),
         },
         myl: Grenzen::gesperrt(),
-        empfaenger: vec![Address::aus_schluessel(&oeffentlich(210))],
+        empfaenger_wurzel: myl_types::sitzung::empfaengerwurzel(&[Address::aus_schluessel(&oeffentlich(210))]),
         gueltig_ab: EpochId(0),
         gueltig_bis: EpochId(100),
         max_schritte: 1_000,

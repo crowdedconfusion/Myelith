@@ -42,6 +42,7 @@ pub mod ausfallmeldung;
 pub mod netzreserve;
 pub mod entsiegelung;
 pub mod gegenstelle;
+pub mod fristleser;
 pub mod ortsdienst;
 pub mod shardweg;
 pub mod trainingswerk;

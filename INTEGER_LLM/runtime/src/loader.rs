@@ -2283,7 +2283,7 @@ fn spec_zustandsparameter() -> Result<Zustandsparameter, String> {
     })
 }
 
-fn spec_model_params() -> Result<ModelConfig, String> {
+pub(crate) fn spec_model_params() -> Result<ModelConfig, String> {
     let parsed: serde_json::Value = serde_json::from_str(SPEC_JSON)
         .map_err(|e| format!("Eingebettetes theta_v/spec.json ist ungueltig: {}", e))?;
     let tv = &parsed["theta_v"];

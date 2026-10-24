@@ -7,6 +7,8 @@ Aufruf (Linux, als root, denn Namensraeume und `tc` brauchen es):
 sudo python3 TESTCLIENT/netzbedingungen/netzlauf_prozesse.py            # der volle Lauf, rund drei Minuten
 sudo python3 TESTCLIENT/netzbedingungen/netzlauf_prozesse.py --kurz     # derselbe Weg im Kleinen, unter einer Minute
 sudo python3 TESTCLIENT/netzbedingungen/netzlauf_prozesse.py --programm <myl-node>
+sudo python3 TESTCLIENT/netzbedingungen/netzlauf_prozesse.py --zweitprogramm <aelteres myl-node>
+sudo python3 TESTCLIENT/netzbedingungen/netzlauf_prozesse.py --dauer 360 --stoerer   # Dauerlauf, sechs Stunden
 ```
 
 # Was hier anders ist als im Netzlauf der Pruefsammlung
@@ -51,6 +53,30 @@ muss mindestens die Haelfte seiner Bloecke ueber Gossip uebernommen haben
 statt ueber das Nachholen. Darunter hinkt er der Spitze dauerhaft hinterher
 (so geschehen bis zum 2026-10-22: 4 von 2 168).
 
+# Ein gemischtes Netz
+
+Mit `--zweitprogramm` laufen die ungeraden Knoten mit einem zweiten
+Programm, etwa der Fassung vor einem Update: der Getrennte (k1), der Knoten
+nur ueber mDNS und der Neuling aus dem Abzug. Erzeuger, Abstuerzer und
+Neuling laufen mit `--programm`. So zeigt derselbe Weg, ob Knoten, die das
+Update noch nicht haben, mit den neuen weiter eine Kette fuehren.
+
+# Der Dauerlauf (`--dauer <Minuten>`)
+
+Nach den fuenf Stolpersteinen und vor dem Schluss laeuft das Netz so viele
+Minuten weiter, und eine feste Folge (`--saat`) stoert es Runde fuer Runde:
+eine Trennung, ein Absturz mit Neustart, eine Verlustspitze auf allen
+Leitungen, ein Laufzeitsprung, oder Ruhe. Nach jeder Stoerung muessen alle
+wieder an die Spitze, in jeder Ruhe darf der Rueckstand nicht wachsen. Je
+Runde wird der Speicher jedes Knotens gelesen (`VmRSS`, offene
+Dateien); waechst die Zahl der offenen Dateien eines Knotens, der nie neu
+startete, auf mehr als das Doppelte, ist das ein Befund.
+
+Mit `--stoerer` kommt eine **boesartige Gegenstelle** dazu, in einem eigenen
+Namensraum und /24: Sie haelt halbe Verbindungen offen und schickt ein Byte
+je zwei Sekunden, sie schickt Muell und schliesst, und sie oeffnet und
+schliesst Verbindungen in Stoessen. Das Netz muss daneben weiterlaufen.
+
 Gelesen wird von aussen, wie ein Betreiber es taete: Hoehe und Gegenstellen
 ueber `/metriken`, die Wurzel aus dem Protokoll des Knotens.
 
@@ -64,6 +90,7 @@ import argparse
 import json
 import os
 import pathlib
+import random
 import shutil
 import signal
 import subprocess
@@ -127,11 +154,12 @@ class Knoten:
         sh("ip", "netns", "exec", self.ns, "ip", "link", "set", "lo", "up")
         self.stoerung(self.verlust)
 
-    def stoerung(self, verlust: float) -> None:
+    def stoerung(self, verlust: float, latenz_ms: int | None = None) -> None:
         """Laufzeit und Verlust auf beiden Seiten der Leitung: Eine Trennung
         mit 100 % Verlust nur in eine Richtung liesse Pakete hinein."""
-        schwankung = max(1, self.latenz_ms // 10)
-        regel = ["netem", "delay", f"{self.latenz_ms}ms", f"{schwankung}ms", "loss", f"{verlust}%"]
+        latenz = self.latenz_ms if latenz_ms is None else latenz_ms
+        schwankung = max(1, latenz // 10)
+        regel = ["netem", "delay", f"{latenz}ms", f"{schwankung}ms", "loss", f"{verlust}%"]
         for ns, geraet in ((self.ns, "eth0"), (None, f"v{self.nummer}p")):
             vorne = ["ip", "netns", "exec", ns] if ns else []
             sh(*vorne, "tc", "qdisc", "replace", "dev", geraet, "root", *regel)
@@ -161,6 +189,8 @@ class Knoten:
         if erzeuger:
             befehl += ["--erzeuger", "--blocktakt", str(blocktakt)]
         befehl += zusatz or []
+        # Fuer einen Neustart im Dauerlauf: mit denselben Angaben.
+        self.angaben = (programm, bootstrap, erzeuger, blocktakt, zusatz)
         fehler = open(self.ordner / "stderr.txt", "a", encoding="utf-8")
         # Aus der Wurzel, damit der Knoten die Konformitaetsvektoren findet.
         self.prozess = subprocess.Popen(befehl, cwd=WURZEL, stdout=fehler, stderr=subprocess.STDOUT)
@@ -194,7 +224,30 @@ class Knoten:
             self.prozess.wait()
             raise Befund(f"{self.name} beendete sich nicht in {frist} s")
 
+    def neu_starten(self) -> None:
+        """Hart beenden und mit denselben Angaben wieder starten; dieselbe
+        Peer-Id wird verlangt."""
+        alte_id = self.peer_id
+        self.beenden(hart=True)
+        self.starten(*self.angaben)
+        if self.warte_auf_peer_id(30) != alte_id:
+            raise Befund(f"{self.name} kam mit einer anderen Peer-Id zurueck")
+
     # ---- Ablesen ------------------------------------------------------
+    def speicher(self) -> tuple[int, int]:
+        """Belegter Speicher in KiB und Zahl der offenen Dateien, aus
+        `/proc`; `(-1, -1)`, wenn der Prozess fehlt."""
+        if self.prozess is None or self.prozess.poll() is not None:
+            return -1, -1
+        pid = self.prozess.pid
+        try:
+            status = pathlib.Path(f"/proc/{pid}/status").read_text()
+            rss = next(int(z.split()[1]) for z in status.splitlines() if z.startswith("VmRSS:"))
+            dateien = len(os.listdir(f"/proc/{pid}/fd"))
+            return rss, dateien
+        except (OSError, StopIteration, ValueError):
+            return -1, -1
+
     def metriken(self) -> dict[str, float]:
         # 📌 Bis zu drei Versuche: Die Abfrage laeuft ueber dieselbe gestoerte
         #    Leitung wie das Netz, und eine einzelne lief bei 5 % Verlust in
@@ -264,6 +317,94 @@ def bruecke_entfernen() -> None:
         NETFILTER.write_text(_netfilter_vorher)
 
 
+# ---- Die boesartige Gegenstelle ---------------------------------------
+STOERER_NS = "myl-s0"
+STOERER_IP = f"{NETZ}.250.10"
+
+# ⚑ Laeuft im eigenen Namensraum als eigener Python-Prozess, damit er die
+# Zeiten des Laufs nicht ueber den Interpreter des Laufs verzerrt. Drei
+# Arten im Wechsel, je Ziel: halbe Verbindungen offen halten (ein Byte je
+# zwei Sekunden), Muell schicken und schliessen, Verbindungen in Stoessen
+# oeffnen und schliessen. Die Zaehler gehen am Ende nach stdout.
+STOERER_SKRIPT = r"""
+import os, random, socket, sys, time
+ziele = sys.argv[2:]
+port = int(sys.argv[1])
+r = random.Random(7)
+offen = {z: [] for z in ziele}
+zahl = {"verbunden": 0, "abgewiesen": 0, "muell": 0, "stoss": 0}
+def verbinde(z):
+    s = socket.socket(); s.settimeout(1.5)
+    try:
+        s.connect((z, port)); zahl["verbunden"] += 1; return s
+    except OSError:
+        zahl["abgewiesen"] += 1; s.close(); return None
+print("gestartet gegen " + " ".join(ziele), flush=True)
+runde = 0
+while True:
+    runde += 1
+    for z in ziele:
+        # halbe Verbindungen: bis zu 16 je Ziel, je ein Byte
+        offen[z] = [s for s in offen[z] if s is not None]
+        while len(offen[z]) < 16:
+            s = verbinde(z)
+            if s is None: break
+            offen[z].append(s)
+        lebend = []
+        for s in offen[z]:
+            try:
+                s.send(bytes([r.randrange(256)])); lebend.append(s)
+            except OSError:
+                s.close()
+        offen[z] = lebend
+        # Muell: vier Verbindungen mit je 4 KiB Zufall
+        for _ in range(4):
+            s = verbinde(z)
+            if s:
+                try: s.send(os.urandom(4096)); zahl["muell"] += 1
+                except OSError: pass
+                s.close()
+        # Stoss: zwanzig Mal oeffnen und sofort schliessen
+        for _ in range(20):
+            s = verbinde(z)
+            if s: zahl["stoss"] += 1; s.close()
+    # Je Runde eine Zeile: Eine Runde sind 240 Versuche ueber gestoerte
+    # Leitungen, rund eine Minute; mit einer Zeile je 30 Runden kam in der
+    # Probe von fuenf Minuten keine einzige (2026-10-23).
+    print(f"runde={runde} " + " ".join(f"{k}={v}" for k, v in zahl.items()), flush=True)
+    time.sleep(2)
+"""
+
+
+class Stoerer:
+    def __init__(self, ordner: pathlib.Path):
+        self.ordner = ordner / "stoerer"
+        self.prozess: subprocess.Popen | None = None
+
+    def starten(self, ziele: list[str]) -> None:
+        self.ordner.mkdir(parents=True, exist_ok=True)
+        aussen = "vsp"
+        sh("ip", "netns", "add", STOERER_NS)
+        sh("ip", "link", "add", aussen, "type", "veth", "peer", "name", "eth0", "netns", STOERER_NS)
+        sh("ip", "link", "set", aussen, "master", BRUECKE, "up")
+        sh("ip", "netns", "exec", STOERER_NS, "ip", "addr", "add", f"{STOERER_IP}/16", "dev", "eth0")
+        sh("ip", "netns", "exec", STOERER_NS, "ip", "link", "set", "eth0", "up")
+        aus = open(self.ordner / "stoerer.txt", "a", encoding="utf-8")
+        self.prozess = subprocess.Popen(
+            ["ip", "netns", "exec", STOERER_NS, sys.executable, "-c", STOERER_SKRIPT, str(PORT), *ziele],
+            stdout=aus, stderr=subprocess.STDOUT,
+        )
+
+    def zaehler(self) -> str:
+        zeilen = (self.ordner / "stoerer.txt").read_text(errors="replace").splitlines() if self.ordner.exists() else []
+        return zeilen[-1] if zeilen else "noch keine Zaehlung"
+
+    def beenden(self) -> None:
+        if self.prozess and self.prozess.poll() is None:
+            self.prozess.kill()
+            self.prozess.wait()
+
+
 def warte(bedingung, frist: float, was: str, knoten: list[Knoten]) -> float:
     """Wartet auf einen Zustand, nicht auf die Uhr; gibt die Dauer zurueck."""
     beginn = time.monotonic()
@@ -298,7 +439,8 @@ def umgebung_pruefen(programm: pathlib.Path) -> str | None:
 
 
 def lauf(args: argparse.Namespace, ordner: pathlib.Path) -> None:
-    programm = args.programm
+    def programm(k: Knoten) -> pathlib.Path:
+        return args.zweitprogramm if args.zweitprogramm and k.nummer % 2 else args.programm
     # Takt und Zeiten. Im kurzen Lauf derselbe Weg mit der kleinsten Menge:
     # weniger Knoten, kuerzere Abschnitte, aber jeder Stolperstein einmal.
     n = 4 if args.kurz else 6
@@ -331,14 +473,15 @@ def lauf(args: argparse.Namespace, ordner: pathlib.Path) -> None:
     for k in alle:
         k.netz_anlegen()
     for k in alle:
-        melde(f"{k.name} {k.ip}: {k.latenz_ms} ms je Richtung, {k.verlust} % Verlust")
+        zweit = " (zweites Programm)" if programm(k) != args.programm else ""
+        melde(f"{k.name} {k.ip}: {k.latenz_ms} ms je Richtung, {k.verlust} % Verlust{zweit}")
 
-    erzeuger.starten(programm, None, True, takt)
+    erzeuger.starten(programm(erzeuger), None, True, takt)
     pid = erzeuger.warte_auf_peer_id(30)
     einstieg = f"/ip4/{erzeuger.ip}/tcp/{PORT}/p2p/{pid}"
     for k in netz[1:]:
         # Stolperstein 1: der letzte ohne Angabe, nur ueber mDNS.
-        k.starten(programm, None if k is ohne_angabe else einstieg, False, takt)
+        k.starten(programm(k), None if k is ohne_angabe else einstieg, False, takt)
     for k in netz:
         k.warte_auf_peer_id(30)
 
@@ -384,7 +527,7 @@ def lauf(args: argparse.Namespace, ordner: pathlib.Path) -> None:
     alte_id = abstuerzer.peer_id
     abstuerzer.beenden(hart=True)
     time.sleep(ausfall)
-    abstuerzer.starten(programm, einstieg, False, takt)
+    abstuerzer.starten(programm(abstuerzer), einstieg, False, takt)
     if abstuerzer.warte_auf_peer_id(30) != alte_id:
         raise Befund(f"{abstuerzer.name} kam mit einer anderen Peer-Id zurueck")
     dauer = warte(lambda: holt_auf(abstuerzer), 120, f"{abstuerzer.name} holt nach dem Absturz auf", netz)
@@ -392,7 +535,7 @@ def lauf(args: argparse.Namespace, ordner: pathlib.Path) -> None:
 
     # ---- Stolperstein 4: ein Neuling ohne Kette und ohne Angabe --------
     warte(lambda: erzeuger.hoehe() >= vorsprung, 600, f"Hoehe {vorsprung}", netz)
-    neuling.starten(programm, None, False, takt)
+    neuling.starten(programm(neuling), None, False, takt)
     neuling.warte_auf_peer_id(30)
     mit_neuling = netz + [neuling]
     dauer = warte(lambda: holt_auf(neuling), 300, "der Neuling holt auf", mit_neuling)
@@ -412,7 +555,7 @@ def lauf(args: argparse.Namespace, ordner: pathlib.Path) -> None:
             anker, anker_hoehe = zeilen[-1]["anker"], zeilen[-1]["hoehe"]
         return anker is not None
     warte(anker_da, 30, "der Erzeuger meldet seinen Abzug", mit_neuling)
-    aus_abzug.starten(programm, None, False, takt, ["--abzug", anker])
+    aus_abzug.starten(programm(aus_abzug), None, False, takt, ["--abzug", anker])
     aus_abzug.warte_auf_peer_id(30)
     mit_neuling = mit_neuling + [aus_abzug]
     def bestaetigt() -> bool:
@@ -422,6 +565,12 @@ def lauf(args: argparse.Namespace, ordner: pathlib.Path) -> None:
     if not uebernommen or uebernommen[0].get("hoehe") != anker_hoehe:
         raise Befund(f"{aus_abzug.name} begann nicht beim Abzug {anker_hoehe}: {uebernommen}")
     melde(f"Neuling aus dem Abzug bei {anker_hoehe}: {uebernommen[0].get('bytes')} Bytes Zustand, an der Spitze und bestaetigt in {dauer:.1f} s")
+
+    # ---- Der Dauerlauf --------------------------------------------------
+    gestoert: set[str] = set()
+    if args.dauer > 0:
+        gestoert = dauerlauf(args, ordner, erzeuger, mit_neuling, [getrennt, abstuerzer] + netz[3:-1], holt_auf,
+                             erlaubter_rueckstand)
 
     # ---- Ende: der Erzeuger haelt an, alle kommen auf einer Hoehe an ---
     erzeuger.beenden()
@@ -488,33 +637,126 @@ def lauf(args: argparse.Namespace, ordner: pathlib.Path) -> None:
         voraus = sum(z.get("aus_dem_voraus", 0) for z in p if z.get("art") == "nachschub_erhalten")
         nachgeholt = sum(z.get("angenommen", 0) for z in p if z.get("art") == "nachschub_erhalten")
         melde(f"{k.name}: {gossip} ueber Gossip, {voraus} aus dem Vorausspeicher, {nachgeholt} nachgeholt")
-        if k in (abstuerzer, neuling, aus_abzug):
+        if k in (abstuerzer, neuling, aus_abzug) or k.name in gestoert:
             continue
         if gossip + voraus < (gossip + voraus + nachgeholt) // 2:
             raise Befund(f"{k.name} hinkt dauerhaft hinterher: nur {gossip + voraus} von {gossip + voraus + nachgeholt} Bloecken ohne Nachholen")
+
+
+def dauerlauf(args, ordner, erzeuger, alle, neustartbar, holt_auf, erlaubter_rueckstand) -> set[str]:
+    """Runde fuer Runde eine Stoerung aus fester Folge; gibt die Namen der
+    Knoten zurueck, die getrennt oder neu gestartet wurden."""
+    r = random.Random(args.saat)
+    uebrige = [k for k in alle if k is not erzeuger]
+    stoerer = Stoerer(ordner) if args.stoerer else None
+    if stoerer:
+        stoerer.starten([k.ip for k in alle])
+        melde(f"Stoerer auf {STOERER_IP} gegen {len(alle)} Knoten")
+    gestoert: set[str] = set()
+    neu_gestartet: set[str] = set()
+    anfang = {k.name: k.speicher() for k in alle}
+    ende = time.monotonic() + args.dauer * 60
+    runde = 0
+    groesster_ruhig = 0
+    try:
+        while time.monotonic() < ende:
+            runde += 1
+            art = r.choice(["trennung", "absturz", "verlustspitze", "laufzeitsprung", "ruhe"])
+            beginn_hoehe = erzeuger.hoehe()
+            if art == "trennung":
+                k = r.choice(uebrige)
+                sekunden = r.randint(5, 30)
+                k.stoerung(100)
+                time.sleep(sekunden)
+                k.stoerung(k.verlust)
+                gestoert.add(k.name)
+                was = f"{k.name} {sekunden} s getrennt"
+            elif art == "absturz":
+                k = r.choice(neustartbar)
+                k.neu_starten()
+                gestoert.add(k.name)
+                neu_gestartet.add(k.name)
+                was = f"{k.name} abgestuerzt und neu gestartet"
+            elif art == "verlustspitze":
+                sekunden = r.randint(10, 30)
+                for k in uebrige:
+                    k.stoerung(20)
+                time.sleep(sekunden)
+                for k in uebrige:
+                    k.stoerung(k.verlust)
+                was = f"alle {sekunden} s mit 20 % Verlust"
+            elif art == "laufzeitsprung":
+                sekunden = r.randint(10, 30)
+                for k in uebrige:
+                    k.stoerung(k.verlust, latenz_ms=k.latenz_ms * 3)
+                time.sleep(sekunden)
+                for k in uebrige:
+                    k.stoerung(k.verlust)
+                was = f"alle {sekunden} s mit dreifacher Laufzeit"
+            else:
+                was = "Ruhe"
+            dauer = warte(lambda: all(holt_auf(k) for k in uebrige), 180, f"Runde {runde} ({was}): alle an der Spitze", alle)
+            # Ruhe zwischen den Runden: der Rueckstand darf nicht wachsen.
+            pause_ende = time.monotonic() + r.randint(20, 60)
+            while time.monotonic() < pause_ende:
+                h = erzeuger.hoehe()
+                hoehen = [k.hoehe() for k in uebrige]
+                if h >= 0 and all(x >= 0 for x in hoehen):
+                    groesster_ruhig = max(groesster_ruhig, max(h - x for x in hoehen))
+                time.sleep(2)
+            if groesster_ruhig > erlaubter_rueckstand:
+                raise Befund(f"Runde {runde}: Rueckstand {groesster_ruhig} Bloecke in der Ruhe, erlaubt {erlaubter_rueckstand}")
+            speicher = " ".join(f"{k.name}={k.speicher()[0] // 1024}M/{k.speicher()[1]}" for k in alle)
+            melde(f"Runde {runde}: {was}, aufgeholt in {dauer:.1f} s; Hoehe {beginn_hoehe} -> {erzeuger.hoehe()}; "
+                  f"Speicher {speicher}")
+            if stoerer and runde % 10 == 0:
+                melde(f"Stoerer: {stoerer.zaehler()}")
+    finally:
+        if stoerer:
+            melde(f"Stoerer zum Schluss: {stoerer.zaehler()}")
+            stoerer.beenden()
+    # ⚑ Lecks: offene Dateien eines Knotens, der nie neu startete.
+    for k in alle:
+        if k.name in neu_gestartet:
+            continue
+        (rss0, fd0), (rss1, fd1) = anfang[k.name], k.speicher()
+        melde(f"{k.name}: Speicher {rss0 // 1024} -> {rss1 // 1024} MiB, offene Dateien {fd0} -> {fd1}")
+        if fd0 > 0 and fd1 > 2 * fd0 + 50:
+            raise Befund(f"{k.name}: offene Dateien von {fd0} auf {fd1}, ein Leck")
+    melde(f"Dauerlauf: {runde} Runden in {args.dauer} min, groesster Rueckstand in der Ruhe {groesster_ruhig}")
+    return gestoert
 
 
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     p.add_argument("--programm", type=pathlib.Path, default=cargo_paths.binary("../NODE/myl-node", "myl-node"))
     p.add_argument("--kurz", action="store_true", help="derselbe Weg im Kleinen")
+    p.add_argument("--zweitprogramm", type=pathlib.Path,
+                   help="ein zweites myl-node fuer die ungeraden Knoten (gemischtes Netz, etwa vor und nach einem Update)")
     p.add_argument("--blocktakt", type=int, default=0, help="Millisekunden je Block (Vorgabe: 50, kurz 25)")
     p.add_argument("--latenz-min", type=int, default=50)
     p.add_argument("--latenz-max", type=int, default=200)
     p.add_argument("--verlust-min", type=float, default=1.0)
     p.add_argument("--verlust-max", type=float, default=5.0)
     p.add_argument("--protokolle", type=pathlib.Path, help="Ordner fuer die Protokolle (Vorgabe: ein neuer im Temp)")
+    p.add_argument("--dauer", type=int, default=0, help="Minuten Dauerlauf mit Stoerungen nach den Stolpersteinen")
+    p.add_argument("--saat", type=int, default=1, help="Saat der Stoerfolge im Dauerlauf")
+    p.add_argument("--stoerer", action="store_true", help="im Dauerlauf eine boesartige Gegenstelle dazu")
     args = p.parse_args()
     args.programm = args.programm.resolve()
+    if args.zweitprogramm:
+        args.zweitprogramm = args.zweitprogramm.resolve()
 
     fehlt = umgebung_pruefen(args.programm)
+    if not fehlt and args.zweitprogramm and not args.zweitprogramm.is_file():
+        fehlt = f"{args.zweitprogramm} fehlt"
     if fehlt:
         print(f"FEHLER: Umgebung: {fehlt}", flush=True)
         return 2
     ordner = args.protokolle or pathlib.Path(tempfile.mkdtemp(prefix="myl-netzlauf-prozesse-"))
     ordner.mkdir(parents=True, exist_ok=True)
     melde(f"Protokolle unter {ordner}")
-    knoten_namen = [f"myl-k{i}" for i in range(8)]
+    knoten_namen = [f"myl-k{i}" for i in range(8)] + [STOERER_NS]
     rc = 0
     try:
         lauf(args, ordner)

@@ -148,6 +148,25 @@ impl request_response::Codec for ByteCodec {
 /// Das Verhalten des Anfragekanals.
 pub type AnfrageBehaviour = request_response::Behaviour<ByteCodec>;
 
+/// So viele Anfragen laufen je Verbindung hoechstens zugleich, in jede
+/// Richtung.
+///
+/// 📌 **Fund 605 (2026-10-23):** Hier galt die Vorgabe von libp2p, 100
+/// Stroeme je Verbindung. Jeder darf [`MAX_ANFRAGE_BYTES`] tragen; eine
+/// fremde Gegenstelle mit ihren zwei Verbindungen konnte damit 800 MiB in
+/// Arbeit halten. **Herleitung der 16:** Ein Knoten stellt einer
+/// Gegenstelle legitim hoechstens sieben zugleich (vier Nachforderungen der
+/// eigenen Kette, zwei der Hintergrundpruefung, ein Inferenzauftrag), und
+/// das nur, wenn er keine zweite hat. Gut das Doppelte bleibt Luft; eine
+/// Verbindung bindet damit hoechstens 64 MiB.
+pub const MAX_ANFRAGEN_ZUGLEICH: usize = 16;
+
+const _: () = assert!(MAX_ANFRAGEN_ZUGLEICH >= 8, "unter dem legitimen Bedarf eines Knotens");
+const _: () = assert!(
+    MAX_ANFRAGEN_ZUGLEICH * MAX_ANFRAGE_BYTES <= 64 * 1024 * 1024,
+    "eine Verbindung bindet mehr als 64 MiB"
+);
+
 /// Baut den Anfragekanal.
 pub fn baue_anfragekanal() -> AnfrageBehaviour {
     request_response::Behaviour::with_codec(
@@ -160,7 +179,7 @@ pub fn baue_anfragekanal() -> AnfrageBehaviour {
             // es fragen kann.
             ProtocolSupport::Full,
         )],
-        request_response::Config::default(),
+        request_response::Config::default().with_max_concurrent_streams(MAX_ANFRAGEN_ZUGLEICH),
     )
 }
 

@@ -119,10 +119,20 @@ fn die_zeitprobe_rechnet_und_laesst_nichts_zurueck() {
     // ⚑ **Über die Tür des Shards**, wie der Knoten sie stellt
     // (`myl_types::zeitprobe`): dieselbe Antwort.
     let mitte = Arc::new(mitte);
-    let stelle = myl_pod::shardweg::Shardstelle::oeffnen(Arc::clone(&mitte), "127.0.0.1:0").expect("Tuer");
+    let ausweis = [0x5A; 32];
+    let stelle = myl_pod::shardweg::Shardstelle::oeffnen(Arc::clone(&mitte), "127.0.0.1:0", ausweis).expect("Tuer");
     let adresse = stelle.adresse().expect("Adresse");
-    let faden = std::thread::spawn(move || stelle.bediene_eine());
-    let ueber_die_tuer = myl_types::zeitprobe::fragen(adresse, 2, std::time::Duration::from_secs(60)).expect("Probe");
-    faden.join().expect("Faden").expect("bedient");
-    assert_eq!(ueber_die_tuer, a, "die Tür rechnet dieselbe Probe");
+    let frist = std::time::Duration::from_secs(60);
+    std::thread::scope(|s| {
+        // ⚑ **Ohne den Ausweis nimmt die Tür nichts an** (Fund 611): Die
+        //   Probe mit einem falschen bekommt keine Antwort, die Tür meldet
+        //   den Ausweis, und danach geht die richtige durch.
+        let faden = s.spawn(|| stelle.bediene_eine());
+        assert!(myl_types::zeitprobe::fragen(adresse, &[0x5B; 32], 2, frist).is_err(), "die Tür rechnete ohne Ausweis");
+        assert_eq!(faden.join().expect("Faden"), Err("falscher Ausweis".to_string()));
+        let faden = s.spawn(|| stelle.bediene_eine());
+        let ueber_die_tuer = myl_types::zeitprobe::fragen(adresse, &ausweis, 2, frist).expect("Probe");
+        faden.join().expect("Faden").expect("bedient");
+        assert_eq!(ueber_die_tuer, a, "die Tür rechnet dieselbe Probe");
+    });
 }

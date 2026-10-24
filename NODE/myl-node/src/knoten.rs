@@ -171,6 +171,10 @@ pub struct Knoten {
     /// Mehrere Verbindungen addieren sich; was vor seiner Zeit ankommt, nimmt
     /// der Vorausspeicher (Fund 592).
     nachforderungen: Vec<Nachforderung1>,
+    /// ⚑ **Wer zuletzt nichts hatte** (Fund 626): ab welcher Höhe und seit
+    /// wann. Eine solche Gegenstelle wird für Bereiche ab dieser Höhe
+    /// [`LEER_SPERRE`] lang nicht gefragt.
+    leer_geantwortet: std::collections::HashMap<libp2p::PeerId, (u64, std::time::Instant)>,
     /// Wohin die Zustandsaufnahme ihre Zahlen zusaetzlich legt.
     ///
     /// ⚑ **Der Abholweg zu den Zahlen, die es laengst gab** (Fund 129).
@@ -202,6 +206,15 @@ pub struct Knoten {
     /// ⚑ **Geteilt, weil die Antwort in einer eigenen Aufgabe entsteht**
     /// und erst dort feststeht, ob der Shard rechnete oder ablehnte.
     inferenz_zaehler: Arc<Inferenzzaehler>,
+    /// Plaetze fuer Inferenzauftraege aus dem Netz, die beim Shard liegen
+    /// (Fund 609, siehe [`INFERENZ_IN_ARBEIT_HOECHSTENS`]).
+    inferenz_plaetze: Plaetze,
+    /// Die Drossel fuer teure Anfragen (Fund 632, [`crate::drossel`]) und
+    /// wie viele sie seit der letzten Zustandsaufnahme abgewiesen hat.
+    drossel: crate::drossel::Drossel<libp2p::PeerId>,
+    gedrosselt: u64,
+    /// Ein Platz fuer eine Zeitprobe zugleich (Fund 609).
+    zeitprobe_platz: Plaetze,
     /// Wie viele Bytes die unterschriebene Zusage nennt; null ohne.
     zugesagt_bytes: u64,
     /// Was die Tür an Abrechnungen abgelegt hat.
@@ -233,6 +246,10 @@ pub struct Knoten {
     /// Verkehr bekommen; ohne diese Zahl waere „bereit" nicht von „hat
     /// noch nichts gehoert" zu unterscheiden.
     hoechste_gehoerte: u64,
+    /// ⚑ **Woher sie kommt** (Fund 634): je Gegenstelle die behauptete Höhe,
+    /// widerlegbar durch eine leere Nachlieferung, verfallend mit der
+    /// Trennung. `hoechste_gehoerte` ist die höchste geltende.
+    gehoert: crate::gehoert::Gehoert<libp2p::PeerId>,
     /// Die eigenen Horchadressen, wie sie gemeldet wurden.
     ///
     /// Der Knoten kennt sie beim Start noch nicht: Bei Port 0 vergibt
@@ -317,8 +334,11 @@ pub struct Knoten {
     /// Die nächste Nummer für Transaktionen des Netzschlüssels, mindestens
     /// die des Kontos im Zustand.
     netz_nonce: u64,
-    /// Was zuletzt eingereicht wurde, bei welcher Höhe: gegen Wiederholung
-    /// in jeder Aufnahme, solange der Block noch aussteht.
+    /// Die Nummer des Kontos im Zustand und die Höhe, ab der ihr Stillstand
+    /// zählt, während eigene Transaktionen ausstehen (Funde 627 und 628).
+    netz_stand: (u64, u64),
+    /// Was zuletzt eingereicht wurde, ab welcher Höhe die Frist zählt: gegen
+    /// Wiederholung in jeder Aufnahme, solange der Block noch aussteht.
     netz_gesendet: std::collections::BTreeMap<&'static str, u64>,
     /// Der Shard aus der Kette (P7).
     shardfuehrung: Option<crate::shardfuehrung::Shardfuehrung>,
@@ -353,8 +373,10 @@ pub struct Knoten {
     abzug_holen: Option<AbzugHolen>,
     /// Die laufende Hintergrundprüfung eines Abzugs.
     hintergrund: Option<Hintergrund>,
-    /// Der zuletzt gelesene eigene Abzug, für das Liefern in Stücken.
-    abzug_zwischen: Option<crate::abzug::Abzug>,
+    /// Das laufende Nachladen der Geschichte einer neu gezogenen Kopie.
+    abruf: Option<Abruf>,
+    /// Das laufende Holen der Teile eines Splitters.
+    teilabruf: Option<Teilabruf>,
     /// Der zuletzt im Protokoll gemeldete eigene Abzug.
     abzug_gemeldet: Option<u64>,
     /// ⚑ Ein Grund, aus dem dieser Knoten von sich aus anhält (eine
@@ -368,6 +390,57 @@ pub struct Knoten {
 
 /// So viele Nachforderungen von Blöcken laufen höchstens zugleich.
 pub const NACHHOLER: usize = 4;
+
+/// So viele Inferenzauftraege aus dem Netz liegen hoechstens zugleich beim
+/// Shard; jeder weitere wird sofort abgelehnt.
+///
+/// 📌 **Fund 609 (2026-10-23):** Jeder Auftrag startete eine eigene Aufgabe,
+/// die bis zur Frist des Ortsanschlusses lebt, auch wenn die Anfrage im Netz
+/// nach zehn Sekunden schon abgelaufen ist und ihr Platz frei wird. Waehrend
+/// eine lange Rechnung die Tuer des Shards belegt (sie bedient nacheinander),
+/// sammelten sich so je Verbindung rund siebzig Auftraege mit je bis zu 4 MiB.
+/// Ein ehrlicher Knoten fuehrt einen Auftrag zugleich (siehe
+/// `letzte_inferenzantwort`); vier lassen Luft.
+pub const INFERENZ_IN_ARBEIT_HOECHSTENS: usize = 4;
+
+/// **Eine feste Zahl von Plaetzen** fuer Arbeit, die eine Anfrage aus dem
+/// Netz ausloest und die sie ueberdauern kann (Fund 609).
+///
+/// ⚑ **Der Platz geht mit seinem [`Platz`] zurueck, beim Freigeben**, auch
+/// wenn die Arbeit mit einer Panik endet. Ein Zaehler, den jeder Pfad von
+/// Hand zuruecksetzt, vergisst es an einem davon, und dann ist der Dienst
+/// fuer immer zu.
+#[derive(Debug, Clone)]
+pub struct Plaetze {
+    belegt: Arc<std::sync::atomic::AtomicUsize>,
+    hoechstens: usize,
+}
+
+/// Ein belegter Platz; gibt ihn beim Freigeben zurueck.
+#[derive(Debug)]
+pub struct Platz(Arc<std::sync::atomic::AtomicUsize>);
+
+impl Plaetze {
+    /// `hoechstens` Plaetze, alle frei.
+    pub fn neu(hoechstens: usize) -> Self {
+        Self { belegt: Arc::new(std::sync::atomic::AtomicUsize::new(0)), hoechstens }
+    }
+
+    /// Ein freier Platz, oder `None`, wenn alle belegt sind.
+    pub fn nehmen(&self) -> Option<Platz> {
+        use std::sync::atomic::Ordering;
+        self.belegt
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |n| (n < self.hoechstens).then_some(n + 1))
+            .ok()
+            .map(|_| Platz(Arc::clone(&self.belegt)))
+    }
+}
+
+impl Drop for Platz {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+    }
+}
 
 /// Eine laufende Nachforderung: bei wem, welcher Bereich, seit wann.
 #[derive(Debug, Clone, Copy)]
@@ -389,6 +462,78 @@ struct Messung {
     pings: u32,
 }
 
+/// Was das Nachspielen der Kettendatei beim Start ergab.
+#[derive(Debug, Default)]
+struct Nachgespielt {
+    uebernommen: usize,
+    abgelehnt: usize,
+    erster_grund: String,
+    lesefehler: Option<String>,
+    /// Bis zu diesem eigenen Abzug nur auf Anschluss geprüft (Fund 629).
+    abzug: Option<u64>,
+    vorgespult: usize,
+    /// Warum der eigene Abzug nicht trug; dann wird ab der Basis gerechnet.
+    verworfen: Option<String>,
+}
+
+/// **Die Kettendatei nachspielen**, mit `einsatz` ab dem jüngsten eigenen
+/// Abzug (Fund 629): bis zu ihm vorspulen, dann den Abzug einsetzen, danach
+/// übernehmen. Scheitert eines davon, steht der Grund in `verworfen`, und
+/// die Kette ist unbrauchbar; der Aufrufer beginnt dann neu ohne Einsatz.
+///
+/// ⚑ **Satz für Satz, nicht alle auf einmal** (Fund 124). Bis zum
+/// 2026-09-02 stand die ganze Kette im Arbeitsspeicher, bevor der erste
+/// Block geprüft war. Jetzt liegt immer nur einer da.
+///
+/// Ein Lesefehler mitten im Nachspielen bricht ab: Was danach kommt,
+/// schlösse an einen Block an, den dieser Knoten nicht hat, und würde
+/// ohnehin abgewiesen. Der Grund geht ins Protokoll.
+fn nachspielen(
+    kette: &mut Kette,
+    speicher: &mut crate::speicher::Kettenspeicher,
+    mut einsatz: Option<(crate::abzug::Abzug, myl_ledger::state::LedgerState)>,
+) -> Nachgespielt {
+    let mut n = Nachgespielt::default();
+    let ziel = einsatz.as_ref().map(|(a, _)| a.hoehe());
+    let lesefehler = speicher
+        .fuer_jeden_satz(|b| {
+            if n.verworfen.is_some() {
+                return;
+            }
+            let h = b.header.height;
+            if let Some(z) = ziel.filter(|&z| einsatz.is_some() && h > kette.hoehe() && h <= z) {
+                if let Err(e) = kette.vorspulen(&b) {
+                    n.verworfen = Some(format!("bei {h}: {e}"));
+                    return;
+                }
+                n.vorgespult += 1;
+                if h == z {
+                    let (abzug, zustand) = einsatz.take().expect("geprüft");
+                    match kette.abzug_einsetzen(&abzug, zustand) {
+                        Ok(()) => n.abzug = Some(z),
+                        Err(e) => n.verworfen = Some(e),
+                    }
+                }
+                return;
+            }
+            match kette.uebernimm(&b) {
+                Ok(()) => n.uebernommen += 1,
+                Err(e) => {
+                    n.abgelehnt += 1;
+                    if n.erster_grund.is_empty() {
+                        n.erster_grund = e.to_string();
+                    }
+                }
+            }
+        })
+        .err();
+    n.lesefehler = lesefehler.map(|e| e.to_string());
+    if let (Some(z), Some(_), None) = (ziel, &einsatz, &n.verworfen) {
+        n.verworfen = Some(format!("die Datei endet vor dem Abzug bei {z}"));
+    }
+    n
+}
+
 /// Das Holen fehlender Dateien, mit seinen Quellen.
 #[derive(Debug)]
 struct Nachholen {
@@ -399,6 +544,34 @@ struct Nachholen {
 }
 
 impl Knoten {
+    /// ⚑ **Eine Kette, die aus einem Abzug begann, beginnt wieder dort**
+    /// (2026-10-22): Die Kettendatei hält dann nur die Blöcke danach, und
+    /// ihr erster schliesst an den Abzug an, nicht an Genesis. Dazu die
+    /// Ablage, ohne Kettendatei keine.
+    fn kette_ab_basis(
+        konfig: &KnotenKonfig,
+        protokoll: &mut Betriebsprotokoll,
+    ) -> Result<(Kette, Option<myl_consensus::block::Block>), KnotenFehler> {
+        let mut kette = Kette::im_netz(konfig.netz);
+        let mut basisblock = None;
+        if let Some(pfad) = konfig.kettendatei.as_ref() {
+            let ablage = crate::abzug::Ablage::neben(pfad, konfig.netz.startwert_hash());
+            if let Some(h) = ablage.basis() {
+                let (abzug, zustand) = ablage.lesen(h).map_err(|e| KnotenFehler::Kette(format!("Basis bei {h}: {e}")))?;
+                kette.auf_abzug_setzen(&abzug, zustand).map_err(KnotenFehler::Kette)?;
+                protokoll.schreibe(
+                    Eintrag::neu("abzug_geladen")
+                        .zahl("hoehe", h as i64)
+                        .wahr("bestaetigt", ablage.bestaetigt())
+                        .text("zustandswurzel", kurz(&kette.zustandswurzel())),
+                );
+                basisblock = Some(abzug.block);
+            }
+            kette.ablage_setzen(ablage);
+        }
+        Ok((kette, basisblock))
+    }
+
     /// Startet den Knoten: Identität, Swarm, Horchadressen, Bootstrap.
     ///
     /// Die Reihenfolge ist bedeutsam. Geprüft wird **zuerst**, denn eine
@@ -445,11 +618,12 @@ impl Knoten {
             .map_err(|e| KnotenFehler::Identitaet(e.to_string()))?;
         let peer_id = identitaet.peer_id();
 
-        let mut protokoll = Betriebsprotokoll::neu(
+        let mut protokoll = Betriebsprotokoll::mit_grenze(
             &konfig.protokollverzeichnis,
             &konfig.name,
             &peer_id.to_string(),
             auf_bildschirm,
+            konfig.protokoll_mb.saturating_mul(1024 * 1024),
         )
         .map_err(KnotenFehler::Protokoll)?;
 
@@ -528,7 +702,8 @@ impl Knoten {
             Arc::new(ProtokollValidator::mit(validatoren)),
         ));
 
-        // ⚑ **Der Wiederanlauf ist ein Nachrechnen, kein Einlesen.**
+        // ⚑ **Der Wiederanlauf ist ein Nachrechnen, kein Einlesen**, ab dem
+        //   jüngsten eigenen Abzug (Fund 629, 2026-10-24).
         //
         // Die Blöcke aus der Datei gehen durch dieselbe
         // `Kette::uebernimm`, durch die auch Gossip-Blöcke gehen: Jeder
@@ -539,75 +714,57 @@ impl Knoten {
         // Und der Zustand wird **nicht** gespeichert, sondern
         // hergeleitet. Ein abgeleiteter Wert, den man zusätzlich
         // ablegt, ist eine zweite Wahrheit.
-        let mut kette = Kette::im_netz(konfig.netz);
-        // ⚑ **Eine Kette, die aus einem Abzug begann, beginnt wieder dort**
-        //   (2026-10-22): Die Kettendatei hält dann nur die Blöcke danach,
-        //   und ihr erster schliesst an den Abzug an, nicht an Genesis.
-        let mut basisblock: Option<myl_consensus::block::Block> = None;
-        if let Some(pfad) = konfig.kettendatei.clone() {
-            let ablage = crate::abzug::Ablage::neben(&pfad, konfig.netz.startwert_hash());
-            if let Some(h) = ablage.basis() {
-                let (abzug, zustand) = ablage.lesen(h).map_err(|e| KnotenFehler::Kette(format!("Basis bei {h}: {e}")))?;
-                kette.auf_abzug_setzen(&abzug, zustand).map_err(KnotenFehler::Kette)?;
-                protokoll.schreibe(
-                    Eintrag::neu("abzug_geladen")
-                        .zahl("hoehe", h as i64)
-                        .wahr("bestaetigt", ablage.bestaetigt())
-                        .text("zustandswurzel", kurz(&kette.zustandswurzel())),
-                );
-                basisblock = Some(abzug.block);
-            }
-            kette.ablage_setzen(ablage);
-        }
+        //
+        // ⚑ **Die Ausnahme sind die Blöcke bis zum jüngsten eigenen Abzug.**
+        //   Sie werden nur auf Anschluss geprüft (`Kette::vorspulen`), und
+        //   der Abzug setzt den Zustand ein (`Kette::abzug_einsetzen`). Keine
+        //   zweite Wahrheit: Die Zustandswurzel seines Blocks bindet ihn, die
+        //   Hashes binden den Block an die Basis. Bis dahin rechnete jeder
+        //   Start ab Genesis, und das wuchs mit der Geschichte: 166 s für
+        //   349 646 Blöcke im Archivlauf. Scheitert der Einsatz, wird ab der
+        //   Basis nachgerechnet wie zuvor.
+        let (mut kette, mut basisblock) = Self::kette_ab_basis(&konfig, &mut protokoll)?;
         if let Some(pfad) = konfig.kettendatei.clone() {
             match crate::speicher::Kettenspeicher::oeffnen(&pfad, konfig.netz.startwert_hash()) {
                 Ok((mut speicher, anlauf)) => {
                     let vorhanden = anlauf.anzahl;
-                    let mut uebernommen = 0usize;
-                    let mut abgelehnt = 0usize;
-                    let mut erster_grund = String::new();
-                    // ⚑ **Satz für Satz, nicht alle auf einmal**
-                    // (Fund 124). Bis zum 2026-09-02 stand die ganze
-                    // Kette im Arbeitsspeicher, bevor der erste Block
-                    // geprüft war. Jetzt liegt immer nur einer da.
-                    //
-                    // Ein Lesefehler mitten im Nachspielen bricht ab:
-                    // Was danach kommt, schlösse an einen Block an, den
-                    // dieser Knoten nicht hat, und würde ohnehin
-                    // abgewiesen. Der Grund geht ins Protokoll.
-                    let lesefehler = speicher
-                        .fuer_jeden_satz(|b| match kette.uebernimm(&b) {
-                            Ok(()) => uebernommen += 1,
-                            Err(e) => {
-                                abgelehnt += 1;
-                                if erster_grund.is_empty() {
-                                    erster_grund = e.to_string();
-                                }
-                            }
-                        })
-                        .err();
+                    let einsatz = kette.ablage().and_then(|a| {
+                        let h = a.hoehen().into_iter().rev().find(|&h| h > kette.hoehe())?;
+                        a.lesen(h).ok()
+                    });
+                    let mut n = nachspielen(&mut kette, &mut speicher, einsatz);
+                    if n.verworfen.is_some() {
+                        let verworfen = n.verworfen.take();
+                        (kette, basisblock) = Self::kette_ab_basis(&konfig, &mut protokoll)?;
+                        n = nachspielen(&mut kette, &mut speicher, None);
+                        n.verworfen = verworfen;
+                    }
                     // Erst **nach** dem Nachspielen anhängen, sonst
                     // schriebe der Wiederanlauf jeden Block ein zweites
                     // Mal in dieselbe Datei.
                     kette.speicher_setzen(speicher);
+                    kette.budget_setzen(konfig.kette_mb.saturating_mul(1024 * 1024));
                     let mut eintrag = Eintrag::neu("kette_geladen")
                         .text("datei", pfad.display().to_string())
                         .wahr("neu", anlauf.neu)
                         .zahl("in_datei", vorhanden as i64)
-                        .text(
-                            "lesefehler",
-                            lesefehler.map(|e| e.to_string()).unwrap_or_default(),
-                        )
-                        .zahl("uebernommen", uebernommen as i64)
-                        .zahl("abgelehnt", abgelehnt as i64)
+                        .text("lesefehler", n.lesefehler.unwrap_or_default())
+                        .zahl("uebernommen", n.uebernommen as i64)
+                        .zahl("abgelehnt", n.abgelehnt as i64)
+                        // Bis zum eigenen Abzug nur auf Anschluss geprüft.
+                        .zahl("ab_abzug", n.abzug.unwrap_or(0) as i64)
+                        .zahl("vorgespult", n.vorgespult as i64)
                         // Ein abgebrochener letzter Satz heißt: der
                         // Knoten wurde mitten im Schreiben abgeräumt.
                         // Genau das will der Chaos-Test wissen.
                         .zahl("abgeschnitten_bytes", anlauf.abgeschnitten as i64)
                         .zahl("hoehe", kette.hoehe() as i64)
                         .text("zustandswurzel", kurz(&kette.zustandswurzel()));
-                    if !erster_grund.is_empty() {
-                        eintrag = eintrag.text("erster_grund", erster_grund);
+                    if !n.erster_grund.is_empty() {
+                        eintrag = eintrag.text("erster_grund", n.erster_grund);
+                    }
+                    if let Some(grund) = n.verworfen {
+                        eintrag = eintrag.text("abzug_verworfen", grund);
                     }
                     protokoll.schreibe(eintrag);
                 }
@@ -638,7 +795,13 @@ impl Knoten {
             None
         };
         let hintergrund = match (&basisblock, kette.ablage()) {
-            (Some(b), Some(a)) if konfig.hintergrundpruefung && !a.bestaetigt() => Some(Hintergrund::neu(konfig.netz, b)),
+            (Some(b), Some(a))
+                if konfig.hintergrundpruefung
+                    && !a.bestaetigt()
+                    && !konfig.netz.ist_anker(b.header.height, &b.hash()) =>
+            {
+                Some(Hintergrund::neu(konfig.netz, b))
+            }
             _ => None,
         };
         let netzschluessel = match (&konfig.modellzusage, &konfig.shard, &konfig.konsensschluesseldatei) {
@@ -653,6 +816,12 @@ impl Knoten {
                 ))
             }
         };
+        // ⚑ **Archivrolle** ([`crate::archiv`], 2026-10-23): aus der eigenen
+        //   Kennung und den beiden jüngsten Langzeitabzügen. Eine gezogene
+        //   Kopie, der die Geschichte fehlt, holt sie mit Beweisen
+        //   ([`crate::archivabruf`]).
+        kette.archivkennung_setzen(netzschluessel.as_ref().map(|k| k.kennung()));
+        let abruf = archiv_abruf(&kette);
         let shardfuehrung = match (&konfig.shard, &konfig.konsensschluesseldatei) {
             (Some(sk), Some(pfad)) if !sk.programm.as_os_str().is_empty() => {
                 Some(crate::shardfuehrung::Shardfuehrung::neu(crate::shardfuehrung::Shardstart {
@@ -678,6 +847,7 @@ impl Knoten {
             netzschluessel,
             netzadresse,
             netz_nonce: 0,
+            netz_stand: (0, 0),
             netz_gesendet: std::collections::BTreeMap::new(),
             shardfuehrung,
             fristsammlung: crate::frist::Fristsammlung::default(),
@@ -692,7 +862,8 @@ impl Knoten {
             testverkehr_nonce: (0, 0),
             abzug_holen,
             hintergrund,
-            abzug_zwischen: None,
+            abruf,
+            teilabruf: None,
             abzug_gemeldet: None,
             angehalten: None,
             gegenstellen: Vec::new(),
@@ -709,17 +880,23 @@ impl Knoten {
             testverkehr_zaehler: 0,
             kette,
             nachforderungen: Vec::new(),
+            leer_geantwortet: std::collections::HashMap::new(),
             beobachtungsstelle: crate::beobachtung::Beobachtungsstelle::neu(),
             kontraktabschrift: crate::tuer::Kontraktabschrift::neu(),
             letzte_inferenzantwort: None,
             ortsanschluss,
             inferenz_zaehler: Arc::new(Inferenzzaehler::default()),
+            inferenz_plaetze: Plaetze::neu(INFERENZ_IN_ARBEIT_HOECHSTENS),
+            drossel: crate::drossel::Drossel::default(),
+            gedrosselt: 0,
+            zeitprobe_platz: Plaetze::neu(1),
             zugesagt_bytes: 0,
             abrechnungen: abrechnungen_rx,
             abrechnungskanal: abrechnungen_tx,
             abrechnungsnonce: 1_000_000,
             kontoschluessel,
             hoechste_gehoerte: 0,
+            gehoert: crate::gehoert::Gehoert::default(),
             latenz_je_peer: std::collections::BTreeMap::new(),
             latenz: (u64::MAX, 0, 0),
             horchadressen: Vec::new(),
@@ -1291,6 +1468,11 @@ impl Knoten {
         self.kommandos
             .send(NodeCommand::Anfrage { an, daten })
             .is_ok()
+    }
+
+    /// Inferenzauftraege aus dem Netz: bearbeitet und abgelehnt.
+    pub fn inferenzstand(&self) -> (u64, u64) {
+        self.inferenz_zaehler.stand()
     }
 
     /// Die zuletzt eingetroffene Inferenzantwort.
@@ -1879,6 +2061,7 @@ impl Knoten {
         eintrag = eintrag
             .zahl("inferenz_bearbeitet", bearbeitet as i64)
             .zahl("inferenz_abgelehnt", abgelehnt as i64)
+            .zahl("gedrosselt", std::mem::take(&mut self.gedrosselt) as i64)
             .zahl("konto_guthaben", guthaben.min(i64::MAX as u64) as i64);
         self.protokoll.schreibe(eintrag);
 
@@ -1953,8 +2136,9 @@ impl Knoten {
     ///
     /// Tut nichts, wenn nichts fehlt oder bereits eine Anfrage läuft.
     fn fordere_nach(&mut self, von: libp2p::PeerId, fremde_hoehe: u64) {
-        self.hoechste_gehoerte = self.hoechste_gehoerte.max(fremde_hoehe);
-        self.nachfordern(Some(von), fremde_hoehe);
+        self.gehoert.hoeren(&von, fremde_hoehe, std::time::Instant::now());
+        self.hoechste_gehoerte = self.gehoert.hoechste();
+        self.nachfordern(Some(von), fremde_hoehe.min(self.hoechste_gehoerte));
     }
 
     /// ⚑ **Weiter nachfordern, solange eine höhere Kette gehört wurde**
@@ -2000,8 +2184,20 @@ impl Knoten {
             else {
                 return;
             };
+            // 📌 **Nicht, wer eben nichts hatte** (Fund 626). Eine
+            //    Gegenstelle, die selbst zurückliegt, antwortet sofort mit
+            //    nichts, ist damit als erste wieder frei und bekam jedes Mal
+            //    den vordersten Bereich; die einzige, die ihn hatte, war mit
+            //    späteren beschäftigt, die der volle Vorausspeicher verwarf.
+            //    Nach einem Totalausfall stand ein Einsteiger so 240 Runden
+            //    lang auf derselben Höhe (Archivlauf, 2026-10-24).
             let belegt = |p: &libp2p::PeerId, k: &Self| {
-                k.nachforderungen.iter().any(|n| n.an == *p) || k.hintergrund_bei(p) || k.abzug_bei(p)
+                k.nachforderungen.iter().any(|n| n.an == *p)
+                    || k.leer_geantwortet.get(p).is_some_and(|(h, t)| *h <= ab && t.elapsed() < LEER_SPERRE)
+                    || k.hintergrund_bei(p)
+                    || k.abzug_bei(p)
+                    || k.abruf_bei(p)
+                    || k.teilabruf_bei(p)
             };
             let peer = match erster.take().filter(|p| !belegt(p, self)) {
                 Some(p) => p,
@@ -2137,11 +2333,13 @@ impl Knoten {
                             let _ = self.voraus.ablegen(self.kette.hoehe(), block.clone(), &m.data);
                             self.fordere_nach(m.von, block.header.height);
                         }
-                        // Auch eine abgelehnte Hoehe ist eine gehoerte
-                        // Hoehe: Sie sagt, dass jemand weiter ist, und
-                        // genau das entscheidet ueber die Bereitschaft.
-                        self.hoechste_gehoerte =
-                            self.hoechste_gehoerte.max(block.header.height);
+                        // ⚑ **Nur ein Block, der vorn nicht anschliesst, sagt
+                        //   etwas über die Höhe** (Fund 634), und nur er wird
+                        //   über die Nachforderung belegt oder widerlegt. Ein
+                        //   Block mit falscher Höhe, Epoche oder Wurzel ist ein
+                        //   Befund über seinen Absender; bis zum 2026-10-24
+                        //   zählte auch seine Höhe, und ein einziger erfundener
+                        //   hielt den Knoten für immer „nicht bereit“.
                     }
                 }
             }
@@ -2233,7 +2431,21 @@ impl Knoten {
             }
             // Jemand fragt Blöcke nach. Antworten, soweit vorhanden.
             NodeEvent::AnfrageEingegangen { von, daten, marke } => {
-                let sofort = match Nachforderung::aus_bytes(&daten) {
+                let anfrage = Nachforderung::aus_bytes(&daten);
+                // ⚑ **Teure Anfragen gehen durch die Drossel** (Fund 632):
+                //   je Gegenstelle und für alle zusammen; darüber gibt es
+                //   `Nichts`, und das kostet nichts.
+                let art = match &anfrage {
+                    Some(Nachforderung::Bloecke { .. }) => Some(crate::drossel::Art::Bloecke),
+                    Some(Nachforderung::Archiv { .. } | Nachforderung::Teil { .. }) => Some(crate::drossel::Art::Archiv),
+                    _ => None,
+                };
+                let gedrosselt = art.is_some_and(|a| !self.drossel.erlaubt(a, &von, std::time::Instant::now()));
+                if gedrosselt {
+                    self.gedrosselt += 1;
+                }
+                let sofort = match anfrage.filter(|_| !gedrosselt) {
+                    None if gedrosselt => Some((Nachlieferung::Nichts, 0)),
                     Some(Nachforderung::Bloecke { ab, bis }) => {
                         let bloecke = crate::nachschub::in_die_antwort(self.kette.bloecke_von_bis(ab, bis));
                         let n = bloecke.len();
@@ -2273,8 +2485,9 @@ impl Knoten {
                     Some(Nachforderung::Inferenz(auftrag)) => {
                         let sitzung = auftrag.sitzung;
                         let zaehler = self.inferenz_zaehler.clone();
-                        match self.ortsanschluss.clone() {
-                            Some(anschluss) => {
+                        let platz = self.inferenz_plaetze.nehmen();
+                        match self.ortsanschluss.clone().zip(platz) {
+                            Some((anschluss, platz)) => {
                                 let sender = self.kommandos.clone();
                                 tokio::spawn(async move {
                                     let antwort = match anschluss
@@ -2290,6 +2503,7 @@ impl Knoten {
                                             sitzung,
                                         },
                                     };
+                                    drop(platz);
                                     zaehler.zaehlen(&antwort);
                                     if let Some(bytes) = Nachlieferung::Inferenz(antwort).als_bytes()
                                     {
@@ -2299,6 +2513,8 @@ impl Knoten {
                                 });
                                 None
                             }
+                            // Ohne Anschluss oder ohne freien Platz: sofort
+                            // abgelehnt (Fund 609).
                             None => {
                                 let antwort = myl_types::inferenzauftrag::Inferenzantwort::Abgelehnt {
                                     sitzung,
@@ -2311,19 +2527,36 @@ impl Knoten {
                     // ⚑ **Eine Zeitprobe an den eigenen Shard** (Stufe 4,
                     //   Frist): weitergereicht in einer eigenen Aufgabe, denn
                     //   der Shard rechnet; die Zeit nimmt, wer fragt.
+                    //
+                    // 📌 **Fund 609 (2026-10-23):** Hier antwortete der Knoten
+                    //   jeder Gegenstelle, und jede Probe startete einen
+                    //   eigenen Faden, der die Anfrage um bis zu 120 s
+                    //   ueberlebte. Die Tuer des Shards bedient nacheinander:
+                    //   Eine Flut fremder Proben stand vor jedem echten
+                    //   Auftrag, der Miner verpasste seine Fristen, und die
+                    //   ehrlichen Messenden, deren Proben hinter der Flut
+                    //   warteten, unterschrieben echte Fristzeugnisse gegen
+                    //   ihn. Jetzt nur fuer Mitglieder des eigenen Pods laut
+                    //   Kette, und eine zugleich.
                     Some(Nachforderung::Zeitprobe { positionen }) => {
-                        match self.shardfuehrung.as_mut().and_then(|f| f.adresse()) {
-                            Some(adresse) => {
+                        let messend = self
+                            .miner_ich()
+                            .is_some_and(|ich| crate::frist::misst_mich(self.kette.zustand(), &ich, &von));
+                        let platz = if messend { self.zeitprobe_platz.nehmen() } else { None };
+                        match self.shardfuehrung.as_mut().and_then(|f| f.tuer()).zip(platz) {
+                            Some(((adresse, ausweis), platz)) => {
                                 let sender = self.kommandos.clone();
                                 tokio::task::spawn_blocking(move || {
                                     let antwort = match myl_types::zeitprobe::fragen(
                                         adresse,
+                                        &ausweis,
                                         positionen.min(crate::frist::PROBE_POSITIONEN),
                                         Duration::from_secs(120),
                                     ) {
                                         Ok(abdruck) => Nachlieferung::Zeitprobe(abdruck),
                                         Err(_) => Nachlieferung::Nichts,
                                     };
+                                    drop(platz);
                                     if let Some(bytes) = antwort.als_bytes() {
                                         let _ = sender.send(NodeCommand::Antwort { marke, daten: bytes });
                                     }
@@ -2338,6 +2571,26 @@ impl Knoten {
                     Some(Nachforderung::Abzug { hoehe, ab }) => {
                         Some((self.abzug_stueck(hoehe, ab).unwrap_or(Nachlieferung::Nichts), 0))
                     }
+                    // ⚑ **Geschichte mit Beweis** (Archivknoten, Stufe A4):
+                    //   nur, wer ab Genesis lebt und die Länge kennt.
+                    Some(Nachforderung::Archiv { ab, bis, anzahl }) => match self.kette.archivlieferung(ab, bis, anzahl) {
+                        Some((bloecke, beweis)) => {
+                            self.protokoll.schreibe(
+                                Eintrag::neu("archiv_geliefert")
+                                    .text("an", von.to_string())
+                                    .zahl("ab", ab as i64)
+                                    .zahl("bloecke", bloecke.len() as i64),
+                            );
+                            Some((Nachlieferung::Archiv { bloecke, beweis }, 0))
+                        }
+                        None => Some((Nachlieferung::Nichts, 0)),
+                    },
+                    // ⚑ **Ein Teil für einen Splitter** (Stufe A7): nur gegen
+                    //   die geltende Teilwurzel des laufenden Abschnitts.
+                    Some(Nachforderung::Teil { grenze, stelle, teil }) => match self.kette.teilstueck(grenze, stelle, teil) {
+                        Some((stueck, beweis)) => Some((Nachlieferung::Teil { grenze, stueck, beweis }, 0)),
+                        None => Some((Nachlieferung::Nichts, 0)),
+                    },
                     // ⚑ **Ein Stück einer Datei des Netzmodells** (P11): nur,
                     //   was das eigene Manifest nennt.
                     Some(Nachforderung::Datei { name, ab, laenge }) => {
@@ -2385,6 +2638,12 @@ impl Knoten {
                     }
                     Some(Nachlieferung::Nichts) if self.abzug_bei(&von) => return self.abzug_nichts(von),
                     Some(Nachlieferung::Nichts) if self.hintergrund_bei(&von) => return self.hintergrund_nichts(von),
+                    Some(Nachlieferung::Nichts) if self.abruf_bei(&von) => return self.abruf_nichts(von),
+                    Some(Nachlieferung::Nichts) if self.teilabruf_bei(&von) => return self.teilabruf_nichts(von),
+                    Some(Nachlieferung::Teil { grenze, stueck, beweis }) => {
+                        return self.teil_erhalten(von, grenze, stueck, beweis)
+                    }
+                    Some(Nachlieferung::Archiv { bloecke, beweis }) => return self.abruf_lieferung(von, bloecke, beweis),
                     Some(Nachlieferung::Bloecke(b)) if self.hintergrund_bei(&von) && self.fuer_den_hintergrund(&b) => {
                         return self.hintergrund_bloecke(von, b)
                     }
@@ -2443,6 +2702,19 @@ impl Knoten {
                             }
                             Err(_) => abgelehnt += 1,
                         }
+                    }
+                }
+                // Wer nichts hatte, wird für diese Höhe eine Weile übergangen
+                // (Fund 626); wer geliefert hat, wieder gefragt.
+                if angenommen > 0 || vorausgelegt > 0 {
+                    self.leer_geantwortet.remove(&von);
+                } else if matches!(Nachlieferung::aus_bytes(&daten), Some(Nachlieferung::Nichts)) {
+                    if let Some(n) = self.nachforderungen.iter().find(|n| n.an == von) {
+                        self.leer_geantwortet.insert(von, (n.ab, std::time::Instant::now()));
+                        // Wer eine Höhe ab hier behauptet hat und nichts
+                        // liefert, hat sie nicht (Fund 634).
+                        self.gehoert.nichts_ab(&von, n.ab, std::time::Instant::now());
+                        self.hoechste_gehoerte = self.gehoert.hoechste();
                     }
                 }
                 self.nachforderungen.retain(|n| n.an != von);
@@ -2507,6 +2779,8 @@ impl Knoten {
             }
             NodeEvent::Getrennt { peer, grund } => {
                 self.gegenstellen.retain(|p| *p != peer);
+                self.gehoert.getrennt(&peer);
+                self.hoechste_gehoerte = self.gehoert.hoechste();
                 Eintrag::neu("getrennt").text("gegenstelle", peer.to_string()).text("grund", grund)
             }
             // Hier wird die Verbindungsgrenze sichtbar. Ohne diesen
@@ -2662,6 +2936,10 @@ impl Knoten {
             return;
         };
         self.zusage_pflegen(&ich);
+        self.archiv_belegen(&ich);
+        self.teilwurzel_nennen(&ich);
+        self.teil_belegen(&ich);
+        self.teile_holen(&ich);
         self.shard_abgleichen(&ich);
         self.fristen_messen(&ich);
         self.dateien_nachholen(&ich);
@@ -2674,12 +2952,42 @@ impl Knoten {
     /// vom Konto im Zustand oder von der zuletzt vergebenen, je nachdem,
     /// welche höher ist.
     fn netz_tx(&mut self, anweisung: myl_consensus::block::Anweisung) -> Option<myl_consensus::block::Transaktion> {
+        self.netz_luecke_pruefen();
         let k = self.netzschluessel.as_ref()?;
         let im_zustand = self.kette.zustand().account(&k.adresse()).nonce;
         let nonce = self.netz_nonce.max(im_zustand);
         let tx = k.transaktion(&self.kette.netzwert(), nonce, anweisung).ok()?;
         self.netz_nonce = nonce + 1;
         Some(tx)
+    }
+
+    /// Ob eigene Transaktionen ausstehen: vergeben, im Zustand noch nicht
+    /// verbraucht.
+    fn netz_offen(&self) -> bool {
+        self.netzschluessel
+            .as_ref()
+            .is_some_and(|k| self.netz_nonce > self.kette.zustand().account(&k.adresse()).nonce)
+    }
+
+    /// ⚑ **Eine Lücke heilt** (Fund 627): Steht die Nummer im Zustand
+    /// [`NETZ_LUECKE_HOEHEN`] Höhen lang still, während eigene Transaktionen
+    /// ausstehen, ist eine verloren, und es wird ab der Nummer im Zustand
+    /// neu gezählt. Bis zum 2026-10-24 zählte der Knoten nur weiter: Eine
+    /// einzige verlorene Transaktion machte jede spätere ungültig, für
+    /// immer, und eine Archivkopie verlor so ihren Platz. Die Regel steht in
+    /// [`netz_luecke`].
+    fn netz_luecke_pruefen(&mut self) {
+        let Some(k) = self.netzschluessel.as_ref() else {
+            return;
+        };
+        let im_zustand = self.kette.zustand().account(&k.adresse()).nonce;
+        let (hoehe, gehoert) = (self.kette.hoehe(), self.hoechste_gehoerte);
+        if netz_luecke(&mut self.netz_stand, self.netz_nonce, im_zustand, hoehe, gehoert) {
+            self.protokoll.schreibe(
+                Eintrag::neu("netz_luecke").zahl("vergeben", self.netz_nonce as i64).zahl("im_zustand", im_zustand as i64),
+            );
+            self.netz_nonce = im_zustand;
+        }
     }
 
     fn tx_verbreiten(&mut self, tx: myl_consensus::block::Transaktion) {
@@ -2694,14 +3002,225 @@ impl Knoten {
         let _ = self.kommandos.send(NodeCommand::Publish { topic: GossipTopic::Transactions, data: daten, result: None });
     }
 
+    /// ⚑ **Der Archivbeleg der Epoche** (Stufe A5): Wer Kopie ist und die
+    /// Geschichte hat, belegt selbst, einmal je Epoche, mit einem neuen
+    /// Versuch nach acht Höhen, solange keiner im Zustand steht.
+    fn archiv_belegen(&mut self, ich: &myl_types::ids::MinerId) {
+        let a = &self.kette.zustand().archiv;
+        if !a.ist_kopie(ich) || a.belegt.contains(ich) || self.schon_gesendet("archivbeleg") {
+            return;
+        }
+        let Some(anweisung) = self.kette.archivbeleg(ich) else {
+            return;
+        };
+        let stichproben = match &anweisung {
+            myl_consensus::block::Anweisung::ArchivBelegen { bloecke, .. } => bloecke.len(),
+            _ => 0,
+        };
+        if let Some(tx) = self.netz_tx(anweisung) {
+            self.protokoll.schreibe(
+                Eintrag::neu("archiv_beleg")
+                    .zahl("epoche", self.kette.zustand().epoch.0 as i64)
+                    .zahl("stichproben", stichproben as i64),
+            );
+            self.tx_verbreiten(tx);
+        }
+    }
+
+    /// ⚑ **Die Teilwurzel nennen** (Stufe A7): einmal je Abschnitt, als
+    /// Kopie mit Geschichte.
+    fn teilwurzel_nennen(&mut self, ich: &myl_types::ids::MinerId) {
+        let a = &self.kette.zustand().archiv;
+        if !a.ist_kopie(ich) || a.teilwurzel.is_some() || a.teilstimmen.contains_key(ich) {
+            return;
+        }
+        if self.schon_gesendet("teilwurzel") {
+            return;
+        }
+        let Some(anweisung) = self.kette.teilwurzel_anweisung(ich) else {
+            return;
+        };
+        if let Some(tx) = self.netz_tx(anweisung) {
+            self.protokoll.schreibe(Eintrag::neu("archiv_teilwurzel").zahl("grenze", self.kette.zustand().archiv.grenze as i64));
+            self.tx_verbreiten(tx);
+        }
+    }
+
+    /// ⚑ **Den eigenen Teil der gezogenen Gruppe belegen** (Stufe A7),
+    /// einmal je Epoche, sobald er auf der Platte liegt.
+    fn teil_belegen(&mut self, ich: &myl_types::ids::MinerId) {
+        let a = &self.kette.zustand().archiv;
+        let (Some(index), Some(_)) = (a.teilindex(ich), a.teilwurzel) else {
+            return;
+        };
+        if a.teil_belegt.contains(ich) {
+            return;
+        }
+        let z = self.kette.zustand();
+        let Some(stelle) = myl_ledger::archiv::teilprobe(&z.archiv, &z.epochensaat, z.epoch.0, ich) else {
+            return;
+        };
+        let grenze = z.archiv.grenze;
+        let Some((stueck, beweis)) = self.kette.teilablage().and_then(|t| t.lesen(grenze, stelle)) else {
+            return;
+        };
+        if beweis.teil != index as u64 || self.schon_gesendet("teilbeleg") {
+            return;
+        }
+        if let Some(tx) = self.netz_tx(myl_consensus::block::Anweisung::ArchivTeilBelegen { stueck, beweis }) {
+            self.protokoll.schreibe(Eintrag::neu("archiv_teilbeleg").zahl("stelle", stelle as i64));
+            self.tx_verbreiten(tx);
+        }
+    }
+
+    /// ⚑ **Die eigenen Teile holen** (Stufe A7): Wer Splitter ist und die
+    /// Teilwurzel gilt, holt die Teile, die noch nicht auf der Platte liegen,
+    /// bei Kopien und Haltern zuerst.
+    fn teile_holen(&mut self, ich: &myl_types::ids::MinerId) {
+        let a = &self.kette.zustand().archiv;
+        let (Some(index), Some(_)) = (a.teilindex(ich), a.teilwurzel) else {
+            self.teilabruf = None;
+            return;
+        };
+        let grenze = a.grenze;
+        let anzahl = a.teil_bis - a.teil_ab;
+        if self.teilabruf.as_ref().is_none_or(|t| t.grenze != grenze) {
+            let Some(ablage) = self.kette.teilablage() else {
+                return;
+            };
+            let fehlend: Vec<u64> = (0..anzahl).filter(|s| !ablage.hat(grenze, *s)).collect();
+            if fehlend.is_empty() {
+                return;
+            }
+            let vorgaenger = self
+                .kette
+                .archivkopien()
+                .iter()
+                .filter_map(|adresse| myl_net::peer_id_aus_bytes(adresse).ok())
+                .collect();
+            self.protokoll.schreibe(
+                Eintrag::neu("archiv_teile_holen").zahl("grenze", grenze as i64).zahl("fehlend", fehlend.len() as i64),
+            );
+            self.teilabruf = Some(Teilabruf {
+                grenze,
+                teil: index as u64,
+                fehlend,
+                laufend: Vec::new(),
+                gesperrt: Default::default(),
+                reihum: 0,
+                gemeldet: None,
+                vorgaenger,
+            });
+        }
+        if let Some(t) = self.teilabruf.as_mut() {
+            t.laufend.retain(|(_, _, seit)| seit.elapsed() <= ABZUG_FRIST);
+        }
+        self.teilabruf_anfragen();
+    }
+
+    fn teilabruf_bei(&self, von: &libp2p::PeerId) -> bool {
+        self.teilabruf.as_ref().is_some_and(|t| t.laufend.iter().any(|(p, _, _)| p == von))
+    }
+
+    fn teilabruf_anfragen(&mut self) {
+        let mut versuche = 0usize;
+        while self.teilabruf.as_ref().is_some_and(|t| t.laufend.len() < HINTERGRUND_ZUGLEICH)
+            && versuche <= self.gegenstellen.len()
+        {
+            versuche += 1;
+            let frei: Vec<libp2p::PeerId> = self
+                .gegenstellen
+                .iter()
+                .filter(|p| {
+                    !self.nachforderungen.iter().any(|n| n.an == **p)
+                        && !self.hintergrund_bei(p)
+                        && !self.abzug_bei(p)
+                        && !self.abruf_bei(p)
+                        && !self.teilabruf_bei(p)
+                })
+                .copied()
+                .collect();
+            let Some(t) = self.teilabruf.as_mut() else {
+                return;
+            };
+            let Some(&stelle) = t.fehlend.iter().find(|s| !t.laufend.iter().any(|(_, x, _)| x == *s)) else {
+                return;
+            };
+            let vorgaenger = t.vorgaenger.iter().find(|p| frei.contains(p) && !t.gesperrt.contains(p)).copied();
+            let Some(peer) =
+                vorgaenger.or_else(|| naechste_gegenstelle(&frei, &mut t.gesperrt, &mut t.reihum, &mut t.gemeldet))
+            else {
+                return;
+            };
+            let (grenze, teil) = (t.grenze, t.teil);
+            if !self.anfrage_senden(peer, &Nachforderung::Teil { grenze, stelle, teil }) {
+                return;
+            }
+            if let Some(t) = self.teilabruf.as_mut() {
+                t.laufend.push((peer, stelle, std::time::Instant::now()));
+            }
+        }
+    }
+
+    fn teilabruf_nichts(&mut self, von: libp2p::PeerId) {
+        if let Some(t) = self.teilabruf.as_mut() {
+            t.laufend.retain(|(p, _, _)| *p != von);
+            t.gesperrt.insert(von);
+        }
+        self.teilabruf_anfragen();
+    }
+
+    /// **Ein Teil kommt an**: nur von einer gefragten Gegenstelle, für den
+    /// erfragten Teil, geprüft gegen die Teilwurzel im Zustand.
+    fn teil_erhalten(
+        &mut self,
+        von: libp2p::PeerId,
+        grenze: u64,
+        stueck: Vec<u8>,
+        beweis: myl_types::archivteile::Teilbeweis,
+    ) {
+        let geltend = self.kette.zustand().archiv.teilwurzel;
+        let ablage = self.kette.teilablage();
+        let Some(t) = self.teilabruf.as_mut() else {
+            return;
+        };
+        let Some(i) = t.laufend.iter().position(|(p, s, _)| *p == von && *s == beweis.stelle) else {
+            return;
+        };
+        t.laufend.remove(i);
+        let gut = grenze == t.grenze
+            && beweis.teil == t.teil
+            && geltend.is_some_and(|w| beweis.pruefen(&w, &stueck))
+            && ablage.as_ref().is_some_and(|a| a.ablegen(grenze, beweis.stelle, &stueck, &beweis).is_ok());
+        if !gut {
+            t.gesperrt.insert(von);
+            self.protokoll.schreibe(Eintrag::neu("archiv_teil_abgelehnt").text("von", von.to_string()));
+            return self.teilabruf_anfragen();
+        }
+        t.fehlend.retain(|s| *s != beweis.stelle);
+        if t.fehlend.is_empty() {
+            let grenze = t.grenze;
+            self.teilabruf = None;
+            self.protokoll.schreibe(Eintrag::neu("archiv_teile_vollstaendig").zahl("grenze", grenze as i64));
+            return;
+        }
+        self.teilabruf_anfragen();
+    }
+
     /// Ob für `was` bei der laufenden Höhe schon etwas unterwegs ist; sonst
     /// vermerken. Ein Block mit der Transaktion kommt in wenigen Höhen.
     fn schon_gesendet(&mut self, was: &'static str) -> bool {
         let hoehe = self.kette.hoehe();
-        if self.netz_gesendet.get(was).is_some_and(|h| hoehe < h + 8) {
+        // ⚑ **Solange eigene Transaktionen ausstehen, wartet ein neuer
+        //   Versuch**, bis zur Lückenfrist (Fund 627). Mit acht Höhen allein
+        //   ging im Archivlauf derselbe Beleg in jeder Aufnahme neu hinaus,
+        //   alle zwei Sekunden, je bis zu 27 KB.
+        let frist = if self.netz_offen() { NETZ_LUECKE_HOEHEN } else { 8 };
+        if self.netz_gesendet.get(was).is_some_and(|b| hoehe < b + frist) {
             return true;
         }
-        self.netz_gesendet.insert(was, hoehe);
+        // ⚑ Die Frist zählt ab der gehörten Spitze (Fund 628).
+        self.netz_gesendet.insert(was, frist_bezug(hoehe, self.hoechste_gehoerte));
         false
     }
 
@@ -3113,10 +3632,67 @@ struct Hintergrund {
     gemeldet: Option<std::time::Instant>,
 }
 
+/// So lange wird eine Gegenstelle, die nichts hatte, ab dieser Höhe nicht
+/// gefragt (Fund 626).
+const LEER_SPERRE: Duration = Duration::from_secs(30);
+
+/// So viele Höhen darf die eigene Nummer im Zustand stillstehen, während
+/// eigene Transaktionen ausstehen, bevor eine als verloren gilt (Fund 627).
+/// Dieselbe Spanne wartet eine Transaktion mit späterer Nummer beim
+/// Erzeuger auf ihre Vorgängerin.
+const NETZ_LUECKE_HOEHEN: u64 = crate::kette::WARTEN_HOECHSTENS_HOEHEN;
+
+/// So weit über der eigenen Höhe zählt eine gehörte Spitze höchstens als
+/// Bezug der Fristen eigener Transaktionen (Fund 628): Die Höhe kommt auch
+/// aus abgelehnten Blöcken, also von jedem.
+const NETZ_SPITZE_HOECHSTENS: u64 = 1024;
+
+/// **Ab welcher Höhe eine Frist für eigene Transaktionen zählt** (Fund 628):
+/// ab der Spitze, die dieser Knoten gehört hat, nicht ab der eigenen Höhe.
+///
+/// 📌 Im Archivlauf vom 2026-10-24 lagen Folger bei 25 ms je Block meist
+/// 40 bis 220 Höhen hinter dem Erzeuger. Ihre Transaktion stand längst im
+/// Block, sie sahen ihn nur noch nicht, und nach 64 eigenen Höhen meldeten
+/// sie eine Lücke, die keine war: 25 Mal bei einem einzigen Splitter.
+///
+/// ⚠️ Gedeckelt auf [`NETZ_SPITZE_HOECHSTENS`] über der eigenen Höhe: Eine
+/// erfundene Spitze verzögert die Heilung einer echten Lücke, verhindert sie
+/// aber nicht.
+fn frist_bezug(hoehe: u64, gehoert: u64) -> u64 {
+    gehoert.clamp(hoehe, hoehe.saturating_add(NETZ_SPITZE_HOECHSTENS))
+}
+
+/// **Ob eine eigene Transaktion verloren ist** (Funde 627 und 628): `stand`
+/// ist die Nummer im Zustand und der Bezug, ab dem die Frist zählt. Er wird
+/// neu gesetzt, wenn nichts aussteht oder die Nummer im Zustand sich bewegt
+/// hat, also bei der Vergabe; verloren ist eine, wenn die eigene Höhe
+/// [`NETZ_LUECKE_HOEHEN`] über dem Bezug steht und die Nummer noch immer.
+pub(crate) fn netz_luecke(stand: &mut (u64, u64), vergeben: u64, im_zustand: u64, hoehe: u64, gehoert: u64) -> bool {
+    let luecke = vergeben > im_zustand && stand.0 == im_zustand && hoehe >= stand.1.saturating_add(NETZ_LUECKE_HOEHEN);
+    if luecke || vergeben <= im_zustand || stand.0 != im_zustand {
+        *stand = (im_zustand, frist_bezug(hoehe, gehoert));
+    }
+    luecke
+}
+
 /// So viele Lieferungen holt die Hintergrundprüfung höchstens zugleich: die
 /// Hälfte von [`NACHHOLER`], damit das Nachholen der eigenen Kette, um das es
 /// im Betrieb geht, Gegenstellen behält.
 const HINTERGRUND_ZUGLEICH: usize = NACHHOLER / 2;
+
+/// ⚑ **So viele Lieferungen holt das Nachladen der Geschichte zugleich**
+/// (Fund 630), höchstens [`ARCHIV_JE_GEGENSTELLE`] bei derselben. Eine neue
+/// Kopie hat eine Frist; bis NODE 0.59.0 holte sie mit
+/// [`HINTERGRUND_ZUGLEICH`], zwei Lieferungen zu 512 Blöcken. Im Archivlauf
+/// vom 2026-10-24 (50 bis 200 ms Laufzeit je Seite, 1 bis 5 % Verlust) kam
+/// damit alle 3,6 s eine Lieferung je Gegenstelle, rund 226 Blöcke je
+/// Sekunde: 509 s für 115 200 Blöcke, und die Kopie wurde ersetzt.
+const ARCHIV_ZUGLEICH: usize = 8;
+
+/// Lieferungen des Nachladens bei derselben Gegenstelle zugleich: so viele
+/// wie die Hintergrundprüfung, damit die Herleitung der Ströme je
+/// Verbindung in `myl-net` stimmt.
+const ARCHIV_JE_GEGENSTELLE: usize = HINTERGRUND_ZUGLEICH;
 
 impl Hintergrund {
     fn neu(netz: &'static crate::netz::Netz, basis: &myl_consensus::block::Block) -> Self {
@@ -3132,6 +3708,55 @@ impl Hintergrund {
             gemeldet: None,
         }
     }
+}
+
+/// ⚑ **Das Nachladen der Geschichte** ([`crate::archivabruf`]) samt den
+/// laufenden Lieferungen. Gefragt werden zuerst die Kopien früherer
+/// Perioden, über ihre registrierte Netzadresse; sie haben die Geschichte
+/// sicher. Danach jeder: Der Beweis hängt an der eigenen Basis, nicht am
+/// Liefernden.
+struct Abruf {
+    a: crate::archivabruf::Archivabruf,
+    laufend: Vec<Nachforderung1>,
+    gesperrt: std::collections::HashSet<libp2p::PeerId>,
+    reihum: usize,
+    gemeldet: Option<std::time::Instant>,
+    vorgaenger: Vec<libp2p::PeerId>,
+}
+
+/// ⚑ **Das Holen der Teile eines Splitters** (Stufe A7): je Stelle eine
+/// Lieferung, bei Kopien und Haltern zuerst.
+struct Teilabruf {
+    grenze: u64,
+    teil: u64,
+    fehlend: Vec<u64>,
+    laufend: Vec<(libp2p::PeerId, u64, std::time::Instant)>,
+    gesperrt: std::collections::HashSet<libp2p::PeerId>,
+    reihum: usize,
+    gemeldet: Option<std::time::Instant>,
+    vorgaenger: Vec<libp2p::PeerId>,
+}
+
+/// Das Nachladen einer Kopie, der die Geschichte vor ihrer Basis fehlt;
+/// `None`, wenn sie keine braucht oder die Basis nicht lesbar ist.
+fn archiv_abruf(kette: &Kette) -> Option<Abruf> {
+    if !kette.braucht_geschichte() {
+        return None;
+    }
+    let (abzug, zustand) = kette.ablage()?.lesen(kette.basis()).ok()?;
+    let a = crate::archivabruf::Archivabruf::neu(
+        &kette.archivpfad()?,
+        kette.netz().startwert_hash(),
+        abzug.block,
+        &zustand.historie,
+    )
+    .ok()?;
+    let vorgaenger = kette
+        .archivkopien()
+        .iter()
+        .filter_map(|adresse| myl_net::peer_id_aus_bytes(adresse).ok())
+        .collect();
+    Some(Abruf { a, laufend: Vec::new(), gesperrt: Default::default(), reihum: 0, gemeldet: None, vorgaenger })
 }
 
 /// Eine Gegenstelle reihum, die nicht gesperrt ist. Sind alle gesperrt, wird
@@ -3197,6 +3822,119 @@ impl Knoten {
             h.laufend.retain(|n| n.seit.elapsed() <= ABZUG_FRIST);
         }
         self.hintergrund_anfragen();
+        if let Some(r) = self.abruf.as_mut() {
+            r.laufend.retain(|n| n.seit.elapsed() <= ABZUG_FRIST);
+        }
+        self.abruf_anfragen();
+    }
+
+    fn abruf_bei(&self, von: &libp2p::PeerId) -> bool {
+        self.abruf_anzahl_bei(von) > 0
+    }
+
+    fn abruf_anzahl_bei(&self, von: &libp2p::PeerId) -> usize {
+        self.abruf.as_ref().map_or(0, |r| r.laufend.iter().filter(|n| n.an == *von).count())
+    }
+
+    /// Füllt die Lieferungen des Nachladens bis [`ARCHIV_ZUGLEICH`] auf,
+    /// je Gegenstelle bis [`ARCHIV_JE_GEGENSTELLE`], die Kopien früherer
+    /// Perioden zuerst.
+    fn abruf_anfragen(&mut self) {
+        let mut versuche = 0usize;
+        while self.abruf.as_ref().is_some_and(|r| r.laufend.len() < ARCHIV_ZUGLEICH)
+            && versuche <= self.gegenstellen.len() * ARCHIV_JE_GEGENSTELLE
+        {
+            versuche += 1;
+            let frei: Vec<libp2p::PeerId> = self
+                .gegenstellen
+                .iter()
+                .filter(|p| {
+                    !self.nachforderungen.iter().any(|n| n.an == **p)
+                        && !self.hintergrund_bei(p)
+                        && !self.abzug_bei(p)
+                        && self.abruf_anzahl_bei(p) < ARCHIV_JE_GEGENSTELLE
+                })
+                .copied()
+                .collect();
+            let Some(r) = self.abruf.as_mut() else {
+                return;
+            };
+            let laufend: Vec<(u64, u64)> = r.laufend.iter().map(|n| (n.ab, n.bis)).collect();
+            let Some((ab, bis)) =
+                crate::nachschub::naechster_bereich(r.a.geschrieben(), &laufend, |x| r.a.wartet(x), r.a.ziel())
+            else {
+                return;
+            };
+            let vorgaenger = r.vorgaenger.iter().find(|p| frei.contains(p) && !r.gesperrt.contains(p)).copied();
+            let Some(peer) =
+                vorgaenger.or_else(|| naechste_gegenstelle(&frei, &mut r.gesperrt, &mut r.reihum, &mut r.gemeldet))
+            else {
+                return;
+            };
+            let anzahl = r.a.anzahl();
+            if !self.anfrage_senden(peer, &Nachforderung::Archiv { ab, bis, anzahl }) {
+                return;
+            }
+            if let Some(r) = self.abruf.as_mut() {
+                r.laufend.push(Nachforderung1 { an: peer, ab, bis, seit: std::time::Instant::now() });
+            }
+        }
+    }
+
+    fn abruf_nichts(&mut self, von: libp2p::PeerId) {
+        if let Some(r) = self.abruf.as_mut() {
+            r.laufend.retain(|n| n.an != von);
+            r.gesperrt.insert(von);
+        }
+        self.abruf_anfragen();
+    }
+
+    /// **Eine Lieferung der Geschichte**: nur von einer Gegenstelle, die
+    /// gefragt war, und ab der erfragten Höhe; geprüft gegen die eigene
+    /// Basis. Wer Müll liefert, wird gesperrt.
+    fn abruf_lieferung(
+        &mut self,
+        von: libp2p::PeerId,
+        bloecke: Vec<myl_consensus::block::Block>,
+        beweis: myl_types::historie::Beweis,
+    ) {
+        let Some(r) = self.abruf.as_mut() else {
+            return;
+        };
+        // Bei derselben Gegenstelle laufen bis zu zwei: die mit der Höhe,
+        // ab der geliefert wurde, sonst irgendeine, und die wird abgewiesen.
+        let ab = bloecke.first().map(|b| b.header.height);
+        let Some(i) = r
+            .laufend
+            .iter()
+            .position(|n| n.an == von && Some(n.ab) == ab)
+            .or_else(|| r.laufend.iter().position(|n| n.an == von))
+        else {
+            return;
+        };
+        let erfragt = r.laufend.remove(i);
+        let ergebnis = if ab != Some(erfragt.ab) {
+            Err("nicht ab der erfragten Höhe".to_string())
+        } else {
+            r.a.lieferung(bloecke, &beweis).map_err(|e| e.to_string())
+        };
+        if let Err(grund) = ergebnis {
+            r.gesperrt.insert(von);
+            self.protokoll.schreibe(Eintrag::neu("archiv_abgelehnt").text("von", von.to_string()).text("grund", grund));
+            return self.abruf_anfragen();
+        }
+        if !r.a.fertig() {
+            return self.abruf_anfragen();
+        }
+        let Some(r) = self.abruf.take() else {
+            return;
+        };
+        let ziel = r.a.anzahl();
+        let eintrag = match r.a.abschliessen().and_then(|pfad| self.kette.geschichte_einfuegen(&pfad)) {
+            Ok(n) => Eintrag::neu("archiv_vollstaendig").zahl("bloecke", n as i64).zahl("bis", ziel as i64),
+            Err(e) => Eintrag::neu("archiv_fehler").text("grund", e),
+        };
+        self.protokoll.schreibe(eintrag);
     }
 
     fn abzug_bei(&self, von: &libp2p::PeerId) -> bool {
@@ -3237,16 +3975,11 @@ impl Knoten {
         }
     }
 
-    /// Liefert ein Stück eines eigenen Abzugs, aus der Ablage; der zuletzt
-    /// gelesene bleibt für die folgenden Stücke im Speicher.
+    /// Liefert ein Stück eines eigenen Abzugs, aus der Ablage: nur dieses
+    /// Stück wird gelesen (Fund 609, [`crate::abzug::Ablage::stueck_lesen`]).
     fn abzug_stueck(&mut self, hoehe: u64, ab: u64) -> Option<Nachlieferung> {
-        if self.abzug_zwischen.as_ref().map(|a| a.hoehe()) != Some(hoehe) {
-            let (a, _) = self.kette.ablage()?.lesen(hoehe).ok()?;
-            self.abzug_zwischen = Some(a);
-        }
-        let a = self.abzug_zwischen.as_ref()?;
-        let daten = crate::abzug::stueck_von(a, ab)?.to_vec();
-        Some(Nachlieferung::Abzug { block: a.block.clone(), ab, daten, groesse: a.zustand.len() as u64 })
+        let (block, daten, groesse) = self.kette.ablage()?.stueck_lesen(hoehe, ab).ok()??;
+        Some(Nachlieferung::Abzug { block, ab, daten, groesse })
     }
 
     fn abzug_stueck_erhalten(&mut self, von: libp2p::PeerId, block: myl_consensus::block::Block, ab: u64, daten: &[u8], groesse: u64) {
@@ -3454,6 +4187,14 @@ impl Knoten {
     /// Meldet einen neu angelegten eigenen Abzug, mit vollem Blockhash: Aus
     /// dieser Zeile entsteht ein Anker.
     fn eigenen_abzug_melden(&mut self) {
+        if let Some((basis, vorher, nachher)) = self.kette.verdichtung_nehmen() {
+            self.protokoll.schreibe(
+                Eintrag::neu("kette_verdichtet")
+                    .zahl("basis", basis as i64)
+                    .zahl("bytes_vorher", vorher as i64)
+                    .zahl("bytes_nachher", nachher as i64),
+            );
+        }
         let Some((hoehe, hash)) = self.kette.letzter_abzug() else {
             return;
         };
@@ -3461,6 +4202,60 @@ impl Knoten {
             return;
         }
         self.abzug_gemeldet = Some(hoehe);
+        // ⚑ **Der Stand der Archivpflicht je Epoche** (Stufe A9): Rolle,
+        //   Ziehung, Belege, Halter, Ersetzte, Teilwurzel. Daraus liest der
+        //   Netzlauf von aussen, was sich an der Pflicht bewegt.
+        {
+            let a = &self.kette.zustand().archiv;
+            self.protokoll.schreibe(
+                Eintrag::neu("archiv_stand")
+                    .zahl("hoehe", hoehe as i64)
+                    .text("rolle", format!("{:?}", self.kette.archivrolle()))
+                    .zahl("basis", self.kette.basis() as i64)
+                    .wahr("gezogen", a.gezogen)
+                    .zahl("grenze", a.grenze as i64)
+                    .zahl("kopien", a.kopien.len() as i64)
+                    .zahl("vollstaendig", a.vollstaendig.len() as i64)
+                    .zahl("splitter", a.splitter.len() as i64)
+                    .zahl("halter", a.halter.len() as i64)
+                    .wahr("halter_alle", a.halter_alle)
+                    .zahl("ersetzt", a.ersetzt.len() as i64)
+                    .wahr("teilwurzel", a.teilwurzel.is_some())
+                    .zahl("teilwurzeln", a.teilwurzeln.len() as i64)
+                    .zahl("miner", self.kette.zustand().miner.len() as i64),
+            );
+        }
+        // ⚑ **Kalte Ausfuhr** (Stufe A8): die fertigen Perioden an jeder
+        //   Langzeitgrenze, wenn die Kette ab Genesis lebt.
+        if crate::abzug::ist_langzeit(hoehe) {
+            if let Some(ordner) = self.konfig.archiv_ausfuhr.clone() {
+                if self.kette.basis() == 0 {
+                    let startwert = self.kette.netz().startwert_hash();
+                    let kette = &mut self.kette;
+                    let eintrag = match crate::archivausfuhr::ausfuhr(&ordner, &startwert, hoehe, true, |ab, bis| {
+                        kette.bloecke_von_bis(ab, bis)
+                    }) {
+                        Ok(n) => Eintrag::neu("archiv_ausfuhr").zahl("hoehe", hoehe as i64).zahl("neu", n as i64),
+                        Err(e) => Eintrag::neu("archiv_ausfuhr_fehler").text("grund", e),
+                    };
+                    self.protokoll.schreibe(eintrag);
+                }
+            }
+        }
+        // ⚑ **Nachladen, sobald nötig, an jeder Epochengrenze**: Eine
+        //   Kopie, die mitten in der Periode nachrückt, wartete sonst bis zur
+        //   nächsten Langzeitgrenze und wäre bis dahin wieder ersetzt.
+        if self.abruf.is_none() {
+            self.abruf = archiv_abruf(&self.kette);
+            if let Some(r) = self.abruf.as_ref() {
+                self.protokoll.schreibe(
+                    Eintrag::neu("archiv_nachladen")
+                        .zahl("bis", self.kette.basis() as i64)
+                        .zahl("vorgaenger", r.vorgaenger.len() as i64),
+                );
+                self.abruf_anfragen();
+            }
+        }
         self.protokoll.schreibe(
             Eintrag::neu("abzug_angelegt")
                 .zahl("hoehe", hoehe as i64)
@@ -3508,5 +4303,167 @@ mod testverkehr_tests {
         assert_eq!(testverkehr_nonce(&mut s, 0, 41), 1, "noch in der Frist");
         assert_eq!(testverkehr_nonce(&mut s, 0, 42), 0, "nach 32 Blöcken neu");
         assert_eq!(testverkehr_nonce(&mut s, 0, 43), 1);
+    }
+}
+
+#[cfg(test)]
+mod wiederanlauf_tests {
+    use super::nachspielen;
+    use crate::abzug::Ablage;
+    use crate::kette::{probekonto, probeschluessel, Kette};
+    use crate::speicher::Kettenspeicher;
+    use myl_consensus::block::{Anweisung, Transaktion};
+
+    fn ordner(marke: &str) -> std::path::PathBuf {
+        let p = std::env::temp_dir().join(format!("myl-wiederanlauf-{marke}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&p);
+        std::fs::create_dir_all(&p).expect("Ordner");
+        p
+    }
+
+    /// Eine Kette mit Datei und Ablage über `n` Blöcke, mit einem Burn je
+    /// 50 Blöcke, damit der Zustand sich bewegt; `versatz` macht die Beträge
+    /// und damit die Kette verschieden.
+    fn gefuellt(pfad: &std::path::Path, n: u64, versatz: u64) -> Kette {
+        let (speicher, _) = Kettenspeicher::oeffnen(pfad, Kette::startwert()).expect("Speicher");
+        let mut k = Kette::probestand();
+        k.speicher_setzen(speicher);
+        k.ablage_setzen(Ablage::neben(pfad, Kette::startwert()));
+        for i in 0..n {
+            if i % 50 == 0 {
+                let konto = (i % 8) as u8;
+                let nonce = k.zustand().account(&probekonto(konto)).nonce;
+                let tx = Transaktion::signiere(&Kette::startwert(), &probeschluessel(konto), nonce, Anweisung::Burn { betrag: 1_000 + i + versatz })
+                    .expect("signieren");
+                k.aufnehmen(tx);
+            }
+            let _ = k.baue_block();
+        }
+        k
+    }
+
+    /// Nachspielen wie beim Start, mit dem eigenen Abzug `einsatz` (oder
+    /// keinem).
+    fn neu_geladen(pfad: &std::path::Path, einsatz: Option<u64>, ablage_von: &std::path::Path) -> (Kette, super::Nachgespielt) {
+        let (mut speicher, _) = Kettenspeicher::oeffnen(pfad, Kette::startwert()).expect("Speicher");
+        let mut k = Kette::probestand();
+        k.ablage_setzen(Ablage::neben(pfad, Kette::startwert()));
+        let einsatz = einsatz.map(|h| Ablage::neben(ablage_von, Kette::startwert()).lesen(h).expect("Abzug"));
+        let n = nachspielen(&mut k, &mut speicher, einsatz);
+        (k, n)
+    }
+
+    /// ⚑ **Der Wiederanlauf setzt beim jüngsten eigenen Abzug an** (Fund
+    /// 629): bis 3600 nur vorgespult, die hundert Blöcke danach übernommen,
+    /// und Höhe, letzter Hash und Zustandswurzel sind die des vollständigen
+    /// Nachrechnens. Die Blöcke nach dem Abzug gehen durch `uebernimm`; ein
+    /// falsch eingesetzter Zustand fiele dort an der ersten Wurzel auf.
+    #[test]
+    fn der_wiederanlauf_setzt_beim_juengsten_abzug_an() {
+        let o = ordner("an");
+        let pfad = o.join("kette.dat");
+        let vorher = gefuellt(&pfad, 3700, 0);
+        assert_eq!(Ablage::neben(&pfad, Kette::startwert()).hoehen(), vec![1800, 3600]);
+        let (k, n) = neu_geladen(&pfad, Some(3600), &pfad);
+        assert_eq!(n.verworfen, None);
+        assert_eq!((n.abzug, n.vorgespult, n.uebernommen, n.abgelehnt), (Some(3600), 3600, 100, 0));
+        assert_eq!((k.hoehe(), k.letzter_hash(), k.zustandswurzel()), (vorher.hoehe(), vorher.letzter_hash(), vorher.zustandswurzel()));
+        let (voll, m) = neu_geladen(&pfad, None, &pfad);
+        assert_eq!((m.abzug, m.uebernommen), (None, 3700));
+        assert_eq!(voll.zustandswurzel(), k.zustandswurzel());
+        let _ = std::fs::remove_dir_all(&o);
+    }
+
+    /// Ein Abzug, dessen Block nicht in der Datei steht, wird verworfen,
+    /// ebenso einer hinter ihrem Ende; der Aufrufer rechnet dann ab der
+    /// Basis.
+    #[test]
+    fn ein_fremder_abzug_wird_verworfen() {
+        let o = ordner("fremd");
+        let (eigen, fremd, lang) = (o.join("eigen.dat"), o.join("fremd.dat"), o.join("lang.dat"));
+        gefuellt(&eigen, 2000, 0);
+        gefuellt(&fremd, 2000, 7);
+        gefuellt(&lang, 3700, 0);
+        let (_, n) = neu_geladen(&eigen, Some(1800), &fremd);
+        assert!(n.verworfen.as_deref().is_some_and(|g| g.contains("1800")), "{:?}", n.verworfen);
+        let (_, n) = neu_geladen(&eigen, Some(3600), &lang);
+        assert!(n.verworfen.as_deref().is_some_and(|g| g.contains("endet vor")), "{:?}", n.verworfen);
+        let _ = std::fs::remove_dir_all(&o);
+    }
+}
+
+#[cfg(test)]
+mod netz_luecke_tests {
+    use super::{netz_luecke, NETZ_LUECKE_HOEHEN, NETZ_SPITZE_HOECHSTENS};
+
+    /// ⚑ **Wer hinter der Spitze liegt, meldet keine Lücke, solange er den
+    /// Block noch nicht gesehen haben kann** (Fund 628). Vergeben bei eigener
+    /// Höhe 1000, die Spitze bei 1150: Die Transaktion kommt dort in den
+    /// Block, und bis zur eigenen Höhe 1150 + 64 ist nichts verloren.
+    #[test]
+    fn wer_zurueckliegt_meldet_keine_falsche_luecke() {
+        let mut s = (0, 0);
+        assert!(!netz_luecke(&mut s, 5, 5, 1000, 1150), "nichts steht aus");
+        // Vergeben: 5 ist unterwegs, der Zustand steht bei 5.
+        assert!(!netz_luecke(&mut s, 6, 5, 1000 + NETZ_LUECKE_HOEHEN, 1220));
+        assert!(!netz_luecke(&mut s, 6, 5, 1150 + NETZ_LUECKE_HOEHEN - 1, 1250), "noch in der Frist ab der Spitze");
+        // Der Block mit der 5 ist angekommen: kein Stillstand mehr.
+        assert!(!netz_luecke(&mut s, 6, 6, 1214, 1260));
+    }
+
+    /// Steht die Nummer 64 Höhen über dem Bezug still, ist die Transaktion
+    /// verloren, und die Frist beginnt von vorn.
+    #[test]
+    fn eine_echte_luecke_wird_gemeldet() {
+        let mut s = (0, 0);
+        assert!(!netz_luecke(&mut s, 5, 5, 1000, 1000));
+        assert!(!netz_luecke(&mut s, 6, 5, 1000 + NETZ_LUECKE_HOEHEN - 1, 1000));
+        assert!(netz_luecke(&mut s, 6, 5, 1000 + NETZ_LUECKE_HOEHEN, 1000));
+        assert!(!netz_luecke(&mut s, 6, 5, 1000 + NETZ_LUECKE_HOEHEN + 1, 1000), "danach zählt die Frist neu");
+    }
+
+    /// ⚠️ Eine erfundene Spitze verzögert die Heilung, verhindert sie aber
+    /// nicht: Sie zählt höchstens [`NETZ_SPITZE_HOECHSTENS`] über der eigenen
+    /// Höhe.
+    #[test]
+    fn eine_erfundene_spitze_haelt_die_heilung_nicht_auf() {
+        let mut s = (0, 0);
+        assert!(!netz_luecke(&mut s, 5, 5, 1000, u64::MAX));
+        let faellig = 1000 + NETZ_SPITZE_HOECHSTENS + NETZ_LUECKE_HOEHEN;
+        assert!(!netz_luecke(&mut s, 6, 5, faellig - 1, u64::MAX));
+        assert!(netz_luecke(&mut s, 6, 5, faellig, u64::MAX));
+    }
+}
+
+#[cfg(test)]
+mod plaetze_tests {
+    use super::Plaetze;
+
+    /// ⚑ **Ein Platz geht beim Freigeben zurück, auch nach einer Panik**
+    /// (Fund 609): sonst wäre die Zeitprobe nach dem ersten Absturz eines
+    /// Fadens für immer zu.
+    #[test]
+    fn ein_platz_geht_beim_freigeben_zurueck_auch_nach_einer_panik() {
+        let p = Plaetze::neu(1);
+        let erster = p.nehmen().expect("frei");
+        assert!(p.nehmen().is_none(), "zwei zugleich auf einem Platz");
+        drop(erster);
+        let zweiter = p.nehmen().expect("wieder frei");
+        let ergebnis = std::thread::spawn(move || {
+            let _halten = zweiter;
+            panic!("Absturz mit belegtem Platz");
+        })
+        .join();
+        assert!(ergebnis.is_err());
+        assert!(p.nehmen().is_some(), "nach der Panik blieb der Platz belegt");
+    }
+
+    #[test]
+    fn mehr_als_die_grenze_bekommt_keinen_platz() {
+        let p = Plaetze::neu(4);
+        let gehalten: Vec<_> = (0..4).map(|_| p.nehmen().expect("frei")).collect();
+        assert!(p.nehmen().is_none());
+        drop(gehalten);
+        assert!(p.nehmen().is_some());
     }
 }

@@ -200,7 +200,7 @@ mod tests {
             agent: Address::new([b; 32]),
             credits: Grenzen::gesperrt(),
             myl: Grenzen::gesperrt(),
-            empfaenger: Vec::new(),
+            empfaenger_wurzel: myl_types::hash::Hash([0; 32]),
             gueltig_ab: EpochId(0),
             gueltig_bis: EpochId(10),
             max_schritte: 1,

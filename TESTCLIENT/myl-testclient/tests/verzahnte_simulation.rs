@@ -271,6 +271,7 @@ fn eine_laufende_kette_greift_ineinander() {
         waehrung: myl_types::sitzung::Waehrung::Credits,
         betrag: 18_000,
         empfaenger: betreiber,
+        empfaenger_beweis: myl_types::sitzung::empfaengerbeweis(&[betreiber], &betreiber).expect("gelistet"),
         bestaetigt_ausgeliefert: true,
         nummer: 1,
     };

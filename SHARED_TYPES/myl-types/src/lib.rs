@@ -32,6 +32,7 @@ pub mod bls;
 pub mod challenge;
 pub mod core_types;
 pub mod gegenstand;
+pub mod geheimdatei;
 pub mod hash;
 pub mod ids;
 pub mod inferenzauftrag;
@@ -58,6 +59,9 @@ pub mod gegenzeichnung;
 pub mod zeitprobe;
 pub mod zuteilung;
 pub mod erasure;
+pub mod historie;
+pub mod archivwahl;
+pub mod archivteile;
 
 pub use erasure::{
     ErasureCoder, ErasureError, Fragment, DEFAULT_K, DEFAULT_M, GF_POLY,

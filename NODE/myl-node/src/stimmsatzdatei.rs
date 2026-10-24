@@ -56,6 +56,13 @@
 //!    Festgehalten in
 //!    `unter_vier_validatoren_ist_die_schranke_nicht_erfuellbar`.
 //! 3. **Keine doppelten Schlüssel**, kein Validator ohne Stake.
+//! 4. **Die Stakes zusammen passen in `u64`** (Fund 619). Jeder einzelne
+//!    tut es beim Lesen; die Summe tat es nicht zwingend, und
+//!    [`Stimmsatzdatei::gesamtstake`] schnitt sie still ab. Mit einer
+//!    abgeschnittenen Summe rechnete die Drittelschranke gegen eine
+//!    falsche Zahl, und `VotingSet` sättigt sein Gesamtgewicht bei
+//!    `u64::MAX`, also läge das Quorum unter zwei Dritteln des echten
+//!    Gewichts.
 //!
 //! Nicht geprüft, sondern nur **berichtet**, wird
 //! [`Stimmsatzdatei::unterscheidet_koepfe_von_gewicht`]. Ein Produktivnetz mit
@@ -141,6 +148,8 @@ pub enum Stimmsatzfehler {
         stake: u64,
         gesamt: u64,
     },
+    /// Die Stakes zusammen passen nicht in `u64` (Fund 619).
+    GesamtstakeZuGross { summe: u128 },
 }
 
 impl std::fmt::Display for Stimmsatzfehler {
@@ -186,6 +195,11 @@ impl std::fmt::Display for Stimmsatzfehler {
                 "{kennung:?} hält {stake} von {gesamt} und damit ein Drittel oder mehr. \
                  Ein Netz, in dem ein Einzelner das Quorum blockieren kann, hat keine \
                  BFT-Safety und startet nicht"
+            ),
+            Self::GesamtstakeZuGross { summe } => write!(
+                f,
+                "die Stakes ergeben zusammen {summe}, mehr als {} (Fund 619)",
+                u64::MAX
             ),
         }
     }
@@ -324,8 +338,16 @@ impl Stimmsatzdatei {
     }
 
     /// Summe aller Stakes.
+    ///
+    /// Passt nach [`Self::pruefe`] immer in `u64`; davor sättigt sie,
+    /// statt umzulaufen.
     pub fn gesamtstake(&self) -> u64 {
-        self.validatoren.iter().map(|v| v.stake as u128).sum::<u128>() as u64
+        u64::try_from(self.stakesumme()).unwrap_or(u64::MAX)
+    }
+
+    /// Die Summe ohne Grenze, für die Prüfung.
+    fn stakesumme(&self) -> u128 {
+        self.validatoren.iter().map(|v| v.stake as u128).sum()
     }
 
     /// Die stimmberechtigte Menge für die erste Runde.
@@ -383,6 +405,11 @@ impl Stimmsatzdatei {
             }
         }
 
+        // Fund 619: erst die Summe, dann die Schranke, die mit ihr rechnet.
+        let summe = self.stakesumme();
+        if summe > u64::MAX as u128 {
+            return Err(Stimmsatzfehler::GesamtstakeZuGross { summe });
+        }
         let gesamt = self.gesamtstake();
         for v in &self.validatoren {
             // „hält ein Drittel oder mehr" heißt 3 · stake >= gesamt.
@@ -679,6 +706,28 @@ mod tests {
         }
         // Und die Gegenrichtung: Ab vier geht es.
         assert!(genesis_mit("gerade-genug", 40, &[250, 250, 250, 250]).is_ok());
+    }
+
+    /// ⚑ **Fund 619: Eine Summe über `u64::MAX` startet nicht.**
+    ///
+    /// Zwölf Validatoren zu je `2^61` ergeben `1,5 · 2^64`. Jeder hält
+    /// ein Zwölftel, also kam die Datei bis dahin durch: Die
+    /// abgeschnittene Summe `2^63` liegt über dem Dreifachen jedes
+    /// Stakes, und das `VotingSet` dazu hätte sein Quorum bei zwei
+    /// Dritteln von `u64::MAX` gehabt statt der echten Summe. Dieselbe
+    /// Verteilung um den Faktor 4 kleiner geht durch.
+    #[test]
+    fn eine_stakesumme_ueber_u64_wird_abgewiesen() {
+        let gross = [1u64 << 61; 12];
+        match genesis_mit("ueberlauf", 50, &gross) {
+            Err(Stimmsatzfehler::GesamtstakeZuGross { summe }) => {
+                assert_eq!(summe, 3u128 << 63);
+            }
+            andere => panic!("erwartet GesamtstakeZuGross, bekommen {andere:?}"),
+        }
+        let g = genesis_mit("ueberlauf", 50, &[1u64 << 59; 12]).expect("dieselbe Verteilung, kleiner");
+        assert_eq!(g.gesamtstake(), 3u64 << 61);
+        assert_eq!(g.stimmberechtigte().total_weight(), 3u64 << 61);
     }
 
     // ── Invariante 2: Köpfe gegen Gewicht ───────────────────────────

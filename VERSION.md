@@ -1,4 +1,4 @@
-0.4.1
+0.4.2
 
 # Myelith: die aktuelle Fassung und was sie ändert
 
@@ -12,14 +12,18 @@ Darunter steht ein einziger Abschnitt: was sich mit der aktuellen Fassung
 ändert. Er wird mit jeder neuen Fassung ersetzt, ältere Fassungen stehen
 hier nicht. Das Programm zeigt ihn vor dem Update.
 
-## 0.4.1 (2026-10-23)
+## 0.4.2 (2026-10-24)
 
-- **Netzstapel auf libp2p 0.57.** Damit sind zwei Sicherheitsmeldungen in der
-  DNS-Bibliothek der Suche im lokalen Netz behoben (RUSTSEC-2026-0118 und
-  -0119), dazu zwei im Gossip-Protokoll.
-- **QUIC verbindet jetzt mit einem post-quantensicheren Schlüsseltausch**,
-  wenn beide Seiten ihn können.
-- Die Suche im lokalen Netz nennt anderen Knoten nur noch Adressen, unter
-  denen sie wirklich erreichbar sind.
-- Beim Bauen wird jetzt eine weitere C-Bibliothek übersetzt (für QUIC); der
-  erste Bau dauert dadurch etwas länger.
+- **Archivknoten:** Eine kleine, ausgeloste Gruppe von Knoten hält die ganze
+  Geschichte der Kette, belegt das je Epoche mit Stichproben und gibt sie an
+  Nachfolger weiter; dazu verteilte Teile, eine kalte Ausfuhr und eine
+  Einfuhr nach einem Totalausfall. Alle anderen Knoten dürfen ihre Kette
+  verdichten und brauchen weniger Platz.
+- **Ein Knoten startet nach einem Absturz in Sekunden** statt Minuten: Er
+  setzt beim eigenen Zustandsabzug an.
+- **Mehr Schutz für das Netz:** Blöcke haben eine Grössengrenze, teure
+  Anfragen werden gedrosselt, neue Absender ohne Guthaben kommen nur
+  gedrosselt in den Speicher wartender Transaktionen, und eine erfundene
+  Blockhöhe hält einen Knoten nicht mehr dauerhaft auf.
+- **Die Empfänger eines Sitzungskontrakts stehen nicht mehr auf der Kette**,
+  nur noch ein Fingerabdruck davon; wer zahlt, belegt den einen Empfänger.

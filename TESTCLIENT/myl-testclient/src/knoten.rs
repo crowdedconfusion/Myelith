@@ -262,6 +262,9 @@ pub fn anlaufstelle() -> bool {
         name: name.clone(),
         schluesseldatei: schluesseldatei(&name),
         protokollverzeichnis: protokollverzeichnis(),
+        protokoll_mb: myl_node::protokoll::GESAMT_HOECHSTENS / (1024 * 1024),
+        kette_mb: 2048,
+        archiv_ausfuhr: None,
         horchadressen: myl_node::konfig::standard_horchadressen(port),
         bootstrap: Vec::new(),
         rolle: Rolle::Relais,
@@ -345,6 +348,9 @@ pub fn teilnehmer(name_vorgabe: &str) -> bool {
         name: name.clone(),
         schluesseldatei: schluesseldatei(&name),
         protokollverzeichnis: protokollverzeichnis(),
+        protokoll_mb: myl_node::protokoll::GESAMT_HOECHSTENS / (1024 * 1024),
+        kette_mb: 2048,
+        archiv_ausfuhr: None,
         // Port 0: Das Betriebssystem sucht einen freien. Ein Teilnehmer
         // nimmt keine Verbindungen von außen an, er braucht keinen
         // bestimmten Port, und ein belegter würde ihn nur aufhalten.

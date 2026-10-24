@@ -60,6 +60,7 @@ fn main() {
     let mut deckel: u64 = 16;
     let mut schluesseldatei: Option<String> = None;
     let mut konsensdatei: Option<String> = None;
+    let mut ausweisdatei: Option<String> = None;
     let mut probeschluessel = false;
     let mut training = false;
     let mut von_bis: (Option<usize>, Option<usize>) = (None, None);
@@ -107,6 +108,13 @@ fn main() {
             "--konsensschluessel" => {
                 i += 1;
                 konsensdatei = args.get(i).cloned();
+            }
+            // ⚑ **Der Ausweis der Tür** (Fund 611): 32 Bytes in einer
+            //   Datei, die der Startende mit `0600` anlegt. Ohne ihn nimmt
+            //   die Tür nichts an, also startet sie ohne ihn nicht.
+            "--ausweis" => {
+                i += 1;
+                ausweisdatei = args.get(i).cloned();
             }
             "--probeschluessel" => probeschluessel = true,
             // ⚑ **Mit Trainingshaelfte starten.** Ohne sie lehnt der
@@ -211,8 +219,23 @@ fn main() {
         deckel,
     ));
 
+    let ausweis = match ausweisdatei.as_deref().map(|d| myl_types::ortsleitung::schluessel_lesen(std::path::Path::new(d))) {
+        Some(Ok(a)) => a,
+        Some(Err(e)) => {
+            eprintln!("[myl-shard] Ausweis nicht lesbar: {e}");
+            std::process::exit(2);
+        }
+        None => {
+            eprintln!(
+                "[myl-shard] --ausweis <datei> fehlt: 32 Bytes, mit denen jede Anfrage an die Tuer \
+                 beginnt. Ohne ihn nimmt die Tuer von jedem Prozess dieser Maschine an."
+            );
+            std::process::exit(2);
+        }
+    };
+
     let stelle = if training {
-        match Shardstelle::oeffnen_mit_training(shard, modell_fuer_training, &adresse) {
+        match Shardstelle::oeffnen_mit_training(shard, modell_fuer_training, &adresse, ausweis) {
             Ok(s) => s,
             Err(e) => {
                 eprintln!("[myl-shard] Tuer {adresse} mit Training: {e}");
@@ -220,7 +243,7 @@ fn main() {
             }
         }
     } else {
-        match Shardstelle::oeffnen(shard, &adresse) {
+        match Shardstelle::oeffnen(shard, &adresse, ausweis) {
             Ok(s) => s,
             Err(e) => {
                 eprintln!("[myl-shard] Tuer {adresse}: {e}");

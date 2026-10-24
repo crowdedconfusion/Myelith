@@ -48,8 +48,11 @@ fn binary() -> PathBuf {
 }
 
 /// Startet einen Shard **mit Trainingshälfte**.
-fn starten(nummer: usize) -> (Child, std::net::SocketAddr) {
+fn starten(nummer: usize) -> (Child, (std::net::SocketAddr, myl_pod::shardweg::Ausweis)) {
+    let (ausweisdatei, ausweis) = ausweis_anlegen(nummer);
     let mut kind = Command::new(binary())
+        .arg("--ausweis")
+        .arg(&ausweisdatei)
         .arg("--artefakte")
         .arg(artefakte())
         .arg("--shard")
@@ -80,7 +83,21 @@ fn starten(nummer: usize) -> (Child, std::net::SocketAddr) {
         .unwrap_or_else(|| panic!("unerwartete Zeile von Shard {nummer}: {zeile:?}"))
         .parse()
         .expect("Adresse lesbar");
-    (kind, adresse)
+    (kind, (adresse, ausweis))
+}
+
+/// Der Ausweis der Tür (Fund 611): je Shard eigene 32 Bytes, mit `0600`
+/// abgelegt, wie der Knoten es tut.
+fn ausweis_anlegen(nummer: usize) -> (PathBuf, myl_pod::shardweg::Ausweis) {
+    // Ein Ordner je Aufruf: Die Tests dieser Datei laufen nebeneinander.
+    static LAUF: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let lauf = LAUF.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let ordner = std::env::temp_dir().join(format!("myl-shardausweis-{}-{lauf}", std::process::id()));
+    std::fs::create_dir_all(&ordner).expect("Ordner");
+    let ausweis = [nummer as u8 + 0x41; 32];
+    let datei = ordner.join(format!("ausweis-{nummer}"));
+    myl_types::ortsleitung::schluessel_ablegen(&datei, &ausweis).expect("Ausweis");
+    (datei, ausweis)
 }
 
 struct Aufraeumer(Vec<Child>);

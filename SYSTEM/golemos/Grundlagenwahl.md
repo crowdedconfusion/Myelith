@@ -2,7 +2,9 @@
 
 Ein Betriebssystem, das genau eine Aufgabe hat: **Myelith bedienen.**
 
-> **Stand:** Entscheidungsgrundlage, noch kein Bau.
+> **Stand:** die Entscheidungsgrundlage vom 2026-09-23, vor dem Bau.
+> Gebaut wird seit dem 2026-09-25; wie, steht in `README.md` und
+> `README/README.md` daneben. Diese Seite hält fest, warum so gewählt wurde.
 > **Ziel:** x86_64 und aarch64.
 > **Stufe 1:** nur Konsole, kein Desktop.
 > **Offline:** die **Installation**, nicht der Bau.

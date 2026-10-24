@@ -37,12 +37,32 @@ PY="${UMGEBUNG}/bin/python3"
 # 📌 Eine Umgebung mit anderer Fassung von transformers ist nicht fertig, auch
 #   wenn alles importiert: Sonst bliebe nach dem Heben der festen Fassungen
 #   die alte liegen, und der Bau liefe still mit ihr.
-SOLL_TRANSFORMERS="$(sed -n 's/^transformers==//p' "${FEST}")"
+# 📌 Fund 602 (2026-10-23): Verglichen wurde nur transformers. Nach dem
+#   Heben von aiohttp, multidict und accelerate wegen bekannter
+#   Schwachstellen galt eine Umgebung mit den alten Fassungen weiter als
+#   fertig, und das Heben waere auf keiner Maschine angekommen. Jetzt muss
+#   jede Zeile von requirements-fest.txt stimmen.
+FASSUNGEN_STIMMEN='
+import importlib.metadata as m, re, sys
+falsch = []
+for zeile in open(sys.argv[1], encoding="utf-8"):
+    t = re.match(r"^([A-Za-z0-9_.-]+)==(\S+)", zeile)
+    if not t:
+        continue
+    try:
+        ist = m.version(t.group(1))
+    except m.PackageNotFoundError:
+        ist = "fehlt"
+    if ist != t.group(2):
+        falsch.append(t.group(1) + " " + ist + " statt " + t.group(2))
+print(", ".join(falsch))
+sys.exit(1 if falsch else 0)
+'
 
 vollstaendig() {
     [ -x "${PY}" ] && "${PY}" -c "${PRUEFIMPORT}" >/dev/null 2>&1 \
         && [ -x "${UMGEBUNG}/bin/hf" ] \
-        && [ "$("${PY}" -c 'import transformers; print(transformers.__version__)')" = "${SOLL_TRANSFORMERS}" ]
+        && "${PY}" -c "${FASSUNGEN_STIMMEN}" "${FEST}" >/dev/null 2>&1
 }
 
 if vollstaendig; then
@@ -55,7 +75,8 @@ if [ -e "${UMGEBUNG}" ]; then
     # Eine halbe oder veraltete Umgebung (abgebrochene Einrichtung, andere
     # Fassung) wird nicht geflickt, sondern neu angelegt: Was in ihr fehlt
     # oder anders ist, ist nicht zu sehen.
-    echo "[python] Unvollstaendige oder veraltete Umgebung unter ${UMGEBUNG} (transformers soll ${SOLL_TRANSFORMERS}), sie wird neu angelegt"
+    ABWEICHUNG="$("${PY}" -c "${FASSUNGEN_STIMMEN}" "${FEST}" 2>/dev/null || true)"
+    echo "[python] Unvollstaendige oder veraltete Umgebung unter ${UMGEBUNG} (${ABWEICHUNG:-nicht lauffaehig}), sie wird neu angelegt"
     rm -rf "${UMGEBUNG}"
 fi
 

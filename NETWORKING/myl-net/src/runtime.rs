@@ -144,6 +144,12 @@ pub struct Netzzustand {
     /// Peers unter der Gossip-Schwelle, die also kein Gossip mehr
     /// bekommen.
     pub schlecht_bewertet: usize,
+    /// Eingegangene Anfragen, deren Antwort noch aussteht.
+    ///
+    /// ⚑ Eine Zahl, die nach jeder Anfrage auf null zurueckgehen muss,
+    /// beantwortet oder abgelaufen (Fund 606). Waechst sie im Betrieb,
+    /// haelt etwas Antwortkanaele fest.
+    pub offene_anfragen: usize,
 }
 
 /// Eine validierte, eingehende Gossip-Nachricht.
@@ -328,6 +334,18 @@ pub async fn run_node_mit(
         u64,
         libp2p::request_response::ResponseChannel<Vec<u8>>,
     > = std::collections::HashMap::new();
+    // 📌 **Fund 606 (2026-10-23):** Ein Antwortkanal verliess die Tabelle
+    //    nur, wenn der Knoten antwortete. Lief die Anfrage vorher ab, schloss
+    //    die Gegenstelle die Verbindung oder liess sich die Antwort nicht
+    //    schreiben, blieb er fuer immer liegen; eine Gegenstelle, die
+    //    Anfragen schickt und nicht wartet, liess die Tabelle so ohne Ende
+    //    wachsen. libp2p meldet das Ende **jeder** eingegangenen Anfrage,
+    //    als `ResponseSent` oder `InboundFailure`; an beidem wird jetzt
+    //    aufgeraeumt, ueber diese Zuordnung von Anfrage zu Marke.
+    let mut marke_je_anfrage: std::collections::HashMap<
+        libp2p::request_response::InboundRequestId,
+        u64,
+    > = std::collections::HashMap::new();
     let mut naechste_marke: u64 = 0;
     // 📌 **Fund 587 (2026-10-22, gefunden im Netzlauf): Kademlia wurde nie
     //    angestoßen.** `start_bootstrap` hatte keinen Aufrufer, und die
@@ -377,7 +395,12 @@ pub async fn run_node_mit(
                             .map(|t| (*t, gossipsub.mesh_peers(&t.topic().hash()).count()))
                             .collect();
                         let schlecht_bewertet = crate::scoring::schlechte_peers(gossipsub);
-                        let _ = reply.send(Netzzustand { peers, mesh, schlecht_bewertet });
+                        let _ = reply.send(Netzzustand {
+                            peers,
+                            mesh,
+                            schlecht_bewertet,
+                            offene_anfragen: offene_anfragen.len(),
+                        });
                     }
                     NodeCommand::Dial { addr, result } => {
                         let ok = swarm.dial(addr).is_ok();
@@ -432,10 +455,11 @@ pub async fn run_node_mit(
                         use libp2p::request_response::{Event as RrEvent, Message as RrMsg};
                         match ev {
                             RrEvent::Message { peer, message, .. } => match message {
-                                RrMsg::Request { request, channel, .. } => {
+                                RrMsg::Request { request_id, request, channel } => {
                                     naechste_marke += 1;
                                     let marke = naechste_marke;
                                     offene_anfragen.insert(marke, channel);
+                                    marke_je_anfrage.insert(request_id, marke);
                                     let _ = events.send(NodeEvent::AnfrageEingegangen {
                                         von: peer,
                                         daten: request,
@@ -455,7 +479,12 @@ pub async fn run_node_mit(
                                     grund: error.to_string(),
                                 });
                             }
-                            _ => {}
+                            RrEvent::ResponseSent { request_id, .. }
+                            | RrEvent::InboundFailure { request_id, .. } => {
+                                if let Some(marke) = marke_je_anfrage.remove(&request_id) {
+                                    offene_anfragen.remove(&marke);
+                                }
+                            }
                         }
                     }
                     SwarmEvent::Behaviour(MylBehaviourEvent::Dcutr(ev)) => {

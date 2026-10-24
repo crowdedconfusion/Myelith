@@ -250,8 +250,8 @@ fn der_knoten_startet_seinen_shard_aus_der_kette() {
     });
     assert!(matches!(f.abgleichen(Some(auftrag.clone())), Ok(myl_node::shardfuehrung::Wechsel::Gestartet(_))));
     let bis = std::time::Instant::now() + std::time::Duration::from_secs(120);
-    let adresse = loop {
-        if let Some(a) = f.adresse() {
+    let (adresse, ausweis) = loop {
+        if let Some(a) = f.tuer() {
             break a;
         }
         assert!(std::time::Instant::now() < bis, "der Shard nannte keine Adresse");
@@ -259,7 +259,7 @@ fn der_knoten_startet_seinen_shard_aus_der_kette() {
     };
     // Der Shard unterschreibt mit dem Schlüssel der Anmeldung.
     use myl_pod::shardweg::{Shardanfrage, Shardantwort, Shardweg, UeberDenDraht};
-    let weg = UeberDenDraht::neu(vec![adresse]);
+    let weg = UeberDenDraht::neu(vec![(adresse, ausweis)]);
     match weg.frage(0, &Shardanfrage::Schluessel) {
         Ok(Shardantwort::Schluessel(pk)) => assert_eq!(pk, probeschluessel(ich).public_key().expect("pk")),
         anders => panic!("{anders:?}"),
@@ -269,7 +269,10 @@ fn der_knoten_startet_seinen_shard_aus_der_kette() {
         anders => panic!("{anders:?}"),
     }
     let t = std::time::Instant::now();
-    let abdruck = myl_types::zeitprobe::fragen(adresse, 2, std::time::Duration::from_secs(120)).expect("Zeitprobe");
+    let abdruck = myl_types::zeitprobe::fragen(adresse, &ausweis, 2, std::time::Duration::from_secs(120)).expect("Zeitprobe");
+    // ⚑ Ohne Ausweis antwortet der echte Shard nicht (Fund 611).
+    let fremd = UeberDenDraht::neu(vec![(adresse, [0u8; 32])]).mit_frist(std::time::Duration::from_secs(5));
+    assert!(fremd.frage(0, &Shardanfrage::Schluessel).is_err(), "der Shard antwortete ohne Ausweis");
     assert_ne!(abdruck, [0; 32]);
     assert!(t.elapsed() > std::time::Duration::ZERO);
     let last = myl_store::teilablage::Netzlast::lesen(&ordner.join(myl_store::teilablage::NETZLAST_DATEI)).expect("Netzlast");

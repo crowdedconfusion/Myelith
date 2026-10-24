@@ -434,7 +434,13 @@ pub fn laeufer_einrichten() -> Result<(PathBuf, bool), String> {
 /// | Fassung | aus | Fingerabdruck |
 /// |---|---|---|
 /// | 1 | 2026-09-17 bis 2026-09-24 | `d42148f974c93f02` |
-const FRUEHERE_LAEUFER: &[u64] = &[0xd421_48f9_74c9_3f02];
+/// | 2 | 2026-09-25 bis 2026-10-22 | `0615a427195a045a` |
+///
+/// ⚑ **Fassung 3 muss Fassung 2 ersetzen.** Wer die Sprechumgebung neu
+/// einrichtet, bekommt transformers 5, und damit spricht Fassung 2 ohne
+/// jede Fehlermeldung einen falschen Satz (siehe `schritt_ohne_maske` im
+/// Laeufer). Fassung 3 laeuft dagegen auch mit der alten Umgebung.
+const FRUEHERE_LAEUFER: &[u64] = &[0xd421_48f9_74c9_3f02, 0x0615_a427_195a_045a];
 
 /// FNV-1a mit 64 Bit, genug, um eine Datei wiederzuerkennen; keine
 /// Pruefsumme gegen Absicht, nur gegen Verwechslung.
@@ -1682,6 +1688,27 @@ mod proben {
         assert_eq!(fingerabdruck(b""), 0xcbf2_9ce4_8422_2325);
         assert_eq!(fingerabdruck(b"a"), 0xaf63_dc4c_8601_ec8c);
         assert_eq!(fingerabdruck(b"foobar"), 0x8594_4171_f739_67e8);
+    }
+
+    /// ⚑ **Jede fruehere Fassung des Laeufers steht in der Liste.** Wer
+    /// `FASSUNG` im Laeufer hebt und den Fingerabdruck der vorigen nicht
+    /// eintraegt, laesst jeden bestehenden Einrichter auf ihr sitzen; bei
+    /// Fassung 2 hiesse das seit transformers 5 einen falschen Satz ohne
+    /// Fehlermeldung. Und der mitgebrachte selbst steht nicht darin.
+    #[test]
+    fn jede_fruehere_fassung_des_laeufers_ist_ersetzbar() {
+        let fassung: usize = COSYVOICE_QUELLE
+            .lines()
+            .find_map(|z| z.strip_prefix("FASSUNG = "))
+            .and_then(|z| z.trim().parse().ok())
+            .expect("FASSUNG im Laeufer");
+        assert_eq!(
+            FRUEHERE_LAEUFER.len(),
+            fassung - 1,
+            "Laeufer der Fassung {fassung}, aber {} fruehere Fingerabdruecke",
+            FRUEHERE_LAEUFER.len()
+        );
+        assert!(!FRUEHERE_LAEUFER.contains(&fingerabdruck(COSYVOICE_QUELLE.as_bytes())));
     }
 
     /// ⚑ **Ersetzt wird nur ein unveraenderter Laeufer einer frueheren

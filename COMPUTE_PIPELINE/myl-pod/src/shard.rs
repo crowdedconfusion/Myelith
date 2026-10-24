@@ -504,6 +504,19 @@ impl ShardNode {
                 return Err("erwarte genau ein Token je Nachricht".to_string());
             }
             let token = tokens[0] as usize;
+            // 📌 **Fund 613 (2026-10-23): das Token gegen das Vokabular,
+            //   vor dem Cache.** Der Zweig der Aktivierungen prüft seine
+            //   Länge seit Fund 41, weil eine Panik im offenen Netz ein
+            //   Denial-of-Service ist; dieser Zweig gab die Kennung
+            //   ungeprüft an `embed_token`. Eine Kennung hinter dem
+            //   Vokabular brachte den Shard-Prozess zum Absturz, und den
+            //   Cache der Sitzung hatte er schon herausgenommen.
+            if token >= self.model.vocab_size {
+                return Err(format!(
+                    "Token {token} liegt ausserhalb des Vokabulars ({} Einträge, Shard {}, Position {pos})",
+                    self.model.vocab_size, self.shard_index
+                ));
+            }
 
             let mut cache = self.position_pruefen(session_id, pos, self.take_cache(session_id)?)?;
             let hidden = self.model.embed_token(token);

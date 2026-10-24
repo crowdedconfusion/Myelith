@@ -161,6 +161,12 @@ pub enum TransitionError {
     FristmeldungUngueltig,
     /// Für diesen Miner ist die Sperre der nächsten Epoche schon vermerkt.
     FristBereitsGemeldet,
+    /// Der Absender ist nicht Archivkopie der laufenden Periode.
+    NichtArchivkopie,
+    /// Er hat in dieser Epoche schon belegt.
+    ArchivBereitsBelegt,
+    /// Der Archivbeleg trägt nicht: Zahl, Stellen, Blöcke oder Beweise.
+    ArchivbelegUngueltig,
 }
 
 impl std::fmt::Display for TransitionError {
@@ -227,6 +233,12 @@ impl std::fmt::Display for TransitionError {
             Self::FristBereitsGemeldet => {
                 f.write_str("fuer diesen Miner ist die Fristsperre der naechsten Epoche schon vermerkt")
             }
+            Self::NichtArchivkopie => f.write_str("der Absender ist nicht Archivkopie der laufenden Periode"),
+            Self::ArchivBereitsBelegt => f.write_str("diese Kopie hat in dieser Epoche schon belegt"),
+            Self::ArchivbelegUngueltig => f.write_str(
+                "der Archivbeleg traegt nicht: Zahl und Stellen der Stichproben, Bloecke und Beweise \
+                 gegen die Historienwurzel der Grenze muessen stimmen",
+            ),
             Self::NichtZumTrainingBestellt => {
                 f.write_str("dieser Pod war in dieser Epoche nicht zum Training bestellt")
             }
@@ -2098,6 +2110,7 @@ mod tests {
             waehrung: Waehrung::Credits,
             betrag,
             empfaenger: adresse(10),
+            empfaenger_beweis: myl_types::sitzung::empfaengerbeweis(&[adresse(10)], &adresse(10)).expect("gelistet"),
             bestaetigt_ausgeliefert: false,
             nummer,
         }
@@ -2158,6 +2171,7 @@ mod tests {
             waehrung: Waehrung::Credits,
             betrag,
             empfaenger: adresse(10),
+            empfaenger_beweis: myl_types::sitzung::empfaengerbeweis(&[adresse(10)], &adresse(10)).expect("gelistet"),
             bestaetigt_ausgeliefert: false,
             nummer,
         };

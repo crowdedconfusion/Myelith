@@ -292,3 +292,38 @@ fn eine_luecke_und_eine_position_hinter_der_grenze_werden_abgelehnt() {
     assert!(shard.process(&nachricht(5)).is_err(), "nach drei Positionen ist 5 wieder eine Luecke");
     assert!(shard.process(&nachricht(3)).is_ok());
 }
+
+/// ⚑ **Ein Token hinter dem Vokabular wird abgelehnt, und die Sitzung
+/// bleibt** (Fund 613). Vorher ging die Kennung ungeprüft an
+/// `embed_token`, und der Shard-Prozess stürzte ab.
+#[test]
+fn ein_token_hinter_dem_vokabular_wird_abgelehnt() {
+    let dir = {
+        let manifest = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR");
+        std::path::PathBuf::from(manifest).join("../../INTEGER_LLM/artifacts/sparrow-0.6b-int8")
+    };
+    if !artefakte::vorhanden(&dir) {
+        return;
+    }
+    let model = Arc::new(integer_llm_runtime::loader::load_model(&dir).expect("Modell"));
+    let vokabular = model.vocab_size as u32;
+    let sk = myl_types::bls::BlsSecretKey::key_gen(&[29u8; 32]).expect("BLS");
+    let shard = myl_pod::shard::ShardNode::new(0, 0, 1, true, false, model, sk, 8);
+    let nachricht = |token: u32, position: u64| PodMessage {
+        magic: wire::MAGIC,
+        segment_id: SegmentId::new([6u8; 32]),
+        session_id: 91,
+        sender_shard: 0,
+        position,
+        flags: wire::FLAG_TOKEN_INPUT,
+        trace: Vec::new(),
+        signature: myl_types::bls::BlsSignature([0u8; 96]),
+        payload: wire::pack_tokens(&[token]),
+    };
+    assert!(shard.process(&nachricht(1, 0)).is_ok(), "ein gueltiges Token rechnet");
+    for fremd in [vokabular, vokabular + 1, u32::MAX] {
+        let e = shard.process(&nachricht(fremd, 1));
+        assert!(e.as_ref().is_err_and(|e| e.contains("Vokabular")), "{fremd}: {:?}", e.err());
+    }
+    assert!(shard.process(&nachricht(2, 1)).is_ok(), "die Sitzung lebt weiter");
+}

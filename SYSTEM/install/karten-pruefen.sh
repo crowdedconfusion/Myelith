@@ -40,7 +40,7 @@
 #
 # Aufruf, aus dem Klon:
 #   sh SYSTEM/install/karten-pruefen.sh               pruefen und messen
-#   sh SYSTEM/install/karten-pruefen.sh --einrichten  dazu fehlendes NVRTC und Rust holen (Netz)
+#   sh SYSTEM/install/karten-pruefen.sh --einrichten  dazu fehlendes NVRTC und Rust (Fassung aus rust-toolchain.toml) holen (Netz)
 #   sh SYSTEM/install/karten-pruefen.sh --nur-finden  nur Schritt 1
 #   sh SYSTEM/install/karten-pruefen.sh --modell pigeon-4b-int8 --modell magpie-30b-a3b-int8
 #   sh SYSTEM/install/karten-pruefen.sh --nur-modell  nur Schritt 5 (nach einem vollen Lauf)
@@ -157,19 +157,57 @@ if [ -z "$WEGE" ]; then
   echo "Kein Rechenweg uebrig."
   exit 2
 fi
-[ "$nur_finden" = 1 ] && exit 0
-
 # ── Rust ────────────────────────────────────────────────────────────
-if ! da cargo; then
-  if [ "$einrichten" = 1 ]; then
-    sagen "Rust einrichten (rustup)"
-    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
-    . "$HOME/.cargo/env"
-  else
-    echo "⛔️ cargo fehlt. Mit --einrichten holt das Skript Rust ueber rustup."
+# Die Fassung steht einmal, in rust-toolchain.toml.
+#
+# 📌 Fund 598 (2026-10-23): Dieser Teil stand hinter dem Ende von
+#    --nur-finden. Der Ablauf beginnt mit `--einrichten --nur-finden`, und
+#    so richtete er nie Rust ein; der naechste Aufruf (ohne --einrichten)
+#    brach mit "cargo fehlt" ab. Und ein vorhandenes cargo wurde nie nach
+#    seiner Fassung gefragt: Ein Mietabbild mit dem Rust der Distribution
+#    waere erst beim Bau an `rust-version` gescheitert.
+FASSUNG=$(sed -n 's/^channel = "\(.*\)"/\1/p' "$HIER/rust-toolchain.toml" 2>/dev/null)
+rustup_holen() {
+  sagen "Rust einrichten (rustup)"
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+  . "$HOME/.cargo/env"
+}
+cargo_fassung() { (cd "$HIER" && cargo --version 2>/dev/null) | cut -d' ' -f2; }
+zu_alt() { [ -n "$FASSUNG" ] && [ -n "$1" ] && [ "$(printf '%s\n%s\n' "$FASSUNG" "$1" | sort -V | head -1)" != "$FASSUNG" ]; }
+rust_einrichten() {
+  if ! da cargo; then
+    if [ "$einrichten" = 1 ]; then
+      rustup_holen
+    else
+      echo "⛔️ cargo fehlt. Mit --einrichten holt das Skript Rust ueber rustup."
+      exit 2
+    fi
+  fi
+  # Mit rustup die Fassung aus rust-toolchain.toml ausdruecklich holen,
+  # statt darauf zu bauen, dass der erste Aufruf sie nachlaedt.
+  if da rustup && [ "$einrichten" = 1 ]; then
+    (cd "$HIER" && rustup toolchain install) || echo "⚠️ rustup konnte $FASSUNG nicht holen"
+  fi
+  IST=$(cargo_fassung)
+  if zu_alt "$IST" && [ "$einrichten" = 1 ] && ! da rustup; then
+    echo "cargo $IST ist aelter als $FASSUNG und kommt nicht von rustup; hole rustup dazu."
+    rustup_holen
+    (cd "$HIER" && rustup toolchain install) || echo "⚠️ rustup konnte $FASSUNG nicht holen"
+    IST=$(cargo_fassung)
+  fi
+  if zu_alt "$IST"; then
+    echo "⛔️ cargo $IST ist aelter als $FASSUNG (rust-toolchain.toml); jede Kiste verlangt sie."
+    echo "   Mit --einrichten holt das Skript sie ueber rustup."
     exit 2
   fi
+  echo "Rust: cargo $IST (verlangt $FASSUNG)"
+}
+
+if [ "$nur_finden" = 1 ]; then
+  [ "$einrichten" = 1 ] && rust_einrichten
+  exit 0
 fi
+rust_einrichten
 if ! da c++; then
   echo "⚠️ Kein C++-Uebersetzer (c++): Der Nachbau der Kerne scheitert dann. Ubuntu: apt install g++"
 fi

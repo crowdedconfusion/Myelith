@@ -1,7 +1,7 @@
 # training (`myl-train`)
 
-> **Version:** 0.4.5 (`myl-train` 0.3.1)
-> **Datum:** 2026-10-22
+> **Version:** 0.4.6 (`myl-train` 0.3.1)
+> **Datum:** 2026-10-23
 > **Status:** **Die Komponente hat Code**, 32 Tests. Zwei Punkte sind
 > gebaut, und beide sind genau die, die **nicht** am ganzzahligen
 > Rückwärtspass hängen:
@@ -145,6 +145,21 @@ von dieser Komponente kommt:
 Entsteht mit der Implementierung.
 
 ## Changelog
+
+### v0.4.6 (2026-10-23): pypdf ohne bekannte Schwachstellen (Fund 601)
+
+Aus dem Sicherheitsaudit vom 2026-10-23.
+
+- ⚑ **Fund 601:** Das Rad unter `korpus/raeder/` war `pypdf` 6.19.0, mit
+  acht Meldungen zu fremden PDFs (Endlosschleifen beim Lesen der
+  Querverweise, grosser Speicher bei Strömen, Feldern und Arrays). Jetzt
+  6.21.1, die erste Fassung ohne Meldung; das Rad ist gegen die SHA-256 von
+  PyPI geprüft, `requirements.txt` nennt es. Die Buchkette liest damit
+  fremde PDFs, und genau dort greifen diese Meldungen.
+- Belege: `einrichten.sh` installiert ohne Netz aus `raeder/`; die
+  Selbsttests von `buch_zu_md`, `buchkorpus`, `md_zu_mappe` und `umgebung`
+  sind grün, der PDF-Weg läuft (eine leere Seite ergibt die vorgesehene
+  Absage).
 
 ### v0.4.5 (2026-10-22): Eine Werkzeugkette für alle Kisten (`myl-train` 0.3.1)
 

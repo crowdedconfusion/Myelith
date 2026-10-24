@@ -291,42 +291,4 @@ Vorlage durchfällt; eine Prüfung, die **alles** ablehnt, besteht diesen
 Test ebenfalls. Neu ist ein vollständiger Beispielantrag als
 Positivprobe, und beide Richtungen laufen im selben Schritt.
 
-### v0.2.0 – 2026-08-29 (Phase 1: aus Zusagen werden Dateien)
-
-Fünf Artefakte, drei davon als Skript im CI:
-
-- **`werkzeuge/modellkarte.py`** erzeugt `Modellkarte.md` aus
-  `theta_v/spec.json` und `eval/results/`. ⚑ **Erzeugt, nicht
-  geschrieben**, denn eine von Hand gepflegte Karte ist so aktuell wie
-  die Erinnerung dessen, der sie zuletzt anfasste. `--pruefe` meldet,
-  wenn die abgelegte nicht mehr die erzeugte ist.
-- **`vorlagen/korpus-aufnahmeantrag.json`** und
-  **`werkzeuge/pruefe_antrag.py`** für die vier Pflichtangaben aus G3.
-  Die leere Vorlage fällt durch, und der CI-Schritt prüft genau das.
-- **`werkzeuge/lizenzprobe.py`** liest den Lizenz**text**, nicht den
-  Dateinamen, und kennt drei Sperrmuster. Vier lokale Modelle, alle
-  Apache 2.0.
-- **`Risikoklassen.toml`** als **eine** Quelle für Kap. 9.3. ⚑ Eine
-  Warnung, die an drei Stellen steht, steht irgendwann in drei
-  Fassungen da, und die mildeste wird die gelesene.
-- **`checklists/README.md`** sagt bei jedem Punkt dazu, **ob eine
-  Maschine ihn prüfen kann**. Drei können es, der Rest nicht.
-
-⚑ **Was keine der Prüfungen leistet, und es steht in jeder von ihnen:**
-Sie prüfen Vollständigkeit und Form, nicht Wahrheit. Ob eine
-Merkle-Wurzel stimmt oder ein Filter wirklich lief, sieht kein Skript.
-Sie sorgen dafür, dass jemand es hingeschrieben hat und dafür einsteht.
-
-### v0.1.0 – 2026-08-18 (bis zum 2026-08-31 als v1.0.0 geführt)
-- Komponente angelegt, `Manifest.md` v1.0.0.
-- Aufbau bewusst als Grenzziehung: Was ist protokoll-durchsetzbar, was
-  governance-abhängig, was nicht kontrollierbar. Erst danach Zusagen.
-- **Ein konkreter Fund beim Anlegen:** Whitepaper Kap. 10.1 verlangt für
-  das Basismodell Apache 2.0 oder MIT. Das lokal vorliegende
-  Qwen2.5-0.5B erfüllt das (`INTEGER_LLM/models/Qwen2.5-0.5B/LICENSE`
-  ist Apache 2.0) — die seit 2026-08-12 offene Frage „Lizenzlage des
-  Basismodells" ist damit **für diese Variante** beantwortet, aber
-  nicht für die Modellfamilie: einzelne Qwen2.5-Größen stehen unter
-  abweichenden Lizenzen. Die Prüfung muss variantenscharf erfolgen,
-  nicht familienweit. Vermerkt in `COMPLIANCE/ethics/Lizenzlage.md` und
-  unter Punkt 1.3.
+**Ältere Einträge** (v0.2.0 und davor, 2 Stück) stehen in der Git-Geschichte dieser Datei: `git log -p -- COMPLIANCE/ethics/README/README.md`.

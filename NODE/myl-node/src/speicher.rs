@@ -93,24 +93,32 @@
 //! steht nur der Index und ein kleiner Zwischenspeicher in der
 //! Grössenordnung von ein paar hundert Sätzen.
 //!
-//! **Zwei Verweise, mit verschiedenen Aufgaben:**
+//! **Ein dünner Verweis statt zweier voller** (Fund 625, 2026-10-23).
 //!
-//! | Verweis | Reihenfolge | Wofür |
-//! |---|---|---|
-//! | `orte` | wie in der Datei | Wiederanlauf, jeder Satz genau einmal |
-//! | `nach_hoehe` | nach Blockhöhe | Nachlieferung an Fragende |
+//! Bis dahin führte der Speicher zwei Verweise über **jeden** Satz: die
+//! Orte in Dateireihenfolge und eine Tabelle nach Höhe. Gemessen kosteten
+//! sie rund 45 Byte Arbeitsspeicher je Block, nicht acht, wie hier stand;
+//! bei 1 s Blockzeit wären das 1,4 GB im Jahr, und der Knoten wuchs Block
+//! für Block. Jetzt gibt es eine **Stütze je [`STUETZABSTAND`] Sätze**
+//! (Höhe und Ort), rund 16 Byte je tausend Blöcke.
 //!
-//! ⚑ **Der Wiederanlauf geht über `orte`, nicht über `nach_hoehe`**, und
+//! | Weg | wie |
+//! |---|---|
+//! | Wiederanlauf | die Datei der Reihe nach, jeder Satz genau einmal |
+//! | Nachlieferung | zur Stütze vor `ab` springen, vorwärts lesen bis `bis` |
+//!
+//! ⚑ **Der Wiederanlauf geht über die Datei, nicht über die Höhen**, und
 //! das ist keine Kleinigkeit. Eine Datei mit doppelten oder springenden
-//! Höhen fiele in `nach_hoehe` zusammen, und der Wiederanlauf spielte
-//! **weniger** Sätze ab, als die Datei enthält. Das wäre eine Auswahl
-//! **vor** der Prüfung, also genau die Stelle, an der ein manipulierter
-//! Verlauf durchkäme. Über `orte` geht jeder Satz durch `uebernimm`, in
-//! Dateireihenfolge, wie bisher.
+//! Höhen fiele in einem Verweis nach Höhe zusammen, und der Wiederanlauf
+//! spielte **weniger** Sätze ab, als die Datei enthält. Das wäre eine
+//! Auswahl **vor** der Prüfung, also genau die Stelle, an der ein
+//! manipulierter Verlauf durchkäme. So geht jeder Satz durch `uebernimm`,
+//! in Dateireihenfolge.
 //!
-//! **Und `nach_hoehe` darf ungenau sein**, weil ein falscher Block dort
+//! **Und die Nachlieferung darf ungenau sein**, weil ein falscher Block
 //! nur an einen Fragenden geht, der ihn selbst über `uebernimm` prüft:
-//! Vorgänger-Hash und Zustandswurzel entscheiden, nicht die Herkunft.
+//! Vorgänger-Hash und Zustandswurzel entscheiden, nicht die Herkunft. Bei
+//! doppelten Höhen gewinnt der spätere Satz.
 //!
 //! **Gelesen wird über einen zweiten Dateigriff.** Ein Griff für beides
 //! hieße, dass jedes Lesen die Schreibstelle verschiebt, und ein
@@ -119,6 +127,9 @@
 //! Griffe können das nicht.
 
 use std::collections::BTreeMap;
+
+/// Alle so viele Sätze eine Stütze im Verweis (Fund 625).
+pub const STUETZABSTAND: u64 = 1024;
 use std::fs::{File, OpenOptions};
 use std::io::{BufReader, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -251,27 +262,29 @@ pub struct Wiederanlauf {
     pub neu: bool,
 }
 
+/// Wo eine Verdichtung ihre neue Datei schreibt.
+fn verdichtungspfad(pfad: &Path) -> PathBuf {
+    let mut n = pfad.as_os_str().to_owned();
+    n.push(".neu");
+    PathBuf::from(n)
+}
+
 /// Ein anhängendes Blockprotokoll auf der Platte.
 #[derive(Debug)]
 pub struct Kettenspeicher {
     pfad: PathBuf,
+    /// Der Startwert der Kette, für den Kopf einer verdichteten Datei.
+    startwert: Hash,
     /// Der Griff zum Anhängen. Steht immer am Ende der Datei.
     datei: File,
     /// Der Griff zum Lesen. Springt frei umher und stört das Anhängen
     /// deshalb nicht (siehe Modulkopf).
     leser: File,
-    /// Wo jeder Satz anfängt, in Dateireihenfolge.
-    ///
-    /// **Acht Bytes je Block.** Eine Kette von einer Million Blöcken
-    /// kostet hier acht Megabyte, die Blöcke selbst kosteten je nach
-    /// Größe drei bis vier Zehnerpotenzen mehr.
-    orte: Vec<u64>,
-    /// Wo der Satz zu einer Höhe anfängt, für die Nachlieferung.
-    ///
-    /// Bei doppelten Höhen gewinnt der spätere Satz. Das ist zulässig,
-    /// weil ein Empfänger jeden gelieferten Block selbst prüft; siehe
-    /// Modulkopf.
-    nach_hoehe: BTreeMap<u64, u64>,
+    /// Höhe und Ort jedes [`STUETZABSTAND`]-ten Satzes, in
+    /// Dateireihenfolge (siehe Modulkopf).
+    stuetzen: Vec<(u64, u64)>,
+    /// Die kleinste Höhe der Datei.
+    kleinste: Option<u64>,
     /// Die Länge der Datei, also der Anfang des nächsten Satzes.
     laenge: u64,
     geschrieben: u64,
@@ -301,6 +314,11 @@ impl Kettenspeicher {
             pfad: pfad.to_path_buf(),
             grund: e.to_string(),
         };
+        // ⚑ Eine liegengebliebene Verdichtung zählt nicht (siehe
+        //   [`Self::verdichten_vorbereiten`]): Sie ist entweder halb
+        //   geschrieben, oder die Basis ist schon gesetzt und die alte
+        //   Datei trägt alles, was danach kommt.
+        let _ = std::fs::remove_file(verdichtungspfad(pfad));
         if let Some(ordner) = pfad.parent() {
             if !ordner.as_os_str().is_empty() {
                 std::fs::create_dir_all(ordner).map_err(fehler)?;
@@ -326,10 +344,11 @@ impl Kettenspeicher {
             return Ok((
                 Self {
                     pfad: pfad.to_path_buf(),
+                    startwert,
                     datei,
                     leser,
-                    orte: Vec::new(),
-                    nach_hoehe: BTreeMap::new(),
+                    stuetzen: Vec::new(),
+                    kleinste: None,
                     laenge: KOPF_BYTES,
                     geschrieben: 0,
                 },
@@ -377,8 +396,8 @@ impl Kettenspeicher {
         }
 
         // Sätze lesen, bis einer abbricht.
-        let mut orte: Vec<u64> = Vec::new();
-        let mut nach_hoehe: BTreeMap<u64, u64> = BTreeMap::new();
+        let mut stuetzen: Vec<(u64, u64)> = Vec::new();
+        let mut kleinste: Option<u64> = None;
         let mut pos = KOPF_BYTES;
         let mut gueltig_bis = pos;
         let mut nummer = 0u64;
@@ -409,8 +428,10 @@ impl Kettenspeicher {
                     pfad: pfad.to_path_buf(),
                     nummer,
                 })?;
-            orte.push(pos);
-            nach_hoehe.insert(block.header.height, pos);
+            if nummer.is_multiple_of(STUETZABSTAND) {
+                stuetzen.push((block.header.height, pos));
+            }
+            kleinste = Some(kleinste.map_or(block.header.height, |k: u64| k.min(block.header.height)));
             nummer += 1;
             pos += 4 + laenge as u64 + 4;
             gueltig_bis = pos;
@@ -427,14 +448,15 @@ impl Kettenspeicher {
         // ungekürzte Datei wäre gleich wieder falsch.
         let lesegriff = File::open(pfad).map_err(fehler)?;
 
-        let anzahl = orte.len() as u64;
+        let anzahl = nummer;
         Ok((
             Self {
                 pfad: pfad.to_path_buf(),
+                startwert,
                 datei,
                 leser: lesegriff,
-                orte,
-                nach_hoehe,
+                stuetzen,
+                kleinste,
                 laenge: gueltig_bis,
                 geschrieben: anzahl,
             },
@@ -481,18 +503,21 @@ impl Kettenspeicher {
         // Der Verweis wird **nach** dem gelungenen Schreiben gesetzt.
         // Andersherum zeigte er nach einem Schreibfehler auf eine
         // Stelle, an der nichts steht.
-        self.orte.push(self.laenge);
-        self.nach_hoehe.insert(block.header.height, self.laenge);
+        if self.geschrieben.is_multiple_of(STUETZABSTAND) {
+            self.stuetzen.push((block.header.height, self.laenge));
+        }
+        self.kleinste = Some(self.kleinste.map_or(block.header.height, |k| k.min(block.header.height)));
         self.laenge += satz.len() as u64;
         self.geschrieben += 1;
         Ok(())
     }
 
-    /// Liest den Satz, der bei `ort` anfängt.
+    /// Liest den Satz, der bei `ort` anfängt, und nennt den Ort des
+    /// folgenden.
     ///
     /// Geht über den **Lesegriff**, verschiebt die Schreibstelle also
     /// nicht (siehe Modulkopf).
-    fn satz_lesen(&mut self, ort: u64) -> Result<Block, SpeicherFehler> {
+    fn satz_und_naechster(&mut self, ort: u64) -> Result<(Block, u64), SpeicherFehler> {
         let unlesbar = || SpeicherFehler::SatzNichtLesbar {
             pfad: self.pfad.clone(),
             ort,
@@ -519,7 +544,8 @@ impl Kettenspeicher {
         if pruefsumme(&nutz) != u32::from_le_bytes(pruefkopf) {
             return Err(unlesbar());
         }
-        borsh::from_slice(&nutz).map_err(|_| unlesbar())
+        let block = borsh::from_slice(&nutz).map_err(|_| unlesbar())?;
+        Ok((block, ort + 4 + u64::from(laenge) + 4))
     }
 
     /// Reicht jeden Satz **in Dateireihenfolge** einmal an `f`.
@@ -535,9 +561,11 @@ impl Kettenspeicher {
         &mut self,
         mut f: impl FnMut(Block),
     ) -> Result<(), SpeicherFehler> {
-        for i in 0..self.orte.len() {
-            let ort = self.orte[i];
-            f(self.satz_lesen(ort)?);
+        let mut ort = KOPF_BYTES;
+        while ort < self.laenge {
+            let (block, naechster) = self.satz_und_naechster(ort)?;
+            f(block);
+            ort = naechster;
         }
         Ok(())
     }
@@ -563,31 +591,171 @@ impl Kettenspeicher {
     /// Unterschied**: Der erste Fall ist ein Nachzügler, der zu weit
     /// zurückfragt, der zweite eine beschädigte Platte.
     pub fn block_bei(&mut self, hoehe: u64) -> Result<Option<Block>, SpeicherFehler> {
-        let Some(&ort) = self.nach_hoehe.get(&hoehe) else {
-            return Ok(None);
-        };
-        self.satz_lesen(ort).map(Some)
+        Ok(self.bloecke_ab(hoehe, hoehe)?.pop())
     }
 
     /// Die kleinste Höhe, die die Datei führt.
     pub fn kleinste_hoehe(&self) -> Option<u64> {
-        self.nach_hoehe.keys().next().copied()
+        self.kleinste
     }
 
-    /// Welche der Höhen `ab` bis einschließlich `bis` die Datei führt.
+    /// **Die Blöcke der Höhen `ab` bis einschließlich `bis`**, die die Datei
+    /// führt, nach Höhe; bei doppelten Höhen der spätere Satz.
     ///
-    /// ⚑ **Über den Verweis, nicht über die Zahlen.** Wer stattdessen
-    /// `for h in ab..=bis` liefe und jede Höhe einzeln nachschlüge,
-    /// arbeitete so lange wie die **Spanne**, nicht wie das Ergebnis,
-    /// und eine Spanne kommt von außen: `Bloecke { ab: 0, bis: u64::MAX }`
-    /// wäre eine Anfrage, die einen Knoten für immer beschäftigt. Der
-    /// Bereich über die Verweistabelle kostet dagegen nur, was er
-    /// findet.
-    pub fn hoehen_von_bis(&self, ab: u64, bis: u64) -> Vec<u64> {
-        if ab > bis {
-            return Vec::new();
+    /// Gelesen wird ab der letzten Stütze vor `ab`, vorwärts.
+    ///
+    /// ⚑ **Die Arbeit ist begrenzt durch den Stützabstand und die Spanne**,
+    /// nicht durch die Datei: Höchstens `2·STUETZABSTAND + (bis − ab + 1)`
+    /// Sätze werden gelesen. `ab` und `bis` kommen von einer Gegenstelle,
+    /// und `Bloecke { ab: 0, bis: u64::MAX }` darf einen Knoten nicht für
+    /// immer beschäftigen; die Spanne deckelt ohnehin schon
+    /// [`crate::kette::Kette::bloecke_von_bis`].
+    pub fn bloecke_ab(&mut self, ab: u64, bis: u64) -> Result<Vec<Block>, SpeicherFehler> {
+        if ab > bis || self.stuetzen.is_empty() {
+            return Ok(Vec::new());
         }
-        self.nach_hoehe.range(ab..=bis).map(|(h, _)| *h).collect()
+        let i = self.stuetzen.partition_point(|&(h, _)| h <= ab);
+        let mut ort = if i == 0 { KOPF_BYTES } else { self.stuetzen[i - 1].1 };
+        let grenze = 2 * STUETZABSTAND + (bis - ab).min(STUETZABSTAND * 64) + 1;
+        let mut gefunden: BTreeMap<u64, Block> = BTreeMap::new();
+        let mut gelesen = 0u64;
+        while ort < self.laenge && gelesen < grenze {
+            let (block, naechster) = self.satz_und_naechster(ort)?;
+            let h = block.header.height;
+            if h > bis && !gefunden.is_empty() {
+                break;
+            }
+            if (ab..=bis).contains(&h) {
+                gefunden.insert(h, block);
+            }
+            ort = naechster;
+            gelesen += 1;
+        }
+        Ok(gefunden.into_values().collect())
+    }
+
+    /// Die Länge der Datei in Bytes.
+    pub fn laenge(&self) -> u64 {
+        self.laenge
+    }
+
+    /// Wie viele Bytes nach der Höhe `hoehe` ungefähr folgen: ab der ersten
+    /// Stütze über ihr. Unterschätzt um höchstens einen Stützabstand.
+    pub fn bytes_nach(&self, hoehe: u64) -> u64 {
+        let i = self.stuetzen.partition_point(|&(h, _)| h <= hoehe);
+        self.stuetzen.get(i).map_or(0, |&(_, ort)| self.laenge.saturating_sub(ort))
+    }
+
+    /// **Verdichten, erster Schritt**: Kopf und alle Sätze über `nach` in
+    /// eine neue Datei neben der Kette, auf die Platte gezwungen. Die Kette
+    /// selbst bleibt unberührt.
+    ///
+    /// ⚑ **Die Reihenfolge ist die Absturzsicherung** (Fund 624/625,
+    /// 2026-10-23): erst diese Datei, dann setzt der Aufrufer die Basis,
+    /// dann [`Self::verdichten_abschliessen`]. Stirbt der Knoten dazwischen,
+    /// hat er die alte Datei und die neue Basis; er lädt den Abzug, weist
+    /// die Sätze davor beim Nachspielen ab und lebt weiter. Andersherum
+    /// begänne die Datei hinter einer Basis, an die nichts anschließt.
+    pub fn verdichten_vorbereiten(&mut self, nach: u64) -> Result<u64, SpeicherFehler> {
+        let ziel = verdichtungspfad(&self.pfad);
+        let fehler = |e: std::io::Error| SpeicherFehler::Datei {
+            pfad: ziel.clone(),
+            grund: e.to_string(),
+        };
+        let mut aus = std::io::BufWriter::new(File::create(&ziel).map_err(fehler)?);
+        aus.write_all(MAGIE).map_err(fehler)?;
+        aus.write_all(&FASSUNG.to_le_bytes()).map_err(fehler)?;
+        aus.write_all(self.startwert.as_bytes()).map_err(fehler)?;
+        let mut ort = KOPF_BYTES;
+        let mut behalten = 0u64;
+        while ort < self.laenge {
+            let (block, naechster) = self.satz_und_naechster(ort)?;
+            if block.header.height > nach {
+                let nutz = borsh::to_vec(&block).map_err(|e| SpeicherFehler::Datei {
+                    pfad: ziel.clone(),
+                    grund: e.to_string(),
+                })?;
+                aus.write_all(&(nutz.len() as u32).to_le_bytes()).map_err(fehler)?;
+                aus.write_all(&nutz).map_err(fehler)?;
+                aus.write_all(&pruefsumme(&nutz).to_le_bytes()).map_err(fehler)?;
+                behalten += 1;
+            }
+            ort = naechster;
+        }
+        let datei = aus.into_inner().map_err(|e| fehler(e.into_error()))?;
+        datei.sync_all().map_err(fehler)?;
+        Ok(behalten)
+    }
+
+    /// **Verdichten, letzter Schritt**: die neue Datei an die Stelle der
+    /// alten, und der Speicher öffnet sie neu.
+    pub fn verdichten_abschliessen(&mut self) -> Result<(), SpeicherFehler> {
+        let neu = verdichtungspfad(&self.pfad);
+        std::fs::rename(&neu, &self.pfad).map_err(|e| SpeicherFehler::Datei {
+            pfad: self.pfad.clone(),
+            grund: e.to_string(),
+        })?;
+        let (frisch, _) = Self::oeffnen(&self.pfad, self.startwert)?;
+        *self = frisch;
+        Ok(())
+    }
+
+    /// **Die Geschichte vor die Kette setzen**: alle Sätze von `archiv`,
+    /// dann die eigenen, in eine neue Datei, die an die Stelle der alten
+    /// tritt. Gibt die Zahl der eingefügten Sätze zurück.
+    ///
+    /// ⚑ Für einen Archivknoten, der seine Kette früher verdichtet hat und
+    /// die Blöcke ab Genesis geprüft zurückgeholt hat
+    /// ([`crate::archiv`]). **Geprüft wird vorher**, hier wird nur
+    /// zusammengelegt. Der Aufrufer entfernt die Basis **danach**: Stirbt
+    /// der Knoten dazwischen, hat er die vollständige Datei und die alte
+    /// Basis, lädt den Abzug und weist die Sätze davor beim Nachspielen ab.
+    pub fn vorne_einfuegen(&mut self, archiv: &Path) -> Result<u64, SpeicherFehler> {
+        let ziel = verdichtungspfad(&self.pfad);
+        let fehler = |e: std::io::Error| SpeicherFehler::Datei {
+            pfad: ziel.clone(),
+            grund: e.to_string(),
+        };
+        let (mut vorne, _) = Self::oeffnen(archiv, self.startwert)?;
+        let mut aus = std::io::BufWriter::new(File::create(&ziel).map_err(fehler)?);
+        aus.write_all(MAGIE).map_err(fehler)?;
+        aus.write_all(&FASSUNG.to_le_bytes()).map_err(fehler)?;
+        aus.write_all(self.startwert.as_bytes()).map_err(fehler)?;
+        let mut eingefuegt = 0u64;
+        let schreiben = |block: &Block, aus: &mut std::io::BufWriter<File>| -> Result<(), SpeicherFehler> {
+            let nutz = borsh::to_vec(block).map_err(|e| SpeicherFehler::Datei { pfad: ziel.clone(), grund: e.to_string() })?;
+            aus.write_all(&(nutz.len() as u32).to_le_bytes())
+                .and_then(|()| aus.write_all(&nutz))
+                .and_then(|()| aus.write_all(&pruefsumme(&nutz).to_le_bytes()))
+                .map_err(|e| SpeicherFehler::Datei { pfad: ziel.clone(), grund: e.to_string() })
+        };
+        let mut ergebnis = Ok(());
+        vorne.fuer_jeden_satz(|b| {
+            if ergebnis.is_ok() {
+                ergebnis = schreiben(&b, &mut aus);
+                eingefuegt += 1;
+            }
+        })?;
+        ergebnis?;
+        let mut ergebnis = Ok(());
+        self.fuer_jeden_satz(|b| {
+            if ergebnis.is_ok() {
+                ergebnis = schreiben(&b, &mut aus);
+            }
+        })?;
+        ergebnis?;
+        let datei = aus.into_inner().map_err(|e| fehler(e.into_error()))?;
+        datei.sync_all().map_err(fehler)?;
+        drop(vorne);
+        self.verdichten_abschliessen()?;
+        let _ = std::fs::remove_file(archiv);
+        Ok(eingefuegt)
+    }
+
+    /// Wie viele Stützen der Verweis hält; für die Probe von Fund 625.
+    #[doc(hidden)]
+    pub fn stuetzen(&self) -> usize {
+        self.stuetzen.len()
     }
 
     /// Wie viele Blöcke die Datei führt.
@@ -680,6 +848,86 @@ mod tests {
         for (i, b) in gelesen.iter().enumerate() {
             assert_eq!(*b, block(i as u64 + 1), "Block {i} kam verändert zurück");
         }
+        std::fs::remove_dir_all(&d).ok();
+    }
+
+    /// ⚑ **Fund 625: Der Verweis wächst nicht mit der Kette.** 5 000 Blöcke
+    /// halten fünf Stützen, nicht 10 000 Einträge; trotzdem findet die
+    /// Nachlieferung jede Höhe, am Anfang, an einer Stütze, dazwischen und
+    /// am Ende, auch nach dem Wiederöffnen.
+    #[test]
+    fn der_verweis_waechst_nicht_mit_der_kette() {
+        let d = tempdir("stuetzen");
+        let p = d.join("kette.log");
+        {
+            let (mut s, _) = Kettenspeicher::oeffnen(&p, startwert()).expect("öffnen");
+            for h in 1..=5000 {
+                s.anhaengen(&block(h)).expect("anhängen");
+            }
+            assert_eq!(s.stuetzen(), 5);
+        }
+        let (mut s, _) = Kettenspeicher::oeffnen(&p, startwert()).expect("wieder öffnen");
+        assert_eq!(s.stuetzen(), 5);
+        assert_eq!(s.kleinste_hoehe(), Some(1));
+        for h in [1u64, 2, 1024, 1025, 1026, 3333, 4096, 4097, 5000] {
+            assert_eq!(s.block_bei(h).expect("lesen"), Some(block(h)), "Höhe {h}");
+        }
+        assert_eq!(s.block_bei(5001).expect("lesen"), None);
+        let spanne = s.bloecke_ab(1020, 1030).expect("lesen");
+        assert_eq!(spanne, (1020..=1030).map(block).collect::<Vec<_>>());
+        // Eine Spanne von aussen über die ganze Zahl: begrenzt, nicht ewig.
+        assert!(s.bloecke_ab(0, u64::MAX).expect("lesen").len() <= 5000);
+        std::fs::remove_dir_all(&d).ok();
+    }
+
+    /// ⚑ **Verdichten behält genau, was über der Basis liegt**, die Datei
+    /// schrumpft, lässt sich weiter beschreiben und wieder öffnen.
+    #[test]
+    fn verdichten_behaelt_genau_was_ueber_der_basis_liegt() {
+        let d = tempdir("verdichten");
+        let p = d.join("kette.log");
+        let (mut s, _) = Kettenspeicher::oeffnen(&p, startwert()).expect("öffnen");
+        for h in 1..=3000 {
+            s.anhaengen(&block(h)).expect("anhängen");
+        }
+        let vorher = s.laenge();
+        assert!(s.bytes_nach(2000) < vorher / 2, "bytes_nach schätzt falsch");
+        assert_eq!(s.verdichten_vorbereiten(2000).expect("vorbereiten"), 1000);
+        // Bis zum Abschluss bleibt die alte Datei unberührt.
+        assert_eq!(s.laenge(), vorher);
+        s.verdichten_abschliessen().expect("abschliessen");
+        assert!(s.laenge() < vorher / 2);
+        assert_eq!(s.bloecke(), 1000);
+        assert_eq!(s.kleinste_hoehe(), Some(2001));
+        assert_eq!(s.block_bei(2000).expect("lesen"), None);
+        assert_eq!(s.block_bei(2001).expect("lesen"), Some(block(2001)));
+        s.anhaengen(&block(3001)).expect("weiter anhängen");
+        drop(s);
+        let (mut s, w) = Kettenspeicher::oeffnen(&p, startwert()).expect("wieder öffnen");
+        assert_eq!(w.anzahl, 1001);
+        let alle = s.alle_saetze().expect("lesen");
+        assert_eq!(alle, (2001..=3001).map(block).collect::<Vec<_>>());
+        std::fs::remove_dir_all(&d).ok();
+    }
+
+    /// Eine Verdichtung, die nicht abgeschlossen wurde, zählt nicht: Beim
+    /// Öffnen verschwindet ihre Datei, und die alte gilt unverändert.
+    #[test]
+    fn eine_halbe_verdichtung_zaehlt_nicht() {
+        let d = tempdir("halbverdichtet");
+        let p = d.join("kette.log");
+        {
+            let (mut s, _) = Kettenspeicher::oeffnen(&p, startwert()).expect("öffnen");
+            for h in 1..=50 {
+                s.anhaengen(&block(h)).expect("anhängen");
+            }
+            s.verdichten_vorbereiten(25).expect("vorbereiten");
+        }
+        assert!(verdichtungspfad(&p).exists());
+        let (s, w) = Kettenspeicher::oeffnen(&p, startwert()).expect("wieder öffnen");
+        assert!(!verdichtungspfad(&p).exists(), "die halbe Verdichtung blieb liegen");
+        assert_eq!(w.anzahl, 50);
+        assert_eq!(s.kleinste_hoehe(), Some(1));
         std::fs::remove_dir_all(&d).ok();
     }
 

@@ -1,7 +1,7 @@
 # Protokollsimulation und Sicherheitsaudit
 
-> **Version:** `myl-simulation` 0.1.3
-> **Datum:** 2026-10-22
+> **Version:** `myl-simulation` 0.1.4
+> **Datum:** 2026-10-23
 > **Status:** Ein Szenario läuft (Segmentweg über alle Schichten) mit
 > Abdeckungsbericht. `latency_sim.py` und `security_sim.py` laufen seit
 > dem 2026-09-01 und **behaupten**, statt nur zu drucken.

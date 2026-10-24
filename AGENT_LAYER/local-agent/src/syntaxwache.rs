@@ -54,16 +54,30 @@ pub fn pruefen(pfad: &Path, inhalt: &str) -> Urteil {
     }
 }
 
+/// Zaehlt die Zwischendateien dieses Prozesses.
+static ZAEHLER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 /// Uebersetzt Python, ohne es auszufuehren.
 fn python(inhalt: &str) -> Urteil {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static ZAEHLER: AtomicU64 = AtomicU64::new(0);
+    use std::sync::atomic::Ordering;
     let datei = std::env::temp_dir().join(format!(
         "myl-syntaxwache-{}-{}.py",
         std::process::id(),
         ZAEHLER.fetch_add(1, Ordering::Relaxed)
     ));
-    if std::fs::write(&datei, inhalt).is_err() {
+    // 📌 **Fund 617 (2026-10-23): exklusiv angelegt.** Hier stand
+    //    `fs::write`, und der Name ist vorhersagbar. Unter einem gemeinsamen
+    //    `/tmp` haette ein anderer Nutzer dort einen Verweis auf eine Datei
+    //    des Nutzers legen koennen, und die Wache haette sie mit dem
+    //    Inhalt des Agenten ueberschrieben. `create_new` legt nur neu an
+    //    und folgt keinem Verweis; liegt dort schon etwas, bleibt das
+    //    Urteil offen.
+    let angelegt = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&datei)
+        .and_then(|mut f| std::io::Write::write_all(&mut f, inhalt.as_bytes()));
+    if angelegt.is_err() {
         return Urteil::Offen;
     }
     const PRUEFER: &str = "import sys\n\
@@ -83,6 +97,33 @@ fn python(inhalt: &str) -> Urteil {
 #[cfg(test)]
 mod proben {
     use super::*;
+
+    /// ⚑ **Ein Verweis unter dem Namen der Zwischendatei wird nicht
+    /// beschrieben** (Fund 617): Die Datei, auf die er zeigt, bleibt, wie
+    /// sie war.
+    #[cfg(unix)]
+    #[test]
+    fn ein_verweis_unter_dem_namen_wird_nicht_beschrieben() {
+        use std::sync::atomic::Ordering;
+        let opfer = std::env::temp_dir().join(format!("myl-syntaxwache-opfer-{}", std::process::id()));
+        std::fs::write(&opfer, "unberuehrt").expect("anlegen");
+        // Die naechsten Namen der Wache vorweg als Verweise belegen.
+        let n = ZAEHLER.load(Ordering::Relaxed);
+        let mut verweise = Vec::new();
+        for k in n..n + 64 {
+            let v = std::env::temp_dir().join(format!("myl-syntaxwache-{}-{k}.py", std::process::id()));
+            let _ = std::fs::remove_file(&v);
+            if std::os::unix::fs::symlink(&opfer, &v).is_ok() {
+                verweise.push(v);
+            }
+        }
+        let _ = pruefen(Path::new("a.py"), "eingeschleust = 1\n");
+        assert_eq!(std::fs::read_to_string(&opfer).expect("lesen"), "unberuehrt");
+        for v in verweise {
+            let _ = std::fs::remove_file(v);
+        }
+        let _ = std::fs::remove_file(&opfer);
+    }
 
     /// ⚑ **Python und JSON, gueltig und ungueltig**, mit Zeile. Ohne
     /// `python3` ist das Urteil offen, und die Probe sagt es statt still zu

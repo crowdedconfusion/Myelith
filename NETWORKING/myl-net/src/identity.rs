@@ -84,7 +84,11 @@ impl NodeIdentity {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
-        fs::write(path, self.to_bytes().map_err(|_| IdentityError::InvalidEncoding)?)?;
+        // 📌 Fund 607 (2026-10-23): Hier stand `fs::write` und danach
+        //    `chmod 0600`; dazwischen lag der Schluessel lesbar fuer jeden.
+        //    Jetzt mit den Rechten ab dem Anlegen. `nur_fuer_den_eigentuemer`
+        //    bleibt fuer eine Datei, die schon vorher offen lag.
+        myl_types::geheimdatei::schreiben(path, &self.to_bytes().map_err(|_| IdentityError::InvalidEncoding)?)?;
         Self::nur_fuer_den_eigentuemer(path);
         Ok(())
     }

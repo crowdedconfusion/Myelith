@@ -44,6 +44,10 @@ pub struct Knotenbild {
     /// Die höchste gesehene Folgenummer. Weicht sie von `zeilen` ab,
     /// fehlen Zeilen.
     pub hoechste_folge: u64,
+    /// Die erste aufbewahrte Folgenummer; über 1, wenn der Knoten seine
+    /// ältesten Dateien unter dem Deckel geräumt hat (Fund 624). Das ist
+    /// keine Lücke, sondern ein fehlender Anfang.
+    pub erste_folge: u64,
     pub erste_zeit_ms: i64,
     pub letzte_zeit_ms: i64,
     /// Peers, zu denen dieser Knoten eine Verbindung vermerkt hat.
@@ -169,7 +173,7 @@ impl Knotenbild {
 
     /// Ob die Folge lückenlos ist.
     pub fn lueckenlos(&self) -> bool {
-        self.zeilen == self.hoechste_folge
+        self.zeilen == self.hoechste_folge - self.erste_folge.saturating_sub(1).min(self.hoechste_folge)
     }
 
     /// Laufzeit in Sekunden, wie der Knoten selbst sie sah.
@@ -307,14 +311,28 @@ pub struct Sammlung {
 
 /// Liest ein einzelnes Betriebsprotokoll.
 pub fn lies_protokoll(pfad: &Path) -> Result<Knotenbild, String> {
-    let inhalt = std::fs::read_to_string(pfad)
-        .map_err(|e| format!("{}: {e}", pfad.display()))?;
+    lies_lauf(&[pfad.to_path_buf()])
+}
+
+/// **Die Dateien eines Laufs als ein Protokoll.** Ein Knoten beginnt eine
+/// neue Datei, wenn die laufende voll ist (Fund 624), und ihre erste Zeile
+/// ist `fortsetzung`; die Folge läuft über die Dateien weiter.
+pub fn lies_lauf(pfade: &[PathBuf]) -> Result<Knotenbild, String> {
+    let pfad = pfade.first().ok_or_else(|| "kein Protokoll".to_string())?;
+    let mut inhalt = String::new();
+    for p in pfade {
+        inhalt.push_str(&std::fs::read_to_string(p).map_err(|e| format!("{}: {e}", p.display()))?);
+        if !inhalt.ends_with('\n') {
+            inhalt.push('\n');
+        }
+    }
     let mut bild = Knotenbild {
         name: String::new(),
         peer: String::new(),
         datei: pfad.to_path_buf(),
         zeilen: 0,
         hoechste_folge: 0,
+        erste_folge: 0,
         erste_zeit_ms: 0,
         letzte_zeit_ms: 0,
         gesehen: BTreeSet::new(),
@@ -352,6 +370,9 @@ pub fn lies_protokoll(pfad: &Path) -> Result<Knotenbild, String> {
         bild.zeilen += 1;
         if let Some(f) = zahl_feld(zeile, "folge") {
             bild.hoechste_folge = bild.hoechste_folge.max(f.max(0) as u64);
+            if bild.erste_folge == 0 || (f.max(0) as u64) < bild.erste_folge {
+                bild.erste_folge = f.max(0) as u64;
+            }
         }
         if let Some(t) = zahl_feld(zeile, "zeit_ms") {
             if bild.erste_zeit_ms == 0 {
@@ -529,7 +550,9 @@ pub fn sammle(verzeichnis: &Path) -> Result<Vec<Knotenbild>, String> {
 pub fn sammle_mit_bericht(verzeichnis: &Path) -> Result<Sammlung, String> {
     let eintraege = std::fs::read_dir(verzeichnis)
         .map_err(|e| format!("{}: {e}", verzeichnis.display()))?;
-    let mut je_knoten: BTreeMap<String, Knotenbild> = BTreeMap::new();
+    // Je Knoten die Köpfe seiner Dateien: Zeit der ersten Zeile, Pfad, und
+    // ob sie eine Fortsetzung ist.
+    let mut koepfe: BTreeMap<String, Vec<(i64, PathBuf, bool)>> = BTreeMap::new();
     let mut fremde = 0usize;
     for e in eintraege.flatten() {
         let pfad = e.path();
@@ -540,22 +563,40 @@ pub fn sammle_mit_bericht(verzeichnis: &Path) -> Result<Sammlung, String> {
             fremde += 1;
             continue;
         }
-        let bild = match lies_protokoll(&pfad) {
-            Ok(b) => b,
-            Err(_) => {
-                fremde += 1;
-                continue;
-            }
+        let Some(erste) = std::fs::read_to_string(&pfad)
+            .ok()
+            .and_then(|t| t.lines().find(|z| !z.trim().is_empty()).map(String::from))
+        else {
+            fremde += 1;
+            continue;
         };
-        let schluessel = if bild.peer.is_empty() { bild.name.clone() } else { bild.peer.clone() };
-        match je_knoten.get(&schluessel) {
-            Some(vorhanden) if vorhanden.erste_zeit_ms >= bild.erste_zeit_ms => {}
-            _ => {
-                je_knoten.insert(schluessel, bild);
+        let peer = text_feld(&erste, "peer").unwrap_or_default();
+        let schluessel = if peer.is_empty() { text_feld(&erste, "knoten").unwrap_or_default() } else { peer };
+        let fortsetzung = text_feld(&erste, "art").as_deref() == Some("fortsetzung");
+        let zeit = zahl_feld(&erste, "zeit_ms").unwrap_or(0);
+        koepfe.entry(schluessel).or_default().push((zeit, pfad, fortsetzung));
+    }
+    // ⚑ **Je Knoten der jüngste Lauf**, samt seinen Fortsetzungen. Ein Lauf
+    // beginnt mit einer Datei, die keine Fortsetzung ist, oder, wenn deren
+    // Anfang schon geräumt ist, mit der ersten Fortsetzung.
+    let mut knoten = Vec::new();
+    for (_, mut dateien) in koepfe {
+        dateien.sort();
+        let mut laeufe: Vec<Vec<PathBuf>> = Vec::new();
+        for (_, pfad, fortsetzung) in dateien {
+            match laeufe.last_mut() {
+                Some(lauf) if fortsetzung => lauf.push(pfad),
+                _ => laeufe.push(vec![pfad]),
+            }
+        }
+        if let Some(lauf) = laeufe.pop() {
+            match lies_lauf(&lauf) {
+                Ok(b) => knoten.push(b),
+                Err(_) => fremde += 1,
             }
         }
     }
-    Ok(Sammlung { knoten: je_knoten.into_values().collect(), fremde })
+    Ok(Sammlung { knoten, fremde })
 }
 
 /// Fällt das Urteil über eine Sammlung von Knotenbildern.
@@ -1222,13 +1263,51 @@ mod tests {
         p
     }
 
+    /// ⚑ **Fund 624: Die Dateien eines Laufs gehören zusammen.** Ein
+    /// rotierter Lauf wird über die Fortsetzungszeile verbunden; ein älterer
+    /// Lauf desselben Knotens zählt nicht, und ein Lauf, dessen Anfang
+    /// unter dem Deckel geräumt wurde, ist trotzdem lückenlos.
+    #[test]
+    fn rotierte_dateien_eines_laufs_werden_zusammengelegt() {
+        let verz = temp("rotation");
+        let alt = [zeile(1, 10, "a", "p1", "start", ""), zeile(2, 11, "a", "p1", "empfangen", "")].join("\n");
+        let neu1 = [
+            zeile(1, 100, "a", "p1", "start", ""),
+            zeile(2, 101, "a", "p1", "empfangen", ""),
+            zeile(3, 102, "a", "p1", "empfangen", ""),
+        ]
+        .join("\n");
+        let neu2 = [
+            zeile(4, 103, "a", "p1", "fortsetzung", ",\"vorher\":\"a-100.jsonl\""),
+            zeile(5, 104, "a", "p1", "empfangen", ""),
+        ]
+        .join("\n");
+        std::fs::write(verz.join("a-10.jsonl"), alt).unwrap();
+        std::fs::write(verz.join("a-100.jsonl"), neu1).unwrap();
+        std::fs::write(verz.join("a-103.jsonl"), neu2).unwrap();
+        let bilder = sammle(&verz).unwrap();
+        assert_eq!(bilder.len(), 1);
+        assert_eq!(bilder[0].zeilen, 5, "der Lauf wurde nicht zusammengelegt");
+        assert_eq!(bilder[0].empfangen, 3);
+        assert!(bilder[0].lueckenlos());
+
+        // Den Anfang geräumt: nur noch die Fortsetzung.
+        std::fs::remove_file(verz.join("a-10.jsonl")).unwrap();
+        std::fs::remove_file(verz.join("a-100.jsonl")).unwrap();
+        let bilder = sammle(&verz).unwrap();
+        assert_eq!(bilder[0].zeilen, 2);
+        assert_eq!(bilder[0].erste_folge, 4);
+        assert!(bilder[0].lueckenlos(), "ein fehlender Anfang ist keine Lücke");
+        let _ = std::fs::remove_dir_all(&verz);
+    }
+
     #[test]
     fn ein_knoten_allein_ergibt_kein_netzurteil() {
         // Dieselbe Haltung wie beim Determinismusnachweis: Ein Werkzeug,
         // das aus einer Quelle ein Urteil über mehrere macht, täuscht.
         let bilder = vec![Knotenbild {
             name: "a".into(), peer: "p1".into(), datei: PathBuf::new(),
-            zeilen: 5, hoechste_folge: 5, erste_zeit_ms: 0, letzte_zeit_ms: 1000,
+            zeilen: 5, hoechste_folge: 5, erste_folge: 1, erste_zeit_ms: 0, letzte_zeit_ms: 1000,
             gesehen: BTreeSet::new(), abgewiesen: 0, empfangen: 0, gesendet: 0,
             vermittelt: false, gesendete_digests: BTreeMap::new(),
             empfangene_digests: BTreeSet::new(), verworfen: BTreeMap::new(),
@@ -1313,7 +1392,7 @@ mod tests {
         let bilder = vec![
             Knotenbild {
                 name: "a".into(), peer: "p1".into(), datei: PathBuf::new(),
-                zeilen: 2, hoechste_folge: 2, erste_zeit_ms: 0, letzte_zeit_ms: 1,
+                zeilen: 2, hoechste_folge: 2, erste_folge: 1, erste_zeit_ms: 0, letzte_zeit_ms: 1,
                 gesehen: ["p2".to_string()].into_iter().collect(),
                 abgewiesen: 0, empfangen: 0, gesendet: 0, vermittelt: false,
                 gesendete_digests: BTreeMap::new(),
@@ -1330,7 +1409,7 @@ mod tests {
             },
             Knotenbild {
                 name: "b".into(), peer: "p2".into(), datei: PathBuf::new(),
-                zeilen: 2, hoechste_folge: 2, erste_zeit_ms: 0, letzte_zeit_ms: 1,
+                zeilen: 2, hoechste_folge: 2, erste_folge: 1, erste_zeit_ms: 0, letzte_zeit_ms: 1,
                 gesehen: ["p3".to_string()].into_iter().collect(),
                 abgewiesen: 0, empfangen: 0, gesendet: 0, vermittelt: false,
                 gesendete_digests: BTreeMap::new(),

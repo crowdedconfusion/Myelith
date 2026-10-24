@@ -29,6 +29,14 @@ bis 9 s nach dem Satz, und zwischen den Saetzen blieben Pausen. Jetzt
 kommt der erste Ton nach rund 2 s, und die Stimme laeuft dem Abspielen
 voraus. Die Gruende stehen bei `beschleunigen` und `sprechen`.
 
+⚑ **Fassung 3 (2026-10-23): eine schlanke Umgebung mit transformers 5.**
+Die Umgebung kommt nicht mehr aus der `requirements.txt` von CosyVoice
+(Server, Training und 248 bekannte Luecken), sondern aus einer eigenen,
+festgenagelten Liste. Zwei Dinge aendern sich dadurch fuer das
+Sprachmodell; sie stehen bei `qwen2_in_float32` und `schritt_ohne_maske`.
+Beide wirken auch mit der alten Umgebung, also laeuft diese Fassung mit
+beiden.
+
 Die Stuecke eines Satzes heissen `<ziel>.<n>.wav`. Ein Aufrufer, der
 keine `stueck`-Zeilen kennt, bekommt am Ende trotzdem den ganzen Satz in
 `<ziel.wav>`; so versteht ihn auch ein Client der Fassung 1.
@@ -56,7 +64,7 @@ import os
 import sys
 
 # ⚑ Woran der Client erkennt, welche Fassung er vor sich hat.
-FASSUNG = 2
+FASSUNG = 3
 
 
 def fehler(satz):
@@ -125,10 +133,76 @@ def laden():
     if not os.path.isdir(modell):
         raise SystemExit(f"die Gewichte fehlen: {modell}")
 
+    qwen2_in_float32()
     from cosyvoice.cli.cosyvoice import AutoModel  # noqa: E402
 
     ist_drei = os.path.isfile(os.path.join(modell, "cosyvoice3.yaml"))
     return AutoModel(model_dir=modell), ist_drei
+
+
+def qwen2_in_float32():
+    """Laesst Qwen2 in float32 laden, wie CosyVoice es erwartet.
+
+    ⛔️ **Ab transformers 5 laedt `from_pretrained` in der Fassung, die
+    die Konfiguration nennt**, beim Sprachmodell von CosyVoice 3 also
+    bfloat16. Die Schichten um das Modell herum (Einbettung der
+    Sprachtoken, Ausgabe) bleiben float32, und der erste Schritt bricht
+    ab mit `mat1 and mat2 must have the same dtype, but got Float and
+    BFloat16`, und zwar im Faden des Sprachmodells, waehrend der Fluss
+    danach an einer conv1d mit drei Rahmen scheitert. Die Gewichte kommen
+    danach aus `llm.pt`; laege der Rahmen in bfloat16, gingen sie beim
+    Einlesen auf bfloat16 verloren, deshalb vorher und nicht danach.
+
+    Vor transformers 5 war float32 die Vorgabe; dort aendert sich nichts.
+    """
+    import torch  # noqa: E402
+    import transformers  # noqa: E402
+
+    if int(transformers.__version__.split(".")[0]) < 5:
+        return
+    laden_wie_gehabt = transformers.Qwen2ForCausalLM.from_pretrained
+
+    def in_float32(*a, **k):
+        k.setdefault("dtype", torch.float32)
+        return laden_wie_gehabt(*a, **k)
+
+    transformers.Qwen2ForCausalLM.from_pretrained = in_float32
+
+
+def schritt_ohne_maske(tts):
+    """Rechnet die Schritte des Sprachmodells ohne Aufmerksamkeitsmaske.
+
+    ⛔️ **CosyVoice gibt ab dem zweiten Schritt eine Maske der Laenge 1
+    mit**, obwohl der Zwischenspeicher alle frueheren Positionen haelt
+    (`torch.tril` ueber die Laenge der neuen Eingabe, und die ist dann
+    ein Token). transformers bis 4.51 liess eine Maske aus lauter Einsen
+    einfach fallen. Die spaetere Maskenlogik nimmt sie woertlich, und das
+    Modell sieht nur noch einen Teil seiner Vorgeschichte. Gemessen am
+    2026-10-23 mit transformers 4.57 und 5.20: Das Aufwaermen „Guten
+    Tag." dauerte 8,8 s statt 0,88 s, der eigentliche Satz 0,4 s statt
+    4,96 s, und whisper hoerte darin „Bis zum naechsten Mal.".
+
+    ⚑ **Ohne Maske ist dasselbe gemeint**: Es wird ein Satz zur Zeit
+    gesprochen, ohne Auffuellung, und die Kausalitaet legt das Modell
+    selbst an. Mit der alten Umgebung ergibt es Ton gleicher Laenge, mit
+    der neuen wieder den gesprochenen Satz.
+    """
+    kodierer = tts.model.llm.llm
+    if not hasattr(kodierer, "forward_one_step"):
+        return
+    modell = kodierer.model
+
+    def schritt(xs, masks, cache=None):  # noqa: ARG001
+        aus = modell(
+            inputs_embeds=xs,
+            output_hidden_states=True,
+            return_dict=True,
+            use_cache=True,
+            past_key_values=cache,
+        )
+        return aus.hidden_states[-1], aus.past_key_values
+
+    kodierer.forward_one_step = schritt
 
 
 def probe_laden(pfad):
@@ -349,6 +423,7 @@ def main():
 
     with stdout_nach_stderr():
         tts, ist_drei = laden()
+        schritt_ohne_maske(tts)
         probe, probentext = probe_laden(probe_pfad)
         wo = beschleunigen(tts)
         art = stimme_merken(tts, probe, probentext, ist_drei)

@@ -51,6 +51,7 @@
 use borsh::{BorshDeserialize, BorshSerialize};
 
 use crate::hash::Hash;
+use crate::merkle::{MerkleProof, MerkleTree};
 use crate::ids::{Address, EpochId, SitzungId};
 
 /// Trennzeichen für die Kontraktadresse.
@@ -253,11 +254,20 @@ pub struct Sitzungskontrakt {
     pub credits: Grenzen,
     /// Grenzen für MYL.
     pub myl: Grenzen,
-    /// An wen überhaupt gezahlt werden darf (Kap. 8.2, Punkt 3).
+    /// An wen überhaupt gezahlt werden darf (Kap. 8.2, Punkt 3), als
+    /// Merkle-Wurzel über die sortierte Liste ([`empfaengerwurzel`]).
     ///
-    /// Leer heißt: an niemanden. Das ist die sichere Lesart einer
-    /// Positivliste.
-    pub empfaenger: Vec<Address>,
+    /// ⚑ **Nur die Wurzel steht im Kontrakt und damit auf der Kette**
+    /// (J1, 2026-10-24). Bis dahin stand die Liste selbst da: lesbar für
+    /// jeden, und dazu abtastbar, denn eine abgelehnte Zahlung kostet
+    /// nichts. Wer die Empfänger kannte, wusste, mit wem der Inhaber
+    /// Geschäfte macht. Jetzt legt, wer zahlt, den Beweis für genau diesen
+    /// einen Empfänger vor ([`Vorhaben::empfaenger_beweis`]); eine Ablehnung
+    /// sagt nur noch „für diese Adresse gibt es keinen Beweis“.
+    ///
+    /// Null heißt: an niemanden. Das ist die sichere Lesart einer
+    /// Positivliste, und kein Beweis trifft sie.
+    pub empfaenger_wurzel: Hash,
     /// Erste Epoche, in der die Session gilt.
     pub gueltig_ab: EpochId,
     /// Letzte Epoche, in der die Session gilt (Kap. 8.2, Punkt 4).
@@ -316,7 +326,7 @@ impl Sitzungskontrakt {
             agent,
             credits,
             myl,
-            empfaenger,
+            empfaenger_wurzel: empfaengerwurzel(&empfaenger),
             gueltig_ab,
             gueltig_bis,
             max_schritte,
@@ -355,14 +365,34 @@ impl Sitzungskontrakt {
         self.grenzen(waehrung).zeugen_fuer(betrag)
     }
 
-    /// Steht diese Adresse auf der Positivliste?
-    ///
-    /// Binäre Suche, weil die Liste sortiert ist.
-    pub fn zahlt_an(&self, empfaenger: &Address) -> bool {
-        self.empfaenger
-            .binary_search_by(|a| a.as_bytes().cmp(empfaenger.as_bytes()))
-            .is_ok()
+    /// Steht diese Adresse auf der Positivliste? Belegt durch `beweis`
+    /// gegen die Wurzel im Kontrakt.
+    pub fn zahlt_an(&self, empfaenger: &Address, beweis: &MerkleProof) -> bool {
+        // Gegen die Nullwurzel der leeren Liste trifft kein Beweis: Er
+        // bräuchte ein Urbild.
+        beweis.verify(&self.empfaenger_wurzel, empfaenger.as_bytes(), beweis.leaf_index)
     }
+}
+
+/// **Die Wurzel einer Empfängerliste**: Merkle-Wurzel über die Adressen in
+/// der gegebenen (sortierten) Folge; null für die leere Liste.
+pub fn empfaengerwurzel(liste: &[Address]) -> Hash {
+    let blaetter: Vec<&[u8]> = liste.iter().map(|a| a.as_bytes().as_slice()).collect();
+    MerkleTree::new(&blaetter).map(|b| b.root()).unwrap_or(Hash([0; 32]))
+}
+
+/// **Der Beweis, dass `wer` auf `liste` steht**, für
+/// [`Vorhaben::empfaenger_beweis`]; `None`, wenn er nicht darauf steht. Die
+/// Liste hält der Inhaber, nicht die Kette.
+pub fn empfaengerbeweis(liste: &[Address], wer: &Address) -> Option<MerkleProof> {
+    let i = liste.iter().position(|a| a == wer)?;
+    let blaetter: Vec<&[u8]> = liste.iter().map(|a| a.as_bytes().as_slice()).collect();
+    MerkleTree::new(&blaetter).ok()?.proof(i).ok()
+}
+
+/// Ein Beweis, der nichts belegt: für ein Vorhaben ohne Empfänger.
+pub fn kein_beweis() -> MerkleProof {
+    MerkleProof { leaf_index: 0, leaf_count: 0, siblings: Vec::new() }
 }
 
 /// Der veränderliche Teil: was schon verbraucht ist.
@@ -410,6 +440,9 @@ pub struct Vorhaben {
     pub betrag: u64,
     /// An wen.
     pub empfaenger: Address,
+    /// Der Beweis, dass `empfaenger` auf der Liste des Kontrakts steht
+    /// (J1); ohne ihn wird nicht gezahlt.
+    pub empfaenger_beweis: MerkleProof,
     /// Ob das zugrundeliegende Segment im Modus bestätigter
     /// Auslieferung gerechnet wurde (Kap. 6.4).
     pub bestaetigt_ausgeliefert: bool,
@@ -570,6 +603,28 @@ pub fn pruefe(
     jetzt: EpochId,
     vorhaben: &Vorhaben,
 ) -> Befund {
+    pruefe_mit(kontrakt, zustand, jetzt, vorhaben, true)
+}
+
+/// **Die Zugangsprüfung**: wie [`pruefe`], aber ohne den Empfänger. Für eine
+/// Tür, die nur fragt, ob jemand unter diesem Kontrakt handeln darf, und
+/// nichts bucht; die Liste kennt sie nicht (J1).
+pub fn pruefe_zugang(
+    kontrakt: &Sitzungskontrakt,
+    zustand: &Sitzungszustand,
+    jetzt: EpochId,
+    vorhaben: &Vorhaben,
+) -> Befund {
+    pruefe_mit(kontrakt, zustand, jetzt, vorhaben, false)
+}
+
+fn pruefe_mit(
+    kontrakt: &Sitzungskontrakt,
+    zustand: &Sitzungszustand,
+    jetzt: EpochId,
+    vorhaben: &Vorhaben,
+    empfaenger_pruefen: bool,
+) -> Befund {
     if kontrakt.adresse() != vorhaben.sitzung {
         return Befund::FalscheSitzung;
     }
@@ -599,7 +654,7 @@ pub fn pruefe(
     if vorhaben.betrag == 0 {
         return Befund::NullBetrag;
     }
-    if !kontrakt.zahlt_an(&vorhaben.empfaenger) {
+    if empfaenger_pruefen && !kontrakt.zahlt_an(&vorhaben.empfaenger, &vorhaben.empfaenger_beweis) {
         return Befund::EmpfaengerNichtGelistet;
     }
 
@@ -663,6 +718,7 @@ mod tests {
             waehrung: Waehrung::Credits,
             betrag,
             empfaenger: adr(10),
+            empfaenger_beweis: empfaengerbeweis(&[adr(10), adr(20)], &adr(10)).expect("gelistet"),
             bestaetigt_ausgeliefert: false,
             nummer: 1,
         }
@@ -732,6 +788,7 @@ mod tests {
             waehrung: Waehrung::Credits,
             betrag: 50_000,
             empfaenger: adr(99),
+            empfaenger_beweis: kein_beweis(),
             bestaetigt_ausgeliefert: true,
             nummer: 1,
         };
@@ -755,13 +812,13 @@ mod tests {
             agent: adr(2),
             credits: grenzen(1_000, 300, 250),
             myl: Grenzen::gesperrt(),
-            empfaenger: vec![adr(10), adr(20)],
+            empfaenger_wurzel: empfaengerwurzel(&[adr(10), adr(20)]),
             gueltig_ab: EpochId(5),
             gueltig_bis: EpochId(9),
             max_schritte: 16,
         };
         let vertauscht = Sitzungskontrakt {
-            empfaenger: vec![adr(20), adr(10)],
+            empfaenger_wurzel: empfaengerwurzel(&[adr(20), adr(10)]),
             ..sortiert.clone()
         };
         assert_ne!(sortiert.adresse(), vertauscht.adresse());
@@ -848,7 +905,7 @@ mod tests {
             EpochId(10),16,
         )
         .expect("gültig");
-        assert!(!k.zahlt_an(&adr(10)));
+        assert!(!k.zahlt_an(&adr(10), &kein_beweis()));
         let v = Vorhaben { sitzung: k.adresse(), ..vorhaben(&kontrakt(), 1) };
         assert_eq!(
             pruefe(&k, &Sitzungszustand::neu(), EpochId(5), &v),
@@ -1129,11 +1186,48 @@ mod tests {
     #[test]
     fn die_positivliste_findet_nur_was_darin_steht() {
         let k = kontrakt();
-        assert!(k.zahlt_an(&adr(10)));
-        assert!(k.zahlt_an(&adr(20)));
-        assert!(!k.zahlt_an(&adr(11)));
-        assert!(!k.zahlt_an(&adr(0)));
-        assert!(!k.zahlt_an(&adr(255)));
+        let liste = [adr(10), adr(20)];
+        let b10 = empfaengerbeweis(&liste, &adr(10)).expect("gelistet");
+        let b20 = empfaengerbeweis(&liste, &adr(20)).expect("gelistet");
+        assert!(k.zahlt_an(&adr(10), &b10));
+        assert!(k.zahlt_an(&adr(20), &b20));
+        assert!(!k.zahlt_an(&adr(20), &b10), "der Beweis gilt seiner Adresse");
+        assert!(!k.zahlt_an(&adr(11), &b10));
+        assert!(!k.zahlt_an(&adr(10), &kein_beweis()));
+        assert!(empfaengerbeweis(&liste, &adr(11)).is_none());
+    }
+
+    /// ⚑ **Die Liste steht nicht im Kontrakt** (J1): In seinen Bytes, also
+    /// auf der Kette, findet sich keine der Empfängeradressen. Bis zum
+    /// 2026-10-24 stand die Liste dort im Klartext.
+    #[test]
+    fn die_empfaenger_stehen_nicht_im_kontrakt() {
+        let k = kontrakt();
+        let roh = to_vec(&k).expect("kodieren");
+        for a in [adr(10), adr(20)] {
+            assert!(!roh.windows(32).any(|w| w == a.as_bytes()), "Adresse im Kontrakt");
+        }
+    }
+
+    /// Ein Beweis aus einer anderen Liste belegt nichts, auch wenn die
+    /// Adresse dort steht: Er trifft eine andere Wurzel.
+    #[test]
+    fn ein_beweis_aus_einer_anderen_liste_belegt_nichts() {
+        let k = kontrakt();
+        let fremd = empfaengerbeweis(&[adr(10), adr(30)], &adr(10)).expect("gelistet");
+        assert!(!k.zahlt_an(&adr(10), &fremd));
+    }
+
+    /// Die Zugangsprüfung fragt nicht nach dem Empfänger, alles andere
+    /// prüft sie wie `pruefe`.
+    #[test]
+    fn die_zugangspruefung_fragt_nicht_nach_dem_empfaenger() {
+        let k = kontrakt();
+        let z = Sitzungszustand::neu();
+        let ohne = Vorhaben { empfaenger: adr(99), empfaenger_beweis: kein_beweis(), ..vorhaben(&k, 1) };
+        assert_eq!(pruefe(&k, &z, EpochId(7), &ohne), Befund::EmpfaengerNichtGelistet);
+        assert_eq!(pruefe_zugang(&k, &z, EpochId(7), &ohne), Befund::Erlaubt);
+        assert!(matches!(pruefe_zugang(&k, &z, EpochId(12), &ohne), Befund::Abgelaufen { .. }));
     }
 }
 

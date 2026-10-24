@@ -1,11 +1,11 @@
 # NODE — der Myelith-Knoten
 
-> **Version:** 0.55.1
-> **Datum:** 2026-10-23
+> **Version:** 0.60.0
+> **Datum:** 2026-10-24
 > **Status:** Netzknoten lauffähig, Blockproduktion mit **Persistenz über
 > Neustarts**, BFT-Runden über das Netz mit Rundenwechsel, und seit dem
 > 1. September **schließt der Knoten die Epoche selbst ab**.
-> **325 Tests grün.**
+> **379 Tests grün** (gezählt am 2026-10-24).
 >
 > ⚑ **Seit dem 27. August sind Blockhöhe und Epoche zwei Dinge.** Die
 > Probekette schrieb ihre Höhe in das Epochenfeld des Blockkopfs; das
@@ -279,6 +279,402 @@ NODE/
 
 ## Changelog
 
+### v0.60.0 (2026-10-24): Wiederanlauf ab dem eigenen Abzug, schnelleres Nachladen, Fristen ab der Spitze, die Frist der Kopien, Drossel, Blockgrenze, gehörte Höhe, Neulinge und Empfängerbeweis (Funde 628 bis 635, J1)
+
+Der volle Archivlauf bestand, aber zwei ehrliche Kopien verloren ihren Platz,
+und Splitter meldeten Lücken in den eigenen Nummern, die keine waren. Alle
+drei Ursachen wuchsen mit der Geschichte oder mit dem Rückstand, nicht mit
+dem Fehlverhalten eines Knotens.
+
+- ⚑ **Fund 629: Der Wiederanlauf setzt beim jüngsten eigenen Abzug an.**
+  Bis hierher rechnete jeder Start die ganze Kettendatei ab der Basis nach,
+  bei einer Kopie ab Genesis: 166 s für 349 646 Blöcke im Archivlauf. Der
+  Knoten war so lange fort, holte danach weitere 40 s auf, und seine Belege
+  zweier Epochen entstanden erst beim Nachverarbeiten, als die Epochen
+  vorbei waren; er wurde ersetzt. Jetzt werden die Blöcke bis zum jüngsten
+  Abzug nur auf Anschluss, Höhe und Epoche geprüft (`Kette::vorspulen`),
+  der Abzug setzt den Zustand ein (`Kette::abzug_einsetzen`: sein Block muss
+  der vorgespulte letzte sein, und lebt die Kette ab Genesis, muss der
+  Historienbaum aus der Datei die Historie des Abzugs treffen), und erst die
+  Blöcke danach gehen durch `uebernimm`. Scheitert der Einsatz (fremder
+  Block, Datei endet davor, Anschluss bricht), wird ab der Basis
+  nachgerechnet wie bisher. `kette_geladen` nennt dazu `ab_abzug`,
+  `vorgespult` und gegebenenfalls `abzug_verworfen`.
+  ⚑ **Was nicht mehr nachgerechnet wird**, sind die Übergänge bis zum
+  Abzug: Der Knoten hat diese Blöcke selbst angewandt, bevor er sie schrieb,
+  und den Abzug danach selbst abgelegt. Eine Einfuhr nach einem Totalausfall
+  bringt keine Abzüge mit und wird weiter ab Genesis nachgerechnet.
+- ⚑ **Fund 630: Das Nachladen der Geschichte holt acht Lieferungen
+  zugleich**, zwei je Gegenstelle (`ARCHIV_ZUGLEICH`,
+  `ARCHIV_JE_GEGENSTELLE`). Es teilte sich bis hierher die zwei Plätze der
+  Hintergrundprüfung; bei 50 bis 200 ms Laufzeit je Seite und bis 5 %
+  Verlust kam je Gegenstelle alle 3,6 s eine Lieferung zu 512 Blöcken,
+  rund 226 Blöcke je Sekunde, und eine neue Kopie brauchte 509 s für
+  115 200 Blöcke. Ihre Frist von acht Epochen plus zwei verfehlten sind im
+  Testtakt von 25 ms rund 400 s; sie wurde ersetzt. Eine Lieferung wird der
+  Anfrage mit derselben Anfangshöhe zugeordnet. Zwei je Gegenstelle bleiben
+  in der Herleitung der Ströme je Verbindung (`myl-net`, sieben legitime),
+  denn eine Gegenstelle, bei der eine Nachforderung oder die
+  Hintergrundprüfung läuft, bekommt keine.
+- ⚑ **Fund 628: Fristen eigener Transaktionen zählen ab der gehörten
+  Spitze**, nicht ab der eigenen Höhe (`frist_bezug`, `netz_luecke`). Folger
+  lagen bei 25 ms je Block meist 40 bis 220 Höhen hinter dem Erzeuger; ihre
+  Transaktion stand längst im Block, und nach 64 eigenen Höhen meldeten sie
+  eine Lücke, 25 Mal bei einem einzigen Splitter, und wiederholten die
+  Pflicht mit einer neuen Nummer. Die Spitze zählt höchstens 1024 Höhen über
+  der eigenen (`NETZ_SPITZE_HOECHSTENS`), denn sie kommt auch aus
+  abgelehnten Blöcken: Eine erfundene verzögert die Heilung einer echten
+  Lücke, verhindert sie nicht. Dasselbe gilt für die Wiederholfrist
+  (`schon_gesendet`).
+- ⚑ **Die Frist einer neuen Kopie ist eine knappe halbe Periode**
+  (`myl-ledger` 0.26.0, 31 statt 8 Epochen). Der Knoten prüft beim
+  Übersetzen, dass Frist, zwei verfehlte Epochen und noch einmal Frist in
+  seine Periode von 64 Epochen passen (`archiv.rs`); mit 32 bricht der Bau
+  ab, das ist geprüft.
+- ⛔️ **Fund 633: Ein Block hatte keine Bytegrenze.** Jede Transaktion, die
+  ihre Nummer verbrauchte, ging in den nächsten Block; Gossip nimmt Blöcke
+  aber nur bis 2 MiB an. Rund achtzig Archivbelege zu je 27 KB von einem
+  beliebigen Konto, ohne Gebühr, ergaben einen Block, den kein Folger je
+  bekam, und die Kette stand für alle. Jetzt trägt ein Block höchstens
+  `BLOCK_TXS_HOECHSTENS_BYTES` (die Hälfte der Gossip-Grenze); was nicht
+  passt, wartet auf den nächsten, was allein grösser ist, fällt heraus,
+  sonst stünde es für immer vorn. Dazu nimmt der Mempool je Absender
+  höchstens `MEMPOOL_JE_ABSENDER` (64) auf, sonst füllte ein Konto alle
+  4096 Plätze. Konsens unberührt: Der Erzeuger wählt nur aus, was er
+  anwendet.
+- ⚑ **Fund 632: Teure Anfragen ohne Drossel.** `Bloecke` (512 Blöcke von
+  der Platte), `Archiv` (512 Blöcke und eine Gruppe für den Beweis) und
+  `Teil` (für jede andere Gruppe 1024 Blöcke neu codiert) konnte jede
+  Gegenstelle beliebig oft stellen, in der Ereignisschleife; eine Flut hielt
+  den Konsens an (Klasse von Fund 609). Jetzt `drossel.rs`: je Art ein Eimer
+  je Gegenstelle und einer für alle (Blöcke 32/s je Gegenstelle, 128/s
+  gesamt; Archiv und Teil 8/s und 32/s), ganzzahlig in Tausendsteln, die
+  Tabelle der Gegenstellen gedeckelt auf 1024, volle Eimer machen Platz.
+  Darüber gibt es `Nichts`; `gedrosselt` steht in jeder Zustandsaufnahme.
+  Dazu hält die Kette acht codierte Gruppen statt einer
+  (`TEILGRUPPEN_BEHALTEN`), damit ehrliche Splitter einander nicht die
+  Codierung wegnehmen.
+- ⚑ **Fund 634: Eine erfundene Höhe hielt den Knoten für immer „nicht
+  bereit“.** Die gehörte Höhe war eine Zahl, die nur wuchs, gespeist aus
+  jedem abgelehnten Block, auch einem, der an die eigene Spitze anschliesst
+  und nur eine falsche Höhe nennt; ein einziger solcher Block genügte, und
+  der Knoten fragte dazu ohne Ende nach Blöcken, die es nicht gibt. Jetzt
+  `gehoert.rs`: Die Höhe ist die Behauptung der Gegenstelle, die sie nannte;
+  sie fällt, wenn diese ab einer behaupteten Höhe nichts liefert (danach
+  zählen ihre Behauptungen fünf Minuten nicht), und mit ihrer Trennung.
+  Gezählt werden nur noch Blöcke, die vorn nicht anschliessen, denn nur sie
+  belegt oder widerlegt die Nachforderung.
+- ⚑ **Fund 635: Neulinge ohne Grenze.** Eine Transaktion kostet nichts, und
+  die Anmeldung als Miner auch nicht; mit frischen Schlüsseln liessen sich
+  Mempool und Zustand ohne Grenze füllen. Jetzt kommen Absender ohne
+  Guthaben, Einsatz und Anmeldung nur gedrosselt hinein: höchstens 32
+  zugleich in den Mempool, höchstens 16 in einen Block. Ein neuer Knoten
+  braucht eine Transaktion, die Anmeldung.
+- ⚑ **J1: Die Abbuchung legt den Empfängerbeweis bei** (SHARED_TYPES
+  0.49.0). Der Kontrakt trägt nur noch die Wurzel seiner Empfängerliste; der
+  Knoten nimmt den Beweis für seine eigene Adresse aus der Vollmacht, die der
+  Inhaber ausgestellt hat. Fehlt er, weist die Kette die Abbuchung ab, wie
+  bisher bei einem Empfänger, der nicht auf der Liste steht.
+- **Offen, mit Grund:** Ganz schliessen Fund 635 erst Gebühren (Richtung vom
+  Projektinhaber festgelegt, ausgearbeitet in den offenen Entscheidungen).
+- **Belege:** fünf neue Tests, je mit Gegenprobe:
+  `wer_zurueckliegt_meldet_keine_falsche_luecke`,
+  `eine_echte_luecke_wird_gemeldet` und
+  `eine_erfundene_spitze_haelt_die_heilung_nicht_auf` (rot, wenn der Bezug
+  die eigene Höhe ist, und rot ohne den Deckel);
+  `der_wiederanlauf_setzt_beim_juengsten_abzug_an` (3700 Blöcke, Abzug bei
+  3600, 100 übernommen, dieselbe Wurzel wie beim vollständigen Nachrechnen)
+  und `ein_fremder_abzug_wird_verworfen` (rot ohne die Prüfung des Blocks
+  und rot ohne die Prüfung des Dateiendes). Zu Fund 633
+  `ein_block_bleibt_unter_seiner_bytegrenze`,
+  `eine_uebergrosse_transaktion_haelt_den_block_nicht_auf`,
+  `ein_absender_fuellt_den_mempool_nicht` (je rot ohne ihre Zeile); zu
+  Fund 632 fünf Tests in `drossel.rs` (rot ohne den eigenen Eimer, ohne den
+  für alle, mit zusammengelegten Arten und ohne das Aufräumen; der Test fürs
+  Aufräumen kam dazu, weil die erste Gegenprobe dort nicht biss). Der Test
+  zur Mempool-Grenze verteilt sich jetzt auf 64 Absender mit Guthaben. Zu
+  Fund 634 vier Tests in `gehoert.rs` (je rot ohne Widerlegen, ohne Sperre,
+  ohne Verfall bei Trennung, und wenn jedes Nichts widerlegte); zu Fund 635
+  `neulinge_kommen_nur_gedrosselt_hinein` (rot ohne die Grenze im Mempool und
+  ohne die im Block).
+- **Gemessen auf echten Ketten:** Die Kettendatei von k11 aus dem vollen
+  Archivlauf (367 363 Blöcke, Abzug bei 367 200) lädt in 1,3 s, 163 Blöcke
+  nachgerechnet, auf die Endwurzel des Laufs `1bd4d53b08cab1ec`; vorher
+  166 s. Die des kurzen Laufs (3797 Blöcke) mit Abzug in 36 ms, ohne die
+  Abzüge vollständig in 258 ms, beide auf dieselbe Wurzel. Der kurze
+  Archivlauf mit 0.60.0 bestand.
+- **Im vollen Archivlauf** (drei Grenzen, Störer, zehn Abstürze): jeder
+  Wiederanlauf ab dem eigenen Abzug, aufgeholt in 3,6 bis 15,5 s statt 18
+  bis 208 s; keine ehrliche Kopie ersetzt; elf Knoten einig. Die
+  Schlussphase war rot an einem Fehler des Laufskripts (TESTCLIENT 0.50.0,
+  Fund 631), nicht des Knotens.
+
+### v0.59.0 (2026-10-24): Mempool und eigene Nummern ohne Lücke (Fund 627)
+
+Gefunden im vollen Archivlauf (zwölf ehrliche Knoten, sechs Sybil, Störer).
+Nach der ersten Langzeitgrenze fielen die übernehmenden Knoten nach und nach
+hinter den Erzeuger zurück; bei Höhe 175 138 des Erzeugers standen sie
+zwischen 156 163 und 164 073, und der Lauf brach beim Aufholen nach einem
+Absturz ab. Zugleich verloren ehrliche Archivkopien ihren Platz: 16 von 18
+Minern standen am Ende unter `ersetzt`, die Kopien schrumpften von sieben auf
+zwei. Eine Ursache mit drei Folgen:
+
+- 📌 **Eine überholte Transaktion sperrte ihren Absender für immer.** Eine
+  Kopie reicht Beleg (bis zu 27 KB) und Teilwurzel (wenige Bytes) im selben
+  Augenblick ein, mit den Nummern n und n+1. Die kleine kommt beim Erzeuger
+  zuerst an. Der Erzeuger legte den ganzen Mempool in den Block, n+1
+  scheiterte dort an der Nummer und war verloren. Der Absender zählte weiter
+  (`netz_nonce`), also galt keine seiner späteren Transaktionen mehr. Belegt
+  im Protokoll von k6: der Beleg der Epoche 65 alle zwei Sekunden neu, die
+  ganze Epoche lang, nie im Zustand.
+- 📌 **Die Wiederholungen füllten die Mempools der übrigen Knoten.**
+  `schon_gesendet` wartete acht Höhen, bei 25 ms je Block also nicht einmal
+  bis zur nächsten Aufnahme. Ein Knoten, der keine Blöcke baut, nahm jede
+  Transaktion auf und strich je Block per Bytevergleich, was der Block
+  enthielt; eine, die nach ihrem Block ankam, blieb für immer liegen. Das
+  Leck gab es schon vor dem Archiv, rund 50 je Minute; mit den Belegen lagen
+  über 5000 im Mempool, und jeder Block serialisierte sie alle. Daran fielen
+  die Knoten zurück.
+- ⚑ **Erzeuger (`baue_block`):** In den Block kommt nur, was seine Nummer
+  verbraucht hat (`anwenden` meldet das je Transaktion). Was an Unterschrift
+  oder Nummer scheitert, hat den Zustand nicht angefasst, die Wurzel ist mit
+  und ohne es dieselbe; der Konsens ändert sich nicht. Eine Transaktion mit
+  späterer Nummer wartet im Mempool auf ihre Vorgängerin.
+- ⚑ **Mempool:** `aufnehmen` lehnt ab, was unter der Nummer im Zustand liegt
+  (sie wächst nur, also gilt so etwas nie mehr), und nimmt höchstens
+  `MEMPOOL_HOECHSTENS` = 4096 auf. Nach jedem Block, gebaut oder übernommen,
+  streicht `mempool_bereinigen` Verbrauchtes und alles, was länger als
+  `WARTEN_HOECHSTENS_HOEHEN` = 64 Höhen wartet. Das ersetzt
+  `streiche_verarbeitete` und seinen Bytevergleich.
+- ⚑ **Absender (`knoten.rs`):** Steht die eigene Nummer im Zustand 64 Höhen
+  still, während eigene Transaktionen ausstehen, zählt der Knoten ab der
+  Nummer im Zustand neu (`netz_luecke_pruefen`, Zeile `netz_luecke` im
+  Protokoll). Solange etwas aussteht, wartet ein neuer Versuch derselben Art
+  64 statt 8 Höhen.
+- 📌 **Ein Test hielt die alte Regel fest:**
+  `eine_doppelt_eingereichte_transaktion_verschwindet_nur_einmal` verlangte,
+  dass die zweite Kopie derselben Transaktion nach dem Block weiter wartet.
+  Sie trägt dieselbe Nummer und hätte nie mehr gegolten; der Test heisst
+  jetzt `…_faellt_mit_dem_block_ganz_heraus`.
+- **Tests:** vier neue in `kette.rs` (überholende Transaktion wartet, der
+  Block trägt nur Verbrauchtes und der Folger rechnet gleich, Mempool eines
+  Folgers bleibt klein, Obergrenze). **Gegenprobe:** mit abgeschaltetem
+  Filter im Block, ohne Nummernprüfung bei der Aufnahme und ohne Streichen
+  nach Nummer werden die ersten drei rot. 361 Tests grün, Clippy mit
+  `-D warnings` ohne Befund.
+
+### v0.58.0 (2026-10-24): Archivknoten mit Beweis, Splittern und kalter Ausfuhr (Stufen A2 bis A9, Fund 626)
+
+Festlegung des Projektinhabers vom 2026-10-23: Die Archivknoten sollen
+„absolut bulletproof gegen Angriffe und Totalausfall“ sein, alle fünf
+Schichten, Redundanz nach kritischer Prüfung. Gewählt: sieben über die Zonen
+verteilte volle Kopien und Reed-Solomon-Splitter (32 aus 64) je Periode. Die
+Regeln stehen im Konsens (SHARED_TYPES 0.48.0, CONSENSUS 0.51.0); hier, was
+der Knoten damit tut.
+
+- ⚑ **Historienwurzel im Zustand (A2):** `anwenden` hängt je Block den Hash
+  des Vorgängers an (`LedgerState.historie`); Erzeuger und Übernehmer gehen
+  denselben Weg. Neue Startwerte mit `-H1`, denn die Zustandswurzel ab
+  Genesis ist eine andere. 📌 **Dabei gefunden:** Die Probe
+  `eine_gefaelschte_unterschrift_bewegt_nichts` verglich die Wurzel vor und
+  nach einem Block und setzte voraus, dass ein leerer Block den Zustand nicht
+  bewegt; seit der Historie tut er das. Sie vergleicht jetzt mit einem
+  Zwilling, der einen leeren Block baut.
+- ⚑ **Die Rolle kommt aus dem Zustand (A3, A6):** `archiv.rs` rechnet nicht
+  mehr selbst, sondern liest Kopie, Halter, Splitter oder „jeder behält“ aus
+  `zustand.archiv`. Verdichtet wird nur, wer laut Zustand nicht hält. Bis
+  zur ersten bestätigten Übergabe hält jeder.
+- ⚑ **Nachladen mit Beweisen (A4, `archivabruf.rs`):** Eine Kopie mit Basis
+  holt die Blöcke davor über `Nachforderung::Archiv { ab, bis, anzahl }`;
+  jede Lieferung kommt mit einem MMR-Beweis für ihren letzten Block gegen
+  die Historie der eigenen Basis, rückwärts legt jeder bewiesene Block seinen
+  Vorgänger fest. Jede Lieferung wird für sich geprüft, Müll fällt bei der
+  ersten auf, die Gegenstelle wird gesperrt; gefragt werden Halter und
+  Kopien zuerst. Liefern kann jede Kette, die ab Genesis lebt: Sie führt
+  einen Historienbaum mit (`Kette::archivlieferung`), nach dem Einfügen einer
+  Geschichte wird er aus der Datei neu gebaut und gegen den Zustand
+  geprüft. Das Nachladen beginnt an jeder Epochengrenze, sobald es nötig
+  ist, nicht erst an der nächsten Langzeitgrenze: Eine Kopie, die mitten in
+  der Periode nachrückt, wäre sonst wieder ersetzt, bevor sie anfängt.
+- ⚑ **Belege (A5):** Eine Kopie belegt je Epoche selbst
+  (`Anweisung::ArchivBelegen`, `Kette::archivbeleg`): die Blöcke ihrer
+  Stichproben als Bytes und je ein Beweis gegen die Historienwurzel der
+  Grenze. Ziehung, Abschluss je Epoche und Anweisung laufen in `anwenden`.
+- ⚑ **Splitter (A7):** Kopien nennen die Teilwurzel (`ArchivTeilwurzel`),
+  aus den Gruppenwurzeln aller fertigen Gruppen der Periode; Splitter holen
+  ihren Teil jeder Gruppe (`Nachforderung::Teil`, `Kette::teilstueck`,
+  codiert auf Anfrage aus 1024 Blöcken), prüfen ihn gegen die Teilwurzel,
+  legen ihn ab (`teilablage.rs`, `<kette>.teile/`) und belegen je Epoche einen
+  gezogenen (`ArchivTeilBelegen`). Teile früherer Abschnitte bleiben liegen.
+- ⚑ **Kalte Ausfuhr und Einfuhr (A8, `archivausfuhr.rs`):** je Periode eine
+  Datei und ein Verzeichnis mit Summen. `--archiv-ausfuhr <ordner>` schreibt
+  jede fertige Periode, solange der Knoten die Kette ab Genesis hat;
+  `myl-node archiv-ausfuhr <kette> <ordner>` und `myl-node archiv-einfuhr
+  <ordner> <kette>` arbeiten am angehaltenen Knoten. Die Einfuhr prüft
+  Summen, Höhen, Verkettung ab dem Startwert und die Anker des Netzes; in
+  eine leere Kette, die der Start dann ab Genesis nachrechnet, oder vor eine
+  verdichtete, geprüft gegen die Historie ihrer Basis.
+- ⚑ **Stand je Epoche im Protokoll:** `archiv_stand` mit Rolle, Basis,
+  Ziehung, Kopien, Vollständigen, Splittern, Haltern, Ersetzten und
+  Teilwurzeln; dazu `archiv_beleg`, `archiv_teilwurzel`, `archiv_teilbeleg`,
+  `archiv_teile_holen`/`_vollstaendig`, `archiv_geliefert`,
+  `archiv_abgelehnt`, `archiv_ausfuhr`.
+- ⚑ **Fund 626, Nachholen hing an einer Gegenstelle ohne Blöcke:** Eine
+  Gegenstelle, die selbst zurücklag, antwortete sofort „nichts“, war damit
+  als erste wieder frei und bekam jedes Mal den vordersten Bereich; die
+  einzige, die ihn hatte, war mit späteren beschäftigt, die der volle
+  Vorausspeicher verwarf. Gefunden im Archivlauf: Nach einem Totalausfall
+  hatte nur ein Knoten die Kette, und zwei Einsteiger aus dem Abzug standen
+  240 Runden lang auf derselben Höhe. Jetzt wird eine solche Gegenstelle für
+  Bereiche ab dieser Höhe 30 s lang nicht gefragt (`LEER_SPERRE`). Gegenprobe:
+  derselbe Lauf war vorher rot und ist jetzt grün.
+- **Proben:** `tests/verdichtung.rs` belegt wie echte Kopien (jede Epoche,
+  Schlüssel der Probekonten) und prüft dazu: eine Kopie lädt mit Beweisen
+  nach und liefert danach selbst; Splitter holen, legen ab und belegen, aus
+  beliebigen 32 der 64 Teile jeder Gruppe kommt die Geschichte mit derselben
+  Historie zurück; eine kalte Ausfuhr kommt vor die verdichtete Kette, eine
+  zu kurze wird abgewiesen. Dazu `archivabruf`, `archivausfuhr`,
+  `teilablage` mit eigenen Proben. Gegenproben für jede Prüfung, alle rot.
+  ⚠️ Die Proben mit Belegen brauchen je rund 100 s: Jeder Beweis liest die
+  1024 Blöcke seiner Gruppe und hasht sie neu. Vorgemerkt: die Bytes aus der
+  Datei hashen, ohne zu zerlegen und neu zu serialisieren.
+
+### v0.57.0 (2026-10-23): Begrenzter Platz und Arbeitsspeicher, Verdichtung, ausgeloste Archivknoten (Funde 624, 625)
+
+Aus dem ersten Dauerlauf (TESTCLIENT 0.48.0): Ein Knoten verlor Platz und
+Arbeitsspeicher ohne Grenze. Festlegungen des Projektinhabers vom selben Tag:
+den Arbeitsspeicher frei halten, so wenig Dateien wie möglich und so viele
+wie nötig, ein Budget von „ein paar GB“, keine festen Archivknoten, aber
+eine Handvoll ausgeloster, rotierender, damit auch ein Totalausfall aller
+Knoten die Geschichte nicht kostet.
+
+- ⚑ **Fund 625, Arbeitsspeicher:** Der Kettenspeicher führte zwei Verweise
+  über jeden Block (`orte`, `nach_hoehe`), gemessen rund 45 Byte je Block
+  (der Kommentar sagte acht), bei 1 s Blockzeit 1,4 GB im Jahr. Gefunden durch
+  Messung von zwei Knoten über die Rückschleife mit und ohne Testverkehr: Der
+  Testverkehr war unschuldig, nach dem Einschwingen wuchsen beide gleich um
+  rund 45 Byte je Block. Jetzt ein **dünner Verweis**, eine Stütze je 1024
+  Sätze (`STUETZABSTAND`); die Nachlieferung springt zur Stütze und liest
+  vorwärts (`bloecke_ab`, Arbeit begrenzt durch Stützabstand und Spanne), der
+  Neustart liest die Datei der Reihe nach. Probe: 5 000 Blöcke halten 5
+  Stützen, jede Höhe wird gefunden.
+- ⚑ **Fund 624, Betriebsprotokoll:** wuchs ohne Grenze (rund 740 Byte je
+  Block, jede Gossip-Nachricht eine Zeile, je Start eine neue Datei, nie
+  geräumt), bei geplanter Blockzeit 12 bis 23 GB im Jahr. Jetzt Rotation
+  (`DATEI_HOECHSTENS` 16 MiB) und ein Deckel über alle Dateien des Knotens,
+  auch früherer Starts (`--protokoll-mb`, Vorgabe 128); die älteste fällt
+  zuerst. Eine neue Datei beginnt mit `fortsetzung` und dem Namen der
+  vorigen, die Folge läuft weiter. 📌 **Dabei gefunden:** Die Probe war in der
+  vollen Sammlung rot. Rotierte das Protokoll schneller als eine Millisekunde,
+  bekam die neue Datei den Namen einer eben geräumten und wurde als Nächstes
+  geräumt; jetzt liegt jeder neue Name streng über allen alten.
+- ⚑ **Verdichtung nach Budget** (`--kette-mb`, Vorgabe 2048): An einer
+  Langzeitgrenze, wenn die Kettendatei über dem Budget liegt, wird ein
+  Langzeitabzug zur Basis, und die Datei behält nur die Blöcke danach. Gewählt
+  wird der älteste, nach dem höchstens das halbe Budget liegt, **aber nie
+  weniger als ab dem vorletzten Langzeitabzug**. Absturzfest in drei
+  Schritten (neue Datei auf die Platte, Basis setzen, umbenennen); eine
+  liegengebliebene `.neu` verwirft das Öffnen. Die eigene Basis gilt als
+  bestätigt; Langzeitabzüge vor der Basis fallen weg. Ein Neustart rechnet ab
+  der Basis nach statt ab Genesis.
+- ⚑ **Archivknoten** (`src/archiv.rs`): je Periode (64 Epochen) die fünf
+  registrierten Miner mit den kleinsten Losen
+  `sha256("myl-archiv" ‖ Epochensaat ‖ Kennung)`, für jeden nachrechenbar.
+  Wer in der laufenden oder vorigen Periode gezogen ist, verdichtet nicht;
+  ohne registrierte Miner verdichtet niemand. Ein gezogener Knoten mit Basis
+  holt die Blöcke ab Genesis über die Hintergrundprüfung, die sie dabei prüft
+  und in `<kette>.archiv` aufbewahrt, und setzt sie danach vor seine Kette
+  (`vorne_einfuegen`, erst umbenennen, dann Basis entfernen). Protokoll:
+  `archiv`, `archiv_nachladen`, `archiv_vollstaendig`, `archiv_fehler`,
+  `kette_verdichtet`. 📌 Entworfen war „jeder mit Wahrscheinlichkeit 5/N“;
+  die Probe zeigte, dass dann etwa jede 150. Periode leer bliebe. Die fünf
+  kleinsten Lose ergeben genau fünf.
+- **Anker aus dem Quelltext** (`Netz::ist_anker`): Eine Basis genau dort
+  braucht keine Hintergrundprüfung; sie verdient dasselbe Vertrauen wie
+  Genesis.
+- **Proben:** `tests/verdichtung.rs` an echten Langzeitgrenzen (345 600
+  Blöcke in rund 3 s): ein nicht gezogener Knoten verdichtet an der zweiten
+  und dritten Grenze und läuft aus der verdichteten Datei mit derselben
+  Wurzel wieder an; ohne Miner verdichtet niemand; ein gezogener nicht; die
+  Geschichte kommt zurück und ein Neustart ab Genesis trifft dieselbe Wurzel.
+  Dazu Speicher (Verdichten, halbe Verdichtung), Protokoll (Deckel, frühere
+  Starts, Namen), Auslosung (genau fünf in jeder von 200 Perioden, Reihenfolge
+  egal). **Gegenproben**, je Behebung einzeln herausgenommen, alle rot:
+  Rotation, steigende Namen, Stützabstand, Verdichtung, Archiv-Ausnahme, und
+  in TESTCLIENT das Verbinden der Fortsetzungen.
+- ⚠️ **Noch nicht im Netz belegt:** das Nachladen eines neu gezogenen
+  Archivknotens über Gegenstellen. Die Bausteine sind geprüft
+  (Hintergrundprüfung, Einfügen), der Weg über das Netz braucht einen Lauf
+  mit registrierten Minern über mehrere Perioden.
+
+### v0.56.1 (2026-10-23): Die Stakes der Stimmsatzdatei müssen zusammen in `u64` passen (Fund 619)
+
+- ⚑ **Fund 619:** `Stimmsatzdatei::gesamtstake` rechnete die Summe in
+  `u128` und schnitt sie mit `as u64` still ab. Jeder einzelne Stake
+  passte beim Lesen, die Summe nicht zwingend. Zwölf Validatoren zu je
+  `2^61` ergaben `1,5 · 2^64`, abgeschnitten `2^63`; jeder einzelne lag
+  unter einem Drittel davon, also kam die Datei durch. Das `VotingSet`
+  dazu sättigt sein Gesamtgewicht bei `u64::MAX`, und das Quorum lag bei
+  zwei Dritteln davon statt der echten Summe: **weniger als zwei Drittel
+  des wirklichen Gewichts hätten genügt.** Jetzt prüft `pruefe` die Summe
+  vor der Drittelschranke und weist mit `GesamtstakeZuGross` ab;
+  `gesamtstake` sättigt nur noch, statt umzulaufen.
+- Test `eine_stakesumme_ueber_u64_wird_abgewiesen`, mit der Gegenrichtung
+  (dieselbe Verteilung geviertelt geht durch, Gesamtgewicht stimmt).
+  **Gegenprobe:** Prüfung abgeschaltet, der Test wird rot und zeigt die
+  angenommene Datei.
+- Hervorgegangen aus einem offenen Punkt des Audits („Genesis verteilt
+  höchstens `u64::MAX`“). Der Ledger selbst braucht keine Zusicherung:
+  `genesis_verteilung` nimmt die Gesamtmenge als `u64` und verteilt sie
+  exakt, und `LedgerState::genesis` legt keine Konten an.
+
+### v0.56.0 (2026-10-23): Sicherheitsaudit: Arbeit, die eine Anfrage überdauert, der Validatorschlüssel und das Nachholen (Funde 607, 609, 611, 612)
+
+Aus dem Sicherheitsaudit vom 2026-10-23.
+
+- ⚑ **Fund 609**, drei Wege, auf denen eine fremde Gegenstelle Arbeit
+  auslöste, die ihre Anfrage überdauerte:
+  1. **Zeitprobe:** jeder Gegenstelle beantwortet, je Probe ein Faden bis
+     zu 120 s. Die Tür des Shards bedient nacheinander; eine Flut stand vor
+     jedem echten Auftrag, der Miner verpasste seine Fristen, und **die
+     ehrlichen Messenden unterschrieben echte Fristzeugnisse gegen ihn**.
+     Jetzt nur für Mitglieder des eigenen Pods laut Kette
+     (`frist::misst_mich`, `frist::messende`), eine zugleich.
+  2. **Inferenzaufträge:** je Auftrag eine Aufgabe bis zur Frist des
+     Ortsanschlusses (45 s), unbegrenzt viele, je bis zu 4 MiB. Jetzt
+     höchstens `INFERENZ_IN_ARBEIT_HOECHSTENS` = 4, jeder weitere sofort
+     abgelehnt; `Knoten::inferenzstand` zeigt bearbeitet und abgelehnt.
+  3. **Zustandsabzug:** Jedes Stück einer anderen Höhe als der zuletzt
+     gelesenen las die ganze Datei (bis 1 GiB), bildete ihre Summe und
+     dekodierte den Zustand, in der Ereignisschleife; abwechselnd zwei
+     Höhen angefragt hielt den Konsens an. Jetzt `Ablage::stueck_lesen`:
+     Kopf, Block und genau das Stück, ungeprüft, denn der Abholer prüft
+     gegen seinen Anker. Der Zwischenspeicher `abzug_zwischen` entfällt.
+  Die Plätze für 1 und 2 sind ein `Platz`, der beim Freigeben zurückgeht,
+  auch nach einer Panik.
+  **Gegenproben:** `misst_mich`, das jedem antwortet, fällt am Fremden; ohne
+  Grenze lehnt Alpha in 15 s keinen von zehn Aufträgen ab, über zwei echte
+  Knoten mit schweigendem Shard (`eine_flut_von_inferenzauftraegen_...`);
+  ein `Platz` ohne Rückgabe fällt in beiden Tests; der alte Leseweg liefert
+  das erste Stück nicht, sobald ein Byte im letzten kippt.
+- **Fund 611:** Der Knoten zieht je Start des Shards einen Ausweis für
+  dessen Tür, legt ihn mit `0600` als `shardausweis` neben die Netzlast,
+  gibt ihn mit `--ausweis` und räumt ihn mit dem Shard weg;
+  `Shardfuehrung::tuer` liefert Adresse und Ausweis (statt `adresse`).
+- **Fund 612:** Beim Nachholen von Modelldateien galt die Grösse, die die
+  liefernde Gegenstelle mit jedem Stück neu ansagte, geprüft wurde erst am
+  Ende; eine böswillige Quelle füllte die Platte. Jetzt gilt die Ansage des
+  ersten Stücks, höchstens `MAX_DATEI_BYTES` = 8 GiB; eine masslose oder
+  wechselnde Ansage ist eine falsche Lieferung. **Gegenprobe:** Ohne die
+  Regel geht „ein Terabyte angesagt“ als `Weiter` durch.
+- **Fund 607:** Der Validatorschlüssel wurde mit `fs::write` angelegt und
+  danach eingeschränkt; jetzt über `myl_types::geheimdatei`.
+- **Fund 599:** `ctutils` 0.4.5, `chacha20` 0.10.2 in der Sperrdatei.
+- Nebenbei: drei Startmeldungen trugen eine Lücke aus rund zwanzig
+  Leerzeichen (ein verlorenes `\` am Zeilenende).
+- Belege: Clippy (`-D warnings`) und alle Tests grün (267 in der
+  Bibliothek, dazu die Testdateien).
+
 ### v0.55.1 (2026-10-23): libp2p 0.57; Sicherheitsmeldungen in `hickory-proto`
 
 - Die direkte Abhängigkeit `libp2p` auf 0.57 (nur `tokio`), passend zu
@@ -459,1718 +855,4 @@ selbst ab Nonce 0 schickte.
   Fenster. `cargo test` rc=0 (309). Im Netzlauf mit Neuling 51 s und 58 s
   statt 92 s und 99 s.
 
-### v0.52.1 (2026-10-22): Sicherheitsmeldung zu `rustls-webpki`; nur die Sperrdatei
-
-- `rustls-webpki` 0.103.15 auf 0.103.16, über `myl-net` (0.17.1)
-  eingezogen, wegen RUSTSEC-2026-0382. Kein Code des Knotens geändert.
-- **Belege:** cargo-deny grün; Clippy mit `-D warnings` und alle Tests
-  offline gegen den Vorrat mit Rückgabe 0.
-
-### v0.52.0 (2026-10-22): Der Knoten rechnet aus der Kette; Stufe 4 abgeschlossen
-
-⚑ **Festlegungen des Projektinhabers vom selben Tag:** ein Testnetz mit dem
-int4-35B als Podmodell, die Probekette rechnet weiter das Probemodell; kein
-Pod ohne Zusage, und der Knoten reicht seine Zusage selbst ein; die Frist
-zeichnet der Pod gegen.
-
-- `netz.rs` (neu): `PROBEKETTE` und `TESTNETZ_INT4` mit Startwert,
-  Podmodell und vTFE-Profil; `Netz::des_zustands` findet das Netz aus dem
-  Podmodell im Zustand. `--netz probe|test-int4`. `NETZMODELL`,
-  `NETZMODELL_INT4` und `NETZMODELL_KOPF` entfallen.
-- Die Kette: `Kette::im_netz`, `netz()`, `netzwert()`; die Zuteilung nach
-  Zusagen, `grenzen_des_pods` als eine Stelle für den Schnitt; Training
-  **und** Inferenz schreiben je Pod nach seinem Schnitt gut;
-  `FristverstossEinreichen` mit Pod und Bereich aus Zuteilung und Schnitt.
-- `shardfuehrung.rs` (neu, P7): Der Knoten leitet seinen Auftrag aus der
-  Kette ab, startet `myl-shard --von --bis`, lässt ihn bei gleichem
-  Bereich laufen und schreibt die Netzlast für den lokalen Plan.
-  `--shard-programm`, `--artefakte`, `--shard-training`.
-- Zusage und Anmeldung: `--modellzusage <ebenen>:<us>[:<von>-<bis>]` und
-  `--zone`; der Knoten meldet sich mit dem Konsensschlüssel an und reicht
-  die Zusage für die nächste Epoche ein.
-- `frist.rs` (neu): Frist eines Mitglieds, Messung aus Zeitprobe minus Ping,
-  `Fristsammlung`; einmal je Epoche misst jedes Mitglied die übrigen
-  Positionen, verteilt Zeugnisse und reicht die Meldung ein, sobald sie
-  trägt.
-- `dateidienst.rs` (neu, P11): Stücke nur aus dem eigenen Manifest, Holen
-  fehlender Dateien für die nächste Epoche, jede geprüft.
-- `nachschub.rs`: `Zeitprobe`, `Ping`, `Datei`, `Fristzeugnis` und ihre
-  Antworten, hinten angehängt.
-- **Aus dem Netzlauf** (fünfzehn Knoten, zwei ungleiche Pods, sechs
-  Stolpersteine, TESTCLIENT `tests/netzlauf.rs`):
-  - 📌 Die Fälligkeit der Zustandsaufnahme überlebt jetzt den Aufruf von
-    `laufe_fuer`. Wer den Knoten in kurzen Scheiben fuhr, bekam nie eine
-    Aufnahme und damit keine Netzarbeit.
-  - 📌 **Fund 588:** Die Blocknachforderung lief nur, wenn ein Block über
-    Gossip kam, nur beim Weiterreicher, und endete an einer leeren Antwort;
-    im Lauf blieb die Hälfte der Knoten bei Höhe 600 von 3660 stehen. Jetzt
-    fordert jede Aufnahme weiter, solange eine höhere Kette gehört ist,
-    reihum über die verbundenen Gegenstellen, und eine verlorene
-    Nachforderung verfällt nach zehn Sekunden.
-  - Die Fristmessung fragt, wer noch nicht gemessen ist, bei jeder Aufnahme
-    wieder, und die Reserve misst mit.
-  - 📌 **Fund 590:** Eine Probe, die nicht länger dauerte als der Ping,
-    ergab null und galt damit als bestanden, für die ganze Epoche. Ein
-    einzelner langer Ping, weil das Gegenüber gerade nachholte, ließ den
-    Lügner (Frist 50 µs) bei vier von sechs Messenden durch. Jetzt gehen
-    drei Pings voraus und der kürzeste zählt
-    (`frist::PINGS_JE_MESSUNG`); eine Messung ohne Rechenzeit ist keine
-    (`gemessen_je_token` liefert `None`), wird als
-    `fristmessung_verworfen` vermerkt und wiederholt. Im Kopf von
-    `frist.rs` stehen dazu die zwei bekannten Grenzen: Eine Meldung, die
-    erst nach dem Epochenwechsel in einen Block kommt, verfällt, und wer
-    seine Pings verzögert, verkleinert die gemessene Rechenzeit.
-  - Der Shard startet erst, wenn die Dateien seines Bereichs da sind; der
-    Dateidienst holt zuerst für die laufende Epoche, dann für die nächste.
-  - `Knoten::miner_kennung`, `shardauftrag`, `shard_pid`;
-    `Shardfuehrung::pid`.
-  - Neue Probe `tests/entdeckung.rs` (Fund 587 in NETWORKING).
-- **Belege:** Proben zu Netzen und Katalog, Auftrag aus der Kette, Prozess
-  folgt dem Soll, Meldung aus einer Mehrheit, Dateien holen und prüfen,
-  Marken hinten; die Kettenproben mit Zusagen; `cargo test` rc=0.
-
-### v0.51.1 (2026-10-22): Die Testphase beginnt mit dem int4-35B
-
-⚑ **Festlegung des Projektinhabers:** Ein Pod rechnet in der Testphase das
-Raven 35B A3B int4; über int8 oder int4 wird nach der Testphase
-entschieden.
-
-- `NETZMODELL_INT4` (neu) hält seinen Abdruck auf der Netzliste fest; die
-  Probe `netzmodell_int4_steht_auf_der_netzliste` vergleicht ihn mit
-  `MODELS/llm/KATALOG.json`.
-- ⚠️ **`NETZMODELL` bleibt `None`.** Mit dem Abdruck schnitte die Kette die
-  Gutschrift nach den Zusagen, während `myl-pod` noch gleich rechnet, und
-  die Ebenenzahl käme aus dem Profil des Probemodells. Ein Mitglied mit einer
-  unmachbaren Zusage nähme dann seinem ganzen Pod die Gutschrift. Gefüllt
-  wird es, wenn der Ledger die Zusage gegen die Ebenenzahl prüft und der Pod
-  nach demselben Schnitt rechnet (CONSENSUS 6.11).
-- **Belege:** `cargo test` rc=0 (296 Tests).
-
-### v0.51.0 (2026-10-22): Die Kette nimmt Zusagen an und schneidet nach ihnen
-
-Stufe 4 des Dispatchers (CONSENSUS v0.49.0).
-
-- Die Anweisung `ZusageEinreichen` geht an `myl_ledger::transitions::zusage_einreichen`.
-- Die Gutschrift für das Training schneidet einen Pod mit
-  `bereiche_des_pods`, derselben Funktion, nach der der Pod rechnen soll;
-  hier stand bis heute der gleiche Schnitt, selbst ausgerechnet.
-- ⚑ **`NETZMODELL` ist noch `None`**, und damit schneidet die Kette weiter
-  gleich. Welche Form des 35B ein Pod rechnet (int8 oder int4), entscheidet
-  der Projektinhaber; danach steht hier sein Abdruck. `NETZMODELL_KOPF` =
-  (4, 1) ist Platz und Zeit des Kopfs, gemessen am Raven.
-- **Belege:** neue Probe `eine_zusage_ueber_die_kette_wirkt`; `cargo test`
-  rc=0 (295 Tests).
-
-### v0.50.0 (2026-10-21): Der Knoten nennt das Modell bei seinem Namen
-
-Die Projektmodelle heißen seit heute nach Tieren, mit Größe und Speicherform als Anhängsel (Festlegung des Projektinhabers): `myelith-0.6b` ist `sparrow-0.6b-int8`, `myelith-4b` `pigeon-4b-int8`, `myelith-30b-a3b` `magpie-30b-a3b-int8`, `myelith-35b-a3b` `raven-35b-a3b-int8`. In den Dateien eines Artefakts steht kein Name, also bleiben Abdrücke und Register gültig. Die Vorgabe von `--modell`, der Name, unter dem die `/v1`-Tür das Modell nennt, war `myelith-myelith-0.6b`, ein doppelter Vorsatz; sie ist jetzt `sparrow-0.6b-int8`. Proben mitgezogen.
-
-### v0.49.0 (2026-10-17): Speicherorte, Kapazitätszusage und die Zahlen eines Miners
-
-Für das Mining aus Konsole und Fenster (CLIENT v0.163.0). Der Client
-startet diesen Knoten im Probelauf; was er dazu braucht, steht hier.
-
-- **`--speicherorte <datei>`** (neu, `KnotenKonfig::speicherorte`): Bei
-  jeder Zustandsaufnahme liest der Knoten die Datei neu und zählt mit
-  `myl_store::belegung`, was in den Orten mit dem Zweck `netz` liegt.
-  Eine kaputte Datei zählt als keine Orte und steht als
-  `speicherorte_fehler` im Protokoll; der Knoten stirbt nicht an einer
-  Tippfehlerzeile.
-- **`--zusage <datei>`** (neu): Der Knoten unterschreibt die Zusage beim
-  Start mit dem **Kontoschlüssel** (BLS) und legt
-  `<datei>.unterschrift` daneben: Konto, öffentlicher Schlüssel, Epoche,
-  SHA-256 der Datei, Unterschrift. ⚑ **Nur mit einem Kontoschlüssel aus
-  einer Datei**; der aus dem Namen abgeleitete ist keiner (Fund 170).
-  Scheitert die Unterschrift, endet der Start mit Rückgabe 1, statt ohne
-  Zusage zu laufen. Im Protokoll steht eine Zeile `zusage`.
-- **Neue Zahlen** in Zustandsaufnahme und `/metriken`:
-  `myelith_speicher_{orte,gegenstaende,shards,unlesbar,belegt_bytes,grenze_bytes,zugesagt_bytes}`,
-  `myelith_inferenz_bearbeitet_total` und `myelith_inferenz_abgelehnt_total`
-  (gezählt am Ausgang jedes Inferenzauftrags aus dem Netz, auch der
-  Ablehnung ohne Shard) und `myelith_konto_guthaben` (das eigene Konto in
-  der Kette).
-- Neue Abhängigkeit `myl-store`.
-- **Belegt:** `tests/speicher_und_zusage.rs` (neu): Die Unterschrift
-  lässt sich mit dem öffentlichen Schlüssel aus der Datei nachprüfen,
-  eine andere Epoche und eine geänderte Datei passen nicht, die Aufnahme
-  zählt einen Shard in einem Ort; ohne Kontoschlüssel wird nichts
-  unterschrieben. Alle 294 Tests grün, Clippy mit `-D warnings` sauber.
-  Am echten Programm: gestartet vom Client, `zusage.unterschrift` liegt
-  da, `/metriken` liefert die Zahlen, SIGTERM schreibt `ende` mit
-  „Beendigungssignal“.
-
-### v0.48.7 – 2026-10-14 (⚑ Fund 544: die neue GolemOS-Probe brach Clippy unter Windows; Sicherheitsmeldungen in der Sperrdatei)
-
-**Fund 544.** `tests/golemknoten.rs` (v0.48.6) band `Path` und
-`Command` oben in der Datei ein. Benutzt werden beide nur im Modul
-`lauf`, und das steht unter `#[cfg(unix)]`, weil es ein Shell-Skript
-ruft. Unter Windows waren die Importe damit unbenutzt, und der Schritt
-„cargo clippy, dieselben Crates“ im Job „Kernel und Konsens
-(windows-latest)“ brach mit `-D warnings` ab (Rückgabe 101). Auf macOS
-und Linux sieht man das nie. Jetzt stehen die beiden Importe in `lauf`,
-oben bleibt nur `PathBuf`.
-
-- **Beleg:** im Kreuzabbild für Windows (`x86_64-pc-windows-gnu`,
-  `cargo check --all-targets` mit `-D warnings`, offline gegen den
-  Vorrat) alle sechs Kisten des Schritts mit Rückgabe 0: `kernels`,
-  `myl-types`, `myl-ledger`, `myl-scheduler`, `myl-consensus`,
-  `myl-node`. **Gegenprobe:** mit der alten Datei Rückgabe 101 und genau
-  die beiden Meldungen der CI (`unused import: Path`, `unused import:
-  std::process::Command`). Auf macOS Clippy grün, die neun Proben grün.
-- ⚠️ **Lokal nicht geprüft:** Clippy selbst für das Windows-Ziel
-  (`blst` braucht C-Header, die hier fehlen, und im Kreuzabbild fehlt
-  Clippy). Was nur Clippy findet und rustc nicht, sieht erst die CI.
-
-**Sperrdatei:** `quinn-proto` 0.11.17 auf 0.11.19 und `rustls` 0.23.45 auf
-0.23.46, wegen neuer Sicherheitsmeldungen (RUSTSEC-2026-0338 bis 0343
-und 0346 bis 0349); `myl-net` 0.16.1. cargo-deny grün, Clippy und alle
-Tests offline gegen den Vorrat mit Rückgabe 0. Kein Code des Knotens
-geändert.
-
-### v0.48.6 – 2026-10-13 (der Knoten als Dienst in GolemOS wird gegen den Knoten und das NixOS-Modul gehalten)
-
-Seit GolemOS 0.3.0 gibt es einen zweiten Weg, `myl-node` als Dienst zu
-fahren: `golem-knoten` in GolemOS, neben dem NixOS-Modul. **Zwei Orte, die
-dieselbe Befehlszeile bauen**, also neun Proben in `tests/golemknoten.rs`:
-Jedes Flag, das `golem-knoten` übergibt, kennt der Knoten; beide Dienste
-übergeben **dieselben** Flags und halten Tür und Ortsleitung zu; die
-Startbegrenzung (fünf Abbrüche in 300 s, zehn Sekunden Pause) und die
-Vorgabe der Aufnahmen sind in beiden dieselbe; die Kennung des
-Dienstkontos (900) steht im Skript und in der Benutzertabelle des Abbilds
-gleich. Unter Unix laufen dazu fünf Proben gegen das Skript selbst: der
-Zuschnitt der Befehlszeile, abgewiesene Werte (Leerzeichen,
-eingeschmuggelte Flags, Port unter 1025, unbekannte Felder), eine
-untergeschobene Einstellung wird gelesen und nicht ausgeführt, ohne
-Konformitätsvektoren startet der Knoten nur auf ausdrückliches `aus`, und
-der Konsensschlüssel landet mit 0400 im Zustand. Gegenproben: eine
-eingeschobene Tür, abgeschaltete Wertprüfung und eine per `eval`
-gelesene Einstellung machen je ein bis zwei Proben rot. Kein Code des
-Knotens geändert.
-
-### v0.48.5 – 2026-09-21 (der Serverzuschnitt kennt den neuen Ablageort)
-
-`serverzuschnitt.rs` prüft, dass der Quellfilter der Flake die großen
-Verzeichnisse ausnimmt; seit die fremden Gewichte unter `MODELS/` an der
-Wurzel liegen, heißt eines davon anders. ⚑ **Und es steht jetzt in der
-Namensliste statt bei den Präfixregeln**, weil es ein Verzeichnis der
-obersten Ebene ist. Die Probe sucht weiter **mit** Anführungszeichen:
-Ohne sie fände `MODELS` auch ein `MODELS-alt`, und eine Teilzeichenkette
-ist dieselbe Antwort auf eine andere Frage.
-
-### v0.48.4 – 2026-09-16 (der Serverzuschnitt wird geprüft, ohne dass Nix dafür nötig ist)
-
-**Nur Prüfungen, keine Verhaltensänderung am Knoten.** Das NixOS-Modul
-unter `myl-server/` startet `myl-node` mit einer Handvoll Flags, und
-bisher hielt die beiden nichts zusammen: Wer hier einen Aufrufnamen
-ändert, merkt es auf einem Server, und zwar daran, dass der Dienst
-startet, abbricht und wieder startet.
-
-⚑ **Fünf Prüfungen lesen zwei Dateien nebeneinander**, ohne `nix` und
-ohne NixOS: Jedes übergebene Flag kennt der Knoten; nach außen geht nur
-der P2P-Port (Tür und Ortsleitung werden gar nicht übergeben, die
-Beobachtung ausdrücklich auf der Rückschleife); ein Startfehler wird
-keine Schleife; jede Option, die die Beispielkonfiguration setzt, gibt
-es im Modul; und die Flake gibt Paket und Modul heraus und zeigt dabei
-auf Dateien, die es gibt.
-
-⚑ **Gelesen wird nur die Befehlszeile und nicht die ganze Datei.** Im
-Modul stehen Flagnamen auch in Beschreibungstexten und in der Liste
-derer, vor denen es **warnt**; wer die Datei durchsucht, findet `--tuer`
-und liest das Gegenteil heraus. **Eine Prüfung, die den Ort nicht kennt,
-prüft eine andere Aussage.**
-
-⚠️ **Was sie nicht sagen:** ob das Modul auf NixOS baut. Das bleibt der
-VM-Prüfung vorbehalten.
-
-### v0.48.3 – 2026-09-14 (der Konformitätstest sucht nach der Form, die beide Erzeuger schreiben)
-
-**Nur ein Test, keine Verhaltensänderung.** Der Gattertest suchte einen
-Vektor mit Ausgabefeld an der Zeichenkette `"data":[` (kompakt). Diese
-Form erzeugte nur die inzwischen abgelöste `tests/golden`-Ablage (Fund
-362); nach dem Neustempeln auf θ_v 0.20.0 schreiben beide Erzeuger
-(Rust wie Python) `"data": [` mit Leerzeichen, und der Test fand keinen
-einzigen Vektor. Er sucht jetzt die kanonische Form.
-
-### v0.48.2 – 2026-09-10 (die Artefakte heissen nach dem Modell, das sie sind)
-
-**Umbenennung, keine Verhaltensänderung.** Die Artefakte unter
-`INTEGER_LLM/artifacts/` heissen seit heute `myelith-0.5b`,
-`myelith-7b`, `myelith-4b` und `myelith-30b-a3b`; die Pfade in zwei Modulen und drei Prüfungen
-sind nachgezogen.
-
-⚑ **Ein Artefakt ist nicht das Basismodell, sondern das Modell, mit dem
-dieses Projekt rechnet.** Es trägt deshalb einen eigenen Namen; die
-Basismodelle unter `models/` behalten ihre und stehen weiter mit
-Herkunft im Katalog.
-
-⚑ **Der Konformitätswert ist unverändert**, gemessen nach dem Umbau:
-`894d8357ae92b5c1` über sechs Vektoren und `6da384ba301b9454` über
-siebzehn. **Die Namen stehen in keiner Bytefolge, die gehasht wird.**
-
-### v0.48.1 – 2026-09-09 (Fund 266: ein Tupelfeld, das niemand las)
-
-Die Testhilfe in `konformitaetstor.rs` gab `(Pfad, Inhalt)` zurück und
-las den Pfad nirgends. Örtlich fiel das nicht auf, weil `cargo test`
-ohne `-D warnings` fährt; in der CI ist es kein Hinweis, sondern ein
-Fehler, und er fällt in **jedem** Job an, der diese Kiste übersetzt.
-Drei davon wurden rot, während hier alles grün war.
-
-📌 **Nachgetragen am 2026-09-10.** Das Manifest trug 0.48.1 seit dem
-2026-09-09, dieser Changelog stand auf 0.48.0.
-
-### v0.48.0 – 2026-09-06 (der Urteilsweg und das Stimmgewicht)
-
-Zwei Enden, die seit langem dalagen, sind verbunden.
-
-⚑ **Der Urteilsweg hat einen Aufrufer.** `Anweisung::SchuldspruchEinreichen`
-geht durch `anwenden`, und ein Beleg ohne Deckung schlachtet niemanden:
-Drei Tests halten fest, dass ein Beleg schlachtet, ein gefälschter nicht
-und ein echter keinen Dritten trifft.
-
-⚑ **Das Stimmgewicht folgt dem hinterlegten Einsatz**
-(`stimmberechtigte_aus_zustand`) und nicht mehr einer Textdatei. Wer
-nicht im Minerregister steht, stimmt nicht mit, gleich wie viel er
-hinterlegt hat; wer darunter bleibt, auch nicht. **Arbeit qualifiziert,
-Stake wiegt.**
-
-**Die Lernrate der Kette ist jetzt die normierte Protokollzahl.**
-
-### v0.47.0 – 2026-09-06 (Fund 192: das Urteilsfeld war scharf)
-
-Ein Block mit einem Schuldspruch wird abgewiesen
-(`KettenFehler::SchuldspruchOhneBeleg`), und die Anfechtungen eines
-Blocks laufen zum ersten Mal durch `Block::validate_challenges`.
-
-⚑ **Der Fund kam aus einer Gegenprobe, nicht aus einer Überlegung.**
-Nimmt man die neue Prüfung heraus, übernimmt die Kette einen Block mit
-einem Schuldspruch **als gültig**. `Block::verdicts` ist Teil des
-gehashten Blocks, `Block::add_verdict` steht offen, und
-`myl_ledger::apply_verdict` hat alles, was zum Schlachten nötig ist. Was
-fehlt, ist der **Beleg**: Ein `Verdict` nennt Täter und
-Kopfgeldempfänger und trägt keinen Nachweis.
-
-⚑ **Bisher schützte allein, dass niemand die Enden verband.** Das ist
-kein Schutz, sondern ein Zufall mit Verfallsdatum: Wer den Urteilsweg
-verdrahtet, ohne den Beleg zu verlangen, gibt dem Blockerzeuger ein
-Werkzeug, mit dem er jeden schlachten kann. Die Ablehnung ist die
-sichere Zwischenlage; sie zwingt den späteren Bau, den Nachweis
-mitzuliefern.
-
-**`validate_challenges` hatte seit jeher keinen Aufrufer**, eine
-geprüfte und abgehakte Prüfung, die nie lief. Sie läuft jetzt.
-
-### v0.46.0 – 2026-09-06 (die Auslastung steuert die Abgabe)
-
-Der Epochenwechsel gibt der Ausschüttung die Auslastung mit, damit die
-Trainingsabgabe greifen kann.
-
-⚑ **Sie kommt aus demselben Plan, aus dem die Trainingspods kommen.**
-Eine zweite Rechnung wäre eine zweite Wahrheit über dieselbe Grösse, und
-die beiden liefen an dem Tag auseinander, an dem jemand eine von beiden
-anfasst.
-
-### v0.45.0 – 2026-09-06 (Trainingsarbeit wird vergütet)
-
-`Kette::trainingszuschreibung` gibt jedem Mitglied eines **bestätigten**
-Paars sein Gewicht, und `epochenausschuettung_mit_training` zahlt es aus
-der Treasury.
-
-⚑ **Nur bestätigte Paare**, denn nur sie sind nachgerechnet worden. Ein
-Segment, dem der Partner fehlt, ist Arbeit, die niemand prüfen kann.
-
-⚑ **Die Tokenzahl kommt aus dem verankerten Korpus, nicht vom Pod.**
-Dürfte er sie nennen, nennte er seine eigene Vergütung.
-
-Ein Test fährt den ganzen Weg: Ein Paar reicht ein, die Kette bestätigt,
-die Modellfassung rückt, und ein Mitglied bekommt Geld.
-
-### v0.44.0 – 2026-09-05 (die Modellfassung steigt am Epochenwechsel)
-
-`Kette::bestaetigte_deltas` sammelt die Δ-Commitments, auf die sich
-beide Pods eines Paars geeinigt haben, und der Epochenwechsel schreibt
-daraus die Modellfassung fort.
-
-⚑ **Der Auftrag wird mitgeprüft, nicht nur das Ergebnis.** Zwei Pods,
-die Verschiedenes gerechnet haben, sind nicht uneinig, sondern
-unvergleichbar, und ihre Übereinstimmung im Ergebnis wäre ein Zufall,
-keine Bestätigung.
-
-⚑ **Sortiert und nicht in Paarreihenfolge.** Die Ordnung geht in die
-neue Modellfassung ein; sie an der Paarbildung aufzuhängen hiesse, zwei
-Dinge zu koppeln, die nichts miteinander zu tun haben. Ein Test hält
-fest, dass die Paarreihenfolge auf das Ergebnis nicht wirkt.
-
-⚑ **Herausgezogen aus dem Epochenwechsel**, statt inline in einer
-dreitausend Zeilen langen Funktion zu stehen: Eine Regel, die man nicht
-einzeln rufen kann, kann man auch nicht einzeln prüfen.
-
-### v0.43.0 – 2026-09-05 (der Weg vom Trainingsplan bis in den Zustand)
-
-`Anweisung::TrainingssegmentEinreichen` wird in `kette.rs` bedient:
-Besetzung nachschlagen, Plan rechnen, Charge ableiten, Übergang rufen.
-
-⚑ **Dieselbe Arbeitsteilung wie beim Bündel** (Fund 144): Der Ledger
-kennt den Scheduler nicht und soll ihn nicht kennen; diese Stelle sieht
-beides und legt vor, was der Übergang prüft.
-
-⚑ **Der Plan wird gerechnet und nicht gespeichert.** Er ist eine reine
-Funktion des Zustands; ihn abzulegen führte eine zweite Wahrheit ein,
-die mit dem Zustand auseinanderlaufen könnte.
-
-⚑ **Ohne Korpus oder ohne Zuweisung gibt es keine Charge**, und dann
-steht dort eine Null. Der Übergang lehnt über `bestellt` oder über die
-Charge ab; **eine erfundene Charge wäre schlimmer als keine.**
-
-Ein Test fährt den ganzen Weg: Ein Segment mit fremder Charge wird
-abgewiesen, das richtige steht danach im Zustand. **Die Fälschung steht
-im Test vor dem Erfolg**, damit der Erfolg nicht bloss belegt, dass
-irgendetwas durchgeht.
-
-### Die Lernrate ist ein Protokollwert
-
-`TRAININGS_LR_ZAEHLER` und `TRAININGS_LR_NENNER` stehen bei der Kette,
-und der Übergang prüft jedes Segment dagegen. **2⁻¹² ist der Wert aus
-dem Trainingslauf**, der auf dem 0,5B über dreissig Schritte sein Ziel
-trifft; für das Expertengemisch liegt das Arbeitsfenster des Routers bei
-2⁻¹⁸ bis 2⁻²², und **dass hier eine Zahl für beide steht, ist eine
-offene Vereinfachung** und kein Ergebnis.
-
-### v0.42.0 – 2026-09-05 (der Epochenwechsel vermerkt, wer trainiert hat)
-
-`epochenwechsel_abschliessen` schreibt `trainingsstand` fort, **vor**
-dem Drehen der Saat: Der Plan der abgelaufenen Epoche hängt an der Saat,
-die während ihr galt.
-
-⚑ **Ohne diesen Eintrag bliebe das Gedächtnis leer**, die Reihum-Ordnung
-hätte nichts zu ordnen, und die Auswahl fiele still auf das blosse Los
-zurück. Ein Test fährt die Kette über Epochengrenzen und hält fest, dass
-der Vermerk entsteht und mitrückt.
-
-### ⚑ Vermerkt wird die Zuweisung, nicht die Leistung
-
-Ein Pod, der zugewiesen war und scheiterte, soll nicht sofort wieder
-vorn stehen; sonst wäre Scheitern ein Weg, immer wieder gewählt zu
-werden, und bei gedeckelter Trainingsvergütung will das niemand. Ob er
-geliefert hat, entscheidet die Vergütung.
-
-### Die Probekette hat einen Probekorpus
-
-Ohne Anker bildet die Kette Trainingspods und weist ihnen nichts zu; der
-Weg von der Zuteilung bis zum Bündel wäre von keinem Test berührt. Die
-Wurzel ist ein Platzhalter und ausdrücklich keine echte Verankerung.
-
-### v0.41.0 – 2026-09-05 (der Trainingsplan bekommt seinen Aufrufer)
-
-`Kette::trainingsplan_der_laufenden_epoche` fragt
-`myl_scheduler::trainingszuteilung`, welche Pods trainieren.
-
-⚑ **Bis heute stellte die Frage niemand.** Dasselbe galt für die ganze
-Kiste `myl-train` (Fund 183) und für die Auslastungsrechnung (Fund 184):
-gebaut, geprüft, unerreicht.
-
-Die Nachfrage kommt aus `vtfe_vorepoche`, nicht aus der laufenden
-Epoche. Die Zuteilung steht fest, **bevor** die Epoche läuft; wer die
-laufende Nachfrage nähme, bräuchte eine Zahl, die es noch nicht gibt.
-
-### ⚑ Der Knoten liest die Parameter-Registry nicht, und das ist ein Behelf
-
-Er bindet `myl-governance` nicht ein und spiegelt die drei neuen Zahlen
-als `const`. `tests/parameter.rs` hält beide Fassungen gegeneinander,
-mit einer Gegenprobe, dass eine Abweichung auch auffällt.
-
-⚑ **`myl-governance` steht nur unter `dev-dependencies`.** Wäre es eine
-gewöhnliche Abhängigkeit, sähe es aus, als läse die Kette die Registry,
-und genau das tut sie nicht. Die eigentliche Antwort wäre, die Parameter
-in den Kettenzustand zu nehmen, damit ein **Beschluss** sie bewegt statt
-eines neuen Baus.
-
-### v0.40.0 – 2026-09-04 (✅ Fund 170: Owner und Worker getrennt, Fund 171 in der Kette)
-
-**Fund 170.** `abrechnungen_verbreiten` unterschrieb mit
-`kette::schluessel_fuer(name)`, also `probeschluessel(sha256(name)[0])`:
-einer von acht, aus dem Namen nachrechenbar. Wer den Namen eines Knotens
-kannte, konnte in seinem Namen unterschreiben.
-
-Neu `--kontoschluessel <datei>` und `--konto <hex>`, also die Trennung
-von arbeitendem und haltendem Schlüssel. Ohne Datei bleibt der
-abgeleitete Schlüssel,
-**und der Knoten sagt es beim Start**.
-
-⚑ **Beim Schreiben des Tests aufgefallen:** `konto_fuer` bildet auf
-`probekonto(hash[0])` ab, also auf **acht** Konten. Zwei Knoten mit
-verschiedenen Namen teilen sich mit Wahrscheinlichkeit 1/8 ein Konto und
-damit einen Nonce-Raum.
-
-Die Wahl des Schlüssels steht als
-`schluessel::abrechnung_unterschreiben` in der Bibliothek, nicht in
-`Knoten`: Ein `Knoten` braucht Netz, Identität und Protokoll, dorthin
-kommt keine Gegenprobe.
-
-**Fund 171.** `Kette::STICHPROBE_BP` kommt aus
-`myl_tokenomics::stichprobe_bp()` und ist damit 500 bp statt 200. Die
-200 waren der Wert aus der Welt **mit** Kontrollsegmenten; A1 hat sie
-entfernt, und die Kette hat seither auf eine zweite Linie vertraut, die
-es nicht mehr gibt.
-
-### v0.39.0 – 2026-09-04 (⚑ Funde 165 und 166: die Tür führt jetzt wirklich zum Modell)
-
-**Fund 166.** `Kontraktabschrift` trägt die Epoche des zuletzt
-abgelegten Standes und frischt sie mit jedem Block auf. Bis dahin las
-`main.rs` sie **einmal vor dem `spawn`**; ein Sitzungskontrakt lief nie
-ab, `Befund::Abgelaufen` konnte nicht eintreten. Die Schleifenrunde
-steht jetzt als `tuer::eine_anfrage` in der Bibliothek: Der Fehler war
-nicht schwer, er war **unerreichbar**.
-
-**Fund 165.** `bedienen_v1`, `Ortsweg::neu` und `mit_abrechnung` hatten
-zusammen **null** Produktionsaufrufer; `main.rs` bediente `/inferenz`
-und gab nichts an einen Shard. Neu:
-
-- `rechenweg::fuer_betreiber` setzt den Weg zusammen, **in der
-  Bibliothek und nicht in `main.rs`** (die Lehre aus 166).
-- `Ortsweg::mit_ankuendigung`, träge gesendet, damit ein
-  Shard-Neustart von selbst heilt, plus `epoche_wechseln`.
-- `Konsensschluessel::{endpunkt, epochenankuendigung}`; der geheime
-  Teil verlässt den Typ nicht.
-- `tuer::eine_v1_anfrage`, `--pod`, `--modell`.
-
-⚑ **Und nicht mit `kette::schluessel_fuer`.** Der ist
-`probeschluessel(sha256(name)[0])`, also einer von acht öffentlich
-ableitbaren; eine damit unterschriebene Ankündigung fälschte jeder, der
-den Knotennamen kennt. Unterschrieben wird mit dem Konsensschlüssel,
-und wenn der aus einem Namen abgeleitet ist, sagt der Knoten es beim
-Start.
-
-### v0.38.0 – 2026-09-03 (`genesis.rs` heisst jetzt `stimmsatzdatei.rs`)
-
-⚑ **Die Namensgleichheit war die Quelle einer gefährlichen
-Verwechslung.** Das Modul liest den **Stimmsatz**: wer bei BFT-Runden
-mitstimmt, mit welchem Gewicht. Eine Betriebsdatei für jeden Netzlauf
-**einschliesslich Probelauf**, an der nichts unumkehrbar ist. Mit dem
-**produktiven Genesis**, dessen Ausführung sich nicht wiederholen lässt,
-hat sie nichts zu tun.
-
-Umbenannt sind Modul, Typen (`Stimmsatzdatei`, `Stimmberechtigter`,
-`Stimmsatzfehler`), das Konfigurationsfeld und die Schalter:
-`--stimmsatz` und `--stimmsatzzeile`. **Die alten Namen werden noch
-angenommen und warnen**, damit ein bestehendes Betreiberskript nicht
-stumm scheitert.
-
-### v0.37.0 – 2026-09-03 (⚑ Fund 163: der Riegel gegen die Verwechslung war nie eingelegt)
-
-`PROBE_STARTWERT` trug einen Doc-Kommentar, der ihn zum „Riegel gegen
-eine Verwechslung mit dem echten Netz" erklärte und mit „Der Text sagt es
-auch dem, der die Bytes anschaut" schloss. ⚑ **Die Konstante wurde
-ausschliesslich in Kommentaren erwähnt.** `Kette::startwert()` rechnete
-`sha256("myelith-testkette-genesis")`, und dieser Text sagt genau das
-nicht.
-
-Dazu stand der wirkliche Wert an **sechs Stellen als Literal**, in drei
-Kisten. Beides geschlossen: `startwert()` nimmt die Konstante, die
-Literale rufen die Funktion. Die Gegenprobe ändert die Konstante und
-beobachtet, dass beide Kisten mitziehen.
-
-**Gefunden wurde er nicht durch einen Test**, sondern durch die Frage des
-Projektinhabers, ob die Regeln in der Agentenanweisung im Kontext des
-Projekts überhaupt stimmen.
-
-### v0.36.1 – 2026-09-03 (⚑ Fund 162: die Shardzahl ist jetzt gebunden)
-
-Die Shardzahl der Pipeline und die der Gewichtsableitung standen beide
-auf vier, und **nichts im Code hielt sie zusammen**. Eine Abweichung
-hätte stumm dazu geführt, dass ein Pod für seine Arbeit nichts bekommt.
-Zwei `const`-Zusicherungen binden sie jetzt.
-
-⚑ **Der erste Anlauf war Zierde**, und die Gegenprobe fing ihn: Ein
-assoziiertes `const` im `impl`-Block wird erst berechnet, wenn es
-jemand benutzt. Auf Modulebene verschoben, beisst es.
-
-### v0.36.0 – 2026-09-03 (⚑ Fund 160: der Rechenweg bucht wirklich ab)
-
-**Nach jeder echten Antwort geht eine Abrechnung in die Kette.** Der
-Rechenweg baut `Anweisung::SitzungAusgeben` (Betrag = erzeugte Token,
-mindestens eins), gibt sie über einen Kanal an den Knoten, der sie mit
-dem eigenen Kettenschlüssel signiert und verbreitet, dieselbe Bauart
-wie bei der Kontraktabschrift der Tür: Wer schreibt, schreibt in der
-Ereignisschleife; wer rechnet, tut es woanders.
-
-⚑ **Erst wenn gerechnet wurde, wird abgebucht.** Wer vorher bucht,
-kassiert für eine Anfrage, die scheitern kann.
-
-**Und `zuschreibung_der_epoche` bekommt seine Arbeitsverteilung jetzt
-immer.** `Kette::arbeitsverteilung_setzen` ist entfernt (Fund 161): Es
-war eine nackte Methode, die den Zustand ausserhalb jeder
-Blockanwendung mutierte und auf einem echten Knoten die Zustandswurzel
-gespalten hätte. `myl_tokenomics::vtfe::arbeitsverteilung_probe`
-rechnet dieselbe Zahl auf jedem Knoten.
-
-### v0.35.0 – 2026-09-03 (der Rechenweg fragt, statt zu raten)
-
-⚑ **Fund 160, die Knotenhälfte.** `Ortsweg::modell` las nur den
-gemerkten Pipeline-Stand und gab „unbekannt" zurück, solange keiner da
-war. Da ein Harness die Modelle **vor** der ersten Anfrage abruft, war
-das der Normalfall; jetzt wird gefragt.
-
-**Und `prompt_tokens` kommt vom Shard statt aus der Byte-Länge.** Der
-frühere Kommentar hier begründete das Schätzen damit, dass der
-Wortschatz beim Shard liegt. Richtig beobachtet, falsch gefolgert: Dann
-zählt der Shard.
-
-### v0.34.0 – 2026-09-03 (der Knoten erfüllt den Rechenweg der Tür)
-
-**Die Tür führt bis zum Rechenwerk** (GATEWAY Stufe 3). `rechenweg`
-setzt zusammen, was nur der Knoten zusammen sieht: die Tür, den
-Sitzungskanal und die lokale Leitung zum Shard.
-
-⚑ **Der Knoten versiegelt, obwohl er den Klartext ohnehin sieht.** Das
-klingt sinnlos und ist es nicht: **Der Weg endet nicht hier.** Heute
-liegt der Shard auf derselben Maschine, morgen in einem fremden Pod, und
-dann trägt genau dieselbe Versiegelung. Wer den Klartext auf die lokale
-Leitung legt, weil sie kurz ist, hat beim ersten fremden Pod eine zweite
-Codeform und einen zweiten Fehlerpfad.
-
-⚑ **Und die Bindung braucht es ohnehin.** Sie bindet den Klartext, den
-der Rechnende erst nach dem Entsiegeln sieht; ohne Siegel gäbe es
-nichts, wogegen er sie prüfen könnte.
-
-**Der Shard sagt einmal, wer er ist**, und der Knoten merkt es sich: Die
-angekündigten Punkte gelten für eine Epoche, und sie bei jeder Anfrage
-zu erfragen wäre ein zusätzlicher Umlauf vor jeder Inferenz.
-
-**Der Deckel des Protokolls schlägt den Wunsch des Klienten.** Ein
-Harness darf mehr Token verlangen, als das Protokoll erlaubt; es bekommt
-das Erlaubte und keine Ablehnung, denn die Zahl ist eine Obergrenze und
-kein Versprechen.
-
-**Was hier bewusst nicht steht:** die Zuteilung aus der Kette. Dieser
-Weg fragt den **lokalen** Shard und keinen fremden Pod; wer einen
-fremden fragt, braucht die Zuteilung, den Weg über `myl-net` und die
-angekündigten Punkte aus dem Block. Das ist der nächste Schnitt und
-keine Zeile, die man hier nebenbei unterbringt.
-
-⚑ **`prompt_tokens` zählt Bytes und keine Token**, und der Name stammt
-aus der OpenAI-Form. Der Wortschatz liegt beim Shard; eine geschätzte
-Tokenzahl wäre eine Zahl, die aussieht wie eine Messung.
-
-### v0.33.0 – 2026-09-03 (der Knoten reicht an den Shard weiter)
-
-**Der kalte Pfad ist zu.** Ein Inferenzauftrag aus dem Netz geht über
-die lokale Leitung an den Shard-Prozess und die Antwort denselben Weg
-zurück. Neu: `ortsklient`, `--ortsleitung <adr>` und
-`--ortsausweis <pfad>`.
-
-⚑ **Und nichts davon läuft in der Ereignisschleife.** Der Shard rechnet
-Sekunden bis Minuten; wer dort wartet, hält die Blockverarbeitung genau
-so lange an. Der Auftrag geht in eine eigene Aufgabe, die Antwort später
-über dieselbe Marke zurück.
-
-⚑ **Die Vorgabe ist aus, anders als bei der Tür.** Ein Knoten ist nicht
-notwendig ein Miner: Er kann Shard in einem Pod sein, Speicher stellen
-oder einfach nur Nutzer sein (Fund 152). Wer rechnet, sagt es; wer
-nichts sagt, lehnt ehrlich ab, statt einen Shard vorzutäuschen.
-
-⚑ **Adresse und Ausweis gehören zusammen**, und wer eines allein
-angibt, bekommt keinen Knoten. Klasse von Fund 56: Eine Absicht, die
-nicht erfüllbar ist, soll den Betreiber beim Start erreichen und nicht
-den ersten Nutzer. Ein Knoten, der jeden Auftrag ablehnt, sieht im
-Betrieb aus wie ein Shard, der schweigt.
-
-⚑ **Fund 156, die gefährliche Hälfte:** Der Klient prüfte nur auf
-`Ok` und las sonst weiter. Ein Shard-Prozess, der eine masslose Länge
-ankündigt, brachte den Knoten dazu, **ein Megabyte Müll zu sammeln**,
-bevor ein Notdeckel griff. Jetzt liest er die Fehlerart und lässt
-sofort fallen. **„Lokal" heisst nicht „vertrauenswürdig ohne Grenze".**
-
-⚑ **Eine Gegenprobe biss als Hänger und nicht als Fehlschlag.** Ohne
-Frist wartet der Knoten auf einen schweigenden Shard unbegrenzt, und
-genau das ist die Zusicherung. Ein Prüfskript, das nur auf `FAILED`
-sieht, hätte sie als bestanden gebucht.
-
-**256 Tests grün.**
-
-### v0.32.0 – 2026-09-03 (ein Inferenzauftrag geht über das Netz)
-
-**Der Rest von Stufe 4, erster Schnitt.** Bis heute gab es für einen
-Inferenzauftrag keinen Weg über das Netz: kein Auftragstyp, kein
-Transport, und `myl-pod` bekam seine Arbeit von der Kommandozeile.
-`Nachforderung::Inferenz` und `Nachlieferung::Inferenz` fahren jetzt auf
-**derselben Anfrageschiene wie die Blocknachforderung**.
-
-⚑ **Eine zweite Schiene wäre ein zweiter Codec, eine zweite
-Größengrenze und eine zweite Zerlegung auf fremden Eingaben.** Genau die
-drei Dinge, die man nicht doppelt haben will. Die Varianten sind
-**angehängt, nicht eingeschoben**: Die Reihenfolge ist Protokollvertrag.
-
-**Der Deckel steht vor der Leitung.** `inferenz_senden` prüft die Form,
-bevor der Auftrag abgeht; was ohnehin abgewiesen wird, soll die Leitung
-nicht belasten.
-
-⚑ **Und die beiden Grenzen sind aneinandergebunden.**
-`MAX_PROMPT_BYTES` steht in `myl-types`, `MAX_ANFRAGE_BYTES` in
-`myl-net`, und die beiden Kisten kennen einander nicht. **Nur hier sind
-beide sichtbar**, also steht die Naht hier: Passte ein formgültiger
-Auftrag nicht durch, scheiterte er erst auf der Leitung, und zwar für
-den Absender unsichtbar.
-
-**Die Antwort ist heute `Abgelehnt`, und das ist keine Übergangslösung
-im Verstecken.** Ein Shard läuft nach der Entscheidung vom 3. September
-in einem **eigenen Prozess**, damit ein Absturz beim Rechnen den Konsens
-nicht anhält. Was fehlt, ist die lokale Schnittstelle dorthin.
-
-⚑ **Abgelehnt und nicht geschwiegen.** Der Fragende soll „hier rechnet
-niemand" von „nicht angekommen" unterscheiden können; ein Auftrag ohne
-Antwort läuft in eine Zeitüberschreitung, die nichts bedeutet.
-
-⚑ **Eine Inferenzantwort hebt die laufende Blocknachforderung nicht
-auf.** Wer beides über eine Schiene schickt, muss beim Lesen wieder
-trennen: Der Empfänger löscht beim Eintreffen einer Antwort zuerst den
-Aufholzustand, weil er eine Blocklieferung erwartet. Ohne die Trennung
-wäre die Nachforderung als erledigt gebucht, **obwohl die Blöcke noch
-unterwegs sind**, und der Knoten fragte dieselben Blöcke ein zweites Mal
-an.
-
-**Eine tote Prüfung ist wieder ausgebaut** (Fund 154). Der Empfänger
-prüfte die Auftragsform, aber beide Zweige lieferten dasselbe
-`Abgelehnt`, und das Ergebnis landete als `bloecke`-Zahl im Protokoll:
-Ein Inferenzauftrag protokollierte sich als Blocklieferung. Eine
-Prüfung, auf die keine Gegenprobe beißen kann, ist Zierde; sie gehört an
-die Naht zum Shard und geht mit ihr ein.
-
-**Neu in der Beobachtung:** `myelith_nachforderung_laeuft`. Die Frage
-eines Betreibers lautet nicht „ist er wach", sondern „holt er noch auf":
-Ein Knoten mit niedriger Höhe und laufender Nachforderung arbeitet,
-einer mit niedriger Höhe und ohne Nachforderung hängt.
-
-**Und eine Tür für Tests**, `ereignis_einspeisen`, mit einem Grund, der
-sich nicht umgehen lässt: Dass eine Inferenzantwort **während** einer
-laufenden Blocknachforderung eintrifft, ist über echte Sockets ein
-Rennen, das ein Test nicht verlässlich gewinnt. Der erste Versuch hat
-genau das bewiesen, indem er flatterte.
-
-**251 Tests grün, sieben Gegenproben je Zeile, alle sieben beißen.**
-
-### v0.31.0 – 2026-09-03 (der Knoten beherbergt das eigene Gateway)
-
-**Punkt B6-3, entschieden am selben Tag: nur das eigene Gateway.** Der
-Betreiber ist der Kontoinhaber, die Tür hört auf `127.0.0.1:4160`, und
-damit entfallen Namensfindung, Vertrauensfrage und Vergütung.
-
-⚑ **K0s Einwand gilt hier nicht, und das ist der Grund, warum es
-geht.** K0 sagt: „Eine öffentliche Tür gehört nicht auf die
-Konsensmaschine", denn ein Überlastangriff gegen die Tür wäre einer
-gegen die Lebendigkeit des Konsenses. **Diese Tür ist nicht
-öffentlich**, und wer sie hinausbindet, bekommt eine Warnung, die genau
-das sagt.
-
-**Drei Ports, nebeneinander und unterscheidbar:** 4150 das Netz, 4151
-die Beobachtung, 4160 die Tür. Ein Blick in `netstat` sagt, was wozu
-gehört.
-
-⚑ **Der Zugang ist ein Sitzungskontrakt aus der Kette**, nicht aus einer
-Attrappe. Der Kettenzustand gehört der Ereignisschleife; ihn mit einem
-Netzdienst zu teilen hiesse, eine Sperre über ein `await` zu halten.
-**Deshalb legt der Knoten bei jeder Zustandsaufnahme eine Abschrift ab**,
-und die Tür liest nur diese: dieselbe Bauart wie bei der
-Betriebsbeobachtung.
-
-**Was das kostet, gehört gesagt:** Die Abschrift ist so frisch wie die
-Aufnahme, im Vorgabefall dreissig Sekunden. **Ein Widerruf wirkt mit
-dieser Verzögerung**, und wer widerruft, will meist sofort.
-
-⚑ **Eine Gegenprobe hat einen ungeprüften Aufruf gefunden.** Die
-Abschrift selbst war geprüft, ihr Aufruf in der Zustandsaufnahme nicht:
-Ausgebaut blieb alles grün. **Dieselbe Klasse, die diese Woche siebenmal
-aufgetreten ist**, diesmal im eigenen frischen Code. Der Test in
-`zwei_knoten.rs` schliesst sie.
-
-**Was dieser Schnitt nicht ist:** Er gibt noch nichts an einen Pod. Es
-gibt keinen Weg dorthin, auf keiner der beiden Seiten; das ist der Rest
-von Stufe 4 und die eigentliche Arbeit.
-
-**Neu an der Befehlszeile:** `--tuer <adr>`, `--ohne-tuer`.
-
-### v0.30.0 – 2026-09-03 (drei Anweisungen für den Einsatz, Punkt B11)
-
-Der Knoten reicht `EinsatzHinterlegen`, `EinsatzKuendigen` und
-`EinsatzAbholen` an den Ledger weiter, wie jede andere Anweisung: über
-`anwenden`, an der einen Stelle, an der der Zustand sich ändert.
-
-⚑ **Damit ist `staked` zum ersten Mal von null verschieden** (Fund 145).
-Es stand seit Langem im Zustand, und keine der acht Anweisungen schrieb
-es; die ganze wirtschaftliche Sicherheitsschicht hing an einer Zahl, die
-niemand setzte.
-
-**Ein Test geht den Weg über echte, unterschriebene Transaktionen.**
-⚑ **Was er nicht prüft, und warum:** Der erste Anlauf stellte
-`zustand.epoch` von Hand auf die Freigabe-Epoche, um das Abholen zu
-sehen. Das hält nicht, denn `anwenden` setzt die Epoche aus der
-**Blockhöhe**, bevor es Transaktionen anwendet, und überschreibt die
-gestellte Zahl. **Das ist richtig so**, es ist die Regel, die Erzeuger
-und Übernehmer zusammenhält. Die Reife steht deshalb dort, wo sie
-hingehört, bei den Übergängen in `myl-ledger`, samt Gegenprobe.
-
-### v0.29.0 – 2026-09-02 (die Zuteilung steht während ihrer Epoche fest, und ein Bündel wird bei der Aufnahme geprüft)
-
-**Die Knotenseite der Funde 142 bis 144.**
-
-⚑ **Eine Ableitung der Zuteilung statt dreier.**
-`zuteilung_der_laufenden_epoche` ist jetzt die einzige Stelle, an der
-sie entsteht. Vorher stand sie an drei Stellen, jede mit einem eigenen
-Blockhash, und zwei davon nahmen den **letzten** statt der Epochensaat:
-Der Abschluss rechnete gegen eine Zuteilung, die während der Epoche
-niemand kannte.
-
-⚑ **Der Rückfall ist jetzt strukturell ausgeschlossen, nicht nur
-getestet.** Die Funktion sieht nur den Ledger-Zustand, und im Zustand
-steht kein Blockhash: Die beiden Saatfelder wechseln ausschließlich am
-Epochenwechsel. Wer den alten Fehler wiederholen wollte, müsste erst
-einen Parameter hinzufügen, und das fällt beim Lesen auf.
-
-⚑ **Die Besetzung wird bei der Aufnahme nachgeschlagen** (Fund 144).
-Der Knoten ist die einzige Stelle, die Scheduler und Ledger zugleich
-sieht: Er schlägt den Pod zur Kennung des Bündels nach und übergibt
-Koordinator und Mitgliedsschlüssel an den Übergang, der beides prüft.
-**Einmal je Block, träge**, denn die Ableitung mischt das ganze
-Register, und sie für jedes Bündel zu wiederholen wäre eine Einladung,
-einen Block mit Bündeln zu füllen.
-
-**`pod_der_kennung` sagt jetzt Nein für vergangene Epochen**, statt eine
-falsche Zuteilung zu liefern. Der Zustand hebt zwei Saaten auf, nicht
-die Historie; wer weiter zurück fragt, braucht den Block, in dem die
-Epoche endete. **Eine erfundene Antwort wäre schlimmer als keine.**
-
-**Die Tests des Punktes reichen jetzt echte Bündel ein**: sechs Miner,
-ein abgeleiteter Pod, eine Unterschrift aller Mitglieder, eingereicht
-vom Koordinator. ⚑ **Wer der Koordinator ist, entscheidet die Saat**,
-und seit dem Mischen ist es nicht mehr Probekonto null; ihn zu raten
-hieße, den Test an eine Permutation zu binden.
-
-### v0.28.0 – 2026-09-02 (der Knoten wird betriebstauglich: Signale, Speicher, Sichtbarkeit)
-
-**Sechs Betriebsbefunde aus der Produktionsreife-Durchsicht.** Angesetzt
-waren vier; zwei kamen beim Umsetzen dazu, und einer davon war kein
-kleiner.
-
-⚑ **Fund 123: SIGTERM wurde nicht behandelt.** `laufen_bis` horchte
-allein auf `ctrl_c`, also **SIGINT**, das Signal einer Tastatur. Unter
-systemd, Docker und Kubernetes kommt **SIGTERM**, und daran starb der
-Knoten wortlos: kein Abschlusseintrag, keine Zustandsaufnahme, nach der
-Schonfrist ein SIGKILL.
-
-**Damit fiel genau die Unterscheidung weg, für die der Abschlusseintrag
-gebaut wurde.** Der Modulkopf sagt es selbst: „absichtlich beendet" ließ
-sich von „abgestürzt" nicht unterscheiden, und bei einem Lauf über
-mehrere Maschinen ist das die erste Frage, wenn ein Protokoll kürzer ist
-als die anderen. **Gelöst war sie für den Probelauf und offen im
-Betrieb.** Beide Signale werden jetzt behandelt und im Protokoll
-**unterschieden**: `Abbruchsignal` gegen `Beendigungssignal`.
-
-⚑ **Fund 140: Und im Startvorlauf horchte weiterhin niemand.** Der
-Handler hing erst in `laufen_bis`, davor liegen bis zu acht Sekunden
-Warten auf eine QUIC-Adresse und fünf auf irgendeine Horchadresse. Wer
-einen Knoten im Container startet und schnell wieder stoppt, traf immer
-dieses Fenster. Jetzt steht die **Beendigungswache**, sobald der Knoten
-existiert, und der Startvorlauf läuft in einem `select!` gegen sie.
-
-**Zwei Hälften, und die zweite fiel fast durch.** Das frühe Einhängen
-allein ließ den Knoten überleben, aber er arbeitete den Vorlauf zu Ende
-und antwortete erst danach: **gemessen 8,6 Sekunden statt 58
-Millisekunden**, bei zehn Sekunden Vorgabefrist von Docker. Sichtbar
-wurde das erst in der Gegenprobe, denn die erste Fassung des Tests
-bestand auch ohne den `select!`. Der Test misst deshalb jetzt die
-**Frist**.
-
-⚑ **Fund 122: Die Kette wurde standardmäßig nicht geschrieben.**
-`kettendatei` stand auf `None`, ein Knoten ohne ausdrückliche Angabe
-hielt also nichts über einen Neustart hinweg. Die Vorgabe ist jetzt
-`kette.dat`, und wer nichts behalten will, sagt es mit `--ohne-kette`.
-Dieselbe Bauart wie `--schluessel`, das seit jeher auf `knoten.key`
-steht.
-
-⚑ **Fund 124: Die Kette lag vollständig im Arbeitsspeicher, zweimal.**
-`verlauf` wuchs unbegrenzt, ein Blockklon je Höhe, nie beschnitten. Und
-`Kettenspeicher::oeffnen` las beim Start die **ganze Datei** ein und gab
-**alle Blöcke** als `Vec<Block>` zurück, also die Kette noch einmal
-daneben, bevor der Knoten den ersten Block geprüft hatte. Ein Knoten,
-der lange genug lief, starb daran, und zwar leise: erst Auslagern, dann
-der Abschuss durch das Betriebssystem, ohne einen Eintrag im eigenen
-Protokoll.
-
-**Jetzt hält der Speicher die Orte, nicht die Blöcke:** acht Bytes je
-Satz. Im Arbeitsspeicher liegen die jüngsten **256** Blöcke, alles
-davor kommt von der Platte. Wiederanlauf und Nachlieferung lesen
-satzweise, es liegt immer nur **ein** Block da.
-
-**Die 256 sind hergeleitet, nicht gegriffen:** Eine Nachforderung
-umfasst höchstens `MAX_BLOECKE_JE_LIEFERUNG` (64) Blöcke, vier
-Lieferungen decken mehrere gleichzeitig aufholende Nachzügler ab.
-Dieselbe Grössenordnung steht in gereiften Kettenknoten als Deckel
-ihrer Blockzwischenspeicher. Zwei Herleitungen, dasselbe Ergebnis.
-
-⚑ **Zwei Verweistabellen, mit verschiedenen Aufgaben, und das ist keine
-Kleinigkeit.** Der Wiederanlauf geht über die **Dateireihenfolge**, nie
-über die Höhen: Eine Datei mit doppelten Höhen fiele in einer
-Höhentabelle zusammen, und der Wiederanlauf spielte **weniger** Sätze ab,
-als die Datei enthält. Das wäre eine Auswahl **vor** der Prüfung, also
-genau die Stelle, an der ein manipulierter Verlauf durchkäme. Gelesen
-wird außerdem über einen **zweiten Dateigriff**: Ein Griff für beides
-hieße, dass jedes Lesen die Schreibstelle verschiebt, und ein vergessenes
-Zurückspringen schriebe den nächsten Block mitten in die Kette.
-
-⚑ **Fund 141: Eine Nachforderung von außen war ein Verstärker.** `ab`
-und `bis` kommen über die Leitung, und der Beantworter deckelte die
-Spanne nicht: `Bloecke { ab: 0, bis: u64::MAX }` packte alles, was der
-Knoten hatte, in **eine** Antwort. Ein paar Bytes hinein, Megabyte
-hinaus. Aufgefallen beim Bauen von Fund 124, weil der neue
-Plattenrückgriff beinahe über einen Zahlenbereich gelaufen wäre und aus
-dem Speicherproblem ein Rechenzeitproblem gemacht hätte. Jetzt Deckel
-**vor** dem Holen, und die Datei wird bereichsweise über die
-Verweistabelle gelesen: in der Länge des Ergebnisses, nicht der Spanne.
-
-⚑ **Fund 129: Es gab keinen Weg, einem laufenden Knoten zuzusehen.**
-Kein Metrik-, Zustands- oder Bereitschaftsendpunkt, im ganzen
-Repositorium keiner. Wer zwanzig Knoten fährt, liest keine zwanzig
-Protokolldateien, und wer einen Knoten in ein Kubernetes stellt, wird
-nach `livenessProbe` und `readinessProbe` gefragt.
-
-**Die Zahlen gab es längst**, die Zustandsaufnahme trägt sie seit
-Langem. Es fehlte der **Abholweg**, und genau das ist das neue Modul
-`beobachtung`: `/metriken` im Prometheus-Textformat, `/gesundheit` und
-`/bereit`. Der Stand entsteht aus **derselben Erhebung** wie der
-Protokolleintrag, im selben Augenblick; zwei getrennte Erhebungen liefen
-auseinander, und dann sagte das Protokoll etwas anderes als der
-Endpunkt.
-
-⚑ **Leben und Bereitschaft sind zwei Fragen.** Auf ein totes Leben
-folgt ein **Neustart**, auf fehlende Bereitschaft nur, dass kein Verkehr
-kommt. Ein Knoten, der aufholt, ist am Leben und nicht bereit; wer
-beides zusammenwirft, startet ihn mitten im Aufholen neu, und dann holt
-er wieder von vorn auf. Bereit heißt hier: mindestens ein Peer, und
-keine Höhe gehört, die über der eigenen liegt.
-
-⚑ **Die Bindeadresse ist eine Sicherheitsentscheidung**, deshalb ist
-die Vorgabe `127.0.0.1:4151` und nicht `0.0.0.0`. Was dort heraussieht,
-ist eine Landkarte: Peerzahl, Höhe, Latenzspanne, Mesh-Größen. Für einen
-Betreiber ist das Diagnose, für einen Angreifer die Aufklärung, und zwar
-ohne einen einzigen Verbindungsversuch ins Protokoll zu schreiben.
-**Diesen Fehler hat die Messwelt schon durchgemacht**, und wer daraus
-gelernt hat, bindet seinen Messendpunkt ab Werk auf die Rückschleife.
-Wer weiter hinaus
-will, sagt es mit `--beobachtung`, bekommt eine Warnung und stellt
-selbst eine Zugangskontrolle davor: **der Endpunkt hat keine.**
-
-**Kein HTTP-Rahmenwerk**, dieselbe Entscheidung wie beim Gateway. Ein
-`GET` ohne Rumpf ist der einfachste Fall, den HTTP kennt, und **ohne
-Rumpf gibt es die Schmuggelklasse nicht**: Es gibt keine zweite Meinung
-über eine Nachrichtengrenze, wenn nach dem Kopf nichts mehr gelesen
-wird. Das Zerlegen steht als reine Funktion ohne Netz und wird einzeln
-geprüft.
-
-**Neu an der Befehlszeile:** `--ohne-kette`, `--beobachtung <adr>`,
-`--ohne-beobachtung`.
-
-**Belegt:** elf Modultests am Endpunkt, ein Integrationstest am echten
-Prozess (der sich seinen Port aus der Ausgabe des Knotens holt, damit
-zwei Läufe nebeneinander nicht kollidieren), drei Tests am Fenster und
-sieben Gegenproben. Jede Gegenprobe entfernt genau eine Zeile und lässt
-genau den einen Test fallen, der sie beweist.
-
-### v0.27.0 – 2026-09-01 (die Saatquelle wird geprüft, Punkt 44 geschlossen)
-
-**Der offene Rest von heute Nachmittag ist zu.** Ein Erzeuger konnte
-beliebige Bytes in `saatquelle` schreiben; sie gehen in keine
-Zustandswurzel ein, also fiel es niemandem auf, **und der Mahlraum war
-wieder unbegrenzt** statt höchstens sechzehn Bit (Fund 120).
-
-⚑ **Die Quelle beschreibt sich jetzt selbst:** Sie trägt das ganze
-`Commitzertifikat` in Borsh, nicht nur das Aggregat. Eine Quelle, die
-sich nicht selbst beschreibt, kann der Empfänger nicht prüfen.
-
-**Zwei Bindungen, und die erste wiegt schwerer:**
-
-1. ⚑ **Das Zertifikat gehört zum Vorgänger dieses Blocks.** Sonst
-   reichte ein Erzeuger ein altes oder fremdes Zertifikat ein, es wäre
-   strukturell einwandfrei, und er **wählte damit unter Zertifikaten**
-   und so seine Saat.
-2. **Die Aggregatsignatur trägt gegen den Stimmsatz.** Ohne sie wären
-   die Unterzeichner eine Behauptung.
-
-**Geprüft wird vor dem Rechnen**, in `uebernimm`, mit eigener
-Fehlermarke: Eine untragende Saatquelle ist ein Befund über den
-**Erzeuger**, kein Anschlussproblem, und sie darf keine Nachforderung
-auslösen.
-
-⚑ **Ohne Stimmsatz wird nur die erste Bindung geprüft, und der Knoten
-sagt es.** Das ist weniger, aber nicht nichts: Die Bindung an den
-Vorgänger nimmt schon jede Wahl **zwischen** Zertifikaten. Die Kette
-bekommt den Satz aus der Genesis, sobald eine Konsensrunde beginnt.
-
-**Ohne Saatquelle bleibt der Blockhash der Rückfall:** benannt
-schlechter, nicht verboten.
-
-### v0.26.0 – 2026-09-01 (die Saatquelle geht in den Block, Punkt 44)
-
-Der Erzeuger schreibt sie aus seinem **Commitzertifikat** in den
-Blockkopf, der Übernehmer liest sie **aus dem Block**. Damit zieht jeder
-dieselbe Stichprobe.
-
-📌 **Und der offene Rest ist benannt, nicht verschwiegen:** Ein Erzeuger
-kann heute **beliebige Bytes** eintragen. Sie gehen in keine
-Zustandswurzel ein, also fällt es niemandem auf. ⚑ **Damit ist der
-Mahlraum wieder unbegrenzt**, wie beim Blockhash, und die sechzehn Bit
-aus Fund 120 sind erst erreicht, **wenn ein Übernehmer die Quelle gegen
-das Zertifikat des Vorgängers prüft**. Das steht am Test, damit niemand
-den grünen Lauf für mehr hält, als er sagt.
-
-### v0.25.0 – 2026-09-01 (⚑ Fund 120: die Saat der Lotterie, und was sie nicht leistet)
-
-`saat_aus_zertifikat` (Punkt 44). Die Stichprobensaat soll aus der
-**Aggregatsignatur des Komitees** kommen, nicht aus dem Blockhash: Der
-Blockhash gibt dem Erzeuger des Abschlussblocks **unbegrenzten**
-Mahlraum, denn er variiert den Inhalt, bis die Ziehung ihm passt.
-
-📌 **Und die Entscheidung von heute Vormittag stand auf einer falschen
-Annahme, die von mir war.** Sie lautete: „BLS ist deterministisch, also
-kann niemand unter Kandidaten wählen." ⚑ **Die Eindeutigkeit gilt für
-Nachricht *und* Schlüsselmenge**, und das Commitzertifikat trägt eine
-**variable** Unterzeichnermenge; wer es zusammenstellt, wählt sie,
-solange sie das Quorum trägt.
-
-**Gemessen** (Komitee 21, Schwelle 15): 4,1 Bit Mahlraum bei 16
-eingegangenen Stimmen, 9,9 bei 18, **16,3 bei 21**.
-
-**Die Entscheidung bleibt trotzdem:** Unbegrenzt auf höchstens sechzehn
-Bit ist ein echter Gewinn, und sechzehn Bit sind nicht null. **Eindeutig
-wird es erst mit Schwellen-BLS und verteilter Schlüsselerzeugung**, wo
-*irgendwelche* `t` von `n` dasselbe ergeben; das ist ein eigenes
-Vorhaben und berührt Punkt 27.
-
-⚑ **Die Unterzeichnermenge geht in die Saat ein**, nicht nur das
-Aggregat. Sie wegzulassen hieße nicht, das Mahlen zu verhindern, sondern
-es **unsichtbar** zu machen: Dieselbe Saat käme dann aus zwei
-verschiedenen Zertifikaten.
-
-**Was noch fehlt:** Der Epochenabschluss übergibt heute den Blockhash;
-das Zertifikat liegt im Konsens und muss dorthin durchgereicht werden.
-Die Grenze steht am Doc-Kommentar der Saatfunktion, damit niemand sie
-für schon erledigt hält.
-
-### v0.24.0 – 2026-09-01 (das Fragen, Punkt 45)
-
-**Der Knoten verschickt die Stichprobe.** Die Lotterie zog seit heute
-(Fund 114), die Adresse stand seit heute in der Kette (Fund 116), die
-Prüfung einer Antwort war vollständig — ⚑ **ohne diesen Aufruf wäre alles
-drei ohne Wirkung geblieben, und genau so ist Fund 114 entstanden.**
-
-`anfragen_fuer` trifft die Entscheidung, der Knoten verschickt nur ihr
-Ergebnis. ⚑ **Damit ist sie prüfbar, ohne ein Netz zu starten**, und der
-Versandteil bleibt so dünn, dass an ihm nichts schiefgehen kann.
-
-**Gefragt wird jedes Mitglied**, Reserve eingeschlossen. Und **einmal je
-Epoche**: Zwischen zwei Wechseln liegen viele Blöcke, und dieselbe Frage
-hundertmal zu stellen wäre eine Flut, die der Gefragte zu Recht als
-Angriff läse.
-
-⚑ **Pods ohne Adresse werden gezählt und protokolliert**, nicht
-übergangen. Sonst wäre „ich nenne keine Adresse" die billigste Art, sich
-der Prüfung zu entziehen.
-
-**Was noch fehlt:** die Antwort zu verarbeiten. `pruefe_spurantwort`
-steht in VERIFICATION; was fehlt, ist ein **Nachrechner mit Modell**, und
-der hängt an Artefakten.
-
-### v0.23.0 – 2026-09-01 (an wen ein Checker fragt, Punkt 46)
-
-`adressen_des_pods` gibt die Netzadressen **aller** Mitglieder zurück,
-Reserve eingeschlossen.
-
-⚑ **An den Pod, nicht an den Koordinator.** Naheliegend wäre der
-Koordinator, denn er sammelt die Spuren ein; **dann genügte sein
-Schweigen, um die Prüfung zu vereiteln.** Alle Mitglieder haben das
-Bündel unterschrieben, und der Merkle-Beweis bindet eine Antwort an die
-unterschriebene Wurzel statt an den Antwortenden. **So muss ein ganzer
-Pod schweigen statt einer.**
-
-⚑ **Die Nulladresse ist keine.** Wer keine nennt, taucht nicht in der
-Liste auf; bleibt sie leer, ist der Pod **nicht prüfbar**, und das ist
-ein Befund. Sonst wäre „ich nenne keine Adresse" die billigste Art, sich
-der Prüfung zu entziehen.
-
-### v0.22.0 – 2026-09-01 (⚑ Fund 114: Stufe 2 wird gezogen, Punkt 45)
-
-**`sample_segments` und `check_segment` hatten null Aufrufer.** Beide
-waren seit dem 2026-08-17 gebaut, geprüft und abgehakt; außerhalb der
-Tests rief sie nichts. **Damit lief Stufe 2 der Verifikation in keinem
-Knoten**, und die gesamte Sicherheitsbedingung aus Anhang B.1 hängt an
-`p`, der Wahrscheinlichkeit einer Nachrechnung. Ohne Ziehung ist `p = 0`.
-
-Der Epochenabschluss zieht jetzt, aus den **bezeugten** Bündeln, also
-denen mit gültiger Aggregatsignatur: Eine Flut ungültiger Bündel soll
-die Rate der ehrlichen nicht verdünnen.
-
-⚑ **Ein gemeinsamer Indexraum, kein Zug je Pod.** Zöge man je Pod, so
-bekäme ein Pod mit drei Segmenten bei jeder Aufrundung eines und damit
-33 Prozent statt 2. **`p` ist eine Wahrscheinlichkeit je Segment**, und
-die ist nur in einem gemeinsamen Raum für alle dieselbe.
-
-📌 **Zwei eigene Fehler auf dem Weg, beide von Gegenproben gefunden.**
-Die Ziehung stand zuerst in einem blanken `Vec` und wurde **von jedem
-Block überschrieben**; sie gehört zu einer Epoche, nicht zu einem Block.
-Und der Test „kleine Pods bekommen keine höhere Rate" prüfte `klein <= 1`
-und ließ damit **genau den schlechten Fall zu**, denn der Zug je Pod
-ergibt eins. Er misst jetzt den Anteil über zweihundert Saaten: 1 Prozent
-statt 14.
-
-**Was noch nicht geschieht:** das Nachrechnen selbst, denn es braucht die
-Spur des Segments, und die liegt beim Koordinator. ⚑ Und die **Saat**
-ist heute der Blockhash und damit mahlbar; sie steht deshalb als
-**Argument** an der Aufrufstelle, nicht als Ableitung im Modul.
-
-### v0.21.0 – 2026-09-01 (⚑ Punkt 40 ganz: die Unterschrift wird geprüft)
-
-Der Knoten baut die Pod-Mitgliedschaft aus der **Zuteilung** und prüft
-damit die Aggregatsignatur jedes Bündels. Ein Bündel, das sie nicht
-besteht, fällt weg.
-
-⚑ **Damit ist die letzte Lücke zu**: Bis hierher konnte ein angemeldeter
-Miner ein Bündel für einen **echten fremden** Pod einreichen und dessen
-Mitgliedern eine unverdiente Gutschrift verschaffen. Jetzt braucht es
-die Unterschriften aller Mitglieder.
-
-**Die Funktion steht im Knoten und nicht im Scheduler**, denn der bildet
-Pods und soll von Bündeln nichts wissen; und nicht in `myl-consensus`,
-der die Zuteilung nicht kennt. **Der Knoten ist die einzige Stelle, die
-beides sieht.**
-
-📌 **Und der Test, an dem der Punkt hängt, fiel beim Einschalten sofort
-um.** Er benutzte eine Attrappe als Signatur; die Prüfung tat also genau
-das, was sie soll. Er unterschreibt jetzt mit allen Mitgliedern.
-
-### v0.20.0 – 2026-09-01 (⚑ Punkt 40 geschlossen: bezeugte Arbeit erreicht ein Konto)
-
-Der Knoten leitet am Epochenwechsel die Zuteilung ab, ordnet die Bündel
-ihren Pods zu und schüttet aus. **Der Weg ist damit durchgehend:**
-Register → Zuteilung → Bündel → Anteile → Konto.
-
-⚑ **Jeder Schritt ist eine Ableitung, keine Angabe.** Wer im Register
-steht, sagt die Kette; wer in welchem Pod sitzt, folgt aus Register,
-Zone und Blockhash; welcher Pod ein Bündel eingereicht hat, folgt aus
-der abgeleiteten Pod-Kennung. Nur die Gewichtung ist gesetzt, und zwar
-von der Governance, nicht von einem Teilnehmer.
-
-**Der Test, an dem der Punkt hängt:** Sechs Miner melden sich an, tragen
-ein Auszahlungskonto ein, jemand verbrennt, ein Bündel kommt in die
-Kette, und am Epochenwechsel wächst das Konto eines Pod-Mitglieds.
-Höchstens vier Konten wachsen, denn ein Pod hat vier Positionen und zwei
-in Reserve.
-
-⚑ **Ein Bündel mit erfundener Pod-Kennung zahlt nichts aus**, und ein
-eigener Test hält das fest. **Das ist die Schranke gegen ein
-gefälschtes Bündel**, solange die Aggregatsignatur noch nicht geprüft
-wird: Wer eine Kennung erfindet, trifft keine Platznummer dieser Epoche.
-
-⚑ **Ohne Arbeitsverteilung bekommt niemand etwas.** Lieber nichts
-ausschütten als nach einer Gewichtung, die niemand gesetzt hat.
-
-**Die Verteilung wird nicht über eine Anweisung gesetzt**, sondern vom
-Betreiber. Eine Anweisung stünde jedem Absender offen, und wer die
-Gewichte setzt, setzt die Verteilung des Ertrags.
-
-📌 **Und drei Tests von mir sahen stärker aus, als sie waren**, alle drei
-in der Gegenprobe aufgefallen: einer prüfte „ohne Bündel keine
-Auszahlung" statt „ohne Verteilung keine Auszahlung", die anderen beiden
-stehen im Scheduler-Changelog.
-
-### v0.19.0 – 2026-09-01 (Punkt 40, Glied 1: das Bündel über die Kette)
-
-`Anweisung::BuendelEinreichen` angewandt, und der Epochenabschluss leert
-die Bündel der abgerechneten Epoche.
-
-⚑ **Heute werden sie verworfen, ohne zugeschrieben zu werden**, weil
-dafür die Pod-Besetzung im Zustand fehlt (Glied 3c). **Verloren geht
-dabei nichts**, denn geprägt wurde für sie auch nichts; gewonnen ist,
-dass der Weg in die Kette steht.
-
-Zwei Tests, eine Gegenprobe: Ohne das Leeren bleiben die Bündel über den
-Epochenwechsel stehen, und der Zustand wüchse unbegrenzt.
-
-### v0.18.0 – 2026-09-01 (Punkt 40, Glied 3a: Anmeldung über die Kette)
-
-Zwei angehängte Anweisungen, `MinerAnmelden` und `MinerAbmelden`, und
-ihre Anwendung in `anwenden`.
-
-⚑ **Die Kennung steht nicht in der Anweisung**, sie folgt aus dem
-Schlüssel, mit dem unterschrieben wurde. Ein zusätzliches Feld ließe
-sich abweichend füllen, und dann meldete A für B an. Dieselbe
-Begründung, aus der `Anweisung` kein Absenderfeld trägt.
-
-⚑ **Und die Registrierungsepoche steht auch nicht darin.** Sie setzt
-die Kette aus ihrem eigenen Zustand; ein selbst gewähltes Datum hübe den
-Registrierungsschluss auf.
-
-Vier Tests, darunter die Gegenprobe zu Fund 85 für die neue Anweisung
-(eine verfälschte Unterschrift wirkt nicht) und die Wurzelgleichheit
-zwischen Erzeuger und Übernehmer.
-
-### v0.17.0 – 2026-09-01 (⚑ Punkt 38: der Knoten schließt die Epoche ab)
-
-Die Rechnung stand seit dem 31. August vollständig: Zuschreibung,
-Ausschüttung, `praegen`. **Was fehlte, war der Aufruf.** Er steht jetzt
-in `anwenden`, also an der einzigen Stelle, an der sich der Zustand
-ändert.
-
-⚑ **Und genau dort, weil beide Seiten sie durchlaufen.** Ein Abschluss,
-den nur der Blockerzeuger rechnet, wäre eine abweichende Zustandswurzel
-und damit ein Konsensbruch. Die Reihenfolge ist tragend: Erst wird die
-**vorige** Epoche abgeschlossen, dann gilt die neue. Eine Gegenprobe mit
-vertauschter Reihenfolge fällt durch.
-
-⚑ **Die Zuschreibung ist heute leer, und das ist kein Versehen.** Sie
-leitet sich aus bestätigten PoI-Bündeln ab, und **diese Kette trägt
-keine**: `Anweisung` kennt Burn, Überweisung und die drei
-Sitzungsanweisungen, kein Bündel. Ohne bezeugte Arbeit gibt es nichts
-zuzuschreiben.
-
-**Die Folge ist die sichere.** Der Shard-Miner-Anteil wird **nicht
-geprägt**, weil ihm kein Empfänger gegenübersteht; geprägt wird allein
-der Treasury-Anteil. Ein Test hält fest, dass die Geldmenge um genau
-diesen Anteil wächst und um sonst nichts. **Was damit noch fehlt, ist
-eine Anweisung, die ein Bündel in die Kette trägt, samt ihrer Prüfung.**
-
-⚑ **Ein Test prüft Übereinstimmung, nicht Richtigkeit**, und das steht
-jetzt an ihm dran. Erzeuger und Übernehmer kommen über die
-Epochengrenze zur selben Wurzel; **beide laufen durch denselben Code**,
-ein falsch rechnender Abschluss rechnete auf beiden Seiten gleich falsch
-und der Test bliebe grün. Zwei Gegenproben haben genau das gezeigt: Sie
-brachten die anderen beiden Tests zu Fall, diesen nicht.
-
-**Die Prägeparameter sind fest**, solange die Kette eine Probekette ist.
-Ein Parameter, der sich ändern kann, gehört an eine Stelle, die beide
-Seiten gleich sehen, und die Governance-Registry ist noch nicht an die
-Kette gebunden. Bis dahin ist ein fester Wert ehrlicher als ein
-beweglicher, den nur einer kennt.
-
-### v0.16.0 – 2026-08-30 (beide Richtungen aus Fund 67 treffen sich an einer Stelle)
-
-Der Knoten springt auf eine höhere Runde, sobald mehr als ein Drittel
-des Stimmgewichts von dort geprüft eingegangen ist. Das ist die zweite
-Hälfte des Zustandsabgleichs: Bisher konnte nur der zurückgeholt werden,
-der **voraus** war.
-
-**Beide Wege treffen sich im selben Zweig**, und das ist kein Zufall:
-Beide zeigen sich als `WrongRound`. Wer voraus ist, bekommt von uns das
-Commit-Zertifikat; wer zurück ist, springt selbst. Sie schließen
-einander aus, ohne dass es geprüft werden müsste, denn das Helfen
-verlangt ein eigenes Zertifikat, und wer commitet hat, springt nicht
-mehr.
-
-Neues Urteil `gesprungen` im Protokoll, mit alter und neuer Runde. Es
-steht neben `falsche-runde`, und der Unterschied ist der Befund: Eine
-verirrte Nachricht der alten Runde ist der Normalfall, ein Sprung ist
-ein Ereignis.
-
-📌 **Das Aufräumen nach einem Rundenwechsel stand nur im Fristweg.**
-Stimmen und Commits der alten Runde werden verworfen, das Zertifikat
-bleibt. Wäre der Sprung daran vorbeigelaufen, hätte der Knoten aus
-Stimmen der alten Runde ein Zertifikat gebaut, das keine Runde mehr
-bezeugt. Beide Wege benutzen jetzt denselben Rumpf, und ein Test hält
-fest, dass der Sprung die alten Stimmen wegwirft.
-
-**Gemessen an den Stakes des Probenetzes:** 250, 230, 200, 120 und 100
-Millionen ergeben 900, die Schranke liegt bei 300 000 001. Alpha allein
-trägt 250 Millionen und bewegt nichts; mit beta sind es 480, und erst
-dann springt es. Der Test zeigt beide Hälften, sonst bliebe offen, ob
-die Schranke wirkt oder ob jede fremde Runde genügt.
-
-**Was der Sprung nicht heilt:** Wer auf Runde 5 springt, hat deren
-Vorschlag verpasst und wartet bis zur Frist auf Runde 6. Das ist
-trotzdem der kürzere Weg, denn er überspringt jede Frist dazwischen.
-
-### v0.15.1 – 2026-08-30 (die Probe baut ein Bündel, das etwas bezeugt)
-
-`probe_poi_buendel` zählte Segment-Ids auf und bildete daraus die
-Bündelwurzel. Seit Fund 100 bezeugt die Wurzel `Id ‖ Spurwurzel`, also
-baut die Probe jetzt auch eine Spur. Ein Bündel, das nur Positionen
-aufzählt, prüfte den Weg nicht, den ein echtes nimmt.
-
-### v0.15.0 – 2026-08-29 (⚑ Fund 96: Anfechtungen werden geprüft, aber nur, wo geprüft werden kann)
-
-Eine Anfechtung fiel im `ProtokollValidator` unter `_ => true`, und bis
-zum selben Tag trug sie auch gar keine Unterschrift. Beides zusammen
-hieß: Jeder konnte im Namen jedes Miners anfechten. Das kostet den
-Angeklagten etwas, denn er muss antworten.
-
-Seitdem prüft der Knoten sie, und die Probe-Anfechtung wird
-unterschrieben: Der Herausforderer ist der Absender, seine Kennung wird
-aus dem Probeschlüssel abgeleitet. Eine Probe mit erfundenem
-Herausforderer prüfte den Weg nicht, den eine echte Anfechtung nimmt,
-sondern einen, den es nicht mehr gibt.
-
-### ⚑ Der Unterschied zum Latenz-Attest, und er hätte beinahe gefehlt
-
-Ein Attest kommt von einem **Validator**, und die Validatorenliste ist
-genau die Menge, gegen die geprüft wird. Ein Herausforderer ist dagegen
-ein **Miner** des redundanten Pods, und der muss dort nicht stehen. Wer
-ihn deshalb abwiese, verwürfe aus **geratener Unkenntnis**, und im
-Gossipsub-Scoring trifft das den ehrlichen Absender, nicht den
-Angreifer. Dieselbe Überlegung, aus der Konsensnachrichten hier nur
-strukturell geprüft werden.
-
-Also: unbekannter Herausforderer geht durch, falsche Unterschrift eines
-**bekannten** nicht. Eine Anfechtung, deren Absender niemand zuordnen
-kann, führt trotzdem zu nichts, denn die Slash-Entscheidung verlangt den
-Schlüssel.
-
-⚑ **Die Zuordnung Miner zu Schlüssel gehört in eine Registrierung, die
-es noch nicht gibt.** Solange die Teilnehmerliste die einzige Quelle
-ist, prüft dieser Zweig im echten Netz nur die Validatoren unter den
-Herausforderern. Steht so im Code.
-
-### v0.14.0 – 2026-08-29 (die Mindestfassung berichtigt)
-
-`rust-version` nannte `1.85` und war falsch: Über libp2p hängen `icu_*`
-(1.86) und `time` (1.88). Gemessen gegen echte Toolchains mit
-`--locked`, jetzt `1.88`, und ein CI-Job fährt sie. Keine Verschärfung,
-sondern eine Berichtigung: Der Code brauchte es schon vorher.
-
-Siehe NETWORKING v0.11.0 für die Herleitung.
-
-### v0.13.1 – 2026-08-29 (drei Abschriften weniger)
-
-`Kette::probekonto`, `GenesisValidator::kennung`,
-`Konsensschluessel::kennung` und `probe_kennung` rechneten die Ableitung
-`sha256(pubkey)` jeweils selbst aus. Sie steht jetzt einmal in
-`myl_types` und wird hier gerufen (SHARED_TYPES v0.11.0). An der
-abgeleiteten Kennung ändert sich nichts, geprüft von den Gegentests in
-`genesis.rs` und `validatorsatz.rs`, die die Regel weiterhin von Hand
-nachrechnen.
-
-### v0.13.0 – 2026-08-29 (⚑ Fund 67 geschlossen: der Rückweg für den, der vorauseilt)
-
-Der aufgezeichnete Vorfall vom 26. August: Ein Knoten hatte nach 1 ms ein
-volles Mesh und begann Runde 0, die anderen vier begannen ihre erst
-522 ms später, seine Vote-Frist von 500 ms lief vorher ab. Er stand am
-Ende bei Runde 5, während die vier Runde 0 längst commitet hatten, und
-von allein kam er nicht zurück.
-
-**Hier stand, der Rückweg hänge an der Kettenpersistenz.** Das war
-falsch, und es fiel erst beim Nachlesen auf: Ein Commit legt bis heute
-keinen Block in die Kette und veröffentlicht auch keinen, er schreibt
-eine Protokollzeile. Über die Kette wäre nichts zurückgekommen. Der
-Rückweg geht über einen Quorumsbeleg, der unabhängig von der Runde des
-Empfängers gilt, und er ist in CONSENSUS v0.20.0 beschrieben.
-
-Was der Knoten dazu beiträgt:
-
-- **`Konsensrunde` sammelt jetzt auch Commits**, nicht nur Stimmen, und
-  baut daraus den Beleg, sobald das Quorum steht. Aus demselben Grund wie
-  bei den Stimmen: Der Automat speichert Commits ohne Signatur, ein
-  Zertifikat ist aber ihr Aggregat. Beim Rundenwechsel werden die
-  gesammelten Commits verworfen, der fertige Beleg **nicht**: Er bezeugt
-  eine Entscheidung, keine Runde.
-- **`hilf_beim_aufholen`** antwortet einem Absender, dessen Nachricht mit
-  `WrongRound` abprallt, mit dem Beleg der eigenen Entscheidung. Drei
-  Bedingungen, jede mit Grund: nur bei falscher Runde, nur mit eigenem
-  Beleg, nur an Stimmberechtigte und an jeden genau einmal.
-- **`konsens_commitet` trägt ein Feld `uebernommen`.** Ohne das sähen
-  „lief mit" und „musste zurückgeholt werden" im Betriebsprotokoll gleich
-  aus, und genau dieser Unterschied ist es, den man nach einem Vorfall
-  wie dem vom 26. August sucht.
-- **`gabelung`** ist eine eigene Marke im Urteil, kein Sammelposten, und
-  gilt nicht als harmlos. Sie ist der einzige Befund dieser Liste, der
-  nicht über den Absender spricht, sondern über das Netz.
-
-Der Test, der den Defekt festhielt, war eigens so geschrieben, dass er
-umschlägt, sobald jemand den Ausgleich baut. Er läuft jetzt den vollen
-Weg: Der Vorausgeeilte dreht bis Runde 5, in der er wieder Leader ist,
-und gibt sich durch seinen Vorschlag zu erkennen; die Gegenseite
-antwortet mit dem Beleg; er übernimmt die Entscheidung und landet auf
-demselben Block. Zweimal gegengeprobt, einmal ohne den Sendeweg, einmal
-ohne die Übernahme, beide Male schlägt er fehl.
-
-### v0.12.0 – 2026-08-29 (das Tor: wer anders rechnet, kommt nicht ins Netz)
-
-Der Knoten fährt vor dem Netz die Op-Konformitätsvektoren und startet
-nicht, wenn seine Maschine abweicht.
-
-### ⚑ Warum das vor dem Netz steht und nicht daneben
-
-Die ganze Zusage des Protokolls ist, dass zwei beliebige Rechner
-dasselbe Ergebnis bekommen. **Ein Knoten, dessen Maschine anders
-rechnet, ist kein langsamer, sondern ein schädlicher:** Er liefert
-abweichende Segmente, wird dafür geschlachtet, und bis dahin
-verschmutzt er den Auftragsstrom.
-
-Prüfen ließ sich das schon, mit dem Testclient. **Das ist freiwillig und
-getrennt vom Betrieb**, passiert also beim ersten Mal und danach nie
-wieder, und niemand merkt es, wenn unter dem Knoten eine Bibliothek
-ausgetauscht wird.
-
-### ⚑ Fehlend ist etwas anderes als falsch
-
-Ein **falscher** Vektor heißt: Diese Maschine rechnet anders. Ein
-**fehlendes** Verzeichnis heißt: Wir wissen es nicht. Beides hält den
-Start an, aber unter verschiedenem Namen, und die Meldung sagt welchen.
-
-**Wer ohne Vektoren starten will, sagt es ausdrücklich**
-(`--ohne-konformitaet`). Dann steht „übersprungen" in der Kommandozeile
-und im Protokoll, **und das ist etwas ganz anderes als „bestanden"** —
-ein eigener Wert, kein Sonderfall des guten.
-
-### ⚑ Der Vorgabepfad sucht an zwei Orten, und das ist kein Komfort
-
-Im Repositorium arbeitet man vom Wurzelverzeichnis, ein Betreiber
-entpackt ein Archiv und startet darin. **Ein Vorgabepfad, der nur den
-ersten Fall trifft, macht das Tor für genau die Leute unbrauchbar, für
-die es gedacht ist** — und sie greifen dann zu `--ohne-konformitaet`,
-womit die Prüfung praktisch abgeschafft wäre.
-
-### Was das Tor nicht belegt
-
-Es fährt die **Op-Vektoren**: einzelne Kernel gegen eingefrorene
-Sollwerte, ohne Modell, in Millisekunden. Layer- und
-Ende-zu-Ende-Vektoren verlangen Artefakte in Gigabyte-Größe; ein Start,
-der davon abhinge, wäre für die meisten kein Start. ⚑ **Das Tor belegt
-also, dass die Kernel übereinstimmen, nicht dass die ganze Kette es
-tut.**
-
-⚑ **Und die Gegenprobe kostete zwei Anläufe.** Der erste verfälschte
-blind die erste `1` im Vektor, die in einem Feld stand, das die Prüfung
-nicht ansieht; der zweite tauschte Ziffern in einem Wert, der keine der
-getauschten enthielt. **Eine Gegenprobe, die nichts verändert, belegt
-nichts** und hätte hier ein Tor als wirksam ausgewiesen, das es nicht
-ist. Jetzt wird der Erwartungswert ersetzt, und der Test prüft vorher,
-dass sich der Text wirklich geändert hat.
-
-**Sechs neue Tests.**
-
-### v0.11.0 – 2026-08-28 (der Testverkehr ist unterschrieben, und die Kette wendet fünf Anweisungen an)
-
-Der Knoten wendet die neuen Transaktionen an: Burn, Überweisung,
-Session eröffnen, widerrufen und ausgeben.
-
-⚑ **Die Unterschrift wird beim Anwenden geprüft, nicht beim Aufnehmen
-in den Mempool.** Ein Block kommt über Gossip und sieht den Mempool nie;
-läge die Prüfung dort, könnte ein Leader eine unsignierte Anweisung in
-einen Block schreiben, und die ehrlichen Knoten wendeten sie an.
-**Erzeuger und Übernehmer überspringen dasselbe**, weil beide dieselbe
-Funktion durchlaufen.
-
-⚑ **Ein Probekonto hat jetzt einen Schlüssel.** Vorher war es nur eine
-Zeichenkette, aus der eine Adresse gehasht wurde, und in seinem Namen
-konnte jeder anweisen. Jetzt folgt die Adresse aus dem Schlüssel, wie
-jede Adresse im Protokoll.
-
-⚑ **Und der Testverkehr zählt seine Nummer hoch.** Ohne das wäre jede
-dieser Transaktionen eine Wiedereinspielung ihrer Vorgängerin und würde
-verworfen; der Zustand bewegte sich nicht, und die Übereinstimmung der
-Zustandswurzeln belegte wieder nichts. **Dieselbe Falle wie beim
-fehlenden Guthaben, nur eine Ebene weiter.**
-
-**Vier neue Tests**, darunter die Gegenprobe zu Fund 85: Eine gefälschte
-Unterschrift bewegt nichts, und ein fremder Schlüssel belastet sein
-eigenes Konto statt des angegriffenen. Zusammen 170.
-
-### v0.10.1 – 2026-08-27 (Gleichstand mit der Netzschicht)
-
-Nur Tests, kein Verhalten. `tests/gleichstand.rs` hält zwei Ableitungen
-zusammen, die einander wegen der Schichtung nicht sehen können:
-`GenesisValidator::kennung` bildet aus dem BLS-Schlüssel eines
-Validators seine `MinerId`, `myl_net::endpunkt_aus_schluessel` bildet
-aus demselben Schlüssel den Endpunkt einer verschlüsselten Sitzung.
-`myl-net` ist L0 und darf die Genesis-Datei nicht kennen; der Preis
-dafür ist eine Doppelrechnung.
-
-⚑ **Was ohne diesen Test auseinanderliefe, und wie es aussähe.** Die
-Sitzungsschicht prüft eine Epochenankündigung, indem sie den Endpunkt
-aus dem mitgeführten Schlüssel ableitet und mit dem vergleicht, den der
-Pod-Pfad nennt. Rechnen beide Seiten verschieden, passt **keine
-einzige** Ankündigung mehr, und jede Meldung lautet „gehört zu einem
-anderen Endpunkt". Das liest sich wie ein Angriff, und niemand käme
-darauf, dass beide Seiten für sich recht haben. Ein Fehler, der wie ein
-Angriff aussieht, kostet beim Suchen ein Vielfaches.
-
-Drei Tests: die Gleichheit über vier Saaten, die Gegenprobe (zwei
-verschiedene Schlüssel geben zwei verschiedene Endpunkte, sonst hieße
-„gleich" auch bei einer konstanten Rückgabe gleich), und der Weg wie im
-Betrieb: Ankündigung prüfen gegen die `MinerId` aus der Genesis-Datei,
-und ein anderer Validator kommt darüber nicht herein.
-
-### v0.10.0 – 2026-08-27 (Höhe und Epoche sind zwei Dinge)
-
-⚑ **Die Probekette benutzte das Epochenfeld als Blockhöhe.** Das trägt,
-solange eine Epoche ein Block ist, und bricht, sobald es das nicht mehr
-ist — und es war nicht folgenlos, sondern **still falsch**: Jede Frist
-„je Epoche" bedeutete in Wahrheit „je Block". Credits verfielen nach
-einem Block statt nach einer Stunde; die Streitfrist von 168 Epochen
-wären 168 Blöcke gewesen, also gut fünf Minuten statt sieben Tagen.
-
-Der Blockkopf trägt jetzt beides (`myl-consensus` v0.14.0): `height`
-wächst um genau eins je Block, `epoch` folgt aus der Höhe. Beim
-Übernehmen wird beides geprüft — die Höhe gegen die eigene, die Epoche
-gegen die Umrechnung. Zwei neue Ablehnungsgründe, `hoehe-weicht-ab` und
-`epoche-weicht-ab`, mit eigenen Marken im Betriebsprotokoll: Sie sind
-Befunde über den Absender und keine Anschlussprobleme, und wer sie unter
-`passt-nicht-an` führte, löste damit auch noch eine Nachforderung aus.
-
-⚑ **Und die Epoche des Ledger-Zustands stand auf null und blieb dort.**
-`anwenden` benutzte die Epoche nur zum Rechnen des Verfalls und setzte
-`zustand.epoch` nie. Jede Prüfung, die an der laufenden Epoche hängt,
-lief damit gegen null. Sie wandert jetzt mit; ein Test baut 1 800 Blöcke
-und verlangt, dass der Zustand danach Epoche 1 kennt.
-
-**Die Nachforderung hängt jetzt an `height`.** Der Modulkopf von
-`nachschub.rs` hat dieselbe Aussage in zwei Fassungen getragen und beide
-Male danebengelegen — einmal „die Lücke ist nicht benennbar", einmal
-„sie ist über `epoch` benennbar". Beide Male, weil dasselbe Feld zwei
-Bedeutungen hatte.
-
-**Die Formatfassung der Kettendatei steigt von 1 auf 2.** Ein Höhenfeld
-ändert die Borsh-Kodierung jedes Satzes; eine Datei der alten Fassung
-würde nicht scheitern, sondern **falsch geparst**. Genau dafür steht die
-Zahl im Kopf.
-
-### v0.9.0 – 2026-08-26 (die Kette überlebt den Neustart)
-
-- **`speicher.rs` (neu):** ein anhängendes Blockprotokoll. Kopf mit
-  Magie, Formatfassung und **Startwert**, der die Datei an ihre Kette
-  bindet: Eine Datei aus einem anderen Netz wird abgewiesen, statt eine
-  fremde Historie als eigene auszugeben. Je Satz Länge, Nutzlast und
-  Prüfsumme.
-- **Der Speicher gehört der Kette, nicht dem Aufrufer.** Die Zusage
-  lautet „jeder Block, der in die Kette kommt, steht auch in der Datei".
-  Läge das Schreiben beim Aufrufer, wäre sie auf drei Aufrufstellen
-  verteilt, und die vierte, die jemand später hinzufügt, vergäße es.
-- **Der Wiederanlauf ist ein Nachrechnen, kein Einlesen.** Ein Test
-  verfälscht einen gespeicherten Block mit **gültiger Prüfsumme**: Der
-  Speicher lässt ihn durch, die Kette nicht.
-- ⚑ **Was `flush` zusichert, steht als Tabelle im Modulkopf.** `kill -9`
-  des Prozesses überlebt das Protokoll, ein Stromausfall vielleicht
-  nicht. Kein `fsync` je Block; für ein echtes Netz ist das eine offene
-  Entscheidung, keine Empfehlung.
-- **Neu auf der Kommandozeile:** `--kette <datei>`. Ohne sie beginnt
-  jeder Start bei null, und der Knoten sagt das beim Hochfahren.
-- **Ein doppeltes Literal beseitigt:** Der Startwert der Probekette stand
-  zweimal da. Wären die beiden Stellen auseinandergelaufen, hätte eine
-  frische Datei ihre eigene Kette abgelehnt, und der Knoten begänne nach
-  jedem Neustart bei null, ohne dass es jemandem auffiele.
-- **Ein veralteter Kommentar nachgezogen:** In `sende_testverkehr` stand
-  „Eine Blocksynchronisierung fehlt und gehört vor ein echtes Testnetz."
-  Sie gibt es seit v0.4.0 (`nachschub.rs`).
-
-### v0.8.0 – 2026-08-26 (Rundenwechsel)
-
-- **`konsens.rs` fährt jetzt `RoundDriver` statt `BftState`.** Damit
-  kommen Uhr, Sperre und Rundenwechsel dazu. Der Knoten hält eine
-  **monotone** Uhr (`Instant`), nicht die Wanduhr: Ein NTP-Sprung
-  rückwärts verlängerte sonst eine laufende Frist, ein Sprung vorwärts
-  ließe sie zu früh feuern, und eine grundlos gewechselte Runde sieht im
-  Protokoll aus wie ein ausgefallener Leader.
-- **Der Ereignistakt begrenzt seine Wartezeit auf die Konsensfrist.**
-  Ohne das schliefe der Knoten bis zur nächsten Zustandsaufnahme, also
-  bis zu 30 Sekunden, und ein ausgefallener Leader hielte die Runde so
-  lange auf, obwohl die Frist längst abgelaufen wäre.
-- **Der Leader sammelt die vollständigen Stimmen**, weil `BftState` sie
-  nur als `MinerId → Hash` führt und ein Polka-Zertifikat ihr Aggregat
-  ist.
-- **Neu auf der Kommandozeile:** `--bft-frist`, `--bft-zuwachs`. Ein
-  Zuwachs von null wird angenommen, aber gewarnt: sicher, möglicherweise
-  dauerhaft blockiert.
-- ⚑ **Fund 67: Wer allein vorauseilt, kommt nicht zurück.** Gemessen
-  über fünf Prozesse. Der erste Knoten hatte nach 1 ms ein volles Mesh
-  und begann seine Runde; die anderen vier begannen ihre erst 522 ms
-  später. Seine Vote-Frist (500 ms) lief vorher ab, er wechselte **mit
-  Stimmgewicht 0** auf Runde 1 und stand am Ende bei Runde 5, während
-  die vier Runde 0 längst commitet hatten. **Ein volles Gossip-Mesh
-  heißt nicht, dass die Gegenstellen mitstimmen.** Als Test festgehalten,
-  nicht behoben: Der Rückweg braucht einen Zustandsabgleich.
-
-### v0.7.0 – 2026-08-26 (BFT-Runden über das Netz)
-
-- **`genesis.rs` (neu):** Der Validator-Satz kommt aus einer Datei, nicht
-  aus dem Netz. Wer sich selbst ankündigen darf, kündigt sich fünfzehnmal
-  an; genau dieser Fehler steckte bis v0.3.6 in `myl-consensus::bft`
-  (Fund A3). Der Hash liegt auf dem **Inhalt**, nach Kennung sortiert,
-  nicht auf den Dateibytes: dieselbe Unterscheidung wie in Kap. 6.2.
-  Besitznachweis je Schlüssel (Fund 27), Ein-Drittel-Schranke als
-  Startfehler. 23 Tests.
-- **`schluessel.rs` (neu):** BLS-Konsensschlüssel, **getrennt** von der
-  Netzidentität. Ein gemeinsames Geheimnis wäre eines weniger zu
-  verwalten und kompromittierte bei einem Leck beide Ebenen. Datei mit
-  Rechten 0600; eine für Gruppe oder Welt lesbare Datei wird **nicht**
-  gelesen. Der Probeschlüssel bleibt, aber als eigener Aufruf mit
-  eigener Herkunft, die in jeder Startzeile steht. 12 Tests.
-- **`konsens.rs` (neu):** Wann ein Knoten selbst etwas sagen muss.
-  `BftState` prüft und zählt, aber erzeugt nichts, weil ihm der
-  Schlüssel fehlt. 16 Tests, darunter drei Teilmengen gleicher Kopfzahl
-  mit drei verschiedenen Urteilen.
-- **Kommandozeile:** `--genesis`, `--konsensschluessel`,
-  `--probe-konsensschluessel`, `--genesiszeile`. Ohne den letzten müsste
-  jeder Betreiber 288 Zeichen Hex von Hand abschreiben, und ein Weg, den
-  niemand geht, ist kein Weg (Fund 55).
-- ⚑ **Fund 63: 417 Millisekunden, und die Runde war tot.** Im ersten
-  Lauf über fünf Prozesse kam der Propose des Leaders bei allen vier
-  anderen an, **4 ms** nach dem Absenden. Ihre eigene Runde begann
-  **417 ms** später, weil jeder erst auf sein Gossip-Mesh wartete. In
-  dieser Lücke war `self.konsens` noch `None`, und die Nachricht wurde
-  verworfen, **ohne Protokollzeile**. Danach wartete das ganze Netz auf
-  einen Propose, den es längst hatte. Behoben mit einem beschränkten
-  Vorlauf-Puffer, der beim Rundenbeginn nachreicht. **Der Modultest
-  konnte das nicht sehen:** Eine Nachrichtenschlange serialisiert, was
-  ein Netz parallel macht.
-- ⚑ **Fund 64: zwei Felder namens `art` in einer Protokollzeile.**
-  `block_abgelehnt` schrieb seit dem 2026-08-24 ein zweites `art`-Feld,
-  `konsens_gesendet` tat es ihm nach. Solche Zeilen schlagen nirgends
-  fehl: Ein Leser nimmt das erste, ein anderer das letzte. Der Leser in
-  `tests/zwei_knoten.rs` filtert nach `z.art` und hätte je nach
-  Reihenfolge etwas anderes gesehen. Behoben, plus `debug_assert` auf
-  reservierte Feldnamen und ein Test über die geschriebenen Zeilen.
-- ⚑ **Fund 65: dieses Crate lief in keinem CI-Job.** Weder Cache noch
-  Clippy noch Tests. 132 Tests, keiner davon in der CI, und das
-  ausgerechnet in dem Crate, das laut eigenem Modulkopf **die Nähte
-  belastet**: Die Funde 55 bis 57 wurden hier sichtbar. Aufgenommen.
-
-### v0.6.0 – 2026-08-25 (A10: Latenz-Atteste werden geprüft)
-
-`src/validatorsatz.rs` ordnet Kennung zu Schlüssel und liefert den
-**Grund** einer Ablehnung. `ProtokollValidator` prüft damit Atteste;
-dort stand vorher `_ => true`. Der Knoten **erzeugt** Atteste aus seinen
-tatsächlich gemessenen Latenzen, nicht aus erfundenen Zahlen.
-
-**Warum das ein Fund war und nicht nur eine Lücke:** Das Feld
-`signature` stand seit dem ersten Entwurf im Typ, und niemand hat es je
-gesetzt oder geprüft. Der Sicherheitsaudit sagt scharf, warum das
-schlimmer ist als ein fehlendes Feld: **Ein ungeprüftes Signaturfeld ist
-gefährlicher als gar keines, weil ein Leser es für einen Schutz hält.**
-
-⚑ **Die Vermutung, das entstehe nebenbei mit dem Binary, war falsch.**
-Der Audit hatte notiert, die Stelle entstehe ohnehin, sobald `myl-net`
-und `myl-consensus` in einem Prozess zusammenkommen. Die **Stelle** war
-da, die **Sache** nicht: `LatencyAttest` hatte weder `sign` noch
-`verify`. Die Prüfung, für die alles vorbereitet schien, brauchte erst
-ihre Primitive.
-
-**Live belegt, drei Knoten:** Alpha und Beta kennen einander und nehmen
-gegenseitig an; ein dritter, der in keiner Liste steht, bekommt alle
-Atteste verworfen und verwirft selbst alle fremden. Der Verwerfungs-
-eintrag nennt den wahrscheinlichsten Grund, damit niemand nach einem
-Angriff sucht, wo eine Kommandozeile unvollständig war.
-
-**⚠️ Was offen bleibt: die Schlüsselherkunft.** Im Probelauf werden die
-Schlüssel aus den Teilnehmernamen abgeleitet. Wer die Namen kennt, kann
-in fremdem Namen signieren. Die Trennlinie liegt **nicht im Prüfcode**:
-Dieselbe Funktion arbeitet unverändert gegen echte Schlüssel, sobald die
-Validator-Registrierung zu Genesis steht. Das ist dieselbe
-Voraussetzung, die auch die BFT-Runden brauchen.
-
-### v0.5.0 – 2026-08-25 (Durchsicht vor dem ersten Mehrmaschinenlauf)
-
-Vier Funde aus einer gezielten Funktionsprüfung, alle behoben. Sie
-hätten den ersten Lauf über getrennte Maschinen jeweils verwirrend
-scheitern lassen.
-
-⚑ **Nur die TCP-Adresse wurde angezeigt.** `warte_auf_adresse` kehrte
-zurück, sobald irgendeine Adresse vorlag, und TCP horcht schneller als
-QUIC. Der Betreiber bekam die quic-v1-Adresse **nie zu sehen**, konnte
-also nur die TCP-Adresse weitergeben, und das ganze Netz lief über TCP.
-Der Rat in der Anleitung, die quic-v1-Adresse zu verteilen, war damit
-unbefolgbar. Jetzt wird gewartet, bis die Adressen sich beruhigt haben,
-und es gibt eine Warnung, wenn keine QUIC-Adresse zustande kommt.
-
-⚑ **Der Mempool eines Nicht-Erzeugers wuchs für immer.** Er nahm jede
-Transaktion aus dem Gossip auf und leerte nie, weil er keine Blöcke
-baut. Gemessen: 0, 0, 3, 4 wartende Einträge über vierzig Sekunden, ohne
-Ende. Schlimmer als der Speicher ist die zweite Folge: **Ein solcher
-Knoten hätte, sobald er je Erzeuger würde, einen Block aus tausenden
-längst verarbeiteter Transaktionen gebaut.** Jetzt streicht jeder
-übernommene Block, was er enthält.
-
-⚑ **Strg-C schrieb keinen Abschluss.** Mit `--laufzeit` behandelte
-niemand das Abbruchsignal; der Prozess starb wortlos. Das Protokoll
-blieb vollständig (jede Zeile wird sofort geschrieben), endete aber
-mitten im Betrieb, und **„absichtlich beendet" ließ sich nicht von
-„abgestürzt" unterscheiden.** Beide Wege laufen jetzt über
-`laufen_bis` und schreiben `ende` mit Grund.
-
-**Gemessen an vier Prozessen** mit QUIC-Einladung, einem Nachzügler nach
-24 Sekunden und einem Abbruch nach 36: alle Proben ohne Fehlschlag,
-Zustandswurzeln auf allen 13 Höhen gleich, Uhrversatz höchstens 1 ms.
-
-### v0.4.0 – 2026-08-24 (Nachzügler holen auf)
-
-`src/nachschub.rs`: Ein Knoten, der Blöcke verpasst hat, fordert sie
-beim Absender des Hinweises nach. Gemessen an drei Prozessen: Gamma kam
-zwanzig Sekunden später dazu, forderte die Blöcke 1 bis 8 an, bekam
-alle acht und stand **zwei Millisekunden später** auf Höhe 8. Am Ende
-stimmten die Zustandswurzeln auf allen zwölf vergleichbaren Höhen.
-
-**Nachschub ist ein Transportweg, kein Vertrauensweg.** Nachgelieferte
-Blöcke gehen durch dieselbe Anschlussprüfung und dieselbe Nachrechnung
-der Zustandswurzel wie verbreitete. Wäre das ein zweiter, schwächerer
-Weg, wäre er das Loch: Wer einen Knoten zum Nachfordern bringt, bekäme
-einen Block hineingelegt, ohne dass er nachrechnet. Ein Test hält das
-fest.
-
-**Eine Anfrage zur Zeit**, und der Bereich ist auf 64 Blöcke gedeckelt.
-Ohne die Sperre schickt ein Neuling für jeden abgelehnten Block eine
-neue Anfrage; ohne den Deckel brächte er den Gegenüber dazu, beliebige
-Datenmengen zu senden.
-
-⚑ **Korrektur einer früheren Aussage.** In v0.2.0 stand, ein Knoten
-könne die Lücke nicht benennen, weil `Block` kein Höhenfeld trägt. Das
-war falsch: Die Probekette schreibt die Höhe in `epoch_meta.epoch`.
-Richtig bleibt, dass der **Protokolltyp** kein Höhenfeld hat und `epoch`
-dort eine Epoche bedeutet, keine Blockhöhe. Diese Doppelbelegung gehört
-aufgelöst, bevor daraus ein echtes Netz wird.
-
-### v0.3.0 – 2026-08-24 (Probelauf: benannte Funktionsproben)
-
-`src/probe.rs` mit sechs benannten Proben und echten Protokollobjekten:
-PoI-Bündel mit gültiger Merkle-Wurzel und echter BLS-Signatur,
-strukturell gültige Challenges. Ein aus Zufallsbytes gebautes Objekt
-käme durch dieselbe Netzprüfung (Fund 45) und belegte nichts über den
-Weg, den ein echtes nimmt.
-
-Die Rahmung ist umgestellt: aus „Testkette" wurde die **Probekette**,
-aus `genesis()` der `probestand()`. Ein Genesis ist ein einmaliges
-Ereignis mit Folgen; das hier entsteht bei jedem Start neu, und der
-Unterschied gehört in den Namen.
-
-⚑ **Der erste Probelauf mit drei Knoten deckte eine Lücke auf:** Der
-Erzeuger baute acht Blöcke, bevor die anderen verbunden waren. Sie
-wiesen alle acht mit „passt nicht an" zurück und blieben auf Höhe 0.
-**Es gibt keinen Nachholmechanismus.** Der Erzeuger wartet jetzt auf den
-ersten Peer, und die Auswertung benennt das Muster. Die Ursache bleibt:
-Wer mitten im Lauf dazukommt, hängt fest. Blocksynchronisierung fehlt
-und gehört vor ein echtes Testnetz.
-
-### v0.2.0 – 2026-08-24 (Probekette: echte Blöcke)
-
-`src/kette.rs` mit Kettenzustand, Mempool und Zustandswurzel. 13 Tests.
-Über drei Prozesse gemessen: sieben Blöcke erzeugt, sieben übernommen,
-Zustandswurzeln auf allen sieben Höhen gleich.
-
-⚑ **Der erste Lauf war grün und maß nichts.** Die Zustandswurzel stand
-bei jeder Höhe auf demselben Wert, obwohl Blöcke mit Transaktionen
-ankamen: Die Burn-Transaktionen scheiterten an fehlender Deckung und
-wurden übersprungen, wie vorgesehen. **Ein unveränderter Zustand ist auf
-jeder Maschine gleich**, also belegte die Übereinstimmung genau nichts.
-Seitdem stattet der Genesis acht Testkonten mit Guthaben aus, und ein
-Test (`ein_wirksamer_burn_veraendert_die_zustandswurzel`) hält fest,
-dass sich die Wurzel bewegen muss.
-
-### v0.1.0 – 2026-08-24 (erster Knoten)
-
-26 Tests grün (21 Unit, 5 Integration). Gemessen an zwei echten
-Prozessen: Beide finden einander, beide protokollieren die Verbindung
-mit korrekter Richtung, der Empfänger vermerkt den Abgang des anderen.
-
-⚑ **Fund 57: Auch für Blöcke ist der Borsh-Parse fast nur eine
-Längenprüfung.** Die erste Fassung der Moduldoku behauptete, `Block`
-trage Vektoren und der Parse habe deshalb „Zähne“. **Der Test, der das
-messen sollte, hat es widerlegt: rund 88 % der verstümmelten Blöcke
-kommen durch.** Ein Block mit wenigen Einträgen besteht fast nur aus
-Feldern fester Breite; empfindlich sind allein die Längenköpfe.
-Dieselbe Eigenschaft wie in Fund 45, nur abgeschwächt, und die
-Abschwächung reicht nicht, um von „Prüfung“ zu sprechen. Die
-Verteidigung für Blöcke ist die Signatur gegen die Validator-Registry,
-und die braucht Kettenzustand.
+**Ältere Einträge** (v0.52.1 und davor, 65 Stück) stehen in der Git-Geschichte dieser Datei: `git log -p -- NODE/README/README.md`.

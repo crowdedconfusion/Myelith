@@ -18,6 +18,7 @@
 //! nicht ein anderes Argument.**
 
 use std::io;
+use std::time::Duration;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -26,7 +27,7 @@ use myl_types::ids::{EpochId, SitzungId};
 use myl_types::sitzung::{Sitzungskontrakt, Sitzungszustand};
 
 use crate::annahme::Annahme;
-use crate::http::{antwort, kopf_lesen, Httpfehler, MAX_KOPF, MAX_RUMPF};
+use crate::http::{antwort, kopf_lesen, Httpfehler, Kopf, MAX_KOPF, MAX_RUMPF};
 use crate::zugang::{Anfragehuelle, Kontraktquelle, Zugangsstelle};
 
 /// Eine Quelle, die nichts kennt: nur damit Stufe 1 einen Typ hat.
@@ -44,16 +45,43 @@ impl Kontraktquelle for LeereQuelle {
 /// Der Weg, unter dem Anfragen angenommen werden.
 pub const WEG: &str = "/inferenz";
 
+/// So lange dürfen Kopf und Rumpf einer Anfrage zusammen brauchen.
+///
+/// 📌 **Fund 610 (2026-10-23):** Die Tür las ohne Frist, und ihr Wirt
+/// bedient eine Verbindung nach der anderen. Ein Prozess auf derselben
+/// Maschine, der eine Verbindung öffnet und nichts schickt, sperrte sie
+/// damit für alle, unbegrenzt. Auf der Rückschleife kommt eine Anfrage in
+/// Millisekunden; zehn Sekunden sind reichlich.
+pub const LESEFRIST: Duration = Duration::from_secs(10);
+
 /// Der Zuhörer.
 pub struct Tuer {
     lauscher: TcpListener,
+    lesefrist: Duration,
+}
+
+/// Was beim Lesen einer Anfrage herauskam.
+enum Gelesen {
+    /// Kopf und vollständiger Rumpf; der Rumpf steht im Puffer ab
+    /// `kopf.rumpf_ab`.
+    Fertig(Kopf, Vec<u8>),
+    /// Die Gegenstelle hat aufgelegt, bevor der Kopf stand.
+    Aufgelegt,
+    /// Der Kopf ist fehlerhaft.
+    Kopffehler(Httpfehler),
+    /// Mehr Bytes als Kopf und Rumpf zusammen haben dürfen.
+    ZuGross(usize),
+    /// Weniger Rumpf als angekündigt.
+    ZuKurz,
+    /// Die [`LESEFRIST`] ist abgelaufen.
+    Abgelaufen,
 }
 
 impl Tuer {
     /// Bindet an `127.0.0.1:port`. Port `0` wählt einen freien.
     pub async fn binden(port: u16) -> io::Result<Self> {
         let lauscher = TcpListener::bind(("127.0.0.1", port)).await?;
-        Ok(Self { lauscher })
+        Ok(Self { lauscher, lesefrist: LESEFRIST })
     }
 
     /// Übernimmt einen schon gebundenen Lauscher.
@@ -69,7 +97,66 @@ impl Tuer {
     /// Weg nimmt, muss selbst wissen, wohin er bindet, und der Knoten
     /// warnt, wenn es nicht die Rückschleife ist.
     pub fn aus_lauscher(lauscher: TcpListener) -> Self {
-        Self { lauscher }
+        Self { lauscher, lesefrist: LESEFRIST }
+    }
+
+    /// Eine andere Lesefrist als [`LESEFRIST`]. ⚑ **Für Tests**, die das
+    /// Ablaufen nicht zehn Sekunden lang abwarten wollen.
+    pub fn mit_lesefrist(mut self, frist: Duration) -> Self {
+        self.lesefrist = frist;
+        self
+    }
+
+    /// Liest Kopf und Rumpf, höchstens [`Self::lesefrist`] lang.
+    ///
+    /// ⚑ **Eine Stelle für beide Wege.** Bis zum 2026-10-23 stand diese
+    /// Schleife zweimal, für `/inferenz` und für `/v1`; beiden fehlte die
+    /// Frist (Fund 610).
+    async fn anfrage_lesen(
+        strom: &mut TcpStream,
+        frist: Duration,
+        zerlegen: impl Fn(&[u8]) -> Result<Kopf, Httpfehler>,
+    ) -> io::Result<Gelesen> {
+        let lesen = async {
+            let mut puffer = Vec::with_capacity(1024);
+            let kopf = loop {
+                match zerlegen(&puffer) {
+                    Ok(k) => break k,
+                    Err(Httpfehler::Unvollstaendig) => {}
+                    Err(e) => return Ok(Gelesen::Kopffehler(e)),
+                }
+                let mut hafen = [0u8; 1024];
+                let n = strom.read(&mut hafen).await?;
+                if n == 0 {
+                    // ⚑ Die Gegenstelle hat aufgelegt, bevor der Kopf
+                    // stand. Das ist kein Fehler des Klienten, sondern ein
+                    // Abbruch.
+                    return Ok(Gelesen::Aufgelegt);
+                }
+                puffer.extend_from_slice(&hafen[..n]);
+                if puffer.len() > MAX_KOPF + MAX_RUMPF {
+                    return Ok(Gelesen::ZuGross(puffer.len()));
+                }
+            };
+            // Den Rumpf vollständig lesen. Das Zerlegen hat die Länge
+            // schon gegen `MAX_RUMPF` geprüft.
+            while puffer.len() < kopf.rumpf_ab + kopf.laenge {
+                let mut hafen = [0u8; 4096];
+                let n = strom.read(&mut hafen).await?;
+                if n == 0 {
+                    // ⚑ **Weniger Rumpf als angekündigt.** Ihn als kurze
+                    // Anfrage zu nehmen hiesse, eine andere Frage
+                    // festzuschreiben als die gestellte.
+                    return Ok(Gelesen::ZuKurz);
+                }
+                puffer.extend_from_slice(&hafen[..n]);
+            }
+            Ok(Gelesen::Fertig(kopf, puffer))
+        };
+        match tokio::time::timeout(frist, lesen).await {
+            Ok(gelesen) => gelesen,
+            Err(_) => Ok(Gelesen::Abgelaufen),
+        }
     }
 
     /// Der tatsächlich belegte Port.
@@ -85,7 +172,7 @@ impl Tuer {
     /// nicht anhalten und nicht prüfen.
     pub async fn bedienen(&self, annahme: &mut Annahme) -> io::Result<()> {
         let (strom, _) = self.lauscher.accept().await?;
-        Self::eine_verbindung(strom, annahme, None::<&mut Zugangsstelle<LeereQuelle>>, EpochId(0), 0)
+        Self::eine_verbindung(strom, self.lesefrist, annahme, None::<&mut Zugangsstelle<LeereQuelle>>, EpochId(0), 0)
             .await
     }
 
@@ -106,56 +193,27 @@ impl Tuer {
         jetzt_ms: u64,
     ) -> io::Result<()> {
         let (strom, _) = self.lauscher.accept().await?;
-        Self::eine_verbindung(strom, annahme, Some(zugang), jetzt, jetzt_ms).await
+        Self::eine_verbindung(strom, self.lesefrist, annahme, Some(zugang), jetzt, jetzt_ms).await
     }
 
     async fn eine_verbindung<Q: Kontraktquelle>(
         mut strom: TcpStream,
+        frist: Duration,
         annahme: &mut Annahme,
         zugang: Option<&mut Zugangsstelle<Q>>,
         jetzt: EpochId,
         jetzt_ms: u64,
     ) -> io::Result<()> {
-        let mut puffer = Vec::with_capacity(1024);
-        let kopf = loop {
-            match kopf_lesen(&puffer, WEG) {
-                Ok(k) => break k,
-                Err(Httpfehler::Unvollstaendig) => {}
-                Err(e) => return Self::fehler(&mut strom, &e).await,
+        let (kopf, puffer) = match Self::anfrage_lesen(&mut strom, frist, |d| kopf_lesen(d, WEG)).await? {
+            Gelesen::Fertig(kopf, puffer) => (kopf, puffer),
+            Gelesen::Aufgelegt => return Ok(()),
+            Gelesen::Kopffehler(e) => return Self::fehler(&mut strom, &e).await,
+            Gelesen::ZuGross(bytes) => {
+                return Self::fehler(&mut strom, &Httpfehler::RumpfZuGross { bytes, grenze: MAX_RUMPF }).await
             }
-            let mut hafen = [0u8; 1024];
-            let n = strom.read(&mut hafen).await?;
-            if n == 0 {
-                // ⚑ Die Gegenstelle hat aufgelegt, bevor der Kopf stand.
-                // Das ist kein Fehler des Klienten, sondern ein Abbruch.
-                return Ok(());
-            }
-            puffer.extend_from_slice(&hafen[..n]);
-            if puffer.len() > MAX_KOPF + MAX_RUMPF {
-                return Self::fehler(
-                    &mut strom,
-                    &Httpfehler::RumpfZuGross {
-                        bytes: puffer.len(),
-                        grenze: MAX_RUMPF,
-                    },
-                )
-                .await;
-            }
+            Gelesen::ZuKurz => return Self::fehler(&mut strom, &Httpfehler::Laengenangabe).await,
+            Gelesen::Abgelaufen => return Self::abgelaufen(&mut strom).await,
         };
-
-        // Den Rumpf vollständig lesen. `kopf_lesen` hat die Länge schon
-        // gegen `MAX_RUMPF` geprüft.
-        while puffer.len() < kopf.rumpf_ab + kopf.laenge {
-            let mut hafen = [0u8; 4096];
-            let n = strom.read(&mut hafen).await?;
-            if n == 0 {
-                // ⚑ **Weniger Rumpf als angekündigt.** Ihn als kurze
-                // Anfrage zu nehmen hiesse, eine andere Frage
-                // festzuschreiben als die gestellte.
-                return Self::fehler(&mut strom, &Httpfehler::Laengenangabe).await;
-            }
-            puffer.extend_from_slice(&hafen[..n]);
-        }
         let rumpf = &puffer[kopf.rumpf_ab..kopf.rumpf_ab + kopf.laenge];
 
         // ⚑ **Mit Zugang: erst prüfen, dann annehmen.** Andersherum
@@ -250,11 +308,12 @@ impl Tuer {
         jetzt_ms: u64,
     ) -> io::Result<()> {
         let (strom, _) = self.lauscher.accept().await?;
-        Self::eine_v1_verbindung(strom, annahme, zugang, weg, jetzt, jetzt_ms).await
+        Self::eine_v1_verbindung(strom, self.lesefrist, annahme, zugang, weg, jetzt, jetzt_ms).await
     }
 
     async fn eine_v1_verbindung<Q: Kontraktquelle, R: crate::oai::Rechenweg>(
         mut strom: TcpStream,
+        frist: Duration,
         annahme: &mut Annahme,
         zugang: &mut Zugangsstelle<Q>,
         weg: &R,
@@ -264,37 +323,19 @@ impl Tuer {
         use crate::oai::{Chatanfrage, Chatantwort, Modelliste, WEG_CHAT, WEG_MODELLE};
         const ERLAUBT: [(&str, &str); 2] = [("POST", WEG_CHAT), ("GET", WEG_MODELLE)];
 
-        let mut puffer = Vec::with_capacity(1024);
-        let kopf = loop {
-            match crate::http::kopf_lesen_wege(&puffer, &ERLAUBT) {
-                Ok(k) => break k,
-                Err(Httpfehler::Unvollstaendig) => {}
-                // ⚑ **Der Fehlertext ist die Debug-Form und keine
-                // eigene Auskunft.** Wer hier ausformuliert, schreibt
-                // eine zweite Fassung derselben Aussage, und die beiden
-                // laufen auseinander.
-                Err(e) => {
-                    return Self::v1_fehler(&mut strom, e.status(), &format!("{e:?}")).await
-                }
-            }
-            let mut hafen = [0u8; 1024];
-            let n = strom.read(&mut hafen).await?;
-            if n == 0 {
-                return Ok(());
-            }
-            puffer.extend_from_slice(&hafen[..n]);
-            if puffer.len() > MAX_KOPF + MAX_RUMPF {
-                return Self::v1_fehler(&mut strom, 413, "der Rumpf ist zu gross").await;
-            }
+        let gelesen =
+            Self::anfrage_lesen(&mut strom, frist, |d| crate::http::kopf_lesen_wege(d, &ERLAUBT)).await?;
+        let (kopf, puffer) = match gelesen {
+            Gelesen::Fertig(kopf, puffer) => (kopf, puffer),
+            Gelesen::Aufgelegt => return Ok(()),
+            // ⚑ **Der Fehlertext ist die Debug-Form und keine eigene
+            // Auskunft.** Wer hier ausformuliert, schreibt eine zweite
+            // Fassung derselben Aussage, und die beiden laufen auseinander.
+            Gelesen::Kopffehler(e) => return Self::v1_fehler(&mut strom, e.status(), &format!("{e:?}")).await,
+            Gelesen::ZuGross(_) => return Self::v1_fehler(&mut strom, 413, "der Rumpf ist zu gross").await,
+            Gelesen::ZuKurz => return Self::v1_fehler(&mut strom, 400, "weniger Rumpf als angekuendigt").await,
+            Gelesen::Abgelaufen => return Self::v1_fehler(&mut strom, 408, "die Anfrage kam nicht in der Frist").await,
         };
-        while puffer.len() < kopf.rumpf_ab + kopf.laenge {
-            let mut hafen = [0u8; 4096];
-            let n = strom.read(&mut hafen).await?;
-            if n == 0 {
-                return Self::v1_fehler(&mut strom, 400, "weniger Rumpf als angekuendigt").await;
-            }
-            puffer.extend_from_slice(&hafen[..n]);
-        }
         let rumpf = puffer[kopf.rumpf_ab..kopf.rumpf_ab + kopf.laenge].to_vec();
 
         // ⚑ **Der Ausweis zuerst, vor jedem Zerlegen.** Wer erst
@@ -449,6 +490,13 @@ impl Tuer {
     /// nichts.
     async fn abgewiesen(strom: &mut TcpStream) -> io::Result<()> {
         let a = antwort(403, "text/plain; charset=utf-8", b"");
+        strom.write_all(&a).await?;
+        strom.flush().await
+    }
+
+    /// Die Anfrage kam nicht in der [`LESEFRIST`] (Fund 610).
+    async fn abgelaufen(strom: &mut TcpStream) -> io::Result<()> {
+        let a = antwort(408, "text/plain; charset=utf-8", b"");
         strom.write_all(&a).await?;
         strom.flush().await
     }

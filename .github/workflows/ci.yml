@@ -39,6 +39,12 @@ on:
       - 'README/Grafiken/**'
       - 'LICENSE.md'
 
+# ⚑ Nur lesend. Ohne diese Zeile gilt, was in den Einstellungen des
+# Repositoriums steht, und das kann Schreibrecht sein. Kein Job hier
+# schreibt etwas zurueck.
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -75,9 +81,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
 
@@ -201,14 +207,14 @@ jobs:
     env:
       MYL_OHNE_ARTEFAKTE: "1"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - uses: ./.github/actions/einrichten
         with:
           cache: kisten-${{ matrix.gruppe }}
           oberflaeche: ${{ matrix.gruppe == 'klient' }}
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         if: matrix.gruppe == 'rechnen'
         with:
           python-version: "3.12"
@@ -242,7 +248,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - uses: ./.github/actions/einrichten
         with:
@@ -268,7 +274,7 @@ jobs:
 
       - name: Protokolle sichern
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: netzlauf-protokolle
           path: ${{ runner.temp }}/netzlauf
@@ -296,7 +302,7 @@ jobs:
     env:
       MYL_OHNE_ARTEFAKTE: "1"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - uses: ./.github/actions/einrichten
         with:
@@ -387,7 +393,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - uses: ./.github/actions/einrichten
         with:
@@ -425,13 +431,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - uses: ./.github/actions/einrichten
         with:
           vorrat: "false"
 
-      - uses: taiki-e/install-action@v2
+      - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
         with:
           tool: cargo-deny
 
@@ -467,12 +473,12 @@ jobs:
     timeout-minutes: 30
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Rust nightly
         run: rustup toolchain install nightly --profile minimal
 
-      - uses: taiki-e/install-action@v2
+      - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
         with:
           tool: cargo-fuzz
 
@@ -496,7 +502,7 @@ jobs:
 
       - name: Reproduzierer sichern
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: fuzz-reproduzierer
           path: '*/*/fuzz/artifacts/**'
@@ -513,17 +519,20 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
 
       - name: torch (nur CPU) und numpy
         run: |
           python3 -m pip install --upgrade pip
-          python3 -m pip install --index-url https://download.pytorch.org/whl/cpu torch
-          python3 -m pip install numpy
+          # Die Fassungen aus der festen Liste, damit die CI prueft, was lokal
+          # rechnet, und nicht, was am Tag des Laufs oben liegt.
+          fest=INTEGER_LLM/calibrate/requirements-fest.txt
+          python3 -m pip install --index-url https://download.pytorch.org/whl/cpu "torch==$(sed -n 's/^torch==//p' "$fest")"
+          python3 -m pip install "numpy==$(sed -n 's/^numpy==//p' "$fest")"
 
       - name: Einheitentests des Kalibrierungswegs
         working-directory: INTEGER_LLM
@@ -545,18 +554,20 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
 
       - name: Geaenderte Simulationen ermitteln
         id: diff
+        env:
+          VORHER: ${{ github.event.before }}
         run: |
-          if [ "${{ github.event_name }}" = "schedule" ]; then
+          if [ "$GITHUB_EVENT_NAME" = "schedule" ]; then
             echo "langsame=ja" >> "$GITHUB_OUTPUT"
-          elif git diff --name-only "${{ github.event.before }}" HEAD 2>/dev/null \
+          elif git diff --name-only "$VORHER" HEAD 2>/dev/null \
                | grep -q 'README/Whitepaper/simulations/'; then
             echo "langsame=ja" >> "$GITHUB_OUTPUT"
           else

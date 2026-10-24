@@ -386,7 +386,7 @@ unter denen der Client sucht). **Deshalb braucht dieser eine Schritt
 Netz.**
 
 <details>
-<summary>📌 Vier Stolpersteine, alle beim Einrichten gefunden</summary>
+<summary>📌 Fünf Stolpersteine, alle beim Einrichten gefunden</summary>
 
 - **Ein aus dem Finder gestartetes `Myelith.app` erbt einen PATH ohne
   `/opt/homebrew/bin`.** Ein mit `brew` installiertes llama.cpp wäre im
@@ -395,13 +395,21 @@ Netz.**
 - **CosyVoice braucht seine eigene Python-Umgebung.** Der erste Python im
   PATH ist unter macOS 3.9 ohne torch. Der Client nimmt den Interpreter aus
   der `.venv` neben der CosyVoice-Installation.
-- **setuptools 81 nahm `pkg_resources` aus der Bauumgebung**, woran
-  `openai-whisper==20231117` scheitert. Das Skript nimmt setuptools zurück
-  und baut dieses Paket ohne eigene Bauumgebung.
-- **Die Reihenfolge von pip:** Wer `openai-whisper` zuerst installiert,
-  holt unbestimmte Fassungen von torch und numpy herein, und pip läuft
-  danach minutenlang rückwärts durch hunderte Fassungen. Erst die
-  gepinnten, dann das eine Paket.
+- **Die Umgebung kommt aus `sprechen-fest.txt`, nicht aus der
+  `requirements.txt` von CosyVoice.** Die brachte Server und Training mit
+  (gradio, fastapi, tensorboard, deepspeed) und hing am 2026-10-23 an 248
+  bekannten Lücken, darunter torch 2.3.1, das fremde Gewichte beim Laden
+  ausführen lässt. Die eigene Liste nennt je Paket Fassung und Prüfsumme
+  für alle Plattformen und wird mit `--require-hashes` installiert. Wie sie
+  entsteht und welche Ausnahmen sie trägt, steht in `sprechen.in`. Eine
+  Umgebung von einem anderen Stand wird ersetzt, nicht nachgebessert.
+- **Mit transformers 5 braucht der Läufer zwei Anpassungen**, beide in
+  `sprechen-cosyvoice.py` begründet: Qwen2 wird in float32 geladen, und die
+  Schritte des Sprachmodells laufen ohne die zu kurze Maske, die CosyVoice
+  mitgibt. ⚠️ Fehlt die zweite, endet der Lauf ohne Fehler und spricht
+  einen anderen Satz.
+- **pyworld braucht zur Laufzeit `pkg_resources`**, das setuptools 81
+  entfernt hat; die Liste hält setuptools deshalb darunter.
 
 ⛔️ **Deutsch kann erst CosyVoice 3.** Die 2.0-Gewichte decken Chinesisch
 und Englisch ab; eine deutsche Stimmprobe ergab Laute, die wie Deutsch

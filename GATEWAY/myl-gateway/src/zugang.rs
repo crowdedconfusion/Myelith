@@ -68,7 +68,7 @@
 use myl_types::bls::{BlsPublicKey, BlsSignature};
 use myl_types::hash::Hash;
 use myl_types::ids::{Address, EpochId, SitzungId};
-use myl_types::sitzung::{pruefe, Sitzungskontrakt, Sitzungszustand, Vorhaben, Waehrung};
+use myl_types::sitzung::{Sitzungskontrakt, Sitzungszustand, Vorhaben, Waehrung};
 
 /// Trennstring der Zugangsbotschaft.
 ///
@@ -186,7 +186,9 @@ pub fn pruefe_zugang(
         (Some(k), Some(z)) => (k, z),
         _ => (&leer, &leer_zustand),
     };
-    let kontraktbefund = pruefe(k, z, jetzt, &vorhaben_fuer(k, anfrage));
+    // ⚑ **Ohne den Empfänger** (J1): Die Tür fragt nach dem Zugang und
+    //   bucht nichts; die Liste des Kontrakts steht nicht mehr auf der Kette.
+    let kontraktbefund = myl_types::sitzung::pruefe_zugang(k, z, jetzt, &vorhaben_fuer(k, anfrage));
 
     if unterschrift_gilt && kontraktbefund.erlaubt() {
         Zugangsbefund::Erlaubt
@@ -422,10 +424,10 @@ fn vorhaben_fuer(kontrakt: &Sitzungskontrakt, anfrage: &Zugangsanfrage) -> Vorha
         handelnder: Address::aus_schluessel(&anfrage.schluessel),
         waehrung: Waehrung::Credits,
         betrag: 1,
-        // Der Empfänger ist das Gateway selbst; in Stufe 2 zahlt noch
-        // niemand, aber die Positivliste des Kontrakts entscheidet
-        // trotzdem mit, wem er überhaupt begegnen darf.
-        empfaenger: kontrakt.empfaenger.first().copied().unwrap_or(Address::new([0u8; 32])),
+        // Kein Empfänger: Die Zugangsprüfung fragt nicht nach ihm (J1);
+        // die Liste kennt nur der Inhaber.
+        empfaenger: Address::new([0u8; 32]),
+        empfaenger_beweis: myl_types::sitzung::kein_beweis(),
         bestaetigt_ausgeliefert: false,
         // ⚑ **Die Nummer aus dem Zugangsausweis, und das ist kein
         // Zufall:** Sie ist derselbe Zähler, gegen den die Tür schon
@@ -451,7 +453,7 @@ fn leerer_kontrakt() -> Sitzungskontrakt {
         agent: Address::new([0u8; 32]),
         credits: myl_types::sitzung::Grenzen::gesperrt(),
         myl: myl_types::sitzung::Grenzen::gesperrt(),
-        empfaenger: Vec::new(),
+        empfaenger_wurzel: myl_types::hash::Hash([0u8; 32]),
         gueltig_ab: EpochId(0),
         gueltig_bis: EpochId(0),
         max_schritte: 0,
@@ -483,7 +485,7 @@ mod tests {
                 zeugenleiter: Vec::new(),
             },
             myl: Grenzen::gesperrt(),
-            empfaenger: vec![Address::aus_schluessel(&oeffentlich(210))],
+            empfaenger_wurzel: myl_types::sitzung::empfaengerwurzel(&[Address::aus_schluessel(&oeffentlich(210))]),
             gueltig_ab: EpochId(0),
             gueltig_bis: EpochId(100),
             max_schritte: 1_000,

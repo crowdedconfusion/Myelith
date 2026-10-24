@@ -222,8 +222,9 @@ impl Einhaengung {
     ///
     /// `muss_da_sein` unterscheidet Lesen von Schreiben: Was noch nicht
     /// existiert, laesst sich nicht aufloesen, wohl aber sein
-    /// Elternverzeichnis. ⚑ Der letzte Namensteil kann dann kein Verweis
-    /// sein, denn es gibt ihn nicht; die Kette darueber ist aufgeloest.
+    /// Elternverzeichnis. ⚑ Gibt es den letzten Namensteil schon (beim
+    /// Ueberschreiben), wird auch er aufgeloest, denn er kann ein Verweis
+    /// sein (Fund 616).
     pub fn aufloesen(&self, roh: &str, muss_da_sein: bool) -> Result<PathBuf, Werkzeugfehler> {
         if roh.trim().is_empty() {
             return Err(Werkzeugfehler { grund: "der Pfad ist leer".into() });
@@ -275,7 +276,23 @@ impl Einhaengung {
             for n in fehlend.iter().rev() {
                 ziel.push(n);
             }
-            ziel.join(name)
+            let ziel = ziel.join(name);
+            // 📌 **Fund 616 (2026-10-23): Den letzten Namensteil gibt es
+            //    schon, und er kann ein Verweis sein.** Hier stand, er
+            //    koenne keiner sein, „denn es gibt ihn nicht“; beim
+            //    Ueberschreiben gibt es ihn. Ein Verweis `notizen.md ->
+            //    ~/.bashrc` im Arbeitsordner (ein fremdes Repositorium
+            //    bringt so etwas mit) lag nach dieser Pruefung innerhalb,
+            //    und `write_file` schrieb hinaus, ohne Freigabe, denn
+            //    Dateiwerkzeuge brauchen keine. Jetzt wird ein vorhandener
+            //    letzter Teil aufgeloest wie beim Lesen, und ein Verweis
+            //    ohne Ziel wird abgelehnt.
+            match std::fs::symlink_metadata(&ziel) {
+                Ok(_) => ziel.canonicalize().map_err(|e| Werkzeugfehler {
+                    grund: format!("{roh}: ein Verweis, dessen Ziel sich nicht aufloesen laesst ({e})"),
+                })?,
+                Err(_) => ziel,
+            }
         };
 
         if !ziel.starts_with(&self.wurzel) {
@@ -3494,6 +3511,32 @@ mod grenze {
         std::os::unix::fs::symlink(&ziel, &verweis).expect("Verweis");
         let l = Dateilesen(e, Ansageform::Amtlich);
         assert!(l.ausfuehren(&serde_json::json!({"pfad": "hinaus/irgendwas"})).is_err());
+    }
+
+    /// ⚑ **Ein Verweis als letzter Namensteil schreibt nicht hinaus**
+    /// (Fund 616): Die Datei draussen bleibt, wie sie war, und ein Verweis
+    /// ohne Ziel wird ebenfalls abgelehnt.
+    #[cfg(unix)]
+    #[test]
+    fn ein_verweis_als_ziel_schreibt_nicht_hinaus() {
+        let (d, e) = baue();
+        let draussen = tempfile::tempdir().expect("draussen");
+        let opfer = draussen.path().join("bashrc");
+        std::fs::write(&opfer, "unberuehrt").expect("anlegen");
+        std::os::unix::fs::symlink(&opfer, d.path().join("notizen.md")).expect("Verweis");
+        std::os::unix::fs::symlink(draussen.path().join("fehlt"), d.path().join("leer.md")).expect("Verweis");
+        let s = Dateischreiben(e, Ansageform::Amtlich);
+        assert!(
+            s.ausfuehren(&serde_json::json!({"pfad": "notizen.md", "inhalt": "eingeschleust"})).is_err(),
+            "ueber einen Verweis hinaus geschrieben"
+        );
+        assert_eq!(std::fs::read_to_string(&opfer).expect("lesen"), "unberuehrt");
+        assert!(s.ausfuehren(&serde_json::json!({"pfad": "leer.md", "inhalt": "x"})).is_err(), "Verweis ohne Ziel");
+        assert!(!draussen.path().join("fehlt").exists(), "ueber einen Verweis ohne Ziel angelegt");
+        // Gegenprobe: eine gewoehnliche Datei wird ueberschrieben.
+        std::fs::write(d.path().join("echt.md"), "alt").expect("anlegen");
+        s.ausfuehren(&serde_json::json!({"pfad": "echt.md", "inhalt": "neu"})).expect("ueberschreiben");
+        assert_eq!(std::fs::read_to_string(d.path().join("echt.md")).expect("lesen"), "neu");
     }
 
     /// ⚑ **Schreiben ist eine eigene Erlaubnis**, und ohne sie sagt das

@@ -1,7 +1,7 @@
 # gateway (`myl-gateway`)
 
-> **Version:** 0.6.1
-> **Datum:** 2026-10-22
+> **Version:** 0.8.0
+> **Datum:** 2026-10-23
 > **Status:** Stufe 1 steht: die Tür auf `localhost` und der Beleg. Sie
 > nimmt entgegen und schreibt fest; **an einen Pod gibt sie noch nichts**.
 
@@ -83,6 +83,36 @@ Sitzungen nicht denselben Wert bekommt und eine Bindung nicht
 übertragbar ist.
 
 ## Changelog
+
+### v0.8.0 (2026-10-24): Die Zugangsprüfung fragt nicht mehr nach dem Empfänger
+
+- Der Sitzungskontrakt trägt nur noch die Wurzel seiner Empfängerliste
+  (SHARED_TYPES 0.49.0). Die Tür fragt nach dem **Zugang** und bucht nichts;
+  sie prüft deshalb mit `pruefe_zugang` (Agent, Nummer, Widerruf,
+  Zeitfenster, Grenzen) statt mit dem ersten Eintrag einer Liste, die es auf
+  der Kette nicht mehr gibt. 55 Tests grün.
+
+### v0.7.0 (2026-10-23): Eine Lesefrist für die Tür (Fund 610)
+
+Aus dem Sicherheitsaudit vom 2026-10-23.
+
+- ⚑ **Fund 610:** Die Tür las ohne Frist, und ihr Wirt (der Knoten) bedient
+  eine Verbindung nach der anderen. Ein Prozess auf derselben Maschine, der
+  eine Verbindung öffnet und nichts schickt, sperrte sie für alle,
+  unbegrenzt. Jetzt `LESEFRIST` = 10 s für Kopf und Rumpf zusammen, danach
+  `408`; für Tests `Tuer::mit_lesefrist`.
+- Die Leseschleife stand zweimal (`/inferenz` und `/v1`) und steht jetzt
+  einmal (`anfrage_lesen`); die Fehlertexte sind dieselben.
+- **Gegenprobe** (`eine_schweigende_verbindung_sperrt_die_tuer_nicht`): Ein
+  Schweiger hält die Verbindung, die nächste Anfrage bekommt ihren Beleg, er
+  ein `408`. Ohne Frist: „die Tuer hat innerhalb von fuenf Sekunden nicht
+  geantwortet“.
+- Geprüft und in Ordnung: doppeltes `Content-Length` und
+  `Transfer-Encoding` abgelehnt, Kopf und Rumpf gedeckelt, ein kurzer Rumpf
+  nicht als kurze Anfrage genommen, Ausweis vor jedem Zerlegen, Deckel auf
+  die Signaturprüfungen je Block der Vollmacht. CSRF und DNS-Rebinding aus
+  dem Browser nützen nichts, denn jeder Weg verlangt ein Geheimnis.
+- Belege: Clippy und alle Tests grün.
 
 ### v0.6.1 (2026-10-22): Eine Werkzeugkette für alle Kisten
 

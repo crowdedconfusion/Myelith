@@ -369,6 +369,10 @@ impl myl_gateway::oai::Rechenweg for Ortsweg {
                 // rechnen wäre eine Einladung, genau das zu tun.
                 betrag: e.neue_token.max(1),
                 empfaenger: self.empfaenger,
+                // ⚑ Der Beweis, dass dieser Knoten auf der Liste steht,
+                //   kommt mit der Vollmacht vom Inhaber (J1); fehlt er,
+                //   weist die Kette die Abbuchung ab.
+                empfaenger_beweis: auftrag.vollmacht.empfaengerbeweis(&self.empfaenger),
                 bestaetigt_ausgeliefert: false,
                 nummer,
             };

@@ -145,6 +145,9 @@ fn konfig(ordner: &Path, name: &str, bootstrap: Vec<String>, miner: Option<&Roll
         name: name.to_string(),
         schluesseldatei: protokolle.join("knoten.key"),
         protokollverzeichnis: protokolle.clone(),
+        protokoll_mb: myl_node::protokoll::GESAMT_HOECHSTENS / (1024 * 1024),
+        kette_mb: 2048,
+        archiv_ausfuhr: None,
         // mDNS sucht ueber die Schnittstellen, nicht ueber die Rueckschleife.
         horchadressen: vec![if sucht_lokal(name) { "/ip4/0.0.0.0/tcp/0" } else { "/ip4/127.0.0.1/tcp/0" }.to_string()],
         bootstrap: if OHNE_ANGABE.contains(&name) { Vec::new() } else { bootstrap },

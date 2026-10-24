@@ -1,10 +1,13 @@
 # WORK_DIR: der Arbeitsordner des Agenten
 
 Dies ist der Ordner, den der Fensterclient beim ersten Start als
-Arbeitsverzeichnis voreinstellt. Er liegt im Repositorium, damit jeder,
-der den Client baut, **sofort etwas hat, woran die Werkzeuge sich
-zeigen können**: echte Dateien mit bekannten Zeilenzahlen, ein Merkmal,
-das genau zweimal vorkommt, und eine Vorlage mit Platzhaltern.
+Arbeitsverzeichnis voreinstellt. Versioniert sind nur der Ordner, diese
+README und `.gitignore`; **was darin liegt, gehört dem Nutzer und dem
+Agenten** und kommt nicht ins Repositorium. Die Beispieldateien unten
+(echte Dateien mit bekannten Zeilenzahlen, ein Merkmal, das genau zweimal
+vorkommt, eine Vorlage mit Platzhaltern) liegen deshalb nur dort, wo sie
+jemand angelegt hat; ein frischer Klon hat sie nicht. Wer die Aufgaben
+unten nachfahren will, legt sie nach der Tabelle in Abschnitt 1 an.
 
 > ⚑ **Der Konsolenclient nimmt weiter das Verzeichnis, aus dem er
 > gestartet wurde.** Wer `myelith` in einem Projekt aufruft, will darin
@@ -13,8 +16,8 @@ das genau zweimal vorkommt, und eine Vorlage mit Platzhaltern.
 
 > ⚠️ **Was hier drin geschrieben wird, bleibt liegen.** Die Aufgaben
 > unten legen Dateien an und ändern sie. Der Ordner ist dafür gedacht;
-> wenn er unordentlich geworden ist, stellt `git checkout WORK_DIR` und
-> das Löschen der neu entstandenen Dateien ihn wieder her.
+> `git checkout WORK_DIR` stellt nur README und `.gitignore` wieder her,
+> alles andere räumt, wer es angelegt hat.
 
 ---
 

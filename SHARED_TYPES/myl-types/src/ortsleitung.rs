@@ -330,18 +330,9 @@ pub fn schluessel_ablegen(
     pfad: &std::path::Path,
     schluessel: &[u8; SCHLUESSEL_LEN],
 ) -> std::io::Result<bool> {
-    use std::io::Write;
-    let mut opt = std::fs::OpenOptions::new();
-    opt.write(true).create(true).truncate(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        opt.mode(0o600);
-    }
-    let mut datei = opt.open(pfad)?;
-    datei.write_all(schluessel)?;
-    datei.flush()?;
-    Ok(cfg!(unix))
+    // Seit Fund 607 an einer Stelle fuer alle Geheimdateien; dort steht
+    // auch, warum eine liegende Datei neu angelegt wird.
+    crate::geheimdatei::schreiben(pfad, schluessel)
 }
 
 /// Liest den Ausweis.

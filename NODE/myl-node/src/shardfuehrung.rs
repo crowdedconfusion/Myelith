@@ -101,6 +101,9 @@ pub struct Shardstart {
     pub netzlast: PathBuf,
 }
 
+/// Der Dateiname des Ausweises der Shardtür, neben `netzlast.json`.
+pub const AUSWEIS_DATEI: &str = "shardausweis";
+
 /// Was beim Abgleich geschah.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Wechsel {
@@ -123,6 +126,8 @@ struct Laufend {
     kind: Child,
     adresse: std::sync::mpsc::Receiver<std::net::SocketAddr>,
     bekannt: Option<std::net::SocketAddr>,
+    /// Der Ausweis seiner Tür (Fund 611), je Start neu gezogen.
+    ausweis: [u8; myl_types::zeitprobe::AUSWEIS_LEN],
 }
 
 impl Shardfuehrung {
@@ -140,13 +145,14 @@ impl Shardfuehrung {
         self.laufend.as_ref().map(|l| l.kind.id())
     }
 
-    /// Die Adresse des laufenden Shards, sobald er sie genannt hat.
-    pub fn adresse(&mut self) -> Option<std::net::SocketAddr> {
+    /// Die Tür des laufenden Shards, sobald er sie genannt hat: Adresse
+    /// und Ausweis, ohne den sie nichts annimmt (Fund 611).
+    pub fn tuer(&mut self) -> Option<(std::net::SocketAddr, [u8; myl_types::zeitprobe::AUSWEIS_LEN])> {
         let l = self.laufend.as_mut()?;
         if l.bekannt.is_none() {
             l.bekannt = l.adresse.try_recv().ok();
         }
-        l.bekannt
+        l.bekannt.map(|a| (a, l.ausweis))
     }
 
     /// **Gleicht den laufenden Shard mit dem Soll ab.** Bleibt der Bereich
@@ -164,10 +170,22 @@ impl Shardfuehrung {
         self.beenden();
         let Some(soll) = soll else {
             let _ = std::fs::remove_file(&self.start.netzlast);
+            let _ = std::fs::remove_file(self.start.netzlast.with_file_name(AUSWEIS_DATEI));
             return Ok(if hatte { Wechsel::Beendet } else { Wechsel::Unveraendert });
         };
+        // ⚑ **Der Ausweis der Tür, je Start neu** (Fund 611): 32 Bytes aus
+        //   der Zufallsquelle, mit `0600` neben die Netzlast gelegt. Wer die
+        //   Datei lesen kann, darf fragen; das ist der Kreis, den das
+        //   Dateisystem ohnehin zieht.
+        let mut ausweis = [0u8; myl_types::zeitprobe::AUSWEIS_LEN];
+        getrandom::fill(&mut ausweis).map_err(|e| format!("keine Zufallsquelle fuer den Ausweis: {e}"))?;
+        let ausweisdatei = self.start.netzlast.with_file_name(AUSWEIS_DATEI);
+        myl_types::ortsleitung::schluessel_ablegen(&ausweisdatei, &ausweis)
+            .map_err(|e| format!("{}: {e}", ausweisdatei.display()))?;
         let mut befehl = Command::new(&self.start.programm);
         befehl
+            .arg("--ausweis")
+            .arg(&ausweisdatei)
             .arg("--artefakte")
             .arg(&self.start.artefakte)
             .arg("--shard")
@@ -202,7 +220,7 @@ impl Shardfuehrung {
             }
         });
         netzlast_schreiben(&self.start.netzlast, &soll, &self.start.artefakte);
-        self.laufend = Some(Laufend { auftrag: soll.clone(), kind, adresse, bekannt: None });
+        self.laufend = Some(Laufend { auftrag: soll.clone(), kind, adresse, bekannt: None, ausweis });
         Ok(Wechsel::Gestartet(soll))
     }
 
@@ -219,6 +237,7 @@ impl Drop for Shardfuehrung {
     fn drop(&mut self) {
         self.beenden();
         let _ = std::fs::remove_file(&self.start.netzlast);
+        let _ = std::fs::remove_file(self.start.netzlast.with_file_name(AUSWEIS_DATEI));
     }
 }
 
@@ -304,11 +323,19 @@ mod tests {
         assert_eq!(f.abgleichen(Some(auftrag(3, 7, 14))), Ok(Wechsel::Gestartet(auftrag(3, 7, 14))));
         let gelesen = myl_store::teilablage::Netzlast::lesen(&netzlast).expect("Netzlast");
         assert_eq!((gelesen.epoche, gelesen.von, gelesen.bis), (3, 7, 14));
+        // ⚑ **Der Ausweis der Tür liegt nur für den Besitzer da** (Fund 611)
+        //   und gleicht dem, den der Knoten bei der Probe mitschickt.
+        let ausweisdatei = ordner.join(AUSWEIS_DATEI);
+        let modus = std::fs::metadata(&ausweisdatei).expect("Ausweis").permissions().mode() & 0o777;
+        assert_eq!(modus, 0o600, "der Ausweis liegt mit {modus:o} offen");
+        let erster = myl_types::ortsleitung::schluessel_lesen(&ausweisdatei).expect("lesen");
         assert_eq!(f.abgleichen(Some(auftrag(4, 7, 14))), Ok(Wechsel::Unveraendert));
         assert_eq!(f.auftrag().map(|a| a.epoche), Some(4), "die Epoche wird vermerkt");
         assert_eq!(f.abgleichen(Some(auftrag(5, 7, 15))), Ok(Wechsel::Gestartet(auftrag(5, 7, 15))));
+        assert_ne!(myl_types::ortsleitung::schluessel_lesen(&ausweisdatei).expect("lesen"), erster, "je Start ein neuer Ausweis");
         assert_eq!(f.abgleichen(None), Ok(Wechsel::Beendet));
         assert!(!netzlast.exists(), "ohne Shard keine Netzlast");
+        assert!(!ausweisdatei.exists(), "ohne Shard kein Ausweis");
         assert_eq!(f.abgleichen(None), Ok(Wechsel::Unveraendert));
         let _ = std::fs::remove_dir_all(&ordner);
     }

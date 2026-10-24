@@ -93,6 +93,19 @@ pub fn in_die_antwort(mut bloecke: Vec<Block>) -> Vec<Block> {
     bloecke
 }
 
+/// So viel Platz hält eine Archivlieferung für ihren Beweis frei: höchstens
+/// 64 Geschwister und 64 Gipfel zu 32 Byte, dazu Längen und Zahlen,
+/// aufgerundet.
+pub const BEWEIS_HOECHSTENS_BYTES: usize = 8 * 1024;
+
+/// Wie [`in_die_antwort`], mit `frei` Bytes Platz für etwas, das neben den
+/// Blöcken mitgeht.
+pub fn in_die_antwort_mit(mut bloecke: Vec<Block>, frei: usize) -> Vec<Block> {
+    let laengen: Vec<usize> = bloecke.iter().map(|b| borsh::to_vec(b).map(|v| v.len()).unwrap_or(usize::MAX)).collect();
+    bloecke.truncate(passende_anzahl(&laengen, myl_types::protocol::MAX_ANFRAGE_BYTES.saturating_sub(frei)));
+    bloecke
+}
+
 /// Was ein Knoten nachfordern kann.
 #[derive(Debug, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
 pub enum Nachforderung {
@@ -147,6 +160,28 @@ pub enum Nachforderung {
         /// Ab welchem Byte des Zustands.
         ab: u64,
     },
+    /// ⚑ **Blöcke der Geschichte mit Beweis** (Archivknoten, Stufe A4): die
+    /// Höhen `ab` bis `bis`, und für die letzte gelieferte ein Beweis gegen
+    /// die Historie mit `anzahl` Blöcken. Angehängt.
+    Archiv {
+        /// Ab welcher Höhe.
+        ab: u64,
+        /// Bis zu welcher Höhe, einschliesslich.
+        bis: u64,
+        /// Die Länge der Historie, gegen die bewiesen wird: die Höhe der
+        /// Basis des Fragenden.
+        anzahl: u64,
+    },
+    /// ⚑ **Ein Teil für einen Splitter** (Stufe A7): Teil `teil` der Gruppe
+    /// an Stelle `stelle` des Abschnitts der Grenze `grenze`. Angehängt.
+    Teil {
+        /// Die Grenze des Abschnitts.
+        grenze: u64,
+        /// Die Stelle der Gruppe im Abschnitt.
+        stelle: u64,
+        /// Welcher der 64 Teile.
+        teil: u64,
+    },
 }
 
 /// Was auf eine Nachforderung zurückkommt.
@@ -190,6 +225,23 @@ pub enum Nachlieferung {
         daten: Vec<u8>,
         /// Wie groß der ganze Zustand ist.
         groesse: u64,
+    },
+    /// Blöcke der Geschichte, aufsteigend ab der erfragten Höhe, und der
+    /// Beweis für den letzten.
+    Archiv {
+        /// Die Blöcke.
+        bloecke: Vec<Block>,
+        /// Der Beweis.
+        beweis: myl_types::historie::Beweis,
+    },
+    /// Ein Teil und seine Pfade zur Teilwurzel.
+    Teil {
+        /// Die Grenze des Abschnitts.
+        grenze: u64,
+        /// Der Teil.
+        stueck: Vec<u8>,
+        /// Der Beweis.
+        beweis: myl_types::archivteile::Teilbeweis,
     },
 }
 

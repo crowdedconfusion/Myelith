@@ -125,6 +125,11 @@ HOT_PATH = [
     # Blockauswahl. Die Vorlage rechnet die Wurzeln und die Wertung der
     # Bloecke in float32; hier ist jede davon ganzzahlig.
     REPO / "kernels" / "src" / "vierstrom.rs",
+    # ⚑ Die Bausteine des Sichtturms (2026-10-23): LayerNorm mit Mittelwert,
+    # die bilineare Umrechnung der Positions-Einbettung, Flickenfolge und
+    # Drehzeile. Die Vorlage rechnet sie in float32; hier ganzzahlig, die
+    # einzige Division rechnet eine Konstante je Bildgroesse.
+    REPO / "kernels" / "src" / "iris.rs",
     # 2026-09-11: Der Fadenpool ersetzt das `thread::scope` je Matrix.
     # Er rechnet nichts, er verteilt nur Zeilen; genau deshalb steht er
     # hier: Ein Konsens-Crate hat keine Datei, die "rechnet nichts"
@@ -279,6 +284,10 @@ HOT_PATH = [
     # Rechenpfad-Datei ebenfalls nicht in dieser Liste stand.
     REPO / "kernels" / "src" / "konformitaet.rs",
     REPO / "runtime" / "src" / "konformitaet.rs",
+    # ⚑ Iris, der Sichtturm in der Laufzeit (2026-10-23): Flickeneinbettung,
+    # 27 Bloecke, Projektor. Rechnet wie der Decoder nur ganzzahlig; der
+    # Vergleich mit der Gleitkomma-Referenz laeuft in Python.
+    REPO / "runtime" / "src" / "iris.rs",
 ]
 
 # Konsenspfad der Netzwerkkomponenten. Dieselbe Anforderung wie oben:
@@ -367,6 +376,21 @@ CONSENSUS_PATH = [
     ROOT / "SHARED_TYPES" / "myl-types" / "src" / "fristmeldung.rs",
     ROOT / "SHARED_TYPES" / "myl-types" / "src" / "gegenzeichnung.rs",
     ROOT / "SHARED_TYPES" / "myl-types" / "src" / "zeitprobe.rs",
+    # 2026-10-23: Geheimdateien mit `0600` ab dem Anlegen (Fund 607). Sie
+    # rechnet nichts; sie steht hier, weil jede Datei eines Konsens-Crates
+    # gelistet sein muss. 📌 Nachgetragen erst am Abend: Beim Audit lief
+    # diese Pruefung nicht mit, gemeldet hat sie die Datei beim naechsten
+    # Lauf.
+    ROOT / "SHARED_TYPES" / "myl-types" / "src" / "geheimdatei.rs",
+    # 2026-10-23: Die Historienwurzel (Archivknoten, Stufe A1), ein Merkle
+    # Mountain Range über die Blockhashes. Sie geht in den Zustand ein, also
+    # ganzzahlig und nur aus Hashes.
+    ROOT / "SHARED_TYPES" / "myl-types" / "src" / "historie.rs",
+    # 2026-10-24: Die Ziehung der Archivkopien und Splitter (Stufe A3) und
+    # die Reed-Solomon-Teile der Gruppen samt Teilwurzel (Stufe A7). Beide
+    # gehen in den Zustand ein: Lose aus Hashes, Codierung ueber GF(2^8).
+    ROOT / "SHARED_TYPES" / "myl-types" / "src" / "archivwahl.rs",
+    ROOT / "SHARED_TYPES" / "myl-types" / "src" / "archivteile.rs",
     # 2026-08-31: Das Gegenstandsformat zog aus `myl-store` hierher,
     # damit der Ledger es lesen kann, ohne an der Store-Rolle zu haengen.
     # Es rechnet in Bytes, Teilzahlen und Bruechen aus kleinen ganzen
@@ -417,6 +441,9 @@ CONSENSUS_PATH = [
     ROOT / "CONSENSUS" / "myl-ledger" / "src" / "lib.rs",
     ROOT / "CONSENSUS" / "myl-ledger" / "src" / "state.rs",
     ROOT / "CONSENSUS" / "myl-ledger" / "src" / "transitions.rs",
+    # 2026-10-24: Die Archivpflicht (Stufen A5 bis A7): Belege, Stichproben,
+    # Gutschrift und Abzug in Basispunkten und Bruchteilen ganzer Zahlen.
+    ROOT / "CONSENSUS" / "myl-ledger" / "src" / "archiv.rs",
     ROOT / "CONSENSUS" / "myl-scheduler" / "src" / "vrf_seed.rs",
     ROOT / "CONSENSUS" / "myl-scheduler" / "src" / "miner_filter.rs",
     ROOT / "CONSENSUS" / "myl-scheduler" / "src" / "shard_assignment.rs",

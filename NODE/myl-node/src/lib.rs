@@ -47,8 +47,14 @@
 #![deny(unsafe_code)]
 
 pub mod abzug;
+pub mod archiv;
+pub mod archivabruf;
+pub mod archivausfuhr;
+pub mod teilablage;
 pub mod beobachtung;
 pub mod dateidienst;
+pub mod drossel;
+pub mod gehoert;
 pub mod stimmsatzdatei;
 pub mod kette;
 pub mod knoten;

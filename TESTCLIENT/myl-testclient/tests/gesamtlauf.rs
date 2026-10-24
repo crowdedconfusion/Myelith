@@ -373,7 +373,10 @@ async fn alle_kompartimente_verzahnt() {
         ],
         [11u8; 32],
     )
-    .expect("ausstellen");
+    .expect("ausstellen")
+    // Der Inhaber legt den Beweis bei, dass der Betreiber auf seiner Liste
+    // steht; nur die Wurzel liegt auf der Kette.
+    .mit_empfaengerbeweis(betreiber, myl_types::sitzung::empfaengerbeweis(&[betreiber], &betreiber).expect("gelistet"));
     let bearer = token.als_bearer();
     b.schritt(
         "AGENT_LAYER",

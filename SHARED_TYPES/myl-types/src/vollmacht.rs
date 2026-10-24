@@ -207,6 +207,38 @@ pub struct Vollmacht {
     /// kann nichts wegnehmen, denn dazu bräuchte er die Saat des
     /// Vorgängers, und die ist fort.
     pub nachweis: [u8; 32],
+    /// ⚑ **Belege, dass bestimmte Empfänger auf der Liste des Kontrakts
+    /// stehen** (J1, 2026-10-24): je Adresse ein Merkle-Beweis gegen die
+    /// Wurzel im Kontrakt. Der Inhaber hängt sie für die Knoten an, die bei
+    /// ihm abrechnen sollen; der Knoten nimmt den für seine eigene Adresse.
+    /// **Ausserhalb der Unterschriftenkette, und das darf so sein:** Ein
+    /// Beweis prüft sich selbst gegen die Wurzel auf der Kette, und wer
+    /// einen weglässt, schadet nur dem, der dann nicht abrechnen kann.
+    /// Höchstens [`EMPFAENGERBEWEISE_HOECHSTENS`].
+    pub empfaengerbeweise: Vec<(Address, crate::merkle::MerkleProof)>,
+}
+
+/// So viele Empfängerbeweise trägt eine Vollmacht höchstens; eine längere
+/// liest [`Vollmacht::aus_bearer`] nicht.
+pub const EMPFAENGERBEWEISE_HOECHSTENS: usize = 16;
+
+impl Vollmacht {
+    /// Hängt den Beweis für `wer` an (J1).
+    pub fn mit_empfaengerbeweis(mut self, wer: Address, beweis: crate::merkle::MerkleProof) -> Self {
+        self.empfaengerbeweise.retain(|(a, _)| *a != wer);
+        self.empfaengerbeweise.push((wer, beweis));
+        self
+    }
+
+    /// Der Beweis für `wer`, falls angehängt; sonst einer, der nichts
+    /// belegt.
+    pub fn empfaengerbeweis(&self, wer: &Address) -> crate::merkle::MerkleProof {
+        self.empfaengerbeweise
+            .iter()
+            .find(|(a, _)| a == wer)
+            .map(|(_, b)| b.clone())
+            .unwrap_or_else(crate::sitzung::kein_beweis)
+    }
 }
 
 impl Vollmacht {
@@ -232,6 +264,7 @@ impl Vollmacht {
                 unterschrift,
             }],
             nachweis: saat,
+            empfaengerbeweise: Vec::new(),
         })
     }
 
@@ -394,6 +427,9 @@ impl Vollmacht {
         // ⚑ **Und Borsh muss die Bytes vollständig lesen.** Ein
         // Anhängsel wäre ein zweiter Weg zu derselben Vollmacht.
         let v: Self = borsh::from_slice(&roh).ok()?;
+        if v.empfaengerbeweise.len() > EMPFAENGERBEWEISE_HOECHSTENS {
+            return None;
+        }
         (borsh::to_vec(&v).ok()? == roh).then_some(v)
     }
 
@@ -450,6 +486,26 @@ mod tests {
     }
 
     /// Eine ausgestellte Vollmacht gilt in ihrem Rahmen.
+    /// ⚑ **Empfängerbeweise reisen mit der Vollmacht** (J1) und kommen über
+    /// den Bearer unverändert zurück; mehr als
+    /// [`EMPFAENGERBEWEISE_HOECHSTENS`] liest `aus_bearer` nicht.
+    #[test]
+    fn empfaengerbeweise_reisen_mit_und_sind_gedeckelt() {
+        let liste: Vec<Address> = (1..=20u8).map(|b| Address::new([b; 32])).collect();
+        let mut v = Vollmacht::ausstellen(&agent(), Vec::new(), [9u8; 32]).expect("ausstellen");
+        let b = crate::sitzung::empfaengerbeweis(&liste, &liste[3]).expect("gelistet");
+        v = v.mit_empfaengerbeweis(liste[3], b.clone());
+        let zurueck = Vollmacht::aus_bearer(&v.als_bearer()).expect("lesbar");
+        assert_eq!(zurueck.empfaengerbeweis(&liste[3]), b);
+        assert_eq!(zurueck.empfaengerbeweis(&liste[4]).leaf_count, 0, "fehlt: belegt nichts");
+        for a in &liste {
+            let b = crate::sitzung::empfaengerbeweis(&liste, a).expect("gelistet");
+            v = v.mit_empfaengerbeweis(*a, b);
+        }
+        assert_eq!(v.empfaengerbeweise.len(), 20);
+        assert!(Vollmacht::aus_bearer(&v.als_bearer()).is_none(), "zu viele");
+    }
+
     #[test]
     fn eine_ausgestellte_vollmacht_gilt() {
         let v = Vollmacht::ausstellen(

@@ -48,29 +48,12 @@ yanked = "deny"
 # das ist die Grenze, die "workspace" zieht.
 unmaintained = "workspace"
 
-ignore = [
-    # ⚑ chacha20 0.10.1 ist zurueckgezogen und liegt trotzdem im Baum von
-    # myl-net, myl-node und myl-testclient.
-    #
-    # **Es ist nicht der Pfad, auf dem dieses Projekt verschluesselt.**
-    # Die eigene Sitzungsverschluesselung nimmt chacha20poly1305 0.10.1
-    # und darunter chacha20 **0.9.1**, und die ist nicht zurueckgezogen.
-    # Die 0.10.1 kommt allein ueber rand 0.10.2 in quinn-proto, also im
-    # Zufallszahlengenerator der QUIC-Schicht von libp2p.
-    #
-    # Aufgeloest ist das, sobald libp2p oder quinn nachziehen. Bis dahin
-    # steht die Ausnahme hier **einzeln und mit Grund**, damit ein
-    # zweiter zurueckgezogener Kandidat den Lauf bricht.
-    { crate = "chacha20@0.10.1", reason = "zurueckgezogen, nur ueber quinn-proto, nicht auf dem eigenen Kryptopfad; faellt mit dem naechsten libp2p" },
-]
-
-# ⚑ **„yanked crate was not encountered" bleibt absichtlich stehen**,
-# obwohl es aus demselben Zuschnitt kommt wie die Lizenzmeldung oben.
-# Der Unterschied: Diese Zeile ist die einzige Stelle, an der sichtbar
-# wird, dass die Ausnahme ueberfluessig geworden ist. Erscheint sie bei
-# **jeder** der dreiundzwanzig Kisten, hat libp2p nachgezogen und der
-# Eintrag oben gehoert geloescht. Bei einer einzelnen Kiste heisst sie
-# nur, dass deren Baum quinn-proto nicht enthaelt.
+# ⚑ **Keine Ausnahme.** Bis zum 2026-10-23 stand hier chacha20 0.10.1
+# (zurueckgezogen, ueber rand 0.10 im Baum von libp2p). Mit 0.10.2 gibt es
+# einen nicht zurueckgezogenen Nachfolger, und die Sperrdateien nehmen ihn.
+# Eine neue Ausnahme kommt nur einzeln, mit Kiste, Fassung und Grund, und
+# nur, wenn es keine behobene Fassung gibt.
+ignore = []
 
 [licenses]
 version = 2

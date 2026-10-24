@@ -78,6 +78,17 @@ impl Netz {
             .map(|(hoehe, b)| crate::abzug::Anker { hoehe: *hoehe, blockhash: Hash::from_bytes(*b) })
     }
 
+    /// Ob Höhe und Blockhash ein Anker dieses Netzes aus dem Quelltext sind.
+    ///
+    /// ⚑ **Ein solcher Anker verdient dasselbe Vertrauen wie Genesis**: Er
+    /// steht im ausgelieferten Programm. Eine Basis genau dort braucht keine
+    /// Hintergrundprüfung, und seit die Knoten ihre Kette verdichten
+    /// (2026-10-23), könnte ihr auch niemand mehr die Blöcke ab Genesis
+    /// liefern.
+    pub fn ist_anker(&self, hoehe: u64, blockhash: &Hash) -> bool {
+        self.abzuege.iter().any(|(h, b)| *h == hoehe && b == blockhash.as_bytes())
+    }
+
     /// Das Netz zu einem Namen.
     pub fn aus_name(name: &str) -> Option<&'static Netz> {
         NETZE.iter().find(|n| n.name == name)
@@ -125,7 +136,9 @@ pub const PROBEKETTE: Netz = Netz {
 
 /// Der Startwert des Testnetzes. Wie bei der Probekette sagt der Text,
 /// was die Kette ist und was nicht.
-pub const TESTNETZ_STARTWERT: &[u8] = b"MYELITH-TESTNETZ-RAVEN-35B-A3B-INT4-KEINE-ECHTE-KETTE";
+/// Seit der Historienwurzel (2026-10-23) mit neuer Kennung, aus demselben
+/// Grund wie bei [`crate::kette::PROBE_STARTWERT`].
+pub const TESTNETZ_STARTWERT: &[u8] = b"MYELITH-TESTNETZ-RAVEN-35B-A3B-INT4-KEINE-ECHTE-KETTE-H1";
 
 /// ⚑ **Das Testnetz mit dem int4-35B** (Festlegung des Projektinhabers vom
 /// 2026-10-22).

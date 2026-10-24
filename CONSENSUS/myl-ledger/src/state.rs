@@ -438,6 +438,24 @@ pub struct LedgerState {
     /// **während** ihr galt; drehte man zuerst, rechnete der Abschluss
     /// gegen eine Zuteilung, die es in dieser Epoche nie gab.
     pub epochensaat_naechste: Hash,
+
+    /// ⚑ **Die Historienwurzel** (Archivknoten, Stufe A2, 2026-10-23): ein
+    /// Merkle Mountain Range über die Hashes aller Blöcke dieser Kette, Blatt
+    /// `i` ist der Hash von Block `i` (Blatt 0 der Startwert). Fortgeschrieben
+    /// beim Anwenden jedes Blocks mit dem Hash seines **Vorgängers**: Den
+    /// eigenen kann der Zustand nicht tragen, denn der Blockhash deckt die
+    /// Zustandswurzel, in der die Historie steht.
+    ///
+    /// Damit lässt sich jeder alte Block mit einem kurzen Beweis gegen den
+    /// heutigen Zustand prüfen, ohne die Kette ab Genesis nachzurechnen; das
+    /// tragen das Nachladen der Archivknoten und ihre Stichproben.
+    pub historie: myl_types::historie::Historie,
+
+    /// ⚑ **Die Archivpflicht** (Archivknoten, Stufen A5 und A6,
+    /// 2026-10-23): Kopien und Splitter der laufenden Periode, Wurzel der
+    /// Grenze, Belege, verfehlte Epochen, Halter bis zur Übergabe. Siehe
+    /// [`crate::archiv`].
+    pub archiv: crate::archiv::Archivstand,
 }
 
 impl LedgerState {
@@ -473,6 +491,8 @@ impl LedgerState {
             // dieselbe wäre.
             epochensaat: Hash::from_bytes([0u8; 32]),
             epochensaat_naechste: Hash::from_bytes([0u8; 32]),
+            historie: myl_types::historie::Historie::default(),
+            archiv: crate::archiv::Archivstand::default(),
         }
     }
 

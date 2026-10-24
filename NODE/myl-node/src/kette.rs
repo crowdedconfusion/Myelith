@@ -129,6 +129,53 @@ pub const PROBEGUTHABEN: u64 = 10_000_000;
 /// Fall, im Betrieb um Größenordnungen weniger.
 pub const VERLAUFSFENSTER: usize = 256;
 
+/// **Wie lange eine Transaktion im Mempool wartet**, in eigenen Höhen
+/// (Fund 627): lange genug, dass eine überholte Vorgängerin nachkommt,
+/// kurz genug, dass Unsinn mit erfundener Nummer nicht liegen bleibt.
+pub const WARTEN_HOECHSTENS_HOEHEN: u64 = 64;
+
+/// **Höchstens so viele Transaktionen warten** (Fund 627); was darüber
+/// kommt, wird nicht aufgenommen.
+pub const MEMPOOL_HOECHSTENS: usize = 4096;
+
+/// ⚑ **So viele Bytes an Transaktionen trägt ein Block höchstens** (Fund 633):
+/// die Hälfte dessen, was Gossip an einem Block annimmt
+/// (`myl_net::validation::MAX_BLOCKS_BYTES`), damit Kopf, Rahmen und
+/// Saatquelle Platz haben. Bis zum 2026-10-24 ging jede gültige Transaktion
+/// in den nächsten Block; rund achtzig Archivbelege zu je 27 KB von einem
+/// beliebigen Konto ergaben einen Block, den kein Folger je bekam, und die
+/// Kette stand für alle. Was nicht passt, wartet auf den nächsten Block.
+pub const BLOCK_TXS_HOECHSTENS_BYTES: usize = myl_net::validation::MAX_BLOCKS_BYTES / 2;
+
+/// So viele Transaktionen eines Absenders hält der Mempool höchstens
+/// (Fund 633): Sonst füllt ein einziges Konto alle [`MEMPOOL_HOECHSTENS`]
+/// Plätze, und jede weitere Transaktion jedes anderen wird abgewiesen.
+pub const MEMPOOL_JE_ABSENDER: usize = 64;
+
+/// ⚑ **Neulinge** (Fund 635): Absender ohne Guthaben, ohne Einsatz und ohne
+/// Anmeldung als Miner. Eine Transaktion kostet heute nichts, und jede legt
+/// im Zustand ein Konto an; mit frischen Schlüsseln liesse sich so der
+/// Mempool füllen und der Zustand ohne Grenze aufblähen. Ganz schliessen das
+/// erst Gebühren oder ein Mindesteinsatz (eine Entscheidung des
+/// Projektinhabers); bis dahin kommen Neulinge nur gedrosselt hinein:
+/// höchstens so viele zugleich in den Mempool ...
+pub const MEMPOOL_NEULINGE_HOECHSTENS: usize = 32;
+/// ... und höchstens so viele in einen Block. Ein neuer Knoten braucht eine
+/// einzige Transaktion, die Anmeldung; danach ist er kein Neuling mehr.
+pub const BLOCK_NEULINGE_HOECHSTENS: usize = 16;
+
+/// Ob `a` ein Neuling ist (siehe [`MEMPOOL_NEULINGE_HOECHSTENS`]).
+fn ist_neuling(z: &LedgerState, a: &Address) -> bool {
+    let k = z.account(a);
+    k.balance == 0 && k.staked == 0 && !z.miner.contains_key(&myl_types::ids::MinerId::new(*a.as_bytes()))
+}
+
+/// So viele codierte Gruppen hält die Kette für Splitter vor (Fund 632).
+/// Mit einer einzigen erzwang jede Anfrage nach einer anderen Gruppe eine
+/// neue Codierung von 1024 Blöcken, auch unter ehrlichen Splittern, die
+/// verschiedene Gruppen zugleich holen.
+pub const TEILGRUPPEN_BEHALTEN: usize = 8;
+
 /// Der Startwert, an dem die Probekette hängt.
 ///
 /// **Der Riegel gegen eine Verwechslung mit dem echten Netz.** Ein Block
@@ -136,8 +183,13 @@ pub const VERLAUFSFENSTER: usize = 256;
 /// echtes Netz beginnt bei einem anderen, und damit passt ein Probeblock
 /// dort nirgends hinein. Der Text sagt es auch dem, der die Bytes
 /// anschaut.
+///
+/// ⚑ **Mit der Historienwurzel neu** (2026-10-23): Der Zustand trägt seitdem
+/// die Historie, und eine Kettendatei von davor rechnete an Block 1 eine
+/// andere Wurzel. Mit einem neuen Startwert weist der Knoten sie gleich beim
+/// Öffnen als fremde Kette ab, statt an einer Wurzel zu scheitern.
 pub const PROBE_STARTWERT: &[u8] =
-    b"MYELITH-PROBELAUF-KEIN-TESTNETZ-KEINE-ECHTE-KETTE";
+    b"MYELITH-PROBELAUF-KEIN-TESTNETZ-KEINE-ECHTE-KETTE-H1";
 
 /// ## ⚑ Warum es diese Konten gibt
 ///
@@ -393,7 +445,8 @@ pub struct Kette {
     /// Eine Ziehung, die niemand sieht, ist von keiner Ziehung nicht zu
     /// unterscheiden, und das war Fund 114.
     letzte_stichprobe: Option<(u64, Vec<crate::stichprobe::Segmentstichprobe>)>,
-    mempool: Vec<Transaktion>,
+    /// Wartende Transaktionen, je mit der eigenen Höhe bei der Aufnahme.
+    mempool: Vec<(u64, Transaktion)>,
     /// Die Hashes der übernommenen Blöcke, damit Dubletten aus dem
     /// Gossip nicht zweimal angewandt werden.
     bekannt: std::collections::HashSet<Hash>,
@@ -448,6 +501,28 @@ pub struct Kette {
     basis: u64,
     /// Der zuletzt angelegte Abzug (Höhe, Blockhash), für das Protokoll.
     letzter_abzug: Option<(u64, Hash)>,
+    /// ⚑ **Das Platzbudget der Kettendatei in Bytes** (Festlegung des
+    /// Projektinhabers vom 2026-10-23); null heißt ohne Grenze. Siehe
+    /// [`Kette::verdichten_wenn_noetig`].
+    budget: u64,
+    /// Die letzte Verdichtung (neue Basis, Bytes vorher, nachher), bis
+    /// der Knoten sie ins Protokoll geschrieben hat.
+    verdichtet: Option<(u64, u64, u64)>,
+    /// Die eigene Kennung als Miner, für die Auslosung der Archivknoten.
+    archivkennung: Option<myl_types::ids::MinerId>,
+    /// ⚑ **Der Historienbaum** (Archivknoten, Stufe A4): Solange die Kette
+    /// ab Genesis lebt, führt sie neben der Historie im Zustand die Knoten
+    /// ab Stufe zehn mit (rund 64 Byte je 1024 Blöcke) und kann damit jedem,
+    /// der nachlädt, Beweise gegen seine Basis geben. Ab einer Basis fehlt
+    /// ihr der Anfang, dann `None`.
+    baum: Option<myl_types::historie::Historienbaum>,
+    /// Die Gruppenwurzeln des laufenden Abschnitts (Grenze, Wurzeln), einmal
+    /// gerechnet, für die Teilwurzel und die Pfade der Teile.
+    teilcache: Option<(u64, Vec<Hash>)>,
+    /// Die zuletzt codierten Gruppen, höchstens [`TEILGRUPPEN_BEHALTEN`]:
+    /// Splitter fragen dieselben, aber nicht alle zugleich dieselbe
+    /// (Fund 632).
+    teilgruppe: std::collections::VecDeque<(u64, Vec<Vec<u8>>)>,
 }
 
 /// ⚑ **Dieselbe Bindung wie in `myl_pod::pipelinewerk`** (seit
@@ -537,6 +612,12 @@ impl Kette {
             ablage: None,
             basis: 0,
             letzter_abzug: None,
+            budget: 0,
+            verdichtet: None,
+            archivkennung: None,
+            baum: Some(Default::default()),
+            teilcache: None,
+            teilgruppe: std::collections::VecDeque::new(),
         }
     }
 
@@ -598,6 +679,296 @@ impl Kette {
         self.speicher = Some(speicher);
     }
 
+    /// Das Platzbudget der Kettendatei, in Bytes; null heißt ohne Grenze.
+    pub fn budget_setzen(&mut self, bytes: u64) {
+        self.budget = bytes;
+    }
+
+    /// Die eigene Kennung als Miner, für die Auslosung der Archivknoten.
+    pub fn archivkennung_setzen(&mut self, kennung: Option<myl_types::ids::MinerId>) {
+        self.archivkennung = kennung;
+    }
+
+    /// (behält jetzt alles, ist Kopie der laufenden Periode), aus dem
+    /// Archivstand des Zustands.
+    pub fn archiv(&self) -> (bool, bool) {
+        let ich = self.archivkennung.as_ref();
+        (self.zustand.archiv.behaelt(ich), ich.is_some_and(|m| self.zustand.archiv.ist_kopie(m)))
+    }
+
+    /// **Wer die Geschichte haben sollte**: die Netzadressen der Halter (sie
+    /// behalten, bis die neuen Kopien belegt haben), dann der Kopien, die
+    /// schon vollständig belegt haben, dann der übrigen. Ohne die eigene.
+    pub fn archivkopien(&self) -> Vec<myl_types::latency_attest::PeerIdBytes> {
+        let a = &self.zustand.archiv;
+        let vollstaendig = a.kopien.iter().filter(|k| a.vollstaendig.contains(k));
+        let uebrige = a.kopien.iter().filter(|k| !a.vollstaendig.contains(k));
+        let mut aus = Vec::new();
+        for k in a.halter.iter().chain(vollstaendig).chain(uebrige) {
+            if Some(*k) == self.archivkennung {
+                continue;
+            }
+            if let Some(m) = self.zustand.miner.get(k) {
+                if !aus.contains(&m.netzadresse) {
+                    aus.push(m.netzadresse);
+                }
+            }
+        }
+        aus
+    }
+
+    /// Die eigene Archivrolle.
+    pub fn archivrolle(&self) -> myl_types::archivwahl::Archivrolle {
+        crate::archiv::rolle(&self.zustand.archiv, self.archivkennung.as_ref())
+    }
+
+    /// Eine gezogene Kopie, der die Geschichte vor ihrer Basis fehlt: Sie
+    /// muss sie holen. Ohne Ziehung muss keiner nachladen, denn dann hat
+    /// auch keiner verdichtet.
+    pub fn braucht_geschichte(&self) -> bool {
+        self.archivkennung.as_ref().is_some_and(|m| self.zustand.archiv.ist_kopie(m)) && self.basis > 0
+    }
+
+    /// **Der eigene Archivbeleg dieser Epoche** (Stufe A5): die Blöcke der
+    /// Stichproben als Bytes und je ein Beweis gegen die Historienwurzel der
+    /// Grenze. `None`, wenn `wer` nicht Kopie ist, schon belegt hat oder
+    /// dieser Kette die Geschichte fehlt.
+    pub fn archivbeleg(&mut self, wer: &myl_types::ids::MinerId) -> Option<Anweisung> {
+        let a = &self.zustand.archiv;
+        if !a.ist_kopie(wer) || a.belegt.contains(wer) {
+            return None;
+        }
+        let grenze = a.grenze;
+        let hoehen = myl_ledger::archiv::stichproben(
+            a,
+            &self.zustand.epochensaat,
+            self.zustand.epoch.0,
+            wer,
+            a.stichprobenzahl(wer),
+        );
+        let baum = self.baum.take()?;
+        let mut bloecke = Vec::with_capacity(hoehen.len());
+        let mut beweise = Vec::with_capacity(hoehen.len());
+        let mut ok = true;
+        for &h in &hoehen {
+            let block = self.bloecke_von_bis(h, h).pop().filter(|b| b.header.height == h);
+            let beweis = baum.beweis_bei(h, grenze, |g| self.gruppenblaetter(g));
+            match (block.and_then(|b| borsh::to_vec(&b).ok()), beweis) {
+                (Some(roh), Some(bw)) => {
+                    bloecke.push(roh);
+                    beweise.push(bw);
+                }
+                _ => {
+                    ok = false;
+                    break;
+                }
+            }
+        }
+        self.baum = Some(baum);
+        ok.then_some(Anweisung::ArchivBelegen { bloecke, beweise })
+    }
+
+    /// Die Blöcke der Gruppe `g` als Bytes; `None`, wenn diese Kette sie
+    /// nicht ganz hat.
+    pub fn gruppenbloecke(&mut self, g: u64) -> Option<Vec<Vec<u8>>> {
+        let hoehen = myl_types::archivteile::gruppenhoehen(g);
+        let (ab, bis) = (*hoehen.start(), *hoehen.end());
+        if bis > self.hoehe {
+            return None;
+        }
+        let mut aus = Vec::with_capacity((bis - ab + 1) as usize);
+        let mut h = ab;
+        while h <= bis {
+            let teil = self.bloecke_von_bis(h, bis);
+            if teil.first()?.header.height != h {
+                return None;
+            }
+            for b in &teil {
+                aus.push(borsh::to_vec(b).ok()?);
+            }
+            h += teil.len() as u64;
+        }
+        Some(aus)
+    }
+
+    /// Die 64 Teile der Gruppe `g`, aus dem Zwischenspeicher oder frisch.
+    fn gruppenteile(&mut self, g: u64) -> Option<Vec<Vec<u8>>> {
+        if let Some((_, t)) = self.teilgruppe.iter().find(|(x, _)| *x == g) {
+            return Some(t.clone());
+        }
+        let teile = myl_types::archivteile::kodieren(&self.gruppenbloecke(g)?);
+        if self.teilgruppe.len() >= TEILGRUPPEN_BEHALTEN {
+            self.teilgruppe.pop_front();
+        }
+        self.teilgruppe.push_back((g, teile.clone()));
+        Some(teile)
+    }
+
+    /// **Die Gruppenwurzeln des laufenden Abschnitts**, einmal je Grenze
+    /// gerechnet; `None`, wenn dieser Kette Blöcke fehlen.
+    fn gruppenwurzeln(&mut self) -> Option<Vec<Hash>> {
+        let a = &self.zustand.archiv;
+        let (grenze, ab, bis) = (a.grenze, a.teil_ab, a.teil_bis);
+        if let Some((g, w)) = &self.teilcache {
+            if *g == grenze {
+                return Some(w.clone());
+            }
+        }
+        let mut wurzeln = Vec::with_capacity((bis - ab) as usize);
+        for g in ab..bis {
+            let teile = myl_types::archivteile::kodieren(&self.gruppenbloecke(g)?);
+            wurzeln.push(myl_types::archivteile::gruppenwurzel(&teile)?);
+        }
+        self.teilcache = Some((grenze, wurzeln.clone()));
+        Some(wurzeln)
+    }
+
+    /// **Die Teilwurzel, die eine Kopie nennt** (Stufe A7): `None`, wenn
+    /// `wer` nicht Kopie ist, schon genannt hat, die Wurzel schon gilt oder
+    /// Blöcke fehlen.
+    pub fn teilwurzel_anweisung(&mut self, wer: &myl_types::ids::MinerId) -> Option<Anweisung> {
+        let a = &self.zustand.archiv;
+        if !a.ist_kopie(wer) || a.teilwurzel.is_some() || a.teil_ab == a.teil_bis || a.teilstimmen.contains_key(wer) {
+            return None;
+        }
+        let w = self.gruppenwurzeln()?;
+        Some(Anweisung::ArchivTeilwurzel { wurzel: myl_types::archivteile::teilwurzel(&w)? })
+    }
+
+    /// **Teil `teil` der Gruppe an Stelle `stelle`** des laufenden
+    /// Abschnitts, mit Beweis: was ein Splitter holt. Nur gegen die
+    /// geltende Teilwurzel, damit niemand etwas liefert, das sich nicht
+    /// belegen lässt.
+    pub fn teilstueck(
+        &mut self,
+        grenze: u64,
+        stelle: u64,
+        teil: u64,
+    ) -> Option<(Vec<u8>, myl_types::archivteile::Teilbeweis)> {
+        let a = &self.zustand.archiv;
+        let geltend = a.teilwurzel?;
+        if a.grenze != grenze || stelle >= a.teil_bis - a.teil_ab || teil >= myl_types::archivteile::TEILE as u64 {
+            return None;
+        }
+        let g = a.teil_ab + stelle;
+        let wurzeln = self.gruppenwurzeln()?;
+        if myl_types::archivteile::teilwurzel(&wurzeln)? != geltend {
+            return None;
+        }
+        let teile = self.gruppenteile(g)?;
+        let bw = myl_types::archivteile::Teilbeweis::bauen(&teile, teil as usize, &wurzeln, stelle as usize)?;
+        Some((teile[teil as usize].clone(), bw))
+    }
+
+    /// **Setzt die geprüfte Geschichte vor die Kette** und entfernt die
+    /// Basis; die Kette lebt danach wieder ab Genesis. Gibt die Zahl der
+    /// eingefügten Blöcke zurück.
+    pub fn geschichte_einfuegen(&mut self, archiv: &std::path::Path) -> Result<u64, String> {
+        let speicher = self.speicher.as_mut().ok_or("ohne Kettendatei")?;
+        let n = speicher.vorne_einfuegen(archiv).map_err(|e| e.to_string())?;
+        if let Some(a) = self.ablage.as_ref() {
+            a.basis_entfernen().map_err(|e| e.to_string())?;
+        }
+        self.basis = 0;
+        self.baum_aufbauen()?;
+        Ok(n)
+    }
+
+    /// **Baut den Historienbaum aus der Kettendatei neu**, nach dem
+    /// Einfügen der Geschichte. Er muss die Historie des Zustands treffen;
+    /// sonst stimmt die Datei nicht mit dem Zustand überein, und der Baum
+    /// bleibt weg, statt falsche Beweise zu geben.
+    fn baum_aufbauen(&mut self) -> Result<(), String> {
+        let hoehe = self.hoehe;
+        let mut baum = myl_types::historie::Historienbaum::default();
+        baum.anhaengen(&self.netz().startwert_hash());
+        let speicher = self.speicher.as_mut().ok_or("ohne Kettendatei")?;
+        speicher
+            .fuer_jeden_satz(|b| {
+                if b.header.height < hoehe {
+                    baum.anhaengen(&b.hash());
+                }
+            })
+            .map_err(|e| e.to_string())?;
+        if baum.historie() != &self.zustand.historie {
+            return Err("die Kettendatei trifft die Historie des Zustands nicht".into());
+        }
+        self.baum = Some(baum);
+        Ok(())
+    }
+
+    /// **Eine Lieferung für jemanden, der die Geschichte nachlädt**
+    /// (Stufe A4): die Blöcke `ab..=bis`, gekürzt auf eine Antwort, und der
+    /// Beweis des letzten gegen die Historie mit `anzahl` Blöcken. `None`,
+    /// wenn diese Kette nicht ab Genesis lebt oder der Bereich nicht vor
+    /// `anzahl` liegt.
+    pub fn archivlieferung(
+        &mut self,
+        ab: u64,
+        bis: u64,
+        anzahl: u64,
+    ) -> Option<(Vec<Block>, myl_types::historie::Beweis)> {
+        let n = self.baum.as_ref()?.historie().anzahl();
+        if ab == 0 || ab > bis || bis >= anzahl || anzahl > n {
+            return None;
+        }
+        let bloecke = crate::nachschub::in_die_antwort_mit(
+            self.bloecke_von_bis(ab, bis),
+            crate::nachschub::BEWEIS_HOECHSTENS_BYTES,
+        );
+        let letzte = bloecke.last()?.header.height;
+        if bloecke.first()?.header.height != ab {
+            return None;
+        }
+        let baum = self.baum.take()?;
+        let beweis = baum.beweis_bei(letzte, anzahl, |g| self.gruppenblaetter(g));
+        self.baum = Some(baum);
+        Some((bloecke, beweis?))
+    }
+
+    /// Die Blatt-Hashes der Gruppe `g`: Blatt `i` ist der Hash von Block
+    /// `i`, Blatt 0 der Startwert.
+    fn gruppenblaetter(&mut self, g: u64) -> Option<Vec<Hash>> {
+        use myl_types::historie::{blatt, GRUPPENSTUFE};
+        let groesse = 1u64 << GRUPPENSTUFE;
+        let erstes = g.checked_mul(groesse)?;
+        let mut blaetter = Vec::with_capacity(groesse as usize);
+        let mut h = erstes;
+        if h == 0 {
+            blaetter.push(blatt(&self.netz().startwert_hash()));
+            h = 1;
+        }
+        while h < erstes + groesse {
+            let teil = self.bloecke_von_bis(h, erstes + groesse - 1);
+            if teil.first()?.header.height != h {
+                return None;
+            }
+            for b in &teil {
+                blaetter.push(blatt(&b.hash()));
+            }
+            h += teil.len() as u64;
+        }
+        Some(blaetter)
+    }
+
+    /// Die Ablage der Teile, wenn dieser Knoten Splitter ist.
+    pub fn teilablage(&self) -> Option<crate::teilablage::Teilablage> {
+        Some(crate::teilablage::Teilablage::neben(self.speicher.as_ref()?.pfad()))
+    }
+
+    /// Wo eine nachgeladene Geschichte liegt, bis sie eingefügt ist.
+    pub fn archivpfad(&self) -> Option<std::path::PathBuf> {
+        let p = self.speicher.as_ref()?.pfad();
+        let mut n = p.as_os_str().to_owned();
+        n.push(".archiv");
+        Some(std::path::PathBuf::from(n))
+    }
+
+    /// Die letzte Verdichtung (neue Basis, Bytes vorher, nachher), einmal.
+    pub fn verdichtung_nehmen(&mut self) -> Option<(u64, u64, u64)> {
+        self.verdichtet.take()
+    }
+
     /// Die Ablage der Abzüge; ab jetzt entsteht an jeder Epochengrenze einer.
     pub fn ablage_setzen(&mut self, ablage: crate::abzug::Ablage) {
         self.ablage = Some(ablage);
@@ -643,8 +1014,64 @@ impl Kette {
         self.bekannt.insert(hash);
         self.verlauf_aufnehmen(abzug.hoehe(), &abzug.block);
         self.basis = abzug.hoehe();
+        self.baum = None;
         self.naechste_saatquelle = None;
         self.letzte_stichprobe = None;
+        Ok(())
+    }
+
+    /// ⚑ **Vorspulen beim Wiederanlauf** (Fund 629): einen Block aus der
+    /// eigenen Kettendatei übernehmen, ohne ihn anzuwenden, bis zu einem
+    /// eigenen Abzug ([`Kette::abzug_einsetzen`]). Geprüft wird, was ohne
+    /// Rechnung geht: Anschluss, Höhe, Epoche; Fenster, bekannte Hashes und
+    /// Historienbaum wachsen wie beim Übernehmen. **Der Zustand steht danach
+    /// nicht zur Höhe**, bis der Abzug eingesetzt ist; ausserhalb des
+    /// Ladens ruft das niemand.
+    pub fn vorspulen(&mut self, block: &Block) -> Result<(), KettenFehler> {
+        if block.header.prev_block_hash != self.letzter_hash {
+            return Err(KettenFehler::PasstNichtAn { erwartet: self.letzter_hash, bekommen: block.header.prev_block_hash });
+        }
+        if block.header.height != self.hoehe + 1 {
+            return Err(KettenFehler::HoeheWeichtAb { erwartet: self.hoehe + 1, bekommen: block.header.height });
+        }
+        let epoche = epoche_fuer_hoehe(block.header.height);
+        if block.header.epoch != epoche {
+            return Err(KettenFehler::EpocheWeichtAb { erwartet: epoche, bekommen: block.header.epoch });
+        }
+        let hash = block.hash();
+        if let Some(b) = self.baum.as_mut() {
+            b.anhaengen(&self.letzter_hash);
+        }
+        self.hoehe = block.header.height;
+        self.letzter_hash = hash;
+        self.bekannt.insert(hash);
+        self.verlauf_aufnehmen(block.header.height, block);
+        Ok(())
+    }
+
+    /// ⚑ **Den eigenen Abzug einsetzen**, nachdem bis zu seinem Block
+    /// vorgespult ist (Fund 629).
+    ///
+    /// Gilt nur, wenn der vorgespulte letzte Block genau der Block des
+    /// Abzugs ist; dessen Zustandswurzel bindet die Bytes
+    /// ([`crate::abzug::Ablage::lesen`] hat sie geprüft), und die Kette von
+    /// Hashes bindet den Block an die Basis. Lebt die Kette ab Genesis, muss
+    /// zudem der Historienbaum aus der Datei die Historie im Zustand treffen.
+    ///
+    /// ⚑ **Was hier nicht nachgerechnet wird**, sind die Übergänge bis zum
+    /// Abzug: Diese Blöcke hat der Knoten selbst angewandt, bevor er sie
+    /// schrieb, und den Abzug danach selbst abgelegt. Ein vollständiges
+    /// Nachspielen bei jedem Start bewies das nur noch einmal, und es kostete
+    /// mit der Geschichte wachsend: im Archivlauf vom 2026-10-24 166 s für
+    /// 349 646 Blöcke, und eine Kopie verlor darüber ihren Platz.
+    pub fn abzug_einsetzen(&mut self, abzug: &crate::abzug::Abzug, zustand: LedgerState) -> Result<(), String> {
+        if self.hoehe != abzug.hoehe() || self.letzter_hash != abzug.block.hash() {
+            return Err(format!("vorgespult bis {}, der Abzug steht bei {}", self.hoehe, abzug.hoehe()));
+        }
+        if self.baum.as_ref().is_some_and(|b| b.historie() != &zustand.historie) {
+            return Err("die Kettendatei trifft die Historie des Abzugs nicht".into());
+        }
+        self.zustand = zustand;
         Ok(())
     }
 
@@ -667,6 +1094,71 @@ impl Kette {
         let abzug = crate::abzug::Abzug { block: block.clone(), zustand };
         match ablage.ablegen(&abzug) {
             Ok(()) => self.letzter_abzug = Some((hoehe, block.hash())),
+            Err(_) => self.schreibfehler += 1,
+        }
+        if crate::abzug::ist_langzeit(hoehe) {
+            self.verdichten_wenn_noetig();
+        }
+    }
+
+    /// **Die Kettendatei unter ihr Budget bringen** (Funde 624 und 625,
+    /// Festlegung des Projektinhabers vom 2026-10-23).
+    ///
+    /// Jeder Knoten, der nicht Kopie ist ([`crate::archiv`]), behält
+    /// alles ab einem Langzeitabzug, und zwar **wenigstens ab dem vorletzten**.
+    /// Liegt die Datei über dem Budget, wird der älteste Langzeitabzug zur
+    /// Basis, nach dem höchstens noch die Hälfte des Budgets liegt; so
+    /// läuft das selten und lässt reichlich Geschichte stehen. Reicht auch
+    /// der vorletzte nicht, gilt er trotzdem: Die Mindestmenge geht vor dem
+    /// Budget.
+    ///
+    /// Danach beginnt die Datei hinter der neuen Basis, genau wie bei einem
+    /// Neuling aus einem Abzug, und ein Neustart rechnet ab dort nach statt
+    /// ab Genesis. Ein Fehler zählt als Schreibfehler und lässt die alte
+    /// Datei stehen.
+    fn verdichten_wenn_noetig(&mut self) {
+        let (Some(speicher), Some(ablage)) = (self.speicher.as_mut(), self.ablage.as_ref()) else {
+            return;
+        };
+        let vorher = speicher.laenge();
+        if self.budget == 0 || vorher <= self.budget {
+            return;
+        }
+        // ⚑ Wer laut Zustand hält (Kopie, Halter, jeder vor der ersten
+        //   Übergabe), verdichtet nicht.
+        if self.zustand.archiv.behaelt(self.archivkennung.as_ref()) {
+            return;
+        }
+        let langzeit: Vec<u64> = ablage
+            .hoehen()
+            .into_iter()
+            .filter(|&h| crate::abzug::ist_langzeit(h) && h > self.basis)
+            .collect();
+        let Some(&spaetestens) = langzeit.len().checked_sub(2).and_then(|i| langzeit.get(i)) else {
+            return;
+        };
+        let neue_basis = langzeit
+            .iter()
+            .copied()
+            .filter(|&h| h <= spaetestens)
+            .find(|&h| speicher.bytes_nach(h) <= self.budget / 2)
+            .unwrap_or(spaetestens);
+        let ergebnis = speicher
+            .verdichten_vorbereiten(neue_basis)
+            .map_err(|e| e.to_string())
+            .and_then(|_| ablage.basis_setzen(neue_basis).map_err(|e| e.to_string()))
+            // ⚑ Selbst gerechnet, also bestätigt: Sonst begänne der nächste
+            //   Neustart eine Hintergrundprüfung ab Genesis, die niemand mehr
+            //   bedienen kann.
+            .and_then(|()| ablage.bestaetigt_setzen(neue_basis).map_err(|e| e.to_string()))
+            .and_then(|()| speicher.verdichten_abschliessen().map_err(|e| e.to_string()));
+        match ergebnis {
+            Ok(()) => {
+                self.basis = neue_basis;
+                self.baum = None;
+                let _ = ablage.raeumen();
+                self.verdichtet = Some((neue_basis, vorher, speicher.laenge()));
+            }
             Err(_) => self.schreibfehler += 1,
         }
     }
@@ -713,35 +1205,21 @@ impl Kette {
         self.zustand.commitment()
     }
 
-    /// Entfernt aus dem Mempool, was in einem Block angekommen ist.
+    /// **Hält den Mempool klein** (Fund 627): Was seine Nummer im Zustand
+    /// schon verbraucht hat, kann nie mehr gelten, und was länger als
+    /// [`WARTEN_HOECHSTENS_HOEHEN`] wartet, kommt nicht mehr.
     ///
-    /// Vergleich über die serialisierten Bytes: Zwei Transaktionen sind
-    /// dieselbe, wenn sie sich gleich schreiben. Ein Feldvergleich wäre
-    /// dasselbe mit mehr Code, und bei einem neuen Feld würde er still
-    /// falsch.
-    ///
-    /// **Je Vorkommen eines**, nicht alle gleichen auf einmal:
-    /// Dieselbe Transaktion zweimal eingereicht ist zweimal eingereicht,
-    /// und wenn ein Block sie einmal enthält, wartet die andere weiter.
-    fn streiche_verarbeitete(&mut self, verarbeitet: &[Transaktion]) {
-        if self.mempool.is_empty() || verarbeitet.is_empty() {
-            return;
-        }
-        let mut zu_streichen: Vec<Vec<u8>> = verarbeitet
-            .iter()
-            .filter_map(|t| borsh::to_vec(t).ok())
-            .collect();
-        self.mempool.retain(|t| {
-            let Ok(bytes) = borsh::to_vec(t) else {
-                return true;
-            };
-            match zu_streichen.iter().position(|z| z == &bytes) {
-                Some(i) => {
-                    zu_streichen.swap_remove(i);
-                    false
-                }
-                None => true,
-            }
+    /// ⚑ Das ersetzt den Vergleich über die Bytes, der je Block jede
+    /// wartende Transaktion serialisierte. Im Archivlauf vom 2026-10-24
+    /// lagen auf den übernehmenden Knoten über 5000 davon, weil jede, die
+    /// nach ihrem Block über Gossip ankam, nie gestrichen wurde; die Knoten
+    /// fielen dabei hinter den Erzeuger zurück. Was ein Block enthält, hat
+    /// seine Nummer verbraucht, fällt hier also ebenso heraus.
+    fn mempool_bereinigen(&mut self, hoehe: u64) {
+        let zustand = &self.zustand;
+        self.mempool.retain(|(seit, tx)| {
+            hoehe.saturating_sub(*seit) < WARTEN_HOECHSTENS_HOEHEN
+                && tx.nonce >= zustand.account(&tx.absender_adresse()).nonce
         });
     }
 
@@ -814,20 +1292,15 @@ impl Kette {
         // Bis zur Untergrenze des Fensters, damit kein Block zweimal
         // in die Antwort kommt.
         let bis_datei = bis.min(untergrenze - 1);
-        let mut aus_der_datei = Vec::new();
-        let mut fehler = 0u64;
-        for hoehe in speicher.hoehen_von_bis(ab, bis_datei) {
-            match speicher.block_bei(hoehe) {
-                Ok(Some(b)) => aus_der_datei.push(b),
-                // Der Verweis sagte, der Satz sei da, und er ist es
-                // nicht: dieselbe Lage wie ein Lesefehler.
-                Ok(None) => fehler += 1,
-                // Ein Lesefehler bricht die Lieferung nicht ab, denn
-                // ein Teil ist besser als nichts, aber er wird gezählt.
-                Err(_) => fehler += 1,
+        // Ein Lesefehler bricht die Lieferung ab und wird gezählt; was das
+        // Fenster hat, geht trotzdem hinaus.
+        let mut aus_der_datei = match speicher.bloecke_ab(ab, bis_datei) {
+            Ok(b) => b,
+            Err(_) => {
+                self.lesefehler += 1;
+                Vec::new()
             }
-        }
-        self.lesefehler += fehler;
+        };
         aus_der_datei.extend(aus_dem_fenster);
         aus_der_datei
     }
@@ -853,23 +1326,35 @@ impl Kette {
         self.mempool.len()
     }
 
-    /// Nimmt eine Transaktion in den Mempool.
+    /// Nimmt eine Transaktion in den Mempool; `false`, wenn ihre Nummer
+    /// schon verbraucht ist oder der Mempool voll ist.
     ///
-    /// Ohne Prüfung: Ob sie durchgeht, entscheidet sich beim Anwenden.
-    /// Eine Vorprüfung hier bräuchte den Zustand **zum Zeitpunkt der
-    /// Aufnahme**, und der ist nicht der beim Anwenden.
-    pub fn aufnehmen(&mut self, tx: Transaktion) {
-        self.mempool.push(tx);
+    /// Ob sie durchgeht, entscheidet sich beim Anwenden. Eine Vorprüfung
+    /// hier bräuchte den Zustand **zum Zeitpunkt der Aufnahme**, und der
+    /// ist nicht der beim Anwenden. ⚑ **Bis auf die Nummer** (Fund 627):
+    /// Sie wächst nur, also gilt eine Transaktion unter der Nummer im
+    /// Zustand auch später nie. Dazu die Grenzen aus Fund 633: insgesamt
+    /// [`MEMPOOL_HOECHSTENS`], je Absender [`MEMPOOL_JE_ABSENDER`].
+    pub fn aufnehmen(&mut self, tx: Transaktion) -> bool {
+        let absender = tx.absender_adresse();
+        if self.mempool.len() >= MEMPOOL_HOECHSTENS
+            || tx.nonce < self.zustand.account(&absender).nonce
+            || self.mempool.iter().filter(|(_, t)| t.absender_adresse() == absender).count() >= MEMPOOL_JE_ABSENDER
+            || (ist_neuling(&self.zustand, &absender)
+                && self.mempool.iter().filter(|(_, t)| ist_neuling(&self.zustand, &t.absender_adresse())).count()
+                    >= MEMPOOL_NEULINGE_HOECHSTENS)
+        {
+            return false;
+        }
+        self.mempool.push((self.hoehe, tx));
+        true
     }
 
     /// Liest eine Transaktion aus Gossip-Bytes und nimmt sie auf.
     pub fn aufnehmen_roh(&mut self, daten: &[u8]) -> bool {
         let mut rest = daten;
         match Transaktion::deserialize(&mut rest) {
-            Ok(tx) if rest.is_empty() => {
-                self.aufnehmen(tx);
-                true
-            }
+            Ok(tx) if rest.is_empty() => self.aufnehmen(tx),
             _ => false,
         }
     }
@@ -1629,7 +2114,7 @@ impl Kette {
         let trainingsplan = Self::trainingsplan_der_laufenden_epoche(zustand);
         let trainingszuschreibung =
             Self::trainingszuschreibung(zustand, &trainingsplan.paare, alte_epoche);
-        let _ = myl_tokenomics::ausschuettung::epochenausschuettung_mit_training(
+        let ausschuettung = myl_tokenomics::ausschuettung::epochenausschuettung_mit_training(
             zustand,
             &zuschreibung,
             &trainingszuschreibung,
@@ -1639,6 +2124,19 @@ impl Kette {
             // kommen; eine zweite Rechnung wäre eine zweite Wahrheit.
             trainingsplan.auslastung,
             &Self::praegeparameter(),
+        );
+        // ⚑ **Die Archivpflicht der abgelaufenen Epoche** (Stufe A5):
+        //   Gutschrift aus dem, was die Treasury eben bekam, verfehlte
+        //   Epochen, Verstoß und Nachrücken.
+        let treasury_eingang = ausschuettung
+            .ok()
+            .and_then(|a| a.je_konto.get(&myl_types::treasury::treasury_adresse()).copied())
+            .unwrap_or(0);
+        let _ = myl_ledger::archiv::epoche_abschliessen(
+            zustand,
+            alte_epoche,
+            treasury_eingang,
+            crate::archiv::WARTE_EPOCHEN,
         );
         // ⚑ **Stufe 2 wird gezogen, und zwar hier** (Punkt 45, Fund
         // 114). Vorher lief sie in keinem Knoten, und `p` aus Anhang
@@ -1754,8 +2252,20 @@ impl Kette {
         letzter_hash: &Hash,
         saatquelle: Option<&[u8]>,
         gezogen: &mut Option<(u64, Vec<crate::stichprobe::Segmentstichprobe>)>,
-    ) {
+    ) -> Vec<bool> {
+        // ⚑ **Die Historie zuerst** (Archivknoten, Stufe A2): der Hash des
+        //   Vorgängers, also des Blocks, an den dieser anschliesst. Erzeuger
+        //   und Übernehmer gehen beide hier durch und hängen dasselbe an.
+        zustand.historie.anhaengen(letzter_hash);
         Self::epochenwechsel_abschliessen(zustand, epoch, letzter_hash, saatquelle, gezogen);
+        // ⚑ **Die Ziehung der Archivkopien** (Stufe A5) am Grenzblock, nach
+        //   dem Abschluss der letzten Epoche der alten Periode und vor den
+        //   Transaktionen: Die Historie zählt jetzt genau die Blöcke vor der
+        //   Grenze.
+        let hoehe = zustand.historie.anzahl();
+        if hoehe > 0 && hoehe.is_multiple_of(crate::archiv::PERIODE_BLOECKE) {
+            myl_ledger::archiv::grenze_ziehen(zustand, hoehe, epoch, crate::archiv::WARTE_EPOCHEN);
+        }
         // ⚑ **Die Epoche des Zustands wird mitgeführt** (seit
         // 2026-08-27). Vorher stand sie auf 0 und blieb dort: `anwenden`
         // benutzte die Epoche nur, um den Verfall auszurechnen, und
@@ -1769,7 +2279,9 @@ impl Kette {
         // ⚑ **Träge, nicht immer.** Die meisten Blöcke tragen kein
         // Bündel, und die Ableitung mischt das ganze Register.
         let mut zuteilung: Option<myl_scheduler::shard_assignment::Zuteilung> = None;
-        for tx in txs {
+        // Je Transaktion, ob sie ihre Nummer verbraucht hat (Fund 627).
+        let mut verbraucht = vec![false; txs.len()];
+        for (i, tx) in txs.iter().enumerate() {
             // ⚑ **Die Unterschrift wird hier geprüft und nicht erst bei
             // der Aufnahme in den Mempool** (2026-08-28, Fund 85). Ein
             // Block kommt über Gossip und sieht den Mempool nie; läge
@@ -1791,6 +2303,7 @@ impl Kette {
             if nonce_verbrauchen(zustand, &absender, geprueft.inhalt().nonce).is_err() {
                 continue;
             }
+            verbraucht[i] = true;
 
             // Gescheiterte Anweisungen werden übersprungen, nicht
             // abgebrochen: Eine Überweisung ohne Deckung ist kein Grund,
@@ -1871,6 +2384,19 @@ impl Kette {
                 // Zahl, die niemand setzte.
                 Anweisung::EinsatzHinterlegen { betrag } => {
                     let _ = einsatz_hinterlegen(zustand, &absender, *betrag);
+                }
+                // ⚑ **Der Archivbeleg** (Stufe A5): Stichproben, Blöcke und
+                //   Beweise prüft der Ledger gegen die Wurzel der Grenze.
+                Anweisung::ArchivBelegen { bloecke, beweise } => {
+                    let _ = myl_ledger::archiv::archiv_belegen(zustand, &absender, bloecke, beweise);
+                }
+                // ⚑ **Splitter** (Stufe A7): Kopien nennen die Teilwurzel,
+                //   Splitter belegen ihre Teile dagegen.
+                Anweisung::ArchivTeilwurzel { wurzel } => {
+                    let _ = myl_ledger::archiv::teilwurzel_nennen(zustand, &absender, *wurzel);
+                }
+                Anweisung::ArchivTeilBelegen { stueck, beweis } => {
+                    let _ = myl_ledger::archiv::teil_belegen(zustand, &absender, stueck, beweis);
                 }
                 Anweisung::EinsatzKuendigen { betrag } => {
                     let _ = einsatz_kuendigen(zustand, &absender, *betrag);
@@ -2036,6 +2562,7 @@ impl Kette {
                 }
             }
         }
+        verbraucht
     }
 
     /// Baut den nächsten Block aus dem Mempool und übernimmt ihn selbst.
@@ -2044,7 +2571,30 @@ impl Kette {
     /// entstandene Zustandswurzel in den Block. Die Empfänger rechnen
     /// dasselbe und vergleichen.
     pub fn baue_block(&mut self) -> Block {
-        let txs: Vec<Transaktion> = std::mem::take(&mut self.mempool);
+        // ⚑ **Nur so viel, wie in einen Block passt** (Fund 633), in der
+        //   Folge des Mempools. Was gerade nicht mehr passt, bleibt
+        //   unangewandt liegen; was allein schon grösser ist als ein Block,
+        //   kann nie hinein und fällt heraus, sonst stünde es für immer vorn.
+        let mut wartend = Vec::new();
+        let mut spaeter = Vec::new();
+        let mut bytes = 0usize;
+        let mut neulinge = 0usize;
+        for (seit, tx) in std::mem::take(&mut self.mempool) {
+            let n = borsh::to_vec(&tx).map_or(usize::MAX, |b| b.len());
+            if n > BLOCK_TXS_HOECHSTENS_BYTES {
+                continue;
+            }
+            // Neulinge nur bis zu ihrer Grenze je Block (Fund 635).
+            let neuling = ist_neuling(&self.zustand, &tx.absender_adresse());
+            if bytes + n <= BLOCK_TXS_HOECHSTENS_BYTES && !(neuling && neulinge >= BLOCK_NEULINGE_HOECHSTENS) {
+                bytes += n;
+                neulinge += usize::from(neuling);
+                wartend.push((seit, tx));
+            } else {
+                spaeter.push((seit, tx));
+            }
+        }
+        let txs: Vec<Transaktion> = wartend.iter().map(|(_, tx)| tx.clone()).collect();
         let hoehe = self.hoehe + 1;
         let epoch = epoche_fuer_hoehe(hoehe);
 
@@ -2052,7 +2602,7 @@ impl Kette {
         // jeder Block die Ziehung der laufenden Epoche.
         let quelle = self.naechste_saatquelle.clone();
         let mut gezogen = None;
-        Self::anwenden(
+        let verbraucht = Self::anwenden(
             &mut self.zustand,
             &txs,
             epoch,
@@ -2063,6 +2613,23 @@ impl Kette {
         if gezogen.is_some() {
             self.letzte_stichprobe = gezogen;
         }
+        // ⚑ **In den Block kommt nur, was seine Nummer verbraucht hat**
+        //   (Fund 627). Was an Unterschrift oder Nummer scheitert, hat den
+        //   Zustand nicht angefasst; die Wurzel ist mit und ohne es dieselbe.
+        //   Bis zum 2026-10-24 ging der ganze Mempool in den Block, und eine
+        //   Transaktion mit der Nummer n+1, die im Gossip vor n ankam,
+        //   scheiterte dort und war verloren: Der Absender zählte weiter und
+        //   hing für immer an der Lücke. Jetzt wartet sie, bis n da ist.
+        let mut im_block = Vec::new();
+        for ((seit, tx), ok) in wartend.into_iter().zip(verbraucht) {
+            if ok {
+                im_block.push(tx);
+            } else {
+                self.mempool.push((seit, tx));
+            }
+        }
+        self.mempool.extend(spaeter);
+        self.mempool_bereinigen(hoehe);
 
         let mut block = Block::new(BlockHeader {
             height: hoehe,
@@ -2072,10 +2639,13 @@ impl Kette {
             state_root: self.zustand.commitment(),
             saatquelle: quelle,
         });
-        for tx in txs {
+        for tx in im_block {
             block.add_transaction(tx);
         }
 
+        if let Some(b) = self.baum.as_mut() {
+            b.anhaengen(&self.letzter_hash);
+        }
         self.hoehe = hoehe;
         self.letzter_hash = block.hash();
         self.bekannt.insert(self.letzter_hash);
@@ -2169,6 +2739,9 @@ impl Kette {
         }
 
         self.zustand = versuch;
+        if let Some(b) = self.baum.as_mut() {
+            b.anhaengen(&self.letzter_hash);
+        }
         self.hoehe = block.header.height;
         self.letzter_hash = hash;
         self.bekannt.insert(hash);
@@ -2185,7 +2758,9 @@ impl Kette {
         // `wartend` im Protokoll wird bedeutungslos, **und ein solcher
         // Knoten baute, sobald er je Erzeuger würde, einen Block aus
         // tausenden längst verarbeiteter Transaktionen.**
-        self.streiche_verarbeitete(&block.txs);
+        //
+        // Seit Fund 627 über die Nummern statt über die Bytes.
+        self.mempool_bereinigen(block.header.height);
         self.schreibe(block);
         self.abzug_anlegen(block);
         Ok(())
@@ -2253,13 +2828,18 @@ mod tests {
     #[test]
     fn eine_gefaelschte_unterschrift_bewegt_nichts() {
         let mut k = Kette::probestand();
-        let vorher = k.zustandswurzel();
+        // 📌 Seit der Historienwurzel bewegt jeder Block den Zustand (er
+        // haengt den Hash seines Vorgaengers an). Verglichen wird deshalb
+        // mit einem Zwilling, der einen leeren Block baut; beim ersten
+        // Block ist der Vorgaenger in beiden derselbe Startblock.
+        let mut leer = Kette::probestand();
+        let _ = leer.baue_block();
 
         let mut tx = burn(0, 5_000);
         tx.signatur = myl_types::bls::BlsSignature([7u8; 96]);
         k.aufnehmen(tx);
         let _ = k.baue_block();
-        assert_eq!(k.zustandswurzel(), vorher, "eine Fälschung darf nichts bewegen");
+        assert_eq!(k.zustandswurzel(), leer.zustandswurzel(), "eine Fälschung darf nichts bewegen");
 
         // Und der Schlüssel eines anderen Kontos hilft auch nicht: Die
         // Adresse folgt aus dem Schlüssel, also belastet er sein eigenes
@@ -2366,6 +2946,7 @@ mod tests {
             waehrung: Waehrung::Myl,
             betrag,
             empfaenger,
+            empfaenger_beweis: myl_types::sitzung::empfaengerbeweis(&[empfaenger], &empfaenger).expect("gelistet"),
             bestaetigt_ausgeliefert: false,
             nummer,
         };
@@ -2904,9 +3485,12 @@ mod tests {
     }
 
     #[test]
-    fn eine_doppelt_eingereichte_transaktion_verschwindet_nur_einmal() {
-        // Dieselbe Transaktion zweimal eingereicht ist zweimal
-        // eingereicht. Enthält ein Block sie einmal, wartet die andere.
+    fn eine_doppelt_eingereichte_transaktion_faellt_mit_dem_block_ganz_heraus() {
+        // 📌 Bis zum 2026-10-24 hiess dieser Test „verschwindet nur einmal":
+        // Dieselbe Transaktion zweimal eingereicht sei zweimal eingereicht,
+        // und die andere warte weiter. Sie trägt aber dieselbe Nummer, und
+        // die ist mit dem Block verbraucht; die wartende hätte nie mehr
+        // gegolten (Fund 627).
         let mut erzeuger = Kette::probestand();
         let mut folger = Kette::probestand();
         let t = burn(3, 600);
@@ -2918,7 +3502,7 @@ mod tests {
         let block = erzeuger.baue_block();
         assert_eq!(block.txs.len(), 1);
         folger.uebernimm(&block).expect("schließt an");
-        assert_eq!(folger.wartend(), 1);
+        assert_eq!(folger.wartend(), 0);
     }
 
     /// Ein leerer Block ist gültig und bewegt die Kette weiter.
@@ -2944,6 +3528,172 @@ mod tests {
         assert_eq!(b.txs.len(), 1);
         assert_eq!(k.wartend(), 0);
         assert!(k.baue_block().txs.is_empty());
+    }
+
+    /// ⚑ **Fund 627: Eine Transaktion, die ihre Vorgängerin im Gossip
+    /// überholt, geht nicht verloren.** Sie wartet im Mempool, statt im
+    /// Block an der Nummer zu scheitern, und kommt mit der Vorgängerin
+    /// nach. Gegenprobe: Vorher stand n+1 im ersten Block, scheiterte dort
+    /// und war weg; der zweite Block wandte nur n an, und die Nummer im
+    /// Zustand blieb bei 1 statt 2.
+    #[test]
+    fn eine_ueberholende_transaktion_wartet_auf_ihre_vorgaengerin() {
+        let mut k = Kette::probestand();
+        k.aufnehmen(burn_nr(3, 100, 1));
+        let erster = k.baue_block();
+        assert!(erster.txs.is_empty(), "n+1 ohne n gehört nicht in den Block");
+        assert_eq!(k.wartend(), 1, "n+1 wartet");
+
+        k.aufnehmen(burn_nr(3, 100, 0));
+        let _ = k.baue_block();
+        let _ = k.baue_block();
+        assert_eq!(k.zustand().account(&probekonto(3)).nonce, 2, "beide sind angewandt");
+        assert_eq!(k.wartend(), 0);
+    }
+
+    /// ⚑ **Fund 627: In den Block kommt nur, was seine Nummer verbraucht**,
+    /// und die Wurzel ist dieselbe wie mit allem. Ein Folger, der den
+    /// schlanken Block übernimmt, landet beim selben Zustand.
+    #[test]
+    fn ein_block_traegt_nur_was_seine_nummer_verbraucht() {
+        let mut k = Kette::probestand();
+        let mut folger = Kette::probestand();
+        let mut gefaelscht = burn(4, 100);
+        gefaelscht.signatur = myl_types::bls::BlsSignature([7u8; 96]);
+        k.aufnehmen(gefaelscht);
+        k.aufnehmen(burn(5, 100));
+        k.aufnehmen(burn_nr(6, 100, 5));
+        let b = k.baue_block();
+        assert_eq!(b.txs.len(), 1, "nur die gültige");
+        folger.uebernimm(&b).expect("schließt an und rechnet gleich");
+        assert_eq!(folger.zustandswurzel(), k.zustandswurzel());
+    }
+
+    /// ⚑ **Fund 627: Der Mempool eines Folgers bleibt klein.** Eine
+    /// Transaktion, die nach ihrem Block ankommt, wird gar nicht erst
+    /// aufgenommen; eine, die vorher ankam, fällt mit dem Block heraus;
+    /// eine mit erfundener Nummer verfällt. Gegenprobe: Vorher nahm
+    /// `aufnehmen` alles, und die späte blieb für immer liegen; im
+    /// Archivlauf vom 2026-10-24 waren es über 5000.
+    #[test]
+    fn der_mempool_eines_folgers_bleibt_klein() {
+        let mut erzeuger = Kette::probestand();
+        let mut folger = Kette::probestand();
+        let frueh = burn(1, 100);
+        let spaet = burn(2, 100);
+        erzeuger.aufnehmen(frueh.clone());
+        erzeuger.aufnehmen(spaet.clone());
+        folger.aufnehmen(frueh);
+        folger.aufnehmen(burn_nr(7, 100, 9));
+        let b = erzeuger.baue_block();
+        folger.uebernimm(&b).expect("schließt an");
+        assert_eq!(folger.wartend(), 1, "die frühe ist mit dem Block weg, die erfundene wartet");
+        assert!(!folger.aufnehmen(spaet), "die späte gilt nie mehr");
+
+        for _ in 0..WARTEN_HOECHSTENS_HOEHEN {
+            let b = erzeuger.baue_block();
+            folger.uebernimm(&b).expect("schließt an");
+        }
+        assert_eq!(folger.wartend(), 0, "die erfundene ist verfallen");
+    }
+
+    /// ⚑ **Fund 627: Der Mempool hat eine Obergrenze.**
+    #[test]
+    fn der_mempool_nimmt_hoechstens_seine_grenze_auf() {
+        let mut k = Kette::probestand();
+        // Verteilt auf so viele Absender, dass keiner an seine eigene
+        // Grenze stösst (Fund 633).
+        for i in 0..MEMPOOL_HOECHSTENS as u64 {
+            let wer = i / MEMPOOL_JE_ABSENDER as u64;
+            let sk = myl_types::bls::BlsSecretKey::key_gen(Hash::sha256(format!("fremd-{wer}").as_bytes()).as_bytes())
+                .expect("Schlüssel");
+            let tx = Transaktion::signiere(&Kette::startwert(), &sk, i % MEMPOOL_JE_ABSENDER as u64, Anweisung::Burn { betrag: 1 })
+                .expect("signieren");
+            // Mit Guthaben, sonst greift die Grenze für Neulinge (Fund 635).
+            k.zustand_mut().account_mut(&tx.absender_adresse()).balance = 1;
+            assert!(k.aufnehmen(tx));
+        }
+        assert!(!k.aufnehmen(burn(8, 1)), "über der Grenze wird nichts aufgenommen");
+        assert_eq!(k.wartend(), MEMPOOL_HOECHSTENS);
+    }
+
+    /// Ein Archivbeleg mit `bytes` Nutzlast, wie ihn jedes Konto einreichen
+    /// kann: Er verbraucht seine Nummer und scheitert danach am Ledger.
+    fn grosser_beleg(wer: u8, nonce: u64, bytes: usize) -> Transaktion {
+        Transaktion::signiere(
+            &Kette::startwert(),
+            &probeschluessel(wer),
+            nonce,
+            Anweisung::ArchivBelegen { bloecke: vec![vec![7u8; bytes]], beweise: vec![] },
+        )
+        .expect("signieren")
+    }
+
+    /// ⚑ **Ein Block bleibt unter seiner Bytegrenze** (Fund 633): Vierzig
+    /// Belege zu je 50 KB sind 2 MB, mehr als Gossip an einem Block annimmt.
+    /// Jeder Block trägt höchstens `BLOCK_TXS_HOECHSTENS_BYTES`, und alle
+    /// kommen nacheinander hinein.
+    #[test]
+    fn ein_block_bleibt_unter_seiner_bytegrenze() {
+        let mut k = Kette::probestand();
+        for i in 0..40u64 {
+            assert!(k.aufnehmen(grosser_beleg(30 + (i % 4) as u8, i / 4, 50_000)));
+        }
+        let mut im_block = 0usize;
+        for _ in 0..10 {
+            let b = k.baue_block();
+            let txs: usize = b.txs.iter().map(|t| borsh::to_vec(t).unwrap().len()).sum();
+            assert!(txs <= BLOCK_TXS_HOECHSTENS_BYTES, "{txs} Bytes in einem Block");
+            assert!(borsh::to_vec(&b).unwrap().len() <= myl_net::validation::MAX_BLOCKS_BYTES);
+            im_block += b.txs.len();
+        }
+        assert_eq!(im_block, 40, "alle kommen nacheinander hinein");
+        assert_eq!(k.wartend(), 0);
+    }
+
+    /// Eine Transaktion, die allein grösser ist als ein Block, hält die
+    /// übrigen nicht auf: Sie fällt heraus, die nächste kommt hinein.
+    #[test]
+    fn eine_uebergrosse_transaktion_haelt_den_block_nicht_auf() {
+        let mut k = Kette::probestand();
+        assert!(k.aufnehmen(grosser_beleg(30, 0, BLOCK_TXS_HOECHSTENS_BYTES + 1)));
+        assert!(k.aufnehmen(burn(3, 900)));
+        let b = k.baue_block();
+        assert_eq!(b.txs.len(), 1, "der Burn steht im Block");
+        assert_eq!(k.wartend(), 0, "die übergrosse ist gegangen");
+    }
+
+    /// ⚑ **Neulinge kommen nur gedrosselt hinein** (Fund 635): Hundert
+    /// frische Schlüssel ohne Guthaben bringen höchstens
+    /// `MEMPOOL_NEULINGE_HOECHSTENS` in den Mempool und höchstens
+    /// `BLOCK_NEULINGE_HOECHSTENS` in einen Block; ein Konto mit Guthaben
+    /// kommt weiter hinein.
+    #[test]
+    fn neulinge_kommen_nur_gedrosselt_hinein() {
+        let mut k = Kette::probestand();
+        let angenommen = (0..100u32)
+            .filter(|i| {
+                let sk = myl_types::bls::BlsSecretKey::key_gen(Hash::sha256(format!("neuling-{i}").as_bytes()).as_bytes())
+                    .expect("Schlüssel");
+                let tx = Transaktion::signiere(&Kette::startwert(), &sk, 0, Anweisung::Burn { betrag: 1 }).expect("signieren");
+                k.aufnehmen(tx)
+            })
+            .count();
+        assert_eq!(angenommen, MEMPOOL_NEULINGE_HOECHSTENS);
+        assert!(k.aufnehmen(burn(3, 900)), "ein Konto mit Guthaben kommt hinein");
+        let b = k.baue_block();
+        assert_eq!(b.txs.len(), BLOCK_NEULINGE_HOECHSTENS + 1, "sechzehn Neulinge und der Burn");
+        assert_eq!(k.wartend(), MEMPOOL_NEULINGE_HOECHSTENS - BLOCK_NEULINGE_HOECHSTENS);
+    }
+
+    /// Ein einzelner Absender füllt den Mempool nicht: höchstens
+    /// `MEMPOOL_JE_ABSENDER`, und ein anderer kommt weiter hinein.
+    #[test]
+    fn ein_absender_fuellt_den_mempool_nicht() {
+        let mut k = Kette::probestand();
+        let angenommen = (0..200u64).filter(|&i| k.aufnehmen(burn_nr(8, 1, i))).count();
+        assert_eq!(angenommen, MEMPOOL_JE_ABSENDER);
+        assert!(k.aufnehmen(burn(3, 900)));
     }
 
     /// Rohe Gossip-Bytes werden gelesen, Unsinn nicht.
@@ -3760,7 +4510,7 @@ mod tests {
                 zeugenleiter: Vec::new(),
             },
             myl: Grenzen::gesperrt(),
-            empfaenger: vec![probekonto(2)],
+            empfaenger_wurzel: myl_types::sitzung::empfaengerwurzel(&[probekonto(2)]),
             gueltig_ab: EpochId(0),
             gueltig_bis: EpochId(100),
             max_schritte: 1_000,

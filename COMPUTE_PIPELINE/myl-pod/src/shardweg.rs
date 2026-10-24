@@ -61,6 +61,10 @@ use std::time::Duration;
 use crate::shard::{ShardNode, ShardOut};
 use crate::wire::PodMessage;
 
+/// Der Ausweis einer Shardtür: 32 Bytes, ohne die sie nichts annimmt
+/// (Fund 611, siehe `myl_types::zeitprobe`).
+pub type Ausweis = [u8; myl_types::zeitprobe::AUSWEIS_LEN];
+
 /// Wie lange auf die Antwort eines Shards gewartet wird.
 ///
 /// ⚑ **Ohne Frist hinge der ganze Pod an einem stillen Shard.** Der
@@ -570,14 +574,16 @@ impl Shardweg for ImProzess {
 /// Suche entsteht, ist nicht die Besetzung, die der Scheduler zugeteilt
 /// hat. Sie stammen aus `MinerRegistration::netzadresse` der zugeteilten
 /// Mitglieder, in Shardreihenfolge.
+///
+/// ⚑ **Mit dem Ausweis jeder Tür** (Fund 611): Ohne ihn nimmt sie nichts an.
 pub struct UeberDenDraht {
-    adressen: Vec<SocketAddr>,
+    adressen: Vec<(SocketAddr, Ausweis)>,
     frist: Duration,
 }
 
 impl UeberDenDraht {
-    /// Neu, mit einer Adresse je Shard in Shardreihenfolge.
-    pub fn neu(adressen: Vec<SocketAddr>) -> Self {
+    /// Neu, mit Adresse und Ausweis je Shard in Shardreihenfolge.
+    pub fn neu(adressen: Vec<(SocketAddr, Ausweis)>) -> Self {
         Self { adressen, frist: ANTWORTFRIST }
     }
 
@@ -594,7 +600,7 @@ impl Shardweg for UeberDenDraht {
     }
 
     fn frage(&self, nummer: usize, anfrage: &Shardanfrage) -> Result<Shardantwort, String> {
-        let adresse = self
+        let (adresse, ausweis) = self
             .adressen
             .get(nummer)
             .ok_or_else(|| format!("Shard {nummer} gibt es in diesem Pod nicht"))?;
@@ -602,7 +608,8 @@ impl Shardweg for UeberDenDraht {
             .map_err(|e| format!("Shard {nummer} unter {adresse} nicht erreichbar: {e}"))?;
         strom.set_read_timeout(Some(self.frist)).map_err(|e| e.to_string())?;
         strom.set_write_timeout(Some(self.frist)).map_err(|e| e.to_string())?;
-        senden(&mut strom, &borsh::to_vec(anfrage).map_err(|e| e.to_string())?)?;
+        let nutzlast = borsh::to_vec(anfrage).map_err(|e| e.to_string())?;
+        myl_types::zeitprobe::rahmen_senden_mit_ausweis(&mut strom, ausweis, &nutzlast, MAX_NACHRICHT)?;
         let roh = empfangen(&mut strom)?;
         borsh::from_slice(&roh).map_err(|e| format!("Shard {nummer} antwortete unlesbar: {e}"))
     }
@@ -624,6 +631,8 @@ pub struct Shardstelle {
     shard: Arc<ShardNode>,
     horcher: std::net::TcpListener,
     frist: Duration,
+    /// Ohne ihn nimmt die Tür nichts an (Fund 611).
+    ausweis: Ausweis,
     /// Die Trainingshälfte, falls dieser Shard eine hält.
     ///
     /// ⚑ **`Option` und nicht immer.** Die Master eines Bereichs sind
@@ -637,9 +646,9 @@ impl Shardstelle {
     ///
     /// `adresse` darf Port null nennen; die vergebene Adresse steht dann
     /// in [`Shardstelle::adresse`].
-    pub fn oeffnen(shard: Arc<ShardNode>, adresse: &str) -> std::io::Result<Self> {
+    pub fn oeffnen(shard: Arc<ShardNode>, adresse: &str, ausweis: Ausweis) -> std::io::Result<Self> {
         let horcher = std::net::TcpListener::bind(adresse)?;
-        Ok(Self { shard, horcher, frist: ANTWORTFRIST, trainer: None })
+        Ok(Self { shard, horcher, frist: ANTWORTFRIST, ausweis, trainer: None })
     }
 
     /// Öffnet die Tür **mit** Trainingshälfte.
@@ -651,6 +660,7 @@ impl Shardstelle {
         shard: Arc<ShardNode>,
         modell: Arc<integer_llm_runtime::model::IntegerModel>,
         adresse: &str,
+        ausweis: Ausweis,
     ) -> Result<Self, String> {
         let horcher = std::net::TcpListener::bind(adresse).map_err(|e| e.to_string())?;
         let trainer = Shardtrainer::neu(modell, shard.layer_start, shard.layer_end)?;
@@ -658,6 +668,7 @@ impl Shardstelle {
             shard,
             horcher,
             frist: ANTWORTFRIST,
+            ausweis,
             trainer: Some(std::sync::Mutex::new(trainer)),
         })
     }
@@ -675,9 +686,15 @@ impl Shardstelle {
     /// wie beim `Ortsdienst`.
     pub fn bediene_eine(&self) -> Result<(), String> {
         let (mut strom, _) = self.horcher.accept().map_err(|e| e.to_string())?;
-        strom.set_read_timeout(Some(self.frist)).map_err(|e| e.to_string())?;
         strom.set_write_timeout(Some(self.frist)).map_err(|e| e.to_string())?;
-        let roh = empfangen(&mut strom)?;
+        // ⚑ Erst der Ausweis, dann die Länge, und alles in **einer** Frist
+        //   (Fund 611): Eine Frist je Lesevorgang liesse sich tröpfelnd
+        //   beliebig dehnen, und diese Tür bedient nacheinander.
+        let roh = myl_types::zeitprobe::rahmen_empfangen_mit_ausweis(
+            &mut crate::fristleser::Fristleser::neu(&strom, self.frist),
+            &self.ausweis,
+            MAX_NACHRICHT,
+        )?;
         // ⚑ **Die Zeitprobe vor jeder anderen Anfrage** (Stufe 4, Frist,
         //   2026-10-22): an ihrer Marke erkannt, beschrieben in
         //   `myl_types::zeitprobe`, damit der Knoten sie stellen kann, ohne

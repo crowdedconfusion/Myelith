@@ -33,6 +33,7 @@ Inferenzpfad. Kein Teil des Auslieferungspfads.
 Usage:
   INTEGER_LLM_MODEL=magpie-30b-a3b-int8 python bench/qualitativ.py [max_tokens]
 """
+import ast
 import os
 import subprocess
 import sys
@@ -70,10 +71,25 @@ def integer_generierung(prompt: str, max_tokens: int):
     prompt_ids, gen_ids = None, None
     for zeile in ergebnis.stdout.splitlines():
         if "Prompt-Tokens:" in zeile:
-            prompt_ids = eval(zeile.split("Prompt-Tokens:")[1].strip())
+            prompt_ids = tokenliste(zeile.split("Prompt-Tokens:")[1])
         elif "Generierte Token:" in zeile:
-            gen_ids = eval(zeile.split("Generierte Token:")[1].strip())
+            gen_ids = tokenliste(zeile.split("Generierte Token:")[1])
     return prompt_ids, gen_ids
+
+
+def tokenliste(text: str) -> list[int]:
+    """Eine Liste von Token-Kennungen aus einer Zeile der Laufzeit.
+
+    📌 Fund 614 (2026-10-23): Hier stand `eval`. Die Laufzeit gibt auch den
+    erzeugten Text aus; enthielt eine Zeile die Zeichenfolge, die hier
+    gesucht wird, war alles dahinter Python-Code, und Modellausgabe wurde
+    zu ausgefuehrtem Code. `ast.literal_eval` liest Literale und fuehrt
+    nichts aus; danach muss es eine Liste ganzer Zahlen sein.
+    """
+    wert = ast.literal_eval(text.strip())
+    if not isinstance(wert, list) or not all(isinstance(t, int) for t in wert):
+        raise ValueError(f"keine Tokenliste: {text.strip()[:80]!r}")
+    return wert
 
 
 def main():

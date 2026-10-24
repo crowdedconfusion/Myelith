@@ -188,8 +188,12 @@ impl Ortsdienst {
     }
 
     fn bediene_strom(&self, mut strom: TcpStream) -> std::io::Result<usize> {
-        strom.set_read_timeout(Some(LESEFRIST))?;
         strom.set_write_timeout(Some(SCHREIBFRIST))?;
+        // ⚑ **Die Lesefrist gilt je Rahmen, nicht je Lesevorgang**
+        //   (Fund 611): sonst dehnte sie, wer tröpfelt, beliebig, und dieser
+        //   Dienst bedient nacheinander. Nach jeder Antwort beginnt sie neu.
+        let leser_strom = strom.try_clone()?;
+        let mut leser = crate::fristleser::Fristleser::neu(&leser_strom, LESEFRIST);
         let mut puffer = Vec::new();
         let mut stueck = [0u8; 8192];
         let mut beantwortet = 0usize;
@@ -213,6 +217,7 @@ impl Ortsdienst {
                     strom.write_all(&rahmen)?;
                     strom.flush()?;
                     beantwortet += 1;
+                    leser.neu_beginnen(LESEFRIST);
                     continue;
                 }
                 // ⚑ **Ein falscher Ausweis oder fremde Magie beendet
@@ -233,7 +238,7 @@ impl Ortsdienst {
             // Zeile, die kein Eingabewert je erreicht, ist keine
             // Prüfung, sondern Zierde (Fund 154). Gebunden wird in
             // `entrahmen`, und dort hält ein Test die Grenze fest.
-            match strom.read(&mut stueck) {
+            match leser.read(&mut stueck) {
                 Ok(0) => return Ok(beantwortet),
                 Ok(n) => puffer.extend_from_slice(&stueck[..n]),
                 Err(_) => return Ok(beantwortet),

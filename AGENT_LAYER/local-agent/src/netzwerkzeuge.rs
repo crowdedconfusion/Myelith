@@ -837,6 +837,98 @@ struct Antwortkopf {
 /// Ein PDF ist keine gueltige Zeichenkette, und das Programm, das es
 /// liest, will ohnehin einen Pfad.
 fn holen(adresse: &str, ziel: &std::path::Path) -> Result<Antwortkopf, Werkzeugfehler> {
+    // 📌 **Fund 615 (2026-10-23): Umleitungen von Hand, und jede Adresse
+    //    vor dem Abruf.** Hier folgte curl mit `--location` bis zu drei
+    //    Umleitungen; `--proto-redir` hielt nur das Schema, und das Endziel
+    //    wurde erst **nach** dem Abruf gegen Schranke 5 gehalten. Den Inhalt
+    //    bekam das Modell dann nicht, aber die Anfrage war schon im
+    //    Heimnetz angekommen (eine Seite, die auf `https://192.168.1.1/`
+    //    umleitet). Und ein öffentlicher Name, der auf eine private Adresse
+    //    zeigt, kam ganz ohne Umleitung durch. Jetzt: jede Station durch
+    //    `pruefe_ziel`, der Name selbst aufgelöst und gegen das eigene Netz
+    //    gehalten, die geprüfte Adresse mit `--resolve` an curl gebunden,
+    //    damit eine zweite Antwort des Namensdienstes nichts ändert.
+    let mut jetzt = adresse.to_string();
+    for _ in 0..=HOECHSTE_UMLEITUNGEN {
+        let wirt = pruefe_ziel(&jetzt).map_err(|g| fehler(&format!("das Ziel ist unzulaessig: {g}")))?;
+        let ip = oeffentliche_adresse(&wirt).map_err(|g| fehler(&g))?;
+        let (kopf, umleitung) = ein_abruf(&jetzt, &wirt, ip, ziel)?;
+        match umleitung {
+            Some(naechste) if (300..400).contains(&kopf.code) => jetzt = naechste,
+            _ => return Ok(Antwortkopf { endziel: jetzt, ..kopf }),
+        }
+    }
+    Err(fehler(&format!("mehr als {HOECHSTE_UMLEITUNGEN} Umleitungen")))
+}
+
+/// So vielen Umleitungen folgt ein Abruf höchstens (Fund 615).
+const HOECHSTE_UMLEITUNGEN: usize = 3;
+
+/// **Löst einen Namen auf und lässt nur öffentliche Adressen zu**
+/// (Fund 615). Zeigt auch nur **eine** der Antworten ins eigene Netz, wird
+/// nicht abgerufen: Welche curl nähme, stünde sonst nicht fest.
+fn oeffentliche_adresse(wirt: &str) -> Result<std::net::IpAddr, String> {
+    use std::net::ToSocketAddrs;
+    let adressen: Vec<std::net::IpAddr> = (wirt, 443)
+        .to_socket_addrs()
+        .map_err(|f| format!("`{wirt}` liess sich nicht aufloesen: {f}"))?
+        .map(|a| a.ip())
+        .collect();
+    if let Some(eigen) = adressen.iter().find(|ip| !ist_oeffentlich(**ip)) {
+        return Err(format!("`{wirt}` zeigt ins eigene Netz ({eigen}) und wird nicht abgerufen"));
+    }
+    adressen.first().copied().ok_or_else(|| format!("`{wirt}` hat keine Adresse"))
+}
+
+/// Ist das eine Adresse im öffentlichen Netz? Nein für Rückschleife,
+/// private und link-lokale Bereiche, geteilten Adressraum (CGNAT),
+/// Dokumentation, Multicast, Rundruf, Unbestimmtes und Reserviertes; eine
+/// IPv4-Adresse in IPv6 wird als IPv4 beurteilt.
+fn ist_oeffentlich(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v4) => {
+            let [a, b, c, _] = v4.octets();
+            !(v4.is_private()
+                || v4.is_loopback()
+                || v4.is_link_local()
+                || v4.is_unspecified()
+                || v4.is_broadcast()
+                || v4.is_multicast()
+                || v4.is_documentation()
+                || a == 0
+                || (a == 100 && (64..128).contains(&b))
+                || (a == 192 && b == 0 && c == 0)
+                || (a == 198 && (18..20).contains(&b))
+                || a >= 240)
+        }
+        std::net::IpAddr::V6(v6) => {
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                return ist_oeffentlich(std::net::IpAddr::V4(v4));
+            }
+            let s = v6.segments();
+            !(v6.is_loopback()
+                || v6.is_unspecified()
+                || v6.is_multicast()
+                || v6.is_unique_local()
+                || v6.is_unicast_link_local()
+                || (s[0] == 0x2001 && s[1] == 0x0db8)
+                || (s[0] == 0x0064 && s[1] == 0xff9b))
+        }
+    }
+}
+
+/// **Ein Abruf ohne Umleitung**, an die geprüfte Adresse gebunden. Gibt
+/// den Kopf zurück und, bei einer Umleitung, ihr Ziel.
+fn ein_abruf(
+    adresse: &str,
+    wirt: &str,
+    ip: std::net::IpAddr,
+    ziel: &std::path::Path,
+) -> Result<(Antwortkopf, Option<String>), Werkzeugfehler> {
+    let gebunden = match ip {
+        std::net::IpAddr::V4(v4) => format!("{wirt}:443:{v4}"),
+        std::net::IpAddr::V6(v6) => format!("{wirt}:443:[{v6}]"),
+    };
     // ⛔️ `-q` steht zuerst, sonst liest curl `~/.curlrc`.
     // ⛔️ `--` steht vor der Adresse, sonst wird eine Adresse mit
     //    fuehrendem Strich als Schalter gelesen.
@@ -845,11 +937,8 @@ fn holen(adresse: &str, ziel: &std::path::Path) -> Result<Antwortkopf, Werkzeugf
         .arg("-sS")
         .arg("--proto")
         .arg("=https")
-        .arg("--proto-redir")
-        .arg("=https")
-        .arg("--location")
-        .arg("--max-redirs")
-        .arg("3")
+        .arg("--resolve")
+        .arg(gebunden)
         .arg("--max-time")
         .arg(FRIST_S.to_string())
         .arg("--max-filesize")
@@ -862,7 +951,7 @@ fn holen(adresse: &str, ziel: &std::path::Path) -> Result<Antwortkopf, Werkzeugf
         .arg("--output")
         .arg(ziel)
         .arg("--write-out")
-        .arg("%{content_type}\u{1}%{http_code}\u{1}%{url_effective}")
+        .arg("%{content_type}\u{1}%{http_code}\u{1}%{url_effective}\u{1}%{redirect_url}")
         .arg("--")
         .arg(adresse)
         .output()
@@ -879,6 +968,7 @@ fn holen(adresse: &str, ziel: &std::path::Path) -> Result<Antwortkopf, Werkzeugf
         .to_ascii_lowercase();
     let code = stuecke.next().unwrap_or("0").trim().parse::<u32>().unwrap_or(0);
     let endziel = stuecke.next().unwrap_or("").trim().to_string();
+    let umleitung = Some(stuecke.next().unwrap_or("").trim().to_string()).filter(|u| !u.is_empty());
     if !aus.status.success() && code == 0 {
         let grund = String::from_utf8_lossy(&aus.stderr);
         let grund = grund.trim();
@@ -887,7 +977,7 @@ fn holen(adresse: &str, ziel: &std::path::Path) -> Result<Antwortkopf, Werkzeugf
             if grund.is_empty() { "kein Grund genannt" } else { grund }
         )));
     }
-    Ok(Antwortkopf { typ, endziel, code })
+    Ok((Antwortkopf { typ, endziel, code }, umleitung))
 }
 
 /// Ein Ablageort fuer diesen einen Abruf.
@@ -1735,6 +1825,34 @@ mod proben {
         println!("--- PDF ---\n{}\n", t.chars().take(700).collect::<String>());
         assert!(t.contains("FREMDTEXT, Anfang"));
         assert!(t.contains("Integer-Only"), "der Titel fehlt im Auszug");
+    }
+
+    /// ⚑ **Nur das öffentliche Netz** (Fund 615): Rückschleife, private,
+    /// link-lokale und geteilte Bereiche, Metadatenadresse, ULA und eine
+    /// private IPv4-Adresse in IPv6-Form sind es nicht.
+    #[test]
+    fn nur_oeffentliche_adressen_sind_oeffentlich() {
+        let ja = ["8.8.8.8", "1.1.1.1", "2606:4700:4700::1111"];
+        let nein = [
+            "127.0.0.1", "10.0.0.5", "172.16.5.4", "192.168.1.1", "169.254.169.254", "100.64.0.1",
+            "0.0.0.0", "224.0.0.1", "255.255.255.255", "192.0.0.8", "198.18.0.1", "240.0.0.1",
+            "::1", "::", "fe80::1", "fd00::1", "ff02::1", "::ffff:192.168.1.1", "64:ff9b::a00:1", "2001:db8::1",
+        ];
+        for a in ja {
+            assert!(ist_oeffentlich(a.parse().expect("Adresse")), "{a} gilt nicht als oeffentlich");
+        }
+        for a in nein {
+            assert!(!ist_oeffentlich(a.parse().expect("Adresse")), "{a} gilt als oeffentlich");
+        }
+    }
+
+    /// ⚑ **Ein Name, der ins eigene Netz zeigt, wird nicht abgerufen**
+    /// (Fund 615). `localhost` löst ohne Netz auf die Rückschleife auf und
+    /// steht hier für jeden fremden Namen, der dasselbe tut.
+    #[test]
+    fn ein_name_der_ins_eigene_netz_zeigt_wird_nicht_abgerufen() {
+        let e = oeffentliche_adresse("localhost");
+        assert!(e.as_ref().is_err_and(|g| g.contains("eigene Netz")), "{e:?}");
     }
 
     /// ⚑ **Beide Werkzeuge oder keines**, und keines ohne `curl`.

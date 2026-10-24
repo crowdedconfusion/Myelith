@@ -34,6 +34,23 @@
 //! Zeitpunkt ist der letzte vor dem Absturz.** Ein gepuffertes Protokoll
 //! verliert genau die Zeilen, wegen derer man es liest.
 //!
+//! # Wie viel aufbewahrt wird (Fund 624, 2026-10-23)
+//!
+//! **Hoechstens [`GESAMT_HOECHSTENS`] je Knoten, in Dateien zu
+//! hoechstens [`DATEI_HOECHSTENS`].** Bis dahin wuchs das Protokoll ohne
+//! Grenze: rund 740 Byte je Block, jede Gossip-Nachricht eine Zeile, je
+//! Start eine neue Datei, die niemand raeumte; im Dauerlauf mit 20 Bloecken
+//! je Sekunde waren es 96 MB je Knoten und Stunde, bei der geplanten
+//! Blockzeit von 1 bis 2 s 12 bis 23 GB im Jahr.
+//!
+//! - Wird die laufende Datei zu gross, beginnt eine neue. Ihre erste Zeile
+//!   ist `fortsetzung` mit dem Namen der vorigen, und die Folgenummer laeuft
+//!   weiter: Wer die Dateien eines Laufs aneinanderlegt, bekommt ein
+//!   lueckenloses Protokoll.
+//! - Ueber alle Dateien dieses Knotens, auch die frueherer Starts, gilt der
+//!   Deckel; darueber faellt die aelteste weg. Was fehlt, fehlt am Anfang,
+//!   nie in der Mitte.
+//!
 //! # Warum ein eigener JSON-Schreiber
 //!
 //! Geschrieben wird ein Format, das der Testclient bereits liest: flache
@@ -46,6 +63,13 @@
 //! greift.
 
 use std::fs::{File, OpenOptions};
+
+/// Groesste Protokolldatei, bevor eine neue beginnt.
+pub const DATEI_HOECHSTENS: u64 = 16 * 1024 * 1024;
+
+/// Groesster Platz aller Protokolldateien eines Knotens, als Vorgabe.
+/// Bei 2 s Blockzeit sind das rund vier Tage.
+pub const GESAMT_HOECHSTENS: u64 = 128 * 1024 * 1024;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -171,6 +195,15 @@ impl std::error::Error for ProtokollFehler {}
 pub struct Betriebsprotokoll {
     datei: File,
     pfad: PathBuf,
+    verzeichnis: PathBuf,
+    /// Der Knotenname, wie er im Dateinamen steht.
+    stamm: String,
+    /// Bytes in der laufenden Datei.
+    bytes: u64,
+    /// Die Zeit im Namen der laufenden Datei; jede neue liegt darüber.
+    namenszeit: i64,
+    datei_hoechstens: u64,
+    gesamt_hoechstens: u64,
     knoten: String,
     peer: String,
     folge: u64,
@@ -202,25 +235,105 @@ impl Betriebsprotokoll {
         peer: &str,
         auf_bildschirm: bool,
     ) -> Result<Self, ProtokollFehler> {
+        Self::mit_grenze(verzeichnis, knoten, peer, auf_bildschirm, GESAMT_HOECHSTENS)
+    }
+
+    /// Wie [`Self::neu`], mit einem eigenen Deckel fuer alle Dateien dieses
+    /// Knotens. Eine Datei ist hoechstens ein Viertel davon und hoechstens
+    /// [`DATEI_HOECHSTENS`], damit beim Wegfallen der aeltesten nie das
+    /// halbe Protokoll auf einmal verschwindet.
+    pub fn mit_grenze(
+        verzeichnis: &Path,
+        knoten: &str,
+        peer: &str,
+        auf_bildschirm: bool,
+        gesamt_hoechstens: u64,
+    ) -> Result<Self, ProtokollFehler> {
         std::fs::create_dir_all(verzeichnis).map_err(ProtokollFehler::Datei)?;
-        let sicherer_name: String = knoten
+        let stamm: String = knoten
             .chars()
             .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
             .collect();
-        let pfad = verzeichnis.join(format!("{}-{}.jsonl", sicherer_name, jetzt_ms()));
+        // Über allen vorhandenen Namen dieses Knotens, auch früherer Starts.
+        let hoechste = std::fs::read_dir(verzeichnis)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|e| protokollzeit(&e.file_name().to_string_lossy(), &stamm))
+            .max()
+            .unwrap_or(i64::MIN);
+        let (pfad, namenszeit) = freier_pfad(verzeichnis, &stamm, hoechste.saturating_add(1));
         let datei = OpenOptions::new()
             .create(true)
             .append(true)
             .open(&pfad)
             .map_err(ProtokollFehler::Datei)?;
-        Ok(Self {
+        let mut p = Self {
             datei,
             pfad,
+            verzeichnis: verzeichnis.to_path_buf(),
+            stamm,
+            bytes: 0,
+            namenszeit,
+            datei_hoechstens: (gesamt_hoechstens / 4).clamp(1, DATEI_HOECHSTENS),
+            gesamt_hoechstens: gesamt_hoechstens.max(1),
             knoten: knoten.to_string(),
             peer: peer.to_string(),
             folge: 0,
             auf_bildschirm,
-        })
+        };
+        p.aufraeumen();
+        Ok(p)
+    }
+
+    /// Eine neue Datei, sobald die laufende voll ist; ihre erste Zeile nennt
+    /// die vorige. Gelingt das Oeffnen nicht, wird in der alten weiter
+    /// geschrieben: Ein Protokoll darf nie der Grund sein, dass ein Lauf endet.
+    fn wechseln(&mut self) {
+        let (neu, namenszeit) = freier_pfad(&self.verzeichnis, &self.stamm, self.namenszeit + 1);
+        let Ok(datei) = OpenOptions::new().create(true).append(true).open(&neu) else {
+            return;
+        };
+        let vorher = self
+            .pfad
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        self.datei = datei;
+        self.pfad = neu;
+        self.namenszeit = namenszeit;
+        self.bytes = 0;
+        self.schreibe(Eintrag::neu("fortsetzung").text("vorher", vorher));
+        self.aufraeumen();
+    }
+
+    /// Haelt alle Dateien dieses Knotens unter dem Deckel; die aelteste
+    /// faellt zuerst, die laufende nie.
+    fn aufraeumen(&mut self) {
+        let Ok(eintraege) = std::fs::read_dir(&self.verzeichnis) else {
+            return;
+        };
+        let mut dateien: Vec<(i64, PathBuf, u64)> = eintraege
+            .flatten()
+            .filter_map(|e| {
+                let name = e.file_name().into_string().ok()?;
+                let zeit = protokollzeit(&name, &self.stamm)?;
+                Some((zeit, e.path(), e.metadata().ok()?.len()))
+            })
+            .collect();
+        dateien.sort();
+        let mut gesamt: u64 = dateien.iter().map(|d| d.2).sum();
+        for (_, pfad, laenge) in dateien {
+            if gesamt <= self.gesamt_hoechstens {
+                break;
+            }
+            if pfad == self.pfad {
+                continue;
+            }
+            if std::fs::remove_file(&pfad).is_ok() {
+                gesamt -= laenge;
+            }
+        }
     }
 
     /// Der Pfad der Protokolldatei. Der Knoten nennt ihn beim Start,
@@ -268,6 +381,120 @@ impl Betriebsprotokoll {
         }
         let _ = writeln!(self.datei, "{}", zeile);
         let _ = self.datei.flush();
+        self.bytes += zeile.len() as u64 + 1;
+        if self.bytes >= self.datei_hoechstens {
+            self.wechseln();
+        }
+    }
+}
+
+/// `<stamm>-<ms>.jsonl` mit einer Zeit von wenigstens `mindestens`, die es
+/// im Verzeichnis noch nicht gibt.
+///
+/// ⛔️ **Streng steigend, nicht nur frei.** Rotiert das Protokoll schneller
+/// als eine Millisekunde, wäre der Name einer eben geräumten alten Datei
+/// wieder frei; die neue trüge dann den jüngsten Inhalt unter dem ältesten
+/// Namen und würde als Nächstes geräumt. Gefunden am 2026-10-23 von der
+/// Probe `das_protokoll_bleibt_unter_dem_deckel`, rot nur in der vollen
+/// Sammlung, wo die Uhr langsamer weiterzählte als die Dateien wuchsen.
+fn freier_pfad(verzeichnis: &Path, stamm: &str, mindestens: i64) -> (PathBuf, i64) {
+    let mut zeit = jetzt_ms().max(mindestens);
+    loop {
+        let pfad = verzeichnis.join(format!("{stamm}-{zeit}.jsonl"));
+        if !pfad.exists() {
+            return (pfad, zeit);
+        }
+        zeit += 1;
+    }
+}
+
+/// Die Zeit im Namen, wenn die Datei ein Protokoll genau dieses Knotens
+/// ist: `<stamm>-<ziffern>.jsonl`. `k1` nimmt so nie `k10-…` mit.
+fn protokollzeit(name: &str, stamm: &str) -> Option<i64> {
+    let rest = name.strip_prefix(stamm)?.strip_prefix('-')?.strip_suffix(".jsonl")?;
+    if rest.is_empty() || !rest.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    rest.parse().ok()
+}
+
+#[cfg(test)]
+mod rotationstests {
+    use super::*;
+
+    fn ordner(name: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("myl-protokollrotation-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    fn dateien(d: &Path, stamm: &str) -> Vec<PathBuf> {
+        let mut v: Vec<PathBuf> = std::fs::read_dir(d)
+            .unwrap()
+            .flatten()
+            .filter(|e| protokollzeit(&e.file_name().to_string_lossy(), stamm).is_some())
+            .map(|e| e.path())
+            .collect();
+        v.sort_by_key(|p| protokollzeit(&p.file_name().unwrap().to_string_lossy(), stamm));
+        v
+    }
+
+    /// ⚑ **Fund 624: Der Platz bleibt unter dem Deckel**, und die Folge
+    /// laeuft ueber die Dateien weiter. Die aeltesten fallen weg, und die
+    /// erste aufbewahrte Datei beginnt mit `fortsetzung`.
+    #[test]
+    fn das_protokoll_bleibt_unter_dem_deckel() {
+        let d = ordner("deckel");
+        let deckel = 64 * 1024;
+        let mut p = Betriebsprotokoll::mit_grenze(&d, "k1", "peer", false, deckel).unwrap();
+        for i in 0..5000 {
+            p.schreibe(Eintrag::neu("empfangen").zahl("i", i).text("polster", "x".repeat(40)));
+        }
+        let liste = dateien(&d, "k1");
+        let gesamt: u64 = liste.iter().map(|f| std::fs::metadata(f).unwrap().len()).sum();
+        assert!(gesamt <= deckel + 1024, "{gesamt} Bytes in {} Dateien", liste.len());
+        assert!(liste.len() >= 3, "es wurde nicht rotiert: {}", liste.len());
+        let erste = std::fs::read_to_string(&liste[0]).unwrap();
+        assert!(erste.lines().next().unwrap().contains("\"art\":\"fortsetzung\""));
+        // Lueckenlos ueber alle aufbewahrten Dateien.
+        let folgen: Vec<i64> = liste
+            .iter()
+            .flat_map(|f| std::fs::read_to_string(f).unwrap().lines().map(String::from).collect::<Vec<_>>())
+            .map(|z| z.split("\"folge\":").nth(1).unwrap().split(',').next().unwrap().parse().unwrap())
+            .collect();
+        assert!(folgen.windows(2).all(|w| w[1] == w[0] + 1), "Luecke in der Folge");
+        // 5000 Eintraege plus je Wechsel eine Fortsetzungszeile.
+        assert!(*folgen.last().unwrap() > 5000, "die Folge endet bei {}", folgen.last().unwrap());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// ⛔️ **Neue Namen liegen über allen alten**, auch wenn die Uhr dahinter
+    /// liegt: Sonst sortierte eine neue Datei vor eine alte und fiele als
+    /// erste weg.
+    #[test]
+    fn neue_namen_liegen_ueber_allen_alten() {
+        let d = ordner("namen");
+        let zukunft = jetzt_ms() + 10_000_000;
+        std::fs::write(d.join(format!("k1-{zukunft}.jsonl")), b"{}\n").unwrap();
+        let p = Betriebsprotokoll::mit_grenze(&d, "k1", "peer", false, 1 << 30).unwrap();
+        let zeit = protokollzeit(&p.pfad().file_name().unwrap().to_string_lossy(), "k1").unwrap();
+        assert!(zeit > zukunft, "neue Datei {zeit} liegt nicht über {zukunft}");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// Dateien frueherer Starts zaehlen mit, fremde Knoten nicht.
+    #[test]
+    fn fruehere_starts_zaehlen_mit_fremde_nicht() {
+        let d = ordner("starts");
+        std::fs::write(d.join("k1-1000.jsonl"), vec![b'a'; 50_000]).unwrap();
+        std::fs::write(d.join("k10-1000.jsonl"), vec![b'b'; 50_000]).unwrap();
+        std::fs::write(d.join("kette.dat"), vec![b'c'; 50_000]).unwrap();
+        let _p = Betriebsprotokoll::mit_grenze(&d, "k1", "peer", false, 40_000).unwrap();
+        assert!(!d.join("k1-1000.jsonl").exists(), "die alte Datei desselben Knotens blieb");
+        assert!(d.join("k10-1000.jsonl").exists(), "ein fremder Knoten wurde geraeumt");
+        assert!(d.join("kette.dat").exists());
+        let _ = std::fs::remove_dir_all(&d);
     }
 }
 

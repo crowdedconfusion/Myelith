@@ -29,6 +29,9 @@ myl-node — ein Myelith-Netzknoten
   --relais <addr>        Relais, über das dieser Knoten erreichbar sein will
   --schluessel <datei>   Schlüsseldatei (Vorgabe: knoten.key)
   --protokolle <verz>    Verzeichnis für Betriebsprotokolle (Vorgabe: logs)
+  --protokoll-mb <n>     höchstens so viele MiB Protokoll für diesen Knoten,
+                         über alle Dateien und Starts; die älteste fällt
+                         zuerst weg (Vorgabe: 128)
   --aufnahme <sek>       Abstand der Zustandsaufnahmen (Vorgabe: 30)
   --testverkehr <sek>    Takt des Testverkehrs (Vorgabe: keiner). Mit
                          --erzeuger wird in diesem Takt ein Block gebaut,
@@ -48,6 +51,15 @@ myl-node — ein Myelith-Netzknoten
                          abgebrochener letzter Satz wird verworfen und die
                          Datei gekürzt. Gespeichert werden nur die Blöcke:
                          Höhe, Zustand und letzter Hash folgen daraus.
+  --kette-mb <n>         Platzbudget der Kettendatei in MiB (Vorgabe: 2048).
+                         Darüber wird an einer Langzeitgrenze verdichtet:
+                         Ein Langzeitabzug wird Basis, die Blöcke davor
+                         fallen weg. Behalten wird immer alles ab dem
+                         vorletzten Langzeitabzug; 0 heißt ohne Grenze.
+  --archiv-ausfuhr <ordner>
+                         Jede fertige Periode der Geschichte kalt in diesen
+                         Ordner schreiben, solange der Knoten sie ganz hat
+                         (Datei je Periode, Verzeichnis mit Summen).
   --ohne-kette           Nichts auf die Platte schreiben, JEDER START
                          BEGINNT DANN BEI NULL. Bis zum 2026-09-02 war das
                          die Vorgabe; die sichere Vorgabe ist die
@@ -192,6 +204,14 @@ myl-node — ein Myelith-Netzknoten
   --still                nicht auf den Bildschirm protokollieren
   --hilfe                diese Übersicht
 
+Bei angehaltenem Knoten:
+  myl-node archiv-ausfuhr <kettendatei> <ordner> [--netz <name>]
+                         Die ganze Kette kalt in den Ordner schreiben.
+  myl-node archiv-einfuhr <ordner> <kettendatei> [--netz <name>]
+                         Eine Ausfuhr einlesen: in eine leere Kette (der
+                         Start rechnet sie ab Genesis nach) oder vor eine
+                         verdichtete (geprüft gegen die Historie der Basis).
+
 Die Schlüsseldatei bestimmt die Identität. Bleibt sie erhalten, behält
 der Knoten seine Peer-Id über Neustarts, und nur dann lassen sich die
 Protokolle mehrerer Läufe zusammenführen.
@@ -213,6 +233,46 @@ struct Argumente {
     ohne_konformitaet: bool,
     /// Eine Zusage, die der Knoten beim Start unterschreibt.
     zusage: Option<PathBuf>,
+}
+
+/// `archiv-ausfuhr <kette> <ordner>` und `archiv-einfuhr <ordner> <kette>`,
+/// jeweils mit `--netz <name>` (Vorgabe wie beim Knoten).
+fn archivbefehl(roh: &[String]) -> Result<String, String> {
+    let mut frei = Vec::new();
+    let mut netz = Some(KnotenKonfig::default().netz);
+    let mut i = 1;
+    while i < roh.len() {
+        if roh[i] == "--netz" {
+            let name = roh.get(i + 1).ok_or("--netz erwartet einen Namen")?;
+            netz = Some(myl_node::netz::Netz::aus_name(name).ok_or_else(|| format!("unbekanntes Netz {name}"))?);
+            i += 2;
+        } else {
+            frei.push(PathBuf::from(&roh[i]));
+            i += 1;
+        }
+    }
+    let netz = netz.ok_or("kein Netz")?;
+    let [a, b] = &frei[..] else {
+        return Err(format!("{} erwartet zwei Pfade", roh[0]));
+    };
+    if roh[0] == "archiv-ausfuhr" {
+        let (mut speicher, w) = myl_node::speicher::Kettenspeicher::oeffnen(a, netz.startwert_hash())
+            .map_err(|e| e.to_string())?;
+        if speicher.kleinste_hoehe().is_some_and(|h| h > 1) {
+            return Err("die Kette ist verdichtet; ausführen kann nur, wer sie ab Genesis hat".into());
+        }
+        let n = myl_node::archivausfuhr::ausfuhr(b, &netz.startwert_hash(), w.anzahl, false, |ab, bis| {
+            speicher.bloecke_ab(ab, bis.min(ab + 511)).unwrap_or_default()
+        })?;
+        return Ok(format!("{} Blöcke, {n} Dateien neu geschrieben nach {}", w.anzahl, b.display()));
+    }
+    let leer = std::fs::metadata(b).map(|m| m.len() == 0).unwrap_or(true);
+    let n = if leer {
+        myl_node::archivausfuhr::einfuhr_in_leere_kette(a, b, netz)?
+    } else {
+        myl_node::archivausfuhr::einfuhr_vor_basis(a, b, netz)?
+    };
+    Ok(format!("{n} Blöcke eingeführt nach {}", b.display()))
 }
 
 fn lies_argumente() -> Result<Option<Argumente>, String> {
@@ -264,8 +324,13 @@ fn lies_argumente() -> Result<Option<Argumente>, String> {
             "--relais" => { konfig.nat.relais.push(wert(i)?); i += 2; }
             "--schluessel" => { konfig.schluesseldatei = PathBuf::from(wert(i)?); i += 2; }
             "--kette" => { konfig.kettendatei = Some(PathBuf::from(wert(i)?)); i += 2; }
+            "--kette-mb" => {
+                konfig.kette_mb = wert(i)?.parse().map_err(|_| "--kette-mb erwartet eine ganze Zahl".to_string())?;
+                i += 2;
+            }
             // ⚑ Der Gegenweg zur neuen Vorgabe (Fund 122). Wer nichts
             // behalten will, sagt es; wer nichts sagt, behaelt.
+            "--archiv-ausfuhr" => { konfig.archiv_ausfuhr = Some(PathBuf::from(wert(i)?)); i += 2; }
             "--ohne-kette" => { konfig.kettendatei = None; i += 1; }
             "--beobachtung" => {
                 konfig.beobachtung = Some(
@@ -353,6 +418,14 @@ fn lies_argumente() -> Result<Option<Argumente>, String> {
                 i += 2;
             }
             "--protokolle" => { konfig.protokollverzeichnis = PathBuf::from(wert(i)?); i += 2; }
+            "--protokoll-mb" => {
+                konfig.protokoll_mb = wert(i)?
+                    .parse::<u64>()
+                    .ok()
+                    .filter(|&n| n > 0)
+                    .ok_or_else(|| "--protokoll-mb erwartet eine Zahl größer null".to_string())?;
+                i += 2;
+            }
             "--aufnahme" => {
                 konfig.aufnahme_sekunden = wert(i)?
                     .parse()
@@ -536,6 +609,19 @@ fn modellzusage_lesen(text: &str) -> Option<myl_types::zusage::Modellzusage> {
 
 #[tokio::main]
 async fn main() {
+    // ⚑ **Ausfuhr und Einfuhr der Geschichte** (Archivknoten, Stufe A8):
+    //   eigene Befehle für den angehaltenen Knoten, ohne Netz.
+    let roh: Vec<String> = std::env::args().skip(1).collect();
+    if matches!(roh.first().map(String::as_str), Some("archiv-ausfuhr" | "archiv-einfuhr")) {
+        match archivbefehl(&roh) {
+            Ok(meldung) => println!("{meldung}"),
+            Err(e) => {
+                eprintln!("myl-node: {e}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
     let args = match lies_argumente() {
         Ok(Some(a)) => a,
         Ok(None) => return,
@@ -733,10 +819,10 @@ async fn main() {
                 );
                 match &weg {
                     Some(_) => eprintln!(
-                        "myl-node: eigenes Gateway auf http://{wo}/v1/chat/completions                          (Shard-Weg steht, Abrechnung an)"
+                        "myl-node: eigenes Gateway auf http://{wo}/v1/chat/completions (Shard-Weg steht, Abrechnung an)"
                     ),
                     None => eprintln!(
-                        "myl-node: kein Shard-Weg, die Tuer bedient nur /inferenz.                          Fuer /v1: --ortsleitung, --ortsausweis, --pod und                          --konsensschluessel."
+                        "myl-node: kein Shard-Weg, die Tuer bedient nur /inferenz. Fuer /v1: --ortsleitung, --ortsausweis, --pod und --konsensschluessel."
                     ),
                 }
                 let konsens_fuer_tuer = konsens;
@@ -768,7 +854,7 @@ async fn main() {
                                         );
                                     }
                                     Err(e) => eprintln!(
-                                        "myl-node: Epochenankuendigung gescheitert ({e:?});                                          der Shard-Weg bleibt auf Epoche {}",
+                                        "myl-node: Epochenankuendigung gescheitert ({e:?}); der Shard-Weg bleibt auf Epoche {}",
                                         w.epoche().0
                                     ),
                                 }

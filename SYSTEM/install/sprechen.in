@@ -1,0 +1,77 @@
+# Was die Umgebung von CosyVoice zum Sprechen braucht, und nur das.
+#
+# Daraus entsteht `sprechen-fest.txt`, mit Fassung und Pruefsumme je Paket
+# fuer alle Plattformen. Neu erzeugen aus der Wurzel des Repositoriums:
+#
+#   uv pip compile SYSTEM/install/sprechen.in --universal --python-version 3.11 \
+#     --generate-hashes --exclude-newer <datum vor zwei Wochen> \
+#     -o SYSTEM/install/sprechen-fest.txt
+#
+# ⚑ Nicht die `requirements.txt` von CosyVoice: Die bringt gradio, fastapi,
+# uvicorn, tensorboard, grpcio und deepspeed mit, also Server und Training,
+# und hing am 2026-10-23 an 20 Paketen mit 248 bekannten Luecken (torch 2.3.1,
+# transformers 4.51.3, pillow, onnx, starlette und weitere). Diese Liste ist
+# aus dem gewachsen, was der Laeufer beim Laden und Sprechen wirklich
+# importiert, und trug am selben Tag eine einzige Meldung, begruendet bei
+# `setuptools` unten.
+#
+# ⚑ `--exclude-newer` zwei Wochen zurueck: Gekaperte Fassungen fielen bisher
+# meist in den ersten Tagen auf. Ausnahme nur fuer eine Fassung, die eine
+# bekannte Luecke schliesst; sie steht dann unten mit Grund und eigenem
+# `--exclude-newer-package`.
+
+# Rechnen. torch ab 2.13 schliesst alle Meldungen bis heute, darunter das
+# Laden fremder Gewichte (`torch.load`). torchaudio liest und schreibt
+# seitdem ueber torchcodec.
+torch>=2.13
+torchaudio
+torchcodec
+numpy>=2
+
+# Das Sprachmodell (Qwen2). ⚠️ Ab transformers 5 laedt es in der Fassung
+# seiner Konfiguration (bfloat16) und nimmt eine zu kurze Maske woertlich;
+# beides faengt der Laeufer ab.
+transformers>=5.10,<6
+huggingface-hub
+diffusers
+x-transformers
+conformer
+
+# Konfiguration und Bau des Modells aus der yaml-Datei.
+HyperPyYAML
+omegaconf
+hydra-core
+
+# Sprachtokenizer und Sprecherkennung (onnx), Merkmale der Stimmprobe.
+onnxruntime
+openai-whisper
+librosa
+soundfile
+scipy
+
+# Allein wegen Importen auf Modulebene im Baum von CosyVoice und Matcha-TTS;
+# beim Sprechen laeuft davon nichts. pyarrow ab 23.0.1 wegen einer
+# Use-after-free-Luecke.
+inflect
+modelscope
+lightning
+gdown
+matplotlib
+wget
+pyworld
+pyarrow>=23.0.1
+
+# ⛔️ pyworld importiert zur Laufzeit `pkg_resources`, und setuptools 81 hat
+# es entfernt. Ohne diese Zeile zieht ein anderes Paket ein neueres herein.
+# pyworld 0.3.6 gibt es nur als alte Windows-Raeder.
+# ⚠️ Die einzige bekannte Meldung der Liste haengt hier (GHSA-h35f-9h28-mq5c,
+# behoben in 83.0.0): Sie betrifft das Erzeugen von sdists aus einer
+# `MANIFEST.in`. In dieser Umgebung wird nichts gepackt, und pip baut die
+# sdists der Liste in einer eigenen Bauumgebung, nicht mit diesem setuptools.
+setuptools<81
+
+# Sicherheitsfassungen juenger als zwei Wochen (eigenes --exclude-newer-package):
+# certifi 2026.10.19 nimmt die emSign-Wurzeln mit kompromittierten
+# Zwischenschluesseln heraus; pillow 13.0.0 schliesst 39 Meldungen.
+certifi==2026.10.19
+pillow==13.0.0

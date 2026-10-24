@@ -219,11 +219,13 @@ impl Konsensschluessel {
             text.push_str(&format!("{b:02x}"));
         }
         text.push('\n');
-        fs::write(pfad, &text).map_err(|e| SchluesselFehler::Datei {
+        // 📌 Fund 607 (2026-10-23): Hier stand `fs::write` und danach
+        //    `setze_enge_rechte`; dazwischen lag der Validatorschluessel mit
+        //    den Vorgaberechten (meist 0644) da. Jetzt `0600` ab dem Anlegen.
+        myl_types::geheimdatei::schreiben(pfad, text.as_bytes()).map_err(|e| SchluesselFehler::Datei {
             pfad: pfad.to_path_buf(),
             grund: e.to_string(),
         })?;
-        setze_enge_rechte(pfad)?;
         Self::aus_ikm(&ikm, Herkunft::NeuErzeugt)
     }
 
@@ -413,22 +415,6 @@ fn pruefe_rechte(_pfad: &Path) -> Result<(), SchluesselFehler> {
     // Auf Systemen ohne Unix-Rechte gibt es nichts zu prüfen. Das ist
     // keine Entwarnung, sondern eine Auslassung, und sie steht hier,
     // damit sie nicht wie eine Prüfung aussieht.
-    Ok(())
-}
-
-#[cfg(unix)]
-fn setze_enge_rechte(pfad: &Path) -> Result<(), SchluesselFehler> {
-    use std::os::unix::fs::PermissionsExt;
-    fs::set_permissions(pfad, fs::Permissions::from_mode(0o600)).map_err(|e| {
-        SchluesselFehler::Datei {
-            pfad: pfad.to_path_buf(),
-            grund: e.to_string(),
-        }
-    })
-}
-
-#[cfg(not(unix))]
-fn setze_enge_rechte(_pfad: &Path) -> Result<(), SchluesselFehler> {
     Ok(())
 }
 
@@ -680,8 +666,7 @@ mod tests {
     fn eine_unlesbare_datei_faellt_auf() {
         let ordner = tempdir("kaputt");
         let pfad = ordner.join("konsens.key");
-        fs::write(&pfad, "# Kopf\nnicht hex\n").unwrap();
-        setze_enge_rechte(&pfad).unwrap();
+        myl_types::geheimdatei::schreiben(&pfad, b"# Kopf\nnicht hex\n").unwrap();
         assert!(matches!(
             Konsensschluessel::aus_datei(&pfad),
             Err(SchluesselFehler::KeinSchluessel { .. })

@@ -386,6 +386,33 @@ pub enum Anweisung {
         /// Die Meldung samt Zeugnissen.
         meldung: myl_types::fristmeldung::Fristmeldung,
     },
+    /// ⚑ **Ein Archivbeleg** (Archivknoten, 2026-10-23): die Blöcke der
+    /// Stichproben des Absenders in dieser Epoche, als Bytes, und je ein
+    /// Beweis gegen die Historienwurzel der Langzeitgrenze. Angehängt.
+    ///
+    /// Die Blöcke stehen als Bytes und nicht als `Block`, denn ein Block
+    /// trägt Transaktionen; der Ledger braucht nur ihren Hash, und der ist
+    /// der Hash genau dieser Bytes.
+    ArchivBelegen {
+        /// Die Blöcke, in der Folge der Stichproben.
+        bloecke: Vec<Vec<u8>>,
+        /// Je Block der Beweis.
+        beweise: Vec<myl_types::historie::Beweis>,
+    },
+    /// ⚑ **Eine Kopie nennt die Teilwurzel** des Abschnitts, den die
+    /// Splitter halten (2026-10-23). Angehängt.
+    ArchivTeilwurzel {
+        /// Die Wurzel über die Gruppenwurzeln des Abschnitts.
+        wurzel: myl_types::hash::Hash,
+    },
+    /// ⚑ **Ein Splitter belegt seinen Teil** der gezogenen Gruppe
+    /// (2026-10-23). Angehängt.
+    ArchivTeilBelegen {
+        /// Der Teil.
+        stueck: Vec<u8>,
+        /// Die Pfade zur Teilwurzel.
+        beweis: myl_types::archivteile::Teilbeweis,
+    },
 }
 
 /// Die Bytes, über die der Absender unterschreibt.

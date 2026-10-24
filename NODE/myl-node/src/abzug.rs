@@ -265,6 +265,61 @@ impl Ablage {
         Abzug::aus_datei(&d, &self.startwert)
     }
 
+    /// **Ein Stück des abgelegten Zustands ab `ab`, zum Liefern**: Block,
+    /// Stück und Gesamtgrösse, oder `None` hinter dem Ende.
+    ///
+    /// # 📌 Fund 609 (2026-10-23): nur das Stück, nicht die Datei
+    ///
+    /// Geliefert wurde über [`Self::lesen`]: die ganze Datei, ihre Summe
+    /// und der dekodierte Zustand, für jedes Stück einer anderen Höhe als
+    /// der zuletzt gelesenen, und das in der Ereignisschleife des Knotens.
+    /// Ein Abzug darf [`HOECHSTE_GROESSE`] haben; wer abwechselnd zwei
+    /// abgelegte Höhen anfragte, liess den Knoten je Anfrage bis zu einem
+    /// Gigabyte lesen und hielt dabei den Konsens an. Jetzt werden Kopf,
+    /// Block und genau das Stück gelesen.
+    ///
+    /// ⚑ **Ungeprüft geliefert, und das ist richtig so:** Der Abholer prüft
+    /// den zusammengesetzten Zustand gegen seinen Anker
+    /// ([`Zusammensetzen::stueck`]). Eine beschädigte eigene Datei kostet
+    /// ihn eine Gegenstelle, nicht die Richtigkeit.
+    pub fn stueck_lesen(&self, hoehe: u64, ab: u64) -> Result<Option<(Block, Vec<u8>, u64)>, AbzugFehler> {
+        use std::io::{Read, Seek, SeekFrom};
+        let kaputt = |g: &str| AbzugFehler::Datei(g.to_string());
+        let mut f = std::fs::File::open(self.pfad(hoehe)).map_err(|e| AbzugFehler::Datei(e.to_string()))?;
+        let mut kopf = [0u8; 8 + 2 + 32 + 8];
+        f.read_exact(&mut kopf).map_err(|_| kaputt("zu kurz"))?;
+        if &kopf[..8] != MAGIE || u16::from_le_bytes([kopf[8], kopf[9]]) != FASSUNG {
+            return Err(kaputt("kein Abzug dieser Fassung"));
+        }
+        if &kopf[10..42] != self.startwert.as_bytes() {
+            return Err(kaputt("Abzug eines anderen Netzes"));
+        }
+        let lb = u64::from_le_bytes(kopf[42..50].try_into().expect("8 Bytes"));
+        if lb > myl_types::protocol::MAX_ANFRAGE_BYTES as u64 {
+            return Err(kaputt("Block grösser als eine Antwort"));
+        }
+        let mut roh = vec![0u8; lb as usize];
+        f.read_exact(&mut roh).map_err(|_| kaputt("Block zu kurz"))?;
+        let block: Block = borsh::from_slice(&roh).map_err(|_| kaputt("kein Block"))?;
+        let mut lz = [0u8; 8];
+        f.read_exact(&mut lz).map_err(|_| kaputt("zu kurz"))?;
+        let groesse = u64::from_le_bytes(lz);
+        if groesse > HOECHSTE_GROESSE {
+            return Err(kaputt("Zustand über der Höchstgrösse"));
+        }
+        if ab >= groesse {
+            return Ok(None);
+        }
+        let Some(n) = stueckgroesse(roh.len()) else {
+            return Ok(None);
+        };
+        let bis = (ab + n as u64).min(groesse);
+        f.seek(SeekFrom::Current(ab as i64)).map_err(|e| AbzugFehler::Datei(e.to_string()))?;
+        let mut daten = vec![0u8; (bis - ab) as usize];
+        f.read_exact(&mut daten).map_err(|_| kaputt("Zustand zu kurz"))?;
+        Ok(Some((block, daten, groesse)))
+    }
+
     /// ⚑ **Die Basis**: der Abzug, aus dem diese Kette lebt. Ohne ihn
     /// lässt sich die Kettendatei nicht nachspielen, denn ihr erster Block
     /// schliesst an ihn an; deshalb räumt [`Ablage::aufraeumen`] ihn nie weg.
@@ -276,6 +331,18 @@ impl Ablage {
     pub fn basis_setzen(&self, hoehe: u64) -> std::io::Result<()> {
         std::fs::create_dir_all(&self.ordner)?;
         std::fs::write(self.ordner.join("basis"), format!("{hoehe}\n"))
+    }
+
+    /// Entfernt die Basis: Die Kette lebt wieder ab Genesis
+    /// ([`crate::archiv`]). Erst **nach** dem Einfügen der Geschichte.
+    pub fn basis_entfernen(&self) -> std::io::Result<()> {
+        for name in ["basis", "bestaetigt"] {
+            match std::fs::remove_file(self.ordner.join(name)) {
+                Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e),
+                _ => {}
+            }
+        }
+        self.aufraeumen()
     }
 
     /// Ob die Hintergrundprüfung die Basis bestätigt hat.
@@ -290,13 +357,25 @@ impl Ablage {
         std::fs::write(self.ordner.join("bestaetigt"), format!("{hoehe}\n"))
     }
 
-    /// Behält die zwei jüngsten, jeden auf Dauer und die Basis.
+    /// Räumt nach der Behaltensregel auf; nach einer Verdichtung von
+    /// außen gerufen.
+    pub fn raeumen(&self) -> std::io::Result<()> {
+        self.aufraeumen()
+    }
+
+    /// Behält die zwei jüngsten, die Basis und jeden auf Dauer, der nicht
+    /// vor der Basis liegt.
+    ///
+    /// ⚑ **Ein Langzeitabzug vor der Basis fällt weg** (2026-10-23): Nach
+    /// einer Verdichtung fehlen die Blöcke zwischen ihm und der Basis, und
+    /// ein Neuling, der bei ihm begänne, käme nicht weiter.
     fn aufraeumen(&self) -> std::io::Result<()> {
         let hoehen = self.hoehen();
         let juengste: Vec<u64> = hoehen.iter().rev().take(2).copied().collect();
         let basis = self.basis();
         for h in hoehen {
-            if !juengste.contains(&h) && !ist_langzeit(h) && Some(h) != basis {
+            let dauerhaft = ist_langzeit(h) && basis.is_none_or(|b| h >= b);
+            if !juengste.contains(&h) && !dauerhaft && Some(h) != basis {
                 std::fs::remove_file(self.pfad(h))?;
             }
         }
@@ -381,14 +460,17 @@ pub fn stueck_von(abzug: &Abzug, ab: u64) -> Option<&[u8]> {
     if ab >= abzug.zustand.len() {
         return None;
     }
-    let block = borsh::to_vec(&abzug.block).ok()?.len();
-    let platz = myl_types::protocol::MAX_ANFRAGE_BYTES.checked_sub(block + 4096)?;
-    let n = (STUECK_BYTES as usize).min(platz);
-    if n == 0 {
-        return None;
-    }
+    let n = stueckgroesse(borsh::to_vec(&abzug.block).ok()?.len())?;
     let bis = (ab + n).min(abzug.zustand.len());
     Some(&abzug.zustand[ab..bis])
+}
+
+/// Wie gross ein Stück neben einem Block von `blocklaenge` Bytes sein darf;
+/// `None`, wenn keines mehr in die Antwort passt. Eine Stelle für
+/// [`stueck_von`] und [`Ablage::stueck_lesen`].
+fn stueckgroesse(blocklaenge: usize) -> Option<usize> {
+    let platz = myl_types::protocol::MAX_ANFRAGE_BYTES.checked_sub(blocklaenge + 4096)?;
+    Some((STUECK_BYTES as usize).min(platz)).filter(|n| *n > 0)
 }
 
 #[cfg(test)]
@@ -486,6 +568,45 @@ mod tests {
         assert!(!ablage.bestaetigt());
         ablage.bestaetigt_setzen(2 * 1800).expect("bestaetigt");
         assert!(ablage.bestaetigt());
+        let _ = std::fs::remove_dir_all(&ordner);
+    }
+
+    /// ⚑ **Geliefert wird das Stück, nicht die Datei** (Fund 609): Jedes
+    /// Stück aus der Ablage gleicht dem aus dem ganz gelesenen Abzug, hinter
+    /// dem Ende kommt nichts. Und ein beschädigtes Byte im **letzten** Stück
+    /// hält das erste nicht auf: Der alte Weg las und prüfte bei jedem Stück
+    /// die ganze Datei und lieferte dann gar nichts.
+    #[test]
+    fn die_ablage_liefert_stuecke_ohne_die_ganze_datei_zu_lesen() {
+        let ordner = std::env::temp_dir().join(format!("myl-abzug-stueck-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&ordner);
+        let mut k = kette_bis(3);
+        let mut block = k.bloecke_von_bis(3, 3).pop().expect("Block");
+        block.header.height = BLOECKE_JE_EPOCHE;
+        // Mehr als zwei Stücke, damit Anfang, Mitte und Rest vorkommen.
+        let zustand: Vec<u8> = (0..(2 * STUECK_BYTES + 12_345)).map(|i| (i % 251) as u8).collect();
+        let abzug = Abzug { block: block.clone(), zustand };
+        let ablage = Ablage::neben(&ordner.join("kette.dat"), k.netz().startwert_hash());
+        ablage.ablegen(&abzug).expect("ablegen");
+        let h = BLOECKE_JE_EPOCHE;
+        let groesse = abzug.zustand.len() as u64;
+        for ab in [0, 1, STUECK_BYTES - 1, STUECK_BYTES, 2 * STUECK_BYTES, groesse - 1] {
+            let (b, daten, g) = ablage.stueck_lesen(h, ab).expect("lesen").expect("Stück");
+            assert_eq!(b.hash(), block.hash());
+            assert_eq!(g, groesse);
+            assert_eq!(daten, stueck_von(&abzug, ab).expect("Vergleich"), "Stück ab {ab}");
+        }
+        assert_eq!(ablage.stueck_lesen(h, groesse).expect("lesen"), None, "hinter dem Ende");
+
+        // Ein Byte im letzten Stück kippen, direkt in der Datei.
+        let pfad = ablage.pfad(h);
+        let mut d = std::fs::read(&pfad).expect("Datei");
+        let stelle = d.len() - 32 - 10;
+        d[stelle] ^= 0xff;
+        std::fs::write(&pfad, &d).expect("schreiben");
+        assert!(ablage.lesen(h).is_err(), "der ganze Weg merkt die Beschädigung");
+        let (_, erstes, _) = ablage.stueck_lesen(h, 0).expect("lesen").expect("Stück");
+        assert_eq!(erstes, stueck_von(&abzug, 0).expect("Vergleich"), "das erste Stück liegt unberührt");
         let _ = std::fs::remove_dir_all(&ordner);
     }
 

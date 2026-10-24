@@ -166,14 +166,29 @@ pub fn schreiben_atomar(pfad: &Path, inhalt: &[u8], geheim: bool) -> Result<(), 
         std::fs::create_dir_all(o).map_err(|f| format!("{}: {f}", o.display()))?;
     }
     let tmp = pfad.with_extension("unfertig");
-    std::fs::write(&tmp, inhalt).map_err(|f| format!("{}: {f}", tmp.display()))?;
+    // 📌 Fund 607 (2026-10-23): Hier stand `fs::write` und danach `chmod
+    //    0600`; dazwischen lag das Geheimnis mit den Vorgaberechten da. Jetzt
+    //    frisch angelegt und mit `0600` ab dem ersten Byte. Das Gegenstueck
+    //    fuer die Kisten des Netzes ist `myl_types::geheimdatei`.
+    match std::fs::remove_file(&tmp) {
+        Ok(()) => {}
+        Err(f) if f.kind() == std::io::ErrorKind::NotFound => {}
+        Err(f) => return Err(format!("{}: {f}", tmp.display())),
+    }
+    let mut opt = std::fs::OpenOptions::new();
+    opt.write(true).create_new(true);
     #[cfg(unix)]
     if geheim {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600)).map_err(|f| f.to_string())?;
+        use std::os::unix::fs::OpenOptionsExt;
+        opt.mode(0o600);
     }
     #[cfg(not(unix))]
     let _ = geheim;
+    {
+        use std::io::Write;
+        let mut datei = opt.open(&tmp).map_err(|f| format!("{}: {f}", tmp.display()))?;
+        datei.write_all(inhalt).and_then(|()| datei.sync_all()).map_err(|f| format!("{}: {f}", tmp.display()))?;
+    }
     std::fs::rename(&tmp, pfad).map_err(|f| format!("{}: {f}", pfad.display()))
 }
 
