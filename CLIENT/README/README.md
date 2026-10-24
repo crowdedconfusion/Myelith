@@ -1,7 +1,7 @@
 # client (Nutzer-Client inkl. Wallet)
 
-> **Version:** 0.178.4 (`myl-client` 0.114.1, `myl-oberflaeche` 0.85.2, `myl-console` 0.69.1, `myl-senses` 0.13.5, `myl-module` 0.5.2)
-> **Datum:** 2026-10-23
+> **Version:** 0.178.5 (`myl-client` 0.114.1, `myl-oberflaeche` 0.85.3, `myl-console` 0.69.1, `myl-senses` 0.13.5, `myl-module` 0.5.2)
+> **Datum:** 2026-10-24
 > **Status:** ✅ **Der lokale Betrieb läuft und ist ausgeliefert.** Ein
 > Gesprächsfenster mit Modellwahl, Agentenschleife und
 > Einstellungsseite; aus einem frischen Klon lassen sich darüber
@@ -181,6 +181,10 @@ Modell überhaupt etwas taugt, und weil eine Schnittstelle, die kein
 Mensch je bedient hat, an den Bedürfnissen vorbei entworfen wird.
 
 ## Changelog
+
+### v0.178.5 (2026-10-24): `tokio` 1.54.1 wegen RUSTSEC-2026-0386 (`myl-oberflaeche` 0.85.3)
+
+- Die Sperrdatei hebt `tokio` von 1.53.1 auf 1.54.1: Die sicheren Konstruktoren von `AsyncFd` verletzen die I/O-Sicherheit (RUSTSEC-2026-0386, `unsound`, neu seit dem 2026-10-23), und cargo-deny war damit rot. Der eigene Code nutzt `AsyncFd` nicht; geändert hat sich nur die Sperrdatei, der Vorrat trägt die neue Fassung. `tauri.conf.json` mitgezogen.
 
 ### v0.178.4 (2026-10-23): Eine schlanke, festgenagelte Sprechumgebung, Läufer der Fassung 3 (Funde 604 b, 620; `myl-senses` 0.13.5)
 

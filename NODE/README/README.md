@@ -1,6 +1,6 @@
 # NODE — der Myelith-Knoten
 
-> **Version:** 0.60.0
+> **Version:** 0.60.1
 > **Datum:** 2026-10-24
 > **Status:** Netzknoten lauffähig, Blockproduktion mit **Persistenz über
 > Neustarts**, BFT-Runden über das Netz mit Rundenwechsel, und seit dem
@@ -278,6 +278,10 @@ NODE/
 ```
 
 ## Changelog
+
+### v0.60.1 (2026-10-24): `tokio` 1.54.1 wegen RUSTSEC-2026-0386
+
+- Die Sperrdatei hebt `tokio` von 1.53.1 auf 1.54.1: Die sicheren Konstruktoren von `AsyncFd` verletzen die I/O-Sicherheit (RUSTSEC-2026-0386, `unsound`, neu seit dem 2026-10-23), und cargo-deny war damit rot. Der eigene Code nutzt `AsyncFd` nicht; geändert hat sich nur die Sperrdatei, der Vorrat trägt die neue Fassung. `myl-node` 0.60.1.
 
 ### v0.60.0 (2026-10-24): Wiederanlauf ab dem eigenen Abzug, schnelleres Nachladen, Fristen ab der Spitze, die Frist der Kopien, Drossel, Blockgrenze, gehörte Höhe, Neulinge und Empfängerbeweis (Funde 628 bis 635, J1)
 

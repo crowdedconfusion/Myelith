@@ -1,7 +1,7 @@
 # networking (`myl-net`, `myl-siegel`)
 
-> **Version:** 0.21.0
-> **Datum:** 2026-10-23
+> **Version:** 0.21.1
+> **Datum:** 2026-10-24
 > **Status:** **Phase 1 und 2 abgeschlossen** (1.1–1.6, 2.1–2.3),
 > **Phase 3 umgesetzt** (3.1–3.4, Abschluss unter Reviewvorbehalt), dazu Punkt 4.2 (Fuzzing der Wire-Protocol-Parser), Punkt 4.3
 > (Verbindungsgrenzen und Peer-Diversität) und seit dem 26. August
@@ -109,6 +109,10 @@ NETWORKING/
 ```
 
 ## Changelog
+
+### v0.21.1 (2026-10-24): `tokio` 1.54.1 wegen RUSTSEC-2026-0386 (`myl-net` 0.21.1)
+
+- Die Sperrdatei hebt `tokio` von 1.53.1 auf 1.54.1: Die sicheren Konstruktoren von `AsyncFd` verletzen die I/O-Sicherheit (RUSTSEC-2026-0386, `unsound`, neu seit dem 2026-10-23), und cargo-deny war damit rot. Der eigene Code nutzt `AsyncFd` nicht; geändert hat sich nur die Sperrdatei, der Vorrat trägt die neue Fassung.
 
 ### v0.21.0 (2026-10-23): Sicherheitsaudit: der Anfragekanal, die Identitätsdatei und die Kapsel (Funde 599, 605 bis 608; `myl-net` 0.21.0, `myl-siegel` 0.3.0)
 

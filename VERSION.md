@@ -1,4 +1,4 @@
-0.4.2
+0.4.3
 
 # Myelith: die aktuelle Fassung und was sie ändert
 
@@ -12,7 +12,13 @@ Darunter steht ein einziger Abschnitt: was sich mit der aktuellen Fassung
 ändert. Er wird mit jeder neuen Fassung ersetzt, ältere Fassungen stehen
 hier nicht. Das Programm zeigt ihn vor dem Update.
 
-## 0.4.2 (2026-10-24)
+## 0.4.3 (2026-10-24)
+
+- **Sicherheitskorrektur in einer Abhängigkeit:** Die Laufzeitbibliothek
+  des Netzes (`tokio`) ist auf einer Fassung ohne die gestern gemeldete
+  Schwäche bei Dateideskriptoren.
+
+Seit 0.4.1 ausserdem:
 
 - **Archivknoten:** Eine kleine, ausgeloste Gruppe von Knoten hält die ganze
   Geschichte der Kette, belegt das je Epoche mit Stichproben und gibt sie an

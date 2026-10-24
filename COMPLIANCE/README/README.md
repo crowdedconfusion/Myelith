@@ -1,7 +1,7 @@
 # compliance
 
-> **Version:** 0.6.4
-> **Datum:** 2026-10-23
+> **Version:** 0.6.5
+> **Datum:** 2026-10-24
 > **Status:** Die Pflichten aus der KI-Verordnung sind dokumentiert und,
 > soweit technisch, umgesetzt; die Einordnung Artikel für Artikel steht in
 > der [Selbsteinschätzung](../de/Selbsteinschaetzung.md). Offen: ein
@@ -38,6 +38,10 @@ Schutzfilter (`CLIENT/myl-client/src/schutzfilter.rs`), Notaus
 (`AGENT_LAYER/local-agent/src/notaus.rs`).
 
 ## Changelog
+
+### v0.6.5 (2026-10-24): NOTICES nach `tokio` 1.54.1
+
+- `NOTICES.md` neu erzeugt: `tokio` 1.54.1 statt 1.53.1 in GATEWAY, NETWORKING, NODE, TESTCLIENT und `myl-oberflaeche` (RUSTSEC-2026-0386). Lizenz unverändert.
 
 ### v0.6.4 (2026-10-23): Dependabot für die festgenagelten Actions
 

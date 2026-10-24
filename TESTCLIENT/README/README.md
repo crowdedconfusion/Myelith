@@ -1,6 +1,6 @@
 # testclient (`myl-testclient`)
 
-> **Version:** 0.50.0
+> **Version:** 0.50.1
 > **Datum:** 2026-10-24
 > **Status:** Phase 1 und **Phase 3 vollständig**, dazu Punkt 2.1
 > (`vergleich`), **2.2** (Backend-Vergleich innerhalb einer Maschine, seit
@@ -543,6 +543,10 @@ COMPUTE_PIPELINE Phase 1: erstmals über einen aufrufbaren Befehl statt
 über einen Integrationstest.
 
 ## Changelog
+
+### v0.50.1 (2026-10-24): `tokio` 1.54.1 wegen RUSTSEC-2026-0386
+
+- Die Sperrdatei hebt `tokio` von 1.53.1 auf 1.54.1: Die sicheren Konstruktoren von `AsyncFd` verletzen die I/O-Sicherheit (RUSTSEC-2026-0386, `unsound`, neu seit dem 2026-10-23), und cargo-deny war damit rot. Der eigene Code nutzt `AsyncFd` nicht; geändert hat sich nur die Sperrdatei, der Vorrat trägt die neue Fassung. `myl-testclient` 0.50.1.
 
 ### v0.50.0 (2026-10-24): Der Archivlauf nennt ersetzte ehrliche Kopien und den Wiederanlauf
 

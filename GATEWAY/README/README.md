@@ -1,7 +1,7 @@
 # gateway (`myl-gateway`)
 
-> **Version:** 0.8.0
-> **Datum:** 2026-10-23
+> **Version:** 0.8.1
+> **Datum:** 2026-10-24
 > **Status:** Stufe 1 steht: die Tür auf `localhost` und der Beleg. Sie
 > nimmt entgegen und schreibt fest; **an einen Pod gibt sie noch nichts**.
 
@@ -83,6 +83,10 @@ Sitzungen nicht denselben Wert bekommt und eine Bindung nicht
 übertragbar ist.
 
 ## Changelog
+
+### v0.8.1 (2026-10-24): `tokio` 1.54.1 wegen RUSTSEC-2026-0386
+
+- Die Sperrdatei hebt `tokio` von 1.53.1 auf 1.54.1: Die sicheren Konstruktoren von `AsyncFd` verletzen die I/O-Sicherheit (RUSTSEC-2026-0386, `unsound`, neu seit dem 2026-10-23), und cargo-deny war damit rot. Der eigene Code nutzt `AsyncFd` nicht; geändert hat sich nur die Sperrdatei, der Vorrat trägt die neue Fassung. `myl-gateway` 0.8.1.
 
 ### v0.8.0 (2026-10-24): Die Zugangsprüfung fragt nicht mehr nach dem Empfänger
 

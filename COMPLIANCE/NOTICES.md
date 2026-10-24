@@ -726,7 +726,7 @@ Release bundles contain only those the respective program pulls in.
 | `tinyvec` | 1.13.2 | Zlib OR Apache-2.0 OR MIT | https://github.com/Lokathor/tinyvec |
 | `tinyvec_macros` | 0.1.1 | MIT OR Apache-2.0 OR Zlib | https://github.com/Soveu/tinyvec_macros |
 | `tokenizers` | 0.21.4 | Apache-2.0 | https://github.com/huggingface/tokenizers |
-| `tokio` | 1.53.1 | MIT | https://github.com/tokio-rs/tokio |
+| `tokio` | 1.54.1 | MIT | https://github.com/tokio-rs/tokio |
 | `tokio-macros` | 2.7.2 | MIT | https://github.com/tokio-rs/tokio |
 | `tokio-util` | 0.7.19 | MIT | https://github.com/tokio-rs/tokio |
 | `toml` | 0.8.23 | MIT OR Apache-2.0 | https://github.com/toml-rs/toml |
