@@ -436,7 +436,9 @@ fn verankerte_werkzeuge_laufen_auch_ohne_bezeugtes() {
 /// Agentenbetrieb Zugriff auf das Dateisystem.
 #[test]
 fn der_anhangzuschnitt_bleibt_im_anhangordner() {
-    let ordner = tempfile::tempdir().expect("Ordner");
+    // Das Geheimnis liegt im aeusseren Ordner und geht mit ihm weg.
+    let aussen = tempfile::tempdir().expect("Ordner");
+    let ordner = tempfile::tempdir_in(aussen.path()).expect("Ordner");
     std::fs::write(ordner.path().join("liste.md"), "- Milch\n").expect("Anhang");
     // Etwas, das NICHT erreichbar sein darf, eine Ebene darueber.
     let geheim = ordner.path().parent().expect("Elternordner").join("geheim.txt");
@@ -495,7 +497,9 @@ fn der_anhangzuschnitt_haengt_keine_manifeste() {
 /// `aufloesen` das traegt.
 #[test]
 fn der_weg_hinaus_weist_pfade_ausserhalb_ab() {
-    let ordner = tempfile::tempdir().expect("Ordner");
+    // Das Geheimnis liegt im aeusseren Ordner und geht mit ihm weg.
+    let aussen = tempfile::tempdir().expect("Ordner");
+    let ordner = tempfile::tempdir_in(aussen.path()).expect("Ordner");
     std::fs::write(ordner.path().join("liste.md"), "- Milch\n").expect("Anhang");
     let geheim = ordner.path().parent().expect("Elternordner").join("geheim-hinaus.txt");
     std::fs::write(&geheim, "nicht hinaus\n").expect("Geheimnis");

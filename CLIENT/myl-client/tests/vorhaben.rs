@@ -37,11 +37,29 @@ fn aufruf(name: &str, argumente: serde_json::Value) -> String {
     format!("<tool_call>{}</tool_call>", serde_json::json!({"name": name, "arguments": argumente}))
 }
 
-fn ordner(name: &str) -> std::path::PathBuf {
+/// Ein Probenordner, der mit der Probe verschwindet (Fund 638): Bis hierher
+/// räumte die Hilfsfunktion nur vorher auf, und jeder Lauf liess seine
+/// Ordner im Temp-Ordner liegen.
+struct Probeordner(std::path::PathBuf);
+
+impl std::ops::Deref for Probeordner {
+    type Target = std::path::PathBuf;
+    fn deref(&self) -> &std::path::PathBuf {
+        &self.0
+    }
+}
+
+impl Drop for Probeordner {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+fn ordner(name: &str) -> Probeordner {
     let p = std::env::temp_dir().join(format!("myl-vorhaben-probe-{}-{name}", std::process::id()));
     let _ = std::fs::remove_dir_all(&p);
     std::fs::create_dir_all(&p).unwrap();
-    p
+    Probeordner(p)
 }
 
 fn ruester(

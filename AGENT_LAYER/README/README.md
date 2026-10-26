@@ -1,6 +1,6 @@
 # agent-layer
 
-> **Version:** 0.55.0 (`myl-agent` 0.7.2, `myl-local-agent` 0.46.0)
+> **Version:** 0.55.1 (`myl-agent` 0.7.2, `myl-local-agent` 0.46.1)
 > **Datum:** 2026-10-23
 > **Status:** Manifeste, Herkunftsstufe, Registratur, der
 > **Session-Kontrakt** mit Durchsetzung im Ledger, der **Plan** und seit
@@ -68,6 +68,11 @@ umbenannt, weil er in jedem `use` steht.
 - `src/kette.rs` — dass er es auch so getan hat, und wann er aufhört.
 
 ## Changelog
+
+### v0.55.1 (2026-10-26): Proben räumen ihre Ordner auf (Fund 638; `myl-local-agent` 0.46.1)
+
+- 📌 **Fund 638:** Die Proben in `vorhaben.rs`, `verlauf.rs`, `gedaechtnis.rs` und `tests/schlaf.rs` legten Ordner im Zwischenordner des Systems an und ließen sie liegen (19 je Lauf nach den ersten beiden). Jetzt hält sie ein `Probeordner`, der beim Fallen den Ordner entfernt. Die zwei Proben in `tests/dateiwerkzeuge.rs`, die ein Geheimnis eine Ebene über den Anhang legen, legen den Anhang in einen äußeren Probeordner, und das Geheimnis geht mit ihm. Mit `TMPDIR` auf einen leeren Ordner geprüft: 480 grün, nichts bleibt.
+- Nur Proben geändert, das Programm nicht.
 
 ### v0.55.0 (2026-10-23): Kein Abruf ins eigene Netz, kein Schreiben über einen Verweis hinaus (Funde 615 bis 617; `myl-local-agent` 0.46.0)
 

@@ -1,4 +1,4 @@
-0.4.3
+0.4.4
 
 # Myelith: die aktuelle Fassung und was sie ändert
 
@@ -12,13 +12,21 @@ Darunter steht ein einziger Abschnitt: was sich mit der aktuellen Fassung
 ändert. Er wird mit jeder neuen Fassung ersetzt, ältere Fassungen stehen
 hier nicht. Das Programm zeigt ihn vor dem Update.
 
-## 0.4.3 (2026-10-24)
+## 0.4.4 (2026-10-26)
 
-- **Sicherheitskorrektur in einer Abhängigkeit:** Die Laufzeitbibliothek
-  des Netzes (`tokio`) ist auf einer Fassung ohne die gestern gemeldete
-  Schwäche bei Dateideskriptoren.
+- **Ein Knoten, der nichts mehr hört, fragt selbst nach.** Bisher erfuhr ein
+  Knoten nur über das Netz, dass er zurücklag; verpasste er den letzten
+  Schub, blieb er stehen. Jetzt fordert er nach zehn Sekunden Stillstand
+  selbst die nächsten Blöcke an.
+- **Ehrliche Miner werden über schlechte Leitungen nicht mehr gesperrt.**
+  Die Zeitprobe eines Miners zählt jetzt die kürzeste von fünf Messungen,
+  ein verlorenes Paket gilt nicht mehr als Rechenzeit.
 
 Seit 0.4.1 ausserdem:
+
+- **Sicherheitskorrektur in einer Abhängigkeit:** Die Laufzeitbibliothek
+  des Netzes (`tokio`) ist auf einer Fassung ohne die gemeldete Schwäche bei
+  Dateideskriptoren.
 
 - **Archivknoten:** Eine kleine, ausgeloste Gruppe von Knoten hält die ganze
   Geschichte der Kette, belegt das je Epoche mit Stichproben und gibt sie an

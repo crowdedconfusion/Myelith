@@ -176,4 +176,6 @@ fn der_endpunkt_antwortet_am_laufenden_knoten() {
         matches!(kind.try_wait(), Ok(Some(_)))
     });
     let _ = std::fs::remove_dir_all(&logs);
+    // Auch der Schluesselordner (Fund 638): Er blieb je Lauf liegen.
+    let _ = std::fs::remove_dir_all(schluessel.parent().expect("Schluesselordner"));
 }

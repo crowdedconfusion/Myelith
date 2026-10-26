@@ -80,9 +80,15 @@ fn shard_binary() -> PathBuf {
 }
 
 fn verzeichnis(zweck: &str) -> PathBuf {
+    // 📌 Fund 642: Prozessnummer und Uhr reichen nicht. Die Uhr von macOS
+    //    zaehlt Mikrosekunden, zwei Proben bekamen denselben Ordner, und
+    //    seit `Aufbau` ihn beim Fallen wegraeumt (Fund 638), nahm die eine
+    //    der anderen Ausweis und Schluessel weg.
+    static LAUF: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let v = std::env::temp_dir().join(format!(
-        "myl-zweiprozesse-{zweck}-{}-{}",
+        "myl-zweiprozesse-{zweck}-{}-{}-{}",
         std::process::id(),
+        LAUF.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos())
@@ -204,6 +210,15 @@ struct Aufbau {
     bearer: String,
     weg: myl_node::rechenweg::Ortsweg,
     empfang: std::sync::Mutex<tokio::sync::mpsc::UnboundedReceiver<Anweisung>>,
+}
+
+/// Die beiden Verzeichnisse gehen mit dem Aufbau (Fund 638): Bis hierher
+/// blieben je Lauf zwei `myl-zweiprozesse-*` im Temp-Ordner liegen.
+impl Drop for Aufbau {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self._ausweis);
+        let _ = std::fs::remove_dir_all(&self._schluessel);
+    }
 }
 
 impl Aufbau {

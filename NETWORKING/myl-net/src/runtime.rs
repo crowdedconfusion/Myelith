@@ -144,6 +144,8 @@ pub struct Netzzustand {
     /// Peers unter der Gossip-Schwelle, die also kein Gossip mehr
     /// bekommen.
     pub schlecht_bewertet: usize,
+    /// Dieselben Peers mit Kennung (Fund 618).
+    pub schlecht_bewertete: Vec<libp2p::PeerId>,
     /// Eingegangene Anfragen, deren Antwort noch aussteht.
     ///
     /// ⚑ Eine Zahl, die nach jeder Anfrage auf null zurueckgehen muss,
@@ -394,11 +396,12 @@ pub async fn run_node_mit(
                             .iter()
                             .map(|t| (*t, gossipsub.mesh_peers(&t.topic().hash()).count()))
                             .collect();
-                        let schlecht_bewertet = crate::scoring::schlechte_peers(gossipsub);
+                        let schlecht_bewertete = crate::scoring::schlecht_bewertete(gossipsub);
                         let _ = reply.send(Netzzustand {
                             peers,
                             mesh,
-                            schlecht_bewertet,
+                            schlecht_bewertet: schlecht_bewertete.len(),
+                            schlecht_bewertete,
                             offene_anfragen: offene_anfragen.len(),
                         });
                     }

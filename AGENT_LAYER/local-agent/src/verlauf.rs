@@ -838,11 +838,30 @@ pub fn uebersicht(wurzel: &Path) -> Uebersicht {
 mod proben {
     use super::*;
 
-    fn ordner(name: &str) -> PathBuf {
+
+    /// Ein Probenordner, der mit der Probe verschwindet (Fund 638): Bis
+    /// hierher räumte die Hilfsfunktion nur vorher auf, und jeder Lauf
+    /// liess seine Ordner im Temp-Ordner liegen.
+    struct Probeordner(PathBuf);
+
+    impl std::ops::Deref for Probeordner {
+        type Target = PathBuf;
+        fn deref(&self) -> &PathBuf {
+            &self.0
+        }
+    }
+
+    impl Drop for Probeordner {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn ordner(name: &str) -> Probeordner {
         let d = std::env::temp_dir().join(format!("myl-verlauf-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).expect("Ordner");
-        d
+        Probeordner(d)
     }
 
     fn beispiel() -> Vec<(String, String)> {

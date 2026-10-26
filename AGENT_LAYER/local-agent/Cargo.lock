@@ -259,7 +259,7 @@ dependencies = [
 
 [[package]]
 name = "myl-local-agent"
-version = "0.46.0"
+version = "0.46.1"
 dependencies = [
  "libc",
  "myl-agent",
@@ -273,7 +273,7 @@ dependencies = [
 
 [[package]]
 name = "myl-senses"
-version = "0.13.5"
+version = "0.13.6"
 
 [[package]]
 name = "myl-types"

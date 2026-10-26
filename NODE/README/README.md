@@ -1,11 +1,11 @@
 # NODE — der Myelith-Knoten
 
-> **Version:** 0.60.1
-> **Datum:** 2026-10-24
+> **Version:** 0.61.0
+> **Datum:** 2026-10-25
 > **Status:** Netzknoten lauffähig, Blockproduktion mit **Persistenz über
 > Neustarts**, BFT-Runden über das Netz mit Rundenwechsel, und seit dem
 > 1. September **schließt der Knoten die Epoche selbst ab**.
-> **379 Tests grün** (gezählt am 2026-10-24).
+> **381 Tests grün** (gezählt am 2026-10-26).
 >
 > ⚑ **Seit dem 27. August sind Blockhöhe und Epoche zwei Dinge.** Die
 > Probekette schrieb ihre Höhe in das Epochenfeld des Blockkopfs; das
@@ -278,6 +278,44 @@ NODE/
 ```
 
 ## Changelog
+
+### v0.61.0 (2026-10-25): Nachfrage bei Stille, die kürzeste von fünf Zeitproben (Funde 618, 639)
+
+- ⚑ **Ein Knoten, der kein Gossip mehr hört, fragt selbst nach.** Bis
+  hierher erfuhr er nur über Gossip, dass er zurücklag. Im Netzlauf hing so
+  in rund einem von vier Läufen ein Knoten, meist einer, der nur über mDNS
+  eingestiegen war: Der Erzeuger führte ihn unter der Gossip-Schwelle, er
+  verpasste den letzten Schub, und weil danach kein Block mehr kam, stand er
+  mit lebenden Verbindungen für immer (bei `m07` 1 392 Blöcke zurück).
+  Jetzt fordert der Knoten ab der eigenen Höhe an, wenn sie
+  `STILLE_NACHFRAGE` (10 s) stand und keine Nachforderung läuft, und fragt
+  weiter, solange die Gegenstelle liefert. Eine Behauptung (Fund 634)
+  entsteht dabei nicht; die Sperre für leere Antworten (Fund 626) und die
+  Drossel (Fund 632) gelten wie sonst. Protokollzeile `stille_nachfrage`.
+- Die Aufnahme nennt die schlecht bewerteten Gegenstellen mit Kennung
+  (`schlecht_bewertete`). Ein Miner schreibt seine eigene Fristsperre ins
+  Protokoll (`fristsperre`, einmal je Epoche): Von außen war nur zu sehen,
+  dass gemeldet wurde, nicht, dass die Kette sperrte.
+- Test `ohne_gossip_fragt_ein_knoten_bei_stille_selbst_nach`: Der Erzeuger
+  baut 700 Blöcke, bevor der zweite Knoten kommt, danach keinen mehr.
+  Gegenprobe mit abgeschalteter Nachfrage: rot, der zweite Knoten bleibt
+  bei null.
+- 📌 **Fund 639: Eine einzige Zeitprobe trug jeden Verlust des Netzes als
+  Rechenzeit.** Im neuen Podlauf unter `tc netem` (50 bis 200 ms, bis 5 %
+  Verlust) wurden zwei ehrliche Miner mit je einer Ebene (Frist 40 und
+  80 ms) zwischen 1 und 770 ms gemessen, drei Zeugen lagen darüber, und die
+  Kette sperrte sie; im Netzlauf im selben Prozess war das nicht zu sehen.
+  Jetzt zählt die kürzeste von `PROBEN_JE_MESSUNG` (5) Proben, wie schon
+  der kürzeste Ping: Verlust verlängert eine Probe nur, und unter seine
+  echte Rechenzeit kommt auch ein Lügner damit nicht. Test
+  `die_kuerzeste_probe_traegt_einen_verlust` mit den Zahlen aus dem Lauf.
+- 📌 **Fund 638:** `tests/beendigungssignal.rs` und `tests/beobachtung.rs`
+  räumen auch den Ordner des Schlüssels weg. Mit `TMPDIR` auf einen leeren
+  Ordner geprüft: Die ganze Kiste hinterlässt nichts.
+- Langer Podlauf mit dieser Fassung bestanden: 381 Epochen, kein ehrlicher
+  Miner gesperrt, der Lügner ab der ersten Epoche nach seiner Messung ohne
+  Shard, 77 Shard- und 55 Minerabstürze überstanden, eine Wurzel.
+- `myl-node` 0.61.0.
 
 ### v0.60.1 (2026-10-24): `tokio` 1.54.1 wegen RUSTSEC-2026-0386
 

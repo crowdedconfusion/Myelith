@@ -152,11 +152,19 @@ pub fn standard_schwellen() -> PeerScoreThresholds {
 /// zeitig Verbindungen bestehen und nichts ankommt, ist die Ursache
 /// gefunden.
 pub fn schlechte_peers(gossipsub: &libp2p::gossipsub::Behaviour) -> usize {
+    schlecht_bewertete(gossipsub).len()
+}
+
+/// Dieselben Peers mit Kennung (Fund 618): Die Zahl allein sagte, dass
+/// jemand kein Gossip mehr bekam, aber nicht wer, und der hängende Knoten
+/// ließ sich nicht dem Grund zuordnen.
+pub fn schlecht_bewertete(gossipsub: &libp2p::gossipsub::Behaviour) -> Vec<libp2p::PeerId> {
     let schwelle = standard_schwellen().gossip_threshold;
     gossipsub
         .all_peers()
         .filter(|(peer, _)| gossipsub.peer_score(peer).is_some_and(|s| s < schwelle))
-        .count()
+        .map(|(peer, _)| *peer)
+        .collect()
 }
 
 #[cfg(test)]

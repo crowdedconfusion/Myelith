@@ -142,6 +142,8 @@ class Knoten:
         self.verlust = verlust
         self.prozess: subprocess.Popen | None = None
         self.peer_id: str | None = None
+        # Zusaetzliche Umgebung des Programms, etwa `MALLOC_ARENA_MAX`.
+        self.umgebung: dict[str, str] = {}
 
     # ---- Netz ---------------------------------------------------------
     def netz_anlegen(self) -> None:
@@ -193,7 +195,8 @@ class Knoten:
         self.angaben = (programm, bootstrap, erzeuger, blocktakt, zusatz)
         fehler = open(self.ordner / "stderr.txt", "a", encoding="utf-8")
         # Aus der Wurzel, damit der Knoten die Konformitaetsvektoren findet.
-        self.prozess = subprocess.Popen(befehl, cwd=WURZEL, stdout=fehler, stderr=subprocess.STDOUT)
+        umgebung = {**os.environ, **self.umgebung}
+        self.prozess = subprocess.Popen(befehl, cwd=WURZEL, stdout=fehler, stderr=subprocess.STDOUT, env=umgebung)
 
     def warte_auf_peer_id(self, frist: float) -> str:
         ende = time.monotonic() + frist
@@ -247,6 +250,48 @@ class Knoten:
             return rss, dateien
         except (OSError, StopIteration, ValueError):
             return -1, -1
+
+    def speicherbild(self) -> dict[str, int] | None:
+        """Woraus der belegte Speicher besteht, in KiB: anonym (Halde,
+        Stapel) und aus Dateien, dazu Faeden und die Arenen von glibc.
+
+        ⚑ Eine Arena ausser der ersten ist eine eigene Halde von 64 MiB
+        Adressraum, ausgerichtet auf 64 MiB: ein beschreibbarer Teil und
+        ein gesperrter Rest. Wer die zaehlt, sieht, ob der Speicher in
+        vielen halbleeren Arenen liegt statt in lebenden Daten.
+        """
+        if self.prozess is None or self.prozess.poll() is not None:
+            return None
+        pid = self.prozess.pid
+        try:
+            status = pathlib.Path(f"/proc/{pid}/status").read_text()
+            karte = pathlib.Path(f"/proc/{pid}/maps").read_text().splitlines()
+        except OSError:
+            return None
+        wert = {z.split(":")[0]: z.split()[1] for z in status.splitlines() if ":" in z and len(z.split()) > 1}
+        arena, halde = 64 << 20, 0
+        bereiche = []
+        for z in karte:
+            teile = z.split()
+            von, bis = (int(x, 16) for x in teile[0].split("-"))
+            bereiche.append((von, bis, teile[1], len(teile) < 6))
+        arenen = 0
+        for i, (von, bis, rechte, anonym) in enumerate(bereiche):
+            if anonym and rechte.startswith("rw") and von % arena == 0:
+                ende = bis
+                if i + 1 < len(bereiche) and bereiche[i + 1][0] == bis and bereiche[i + 1][2].startswith("---"):
+                    ende = bereiche[i + 1][1]
+                if ende - von == arena:
+                    arenen += 1
+                    halde += (bis - von) >> 10
+        return {
+            "rss": int(wert.get("VmRSS", 0)),
+            "anon": int(wert.get("RssAnon", 0)),
+            "datei": int(wert.get("RssFile", 0)),
+            "faeden": int(wert.get("Threads", 0)),
+            "arenen": arenen,
+            "arenen_beschrieben": halde,
+        }
 
     def metriken(self) -> dict[str, float]:
         # 📌 Bis zu drei Versuche: Die Abfrage laeuft ueber dieselbe gestoerte
@@ -596,11 +641,21 @@ def lauf(args: argparse.Namespace, ordner: pathlib.Path) -> None:
             raise Befund("die Hoehen kamen nicht zur Ruhe")
     for k in uebrige:
         k.beenden()
-    verloren = schluss - hoehe
+    verloren = max(0, schluss - hoehe)
     if verloren > erlaubter_rueckstand:
         raise Befund(f"{verloren} Bloecke des Erzeugers erreichten niemanden, erlaubt {erlaubter_rueckstand}")
 
-    wurzeln = {"k0 (erzeugt)": erzeugt[hoehe]}
+    # 📌 Fund 637: Der Erzeuger schreibt `block_erzeugt` erst nach dem
+    #    Verbreiten. Kommt das Signal dazwischen, haben die anderen einen Block
+    #    mehr, als sein Protokoll nennt; dann vergleichen die uebrigen
+    #    untereinander. Mehr als einer darueber waere ein Fehler.
+    if hoehe in erzeugt:
+        wurzeln = {"k0 (erzeugt)": erzeugt[hoehe]}
+    elif hoehe == schluss + 1:
+        wurzeln = {}
+        melde(f"der letzte Block {hoehe} steht nicht im Protokoll des Erzeugers (Signal zwischen Verbreiten und Schreiben)")
+    else:
+        raise Befund(f"die uebrigen stehen bei {hoehe}, der Erzeuger nannte zuletzt {schluss}")
     for k in uebrige:
         aufnahmen = [z for z in k.protokoll() if z.get("art") == "aufnahme" and z.get("hoehe") == hoehe]
         if not aufnahmen:
@@ -620,7 +675,7 @@ def lauf(args: argparse.Namespace, ordner: pathlib.Path) -> None:
     if bewegt < 10:
         raise Befund(f"die Wurzel nahm nur {bewegt} Werte an; der Zustand bewegte sich nicht, die gleiche Wurzel sagte nichts")
     melde(
-        f"Ende: {len(wurzeln)} Knoten bei Hoehe {hoehe}, eine Wurzel {erzeugt[hoehe]}, {bewegt} verschiedene Wurzeln "
+        f"Ende: {len(wurzeln)} Knoten bei Hoehe {hoehe}, eine Wurzel {next(iter(wurzeln.values()))}, {bewegt} verschiedene Wurzeln "
         f"auf dem Weg; {verloren} Bloecke gingen mit dem Erzeuger"
     )
 

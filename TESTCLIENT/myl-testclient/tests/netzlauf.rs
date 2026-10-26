@@ -209,12 +209,18 @@ async fn angleichen(knoten: &mut [Knoten], frist: Duration) -> bool {
     false
 }
 
+/// Die Höhen aller Knoten, für die Meldung eines gescheiterten Angleichens
+/// (Fund 618: aus „holten nicht auf“ allein war nicht zu sehen, wer hing).
+fn hoehen(knoten: &[Knoten]) -> Vec<u64> {
+    knoten.iter().map(|k| k.kette().hoehe()).collect()
+}
+
 /// ⚑ **Alle dieselbe Kette, dieselbe Zuteilung, dieselben Grenzen**, und
 /// jeder rechnende Miner führt genau den Shard seiner Position.
 fn pruefe_einigkeit(knoten: &[Knoten], wo: &str) {
     let w = knoten[0].kette().zustandswurzel();
     for k in knoten {
-        assert_eq!(k.kette().zustandswurzel(), w, "{wo}: die Ketten laufen auseinander");
+        assert_eq!(k.kette().zustandswurzel(), w, "{wo}: die Ketten laufen auseinander; Höhen {:?}", hoehen(knoten));
     }
     let z0 = myl_node::kette::Kette::zuteilung_der_laufenden_epoche(knoten[0].kette().zustand());
     for k in &knoten[1..] {
@@ -314,7 +320,7 @@ async fn der_netzbetrieb_traegt_mit_ungleichen_pods_und_stolpersteinen() {
     for _ in 0..30 {
         runde(&mut knoten, 2).await;
     }
-    assert!(angleichen(&mut knoten, Duration::from_secs(60)).await, "die Knoten holten nicht auf");
+    assert!(angleichen(&mut knoten, Duration::from_secs(60)).await, "nach der Anmeldung holten die Knoten nicht auf: Höhen {:?}", hoehen(&knoten));
     let angemeldet = knoten[0].kette().zustand().miner.len();
     let zusagen = knoten[0].kette().zustand().zusagen.len();
     eprintln!("[netzlauf] angemeldet {angemeldet}, Zusagen {zusagen}, Höhe {}", knoten[0].kette().hoehe());
@@ -334,7 +340,7 @@ async fn der_netzbetrieb_traegt_mit_ungleichen_pods_und_stolpersteinen() {
         while knoten[0].kette().zustand().epoch.0 < ziel {
             runde(&mut knoten, 200).await;
         }
-        assert!(angleichen(&mut knoten, Duration::from_secs(120)).await, "die Knoten holten nicht auf");
+        assert!(angleichen(&mut knoten, Duration::from_secs(120)).await, "zu Beginn von Epoche {ziel} holten die Knoten nicht auf: Höhen {:?}", hoehen(&knoten));
         pruefe_einigkeit(&knoten, &format!("Beginn Epoche {ziel}"));
         let zustand = knoten[0].kette().zustand().clone();
         let z = myl_node::kette::Kette::zuteilung_der_laufenden_epoche(&zustand);
@@ -430,7 +436,7 @@ async fn der_netzbetrieb_traegt_mit_ungleichen_pods_und_stolpersteinen() {
         assert_eq!(zurueck.miner_kennung(), *vorher, "{} nach dem Neustart ein anderer Miner", m.name);
         knoten.insert(*i, zurueck);
     }
-    assert!(angleichen(&mut knoten, Duration::from_secs(120)).await, "die neu gestarteten Knoten holten nicht auf");
+    assert!(angleichen(&mut knoten, Duration::from_secs(120)).await, "die neu gestarteten Knoten holten nicht auf: Höhen {:?}", hoehen(&knoten));
     eprintln!("[netzlauf] drei Ausfälle zurück bei Höhe {}", knoten[0].kette().hoehe());
 
     // ---- Stolperstein 8: ein Neuling ohne Kette und ohne Angabe ----------
@@ -441,7 +447,7 @@ async fn der_netzbetrieb_traegt_mit_ungleichen_pods_und_stolpersteinen() {
     neu.netz = &LOKALNETZ;
     neu.horchadressen = vec!["/ip4/0.0.0.0/tcp/0".to_string()];
     knoten.push(Knoten::starten(neu, false).await.expect("Neuling"));
-    assert!(angleichen(&mut knoten, Duration::from_secs(180)).await, "der Neuling holte nicht auf");
+    assert!(angleichen(&mut knoten, Duration::from_secs(180)).await, "der Neuling holte nicht auf: Höhen {:?}", hoehen(&knoten));
     pruefe_einigkeit(&knoten, "mit dem Neuling");
     eprintln!(
         "[netzlauf] Neuling bei Höhe {} mit {} Gegenstellen",
@@ -453,7 +459,7 @@ async fn der_netzbetrieb_traegt_mit_ungleichen_pods_und_stolpersteinen() {
     while knoten[0].kette().zustand().epoch.0 <= epoche {
         runde(&mut knoten, 200).await;
     }
-    assert!(angleichen(&mut knoten, Duration::from_secs(120)).await, "die Knoten holten nicht auf");
+    assert!(angleichen(&mut knoten, Duration::from_secs(120)).await, "in der Epoche danach holten die Knoten nicht auf: Höhen {:?}", hoehen(&knoten));
     pruefe_einigkeit(&knoten, "Beginn der Epoche danach");
     let zustand = knoten[0].kette().zustand().clone();
     let z3 = myl_node::kette::Kette::zuteilung_der_laufenden_epoche(&zustand);
@@ -478,6 +484,10 @@ async fn der_netzbetrieb_traegt_mit_ungleichen_pods_und_stolpersteinen() {
         }
         assert!(tokio::time::Instant::now() < bis, "in der Epoche danach führt nicht jede Position ihren Shard");
     }
+    // 📌 Fund 636: Die Schleife davor baut je Runde einen Block, und ein
+    //    Knoten kann ihn in seinen 25 ms noch nicht haben; ohne Angleichen
+    //    verglich die Probe Wurzeln verschiedener Höhen.
+    assert!(angleichen(&mut knoten, Duration::from_secs(60)).await, "am Ende holten die Knoten nicht auf: Höhen {:?}", hoehen(&knoten));
     pruefe_einigkeit(&knoten, "Ende");
     // Nur der Lügner ist gesperrt; kein ehrlicher Knoten riss seine Frist.
     let gesperrt: Vec<MinerId> = knoten[0].kette().zustand().fristsperren.keys().copied().collect();
@@ -504,7 +514,16 @@ async fn der_netzbetrieb_traegt_mit_ungleichen_pods_und_stolpersteinen() {
             zaehle("shard_wartet_auf_dateien")
         );
     }
-    assert!(im_protokoll(&ordner, "holer", "datei_geholt") > 0, "der Holer holte keine Datei");
+    // 📌 Fund 640: Die Pods verteilt der Zufall der Kette, und in einem von
+    //    zwanzig Laeufen bekam der Holer nie eine Position. Ohne Lueckenfuellung
+    //    startet sein Shard nicht (je Ebene fehlt eine Datei); hat er also
+    //    gestartet, muss er geholt haben. Dass jede Position ihren Shard
+    //    fuehrt, prueft die Schleife oben.
+    if im_protokoll(&ordner, "holer", "shard_gestartet") > 0 {
+        assert!(im_protokoll(&ordner, "holer", "datei_geholt") > 0, "der Holer startete seinen Shard, ohne eine Datei zu holen");
+    } else {
+        eprintln!("[netzlauf] der Holer bekam keine Position, nichts zu holen");
+    }
     assert_eq!(MINER.iter().map(|m| im_protokoll(&ordner, m.name, "datei_verworfen")).sum::<usize>(), 0, "eine Lieferung passte nicht");
     assert!(MINER.iter().map(|m| im_protokoll(&ordner, m.name, "fristmessung")).sum::<usize>() >= 10, "kaum gemessen");
     let _ = std::fs::remove_dir_all(&ordner);

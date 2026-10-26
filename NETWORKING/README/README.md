@@ -1,7 +1,7 @@
 # networking (`myl-net`, `myl-siegel`)
 
-> **Version:** 0.21.1
-> **Datum:** 2026-10-24
+> **Version:** 0.21.2
+> **Datum:** 2026-10-25
 > **Status:** **Phase 1 und 2 abgeschlossen** (1.1–1.6, 2.1–2.3),
 > **Phase 3 umgesetzt** (3.1–3.4, Abschluss unter Reviewvorbehalt), dazu Punkt 4.2 (Fuzzing der Wire-Protocol-Parser), Punkt 4.3
 > (Verbindungsgrenzen und Peer-Diversität) und seit dem 26. August
@@ -109,6 +109,15 @@ NETWORKING/
 ```
 
 ## Changelog
+
+### v0.21.2 (2026-10-25): Schlecht bewertete Peers mit Kennung (Fund 618; `myl-net` 0.21.2)
+
+- `scoring::schlecht_bewertete` nennt die Peers unter der Gossip-Schwelle
+  mit Kennung, `Netzzustand::schlecht_bewertete` trägt sie zum Knoten;
+  `schlechte_peers` zählt daraus. Bis hierher stand nur die Zahl im
+  Protokoll: Im Netzlauf bewertete der Erzeuger sechs Gegenstellen unter der
+  Schwelle, während ein Knoten kein Gossip mehr bekam, und welche es waren,
+  ließ sich nicht sagen.
 
 ### v0.21.1 (2026-10-24): `tokio` 1.54.1 wegen RUSTSEC-2026-0386 (`myl-net` 0.21.1)
 

@@ -175,6 +175,14 @@ pub struct Knoten {
     /// wann. Eine solche Gegenstelle wird für Bereiche ab dieser Höhe
     /// [`LEER_SPERRE`] lang nicht gefragt.
     leer_geantwortet: std::collections::HashMap<libp2p::PeerId, (u64, std::time::Instant)>,
+    /// Die eigene Höhe und seit wann sie steht, für die Nachfrage bei Stille
+    /// (Fund 618).
+    zuletzt_gewachsen: (u64, std::time::Instant),
+    /// Die Gegenstelle der laufenden Nachfrage bei Stille.
+    stille_bei: Option<libp2p::PeerId>,
+    /// Die zuletzt gemeldete eigene Fristsperre (Epoche), damit sie einmal
+    /// im Protokoll steht und nicht je Aufnahme.
+    fristsperre_gemeldet: Option<u64>,
     /// Wohin die Zustandsaufnahme ihre Zahlen zusaetzlich legt.
     ///
     /// ⚑ **Der Abholweg zu den Zahlen, die es laengst gab** (Fund 129).
@@ -460,6 +468,9 @@ struct Messung {
     /// Der kürzeste Ping bisher.
     ping_us: Option<u64>,
     pings: u32,
+    /// Die kürzeste Zeitprobe bisher (Fund 639).
+    probe_us: Option<u64>,
+    proben: u32,
 }
 
 /// Was das Nachspielen der Kettendatei beim Start ergab.
@@ -881,6 +892,9 @@ impl Knoten {
             kette,
             nachforderungen: Vec::new(),
             leer_geantwortet: std::collections::HashMap::new(),
+            zuletzt_gewachsen: (0, std::time::Instant::now()),
+            stille_bei: None,
+            fristsperre_gemeldet: None,
             beobachtungsstelle: crate::beobachtung::Beobachtungsstelle::neu(),
             kontraktabschrift: crate::tuer::Kontraktabschrift::neu(),
             letzte_inferenzantwort: None,
@@ -2001,6 +2015,7 @@ impl Knoten {
         //   gilt als verloren (Fund 588); dann die nächste Gegenstelle.
         self.nachforderungen.retain(|n| n.seit.elapsed() <= Duration::from_secs(10));
         self.weiter_nachfordern(None);
+        self.stille_pruefen();
         self.abzug_arbeit();
         self.eigenen_abzug_melden();
         self.netzarbeit().await;
@@ -2021,6 +2036,11 @@ impl Knoten {
             // aber die Datei unvollständig. Das darf nicht still bleiben.
             .zahl("kette_schreibfehler", self.kette.schreibfehler() as i64)
             .zahl("kette_lesefehler", self.kette.lesefehler() as i64);
+        // Wer unter der Gossip-Schwelle steht, beim Namen (Fund 618).
+        if !z.schlecht_bewertete.is_empty() {
+            let namen: Vec<String> = z.schlecht_bewertete.iter().map(|p| p.to_string()).collect();
+            eintrag = eintrag.text("schlecht_bewertete", namen.join(","));
+        }
         if let Some(n) = self.kette.gespeicherte_bloecke() {
             eintrag = eintrag.zahl("kette_gespeichert", n as i64);
         }
@@ -2222,6 +2242,45 @@ impl Knoten {
                     .zahl("eigene_hoehe", self.kette.hoehe() as i64)
                     .zahl("laufend", self.nachforderungen.len() as i64),
             );
+        }
+    }
+
+    /// ⚑ **Nachfrage bei Stille** (Fund 618, 2026-10-25). Ein Knoten erfuhr
+    /// nur über Gossip, dass er zurücklag. Bekam er keines mehr (im Netzlauf
+    /// bewertete ihn der Erzeuger unter der Gossip-Schwelle) und kamen danach
+    /// keine neuen Blöcke, stand er für immer, mit lebenden Verbindungen.
+    /// Jetzt fragt er selbst ab der eigenen Höhe, wenn sie
+    /// [`STILLE_NACHFRAGE`] lang stand und keine Nachforderung läuft; liefert
+    /// die Gegenstelle, fragt er weiter, bis sie nichts mehr hat. Eine
+    /// Behauptung (Fund 634) entsteht dabei nicht; die Sperre für leere
+    /// Antworten (Fund 626) und die Drossel (Fund 632) gelten wie sonst.
+    fn stille_pruefen(&mut self) {
+        if self.stille_bei.is_some_and(|p| !self.nachforderungen.iter().any(|n| n.an == p)) {
+            self.stille_bei = None;
+        }
+        let hoehe = self.kette.hoehe();
+        if hoehe != self.zuletzt_gewachsen.0 {
+            self.zuletzt_gewachsen = (hoehe, std::time::Instant::now());
+            return;
+        }
+        if self.konfig.erzeugt_bloecke
+            || self.zuletzt_gewachsen.1.elapsed() < STILLE_NACHFRAGE
+            || !self.nachforderungen.is_empty()
+        {
+            return;
+        }
+        self.zuletzt_gewachsen.1 = std::time::Instant::now();
+        self.stille_nachfragen(None);
+    }
+
+    /// Eine Nachforderung ab der eigenen Höhe, ohne gehörtes Ziel.
+    fn stille_nachfragen(&mut self, bevorzugt: Option<libp2p::PeerId>) {
+        let vorher = self.nachforderungen.len();
+        let hoehe = self.kette.hoehe();
+        self.nachfordern(bevorzugt, hoehe + crate::nachschub::MAX_BLOECKE_JE_LIEFERUNG);
+        self.stille_bei = self.nachforderungen.get(vorher).map(|n| n.an);
+        if let Some(p) = self.stille_bei {
+            self.protokoll.schreibe(Eintrag::neu("stille_nachfrage").text("bei", p.to_string()).zahl("ab", (hoehe + 1) as i64));
         }
     }
 
@@ -2720,6 +2779,14 @@ impl Knoten {
                 self.nachforderungen.retain(|n| n.an != von);
                 let aus_dem_voraus = self.voraus_einspielen();
                 self.weiter_nachfordern((angenommen > 0).then_some(von));
+                // Wer bei Stille geliefert hat, wird weiter gefragt, bis er
+                // nichts mehr hat (Fund 618).
+                if self.stille_bei == Some(von) {
+                    self.stille_bei = None;
+                    if angenommen > 0 && self.nachforderungen.is_empty() {
+                        self.stille_nachfragen(Some(von));
+                    }
+                }
                 Eintrag::neu("nachschub_erhalten")
                     .text("von", von.to_string())
                     .zahl("angenommen", angenommen as i64)
@@ -2935,6 +3002,14 @@ impl Knoten {
         let Some(ich) = self.miner_ich() else {
             return;
         };
+        // Die eigene Fristsperre steht im Protokoll: Von außen ist sonst nur
+        // zu sehen, dass gemeldet wurde, nicht, dass die Kette sperrte.
+        if let Some(e) = self.kette.zustand().fristsperren.get(&ich).map(|e| e.0) {
+            if self.fristsperre_gemeldet != Some(e) {
+                self.fristsperre_gemeldet = Some(e);
+                self.protokoll.schreibe(Eintrag::neu("fristsperre").zahl("epoche", e as i64));
+            }
+        }
         self.zusage_pflegen(&ich);
         self.archiv_belegen(&ich);
         self.teilwurzel_nennen(&ich);
@@ -3331,7 +3406,10 @@ impl Knoten {
             let Some(daten) = Nachforderung::Ping.als_bytes() else {
                 continue;
             };
-            self.messungen.insert(an, Messung { pod, mitglied: m.miner_id, ab: std::time::Instant::now(), ping_us: None, pings: 0 });
+            self.messungen.insert(
+                an,
+                Messung { pod, mitglied: m.miner_id, ab: std::time::Instant::now(), ping_us: None, pings: 0, probe_us: None, proben: 0 },
+            );
             let _ = self.kommandos.send(NodeCommand::Anfrage { an, daten });
         }
     }
@@ -3366,16 +3444,32 @@ impl Knoten {
         }
     }
 
-    /// Die Zeitprobe ist zurück: gegen die Frist halten und, wenn darüber,
-    /// ein Zeugnis unterschreiben und verteilen.
+    /// Eine Zeitprobe ist zurück: die nächste stellen oder, nach der letzten,
+    /// die kürzeste gegen die Frist halten und, wenn darüber, ein Zeugnis
+    /// unterschreiben und verteilen (Fund 639: die kürzeste zählt).
     fn zeitprobe_erhalten(&mut self, von: libp2p::PeerId) {
+        let Some(m) = self.messungen.get_mut(&von) else {
+            return;
+        };
+        if m.pings < crate::frist::PINGS_JE_MESSUNG {
+            return;
+        }
+        let dauer = m.ab.elapsed().as_micros() as u64;
+        m.probe_us = Some(m.probe_us.map_or(dauer, |p| p.min(dauer)));
+        m.proben += 1;
+        if m.proben < crate::frist::PROBEN_JE_MESSUNG {
+            m.ab = std::time::Instant::now();
+            if let Some(daten) = (Nachforderung::Zeitprobe { positionen: crate::frist::PROBE_POSITIONEN }).als_bytes() {
+                let _ = self.kommandos.send(NodeCommand::Anfrage { an: von, daten });
+            }
+            return;
+        }
         let Some(m) = self.messungen.remove(&von) else {
             return;
         };
-        let (Some(ping_us), true) = (m.ping_us, m.pings >= crate::frist::PINGS_JE_MESSUNG) else {
+        let (Some(ping_us), Some(probe_us)) = (m.ping_us, m.probe_us) else {
             return;
         };
-        let probe_us = m.ab.elapsed().as_micros() as u64;
         // Ohne Rechenzeit keine Messung (Fund 590): nicht vermerkt, also bei
         // der nächsten Aufnahme wieder gefragt.
         let Some(gemessen) = crate::frist::gemessen_je_token(probe_us, ping_us, crate::frist::PROBE_POSITIONEN) else {
@@ -3635,6 +3729,11 @@ struct Hintergrund {
 /// So lange wird eine Gegenstelle, die nichts hatte, ab dieser Höhe nicht
 /// gefragt (Fund 626).
 const LEER_SPERRE: Duration = Duration::from_secs(30);
+
+/// So lange darf die eigene Höhe stehen, ohne dass eine Nachforderung läuft,
+/// bevor der Knoten von sich aus fragt (Fund 618). Zehn Blockzeiten im
+/// Betrieb; im Leerlauf eine Anfrage je zehn Sekunden an eine Gegenstelle.
+const STILLE_NACHFRAGE: Duration = Duration::from_secs(10);
 
 /// So viele Höhen darf die eigene Nummer im Zustand stillstehen, während
 /// eigene Transaktionen ausstehen, bevor eine als verloren gilt (Fund 627).

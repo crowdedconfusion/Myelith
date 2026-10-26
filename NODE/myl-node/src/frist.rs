@@ -49,6 +49,18 @@ pub fn frist_des_mitglieds(zustand: &LedgerState, pod_index: u32, mitglied: &Min
 /// Wie viele Pings einer Zeitprobe vorausgehen; der kürzeste zählt als Weg.
 pub const PINGS_JE_MESSUNG: u32 = 3;
 
+/// Wie viele Zeitproben je Messung; die kürzeste zählt.
+///
+/// 📌 **Fund 639 (2026-10-25, im Podlauf unter `tc netem`): Eine einzige
+/// Probe trug jeden Verlust des Netzes als Rechenzeit.** Ein verlorenes
+/// Paket kostet eine Neuübertragung, oft über 200 ms; der kürzeste Ping zieht
+/// nur den Weg ab. Zwei ehrliche Miner mit je einer Ebene (Frist 40 und
+/// 80 ms) wurden zwischen 1 und 770 ms gemessen, drei Zeugen lagen darüber,
+/// und die Kette sperrte sie. Verlust und Schwankung verlängern eine Probe
+/// nur; die kürzeste von mehreren liegt nahe an Weg und Rechnung, und unter
+/// die echte Rechenzeit kommt auch ein Lügner damit nicht.
+pub const PROBEN_JE_MESSUNG: u32 = 5;
+
 /// **Was eine Messung je Token ergibt**: die Probe ohne den Weg, durch die
 /// Positionen der Probe, aufgerundet.
 ///
@@ -167,6 +179,25 @@ mod tests {
         assert_eq!(gemessen_je_token(1_000, 5_000, 4), None, "ein langer Ping macht keine Messung (Fund 590)");
         assert_eq!(gemessen_je_token(5_000, 5_000, 4), None, "ohne Rechenzeit keine Messung");
         assert_eq!(gemessen_je_token(900, 0, 0), Some(900), "null Positionen zählt als eine");
+    }
+
+    /// ⚑ **Die kürzeste Probe trägt einen Verlust** (Fund 639), mit den
+    /// Zahlen eines ehrlichen Miners mit einer Ebene aus dem Podlauf: Weg rund
+    /// 100 ms, eine Probe mit Neuübertragung. Die einzelne Probe hätte ihn
+    /// angeschuldigt, die kürzeste von fünf nicht; der Lügner mit 50 µs
+    /// bleibt darüber.
+    #[test]
+    fn die_kuerzeste_probe_traegt_einen_verlust() {
+        let pings = [100_000u64, 104_000, 101_000];
+        let proben = [310_000u64, 108_000, 109_500, 112_000, 107_900];
+        assert_eq!(proben.len() as u32, PROBEN_JE_MESSUNG);
+        let weg = *pings.iter().min().unwrap();
+        let frist_ehrlich = 40_000;
+        let einzeln = gemessen_je_token(proben[0], weg, PROBE_POSITIONEN).unwrap();
+        assert!(einzeln > frist_ehrlich, "die alte Messung mit einer Probe schuldigte an: {einzeln}");
+        let kuerzeste = gemessen_je_token(*proben.iter().min().unwrap(), weg, PROBE_POSITIONEN).unwrap();
+        assert!(kuerzeste <= frist_ehrlich, "{kuerzeste}");
+        assert!(kuerzeste > 50, "der Lügner bleibt über seiner Frist");
     }
 
     /// Eine Probekette mit einem Pod aus sechs Probekonten in Epoche 1.

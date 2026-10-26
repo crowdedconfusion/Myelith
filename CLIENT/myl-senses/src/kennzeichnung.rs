@@ -398,10 +398,11 @@ mod proben {
             .collect()
     }
 
-    fn ablegen(name: &str, proben: &[i16]) -> std::path::PathBuf {
-        let d = std::env::temp_dir().join(format!("myl-kennz-{}", std::process::id()));
-        std::fs::create_dir_all(&d).unwrap();
-        let p = d.join(name);
+    /// Der Ordner verschwindet mit der Probe (Fund 638); bis hierher blieb
+    /// je Lauf ein `myl-kennz-<pid>` im Temp-Ordner liegen.
+    fn ablegen(name: &str, proben: &[i16]) -> (tempfile::TempDir, std::path::PathBuf) {
+        let d = tempfile::Builder::new().prefix("myl-kennz-").tempdir().unwrap();
+        let p = d.path().join(name);
         // Ohne Metadaten, wie piper es schreibt.
         let mut b = schreiben(24_000, 1, proben);
         let i = b.windows(4).position(|w| w == b"LIST").unwrap();
@@ -410,7 +411,7 @@ mod proben {
         let groesse = (b.len() - 8) as u32;
         b[4..8].copy_from_slice(&groesse.to_le_bytes());
         std::fs::write(&p, b).unwrap();
-        p
+        (d, p)
     }
 
     /// ⚑ **Gekennzeichnet traegt beide Marken, ungekennzeichnet keine**,
@@ -419,7 +420,7 @@ mod proben {
     fn beide_marken_und_keine_falschen() {
         for saat in [3u64, 17, 99] {
             let roh = signal(saat, 2);
-            let p = ablegen(&format!("s{saat}.wav"), &roh);
+            let (_d, p) = ablegen(&format!("s{saat}.wav"), &roh);
             let vorher = pruefen(&p).unwrap();
             assert!(!vorher.metadaten && !vorher.wasserzeichen(), "{saat}: {vorher:?}");
 
@@ -431,7 +432,7 @@ mod proben {
             // Vorne abgeschnitten und halb so laut.
             let wav = Wav::lesen(&std::fs::read(&p).unwrap()).unwrap();
             let verstuemmelt: Vec<i16> = wav.proben[1234..].iter().map(|x| x / 2).collect();
-            let q = ablegen(&format!("v{saat}.wav"), &verstuemmelt);
+            let (_e, q) = ablegen(&format!("v{saat}.wav"), &verstuemmelt);
             let b = pruefen(&q).unwrap();
             assert!(!b.metadaten);
             assert!(b.gesucht >= SCHWELLE_GESUCHT, "{saat}: abgeschnitten nicht erkannt: {b:?}");
@@ -444,7 +445,7 @@ mod proben {
     #[test]
     fn die_stoerung_bleibt_klein() {
         let roh = signal(5, 2);
-        let p = ablegen("klein.wav", &roh);
+        let (_d, p) = ablegen("klein.wav", &roh);
         synthetisch_kennzeichnen(&p, Modalitaet::Sprache).unwrap();
         let neu = Wav::lesen(&std::fs::read(&p).unwrap()).unwrap().proben;
         let energie = |v: &[i64]| v.iter().map(|x| (x * x) as u128).sum::<u128>();
@@ -485,9 +486,8 @@ mod proben {
         }
         let groesse = (b.len() - 8) as u32;
         b[4..8].copy_from_slice(&groesse.to_le_bytes());
-        let d = std::env::temp_dir().join(format!("myl-kennz-f-{}", std::process::id()));
-        std::fs::create_dir_all(&d).unwrap();
-        let p = d.join("f.wav");
+        let d = tempfile::Builder::new().prefix("myl-kennz-f-").tempdir().unwrap();
+        let p = d.path().join("f.wav");
         std::fs::write(&p, &b).unwrap();
 
         synthetisch_kennzeichnen(&p, Modalitaet::Sprache).unwrap();

@@ -14,8 +14,8 @@ use myl_consensus::block::{Anweisung, Transaktion};
 use myl_node::konfig::{KnotenKonfig, Rolle};
 use myl_node::Knoten;
 
-fn ordner() -> PathBuf {
-    let p = std::env::temp_dir().join(format!("myl-nachholen-{}", std::process::id()));
+fn ordner(name: &str) -> PathBuf {
+    let p = std::env::temp_dir().join(format!("myl-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&p);
     std::fs::create_dir_all(&p).expect("Ordner");
     p
@@ -57,7 +57,7 @@ async fn treiben(knoten: &mut [&mut Knoten], frist: Duration, fertig: impl Fn(&[
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn ein_neuling_holt_bei_mehreren_zugleich_nach() {
-    let o = ordner();
+    let o = ordner("nachholen");
     let mut alpha = Knoten::starten(KnotenKonfig { erzeugt_bloecke: true, ..konfig(&o, "alpha", vec![]) }, false)
         .await
         .expect("Alpha");
@@ -106,5 +106,35 @@ async fn ein_neuling_holt_bei_mehreren_zugleich_nach() {
         zeilen.iter().filter_map(|z| z.split("\"bei\":\"").nth(1)?.split('"').next()).collect();
     assert!(bei.len() >= 2, "nur bei {bei:?} nachgefordert");
     assert!(zeilen.iter().any(|z| !z.contains("\"laufend\":1,") && !z.contains("\"laufend\":1}")), "nie mehr als eine zugleich");
+    let _ = std::fs::remove_dir_all(&o);
+}
+
+/// ⚑ **Nachfrage bei Stille** (Fund 618): Alpha hat seine Blöcke gebaut,
+/// bevor Beta kam, und baut danach keinen mehr. Beta hört also nie einen
+/// Block über Gossip und erfährt nicht, dass er zurückliegt; im Netzlauf
+/// stand so ein Knoten, den der Erzeuger unter der Gossip-Schwelle führte,
+/// für immer. Jetzt fragt Beta nach zehn Sekunden Stille selbst nach.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ohne_gossip_fragt_ein_knoten_bei_stille_selbst_nach() {
+    let o = ordner("stille");
+    let mut alpha = Knoten::starten(KnotenKonfig { erzeugt_bloecke: true, ..konfig(&o, "alpha", vec![]) }, false)
+        .await
+        .expect("Alpha");
+    for _ in 0..700u64 {
+        alpha.erzeuge_block().await;
+    }
+    let a = alpha.warte_auf_adresse(Duration::from_secs(5)).await.expect("Adresse");
+    let mut beta = Knoten::starten(konfig(&o, "beta", vec![format!("{}/p2p/{}", a, alpha.peer_id())]), false)
+        .await
+        .expect("Beta");
+    let ende = tokio::time::Instant::now() + Duration::from_secs(40);
+    while beta.kette().hoehe() < alpha.kette().hoehe() && tokio::time::Instant::now() < ende {
+        alpha.laufe_fuer(Duration::from_millis(50)).await;
+        beta.laufe_fuer(Duration::from_millis(50)).await;
+    }
+    assert_eq!(beta.kette().hoehe(), alpha.kette().hoehe(), "Beta blieb ohne Gossip stehen");
+    assert_eq!(beta.kette().zustandswurzel(), alpha.kette().zustandswurzel());
+    let protokoll = std::fs::read_to_string(beta.protokollpfad()).unwrap_or_default();
+    assert!(protokoll.contains("\"art\":\"stille_nachfrage\""), "nicht über die Nachfrage bei Stille");
     let _ = std::fs::remove_dir_all(&o);
 }

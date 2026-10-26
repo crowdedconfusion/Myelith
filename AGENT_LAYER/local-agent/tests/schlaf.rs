@@ -104,11 +104,27 @@ fn fragen_mit(buch: &Drehbuch, teil: &str) -> usize {
     buch.fragen.lock().expect("Schloss").iter().filter(|f| f.contains(teil)).count()
 }
 
-fn ordner(name: &str) -> PathBuf {
+/// Ein Probeordner im Zwischenordner, der beim Fallen verschwindet.
+struct Probeordner(PathBuf);
+
+impl std::ops::Deref for Probeordner {
+    type Target = PathBuf;
+    fn deref(&self) -> &PathBuf {
+        &self.0
+    }
+}
+
+impl Drop for Probeordner {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+fn ordner(name: &str) -> Probeordner {
     let d = std::env::temp_dir().join(format!("myl-schlaf-{}-{name}", std::process::id()));
     let _ = std::fs::remove_dir_all(&d);
     std::fs::create_dir_all(&d).expect("Ordner");
-    d
+    Probeordner(d)
 }
 
 /// Ein Gespraech mit Auftrag, Antwort, Werkzeugergebnis und einer zweiten

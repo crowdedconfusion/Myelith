@@ -37,8 +37,14 @@ const ANHANGORDNER: &str = ".AGENT/anhaenge";
 const WAV_SH: &str = "printf 'RIFF\\354\\000\\000\\000WAVEfmt \\020\\000\\000\\000\\001\\000\\001\\000\\300]\\000\\000\\200\\273\\000\\000\\002\\000\\020\\000data\\310\\000\\000\\000' > \"$W\"; head -c 200 /dev/zero >> \"$W\"";
 
 /// Was eine Attrappe zu einer Tondatei gesagt hat: der Text neben ihr.
+///
+/// 📌 Gelesen heisst weggeraeumt: Der Text liegt neben der Tondatei im
+/// Zwischenordner, und die Bibliothek raeumt nur die Tondatei weg.
 fn gesprochen(wav: &Path) -> String {
-    std::fs::read_to_string(format!("{}.txt", wav.display())).unwrap_or_default()
+    let neben = format!("{}.txt", wav.display());
+    let text = std::fs::read_to_string(&neben).unwrap_or_default();
+    let _ = std::fs::remove_file(&neben);
+    text
 }
 
 /// Ein gestelltes Programm, das ausgibt, was es bekommen hat, und dabei
@@ -561,9 +567,12 @@ fn ein_schweigender_laeufer_laeuft_in_die_frist() {
 /// beides entgegennimmt.
 /// Ein gestellter Laeufer der Fassung 2: meldet je Satz zwei Stuecke
 /// (`<ziel>.0.wav`, `<ziel>.1.wav`, je eine Haelfte des Textes), dann
-/// den ganzen Satz in `<ziel>` und `ok`.
-fn stromlaeufer(bin: &Path, name: &str) -> std::path::PathBuf {
+/// den ganzen Satz in `<ziel>` und `ok`. Den Text des ganzen Satzes
+/// schreibt er nur mit `ganz`: Wer Stuecke spielt, liest ihn nie, und er
+/// bliebe im Zwischenordner liegen.
+fn stromlaeufer(bin: &Path, name: &str, ganz: bool) -> std::path::PathBuf {
     let laeufer = bin.join(name);
+    let ganz = if ganz { "cp \"$quelle\" \"$ziel.txt\"; " } else { "" };
     std::fs::write(
         &laeufer,
         format!(
@@ -575,7 +584,7 @@ fn stromlaeufer(bin: &Path, name: &str) -> std::path::PathBuf {
              printf '%s\\t%s\\n' stueck \"$stamm.0.wav\"\n\
              printf 'hinten-' > \"$stamm.1.wav.txt\"; cat \"$quelle\" >> \"$stamm.1.wav.txt\"; W=\"$stamm.1.wav\"; {WAV_SH}\n\
              printf '%s\\t%s\\n' stueck \"$stamm.1.wav\"\n\
-             cp \"$quelle\" \"$ziel.txt\"; W=\"$ziel\"; {WAV_SH}; echo ok\n\
+             {ganz}W=\"$ziel\"; {WAV_SH}; echo ok\n\
              done\n"
         ),
     )
@@ -608,7 +617,7 @@ fn der_vorrang_wartet_auf_den_ersten_ton() {
              stamm=\"${{ziel%.wav}}\"\n\
              cp \"$quelle\" \"$stamm.0.wav.txt\"; W=\"$stamm.0.wav\"; {WAV_SH}\n\
              printf '%s\\t%s\\n' stueck \"$stamm.0.wav\"\n\
-             cp \"$quelle\" \"$ziel.txt\"; W=\"$ziel\"; {WAV_SH}; echo ok\n\
+             W=\"$ziel\"; {WAV_SH}; echo ok\n\
              done\n"
         ),
     )
@@ -670,7 +679,7 @@ fn der_dauerlaeufer_meldet_seine_stuecke() {
     let heimat = d.path().join("sinne");
     let bin = heimat.join("bin");
     std::fs::create_dir_all(&bin).expect("bin");
-    stromlaeufer(&bin, "sprechen");
+    stromlaeufer(&bin, "sprechen", true);
     let sinne = Sinne::finden_in(&heimat, &Eigene::default(), &[]);
     let zeug = sinne.sprechen.as_ref().expect("bereit").clone();
     let mut dauer = myl_senses::sprechen::Dauersprecher::starten(&zeug).expect("meldet sich");
@@ -716,7 +725,7 @@ fn der_vorleser_spielt_die_stuecke_sobald_sie_kommen() {
     //   Python bekommt den Laeufer als erstes Argument und reicht die
     //   uebrigen an den Stromlaeufer weiter. Er heisst nicht `sprechen`,
     //   sonst gewaenne er als eigenes Skript.
-    let strom = stromlaeufer(&bin, "strom");
+    let strom = stromlaeufer(&bin, "strom", false);
     std::fs::create_dir_all(heimat.join("cosyvoice")).expect("cosyvoice");
     std::fs::write(
         bin.join(myl_senses::laufwerk::COSYVOICE_LAEUFER),
@@ -912,7 +921,9 @@ fn cosy_attrappe(heimat: &Path, zaehler: &Path) -> Sinne {
     std::fs::write(bin.join(myl_senses::laufwerk::COSYVOICE_LAEUFER), "# Attrappe\n")
         .expect("Laeufer");
     // Das gestellte Python bekommt den Laeufer als erstes Argument und
-    // danach die Argumente des Clients.
+    // danach die Argumente des Clients. Ein Satz fuer die Ablage bekommt
+    // keinen Text daneben: Er zieht um, und der Text bliebe im
+    // Zwischenordner liegen.
     let python = bin.join("python3");
     std::fs::write(
         &python,
@@ -921,7 +932,9 @@ fn cosy_attrappe(heimat: &Path, zaehler: &Path) -> Sinne {
              if [ \"$1\" != \"--dauer\" ]; then exit 0; fi\n\
              echo start >> {}\n\
              echo bereit\n\
-             while IFS=\"$(printf '\\t')\" read -r quelle ziel; do cp \"$quelle\" \"$ziel.txt\"; W=\"$ziel\"; {WAV_SH}; echo ok; done\n",
+             while IFS=\"$(printf '\\t')\" read -r quelle ziel; do\n\
+             case \"$ziel\" in *myl-ueberbrueckung*) ;; *) cp \"$quelle\" \"$ziel.txt\" ;; esac\n\
+             W=\"$ziel\"; {WAV_SH}; echo ok; done\n",
             zaehler.display()
         ),
     )
@@ -953,7 +966,10 @@ fn ein_geteilter_laeufer_startet_nur_einmal() {
     for i in 0..3 {
         let mut v = myl_senses::sprechen::Vorleser::neu_geteilt(
             &zeug,
-            Box::new(|_| Ok(())),
+            Box::new(|w| {
+                gesprochen(w);
+                Ok(())
+            }),
             Some(std::sync::Arc::clone(&geteilt)),
         );
         v.schub(&format!("Das ist die Antwort Nummer {i}, lang genug zum Sprechen."));
@@ -969,7 +985,13 @@ fn ein_geteilter_laeufer_startet_nur_einmal() {
     // gestartet wuerde.
     let _ = std::fs::remove_file(&zaehler);
     for _ in 0..2 {
-        let mut v = myl_senses::sprechen::Vorleser::neu_mit(&zeug, Box::new(|_| Ok(())));
+        let mut v = myl_senses::sprechen::Vorleser::neu_mit(
+            &zeug,
+            Box::new(|w| {
+                gesprochen(w);
+                Ok(())
+            }),
+        );
         v.schub("Das ist eine Antwort, lang genug zum Sprechen.");
         assert!(v.abschliessen().is_empty());
     }

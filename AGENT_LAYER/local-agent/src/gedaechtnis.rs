@@ -1145,11 +1145,27 @@ fn gekuerzt(t: &str, n: usize) -> String {
 mod proben {
     use super::*;
 
-    fn ordner_fuer(name: &str) -> PathBuf {
+    /// Ein Probeordner im Zwischenordner, der beim Fallen verschwindet.
+    struct Probeordner(PathBuf);
+
+    impl std::ops::Deref for Probeordner {
+        type Target = PathBuf;
+        fn deref(&self) -> &PathBuf {
+            &self.0
+        }
+    }
+
+    impl Drop for Probeordner {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn ordner_fuer(name: &str) -> Probeordner {
         let d = std::env::temp_dir().join(format!("myl-gedaechtnis-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).expect("Ordner");
-        d
+        Probeordner(d)
     }
 
     fn herkunft(sitzung: &str) -> Vec<Herkunft> {

@@ -1,7 +1,7 @@
 # testclient (`myl-testclient`)
 
-> **Version:** 0.50.1
-> **Datum:** 2026-10-24
+> **Version:** 0.51.0
+> **Datum:** 2026-10-25
 > **Status:** Phase 1 und **Phase 3 vollständig**, dazu Punkt 2.1
 > (`vergleich`), **2.2** (Backend-Vergleich innerhalb einer Maschine, seit
 > dem 2026-08-30) und 2.4 (`--repeat`); **Phase 4 vollständig** (4.3 die
@@ -543,6 +543,70 @@ COMPUTE_PIPELINE Phase 1: erstmals über einen aufrufbaren Befehl statt
 über einen Integrationstest.
 
 ## Changelog
+
+### v0.51.0 (2026-10-25): Der Podlauf: Netz, Rechnen und Prüfen in getrennten Prozessen
+
+- `netzbedingungen/podlauf.py` (neu, auf dem Netzlauf mit getrennten
+  Prozessen): ein Erzeuger und zehn Miner, jeder mit Laufzeit und Verlust
+  (`tc netem`), jeder Miner mit eigenem `myl-shard` und dem Probeartefakt.
+  Verlangt werden Anmeldung und Zusage über die Kette, Pods mit den Grenzen
+  der Kette, Zeitproben über die Shards der anderen (echte
+  Vorwärtsrechnungen über die gestörten Leitungen), Meldung und Sperre des
+  Lügners samt einer Epoche ohne seinen Shard, kein ehrlicher Miner
+  gesperrt, Neustart eines abgestürzten Shards und eines abgestürzten
+  Miners, am Ende eine Wurzel. `--kurz` für die Mechanik, sonst
+  `--epochen <n>` Dauer mit Störungen, `--stoerer` dazu.
+- Noch nicht dabei: Anfragen über die Tür und die Stichprobe der Segmente.
+- Langer Lauf bestanden: 381 Epochen unter `tc netem` mit Störer, 1 755
+  Zeitproben, 102 Meldungen, kein ehrlicher Miner gesperrt, 77 Shard- und
+  55 Minerabstürze (Neustart bis 2,5 s, aufgeholt bis 26,6 s), eine Wurzel.
+- 📌 **Fund 638:** `tests/zwei_prozesse.rs` räumt Ausweis und Schlüssel beim
+  Fallen weg. Mit `TMPDIR` auf einen leeren Ordner geprüft: Die ganze Kiste
+  hinterlässt nichts.
+- 📌 **Fund 640:** Im Netzlauf verlangte die Probe, dass der Holer eine
+  Datei holt, auch wenn er nie eine Position bekam; die Pods verteilt der
+  Zufall der Kette, und in einem von zwanzig Läufen stand er nur in der
+  Reserve. Jetzt gilt: Hat er seinen Shard gestartet, muss er geholt haben
+  (ohne Lückenfüllung startet er nicht). Gegenprobe mit ganzem Ordner für
+  den Holer: rot. Netzlauf 20 mal: 19 grün, der rote war dieser Fall;
+  Fund 618 kam nicht wieder.
+- Der Podlauf legt je Epoche und am Ende der Dauerphase ein Speicherbild
+  je Miner ab (`speicher.jsonl`: anonym und aus Dateien, Fäden, Arenen von
+  glibc samt beschriebenem Teil); `--arenen <n>` setzt `MALLOC_ARENA_MAX`
+  für jeden zweiten Miner, zum Vergleich der Speicherhaltung. Im kurzen
+  Lauf: ungedeckelt 46 bis 48 Arenen (eine je Faden, 47 Fäden), 19 bis
+  26 MiB beschrieben; gedeckelt eine, 5 bis 7 MiB.
+- 📌 **Fund 641:** Der Podlauf verlangte eine Position des Lügners bis
+  Epoche 8; in einem von rund zehn kurzen Läufen bekam er keine. Jetzt bis
+  Epoche 16 (`LUEGNER_BIS`), was nur kostet, wenn er spät drankommt.
+- 📌 **Fund 642:** `tests/zwei_prozesse.rs` benannte seine Ordner nach
+  Prozessnummer und Uhr; die Uhr von macOS zählt Mikrosekunden, und zwei
+  Proben bekamen im frischen Gesamtlauf denselben Ordner. Seit Fund 638
+  räumt `Aufbau` ihn beim Fallen weg, und die eine nahm der anderen Ausweis
+  und Schlüssel („Tür nicht geöffnet: No such file or directory“). Jetzt
+  mit einem Zähler im Namen. Gegenprobe mit erzwungen gleichem Namen: drei
+  von drei rot; danach zehn von zehn grün, ganze Kiste 295 grün ohne Reste.
+- `myl-testclient` 0.51.0 (der Lauf ist ein Skript, die Kiste zieht mit).
+
+### v0.50.2 (2026-10-25): Netzlauf gleicht vor der Schlussprüfung an, netem-Auswertung ohne letzten Erzeugerblock (Funde 636, 637; Fund 618 eingegrenzt)
+
+- **Fund 636:** Die Schlussprüfung des Netzlaufs (`tests/netzlauf.rs`)
+  verglich die Zustandswurzeln direkt nach einer Schleife, die je Runde
+  einen Block baut; ein Knoten konnte ihn in seinen 25 ms noch nicht haben.
+  In 4 von 20 Nachtläufen rot mit „die Ketten laufen auseinander“, mit
+  Höhen in der Meldung `[5490, 5489, …]`: ein Block zurück, keine Gabelung.
+  Jetzt erst angleichen, dann vergleichen; die Meldung nennt die Höhen.
+- **Fund 637:** Die Auswertung von `netzbedingungen/netzlauf_prozesse.py`
+  stürzte mit `KeyError` ab, wenn das Signal den Erzeuger zwischen
+  Verbreiten und `block_erzeugt` traf: Die übrigen standen einen Block über
+  seinem Protokoll. Dann vergleichen jetzt die übrigen untereinander; mehr
+  als ein Block darüber bleibt ein Befund.
+- **Fund 618 eingegrenzt:** Jedes gescheiterte Angleichen im Netzlauf hat
+  eine eigene Meldung mit den Höhen aller Knoten (vorher dreimal wortgleich
+  „die Knoten holten nicht auf“). Nachgestellt in rund 5 von 20 Läufen, auf
+  dem Stand vom 2026-10-23 ebenso oft; meist nach der Epochengrenze
+  („in der Epoche danach“), seltener nach dem Neustart der drei Ausfälle.
+- `myl-testclient` 0.50.2.
 
 ### v0.50.1 (2026-10-24): `tokio` 1.54.1 wegen RUSTSEC-2026-0386
 

@@ -78,7 +78,7 @@ pub use nat::{
 };
 pub use node::{build_swarm, MylBehaviour};
 pub use scoring::{
-    schlechte_peers, standard_parameter, standard_schwellen, IP_KOLOKATION_SCHWELLE,
+    schlecht_bewertete, schlechte_peers, standard_parameter, standard_schwellen, IP_KOLOKATION_SCHWELLE,
 };
 pub use sitzung::{
     endpunkt_aus_schluessel, Endpunkt, Epochenankuendigung, Epochenpunkt, Epochenschluessel,

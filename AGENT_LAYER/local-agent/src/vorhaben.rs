@@ -3139,7 +3139,8 @@ mod proben {
     /// hinter dem Vorgaenger.
     #[test]
     fn bestaetigen_macht_fertig_und_beginnt_die_kette() {
-        let a = Ablage::neu(ordner("bestaetigen"));
+        let o = ordner("bestaetigen");
+        let a = Ablage::neu(o.to_path_buf());
         let mut v = a.anlegen("Ziel", 1).unwrap();
         let hinten = a.anlegen("anderes", 2).unwrap();
         let mut w = wahl();
@@ -3163,7 +3164,8 @@ mod proben {
     /// Notiz im naechsten Auftrag.**
     #[test]
     fn nachbessern_macht_bereit_und_traegt_den_hinweis_weiter() {
-        let a = Ablage::neu(ordner("nachbessern"));
+        let o = ordner("nachbessern");
+        let a = Ablage::neu(o.to_path_buf());
         let mut v = a.anlegen("Ziel", 1).unwrap();
         let mut w = wahl();
         w.fertig = Some("steht".into());
@@ -3181,7 +3183,8 @@ mod proben {
     /// am Ende des Laufs oder, nach einem harten Ende, beim naechsten Start.
     #[test]
     fn nach_dem_schliessen_ist_der_laufende_angehalten() {
-        let a = Ablage::neu(ordner("schliessen"));
+        let o = ordner("schliessen");
+        let a = Ablage::neu(o.to_path_buf());
         let v = a.anlegen("lief", 1).unwrap();
         let zweiter = a.anlegen("wartete", 2).unwrap();
         assert!(a.nach_dem_schliessen(Sprache::De).is_none(), "ohne Marke lief nichts");
@@ -3206,7 +3209,8 @@ mod proben {
     /// das Gewaehlte laeuft als naechstes.
     #[test]
     fn wieder_aufnehmen_stellt_nach_vorn() {
-        let a = Ablage::neu(ordner("aufnehmen"));
+        let o = ordner("aufnehmen");
+        let a = Ablage::neu(o.to_path_buf());
         let erst = a.anlegen("eins", 1).unwrap();
         let zwei = a.anlegen("zwei", 2).unwrap();
         let drei = a.anlegen("drei", 3).unwrap();
@@ -3287,7 +3291,8 @@ mod proben {
     /// sind keine Worte des Menschen.
     #[test]
     fn die_worte_des_menschen_kommen_zurueck() {
-        let a = Ablage::neu(ordner("menschenwort"));
+        let o = ordner("menschenwort");
+        let a = Ablage::neu(o.to_path_buf());
         for (sprache, frage) in [(Sprache::De, "Wie heisst du?"), (Sprache::En, "What is your name?")] {
             let mut v = a.anlegen("Gruss", 1).unwrap();
             v.zustand = Zustand::Frage { frage: frage.into() };
@@ -3316,7 +3321,8 @@ mod proben {
     /// als Notiz `mensch` im Auftrag, und das Vorhaben ist bereit.
     #[test]
     fn das_modell_fragt_und_die_antwort_kommt_an() {
-        let a = Ablage::neu(ordner("rueckfrage"));
+        let o = ordner("rueckfrage");
+        let a = Ablage::neu(o.to_path_buf());
         let mut v = a.anlegen("Bericht schreiben", 1).unwrap();
         let g = Arc::new(Mutex::new(Rundenwahl::default()));
         Rueckfrage(g.clone()).ausfuehren(&serde_json::json!({"question": "Deutsch oder Englisch?"})).unwrap();
@@ -3351,7 +3357,8 @@ mod proben {
     /// steht in seinen Notizen.
     #[test]
     fn fortsetzen_ohne_antwort_laesst_das_modell_entscheiden() {
-        let a = Ablage::neu(ordner("ohne-antwort"));
+        let o = ordner("ohne-antwort");
+        let a = Ablage::neu(o.to_path_buf());
         let mut v = a.anlegen("Ziel", 1).unwrap();
         v.zustand = Zustand::Frage { frage: "Welche Farbe?".into() };
         a.speichern(&v).unwrap();
@@ -3405,15 +3412,35 @@ mod proben {
         assert!(a.contains("Runde 1.") && !a.contains("höchstens"), "{a}");
     }
 
-    fn ordner(name: &str) -> PathBuf {
+
+    /// Ein Probenordner, der mit der Probe verschwindet (Fund 638): Bis
+    /// hierher räumte die Hilfsfunktion nur vorher auf, und jeder Lauf
+    /// liess seine Ordner im Temp-Ordner liegen.
+    struct Probeordner(PathBuf);
+
+    impl std::ops::Deref for Probeordner {
+        type Target = PathBuf;
+        fn deref(&self) -> &PathBuf {
+            &self.0
+        }
+    }
+
+    impl Drop for Probeordner {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn ordner(name: &str) -> Probeordner {
         let p = std::env::temp_dir().join(format!("myl-vorhaben-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&p);
-        p
+        Probeordner(p)
     }
 
     #[test]
     fn laeufer_ist_einzeln_und_haelt_beim_schliessen_an() {
-        let a = Ablage::neu(ordner("laeufer"));
+        let o = ordner("laeufer");
+        let a = Ablage::neu(o.to_path_buf());
         let mut v = a.anlegen("Ziel", jetzt()).unwrap();
         v.zustand = Zustand::Schlaeft;
         v.naechste = jetzt() + 3_600;
@@ -3445,7 +3472,8 @@ mod proben {
     #[cfg(unix)]
     #[test]
     fn herzschlag_rettet_die_wartezeit_nach_hartem_ende() {
-        let a = Ablage::neu(ordner("herzschlag"));
+        let o = ordner("herzschlag");
+        let a = Ablage::neu(o.to_path_buf());
         let mut v = a.anlegen("Ziel", 0).unwrap();
         v.zustand = Zustand::Schlaeft;
         // Letzter Herzschlag vor einer Stunde, die Runde war fuer eine
@@ -3463,7 +3491,8 @@ mod proben {
     #[cfg(unix)]
     #[test]
     fn verwaiste_sperre_gilt_nicht() {
-        let a = Ablage::neu(ordner("verwaist"));
+        let o = ordner("verwaist");
+        let a = Ablage::neu(o.to_path_buf());
         std::fs::create_dir_all(&a.ordner).unwrap();
         std::fs::write(a.ordner.join(".laeufer"), "999999 0 alt").unwrap();
         assert!(Laeufer::oeffnen(a, "neu").is_ok());
@@ -3471,7 +3500,8 @@ mod proben {
 
     #[test]
     fn ablage_hin_und_zurueck() {
-        let a = Ablage::neu(ordner("ablage"));
+        let o = ordner("ablage");
+        let a = Ablage::neu(o.to_path_buf());
         let v = a.anlegen("Ziel A", 5).unwrap();
         let w = a.anlegen("Ziel B", 5).unwrap();
         assert_ne!(v.kennung, w.kennung);
@@ -3826,7 +3856,8 @@ mod proben {
     /// Umstellen aendert, welches vorn steht.
     #[test]
     fn die_schlange_faehrt_nur_das_vorderste() {
-        let a = Ablage::neu(ordner("schlange"));
+        let o = ordner("schlange");
+        let a = Ablage::neu(o.to_path_buf());
         let x = a.anlegen("erstes", 5).unwrap();
         let y = a.anlegen("zweites", 5).unwrap();
         let z = a.anlegen("drittes", 5).unwrap();
@@ -3860,7 +3891,8 @@ mod proben {
     /// und ein neues steht hinten.
     #[test]
     fn die_reihe_verzeiht_luecken() {
-        let a = Ablage::neu(ordner("luecken"));
+        let o = ordner("luecken");
+        let a = Ablage::neu(o.to_path_buf());
         let x = a.anlegen("eins", 5).unwrap();
         let y = a.anlegen("zwei", 5).unwrap();
         a.reihe_setzen(&["gibt-es-nicht".into(), y.kennung.clone(), y.kennung.clone()]).unwrap();
@@ -3873,7 +3905,8 @@ mod proben {
     /// ⚑ Eine Kette steht direkt hinter ihrem Vorgaenger, nicht hinten.
     #[test]
     fn die_kette_reiht_sich_hinter_dem_vorgaenger_ein() {
-        let a = Ablage::neu(ordner("kettenreihe"));
+        let o = ordner("kettenreihe");
+        let a = Ablage::neu(o.to_path_buf());
         let x = a.anlegen("vorn", 5).unwrap();
         let y = a.anlegen("hinten", 5).unwrap();
         let n = a.anlegen("folge", 6).unwrap();
@@ -3886,7 +3919,8 @@ mod proben {
     /// ueber eine Kennung wie `..` erreichbar waere.
     #[test]
     fn entfernen_loescht_nur_ein_vorhaben() {
-        let a = Ablage::neu(ordner("entfernen"));
+        let o = ordner("entfernen");
+        let a = Ablage::neu(o.to_path_buf());
         let x = a.anlegen("weg", 5).unwrap();
         let y = a.anlegen("bleibt", 5).unwrap();
         a.reihe_setzen(&[y.kennung.clone(), x.kennung.clone()]).unwrap();
@@ -3902,7 +3936,8 @@ mod proben {
 
     #[test]
     fn stoppen_und_weitermachen() {
-        let a = Ablage::neu(ordner("stoppen"));
+        let o = ordner("stoppen");
+        let a = Ablage::neu(o.to_path_buf());
         let x = a.anlegen("eins", 5).unwrap();
         let v = a.stoppen(&x.kennung, Sprache::De).unwrap();
         assert!(!v.aktiv());
@@ -3918,7 +3953,8 @@ mod proben {
     /// Vorhaben von vor der Haertung (ohne Feld) laedt als nicht fremd.
     #[test]
     fn das_fremd_flag_wird_gespeichert() {
-        let a = Ablage::neu(ordner("fremdflag"));
+        let o = ordner("fremdflag");
+        let a = Ablage::neu(o.to_path_buf());
         let mut v = a.anlegen("Ein Sensorblatt zusammenfassen", 1).expect("anlegen");
         assert!(!v.fremd);
         v.fremd = true;

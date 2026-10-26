@@ -187,6 +187,8 @@ fn lauf(signal: i32, erwarteter_grund: &str, name: &str) {
     );
 
     let _ = std::fs::remove_dir_all(&logs);
+    // Auch der Schluesselordner (Fund 638): Er blieb je Lauf liegen.
+    let _ = std::fs::remove_dir_all(schluessel.parent().expect("Schluesselordner"));
 }
 
 /// **SIGTERM wird behandelt**, und das ist der Fund.
@@ -275,4 +277,6 @@ fn ein_signal_im_startvorlauf_wird_auch_behandelt() {
     );
 
     let _ = std::fs::remove_dir_all(&logs);
+    // Auch der Schluesselordner (Fund 638): Er blieb je Lauf liegen.
+    let _ = std::fs::remove_dir_all(schluessel.parent().expect("Schluesselordner"));
 }

@@ -1,6 +1,6 @@
 # client (Nutzer-Client inkl. Wallet)
 
-> **Version:** 0.178.5 (`myl-client` 0.114.1, `myl-oberflaeche` 0.85.3, `myl-console` 0.69.1, `myl-senses` 0.13.5, `myl-module` 0.5.2)
+> **Version:** 0.178.6 (`myl-client` 0.114.2, `myl-oberflaeche` 0.85.3, `myl-console` 0.69.1, `myl-senses` 0.13.6, `myl-module` 0.5.2)
 > **Datum:** 2026-10-24
 > **Status:** ✅ **Der lokale Betrieb läuft und ist ausgeliefert.** Ein
 > Gesprächsfenster mit Modellwahl, Agentenschleife und
@@ -181,6 +181,11 @@ Modell überhaupt etwas taugt, und weil eine Schnittstelle, die kein
 Mensch je bedient hat, an den Bedürfnissen vorbei entworfen wird.
 
 ## Changelog
+
+### v0.178.6 (2026-10-26): Proben räumen ihren Zwischenordner auf (Fund 638; `myl-client` 0.114.2, `myl-senses` 0.13.6)
+
+- 📌 **Fund 638: Proben ließen Dateien im Zwischenordner des Systems liegen.** Gefunden mit `TMPDIR` auf einen leeren Ordner: `myl-senses` hinterließ 40 Dateien je Lauf. Die Attrappen der Sprechproben schreiben ihren Text neben die Tondatei, und die Bibliothek räumt nur die Tondatei weg. Jetzt räumt `gesprochen` den Text beim Lesen weg; wo niemand ihn liest (Sätze für die Ablage, der ganze Satz neben gestreamten Stücken), schreibt die Attrappe keinen. Die Kennzeichnungsprobe legt ihre Tondatei in einen eigenen Ordner, der mit der Probe verschwindet; `tests/vorhaben.rs` in `myl-client` räumt seine Ordner mit einem Wächter weg. Gegenprobe: vorher 40 Reste, jetzt keiner; `myl-client` hinterlässt nichts.
+- Nur Proben geändert, das Programm nicht.
 
 ### v0.178.5 (2026-10-24): `tokio` 1.54.1 wegen RUSTSEC-2026-0386 (`myl-oberflaeche` 0.85.3)
 
