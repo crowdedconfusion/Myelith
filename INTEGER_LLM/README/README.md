@@ -1,7 +1,7 @@
 # integer-llm
 
-> **Version:** 0.146.1 (θ_v 0.22.0; kernels 0.89.0, runtime 0.104.1, pipeline 0.15.4)
-> **Datum:** 2026-10-26
+> **Version:** 0.146.2 (θ_v 0.22.0; kernels 0.89.0, runtime 0.104.1, pipeline 0.15.4)
+> **Datum:** 2026-10-27
 > **Status:** ⚠️ **Das Akzeptanzkriterium ruht auf einer zu kleinen
 > Stichprobe.** Gemessen wurde bisher ueber **4 Sequenzen, 435
 > Positionen**; eine Messung ueber **32 Sequenzen, 3558 Positionen**
@@ -648,6 +648,14 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
   volle Paritätstests nur auf GPU-Runnern (nightly oder PR-basiert)
 
 ## Changelog
+
+### v0.146.2 (2026-10-27): Der Gleitkomma-Audit kennt die Relaisleitung
+
+- `tests/audit/test_no_float.py` führt `myl-types/src/relais.rs` im
+  Konsenspfad. Die Vollständigkeitsprüfung hat die Datei in der CI gemeldet
+  (Schritt „Audit der Zahlensemantik“), im ersten Lauf nach ihrer
+  Entstehung; sie rechnet nur in Ganzzahlen. 120 Dateien im Konsenspfad,
+  null Treffer.
 
 ### v0.146.1 (2026-10-26): Proben räumen ab (Fund 653; runtime 0.104.1, pipeline 0.15.4)
 

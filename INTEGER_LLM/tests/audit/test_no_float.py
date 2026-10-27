@@ -382,6 +382,12 @@ CONSENSUS_PATH = [
     # diese Pruefung nicht mit, gemeldet hat sie die Datei beim naechsten
     # Lauf.
     ROOT / "SHARED_TYPES" / "myl-types" / "src" / "geheimdatei.rs",
+    # 2026-10-26: Die Relaisleitung zwischen Knoten, Pod und Wallet. Sie
+    # traegt Podbild, Shardanfragen, Kontostand (Guthaben, Nonce, seit dem
+    # 2026-10-27 Grundpreis und Aufschlag) und Transaktionen, alles in
+    # Ganzzahlen. 📌 Gemeldet hat sie die CI zum Commit mit den Gebuehren;
+    # lokal lief dieser Audit vorher nicht mit.
+    ROOT / "SHARED_TYPES" / "myl-types" / "src" / "relais.rs",
     # 2026-10-23: Die Historienwurzel (Archivknoten, Stufe A1), ein Merkle
     # Mountain Range über die Blockhashes. Sie geht in den Zustand ein, also
     # ganzzahlig und nur aus Hashes.
