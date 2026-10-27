@@ -169,8 +169,14 @@ fn belegen(datei: &std::fs::File, bytes: u64) -> Result<(), String> {
         // zusammenhaengender Bereich ist der schnellere; scheitert er
         // an der Zerstueckelung der Platte, ist ein verteilter genauso
         // viel wert, denn gehalten wird Platz und keine Bahn.
+        // 📌 Fund 644 (2026-10-26): Hier stand `F_ALLOCATECONTIG` allein.
+        //    Ohne `F_ALLOCATEALL` darf der Aufruf weniger buchen als
+        //    verlangt und trotzdem gelingen; auf einer viel beschriebenen
+        //    Platte waren es 25 von 64 MiB, und die Reservierung war still
+        //    halb. Jetzt beide Versuche „alles oder nichts", und gezaehlt
+        //    wird, was gebucht ist.
         let mut fst = libc::fstore_t {
-            fst_flags: libc::F_ALLOCATECONTIG,
+            fst_flags: libc::F_ALLOCATECONTIG | libc::F_ALLOCATEALL,
             fst_posmode: libc::F_PEOFPOSMODE,
             fst_offset: 0,
             fst_length: fehlt,
@@ -188,6 +194,9 @@ fn belegen(datei: &std::fs::File, bytes: u64) -> Result<(), String> {
                 "Platz laesst sich nicht belegen: {}",
                 std::io::Error::last_os_error()
             ));
+        }
+        if fst.fst_bytesalloc < fehlt {
+            return Err(format!("Platz nur teilweise belegt: {} von {fehlt} Bytes", fst.fst_bytesalloc));
         }
     }
     // 📌 **`F_PREALLOCATE` bucht die Bloecke, verlaengert die Datei

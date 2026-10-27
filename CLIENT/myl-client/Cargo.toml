@@ -1,6 +1,6 @@
 [package]
 name = "myl-client"
-version = "0.114.2"
+version = "0.117.0"
 edition = "2021"
 rust-version = "1.99"
 description = "Der Nutzer-Client: eine Frage an ein lokales Modell, die Agentenschleife mit Einhaengegrenze, die Einstellungen."
@@ -45,6 +45,16 @@ myl-module = { path = "../myl-module" }
 myl-types = { path = "../../SHARED_TYPES/myl-types" }
 # Speicherorte und Zusage fuer das Mining (`mining`).
 myl-store = { path = "../../STORAGE/myl-store" }
+# Zufall fuer neue Testwallets (`wallet`); dieselbe Fassung wie im Knoten,
+# schon im Vorrat.
+getrandom = "0.3"
+# SHA-256 und SHA-512 fuer BIP-39 (`bip39`); dieselbe Fassung wie in
+# `myl-types`, schon im Vorrat.
+sha2 = "0.10"
+# Kettentransaktionen, die das Wallet unterschreibt (`bezahlen`); bringt
+# nur `myl-ledger` mit, keine Fremdkiste.
+myl-consensus = { path = "../../CONSENSUS/myl-consensus" }
+borsh = { version = "1.6", features = ["derive"] }
 # Erhebung der Maschine und Belegungsplan; drei Fremdkisten, alle schon da.
 myl-dispatcher = { path = "../../COMPUTE_PIPELINE/dispatcher" }
 # ⚑ **Mit `cpu-simd`, und auf macOS mit `metal`** (Fund 367, 2026-09-14).
@@ -104,3 +114,23 @@ opt-level = 2
 debug-assertions = true
 overflow-checks = true
 debug = "line-tables-only"
+
+# Ueberlaufpruefung im Freigabebau, nur fuer die Protokollkisten
+# (Festlegung des Projektinhabers, 2026-10-26). `--release` schaltet sie
+# sonst ab, und eine Rechnung im Konsenspfad liefe an den Raendern still
+# um; so wird aus einem stillen Fehler ein lauter Halt. Die Rechenkerne
+# (`integer-llm-*`) bleiben ohne, dort zaehlt jede Anweisung, und sie
+# rechnen mit ausdruecklichem `wrapping_*`. Ein Profil gilt nur in der
+# Kiste, die gebaut wird, deshalb steht die Liste in jeder Programmkiste.
+[profile.release.package.myl-types]
+overflow-checks = true
+[profile.release.package.myl-ledger]
+overflow-checks = true
+[profile.release.package.myl-consensus]
+overflow-checks = true
+[profile.release.package.myl-store]
+overflow-checks = true
+[profile.release.package.myl-client]
+overflow-checks = true
+[profile.release.package.myl-agent]
+overflow-checks = true

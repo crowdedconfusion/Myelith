@@ -87,6 +87,11 @@ fn starten(nummer: usize, bereich: Option<(usize, usize)>) -> (Child, (std::net:
         .unwrap_or_else(|| panic!("unerwartete Zeile von Shard {nummer}: {zeile:?}"))
         .parse()
         .expect("Adresse lesbar");
+    // Fund 638: Der Shard hat seinen Ausweis gelesen, bevor er seine
+    // Adresse nennt; danach braucht den Ordner niemand mehr.
+    if let Some(ordner) = ausweisdatei.parent() {
+        let _ = std::fs::remove_dir_all(ordner);
+    }
     (kind, (adresse, ausweis))
 }
 

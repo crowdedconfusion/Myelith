@@ -48,6 +48,9 @@ pub const ORDNER_VORGABE: &str = "Myelith";
 pub const MELDETAKT: Duration = Duration::from_secs(5 * 60);
 /// Unter welchem Namen der Knoten laeuft.
 const KNOTENNAME: &str = "miner";
+/// Der Ausweis der Relaisleitung im Datenordner (`0600`, vom Knoten
+/// geschrieben).
+pub const RELAISAUSWEIS: &str = "relais.ausweis";
 /// Wie lange der Start auf den Beobachtungsendpunkt wartet.
 const STARTFRIST: Duration = Duration::from_secs(30);
 /// Der Takt der Zustandsaufnahme des Knotens, in Sekunden.
@@ -380,6 +383,18 @@ pub struct Zustand {
     /// Das Guthaben beim ersten Blick nach dem Start.
     #[serde(default)]
     pub guthaben_beim_start: Option<u64>,
+    /// Das Wallet, an das ausgezahlt wird (`crate::wallet`).
+    #[serde(default)]
+    pub wallet: Option<String>,
+    /// Sein Guthaben beim ersten Blick nach dem Start.
+    #[serde(default)]
+    pub auszahlung_beim_start: Option<u64>,
+    /// Wohin der Knoten beigetreten ist; `None` heisst eigener Probelauf.
+    #[serde(default)]
+    pub einstieg: Option<String>,
+    /// Die Relaisleitung des Knotens (`host:port`), fuer das Wallet.
+    #[serde(default)]
+    pub relais: Option<String>,
     /// Was hergegeben ist, fuer die Meldung.
     pub kerne: u32,
     pub rechenwerke: usize,
@@ -502,14 +517,35 @@ pub fn starten(f: &Freigabe, von: &str) -> Result<Zustand, String> {
         .map(|a| a.port())
         .map_err(|e| format!("kein freier Port: {e}"))?;
     let beobachtung = format!("127.0.0.1:{port}");
+    // ⚑ Die Relaisleitung: ueber sie bezahlt das Wallet (`crate::bezahlen`).
+    let relais = std::net::TcpListener::bind("127.0.0.1:0")
+        .and_then(|l| l.local_addr())
+        .map(|a| a.to_string())
+        .map_err(|e| format!("kein freier Port: {e}"))?;
     let ausgabe = daten.join("knoten.log");
     let log = std::fs::File::create(&ausgabe).map_err(|e| format!("{}: {e}", ausgabe.display()))?;
     let log2 = log.try_clone().map_err(|e| e.to_string())?;
+    let einstieg = einstieg();
+    let wallet = crate::wallet::gewaehlt();
     let mut c = std::process::Command::new(&programm);
-    c.arg("--name").arg(KNOTENNAME)
-        .arg("--port").arg("0")
-        .arg("--erzeuger")
-        .arg("--kette").arg(knotenordner.join("kette.dat"))
+    c.arg("--name").arg(KNOTENNAME).arg("--port").arg("0");
+    // ⚑ Mit Einstieg tritt der Knoten bei; ohne ist er sein eigener Erzeuger
+    //   und baut erst, wenn jemand zuhoert.
+    match &einstieg {
+        Some(e) => c.arg("--bootstrap").arg(e),
+        None => c.arg("--erzeuger"),
+    };
+    // ⚑ Das Wallet wird Auszahlungskonto. Der Knoten arbeitet mit seinem
+    //   eigenen Konsensschluessel; den Schluessel eines Wallets bekommt er
+    //   nur, wenn die Kette noch ein anderes fuehrt und es zu wechseln gilt.
+    if let Some(w) = &wallet {
+        c.arg("--konsensschluessel").arg(daten.join("konsens.key")).arg("--konto").arg(w.adresse_hex());
+        if let Some(alt) = crate::wallet::eingetragen().filter(|a| a.name != w.name) {
+            c.arg("--kontowechsel").arg(alt.schluesselpfad());
+        }
+    }
+    c.arg("--podrelais").arg(&relais).arg("--podrelaisausweis").arg(daten.join(RELAISAUSWEIS));
+    c.arg("--kette").arg(knotenordner.join("kette.dat"))
         .arg("--protokolle").arg(knotenordner.join("logs"))
         .arg("--schluessel").arg(daten.join("knoten.key"))
         .arg("--kontoschluessel").arg(daten.join("konto.key"))
@@ -559,6 +595,10 @@ pub fn starten(f: &Freigabe, von: &str) -> Result<Zustand, String> {
         von: von.to_string(),
         von_pid: std::process::id(),
         guthaben_beim_start: None,
+        wallet: wallet.map(|w| w.name),
+        auszahlung_beim_start: None,
+        einstieg,
+        relais: Some(relais),
         kerne: f.kerne,
         rechenwerke: f.rechenwerke.len(),
         volumen_bytes: zusage.volumen_bytes(),
@@ -569,6 +609,66 @@ pub fn starten(f: &Freigabe, von: &str) -> Result<Zustand, String> {
     }
     zustand_schreiben(&z)?;
     Ok(z)
+}
+
+/// **Wohin der Knoten beitritt**: `MYL_PROBENETZ`, sonst die Einstellung
+/// `mining.einstieg`. Beide nehmen eine Multiadresse oder eine Datei, in
+/// deren erster Zeile sie steht.
+pub fn einstieg() -> Option<String> {
+    einstieg_aus(einstieg_angabe()?.trim())
+}
+
+/// Die Angabe, wie sie steht: `MYL_PROBENETZ`, sonst `mining.einstieg`.
+fn einstieg_angabe() -> Option<String> {
+    std::env::var("MYL_PROBENETZ").ok().filter(|v| !v.trim().is_empty()).or_else(|| {
+        crate::Einstellungen::lesen(&crate::Einstellungen::vorgabepfad()).ok().and_then(|e| e.mining.einstieg)
+    })
+}
+
+/// **Wo sich ein Knoten befragen laesst** (`/konto/…`, 2026-10-26): der
+/// laufende Knoten des Minings, sonst der Abfrageort, den die Einstiegsdatei
+/// in einer Zeile `beobachtung <host:port>` nennt (das Probenetz schreibt
+/// sie).
+pub fn abfrageort() -> Option<String> {
+    if let Some(z) = zustand() {
+        return Some(z.beobachtung);
+    }
+    let text = std::fs::read_to_string(einstieg_angabe()?.trim()).ok()?;
+    text.lines().find_map(|z| z.trim().strip_prefix("beobachtung ").map(|o| o.trim().to_string()))
+}
+
+/// **Setzt den Einstieg** (`mining.einstieg`); leer heisst eigener
+/// Probelauf. Eine Datei wird mit vollem Pfad abgelegt, damit sie von
+/// ueberall gilt. Gibt den Einstieg zurueck, wie er danach gilt. Eine
+/// Stelle fuer Konsole, Fenster und `myl`.
+pub fn einstieg_setzen(angabe: &str) -> Result<Option<String>, String> {
+    let angabe = angabe.trim();
+    if !angabe.is_empty() && einstieg_aus(angabe).is_none() {
+        return Err(format!("„{angabe}“ ist weder eine Multiadresse mit /p2p/ noch eine Datei, die eine nennt."));
+    }
+    let p = Path::new(angabe);
+    let wert = if angabe.is_empty() {
+        None
+    } else if p.is_file() {
+        Some(p.canonicalize().map(|c| c.display().to_string()).unwrap_or_else(|_| angabe.to_string()))
+    } else {
+        Some(angabe.to_string())
+    };
+    let ep = Einstellungen::vorgabepfad();
+    let mut e = Einstellungen::lesen(&ep).unwrap_or_default();
+    e.mining.einstieg = wert;
+    e.schreiben(&ep)?;
+    Ok(einstieg())
+}
+
+/// Eine Angabe als Multiadresse, oder die erste Zeile der Datei, die sie nennt.
+pub fn einstieg_aus(angabe: &str) -> Option<String> {
+    if angabe.contains("/p2p/") && !std::path::Path::new(angabe).is_file() {
+        return Some(angabe.to_string());
+    }
+    let text = std::fs::read_to_string(angabe).ok()?;
+    let zeile = text.lines().map(str::trim).find(|z| !z.is_empty())?;
+    zeile.contains("/p2p/").then(|| zeile.to_string())
 }
 
 /// Ob ein Knoten das Programm ueberlebt, das ihn startet: nur von `myl`.
@@ -628,6 +728,10 @@ pub struct Stand {
     pub bearbeitet: u64,
     pub abgelehnt: u64,
     pub guthaben: u64,
+    /// Guthaben des Auszahlungskontos (des Wallets).
+    pub auszahlung_guthaben: u64,
+    /// Ob die Kette das Wallet schon als Auszahlungskonto fuehrt.
+    pub auszahlung_eingetragen: bool,
 }
 
 /// Liest die Zahlen aus dem Prometheus-Text.
@@ -648,6 +752,8 @@ pub fn stand_aus(text: &str) -> Stand {
             "myelith_inferenz_bearbeitet_total" => s.bearbeitet = w,
             "myelith_inferenz_abgelehnt_total" => s.abgelehnt = w,
             "myelith_konto_guthaben" => s.guthaben = w,
+            "myelith_auszahlung_guthaben" => s.auszahlung_guthaben = w,
+            "myelith_auszahlung_eingetragen" => s.auszahlung_eingetragen = w == 1,
             _ => {}
         }
     }
@@ -658,9 +764,19 @@ pub fn stand_aus(text: &str) -> Stand {
 /// dem das Geminte gemessen wird.
 pub fn stand(z: &mut Zustand) -> Result<Stand, String> {
     let s = stand_aus(&holen(&z.beobachtung, "/metriken")?);
-    if z.guthaben_beim_start.is_none() {
-        z.guthaben_beim_start = Some(s.guthaben);
+    if z.guthaben_beim_start.is_none() || (z.wallet.is_some() && z.auszahlung_beim_start.is_none()) {
+        z.guthaben_beim_start.get_or_insert(s.guthaben);
+        if z.wallet.is_some() {
+            z.auszahlung_beim_start.get_or_insert(s.auszahlung_guthaben);
+        }
         let _ = zustand_schreiben(z);
+    }
+    // ⚑ Was die Kette als Auszahlungskonto fuehrt, merkt sich der Client:
+    //   Ein spaeterer Wechsel braucht genau dessen Schluessel.
+    if let (true, Some(name)) = (s.auszahlung_eingetragen, z.wallet.as_deref()) {
+        if crate::wallet::eingetragen().map(|w| w.name) != Some(name.to_string()) {
+            let _ = crate::wallet::eingetragen_setzen(name);
+        }
     }
     Ok(s)
 }
@@ -672,7 +788,11 @@ pub fn stand(z: &mut Zustand) -> Result<Stand, String> {
 pub fn zusammenfassung(z: &Zustand, s: &Stand, jetzt_ms: u64) -> Vec<String> {
     let minuten = jetzt_ms.saturating_sub(z.gestartet_ms) / 60_000;
     let seit = if minuten >= 60 { format!("{} h {:02} min", minuten / 60, minuten % 60) } else { format!("{minuten} min") };
-    let gemint = s.guthaben.saturating_sub(z.guthaben_beim_start.unwrap_or(s.guthaben));
+    let gemint = match z.wallet {
+        Some(_) => s.auszahlung_guthaben.saturating_sub(z.auszahlung_beim_start.unwrap_or(s.auszahlung_guthaben)),
+        None => s.guthaben.saturating_sub(z.guthaben_beim_start.unwrap_or(s.guthaben)),
+    };
+    let wo = if z.einstieg.is_some() { "im Probenetz" } else { "eigener Probelauf ohne Testnetz" };
     let rechenwerke = match z.rechenwerke {
         0 => "kein Rechenwerk".to_string(),
         1 => "1 Rechenwerk".to_string(),
@@ -680,7 +800,7 @@ pub fn zusammenfassung(z: &Zustand, s: &Stand, jetzt_ms: u64) -> Vec<String> {
     };
     let anfragen = if SHARD_ANGESCHLOSSEN { "" } else { " (kein Shard angeschlossen)" };
     let mut zeilen = vec![
-        format!("⛏ Mining seit {seit}, Probelauf ohne Testnetz"),
+        format!("⛏ Mining seit {seit}, {wo}"),
         format!(
             "  hergegeben: {} Kerne, {rechenwerke}, {} unter {}",
             z.kerne,
@@ -696,6 +816,17 @@ pub fn zusammenfassung(z: &Zustand, s: &Stand, jetzt_ms: u64) -> Vec<String> {
         format!("  Anfragen: {} bearbeitet, {} abgelehnt{anfragen}", s.bearbeitet, s.abgelehnt),
         format!("  gemint: {} MYL (Spielgeld) · Kette Höhe {}, {} Gegenstellen", myl_text(gemint), s.hoehe, s.peers),
     ];
+    match &z.wallet {
+        Some(name) if s.auszahlung_eingetragen => zeilen.push(format!(
+            "  Wallet {name}: {} MYL (Testwallet)",
+            myl_text(s.auszahlung_guthaben)
+        )),
+        Some(name) => zeilen.push(format!("  Wallet {name}: Eintrag als Auszahlungskonto wartet auf die Kette")),
+        None => zeilen.push("  kein Wallet ausgewählt: Ohne Auszahlungskonto bekommt dieser Knoten nichts".to_string()),
+    }
+    if z.einstieg.is_none() {
+        zeilen.push("  ⚠ ohne Einstieg kein zweiter Knoten, und ohne ihn baut der eigene keinen Block".to_string());
+    }
     if s.unlesbar > 0 {
         zeilen.push(format!("  ⚠ {} Ordner ohne lesbares Manifest", s.unlesbar));
     }
@@ -747,7 +878,7 @@ fn letzte_zeilen(p: &Path, n: usize) -> String {
 ///
 /// ⚑ **Von Hand und ohne Rahmenwerk**, wie der Endpunkt selbst: ein GET
 /// ohne Rumpf auf der Rueckschleife.
-fn holen(adresse: &str, weg: &str) -> Result<String, String> {
+pub(crate) fn holen(adresse: &str, weg: &str) -> Result<String, String> {
     let a: std::net::SocketAddr = adresse.parse().map_err(|_| format!("keine Adresse: {adresse}"))?;
     let mut s = std::net::TcpStream::connect_timeout(&a, Duration::from_millis(500)).map_err(|e| e.to_string())?;
     let _ = s.set_read_timeout(Some(Duration::from_secs(2)));
@@ -904,6 +1035,10 @@ mod tests {
             von: "Konsole".into(),
             von_pid: 1,
             guthaben_beim_start: Some(1_000_000),
+            wallet: None,
+            auszahlung_beim_start: None,
+            einstieg: None,
+            relais: None,
             kerne: 8,
             rechenwerke: 1,
             volumen_bytes: 200 * myl_store::orte::GIB,
@@ -914,6 +1049,38 @@ mod tests {
         for teil in ["seit 1 h 05 min", "Probelauf", "8 Kerne", "1 Rechenwerk", "200 GiB", "/Volumes/Platte/Myelith", "3 Gegenstände, davon 2 Shards", "1,5 GiB", "4 bearbeitet, 5 abgelehnt", "2,5 MYL (Spielgeld)", "Höhe 9"] {
             assert!(t.contains(teil), "{teil:?} fehlt in\n{t}");
         }
+    }
+
+    /// ⚑ Mit Wallet zaehlt dessen Guthaben als gemint, nicht das
+    /// Arbeitskonto des Knotens; mit Einstieg heisst es Probenetz.
+    #[test]
+    fn mit_wallet_zaehlt_das_wallet() {
+        let t = "myelith_konto_guthaben 7000000\nmyelith_auszahlung_guthaben 30000000\nmyelith_auszahlung_eingetragen 1\n";
+        let s = stand_aus(t);
+        assert_eq!((s.auszahlung_guthaben, s.auszahlung_eingetragen), (30_000_000, true));
+        let z = Zustand {
+            pid: 1,
+            beobachtung: String::new(),
+            gestartet_ms: 0,
+            von: "Fenster".into(),
+            von_pid: 1,
+            guthaben_beim_start: Some(7_000_000),
+            wallet: Some("haupt".into()),
+            auszahlung_beim_start: Some(10_000_000),
+            einstieg: Some("/ip4/127.0.0.1/tcp/4100/p2p/x".into()),
+            relais: None,
+            kerne: 1,
+            rechenwerke: 0,
+            volumen_bytes: myl_store::orte::GIB,
+            pfad: "/Volumes/Platte/Myelith".into(),
+        };
+        let text = zusammenfassung(&z, &s, 0).join("\n");
+        for teil in ["im Probenetz", "gemint: 20 MYL", "Wallet haupt: 30 MYL"] {
+            assert!(text.contains(teil), "{teil:?} fehlt in\n{text}");
+        }
+        // Solange die Kette es nicht fuehrt, steht das da.
+        let s = Stand { auszahlung_eingetragen: false, ..s };
+        assert!(zusammenfassung(&z, &s, 0).join("\n").contains("wartet auf die Kette"));
     }
 
     #[test]

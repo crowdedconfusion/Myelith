@@ -126,6 +126,15 @@ pub const ZIELE: &[(&str, Ziel)] = &[
     ("inferenzantwort", |d| {
         kanonisch::<myl_types::inferenzauftrag::Inferenzantwort>(d)
     }),
+    // 2026-10-26: Die lokalen Leitungen (Knoten zu Shard, Koordinator und
+    // Wallet zu Knoten) und die Vollmacht, die an der Tuer ankommt. Alles,
+    // was ueber eine Leitung oder durch die Tuer kommt, gehoert unter
+    // dasselbe Praedikat (Angriffsklassen A16 und A20).
+    ("ortsfrage", |d| kanonisch::<myl_types::ortsleitung::Ortsfrage>(d)),
+    ("ortsantwort", |d| kanonisch::<myl_types::ortsleitung::Ortsantwort>(d)),
+    ("relaisfrage", |d| kanonisch::<myl_types::relais::Relaisfrage>(d)),
+    ("relaisantwort", |d| kanonisch::<myl_types::relais::Relaisantwort>(d)),
+    ("vollmacht", |d| kanonisch::<myl_types::vollmacht::Vollmacht>(d)),
 ];
 
 /// Sucht ein Ziel nach Namen.

@@ -237,7 +237,9 @@ mod tests {
 
     /// Schreibt ein Manifest in eine temporaere Datei und laedt es.
     fn load_json(name: &str, stages: Vec<serde_json::Value>) -> Result<PipelineManifest, String> {
-        let dir = std::env::temp_dir().join(format!("myelith-pipeline-tests-{}", std::process::id()));
+        // Fund 653: ein Verzeichnis je Probe, am Ende abgeraeumt. Vorher
+        // teilten sich alle Proben eines, und es blieb liegen.
+        let dir = std::env::temp_dir().join(format!("myelith-pipeline-tests-{}-{name}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("Testverzeichnis");
         let path = dir.join(format!("{}.json", name));
         let mut obj = serde_json::json!({
@@ -259,7 +261,7 @@ mod tests {
         }
         std::fs::write(&path, serde_json::to_string(&obj).unwrap()).expect("schreiben");
         let result = PipelineManifest::load(&path);
-        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir_all(&dir);
         result
     }
 
@@ -351,12 +353,12 @@ mod tests {
 
     #[test]
     fn kaputtes_json_meldet_fehler() {
-        let dir = std::env::temp_dir().join(format!("myelith-pipeline-tests-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("myelith-pipeline-tests-{}-kaputt", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("kaputt.json");
         std::fs::write(&path, "{ kein json").unwrap();
         let err = PipelineManifest::load(&path).unwrap_err();
-        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir_all(&dir);
         assert!(err.contains("Invalid JSON"));
     }
 

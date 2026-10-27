@@ -1,7 +1,7 @@
 # testclient (`myl-testclient`)
 
-> **Version:** 0.51.0
-> **Datum:** 2026-10-25
+> **Version:** 0.55.0
+> **Datum:** 2026-10-27
 > **Status:** Phase 1 und **Phase 3 vollständig**, dazu Punkt 2.1
 > (`vergleich`), **2.2** (Backend-Vergleich innerhalb einer Maschine, seit
 > dem 2026-08-30) und 2.4 (`--repeat`); **Phase 4 vollständig** (4.3 die
@@ -543,6 +543,250 @@ COMPUTE_PIPELINE Phase 1: erstmals über einen aufrufbaren Befehl statt
 über einen Integrationstest.
 
 ## Changelog
+
+### v0.55.0 (2026-10-27): Podlauf näher an echten Bedingungen; Lastgeber
+
+- ⚑ **`podlauf.py --real`**: Knoten in drei Zonen (Europa, Nordamerika,
+  Asien) mit Rundlauf je Paar (20 bis 200 ms zwischen den Zonen), eigener
+  Zugangsleitung (1 bis 12 ms), Bandbreite nach oben (1 Gbit/s im
+  Rechenzentrum, 20 bis 100 Mbit/s zu Hause) und Verlust in Schüben; bis
+  dahin trug jeder Knoten eine Laufzeit für allen Verkehr, und zwei Knoten
+  sahen einander mit 200 bis 800 ms. Die Zone geht als `--zone` in die
+  Anmeldung, die Pods bilden sich danach.
+- Vier Validatoren (Erzeuger und je ein Miner je Zone) aus Zeilen von
+  `--stimmsatzzeile`; Prüfpunkte werden über das Netz gestimmt.
+- Trennungen: Asien allein, dann Europa gegen den Rest (je 60 s, im
+  Dauerteil alle 30 Epochen); gemessen bestätigte Höhe während der Trennung,
+  Aufholen und der nächste Prüfpunkt. Mit drei Stimmen beim Erzeuger muss
+  ein Prüfpunkt entstehen, mit zweien darf keiner.
+- Ein später Einsteiger in Asien (holt auf, Probehahn, Anmeldung, Zusage).
+- Mit `--tor`: Überweisung aus der Wallet an ein neues Konto (Betrag,
+  Gebühr, Aufschlag geprüft) und eine kurze Sitzung, deren Hinterlegung
+  nach der Nachfrist zurückkommen muss.
+- Befunde werden gesammelt und am Ende gemeldet; Platz der Kettendatei und
+  der Protokolle je 25 Epochen.
+- ⚑ **`examples/lastgeber.rs`** (nicht ausgeliefert): Absender aus den
+  Probekonten 6 bis 11 ausstatten, dann Burns über die Relaisleitung in
+  Stufen steigender Rate; je Stufe gesendet, aufgenommen, höchster
+  Grundpreis; danach, wann der Preis wieder am Boden ist.
+  `podlauf.py --lastgeber <programm>` fährt ihn mit `--tor --real`.
+- ⚠️ **Fund 664, offen:** Mit 108 s je Epoche wird ein Lügner nicht
+  gemeldet. Ab einem Viertel der Epoche, mit zwei Überschreitungen im
+  Abstand eines Achtels und einer Probe von über 2 s schafft kaum ein
+  Messender ein Zeugnis, drei zugleich nicht (Positionen in fünf Epochen,
+  zwei Zeugnisse, keine Meldung). Mit `--real` ein gesammelter Befund statt
+  Abbruch. Im Skript behoben: Die Epoche des Lügners war falsch beschriftet,
+  wenn schon eine spätere lief, und die Sperre bekam nur drei Epochen (jetzt
+  zwölf, im kurzen Lauf mit `--real` vier).
+- `tests/netzlauf.rs`: Die Anmeldung wartet auf die Zusagen mit Frist statt
+  dreissig fester Runden; seit den Gebühren versorgt sich jeder Miner zuerst
+  über den Probehahn.
+- Kurzer Lauf: durchgelaufen, einziger Befund Fund 664. Vier Validatoren mit 180, 180, 175 und 161 Stimmen, 173 Zertifikate; Überweisung auf die Einheit (1 MYL, 0,01 MYL Aufschlag, 201 Gebühr wie in der Vorschau); 0,2 MYL für zwei Sitzungen hinterlegt; Antworten über die Tür in 3,4 bis 8,9 s statt rund 60 s; Last 50/s und 181/s ganz aufgenommen, Grundpreis am Boden (elf Burns je Block gegen ein Ziel von rund 3 000); Trennung Asiens mit Prüfpunkten, Atlantikschnitt ohne, danach aufgeholt in 8 und 16 s; Einsteiger an der Spitze nach 43 s; Stichprobe 18 von 18; eine Wurzel bei Höhe 27 017.
+- 299 Tests grün, Clippy sauber.
+
+### v0.54.5 (2026-10-27): Gebühren
+
+- `bezahlen`: Der Burn kostet die Gebühr dazu; die Vorschau der
+  Überweisung an ein neues Konto nennt Gebühr und Aufschlag, und abgebucht
+  wird genau das.
+- `gesamtlauf`: Der Burn zieht die Gebühr mit ab.
+- `podlauf.py`: m00 zählt nicht mehr bei der Auszahlung für bezeugte
+  Arbeit. Sein Konto ist der Zahler, und dessen Guthaben ist seit den
+  Gebühren kein Vielfaches der Probeprägung mehr; m00 hätte immer gezählt.
+- 299 Tests grün.
+
+### v0.54.4 (2026-10-27): Prüfpunkte im Podlauf
+
+- `src/stack.rs` baut den Blockkopf mit `pruefpunkt` (CONSENSUS 0.55.0).
+- `netzbedingungen/podlauf.py` meldet am Ende `Pruefpunkte:` (gestimmt,
+  Zertifikate, bis zu welcher Höhe). Kurzer Podlauf mit Tor (2026-10-27): 60 Prüfpunkte gestimmt und zertifiziert bis Höhe 9 000, eine Wurzel bei 9 028; die Stichprobe wird mit dem Zertifikat gezogen (3 Ziehungen, 18 von 18 Anfragen angekommen).
+- `myl-testclient` 0.54.4. 299 Tests grün, Clippy sauber.
+
+### v0.54.3 (2026-10-27): Ohne verworfene Messungen
+
+- `tests/netzlauf.rs` und `netzbedingungen/podlauf.py` zählen
+  `fristmessung_verworfen` nicht mehr; seit NODE 0.68.0 gibt es keine.
+- Der Netzlauf belegt die neue Zeitprobe: Der Lügner wird gemeldet (bei Höhe 4 334 in 174 s); mit der ersten Fassung ohne Grenze (Probe verworfen nach der Zeitgrenze der Anfrage) und ohne Abbruch im Shard (keine Mehrheit) war er zweimal rot.
+- `myl-testclient` 0.54.3. 299 Tests grün, Clippy sauber.
+
+### v0.54.2 (2026-10-27): Die Stichprobe am Ende des Podlaufs
+
+- `netzbedingungen/podlauf.py` meldet am Ende eine Zeile `Stichprobe:`
+  mit den Ziehungen des Erzeugers, seinen Anfragen, den Ziehungen ohne
+  Adresse und den Anfragen, die bei Minern ankamen. Die Zählung bei den
+  Minern allein hatte `stichprobe_gefragt=0` gezeigt, weil nur der Erzeuger
+  zieht; erst die Zeile beim Erzeuger zeigte Fund 658 (NODE 0.67.0).
+- `myl-testclient` 0.54.2. 299 Tests grün, Clippy sauber.
+
+### v0.54.1 (2026-10-27): Der Podlauf zählt die Stichprobe
+
+- `netzbedingungen/podlauf.py`: Die Zählung am Ende nennt auch
+  `stichprobe_gefragt` und `spuranfrage_eingegangen` (NODE 0.66.0). Ist die
+  zweite Zahl null, obwohl die erste es nicht ist, kommen die Anfragen nicht
+  an.
+- **Kurzer Podlauf mit Tor** (`--kurz --tor --blocktakt 60`, mit NODE 0.65.0
+  und COMPUTE_PIPELINE 0.52.0): bestanden, eine Wurzel bei Höhe 12 637.
+  Rechenzeit des Pods 18,6 und 22,0 s je Auftrag statt 37 bis 62 s (Stapel);
+  jeder Block unterschrieben, keine Ablehnung wegen des Erzeugers.
+- `myl-testclient` 0.54.1. 299 Tests grün,
+  Clippy sauber.
+
+### v0.54.0 (2026-10-27): Marken der Shardanfragen; Überweisen; der lange Lauf als Beleg
+
+- `tests/shardmarken.rs` (neu): jede Variante von `Shardanfrage` gegen die
+  Liste des Knotens, Stelle für Stelle; ein umsortiertes oder eingefügtes
+  Feld fällt auf, ebenso eine Marke, die es nicht gibt. Bisher prüfte das
+  nur Marke 8.
+- `tests/bezahlen.rs`: Überweisen mit Vorschau (CLIENT 0.180.0).
+- `tests/netzlauf.rs`: Die Meldung des Lügners wird in **Blöcken** verlangt
+  (bis zum Ende der übernächsten Epoche), nicht in 180 s. Seit Anlaufzeit
+  und zwei Fenstern (NODE 0.64.0) braucht sie mindestens drei Achtel einer
+  Epoche, und je nach Lage auch die nächste; die Zeit bleibt Notbremse.
+- **Langer Podlauf 4** (`--tor --stoerer --blocktakt 60 --epochen 100
+  --arenen 2`, 2026-10-26/27): bestanden, eine Wurzel bei Höhe 191 399.
+  Zeitproben 1 748 bestanden, 210 Verdacht, 121 Zeugnisse; alle 88
+  Meldungen gegen den Lügner (28 Sperren), kein ehrlicher Miner gemeldet
+  (Fund 655, NODE 0.64.0). Tür im Dauerteil 56 von 73 (Median 93 s): Die
+  Abstürze kommen jetzt am Epochenanfang, dazu das Bereitschaftswarten, und
+  der Prefill ging noch Token für Token; das behebt COMPUTE_PIPELINE 0.52.0.
+- `myl-testclient` 0.54.0. 299 Tests grün, Clippy sauber.
+
+### v0.53.5 (2026-10-26): Abstürze am Anfang der Epoche
+
+- 📌 Im dritten langen Lauf wartete der Podlauf in Epoche 30 120 s auf den
+  Neustart eines Shards, den es nicht mehr gab: Der Absturz kam nach der
+  Frage der Epoche, also kurz vor dem Wechsel, und in der nächsten Epoche
+  hatte der Miner keine Position. Jetzt kommen die Abstürze am Anfang der
+  Epoche, vor der Frage; und endet die Epoche vor dem Neustart, ohne dass
+  das Opfer danach eine Position hat, gilt der Absturz als erledigt. Bis
+  dahin (30 Epochen): nur der Lügner gemeldet (21 Meldungen, 7 Sperren),
+  54 Verdachtsfälle ohne Zeugnis, kein ehrlicher Miner gesperrt.
+- `myl-testclient` 0.53.5.
+
+### v0.53.4 (2026-10-26): Überlaufprüfung im Freigabebau
+
+- Überlaufprüfung im Freigabebau für die Protokollkisten (Festlegung des Projektinhabers): `[profile.release.package.<kiste>] overflow-checks = true` für jede Protokollkiste im Baum dieses Programms; die Rechenkerne (`integer-llm-*`) bleiben ohne. Bis hierher war sie nur im Testprofil an, und eine Rechnung im Konsenspfad wäre im ausgelieferten Programm an den Rändern still umgelaufen. Belegt am Knoten (NODE 0.64.0): `myl_ledger` wird mit `-C overflow-checks=on` übersetzt, `integer_llm_kernels` ohne. Alle 4 359 Tests liefen schon immer mit eingeschalteter Prüfung.
+- Kurzer Torlauf mit den Korrekturen der Funde 649, 654 und 655
+  (`--kurz --tor --blocktakt 60`): bestanden. Die zweite Frage zeigt beide
+  Wiederholungen im Netz: In Epoche 3 ging eine Runde verloren, der
+  Koordinator rechnete neu, die Epoche endete im Auftrag, und der Pod der
+  Epoche 4 lieferte die Antwort (184 s statt rund 60). Zeitproben: 121
+  bestanden, 8 Verdacht, 3 Zeugnisse. Der Lügner (Frist 50 µs) wurde nach
+  zwei Fenstern bezeugt und gesperrt, jetzt vier Epochen nach seiner
+  Position statt einer; zwei ehrliche Miner lagen kurz über ihrer Frist
+  (127 bei 120 ms, 133 bei 70 ms) und blieben beim Verdacht.
+- `myl-testclient` 0.53.4.
+
+### v0.53.3 (2026-10-26): Der lange Podlauf mit Tür und Störer: ein ehrlicher Miner gesperrt (Fund 655)
+
+- Gemessen am 2026-10-26 (`--tor --stoerer --blocktakt 60 --epochen 100
+  --arenen 2`, rund drei Stunden, 10 Miner unter `tc netem`): **93 von 99
+  Fragen** über die Tür beantwortet (Median 75 s), 75 Abrechnungen
+  verbreitet, Bündel je Epoche eingereicht, Lügner in Epoche 9 gemeldet und
+  gesperrt, 35 Abstürze überstanden (20 Shards, 15 Miner), Speicher je
+  Miner 26 bis 45 MB ohne Trend, der Störer mit 29 529 Verbindungen und
+  4 023 Müllsendungen. Die sechs Ausfälle: fünf an Epochenübergängen
+  (Fund 649) und eine verlorene Relaisrunde (Fund 654, inzwischen behoben).
+- ⛔️ **Befund: Ein ehrlicher Miner (m07) wurde zweimal gesperrt (Fund
+  655).** Beide Male lagen drei Messungen über der Frist (130 bis 394 ms
+  bei 100 ms für eine Ebene), alle in den ersten 25 s einer Epoche, 14 bis
+  25 s nach dem Start seines Shards und während dieser schon für die Tür
+  rechnete. Sonst lagen seine Messungen bei 2 bis 14 ms. Der Lauf ist
+  deshalb nicht bestanden; der Fund steht in `SIMULATION/Sicherheitsaudit.md`
+  (A26).
+- `myl-testclient` 0.53.3.
+
+### v0.53.2 (2026-10-26): Verkehr im Dauerteil des Podlaufs
+
+- `podlauf.py --tor` ohne `--kurz`: Im Dauerteil fragt der Agent je Epoche
+  einmal über die Tür, vor den Abstürzen dieser Epoche. Am Ende stehen
+  beantwortete und gestellte Fragen, der Median der Dauer und die
+  verbreiteten Abrechnungen; ist weniger als die Hälfte beantwortet, ist
+  das ein Befund. Die Sitzung des Agenten gilt dafür so lange wie der Lauf
+  (`--epochen` plus 30).
+- Vorlauf am 2026-10-26 (`--tor --stoerer --blocktakt 60 --epochen 2`, mit
+  den Korrekturen der Funde 651 bis 653): drei Antworten über die Tür in 50
+  bis 74 s, Bündel eingereicht, Auszahlung an sieben Miner, Lügner in
+  Epoche 7 gemeldet und für Epoche 8 gesperrt, Shard nach 1 s und Miner
+  nach 15 s wieder da, im Dauerteil 1 von 1 beantwortet, eine Wurzel.
+  Bestanden.
+- `myl-testclient` 0.53.2.
+
+### v0.53.1 (2026-10-26): Die Tür rechnet nur, was der Kontrakt deckt (Fund 651)
+
+- `tests/tuer_bis_rechenwerk.rs`: `einzellimit_und_restbudget_greifen_vor_dem_rechnen`.
+  Ein Kontrakt mit Einzellimit 2 und einer mit 10 Credits Restbudget
+  bekommen je eine Anfrage über 16 Token: Das Rechenwerk läuft nicht, die
+  Antwort ist keine 200. Gegenprobe innerhalb der Grenzen: gerechnet, 200.
+  Vor der Prüfung in der Tür (GATEWAY 0.10.0) rot.
+- `myl-testclient` 0.53.1.
+
+### v0.53.0 (2026-10-26): Der Podlauf mit Tür: vom Wallet bis zur Auszahlung über echte Knoten
+
+- ⚑ **`podlauf.py --tor`**: Der Erzeuger k0 wird zum Torknoten mit Tür
+  (`127.0.0.1:4160`), Relaisleitung und Ortsdienst (`myl-pod-node` über den
+  Pod der Kette). Ein Testwallet aus festen BIP-39-Wörtern ist das
+  Auszahlungskonto von m00, die übrigen Miner zahlen auf eigene Testkonten
+  aus (`--konto`). Der Lauf wartet, bis das Wallet aus der Probeprägung
+  verdient, kauft mit `myl wallet credits` Credits, eröffnet mit
+  `myl wallet sitzung` einen Sitzungskontrakt für einen Agenten und fragt
+  dreimal mit `myl frage --tuer`, jedes Mal am Anfang einer Epoche mit vier
+  laufenden Shards. Danach verlangt er das Bündel des Ortsdienstes, eine
+  Auszahlung für bezeugte Arbeit (ein Guthaben, das kein Vielfaches der
+  Probeprägung ist) und verbreitete Abrechnungen der Tür. Mit
+  `MYL_HALTEN=<s>` hält er bei einem Fehler an, zum Nachsehen im Container.
+- Gemessen am 2026-10-26 (`--kurz --tor --blocktakt 60`, 10 Miner,
+  50 bis 200 ms je Richtung, 1 bis 5 % Verlust): drei Antworten über die
+  Tür in 63 bis 83 s (5 bis 7 Token hinein, 4 heraus) über drei
+  verschiedene Pods, das Bündel der Epoche 3 vom Koordinator eingereicht,
+  Auszahlung für bezeugte Arbeit an sieben Miner, drei Abrechnungen, der
+  Lügner in Epoche 4 gesperrt, eine Wurzel bei allen. Bestanden.
+- Kurze Prompts und vier Token: Über die schlechteste Leitung (185 ms,
+  4,6 % Verlust) kostet eine Runde zu einem Mitglied bis 15 s, und der
+  Prefill geht Token für Token durch alle Positionen. Lange Prompts
+  gehören in einen Lauf mit längeren Epochen.
+- `tests/bezahlen.rs` prüft zusätzlich die Tür: Die Vollmacht aus der Datei
+  des Agenten besteht ihre eigene Prüfung und die Zugangsstelle mit der
+  Abschrift **des Knotens selbst**, gleich nach dem Block, der die Sitzung
+  trägt, bei Aufnahme nach Vorgabe (30 s). Gegenprobe ohne das Nachziehen
+  der Abschrift im Knoten: rot (NODE 0.63.0).
+- `myl-testclient` 0.53.0.
+
+### v0.52.0 (2026-10-26): Ein Probenetz im Docker für den Client
+
+- `netzbedingungen/probenetz.py` (neu): ein Erzeuger (Blocktakt 100 ms,
+  eine Epoche rund vier Minuten) und drei Mitläufer in einem Container, alle
+  als Miner angemeldet mit festen Testkonten ohne Schlüssel. Der Port des
+  Erzeugers geht an den Mac (`127.0.0.1:4100`), seine Adresse nach
+  `<ordner>/einstieg.txt`; der Client tritt darüber bei. `starten`,
+  `stand`, `stoppen`; Kette und Schlüssel bleiben im Ordner, ein
+  abgestürzter Knoten wird neu gestartet. Gemessen: nach der ersten Epoche
+  je 10 MYL auf den Testkonten. Der Erzeuger hat einen
+  Beobachtungsendpunkt (`127.0.0.1:4180` auf dem Mac), und `einstieg.txt`
+  nennt ihn in einer zweiten Zeile (`beobachtung …`): Dort fragt der Client
+  mit `/konto/…`, ob ein Wallet schon Spuren hat.
+- ⚑ **`tests/pod_ueber_knoten.rs`**: ein Torknoten ohne
+  Shard mit Relaisleitung und sechs Miner mit echten Shard-Prozessen. In
+  Epoche 2 rechnet ein Koordinator über die Leitung acht Token über die
+  vier Shards des Pods (Grenzen aus der Kette, über das Netz bei den
+  Knoten der Mitglieder); das Ergebnis gleicht Token für Token derselben
+  Rechnung im Prozess. Gegenproben: Eine Trainingsanfrage wird nicht
+  weitergereicht, eine Reserve hat keinen Shard. Danach das Bündel: von
+  den vier Positionen über die Leitung unterschrieben, vom Torknoten an die
+  erste Position gegeben und eingereicht; mit einem Burn von 5 MYL wachsen
+  am Epochenwechsel die Konten der Positionen um 10 MYL Probeprägung und
+  ihren Anteil (53 123 Einheiten, der Kopf 92 244), die der Reserve um
+  genau 10 MYL. Gegenprobe: ein Bündel mit erhöhtem Anspruch wird am
+  Aggregat abgewiesen. Rund 27 s.
+- ⚑ **`tests/bezahlen.rs`**: Ein Testwallet bekommt MYL, kauft Credits,
+  eröffnet einen Sitzungskontrakt für einen Agenten mit Vollmacht und
+  widerruft ihn, alles über die Relaisleitung eines echten Knotens.
+  Gegenproben: Ein fremdes Wallet kann nicht widerrufen, eine verfälschte
+  Transaktion lässt der Knoten nicht ins Netz. Dafür `myl-client` als
+  Entwicklungsabhängigkeit. Rund 2 s.
+- Die Konfigurationen in `src/knoten.rs`, `tests/netzlauf.rs` und
+  `tests/kalter_pfad.rs` nennen das neue Feld `kontowechseldatei`.
+- `myl-testclient` 0.52.0.
 
 ### v0.51.0 (2026-10-25): Der Podlauf: Netz, Rechnen und Prüfen in getrennten Prozessen
 

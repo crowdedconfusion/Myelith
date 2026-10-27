@@ -404,6 +404,36 @@ impl<Q: Kontraktquelle> Zugangsstelle<Q> {
         }
         Zugangsbefund::Erlaubt
     }
+
+    /// **Deckt der Kontrakt diesen Höchstbetrag?** Einzellimit und
+    /// Restbudget, mit derselben Prüfung, die die Kette beim Abbuchen
+    /// anlegt ([`myl_types::sitzung::pruefe_zugang`]).
+    ///
+    /// 📌 **Fund 651 (2026-10-26):** Die Tür prüfte vor dem Rechnen nur
+    /// die Vorbehalte der Vollmacht und den Kontrakt mit dem Betrag eins.
+    /// Eine Anfrage über dem Einzellimit oder über dem Rest des Budgets
+    /// wurde gerechnet, und die Kette nahm die Abbuchung danach nicht an:
+    /// verschenkte Arbeit, beliebig oft. Jetzt steht der Höchstbetrag der
+    /// Anfrage fest, bevor gerechnet wird, und wird gegen den Kontrakt
+    /// geprüft.
+    pub fn deckt_der_kontrakt(&self, vollmacht: &crate::vollmacht::Vollmacht, rahmen: &crate::vollmacht::Anfragerahmen) -> bool {
+        let Some((kontrakt, zustand)) = self.quelle.nachschlagen(rahmen.sitzung) else {
+            return false;
+        };
+        let vorhaben = Vorhaben {
+            sitzung: kontrakt.adresse(),
+            handelnder: Address::aus_schluessel(&vollmacht.agent),
+            waehrung: Waehrung::Credits,
+            betrag: rahmen.credits,
+            empfaenger: Address::new([0u8; 32]),
+            empfaenger_beweis: myl_types::sitzung::kein_beweis(),
+            bestaetigt_ausgeliefert: false,
+            // Nur geprüft, nie gebucht: die nächste freie Nummer, damit der
+            // Riegel gegen die Wiedereinspielung nicht anschlägt.
+            nummer: zustand.hoechste_abrechnung.saturating_add(1),
+        };
+        myl_types::sitzung::pruefe_zugang(&kontrakt, &zustand, rahmen.jetzt, &vorhaben).erlaubt()
+    }
 }
 
 /// Das Vorhaben, gegen das der Kontrakt geprüft wird.

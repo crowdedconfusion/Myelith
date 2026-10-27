@@ -136,20 +136,30 @@ impl Kontraktabschrift {
 /// Die Epoche wird **je Runde** gelesen und an beide Stellen gereicht,
 /// die sie brauchen: an die Annahmestelle für die Anfragebindung und an
 /// die Zugangsprüfung für das Gültigkeitsfenster des Kontrakts.
+///
+/// 📌 **Fund 647 (2026-10-26): Gelesen wird nach dem Annehmen.** Die
+/// Verbindung kommt angenommen herein ([`myl_gateway::Tuer::annehmen`]),
+/// und erst dann stehen Epoche und Uhr fest. Vorher las diese Funktion
+/// beides und wartete danach; die erste Anfrage nach einer langen Pause
+/// traf so auf die Epoche vom Beginn des Wartens.
 pub async fn eine_anfrage(
     tuer: &myl_gateway::Tuer,
+    verbindung: myl_gateway::Verbindung,
     annahme: &mut myl_gateway::annahme::Annahme,
     stelle: &mut myl_gateway::zugang::Zugangsstelle<Kontraktabschrift>,
     abschrift: &Kontraktabschrift,
 ) -> std::io::Result<()> {
     let epoche = abschrift.epoche();
     annahme.epoche_setzen(epoche);
-    let jetzt_ms = std::time::SystemTime::now()
+    tuer.mit_zugang_beantworten(verbindung, annahme, stelle, epoche, jetzt_ms())
+        .await
+}
+
+fn jetzt_ms() -> u64 {
+    std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
-        .unwrap_or(0);
-    tuer.bedienen_mit_zugang(annahme, stelle, epoche, jetzt_ms)
-        .await
+        .unwrap_or(0)
 }
 
 /// Bedient **eine** Anfrage an der `/v1`-Tür, mit Rechenweg dahinter.
@@ -164,8 +174,11 @@ pub async fn eine_anfrage(
 /// Bis zum 2026-09-03 hatte `bedienen_v1` **null** Produktionsaufrufer:
 /// `main.rs` bediente `/inferenz` und baute keinen Weg. Die Kisten
 /// trugen alle vier Gateway-Stufen, das Binary rief sie nicht.
+///
+/// Wie [`eine_anfrage`]: Die Verbindung ist schon angenommen (Fund 647).
 pub async fn eine_v1_anfrage<R: myl_gateway::oai::Rechenweg>(
     tuer: &myl_gateway::Tuer,
+    verbindung: myl_gateway::Verbindung,
     annahme: &mut myl_gateway::annahme::Annahme,
     stelle: &mut myl_gateway::zugang::Zugangsstelle<Kontraktabschrift>,
     abschrift: &Kontraktabschrift,
@@ -173,11 +186,7 @@ pub async fn eine_v1_anfrage<R: myl_gateway::oai::Rechenweg>(
 ) -> std::io::Result<()> {
     let epoche = abschrift.epoche();
     annahme.epoche_setzen(epoche);
-    let jetzt_ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0);
-    tuer.bedienen_v1(annahme, stelle, weg, epoche, jetzt_ms)
+    tuer.v1_beantworten(verbindung, annahme, stelle, weg, epoche, jetzt_ms())
         .await
 }
 
@@ -289,7 +298,9 @@ mod tests {
     /// 📌 **Die Gegenprobe:** Wer in [`eine_anfrage`] die Zeile
     /// `let epoche = abschrift.epoche();` durch die Startepoche ersetzt,
     /// bekommt hier zweimal 403. Genau so lief `main.rs` bis zum
-    /// 2026-09-03.
+    /// 2026-09-03. Und wer die Epoche wieder vor dem Annehmen liest,
+    /// ebenso (Fund 647): Beim zweiten Mal wartet die Tür schon, als die
+    /// Kette wandert.
     #[tokio::test]
     async fn ein_kontrakt_der_erst_spaeter_gilt_kommt_erst_spaeter_durch() {
         use myl_types::vollmacht::{Vollmacht, Vorbehalt};
@@ -372,7 +383,8 @@ mod tests {
 
         // --- Epoche 0: der Kontrakt gilt noch nicht -------------------
         let dienst = async {
-            let _ = eine_anfrage(&tuer, &mut annahme, &mut stelle, &abschrift).await;
+            let v = tuer.annehmen().await.expect("annehmen");
+            let _ = eine_anfrage(&tuer, v, &mut annahme, &mut stelle, &abschrift).await;
         };
         let (antwort, _) = tokio::join!(frage(port, token.clone()), dienst);
         let kopf = kopf_von(&antwort);
@@ -383,18 +395,26 @@ mod tests {
             "ein Kontrakt, der erst ab Epoche 5 gilt, kam bei Epoche 0 durch: {kopf}"
         );
 
-        // --- Die Kette wandert auf Epoche 7, sonst nichts -------------
+        // --- Die Kette wandert auf Epoche 7, während die Tür wartet ---
+        //
+        // 📌 **Fund 647:** Die Tür wartet schon, wenn die Kette wandert,
+        // so wie im Betrieb zwischen zwei Anfragen. Wer die Epoche vor dem
+        // Annehmen liest, prüft gegen Epoche 0 und weist ab.
         zustand.epoch = EpochId(7);
-        abschrift.setzen(&zustand);
-
         let dienst = async {
-            let _ = eine_anfrage(&tuer, &mut annahme, &mut stelle, &abschrift).await;
+            let v = tuer.annehmen().await.expect("annehmen");
+            let _ = eine_anfrage(&tuer, v, &mut annahme, &mut stelle, &abschrift).await;
         };
-        let (antwort, _) = tokio::join!(frage(port, token), dienst);
+        let klient = async {
+            tokio::task::yield_now().await;
+            abschrift.setzen(&zustand);
+            frage(port, token).await
+        };
+        let (_, antwort) = tokio::join!(dienst, klient);
         let kopf = kopf_von(&antwort);
         assert!(
             kopf.starts_with("HTTP/1.1 200"),
-            "die Tuer haengt an der Startepoche fest (Fund 166): {kopf}"
+            "die Tuer haengt an der Startepoche fest (Fund 166, 647): {kopf}"
         );
 
         // ⚑ **Und der Beleg trägt dieselbe Epoche.** Ohne diese Zeile

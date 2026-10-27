@@ -1,11 +1,11 @@
 # NODE — der Myelith-Knoten
 
-> **Version:** 0.61.0
-> **Datum:** 2026-10-25
+> **Version:** 0.73.0
+> **Datum:** 2026-10-27
 > **Status:** Netzknoten lauffähig, Blockproduktion mit **Persistenz über
 > Neustarts**, BFT-Runden über das Netz mit Rundenwechsel, und seit dem
 > 1. September **schließt der Knoten die Epoche selbst ab**.
-> **381 Tests grün** (gezählt am 2026-10-26).
+> **384 Tests grün** (gezählt am 2026-10-26).
 >
 > ⚑ **Seit dem 27. August sind Blockhöhe und Epoche zwei Dinge.** Die
 > Probekette schrieb ihre Höhe in das Epochenfeld des Blockkopfs; das
@@ -278,6 +278,454 @@ NODE/
 ```
 
 ## Changelog
+
+### v0.73.0 (2026-10-27): Gebühren und Prüfpunkte von außen sichtbar
+
+- Neue Metriken: `myelith_grundpreis_je_byte`, `myelith_gebuehren_epoche`,
+  `myelith_gebuehren_validatoren`, `myelith_treasury_guthaben`,
+  `myelith_pruefpunkt_bestaetigt`; Grundpreis, Validatorentopf und
+  bestätigte Höhe auch in der Zeile `aufnahme`. Gelesen werden nur die fünf
+  Zahlen, nicht der ganze Zustand.
+- `/konto/<hex>` nennt `hinterlegt`: was die Adresse für Anmeldung und
+  Sitzungen hinterlegt hat.
+- 📌 **Probehahn: Ein Wiederholer beginnt beim nächsten Probekonto.** Trafen
+  zwei Knoten dieselbe Nummer desselben Kontos, kam nur einer durch, und der
+  andere traf beim nächsten Anlauf wieder dasselbe Konto; im kurzen Podlauf
+  bis zu sechs Anläufe, im Netzlauf der Prüfsammlung waren nach 60 Höhen
+  13 von 14 Minern angemeldet. Danach Zusagen bei Höhe 200 statt 399.
+- 📌 **Fund 665: kein Probehahn, solange der Knoten aufholt.** Ein
+  Einsteiger sah beim Aufholen einen alten Zustand (kein Guthaben, alte
+  Nummern der Probekonten) und zapfte bei jeder Aufnahme, im kurzen Podlauf
+  dreizehnmal, zwölfmal mit veralteten Nummern. Jetzt erst, wenn er nicht
+  mehr als die Lückenfrist hinter der gehörten Höhe liegt.
+- `myl-node` 0.73.0. 404 Tests grün, Clippy sauber.
+
+### v0.72.0 (2026-10-27): Gebühren, Hinterlegungen, Probehahn
+
+Festlegungen des Projektinhabers, Zahlen vorläufig (`netz::GEBUEHREN_VORLAEUFIG`).
+
+- ⚑ **Die Gebühr**: Grundpreis je Byte mal Bytes der Transaktion. Geprüft
+  vor der Nummer: Wer sie nicht decken kann oder weniger zugesagt hat
+  (`max_gebuehr`), wartet und behält seine Nummer. Gezahlt wird auch, wenn
+  die Anweisung danach scheitert; ihre Bytes stehen im Block. Ohne
+  Trinkgeld und ohne Ausnahmen.
+- ⚑ **Der Grundpreis** (`naechster_grundpreis`) wandert je Block um
+  höchstens ein Achtel um das Ziel, einen halben Block
+  (`GRUNDPREIS_ZIEL_BYTES`); über dem Ziel steigt er mindestens um eins,
+  sonst bliebe er bei eins für immer; nie unter dem Boden des Netzes.
+- ⚑ **Die Teilung** am Epochenwechsel: drei Dreizehntel an die Treasury,
+  zehn in den Topf der Validatoren (`gebuehren_validatoren`). Ausgezahlt
+  wird der Topf, sobald es eine Gewichtsquelle für Validatoren gibt; die
+  Prägung lässt ihren Validatorenanteil aus demselben Grund aus.
+- ⚑ **Ein neues Konto** kostet den Absender einmal den Aufschlag, an die
+  Treasury: Konten werden nie gelöscht, die Nummer schützt vor
+  Wiederholung.
+- ⚑ **Hinterlegungen**: eine neue Anmeldung als Miner (zurück beim
+  Abmelden; wer seine Angaben ändert, hinterlegt nicht noch einmal) und
+  eine Sitzung (zurück, wenn sie aufgeräumt wird). Das Auszahlungskonto
+  bleibt nach der Abmeldung eingetragen.
+- ⚑ **Abgelaufene Sitzungen werden aufgeräumt** (Fund 662): Die Kette rief
+  `sitzung_aufraeumen` nie, jede Sitzung blieb für immer im Zustand. Jetzt
+  am Epochenwechsel, nach der Nachfrist.
+- ⚠️ **Fund 663, offen**: Für Speichermanifeste gibt es keine Anweisung
+  (`speicher_aufnehmen` hat ausserhalb der Ledgerproben keinen Aufrufer);
+  die Hinterlegung dafür steht in den Zahlen und greift erst mit ihr.
+- ⚑ **Der Probehahn** (`Netz::probehahn`, nur Testnetze): Ein Knoten, dessen
+  Konto Hinterlegung und Gebühr nicht deckt, überweist sich vor der
+  Anmeldung aus einem Probekonto (Zeile `probehahn`), danach füllt er ein
+  Polster von einem MYL nach, wenn es unter die Hälfte fällt. Ebenso das
+  bisherige Auszahlungskonto, das einen Wechsel unterschreibt.
+- Die Kontoauskunft der Relaisleitung nennt Grundpreis, Aufschlag und ob das
+  Konto schon besteht (für die Vorschau der Wallet).
+- Neulinge ohne Guthaben kommen in keinen Block mehr; die Drossel im
+  Mempool bleibt.
+- Proben: `wer_die_gebuehr_nicht_zusagt_wartet`,
+  `eine_gescheiterte_anweisung_zahlt_die_gebuehr`,
+  `ein_neues_konto_kostet_einmal_den_aufschlag`,
+  `die_anmeldung_hinterlegt_und_die_abmeldung_gibt_zurueck`,
+  `eine_abgelaufene_sitzung_gibt_ihre_hinterlegung_zurueck`,
+  `der_grundpreis_wandert_um_hoechstens_ein_achtel`,
+  `die_gebuehren_teilen_sich_drei_zu_zehn`, je mit Gegenprobe; ohne
+  Probehahn scheitert `auszahlung` an der Anmeldung.
+- `myl-node` 0.72.0. 404 Tests grün, Clippy sauber.
+
+### v0.71.0 (2026-10-27): Vertrauensfrist; wer doppelt unterschreibt, wird geschlachtet
+
+- ⚑ **Vertrauensfrist** (CONSENSUS 0.56.0): Kommt ein Block, dessen Epoche
+  mehr als 112 Epochen über dem zuletzt bestätigten eigenen Prüfpunkt liegt,
+  hält der Knoten an (`vertrauensfrist_ueberschritten`) und braucht einen
+  jüngeren Anker. Darüber könnte ihm jeder eine zweite Geschichte vorlegen,
+  unterschrieben mit Schlüsseln, die nicht mehr haften; eine Prüfung ab
+  Genesis hilft dagegen nicht, denn die Fälschung trägt gültige alte
+  Unterschriften. Der Anker wandert mit, solange der Knoten folgt. ⚑ Nicht auf
+  der Probekette, die ihren Satz ohnehin aus Block 1 lernt
+  (`kette::vertrauen_traegt`).
+- ⚑ **Doppelbelege werden gebucht** (`Kette::doppelbeleg_buchen`): Der Beleg
+  trägt, die Tat liegt in der Sperrfrist, und derselbe Widerspruch ist noch
+  nicht gebucht; dann schlachtet die Kette nach der Matrix (Validator,
+  Doppelsignatur oder Zensur: 30, 65, 100 % gestaffelt) über
+  `urteil_buchen_gestaffelt`, das Kopfgeld geht an den Melder, wer sich selbst
+  meldet, wird abgewiesen. Ohne Einsatz bleibt der Beleg ohne Folge.
+- **Knoten erkennen und melden**: eine zweite Prüfpunktstimme eines Wählers
+  für dieselbe Höhe (`pruefpunktstimme_aufnehmen`) und einen zweiten Block
+  desselben Erzeugers an einer Höhe, die die Kette schon hat
+  (`doppelt_erzeugt_pruefen`); gemeldet je Widerspruch einmal über den
+  Minerschlüssel (`doppelbeleg_erkannt`, Feld `belegart`; ein Feld `art`
+  hätte die feste Spalte überschrieben, und das Protokoll weist es ab).
+- Proben: `eine_doppelunterschrift_kostet_den_einsatz` (30 % beim ersten
+  Mal, Kopfgeld; Gegenproben: derselbe Widerspruch, kein Einsatz,
+  Selbstmeldung, Tat vor der Sperrfrist; ohne den Vermerk rot),
+  `die_vertrauensfrist_traegt_bis_112_epochen` (mit einer Epoche zu viel
+  rot), `ein_zweiter_block_derselben_hoehe_wird_als_doppelbeleg_erkannt`
+  (der Block eines Fremden ist keiner; ohne die Erkennung rot).
+- `myl-node` 0.71.0. 397 Tests grün, Clippy sauber.
+
+### v0.70.0 (2026-10-27): Prüfpunkte, und die Saat kommt aus ihrem Zertifikat
+
+- ⚑ **Prüfpunkte im Knoten** (CONSENSUS 0.55.0, Festlegungen des
+  Projektinhabers): `Knoten::pruefpunkt_pflegen` stimmt bei jeder Aufnahme
+  und nach jedem eigenen Block über den jüngsten unbestätigten Prüfpunkt ab,
+  wenn der eigene Schlüssel im Stimmsatz steht, wiederholt die Stimme alle
+  zehn Sekunden bis zur Bestätigung, sammelt die Stimmen der anderen
+  (`pruefpunktstimme_aufnehmen`, nur tragende, nur über dem bestätigten
+  Stand) und baut ab zwei Dritteln das Zertifikat. Der Erzeuger legt es in
+  den nächsten Block. Protokollzeilen `pruefpunkt_gestimmt`,
+  `pruefpunkt_zertifikat`, `pruefpunktstimme_abgelehnt`.
+- Die Kette nimmt ein Zertifikat nur für einen Prüfpunkt nach dem
+  bestätigten Stand, für den eigenen Block an dieser Höhe und mit mehr als
+  zwei Dritteln des Satzes (`KettenFehler::PruefpunktTraegtNicht`, Marke
+  `pruefpunkt-traegt-nicht`); Lücken sind erlaubt, denn ein späterer
+  Prüfpunkt deckt die früheren mit.
+- ⚑ **Die Ziehung der Stichprobe wartet auf das Zertifikat des
+  Epochenwechsels**; die Saat kommt aus ihm (`stichprobe::saat_aus_zertifikat`,
+  `stichprobe_aus_anteilen`). Der Rückfall auf den Blockhash (Fund 120,
+  unbegrenzter Mahlraum) ist entfallen. Die Zuteilung der abgelaufenen Epoche
+  wird bis zur Ziehung aufgehoben (vgl. Fund 658).
+- 📌 Beim Bau gefunden: Ein Neuling aus einem Abzug hatte seinen Stimmsatz
+  noch nicht gelernt und wies den ersten Block danach ab, sobald er ein
+  Zertifikat trug; jetzt prüft eine lernende Kette gegen den Satz, den sie
+  aus genau diesem Block lernt. Abzugstests und Netzlauf vorher rot.
+- Proben: `ein_pruefpunkt_wird_bestaetigt` (Gegenproben: dasselbe noch
+  einmal, ein anderer Block, ein Fremder, keine Prüfpunkthöhe, ein
+  nachträglich eingesetztes Zertifikat), `die_saat_kommt_aus_dem_zertifikat`;
+  in `bezeugte_arbeit_erreicht_ein_konto` zieht die Kette erst mit dem
+  Zertifikat. Gegenprobe ohne Prüfung des Zertifikats rot.
+- `myl-node` 0.70.0. 394 Tests grün, Clippy sauber; Netzlauf grün.
+
+### v0.69.0 (2026-10-27): Stimmsatz ab Genesis, jeder Block unterschrieben
+
+- ⚑ **Festlegung des Projektinhabers vom 2026-10-27:** Jede Kette hat ab
+  Genesis einen Stimmsatz, und jeder Block braucht die Unterschrift eines
+  Mitglieds unter dem Schlüssel, den der Satz für es führt. Unsignierte
+  Blöcke gibt es nicht mehr (`Kette::erzeuger_traegt`).
+- **Woher der Satz kommt:** aus der Stimmsatzdatei (`--stimmsatz`), jetzt für
+  jeden Knoten, nicht nur für die, die mitstimmen; wer nicht darin steht,
+  hört zu, statt abzubrechen. ⛔️ Ohne Datei startet ein Netz nicht, ausser
+  der Probekette (`Netz::lernt_erzeuger`): Sie lernt ihren Erzeuger aus
+  Block 1, als einziges Mitglied mit Gewicht eins, und verlangt ihn danach.
+  Das ist Vertrauen beim ersten Block und so schwach wie die Probekette
+  selbst, die keinen Anker hat.
+- Ein Erzeuger ohne eigenen Schlüssel unterschreibt auf der Probekette mit
+  dem Probeerzeuger (`kette::PROBEERZEUGER`, jeder kann ihn ableiten;
+  Protokollzeile `erzeuger_probeschluessel`), auf jedem anderen Netz startet
+  er nicht. Ein Erzeuger, dessen Schlüssel nicht im Satz steht, startet
+  nicht. `Kette::probestand` unterschreibt mit dem Probeerzeuger.
+- Die Prüfung im Hintergrund rechnet mit demselben Satz.
+- Probe `nur_ein_belegter_erzeuger_kommt_durch` neu gefasst: unsigniert nie,
+  der Erzeuger von Block 1 wird Mitglied und ein zweiter kommt nicht durch,
+  ein Netz ohne Lernen nimmt ohne Satz nichts. Gegenprobe (die alte Regel
+  „ohne Satz geht alles“) rot. Vier Tests, die einen Block verfälschen,
+  unterschreiben ihn danach neu (`neu_unterschreiben`): Gefangen werden muss
+  der falsche Block eines berechtigten Erzeugers, nicht erst die Unterschrift.
+  Ebenso `tests/schuldspruch.rs`; in `tests/zwei_knoten.rs` ist der Knoten,
+  der Blöcke baut, jetzt Erzeuger.
+- 📌 Beim ersten Testlauf hielten Netzlauf und Abzugstests an: Der Erzeuger
+  der Läufe hatte keinen Schlüssel und baute unsignierte Blöcke (106 statt
+  rund 250 Byte); daraus der Probeerzeuger.
+- `myl-node` 0.69.0. 395 Tests grün, Clippy sauber; Netzlauf
+  grün (Lügner gemeldet bei Höhe 4 332).
+
+### v0.68.0 (2026-10-27): Die Zeitprobe ohne Ping, nach der Zusage bemessen (Fund 646)
+
+- ⚑ **Festlegung des Projektinhabers vom 2026-10-27:** Es wird nichts mehr
+  abgezogen, was der Gemessene verlängern kann. Bestanden ist eine Messung,
+  wenn die kürzeste von fünf Zeitproben ≤ k · Frist + Zugabe ist
+  (`frist::gemessen_je_token`, `ZUGABE_US` = 2 s). Der Ping, der Wechsel aus
+  0.67.0 und `fristmessung_verworfen` entfallen; eine Messung kann nicht mehr
+  negativ werden. Die Zahl im Fristzeugnis ist (Probe − Zugabe) / k; die
+  Kette hält sie gegen die Frist wie bisher.
+- 📌 **Fund 646 geschlossen:** Wer seine Pongs zurückhielt, liess jede
+  Messung verwerfen und wurde nie gemessen (Audit A28).
+- ⚑ **Die Probe richtet sich nach der Zusage** (`frist::probe_positionen`,
+  nachgeschärft beim Bau): k = 2 s · `FRIST_FAKTOR` / Frist, 64 bis 2 048
+  Positionen. Mit fester Grösse fiel ein Lügner erst bei 31 ms je Token über
+  der Frist auf, ein Shard rechnet aber 2 bis 8 ms. Jetzt fällt einer auf,
+  sobald er mehr als rund das Dreifache seiner Zusage rechnet, an der
+  Obergrenze ab rund 1 ms über der Frist; ein Ehrlicher zahlt je Probe rund
+  2 s und hat für den Weg Zugabe plus Ziel.
+- 📌 **Beim Bau gefunden: Wer langsam genug war, entkam.** Die grosse Probe
+  des Lügners lief über die Zeitgrenze einer Anfrage (10 s), die Anfrage
+  scheiterte, und die Messung wurde verworfen. Jetzt endet eine Probe nach
+  `frist::grenze_der_probe` als Überschreitung, ob die Antwort noch kommt
+  oder nicht (`zeitprobe_ueberschritten`); im Netzlauf vorher rot.
+- ⚑ **Die Probe trägt ihre Grenze** (`Nachforderung::ZeitprobeMitGrenze`,
+  angehängt, Marke 12; `frist::probe`): Der gemessene Knoten gibt sie an
+  seinen Shard weiter (SHARED_TYPES 0.51.0), und der hört dort auf. Sonst
+  rechnete der Shard eines Lügners seine grosse Probe rund 50 s zu Ende, und
+  jeder andere Messende bekam „besetzt“; im Netzlauf kam keine Mehrheit
+  zusammen. Die Antwort auf eine Zeitprobe steht jetzt in
+  `Knoten::zeitprobe_beantworten`, für beide Formen.
+- Die Zeitgrenze einer laufenden Messung steigt von 30 auf 120 s.
+- ⚠️ **Offen (Fund 660):** Ein Mitglied, das jede Zeitprobe sofort mit
+  `Nichts` beantwortet, wird nie gemessen. Zur Entscheidung.
+- ⚠️ **Offen (Fund 661, beim Bau gefunden):** Der Abdruck, den eine
+  Zeitprobe zurückgibt, wird nicht nachgerechnet; wer sofort mit einem
+  beliebigen Abdruck antwortet, besteht. Zur Entscheidung.
+- Proben: `der_luegner_bekommt_die_groessere_probe` (Gegenproben: feste 64
+  Positionen und die alte Regel mit Ping lassen ihn durch),
+  `ein_ehrlicher_besteht_mit_langem_weg`, `die_grenze_der_probe_ist_die_frist`,
+  `die_kuerzeste_probe_traegt_einen_verlust`.
+- `myl-node` 0.68.0. 395 Tests grün, Clippy sauber.
+
+### v0.67.0 (2026-10-27): Die Stichprobe findet ihren Pod; Ping und Probe im Wechsel
+
+- 📌 **Fund 658: Keine Stichprobe fand ihren Pod.** Gezogen wird beim
+  Epochenwechsel, für die **abgelaufene** Epoche; `Kette::pod_der_kennung`
+  kannte nur die Zuteilung der **laufenden** und gab für jede andere `None`.
+  Jede Ziehung endete als `ohne_adresse` (im kurzen Podlauf: drei Ziehungen,
+  null Anfragen), noch bevor Fund 656 zum Tragen kam. Jetzt hält die Kette
+  in `baue_block` die Pods der Ziehung fest, aus der Zuteilung der
+  ablaufenden Epoche, bevor der Wechsel sie ersetzt; `pod_der_kennung`
+  findet sie für die Epoche der Ziehung. Probe in
+  `bezeugte_arbeit_erreicht_ein_konto`, ohne die Korrektur rot.
+- **Im Netz belegt** (kurzer Podlauf mit Tor, 2026-10-27): drei Ziehungen, 18
+  Anfragen, keine ohne Adresse, alle 18 bei den Minern angekommen
+  (`spuranfrage_eingegangen`); im Lauf davor drei Ziehungen, null Anfragen.
+  Beantwortet wird noch nicht (Fund 656, NODE 0.66.0).
+- 📌 **Fund 646, Teil (a): Ping und Zeitprobe im Wechsel**, je fünf
+  (`frist::naechster_schritt`, `PINGS_JE_MESSUNG` gleich
+  `PROBEN_JE_MESSUNG`). Bis hierher kamen drei Pings, dann fünf Proben; die
+  Hälfte aller Messungen wurde verworfen (im langen Podlauf vom 2026-10-26/27
+  1 591 von 3 188), weil der Weg über Sekunden um Hunderte Millisekunden
+  schwankte und die Rechnung einer Probe bei rund 50 ms lag. Im kurzen
+  Podlauf jetzt 37 % statt 45 bis 52 % in fünf Läufen davor. Probe
+  `pings_und_proben_wechseln_sich_ab`, mit der alten Folge rot.
+- ⚠️ **Offen aus Fund 646:** Ein Lügner, der seine Pongs länger zurückhält
+  als seine Proben, lässt jede Messung verwerfen und wird nie gemessen. Das
+  braucht eine Festlegung (die Frist mit fester Zugabe für den Weg statt
+  eines abgezogenen Pings).
+- `myl-node` 0.67.0. 393 Tests grün, Clippy sauber.
+
+### v0.66.0 (2026-10-27): Die Stichprobe kommt an (Fund 656, der Transport)
+
+- 📌 **Fund 656: Keine Spuranfrage kam je an.** `stichprobe_verschicken`
+  kodierte die nackte `Spuranfrage`; der Empfänger las jede Anfrage als
+  `Nachforderung`, das niedrigste Byte der Epoche wurde zur Marke, und die
+  Anfrage war unlesbar (oder, je nach Epoche, etwas anderes). Die
+  Protokollzeile `stichprobe_gefragt` zählte Anfragen, die niemand verstand.
+  Gefunden beim Lesen, nicht im Lauf.
+- Neu `Nachforderung::Spur` (angehängt, Marke 11). `stichprobe::anfragen_fuer`
+  liefert jetzt die fertige Nachforderung statt der nackten Anfrage; der
+  Aufrufer kann die Hülle nicht mehr vergessen.
+- ⚑ **Beantwortet wird noch nicht.** Die Segmentzeugnisse eines Bündels
+  hält nur der Koordinator, und die Eingabe eines Segments hebt seit E10
+  niemand auf (Fund 118). Der Empfänger antwortet `Nichts` und schreibt
+  `spuranfrage_eingegangen` (von, Epoche, Pod, Segment) ins Protokoll; damit
+  ist im Netz sichtbar, dass die Anfragen ankommen. Wer antwortet und woher
+  die Eingabe kommt, ist eine Entscheidung des Projektinhabers.
+- Proben: `eine_spuranfrage_kommt_als_spuranfrage_an` (die nackte Anfrage
+  geht für keine Epoche als Spuranfrage durch, die Marke steht hinten);
+  `jede_ziehung_ergibt_fragen_an_alle_mitglieder` liest jede ausgehende
+  Anfrage zurück. Gegenprobe: eine andere Nachforderung statt `Spur`, rot.
+- `myl-node` 0.66.0. 392 Tests grün, Clippy sauber.
+
+### v0.65.0 (2026-10-27): Der Übernehmer prüft den Erzeuger; der Stapel darf durch
+
+- ⚑ **Die Unterschrift des Erzeugers beim Übernehmen** (CONSENSUS 0.54.0):
+  `Kette::uebernimm` prüft vor jeder Rechnung, wer den Block erzeugt hat.
+  Eine Unterschrift, die dasteht, muss tragen, immer (Fund 192). **Mit
+  Stimmsatz** muss jeder Block unterschrieben sein, von einem Mitglied, unter
+  genau dem Schlüssel, den der Satz für es führt. **Ohne Stimmsatz**
+  (Probebetrieb mit einem Erzeuger) darf ein Block unsigniert sein. Neuer
+  Fehler `ErzeugerUnbelegt`, Ablehnungsmarke `erzeuger-unbelegt`.
+- Die Kette unterschreibt ihre Blöcke in `baue_block`, bevor sie geschrieben
+  und verbreitet werden, wenn ein Erzeugerschlüssel gesetzt ist: beim
+  Erzeuger aus `--konsensschluessel` (auch ohne Miner zu sein), im BFT mit dem
+  Schlüssel der Runde.
+- Probe `nur_ein_belegter_erzeuger_kommt_durch`: Mitglied angenommen;
+  unsigniert, fremd und untergeschobener Schlüssel abgewiesen; ohne
+  Stimmsatz unsigniert und fremd unterschrieben angenommen, eine Unterschrift,
+  die nicht trägt, abgewiesen. Ohne die Prüfung rot.
+- 📌 **Der Archivbeleg schickt die Bytes, die der Blockhash deckt**
+  (`Block::hashbytes`, CONSENSUS 0.54.0), nicht die volle Kodierung. Die
+  Kette prüft sie gegen die Historie der Hashes; mit der Unterschrift im
+  Block trugen die vollen Bytes nicht mehr, und kein Knoten verdichtete
+  (sechs rote Tests in `tests/verdichtung.rs`, jetzt grün). Der Test der
+  Splitter liest die Blöcke jetzt und hasht wie jeder Block.
+- `Nachlieferung::Abzug` trägt den Block in einer `Box` (Clippy:
+  grosser Unterschied zwischen den Varianten, seit der Block die
+  Unterschrift trägt); an der Kodierung ändert das nichts.
+- Die Liste der weitergereichten Shardanfragen
+  (`nachschub::SHARDANFRAGEN_ERLAUBT`) ist eine Aufzählung statt eines
+  Bereichs und enthält Marke 11, `RechneStapel` (Fund 650, COMPUTE_PIPELINE);
+  das Training (8 bis 10) bleibt gesperrt. Probe im TESTCLIENT
+  (`shardmarken.rs`).
+- `myl-node` 0.65.0. 391 Tests grün, Clippy sauber.
+
+### v0.64.0 (2026-10-26): Zeitproben nach dem Anlauf und in zwei Fenstern (Fund 655); Überlaufprüfung im Freigabebau
+
+- ⛔️📌 **Fund 655: Ein ehrlicher Miner wurde gesperrt.** Im langen
+  Podlauf mit Tür und Störer zweimal derselbe: drei Messungen über seiner
+  Frist (130 bis 394 ms bei 100 ms), alle in den ersten 25 s einer Epoche,
+  14 bis 25 s nach dem Start seines Shards, der zugleich schon für die Tür
+  rechnete; sonst lag er bei 2 bis 14 ms. Die Zeitprobe mass den Anlauf
+  mit, und drei ehrliche Zeugen genügten. **Jetzt (Festlegung des
+  Projektinhabers: Anlaufzeit und zwei Fenster):** Gemessen wird erst ab
+  einem Viertel der Epoche (`frist::darf_messen`, in Blöcken). Eine
+  Überschreitung ist nur ein Verdacht; ein Zeugnis gibt es erst, wenn eine
+  zweite Messung mindestens ein Achtel Epoche später wieder darüber liegt,
+  und bezeugt wird der kleinere Wert (`frist::urteil`). Liegt die zweite
+  darunter, ist der Verdacht erledigt. Ein Lügner liegt immer darüber und
+  wird weiter bezeugt, nur später in der Epoche. Die Kette ändert sich
+  nicht; die Regel gilt für die Messenden. Die Zeile `fristmessung` nennt
+  das Urteil. Probe `erst_nach_dem_anlauf_und_in_zwei_fenstern` mit
+  Gegenprobe (der Lügner wird bezeugt). Der Beleg im Netz steht aus: der
+  lange Podlauf ohne Sperre eines ehrlichen Miners.
+- Überlaufprüfung im Freigabebau für die Protokollkisten (Festlegung des Projektinhabers): `[profile.release.package.<kiste>] overflow-checks = true` für jede Protokollkiste im Baum dieses Programms; die Rechenkerne (`integer-llm-*`) bleiben ohne. Bis hierher war sie nur im Testprofil an, und eine Rechnung im Konsenspfad wäre im ausgelieferten Programm an den Rändern still umgelaufen. Belegt am Knoten: `myl_ledger` wird mit `-C overflow-checks=on` übersetzt, `integer_llm_kernels` ohne. Alle 4 359 Tests liefen schon immer mit eingeschalteter Prüfung.
+- `myl-node` 0.64.0.
+
+### v0.63.0 (2026-10-26): Die Tür sieht eine Sitzung, sobald sie in der Kette steht, und wartet auf einen Pod über Knoten (Funde 647, 648, 650)
+
+- 📌 **Fund 647: Die erste Anfrage nach einer Pause traf auf die Epoche vom
+  Beginn des Wartens.** Die Türschleife las Epoche, Schlüsselwechsel und Uhr
+  und wartete danach auf die nächste Verbindung, beliebig lange. Ein
+  Sitzungskontrakt, der in einer späteren Epoche eröffnet wurde, galt für
+  die Tür noch nicht (`jetzt < gueltig_ab`): 401, obwohl Vollmacht und
+  Kontrakt stimmten. Gesehen im Torlauf über Docker, wo die erste Anfrage
+  Epochen nach dem Start kam; der Test zu Fund 166 setzte die Epoche, bevor
+  die Tür wartete, und sah es nicht. Jetzt nimmt die Schleife zuerst an
+  (`Tuer::annehmen`, GATEWAY 0.9.0), wechselt dann den Sitzungsschlüssel
+  und liest Epoche und Uhr; `tuer::eine_anfrage` und `eine_v1_anfrage`
+  nehmen die angenommene Verbindung. Der Test
+  `ein_kontrakt_der_erst_spaeter_gilt_kommt_erst_spaeter_durch` lässt die
+  Kette jetzt wandern, während die Tür schon wartet; Gegenprobe mit dem
+  alten Ablauf (lesen, dann warten): 403, rot.
+- 📌 **Fund 648: Die Abschrift der Tür wurde nur bei der Aufnahme
+  aufgefrischt**, im Vorgabefall alle dreissig Sekunden, obwohl die Doku
+  des Feldes „bei jedem Block“ sagte. Wer eine Sitzung eröffnete und gleich
+  fragte, bekam bis dahin 401; ebenso spät wirkte ein Widerruf. Jetzt zieht
+  `abschrift_nachziehen` die Abschrift nach, sobald die Kette gewachsen ist.
+  ⚠️ Das kopiert je Block alle Kontrakte; bei vielen Sitzungen gehört ein
+  Abgleich nur der geänderten hin. Beleg im TESTCLIENT (`bezahlen`, mit der
+  Abschrift des Knotens selbst und Aufnahme nach Vorgabe); Gegenprobe ohne
+  das Nachziehen: rot.
+- Der Rechenweg zur Ortsleitung nennt jetzt, wo er endet
+  (`myl-node: Rechenweg in Epoche …: <Grund>`): Ankündigung, Gegenstelle,
+  Pipeline-Stand, Kanal, Form, Leitung oder die Ablehnung des Shards. Die
+  Tür meldet dem Klienten weiter nur 502.
+- 📌 **Fund 650: Die Tür gab nach 45 s auf, während der Pod richtig
+  rechnete.** Gemessen im Lauf über Docker (50 bis 200 ms je Richtung,
+  1 bis 5 % Verlust): 0,5 bis 2,7 s je Runde zu einem Mitglied, rund 4 s je
+  Token bei vier Positionen, 9 s Schlüsselaufbau. Die Frist der Ortsleitung
+  (`FRIST`, 45 s) gilt dem Weg über das Netz und seiner Leerlauffrist; an
+  der Tür wartet ein Klient auf derselben Maschine 600 s. Aufträge von der
+  Tür bekommen jetzt `TUERFRIST` (540 s), Probe
+  `die_tuerfrist_liegt_zwischen_netz_und_klient`. ⚠️ Die Tür bedient eine
+  Anfrage nach der anderen; so lange steht sie für alle anderen. Und der
+  Prefill geht Token für Token durch alle Positionen; dort liegt der
+  grösste Hebel.
+- Jede über das Netz weitergereichte Shardanfrage schreibt bei ihrer
+  Antwort eine Zeile `shardrelais` (Mitglied, Dauer, Bytes, Fehler): Ein
+  Token geht durch jede Position einmal, und hier steht, was eine Runde
+  kostet.
+- `myl-node` 0.63.0.
+
+### v0.62.0 (2026-10-26): Auszahlungskonto über die Kette, Probeprägung für Testwallets (Fund 643)
+
+- 📌 **Fund 643: `--konto` wurde gelesen und nie benutzt.** Die Hilfe
+  versprach „Wohin die Erträge gehen“; im Betrieb trug kein Knoten je ein
+  Auszahlungskonto ein, und ohne Eintrag gibt es keinen Anteil. Jetzt meldet
+  sich ein Knoten mit `--konto` und `--konsensschluessel` als Miner an (wenn
+  nicht schon über die Zusage) und trägt das Konto über die Kette ein.
+  Die erste Eintragung unterschreibt der Miner, jede weitere das bisher
+  eingetragene Konto: `--kontowechsel <schlüssel>` (neu). Ohne diesen
+  Schlüssel bleibt das alte stehen, und die Zeile `auszahlungskonto` nennt
+  beide. Test `das_konto_geht_ueber_die_kette_und_wechselt_nur_mit_dem_alten_schluessel`
+  (Eintragung, Wechsel ohne Schlüssel bleibt, Wechsel mit Schlüssel);
+  Gegenprobe ohne die Pflege: rot.
+- ⚑ **Probeprägung** (Festlegung des Projektinhabers): An jedem
+  Epochenwechsel bekommt das Auszahlungskonto jedes angemeldeten, in dieser
+  Epoche nicht gesperrten Miners den Betrag des Netzes, auf der Probekette
+  10 MYL, damit ein Testwallet beim Mining sichtbar wächst. Neben der
+  Ausschüttung, nicht in ihr: ohne Burn, ohne Bündel, und fällt sie weg,
+  ändert sich an der echten Rechnung nichts. ⛔️ Auf jedem anderen Netz null
+  (`Netz::probepraegung`, Probe `nur_die_probekette_praegt_zur_probe`).
+  Test `die_probekette_praegt_je_epoche_ins_auszahlungskonto` (eingetragen
+  bekommt, gesperrt und ohne Eintrag nicht, das Testnetz prägt nichts);
+  Gegenprobe ohne den Aufruf: rot. Die drei Proben der echten Ausschüttung
+  ziehen den Probebetrag ab und prüfen den echten Teil wie zuvor.
+- Aufnahme und Metriken nennen Guthaben und Eintrag des Auszahlungskontos
+  (`myelith_auszahlung_guthaben`, `myelith_auszahlung_eingetragen`).
+- ⚑ **Kontoabfrage** `/konto/<64 hex>` am Beobachtungsendpunkt: Höhe,
+  Guthaben, Nonce, ob als Miner angemeldet, für wie viele Miner
+  Auszahlungskonto, und ob die Adresse damit „bekannt“ ist. Der Dienst
+  reicht die Anfrage über einen Kanal an die Schleife des Knotens, die aus
+  dem Zustand antwortet; kopiert wird nichts. Der Client fragt damit, ob
+  ein Wallet schon Spuren hat. ⚠️ Eine Auskunft, kein Beweis gegen die
+  Zustandswurzel. Proben im Endpunkt (unbekannte Adresse 200, kaputte 404)
+  und in `tests/auszahlung.rs`.
+- ⚑ **Ein Pod über Knoten**: `--podrelais <host:port>` und
+  `--podrelaisausweis <datei>` öffnen eine Relaisleitung für einen
+  Koordinator auf derselben Maschine. Er fragt nach dem Podbild der Epoche
+  (Pods, Mitglieder in Shardreihenfolge, Grenzen aus der Kette) und reicht
+  Shardanfragen an Mitglieder; der Knoten schickt sie als
+  `Nachforderung::Shard` über das Netz (mit Kennung zur Zuordnung), das
+  Mitglied gibt die Bytes unverändert an seinen Shard und die Antwort
+  zurück. Ist das Mitglied der Knoten selbst, geht die Anfrage direkt an
+  den eigenen Shard. Weitergereicht werden nur die Marken von Rechnen,
+  Zuschnitt, Schlüssel, Unterschreiben, Sitzung vergessen, Abdruck, Profil
+  und gehaltenen Sitzungen (`SHARDANFRAGEN_ERLAUBT`); Training über fremde
+  Knoten nicht. Eigene Plätze (`shard_plaetze`), eine Ablehnung kommt mit
+  Grund zurück. Der Knoten rechnet dabei nichts und hängt nicht an
+  `myl-pod`. Proben: Leitung nur mit Ausweis (mit Gegenprobe), der ganze
+  Weg im TESTCLIENT (`pod_ueber_knoten`).
+- ⚑ **Das Bündel in die Kette:** Über die Leitung gibt ein Koordinator ein
+  unterschriebenes PoI-Bündel ab (`Relaisfrage::BuendelEinreichen`). Der
+  Knoten prüft es wie das Einreichen (`Kette::buendel_pruefen`: Epoche,
+  noch kein Bündel des Pods, Pod in der Zuteilung, Aggregat) und gibt es
+  der ersten Position, denn nur sie darf einreichen
+  (`Nachforderung::Buendel`); die prüft erneut, ob sie Koordinator ist, und
+  reicht mit ihrem Konsensschlüssel ein. Ein gefälschtes Bündel kommt so
+  gar nicht erst in die Kette.
+- 📌 **Fund 645: Ein Bündel mussten auch die Reservemitglieder
+  unterschreiben.** Prüfung beim Einreichen und Zuschreibung am
+  Epochenwechsel nahmen `pod.mitglieder()`, also auch die Reserve; die hat
+  keinen Shard, sieht die Arbeit nie und kann nicht nachrechnen, was sie
+  unterschriebe. Ein echter Pod mit Reserve bekam so nie ein Bündel durch.
+  Jetzt unterschreiben die Positionen (`unterzeichner_des_buendels`), an
+  beiden Stellen dieselbe Menge. Gegenprobe mit der alten Menge: die Probe
+  der bezeugten Arbeit rot. ⚠️ Trainingssegmente prüfen weiter gegen alle
+  Mitglieder; dort ist zu klären, wer rechnet.
+- Belegt im TESTCLIENT (`pod_ueber_knoten`): Bündel über den Torknoten an
+  die erste Position eingereicht, mit einem Burn derselben Epoche wachsen
+  die Konten der Positionen am Epochenwechsel um die Probeprägung und ihren
+  Anteil an der Ausschüttung (der Kopf am meisten), die der Reserve nur um
+  die Probeprägung; ein Bündel mit erhöhtem Anspruch wird am Aggregat
+  abgewiesen.
+- ⚑ **Ein Wallet bezahlt über die Leitung:** `Relaisfrage::Konto` nennt
+  Nonce, Guthaben, Credits, Netzwert und das eigene Konto (den Betreiber
+  einer Tür); `Relaisfrage::Transaktion` nimmt eine unterschriebene
+  Transaktion, prüft Unterschrift und Netz und verbreitet sie. Eine
+  verfälschte kommt nicht ins Netz (Probe im TESTCLIENT, `bezahlen`).
+- Mit `--konsensschluessel` nennt der Knoten beim Start seinen Endpunkt
+  (`myl-node: Endpunkt …`), den ein Ortsdienst als `--knoten` erwartet.
+  Das Podbild nennt die Länge einer Epoche (`bloecke_je_epoche`), damit ein
+  Koordinator sie nicht ein zweites Mal hinschreibt.
+- Schlüsseldateien nehmen neben 32 auch 64 Bytes Ausgangsmaterial, also
+  einen Seed nach BIP-39 aus einem Testwallet des Clients; daraus ergibt
+  `key_gen` den Hauptschlüssel nach EIP-2333. So liest `--kontowechsel`
+  auch diese Wallets. Probe `ein_seed_aus_64_bytes_ist_ein_schluessel`.
+- `myl-node` 0.62.0.
 
 ### v0.61.0 (2026-10-25): Nachfrage bei Stille, die kürzeste von fünf Zeitproben (Funde 618, 639)
 

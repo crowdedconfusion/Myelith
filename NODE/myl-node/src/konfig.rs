@@ -171,10 +171,25 @@ pub struct KnotenKonfig {
     pub kontoschluesseldatei: Option<PathBuf>,
     /// Wohin die Erträge dieses Knotens gehen sollen.
     ///
-    /// ⚑ **Das kalte Konto**, also der haltende Teil des Paares. Ohne
-    /// Angabe ist es die Adresse des unterschreibenden Schlüssels
-    /// selbst, und die ist heiss.
+    /// ⚑ **Das kalte Konto**, also der haltende Teil des Paares. Mit
+    /// Angabe meldet sich der Knoten mit seinem Konsensschlüssel als Miner
+    /// an und trägt dieses Konto über die Kette als Auszahlungskonto ein
+    /// (Fund 643: bis zum 2026-10-26 wurde die Angabe gelesen und nie
+    /// benutzt). Ohne Angabe trägt er nichts ein, und es gilt „ohne Eintrag
+    /// kein Anteil".
     pub konto: Option<Address>,
+    /// Der Schlüssel des **bisher** eingetragenen Auszahlungskontos, für
+    /// einen Wechsel. Die Kette nimmt eine zweite Eintragung nur mit der
+    /// Unterschrift des eingetragenen Kontos an; ohne diesen Schlüssel
+    /// bleibt das alte stehen, und der Knoten sagt es im Protokoll.
+    pub kontowechseldatei: Option<PathBuf>,
+    /// ⚑ **Die Relaisleitung** (2026-10-26): Hier fragt ein
+    /// Koordinator auf derselben Maschine nach den Pods der Epoche und
+    /// reicht Shardanfragen an die Mitglieder. Nur auf der Rückschleife
+    /// sinnvoll; ohne Angabe keine Leitung.
+    pub podrelais: Option<std::net::SocketAddr>,
+    /// Wohin der Ausweis der Relaisleitung geschrieben wird (`0600`).
+    pub podrelaisausweis: Option<PathBuf>,
     /// Abstand des Testverkehrs in Sekunden, `None` heißt keiner.
     ///
     /// **Nur für Testnetze.** Der Knoten schickt dann getaktet einen
@@ -365,6 +380,9 @@ impl Default for KnotenKonfig {
             modellname: "sparrow-0.6b-int8".to_string(),
             kontoschluesseldatei: None,
             konto: None,
+            kontowechseldatei: None,
+            podrelais: None,
+            podrelaisausweis: None,
             testverkehr_sekunden: None,
             erzeugt_bloecke: false,
             blocktakt_ms: None,

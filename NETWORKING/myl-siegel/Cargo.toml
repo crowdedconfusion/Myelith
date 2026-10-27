@@ -1,6 +1,6 @@
 [package]
 name = "myl-siegel"
-version = "0.3.0"
+version = "0.3.1"
 edition = "2021"
 rust-version = "1.99"
 description = "Der vertrauliche Sitzungskanal für Myelith (Whitepaper Kap. 9.2): hybrider Schlüsselaustausch aus X25519 und ML-KEM-768, abgeleitet über HKDF-SHA256, versiegelt mit ChaCha20-Poly1305. Trägt keinen Transport: Wer die Bytes bewegt, entscheidet der Aufrufer."

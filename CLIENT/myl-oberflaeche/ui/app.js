@@ -305,6 +305,38 @@ const TEXTE = {
     "modus.wallet.was": "Guthaben",
     "modus.wallet.warum":
       "Guthaben, Überweisungen und die Belege dazu. Braucht dieselbe Netzhälfte wie der Knoten.",
+    "wallet.titel": "Wallet",
+    "wallet.hinweis":
+      "Testwallets auf der Probekette: Spielgeld. Das ausgewählte bekommt beim Mining die Erträge, je Epoche 10 MYL zur Probe.",
+    "wallet.neu": "Neues Wallet",
+    "wallet.anlegen": "Anlegen",
+    "wallet.name.platz": "Name, etwa haupt",
+    "wallet.wieder": "Aus zwölf Wörtern",
+    "wallet.wieder.platz": "die zwölf Wörter, mit Leerzeichen",
+    "wallet.wieder.knopf": "Wiederherstellen",
+    "wallet.entwurf.titel": "Wiederherstellungsschlüssel (BIP-39)",
+    "wallet.entwurf.hinweis":
+      "Schreib die Wörter in dieser Reihenfolge auf Papier. Wer sie hat, hat das Wallet; ohne sie ist es nach einem Verlust dieses Rechners weg. Sie werden nie wieder gezeigt.",
+    "wallet.entwurf.notiert": "Ich habe alle zwölf Wörter notiert.",
+    "wallet.entwurf.weiter": "Weiter",
+    "wallet.entwurf.pruefen": "Zur Bestätigung zwei der zwölf Wörter.",
+    "wallet.entwurf.wort": (n) => `Wort ${n}`,
+    "wallet.entwurf.bestaetigen": "Bestätigen",
+    "wallet.entwurf.abbrechen": "Abbrechen",
+    "wallet.einstieg": "Einstieg ins Netz",
+    "wallet.einstieg.platz": "Multiadresse oder Datei (einstieg.txt des Probenetzes)",
+    "wallet.einstieg.setzen": "Setzen",
+    "wallet.waehlen": "Auswählen",
+    "wallet.gewaehlt": "ausgewählt",
+    "wallet.eingetragen": "Auszahlungskonto",
+    "wallet.leer": "Noch kein Wallet. Leg oben eines an.",
+    "wallet.mining": (n, g) => `Mining zahlt an ${n}: ${g} MYL.`,
+    "wallet.wartet": (n) => `Mining zahlt an ${n}; der Eintrag als Auszahlungskonto wartet auf die Kette.`,
+    "wallet.ruht": "Mining läuft nicht. Das ausgewählte Wallet gilt ab dem nächsten Start.",
+    "wallet.anders": (n) => `Mining zahlt noch an ${n}; das ausgewählte gilt ab dem nächsten Start.`,
+    "wallet.mit_einstieg": (a) => `Tritt bei: ${a}`,
+    "wallet.ohne_einstieg": "Kein Einstieg: Der Knoten erzeugt allein und baut erst, wenn jemand zuhört.",
+    "wallet.ordner": (o) => `Die Schlüssel liegen unverschlüsselt unter ${o}.`,
     "modus.terminal.name": "Terminal",
     "modus.terminal.was": "Befehle",
     "modus.terminal.leer":
@@ -653,6 +685,38 @@ const TEXTE = {
     "modus.wallet.was": "Balance",
     "modus.wallet.warum":
       "Balance, transfers and the receipts for them. Needs the same network half as the node.",
+    "wallet.titel": "Wallet",
+    "wallet.hinweis":
+      "Test wallets on the probe chain: play money. The selected one receives the mining rewards, 10 MYL per epoch for testing.",
+    "wallet.neu": "New wallet",
+    "wallet.anlegen": "Create",
+    "wallet.name.platz": "Name, e.g. main",
+    "wallet.wieder": "From twelve words",
+    "wallet.wieder.platz": "the twelve words, separated by spaces",
+    "wallet.wieder.knopf": "Restore",
+    "wallet.entwurf.titel": "Recovery phrase (BIP-39)",
+    "wallet.entwurf.hinweis":
+      "Write the words down on paper in this order. Whoever has them has the wallet; without them it is gone if this computer is lost. They will never be shown again.",
+    "wallet.entwurf.notiert": "I have written down all twelve words.",
+    "wallet.entwurf.weiter": "Continue",
+    "wallet.entwurf.pruefen": "To confirm, two of the twelve words.",
+    "wallet.entwurf.wort": (n) => `Word ${n}`,
+    "wallet.entwurf.bestaetigen": "Confirm",
+    "wallet.entwurf.abbrechen": "Cancel",
+    "wallet.einstieg": "Network entry",
+    "wallet.einstieg.platz": "Multiaddress or file (einstieg.txt of the probe network)",
+    "wallet.einstieg.setzen": "Set",
+    "wallet.waehlen": "Select",
+    "wallet.gewaehlt": "selected",
+    "wallet.eingetragen": "payout account",
+    "wallet.leer": "No wallet yet. Create one above.",
+    "wallet.mining": (n, g) => `Mining pays ${n}: ${g} MYL.`,
+    "wallet.wartet": (n) => `Mining pays ${n}; its entry as payout account is waiting for the chain.`,
+    "wallet.ruht": "Mining is not running. The selected wallet applies from the next start.",
+    "wallet.anders": (n) => `Mining still pays ${n}; the selected one applies from the next start.`,
+    "wallet.mit_einstieg": (a) => `Joins: ${a}`,
+    "wallet.ohne_einstieg": "No entry: the node produces alone and only builds once someone listens.",
+    "wallet.ordner": (o) => `The keys are stored unencrypted under ${o}.`,
     "modus.terminal.name": "Terminal",
     "modus.terminal.was": "Commands",
     "modus.terminal.leer":
@@ -920,9 +984,11 @@ const MODI = [
   {
     id: "knoten",
   },
+  // ⚑ **Das Wallet ist offen** (Auftrag des Projektinhabers, 2026-10-26):
+  //   Testwallets anlegen und eines auswaehlen; beim Mining bekommt es die
+  //   Ertraege. Ueberweisungen und Belege kommen spaeter.
   {
     id: "wallet",
-    offen: false,
   },
   // ⛔️ **Deine Kommandozeile, nicht die des Modells** (Auftrag des
   //    Projektinhabers, 2026-09-23, unter Wallet).
@@ -2997,6 +3063,194 @@ function alles_zeichnen() {
   gespraech_zeichnen();
   terminal_umschalten();
   knoten_umschalten();
+  wallet_umschalten();
+}
+
+// --- Das Wallet -------------------------------------------------------------
+
+/// Stellt zwischen Gespraech und Walletseite um.
+function wallet_umschalten() {
+  const an = modus_jetzt() === "wallet";
+  $("walletseite").hidden = !an;
+  if (an) {
+    $("gespraech").hidden = true;
+    $("eingabe").hidden = true;
+    const leiste = $("anhangleiste");
+    if (leiste) leiste.hidden = true;
+    wallet_laden();
+  }
+}
+
+async function wallet_laden() {
+  let l;
+  try {
+    l = await invoke("wallet_lage");
+  } catch (f) {
+    $("walletmeldung").textContent = String(f);
+    return;
+  }
+  wallet_zeichnen(l);
+}
+
+function wallet_zeichnen(l) {
+  const stand = $("walletstand");
+  const gewaehlt = l.wallets.find((w) => w.gewaehlt);
+  let zeile;
+  if (!l.mining_wallet) zeile = t("wallet.ruht");
+  else if (gewaehlt && gewaehlt.name !== l.mining_wallet) zeile = t("wallet.anders", l.mining_wallet);
+  else if (!l.mining_eingetragen) zeile = t("wallet.wartet", l.mining_wallet);
+  else {
+    const w = l.wallets.find((x) => x.name === l.mining_wallet);
+    zeile = t("wallet.mining", l.mining_wallet, (w && w.guthaben) || "0");
+  }
+  stand.dataset.laeuft = l.mining_wallet ? "ja" : "nein";
+  stand.textContent = zeile + "\n" + (l.einstieg ? t("wallet.mit_einstieg", l.einstieg) : t("wallet.ohne_einstieg"));
+
+  const liste = $("walletliste");
+  liste.replaceChildren();
+  if (!l.wallets.length) {
+    const p = document.createElement("p");
+    p.className = "knotenhinweis";
+    p.textContent = t("wallet.leer");
+    liste.append(p);
+  }
+  for (const w of l.wallets) {
+    const reihe = document.createElement("div");
+    reihe.className = "walletreihe";
+    reihe.dataset.gewaehlt = w.gewaehlt ? "ja" : "nein";
+    const kopf = document.createElement("div");
+    kopf.className = "walletkopf";
+    const name = document.createElement("strong");
+    name.textContent = w.name;
+    kopf.append(name);
+    for (const [an, schluessel] of [[w.gewaehlt, "wallet.gewaehlt"], [w.eingetragen, "wallet.eingetragen"]]) {
+      if (!an) continue;
+      const marke = document.createElement("span");
+      marke.className = "walletmarke";
+      marke.textContent = t(schluessel);
+      kopf.append(marke);
+    }
+    if (w.guthaben !== null && w.guthaben !== undefined) {
+      const g = document.createElement("span");
+      g.className = "walletguthaben";
+      g.textContent = `${w.guthaben} MYL`;
+      kopf.append(g);
+    }
+    const adresse = document.createElement("code");
+    adresse.className = "walletadresse";
+    adresse.textContent = w.adresse;
+    reihe.append(kopf, adresse);
+    if (!w.gewaehlt) {
+      const knopf = document.createElement("button");
+      knopf.type = "button";
+      knopf.textContent = t("wallet.waehlen");
+      knopf.addEventListener("click", async () => {
+        try {
+          await invoke("wallet_waehlen", { name: w.name });
+          $("walletmeldung").textContent = "";
+        } catch (f) {
+          $("walletmeldung").textContent = String(f);
+        }
+        wallet_laden();
+      });
+      reihe.append(knopf);
+    }
+    liste.append(reihe);
+  }
+  const ein = $("wallet-einstieg");
+  if (document.activeElement !== ein) ein.value = l.einstieg_angabe;
+  $("walletordner").textContent = t("wallet.ordner", l.ordner);
+}
+
+/// **Ein neues Wallet, erster Schritt**: Der Ruecken wuerfelt und sucht im
+/// Netz; die Seite zeigt die zwoelf Woerter zum Notieren.
+async function wallet_anlegen(ereignis) {
+  ereignis.preventDefault();
+  let e;
+  try {
+    e = await invoke("wallet_entwurf", { name: $("wallet-name").value });
+  } catch (f) {
+    $("walletmeldung").textContent = String(f);
+    return;
+  }
+  $("walletmeldung").textContent = "";
+  $("entwurf-befund").textContent = e.befund;
+  const ol = $("entwurf-woerter");
+  ol.replaceChildren(
+    ...e.woerter.map((w) => {
+      const li = document.createElement("li");
+      li.textContent = w;
+      return li;
+    })
+  );
+  $("entwurf-label-a").textContent = t("wallet.entwurf.wort", e.abfrage[0]);
+  $("entwurf-label-b").textContent = t("wallet.entwurf.wort", e.abfrage[1]);
+  $("entwurf-notiert").checked = false;
+  $("entwurf-weiter").disabled = true;
+  $("entwurf-a").value = "";
+  $("entwurf-b").value = "";
+  $("entwurf-schritt1").hidden = false;
+  $("entwurf-schritt2").hidden = true;
+  $("walletentwurf").hidden = false;
+}
+
+/// Zweiter Schritt: Die Woerter verschwinden, zwei werden abgefragt.
+function wallet_entwurf_weiter() {
+  if (!$("entwurf-notiert").checked) return;
+  $("entwurf-woerter").replaceChildren();
+  $("entwurf-schritt1").hidden = true;
+  $("entwurf-schritt2").hidden = false;
+  $("entwurf-a").focus();
+}
+
+async function wallet_entwurf_bestaetigen(ereignis) {
+  ereignis.preventDefault();
+  try {
+    $("walletmeldung").textContent = await invoke("wallet_bestaetigen", {
+      notiert: $("entwurf-notiert").checked,
+      wortA: $("entwurf-a").value,
+      wortB: $("entwurf-b").value,
+    });
+    $("wallet-name").value = "";
+  } catch (f) {
+    $("walletmeldung").textContent = String(f);
+  }
+  $("walletentwurf").hidden = true;
+  wallet_laden();
+}
+
+async function wallet_entwurf_abbrechen() {
+  try {
+    await invoke("wallet_verwerfen");
+  } catch (_) {}
+  $("entwurf-woerter").replaceChildren();
+  $("walletentwurf").hidden = true;
+}
+
+async function wallet_wiederherstellen(ereignis) {
+  ereignis.preventDefault();
+  try {
+    $("walletmeldung").textContent = await invoke("wallet_wiederherstellen", {
+      name: $("wallet-wieder-name").value,
+      woerter: $("wallet-wieder-woerter").value,
+    });
+    $("wallet-wieder-name").value = "";
+    $("wallet-wieder-woerter").value = "";
+  } catch (f) {
+    $("walletmeldung").textContent = String(f);
+  }
+  wallet_laden();
+}
+
+async function wallet_einstieg_setzen(ereignis) {
+  ereignis.preventDefault();
+  try {
+    await invoke("einstieg_setzen", { angabe: $("wallet-einstieg").value });
+    $("walletmeldung").textContent = "";
+  } catch (f) {
+    $("walletmeldung").textContent = String(f);
+  }
+  wallet_laden();
 }
 
 // --- Der Knoten: Mining ---------------------------------------------------
@@ -5789,6 +6043,17 @@ $("eingabe").addEventListener("submit", async (e) => {
   //   Kommentar an der Liste sagte, im Fenster werde kein Befehl getippt.
   await senden(text);
 });
+
+$("walletneu").addEventListener("submit", wallet_anlegen);
+$("walletwieder").addEventListener("submit", wallet_wiederherstellen);
+$("entwurf-notiert").addEventListener("change", () => {
+  $("entwurf-weiter").disabled = !$("entwurf-notiert").checked;
+});
+$("entwurf-weiter").addEventListener("click", wallet_entwurf_weiter);
+$("entwurf-schritt2").addEventListener("submit", wallet_entwurf_bestaetigen);
+$("entwurf-abbrechen1").addEventListener("click", wallet_entwurf_abbrechen);
+$("entwurf-abbrechen2").addEventListener("click", wallet_entwurf_abbrechen);
+$("walleteinstieg").addEventListener("submit", wallet_einstieg_setzen);
 
 $("terminalform").addEventListener("submit", async (e) => {
   e.preventDefault();

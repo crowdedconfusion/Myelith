@@ -120,8 +120,19 @@ myl-node — ein Myelith-Netzknoten
   --artefakte <ordner>   Das Artefakt des Netzmodells, fuer den Shard und
                          den Dateidienst.
   --shard-training       Den Shard mit Trainingshaelfte starten.
-  --konto <64 hex>       Wohin die Ertraege gehen. Vorgabe: die Adresse
-                         des unterschreibenden Schluessels selbst.
+  --konto <64 hex>       Wohin die Ertraege gehen. Der Knoten meldet sich
+                         dafuer mit --konsensschluessel als Miner an und
+                         traegt das Konto ueber die Kette ein. Ohne Angabe
+                         kein Eintrag, und ohne Eintrag kein Anteil.
+  --podrelais <host:port>
+                         Die Relaisleitung fuer einen Koordinator auf
+                         dieser Maschine (Pods der Epoche, Shardanfragen
+                         an die Mitglieder). Braucht --podrelaisausweis.
+  --podrelaisausweis <datei>
+                         Wohin der Ausweis der Relaisleitung kommt (0600).
+  --kontowechsel <datei> Der Schluessel des bisher eingetragenen Kontos;
+                         nur fuer einen Wechsel noetig, denn die Kette
+                         nimmt ihn nur mit dessen Unterschrift an.
   --ortsausweis <pfad>   Wo der Ausweis des Shard-Prozesses liegt, Datei
                          oder Verzeichnis. Der Shard legt ihn beim Start
                          ab, unter Unix mit 0600. Gehoert zusammen mit
@@ -135,10 +146,12 @@ myl-node — ein Myelith-Netzknoten
                          Rueckschleife hinaus bindet, stellt selbst etwas
                          davor.
   --ohne-beobachtung     Keinen Beobachtungsendpunkt oeffnen.
-  --stimmsatz <datei>    Stimmsatzdatei mit dem Validator-Satz. Nur damit
-                         stimmt dieser Knoten bei BFT-Runden mit; ohne sie
-                         hört er zu und rechnet nach. Der Knoten muss mit
-                         seinem Konsensschlüssel darin stehen.
+  --stimmsatz <datei>    Stimmsatzdatei mit dem Validator-Satz. Jeder Block
+                         braucht die Unterschrift eines Mitglieds. Steht
+                         der eigene Konsensschlüssel darin, stimmt dieser
+                         Knoten bei BFT-Runden mit, sonst hört er zu.
+                         Pflicht ausser auf der Probekette; die lernt ihren
+                         Erzeuger ohne Datei aus Block 1.
   --konsensschluessel <datei>
                          geheimer BLS-Schlüssel für die Stimme (Vorgabe:
                          <name>.konsens.key). GETRENNT von --schluessel,
@@ -415,6 +428,18 @@ fn lies_argumente() -> Result<Option<Argumente>, String> {
                         .map_err(|_| "--konto ist kein Hex".to_string())?;
                 }
                 konfig.konto = Some(myl_types::ids::Address::new(b));
+                i += 2;
+            }
+            "--kontowechsel" => {
+                konfig.kontowechseldatei = Some(PathBuf::from(wert(i)?));
+                i += 2;
+            }
+            "--podrelais" => {
+                konfig.podrelais = Some(wert(i)?.parse().map_err(|_| "--podrelais erwartet host:port".to_string())?);
+                i += 2;
+            }
+            "--podrelaisausweis" => {
+                konfig.podrelaisausweis = Some(PathBuf::from(wert(i)?));
                 i += 2;
             }
             "--protokolle" => { konfig.protokollverzeichnis = PathBuf::from(wert(i)?); i += 2; }
@@ -731,6 +756,13 @@ async fn main() {
         },
         None => None,
     };
+    // ⚑ Der Endpunkt, den ein Ortsdienst als `--knoten` erwartet: aus dem
+    //   Konsensschlüssel, hier genannt, damit ein Skript ihn nicht nachrechnen
+    //   muss.
+    if let Some(k) = konsens.as_ref() {
+        let e: String = k.endpunkt().bytes().iter().map(|b| format!("{b:02x}")).collect();
+        eprintln!("myl-node: Endpunkt {e}");
+    }
 
     let mut knoten = match Knoten::starten(args.konfig, args.auf_bildschirm).await {
         Ok(k) => k,
@@ -833,8 +865,16 @@ async fn main() {
                         myl_gateway::zugang::Zugangsstelle::neu(abschrift.clone());
                     let mut weg = weg;
                     loop {
-                        // ⚑ **Der Epochenwechsel, bevor die naechste
-                        // Anfrage kommt.** `Sitzungen` gilt fuer genau
+                        // 📌 **Erst annehmen, dann lesen** (Fund 647):
+                        // Die Tuer wartet beliebig lange; Epoche,
+                        // Schluessel und Uhr gelten fuer den Augenblick,
+                        // in dem die Anfrage da ist, nicht fuer den
+                        // Beginn des Wartens.
+                        let Ok(verbindung) = tuer.annehmen().await else {
+                            continue;
+                        };
+                        // ⚑ **Der Epochenwechsel, bevor die Anfrage
+                        // bedient wird.** `Sitzungen` gilt fuer genau
                         // eine Epoche; ohne diesen Schritt versiegelte
                         // der Knoten nach der ersten Epochengrenze fuer
                         // eine Epoche, die der Shard nicht mehr fuehrt,
@@ -867,6 +907,7 @@ async fn main() {
                             Some(w) => {
                                 let _ = myl_node::tuer::eine_v1_anfrage(
                                     &tuer,
+                                    verbindung,
                                     &mut annahme,
                                     &mut stelle,
                                     &abschrift,
@@ -877,6 +918,7 @@ async fn main() {
                             None => {
                                 let _ = myl_node::tuer::eine_anfrage(
                                     &tuer,
+                                    verbindung,
                                     &mut annahme,
                                     &mut stelle,
                                     &abschrift,
@@ -1069,6 +1111,13 @@ async fn starte_konsens(
         g.validatoren.len(),
         g.gesamtstake()
     );
+
+    // ⚑ Seit dem 2026-10-27 lesen alle Knoten den Stimmsatz; mitgestimmt
+    //   wird nur, wer darin steht. Die anderen hören zu und prüfen.
+    if g.stimmberechtigte().pubkey(&schluessel.kennung()).is_none() {
+        eprintln!("myl-node: nicht im Stimmsatz, dieser Knoten hört zu und prüft");
+        return Ok(());
+    }
 
     // Auf das Mesh warten, sonst geht der Propose ins Leere.
     let mesh = knoten

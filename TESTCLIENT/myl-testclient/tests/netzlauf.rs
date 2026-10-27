@@ -177,6 +177,9 @@ fn konfig(ordner: &Path, name: &str, bootstrap: Vec<String>, miner: Option<&Roll
         modellname: "sparrow-0.6b-int8".to_string(),
         kontoschluesseldatei: None,
         konto: None,
+        kontowechseldatei: None,
+        podrelais: None,
+        podrelaisausweis: None,
         testverkehr_sekunden: None,
         erzeugt_bloecke: miner.is_none(),
         blocktakt_ms: None,
@@ -317,8 +320,20 @@ async fn der_netzbetrieb_traegt_mit_ungleichen_pods_und_stolpersteinen() {
     eprintln!("[netzlauf] Peers je Knoten: {verbunden:?}");
 
     // ---- Epoche 0: Anmeldung, dann Zusage, über die Kette ---------------
-    for _ in 0..30 {
+    // 📌 Seit den Gebühren versorgt sich jeder Miner zuerst über den
+    //    Probehahn; vierzehn Miner auf zwölf Probekonten treffen einander,
+    //    und einer wiederholt. Gewartet wird deshalb auf die Zusagen, mit
+    //    Frist, statt dreissig fester Runden.
+    let bis = tokio::time::Instant::now() + Duration::from_secs(120);
+    for i in 0.. {
         runde(&mut knoten, 2).await;
+        let z = knoten[0].kette().zustand();
+        if i >= 30 && z.miner.len() == 14 && z.zusagen.len() == 14 {
+            break;
+        }
+        if tokio::time::Instant::now() >= bis {
+            break;
+        }
     }
     assert!(angleichen(&mut knoten, Duration::from_secs(60)).await, "nach der Anmeldung holten die Knoten nicht auf: Höhen {:?}", hoehen(&knoten));
     let angemeldet = knoten[0].kette().zustand().miner.len();
@@ -404,13 +419,21 @@ async fn der_netzbetrieb_traegt_mit_ungleichen_pods_und_stolpersteinen() {
     let lebt_im_pod = z.pods.iter().any(|p| p.shards.iter().any(|s| s.miner.miner_id == luegner));
     let epoche = knoten[0].kette().zustand().epoch.0;
     if lebt_im_pod {
-        bis = tokio::time::Instant::now() + Duration::from_secs(180);
+        // ⚑ **Gemessen in Blöcken, nicht in Sekunden** (2026-10-27): Seit der
+        //   Anlaufzeit und den zwei Fenstern der Zeitprobe (NODE 0.64.0)
+        //   misst niemand vor einem Viertel der Epoche, und ein Zeugnis
+        //   braucht eine zweite Messung ein Achtel später. Verlangt ist die
+        //   Meldung bis zum Ende der übernächsten Epoche; die Zeit ist nur
+        //   die Notbremse.
+        let bis_hoehe = (epoche + 2) * myl_consensus::block::BLOECKE_JE_EPOCHE;
+        bis = tokio::time::Instant::now() + Duration::from_secs(1_200);
         loop {
             runde(&mut knoten, 2).await;
             if knoten[0].kette().zustand().fristsperren.contains_key(&luegner) {
                 break;
             }
-            assert!(tokio::time::Instant::now() < bis, "der Lügner wurde nicht gemeldet");
+            assert!(knoten[0].kette().hoehe() < bis_hoehe, "der Lügner wurde bis Höhe {bis_hoehe} nicht gemeldet");
+            assert!(tokio::time::Instant::now() < bis, "der Lügner wurde in der Zeit nicht gemeldet");
         }
         eprintln!("[netzlauf] Lügner gemeldet bei Höhe {}", knoten[0].kette().hoehe());
     } else {
@@ -503,11 +526,10 @@ async fn der_netzbetrieb_traegt_mit_ungleichen_pods_und_stolpersteinen() {
     for m in &MINER {
         let zaehle = |a: &str| im_protokoll(&ordner, m.name, a);
         eprintln!(
-            "[netzlauf] {}: Shard gestartet {}, Messungen {} (verworfen {}), Meldungen {}, Dateien geholt {}, verworfen {}, gewartet {}",
+            "[netzlauf] {}: Shard gestartet {}, Messungen {}, Meldungen {}, Dateien geholt {}, verworfen {}, gewartet {}",
             m.name,
             zaehle("shard_gestartet"),
             zaehle("fristmessung"),
-            zaehle("fristmessung_verworfen"),
             zaehle("fristmeldung"),
             zaehle("datei_geholt"),
             zaehle("datei_verworfen"),

@@ -1,7 +1,7 @@
 # client (Nutzer-Client inkl. Wallet)
 
-> **Version:** 0.178.6 (`myl-client` 0.114.2, `myl-oberflaeche` 0.85.3, `myl-console` 0.69.1, `myl-senses` 0.13.6, `myl-module` 0.5.2)
-> **Datum:** 2026-10-24
+> **Version:** 0.181.0 (`myl-client` 0.117.0, `myl-oberflaeche` 0.86.1, `myl-console` 0.69.2, `myl-senses` 0.13.6, `myl-module` 0.5.2)
+> **Datum:** 2026-10-26
 > **Status:** ✅ **Der lokale Betrieb läuft und ist ausgeliefert.** Ein
 > Gesprächsfenster mit Modellwahl, Agentenschleife und
 > Einstellungsseite; aus einem frischen Klon lassen sich darüber
@@ -53,7 +53,7 @@ kostet nichts, wenn er stimmt, und einen halben Tag, wenn nicht.
 | **Gespraeche verwalten** | Rechtsklick auf eine Zeile: umbenennen an Ort und Stelle, als Markdown ausgeben, loeschen. Wohin ausgegeben wird, steht in `ausgabe.ordner`; ohne Angabe fuehrt das Fenster dorthin |
 
 ⚑ **Die Oberfläche ruft dieselben Funktionen wie die Kommandozeile**,
-über vierundsiebzig Befehle. ⚠️ **Mit fünf Ausnahmen, und alle sind gewollt:** `terminal_ausfuehren` startet eine Shell, denn ein Terminal, das keine startet, ist keines; `modul_waehlen` und `modul_befehl` starten ein Modul, und zwar wie die Konsole nur die geprüfte Kopie eines signierten Moduls; `artefakt_bauen` startet die Bauskripte des Repositoriums über `myl_client::bezug`, dieselbe Stelle wie die Konsole, und nur nach Bestätigung; die Aktualisierung startet `curl`, `git` und das Installationsskript über `myl_client::aktualisierung`. `mining_starten` startet den Knoten (`myl-node`) und `mining_beenden` schickt ihm das Ende (`kill`), beide über `myl_client::mining`, dieselbe Stelle wie `/mining` in der Konsole. Jeder andere Befehl startet **keinen einzigen Unterprozess**. 📌 Bis zum 2026-10-16 nannte dieser Satz nur die ersten beiden, obwohl Bau und Aktualisierung schon damals Unterprozesse starteten. `jeder_befehl_ist_angemeldet` hält die vier
+über einundachtzig Befehle. ⚠️ **Mit fünf Ausnahmen, und alle sind gewollt:** `terminal_ausfuehren` startet eine Shell, denn ein Terminal, das keine startet, ist keines; `modul_waehlen` und `modul_befehl` starten ein Modul, und zwar wie die Konsole nur die geprüfte Kopie eines signierten Moduls; `artefakt_bauen` startet die Bauskripte des Repositoriums über `myl_client::bezug`, dieselbe Stelle wie die Konsole, und nur nach Bestätigung; die Aktualisierung startet `curl`, `git` und das Installationsskript über `myl_client::aktualisierung`. `mining_starten` startet den Knoten (`myl-node`) und `mining_beenden` schickt ihm das Ende (`kill`), beide über `myl_client::mining`, dieselbe Stelle wie `/mining` in der Konsole. Jeder andere Befehl startet **keinen einzigen Unterprozess**. 📌 Bis zum 2026-10-16 nannte dieser Satz nur die ersten beiden, obwohl Bau und Aktualisierung schon damals Unterprozesse starteten. `jeder_befehl_ist_angemeldet` hält die vier
 Richtungen zusammen: kein Befehl ohne Anmeldung, keine Anmeldung ohne
 Befehl, kein Aufruf ins Leere und kein Befehl, den niemand ruft. „Ohne eigene Logik" hiesse sonst, aus einer Textausgabe
 für Menschen eine Schnittstelle zu machen, und genau das ist die Sorte
@@ -181,6 +181,117 @@ Modell überhaupt etwas taugt, und weil eine Schnittstelle, die kein
 Mensch je bedient hat, an den Bedürfnissen vorbei entworfen wird.
 
 ## Changelog
+
+### v0.181.0 (2026-10-27): Gebühren in der Wallet (`myl-client` 0.117.0)
+
+- ⚑ Jede Transaktion der Wallet sagt das Doppelte der Gebühr von jetzt zu
+  (`bezahlen::GEBUEHR_SPIELRAUM`, wie bei Wallets nach EIP-1559); abgebucht
+  wird nur die Gebühr des Blocks. `bezahlen::gebuehr` rechnet sie aus dem
+  Grundpreis der Kontoauskunft.
+- Die Vorschau einer Überweisung nennt Gebühr, Zusage und, an ein neues
+  Konto, den Aufschlag, und prüft, dass das Guthaben alles deckt.
+- 208 Tests grün, Clippy sauber.
+
+### v0.180.0 (2026-10-27): Überweisen mit Vorschau; Guthaben jedes Wallets (`myl-client` 0.116.0)
+
+- ⚑ **`myl wallet ueberweisen NAME EMPFAENGER MYL [--ja]`**: zeigt zuerst,
+  was unterschrieben wird (von, an, Betrag, Guthaben danach, Nonce, Netz),
+  und unterschreibt erst nach Bestätigung. `bezahlen::ueberweisung_vorschauen`
+  prüft Betrag, Empfänger und Deckung; `bezahlen::ueberweisen` unterschreibt
+  **genau mit dem Stand der Vorschau** und bricht ab, wenn sich Nonce oder
+  Netz inzwischen geändert haben. Probe im TESTCLIENT (`bezahlen.rs`):
+  Überziehen bekommt keine Vorschau, eine Überweisung kommt an, dieselbe
+  Vorschau ein zweites Mal unterschreibt nichts.
+- `myl wallet` nennt Guthaben, Credits und Nonce **jedes** Wallets über die
+  Leitung eines Knotens (eigener oder `--relais`), nicht nur das des
+  laufenden Minings.
+- `myl-oberflaeche`: `tauri.conf.json` auf 0.86.1 nachgezogen; bei 0.179.1
+  vergessen, die Probe `die_buendelversion_ist_die_kistenversion` war rot.
+- `myl-client` 0.116.0. 208 Tests grün, Clippy sauber.
+
+### v0.179.1 (2026-10-26): Überlaufprüfung im Freigabebau (`myl-client` 0.115.1, `myl-console` 0.69.2, `myl-oberflaeche` 0.86.1)
+
+- Überlaufprüfung im Freigabebau für die Protokollkisten (Festlegung des Projektinhabers): `[profile.release.package.<kiste>] overflow-checks = true` für jede Protokollkiste im Baum dieses Programms; die Rechenkerne (`integer-llm-*`) bleiben ohne. Bis hierher war sie nur im Testprofil an, und eine Rechnung im Konsenspfad wäre im ausgelieferten Programm an den Rändern still umgelaufen. Belegt am Knoten (NODE 0.64.0): `myl_ledger` wird mit `-C overflow-checks=on` übersetzt, `integer_llm_kernels` ohne. Alle 4 359 Tests liefen schon immer mit eingeschalteter Prüfung. In `myl-client`,
+  `myl-console` und `myl-oberflaeche`, je mit den Protokollkisten ihres Baums.
+- `myl-client` 0.115.1, `myl-console` 0.69.2, `myl-oberflaeche` 0.86.1.
+
+### v0.179.0 (2026-10-26): Testwallets, Mining zahlt ins ausgewählte, Beitritt zu einem Probenetz (`myl-client` 0.115.0, `myl-oberflaeche` 0.86.0)
+
+- ⚑ **Testwallets** (Auftrag des Projektinhabers): `myl_client::wallet`
+  legt Wallets an (BLS-Schlüssel, Rechte `0600`, dasselbe Dateiformat wie
+  der Knoten), listet sie und wählt eines aus; das ausgewählte ist das
+  eingeloggte. ⚠️ Spielgeld: Die Schlüssel liegen unverschlüsselt neben den
+  Einstellungen; vor echten MYL fehlen ein verschlüsselter Speicher, eine
+  Sicherung und ein kaltes Auszahlungskonto.
+- ⚑ **Mining zahlt ins ausgewählte Wallet.** Der Knoten startet mit
+  `--konto` (dessen Adresse) und eigenem Konsensschlüssel und trägt es über
+  die Kette als Auszahlungskonto ein; auf der Probekette prägt jede Epoche
+  10 MYL dorthin. Nach einem Wechsel gibt der Client den Schlüssel des
+  bisher eingetragenen Wallets mit (`--kontowechsel`), denn die Kette nimmt
+  einen Wechsel nur mit dessen Unterschrift an; welches eingetragen ist,
+  merkt sich der Client aus den Metriken des Knotens. „gemint“ misst jetzt
+  das Wallet, nicht das Arbeitskonto des Knotens.
+- ⚑ **Beitritt statt Alleingang:** `mining.einstieg` (neu) nimmt eine
+  Multiadresse oder eine Datei, die eine nennt; dann tritt der Knoten bei,
+  statt allein zu erzeugen. Vorher baute ein Knoten des Clients allein nie
+  einen Block, weil der Erzeuger erst baut, wenn jemand zuhört; die
+  Zusammenfassung sagt das jetzt. `MYL_PROBENETZ` geht der Einstellung vor.
+- `myl wallet [neu NAME|waehle NAME]`, `myl mining einstieg [ADRESSE|DATEI|aus]`.
+- **Fenster: der Reiter „Wallet“ ist offen.** Wallets mit Adresse,
+  Guthaben (des laufenden Minings), Marken „ausgewählt“ und
+  „Auszahlungskonto“, Anlegen, Auswählen, Einstieg; vier neue Befehle
+  (`wallet_lage`, `wallet_neu`, `wallet_waehlen`, `einstieg_setzen`), keiner
+  startet einen Unterprozess.
+- ⚑ **Wiederherstellungswörter nach BIP-39** (Festlegung des
+  Projektinhabers: der etablierte Standard, zwölf englische Wörter):
+  `bip39.rs` mit der Liste aus BIP-39 (unverändert, MIT, Abdruck in der
+  Probe), Prüfsumme, Seed nach PBKDF2-HMAC-SHA512 mit 2048 Runden;
+  HMAC und PBKDF2 selbst geschrieben auf `sha2`, geprüft gegen RFC 4231 und
+  die Prüfvektoren von BIP-39. Der Schlüssel ist der Hauptschlüssel nach
+  EIP-2333 über den Seed; die Datei trägt den Seed.
+- ⚑ **Ein neues Wallet entsteht in Schritten:** Entwurf, Suche im Netz
+  (`/konto` beim laufenden Knoten oder beim Abfrageort des Einstiegs; mit
+  Spuren wird nichts angelegt), die zwölf Wörter, „notiert?“ und zwei
+  zufällig abgefragte Wörter; erst dann gespeichert. Dasselbe Wallet zweimal
+  auf derselben Maschine wird abgewiesen. Wiederherstellen aus den Wörtern
+  mit Suche im Netz. `Debug` eines Entwurfs zeigt die Wörter nie.
+- Konsole: **`/wallet`** nach dem Schema von `/settings` und `/mining`
+  (Wallets, „Neues Wallet“, „Aus zwölf Wörtern“, Einstieg), Ja-Frage über
+  `janein`. Fenster: Entwurf mit Wörtern, Haken „notiert“, Abfrage zweier
+  Wörter; der Seed bleibt im Rücken. `myl wallet neu` und
+  `myl wallet wiederherstellen`. Der Einstieg wird an einer Stelle gesetzt
+  (`mining::einstieg_setzen`).
+- ⚑ **Bezahlen aus dem Wallet** (`bezahlen.rs`, neu): Das Wallet
+  unterschreibt selbst (Nonce und Netzwert über die Relaisleitung des
+  eigenen Knotens): Credits kaufen (Burn), einen Sitzungskontrakt für einen
+  Agenten eröffnen (Budget, Einzellimit, Frist in Epochen, einziger
+  Empfänger der Betreiber des Knotens), widerrufen. Der Agent hat einen
+  eigenen Schlüssel (`wallets/agenten/`, `0600`) und stellt sich die
+  Vollmacht aus, nur für diese Sitzung und bis zu ihrem Ende, mit dem
+  Empfängerbeweis; abgelegt neben seinem Schlüssel. Den Schlüssel des
+  Wallets bekommt der Agent nie. ⚠️ Die Summe der Budgets ist die Grenze.
+  Der Mining-Knoten öffnet dafür seine Relaisleitung (`--podrelais`).
+  Belegt im TESTCLIENT (`bezahlen`) gegen eine echte Kette.
+- ⚑ **Der Agent über die Tür:** `myl frage --tuer HOST:PORT --agent NAME`
+  fragt mit der Vollmacht des Agenten über die Tür eines Knotens statt über
+  ein Modell auf dieser Maschine (über `Tuerklient`, denselben `Modellweg`
+  wie die Agentenschleife) und nennt Beleg und Segment. Dazu `myl wallet
+  credits`, `myl wallet sitzung` und `myl wallet widerrufen`, mit der
+  Leitung des eigenen Mining-Knotens oder `--relais`/`--relaisausweis`.
+- 📌 **Fund 644: Eine Reservierung unter macOS konnte still halb sein.**
+  `F_PREALLOCATE` lief zuerst mit `F_ALLOCATECONTIG` allein, und ohne
+  `F_ALLOCATEALL` darf der Aufruf weniger buchen als verlangt und trotzdem
+  gelingen; `fst_bytesalloc` wurde nicht geprüft. Auf einer viel
+  beschriebenen Platte belegte die Probe 25 von 64 MiB und war in drei
+  Läufen zweimal rot. Jetzt beide Versuche „alles oder nichts“, und eine
+  kleinere Buchung ist ein Fehler; danach zehn von zehn grün.
+- Echter Lauf gegen das Docker-Probenetz (TESTCLIENT): Wallet `probe-a`
+  bekam an der Epochengrenze 10 MYL; nach Auswahl von `probe-b` und
+  Neustart unterschrieb der Knoten den Wechsel mit dem Schlüssel von
+  `probe-a`, und ab der nächsten Epoche wuchs `probe-b`. Danach mit
+  Wörtern: falsch beantwortete Abfrage legt nichts an, richtige legt an,
+  dieselben Wörter unter anderem Namen werden abgewiesen, der Prüfvektor
+  von BIP-39 stellt her, jedes Mal mit Suche im Probenetz.
 
 ### v0.178.6 (2026-10-26): Proben räumen ihren Zwischenordner auf (Fund 638; `myl-client` 0.114.2, `myl-senses` 0.13.6)
 

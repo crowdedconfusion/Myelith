@@ -161,7 +161,7 @@ mod tests {
             prev_block_hash: Hash::sha256(&h.to_le_bytes()),
             timestamp_ms: 1_700_000_000_000 + h,
             state_root: Hash::sha256(&[marke]),
-            saatquelle: None,
+            pruefpunkt: None,
         });
         let roh = borsh::to_vec(&b).expect("Drahtform");
         (b, roh)

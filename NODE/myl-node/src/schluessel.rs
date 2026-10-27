@@ -379,11 +379,15 @@ impl Konsensschluessel {
     }
 }
 
-fn hex_ikm(wort: &str) -> Option<[u8; IKM_BYTES]> {
-    if wort.len() != IKM_BYTES * 2 {
+/// Das Ausgangsmaterial aus Hex: 32 Bytes, wie dieser Knoten sie anlegt,
+/// oder 64 Bytes, ein Seed nach BIP-39 aus einem Testwallet des Clients
+/// (2026-10-26). Aus beidem leitet [`BlsSecretKey::key_gen`] den Schlüssel
+/// ab; mit dem Seed ist das der Hauptschlüssel nach EIP-2333.
+fn hex_ikm(wort: &str) -> Option<Vec<u8>> {
+    if wort.len() != IKM_BYTES * 2 && wort.len() != IKM_BYTES * 4 {
         return None;
     }
-    let mut roh = [0u8; IKM_BYTES];
+    let mut roh = vec![0u8; wort.len() / 2];
     for (i, byte) in roh.iter_mut().enumerate() {
         *byte = u8::from_str_radix(wort.get(i * 2..i * 2 + 2)?, 16).ok()?;
     }
@@ -596,6 +600,24 @@ mod tests {
         );
     }
     use super::*;
+
+    /// ⚑ **Ein Seed aus 64 Bytes** (BIP-39, Testwallet des Clients) gibt
+    /// denselben Schlüssel wie `key_gen` über diesen Seed; 32 Bytes bleiben
+    /// wie bisher, jede andere Länge ist keiner.
+    #[test]
+    fn ein_seed_aus_64_bytes_ist_ein_schluessel() {
+        let verz = std::env::temp_dir().join(format!("myl-seedschluessel-{}", std::process::id()));
+        std::fs::create_dir_all(&verz).expect("Verzeichnis");
+        let seed: Vec<u8> = (0..64u8).collect();
+        let text: String = seed.iter().map(|b| format!("{b:02x}")).collect();
+        let pfad = verz.join("wallet.key");
+        myl_types::geheimdatei::schreiben(&pfad, format!("{DATEIKOPF}\n{text}\n").as_bytes()).expect("schreiben");
+        let k = Konsensschluessel::aus_datei(&pfad).expect("lesen");
+        let erwartet = BlsSecretKey::key_gen(&seed).expect("key_gen").public_key().expect("pk");
+        assert_eq!(k.adresse(), myl_types::ids::Address::aus_schluessel(&erwartet));
+        assert!(hex_ikm(&"ab".repeat(48)).is_none(), "48 Bytes wurden angenommen");
+        let _ = std::fs::remove_dir_all(&verz);
+    }
     use myl_consensus::signing::vote_message;
 
     fn tempdir(name: &str) -> PathBuf {

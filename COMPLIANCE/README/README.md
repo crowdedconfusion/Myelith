@@ -1,7 +1,7 @@
 # compliance
 
-> **Version:** 0.6.5
-> **Datum:** 2026-10-24
+> **Version:** 0.6.6
+> **Datum:** 2026-10-26
 > **Status:** Die Pflichten aus der KI-Verordnung sind dokumentiert und,
 > soweit technisch, umgesetzt; die Einordnung Artikel für Artikel steht in
 > der [Selbsteinschätzung](../de/Selbsteinschaetzung.md). Offen: ein
@@ -38,6 +38,13 @@ Schutzfilter (`CLIENT/myl-client/src/schutzfilter.rs`), Notaus
 (`AGENT_LAYER/local-agent/src/notaus.rs`).
 
 ## Changelog
+
+### v0.6.6 (2026-10-26): BIP-39-Wortliste unter den Daten
+
+- `fremdkomponenten.json` und `NOTICES.md`: die englische Wortliste aus
+  BIP-39 (MIT), unverändert mitgeliefert in `myl-client` für die
+  Wiederherstellungswörter der Testwallets; Lizenz am Kopf von
+  `bip-0039.mediawiki` geprüft, Abdruck in der Probe des Clients.
 
 ### v0.6.5 (2026-10-24): NOTICES nach `tokio` 1.54.1
 

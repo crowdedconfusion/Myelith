@@ -139,6 +139,20 @@ pub struct Beobachtungsstand {
     pub inferenz_abgelehnt: u64,
     /// Guthaben des eigenen Kontos in der Kette, in der kleinsten Einheit.
     pub konto_guthaben: u64,
+    /// Guthaben des Auszahlungskontos aus `--konto`, null ohne Angabe.
+    pub auszahlung_guthaben: u64,
+    /// Eins, wenn die Kette genau dieses Konto als Auszahlungskonto führt.
+    pub auszahlung_eingetragen: u64,
+    /// ⚑ **Gebühren** (G1): der Grundpreis je Byte des nächsten Blocks, ...
+    pub grundpreis_je_byte: u64,
+    /// ... die Gebühren der laufenden Epoche ...
+    pub gebuehren_epoche: u64,
+    /// ... und der Topf der Validatoren.
+    pub gebuehren_validatoren: u64,
+    /// Guthaben der Treasury.
+    pub treasury_guthaben: u64,
+    /// Bis zu dieser Höhe ist die Kette durch einen Prüfpunkt bestätigt.
+    pub pruefpunkt_bestaetigt: u64,
 }
 
 impl Beobachtungsstand {
@@ -153,6 +167,66 @@ impl Beobachtungsstand {
     }
 }
 
+/// ⚑ **Was der Knoten über eine Adresse weiß** (`/konto/<hex>`,
+/// 2026-10-26): ob sie auf der Kette vorkommt. Der Client fragt das, bevor
+/// er ein Wallet anlegt oder wiederherstellt, damit dasselbe nicht doppelt
+/// entsteht.
+///
+/// ⚠️ **Eine Auskunft, kein Beweis**: Der Client glaubt hier einem Knoten.
+/// Vor einem Netz, dessen MYL etwas gelten, gehört ein Beweis gegen die
+/// Zustandswurzel dazu.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Kontoauskunft {
+    /// Die Höhe, auf der geantwortet wurde.
+    pub hoehe: u64,
+    pub guthaben: u64,
+    pub nonce: u64,
+    /// Ob unter diesen Bytes ein Miner angemeldet ist.
+    pub miner: bool,
+    /// Für wie viele Miner sie das Auszahlungskonto ist.
+    pub auszahlung_fuer: u64,
+    /// Was sie hinterlegt hat (Anmeldung, Sitzungen), zurück bei Abmeldung
+    /// und Aufräumen.
+    pub hinterlegt: u64,
+}
+
+impl Kontoauskunft {
+    /// Ob die Adresse auf der Kette Spuren hat.
+    pub fn bekannt(&self) -> bool {
+        self.guthaben > 0 || self.nonce > 0 || self.miner || self.auszahlung_fuer > 0
+    }
+
+    /// Als JSON, ohne Fremdkiste: sechs Zahlen und ein Wahrheitswert.
+    pub fn als_json(&self) -> String {
+        format!(
+            "{{\"hoehe\":{},\"bekannt\":{},\"guthaben\":{},\"nonce\":{},\"miner\":{},\"auszahlung_fuer\":{},\"hinterlegt\":{}}}\n",
+            self.hoehe,
+            self.bekannt(),
+            self.guthaben,
+            self.nonce,
+            self.miner,
+            self.auszahlung_fuer,
+            self.hinterlegt
+        )
+    }
+}
+
+/// Eine Kontoanfrage an die Schleife des Knotens: Adresse und Rückweg.
+pub type Kontoanfrage = (myl_types::ids::Address, tokio::sync::oneshot::Sender<Kontoauskunft>);
+
+/// Die Adresse aus `/konto/<64 hex>`, sonst `None`.
+pub fn adresse_aus_weg(weg: &str) -> Option<myl_types::ids::Address> {
+    let hex = weg.strip_prefix("/konto/")?;
+    if hex.len() != 64 {
+        return None;
+    }
+    let mut b = [0u8; 32];
+    for (i, x) in b.iter_mut().enumerate() {
+        *x = u8::from_str_radix(hex.get(i * 2..i * 2 + 2)?, 16).ok()?;
+    }
+    Some(myl_types::ids::Address::new(b))
+}
+
 /// Der geteilte Ablageort für den Stand.
 ///
 /// Der Knoten schreibt, der Dienst liest. Eine `Mutex` genügt: Die
@@ -161,12 +235,29 @@ impl Beobachtungsstand {
 #[derive(Debug, Clone, Default)]
 pub struct Beobachtungsstelle {
     stand: Arc<Mutex<Beobachtungsstand>>,
+    /// ⚑ Kontoanfragen gehen an die Schleife des Knotens, der den Zustand
+    ///   hält; hier wird nichts vom Zustand kopiert.
+    anfragen: Option<tokio::sync::mpsc::Sender<Kontoanfrage>>,
 }
 
 impl Beobachtungsstelle {
     /// Eine leere Stelle.
     pub fn neu() -> Self {
         Self::default()
+    }
+
+    /// Eine Stelle, die Kontoanfragen an den Knoten weiterreicht.
+    pub fn mit_anfragen(anfragen: tokio::sync::mpsc::Sender<Kontoanfrage>) -> Self {
+        Self { anfragen: Some(anfragen), ..Self::default() }
+    }
+
+    /// Fragt den Knoten nach einer Adresse; `None`, wenn er nicht binnen
+    /// zwei Sekunden antwortet oder keine Anfragen nimmt.
+    pub async fn konto(&self, adresse: myl_types::ids::Address) -> Option<Kontoauskunft> {
+        let tx = self.anfragen.as_ref()?;
+        let (rueck, antwort) = tokio::sync::oneshot::channel();
+        tx.send((adresse, rueck)).await.ok()?;
+        tokio::time::timeout(std::time::Duration::from_secs(2), antwort).await.ok()?.ok()
     }
 
     /// Legt einen neuen Stand ab.
@@ -360,6 +451,13 @@ pub fn als_prometheus(stand: &Beobachtungsstand, jetzt_ms: u64) -> String {
         ("myelith_inferenz_bearbeitet_total", "Inferenzauftraege aus dem Netz mit Ergebnis.", "counter", stand.inferenz_bearbeitet),
         ("myelith_inferenz_abgelehnt_total", "Abgelehnte Inferenzauftraege aus dem Netz.", "counter", stand.inferenz_abgelehnt),
         ("myelith_konto_guthaben", "Guthaben des eigenen Kontos in der kleinsten Einheit.", "gauge", stand.konto_guthaben),
+        ("myelith_auszahlung_guthaben", "Guthaben des Auszahlungskontos (--konto) in der kleinsten Einheit.", "gauge", stand.auszahlung_guthaben),
+        ("myelith_auszahlung_eingetragen", "Eins, wenn die Kette dieses Konto als Auszahlungskonto fuehrt.", "gauge", stand.auszahlung_eingetragen),
+        ("myelith_grundpreis_je_byte", "Grundpreis je Byte des naechsten Blocks.", "gauge", stand.grundpreis_je_byte),
+        ("myelith_gebuehren_epoche", "Gebuehren der laufenden Epoche.", "gauge", stand.gebuehren_epoche),
+        ("myelith_gebuehren_validatoren", "Topf der Validatoren aus den Gebuehren.", "gauge", stand.gebuehren_validatoren),
+        ("myelith_treasury_guthaben", "Guthaben der Treasury.", "gauge", stand.treasury_guthaben),
+        ("myelith_pruefpunkt_bestaetigt", "Bis zu dieser Hoehe durch einen Pruefpunkt bestaetigt.", "gauge", stand.pruefpunkt_bestaetigt),
     ] {
         zeile(name, hilfe, art, wert);
     }
@@ -437,8 +535,16 @@ pub async fn laufen(lauscher: TcpListener, stelle: Beobachtungsstelle) {
                 }
             }
             let weg = weg_aus_anfrage(&puffer);
-            let stand = stelle.holen();
-            let aus = bedienen(weg.as_deref(), &stand, crate::protokoll::jetzt_ms().max(0) as u64);
+            let aus = match weg.as_deref().filter(|w| w.starts_with("/konto/")) {
+                Some(w) => match adresse_aus_weg(w) {
+                    None => antwort(404, "text/plain; charset=utf-8", "erwartet /konto/<64 hex>\n"),
+                    Some(a) => match stelle.konto(a).await {
+                        Some(k) => antwort(200, "application/json", &k.als_json()),
+                        None => antwort(503, "text/plain; charset=utf-8", "der Knoten antwortet nicht\n"),
+                    },
+                },
+                None => bedienen(weg.as_deref(), &stelle.holen(), crate::protokoll::jetzt_ms().max(0) as u64),
+            };
             let _ = strom.write_all(&aus).await;
             let _ = strom.shutdown().await;
         });
@@ -448,6 +554,31 @@ pub async fn laufen(lauscher: TcpListener, stelle: Beobachtungsstelle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn die_adresse_kommt_nur_aus_einem_ganzen_weg() {
+        let a = adresse_aus_weg(&format!("/konto/{}", "0f".repeat(32))).expect("Adresse");
+        assert_eq!(a.as_bytes(), &[0x0f; 32]);
+        for weg in ["/konto/", "/konto/0f", &format!("/konto/{}", "zz".repeat(32)), &format!("/konten/{}", "0f".repeat(32))] {
+            assert!(adresse_aus_weg(weg).is_none(), "{weg} wurde angenommen");
+        }
+    }
+
+    #[test]
+    fn eine_spur_genuegt_fuer_bekannt() {
+        let leer = Kontoauskunft::default();
+        assert!(!leer.bekannt());
+        assert!(leer.als_json().contains("\"bekannt\":false"));
+        for k in [
+            Kontoauskunft { guthaben: 1, ..Default::default() },
+            Kontoauskunft { nonce: 1, ..Default::default() },
+            Kontoauskunft { miner: true, ..Default::default() },
+            Kontoauskunft { auszahlung_fuer: 1, ..Default::default() },
+        ] {
+            assert!(k.bekannt(), "{k:?}");
+            assert!(k.als_json().contains("\"bekannt\":true"));
+        }
+    }
 
     fn stand() -> Beobachtungsstand {
         Beobachtungsstand {

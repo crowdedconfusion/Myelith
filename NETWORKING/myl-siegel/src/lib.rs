@@ -117,6 +117,11 @@
 //! Schlüssel: Es gibt keinen Weg, den Zähler zurückzusetzen, ohne einen
 //! neuen [`Kanal`] zu bauen, und ein neuer Kanal hat neue Schlüssel.
 //! Die Regel ist nicht dokumentiert, sie ist gebaut.
+//!
+//! Wie jede Protokollkiste ohne `unsafe` (2026-10-26 nachgetragen: Die
+//! Kiste mit der Sitzungsverschlüsselung war die einzige ohne diese Zeile).
+
+#![deny(unsafe_code)]
 
 use std::collections::BTreeMap;
 use std::fmt;

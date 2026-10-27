@@ -21,6 +21,7 @@ pub mod signing;
 pub mod voting_weight;
 pub mod double_signing;
 pub mod round_change;
+pub mod pruefpunkt;
 pub mod poi;
 pub mod epoch_close;
 pub mod da;

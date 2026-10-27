@@ -4294,6 +4294,9 @@ mod tests {
                     pos / crate::model::VORBEREITUNGSFENSTER
                 );
             }
+            // Fund 653: Diese vier blieben im Temp liegen; alle anderen
+            // Proben hier raeumen ab.
+            let _ = fs::remove_dir_all(&dir);
         }
     }
 

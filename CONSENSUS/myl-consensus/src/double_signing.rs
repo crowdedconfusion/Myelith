@@ -54,6 +54,11 @@ pub enum DoubleSignError {
     InvalidSignature,
     /// Validator nicht gefunden.
     ValidatorNotFound,
+    /// Die beiden Unterschriften stammen von verschiedenen Schlüsseln
+    /// (2026-10-27, [`Doppelbeleg`]).
+    VerschiedeneTaeter,
+    /// Die beiden Werte nennen verschiedene Höhen: kein Widerspruch.
+    VerschiedeneHoehen,
 }
 
 impl std::fmt::Display for DoubleSignError {
@@ -69,6 +74,8 @@ impl std::fmt::Display for DoubleSignError {
                 write!(f, "Ungültige Signatur im Double-Signing-Beweis")
             }
             Self::ValidatorNotFound => write!(f, "Validator nicht gefunden"),
+            Self::VerschiedeneTaeter => write!(f, "Kein Doppelbeleg: zwei verschiedene Schlüssel"),
+            Self::VerschiedeneHoehen => write!(f, "Kein Doppelbeleg: zwei verschiedene Höhen"),
         }
     }
 }
@@ -130,6 +137,130 @@ impl DoubleSignProof {
         data.extend_from_slice(&self.signature_1.0);
         data.extend_from_slice(&self.signature_2.0);
         Hash::sha256(&data)
+    }
+}
+
+/// Ein Block, wie ihn ein [`Doppelbeleg`] trägt: Kopf, Rumpf als rohe Bytes
+/// und die Unterschrift des Erzeugers.
+///
+/// ⚑ **Rohe Bytes statt eines `Block`**, mit Absicht: Ein Block enthält
+/// Transaktionen, eine Transaktion kann einen Beleg enthalten, und ein Beleg
+/// mit Blöcken wäre ein rekursiver Typ. Beliebig tief verschachtelte Belege
+/// ließen beim Lesen den Stack wachsen. Für den Beleg reicht der Hash, und
+/// der folgt aus Kopf und Rumpf ([`crate::block::Block::hash_aus_teilen`]).
+#[derive(Debug, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
+pub struct Belegblock {
+    /// Der Kopf, aus dem die Höhe kommt.
+    pub kopf: crate::block::BlockHeader,
+    /// `Block::rumpfbytes`.
+    pub rumpf: Vec<u8>,
+    /// Die Unterschrift des Erzeugers.
+    pub unterschrift: crate::block::Erzeugerunterschrift,
+}
+
+impl Belegblock {
+    /// Aus einem unterschriebenen Block; `None` ohne Unterschrift.
+    pub fn aus_block(b: &crate::block::Block) -> Option<Self> {
+        Some(Self { kopf: b.header.clone(), rumpf: b.rumpfbytes(), unterschrift: b.unterschrift.clone()? })
+    }
+
+    fn hash(&self) -> Hash {
+        crate::block::Block::hash_aus_teilen(&self.kopf, &self.rumpf)
+    }
+
+    fn unterschrift_traegt(&self) -> bool {
+        self.unterschrift
+            .schluessel
+            .verify(&crate::block::erzeugernachricht_zum_hash(&self.hash()), &self.unterschrift.signatur)
+    }
+}
+
+/// ⚑ **Ein Beleg für eine Doppelunterschrift** (Festlegung des
+/// Projektinhabers vom 2026-10-27, CONSENSUS 7.6): zwei Unterschriften
+/// desselben Schlüssels für zwei verschiedene Werte, wo es nur einen geben
+/// darf. Jeder Dritte kann ihn ohne weiteren Zustand prüfen
+/// ([`Self::schuldiger`]).
+///
+/// - **Erzeuger:** zwei Blöcke derselben Höhe vom selben Erzeuger. Das ist
+///   der Fall, in dem zwischen zwei Prüfpunkten nur die Unterschrift des
+///   Erzeugers gilt.
+/// - **Prüfpunkt:** zwei Prüfpunktstimmen desselben Wählers für dieselbe
+///   Höhe und verschiedene Blöcke. Zwei Zertifikate für eine Höhe brauchen
+///   ein Drittel solcher Stimmen; dieser Beleg macht sie teuer.
+#[derive(Debug, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
+pub enum Doppelbeleg {
+    /// Zwei Blöcke derselben Höhe vom selben Erzeuger (in einer `Box`,
+    /// weil sie viel grösser sind als zwei Stimmen; die Kodierung ist
+    /// dieselbe).
+    Erzeuger(Box<Belegblock>, Box<Belegblock>),
+    /// Zwei Stimmen desselben Wählers für denselben Prüfpunkt.
+    Pruefpunkt {
+        /// Die erste Stimme.
+        erste: Box<crate::pruefpunkt::Pruefpunktstimme>,
+        /// Die zweite Stimme.
+        zweite: Box<crate::pruefpunkt::Pruefpunktstimme>,
+        /// Der Schlüssel des Wählers; seine Kennung muss daraus folgen.
+        schluessel: BlsPublicKey,
+    },
+}
+
+impl Doppelbeleg {
+    /// **Prüft den Beleg und nennt den Schlüssel des Schuldigen.**
+    ///
+    /// Gilt genau dann, wenn beide Unterschriften unter demselben Schlüssel
+    /// tragen, beide dieselbe Höhe nennen und die Werte verschieden sind.
+    pub fn schuldiger(&self) -> Result<BlsPublicKey, DoubleSignError> {
+        match self {
+            Self::Erzeuger(a, b) => {
+                if a.unterschrift.schluessel != b.unterschrift.schluessel {
+                    return Err(DoubleSignError::VerschiedeneTaeter);
+                }
+                if a.kopf.height != b.kopf.height {
+                    return Err(DoubleSignError::VerschiedeneHoehen);
+                }
+                if a.hash() == b.hash() {
+                    return Err(DoubleSignError::IdenticalBlocks);
+                }
+                if !a.unterschrift_traegt() || !b.unterschrift_traegt() {
+                    return Err(DoubleSignError::InvalidSignature);
+                }
+                Ok(a.unterschrift.schluessel)
+            }
+            Self::Pruefpunkt { erste, zweite, schluessel } => {
+                if erste.waehler != zweite.waehler || MinerId::aus_schluessel(schluessel) != erste.waehler {
+                    return Err(DoubleSignError::VerschiedeneTaeter);
+                }
+                if erste.hoehe != zweite.hoehe {
+                    return Err(DoubleSignError::VerschiedeneHoehen);
+                }
+                if erste.block_hash == zweite.block_hash {
+                    return Err(DoubleSignError::IdenticalBlocks);
+                }
+                let traegt = |s: &crate::pruefpunkt::Pruefpunktstimme| {
+                    schluessel.verify(&crate::pruefpunkt::pruefpunktnachricht(s.hoehe, &s.block_hash), &s.signatur)
+                };
+                if !traegt(erste) || !traegt(zweite) {
+                    return Err(DoubleSignError::InvalidSignature);
+                }
+                Ok(*schluessel)
+            }
+        }
+    }
+
+    /// Die Höhe, um die es geht: Block oder Prüfpunkt.
+    pub fn hoehe(&self) -> u64 {
+        match self {
+            Self::Erzeuger(a, _) => a.kopf.height,
+            Self::Pruefpunkt { erste, .. } => erste.hoehe,
+        }
+    }
+
+    /// Die Art, als Zahl für den Vermerk im Zustand: 0 Erzeuger, 1 Prüfpunkt.
+    pub fn art(&self) -> u8 {
+        match self {
+            Self::Erzeuger(..) => 0,
+            Self::Pruefpunkt { .. } => 1,
+        }
     }
 }
 
@@ -205,6 +336,84 @@ impl SignedBlocksRegistry {
     /// Gibt die Anzahl signierter Blöcke für einen Validator zurück.
     pub fn signed_block_count(&self, miner_id: &MinerId) -> usize {
         self.signed_blocks.get(miner_id).map_or(0, |m| m.len())
+    }
+}
+
+#[cfg(test)]
+mod belegtests {
+    use super::*;
+    use crate::block::{Block, BlockHeader};
+    use crate::pruefpunkt::Pruefpunktstimme;
+    use myl_types::bls::BlsSecretKey;
+
+    fn sk(b: u8) -> BlsSecretKey {
+        BlsSecretKey::key_gen(&[b; 32]).expect("Schlüssel")
+    }
+
+    fn block(hoehe: u64, zeit: u64, wer: u8) -> Belegblock {
+        let mut b = Block::new(BlockHeader {
+            height: hoehe,
+            epoch: 0,
+            prev_block_hash: Hash::sha256(b"vorher"),
+            timestamp_ms: zeit,
+            state_root: Hash::sha256(b"wurzel"),
+            pruefpunkt: None,
+        });
+        b.unterschreiben(&sk(wer)).expect("unterschreiben");
+        Belegblock::aus_block(&b).expect("unterschrieben")
+    }
+
+    /// ⚑ **Zwei Blöcke derselben Höhe vom selben Erzeuger sind ein Beleg**
+    /// (CONSENSUS 7.6); verschiedene Höhen, verschiedene Erzeuger, derselbe
+    /// Block zweimal und eine gefälschte Unterschrift sind keiner.
+    #[test]
+    fn zwei_bloecke_derselben_hoehe_belegen_den_erzeuger() {
+        let pk = sk(7).public_key().expect("pk");
+        let erz = |a: Belegblock, b: Belegblock| Doppelbeleg::Erzeuger(Box::new(a), Box::new(b));
+        let beleg = erz(block(10, 1, 7), block(10, 2, 7));
+        assert_eq!(beleg.schuldiger(), Ok(pk));
+        assert_eq!(beleg.hoehe(), 10);
+        // ⛔️ Gegenproben.
+        assert_eq!(erz(block(10, 1, 7), block(11, 2, 7)).schuldiger(), Err(DoubleSignError::VerschiedeneHoehen));
+        assert_eq!(erz(block(10, 1, 7), block(10, 2, 8)).schuldiger(), Err(DoubleSignError::VerschiedeneTaeter));
+        assert_eq!(erz(block(10, 1, 7), block(10, 1, 7)).schuldiger(), Err(DoubleSignError::IdenticalBlocks));
+        let mut gefaelscht = block(10, 2, 8);
+        gefaelscht.unterschrift.schluessel = pk;
+        assert_eq!(erz(block(10, 1, 7), gefaelscht).schuldiger(), Err(DoubleSignError::InvalidSignature));
+        // Ein veränderter Rumpf trägt die Unterschrift nicht mehr.
+        let mut anderer_rumpf = block(10, 2, 7);
+        anderer_rumpf.rumpf.push(0);
+        assert_eq!(erz(block(10, 1, 7), anderer_rumpf).schuldiger(), Err(DoubleSignError::InvalidSignature));
+    }
+
+    /// Zwei Prüfpunktstimmen desselben Wählers für dieselbe Höhe und
+    /// verschiedene Blöcke; die Kennung muss aus dem Schlüssel folgen.
+    #[test]
+    fn zwei_pruefpunktstimmen_belegen_den_waehler() {
+        let pk = sk(3).public_key().expect("pk");
+        let wer = MinerId::aus_schluessel(&pk);
+        let stimme = |h: &[u8], hoehe: u64| Box::new(Pruefpunktstimme::unterschreiben(hoehe, Hash::sha256(h), wer, &sk(3)).expect("Stimme"));
+        let beleg = Doppelbeleg::Pruefpunkt { erste: stimme(b"a", 150), zweite: stimme(b"b", 150), schluessel: pk };
+        assert_eq!(beleg.schuldiger(), Ok(pk));
+        // ⛔️ Gegenproben.
+        let gleich = Doppelbeleg::Pruefpunkt { erste: stimme(b"a", 150), zweite: stimme(b"a", 150), schluessel: pk };
+        assert_eq!(gleich.schuldiger(), Err(DoubleSignError::IdenticalBlocks));
+        let hoehen = Doppelbeleg::Pruefpunkt { erste: stimme(b"a", 150), zweite: stimme(b"b", 300), schluessel: pk };
+        assert_eq!(hoehen.schuldiger(), Err(DoubleSignError::VerschiedeneHoehen));
+        let fremder = sk(4).public_key().expect("pk");
+        let falscher_schluessel = Doppelbeleg::Pruefpunkt { erste: stimme(b"a", 150), zweite: stimme(b"b", 150), schluessel: fremder };
+        assert_eq!(falscher_schluessel.schuldiger(), Err(DoubleSignError::VerschiedeneTaeter));
+        let mut verfaelscht = stimme(b"b", 150);
+        verfaelscht.block_hash = Hash::sha256(b"c");
+        let unecht = Doppelbeleg::Pruefpunkt { erste: stimme(b"a", 150), zweite: verfaelscht, schluessel: pk };
+        assert_eq!(unecht.schuldiger(), Err(DoubleSignError::InvalidSignature));
+    }
+
+    #[test]
+    fn der_beleg_ueberlebt_borsh() {
+        let beleg = Doppelbeleg::Erzeuger(Box::new(block(10, 1, 7)), Box::new(block(10, 2, 7)));
+        let bytes = borsh::to_vec(&beleg).expect("borsh");
+        assert_eq!(borsh::from_slice::<Doppelbeleg>(&bytes).expect("lesen"), beleg);
     }
 }
 

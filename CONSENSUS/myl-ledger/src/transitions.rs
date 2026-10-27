@@ -976,6 +976,14 @@ pub fn miner_anmelden(
 /// zu führen hieße, ihn in Pods zu setzen, die er nicht mehr besetzt.
 /// Der Registrierungsschluss schützt die Zuteilung vor **Zugängen**, die
 /// sie beeinflussen wollen, nicht vor Abgängen.
+///
+/// ⛔️ **Das Auszahlungskonto bleibt eingetragen, und das ist Absicht**
+/// (Festlegung des Projektinhabers vom 2026-10-27). Würde es mit der
+/// Anmeldung gelöscht, könnte ein Dieb mit dem heissen Schlüssel abmelden,
+/// sich mit derselben Kennung neu anmelden und als „erste Eintragung“ sein
+/// eigenes Konto setzen. Wer bestohlen wurde, meldet sich mit einem
+/// **neuen** Konsensschlüssel an. Probe:
+/// `abmelden_und_neu_anmelden_leitet_den_ertrag_nicht_um`.
 pub fn miner_abmelden(
     state: &mut LedgerState,
     unterzeichner: &Address,
@@ -2792,6 +2800,28 @@ mod tests {
         let neu = Address::new([5u8; 32]);
         assert_eq!(auszahlungskonto_eintragen(&mut st, &kalt, &m, neu), Ok(()));
         assert_eq!(auszahlungskonto(&st, &m), Some(neu));
+    }
+
+    /// ⛔️ **Abmelden und mit derselben Kennung neu anmelden leitet den
+    /// Ertrag nicht um** (2026-10-27): Der Auszahlungseintrag überlebt die
+    /// Abmeldung, also gehört die nächste Änderung weiter dem kalten Konto.
+    #[test]
+    fn abmelden_und_neu_anmelden_leitet_den_ertrag_nicht_um() {
+        let mut st = LedgerState::genesis(1);
+        let anmelden = |st: &mut LedgerState| {
+            miner_anmelden(st, &miner_adresse(1), &kennung(1), HardwareClass::SmallGpu, GeoRegion::Europe, probeschluessel(1), myl_types::latency_attest::PeerIdBytes([0; 32]))
+        };
+        anmelden(&mut st).expect("Anmeldung");
+        let kalt = Address::new([9u8; 32]);
+        auszahlungskonto_eintragen(&mut st, &miner_adresse(1), &kennung(1), kalt).expect("erste Eintragung");
+        miner_abmelden(&mut st, &miner_adresse(1), &kennung(1)).expect("Abmeldung");
+        anmelden(&mut st).expect("Neuanmeldung mit derselben Kennung");
+        assert_eq!(
+            auszahlungskonto_eintragen(&mut st, &miner_adresse(1), &kennung(1), Address::new([6u8; 32])),
+            Err(TransitionError::NichtDasAuszahlungskonto),
+            "der heisse Schluessel leitete den Ertrag nach Ab- und Neuanmeldung um"
+        );
+        assert_eq!(auszahlungskonto(&st, &kennung(1)), Some(kalt));
     }
 
     /// Ohne Eintrag kein Konto, und damit kein Anteil.

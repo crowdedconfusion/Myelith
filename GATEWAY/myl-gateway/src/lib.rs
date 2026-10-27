@@ -62,4 +62,4 @@ pub mod zugang;
 
 pub use annahme::{Annahme, Beleg, Annahmefehler};
 pub use http::{antwort, kopf_lesen, Httpfehler, Kopf, MAX_KOPF, MAX_RUMPF};
-pub use tuer::{Tuer, WEG};
+pub use tuer::{Tuer, Verbindung, WEG};

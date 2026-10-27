@@ -328,6 +328,10 @@ impl Konsensrunde {
             Konsensnachricht::Commitzertifikat(z) => {
                 self.treiber.apply_commitzertifikat(z).map(|_| ())
             }
+            // Eine Prüfpunktstimme gehört zu keiner Runde (2026-10-27); der
+            // Knoten leitet sie vorher an die Sammlung der Prüfpunkte, hier
+            // zählt sie nichts.
+            Konsensnachricht::Pruefpunktstimme(_) => return (Urteil::Unlesbar, Vec::new()),
         };
         match ergebnis {
             Ok(()) => {

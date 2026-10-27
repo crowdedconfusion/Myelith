@@ -1832,7 +1832,7 @@ dependencies = [
 
 [[package]]
 name = "integer-llm-runtime"
-version = "0.104.0"
+version = "0.104.1"
 dependencies = [
  "integer-llm-kernels",
  "libc",
@@ -2263,10 +2263,13 @@ dependencies = [
 
 [[package]]
 name = "myl-client"
-version = "0.114.2"
+version = "0.117.0"
 dependencies = [
+ "borsh",
+ "getrandom 0.3.4",
  "integer-llm-runtime",
  "libc",
+ "myl-consensus",
  "myl-dispatcher",
  "myl-local-agent",
  "myl-module",
@@ -2275,6 +2278,17 @@ dependencies = [
  "myl-types",
  "serde",
  "serde_json",
+ "sha2",
+]
+
+[[package]]
+name = "myl-consensus"
+version = "0.39.0"
+dependencies = [
+ "borsh",
+ "myl-ledger",
+ "myl-types",
+ "sha2",
 ]
 
 [[package]]
@@ -2284,6 +2298,15 @@ dependencies = [
  "libc",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "myl-ledger"
+version = "0.29.0"
+dependencies = [
+ "borsh",
+ "myl-types",
+ "sha2",
 ]
 
 [[package]]
@@ -2313,7 +2336,7 @@ dependencies = [
 
 [[package]]
 name = "myl-oberflaeche"
-version = "0.85.3"
+version = "0.86.1"
 dependencies = [
  "myl-client",
  "myl-local-agent",
@@ -2343,7 +2366,7 @@ dependencies = [
 
 [[package]]
 name = "myl-types"
-version = "0.49.0"
+version = "0.52.0"
 dependencies = [
  "blst",
  "borsh",

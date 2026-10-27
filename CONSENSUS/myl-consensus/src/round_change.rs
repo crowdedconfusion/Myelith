@@ -296,7 +296,7 @@ impl PolkaCertificate {
 /// 3. alle Unterzeichner stimmberechtigt,
 /// 4. Summe der Gewichte erreicht das Quorum,
 /// 5. Aggregat-Signatur gültig über `botschaft`.
-fn pruefe_aggregat(
+pub(crate) fn pruefe_aggregat(
     unterzeichner: &[MinerId],
     voting_set: &VotingSet,
     botschaft: &[u8],

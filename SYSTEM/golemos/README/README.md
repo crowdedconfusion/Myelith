@@ -1,6 +1,6 @@
 # golemos (die Linux-Distribution, die nur Myelith bedient)
 
-> **Version:** 0.3.2 (`golem-einrichten` 0.3.2)
+> **Version:** 0.3.3 (`golem-einrichten` 0.3.3)
 > **Datum:** 2026-10-22
 > **Status:** Startet vom Stick und von Platte, findet einen
 > Myelith-Ordner auf dem Stick oder einem zweiten Laufwerk und
@@ -101,6 +101,15 @@ sie tut, soll sich in ihrem eigenen Quelltext lesen lassen.
 ---
 
 ## Changelog
+
+### v0.3.3 (2026-10-26): Die Proben räumen ab (Fund 653; `golem-einrichten` 0.3.3)
+
+- 📌 **Fund 653:** Jede Probe legte über `proben::ordner` ein Verzeichnis
+  im Temp an und liess es liegen, 13 je Lauf. Jetzt gibt `ordner` einen
+  Wächter zurück (`Probeordner`), der das Verzeichnis beim Verlassen der
+  Probe löscht, auch wenn sie scheitert. Nachgeprüft: 78 Proben mit leerem
+  Probeordner, danach leer.
+- `golem-einrichten` 0.3.3.
 
 ### v0.3.2 (2026-10-22): Eine Werkzeugkette für alle Kisten (`golem-einrichten` 0.3.2)
 

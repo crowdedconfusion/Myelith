@@ -1,7 +1,7 @@
 # shared-types (`myl-types`)
 
-> **Version:** 0.49.0
-> **Datum:** 2026-10-24
+> **Version:** 0.52.0
+> **Datum:** 2026-10-27
 > **Status:** 🎉 **Phase 2 abgeschlossen** (Punkte 1.1–1.7, 2.1–2.3):
 > Hash, Merkle-Baum, VRF (bit-exakt gegen RFC-9381-Vektoren), BLS12-381
 > mit Aggregation **und Proof-of-Possession**, **Erasure-Codierung über
@@ -49,6 +49,55 @@ SHARED_TYPES/
 ```
 
 ## Changelog
+
+### v0.52.0 (2026-10-27): Gebühren in der Kontoauskunft
+
+- `relais::Kontostand` trägt `grundpreis_je_byte`, `bekannt` und
+  `aufschlag_konto`, damit eine Wallet die Gebühr vor dem Unterschreiben
+  zeigen kann. Ändert die Kodierung der Antwort.
+- 331 Tests grün.
+
+### v0.51.0 (2026-10-27): Die Zeitprobe mit Grenze
+
+- `zeitprobe::anfrage_mit_grenze`, `als_anfrage_mit_grenze`,
+  `fragen_mit_grenze`: dazu vier Bytes, nach wie vielen Millisekunden der
+  Shard aufhört (Fund 646, NODE 0.68.0). Die alte Form mit vier Bytes bleibt
+  lesbar; ein Anhängsel macht beide ungültig.
+- `myl-types` 0.51.0. 331 Tests grün, Clippy sauber.
+
+### v0.50.1 (2026-10-26): Fuzz-Ziele für die lokalen Leitungen und die Vollmacht; Mutationen auf stable
+
+- Fünf neue Ziele in `tests/fuzzziele/mod.rs` (und je ein libfuzzer-Ziel
+  unter `fuzz/`): `ortsfrage`, `ortsantwort`, `relaisfrage`,
+  `relaisantwort`, `vollmacht`. Alles, was über eine Leitung oder durch die
+  Tür kommt, steht damit unter dem Prädikat der Kanonizität (Angriffsklassen
+  A16 und A20 in `SIMULATION/Sicherheitsaudit.md`). Startkorpus aus
+  gültigen Kodierungen der echten Typen, 20 Saaten, alle kanonisch; 18
+  Ziele.
+- ⚑ **`mutationen_der_saat_bleiben_kanonisch`** (`tests/fuzzkorpus.rs`):
+  Jede Korpuseingabe wird mit einem reproduzierbaren Würfel tausendfach
+  verändert (Bit kippen, Byte setzen, kürzen, verlängern), und jede
+  Mutation muss unlesbar oder kanonisch sein. Der Fuzzer braucht Nightly
+  und `libfuzzer-sys`, das nicht im Offline-Lager liegt; diese Probe läuft
+  in jedem `cargo test`. Gemessen: 163 000 Mutationen, 9 514 lesbar, alle
+  kanonisch, kein Fund. Das Prädikat selbst hat seine Gegenprobe
+  (`das_praedikat_findet_eine_nicht_kanonische_kodierung`).
+- `myl-types` 0.50.1.
+
+### v0.50.0 (2026-10-26): Die Relaisleitung zwischen Knoten und Koordinator
+
+- `relais.rs` (neu): `Relaisfrage` (Podbild, Shard), `Relaisantwort`,
+  `Podbild` mit Pods und Mitgliedern in Shardreihenfolge (Netzadresse,
+  Ebenenbereich), `fragen` (blockierend, Rahmen mit Ausweis wie die
+  Ortsleitung), `ausweis_lesen` (64 Hexzeichen). Größengrenze wie zwischen
+  zwei Knoten. Proben: Hin und zurück, Anhängsel abgewiesen, Ausweis mit
+  falscher Länge abgewiesen.
+- Dazu `Relaisfrage::BuendelEinreichen` (ein unterschriebenes PoI-Bündel
+  für den Koordinator des Pods) und `Relaisantwort::Erledigt`, angehängt.
+- Dazu `Relaisfrage::Konto` (Antwort `Kontostand`: Höhe, Epoche,
+  Guthaben, Nonce, Credits, Netzwert, Konto des Knotens) und
+  `Relaisfrage::Transaktion` für ein Wallet, das selbst unterschreibt.
+- `myl-types` 0.50.0.
 
 ### v0.49.0 (2026-10-24): Die Empfängerliste eines Sitzungskontrakts steht nur noch als Wurzel auf der Kette
 

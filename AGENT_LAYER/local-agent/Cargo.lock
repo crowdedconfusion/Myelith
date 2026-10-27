@@ -277,7 +277,7 @@ version = "0.13.6"
 
 [[package]]
 name = "myl-types"
-version = "0.49.0"
+version = "0.52.0"
 dependencies = [
  "blst",
  "borsh",

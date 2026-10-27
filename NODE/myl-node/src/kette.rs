@@ -72,7 +72,7 @@
 //! niemand nachrechnet, ist ein Feld, das jeder setzen darf.
 
 use borsh::BorshDeserialize;
-use myl_consensus::block::{epoche_fuer_hoehe, Anweisung, Block, BlockHeader, Transaktion};
+use myl_consensus::block::{epoche_fuer_hoehe, Anweisung, Block, BlockHeader, Transaktion, BLOECKE_JE_EPOCHE};
 use myl_ledger::state::LedgerState;
 use myl_ledger::transitions::{
     burn_to_credits, nonce_verbrauchen, sitzung_ausgeben, sitzung_eroeffnen, sitzung_widerrufen,
@@ -129,6 +129,20 @@ pub const PROBEGUTHABEN: u64 = 10_000_000;
 /// Fall, im Betrieb um Größenordnungen weniger.
 pub const VERLAUFSFENSTER: usize = 256;
 
+/// ⚑ **Trägt das Vertrauen noch?** (2026-10-27, CONSENSUS 7.5): ja, solange
+/// die Epoche des Netzes höchstens
+/// [`myl_ledger::einsatz::VERTRAUENSFRIST_EPOCHEN`] über der des zuletzt
+/// bestätigten eigenen Prüfpunkts liegt. Darüber haftet womöglich niemand
+/// mehr, der damals unterschrieben hat.
+pub fn vertrauen_traegt(bestaetigt_epoche: u64, netz_epoche: u64) -> bool {
+    netz_epoche.saturating_sub(bestaetigt_epoche) <= myl_ledger::einsatz::VERTRAUENSFRIST_EPOCHEN
+}
+
+/// Höchstens so viele Zuteilungen abgelaufener Epochen hebt die Kette für
+/// ihre Ziehung auf (2026-10-27); länger hängt keine Abstimmung, ohne dass
+/// die Ziehung ohnehin verloren wäre.
+const OFFENE_ZUTEILUNGEN_HOECHSTENS: usize = 4;
+
 /// **Wie lange eine Transaktion im Mempool wartet**, in eigenen Höhen
 /// (Fund 627): lange genug, dass eine überholte Vorgängerin nachkommt,
 /// kurz genug, dass Unsinn mit erfundener Nummer nicht liegen bleibt.
@@ -153,16 +167,54 @@ pub const BLOCK_TXS_HOECHSTENS_BYTES: usize = myl_net::validation::MAX_BLOCKS_BY
 pub const MEMPOOL_JE_ABSENDER: usize = 64;
 
 /// ⚑ **Neulinge** (Fund 635): Absender ohne Guthaben, ohne Einsatz und ohne
-/// Anmeldung als Miner. Eine Transaktion kostet heute nichts, und jede legt
-/// im Zustand ein Konto an; mit frischen Schlüsseln liesse sich so der
-/// Mempool füllen und der Zustand ohne Grenze aufblähen. Ganz schliessen das
-/// erst Gebühren oder ein Mindesteinsatz (eine Entscheidung des
-/// Projektinhabers); bis dahin kommen Neulinge nur gedrosselt hinein:
-/// höchstens so viele zugleich in den Mempool ...
+/// Anmeldung als Miner. Bis zu den Gebühren (2026-10-27, G1) kostete eine
+/// Transaktion nichts, und jede legte im Zustand ein Konto an; mit frischen
+/// Schlüsseln liess sich so der Mempool füllen und der Zustand ohne Grenze
+/// aufblähen. Seither kommt ein Neuling in keinen Block, weil er die Gebühr
+/// nicht zahlen kann; die Drossel bleibt für den Mempool, in dem er bis zum
+/// Verfall wartet: höchstens so viele zugleich in den Mempool ...
 pub const MEMPOOL_NEULINGE_HOECHSTENS: usize = 32;
 /// ... und höchstens so viele in einen Block. Ein neuer Knoten braucht eine
 /// einzige Transaktion, die Anmeldung; danach ist er kein Neuling mehr.
 pub const BLOCK_NEULINGE_HOECHSTENS: usize = 16;
+
+/// ⚑ **Das Ziel des Grundpreises** (2026-10-27, Festlegung des
+/// Projektinhabers, G1): ein halber Block. Ist ein Block voller, steigt der
+/// Preis, ist er leerer, sinkt er, je Block um höchstens ein Achtel.
+pub const GRUNDPREIS_ZIEL_BYTES: u64 = BLOCK_TXS_HOECHSTENS_BYTES as u64 / 2;
+
+/// Um höchstens den so vielten Teil wandert der Grundpreis je Block.
+pub const GRUNDPREIS_SCHRITT_TEILER: u64 = 8;
+
+/// ⚑ **Die Teilung der Gebühren** (Festlegung des Projektinhabers): von
+/// dreizehn Teilen drei an die Treasury, zehn an die Validatoren.
+pub const GEBUEHR_TEILE: u64 = 13;
+/// Der Anteil der Treasury in [`GEBUEHR_TEILE`].
+pub const GEBUEHR_TREASURY: u64 = 3;
+
+/// Die Arten einer Hinterlegung (`LedgerState::hinterlegungen`).
+pub const HINTERLEGT_ANMELDUNG: u8 = 0;
+/// Siehe [`HINTERLEGT_ANMELDUNG`].
+pub const HINTERLEGT_SITZUNG: u8 = 1;
+
+/// Der Grundpreis des nächsten Blocks aus dem jetzigen und den Bytes, die
+/// dieser Block an Gebühren gezählt hat.
+///
+/// Wie EIP-1559: `preis · (bytes − ziel) / ziel / 8`. ⚑ **Mindestens eins
+/// nach oben**, wenn der Block über dem Ziel lag; sonst bliebe ein Preis
+/// von eins für immer bei eins, weil ein Achtel davon null ist. Nie unter
+/// dem Boden.
+pub fn naechster_grundpreis(preis: u64, bytes: u64, boden: u64) -> u64 {
+    let ziel = GRUNDPREIS_ZIEL_BYTES as u128;
+    let p = preis as u128;
+    let neu = if bytes as u128 > ziel {
+        let schritt = p * (bytes as u128 - ziel) / ziel / GRUNDPREIS_SCHRITT_TEILER as u128;
+        p + schritt.max(1)
+    } else {
+        p - p * (ziel - bytes as u128) / ziel / GRUNDPREIS_SCHRITT_TEILER as u128
+    };
+    u64::try_from(neu).unwrap_or(u64::MAX).max(boden)
+}
 
 /// Ob `a` ein Neuling ist (siehe [`MEMPOOL_NEULINGE_HOECHSTENS`]).
 fn ist_neuling(z: &LedgerState, a: &Address) -> bool {
@@ -316,13 +368,19 @@ pub enum KettenFehler {
     /// errechnet. Irgendwo im Ledger-Pfad ist etwas nicht
     /// deterministisch.
     ZustandWeichtAb { erwartet: Hash, errechnet: Hash },
-    /// Die Saatquelle des Blocks trägt nicht (Punkt 44).
+    /// **Das Zertifikat eines Prüfpunkts im Block trägt nicht**
+    /// (2026-10-27, CONSENSUS 7.2): kein Prüfpunkt nach dem zuletzt
+    /// bestätigten, nicht der eigene Block an dieser Höhe, oder nicht
+    /// zwei Drittel des Stimmsatzes.
     ///
-    /// ⚑ **Eine Ablehnung und keine Warnung.** Die Saat entscheidet, wer
-    /// nachgerechnet wird; eine Quelle, die niemand belegt, ist ein frei
-    /// gewählter Wert und damit unbegrenzter Mahlraum. Sie durchzulassen
-    /// hieße, das Feld gleich wegzulassen.
-    SaatquelleTraegtNicht,
+    /// ⚑ **Eine Ablehnung und keine Warnung.** Aus dem Zertifikat kommt die
+    /// Saat der Stichprobe und die Endgültigkeit; eines, das niemand belegt,
+    /// wäre ein frei gewählter Wert.
+    PruefpunktTraegtNicht,
+    /// **Der Erzeuger ist nicht belegt**: Die Unterschrift
+    /// trägt nicht, oder ein Stimmsatz ist gesetzt und der Block ist
+    /// unsigniert oder von jemandem außerhalb des Satzes.
+    ErzeugerUnbelegt,
     /// **Die Höhe im Kopf passt nicht zur Kette.**
     ///
     /// Der Vorgängerhash bindet die Kette schon; diese Prüfung hält das
@@ -374,10 +432,11 @@ impl std::fmt::Display for KettenFehler {
                 &bekommen.to_hex()[..16]
             ),
             Self::SchonBekannt => write!(f, "bereits übernommen"),
-            Self::SaatquelleTraegtNicht => write!(
+            Self::PruefpunktTraegtNicht => write!(
                 f,
-                "die Saatquelle trägt nicht: kein Zertifikat des Vorgängers"
+                "das Zertifikat des Prüfpunkts trägt nicht"
             ),
+            Self::ErzeugerUnbelegt => write!(f, "der Erzeuger ist nicht belegt: keine tragende Unterschrift eines Berechtigten"),
             Self::ZustandWeichtAb { erwartet, errechnet } => write!(
                 f,
                 "Zustandswurzel weicht ab: Block sagt {}, errechnet {}",
@@ -418,14 +477,24 @@ pub struct Kette {
     /// nachrechnen; er soll deshalb sagen, dass er es nicht tut, statt
     /// stillschweigend alles anzunehmen.
     stimmsatz: Option<myl_consensus::validator::VotingSet>,
-    /// Die Saatquelle, die der nächste erzeugte Block tragen soll
-    /// (Punkt 44).
+    /// Der Schlüssel, mit dem dieser Knoten seine Blöcke unterschreibt
+    /// (2026-10-27); `None` heißt unsigniert.
+    erzeugerschluessel: Option<crate::schluessel::Konsensschluessel>,
+    /// Ob diese Kette ihren Stimmsatz aus Block 1 lernt (nur auf einer
+    /// Probekette, [`crate::netz::Netz::lernt_erzeuger`]).
+    lernt_erzeuger: bool,
+    /// Das Zertifikat eines Prüfpunkts, das der nächste erzeugte Block
+    /// tragen soll (2026-10-27, CONSENSUS 7.2).
     ///
-    /// ⚑ **Sie kommt von außen, weil sie im Konsens entsteht.** Die
-    /// Kette kennt keine Runde und kein Zertifikat; der Knoten setzt
-    /// sie, sobald er eines hat. `None` heißt Blockhash, und das ist
-    /// der schlechtere Rückfall (Fund 120).
-    naechste_saatquelle: Option<Vec<u8>>,
+    /// ⚑ **Es kommt von außen, weil es im Stimmsatz entsteht**: Der Knoten
+    /// sammelt die Prüfpunktstimmen und bietet es an
+    /// ([`Self::pruefpunkt_anbieten`]); die Kette prüft es beim Bauen wie
+    /// beim Übernehmen.
+    naechstes_pruefpunktzertifikat: Option<myl_consensus::pruefpunkt::Pruefpunktzertifikat>,
+    /// Die Zuteilungen abgelaufener Epochen, deren Ziehung noch aussteht:
+    /// Gezogen wird erst mit dem Zertifikat (2026-10-27), und dann gilt
+    /// schon die Zuteilung der nächsten Epoche (vgl. Fund 658).
+    offene_zuteilungen: Vec<(u64, myl_scheduler::shard_assignment::Zuteilung)>,
     /// Die zuletzt gezogene Stichprobe, mit der Epoche, zu der sie
     /// gehört (Punkt 45).
     ///
@@ -445,6 +514,16 @@ pub struct Kette {
     /// Eine Ziehung, die niemand sieht, ist von keiner Ziehung nicht zu
     /// unterscheiden, und das war Fund 114.
     letzte_stichprobe: Option<(u64, Vec<crate::stichprobe::Segmentstichprobe>)>,
+    /// Die Pods der zuletzt gezogenen Stichprobe, aus der Zuteilung der
+    /// Epoche, zu der sie gehört.
+    ///
+    /// 📌 **Fund 658 (2026-10-27, im kurzen Podlauf): Keine Stichprobe fand
+    /// ihren Pod.** Gezogen wird beim Wechsel, für die **abgelaufene**
+    /// Epoche; [`Self::pod_der_kennung`] kannte nur die Zuteilung der
+    /// **laufenden** und gab für jede andere `None`. Jede Ziehung endete als
+    /// `ohne_adresse`, noch vor Fund 656. Jetzt hält die Kette die Pods der
+    /// Ziehung fest, bevor der Wechsel die Zuteilung ersetzt.
+    pods_der_stichprobe: Vec<myl_scheduler::shard_assignment::Pod>,
     /// Wartende Transaktionen, je mit der eigenen Höhe bei der Aufnahme.
     mempool: Vec<(u64, Transaktion)>,
     /// Die Hashes der übernommenen Blöcke, damit Dubletten aus dem
@@ -541,6 +620,12 @@ const _: () = assert!(
     "Shardzahl der Kette und der Gewichtsableitung sind auseinandergelaufen"
 );
 
+/// ⚑ **Der Name des Probeerzeugers** (2026-10-27): Eine Probekette
+/// unterschreibt ihre Blöcke mit dem Konsensschlüssel aus diesem Namen.
+/// **Wer den Namen kennt, kennt den Schlüssel**, und das ist auf der
+/// Probekette gewollt; sie hat keinen Wert und keinen Anker.
+pub const PROBEERZEUGER: &str = "probeerzeuger";
+
 impl Kette {
     /// Eine frische Probekette.
     ///
@@ -553,7 +638,19 @@ impl Kette {
     /// einmaliges Ereignis mit Folgen; das hier entsteht bei jedem
     /// Start neu.
     pub fn probestand() -> Self {
-        Self::im_netz(&crate::netz::PROBEKETTE)
+        let mut k = Self::im_netz(&crate::netz::PROBEKETTE);
+        // ⚑ Seit dem 2026-10-27 braucht jeder Block die Unterschrift eines
+        //   Mitglieds; eine Probekette unterschreibt mit dem Probeerzeuger,
+        //   dessen Schlüssel jeder aus dem Namen ableiten kann.
+        if let Ok(e) = crate::schluessel::Konsensschluessel::probe(PROBEERZEUGER) {
+            k.erzeugerschluessel = Some(e);
+        }
+        k
+    }
+
+    /// Der Stimmsatz dieser Kette, sobald sie einen hat.
+    pub fn stimmsatz(&self) -> Option<&myl_consensus::validator::VotingSet> {
+        self.stimmsatz.as_ref()
     }
 
     /// **Eine frische Kette im gegebenen Netz** (2026-10-22): wie
@@ -601,8 +698,12 @@ impl Kette {
             letzter_hash: netz.startwert_hash(),
             zustand,
             stimmsatz: None,
-            naechste_saatquelle: None,
+            erzeugerschluessel: None,
+            lernt_erzeuger: netz.lernt_erzeuger,
+            naechstes_pruefpunktzertifikat: None,
+            offene_zuteilungen: Vec::new(),
             letzte_stichprobe: None,
+            pods_der_stichprobe: Vec::new(),
             mempool: Vec::new(),
             bekannt: std::collections::HashSet::new(),
             verlauf: std::collections::BTreeMap::new(),
@@ -753,7 +854,10 @@ impl Kette {
         for &h in &hoehen {
             let block = self.bloecke_von_bis(h, h).pop().filter(|b| b.header.height == h);
             let beweis = baum.beweis_bei(h, grenze, |g| self.gruppenblaetter(g));
-            match (block.and_then(|b| borsh::to_vec(&b).ok()), beweis) {
+            // Die Bytes, die der Blockhash deckt: Die Kette prüft sie gegen
+            // die Historie der Hashes (nicht die volle Kodierung mit der
+            // Unterschrift des Erzeugers).
+            match (block.map(|b| b.hashbytes()), beweis) {
                 (Some(roh), Some(bw)) => {
                     bloecke.push(roh);
                     beweise.push(bw);
@@ -1015,8 +1119,10 @@ impl Kette {
         self.verlauf_aufnehmen(abzug.hoehe(), &abzug.block);
         self.basis = abzug.hoehe();
         self.baum = None;
-        self.naechste_saatquelle = None;
+        self.naechstes_pruefpunktzertifikat = None;
+        self.offene_zuteilungen.clear();
         self.letzte_stichprobe = None;
+        self.pods_der_stichprobe.clear();
         Ok(())
     }
 
@@ -1417,8 +1523,7 @@ impl Kette {
         epoche: u64,
     ) -> Option<myl_consensus::poi::PodMembership> {
         let erste = pod.shards.first()?;
-        let mitglieder: Vec<(myl_types::ids::MinerId, myl_types::bls::BlsPublicKey)> =
-            pod.mitglieder().map(|m| (m.miner_id, m.schluessel)).collect();
+        let mitglieder = Self::unterzeichner_des_buendels(pod);
         myl_consensus::poi::PodMembership::ohne_besitznachweis(
             EpochId(epoche),
             myl_types::pod_kennung(epoche, pod.pod_index),
@@ -1426,6 +1531,44 @@ impl Kette {
             mitglieder,
         )
         .ok()
+    }
+
+    /// **Prüft ein PoI-Bündel gegen die laufende Epoche**, wie das
+    /// Einreichen es täte: Pod aus der Zuteilung, Aggregat gegen die
+    /// Positionen. Gibt die Kennung des Koordinators (erste Position) und
+    /// ihre Netzadresse zurück. Für den Knoten, bevor er ein Bündel
+    /// weitergibt oder einreicht: Ein gefälschtes soll gar nicht erst in die
+    /// Kette.
+    pub fn buendel_pruefen(
+        zustand: &LedgerState,
+        buendel: &myl_types::PoIBundle,
+    ) -> Result<(myl_types::ids::MinerId, myl_types::latency_attest::PeerIdBytes), String> {
+        if buendel.epoch != zustand.epoch {
+            return Err(format!("Bündel für Epoche {}, laufend ist {}", buendel.epoch.0, zustand.epoch.0));
+        }
+        if zustand.buendel.contains_key(&buendel.pod) {
+            return Err("für diesen Pod liegt schon ein Bündel vor".into());
+        }
+        let zuteilung = Self::zuteilung_der_laufenden_epoche(zustand);
+        let pod = myl_scheduler::zonenzuteilung::pod_zu_kennung(&zuteilung, zustand.epoch.0, &buendel.pod)
+            .ok_or("diesen Pod kennt die Zuteilung nicht")?;
+        let mitgliedschaft = Self::mitgliedschaft(pod, zustand.epoch.0).ok_or("Pod ohne Positionen")?;
+        myl_consensus::poi::verify_bundle_signature(buendel, &mitgliedschaft).map_err(|e| format!("Aggregat: {e:?}"))?;
+        let erster = &pod.shards.first().ok_or("Pod ohne Positionen")?.miner;
+        Ok((erster.miner_id, erster.netzadresse))
+    }
+
+    /// ⚑ **Wer ein PoI-Bündel unterschreibt: die Positionen, nicht die
+    /// Reserve** (Fund 645, 2026-10-26). Hier stand `pod.mitglieder()`, also
+    /// auch die Reserve. Die hat keinen Shard, sieht die Arbeit nie und kann
+    /// nicht nachrechnen, was sie unterschriebe; ein Shard prüft vor seiner
+    /// Unterschrift den Anspruch gegen die eigenen Segmente. Ein echter Pod
+    /// mit Reserve bekam so nie ein Bündel durch. Dieselbe Menge prüft das
+    /// Einreichen und die Zuschreibung am Epochenwechsel.
+    fn unterzeichner_des_buendels(
+        pod: &myl_scheduler::shard_assignment::Pod,
+    ) -> Vec<(myl_types::ids::MinerId, myl_types::bls::BlsPublicKey)> {
+        pod.shards.iter().map(|s| (s.miner.miner_id, s.miner.schluessel)).collect()
     }
 
     /// Wie viele Shard-Positionen ein Pod dieser Probekette hat.
@@ -1623,6 +1766,35 @@ impl Kette {
     /// zu verwerfen ist richtig, und es **den Block verwerfen zu
     /// lassen wäre falsch**, denn dann hielte eine einzige Fälschung die
     /// Kette an.
+    /// ⚑ **Die Probeprägung der abgelaufenen Epoche** (2026-10-26): je
+    /// angemeldetem Miner mit Auszahlungskonto der Betrag des Netzes, ausser
+    /// er war in dieser Epoche gesperrt. Auf jedem Netz ausser der
+    /// Probekette ist der Betrag null, und hier geschieht nichts.
+    ///
+    /// ⚑ **Neben der Ausschüttung, nicht in ihr**: Diese MYL entstehen ohne
+    /// Arbeitsnachweis und ohne Burn, und sie sollen in keiner Rechnung
+    /// auftauchen, die einmal echtes Geld abrechnet. Fällt die Probeprägung
+    /// weg, ändert sich an der Ausschüttung nichts.
+    ///
+    /// Wer zehn Miner auf ein Wallet zeigen lässt, bekommt zehnmal; auf der
+    /// Probekette ist das gewollt einfach.
+    fn probepraegung(zustand: &mut LedgerState, alte_epoche: u64) {
+        let betrag = crate::netz::Netz::des_zustands(zustand).probepraegung;
+        if betrag == 0 {
+            return;
+        }
+        let empfaenger: Vec<Address> = zustand
+            .auszahlung
+            .iter()
+            .filter(|(m, _)| zustand.miner.contains_key(*m))
+            .filter(|(m, _)| zustand.fristsperren.get(*m).map(|e| e.0) != Some(alte_epoche))
+            .map(|(_, konto)| *konto)
+            .collect();
+        for konto in empfaenger {
+            let _ = myl_ledger::transitions::praegen(zustand, &konto, betrag);
+        }
+    }
+
     fn zuschreibung_der_epoche(
         zustand: &LedgerState,
     ) -> (myl_tokenomics::Zuschreibung, Vec<myl_types::PoIBundle>) {
@@ -1682,57 +1854,187 @@ impl Kette {
         )
     }
 
-    /// Setzt den Stimmsatz, gegen den Saatquellen geprüft werden.
+    /// Setzt den Stimmsatz, gegen den Saatquellen und Erzeuger geprüft
+    /// werden.
     pub fn stimmsatz_setzen(&mut self, satz: myl_consensus::validator::VotingSet) {
         self.stimmsatz = Some(satz);
     }
 
-    /// Prüft die Saatquelle eines Blocks (Punkt 44).
+    /// Setzt den Schlüssel, mit dem dieser Knoten seine Blöcke
+    /// unterschreibt (2026-10-27).
+    pub fn erzeugerschluessel_setzen(&mut self, schluessel: crate::schluessel::Konsensschluessel) {
+        self.erzeugerschluessel = Some(schluessel);
+    }
+
+    /// **Trägt der Erzeuger dieses Blocks?**
     ///
-    /// # ⚑ Zwei Bindungen, und die erste wiegt schwerer
+    /// ⚑ **Seit dem 2026-10-27 braucht jeder Block die Unterschrift eines
+    /// Mitglieds des Stimmsatzes**, unter genau dem Schlüssel, den der Satz
+    /// für es führt (Festlegung des Projektinhabers: Stimmsatz ab Genesis,
+    /// immer Pflicht). Unsignierte Blöcke gibt es nicht mehr; eine
+    /// Unterschrift, die nicht trägt, nie (Fund 192).
     ///
-    /// 1. **Das Zertifikat gehört zum Vorgänger dieses Blocks.** Sonst
-    ///    reichte ein Erzeuger ein altes oder fremdes Zertifikat ein und
-    ///    hätte damit eine Saat, die er sich aussuchen kann.
-    /// 2. **Die Aggregatsignatur trägt gegen den Stimmsatz.** Ohne sie
-    ///    wären die Unterzeichner eine Behauptung.
-    ///
-    /// ⚑ **Ohne Stimmsatz wird nur die erste geprüft**, und das ist
-    /// weniger, aber nicht nichts: Die Bindung an den Vorgänger allein
-    /// nimmt dem Erzeuger schon jede Wahl **zwischen** Zertifikaten.
-    fn saatquelle_traegt(&self, block: &Block) -> bool {
-        let Some(roh) = block.header.saatquelle.as_deref() else {
-            // Kein Feld heißt Blockhash als Rückfall; das ist erlaubt
-            // und benannt (Fund 120).
-            return true;
-        };
-        use borsh::BorshDeserialize;
-        let mut rest = roh;
-        let Ok(zert) =
-            myl_consensus::round_change::Commitzertifikat::deserialize(&mut rest)
-        else {
+    /// Hat die Kette noch keinen Satz, gilt das nur auf einer Probekette und
+    /// nur bis Block 1: Wer ihn trägt, wird das einzige Mitglied
+    /// ([`Self::erzeuger_lernen`]).
+    fn erzeuger_traegt(&self, block: &Block) -> bool {
+        let (Ok(Some(kennung)), Some(u)) = (block.erzeuger(), &block.unterschrift) else {
             return false;
         };
-        if !rest.is_empty() {
-            return false;
-        }
-        if zert.block_hash != block.header.prev_block_hash {
-            return false;
-        }
         match &self.stimmsatz {
-            Some(satz) => zert.verify(satz).is_ok(),
-            None => true,
+            Some(satz) => satz.pubkey(&kennung) == Some(&u.schluessel),
+            None => self.lernt_erzeuger,
         }
     }
 
-    /// Setzt die Saatquelle für den nächsten erzeugten Block.
+    /// **Der Stimmsatz aus dem ersten Block** einer Probekette ohne
+    /// Stimmsatzdatei: sein Erzeuger als einziges Mitglied, Gewicht eins.
+    /// Nur, wenn die Kette lernen darf und noch keinen Satz hat.
+    fn erzeuger_lernen(&mut self, block: &Block) {
+        if self.stimmsatz.is_some() {
+            return;
+        }
+        self.stimmsatz = self.satz_aus_block(block);
+    }
+
+    /// Der Satz, den eine lernende Kette aus diesem Block lernen würde: sein
+    /// Erzeuger allein, Gewicht eins. `None`, wenn sie nicht lernt.
+    fn satz_aus_block(&self, block: &Block) -> Option<myl_consensus::validator::VotingSet> {
+        if !self.lernt_erzeuger {
+            return None;
+        }
+        let (Ok(Some(kennung)), Some(u)) = (block.erzeuger(), &block.unterschrift) else {
+            return None;
+        };
+        let mut mitglieder = std::collections::BTreeMap::new();
+        mitglieder.insert(kennung, myl_consensus::validator::VotingMember { pubkey: u.schluessel, weight: 1 });
+        Some(myl_consensus::validator::VotingSet::from_members(mitglieder))
+    }
+
+    /// Der Hash des eigenen Blocks an `hoehe`, solange er im Fenster liegt.
+    pub fn hash_an(&self, hoehe: u64) -> Option<Hash> {
+        self.verlauf.get(&hoehe).map(|b| b.hash())
+    }
+
+    /// Der eigene Block an `hoehe`, solange er im Fenster liegt.
+    pub fn block_an(&self, hoehe: u64) -> Option<&Block> {
+        self.verlauf.get(&hoehe)
+    }
+
+    /// **Trägt dieses Zertifikat in einem Block der Höhe `hoehe`?**
+    /// (2026-10-27, CONSENSUS 7.2)
     ///
-    /// ⚑ **Nur der Erzeuger setzt sie; alle anderen lesen sie aus dem
-    /// Block.** Anders ginge es nicht: Wer sie aus eigenem Zustand
-    /// nähme, zöge eine andere Stichprobe als seine Nachbarn, und wer
-    /// nachgerechnet wird, ist eine Konsensentscheidung.
-    pub fn saatquelle_setzen(&mut self, quelle: Vec<u8>) {
-        self.naechste_saatquelle = Some(quelle);
+    /// 1. **Ein Prüfpunkt nach dem zuletzt bestätigten** und vor diesem
+    ///    Block. Ein älteres Zertifikat sagte nichts Neues, und eine Lücke
+    ///    ist erlaubt: Die Endgültigkeit eines späteren Prüfpunkts deckt
+    ///    die früheren mit.
+    /// 2. **Der eigene Block an dieser Höhe.** Ein Zertifikat für einen
+    ///    anderen Zweig ist keines für diese Kette.
+    /// 3. **Mehr als zwei Drittel des Stimmsatzes** über die
+    ///    Prüfpunktbotschaft. Ohne Satz trägt keines.
+    fn zertifikat_traegt(&self, z: &myl_consensus::pruefpunkt::Pruefpunktzertifikat, hoehe: u64) -> bool {
+        self.stimmsatz.as_ref().is_some_and(|satz| self.zertifikat_traegt_gegen(z, hoehe, satz))
+    }
+
+    fn zertifikat_traegt_gegen(
+        &self,
+        z: &myl_consensus::pruefpunkt::Pruefpunktzertifikat,
+        hoehe: u64,
+        satz: &myl_consensus::validator::VotingSet,
+    ) -> bool {
+        z.hoehe > self.zustand.pruefpunkt_bestaetigt
+            && z.hoehe < hoehe
+            && self.hash_an(z.hoehe) == Some(z.block_hash)
+            && z.verify(satz).is_ok()
+    }
+
+    /// **Bucht einen Doppelbeleg** (2026-10-27, CONSENSUS 7.6).
+    ///
+    /// 1. Der Beleg trägt ([`myl_consensus::double_signing::Doppelbeleg::schuldiger`]).
+    /// 2. **Die Tat liegt in der Sperrfrist**: Ältere Widersprüche sind nicht
+    ///    mehr schlachtbar, das ist dieselbe Grenze wie die Haftung des
+    ///    Einsatzes (und der Grund der Vertrauensfrist).
+    /// 3. **Einmal je (Schuldiger, Art, Höhe)**: Ein zweiter Beleg für
+    ///    denselben Widerspruch schlachtet nicht noch einmal.
+    /// 4. Geschlachtet wird nach der Matrix (Validator, Doppelsignatur oder
+    ///    Zensur: 30, 65, 100 % gestaffelt), das Kopfgeld geht an den
+    ///    Melder; wer sich selbst meldet, wird abgewiesen
+    ///    (`myl_ledger::apply_verdict`). Ohne Einsatz gibt es nichts zu
+    ///    schlachten, und der Beleg bleibt ohne Folge.
+    fn doppelbeleg_buchen(
+        zustand: &mut LedgerState,
+        melder: &Address,
+        beleg: &myl_consensus::double_signing::Doppelbeleg,
+    ) -> Result<(), String> {
+        let pk = beleg.schuldiger().map_err(|e| e.to_string())?;
+        let tat_epoche = epoche_fuer_hoehe(beleg.hoehe());
+        if tat_epoche.saturating_add(myl_ledger::einsatz::SPERRFRIST_EPOCHEN) < zustand.epoch.0 {
+            return Err("die Tat liegt vor der Sperrfrist".into());
+        }
+        let schuldig = Address::aus_schluessel(&pk);
+        let schluessel = (schuldig, beleg.art(), beleg.hoehe());
+        if zustand.doppelbelege.contains_key(&schluessel) {
+            return Err("dieser Widerspruch ist schon gebucht".into());
+        }
+        let urteil = myl_ledger::transitions::Verdict {
+            segment_id: myl_types::ids::SegmentId::new(Hash::sha256(&borsh::to_vec(beleg).map_err(|e| e.to_string())?).0),
+            miner: schuldig,
+            checker: *melder,
+            outcome: myl_ledger::transitions::VerdictOutcome::SlashMiner,
+        };
+        myl_tokenomics::slashing::urteil_buchen_gestaffelt(
+            zustand,
+            &urteil,
+            myl_tokenomics::slashing::Akteur::Validator,
+            myl_tokenomics::slashing::Grund::DoubleSigningOderZensur,
+        )
+        .map_err(|e| format!("{e:?}"))?;
+        let epoche = zustand.epoch.0;
+        zustand.doppelbelege.insert(schluessel, epoche);
+        Ok(())
+    }
+
+    /// Prüft das Zertifikat im Kopf eines Blocks; ohne Zertifikat nichts.
+    ///
+    /// 📌 Eine lernende Kette ohne Satz (etwa nach einem Abzug) prüft gegen
+    /// den Satz, den sie aus genau diesem Block lernt; sonst wiese sie den
+    /// ersten Block nach dem Abzug ab, sobald er ein Zertifikat trägt.
+    fn pruefpunkt_traegt(&self, block: &Block) -> bool {
+        let Some(z) = &block.header.pruefpunkt else {
+            return true;
+        };
+        match &self.stimmsatz {
+            Some(satz) => self.zertifikat_traegt_gegen(z, block.header.height, satz),
+            None => self.satz_aus_block(block).is_some_and(|satz| self.zertifikat_traegt_gegen(z, block.header.height, &satz)),
+        }
+    }
+
+    /// **Bietet ein Zertifikat für den nächsten erzeugten Block an.**
+    ///
+    /// ⚑ **Nur der Erzeuger legt es in einen Block; alle anderen lesen es
+    /// daraus.** Behalten wird das höchste, denn es deckt die früheren mit.
+    pub fn pruefpunkt_anbieten(&mut self, z: myl_consensus::pruefpunkt::Pruefpunktzertifikat) {
+        if z.hoehe <= self.zustand.pruefpunkt_bestaetigt {
+            return;
+        }
+        if self.naechstes_pruefpunktzertifikat.as_ref().is_none_or(|alt| z.hoehe > alt.hoehe) {
+            self.naechstes_pruefpunktzertifikat = Some(z);
+        }
+    }
+
+    /// Bis zu welcher Höhe die Kette bestätigt ist.
+    pub fn bestaetigt_bis(&self) -> u64 {
+        self.zustand.pruefpunkt_bestaetigt
+    }
+
+    /// Die Höhe des angebotenen, noch nicht eingetragenen Zertifikats.
+    pub fn naechstes_pruefpunktzertifikat_hoehe(&self) -> Option<u64> {
+        self.naechstes_pruefpunktzertifikat.as_ref().map(|z| z.hoehe)
+    }
+
+    /// Der Schlüssel, mit dem diese Kette ihre Blöcke unterschreibt.
+    pub fn erzeugerschluessel(&self) -> Option<&crate::schluessel::Konsensschluessel> {
+        self.erzeugerschluessel.as_ref()
     }
 
     /// Die zuletzt gezogene Stichprobe (Punkt 45).
@@ -1999,7 +2301,16 @@ impl Kette {
         kennung: &myl_types::ids::PodId,
     ) -> Option<myl_scheduler::shard_assignment::Pod> {
         if epoche != self.zustand.epoch.0 {
-            return None;
+            // 📌 Fund 658: die Epoche der letzten Ziehung, aus den
+            //    festgehaltenen Pods.
+            if self.stichprobenepoche() != Some(epoche) {
+                return None;
+            }
+            return self
+                .pods_der_stichprobe
+                .iter()
+                .find(|p| myl_types::pod_kennung(epoche, p.pod_index) == *kennung)
+                .cloned();
         }
         let zuteilung = Self::zuteilung_der_laufenden_epoche(&self.zustand);
         myl_scheduler::zonenzuteilung::pod_zu_kennung(&zuteilung, epoche, kennung).cloned()
@@ -2027,7 +2338,8 @@ impl Kette {
     /// wird auch diese Konstante überflüssig.
     pub const STICHPROBE_BP: u32 = myl_tokenomics::stichprobe_bp();
 
-    /// Zieht die Stichprobe der abgeschlossenen Epoche (Punkt 45).
+    /// **Zieht die Stichproben, deren Epochenwechsel dieses Zertifikat
+    /// bestätigt** (Punkt 45).
     ///
     /// # ⚑ Warum diese Zeile der eigentliche Fund ist
     ///
@@ -2044,26 +2356,27 @@ impl Kette {
     /// dürfen: Sonst verdünnte eine Flut ungültiger Bündel die
     /// Stichprobenrate der ehrlichen.
     ///
-    /// ⚑ **Die Saat ist heute der Blockhash, und das ist die offene
-    /// Hälfte.** Wer den Abschlussblock erzeugt, kann Kandidaten
-    /// probieren, bis die Ziehung seine eigenen Segmente verschont. Das
-    /// Ziel ist die Aggregatsignatur des Komitees; sie steht hier
-    /// deshalb als **Argument** und nicht als Ableitung im Modul.
-    fn stichprobe_der_epoche(
-        bezeugt: &[myl_types::PoIBundle],
-        epoche: u64,
-        letzter_hash: &Hash,
-        saatquelle: Option<&[u8]>,
-    ) -> Vec<crate::stichprobe::Segmentstichprobe> {
-        // ⚑ **Die Quelle steht im Block, der Blockhash ist der
-        // Rückfall.** Der Rückfall ist schlechter (unbegrenzter
-        // Mahlraum statt höchstens sechzehn Bit, Fund 120) und deshalb
-        // benannt statt stillschweigend.
-        let saat = crate::stichprobe::stichprobensaat(
-            saatquelle.unwrap_or_else(|| letzter_hash.as_bytes()),
-            epoche,
-        );
-        crate::stichprobe::stichprobe_der_epoche(bezeugt, &saat, Self::STICHPROBE_BP)
+    /// ⚑ **Seit dem 2026-10-27 wird mit dem Zertifikat gezogen** (CONSENSUS
+    /// 7.2, Festlegung des Projektinhabers): Beim Wechsel hebt der Zustand
+    /// die Anteile auf ([`myl_ledger::state::OffeneStichprobe`]), und
+    /// gezogen wird, sobald ein Block das Zertifikat eines Prüfpunkts an
+    /// oder nach dem Wechsel trägt. Es entsteht, nachdem die Bündel
+    /// feststehen, also kennt es beim Einreichen niemand. Der Rückfall auf
+    /// den Blockhash (Fund 120, unbegrenzter Mahlraum) ist entfallen.
+    fn offene_stichproben_ziehen(
+        zustand: &mut LedgerState,
+        z: &myl_consensus::pruefpunkt::Pruefpunktzertifikat,
+        gezogen: &mut Option<(u64, Vec<crate::stichprobe::Segmentstichprobe>)>,
+    ) {
+        let (faellig, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut zustand.stichproben_offen)
+            .into_iter()
+            .partition(|o| (o.epoche + 1).saturating_mul(BLOECKE_JE_EPOCHE) <= z.hoehe);
+        zustand.stichproben_offen = rest;
+        for o in faellig {
+            let saat = crate::stichprobe::saat_aus_zertifikat(&z.aggregat, &z.unterzeichner, o.epoche);
+            let stichprobe = crate::stichprobe::stichprobe_aus_anteilen(&o.anteile, &saat, Self::STICHPROBE_BP);
+            *gezogen = Some((o.epoche, stichprobe));
+        }
     }
 
     /// Schließt die vorige Epoche ab, wenn eine neue beginnt (Punkt 38).
@@ -2096,13 +2409,7 @@ impl Kette {
     /// gescheiterte Transaktion. Beide Seiten überspringen dasselbe,
     /// weil beide dieselbe Funktion durchlaufen; ein Abbruch hier
     /// hielte die Kette an, und zwar bei allen gleichzeitig.
-    fn epochenwechsel_abschliessen(
-        zustand: &mut LedgerState,
-        neue_epoche: u64,
-        letzter_hash: &Hash,
-        saatquelle: Option<&[u8]>,
-        gezogen: &mut Option<(u64, Vec<crate::stichprobe::Segmentstichprobe>)>,
-    ) {
+    fn epochenwechsel_abschliessen(zustand: &mut LedgerState, neue_epoche: u64, letzter_hash: &Hash) {
         if neue_epoche <= zustand.epoch.0 {
             return;
         }
@@ -2143,13 +2450,38 @@ impl Kette {
         // B.1 war null. Gezogen wird aus den **bezeugten** Bündeln,
         // also denen, deren Aggregatsignatur galt.
         //
-        // ⚑ **Das Nachrechnen fehlt noch**, denn es braucht die Spur des
-        // Segments, und die liegt beim Koordinator. Was hier steht, ist
-        // die Ziehung; sie **allein** macht `p` von null verschieden und
-        // ist die Vorbedingung für alles Weitere.
-        let stichprobe =
-            Self::stichprobe_der_epoche(&bezeugt, alte_epoche, letzter_hash, saatquelle);
-        *gezogen = Some((alte_epoche, stichprobe));
+        // ⚑ **Seit dem 2026-10-27 wird hier nur aufgehoben** (CONSENSUS
+        // 7.2): die Anteile der bezeugten Bündel, gezogen wird mit dem
+        // Zertifikat des Prüfpunkts an diesem Wechsel
+        // (`offene_stichproben_ziehen`).
+        zustand.stichproben_offen.push(myl_ledger::state::OffeneStichprobe {
+            epoche: alte_epoche,
+            anteile: bezeugt.iter().map(|b| (b.pod, b.segmente)).collect(),
+        });
+        // Gebuchte Doppelbelege fallen nach der Sperrfrist weg (CONSENSUS
+        // 7.6); ältere Taten sind ohnehin nicht mehr schlachtbar.
+        zustand
+            .doppelbelege
+            .retain(|_, gebucht| gebucht.saturating_add(myl_ledger::einsatz::SPERRFRIST_EPOCHEN) >= neue_epoche);
+        Self::gebuehren_teilen(zustand);
+        // ⚑ **Abgelaufene Sitzungen fallen weg, ihre Hinterlegung geht
+        //   zurück** (2026-10-27, Fund 662). Vorher rief die Kette
+        //   `sitzung_aufraeumen` nie, und jede Sitzung blieb für immer im
+        //   Zustand.
+        if myl_ledger::transitions::sitzung_aufraeumen(zustand) > 0 {
+            let weg: Vec<[u8; 32]> = zustand
+                .hinterlegungen
+                .keys()
+                .filter(|(art, k)| {
+                    *art == HINTERLEGT_SITZUNG
+                        && !zustand.sitzungen.contains_key(&myl_types::ids::SitzungId::new(*k))
+                })
+                .map(|(_, k)| *k)
+                .collect();
+            for k in weg {
+                Self::zurueckgeben(zustand, HINTERLEGT_SITZUNG, k);
+            }
+        }
         // ⚑ **Und die Bündel der abgerechneten Epoche fallen weg.**
         // Ohne dies wüchse der Zustand unbegrenzt, und Entscheidung D7
         // wäre gebrochen; die Historie steht in den Blöcken.
@@ -2186,6 +2518,7 @@ impl Kette {
                 myl_types::modellversion::naechste_version(&zustand.modell_version, &bestaetigt);
         }
         let _ = myl_ledger::transitions::trainingssegmente_leeren(zustand);
+        Self::probepraegung(zustand, alte_epoche);
         // ⚑ **Und die Saat rückt weiter** (Fund 143).
         //
         // **Hinter dem Abschluss, nicht davor.** Die abgerechnete
@@ -2250,14 +2583,22 @@ impl Kette {
         txs: &[Transaktion],
         epoch: u64,
         letzter_hash: &Hash,
-        saatquelle: Option<&[u8]>,
+        pruefpunkt: Option<&myl_consensus::pruefpunkt::Pruefpunktzertifikat>,
         gezogen: &mut Option<(u64, Vec<crate::stichprobe::Segmentstichprobe>)>,
     ) -> Vec<bool> {
         // ⚑ **Die Historie zuerst** (Archivknoten, Stufe A2): der Hash des
         //   Vorgängers, also des Blocks, an den dieser anschliesst. Erzeuger
         //   und Übernehmer gehen beide hier durch und hängen dasselbe an.
         zustand.historie.anhaengen(letzter_hash);
-        Self::epochenwechsel_abschliessen(zustand, epoch, letzter_hash, saatquelle, gezogen);
+        Self::epochenwechsel_abschliessen(zustand, epoch, letzter_hash);
+        // ⚑ **Das Zertifikat eines Prüfpunkts** (2026-10-27, CONSENSUS
+        //   7.2): bestätigt bis zu seiner Höhe, und was auf einen
+        //   bestätigten Wechsel wartete, wird jetzt gezogen. Geprüft ist es,
+        //   bevor `anwenden` gerufen wird.
+        if let Some(z) = pruefpunkt {
+            zustand.pruefpunkt_bestaetigt = z.hoehe;
+            Self::offene_stichproben_ziehen(zustand, z, gezogen);
+        }
         // ⚑ **Die Ziehung der Archivkopien** (Stufe A5) am Grenzblock, nach
         //   dem Abschluss der letzten Epoche der alten Periode und vor den
         //   Transaktionen: Die Historie zählt jetzt genau die Blöcke vor der
@@ -2281,6 +2622,11 @@ impl Kette {
         let mut zuteilung: Option<myl_scheduler::shard_assignment::Zuteilung> = None;
         // Je Transaktion, ob sie ihre Nummer verbraucht hat (Fund 627).
         let mut verbraucht = vec![false; txs.len()];
+        // Die Bytes der verbrauchten Transaktionen, für den Grundpreis (G1).
+        let mut bytes_im_block: u64 = 0;
+        let gebuehren = crate::netz::Netz::des_zustands(zustand).gebuehren;
+        // Nie unter dem Boden, auch nicht im ersten Block eines Zustands.
+        zustand.grundpreis_je_byte = zustand.grundpreis_je_byte.max(gebuehren.boden_je_byte);
         for (i, tx) in txs.iter().enumerate() {
             // ⚑ **Die Unterschrift wird hier geprüft und nicht erst bei
             // der Aufnahme in den Mempool** (2026-08-28, Fund 85). Ein
@@ -2296,6 +2642,15 @@ impl Kette {
             };
             let absender = geprueft.inhalt().absender_adresse();
 
+            // ⚑ **Die Gebühr** (2026-10-27, G1): Grundpreis mal Bytes,
+            //   höchstens `max_gebuehr`. Wer sie nicht decken kann oder
+            //   weniger zugesagt hat, wartet, ohne seine Nummer zu verbrauchen.
+            let bytes = geprueft.inhalt().gebuehrenbytes();
+            let gebuehr = zustand.grundpreis_je_byte.saturating_mul(bytes);
+            if gebuehr > geprueft.inhalt().max_gebuehr || zustand.account(&absender).balance < gebuehr {
+                continue;
+            }
+
             // ⚑ **Die Nummer wird auch dann verbraucht, wenn die
             // Anweisung danach scheitert.** Sonst wäre eine ungedeckte
             // Überweisung unverändert gültig und beliebig oft
@@ -2304,6 +2659,11 @@ impl Kette {
                 continue;
             }
             verbraucht[i] = true;
+            // Gezahlt wird auch, wenn die Anweisung danach scheitert: Die
+            // Bytes stehen im Block.
+            zustand.account_mut(&absender).balance -= gebuehr;
+            zustand.gebuehren_epoche = zustand.gebuehren_epoche.saturating_add(gebuehr);
+            bytes_im_block = bytes_im_block.saturating_add(bytes);
 
             // Gescheiterte Anweisungen werden übersprungen, nicht
             // abgebrochen: Eine Überweisung ohne Deckung ist kein Grund,
@@ -2314,11 +2674,25 @@ impl Kette {
                     // Testkette, damit beide Seiten dieselbe rechnen.
                     let _ = burn_to_credits(zustand, &absender, *betrag, EpochId(epoch + 1));
                 }
+                // ⚑ G1: An ein neues Konto zahlt der Absender einmal den
+                //   Aufschlag an die Treasury; ein Konto bleibt für immer.
                 Anweisung::Ueberweisung { nach, betrag } => {
-                    let _ = transfer(zustand, &absender, nach, *betrag);
+                    let aufschlag = if zustand.accounts.contains_key(nach) { 0 } else { gebuehren.aufschlag_konto };
+                    if zustand.account(&absender).balance >= betrag.saturating_add(aufschlag)
+                        && transfer(zustand, &absender, nach, *betrag).is_ok()
+                        && aufschlag > 0
+                    {
+                        Self::an_die_treasury(zustand, &absender, aufschlag);
+                    }
                 }
+                // ⚑ G1: Eine Sitzung hinterlegt, zurück beim Aufräumen.
                 Anweisung::SitzungEroeffnen { kontrakt } => {
-                    let _ = sitzung_eroeffnen(zustand, &absender, kontrakt.clone());
+                    let h = gebuehren.hinterlegung_sitzung;
+                    if zustand.account(&absender).balance >= h
+                        && sitzung_eroeffnen(zustand, &absender, kontrakt.clone()).is_ok()
+                    {
+                        Self::hinterlegen(zustand, &absender, HINTERLEGT_SITZUNG, *kontrakt.adresse().as_bytes(), h);
+                    }
                 }
                 // ⚑ Die Kennung folgt aus dem Absender und steht nicht
                 // in der Anweisung: Beide sind derselbe Schlüssel, und
@@ -2333,19 +2707,31 @@ impl Kette {
                     netzadresse,
                 } => {
                     let kennung = myl_types::ids::MinerId::new(*absender.as_bytes());
-                    let _ = miner_anmelden(
-                        zustand,
-                        &absender,
-                        &kennung,
-                        *hardware,
-                        *zone,
-                        geprueft.inhalt().absender,
-                        *netzadresse,
-                    );
+                    // ⚑ G1: Nur eine neue Anmeldung hinterlegt; wer seine
+                    //   Angaben ändert, hat schon hinterlegt.
+                    let neu = !zustand.miner.contains_key(&kennung);
+                    let h = if neu { gebuehren.hinterlegung_anmeldung } else { 0 };
+                    if zustand.account(&absender).balance >= h
+                        && miner_anmelden(
+                            zustand,
+                            &absender,
+                            &kennung,
+                            *hardware,
+                            *zone,
+                            geprueft.inhalt().absender,
+                            *netzadresse,
+                        )
+                        .is_ok()
+                        && h > 0
+                    {
+                        Self::hinterlegen(zustand, &absender, HINTERLEGT_ANMELDUNG, *kennung.as_bytes(), h);
+                    }
                 }
                 Anweisung::MinerAbmelden => {
                     let kennung = myl_types::ids::MinerId::new(*absender.as_bytes());
-                    let _ = miner_abmelden(zustand, &absender, &kennung);
+                    if miner_abmelden(zustand, &absender, &kennung).is_ok() {
+                        Self::zurueckgeben(zustand, HINTERLEGT_ANMELDUNG, *kennung.as_bytes());
+                    }
                 }
                 // ⚑ **Die Kapazitätszusage** (Stufe 4 des Dispatchers,
                 //   2026-10-21): je Netzmodell Ebenen und Ebenenzeit, ab
@@ -2401,6 +2787,10 @@ impl Kette {
                 Anweisung::EinsatzKuendigen { betrag } => {
                     let _ = einsatz_kuendigen(zustand, &absender, *betrag);
                 }
+                // ⚑ **Ein Doppelbeleg** (2026-10-27, CONSENSUS 7.6).
+                Anweisung::DoppelbelegEinreichen { beleg } => {
+                    let _ = Self::doppelbeleg_buchen(zustand, &absender, beleg);
+                }
                 Anweisung::EinsatzAbholen => {
                     let _ = einsatz_abholen(zustand, &absender);
                 }
@@ -2433,8 +2823,7 @@ impl Kette {
                     let Some(erster) = pod.shards.first() else {
                         continue;
                     };
-                    let mitglieder: Vec<(myl_types::ids::MinerId, myl_types::bls::BlsPublicKey)> =
-                        pod.mitglieder().map(|m| (m.miner_id, m.schluessel)).collect();
+                    let mitglieder = Self::unterzeichner_des_buendels(pod);
                     let _ = buendel_einreichen(
                         zustand,
                         &absender,
@@ -2562,7 +2951,47 @@ impl Kette {
                 }
             }
         }
+        zustand.grundpreis_je_byte = naechster_grundpreis(zustand.grundpreis_je_byte, bytes_im_block, gebuehren.boden_je_byte);
         verbraucht
+    }
+
+    /// ⚑ **Die Gebühren der Epoche werden geteilt** (2026-10-27, Festlegung
+    /// des Projektinhabers): drei Dreizehntel an die Treasury, zehn in den
+    /// Topf der Validatoren. Der Topf bleibt stehen, bis es eine
+    /// Gewichtsquelle für Validatoren gibt; der Rest einer Teilung fällt
+    /// dem Topf zu, damit keine Einheit verschwindet.
+    fn gebuehren_teilen(zustand: &mut LedgerState) {
+        let summe = std::mem::take(&mut zustand.gebuehren_epoche);
+        let treasury = (summe as u128 * GEBUEHR_TREASURY as u128 / GEBUEHR_TEILE as u128) as u64;
+        let t = zustand.account_mut(&myl_types::treasury::treasury_adresse());
+        t.balance = t.balance.saturating_add(treasury);
+        zustand.gebuehren_validatoren = zustand.gebuehren_validatoren.saturating_add(summe - treasury);
+    }
+
+    /// Bucht `betrag` vom Konto `von` an die Treasury (G1: Aufschlag für
+    /// ein neues Konto). Gedeckt ist er, das prüft der Aufrufer.
+    fn an_die_treasury(zustand: &mut LedgerState, von: &Address, betrag: u64) {
+        zustand.account_mut(von).balance -= betrag;
+        let t = zustand.account_mut(&myl_types::treasury::treasury_adresse());
+        t.balance = t.balance.saturating_add(betrag);
+    }
+
+    /// Hinterlegt `betrag` vom Konto `von` unter (Art, Kennung) (G1).
+    /// Gedeckt ist er, das prüft der Aufrufer.
+    fn hinterlegen(zustand: &mut LedgerState, von: &Address, art: u8, kennung: [u8; 32], betrag: u64) {
+        zustand.account_mut(von).balance -= betrag;
+        let eintrag = zustand.hinterlegungen.entry((art, kennung)).or_insert((*von, 0));
+        eintrag.1 = eintrag.1.saturating_add(betrag);
+    }
+
+    /// Gibt die Hinterlegung unter (Art, Kennung) an den zurück, der sie
+    /// hinterlegt hat (G1). Ohne Eintrag geschieht nichts: Was vor den
+    /// Gebühren angemeldet wurde, hat nichts hinterlegt.
+    fn zurueckgeben(zustand: &mut LedgerState, art: u8, kennung: [u8; 32]) {
+        if let Some((wer, betrag)) = zustand.hinterlegungen.remove(&(art, kennung)) {
+            let konto = zustand.account_mut(&wer);
+            konto.balance = konto.balance.saturating_add(betrag);
+        }
     }
 
     /// Baut den nächsten Block aus dem Mempool und übernimmt ihn selbst.
@@ -2598,18 +3027,44 @@ impl Kette {
         let hoehe = self.hoehe + 1;
         let epoch = epoche_fuer_hoehe(hoehe);
 
-        // ⚑ **Nur wenn ein Epochenwechsel stattfand**, sonst löschte
-        // jeder Block die Ziehung der laufenden Epoche.
-        let quelle = self.naechste_saatquelle.clone();
+        // ⚑ **Das angebotene Zertifikat eines Prüfpunkts**, wenn es für
+        //   diesen Block trägt (2026-10-27, CONSENSUS 7.2); geprüft vor dem
+        //   Anwenden, das den bestätigten Stand fortschreibt.
+        let zert = self.naechstes_pruefpunktzertifikat.take();
+        let zert = zert.filter(|z| self.zertifikat_traegt(z, hoehe));
         let mut gezogen = None;
+        // 📌 Fund 658: die Zuteilung der ablaufenden Epoche, bevor der
+        //    Wechsel sie ersetzt. Gezogen wird erst mit dem Zertifikat, also
+        //    bleibt sie bis dahin aufgehoben.
+        if epoch > self.zustand.epoch.0 {
+            let alte = self.zustand.epoch.0;
+            self.offene_zuteilungen.push((alte, Self::zuteilung_der_laufenden_epoche(&self.zustand)));
+            while self.offene_zuteilungen.len() > OFFENE_ZUTEILUNGEN_HOECHSTENS {
+                self.offene_zuteilungen.remove(0);
+            }
+        }
         let verbraucht = Self::anwenden(
             &mut self.zustand,
             &txs,
             epoch,
             &self.letzter_hash,
-            quelle.as_deref(),
+            zert.as_ref(),
             &mut gezogen,
         );
+        if let Some((e, proben)) = &gezogen {
+            let mut pods: Vec<myl_scheduler::shard_assignment::Pod> = Vec::new();
+            if let Some(stelle) = self.offene_zuteilungen.iter().position(|(alt, _)| alt == e) {
+                let (_, z) = self.offene_zuteilungen.remove(stelle);
+                for s in proben {
+                    if let Some(p) = myl_scheduler::zonenzuteilung::pod_zu_kennung(&z, *e, &s.pod) {
+                        if !pods.iter().any(|q| q.pod_index == p.pod_index) {
+                            pods.push(p.clone());
+                        }
+                    }
+                }
+            }
+            self.pods_der_stichprobe = pods;
+        }
         if gezogen.is_some() {
             self.letzte_stichprobe = gezogen;
         }
@@ -2637,11 +3092,20 @@ impl Kette {
             prev_block_hash: self.letzter_hash,
             timestamp_ms: crate::protokoll::jetzt_ms().max(0) as u64,
             state_root: self.zustand.commitment(),
-            saatquelle: quelle,
+            pruefpunkt: zert,
         });
         for tx in im_block {
             block.add_transaction(tx);
         }
+        // Unterschreiben, bevor der Block geschrieben und
+        // verbreitet wird; die Unterschrift ändert den Blockhash nicht.
+        if let Some(k) = &self.erzeugerschluessel {
+            if let Ok(signatur) = k.signiere(&block.erzeugernachricht()) {
+                block.unterschrift =
+                    Some(myl_consensus::block::Erzeugerunterschrift { schluessel: k.oeffentlich(), signatur });
+            }
+        }
+        self.erzeuger_lernen(&block);
 
         if let Some(b) = self.baum.as_mut() {
             b.anhaengen(&self.letzter_hash);
@@ -2665,12 +3129,11 @@ impl Kette {
         if self.bekannt.contains(&hash) {
             return Err(KettenFehler::SchonBekannt);
         }
-        // ⚑ **Die Saatquelle wird geprüft, bevor gerechnet wird**
-        // (Punkt 44). Sie geht in keine Zustandswurzel ein, also fiele
-        // sie sonst niemandem auf, und ein frei gewählter Wert wäre
-        // unbegrenzter Mahlraum.
-        if !self.saatquelle_traegt(block) {
-            return Err(KettenFehler::SaatquelleTraegtNicht);
+        // ⚑ **Wer ihn erzeugt hat**, vor jeder Rechnung: Ein Block, den
+        // niemand Berechtigtes unterschrieben hat, kostet keinen
+        // Zustandsübergang.
+        if !self.erzeuger_traegt(block) {
+            return Err(KettenFehler::ErzeugerUnbelegt);
         }
         if block.header.prev_block_hash != self.letzter_hash {
             return Err(KettenFehler::PasstNichtAn {
@@ -2701,6 +3164,12 @@ impl Kette {
                 bekommen: block.header.epoch,
             });
         }
+        // ⚑ **Das Zertifikat eines Prüfpunkts** (2026-10-27, CONSENSUS
+        // 7.2), bevor gerechnet wird: Aus ihm kommen Endgültigkeit und Saat.
+        // Erst nach Erzeuger und Anschluss, weil es die teurere Prüfung ist.
+        if !self.pruefpunkt_traegt(block) {
+            return Err(KettenFehler::PruefpunktTraegtNicht);
+        }
 
         // ⚑ **Was im Block steht, muss geprüft werden oder darf nicht
         // drin stehen** (Fund 192). Beide Felder sind Teil des
@@ -2720,14 +3189,14 @@ impl Kette {
         // Block folgt, hätte den Befund verschluckt.
         let mut versuch = self.zustand.clone();
         let mut gezogen = None;
-        // ⚑ **Die Quelle kommt aus dem Block, nicht aus eigenem
+        // ⚑ **Das Zertifikat kommt aus dem Block, nicht aus eigenem
         // Zustand.** Sonst zöge jeder Knoten eine andere Stichprobe.
         Self::anwenden(
             &mut versuch,
             &block.txs,
             block.header.epoch,
             &self.letzter_hash,
-            block.header.saatquelle.as_deref(),
+            block.header.pruefpunkt.as_ref(),
             &mut gezogen,
         );
         let errechnet = versuch.commitment();
@@ -2763,6 +3232,7 @@ impl Kette {
         self.mempool_bereinigen(block.header.height);
         self.schreibe(block);
         self.abzug_anlegen(block);
+        self.erzeuger_lernen(block);
         Ok(())
     }
 }
@@ -2816,6 +3286,12 @@ mod tests {
 
     fn burn(wer: u8, betrag: u64) -> Transaktion {
         burn_nr(wer, betrag, 0)
+    }
+
+    /// Die Gebühr einer Transaktion, solange der Grundpreis am Boden der
+    /// Probekette steht (G1); kleine Blöcke heben ihn nicht.
+    fn gebuehr(tx: &Transaktion) -> u64 {
+        crate::netz::PROBEKETTE.gebuehren.boden_je_byte * tx.gebuehrenbytes()
     }
 
     /// ⚑ **Die Gegenprobe zu Fund 85: Eine Anweisung ohne gültige
@@ -2898,10 +3374,11 @@ mod tests {
             Anweisung::Ueberweisung { nach, betrag: 2_500 },
         )
         .expect("signieren");
+        let g = gebuehr(&tx);
         k.aufnehmen(tx);
         let _ = k.baue_block();
 
-        assert_eq!(k.zustand().account(&von).balance, v0 - 2_500);
+        assert_eq!(k.zustand().account(&von).balance, v0 - 2_500 - g);
         assert_eq!(k.zustand().account(&nach).balance, n0 + 2_500);
     }
 
@@ -3096,6 +3573,7 @@ mod tests {
         let mut folger = Kette::probestand();
         let mut block = erzeuger.baue_block();
         block.header.height = 7;
+        neu_unterschreiben(&mut block);
         assert!(matches!(
             folger.uebernimm(&block),
             Err(KettenFehler::HoeheWeichtAb { erwartet: 1, bekommen: 7 })
@@ -3117,6 +3595,7 @@ mod tests {
 
         let mut gefaelscht = block.clone();
         gefaelscht.header.epoch = 9;
+        neu_unterschreiben(&mut gefaelscht);
         assert!(matches!(
             folger.uebernimm(&gefaelscht),
             Err(KettenFehler::EpocheWeichtAb { erwartet: 0, bekommen: 9 })
@@ -3202,8 +3681,9 @@ mod tests {
         erzeuger.aufnehmen(burn(1, 1_000));
         let mut block = erzeuger.baue_block();
 
-        // Jemand fälscht die Wurzel.
+        // Der Erzeuger fälscht die Wurzel und unterschreibt.
         block.header.state_root = Hash::sha256(b"etwas anderes");
+        neu_unterschreiben(&mut block);
 
         let vorher = folger.zustandswurzel();
         let fehler = folger.uebernimm(&block).expect_err("muss auffallen");
@@ -3421,6 +3901,7 @@ mod tests {
         let _ = erzeuger.baue_block();
         let mut geliefert = erzeuger.bloecke_von_bis(1, 1);
         geliefert[0].header.state_root = Hash::sha256(b"untergeschoben");
+        neu_unterschreiben(&mut geliefert[0]);
 
         let mut neuling = Kette::probestand();
         let fehler = neuling.uebernimm(&geliefert[0]).expect_err("muss auffallen");
@@ -3667,7 +4148,9 @@ mod tests {
     /// frische Schlüssel ohne Guthaben bringen höchstens
     /// `MEMPOOL_NEULINGE_HOECHSTENS` in den Mempool und höchstens
     /// `BLOCK_NEULINGE_HOECHSTENS` in einen Block; ein Konto mit Guthaben
-    /// kommt weiter hinein.
+    /// kommt weiter hinein. ⚑ Seit den Gebühren (G1) kommt ein Neuling ohne
+    /// Guthaben in keinen Block: Er kann sie nicht zahlen und wartet, bis er
+    /// verfällt.
     #[test]
     fn neulinge_kommen_nur_gedrosselt_hinein() {
         let mut k = Kette::probestand();
@@ -3682,8 +4165,8 @@ mod tests {
         assert_eq!(angenommen, MEMPOOL_NEULINGE_HOECHSTENS);
         assert!(k.aufnehmen(burn(3, 900)), "ein Konto mit Guthaben kommt hinein");
         let b = k.baue_block();
-        assert_eq!(b.txs.len(), BLOCK_NEULINGE_HOECHSTENS + 1, "sechzehn Neulinge und der Burn");
-        assert_eq!(k.wartend(), MEMPOOL_NEULINGE_HOECHSTENS - BLOCK_NEULINGE_HOECHSTENS);
+        assert_eq!(b.txs.len(), 1, "nur der Burn, kein Neuling zahlt");
+        assert_eq!(k.wartend(), MEMPOOL_NEULINGE_HOECHSTENS);
     }
 
     /// Ein einzelner Absender füllt den Mempool nicht: höchstens
@@ -4328,6 +4811,190 @@ mod tests {
         assert_eq!(k.zustand().miner[&kennung].zone, GeoRegion::Asia);
     }
 
+    // --- G1: Gebühren, Aufschlag, Hinterlegung ---
+
+    fn mit_grenze(wer: u8, nonce: u64, max_gebuehr: u64, a: Anweisung) -> Transaktion {
+        Transaktion::signiere_mit_grenze(&Kette::startwert(), &probeschluessel(wer), nonce, max_gebuehr, a)
+            .expect("signieren")
+    }
+
+    /// ⚑ **Wer weniger zusagt, als die Gebühr kostet, wartet** und behält
+    /// seine Nummer; mit genau der Gebühr kommt er hinein, und sie landet im
+    /// Topf der Epoche.
+    #[test]
+    fn wer_die_gebuehr_nicht_zusagt_wartet() {
+        let mut k = Kette::probestand();
+        let a = || Anweisung::Burn { betrag: 10 };
+        let g = gebuehr(&mit_grenze(3, 0, 0, a()));
+        k.aufnehmen(mit_grenze(3, 0, g - 1, a()));
+        let b = k.baue_block();
+        assert!(b.txs.is_empty(), "eine Einheit zu wenig zugesagt");
+        assert_eq!(k.zustand().account(&probekonto(3)).nonce, 0, "die Nummer ist verbraucht");
+        assert_eq!(k.zustand().gebuehren_epoche, 0);
+
+        // Gegenprobe: genau die Gebühr.
+        let vorher = k.zustand().account(&probekonto(3)).balance;
+        k.aufnehmen(mit_grenze(3, 0, g, a()));
+        assert_eq!(k.baue_block().txs.len(), 1);
+        assert_eq!(k.zustand().account(&probekonto(3)).balance, vorher - 10 - g);
+        assert_eq!(k.zustand().gebuehren_epoche, g);
+    }
+
+    /// ⚑ **Eine gescheiterte Anweisung zahlt trotzdem**: Ihre Bytes stehen
+    /// im Block. Wer die Gebühr nicht decken kann, kommt nicht hinein.
+    #[test]
+    fn eine_gescheiterte_anweisung_zahlt_die_gebuehr() {
+        let mut k = Kette::probestand();
+        let vorher = k.zustand().account(&probekonto(3)).balance;
+        let tx = burn(3, u64::MAX);
+        let g = gebuehr(&tx);
+        k.aufnehmen(tx);
+        assert_eq!(k.baue_block().txs.len(), 1, "die Nummer ist verbraucht");
+        assert_eq!(k.zustand().account(&probekonto(3)).balance, vorher - g, "nur die Gebühr");
+
+        // Gegenprobe: ein Konto mit weniger als der Gebühr.
+        k.zustand_mut().account_mut(&probekonto(4)).balance = g - 1;
+        k.aufnehmen(burn(4, 1));
+        assert!(k.baue_block().txs.is_empty(), "ungedeckt im Block");
+        assert_eq!(k.zustand().account(&probekonto(4)).balance, g - 1);
+    }
+
+    /// ⚑ **Ein neues Konto kostet einmal den Aufschlag**, an die Treasury;
+    /// die zweite Überweisung an dasselbe Konto nicht.
+    #[test]
+    fn ein_neues_konto_kostet_einmal_den_aufschlag() {
+        let mut k = Kette::probestand();
+        let aufschlag = crate::netz::PROBEKETTE.gebuehren.aufschlag_konto;
+        let treasury = myl_types::treasury::treasury_adresse();
+        let neu = Address::new(*Hash::sha256(b"ein-neues-konto").as_bytes());
+        assert!(!k.zustand().accounts.contains_key(&neu));
+        let (v0, t0) = (k.zustand().account(&probekonto(3)).balance, k.zustand().account(&treasury).balance);
+
+        let tx = mit_grenze(3, 0, u64::MAX, Anweisung::Ueberweisung { nach: neu, betrag: 100 });
+        let g1 = gebuehr(&tx);
+        k.aufnehmen(tx);
+        k.baue_block();
+        assert_eq!(k.zustand().account(&neu).balance, 100);
+        assert_eq!(k.zustand().account(&probekonto(3)).balance, v0 - 100 - g1 - aufschlag);
+        assert_eq!(k.zustand().account(&treasury).balance, t0 + aufschlag);
+
+        // Gegenprobe: dasselbe Konto ein zweites Mal.
+        let tx = mit_grenze(3, 1, u64::MAX, Anweisung::Ueberweisung { nach: neu, betrag: 100 });
+        let g2 = gebuehr(&tx);
+        k.aufnehmen(tx);
+        k.baue_block();
+        assert_eq!(k.zustand().account(&probekonto(3)).balance, v0 - 200 - g1 - g2 - aufschlag);
+        assert_eq!(k.zustand().account(&treasury).balance, t0 + aufschlag);
+    }
+
+    /// ⚑ **Die Anmeldung hinterlegt, die Abmeldung gibt zurück**; eine
+    /// zweite Anmeldung desselben Miners hinterlegt nicht noch einmal.
+    #[test]
+    fn die_anmeldung_hinterlegt_und_die_abmeldung_gibt_zurueck() {
+        use myl_types::miner::HardwareClass;
+        let mut k = Kette::probestand();
+        let h = crate::netz::PROBEKETTE.gebuehren.hinterlegung_anmeldung;
+        let kennung = *probekonto(0).as_bytes();
+        let v0 = k.zustand().account(&probekonto(0)).balance;
+        let mut gezahlt = 0;
+        let mut senden = |k: &mut Kette, tx: Transaktion| {
+            gezahlt += gebuehr(&tx);
+            k.aufnehmen(tx);
+            k.baue_block();
+            gezahlt
+        };
+
+        let g = senden(&mut k, anmeldung(0, HardwareClass::MediumGpu));
+        assert_eq!(k.zustand().account(&probekonto(0)).balance, v0 - g - h);
+        assert_eq!(k.zustand().hinterlegungen.get(&(HINTERLEGT_ANMELDUNG, kennung)), Some(&(probekonto(0), h)));
+
+        // Gegenprobe: dieselbe Anmeldung mit anderen Angaben hinterlegt nicht.
+        let neu = Anweisung::MinerAnmelden {
+            hardware: HardwareClass::LargeGpu,
+            zone: myl_types::node_metadata::GeoRegion::Europe,
+            netzadresse: myl_types::latency_attest::PeerIdBytes([0; 32]),
+        };
+        let g = senden(&mut k, mit_grenze(0, 1, u64::MAX, neu));
+        assert_eq!(k.zustand().account(&probekonto(0)).balance, v0 - g - h);
+
+        let g = senden(&mut k, mit_grenze(0, 2, u64::MAX, Anweisung::MinerAbmelden));
+        assert_eq!(k.zustand().account(&probekonto(0)).balance, v0 - g, "die Hinterlegung kam nicht zurück");
+        assert!(k.zustand().hinterlegungen.is_empty());
+    }
+
+    /// ⚑ **Eine Sitzung hinterlegt, und wenn sie aufgeräumt wird, kommt
+    /// die Hinterlegung zurück** (Fund 662: Vorher räumte die Kette nie auf).
+    /// Gegenprobe: vor dem Ende der Nachfrist bleibt beides.
+    #[test]
+    fn eine_abgelaufene_sitzung_gibt_ihre_hinterlegung_zurueck() {
+        use myl_types::sitzung::{Grenzen, Sitzungskontrakt};
+        let mut k = Kette::probestand();
+        let h = crate::netz::PROBEKETTE.gebuehren.hinterlegung_sitzung;
+        let kontrakt = Sitzungskontrakt::neu(
+            probekonto(6),
+            probekonto(7),
+            Grenzen::gesperrt(),
+            Grenzen::gesperrt(),
+            Vec::new(),
+            EpochId(0),
+            EpochId(0),
+            16,
+        )
+        .expect("gueltiger Kontrakt");
+        let id = kontrakt.adresse();
+        let v0 = k.zustand().account(&probekonto(6)).balance;
+        let tx = mit_grenze(6, 0, u64::MAX, Anweisung::SitzungEroeffnen { kontrakt });
+        let g = gebuehr(&tx);
+        k.aufnehmen(tx);
+        k.baue_block();
+        assert!(k.zustand().sitzung(&id).is_some());
+        assert_eq!(k.zustand().account(&probekonto(6)).balance, v0 - g - h);
+
+        let nachfrist = myl_ledger::state::SITZUNG_NACHFRIST;
+        let z = k.zustand_mut();
+        z.epoch = EpochId(nachfrist);
+        Kette::epochenwechsel_abschliessen(z, nachfrist + 1, &Hash([0; 32]));
+        assert!(k.zustand().sitzung(&id).is_some(), "vor dem Ende der Nachfrist aufgeräumt");
+        assert_eq!(k.zustand().account(&probekonto(6)).balance, v0 - g - h);
+
+        let z = k.zustand_mut();
+        z.epoch = EpochId(nachfrist + 1);
+        Kette::epochenwechsel_abschliessen(z, nachfrist + 2, &Hash([0; 32]));
+        assert!(k.zustand().sitzung(&id).is_none(), "die abgelaufene Sitzung blieb");
+        assert_eq!(k.zustand().account(&probekonto(6)).balance, v0 - g, "die Hinterlegung kam nicht zurück");
+    }
+
+    /// ⚑ **Der Grundpreis wandert um höchstens ein Achtel**: am Ziel bleibt
+    /// er, ein voller Block hebt ihn um ein Achtel, ein leerer senkt ihn um
+    /// eins; bei eins steigt er dennoch um eins, und unter den Boden fällt
+    /// er nie.
+    #[test]
+    fn der_grundpreis_wandert_um_hoechstens_ein_achtel() {
+        let ziel = GRUNDPREIS_ZIEL_BYTES;
+        assert_eq!(naechster_grundpreis(800, ziel, 1), 800);
+        assert_eq!(naechster_grundpreis(800, 2 * ziel, 1), 900);
+        assert_eq!(naechster_grundpreis(800, 0, 1), 700);
+        assert_eq!(naechster_grundpreis(1, ziel + 1, 1), 2, "bei eins bliebe er sonst für immer");
+        assert_eq!(naechster_grundpreis(1, 0, 1), 1, "unter den Boden");
+        assert_eq!(naechster_grundpreis(800, 0, 750), 750, "unter den Boden");
+        assert_eq!(naechster_grundpreis(u64::MAX, 2 * ziel, 1), u64::MAX);
+    }
+
+    /// ⚑ **Die Gebühren einer Epoche teilen sich drei zu zehn**: Treasury
+    /// und Topf der Validatoren; der Rest der Teilung geht in den Topf, und
+    /// keine Einheit verschwindet.
+    #[test]
+    fn die_gebuehren_teilen_sich_drei_zu_zehn() {
+        let mut z = Kette::probestand().zustand().clone();
+        let treasury = myl_types::treasury::treasury_adresse();
+        let t0 = z.account(&treasury).balance;
+        z.gebuehren_epoche = 1_301;
+        Kette::gebuehren_teilen(&mut z);
+        assert_eq!(z.account(&treasury).balance - t0, 300);
+        assert_eq!(z.gebuehren_validatoren, 1_001);
+        assert_eq!(z.gebuehren_epoche, 0);
+    }
+
     /// Welches Probekonto der Koordinator dieses Pods ist.
     ///
     /// ⚑ **Der Koordinator ist Position null**, und welcher
@@ -4412,54 +5079,36 @@ mod tests {
         let mut k = Kette::probestand();
         let vorher = k.zustand().account(&probekonto(0)).balance;
         assert!(vorher > 0, "das Probekonto hat kein Guthaben");
+        // Die Gebühren laufen mit (G1).
+        let mut gezahlt = 0;
+        let mut senden = |k: &mut Kette, nonce: u64, anweisung: Anweisung| {
+            let tx = Transaktion::signiere(&Kette::startwert(), &probeschluessel(0), nonce, anweisung).expect("signieren");
+            gezahlt += gebuehr(&tx);
+            k.aufnehmen(tx);
+            k.baue_block();
+            gezahlt
+        };
 
-        k.aufnehmen(
-            Transaktion::signiere(
-                &Kette::startwert(),
-                &probeschluessel(0),
-                0,
-                Anweisung::EinsatzHinterlegen { betrag: 5_000 },
-            )
-            .expect("signieren"),
-        );
-        k.baue_block();
+        let g = senden(&mut k, 0, Anweisung::EinsatzHinterlegen { betrag: 5_000 });
         assert_eq!(
             k.zustand().account(&probekonto(0)).staked,
             5_000,
             "der Einsatz kam nicht an"
         );
-        assert_eq!(k.zustand().account(&probekonto(0)).balance, vorher - 5_000);
+        assert_eq!(k.zustand().account(&probekonto(0)).balance, vorher - 5_000 - g);
 
         // Kuendigen: aus `staked` heraus, aber noch nicht ins Guthaben.
-        k.aufnehmen(
-            Transaktion::signiere(
-                &Kette::startwert(),
-                &probeschluessel(0),
-                1,
-                Anweisung::EinsatzKuendigen { betrag: 2_000 },
-            )
-            .expect("signieren"),
-        );
-        k.baue_block();
+        let g = senden(&mut k, 1, Anweisung::EinsatzKuendigen { betrag: 2_000 });
         let konto = k.zustand().account(&probekonto(0));
         assert_eq!(konto.staked, 3_000);
-        assert_eq!(konto.balance, vorher - 5_000, "das Geld kam zu frueh zurueck");
+        assert_eq!(konto.balance, vorher - 5_000 - g, "das Geld kam zu frueh zurueck");
         assert_eq!(konto.gekuendigt.values().sum::<u64>(), 2_000);
 
         // Abholen vor der Freigabe bewirkt nichts.
-        k.aufnehmen(
-            Transaktion::signiere(
-                &Kette::startwert(),
-                &probeschluessel(0),
-                2,
-                Anweisung::EinsatzAbholen,
-            )
-            .expect("signieren"),
-        );
-        k.baue_block();
+        let g = senden(&mut k, 2, Anweisung::EinsatzAbholen);
         assert_eq!(
             k.zustand().account(&probekonto(0)).balance,
-            vorher - 5_000,
+            vorher - 5_000 - g,
             "vor der Freigabe wurde ausgezahlt"
         );
 
@@ -4676,20 +5325,18 @@ mod tests {
         assert!(k.zustand().buendel.is_empty(), "die Buendel blieben stehen");
     }
 
-    /// Unterschreibt ein Bündel mit **allen** Mitgliedern seines Pods.
+    /// Unterschreibt ein Bündel mit den **Positionen** seines Pods.
     ///
-    /// ⚑ **Allen, nicht nur den Positionen.** `PodMembership::pubkeys`
-    /// liefert die Schlüssel aller Mitglieder einschließlich der
-    /// Reserve, und `fast_aggregate_verify` prüft gegen genau diese
-    /// Menge. Wer nur die Positionen unterschreiben ließe, bekäme ein
-    /// Aggregat, das gegen mehr Schlüssel geprüft wird, als es enthält.
+    /// ⚑ **Nur die Positionen, seit Fund 645** (2026-10-26): Die Reserve
+    /// rechnet nicht und kann nicht prüfen, was sie unterschriebe. Geprüft
+    /// wird gegen genau diese Menge ([`Kette::unterzeichner_des_buendels`]).
     fn buendel_unterschreiben(
         buendel: &mut myl_types::PoIBundle,
         pod: &myl_scheduler::shard_assignment::Pod,
     ) {
         let msg = myl_consensus::poi::bundle_message(buendel);
         let mut teile = Vec::new();
-        for m in pod.mitglieder() {
+        for m in pod.shards.iter().map(|s| &s.miner) {
             // Welcher Probeschlüssel gehört zu dieser Kennung?
             let w = (0..6u8)
                 .find(|w| {
@@ -4703,103 +5350,250 @@ mod tests {
         buendel.aggregate_sig = myl_types::bls::BlsSignature(aggregat.0);
     }
 
-    /// ⚑ **Eine erfundene Saatquelle wird abgelehnt** (Punkt 44).
-    ///
-    /// Ohne diese Prüfung könnte ein Erzeuger beliebige Bytes eintragen:
-    /// Sie gehen in keine Zustandswurzel ein, also fiele es niemandem
-    /// auf, und der Mahlraum wäre unbegrenzt statt höchstens sechzehn
-    /// Bit (Fund 120).
-    #[test]
-    fn eine_erfundene_saatquelle_wird_abgelehnt() {
-        let mut k = Kette::probestand();
-        let mut block = k.baue_block();
-        block.header.saatquelle = Some(b"frei erfunden".to_vec());
-        let mut leser = Kette::probestand();
-        assert_eq!(
-            leser.uebernimm(&block),
-            Err(KettenFehler::SaatquelleTraegtNicht),
-            "erfundene Bytes gingen als Saatquelle durch"
-        );
+    /// Das Zertifikat des Prüfpunkts an `hoehe` über den eigenen Block,
+    /// unterschrieben vom Probeerzeuger, dem einzigen Mitglied einer
+    /// Probekette.
+    fn pruefpunkt_von(k: &Kette, hoehe: u64, wer: &str) -> myl_consensus::pruefpunkt::Pruefpunktzertifikat {
+        let schluessel = crate::schluessel::Konsensschluessel::probe(wer).expect("Schlüssel");
+        let block_hash = k.hash_an(hoehe).expect("der Block liegt im Fenster");
+        let signatur = schluessel
+            .signiere(&myl_consensus::pruefpunkt::pruefpunktnachricht(hoehe, &block_hash))
+            .expect("unterschreiben");
+        let stimme = myl_consensus::pruefpunkt::Pruefpunktstimme { hoehe, block_hash, waehler: schluessel.kennung(), signatur };
+        myl_consensus::pruefpunkt::Pruefpunktzertifikat::aus_stimmen(&[stimme]).expect("Zertifikat")
     }
 
-    /// ⚑ **Und ein Zertifikat für einen *anderen* Block ebenso.**
-    ///
-    /// Das ist die schwerere Hälfte: Ein altes oder fremdes Zertifikat
-    /// ist strukturell einwandfrei, und wer es einsetzen darf, **wählt
-    /// unter Zertifikaten** und damit seine Saat.
+    /// Baut `n` Blöcke auf `k` und übernimmt sie in `folger`.
+    fn bauen_und_folgen(k: &mut Kette, folger: &mut Kette, n: usize) {
+        for _ in 0..n {
+            let b = k.baue_block();
+            folger.uebernimm(&b).expect("ein gewöhnlicher Block");
+        }
+    }
+
+    /// ⚑ **Ein Prüfpunkt wird bestätigt** (2026-10-27, CONSENSUS 7.2): Der
+    /// Erzeuger legt das Zertifikat in den nächsten Block, der Folger nimmt
+    /// es an, und beide stehen danach bei Höhe 150. Gegenproben: dasselbe
+    /// Zertifikat ein zweites Mal, keine Prüfpunkthöhe, ein anderer Block,
+    /// ein Fremder als Unterzeichner.
     #[test]
-    fn ein_zertifikat_fuer_einen_anderen_block_wird_abgelehnt() {
-        use myl_consensus::round_change::Commitzertifikat;
+    fn ein_pruefpunkt_wird_bestaetigt() {
         let mut k = Kette::probestand();
-        let fremd = Commitzertifikat {
-            round: 1,
-            block_hash: Hash::sha256(b"ein ganz anderer Block"),
-            committers: vec![myl_types::ids::MinerId::new([1; 32])],
-            aggregate: myl_types::bls::BlsAggregateSignature([0; 96]),
+        let mut folger = Kette::probestand();
+        bauen_und_folgen(&mut k, &mut folger, 150);
+        let z = pruefpunkt_von(&k, 150, PROBEERZEUGER);
+        k.pruefpunkt_anbieten(z.clone());
+        let mit = k.baue_block();
+        assert_eq!(mit.header.pruefpunkt.as_ref(), Some(&z), "der Erzeuger legte das Zertifikat nicht in den Block");
+        folger.uebernimm(&mit).expect("ein Block mit tragendem Zertifikat");
+        assert_eq!((k.bestaetigt_bis(), folger.bestaetigt_bis()), (150, 150));
+
+        // ⛔️ Dasselbe Zertifikat noch einmal: nichts Neues, abgelehnt.
+        let mut nochmal = k.baue_block();
+        nochmal.header.pruefpunkt = Some(z);
+        neu_unterschreiben(&mut nochmal);
+        assert_eq!(folger.uebernimm(&nochmal), Err(KettenFehler::PruefpunktTraegtNicht), "zweimal dasselbe");
+
+        // Je Gegenprobe ein frisches Paar bei Höhe 150 und ein Block 151
+        // mit einem veränderten Zertifikat.
+        let pruefe = |aendern: &dyn Fn(&Kette) -> myl_consensus::pruefpunkt::Pruefpunktzertifikat| {
+            let mut erz = Kette::probestand();
+            let mut neu = Kette::probestand();
+            bauen_und_folgen(&mut erz, &mut neu, 150);
+            let zert = aendern(&erz);
+            let mut b = erz.baue_block();
+            b.header.pruefpunkt = Some(zert);
+            neu_unterschreiben(&mut b);
+            neu.uebernimm(&b)
         };
-        let mut block = k.baue_block();
-        block.header.saatquelle = Some(borsh::to_vec(&fremd).expect("borsh"));
-        let mut leser = Kette::probestand();
-        assert_eq!(
-            leser.uebernimm(&block),
-            Err(KettenFehler::SaatquelleTraegtNicht)
-        );
+        // ⛔️ Ein richtiges Zertifikat, nachträglich in einen fertigen Block
+        // gesetzt: Es schreibt den bestätigten Stand fort, die Wurzel im Kopf
+        // weiss davon nichts.
+        assert!(matches!(pruefe(&|e| pruefpunkt_von(e, 150, PROBEERZEUGER)), Err(KettenFehler::ZustandWeichtAb { .. })));
+        // ⛔️ Ein anderer Block an Höhe 150.
+        let anderer = |e: &Kette| {
+            let mut x = pruefpunkt_von(e, 150, PROBEERZEUGER);
+            x.block_hash = Hash::sha256(b"ein anderer Block");
+            x
+        };
+        assert_eq!(pruefe(&anderer), Err(KettenFehler::PruefpunktTraegtNicht), "anderer Block");
+        // ⛔️ Ein Fremder unterschreibt.
+        assert_eq!(pruefe(&|e| pruefpunkt_von(e, 150, "fremder")), Err(KettenFehler::PruefpunktTraegtNicht), "Fremder");
+        // ⛔️ Keine Prüfpunkthöhe.
+        let schief = |e: &Kette| {
+            let mut x = pruefpunkt_von(e, 150, PROBEERZEUGER);
+            x.hoehe = 149;
+            x
+        };
+        assert_eq!(pruefe(&schief), Err(KettenFehler::PruefpunktTraegtNicht), "keine Prüfpunkthöhe");
     }
 
-    /// Ohne Saatquelle bleibt der Blockhash der Rückfall, und der ist
-    /// erlaubt: benannt schlechter, nicht verboten.
+    /// ⚑ **Die Saat kommt aus dem Zertifikat** (2026-10-27): Zwei
+    /// Zertifikate mit verschiedenen Unterzeichnern ziehen verschieden, ein
+    /// und dasselbe zieht gleich, und jeder Knoten liest es aus dem Block.
     #[test]
-    fn ohne_saatquelle_wird_ein_block_angenommen() {
+    fn die_saat_kommt_aus_dem_zertifikat() {
+        let anteile = vec![(myl_types::ids::PodId::new([5; 32]), 1_000u32)];
+        let mut k = Kette::probestand();
+        for _ in 0..150 {
+            k.baue_block();
+        }
+        let a = pruefpunkt_von(&k, 150, PROBEERZEUGER);
+        let b = pruefpunkt_von(&k, 150, "fremder");
+        let zieh = |z: &myl_consensus::pruefpunkt::Pruefpunktzertifikat| {
+            let saat = crate::stichprobe::saat_aus_zertifikat(&z.aggregat, &z.unterzeichner, 0);
+            crate::stichprobe::stichprobe_aus_anteilen(&anteile, &saat, Kette::STICHPROBE_BP)
+        };
+        // ⚑ Aus der Konstante gerechnet (Fund 171).
+        let erwartet = (1_000 * Kette::STICHPROBE_BP as usize).div_ceil(10_000);
+        assert_eq!(zieh(&a).len(), erwartet);
+        assert_ne!(zieh(&a), zieh(&b), "das Zertifikat muss die Ziehung ändern");
+        assert_eq!(zieh(&a), zieh(&a.clone()), "dasselbe Zertifikat, dieselbe Ziehung");
+    }
+
+    /// Unterschreibt einen in einem Test veränderten Block neu, mit dem
+    /// Probeerzeuger: Der berechtigte Erzeuger hat einen falschen Block
+    /// gebaut, und die eigentliche Prüfung muss ihn fangen, nicht erst die
+    /// Unterschrift.
+    fn neu_unterschreiben(block: &mut Block) {
+        let k = crate::schluessel::Konsensschluessel::probe(PROBEERZEUGER).expect("Schlüssel");
+        let signatur = k.signiere(&block.erzeugernachricht()).expect("unterschreiben");
+        block.unterschrift = Some(myl_consensus::block::Erzeugerunterschrift { schluessel: k.oeffentlich(), signatur });
+    }
+
+    /// ⚑ **Jeder Block braucht die Unterschrift eines Mitglieds** (Stimmsatz
+    /// ab Genesis, 2026-10-27). Mit Stimmsatz nur ein Mitglied unter seinem
+    /// Schlüssel; ohne Satz lernt eine Probekette den Erzeuger aus Block 1
+    /// und verlangt ihn danach; ein anderes Netz nimmt ohne Satz nichts.
+    #[test]
+    fn nur_ein_belegter_erzeuger_kommt_durch() {
+        use myl_consensus::validator::{VotingMember, VotingSet};
+        let mitglied = crate::schluessel::Konsensschluessel::probe("erzeuger").expect("Schlüssel");
+        let fremder = crate::schluessel::Konsensschluessel::probe("fremder").expect("Schlüssel");
+        let satz = || {
+            let mut m = std::collections::BTreeMap::new();
+            m.insert(mitglied.kennung(), VotingMember { pubkey: mitglied.oeffentlich(), weight: 1 });
+            VotingSet::from_members(m)
+        };
+        let erzeugt_von = |k: Option<&crate::schluessel::Konsensschluessel>| {
+            let mut e = Kette::im_netz(&crate::netz::PROBEKETTE);
+            if let Some(k) = k {
+                e.erzeugerschluessel_setzen(k.clone());
+            }
+            e.baue_block()
+        };
+        let mit_satz = || {
+            let mut l = Kette::probestand();
+            l.stimmsatz_setzen(satz());
+            l
+        };
+
+        // Das Mitglied: angenommen.
+        let echt = erzeugt_von(Some(&mitglied));
+        assert_eq!(echt.erzeuger(), Ok(Some(mitglied.kennung())));
+        mit_satz().uebernimm(&echt).expect("ein Block des Mitglieds wurde abgewiesen");
+        // ⛔️ Gegenproben mit Stimmsatz: unsigniert, von einem Fremden, und
+        // die Unterschrift des Mitglieds unter einem anderen Schlüssel.
+        assert_eq!(mit_satz().uebernimm(&erzeugt_von(None)), Err(KettenFehler::ErzeugerUnbelegt));
+        assert_eq!(mit_satz().uebernimm(&erzeugt_von(Some(&fremder))), Err(KettenFehler::ErzeugerUnbelegt));
+        let mut untergeschoben = echt.clone();
+        if let Some(u) = untergeschoben.unterschrift.as_mut() {
+            u.schluessel = fremder.oeffentlich();
+        }
+        assert_eq!(mit_satz().uebernimm(&untergeschoben), Err(KettenFehler::ErzeugerUnbelegt));
+
+        // ⛔️ Ohne Satz auf der Probekette: unsigniert nie, und eine
+        // Unterschrift, die nicht trägt, nie.
+        assert_eq!(Kette::probestand().uebernimm(&erzeugt_von(None)), Err(KettenFehler::ErzeugerUnbelegt));
+        assert_eq!(Kette::probestand().uebernimm(&untergeschoben), Err(KettenFehler::ErzeugerUnbelegt));
+        // Der Erzeuger von Block 1 wird das einzige Mitglied; danach kommt
+        // ein anderer nicht mehr durch.
+        let mut e = Kette::im_netz(&crate::netz::PROBEKETTE);
+        e.erzeugerschluessel_setzen(fremder.clone());
+        let erster = e.baue_block();
+        e.erzeugerschluessel_setzen(mitglied.clone());
+        let zweiter = e.baue_block();
+        let mut lerner = Kette::probestand();
+        assert!(lerner.stimmsatz().is_none());
+        lerner.uebernimm(&erster).expect("Block 1 auf der Probekette");
+        assert_eq!(lerner.stimmsatz().and_then(|s| s.pubkey(&fremder.kennung())), Some(&fremder.oeffentlich()));
+        assert_eq!(lerner.uebernimm(&zweiter), Err(KettenFehler::ErzeugerUnbelegt), "ein zweiter Erzeuger kam durch");
+
+        // ⛔️ Ein Netz, das nicht lernt, nimmt ohne Satz nichts an.
+        let mut t = Kette::im_netz(&crate::netz::TESTNETZ_INT4);
+        t.erzeugerschluessel_setzen(mitglied.clone());
+        let testblock = t.baue_block();
+        assert_eq!(Kette::im_netz(&crate::netz::TESTNETZ_INT4).uebernimm(&testblock), Err(KettenFehler::ErzeugerUnbelegt));
+    }
+
+    /// ⚑ **Ein Erzeuger, der doppelt unterschreibt, wird geschlachtet**
+    /// (CONSENSUS 7.6): 30 % seines Einsatzes beim ersten Mal, das Kopfgeld
+    /// an den Melder. Gegenproben: derselbe Widerspruch noch einmal, ein
+    /// Täter ohne Einsatz, eine Tat vor der Sperrfrist, wer sich selbst
+    /// meldet.
+    #[test]
+    fn eine_doppelunterschrift_kostet_den_einsatz() {
+        use myl_consensus::double_signing::{Belegblock, Doppelbeleg};
+        let block = |zeit: u64, wer: u8| {
+            let mut b = Block::new(BlockHeader {
+                height: 5,
+                epoch: 0,
+                prev_block_hash: Hash::sha256(b"vorher"),
+                timestamp_ms: zeit,
+                state_root: Hash::sha256(b"wurzel"),
+                pruefpunkt: None,
+            });
+            b.unterschreiben(&probeschluessel(wer)).expect("unterschreiben");
+            Belegblock::aus_block(&b).expect("unterschrieben")
+        };
+        let beleg = |wer: u8| Doppelbeleg::Erzeuger(Box::new(block(1, wer)), Box::new(block(2, wer)));
+        let taeter = Address::aus_schluessel(&probeschluessel(1).public_key().expect("pk"));
+        let melder = probekonto(2);
+        let mut z = Kette::probestand().zustand().clone();
+        z.account_mut(&taeter).balance = 10_000;
+        einsatz_hinterlegen(&mut z, &taeter, 10_000).expect("Einsatz");
+        let vorher_melder = z.account(&melder).balance;
+
+        Kette::doppelbeleg_buchen(&mut z, &melder, &beleg(1)).expect("ein tragender Beleg");
+        assert_eq!(z.account(&taeter).staked, 7_000, "30 % beim ersten Mal");
+        assert!(z.account(&melder).balance > vorher_melder, "der Melder bekam kein Kopfgeld");
+
+        // ⛔️ Derselbe Widerspruch noch einmal.
+        assert!(Kette::doppelbeleg_buchen(&mut z, &melder, &beleg(1)).is_err());
+        assert_eq!(z.account(&taeter).staked, 7_000);
+        // ⛔️ Ein Täter ohne Einsatz: nichts zu schlachten.
+        assert!(Kette::doppelbeleg_buchen(&mut z, &melder, &beleg(3)).is_err());
+        // ⛔️ Wer sich selbst meldet.
+        let mut z2 = Kette::probestand().zustand().clone();
+        z2.account_mut(&taeter).balance = 10_000;
+        einsatz_hinterlegen(&mut z2, &taeter, 10_000).expect("Einsatz");
+        assert!(Kette::doppelbeleg_buchen(&mut z2, &taeter, &beleg(1)).is_err());
+        // ⛔️ Eine Tat vor der Sperrfrist.
+        z2.epoch = EpochId(myl_ledger::einsatz::SPERRFRIST_EPOCHEN + 1);
+        assert!(Kette::doppelbeleg_buchen(&mut z2, &melder, &beleg(1)).is_err());
+        assert_eq!(z2.account(&taeter).staked, 10_000);
+    }
+
+    /// ⚑ **Die Vertrauensfrist** (CONSENSUS 7.5): bis 112 Epochen über dem
+    /// bestätigten Prüfpunkt trägt sie, eine darüber nicht; ein Netz, das
+    /// hinter dem eigenen Stand liegt, ist kein Grund zum Anhalten.
+    #[test]
+    fn die_vertrauensfrist_traegt_bis_112_epochen() {
+        assert!(vertrauen_traegt(10, 10 + 112));
+        assert!(!vertrauen_traegt(10, 10 + 113), "eine Epoche zu viel");
+        assert!(vertrauen_traegt(50, 3));
+        assert!(vertrauen_traegt(0, 0));
+    }
+
+    /// Ohne Zertifikat wird ein Block angenommen: Nicht jeder Block trägt
+    /// eines, nur der, in dem es gerade beisammen ist.
+    #[test]
+    fn ohne_zertifikat_wird_ein_block_angenommen() {
         let mut k = Kette::probestand();
         let block = k.baue_block();
-        assert!(block.header.saatquelle.is_none());
+        assert!(block.header.pruefpunkt.is_none());
         let mut leser = Kette::probestand();
         assert!(leser.uebernimm(&block).is_ok());
-    }
-
-    /// ⚑ **Die Saatquelle aus dem Block bestimmt die Ziehung.**
-    ///
-    /// Das ist die Zusage aus Punkt 44: Wer den Block übernimmt, liest
-    /// die Quelle **aus ihm** und nicht aus eigenem Zustand. Zwei Knoten
-    /// mit verschiedenen Quellen zögen verschiedene Segmente, und wer
-    /// geprüft wird, ist eine Konsensentscheidung.
-    ///
-    /// 📌 **Was dieser Test nicht zeigt, und es gehört gesagt:** dass die
-    /// Quelle **echt** ist. Ein Erzeuger kann heute beliebige Bytes
-    /// eintragen; sie gehen in keine Zustandswurzel ein, also fällt es
-    /// niemandem auf. **Damit ist der Mahlraum wieder unbegrenzt**, wie
-    /// beim Blockhash, und die sechzehn Bit aus Fund 120 sind erst
-    /// erreicht, wenn ein Übernehmer die Quelle gegen das Zertifikat des
-    /// Vorgängers prüft. **Das ist der offene Rest von Punkt 44.**
-    #[test]
-    fn die_saatquelle_aus_dem_block_bestimmt_die_ziehung() {
-        let bezeugt: Vec<myl_types::PoIBundle> = vec![myl_types::PoIBundle {
-            epoch: EpochId(0),
-            pod: myl_types::ids::PodId::new([5; 32]),
-            segments_root: myl_types::ids::MerkleRoot::new([5; 32]),
-            vtfe_claimed: 1,
-            aggregate_sig: myl_types::bls::BlsSignature([0; 96]),
-            segmente: 1_000,
-        }];
-        let mit =
-            Kette::stichprobe_der_epoche(&bezeugt, 0, &Kette::startwert(), Some(b"zertifikat"));
-        let ohne = Kette::stichprobe_der_epoche(&bezeugt, 0, &Kette::startwert(), None);
-        // ⚑ **Aus der Konstante gerechnet und nicht abgeschrieben**
-        // (Fund 171). Hier stand zweimal `20`, und als die Rate von 200
-        // auf 500 bp stieg, war das die einzige Stelle, die es merkte.
-        let erwartet = (1_000 * Kette::STICHPROBE_BP as usize).div_ceil(10_000);
-        assert_eq!(mit.len(), erwartet);
-        assert_eq!(ohne.len(), erwartet);
-        assert_ne!(
-            mit, ohne,
-            "die Quelle aus dem Block muss die Ziehung aendern, sonst wirkt sie nicht"
-        );
-        // Zweimal dieselbe Quelle ergibt dieselbe Ziehung: Darauf ruht,
-        // dass zwei Knoten dasselbe pruefen.
-        assert_eq!(
-            mit,
-            Kette::stichprobe_der_epoche(&bezeugt, 0, &Kette::startwert(), Some(b"zertifikat"))
-        );
     }
 
 
@@ -5078,6 +5872,15 @@ mod tests {
         let nachher: Vec<u64> = (0..6u8)
             .map(|w| k.zustand().account(&kaltes_konto(w)).balance)
             .collect();
+        // ⚑ **Gezogen wird erst mit dem Zertifikat** (2026-10-27, CONSENSUS
+        //   7.2): Bis dahin hebt der Zustand die Anteile auf. ⛔️ Ohne
+        //   Zertifikat keine Ziehung, und kein Rückfall auf den Blockhash.
+        assert!(k.letzte_stichprobe().is_empty(), "gezogen ohne Zertifikat");
+        assert_eq!(k.zustand().stichproben_offen.len(), 1);
+        let z = pruefpunkt_von(&k, BLOECKE_JE_EPOCHE, PROBEERZEUGER);
+        k.pruefpunkt_anbieten(z);
+        k.baue_block();
+        assert!(k.zustand().stichproben_offen.is_empty(), "die Ziehung wartet noch");
         // ⚑ **Fund 114: Und die Stichprobe ist gezogen.**
         //
         // `sample_segments` und `check_segment` waren seit dem
@@ -5103,8 +5906,23 @@ mod tests {
             stichprobe.iter().all(|x| x.pod == kennung && x.segment < 1_000),
             "eine Ziehung zeigte ins Leere"
         );
+        // 📌 Fund 658: Der Pod jeder Ziehung ist nach dem Wechsel noch zu
+        //    finden (die Probekonten hier tragen keine Netzadresse; die
+        //    Adressen prüft `stichprobe.rs`).
+        let pod = k.pod_der_kennung(0, &kennung).expect("Fund 658: der Pod der abgelaufenen Epoche fehlt");
+        assert_eq!(pod.pod_index, pod_index);
+        assert!(stichprobe.iter().all(|x| k.pod_der_kennung(0, &x.pod).is_some()));
+        // ⛔️ Eine andere Epoche als die der Ziehung findet nichts.
+        assert!(k.pod_der_kennung(5, &kennung).is_none());
 
-        let gewachsen = (0..6).filter(|i| nachher[*i] > vorher[*i]).count();
+        // ⚑ Die Probeprägung (2026-10-26) bekommt jedes eingetragene Konto
+        //   obendrauf; geprüft wird, was die echte Ausschüttung zahlte.
+        let probe = crate::netz::PROBEKETTE.probepraegung;
+        assert!(
+            (0..6).all(|i| nachher[i] >= vorher[i] + probe),
+            "ein Konto bekam die Probeprägung nicht: {vorher:?} -> {nachher:?}"
+        );
+        let gewachsen = (0..6).filter(|i| nachher[*i] > vorher[*i] + probe).count();
         assert!(
             gewachsen > 0,
             "kein Auszahlungskonto ist gewachsen: {vorher:?} -> {nachher:?}"
@@ -5209,9 +6027,10 @@ mod tests {
         }
         assert_eq!(k.zustand().epoch.0, 1, "die Epoche wechselte nicht");
         for w in 0..6u8 {
+            // Nur die Probeprägung, nichts aus der Ausschüttung.
             assert_eq!(
                 k.zustand().account(&kaltes_konto(w)).balance,
-                0,
+                crate::netz::PROBEKETTE.probepraegung,
                 "ein Buendel ohne gueltige Unterschrift hat ausgezahlt"
             );
         }
@@ -5315,9 +6134,10 @@ mod tests {
         }
         assert_eq!(k.zustand().epoch.0, 1, "die Epoche wechselte nicht");
         for w in 0..6u8 {
+            // Nur die Probeprägung, nichts aus der Ausschüttung.
             assert_eq!(
                 k.zustand().account(&kaltes_konto(w)).balance,
-                0,
+                crate::netz::PROBEKETTE.probepraegung,
                 "ein erfundenes Buendel hat ausgezahlt"
             );
         }
@@ -5325,6 +6145,82 @@ mod tests {
 
     fn kaltes_konto(w: u8) -> Address {
         Address::new([200 + w; 32])
+    }
+
+    /// ⚑ **Die Probeprägung** (2026-10-26): Am Epochenwechsel bekommt das
+    /// Auszahlungskonto jedes angemeldeten Miners den Betrag der
+    /// Probekette, ein gesperrter in der Epoche seiner Sperre nichts, einer
+    /// ohne Eintrag nichts. Ohne Brennstoff und ohne Bündel, also nichts aus
+    /// der echten Ausschüttung.
+    #[test]
+    fn die_probekette_praegt_je_epoche_ins_auszahlungskonto() {
+        use myl_consensus::block::BLOECKE_JE_EPOCHE;
+        use myl_types::miner::HardwareClass;
+        use myl_types::node_metadata::GeoRegion;
+
+        let mut k = Kette::probestand();
+        let kennung = |w: u8| myl_types::ids::MinerId::new(*probekonto(w).as_bytes());
+        let mut nonce = [0u64; 4];
+        for w in 0..4u8 {
+            k.aufnehmen(
+                Transaktion::signiere(
+                    &Kette::startwert(),
+                    &probeschluessel(w),
+                    nonce[w as usize],
+                    Anweisung::MinerAnmelden {
+                        hardware: HardwareClass::MediumGpu,
+                        zone: GeoRegion::Europe,
+                        netzadresse: myl_types::latency_attest::PeerIdBytes([0; 32]),
+                    },
+                )
+                .expect("signieren"),
+            );
+            nonce[w as usize] += 1;
+        }
+        k.baue_block();
+        // Drei tragen ein Konto ein, der vierte nicht.
+        for w in 0..3u8 {
+            k.aufnehmen(
+                Transaktion::signiere(
+                    &Kette::startwert(),
+                    &probeschluessel(w),
+                    nonce[w as usize],
+                    Anweisung::AuszahlungskontoEintragen { kennung: kennung(w), konto: kaltes_konto(w) },
+                )
+                .expect("signieren"),
+            );
+            nonce[w as usize] += 1;
+        }
+        k.baue_block();
+        assert_eq!(k.zustand().auszahlung.len(), 3, "die Auszahlungskonten kamen nicht an");
+        // Der dritte ist in der laufenden Epoche gesperrt.
+        k.zustand_mut().fristsperren.insert(kennung(2), EpochId(0));
+        let vorher: Vec<u64> = (0..4u8)
+            .map(|w| k.zustand().account(&kaltes_konto(w)).balance)
+            .chain([k.zustand().account(&probekonto(3)).balance])
+            .collect();
+        while k.zustand().epoch.0 == 0 {
+            k.baue_block();
+        }
+        assert!(k.hoehe() <= BLOECKE_JE_EPOCHE + 2, "die Epoche wechselte spät");
+        let nachher: Vec<u64> = (0..4u8)
+            .map(|w| k.zustand().account(&kaltes_konto(w)).balance)
+            .chain([k.zustand().account(&probekonto(3)).balance])
+            .collect();
+        let betrag = crate::netz::PROBEKETTE.probepraegung;
+        assert_eq!(nachher[0], vorher[0] + betrag, "das erste Konto bekam nicht den Betrag");
+        assert_eq!(nachher[1], vorher[1] + betrag, "das zweite Konto bekam nicht den Betrag");
+        assert_eq!(nachher[2], vorher[2], "der Gesperrte bekam etwas");
+        assert_eq!(nachher[3], vorher[3], "ein Konto ohne Eintrag bekam etwas");
+        assert_eq!(nachher[4], vorher[4], "der Miner ohne Eintrag bekam etwas");
+
+        // ⛔️ Gegenprobe: derselbe Zustand im Testnetz prägt nichts.
+        let mut z = k.zustand().clone();
+        z.podmodell = Some(crate::netz::TESTNETZ_INT4.podmodell);
+        let vor: Vec<u64> = (0..3u8).map(|w| z.account(&kaltes_konto(w)).balance).collect();
+        Kette::probepraegung(&mut z, 1);
+        let nach: Vec<u64> = (0..3u8).map(|w| z.account(&kaltes_konto(w)).balance).collect();
+        assert_eq!(vor, nach, "das Testnetz prägte zur Probe");
     }
 
     /// ⚑ **Fund 167: das Auszahlungskonto hat einen Weg über die Kette,

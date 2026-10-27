@@ -1,6 +1,6 @@
 [package]
 name = "myl-gateway"
-version = "0.8.1"
+version = "0.10.0"
 edition = "2021"
 rust-version = "1.99"
 description = "Gateway (Whitepaper Kap. 3.3, Rolle 6): nimmt Inferenzanfragen entgegen, schreibt sie fest und liefert einen Beleg. Stufe 1 ist das eigene Gateway auf localhost; der Betreiber ist der Kontoinhaber, damit entfaellt die Bezahlfrage."

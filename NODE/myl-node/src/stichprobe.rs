@@ -50,21 +50,19 @@
 //!   VERIFICATION; was fehlt, ist der Weg von „stimmt nicht überein" zu
 //!   einer `Challenge` im Gossip.
 //!
-//! ⚑ **Die Saat ist seit Punkt 44 nicht mehr offen, und dieser Absatz
-//! war es bis zum 2026-09-06.** Er sagte, der Knoten übergebe den
-//! Blockhash und der sei mahlbar. Das stimmt nicht mehr:
-//! `Knoten::erzeuge_block` setzt die Saatquelle aus dem eigenen
-//! **Commitzertifikat**, `Kette::saatquelle_traegt` bindet sie an den
-//! Vorgängerblock und prüft die Aggregatsignatur gegen den Stimmsatz.
-//! BLS ist deterministisch, also kann niemand unter Kandidaten wählen,
-//! und kein einzelnes Mitglied kennt die Signatur, bevor zwei Drittel
-//! unterschrieben haben.
+//! ⚑ **Die Saat kommt seit dem 2026-10-27 aus dem Zertifikat des
+//! Prüfpunkts am Epochenwechsel** (CONSENSUS 7.2, Festlegung des
+//! Projektinhabers). Beim Wechsel hebt der Zustand die Anteile der
+//! bezeugten Bündel auf ([`stichprobe_aus_anteilen`]); gezogen wird erst,
+//! wenn ein Block das Zertifikat trägt. Es entsteht, nachdem die Bündel
+//! feststehen, also kennt es beim Einreichen niemand, und kein einzelnes
+//! Mitglied kennt die Sammelsignatur, bevor zwei Drittel unterschrieben
+//! haben. **Der Rückfall auf den Blockhash (Fund 120) ist entfallen**;
+//! hängt die Abstimmung, wartet die Ziehung. Was bleibt, ist der kleine
+//! Mahlraum aus der Wahl der Unterzeichner (siehe [`stichprobensaat`]).
 //!
-//! **Was bleibt, ist der benannte Rückfall:** Ohne Zertifikat gilt der
-//! Blockhash (Fund 120). Er ist mahlbar, und er greift nur in einem
-//! Netz ohne laufenden Konsens. Die Saat ist deshalb ein **Argument**
-//! dieser Funktionen und keine Konstante: Wer sie setzt, soll es an der
-//! Aufrufstelle entscheiden müssen.
+//! 📌 Bis dahin stand die Saat als rohe Bytes eines Commitzertifikats im
+//! Kopf (`saatquelle`), wahlweise, mit dem Blockhash als Rückfall.
 //!
 //! 📌 **Die Lehre aus diesem Absatz gilt über ihn hinaus.** Ein
 //! Modulkopf, der eine Lücke beschreibt, veraltet nicht mit ihr; er
@@ -158,10 +156,22 @@ pub fn stichprobe_der_epoche(
     saat: &[u8; 32],
     rate_bp: u32,
 ) -> Vec<Segmentstichprobe> {
-    let mut sortiert: Vec<&PoIBundle> = buendel.iter().filter(|b| b.segmente > 0).collect();
-    sortiert.sort_by_key(|b| *b.pod.as_bytes());
+    let anteile: Vec<(PodId, u32)> = buendel.iter().map(|b| (b.pod, b.segmente)).collect();
+    stichprobe_aus_anteilen(&anteile, saat, rate_bp)
+}
 
-    let gesamt: u64 = sortiert.iter().map(|b| u64::from(b.segmente)).sum();
+/// Wie [`stichprobe_der_epoche`], aus den Anteilen (Pod, Segmente), wie sie
+/// der Zustand bis zur Ziehung aufhebt (2026-10-27, Prüfpunkte: gezogen wird
+/// erst mit dem Zertifikat des Epochenwechsels).
+pub fn stichprobe_aus_anteilen(
+    anteile: &[(PodId, u32)],
+    saat: &[u8; 32],
+    rate_bp: u32,
+) -> Vec<Segmentstichprobe> {
+    let mut sortiert: Vec<&(PodId, u32)> = anteile.iter().filter(|(_, n)| *n > 0).collect();
+    sortiert.sort_by_key(|(p, _)| *p.as_bytes());
+
+    let gesamt: u64 = sortiert.iter().map(|(_, n)| u64::from(*n)).sum();
     if gesamt == 0 {
         return Vec::new();
     }
@@ -176,15 +186,15 @@ pub fn stichprobe_der_epoche(
     let mut aus = Vec::with_capacity(gezogen.sampled_segments.len());
     for global in gezogen.sampled_segments {
         let mut rest = global;
-        for b in &sortiert {
-            if rest < b.segmente {
+        for (pod, segmente) in &sortiert {
+            if rest < *segmente {
                 aus.push(Segmentstichprobe {
-                    pod: b.pod,
+                    pod: *pod,
                     segment: rest,
                 });
                 break;
             }
-            rest -= b.segmente;
+            rest -= *segmente;
         }
     }
     aus
@@ -241,12 +251,18 @@ pub fn adressen_des_pods(
 /// Ein Pod, den niemand erreichen kann, ist nicht prüfbar. Sie
 /// mitzugeben zwingt den Aufrufer, es zu sehen; sonst wäre „ich nenne
 /// keine Adresse" die billigste Art, sich der Prüfung zu entziehen.
+///
+/// 📌 **Fund 656 (2026-10-27): Geliefert wird die fertige Nachforderung,
+/// nicht die nackte Spuranfrage.** Bis dahin kodierte der Aufrufer die
+/// Anfrage selbst, nackt, und der Empfänger las sie als etwas anderes oder
+/// gar nicht; keine Stichprobe kam je an. Wer jetzt die Bytes braucht, ruft
+/// `als_bytes` und kann die Hülle nicht mehr vergessen.
 pub fn anfragen_fuer(
     gezogen: &[Segmentstichprobe],
     epoche: u64,
     pod_finden: impl Fn(&PodId) -> Option<myl_scheduler::shard_assignment::Pod>,
 ) -> (
-    Vec<(myl_types::latency_attest::PeerIdBytes, myl_types::Spuranfrage)>,
+    Vec<(myl_types::latency_attest::PeerIdBytes, crate::nachschub::Nachforderung)>,
     usize,
 ) {
     let mut aus = Vec::new();
@@ -269,7 +285,7 @@ pub fn anfragen_fuer(
         // ⚑ **Jedes Mitglied wird gefragt**, nicht nur eines: Sonst
         // genügte das Schweigen eines Einzelnen.
         for a in adressen {
-            aus.push((a, anfrage));
+            aus.push((a, crate::nachschub::Nachforderung::Spur(anfrage)));
         }
     }
     (aus, ohne_adresse)
@@ -525,10 +541,19 @@ mod tests {
         let (fragen, ohne) = anfragen_fuer(&gezogen, 3, |_| Some(pod.clone()));
         assert_eq!(ohne, 0);
         assert_eq!(fragen.len(), 6, "zwei Ziehungen mal drei Mitglieder");
-        assert!(fragen.iter().all(|(_, a)| a.epoche.0 == 3));
+        let spur = |n: &crate::nachschub::Nachforderung| match n {
+            crate::nachschub::Nachforderung::Spur(a) => *a,
+            andere => panic!("eine Stichprobe muss als Spuranfrage hinausgehen, nicht als {andere:?}"),
+        };
+        assert!(fragen.iter().all(|(_, n)| spur(n).epoche.0 == 3));
         let segmente: std::collections::BTreeSet<u32> =
-            fragen.iter().map(|(_, a)| a.segment).collect();
+            fragen.iter().map(|(_, n)| spur(n).segment).collect();
         assert_eq!(segmente.len(), 2, "beide Segmente muessen gefragt werden");
+        // 📌 Fund 656: Was hinausgeht, liest der Empfänger als Spuranfrage.
+        for (_, n) in &fragen {
+            let bytes = n.als_bytes().expect("Borsh");
+            assert_eq!(crate::nachschub::Nachforderung::aus_bytes(&bytes).as_ref(), Some(n));
+        }
     }
 
     /// ⚑ **Ein Pod ohne Adresse wird gezaehlt, nicht uebergangen.**

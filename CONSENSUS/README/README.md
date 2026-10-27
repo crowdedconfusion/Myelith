@@ -1,8 +1,8 @@
 # consensus (`myl-consensus` + `myl-ledger` + `myl-scheduler`)
 
-> **Version:** 0.52.0 (`myl-consensus` 0.34.0, `myl-scheduler` 0.18.1,
-> `myl-ledger` 0.26.0)
-> **Datum:** 2026-10-24
+> **Version:** 0.57.0 (`myl-consensus` 0.39.0, `myl-scheduler` 0.18.1,
+> `myl-ledger` 0.29.0)
+> **Datum:** 2026-10-27
 > **Status:** Design-Entscheidungen getroffen (malachite hinter
 > trait-Grenze mit Eigenbau-Fallback, Blockzeit 2 s, Komitee 21/7,
 > Streitfrist 7 Tage, Reed-Solomon k=8/m=4);
@@ -107,6 +107,175 @@ myl-consensus/tests/
 ```
 
 ## Changelog
+
+### v0.57.0 (2026-10-27): Gebühren (`myl-consensus` 0.39.0, `myl-ledger` 0.29.0)
+
+- ⚑ **`Transaktion::max_gebuehr`** (Festlegung des Projektinhabers):
+  höchstens so viel Gebühr zahlt der Absender; unterschrieben wie alles
+  andere (`transaktionsbytes` nimmt das Feld auf). `signiere` sagt ohne
+  Grenze zu (`u64::MAX`), `signiere_mit_grenze` mit.
+  `Transaktion::gebuehrenbytes` zählt die kodierte Transaktion.
+  ⚠️ Ändert die Kodierung jeder Transaktion; alte Ketten sind nicht lesbar.
+- `myl-ledger`: Der Zustand führt `grundpreis_je_byte`, `gebuehren_epoche`
+  (die Gebühren der laufenden Epoche), `gebuehren_validatoren` (der Topf
+  der Validatoren, bis es eine Gewichtsquelle für sie gibt) und
+  `hinterlegungen` (je Art und Kennung wer wie viel hinterlegt hat). Die
+  Regeln dazu stehen im Knoten (NODE 0.72.0).
+- Fuzz-Korpus: zwei Transaktionen mit dem neuen Feld
+  (`korpussaat::transaktionen_fuer_den_fuzzer`, über
+  `KORPUS_TRANSAKTION_NACH`); die älteren Saaten lesen sich nicht mehr
+  vollständig und bleiben als Regression liegen.
+- 284 Tests in `myl-consensus`, 118 in `myl-ledger` grün, Clippy sauber.
+
+### v0.56.0 (2026-10-27): Vertrauensfrist und Doppelbelege (`myl-consensus` 0.38.0, `myl-ledger` 0.28.0)
+
+- ⚑ **Die Vertrauensfrist** (Festlegung des Projektinhabers):
+  `einsatz::VERTRAUENSFRIST_EPOCHEN = SPERRFRIST_EPOCHEN * 2 / 3`, also 112
+  Epochen; 56 bleiben als Rand, in dem ein Beleg für eine Doppelunterschrift
+  noch in einen Block kommt. Abgeleitet, damit sie mit der Sperrfrist wandert.
+  Wer sie anwendet, steht im Knoten (NODE 0.71.0).
+- ⚑ **Doppelbelege** (`double_signing::Doppelbeleg`): zwei Blöcke derselben
+  Höhe vom selben Erzeuger (`Belegblock`: Kopf, Rumpf als rohe Bytes,
+  Unterschrift) oder zwei Prüfpunktstimmen eines Wählers für dieselbe Höhe.
+  `Doppelbeleg::schuldiger` prüft ohne weiteren Zustand: derselbe Schlüssel,
+  dieselbe Höhe, verschiedene Werte, beide Unterschriften tragen; bei
+  Prüfpunktstimmen folgt die Kennung aus dem Schlüssel. 📌 **Rohe Bytes statt
+  eines Blocks**: Ein Beleg mit Blöcken wäre ein rekursiver Typ (Block,
+  Transaktion, Beleg, Block), und beliebig tief verschachtelte Belege liessen
+  beim Lesen den Stack wachsen. Dafür `Block::rumpfbytes`,
+  `Block::hash_aus_teilen`, `block::erzeugernachricht_zum_hash`.
+  Blöcke und Stimmen stehen im Beleg in einer `Box`, ebenso der Beleg in
+  der Anweisung (Clippy: grosser Unterschied zwischen den Varianten); an der
+  Kodierung ändert das nichts.
+- Neu angehängt `Anweisung::DoppelbelegEinreichen`; `DoubleSignError` um
+  `VerschiedeneTaeter` und `VerschiedeneHoehen` erweitert.
+- `myl-ledger`: Der Zustand führt `doppelbelege` (je Schuldiger, Art, Höhe
+  die Epoche der Buchung), damit derselbe Widerspruch nur einmal schlachtet;
+  Einträge fallen nach der Sperrfrist weg.
+- Proben: `zwei_bloecke_derselben_hoehe_belegen_den_erzeuger`,
+  `zwei_pruefpunktstimmen_belegen_den_waehler` (Gegenproben: andere Höhe,
+  anderer Täter, derselbe Wert, gefälschte Unterschrift, veränderter Rumpf),
+  `der_beleg_ueberlebt_borsh`, `die_vertrauensfrist_liegt_mit_rand_unter_der_sperrfrist`.
+- 283 Tests in `myl-consensus`, 118 in `myl-ledger` grün, Clippy sauber.
+
+### v0.55.0 (2026-10-27): Prüfpunkte, Stufe 1 der Endgültigkeit (`myl-consensus` 0.37.0, `myl-ledger` 0.27.0)
+
+- ⚑ **Festlegungen des Projektinhabers vom 2026-10-27:** Ziel ist das
+  Whitepaper (Kap. 3.5.2: BFT je Block, HotStuff-Familie, Erzeuger rotiert
+  per VRF). **Stufe 1 sind Prüfpunkte** alle 150 Blöcke
+  (`pruefpunkt::BLOECKE_JE_PRUEFPUNKT`, teilt die Epoche), und zwar über
+  **Prüfpunktstimmen statt Runden** (nach Casper FFG und GRANDPA): Jedes
+  Mitglied unterschreibt (Höhe, Blockhash) des Blocks, den es hat
+  (`Pruefpunktstimme`, eigenes Trennzeichen `MYELITH_PRUEFPUNKT_v1`); ab mehr
+  als zwei Dritteln des Gewichts entsteht ein `Pruefpunktzertifikat`.
+  Geprüft mit demselben Kern wie die Zertifikate der Runden
+  (`round_change::pruefe_aggregat`, jetzt `pub(crate)`). Zwei Zertifikate für
+  dieselbe Höhe brauchen ein Drittel Doppelstimmen; deren Schlachtung folgt.
+- ⚑ **Kopffeld `pruefpunkt: Option<Pruefpunktzertifikat>` ersetzt
+  `saatquelle`** (rohe Bytes eines Commitzertifikats mit Blockhash als
+  Rückfall). Formatwechsel: Blöcke und Kettendateien des alten Formats sind
+  nicht mehr lesbar. Neu angehängt `Konsensnachricht::Pruefpunktstimme`.
+- `myl-ledger`: Der Zustand führt `pruefpunkt_bestaetigt` (bis wohin die
+  Kette bestätigt ist) und `stichproben_offen` (`OffeneStichprobe`): Beim
+  Epochenwechsel werden nur noch die Anteile der bezeugten Bündel
+  aufgehoben; gezogen wird mit dem Zertifikat des Wechsels (NODE 0.70.0).
+  Im Zustand, damit auch ein Knoten aus einem Abzug dasselbe nächste
+  Zertifikat annimmt.
+- Proben in `pruefpunkt.rs`: drei von vier tragen, zwei nicht; andere Höhe,
+  keine Prüfpunkthöhe, ein Fremder, ein Commit der Runden als Stimme, zwei
+  Blöcke in einem Zertifikat: alle abgewiesen. Die Fuzz-Saaten des Blocks
+  sind im neuen Format neu geschrieben (eine ohne, eine mit Zertifikat);
+  373 000 Mutationen kanonisch.
+- 280 Tests in `myl-consensus`, 117 in `myl-ledger` grün, Clippy sauber.
+
+### v0.54.1 (2026-10-27): Der Auszahlungseintrag überlebt die Abmeldung, mit Probe (`myl-ledger` 0.26.2)
+
+- ⛔️ **Festgehalten, nicht geändert** (Festlegung des Projektinhabers vom
+  2026-10-27): `miner_abmelden` lässt das Auszahlungskonto stehen. Würde es
+  mit der Anmeldung gelöscht, könnte ein Dieb mit dem heissen Schlüssel
+  abmelden, sich mit derselben Kennung neu anmelden und als „erste
+  Eintragung“ sein Konto setzen. Wer bestohlen wurde, meldet sich mit einem
+  neuen Konsensschlüssel an. Ein Wechsel des Auszahlungskontos mit Frist
+  wurde verworfen: Widersprechen dürfte dasselbe Konto, das gestohlen ist.
+- Probe `abmelden_und_neu_anmelden_leitet_den_ertrag_nicht_um`; Gegenprobe
+  (Eintrag beim Abmelden gelöscht) rot.
+- `myl-ledger` 0.26.2. 117 Tests grün, Clippy sauber.
+
+### v0.54.0 (2026-10-27): Der Block trägt die Unterschrift seines Erzeugers (`myl-consensus` 0.36.0)
+
+- ⚑ **`Block::unterschrift: Option<Erzeugerunterschrift>`**, angehängt:
+  öffentlicher Schlüssel und BLS-Unterschrift über
+  `DST_BLOCK_ERZEUGER ‖ Blockhash` (neues Präfix
+  `MYELITH_BLOCK_ERZEUGER_v1`). Der Schlüssel kommt mit und keine Kennung,
+  denn aus einem Hash folgt kein Schlüssel; die Kennung folgt aus ihm.
+- **Der Blockhash deckt die Unterschrift nicht** und ist damit bytegleich zu
+  vorher; bestehende Hashes und Ketten bleiben gültig, und keine
+  Unterschrift verändert, welcher Block gemeint ist.
+  `Block::erzeuger()` sagt `Ok(None)` (unsigniert), `Ok(Some(kennung))`
+  (trägt) oder `Err` (steht da und trägt nicht).
+- Probe `die_unterschrift_des_erzeugers_traegt_und_bindet_den_block`: trägt,
+  Hash unverändert, Borsh rundweg; Gegenproben: ein veränderter Block und ein
+  untergeschobener Schlüssel tragen nicht. Zwei Saaten im neuen Format für
+  das Fuzz-Ziel `block`. Die Prüfung beim Übernehmen steht im Knoten
+  (NODE 0.65.0).
+- `tests/fuzzkorpus.rs`: die Mutationsprobe auf stable wie in `myl-types`
+  (`mutationen_der_saat_bleiben_kanonisch`): 373 000 Mutationen über die
+  sechs Ziele, 9 759 lesbar, alle kanonisch, Block und Transaktion im neuen
+  Format eingeschlossen. Kein Fund. 276 Tests grün.
+- **Im Netz belegt** (kurzer Podlauf mit Tor, 2026-10-27): Der Erzeuger
+  unterschreibt jeden Block; die Kettendatei eines Miners wuchs um 144 Byte
+  je Block (Schlüssel 48, Unterschrift 96), und kein Knoten lehnte einen
+  Block wegen des Erzeugers ab. Eine Wurzel bei Höhe 12 637.
+- 📌 **`Block::hashbytes()`**: die Bytes, die der Blockhash deckt (der Block
+  ohne die Unterschrift). Wer Blockbytes weitergibt, die gegen den Hash
+  geprüft werden, gibt diese. Bis zum neuen Feld waren sie gleich der vollen
+  Kodierung, und der Archivbeleg verliess sich still darauf
+  (`myl_ledger::archiv::archiv_belegen` hasht rohe Bytes); mit dem Feld trug
+  er nicht mehr, und kein Knoten verdichtete. Gefunden an den
+  Verdichtungstests des Knotens, behoben dort (NODE 0.65.0).
+- ⚠️ Das Blockformat hat ein Byte mehr; Kettendateien im alten Format liest
+  ein neuer Knoten nicht mehr (vor dem Genesis-Block gewollt einfach).
+- `myl-consensus` 0.36.0.
+
+### v0.53.0 (2026-10-26): Zwei Quoren schneiden sich, auch an den Rändern von `u64` (Fund 652; `myl-consensus` 0.35.0)
+
+- 📌 **Fund 652: Ein Gesamtgewicht über `u64` brach den Quorumsschnitt.**
+  `VotingSet` summierte die Gewichte in u128 und sättigte auf `u64::MAX`;
+  Quorumsschwelle und Stimmenzählung sättigen ebenfalls. Lag die wahre
+  Summe darüber, gab es zwei Quoren ohne einen gemeinsamen Teilnehmer,
+  also zwei bestätigte Blöcke derselben Höhe. Im Betrieb begrenzt die
+  Geldmenge den Stake (das Gewicht ist heute der Stake), aber geprüft war
+  diese Schranke nirgends. Jetzt ergibt eine solche Summe eine Menge ohne
+  Gewicht: Kein Quorum ist erreichbar, der Konsens steht, statt sich zu
+  widersprechen (Sicherheit vor Lebendigkeit). An beiden Konstruktoren,
+  `for_producers` und `from_members`; die Schnittstelle bleibt.
+- ⚑ **`tests/quorumschnitt.rs`** (neu): der Quorumsschnitt als
+  Eigenschaftstest über den echten Code, die offene Frage aus dem
+  Auditzuschnitt („schneiden sich zwei Quoren wirklich in mehr als einem
+  Drittel, auch bei ungleichen Gewichten und Rundungen?“). 3 000 zufällige
+  Gewichtsvektoren, je 40 Reihenfolgen mit den beiden Quoren kleinsten
+  Schnitts: Dreimal der Schnitt liegt immer über der wahren Summe; wer die
+  Drittelschranke erreicht, hält mehr als ein Drittel. Dazu 500 Fälle mit
+  Gewichten nahe `u64::MAX`: Niemand erreicht ein Quorum. Gegenprobe mit
+  dem sättigenden Verhalten: rot (Riesenfall 0, Schnitt 0).
+- `myl-consensus` 0.35.0.
+
+### v0.52.1 (2026-10-26): Eine Sitzung hält ihren Kontrakt über jede Folge (`myl-ledger` 0.26.1)
+
+- ⚑ **Invariante 6 in `tests/invarianten.rs`**:
+  `eine_sitzung_haelt_ihren_kontrakt_ueber_jede_folge`. 60 Keime zu je 300
+  zufälligen Schritten unter einem Sitzungskontrakt: Beträge bis zum
+  Doppelten des Einzellimits, wiederholte und übersprungene Nummern, ein
+  Fremder als Handelnder, Widerrufe vom Fremden und vom Inhaber. Nach jedem
+  Schritt: Verbrauch nie über dem Budget; eine angenommene Abbuchung nie
+  über dem Einzellimit, nie nach dem Widerruf, nie mit verbrauchter Nummer,
+  mit genau ihrem Abzug; eine abgelehnte lässt den Zustand bitgleich. Der
+  Lauf zählt mit, dass gebucht wird und das Budget an seinen Rand kommt.
+  Gegenprobe ohne die Budgetprüfung in `pruefe`: rot (Keim 4, Schritt 53,
+  Verbrauch 527 bei Budget 500). Bisher standen diese Grenzen nur an
+  getippten Beispielen; die Tür verlässt sich auf sie (Angriffsklassen A17
+  und A19 in `SIMULATION/Sicherheitsaudit.md`).
+- `myl-ledger` 0.26.1.
 
 ### v0.52.0 (2026-10-24): Eine knappe halbe Periode zum Nachladen (`myl-ledger` 0.26.0, Fund 628)
 

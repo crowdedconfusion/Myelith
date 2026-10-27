@@ -1,6 +1,6 @@
 [package]
 name = "myl-oberflaeche"
-version = "0.85.3"
+version = "0.86.1"
 edition = "2021"
 rust-version = "1.99"
 description = "Die grafische Oberflaeche des Clients auf Tauri: ein Gespraechsfenster, das dieselben Funktionen ruft wie die Kommandozeile."
@@ -62,3 +62,23 @@ opt-level = 2
 debug-assertions = true
 overflow-checks = true
 debug = "line-tables-only"
+
+# Ueberlaufpruefung im Freigabebau, nur fuer die Protokollkisten
+# (Festlegung des Projektinhabers, 2026-10-26). `--release` schaltet sie
+# sonst ab, und eine Rechnung im Konsenspfad liefe an den Raendern still
+# um; so wird aus einem stillen Fehler ein lauter Halt. Die Rechenkerne
+# (`integer-llm-*`) bleiben ohne, dort zaehlt jede Anweisung, und sie
+# rechnen mit ausdruecklichem `wrapping_*`. Ein Profil gilt nur in der
+# Kiste, die gebaut wird, deshalb steht die Liste in jeder Programmkiste.
+[profile.release.package.myl-types]
+overflow-checks = true
+[profile.release.package.myl-ledger]
+overflow-checks = true
+[profile.release.package.myl-consensus]
+overflow-checks = true
+[profile.release.package.myl-store]
+overflow-checks = true
+[profile.release.package.myl-client]
+overflow-checks = true
+[profile.release.package.myl-agent]
+overflow-checks = true

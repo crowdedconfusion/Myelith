@@ -1,7 +1,7 @@
 # gateway (`myl-gateway`)
 
-> **Version:** 0.8.1
-> **Datum:** 2026-10-24
+> **Version:** 0.10.0
+> **Datum:** 2026-10-26
 > **Status:** Stufe 1 steht: die Tür auf `localhost` und der Beleg. Sie
 > nimmt entgegen und schreibt fest; **an einen Pod gibt sie noch nichts**.
 
@@ -83,6 +83,34 @@ Sitzungen nicht denselben Wert bekommt und eine Bindung nicht
 übertragbar ist.
 
 ## Changelog
+
+### v0.10.0 (2026-10-26): Der Kontrakt deckt den Höchstbetrag, bevor gerechnet wird (Fund 651)
+
+- 📌 **Fund 651: Die Tür rechnete über die Grenzen des Kontrakts.** Vor dem
+  Rechnen prüfte sie die Vorbehalte der Vollmacht und den Kontrakt mit dem
+  Betrag eins; Einzellimit und Restbudget prüfte erst die Kette beim
+  Abbuchen. Eine Anfrage darüber wurde gerechnet und beantwortet, die
+  Abbuchung scheiterte, die Arbeit war verschenkt. Jetzt hält
+  `Zugangsstelle::deckt_der_kontrakt` den Höchstbetrag (`max_tokens`) mit
+  derselben Prüfung gegen den Kontrakt, die die Kette anlegt
+  (`pruefe_zugang`), und die Tür antwortet vorher mit 402. Beleg im
+  TESTCLIENT (`einzellimit_und_restbudget_greifen_vor_dem_rechnen`: über
+  dem Einzellimit und über dem Restbudget läuft das Rechenwerk nicht,
+  innerhalb der Grenzen schon); ohne die Prüfung rot. Gefunden beim
+  Nachtrag der Angriffsklassen A16 bis A24 in `SIMULATION/Sicherheitsaudit.md`.
+- `myl-gateway` 0.10.0.
+
+### v0.9.0 (2026-10-26): Annehmen und Beantworten getrennt (Fund 647)
+
+- ⚑ **`Tuer::annehmen`** wartet auf eine Verbindung und gibt sie als
+  `Verbindung` zurück, ungelesen; `mit_zugang_beantworten` und
+  `v1_beantworten` bedienen sie. So liest ein Wirt Epoche und Uhr **nach**
+  dem Warten und nicht davor. 📌 Fund 647: Der Knoten las beides vor dem
+  Warten, und die erste Anfrage nach einer Pause wurde gegen die alte
+  Epoche geprüft und abgewiesen. `bedienen_mit_zugang` und `bedienen_v1`
+  bleiben als Kurzform (annehmen, beantworten) und sagen in ihrer Doku,
+  dass ihre Werte vor dem Warten feststehen. Der Beleg steht im Knoten
+  (Test mit Gegenprobe). 55 Tests grün. `myl-gateway` 0.9.0.
 
 ### v0.8.1 (2026-10-24): `tokio` 1.54.1 wegen RUSTSEC-2026-0386
 

@@ -116,37 +116,67 @@ pub struct BlockHeader {
     /// vorschlagen, und das Komitee hätte nichts, woran es den Fehler
     /// festmachen könnte.
     pub state_root: Hash,
-    /// Die Saatquelle für die Stichprobenlotterie des Vorgängers
-    /// (Punkt 44).
+    /// ⚑ **Das Zertifikat eines Prüfpunkts** (Festlegung des
+    /// Projektinhabers vom 2026-10-27, ersetzt `saatquelle`): der Beleg,
+    /// dass mehr als zwei Drittel des Stimmsatzes den Block an einer Höhe
+    /// `150 · n` bestätigt haben ([`crate::pruefpunkt`]). Ein späterer Block
+    /// trägt es, sobald es beisammen ist.
     ///
-    /// # ⚑ Warum sie in den Block muss und nicht lokal bleiben kann
+    /// **Aus ihm kommt die Saat der Stichprobe**: Das Zertifikat des
+    /// Epochenwechsels entsteht erst, nachdem die Bündel der Epoche
+    /// feststehen, also kann es niemand beim Einreichen kennen. Der Rückfall
+    /// auf den Blockhash (Fund 120, unbegrenzter Mahlraum) entfällt; hängt
+    /// die Abstimmung, wartet die Ziehung auf das nächste Zertifikat.
     ///
-    /// Die Saat entscheidet, **wer nachgerechnet wird**, und das ist
-    /// eine Konsensentscheidung. Das Commitzertifikat entsteht in der
-    /// Runde und liegt danach **lokal** bei dem, der es zusammengesetzt
-    /// hat; zwei Knoten mit verschiedenen Zertifikaten zögen
-    /// verschiedene Segmente. **Eine Saat aus lokalem Zustand ist keine
-    /// Saat, sondern eine Meinung.**
-    ///
-    /// Hier steht deshalb, was der Erzeuger als Quelle benutzt hat, und
-    /// jeder rechnet damit dasselbe. Es ist die geläufige Bauart für
-    /// diese Art Bindung: **Ein Block trägt den Beleg für seinen
-    /// Vorgänger mit**, statt dass der Leser ihn sich aus eigenem
-    /// Zustand zusammensucht.
-    ///
-    /// ⚑ **`None` heißt Blockhash**, und das ist der Rückfall für die
-    /// erste Runde und für einen Knoten ohne Zertifikat. Er ist
-    /// **schlechter** (unbegrenzter Mahlraum statt höchstens sechzehn
-    /// Bit, Fund 120) und deshalb ausdrücklich benannt statt
-    /// stillschweigend.
-    ///
-    /// **Additiv angehängt, nie eingefügt:** Die Feldreihenfolge ist
-    /// Konsensvertrag.
-    pub saatquelle: Option<Vec<u8>>,
+    /// 📌 Hier stand bis zum 2026-10-27 `saatquelle: Option<Vec<u8>>`, rohe
+    /// Bytes eines Commitzertifikats, die den Vorgänger bestätigten: ein
+    /// Feld, das erst gelesen werden musste, um zu wissen, ob es überhaupt
+    /// ein Zertifikat war. Ein typisiertes Feld kennt diesen Fall nicht.
+    pub pruefpunkt: Option<crate::pruefpunkt::Pruefpunktzertifikat>,
 }
 
 /// Trennzeichen für die Transaktionsunterschrift.
 pub const DST_TRANSAKTION: &[u8] = b"MYELITH_TRANSAKTION_v1";
+
+/// Trennzeichen für die Unterschrift des Erzeugers unter einem Block.
+pub const DST_BLOCK_ERZEUGER: &[u8] = b"MYELITH_BLOCK_ERZEUGER_v1";
+
+/// Die Botschaft des Erzeugers zu einem Blockhash: `DST_BLOCK_ERZEUGER ‖ Hash`.
+pub fn erzeugernachricht_zum_hash(hash: &Hash) -> Vec<u8> {
+    let mut m = DST_BLOCK_ERZEUGER.to_vec();
+    m.extend_from_slice(hash.as_bytes());
+    m
+}
+
+/// **Die Unterschrift des Erzeugers** (2026-10-27).
+///
+/// # ⚑ Warum der Schlüssel mitkommt und keine Kennung
+///
+/// Eine Kennung ist der Hash eines Schlüssels, und aus einem Hash folgt
+/// kein Schlüssel. Ein Übernehmer ohne Stimmsatz könnte eine Unterschrift
+/// unter einer blossen Kennung nie prüfen; mit dem Schlüssel kann er es
+/// immer, und mit Stimmsatz prüft er zusätzlich, dass es **der** Schlüssel
+/// dieses Mitglieds ist. Die Kennung folgt daraus
+/// ([`Erzeugerunterschrift::erzeuger`]), ein zweites Feld dafür liesse sich
+/// abweichend füllen.
+#[derive(Debug, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
+pub struct Erzeugerunterschrift {
+    /// Der öffentliche Schlüssel des Erzeugers.
+    pub schluessel: BlsPublicKey,
+    /// Die Unterschrift über [`Block::erzeugernachricht`].
+    pub signatur: BlsSignature,
+}
+
+impl Erzeugerunterschrift {
+    /// Die Kennung des Erzeugers: der Hash seines Schlüssels.
+    pub fn erzeuger(&self) -> MinerId {
+        MinerId::aus_schluessel(&self.schluessel)
+    }
+}
+
+/// Eine Unterschrift unter einem Block, die nicht trägt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UnterschriftTraegtNicht;
 
 /// Was eine Transaktion anweist.
 ///
@@ -413,6 +443,16 @@ pub enum Anweisung {
         /// Die Pfade zur Teilwurzel.
         beweis: myl_types::archivteile::Teilbeweis,
     },
+    /// ⚑ **Ein Beleg für eine Doppelunterschrift** (2026-10-27, CONSENSUS
+    /// 7.6): zwei Blöcke derselben Höhe vom selben Erzeuger oder zwei
+    /// Prüfpunktstimmen eines Wählers für dieselbe Höhe. Die Kette prüft
+    /// ihn und schlachtet nach der Matrix (Validator, Doppelsignatur), der
+    /// Melder bekommt das Kopfgeld. Angehängt.
+    DoppelbelegEinreichen {
+        /// Der Beleg (in einer `Box`: Er ist viel grösser als die übrigen
+        /// Anweisungen; die Kodierung ist dieselbe).
+        beleg: Box<crate::double_signing::Doppelbeleg>,
+    },
 }
 
 /// Die Bytes, über die der Absender unterschreibt.
@@ -429,14 +469,16 @@ pub fn transaktionsbytes(
     netz: &Hash,
     absender: &BlsPublicKey,
     nonce: u64,
+    max_gebuehr: u64,
     anweisung: &Anweisung,
 ) -> Vec<u8> {
     let kodiert = borsh::to_vec(anweisung).expect("Anweisung ist stets serialisierbar");
-    let mut msg = Vec::with_capacity(DST_TRANSAKTION.len() + 32 + 48 + 8 + kodiert.len());
+    let mut msg = Vec::with_capacity(DST_TRANSAKTION.len() + 32 + 48 + 16 + kodiert.len());
     msg.extend_from_slice(DST_TRANSAKTION);
     msg.extend_from_slice(netz.as_bytes());
     msg.extend_from_slice(&absender.0);
     msg.extend_from_slice(&nonce.to_le_bytes());
+    msg.extend_from_slice(&max_gebuehr.to_le_bytes());
     msg.extend_from_slice(&kodiert);
     msg
 }
@@ -476,6 +518,12 @@ pub struct Transaktion {
     pub absender: BlsPublicKey,
     /// Fortlaufende Nummer dieses Kontos, gegen Wiedereinspielung.
     pub nonce: u64,
+    /// ⚑ **Höchstens so viel Gebühr zahlt der Absender** (2026-10-27,
+    /// Festlegung des Projektinhabers, G1): Liegt Grundpreis mal Bytes
+    /// darüber, wartet die Transaktion, statt teurer zu werden, als der
+    /// Absender unterschrieben hat. `u64::MAX` heisst: ohne Grenze.
+    /// Unterschrieben wie alles andere.
+    pub max_gebuehr: u64,
     /// Was getan werden soll.
     pub anweisung: Anweisung,
     /// Unterschrift über [`transaktionsbytes`].
@@ -490,21 +538,37 @@ impl Transaktion {
         Address::aus_schluessel(&self.absender)
     }
 
-    /// Unterschreibt eine Anweisung.
+    /// Unterschreibt eine Anweisung, ohne Grenze für die Gebühr.
     pub fn signiere(
         netz: &Hash,
         schluessel: &myl_types::bls::BlsSecretKey,
         nonce: u64,
         anweisung: Anweisung,
     ) -> Result<Self, myl_types::bls::BlsError> {
+        Self::signiere_mit_grenze(netz, schluessel, nonce, u64::MAX, anweisung)
+    }
+
+    /// Unterschreibt eine Anweisung mit einer Grenze für die Gebühr (G1).
+    pub fn signiere_mit_grenze(
+        netz: &Hash,
+        schluessel: &myl_types::bls::BlsSecretKey,
+        nonce: u64,
+        max_gebuehr: u64,
+        anweisung: Anweisung,
+    ) -> Result<Self, myl_types::bls::BlsError> {
         let absender = schluessel.public_key()?;
-        let signatur = schluessel.sign(&transaktionsbytes(netz, &absender, nonce, &anweisung))?;
-        Ok(Self { absender, nonce, anweisung, signatur })
+        let signatur = schluessel.sign(&transaktionsbytes(netz, &absender, nonce, max_gebuehr, &anweisung))?;
+        Ok(Self { absender, nonce, max_gebuehr, anweisung, signatur })
+    }
+
+    /// Wie viele Bytes die Gebühr zählt: die kodierte Transaktion.
+    pub fn gebuehrenbytes(&self) -> u64 {
+        borsh::to_vec(self).map_or(u64::MAX, |b| b.len() as u64)
     }
 
     /// Prüft die Unterschrift gegen diese Kette.
     pub fn pruefe(self, netz: &Hash) -> Result<GepruefteTransaktion, TransaktionsFehler> {
-        let bytes = transaktionsbytes(netz, &self.absender, self.nonce, &self.anweisung);
+        let bytes = transaktionsbytes(netz, &self.absender, self.nonce, self.max_gebuehr, &self.anweisung);
         if !self.absender.verify(&bytes, &self.signatur) {
             return Err(TransaktionsFehler::SignaturStimmtNicht);
         }
@@ -542,6 +606,13 @@ pub struct Block {
     /// Verdicts — dieselbe Struktur, die `myl_ledger::apply_verdict`
     /// verarbeitet.
     pub verdicts: Vec<Verdict>,
+    /// Die Unterschrift des Erzeugers (2026-10-27).
+    ///
+    /// ⚑ **Nicht im Blockhash.** Sie unterschreibt den Hash und kann ihn
+    /// deshalb nicht enthalten; der Hash ist damit derselbe wie vor dem
+    /// Feld, und keine Unterschrift verändert, welcher Block gemeint ist.
+    /// **Additiv angehängt:** Die Feldreihenfolge ist Konsensvertrag.
+    pub unterschrift: Option<Erzeugerunterschrift>,
 }
 
 impl Block {
@@ -553,6 +624,7 @@ impl Block {
             poi_bundles: Vec::new(),
             challenges: Vec::new(),
             verdicts: Vec::new(),
+            unterschrift: None,
         }
     }
 
@@ -581,9 +653,73 @@ impl Block {
     /// Der Hash deckt `state_root` mit ab — eine Manipulation der
     /// gebuchten Zustandsübergänge verändert damit den Hash, über den
     /// abgestimmt wird.
+    ///
+    /// ⚑ **Ohne die Unterschrift des Erzeugers**: dieselben
+    /// Bytes wie vor dem Feld, in derselben Reihenfolge.
     pub fn hash(&self) -> Hash {
-        let bytes = borsh::to_vec(self).expect("Borsh-Serialisierung sollte nicht fehlschlagen");
-        Hash::sha256(&bytes)
+        Hash::sha256(&self.hashbytes())
+    }
+
+    /// **Die Bytes, die der Blockhash deckt**: der Block ohne die
+    /// Unterschrift des Erzeugers.
+    ///
+    /// 📌 Wer einen Block als Bytes weitergibt, die gegen seinen Hash geprüft
+    /// werden (der Archivbeleg, `myl_ledger::archiv::archiv_belegen`), gibt
+    /// **diese** Bytes, nicht die volle Kodierung. Bis zur Unterschrift des
+    /// Erzeugers waren beide dasselbe, und genau darauf verliess sich der
+    /// Archivbeleg still; mit ihr trug er nicht mehr, und kein Knoten
+    /// verdichtete (gefunden an `tests/verdichtung.rs` im Knoten).
+    pub fn hashbytes(&self) -> Vec<u8> {
+        borsh::to_vec(&(&self.header, &self.txs, &self.poi_bundles, &self.challenges, &self.verdicts))
+            .expect("Borsh-Serialisierung sollte nicht fehlschlagen")
+    }
+
+    /// **Der Rumpf**: die Bytes des Blockhashes ohne den Kopf. Borsh kodiert
+    /// das Tupel als Folge seiner Teile, also gilt
+    /// `hashbytes = borsh(Kopf) ‖ Rumpf` (2026-10-27, für den
+    /// [`crate::double_signing::Doppelbeleg`]).
+    pub fn rumpfbytes(&self) -> Vec<u8> {
+        borsh::to_vec(&(&self.txs, &self.poi_bundles, &self.challenges, &self.verdicts))
+            .expect("Borsh-Serialisierung sollte nicht fehlschlagen")
+    }
+
+    /// Der Blockhash aus Kopf und Rumpf, ohne den Rumpf zu zerlegen.
+    pub fn hash_aus_teilen(kopf: &BlockHeader, rumpf: &[u8]) -> Hash {
+        let mut b = borsh::to_vec(kopf).expect("Borsh-Serialisierung sollte nicht fehlschlagen");
+        b.extend_from_slice(rumpf);
+        Hash::sha256(&b)
+    }
+
+    /// Was der Erzeuger unterschreibt: `DST_BLOCK_ERZEUGER ‖ Blockhash`.
+    /// Der Hash bindet Höhe, Vorgänger und damit Kette und Netz.
+    pub fn erzeugernachricht(&self) -> Vec<u8> {
+        erzeugernachricht_zum_hash(&self.hash())
+    }
+
+    /// Unterschreibt den Block als Erzeuger.
+    pub fn unterschreiben(&mut self, sk: &myl_types::bls::BlsSecretKey) -> Result<(), myl_types::bls::BlsError> {
+        let signatur = sk.sign(&self.erzeugernachricht())?;
+        self.unterschrift = Some(Erzeugerunterschrift { schluessel: sk.public_key()?, signatur });
+        Ok(())
+    }
+
+    /// **Wer diesen Block erzeugt hat, belegt durch seine Unterschrift.**
+    ///
+    /// `Ok(None)`: unsigniert. `Ok(Some(kennung))`: die Unterschrift trägt
+    /// unter dem mitgeführten Schlüssel. `Err`: Sie steht da und trägt
+    /// nicht; ein solcher Block ist abzuweisen, denn was im Block steht,
+    /// muss geprüft werden oder darf nicht drin stehen (Fund 192).
+    ///
+    /// ⚠️ **Das belegt, wer, nicht dass er durfte.** Ob der Erzeuger zum
+    /// Stimmsatz gehört, prüft der Übernehmer gegen seinen Satz.
+    pub fn erzeuger(&self) -> Result<Option<MinerId>, UnterschriftTraegtNicht> {
+        let Some(u) = &self.unterschrift else {
+            return Ok(None);
+        };
+        if !u.schluessel.verify(&self.erzeugernachricht(), &u.signatur) {
+            return Err(UnterschriftTraegtNicht);
+        }
+        Ok(Some(u.erzeuger()))
     }
 
     /// Gibt die Gesamtanzahl der Einträge zurück.
@@ -622,6 +758,39 @@ impl Block {
 mod tests {
     use super::*;
     use myl_ledger::transitions::VerdictOutcome;
+
+    /// ⚑ **Die Unterschrift des Erzeugers**: Sie trägt unter
+    /// ihrem Schlüssel, ändert den Blockhash nicht, und weder ein
+    /// veränderter Block noch ein untergeschobener Schlüssel kommen durch.
+    #[test]
+    fn die_unterschrift_des_erzeugers_traegt_und_bindet_den_block() {
+        let sk = myl_types::bls::BlsSecretKey::key_gen(&[3u8; 32]).expect("Schlüssel");
+        let mut block = Block::new(test_meta());
+        assert_eq!(block.erzeuger(), Ok(None), "unsigniert ist kein Fehler");
+        let vorher = block.hash();
+        block.unterschreiben(&sk).expect("unterschreiben");
+        assert_eq!(block.hash(), vorher, "die Unterschrift ändert den Blockhash");
+        let kennung = MinerId::aus_schluessel(&sk.public_key().expect("pk"));
+        assert_eq!(block.erzeuger(), Ok(Some(kennung)));
+        // Kanonisch und rundweg: dieselben Bytes zurück.
+        let bytes = borsh::to_vec(&block).expect("Borsh");
+        let zurueck: Block = borsh::from_slice(&bytes).expect("lesen");
+        assert_eq!(zurueck, block);
+        // Die Bytes des Hashes sind die Kodierung ohne das letzte Feld.
+        assert_eq!(Hash::sha256(&block.hashbytes()), block.hash());
+        assert!(bytes.starts_with(&block.hashbytes()) && bytes.len() > block.hashbytes().len());
+
+        // ⛔️ Gegenproben: ein veränderter Block, ein fremder Schlüssel.
+        let mut veraendert = block.clone();
+        veraendert.header.timestamp_ms += 1;
+        assert_eq!(veraendert.erzeuger(), Err(UnterschriftTraegtNicht), "ein veränderter Block trug die Unterschrift");
+        let fremd = myl_types::bls::BlsSecretKey::key_gen(&[4u8; 32]).expect("Schlüssel");
+        let mut untergeschoben = block.clone();
+        if let Some(u) = untergeschoben.unterschrift.as_mut() {
+            u.schluessel = fremd.public_key().expect("pk");
+        }
+        assert_eq!(untergeschoben.erzeuger(), Err(UnterschriftTraegtNicht), "ein fremder Schlüssel trug die Unterschrift");
+    }
     use myl_types::bls::BlsSignature;
     use myl_types::ids::{EpochId, MerkleRoot, PodId, SegmentId};
 
@@ -637,7 +806,7 @@ mod tests {
             prev_block_hash: test_hash(0),
             timestamp_ms: 1_700_000_000_000,
             state_root: test_hash(99),
-            saatquelle: None,
+            pruefpunkt: None,
         }
     }
 
@@ -882,6 +1051,28 @@ mod korpussaat {
             let bytes = borsh::to_vec(p).expect("kodierbar");
             std::fs::write(d.join(format!("schuldspruch-{i}")), &bytes).expect("schreiben");
             eprintln!("[korpussaat] {} Bytes nach {}", bytes.len(), ziel);
+        }
+    }
+
+    /// Schreibt Transaktionen mit `max_gebuehr` (G1), wenn
+    /// `KORPUS_TRANSAKTION_NACH` gesetzt ist: ohne Grenze und mit.
+    #[test]
+    fn transaktionen_fuer_den_fuzzer() {
+        let Ok(ziel) = std::env::var("KORPUS_TRANSAKTION_NACH") else {
+            return;
+        };
+        let d = std::path::PathBuf::from(&ziel);
+        std::fs::create_dir_all(&d).expect("Verzeichnis");
+        let netz = Hash::sha256(b"korpus");
+        let sk = myl_types::bls::BlsSecretKey::key_gen(&[7u8; 32]).expect("Schluessel");
+        let nach = myl_types::ids::Address::new([8u8; 32]);
+        let proben = [
+            Transaktion::signiere(&netz, &sk, 0, Anweisung::Ueberweisung { nach, betrag: 1 }).expect("signieren"),
+            Transaktion::signiere_mit_grenze(&netz, &sk, 3, 600, Anweisung::Burn { betrag: 9 }).expect("signieren"),
+        ];
+        for (i, p) in proben.iter().enumerate() {
+            let bytes = borsh::to_vec(p).expect("kodierbar");
+            std::fs::write(d.join(format!("gebuehr-{i}")), &bytes).expect("schreiben");
         }
     }
 }

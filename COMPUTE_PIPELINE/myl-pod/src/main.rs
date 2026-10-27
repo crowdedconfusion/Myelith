@@ -108,6 +108,9 @@ fn main() {
     let mut epoche: u64 = 0;
     let mut deckel: u32 = 16;
     let mut grenzen: Option<Vec<(usize, usize)>> = None;
+    let mut podrelais: Option<String> = None;
+    let mut knotenschluessel: Option<String> = None;
+    let mut podrelaisausweis: Option<String> = None;
     let mut i = 1;
     while i < args.len() {
         // Ein Wert, der fehlt, ist ein Fehler und kein Absturz: Das
@@ -134,6 +137,14 @@ fn main() {
             "--knoten" => { knoten_hex = Some(wert(i)); i += 2; }
             "--pipeline" => { pipeline_hex = Some(wert(i)); i += 2; }
             "--epoche" => { epoche = wert(i).parse().unwrap_or(0); i += 2; }
+            // ⚑ Über den Pod der Kette statt über ein Modell im Prozess
+            //   (2026-10-26): die Relaisleitung des Knotens und ihr Ausweis.
+            "--podrelais" => { podrelais = Some(wert(i)); i += 2; }
+            // ⚑ Den erwarteten Knoten aus seinem Konsensschlüssel statt als
+            //   Hex: ein Skript, das den Knoten danach startet, kennt den
+            //   Endpunkt sonst noch nicht.
+            "--knotenschluessel" => { knotenschluessel = Some(wert(i)); i += 2; }
+            "--podrelaisausweis" => { podrelaisausweis = Some(wert(i)); i += 2; }
             "--grenzen" => {
                 let text = wert(i);
                 match grenzen_lesen(&text) {
@@ -159,11 +170,23 @@ fn main() {
             &ortsleitung,
             &ausweis.unwrap_or_else(|| fehlt("--ausweis")),
             hex32(&pod_hex.unwrap_or_else(|| fehlt("--pod")), "--pod"),
-            hex32(&knoten_hex.unwrap_or_else(|| fehlt("--knoten")), "--knoten"),
+            match (knoten_hex, knotenschluessel) {
+                (Some(h), _) => hex32(&h, "--knoten"),
+                (None, Some(datei)) => endpunkt_aus_datei(&datei),
+                (None, None) => fehlt("--knoten"),
+            },
             hex32(&pipeline_hex.unwrap_or_else(|| fehlt("--pipeline")), "--pipeline"),
             EpochId(epoche),
             deckel,
             grenzen.as_deref(),
+            match (podrelais, podrelaisausweis) {
+                (Some(a), Some(d)) => Some((a, d)),
+                (None, None) => None,
+                _ => {
+                    eprintln!("[myl-pod] --podrelais und --podrelaisausweis gehören zusammen");
+                    std::process::exit(1);
+                }
+            },
         );
         return;
     };
@@ -235,6 +258,28 @@ fn main() {
     let _ = pack_tokens(&generated);
 }
 
+/// Der Endpunkt eines Knotens aus seiner Schlüsseldatei (Kopfzeile, dann 32
+/// oder 64 Bytes Ausgangsmaterial in Hex, wie der Knoten sie schreibt).
+fn endpunkt_aus_datei(datei: &str) -> [u8; 32] {
+    let text = std::fs::read_to_string(datei).unwrap_or_else(|e| {
+        eprintln!("[myl-pod] --knotenschluessel {datei}: {e}");
+        std::process::exit(1)
+    });
+    let wort = text.lines().map(|l| l.split('#').next().unwrap_or("").trim()).find(|l| !l.is_empty()).unwrap_or("");
+    let ikm: Option<Vec<u8>> = (wort.len() == 64 || wort.len() == 128)
+        .then(|| (0..wort.len() / 2).map(|i| u8::from_str_radix(&wort[i * 2..i * 2 + 2], 16).ok()).collect())
+        .flatten();
+    let Some(ikm) = ikm else {
+        eprintln!("[myl-pod] --knotenschluessel {datei}: kein Schlüssel");
+        std::process::exit(1)
+    };
+    let pk = myl_types::bls::BlsSecretKey::key_gen(&ikm).and_then(|k| k.public_key()).unwrap_or_else(|_| {
+        eprintln!("[myl-pod] --knotenschluessel {datei}: nicht ableitbar");
+        std::process::exit(1)
+    });
+    *myl_siegel::endpunkt_aus_schluessel(&pk).bytes()
+}
+
 /// Der Shard-Prozess als Dienst (Fund 169).
 ///
 /// ⚑ **Alles, was hier zusammenkommt, gab es schon.** Es fehlte allein
@@ -253,6 +298,7 @@ fn dienst(
     epoche: EpochId,
     deckel: u32,
     grenzen: Option<&[(usize, usize)]>,
+    ueber_knoten: Option<(String, String)>,
 ) {
     use myl_pod::entsiegelung::Entsiegelndes;
     use myl_pod::gegenstelle::Betreibergegenstelle;
@@ -278,29 +324,56 @@ fn dienst(
         myl_types::hash::Hash::sha256(&[b"MYELITH-SHARD-ENDPUNKT-v1".as_slice(), &pod].concat()).0,
     );
 
-    println!("[myl-pod] Lade Pipeline aus {artefakte} ...");
-    let werk = match Pipelinewerk::laden_mit_grenzen(
-        std::path::Path::new(artefakte),
-        pod_id,
-        epoche,
-        myl_types::hash::Hash(pipeline),
-        deckel,
-        grenzen,
-    ) {
-        Ok(w) => w,
-        Err(e) => {
-            eprintln!("[myl-pod] Pipeline nicht geladen: {e}");
-            std::process::exit(1);
+    let (werk, shards): (Box<dyn myl_pod::entsiegelung::Klartextwerk>, u32) = match ueber_knoten {
+        // ⚑ **Über den Pod der Kette**: kein Modell hier, nur der Wortschatz.
+        Some((relais, datei)) => {
+            let relais: std::net::SocketAddr = relais.parse().unwrap_or_else(|_| {
+                eprintln!("[myl-pod] --podrelais erwartet adresse:port, bekam {relais}");
+                std::process::exit(1)
+            });
+            println!("[myl-pod] Rechne über den Pod der Kette (Relaisleitung {relais})");
+            match myl_pod::podwerk::Podwerk::neu(
+                std::path::Path::new(artefakte),
+                relais,
+                std::path::PathBuf::from(datei),
+                myl_types::hash::Hash(pipeline),
+                deckel,
+            ) {
+                Ok(w) => (Box::new(w), 4),
+                Err(e) => {
+                    eprintln!("[myl-pod] Podwerk: {e}");
+                    std::process::exit(1);
+                }
+            }
+        }
+        None => {
+            println!("[myl-pod] Lade Pipeline aus {artefakte} ...");
+            match Pipelinewerk::laden_mit_grenzen(
+                std::path::Path::new(artefakte),
+                pod_id,
+                epoche,
+                myl_types::hash::Hash(pipeline),
+                deckel,
+                grenzen,
+            ) {
+                Ok(w) => {
+                    let n = w.shardzahl();
+                    (Box::new(w), n)
+                }
+                Err(e) => {
+                    eprintln!("[myl-pod] Pipeline nicht geladen: {e}");
+                    std::process::exit(1);
+                }
+            }
         }
     };
-    let shards = werk.shardzahl();
 
     let entsiegelnd = Entsiegelndes::neu(
         pod_id,
         ich,
         Sitzungen::neu(ich, Epochenschluessel::ziehe(epoche)),
         Box::new(Betreibergegenstelle::neu(Endpunkt::aus_bytes(knoten))),
-        Box::new(werk),
+        werk,
     );
 
     let (dienst, befund) = match Ortsdienst::oeffnen(

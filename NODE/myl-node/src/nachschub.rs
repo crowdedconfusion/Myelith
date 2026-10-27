@@ -182,7 +182,61 @@ pub enum Nachforderung {
         /// Welcher der 64 Teile.
         teil: u64,
     },
+    /// ⚑ **Eine Anfrage an den Shard dieses Knotens, für einen Pod über
+    /// Knoten** (2026-10-26): Ein Koordinator fragt die Shards
+    /// der Pod-Mitglieder über deren Knoten; der Knoten reicht die Bytes
+    /// unverändert an seinen Shard und die Antwort zurück. Die Bytes sind
+    /// eine `myl_pod::shardweg::Shardanfrage` in Borsh; der Knoten liest
+    /// nur ihre Marke (siehe [`SHARDANFRAGEN_ERLAUBT`]). Angehängt.
+    Shard {
+        /// Ordnet die Antwort der Anfrage zu, wenn mehrere unterwegs sind.
+        kennung: u64,
+        /// Die Anfrage an den Shard.
+        anfrage: Vec<u8>,
+    },
+    /// ⚑ **Ein unterschriebenes PoI-Bündel für den Koordinator seines
+    /// Pods** (2026-10-26): Der Torknoten, der den Pod gefahren hat, gibt es
+    /// der ersten Position, denn nur sie darf es laut Kette einreichen.
+    /// Angehängt.
+    Buendel {
+        /// Ordnet die Antwort zu.
+        kennung: u64,
+        /// Das Bündel in Borsh.
+        buendel: Vec<u8>,
+    },
+    /// ⚑ **Eine Spuranfrage der Stichprobe** (2026-10-27, Fund 656): Bis
+    /// hierher ging die nackte `Spuranfrage` hinaus, und der Empfänger las
+    /// sie als Nachforderung; das niedrigste Byte der Epoche wurde zur
+    /// Marke, die Anfrage war unlesbar, und die Prüfung per Stichprobe fand
+    /// im Netz nicht statt. Jetzt ist sie eine Nachforderung wie jede. Wer
+    /// sie beantworten kann, ist noch offen: Die Segmentzeugnisse hält nur
+    /// der Koordinator. Bis dahin antwortet der Empfänger `Nichts` und
+    /// schreibt es ins Protokoll. Angehängt.
+    Spur(myl_types::Spuranfrage),
+    /// ⚑ **Eine Zeitprobe mit Grenze** (2026-10-27, Fund 646): wie
+    /// [`Nachforderung::Zeitprobe`], und nach `grenze_ms` hört der Shard auf.
+    /// Wer so lange braucht, hat seine Frist überschritten; ohne Grenze
+    /// rechnete der Shard eines Lügners seine grosse Probe zu Ende und war
+    /// für jeden anderen Messenden besetzt. Angehängt.
+    ZeitprobeMitGrenze {
+        /// Wie viele Positionen.
+        positionen: u32,
+        /// Nach wie vielen Millisekunden der Shard aufhört.
+        grenze_ms: u32,
+    },
 }
+
+/// ⚑ **Welche Shardanfragen ein Knoten weiterreicht**: die Marken (erstes
+/// Byte in Borsh) von `Rechne`, `Zuschnitt`, `Schluessel`, `Unterschreibe`,
+/// `SitzungVergessen`, `DekodierDigest`, `Profil` und `GehalteneSitzungen`.
+/// Das Training über fremde Knoten ist nicht freigegeben. Die Reihenfolge
+/// der Varianten ist Protokollvertrag in `myl-pod` (dort angehängt, nie
+/// eingefügt); eine Probe im TESTCLIENT hält beide zusammen.
+///
+/// Seit dem 2026-10-27 auch Marke 11, `RechneStapel`: der Prefill eines
+/// Prompts in einer Runde je Shard (Fund 650). 8 bis 10 (Training) bleiben
+/// gesperrt.
+pub const SHARDANFRAGEN_ERLAUBT: &[u8] = &[0, 1, 2, 3, 4, 5, 6, 7, 11];
 
 /// Was auf eine Nachforderung zurückkommt.
 #[derive(Debug, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
@@ -217,8 +271,9 @@ pub enum Nachlieferung {
     /// Fragende hält ihn beim ersten gegen seinen Anker), die Stelle, die
     /// Bytes und die Größe des ganzen Zustands.
     Abzug {
-        /// Der Block bei H.
-        block: Block,
+        /// Der Block bei H. In einer `Box`, seit der Block die Unterschrift
+        /// seines Erzeugers trägt; an der Kodierung ändert das nichts.
+        block: Box<Block>,
         /// Ab welchem Byte.
         ab: u64,
         /// Die Bytes, höchstens `abzug::STUECK_BYTES`.
@@ -242,6 +297,25 @@ pub enum Nachlieferung {
         stueck: Vec<u8>,
         /// Der Beweis.
         beweis: myl_types::archivteile::Teilbeweis,
+    },
+    /// Die Antwort des Shards auf [`Nachforderung::Shard`], unverändert,
+    /// oder der Grund, aus dem der Knoten nicht weitergereicht hat.
+    Shard {
+        /// Dieselbe Kennung wie in der Anfrage.
+        kennung: u64,
+        /// Die Antwort des Shards in Borsh; leer bei `fehler`.
+        antwort: Vec<u8>,
+        /// Warum nicht weitergereicht wurde (kein Shard, kein Platz, nicht
+        /// erlaubt, keine Antwort).
+        fehler: Option<String>,
+    },
+    /// Die Antwort auf [`Nachforderung::Buendel`]: eingereicht, oder warum
+    /// nicht.
+    Buendel {
+        /// Dieselbe Kennung wie in der Anfrage.
+        kennung: u64,
+        /// Warum nicht eingereicht wurde; `None` heißt eingereicht.
+        fehler: Option<String>,
     },
 }
 
@@ -412,11 +486,44 @@ mod tests {
     /// ⚑ **Die neuen Marken stehen hinten** (2026-10-22): Die alten
     /// behalten ihre Nummern, und ein alter Knoten liest eine neue als
     /// unbekannt statt als etwas anderes.
+    /// ⚑ **Fund 656:** Eine Spuranfrage kommt als Spuranfrage an. Gegenprobe:
+    /// die nackte Anfrage, wie sie bis zum 2026-10-27 hinausging, liest der
+    /// Empfänger nie als solche, für keine Epoche.
+    #[test]
+    fn eine_spuranfrage_kommt_als_spuranfrage_an() {
+        for epoche in [0u64, 1, 6, 13, 14, 255, 256, 1_000_000] {
+            let anfrage = myl_types::Spuranfrage {
+                epoche: myl_types::ids::EpochId(epoche),
+                pod: myl_types::ids::PodId::new([3; 32]),
+                segment: 7,
+            };
+            let n = Nachforderung::Spur(anfrage);
+            assert_eq!(Nachforderung::aus_bytes(&n.als_bytes().unwrap()), Some(n));
+            let nackt = borsh::to_vec(&anfrage).unwrap();
+            assert!(
+                !matches!(Nachforderung::aus_bytes(&nackt), Some(Nachforderung::Spur(_))),
+                "Epoche {epoche}: die nackte Anfrage darf nicht als Spuranfrage durchgehen"
+            );
+        }
+        assert_eq!(
+            Nachforderung::Spur(myl_types::Spuranfrage {
+                epoche: myl_types::ids::EpochId(1),
+                pod: myl_types::ids::PodId::new([0; 32]),
+                segment: 0,
+            })
+            .als_bytes()
+            .unwrap()[0],
+            11,
+            "angehängt: die Marke hinter dem Bündel"
+        );
+    }
+
     #[test]
     fn die_neuen_marken_stehen_hinten() {
         assert_eq!(Nachforderung::Bloecke { ab: 1, bis: 2 }.als_bytes().unwrap()[0], 0);
         assert_eq!(Nachforderung::Zeitprobe { positionen: 4 }.als_bytes().unwrap()[0], 2);
         assert_eq!(Nachforderung::Ping.als_bytes().unwrap()[0], 3);
+        assert_eq!(Nachforderung::ZeitprobeMitGrenze { positionen: 64, grenze_ms: 1 }.als_bytes().unwrap()[0], 12);
         assert_eq!(Nachlieferung::Nichts.als_bytes().unwrap()[0], 2);
         assert_eq!(Nachlieferung::Pong.als_bytes().unwrap()[0], 4);
         let d = Nachlieferung::Datei { name: "a.bin".into(), ab: 3, daten: vec![1, 2], groesse: 5 };

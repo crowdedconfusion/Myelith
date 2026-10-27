@@ -1,7 +1,7 @@
 # compute-pipeline (`myl-pod`, `myl-dispatcher`)
 
-> **Version:** 0.48.0 (`myl-pod` 0.39.0, `myl-dispatcher` 0.11.2)
-> **Datum:** 2026-10-23
+> **Version:** 0.52.1 (`myl-pod` 0.43.1, `myl-dispatcher` 0.11.2)
+> **Datum:** 2026-10-26
 > **Status:** Phase 1 vollständig, Phase 2.1, **Phase 3 vollständig**
 > (3.1 bis 3.3) und Punkt 4.3. `shard_loop` mit Spur-Hashes und
 > Manipulationserkennung, `coordinator_loop` mit Micro-Batching,
@@ -106,6 +106,140 @@ COMPUTE_PIPELINE/
 ```
 
 ## Changelog
+
+### v0.52.1 (2026-10-27): Die Zeitprobe rechnet bis zu 2 048 Positionen (`myl-pod` 0.43.1)
+
+- `shard::ZEITPROBE_HOECHSTENS` von 16 auf 2 048: Die Probe eines Mitglieds
+  richtet sich jetzt nach seiner Zusage (NODE 0.68.0, Fund 646); wer sehr
+  schnell ansagt, bekommt die grosse Probe.
+- `ShardNode::zeitprobe_bis`: Mit Grenze hört der Shard dort auf (vor jeder
+  Position geprüft); die Tür liest sie aus der Probe
+  (`myl_types::zeitprobe::als_anfrage_mit_grenze`).
+- `myl-pod` 0.43.1. 165 Tests grün, Clippy sauber.
+
+### v0.52.0 (2026-10-27): Der Prefill als Stapel, eine Runde je Shard (Fund 650; `myl-pod` 0.43.0)
+
+- 📌 **Fund 650, der grösste Hebel an der Tür:** Über Knoten mit Latenz
+  kostete jedes Prompt-Token eine Runde je Shard, rund 4 s je Token bei vier
+  Shards; im langen Lauf lag der Median einer Antwort bei 75 bis 93 s, und
+  Aufträge liefen über Epochengrenzen. Jetzt geht der Prefill als
+  `Shardanfrage::RechneStapel` (angehängt, Marke 11, höchstens
+  `MAX_STAPEL` = 64 Nachrichten) in **einer** Runde je Shard; der Shard
+  rechnet die Nachrichten der Reihe nach über dieselbe Prüfung und dieselbe
+  Funktion wie einzeln (`Shardantwort::StapelGerechnet`). Jede Position
+  bleibt ihr eigenes Segment mit eigener Spur und Unterschrift; an den
+  PoI-Segmenten ändert sich nichts.
+- **Im Netz belegt** (kurzer Podlauf mit Tor, netem 50 bis 200 ms, 2026-10-27):
+  Rechenzeit des Pods je Auftrag 18,6 und 22,0 s (der erste, mit Anlauf,
+  35,5 s) statt 37 bis 62 s in den vier kurzen Läufen davor; Antwort an der
+  Tür 37 bis 60 s statt 47 bis 83 s. Was bleibt, ist das Dekodieren: Jedes
+  neue Token kostet weiter eine Runde je Shard.
+- Scheitert der Stapel (auch an einem Shard, der ihn nicht kennt), greift
+  die Wiederholung aus Fund 654, dann Token für Token.
+- `tests/stapel_prefill.rs` (neu): Bitgleichheit mit dem Weg Token für
+  Token (Token, Segmente, Spuren, Unterschriften), vier Stapelrunden statt
+  sieben mal vier; der Weg Token für Token als Gegenprobe über einen Shard,
+  der den Stapel ablehnt.
+- 📌 **Fund 657: `sitzung_vergessen` liess den Generierungszähler stehen.**
+  Er wurde nur entfernt, wenn eine Sitzung den Deckel des Shards voll
+  erreichte; das Podwerk fragt meist weniger an, also blieb je Sitzung ein
+  Eintrag für immer (dieselbe Klasse wie Fund 164), und eine Wiederholung
+  derselben Sitzung (Fund 654) bekam nur noch den Rest des Deckels.
+  Sichtbar wurde es, als die verlorene Runde mit dem Stapel ins Dekodieren
+  rückte: zwei Token statt vier. Jetzt räumt `sitzung_vergessen` ihn mit ab;
+  `verlorene_runde.rs` ohne die Korrektur rot.
+- `myl-pod` 0.43.0. 165 Tests grün, Clippy sauber.
+
+### v0.51.1 (2026-10-26): Erst rechnen, wenn der neue Pod steht (Fund 649, zweiter Teil; `myl-pod` 0.42.1)
+
+- 📌 Im zweiten langen Lauf griff die Wiederholung über den neuen Pod, kam
+  aber zu früh: Gleich nach dem Wechsel liefen bei den neuen Mitgliedern
+  teils noch die Shards der alten Epoche; einer meldete „kein Shard“, ein
+  anderer bekam ein Token ohne Einbettung. Jetzt wartet das Podwerk, bevor
+  es für eine Epoche einen Koordinator baut, bis jedes Mitglied den
+  Zuschnitt meldet, den die Kette ihm gibt (`von..bis` aus dem Podbild),
+  höchstens `BEREIT_FRIST` (60 s). Das gilt für jeden ersten Auftrag einer
+  Epoche, nicht nur für die Wiederholung.
+- `tests/podwerk_epochenwechsel.rs` geschärft: Nach dem Wechsel antworten
+  die neuen Mitglieder fünf Fragen lang „kein Shard an diesem Knoten“, wie
+  ein Knoten, der seinen Shard noch startet; das Podbild nennt echte
+  Ebenenbereiche. Gegenprobe ohne das Warten: keine Antwort, rot.
+- `myl-pod` 0.42.1.
+
+### v0.51.0 (2026-10-26): Ein Auftrag über die Epochengrenze bekommt seine Antwort (Fund 649; `myl-pod` 0.42.0)
+
+- 📌 **Fund 649**, im langen Lauf über Docker fünf von sechs Ausfällen: Am
+  Epochenwechsel beenden die Knoten ihre Shards, auch mitten in einem
+  Auftrag; die Wiederholung des Koordinators (Fund 654) trifft dann nur
+  noch die alten Plätze, und das Podwerk gab auf. Jetzt fragt das Podwerk
+  nach einem leeren Ergebnis das Podbild neu; steht die Kette in einer
+  neuen Epoche, rechnet deren Pod den Auftrag **einmal** neu. Eine Kosten-
+  oder Wertfrage ist das nicht (gescheiterte Aufträge wurden nie
+  abgerechnet), aber eine der Verfügbarkeit: Bei 60 bis 80 s je Auftrag
+  über Knoten mit Latenz fiel jeder fünfzehnte Auftrag auf eine Grenze.
+- `tests/podwerk_epochenwechsel.rs` (neu): ein Relais im Prozess mit
+  demselben Drahtformat wie der Knoten, je Epoche ein Pod aus vier Shards,
+  Wechsel nach der sechsten Rechenrunde mitten im Prefill; danach antworten
+  die alten Mitglieder „kein Shard an diesem Knoten“. Die Antwort gleicht
+  derselben Rechnung ohne Wechsel. Gegenprobe ohne die Wiederholung über
+  den neuen Pod: abgelehnt, rot.
+- `myl-pod` 0.42.0.
+
+### v0.50.1 (2026-10-26): Überlaufprüfung im Freigabebau (`myl-pod` 0.41.1)
+
+- Überlaufprüfung im Freigabebau für die Protokollkisten (Festlegung des Projektinhabers): `[profile.release.package.<kiste>] overflow-checks = true` für jede Protokollkiste im Baum dieses Programms; die Rechenkerne (`integer-llm-*`) bleiben ohne. Bis hierher war sie nur im Testprofil an, und eine Rechnung im Konsenspfad wäre im ausgelieferten Programm an den Rändern still umgelaufen. Belegt am Knoten (NODE 0.64.0): `myl_ledger` wird mit `-C overflow-checks=on` übersetzt, `integer_llm_kernels` ohne. Alle 4 359 Tests liefen schon immer mit eingeschalteter Prüfung.
+- `myl-pod` 0.41.1.
+
+### v0.50.0 (2026-10-26): Eine verlorene Runde kostet nicht den Auftrag (Fund 654; `myl-pod` 0.41.0)
+
+- 📌 **Fund 654**, gesehen im langen Lauf über Docker mit Störer: Eine
+  Runde zu Shard 1 ging auf der Leitung verloren (IO-Fehler), dem Shard
+  fehlte damit eine Position im KV-Speicher, und jede folgende lehnte er ab
+  („hinter dem Ende des KV-Speichers“). Der Koordinator schickte trotzdem
+  alle weiter, und der Auftrag scheiterte. Jetzt bricht die erste
+  fehlgeschlagene Runde den Durchlauf ab (`pump` meldet sie), die Segmente
+  dieses Durchlaufs werden verworfen, die Shards vergessen die Sitzung, und
+  `run_prompt` rechnet **einmal** neu. Scheitert auch das, kommt nichts
+  zurück und kein halbes Segment bleibt im Bündel. Vorher wurde ein halber
+  Durchlauf sogar als Segment vermerkt, sobald ein Shard etwas lieferte.
+- `tests/verlorene_runde.rs` (neu): Ein Weg im Prozess verliert genau eine
+  Rechenrunde zu Shard 1; die Antwort gleicht der ohne Verlust, die Zahl
+  der Segmente auch, keine Kennung doppelt. Gegenprobe im selben Test:
+  Bleibt Shard 1 weg, kommt nichts und kein Segment bleibt stehen. Ohne die
+  Wiederholung rot.
+- `myl-pod` 0.41.0.
+
+### v0.49.1 (2026-10-26): Das Podwerk nennt je Auftrag seine Dauer (`myl-pod` 0.40.1)
+
+- Je Auftrag eine Zeile `[myl-pod] Epoche …: … Prompt-Token, … neue in … ms`.
+  Gebraucht im Lauf über Docker: Dort gab die Ortsleitung des Knotens nach
+  45 s auf, während das Podwerk noch rechnete, und ohne Zeit war nicht zu
+  sagen, ob die Shards rechneten oder das Netz wartete. Gegenstück im Knoten:
+  `shardrelais` mit der Dauer jeder Runde.
+
+### v0.49.0 (2026-10-26): Ein Pod über Knoten (`myl-pod` 0.40.0)
+
+- ⚑ `shardweg::UeberDenKnoten` (neu): Der Koordinator fragt die Shards der
+  Pod-Mitglieder über die Relaisleitung seines Knotens; der reicht über das
+  Netz an den Knoten des Mitglieds und der an seinen Shard. Die Mitglieder
+  kommen aus dem Podbild der Kette in Shardreihenfolge. Belegt im TESTCLIENT
+  (`pod_ueber_knoten`): ein Torknoten ohne Shard, sechs Miner, ein Pod aus
+  vier Shards, acht Token Token für Token wie dieselben Grenzen im Prozess.
+- ⚑ **`podwerk::Podwerk`** (neu): ein Ortsdienst, der über den Pod der
+  Kette rechnet statt über ein Modell im eigenen Prozess. Er hält nur den
+  Wortschatz, fragt je Auftrag das Podbild, baut je Epoche einen
+  Koordinator über `UeberDenKnoten` und reicht im letzten Sechstel der
+  Epoche das von den Positionen unterschriebene Bündel über die Leitung ein
+  (einmal je Epoche, die Länge nennt das Podbild). `myl-pod-node
+  --podrelais <host:port> --podrelaisausweis <datei>` wählt ihn; den
+  Ausweis liest er erst, wenn er ihn braucht, denn der Knoten startet nach
+  ihm. `--knotenschluessel <datei>` leitet den erwarteten Knoten aus dessen
+  Konsensschlüssel ab, statt ihn als Hex zu verlangen.
+- 📌 Fund 638, Rest: `tests/vier_prozesse_ein_pod.rs` und
+  `tests/training_ueber_den_draht.rs` ließen je Shard einen Ordner
+  `myl-shardausweis-*` liegen; jetzt weg, sobald der Shard seine Adresse
+  nennt (er hat den Ausweis dann gelesen). Mit leerem Temp-Ordner geprüft.
+- `myl-pod` 0.40.0.
 
 ### v0.48.0 (2026-10-23): Ein Ausweis und eine Gesamtfrist für die Shardtür; das Token gegen das Vokabular (Funde 611, 613; `myl-pod` 0.39.0, `myl-dispatcher` 0.11.2)
 

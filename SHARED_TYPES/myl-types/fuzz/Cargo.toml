@@ -130,3 +130,38 @@ path = "fuzz_targets/inferenzantwort.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "ortsfrage"
+path = "fuzz_targets/ortsfrage.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ortsantwort"
+path = "fuzz_targets/ortsantwort.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "relaisfrage"
+path = "fuzz_targets/relaisfrage.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "relaisantwort"
+path = "fuzz_targets/relaisantwort.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "vollmacht"
+path = "fuzz_targets/vollmacht.rs"
+test = false
+doc = false
+bench = false

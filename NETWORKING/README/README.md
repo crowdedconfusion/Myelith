@@ -1,7 +1,7 @@
 # networking (`myl-net`, `myl-siegel`)
 
-> **Version:** 0.21.2
-> **Datum:** 2026-10-25
+> **Version:** 0.21.3
+> **Datum:** 2026-10-26
 > **Status:** **Phase 1 und 2 abgeschlossen** (1.1–1.6, 2.1–2.3),
 > **Phase 3 umgesetzt** (3.1–3.4, Abschluss unter Reviewvorbehalt), dazu Punkt 4.2 (Fuzzing der Wire-Protocol-Parser), Punkt 4.3
 > (Verbindungsgrenzen und Peer-Diversität) und seit dem 26. August
@@ -109,6 +109,15 @@ NETWORKING/
 ```
 
 ## Changelog
+
+### v0.21.3 (2026-10-26): `myl-siegel` ohne `unsafe`, festgeschrieben (`myl-net` 0.21.3, `myl-siegel` 0.3.1)
+
+- `#![deny(unsafe_code)]` in `myl-siegel`. Zwölf der dreizehn
+  Protokollkisten trugen die Zeile schon; ausgerechnet die Kiste mit der
+  Sitzungsverschlüsselung nicht. Sie enthielt kein `unsafe`, jetzt kann
+  keines unbemerkt hinein. Gegenprobe: ein eingefügter `unsafe`-Block
+  bricht den Bau. Gefunden bei der Bestandsaufnahme für das Audit.
+- `myl-net` 0.21.3 (ohne Änderung, Komponentenstand), `myl-siegel` 0.3.1.
 
 ### v0.21.2 (2026-10-25): Schlecht bewertete Peers mit Kennung (Fund 618; `myl-net` 0.21.2)
 

@@ -1,6 +1,6 @@
 [package]
 name = "myl-testclient"
-version = "0.51.0"
+version = "0.55.0"
 edition = "2021"
 # ⚑ 1.88 und nicht 1.85 wie die uebrigen Crates, und der Grund liegt
 # nicht im eigenen Code: Ueber libp2p haengt hier die `icu_*`-Kette
@@ -150,3 +150,43 @@ serde_json = "1.0"
 # beiden Fassungen zusammenpassen, laesst sich nur dort pruefen, wo beide
 # sichtbar sind, und das ist diese Kiste.
 myl-local-agent = { path = "../../AGENT_LAYER/local-agent" }
+# ⚑ **Das Wallet bezahlt über einen echten Knoten** (2026-10-26): Credits,
+# Sitzung, Vollmacht und Widerruf aus `myl_client::bezahlen` gegen eine
+# Kette. Nur hier sind Client und Knoten zugleich sichtbar.
+myl-client = { path = "../../CLIENT/myl-client" }
+
+# Ueberlaufpruefung im Freigabebau, nur fuer die Protokollkisten
+# (Festlegung des Projektinhabers, 2026-10-26). `--release` schaltet sie
+# sonst ab, und eine Rechnung im Konsenspfad liefe an den Raendern still
+# um; so wird aus einem stillen Fehler ein lauter Halt. Die Rechenkerne
+# (`integer-llm-*`) bleiben ohne, dort zaehlt jede Anweisung, und sie
+# rechnen mit ausdruecklichem `wrapping_*`. Ein Profil gilt nur in der
+# Kiste, die gebaut wird, deshalb steht die Liste in jeder Programmkiste.
+[profile.release.package.myl-types]
+overflow-checks = true
+[profile.release.package.myl-ledger]
+overflow-checks = true
+[profile.release.package.myl-consensus]
+overflow-checks = true
+[profile.release.package.myl-scheduler]
+overflow-checks = true
+[profile.release.package.myl-tokenomics]
+overflow-checks = true
+[profile.release.package.myl-governance]
+overflow-checks = true
+[profile.release.package.myl-gateway]
+overflow-checks = true
+[profile.release.package.myl-net]
+overflow-checks = true
+[profile.release.package.myl-siegel]
+overflow-checks = true
+[profile.release.package.myl-verifier]
+overflow-checks = true
+[profile.release.package.myl-store]
+overflow-checks = true
+[profile.release.package.myl-node]
+overflow-checks = true
+[profile.release.package.myl-pod]
+overflow-checks = true
+[profile.release.package.myl-agent]
+overflow-checks = true

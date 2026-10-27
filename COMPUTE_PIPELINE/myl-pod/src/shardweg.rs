@@ -188,7 +188,18 @@ pub enum Shardanfrage {
         /// Der Nenner der Lernrate.
         lr_nenner: i64,
     },
+    /// ⚑ **Rechne diese Nachrichten der Reihe nach** (Fund 650, 2026-10-27):
+    /// der Prefill eines Prompts in **einer** Runde je Shard statt einer je
+    /// Token und Shard. Jede Nachricht bleibt ihre eigene Position und ihr
+    /// eigenes Segment, mit eigener Spur und Unterschrift; gebündelt wird nur
+    /// der Weg. Höchstens [`MAX_STAPEL`] Nachrichten. Angehängt.
+    RechneStapel(Vec<PodMessage>),
 }
+
+/// Höchstens so viele Nachrichten in einem Stapel: bei einer Breite von
+/// 1 024 und 28 Ebenen rund 200 kB, weit unter der Grenze einer Anfrage über
+/// das Netz (4 MiB); ein längerer Prompt geht in mehreren Stapeln.
+pub const MAX_STAPEL: usize = 64;
 
 /// Was ein Shard darauf antwortet.
 #[derive(Debug, Clone, PartialEq, Eq, borsh::BorshSerialize, borsh::BorshDeserialize)]
@@ -242,6 +253,8 @@ pub enum Shardantwort {
     /// ausgefallenen Shard nicht zu unterscheiden, und der Koordinator
     /// zöge die Reserve, obwohl der Shard antwortet.
     Fehler(String),
+    /// Die Ergebnisse eines Stapels, in seiner Reihenfolge. Angehängt.
+    StapelGerechnet(Vec<ShardOut>),
 }
 
 /// Wie der Koordinator einen Shard erreicht.
@@ -473,6 +486,25 @@ pub fn bedienen(shard: &ShardNode, anfrage: &Shardanfrage) -> Shardantwort {
         // schweigen.** Ein Koordinator, der keine Antwort bekommt, kann
         // „kann nicht" nicht von „ist ausgefallen" unterscheiden und
         // zöge die Reserve.
+        // ⚑ **Ein Stapel ist eine Folge einzelner Rechnungen**, über
+        // dieselbe Prüfung und dieselbe Funktion wie `Rechne`; die erste,
+        // die scheitert, beendet ihn, und der Rest wird nicht gerechnet.
+        Shardanfrage::RechneStapel(ms) => {
+            if ms.len() > MAX_STAPEL {
+                return Shardantwort::Fehler(format!("ein Stapel von {} Nachrichten, höchstens {MAX_STAPEL}", ms.len()));
+            }
+            let mut aus = Vec::with_capacity(ms.len());
+            for (i, m) in ms.iter().enumerate() {
+                if !m.is_valid_frame() {
+                    return Shardantwort::Fehler(format!("Stapel, Nachricht {i}: keine Magic-Bytes"));
+                }
+                match shard.process(m) {
+                    Ok(a) => aus.push(a),
+                    Err(e) => return Shardantwort::Fehler(format!("Stapel, Nachricht {i}: {e}")),
+                }
+            }
+            Shardantwort::StapelGerechnet(aus)
+        }
         Shardanfrage::TrainVorwaerts { .. }
         | Shardanfrage::TrainRueckwaerts { .. }
         | Shardanfrage::TrainAnwenden { .. } => Shardantwort::Fehler(
@@ -615,6 +647,59 @@ impl Shardweg for UeberDenDraht {
     }
 }
 
+/// ⚑ **Ein Pod über Knoten** (2026-10-26): Der Koordinator
+/// fragt die Shards der Mitglieder über die Relaisleitung seines Knotens;
+/// der reicht über das Netz an den Knoten des Mitglieds und der an seinen
+/// Shard. Die Bytes gehen unverändert durch, ausgelegt werden sie nur hier
+/// und beim Shard.
+///
+/// ⚑ **Die Mitglieder kommen aus der Kette** ([`myl_types::relais::Podbild`])
+/// in Shardreihenfolge. Wer sie anders ordnet, bekommt beim Erheben der
+/// Besetzung Lücken zwischen den Bereichen, und der Pod rechnet nicht.
+pub struct UeberDenKnoten {
+    relais: SocketAddr,
+    ausweis: Ausweis,
+    mitglieder: Vec<myl_types::latency_attest::PeerIdBytes>,
+    frist: Duration,
+}
+
+impl UeberDenKnoten {
+    /// Neu, mit der Leitung des eigenen Knotens und den Mitgliedern in
+    /// Shardreihenfolge.
+    pub fn neu(relais: SocketAddr, ausweis: Ausweis, mitglieder: Vec<myl_types::latency_attest::PeerIdBytes>) -> Self {
+        Self { relais, ausweis, mitglieder, frist: RELAISFRIST }
+    }
+}
+
+/// Die Frist je Frage über den Knoten: so lang, wie seine Leitung wartet.
+pub const RELAISFRIST: Duration = Duration::from_secs(150);
+
+impl Shardweg for UeberDenKnoten {
+    fn shardzahl(&self) -> usize {
+        self.mitglieder.len()
+    }
+
+    fn frage(&self, nummer: usize, anfrage: &Shardanfrage) -> Result<Shardantwort, String> {
+        let an = *self
+            .mitglieder
+            .get(nummer)
+            .ok_or_else(|| format!("Shard {nummer} gibt es in diesem Pod nicht"))?;
+        let anfrage = borsh::to_vec(anfrage).map_err(|e| e.to_string())?;
+        match myl_types::relais::fragen(
+            self.relais,
+            &self.ausweis,
+            &myl_types::relais::Relaisfrage::Shard { an, anfrage },
+            self.frist,
+        )? {
+            myl_types::relais::Relaisantwort::Shard(roh) => {
+                borsh::from_slice(&roh).map_err(|e| format!("Shard {nummer} antwortete unlesbar: {e}"))
+            }
+            myl_types::relais::Relaisantwort::Fehler(f) => Err(format!("Shard {nummer}: {f}")),
+            andere => Err(format!("Shard {nummer}: unerwartete Antwort {andere:?}")),
+        }
+    }
+}
+
 /// Ein Shard als Dienst: **einer**, mit **einem** Schlüssel.
 ///
 /// # ⚑ Was dieser Typ zusichert, und es ist der Punkt der ganzen Sache
@@ -699,8 +784,9 @@ impl Shardstelle {
         //   2026-10-22): an ihrer Marke erkannt, beschrieben in
         //   `myl_types::zeitprobe`, damit der Knoten sie stellen kann, ohne
         //   diese Kiste einzubinden.
-        if let Some(positionen) = myl_types::zeitprobe::als_anfrage(&roh) {
-            let abdruck = self.shard.zeitprobe(positionen as usize);
+        if let Some((positionen, grenze)) = myl_types::zeitprobe::als_anfrage_mit_grenze(&roh) {
+            let grenze = grenze.map(|ms| std::time::Duration::from_millis(u64::from(ms)));
+            let abdruck = self.shard.zeitprobe_bis(positionen as usize, grenze);
             return senden(&mut strom, &myl_types::zeitprobe::antwort(abdruck));
         }
         let anfrage: Shardanfrage =

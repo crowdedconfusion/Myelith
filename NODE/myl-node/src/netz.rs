@@ -56,7 +56,67 @@ pub struct Netz {
     /// Ein Neuling ohne eigene Kette beginnt beim jüngsten statt bei Block 0.
     /// Nur Höhen, die jeder Knoten auf Dauer behält (`abzug::ist_langzeit`).
     pub abzuege: &'static [(u64, [u8; 32])],
+    /// ⚑ **Die Probeprägung** (Festlegung des Projektinhabers vom
+    /// 2026-10-26): So viele Einheiten bekommt an jedem Epochenwechsel das
+    /// Auszahlungskonto jedes angemeldeten, nicht gesperrten Miners, damit
+    /// ein Testwallet beim Mining sichtbar wächst, bevor der Weg über
+    /// bezeugte Arbeit im Betrieb steht.
+    ///
+    /// ⛔️ **Null ausser auf der Probekette.** Das ist Spielgeld ohne
+    /// Arbeitsnachweis; in einem Netz, dessen MYL etwas gelten sollen,
+    /// wäre es eine Prägung aus dem Nichts. Die Probe
+    /// `nur_die_probekette_praegt_zur_probe` hält das fest.
+    pub probepraegung: u64,
+    /// ⚑ **Ob die Kette ihren Stimmsatz aus Block 1 lernt** (2026-10-27,
+    /// Festlegung des Projektinhabers: Stimmsatz ab Genesis, immer Pflicht).
+    /// Jeder Block braucht die Unterschrift eines Mitglieds. Ohne
+    /// Stimmsatzdatei wird auf einer Probekette, wer Block 1 unterschrieben
+    /// hat, das einzige Mitglied; das ist Vertrauen beim ersten Block und so
+    /// schwach wie die Probekette selbst, die keinen Anker hat. ⛔️ **Jedes
+    /// andere Netz startet ohne `--stimmsatz` nicht.**
+    pub lernt_erzeuger: bool,
+    /// ⚑ **Die Gebühren dieses Netzes** (2026-10-27, G1, Zahlen vorläufig).
+    pub gebuehren: Gebuehren,
+    /// ⚑ **Der Probehahn** (2026-10-27, Festlegung des Projektinhabers: nur
+    /// auf Testnetzen): Ein Knoten versorgt sein Konto selbst aus den
+    /// Probekonten, deren Schlüssel jeder ableiten kann, damit er Gebühr und
+    /// Hinterlegung zahlen kann. ⛔️ **Aus in jedem Netz, dessen MYL etwas
+    /// gelten sollen**: Dort gibt es keine Probekonten.
+    pub probehahn: bool,
 }
+
+/// ⚑ **Die Zahlen der Gebühren** (Festlegung des Projektinhabers vom
+/// 2026-10-27: Boden plus wandernder Bytepreis, Hinterlegung für neuen
+/// Zustand, Aufschlag je neuem Konto). ⚠️ **Vorläufig**: Die Mechanik ist
+/// entschieden, die Zahlen sind vor dem Testnetz festzulegen. Alle in
+/// MYL-Kleinstbeträgen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Gebuehren {
+    /// Der Grundpreis je Byte fällt nie darunter.
+    pub boden_je_byte: u64,
+    /// Wer an ein neues Konto überweist, zahlt das einmal dazu (an die
+    /// Treasury): Ein Konto wird nie gelöscht (die Nonce schützt vor
+    /// Wiederholung), also ist es dauerhafter Zustand.
+    pub aufschlag_konto: u64,
+    /// Hinterlegung für eine Anmeldung als Miner, zurück beim Abmelden.
+    pub hinterlegung_anmeldung: u64,
+    /// Hinterlegung für eine Sitzung, zurück beim Aufräumen.
+    pub hinterlegung_sitzung: u64,
+    /// Hinterlegung für ein Speichermanifest, zurück beim Löschen.
+    pub hinterlegung_manifest: u64,
+}
+
+/// Die vorläufigen Zahlen (2026-10-27, mit dem Projektinhaber): Boden ein
+/// Kleinstbetrag je Byte (eine Überweisung von rund 300 Byte kostet
+/// 0,0003 MYL), Konto 0,01 MYL, Anmeldung 1 MYL, Sitzung und Manifest je
+/// 0,1 MYL.
+pub const GEBUEHREN_VORLAEUFIG: Gebuehren = Gebuehren {
+    boden_je_byte: 1,
+    aufschlag_konto: myl_tokenomics::UNITS_PER_MYL / 100,
+    hinterlegung_anmeldung: myl_tokenomics::UNITS_PER_MYL,
+    hinterlegung_sitzung: myl_tokenomics::UNITS_PER_MYL / 10,
+    hinterlegung_manifest: myl_tokenomics::UNITS_PER_MYL / 10,
+};
 
 impl Netz {
     /// Der Startwert als Hash.
@@ -132,6 +192,12 @@ pub const PROBEKETTE: Netz = Netz {
     einstieg: &[],
     lokale_suche: false,
     abzuege: &[],
+    // Zehn MYL je Epoche: genug, dass ein Wallet in Minuten sichtbar
+    // wächst, und rund, damit eine Abweichung auffällt.
+    probepraegung: 10 * myl_tokenomics::UNITS_PER_MYL,
+    lernt_erzeuger: true,
+    gebuehren: GEBUEHREN_VORLAEUFIG,
+    probehahn: true,
 };
 
 /// Der Startwert des Testnetzes. Wie bei der Probekette sagt der Text,
@@ -168,6 +234,11 @@ pub const TESTNETZ_INT4: Netz = Netz {
     lokale_suche: true,
     // Noch keiner: Das Testnetz hat noch keine dauerhafte Epochengrenze.
     abzuege: &[],
+    probepraegung: 0,
+    lernt_erzeuger: false,
+    gebuehren: GEBUEHREN_VORLAEUFIG,
+    // Ein Testnetz: Seine Probekonten sind Spielgeld wie auf der Probekette.
+    probehahn: true,
 };
 
 /// Alle Netze, die dieser Knoten kennt.
@@ -192,6 +263,19 @@ mod tests {
     /// ⚑ Ein Anker steht nur auf einer Höhe, die jeder Knoten auf Dauer
     /// behält; auf einer gewöhnlichen könnte ihn zwei Epochen später
     /// niemand mehr liefern.
+    /// ⛔️ Spielgeld gibt es nur auf der Probekette; jedes andere Netz
+    /// prägt allein für bezeugte Arbeit.
+    #[test]
+    fn nur_die_probekette_praegt_zur_probe() {
+        for n in NETZE {
+            if n.name == PROBEKETTE.name {
+                assert!(n.probepraegung > 0, "die Probekette prägt nichts zur Probe");
+            } else {
+                assert_eq!(n.probepraegung, 0, "{} prägt Spielgeld", n.name);
+            }
+        }
+    }
+
     #[test]
     fn jeder_anker_steht_auf_einer_dauerhaften_hoehe() {
         for n in NETZE {

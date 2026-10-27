@@ -469,6 +469,71 @@
       <p id="sprachtext" class="sprachtext"></p>
     </section>
 
+    <!-- ⚑ **Der Reiter „Wallet": Testwallets** (Auftrag des
+         Projektinhabers, 2026-10-26). Anlegen, auswaehlen, Guthaben; das
+         ausgewaehlte bekommt beim Mining die Ertraege. Dazu der Einstieg,
+         ueber den der Knoten einem Netz beitritt. -->
+    <section id="walletseite" class="knotenseite" hidden aria-label="Wallet" data-t-marke="wallet.titel">
+      <h2 data-t="wallet.titel">Wallet</h2>
+      <p class="knotenhinweis" data-t="wallet.hinweis">Testwallets auf der Probekette: Spielgeld.</p>
+      <div id="walletstand" class="knotenstand" role="status" aria-live="polite"></div>
+      <div id="walletliste" class="walletliste"></div>
+      <!-- ⚑ **Ein neues Wallet** (Festlegung des Projektinhabers,
+           2026-10-26): die zwoelf Woerter, „notiert", dann zwei davon
+           abgefragt; erst dann gespeichert. -->
+      <div id="walletentwurf" class="walletentwurf" hidden>
+        <h3 data-t="wallet.entwurf.titel">Wiederherstellungsschlüssel</h3>
+        <p id="entwurf-befund" class="knotenhinweis"></p>
+        <div id="entwurf-schritt1">
+          <ol id="entwurf-woerter" class="entwurfwoerter"></ol>
+          <p class="knotenhinweis" data-t="wallet.entwurf.hinweis">Schreib die Wörter in dieser Reihenfolge auf Papier.</p>
+          <label class="entwurfhaken"><input id="entwurf-notiert" type="checkbox" />
+            <span data-t="wallet.entwurf.notiert">Ich habe alle zwölf Wörter notiert.</span></label>
+          <div class="knotenknoepfe">
+            <button id="entwurf-weiter" type="button" disabled data-t="wallet.entwurf.weiter">Weiter</button>
+            <button id="entwurf-abbrechen1" type="button" data-t="wallet.entwurf.abbrechen">Abbrechen</button>
+          </div>
+        </div>
+        <form id="entwurf-schritt2" hidden>
+          <p class="knotenhinweis" data-t="wallet.entwurf.pruefen">Zur Bestätigung zwei der zwölf Wörter.</p>
+          <div class="knotenreihen">
+            <label id="entwurf-label-a" for="entwurf-a"></label>
+            <input id="entwurf-a" type="text" autocomplete="off" spellcheck="false" />
+            <label id="entwurf-label-b" for="entwurf-b"></label>
+            <input id="entwurf-b" type="text" autocomplete="off" spellcheck="false" />
+          </div>
+          <div class="knotenknoepfe">
+            <button type="submit" data-t="wallet.entwurf.bestaetigen">Bestätigen</button>
+            <button id="entwurf-abbrechen2" type="button" data-t="wallet.entwurf.abbrechen">Abbrechen</button>
+          </div>
+        </form>
+      </div>
+      <div class="knotenreihen">
+        <label for="wallet-name" data-t="wallet.neu">Neues Wallet</label>
+        <form id="walletneu" class="knotenregler">
+          <input id="wallet-name" type="text" autocomplete="off" spellcheck="false" maxlength="40"
+                 data-t-platz="wallet.name.platz" />
+          <button type="submit" data-t="wallet.anlegen">Anlegen</button>
+        </form>
+        <label for="wallet-wieder-name" data-t="wallet.wieder">Aus zwölf Wörtern</label>
+        <form id="walletwieder" class="walletwieder">
+          <input id="wallet-wieder-name" type="text" autocomplete="off" spellcheck="false" maxlength="40"
+                 data-t-platz="wallet.name.platz" />
+          <textarea id="wallet-wieder-woerter" rows="2" autocomplete="off" spellcheck="false"
+                    data-t-platz="wallet.wieder.platz"></textarea>
+          <button type="submit" data-t="wallet.wieder.knopf">Wiederherstellen</button>
+        </form>
+        <label for="wallet-einstieg" data-t="wallet.einstieg">Einstieg ins Netz</label>
+        <form id="walleteinstieg" class="knotenregler">
+          <input id="wallet-einstieg" type="text" autocomplete="off" spellcheck="false"
+                 data-t-platz="wallet.einstieg.platz" />
+          <button type="submit" data-t="wallet.einstieg.setzen">Setzen</button>
+        </form>
+      </div>
+      <p id="walletmeldung" class="knotenmeldung" role="alert"></p>
+      <p id="walletordner" class="knotenhinweis"></p>
+    </section>
+
     <!-- ⚑ Die Eingabezeile klebt unten und nicht im Fluss: Wer nach
          oben scrollt, um etwas nachzulesen, soll nicht erst wieder
          herunterscrollen muessen, um zu antworten. -->

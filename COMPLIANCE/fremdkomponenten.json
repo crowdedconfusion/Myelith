@@ -173,6 +173,14 @@
       "lizenz": "CC-BY-SA-3.0 oder GFDL",
       "weg": "nachgeladen",
       "geprueft": "2026-09-25, Hugging-Face-API (license=cc-by-sa-3.0, gfdl)"
+    },
+    {
+      "name": "BIP-39-Wortliste, englisch (bip-0039/english.txt)",
+      "zweck": "Wiederherstellungswoerter der Testwallets im Client (zwoelf Woerter nach BIP-39), unveraendert; SHA-256 2f5eed53…dbda",
+      "quelle": "https://github.com/bitcoin/bips/blob/master/bip-0039/english.txt",
+      "lizenz": "MIT",
+      "weg": "mitgeliefert",
+      "geprueft": "2026-10-26, Kopf von bip-0039.mediawiki (License: MIT), Abdruck gegen die Probe in myl-client"
     }
   ]
 }

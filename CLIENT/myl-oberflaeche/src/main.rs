@@ -3612,6 +3612,13 @@ fn main() {
             artefakt_bauen,
             bauplan,
             mining_lage,
+            wallet_lage,
+            wallet_entwurf,
+            wallet_bestaetigen,
+            wallet_verwerfen,
+            wallet_wiederherstellen,
+            wallet_waehlen,
+            einstieg_setzen,
             rechenwerke_auffrischen,
             mining_stand,
             mining_ablegen,
@@ -4230,6 +4237,143 @@ async fn mining_starten(freigabe: myl_client::mining::Freigabe) -> Result<Vec<St
 #[tauri::command]
 async fn mining_beenden() -> Result<bool, String> {
     myl_client::mining::beenden()
+}
+
+/// Ein Wallet, wie der Reiter es zeigt.
+#[derive(Serialize)]
+struct Walletzeile {
+    name: String,
+    adresse: String,
+    gewaehlt: bool,
+    /// Ob die Kette es zuletzt als Auszahlungskonto fuehrte.
+    eingetragen: bool,
+    /// Das Guthaben, falls der laufende Knoten es kennt (nur das seines
+    /// Wallets), als Text in MYL.
+    guthaben: Option<String>,
+}
+
+/// **Die Lage fuer den Reiter „Wallet"** (2026-10-26).
+#[derive(Serialize)]
+struct Walletlage {
+    wallets: Vec<Walletzeile>,
+    /// Laeuft Mining, und an welches Wallet zahlt es.
+    mining_wallet: Option<String>,
+    /// Ob die Kette das Wallet des laufenden Minings schon fuehrt.
+    mining_eingetragen: bool,
+    /// Wohin der Knoten beitritt, wie eingestellt (roh) und aufgeloest.
+    einstieg_angabe: String,
+    einstieg: Option<String>,
+    ordner: String,
+}
+
+#[tauri::command]
+async fn wallet_lage() -> Result<Walletlage, String> {
+    use myl_client::{mining, wallet};
+    let gewaehlt = wallet::gewaehlt().map(|w| w.name);
+    let eingetragen = wallet::eingetragen().map(|w| w.name);
+    let lauf = mining::zustand().and_then(|mut z| {
+        let s = mining::stand(&mut z).ok()?;
+        Some((z.wallet?, s.auszahlung_guthaben, s.auszahlung_eingetragen))
+    });
+    let wallets = wallet::liste()
+        .into_iter()
+        .map(|w| Walletzeile {
+            guthaben: lauf.as_ref().filter(|(n, _, _)| *n == w.name).map(|(_, g, _)| mining::myl_text(*g)),
+            gewaehlt: Some(&w.name) == gewaehlt.as_ref(),
+            eingetragen: Some(&w.name) == eingetragen.as_ref(),
+            adresse: w.adresse_hex(),
+            name: w.name,
+        })
+        .collect();
+    let e = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad()).unwrap_or_default();
+    Ok(Walletlage {
+        wallets,
+        mining_wallet: lauf.as_ref().map(|(n, _, _)| n.clone()),
+        mining_eingetragen: lauf.as_ref().is_some_and(|(_, _, e)| *e),
+        einstieg_angabe: e.mining.einstieg.unwrap_or_default(),
+        einstieg: mining::einstieg(),
+        ordner: wallet::ordner().display().to_string(),
+    })
+}
+
+/// ⚑ **Der Entwurf eines neuen Wallets bleibt im Ruecken**, bis er
+/// bestaetigt ist (Festlegung des Projektinhabers, 2026-10-26): Die Seite
+/// bekommt die Woerter zum Zeigen und die zwei abgefragten Stellen, den Seed
+/// nie.
+static ENTWURF: std::sync::Mutex<Option<Offener>> = std::sync::Mutex::new(None);
+
+/// Ein offener Entwurf: Name, Entwurf und die zwei abgefragten Stellen.
+type Offener = (String, myl_client::wallet::Entwurf, (usize, usize));
+
+/// Was die Seite zum Notieren zeigt.
+#[derive(Serialize)]
+struct Walletentwurf {
+    woerter: Vec<String>,
+    befund: String,
+    abfrage: (usize, usize),
+}
+
+/// **Erster Schritt**: Name pruefen, wuerfeln, im Netz suchen. Hat die
+/// Adresse schon Spuren, wird nichts entworfen.
+#[tauri::command]
+async fn wallet_entwurf(name: String) -> Result<Walletentwurf, String> {
+    use myl_client::wallet;
+    let name = name.trim().to_string();
+    wallet::name_pruefen(&name)?;
+    let e = wallet::entwerfen()?;
+    let befund = wallet::im_netz_suchen(&e.adresse);
+    if matches!(befund, wallet::Netzbefund::Bekannt { .. }) {
+        return Err(format!("{} Es wird nichts angelegt.", befund.satz()));
+    }
+    let abfrage = e.abfrage();
+    let antwort = Walletentwurf { woerter: e.woerter().to_vec(), befund: befund.satz(), abfrage };
+    *ENTWURF.lock().map_err(|_| "Entwurf gesperrt")? = Some((name, e, abfrage));
+    Ok(antwort)
+}
+
+/// **Zweiter Schritt**: „notiert" und die zwei Woerter; erst dann wird
+/// gespeichert. Stimmt etwas nicht, ist der Entwurf verworfen.
+#[tauri::command]
+async fn wallet_bestaetigen(notiert: bool, wort_a: String, wort_b: String) -> Result<String, String> {
+    let (name, e, (a, b)) = ENTWURF.lock().map_err(|_| "Entwurf gesperrt")?.take().ok_or("Kein Entwurf; neu beginnen.")?;
+    if !notiert {
+        return Err("Ohne Bestätigung, dass die Wörter notiert sind, wird nichts angelegt.".into());
+    }
+    if !e.bestaetigt(&[(a, &wort_a), (b, &wort_b)]) {
+        return Err("Die Wörter stimmen nicht; es wurde nichts angelegt. Neu beginnen.".into());
+    }
+    let w = myl_client::wallet::speichern(&name, &e)?;
+    Ok(format!("{} angelegt: {}", w.name, w.adresse_hex()))
+}
+
+#[tauri::command]
+async fn wallet_verwerfen() {
+    if let Ok(mut g) = ENTWURF.lock() {
+        *g = None;
+    }
+}
+
+/// Ein Wallet aus zwoelf Woertern, mit Suche im Netz.
+#[tauri::command]
+async fn wallet_wiederherstellen(name: String, woerter: String) -> Result<String, String> {
+    use myl_client::wallet;
+    let name = name.trim();
+    wallet::name_pruefen(name)?;
+    let e = wallet::aus_woertern(&woerter)?;
+    let befund = wallet::im_netz_suchen(&e.adresse);
+    let w = wallet::speichern(name, &e)?;
+    Ok(format!("{} wiederhergestellt. {}", w.name, befund.satz()))
+}
+
+#[tauri::command]
+async fn wallet_waehlen(name: String) -> Result<(), String> {
+    myl_client::wallet::waehlen(&name).map(|_| ())
+}
+
+/// Setzt den Einstieg; leer heisst eigener Probelauf.
+#[tauri::command]
+async fn einstieg_setzen(angabe: String) -> Result<Option<String>, String> {
+    myl_client::mining::einstieg_setzen(&angabe)
 }
 
 /// Was vor dem Knopf steht: der Plan und ob der Platz reicht.

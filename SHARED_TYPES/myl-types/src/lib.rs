@@ -44,6 +44,8 @@ pub mod node_metadata;
 pub mod ortsleitung;
 pub mod poi_botschaft;
 pub mod protocol;
+/// Die Relaisleitung zwischen Knoten und Koordinator.
+pub mod relais;
 pub mod seed_rng;
 pub mod sitzung;
 pub mod trainingssegment;

@@ -1,7 +1,7 @@
 # integer-llm
 
-> **Version:** 0.146.0 (θ_v 0.22.0; kernels 0.89.0, runtime 0.104.0, pipeline 0.15.3)
-> **Datum:** 2026-10-23
+> **Version:** 0.146.1 (θ_v 0.22.0; kernels 0.89.0, runtime 0.104.1, pipeline 0.15.4)
+> **Datum:** 2026-10-26
 > **Status:** ⚠️ **Das Akzeptanzkriterium ruht auf einer zu kleinen
 > Stichprobe.** Gemessen wurde bisher ueber **4 Sequenzen, 435
 > Positionen**; eine Messung ueber **32 Sequenzen, 3558 Positionen**
@@ -648,6 +648,18 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
   volle Paritätstests nur auf GPU-Runnern (nightly oder PR-basiert)
 
 ## Changelog
+
+### v0.146.1 (2026-10-26): Proben räumen ab (Fund 653; runtime 0.104.1, pipeline 0.15.4)
+
+- 📌 **Fund 653: Proben liessen Verzeichnisse im Temp liegen.** Gefunden
+  bei der vollen Testrunde mit leerem Probeordner. In `runtime` vier
+  (`integer-llm-loader-logits-*`: die Logits-Probe räumte als einzige ihr
+  Verzeichnis nicht ab), in `pipeline` eines (alle Proben teilten sich ein
+  Verzeichnis, gelöscht wurden nur die Dateien). Jetzt räumt die
+  Logits-Probe ab, und `pipeline` gibt jeder Probe ein eigenes
+  Verzeichnis, das sie am Ende löscht. Nachgeprüft: beide Kisten mit leerem
+  Probeordner, danach leer.
+- runtime 0.104.1, pipeline 0.15.4.
 
 ### v0.146.0 (2026-10-23): Iris, der Sichtturm, ganzzahlig (kernels 0.89.0, runtime 0.104.0; Funde 621 bis 623)
 

@@ -291,6 +291,9 @@ pub fn anlaufstelle() -> bool {
         modellname: "sparrow-0.6b-int8".to_string(),
         kontoschluesseldatei: None,
         konto: None,
+        kontowechseldatei: None,
+        podrelais: None,
+        podrelaisausweis: None,
         testverkehr_sekunden: if takt == 0 { None } else { Some(takt) },
         // Die Anlaufstelle baut die Blöcke. **Genau einer im Netz**:
         // Zwei Erzeuger gabeln die Kette sofort, weil niemand
@@ -380,6 +383,9 @@ pub fn teilnehmer(name_vorgabe: &str) -> bool {
         modellname: "sparrow-0.6b-int8".to_string(),
         kontoschluesseldatei: None,
         konto: None,
+        kontowechseldatei: None,
+        podrelais: None,
+        podrelaisausweis: None,
         testverkehr_sekunden: if takt == 0 { None } else { Some(takt) },
         // Teilnehmer erzeugen nicht, sie schicken Transaktionen und
         // rechnen die Blöcke der Anlaufstelle nach.

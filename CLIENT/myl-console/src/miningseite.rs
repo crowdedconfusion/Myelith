@@ -381,7 +381,7 @@ const HINWEISZEILEN: usize = 6;
 
 /// Bricht an Wortgrenzen um; ein Wort, das allein zu lang ist, steht in
 /// seiner eigenen Zeile und wird dort gekuerzt.
-fn umbrechen(text: &str, breite: usize) -> Vec<String> {
+pub(crate) fn umbrechen(text: &str, breite: usize) -> Vec<String> {
     let breite = breite.max(10);
     let mut aus: Vec<String> = Vec::new();
     let mut zeile = String::new();
@@ -400,7 +400,7 @@ fn umbrechen(text: &str, breite: usize) -> Vec<String> {
     aus.into_iter().map(|z| kuerzen(&z, breite)).collect()
 }
 
-fn kuerzen(text: &str, breite: usize) -> String {
+pub(crate) fn kuerzen(text: &str, breite: usize) -> String {
     let n = text.chars().count();
     if n <= breite {
         return text.to_string();

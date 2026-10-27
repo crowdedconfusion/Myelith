@@ -1,6 +1,6 @@
 [package]
 name = "integer-llm-pipeline"
-version = "0.15.3"
+version = "0.15.4"
 edition = "2021"
 rust-version = "1.99"
 license = "LicenseRef-PolyForm-Shield-1.0.0"

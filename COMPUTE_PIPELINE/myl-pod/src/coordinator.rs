@@ -233,14 +233,79 @@ impl Coordinator {
     ///
     /// `prompt_tokens` ist der Prompt; `max_new_tokens` begrenzt die
     /// Generation. Die Ausgabe ist bei identischem Prompt bitgleich.
+    ///
+    /// 📌 **Fund 654 (2026-10-26): Eine verlorene Runde kostete den ganzen
+    /// Auftrag.** Ging eine Runde zu einem Shard verloren (im Lauf über
+    /// Docker ein IO-Fehler auf der Leitung), fehlte dem Shard diese
+    /// Position im KV-Speicher, und jede folgende lehnte er ab („hinter dem
+    /// Ende des KV-Speichers“); der Koordinator schickte trotzdem alle
+    /// weiter. Jetzt bricht die erste fehlgeschlagene Runde den Durchlauf
+    /// ab, die Segmente dieses Durchlaufs werden verworfen (sonst stünde
+    /// dieselbe Position zweimal im Bündel), die Shards vergessen die
+    /// Sitzung, und der Auftrag wird **einmal** neu gerechnet. Scheitert
+    /// auch das, kommt nichts zurück und kein halbes Segment bleibt stehen.
     pub fn run_prompt(&mut self, session_id: u64, prompt_tokens: &[u32], max_new_tokens: u64) -> Vec<u32> {
+        let vorher = self.completed.len();
+        if let Some(t) = self.ein_durchlauf(session_id, prompt_tokens, max_new_tokens, true) {
+            return t;
+        }
+        self.completed.truncate(vorher);
+        self.sitzung_abschliessen(session_id);
+        eprintln!("[coordinator] Sitzung {session_id}: eine Runde ging verloren, der Auftrag wird neu gerechnet");
+        // Die Wiederholung Token für Token: Sie trägt auch über einen Shard,
+        // der den Stapel nicht kennt (Fund 650).
+        match self.ein_durchlauf(session_id, prompt_tokens, max_new_tokens, false) {
+            Some(t) => t,
+            None => {
+                self.completed.truncate(vorher);
+                Vec::new()
+            }
+        }
+    }
+
+    /// Ein Durchlauf; `None`, sobald eine Runde zu einem Shard scheitert.
+    /// `stapel`: der Prefill als Stapel je Shard (Fund 650).
+    fn ein_durchlauf(&mut self, session_id: u64, prompt_tokens: &[u32], max_new_tokens: u64, stapel: bool) -> Option<Vec<u32>> {
         let mut generated = Vec::new();
 
         // 1) Prefill: Prompt-Tokens durch die Pipeline schicken (je Token
         //    eine Nachricht, Position 0..P-1). Das letzte Prompt-Token
         //    trägt FLAG_SAMPLE und löst das erste Sampling aus.
         let mut pending_feedback: Option<PodMessage> = None;
-        for (i, tok) in prompt_tokens.iter().enumerate() {
+        // 📌 **Fund 650 (2026-10-27): der Prefill als Stapel.** Über Knoten
+        //    mit Latenz kostete jedes Prompt-Token eine Runde je Shard, rund
+        //    4 s je Token bei vier Shards. Jetzt gehen bis zu `MAX_STAPEL`
+        //    Positionen in **einer** Runde je Shard; jede bleibt ihr eigenes
+        //    Segment mit eigener Spur und Unterschrift, und gerechnet wird in
+        //    derselben Reihenfolge wie einzeln.
+        if stapel && prompt_tokens.len() > 1 {
+            let mut i0 = 0usize;
+            for teil in prompt_tokens.chunks(crate::shardweg::MAX_STAPEL) {
+                let mut msgs = Vec::with_capacity(teil.len());
+                let mut eingaenge = Vec::with_capacity(teil.len());
+                for (k, tok) in teil.iter().enumerate() {
+                    let i = i0 + k;
+                    let packed = wire::pack_tokens(&[*tok]);
+                    let flags = if i + 1 == prompt_tokens.len() { FLAG_SAMPLE } else { 0 };
+                    eingaenge.push(crate::trace::activation_hash(&packed));
+                    msgs.push(PodMessage::token_input(segment_id_from(session_id, i as u64), session_id, i as u64, packed, flags));
+                }
+                let ergebnisse = self.pump_stapel(&msgs)?;
+                for (k, (out_trace, out_sigs, token_opt, feedback_opt)) in ergebnisse.into_iter().enumerate() {
+                    let i = i0 + k;
+                    self.segment_abschliessen(segment_id_from(session_id, i as u64), i as u64, out_trace, out_sigs, eingaenge[k]);
+                    if let Some(t) = token_opt {
+                        generated.push(t);
+                    }
+                    if feedback_opt.is_some() {
+                        pending_feedback = feedback_opt;
+                    }
+                }
+                i0 += teil.len();
+            }
+        }
+        let einzeln: &[u32] = if stapel && prompt_tokens.len() > 1 { &[] } else { prompt_tokens };
+        for (i, tok) in einzeln.iter().enumerate() {
             let is_last = i + 1 == prompt_tokens.len();
             let packed = wire::pack_tokens(&[*tok]);
             let flags = if is_last { FLAG_SAMPLE } else { 0 };
@@ -249,7 +314,7 @@ impl Coordinator {
             // (Fund 102): die Nutzlast dieser Nachricht.
             let eingang = crate::trace::activation_hash(&packed);
             let msg = PodMessage::token_input(segment_id, session_id, i as u64, packed, flags);
-            let (out_trace, out_sigs, token_opt, feedback_opt) = self.pump(&msg);
+            let (out_trace, out_sigs, token_opt, feedback_opt) = self.pump(&msg)?;
             self.segment_abschliessen(segment_id, i as u64, out_trace, out_sigs, eingang);
             if let Some(t) = token_opt {
                 generated.push(t);
@@ -273,7 +338,7 @@ impl Coordinator {
             msg.segment_id = segment_id;
             let position = msg.position;
             let eingang = crate::trace::activation_hash(&msg.payload);
-            let (out_trace, out_sigs, token_opt, feedback_opt) = self.pump(&msg);
+            let (out_trace, out_sigs, token_opt, feedback_opt) = self.pump(&msg)?;
             self.segment_abschliessen(segment_id, position, out_trace, out_sigs, eingang);
             match token_opt {
                 Some(t) => generated.push(t),
@@ -282,7 +347,7 @@ impl Coordinator {
             pending_feedback = feedback_opt;
         }
 
-        generated
+        Some(generated)
     }
 
     /// Vermerkt ein abgeschlossenes Segment, also einen Vorwärtspass.
@@ -339,12 +404,74 @@ impl Coordinator {
         });
     }
 
+    /// **Ein Stapel durch die Pipeline** (Fund 650): je Shard eine Runde mit
+    /// allen Nachrichten, die noch unterwegs sind; je Nachricht dasselbe,
+    /// was [`Self::pump`] für eine sammelt. `None`, sobald ein Shard ablehnt,
+    /// nicht erreicht wird oder etwas anderes als einen Stapel liefert (ein
+    /// Shard, der ihn nicht kennt).
+    #[allow(clippy::type_complexity)]
+    fn pump_stapel(
+        &self,
+        erste: &[PodMessage],
+    ) -> Option<Vec<(Vec<[u8; 32]>, Vec<BlsSignature>, Option<u32>, Option<PodMessage>)>> {
+        let n = erste.len();
+        let mut aus: Vec<(Vec<[u8; 32]>, Vec<BlsSignature>, Option<u32>, Option<PodMessage>)> =
+            (0..n).map(|_| (Vec::new(), Vec::new(), None, None)).collect();
+        let mut unterwegs: Vec<(usize, PodMessage)> = erste.iter().cloned().enumerate().collect();
+        for shard_idx in 0..self.weg.shardzahl() {
+            if unterwegs.is_empty() {
+                break;
+            }
+            let stapel: Vec<PodMessage> = unterwegs.iter().map(|(_, m)| m.clone()).collect();
+            let outs = match self.weg.frage(shard_idx, &crate::shardweg::Shardanfrage::RechneStapel(stapel)) {
+                Ok(crate::shardweg::Shardantwort::StapelGerechnet(o)) if o.len() == unterwegs.len() => o,
+                Ok(crate::shardweg::Shardantwort::Fehler(e)) => {
+                    eprintln!("[coordinator] Shard {shard_idx} lehnte den Stapel ab: {e}");
+                    return None;
+                }
+                Ok(andere) => {
+                    eprintln!("[coordinator] Shard {shard_idx} antwortete auf den Stapel mit {andere:?}");
+                    return None;
+                }
+                Err(e) => {
+                    eprintln!("[coordinator] Shard {shard_idx} lehnte ab: {e}");
+                    return None;
+                }
+            };
+            let mut weiter = Vec::new();
+            for ((i, _), out) in unterwegs.into_iter().zip(outs) {
+                let e = &mut aus[i];
+                match out {
+                    ShardOut::Forward(next) => {
+                        e.0 = next.trace.clone();
+                        e.1.push(next.signature);
+                        weiter.push((i, next));
+                    }
+                    ShardOut::Token { token, feedback, trace, signature, .. } => {
+                        e.0 = trace;
+                        e.1.push(signature);
+                        e.2 = Some(token);
+                        e.3 = feedback;
+                    }
+                    ShardOut::Prefill { trace, signature } => {
+                        e.0 = trace;
+                        e.1.push(signature);
+                    }
+                }
+            }
+            unterwegs = weiter;
+        }
+        Some(aus)
+    }
+
     /// Schickt eine Nachricht durch die Shard-Pipeline und sammelt Spur,
     /// Signaturen, ein evtl. gesampeltes Token und die Feedback-Nachricht.
+    /// `None`, wenn ein Shard ablehnt oder nicht erreicht wird (Fund 654).
+    #[allow(clippy::type_complexity)]
     fn pump(
         &self,
         first: &PodMessage,
-    ) -> (Vec<[u8; 32]>, Vec<BlsSignature>, Option<u32>, Option<PodMessage>) {
+    ) -> Option<(Vec<[u8; 32]>, Vec<BlsSignature>, Option<u32>, Option<PodMessage>)> {
         let mut trace = Vec::new();
         let mut signatures = Vec::new();
         let mut token_out = None;
@@ -395,11 +522,11 @@ impl Coordinator {
                 }
                 Err(e) => {
                     eprintln!("[coordinator] Shard {} lehnte ab: {}", shard_idx, e);
-                    break;
+                    return None;
                 }
             }
         }
-        (trace, signatures, token_out, feedback_out)
+        Some((trace, signatures, token_out, feedback_out))
     }
 
     /// Baut ein PoI-Bündel aus den abgeschlossenen Segmenten dieser

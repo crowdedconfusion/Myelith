@@ -54,6 +54,9 @@ pub const WEG: &str = "/inferenz";
 /// Millisekunden; zehn Sekunden sind reichlich.
 pub const LESEFRIST: Duration = Duration::from_secs(10);
 
+/// Eine angenommene, noch ungelesene Verbindung ([`Tuer::annehmen`]).
+pub struct Verbindung(TcpStream);
+
 /// Der Zuhörer.
 pub struct Tuer {
     lauscher: TcpListener,
@@ -185,6 +188,11 @@ impl Tuer {
     /// ein anderer Aufruf und kein Schalter: Ein Gateway, das beide
     /// Formen annimmt, müsste raten, welche vorliegt, und Raten ist
     /// genau das, was eine Zerlegung nicht tun darf.
+    ///
+    /// ⚠️ **Epoche und Uhr stehen hier fest, bevor die Tür wartet.** Wer
+    /// sie aus einem Zustand liest, der weiterläuft, nimmt
+    /// [`Tuer::annehmen`] und [`Tuer::mit_zugang_beantworten`] und liest
+    /// dazwischen (Fund 647).
     pub async fn bedienen_mit_zugang<Q: Kontraktquelle>(
         &self,
         annahme: &mut Annahme,
@@ -192,8 +200,46 @@ impl Tuer {
         jetzt: EpochId,
         jetzt_ms: u64,
     ) -> io::Result<()> {
+        let v = self.annehmen().await?;
+        self.mit_zugang_beantworten(v, annahme, zugang, jetzt, jetzt_ms).await
+    }
+
+    /// **Wartet auf eine Verbindung**, ohne sie zu lesen.
+    ///
+    /// 📌 **Fund 647 (2026-10-26):** Der Knoten las Epoche und Uhr und
+    /// wartete danach auf die nächste Verbindung, beliebig lange. Kam sie
+    /// Epochen später, prüfte die Tür einen frischen Kontrakt gegen die
+    /// alte Epoche und wies ab (401), obwohl alles stimmte. Wer annimmt
+    /// und **danach** liest, prüft gegen den Stand des Augenblicks, in dem
+    /// die Anfrage da ist.
+    pub async fn annehmen(&self) -> io::Result<Verbindung> {
         let (strom, _) = self.lauscher.accept().await?;
-        Self::eine_verbindung(strom, self.lesefrist, annahme, Some(zugang), jetzt, jetzt_ms).await
+        Ok(Verbindung(strom))
+    }
+
+    /// Beantwortet eine angenommene Verbindung mit Zugangsprüfung (Stufe 2).
+    pub async fn mit_zugang_beantworten<Q: Kontraktquelle>(
+        &self,
+        v: Verbindung,
+        annahme: &mut Annahme,
+        zugang: &mut Zugangsstelle<Q>,
+        jetzt: EpochId,
+        jetzt_ms: u64,
+    ) -> io::Result<()> {
+        Self::eine_verbindung(v.0, self.lesefrist, annahme, Some(zugang), jetzt, jetzt_ms).await
+    }
+
+    /// Beantwortet eine angenommene Verbindung an der `/v1`-Tür.
+    pub async fn v1_beantworten<Q: Kontraktquelle, R: crate::oai::Rechenweg>(
+        &self,
+        v: Verbindung,
+        annahme: &mut Annahme,
+        zugang: &mut Zugangsstelle<Q>,
+        weg: &R,
+        jetzt: EpochId,
+        jetzt_ms: u64,
+    ) -> io::Result<()> {
+        Self::eine_v1_verbindung(v.0, self.lesefrist, annahme, zugang, weg, jetzt, jetzt_ms).await
     }
 
     async fn eine_verbindung<Q: Kontraktquelle>(
@@ -299,6 +345,9 @@ impl Tuer {
     /// sie ohne Ausweis herausgäbe, sagte einem Fremden, welcher
     /// Pipeline-Stand hier läuft, und das ist eine Auskunft über den
     /// Betreiber.
+    ///
+    /// ⚠️ Epoche und Uhr stehen fest, bevor die Tür wartet; siehe
+    /// [`Tuer::annehmen`] (Fund 647).
     pub async fn bedienen_v1<Q: Kontraktquelle, R: crate::oai::Rechenweg>(
         &self,
         annahme: &mut Annahme,
@@ -307,8 +356,8 @@ impl Tuer {
         jetzt: EpochId,
         jetzt_ms: u64,
     ) -> io::Result<()> {
-        let (strom, _) = self.lauscher.accept().await?;
-        Self::eine_v1_verbindung(strom, self.lesefrist, annahme, zugang, weg, jetzt, jetzt_ms).await
+        let v = self.annehmen().await?;
+        self.v1_beantworten(v, annahme, zugang, weg, jetzt, jetzt_ms).await
     }
 
     async fn eine_v1_verbindung<Q: Kontraktquelle, R: crate::oai::Rechenweg>(
@@ -421,6 +470,12 @@ impl Tuer {
                 "die Vollmacht deckt diesen Auftrag nicht",
             )
             .await;
+        }
+        // 📌 **Und der Kontrakt, mit demselben Höchstbetrag** (Fund 651):
+        // Einzellimit und Restbudget prüft sonst erst die Kette, nach dem
+        // Rechnen, und dann ist die Arbeit verschenkt.
+        if !zugang.deckt_der_kontrakt(&vollmacht, &hoechstens) {
+            return Self::v1_fehler(&mut strom, 402, "der Kontrakt deckt diesen Auftrag nicht").await;
         }
 
         let auftrag = crate::oai::Rechenauftrag {

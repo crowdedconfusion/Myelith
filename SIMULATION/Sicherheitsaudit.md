@@ -1,6 +1,6 @@
 # Sicherheitsaudit
 
-**Stand:** 2026-08-28
+**Stand:** 2026-08-28, Tür und Wallet (A16 bis A24) und Quorumsschnitt (A25) am 2026-10-26, Stichprobe im Netz (A27) und Zeitprobe (A28 bis A30) am 2026-10-27
 **Grundlage:** die Angreiferklassen aus Whitepaper Kap. 5.6 und 9.2, die
 Sicherheitsargumente aus Kap. 6.8 und Anhang B, sowie die Funde 41 bis 53
 dieses Projekts.
@@ -13,6 +13,13 @@ hat. Es ist **kein externes Review** (K5, K9) und ersetzt keines.
 sind **zehn abgewehrt und belegt**, **drei offen mit gemessener Lücke**
 und **zwei ungeprüft**. Keine der Lücken ist neu entdeckt worden, ohne
 dass sie hier steht.
+
+⚑ **Nachtrag vom 2026-10-26: neun Klassen für Tür, Wallet und die lokalen
+Leitungen (A16 bis A24).** Diese Teile sind seit Oktober gebaut und standen
+hier noch nicht. Acht sind abgewehrt und belegt (A24 seit dem Abend), eine offen (A23).
+Beim Durchgehen fiel eine Lücke auf und ist geschlossen (A17, Fund 651).
+Dazu A25: Der erste Eigenschaftstest über den Quorumsschnitt fand eine
+latente Lücke an den Rändern von `u64` (Fund 652), am selben Tag behoben.
 
 ⚑ **Neu und am selben Tag geschlossen: A15 (2026-08-28).** Die erste
 Klasse dieses Dokuments, die nicht aus einem Angriffsmodell kam, sondern
@@ -48,6 +55,21 @@ Kettenmigration.
 | A13 | Angriff auf die Krypto-Primitiven | ❓ | nie extern geprüft (K5) |
 | A14 | **Ein Gateway liest den Inhalt mit** | ✅ | Sitzungs-E2E seit `myl-net` v0.9.0, über echte Verbindungen gemessen; **Verkehrsdaten bleiben sichtbar**, und das Schema selbst fällt unter A13 |
 | A15 | **Zwei Blattfolgen, eine Merkle-Wurzel** | ✅ | **Fund 77** (2026-08-28), gemessen und am selben Tag behoben: die Wurzel bindet die Blattzahl (`myl-types` v0.6.0) |
+| A16 | Tür ohne gültige Vollmacht | ✅ | Unterschrift, Vorbehalte und Kontrakt vor jedem Zerlegen; jede Ablehnung sieht gleich aus |
+| A17 | **Tür rechnet über die Grenzen des Kontrakts** | ✅ | **Fund 651** (2026-10-26) geschlossen: Einzellimit und Restbudget vor dem Rechnen |
+| A18 | Veralteter Stand an der Tür | ✅ | **Funde 647, 648** (2026-10-26) geschlossen: Epoche nach dem Annehmen, Abschrift je Block |
+| A19 | Doppelte oder fremde Abrechnung | ✅ | Riegel der Abrechnungsnummer in der Kette, Vollmacht autorisiert |
+| A20 | Lokale Leitungen ohne Ausweis | ✅ | Relais- und Ortsleitung nur mit Ausweis (`0600`), Rahmen gedeckelt |
+| A21 | Transaktion aus dem Wallet verfälscht | ✅ | Unterschrift bindet Netz, Nonce und Anweisung; der Knoten verbreitet nur Geprüftes |
+| A22 | Auszahlungskonto umlenken | ✅ | **Fund 643**: ein Wechsel braucht den Schlüssel des alten Kontos |
+| A23 | **Die Tür belegen** | ⚠️ | Lesefrist und Takt greifen; ein gültiger Kontrakt belegt sie bis zur Frist eines Auftrags |
+| A24 | **Auftrag über die Epochengrenze** | ✅ | **Fund 649** (2026-10-26) geschlossen: das Podwerk rechnet einmal über den Pod der neuen Epoche |
+| A26 | **Ein ehrlicher Miner wird gesperrt** | ✅ | **Fund 655** geschlossen: Anlaufzeit und zwei Fenster; im langen Lauf über 100 Epochen 210 Verdachtsfälle, kein ehrlicher Miner gemeldet |
+| A27 | **Die Stichprobe erreicht niemanden** | ⚠️ | **Fund 656** zur Hälfte: Seit NODE 0.66.0 gehen Spuranfragen als Nachforderung hinaus, seit NODE 0.67.0 finden sie ihren Pod auch nach dem Epochenwechsel (**Fund 658**: vorher endete jede Ziehung ohne Adresse). Im kurzen Podlauf kamen 18 von 18 an (`spuranfrage_eingegangen`). **Beantworten kann sie noch niemand**, denn die Segmentzeugnisse hält nur der Koordinator, und die Eingabe eines Segments hebt seit E10 niemand auf (Fund 118). Stufe 2 von A1 findet im Netz also weiter nicht statt |
+| A28 | **Ein Lügner lässt jede Zeitprobe verwerfen** | ✅ | **Fund 646** geschlossen (NODE 0.68.0, Festlegung des Projektinhabers 2026-10-27): Es wird kein Ping mehr abgezogen; bestanden ist die kürzeste von fünf Proben ≤ k · Frist + Zugabe (2 s), und k richtet sich nach der Zusage (64 bis 2 048 Positionen). Eine Probe über ihrer Grenze gilt als Überschreitung, auch ohne Antwort. Probe mit Gegenproben in `frist.rs`; im Netzlauf gemeldet |
+| A29 | **Ein Mitglied verweigert jede Zeitprobe** | ❌ | **Fund 660** offen: Wer jede Probe sofort mit `Nichts` beantwortet (angeblich besetzt), wird nie gemessen. Abhilfe braucht eine Festlegung (verweigerte Proben zählen wie eine Überschreitung, ab einer Zahl je Epoche) |
+| A30 | **Ein Mitglied antwortet mit erfundenem Abdruck** | ❌ | **Fund 661** offen: Der Abdruck einer Zeitprobe wird nicht nachgerechnet; wer sofort mit einem beliebigen Abdruck antwortet, besteht jede Probe. Abhilfe braucht eine Festlegung (etwa Stichproben der Abdrücke durch Checker, die das Modell haben) |
+| A25 | **Zwei Quoren ohne gemeinsamen Teilnehmer** | ✅ | **Fund 652** (2026-10-26) geschlossen: ein Gesamtgewicht über `u64` sättigte; Eigenschaftstest `quorumschnitt.rs` |
 
 ---
 
@@ -239,6 +261,161 @@ dessen Form den Defekt verdeckt, weil er die richtige Frage nicht
 stellt. Und der Baum in `da.rs` band die Blattzahl über `k` und `m` von
 Anfang an mit, also hatte eine Stelle das Richtige getan, ohne dass
 jemand die Regel daraus verallgemeinert hätte.
+
+---
+
+## 2b. Tür, Wallet und lokale Leitungen (Nachtrag 2026-10-26)
+
+Was hier zugesagt wird, ist dasselbe wie in Z3: Ein Agent kommt über
+seinen Sitzungskontrakt nicht hinaus, und **dazu**, dass ein Betreiber für
+Arbeit, die er an der Tür annimmt, auch bezahlt wird. Das Zweite ist neu;
+ohne es wäre die Tür ein Ort, an dem Rechenzeit verschenkt wird.
+
+### A16 Tür ohne gültige Vollmacht
+
+Die Tür prüft die Vollmacht vor jedem Zerlegen des Rumpfes: Unterschrift
+des Agenten, Kette der Abschwächungen, Vorbehalte, dann den Kontrakt aus
+der Kette (Agent, Widerruf, Zeitfenster). Jede Ablehnung ist dieselbe 401.
+Belege: `GATEWAY/myl-gateway/tests/tuer.rs` (`ein_fremdes_token_wird_wie_alles_andere_abgewiesen`,
+`jede_ablehnung_sieht_gleich_aus`, `zwei_authorization_koepfe_werden_abgewiesen`),
+`zugang.rs` (`ein_fremder_schluessel_kommt_nicht_durch`, `widerruf_ablauf_und_vorlauf_schliessen`),
+`vollmacht.rs` (`ein_geaenderter_vorbehalt_bricht_die_kette`, `ein_untergeschobener_nachfolger_bricht_die_kette`).
+
+### A17 Tür rechnet über die Grenzen des Kontrakts (Fund 651)
+
+Gefunden beim Aufstellen dieses Nachtrags. Die Tür prüfte den Kontrakt mit
+dem Betrag eins; Einzellimit und Restbudget prüfte erst die Kette beim
+Abbuchen, also nach dem Rechnen. Eine Anfrage darüber bekam ihre Antwort,
+die Abbuchung scheiterte, und die Arbeit war verschenkt, beliebig oft.
+**Geschlossen:** Der Höchstbetrag der Anfrage (`max_tokens`) wird vor dem
+Rechnen mit derselben Prüfung gegen den Kontrakt gehalten, die die Kette
+anlegt (`Zugangsstelle::deckt_der_kontrakt`, 402). Beleg:
+`TESTCLIENT/myl-testclient/tests/tuer_bis_rechenwerk.rs`
+(`einzellimit_und_restbudget_greifen_vor_dem_rechnen`, das Rechenwerk läuft
+nicht); ohne die Prüfung rot.
+
+### A18 Veralteter Stand an der Tür (Funde 647, 648)
+
+Zwei Wege, auf denen die Tür gegen einen alten Stand prüfte: die Epoche,
+gelesen vor dem Warten auf eine Verbindung (647), und die Abschrift der
+Kontrakte, aufgefrischt nur alle dreissig Sekunden (648). Beides wirkte in
+beide Richtungen: Eine neue Sitzung wurde abgewiesen, **und ein Widerruf
+griff verspätet**. Belege: `NODE/myl-node/src/tuer.rs`
+(`ein_kontrakt_der_erst_spaeter_gilt_kommt_erst_spaeter_durch`, die Kette
+wandert, während die Tür wartet), `TESTCLIENT/myl-testclient/tests/bezahlen.rs`
+(die Abschrift des Knotens gleich nach dem Block); beide mit Gegenprobe.
+
+### A19 Doppelte oder fremde Abrechnung
+
+Eine Abrechnung trägt eine Nummer, die je Sitzung steigen muss, und die
+Vollmacht des Agenten. Belege: `tuer_bis_rechenwerk.rs`
+(`eine_gerechnete_anfrage_bucht_credits_ab`, dieselbe Abrechnung ein
+zweites Mal scheitert), `CONSENSUS/myl-ledger/src/transitions.rs`
+(`eine_vollmacht_autorisiert_die_abbuchung_durch_einen_fremden`,
+`ein_agent_kommt_ueber_die_grenzen_nicht_hinaus`).
+
+### A20 Lokale Leitungen ohne Ausweis
+
+Relaisleitung (Knoten zu Koordinator und Wallet) und Ortsleitung (Knoten zu
+Shard) nehmen nur Rahmen mit dem Ausweis aus einer Datei mit Rechten
+`0600`; ohne ihn kommt keine Antwort. Belege: `NODE/myl-node/src/relais.rs`
+(`nur_mit_ausweis_kommt_eine_frage_durch`), `myl-types/src/ortsleitung.rs`
+(`ein_falscher_ausweis_kommt_nicht_durch`, `die_laenge_wird_erst_nach_dem_ausweis_gelesen`),
+`myl-pod/src/ortsdienst.rs` (`ohne_ausweis_bleibt_die_tuer_stumm`). ⚠️
+**Grenze des Modells:** Wer als derselbe Benutzer auf der Maschine läuft,
+liest den Ausweis. Das ist gewollt; die Leitungen trennen Prozesse eines
+Betreibers, nicht Betreiber voneinander.
+
+### A21 Transaktion aus dem Wallet verfälscht
+
+Die Unterschrift bindet Netzwert, Nonce und Anweisung; der Knoten prüft sie,
+bevor er verbreitet. Belege: `CONSENSUS/myl-consensus/src/block.rs`
+(`eine_unterschrift_bindet_kette_nummer_und_anweisung`),
+`myl-ledger` (`die_nonce_geht_streng_der_reihe_nach`,
+`nur_der_inhaber_widerruft_und_zweimal_schadet_nicht`),
+`TESTCLIENT/myl-testclient/tests/bezahlen.rs` (eine verfälschte Transaktion
+kommt nicht ins Netz, ein fremdes Wallet widerruft nicht).
+
+### A22 Auszahlungskonto umlenken
+
+Die erste Eintragung unterschreibt der Miner, jede weitere das bisher
+eingetragene Konto (Fund 643). Belege: `myl-ledger`
+(`nach_der_ersten_eintragung_darf_nur_noch_das_konto`, `ein_fremder_traegt_nicht_ein`),
+`NODE/myl-node/tests/auszahlung.rs`.
+
+### A23 Die Tür belegen (offen)
+
+Die Tür bedient eine Anfrage nach der anderen. Gegen fremde Verbindungen
+greifen die Lesefrist (Fund 610, 10 s) und der Takt je Kontrakt; ein
+**gültiger** Kontrakt aber belegt die Tür für die Dauer eines Auftrags, und
+die darf seit Fund 650 bis 540 s betragen, weil ein Pod über Knoten mit
+Latenz Sekunden je Token braucht. **Offen:** gleichzeitige Aufträge oder
+eine Frist je Kontrakt. Die Tür horcht nur auf der Rückschleife; die
+Gefahr geht von Programmen auf der eigenen Maschine aus.
+
+### A24 Auftrag über die Epochengrenze (Fund 649, geschlossen)
+
+Am Epochenwechsel beenden die Knoten ihre Shards sofort, auch mitten in
+einem Auftrag. Der Auftrag scheitert, und **niemand wird belastet**; es ist
+eine Frage der Verfügbarkeit, nicht des Werts. Verwandt mit dem bekannten
+Punkt „Nachrichten an der Epochengrenze“ (A14). **Geschlossen am selben
+Tag:** Kommt kein Token und steht die Kette in einer neuen Epoche, rechnet
+deren Pod den Auftrag einmal neu (COMPUTE_PIPELINE 0.51.0,
+`tests/podwerk_epochenwechsel.rs` mit Gegenprobe).
+
+### A26 Ein ehrlicher Miner wird gesperrt (Fund 655, offen)
+
+Gemessen im langen Podlauf über Docker (2026-10-26, 100 Epochen, Störer,
+`tc netem`): Ein ehrlicher Miner wurde zweimal für eine Epoche gesperrt.
+Beide Male lagen drei Zeitproben über seiner Frist (130 bis 394 ms bei
+100 ms), alle in den ersten 25 s einer Epoche, 14 bis 25 s nach dem Start
+seines Shards, und dieser rechnete zur selben Zeit schon für einen Auftrag
+von der Tür. In ruhigen Phasen lagen dieselben Messungen bei 2 bis 14 ms.
+**Die Zeitprobe misst damit nicht nur die Zusage, sondern auch Anlauf und
+Last**, und drei ehrliche Zeugen reichen für eine Sperre. Das ist die Klasse
+„eine Abwehr trifft den Falschen“, und sie wiegt schwerer als ein
+entkommener Lügner. Verwandt: Fund 646 (das Messverfahren unter Latenz).
+**Behoben (NODE 0.64.0, Festlegung des Projektinhabers):** Gemessen wird
+erst ab einem Viertel der Epoche, und ein Zeugnis gibt es erst nach einer
+zweiten Überschreitung mindestens ein Achtel Epoche später. **Belegt im
+langen Podlauf vom 2026-10-26/27** (100 Epochen, Tür, Störer, `tc netem`,
+35 Abstürze): 1 748 Messungen bestanden, 210 Verdachtsfälle, 121 Zeugnisse,
+alle 88 Meldungen gegen den Lügner, der 28-mal gesperrt wurde; kein
+ehrlicher Miner gemeldet oder gesperrt. Ein einzelner Lauf ist ein Beleg,
+kein Beweis (im ersten Lauf zwei falsche Sperren in 100 Epochen); der Kern
+steht im Test mit Gegenprobe.
+
+### A27 Die Stichprobe erreicht niemanden (Fund 656, offen)
+
+A1 stützt sich auf drei Stufen; die zweite ist die Stichprobe: Die Kette
+zieht Segmente, der Knoten fragt die Mitglieder des Pods nach Spur und
+Beweis, und ein Prüfer rechnet nach. **Im Netz kommt die Frage nicht an.**
+`Knoten::stichprobe_verschicken` schickt die nackte `Spuranfrage`, der
+Empfänger liest jede Anfrage als `Nachforderung` und bekommt `None`; dazu
+hält kein Mitglied die Spuren, die es liefern müsste, und die fragende Seite
+prüft keine Antwort. Die Bausteine in `myl-verifier` sind geprüft, die Nähte
+fehlen: antworten (die Shards halten, was sie unterschrieben haben),
+prüfen, nachrechnen, folgen. ⚠️ **Bis
+dahin gilt A1 im Netz nur über Stufe 1 (Redundanz) und die
+Kontrollsegmente**, nicht über die Stichprobe.
+
+### A25 Zwei Quoren ohne gemeinsamen Teilnehmer (Fund 652)
+
+Die Sicherheit des BFT hängt daran, dass sich zwei Quoren in mehr als
+einem Drittel des Gewichts schneiden. `CONSENSUS/myl-consensus/tests/quorumschnitt.rs`
+prüft das über den echten Code: zufällige Gewichte, für jede Reihenfolge
+die beiden Quoren mit dem kleinsten Schnitt. Bei gewöhnlichen Gewichten
+hält es immer. **Ging die Summe der Gewichte über `u64`, sättigten
+Gesamtgewicht, Schwelle und Zählung**, und zwei Quoren ohne einen
+gemeinsamen Teilnehmer waren möglich. Im Betrieb ist das Gewicht der
+Stake, und die Geldmenge hält die Summe weit darunter; geprüft war diese
+Schranke aber nirgends. **Geschlossen:** Eine solche Summe ergibt eine
+Menge ohne Gewicht, und der Konsens steht, statt sich zu widersprechen.
+Gegenprobe mit dem alten Verhalten: rot.
+
+⚠️ **Was der Test nicht zeigt:** Sperre, Rundenwechsel und den Wechsel
+der Menge an der Epochengrenze. Die Frage aus dem Auditzuschnitt dazu
+bleibt offen; der Test belegt nur die Schwelle, auf der sie aufbaut.
 
 ---
 

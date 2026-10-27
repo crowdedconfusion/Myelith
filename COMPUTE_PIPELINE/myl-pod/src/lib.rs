@@ -47,6 +47,8 @@ pub mod ortsdienst;
 pub mod shardweg;
 pub mod trainingswerk;
 pub mod pipelinewerk;
+/// Ein Ortsdienst, der über den Pod der Kette rechnet (seit 2026-10-26).
+pub mod podwerk;
 pub mod standby;
 pub mod coordinator;
 pub mod micro_batch;

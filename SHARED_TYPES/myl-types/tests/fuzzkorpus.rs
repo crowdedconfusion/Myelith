@@ -161,3 +161,61 @@ fn ein_anhaengsel_macht_die_eingabe_ungueltig() {
         "eine Eingabe mit Anhaengsel wurde als vollstaendig gelesen"
     );
 }
+
+/// ⚑ **Mutationen der Saat, auf stable** (2026-10-26).
+///
+/// Der Fuzzer braucht Nightly und eine Abhängigkeit, die nicht im
+/// Offline-Lager liegt; dieser Lauf ersetzt ihn nicht, aber er geht über
+/// den eingecheckten Korpus hinaus: Jede Eingabe wird mit einem
+/// reproduzierbaren Würfel tausendfach verändert (ein Byte kippen, ein
+/// Byte setzen, kürzen, verlängern), und jede Mutation muss sich entweder
+/// gar nicht als ihr Typ lesen oder kanonisch sein. Eine Panik nennt Ziel,
+/// Datei und Mutation.
+#[test]
+fn mutationen_der_saat_bleiben_kanonisch() {
+    struct Wuerfel(u64);
+    impl Wuerfel {
+        fn naechste(&mut self) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0
+        }
+        fn bis(&mut self, n: u64) -> u64 {
+            self.naechste() % n.max(1)
+        }
+    }
+    let mut versucht = 0usize;
+    let mut gelesen = 0usize;
+    for (name, f) in fuzzziele::ZIELE {
+        for (pfad, saat) in eingaben(name) {
+            let mut w = Wuerfel(0x9e37_79b9_7f4a_7c15 ^ saat.len() as u64 ^ (name.len() as u64) << 32);
+            for runde in 0..1_000u32 {
+                let mut m = saat.clone();
+                for _ in 0..=w.bis(3) {
+                    match w.bis(4) {
+                        0 if !m.is_empty() => {
+                            let i = w.bis(m.len() as u64) as usize;
+                            m[i] ^= 1 << w.bis(8);
+                        }
+                        1 if !m.is_empty() => {
+                            let i = w.bis(m.len() as u64) as usize;
+                            m[i] = w.naechste() as u8;
+                        }
+                        2 if !m.is_empty() => m.truncate(w.bis(m.len() as u64) as usize),
+                        _ => m.push(w.naechste() as u8),
+                    }
+                }
+                versucht += 1;
+                let ergebnis = std::panic::catch_unwind(|| f(&m));
+                match ergebnis {
+                    Ok(true) => gelesen += 1,
+                    Ok(false) => {}
+                    Err(_) => panic!("{name}: Mutation {runde} von {} ist lesbar und nicht kanonisch: {m:?}", pfad.display()),
+                }
+            }
+        }
+    }
+    println!("[fuzzkorpus] {versucht} Mutationen, {gelesen} davon lasen sich vollstaendig und waren kanonisch");
+    assert!(gelesen > 0, "keine Mutation las sich; dann prüft dieser Lauf die Kanonizität nie");
+}

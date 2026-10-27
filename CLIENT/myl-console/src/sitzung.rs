@@ -1285,6 +1285,10 @@ fn schleife(stand: &mut Stand) -> i32 {
                 mining_zeigen(stand);
                 continue;
             }
+            Some(Befehlsart::Wallet) => {
+                wallet_zeigen(stand);
+                continue;
+            }
             Some(Befehlsart::Update) => {
                 if aktualisieren() {
                     NEUSTART.store(true, std::sync::atomic::Ordering::SeqCst);
@@ -1440,6 +1444,8 @@ enum Befehlsart {
     Mining,
     /// Das Mining beenden.
     MiningStop,
+    /// Die Seite der Testwallets: anlegen, auswaehlen, Einstieg.
+    Wallet,
     /// Nach einer neueren Fassung sehen und sie nach Rueckfrage einspielen.
     Update,
     /// Ein eigenes Modell bauen, Schritt fuer Schritt (`/build artifact`).
@@ -1464,7 +1470,7 @@ struct Befehl {
 /// nennt irgendwann einen Befehl, den es nicht gibt, oder verschweigt
 /// einen, den es gibt, **und beides sieht erst der, der es
 /// ausprobiert.**
-const BEFEHLE: [Befehl; 26] = [
+const BEFEHLE: [Befehl; 27] = [
     Befehl {
         art: Befehlsart::Modell,
         namen: &["/model", "/modell"],
@@ -1584,6 +1590,13 @@ const BEFEHLE: [Befehl; 26] = [
         art: Befehlsart::MiningStop,
         namen: &["/mining stop"],
         was: "beendet das Mining",
+    },
+    // ⚑ **Das Wallet** (Auftrag des Projektinhabers, 2026-10-26): dieselben
+    //   Testwallets wie der Reiter „Wallet" im Fenster.
+    Befehl {
+        art: Befehlsart::Wallet,
+        namen: &["/wallet"],
+        was: "Testwallets: anlegen, auswaehlen (das ausgewaehlte bekommt beim Mining die Ertraege), Einstieg ins Netz",
     },
     // ⚑ **Das Update** (Auftrag des Projektinhabers, 2026-10-17): dieselbe
     //   Pruefung wie im Fenster, das sie beim Start von selbst faehrt.
@@ -2371,6 +2384,19 @@ fn mining_zeigen(stand: &mut Stand) {
     }
     let z = crate::miningseite::fahren(t);
     crate::miningzeile::uebernehmen(z);
+    if let Some(sch) = stand.schirm {
+        banner::bildschirm_mit(stand.design);
+        sch.einrichten();
+    }
+}
+
+fn wallet_zeigen(stand: &mut Stand) {
+    let t = design::toene(stand.design);
+    if let Some(sch) = stand.schirm {
+        sch.aufloesen();
+        schirm_leeren();
+    }
+    crate::walletseite::fahren(t);
     if let Some(sch) = stand.schirm {
         banner::bildschirm_mit(stand.design);
         sch.einrichten();

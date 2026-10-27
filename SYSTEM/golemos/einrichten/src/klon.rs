@@ -189,11 +189,37 @@ pub(crate) mod proben {
 
     /// Ein frisches Verzeichnis je Probe, damit parallele Proben sich
     /// nicht in die Quere kommen.
-    pub fn ordner(name: &str) -> PathBuf {
+    ///
+    /// 📌 **Fund 653 (2026-10-26):** Es blieb nach der Probe liegen, zehn
+    /// Verzeichnisse je Lauf im Temp. Jetzt räumt der Wächter beim
+    /// Verlassen der Probe ab, auch wenn sie scheitert.
+    pub fn ordner(name: &str) -> Probeordner {
         let p = std::env::temp_dir().join(format!("golem-einrichten-{}-{name}", std::process::id()));
         let _ = fs::remove_dir_all(&p);
         fs::create_dir_all(&p).unwrap();
-        p
+        Probeordner(p)
+    }
+
+    /// Ein Probeverzeichnis, das sich beim Verlassen selbst löscht.
+    pub struct Probeordner(PathBuf);
+
+    impl std::ops::Deref for Probeordner {
+        type Target = PathBuf;
+        fn deref(&self) -> &PathBuf {
+            &self.0
+        }
+    }
+
+    impl AsRef<Path> for Probeordner {
+        fn as_ref(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for Probeordner {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
     }
 
     pub fn scheinklon(ort: &Path) {
@@ -245,7 +271,7 @@ pub(crate) mod proben {
     fn findet_nicht_auf_ebene_drei() {
         let o = ordner("ebene3");
         scheinklon(&o.join("a/b/Myelith"));
-        assert_eq!(finden(&[o]), None);
+        assert_eq!(finden(std::slice::from_ref(&*o)), None);
     }
 
     #[test]
@@ -266,7 +292,7 @@ pub(crate) mod proben {
         scheinklon(&a.join("eins"));
         scheinklon(&b);
         assert_eq!(finden(&[a.clone(), b.clone()]), Some(a.join("eins")));
-        assert_eq!(finden(&[b.clone(), a]), Some(b));
+        assert_eq!(finden(&[b.to_path_buf(), a.to_path_buf()]), Some(b.to_path_buf()));
     }
 
     #[test]

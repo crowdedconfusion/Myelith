@@ -442,10 +442,7 @@ impl VotingSet {
             );
         }
 
-        Ok(Self {
-            members,
-            total_weight: u64::try_from(total_weight).unwrap_or(u64::MAX),
-        })
+        Ok(Self::mit_summe(members, total_weight))
     }
 
     /// Baut die Menge direkt aus Mitgliedern (für Tests und für Aufrufer,
@@ -454,9 +451,28 @@ impl VotingSet {
         let total_weight = members
             .values()
             .fold(0u128, |acc, m| acc + m.weight as u128);
-        Self {
-            members,
-            total_weight: u64::try_from(total_weight).unwrap_or(u64::MAX),
+        Self::mit_summe(members, total_weight)
+    }
+
+    /// **Ein Gesamtgewicht über `u64` ergibt eine Menge ohne Gewicht.**
+    ///
+    /// 📌 **Fund 652 (2026-10-26):** Hier stand
+    /// `u64::try_from(summe).unwrap_or(u64::MAX)`. Ging die Summe der
+    /// Gewichte über `u64` hinaus, rechnete die Quorumsschwelle mit dem
+    /// gesättigten Wert, und die Stimmen werden ebenfalls sättigend
+    /// gezählt: Zwei Quoren ohne einen gemeinsamen Teilnehmer waren
+    /// möglich, also zwei bestätigte Blöcke derselben Höhe. Im Betrieb
+    /// begrenzt die Geldmenge den Stake und damit die Summe; geprüft war
+    /// diese Schranke nirgends. Gefunden mit `tests/quorumschnitt.rs`.
+    ///
+    /// ⚑ **Sicherheit vor Lebendigkeit**, wie überall im BFT: Eine Menge
+    /// ohne Mitglieder hat das Gesamtgewicht null, niemand zählt, kein
+    /// Quorum ist erreichbar, und der Konsens steht, statt sich zu
+    /// widersprechen.
+    fn mit_summe(members: BTreeMap<MinerId, VotingMember>, summe: u128) -> Self {
+        match u64::try_from(summe) {
+            Ok(total_weight) => Self { members, total_weight },
+            Err(_) => Self { members: BTreeMap::new(), total_weight: 0 },
         }
     }
 

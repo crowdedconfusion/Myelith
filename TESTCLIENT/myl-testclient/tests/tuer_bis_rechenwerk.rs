@@ -434,3 +434,108 @@ async fn eine_gerechnete_anfrage_bucht_credits_ab() {
 
     let _ = std::fs::remove_dir_all(&verz);
 }
+
+/// Ein Kontrakt mit festem Zustand, etwa schon teilweise verbraucht.
+struct MitStand(Sitzungskontrakt, Sitzungszustand);
+impl Kontraktquelle for MitStand {
+    fn nachschlagen(&self, s: SitzungId) -> Option<(Sitzungskontrakt, Sitzungszustand)> {
+        (s == self.0.adresse()).then(|| (self.0.clone(), self.1))
+    }
+}
+
+/// Eine Anfrage an `/v1` gegen diesen Kontrakt und Zustand: der Anfang
+/// der Antwort und wie oft das Rechenwerk lief.
+async fn v1_gegen(k: Sitzungskontrakt, zustand: Sitzungszustand, max_tokens: u32) -> (String, usize) {
+    let verz = verzeichnis("grenze");
+    let shard_schluessel = Epochenschluessel::probe(EpochId(5), [2u8; 32]);
+    let knoten_schluessel = Epochenschluessel::probe(EpochId(5), [1u8; 32]);
+    let knoten_punkte = Gegenpunkte { punkt: knoten_schluessel.punkt(), kapselpunkt: knoten_schluessel.kapselpunkt() };
+    let laeufe = Arc::new(AtomicUsize::new(0));
+    let (dienst, befund) = Ortsdienst::oeffnen(
+        "127.0.0.1:0".parse().expect("Adresse"),
+        &verz,
+        Box::new(Entsiegelndes::neu(
+            PodId::new(POD),
+            Endpunkt::aus_bytes([2u8; 32]),
+            Sitzungen::neu(Endpunkt::aus_bytes([2u8; 32]), shard_schluessel),
+            Box::new(JedeSitzung { wer: Endpunkt::aus_bytes([1u8; 32]), punkte: knoten_punkte }),
+            Box::new(Spiegelwerk { gesehen: Arc::new(Mutex::new(Vec::new())), laeufe: Arc::clone(&laeufe) }),
+        )),
+    )
+    .expect("Shard-Tuer");
+    let shard_adresse = befund.adresse;
+    std::thread::spawn(move || loop {
+        if dienst.bediene_eine().is_err() {
+            break;
+        }
+    });
+    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+    let anschluss = Ortsanschluss::neu(shard_adresse, &verz.join(SCHLUESSEL_DATEI)).expect("Anschluss");
+    let weg = Ortsweg::neu(
+        anschluss,
+        PodId::new(POD),
+        EpochId(5),
+        Endpunkt::aus_bytes([1u8; 32]),
+        knoten_schluessel,
+        "myelith-qwen",
+        empfaenger_210(),
+    )
+    .mit_abrechnung(tx);
+    let s_id = k.adresse();
+    let bearer = Vollmacht::ausstellen(
+        &geheim(7),
+        vec![Vorbehalt::NurSitzung(s_id), Vorbehalt::GueltigBis(EpochId(100))],
+        [12u8; 32],
+    )
+    .expect("ausstellen")
+    .mit_empfaengerbeweis(empfaenger_210(), myl_types::sitzung::empfaengerbeweis(&[empfaenger_210()], &empfaenger_210()).expect("gelistet"))
+    .als_bearer();
+    let tuer = Tuer::binden(0).await.expect("binden");
+    let port = tuer.port().expect("port");
+    let mut annahme = Annahme::neu(43, EpochId(5));
+    let mut stelle = Zugangsstelle::neu(MitStand(k, zustand));
+    let koerper = format!(r#"{{"messages":[{{"role":"user","content":"x"}}],"max_tokens":{max_tokens}}}"#);
+    let bytes = post_bearer(WEG_CHAT, &bearer, koerper.as_bytes());
+    let dienst = async {
+        tuer.bedienen_v1(&mut annahme, &mut stelle, &weg, EpochId(5), 1_000).await.expect("bedienen");
+    };
+    let klient = tokio::task::spawn_blocking(move || {
+        let mut strom = TcpStream::connect(("127.0.0.1", port)).expect("verbinden");
+        strom.set_read_timeout(Some(Duration::from_secs(20))).expect("Frist");
+        strom.write_all(&bytes).expect("senden");
+        let mut aus = Vec::new();
+        let _ = strom.read_to_end(&mut aus);
+        aus
+    });
+    let (antwort, _) = tokio::join!(klient, dienst);
+    let antwort = antwort.expect("Klient");
+    let _ = std::fs::remove_dir_all(&verz);
+    (String::from_utf8_lossy(&antwort[..antwort.len().min(16)]).to_string(), laeufe.load(Ordering::SeqCst))
+}
+
+/// ⚑ **Einzellimit und Restbudget des Kontrakts greifen vor dem Rechnen.**
+/// Was die Anfrage höchstens kostet (`max_tokens`), steht beim Eintreffen
+/// fest; liegt es über dem Einzellimit oder über dem, was vom Budget übrig
+/// ist, darf die Tür nicht rechnen, denn die Kette nähme die Abbuchung
+/// danach nicht an, und die Arbeit wäre verschenkt.
+#[tokio::test]
+async fn einzellimit_und_restbudget_greifen_vor_dem_rechnen() {
+    // Gegenprobe zuerst: innerhalb der Grenzen wird gerechnet.
+    let (kopf, laeufe) = v1_gegen(kontrakt(7), Sitzungszustand::neu(), 16).await;
+    assert!(kopf.starts_with("HTTP/1.1 200"), "innerhalb der Grenzen abgewiesen: {kopf}");
+    assert_eq!(laeufe, 1);
+
+    // Über dem Einzellimit.
+    let mut k = kontrakt(7);
+    k.credits.einzellimit = 2;
+    let (kopf, laeufe) = v1_gegen(k, Sitzungszustand::neu(), 16).await;
+    assert_eq!(laeufe, 0, "über dem Einzellimit wurde gerechnet ({kopf})");
+    assert!(!kopf.starts_with("HTTP/1.1 200"), "über dem Einzellimit kam 200");
+
+    // Über dem Restbudget: 10 000 Budget, 9 990 verbraucht, 16 verlangt.
+    let mut zustand = Sitzungszustand::neu();
+    zustand.verbraucht_credits = 9_990;
+    let (kopf, laeufe) = v1_gegen(kontrakt(7), zustand, 16).await;
+    assert_eq!(laeufe, 0, "über dem Restbudget wurde gerechnet ({kopf})");
+    assert!(!kopf.starts_with("HTTP/1.1 200"), "über dem Restbudget kam 200");
+}

@@ -160,6 +160,11 @@ pub enum Konsensnachricht {
     /// des Netzes, aber der Beleg gilt für sich. Siehe
     /// [`crate::round_change::Commitzertifikat`].
     Commitzertifikat(crate::round_change::Commitzertifikat),
+    /// ⚑ **Die Stimme eines Mitglieds für einen Prüfpunkt** (2026-10-27,
+    /// [`crate::pruefpunkt`]). Angehängt: Die Kodierung der übrigen Marken
+    /// bleibt dieselbe. Sie gehört zu keiner Runde; wer genug davon hat,
+    /// baut das Zertifikat.
+    Pruefpunktstimme(crate::pruefpunkt::Pruefpunktstimme),
 }
 
 impl Konsensnachricht {
@@ -180,6 +185,10 @@ impl Konsensnachricht {
             Self::Vote(v) => v.round,
             Self::Commit(c) => c.round,
             Self::Commitzertifikat(z) => z.round,
+            // Eine Prüfpunktstimme gehört zu keiner Runde; der Knoten
+            // leitet sie vor jedem Rundenfilter an die Sammlung der
+            // Prüfpunkte.
+            Self::Pruefpunktstimme(_) => 0,
         }
     }
 
@@ -201,6 +210,7 @@ impl Konsensnachricht {
             Self::Vote(v) => Some(v.voter),
             Self::Commit(c) => Some(c.committer),
             Self::Commitzertifikat(_) => None,
+            Self::Pruefpunktstimme(s) => Some(s.waehler),
         }
     }
 
@@ -212,6 +222,7 @@ impl Konsensnachricht {
             Self::Vote(_) => "vote",
             Self::Commit(_) => "commit",
             Self::Commitzertifikat(_) => "commit-zertifikat",
+            Self::Pruefpunktstimme(_) => "pruefpunktstimme",
         }
     }
 }

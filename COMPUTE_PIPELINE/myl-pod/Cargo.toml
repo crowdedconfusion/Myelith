@@ -1,6 +1,6 @@
 [package]
 name = "myl-pod"
-version = "0.39.0"
+version = "0.43.1"
 edition = "2021"
 rust-version = "1.99"
 description = "L2-Compute-Pipeline für Myelith (Whitepaper Kap. 4, Anhang A.3): Pod-Mining-Loop mit Spur-Hashes und Eingangs-Prüfung (Manipulationserkennung), BLS-Signierung der Shard-Übergänge, KV-Cache-Session-Affinität und erasure-codierter DA-Archivierung. Konsumiert die INTEGER_LLM-Stage-API und myl-types."
@@ -89,3 +89,23 @@ opt-level = 2
 
 [profile.dev.package.integer-llm-runtime]
 opt-level = 2
+
+# Ueberlaufpruefung im Freigabebau, nur fuer die Protokollkisten
+# (Festlegung des Projektinhabers, 2026-10-26). `--release` schaltet sie
+# sonst ab, und eine Rechnung im Konsenspfad liefe an den Raendern still
+# um; so wird aus einem stillen Fehler ein lauter Halt. Die Rechenkerne
+# (`integer-llm-*`) bleiben ohne, dort zaehlt jede Anweisung, und sie
+# rechnen mit ausdruecklichem `wrapping_*`. Ein Profil gilt nur in der
+# Kiste, die gebaut wird, deshalb steht die Liste in jeder Programmkiste.
+[profile.release.package.myl-types]
+overflow-checks = true
+[profile.release.package.myl-ledger]
+overflow-checks = true
+[profile.release.package.myl-scheduler]
+overflow-checks = true
+[profile.release.package.myl-tokenomics]
+overflow-checks = true
+[profile.release.package.myl-siegel]
+overflow-checks = true
+[profile.release.package.myl-pod]
+overflow-checks = true

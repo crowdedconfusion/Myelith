@@ -290,15 +290,16 @@ async fn alle_kompartimente_verzahnt() {
     // ---- 3. TOKENOMICS: MYL verbrennen, Credits bekommen -------------
     let nutzer = probekonto(0);
     let vor_myl = kette.zustand().account(&nutzer).balance;
-    kette.aufnehmen(
-        Transaktion::signiere(
-            &Kette::startwert(),
-            &probeschluessel(0),
-            nonce[0],
-            Anweisung::Burn { betrag: 5_000_000 },
-        )
-        .expect("signieren"),
-    );
+    let burn = Transaktion::signiere(
+        &Kette::startwert(),
+        &probeschluessel(0),
+        nonce[0],
+        Anweisung::Burn { betrag: 5_000_000 },
+    )
+    .expect("signieren");
+    // Die Gebühr kommt dazu, beim Grundpreis am Boden der Probekette.
+    let gebuehr = myl_node::netz::PROBEKETTE.gebuehren.boden_je_byte * burn.gebuehrenbytes();
+    kette.aufnehmen(burn);
     nonce[0] += 1;
     kette.baue_block();
     let nach_myl = kette.zustand().account(&nutzer).balance;
@@ -309,7 +310,7 @@ async fn alle_kompartimente_verzahnt() {
         .iter()
         .map(|c| c.vtfe)
         .sum();
-    assert_eq!(vor_myl - nach_myl, 5_000_000, "es wurde nicht genau der Betrag verbrannt");
+    assert_eq!(vor_myl - nach_myl, 5_000_000 + gebuehr, "es wurde nicht genau der Betrag verbrannt");
     assert!(credits > 0, "es wurden keine Credits gepraegt");
     assert!(kette.zustand().burn_epoche > 0, "der Burn wurde fuer die Praegung nicht gezaehlt");
     b.schritt(
@@ -608,10 +609,11 @@ async fn alle_kompartimente_verzahnt() {
         aggregate_sig: myl_types::bls::BlsSignature([0; 96]),
         segmente: 1_000,
     };
-    // Echte Unterschriften aller Mitglieder, zu einem Aggregat.
+    // Echte Unterschriften der Positionen, zu einem Aggregat (Fund 645:
+    // die Reserve rechnet nicht und unterschreibt nicht).
     let botschaft = myl_consensus::poi::bundle_message(&buendel);
     let mut teile = Vec::new();
-    for m in pod.mitglieder() {
+    for m in pod.shards.iter().map(|s| &s.miner) {
         let w = (0..6u8)
             .find(|w| MinerId::new(*probekonto(*w).as_bytes()) == m.miner_id)
             .expect("Mitglied ist ein Probekonto");

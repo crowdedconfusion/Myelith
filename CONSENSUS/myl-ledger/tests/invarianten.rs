@@ -410,3 +410,114 @@ fn zufaelliger_uebergang(w: &mut Wuerfel, state: &mut LedgerState) -> Schritt {
         }
     }
 }
+
+/// **Invariante 6: Eine Sitzung hält ihren Kontrakt, über jede Folge.**
+///
+/// Zufällige Abbuchungen unter einem Sitzungskontrakt, mit Beträgen bis
+/// zum Doppelten des Einzellimits, wiederholten und übersprungenen
+/// Nummern, einem Fremden als Handelndem und einem Widerruf irgendwann.
+/// Nach jedem Schritt gilt:
+///
+/// - Der Verbrauch liegt nie über dem Budget.
+/// - Eine angenommene Abbuchung liegt nie über dem Einzellimit, kommt nie
+///   nach dem Widerruf, trägt eine grössere Nummer als jede davor und
+///   senkt die Credits des Inhabers um genau ihren Betrag.
+/// - Eine abgelehnte lässt den Zustand bitgleich.
+///
+/// ⚑ Ergänzt am 2026-10-26 mit den Angriffsklassen A17 und A19: Die Tür
+/// verlässt sich darauf, dass die Kette diese Grenzen hält, und bis hierher
+/// standen sie nur an getippten Beispielen.
+#[test]
+fn eine_sitzung_haelt_ihren_kontrakt_ueber_jede_folge() {
+    use myl_ledger::{sitzung_ausgeben, sitzung_eroeffnen, sitzung_widerrufen};
+    use myl_types::sitzung::{empfaengerbeweis, empfaengerwurzel, Grenzen, Sitzungskontrakt, Vorhaben, Waehrung};
+
+    const BUDGET: u64 = 500;
+    const EINZELLIMIT: u64 = 40;
+    let (inhaber, agent, betreiber, fremder) = (adresse(1), adresse(2), adresse(3), adresse(4));
+    // Damit der Lauf nicht ins Leere prüft: wie oft gebucht wurde, und wie
+    // oft das Budget fast ausgeschöpft war.
+    let (mut angenommen, mut am_rand) = (0u64, 0u64);
+
+    for keim in 1..=60u64 {
+        let mut w = Wuerfel::neu(keim);
+        let mut state = startzustand();
+        state.account_mut(&inhaber).credits.push(myl_types::core_types::InferenceCredit {
+            owner: inhaber,
+            vtfe: 10_000,
+            expiry: EpochId(1_000),
+        });
+        let kontrakt = Sitzungskontrakt {
+            inhaber,
+            agent,
+            credits: Grenzen { budget: BUDGET, einzellimit: EINZELLIMIT, schwelle: u64::MAX, zeugenleiter: Vec::new() },
+            myl: Grenzen::gesperrt(),
+            empfaenger_wurzel: empfaengerwurzel(&[betreiber]),
+            gueltig_ab: EpochId(0),
+            gueltig_bis: EpochId(1_000),
+            max_schritte: 10_000,
+        };
+        let id = sitzung_eroeffnen(&mut state, &inhaber, kontrakt).expect("eroeffnen");
+        let beweis = empfaengerbeweis(&[betreiber], &betreiber).expect("gelistet");
+        let credits = |s: &LedgerState| s.account(&inhaber).credits.iter().map(|c| c.vtfe).sum::<u64>();
+        let mut widerrufen = false;
+
+        for schritt in 0..300 {
+            let vorher = state.clone();
+            let zustand = vorher.sitzungen[&id].zustand;
+            match w.bis(20) {
+                // Ein Widerruf, selten; einmal vom Fremden, einmal vom Inhaber.
+                0 => {
+                    let wer = if w.bis(2) == 0 { fremder } else { inhaber };
+                    let r = sitzung_widerrufen(&mut state, &id, &wer);
+                    if wer == inhaber {
+                        assert!(r.is_ok(), "Keim {keim}, Schritt {schritt}: der Inhaber kann nicht widerrufen");
+                        widerrufen = true;
+                    } else {
+                        assert!(r.is_err(), "Keim {keim}, Schritt {schritt}: ein Fremder hat widerrufen");
+                        assert_eq!(state, vorher, "Keim {keim}, Schritt {schritt}: abgelehnter Widerruf änderte etwas");
+                    }
+                }
+                _ => {
+                    let nummer = match w.bis(5) {
+                        0 => zustand.hoechste_abrechnung.saturating_sub(w.bis(3)),
+                        1 => zustand.hoechste_abrechnung + 1 + w.bis(5),
+                        _ => zustand.hoechste_abrechnung + 1,
+                    };
+                    let handelnder = if w.bis(10) == 0 { fremder } else { agent };
+                    let vorhaben = Vorhaben {
+                        sitzung: id,
+                        handelnder,
+                        waehrung: Waehrung::Credits,
+                        betrag: w.bis(2 * EINZELLIMIT + 1),
+                        empfaenger: betreiber,
+                        empfaenger_beweis: beweis.clone(),
+                        bestaetigt_ausgeliefert: false,
+                        nummer,
+                    };
+                    let r = sitzung_ausgeben(&mut state, &handelnder, &vorhaben, None);
+                    let nachher = state.sitzungen[&id].zustand;
+                    match r {
+                        Ok(()) => {
+                            assert!(vorhaben.betrag <= EINZELLIMIT, "Keim {keim}, Schritt {schritt}: über dem Einzellimit gebucht");
+                            assert!(!widerrufen, "Keim {keim}, Schritt {schritt}: nach dem Widerruf gebucht");
+                            assert_eq!(handelnder, agent, "Keim {keim}, Schritt {schritt}: ein Fremder hat gebucht");
+                            assert!(nummer > zustand.hoechste_abrechnung, "Keim {keim}, Schritt {schritt}: eine verbrauchte Nummer gebucht");
+                            assert_eq!(nachher.hoechste_abrechnung, nummer);
+                            assert_eq!(credits(&vorher) - credits(&state), vorhaben.betrag, "Keim {keim}, Schritt {schritt}: falscher Abzug");
+                            angenommen += 1;
+                        }
+                        Err(_) => assert_eq!(state, vorher, "Keim {keim}, Schritt {schritt}: eine abgelehnte Buchung änderte etwas"),
+                    }
+                }
+            }
+            let z = state.sitzungen[&id].zustand;
+            assert!(z.verbraucht_credits <= BUDGET, "Keim {keim}, Schritt {schritt}: Verbrauch {} über dem Budget", z.verbraucht_credits);
+        }
+        if state.sitzungen[&id].zustand.verbraucht_credits + EINZELLIMIT > BUDGET {
+            am_rand += 1;
+        }
+    }
+    assert!(angenommen > 300, "kaum gebucht ({angenommen}); der Lauf prüft fast nichts");
+    assert!(am_rand > 10, "das Budget kam nur {am_rand}-mal an seinen Rand");
+}

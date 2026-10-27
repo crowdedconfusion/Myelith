@@ -1801,7 +1801,7 @@ fn glas_hat_dicke_und_spiegelung() {
 /// diese Zahlen bewegen, und wer darueber hinauskommt, bekommt es
 /// gesagt statt eines stillen Durchlaufs.
 fn zahlwort(n: usize) -> String {
-    const WORTE: [&str; 81] = [
+    const WORTE: [&str; 86] = [
         "null", "ein", "zwei", "drei", "vier", "fünf", "sechs", "sieben", "acht", "neun",
         "zehn", "elf", "zwölf", "dreizehn", "vierzehn", "fünfzehn", "sechzehn", "siebzehn",
         "achtzehn", "neunzehn", "zwanzig", "einundzwanzig", "zweiundzwanzig",
@@ -1819,6 +1819,7 @@ fn zahlwort(n: usize) -> String {
         "neunundsechzig", "siebzig", "einundsiebzig", "zweiundsiebzig", "dreiundsiebzig",
         "vierundsiebzig", "fünfundsiebzig", "sechsundsiebzig", "siebenundsiebzig",
         "achtundsiebzig", "neunundsiebzig", "achtzig",
+        "einundachtzig", "zweiundachtzig", "dreiundachtzig", "vierundachtzig", "fünfundachtzig",
     ];
     WORTE
         .get(n)

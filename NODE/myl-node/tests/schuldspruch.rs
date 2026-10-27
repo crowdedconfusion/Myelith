@@ -53,6 +53,12 @@ fn ein_schuldspruch_ohne_beleg_wird_abgewiesen() {
         boese.add_transaction(tx);
     }
     boese.add_verdict(urteil());
+    // Der berechtigte Erzeuger unterschreibt ihn (Stimmsatz ab Genesis,
+    // 2026-10-27): Gefangen werden muss der Schuldspruch, nicht die
+    // Unterschrift.
+    let k = myl_node::schluessel::Konsensschluessel::probe(myl_node::kette::PROBEERZEUGER).expect("Schlüssel");
+    let signatur = k.signiere(&boese.erzeugernachricht()).expect("unterschreiben");
+    boese.unterschrift = Some(myl_consensus::block::Erzeugerunterschrift { schluessel: k.oeffentlich(), signatur });
 
     let mut zweiter = Kette::probestand();
     match zweiter.uebernimm(&boese) {

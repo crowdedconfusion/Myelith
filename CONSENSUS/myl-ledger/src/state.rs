@@ -456,6 +456,59 @@ pub struct LedgerState {
     /// Grenze, Belege, verfehlte Epochen, Halter bis zur Übergabe. Siehe
     /// [`crate::archiv`].
     pub archiv: crate::archiv::Archivstand,
+
+    /// ⚑ **Bis zu welchem Prüfpunkt die Kette bestätigt ist** (2026-10-27,
+    /// Festlegung des Projektinhabers: Prüfpunkte alle 150 Blöcke): die Höhe
+    /// des jüngsten Prüfpunkts, dessen Zertifikat ein Block getragen hat,
+    /// null vor dem ersten. **Im Zustand und nicht in der Kette**, damit
+    /// jeder Knoten, auch einer, der aus einem Abzug begann, dasselbe
+    /// nächste Zertifikat annimmt.
+    pub pruefpunkt_bestaetigt: u64,
+
+    /// ⚑ **Ziehungen, die auf ihr Zertifikat warten** (2026-10-27): je
+    /// abgelaufene Epoche die Anteile ihrer bezeugten Bündel. Gezogen wird,
+    /// sobald ein Block das Zertifikat eines Prüfpunkts an oder nach dem
+    /// Wechsel trägt; aus ihm kommt die Saat, die beim Einreichen der Bündel
+    /// niemand kennen konnte. **Begrenzt**: ein Eintrag je Epoche, und er
+    /// fällt mit der Ziehung weg; nur eine Abstimmung, die über Epochen
+    /// hängt, lässt die Liste wachsen.
+    pub stichproben_offen: Vec<OffeneStichprobe>,
+
+    /// ⚑ **Gebuchte Doppelbelege** (2026-10-27, CONSENSUS 7.6): je
+    /// (Schuldiger, Art, Höhe) die Epoche der Buchung, damit derselbe
+    /// Widerspruch nur einmal schlachtet. **Begrenzt**: nach der Sperrfrist
+    /// fällt ein Eintrag weg, und ein älterer Widerspruch ist ohnehin nicht
+    /// mehr schlachtbar.
+    pub doppelbelege: BTreeMap<(Address, u8, u64), u64>,
+
+    /// ⚑ **Der Grundpreis je Byte** (2026-10-27, Festlegung des
+    /// Projektinhabers, G1): wandert je Block um höchstens ein Achtel um das
+    /// Ziel und fällt nie unter den Boden des Netzes. Die Kette setzt ihn.
+    pub grundpreis_je_byte: u64,
+
+    /// Die Gebühren der laufenden Epoche; beim Wechsel geteilt.
+    pub gebuehren_epoche: u64,
+
+    /// ⚑ **Der Anteil der Validatoren an den Gebühren**, zehn Dreizehntel,
+    /// gesammelt, bis es eine Gewichtsquelle für Validatoren gibt. Die
+    /// Prägung zahlt ihren Validatorenanteil aus demselben Grund nicht aus
+    /// (`Auslassungsgrund::KeineGewichtsquelle`); erfunden wird hier keine.
+    pub gebuehren_validatoren: u64,
+
+    /// ⚑ **Hinterlegungen für neuen Zustand** (G1): je (Art, Kennung) wer
+    /// hinterlegt hat und wie viel. Zurück beim Abmelden, beim Aufräumen der
+    /// Sitzung, beim Löschen des Manifests. Art 0 Anmeldung (Kennung des
+    /// Miners), 1 Sitzung, 2 Speichermanifest.
+    pub hinterlegungen: BTreeMap<(u8, [u8; 32]), (Address, u64)>,
+}
+
+/// Eine Ziehung, die auf das Zertifikat ihres Epochenwechsels wartet.
+#[derive(Debug, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
+pub struct OffeneStichprobe {
+    /// Die abgelaufene Epoche.
+    pub epoche: u64,
+    /// Je bezeugtem Bündel der Pod und seine Zahl der Segmente.
+    pub anteile: Vec<(PodId, u32)>,
 }
 
 impl LedgerState {
@@ -493,6 +546,13 @@ impl LedgerState {
             epochensaat_naechste: Hash::from_bytes([0u8; 32]),
             historie: myl_types::historie::Historie::default(),
             archiv: crate::archiv::Archivstand::default(),
+            pruefpunkt_bestaetigt: 0,
+            stichproben_offen: Vec::new(),
+            doppelbelege: BTreeMap::new(),
+            grundpreis_je_byte: 0,
+            gebuehren_epoche: 0,
+            gebuehren_validatoren: 0,
+            hinterlegungen: BTreeMap::new(),
         }
     }
 

@@ -171,6 +171,14 @@ fn der_endpunkt_antwortet_am_laufenden_knoten() {
     let vier = hole(port, "/anderswo");
     assert!(vier.starts_with("HTTP/1.1 404 "), "unbekannter Weg: {vier}");
 
+    // ⚑ Die Kontoabfrage (2026-10-26) geht durch die Schleife des Knotens:
+    //   Eine unbenutzte Adresse ist unbekannt, eine kaputte ist 404.
+    let konto = hole(port, &format!("/konto/{}", "ab".repeat(32)));
+    assert!(konto.starts_with("HTTP/1.1 200 "), "Kontoabfrage: {konto}");
+    assert!(konto.contains("\"bekannt\":false") && konto.contains("\"guthaben\":0"), "Kontoabfrage: {konto}");
+    let kaputt = hole(port, "/konto/xyz");
+    assert!(kaputt.starts_with("HTTP/1.1 404 "), "kaputte Adresse: {kaputt}");
+
     let _ = Command::new("kill").args(["-15", &kind.id().to_string()]).status();
     warte_auf("das Ende des Prozesses", || {
         matches!(kind.try_wait(), Ok(Some(_)))

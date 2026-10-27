@@ -370,8 +370,11 @@ fn splitter_halten_teile_aus_denen_die_geschichte_zurueckkommt() {
             .map(|&t| (t, k.teilstueck(grenze, stelle, t as u64).expect("Teil").0))
             .collect();
         let bloecke = dekodieren(&teile).expect("aus 32 von 64");
+        // Gelesen und gehasht wie jeder Block: Der Hash deckt die
+        // Unterschrift des Erzeugers nicht, die rohen Bytes tun es.
         for roh in &bloecke {
-            historie.anhaengen(&myl_types::hash::Hash::sha256(roh));
+            let b: myl_consensus::block::Block = borsh::from_slice(roh).expect("Block");
+            historie.anhaengen(&b.hash());
         }
     }
     // Der Abschnitt endet an der letzten fertigen Gruppe; der Rest bis zur

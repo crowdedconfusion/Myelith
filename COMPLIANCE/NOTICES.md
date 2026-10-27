@@ -906,6 +906,7 @@ Release bundles contain only those the respective program pulls in.
 | Datensatz / dataset | Zweck / purpose | Lizenz / licence | Weg / how it arrives | geprüft / checked |
 |---|---|---|---|---|
 | [WikiText-2 (wikitext-2-raw-v1, Testsplit)](https://huggingface.co/datasets/Salesforce/wikitext) | Kalibrierung der ganzzahligen Skalen und Messung der Perplexitaet; kein Training | CC-BY-SA-3.0 oder GFDL | vom Einrichtungsskript geholt / fetched by the setup script | 2026-09-25, Hugging-Face-API (license=cc-by-sa-3.0, gfdl) |
+| [BIP-39-Wortliste, englisch (bip-0039/english.txt)](https://github.com/bitcoin/bips/blob/master/bip-0039/english.txt) | Wiederherstellungswoerter der Testwallets im Client (zwoelf Woerter nach BIP-39), unveraendert; SHA-256 2f5eed53…dbda | MIT | mitgeliefert / shipped | 2026-10-26, Kopf von bip-0039.mediawiki (License: MIT), Abdruck gegen die Probe in myl-client |
 
 ## 7. Medien / Media
 

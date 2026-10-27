@@ -144,7 +144,11 @@ fn sperre<'a, T>(m: &'a Mutex<T>, was: &str) -> Result<std::sync::MutexGuard<'a,
 
 /// Höchstens so viele Positionen rechnet eine Zeitprobe (gegen eine
 /// Probe, die einen Shard minutenlang belegt).
-pub const ZEITPROBE_HOECHSTENS: usize = 16;
+///
+/// ⚑ **2 048 seit dem 2026-10-27** (bis dahin 16): Die Probe eines
+/// Mitglieds richtet sich nach seiner Zusage, und wer sehr schnell ansagt,
+/// bekommt bis zu 2 048 Positionen (Fund 646, NODE `frist::probe_positionen`).
+pub const ZEITPROBE_HOECHSTENS: usize = 2_048;
 
 /// Das Token, dessen Einbettung die Zeitprobe rechnet.
 pub const ZEITPROBE_TOKEN: usize = 0;
@@ -364,10 +368,22 @@ impl ShardNode {
     /// Eingabe der richtigen Länge, und die Arbeit hängt nicht an den
     /// Werten. Keine Sitzung, kein Abdruck, keine Spur bleibt zurück.
     pub fn zeitprobe(&self, positionen: usize) -> [u8; 32] {
+        self.zeitprobe_bis(positionen, None)
+    }
+
+    /// Wie [`Self::zeitprobe`], und nach `grenze` hört der Shard auf
+    /// (2026-10-27, Fund 646): Wer so lange braucht, hat die Frist ohnehin
+    /// überschritten, und der Shard ist wieder frei für den nächsten
+    /// Messenden. Die Grenze wird vor jeder Position geprüft.
+    pub fn zeitprobe_bis(&self, positionen: usize, grenze: Option<std::time::Duration>) -> [u8; 32] {
         let positionen = positionen.clamp(1, ZEITPROBE_HOECHSTENS);
+        let ab = std::time::Instant::now();
         let mut cache = self.frischer_cache();
         let mut letzte = ZERO_HASH;
         for pos in 0..positionen {
+            if grenze.is_some_and(|g| ab.elapsed() >= g) {
+                break;
+            }
             let mut hidden = self.model.embed_token(ZEITPROBE_TOKEN);
             for i in self.layer_start..self.layer_end {
                 hidden = self.model.run_layers(hidden, pos, &mut cache, i, i + 1);
@@ -433,6 +449,15 @@ impl ShardNode {
         }
         if let Ok(mut d) = self.dekodier_digest.lock() {
             d.remove(&session_id);
+        }
+        // 📌 **Fund 657 (2026-10-27): und der Generierungszähler.** Er blieb
+        //   stehen, wenn eine Sitzung vor dem Deckel des Shards endete (das
+        //   Podwerk fragt meist weniger Token an), also je Sitzung ein Eintrag
+        //   für immer; und eine Wiederholung derselben Sitzung (Fund 654)
+        //   bekam nur noch den Rest des Deckels. Gefunden an
+        //   `tests/verlorene_runde.rs`.
+        if let Ok(mut g) = self.gen_count.lock() {
+            g.remove(&session_id);
         }
     }
 

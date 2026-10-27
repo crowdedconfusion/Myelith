@@ -296,6 +296,12 @@ impl Ortsweg {
     }
 }
 
+/// Sagt, wo der Rechenweg endete, und gibt nichts zurück.
+fn gescheitert<T>(grund: &str, epoche: EpochId) -> Option<T> {
+    eprintln!("myl-node: Rechenweg in Epoche {}: {grund}", epoche.0);
+    None
+}
+
 #[async_trait::async_trait]
 impl myl_gateway::oai::Rechenweg for Ortsweg {
     async fn rechne(
@@ -306,16 +312,32 @@ impl myl_gateway::oai::Rechenweg for Ortsweg {
         // die Punkte dieses Knotens nicht und bekommt einen Umschlag,
         // den er nicht öffnen kann. Träge, also heilt es einen
         // Shard-Neustart von selbst.
+        //
+        // 📌 **Jeder Abbruch sagt, wo** (2026-10-26). Die Tür meldet nur
+        // „kein Pod hat gerechnet"; ohne diese Zeilen war im Torlauf nicht
+        // zu sehen, an welcher der fünf Stellen der Weg endete.
         if !self.sicherstellen_angekuendigt().await {
-            return None;
+            return gescheitert("der Shard nahm die Ankuendigung nicht an", self.epoche());
         }
-        let (gegenstelle, punkte) = self.shard_erfragen().await?;
-        let pipeline = self.pipeline_erfragen().await?;
+        let Some((gegenstelle, punkte)) = self.shard_erfragen().await else {
+            return gescheitert("der Shard nannte keine Gegenstelle", self.epoche());
+        };
+        let Some(pipeline) = self.pipeline_erfragen().await else {
+            return gescheitert("der Shard nannte keinen Pipeline-Stand", self.epoche());
+        };
 
         let versiegelt = {
-            let mut sitzungen = self.sitzungen.lock().ok()?;
-            let kanal = sitzungen.kanal(self.pod, gegenstelle, &punkte).ok()?;
-            Umschlag::schliessen(kanal, auftrag.prompt.as_bytes()).ok()?
+            let Ok(mut sitzungen) = self.sitzungen.lock() else {
+                return gescheitert("Sitzungen vergiftet", self.epoche());
+            };
+            let Some(v) = sitzungen
+                .kanal(self.pod, gegenstelle, &punkte)
+                .ok()
+                .and_then(|kanal| Umschlag::schliessen(kanal, auftrag.prompt.as_bytes()).ok())
+            else {
+                return gescheitert("kein Kanal zum Shard", self.epoche());
+            };
+            v
         };
         let inferenz = Inferenzauftrag {
             sitzung: auftrag.sitzung,
@@ -330,9 +352,12 @@ impl myl_gateway::oai::Rechenweg for Ortsweg {
             pipeline,
         };
         if inferenz.pruefe_form().is_err() {
-            return None;
+            return gescheitert("der Auftrag ist formwidrig", self.epoche());
         }
-        let ergebnis = match self.anschluss.frage(&Ortsfrage::Inferenz(inferenz)).await? {
+        let Some(antwort) = self.anschluss.frage_fuer_die_tuer(&Ortsfrage::Inferenz(inferenz)).await else {
+            return gescheitert("die Ortsleitung antwortete nicht", self.epoche());
+        };
+        let ergebnis = match antwort {
             Ortsantwort::Inferenz(Inferenzantwort::Ergebnis {
                 token,
                 segment,
@@ -350,7 +375,7 @@ impl myl_gateway::oai::Rechenweg for Ortsweg {
                 neue_token: token.len() as u64,
                 segment: hex::encode(segment.as_bytes()),
             }),
-            _ => None,
+            andere => gescheitert(&format!("der Shard rechnete nicht: {andere:?}"), self.epoche()),
         };
         // ⚑ **Erst wenn gerechnet wurde, wird abgebucht.** Wer vorher
         // bucht, kassiert für eine Anfrage, die scheitern kann; wer gar

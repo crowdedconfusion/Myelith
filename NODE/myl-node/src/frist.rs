@@ -4,9 +4,9 @@
 //! # ⚑ Der Weg
 //!
 //! 1. Einmal je Epoche stellt jedes Mitglied eines Pods jedem anderen
-//!    rechnenden Mitglied eine **Zeitprobe** und misst sie, dazu einen
-//!    **Ping** über denselben Kanal, mehrmals: Die Probe dauert Weg plus
-//!    Rechnung, der kürzeste Ping nur den Weg ([`gemessen_je_token`]).
+//!    rechnenden Mitglied eine **Zeitprobe** und misst sie, mehrmals; die
+//!    kürzeste zählt, abzüglich einer festen Zugabe für den Weg
+//!    ([`gemessen_je_token`]).
 //! 2. Liegt die Messung über der Frist ([`frist_des_mitglieds`]), unterschreibt
 //!    es ein **Fristzeugnis** und schickt es an die übrigen Mitglieder.
 //! 3. Jedes Mitglied **sammelt** Zeugnisse ([`Fristsammlung`]); sobald eine
@@ -20,15 +20,13 @@
 //! ⚠️ **Zwei Grenzen, beide bekannt.** Eine Meldung gilt nur in ihrer
 //! Epoche: Kommt sie erst nach dem Wechsel in einen Block, weist die Kette
 //! sie ab, und der Verstoß fällt erst bei der Messung der nächsten Epoche
-//! auf. Und der Gemessene beantwortet auch die Pings; wer jeden davon
-//! verzögert, verkleinert die gemessene Rechenzeit um diese Verzögerung.
+//! auf. Und die Zugabe für den Weg ist eine Auflösung: Wer je Token weniger
+//! als [`ZUGABE_US`] durch die Grösse seiner Probe ([`probe_positionen`])
+//! über seiner Frist liegt, fällt nicht auf.
 
 use myl_ledger::state::LedgerState;
 use myl_types::fristmeldung::{Fristmeldung, Fristzeugnis};
 use myl_types::ids::{EpochId, MinerId};
-
-/// Wie viele Positionen eine Zeitprobe rechnet.
-pub const PROBE_POSITIONEN: u32 = 4;
 
 /// **Die Frist eines Mitglieds in der laufenden Epoche**, in Mikrosekunden
 /// je Token: das Doppelte seiner angesagten Zeit über seine Ebenen, samt
@@ -46,35 +44,165 @@ pub fn frist_des_mitglieds(zustand: &LedgerState, pod_index: u32, mitglied: &Min
     Some(zusage.frist_us(bis - von + kopf))
 }
 
-/// Wie viele Pings einer Zeitprobe vorausgehen; der kürzeste zählt als Weg.
-pub const PINGS_JE_MESSUNG: u32 = 3;
+/// **Wie lange eine Zeitprobe einen ehrlichen Shard beschäftigt**, in
+/// Mikrosekunden: 2 s. Daraus folgt ihre Grösse ([`probe_positionen`]).
+pub const PROBE_ZIEL_US: u64 = 2_000_000;
+
+/// Mindestens so viele Positionen rechnet eine Zeitprobe.
+pub const PROBE_MINDESTENS: u32 = 64;
+
+/// Höchstens so viele Positionen rechnet eine Zeitprobe; der Shard rechnet
+/// nicht mehr (`myl_pod::shard::ZEITPROBE_HOECHSTENS`).
+pub const PROBE_HOECHSTENS: u32 = 2_048;
+
+/// **Wie viele Positionen die Zeitprobe eines Mitglieds rechnet**: so
+/// viele, dass seine Zusage die Probe [`PROBE_ZIEL_US`] lang beschäftigt,
+/// begrenzt auf [`PROBE_MINDESTENS`] bis [`PROBE_HOECHSTENS`]. `frist_us`
+/// ist seine Frist je Token, also die Zusage mal `FRIST_FAKTOR`.
+///
+/// ⚑ **Festlegung des Projektinhabers vom 2026-10-27, nachgeschärft beim
+/// Bau.** Mit einer festen Grösse von 64 Positionen fiel ein Lügner erst
+/// auf, wenn er je Token mehr als Zugabe/64 ≈ 31 ms über seiner Frist lag;
+/// ein Shard rechnet aber 2 bis 8 ms je Token, und der Lügner der Podläufe
+/// (50 µs angesagt, rund 8 ms gerechnet) wäre durchgekommen. **Wer schneller
+/// ansagt, bekommt die grössere Probe**: Die Lüge vergrössert ihre eigene
+/// Prüfung, und ein Lügner fällt auf, sobald er mehr als rund das Dreifache
+/// seiner Zusage rechnet (die Frist erlaubt das Doppelte, die Zugabe ein
+/// Ziel mehr); an der Obergrenze ist die Schranke absolut, rund
+/// Zugabe/2048 ≈ 1 ms über der Frist. Ein Ehrlicher zahlt je Probe ungefähr
+/// das Ziel, gleich wie schnell er ist, und sein Spielraum für den Weg ist
+/// Zugabe plus Ziel.
+///
+/// ⚠️ Die späten Positionen einer langen Probe rechnen gegen einen längeren
+/// Kontext und sind etwas teurer; das trifft den Ehrlichen innerhalb des
+/// Faktors zwei und macht den Lügner nur langsamer.
+pub fn probe_positionen(frist_us: u64) -> u32 {
+    let k = PROBE_ZIEL_US.saturating_mul(myl_types::zusage::FRIST_FAKTOR) / frist_us.max(1);
+    k.clamp(u64::from(PROBE_MINDESTENS), u64::from(PROBE_HOECHSTENS)) as u32
+}
+
+/// **Die feste Zugabe für den Weg**, in Mikrosekunden: 2 s.
+///
+/// 📌 **Fund 646 (2026-10-26/27): Bis hierher wurde ein Ping abgezogen, und
+/// der Gemessene konnte ihn verlängern.** Ping und Zeitprobe sind
+/// verschiedene Nachforderungen; wer nur seine Pongs zurückhielt, machte
+/// die Probe kürzer als den Ping, und eine solche Messung wurde verworfen
+/// und wiederholt (Fund 590), ohne Ende. Auch ohne Absicht wurde im langen
+/// Podlauf die Hälfte aller Messungen verworfen, weil der Weg um Hunderte
+/// Millisekunden schwankte. ⚑ **Jetzt wird nichts gemessen, was der
+/// Gemessene beeinflussen kann, ausser der Probe selbst**, und eine Probe
+/// kann er nur verlängern (Festlegung des Projektinhabers vom 2026-10-27).
+///
+/// Warum 2 s: Im langen Podlauf lag schon die kürzeste von fünf Proben im
+/// ungünstigen Zehntel bei 1,5 s; eine falsche Sperre wiegt schwerer als ein
+/// Lügner, der knapp durchkommt (Fund 655). Vor dem Genesis verteilt
+/// nachzumessen.
+pub const ZUGABE_US: u64 = 2_000_000;
 
 /// Wie viele Zeitproben je Messung; die kürzeste zählt.
 ///
 /// 📌 **Fund 639 (2026-10-25, im Podlauf unter `tc netem`): Eine einzige
 /// Probe trug jeden Verlust des Netzes als Rechenzeit.** Ein verlorenes
-/// Paket kostet eine Neuübertragung, oft über 200 ms; der kürzeste Ping zieht
-/// nur den Weg ab. Zwei ehrliche Miner mit je einer Ebene (Frist 40 und
-/// 80 ms) wurden zwischen 1 und 770 ms gemessen, drei Zeugen lagen darüber,
-/// und die Kette sperrte sie. Verlust und Schwankung verlängern eine Probe
-/// nur; die kürzeste von mehreren liegt nahe an Weg und Rechnung, und unter
-/// die echte Rechenzeit kommt auch ein Lügner damit nicht.
+/// Paket kostet eine Neuübertragung, oft über 200 ms. Zwei ehrliche Miner
+/// mit je einer Ebene (Frist 40 und 80 ms) wurden zwischen 1 und 770 ms
+/// gemessen, drei Zeugen lagen darüber, und die Kette sperrte sie. Verlust
+/// und Schwankung verlängern eine Probe nur; die kürzeste von mehreren liegt
+/// nahe an Weg und Rechnung, und darunter kommt auch ein Lügner nicht.
 pub const PROBEN_JE_MESSUNG: u32 = 5;
 
-/// **Was eine Messung je Token ergibt**: die Probe ohne den Weg, durch die
-/// Positionen der Probe, aufgerundet.
+/// **Was eine Messung je Token ergibt**: die kürzeste Probe abzüglich der
+/// Zugabe für den Weg ([`ZUGABE_US`]), durch die Positionen der Probe,
+/// abgerundet. Eine Probe unter der Zugabe ergibt null.
 ///
-/// 📌 **Fund 590 (2026-10-22, im Netzlauf): Eine Probe, die nicht länger
-/// dauert als der Ping, ist keine Messung** (`None`). Bis dahin ergab sie
-/// null, und null hiess „unter der Frist, für diese Epoche erledigt“. Ein
-/// einzelner Ping, der zufällig lang war, weil das Gegenüber gerade Blöcke
-/// nachholte, reichte so, um einen Lügner mit einer Frist von 50 µs bei vier
-/// von sechs Messenden durchzulassen. Jetzt zählt der kürzeste von
-/// [`PINGS_JE_MESSUNG`] Pings, und eine Messung ohne Rechenzeit wird
-/// wiederholt statt bestanden.
-pub fn gemessen_je_token(probe_us: u64, ping_us: u64, positionen: u32) -> Option<u64> {
-    let rechnung = probe_us.checked_sub(ping_us).filter(|r| *r > 0)?;
-    Some(rechnung.div_ceil(positionen.max(1) as u64))
+/// ⚑ **Damit gilt: bestanden, wenn die kürzeste Probe ≤ k · Frist + Zugabe.**
+/// Die Zahl im Fristzeugnis ist diese Grösse; die Kette hält sie gegen die
+/// Frist und rechnet sie nicht nach.
+///
+/// 📌 Bis zum 2026-10-27 stand hier Probe minus kürzester Ping, und eine
+/// Probe, die nicht länger als der Ping dauerte, war keine Messung (Fund
+/// 590). Beides entfällt: Ohne Ping gibt es nichts, was negativ werden
+/// könnte, und nichts mehr zu verwerfen.
+pub fn gemessen_je_token(probe_us: u64, positionen: u32) -> u64 {
+    probe_us.saturating_sub(ZUGABE_US) / u64::from(positionen.max(1))
+}
+
+/// **Ab wann eine Probe die Frist überschritten hat**, in Mikrosekunden
+/// seit sie gestellt wurde: die kleinste Dauer, für die
+/// [`gemessen_je_token`] über `frist_us` liegt.
+///
+/// 📌 **Gefunden beim Bau (2026-10-27, Netzlauf): Wer langsam genug war,
+/// entkam.** Die grosse Probe eines Lügners (rund 1 600 Positionen) lief
+/// über die Zeitgrenze einer Anfrage im Netz (10 s), die Anfrage scheiterte,
+/// und die Messung wurde verworfen statt gewertet. Wer diese Dauer
+/// überschreitet, hat die Frist überschritten, gleich ob seine Antwort noch
+/// kommt; die Messung endet hier mit der verstrichenen Zeit.
+pub fn grenze_der_probe(frist_us: u64, positionen: u32) -> u64 {
+    ZUGABE_US.saturating_add(u64::from(positionen.max(1)).saturating_mul(frist_us.saturating_add(1)))
+}
+
+/// **Die Zeitprobe für ein Mitglied**: seine Positionen und seine Grenze,
+/// aufgerundet auf Millisekunden, damit der Shard dort aufhört.
+pub fn probe(frist_us: u64, positionen: u32) -> crate::nachschub::Nachforderung {
+    let grenze_ms = grenze_der_probe(frist_us, positionen).div_ceil(1_000);
+    crate::nachschub::Nachforderung::ZeitprobeMitGrenze { positionen, grenze_ms: u32::try_from(grenze_ms).unwrap_or(u32::MAX) }
+}
+
+/// **Ab welchem Teil einer Epoche gemessen wird**, in Vierteln: ab dem
+/// ersten Viertel, gezählt in Blöcken.
+///
+/// 📌 **Fund 655 (2026-10-26, im langen Podlauf mit Tür und Störer): Ein
+/// ehrlicher Miner wurde zweimal gesperrt.** Beide Male lagen drei
+/// Messungen in den ersten 25 s einer Epoche, 14 bis 25 s nach dem Start
+/// seines Shards, der zugleich schon für die Tür rechnete: 130 bis 394 ms
+/// bei einer Frist von 100 ms, sonst 2 bis 14 ms. Die Zeitprobe mass den
+/// Anlauf mit. Jetzt misst niemand vor dem ersten Viertel der Epoche
+/// (Festlegung des Projektinhabers: Anlaufzeit und zwei Fenster).
+pub const ANLAUF_TEIL: u64 = 4;
+
+/// **Wie weit zwei Messfenster auseinanderliegen müssen**, als Teil der
+/// Epoche: ein Achtel, gezählt in Blöcken.
+pub const FENSTERABSTAND_TEIL: u64 = 8;
+
+/// Darf auf dieser Höhe gemessen werden? Erst nach der Anlaufzeit.
+pub fn darf_messen(hoehe: u64) -> bool {
+    let e = myl_consensus::block::BLOECKE_JE_EPOCHE;
+    hoehe % e >= e / ANLAUF_TEIL
+}
+
+/// Was aus einer Messung folgt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Urteil {
+    /// Unter der Frist: für diese Epoche erledigt.
+    Bestanden,
+    /// Über der Frist, aber das erste Fenster: noch kein Zeugnis, später
+    /// wird nachgemessen.
+    Verdacht,
+    /// Zum zweiten Mal über der Frist, in einem getrennten Fenster:
+    /// bezeugt wird der kleinere Wert.
+    Zeugnis(u64),
+}
+
+/// **Das Urteil über eine Messung** (Fund 655, zwei Fenster). `verdacht`
+/// ist die erste Überschreitung dieser Epoche, mit Höhe und Wert.
+///
+/// ⚑ **Eine Überschreitung allein bezeugt nichts.** Anlauf, Last und
+/// Netz verlängern eine Probe für Sekunden; ein Lügner aber liegt immer
+/// darüber, auch ein Achtel Epoche später. Liegt die zweite Messung zu
+/// früh, bleibt es beim Verdacht.
+pub fn urteil(gemessen: u64, frist: u64, hoehe: u64, verdacht: Option<(u64, u64)>) -> Urteil {
+    if gemessen <= frist {
+        return Urteil::Bestanden;
+    }
+    let abstand = myl_consensus::block::BLOECKE_JE_EPOCHE / FENSTERABSTAND_TEIL;
+    match verdacht {
+        Some((h0, g0)) if hoehe >= h0.saturating_add(abstand) => Urteil::Zeugnis(g0.min(gemessen)),
+        _ => Urteil::Verdacht,
+    }
+}
+
+/// Ist das zweite Fenster nach einem Verdacht auf Höhe `h0` offen?
+pub fn zweites_fenster_offen(hoehe: u64, h0: u64) -> bool {
+    hoehe >= h0.saturating_add(myl_consensus::block::BLOECKE_JE_EPOCHE / FENSTERABSTAND_TEIL)
 }
 
 /// Die Mitglieder eines Pods, die eine Position haben, ohne `ich`: wen
@@ -173,31 +301,117 @@ mod tests {
     use myl_consensus::block::BLOECKE_JE_EPOCHE;
 
     #[test]
-    fn die_messung_zieht_den_weg_ab_und_rundet_auf() {
-        assert_eq!(gemessen_je_token(10_000, 2_000, 4), Some(2_000));
-        assert_eq!(gemessen_je_token(10_001, 2_000, 4), Some(2_001));
-        assert_eq!(gemessen_je_token(1_000, 5_000, 4), None, "ein langer Ping macht keine Messung (Fund 590)");
-        assert_eq!(gemessen_je_token(5_000, 5_000, 4), None, "ohne Rechenzeit keine Messung");
-        assert_eq!(gemessen_je_token(900, 0, 0), Some(900), "null Positionen zählt als eine");
+    fn die_messung_zieht_die_zugabe_ab_und_rundet_ab() {
+        assert_eq!(gemessen_je_token(ZUGABE_US + 8_000, 4), 2_000);
+        assert_eq!(gemessen_je_token(ZUGABE_US + 8_003, 4), 2_000, "abgerundet, zugunsten des Gemessenen");
+        assert_eq!(gemessen_je_token(ZUGABE_US, 4), 0, "die Zugabe allein ist keine Rechnung");
+        assert_eq!(gemessen_je_token(0, 4), 0);
+        assert_eq!(gemessen_je_token(ZUGABE_US + 900, 0), 900, "null Positionen zählt als eine");
     }
 
-    /// ⚑ **Die kürzeste Probe trägt einen Verlust** (Fund 639), mit den
-    /// Zahlen eines ehrlichen Miners mit einer Ebene aus dem Podlauf: Weg rund
-    /// 100 ms, eine Probe mit Neuübertragung. Die einzelne Probe hätte ihn
-    /// angeschuldigt, die kürzeste von fünf nicht; der Lügner mit 50 µs
-    /// bleibt darüber.
+    /// ⚑ **Fund 655: Anlaufzeit und zwei Fenster.** Vor dem ersten Viertel
+    /// misst niemand; eine Überschreitung ist ein Verdacht; erst eine zweite,
+    /// ein Achtel Epoche später, ergibt ein Zeugnis über den kleineren Wert;
+    /// eine zweite Messung unter der Frist erledigt den Verdacht.
+    #[test]
+    fn erst_nach_dem_anlauf_und_in_zwei_fenstern() {
+        let e = BLOECKE_JE_EPOCHE;
+        let abstand = e / FENSTERABSTAND_TEIL;
+        // Die Anlaufzeit: in jeder Epoche dasselbe Viertel.
+        assert!(!darf_messen(0) && !darf_messen(e / 4 - 1) && !darf_messen(7 * e + 3));
+        assert!(darf_messen(e / 4) && darf_messen(7 * e + e / 2));
+        // Ein ehrlicher Miner im Anlauf: einmal über der Frist, danach darunter.
+        let h0 = 3 * e + e / 4;
+        assert_eq!(urteil(394_000, 100_000, h0, None), Urteil::Verdacht);
+        assert_eq!(urteil(9_000, 100_000, h0 + abstand, Some((h0, 394_000))), Urteil::Bestanden);
+        // Zu früh nachgemessen: noch kein Zeugnis.
+        assert!(!zweites_fenster_offen(h0 + abstand - 1, h0));
+        assert_eq!(urteil(300_000, 100_000, h0 + abstand - 1, Some((h0, 394_000))), Urteil::Verdacht);
+        // ⛔️ Gegenprobe: Der Lügner liegt immer darüber und wird bezeugt,
+        // mit dem kleineren der beiden Werte.
+        assert!(zweites_fenster_offen(h0 + abstand, h0));
+        assert_eq!(urteil(5_000, 1, h0 + abstand, Some((h0, 7_000))), Urteil::Zeugnis(5_000));
+        assert_eq!(urteil(9_000, 1, h0 + abstand, Some((h0, 7_000))), Urteil::Zeugnis(7_000));
+    }
+
+    /// ⚑ **Fund 646: Wer seine Pongs zurückhält, entkommt nicht mehr**, und
+    /// die Probe richtet sich nach der Zusage. Ein Lügner sagt 50 µs je
+    /// Token an (Frist 100 µs) und rechnet 8 ms; sein Weg ist 300 ms.
+    #[test]
+    fn der_luegner_bekommt_die_groessere_probe() {
+        let frist_luegner = 100;
+        let k = probe_positionen(frist_luegner);
+        assert_eq!(k, PROBE_HOECHSTENS, "die Lüge vergrössert die Probe");
+        let probe = 300_000 + u64::from(k) * 8_000;
+        assert!(gemessen_je_token(probe, k) > frist_luegner, "der Lügner liegt über der Frist");
+        // ⛔️ Gegenprobe 1: Mit 64 Positionen bestand er.
+        let probe_64 = 300_000 + 64 * 8_000;
+        assert!(gemessen_je_token(probe_64, 64) <= frist_luegner, "mit fester Grösse 64 käme er durch");
+        // ⛔️ Gegenprobe 2: Mit der alten Regel (vier Positionen, Probe minus
+        //    kürzester Ping) hielt er jeden Pong 5 s zurück und war unmessbar.
+        let alte_probe: u64 = 300_000 + 4 * 8_000;
+        assert!(alte_probe.checked_sub(300_000 + 5_000_000).filter(|r| *r > 0).is_none());
+        // An der Obergrenze ist die Auflösung Zugabe/2048, rund 1 ms: 0,5 ms
+        // gerechnet besteht, 1,5 ms nicht.
+        assert!(gemessen_je_token(300_000 + u64::from(k) * 500, k) <= frist_luegner);
+        assert!(gemessen_je_token(300_000 + u64::from(k) * 1_500, k) > frist_luegner);
+        // Unterhalb der Obergrenze ist die Schranke relativ: Wer 4 ms ansagt
+        // (Frist 8 ms), besteht mit dem 2,75-Fachen und fällt mit dem
+        // 3,25-Fachen auf.
+        let k8 = probe_positionen(8_000);
+        assert_eq!(k8, 500);
+        assert!(gemessen_je_token(u64::from(k8) * 11_000, k8) <= 8_000);
+        assert!(gemessen_je_token(u64::from(k8) * 13_000, k8) > 8_000);
+    }
+
+    /// 📌 Wer die Grenze überschreitet, liegt über der Frist, eine
+    /// Mikrosekunde früher nicht.
+    #[test]
+    fn die_grenze_der_probe_ist_die_frist() {
+        for (frist, k) in [(100u64, 2_048u32), (16_000, 250), (100_000, 64)] {
+            let g = grenze_der_probe(frist, k);
+            assert!(gemessen_je_token(g, k) > frist, "Frist {frist}, k {k}");
+            assert!(gemessen_je_token(g - 1, k) <= frist, "Frist {frist}, k {k}");
+        }
+        // Der Lügner des Netzlaufs (25 Ebenen, Frist 2,5 ms): Grenze unter
+        // der Zeitgrenze einer Anfrage, also gewertet, bevor sie scheitert.
+        let k = probe_positionen(2_500);
+        assert!(grenze_der_probe(2_500, k) < 10_000_000, "{}", grenze_der_probe(2_500, k));
+    }
+
+    /// Ein Ehrlicher zahlt je Probe ungefähr das Ziel, gleich wie schnell
+    /// er ist, und besteht auch mit 3 s Weg.
+    #[test]
+    fn ein_ehrlicher_besteht_mit_langem_weg() {
+        for zusage in [1_000u64, 8_000, 50_000] {
+            let frist = zusage * myl_types::zusage::FRIST_FAKTOR;
+            let k = probe_positionen(frist);
+            let rechnung = u64::from(k) * zusage;
+            assert!(rechnung <= 2 * PROBE_ZIEL_US || k == PROBE_MINDESTENS, "Zusage {zusage}: {rechnung} µs Rechnung");
+            let probe = 3_000_000 + rechnung;
+            assert!(gemessen_je_token(probe, k) <= frist, "Zusage {zusage} µs, k = {k}: ehrlich gemeldet");
+        }
+        assert_eq!(probe_positionen(u64::MAX), PROBE_MINDESTENS);
+        assert_eq!(probe_positionen(0), PROBE_HOECHSTENS);
+        assert_eq!(gemessen_je_token(ZUGABE_US - 1, 64), 0, "unter der Zugabe ist nichts gemessen");
+    }
+
+    /// ⚑ **Die kürzeste Probe trägt einen Verlust** (Fund 639): Die einzelne
+    /// Probe mit Rückstau hätte einen Ehrlichen angeschuldigt, die kürzeste
+    /// von fünf nicht.
     #[test]
     fn die_kuerzeste_probe_traegt_einen_verlust() {
-        let pings = [100_000u64, 104_000, 101_000];
-        let proben = [310_000u64, 108_000, 109_500, 112_000, 107_900];
+        let frist_ehrlich = 80_000;
+        let k = probe_positionen(frist_ehrlich);
+        // Weg 100 ms, Rechnung 40 ms je Token; eine Probe trifft einen
+        // Verlust (+200 ms Neuübertragung) und einen Rückstau (+6 s).
+        let gut = 100_000 + u64::from(k) * 40_000;
+        let proben = [gut + 6_000_000, gut + 4_000, gut + 9_500, gut + 200_000, gut + 7_900];
         assert_eq!(proben.len() as u32, PROBEN_JE_MESSUNG);
-        let weg = *pings.iter().min().unwrap();
-        let frist_ehrlich = 40_000;
-        let einzeln = gemessen_je_token(proben[0], weg, PROBE_POSITIONEN).unwrap();
+        let einzeln = gemessen_je_token(proben[0], k);
         assert!(einzeln > frist_ehrlich, "die alte Messung mit einer Probe schuldigte an: {einzeln}");
-        let kuerzeste = gemessen_je_token(*proben.iter().min().unwrap(), weg, PROBE_POSITIONEN).unwrap();
+        let kuerzeste = gemessen_je_token(*proben.iter().min().unwrap(), k);
         assert!(kuerzeste <= frist_ehrlich, "{kuerzeste}");
-        assert!(kuerzeste > 50, "der Lügner bleibt über seiner Frist");
     }
 
     /// Eine Probekette mit einem Pod aus sechs Probekonten in Epoche 1.

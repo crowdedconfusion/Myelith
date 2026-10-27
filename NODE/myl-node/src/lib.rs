@@ -69,6 +69,8 @@ pub mod rechenweg;
 pub mod probe;
 pub mod protokoll;
 pub mod schluessel;
+/// Die Relaisleitung zu einem Koordinator.
+pub mod relais;
 pub mod shardfuehrung;
 pub mod speicher;
 pub mod stichprobe;

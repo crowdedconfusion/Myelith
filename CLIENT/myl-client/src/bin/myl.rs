@@ -62,6 +62,15 @@ myl: lokaler Betrieb von Myelith
                                   Das Gedaechtnis des Ordners: was es weiss, Suche, eine Erinnerung vergessen
   myl mining [start [--ort PFAD] [--volumen GIB] [--kerne N] [--gewichte]|stop]
                                   Mining im Probelauf: Stand, starten (Knoten laeuft weiter), beenden
+  myl mining einstieg [ADRESSE|DATEI|aus]
+                                  Wohin der Knoten beitritt (etwa einstieg.txt des Probenetzes)
+  myl wallet [neu NAME|wiederherstellen NAME|waehle NAME]
+                                  Testwallets: Liste, neu (12 Woerter nach BIP-39), aus Woertern, auswaehlen
+  myl wallet credits NAME MYL | sitzung NAME AGENT [BUDGET] [EPOCHEN] | widerrufen NAME SITZUNG
+  myl wallet ueberweisen NAME EMPFAENGER MYL [--ja]   zeigt erst, was unterschrieben wird
+                                  Bezahlen: Credits kaufen, Sitzung mit Vollmacht fuer einen Agenten, Widerruf
+  myl frage --tuer HOST:PORT --agent NAME TEXT
+                                  Eine Frage ueber die Tuer eines Knotens, mit der Vollmacht des Agenten
   myl einstellungen               Zeigt die Einstellungen
   myl setzen <feld> <wert>        Aendert eine Einstellung
 
@@ -186,6 +195,7 @@ fn myl_hauptteil(args: &[String]) -> i32 {
         Some("kennzeichen") => kennzeichen(&args[2..]),
         Some("setzen") => setzen(&args[2..]),
         Some("mining") => mining(&args[2..]),
+        Some("wallet") => wallet(&args[2..]),
         // Die Hilfe ist hier eine Antwort und kein Fehler: Sie geht nach
         // stdout und gibt null zurueck.
         None | Some("--hilfe") | Some("-h") | Some("--help") | Some("hilfe") => {
@@ -204,6 +214,65 @@ fn myl_hauptteil(args: &[String]) -> i32 {
             eprintln!("myl: unbekannter Befehl `{unbekannt}`");
             eprint!("{}", hilfe());
             2
+        }
+    }
+}
+
+/// **Eine Frage über die Tür**: `--tuer HOST:PORT`, `--agent NAME` (seine
+/// Vollmacht liegt bei den Wallets, aus einer eröffneten Sitzung).
+fn frage_ueber_die_tuer(args: &[String], i: usize, e: &Einstellungen) -> i32 {
+    let Some((wirt, port)) = args.get(i + 1).and_then(|a| a.rsplit_once(':')).and_then(|(h, p)| Some((h.to_string(), p.parse::<u16>().ok()?))) else {
+        eprintln!("myl frage: --tuer erwartet HOST:PORT");
+        return 2;
+    };
+    let agent = args.iter().position(|a| a == "--agent").and_then(|j| args.get(j + 1)).cloned().unwrap_or_else(|| "agent".into());
+    let datei = myl_client::bezahlen::agentenordner().join(format!("{agent}.vollmacht"));
+    let vollmacht = match std::fs::read_to_string(&datei) {
+        Ok(v) => v.trim().to_string(),
+        Err(_) => {
+            eprintln!("myl frage: keine Vollmacht für {agent} ({}); erst eine Sitzung eröffnen: myl wallet sitzung", datei.display());
+            return 1;
+        }
+    };
+    // Der Text ohne die Angaben zur Tür.
+    let mut rest: Vec<String> = Vec::new();
+    let mut k = 0;
+    while k < args.len() {
+        if matches!(args[k].as_str(), "--tuer" | "--agent" | "--token") {
+            k += 2;
+            continue;
+        }
+        rest.push(args[k].clone());
+        k += 1;
+    }
+    let text = rest.join(" ");
+    if text.trim().is_empty() {
+        eprintln!("myl frage: es fehlt der Text");
+        return 2;
+    }
+    if let Some(satz) = myl_client::schutzfilter::abweisen(&text, e.oberflaeche.sprache, "myl-frage") {
+        eprintln!("{satz}");
+        return 3;
+    }
+    let token = zahl(args, "--token").unwrap_or(e.modell.token) as u32;
+    let klient = myl_local_agent::Tuerklient::neu(wirt, port, vollmacht);
+    let anfang = std::time::Instant::now();
+    match klient.chat("myelith", &[Nachricht::nutzer(text)], Some(token)) {
+        Ok(a) => {
+            println!("{}", a.text);
+            eprintln!(
+                "[myl] über die Tür: {} Token hinein, {} heraus, {:.1} s, Beleg {}{}",
+                a.prompt_token,
+                a.antwort_token,
+                anfang.elapsed().as_secs_f64(),
+                a.kennung,
+                a.segment.map(|s| format!(", Segment {}", s.iter().take(8).map(|b| format!("{b:02x}")).collect::<String>())).unwrap_or_default()
+            );
+            0
+        }
+        Err(f) => {
+            eprintln!("myl frage: die Tür antwortete nicht: {f:?}");
+            1
         }
     }
 }
@@ -291,11 +360,233 @@ fn mining(args: &[String]) -> i32 {
                 1
             }
         },
+        Some("einstieg") => {
+            let gesetzt = match args.get(1).map(String::as_str) {
+                None => Ok(mining::einstieg()),
+                Some("aus") => mining::einstieg_setzen(""),
+                Some(angabe) => mining::einstieg_setzen(angabe),
+            };
+            let gesetzt = match gesetzt {
+                Ok(g) => g,
+                Err(f) => {
+                    eprintln!("myl mining: {f}");
+                    return 1;
+                }
+            };
+            match gesetzt {
+                Some(a) => println!("Einstieg: {a}"),
+                None => println!("Kein Einstieg: Der Knoten erzeugt selbst und baut erst, wenn jemand zuhört."),
+            }
+            0
+        }
         Some(anders) => {
-            eprintln!("myl mining: unbekannt `{anders}`; status, start oder stop.");
+            eprintln!("myl mining: unbekannt `{anders}`; status, start, stop oder einstieg.");
             2
         }
     }
+}
+
+/// Die Leitung zum Knoten: aus `--relais ADDR --relaisausweis DATEI`, sonst
+/// die des eigenen Mining-Knotens.
+fn leitung(args: &[String]) -> Result<myl_client::bezahlen::Knotenleitung, String> {
+    let wert = |n: &str| args.iter().position(|a| a == n).and_then(|i| args.get(i + 1)).cloned();
+    match (wert("--relais"), wert("--relaisausweis")) {
+        (Some(a), Some(d)) => Ok(myl_client::bezahlen::Knotenleitung {
+            adresse: a.parse().map_err(|_| format!("keine Adresse: {a}"))?,
+            ausweis: myl_types::relais::ausweis_lesen(std::path::Path::new(&d)).map_err(|e| e.to_string())?,
+        }),
+        _ => myl_client::bezahlen::eigene_leitung(),
+    }
+}
+
+/// MYL als Zahl mit Komma (`5` oder `0,5`) in Kleinstbeträge.
+fn myl_betrag(t: &str) -> Result<u64, String> {
+    let (ganz, rest) = t.split_once([',', '.']).unwrap_or((t, ""));
+    let ganz: u64 = ganz.parse().map_err(|_| format!("kein Betrag: {t}"))?;
+    let mut nach = rest.to_string();
+    if nach.len() > 6 {
+        return Err("höchstens sechs Nachkommastellen".into());
+    }
+    while nach.len() < 6 {
+        nach.push('0');
+    }
+    let nach: u64 = nach.parse().map_err(|_| format!("kein Betrag: {t}"))?;
+    ganz.checked_mul(1_000_000).and_then(|g| g.checked_add(nach)).ok_or_else(|| "Betrag zu groß".into())
+}
+
+fn hex(b: &[u8]) -> String {
+    b.iter().map(|x| format!("{x:02x}")).collect()
+}
+
+fn hex32(t: &str) -> Option<[u8; 32]> {
+    if t.len() != 64 {
+        return None;
+    }
+    let mut b = [0u8; 32];
+    for (i, x) in b.iter_mut().enumerate() {
+        *x = u8::from_str_radix(t.get(i * 2..i * 2 + 2)?, 16).ok()?;
+    }
+    Some(b)
+}
+
+/// Liest eine Zeile von der Eingabe, ohne Zeilenende.
+fn zeile_lesen(frage: &str) -> Option<String> {
+    use std::io::Write;
+    print!("{frage}");
+    let _ = std::io::stdout().flush();
+    let mut z = String::new();
+    std::io::stdin().read_line(&mut z).ok()?;
+    Some(z.trim().to_string())
+}
+
+/// **Ein neues Wallet** (Festlegung des Projektinhabers, 2026-10-26): erst im
+/// Netz suchen, dann die zwoelf Woerter, dann doppelt bestaetigen, erst dann
+/// speichern. Wer abbricht, hat nichts angelegt.
+fn wallet_neu(name: &str) -> Result<(), String> {
+    use myl_client::wallet;
+    use std::io::IsTerminal;
+    wallet::name_pruefen(name)?;
+    if !std::io::stdin().is_terminal() {
+        return Err("Ein neues Wallet braucht ein Terminal: Die Wörter werden gezeigt und abgefragt.".into());
+    }
+    let e = wallet::entwerfen()?;
+    let befund = wallet::im_netz_suchen(&e.adresse);
+    println!("{}", befund.satz());
+    if matches!(befund, wallet::Netzbefund::Bekannt { .. }) {
+        return Err("Diese Adresse hat schon Spuren im Netz; es wird nichts angelegt.".into());
+    }
+    println!();
+    println!("Dein Wiederherstellungsschlüssel (BIP-39, zwölf Wörter). Schreib sie in dieser");
+    println!("Reihenfolge auf Papier; wer sie hat, hat das Wallet. Sie werden nie wieder gezeigt.");
+    println!();
+    for (i, w) in e.woerter().iter().enumerate() {
+        println!("  {:>2}. {w}", i + 1);
+    }
+    println!();
+    let ja = zeile_lesen("Hast du alle zwölf Wörter notiert? (ja/nein) ").unwrap_or_default();
+    if !matches!(ja.to_lowercase().as_str(), "ja" | "j" | "yes" | "y") {
+        return Err("Abgebrochen; es wurde nichts angelegt.".into());
+    }
+    // Die Woerter vom Schirm nehmen, bevor gefragt wird.
+    print!("[2J[H");
+    let (a, b) = e.abfrage();
+    let wa = zeile_lesen(&format!("Zur Bestätigung: Wort {a}? ")).unwrap_or_default();
+    let wb = zeile_lesen(&format!("Und Wort {b}? ")).unwrap_or_default();
+    if !e.bestaetigt(&[(a, &wa), (b, &wb)]) {
+        return Err("Die Wörter stimmen nicht; es wurde nichts angelegt. Neu beginnen mit: myl wallet neu".into());
+    }
+    let w = wallet::speichern(name, &e)?;
+    println!("Wallet {} angelegt: {}", w.name, w.adresse_hex());
+    Ok(())
+}
+
+/// **Ein Wallet aus zwoelf Woertern**, mit Suche im Netz.
+fn wallet_wiederherstellen(name: &str) -> Result<(), String> {
+    use myl_client::wallet;
+    wallet::name_pruefen(name)?;
+    let text = zeile_lesen("Die zwölf Wörter, durch Leerzeichen getrennt: ").unwrap_or_default();
+    let e = wallet::aus_woertern(&text)?;
+    println!("{}", wallet::im_netz_suchen(&e.adresse).satz());
+    let w = wallet::speichern(name, &e)?;
+    println!("Wallet {} wiederhergestellt: {}", w.name, w.adresse_hex());
+    Ok(())
+}
+
+/// **`myl wallet`**: Testwallets anlegen, auflisten, auswaehlen. Das
+/// ausgewaehlte bekommt beim naechsten Start des Minings die Ertraege.
+fn wallet(args: &[String]) -> i32 {
+    use myl_client::{mining, wallet};
+    let name = args.get(1).map(String::as_str).unwrap_or("");
+    let ergebnis = match args.first().map(String::as_str) {
+        None | Some("liste") => Ok(()),
+        Some("neu") => wallet_neu(name),
+        Some("wiederherstellen") => wallet_wiederherstellen(name),
+        Some("credits") => leitung(args).and_then(|l| {
+            let w = wallet::laden(name)?;
+            let betrag = myl_betrag(args.get(2).map(String::as_str).unwrap_or(""))?;
+            myl_client::bezahlen::credits_kaufen(&l, &w, betrag).map(|z| println!("Credits gekauft ({z})."))
+        }),
+        Some("sitzung") => leitung(args).and_then(|l| {
+            let w = wallet::laden(name)?;
+            let agent = args.get(2).cloned().unwrap_or_else(|| "agent".into());
+            let budget: u64 = args.get(3).and_then(|v| v.parse().ok()).unwrap_or(10_000);
+            let epochen: u64 = args.get(4).and_then(|v| v.parse().ok()).unwrap_or(20);
+            myl_client::bezahlen::sitzung_eroeffnen(&l, &w, &agent, budget, budget.div_ceil(10).max(1), epochen).map(|s| {
+                println!("Sitzung {} für {agent}: Budget {budget} Credits, bis Epoche {}.", hex(s.id.as_bytes()), s.gueltig_bis);
+                println!("Die Vollmacht liegt unter {}.", myl_client::bezahlen::agentenordner().join(format!("{agent}.vollmacht")).display());
+            })
+        }),
+        Some("ueberweisen") => leitung(args).and_then(|l| {
+            let w = wallet::laden(name)?;
+            let an = args.get(2).and_then(|t| hex32(t)).ok_or("erwartet den Empfänger als 64 Hexzeichen")?;
+            let betrag = myl_betrag(args.get(3).map(String::as_str).unwrap_or(""))?;
+            let v = myl_client::bezahlen::ueberweisung_vorschauen(&l, &w, wallet::Address::new(an), betrag)?;
+            println!("Überweisung, noch nicht unterschrieben:");
+            println!("  von      {} ({})", hex(v.von.as_bytes()), w.name);
+            println!("  an       {}", hex(v.an.as_bytes()));
+            println!("  Betrag   {} MYL", mining::myl_text(v.betrag));
+            println!("  Gebühr   {} MYL (höchstens {})", mining::myl_text(v.gebuehr), mining::myl_text(v.max_gebuehr));
+            if v.aufschlag > 0 {
+                println!("  Aufschlag {} MYL (neues Konto, einmal)", mining::myl_text(v.aufschlag));
+            }
+            println!("  danach   {} MYL", mining::myl_text(v.guthaben - v.betrag - v.gebuehr - v.aufschlag));
+            println!("  Nonce    {}", v.nonce());
+            println!("  Netz     {}", &hex(v.netzwert().as_bytes())[..16]);
+            let ja = args.iter().any(|a| a == "--ja")
+                || zeile_lesen("Unterschreiben und senden? [j/N] ").is_some_and(|z| z.trim().eq_ignore_ascii_case("j"));
+            if !ja {
+                println!("Nichts unterschrieben.");
+                return Ok(());
+            }
+            myl_client::bezahlen::ueberweisen(&l, &w, &v).map(|z| println!("Überweisung verbreitet ({z})."))
+        }),
+        Some("widerrufen") => leitung(args).and_then(|l| {
+            let w = wallet::laden(name)?;
+            let id = args.get(2).and_then(|t| hex32(t)).ok_or("erwartet die Sitzung als 64 Hexzeichen")?;
+            myl_client::bezahlen::sitzung_widerrufen(&l, &w, myl_types::ids::SitzungId::new(id)).map(|z| println!("Widerruf verbreitet ({z})."))
+        }),
+        Some("waehle") => wallet::waehlen(name).map(|w| {
+            println!("Wallet {} ausgewählt.", w.name);
+            if mining::zustand().is_some() {
+                println!("Es gilt ab dem nächsten Start des Minings (myl mining stop, dann start).");
+            }
+        }),
+        Some(anders) => {
+            eprintln!("myl wallet: unbekannt `{anders}`; liste, neu, wiederherstellen, waehle, credits, sitzung, widerrufen, ueberweisen.");
+            return 2;
+        }
+    };
+    if let Err(f) = ergebnis {
+        eprintln!("myl wallet: {f}");
+        return 1;
+    }
+    let gewaehlt = wallet::gewaehlt().map(|w| w.name);
+    let eingetragen = wallet::eingetragen().map(|w| w.name);
+    // ⚑ Das Guthaben **jedes** Wallets (2026-10-27): über die
+    //   Leitung eines Knotens, den eigenen oder `--relais`. Ohne Knoten bleibt
+    //   die Liste ohne Zahlen, statt alte zu zeigen.
+    let stand_von = |w: &wallet::Wallet| leitung(args).ok().and_then(|l| l.kontostand(&w.adresse).ok());
+    let liste = wallet::liste();
+    if liste.is_empty() {
+        println!("Noch kein Wallet. Anlegen mit: myl wallet neu <name>");
+    }
+    for w in liste {
+        let mut zeile = format!(
+            "{} {:<16} {}",
+            if Some(&w.name) == gewaehlt.as_ref() { "*" } else { " " },
+            w.name,
+            w.adresse_hex()
+        );
+        if let Some(k) = stand_von(&w) {
+            zeile.push_str(&format!("  {} MYL, {} Credits, Nonce {}", mining::myl_text(k.guthaben), k.credits, k.nonce));
+        }
+        if Some(&w.name) == eingetragen.as_ref() {
+            zeile.push_str("  (Auszahlungskonto)");
+        }
+        println!("{zeile}");
+    }
+    println!("Testwallets auf der Probekette: Spielgeld, die Schlüssel liegen unverschlüsselt unter {}.", wallet::ordner().display());
+    0
 }
 
 /// Die Speicherorte aus ihrer Datei.
@@ -1794,6 +2085,11 @@ fn frage(args: &[String]) -> i32 {
             return 1;
         }
     };
+    // ⚑ **Über die Tür eines Knotens** (2026-10-26): mit der Vollmacht des
+    //   Agenten aus dem Wallet, kein Modell auf dieser Maschine.
+    if let Some(i) = args.iter().position(|a| a == "--tuer") {
+        return frage_ueber_die_tuer(args, i, &e);
+    }
     kapazitaet_anwenden(&e);
     let (artefakt, rest) = artefakt_und_rest(args, &e);
     let Some(artefakt) = artefakt else {

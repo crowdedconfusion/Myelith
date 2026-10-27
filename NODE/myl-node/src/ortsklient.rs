@@ -43,6 +43,21 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 /// der Knoten rechnete für einen Papierkorb.
 pub const FRIST: Duration = Duration::from_secs(45);
 
+/// Wie lange ein Auftrag von der **eigenen Tür** rechnen darf.
+///
+/// 📌 **Fund 650 (2026-10-26):** Über einen Pod aus Knoten mit Latenz
+/// kostet ein Token eine Runde je Position, gemessen im Lauf über Docker
+/// 0,5 bis 2,7 s je Runde, also rund 4 s je Token bei vier Positionen,
+/// dazu 9 s Schlüsselaufbau. Mit [`FRIST`] gab der Knoten nach 45 s auf,
+/// während der Pod richtig rechnete. [`FRIST`] gilt für den Weg über das
+/// Netz und dessen Leerlauffrist; an der Tür wartet ein Klient auf
+/// derselben Maschine (`Tuerklient`, 600 s). Diese Frist liegt darunter,
+/// damit der Klient eine Antwort bekommt und keine Zeitüberschreitung.
+///
+/// ⚠️ Die Tür bedient eine Anfrage nach der anderen; so lange steht sie
+/// für alle anderen.
+pub const TUERFRIST: Duration = Duration::from_secs(540);
+
 /// Der Anschluss an einen lokalen Shard-Prozess.
 #[derive(Debug, Clone)]
 pub struct Ortsanschluss {
@@ -86,6 +101,11 @@ impl Ortsanschluss {
     /// aussen wäre ein Auskunftsdienst über den Zustand dieses Knotens.
     pub async fn frage(&self, frage: &Ortsfrage) -> Option<Ortsantwort> {
         self.frage_mit_frist(frage, FRIST).await
+    }
+
+    /// Eine Frage für die eigene Tür, mit [`TUERFRIST`] (Fund 650).
+    pub async fn frage_fuer_die_tuer(&self, frage: &Ortsfrage) -> Option<Ortsantwort> {
+        self.frage_mit_frist(frage, TUERFRIST).await
     }
 
     /// Wie [`Self::frage`], mit einer anderen Frist.
@@ -142,6 +162,16 @@ impl Ortsanschluss {
 mod tests {
     use super::*;
     use myl_types::ortsleitung::schluessel_ablegen;
+
+    /// ⚑ **Die Frist der Tür liegt zwischen den beiden Wartenden** (Fund
+    /// 650): länger als die Frist für das Netz, kürzer als die 600 s, die
+    /// der Klient an der Tür wartet. Sonst bekäme er eine
+    /// Zeitüberschreitung statt einer Antwort.
+    #[test]
+    fn die_tuerfrist_liegt_zwischen_netz_und_klient() {
+        assert!(TUERFRIST > FRIST);
+        assert!(TUERFRIST < Duration::from_secs(600));
+    }
 
     fn verzeichnis(marke: &str) -> std::path::PathBuf {
         let v = std::env::temp_dir().join(format!("myl-ortsklient-{marke}-{}", std::process::id()));

@@ -80,6 +80,9 @@ fn konfig(verzeichnis: &std::path::Path, name: &str, bootstrap: Vec<String>) -> 
         modellname: "sparrow-0.6b-int8".to_string(),
         kontoschluesseldatei: None,
         konto: None,
+        kontowechseldatei: None,
+        podrelais: None,
+        podrelaisausweis: None,
         // Kein Testverkehr: Die Tests hier schicken gezielt, damit
         // sichtbar bleibt, welche Nachricht wessen ist.
         testverkehr_sekunden: None,
@@ -218,7 +221,7 @@ async fn ein_echter_block_kommt_an_unsinn_nicht() {
         prev_block_hash: Hash::sha256(b"genesis"),
         timestamp_ms: 1_700_000_000_000,
         state_root: Hash::sha256(b"zustand"),
-        saatquelle: None,
+        pruefpunkt: None,
     });
     let gueltig = borsh::to_vec(&block).expect("Serialisierung");
 
@@ -650,7 +653,11 @@ async fn eine_inferenzantwort_beendet_die_blocknachforderung_nicht() {
     use myl_types::inferenzauftrag::Inferenzantwort;
 
     let verz = arbeitsverzeichnis("aufholen");
-    let mut alpha = Knoten::starten(konfig(&verz, "alpha", vec![]), false)
+    // Alpha baut die Blöcke, also ist er Erzeuger: Seit dem 2026-10-27
+    // braucht jeder Block die Unterschrift eines Mitglieds.
+    let mut erzeuger = konfig(&verz, "alpha", vec![]);
+    erzeuger.erzeugt_bloecke = true;
+    let mut alpha = Knoten::starten(erzeuger, false)
         .await
         .expect("Alpha startet");
     let mut beta = Knoten::starten(konfig(&verz, "beta", vec![]), false)
@@ -771,5 +778,45 @@ async fn der_blocktakt_baut_im_eigenen_takt() {
     let mut gamma = Knoten::starten(ohne, false).await.expect("Gamma startet");
     gamma.laufe_fuer(Duration::from_millis(300)).await;
     assert_eq!(gamma.kette().hoehe(), 0, "ohne Blocktakt und ohne Testverkehr baut niemand");
+    std::fs::remove_dir_all(&verz).ok();
+}
+
+/// ⚑ **Zwei Blöcke derselben Höhe vom selben Erzeuger werden erkannt**
+/// (2026-10-27, CONSENSUS 7.6): Beta übernimmt den ersten und meldet den
+/// Widerspruch, sobald der zweite kommt. Gegenprobe: ein zweiter Block von
+/// einem anderen Erzeuger ist kein Beleg.
+#[tokio::test]
+async fn ein_zweiter_block_derselben_hoehe_wird_als_doppelbeleg_erkannt() {
+    use borsh::BorshSerialize;
+    let verz = arbeitsverzeichnis("doppelbeleg");
+    let mut beta = Knoten::starten(konfig(&verz, "beta", vec![]), false).await.expect("Beta startet");
+    let erzeuger = myl_node::schluessel::Konsensschluessel::probe(myl_node::kette::PROBEERZEUGER).expect("Schlüssel");
+    let fremder = myl_node::schluessel::Konsensschluessel::probe("fremder").expect("Schlüssel");
+    let mut e = myl_node::kette::Kette::probestand();
+    let erster = e.baue_block();
+    let neu_unterschrieben = |zeit: u64, k: &myl_node::schluessel::Konsensschluessel| {
+        let mut b = erster.clone();
+        b.header.timestamp_ms = zeit;
+        let signatur = k.signiere(&b.erzeugernachricht()).expect("unterschreiben");
+        b.unterschrift = Some(myl_consensus::block::Erzeugerunterschrift { schluessel: k.oeffentlich(), signatur });
+        b
+    };
+    let zweiter = neu_unterschrieben(erster.header.timestamp_ms + 1, &erzeuger);
+    let von_fremdem = neu_unterschrieben(erster.header.timestamp_ms + 2, &fremder);
+    let von = libp2p::PeerId::random();
+    for b in [&erster, &von_fremdem, &zweiter] {
+        let mut roh = Vec::new();
+        b.serialize(&mut roh).expect("schreiben");
+        beta.ereignis_einspeisen(myl_net::NodeEvent::Message(myl_net::InboundMessage {
+            topic: myl_net::GossipTopic::Blocks,
+            data: roh,
+            von,
+        }));
+    }
+    beta.aufnahme().await;
+    assert_eq!(beta.kette().hoehe(), 1);
+    let erkannt: Vec<_> = lies_protokoll(beta.protokollpfad()).into_iter().filter(|z| z.art == "doppelbeleg_erkannt").collect();
+    assert_eq!(erkannt.len(), 1, "genau ein Widerspruch, nicht der des Fremden");
+    assert!(erkannt[0].roh.contains("\"belegart\":0"), "{}", erkannt[0].roh);
     std::fs::remove_dir_all(&verz).ok();
 }

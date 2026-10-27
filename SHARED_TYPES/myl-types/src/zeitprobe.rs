@@ -46,8 +46,28 @@ pub fn anfrage(positionen: u32) -> Vec<u8> {
 
 /// Ist das eine Probe? Dann die Zahl der Positionen.
 pub fn als_anfrage(roh: &[u8]) -> Option<u32> {
-    let zahl: [u8; 4] = roh.strip_prefix(MARKE)?.try_into().ok()?;
-    Some(u32::from_le_bytes(zahl))
+    als_anfrage_mit_grenze(roh).map(|(p, _)| p)
+}
+
+/// ⚑ **Die Probe mit Grenze** (2026-10-27, Fund 646): dazu vier Bytes, nach
+/// wie vielen Millisekunden der Shard aufhört. Eine Probe, die so lange
+/// dauert, hat die Frist ohnehin überschritten; ohne Grenze rechnete der
+/// Shard eines Lügners seine 2 048 Positionen zu Ende (rund 50 s im
+/// Netzlauf), und jeder andere Messende bekam in der Zeit „besetzt“.
+pub fn anfrage_mit_grenze(positionen: u32, grenze_ms: u32) -> Vec<u8> {
+    [MARKE, &positionen.to_le_bytes(), &grenze_ms.to_le_bytes()].concat()
+}
+
+/// Ist das eine Probe? Dann Positionen und, wenn angegeben, die Grenze in
+/// Millisekunden. Vier oder acht Bytes nach der Marke, sonst nichts.
+pub fn als_anfrage_mit_grenze(roh: &[u8]) -> Option<(u32, Option<u32>)> {
+    let rest = roh.strip_prefix(MARKE)?;
+    let zahl = |b: &[u8]| -> Option<u32> { Some(u32::from_le_bytes(b.try_into().ok()?)) };
+    match rest.len() {
+        4 => Some((zahl(rest)?, None)),
+        8 => Some((zahl(&rest[..4])?, Some(zahl(&rest[4..])?))),
+        _ => None,
+    }
 }
 
 /// Die Nutzlast der Antwort.
@@ -121,10 +141,25 @@ pub fn fragen(
     positionen: u32,
     frist: Duration,
 ) -> Result<[u8; 32], String> {
+    fragen_mit(adresse, ausweis, &anfrage(positionen), frist)
+}
+
+/// Wie [`fragen`], mit einer Grenze, nach der der Shard aufhört.
+pub fn fragen_mit_grenze(
+    adresse: SocketAddr,
+    ausweis: &[u8; AUSWEIS_LEN],
+    positionen: u32,
+    grenze_ms: u32,
+    frist: Duration,
+) -> Result<[u8; 32], String> {
+    fragen_mit(adresse, ausweis, &anfrage_mit_grenze(positionen, grenze_ms), frist)
+}
+
+fn fragen_mit(adresse: SocketAddr, ausweis: &[u8; AUSWEIS_LEN], nutzlast: &[u8], frist: Duration) -> Result<[u8; 32], String> {
     let mut strom = TcpStream::connect_timeout(&adresse, frist).map_err(|e| format!("{adresse}: {e}"))?;
     strom.set_read_timeout(Some(frist)).map_err(|e| e.to_string())?;
     strom.set_write_timeout(Some(frist)).map_err(|e| e.to_string())?;
-    rahmen_senden_mit_ausweis(&mut strom, ausweis, &anfrage(positionen), 64)?;
+    rahmen_senden_mit_ausweis(&mut strom, ausweis, nutzlast, 64)?;
     let roh = rahmen_empfangen(&mut strom, 64)?;
     als_antwort(&roh).ok_or_else(|| "die Tuer antwortete nicht mit einer Zeitprobe".to_string())
 }
@@ -142,6 +177,13 @@ mod tests {
         let mut lang = anfrage(4);
         lang.push(0);
         assert_eq!(als_anfrage(&lang), None, "Anhängsel");
+        // Mit Grenze: acht Bytes, und die alte Form bleibt lesbar.
+        assert_eq!(als_anfrage_mit_grenze(&anfrage_mit_grenze(2_048, 2_500)), Some((2_048, Some(2_500))));
+        assert_eq!(als_anfrage_mit_grenze(&anfrage(4)), Some((4, None)));
+        assert_eq!(als_anfrage(&anfrage_mit_grenze(64, 9)), Some(64));
+        let mut lang = anfrage_mit_grenze(4, 1);
+        lang.push(0);
+        assert_eq!(als_anfrage_mit_grenze(&lang), None, "Anhängsel");
     }
 
     /// Über eine echte Verbindung, mit einer Tür, die die Probe beantwortet.

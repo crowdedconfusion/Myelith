@@ -304,6 +304,13 @@ pub struct Miningeinstellung {
     /// Kennungen der freigegebenen Rechenwerke aus dem Hardwarescan.
     #[serde(default)]
     pub rechenwerke: Vec<String>,
+    /// ⚑ **Wohin der Knoten beitritt** (2026-10-26): eine Multiadresse
+    /// (`/ip4/…/tcp/…/p2p/…`) oder eine Datei, in deren erster Zeile sie
+    /// steht (`einstieg.txt` des Probenetzes). Leer heisst ein eigener
+    /// Probelauf, in dem der Knoten selbst erzeugt. Fuer das Testnetz kommt
+    /// der Einstieg spaeter aus dem Netz selbst.
+    #[serde(default)]
+    pub einstieg: Option<String>,
 }
 
 impl Einstellungen {

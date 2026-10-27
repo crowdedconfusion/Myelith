@@ -3434,6 +3434,36 @@ body.ablegen .eingabefeld {
 .knotenmeldung { min-height: 1.2rem; margin: 1rem 0 .4rem; color: var(--schlecht); white-space: pre-wrap; }
 .knotenknoepfe { display: flex; gap: .8rem; flex-wrap: wrap; }
 .knotenknopf { min-width: 12rem; }
+/* ⚑ Das Wallet (2026-10-26): je Wallet eine Reihe, das ausgewaehlte
+   hervorgehoben; die Adresse ganz, denn sie wird abgeschrieben. */
+.walletliste { display: flex; flex-direction: column; gap: .6rem; margin: 0 0 1.2rem; }
+.walletreihe {
+  padding: .6rem .8rem;
+  border: 1px solid var(--kante);
+  border-radius: var(--rund-klein);
+  display: flex;
+  flex-direction: column;
+  gap: .35rem;
+  align-items: flex-start;
+}
+.walletreihe[data-gewaehlt="ja"] { border-color: var(--text); }
+.walletkopf { display: flex; gap: .6rem; align-items: baseline; flex-wrap: wrap; }
+.walletmarke { font-size: .75rem; color: var(--leise); border: 1px solid var(--kante); border-radius: 999px; padding: 0 .5rem; }
+.walletguthaben { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.walletadresse { font-size: 11.5px; color: var(--leise); word-break: break-all; }
+.walletentwurf { margin: 0 0 1.2rem; padding: .8rem 1rem; border: 1px solid var(--text); border-radius: var(--rund-klein); }
+.walletentwurf h3 { margin-top: 0; }
+.entwurfwoerter {
+  columns: 2;
+  margin: .4rem 0 .8rem;
+  padding-left: 2rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 14px;
+  line-height: 1.7;
+}
+.entwurfhaken { display: flex; gap: .5rem; align-items: center; margin: 0 0 .8rem; }
+.walletwieder { display: flex; flex-direction: column; gap: .4rem; }
+.walletwieder textarea { width: 100%; box-sizing: border-box; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 .knotenknopf[data-laeuft="ja"] { color: var(--text); }
 .knotenmeldungen pre {
   margin: 0 0 .6rem;

@@ -69,6 +69,18 @@ use std::collections::BTreeMap;
 /// Sieben Tage bei Stunden-Epochen sind 168.
 pub const SPERRFRIST_EPOCHEN: u64 = 168;
 
+/// ⚑ **Die Vertrauensfrist** (Festlegung des Projektinhabers vom
+/// 2026-10-27, schwache Subjektivität): Wie viele Epochen ein bestätigter
+/// Prüfpunkt als Anker taugt, zwei Drittel der Sperrfrist, also 112.
+///
+/// Wer damals im Stimmsatz war, haftet bis zum Ende der Sperrfrist für eine
+/// zweite Geschichte, die er unterschreibt; danach kann er es ohne Risiko
+/// (Long-Range-Angriff). Der Rest von 56 Epochen ist der Rand, in dem ein
+/// Beleg für eine Doppelunterschrift noch in einen Block kommt, auch wenn
+/// ein Erzeuger ihn eine Weile zurückhält. **Abgeleitet und nicht
+/// eingetragen**, damit sie mit der Sperrfrist wandert (vgl. Fund 171).
+pub const VERTRAUENSFRIST_EPOCHEN: u64 = SPERRFRIST_EPOCHEN * 2 / 3;
+
 /// Wie viele getrennte Kündigungen ein Konto offen haben darf.
 ///
 /// ⚑ **Eine Schranke gegen Zustandswachstum**, dieselbe Klasse wie bei
@@ -216,6 +228,15 @@ mod tests {
         // sind; hier steht, was daraus folgt.
         assert_eq!(SPERRFRIST_EPOCHEN, 7 * 24);
         assert_eq!(freigabe_epoche(10), 10 + SPERRFRIST_EPOCHEN);
+    }
+
+    /// ⚑ **Die Vertrauensfrist liegt mit Rand unter der Sperrfrist**
+    /// (2026-10-27): 112 Epochen, 56 bleiben für Belege.
+    #[test]
+    fn die_vertrauensfrist_liegt_mit_rand_unter_der_sperrfrist() {
+        assert_eq!(VERTRAUENSFRIST_EPOCHEN, 112);
+        assert_eq!(SPERRFRIST_EPOCHEN - VERTRAUENSFRIST_EPOCHEN, 56);
+        const { assert!(VERTRAUENSFRIST_EPOCHEN < SPERRFRIST_EPOCHEN) };
     }
 
     /// ⚑ **Gekündigtes haftet weiter.** Ohne das wäre die Kündigung der
