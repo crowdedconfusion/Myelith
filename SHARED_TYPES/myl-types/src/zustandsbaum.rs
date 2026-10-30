@@ -468,6 +468,54 @@ pub struct Seitenablage {
     belegt: u64,
 }
 
+/// ⚑ **Lesen und Schreiben an fester Stelle, je System** (2026-10-30): ohne
+/// gemeinsamen Dateizeiger. 📌 Hier stand ungeschützt
+/// `std::os::unix::fs::FileExt`, und die CI unter Windows baute `myl-types`
+/// nicht mehr (kalter Klon, Klient, Kerne).
+#[cfg(unix)]
+fn an_stelle_schreiben(datei: &std::fs::File, bytes: &[u8], ort: u64) -> std::io::Result<()> {
+    use std::os::unix::fs::FileExt;
+    datei.write_all_at(bytes, ort)
+}
+
+#[cfg(unix)]
+fn an_stelle_lesen(datei: &std::fs::File, puffer: &mut [u8], ort: u64) -> std::io::Result<()> {
+    use std::os::unix::fs::FileExt;
+    datei.read_exact_at(puffer, ort)
+}
+
+/// Unter Windows darf `seek_write` weniger schreiben als verlangt; also bis
+/// alles steht.
+#[cfg(windows)]
+fn an_stelle_schreiben(datei: &std::fs::File, mut bytes: &[u8], mut ort: u64) -> std::io::Result<()> {
+    use std::os::windows::fs::FileExt;
+    while !bytes.is_empty() {
+        let n = datei.seek_write(bytes, ort)?;
+        if n == 0 {
+            return Err(std::io::ErrorKind::WriteZero.into());
+        }
+        bytes = &bytes[n..];
+        ort += n as u64;
+    }
+    Ok(())
+}
+
+/// Unter Windows darf `seek_read` weniger lesen als verlangt; also bis alles
+/// da ist, null heisst Dateiende.
+#[cfg(windows)]
+fn an_stelle_lesen(datei: &std::fs::File, mut puffer: &mut [u8], mut ort: u64) -> std::io::Result<()> {
+    use std::os::windows::fs::FileExt;
+    while !puffer.is_empty() {
+        let n = datei.seek_read(puffer, ort)?;
+        if n == 0 {
+            return Err(std::io::ErrorKind::UnexpectedEof.into());
+        }
+        puffer = &mut puffer[n..];
+        ort += n as u64;
+    }
+    Ok(())
+}
+
 impl Seitenablage {
     /// Eine neue, leere Ablage (eine vorhandene Datei wird geleert).
     pub fn neu(pfad: &std::path::Path) -> std::io::Result<Self> {
@@ -480,7 +528,6 @@ impl Seitenablage {
     }
 
     fn schreiben(&mut self, bytes: &[u8]) -> Seite {
-        use std::os::unix::fs::FileExt;
         let k = Self::klasse(bytes.len());
         let ort = match self.frei.get_mut(&k).and_then(Vec::pop) {
             Some(o) => o,
@@ -490,15 +537,14 @@ impl Seitenablage {
                 o
             }
         };
-        self.datei.write_all_at(bytes, ort).expect("die Seitenablage des Zustandsbaums ist nicht beschreibbar");
+        an_stelle_schreiben(&self.datei, bytes, ort).expect("die Seitenablage des Zustandsbaums ist nicht beschreibbar");
         self.belegt += u64::from(k);
         Seite { ort, laenge: bytes.len() as u32 }
     }
 
     fn lesen(&self, s: Seite) -> Knoten {
-        use std::os::unix::fs::FileExt;
         let mut b = vec![0u8; s.laenge as usize];
-        self.datei.read_exact_at(&mut b, s.ort).expect("die Seitenablage des Zustandsbaums ist nicht lesbar");
+        an_stelle_lesen(&self.datei, &mut b, s.ort).expect("die Seitenablage des Zustandsbaums ist nicht lesbar");
         let mut ein = &b[..];
         let mut budget = usize::MAX;
         Knoten::dekodieren(&mut ein, 0, &mut budget, true).expect("eine Seite der eigenen Ablage ist kaputt")

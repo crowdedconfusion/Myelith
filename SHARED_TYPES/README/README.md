@@ -1,6 +1,6 @@
 # shared-types (`myl-types`)
 
-> **Version:** 0.62.0
+> **Version:** 0.62.1
 > **Datum:** 2026-10-29
 > **Status:** 🎉 **Phase 2 abgeschlossen** (Punkte 1.1–1.7, 2.1–2.3):
 > Hash, Merkle-Baum, VRF (bit-exakt gegen RFC-9381-Vektoren), BLS12-381
@@ -49,6 +49,19 @@ SHARED_TYPES/
 ```
 
 ## Changelog
+
+### v0.62.1 (2026-10-30): Die Seitenablage baut unter Windows
+
+- 📌 **CI zu `d5fa129` rot unter Windows** (kalter Klon, Klient, Kerne):
+  Die Seitenablage des Zustandsbaums las und schrieb über
+  `std::os::unix::fs::FileExt`, ungeschützt; `myl-types` und damit alles
+  darüber baute unter Windows nicht.
+- ⚑ **Lesen und Schreiben an fester Stelle je System**: unter Unix
+  `read_exact_at` und `write_all_at`, unter Windows `seek_read` und
+  `seek_write` in einer Schleife (beide dürfen weniger liefern als
+  verlangt; null heisst Dateiende oder nichts geschrieben). Beides ohne
+  gemeinsamen Dateizeiger. Der Windows-Zweig ist hier nicht gebaut (kein
+  Ziel installiert); belegt wird er von der CI.
 
 ### v0.62.0 (2026-10-30): Der Zustandsbaum auf der Platte
 
