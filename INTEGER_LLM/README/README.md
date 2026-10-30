@@ -1,7 +1,7 @@
 # integer-llm
 
-> **Version:** 0.146.2 (θ_v 0.22.0; kernels 0.89.0, runtime 0.104.1, pipeline 0.15.4)
-> **Datum:** 2026-10-27
+> **Version:** 0.147.1 (θ_v 0.22.0; kernels 0.89.0, runtime 0.105.0, pipeline 0.15.4)
+> **Datum:** 2026-10-29
 > **Status:** ⚠️ **Das Akzeptanzkriterium ruht auf einer zu kleinen
 > Stichprobe.** Gemessen wurde bisher ueber **4 Sequenzen, 435
 > Positionen**; eine Messung ueber **32 Sequenzen, 3558 Positionen**
@@ -648,6 +648,27 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
   volle Paritätstests nur auf GPU-Runnern (nightly oder PR-basiert)
 
 ## Changelog
+
+### v0.147.1 (2026-10-30): Das Gleitkomma-Audit kennt die neuen Konsensdateien
+
+- `tests/audit/test_no_float.py`: In `CONSENSUS_PATH` stehen jetzt
+  `myl-ledger/src/pruefung.rs` (Prüfaufträge und Schiedsrunde),
+  `myl-ledger/src/sammlung.rs` (die Sammlungen hinter der Zustandswurzel),
+  `myl-consensus/src/zeuge.rs` (Zeugenstücke) und
+  `myl-types/src/zustandsbaum.rs` (Zustandswurzel, Zeugen, Seiten auf der
+  Platte). Die ersten drei meldete die Vollständigkeitsprüfung als nicht
+  gelistet; der Zustandsbaum liegt in einer Kiste, die nicht als ganze
+  geprüft wird, und wäre ohne Eintrag ungeprüft geblieben. Null Treffer.
+
+### v0.147.0 (2026-10-29): Ein Blick nach jeder Ebene im Stapel (runtime 0.105.0)
+
+- **`vorbereiten_stapel_mit_ebenen`**: wie `vorbereiten_stapel`, und nach
+  jeder Ebene bekommt ein Beobachter den Ausgang für jedes Token des
+  Stapels. An der Rechnung ändert er nichts, er liest nur; `None` für
+  Modelle mit vier Strömen (sie laufen im Stapel Token für Token). Dafür
+  braucht ihn der Nachrechner der Stufe 2, der jetzt als Prefill prüft
+  (VERIFICATION 0.27.0).
+- θ_v unverändert; Konformität 55/55.
 
 ### v0.146.2 (2026-10-27): Der Gleitkomma-Audit kennt die Relaisleitung
 

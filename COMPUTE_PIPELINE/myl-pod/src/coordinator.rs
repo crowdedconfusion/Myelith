@@ -58,6 +58,12 @@ pub struct CompletedSegment {
     /// Der Wert ist der Hash der Token-Nutzlast, also klein und von
     /// jedem nachrechenbar, der die Anfrage kennt.
     pub eingangs_commitment: [u8; 32],
+    /// ⚑ **Die Nutzlast des Eingangs** (Stufe 2, Nachrechnen, 2026-10-29):
+    /// das Token als zwei `i16`, über die [`Self::eingangs_commitment`]
+    /// gebildet ist. Vier Bytes je Segment; damit rechnet ein Checker die
+    /// Pipeline ab den Tokens nach, ohne dass Aktivierungen aufgehoben
+    /// werden (E10).
+    pub eingabe: Vec<i16>,
     /// Die Merkle-Wurzel über [`Self::zusicherungen`].
     ///
     /// ⚑ **Fund 100:** Bis zum 2026-08-30 ging in die Bündelwurzel nur
@@ -188,6 +194,9 @@ pub struct Coordinator {
     completed: Vec<CompletedSegment>,
     /// Wie viele Segmente wegen des Deckels verworfen wurden.
     verworfen: u64,
+    /// Wer eine ausgefallene Position vertritt (Whitepaper 6.8); geht ins
+    /// Bündel und wird mitunterschrieben.
+    vertreter: Vec<(u32, MinerId)>,
 }
 
 impl Coordinator {
@@ -220,6 +229,7 @@ impl Coordinator {
             besetzung,
             completed: Vec::new(),
             verworfen: 0,
+            vertreter: Vec::new(),
         })
     }
 
@@ -293,7 +303,7 @@ impl Coordinator {
                 let ergebnisse = self.pump_stapel(&msgs)?;
                 for (k, (out_trace, out_sigs, token_opt, feedback_opt)) in ergebnisse.into_iter().enumerate() {
                     let i = i0 + k;
-                    self.segment_abschliessen(segment_id_from(session_id, i as u64), i as u64, out_trace, out_sigs, eingaenge[k]);
+                    self.segment_abschliessen(segment_id_from(session_id, i as u64), i as u64, out_trace, out_sigs, eingaenge[k], msgs[k].payload.clone());
                     if let Some(t) = token_opt {
                         generated.push(t);
                     }
@@ -315,7 +325,7 @@ impl Coordinator {
             let eingang = crate::trace::activation_hash(&packed);
             let msg = PodMessage::token_input(segment_id, session_id, i as u64, packed, flags);
             let (out_trace, out_sigs, token_opt, feedback_opt) = self.pump(&msg)?;
-            self.segment_abschliessen(segment_id, i as u64, out_trace, out_sigs, eingang);
+            self.segment_abschliessen(segment_id, i as u64, out_trace, out_sigs, eingang, msg.payload.clone());
             if let Some(t) = token_opt {
                 generated.push(t);
             }
@@ -339,7 +349,7 @@ impl Coordinator {
             let position = msg.position;
             let eingang = crate::trace::activation_hash(&msg.payload);
             let (out_trace, out_sigs, token_opt, feedback_opt) = self.pump(&msg)?;
-            self.segment_abschliessen(segment_id, position, out_trace, out_sigs, eingang);
+            self.segment_abschliessen(segment_id, position, out_trace, out_sigs, eingang, msg.payload.clone());
             match token_opt {
                 Some(t) => generated.push(t),
                 None => break,
@@ -362,6 +372,7 @@ impl Coordinator {
         trace: Vec<[u8; 32]>,
         signatures: Vec<BlsSignature>,
         eingangs_commitment: [u8; 32],
+        eingabe: Vec<i16>,
     ) {
         if trace.is_empty() {
             return;
@@ -398,6 +409,7 @@ impl Coordinator {
             position,
             trace,
             eingangs_commitment,
+            eingabe,
             spurwurzel,
             signatures,
             pod_path,
@@ -570,19 +582,33 @@ impl Coordinator {
     /// sind für sich getestet; die Naht dazwischen hat nie jemand
     /// zusammengesteckt. Festgehalten in
     /// `tests/koordinator_byzantinisch.rs`.
+    /// **Die Blätter des Bündels**: je Segment das Ausgabenzeugnis (Stufe 1:
+    /// Eingang und letzte Ausgabe; die Ausgabenwurzel ordnet nach Kennung,
+    /// der Zwilling kommt also auf dieselbe Wurzel, auch wenn er die Segmente
+    /// in anderer Folge abschloss) und das Segmentzeugnis (in Bündelfolge,
+    /// für `segments_root`). Daraus baut der Ortsdienst auch einen
+    /// Differenzbeweis.
+    pub fn blaetter(&self) -> (Vec<myl_types::Ausgabenzeugnis>, Vec<myl_types::Segmentzeugnis>) {
+        let ausgaben = self
+            .completed
+            .iter()
+            .map(|c| myl_types::Ausgabenzeugnis {
+                id: c.id,
+                eingang: c.eingangs_commitment,
+                ausgang: c.trace.last().copied().unwrap_or([0u8; 32]),
+            })
+            .collect();
+        let zeugnisse = self.completed.iter().map(|c| myl_types::Segmentzeugnis { id: c.id, spurwurzel: c.spurwurzel }).collect();
+        (ausgaben, zeugnisse)
+    }
+
     pub fn build_poi_bundle(&self) -> Result<PoIBundle, String> {
         if self.completed.is_empty() {
             return Err("keine abgeschlossenen Segmente".to_string());
         }
-        let zeugnisse: Vec<myl_types::Segmentzeugnis> = self
-            .completed
-            .iter()
-            .map(|c| myl_types::Segmentzeugnis {
-                id: c.id,
-                spurwurzel: c.spurwurzel,
-            })
-            .collect();
+        let (ausgaben, zeugnisse) = self.blaetter();
         let root = segments_root(&zeugnisse).map_err(|e| e.to_string())?;
+        let wurzel_der_ausgaben = myl_types::ausgabenwurzel(&ausgaben).map_err(|e| e.to_string())?;
         let vtfe = self.beanspruchte_vtfe()?;
         // Aggregat über die Übergangs-Signaturen (alle dieselbe Arbeit).
         let all_sigs: Vec<BlsSignature> = self
@@ -614,44 +640,22 @@ impl Coordinator {
             // rechnet die vTFE gegen `completed.len()` nach, während
             // die unterschriebene Botschaft eine Eins trug.
             segmente: self.completed.len() as u32,
+            ausgabenwurzel: wurzel_der_ausgaben,
+            vertreter: self.vertreter.clone(),
         })
     }
 
     /// Die Botschaft, die die Pod-Mitglieder unterschreiben müssen,
     /// damit aus [`Self::build_poi_bundle`] ein einreichbares Bündel wird
-    /// (⚑ Fund 52).
+    /// (⚑ Fund 52): `myl_types::poi_botschaft::bundle_message`, dieselbe
+    /// Funktion, gegen die die Kette prüft.
     ///
-    /// Sie wird hier **nicht** nachgebaut, sondern aus dem Bündel
-    /// abgeleitet, wie es die Gegenseite tut. Eine zweite Fassung der
-    /// Kodierung wäre genau die Art Dublette, an der sich das Projekt
-    /// schon mehrfach verbrannt hat: Sie liefe irgendwann auseinander,
-    /// und der Streit wäre nicht entscheidbar.
-    ///
-    /// Die Kodierung steht in `myl_consensus::poi::poi_bundle_message`
-    /// und lautet `DST_POI_BUNDLE ‖ u64_le(epoch) ‖ pod ‖ segments_root ‖
-    /// u64_le(vtfe_claimed) ‖ u32_le(segmente)`.
-    ///
-    /// ⚑ **Sie steht hier zwangsläufig ein zweites Mal.** `myl-consensus`
-    /// ist nur **dev-dependency** dieses Crates, denn `myl-pod` darf zur
-    /// Bauzeit nicht am Konsens hängen. Rufen geht also nicht, nur
-    /// abschreiben.
-    ///
-    /// **Was die Kopie zusammenhält, ist der Test
-    /// `die_signierbotschaft_des_pods_ist_die_des_konsenses`**, und er
-    /// hat sich am 2026-09-01 bezahlt gemacht: Als `PoIBundle` das Feld
-    /// `segmente` bekam, band die Konsensfassung es und diese nicht.
-    /// **Der Test fiel um, bevor irgendetwas auseinanderlaufen konnte.**
-    /// Eine erzwungene Kopie ist tragbar, solange eine Gegenprobe an ihr
-    /// hängt; ohne sie wäre sie Fund 111.
+    /// 📌 **Fund 673 (2026-10-28):** Hier stand eine Abschrift der Kodierung,
+    /// weil sie einst in `myl-consensus` lag, das dieser Crate nur zum
+    /// Prüfen einbindet. Sie liegt längst in `myl-types`; mit der
+    /// Ausgabenwurzel (Stufe 1) wäre die Abschrift auseinandergelaufen.
     pub fn signierbotschaft(bundle: &PoIBundle) -> Vec<u8> {
-        let mut msg = Vec::with_capacity(21 + 8 + 32 + 32 + 8 + 4);
-        msg.extend_from_slice(b"MYELITH_POI_BUNDLE_v1");
-        msg.extend_from_slice(&bundle.epoch.0.to_le_bytes());
-        msg.extend_from_slice(bundle.pod.as_bytes());
-        msg.extend_from_slice(bundle.segments_root.as_bytes());
-        msg.extend_from_slice(&bundle.vtfe_claimed.to_le_bytes());
-        msg.extend_from_slice(&bundle.segmente.to_le_bytes());
-        msg
+        myl_types::poi_botschaft::bundle_message(bundle)
     }
 
     /// Baut ein PoI-Bündel **und lässt es von den Mitgliedern
@@ -753,6 +757,13 @@ impl Coordinator {
     /// ⚑ **Sichtbar und nicht still** (Fund 164). Verworfene Segmente
     /// sind Arbeit, die niemand mehr bezeugen kann; wer sie stumm
     /// wegwirft, verschenkt Vergütung, ohne dass es jemand merkt.
+    /// ⚑ **Wer eine Position vertritt** (Whitepaper 6.8): Die Reserve hat
+    /// eine ausgefallene Position übernommen; das Bündel nennt sie, und ihr
+    /// Shard unterschreibt statt des Inhabers.
+    pub fn vertreter_setzen(&mut self, vertreter: Vec<(u32, MinerId)>) {
+        self.vertreter = vertreter;
+    }
+
     pub fn verworfene_segmente(&self) -> u64 {
         self.verworfen
     }

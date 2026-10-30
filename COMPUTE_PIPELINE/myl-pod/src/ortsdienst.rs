@@ -187,6 +187,36 @@ impl Ortsdienst {
         }
     }
 
+    /// ⚑ **Läuft, bis die Tür geschlossen wird, und bedient bis zu
+    /// `hoechstens` Verbindungen zugleich** (2026-10-28): Je Anfrage öffnet
+    /// die Tür des Knotens eine eigene Verbindung, und erst so rechnen
+    /// mehrere Zwillingspaare zugleich (Ziel des Projektinhabers: viele
+    /// Anfragen ohne Stau). Ist die Grenze erreicht, wird die nächste
+    /// Verbindung in diesem Faden bedient; so wartet sie, statt dass Fäden
+    /// ohne Ende entstehen (Fund 611: die Lesefrist gilt je Rahmen, ein
+    /// Tröpfler hält höchstens einen Platz).
+    pub fn laufen_parallel(self: std::sync::Arc<Self>, hoechstens: usize) {
+        let aktiv = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        loop {
+            let Ok((strom, _)) = self.horcher.accept() else {
+                continue;
+            };
+            if aktiv.load(std::sync::atomic::Ordering::SeqCst) >= hoechstens {
+                let _ = self.bediene_strom(strom);
+                continue;
+            }
+            aktiv.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let (d, a) = (std::sync::Arc::clone(&self), std::sync::Arc::clone(&aktiv));
+            let gestartet = std::thread::Builder::new().name("ortsdienst".into()).spawn(move || {
+                let _ = d.bediene_strom(strom);
+                a.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+            });
+            if gestartet.is_err() {
+                aktiv.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+    }
+
     fn bediene_strom(&self, mut strom: TcpStream) -> std::io::Result<usize> {
         strom.set_write_timeout(Some(SCHREIBFRIST))?;
         // ⚑ **Die Lesefrist gilt je Rahmen, nicht je Lesevorgang**

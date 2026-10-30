@@ -1,7 +1,7 @@
 # networking (`myl-net`, `myl-siegel`)
 
-> **Version:** 0.21.3
-> **Datum:** 2026-10-26
+> **Version:** 0.24.0
+> **Datum:** 2026-10-28
 > **Status:** **Phase 1 und 2 abgeschlossen** (1.1–1.6, 2.1–2.3),
 > **Phase 3 umgesetzt** (3.1–3.4, Abschluss unter Reviewvorbehalt), dazu Punkt 4.2 (Fuzzing der Wire-Protocol-Parser), Punkt 4.3
 > (Verbindungsgrenzen und Peer-Diversität) und seit dem 26. August
@@ -109,6 +109,64 @@ NETWORKING/
 ```
 
 ## Changelog
+
+### v0.24.0 (2026-10-30): Anfragen mit Zweck (`myl-net` 0.24.0)
+
+- ⚑ **`NodeCommand::AnfrageMitZweck`**: wie `Anfrage`, dazu ein Zweck, den
+  `NodeEvent::AntwortEingegangen` und `NodeEvent::AnfrageGescheitert` als
+  `zweck` zurücktragen (sonst `None`). Die Zuordnung hält nur, was
+  unterwegs ist: libp2p meldet für jede ausgehende Anfrage eine Antwort
+  oder einen Fehlschlag, und daran wird sie entfernt.
+- 📌 Anlass (NODE 0.99.2): Ohne Zweck wusste ein Knoten nicht, worauf ein
+  `Nichts` antwortete. Jedes `Nichts` einer gemessenen Gegenstelle zählte als
+  abgewiesene Zeitprobe, auch eines auf eine Blocknachforderung; ehrliche
+  Mitglieder konnten so Zeugnisse bekommen.
+
+### v0.23.0 (2026-10-29): Das Thema der Zeugen und die Rollen (`myl-net` 0.23.0)
+
+- ⚑ **`GossipTopic::Zeugen`** (`/myelith/zeugen/1`, angehängt): Stücke der
+  Zeugen für zustandslose Knoten, höchstens `MAX_ZEUGEN_BYTES` (1 MiB und
+  der unterschriebene Kopf). Strukturell prüft der `PayloadValidator` des
+  Knotens (Unterschrift eines bekannten Erzeugers).
+- ⚑ **`Rolle` und `subscribe_rolle`**: Ein voller Knoten abonniert alles
+  ausser den Zeugen (sie sind grösser als der Block, und er braucht sie
+  nicht), ein zustandsloser alles ausser den Transaktionen und dazu die
+  Zeugen. ⛔️ Keine Transaktionen, weil er ihre Nummern nicht prüfen kann:
+  Er reichte sonst alte, gültig unterschriebene Transaktionen weiter, die
+  ein Angreifer kostenlos wiederholt.
+- Test `die_rollen_trennen_zeugen_und_transaktionen`; 122 Tests grün,
+  Clippy sauber. (Der Kopf nannte hier noch 0.21.4.)
+
+### v0.22.0 (2026-10-28): Vorrang für Pod-Mitglieder in den Verbindungsgrenzen (`myl-net` 0.22.0)
+
+- ⚑ **`NodeCommand::Vorrang { peers }`** (Fund 674): Die genannten
+  Gegenstellen zählen nicht gegen die Zahlengrenzen
+  (`connection_limits` mit seiner Ausnahmeliste, ersetzt die vorige
+  Liste), höchstens **`MAX_VORRANG` = 64**. Der Knoten setzt dort die
+  Mitglieder seines Pods (NODE 0.77.0). Vorher scheiterte das Wählen zu
+  einem Mitglied, sobald die 16 ausgehenden Plätze belegt waren, und die
+  Zeitprobe erreichte es nicht (im Lauf mit 29 Knoten 810 von rund 1 500
+  Proben). ⚠️ Für Gegenstellen mit Vorrang gilt auch die Grenze je Peer
+  nicht (die Ausnahmeliste ist ganz oder gar nicht); der Deckel hält die
+  Fläche klein, die Grenze je Adressbereich bleibt.
+- Probe `ein_pod_mitglied_mit_vorrang_bekommt_seinen_platz` (ein
+  ausgehender Platz, belegt: ohne Vorrang scheitert der zweite, mit Vorrang
+  gelingt er, ein Dritter ohne Vorrang bleibt draußen).
+- Im Podlauf mit 29 Knoten (vier Pods) belegt: Zeitproben nicht erreicht
+  0 statt 810, Messungen verfallen oder verloren 2 von 476 statt 68 von
+  716 (TESTCLIENT 0.57.0).
+- `myl-net` 0.22.0. Tests grün, Clippy sauber.
+
+### v0.21.4 (2026-10-28): Bündel mit Ausgabenwurzel (`myl-net` 0.21.4)
+
+- Die Bündel in Proben und Prüfwegen tragen die neuen Felder
+  `ausgabenwurzel` und `vertreter` (SHARED_TYPES 0.55.0); kein anderes
+  Verhalten. Mit der Vertreterliste am Ende ist ein Bündel nicht mehr
+  durchweg fester Länge: Die Proben `fuer_feste_typen_ist_die_borsh_pruefung_eine_laengenpruefung`
+  und `verstuemmelte_nachrichten_stuerzen_nicht_ab` lassen die Länge der
+  Liste unberührt und prüfen die Felder davor wie bisher; die Moduldoku von
+  `validation.rs` sagt es, wie die Probe es verlangt.
+- `myl-net` 0.21.4. 120 Tests grün, Clippy sauber.
 
 ### v0.21.3 (2026-10-26): `myl-siegel` ohne `unsafe`, festgeschrieben (`myl-net` 0.21.3, `myl-siegel` 0.3.1)
 

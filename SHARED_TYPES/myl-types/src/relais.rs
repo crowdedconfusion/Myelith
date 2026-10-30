@@ -63,7 +63,55 @@ pub enum Relaisfrage {
         /// Die Transaktion in Borsh.
         tx: Vec<u8>,
     },
+    /// ⚑ **Lege bei diesem Mitglied die Spuren eines Bündels ab** (Stufe 2,
+    /// 2026-10-28): damit es auf eine Spuranfrage antworten kann, nachdem
+    /// sein Shard mit der Epoche endete. Angehängt.
+    SpurenAblegen {
+        /// Die Netzadresse des Mitglieds.
+        an: PeerIdBytes,
+        /// Die Ablage.
+        ablage: crate::Spurablage,
+    },
+    /// ⚑ **Lass dieses Reservemitglied eine Position übernehmen**
+    /// (Whitepaper 6.8, 2026-10-28). Angehängt.
+    Uebernahme {
+        /// Die Netzadresse des Reservemitglieds.
+        an: PeerIdBytes,
+        /// Die Epoche.
+        epoche: u64,
+        /// Der Pod (Index).
+        pod: u32,
+        /// Die Position.
+        position: u32,
+    },
+    /// ⚑ **Ein Differenzbeweis zweier Zwillinge** (2026-10-29), vom
+    /// Ortsdienst, der beide rechnete: Der Knoten reicht ihn an die
+    /// Koordinatoren beider Pods, und jeder meldet ihn mit seinem Schlüssel.
+    /// Angehängt.
+    DifferenzMelden {
+        /// Die Epoche der Bündel.
+        epoche: u64,
+        /// Pod `a` und `b` des Beweises.
+        pod_a: crate::ids::PodId,
+        pod_b: crate::ids::PodId,
+        /// Der Beweis (in einer `Box`: Er ist viel grösser als die übrigen
+        /// Fragen; die Kodierung ist dieselbe).
+        beweis: Box<crate::core_types::Differenzbeweis>,
+    },
+    /// ⚑ **Viele Transaktionen auf einmal** (2026-10-29), höchstens
+    /// [`TRANSAKTIONEN_JE_FRAGE`]: Der Knoten prüft die Unterschriften als
+    /// Stapel (rund 90 statt 470 µs je Stück) und verbreitet, was gilt. Wie
+    /// ein Gateway viele Nutzer bündelt; einzeln war die Leitung selbst der
+    /// Engpass (eine Verbindung und eine Einzelprüfung je Transaktion).
+    /// Die Antwort nennt `angenommen <a> von <n>`. Angehängt.
+    Transaktionen {
+        /// Je Transaktion ihr Borsh.
+        txs: Vec<Vec<u8>>,
+    },
 }
+
+/// Höchstens so viele Transaktionen trägt [`Relaisfrage::Transaktionen`].
+pub const TRANSAKTIONEN_JE_FRAGE: usize = 512;
 
 /// Was der Knoten darauf antwortet.
 #[derive(Debug, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
@@ -128,6 +176,16 @@ pub struct Podeintrag {
     pub kennung: crate::ids::PodId,
     /// Die rechnenden Mitglieder in Shardreihenfolge.
     pub mitglieder: Vec<Podmitglied>,
+    /// ⚑ **Sein Zwilling** (Stufe 1, 2026-10-28): der Index des Pods, der
+    /// dieselben Segmente rechnet, aus denselben Paaren, nach denen die
+    /// Kette vergütet. `None`: ohne Zwilling (allein oder in Bereitschaft).
+    /// Angehängt.
+    pub zwilling: Option<u32>,
+    /// ⚑ **Die Reserve des Pods** (Whitepaper 6.8, 2026-10-28): wer eine
+    /// ausgefallene Position übernehmen darf, in der Folge der Kette. Die
+    /// Ebenen `von..bis` sind hier null; sie folgen aus der übernommenen
+    /// Position. Angehängt.
+    pub reserve: Vec<Podmitglied>,
 }
 
 /// Ein rechnendes Mitglied.
@@ -216,6 +274,8 @@ mod tests {
                 pod_index: 0,
                 kennung: crate::miner::pod_kennung(3, 0),
                 mitglieder: vec![Podmitglied { miner: crate::ids::MinerId::new([1; 32]), netzadresse: PeerIdBytes([2; 32]), von: 0, bis: 14 }],
+                zwilling: Some(1),
+                reserve: Vec::new(),
             }],
         };
         let a = Relaisantwort::Podbild(bild);

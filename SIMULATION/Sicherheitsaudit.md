@@ -1,6 +1,6 @@
 # Sicherheitsaudit
 
-**Stand:** 2026-08-28, Tür und Wallet (A16 bis A24) und Quorumsschnitt (A25) am 2026-10-26, Stichprobe im Netz (A27) und Zeitprobe (A28 bis A30) am 2026-10-27
+**Stand:** 2026-08-28, Tür und Wallet (A16 bis A24) und Quorumsschnitt (A25) am 2026-10-26, Stichprobe im Netz (A27) und Zeitprobe (A28 bis A31) am 2026-10-27, Saat und Unterschrift der Zeitprobe (A32) am 2026-10-28
 **Grundlage:** die Angreiferklassen aus Whitepaper Kap. 5.6 und 9.2, die
 Sicherheitsargumente aus Kap. 6.8 und Anhang B, sowie die Funde 41 bis 53
 dieses Projekts.
@@ -69,6 +69,8 @@ Kettenmigration.
 | A28 | **Ein Lügner lässt jede Zeitprobe verwerfen** | ✅ | **Fund 646** geschlossen (NODE 0.68.0, Festlegung des Projektinhabers 2026-10-27): Es wird kein Ping mehr abgezogen; bestanden ist die kürzeste von fünf Proben ≤ k · Frist + Zugabe (2 s), und k richtet sich nach der Zusage (64 bis 2 048 Positionen). Eine Probe über ihrer Grenze gilt als Überschreitung, auch ohne Antwort. Probe mit Gegenproben in `frist.rs`; im Netzlauf gemeldet |
 | A29 | **Ein Mitglied verweigert jede Zeitprobe** | ❌ | **Fund 660** offen: Wer jede Probe sofort mit `Nichts` beantwortet (angeblich besetzt), wird nie gemessen. Abhilfe braucht eine Festlegung (verweigerte Proben zählen wie eine Überschreitung, ab einer Zahl je Epoche) |
 | A30 | **Ein Mitglied antwortet mit erfundenem Abdruck** | ❌ | **Fund 661** offen: Der Abdruck einer Zeitprobe wird nicht nachgerechnet; wer sofort mit einem beliebigen Abdruck antwortet, besteht jede Probe. Abhilfe braucht eine Festlegung (etwa Stichproben der Abdrücke durch Checker, die das Modell haben) |
+| A31 | **Ein Lügner, der nur kurz auf Position steht** | ⚠️ | **Fund 664** offen: Gemeldet wird erst mit Zeugnissen einer Mehrheit des Pods, und ein Zeugnis verlangt zwei Überschreitungen im Abstand eines Achtels der Epoche, ab einem Viertel. Mit 108 s je Epoche (Podlauf mit `--real`, kurze Wege) schafften das zwei von vier Messenden; der Lügner stand in vier Epochen auf Position und wurde nie gemeldet. Bei einer Stunde je Epoche trüge die Regel; die Erkennung hängt aber an der Wanduhrlänge der Epoche, und die steht nirgends als Bedingung. Zur Entscheidung |
+| A32 | **Ein Lügner, der den Abdruck der Zeitprobe vorrechnet** | ✅ | **Fund 669** (2026-10-28) geschlossen: Die Anfrage trug nur Positionen und Grenze, der Abdruck war für dieselbe Anfrage immer derselbe; einmal gerechnet, hätte ein Lügner ihn danach sofort geschickt. Jetzt trägt jede Probe eine frische Saat des Messenden (32 Byte), aus der der Shard die Eingabe bildet, und die Antwort ist mit dem Minerschlüssel über Saat, Positionen und Abdruck unterschrieben; gezählt wird nur eine tragende Unterschrift. Proben in `myl-types`, `myl-pod` (`grenzen_der_kette`) und `myl-node` (`frist`) mit Gegenproben |
 | A25 | **Zwei Quoren ohne gemeinsamen Teilnehmer** | ✅ | **Fund 652** (2026-10-26) geschlossen: ein Gesamtgewicht über `u64` sättigte; Eigenschaftstest `quorumschnitt.rs` |
 
 ---

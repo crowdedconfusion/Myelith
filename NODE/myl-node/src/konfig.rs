@@ -201,6 +201,29 @@ pub struct KnotenKonfig {
     /// In einem echten Netz gehört das aus: Ein Knoten, der
     /// bedeutungslose Blöcke einspeist, ist dort ein Störer.
     pub testverkehr_sekunden: Option<u64>,
+    /// ⚑ **Der Einsatz, den der Knoten als Miner hinterlegt**, in
+    /// Kleinstbeträgen (2026-10-29): nach der Anmeldung, bis er erreicht
+    /// ist. `None` heisst keiner. Bis hierher gab es im Betrieb keinen Weg,
+    /// einen Einsatz zu hinterlegen, und ohne Einsatz schlachtet ein
+    /// Schiedsurteil nichts.
+    pub einsatz: Option<u64>,
+    /// ⚑ **Zustandslos** (`--zustandslos`, zustandslose Validierung,
+    /// 2026-10-29): Der Knoten hält Konten, Sitzungen, Manifeste und
+    /// Hinterlegungen nicht, übernimmt Blöcke nur mit ihrem Zeugen, erzeugt
+    /// keine Blöcke und nimmt keine fremden Transaktionen an. Nur seine
+    /// eigenen Konten führt er mit.
+    pub zustandslos: bool,
+    /// ⚑ **Den grossen Zustandsbaum auf die Platte auslagern**
+    /// (`--baum-auf-platte`, 2026-10-30, nach dem Vorbild von NOMT): Die
+    /// Seiten liegen neben der Kettendatei (sonst im Protokollverzeichnis);
+    /// im Speicher bleibt der obere Baum. Ein Zwischenspeicher: Der Knoten
+    /// baut ihn beim Start neu.
+    pub baum_auf_platte: bool,
+    /// ⚑ **Zeugen bereithalten** (`--zeugen-bereithalten`, 2026-10-30): Ein
+    /// voller Knoten erzeugt die Zeugen der Blöcke, die er anwendet, und
+    /// liefert sie zustandslosen Knoten auf Nachfrage; so hängt ihre
+    /// Prüfbarkeit nicht am Erzeuger allein.
+    pub zeugen_bereithalten: bool,
     /// Ob dieser Knoten Blöcke **erzeugt**.
     ///
     /// **Genau einer im Netz**, sonst gabelt sich die Kette sofort:
@@ -384,6 +407,10 @@ impl Default for KnotenKonfig {
             podrelais: None,
             podrelaisausweis: None,
             testverkehr_sekunden: None,
+            einsatz: None,
+            zustandslos: false,
+            baum_auf_platte: false,
+            zeugen_bereithalten: false,
             erzeugt_bloecke: false,
             blocktakt_ms: None,
             abzug: None,

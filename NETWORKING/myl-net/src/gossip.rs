@@ -69,9 +69,17 @@ pub const TOPIC_CONSENSUS: &str = "/myelith/consensus/1";
 /// Bandbreite und Bewertung, und wer mit Meldungen flutet, träfe die
 /// Abrechnung mit.
 pub const TOPIC_POD_FAILURES: &str = "/myelith/pod-failures/1";
+/// ⚑ **Topic für die Zeugen der Blöcke** (zustandslose Validierung,
+/// 2026-10-29), in unterschriebenen Stücken.
+///
+/// **Ein eigenes Topic, und nur zustandslose Knoten abonnieren es**
+/// ([`subscribe_rolle`]): Ein Zeuge ist bei vollen Blöcken grösser als der
+/// Block selbst, und ein voller Knoten braucht ihn nicht. Der Erzeuger
+/// veröffentlicht, ohne zu abonnieren.
+pub const TOPIC_ZEUGEN: &str = "/myelith/zeugen/1";
 
 /// Alle Protokoll-Topics in kanonischer Reihenfolge.
-pub const ALL_TOPICS: [&str; 7] = [
+pub const ALL_TOPICS: [&str; 8] = [
     TOPIC_BLOCKS,
     TOPIC_TRANSACTIONS,
     TOPIC_POI_BUNDLES,
@@ -79,6 +87,7 @@ pub const ALL_TOPICS: [&str; 7] = [
     TOPIC_LATENCY_ATTESTS,
     TOPIC_CONSENSUS,
     TOPIC_POD_FAILURES,
+    TOPIC_ZEUGEN,
 ];
 
 /// Die Nachrichtenklassen des Protokolls (ein Wert je Topic).
@@ -96,6 +105,8 @@ pub enum GossipTopic {
     /// **Additiv angehängt, nie eingefügt:** Die Reihenfolge der
     /// Varianten ist Konsensvertrag.
     PodFailures,
+    /// Stücke der Zeugen, für zustandslose Knoten.
+    Zeugen,
 }
 
 impl GossipTopic {
@@ -104,7 +115,7 @@ impl GossipTopic {
     /// Neben [`ALL_TOPICS`], das die **Namen** führt: Wer über Topics
     /// rechnet statt über Zeichenketten, braucht die Werte. Eine neue
     /// Variante fällt hier auf, weil der Test unten die Länge prüft.
-    pub const ALLE: [GossipTopic; 7] = [
+    pub const ALLE: [GossipTopic; 8] = [
         Self::Blocks,
         Self::Transactions,
         Self::PoiBundles,
@@ -112,6 +123,7 @@ impl GossipTopic {
         Self::LatencyAttests,
         Self::Consensus,
         Self::PodFailures,
+        Self::Zeugen,
     ];
 
     /// Der kanonische Topic-Name (Konsens-Feld).
@@ -124,6 +136,7 @@ impl GossipTopic {
             Self::LatencyAttests => TOPIC_LATENCY_ATTESTS,
             Self::Consensus => TOPIC_CONSENSUS,
             Self::PodFailures => TOPIC_POD_FAILURES,
+            Self::Zeugen => TOPIC_ZEUGEN,
         }
     }
 
@@ -133,7 +146,7 @@ impl GossipTopic {
     /// auseinandergelaufen** (2026-09-01: `ALLE` hatte sieben,
     /// `all()` sechs). `all()` gibt deshalb `ALLE` zurück statt die
     /// Liste ein zweites Mal zu schreiben.
-    pub fn all() -> [GossipTopic; 7] {
+    pub fn all() -> [GossipTopic; 8] {
         Self::ALLE
     }
 
@@ -178,6 +191,40 @@ impl From<PublishError> for GossipError {
 /// gezielt einzelne Topics abonnieren.
 pub fn subscribe_all(swarm: &mut Swarm<MylBehaviour>) -> Result<(), GossipError> {
     for topic in GossipTopic::all() {
+        subscribe(swarm, topic)?;
+    }
+    Ok(())
+}
+
+/// ⚑ **Die Rolle eines Knotens im Gossip** (zustandslose Validierung,
+/// 2026-10-29).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Rolle {
+    /// Hält den ganzen Zustand: alles ausser den Zeugen.
+    Voll,
+    /// Hält die grossen Sammlungen nicht: alles ausser den Transaktionen,
+    /// dazu die Zeugen. ⚑ **Keine Transaktionen**, weil er ihre Nummern
+    /// nicht prüfen kann: Er reichte sonst alte, gültig unterschriebene
+    /// Transaktionen weiter, die ein Angreifer kostenlos wiederholt.
+    Zustandslos,
+}
+
+impl Rolle {
+    /// Die Topics dieser Rolle.
+    pub fn topics(self) -> Vec<GossipTopic> {
+        GossipTopic::ALLE
+            .into_iter()
+            .filter(|t| match self {
+                Rolle::Voll => *t != GossipTopic::Zeugen,
+                Rolle::Zustandslos => *t != GossipTopic::Transactions,
+            })
+            .collect()
+    }
+}
+
+/// Abonniert die Topics einer [`Rolle`].
+pub fn subscribe_rolle(swarm: &mut Swarm<MylBehaviour>, rolle: Rolle) -> Result<(), GossipError> {
+    for topic in rolle.topics() {
         subscribe(swarm, topic)?;
     }
     Ok(())
@@ -302,6 +349,8 @@ mod tests {
             vtfe_claimed: 123_456,
             aggregate_sig: sig,
             segmente: 1,
+            ausgabenwurzel: myl_types::MerkleRoot::new([0u8; 32]),
+            vertreter: Vec::new(),
         }
     }
 
@@ -374,5 +423,17 @@ mod tests {
 
         let daten = empfangen.expect("Gossip-Nachricht lief in den Timeout");
         assert_eq!(daten, erwartet);
+    }
+
+    /// ⚑ Ein voller Knoten abonniert die Zeugen nicht, ein zustandsloser
+    /// keine Transaktionen.
+    #[test]
+    fn die_rollen_trennen_zeugen_und_transaktionen() {
+        use super::{GossipTopic, Rolle};
+        let voll = Rolle::Voll.topics();
+        let los = Rolle::Zustandslos.topics();
+        assert!(voll.contains(&GossipTopic::Transactions) && !voll.contains(&GossipTopic::Zeugen));
+        assert!(los.contains(&GossipTopic::Zeugen) && !los.contains(&GossipTopic::Transactions));
+        assert!(voll.contains(&GossipTopic::Blocks) && los.contains(&GossipTopic::Blocks));
     }
 }

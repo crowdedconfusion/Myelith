@@ -1,7 +1,7 @@
 # compute-pipeline (`myl-pod`, `myl-dispatcher`)
 
-> **Version:** 0.52.1 (`myl-pod` 0.43.1, `myl-dispatcher` 0.11.2)
-> **Datum:** 2026-10-26
+> **Version:** 0.57.0 (`myl-pod` 0.48.0, `myl-dispatcher` 0.11.2)
+> **Datum:** 2026-10-29
 > **Status:** Phase 1 vollständig, Phase 2.1, **Phase 3 vollständig**
 > (3.1 bis 3.3) und Punkt 4.3. `shard_loop` mit Spur-Hashes und
 > Manipulationserkennung, `coordinator_loop` mit Micro-Batching,
@@ -106,6 +106,140 @@ COMPUTE_PIPELINE/
 ```
 
 ## Changelog
+
+### v0.57.0 (2026-10-29): Der Ortsdienst meldet Differenzen (`myl-pod` 0.48.0)
+
+- ⚑ **`differenzen_melden`** (CONSENSUS 0.64.0): Der Ortsdienst rechnet
+  beide Zwillinge und merkt sich beim Einreichen die Blätter jedes Bündels
+  (`Coordinator::blaetter`, dieselben, aus denen das Bündel entsteht). Ist
+  die Epoche vorbei und haben zwei Zwillinge verschiedene
+  Ausgabenwurzeln, sucht er die Segmente mit verschiedenem Blatt und
+  schickt für jedes, höchstens vier, einen Differenzbeweis an seinen
+  Knoten; der reicht ihn an die Koordinatoren beider Pods weiter.
+
+### v0.56.0 (2026-10-29): Erst einreichen, dann die Spuren ablegen (`myl-pod` 0.47.0)
+
+- 📌 **Fund 680: Zwillingsgruppen blieben unvollständig, weil das Bündel zu
+  spät kam.** Eingereicht wird im letzten Sechstel einer Epoche (im
+  Kurzlauf 18 s, im Nachtlauf 36 s). Davor legte das Podwerk die Spuren
+  bei jedem Mitglied ab, Mitglied für Mitglied mit bis zu 10 s je
+  Mitglied; mit einem Timeout beim Unterschreiben kam das Bündel nach dem
+  Wechsel und wurde abgewiesen („Bündel für Epoche 2, laufend ist 3“),
+  die Gruppe galt als unvollständig, und niemand wurde vergütet. Im
+  Nachtlauf vom 2026-10-29 waren 35 von 82 Gruppen uneinig oder
+  unvollständig. Jetzt wird zuerst eingereicht, und die Spuren gehen
+  danach an alle Mitglieder zugleich. Gezogen wird erst mit dem Zertifikat
+  nach dem Wechsel; die Spuren liegen also noch rechtzeitig.
+
+### v0.55.3 (2026-10-29): Die Konformitätsprobe des Prefills (`myl-pod` 0.46.3)
+
+- Neuer Test `der_prefill_ist_bitgleich_zum_schrittweisen_rechnen` mit
+  echtem Modell (VERIFICATION 0.27.0). Kein anderes Verhalten.
+
+### v0.55.2 (2026-10-29): Die Schiedsrunde im Test des Nachrechnens (`myl-pod` 0.46.2)
+
+- `ein_checker_rechnet_den_verlauf_ab_den_tokens_nach` prüft jetzt auch die
+  Schiedsrunde mit echtem Modell (VERIFICATION 0.26.0): Gegen die
+  gefälschte Layer rechnete der Pod falsch, gegen die ehrliche nicht, ein
+  verfälschter Beleg trägt nicht, und an der ersten Layer genügen die
+  Tokens. Kein anderes Verhalten.
+
+### v0.55.1 (2026-10-29): Die Logits im Test des Nachrechnens (`myl-pod` 0.46.1)
+
+- `ein_checker_rechnet_den_verlauf_ab_den_tokens_nach` prüft jetzt auch die
+  Logits (VERIFICATION 0.25.0): Eine gefälschte Spur ändert sie nicht, ein
+  anderes Token schon. Kein anderes Verhalten.
+
+### v0.55.0 (2026-10-29): Die Tokens gehen mit in die Ablage (`myl-pod` 0.46.0)
+
+- **`CompletedSegment::eingabe`**: der Koordinator hält je Segment die
+  Nutzlast seines Eingangs (das Token), und `spuren_ablegen` legt sie als
+  `Spurablage::eingaben` ab (SHARED_TYPES 0.56.0). Vier Bytes je Segment.
+- Test `ein_checker_rechnet_den_verlauf_ab_den_tokens_nach`: ein Pod aus
+  vier Shards rechnet zwei Sitzungen; der Verlauf eines gezogenen Segments
+  wird geprüft und mit `myl_verifier::verlauf_nachrechnen` nachgerechnet.
+  Ehrlich gleich; eine verfälschte Layer und ein anderes Token werden an der
+  richtigen Position und Layer gefunden; ein Token ausserhalb des
+  Vokabulars ist ein Fehler. Alle Tests grün.
+
+### v0.54.0 (2026-10-28): Der Zwilling rechnet mit (`myl-pod` 0.45.0)
+
+- ⚑ **Stufe 1 im Podwerk** (Whitepaper 3.4 und 6.4, Festlegung des
+  Projektinhabers vom 2026-10-28): Nennt das Podbild für den ersten Pod
+  einen Zwilling, rechnet dieser jeden Auftrag ein zweites Mal, in einem
+  eigenen Faden mit eigenem Koordinator. Die Antwort geht nach dem ersten
+  Pod hinaus (optimistische Auslieferung); beide reichen am Ende der Epoche
+  ihr Bündel ein. `ueber_pod` ist die Rechnung über einen Pod, für beide.
+- **Der Koordinator setzt die Ausgabenwurzel** (Eingang und letzte Ausgabe
+  je Segment, SHARED_TYPES 0.55.0).
+- 📌 **Fund 673: `Coordinator::signierbotschaft` war eine Abschrift** der
+  Botschaft, mit der Begründung, sie liege in `myl-consensus`, das dieser
+  Crate nur zum Prüfen einbindet. Sie liegt längst in `myl-types`; mit der
+  Ausgabenwurzel wäre die Abschrift auseinandergelaufen. Jetzt ein Aufruf;
+  die Probe `die_signierbotschaft_des_pods_ist_die_des_konsenses` prüft
+  auch Bündel mit Wurzel, und mit der alten Abschrift wird sie rot.
+- **`Pipelinewerk::buendelinhalt`** (Einsicht). Probe
+  `zwillinge_mit_verschiedenem_schnitt_haben_dieselbe_ausgabenwurzel` mit
+  dem Probeartefakt: gleicher und ungleicher Schnitt, dieselbe
+  Ausgabenwurzel, ein anderer Auftrag eine andere (Gegenprobe). 📌 Dabei
+  zeigte sich, dass auch `segments_root` am Schnitt nicht hängt: Die Spur
+  wird je Ebene geführt.
+- ⚠️ Die Verdrahtung des Zwillings im Podwerk hat keine eigene Probe (kein
+  Prüfstand mit zwei Pods); ihr Beleg ist der Zähler einiger Paare im
+  Podlauf mit `--zwillinge` (TESTCLIENT 0.57.0).
+- ⚑ **Die Reserve springt ein** (Whitepaper 6.8): Meldet ein Mitglied
+  seinen Bereich nach der Wartefrist nicht, bittet das Podwerk die Reserve
+  des Pods über die Relaisleitung, die Position zu übernehmen (`besetzen`),
+  wartet, bis sie den Bereich meldet, und rechnet mit ihr; der Koordinator
+  nennt sie im Bündel (`vertreter_setzen`), ihr Shard unterschreibt. Kommt
+  mitten in der Epoche kein Token, wird der Pod einmal neu besetzt und der
+  Auftrag neu gerechnet, nur in derselben Epoche (📌 der erste Einbau
+  wartete auch nach dem Wechsel auf den alten Pod; die Probe
+  `ein_auftrag_ueber_die_epochengrenze_bekommt_seine_antwort` wurde rot). Einen eigenen Neuaufbau des Caches braucht es
+  nicht: Jeder Auftrag geht mit vollem Prefill durch den Pod.
+- ⚑ **Spuren ablegen** (Stufe 2): Bevor der Koordinator das Bündel
+  einreicht, legt er je Segment Zeugnis und Spur bei den Knoten aller
+  Mitglieder ab (`spuren_ablegen`, über die Relaisleitung, NODE 0.77.0).
+  Eine Ablage über der Grenze einer Relaisnachricht unterbleibt mit einer
+  Meldung; das Bündel geht trotzdem hinaus.
+- ⚑ **Ein Fälscher für den Prüfstand**: Merkmal `faelscher` (nie im
+  ausgelieferten Programm). Mit ihm und `MYL_SHARD_FAELSCHEN=1` rechnet
+  `myl-shard` auf einer Eingabe, deren erster Wert um eins verschoben ist;
+  Spur und Unterschrift folgen der falschen Rechnung, der Nachfolger nimmt
+  sie an. Nur ein Zwilling sieht die andere Ausgabe. Ohne das Merkmal ist
+  `faelschen` leer. ⚠️ Keine eigene Probe (die Umgebung wird einmal je
+  Prozess gelesen); ihr Beleg ist der Podlauf mit `--faelscher`
+  (TESTCLIENT 0.57.0). Clippy mit und ohne Merkmal sauber.
+- ⚑ **Last über alle Zwillingspaare** (Whitepaper 3.4: zwei zugeloste
+  Pods je Segment; Ziel des Projektinhabers vom 2026-10-28: so viele Paare
+  wie möglich, damit viele Anfragen ohne Stau gerechnet werden). Bisher
+  rechnete das Podwerk jeden Auftrag über den ersten Pod und seinen
+  Zwilling, und der Ortsdienst bediente Verbindungen nacheinander; weitere
+  Paare brachten keinen Durchsatz. Jetzt:
+  - **`paar_waehlen`**: Jede Sitzung wird einem Paar zugelost, aus der
+    Sitzung und den Kennungen der Pods dieser Epoche. Eine Sitzung bleibt
+    die Epoche über bei ihrem Paar (KV-Cache), ein Pod in Bereitschaft wird
+    nie gewählt, ohne jedes Paar rechnet der erste Pod allein
+    (Anlaufregel). Probe `jede_sitzung_bekommt_ein_paar_und_alle_paare_rechnen`
+    (2 000 Sitzungen über zwei Paare je 800 bis 1 200, fest je Sitzung,
+    neu je Epoche; Gegenproben: allein, leer).
+  - **Ein Koordinator je Pod** (`staende`): Jedes Paar rechnet für sich,
+    jeder Pod reicht sein Bündel ein.
+  - **`Ortsdienst::laufen_parallel`**: bis zu 32 Verbindungen zugleich (die
+    Tür öffnet je Anfrage eine); darüber wird im Hauptfaden bedient, so
+    wartet die nächste, statt dass Fäden ohne Ende entstehen. Ein Tröpfler
+    hält höchstens einen Platz (Lesefrist je Rahmen, Fund 611).
+- `myl-pod` 0.45.0. 166 Tests grün, Clippy sauber.
+
+### v0.53.0 (2026-10-28): Die Zeitprobe rechnet auf der Saat des Messenden (`myl-pod` 0.44.0)
+
+- ⚑ `ShardNode::zeitprobe_bis(positionen, grenze, saat)`: Mit Saat ist das
+  Token jeder Position `sha256(saat ‖ position)` modulo Vokabular; der
+  Abdruck hängt so an der Saat und lässt sich nicht vorrechnen (Fund 669).
+  Ohne Saat wie bisher. Der Shardweg reicht sie aus der Anfrage durch.
+- Probe in `tests/grenzen_der_kette.rs`: gleiche Saat gleicher Abdruck,
+  andere Saat anderer, mit Saat anders als ohne.
+- `myl-pod` 0.44.0. 165 Tests grün, Clippy sauber.
 
 ### v0.52.1 (2026-10-27): Die Zeitprobe rechnet bis zu 2 048 Positionen (`myl-pod` 0.43.1)
 

@@ -218,6 +218,8 @@ fn buendel(marke: u8) -> PoIBundle {
         vtfe_claimed: 1000 + marke as u64,
         aggregate_sig: sig,
         segmente: 1,
+        ausgabenwurzel: myl_types::MerkleRoot::new([0u8; 32]),
+        vertreter: Vec::new(),
     }
 }
 

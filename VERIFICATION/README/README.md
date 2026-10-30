@@ -1,7 +1,7 @@
 # verification (`myl-verifier`)
 
-> **Version:** 0.23.3
-> **Datum:** 2026-10-23
+> **Version:** 0.27.0
+> **Datum:** 2026-10-29
 > **Status:** 🎉 **Phasen 1, 2 und 3 abgeschlossen** (Punkte 1.1–1.3,
 > 2.1–2.5, 3.1–3.6), Phase 4 zu drei Vierteln (4.1, 4.2 und 4.4 ✅,
 > 4.3 ✅ seit 2026-08-24): Redundanzvergleich (Stufe 1),
@@ -145,6 +145,69 @@ gegen zwei eingebaute Fehler geeicht worden (Grenzverschiebung um eins,
 umgedrehter Vergleich); beide fliegen auf.
 
 ## Changelog
+
+### v0.27.0 (2026-10-29): Nachrechnen als Prefill
+
+- ⚑ **`verlauf_nachrechnen` prüft als Prefill** (Festlegung des
+  Projektinhabers vom 2026-10-29, VeriLLM): `verlauf_als_prefill` rechnet
+  alle Positionen eines Fensters Ebene für Ebene
+  (`vorbereiten_stapel_mit_ebenen`) und vergleicht nach jeder Ebene alle
+  Ausgänge mit der Spur; die erste Abweichung ist die kleinste nach
+  Position und Eintrag, wie beim schrittweisen Weg. Der schrittweise Weg
+  bleibt als `verlauf_schrittweise`: Rückfall für Modelle ohne Ausgang je
+  Ebene im Stapel, und Gegenprobe.
+- **Erst die Konformitätsprobe, dann umgestellt**: Test
+  `der_prefill_ist_bitgleich_zum_schrittweisen_rechnen` in `myl-pod`, 520
+  Positionen (über die Fenstergrenze), Ketten wie ein Shard sie rechnet:
+  jede Layer jeder Position gleich, dieselben Logits, eine Fälschung
+  hinter der Grenze an derselben Stelle. Gemessen im Testprofil: 6,9 s
+  gegen 20,8 s, rund dreimal schneller.
+
+### v0.26.0 (2026-10-29): Beleg und Schiedsrechnung
+
+- ⚑ **`schiedsbeleg(modell, tokens, position, layer)`**: die Eingänge der
+  strittigen Layer für die Positionen bis zur strittigen, aus den Tokens
+  gerechnet. Bis dorthin war der Anfechter mit dem Pod einig, also trifft
+  jeder Eingang den Hash, den der Pod bezeugt hat. Für Layer null leer.
+- ⚑ **`schied_nachrechnen`** (Whitepaper 6.6): das Komitee rechnet **eine**
+  Layer an **einer** Position nach. Die Eingänge (Einbettungen für Layer
+  null, sonst der Beleg) werden gegen die Hashes des Pods geprüft; trägt
+  der Beleg nicht, verliert der Anfechter (Beweislast). `true` heisst, der
+  Pod rechnete falsch.
+- Geprüft im Test mit echtem Modell in `myl-pod`.
+
+### v0.25.0 (2026-10-29): Der Nachrechner liefert die Logits
+
+- ⚑ **`verlauf_nachrechnen` gibt `Verlaufspruefung { ergebnis, logits }`**
+  zurück (Festlegen vor Aufdecken, Festlegung des Projektinhabers vom
+  2026-10-29): dazu den Hash der Logits an der letzten Position
+  (`logits_hash`, je Wert `i32` in Little Endian). Er steht in keiner
+  Spur; zwei Checker, die ihn gleich aufdecken, haben beide bis zum
+  LM-Kopf gerechnet. Nach einer Abweichung rechnet der Nachrechner mit den
+  eigenen Werten weiter, die Logits sind also immer die ehrlichen.
+
+### v0.24.0 (2026-10-29): Der Checker rechnet einen Verlauf ab den Tokens nach
+
+- ⚑ **`verlauf_nachrechnen(modell, tokens, ketten)`** (Whitepaper 3.4 und
+  6.6): rechnet eine Sitzung ab Position null Layer für Layer über
+  `integer_llm_runtime` nach, mit eigenem KV-Cache, und vergleicht jeden
+  `activation_hash` mit der Spur, die der Pod bezeugt hat. Ergebnis
+  `Verlaufsergebnis::Gleich` oder die erste `Abweichung { position, eintrag }`;
+  der Eintrag ist die Layer plus eins (null ist der Eingang). Eine Spur
+  falscher Länge ist eine Abweichung. Damit ist der fehlende KV-Verlauf beim
+  Nachrechnen hinter Position null geschlossen.
+- `CheckError::Verlauf { position }` für ein Token ausserhalb des Vokabulars.
+- Gerechnet wird nicht über den Code des Pods, sondern über die Laufzeit
+  selbst; der Test `ein_checker_rechnet_den_verlauf_ab_den_tokens_nach` in
+  `myl-pod` prüft beide gegeneinander. 122 Tests grün.
+
+### v0.23.4 (2026-10-28): Die Lieferung wird geprüft wie im Knoten
+
+- `checker::pruefe_spurantwort` ruft `myl_types::lieferung_pruefen`
+  (SHARED_TYPES 0.55.0) statt einer eigenen Abschrift derselben Prüfung;
+  Knoten und Prüfer können so nicht auseinanderlaufen. Die Fehler bleiben
+  dieselben. Kein anderes Verhalten.
+- `myl-verifier` 0.23.4.
 
 ### v0.23.3 (2026-10-23): RUSTSEC-2026-0385 in der Sperrdatei (Fund 599)
 

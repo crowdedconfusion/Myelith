@@ -13,9 +13,11 @@
 //! selbst: Er ist die eigene Unterschrift des Beschuldigten über den
 //! strittigen Übergang, in der Rolle Shard.
 //!
-//! ⚑ **Drei Tests, und der mittlere ist der wichtigste.** Der erste
-//! zeigt, dass es geht; der zweite, dass es **ohne Beleg nicht** geht;
-//! der dritte, dass ein gültiger Beleg **keine Waffe gegen Dritte** ist.
+//! ⛔️ **Seit dem 2026-10-29 (Fund 679) wirkt die Anweisung nicht mehr.**
+//! Der Beleg belegt nur die Urheberschaft, nicht die falsche Rechnung, und
+//! damit war er eine Waffe gegen jeden Ehrlichen, mit dem man gerechnet
+//! hatte. Geschlachtet wird über die Schiedsrunde der Validatoren (T6d).
+//! Die drei Tests belegen jetzt, dass keiner dieser Wege schlachtet.
 
 use myl_consensus::block::{Anweisung, Transaktion};
 use myl_node::kette::{probekonto, probeschluessel, Kette};
@@ -55,9 +57,17 @@ fn kette_mit_einsatz(wer: &Address, betrag: u64) -> Kette {
     k
 }
 
-/// ⚑ **Ein Schuldspruch mit Beleg schlachtet, über einen Block.**
+/// ⛔️ **Fund 679 (2026-10-29): Ein Beleg allein schlachtet nicht mehr.**
+///
+/// Bis NODE 0.80.0 schlachtete dieser Block den Einsatz von Miner 3 und
+/// zahlte Konto 4 das Kopfgeld, eingereicht von Konto 0, belegt nur durch
+/// die echte Unterschrift von Miner 3 über einen Übergang. Dass dieser
+/// Übergang falsch war, prüfte niemand; jeder, der mit einem Miner
+/// gerechnet hatte, besass eine solche Unterschrift. Geschlachtet wird jetzt
+/// nur über eine entschiedene Schiedsrunde (siehe
+/// `ein_streitfall_schlachtet_den_beschuldigten_und_zahlt_dem_anfechter_kopfgeld`).
 #[test]
-fn ein_beleg_schlachtet_ueber_einen_block() {
+fn ein_beleg_allein_schlachtet_nicht_mehr() {
     let schuldig = probekonto(3);
     let anzeigend = probekonto(4);
     let mut k = kette_mit_einsatz(&schuldig, 100_000_000);
@@ -82,17 +92,8 @@ fn ein_beleg_schlachtet_ueber_einen_block() {
     );
     k.baue_block();
 
-    assert_eq!(
-        k.zustand().account(&schuldig).staked,
-        0,
-        "der Einsatz wurde nicht geschlachtet"
-    );
-    // Das Kopfgeld sind dreissig Prozent des geschlachteten Betrags.
-    assert_eq!(
-        k.zustand().account(&anzeigend).balance - vorher,
-        30_000_000,
-        "das Kopfgeld kam nicht an"
-    );
+    assert_eq!(k.zustand().account(&schuldig).staked, 100_000_000, "ohne Schiedsrunde kein Schlachten");
+    assert_eq!(k.zustand().account(&anzeigend).balance, vorher, "und kein Kopfgeld");
 }
 
 /// ⚑ **Ohne gueltigen Beleg geschieht nichts.**

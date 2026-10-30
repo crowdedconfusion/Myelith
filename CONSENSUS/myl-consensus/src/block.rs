@@ -178,6 +178,10 @@ impl Erzeugerunterschrift {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UnterschriftTraegtNicht;
 
+/// Höchstens so viele Festlegungen oder Aufdeckungen trägt eine
+/// Transaktion; mehr weist die Kette als Ganzes ab.
+pub const PRUEFUNGEN_JE_TX: usize = 64;
+
 /// Was eine Transaktion anweist.
 ///
 /// ⚑ **Kein Absenderfeld.** Wer die Anweisung erteilt, steht in
@@ -453,6 +457,53 @@ pub enum Anweisung {
         /// Anweisungen; die Kodierung ist dieselbe).
         beleg: Box<crate::double_signing::Doppelbeleg>,
     },
+    /// ⚑ **Checker legen sich fest** (Stufe 2, Festlegung des
+    /// Projektinhabers vom 2026-10-29): je Ziehung (gezogene Epoche, Pod,
+    /// Segment) der Hash über den Befund, bevor irgendwer aufdeckt
+    /// ([`myl_ledger::pruefung::festlegung`]). Gebündelt, höchstens
+    /// [`PRUEFUNGEN_JE_TX`] je Transaktion: Ein Pod allein wird voll
+    /// gezogen, und eine Transaktion je Ziehung sprengte die Grenze je
+    /// Absender im Mempool. Angehängt.
+    PruefungFestlegen {
+        /// Je Ziehung die Festlegung.
+        festlegungen: Vec<(u64, myl_types::ids::PodId, u32, myl_types::hash::Hash)>,
+    },
+    /// ⚑ **Checker decken auf** (2026-10-29): je Ziehung Befund und Salz zu
+    /// ihrer Festlegung, gebündelt wie oben. Angehängt.
+    PruefungAufdecken {
+        /// Je Ziehung Befund und Salz.
+        aufdeckungen: Vec<(u64, myl_types::ids::PodId, u32, myl_ledger::pruefung::Pruefbefund, [u8; 32])>,
+    },
+    /// ⚑ **Eine Schiedsstimme** (T6d, Whitepaper 6.6, Festlegung des
+    /// Projektinhabers vom 2026-10-29): Ein Validator hat die strittige
+    /// Layer an der strittigen Position nachgerechnet. `pod_falsch` heisst,
+    /// der Ausgang des Pods weicht ab. Zählen nur Mitglieder des Stimmsatzes;
+    /// mehr als zwei Drittel des Gewichts entscheiden. Angehängt.
+    SchiedsstimmeAbgeben {
+        /// Die gezogene Epoche.
+        epoche: u64,
+        /// Der Pod.
+        pod: myl_types::ids::PodId,
+        /// Das Segment.
+        segment: u32,
+        /// Das Ergebnis des Nachrechnens.
+        pod_falsch: bool,
+    },
+    /// ⚑ **Ein Differenzbeweis zweier Zwillinge** (Whitepaper 6.4 und 6.6,
+    /// Festlegung des Projektinhabers vom 2026-10-29): dasselbe Segment,
+    /// zwei Ausgaben, je mit Beweis gegen die Bündel. Die Kette legt für
+    /// genau dieses Segment in beiden Pods einen Prüfauftrag an
+    /// ([`myl_ledger::pruefung::differenz_melden`]). Angehängt.
+    DifferenzMelden {
+        /// Die Epoche der Bündel.
+        epoche: u64,
+        /// Pod `a` und `b` des Beweises.
+        pod_a: myl_types::ids::PodId,
+        pod_b: myl_types::ids::PodId,
+        /// Der Beweis (in einer `Box`: Er ist grösser als die übrigen
+        /// Anweisungen; die Kodierung ist dieselbe).
+        beweis: Box<myl_types::Differenzbeweis>,
+    },
 }
 
 /// Die Bytes, über die der Absender unterschreibt.
@@ -531,6 +582,12 @@ pub struct Transaktion {
 }
 
 impl Transaktion {
+    /// **Die Kennung einer Transaktion**: SHA-256 über ihre Bytes samt
+    /// Unterschrift. Zwei gleiche Kennungen sind dieselbe Transaktion.
+    pub fn kennung(&self) -> Hash {
+        Hash::sha256(&borsh::to_vec(self).unwrap_or_default())
+    }
+
     /// Das Konto, das belastet wird: `SHA-256` über den Schlüssel.
     ///
     /// **Abgeleitet und nicht angegeben** — siehe [`Anweisung`].
@@ -566,6 +623,13 @@ impl Transaktion {
         borsh::to_vec(self).map_or(u64::MAX, |b| b.len() as u64)
     }
 
+    /// ⚑ **Die Einheiten der Gebühr** (2026-10-28, Festlegung des
+    /// Projektinhabers): Bytes plus [`PRUEFEINHEIT`] je Unterschrift, wie
+    /// Gas bei Ethereum. Eine Transaktion trägt genau eine.
+    pub fn gebuehreneinheiten(&self) -> u64 {
+        self.gebuehrenbytes().saturating_add(PRUEFEINHEIT)
+    }
+
     /// Prüft die Unterschrift gegen diese Kette.
     pub fn pruefe(self, netz: &Hash) -> Result<GepruefteTransaktion, TransaktionsFehler> {
         let bytes = transaktionsbytes(netz, &self.absender, self.nonce, self.max_gebuehr, &self.anweisung);
@@ -584,6 +648,57 @@ impl Transaktion {
 /// vergisst, merkt nichts.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GepruefteTransaktion(Transaktion);
+
+/// ⚑ **Die Prüfeinheit** (2026-10-28, Festlegung des Projektinhabers): so
+/// viele Gebühreneinheiten kostet eine Unterschrift zusätzlich zu den Bytes.
+/// Anlass: Eine Unterschrift zu prüfen kostet gemessen 88 µs (im Stapel),
+/// die Bytes einer Überweisung fast nichts; bis hierher stieg der
+/// Grundpreis erst bei rund 3 000 Transaktionen je Block. ⚠️ Vorläufig bis
+/// zur Messung der Prüfrate auf der kleinsten zugelassenen Maschine.
+pub const PRUEFEINHEIT: u64 = 1_000;
+
+/// ⚑ **Prüft die Unterschriften vieler Transaktionen auf einmal**
+/// (2026-10-28): erst als Stapel ([`myl_types::bls::verify_batch`]); trägt
+/// er, gelten alle als geprüft. Sonst einzeln, mit genau dem Ergebnis von
+/// [`Transaktion::pruefe`] je Transaktion. Das Ergebnis ist also dasselbe wie
+/// einzeln, bis auf eine Fehlerwahrscheinlichkeit von 2⁻⁶⁴ je Stapel.
+///
+/// Gemessen am 2026-10-28: Ein Block mit 4 096 Transaktionen brauchte beim
+/// Anwenden 1 909 ms, fast nur für die Unterschriften (rund 470 µs je
+/// Stück); als Stapel rund 90 µs je Stück. Ein Block mit falschen
+/// Unterschriften kostet so viel wie bisher: Stapel und danach jede einzeln.
+/// **Wie [`pruefe_alle`], ohne die schon geprüften** (Skalierung,
+/// 2026-10-29): `schon` sagt je Transaktion, ob dieser Knoten genau diese
+/// Bytes samt Unterschrift schon geprüft hat (bei der Aufnahme in den
+/// Mempool). Das Ergebnis ist dasselbe: Die Prüfung hängt nur an den Bytes.
+/// 📌 Seit der Prüfung vor dem Mempool prüfte jeder Knoten jede
+/// Transaktion zweimal; im Durchsatzlauf mit 14 Knoten auf einem Rechner
+/// sank die Decke von rund 1750 auf rund 1040 je Sekunde.
+pub fn pruefe_alle_ausser(txs: &[Transaktion], netz: &Hash, schon: &dyn Fn(&Transaktion) -> bool) -> Vec<Option<GepruefteTransaktion>> {
+    let offen: Vec<usize> = (0..txs.len()).filter(|i| !schon(&txs[*i])).collect();
+    let zu_pruefen: Vec<Transaktion> = offen.iter().map(|i| txs[*i].clone()).collect();
+    let mut aus: Vec<Option<GepruefteTransaktion>> = txs.iter().map(|t| Some(GepruefteTransaktion(t.clone()))).collect();
+    for (i, g) in offen.into_iter().zip(pruefe_alle(&zu_pruefen, netz)) {
+        aus[i] = g;
+    }
+    aus
+}
+
+pub fn pruefe_alle(txs: &[Transaktion], netz: &Hash) -> Vec<Option<GepruefteTransaktion>> {
+    if txs.len() >= 2 {
+        let bytes: Vec<Vec<u8>> = txs
+            .iter()
+            .map(|t| transaktionsbytes(netz, &t.absender, t.nonce, t.max_gebuehr, &t.anweisung))
+            .collect();
+        let msgs: Vec<&[u8]> = bytes.iter().map(|b| b.as_slice()).collect();
+        let pks: Vec<BlsPublicKey> = txs.iter().map(|t| t.absender).collect();
+        let sigs: Vec<BlsSignature> = txs.iter().map(|t| t.signatur).collect();
+        if myl_types::bls::verify_batch(&pks, &msgs, &sigs) {
+            return txs.iter().map(|t| Some(GepruefteTransaktion(t.clone()))).collect();
+        }
+    }
+    txs.iter().map(|t| t.clone().pruefe(netz).ok()).collect()
+}
 
 impl GepruefteTransaktion {
     /// Die zugrunde liegende Transaktion.
@@ -759,6 +874,30 @@ mod tests {
     use super::*;
     use myl_ledger::transitions::VerdictOutcome;
 
+    /// ⚑ **`pruefe_alle` gibt dasselbe wie die Einzelprüfung**: alle gültig,
+    /// alle geprüft; eine verfälschte fällt heraus und nur sie; unter einem
+    /// anderen Netz trägt keine.
+    #[test]
+    fn pruefe_alle_gibt_dasselbe_wie_einzeln() {
+        let netz = Hash::sha256(b"netz");
+        let txs: Vec<Transaktion> = (1..=8u8)
+            .map(|i| {
+                let sk = myl_types::bls::BlsSecretKey::key_gen(&[i; 32]).expect("Schlüssel");
+                Transaktion::signiere(&netz, &sk, u64::from(i), Anweisung::Burn { betrag: 1 }).expect("signieren")
+            })
+            .collect();
+        assert!(pruefe_alle(&txs, &netz).iter().all(Option::is_some), "alle gültig");
+        let mut falsch = txs.clone();
+        falsch[5].nonce += 1;
+        let ergebnis = pruefe_alle(&falsch, &netz);
+        for (i, e) in ergebnis.iter().enumerate() {
+            assert_eq!(e.is_some(), i != 5, "Transaktion {i}");
+            assert_eq!(e.is_some(), falsch[i].clone().pruefe(&netz).is_ok(), "anders als einzeln bei {i}");
+        }
+        assert!(pruefe_alle(&txs, &Hash::sha256(b"anderes netz")).iter().all(Option::is_none), "fremdes Netz");
+        assert_eq!(pruefe_alle(&txs[..1], &netz).len(), 1, "eine einzelne geht den Einzelweg");
+    }
+
     /// ⚑ **Die Unterschrift des Erzeugers**: Sie trägt unter
     /// ihrem Schlüssel, ändert den Blockhash nicht, und weder ein
     /// veränderter Block noch ein untergeschobener Schlüssel kommen durch.
@@ -818,6 +957,8 @@ mod tests {
             vtfe_claimed: 1234,
             aggregate_sig: BlsSignature([9u8; 96]),
             segmente: 1,
+            ausgabenwurzel: myl_types::MerkleRoot::new([0u8; 32]),
+            vertreter: Vec::new(),
         }
     }
 
@@ -1007,6 +1148,26 @@ mod tests {
         let miners = block.challenged_miners();
         assert_eq!(miners.len(), 2);
         assert!(miners.windows(2).all(|w| w[0] < w[1]));
+    }
+
+    /// ⚑ **Schon Geprüftes wird übersprungen, alles andere geprüft**
+    /// (Skalierung, 2026-10-29): Eine Transaktion mit falscher Unterschrift
+    /// fällt, wenn sie nicht als geprüft gilt; die Kennung hängt an der
+    /// Unterschrift.
+    #[test]
+    fn schon_gepruefte_werden_uebersprungen() {
+        let netz = Hash::sha256(b"netz");
+        let sk = myl_types::bls::BlsSecretKey::key_gen(&[7u8; 32]).expect("Schlüssel");
+        let gut = Transaktion::signiere(&netz, &sk, 0, Anweisung::Burn { betrag: 1 }).expect("signieren");
+        let mut schlecht = Transaktion::signiere(&netz, &sk, 1, Anweisung::Burn { betrag: 1 }).expect("signieren");
+        schlecht.signatur = gut.signatur;
+        assert_ne!(gut.kennung(), schlecht.kennung());
+        let txs = vec![gut.clone(), schlecht.clone()];
+        let keins = pruefe_alle_ausser(&txs, &netz, &|_| false);
+        assert!(keins[0].is_some() && keins[1].is_none(), "ohne Speicher wird geprüft");
+        let k = schlecht.kennung();
+        let beide = pruefe_alle_ausser(&txs, &netz, &|t| t.kennung() == k);
+        assert!(beide[0].is_some() && beide[1].is_some(), "als geprüft gemerkt, also übersprungen");
     }
 }
 

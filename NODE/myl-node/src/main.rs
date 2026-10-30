@@ -33,6 +33,15 @@ myl-node — ein Myelith-Netzknoten
                          über alle Dateien und Starts; die älteste fällt
                          zuerst weg (Vorgabe: 128)
   --aufnahme <sek>       Abstand der Zustandsaufnahmen (Vorgabe: 30)
+  --baum-auf-platte       Den Zustandsbaum in Seiten auf die Platte auslagern
+                         (im Speicher bleibt der obere Baum).
+  --zeugen-bereithalten   Als voller Knoten die Zeugen der Blöcke erzeugen und
+                         zustandslosen Knoten auf Nachfrage liefern.
+  --zustandslos          Ohne Konten, Sitzungen, Manifeste und Hinterlegungen:
+                         Blöcke nur mit Zeugen, keine Blockerzeugung, keine
+                         fremden Transaktionen.
+  --einsatz <betrag>     Als Miner so viel Einsatz hinterlegen, in
+                         Kleinstbeträgen (Vorgabe: keinen).
   --testverkehr <sek>    Takt des Testverkehrs (Vorgabe: keiner). Mit
                          --erzeuger wird in diesem Takt ein Block gebaut,
                          sonst eine Burn-Transaktion geschickt. Ohne das
@@ -455,6 +464,22 @@ fn lies_argumente() -> Result<Option<Argumente>, String> {
                 konfig.aufnahme_sekunden = wert(i)?
                     .parse()
                     .map_err(|_| "--aufnahme erwartet eine Zahl".to_string())?;
+                i += 2;
+            }
+            "--zeugen-bereithalten" => {
+                konfig.zeugen_bereithalten = true;
+                i += 1;
+            }
+            "--baum-auf-platte" => {
+                konfig.baum_auf_platte = true;
+                i += 1;
+            }
+            "--zustandslos" => {
+                konfig.zustandslos = true;
+                i += 1;
+            }
+            "--einsatz" => {
+                konfig.einsatz = Some(wert(i)?.parse().map_err(|_| "--einsatz erwartet eine Zahl".to_string())?);
                 i += 2;
             }
             "--testverkehr" => {

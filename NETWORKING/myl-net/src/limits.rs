@@ -150,6 +150,15 @@ pub const MAX_AUSSTEHEND_AUSGEHEND: u32 = 8;
 /// selben Rechenzentrum stehen, was üblich ist.
 pub const MAX_JE_ADRESSBEREICH: usize = 4;
 
+/// ⚑ **Höchstens so viele Gegenstellen mit Vorrang** (Fund 674,
+/// 2026-10-28): Pod-Mitglieder, die nicht gegen die Zahlengrenzen zählen
+/// ([`crate::NodeCommand::Vorrang`]). Ein Miner braucht die fünf anderen
+/// seines Pods, ein Torknoten die Pods, die er bedient. ⚠️ Für sie gilt auch
+/// die Grenze je Peer nicht (die Ausnahmeliste von `connection_limits` ist
+/// ganz oder gar nicht); der Deckel hält die Fläche klein, und die Grenze
+/// je Adressbereich bleibt.
+pub const MAX_VORRANG: usize = 64;
+
 /// Präfixlänge für IPv4-Adressbereiche: /24, also die ersten drei Oktette.
 pub const IPV4_PRAEFIX_BITS: u8 = 24;
 

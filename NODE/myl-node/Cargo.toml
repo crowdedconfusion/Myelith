@@ -1,6 +1,6 @@
 [package]
 name = "myl-node"
-version = "0.73.0"
+version = "0.99.2"
 edition = "2021"
 # ⚑ 1.88 und nicht 1.85 wie die uebrigen Crates, und der Grund liegt
 # nicht im eigenen Code: Ueber libp2p haengt hier die `icu_*`-Kette
@@ -40,6 +40,12 @@ myl-types = { path = "../../SHARED_TYPES/myl-types" }
 # Maschine die eingefrorenen Op-Vektoren trifft. Ein Knoten, der anders
 # rechnet, ist kein langsamer, sondern ein schädlicher.
 integer-llm-kernels = { path = "../../INTEGER_LLM/kernels" }
+# ⚑ **Der Checker der Stufe 2** (2026-10-29): Ein Knoten, dem die Kette eine
+# Ziehung zuteilt, rechnet ihren Verlauf ab den Tokens nach, ueber den
+# Nachrechner der Pruefseite und nicht ueber den Code des Pods. Dafuer laedt
+# er das Netzmodell selbst, erst wenn er es braucht.
+myl-verifier = { path = "../../VERIFICATION/myl-verifier" }
+integer-llm-runtime = { path = "../../INTEGER_LLM/runtime" }
 myl-consensus = { path = "../../CONSENSUS/myl-consensus" }
 myl-ledger = { path = "../../CONSENSUS/myl-ledger" }
 # ⚑ Fuer den Epochenabschluss: Der Knoten rechnet die Praegung nicht
@@ -74,6 +80,13 @@ sha2 = "0.10"
 # Entscheidung wie im Gateway.
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "time", "macros", "sync", "signal", "net", "io-util"] }
 libp2p = { version = "0.57", features = ["tokio"] }
+
+[features]
+# ⚑ Das 0,6B gilt als Netzmodell nur in den Netzproben (Pruefnetz,
+# `INTEGER_LLM/runtime/src/netzfreigabe.rs`); der Checker laedt dasselbe
+# Modell wie die Shards der Probe, also mit demselben Merkmal. Nie im
+# ausgelieferten Programm.
+pruefnetz = ["integer-llm-runtime/pruefnetz"]
 
 [lib]
 name = "myl_node"
@@ -154,6 +167,8 @@ overflow-checks = true
 [profile.release.package.myl-siegel]
 overflow-checks = true
 [profile.release.package.myl-store]
+overflow-checks = true
+[profile.release.package.myl-verifier]
 overflow-checks = true
 [profile.release.package.myl-node]
 overflow-checks = true

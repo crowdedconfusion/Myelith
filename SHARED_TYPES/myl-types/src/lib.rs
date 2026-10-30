@@ -22,6 +22,7 @@
 
 #![deny(unsafe_code)]
 
+pub mod zustandsbaum;
 pub mod auslastung;
 pub mod korpusanker;
 pub mod lernrate;
@@ -74,7 +75,11 @@ pub use bls::{
     BLS_POP_DST,
 };
 pub use challenge::{Challenge, ChallengeStructureError, DST_CHALLENGE};
-pub use core_types::{segments_root, spurwurzel, InferenceCredit, PoIBundle, Segment, Segmentzeugnis, Spuranfrage, Spurantwort,};
+pub use core_types::{
+    ausgabenwurzel, differenz_pruefen, differenzseite, segments_root, Differenzbeweis, Differenzfehler, Differenzseite, spurwurzel, Ausgabenzeugnis, InferenceCredit, PoIBundle, Segment, Segmentzeugnis,
+    Spuranfrage, Spurantwort, lieferung_pruefen, Lieferfehler, Spurablage, sitzung_und_position, token_aus_eingabe,
+    eingabe_aus_bytes, verlauf_pruefen, Verlauffehler,
+};
 pub use hash::Hash;
 pub use ids::{
     ActivationHash, Address, EpochId, IdParseError, MerkleRoot, MinerId, PodId, SegmentId,

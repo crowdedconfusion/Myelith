@@ -393,6 +393,8 @@ mod tests {
                 vtfe_claimed: vtfe,
                 aggregate_sig: BlsSignature(agg.0),
                 segmente: 1,
+                ausgabenwurzel: myl_types::MerkleRoot::new([0u8; 32]),
+                vertreter: Vec::new(),
             };
             reg.submit(&bundle, &m, &miner(0), EpochId(epoch))
                 .expect("submit");

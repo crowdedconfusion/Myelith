@@ -81,6 +81,27 @@ pub fn probe_positionen(frist_us: u64) -> u32 {
     k.clamp(u64::from(PROBE_MINDESTENS), u64::from(PROBE_HOECHSTENS)) as u32
 }
 
+/// ⚑ **Ist der eigene Shard zu langsam?** (Selbstprobe, Fund 677, Frage 6
+/// vom 2026-10-29): mehr als das Anderthalbfache der Zusage je Token, also
+/// mehr als drei Viertel der Frist. Bis zur Frist bleibt so ein Viertel.
+pub fn selbstprobe_zu_langsam(je_token_us: u64, frist_us: u64) -> bool {
+    let zusage_us = frist_us / myl_types::zusage::FRIST_FAKTOR;
+    zusage_us > 0 && je_token_us.saturating_mul(2) > zusage_us.saturating_mul(3)
+}
+
+/// **Die angepasste Ebenenzeit**: die jetzige, gestreckt um das Verhältnis
+/// von gemessener Zeit zur Zusage, mit einem Viertel Luft. `None`, wenn sie
+/// nicht langsamer würde: Schneller wird eine Zusage nie von selbst.
+pub fn angepasste_ebenenzeit(jetzt_us: u64, je_token_us: u64, frist_us: u64) -> Option<u64> {
+    let zusage_us = frist_us / myl_types::zusage::FRIST_FAKTOR;
+    if zusage_us == 0 {
+        return None;
+    }
+    let neu = u128::from(jetzt_us) * u128::from(je_token_us) * 5 / (u128::from(zusage_us) * 4);
+    let neu = u64::try_from(neu).unwrap_or(u64::MAX);
+    (neu > jetzt_us).then_some(neu)
+}
+
 /// **Die feste Zugabe für den Weg**, in Mikrosekunden: 2 s.
 ///
 /// 📌 **Fund 646 (2026-10-26/27): Bis hierher wurde ein Ping abgezogen, und
@@ -109,6 +130,87 @@ pub const ZUGABE_US: u64 = 2_000_000;
 /// und Schwankung verlängern eine Probe nur; die kürzeste von mehreren liegt
 /// nahe an Weg und Rechnung, und darunter kommt auch ein Lügner nicht.
 pub const PROBEN_JE_MESSUNG: u32 = 5;
+
+/// **Ist eine Messung nach einer Antwort schon entschieden?** Nach
+/// [`PROBEN_JE_MESSUNG`] Proben immer; vorher, sobald die kürzeste Probe die
+/// Frist hält: Weitere Proben können sie nur verkürzen, das Urteil bliebe
+/// [`Urteil::Bestanden`].
+///
+/// ⚑ (2026-10-28) Ein Ehrlicher belegt seinen einzigen Platz für Zeitproben
+/// (Fund 609) so meist für eine Probe statt fünf, und die übrigen Messenden
+/// seines Pods kommen früher an die Reihe ([`ABWEISUNGEN_MINDESTENS`]).
+pub fn messung_fertig(kuerzeste_us: u64, proben: u32, frist_us: u64, positionen: u32) -> bool {
+    proben >= PROBEN_JE_MESSUNG || gemessen_je_token(kuerzeste_us, positionen) <= frist_us
+}
+
+/// **So viele Abweisungen in Folge braucht eine Überschreitung mindestens**:
+/// vier, und sie müssen zusammen [`abweisungsdauer`] überspannen.
+///
+/// 📌 **Fund 660 (2026-10-27): Wer jede Zeitprobe mit `Nichts` beantwortete,
+/// wurde nie gemessen.** Ein `Nichts` oder eine gescheiterte Anfrage warf
+/// die Messung samt ihrer beantworteten Proben weg, und bei der nächsten
+/// Aufnahme begann eine neue. ⚑ **Festlegung des Projektinhabers vom
+/// 2026-10-28:** Eine Abweisung durch einen Positionsinhaber zählt wie eine
+/// Überschreitung, mit denselben zwei Fenstern und derselben Mehrheit; nach
+/// einer Abweisung fragt der Messende mit Abstand erneut.
+///
+/// ⚠️ **Auch ein Ehrlicher weist ab**, wenn sein einziger Platz für
+/// Zeitproben gerade belegt ist (Fund 609), und zu Beginn des Messfensters
+/// fragen alle Mitglieder zugleich. Eine feste Zahl von Abweisungen trägt
+/// das nicht: Simuliert (Probe `ehrliches_gedraenge_ist_keine_verweigerung`)
+/// endeten mit vier Abweisungen in Folge bei fünf Messenden rund 18 % der
+/// Runden mit einer falschen Überschreitung, bei sieben über 80 %. Das
+/// Gedränge wächst mit der Zahl der Messenden, also wächst die Dauer mit.
+pub const ABWEISUNGEN_MINDESTENS: u32 = 4;
+
+/// **Wie lange ein Gemessener ohne Antwort abweisen muss, bis es zählt**,
+/// in Mikrosekunden: dreimal so lange, wie alle `messende` zusammen seinen
+/// Platz mit je einer Probe ([`PROBE_ZIEL_US`]) belegen.
+///
+/// Warum dreimal: Mit einfacher Dauer blieben in der Simulation bei fünf
+/// bis 23 Messenden bis zu 80 % der Runden mit einer falschen
+/// Überschreitung, mit dreifacher keine von 72 000 (Startstreuung 2 s und
+/// 30 s, Weg 50 bis 600 ms). Ein Verweigerer wird so nach rund 7 s je
+/// Messendem erfasst; mit einer Epoche von einer Stunde ist das wenig, mit
+/// den 108 s eines gerafften Laufs viel (Fund 664).
+pub fn abweisungsdauer(messende: usize) -> u64 {
+    3 * (messende.max(1) as u64) * PROBE_ZIEL_US
+}
+
+/// **Wie lange nach der `in_folge`-ten Abweisung erneut gefragt wird**, in
+/// Mikrosekunden: nach der ersten das Ziel einer Probe ([`PROBE_ZIEL_US`]),
+/// danach das Doppelte, je mit einem Zufallsteil bis zur selben Länge,
+/// damit die Messenden auseinanderlaufen. Häufiges Nachfragen trifft eher
+/// eine Lücke; die Dauer bis zur Überschreitung setzt
+/// [`abweisungsdauer`].
+///
+/// ⚠️ Gefragt wird bei der nächsten Aufnahme nach dem Abstand; mit einem
+/// Takt von 30 s ist der Abstand mindestens das.
+pub fn abstand_nach_abweisung(in_folge: u32, zufall: u64) -> u64 {
+    let basis = PROBE_ZIEL_US << in_folge.saturating_sub(1).min(1);
+    basis + zufall % basis
+}
+
+/// Was nach einer Abweisung folgt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NachAbweisung {
+    /// Nach so vielen Mikrosekunden erneut fragen.
+    Wiederholen(u64),
+    /// Die Messung endet als Überschreitung: Ohne beantwortete Probe zählt
+    /// sie, als wäre die Probe in ihre Grenze gelaufen
+    /// ([`grenze_der_probe`]).
+    Ueberschritten,
+}
+
+/// **Die Folge einer Abweisung** (Fund 660): die `in_folge`-te in Folge,
+/// `seit_us` nach der ersten der Folge, bei `messende` Messenden im Pod.
+pub fn nach_abweisung(in_folge: u32, seit_us: u64, messende: usize, zufall: u64) -> NachAbweisung {
+    if in_folge >= ABWEISUNGEN_MINDESTENS && seit_us >= abweisungsdauer(messende) {
+        NachAbweisung::Ueberschritten
+    } else {
+        NachAbweisung::Wiederholen(abstand_nach_abweisung(in_folge, zufall))
+    }
+}
 
 /// **Was eine Messung je Token ergibt**: die kürzeste Probe abzüglich der
 /// Zugabe für den Weg ([`ZUGABE_US`]), durch die Positionen der Probe,
@@ -142,9 +244,38 @@ pub fn grenze_der_probe(frist_us: u64, positionen: u32) -> u64 {
 
 /// **Die Zeitprobe für ein Mitglied**: seine Positionen und seine Grenze,
 /// aufgerundet auf Millisekunden, damit der Shard dort aufhört.
-pub fn probe(frist_us: u64, positionen: u32) -> crate::nachschub::Nachforderung {
+pub fn probe(frist_us: u64, positionen: u32, saat: [u8; 32]) -> crate::nachschub::Nachforderung {
     let grenze_ms = grenze_der_probe(frist_us, positionen).div_ceil(1_000);
-    crate::nachschub::Nachforderung::ZeitprobeMitGrenze { positionen, grenze_ms: u32::try_from(grenze_ms).unwrap_or(u32::MAX) }
+    crate::nachschub::Nachforderung::ZeitprobeMitSaat {
+        positionen,
+        grenze_ms: u32::try_from(grenze_ms).unwrap_or(u32::MAX),
+        saat,
+    }
+}
+
+/// **Trägt die Antwort einer Zeitprobe?** Die Unterschrift unter `schluessel`
+/// über Saat, Positionen und Abdruck (Fund 661).
+pub fn antwort_traegt(
+    schluessel: &myl_types::bls::BlsPublicKey,
+    saat: &[u8; 32],
+    positionen: u32,
+    abdruck: &[u8; 32],
+    signatur: &myl_types::bls::BlsSignature,
+) -> bool {
+    schluessel.verify(&myl_types::zeitprobe::antwortnachricht(saat, positionen, abdruck), signatur)
+}
+
+/// ⚑ **Eine frische Saat je Probe** (2026-10-28, Fund 669): 32 Bytes, für das
+/// gemessene Mitglied nicht vorhersehbar, aus `RandomState` der
+/// Standardbibliothek, die das Betriebssystem schlüsselt.
+pub fn frische_saat() -> [u8; 32] {
+    use std::hash::BuildHasher;
+    let zufall = std::collections::hash_map::RandomState::new();
+    let mut saat = [0u8; 32];
+    for (i, teil) in saat.chunks_mut(8).enumerate() {
+        teil.copy_from_slice(&zufall.hash_one(i).to_le_bytes());
+    }
+    saat
 }
 
 /// **Ab welchem Teil einer Epoche gemessen wird**, in Vierteln: ab dem
@@ -300,6 +431,28 @@ mod tests {
     use super::*;
     use myl_consensus::block::BLOECKE_JE_EPOCHE;
 
+    /// Fund 669/661: Nur die Unterschrift des Mitglieds über genau diese
+    /// Saat, diese Positionen und diesen Abdruck trägt; die Saat ist je
+    /// Probe neu.
+    #[test]
+    fn nur_die_unterschrift_ueber_die_eigene_saat_traegt() {
+        let k = crate::schluessel::Konsensschluessel::probe("alpha").expect("Schlüssel");
+        let fremd = crate::schluessel::Konsensschluessel::probe("beta").expect("Schlüssel");
+        let saat = frische_saat();
+        assert_ne!(saat, frische_saat(), "je Probe eine neue Saat");
+        let abdruck = [9u8; 32];
+        let nachricht = myl_types::zeitprobe::antwortnachricht(&saat, 64, &abdruck);
+        let sig = k.signiere(&nachricht).expect("signieren");
+        assert!(antwort_traegt(&k.oeffentlich(), &saat, 64, &abdruck, &sig));
+        // Gegenproben: andere Saat, andere Positionen, anderer Abdruck,
+        // anderer Schlüssel.
+        assert!(!antwort_traegt(&k.oeffentlich(), &frische_saat(), 64, &abdruck, &sig));
+        assert!(!antwort_traegt(&k.oeffentlich(), &saat, 65, &abdruck, &sig));
+        assert!(!antwort_traegt(&k.oeffentlich(), &saat, 64, &[8u8; 32], &sig));
+        assert!(!antwort_traegt(&fremd.oeffentlich(), &saat, 64, &abdruck, &sig));
+        assert!(matches!(probe(1_000, 64, saat), crate::nachschub::Nachforderung::ZeitprobeMitSaat { saat: s, .. } if s == saat));
+    }
+
     #[test]
     fn die_messung_zieht_die_zugabe_ab_und_rundet_ab() {
         assert_eq!(gemessen_je_token(ZUGABE_US + 8_000, 4), 2_000);
@@ -414,6 +567,139 @@ mod tests {
         assert!(kuerzeste <= frist_ehrlich, "{kuerzeste}");
     }
 
+    /// Ein Pod mit einem Platz für Zeitproben beim Gemessenen: `messende`
+    /// fragen ihn, jeder zu einem Zeitpunkt bis `streuung_us` nach dem
+    /// Beginn; jede Probe belegt den Platz `belegt_us`, der Weg hin und
+    /// zurück kostet `weg_us`. Abweisungen folgen [`nach_abweisung`], nur
+    /// die Dauer bis zur Überschreitung ist `dauer_us`. Liefert je
+    /// Messendem, ob seine Messung als Überschreitung endete.
+    ///
+    /// `frueh_fertig`: Der Gemessene hält die Frist, die Messung endet nach
+    /// der ersten Antwort ([`messung_fertig`]); sonst nach fünf.
+    /// `verweigert`: Er antwortet nie.
+    #[allow(clippy::too_many_arguments)]
+    fn gedraenge(
+        messende: usize,
+        streuung_us: u64,
+        belegt_us: u64,
+        weg_us: u64,
+        saat: u64,
+        frueh_fertig: bool,
+        dauer_us: u64,
+        verweigert: bool,
+    ) -> Vec<bool> {
+        let mut zufall = saat | 1;
+        let mut naechster = move || {
+            zufall ^= zufall << 13;
+            zufall ^= zufall >> 7;
+            zufall ^= zufall << 17;
+            zufall
+        };
+        // Je Messendem: wann er fragt, Abweisungen in Folge seit wann,
+        // Antworten, Ende.
+        let mut senden: Vec<Option<u64>> = (0..messende).map(|_| Some(naechster() % streuung_us)).collect();
+        let mut in_folge = vec![0u32; messende];
+        let mut erste = vec![0u64; messende];
+        let mut proben = vec![0u32; messende];
+        let mut ueber = vec![false; messende];
+        let mut frei_ab = 0u64;
+        while let Some((i, t)) = senden.iter().enumerate().filter_map(|(i, s)| s.map(|t| (i, t))).min_by_key(|(_, t)| *t) {
+            let an = t + weg_us / 2;
+            if verweigert || an < frei_ab {
+                in_folge[i] += 1;
+                if in_folge[i] == 1 {
+                    erste[i] = t;
+                }
+                senden[i] = if in_folge[i] >= ABWEISUNGEN_MINDESTENS && t - erste[i] >= dauer_us {
+                    ueber[i] = true;
+                    None
+                } else {
+                    Some(t + weg_us + abstand_nach_abweisung(in_folge[i], naechster()))
+                };
+                continue;
+            }
+            frei_ab = an + belegt_us;
+            in_folge[i] = 0;
+            proben[i] += 1;
+            senden[i] = (!frueh_fertig && proben[i] < PROBEN_JE_MESSUNG).then_some(frei_ab + weg_us / 2);
+        }
+        ueber
+    }
+
+    /// ⚑ **Ehrliches Gedränge ist keine Verweigerung** (Fund 660, Gegenprobe
+    /// der Festlegung vom 2026-10-28): Vier bis 23 Messende fragen denselben
+    /// Ehrlichen, alle innerhalb von 2 s oder von 30 s; eine Probe belegt
+    /// seinen Platz 2 s, der Weg kostet 50 bis 600 ms. Keine Runde endet mit
+    /// einer Überschreitung.
+    #[test]
+    fn ehrliches_gedraenge_ist_keine_verweigerung() {
+        let runden = |dauer: &dyn Fn(usize) -> u64, frueh: bool| {
+            let mut falsch = 0usize;
+            for messende in [4usize, 5, 7, 11, 23] {
+                for streuung in [2_000_000u64, 30_000_000] {
+                    for weg in [50_000u64, 300_000, 600_000] {
+                        for saat in 1..=200u64 {
+                            let ueber = gedraenge(messende, streuung, PROBE_ZIEL_US, weg, saat, frueh, dauer(messende), false);
+                            falsch += usize::from(ueber.contains(&true));
+                        }
+                    }
+                }
+            }
+            falsch
+        };
+        assert_eq!(runden(&abweisungsdauer, true), 0);
+        // ⛔️ Gegenproben: die einfache Dauer statt der dreifachen, oder fünf
+        //    Proben je Messung statt des frühen Endes, und Gedränge zählt als
+        //    Verweigerung.
+        let einfach = |m: usize| m as u64 * PROBE_ZIEL_US;
+        assert!(runden(&einfach, true) > 0, "einfache Dauer");
+        assert!(runden(&abweisungsdauer, false) > 0, "ohne frühes Ende");
+        // Ein Verweigerer erreicht bei jedem Messenden die Überschreitung.
+        for messende in [4usize, 23] {
+            let ueber = gedraenge(messende, 2_000_000, PROBE_ZIEL_US, 300_000, 7, true, abweisungsdauer(messende), true);
+            assert!(ueber.iter().all(|u| *u), "{messende} Messende");
+        }
+    }
+
+    /// ⚑ **Fund 660: Eine Verweigerung zählt wie eine Überschreitung**,
+    /// erst nach vier Abweisungen in Folge über die ganze Dauer, und dann
+    /// mit denselben zwei Fenstern wie eine gemessene.
+    #[test]
+    fn eine_lange_verweigerung_ist_eine_ueberschreitung() {
+        let d = abweisungsdauer(5);
+        assert_eq!(d, 30_000_000);
+        assert_eq!(nach_abweisung(1, 0, 5, 0), NachAbweisung::Wiederholen(PROBE_ZIEL_US));
+        assert_eq!(nach_abweisung(2, 0, 5, 0), NachAbweisung::Wiederholen(2 * PROBE_ZIEL_US));
+        assert_eq!(nach_abweisung(9, 0, 5, 0), NachAbweisung::Wiederholen(2 * PROBE_ZIEL_US), "gedeckelt");
+        assert_eq!(nach_abweisung(ABWEISUNGEN_MINDESTENS, d, 5, 0), NachAbweisung::Ueberschritten);
+        // ⛔️ Gegenproben: eine zu wenig, oder eine Mikrosekunde zu kurz.
+        assert!(matches!(nach_abweisung(ABWEISUNGEN_MINDESTENS - 1, d, 5, 0), NachAbweisung::Wiederholen(_)));
+        assert!(matches!(nach_abweisung(ABWEISUNGEN_MINDESTENS, d - 1, 5, 0), NachAbweisung::Wiederholen(_)));
+        // Der Zufallsteil bleibt unter der Basis.
+        assert_eq!(abstand_nach_abweisung(1, PROBE_ZIEL_US - 1), 2 * PROBE_ZIEL_US - 1);
+        assert_eq!(abstand_nach_abweisung(1, PROBE_ZIEL_US), PROBE_ZIEL_US);
+        // Ohne beantwortete Probe gemessen wie die Grenze, also über der
+        // Frist, und im ersten Fenster ein Verdacht.
+        let (frist, k) = (8_000u64, probe_positionen(8_000));
+        let gilt = gemessen_je_token(grenze_der_probe(frist, k), k);
+        assert!(gilt > frist);
+        let h0 = BLOECKE_JE_EPOCHE / 4;
+        assert_eq!(urteil(gilt, frist, h0, None), Urteil::Verdacht);
+        assert_eq!(urteil(gilt, frist, h0 + BLOECKE_JE_EPOCHE / 8, Some((h0, gilt))), Urteil::Zeugnis(gilt));
+    }
+
+    /// Das frühe Ende ändert kein Urteil: Wer die Frist schon hält, bleibt
+    /// darunter; wer darüber liegt, bekommt alle fünf Proben.
+    #[test]
+    fn eine_bestandene_probe_beendet_die_messung() {
+        let (frist, k) = (8_000u64, probe_positionen(8_000));
+        let grenze = grenze_der_probe(frist, k);
+        assert!(messung_fertig(grenze - 1, 1, frist, k), "unter der Grenze: bestanden");
+        assert!(!messung_fertig(grenze, 1, frist, k), "an der Grenze: weiter messen");
+        assert!(!messung_fertig(grenze, PROBEN_JE_MESSUNG - 1, frist, k));
+        assert!(messung_fertig(grenze, PROBEN_JE_MESSUNG, frist, k), "nach fünf immer");
+    }
+
     /// Eine Probekette mit einem Pod aus sechs Probekonten in Epoche 1.
     fn kette_mit_pod() -> crate::kette::Kette {
         let mut k = crate::kette::Kette::probestand();
@@ -507,5 +793,20 @@ mod tests {
         };
         let einreicher = myl_types::ids::Address::new(*meldung.zeugnisse[0].zeuge.as_bytes());
         myl_ledger::transitions::fristverstoss_einreichen(&mut st, &einreicher, &meldung, &kontext).expect("Kette nimmt an");
+    }
+
+    /// ⚑ Die Selbstprobe: Bis zum Anderthalbfachen der Zusage bleibt alles,
+    /// darüber wird die Zusage mit einem Viertel Luft langsamer, nie
+    /// schneller.
+    #[test]
+    fn die_selbstprobe_verlangsamt_erst_ueber_dem_anderthalbfachen() {
+        // Zusage 10 ms je Token, Frist 20 ms.
+        assert!(!selbstprobe_zu_langsam(15_000, 20_000), "genau anderthalb: noch gut");
+        assert!(selbstprobe_zu_langsam(15_001, 20_000));
+        // Doppelt so langsam wie zugesagt: Ebenenzeit 300 µs wird 750 µs.
+        assert_eq!(angepasste_ebenenzeit(300, 20_000, 20_000), Some(750));
+        // Schneller als zugesagt: keine Änderung.
+        assert_eq!(angepasste_ebenenzeit(300, 5_000, 20_000), None);
+        assert_eq!(angepasste_ebenenzeit(300, 5_000, 0), None);
     }
 }

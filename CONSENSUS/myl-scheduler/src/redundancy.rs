@@ -169,6 +169,68 @@ fn pods_are_disjoint(pod_a: &Pod, pod_b: &Pod) -> bool {
     miners_a.is_disjoint(&miners_b)
 }
 
+/// ⚑ **Die Zwillingspaare einer Epoche** (Whitepaper 3.4 und 4.4,
+/// Festlegung des Projektinhabers vom 2026-10-28): je zwei Pods, die jedes
+/// Segment beide rechnen; die Kette vergütet nur, was beide gleich
+/// gerechnet haben. Kette und Ortsdienst bilden die Paare aus derselben
+/// Zuteilung und damit dieselben.
+///
+/// In der Folge der Pod-Indizes bekommt jeder noch freie Pod den ersten
+/// freien, mit dem er kein Mitglied teilt, und dabei bevorzugt einen aus
+/// einer anderen bestimmten Zone (4.4: Distanz zwischen den Zwillingen).
+/// Bleibt ein Pod übrig, hat er keinen Zwilling. Geliefert werden
+/// Pod-Indizes, der kleinere zuerst.
+pub fn zwillingspaare(pods: &[Pod]) -> Vec<(u32, u32)> {
+    let mut reihe: Vec<&Pod> = pods.iter().collect();
+    reihe.sort_by_key(|p| p.pod_index);
+    let mut frei = vec![true; reihe.len()];
+    let mut paare = Vec::new();
+    for i in 0..reihe.len() {
+        if !frei[i] {
+            continue;
+        }
+        let kandidaten: Vec<usize> =
+            (i + 1..reihe.len()).filter(|&j| frei[j] && pods_are_disjoint(reihe[i], reihe[j])).collect();
+        let divers = kandidaten.iter().copied().find(|&j| {
+            matches!((pod_zone(reihe[i]), pod_zone(reihe[j])), (Some(a), Some(b)) if a != b)
+        });
+        if let Some(j) = divers.or_else(|| kandidaten.first().copied()) {
+            frei[i] = false;
+            frei[j] = false;
+            paare.push((reihe[i].pod_index, reihe[j].pod_index));
+        }
+    }
+    paare
+}
+
+/// ⚑ **Die Zwillingsgruppen der Epoche** (Whitepaper 3.4 und 3.5.2,
+/// Festlegung des Projektinhabers vom 2026-10-28): die Paare aus
+/// [`zwillingspaare`]. Ein übriger Pod bildet **keine** Gruppe: Er steht in
+/// Bereitschaft (rechnet nicht, wird nicht vergütet; später Checker), bis
+/// genug Miner für ein weiteres Paar da sind; welche Miner das trifft,
+/// mischt die Epochensaat mit der Podbildung jede Epoche neu. ⚑ Nur wenn
+/// es **gar kein Paar** gibt (ein Netz mit einem Pod), ist jeder Pod eine
+/// Gruppe für sich: die Anlaufregel (voll gezogen, Gutschrift nach der
+/// Streitfrist). Je Gruppe die Pod-Indizes aufsteigend, die Gruppen nach
+/// ihrem kleinsten.
+pub fn zwillingsgruppen(pods: &[Pod]) -> Vec<Vec<u32>> {
+    let paare = zwillingspaare(pods);
+    if paare.is_empty() {
+        let mut allein: Vec<Vec<u32>> = pods.iter().map(|p| vec![p.pod_index]).collect();
+        allein.sort();
+        return allein;
+    }
+    paare.iter().map(|&(a, b)| vec![a, b]).collect()
+}
+
+/// **Die Pods in Bereitschaft**: die, die in keiner Zwillingsgruppe stehen
+/// ([`zwillingsgruppen`]).
+pub fn bereitschaft(pods: &[Pod], gruppen: &[Vec<u32>]) -> Vec<u32> {
+    let mut aus: Vec<u32> = pods.iter().map(|p| p.pod_index).filter(|i| !gruppen.iter().any(|g| g.contains(i))).collect();
+    aus.sort_unstable();
+    aus
+}
+
 /// Warum eine Redundanzzuteilung nicht zustande kam.
 ///
 /// **Vor dieser Aufteilung bekam der Aufrufer eine leere Liste** und
@@ -358,6 +420,50 @@ mod tests {
     // -----------------------------------------------------------------
     // Disjunktheit
     // -----------------------------------------------------------------
+
+    /// ⚑ Zwillinge: disjunkt, in Indexfolge, eine andere Zone bevorzugt;
+    /// ein übriger Pod bleibt allein, die Eingabefolge zählt nicht.
+    #[test]
+    fn ein_uebriger_pod_steht_in_bereitschaft() {
+        let a = test_pod(0, &[1, 2], GeoRegion::Europe);
+        let b = test_pod(1, &[3, 4], GeoRegion::Asia);
+        let c = test_pod(2, &[5, 6], GeoRegion::NorthAmerica);
+        // Drei: ein Paar, der dritte in Bereitschaft (keine Dreiergruppe).
+        let drei = [a.clone(), b.clone(), c.clone()];
+        let g = zwillingsgruppen(&drei);
+        assert_eq!(g, vec![vec![0, 1]]);
+        assert_eq!(bereitschaft(&drei, &g), vec![2]);
+        // Vier: zwei Paare, keiner in Bereitschaft.
+        let vier = [a.clone(), b.clone(), c.clone(), test_pod(3, &[7, 8], GeoRegion::Europe)];
+        let g = zwillingsgruppen(&vier);
+        assert_eq!(g, vec![vec![0, 1], vec![2, 3]]);
+        assert!(bereitschaft(&vier, &g).is_empty());
+        // ⚑ Anlaufregel: allein im Netz eine Gruppe aus einem.
+        assert_eq!(zwillingsgruppen(std::slice::from_ref(&a)), vec![vec![0]]);
+        // ⛔️ Gegenproben: Zwei, die ein Mitglied teilen, bilden kein Paar;
+        //    dann ist jeder allein (Anlaufregel), keiner in Bereitschaft.
+        let teilt = test_pod(1, &[1, 9], GeoRegion::Asia);
+        let g = zwillingsgruppen(&[a.clone(), teilt.clone()]);
+        assert_eq!(g, vec![vec![0], vec![1]]);
+        assert!(bereitschaft(&[a, teilt], &g).is_empty());
+        assert!(zwillingsgruppen(&[]).is_empty());
+    }
+
+    #[test]
+    fn zwillingspaare_sind_disjunkt_und_bevorzugen_eine_andere_zone() {
+        let a = test_pod(0, &[1, 2], GeoRegion::Europe);
+        let b = test_pod(1, &[3, 4], GeoRegion::Europe);
+        let c = test_pod(2, &[5, 6], GeoRegion::Asia);
+        assert_eq!(zwillingspaare(&[a.clone(), b.clone(), c.clone()]), vec![(0, 2)], "Asien vor Europa");
+        assert_eq!(zwillingspaare(&[c.clone(), b.clone(), a.clone()]), vec![(0, 2)], "die Folge der Eingabe zählt nicht");
+        assert_eq!(zwillingspaare(&[a.clone(), b.clone()]), vec![(0, 1)], "ohne andere Zone der nächste");
+        assert!(zwillingspaare(std::slice::from_ref(&a)).is_empty(), "einer allein hat keinen Zwilling");
+        // ⛔️ Gegenprobe: Wer ein Mitglied teilt, wird kein Zwilling.
+        let teilt = test_pod(1, &[2, 7], GeoRegion::Asia);
+        assert!(zwillingspaare(&[a, teilt]).is_empty());
+        let d = test_pod(3, &[8, 9], GeoRegion::Europe);
+        assert_eq!(zwillingspaare(&[b, c, d, test_pod(0, &[1, 2], GeoRegion::Europe)]), vec![(0, 2), (1, 3)]);
+    }
 
     #[test]
     fn pods_are_disjoint_true() {

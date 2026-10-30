@@ -92,6 +92,18 @@ pub enum NodeCommand {
         an: libp2p::PeerId,
         daten: Vec<u8>,
     },
+    /// ⚑ **Wie [`NodeCommand::Anfrage`], mit einem Zweck** (2026-10-30):
+    /// Antwort und Fehlschlag tragen ihn zurück
+    /// ([`NodeEvent::AntwortEingegangen`], [`NodeEvent::AnfrageGescheitert`]).
+    /// 📌 Ohne ihn wusste der Knoten nicht, worauf ein `Nichts` antwortete:
+    /// Jedes `Nichts` einer gemessenen Gegenstelle zählte als abgewiesene
+    /// Zeitprobe, auch eines auf eine Blocknachforderung, und ehrliche
+    /// Mitglieder bekamen so Zeugnisse.
+    AnfrageMitZweck {
+        an: libp2p::PeerId,
+        daten: Vec<u8>,
+        zweck: u64,
+    },
     /// Auf eine eingegangene Anfrage antworten.
     ///
     /// Die `marke` stammt aus [`NodeEvent::AnfrageEingegangen`]. Sie
@@ -109,6 +121,14 @@ pub enum NodeCommand {
     /// Antwort für den Klienten wertlos. Ein gewöhnlicher Knoten
     /// überlässt das AutoNAT.
     ExterneAdresse { addr: Multiaddr },
+    /// ⚑ **Vorrang in den Verbindungsgrenzen** (Fund 674, 2026-10-28): Diese
+    /// Gegenstellen (die Mitglieder des eigenen Pods, für einen Torknoten die
+    /// Pods, die er bedient) zählen nicht gegen die Zahlengrenzen
+    /// (`connection_limits` mit Ausnahmeliste). Ohne das scheiterte das
+    /// Wählen zu einem Mitglied, sobald die ausgehenden Plätze voll waren,
+    /// und die Zeitprobe erreichte es nicht. Ersetzt die vorige Liste;
+    /// höchstens [`crate::limits::MAX_VORRANG`], der Rest ohne Vorrang.
+    Vorrang { peers: Vec<PeerId> },
     /// Eine Gegenstelle sperren oder entsperren.
     ///
     /// **Eine Sperre wirkt auf die Peer-Id, nicht auf die Adresse.** Das
@@ -216,11 +236,15 @@ pub enum NodeEvent {
     AntwortEingegangen {
         von: libp2p::PeerId,
         daten: Vec<u8>,
+        /// Der Zweck aus [`NodeCommand::AnfrageMitZweck`], sonst `None`.
+        zweck: Option<u64>,
     },
     /// Eine eigene Anfrage ist gescheitert.
     AnfrageGescheitert {
         an: libp2p::PeerId,
         grund: String,
+        /// Der Zweck aus [`NodeCommand::AnfrageMitZweck`], sonst `None`.
+        zweck: Option<u64>,
     },
     /// Ein Lochstanzversuch (DCUtR) ist abgeschlossen.
     ///
@@ -349,6 +373,11 @@ pub async fn run_node_mit(
         u64,
     > = std::collections::HashMap::new();
     let mut naechste_marke: u64 = 0;
+    // Der Zweck je eigener Anfrage, bis Antwort oder Fehlschlag sie
+    // beendet; libp2p meldet für **jede** ausgehende eines von beiden, die
+    // Tabelle hält also nur, was unterwegs ist.
+    let mut zweck_je_anfrage: std::collections::HashMap<libp2p::request_response::OutboundRequestId, u64> =
+        std::collections::HashMap::new();
     // 📌 **Fund 587 (2026-10-22, gefunden im Netzlauf): Kademlia wurde nie
     //    angestoßen.** `start_bootstrap` hatte keinen Aufrufer, und die
     //    Horchadressen aus `identify` kamen nicht in die Routing-Tabelle.
@@ -363,6 +392,7 @@ pub async fn run_node_mit(
     let kad_naechste = tokio::time::sleep(KAD_TAKT);
     tokio::pin!(kad_naechste);
     let mut kad_angestossen = false;
+    let mut vorrang: std::collections::HashSet<PeerId> = std::collections::HashSet::new();
     loop {
         tokio::select! {
             _ = &mut kad_naechste => {
@@ -420,6 +450,17 @@ pub async fn run_node_mit(
                     NodeCommand::ExterneAdresse { addr } => {
                         swarm.add_external_address(addr);
                     }
+                    NodeCommand::Vorrang { peers } => {
+                        let neu: std::collections::HashSet<PeerId> =
+                            peers.into_iter().take(crate::limits::MAX_VORRANG).collect();
+                        for alt in vorrang.difference(&neu) {
+                            swarm.behaviour_mut().grenzen.remove_peer_id(alt);
+                        }
+                        for p in neu.difference(&vorrang) {
+                            swarm.behaviour_mut().grenzen.bypass_peer_id(p);
+                        }
+                        vorrang = neu;
+                    }
                     NodeCommand::Sperren {
                         peer,
                         gesperrt,
@@ -437,6 +478,10 @@ pub async fn run_node_mit(
                     }
                     NodeCommand::Anfrage { an, daten } => {
                         swarm.behaviour_mut().anfrage.send_request(&an, daten);
+                    }
+                    NodeCommand::AnfrageMitZweck { an, daten, zweck } => {
+                        let id = swarm.behaviour_mut().anfrage.send_request(&an, daten);
+                        zweck_je_anfrage.insert(id, zweck);
                     }
                     NodeCommand::Antwort { marke, daten } => {
                         if let Some(kanal) = offene_anfragen.remove(&marke) {
@@ -469,17 +514,19 @@ pub async fn run_node_mit(
                                         marke,
                                     });
                                 }
-                                RrMsg::Response { response, .. } => {
+                                RrMsg::Response { request_id, response } => {
                                     let _ = events.send(NodeEvent::AntwortEingegangen {
                                         von: peer,
                                         daten: response,
+                                        zweck: zweck_je_anfrage.remove(&request_id),
                                     });
                                 }
                             },
-                            RrEvent::OutboundFailure { peer, error, .. } => {
+                            RrEvent::OutboundFailure { peer, request_id, error, .. } => {
                                 let _ = events.send(NodeEvent::AnfrageGescheitert {
                                     an: peer,
                                     grund: error.to_string(),
+                                    zweck: zweck_je_anfrage.remove(&request_id),
                                 });
                             }
                             RrEvent::ResponseSent { request_id, .. }

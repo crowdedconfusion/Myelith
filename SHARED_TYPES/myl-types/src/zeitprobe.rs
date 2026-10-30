@@ -58,6 +58,33 @@ pub fn anfrage_mit_grenze(positionen: u32, grenze_ms: u32) -> Vec<u8> {
     [MARKE, &positionen.to_le_bytes(), &grenze_ms.to_le_bytes()].concat()
 }
 
+/// ⚑ **Die Probe mit Saat** (2026-10-28, Fund 669): dazu 32 Bytes vom
+/// Messenden, aus denen der Shard seine Eingabe bildet. Ohne Saat ist die
+/// Eingabe fest und der Abdruck für dieselbe Anfrage immer derselbe; ein
+/// Lügner rechnet ihn einmal und schickt ihn danach sofort.
+pub fn anfrage_mit_saat(positionen: u32, grenze_ms: u32, saat: &[u8; 32]) -> Vec<u8> {
+    [MARKE, &positionen.to_le_bytes(), &grenze_ms.to_le_bytes(), saat].concat()
+}
+
+/// Ist das eine Probe? Dann Positionen, Grenze und Saat, soweit angegeben:
+/// vier, acht oder vierzig Bytes nach der Marke, sonst nichts.
+pub fn als_anfrage_voll(roh: &[u8]) -> Option<(u32, Option<u32>, Option<[u8; 32]>)> {
+    let rest = roh.strip_prefix(MARKE)?;
+    if rest.len() == 40 {
+        let (p, g) = als_anfrage_mit_grenze(&[MARKE, &rest[..8]].concat())?;
+        return Some((p, g, Some(rest[8..].try_into().ok()?)));
+    }
+    als_anfrage_mit_grenze(roh).map(|(p, g)| (p, g, None))
+}
+
+/// ⚑ **Was ein Mitglied über seine Antwort unterschreibt** (2026-10-28,
+/// Festlegung des Projektinhabers zu Fund 661): Saat, Positionen und
+/// Abdruck, unter eigener Domäne. Damit ist ein falscher Abdruck ein Beleg,
+/// den Checker später nachrechnen können.
+pub fn antwortnachricht(saat: &[u8; 32], positionen: u32, abdruck: &[u8; 32]) -> Vec<u8> {
+    [b"MYELITH_ZEITPROBE_ANTWORT_v1".as_slice(), saat, &positionen.to_le_bytes(), abdruck].concat()
+}
+
 /// Ist das eine Probe? Dann Positionen und, wenn angegeben, die Grenze in
 /// Millisekunden. Vier oder acht Bytes nach der Marke, sonst nichts.
 pub fn als_anfrage_mit_grenze(roh: &[u8]) -> Option<(u32, Option<u32>)> {
@@ -155,6 +182,18 @@ pub fn fragen_mit_grenze(
     fragen_mit(adresse, ausweis, &anfrage_mit_grenze(positionen, grenze_ms), frist)
 }
 
+/// Wie [`fragen_mit_grenze`], mit Saat (Fund 669).
+pub fn fragen_mit_saat(
+    adresse: SocketAddr,
+    ausweis: &[u8; AUSWEIS_LEN],
+    positionen: u32,
+    grenze_ms: u32,
+    saat: &[u8; 32],
+    frist: Duration,
+) -> Result<[u8; 32], String> {
+    fragen_mit(adresse, ausweis, &anfrage_mit_saat(positionen, grenze_ms, saat), frist)
+}
+
 fn fragen_mit(adresse: SocketAddr, ausweis: &[u8; AUSWEIS_LEN], nutzlast: &[u8], frist: Duration) -> Result<[u8; 32], String> {
     let mut strom = TcpStream::connect_timeout(&adresse, frist).map_err(|e| format!("{adresse}: {e}"))?;
     strom.set_read_timeout(Some(frist)).map_err(|e| e.to_string())?;
@@ -179,6 +218,14 @@ mod tests {
         assert_eq!(als_anfrage(&lang), None, "Anhängsel");
         // Mit Grenze: acht Bytes, und die alte Form bleibt lesbar.
         assert_eq!(als_anfrage_mit_grenze(&anfrage_mit_grenze(2_048, 2_500)), Some((2_048, Some(2_500))));
+        // Mit Saat (Fund 669): vierzig Bytes; ein Byte mehr ist keine Probe.
+        let saat = [7u8; 32];
+        assert_eq!(als_anfrage_voll(&anfrage_mit_saat(64, 900, &saat)), Some((64, Some(900), Some(saat))));
+        assert_eq!(als_anfrage_voll(&anfrage_mit_grenze(64, 900)), Some((64, Some(900), None)));
+        let mut zu_lang = anfrage_mit_saat(64, 900, &saat);
+        zu_lang.push(0);
+        assert_eq!(als_anfrage_voll(&zu_lang), None, "Anhängsel nach der Saat");
+        assert!(anfrage_mit_saat(64, 900, &saat).len() <= 64, "passt nicht in den Rahmen");
         assert_eq!(als_anfrage_mit_grenze(&anfrage(4)), Some((4, None)));
         assert_eq!(als_anfrage(&anfrage_mit_grenze(64, 9)), Some(64));
         let mut lang = anfrage_mit_grenze(4, 1);

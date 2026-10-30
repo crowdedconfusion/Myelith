@@ -63,11 +63,30 @@ pub fn poi_bundle_message(
 
 /// Signierbotschaft zu einem konkreten Bündel.
 pub fn bundle_message(bundle: &PoIBundle) -> Vec<u8> {
-    poi_bundle_message(
+    let mut msg = poi_bundle_message(
         bundle.epoch,
         bundle.pod,
         &bundle.segments_root,
         bundle.vtfe_claimed,
         bundle.segmente,
-    )
+    );
+    // ⚑ Die Ausgabenwurzel (Stufe 1), sobald sie nicht null ist: Die
+    //   Felder davor haben feste Länge, also ist die Botschaft mit und ohne
+    //   sie eindeutig, und wer sie nach dem Unterschreiben ändert oder
+    //   streicht, macht das Aggregat ungültig.
+    if bundle.ausgabenwurzel.as_bytes() != &[0u8; 32] {
+        msg.extend_from_slice(bundle.ausgabenwurzel.as_bytes());
+    }
+    // ⚑ Die Vertreter (Übernahme durch die Reserve), sobald es welche gibt,
+    //   hinter einer eigenen Marke: Ohne Marke wäre die Folge aus Wurzel und
+    //   Vertretern nicht mehr eindeutig zu lesen.
+    if !bundle.vertreter.is_empty() {
+        msg.extend_from_slice(b"MYELITH_POI_VERTRETER");
+        msg.extend_from_slice(&(bundle.vertreter.len() as u32).to_le_bytes());
+        for (position, miner) in &bundle.vertreter {
+            msg.extend_from_slice(&position.to_le_bytes());
+            msg.extend_from_slice(miner.as_bytes());
+        }
+    }
+    msg
 }

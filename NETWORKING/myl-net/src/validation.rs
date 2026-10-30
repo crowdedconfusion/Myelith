@@ -27,13 +27,14 @@
 //!
 //! | Topic | angenommen | warum |
 //! |---|---|---|
-//! | `PoiBundles` | **20 000 von 20 000** | nur Felder fester Länge |
+//! | `PoiBundles` | **20 000 von 20 000** | Felder fester Länge (seit dem 2026-10-28 bis auf die Vertreterliste am Ende; gemessen mit unberührter Länge der Liste) |
 //! | `Challenges` | **20 000 von 20 000** | dito, plus zwei Ungleichungen, die Zufall erfüllt |
 //! | `LatencyAttests` | 9 081 von 20 000 | enthält einen Vektor, dessen Längenkopf passen muss |
 //!
 //! **Bei einem Typ aus lauter Feldern fester Länge ist ein Borsh-Parse
-//! eine Längenprüfung.** Jede Bytefolge der richtigen Länge ist ein
-//! gültiges `PoIBundle`. Das ist kein Fehler, sondern eine Eigenschaft
+//! eine Längenprüfung.** Jede Bytefolge der richtigen Länge mit leerer
+//! Vertreterliste ist ein gültiges `PoIBundle`; die Liste selbst prüft
+//! nur ihre Länge, ihren Inhalt erst die Kette. Das ist kein Fehler, sondern eine Eigenschaft
 //! des Formats, aber es verschiebt die Frage: Die Verteidigung für
 //! PoI-Bündel ist die Aggregatsignatur, und die kann L0 nicht prüfen.
 //! **Solange kein [`PayloadValidator`] verdrahtet ist, verbreitet ein
@@ -100,6 +101,9 @@ pub const MAX_LATENCY_ATTESTS_BYTES: usize = 4 * 1024;
 /// Aufgerundet auf 512 bleibt Luft für eine Rahmung, ohne dass jemand
 /// ein Bündel durch dieses Topic schieben könnte.
 pub const MAX_POD_FAILURES_BYTES: usize = 512;
+/// Grösstes Stück eines Zeugen: 1 MiB Nutzlast und der unterschriebene
+/// Kopf (höchstens 48 Stückhashes, Schlüssel, Unterschrift), aufgerundet.
+pub const MAX_ZEUGEN_BYTES: usize = 1024 * 1024 + 4 * 1024;
 /// Maximale Größe einer BFT-Konsensnachricht.
 ///
 /// **Hergeleitet, nicht geraten.** Die größte heute definierte Nachricht
@@ -187,6 +191,7 @@ pub fn max_payload_bytes(topic: GossipTopic) -> usize {
         GossipTopic::LatencyAttests => MAX_LATENCY_ATTESTS_BYTES,
         GossipTopic::Consensus => MAX_CONSENSUS_BYTES,
         GossipTopic::PodFailures => MAX_POD_FAILURES_BYTES,
+        GossipTopic::Zeugen => MAX_ZEUGEN_BYTES,
     }
 }
 
@@ -201,8 +206,9 @@ pub fn validate_payload(topic: GossipTopic, data: &[u8]) -> Result<(), Validatio
     }
     match topic {
         // PoI-Bündel: Borsh-Parse gegen den myl-types-Typ (Anhang A.1).
-        // Da der Typ nur Felder fester Länge hat, ist das in der Sache
-        // eine Längenprüfung — siehe Fund 45 in der Moduldoku. Die
+        // Da der Typ bis auf die Vertreterliste nur Felder fester Länge
+        // hat, ist das in der Sache eine Längenprüfung, siehe Fund 45 in
+        // der Moduldoku. Die
         // inhaltliche Prüfung ist die Aggregatsignatur und gehört in
         // einen PayloadValidator.
         GossipTopic::PoiBundles => {
@@ -241,10 +247,13 @@ pub fn validate_payload(topic: GossipTopic, data: &[u8]) -> Result<(), Validatio
         // also prüft die Netzschicht die Größe und der PayloadValidator
         // den Inhalt. Eine Größenprüfung allein ist hier mehr wert als
         // sonst, weil die Nutzlast eine **feste** Länge hat.
+        // Zeugenstücke ebenso (der Typ liegt in myl-consensus); die
+        // Unterschrift und den Erzeuger prüft der PayloadValidator.
         GossipTopic::Blocks
         | GossipTopic::Transactions
         | GossipTopic::Consensus
-        | GossipTopic::PodFailures => {}
+        | GossipTopic::PodFailures
+        | GossipTopic::Zeugen => {}
     }
     Ok(())
 }
@@ -430,6 +439,8 @@ mod tests {
             vtfe_claimed: 42,
             aggregate_sig: sig,
             segmente: 1,
+            ausgabenwurzel: myl_types::MerkleRoot::new([0u8; 32]),
+            vertreter: Vec::new(),
         };
         borsh::to_vec(&bundle).expect("Serialisierung")
     }

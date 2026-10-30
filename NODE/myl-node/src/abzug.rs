@@ -43,6 +43,37 @@ pub const STUECK_BYTES: u64 = 1024 * 1024;
 pub const HOECHSTE_GROESSE: u64 = 1024 * 1024 * 1024;
 /// Der Kopf der Datei eines Abzugs.
 const MAGIE: &[u8; 8] = b"MYLABZUG";
+/// Der Kopf der Datei eines leichten Abzugs.
+const MAGIE_LEICHT: &[u8; 8] = b"MYLLEICH";
+/// So viele leichte Abzüge behält ein Knoten (an Prüfpunkten).
+pub const LEICHTE_BEHALTEN: usize = 4;
+
+/// ⚑ **Die Art eines Abzugs** (zustandslose Validierung, 2026-10-29): der
+/// ganze Zustand, oder der **leichte**: ohne die grossen Sammlungen, mit der
+/// Wurzel des grossen Baums (`LedgerState::leicht_bytes`). Leichte entstehen
+/// an jedem Prüfpunkt, damit ein zustandsloser Knoten höchstens rund 150
+/// Blöcke mit Zeugen nachrechnet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Art {
+    Voll,
+    Leicht,
+}
+
+impl Art {
+    fn magie(self) -> &'static [u8; 8] {
+        match self {
+            Art::Voll => MAGIE,
+            Art::Leicht => MAGIE_LEICHT,
+        }
+    }
+
+    fn praefix(self) -> &'static str {
+        match self {
+            Art::Voll => "abzug-",
+            Art::Leicht => "leicht-",
+        }
+    }
+}
 const FASSUNG: u16 = 1;
 
 /// Woran ein Neuling einen Abzug misst.
@@ -134,23 +165,48 @@ impl Abzug {
     /// in derselben Form zurückschreibt: Zwei Bytefolgen für einen Zustand
     /// wären zwei Wurzeln für dieselbe Sache.
     pub fn pruefen(&self, anker: &Anker) -> Result<LedgerState, AbzugFehler> {
+        self.pruefen_als(anker, Art::Voll)
+    }
+
+    /// Dasselbe für eine Art.
+    pub fn pruefen_als(&self, anker: &Anker, art: Art) -> Result<LedgerState, AbzugFehler> {
         if self.hoehe() != anker.hoehe {
             return Err(AbzugFehler::FalscheHoehe { anker: anker.hoehe, block: self.hoehe() });
         }
         if self.block.hash() != anker.blockhash {
             return Err(AbzugFehler::FremderBlock);
         }
-        self.pruefen_gegen_block()
+        self.pruefen_gegen_block_als(art)
+    }
+
+    /// ⚑ **Ein leichter Abzug, gegen den eigenen Block**: lesbar als leichte
+    /// Form (⛔️ nichts in den grossen Sammlungen, kanonisch), und die
+    /// Zustandswurzel aus kleinem Baum, Kopf und grosser Wurzel ist die im
+    /// Kopf des Blocks. Die grosse Wurzel ist damit an den Block gebunden.
+    pub fn pruefen_gegen_block_als(&self, art: Art) -> Result<LedgerState, AbzugFehler> {
+        if art == Art::Voll {
+            return self.pruefen_gegen_block();
+        }
+        let mut zustand = LedgerState::aus_leicht(&self.zustand).ok_or(AbzugFehler::KeinZustand)?;
+        if zustand.wurzel() != self.block.header.state_root {
+            return Err(AbzugFehler::FalscheWurzel);
+        }
+        Ok(zustand)
     }
 
     /// Prüft nur Wurzel und Form, gegen den eigenen Block. Für Abzüge, die
     /// dieser Knoten selbst angelegt hat oder deren Block er schon kennt.
+    ///
+    /// 📌 Skalierung (2026-10-29): Die Wurzel war SHA-256 über die Bytes des
+    /// Zustands, und hier wurde zuerst darüber geprüft. Seit sie aus dem
+    /// Zustandsbaum kommt, wird gelesen, gerechnet und verlangt, dass sich
+    /// die Bytes in derselben Form zurückschreiben.
     pub fn pruefen_gegen_block(&self) -> Result<LedgerState, AbzugFehler> {
-        if Hash::sha256(&self.zustand) != self.block.header.state_root {
+        let mut zustand: LedgerState = borsh::from_slice(&self.zustand).map_err(|_| AbzugFehler::KeinZustand)?;
+        if zustand.wurzel() != self.block.header.state_root {
             return Err(AbzugFehler::FalscheWurzel);
         }
-        let zustand: LedgerState = borsh::from_slice(&self.zustand).map_err(|_| AbzugFehler::KeinZustand)?;
-        if zustand.commitment() != self.block.header.state_root {
+        if borsh::to_vec(&zustand).ok().as_deref() != Some(self.zustand.as_slice()) {
             return Err(AbzugFehler::KeinZustand);
         }
         Ok(zustand)
@@ -160,9 +216,13 @@ impl Abzug {
     /// davor. Die Prüfsumme findet einen halb geschriebenen Abzug; gegen
     /// Fälschung steht der Anker, nicht die Summe.
     pub fn als_datei(&self, startwert: &Hash) -> Vec<u8> {
+        self.als_datei_als(startwert, Art::Voll)
+    }
+
+    fn als_datei_als(&self, startwert: &Hash, art: Art) -> Vec<u8> {
         let block = borsh::to_vec(&self.block).expect("ein Block ist stets serialisierbar");
         let mut d = Vec::with_capacity(64 + block.len() + self.zustand.len());
-        d.extend_from_slice(MAGIE);
+        d.extend_from_slice(art.magie());
         d.extend_from_slice(&FASSUNG.to_le_bytes());
         d.extend_from_slice(startwert.as_bytes());
         d.extend_from_slice(&(block.len() as u64).to_le_bytes());
@@ -176,8 +236,12 @@ impl Abzug {
 
     /// Liest eine Datei aus [`Abzug::als_datei`] und prüft Wurzel und Form.
     pub fn aus_datei(d: &[u8], startwert: &Hash) -> Result<(Self, LedgerState), AbzugFehler> {
+        Self::aus_datei_als(d, startwert, Art::Voll)
+    }
+
+    fn aus_datei_als(d: &[u8], startwert: &Hash, art: Art) -> Result<(Self, LedgerState), AbzugFehler> {
         let kaputt = |g: &str| AbzugFehler::Datei(g.to_string());
-        if d.len() < 8 + 2 + 32 + 8 + 8 + 32 || &d[..8] != MAGIE {
+        if d.len() < 8 + 2 + 32 + 8 + 8 + 32 || &d[..8] != art.magie() {
             return Err(kaputt("kein Abzug"));
         }
         let (inhalt, summe) = d.split_at(d.len() - 32);
@@ -206,7 +270,7 @@ impl Abzug {
             return Err(kaputt("Bytes hinter dem Zustand"));
         }
         let abzug = Self { block, zustand };
-        let z = abzug.pruefen_gegen_block()?;
+        let z = abzug.pruefen_gegen_block_als(art)?;
         Ok((abzug, z))
     }
 }
@@ -218,6 +282,7 @@ impl Abzug {
 pub struct Ablage {
     ordner: PathBuf,
     startwert: Hash,
+    art: Art,
 }
 
 impl Ablage {
@@ -227,11 +292,16 @@ impl Ablage {
             "{}.abzuege",
             kettendatei.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "kette".into())
         ));
-        Self { ordner, startwert }
+        Self { ordner, startwert, art: Art::Voll }
+    }
+
+    /// Dieselbe Ablage für die leichten Abzüge (im selben Ordner).
+    pub fn leicht(&self) -> Self {
+        Self { art: Art::Leicht, ..self.clone() }
     }
 
     fn pfad(&self, hoehe: u64) -> PathBuf {
-        self.ordner.join(format!("abzug-{hoehe}.dat"))
+        self.ordner.join(format!("{}{hoehe}.dat", self.art.praefix()))
     }
 
     /// Legt einen Abzug ab und räumt nach der Behaltensregel auf.
@@ -239,7 +309,7 @@ impl Ablage {
         std::fs::create_dir_all(&self.ordner)?;
         let ziel = self.pfad(abzug.hoehe());
         let zwischen = ziel.with_extension("teil");
-        std::fs::write(&zwischen, abzug.als_datei(&self.startwert))?;
+        std::fs::write(&zwischen, abzug.als_datei_als(&self.startwert, self.art))?;
         std::fs::rename(&zwischen, &ziel)?;
         self.aufraeumen()
     }
@@ -252,7 +322,7 @@ impl Ablage {
             .flatten()
             .filter_map(|e| {
                 let n = e.file_name().to_string_lossy().into_owned();
-                n.strip_prefix("abzug-")?.strip_suffix(".dat")?.parse().ok()
+                n.strip_prefix(self.art.praefix())?.strip_suffix(".dat")?.parse().ok()
             })
             .collect();
         h.sort_unstable();
@@ -262,7 +332,7 @@ impl Ablage {
     /// Der Abzug einer Höhe, geprüft gegen seinen eigenen Block.
     pub fn lesen(&self, hoehe: u64) -> Result<(Abzug, LedgerState), AbzugFehler> {
         let d = std::fs::read(self.pfad(hoehe)).map_err(|e| AbzugFehler::Datei(e.to_string()))?;
-        Abzug::aus_datei(&d, &self.startwert)
+        Abzug::aus_datei_als(&d, &self.startwert, self.art)
     }
 
     /// **Ein Stück des abgelegten Zustands ab `ab`, zum Liefern**: Block,
@@ -288,7 +358,7 @@ impl Ablage {
         let mut f = std::fs::File::open(self.pfad(hoehe)).map_err(|e| AbzugFehler::Datei(e.to_string()))?;
         let mut kopf = [0u8; 8 + 2 + 32 + 8];
         f.read_exact(&mut kopf).map_err(|_| kaputt("zu kurz"))?;
-        if &kopf[..8] != MAGIE || u16::from_le_bytes([kopf[8], kopf[9]]) != FASSUNG {
+        if &kopf[..8] != self.art.magie() || u16::from_le_bytes([kopf[8], kopf[9]]) != FASSUNG {
             return Err(kaputt("kein Abzug dieser Fassung"));
         }
         if &kopf[10..42] != self.startwert.as_bytes() {
@@ -371,6 +441,14 @@ impl Ablage {
     /// ein Neuling, der bei ihm begänne, käme nicht weiter.
     fn aufraeumen(&self) -> std::io::Result<()> {
         let hoehen = self.hoehen();
+        // Leichte: die jüngsten, sonst nichts (sie entstehen an jedem
+        // Prüfpunkt und sind nur für Zustandslose da, die neu einsteigen).
+        if self.art == Art::Leicht {
+            for h in hoehen.iter().rev().skip(LEICHTE_BEHALTEN) {
+                std::fs::remove_file(self.pfad(*h))?;
+            }
+            return Ok(());
+        }
         let juengste: Vec<u64> = hoehen.iter().rev().take(2).copied().collect();
         let basis = self.basis();
         for h in hoehen {
@@ -390,6 +468,7 @@ impl Ablage {
 #[derive(Debug)]
 pub struct Zusammensetzen {
     anker: Anker,
+    art: Art,
     block: Option<Block>,
     groesse: u64,
     puffer: Vec<u8>,
@@ -407,7 +486,17 @@ pub enum Weiter {
 impl Zusammensetzen {
     /// Ein neues Zusammensetzen für einen Anker.
     pub fn neu(anker: Anker) -> Self {
-        Self { anker, block: None, groesse: 0, puffer: Vec::new() }
+        Self::neu_als(anker, Art::Voll)
+    }
+
+    /// Für eine Art.
+    pub fn neu_als(anker: Anker, art: Art) -> Self {
+        Self { anker, art, block: None, groesse: 0, puffer: Vec::new() }
+    }
+
+    /// Die Art, die zusammengesetzt wird.
+    pub fn art(&self) -> Art {
+        self.art
     }
 
     /// Der Anker, dem es gilt.
@@ -446,7 +535,7 @@ impl Zusammensetzen {
             return Ok(Weiter::Ab(self.ab()));
         }
         let abzug = Abzug { block: self.block.clone().expect("gesetzt"), zustand: std::mem::take(&mut self.puffer) };
-        let z = abzug.pruefen(&self.anker)?;
+        let z = abzug.pruefen_als(&self.anker, self.art)?;
         Ok(Weiter::Fertig(Box::new((abzug, z))))
     }
 }
@@ -526,10 +615,17 @@ mod tests {
         assert!(matches!(abzug.pruefen(&falsch_hoch), Err(AbzugFehler::FalscheHoehe { .. })));
         let fremd = Anker { blockhash: Hash::sha256(b"fremd"), ..anker };
         assert_eq!(abzug.pruefen(&fremd), Err(AbzugFehler::FremderBlock));
-        let mut gefaelscht = abzug.clone();
-        let letzte = gefaelscht.zustand.len() - 1;
-        gefaelscht.zustand[letzte] ^= 1;
+        // Ein gefälschter Wert in kanonischer Form: Er liest sich, aber die
+        // Wurzel passt nicht.
+        let mut z: LedgerState = borsh::from_slice(&abzug.zustand).unwrap();
+        z.rueckbuchungen += 1;
+        let gefaelscht = Abzug { zustand: borsh::to_vec(&z).unwrap(), ..abzug.clone() };
         assert_eq!(gefaelscht.pruefen(&anker), Err(AbzugFehler::FalscheWurzel));
+        // Und verstümmelte Bytes lesen sich nicht.
+        let mut kaputt = abzug.clone();
+        let letzte = kaputt.zustand.len() - 1;
+        kaputt.zustand[letzte] ^= 1;
+        assert!(kaputt.pruefen(&anker).is_err());
     }
 
     /// Die Datei hin und zurück; ein abgeschnittener Abzug und einer eines

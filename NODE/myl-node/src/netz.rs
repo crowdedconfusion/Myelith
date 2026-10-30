@@ -103,6 +103,9 @@ pub struct Gebuehren {
     /// Hinterlegung für eine Sitzung, zurück beim Aufräumen.
     pub hinterlegung_sitzung: u64,
     /// Hinterlegung für ein Speichermanifest, zurück beim Löschen.
+    /// ⚠️ **Ruht** (Festlegung des Projektinhabers vom 2026-10-28, Fund 663):
+    /// Die Kette kennt noch keine Anweisung für Manifeste; sie entsteht samt
+    /// dieser Hinterlegung mit der Speicherrolle der Komponente STORAGE.
     pub hinterlegung_manifest: u64,
 }
 

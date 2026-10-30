@@ -492,16 +492,34 @@ pub fn burn_to_credits(
         return Err(TransitionError::Overflow);
     }
     let minted = syn / credit_price;
+    // ⛔️ **Ein Eintrag je Verfalls-Epoche, Verfallenes entsorgt**
+    // (2026-10-30, die Klasse von Fund 144): Bis hierher hängte jeder Kauf
+    // einen Eintrag an. 📌 Im langen Podlauf wuchsen so einzelne Konten des
+    // Testverkehrs auf Hunderte KB, der Zustand von 32 KB auf 2,6 MB in
+    // anderthalb Stunden, und jeder Zeuge, der ein solches Konto berührte,
+    // trug die ganze Liste (Median 526 KB je Block); zustandslose Knoten
+    // kamen nicht mehr nach. Verfallene Credits sind ohnehin unbrauchbar
+    // (`credit_spend` übergeht sie); entsorgt wird in einem Übergang, nie
+    // beim Lesen.
+    let epoch = state.epoch;
+    let gleiche = state.account(addr).credits.iter().find(|c| c.expiry == credit_expiry).map_or(0, |c| c.vtfe);
+    if gleiche.checked_add(minted).is_none() {
+        return Err(TransitionError::Overflow);
+    }
 
     // Änderungsphase.
     let account = state.account_mut(addr);
     account.balance = available - syn;
     if minted > 0 {
-        account.credits.push(InferenceCredit {
-            owner: *addr,
-            vtfe: minted,
-            expiry: credit_expiry,
-        });
+        account.credits.retain(|c| c.expiry >= epoch);
+        match account.credits.iter_mut().find(|c| c.expiry == credit_expiry) {
+            Some(c) => c.vtfe += minted,
+            None => account.credits.push(InferenceCredit {
+                owner: *addr,
+                vtfe: minted,
+                expiry: credit_expiry,
+            }),
+        }
         // Ausgabereihenfolge-Invariante: Credits stehen aufsteigend nach
         // Verfalls-Epoche (siehe `credit_spend`).
         account.credits.sort_by_key(|c| c.expiry);
@@ -711,6 +729,10 @@ pub fn sitzung_eroeffnen(
     if kontrakt.gueltig_bis.0 < state.epoch.0 {
         return Err(TransitionError::SitzungAbgelaufen);
     }
+    // In das Fach der Epoche, in der sie wegfällt (siehe
+    // `sitzung_aufraeumen`).
+    let weg_in = kontrakt.gueltig_bis.0.saturating_add(SITZUNG_NACHFRIST).saturating_add(1);
+    state.sitzungsablauf.entry(weg_in).or_default().push(adresse);
     state
         .sitzungen
         .insert(adresse, Sitzung { kontrakt, zustand: Sitzungszustand::neu() });
@@ -998,6 +1020,14 @@ pub fn miner_abmelden(
     Ok(())
 }
 
+/// ⛔️ **So weit voraus darf eine Zusage gelten** (2026-10-30, die Klasse
+/// von Fund 144): Je Miner bleibt von den geltenden nur die jüngste, die
+/// künftigen aber waren unbegrenzt; ein Miner konnte je Gebühr eine weitere
+/// für jetzt+1, +2 … stapeln, in einer Sammlung, die jeder zustandslose
+/// Knoten ganz hält. Der Knoten selbst sagt für die nächste Epoche zu; mit
+/// diesem Vorlauf bleiben je Miner höchstens neun Einträge.
+pub const ZUSAGE_VORLAUF_EPOCHEN: u64 = 8;
+
 /// Nimmt eine Kapazitätszusage auf (Stufe 4 des Dispatchers, 2026-10-21).
 ///
 /// **Vier Schritte, billig vor teuer:** Der Einreichende ist der Halter; er
@@ -1016,6 +1046,9 @@ pub fn zusage_einreichen(
     let Some(reg) = state.miner.get(&zusage.halter) else {
         return Err(TransitionError::MinerUnbekannt);
     };
+    if zusage.ab_epoche.0 > state.epoch.0.saturating_add(ZUSAGE_VORLAUF_EPOCHEN) {
+        return Err(TransitionError::ZusageUngueltig);
+    }
     // ⚑ **Gegen das Podmodell** (6.6, 2026-10-22): nur das Modell des
     //   Netzes, höchstens seine Ebenen samt Kopf. Ohne Podmodell gilt nur
     //   eine Zusage ohne Modelle, also reiner Speicher.
@@ -1548,6 +1581,35 @@ pub fn praegen(
     Ok(())
 }
 
+/// ⚑ **Höchstens so viele vorgemerkte Auszahlungen bucht ein Block**
+/// (verteilte Ausschüttung, 2026-10-30; dieselbe Partitionsgrösse wie
+/// Solanas SIMD-0118). Ein Block berührt damit höchstens so viele Konten aus
+/// Ausschüttungen, und sein Zeuge bleibt begrenzt; eine Million Miner sind
+/// nach rund 245 Blöcken bezahlt.
+pub const AUSZAHLUNGEN_JE_BLOCK: usize = 4096;
+
+/// Merkt `betrag` für `konto` vor (zusammengefasst je Konto).
+pub fn auszahlung_vormerken(state: &mut LedgerState, konto: &Address, betrag: u64) {
+    if betrag > 0 {
+        let e = state.auszahlungen_offen.entry(*konto).or_insert(0);
+        *e = e.saturating_add(betrag);
+    }
+}
+
+/// ⚑ **Bucht höchstens `hoechstens` vorgemerkte Auszahlungen**, nach Adresse,
+/// und liefert, wie viele es waren. Gebucht wird wie `praegen` (das Geld
+/// ist mit der Vormerkung entstanden oder aus dem Bestand der Treasury
+/// genommen); ein Überlauf, der bei `u64` praktisch nicht vorkommt, kappt.
+pub fn auszahlungen_buchen(state: &mut LedgerState, hoechstens: usize) -> usize {
+    let faellig: Vec<(Address, u64)> = state.auszahlungen_offen.iter().take(hoechstens).map(|(a, b)| (*a, *b)).collect();
+    for (konto, betrag) in &faellig {
+        state.auszahlungen_offen.remove(konto);
+        let k = state.account_mut(konto);
+        k.balance = k.balance.saturating_add(*betrag);
+    }
+    faellig.len()
+}
+
 /// Wohin dieser Miner bezahlt wird, falls er es gesagt hat.
 ///
 /// ⚑ **`None` heißt: kein Anteil.** Wer nichts eingetragen hat, wird bei
@@ -1611,18 +1673,61 @@ pub fn speicher_entfernen(
 }
 
 /// Räumt Sessions weg, deren Fenster länger als
-/// [`SITZUNG_NACHFRIST`] Epochen zurückliegt, und liefert deren Anzahl.
+/// [`SITZUNG_NACHFRIST`] Epochen zurückliegt, und liefert sie.
 ///
 /// **Ein Übergang und kein Nebenher.** Würde beim Lesen aufgeräumt,
 /// hinge der Zustand daran, wer wann gelesen hat; dieselbe Lehre wie
 /// bei der Verstoßhistorie.
-pub fn sitzung_aufraeumen(state: &mut LedgerState) -> usize {
+///
+/// ⚑ **Aus den Ablauffächern** (Skalierung, 2026-10-29): Gelesen werden
+/// nur die Fächer der Epochen seit dem letzten Aufräumen, nicht alle
+/// Sitzungen. Bis hierher lief ein `retain` über alle; bei einer
+/// Milliarde Teilnehmern je Epoche ein Durchlauf über den ganzen Bestand.
+pub fn sitzung_aufraeumen(state: &mut LedgerState) -> Vec<SitzungId> {
+    sitzung_aufraeumen_hoechstens(state, SITZUNGEN_JE_AUFRAEUMEN)
+}
+
+/// ⚑ **Höchstens so viele Sitzungen räumt ein Epochenwechsel auf**
+/// (zustandslose Validierung, 2026-10-29): Der Rest rückt in das Fach der
+/// nächsten Epoche. Ohne Grenze könnte jemand viele Sitzungen mit derselben
+/// Ablaufepoche eröffnen und den Zeugen des Wechselblocks über die Grenze
+/// der Zeugenstücke treiben; zustandslose Knoten blieben dort hängen. Eine
+/// abgelaufene Sitzung gibt ohnehin nichts mehr aus; sie fällt nur später
+/// weg.
+pub const SITZUNGEN_JE_AUFRAEUMEN: usize = 10_000;
+
+/// ⛔️ **Gebuchte Doppelbelege fallen nach der Sperrfrist weg** (2026-10-30,
+/// die Klasse von Fund 144): Bis hierher blieb jeder für immer im kleinen
+/// Register, das jeder zustandslose Knoten ganz hält. Gebraucht wird ein
+/// Eintrag nur, damit derselbe Widerspruch nicht zweimal schlachtet; ein
+/// Beleg, dessen Tat vor der Sperrfrist liegt, wird ohnehin abgewiesen. Die
+/// Buchung liegt nie vor der Tat; ist also `gebucht + SPERRFRIST < jetzt`,
+/// dann auch die Tat, und der Eintrag schützt nichts mehr. Ein Übergang am
+/// Epochenwechsel, nie beim Lesen.
+pub fn doppelbelege_aufraeumen(state: &mut LedgerState) {
     let jetzt = state.epoch.0;
-    let vorher = state.sitzungen.len();
-    state
-        .sitzungen
-        .retain(|_, s| jetzt <= s.kontrakt.gueltig_bis.0.saturating_add(SITZUNG_NACHFRIST));
-    vorher - state.sitzungen.len()
+    state.doppelbelege.retain(|_, gebucht| gebucht.saturating_add(crate::einsatz::SPERRFRIST_EPOCHEN) >= jetzt);
+}
+
+/// Wie [`sitzung_aufraeumen`] mit einer anderen Grenze (für Tests).
+pub fn sitzung_aufraeumen_hoechstens(state: &mut LedgerState, hoechstens: usize) -> Vec<SitzungId> {
+    let jetzt = state.epoch.0;
+    let mut weg = Vec::new();
+    let mut uebrig = Vec::new();
+    for fach in state.sitzungsablauf_bis.saturating_add(1)..=jetzt {
+        for id in state.sitzungsablauf.remove(&fach).unwrap_or_default() {
+            if weg.len() >= hoechstens {
+                uebrig.push(id);
+            } else if state.sitzungen.remove(&id).is_some() {
+                weg.push(id);
+            }
+        }
+    }
+    if !uebrig.is_empty() {
+        state.sitzungsablauf.entry(jetzt.saturating_add(1)).or_default().extend(uebrig);
+    }
+    state.sitzungsablauf_bis = state.sitzungsablauf_bis.max(jetzt);
+    weg
 }
 
 
@@ -2003,6 +2108,44 @@ mod tests {
         }
         account.credits.sort_by_key(|c| c.expiry);
         state
+    }
+
+    #[test]
+    fn doppelbelege_fallen_nach_der_sperrfrist() {
+        let mut state = LedgerState::genesis(1);
+        let a = Address::new([3u8; 32]);
+        state.doppelbelege.insert((a, 0, 10), 1);
+        state.doppelbelege.insert((a, 0, 11), 5);
+        state.epoch = EpochId(1 + crate::einsatz::SPERRFRIST_EPOCHEN);
+        doppelbelege_aufraeumen(&mut state);
+        assert_eq!(state.doppelbelege.len(), 2, "genau an der Grenze bleibt er");
+        state.epoch = EpochId(2 + crate::einsatz::SPERRFRIST_EPOCHEN);
+        doppelbelege_aufraeumen(&mut state);
+        assert_eq!(state.doppelbelege.keys().copied().collect::<Vec<_>>(), vec![(a, 0, 11)]);
+    }
+
+    #[test]
+    fn credits_bleiben_begrenzt() {
+        // ⛔️ Tausend Käufe mit demselben Verfall ergeben einen Eintrag, und
+        //    ein Kauf entsorgt Verfallenes.
+        let addr = Address::new([7u8; 32]);
+        let mut state = LedgerState::genesis(1);
+        state.account_mut(&addr).balance = 1_000_000;
+        for _ in 0..1000 {
+            burn_to_credits(&mut state, &addr, 3, EpochId(5)).expect("burn");
+        }
+        assert_eq!(state.account(&addr).credits.len(), 1);
+        assert_eq!(state.account(&addr).credits[0].vtfe, 3000);
+        burn_to_credits(&mut state, &addr, 2, EpochId(4)).expect("burn");
+        assert_eq!(state.account(&addr).credits.iter().map(|c| c.expiry.0).collect::<Vec<_>>(), vec![4, 5], "aufsteigend");
+        state.epoch = EpochId(5);
+        burn_to_credits(&mut state, &addr, 1, EpochId(6)).expect("burn");
+        assert_eq!(state.account(&addr).credits.iter().map(|c| (c.expiry.0, c.vtfe)).collect::<Vec<_>>(), vec![(5, 3000), (6, 1)], "Epoche 4 verfallen");
+        // Ein Überlauf ändert nichts.
+        state.account_mut(&addr).credits[1].vtfe = u64::MAX;
+        let vorher = state.account(&addr).clone();
+        assert_eq!(burn_to_credits(&mut state, &addr, 1, EpochId(6)), Err(TransitionError::Overflow));
+        assert_eq!(state.account(&addr), vorher);
     }
 
     #[test]
@@ -2608,13 +2751,14 @@ mod tests {
     fn aufgeraeumt_wird_erst_nach_der_nachfrist() {
         let (mut state, id) = state_mit_sitzung(500);
         state.epoch = EpochId(100 + SITZUNG_NACHFRIST);
-        assert_eq!(sitzung_aufraeumen(&mut state), 0);
+        assert_eq!(sitzung_aufraeumen(&mut state).len(), 0);
         assert!(state.sitzung(&id).is_some());
 
         state.epoch = EpochId(100 + SITZUNG_NACHFRIST + 1);
-        assert_eq!(sitzung_aufraeumen(&mut state), 1);
+        assert_eq!(sitzung_aufraeumen(&mut state), vec![id]);
         assert!(state.sitzung(&id).is_none());
-        assert_eq!(sitzung_aufraeumen(&mut state), 0);
+        assert_eq!(sitzung_aufraeumen(&mut state).len(), 0);
+        assert!(state.sitzungsablauf.anzahl() == 0, "das Fach ist leer und fällt weg");
     }
 
     /// Sessions gehen in die Zustandsverpflichtung ein — sonst könnten
@@ -2952,6 +3096,17 @@ mod tests {
         zusage_einreichen(&mut st, &miner_adresse(1), &zusage(6, 1)).expect("Zusage");
         let liste: Vec<u64> = st.zusagen[&kennung(1)].iter().map(|z| z.ab_epoche.0).collect();
         assert_eq!(liste, [4, 6], "von den geltenden bleibt nur die juengste");
+        // ⛔️ Nicht weiter voraus als der Vorlauf: je Miner bleibt die Liste
+        //    begrenzt.
+        assert_eq!(
+            zusage_einreichen(&mut st, &miner_adresse(1), &zusage(5 + ZUSAGE_VORLAUF_EPOCHEN + 1, 1)),
+            Err(TransitionError::ZusageUngueltig),
+            "zu weit voraus"
+        );
+        for ab in 6..=5 + ZUSAGE_VORLAUF_EPOCHEN {
+            zusage_einreichen(&mut st, &miner_adresse(1), &zusage(ab, 1)).expect("im Vorlauf");
+        }
+        assert!(st.zusagen[&kennung(1)].len() as u64 <= ZUSAGE_VORLAUF_EPOCHEN + 1);
     }
 
     /// ⚑ **Gegen das Podmodell** (6.6, 2026-10-22): ein fremdes Modell und
@@ -3276,6 +3431,8 @@ mod tests {
             vtfe_claimed: vtfe,
             aggregate_sig: myl_types::bls::BlsSignature([0; 96]),
             segmente: 1,
+            ausgabenwurzel: myl_types::MerkleRoot::new([0u8; 32]),
+            vertreter: Vec::new(),
         }
     }
 
@@ -3647,5 +3804,221 @@ mod tests {
         let mut st = LedgerState::genesis(1);
         angemeldet(&mut st, 3);
         assert_eq!(st.miner[&kennung(3)].schluessel, probeschluessel(3));
+    }
+
+    /// ⚑ **Ein Prüfer ohne die grossen Sammlungen rechnet denselben Block**
+    /// (zustandslose Validierung, 2026-10-29): Der Erzeuger hält alles,
+    /// zeichnet auf und gibt den Zeugen heraus; der Prüfer hält die kleinen
+    /// Sammlungen und vom grossen Baum nur die Wurzel. Der Block überweist
+    /// an ein bestehendes und an ein neues Konto, leert eines (es fällt
+    /// weg), eröffnet eine Sitzung und räumt eine abgelaufene samt Fach
+    /// auf. Beide kommen zur selben Wurzel, auch danach noch.
+    #[test]
+    fn ein_pruefer_ohne_grosse_sammlungen_rechnet_denselben_block() {
+        let (mut voll, alt) = state_mit_sitzung(500);
+        for i in 20..220u8 {
+            voll.account_mut(&adresse(i)).balance = 1_000 + u64::from(i);
+        }
+        voll.epoch = EpochId(100 + SITZUNG_NACHFRIST + 1);
+        let block = |z: &mut LedgerState| {
+            transfer(z, &adresse(20), &adresse(21), 5).expect("bestehend");
+            transfer(z, &adresse(22), &adresse(240), 7).expect("neu");
+            let alles = z.account(&adresse(23)).balance;
+            transfer(z, &adresse(23), &adresse(24), alles).expect("leer");
+            let k = Sitzungskontrakt::neu(adresse(25), adresse(2), grenzen(1_000, 300, u64::MAX), myl_types::sitzung::Grenzen::gesperrt(), vec![adresse(10)], EpochId(0), EpochId(400), 16).expect("gültig");
+            sitzung_eroeffnen(z, &adresse(25), k).expect("eröffnen");
+            assert_eq!(sitzung_aufraeumen(z).len(), 1);
+            z.leere_konten_entfernen();
+        };
+        let mut pruefer = voll.zustandslos();
+        assert_eq!(pruefer.wurzel(), voll.wurzel(), "derselbe Stand");
+        assert_eq!(pruefer.accounts.anzahl(), 0, "der Prüfer hält keine Konten");
+        let mut ohne_konto = pruefer.clone();
+        let mut gefaelscht_bei = pruefer.clone();
+
+        voll.aufzeichnen_beginnen();
+        block(&mut voll);
+        let zeuge = voll.zeuge_nehmen().expect("bezeugbar");
+        let nachher = voll.wurzel();
+        assert!(!voll.accounts.contains_key(&adresse(23)), "das leere Konto fiel weg");
+        assert!(voll.sitzung(&alt).is_none());
+        let zeuge: crate::state::Zeuge = borsh::from_slice(&borsh::to_vec(&zeuge).unwrap()).unwrap();
+
+        pruefer.zeuge_einsetzen(&zeuge).expect("trägt");
+        block(&mut pruefer);
+        assert_eq!(pruefer.wurzel(), nachher, "dieselbe Wurzel");
+        assert!(pruefer.zeuge_eingehalten());
+        pruefer.zeuge_abschliessen(true);
+        assert_eq!(pruefer.wurzel(), nachher, "auch nur mit der Wurzel");
+        assert_eq!(pruefer.accounts.anzahl(), 0);
+
+        // Gegenproben. Der Zeuge gehört zum Stand vor dem Block: Ein
+        // Prüfer von danach nimmt ihn nicht.
+        assert_eq!(voll.zustandslos().zeuge_einsetzen(&zeuge), Err(crate::state::Zeugenfehler::FremdeWurzel));
+        // Fehlt ein berührtes Konto, fällt der Zugriff auf.
+        let mut ohne = zeuge.clone();
+        ohne.accounts.retain(|(a, _)| *a != adresse(21));
+        let vorher = ohne_konto.wurzel();
+        let sicherung = ohne_konto.sichern();
+        ohne_konto.zeuge_einsetzen(&ohne).expect("was drin ist, passt");
+        block(&mut ohne_konto);
+        ohne_konto.wurzel();
+        assert!(!ohne_konto.zeuge_eingehalten(), "ein Zugriff daneben fällt auf");
+        // Abgewiesen: der Rest über die Sicherung, der grosse Baum hier.
+        ohne_konto.zuruecksetzen(sicherung);
+        ohne_konto.zeuge_abschliessen(false);
+        assert_eq!(ohne_konto.wurzel(), vorher, "abgewiesen: zurück auf davor");
+        // Ein gefälschtes Guthaben passt nicht zum Teilbaum.
+        let mut gefaelscht = zeuge.clone();
+        if let Some((_, Some(k))) = gefaelscht.accounts.iter_mut().find(|(a, _)| *a == adresse(20)) {
+            k.balance += 1_000_000;
+        }
+        assert_eq!(gefaelscht_bei.zeuge_einsetzen(&gefaelscht), Err(crate::state::Zeugenfehler::EintragFalsch));
+    }
+
+    /// ⚑ **Die leichte Form und die Kontobeweise** (2026-10-29): Aus der
+    /// leichten Form entsteht ein zustandsloser Stand mit derselben Wurzel,
+    /// der den nächsten Block mit Zeugen rechnet. ⛔️ Ein Konto, in die
+    /// grosse Sammlung der leichten Form geschmuggelt, wird abgewiesen, ein
+    /// Anhängsel ebenso. Kontobeweise eines vollen Knotens tragen gegen die
+    /// Wurzel des leichten Stands, gefälschte nicht, auch nicht für das
+    /// Fehlen eines vorhandenen Kontos.
+    #[test]
+    fn die_leichte_form_und_kontobeweise() {
+        let (mut voll, _) = state_mit_sitzung(500);
+        for i in 20..120u8 {
+            voll.account_mut(&adresse(i)).balance = 1_000 + u64::from(i);
+        }
+        let bytes = voll.leicht_bytes();
+        let mut leicht = LedgerState::aus_leicht(&bytes).expect("lesbar");
+        assert_eq!(leicht.wurzel(), voll.wurzel(), "dieselbe Wurzel");
+        assert_eq!(leicht.accounts.anzahl(), 0);
+        // Weiter mit Zeugen.
+        voll.aufzeichnen_beginnen();
+        transfer(&mut voll, &adresse(20), &adresse(21), 5).unwrap();
+        let zeuge = voll.zeuge_nehmen().unwrap();
+        leicht.zeuge_einsetzen(&zeuge).expect("trägt");
+        transfer(&mut leicht, &adresse(20), &adresse(21), 5).unwrap();
+        assert_eq!(leicht.wurzel(), voll.wurzel());
+        assert!(leicht.zeuge_eingehalten());
+        leicht.zeuge_abschliessen(true);
+        // Geschmuggelt.
+        let (z, w) = bytes.split_at(bytes.len() - 32);
+        let mut geschmuggelt: LedgerState = borsh::from_slice(z).unwrap();
+        geschmuggelt.accounts.insert(adresse(99), crate::state::AccountState { balance: 1 << 40, ..crate::state::AccountState::neu(EpochId(0)) });
+        let mut b = borsh::to_vec(&geschmuggelt).unwrap();
+        b.extend_from_slice(w);
+        assert!(LedgerState::aus_leicht(&b).is_none(), "ein geschmuggeltes Konto");
+        let mut anhang = z.to_vec();
+        anhang.push(0);
+        anhang.extend_from_slice(w);
+        assert!(LedgerState::aus_leicht(&anhang).is_none(), "ein Anhängsel");
+        // Kontobeweise.
+        let beweise = voll.kontobeweise(&[adresse(20), adresse(21), adresse(250)]).unwrap();
+        for k in &beweise {
+            assert!(leicht.kontobeweis_traegt(k), "{:?}", k.adresse);
+        }
+        assert!(beweise[2].konto.is_none(), "das Fehlen ist belegt");
+        let mut falsch = beweise[0].clone();
+        falsch.konto.as_mut().unwrap().balance += 1;
+        assert!(!leicht.kontobeweis_traegt(&falsch));
+        let mut weg = beweise[1].clone();
+        weg.konto = None;
+        assert!(!leicht.kontobeweis_traegt(&weg), "Fehlen eines vorhandenen");
+        assert!(leicht.kontobeweise(&[adresse(20)]).is_none(), "ein leichter Stand stellt keine aus");
+    }
+
+    /// ⚑ **Das Aufräumen ist begrenzt** (2026-10-29): Über der Grenze rückt
+    /// der Rest in das Fach der nächsten Epoche und fällt dort weg.
+    #[test]
+    fn das_aufraeumen_ist_begrenzt() {
+        let mut state = LedgerState::genesis(1);
+        let mut ids = Vec::new();
+        for i in 0..5u8 {
+            let k = Sitzungskontrakt::neu(adresse(1), adresse(2), grenzen(1_000, 300, u64::MAX), myl_types::sitzung::Grenzen::gesperrt(), vec![adresse(10 + i)], EpochId(0), EpochId(100), 16).expect("gültig");
+            ids.push(sitzung_eroeffnen(&mut state, &adresse(1), k).expect("eröffnen"));
+        }
+        state.epoch = EpochId(100 + SITZUNG_NACHFRIST + 1);
+        assert_eq!(sitzung_aufraeumen_hoechstens(&mut state, 2).len(), 2);
+        assert_eq!(state.sitzungen.anzahl(), 3);
+        state.epoch = EpochId(100 + SITZUNG_NACHFRIST + 2);
+        assert_eq!(sitzung_aufraeumen_hoechstens(&mut state, 2).len(), 2);
+        state.epoch = EpochId(100 + SITZUNG_NACHFRIST + 3);
+        assert_eq!(sitzung_aufraeumen_hoechstens(&mut state, 2).len(), 1);
+        assert_eq!(state.sitzungen.anzahl(), 0);
+        assert_eq!(state.sitzungsablauf.anzahl(), 0, "kein Fach bleibt liegen");
+    }
+
+    /// ⚑ **Vorgemerkte Auszahlungen werden begrenzt je Block gebucht**
+    /// (2026-10-30): zusammengefasst je Konto, nach Adresse, höchstens die
+    /// Grenze; die Summe bleibt.
+    #[test]
+    fn vorgemerkte_auszahlungen_werden_begrenzt_gebucht() {
+        let mut state = LedgerState::genesis(1);
+        for i in 0..10u8 {
+            auszahlung_vormerken(&mut state, &adresse(i), 100);
+        }
+        auszahlung_vormerken(&mut state, &adresse(3), 5);
+        auszahlung_vormerken(&mut state, &adresse(4), 0);
+        assert_eq!(state.auszahlungen_offen.anzahl(), 10);
+        assert_eq!(auszahlungen_buchen(&mut state, 4), 4);
+        assert_eq!(state.account(&adresse(3)).balance, 105, "zusammengefasst");
+        assert_eq!(state.account(&adresse(4)).balance, 0, "noch nicht dran");
+        assert_eq!(auszahlungen_buchen(&mut state, 4), 4);
+        assert_eq!(auszahlungen_buchen(&mut state, 4), 2);
+        assert_eq!(auszahlungen_buchen(&mut state, 4), 0);
+        let summe: u64 = (0..10u8).map(|i| state.account(&adresse(i)).balance).sum();
+        assert_eq!(summe, 1_005);
+    }
+
+    /// ⚑ **Ausgelagert ist derselbe Zustand** (2026-10-30): Ein Zustand mit
+    /// ausgelagertem grossen Baum und einer im Speicher rechnen über viele
+    /// Blöcke dieselbe Wurzel und geben Byte für Byte denselben Zeugen und
+    /// dieselben Kontobeweise; ausgelagert steht nur ein Bruchteil des
+    /// Baums im Speicher.
+    #[test]
+    fn ausgelagert_ist_derselbe_zustand() {
+        let mut speicher = LedgerState::genesis(1);
+        for i in 0..3_000u32 {
+            let mut b = [0u8; 32];
+            b[..4].copy_from_slice(&i.to_le_bytes());
+            speicher.account_mut(&Address::new(b)).balance = 1_000;
+        }
+        let mut platte = speicher.clone();
+        let pfad = std::env::temp_dir().join(format!("myl-zustand-seiten-{}", std::process::id()));
+        platte.baum_auslagern(&pfad).expect("Ablage");
+        assert_eq!(platte.wurzel(), speicher.wurzel());
+        let (im_speicher, belegt) = platte.baum_groessen();
+        assert!(im_speicher < 600 && belegt > 0, "{im_speicher} Knoten im Speicher, {belegt} Bytes ausgelagert");
+        let adr = |i: u32| {
+            let mut b = [0u8; 32];
+            b[..4].copy_from_slice(&i.to_le_bytes());
+            Address::new(b)
+        };
+        for runde in 0..20u32 {
+            let block = |z: &mut LedgerState| {
+                for j in 0..25u32 {
+                    let von = adr((runde * 131 + j * 17) % 3_000);
+                    let nach = adr((runde * 71 + j * 29) % 3_500);
+                    let _ = transfer(z, &von, &nach, 1 + u64::from(j));
+                }
+                let leer = adr((runde * 13) % 3_000);
+                let alles = z.account(&leer).balance;
+                let _ = transfer(z, &leer, &adr(1), alles);
+                z.leere_konten_entfernen();
+            };
+            speicher.aufzeichnen_beginnen();
+            platte.aufzeichnen_beginnen();
+            block(&mut speicher);
+            block(&mut platte);
+            let a = speicher.zeuge_nehmen().expect("Zeuge");
+            let b = platte.zeuge_nehmen().expect("Zeuge");
+            assert_eq!(a, b, "Runde {runde}: der Zeuge");
+            assert_eq!(platte.wurzel(), speicher.wurzel(), "Runde {runde}");
+            let k = [adr(runde), adr(4_000)];
+            assert_eq!(platte.kontobeweise(&k), speicher.kontobeweise(&k));
+        }
+        assert_eq!(platte.commitment(), speicher.commitment());
+        std::fs::remove_file(&pfad).ok();
     }
 }

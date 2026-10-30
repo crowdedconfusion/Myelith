@@ -345,3 +345,28 @@ async fn ein_einzelner_peer_bekommt_hoechstens_zwei_verbindungen() {
     // das Opfer nicht überlastet.
     assert_eq!(ruhig, 1, "ein Angreifer, ein Peer, egal wie oft er wählt");
 }
+
+/// ⚑ **Fund 674: Ein Pod-Mitglied mit Vorrang bekommt seinen Platz.** Das
+/// Opfer hat einen einzigen ausgehenden Platz, und der ist belegt. Ein
+/// zweiter Wählversuch scheitert an der Grenze (Gegenprobe); mit Vorrang
+/// für die Gegenstelle kommt die Verbindung zustande, und nach dem Entzug
+/// des Vorrangs zählt die Grenze wieder für einen dritten.
+#[tokio::test]
+async fn ein_pod_mitglied_mit_vorrang_bekommt_seinen_platz() {
+    let a = Node::start(None).await;
+    let b = Node::start(None).await;
+    let c = Node::start(None).await;
+    let opfer = Node::start_mit(config_mit_grenzen(8, 1), None).await;
+    assert!(opfer.dial(a.listen_addr.clone()).await);
+    assert_eq!(opfer.warte_auf_peers(1, Duration::from_secs(5)).await, 1);
+    // ⛔️ Gegenprobe: ohne Vorrang kein zweiter ausgehender Platz.
+    opfer.dial(b.listen_addr.clone()).await;
+    assert_eq!(opfer.warte_auf_ruhe(Duration::from_secs(2), Duration::from_secs(8)).await, 1, "die Grenze greift");
+    // Mit Vorrang für b.
+    opfer.commands.send(NodeCommand::Vorrang { peers: vec![b.peer_id] }).expect("Kommando");
+    assert!(opfer.dial(b.listen_addr.clone()).await);
+    assert_eq!(opfer.warte_auf_peers(2, Duration::from_secs(5)).await, 2, "b hat Vorrang");
+    // ⛔️ Gegenprobe: c ohne Vorrang bleibt draußen.
+    opfer.dial(c.listen_addr.clone()).await;
+    assert_eq!(opfer.warte_auf_ruhe(Duration::from_secs(2), Duration::from_secs(8)).await, 2, "c hat keinen Vorrang");
+}

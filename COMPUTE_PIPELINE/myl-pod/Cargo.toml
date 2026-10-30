@@ -1,6 +1,6 @@
 [package]
 name = "myl-pod"
-version = "0.43.1"
+version = "0.48.0"
 edition = "2021"
 rust-version = "1.99"
 description = "L2-Compute-Pipeline für Myelith (Whitepaper Kap. 4, Anhang A.3): Pod-Mining-Loop mit Spur-Hashes und Eingangs-Prüfung (Manipulationserkennung), BLS-Signierung der Shard-Übergänge, KV-Cache-Session-Affinität und erasure-codierter DA-Archivierung. Konsumiert die INTEGER_LLM-Stage-API und myl-types."
@@ -35,6 +35,13 @@ myl-consensus = { path = "../../CONSENSUS/myl-consensus" }
 # ⚑ Das 0,6B rechnet in den Netzproben (Pruefnetz); nur hier, nie im
 # ausgelieferten Programm (INTEGER_LLM/runtime/src/netzfreigabe.rs).
 integer-llm-runtime = { path = "../../INTEGER_LLM/runtime", features = ["pruefnetz"] }
+
+# ⚑ **Ein Fälscher für den Prüfstand** (2026-10-28): Mit diesem Merkmal und
+# `MYL_SHARD_FAELSCHEN=1` rechnet ein Shard auf einer um eins verschobenen
+# Eingabe, in sich stimmig (Spur und Unterschrift passen). So prüft ein
+# Netzlauf, dass zwei Pods uneinig werden. Nie im ausgelieferten Programm.
+[features]
+faelscher = []
 
 [lib]
 name = "myl_pod"

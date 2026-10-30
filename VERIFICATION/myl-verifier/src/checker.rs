@@ -28,6 +28,12 @@ pub enum CheckError {
         /// Die Position, die nachgerechnet werden sollte.
         position: usize,
     },
+    /// Ein Verlauf zum Nachrechnen taugt nicht: leer, Tokens und Ketten
+    /// verschieden lang, oder ein Token ausserhalb des Vokabulars.
+    Verlauf {
+        /// Die Position, an der es scheiterte.
+        position: usize,
+    },
 }
 
 impl std::fmt::Display for CheckError {
@@ -39,6 +45,7 @@ impl std::fmt::Display for CheckError {
                 f,
                 "Position {position} laesst sich ohne den KV-Verlauf der Positionen davor nicht nachrechnen"
             ),
+            Self::Verlauf { position } => write!(f, "der Verlauf taugt an Position {position} nicht zum Nachrechnen"),
         }
     }
 }
@@ -328,36 +335,17 @@ pub fn pruefe_spurantwort(
     segments_root: &myl_types::ids::MerkleRoot,
     segmente_im_buendel: u32,
 ) -> Result<CheckResult, Spurfehler> {
-    if antwort.beweis.leaf_index != u64::from(antwort.anfrage.segment) {
-        return Err(Spurfehler::FalschesSegment {
-            gefragt: antwort.anfrage.segment,
-            geliefert: antwort.beweis.leaf_index,
-        });
-    }
-    if antwort.beweis.leaf_count != u64::from(segmente_im_buendel) {
-        return Err(Spurfehler::BlattzahlPasstNicht {
-            im_buendel: segmente_im_buendel,
-            im_beweis: antwort.beweis.leaf_count,
-        });
-    }
-
-    // Das Blatt ist `Id ‖ Spurwurzel`, genau wie in `segments_root`.
-    let mut blatt = Vec::with_capacity(64);
-    blatt.extend_from_slice(antwort.zeugnis.id.as_ref());
-    blatt.extend_from_slice(antwort.zeugnis.spurwurzel.as_ref());
-    let wurzel = Hash(*segments_root.as_bytes());
-    if !antwort
-        .beweis
-        .verify(&wurzel, &blatt, antwort.beweis.leaf_index)
-    {
-        return Err(Spurfehler::BeweisTraegtNicht);
-    }
-
-    let roh: Vec<[u8; 32]> = antwort.spur.iter().map(|h| *h.as_bytes()).collect();
-    match myl_types::spurwurzel(&roh) {
-        Ok(w) if w == antwort.zeugnis.spurwurzel => {}
-        _ => return Err(Spurfehler::SpurPasstNichtZumZeugnis),
-    }
+    // ⚑ Die Lieferung prüft `myl_types::lieferung_pruefen` (2026-10-28):
+    //   dieselben vier Schritte, die auch der Knoten vor jedem Nachrechnen
+    //   geht, an einer Stelle.
+    myl_types::lieferung_pruefen(antwort, segments_root, segmente_im_buendel).map_err(|f| match f {
+        myl_types::Lieferfehler::FalschesSegment { gefragt, geliefert } => Spurfehler::FalschesSegment { gefragt, geliefert },
+        myl_types::Lieferfehler::BlattzahlPasstNicht { im_buendel, im_beweis } => {
+            Spurfehler::BlattzahlPasstNicht { im_buendel, im_beweis }
+        }
+        myl_types::Lieferfehler::BeweisTraegtNicht => Spurfehler::BeweisTraegtNicht,
+        myl_types::Lieferfehler::SpurPasstNichtZumZeugnis => Spurfehler::SpurPasstNichtZumZeugnis,
+    })?;
 
     check_segment(
         auditor,

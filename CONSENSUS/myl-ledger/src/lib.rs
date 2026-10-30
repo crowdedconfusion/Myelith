@@ -26,6 +26,8 @@
 
 pub mod archiv;
 pub mod einsatz;
+pub mod pruefung;
+pub mod sammlung;
 pub mod state;
 pub mod transitions;
 

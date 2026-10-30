@@ -67,6 +67,8 @@ fn ehrliches_buendel(epoch: EpochId, pod: PodId, vtfe: u64) -> PoIBundle {
         vtfe_claimed: vtfe,
         aggregate_sig: BlsSignature([0u8; 96]),
         segmente: 1,
+        ausgabenwurzel: myl_types::MerkleRoot::new([0u8; 32]),
+        vertreter: Vec::new(),
     };
     let msg = bundle_message(&vorlage);
     let sigs: Vec<BlsSignature> = (1..=3u8).map(|i| sk(i).sign(&msg).expect("sign")).collect();
@@ -186,6 +188,8 @@ fn ein_allein_unterschriebenes_buendel_wird_abgelehnt() {
         vtfe_claimed: 1_000,
         aggregate_sig: BlsSignature([0u8; 96]),
         segmente: 1,
+        ausgabenwurzel: myl_types::MerkleRoot::new([0u8; 32]),
+        vertreter: Vec::new(),
     };
     let msg = bundle_message(&vorlage);
 
@@ -260,6 +264,8 @@ fn fund_52_die_uebergangssignaturen_verifizieren_das_buendel_nicht() {
         vtfe_claimed: 1_000,
         aggregate_sig: BlsSignature([0u8; 96]),
         segmente: 1,
+        ausgabenwurzel: myl_types::MerkleRoot::new([0u8; 32]),
+        vertreter: Vec::new(),
     };
 
     // So baut `Coordinator::build_poi_bundle` das Aggregat: über die
@@ -302,12 +308,10 @@ fn fund_52_die_uebergangssignaturen_verifizieren_das_buendel_nicht() {
 
 /// **Die Botschaft des Pods ist bitgleich mit der des Konsenses.**
 ///
-/// `Coordinator::signierbotschaft` und
-/// `myl_consensus::poi::bundle_message` kodieren dasselbe. Sie stehen an
-/// zwei Orten, weil `myl-pod` nicht an `myl-consensus` hängen soll, und
-/// **genau deshalb braucht es diesen Test**: Eine Dublette der Kodierung
-/// läuft irgendwann auseinander, und dann ist der Streit nicht mehr
-/// entscheidbar.
+/// `Coordinator::signierbotschaft` und `bundle_message` kodieren dasselbe.
+/// Seit Fund 673 ruft die eine die andere; die Probe bleibt, damit eine
+/// neue Abschrift sofort auffällt, auch mit Ausgabenwurzel (Stufe 1), denn
+/// ohne sie wäre eine alte Abschrift noch gleich.
 #[test]
 fn die_signierbotschaft_des_pods_ist_die_des_konsenses() {
     let mut w: u64 = 0x243F_6A88;
@@ -323,6 +327,9 @@ fn die_signierbotschaft_des_pods_ist_die_des_konsenses() {
             vtfe_claimed: w,
             aggregate_sig: BlsSignature([0u8; 96]),
             segmente: 1,
+            // Jede zweite mit Ausgabenwurzel.
+            ausgabenwurzel: myl_types::MerkleRoot::new([if w & 1 == 1 { (w >> 24) as u8 | 1 } else { 0 }; 32]),
+            vertreter: Vec::new(),
         };
         assert_eq!(
             myl_pod::coordinator::Coordinator::signierbotschaft(&b),

@@ -408,5 +408,10 @@ fn dienst(
             befund.adresse
         );
     }
-    dienst.laufen();
+    // ⚑ Mehrere Anfragen zugleich, je Zwillingspaar eine (2026-10-28).
+    std::sync::Arc::new(dienst).laufen_parallel(ORTSDIENST_ZUGLEICH);
 }
+
+/// Wie viele Anfragen der Ortsdienst zugleich bedient: genug für viele
+/// Zwillingspaare; jede wartet ohnehin auf ihren Pod.
+const ORTSDIENST_ZUGLEICH: usize = 32;

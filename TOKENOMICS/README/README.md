@@ -1,7 +1,7 @@
 # tokenomics (`myl-tokenomics`)
 
-> **Version:** 0.23.1
-> **Datum:** 2026-10-22
+> **Version:** 0.25.0
+> **Datum:** 2026-10-30
 > **Status:** Design-Entscheidungen getroffen (Fixed-Point bestätigt,
 > vTFE-Skalierung 10⁻⁶, MYL-Kleinstbeträge 10⁶, EMA-Fenster 30 Epochen
 > α=2/31); 🎉 **Phasen 1 bis 5 abgeschlossen** (Auslastungsboden und
@@ -97,6 +97,41 @@ volle Gutschrift bekommen. Eine Funktion, die immer null liefert,
 verletzt keine Obergrenze.
 
 ## Changelog
+
+### v0.25.0 (2026-10-30): Die Ausschüttung vorgemerkt
+
+- ⚑ **`epochenausschuettung_vorgemerkt`** (verteilte Ausschüttung, nach dem
+  Vorbild von Solanas „Partitioned Epoch Rewards“, SIMD-0118): dieselben
+  Beträge, Klassen und derselbe Abschluss wie
+  `epochenausschuettung_mit_pruefern`, aber jeder Anteil kommt in
+  `LedgerState::auszahlungen_offen` und wird in den folgenden Blöcken
+  begrenzt gebucht. Kein Konto wird dabei berührt (ausser der Treasury,
+  wenn aus ihrem Bestand gezahlt wird); die Überlaufprüfung je Konto
+  entfällt, denn sie läse jedes Konto, und gebucht wird gekappt. ⚑ Abwägung
+  gegen Cosmos F1 (Abruf durch den Miner): F1 macht den Wechsel O(1),
+  verlangt aber, dass jeder abholt, und je Miner einen offenen Posten; die
+  Partitionen behalten Bedeutung und Bedienung und begrenzen trotzdem je
+  Block. Die Bibliothek und die Simulation buchen weiter sofort.
+- Whitepaper Kap. 5.3: Aufteilung und Beträge unverändert; nur der
+  Zeitpunkt der Gutschrift liegt bei sehr vielen Minern in den ersten
+  Blöcken der neuen Epoche (bei bis zu 4096 Empfängern im Wechselblock
+  selbst).
+- Test `vorgemerkt_ergibt_dieselben_guthaben`: 10 000 Miner, die
+  vorgemerkte Ausschüttung berührt höchstens ein Konto (aufgezeichnet),
+  nach drei Partitionen dieselben Guthaben und dieselbe Zustandswurzel wie
+  sofort gebucht.
+
+### v0.24.0 (2026-10-29): Der Checker-Pool zahlt aus
+
+- ⚑ **`epochenausschuettung_mit_pruefern`** (Anhang B.3: „Checker-Vergütung
+  = Grundvergütung (4 % der Prägung, proportional zu geprüftem Volumen)“;
+  Festlegung des Projektinhabers vom 2026-10-29): Die 4 % gehen nach dem
+  geprüften Volumen der Epoche an die Auszahlungskonten der Checker. Ohne
+  Volumen bleibt der Pool ungeprägt wie bisher (`KeineGewichtsquelle`);
+  ohne Auszahlungskonto zählt ein Checker nicht. Das Kopfgeld (b = 30 %)
+  kommt weiter aus `apply_verdict`. `epochenausschuettung_mit_training`
+  ruft sie mit leerem Volumen.
+- Test `der_checker_pool_zahlt_nach_geprueftem_volumen`.
 
 ### v0.23.1 (2026-10-22): Eine Werkzeugkette für alle Kisten
 

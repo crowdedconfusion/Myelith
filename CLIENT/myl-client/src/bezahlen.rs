@@ -91,7 +91,7 @@ pub fn gebuehr(stand: &Kontostand, anweisung: &Anweisung) -> u64 {
         anweisung: anweisung.clone(),
         signatur: myl_types::bls::BlsSignature([0; myl_types::bls::BLS_SIG_LEN]),
     };
-    stand.grundpreis_je_byte.saturating_mul(muster.gebuehrenbytes())
+    stand.grundpreis_je_byte.saturating_mul(muster.gebuehreneinheiten())
 }
 
 /// Wie [`senden`], mit einem schon gelesenen Stand: unterschrieben wird

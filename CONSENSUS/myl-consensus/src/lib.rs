@@ -25,6 +25,7 @@ pub mod pruefpunkt;
 pub mod poi;
 pub mod epoch_close;
 pub mod da;
+pub mod zeuge;
 
 pub use validator::{
     Validator, ValidatorRegistry, Committee, CommitteeRole, select_committee,

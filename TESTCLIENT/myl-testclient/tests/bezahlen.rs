@@ -216,6 +216,25 @@ async fn ein_wallet_kauft_credits_eroeffnet_eine_sitzung_und_widerruft_sie() {
     )
     .await;
     assert!(matches!(&r, Ok(myl_types::relais::Relaisantwort::Fehler(f)) if f.contains("ungültig")), "{r:?}");
+    // Eine gültig unterschriebene Transaktion mit verbrauchter Nummer weist
+    // der Mempool ab, und die Leitung sagt es (2026-10-28); vorher kam
+    // „verbreitet“, und eine Wallet hielt sie für unterwegs.
+    let alt = myl_consensus::block::Transaktion::signiere(
+        &knoten[0].kette().netzwert(),
+        &myl_node::kette::probeschluessel(1),
+        0,
+        myl_consensus::block::Anweisung::Burn { betrag: 1 },
+    )
+    .expect("signieren");
+    let bytes = borsh::to_vec(&alt).expect("Borsh");
+    let r = treiben_bis(
+        &mut knoten,
+        tokio::task::spawn_blocking(move || {
+            myl_types::relais::fragen(relais, &leitung.ausweis, &myl_types::relais::Relaisfrage::Transaktion { tx: bytes }, Duration::from_secs(10))
+        }),
+    )
+    .await;
+    assert!(matches!(&r, Ok(myl_types::relais::Relaisantwort::Fehler(f)) if f.contains("abgewiesen")), "{r:?}");
 
     // ---- Der Inhaber widerruft ----------------------------------------------
     let (l, z) = (leitung, zahler.clone());

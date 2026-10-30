@@ -331,6 +331,8 @@ mod tests {
             vtfe_claimed: 1_000,
             aggregate_sig: BlsSignature([0; 96]),
             segmente,
+            ausgabenwurzel: MerkleRoot::new([0u8; 32]),
+            vertreter: Vec::new(),
         }
     }
 

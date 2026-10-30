@@ -1,7 +1,7 @@
 # shared-types (`myl-types`)
 
-> **Version:** 0.52.0
-> **Datum:** 2026-10-27
+> **Version:** 0.62.0
+> **Datum:** 2026-10-29
 > **Status:** 🎉 **Phase 2 abgeschlossen** (Punkte 1.1–1.7, 2.1–2.3):
 > Hash, Merkle-Baum, VRF (bit-exakt gegen RFC-9381-Vektoren), BLS12-381
 > mit Aggregation **und Proof-of-Possession**, **Erasure-Codierung über
@@ -49,6 +49,211 @@ SHARED_TYPES/
 ```
 
 ## Changelog
+
+### v0.62.0 (2026-10-30): Der Zustandsbaum auf der Platte
+
+Punkt 1 der Festlegung vom 2026-10-29 (nach dem Vorbild von NOMT, geprüft
+gegen QMDB; eigene Umsetzung).
+
+- ⚑ **`Zustandsbaum::mit_ablage`**: Teilbäume unterhalb einer Tiefe, die mit
+  der Zahl der Einträge wächst (rund 128 Einträge je Seite), liegen als
+  Seiten in einer Datei (`Seitenablage`: Grössenklassen ab 256 Bytes, freie
+  Plätze wiederverwendet); im Speicher steht der obere Baum, an jeder
+  ausgelagerten Stelle `Knoten::Ausgelagert { seite, hash }`. Vor jedem
+  Zugriff wird der Pfad eingelagert (beim Zeugen eines entfernten
+  Schlüssels auch die Geschwister), nach jeder Wurzel werden genau die
+  eingelagerten Seiten und berührten Pfade wieder ausgelagert (O(k ·
+  Tiefe), nicht über den ganzen Baum); eine unveränderte Seite wird
+  wiederverwendet. Auch während grosser Änderungsfolgen (erster Bau)
+  zwischendurch, alle 65 536 Pfade.
+- ⚑ **Gehasht wird wie zuvor**: gleiche Wurzel, gleiche Beweise, Byte für
+  Byte gleiche Zeugen, gleich, was wo liegt. Die Datei ist ein
+  Zwischenspeicher (der Zustand wird beim Start hergeleitet), braucht also
+  keine Absturzsicherheit.
+- ⛔️ Die Marken einer Seite (4 ausgelagert, 5 Zweig mit Hash) liest nur die
+  eigene Ablage; in einem Zeugen werden sie abgewiesen, dort wird jeder
+  Hash selbst gerechnet. Eine Kopie eines ausgelagerten Baums liegt ganz im
+  Speicher (die Seiten gehören dem Original). `wurzel_gerechnet` liest die
+  Wurzel ohne Kopie, `knoten_im_speicher` für Angaben.
+- 📌 Erste Fassung ohne Hashes in den Seiten: Jede eingelagerte Seite wurde
+  ganz neu gehasht, ein Block mit 2000 Überweisungen bei einer Million
+  Konten brauchte 272 statt 34 ms; mit Hashes 76 ms.
+- Gemessen (Release, eine Million Konten, mit zählendem Allokator):
+  Baumknoten im Speicher 16 383 statt 2,88 Mio.; belegt 183 statt 380 MB
+  (der Rest sind die Konten selbst); RSS fällt kaum (macOS behält
+  freigegebenen Speicher). Block mit Zeugen 76 statt 34 ms, erster Bau
+  10 statt 4 s.
+- Tests `ausgelagert_rechnet_wie_im_speicher` (30 Runden gegen den Baum im
+  Speicher: Wurzel, Werte, Beweise, Zeuge Byte für Byte; Kopie; nach dem
+  Entfernen aller Einträge keine belegte Seite) und
+  `eine_seitenmarke_ist_kein_zeuge`.
+
+### v0.61.0 (2026-10-29): Ein Zeuge wird nur kanonisch gelesen
+
+- ⛔️ **`Teilbaum::aus_bytes` liest nur Kanonisches**: kein Zweig über zwei
+  Leeren oder über Leerem und einem Blatt, kein gekürzter Knoten mit dem
+  Hash des Leeren. Ein solcher Knoten kostete im Draht zwei Bytes und im
+  Speicher ein Vielfaches, bevor die Wurzel ihn verwerfen könnte.
+- ⛔️ **`TEILBAUM_KNOTEN_HOECHSTENS`** (2²¹): Zweige mit leerem Geschwister
+  bleiben kanonisch und kosten zwei Bytes je Ebene; die Schranke bindet den
+  Speicher an die Zahl der Knoten. Ein ehrlicher Zeuge hat bei einer
+  Milliarde Einträgen und 8000 berührten rund eine halbe Million.
+- Test `unkanonisches_wird_nicht_gelesen`; 344 Tests grün, Clippy sauber.
+
+### v0.60.0 (2026-10-29): Der Teilbaum als Zeuge
+
+- ⚑ **`Zustandsbaum::teilbaum(schluessel, entfernt)`** (zustandslose
+  Validierung, Festlegung des Projektinhabers vom 2026-10-29): ein
+  **`Teilbaum`** über die Pfade einiger Schlüssel, alles daneben als Hash;
+  gemeinsame obere Pfade stehen einmal darin. Er hat dieselbe Wurzel wie der
+  volle Baum; `lesen` und `setzen` gehen auf seinen Pfaden, und die neue
+  Wurzel ist die des vollen Baums nach denselben Änderungen. Ein Zugriff
+  daneben ist `Ausserhalb` und ändert nichts. Kodierung `als_bytes` und
+  `aus_bytes` (höchstens 256 tief, kein Rest).
+- ⚑ **Gekürzt wird nur ein Zweig, nie ein Blatt**, und beim Entfernen darf
+  kein gekürzter Knoten neben Leerem stehen bleiben: Der Hash eines
+  einzelnen Blatts, als gekürzter Zweig ausgegeben, gäbe dieselbe
+  Vorwurzel, fiele aber nicht zusammen, wo der volle Baum es tut. Prüfer und
+  volle Knoten kämen zu verschiedenen Wurzeln. Deshalb öffnet der Zeuge
+  neben dem Pfad eines entfernten Schlüssels den Zweig eine Ebene weit; ein
+  geöffneter Zweig ist über die getrennten Hash-Domänen als Zweig belegt
+  und hat im kanonischen Baum mindestens zwei Einträge.
+- 📌 **Erst entscheiden, dann ändern**: Die erste Fassung von
+  `Teilbaum::setzen` sicherte den ganzen Teilbaum vor jeder Änderung; bei
+  4000 Änderungen 8 s je Block. Jetzt entscheidet ein Trockenlauf über den
+  Pfad in O(Tiefe), danach wird ohne Kopie geändert: 29 ms.
+- Tests `der_zeuge_traegt_wie_der_volle_baum`,
+  `ein_als_zweig_getarntes_blatt_faellt_auf`,
+  `der_zeuge_haelt_auch_gemischten_runden_stand` (40 Runden aus Setzen,
+  Neuanlegen und Entfernen); 343 Tests grün, Clippy sauber.
+
+### v0.59.0 (2026-10-29): Der Zustandsbaum
+
+- ⚑ **`zustandsbaum::Zustandsbaum`** (Skalierung, Festlegung des
+  Projektinhabers vom 2026-10-29; Vorbild Jellyfish Merkle Tree und
+  EIP-7864, eigene Umsetzung): ein binärer, dünn besetzter Merkle-Baum über
+  256-Bit-Schlüssel. Ein Teilbaum mit genau einem Eintrag ist dieser
+  Eintrag; die Wurzel hängt nur an der Menge, nicht an der Folge der
+  Änderungen. Zweige merken ihren Hash und rechnen erst bei
+  `wurzel()` nach, was ein Block mehrfach berührt, wird einmal gehasht.
+  `Baumbeweis` für Vorhandensein und Fehlen; `wurzel_von` als Gegenprobe
+  ohne Baum.
+- Gemessen (Release): eine Million Einträge, 2000 Änderungen samt Wurzel
+  11 ms; Beweistiefe 24.
+- Tests `leer_und_ein_eintrag`, `die_wurzel_haengt_nur_an_der_menge`,
+  `beweise_fuer_vorhandene_und_fehlende`; 340 Tests grün.
+
+### v0.58.0 (2026-10-29): Transaktionen gebündelt über die Relaisleitung
+
+- **`Relaisfrage::Transaktionen`** (angehängt), höchstens
+  `TRANSAKTIONEN_JE_FRAGE` (512): viele Transaktionen in einer Frage; der
+  Knoten prüft sie als Stapel. Wie ein Gateway viele Nutzer bündelt.
+
+### v0.57.0 (2026-10-29): Der Differenzbeweis zweier Zwillinge
+
+- ⚑ **`Differenzbeweis`** (Whitepaper 6.4 und 6.6, Festlegung des
+  Projektinhabers vom 2026-10-29): zwei `Differenzseite`n zu derselben
+  Kennung, je mit dem Ausgabenzeugnis und seinem Beweis gegen die
+  Ausgabenwurzel und mit dem Segmentzeugnis und seinem Beweis gegen
+  `segments_root` (das legt die Stelle im Bündel fest).
+  `differenzseite` baut eine Seite aus den Blättern eines Bündels,
+  `differenz_pruefen` prüft beide gegen die Wurzeln und liefert die Stelle
+  in jedem Bündel. Gleiche Blätter sind keine Differenz. Der Beweis
+  verortet die Abweichung, wie Verde und Arbitrum BoLD einen Streit
+  eingrenzen; wer ihn meldet, muss niemand glauben.
+- `Relaisfrage::DifferenzMelden` (angehängt).
+- Test `ein_differenzbeweis_verortet_die_abweichung`; 337 Tests grün.
+
+### v0.56.0 (2026-10-29): Die Tokens in der Ablage, der Verlauf für das Nachrechnen
+
+- ⚑ **`Spurablage::eingaben`** (angehängt, parallel zu `eintraege`): je
+  Segment die Nutzlast seines Eingangs, das Token als zwei `i16`, vier
+  Bytes. Aktivierungen bleiben draussen. Leer heisst: eine Ablage ohne
+  Tokens (ältere Fassung); sie beantwortet Spuranfragen wie bisher, aber
+  keine Verläufe.
+- **`Spurablage::verlauf`**: zu einem gezogenen Segment alle Segmente
+  derselben Sitzung bis zu ihm, nach Position geordnet, jedes mit Beweis
+  gegen dieselbe Spurwurzel und mit seinem Token.
+- **`verlauf_pruefen`**: jede Lieferung trägt, eine Sitzung, Positionen
+  lückenlos ab null bis zum gezogenen Segment, und der Hash jedes Tokens ist
+  der erste Eintrag seiner Spur. Ergebnis sind die Tokens; ein Pod kann so
+  keine anderen unterschieben als die, über die er gerechnet hat. Fehler
+  als `Verlauffehler`.
+- Dazu `sitzung_und_position`, `token_aus_eingabe`, `eingabe_aus_bytes`.
+- Test `der_verlauf_liefert_die_tokens_bis_zum_gezogenen_segment`; 318 Tests
+  grün.
+
+### v0.55.0 (2026-10-28): Die Ausgabenwurzel für Stufe 1
+
+- ⚑ **`PoIBundle.ausgabenwurzel`** (angehängt; Whitepaper 3.4, Festlegung
+  des Projektinhabers vom 2026-10-28): Merkle-Wurzel über Kennung, Eingang
+  und letzte Ausgabe je Segment (`Ausgabenzeugnis`, `ausgabenwurzel`),
+  **nach Kennung geordnet**. Zwei Zwillingspods, die dieselben Segmente
+  gleich gerechnet haben, tragen dieselbe, gleich in welcher Folge sie
+  abschlossen; daran vergütet die Kette (NODE 0.77.0). `segments_root`
+  taugt dafür nicht, weil sie der Folge des Abschlusses folgt. Null heisst:
+  keine. `poi_botschaft::bundle_message` hängt sie an, sobald sie nicht
+  null ist; die Felder davor haben feste Länge, die Botschaft ist also
+  eindeutig, und wer die Wurzel nach dem Unterschreiben ändert oder
+  streicht, macht das Aggregat ungültig.
+- **`relais::Podeintrag.zwilling`** (angehängt): der Pod, der dieselben
+  Segmente rechnet, aus denselben Paaren, nach denen die Kette vergütet.
+- Proben `die_ausgabenwurzel_ist_von_der_reihenfolge_frei` (Gegenproben:
+  anderer Ein- oder Ausgang, andere Kennung, ein Segment weniger) und
+  `die_botschaft_traegt_die_ausgabenwurzel`. ⚠️ Das Format des Bündels und
+  des Podbilds ändert sich; der Fuzz-Korpus `poi_buendel` läuft weiter
+  durch, seine alten Einträge sind keine gültigen Bündel mehr.
+- ⚑ **Übernahme durch die Reserve** (Whitepaper 6.8, Festlegung des
+  Projektinhabers vom 2026-10-28): `PoIBundle.vertreter` (angehängt), je
+  Position das Reservemitglied, das sie übernahm; `bundle_message` hängt die
+  Liste hinter einer eigenen Marke an, sobald sie nicht leer ist (die
+  Folge aus Wurzel und Vertretern bleibt so eindeutig lesbar).
+  `relais::Podeintrag.reserve` (angehängt) nennt dem Ortsdienst die
+  Reserve; `relais::Relaisfrage::Uebernahme` (angehängt) bittet über die
+  Relaisleitung ein Reservemitglied, eine Position zu übernehmen.
+- ⚑ **Die Spur liegt bei allen Mitgliedern** (Stufe 2, Whitepaper 3.5.2
+  und 6.4): `Spurablage` (Epoche, Pod, `segments_root`, je Segment Zeugnis
+  und Spur in Bündelfolge) mit `antwort`, die auf eine `Spuranfrage` Zeugnis,
+  Merkle-Beweis gegen `segments_root` und Spur liefert (`None`, wenn die
+  Anfrage nicht passt oder die Ablage ihre Wurzel nicht ergibt).
+  `lieferung_pruefen` mit `Lieferfehler` ist die eine Prüfung einer
+  Lieferung: Index, Blattzahl gleich der Segmentzahl des Bündels, Beweis
+  gegen die unterschriebene Wurzel, Spur gleich der bezeugten Spurwurzel.
+  `relais::Relaisfrage::SpurenAblegen` (angehängt) reicht eine Ablage an
+  den Knoten eines Mitglieds. Probe `eine_abgelegte_spur_traegt_gegen_die_wurzel` mit
+  Gegenproben (falscher Index, falsche Blattzahl, fremde Wurzel, andere
+  Spur, fremder Pod, fehlender Index, Ablage mit falscher Wurzel).
+- `myl-types` 0.55.0. 335 Tests grün, Clippy sauber.
+
+### v0.54.0 (2026-10-28): Die Zeitprobe mit Saat
+
+- ⚑ `zeitprobe::anfrage_mit_saat`: Die Anfrage trägt eine Saat des
+  Messenden (32 Byte); die Tür liest sie mit `als_anfrage_voll` (4, 8 oder
+  40 Bytes nach der Marke). Anlass Fund 669: Ohne frische Eingabe war der
+  Abdruck für dieselbe Anfrage immer derselbe und liess sich vorrechnen.
+- `zeitprobe::fragen_mit_saat` und `zeitprobe::antwortnachricht`: die
+  Nachricht, über die das gemessene Mitglied seine Antwort unterschreibt
+  (Saat, Positionen, Abdruck, mit eigener Domäne).
+- `myl-types` 0.54.0. 332 Tests grün, Clippy sauber.
+
+### v0.53.0 (2026-10-28): Stapelprüfung der Unterschriften
+
+- ⚑ `bls::verify_batch`: viele Einzelsignaturen über je eigene Nachrichten
+  in einem Aufruf (`blst` `verify_multiple_aggregate_signatures`), mit
+  Zufallsskalaren von 64 Bit aus `RandomState` der Standardbibliothek, die
+  das Betriebssystem schlüsselt (keine neue Kiste, kein `unsafe`). `true`
+  heisst: jede trägt, bis auf 2⁻⁶⁴; `false`: mindestens eine nicht, oder
+  etwas ist nicht dekodierbar.
+- Gemessen (M5 Pro): rund 90 µs je Signatur samt Dekodieren gegen rund
+  470 µs mit `verify` je Signatur.
+- Probe `die_stapelpruefung_faellt_mit_einer_falschen_signatur`
+  (vertauschte Signaturen, fremde Nachricht, leer, ungleich lang).
+- `examples/pruefrate.rs` (nicht ausgeliefert): misst Einzel- gegen
+  Stapelprüfung auf der eigenen Maschine (`cargo run --release --example
+  pruefrate -- 1000`); hier 452 gegen 87 µs je Unterschrift auf 15 Fäden.
+  Für das Ziel des Grundpreises zählt die Prüfrate der kleinsten
+  zugelassenen Maschine.
+- 332 Tests grün, Clippy sauber.
 
 ### v0.52.0 (2026-10-27): Gebühren in der Kontoauskunft
 

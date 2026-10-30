@@ -654,7 +654,7 @@ dependencies = [
 
 [[package]]
 name = "integer-llm-runtime"
-version = "0.104.1"
+version = "0.105.0"
 dependencies = [
  "integer-llm-kernels",
  "libc",
@@ -820,7 +820,7 @@ dependencies = [
 
 [[package]]
 name = "myl-consensus"
-version = "0.39.0"
+version = "0.47.0"
 dependencies = [
  "borsh",
  "myl-ledger",
@@ -840,7 +840,7 @@ dependencies = [
 
 [[package]]
 name = "myl-ledger"
-version = "0.29.0"
+version = "0.45.0"
 dependencies = [
  "borsh",
  "myl-types",
@@ -849,7 +849,7 @@ dependencies = [
 
 [[package]]
 name = "myl-pod"
-version = "0.43.1"
+version = "0.48.0"
 dependencies = [
  "borsh",
  "getrandom 0.2.17",
@@ -864,7 +864,7 @@ dependencies = [
 
 [[package]]
 name = "myl-scheduler"
-version = "0.18.1"
+version = "0.19.0"
 dependencies = [
  "borsh",
  "myl-train",
@@ -903,7 +903,7 @@ dependencies = [
 
 [[package]]
 name = "myl-tokenomics"
-version = "0.23.1"
+version = "0.25.0"
 dependencies = [
  "borsh",
  "myl-ledger",
@@ -919,7 +919,7 @@ dependencies = [
 
 [[package]]
 name = "myl-types"
-version = "0.52.0"
+version = "0.62.0"
 dependencies = [
  "blst",
  "borsh",
@@ -931,7 +931,7 @@ dependencies = [
 
 [[package]]
 name = "myl-verifier"
-version = "0.23.3"
+version = "0.27.0"
 dependencies = [
  "borsh",
  "integer-llm-kernels",

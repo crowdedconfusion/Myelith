@@ -79,7 +79,10 @@ pub mod anzeige;
 pub mod nachrechner;
 pub mod trainingspruefung;
 pub use anzeige::{anzeige_erheben, beschuldigter, Anzeigefehler, Zustaendigkeit};
-pub use nachrechner::ModellAuditor;
+pub use nachrechner::{
+    logits_hash, schied_nachrechnen, schiedsbeleg, verlauf_als_prefill, verlauf_nachrechnen, verlauf_schrittweise,
+    ModellAuditor, Verlaufsergebnis, Verlaufspruefung,
+};
 pub use checker::{
     check_segment, pruefe_spurantwort, CheckError, CheckResult, SegmentAuditor, Spurfehler,
 };

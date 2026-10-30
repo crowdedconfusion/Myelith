@@ -153,6 +153,11 @@ pub struct Beobachtungsstand {
     pub treasury_guthaben: u64,
     /// Bis zu dieser Höhe ist die Kette durch einen Prüfpunkt bestätigt.
     pub pruefpunkt_bestaetigt: u64,
+    /// Der Credit-Preis der laufenden Epoche (Kleinstbeträge je vTFE).
+    pub credit_preis: u64,
+    /// Zwillingspaare seit Genesis, einig und uneinig (Stufe 1).
+    pub zwillinge_einig: u64,
+    pub zwillinge_uneinig: u64,
 }
 
 impl Beobachtungsstand {
@@ -458,6 +463,9 @@ pub fn als_prometheus(stand: &Beobachtungsstand, jetzt_ms: u64) -> String {
         ("myelith_gebuehren_validatoren", "Topf der Validatoren aus den Gebuehren.", "gauge", stand.gebuehren_validatoren),
         ("myelith_treasury_guthaben", "Guthaben der Treasury.", "gauge", stand.treasury_guthaben),
         ("myelith_pruefpunkt_bestaetigt", "Bis zu dieser Hoehe durch einen Pruefpunkt bestaetigt.", "gauge", stand.pruefpunkt_bestaetigt),
+        ("myelith_credit_preis", "Credit-Preis der laufenden Epoche, Kleinstbetraege je vTFE.", "gauge", stand.credit_preis),
+        ("myelith_zwillinge_einig_total", "Zwillingspaare, die einig waren (beide verguetet).", "counter", stand.zwillinge_einig),
+        ("myelith_zwillinge_uneinig_total", "Zwillingspaare, die uneinig oder unvollstaendig waren.", "counter", stand.zwillinge_uneinig),
     ] {
         zeile(name, hilfe, art, wert);
     }

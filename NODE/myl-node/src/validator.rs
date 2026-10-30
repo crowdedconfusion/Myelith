@@ -79,12 +79,73 @@ use crate::validatorsatz::{Attesturteil, Validatorsatz};
 #[derive(Debug, Default, Clone)]
 pub struct ProtokollValidator {
     validatoren: Validatorsatz,
+    /// Die Blockerzeuger, deren Zeugenstücke weitergeleitet werden.
+    erzeuger: Erzeugerliste,
+    /// Zuletzt geprüfte Zeugenköpfe: Ein Kopf kommt mit jedem seiner
+    /// Stücke, die Unterschrift wird einmal geprüft.
+    gepruefte_koepfe: std::sync::Arc<std::sync::Mutex<std::collections::VecDeque<myl_types::Hash>>>,
 }
+
+/// ⚑ **Die Schlüssel der Blockerzeuger, geteilt** (zustandslose
+/// Validierung, 2026-10-29): Der Knoten führt sie aus seinem Stimmsatz
+/// nach, der Netzfaden prüft Zeugenstücke dagegen. **Leer weist jedes
+/// Stück ab**, der sichere Vorgabefall: Wer die Erzeuger nicht kennt, kann
+/// keine Unterschrift prüfen.
+pub type Erzeugerliste = std::sync::Arc<
+    std::sync::RwLock<std::collections::BTreeMap<myl_types::MinerId, myl_types::bls::BlsPublicKey>>,
+>;
+
+/// So viele geprüfte Zeugenköpfe merkt sich der Netzfaden.
+const GEPRUEFTE_KOEPFE: usize = 64;
 
 impl ProtokollValidator {
     /// Mit einem Validatorsatz für die Attest-Prüfung.
     pub fn mit(validatoren: Validatorsatz) -> Self {
-        Self { validatoren }
+        Self { validatoren, ..Default::default() }
+    }
+
+    /// Dazu die Liste der Blockerzeuger für die Zeugenstücke.
+    pub fn mit_erzeugern(mut self, erzeuger: Erzeugerliste) -> Self {
+        self.erzeuger = erzeuger;
+        self
+    }
+
+    /// ⚑ **Ein Zeugenstück wird nur weitergeleitet**, wenn es vollständig
+    /// lesbar ist, zu seinem Kopf passt und der Kopf von einem bekannten
+    /// Blockerzeuger unterschrieben ist. Sonst könnte jeder das Netz der
+    /// Zustandslosen mit Stücken fluten oder einem Block ein falsches
+    /// Stück voranschicken.
+    pub fn zeugenstueck_traegt(&self, data: &[u8]) -> bool {
+        let mut rest = data;
+        let Ok(s) = myl_consensus::zeuge::Zeugenstueck::deserialize(&mut rest) else {
+            return false;
+        };
+        if !rest.is_empty() || !s.passt() {
+            return false;
+        }
+        let bekannt = self
+            .erzeuger
+            .read()
+            .map(|e| e.get(&s.kopf.erzeuger()) == Some(&s.kopf.schluessel))
+            .unwrap_or(false);
+        if !bekannt {
+            return false;
+        }
+        let kennung = s.kopf.kennung();
+        let Ok(mut gepruefte) = self.gepruefte_koepfe.lock() else {
+            return false;
+        };
+        if gepruefte.contains(&kennung) {
+            return true;
+        }
+        if !s.kopf.traegt() {
+            return false;
+        }
+        gepruefte.push_back(kennung);
+        if gepruefte.len() > GEPRUEFTE_KOEPFE {
+            gepruefte.pop_front();
+        }
+        true
     }
 
     /// Der Validatorsatz, für Diagnose.
@@ -200,6 +261,7 @@ impl PayloadValidator for ProtokollValidator {
             // Netzfaden, und ein `Reject` aus geratener Unkenntnis
             // bestrafte ehrliche Absender im Gossipsub-Scoring.
             GossipTopic::Consensus => liest_sich_vollstaendig_als::<Konsensnachricht>(data),
+            GossipTopic::Zeugen => self.zeugenstueck_traegt(data),
             // Die übrigen prüft `myl-net` strukturell; hier nichts zu
             // ergänzen, solange kein Kettenzustand da ist.
             _ => true,
@@ -463,5 +525,35 @@ mod tests {
         let v = ProtokollValidator::default();
         assert_eq!(v.validatoren().anzahl(), 0);
         assert!(!v.validate(GossipTopic::LatencyAttests, &[0xAB; 40]));
+    }
+
+    /// ⚑ **Zeugenstücke nur von bekannten Erzeugern** (zustandslose
+    /// Validierung, 2026-10-29): ohne Erzeugerliste keines; mit ihr das
+    /// echte, nicht eines mit fremdem Schlüssel, nicht ein verändertes,
+    /// nicht eines mit Anhängsel.
+    #[test]
+    fn zeugenstuecke_nur_von_bekannten_erzeugern() {
+        let sk = myl_types::bls::BlsSecretKey::key_gen(&[5u8; 32]).unwrap();
+        let pk = sk.public_key().unwrap();
+        let stuecke = myl_consensus::zeuge::zerlegen(3, myl_types::Hash::sha256(b"b"), b"zeuge", pk, |m| sk.sign(m).ok()).unwrap();
+        let bytes = borsh::to_vec(&stuecke[0]).unwrap();
+        let liste = Erzeugerliste::default();
+        let v = ProtokollValidator::default().mit_erzeugern(liste.clone());
+        assert!(!v.validate(GossipTopic::Zeugen, &bytes), "niemand bekannt");
+        liste.write().unwrap().insert(myl_types::MinerId::aus_schluessel(&pk), pk);
+        assert!(v.validate(GossipTopic::Zeugen, &bytes));
+        assert!(v.validate(GossipTopic::Zeugen, &bytes), "aus dem Zwischenspeicher");
+        let fremd = myl_types::bls::BlsSecretKey::key_gen(&[6u8; 32]).unwrap();
+        let fremde = myl_consensus::zeuge::zerlegen(3, myl_types::Hash::sha256(b"b"), b"zeuge", fremd.public_key().unwrap(), |m| fremd.sign(m).ok()).unwrap();
+        assert!(!v.validate(GossipTopic::Zeugen, &borsh::to_vec(&fremde[0]).unwrap()), "fremder Erzeuger");
+        let mut falsch = stuecke[0].clone();
+        falsch.bytes.push(0);
+        assert!(!v.validate(GossipTopic::Zeugen, &borsh::to_vec(&falsch).unwrap()), "verändert");
+        let mut untergeschoben = stuecke[0].clone();
+        untergeschoben.kopf.signatur = fremd.sign(b"x").unwrap();
+        assert!(!v.validate(GossipTopic::Zeugen, &borsh::to_vec(&untergeschoben).unwrap()), "Unterschrift trägt nicht");
+        let mut anhang = bytes.clone();
+        anhang.push(0);
+        assert!(!v.validate(GossipTopic::Zeugen, &anhang), "Anhängsel");
     }
 }

@@ -24,7 +24,7 @@ use std::time::Duration;
 
 use myl_net::{
     alle_horchadressen, bootstrap_from_config, build_swarm, eigene_adressen, ist_quic,
-    ist_vermittelt, run_node_mit, subscribe_all, GossipTopic, NodeCommand, NodeEvent, NodeIdentity,
+    ist_vermittelt, run_node_mit, GossipTopic, NodeCommand, NodeEvent, NodeIdentity,
 };
 use tokio::sync::{mpsc, oneshot};
 
@@ -113,6 +113,74 @@ impl std::fmt::Display for KnotenFehler {
 
 impl std::error::Error for KnotenFehler {}
 
+/// ⚑ **Höchstens so viel sammelt ein zustandsloser Knoten an Zeugenstücken**
+/// (zustandslose Validierung, 2026-10-29).
+const ZEUGEN_SAMMLER_BYTES: usize = 128 << 20;
+/// Wie weit ein Block vor der eigenen Höhe auf seinen Zeugen warten darf.
+/// 📌 Erst 32: Beim Aufholen kam ein zustandsloser Knoten im Podlauf mit
+/// rund 11 Blöcken je Sekunde nicht an eine Spitze, die mit 16 wuchs.
+const WARTENDE_BLOECKE: u64 = 128;
+/// Wie viele fertige Zeugen auf ihren Block warten dürfen (dazu die
+/// Bytegrenze [`ZEUGEN_SAMMLER_BYTES`]).
+const FERTIGE_ZEUGEN: usize = WARTENDE_BLOECKE as usize;
+/// So viele weitere Gegenstellen fragt ein zustandsloser Knoten nach Zeugen.
+const ZEUGEN_GEGENSTELLEN: usize = 4;
+/// So lange sucht ein zustandsloser Neuling einen verankerten leichten Abzug.
+const ANKER_SUCHEN_HOECHSTENS: std::time::Duration = std::time::Duration::from_secs(10);
+/// So weit voraus hält ein zustandsloser Knoten Kontobeweise.
+const KONTOBEWEISE_VORAUS: u64 = 2 * WARTENDE_BLOECKE;
+/// ⚑ **So lange sammelt ein zustandsloser Knoten Anker** (Zertifikate von
+/// mehreren Gegenstellen) und nimmt dann den jüngsten: Ein gültiges, aber
+/// altes Zertifikat einer einzelnen Gegenstelle führte sonst zu einem Abzug,
+/// den niemand mehr hat, oder zu einem Abstand, für den niemand Zeugen hält.
+const ANKER_SAMMELN: std::time::Duration = std::time::Duration::from_secs(2);
+/// ⚑ **Selbstheilung**: Steht ein zustandsloser Knoten so lange still,
+/// obwohl höhere Blöcke gehört wurden (etwa weil ein Erzeuger Zeugen
+/// zurückhält), sucht er einen jüngeren verankerten leichten Abzug.
+const STILLSTAND_HOECHSTENS: std::time::Duration = std::time::Duration::from_secs(30);
+/// So oft fragt ein zustandsloser Knoten nach Kontobeweisen.
+const KONTOBEWEISE_ALLE: std::time::Duration = std::time::Duration::from_secs(2);
+/// ⚑ **Der Zweck einer Zeitprobe** ([`NodeCommand::AnfrageMitZweck`],
+/// 2026-10-30): Nur ein `Nichts` oder ein Fehlschlag mit diesem Zweck zählt
+/// als Abweisung der Probe.
+const ZWECK_ZEITPROBE: u64 = 1;
+/// Ab so vielen Neuverankerungen hintereinander ohne einen Block mit
+/// Zeugen meldet der zustandslose Knoten, dass er nur noch springt.
+const NUR_ABZUG_WARNUNG: u32 = 3;
+/// So viele Unterzeichner untragender Zeugen merkt sich ein Knoten.
+const ZEUGEN_GESPERRT: usize = 64;
+/// Ab wann ein fehlender Zeuge nachgefragt wird.
+const ZEUGE_NACHFRAGEN_NACH: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// Höchstens `n` Gegenstellen ab `ab`, reihum, und wo die nächste Runde
+/// beginnt. Nach `ceil(len / n)` Runden war jede einmal dabei.
+fn reihum(gegenstellen: &[libp2p::PeerId], ab: usize, n: usize) -> (Vec<libp2p::PeerId>, usize) {
+    let len = gegenstellen.len();
+    if len == 0 {
+        return (Vec::new(), 0);
+    }
+    let ab = ab % len;
+    let auswahl = (0..n.min(len)).map(|i| gegenstellen[(ab + i) % len]).collect();
+    (auswahl, (ab + n) % len)
+}
+
+/// Führt die Erzeugerliste des Netzfadens aus dem Stimmsatz der Kette nach.
+/// Ohne Stimmsatz (eine Kette, die ihren Erzeuger erst lernt) bleibt sie,
+/// wie sie ist; siehe `Knoten::zustandslos_block`.
+fn erzeugerliste_aus(kette: &crate::kette::Kette, liste: &crate::validator::Erzeugerliste) {
+    let Some(satz) = kette.stimmsatz() else {
+        return;
+    };
+    let neu: std::collections::BTreeMap<myl_types::MinerId, myl_types::bls::BlsPublicKey> =
+        satz.members().map(|(id, m)| (*id, m.pubkey)).collect();
+    if liste.read().is_ok_and(|l| *l == neu) {
+        return;
+    }
+    if let Ok(mut l) = liste.write() {
+        *l = neu;
+    }
+}
+
 /// Ein laufender Knoten.
 pub struct Knoten {
     konfig: KnotenKonfig,
@@ -136,6 +204,9 @@ pub struct Knoten {
     kontoanfragen: mpsc::Receiver<crate::beobachtung::Kontoanfrage>,
     /// Fragen von der Relaisleitung.
     relaisauftraege: mpsc::Receiver<crate::relais::Relaisauftrag>,
+    /// ⚑ Der zuletzt gesetzte Vorrang in den Verbindungsgrenzen (Fund 674):
+    /// Epoche und Gegenstellen.
+    vorrang: Option<(u64, Vec<libp2p::PeerId>)>,
     /// Hält den Kanal offen, auch ohne Leitung.
     _relais_tx: mpsc::Sender<crate::relais::Relaisauftrag>,
     /// Weitergereichte Shardanfragen, die auf ihre Antwort warten: an wen,
@@ -383,6 +454,112 @@ pub struct Knoten {
     netz_gesendet: std::collections::BTreeMap<&'static str, u64>,
     /// Der Shard aus der Kette (P7).
     shardfuehrung: Option<crate::shardfuehrung::Shardfuehrung>,
+    /// ⚑ **Stufe 2, Nachrechnen** (T6c, W6b, 2026-10-29): die Ziehungen,
+    /// für die dieser Knoten Checker ist und den Verlauf schon erfragt hat
+    /// (Epoche, Pod, Index), und die, deren Verlauf schon nachgerechnet wird.
+    verlauf_gefragt: std::collections::BTreeSet<(u64, myl_types::ids::PodId, u32)>,
+    nachgerechnet: std::collections::BTreeSet<(u64, myl_types::ids::PodId, u32)>,
+    /// Festgelegt und noch nicht aufgedeckt: je Ziehung Befund und Salz.
+    festgelegt: std::collections::BTreeMap<(u64, myl_types::ids::PodId, u32), (myl_ledger::pruefung::Pruefbefund, [u8; 32])>,
+    /// Festlegungen, die noch in eine Transaktion müssen.
+    festzulegen: Vec<(u64, myl_types::ids::PodId, u32, myl_types::Hash)>,
+    /// Als Anfechter: je Ziehung der Schiedsbeleg (Verlauf, Eingänge).
+    schiedsbelege: std::collections::BTreeMap<(u64, myl_types::ids::PodId, u32), Schiedsbeleg>,
+    /// Als Validator: je Streitfall, seit wann der Beleg angefragt ist.
+    schied_angefragt: std::collections::BTreeMap<(u64, myl_types::ids::PodId, u32), std::time::Instant>,
+    /// ⚑ **Zustandslos** (zustandslose Validierung, 2026-10-29): die Schlüssel
+    /// der Blockerzeuger, gegen die der Netzfaden Zeugenstücke prüft.
+    erzeugerliste: crate::validator::Erzeugerliste,
+    /// Dieselbe Prüfung für nachgeforderte Stücke, die nicht durch den
+    /// Netzfaden kommen.
+    zeugenpruefer: crate::validator::ProtokollValidator,
+    /// Setzt die Zeugen aus geprüften Stücken zusammen.
+    zeugensammler: myl_consensus::zeuge::Zeugensammler,
+    /// Blöcke, deren Erzeuger belegt ist, je Höhe, bis ihr Zeuge da ist:
+    /// mit Ankunft und Weiterreicher.
+    wartet_auf_zeugen: std::collections::BTreeMap<u64, (myl_consensus::block::Block, std::time::Instant, libp2p::PeerId)>,
+    /// Höhen, deren Block nachgefordert kam: Sein Zeuge ist im Gossip längst
+    /// vorbei, er wird sofort nachgefragt.
+    zeugen_eilig: std::collections::BTreeSet<u64>,
+    /// Zusammengesetzte Zeugen, je Blockhash, bis ihr Block dran ist.
+    fertige_zeugen: std::collections::VecDeque<(myl_types::Hash, myl_ledger::state::Zeuge, usize, myl_types::bls::BlsPublicKey)>,
+    /// ⚑ **Unterzeichner, deren Zeuge nicht trug** (2026-10-30): Von ihnen
+    /// nimmt der Knoten keine direkt gelieferten Stücke mehr an. Begrenzt
+    /// auf [`ZEUGEN_GESPERRT`].
+    zeugen_gesperrt: std::collections::VecDeque<myl_types::bls::BlsPublicKey>,
+    /// Je (Blockhash, Stück), seit wann nachgefragt.
+    zeugen_angefragt: std::collections::BTreeMap<(myl_types::Hash, u16), std::time::Instant>,
+    /// Wer zuletzt tragende Zeugenstücke brachte (Gossip oder Nachlieferung):
+    /// Er wird bei jeder Nachfrage mitgefragt. 📌 Erster Podlauf: Die Blöcke
+    /// kamen über Nachforderungen von vollen Minern, die keine Zeugen haben,
+    /// und der Erzeuger stand nicht unter den gefragten Gegenstellen.
+    zeugen_quellen: std::collections::VecDeque<libp2p::PeerId>,
+    /// ⚑ **Reihum durch die Gegenstellen** (2026-10-30): wo die nächste
+    /// Zeugennachfrage weitere Gegenstellen beginnt. 📌 Langer Podlauf: Es
+    /// waren immer dieselben ersten vier, unter ihnen keiner der vollen
+    /// Miner, die Zeugen bereithielten; in die Quellen kommt aber nur, wer
+    /// schon geliefert hat. Nach einer Trennung lief der Erzeuger allein in
+    /// Zeitüberschreitungen, und der zustandslose Knoten kam nur über
+    /// leichte Abzüge weiter.
+    zeugen_reihum: usize,
+    /// ⚑ **Neuverankerungen ohne einen Block mit Zeugen dazwischen**
+    /// (2026-10-30). Ab [`NUR_ABZUG_WARNUNG`] meldet der Knoten, dass er
+    /// nur noch springt und nichts prüft. 📌 Im langen Podlauf ging das eine
+    /// Stunde lang still.
+    nur_abzug: u32,
+    /// Seit wann ein zustandsloser Neuling einen Anker für einen leichten
+    /// Abzug sucht (über ein Prüfpunktzertifikat); bis
+    /// [`ANKER_SUCHEN_HOECHSTENS`], dann folgt er ab Genesis.
+    anker_suchen: Option<std::time::Instant>,
+    /// Der höchste geprüfte Anker dieser Suche, und seit wann es einen gibt:
+    /// Gesammelt wird [`ANKER_SAMMELN`] lang, genommen der jüngste.
+    anker_kandidat: Option<(crate::abzug::Anker, std::time::Instant)>,
+    /// Zustandslos: die Höhe und seit wann sie steht (für die Selbstheilung).
+    stillstand: (u64, std::time::Instant),
+    /// Zustandslos: der höchste Block mit belegtem Erzeuger, der ankam.
+    hoechster_belegter: u64,
+    /// Für Tests: so lange Stillstand, bis neu verankert wird.
+    stillstand_hoechstens: std::time::Duration,
+    /// Für Tests: Der Erzeuger hält seine Zeugen zurück (zerlegt und
+    /// verbreitet sie nicht, liefert sie nicht nach), wie ein böswilliger.
+    zeugen_zurueckhalten: bool,
+    /// Kontobeweise einer höheren Höhe, bis die eigene sie erreicht.
+    kontobeweise_offen: Option<(u64, Vec<myl_ledger::state::Kontobeweis>)>,
+    /// Wann zuletzt Kontobeweise angefragt wurden.
+    kontobeweise_angefragt: Option<std::time::Instant>,
+    /// In welcher Epoche die Grössen zuletzt im Protokoll standen.
+    groessen_epoche: Option<u64>,
+    /// Die Zähler der Transaktionen der laufenden Sekunde.
+    tx_zaehler: TxZaehler,
+    /// Transaktionen aus dem Gossip, die auf die Stapelprüfung warten.
+    tx_puffer: Vec<myl_consensus::block::Transaktion>,
+    tx_puffer_seit: std::time::Instant,
+    tx_geprueft: tokio::sync::mpsc::UnboundedReceiver<Vec<myl_consensus::block::GepruefteTransaktion>>,
+    tx_geprueft_kanal: tokio::sync::mpsc::UnboundedSender<Vec<myl_consensus::block::GepruefteTransaktion>>,
+    relais_geprueft: tokio::sync::mpsc::UnboundedReceiver<RelaisGeprueft>,
+    relais_geprueft_kanal: tokio::sync::mpsc::UnboundedSender<RelaisGeprueft>,
+    /// Die Selbstprobe: in welcher Epoche zuletzt, ihre Ergebnisse (Epoche,
+    /// je Token, Frist), und die daraus angepasste Ebenenzeit.
+    selbstprobe_epoche: Option<u64>,
+    selbstproben: tokio::sync::mpsc::UnboundedReceiver<(u64, u64, u64)>,
+    selbstprobenkanal: tokio::sync::mpsc::UnboundedSender<(u64, u64, u64)>,
+    ebenenzeit_angepasst: u64,
+    /// Als Validator: Streitfälle, zu denen gestimmt ist.
+    schied_gestimmt: std::collections::BTreeSet<(u64, myl_types::ids::PodId, u32)>,
+    schiedsrechnungen: tokio::sync::mpsc::UnboundedReceiver<Schiedsrechnung>,
+    schiedskanal: tokio::sync::mpsc::UnboundedSender<Schiedsrechnung>,
+    /// Das Modell des Checkers, beim ersten Nachrechnen geladen und dann
+    /// gehalten: über `myl_verifier`, nicht über den Code des Pods.
+    pruefmodell: Arc<std::sync::Mutex<Option<Arc<integer_llm_runtime::model::IntegerModel>>>>,
+    /// Was nachgerechnet wurde, aus der Rechenaufgabe zurück in die Schleife.
+    nachrechnungen: tokio::sync::mpsc::UnboundedReceiver<Nachrechnung>,
+    nachrechnungskanal: tokio::sync::mpsc::UnboundedSender<Nachrechnung>,
+    /// ⚑ **Eine übernommene Position** (Whitepaper 6.8): Als Reserve rechnet
+    /// dieser Knoten sie bis zum Ende ihrer Epoche.
+    uebernahme: Option<crate::shardfuehrung::Shardauftrag>,
+    /// ⚑ **Abgelegte Spuren** für die Stichprobe (Stufe 2), höchstens
+    /// [`SPURABLAGEN_HOECHSTENS`], die älteste fällt.
+    spurablagen: Vec<myl_types::Spurablage>,
     /// Die Zeugnisse über Fristen (6.8).
     fristsammlung: crate::frist::Fristsammlung,
     /// Laufende Messungen je Gegenüber.
@@ -503,6 +680,10 @@ enum Weckruf {
     Ereignis(Option<NodeEvent>),
     Konto(crate::beobachtung::Kontoanfrage),
     Relais(crate::relais::Relaisauftrag),
+    /// Ein geprüfter Stapel Transaktionen aus dem Gossip.
+    Geprueft(Vec<myl_consensus::block::GepruefteTransaktion>),
+    /// Ein geprüfter Stapel von der Relaisleitung, mit der Antwort.
+    RelaisGeprueft(RelaisGeprueft),
     Frist,
 }
 
@@ -528,6 +709,22 @@ struct Messung {
     /// Die kürzeste Zeitprobe bisher (Fund 639).
     probe_us: Option<u64>,
     proben: u32,
+    /// Die Saat der laufenden Probe (Fund 669), über die die Antwort
+    /// unterschrieben sein muss.
+    saat: [u8; 32],
+    /// Die Epoche, in der die Messung gestellt wurde; nach dem Wechsel gilt
+    /// sie nicht mehr (Fund 670).
+    epoche: u64,
+    /// Wie viele Mitglieder des Pods den Gemessenen messen; daraus folgt,
+    /// wie lange eine Verweigerung dauern muss (Fund 660).
+    messende: usize,
+    /// Abweisungen in Folge seit der letzten Antwort und seit wann (Fund
+    /// 660), dazu alle Abweisungen dieser Messung für das Protokoll.
+    abgewiesen_in_folge: u32,
+    abgewiesen_seit: Option<std::time::Instant>,
+    abgewiesen: u32,
+    /// Nach einer Abweisung: ab wann wieder gefragt wird.
+    wieder_ab: Option<std::time::Instant>,
 }
 
 /// Was das Nachspielen der Kettendatei beim Start ergab.
@@ -669,12 +866,24 @@ impl Knoten {
         konfig: KnotenKonfig,
         auf_bildschirm: bool,
     ) -> Result<Self, KnotenFehler> {
+        // ⚑ **Ein zustandsloser Knoten führt keine Kettendatei** (2026-10-29):
+        //   Er könnte sie ohne Zeugen nicht nachrechnen. Nach einem Neustart
+        //   steigt er über einen leichten Abzug wieder ein.
+        let mut konfig = konfig;
+        if konfig.zustandslos {
+            konfig.kettendatei = None;
+        }
         konfig.pruefe().map_err(KnotenFehler::Konfig)?;
 
         // Der Weg von der Tür zur Kette. Unbegrenzt, weil eine
         // Abrechnung nicht verlorengehen darf: Ein voller Kanal hiesse,
         // dass gerechnete Arbeit unbezahlt bleibt.
         let (abrechnungen_tx, abrechnungen_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (nachrechnungen_tx, nachrechnungen_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (schied_tx, schied_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (selbstprobe_tx, selbstprobe_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (tx_geprueft_tx, tx_geprueft_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (relais_geprueft_tx, relais_geprueft_rx) = tokio::sync::mpsc::unbounded_channel();
 
         // ⚑ **Der Ausweis wird beim Start gelesen, nicht bei der ersten
         // Frage.** Eine Datei im heissen Pfad ist eine Fehlerquelle im
@@ -728,7 +937,13 @@ impl Knoten {
         let netz = konfig.netz();
         let mut swarm =
             build_swarm(&identitaet, &netz).map_err(|e| KnotenFehler::Netz(e.to_string()))?;
-        subscribe_all(&mut swarm).map_err(|e| KnotenFehler::Netz(format!("{:?}", e)))?;
+        // ⚑ Nach der Rolle: Volle Knoten hören die Zeugen nicht, zustandslose
+        //   keine Transaktionen (myl-net `Rolle`).
+        let rolle = if konfig.zustandslos { myl_net::Rolle::Zustandslos } else { myl_net::Rolle::Voll };
+        if konfig.zustandslos && konfig.erzeugt_bloecke {
+            return Err(KnotenFehler::Kette("ein zustandsloser Knoten erzeugt keine Blöcke".into()));
+        }
+        myl_net::subscribe_rolle(&mut swarm, rolle).map_err(|e| KnotenFehler::Netz(format!("{:?}", e)))?;
 
         // Eigene öffentliche Adressen eintragen. Für ein Relais Pflicht
         // (Fund 56): Sie stehen in der Reservierungsantwort.
@@ -795,11 +1010,13 @@ impl Knoten {
                 .zahl("bekannte_aussteller", validatoren.anzahl() as i64)
                 .wahr("atteste_pruefbar", validatoren.anzahl() > 0),
         );
+        let erzeugerliste = crate::validator::Erzeugerliste::default();
+        let zeugenpruefer = ProtokollValidator::default().mit_erzeugern(erzeugerliste.clone());
         tokio::spawn(run_node_mit(
             swarm,
             cmd_rx,
             ev_tx,
-            Arc::new(ProtokollValidator::mit(validatoren)),
+            Arc::new(ProtokollValidator::mit(validatoren).mit_erzeugern(erzeugerliste.clone())),
         ));
 
         // ⚑ **Der Wiederanlauf ist ein Nachrechnen, kein Einlesen**, ab dem
@@ -889,11 +1106,17 @@ impl Knoten {
         //   den Abzug seines Ankers, der vom Betreiber vor dem des Netzes.
         //   Und wer aus einem Abzug lebt, den die Hintergrundprüfung noch
         //   nicht bestätigt hat, prüft weiter.
-        let abzug_holen = if kette.hoehe() == 0 {
-            konfig.abzug.or_else(|| konfig.netz.juengster_anker()).map(AbzugHolen::neu)
-        } else {
-            None
+        // ⚑ Ein zustandsloser Knoten holt einen **leichten** Abzug, und nur
+        //   mit dem Anker des Betreibers: Die Anker des Netzes liegen an
+        //   alten Epochengrenzen, und so weit hält niemand Zeugen bereit.
+        //   Ohne ihn sucht er einen über ein Prüfpunktzertifikat.
+        let abzug_holen = match (kette.hoehe() == 0, konfig.zustandslos) {
+            (true, false) => konfig.abzug.or_else(|| konfig.netz.juengster_anker()).map(AbzugHolen::neu),
+            (true, true) => konfig.abzug.map(|a| AbzugHolen::neu_als(a, crate::abzug::Art::Leicht)),
+            _ => None,
         };
+        let anker_suchen =
+            (konfig.zustandslos && abzug_holen.is_none() && kette.hoehe() == 0 && kette.stimmsatz().is_some()).then(std::time::Instant::now);
         let hintergrund = match (&basisblock, kette.ablage()) {
             (Some(b), Some(a))
                 if konfig.hintergrundpruefung
@@ -987,6 +1210,63 @@ impl Knoten {
             _ => None,
         };
         let netzadresse = myl_net::netzadresse(&identitaet).unwrap_or(myl_types::latency_attest::PeerIdBytes([0; 32]));
+        // ⚑ **Zustandslos ab hier** (2026-10-29): Die Kette ist geladen und
+        //   nachgerechnet; die grossen Sammlungen fallen weg, die eigenen
+        //   Konten bleiben (Netz-, Konto-, Miner- und Auszahlungskonto).
+        if konfig.zustandslos {
+            let mut eigene = vec![crate::kette::konto_fuer(&konfig.name)];
+            for k in [netzschluessel.as_ref(), kontoschluessel.as_ref()].into_iter().flatten() {
+                eigene.push(k.adresse());
+                eigene.push(myl_types::ids::Address::new(*k.kennung().as_bytes()));
+            }
+            eigene.extend(konfig.konto);
+            // Im Probenetz versorgt sich jeder aus den Probekonten (Probehahn);
+            // ein zustandsloser Knoten führt sie deshalb wie eigene.
+            if konfig.netz.probehahn {
+                eigene.extend((0..crate::kette::PROBEKONTEN).map(crate::kette::probekonto));
+            }
+            kette.zustandslos_machen(&eigene);
+            protokoll.schreibe(Eintrag::neu("zustandslos").zahl("eigene_konten", eigene.len() as i64).zahl("hoehe", kette.hoehe() as i64));
+        }
+        // ⚑ Zeugen bereithalten (2026-10-30): mit dem Netzschlüssel, sonst
+        //   dem Probeschlüssel des Namens.
+        if konfig.zeugen_bereithalten && !konfig.zustandslos {
+            let k = match netzschluessel.clone() {
+                Some(k) => Some(k),
+                None => crate::schluessel::Konsensschluessel::probe(&konfig.name).ok(),
+            };
+            if let Some(k) = k {
+                kette.zeugen_bereithalten_setzen(k);
+                protokoll.schreibe(Eintrag::neu("zeugen_bereithalten"));
+            }
+        }
+        // ⚑ Die Zeugen auf der Platte (2026-10-30): wer sie erzeugt, als
+        //   Erzeuger oder als Zeugenhalter; neben der Kettendatei, sonst im
+        //   Protokollverzeichnis.
+        if !konfig.zustandslos && (konfig.erzeugt_bloecke || konfig.zeugen_bereithalten) {
+            let ordner = match &konfig.kettendatei {
+                Some(k) => k.with_extension("zeugen"),
+                None => konfig.protokollverzeichnis.join(format!("{}.zeugen", konfig.name)),
+            };
+            kette
+                .zeugen_auf_platte_setzen(ordner.clone())
+                .map_err(|e| KnotenFehler::Kette(format!("Zeugen auf der Platte unter {}: {e}", ordner.display())))?;
+            protokoll.schreibe(Eintrag::neu("zeugen_auf_platte").text("pfad", ordner.display().to_string()));
+        }
+        // ⚑ Der Zustandsbaum auf der Platte (2026-10-30): nur, wer ihn ganz
+        //   hält.
+        if konfig.baum_auf_platte && !konfig.zustandslos {
+            let pfad = match &konfig.kettendatei {
+                Some(k) => k.with_extension("baum"),
+                None => konfig.protokollverzeichnis.join(format!("{}.baum", konfig.name)),
+            };
+            kette
+                .zustand_mut()
+                .baum_auslagern(&pfad)
+                .map_err(|e| KnotenFehler::Kette(format!("Zustandsbaum auf der Platte unter {}: {e}", pfad.display())))?;
+            protokoll.schreibe(Eintrag::neu("baum_auf_platte").text("pfad", pfad.display().to_string()));
+        }
+        erzeugerliste_aus(&kette, &erzeugerliste);
         protokoll.schreibe(
             Eintrag::neu("netz")
                 .text("netz", konfig.netz.name)
@@ -1004,6 +1284,8 @@ impl Knoten {
             netz_stand: (0, 0),
             netz_gesendet: std::collections::BTreeMap::new(),
             shardfuehrung,
+            uebernahme: None,
+            spurablagen: Vec::new(),
             fristsammlung: crate::frist::Fristsammlung::default(),
             messungen: std::collections::BTreeMap::new(),
             gemessen: std::collections::BTreeSet::new(),
@@ -1036,6 +1318,7 @@ impl Knoten {
             ereignisse: ev_rx,
             kontoanfragen: anfragen_rx,
             relaisauftraege,
+            vorrang: None,
             _relais_tx: relais_tx,
             shardrelais: std::collections::HashMap::new(),
             relais_kennung: 0,
@@ -1062,6 +1345,49 @@ impl Knoten {
             zugesagt_bytes: 0,
             abrechnungen: abrechnungen_rx,
             abrechnungskanal: abrechnungen_tx,
+            verlauf_gefragt: std::collections::BTreeSet::new(),
+            nachgerechnet: std::collections::BTreeSet::new(),
+            festgelegt: std::collections::BTreeMap::new(),
+            festzulegen: Vec::new(),
+            schiedsbelege: std::collections::BTreeMap::new(),
+            schied_angefragt: std::collections::BTreeMap::new(),
+            erzeugerliste,
+            zeugenpruefer,
+            zeugensammler: myl_consensus::zeuge::Zeugensammler::neu(ZEUGEN_SAMMLER_BYTES),
+            wartet_auf_zeugen: std::collections::BTreeMap::new(),
+            zeugen_eilig: std::collections::BTreeSet::new(),
+            fertige_zeugen: std::collections::VecDeque::new(),
+            zeugen_gesperrt: std::collections::VecDeque::new(),
+            zeugen_angefragt: std::collections::BTreeMap::new(),
+            zeugen_quellen: std::collections::VecDeque::new(),
+            zeugen_reihum: 0,
+            nur_abzug: 0,
+            anker_suchen,
+            anker_kandidat: None,
+            stillstand: (0, std::time::Instant::now()),
+            hoechster_belegter: 0,
+            stillstand_hoechstens: STILLSTAND_HOECHSTENS,
+            zeugen_zurueckhalten: false,
+            kontobeweise_offen: None,
+            kontobeweise_angefragt: None,
+            schied_gestimmt: std::collections::BTreeSet::new(),
+            schiedsrechnungen: schied_rx,
+            groessen_epoche: None,
+            tx_zaehler: TxZaehler::default(),
+            tx_puffer: Vec::new(),
+            tx_puffer_seit: std::time::Instant::now(),
+            tx_geprueft: tx_geprueft_rx,
+            tx_geprueft_kanal: tx_geprueft_tx,
+            relais_geprueft: relais_geprueft_rx,
+            relais_geprueft_kanal: relais_geprueft_tx,
+            selbstprobe_epoche: None,
+            selbstproben: selbstprobe_rx,
+            selbstprobenkanal: selbstprobe_tx,
+            ebenenzeit_angepasst: 0,
+            schiedskanal: schied_tx,
+            pruefmodell: Arc::default(),
+            nachrechnungen: nachrechnungen_rx,
+            nachrechnungskanal: nachrechnungen_tx,
             abrechnungsnonce: 1_000_000,
             kontoschluessel,
             hoechste_gehoerte: 0,
@@ -1577,6 +1903,10 @@ impl Knoten {
                     rest = rest.min(Duration::from_millis(verbleibend));
                 }
             }
+            // Gesammelte Transaktionen warten höchstens 20 ms auf ihre Prüfung.
+            if !self.tx_puffer.is_empty() {
+                rest = rest.min(Duration::from_millis(20));
+            }
             let rest = rest.max(Duration::from_millis(1));
             // ⚑ Eine Kontoanfrage weckt die Schleife wie ein Ereignis und
             //   wird aus dem Zustand beantwortet, ohne zu warten.
@@ -1584,6 +1914,8 @@ impl Knoten {
                 ev = self.ereignisse.recv() => Weckruf::Ereignis(ev),
                 Some(a) = self.kontoanfragen.recv() => Weckruf::Konto(a),
                 Some(a) = self.relaisauftraege.recv() => Weckruf::Relais(a),
+                Some(g) = self.tx_geprueft.recv() => Weckruf::Geprueft(g),
+                Some(g) = self.relais_geprueft.recv() => Weckruf::RelaisGeprueft(g),
                 _ = tokio::time::sleep(rest) => Weckruf::Frist,
             };
             match geweckt {
@@ -1596,8 +1928,11 @@ impl Knoten {
                     let _ = rueck.send(self.kontoauskunft(&adresse));
                 }
                 Weckruf::Relais((frage, rueck)) => self.relais_bedienen(frage, rueck),
-                Weckruf::Frist => continue,
+                Weckruf::Geprueft(g) => self.geprueft_aufnehmen(g),
+                Weckruf::RelaisGeprueft(g) => self.relais_geprueft_aufnehmen(g),
+                Weckruf::Frist => {}
             }
+            self.tx_puffer_pflegen();
         }
     }
 
@@ -1887,6 +2222,9 @@ impl Knoten {
     /// zuerst**, das steckt in [`Kette::baue_block`]: Der Zustand wird
     /// angewandt, bevor die Wurzel in den Block geschrieben wird.
     pub async fn erzeuge_block(&mut self) -> bool {
+        if self.kette.ist_zustandslos() {
+            return false;
+        }
         // ⚑ Das Zertifikat eines Prüfpunkts legt die Kette selbst in den
         //   Block, wenn der Knoten es angeboten hat (CONSENSUS 7.2,
         //   `pruefpunkt_pflegen`). Bis zum 2026-10-27 stand hier die
@@ -1899,12 +2237,25 @@ impl Knoten {
         };
         let bytes = daten.len();
         let ok = self.veroeffentliche(GossipTopic::Blocks, daten).await;
+        // ⚑ **Dann der Zeuge, in unterschriebenen Stücken**, für die
+        //   zustandslosen Knoten; ohne Abonnenten geht er nirgends hin.
+        let hash = self.kette.letzter_hash();
+        let stuecke = if self.zeugen_zurueckhalten { None } else { self.kette.zeugenstuecke(&hash) };
+        let zeugenstuecke = stuecke.map_or(0, |stuecke| {
+            for s in stuecke.iter() {
+                if let Ok(d) = borsh::to_vec(s) {
+                    let _ = self.kommandos.send(NodeCommand::Publish { topic: GossipTopic::Zeugen, data: d, result: None });
+                }
+            }
+            stuecke.len()
+        });
         self.protokoll.schreibe(
             Eintrag::neu("block_erzeugt")
+                .zahl("zeugenstuecke", zeugenstuecke as i64)
                 .zahl("hoehe", self.kette.hoehe() as i64)
                 .zahl("txs", wartend as i64)
                 .zahl("bytes", bytes as i64)
-                .text("zustandswurzel", kurz(&self.kette.zustandswurzel()))
+                .text("zustandswurzel", kurz(&self.kette.wurzel()))
                 .text("block", kurz(&self.kette.letzter_hash()))
                 .wahr("verbreitet", ok),
         );
@@ -2085,11 +2436,11 @@ impl Knoten {
     /// bindet die Antwort an die unterschriebene Wurzel, also ist
     /// gleichgültig, wer antwortet.
     ///
-    /// ⚑ **Die Antwort wird hier noch nicht verarbeitet.** Sie kommt als
-    /// `NodeEvent` zurück, und was dann zu tun ist, steht in
-    /// `myl_verifier::pruefe_spurantwort`; **was fehlt, ist ein
-    /// Nachrechner mit Modell**, und der hängt an Artefakten. Diese
-    /// Grenze steht hier, damit niemand den Aufruf für mehr hält.
+    /// ⚑ **Die Antwort wird geprüft, aber nicht nachgerechnet.** Sie kommt
+    /// als `Nachlieferung::Spur` zurück und geht an `spur_erhalten`
+    /// (Beweis gegen die Wurzel aus der Kette); **was fehlt, ist ein
+    /// Nachrechner mit Modell und der Eingabe des Segments**. Diese Grenze
+    /// steht hier, damit niemand den Aufruf für mehr hält.
     async fn stichprobe_verschicken(&mut self) {
         let Some(epoche) = self.kette.stichprobenepoche() else {
             return;
@@ -2128,12 +2479,28 @@ impl Knoten {
         // Befund.** Er steht im Protokoll und nicht in einer stillen
         // Fortsetzung: Sonst wäre „ich nenne keine Adresse" die
         // billigste Art, sich der Prüfung zu entziehen.
+        // Die Checker der Ziehung, als Netzadressen: Fehlt einer, gab es in
+        // der gezogenen Epoche keinen Miner ohne Pod.
+        let pruefer: Vec<String> = self
+            .kette
+            .pruefer_der_stichprobe()
+            .iter()
+            .map(|(_, _, m)| {
+                self.kette
+                    .zustand()
+                    .miner
+                    .get(m)
+                    .and_then(|r| myl_net::peer_id_aus_bytes(&r.netzadresse).ok())
+                    .map_or_else(|| kurz(&myl_types::hash::Hash::from_bytes(*m.as_bytes())), |p| p.to_string())
+            })
+            .collect();
         self.protokoll.schreibe(
             Eintrag::neu("stichprobe_gefragt")
                 .zahl("epoche", epoche as i64)
                 .zahl("segmente", gezogen.len() as i64)
                 .zahl("anfragen", gefragt as i64)
-                .zahl("ohne_adresse", ohne_adresse as i64),
+                .zahl("ohne_adresse", ohne_adresse as i64)
+                .text("pruefer", pruefer.join(",")),
         );
     }
 
@@ -2168,11 +2535,15 @@ impl Knoten {
         //    kommt 32 Blöcke lang nichts davon an, ging es verloren, und
         //    gezählt wird wieder ab dem Zustand.
         let schluessel = crate::kette::schluessel_fuer(&self.konfig.name);
-        let im_zustand = self.kette.zustand().account(&crate::kette::konto_fuer(&self.konfig.name)).nonce;
+        let im_zustand = self.kette.konto(&crate::kette::konto_fuer(&self.konfig.name)).nonce;
         let nonce = testverkehr_nonce(&mut self.testverkehr_nonce, im_zustand, self.kette.hoehe());
-        let anweisung = Anweisung::Burn {
-            betrag: 1_000 + self.testverkehr_zaehler * 100,
-        };
+        // 📌 Fund 672 (2026-10-28, kurzer Podlauf): Hier stand `1 000 +
+        //    Zaehler * 100`, ein Betrag, der jede Sekunde wuchs; aufsummiert
+        //    rund 50 * T^2 Kleinstbetraege nach T Sekunden, ein Probekonto
+        //    mit 10 MYL war nach rund 7,5 Minuten leer, und mit ihm der
+        //    Vorrat, aus dem der Probehahn die Knoten versorgt. Den Zustand
+        //    bewegen Nummer und Gebuehr; der Betrag ist der kleinste.
+        let anweisung = Anweisung::Burn { betrag: 1 };
         let tx = match Transaktion::signiere(
             &self.kette.netzwert(),
             &schluessel,
@@ -2358,13 +2729,16 @@ impl Knoten {
         self.shardrelais.retain(|_, (_, _, seit)| seit.elapsed() <= crate::relais::FRIST);
         self.abzug_arbeit();
         self.eigenen_abzug_melden();
+        self.vorrang_pflegen();
+        self.nachrechnung_pflegen();
+        self.groessen_protokollieren();
         self.netzarbeit().await;
         self.pruefpunkt_pflegen().await;
         let z = self.zustand().await;
         let mut eintrag = Eintrag::neu("aufnahme")
             .zahl("peers", z.peers as i64)
             .zahl("hoehe", self.kette.hoehe() as i64)
-            .text("zustandswurzel", kurz(&self.kette.zustandswurzel()))
+            .text("zustandswurzel", kurz(&self.kette.wurzel()))
             .zahl("wartend", self.kette.wartend() as i64)
             .zahl("voraus", self.voraus.len() as i64)
             .zahl("schlecht_bewertet", z.schlecht_bewertet as i64)
@@ -2409,7 +2783,7 @@ impl Knoten {
         // ⚑ **Was der Knoten fuer das Netz haelt, und was er daran hat.**
         // Gezaehlt wird auf der Platte, bei jeder Aufnahme neu.
         let speicher = self.speicher_zaehlen();
-        let guthaben = self.kette.zustand().account(&self.eigenes_konto()).balance;
+        let guthaben = self.kette.konto(&self.eigenes_konto()).balance;
         let (auszahlung_guthaben, auszahlung_eingetragen) = self.auszahlung_stand();
         let (bearbeitet, abgelehnt) = self.inferenz_zaehler.stand();
         if let Some(s) = &speicher {
@@ -2441,10 +2815,21 @@ impl Knoten {
                 z.pruefpunkt_bestaetigt,
             )
         };
+        // Der Credit-Preis und die Zwillinge (Stufe 1), 2026-10-28.
+        let (credit_preis, einig, uneinig, zurueck) = {
+            let z = self.kette.zustand();
+            (z.credit_price, z.zwillinge_einig, z.zwillinge_uneinig, z.zurueckgehalten.len())
+        };
         eintrag = eintrag
             .zahl("grundpreis_je_byte", grundpreis.min(i64::MAX as u64) as i64)
             .zahl("gebuehren_validatoren", gebuehren_validatoren.min(i64::MAX as u64) as i64)
-            .zahl("pruefpunkt_bestaetigt", bestaetigt.min(i64::MAX as u64) as i64);
+            .zahl("pruefpunkt_bestaetigt", bestaetigt.min(i64::MAX as u64) as i64)
+            .zahl("credit_preis", credit_preis.min(i64::MAX as u64) as i64)
+            .zahl("zwillinge_einig", einig.min(i64::MAX as u64) as i64)
+            .zahl("zwillinge_uneinig", uneinig.min(i64::MAX as u64) as i64)
+            .zahl("rueckbuchungen", self.kette.zustand().rueckbuchungen.min(i64::MAX as u64) as i64)
+            // Gutschriften eines Pods allein, bis nach der Streitfrist (W6).
+            .zahl("zurueckgehalten", zurueck as i64);
         self.protokoll.schreibe(eintrag);
 
         // ⚑ **Und die Kontraktabschrift für die eigene Tür** (B6-3),
@@ -2497,6 +2882,9 @@ impl Knoten {
             gebuehren_validatoren,
             treasury_guthaben: treasury,
             pruefpunkt_bestaetigt: bestaetigt,
+            credit_preis,
+            zwillinge_einig: einig,
+            zwillinge_uneinig: uneinig,
         });
     }
 
@@ -2536,7 +2924,12 @@ impl Knoten {
     /// Jetzt: Wer etwas geliefert hat, wird weiter gefragt; wer nichts hatte,
     /// macht Platz für die nächste verbundene Gegenstelle, reihum.
     fn weiter_nachfordern(&mut self, bevorzugt: Option<libp2p::PeerId>) {
-        let ziel = self.hoechste_gehoerte;
+        let mut ziel = self.hoechste_gehoerte;
+        // Zustandslos nur bis zum Rand des Wartefensters: Was darüber liegt,
+        // würde geholt und gleich verworfen.
+        if self.kette.ist_zustandslos() {
+            ziel = ziel.min(self.kette.hoehe() + WARTENDE_BLOECKE);
+        }
         self.nachfordern(bevorzugt, ziel);
     }
 
@@ -2548,7 +2941,7 @@ impl Knoten {
     fn nachfordern(&mut self, bevorzugt: Option<libp2p::PeerId>, ziel: u64) {
         // Solange ein Abzug geholt wird, nicht von Genesis an nachholen:
         // Die Kettendatei muss leer sein, wenn er kommt.
-        if self.abzug_holen.is_some() {
+        if self.abzug_holen.is_some() || self.anker_suchen.is_some() {
             return;
         }
         let mut erster = bevorzugt;
@@ -2562,7 +2955,7 @@ impl Knoten {
             //    (netem, ein Knoten nach dem Absturz bei 1 217 von 5 926).
             let laufend: Vec<(u64, u64)> = self.nachforderungen.iter().map(|n| (n.ab, n.bis)).collect();
             let Some((ab, bis)) =
-                crate::nachschub::naechster_bereich(self.kette.hoehe(), &laufend, |h| self.voraus.hat_hoehe(h), ziel)
+                crate::nachschub::naechster_bereich(self.kette.hoehe(), &laufend, |h| self.voraus.hat_hoehe(h) || self.wartet_auf_zeugen.contains_key(&h), ziel)
             else {
                 return;
             };
@@ -2681,6 +3074,9 @@ impl Knoten {
                 if !rest.is_empty() {
                     return;
                 }
+                if self.kette.ist_zustandslos() {
+                    return self.zustandslos_block(block, m.von);
+                }
                 // ⚑ **Die Vertrauensfrist** (2026-10-27, CONSENSUS 7.5):
                 //   Liegt das Netz mehr als `VERTRAUENSFRIST_EPOCHEN` über
                 //   dem zuletzt bestätigten Prüfpunkt dieses Knotens, könnte
@@ -2708,7 +3104,7 @@ impl Knoten {
                             Eintrag::neu("block_uebernommen")
                                 .zahl("hoehe", self.kette.hoehe() as i64)
                                 .zahl("txs", block.txs.len() as i64)
-                                .text("zustandswurzel", kurz(&self.kette.zustandswurzel()))
+                                .text("zustandswurzel", kurz(&self.kette.wurzel()))
                                 .text("block", kurz(&self.kette.letzter_hash())),
                         );
                         self.voraus_einspielen();
@@ -2744,6 +3140,8 @@ impl Knoten {
                             // noch eine Nachforderung aus.
                             crate::kette::KettenFehler::HoeheWeichtAb { .. } => "hoehe-weicht-ab",
                             crate::kette::KettenFehler::EpocheWeichtAb { .. } => "epoche-weicht-ab",
+                            // Zustandslos: Der Zeuge fehlt oder trägt nicht.
+                            crate::kette::KettenFehler::ZeugeTraegtNicht(_) => "zeuge-traegt-nicht",
                             // ⚑ Ebenfalls Befunde über den Erzeuger:
                             // Wer einen Schuldspruch ohne Beleg in
                             // einen Block schreibt, versucht zu
@@ -2801,6 +3199,14 @@ impl Knoten {
             // was hier ankommt, hat die Prüfung bestanden. Der Eintrag
             // hält fest, dass sie stattgefunden hat, denn genau das war
             // bis zum 2026-08-25 nicht der Fall.
+            // ⚑ Ein Zeugenstück: Der Netzfaden hat Unterschrift und
+            //   Erzeuger schon geprüft.
+            GossipTopic::Zeugen => {
+                if let Ok(s) = borsh::from_slice::<myl_consensus::zeuge::Zeugenstueck>(&m.data) {
+                    self.zeugen_quelle(m.von);
+                    self.zeugenstueck_erhalten(s);
+                }
+            }
             GossipTopic::LatencyAttests => {
                 self.protokoll.schreibe(
                     Eintrag::neu("attest_angenommen")
@@ -2821,13 +3227,84 @@ impl Knoten {
                 let raus = self.nimm_konsens_an(&m.data);
                 self.konsens_ausgang.extend(raus);
             }
-            GossipTopic::Transactions if self.kette.aufnehmen_roh(&m.data) => {
-                self.protokoll.schreibe(
-                    Eintrag::neu("tx_aufgenommen").zahl("wartend", self.kette.wartend() as i64),
-                );
-            }
+            // ⚑ Gezählt statt je Zeile (Skalierung, 2026-10-29): Bei 2000
+            //   Transaktionen je Sekunde schrieb jeder Knoten zwei Zeilen je
+            //   Transaktion; die Zähler gehen sekündlich hinaus
+            //   ([`Self::tx_zaehler_schreiben`]).
+            // ⚑ **Erst geprüft, dann im Mempool** (Skalierung, 2026-10-29):
+            //   Bis hierher kam jede Transaktion aus dem Gossip ungeprüft in
+            //   den Mempool; ungültige verdrängten gültige. Jetzt sammelt der
+            //   Knoten sie kurz und prüft sie als Stapel in einer
+            //   Rechenaufgabe ([`Self::tx_puffer_pflegen`]).
+            GossipTopic::Transactions => match borsh::from_slice::<myl_consensus::block::Transaktion>(&m.data) {
+                Ok(tx) => self.tx_puffer.push(tx),
+                Err(_) => self.tx_zaehler.abgewiesen += 1,
+            },
             _ => {}
         }
+    }
+
+    /// **Den Puffer der Transaktionen prüfen**: alle 20 ms oder ab 256
+    /// gesammelten als Stapel in einer Rechenaufgabe (`pruefe_alle`); was
+    /// zurückkommt, geht in den Mempool.
+    fn tx_puffer_pflegen(&mut self) {
+        if self.tx_puffer.is_empty() || (self.tx_puffer.len() < 256 && self.tx_puffer_seit.elapsed() < Duration::from_millis(20)) {
+            if self.tx_puffer.is_empty() {
+                self.tx_puffer_seit = std::time::Instant::now();
+            }
+            return;
+        }
+        let stapel = std::mem::take(&mut self.tx_puffer);
+        self.tx_puffer_seit = std::time::Instant::now();
+        let netz = self.kette.netzwert();
+        let kanal = self.tx_geprueft_kanal.clone();
+        tokio::task::spawn_blocking(move || {
+            let gut: Vec<myl_consensus::block::GepruefteTransaktion> =
+                myl_consensus::block::pruefe_alle(&stapel, &netz).into_iter().flatten().collect();
+            let _ = kanal.send(gut);
+        });
+    }
+
+    /// Ein geprüfter Stapel von der Relaisleitung: aufnehmen, verbreiten,
+    /// antworten.
+    fn relais_geprueft_aufnehmen(&mut self, (gut, n, rueck): RelaisGeprueft) {
+        let mut angenommen = 0usize;
+        for g in gut {
+            if self.tx_verbreiten_geprueft(g) {
+                angenommen += 1;
+            }
+        }
+        let _ = rueck.send(myl_types::relais::Relaisantwort::Erledigt(format!("angenommen {angenommen} von {n}")));
+    }
+
+    /// Geprüfte Transaktionen in den Mempool.
+    fn geprueft_aufnehmen(&mut self, gepruefte: Vec<myl_consensus::block::GepruefteTransaktion>) {
+        for g in gepruefte {
+            if self.kette.aufnehmen_geprueft(g) {
+                self.tx_zaehler.aufgenommen += 1;
+            } else {
+                self.tx_zaehler.abgewiesen += 1;
+            }
+        }
+    }
+
+    /// Schreibt die Zähler der Transaktionen, wenn seit dem letzten Mal eine
+    /// Sekunde vergangen ist, und beginnt neu.
+    fn tx_zaehler_schreiben(&mut self) {
+        let z = &self.tx_zaehler;
+        if z.seit.elapsed() < Duration::from_secs(1) {
+            return;
+        }
+        if z.empfangen > 0 {
+            self.protokoll.schreibe(
+                Eintrag::neu("tx_zaehler")
+                    .zahl("empfangen", z.empfangen as i64)
+                    .zahl("aufgenommen", z.aufgenommen as i64)
+                    .zahl("abgewiesen", z.abgewiesen as i64)
+                    .zahl("wartend", self.kette.wartend() as i64),
+            );
+        }
+        self.tx_zaehler = TxZaehler::default();
     }
 
     fn vermerke(&mut self, ereignis: NodeEvent) {
@@ -2850,12 +3327,22 @@ impl Knoten {
                     .find(|p| p.topic() == Some(m.topic))
                     .map(|p| p.kennung())
                     .unwrap_or("sonstiges");
-                let eintrag = Eintrag::neu("empfangen")
-                    .text("topic", format!("{:?}", m.topic))
-                    .text("kennung", probe)
-                    .text("digest", nutzlast_digest(&m.data))
-                    .zahl("bytes", m.data.len() as i64);
-                self.protokoll.schreibe(eintrag);
+                // ⚑ Transaktionen: die ersten [`TX_ZEILEN_JE_SEKUNDE`] je
+                //   Sekunde einzeln (die Auswertung gleicht Proben ab), was
+                //   darüber kommt, nur gezählt.
+                let einzeln = m.topic != GossipTopic::Transactions || {
+                    self.tx_zaehler_schreiben();
+                    self.tx_zaehler.empfangen += 1;
+                    self.tx_zaehler.empfangen <= TX_ZEILEN_JE_SEKUNDE
+                };
+                if einzeln {
+                    let eintrag = Eintrag::neu("empfangen")
+                        .text("topic", format!("{:?}", m.topic))
+                        .text("kennung", probe)
+                        .text("digest", nutzlast_digest(&m.data))
+                        .zahl("bytes", m.data.len() as i64);
+                    self.protokoll.schreibe(eintrag);
+                }
                 // Und dann verarbeiten. Getrennt vom Empfangseintrag,
                 // damit im Protokoll steht, was ankam, auch wenn die
                 // Verarbeitung scheitert.
@@ -2894,7 +3381,10 @@ impl Knoten {
                 //   je Gegenstelle und für alle zusammen; darüber gibt es
                 //   `Nichts`, und das kostet nichts.
                 let art = match &anfrage {
-                    Some(Nachforderung::Bloecke { .. }) => Some(crate::drossel::Art::Bloecke),
+                    Some(Nachforderung::Bloecke { .. } | Nachforderung::Zeugenstuecke(_) | Nachforderung::Kontobeweise(_)) => {
+                        Some(crate::drossel::Art::Bloecke)
+                    }
+                    Some(Nachforderung::LeichterAbzug { .. }) => Some(crate::drossel::Art::Archiv),
                     Some(Nachforderung::Archiv { .. } | Nachforderung::Teil { .. }) => Some(crate::drossel::Art::Archiv),
                     _ => None,
                 };
@@ -2996,9 +3486,12 @@ impl Knoten {
                     //   warteten, unterschrieben echte Fristzeugnisse gegen
                     //   ihn. Jetzt nur fuer Mitglieder des eigenen Pods laut
                     //   Kette, und eine zugleich.
-                    Some(Nachforderung::Zeitprobe { positionen }) => self.zeitprobe_beantworten(&von, marke, positionen, None),
+                    Some(Nachforderung::Zeitprobe { positionen }) => self.zeitprobe_beantworten(&von, marke, positionen, None, None),
                     Some(Nachforderung::ZeitprobeMitGrenze { positionen, grenze_ms }) => {
-                        self.zeitprobe_beantworten(&von, marke, positionen, Some(grenze_ms))
+                        self.zeitprobe_beantworten(&von, marke, positionen, Some(grenze_ms), None)
+                    }
+                    Some(Nachforderung::ZeitprobeMitSaat { positionen, grenze_ms, saat }) => {
+                        self.zeitprobe_beantworten(&von, marke, positionen, Some(grenze_ms), Some(saat))
                     }
                     // ⚑ **Eine Shardanfrage für einen Pod über Knoten**:
                     //   unverändert an den eigenen Shard, nur erlaubte
@@ -3047,6 +3540,27 @@ impl Knoten {
                             });
                         Some((Nachlieferung::Buendel { kennung, fehler: ergebnis.err() }, 0))
                     }
+                    // ⚑ **Eine Position übernehmen** (6.8): geprüft gegen die
+                    //   Kette; der Shard startet bei der nächsten Aufnahme.
+                    Some(Nachforderung::PositionUebernehmen { kennung, epoche, pod, position }) => {
+                        let ergebnis = self.miner_ich().ok_or_else(|| "kein Miner".to_string()).and_then(|ich| {
+                            crate::shardfuehrung::uebernahme_pruefen(self.kette.zustand(), &ich, epoche, pod, position)
+                        });
+                        let fehler = match ergebnis {
+                            Ok(auftrag) => {
+                                self.protokoll.schreibe(
+                                    Eintrag::neu("position_uebernommen")
+                                        .zahl("epoche", epoche as i64)
+                                        .zahl("pod", i64::from(pod))
+                                        .zahl("position", i64::from(position)),
+                                );
+                                self.uebernahme = Some(auftrag);
+                                None
+                            }
+                            Err(f) => Some(f),
+                        };
+                        Some((Nachlieferung::Uebernahme { kennung, fehler }, 0))
+                    }
                     Some(Nachforderung::Ping) => Some((Nachlieferung::Pong, 0)),
                     // ⚑ **Ein Stück eines eigenen Abzugs** (2026-10-22).
                     Some(Nachforderung::Abzug { hoehe, ab }) => {
@@ -3090,19 +3604,143 @@ impl Knoten {
                         Some((Nachlieferung::Vermerkt, 0))
                     }
                     // ⚑ **Eine Spuranfrage der Stichprobe** (Fund 656): Die
-                    //   Segmentzeugnisse hält heute nur der Koordinator, also
-                    //   antwortet niemand mit einer Spur. Aber die Anfrage
-                    //   kommt an, und das steht im Protokoll.
+                    //   Anfrage und ihre Antwort stehen im Protokoll.
                     Some(Nachforderung::Spur(a)) => {
+                        // ⚑ Stufe 2: aus der Ablage, mit Beweis gegen die
+                        //   Wurzel des Bündels. Kennt die Kette die Wurzel,
+                        //   zählt nur eine Ablage mit genau dieser.
+                        let wurzel = self
+                            .kette
+                            .zustand()
+                            .stichprobe_wurzeln
+                            .iter()
+                            .find(|(p, _, _)| *p == a.pod)
+                            .map(|(_, w, _)| *w);
+                        let antwort = self
+                            .spurablagen
+                            .iter()
+                            .rev()
+                            .filter(|ab| wurzel.is_none_or(|w| ab.segments_root == w))
+                            .find_map(|ab| ab.antwort(&a));
                         self.protokoll.schreibe(
                             Eintrag::neu("spuranfrage_eingegangen")
                                 .text("von", von.to_string())
                                 .zahl("epoche", a.epoche.0 as i64)
                                 .text("pod", a.pod.to_hex())
                                 .zahl("segment", i64::from(a.segment))
-                                .text("antwort", "nichts"),
+                                .text("antwort", if antwort.is_some() { "spur" } else { "nichts" }),
                         );
+                        Some((antwort.map_or(Nachlieferung::Nichts, Nachlieferung::Spur), 0))
+                    }
+                    // ⚑ Stufe 2, Nachrechnen: der Verlauf aus der Ablage, wie
+                    //   die Spur oben; zu gross für eine Antwort heisst nichts.
+                    // ⚑ Ein Differenzbeweis: Ist dieser Knoten Koordinator eines
+                    //   der beiden Pods, meldet er ihn.
+                    Some(Nachforderung::Differenz { epoche, pod_a, pod_b, beweis }) => {
+                        let ich = self.miner_ich();
+                        let koordinator = self.kette.zustand().uneinigkeiten.iter().any(|u| {
+                            u.stichprobe.epoche == epoche
+                                && u.stichprobe
+                                    .besetzung
+                                    .iter()
+                                    .any(|(p, b)| (*p == pod_a || *p == pod_b) && b.first().map(|(m, _, _)| *m) == ich)
+                        });
+                        if koordinator {
+                            self.differenz_selbst_melden(epoche, pod_a, pod_b, *beweis);
+                        }
                         Some((Nachlieferung::Nichts, 0))
+                    }
+                    // ⚑ Leichter Abzug: Anker, Stücke, Kontobeweise (2026-10-29).
+                    Some(Nachforderung::LeichterAnker) => Some((Nachlieferung::LeichterAnker(self.kette.leichter_anker().map(Box::new)), 0)),
+                    Some(Nachforderung::LeichterAbzug { hoehe, ab }) => {
+                        let stueck = self.kette.ablage().and_then(|a| a.leicht().stueck_lesen(hoehe, ab).ok().flatten());
+                        Some((
+                            stueck.map_or(Nachlieferung::Nichts, |(block, daten, groesse)| Nachlieferung::Abzug { block: Box::new(block), ab, daten, groesse }),
+                            0,
+                        ))
+                    }
+                    Some(Nachforderung::Kontobeweise(adressen)) => {
+                        let adressen: Vec<_> = adressen.into_iter().take(crate::nachschub::KONTOBEWEISE_JE_ANFRAGE).collect();
+                        // Ohne Beweise eine leere Lieferung, nie `Nichts`.
+                        let (hoehe, beweise) = self.kette.kontobeweise(&adressen).unwrap_or((0, Vec::new()));
+                        Some((Nachlieferung::Kontobeweise { hoehe, beweise }, 0))
+                    }
+                    // ⚑ Ein Stück des Zeugen eines selbst erzeugten Blocks.
+                    Some(Nachforderung::Zeugenstuecke(wuensche)) => {
+                        // So viele, wie in eine Antwort passen; ein Stück
+                        // ist höchstens 1 MiB, die Antwort höchstens 4.
+                        let mut stuecke = Vec::new();
+                        let mut bytes = 0usize;
+                        for (blockhash, nr) in wuensche.into_iter().take(crate::nachschub::ZEUGENSTUECKE_JE_ANFRAGE) {
+                            // ⛔️ Nur schon Unterschriebenes: Eine Nachforderung
+                            //    darf den Erzeuger nicht zum Unterschreiben
+                            //    zwingen (32 je Anfrage wären eine Last).
+                            let Some(s) = self.kette.zeugenstuecke_gehalten(&blockhash).and_then(|s| s.get(usize::from(nr)).cloned()) else {
+                                continue;
+                            };
+                            let n = s.bytes.len() + 4096;
+                            if bytes + n > myl_types::protocol::MAX_ANFRAGE_BYTES - 4096 {
+                                break;
+                            }
+                            bytes += n;
+                            stuecke.push(s);
+                        }
+                        self.protokoll.schreibe(
+                            Eintrag::neu("zeugenstuecke_erbeten").text("von", von.to_string()).zahl("geliefert", stuecke.len() as i64),
+                        );
+                        // Auch leer eine Lieferung, nie `Nichts` (siehe
+                        // `Nachlieferung::LeichterAnker`).
+                        Some((Nachlieferung::Zeugenstuecke(stuecke), 0))
+                    }
+                    // ⚑ T6d: der eigene Schiedsbeleg, wenn es ihn gibt.
+                    Some(Nachforderung::Schiedsbeleg(a)) => {
+                        let antwort = self
+                            .schiedsbelege
+                            .get(&(a.epoche.0, a.pod, a.segment))
+                            .map(|(verlauf, eingaenge)| Nachlieferung::Schiedsbeleg { verlauf: verlauf.clone(), eingaenge: eingaenge.clone() })
+                            .filter(|n| n.als_bytes().is_some_and(|b| b.len() < myl_types::protocol::MAX_ANFRAGE_BYTES));
+                        self.protokoll.schreibe(
+                            Eintrag::neu("schiedsbeleg_eingegangen")
+                                .text("von", von.to_string())
+                                .zahl("segment", i64::from(a.segment))
+                                .text("antwort", if antwort.is_some() { "beleg" } else { "nichts" }),
+                        );
+                        Some((antwort.unwrap_or(Nachlieferung::Nichts), 0))
+                    }
+                    Some(Nachforderung::Verlauf(a)) => {
+                        let wurzel = self
+                            .kette
+                            .zustand()
+                            .stichprobe_wurzeln
+                            .iter()
+                            .find(|(p, _, _)| *p == a.pod)
+                            .map(|(_, w, _)| *w);
+                        let verlauf = self
+                            .spurablagen
+                            .iter()
+                            .rev()
+                            .filter(|ab| wurzel.is_none_or(|w| ab.segments_root == w))
+                            .find_map(|ab| ab.verlauf(&a));
+                        let antwort = verlauf
+                            .map(Nachlieferung::Verlauf)
+                            .filter(|n| n.als_bytes().is_some_and(|b| b.len() < myl_types::protocol::MAX_ANFRAGE_BYTES));
+                        self.protokoll.schreibe(
+                            Eintrag::neu("verlaufanfrage_eingegangen")
+                                .text("von", von.to_string())
+                                .zahl("epoche", a.epoche.0 as i64)
+                                .text("pod", a.pod.to_hex())
+                                .zahl("segment", i64::from(a.segment))
+                                .text("antwort", if antwort.is_some() { "verlauf" } else { "nichts" }),
+                        );
+                        Some((antwort.unwrap_or(Nachlieferung::Nichts), 0))
+                    }
+                    Some(Nachforderung::SpurenAblegen { kennung, ablage }) => {
+                        let fehler = self.spur_ablegen(ablage).err();
+                        if let Some(f) = &fehler {
+                            self.protokoll
+                                .schreibe(Eintrag::neu("spurablage_abgewiesen").text("von", von.to_string()).text("grund", f.clone()));
+                        }
+                        Some((Nachlieferung::Abgelegt { kennung, fehler }, 0))
                     }
                     // Unlesbare Anfrage: trotzdem antworten. Schweigen
                     // ließe den Fragenden auf eine Zeitüberschreitung
@@ -3122,7 +3760,7 @@ impl Knoten {
                     .zahl("bloecke", anzahl as i64)
             }
             // Die nachgeforderten Blöcke sind da.
-            NodeEvent::AntwortEingegangen { von, daten } => {
+            NodeEvent::AntwortEingegangen { von, daten, zweck } => {
                 // ⚑ **Antworten der Netzarbeit** (Stufe 4) berühren die
                 //   Blocknachforderung nicht, wie die Inferenzantwort.
                 match Nachlieferung::aus_bytes(&daten) {
@@ -3147,21 +3785,98 @@ impl Knoten {
                         return self.shard_antwort(von, kennung, antwort, fehler)
                     }
                     Some(Nachlieferung::Buendel { kennung, fehler }) => return self.buendel_antwort(von, kennung, fehler),
+                    Some(Nachlieferung::Uebernahme { kennung, fehler }) => {
+                        return self.relais_beantworten(von, kennung, fehler, "übernommen")
+                    }
+                    Some(Nachlieferung::Abgelegt { kennung, fehler }) => return self.relais_beantworten(von, kennung, fehler, "abgelegt"),
+                    Some(Nachlieferung::Spur(antwort)) => return self.spur_erhalten(von, antwort),
+                    Some(Nachlieferung::Verlauf(antworten)) => return self.verlauf_erhalten(von, antworten),
+                    Some(Nachlieferung::Schiedsbeleg { verlauf, eingaenge }) => return self.schiedsbeleg_erhalten(verlauf, eingaenge),
+                    // ⚑ Ein nachgefordertes Zeugenstück kommt nicht durch den
+                    //   Netzfaden: dieselbe Prüfung hier.
+                    Some(Nachlieferung::LeichterAnker(z)) => {
+                        if let Some(z) = z {
+                            self.leichter_anker_erhalten(von, *z);
+                        }
+                        return;
+                    }
+                    Some(Nachlieferung::Kontobeweise { hoehe, beweise }) => return self.kontobeweise_erhalten(hoehe, beweise),
+                    Some(Nachlieferung::Zeugenstuecke(stuecke)) => {
+                        if stuecke.is_empty() {
+                            return;
+                        }
+                        let n = stuecke.len();
+                        let mut tragend = 0usize;
+                        // ⚑ Eine direkte Antwort darf auch von einem vollen
+                        //   Knoten kommen, der Zeugen bereithält (2026-10-30),
+                        //   aber nur von einem **eingetragenen Miner** unter
+                        //   seinem eingetragenen Schlüssel: Ein Wegwerfschlüssel
+                        //   kostet nichts, eine Eintragung schon. Wessen Zeuge
+                        //   einmal nicht trug, der ist gesperrt. Weitergeleitet
+                        //   wird so etwas nie; das Gossip bleibt bei den
+                        //   Erzeugern. Je Kopf wird einmal geprüft.
+                        let mut gepruefte: Vec<myl_types::Hash> = Vec::new();
+                        for s in stuecke {
+                            let k = s.kopf.kennung();
+                            let traegt = gepruefte.contains(&k)
+                                || borsh::to_vec(&s).is_ok_and(|d| self.zeugenpruefer.zeugenstueck_traegt(&d))
+                                || (s.passt()
+                                    && !self.zeugen_gesperrt.contains(&s.kopf.schluessel)
+                                    && self.kette.zustand().miner.get(&s.kopf.erzeuger()).is_some_and(|r| r.schluessel == s.kopf.schluessel)
+                                    && s.kopf.traegt());
+                            if traegt {
+                                if !gepruefte.contains(&k) {
+                                    gepruefte.push(k);
+                                }
+                                tragend += 1;
+                                self.zeugenstueck_erhalten(s);
+                            }
+                        }
+                        if tragend > 0 {
+                            self.zeugen_quelle(von);
+                        }
+                        self.protokoll.schreibe(
+                            Eintrag::neu("zeugenstuecke_nachgeliefert")
+                                .text("von", von.to_string())
+                                .zahl("stuecke", n as i64)
+                                .zahl("tragend", tragend as i64),
+                        );
+                        return;
+                    }
                     // Seit Fund 646 misst niemand mehr mit Pings; ein Pong
                     // eines alten Knotens hat keinen Empfänger.
                     Some(Nachlieferung::Pong) => return,
-                    Some(Nachlieferung::Zeitprobe(_)) => return self.zeitprobe_erhalten(von),
+                    // 📌 Fund 669/661: Gezählt wird nur die unterschriebene
+                    //    Antwort auf die eigene Saat. Eine ohne oder mit
+                    //    falscher Unterschrift bleibt liegen, die Probe läuft
+                    //    in ihre Grenze.
+                    Some(Nachlieferung::ZeitprobeUnterschrieben { abdruck, signatur }) => {
+                        if self.zeitprobe_traegt(&von, &abdruck, &signatur) {
+                            return self.zeitprobe_erhalten(von);
+                        }
+                        return;
+                    }
+                    Some(Nachlieferung::Zeitprobe(_)) => return,
                     Some(Nachlieferung::Datei { name, ab, daten, groesse }) => {
                         return self.stueck_erhalten(von, &name, ab, &daten, groesse)
                     }
                     Some(Nachlieferung::Vermerkt) => return,
-                    Some(Nachlieferung::Nichts) if self.ist_netzarbeit(&von) => return self.nichts_erhalten(von),
+                    // ⚑ Nach dem Zweck (2026-10-30): ein `Nichts` auf eine
+                    //   Zeitprobe in die Messung, eines der Quelle des
+                    //   Nachholens dorthin; jedes andere, auch das einer
+                    //   gemessenen Gegenstelle auf eine Blocknachforderung,
+                    //   den gewöhnlichen Weg.
+                    Some(Nachlieferung::Nichts) if zweck == Some(ZWECK_ZEITPROBE) => {
+                        return self.nichts_erhalten(von, "nichts", true)
+                    }
+                    Some(Nachlieferung::Nichts) if self.ist_nachholquelle(&von) => return self.nichts_erhalten(von, "nichts", false),
                     _ => {}
                 }
                 let vorher = self.kette.hoehe();
                 let mut angenommen = 0usize;
                 let mut abgelehnt = 0usize;
                 let mut vorausgelegt = 0usize;
+                let mut gewartet = 0usize;
                 // ⚑ **Eine Inferenzantwort ist keine Blocklieferung**, und
                 // sie darf die Nachforderung nicht als erledigt
                 // buchen: Wer beides über dieselbe Schiene schickt,
@@ -3195,6 +3910,23 @@ impl Knoten {
                     //   späterer Bereich auch einmal vor einem früheren an;
                     //   seine Blöcke gehen in den Vorausspeicher (Fund 592).
                     for b in bloecke {
+                        if self.kette.ist_zustandslos() {
+                            // ⚑ Ein Block, der neu ins Wartefenster kommt, ist
+                            //   geliefert (2026-10-30): Er zählt für die
+                            //   Fortsetzung wie ein angenommener. 📌 Sonst riss
+                            //   die Kette des Nachforderns ab, und der nächste
+                            //   Bereich kam erst mit dem nächsten Block über das
+                            //   Gossip: Im Kurzlauf `kurz-ablage` folgte der
+                            //   zustandslose Miner nach einer Trennung genau im
+                            //   Takt des Erzeugers, 130 Blöcke dahinter, und holte
+                            //   nie auf.
+                            let h = b.header.height;
+                            let neu = !self.wartet_auf_zeugen.contains_key(&h);
+                            self.zeugen_eilig.insert(h);
+                            self.zustandslos_block(b, von);
+                            gewartet += usize::from(neu && self.wartet_auf_zeugen.contains_key(&h));
+                            continue;
+                        }
                         match self.kette.uebernimm(&b) {
                             Ok(()) => angenommen += 1,
                             Err(crate::kette::KettenFehler::PasstNichtAn { .. }) if b.header.height > self.kette.hoehe() + 1 => {
@@ -3208,7 +3940,7 @@ impl Knoten {
                 }
                 // Wer nichts hatte, wird für diese Höhe eine Weile übergangen
                 // (Fund 626); wer geliefert hat, wieder gefragt.
-                if angenommen > 0 || vorausgelegt > 0 {
+                if angenommen > 0 || vorausgelegt > 0 || gewartet > 0 {
                     self.leer_geantwortet.remove(&von);
                 } else if matches!(Nachlieferung::aus_bytes(&daten), Some(Nachlieferung::Nichts)) {
                     if let Some(n) = self.nachforderungen.iter().find(|n| n.an == von) {
@@ -3220,8 +3952,10 @@ impl Knoten {
                     }
                 }
                 self.nachforderungen.retain(|n| n.an != von);
+                // Zustandslos: die Zeugen der eben gelieferten Blöcke gleich.
+                self.zeugen_pflegen();
                 let aus_dem_voraus = self.voraus_einspielen();
-                self.weiter_nachfordern((angenommen > 0).then_some(von));
+                self.weiter_nachfordern((angenommen > 0 || gewartet > 0).then_some(von));
                 // Wer bei Stille geliefert hat, wird weiter gefragt, bis er
                 // nichts mehr hat (Fund 618).
                 if self.stille_bei == Some(von) {
@@ -3236,18 +3970,30 @@ impl Knoten {
                     .zahl("abgelehnt", abgelehnt as i64)
                     .zahl("aus_dem_voraus", aus_dem_voraus as i64)
                     .zahl("vorausgelegt", vorausgelegt as i64)
+                    .zahl("gewartet", gewartet as i64)
                     .zahl("hoehe_vorher", vorher as i64)
                     .zahl("hoehe_nachher", self.kette.hoehe() as i64)
             }
-            NodeEvent::AnfrageGescheitert { an, grund } if self.shardrelais.values().any(|(p, _, _)| *p == an) => {
+            NodeEvent::AnfrageGescheitert { an, grund, .. } if self.shardrelais.values().any(|(p, _, _)| *p == an) => {
                 self.shardrelais_scheitern(&an, &grund);
                 Eintrag::neu("shardrelais_gescheitert").text("an", an.to_string()).text("grund", grund)
             }
-            NodeEvent::AnfrageGescheitert { an, grund } if self.ist_netzarbeit(&an) => {
-                self.nichts_erhalten(an);
+            // 📌 **Fund 674 (2026-10-28): Nicht erreicht ist keine Weigerung.**
+            //    Ein Knoten hält höchstens `MAX_AUSGEHEND` Verbindungen; sind
+            //    sie belegt, scheitert das Wählen zu einem Mitglied, mit dem
+            //    er noch nicht verbunden ist. Das zählte wie eine Abweisung,
+            //    und mit 29 Knoten bekamen ehrliche Miner Zeugnisse. Jetzt
+            //    wird später neu gefragt, ohne zu zählen.
+            NodeEvent::AnfrageGescheitert { an, grund, zweck } if zweck == Some(ZWECK_ZEITPROBE) && self.messungen.contains_key(&an) && ist_waehlfehler(&grund) => {
+                self.messung_unerreicht(an);
+                self.nachholquelle_scheitert(an);
+                Eintrag::neu("zeitprobe_unerreicht").text("an", an.to_string()).text("grund", grund)
+            }
+            NodeEvent::AnfrageGescheitert { an, grund, zweck } if zweck == Some(ZWECK_ZEITPROBE) || self.ist_nachholquelle(&an) => {
+                self.nichts_erhalten(an, "gescheitert", zweck == Some(ZWECK_ZEITPROBE));
                 Eintrag::neu("netzarbeit_gescheitert").text("an", an.to_string()).text("grund", grund)
             }
-            NodeEvent::AnfrageGescheitert { an, grund } => {
+            NodeEvent::AnfrageGescheitert { an, grund, .. } => {
                 self.nachforderungen.retain(|n| n.an != an);
                 self.weiter_nachfordern(None);
                 Eintrag::neu("nachschub_gescheitert")
@@ -3425,6 +4171,387 @@ impl Beendigungswache {
 /// Blockverarbeitung.
 impl Knoten {
     /// Die Kennung, unter der dieser Knoten als Miner angemeldet ist.
+    /// ⚑ **Ein Block beim zustandslosen Knoten** (2026-10-29): Er wartet auf
+    /// seinen Zeugen, wenn sein Erzeuger belegt ist und er nicht zu weit
+    /// vorn liegt; je Höhe gilt der erste. Erst ein belegter Block legt
+    /// fest, welcher Zeuge an seiner Höhe zählt: Sonst könnte ein
+    /// gefälschter Block den echten Zeugen verdrängen.
+    fn zustandslos_block(&mut self, block: myl_consensus::block::Block, von: libp2p::PeerId) {
+        let hoehe = block.header.height;
+        let eigene = self.kette.hoehe();
+        if hoehe <= eigene || self.wartet_auf_zeugen.contains_key(&hoehe) {
+            return;
+        }
+        // ⛔️ **Zuerst der Erzeuger**, wie im vollen Pfad: Ein Block ohne
+        //    belegten Erzeuger löst nichts aus, keine Nachforderung und
+        //    keine Erwartung an einen Zeugen.
+        if !self.kette.erzeuger_belegt(&block) {
+            self.protokoll.schreibe(Eintrag::neu("block_abgelehnt").zahl("hoehe", hoehe as i64).text("grund", "erzeuger-unbelegt"));
+            return;
+        }
+        // Daran misst die Selbstheilung, ob es weitergeht (belegt, also nicht
+        // nur behauptet).
+        self.hoechster_belegter = self.hoechster_belegter.max(hoehe);
+        // Eine Lücke davor: nachfordern wie im vollen Pfad.
+        if hoehe > eigene + 1 && !self.wartet_auf_zeugen.contains_key(&(eigene + 1)) {
+            self.fordere_nach(von, hoehe);
+        }
+        if hoehe > eigene + WARTENDE_BLOECKE {
+            return;
+        }
+        // Eine Kette, die ihren Erzeuger erst lernt (Probekette), hat vor
+        // ihrem ersten Block (ab Genesis oder nach einem Abzug) keinen
+        // Stimmsatz: Der Erzeuger des nächsten Blocks ist der, den sie
+        // lernen wird (`Kette::satz_aus_block`). ⛔️ Nur dieser und nur
+        // wenige: Sonst brächte jeder unterschriebene Block seinen Schlüssel
+        // in die Liste, nach der Zeugenstücke weitergeleitet werden.
+        if self.kette.stimmsatz().is_none() && hoehe == eigene + 1 {
+            if let (Some(u), Ok(mut l)) = (&block.unterschrift, self.erzeugerliste.write()) {
+                if l.len() < myl_consensus::zeuge::KOEPFE_JE_HOEHE {
+                    l.insert(u.erzeuger(), u.schluessel);
+                }
+            }
+        }
+        self.zeugensammler.erwarten(hoehe, block.hash());
+        if hoehe == eigene + 1 {
+            self.protokoll.schreibe(Eintrag::neu("wartet_auf_zeuge").zahl("hoehe", hoehe as i64).text("block", kurz(&block.hash())));
+        }
+        self.wartet_auf_zeugen.insert(hoehe, (block, std::time::Instant::now(), von));
+        self.zeugen_einspielen();
+    }
+
+    /// Merkt sich eine Gegenstelle, die tragende Zeugenstücke brachte.
+    fn zeugen_quelle(&mut self, von: libp2p::PeerId) {
+        if self.zeugen_quellen.front() != Some(&von) {
+            self.zeugen_quellen.retain(|p| *p != von);
+            self.zeugen_quellen.push_front(von);
+            self.zeugen_quellen.truncate(ZEUGEN_GEGENSTELLEN);
+        }
+    }
+
+    /// Ein geprüftes Zeugenstück; macht es einen Zeugen fertig, wird er
+    /// gelesen und, wenn sein Block dran ist, eingespielt.
+    fn zeugenstueck_erhalten(&mut self, s: myl_consensus::zeuge::Zeugenstueck) {
+        if s.kopf.hoehe <= self.kette.hoehe() {
+            return;
+        }
+        // Für die Auswertung: ein Stück für den nächsten Block, das keinen
+        // Zeugen fertig macht.
+        let naechstes = (s.kopf.hoehe == self.kette.hoehe() + 1)
+            .then(|| (s.nr, s.kopf.stuecke.len(), self.wartet_auf_zeugen.get(&s.kopf.hoehe).map(|(b, _, _)| b.hash() == s.kopf.blockhash)));
+        let Some((hoehe, blockhash, bytes, unterzeichner)) = self.zeugensammler.aufnehmen(s) else {
+            if let Some((nr, teile, passt)) = naechstes {
+                self.protokoll.schreibe(
+                    Eintrag::neu("zeugenstueck_liegt")
+                        .zahl("nr", i64::from(nr))
+                        .zahl("teile", teile as i64)
+                        .text("block", match passt { Some(true) => "wartet", Some(false) => "anderer", None => "fehlt" }),
+                );
+            }
+            return;
+        };
+        let mut rest = &bytes[..];
+        let gelesen = <myl_ledger::state::Zeuge as borsh::BorshDeserialize>::deserialize(&mut rest).ok().filter(|_| rest.is_empty());
+        // Für die Auswertung: was im Fenster fertig wird, und ob sein Block
+        // wartet.
+        if hoehe <= self.kette.hoehe() + WARTENDE_BLOECKE {
+            let block = self.wartet_auf_zeugen.get(&hoehe).map(|(b, _, _)| b.hash() == blockhash);
+            self.protokoll.schreibe(
+                Eintrag::neu("zeuge_fertig")
+                    .zahl("hoehe", hoehe as i64)
+                    .zahl("bytes", bytes.len() as i64)
+                    .wahr("lesbar", gelesen.is_some())
+                    .text("block", match block { Some(true) => "wartet", Some(false) => "anderer", None => "fehlt" }),
+            );
+        }
+        let Some(zeuge) = gelesen else {
+            return;
+        };
+        self.fertige_zeugen.push_back((blockhash, zeuge, bytes.len(), unterzeichner));
+        while self.fertige_zeugen.len() > FERTIGE_ZEUGEN
+            || self.fertige_zeugen.iter().map(|(_, _, n, _)| n).sum::<usize>() > ZEUGEN_SAMMLER_BYTES
+        {
+            self.fertige_zeugen.pop_front();
+        }
+        self.zeugen_einspielen();
+    }
+
+    /// Spielt ein, solange der nächste Block wartet und sein Zeuge da ist.
+    fn zeugen_einspielen(&mut self) {
+        loop {
+            let naechste = self.kette.hoehe() + 1;
+            let Some((block, _, _)) = self.wartet_auf_zeugen.get(&naechste) else {
+                break;
+            };
+            let hash = block.hash();
+            let Some(i) = self.fertige_zeugen.iter().position(|(h, _, _, _)| *h == hash) else {
+                break;
+            };
+            let (_, zeuge, _, unterzeichner) = self.fertige_zeugen.remove(i).expect("gefunden");
+            let (block, _, von) = self.wartet_auf_zeugen.remove(&naechste).expect("gefunden");
+            match self.kette.uebernimm_mit_zeuge(&block, &zeuge) {
+                Ok(()) => {
+                    self.nur_abzug = 0;
+                    self.zeugensammler.bis_vergessen(naechste);
+                    self.kontobeweise_einsetzen();
+                    self.protokoll.schreibe(
+                        Eintrag::neu("block_uebernommen")
+                            .zahl("hoehe", self.kette.hoehe() as i64)
+                            .zahl("txs", block.txs.len() as i64)
+                            .wahr("mit_zeuge", true)
+                            .text("zustandswurzel", kurz(&self.kette.wurzel()))
+                            .text("block", kurz(&self.kette.letzter_hash())),
+                    );
+                }
+                Err(grund) => {
+                    // ⚑ Trug der Zeuge eines anderen als des Erzeugers nicht,
+                    //   liegt es am Zeugen, nicht am Block (2026-10-30): Der
+                    //   Block wartet weiter, der Unterzeichner ist gesperrt.
+                    //   Sonst könnte ein Miner mit einem falschen Zeugen
+                    //   einen Block aus der Warteschlange werfen.
+                    let vom_erzeuger = block.unterschrift.as_ref().is_some_and(|u| u.schluessel == unterzeichner);
+                    self.protokoll.schreibe(
+                        Eintrag::neu("block_abgelehnt")
+                            .zahl("hoehe", naechste as i64)
+                            .text("grund", grund.to_string())
+                            .wahr("zeuge_vom_erzeuger", vom_erzeuger),
+                    );
+                    if !vom_erzeuger {
+                        self.zeugen_gesperrt.push_back(unterzeichner);
+                        while self.zeugen_gesperrt.len() > ZEUGEN_GESPERRT {
+                            self.zeugen_gesperrt.pop_front();
+                        }
+                        self.wartet_auf_zeugen.insert(naechste, (block, std::time::Instant::now(), von));
+                    }
+                    break;
+                }
+            }
+        }
+        let h = self.kette.hoehe();
+        self.wartet_auf_zeugen.retain(|hoehe, _| *hoehe > h);
+        self.zeugen_eilig.retain(|hoehe| *hoehe > h && *hoehe <= h + WARTENDE_BLOECKE);
+        self.zeugen_angefragt.retain(|_, t| t.elapsed() < std::time::Duration::from_secs(60));
+    }
+
+    /// ⚑ **Fehlt der Zeuge eines wartenden Blocks** nach
+    /// [`ZEUGE_NACHFRAGEN_NACH`], fragt der zustandslose Knoten Stück für
+    /// Stück nach: beim Erzeuger, wenn er als Miner eingetragen ist, und bei
+    /// dem, der den Block weiterreichte. Die Antworten prüft er wie das
+    /// Gossip.
+    fn zeugen_pflegen(&mut self) {
+        if !self.kette.ist_zustandslos() {
+            return;
+        }
+        self.leicht_einstieg_pflegen();
+        // Während ein Abzug kommt, keine Zeugen: Der Knoten springt ohnehin.
+        if self.abzug_holen.is_some() || self.anker_suchen.is_some() {
+            return;
+        }
+        // Alle wartenden Blöcke ohne Zeugen, die lange genug warten; beim
+        // Aufholen also viele zugleich, nicht einer je Frist.
+        let offen: Vec<(myl_types::Hash, Vec<libp2p::PeerId>)> = self
+            .wartet_auf_zeugen
+            .values()
+            .filter(|(block, seit, _)| {
+                (seit.elapsed() >= ZEUGE_NACHFRAGEN_NACH || self.zeugen_eilig.contains(&block.header.height))
+                    && !self.fertige_zeugen.iter().any(|(h, _, _, _)| *h == block.hash())
+            })
+            .map(|(block, _, von)| {
+                let erzeuger = block.erzeuger().ok().flatten().and_then(|m| {
+                    self.kette.zustand().miner.get(&m).and_then(|r| myl_net::peer_id_aus_bytes(&r.netzadresse).ok())
+                });
+                (block.hash(), [Some(*von), erzeuger].into_iter().flatten().collect::<Vec<_>>())
+            })
+            .collect();
+        // Dazu einige weitere Gegenstellen: Der Weiterreicher muss den
+        // Zeugen nicht haben (ein voller Knoten hält keine fremden), und den
+        // Erzeuger kennt nicht jedes Netz als Miner.
+        // Reihum, damit jeder Zeugenhalter einmal gefragt wird und als
+        // Quelle bleibt, sobald er liefert; je Runde bleiben es höchstens
+        // `ZEUGEN_GEGENSTELLEN` weitere.
+        let (reihum, weiter) = reihum(&self.gegenstellen, self.zeugen_reihum, ZEUGEN_GEGENSTELLEN);
+        let weitere: Vec<libp2p::PeerId> = self.zeugen_quellen.iter().copied().chain(reihum).collect();
+        if !offen.is_empty() {
+            self.zeugen_reihum = weiter;
+        }
+        let offen: Vec<(myl_types::Hash, Vec<libp2p::PeerId>)> = offen
+            .into_iter()
+            .map(|(h, mut an)| {
+                for p in &weitere {
+                    if !an.contains(p) {
+                        an.push(*p);
+                    }
+                }
+                (h, an)
+            })
+            .collect();
+        // Je Gegenstelle eine gebündelte Anfrage (eine Verbindung trägt nur
+        // `MAX_ANFRAGEN_ZUGLEICH` zugleich).
+        let mut je_peer: std::collections::BTreeMap<libp2p::PeerId, Vec<(myl_types::Hash, u16)>> = Default::default();
+        let jetzt = std::time::Instant::now();
+        for (hash, an) in offen {
+            for nr in self.zeugensammler.fehlende(&hash).unwrap_or_else(|| vec![0]) {
+                let neu = self.zeugen_angefragt.get(&(hash, nr)).is_none_or(|t| t.elapsed() > ZEUGE_NACHFRAGEN_NACH);
+                if !neu {
+                    continue;
+                }
+                for p in &an {
+                    let w = je_peer.entry(*p).or_default();
+                    if w.len() < crate::nachschub::ZEUGENSTUECKE_JE_ANFRAGE {
+                        w.push((hash, nr));
+                    }
+                }
+                self.zeugen_angefragt.insert((hash, nr), jetzt);
+            }
+        }
+        for (p, wuensche) in je_peer {
+            let n = wuensche.len();
+            if let Some(daten) = Nachforderung::Zeugenstuecke(wuensche).als_bytes() {
+                let _ = self.kommandos.send(NodeCommand::Anfrage { an: p, daten });
+                self.protokoll.schreibe(Eintrag::neu("zeugenstuecke_angefragt").text("an", p.to_string()).zahl("stuecke", n as i64));
+            }
+        }
+    }
+
+    /// ⚑ **Der Einstieg des zustandslosen Knotens** (2026-10-29): Ohne Anker
+    /// fragt er nach dem jüngsten verankerten leichten Abzug; nach
+    /// [`ANKER_SUCHEN_HOECHSTENS`] ohne Antwort folgt er ab Genesis. Kennt
+    /// er eigene Konten nicht, fragt er nach Kontobeweisen.
+    fn leicht_einstieg_pflegen(&mut self) {
+        // ⚑ Selbstheilung: Stillstand trotz höherer Blöcke, und ein
+        //   Stimmsatz, gegen den sich ein Anker prüfen lässt.
+        let hoehe = self.kette.hoehe();
+        if self.stillstand.0 != hoehe || self.abzug_holen.is_some() || self.anker_suchen.is_some() {
+            self.stillstand = (hoehe, std::time::Instant::now());
+        } else if self.stillstand.1.elapsed() > self.stillstand_hoechstens
+            && self.hoechster_belegter > hoehe + 1
+            && self.kette.stimmsatz().is_some()
+        {
+            self.nur_abzug = self.nur_abzug.saturating_add(1);
+            self.protokoll.schreibe(
+                Eintrag::neu("zustandslos_neu_verankern")
+                    .zahl("hoehe", hoehe as i64)
+                    .zahl("belegt_bis", self.hoechster_belegter as i64)
+                    .zahl("hintereinander", i64::from(self.nur_abzug)),
+            );
+            if self.nur_abzug >= NUR_ABZUG_WARNUNG {
+                self.protokoll.schreibe(
+                    Eintrag::neu("zustandslos_nur_abzug")
+                        .zahl("hintereinander", i64::from(self.nur_abzug))
+                        .text("hinweis", "kein Block mit Zeugen seit den letzten Neuverankerungen; fehlen die Zeugen ab dem Pruefpunkt?"),
+                );
+            }
+            self.anker_suchen = Some(std::time::Instant::now());
+            self.anker_kandidat = None;
+            self.stillstand = (hoehe, std::time::Instant::now());
+        }
+        if let Some(seit) = self.anker_suchen {
+            if let Some((anker, _)) = self.anker_kandidat.filter(|(_, ab)| ab.elapsed() >= ANKER_SAMMELN) {
+                self.anker_suchen = None;
+                self.anker_kandidat = None;
+                self.protokoll.schreibe(Eintrag::neu("leichter_anker").zahl("hoehe", anker.hoehe as i64));
+                self.abzug_holen = Some(AbzugHolen::neu_als(anker, crate::abzug::Art::Leicht));
+                self.abzug_anfragen();
+            } else if seit.elapsed() > ANKER_SUCHEN_HOECHSTENS && self.anker_kandidat.is_none() {
+                self.anker_suchen = None;
+                self.protokoll.schreibe(Eintrag::neu("leichter_anker_keiner"));
+                self.weiter_nachfordern(None);
+            } else if let Some(daten) = Nachforderung::LeichterAnker.als_bytes() {
+                for p in self.gegenstellen.iter().take(ZEUGEN_GEGENSTELLEN) {
+                    let _ = self.kommandos.send(NodeCommand::Anfrage { an: *p, daten: daten.clone() });
+                }
+            }
+        }
+        let unbekannt = self.kette.eigene_unbekannt();
+        if unbekannt.is_empty() || self.abzug_holen.is_some() || self.kette.hoehe() == 0 {
+            return;
+        }
+        if self.kontobeweise_angefragt.is_some_and(|t| t.elapsed() < KONTOBEWEISE_ALLE) {
+            return;
+        }
+        let wuensche: Vec<_> = unbekannt.into_iter().take(crate::nachschub::KONTOBEWEISE_JE_ANFRAGE).collect();
+        if let Some(daten) = Nachforderung::Kontobeweise(wuensche).als_bytes() {
+            for p in self.gegenstellen.iter().take(2) {
+                let _ = self.kommandos.send(NodeCommand::Anfrage { an: *p, daten: daten.clone() });
+            }
+            self.kontobeweise_angefragt = Some(std::time::Instant::now());
+        }
+    }
+
+    /// Ein Zertifikat als Anker: nur, wenn es gegen den eigenen Stimmsatz
+    /// trägt und der Knoten noch einen sucht.
+    /// Gesammelt wird ([`ANKER_SAMMELN`]), genommen der jüngste; einer
+    /// unter der eigenen Höhe zählt nicht (die Selbstheilung springt nur
+    /// vorwärts).
+    fn leichter_anker_erhalten(&mut self, von: libp2p::PeerId, z: myl_consensus::pruefpunkt::Pruefpunktzertifikat) {
+        if self.anker_suchen.is_none() || self.abzug_holen.is_some() || z.hoehe <= self.kette.hoehe() {
+            return;
+        }
+        let Some(anker) = self.kette.anker_aus_zertifikat(&z) else {
+            self.protokoll.schreibe(Eintrag::neu("leichter_anker_abgelehnt").text("von", von.to_string()).zahl("hoehe", z.hoehe as i64));
+            return;
+        };
+        match &mut self.anker_kandidat {
+            Some((a, _)) if a.hoehe >= anker.hoehe => {}
+            Some((a, _)) => *a = anker,
+            None => self.anker_kandidat = Some((anker, std::time::Instant::now())),
+        }
+    }
+
+    /// Für Tests: Der Erzeuger hält seine Zeugen zurück.
+    #[doc(hidden)]
+    pub fn zeugen_zurueckhalten(&mut self, ja: bool) {
+        self.zeugen_zurueckhalten = ja;
+    }
+
+    /// Für Tests: wie lange Stillstand, bis neu verankert wird.
+    #[doc(hidden)]
+    pub fn stillstand_hoechstens_setzen(&mut self, d: std::time::Duration) {
+        self.stillstand_hoechstens = d;
+    }
+
+    /// Kontobeweise: gleich einsetzen, wenn sie zur eigenen Höhe gehören,
+    /// sonst halten, bis die eigene sie erreicht; ältere fallen weg.
+    ///
+    /// ⛔️ **Gehalten wird die niedrigste ab der eigenen Höhe**, und höchstens
+    /// [`KONTOBEWEISE_VORAUS`] Höhen voraus: Hielte er die höchste, belegte
+    /// eine Gegenstelle mit einer erfundenen fernen Höhe den Platz für immer,
+    /// und der Knoten erführe sein Konto nie. Eine falsche Lieferung kostet
+    /// so nur einen weiteren Versuch.
+    fn kontobeweise_erhalten(&mut self, hoehe: u64, beweise: Vec<myl_ledger::state::Kontobeweis>) {
+        let eigene = self.kette.hoehe();
+        if !self.kette.ist_zustandslos() || hoehe < eigene || hoehe > eigene + KONTOBEWEISE_VORAUS {
+            return;
+        }
+        if self.kontobeweise_offen.as_ref().is_none_or(|(h, _)| hoehe <= *h || *h < eigene) {
+            self.kontobeweise_offen = Some((hoehe, beweise));
+        }
+        self.kontobeweise_einsetzen();
+    }
+
+    /// Für Tests: eine Lieferung von Kontobeweisen einspeisen.
+    #[doc(hidden)]
+    pub fn kontobeweise_einspeisen(&mut self, hoehe: u64, beweise: Vec<myl_ledger::state::Kontobeweis>) {
+        self.kontobeweise_erhalten(hoehe, beweise);
+    }
+
+    /// Für Tests: die Höhe der gehaltenen Kontobeweise.
+    #[doc(hidden)]
+    pub fn kontobeweise_gehalten(&self) -> Option<u64> {
+        self.kontobeweise_offen.as_ref().map(|(h, _)| *h)
+    }
+
+    fn kontobeweise_einsetzen(&mut self) {
+        let Some((hoehe, beweise)) = self.kontobeweise_offen.take() else {
+            return;
+        };
+        match self.kette.kontobeweise_einsetzen(hoehe, &beweise) {
+            Ok(n) => self.protokoll.schreibe(Eintrag::neu("kontobeweise").zahl("hoehe", hoehe as i64).zahl("eingesetzt", n as i64)),
+            Err(eigene) if eigene < hoehe => self.kontobeweise_offen = Some((hoehe, beweise)),
+            Err(_) => {}
+        }
+    }
+
     fn miner_ich(&self) -> Option<myl_types::ids::MinerId> {
         self.netzschluessel.as_ref().map(|k| k.kennung())
     }
@@ -3442,6 +4569,43 @@ impl Knoten {
     /// Die Prozessnummer dieses Shards.
     pub fn shard_pid(&self) -> Option<u32> {
         self.shardfuehrung.as_ref().and_then(|f| f.pid())
+    }
+
+    /// ⚑ **Vorrang für die Pod-Mitglieder** (Fund 674, N1): je Epoche die
+    /// Gegenstellen, die nicht gegen die Verbindungsgrenzen zählen. Ein
+    /// Miner braucht die Mitglieder seines Pods (Zeitprobe, Spuren), ein
+    /// Torknoten die aller Pods (Shardverkehr über die Relaisleitung), der
+    /// eigene Pod zuerst. Gedeckelt in `myl-net` (`MAX_VORRANG`).
+    fn vorrang_pflegen(&mut self) {
+        let z = self.kette.zustand();
+        let epoche = z.epoch.0;
+        if self.vorrang.as_ref().is_some_and(|(e, _)| *e == epoche) {
+            return;
+        }
+        let zuteilung = crate::kette::Kette::zuteilung_der_laufenden_epoche(z);
+        let ich = self.miner_ich();
+        let mein_pod = |p: &&myl_scheduler::shard_assignment::Pod| ich.is_some_and(|i| p.mitglieder().any(|m| m.miner_id == i));
+        let mut pods: Vec<&myl_scheduler::shard_assignment::Pod> = zuteilung.pods.iter().filter(mein_pod).collect();
+        // Mit Relaisleitung bedient er Pods für einen Ortsdienst (Torknoten).
+        if self.konfig.podrelais.is_some() {
+            pods.extend(zuteilung.pods.iter().filter(|p| !mein_pod(p)));
+        }
+        let mut peers: Vec<libp2p::PeerId> = Vec::new();
+        for m in pods.iter().flat_map(|p| p.mitglieder()) {
+            if ich == Some(m.miner_id) {
+                continue;
+            }
+            if let Ok(p) = myl_net::peer_id_aus_bytes(&m.netzadresse) {
+                if p != self.peer_id && !peers.contains(&p) {
+                    peers.push(p);
+                }
+            }
+        }
+        let anzahl = peers.len();
+        if self.kommandos.send(NodeCommand::Vorrang { peers: peers.clone() }).is_ok() {
+            self.protokoll.schreibe(Eintrag::neu("vorrang").zahl("epoche", epoche as i64).zahl("peers", anzahl as i64));
+            self.vorrang = Some((epoche, peers));
+        }
     }
 
     /// Je Aufnahme: Zusage pflegen, Shard abgleichen, messen, holen.
@@ -3462,6 +4626,7 @@ impl Knoten {
             self.probehahn_pflegen(&ich);
         }
         self.zusage_pflegen(&ich);
+        self.einsatz_pflegen(&ich);
         self.auszahlung_pflegen(&ich);
         self.archiv_belegen(&ich);
         self.teilwurzel_nennen(&ich);
@@ -3469,6 +4634,7 @@ impl Knoten {
         self.teile_holen(&ich);
         self.shard_abgleichen(&ich);
         self.fristen_messen(&ich);
+        self.selbstprobe_pflegen(&ich);
         self.dateien_nachholen(&ich);
         for tx in std::mem::take(&mut self.ausstehend) {
             self.tx_verbreiten(tx);
@@ -3481,7 +4647,12 @@ impl Knoten {
     fn netz_tx(&mut self, anweisung: myl_consensus::block::Anweisung) -> Option<myl_consensus::block::Transaktion> {
         self.netz_luecke_pruefen();
         let k = self.netzschluessel.as_ref()?;
-        let im_zustand = self.kette.zustand().account(&k.adresse()).nonce;
+        // ⚑ Zustandslos und das eigene Konto noch unbekannt: keine Nummer
+        //   raten (der Boden einer neuen Epoche läge weit darüber).
+        if !self.kette.konto_bekannt(&k.adresse()) {
+            return None;
+        }
+        let im_zustand = self.kette.konto(&k.adresse()).nonce;
         let nonce = self.netz_nonce.max(im_zustand);
         let tx = k.transaktion(&self.kette.netzwert(), nonce, anweisung).ok()?;
         self.netz_nonce = nonce + 1;
@@ -3493,7 +4664,7 @@ impl Knoten {
     fn netz_offen(&self) -> bool {
         self.netzschluessel
             .as_ref()
-            .is_some_and(|k| self.netz_nonce > self.kette.zustand().account(&k.adresse()).nonce)
+            .is_some_and(|k| self.netz_nonce > self.kette.konto(&k.adresse()).nonce)
     }
 
     /// ⚑ **Eine Lücke heilt** (Fund 627): Steht die Nummer im Zustand
@@ -3507,7 +4678,7 @@ impl Knoten {
         let Some(k) = self.netzschluessel.as_ref() else {
             return;
         };
-        let im_zustand = self.kette.zustand().account(&k.adresse()).nonce;
+        let im_zustand = self.kette.konto(&k.adresse()).nonce;
         let (hoehe, gehoert) = (self.kette.hoehe(), self.hoechste_gehoerte);
         if netz_luecke(&mut self.netz_stand, self.netz_nonce, im_zustand, hoehe, gehoert) {
             self.protokoll.schreibe(
@@ -3517,16 +4688,38 @@ impl Knoten {
         }
     }
 
-    fn tx_verbreiten(&mut self, tx: myl_consensus::block::Transaktion) {
+    /// Verbreitet eine Transaktion; liefert, ob sie hinausging.
+    ///
+    /// 📌 **Weist der Mempool des Erzeugers sie ab** (Nummer verbraucht,
+    /// Mempool voll, Deckel je Absender), geht sie nicht hinaus, und der
+    /// Aufrufer erfährt es (2026-10-28). Vorher meldete die Relaisleitung
+    /// einer Wallet „verbreitet“, auch wenn die Transaktion nie in einen
+    /// Block kommen konnte; im Nachtlauf hielt das jede spätere Nummer eines
+    /// Absenders auf.
+    /// Wie [`Self::tx_verbreiten`], für eine geprüfte Transaktion: Der
+    /// Erzeuger merkt sich ihre Unterschrift als geprüft.
+    fn tx_verbreiten_geprueft(&mut self, g: myl_consensus::block::GepruefteTransaktion) -> bool {
+        let Ok(daten) = borsh::to_vec(g.inhalt()) else {
+            return false;
+        };
+        if self.konfig.erzeugt_bloecke && !self.kette.aufnehmen_geprueft(g) {
+            return false;
+        }
+        let _ = self.kommandos.send(NodeCommand::Publish { topic: GossipTopic::Transactions, data: daten, result: None });
+        true
+    }
+
+    fn tx_verbreiten(&mut self, tx: myl_consensus::block::Transaktion) -> bool {
         let Ok(daten) = borsh::to_vec(&tx) else {
-            return;
+            return false;
         };
         // ⚑ Der Erzeuger hört sein eigenes Gossip nicht; er nimmt die
         //   Transaktion selbst auf.
-        if self.konfig.erzeugt_bloecke {
-            self.kette.aufnehmen(tx);
+        if self.konfig.erzeugt_bloecke && !self.kette.aufnehmen(tx) {
+            return false;
         }
         let _ = self.kommandos.send(NodeCommand::Publish { topic: GossipTopic::Transactions, data: daten, result: None });
+        true
     }
 
     /// ⚑ **Der Archivbeleg der Epoche** (Stufe A5): Wer Kopie ist und die
@@ -3780,7 +4973,8 @@ impl Knoten {
     /// nächste.
     fn probehahn_pflegen(&mut self, ich: &myl_types::ids::MinerId) -> bool {
         let untergrenze = if self.kette.zustand().miner.contains_key(ich) {
-            PROBEHAHN_POLSTER / 2
+            // Dazu, was am Einsatz noch fehlt ([`Self::einsatz_pflegen`]).
+            PROBEHAHN_POLSTER / 2 + self.einsatz_fehlt(ich)
         } else {
             self.konfig.netz.gebuehren.hinterlegung_anmeldung + PROBEHAHN_POLSTER / 2
         };
@@ -3792,7 +4986,7 @@ impl Knoten {
     /// `was` trennt die Wiederholsperre je Zweck.
     fn probehahn(&mut self, adresse: &myl_types::ids::Address, untergrenze: u64, was: &'static str) -> bool {
         let adresse = *adresse;
-        let stand = self.kette.zustand().account(&adresse).balance;
+        let stand = self.kette.konto(&adresse).balance;
         if stand >= untergrenze {
             return true;
         }
@@ -3807,7 +5001,6 @@ impl Knoten {
             return false;
         }
         let betrag = untergrenze + PROBEHAHN_POLSTER / 2 - stand;
-        let z = self.kette.zustand();
         let n = crate::kette::PROBEKONTEN;
         // 📌 Ein Wiederholer beginnt beim nächsten Konto: Trafen zwei Knoten
         //    dieselbe Nummer desselben Kontos, kam nur einer durch, und der
@@ -3817,12 +5010,15 @@ impl Knoten {
         self.probehahn_versuche = self.probehahn_versuche.wrapping_add(1);
         let Some(quelle) = (0..n)
             .map(|i| (adresse.as_bytes()[0] % n + versuch + i) % n)
-            .find(|q| z.account(&crate::kette::probekonto(*q)).balance >= betrag + PROBEHAHN_POLSTER)
+            .find(|q| {
+                let k = crate::kette::probekonto(*q);
+                self.kette.konto_bekannt(&k) && self.kette.konto(&k).balance >= betrag + PROBEHAHN_POLSTER
+            })
         else {
             self.protokoll.schreibe(Eintrag::neu("probehahn_leer").zahl("betrag", betrag as i64));
             return false;
         };
-        let nonce = z.account(&crate::kette::probekonto(quelle)).nonce;
+        let nonce = self.kette.konto(&crate::kette::probekonto(quelle)).nonce;
         let anweisung = myl_consensus::block::Anweisung::Ueberweisung { nach: adresse, betrag };
         let schluessel = crate::kette::probeschluessel(quelle);
         if let Ok(tx) = myl_consensus::block::Transaktion::signiere(&self.kette.netzwert(), &schluessel, nonce, anweisung) {
@@ -3834,6 +5030,31 @@ impl Knoten {
         false
     }
 
+    /// Was am konfigurierten Einsatz noch fehlt.
+    fn einsatz_fehlt(&self, ich: &myl_types::ids::MinerId) -> u64 {
+        let staked = self.kette.konto(&myl_types::ids::Address::new(*ich.as_bytes())).staked;
+        self.konfig.einsatz.unwrap_or(0).saturating_sub(staked)
+    }
+
+    /// ⚑ **Den Einsatz hinterlegen** (2026-10-29, `--einsatz`): als
+    /// angemeldeter Miner, sobald das Guthaben ihn und ein Polster für
+    /// Gebühren trägt, und nur, was fehlt. Ohne Einsatz schlachtet ein
+    /// Schiedsurteil nichts.
+    fn einsatz_pflegen(&mut self, ich: &myl_types::ids::MinerId) {
+        let fehlt = self.einsatz_fehlt(ich);
+        let stand = self.kette.konto(&myl_types::ids::Address::new(*ich.as_bytes())).balance;
+        if fehlt == 0 || !self.kette.zustand().miner.contains_key(ich) || stand < fehlt + PROBEHAHN_POLSTER / 4 {
+            return;
+        }
+        if self.schon_gesendet("einsatz") {
+            return;
+        }
+        if let Some(tx) = self.netz_tx(myl_consensus::block::Anweisung::EinsatzHinterlegen { betrag: fehlt }) {
+            self.tx_verbreiten(tx);
+            self.protokoll.schreibe(Eintrag::neu("einsatz_hinterlegt").zahl("betrag", fehlt.min(i64::MAX as u64) as i64));
+        }
+    }
+
     /// ⚑ **Anmeldung und Zusage** (Festlegung des Projektinhabers: kein Pod
     /// ohne Zusage, der Knoten reicht sie selbst ein). Angemeldet wird, wer
     /// es noch nicht ist; eingereicht, wenn die neueste Zusage im Zustand
@@ -3842,7 +5063,10 @@ impl Knoten {
         let Some(soll) = self.konfig.modellzusage else {
             return;
         };
-        let soll = myl_types::zusage::Modellzusage { abdruck: self.konfig.netz.podmodell.abdruck, ..soll };
+        let mut soll = myl_types::zusage::Modellzusage { abdruck: self.konfig.netz.podmodell.abdruck, ..soll };
+        // ⚑ Die Selbstprobe darf die Zusage nur verlangsamen (Frage 6 vom
+        //   2026-10-29, [`Self::selbstprobe_auswerten`]).
+        soll.ebenenzeit_us = soll.ebenenzeit_us.max(self.ebenenzeit_angepasst);
         if !self.kette.zustand().miner.contains_key(ich) {
             self.anmeldung_senden(ich);
             return;
@@ -3870,11 +5094,107 @@ impl Knoten {
         }
     }
 
+    /// ⚑ **Die Grössen je Epoche ins Protokoll** (Fund 677): die der Kette
+    /// ([`crate::kette::Kette::groessen`]) und die eigenen Sammlungen, die mit
+    /// der Laufzeit wachsen könnten.
+    fn groessen_protokollieren(&mut self) {
+        let epoche = self.kette.zustand().epoch.0;
+        if self.groessen_epoche == Some(epoche) {
+            return;
+        }
+        self.groessen_epoche = Some(epoche);
+        let mut eintrag = Eintrag::neu("groessen").zahl("epoche", epoche as i64);
+        for (name, wert) in self.kette.groessen() {
+            eintrag = eintrag.zahl(name, wert.min(i64::MAX as u64) as i64);
+        }
+        let eigene = [
+            ("spurablagen", self.spurablagen.len()),
+            ("spurablagen_eintraege", self.spurablagen.iter().map(|a| a.eintraege.len()).sum()),
+            ("messungen", self.messungen.len()),
+            ("schiedsbelege", self.schiedsbelege.len()),
+            ("festgelegt", self.festgelegt.len()),
+            ("shardrelais", self.shardrelais.len()),
+            ("ausstehend", self.ausstehend.len()),
+        ];
+        for (name, wert) in eigene {
+            eintrag = eintrag.zahl(name, wert as i64);
+        }
+        self.protokoll.schreibe(eintrag);
+    }
+
+    /// ⚑ **Die Selbstprobe** (Fund 677, Frage 6 vom 2026-10-29): Einmal je
+    /// Epoche, in ihrer zweiten Hälfte, misst der Knoten seinen eigenen Shard
+    /// mit einer Zeitprobe derselben Grösse, wie sie die Mitglieder stellen.
+    /// In der zweiten Hälfte, weil die Mitglieder am Anfang messen und der
+    /// Shard nur einen Platz für Zeitproben hat (Fund 609).
+    fn selbstprobe_pflegen(&mut self, ich: &myl_types::ids::MinerId) {
+        while let Ok((epoche, je_token_us, frist_us)) = self.selbstproben.try_recv() {
+            self.selbstprobe_auswerten(epoche, je_token_us, frist_us);
+        }
+        let z = self.kette.zustand();
+        let epoche = z.epoch.0;
+        let in_epoche = self.kette.hoehe() % myl_consensus::block::BLOECKE_JE_EPOCHE;
+        if self.selbstprobe_epoche == Some(epoche) || in_epoche < myl_consensus::block::BLOECKE_JE_EPOCHE / 2 {
+            return;
+        }
+        let Some(auftrag) = crate::shardfuehrung::auftrag_der_epoche(z, ich) else {
+            return;
+        };
+        let Some(frist) = crate::frist::frist_des_mitglieds(z, auftrag.pod, ich) else {
+            return;
+        };
+        let Some(((adresse, ausweis), platz)) =
+            self.shardfuehrung.as_mut().and_then(|f| f.tuer()).zip(self.zeitprobe_platz.nehmen())
+        else {
+            return;
+        };
+        self.selbstprobe_epoche = Some(epoche);
+        let positionen = crate::frist::probe_positionen(frist);
+        let kanal = self.selbstprobenkanal.clone();
+        tokio::task::spawn_blocking(move || {
+            let beginn = std::time::Instant::now();
+            let ok = myl_types::zeitprobe::fragen(adresse, &ausweis, positionen, Duration::from_secs(120)).is_ok();
+            let dauer = beginn.elapsed().as_micros() as u64;
+            drop(platz);
+            if ok {
+                let _ = kanal.send((epoche, dauer / u64::from(positionen.max(1)), frist));
+            }
+        });
+    }
+
+    /// **Die Selbstprobe auswerten**: Braucht der eigene Shard je Token mehr
+    /// als das Anderthalbfache seiner Zusage (drei Viertel der Frist, die das
+    /// Doppelte erlaubt), wird die Zusage für die nächste Epoche langsamer:
+    /// die gemessene Zeit mit einem Viertel Luft. Schneller wird sie nie von
+    /// selbst; das bleibt der Konfiguration. Whitepaper: Zusage und Frist
+    /// stehen dort nicht (Festlegung vom 2026-10-22); die Reserve (6.8) ist
+    /// unberührt.
+    fn selbstprobe_auswerten(&mut self, epoche: u64, je_token_us: u64, frist_us: u64) {
+        let mut eintrag = Eintrag::neu("selbstprobe")
+            .zahl("epoche", epoche as i64)
+            .zahl("je_token_us", je_token_us.min(i64::MAX as u64) as i64)
+            .zahl("frist_us", frist_us.min(i64::MAX as u64) as i64);
+        if crate::frist::selbstprobe_zu_langsam(je_token_us, frist_us) {
+            if let Some(soll) = self.konfig.modellzusage {
+                let jetzt = soll.ebenenzeit_us.max(self.ebenenzeit_angepasst);
+                if let Some(neu) = crate::frist::angepasste_ebenenzeit(jetzt, je_token_us, frist_us) {
+                    self.ebenenzeit_angepasst = neu;
+                    eintrag = eintrag.zahl("ebenenzeit_us_neu", neu.min(i64::MAX as u64) as i64);
+                }
+            }
+            eintrag = eintrag.text("warnung", "langsamer als das Anderthalbfache der Zusage");
+        }
+        self.protokoll.schreibe(eintrag);
+    }
+
     /// **Die Pods der laufenden Epoche** für einen Koordinator, je Mitglied
     /// Netzadresse und Ebenenbereich in Shardreihenfolge.
     pub fn podbild(&self) -> myl_types::relais::Podbild {
         let z = self.kette.zustand();
         let zuteilung = crate::kette::Kette::zuteilung_der_laufenden_epoche(z);
+        // ⚑ Dieselben Gruppen, nach denen die Kette vergütet (Stufe 1).
+        let gruppen = crate::kette::Kette::zwillinge_der_laufenden_epoche(z);
+        let zwilling = |i: u32| gruppen.iter().find(|g| g.contains(&i)).and_then(|g| g.iter().copied().find(|&j| j != i));
         let pods = zuteilung
             .pods
             .iter()
@@ -3893,6 +5213,13 @@ impl Knoten {
                             von,
                             bis,
                         })
+                        .collect(),
+                    zwilling: zwilling(p.pod_index),
+                    // Die Reserve, die eine Position übernehmen darf (6.8).
+                    reserve: p
+                        .reserve
+                        .iter()
+                        .map(|r| myl_types::relais::Podmitglied { miner: r.miner_id, netzadresse: r.netzadresse, von: 0, bis: 0 })
                         .collect(),
                 })
             })
@@ -3984,6 +5311,83 @@ impl Knoten {
                 self.shardrelais.insert(kennung, (peer, rueck, std::time::Instant::now()));
                 let _ = self.kommandos.send(NodeCommand::Anfrage { an: peer, daten });
             }
+            // ⚑ **Spuren eines Bündels ablegen** (Stufe 2): beim Mitglied.
+            Relaisfrage::SpurenAblegen { an, ablage } => {
+                let Ok(peer) = myl_net::peer_id_aus_bytes(&an) else {
+                    let _ = rueck.send(Relaisantwort::Fehler("keine gültige Netzadresse".into()));
+                    return;
+                };
+                if peer == self.peer_id {
+                    let _ = rueck.send(match self.spur_ablegen(ablage) {
+                        Ok(()) => Relaisantwort::Erledigt("abgelegt".into()),
+                        Err(f) => Relaisantwort::Fehler(f),
+                    });
+                    return;
+                }
+                let kennung = self.relais_kennung;
+                self.relais_kennung = self.relais_kennung.wrapping_add(1);
+                let Some(daten) = (Nachforderung::SpurenAblegen { kennung, ablage }).als_bytes() else {
+                    let _ = rueck.send(Relaisantwort::Fehler("Ablage nicht serialisierbar".into()));
+                    return;
+                };
+                self.shardrelais.insert(kennung, (peer, rueck, std::time::Instant::now()));
+                let _ = self.kommandos.send(NodeCommand::Anfrage { an: peer, daten });
+            }
+            // ⚑ **Eine Übernahme durch die Reserve** (6.8): an deren Knoten.
+            // ⚑ **Ein Differenzbeweis vom Ortsdienst** (2026-10-29): an die
+            //   Koordinatoren beider Pods, wie die Kette sie aus der
+            //   Uneinigkeit kennt (erste Position); jeder meldet ihn mit
+            //   seinem Schlüssel, die Kette nimmt den ersten. Schweigt der
+            //   eine, meldet der andere.
+            Relaisfrage::DifferenzMelden { epoche, pod_a, pod_b, beweis } => {
+                let z = self.kette.zustand();
+                let koordinatoren: Vec<myl_types::ids::MinerId> = z
+                    .uneinigkeiten
+                    .iter()
+                    .find(|u| u.stichprobe.epoche == epoche)
+                    .map(|u| {
+                        u.stichprobe
+                            .besetzung
+                            .iter()
+                            .filter(|(p, _)| *p == pod_a || *p == pod_b)
+                            .filter_map(|(_, b)| b.first().map(|(m, _, _)| *m))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                if koordinatoren.is_empty() {
+                    let _ = rueck.send(Relaisantwort::Fehler("keine uneinige Gruppe zu diesen Pods".into()));
+                    return;
+                }
+                let mut gesendet = 0;
+                for k in koordinatoren {
+                    if self.miner_ich() == Some(k) {
+                        self.differenz_selbst_melden(epoche, pod_a, pod_b, (*beweis).clone());
+                        gesendet += 1;
+                        continue;
+                    }
+                    let an = self.kette.zustand().miner.get(&k).and_then(|r| myl_net::peer_id_aus_bytes(&r.netzadresse).ok());
+                    let daten = Nachforderung::Differenz { epoche, pod_a, pod_b, beweis: beweis.clone() }.als_bytes();
+                    if let (Some(an), Some(daten)) = (an, daten) {
+                        let _ = self.kommandos.send(NodeCommand::Anfrage { an, daten });
+                        gesendet += 1;
+                    }
+                }
+                let _ = rueck.send(Relaisantwort::Erledigt(format!("an {gesendet} Koordinatoren")));
+            }
+            Relaisfrage::Uebernahme { an, epoche, pod, position } => {
+                let Ok(peer) = myl_net::peer_id_aus_bytes(&an) else {
+                    let _ = rueck.send(Relaisantwort::Fehler("keine gültige Netzadresse".into()));
+                    return;
+                };
+                let kennung = self.relais_kennung;
+                self.relais_kennung = self.relais_kennung.wrapping_add(1);
+                let Some(daten) = (Nachforderung::PositionUebernehmen { kennung, epoche, pod, position }).als_bytes() else {
+                    let _ = rueck.send(Relaisantwort::Fehler("Anfrage nicht serialisierbar".into()));
+                    return;
+                };
+                self.shardrelais.insert(kennung, (peer, rueck, std::time::Instant::now()));
+                let _ = self.kommandos.send(NodeCommand::Anfrage { an: peer, daten });
+            }
             Relaisfrage::Konto { adresse } => {
                 let z = self.kette.zustand();
                 let konto = z.account(&adresse);
@@ -4009,14 +5413,44 @@ impl Knoten {
                     let _ = rueck.send(Relaisantwort::Fehler("keine Transaktion".into()));
                     return;
                 };
-                if let Err(e) = t.clone().pruefe(&self.kette.netzwert()) {
-                    let _ = rueck.send(Relaisantwort::Fehler(format!("Transaktion ungültig: {e:?}")));
+                let nonce = t.nonce;
+                let g = match t.pruefe(&self.kette.netzwert()) {
+                    Ok(g) => g,
+                    Err(e) => {
+                        let _ = rueck.send(Relaisantwort::Fehler(format!("Transaktion ungültig: {e:?}")));
+                        return;
+                    }
+                };
+                if !self.tx_verbreiten_geprueft(g) {
+                    let _ = rueck.send(Relaisantwort::Fehler(format!(
+                        "vom Mempool abgewiesen (Nonce {nonce}: verbraucht, Mempool voll oder zu viele vom selben Absender)"
+                    )));
                     return;
                 }
-                let nonce = t.nonce;
-                self.tx_verbreiten(t);
                 self.protokoll.schreibe(Eintrag::neu("wallet_tx").zahl("nonce", nonce.min(i64::MAX as u64) as i64));
                 let _ = rueck.send(Relaisantwort::Erledigt(format!("verbreitet, Nonce {nonce}")));
+            }
+            // ⚑ **Gebündelt** (2026-10-29): als Stapel geprüft, dann jede
+            //   gültige verbreitet; gezählt, wie viele der Mempool nahm.
+            Relaisfrage::Transaktionen { txs } => {
+                if txs.len() > myl_types::relais::TRANSAKTIONEN_JE_FRAGE {
+                    let _ = rueck.send(Relaisantwort::Fehler(format!("mehr als {} Transaktionen", myl_types::relais::TRANSAKTIONEN_JE_FRAGE)));
+                    return;
+                }
+                // ⚑ Geprüft in einer Rechenaufgabe (Skalierung, 2026-10-29):
+                //   Im Hauptfaden hielt der Stapel bei 3000 je Sekunde
+                //   Blockbau und Gossip auf; aufgenommen und beantwortet wird
+                //   danach in der Schleife (`Weckruf::RelaisGeprueft`).
+                let n = txs.len();
+                let netz = self.kette.netzwert();
+                let kanal = self.relais_geprueft_kanal.clone();
+                tokio::task::spawn_blocking(move || {
+                    let gelesen: Vec<myl_consensus::block::Transaktion> =
+                        txs.iter().filter_map(|b| borsh::from_slice::<myl_consensus::block::Transaktion>(b).ok()).collect();
+                    let gut: Vec<myl_consensus::block::GepruefteTransaktion> =
+                        myl_consensus::block::pruefe_alle(&gelesen, &netz).into_iter().flatten().collect();
+                    let _ = kanal.send((gut, n, rueck));
+                });
             }
         }
     }
@@ -4046,6 +5480,546 @@ impl Knoten {
             let _ = rueck.send(match fehler {
                 Some(f) => Relaisantwort::Fehler(format!("Koordinator {von}: {f}")),
                 None => Relaisantwort::Erledigt(format!("eingereicht vom Koordinator {von}")),
+            });
+        }
+    }
+
+    /// Hebt eine Spurablage auf; eine für dasselbe Bündel ersetzt die alte.
+    /// ⚑ Nur eine, die zu diesem Knoten gehört
+    /// ([`crate::shardfuehrung::ablage_pruefen`]): Sonst könnte jeder im
+    /// Netz die echten Ablagen mit erfundenen verdrängen.
+    fn spur_ablegen(&mut self, ablage: myl_types::Spurablage) -> Result<(), String> {
+        let ich = self.miner_ich().ok_or("kein Miner")?;
+        let pod = self.kette.pod_der_kennung(ablage.epoche.0, &ablage.pod).ok_or("diesen Pod kennt die Zuteilung nicht")?;
+        crate::shardfuehrung::ablage_pruefen(&pod, &ich, &ablage)?;
+        self.spurablagen.retain(|a| !(a.epoche == ablage.epoche && a.pod == ablage.pod && a.segments_root == ablage.segments_root));
+        self.spurablagen.push(ablage);
+        while self.spurablagen.len() > SPURABLAGEN_HOECHSTENS {
+            self.spurablagen.remove(0);
+        }
+        Ok(())
+    }
+
+    /// ⚑ **Eine gelieferte Spur** (Stufe 2): gegen die Wurzel des Bündels aus
+    /// der Kette geprüft (`myl_types::lieferung_pruefen`); das Ergebnis steht
+    /// im Protokoll. Nachgerechnet wird noch nicht (die Eingabe fehlt, E10).
+    fn spur_erhalten(&mut self, von: libp2p::PeerId, antwort: myl_types::Spurantwort) {
+        let bekannt = self
+            .kette
+            .zustand()
+            .stichprobe_wurzeln
+            .iter()
+            .find(|(p, _, _)| *p == antwort.anfrage.pod)
+            .map(|(_, w, n)| (*w, *n));
+        let ergebnis = match bekannt {
+            None => "ohne Wurzel".to_string(),
+            Some((w, n)) => match myl_types::lieferung_pruefen(&antwort, &w, n) {
+                Ok(()) => "traegt".to_string(),
+                Err(f) => format!("{f:?}"),
+            },
+        };
+        self.protokoll.schreibe(
+            Eintrag::neu("spur_geprueft")
+                .text("von", von.to_string())
+                .zahl("epoche", antwort.anfrage.epoche.0 as i64)
+                .text("pod", antwort.anfrage.pod.to_hex())
+                .zahl("segment", i64::from(antwort.anfrage.segment))
+                .text("ergebnis", ergebnis),
+        );
+    }
+
+    /// ⚑ **Der Checker fragt nach dem Verlauf** (Stufe 2, T6c und W6b,
+    /// 2026-10-29): Für jede Ziehung der letzten Stichprobe, die die Kette
+    /// diesem Miner zuteilt ([`crate::kette::pruefer_waehlen`]), geht eine
+    /// `Nachforderung::Verlauf` an jedes Mitglied des Pods, einmal je
+    /// Ziehung; die erste Antwort, die trägt, wird nachgerechnet. Dazu holt
+    /// die Schleife ab, was nachgerechnet ist.
+    fn nachrechnung_pflegen(&mut self) {
+        while let Ok(n) = self.nachrechnungen.try_recv() {
+            self.nachrechnung_vermerken(n);
+        }
+        self.aufdecken_wenn_erlaubt();
+        self.schied_pflegen();
+        erzeugerliste_aus(&self.kette, &self.erzeugerliste);
+        self.zeugen_pflegen();
+        let Some(ich) = self.miner_ich() else {
+            return;
+        };
+        // ⚑ **Aus den Aufträgen im Zustand** (2026-10-29), nicht aus der
+        //   letzten Ziehung: Ein Differenzbeweis legt Aufträge auch ausserhalb
+        //   der Ziehung an. Gefragt wird jedes Mitglied der Besetzung.
+        let meine: Vec<myl_ledger::pruefung::Pruefauftrag> = self
+            .kette
+            .zustand()
+            .pruefauftraege
+            .iter()
+            .filter(|a| a.pruefer.contains(&ich) && !self.verlauf_gefragt.contains(&(a.epoche, a.pod, a.segment)))
+            .cloned()
+            .collect();
+        if meine.is_empty() {
+            return;
+        }
+        let (mut gefragt, mut ohne_adresse) = (0usize, 0usize);
+        for a in &meine {
+            let anfrage = myl_types::Spuranfrage { epoche: myl_types::ids::EpochId(a.epoche), pod: a.pod, segment: a.segment };
+            for (m, _, _) in &a.besetzung {
+                let an = self.kette.zustand().miner.get(m).and_then(|r| myl_net::peer_id_aus_bytes(&r.netzadresse).ok());
+                let (Some(an), Some(daten)) = (an, Nachforderung::Verlauf(anfrage).als_bytes()) else {
+                    ohne_adresse += 1;
+                    continue;
+                };
+                if self.kommandos.send(NodeCommand::Anfrage { an, daten }).is_ok() {
+                    gefragt += 1;
+                }
+            }
+            self.verlauf_gefragt.insert((a.epoche, a.pod, a.segment));
+        }
+        while self.verlauf_gefragt.len() > 256 {
+            self.verlauf_gefragt.pop_first();
+        }
+        self.protokoll.schreibe(
+            Eintrag::neu("pruefer_zugeteilt")
+                .zahl("epoche", meine.first().map_or(0, |a| a.epoche) as i64)
+                .zahl("ziehungen", meine.len() as i64)
+                .zahl("anfragen", gefragt as i64)
+                .zahl("ohne_adresse", ohne_adresse as i64),
+        );
+    }
+
+    /// ⚑ **Ein Verlauf ist da** (Stufe 2, T6c): prüfen gegen die Wurzel aus
+    /// der Kette ([`myl_types::verlauf_pruefen`]), dann in einer
+    /// Rechenaufgabe ab den Tokens nachrechnen
+    /// ([`myl_verifier::verlauf_nachrechnen`]). Nur für eigene Ziehungen und
+    /// nur einmal je Ziehung; ein Verlauf, der nicht trägt, lässt die Ziehung
+    /// für die Antwort eines anderen Mitglieds offen.
+    fn verlauf_erhalten(&mut self, von: libp2p::PeerId, antworten: Vec<myl_types::Spurantwort>) {
+        let Some(gezogen) = antworten.last().map(|a| a.anfrage) else {
+            return;
+        };
+        let schluessel = (gezogen.epoche.0, gezogen.pod, gezogen.segment);
+        if !self.verlauf_gefragt.contains(&schluessel) || self.nachgerechnet.contains(&schluessel) {
+            return;
+        }
+        // Die Wurzel aus dem Auftrag (sie bleibt dort, auch wenn neu gezogen
+        // wird), sonst aus der letzten Ziehung.
+        let z = self.kette.zustand();
+        let bekannt = z
+            .pruefauftraege
+            .iter()
+            .find(|a| (a.epoche, a.pod, a.segment) == schluessel)
+            .map(|a| (a.wurzel, a.segmente))
+            .or_else(|| z.stichprobe_wurzeln.iter().find(|(p, _, _)| *p == gezogen.pod).map(|(_, w, n)| (*w, *n)));
+        let geprueft = match bekannt {
+            None => Err("ohne Wurzel".to_string()),
+            Some((w, n)) => myl_types::verlauf_pruefen(&antworten, &w, n).map_err(|f| format!("{f:?}")),
+        };
+        let tokens = match geprueft {
+            Ok(t) => t,
+            Err(f) => {
+                self.protokoll.schreibe(
+                    Eintrag::neu("verlauf_abgewiesen")
+                        .text("von", von.to_string())
+                        .zahl("epoche", gezogen.epoche.0 as i64)
+                        .text("pod", gezogen.pod.to_hex())
+                        .zahl("segment", i64::from(gezogen.segment))
+                        .text("grund", f),
+                );
+                return;
+            }
+        };
+        let Some(artefakte) = self.shardfuehrung.as_ref().map(|f| f.artefakte().to_path_buf()) else {
+            self.protokoll.schreibe(Eintrag::neu("nachrechnen_ohne_modell").zahl("segment", i64::from(gezogen.segment)));
+            return;
+        };
+        self.nachgerechnet.insert(schluessel);
+        while self.nachgerechnet.len() > 256 {
+            self.nachgerechnet.pop_first();
+        }
+        let ketten: Vec<Vec<myl_types::Hash>> = antworten.iter().map(|a| a.spur.clone()).collect();
+        let modell = Arc::clone(&self.pruefmodell);
+        let kanal = self.nachrechnungskanal.clone();
+        let verlauf = antworten;
+        tokio::task::spawn_blocking(move || {
+            let beginn = std::time::Instant::now();
+            let geladen = {
+                let mut g = modell.lock().unwrap_or_else(|v| v.into_inner());
+                if g.is_none() {
+                    *g = integer_llm_runtime::loader::load_model_fuer_netz(&artefakte).ok().map(Arc::new);
+                }
+                g.clone()
+            };
+            let ergebnis = match &geladen {
+                Some(m) => myl_verifier::verlauf_nachrechnen(m, &tokens, &ketten).map_err(|e| e.to_string()),
+                None => Err(format!("Modell unter {} nicht geladen", artefakte.display())),
+            };
+            // ⚑ **Bei einer Abweichung gleich den Schiedsbeleg** (T6d): die
+            //   Eingänge der strittigen Layer bis zur strittigen Position,
+            //   samt dem Verlauf, den das Komitee gegen die Kette prüft.
+            let beleg = match (&geladen, &ergebnis) {
+                (Some(m), Ok(myl_verifier::Verlaufspruefung { ergebnis: myl_verifier::Verlaufsergebnis::Abweichung { position, eintrag }, .. })) => {
+                    myl_verifier::schiedsbeleg(m, &tokens, *position, eintrag.saturating_sub(1).min(m.num_layers))
+                        .ok()
+                        .map(|e| (verlauf, e))
+                }
+                _ => None,
+            };
+            let _ = kanal.send(Nachrechnung {
+                gezogen,
+                positionen: tokens.len(),
+                ergebnis,
+                dauer_ms: beginn.elapsed().as_millis().min(i64::MAX as u128) as i64,
+                beleg,
+            });
+        });
+    }
+
+    /// ⚑ **Festlegen** (Stufe 2, Festlegung des Projektinhabers vom
+    /// 2026-10-29): aus dem Ergebnis den Befund, ein frisches Salz, und die
+    /// Festlegung als Transaktion. Befund und Salz bleiben hier, bis die
+    /// Kette das Aufdecken erlaubt ([`Self::aufdecken_wenn_erlaubt`]).
+    fn festlegen(&mut self, g: myl_types::Spuranfrage, positionen: usize, p: &myl_verifier::Verlaufspruefung) {
+        let Some(ich) = self.miner_ich() else {
+            return;
+        };
+        let befund = myl_ledger::pruefung::Pruefbefund {
+            logits: p.logits,
+            abweichung: match p.ergebnis {
+                myl_verifier::Verlaufsergebnis::Gleich => None,
+                myl_verifier::Verlaufsergebnis::Abweichung { position, eintrag } => {
+                    Some((position.min(u32::MAX as usize) as u32, eintrag.min(u32::MAX as usize) as u32))
+                }
+            },
+            positionen: positionen.min(u32::MAX as usize) as u32,
+        };
+        let mut salz = [0u8; 32];
+        if getrandom::fill(&mut salz).is_err() {
+            return;
+        }
+        let festlegung = myl_ledger::pruefung::festlegung(&befund, &salz, &ich);
+        self.festzulegen.push((g.epoche.0, g.pod, g.segment, festlegung));
+        self.festgelegt.insert((g.epoche.0, g.pod, g.segment), (befund, salz));
+    }
+
+    /// ⚑ **Aufdecken, sobald die Kette es erlaubt**: Die eigene Festlegung
+    /// steht im Auftrag, und alle haben festgelegt oder die erste Frist ist
+    /// vorbei. Ein Auftrag, den es nicht mehr gibt, ist abgeschlossen.
+    fn aufdecken_wenn_erlaubt(&mut self) {
+        // Abgeschlossenes ins Protokoll: beim Erzeuger alles, sonst das
+        // eigene.
+        let ich = self.miner_ich();
+        let ausgaben = self.kette.pruefausgaben_abholen();
+        if self.konfig.erzeugt_bloecke {
+            for (u, fehler) in &ausgaben.urteile {
+                let f = &u.fall;
+                self.protokoll.schreibe(
+                    Eintrag::neu("streitfall_entschieden")
+                        .zahl("epoche", f.epoche as i64)
+                        .text("pod", f.pod.to_hex())
+                        .zahl("segment", i64::from(f.segment))
+                        .text("ausgang", format!("{:?}", u.ausgang).to_lowercase())
+                        .text("anfechter", self.netzadresse_von(&f.anfechter))
+                        .text("beschuldigt", f.beschuldigt.map(|m| self.netzadresse_von(&m)).unwrap_or_default())
+                        .zahl("stimmen", f.stimmen.len() as i64)
+                        .text("buchung", fehler.clone().unwrap_or_else(|| "gebucht".into())),
+                );
+            }
+        }
+        for ab in ausgaben.abschluesse {
+            let a = &ab.auftrag;
+            if !ich.is_some_and(|i| a.pruefer.contains(&i)) && !self.konfig.erzeugt_bloecke {
+                continue;
+            }
+            self.protokoll.schreibe(
+                Eintrag::neu("pruefung_abgeschlossen")
+                    .zahl("epoche", a.epoche as i64)
+                    .text("pod", a.pod.to_hex())
+                    .zahl("segment", i64::from(a.segment))
+                    .text("ausgang", format!("{:?}", ab.ausgang).to_lowercase())
+                    .zahl("pruefer", a.pruefer.len() as i64)
+                    .zahl("festgelegt", a.festlegungen.len() as i64)
+                    .zahl("aufgedeckt", a.aufdeckungen.len() as i64)
+                    .zahl("abweichungen", ab.abweichungen.len() as i64),
+            );
+        }
+        let Some(ich) = ich else {
+            return;
+        };
+        // Die Festlegungen gebündelt (`PRUEFUNGEN_JE_TX`): Ein Pod allein
+        // wird voll gezogen, eine Transaktion je Ziehung sprengte die
+        // Grenze je Absender im Mempool.
+        while !self.festzulegen.is_empty() {
+            let n = self.festzulegen.len().min(myl_consensus::block::PRUEFUNGEN_JE_TX);
+            let festlegungen: Vec<_> = self.festzulegen.drain(..n).collect();
+            let anzahl = festlegungen.len();
+            let Some(tx) = self.netz_tx(myl_consensus::block::Anweisung::PruefungFestlegen { festlegungen }) else {
+                self.festzulegen.clear();
+                break;
+            };
+            self.ausstehend.push(tx);
+            self.protokoll.schreibe(Eintrag::neu("pruefung_festgelegt").zahl("ziehungen", anzahl as i64));
+        }
+        let hoehe = self.kette.zustand().historie.anzahl();
+        let mut fertig = Vec::new();
+        let mut decken = Vec::new();
+        for (schluessel, (befund, salz)) in &self.festgelegt {
+            let (epoche, pod, segment) = *schluessel;
+            let auftrag = self
+                .kette
+                .zustand()
+                .pruefauftraege
+                .iter()
+                .find(|a| a.epoche == epoche && a.pod == pod && a.segment == segment);
+            let Some(a) = auftrag else {
+                fertig.push(*schluessel);
+                continue;
+            };
+            let meine = a.festlegungen.iter().any(|(m, _)| *m == ich);
+            let frei = a.festlegungen.len() == a.pruefer.len() || hoehe > a.frist_festlegen;
+            if meine && frei && hoehe <= a.frist_aufdecken {
+                decken.push((*schluessel, befund.clone(), *salz));
+            }
+        }
+        for teil in decken.chunks(myl_consensus::block::PRUEFUNGEN_JE_TX) {
+            let aufdeckungen: Vec<_> = teil.iter().map(|((e, p, s), b, z)| (*e, *p, *s, b.clone(), *z)).collect();
+            if let Some(tx) = self.netz_tx(myl_consensus::block::Anweisung::PruefungAufdecken { aufdeckungen }) {
+                self.ausstehend.push(tx);
+                fertig.extend(teil.iter().map(|(k, _, _)| *k));
+                self.protokoll.schreibe(Eintrag::neu("pruefung_aufgedeckt").zahl("ziehungen", teil.len() as i64));
+            }
+        }
+        for s in fertig {
+            self.festgelegt.remove(&s);
+        }
+    }
+
+    /// Meldet einen Differenzbeweis mit dem eigenen Schlüssel.
+    fn differenz_selbst_melden(
+        &mut self,
+        epoche: u64,
+        pod_a: myl_types::ids::PodId,
+        pod_b: myl_types::ids::PodId,
+        beweis: myl_types::Differenzbeweis,
+    ) {
+        let id = beweis.a.ausgabe.id;
+        if let Some(tx) = self.netz_tx(myl_consensus::block::Anweisung::DifferenzMelden {
+            epoche,
+            pod_a,
+            pod_b,
+            beweis: Box::new(beweis),
+        }) {
+            self.ausstehend.push(tx);
+            self.protokoll.schreibe(
+                Eintrag::neu("differenz_gemeldet").zahl("epoche", epoche as i64).text("segment", hex::encode(&id.as_ref()[..8])),
+            );
+        }
+    }
+
+    /// Die Netzadresse eines Miners als Text, sonst seine Kennung kurz.
+    fn netzadresse_von(&self, m: &myl_types::ids::MinerId) -> String {
+        self.kette
+            .zustand()
+            .miner
+            .get(m)
+            .and_then(|r| myl_net::peer_id_aus_bytes(&r.netzadresse).ok())
+            .map_or_else(|| hex::encode(&m.as_bytes()[..8]), |p| p.to_string())
+    }
+
+    /// ⚑ **Die Schiedsrunde im Komitee** (T6d, Whitepaper 6.6): Ein
+    /// Validator holt zu jedem offenen Streitfall den Beleg beim Anfechter,
+    /// rechnet die strittige Layer nach und stimmt ab. Bekommt er bis zur
+    /// Hälfte des Fensters keinen Beleg, stimmt er gegen die Anfechtung: Die
+    /// Beweislast trägt der Anfechter.
+    fn schied_pflegen(&mut self) {
+        while let Ok(r) = self.schiedsrechnungen.try_recv() {
+            self.schiedsstimme_abgeben(r);
+        }
+        let Some(ich) = self.miner_ich() else {
+            return;
+        };
+        if !self.kette.stimmsatz().is_some_and(|v| v.contains(&ich)) {
+            return;
+        }
+        let hoehe = self.kette.zustand().historie.anzahl();
+        let faelle: Vec<myl_ledger::pruefung::Streitfall> = self.kette.zustand().streitfaelle.clone();
+        for f in faelle {
+            let schluessel = (f.epoche, f.pod, f.segment);
+            if self.schied_gestimmt.contains(&schluessel) || f.stimmen.iter().any(|(m, _)| *m == ich) {
+                continue;
+            }
+            if hoehe.saturating_add(crate::kette::Kette::SCHIED_FENSTER_BLOECKE / 2) > f.frist {
+                self.schiedsstimme_abgeben(Schiedsrechnung { fall: schluessel, pod_falsch: Ok(false) });
+                continue;
+            }
+            let neu = self.schied_angefragt.get(&schluessel).is_none_or(|t| t.elapsed() > std::time::Duration::from_secs(20));
+            if !neu {
+                continue;
+            }
+            let anfrage = myl_types::Spuranfrage { epoche: myl_types::ids::EpochId(f.epoche), pod: f.pod, segment: f.segment };
+            let an = self
+                .kette
+                .zustand()
+                .miner
+                .get(&f.anfechter)
+                .and_then(|r| myl_net::peer_id_aus_bytes(&r.netzadresse).ok());
+            if let (Some(an), Some(daten)) = (an, Nachforderung::Schiedsbeleg(anfrage).als_bytes()) {
+                let _ = self.kommandos.send(NodeCommand::Anfrage { an, daten });
+                self.schied_angefragt.insert(schluessel, std::time::Instant::now());
+                self.protokoll.schreibe(
+                    Eintrag::neu("schiedsbeleg_angefragt").zahl("epoche", f.epoche as i64).zahl("segment", i64::from(f.segment)),
+                );
+            }
+        }
+        while self.schied_angefragt.len() > 256 {
+            self.schied_angefragt.pop_first();
+        }
+    }
+
+    /// Ein Schiedsbeleg ist da: gegen die Kette prüfen, dann nachrechnen.
+    fn schiedsbeleg_erhalten(&mut self, verlauf: Vec<myl_types::Spurantwort>, eingaenge: Vec<Vec<i16>>) {
+        let Some(gezogen) = verlauf.last().map(|a| a.anfrage) else {
+            return;
+        };
+        let schluessel = (gezogen.epoche.0, gezogen.pod, gezogen.segment);
+        if self.schied_gestimmt.contains(&schluessel) {
+            return;
+        }
+        let Some(fall) = self
+            .kette
+            .zustand()
+            .streitfaelle
+            .iter()
+            .find(|f| (f.epoche, f.pod, f.segment) == schluessel)
+            .cloned()
+        else {
+            return;
+        };
+        // Der Verlauf muss gegen die Wurzel des Bündels tragen; sonst trägt
+        // der Beleg nicht, und das fällt auf den Anfechter.
+        let tokens = match myl_types::verlauf_pruefen(&verlauf, &fall.wurzel, fall.segmente) {
+            Ok(t) => t,
+            Err(_) => {
+                self.schiedsstimme_abgeben(Schiedsrechnung { fall: schluessel, pod_falsch: Ok(false) });
+                return;
+            }
+        };
+        let Some(artefakte) = self.shardfuehrung.as_ref().map(|f| f.artefakte().to_path_buf()) else {
+            return;
+        };
+        let ketten: Vec<Vec<myl_types::Hash>> = verlauf.iter().map(|a| a.spur.clone()).collect();
+        let modell = Arc::clone(&self.pruefmodell);
+        let kanal = self.schiedskanal.clone();
+        self.schied_gestimmt.insert(schluessel);
+        tokio::task::spawn_blocking(move || {
+            let geladen = {
+                let mut g = modell.lock().unwrap_or_else(|v| v.into_inner());
+                if g.is_none() {
+                    *g = integer_llm_runtime::loader::load_model_fuer_netz(&artefakte).ok().map(Arc::new);
+                }
+                g.clone()
+            };
+            let pod_falsch = match geladen {
+                Some(m) => myl_verifier::schied_nachrechnen(
+                    &m,
+                    &tokens,
+                    &ketten,
+                    fall.position as usize,
+                    fall.eintrag as usize,
+                    &eingaenge,
+                )
+                .map_err(|e| e.to_string()),
+                None => Err(format!("Modell unter {} nicht geladen", artefakte.display())),
+            };
+            let _ = kanal.send(Schiedsrechnung { fall: schluessel, pod_falsch });
+        });
+    }
+
+    /// Die Stimme als Transaktion; ohne Ergebnis (das Modell fehlte) keine.
+    fn schiedsstimme_abgeben(&mut self, r: Schiedsrechnung) {
+        let (epoche, pod, segment) = r.fall;
+        self.schied_gestimmt.insert(r.fall);
+        while self.schied_gestimmt.len() > 256 {
+            self.schied_gestimmt.pop_first();
+        }
+        let mut eintrag = Eintrag::neu("schiedsstimme").zahl("epoche", epoche as i64).zahl("segment", i64::from(segment));
+        match r.pod_falsch {
+            Ok(pod_falsch) => {
+                if let Some(tx) =
+                    self.netz_tx(myl_consensus::block::Anweisung::SchiedsstimmeAbgeben { epoche, pod, segment, pod_falsch })
+                {
+                    self.ausstehend.push(tx);
+                }
+                eintrag = eintrag.wahr("pod_falsch", pod_falsch);
+            }
+            Err(f) => eintrag = eintrag.text("fehler", f),
+        }
+        self.protokoll.schreibe(eintrag);
+    }
+
+    /// Schreibt ein Ergebnis des Nachrechnens ins Protokoll.
+    ///
+    /// ⚑ **Bei einer Abweichung auch, wen sie trifft**: das Mitglied, dessen
+    /// Bereich die abweichende Layer enthält, aus dem Schnitt des Pods in der
+    /// gezogenen Epoche. Das ist die Grundlage für den Schuldspruch (T6d);
+    /// eingereicht wird hier noch nichts.
+    fn nachrechnung_vermerken(&mut self, n: Nachrechnung) {
+        let g = n.gezogen;
+        let mut eintrag = Eintrag::neu("stichprobe_nachgerechnet")
+            .zahl("epoche", g.epoche.0 as i64)
+            .text("pod", g.pod.to_hex())
+            .zahl("segment", i64::from(g.segment))
+            .zahl("positionen", n.positionen as i64)
+            .zahl("dauer_ms", n.dauer_ms);
+        if let Ok(p) = &n.ergebnis {
+            self.festlegen(g, n.positionen, p);
+        }
+        if let Some(b) = n.beleg {
+            self.schiedsbelege.insert((g.epoche.0, g.pod, g.segment), b);
+            while self.schiedsbelege.len() > 64 {
+                self.schiedsbelege.pop_first();
+            }
+        }
+        eintrag = match n.ergebnis.map(|p| p.ergebnis) {
+            Ok(myl_verifier::Verlaufsergebnis::Gleich) => eintrag.text("ergebnis", "gleich"),
+            Ok(myl_verifier::Verlaufsergebnis::Abweichung { position, eintrag: stelle }) => {
+                // Eintrag j + 1 ist die Ausgabe der Layer j.
+                let layer = stelle.saturating_sub(1) as u32;
+                // ⚠️ Die Grenzen aus den Zusagen nach dem Stand von jetzt; für
+                //    den Schuldspruch (T6d) müssen es die der gezogenen Epoche
+                //    sein. Hier steht es nur im Protokoll.
+                let wer = self
+                    .kette
+                    .pod_der_kennung(g.epoche.0, &g.pod)
+                    .and_then(|pod| {
+                        let grenzen = crate::kette::Kette::grenzen_des_pods(self.kette.zustand(), &pod)?;
+                        let stelle = grenzen.iter().position(|(von, bis)| *von <= layer && layer < *bis)?;
+                        pod.shards.get(stelle).map(|s| {
+                            myl_net::peer_id_aus_bytes(&s.miner.netzadresse)
+                                .map_or_else(|_| hex::encode(&s.miner.miner_id.as_bytes()[..8]), |p| p.to_string())
+                        })
+                    })
+                    .unwrap_or_default();
+                eintrag
+                    .text("ergebnis", "abweichung")
+                    .zahl("position", position as i64)
+                    .zahl("layer", i64::from(layer))
+                    .text("beschuldigt", wer)
+            }
+            Err(f) => eintrag.text("ergebnis", "fehler").text("grund", f),
+        };
+        self.protokoll.schreibe(eintrag);
+    }
+
+    /// Die Antwort eines Mitglieds auf eine weitergereichte Übernahme (6.8)
+    /// oder Spurablage (Stufe 2): `was` bei Erfolg.
+    fn relais_beantworten(&mut self, von: libp2p::PeerId, kennung: u64, fehler: Option<String>, was: &str) {
+        use myl_types::relais::Relaisantwort;
+        if !self.shardrelais.get(&kennung).is_some_and(|(p, _, _)| *p == von) {
+            return;
+        }
+        if let Some((_, rueck, _)) = self.shardrelais.remove(&kennung) {
+            let _ = rueck.send(match fehler {
+                Some(f) => Relaisantwort::Fehler(format!("{von}: {f}")),
+                None => Relaisantwort::Erledigt(format!("{was} von {von}")),
             });
         }
     }
@@ -4111,7 +6085,7 @@ impl Knoten {
             .miner_ich()
             .and_then(|ich| myl_ledger::transitions::auszahlungskonto(zustand, &ich))
             == Some(soll);
-        (zustand.account(&soll).balance, eingetragen)
+        (self.kette.konto(&soll).balance, eingetragen)
     }
 
     /// ⚑ **Anmeldung und Auszahlungskonto** (Fund 643, 2026-10-26): Mit
@@ -4161,7 +6135,7 @@ impl Knoten {
                 let Some(k) = self.kontowechsel.as_ref().filter(|k| k.adresse() == bisher) else {
                     return;
                 };
-                let nonce = self.kette.zustand().account(&bisher).nonce;
+                let nonce = self.kette.konto(&bisher).nonce;
                 k.transaktion(&self.kette.netzwert(), nonce, anweisung).ok()
             }
         };
@@ -4173,7 +6147,10 @@ impl Knoten {
 
     /// ⚑ **Der Shard aus der Kette** (P7).
     fn shard_abgleichen(&mut self, ich: &myl_types::ids::MinerId) {
-        let mut soll = crate::shardfuehrung::auftrag_der_epoche(self.kette.zustand(), ich);
+        let jetzt = self.kette.zustand().epoch.0;
+        // ⚑ Eine Übernahme gilt bis zum Ende ihrer Epoche (6.8).
+        self.uebernahme = self.uebernahme.take().filter(|a| a.epoche == jetzt);
+        let mut soll = crate::shardfuehrung::auftrag_der_epoche(self.kette.zustand(), ich).or_else(|| self.uebernahme.clone());
         // ⚑ **Erst starten, wenn die Dateien da sind** (P11): Fehlt dem
         //   Bereich etwas, holt der Dateidienst es zuerst; ein Shard, der
         //   beim Laden abbricht, würde sonst jede Aufnahme neu gestartet.
@@ -4219,28 +6196,62 @@ impl Knoten {
         let hoehe = self.kette.hoehe();
         self.gemessen.retain(|(e, _)| *e == epoche);
         self.fristverdacht.retain(|(e, _), _| *e == epoche);
+        // 📌 Fund 670: Eine Messung aus der vorigen Epoche gilt nicht mehr;
+        //    Pod, Frist und Fenster sind andere.
+        let verfallen: Vec<libp2p::PeerId> =
+            self.messungen.iter().filter(|(_, m)| m.epoche != epoche).map(|(p, _)| *p).collect();
+        for p in verfallen {
+            if let Some(m) = self.messungen.remove(&p) {
+                self.messung_verworfen(&m, "fristmessung_verfallen");
+            }
+        }
         // 📌 Fund 655: nicht im Anlauf der Epoche, wenn die Shards gerade
         //    starten.
         if !crate::frist::darf_messen(hoehe) {
             return;
         }
         // Wer über der Grenze seiner Probe ist, hat die Frist überschritten,
-        // auch ohne Antwort (frist::grenze_der_probe).
+        // auch ohne Antwort (frist::grenze_der_probe); wer nach einer
+        // Abweisung wartet, hat keine Probe offen.
         let ueber: Vec<libp2p::PeerId> = self
             .messungen
             .iter()
-            .filter(|(_, m)| m.ab.elapsed().as_micros() as u64 >= crate::frist::grenze_der_probe(m.frist, m.positionen))
+            .filter(|(_, m)| {
+                m.wieder_ab.is_none()
+                    && m.ab.elapsed().as_micros() as u64 >= crate::frist::grenze_der_probe(m.frist, m.positionen)
+            })
             .map(|(p, _)| *p)
             .collect();
         for p in ueber {
             self.messung_ueberschritten(p);
+        }
+        // ⚑ Fund 660: Nach einer Abweisung wird mit Abstand erneut gefragt,
+        //   dieselbe Messung mit einer neuen Saat.
+        let jetzt = std::time::Instant::now();
+        let faellig: Vec<libp2p::PeerId> =
+            self.messungen.iter().filter(|(_, m)| m.wieder_ab.is_some_and(|t| t <= jetzt)).map(|(p, _)| *p).collect();
+        for an in faellig {
+            if let Some(m) = self.messungen.get_mut(&an) {
+                m.wieder_ab = None;
+                m.ab = jetzt;
+                m.saat = crate::frist::frische_saat();
+                if let Some(daten) = crate::frist::probe(m.frist, m.positionen, m.saat).als_bytes() {
+                    let _ = self.kommandos.send(NodeCommand::AnfrageMitZweck { an, daten, zweck: ZWECK_ZEITPROBE });
+                }
+            }
         }
         let laufend: Vec<myl_types::ids::MinerId> = self.messungen.values().map(|m| m.mitglied).collect();
         // Eine Messung, deren Probe nach zwei Minuten nicht zurück ist, gilt
         // als verloren und darf neu gestellt werden; eine Probe rechnet bis
         // zu 2 048 Positionen (Fund 646), und die Leitung zum Shard wartet
         // ebenso lange.
-        self.messungen.retain(|_, m| m.ab.elapsed() < Duration::from_secs(120));
+        let verloren: Vec<libp2p::PeerId> =
+            self.messungen.iter().filter(|(_, m)| m.ab.elapsed() >= Duration::from_secs(120)).map(|(p, _)| *p).collect();
+        for p in verloren {
+            if let Some(m) = self.messungen.remove(&p) {
+                self.messung_verworfen(&m, "fristmessung_verloren");
+            }
+        }
         for (pod, m) in crate::frist::zu_messen(self.kette.zustand(), ich) {
             if self.gemessen.contains(&(epoche, m.miner_id)) || laufend.contains(&m.miner_id) {
                 continue;
@@ -4262,22 +6273,71 @@ impl Knoten {
                 continue;
             };
             let positionen = crate::frist::probe_positionen(frist);
-            let Some(daten) = crate::frist::probe(frist, positionen).als_bytes() else {
+            let saat = crate::frist::frische_saat();
+            let Some(daten) = crate::frist::probe(frist, positionen, saat).als_bytes() else {
                 continue;
             };
+            let messende = crate::frist::messende(self.kette.zustand(), &m.miner_id).len();
             self.messungen.insert(
                 an,
-                Messung { pod, mitglied: m.miner_id, ab: std::time::Instant::now(), positionen, frist, probe_us: None, proben: 0 },
+                Messung {
+                    pod,
+                    mitglied: m.miner_id,
+                    ab: std::time::Instant::now(),
+                    positionen,
+                    frist,
+                    probe_us: None,
+                    proben: 0,
+                    saat,
+                    epoche,
+                    messende,
+                    abgewiesen_in_folge: 0,
+                    abgewiesen_seit: None,
+                    abgewiesen: 0,
+                    wieder_ab: None,
+                },
             );
-            let _ = self.kommandos.send(NodeCommand::Anfrage { an, daten });
+            // Die Diagnose der Messplanung (Funde 664, 667): wer wen in
+            // welcher Epoche zu messen beginnt.
+            self.protokoll.schreibe(
+                Eintrag::neu("fristmessung_gestellt")
+                    .text("mitglied", hex::encode(&m.miner_id.as_bytes()[..8]))
+                    .zahl("epoche", epoche as i64)
+                    .zahl("hoehe", hoehe as i64)
+                    .zahl("positionen", i64::from(positionen))
+                    .zahl("messende", messende as i64),
+            );
+            let _ = self.kommandos.send(NodeCommand::AnfrageMitZweck { an, daten, zweck: ZWECK_ZEITPROBE });
         }
     }
 
-    /// Gehört ein Gegenüber zu einer laufenden Messung oder ist es die
-    /// laufende Quelle des Nachholens?
-    fn ist_netzarbeit(&self, peer: &libp2p::PeerId) -> bool {
-        self.messungen.contains_key(peer)
-            || self.nachholen.as_ref().is_some_and(|n| n.laeuft && n.quellen.get(n.quelle) == Some(peer))
+    /// Schreibt eine Messung ins Protokoll, die ohne Urteil endet.
+    fn messung_verworfen(&mut self, m: &Messung, art: &str) {
+        self.protokoll.schreibe(
+            Eintrag::neu(art)
+                .text("mitglied", hex::encode(&m.mitglied.as_bytes()[..8]))
+                .zahl("epoche", m.epoche as i64)
+                .zahl("proben", i64::from(m.proben))
+                .zahl("abgewiesen", i64::from(m.abgewiesen)),
+        );
+    }
+
+    /// Die Gegenstelle, von der gerade eine Datei nachgeholt wird. Ob ein
+    /// `Nichts` zu einer Messung gehört, sagt seit 2026-10-30 der Zweck der
+    /// Anfrage, nicht mehr die Gegenstelle.
+    fn ist_nachholquelle(&self, peer: &libp2p::PeerId) -> bool {
+        self.nachholen.as_ref().is_some_and(|n| n.laeuft && n.quellen.get(n.quelle) == Some(peer))
+    }
+
+    /// Trägt die Unterschrift einer Antwort, unter dem Schlüssel, mit dem
+    /// das gemessene Mitglied in der Kette steht, über die Saat der
+    /// laufenden Probe (Fund 669, Fund 661)?
+    fn zeitprobe_traegt(&self, von: &libp2p::PeerId, abdruck: &[u8; 32], signatur: &myl_types::bls::BlsSignature) -> bool {
+        self.messungen.get(von).is_some_and(|m| {
+            self.kette.zustand().miner.get(&m.mitglied).is_some_and(|eintrag| {
+                crate::frist::antwort_traegt(&eintrag.schluessel, &m.saat, m.positionen, abdruck, signatur)
+            })
+        })
     }
 
     /// Eine Zeitprobe ist zurück: die nächste stellen oder, nach der letzten,
@@ -4288,19 +6348,67 @@ impl Knoten {
             return;
         };
         let dauer = m.ab.elapsed().as_micros() as u64;
-        m.probe_us = Some(m.probe_us.map_or(dauer, |p| p.min(dauer)));
+        let kuerzeste = m.probe_us.map_or(dauer, |p| p.min(dauer));
+        m.probe_us = Some(kuerzeste);
         m.proben += 1;
-        if m.proben < crate::frist::PROBEN_JE_MESSUNG {
+        m.abgewiesen_in_folge = 0;
+        m.abgewiesen_seit = None;
+        // ⚑ Hält die kürzeste schon die Frist, ist das Urteil entschieden
+        //   (frist::messung_fertig): Der Platz des Gemessenen wird frei.
+        if !crate::frist::messung_fertig(kuerzeste, m.proben, m.frist, m.positionen) {
             m.ab = std::time::Instant::now();
-            if let Some(daten) = crate::frist::probe(m.frist, m.positionen).als_bytes() {
-                let _ = self.kommandos.send(NodeCommand::Anfrage { an: von, daten });
+            m.saat = crate::frist::frische_saat();
+            if let Some(daten) = crate::frist::probe(m.frist, m.positionen, m.saat).als_bytes() {
+                let _ = self.kommandos.send(NodeCommand::AnfrageMitZweck { an: von, daten, zweck: ZWECK_ZEITPROBE });
             }
             return;
         }
         let Some(m) = self.messungen.remove(&von) else {
             return;
         };
-        self.messung_auswerten(m);
+        self.messung_auswerten(m, "beantwortet");
+    }
+
+    /// ⚑ **Eine Abweisung** (Fund 660): ein `Nichts` oder eine gescheiterte
+    /// Anfrage vor der Grenze der Probe. Die Messung bleibt mit ihren
+    /// beantworteten Proben stehen und fragt mit Abstand erneut; erst eine
+    /// lange Folge ohne Antwort endet als Überschreitung
+    /// ([`crate::frist::nach_abweisung`]).
+    fn messung_abgewiesen(&mut self, von: libp2p::PeerId, art: &str) {
+        let saat = crate::frist::frische_saat();
+        let zufall = u64::from_le_bytes([saat[0], saat[1], saat[2], saat[3], saat[4], saat[5], saat[6], saat[7]]);
+        let jetzt = std::time::Instant::now();
+        let Some(m) = self.messungen.get_mut(&von) else {
+            return;
+        };
+        m.abgewiesen += 1;
+        m.abgewiesen_in_folge += 1;
+        let seit = *m.abgewiesen_seit.get_or_insert(jetzt);
+        let seit_us = jetzt.saturating_duration_since(seit).as_micros() as u64;
+        let folge = crate::frist::nach_abweisung(m.abgewiesen_in_folge, seit_us, m.messende, zufall);
+        self.protokoll.schreibe(
+            Eintrag::neu("zeitprobe_abgewiesen")
+                .text("mitglied", hex::encode(&m.mitglied.as_bytes()[..8]))
+                .text("wie", art)
+                .zahl("epoche", m.epoche as i64)
+                .zahl("in_folge", i64::from(m.abgewiesen_in_folge))
+                .zahl("seit_ms", (seit_us / 1_000) as i64),
+        );
+        match folge {
+            crate::frist::NachAbweisung::Wiederholen(us) => {
+                m.wieder_ab = Some(jetzt + Duration::from_micros(us));
+            }
+            crate::frist::NachAbweisung::Ueberschritten => {
+                let Some(mut m) = self.messungen.remove(&von) else {
+                    return;
+                };
+                // Ohne beantwortete Probe zählt sie wie eine, die in ihre
+                // Grenze lief; mit beantworteten sind die schon darüber
+                // (sonst hätte das frühe Ende sie beendet).
+                m.probe_us = Some(m.probe_us.unwrap_or(crate::frist::grenze_der_probe(m.frist, m.positionen)));
+                self.messung_auswerten(m, "verweigert");
+            }
+        }
     }
 
     /// Beantwortet eine Zeitprobe über den eigenen Shard: nur für Mitglieder
@@ -4312,6 +6420,7 @@ impl Knoten {
         marke: u64,
         positionen: u32,
         grenze_ms: Option<u32>,
+        saat: Option<[u8; 32]>,
     ) -> Option<(Nachlieferung, usize)> {
         let messend = self
             .miner_ich()
@@ -4321,16 +6430,27 @@ impl Knoten {
             return Some((Nachlieferung::Nichts, 0));
         };
         let sender = self.kommandos.clone();
+        let schluessel = self.netzschluessel.clone();
         tokio::task::spawn_blocking(move || {
+            let gefragt = positionen;
             let positionen = positionen.min(crate::frist::PROBE_HOECHSTENS);
             let frist = Duration::from_secs(120);
-            let ergebnis = match grenze_ms {
-                Some(ms) => myl_types::zeitprobe::fragen_mit_grenze(adresse, &ausweis, positionen, ms, frist),
-                None => myl_types::zeitprobe::fragen(adresse, &ausweis, positionen, frist),
+            let ergebnis = match (grenze_ms, saat.as_ref()) {
+                (Some(ms), Some(s)) => myl_types::zeitprobe::fragen_mit_saat(adresse, &ausweis, positionen, ms, s, frist),
+                (Some(ms), None) => myl_types::zeitprobe::fragen_mit_grenze(adresse, &ausweis, positionen, ms, frist),
+                (None, _) => myl_types::zeitprobe::fragen(adresse, &ausweis, positionen, frist),
             };
-            let antwort = match ergebnis {
-                Ok(abdruck) => Nachlieferung::Zeitprobe(abdruck),
-                Err(_) => Nachlieferung::Nichts,
+            // ⚑ Mit Saat unterschrieben (Fund 661): über Saat, die gefragten
+            //   Positionen und den Abdruck, mit dem Minerschlüssel.
+            let antwort = match (ergebnis, saat, schluessel) {
+                (Ok(abdruck), Some(s), Some(k)) => {
+                    match k.signiere(&myl_types::zeitprobe::antwortnachricht(&s, gefragt, &abdruck)) {
+                        Ok(signatur) => Nachlieferung::ZeitprobeUnterschrieben { abdruck, signatur },
+                        Err(_) => Nachlieferung::Nichts,
+                    }
+                }
+                (Ok(abdruck), _, _) => Nachlieferung::Zeitprobe(abdruck),
+                (Err(_), _, _) => Nachlieferung::Nichts,
             };
             drop(platz);
             if let Some(bytes) = antwort.als_bytes() {
@@ -4346,6 +6466,10 @@ impl Knoten {
         let Some(m) = self.messungen.get(&von) else {
             return false;
         };
+        // Wer nach einer Abweisung wartet, hat keine Probe offen.
+        if m.wieder_ab.is_some() {
+            return false;
+        }
         let dauer = m.ab.elapsed().as_micros() as u64;
         if dauer < crate::frist::grenze_der_probe(m.frist, m.positionen) {
             return false;
@@ -4360,12 +6484,14 @@ impl Knoten {
                 .zahl("dauer_us", dauer.min(i64::MAX as u64) as i64)
                 .zahl("positionen", i64::from(m.positionen)),
         );
-        self.messung_auswerten(m);
+        self.messung_auswerten(m, "grenze");
         true
     }
 
     /// Wertet eine beendete Messung aus: Urteil, Verdacht oder Zeugnis.
-    fn messung_auswerten(&mut self, m: Messung) {
+    /// `ende` sagt, wie sie endete: beantwortet, an der Grenze oder
+    /// verweigert (Fund 660).
+    fn messung_auswerten(&mut self, m: Messung, ende: &str) {
         let Some(probe_us) = m.probe_us else {
             return;
         };
@@ -4374,6 +6500,12 @@ impl Knoten {
         let gemessen = crate::frist::gemessen_je_token(probe_us, m.positionen);
         let e = self.kette.zustand().epoch.0;
         let hoehe = self.kette.hoehe();
+        // 📌 Fund 670: Endet eine Messung erst nach dem Wechsel, gilt sie
+        //    nicht; Pod und Frist der neuen Epoche sind andere.
+        if m.epoche != e {
+            self.messung_verworfen(&m, "fristmessung_verfallen");
+            return;
+        }
         let zustand = self.kette.zustand();
         let Some(frist) = crate::frist::frist_des_mitglieds(zustand, m.pod, &m.mitglied) else {
             self.gemessen.insert((e, m.mitglied));
@@ -4387,7 +6519,12 @@ impl Knoten {
                 .zahl("gemessen_us", gemessen.min(i64::MAX as u64) as i64)
                 .zahl("probe_us", probe_us.min(i64::MAX as u64) as i64)
                 .zahl("frist_us", frist.min(i64::MAX as u64) as i64)
-                .text("urteil", format!("{urteil:?}")),
+                .text("urteil", format!("{urteil:?}"))
+                .text("ende", ende)
+                .zahl("epoche", e as i64)
+                .zahl("hoehe", hoehe as i64)
+                .zahl("proben", i64::from(m.proben))
+                .zahl("abgewiesen", i64::from(m.abgewiesen)),
         );
         // ⚑ Fund 655: Ein Verdacht wird später nachgemessen und bezeugt noch
         //   nichts; erst die zweite Überschreitung ergibt ein Zeugnis.
@@ -4470,27 +6607,36 @@ impl Knoten {
         // ⚑ **Erst die laufende Epoche, dann die nächste**: Fehlt dem
         //   Bereich, den dieser Knoten jetzt rechnen soll, eine Datei,
         //   wartet sein Shard darauf.
+        // 📌 Skalierung (2026-10-29): Hier standen zwei volle Kopien des
+        //    Zustands je Durchlauf der Miner-Schleife; jetzt ein Blick unter
+        //    der Epoche und Saat der nächsten ([`LedgerState::als_epoche`]).
         let jetzt = self.kette.zustand().epoch.0;
-        let mut naechster = self.kette.zustand().clone();
-        naechster.epoch = myl_types::ids::EpochId(jetzt + 1);
-        naechster.epochensaat = naechster.epochensaat_naechste;
+        let saat_naechste = self.kette.zustand().epochensaat_naechste;
+        let saat_jetzt = self.kette.zustand().epochensaat;
         let mut ziel = None;
-        for (epoche, z) in [(jetzt, self.kette.zustand().clone()), (jetzt + 1, naechster)] {
-            let Some(a) = crate::shardfuehrung::auftrag_der_epoche(&z, ich) else {
+        for (epoche, saat) in [(jetzt, saat_jetzt), (jetzt + 1, saat_naechste)] {
+            let a = self
+                .kette
+                .zustand_mut()
+                .als_epoche(myl_types::ids::EpochId(epoche), saat, |z| crate::shardfuehrung::auftrag_der_epoche(z, ich));
+            let Some(a) = a else {
                 continue;
             };
             let Ok(fehlt) = crate::dateidienst::fehlende(&sk.artefakte, a.von, a.bis, a.mit_einbettung(), a.mit_kopf()) else {
                 continue;
             };
             if !fehlt.is_empty() {
-                ziel = Some((epoche, z, fehlt));
+                ziel = Some((epoche, saat, fehlt));
                 break;
             }
         }
-        let Some((naechste, z, fehlt)) = ziel else {
+        let Some((naechste, saat, fehlt)) = ziel else {
             return;
         };
-        let zuteilung = crate::kette::Kette::zuteilung_der_laufenden_epoche(&z);
+        let zuteilung = self
+            .kette
+            .zustand_mut()
+            .als_epoche(myl_types::ids::EpochId(naechste), saat, crate::kette::Kette::zuteilung_der_laufenden_epoche);
         let quellen: Vec<libp2p::PeerId> = zuteilung
             .pods
             .iter()
@@ -4552,13 +6698,26 @@ impl Knoten {
         self.naechstes_stueck();
     }
 
-    /// Ein Gegenüber der Netzarbeit hatte nichts oder antwortete nicht.
-    fn nichts_erhalten(&mut self, von: libp2p::PeerId) {
-        // Eine Probe, die erst nach ihrer Grenze scheitert, ist gemessen.
-        if self.messung_ueberschritten(von) {
-            return;
+    /// Ein Gegenüber der Netzarbeit hatte nichts oder antwortete nicht;
+    /// `wie` ist `nichts` oder `gescheitert`. In die Messung geht es nur,
+    /// wenn es die Antwort auf eine Zeitprobe war (`zeitprobe`).
+    fn nichts_erhalten(&mut self, von: libp2p::PeerId, wie: &str, zeitprobe: bool) {
+        if zeitprobe {
+            // Eine Probe, die erst nach ihrer Grenze scheitert, ist gemessen.
+            if self.messung_ueberschritten(von) {
+                return;
+            }
+            // ⚑ Fund 660: Vorher ist es eine Abweisung; die Messung bleibt.
+            if self.messungen.get(&von).is_some_and(|m| m.wieder_ab.is_none()) {
+                self.messung_abgewiesen(von, wie);
+            }
         }
-        self.messungen.remove(&von);
+        self.nachholquelle_scheitert(von);
+    }
+
+    /// Hat `von` als Quelle des Nachholens nichts geliefert, kommt die
+    /// nächste dran.
+    fn nachholquelle_scheitert(&mut self, von: libp2p::PeerId) {
         if let Some(n) = self.nachholen.as_mut() {
             if n.laeuft && n.quellen.get(n.quelle) == Some(&von) {
                 n.holer.quelle_hat_nicht();
@@ -4567,7 +6726,31 @@ impl Knoten {
             }
         }
     }
+
+    /// 📌 Fund 674: Das Mitglied war nicht zu erreichen (Wählfehler). Keine
+    /// Abweisung: später neu fragen, 4 bis 8 s, ohne zu zählen.
+    fn messung_unerreicht(&mut self, von: libp2p::PeerId) {
+        let saat = crate::frist::frische_saat();
+        let zufall = u64::from_le_bytes([saat[0], saat[1], saat[2], saat[3], saat[4], saat[5], saat[6], saat[7]]);
+        if let Some(m) = self.messungen.get_mut(&von) {
+            if m.wieder_ab.is_none() {
+                m.wieder_ab = Some(std::time::Instant::now() + Duration::from_millis(4_000 + zufall % 4_000));
+            }
+        }
+    }
 }
+
+/// 📌 **Ein Wählfehler** (Fund 674): Die Anfrage kam gar nicht erst hinaus,
+/// weil keine Verbindung zustande kam. Der Text ist der von libp2p
+/// (`OutboundFailure::DialFailure`); eine Probe hält ihn fest.
+fn ist_waehlfehler(grund: &str) -> bool {
+    grund.starts_with("Failed to dial")
+}
+
+/// ⚑ **So viele Spurablagen hält ein Knoten** (Stufe 2, 2026-10-28): je
+/// Bündel eine, über wenige Epochen; die Ziehung kommt eine Epoche nach dem
+/// Bündel. Gedeckelt, weil jeder eine Ablage schicken kann.
+pub const SPURABLAGEN_HOECHSTENS: usize = 16;
 
 /// Was in den Orten fuer das Netz liegt, ueber alle zusammen.
 #[derive(Debug, Clone, Copy, Default)]
@@ -4612,10 +6795,22 @@ struct AbzugHolen {
     gemeldet: Option<std::time::Instant>,
 }
 
+/// Die Nachforderung des nächsten Stücks, nach der Art des Abzugs.
+fn abzug_nachforderung(z: &crate::abzug::Zusammensetzen) -> Nachforderung {
+    match z.art() {
+        crate::abzug::Art::Voll => Nachforderung::Abzug { hoehe: z.anker().hoehe, ab: z.ab() },
+        crate::abzug::Art::Leicht => Nachforderung::LeichterAbzug { hoehe: z.anker().hoehe, ab: z.ab() },
+    }
+}
+
 impl AbzugHolen {
     fn neu(anker: crate::abzug::Anker) -> Self {
+        Self::neu_als(anker, crate::abzug::Art::Voll)
+    }
+
+    fn neu_als(anker: crate::abzug::Anker, art: crate::abzug::Art) -> Self {
         Self {
-            z: crate::abzug::Zusammensetzen::neu(anker),
+            z: crate::abzug::Zusammensetzen::neu_als(anker, art),
             bei: None,
             gesperrt: Default::default(),
             reihum: 0,
@@ -4993,7 +7188,7 @@ impl Knoten {
         let Some(peer) = naechste_gegenstelle(&self.gegenstellen, &mut h.gesperrt, &mut h.reihum, &mut h.gemeldet) else {
             return;
         };
-        let n = Nachforderung::Abzug { hoehe: h.z.anker().hoehe, ab: h.z.ab() };
+        let n = abzug_nachforderung(&h.z);
         let ab = h.z.ab();
         if self.anfrage_senden(peer, &n) {
             if let Some(h) = self.abzug_holen.as_mut() {
@@ -5043,7 +7238,7 @@ impl Knoten {
         let Some(h) = self.abzug_holen.as_ref() else {
             return;
         };
-        let n = Nachforderung::Abzug { hoehe: h.z.anker().hoehe, ab: h.z.ab() };
+        let n = abzug_nachforderung(&h.z);
         let gesendet = self.anfrage_senden(peer, &n);
         if let Some(h) = self.abzug_holen.as_mut() {
             h.bei = gesendet.then(|| (peer, std::time::Instant::now()));
@@ -5070,6 +7265,28 @@ impl Knoten {
             self.protokoll.schreibe(Eintrag::neu("abzug_nicht_gesetzt").text("grund", g));
             return;
         }
+        // ⚑ Leicht: Die eigenen Konten kennt der Knoten erst wieder über
+        //   einen Zeugen oder einen Kontobeweis; keine Ablage, keine
+        //   Hintergrundprüfung (sie bräuchte den ganzen Zustand).
+        if self.kette.ist_zustandslos() {
+            self.kette.eigene_vergessen();
+            self.wartet_auf_zeugen.clear();
+            self.zeugen_eilig.clear();
+            self.fertige_zeugen.clear();
+            self.zeugensammler = myl_consensus::zeuge::Zeugensammler::neu(ZEUGEN_SAMMLER_BYTES);
+            self.kontobeweise_offen = None;
+            self.protokoll.schreibe(
+                Eintrag::neu("abzug_uebernommen")
+                    .zahl("hoehe", hoehe as i64)
+                    .zahl("bytes", bytes as i64)
+                    .wahr("leicht", true)
+                    .text("von", von.to_string())
+                    .text("zustandswurzel", kurz(&self.kette.wurzel())),
+            );
+            self.voraus_einspielen();
+            self.weiter_nachfordern(None);
+            return;
+        }
         if let Some(a) = self.kette.ablage().cloned() {
             if a.ablegen(&abzug).and_then(|()| a.basis_setzen(hoehe)).is_err() {
                 self.protokoll.schreibe(Eintrag::neu("abzug_nicht_abgelegt").zahl("hoehe", hoehe as i64));
@@ -5080,7 +7297,7 @@ impl Knoten {
                 .zahl("hoehe", hoehe as i64)
                 .zahl("bytes", bytes as i64)
                 .text("von", von.to_string())
-                .text("zustandswurzel", kurz(&self.kette.zustandswurzel())),
+                .text("zustandswurzel", kurz(&self.kette.wurzel())),
         );
         if self.konfig.hintergrundpruefung {
             self.hintergrund = Some(Hintergrund::neu(self.konfig.netz, self.kette.stimmsatz().cloned(), &abzug.block));
@@ -5309,6 +7526,32 @@ pub(crate) fn testverkehr_nonce(stand: &mut (u64, u64), im_zustand: u64, hoehe: 
 }
 
 #[cfg(test)]
+mod reihum_tests {
+    use super::reihum;
+
+    /// ⚑ Reihum war nach `ceil(len / n)` Runden jede Gegenstelle dabei, je
+    /// Runde höchstens `n`; mit weniger Gegenstellen als `n` alle, ohne
+    /// doppelte.
+    #[test]
+    fn jede_gegenstelle_kommt_dran() {
+        let p: Vec<libp2p::PeerId> = (0..10).map(|_| libp2p::PeerId::random()).collect();
+        let mut gesehen = std::collections::BTreeSet::new();
+        let mut ab = 0;
+        for _ in 0..3 {
+            let (auswahl, weiter) = reihum(&p, ab, 4);
+            assert_eq!(auswahl.len(), 4);
+            gesehen.extend(auswahl);
+            ab = weiter;
+        }
+        assert_eq!(gesehen.len(), 10, "nach drei Runden alle zehn");
+        let (wenige, _) = reihum(&p[..2], 7, 4);
+        assert_eq!(wenige.len(), 2);
+        assert_ne!(wenige[0], wenige[1]);
+        assert_eq!(reihum(&[], 3, 4), (Vec::new(), 0));
+    }
+}
+
+#[cfg(test)]
 mod testverkehr_tests {
     use super::testverkehr_nonce;
 
@@ -5495,5 +7738,237 @@ mod plaetze_tests {
         assert!(p.nehmen().is_none());
         drop(gehalten);
         assert!(p.nehmen().is_some());
+    }
+}
+
+/// Ein nachgerechneter Verlauf, aus der Rechenaufgabe zurück (Stufe 2).
+#[derive(Debug)]
+pub struct Nachrechnung {
+    /// Die Ziehung.
+    gezogen: myl_types::Spuranfrage,
+    /// Wie viele Positionen nachgerechnet wurden.
+    positionen: usize,
+    /// Das Ergebnis samt Logits, oder warum es keines gibt.
+    ergebnis: Result<myl_verifier::Verlaufspruefung, String>,
+    /// Wie lange es dauerte, samt Laden des Modells.
+    dauer_ms: i64,
+    /// Bei einer Abweichung der Schiedsbeleg: Verlauf und Eingänge.
+    beleg: Option<Schiedsbeleg>,
+}
+
+/// Ein geprüfter Stapel von der Relaisleitung: die gültigen, wie viele
+/// gefragt waren, und wohin die Antwort geht.
+type RelaisGeprueft = (Vec<myl_consensus::block::GepruefteTransaktion>, usize, std::sync::mpsc::Sender<myl_types::relais::Relaisantwort>);
+
+/// So viele Transaktionen je Sekunde stehen einzeln im Protokoll; was
+/// darüber kommt, nur in der Sammelzeile `tx_zaehler`.
+const TX_ZEILEN_JE_SEKUNDE: u64 = 100;
+
+/// Die Zähler der Transaktionen einer Sekunde.
+#[derive(Debug)]
+struct TxZaehler {
+    seit: std::time::Instant,
+    empfangen: u64,
+    aufgenommen: u64,
+    abgewiesen: u64,
+}
+
+impl Default for TxZaehler {
+    fn default() -> Self {
+        Self { seit: std::time::Instant::now(), empfangen: 0, aufgenommen: 0, abgewiesen: 0 }
+    }
+}
+
+/// Ein Schiedsbeleg: der nachgerechnete Verlauf und die Eingänge der
+/// strittigen Layer bis zur strittigen Position (T6d).
+type Schiedsbeleg = (Vec<myl_types::Spurantwort>, Vec<Vec<i16>>);
+
+/// Was ein Validator im Komitee nachgerechnet hat (T6d).
+pub struct Schiedsrechnung {
+    fall: (u64, myl_types::ids::PodId, u32),
+    pod_falsch: Result<bool, String>,
+}
+
+/// ⚑ **Die Abweisung einer Zeitprobe im Knoten** (Fund 660, Fund 670): die
+/// Verdrahtung zwischen `nichts_erhalten`, `messung_abgewiesen` und
+/// `messung_auswerten`, gegen einen gestarteten Knoten mit einem Pod.
+#[cfg(test)]
+mod abweisung_tests {
+    use super::*;
+    use crate::kette::{probeanmeldung, probezusage, Kette};
+    use myl_types::ids::{EpochId, MinerId};
+
+    /// Der Ordner einer Probe, unter dem Zwischenordner.
+    fn ordner(marke: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("myl-abweisung-{marke}-{}", std::process::id()))
+    }
+
+    /// Der Ordner einer bestandenen Probe bleibt nicht liegen.
+    fn aufraeumen(marke: &str) {
+        let _ = std::fs::remove_dir_all(ordner(marke));
+    }
+
+    /// Ein Knoten ohne Nachbarn, dessen Kette einen Pod aus sechs
+    /// Probekonten in Epoche 3 trägt.
+    async fn knoten_mit_pod(marke: &str) -> Knoten {
+        let d = ordner(marke);
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).expect("Ordner");
+        let konfig = KnotenKonfig {
+            name: marke.to_string(),
+            schluesseldatei: d.join("knoten.key"),
+            protokollverzeichnis: d.clone(),
+            horchadressen: vec!["/ip4/127.0.0.1/tcp/0".to_string()],
+            kettendatei: None,
+            beobachtung: None,
+            tuer: None,
+            ..KnotenKonfig::default()
+        };
+        let mut k = Knoten::starten(konfig, false).await.expect("Knoten");
+        let mut kette = Kette::probestand();
+        for w in 0..6u8 {
+            kette.aufnehmen(probeanmeldung(w));
+            kette.aufnehmen(probezusage(w, EpochId(1), 1));
+        }
+        kette.baue_block();
+        while kette.zustand().epoch.0 < 3 {
+            kette.baue_block();
+        }
+        k.kette = kette;
+        k
+    }
+
+    /// Eine laufende Messung an das zweite Mitglied des Pods, mit
+    /// `in_folge` Abweisungen seit `seit`.
+    fn messung(k: &Knoten, epoche: u64, in_folge: u32, seit: Duration) -> (MinerId, Messung) {
+        let z = k.kette.zustand();
+        let zuteilung = Kette::zuteilung_der_laufenden_epoche(z);
+        let pod = &zuteilung.pods[0];
+        let mitglied = pod.shards[1].miner.miner_id;
+        let frist = crate::frist::frist_des_mitglieds(z, pod.pod_index, &mitglied).expect("Frist");
+        let jetzt = std::time::Instant::now();
+        let m = Messung {
+            pod: pod.pod_index,
+            mitglied,
+            ab: jetzt,
+            positionen: crate::frist::probe_positionen(frist),
+            frist,
+            probe_us: None,
+            proben: 0,
+            saat: [0u8; 32],
+            epoche,
+            messende: crate::frist::messende(z, &mitglied).len(),
+            abgewiesen_in_folge: in_folge,
+            abgewiesen_seit: Some(jetzt.checked_sub(seit).unwrap_or(jetzt)),
+            abgewiesen: in_folge,
+            wieder_ab: None,
+        };
+        (mitglied, m)
+    }
+
+    /// Eine Abweisung lässt die Messung stehen und fragt mit Abstand neu;
+    /// erst eine lange Folge endet als Überschreitung, im ersten Fenster
+    /// als Verdacht.
+    #[tokio::test]
+    async fn eine_lange_verweigerung_wird_im_knoten_zum_verdacht() {
+        let mut k = knoten_mit_pod("verweigerung").await;
+        let e = k.kette.zustand().epoch.0;
+        let von = libp2p::PeerId::random();
+        // ⛔️ Gegenprobe 1: drei in Folge über eine Stunde, die vierte
+        //    kommt erst jetzt. Vier sind nötig, die Dauer genügt: Verdacht.
+        let (mitglied, m) = messung(&k, e, 3, Duration::from_secs(3_600));
+        k.messungen.insert(von, m);
+        k.nichts_erhalten(von, "nichts", true);
+        assert!(!k.messungen.contains_key(&von), "die Messung endet");
+        assert!(k.fristverdacht.contains_key(&(e, mitglied)), "als Verdacht");
+        // ⛔️ Gegenprobe 2: die vierte in Folge, aber erst seit einer
+        //    Sekunde: weiter fragen, kein Verdacht.
+        k.fristverdacht.clear();
+        let (mitglied, m) = messung(&k, e, 3, Duration::from_secs(1));
+        k.messungen.insert(von, m);
+        k.nichts_erhalten(von, "nichts", true);
+        let m = k.messungen.get(&von).expect("die Messung bleibt");
+        assert_eq!(m.abgewiesen_in_folge, 4);
+        assert!(m.wieder_ab.is_some(), "mit Abstand neu fragen");
+        assert!(!k.fristverdacht.contains_key(&(e, mitglied)));
+        // ⛔️ Gegenprobe 3: eine Stunde, aber erst die dritte in Folge.
+        let (mitglied, m) = messung(&k, e, 2, Duration::from_secs(3_600));
+        k.messungen.insert(von, m);
+        k.nichts_erhalten(von, "gescheitert", true);
+        assert!(k.messungen.get(&von).is_some_and(|m| m.wieder_ab.is_some()));
+        assert!(!k.fristverdacht.contains_key(&(e, mitglied)));
+        // Ein `Nichts`, während die Messung wartet, zählt nicht.
+        k.nichts_erhalten(von, "nichts", true);
+        assert_eq!(k.messungen.get(&von).map(|m| m.abgewiesen_in_folge), Some(3));        aufraeumen("verweigerung");
+    }
+
+    /// ⛔️ **Nur eine Antwort auf die Zeitprobe zählt** (2026-10-30): Ein
+    /// `Nichts` oder ein Fehlschlag ohne den Zweck der Probe, etwa auf eine
+    /// Blocknachforderung an dasselbe Mitglied, berührt die Messung nicht;
+    /// mit dem Zweck ist es eine Abweisung.
+    #[tokio::test]
+    async fn nur_die_antwort_auf_die_probe_zaehlt() {
+        let mut k = knoten_mit_pod("zweck").await;
+        let e = k.kette.zustand().epoch.0;
+        let von = libp2p::PeerId::random();
+        let (_, m) = messung(&k, e, 0, Duration::from_secs(0));
+        k.messungen.insert(von, m);
+        let nichts = Nachlieferung::Nichts.als_bytes().expect("Nichts");
+        k.ereignis_einspeisen(NodeEvent::AntwortEingegangen { von, daten: nichts.clone(), zweck: None });
+        k.ereignis_einspeisen(NodeEvent::AnfrageGescheitert { an: von, grund: "Timeout".into(), zweck: None });
+        assert_eq!(k.messungen.get(&von).map(|m| (m.abgewiesen, m.wieder_ab.is_some())), Some((0, false)), "ohne Zweck nichts");
+        k.ereignis_einspeisen(NodeEvent::AntwortEingegangen { von, daten: nichts, zweck: Some(ZWECK_ZEITPROBE) });
+        assert_eq!(k.messungen.get(&von).map(|m| m.abgewiesen), Some(1), "die Probe wurde abgewiesen");
+        aufraeumen("zweck");
+    }
+
+    /// 📌 **Fund 674:** Ein Wählfehler ist keine Abweisung: Die Messung
+    /// bleibt, zählt nichts und fragt später neu; auch nach einer langen
+    /// Folge solcher Fehler kein Verdacht. Der Text von libp2p ist
+    /// festgehalten, damit ein Update ihn nicht still ändert.
+    #[tokio::test]
+    async fn nicht_erreicht_ist_keine_weigerung() {
+        let mut k = knoten_mit_pod("unerreicht").await;
+        let e = k.kette.zustand().epoch.0;
+        let von = libp2p::PeerId::random();
+        assert!(ist_waehlfehler(&libp2p::request_response::OutboundFailure::DialFailure.to_string()));
+        // ⛔️ Gegenproben: andere Fehler sind keine Wählfehler.
+        assert!(!ist_waehlfehler(&libp2p::request_response::OutboundFailure::Timeout.to_string()));
+        assert!(!ist_waehlfehler(&libp2p::request_response::OutboundFailure::ConnectionClosed.to_string()));
+        let (mitglied, m) = messung(&k, e, 3, Duration::from_secs(3_600));
+        k.messungen.insert(von, m);
+        for _ in 0..10 {
+            if let Some(m) = k.messungen.get_mut(&von) {
+                m.wieder_ab = None;
+            }
+            k.messung_unerreicht(von);
+        }
+        let m = k.messungen.get(&von).expect("die Messung bleibt");
+        assert_eq!(m.abgewiesen_in_folge, 3, "nicht gezählt");
+        assert!(m.wieder_ab.is_some(), "später neu fragen");
+        assert!(!k.fristverdacht.contains_key(&(e, mitglied)), "kein Verdacht");
+        // ⛔️ Gegenprobe: dieselbe Lage mit einer Abweisung endet im Verdacht.
+        if let Some(m) = k.messungen.get_mut(&von) {
+            m.wieder_ab = None;
+        }
+        k.nichts_erhalten(von, "nichts", true);
+        assert!(k.fristverdacht.contains_key(&(e, mitglied)));
+        aufraeumen("unerreicht");
+    }
+
+    /// 📌 **Fund 670:** Eine Messung aus der vorigen Epoche wird nicht mehr
+    /// bewertet; dieselbe aus der laufenden ergibt den Verdacht.
+    #[tokio::test]
+    async fn eine_messung_aus_der_vorigen_epoche_verfaellt() {
+        let mut k = knoten_mit_pod("verfall").await;
+        let e = k.kette.zustand().epoch.0;
+        let (mitglied, mut m) = messung(&k, e - 1, 0, Duration::ZERO);
+        m.probe_us = Some(u64::MAX / 2);
+        k.messung_auswerten(m.clone(), "beantwortet");
+        assert!(!k.fristverdacht.contains_key(&(e, mitglied)), "verfallen");
+        // ⛔️ Gegenprobe: in der laufenden Epoche ein Verdacht.
+        m.epoche = e;
+        k.messung_auswerten(m, "beantwortet");
+        assert!(k.fristverdacht.contains_key(&(e, mitglied)));        aufraeumen("verfall");
     }
 }

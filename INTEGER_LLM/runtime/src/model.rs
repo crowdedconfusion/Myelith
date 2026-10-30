@@ -1719,6 +1719,36 @@ impl IntegerModel {
         pos_start: usize,
         cache: &mut KVCache,
     ) -> Vec<Vec<i16>> {
+        self.vorbereiten_stapel_innen(token_ids, pos_start, cache, None)
+    }
+
+    /// **Wie [`Model::vorbereiten_stapel`], mit einem Blick nach jeder
+    /// Ebene** (Prüfung als Prefill, 2026-10-29): `nach_ebene(i, zustaende)`
+    /// bekommt den Ausgang der Ebene `i` für jedes Token des Stapels. An der
+    /// Rechnung ändert der Blick nichts; er liest nur.
+    ///
+    /// `None` für ein Modell mit vier Strömen: Es läuft im Stapel Token für
+    /// Token durch den Weg des Dekodierens, ohne Ausgang je Ebene.
+    pub fn vorbereiten_stapel_mit_ebenen(
+        &self,
+        token_ids: &[usize],
+        pos_start: usize,
+        cache: &mut KVCache,
+        nach_ebene: &mut dyn FnMut(usize, &[Vec<i16>]),
+    ) -> Option<Vec<Vec<i16>>> {
+        if self.vierstrom.is_some() {
+            return None;
+        }
+        Some(self.vorbereiten_stapel_innen(token_ids, pos_start, cache, Some(nach_ebene)))
+    }
+
+    fn vorbereiten_stapel_innen(
+        &self,
+        token_ids: &[usize],
+        pos_start: usize,
+        cache: &mut KVCache,
+        mut nach_ebene: Option<&mut dyn FnMut(usize, &[Vec<i16>])>,
+    ) -> Vec<Vec<i16>> {
         if token_ids.is_empty() {
             return Vec::new();
         }
@@ -1807,6 +1837,9 @@ impl IntegerModel {
                 .chunks_exact(hs)
                 .map(<[i16]>::to_vec)
                 .collect();
+                if let Some(blick) = nach_ebene.as_mut() {
+                    blick(i, &zustaende);
+                }
                 continue;
             }
             let out_frac: &[u8] = if i + 1 < self.layers.len() {
@@ -1951,6 +1984,9 @@ impl IntegerModel {
             .chunks_exact(hs)
             .map(<[i16]>::to_vec)
             .collect();
+            if let Some(blick) = nach_ebene.as_mut() {
+                blick(i, &zustaende);
+            }
         }
         zustaende
     }

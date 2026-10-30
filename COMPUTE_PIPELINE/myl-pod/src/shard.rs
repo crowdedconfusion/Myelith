@@ -142,6 +142,25 @@ fn sperre<'a, T>(m: &'a Mutex<T>, was: &str) -> Result<std::sync::MutexGuard<'a,
         .map_err(|_| format!("Sperre {was} ist vergiftet: ein Thread ging beim Halten in Panik"))
 }
 
+/// ⚑ **Der Fälscher des Prüfstands** (Merkmal `faelscher`, 2026-10-28): Mit
+/// `MYL_SHARD_FAELSCHEN=1` rechnet der Shard auf einer Eingabe, deren erster
+/// Wert um eins verschoben ist. Spur und Unterschrift folgen der falschen
+/// Rechnung, der Nachfolger nimmt sie also an; nur ein zweiter Pod, der
+/// dasselbe Segment ehrlich rechnet, sieht eine andere Ausgabe. Ohne das
+/// Merkmal tut diese Funktion nichts.
+#[cfg(feature = "faelscher")]
+fn faelschen(hidden: &mut [i16]) {
+    static AN: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if *AN.get_or_init(|| std::env::var("MYL_SHARD_FAELSCHEN").is_ok_and(|w| w == "1")) {
+        if let Some(erster) = hidden.first_mut() {
+            *erster = erster.wrapping_add(1);
+        }
+    }
+}
+
+#[cfg(not(feature = "faelscher"))]
+fn faelschen(_: &mut [i16]) {}
+
 /// Höchstens so viele Positionen rechnet eine Zeitprobe (gegen eine
 /// Probe, die einen Shard minutenlang belegt).
 ///
@@ -368,14 +387,23 @@ impl ShardNode {
     /// Eingabe der richtigen Länge, und die Arbeit hängt nicht an den
     /// Werten. Keine Sitzung, kein Abdruck, keine Spur bleibt zurück.
     pub fn zeitprobe(&self, positionen: usize) -> [u8; 32] {
-        self.zeitprobe_bis(positionen, None)
+        self.zeitprobe_bis(positionen, None, None)
     }
 
     /// Wie [`Self::zeitprobe`], und nach `grenze` hört der Shard auf
     /// (2026-10-27, Fund 646): Wer so lange braucht, hat die Frist ohnehin
     /// überschritten, und der Shard ist wieder frei für den nächsten
     /// Messenden. Die Grenze wird vor jeder Position geprüft.
-    pub fn zeitprobe_bis(&self, positionen: usize, grenze: Option<std::time::Duration>) -> [u8; 32] {
+    ///
+    /// ⚑ **Mit Saat** (2026-10-28, Fund 669) ist das Token je Position
+    /// `sha256(saat ‖ position)` modulo Vokabular, und der Abdruck hängt an der
+    /// Saat des Messenden; ohne Saat das feste Token wie bisher.
+    pub fn zeitprobe_bis(
+        &self,
+        positionen: usize,
+        grenze: Option<std::time::Duration>,
+        saat: Option<&[u8; 32]>,
+    ) -> [u8; 32] {
         let positionen = positionen.clamp(1, ZEITPROBE_HOECHSTENS);
         let ab = std::time::Instant::now();
         let mut cache = self.frischer_cache();
@@ -384,7 +412,16 @@ impl ShardNode {
             if grenze.is_some_and(|g| ab.elapsed() >= g) {
                 break;
             }
-            let mut hidden = self.model.embed_token(ZEITPROBE_TOKEN);
+            let token = match saat {
+                Some(s) => {
+                    let h = myl_types::hash::Hash::sha256(&[s.as_slice(), &(pos as u64).to_le_bytes()].concat());
+                    let mut b = [0u8; 8];
+                    b.copy_from_slice(&h.0[..8]);
+                    (u64::from_le_bytes(b) % self.model.vocab_size.max(1) as u64) as usize
+                }
+                None => ZEITPROBE_TOKEN,
+            };
+            let mut hidden = self.model.embed_token(token);
             for i in self.layer_start..self.layer_end {
                 hidden = self.model.run_layers(hidden, pos, &mut cache, i, i + 1);
             }
@@ -544,7 +581,8 @@ impl ShardNode {
             }
 
             let mut cache = self.position_pruefen(session_id, pos, self.take_cache(session_id)?)?;
-            let hidden = self.model.embed_token(token);
+            let mut hidden = self.model.embed_token(token);
+            faelschen(&mut hidden);
             let mut trace = msg.trace.clone();
             let out =
                 self.layer_fuer_layer(hidden, pos, &mut cache, &msg.segment_id, &mut trace);
@@ -597,7 +635,8 @@ impl ShardNode {
         // mehr. Damit ist der übertragene Nutzdatensatz genau das, was
         // der Sender gehasht hat, und die Spur bindet wieder die
         // ausgelieferte Arbeit.
-        let hidden = msg.payload.clone();
+        let mut hidden = msg.payload.clone();
+        faelschen(&mut hidden);
 
         let mut cache = self.position_pruefen(session_id, pos, self.take_cache(session_id)?)?;
         let mut trace = msg.trace.clone();

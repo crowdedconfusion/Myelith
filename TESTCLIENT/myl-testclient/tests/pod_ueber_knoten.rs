@@ -280,12 +280,25 @@ async fn ein_torknoten_ohne_shard_rechnet_ueber_die_knoten_des_pods() {
         positionen.contains(&id)
     };
     eprintln!("[podueberknoten] Auszahlung: vorher {vorher:?}, nachher {nachher:?}");
+    // ⚑ Ein Pod allein, ohne Zwilling (2026-10-28, Anlaufregel): In dieser
+    //   Epoche bekommt jeder nur die Probeprägung; die Gutschrift der
+    //   Positionen wartet bis nach der Streitfrist, die Reserve hat keine.
     for i in 0..MINER {
         let zuwachs = nachher[i] - vorher[i];
-        if rolle(i) {
-            assert!(zuwachs > probe, "Position m{i} bekam nur {zuwachs}, nicht mehr als die Probeprägung");
-        } else {
-            assert_eq!(zuwachs, probe, "Reserve m{i} bekam {zuwachs} statt der Probeprägung");
-        }
+        assert_eq!(zuwachs, probe, "m{i} bekam {zuwachs} statt der Probeprägung (Pod allein: zurückgehalten)");
+    }
+    let gehalten = &knoten[0].kette().zustand().zurueckgehalten;
+    let ab = epoche + myl_ledger::einsatz::SPERRFRIST_EPOCHEN;
+    for i in (0..MINER).filter(|&i| rolle(i)) {
+        let id = knoten[1 + i].miner_kennung().expect("Kennung");
+        assert!(
+            gehalten.iter().any(|(e, wer, v)| *e == ab && *wer == id && *v > 0),
+            "Position m{i} hat keine zurückgehaltene Gutschrift: {gehalten:?}"
+        );
+    }
+    // ⛔️ Die Reserve rechnete nicht und hat auch nichts zurückgehalten.
+    for i in (0..MINER).filter(|&i| !rolle(i)) {
+        let id = knoten[1 + i].miner_kennung().expect("Kennung");
+        assert!(gehalten.iter().all(|(_, wer, _)| *wer != id), "Reserve m{i} hat eine Gutschrift");
     }
 }

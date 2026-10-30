@@ -298,7 +298,7 @@ async fn alle_kompartimente_verzahnt() {
     )
     .expect("signieren");
     // Die Gebühr kommt dazu, beim Grundpreis am Boden der Probekette.
-    let gebuehr = myl_node::netz::PROBEKETTE.gebuehren.boden_je_byte * burn.gebuehrenbytes();
+    let gebuehr = myl_node::netz::PROBEKETTE.gebuehren.boden_je_byte * burn.gebuehreneinheiten();
     kette.aufnehmen(burn);
     nonce[0] += 1;
     kette.baue_block();
@@ -608,6 +608,8 @@ async fn alle_kompartimente_verzahnt() {
         vtfe_claimed: 1_000_000,
         aggregate_sig: myl_types::bls::BlsSignature([0; 96]),
         segmente: 1_000,
+        ausgabenwurzel: myl_types::MerkleRoot::new([0u8; 32]),
+        vertreter: Vec::new(),
     };
     // Echte Unterschriften der Positionen, zu einem Aggregat (Fund 645:
     // die Reserve rechnet nicht und unterschreibt nicht).

@@ -92,6 +92,8 @@ fn gueltiges_bundle() -> PoIBundle {
         vtfe_claimed: 1_000,
         aggregate_sig: sk.sign(b"poi").expect("sign"),
         segmente: 1,
+        ausgabenwurzel: myl_types::MerkleRoot::new([0u8; 32]),
+        vertreter: Vec::new(),
     }
 }
 
@@ -234,10 +236,14 @@ fn vergiftete_atteste_werden_abgelehnt() {
 #[test]
 fn verstuemmelte_nachrichten_stuerzen_nicht_ab() {
     let mut rng = Rng::neu(0xC0FF_EE42);
-    let vorlagen: Vec<(GossipTopic, Vec<u8>)> = vec![
-        (GossipTopic::Challenges, borsh::to_vec(&gueltige_challenge()).unwrap()),
-        (GossipTopic::LatencyAttests, borsh::to_vec(&gueltiges_attest()).unwrap()),
-        (GossipTopic::PoiBundles, borsh::to_vec(&gueltiges_bundle()).unwrap()),
+    // Je Vorlage, wie viele Bytes am Ende unberührt bleiben: beim Bündel die
+    // Länge der Vertreterliste (vier Bytes, seit dem 2026-10-28 am Ende);
+    // überschrieben ergäbe sie fast nie eine passende Länge, und der Test
+    // käme an die Felder davor nicht heran.
+    let vorlagen: Vec<(GossipTopic, Vec<u8>, usize)> = vec![
+        (GossipTopic::Challenges, borsh::to_vec(&gueltige_challenge()).unwrap(), 0),
+        (GossipTopic::LatencyAttests, borsh::to_vec(&gueltiges_attest()).unwrap(), 0),
+        (GossipTopic::PoiBundles, borsh::to_vec(&gueltiges_bundle()).unwrap(), 4),
     ];
 
     // **Je Topic gezählt, nicht in einer Summe.** Eine Gesamtquote kann
@@ -245,12 +251,13 @@ fn verstuemmelte_nachrichten_stuerzen_nicht_ab() {
     // alles annimmt, während das Topic mit dem Vektor gar nicht erreicht
     // wird. Genau diese Verwechslung machte den ersten Pod-Fuzzer
     // wertlos.
-    for (topic, gut) in &vorlagen {
+    for (topic, gut, unberuehrt) in &vorlagen {
         let mut angenommen = 0usize;
         for _ in 0..20_000 {
             let mut roh = gut.clone();
-            let ab = (rng.u64() as usize) % roh.len();
-            for b in roh.iter_mut().skip(ab) {
+            let ende = roh.len() - unberuehrt;
+            let ab = (rng.u64() as usize) % ende;
+            for b in roh[..ende].iter_mut().skip(ab) {
                 *b = (rng.u64() & 0xff) as u8;
             }
             if validate_payload(*topic, &roh).is_ok() {
@@ -271,10 +278,10 @@ fn verstuemmelte_nachrichten_stuerzen_nicht_ab() {
 ///
 /// Die Moduldoku von `validation.rs` nannte das eine „vollständige
 /// Borsh-Strukturprüfung gegen den `myl-types`-Typ". Das klingt nach
-/// einem Filter und ist keiner: `PoIBundle` besteht ausschließlich aus
-/// Feldern fester Länge (zwei u64, drei Byte-Arrays), und **jede**
-/// Bytefolge der richtigen Länge ist ein gültiges `PoIBundle`. Der
-/// Fuzzer bestätigt es mit 20 000 von 20 000.
+/// einem Filter und ist keiner: `PoIBundle` besteht bis auf die
+/// Vertreterliste am Ende (seit dem 2026-10-28) aus Feldern fester Länge,
+/// und **jede** Bytefolge der richtigen Länge mit leerer Liste ist ein
+/// gültiges `PoIBundle`. Der Fuzzer bestätigt es mit 2 000 von 2 000.
 ///
 /// Bei `Challenge` ist es dasselbe, nur mit zwei Ungleichungen davor,
 /// die zufällige Bytes praktisch immer erfüllen. Nur `LatencyAttest`
@@ -294,7 +301,10 @@ fn fuer_feste_typen_ist_die_borsh_pruefung_eine_laengenpruefung() {
 
     let mut angenommen = 0usize;
     for _ in 0..2_000 {
-        if validate_payload(GossipTopic::PoiBundles, &rng.bytes(laenge)).is_ok() {
+        // Zufall bis auf die Länge der Vertreterliste, die null bleibt.
+        let mut roh = rng.bytes(laenge);
+        roh[laenge - 4..].fill(0);
+        if validate_payload(GossipTopic::PoiBundles, &roh).is_ok() {
             angenommen += 1;
         }
     }

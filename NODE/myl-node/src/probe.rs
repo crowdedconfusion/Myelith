@@ -187,6 +187,8 @@ pub fn probe_poi_buendel(absender: &str, folge: u64) -> Option<PoIBundle> {
         vtfe_claimed: vtfe,
         aggregate_sig,
         segmente: 1,
+        ausgabenwurzel: myl_types::MerkleRoot::new([0u8; 32]),
+        vertreter: Vec::new(),
     })
 }
 

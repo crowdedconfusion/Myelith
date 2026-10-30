@@ -1,8 +1,8 @@
 # consensus (`myl-consensus` + `myl-ledger` + `myl-scheduler`)
 
-> **Version:** 0.57.0 (`myl-consensus` 0.39.0, `myl-scheduler` 0.18.1,
-> `myl-ledger` 0.29.0)
-> **Datum:** 2026-10-27
+> **Version:** 0.76.0 (`myl-consensus` 0.47.0, `myl-scheduler` 0.19.0,
+> `myl-ledger` 0.45.0)
+> **Datum:** 2026-10-29
 > **Status:** Design-Entscheidungen getroffen (malachite hinter
 > trait-Grenze mit Eigenbau-Fallback, Blockzeit 2 s, Komitee 21/7,
 > Streitfrist 7 Tage, Reed-Solomon k=8/m=4);
@@ -107,6 +107,422 @@ myl-consensus/tests/
 ```
 
 ## Changelog
+
+### v0.76.0 (2026-10-30): Durchsicht des Zustands auf unbegrenzte Einträge (`myl-ledger` 0.45.0)
+
+Nach dem Fund bei den Credits (v0.75.0) jedes Feld von `LedgerState` und
+seinen Sammlungen durchgesehen: Ist es begrenzt, und wodurch? Begrenzt durch
+Fristen, Fenster, Ablauf oder Leeren je Epoche sind die übrigen; zwei waren
+es nicht, beide im kleinen Register, das jeder zustandslose Knoten ganz hält.
+
+- ⛔️ **Künftige Zusagen höchstens `ZUSAGE_VORLAUF_EPOCHEN` (8) voraus.**
+  Von den geltenden blieb je Miner nur die jüngste, die künftigen waren
+  unbegrenzt: Je Gebühr liess sich eine weitere für jetzt+1, +2 … stapeln.
+  Der Knoten sagt für die nächste Epoche zu; je Miner bleiben höchstens neun.
+- ⛔️ **`doppelbelege_aufraeumen` am Epochenwechsel.** Jeder gebuchte
+  Widerspruch blieb für immer; gebraucht wird er nur gegen doppeltes
+  Schlachten innerhalb der Sperrfrist. Fällt, wenn `gebucht + SPERRFRIST <
+  jetzt` (dann liegt auch die Tat davor, und ein neuer Beleg würde ohnehin
+  abgewiesen).
+- ⚠️ `speicher_aufnehmen` hat noch keinen Aufrufer ausserhalb der Tests;
+  wer es verdrahtet, braucht eine Grenze oder eine Bezahlung.
+- Tests `doppelbelege_fallen_nach_der_sperrfrist`, Vorlauf in
+  `eine_zusage_gilt_ab_ihrer_epoche_unter_dem_registrierten_schluessel`.
+
+### v0.75.0 (2026-10-30): Credits je Verfall zusammengelegt (`myl-ledger` 0.44.0)
+
+📌 Fund aus dem langen Podlauf `nacht-bereit`, aus der Klasse von Fund 144:
+Jeder Kauf von Credits (`burn_to_credits`) hängte an `AccountState.credits`
+einen Eintrag an; zusammengelegt wurde nie, Verfallenes nur beim Ausgeben
+entsorgt. Der Testverkehr verbrennt laufend, und so wuchs der Zustand von
+32 KB auf 2,6 MB in anderthalb Stunden, bei gleichbleibender Zahl von Konten.
+Jeder Zeuge, der ein solches Konto berührte, trug die ganze Liste: Median
+526 KB je Block statt unter 1 KB, und die zustandslosen Knoten kamen nicht
+mehr nach (siehe NODE 0.98.1).
+
+- ⛔️ **Ein Eintrag je Verfalls-Epoche**, und ein Kauf entsorgt Verfallenes
+  (in einem Übergang, nie beim Lesen, wie bei `gekuendigt`). Den Verfall
+  legt der Knoten fest (Epoche plus eins), nicht der Käufer; je Konto
+  bleiben damit höchstens zwei Einträge.
+- Ein Überlauf beim Zusammenlegen wird vor jeder Änderung abgelehnt.
+- ⚠️ Die Zustandswurzel ändert sich für Konten mit mehreren Käufen
+  derselben Epoche: Konsensänderung, nur zusammen mit allen Knoten.
+- Test `credits_bleiben_begrenzt` (tausend Käufe ergeben einen Eintrag,
+  Verfallenes fällt, Überlauf ändert nichts).
+
+### v0.74.0 (2026-10-30): Der Zeugensammler für mehrere Lieferanten (`myl-consensus` 0.47.0)
+
+Seit auch volle Knoten Zeugen liefern (NODE 0.98.0), kann ein Block mehrere
+Köpfe haben.
+
+- ⛔️ **Je Unterzeichner ein Kopf, auch für einen bekannten Block**: Bisher
+  galt die Grenze nur, solange der Block unbekannt war; danach hätte einer
+  beliebig viele Köpfe zum echten Blockhash unterschreiben und den echten
+  aus der Bytegrenze drängen können.
+- ⚑ **`fehlende` über alle Köpfe des Blocks**: Nur die Lücken des ersten
+  Kopfes zu fragen hiesse, dass ein anderer nie fertig wird, wenn der erste
+  Unterzeichner schweigt.
+- `aufnehmen` gibt den Unterzeichner mit heraus: Der Knoten sperrt ihn, wenn
+  sein Zeuge nicht trägt.
+- Test `der_sammler_ist_begrenzt` erweitert (ein Kopf je Unterzeichner beim
+  bekannten Block, Lücken zweier Köpfe).
+
+### v0.73.0 (2026-10-30): Der grosse Baum auf der Platte (`myl-ledger` 0.43.0)
+
+- ⚑ **`LedgerState::baum_auslagern(pfad)`** (SHARED_TYPES 0.62.0): Der grosse
+  Baum lagert in Seiten aus; ein Neubau (erster Bau, Sicherheitsnetz)
+  lagert wieder dorthin aus. `baum_groessen` für Angaben.
+- ⛔️ **Eine Kopie vergisst die Ablage**: Öffnete ein Neubau der Kopie
+  dieselbe Datei, leerte er die Seiten des Originals.
+- 📌 **`grosswurzel_fest` ohne Kopie**: Die Kopie eines ausgelagerten Baums
+  lädt ihn ganz, und das liefe an jedem Prüfpunkt (leichter Abzug).
+- Test `ausgelagert_ist_derselbe_zustand` (20 Blöcke: Wurzel, Zeuge und
+  Kontobeweise ausgelagert wie im Speicher).
+
+### v0.72.0 (2026-10-30): Vorgemerkte Auszahlungen (`myl-ledger` 0.42.0)
+
+- ⚑ **`auszahlungen_offen`** (klein, Nummer 15 im Zustandsbaum): je Konto,
+  was aus Ausschüttungen zusteht und noch nicht gebucht ist.
+  `auszahlung_vormerken` fasst je Konto zusammen; **`auszahlungen_buchen`**
+  bucht höchstens `AUSZAHLUNGEN_JE_BLOCK` (4096, die Partitionsgrösse von
+  SIMD-0118), nach Adresse. Im kleinen Baum, weil der Plan mit den Minern
+  wächst wie ihr Register: So berührt der Wechselblock keinen Zeugen, und
+  jeder Block höchstens 4096 Konten aus Ausschüttungen.
+- Test `vorgemerkte_auszahlungen_werden_begrenzt_gebucht`.
+
+### v0.71.0 (2026-10-29): Das Aufräumen der Sitzungen ist begrenzt (`myl-ledger` 0.41.0)
+
+- ⛔️ **`SITZUNGEN_JE_AUFRAEUMEN` = 10 000** je Epochenwechsel; der Rest rückt
+  in das Fach der nächsten Epoche. Ohne Grenze könnte jemand viele
+  Sitzungen mit derselben Ablaufepoche eröffnen und den Zeugen des
+  Wechselblocks über die Grenze der Zeugenstücke (48 MiB) treiben;
+  zustandslose Knoten blieben dort hängen. Eine abgelaufene Sitzung gibt
+  nichts mehr aus, sie fällt nur später weg. `sitzung_aufraeumen_hoechstens`
+  für Tests.
+- ⚑ **Die Zeugengrösse in der Gebühr, kritisch geprüft: keine eigene
+  Gebühr.** Jede Anweisung berührt höchstens eine kleine feste Zahl grosser
+  Einträge (Absender, Empfänger, Sitzung samt Fach und Hinterlegung); die
+  Anweisungen mit Listen berühren nur Kopf und Register. Der Zeuge wächst
+  also mit der Zahl der Transaktionen, und die ist über Bytes und
+  Prüfeinheit bepreist; der Fall aus der Analyse von Dedaub (billige
+  Transaktion, grosser Zeuge) besteht nicht. Offen bleibt die Ausschüttung
+  am Epochenwechsel bei sehr vielen Minern (siehe NODE).
+- Test `das_aufraeumen_ist_begrenzt`; 136 Tests grün, Clippy sauber.
+
+### v0.70.0 (2026-10-29): Die leichte Form und Kontobeweise (`myl-ledger` 0.40.0)
+
+- ⚑ **`LedgerState::leicht_bytes` und `aus_leicht`**: der Zustand ohne die
+  grossen Sammlungen, dahinter die Wurzel des grossen Baums; daraus ein
+  zustandsloser Stand mit derselben Zustandswurzel. ⛔️ `aus_leicht` weist
+  ab, wenn in einer grossen Sammlung etwas steht (die grosse Wurzel deckte
+  es nicht, und so kämen ungeprüfte Konten hinein), und was nicht kanonisch
+  ist.
+- ⚑ **`Kontobeweis`**, `kontobeweise` (nur ein voller Stand) und
+  `kontobeweis_traegt` (gegen die gehaltene grosse Wurzel): ein Konto oder
+  sein Fehlen, belegt durch den Pfad im grossen Baum.
+- Test `die_leichte_form_und_kontobeweise` (dieselbe Wurzel, danach mit
+  Zeugen weiter; geschmuggeltes Konto, Anhängsel, gefälschtes Guthaben und
+  behauptetes Fehlen werden abgewiesen); 135 Tests grün, Clippy sauber.
+
+### v0.69.0 (2026-10-29): Zeugen auf dem Draht, keine Hintertür in der Sammlung (`myl-consensus` 0.46.0, `myl-ledger` 0.39.0)
+
+- ⚑ **`zeuge`** (neues Modul in `myl-consensus`): Der Zeuge eines Blocks geht
+  in **Stücken** von höchstens 1 MiB, höchstens 48. Der Erzeuger
+  unterschreibt einen **`Zeugenkopf`** (Höhe, Blockhash, Hashes aller
+  Stücke, `DST_ZEUGENKOPF`); jedes **`Zeugenstueck`** trägt ihn und ist für
+  sich prüfbar (`passt`, `traegt`). Die Sicherheit hängt nicht daran (ein
+  Zeuge belegt sich über die Wurzel vor dem Block), wohl aber die
+  Lebendigkeit: Ohne Unterschrift könnte jeder einem Block ein falsches
+  Stück voranschicken oder das Netz der Zustandslosen fluten.
+- ⚑ **`Zeugensammler`**, begrenzt: Bytes insgesamt (das älteste Unfertige
+  fällt), Köpfe je Höhe (`KOEPFE_JE_HOEHE` = 4) und je Höhe und
+  Unterzeichner einer. **`erwarten(hoehe, blockhash)`**: Ist der Block
+  bekannt, gilt dort nur noch sein Kopf, und der bekommt immer Platz; wer
+  vorher Köpfe mit Unsinn unterschrieb, verdrängt den echten nicht.
+  `fehlende` für die Nachforderung.
+- ⛔️ **`Sammlung` ohne `Deref`**: Darüber war jede `BTreeMap`-Methode
+  erreichbar, die die Sammlung nicht selbst hat (`get_key_value`,
+  `first_key_value` …), und ein solcher Lesezugriff ginge still an
+  Aufzeichnung und Abdeckung vorbei; ein Prüfer rechnete dann mit einem
+  Wert, den kein Zeuge belegt. Jetzt muss jeder Zugriff durch die
+  Sammlung; **`als_map`** gibt die ganze `BTreeMap` nur ausdrücklich und
+  zählt als Zugriff auf das Ganze; `s[&k]` liest über `get`.
+- ⛔️ **Stille Zugriffe nur in der Kiste** (`wert_still`, `enthaelt_still`,
+  `alle`): Sie zählen nicht als Zugriff und gehören nicht in den
+  Blockpfad. Für den zustandslosen Knoten gibt es
+  **`LedgerState::konten_still`** (nicht im Blockpfad).
+- Tests `zerlegt_geprueft_zusammengesetzt`, `der_sammler_ist_begrenzt`;
+  Konsens 288, Ledger 134 Tests grün, Clippy sauber.
+
+### v0.68.0 (2026-10-29): Zustandslos prüfen, leere Konten fallen weg (`myl-ledger` 0.38.0)
+
+- ⚑ **Zwei Bäume, Wurzel v3** (zustandslose Validierung, Festlegung des
+  Projektinhabers vom 2026-10-29, nach dem Vorbild von NEAR, eigene
+  Umsetzung): `SHA-256("myelith-zustand-v3" ‖ SHA-256(Kopf) ‖ kleine Wurzel
+  ‖ grosse Wurzel)`. Der **grosse** Baum trägt, was mit den Teilnehmern
+  wächst (`GROSSE_SAMMLUNGEN`: Konten, Sitzungen, Speicher,
+  Hinterlegungen, Ablauffächer); der **kleine** die Register, die mit den
+  Minern wachsen. Ein prüfender Knoten hält den kleinen ganz, vom grossen
+  nur die Wurzel.
+- ⚑ **Der Zeuge eines Blocks** (`Zeuge`): je grosser Sammlung die
+  berührten Einträge mit ihrem Wert davor und der Teilbaum über ihre Pfade
+  (SHARED_TYPES 0.60.0). Der Erzeuger: `aufzeichnen_beginnen`, anwenden,
+  `zeuge_nehmen`, dann erst `wurzel` (der grosse Baum steht beim Zeugen
+  noch auf dem Stand davor). Der Prüfer: `zeuge_einsetzen` (Wurzel davor
+  und jeder Eintrag gegen den Teilbaum), anwenden, `wurzel`,
+  `zeuge_eingehalten`, `zeuge_abschliessen`; `zustandslos` macht aus einem
+  vollen Stand den eines Prüfers mit derselben Wurzel. `Zeugenfehler`:
+  unlesbar, fremde Wurzel, Eintrag falsch, unvollständig, nicht voll.
+- ⚑ **`Sammlung` zeichnet auf und hält teilweise**: Eigene Lesemethoden
+  (`get`, `contains_key`, `iter`, `len` …) gehen denen der `BTreeMap` vor.
+  Beim Erzeuger merkt sich jeder Zugriff den Wert davor, gelesen wie
+  geändert, auch fehlende; beim Prüfer ist ein Zugriff ausserhalb des
+  Zeugen ein **Fehlgriff**, und was über die ganze Sammlung läuft, ist in
+  beiden Lagen einer (es lässt sich nicht bezeugen). `anzahl`, `alle`,
+  `enthaelt_still`, `wert_still` zählen nicht als Zugriff (für Baum und
+  Angaben über den Knoten).
+- ⚑ **Ablauffächer der Sitzungen** (`sitzungsablauf`,
+  `sitzungsablauf_bis`): Beim Eröffnen kommt eine Sitzung in das Fach der
+  Epoche, in der sie wegfällt; `sitzung_aufraeumen` liest nur die fälligen
+  Fächer und liefert die weggefallenen. 📌 Bis hierher ein `retain` über
+  alle Sitzungen je Epochenwechsel, und die Kette suchte danach über alle
+  Hinterlegungen; bei einer Milliarde Teilnehmern ein Durchlauf über den
+  ganzen Bestand, und kein Zeuge könnte ihn belegen.
+- ⚑ **Nonce-Boden und leere Konten** (kritisch geprüft statt eines Ablaufs
+  ungenutzter Konten): Ein Konto, das in Epoche E entsteht, beginnt mit
+  der Nonce E·2³² (`AccountState::neu`); `leere_konten_entfernen` nimmt je
+  Block die leeren unter den geänderten heraus, O(geändert). Ein
+  Staubkonto bläht den Zustand so nicht auf, und eine alte Transaktion
+  greift an derselben Adresse nicht wieder. Ein Ablauf mit Wiederbelebung
+  über einen Beweis (Stellar, EIP-7736) ist zurückgestellt: Er braucht
+  Archivknoten mit allen abgelaufenen Einträgen, und Konten mit Guthaben
+  dürfen ohnehin nicht verfallen.
+- Gemessen (Release, eine Million Konten, Block mit 2000 Überweisungen,
+  200 an neue Konten): ohne Zeugen 22 ms, mit Zeugen 32 ms, **Prüfer ohne
+  Konten 29 ms**; Zeuge 1,7 MB (Teilbaum 1,4 MB, rund 4000 Konten).
+- Tests `ein_pruefer_ohne_grosse_sammlungen_rechnet_denselben_block`
+  (Überweisungen, neues Konto, geleertes Konto fällt weg, Sitzung auf und
+  zu; Gegenproben: Zeuge nach dem Block, fehlendes Konto, gefälschtes
+  Guthaben), `aufzeichnung_und_teilweise_haltung`,
+  `leere_konten_fallen_weg_und_der_nonce_boden_schuetzt`; Ledger 134 Tests
+  grün, Clippy sauber; Konsens, Tokenomics, Governance, Verifier,
+  Simulation, Testclient grün.
+
+### v0.67.0 (2026-10-29): Jede Unterschrift einmal (`myl-consensus` 0.45.0)
+
+- **`pruefe_alle_ausser`**: wie `pruefe_alle`, ohne die Transaktionen, die
+  dieser Knoten schon geprüft hat; das Ergebnis ist dasselbe, die Prüfung
+  hängt nur an den Bytes. **`Transaktion::kennung`**: SHA-256 über die
+  Bytes samt Unterschrift. 📌 Seit der Prüfung vor dem Mempool prüfte jeder
+  Knoten jede Transaktion zweimal; im Durchsatzlauf mit 14 Knoten auf
+  einem Rechner sank die Decke von rund 1750 auf rund 1040 je Sekunde.
+- Test `schon_gepruefte_werden_uebersprungen`.
+
+### v0.66.0 (2026-10-29): Die Zustandswurzel aus dem Baum (`myl-ledger` 0.37.0)
+
+- ⚑ **Die Zustandswurzel** (Skalierung, Festlegung des Projektinhabers vom
+  2026-10-29): `SHA-256("myelith-zustand-v2" ‖ SHA-256(Kopf) ‖ Baumwurzel)`.
+  Der Kopf sind die Einzelwerte (erschöpfend zerlegt: Ein neues Feld baut
+  nicht, bis es zugeordnet ist); die 14 Sammlungen, die mit Teilnehmern und
+  Nutzung wachsen, stehen im Zustandsbaum (SHARED_TYPES 0.59.0).
+  📌 Bis hierher SHA-256 über den ganzen Zustand je Block: bei einer
+  Million Konten 127 ms, länger als ein Blocktakt.
+- ⚑ **`Sammlung`**: eine `BTreeMap`, die geänderte Schlüssel merkt und auf
+  Wunsch ein Journal der alten Werte führt; gelesen wird über `Deref`,
+  geändert nur über ihre Methoden (`retain` nur lesend, `veraendern` für
+  Code, der eine `BTreeMap` will, `nehmen` statt `std::mem::take`).
+- **`LedgerState::wurzel`** schreibt den Baum mit dem Geänderten fort,
+  **`commitment`** rechnet alles neu (für Tests und seltene Prüfungen),
+  beide gleich. **`sichern` / `zuruecksetzen` / `sicherung_verwerfen`**
+  statt einer Kopie des ganzen Zustands; **`als_epoche`** für Ableitungen
+  unter anderer Epoche ohne Kopie.
+- ⚑ **Das Sicherheitsnetz**: Stimmt die Zahl der Einträge im Baum nicht mit
+  den Sammlungen, ging eine Änderung am Merken vorbei; dann wird neu
+  gebaut (die Wurzel bleibt richtig), in Tests schlägt es laut an.
+  📌 Beim Einbau so gefunden: zwei `std::mem::take` am Epochenwechsel.
+- Gemessen (Release, eine Million Konten, 2000 Änderungen je Block): 12,5 ms
+  je Block statt 157 ms (Wurzel und Kopie); einmaliger Aufbau 3,8 s.
+- ⚠️ Die Zustandswurzel ändert sich; eine Kette einer älteren Fassung lässt
+  sich nicht weiterführen.
+- Tests `die_fortgeschriebene_wurzel_ist_die_neu_gerechnete`,
+  `zuruecksetzen_stellt_inhalt_und_wurzel_wieder_her`,
+  `das_journal_spielt_alles_zurueck`, `kodiert_wie_eine_btreemap`,
+  `veraendern_und_nehmen_werden_gemerkt`; 131 Tests grün.
+
+### v0.65.0 (2026-10-29): Die Rückbuchung (`myl-ledger` 0.36.0)
+
+- ⚑ **`Vorbehalt`** (Whitepaper 6.4: „Rückbuchung der vTFE-Gutschrift“,
+  Festlegung des Projektinhabers vom 2026-10-29): Was die Pods einer
+  uneinigen Gruppe verdient hätten (je Paar halbiert wie bei einer
+  einigen), bleibt zurückgehalten. `vorbehalt_entscheiden`: Wird ein Pod
+  überführt, verfällt sein Vorbehalt und der seines Zwillings wird frei;
+  `vorbehalte_faellig` zahlt freie am nächsten Wechsel aus und lässt
+  unfreie nach der Streitfrist verfallen. So bekommt ein ehrlicher Pod
+  seinen Lohn, sobald der andere überführt ist, und hat Grund, den
+  Differenzbeweis zu melden. Neu im Zustand (angehängt): `vorbehalte`,
+  `rueckbuchungen`.
+- 📌 **Kein zweiter Auftrag für dasselbe Segment**: In `gezielt22` traf ein
+  Differenzbeweis ein schon gezogenes Segment; der zweite Auftrag bekam nie
+  eine Festlegung (sie ging an den ersten) und schloss unvollständig.
+  `auftraege_anlegen` überspringt jetzt ein Segment mit offenem Auftrag;
+  die Checker wären dieselben.
+- Test `der_ehrliche_zwilling_bekommt_seinen_lohn_nach_dem_urteil`, Probe
+  im Test des Differenzbeweises; 117 Tests grün.
+
+### v0.64.0 (2026-10-29): Uneinige Zwillinge werden genau geprüft (`myl-ledger` 0.35.0, `myl-consensus` 0.44.0)
+
+- ⚑ **`Uneinigkeit`** (Whitepaper 6.4: eine Abweichung in Stufe 1 „wirkt
+  über Slashing“; wer falsch rechnete, entscheidet Stufe 2): Am Wechsel
+  legt die Kette jedes Paar ab, das zwei Bündel mit verschiedener
+  Ausgabenwurzel einreichte, mit Wurzeln, Kandidaten, Ersatz und
+  Besetzung, eine Epoche lang. **`differenz_melden`**: Ein
+  Differenzbeweis, der gegen beide Bündel trägt, legt für genau das
+  abweichende Segment in beiden Pods einen Prüfauftrag an; höchstens
+  `DIFFERENZEN_JE_GRUPPE` (4) je Paar, jedes Segment einmal.
+- ⚑ **Warum nicht das ganze Paar ziehen** (kritisch geprüft, Festlegung
+  des Projektinhabers vom 2026-10-29): Mit der Obergrenze für volles
+  Ziehen könnte das eine falsche Segment unentdeckt bleiben, und ein Pod
+  könnte seinen ehrlichen Zwilling mit einem einzigen falschen Segment um
+  die Vergütung bringen, ohne sicher gefunden zu werden. Der
+  Differenzbeweis findet die Stelle immer und belastet die Prüfer nur mit
+  ihr.
+- **`Anweisung::DifferenzMelden`** (angehängt). Neu im Zustand
+  (angehängt): `uneinigkeiten`.
+- Test `ein_differenzbeweis_legt_je_pod_einen_auftrag_an`.
+
+### v0.63.0 (2026-10-29): Die Schiedsrunde (`myl-ledger` 0.34.0, `myl-consensus` 0.43.0)
+
+- ⚑ **`Streitfall`** (Whitepaper 6.6, Festlegung des Projektinhabers vom
+  2026-10-29): `faellige_abschliessen` öffnet je Auftrag mit aufgedeckter
+  Abweichung einen Streitfall mit der frühesten behaupteten Stelle, dem
+  Anfechter und dem **Beschuldigten aus der Besetzung der gezogenen
+  Epoche** (`OffeneStichprobe::besetzung`, `Pruefauftrag::besetzung`, je
+  Position Miner und Layerbereich). Wurzel und Segmentzahl des Bündels
+  stehen im Auftrag und im Fall, damit der Verlauf auch nach weiteren
+  Ziehungen geprüft werden kann.
+- **`schiedsstimme`** (einmal je Validator, bis zur Frist; ob er im
+  Stimmsatz steht, sagt die Kette) und **`streitfaelle_entscheiden`**:
+  mehr als zwei Drittel des Gewichts für eine Seite entscheiden
+  (`PodFalsch`, `AnfechtungFalsch`), ohne Mehrheit bis zur Frist verfällt
+  der Fall. Das feste Fenster folgt Arbitrum BoLD.
+- **`Anweisung::SchiedsstimmeAbgeben`** (angehängt).
+- Neu im Zustand (angehängt): `streitfaelle`; `Besetzung` als Typname.
+- Tests: `das_komitee_entscheidet_mit_mehr_als_zwei_dritteln_oder_der_fall_verfaellt`,
+  der Streitfall im Test der einzelnen Abweichung (Beschuldigter aus dem
+  Layerbereich).
+
+### v0.62.0 (2026-10-29): Prüfaufträge mit Festlegen vor Aufdecken (`myl-ledger` 0.33.0, `myl-consensus` 0.42.0)
+
+- ⚑ **`myl_ledger::pruefung`** (Whitepaper 3.3, 6.8 (b), Anhang B.3;
+  Festlegung des Projektinhabers vom 2026-10-29):
+  - `OffeneStichprobe` hält jetzt, wer prüfen darf: `pruefkandidaten` (die
+    Miner ohne Pod, darunter die des Pods in Bereitschaft) und je Pod
+    `ersatz` (die Mitglieder der übrigen Zwillingsgruppen, genommen nur
+    ohne Kandidaten).
+  - `auftraege_anlegen`: je Ziehung ein `Pruefauftrag` mit bis zu zwei
+    Checkern (`pruefer_waehlen`, geordnet nach `SHA-256("myelith-pruefer" ‖
+    Epoche ‖ Pod ‖ Index ‖ Kennung)`) und zwei festen Fristen in Blöcken.
+  - `festlegen` bis zur ersten Frist; `aufdecken` erst, wenn alle
+    festgelegt haben oder die erste Frist vorbei ist, bis zur zweiten, und
+    nur, was zur eigenen `festlegung` passt (Hash über Befund, Salz und
+    Kennung). Der `Pruefbefund` trägt den Hash der Logits an der letzten
+    Position, den keine Spur enthält.
+  - `faellige_abschliessen`: alle gleich aufgedeckt heisst einig, das
+    geprüfte Volumen (Positionen) geht auf `LedgerState::pruefvolumen`;
+    verschieden oder unvollständig zahlt niemanden. **Jede aufgedeckte
+    Abweichung** steht im Abschluss, auch wenn der zweite Checker
+    schweigt: Ein ehrlicher Checker genügt.
+  - Neu im Zustand (angehängt): `pruefauftraege`, `pruefvolumen`.
+- **`Anweisung::PruefungFestlegen` und `PruefungAufdecken`** (angehängt),
+  gebündelt bis `PRUEFUNGEN_JE_TX` (64) je Transaktion: Ein Pod allein wird
+  voll gezogen, und eine Transaktion je Ziehung sprengte die Grenze je
+  Absender im Mempool (so im ersten Test geschehen).
+- ⚠️ Die Zustandswurzel ändert sich; eine Kette einer älteren Fassung lässt
+  sich nicht weiterführen.
+- Tests: `die_wahl_ist_fest_und_ohne_doppelte`,
+  `ohne_kandidaten_kommt_der_ersatz_aus_der_anderen_gruppe`,
+  `festlegen_dann_aufdecken_und_einig_gibt_volumen`,
+  `eine_abweichung_allein_wird_ein_streitfall_aber_nicht_bezahlt`,
+  `verschiedene_befunde_ohne_abweichung_sind_uneinig`.
+
+### v0.61.0 (2026-10-28): Zwillingspaare (`myl-scheduler` 0.19.0, `myl-ledger` 0.32.0, `myl-consensus` 0.41.1)
+
+- ⚑ **`myl-scheduler::zwillingspaare`** (Whitepaper 3.4 und 4.4): je zwei
+  Pods, die jedes Segment beide rechnen, disjunkt, in der Folge der
+  Indizes, mit Vorzug für eine andere bestimmte Zone; ein übriger Pod hat
+  keinen Zwilling. Kette und Ortsdienst bilden die Paare aus derselben
+  Zuteilung. Probe mit Gegenprobe (wer ein Mitglied teilt, wird kein
+  Zwilling).
+- **`LedgerState.zwillinge_einig` und `zwillinge_uneinig`** (angehängt):
+  gezählt am Epochenwechsel (NODE 0.77.0). ⚠️ Das Format des Zustands
+  ändert sich.
+- **`LedgerState.stichprobe_wurzeln` und `OffeneStichprobe.wurzeln`**
+  (angehängt; Stufe 2): je bezeugtem Bündel der gezogenen Epoche Pod,
+  `segments_root` und Segmentzahl. Dagegen prüft ein Knoten eine gelieferte
+  Spur (NODE 0.77.0).
+- ⚑ **`myl-scheduler::zwillingsgruppen` und `bereitschaft`** (Festlegung
+  des Projektinhabers vom 2026-10-28): die Paare; ein übriger Pod bildet
+  keine Gruppe, sondern steht in **Bereitschaft** (rechnet nicht, wird nicht
+  vergütet, später Checker), bis genug Miner für ein weiteres Paar da sind.
+  So bleibt r = 2 (Whitepaper 3.4) ohne Mehrarbeit; eine Dreiergruppe hätte
+  dieselbe Arbeit dreimal gerechnet. Welche Miner die Bereitschaft trifft,
+  mischt die Epochensaat mit der Podbildung jede Epoche neu. Nur ohne
+  jedes Paar (ein Netz mit einem Pod) ist jeder Pod eine Gruppe für sich
+  (Anlaufregel). Probe `ein_uebriger_pod_steht_in_bereitschaft` mit
+  Gegenproben (zwei, die ein Mitglied teilen: jeder allein, keiner in
+  Bereitschaft; leer).
+- **`LedgerState.zurueckgehalten`** (angehängt): je Miner die vTFE eines
+  Pods, der allein rechnete, mit der Epoche der Freigabe (nach der
+  Streitfrist); **`OffeneStichprobe.voll`** (angehängt): die Pods, deren
+  Segmente alle gezogen werden (Anlaufregel, NODE 0.77.0).
+- `myl-consensus`: Die Bündel der Proben tragen das neue Feld; kein
+  anderes Verhalten.
+- `myl-scheduler` 0.19.0 (132 Tests), `myl-ledger` 0.32.0 (118),
+  `myl-consensus` 0.41.1 (285), grün, Clippy sauber.
+
+### v0.60.0 (2026-10-28): Der Credit-Preis in Feinauflösung (`myl-ledger` 0.31.0)
+
+- ⚑ **`LedgerState::credit_preis_fein`** (neu, am Ende des Zustands):
+  der Credit-Preis als Festkomma mit 32 Nachkommabits, zu Genesis aus
+  `credit_price`. Die Kette schreibt ihn seit NODE 0.76.0 je Epoche nach der
+  Auslastung fort (Whitepaper 5.4, Festlegung des Projektinhabers vom
+  2026-10-28: κ = 1/6, Ziel 0,8, Untergrenze der Kleinstbetrag);
+  `credit_price` ist sein gerundeter Wert, mindestens 1. 📌 Ohne die
+  Nachkommastellen bliebe ein kleiner ganzzahliger Preis stehen: Ein
+  Schritt von 3,4 % rundet unter rund 15 Kleinstbeträgen auf null, einer
+  von 12,5 % unter rund 4. ⚠️ Der Zustand ändert damit sein Format; eine
+  Kette einer älteren Fassung lässt sich nicht weiterführen.
+- `myl-ledger` 0.31.0. 118 Tests grün, Clippy sauber; abhängige Kisten
+  gegen die neue Fassung geprüft (siehe NODE 0.76.0).
+
+### v0.59.0 (2026-10-28): Die Gebühr zählt auch die Prüfung; Stimmen der Validatoren (`myl-consensus` 0.41.0, `myl-ledger` 0.30.0)
+
+- ⚑ **Gebühreneinheiten statt Bytes** (Festlegung des Projektinhabers vom
+  2026-10-28): `block::PRUEFEINHEIT` (1 000) und
+  `Transaktion::gebuehreneinheiten`, die Bytes und eine Prüfeinheit je
+  Unterschrift. Gemessen kostet die Prüfung einer Unterschrift so viel wie
+  rund tausend Bytes; eine Gebühr nur nach Bytes bepreiste das Teuerste an
+  einer Transaktion nicht. Der Grundpreis bewegt sich weiter um ein Achtel.
+- `myl-ledger` Zustand `pruefpunkt_stimmen`: die Unterschriften je
+  Validator in den Prüfpunktzertifikaten der laufenden Epoche, Grundlage
+  der Auszahlung des Validatorentopfs (NODE 0.75.0).
+- ⚠️ Der Zustand hat ein Feld mehr; eine Kette einer älteren Fassung lässt
+  sich nicht weiterführen.
+- 285 Tests in `myl-consensus`, 118 in `myl-ledger` grün, Clippy sauber.
+
+### v0.58.0 (2026-10-28): Alle Unterschriften eines Blocks auf einmal (`myl-consensus` 0.40.0)
+
+- ⚑ `block::pruefe_alle`: prüft die Unterschriften vieler Transaktionen
+  erst als Stapel (`myl_types::bls::verify_batch`); trägt er, gelten alle
+  als geprüft, sonst jede einzeln mit genau dem Ergebnis von `pruefe`. Das
+  Ergebnis ist dasselbe wie einzeln, bis auf eine Fehlerwahrscheinlichkeit
+  von 2⁻⁶⁴ je Stapel (das Verfahren der Konsensclients von Ethereum). Ein
+  Block mit falschen Unterschriften kostet so viel wie bisher.
+- Anlass: Ein Block mit 4 096 Transaktionen brauchte beim Anwenden 1 909 ms,
+  fast nur für die Unterschriften; mit `pruefe_alle` 362 ms (NODE 0.74.0).
+- Probe `pruefe_alle_gibt_dasselbe_wie_einzeln` (alle gültig, eine
+  verfälscht, fremdes Netz, eine einzelne).
+- 285 Tests in `myl-consensus`, `myl-ledger` 118 unverändert grün, Clippy sauber.
 
 ### v0.57.0 (2026-10-27): Gebühren (`myl-consensus` 0.39.0, `myl-ledger` 0.29.0)
 

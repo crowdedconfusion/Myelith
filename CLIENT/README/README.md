@@ -1,7 +1,7 @@
 # client (Nutzer-Client inkl. Wallet)
 
-> **Version:** 0.181.0 (`myl-client` 0.117.0, `myl-oberflaeche` 0.86.1, `myl-console` 0.69.2, `myl-senses` 0.13.6, `myl-module` 0.5.2)
-> **Datum:** 2026-10-26
+> **Version:** 0.182.0 (`myl-client` 0.118.0, `myl-oberflaeche` 0.86.1, `myl-console` 0.69.2, `myl-senses` 0.13.6, `myl-module` 0.5.2)
+> **Datum:** 2026-10-28
 > **Status:** ✅ **Der lokale Betrieb läuft und ist ausgeliefert.** Ein
 > Gesprächsfenster mit Modellwahl, Agentenschleife und
 > Einstellungsseite; aus einem frischen Klon lassen sich darüber
@@ -181,6 +181,12 @@ Modell überhaupt etwas taugt, und weil eine Schnittstelle, die kein
 Mensch je bedient hat, an den Bedürfnissen vorbei entworfen wird.
 
 ## Changelog
+
+### v0.182.0 (2026-10-28): Die Gebühr nach Einheiten (`myl-client` 0.118.0)
+
+- `bezahlen::gebuehr` rechnet mit `gebuehreneinheiten`: Bytes plus eine
+  Prüfeinheit je Unterschrift (CONSENSUS 0.59.0), wie die Kette.
+- 208 Tests grün, Clippy sauber.
 
 ### v0.181.0 (2026-10-27): Gebühren in der Wallet (`myl-client` 0.117.0)
 

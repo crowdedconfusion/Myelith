@@ -538,6 +538,8 @@ mod tests {
             vtfe_claimed: vtfe,
             aggregate_sig: BlsSignature(agg.0),
             segmente: 1,
+            ausgabenwurzel: myl_types::MerkleRoot::new([0u8; 32]),
+            vertreter: Vec::new(),
         }
     }
 
@@ -848,6 +850,8 @@ mod tests {
             vtfe_claimed: 500,
             aggregate_sig: BlsSignature(agg.0),
             segmente: 1,
+            ausgabenwurzel: myl_types::MerkleRoot::new([0u8; 32]),
+            vertreter: Vec::new(),
         };
         reg.submit(&b2, &m2, &miner(10), EpochId(3)).expect("pod 2");
 
@@ -894,6 +898,8 @@ mod tests {
                     vtfe_claimed: 100,
                     aggregate_sig: BlsSignature(agg.0),
                     segmente: 1,
+                    ausgabenwurzel: myl_types::MerkleRoot::new([0u8; 32]),
+                    vertreter: Vec::new(),
                 };
                 reg.submit(&b, &m, &miner(0), EpochId(3)).expect("submit");
             }
@@ -928,6 +934,8 @@ mod tests {
                 vtfe_claimed: v,
                 aggregate_sig: BlsSignature(agg.0),
                 segmente: 1,
+                ausgabenwurzel: myl_types::MerkleRoot::new([0u8; 32]),
+                vertreter: Vec::new(),
             };
             reg.submit(&b, &m, &miner(0), EpochId(3)).expect("submit");
         }

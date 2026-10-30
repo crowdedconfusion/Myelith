@@ -79,6 +79,42 @@ fn die_inferenz_rechnet_mit_den_grenzen_der_kette_dasselbe() {
     );
 }
 
+/// ⚑ **Stufe 1: Zwillinge mit verschiedenem Schnitt bezeugen dasselbe
+/// Ergebnis** (2026-10-28): dieselbe Ausgabenwurzel. 📌 Auch die
+/// Segmentwurzel ist gleich, denn die Spur wird je Ebene geführt, nicht je
+/// Übergang; der Vergleich braucht die Ausgabenwurzel trotzdem, weil sie nach
+/// Kennung geordnet ist und die Segmentwurzel nach der Folge des Abschlusses.
+#[test]
+fn zwillinge_mit_verschiedenem_schnitt_haben_dieselbe_ausgabenwurzel() {
+    let dir = artefakte();
+    if !myl_pod::artefakte::vorhanden(&dir) {
+        return;
+    }
+    let pipeline = Hash([7u8; 32]);
+    let prompt: &[u8] = b"Die Hauptstadt von Frankreich ist";
+    let rechnen = |g: Option<&[(usize, usize)]>, prompt: &[u8]| {
+        let werk = Pipelinewerk::laden_mit_grenzen(&dir, PodId::new([0xAA; 32]), EpochId(0), pipeline, 4, g).expect("laedt");
+        let auftrag = Inferenzauftrag {
+            sitzung: 1,
+            bindung: Anfragebindung::neu(1, prompt, EpochId(0)),
+            prompt_versiegelt: Vec::new(),
+            max_token: 3,
+            pipeline,
+        };
+        assert!(matches!(werk.rechne(&auftrag, prompt), Inferenzantwort::Ergebnis { .. }));
+        werk.buendelinhalt().expect("Bündel")
+    };
+    let a = rechnen(None, prompt);
+    let b = rechnen(Some(&UNGLEICH), prompt);
+    assert_eq!(a.segmente, b.segmente);
+    assert_ne!(a.ausgabenwurzel.as_bytes(), &[0u8; 32], "eine Wurzel, nicht null");
+    assert_eq!(a.ausgabenwurzel, b.ausgabenwurzel, "verschiedener Schnitt, dasselbe Ergebnis");
+    assert_eq!(a.segments_root, b.segments_root, "die Spur je Ebene hängt nicht am Schnitt");
+    // ⛔️ Gegenprobe: ein anderer Auftrag, eine andere Ausgabenwurzel.
+    let c = rechnen(Some(&UNGLEICH), b"Zwei plus zwei");
+    assert_ne!(a.ausgabenwurzel, c.ausgabenwurzel);
+}
+
 /// ⚑ **Training: ungleiche Grenzen, dasselbe Commitment.** Die Spur je
 /// Shard ist eine andere (anders geschnitten), das Commitment über den
 /// ganzen Pod nicht.
@@ -114,6 +150,13 @@ fn die_zeitprobe_rechnet_und_laesst_nichts_zurueck() {
     let a = mitte.zeitprobe(2);
     assert_eq!(a, mitte.zeitprobe(2), "dieselbe Probe, derselbe Abdruck");
     assert_ne!(a, kopf.zeitprobe(2), "ein anderer Bereich rechnet anderes");
+    // ⚑ Fund 669: Mit Saat hängt der Abdruck an ihr; dieselbe Saat gibt
+    //   denselben, eine andere einen anderen, und keiner ist der ohne Saat.
+    let (s1, s2) = ([1u8; 32], [2u8; 32]);
+    let b1 = mitte.zeitprobe_bis(2, None, Some(&s1));
+    assert_eq!(b1, mitte.zeitprobe_bis(2, None, Some(&s1)), "dieselbe Saat, derselbe Abdruck");
+    assert_ne!(b1, mitte.zeitprobe_bis(2, None, Some(&s2)), "eine andere Saat, derselbe Abdruck");
+    assert_ne!(b1, a, "mit Saat wie ohne");
     assert_eq!(mitte.gehaltene_sitzungen(), 0, "die Probe hielt eine Sitzung fest");
 
     // ⚑ **Über die Tür des Shards**, wie der Knoten sie stellt

@@ -220,6 +220,55 @@ pub fn epochenausschuettung_mit_training(
     auslastung: i64,
     params: &MintParams,
 ) -> Result<Ausschuettung, Ausschuettungsfehler> {
+    epochenausschuettung_mit_pruefern(state, zuschreibung, training, &BTreeMap::new(), auslastung, params)
+}
+
+/// Dasselbe, und dazu **der Checker-Pool** (Anhang B.3, Festlegung des
+/// Projektinhabers vom 2026-10-29): „Checker-Vergütung = Grundvergütung
+/// (4 % der Prägung, proportional zu geprüftem Volumen)“. `pruefer` ist
+/// je Checker das geprüfte Volumen der Epoche (nachgerechnete Positionen
+/// aus einig abgeschlossenen Prüfaufträgen). Ohne Volumen bleibt der Pool
+/// ungeprägt wie bisher ([`Auslassungsgrund::KeineGewichtsquelle`]); ohne
+/// Auszahlungskonto zählt ein Checker nicht, wie ein Miner.
+pub fn epochenausschuettung_mit_pruefern(
+    state: &mut LedgerState,
+    zuschreibung: &Zuschreibung,
+    training: &Zuschreibung,
+    pruefer: &BTreeMap<MinerId, u64>,
+    auslastung: i64,
+    params: &MintParams,
+) -> Result<Ausschuettung, Ausschuettungsfehler> {
+    ausschuetten(state, zuschreibung, training, pruefer, auslastung, params, false)
+}
+
+/// ⚑ **Dasselbe, aber vorgemerkt statt gebucht** (verteilte Ausschüttung,
+/// 2026-10-30, nach Solanas SIMD-0118): Jeder Anteil kommt in
+/// `LedgerState::auszahlungen_offen` und wird in den folgenden Blöcken
+/// begrenzt gebucht (`myl_ledger::transitions::auszahlungen_buchen`).
+/// Beträge, Klassen und Abschluss sind dieselben; nur kein Konto wird hier
+/// berührt (ausser der Treasury, wenn aus ihrem Bestand gezahlt wird), und
+/// die Überlaufprüfung je Konto entfällt, denn sie läse jedes Konto. Für
+/// den Knoten; Bibliothek und Simulation buchen sofort.
+pub fn epochenausschuettung_vorgemerkt(
+    state: &mut LedgerState,
+    zuschreibung: &Zuschreibung,
+    training: &Zuschreibung,
+    pruefer: &BTreeMap<MinerId, u64>,
+    auslastung: i64,
+    params: &MintParams,
+) -> Result<Ausschuettung, Ausschuettungsfehler> {
+    ausschuetten(state, zuschreibung, training, pruefer, auslastung, params, true)
+}
+
+fn ausschuetten(
+    state: &mut LedgerState,
+    zuschreibung: &Zuschreibung,
+    training: &Zuschreibung,
+    pruefer: &BTreeMap<MinerId, u64>,
+    auslastung: i64,
+    params: &MintParams,
+    vormerken: bool,
+) -> Result<Ausschuettung, Ausschuettungsfehler> {
     // ---- Prüfphase: der ganze Plan, ohne eine Zustandsänderung. ----
 
     // Was der Abschluss ergäbe. Deterministisch dieselbe Rechnung, die
@@ -282,6 +331,28 @@ pub fn epochenausschuettung_mit_training(
         }
     }
 
+    let mut pruefer_gewichte: Vec<(Address, u64)> = Vec::new();
+    for (miner, gewicht) in pruefer {
+        match auszahlungskonto(state, miner) {
+            Some(konto) if *gewicht > 0 => pruefer_gewichte.push((konto, *gewicht)),
+            Some(_) => {}
+            None => ohne_konto.push(*miner),
+        }
+    }
+    let checkers = if checkers > 0 && !pruefer_gewichte.is_empty() {
+        match split_proportional(checkers, &pruefer_gewichte) {
+            Ok(anteile) => {
+                for (konto, betrag) in anteile {
+                    let e = plan.entry(konto).or_insert(0);
+                    *e = e.saturating_add(betrag);
+                }
+                0
+            }
+            Err(_) => checkers,
+        }
+    } else {
+        checkers
+    };
     for (klasse, betrag) in [
         (Empfaengerklasse::Koordinatoren, coordinators),
         (Empfaengerklasse::Validatoren, validators),
@@ -384,8 +455,9 @@ pub fn epochenausschuettung_mit_training(
     // Aufstellung wäre eine andere als die Buchung.
     plan.retain(|_, betrag| *betrag > 0);
 
-    // Überlauf vorher prüfen, nicht mitten im Buchen.
-    for (konto, betrag) in &plan {
+    // Überlauf vorher prüfen, nicht mitten im Buchen (vorgemerkt: beim
+    // Buchen, gekappt).
+    for (konto, betrag) in plan.iter().filter(|_| !vormerken) {
         state
             .account(konto)
             .balance
@@ -401,7 +473,11 @@ pub fn epochenausschuettung_mit_training(
 
     let mut gutgeschrieben: u64 = 0;
     for (konto, betrag) in &plan {
-        praegen(state, konto, *betrag).map_err(Ausschuettungsfehler::Buchung)?;
+        if vormerken {
+            myl_ledger::transitions::auszahlung_vormerken(state, konto, *betrag);
+        } else {
+            praegen(state, konto, *betrag).map_err(Ausschuettungsfehler::Buchung)?;
+        }
         gutgeschrieben = gutgeschrieben.saturating_add(*betrag);
     }
 
@@ -414,8 +490,12 @@ pub fn epochenausschuettung_mit_training(
         debug_assert!(haben >= aus_bestand, "der Bestand wurde vorher geprueft");
         state.account_mut(&von).balance = haben.saturating_sub(aus_bestand);
         for (konto, betrag) in &ueberweisung {
-            let e = state.account_mut(konto);
-            e.balance = e.balance.saturating_add(*betrag);
+            if vormerken {
+                myl_ledger::transitions::auszahlung_vormerken(state, konto, *betrag);
+            } else {
+                let e = state.account_mut(konto);
+                e.balance = e.balance.saturating_add(*betrag);
+            }
         }
     }
 
@@ -582,6 +662,48 @@ mod tests {
         // mit voller Abgabe.
         let faktor = voll / leer.max(1);
         assert!((8..=12).contains(&faktor), "der Faktor ist {faktor} statt rund zehn");
+    }
+
+    /// ⚑ **Der Checker-Pool zahlt nach geprüftem Volumen** (Anhang B.3,
+    /// 2026-10-29): Zwei Checker mit 3 zu 1 Positionen bekommen die 4 %
+    /// im selben Verhältnis, und der Pool steht nicht mehr unter dem
+    /// Ungeprägten. Ohne Volumen bleibt er es.
+    #[test]
+    fn der_checker_pool_zahlt_nach_geprueftem_volumen() {
+        use crate::zuschreibung::Zuschreibung;
+        use myl_ledger::state::LedgerState;
+        use myl_types::ids::{Address, MinerId};
+
+        let aufsetzen = || {
+            let mut st = LedgerState::genesis(1);
+            st.account_mut(&Address::new([1u8; 32])).balance = 10_000_000;
+            myl_ledger::transitions::burn_to_credits(&mut st, &Address::new([1u8; 32]), 5_000_000, myl_types::ids::EpochId(1_000))
+                .expect("Burn");
+            let inf = MinerId::new([10u8; 32]);
+            st.auszahlung.insert(inf, Address::new([11u8; 32]));
+            for b in [30u8, 40] {
+                st.auszahlung.insert(MinerId::new([b; 32]), Address::new([b + 1; 32]));
+            }
+            let mut inferenz = Zuschreibung::default();
+            inferenz.je_miner.insert(inf, 1_000);
+            (st, inferenz)
+        };
+        let params = MintParams { subsidy_num: 1, subsidy_den: 2, m_max: u64::MAX };
+        let (mut st, inferenz) = aufsetzen();
+        let mut pruefer = BTreeMap::new();
+        pruefer.insert(MinerId::new([30u8; 32]), 30);
+        pruefer.insert(MinerId::new([40u8; 32]), 10);
+        let a = epochenausschuettung_mit_pruefern(&mut st, &inferenz, &Zuschreibung::default(), &pruefer, 0, &params)
+            .expect("Ausschuettung");
+        let (x, y) = (st.account(&Address::new([31u8; 32])).balance, st.account(&Address::new([41u8; 32])).balance);
+        assert!(x > 0 && y > 0, "beide Checker bezahlt: {x} {y}");
+        assert!((x / y).abs_diff(3) <= 1 && x >= 3 * y - 3, "3 zu 1: {x} {y}");
+        assert!(!a.nicht_gepraegt.iter().any(|n| n.klasse == Empfaengerklasse::Pruefer), "der Pool ist ausgezahlt");
+
+        let (mut st, inferenz) = aufsetzen();
+        let a = epochenausschuettung_mit_pruefern(&mut st, &inferenz, &Zuschreibung::default(), &BTreeMap::new(), 0, &params)
+            .expect("Ausschuettung");
+        assert!(a.nicht_gepraegt.iter().any(|n| n.klasse == Empfaengerklasse::Pruefer), "ohne Volumen ungeprägt");
     }
 
     /// ⚑ **Und bei niedriger Auslastung wird er ausgegeben.**
@@ -933,5 +1055,40 @@ mod tests {
         assert_eq!(st.burn_epoche, 0);
         assert_eq!(st.burn_ema, a.burn_ema);
         assert_eq!(st.burn_ema_bis, EpochId(1));
+    }
+
+    /// ⚑ **Vorgemerkt wie sofort** (verteilte Ausschüttung, 2026-10-30):
+    /// 10 000 Miner mit Arbeit und Auszahlungskonto. Vorgemerkt berührt die
+    /// Ausschüttung kein Konto (aufgezeichnet: nur die Treasury), und nach
+    /// dem Buchen in Partitionen stehen dieselben Guthaben da wie bei der
+    /// sofortigen Buchung.
+    #[test]
+    fn vorgemerkt_ergibt_dieselben_guthaben() {
+        let (mut st, _) = aufbau(5_000_000, &[], &[]);
+        let mut z = Zuschreibung::default();
+        for i in 0..10_000u32 {
+            let mut b = [0u8; 32];
+            b[..4].copy_from_slice(&i.to_le_bytes());
+            b[31] = 7;
+            let m = MinerId::new(b);
+            st.auszahlung.insert(m, Address::new(b));
+            z.je_miner.insert(m, 1 + u64::from(i % 17));
+        }
+        let mut sofort = st.clone();
+        let a = epochenausschuettung(&mut sofort, &z, &params()).expect("sofort");
+        st.aufzeichnen_beginnen();
+        let v = epochenausschuettung_vorgemerkt(&mut st, &z, &Zuschreibung::default(), &BTreeMap::new(), 0, &params()).expect("vorgemerkt");
+        let zeuge = st.zeuge_nehmen().expect("bezeugbar");
+        assert!(zeuge.accounts.len() <= 1, "vorgemerkt berührt kein Konto: {}", zeuge.accounts.len());
+        assert_eq!((a.gutgeschrieben, a.je_konto.len()), (v.gutgeschrieben, v.je_konto.len()));
+        let mut bloecke = 0;
+        while myl_ledger::transitions::auszahlungen_buchen(&mut st, myl_ledger::transitions::AUSZAHLUNGEN_JE_BLOCK) > 0 {
+            bloecke += 1;
+        }
+        assert_eq!(bloecke, 3, "10 000 in Partitionen zu 4096");
+        for k in a.je_konto.keys() {
+            assert_eq!(st.account(k).balance, sofort.account(k).balance, "{k:?}");
+        }
+        assert_eq!(st.wurzel(), sofort.wurzel(), "danach derselbe Zustand");
     }
 }

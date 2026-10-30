@@ -318,6 +318,10 @@ CONSENSUS_PATH = [
     # entscheidet sich, wessen Einsatz geschlachtet wird.
     ROOT / "SHARED_TYPES" / "myl-types" / "src" / "schuldbeleg.rs",
     ROOT / "SHARED_TYPES" / "myl-types" / "src" / "modellversion.rs",
+    # ⚑ 2026-10-30: Der Zustandsbaum rechnet die Zustandswurzel, Zeugen und
+    # Seiten auf der Platte; eine Gleitkommazahl darin waere eine Wurzel, die
+    # zwei Maschinen verschieden bilden.
+    ROOT / "SHARED_TYPES" / "myl-types" / "src" / "zustandsbaum.rs",
     ROOT / "SHARED_TYPES" / "myl-types" / "src" / "challenge.rs",
     ROOT / "SHARED_TYPES" / "myl-types" / "src" / "seed_rng.rs",
     ROOT / "SHARED_TYPES" / "myl-types" / "src" / "bls.rs",
@@ -450,6 +454,10 @@ CONSENSUS_PATH = [
     # 2026-10-24: Die Archivpflicht (Stufen A5 bis A7): Belege, Stichproben,
     # Gutschrift und Abzug in Basispunkten und Bruchteilen ganzer Zahlen.
     ROOT / "CONSENSUS" / "myl-ledger" / "src" / "archiv.rs",
+    # ⚑ 2026-10-30: Pruefauftraege und Schiedsrunde (Urteile ueber Einsatz),
+    # die Sammlungen hinter der Zustandswurzel.
+    ROOT / "CONSENSUS" / "myl-ledger" / "src" / "pruefung.rs",
+    ROOT / "CONSENSUS" / "myl-ledger" / "src" / "sammlung.rs",
     ROOT / "CONSENSUS" / "myl-scheduler" / "src" / "vrf_seed.rs",
     ROOT / "CONSENSUS" / "myl-scheduler" / "src" / "miner_filter.rs",
     ROOT / "CONSENSUS" / "myl-scheduler" / "src" / "shard_assignment.rs",
@@ -470,6 +478,8 @@ CONSENSUS_PATH = [
     # bezeugte Arbeit bezahlt wird**; sie rechnet nur mit Indizes und
     # Byte-Folgen und muss es bleiben.
     ROOT / "CONSENSUS" / "myl-consensus" / "src" / "poi.rs",
+    # ⚑ 2026-10-30: Zeugenstuecke und ihr Sammler (zustandslose Validierung).
+    ROOT / "CONSENSUS" / "myl-consensus" / "src" / "zeuge.rs",
     ROOT / "TOKENOMICS" / "myl-tokenomics" / "src" / "ema.rs",
     ROOT / "TOKENOMICS" / "myl-tokenomics" / "src" / "mint.rs",
     ROOT / "TOKENOMICS" / "myl-tokenomics" / "src" / "distribute.rs",

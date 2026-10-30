@@ -61,7 +61,7 @@ pub use anfrage::{
 pub use config::NetConfig;
 pub use discovery::{bootstrap_from_config, parse_bootstrap_peer, start_bootstrap, DiscoveryError, KAD_PROTOCOL};
 pub use gossip::{
-    publish, subscribe, subscribe_all, GossipError, GossipTopic, ALL_TOPICS, TOPIC_BLOCKS,
+    publish, subscribe, subscribe_all, subscribe_rolle, GossipError, GossipTopic, Rolle, ALL_TOPICS, TOPIC_BLOCKS,
     TOPIC_CHALLENGES, TOPIC_LATENCY_ATTESTS, TOPIC_POI_BUNDLES, TOPIC_TRANSACTIONS,
 };
 pub use identity::{netzadresse, peer_id_aus_bytes, NodeIdentity};
@@ -70,7 +70,7 @@ pub use latency::{
 };
 pub use limits::{
     adressbereich, standard_grenzen, Adressbereich, Adressvielfalt, BereichVoll,
-    MAX_AUSGEHEND, MAX_EINGEHEND, MAX_GESAMT, MAX_JE_ADRESSBEREICH, MAX_JE_PEER,
+    MAX_AUSGEHEND, MAX_EINGEHEND, MAX_GESAMT, MAX_JE_ADRESSBEREICH, MAX_JE_PEER, MAX_VORRANG,
 };
 pub use nat::{
     alle_horchadressen, eigene_adressen, ist_quic, ist_vermittelt, pruefe as nat_pruefen,

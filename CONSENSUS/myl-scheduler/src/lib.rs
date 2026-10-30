@@ -38,7 +38,7 @@ pub use miner_filter::{
     filter_miners, HardwareClass, MinerRegistration,
 };
 pub use redundancy::{
-    assign_redundant_pods, Redundanzzuteilung, SegmentAssignment, ZuweisungsHindernis,
+    assign_redundant_pods, bereitschaft, zwillingsgruppen, zwillingspaare, Redundanzzuteilung, SegmentAssignment, ZuweisungsHindernis,
 };
 pub use sampling::{sample_segments, SamplingResult};
 pub use shard_assignment::{

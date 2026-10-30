@@ -224,7 +224,85 @@ pub enum Nachforderung {
         /// Nach wie vielen Millisekunden der Shard aufhört.
         grenze_ms: u32,
     },
+    /// ⚑ **Die Zeitprobe mit Saat** (2026-10-28, Fund 669): Die Saat des
+    /// Messenden bestimmt die Eingabe des Shards, der Abdruck hängt an ihr;
+    /// ohne sie wäre er für dieselbe Anfrage immer derselbe. Angehängt.
+    ZeitprobeMitSaat {
+        /// Wie viele Positionen.
+        positionen: u32,
+        /// Nach wie vielen Millisekunden der Shard aufhört.
+        grenze_ms: u32,
+        /// Frisch je Probe.
+        saat: [u8; 32],
+    },
+    /// ⚑ **Übernimm diese Position** (Whitepaper 6.8, 2026-10-28): an ein
+    /// Reservemitglied, dessen Pod einen Inhaber verloren hat. Es prüft
+    /// gegen die Kette, ob es Reserve dieses Pods ist und die Ebenen hält,
+    /// und startet dann den Shard der Position bis zum Ende der Epoche.
+    /// Angehängt.
+    PositionUebernehmen {
+        /// Zur Zuordnung der Antwort über die Relaisleitung.
+        kennung: u64,
+        /// Die Epoche, für die es gilt.
+        epoche: u64,
+        /// Der Pod (Index in der Zuteilung).
+        pod: u32,
+        /// Die Position.
+        position: u32,
+    },
+    /// ⚑ **Hebe die Spuren dieses Bündels auf** (Stufe 2, 2026-10-28): vom
+    /// Ortsdienst beim Einreichen, damit dieser Knoten auf eine Spuranfrage
+    /// antworten kann, nachdem sein Shard mit der Epoche endete. Angehängt.
+    SpurenAblegen {
+        /// Zur Zuordnung der Antwort über die Relaisleitung.
+        kennung: u64,
+        /// Die Ablage.
+        ablage: myl_types::Spurablage,
+    },
+    /// ⚑ **Der Verlauf eines gezogenen Segments** (Stufe 2, Nachrechnen,
+    /// 2026-10-29): an die Mitglieder des Pods, vom zugeteilten Checker.
+    /// Die Antwort trägt alle Segmente derselben Sitzung bis zum gezogenen,
+    /// mit Beweisen und Tokens ([`myl_types::Spurablage::verlauf`]).
+    /// Angehängt.
+    Verlauf(myl_types::Spuranfrage),
+    /// ⚑ **Der Schiedsbeleg zu einem Streitfall** (T6d, 2026-10-29): an den
+    /// Anfechter, vom Validator im Komitee. Angehängt.
+    Schiedsbeleg(myl_types::Spuranfrage),
+    /// ⚑ **Ein Differenzbeweis** (2026-10-29): an den Koordinator eines der
+    /// beiden uneinigen Pods, der ihn meldet. Die Antwort ist `Nichts`.
+    /// Angehängt.
+    Differenz {
+        epoche: u64,
+        pod_a: myl_types::ids::PodId,
+        pod_b: myl_types::ids::PodId,
+        beweis: Box<myl_types::Differenzbeweis>,
+    },
+    /// ⚑ **Stücke der Zeugen von Blöcken** (zustandslose Validierung,
+    /// 2026-10-29), je (Blockhash, Stück), höchstens
+    /// [`ZEUGENSTUECKE_JE_ANFRAGE`]: an den Erzeuger oder wer den Block
+    /// weiterreichte. Gebündelt, weil eine Verbindung nur
+    /// `MAX_ANFRAGEN_ZUGLEICH` Anfragen zugleich trägt und ein aufholender
+    /// Knoten viele Zeugen braucht. Die Antwort ist
+    /// [`Nachlieferung::Zeugenstuecke`]. Angehängt.
+    Zeugenstuecke(Vec<(myl_types::Hash, u16)>),
+    /// ⚑ **Der jüngste verankerte leichte Abzug** (2026-10-29): Die Antwort
+    /// ist [`Nachlieferung::LeichterAnker`] mit dem Prüfpunktzertifikat, das
+    /// der Fragende gegen seinen Stimmsatz prüft. Angehängt.
+    LeichterAnker,
+    /// Ein Stück eines leichten Abzugs; die Antwort wie beim vollen
+    /// ([`Nachlieferung::Abzug`]). Angehängt.
+    LeichterAbzug { hoehe: u64, ab: u64 },
+    /// ⚑ **Kontobeweise** für höchstens [`KONTOBEWEISE_JE_ANFRAGE`] Adressen,
+    /// auf dem Stand des Gefragten; die Antwort ist
+    /// [`Nachlieferung::Kontobeweise`]. Angehängt.
+    Kontobeweise(Vec<myl_types::ids::Address>),
 }
+
+/// Höchstens so viele Adressen nennt eine [`Nachforderung::Kontobeweise`].
+pub const KONTOBEWEISE_JE_ANFRAGE: usize = 8;
+
+/// Höchstens so viele Stücke nennt eine [`Nachforderung::Zeugenstuecke`].
+pub const ZEUGENSTUECKE_JE_ANFRAGE: usize = 128;
 
 /// ⚑ **Welche Shardanfragen ein Knoten weiterreicht**: die Marken (erstes
 /// Byte in Borsh) von `Rechne`, `Zuschnitt`, `Schluessel`, `Unterschreibe`,
@@ -317,6 +395,62 @@ pub enum Nachlieferung {
         /// Warum nicht eingereicht wurde; `None` heißt eingereicht.
         fehler: Option<String>,
     },
+    /// ⚑ **Die Zeitprobe, unterschrieben** (2026-10-28, Festlegung des
+    /// Projektinhabers zu Fund 661): der Abdruck und die Unterschrift des
+    /// Mitglieds über Saat, Positionen und Abdruck
+    /// (`myl_types::zeitprobe::antwortnachricht`), mit seinem Minerschlüssel.
+    /// Ein falscher Abdruck ist damit ein Beleg. Angehängt.
+    ZeitprobeUnterschrieben {
+        /// Der Abdruck des letzten Ergebnisses.
+        abdruck: [u8; 32],
+        /// Die Unterschrift des Mitglieds.
+        signatur: myl_types::bls::BlsSignature,
+    },
+    /// Die Antwort auf [`Nachforderung::PositionUebernehmen`]: übernommen,
+    /// oder warum nicht. Angehängt.
+    Uebernahme {
+        /// Die Kennung der Anfrage.
+        kennung: u64,
+        /// `None`: übernommen.
+        fehler: Option<String>,
+    },
+    /// ⚑ **Eine Spur mit Beweis** (Stufe 2): die Antwort auf
+    /// [`Nachforderung::Spur`]. Angehängt.
+    Spur(myl_types::Spurantwort),
+    /// Die Antwort auf [`Nachforderung::SpurenAblegen`]. Angehängt.
+    Abgelegt {
+        /// Die Kennung der Anfrage.
+        kennung: u64,
+        /// Warum nicht abgelegt; `None` heisst abgelegt.
+        fehler: Option<String>,
+    },
+    /// Die Antwort auf [`Nachforderung::Verlauf`]: die Segmente der Sitzung
+    /// bis zum gezogenen, nach Position. Angehängt.
+    Verlauf(Vec<myl_types::Spurantwort>),
+    /// Die Antwort auf [`Nachforderung::Schiedsbeleg`]: der Verlauf, den der
+    /// Anfechter nachgerechnet hat (mit Beweisen gegen die Wurzel auf der
+    /// Kette), und die Eingänge der strittigen Layer für die Positionen bis
+    /// zur strittigen; leer, wenn er keinen hat. Angehängt.
+    Schiedsbeleg {
+        verlauf: Vec<myl_types::Spurantwort>,
+        eingaenge: Vec<Vec<i16>>,
+    },
+    /// Die Antwort auf [`Nachforderung::Zeugenstuecke`]: die vorhandenen, so
+    /// viele, wie in eine Antwort passen. Angehängt.
+    Zeugenstuecke(Vec<myl_consensus::zeuge::Zeugenstueck>),
+    /// Die Antwort auf [`Nachforderung::LeichterAnker`] (`None`: keiner).
+    /// Angehängt.
+    ///
+    /// ⚑ **Die neuen Nachforderungen antworten nie mit `Nichts`**
+    /// (2026-10-29): Antworten tragen keine Kennung, und ein `Nichts` wird
+    /// der laufenden Nachforderung an dieselbe Gegenstelle zugeschrieben
+    /// (Blöcke, Abzug). 📌 Beim Bau gefunden: Ein voller Knoten ohne Zeugen
+    /// antwortete auf Zeugenstücke mit `Nichts`, und der Zustandslose hielt
+    /// ihn darauf für leer an Blöcken und an Abzügen.
+    LeichterAnker(Option<Box<myl_consensus::pruefpunkt::Pruefpunktzertifikat>>),
+    /// Die Antwort auf [`Nachforderung::Kontobeweise`]: die Höhe, auf der sie
+    /// gelten, und die Beweise. Angehängt.
+    Kontobeweise { hoehe: u64, beweise: Vec<myl_ledger::state::Kontobeweis> },
 }
 
 /// ⚑ **Der nächste Bereich beim Nachholen von mehreren Quellen** (2026-10-22).
@@ -526,6 +660,64 @@ mod tests {
         assert_eq!(Nachforderung::ZeitprobeMitGrenze { positionen: 64, grenze_ms: 1 }.als_bytes().unwrap()[0], 12);
         assert_eq!(Nachlieferung::Nichts.als_bytes().unwrap()[0], 2);
         assert_eq!(Nachlieferung::Pong.als_bytes().unwrap()[0], 4);
+        let mit_saat = Nachforderung::ZeitprobeMitSaat { positionen: 64, grenze_ms: 1, saat: [7; 32] };
+        assert_eq!(mit_saat.als_bytes().unwrap()[0], 13);
+        assert_eq!(Nachforderung::aus_bytes(&mit_saat.als_bytes().unwrap()), Some(mit_saat));
+        let k = crate::schluessel::Konsensschluessel::probe("alpha").expect("Schlüssel");
+        let u = Nachlieferung::ZeitprobeUnterschrieben { abdruck: [5; 32], signatur: k.signiere(b"x").expect("signieren") };
+        assert_eq!(u.als_bytes().unwrap()[0], 12);
+        assert_eq!(Nachlieferung::aus_bytes(&u.als_bytes().unwrap()), Some(u));
+        let ab = Nachforderung::SpurenAblegen {
+            kennung: 4,
+            ablage: myl_types::Spurablage {
+                epoche: myl_types::ids::EpochId(1),
+                pod: myl_types::ids::PodId::new([2; 32]),
+                segments_root: myl_types::ids::MerkleRoot::new([3; 32]),
+                eintraege: Vec::new(),
+                eingaben: Vec::new(),
+            },
+        };
+        assert_eq!(ab.als_bytes().unwrap()[0], 15);
+        assert_eq!(Nachforderung::aus_bytes(&ab.als_bytes().unwrap()), Some(ab));
+        assert_eq!(Nachlieferung::Abgelegt { kennung: 4, fehler: None }.als_bytes().unwrap()[0], 15);
+        let v = Nachforderung::Verlauf(myl_types::Spuranfrage {
+            epoche: myl_types::ids::EpochId(1),
+            pod: myl_types::ids::PodId::new([2; 32]),
+            segment: 3,
+        });
+        assert_eq!(v.als_bytes().unwrap()[0], 16, "angehängt");
+        assert_eq!(Nachforderung::aus_bytes(&v.als_bytes().unwrap()), Some(v));
+        assert_eq!(Nachlieferung::Verlauf(Vec::new()).als_bytes().unwrap()[0], 16, "angehängt");
+        let sb = Nachforderung::Schiedsbeleg(myl_types::Spuranfrage {
+            epoche: myl_types::ids::EpochId(1),
+            pod: myl_types::ids::PodId::new([2; 32]),
+            segment: 3,
+        });
+        assert_eq!(sb.als_bytes().unwrap()[0], 17, "angehängt");
+        assert_eq!(Nachforderung::aus_bytes(&sb.als_bytes().unwrap()), Some(sb));
+        let sl = Nachlieferung::Schiedsbeleg { verlauf: Vec::new(), eingaenge: vec![vec![1, -2]] };
+        assert_eq!(sl.als_bytes().unwrap()[0], 17, "angehängt");
+        let id = myl_types::ids::SegmentId::new([1; 32]);
+        let seite = myl_types::Differenzseite {
+            ausgabe: myl_types::Ausgabenzeugnis { id, eingang: [0; 32], ausgang: [0; 32] },
+            ausgabenbeweis: myl_types::merkle::MerkleProof { leaf_index: 0, leaf_count: 1, siblings: Vec::new() },
+            segment: myl_types::Segmentzeugnis { id, spurwurzel: myl_types::ids::MerkleRoot::new([0; 32]) },
+            segmentbeweis: myl_types::merkle::MerkleProof { leaf_index: 0, leaf_count: 1, siblings: Vec::new() },
+        };
+        let d = Nachforderung::Differenz {
+            epoche: 1,
+            pod_a: myl_types::ids::PodId::new([2; 32]),
+            pod_b: myl_types::ids::PodId::new([3; 32]),
+            beweis: Box::new(myl_types::Differenzbeweis { a: seite.clone(), b: seite }),
+        };
+        assert_eq!(d.als_bytes().unwrap()[0], 18, "angehängt");
+        assert_eq!(Nachforderung::aus_bytes(&d.als_bytes().unwrap()), Some(d));
+        let ue = Nachforderung::PositionUebernehmen { kennung: 1, epoche: 2, pod: 3, position: 1 };
+        assert_eq!(ue.als_bytes().unwrap()[0], 14);
+        assert_eq!(Nachforderung::aus_bytes(&ue.als_bytes().unwrap()), Some(ue));
+        let a = Nachlieferung::Uebernahme { kennung: 1, fehler: Some("nein".into()) };
+        assert_eq!(a.als_bytes().unwrap()[0], 13);
+        assert_eq!(Nachlieferung::aus_bytes(&a.als_bytes().unwrap()), Some(a));
         let d = Nachlieferung::Datei { name: "a.bin".into(), ab: 3, daten: vec![1, 2], groesse: 5 };
         assert_eq!(Nachlieferung::aus_bytes(&d.als_bytes().unwrap()), Some(d));
     }

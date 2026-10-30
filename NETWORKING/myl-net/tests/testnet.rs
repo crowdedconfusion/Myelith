@@ -215,6 +215,8 @@ fn beispiel_bundle(epoch: u64) -> PoIBundle {
         vtfe_claimed: 99,
         aggregate_sig: sig,
         segmente: 1,
+        ausgabenwurzel: myl_types::MerkleRoot::new([0u8; 32]),
+        vertreter: Vec::new(),
     }
 }
 

@@ -293,7 +293,7 @@ pub fn grenze_ziehen(state: &mut LedgerState, hoehe: u64, grenze_epoche: u64, wa
             }
         }
     }
-    let ziehung = archivwahl::ziehen(&state.epochensaat, &state.miner, grenze_epoche, warte_epochen);
+    let ziehung = archivwahl::ziehen(&state.epochensaat, state.miner.als_map(), grenze_epoche, warte_epochen);
     let a = &mut state.archiv;
     (a.teil_ab, a.teil_bis) = myl_types::archivteile::abschnitt(a.grenze, hoehe);
     a.teilwurzel = None;
@@ -514,8 +514,8 @@ pub fn epoche_abschliessen(
         //   bleibt stehen. Eine fehlende Kopie wiegt schwerer als die Mühe.
         let mut ausgeschlossen = a.splitter.clone();
         ausgeschlossen.extend(a.ersetzt.iter().copied());
-        let neu = archivwahl::nachruecken(&a.saat, &state.miner, a.grenze_epoche, warte_epochen, &a.kopien, &ausgeschlossen)
-            .or_else(|| archivwahl::nachruecken(&a.saat, &state.miner, a.grenze_epoche, warte_epochen, &a.kopien, &a.ersetzt));
+        let neu = archivwahl::nachruecken(&a.saat, state.miner.als_map(), a.grenze_epoche, warte_epochen, &a.kopien, &ausgeschlossen)
+            .or_else(|| archivwahl::nachruecken(&a.saat, state.miner.als_map(), a.grenze_epoche, warte_epochen, &a.kopien, &a.ersetzt));
         if let Some(n) = neu {
             let a = &mut state.archiv;
             a.kopien.push(n);

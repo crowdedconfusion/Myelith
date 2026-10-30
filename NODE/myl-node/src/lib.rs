@@ -78,6 +78,7 @@ pub mod tuer;
 pub mod validator;
 pub mod validatorsatz;
 pub mod voraus;
+pub mod zeugenablage;
 
 pub use stimmsatzdatei::{Stimmsatzdatei, Stimmsatzfehler, Stimmberechtigter};
 pub use kette::{Kette, KettenFehler};

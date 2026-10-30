@@ -1,11 +1,11 @@
 # NODE — der Myelith-Knoten
 
-> **Version:** 0.73.0
-> **Datum:** 2026-10-27
+> **Version:** 0.99.2
+> **Datum:** 2026-10-29
 > **Status:** Netzknoten lauffähig, Blockproduktion mit **Persistenz über
 > Neustarts**, BFT-Runden über das Netz mit Rundenwechsel, und seit dem
 > 1. September **schließt der Knoten die Epoche selbst ab**.
-> **384 Tests grün** (gezählt am 2026-10-26).
+> **423 Tests grün** (gezählt am 2026-10-28).
 >
 > ⚑ **Seit dem 27. August sind Blockhöhe und Epoche zwei Dinge.** Die
 > Probekette schrieb ihre Höhe in das Epochenfeld des Blockkopfs; das
@@ -278,6 +278,920 @@ NODE/
 ```
 
 ## Changelog
+
+### v0.99.2 (2026-10-30): Nur die Antwort auf die Zeitprobe zählt
+
+- ⛔️ **Zeitproben gehen mit Zweck hinaus** (`NodeCommand::AnfrageMitZweck`,
+  NETWORKING 0.24.0), und nur ein `Nichts` oder ein Fehlschlag **mit diesem
+  Zweck** zählt als Abweisung der Probe. Bis hierher zählte jedes `Nichts`
+  einer gemessenen Gegenstelle, auch eines auf eine Blocknachforderung
+  oder aus der Drossel; eine Folge davon wird zum Verdacht und zum Zeugnis
+  gegen ein ehrliches Mitglied. Die offene Empfehlung „Antwortmarken für alle
+  Nachforderungen“ ist damit für die Messung erledigt.
+- 📌 **Zweiter Fehler an derselben Stelle**: Ein `Nichts` einer gemessenen
+  Gegenstelle wurde abgefangen und erreichte die Buchführung des Nachholens
+  nie (wer leer antwortete, wurde nicht übergangen). Jetzt geht es den
+  gewöhnlichen Weg; nur die Quelle des Dateiholens bleibt eigens behandelt.
+- Test `nur_die_antwort_auf_die_probe_zaehlt` über den Ereignisweg (ohne
+  Zweck berührt nichts die Messung, mit Zweck ist es eine Abweisung).
+
+### v0.99.1 (2026-10-30): Der zustandslose Knoten holt im Ganzen nach
+
+📌 Kurzlauf `kurz-ablage` (abgebrochen): Nach einer Trennung folgte der
+zustandslose Miner genau im Takt des Erzeugers, 130 Blöcke dahinter, und
+holte nie auf. Weil er nie 30 s stillstand, griff auch die Selbstheilung
+nicht. Im Protokoll drei Verschwendungen:
+
+- ⚑ **Ein Block, der neu ins Wartefenster kommt, zählt als geliefert**:
+  Bis hierher galt nur ein angenommener Block, und beim zustandslosen
+  Knoten wird keiner sofort angenommen. Die Kette des Nachforderns riss ab,
+  und der nächste Bereich kam erst mit dem nächsten Block über das Gossip,
+  einmal je Takt.
+- ⚑ **Die Bereichsplanung kennt das Wartefenster**: Blöcke, die schon auf
+  ihren Zeugen warten, werden nicht noch einmal geholt (im Protokoll immer
+  wieder einzelne Blöcke derselben Höhe).
+- ⚑ **Zustandslos nur bis zum Rand des Wartefensters**: Was darüber liegt,
+  wurde geholt und gleich verworfen.
+- Die Lieferung nennt `gewartet`. Test
+  `ein_zurueckgefallener_holt_mit_zeugen_auf_waehrend_die_kette_laeuft`
+  (Beta steht 300 Blöcke, holt dann ohne Neuverankerung auf, während Alpha
+  baut). ⚠️ Er besteht auch ohne die Korrektur: Mit einer einzigen
+  Gegenstelle zeigt sich der Fehler nicht. Er sichert das Aufholen bei
+  laufender Kette, nicht diesen Fehler.
+- Kurzlauf `kurz-aufholen` danach bestanden: Nach der ersten Trennung (rund
+  1000 Blöcke Rückstand, mehr als das Fenster) sprang der zustandslose
+  Miner zum Prüfpunkt und füllte mit Zeugen auf, nach der zweiten holte er
+  mit Zeugen auf. Ob die Korrektur oder der Zufall der Schwelle den
+  Unterschied machte, belegt ein einzelner Lauf nicht; der Nachtlauf mit
+  vielen Trennungen soll es zeigen.
+- 📌 Unterwegs: `cargo build` in `myl-pod` als Prüfbau überschrieb die
+  vorgebauten Shard-Programme ohne `pruefnetz`, und fünf Testclient-Tests
+  scheiterten scheinbar an Last. Prüfbau dort nur mit `cargo test --no-run`.
+
+### v0.99.0 (2026-10-30): Die Zeugen auf der Platte
+
+Der offene Punkt aus v0.98.1: Die Vorhaltung der Zeugen muss den Abstand vom
+Prüfpunkt zur Spitze decken, sonst trägt die Selbstheilung eines
+zustandslosen Knotens nicht.
+
+- ⚑ **`zeugenablage`** (neues Modul): Erzeuger und Zeugenhalter legen die
+  unterschriebenen Stücke jedes Blocks auch auf die Platte, eine Datei je
+  Block, neben der Kettendatei (`<kette>.zeugen`, sonst im
+  Protokollverzeichnis). **Ein Fenster nach Höhe**, drei
+  Prüfpunktabstände (450 Blöcke), nicht nach Bytes; 4 GiB als Notbremse.
+  Ein Zwischenspeicher: beim Start geleert, ohne Schreibprotokoll. Eine
+  Nachfrage liest erst den Speicher, dann die Platte.
+- **Vorbild NEAR**, geprüft: Dort halten Validatoren Zeugen nur für die
+  Spitze und holen beim Rückstand den Zustand (State Sync). Unser leichter
+  Abzug ist das Gegenstück, verankert aber am Prüfpunkt; deshalb das
+  Fenster bis zur Spitze. Unter echter Last (ein voller Block bei einer
+  Million Konten bringt Zeugen im MB-Bereich) fassten 64 MiB im Speicher
+  nur einige Dutzend Blöcke.
+- Keine neue Angriffsfläche: Die Dateinamen entstehen allein aus Höhe und
+  Hash, der Empfänger prüft jedes Stück wie bisher, eine beschädigte Datei
+  liest sich als nichts.
+- ⚑ **`zustandslos_nur_abzug`**: Nach drei Neuverankerungen ohne einen
+  Block mit Zeugen dazwischen meldet der Knoten, dass er nur noch springt.
+  `groessen` trägt `zeugen_platte_bytes`, `zeugen_platte_bloecke` und
+  `zeugen_platte_fehler`.
+- Tests `das_fenster_folgt_der_hoehe`, `die_grenze_und_eine_beschaedigte_datei`,
+  `zeugenstuecke_kommen_auch_von_der_platte`.
+
+### v0.98.2 (2026-10-30): Doppelbelege am Epochenwechsel aufgeräumt
+
+- Der Epochenwechsel ruft `doppelbelege_aufraeumen` (CONSENSUS 0.76.0)
+  neben dem Aufräumen der Sitzungen.
+- Kurzlauf `kurz-morgen` mit Trennungen und Laststufen bestanden: Der
+  zustandslose Miner folgte nach beiden Trennungen wieder mit Zeugen (zwei
+  Neuverankerungen, danach 1934 Blöcke mit Zeugen), Zeugen im Median unter
+  1 KB; die Halter lieferten.
+
+### v0.98.1 (2026-10-30): Zeugennachfragen reihum
+
+📌 Fund aus dem langen Podlauf `nacht-bereit`: Der zustandslose Miner fragte
+nie einen der vollen Miner, die Zeugen bereithielten. Weitere Gegenstellen
+waren immer dieselben ersten vier, und in die Quellen kommt nur, wer schon
+geliefert hat. Über den ganzen Lauf kam jedes Stück vom Erzeuger; nach einer
+Trennung lief er bei 188 Nachfragen in Zeitüberschreitungen, und der
+zustandslose Knoten kam viermal nur über einen leichten Abzug weiter (die
+Selbstheilung trug, die Zeugen nicht).
+
+- ⚑ **Reihum durch die Gegenstellen** (`reihum`): je Runde höchstens vier
+  weitere, beginnend dort, wo die letzte aufhörte; nach `ceil(len / 4)`
+  Runden war jede dabei, und wer liefert, bleibt als Quelle. Keine neue
+  Angriffsfläche: Es bleiben vier Anfragen je Runde, angenommen wird wie
+  bisher nur von Erzeugern oder eingetragenen Minern.
+- Test `jede_gegenstelle_kommt_dran`.
+- 📌 **Warum der zustandslose Miner ab 04:15 gar nicht mehr folgte**: Die
+  Zeugen waren auf einen Median von 526 KB gewachsen (Ursache: CONSENSUS
+  0.75.0, Credits ohne Zusammenlegen). Gehalten werden 64 MiB, also rund
+  100 Blöcke; der leichte Abzug setzt am Prüfpunkt an, 300 bis 400 Blöcke
+  hinter der Spitze. Nach jedem Sprung hielt niemand mehr den Zeugen des
+  nächsten Blocks, und alle 30 s folgte der nächste Sprung.
+- ⚠️ **Offen, zur Entscheidung**: Die Vorhaltung muss mindestens den
+  Abstand zwischen Prüfpunkt und Spitze decken, auch bei grossen Zeugen
+  (ein Block darf bis 48 MiB Zeuge haben). Vorschlag: Zeugenhalter legen
+  die Zeugen der letzten zwei Prüfpunktabstände auf die Platte (Ring nach
+  Höhe), im Speicher bleibt nur das Jüngste.
+
+### v0.98.0 (2026-10-30): `--zeugen-bereithalten`
+
+📌 Anlass aus dem Kurzlauf: Nur der Erzeuger hielt Zeugen. Als er am Ende
+anhielt, lag der zustandslose Miner 136 Blöcke zurück und kam nie mehr
+weiter.
+
+- ⚑ **`--zeugen-bereithalten`**: Ein voller Knoten zeichnet beim Übernehmen
+  auf wie ein Erzeuger, hält den Zeugen jedes Blocks und unterschreibt die
+  Stücke mit seinem Konsensschlüssel; zustandslose Knoten bekommen sie auf
+  Nachfrage. Gemessen kostet die Aufzeichnung rund 10 ms je Block bei einer
+  Million Konten.
+- ⛔️ **Wer direkt liefern darf**: ein Erzeuger aus dem Stimmsatz wie bisher,
+  sonst nur ein **eingetragener Miner unter seinem eingetragenen
+  Schlüssel**. Ein Wegwerfschlüssel kostet nichts, eine Eintragung schon.
+  Weitergeleitet wird über das Gossip weiter nur, was ein Erzeuger
+  unterschrieb.
+- ⛔️ **Ein falscher Zeuge wirft keinen Block hinaus**: Trägt der Zeuge eines
+  anderen als des Erzeugers nicht, wartet der Block weiter, und der
+  Unterzeichner ist gesperrt (höchstens 64 gemerkt). Sicher war es schon
+  vorher, denn ein Zeuge belegt sich über die Wurzel vor dem Block;
+  ohne diese Sperre hätte aber jeder Miner einem zustandslosen Knoten
+  Blöcke aus der Warteschlange werfen können.
+- Tests `ein_voller_knoten_haelt_zeugen_bereit` (Alpha hält zurück, Beta
+  folgt 100 Blöcke allein mit Gammas Zeugen, ohne leichten Abzug) und
+  `ein_unbekannter_unterzeichner_liefert_keine_zeugen` (ein nicht
+  eingetragener Gamma bringt Beta keinen Block weiter).
+
+### v0.97.0 (2026-10-30): `--baum-auf-platte`
+
+Punkt 1 der Festlegung vom 2026-10-29 (SHARED_TYPES 0.62.0, CONSENSUS
+0.73.0).
+
+- ⚑ **`--baum-auf-platte`**: Ein voller Knoten lagert den grossen
+  Zustandsbaum in Seiten aus, neben der Kettendatei (`<kette>.baum`, sonst
+  im Protokollverzeichnis); im Speicher bleibt der obere Baum. Der Knoten
+  baut ihn beim Start neu (ein Zwischenspeicher). `groessen` trägt
+  `baum_im_speicher` und `baum_seiten_bytes`.
+- Test `ein_erzeuger_mit_dem_baum_auf_der_platte`: Alpha erzeugt mit
+  ausgelagertem Baum, Gamma (voll, im Speicher) und Beta (zustandslos, mit
+  den Zeugen aus dem ausgelagerten Baum) folgen mit derselben Wurzel.
+- Alle Kisten grün (Knoten 439), Clippy sauber; im Testclient fielen
+  `netzlauf` und `pod_ueber_knoten` im vollen Lauf unter Last aus und
+  liefen allein grün.
+
+### v0.96.0 (2026-10-30): Die Ausschüttung in Partitionen
+
+Punkt 2 der Festlegung vom 2026-10-29 (nach Solanas SIMD-0118, geprüft
+gegen Cosmos F1 und Bittensor [3]).
+
+- ⚑ **Der Epochenwechsel merkt die Ausschüttung vor**
+  (`epochenausschuettung_vorgemerkt`, TOKENOMICS 0.25.0), und **jeder Block
+  bucht höchstens 4096 Vormerkungen** (`auszahlungen_buchen`, gleich nach
+  dem Abschluss eines Wechsels, also auch im Wechselblock selbst). Bei
+  wenigen Minern ist damit alles im selben Block bezahlt wie bisher; bei
+  sehr vielen bleibt jeder Block und sein Zeuge begrenzt. `groessen` trägt
+  `auszahlungen_offen`.
+- Test `der_abzug_besteht_nur_gegen_seinen_anker` fälscht jetzt einen Wert
+  in kanonischer Form (das letzte Byte des Zustands ist nun eine
+  Längenangabe und liest sich verfälscht gar nicht mehr).
+- Alle Kisten grün (Knoten 438), Clippy sauber.
+
+### v0.95.0 (2026-10-30): Der jüngste Anker, Selbstheilung, keine stummen Antworten
+
+Festlegung des Projektinhabers vom 2026-10-29: die drei offenen Punkte der
+Skalierung umsetzen, nach Recherche und kritischer Prüfung. Dies ist Punkt 3
+(nach dem Vorbild der Checkpoint-Synchronisation von Ethereum: einsteigen am
+jüngsten bestätigten Punkt, abgeglichen mit mehreren Quellen).
+
+- ⚑ **Der jüngste Anker**: Ein zustandsloser Knoten sammelt Zertifikate
+  `ANKER_SAMMELN` (2 s) lang von mehreren Gegenstellen und nimmt das höchste,
+  das gegen seinen Stimmsatz trägt; eines unter der eigenen Höhe zählt nicht.
+  Vorher galt das erste, und ein gültiges, aber altes Zertifikat einer
+  einzelnen Gegenstelle führte zu einem Abzug, den niemand mehr hat.
+- ⚑ **Selbstheilung**: Steht ein zustandsloser Knoten `STILLSTAND_HOECHSTENS`
+  (30 s) still, obwohl Blöcke mit belegtem Erzeuger darüber ankamen (etwa
+  weil ein Erzeuger seine Zeugen zurückhält), sucht er einen jüngeren
+  verankerten leichten Abzug und springt dorthin; die leichten Abzüge legen
+  alle vollen Knoten ab, unabhängig vom Erzeuger. Derselbe Schutz wie beim
+  Einstieg: ein Zertifikat von mehr als zwei Dritteln. `auf_abzug_setzen`
+  erlaubt einem zustandslosen Knoten dafür, vorwärts neu aufzusetzen.
+  Gemessen wird an der höchsten Höhe mit belegtem Erzeuger, nicht an
+  Behauptungen von Gegenstellen (die leere Antworten senken).
+- ⛔️ 📌 **Die neuen Nachforderungen antworten nie mit `Nichts`**: Antworten
+  tragen keine Kennung, und ein `Nichts` wurde der laufenden Nachforderung
+  an dieselbe Gegenstelle zugeschrieben. Ein voller Knoten ohne Zeugen
+  antwortete auf Zeugenstücke mit `Nichts`, und der Zustandslose hielt ihn
+  darauf für leer an Blöcken und Abzügen und sperrte ihn; ein Erzeuger, der
+  Zeugen zurückhält, konnte so auch den Abzug sperren. Jetzt leere
+  `Zeugenstuecke`, `Kontobeweise` mit Höhe 0 und
+  `LeichterAnker(Option<…>)`. Während ein Abzug kommt, fragt der Knoten
+  keine Zeugen nach.
+- Test `ein_zustandsloser_knoten_heilt_sich_ueber_einen_juengeren_anker`:
+  Alpha hält Zeugen über zwei Prüfpunkte zurück (Testschalter
+  `zeugen_zurueckhalten`), Beta springt über einen leichten Abzug und folgt
+  danach; dieselbe Wurzel. Sechs zustandslose Netztests zweimal grün, Clippy
+  sauber.
+
+### v0.94.0 (2026-10-29): Zustandslos im Probenetz, Zeugen in den Grössen
+
+- **Probenetz**: Ein zustandsloser Knoten führt die zwölf Probekonten wie
+  eigene (aus Zeugen und Kontobeweisen); sonst sähe er sie leer und käme
+  über den Probehahn nie an Guthaben, Einsatz und Anmeldung. Der Probehahn
+  liest sie über `Kette::konto` und nimmt nur bekannte.
+- **`groessen`** trägt `zustandslos`, `zeugenlos`, `zeugenstuecke_bytes` und
+  `eigene_unbekannt`, für die Auswertung im Podlauf.
+- ⚠️ **Offen, für eine eigene Entscheidung**: Die Ausschüttung am
+  Epochenwechsel berührt das Auszahlungskonto jedes Miners mit Arbeit. Bei
+  sehr vielen Minern (über rund 50 000) wird der Zeuge dieses einen Blocks
+  grösser als 48 MiB. Abhilfe wäre eine Auszahlungswarteschlange über
+  mehrere Blöcke; sie verschiebt Auszahlungszeitpunkte.
+- 📌 **Aus dem ersten Podlauf** (`kurz-zustandslos` bis `5`):
+  - Der zustandslose Miner fragte Zeugen beim Weiterreicher (ein voller
+    Knoten ohne Zeugen), beim Erzeuger nur, wenn er als Miner eingetragen
+    ist, und bei den ersten vier Gegenstellen; der Erzeuger war nicht
+    darunter, und Block 1 bekam nie seinen Zeugen. Jetzt fragt er auch, wer
+    ihm zuletzt tragende Zeugenstücke brachte (`zeugen_quellen`).
+  - Er holte mit rund 11 Blöcken je Sekunde nicht an eine Spitze mit 16
+    auf: Nachgeforderte Blöcke fragen ihren Zeugen jetzt sofort
+    (`zeugen_eilig`), die Pflege läuft auch nach jeder Blocklieferung, das
+    Fenster ist 128 Blöcke, eine Nachforderung nennt bis 128 Stücke.
+  - Protokollzeilen `zeuge_fertig`, `wartet_auf_zeuge`,
+    `zeugenstueck_liegt` für die Auswertung.
+- **Kurzlauf `kurz-zustandslos5` bestanden**: Der zustandslose Miner
+  übernahm 7730 Blöcke mit Zeugen, sagte zu und bekam 40,0 Mio. auf sein
+  Auszahlungskonto (die anderen im Mittel 39,5 Mio.), mit 0 Konten im
+  Zustand; der späte zustandslose Einsteiger stieg über einen leichten
+  Abzug bei 7500 (7668 Bytes) ein und war nach 5 s an der Spitze;
+  `zeugenlos` 0, eine Wurzel.
+- Test `ein_zustandsloser_knoten_steigt_ueber_einen_leichten_abzug_ein`
+  wartet jetzt auf alle eigenen Konten (sie kommen in Bündeln zu acht).
+  Clippy sauber.
+
+### v0.93.0 (2026-10-29): Der leichte Abzug, Kontobeweise, keine Kettendatei für Zustandslose
+
+- ⚑ **Leichte Abzüge an jedem Prüfpunkt** (alle 150 Blöcke): Ein voller
+  Knoten mit Ablage legt neben die vollen `leicht-<höhe>.dat` ab (Register,
+  Kopf, Wurzel des grossen Baums; im Test 752 Bytes), behält die jüngsten
+  vier und merkt sich die zuletzt angewandten Prüfpunktzertifikate. So
+  rechnet ein zustandsloser Neuling höchstens rund 150 Blöcke mit Zeugen
+  nach; an Epochengrenzen allein wären es bis zu 1800, und so viele Zeugen
+  hält niemand bereit.
+- ⚑ **Der Anker** eines leichten Abzugs: der des Betreibers (`--abzug`),
+  oder **ein Prüfpunktzertifikat**, das der Knoten gegen seinen Stimmsatz
+  prüft (`Kette::anker_aus_zertifikat`; ohne Satz keiner). Eine
+  Gegenstelle liefert nur Bytes. Ohne Anker und Satz (Probekette) folgt
+  er ab Genesis, nach zehn Sekunden Suche.
+- ⚑ **Kontobeweise**: Nach einem leichten Abzug kennt der Knoten seine
+  eigenen Konten nicht; er fragt nach Beweisen, hält sie, bis seine Höhe
+  ihre erreicht, und setzt sie nur ein, wenn sie gegen seine eigene Wurzel
+  tragen. Ein Zeuge, der das Konto berührt, bringt es ebenso. Solange es
+  unbekannt ist, sendet er keine eigenen Transaktionen (die Nummer läge
+  sonst am Boden einer neuen Epoche, weit über der wirklichen).
+- ⚑ **Ein zustandsloser Knoten führt keine Kettendatei**: Er könnte sie ohne
+  Zeugen nicht nachrechnen. Nach einem Neustart steigt er über einen
+  leichten Abzug ein.
+- Nachforderungen `LeichterAnker`, `LeichterAbzug`, `Kontobeweise`
+  (angehängt; gedrosselt wie Blöcke beziehungsweise Archiv).
+- ⛔️ **Aus der Angriffsprüfung:**
+  - Gehalten werden die niedrigsten Kontobeweise ab der eigenen Höhe,
+    höchstens 64 voraus. Hielte er die höchsten, belegte eine erfundene
+    ferne Höhe den Platz für immer.
+  - Eine lernende Kette übernimmt den Erzeuger des nächsten Blocks auch
+    nach einem Abzug in die Erzeugerliste (höchstens vier). Bisher nur vor
+    Block 1, und nach einem Abzug wies der Netzfaden alle Zeugenstücke ab.
+- **Restpunkt** (Lebendigkeit, nicht Sicherheit): Ein gültiges, aber altes
+  Zertifikat führt zu einem Abzug, den niemand mehr hat, oder zu einem
+  Abstand ohne Zeugen. Abhilfe später: kurz sammeln, den jüngsten nehmen.
+- Tests:
+  - `ein_zustandsloser_knoten_steigt_ueber_einen_leichten_abzug_ein`:
+    Anker bei 150, leichter Abzug, Aufholen mit Zeugen, eigenes Konto per
+    Kontobeweis, keine Kettendatei, dieselbe Wurzel.
+  - `erfundene_kontobeweise_belegen_den_platz_nicht`.
+  - `ein_anker_kommt_nur_aus_einem_tragenden_zertifikat`.
+- 437 Tests grün (gesperrt, offline), Clippy sauber.
+
+### v0.92.0 (2026-10-29): Die Rolle `--zustandslos` und die Zeugen im Netz
+
+- ⚑ **`--zustandslos`** (Festlegung des Projektinhabers vom 2026-10-29:
+  Rollen nach NEAR): Der Knoten lädt seine Kette wie jeder, wird dann
+  zustandslos (die eigenen Konten bleiben: Netz-, Konto-, Miner- und
+  Auszahlungskonto), übernimmt Blöcke nur mit Zeugen, erzeugt keine Blöcke
+  (mit `--erzeuger` zusammen startet er nicht), führt keinen Mempool und
+  abonniert keine Transaktionen (myl-net `Rolle`).
+- ⚑ **Der Erzeuger verbreitet zu jedem Block den Zeugen** in unterschriebenen
+  Stücken (CONSENSUS 0.69.0) auf `GossipTopic::Zeugen`; volle Knoten
+  abonnieren es nicht. Er hält die Stücke bis 64 MB bereit
+  (`Kette::zeugenstuecke`) und beantwortet **`Nachforderung::Zeugenstuecke`**
+  gebündelt (bis 32 je Anfrage, so viele, wie in eine Antwort passen).
+- ⚑ **Der Netzfaden leitet ein Zeugenstück nur weiter**, wenn es vollständig
+  lesbar ist, zu seinem Kopf passt und ein bekannter Blockerzeuger den Kopf
+  unterschrieben hat (`ProtokollValidator::zeugenstueck_traegt`, geteilte
+  `Erzeugerliste` aus dem Stimmsatz; leer weist alles ab). Nachgeforderte
+  Stücke gehen durch dieselbe Prüfung im Knoten.
+- **Der zustandslose Empfang**: Ein Block mit belegtem Erzeuger wartet je
+  Höhe auf seinen Zeugen (höchstens 32 voraus, der erste je Höhe gilt);
+  der Sammler erwartet dann nur noch dessen Kopf. Fehlt ein Zeuge nach 1 s,
+  fragt der Knoten gebündelt beim Weiterreicher, beim Erzeuger (wenn er als
+  Miner eingetragen ist) und bei bis zu vier weiteren Gegenstellen nach.
+- ⛔️ **Aus der Angriffsprüfung:**
+  - Ein Block löst erst etwas aus (Nachforderung, Erwartung an einen
+    Zeugen), wenn sein Erzeuger belegt ist; sonst könnten gefälschte hohe
+    Blöcke Nachforderungen anstossen oder echte Zeugen verdrängen.
+  - Eine lernende Kette (Probekette) übernimmt den Erzeuger in die Liste
+    nur für Block 1 bei Höhe 0 und höchstens vier; sonst brächte jeder
+    unterschriebene Block seinen Schlüssel hinein.
+  - Nachforderungen werden nur aus schon Unterschriebenem bedient; sonst
+    zwänge jede Anfrage den Erzeuger zu bis zu 32 BLS-Unterschriften.
+- 📌 **Beim Bau gefunden**:
+  - Das erste Zeugenstück kam vor dem Block an, und der Netzfaden kannte
+    den Erzeuger noch nicht; dafür die Nachforderung.
+  - Eine Verbindung trägt nur 16 Anfragen zugleich, und ein aufholender
+    Knoten verlor die Hälfte; deshalb gebündelt.
+  - Der Weiterreicher eines Blocks ist oft ein voller Knoten ohne Zeugen;
+    deshalb weitere Gegenstellen.
+- Tests in `tests/zustandslos.rs`:
+  - `ein_zustandsloser_knoten_folgt_mit_zeugen`: drei Knoten, Beta
+    zustandslos, Gamma voll ohne Zeugenstücke; dieselbe Wurzel, keine
+    Konten bei Beta.
+  - `ein_zustandsloser_knoten_holt_mit_zeugen_auf`: Beta kommt bei Höhe 25
+    dazu.
+  - `ein_gefaelschter_block_loest_beim_zustandslosen_nichts_aus`.
+  - Dazu `zeugenstuecke_nur_von_bekannten_erzeugern`.
+- 434 Tests grün, Clippy sauber.
+
+### v0.91.0 (2026-10-29): Der zustandslose Knoten kennt seine eigenen Konten
+
+- 📌 **Ohne eigene Konten keine Entlohnung**: Der Knoten liest sein Konto
+  auch ausserhalb der Blöcke, für die Nummern seiner Transaktionen
+  (Bündel, Festlegen und Aufdecken der Prüfaufträge, Schiedsstimmen,
+  Differenzmeldungen), für Einsatz, Guthaben und Probehahn. Zustandslos
+  stand dort ein leeres Konto; er hätte seine Arbeit mit falschen Nummern
+  eingereicht und wäre nicht entlohnt worden.
+- ⚑ **`zustandslos_machen(eigene)`** nimmt die eigenen Konten aus dem
+  vollen Stand mit; nach jedem geprüften Block werden die fortgeschrieben,
+  die der Zeuge abdeckt (aus geprüften Blöcken, also so verlässlich wie
+  die Wurzel). **`Kette::konto`** liefert sie; der Knoten liest seine
+  Konten nur noch darüber.
+- **Mempool beim zustandslosen Knoten**: Fremde Nummern kann er nicht
+  beurteilen und prüft sie nicht (das tun die vollen Knoten); die eigenen
+  schon. `mempool_bereinigen` liest je Absender einmal statt je
+  Transaktion.
+- Test `die_entlohnung_rechnet_auch_der_zustandslose_folger_nach`: sechs
+  Miner mit Auszahlungskonto, ein Pod, ein Bündel, Burns, Rückhalt nach
+  der Anlaufregel und Freigabe; der zustandslose Folger kommt zur selben
+  Wurzel, sieht den Lohn auf seinen eigenen Konten, jeder Block war
+  bezeugbar. `ein_zustandsloser_folger_rechnet_mit_zeugen_mit` prüft
+  zusätzlich Nummer und Guthaben der eigenen Konten.
+
+### v0.90.0 (2026-10-29): Der Zeuge je Block, der zustandslose Folger
+
+- ⚑ **Der Erzeuger hält zu jedem Block den Zeugen bereit** (zustandslose
+  Validierung, CONSENSUS 0.68.0): `baue_block` zeichnet auf, was das
+  Anwenden an grossen Sammlungen berührt, und legt den Zeugen (Borsh) zum
+  Blockhash, zusammen höchstens `ZEUGEN_HOECHSTENS_BYTES` (64 MB);
+  `eigener_zeuge`. **`zeugenlos`** zählt Blöcke ohne Zeugen (ein Zugriff
+  über eine ganze grosse Sammlung im Blockpfad): null, sonst ein Fund.
+- ⚑ **`zustandslos_machen` und `uebernimm_mit_zeuge`**: Ein zustandsloser
+  Knoten hält keine Konten, Sitzungen, Manifeste und Hinterlegungen und
+  übernimmt einen Block nur mit Zeugen; trägt er nicht (fremde Wurzel,
+  falscher Eintrag, ein Zugriff daneben), bleibt der Zustand, wie er war:
+  `KettenFehler::ZeugeTraegtNicht`, im Protokoll `zeuge-traegt-nicht`.
+  Er erzeugt keine Blöcke und legt keine Abzüge an. Der Transport im Netz
+  und die Rolle im Knoten folgen.
+- ⚑ **Abgelaufene Sitzungen aus den Ablauffächern**; die Hinterlegung geht
+  für genau die weggefallenen zurück. 📌 Bis hierher suchte der
+  Epochenwechsel über alle Hinterlegungen.
+- **Leere Konten fallen am Ende jedes Blocks weg**
+  (`leere_konten_entfernen`), mit dem Nonce-Boden.
+- Test `ein_zustandsloser_folger_rechnet_mit_zeugen_mit` (über die
+  Epochengrenze, `zeugenlos` null; ohne Zeugen und mit unvollständigem
+  wird abgewiesen, nichts bewegt sich). 429 Tests, davon 428 grün; die
+  mDNS-Probe `zwei_knoten_ohne_angabe_finden_einander_im_lokalen_netz`
+  fiel im vollen Lauf und lief allein grün (Umgebung, bekannt). Clippy
+  sauber.
+
+### v0.89.0 (2026-10-29): Der Hauptfaden bleibt frei, nichts verfällt im Rückstau
+
+- **Die gebündelte Relaisleitung prüft in einer Rechenaufgabe**; aufgenommen
+  und beantwortet wird danach in der Schleife (`Weckruf::RelaisGeprueft`).
+  Im Hauptfaden hielt der Stapel bei 3000 je Sekunde Blockbau und Gossip
+  auf.
+- 📌 **`WARTEN_HOECHSTENS_HOEHEN` 64 auf 256**: Unter Rückstau verfielen
+  angenommene Transaktionen nach knapp 4 s (`durchsatz4`: 97 bei 3000/s),
+  bevor der volle Mempool Gegendruck gab; Unsinn begrenzt die Platzzahl.
+- 428 Tests grün, Clippy sauber.
+
+### v0.88.0 (2026-10-29): Der Speicher der geprüften Unterschriften
+
+- **`Kette::aufnehmen_geprueft`** nimmt eine `GepruefteTransaktion` (es
+  gibt sie nur durch eine Prüfung) und merkt sich ihre Kennung; der Block
+  prüft sie nicht noch einmal (CONSENSUS 0.67.0). Höchstens doppelt so
+  viele Kennungen, wie der Mempool Plätze hat; die ältesten fallen zuerst.
+  Gossip, gebündelte und einzelne Relaisleitung gehen darüber.
+- 428 Tests grün, Clippy sauber.
+
+### v0.87.0 (2026-10-29): Je Block nur das Geänderte
+
+- ⚑ **Die Wurzel je Block über den Zustandsbaum** (CONSENSUS 0.66.0):
+  `baue_block` und `uebernimm` schreiben sie fort; `uebernimm` rechnet auf
+  dem Zustand selbst, gesichert statt kopiert, und spielt bei falscher
+  Wurzel zurück. Die Protokollzeilen je Block nehmen `Kette::wurzel`
+  (bis hierher rechneten sie die volle Wurzel bei jedem Block neu).
+  `zustandswurzel()` bleibt die volle Rechnung für Tests und seltene
+  Prüfungen.
+- 📌 **Zwei volle Kopien des Zustands je Durchlauf der Miner-Schleife**
+  (`dateien_nachholen`, für die Zuteilung der nächsten Epoche) sind
+  durch einen Blick unter deren Epoche und Saat ersetzt.
+- 📌 **Der Abzug** prüfte über SHA-256 der Bytes, was die alte Wurzel war;
+  jetzt gelesen, gerechnet und auf dieselbe Form beim Zurückschreiben
+  geprüft.
+- 428 Tests grün, Clippy sauber.
+
+### v0.86.0 (2026-10-29): Ein Mempool, der Andrang aushält
+
+- ⚑ **Erst geprüft, dann im Mempool** (Skalierung, Festlegung des
+  Projektinhabers vom 2026-10-29): Transaktionen aus dem Gossip kamen
+  bisher ungeprüft in den Mempool, und ungültige verdrängten gültige.
+  Jetzt sammelt der Knoten sie bis 20 ms oder 256 Stück und prüft sie als
+  Stapel in einer Rechenaufgabe; die Hauptschleife wacht für das Ergebnis
+  auf (`Weckruf::Geprueft`).
+- ⚑ **Der Mempool** als eigene Struktur mit Zählern je Absender und für
+  Neulinge (die Aufnahme zählte bisher jedes Mal über alle Wartenden),
+  Bytes und Neulingsstand je Eintrag einmal bei der Aufnahme, 16 384 Plätze
+  statt 4 096. **Verdrängt wird nach dem Preis, gewählt nach Eingang**
+  (kritisch geprüft: Ein Trinkgeld gibt es nicht, eine Reihenfolge nach
+  Gebot belohnte nur hohe Obergrenzen): Ist er voll, fallen die
+  billigsten Enden der Nummernketten, die weniger bieten als die neue
+  Transaktion, nie eine aus der Mitte. Test
+  `ein_voller_mempool_verdraengt_das_billigste_ende`.
+- **Gezählt statt je Zeile**: Transaktionen stehen bis 100 je Sekunde
+  einzeln im Protokoll, darüber in der Sammelzeile `tx_zaehler`
+  (`tx_aufgenommen` entfällt). Bei 2000/s schrieb jeder Knoten zuvor rund
+  150 000 Zeilen in sieben Minuten.
+- 428 Tests grün, Clippy sauber.
+
+### v0.85.0 (2026-10-29): Gebündelte Annahme über die Relaisleitung
+
+- ⚑ **`Relaisfrage::Transaktionen`** (SHARED_TYPES 0.58.0): Die
+  Unterschriften werden als Stapel geprüft (`pruefe_alle`, gemessen rund
+  90 statt 470 µs je Stück), jede gültige wird verbreitet, die Antwort
+  nennt, wie viele der Mempool nahm. 📌 Einzeln (eine Verbindung und eine
+  Einzelprüfung je Transaktion im Hauptfaden) war die Leitung der Engpass:
+  Im Nachtlauf vom 2026-10-29 kam keine Laststufe über rund 350 je
+  Sekunde; gemessen war die Leitung, nicht das Netz.
+- 427 Tests grün, Clippy sauber.
+
+### v0.84.0 (2026-10-29): Einsatz und Rückbuchung
+
+- ⚑ **`--einsatz <betrag>`**: Ein Miner hinterlegt nach der Anmeldung
+  selbst so viel Einsatz, sobald sein Guthaben ihn trägt (der Probehahn
+  plant ihn ein). Bis hierher gab es im Betrieb keinen Weg dazu, nur in
+  Tests, und ohne Einsatz schlachtet ein Schiedsurteil nichts
+  (`gezielt19` und `gezielt21`: `NoStake`). Protokoll `einsatz_hinterlegt`.
+  Der Stimmsatz des laufenden Knotens hängt nicht am Einsatz.
+- ⚑ **Die Rückbuchung** (CONSENSUS 0.65.0): Am Wechsel werden die Anteile
+  uneiniger Paare als Vorbehalt abgelegt, ein Urteil „Pod falsch“
+  entscheidet ihn (auch wenn die Schlachtung mangels Einsatz scheitert),
+  und freie Vorbehalte gehen in die Ausschüttung. `aufnahme` nennt
+  `rueckbuchungen`.
+- ⚠️ `zwei_knoten_ohne_angabe_finden_einander_im_lokalen_netz` (mDNS) fällt
+  auf dieser Maschine gelegentlich, auch einzeln (einer von drei); die
+  übrigen 426 Tests grün, Clippy sauber.
+
+### v0.83.1 (2026-10-29): Spuren nach dem Wechsel werden angenommen
+
+- 📌 **Fund 680, Folge**: Seit das Podwerk erst einreicht und dann die
+  Spuren ablegt (COMPUTE_PIPELINE 0.56.0), kommen sie oft nach dem
+  Wechsel an, und die Ablage scheiterte mit „diesen Pod kennt die
+  Zuteilung nicht“ (`gezielt20`). `Kette::pod_der_kennung` sieht jetzt
+  zuerst in der aufgehobenen Zuteilung der abgelaufenen Epoche nach, die
+  bis zur Ziehung steht. Probe in `bezeugte_arbeit_erreicht_ein_konto`.
+
+### v0.83.0 (2026-10-29): Uneinige Zwillinge werden genau geprüft
+
+- ⚑ **Uneinige Paare am Wechsel** (Whitepaper 6.4, Festlegung des
+  Projektinhabers vom 2026-10-29): Die Zwillingsabrechnung vermerkt Paare
+  mit zwei verschiedenen Bündeln (`verschieden`); die Kette legt sie als
+  `Uneinigkeit` ab. **`Anweisung::DifferenzMelden`** legt daraus die
+  Prüfaufträge an (CONSENSUS 0.64.0).
+- **Der Weg des Beweises**: Der Ortsdienst schickt ihn
+  (`Relaisfrage::DifferenzMelden`, myl-pod 0.48.0); der Knoten reicht ihn
+  an die Koordinatoren beider Pods (`Nachforderung::Differenz`, Marke 18),
+  und jeder meldet ihn mit seinem Schlüssel; die Kette nimmt den ersten.
+  Schweigt der eine Koordinator, meldet der andere. Protokoll
+  `differenz_gemeldet`.
+- ⚑ **Der Checker richtet sich nach den Aufträgen im Zustand**, nicht nach
+  der letzten Ziehung (ein Differenzbeweis legt Aufträge auch ausserhalb
+  an), fragt die Besetzung des Auftrags und prüft gegen die Wurzel des
+  Auftrags.
+- 427 Tests grün, Clippy sauber.
+
+### v0.82.0 (2026-10-29): Die Selbstprobe und die Grössen je Epoche
+
+- ⚑ **Die Selbstprobe** (Fund 677, Festlegung des Projektinhabers vom
+  2026-10-29): Einmal je Epoche, in ihrer zweiten Hälfte (die Mitglieder
+  messen am Anfang, der Shard hat einen Platz für Zeitproben), misst der
+  Knoten seinen eigenen Shard mit einer Zeitprobe in der Grösse, die die
+  Mitglieder stellen. Braucht er je Token mehr als das Anderthalbfache
+  seiner Zusage (`frist::selbstprobe_zu_langsam`), reicht er für die
+  nächste Epoche eine langsamere ein (`frist::angepasste_ebenenzeit`: die
+  gemessene Zeit mit einem Viertel Luft); schneller wird sie nie von
+  selbst. Protokoll `selbstprobe`, mit Warnung. Whitepaper: Zusage und
+  Frist stehen dort nicht (Festlegung vom 2026-10-22); die Reserve (6.8)
+  bleibt unberührt. Test
+  `die_selbstprobe_verlangsamt_erst_ueber_dem_anderthalbfachen`.
+- **Die Grössen je Epoche** (Fund 677, um das Wachstum von rund 2,3 MB je
+  Epoche im Nachtlauf zu finden): `Kette::groessen` (Bytes des Zustands,
+  den jeder Block ganz hasht, und die Einträge jeder Sammlung) und die
+  eigenen Sammlungen des Knotens, als Protokollzeile `groessen`.
+- Der Nachrechner prüft jetzt als Prefill (VERIFICATION 0.27.0).
+- 427 Tests grün, Clippy sauber.
+
+### v0.81.0 (2026-10-29): Die Schiedsrunde und das Ende des Schlachtens ohne Beweis
+
+- ⛔️ **Fund 679: `SchuldspruchEinreichen` schlachtete ohne Beweis der
+  falschen Rechnung.** Der Beleg war die Unterschrift des Beschuldigten
+  über einen Übergang; er belegte, wen es trifft, und setzte voraus, dass
+  falsch gerechnet wurde. Jeder, der mit einem Miner gerechnet hatte,
+  besass eine solche Unterschrift und konnte einen Ehrlichen schlachten
+  lassen (`tests/urteilsweg.rs` zeigte genau das als Erfolg). Die
+  Anweisung bleibt in der Kodierung und wirkt nicht mehr; der Test belegt
+  jetzt das Gegenteil.
+- ⚑ **Geschlachtet wird über die Schiedsrunde** (Whitepaper 6.6,
+  Festlegung des Projektinhabers vom 2026-10-29): Eine aufgedeckte
+  Abweichung öffnet einen Streitfall (CONSENSUS 0.63.0). Jeder Validator
+  im Stimmsatz holt beim Anfechter den Schiedsbeleg
+  (`Nachforderung::Schiedsbeleg`, Marke 17: Verlauf mit Beweisen und die
+  Eingänge der strittigen Layer), prüft ihn gegen die Wurzel auf der
+  Kette, rechnet die Layer nach (`myl_verifier::schied_nachrechnen`) und
+  stimmt ab. Ohne Beleg bis zur Hälfte des Fensters stimmt er gegen die
+  Anfechtung. Die Kette entscheidet mit mehr als zwei Dritteln und bucht
+  nach der Matrix (`schiedsurteil_buchen`): der Beschuldigte verliert 100 %
+  seines Einsatzes, der Anfechter bekommt das Kopfgeld; oder der Anfechter
+  verliert seine Kaution. Fenster eine Epoche (`SCHIED_FENSTER_BLOECKE`).
+- Der Anfechter berechnet seinen Beleg gleich beim Nachrechnen und hält
+  ihn bereit. Protokoll: `schiedsbeleg_angefragt`,
+  `schiedsbeleg_eingegangen`, `schiedsstimme`, beim Erzeuger
+  `streitfall_entschieden`.
+- Damit ist auch die Lücke „Grenzen beim Beschuldigen nach dem laufenden
+  Stand“ geschlossen: Der Beschuldigte kommt aus der Besetzung der
+  gezogenen Epoche.
+- ⚠️ Ein Beleg muss in eine Antwort passen (4 MiB): beim 0,6B-Modell rund
+  tausend Positionen. Längere Sitzungen und grössere Modelle brauchen
+  einen Beleg in Stücken.
+- Test `ein_streitfall_schlachtet_den_beschuldigten_und_zahlt_dem_anfechter_kopfgeld`:
+  Abweichung aufgedeckt, Streitfall gegen das Mitglied mit Layer 0, eine
+  Stimme ausserhalb des Stimmsatzes zählt nicht, die berechtigte
+  entscheidet, 100 % des Einsatzes geschlachtet, 30 % Kopfgeld beim
+  Anfechter, der Folger auf derselben Wurzel. 426 Tests grün, Clippy
+  sauber.
+
+### v0.80.0 (2026-10-29): Zwei Checker, Festlegen vor Aufdecken, der Checker-Pool
+
+- ⚑ **Die Checker stehen in der Kette** (Festlegung des Projektinhabers vom
+  2026-10-29, Fragen 1, 2 und 4): Der Epochenwechsel legt die Kandidaten
+  ab (`Kette::pruefkandidaten`: Miner ohne Pod, je Pod der Ersatz aus den
+  übrigen Zwillingsgruppen), die Ziehung legt je Segment einen Prüfauftrag
+  mit zwei Checkern an, Fenster je eine Viertelepoche
+  (`PRUEF_FENSTER_BLOECKE`). `pruefer_der_stichprobe` kommt aus dem
+  Zustand; die eigene Wahl im Knoten ist entfallen.
+- **Der Ablauf im Knoten**: nachrechnen, den Befund samt Logits festlegen
+  (frisches Salz), aufdecken, sobald die Kette es erlaubt, beides gebündelt.
+  Protokoll: `pruefung_festgelegt`, `pruefung_aufgedeckt`,
+  `pruefung_abgeschlossen` (beim Erzeuger jeder Auftrag, sonst die
+  eigenen).
+- **Der Checker-Pool zahlt am Wechsel** nach `pruefvolumen`
+  (TOKENOMICS 0.24.0).
+- Test `ein_checker_ohne_pod_legt_fest_deckt_auf_und_wird_bezahlt`: sieben
+  Miner, einer ohne Pod; er legt fest, deckt auf, der Auftrag schliesst
+  einig ab, und der Pool bezahlt ihn am nächsten Wechsel; ein Folger kommt
+  auf dieselbe Wurzel. 425 Tests grün, Clippy sauber.
+- ⚠️ Die Zustandswurzel ändert sich (CONSENSUS 0.62.0).
+
+### v0.79.0 (2026-10-29): Der Checker aus der Bereitschaft rechnet nach
+
+- ⚑ **Zuteilung des Checkers** (Whitepaper 6.8, Festlegung des
+  Projektinhabers vom 2026-10-27): je Ziehung der Stichprobe ein Miner ohne
+  Pod der gezogenen Epoche, darunter der Pod in Bereitschaft, über
+  `SHA-256("myelith-pruefer" ‖ Epoche ‖ Pod ‖ Index)` modulo der geordneten
+  Kandidaten (`pruefer_waehlen`, `Kette::pruefer_der_stichprobe`). Pod und
+  Index sind schon die Ausgabe der Saat aus dem Zertifikat; es gibt keinen
+  zweiten Spielraum. Test `der_pruefer_ist_ein_kandidat_und_fuer_alle_derselbe`.
+- **Der Ablauf im Knoten**: Der zugeteilte Checker fragt die Mitglieder des
+  Pods nach dem Verlauf (`Nachforderung::Verlauf`, angehängt, Marke 16),
+  prüft die erste Antwort mit `verlauf_pruefen` gegen die Spurwurzel des
+  Zertifikats, lädt das Netzmodell bei Bedarf einmal (eingeblendet, also
+  mit den Shards geteilt) und rechnet in einer eigenen Rechenaufgabe nach
+  (`myl_verifier::verlauf_nachrechnen`). Protokoll: `pruefer_zugeteilt`,
+  `verlaufanfrage_eingegangen`, `verlauf_abgewiesen`,
+  `stichprobe_nachgerechnet` mit Ergebnis, Position, Layer und dem Mitglied,
+  dessen Bereich die Layer enthält.
+- 📌 **Jeder Knoten merkt sich die Ziehung**, nicht nur der Erzeuger:
+  `Kette::uebernimm` warf sie bisher weg, und im ersten gezielten Lauf
+  wurde viermal gezogen und kein Checker erfuhr von seiner Zuteilung. Beide
+  Wege gehen jetzt über `ziehung_merken` (dazu `ablaufende_zuteilung`,
+  `zuteilung_aufheben`); `bezeugte_arbeit_erreicht_ein_konto` führt einen
+  Folger mit, der dieselbe Ziehung, dieselben Checker und denselben Pod
+  kennen muss. Die Spuranfragen verschickt weiter nur der Erzeuger.
+- `stichprobe_gefragt` nennt die Checker der Ziehung (`pruefer`, als
+  Netzadressen); leer heisst: kein Miner ohne Pod in der gezogenen Epoche.
+- `ablage_pruefen` weist eine Ablage ab, deren Tokens nicht zu ihren
+  Einträgen passen.
+- Merkmal `pruefnetz` (reicht an `integer-llm-runtime` durch) für die
+  Netzproben mit dem kleinen Modell.
+- ⚠️ **Noch ohne Folgen auf der Kette**: Eine Abweichung steht nur im
+  Protokoll; eingereicht wird nichts. Die Grenzen beim Beschuldigten kommen
+  aus dem laufenden Stand, nicht aus der gezogenen Epoche; eine Sitzung über
+  einen Epochenwechsel ergibt eine Lücke.
+- 424 Tests grün (`zwei_knoten_ohne_angabe_finden_einander_im_lokalen_netz`
+  fiel einmal unter Last und lief danach dreimal durch).
+
+### v0.78.0 (2026-10-28): Der Probehahn trocknet nicht mehr aus
+
+- 📌 **Fund 675: Die Probekonten werden am Epochenwechsel nachgefüllt.**
+  Sie sind der Vorrat des Probehahns, und nichts füllte sie nach. Der
+  Testverkehr zahlt seine Gebühren aus ihnen, rund einmal je Sekunde und
+  Knoten; im Nachtlauf mit 30 Knoten auf zwölf Konten waren alle nach etwa
+  40 Minuten leer. Danach hatte die Lastphase nichts mehr zum Ausstatten
+  (ab 400/s null aufgenommen), und der späte Einsteiger fand 452 mal einen
+  leeren Hahn und kam nie zur Zusage. Jetzt füllt `Kette::probepraegung`
+  ein Probekonto unter der Hälfte wieder auf `PROBEGUTHABEN` auf, nur auf
+  der Probekette (wo die Probeprägung nicht null ist). Erst unter der
+  Hälfte, damit kleine Abgänge wie eine Hinterlegung in der Rechnung
+  bleiben. Test `der_wechsel_fuellt_ein_leeres_probekonto_auf`, dazu die
+  Gegenprobe im Testnetz.
+- ⚠️ Die Zustandswurzel der Probekette ändert sich damit; eine Kette einer
+  älteren Fassung lässt sich nicht weiterführen.
+
+### v0.77.0 (2026-10-28): Stufe 1, vergütet wird nur, was zwei Pods gleich rechnen
+
+- ⚑ **Die Kette vergütet Inferenz nach Zwillingspaaren** (Whitepaper 3.4,
+  3.5.2 und 5.3; Festlegung des Projektinhabers vom 2026-10-28).
+  `Kette::zwillinge_der_laufenden_epoche` bildet die Paare aus den Pods mit
+  Schnitt (`myl_scheduler::zwillingspaare`, CONSENSUS 0.61.0). Am
+  Epochenwechsel (`nach_zwillingen`): Haben beide ein gültig unterschriebenes
+  Bündel mit derselben Ausgabenwurzel (nicht null) und derselben
+  Segmentzahl (`zwillinge_einig`), bekommt jeder die Hälfte seiner vTFE
+  (Redundanz-Normierung); uneinig oder ohne Bündel des Zwillings keiner
+  (ein Fall für die Stichprobe, die weiter aus allen gültigen Bündeln
+  zieht). ⚠️ Ein Pod ohne Zwilling (ein Netz mit einem Pod, oder ein
+  übriger) wird wie bisher allein vergütet. Vorher bezahlte die Kette das
+  unterschriebene Bündel eines Pods; ein Pod, in dem alle logen, wurde
+  bezahlt.
+- **Das Podbild der Relaisleitung nennt den Zwilling**; der Ortsdienst rechnet
+  damit jeden Auftrag auch über ihn (COMPUTE_PIPELINE 0.54.0).
+- **Zähler** `zwillinge_einig`, `zwillinge_uneinig` im Zustand, in der
+  Zeile `aufnahme` und als `myelith_zwillinge_einig_total`,
+  `myelith_zwillinge_uneinig_total`; dazu `credit_preis` und
+  `myelith_credit_preis`.
+- Probe `zwillinge_werden_nur_einig_vergutet` mit Gegenproben (andere
+  Wurzel, andere Segmentzahl, Wurzel null, ein Bündel fehlt: keiner;
+  keiner hat etwas: nichts gezählt; ohne Zwilling: voll).
+- ⚑ **Die Reserve übernimmt eine ausgefallene Position** (Whitepaper 6.8,
+  Festlegung des Projektinhabers vom 2026-10-28, wie Petals: der Weg ersetzt
+  sofort). Neue Nachforderung `PositionUebernehmen` (Marke 14) mit Antwort
+  `Nachlieferung::Uebernahme` (Marke 13), über die Relaisleitung
+  (`Relaisfrage::Uebernahme`) an das Reservemitglied. Es prüft gegen die
+  Kette (`shardfuehrung::uebernahme_pruefen`: laufende Epoche, Reserve
+  dieses Pods, Position vorhanden, Zusage hält die Ebenen) und rechnet die
+  Position bis zum Ende der Epoche (`uebernahme`, Protokollzeile
+  `position_uebernommen`). Die Kette nimmt für eine Position die
+  Unterschrift des Vertreters an (`unterzeichner_des_buendels` mit
+  `PoIBundle.vertreter`: nur ein Reservemitglied dieses Pods, jede Position
+  und jeder Vertreter höchstens einmal), lässt ihn für die erste Position
+  einreichen und vergütet die Position an ihn. ⚠️ **Abweichung von der
+  Festlegung:** vergütet wird je Bündel an den, der für die Position
+  unterschreibt, nicht je Segment; dafür braucht es Unterschriften je
+  Segment (mit dem Nachrechnen). Proben `die_reserve_vertritt_eine_position`
+  und `nur_die_reserve_uebernimmt_eine_position` (je mit Gegenproben),
+  Markenprobe erweitert.
+- ⚑ **Die Stichprobe bekommt eine Spur** (Stufe 2, Whitepaper 3.5.2 und
+  6.4). Jedes Mitglied hebt die Spuren des eigenen Pods auf (`spurablagen`,
+  höchstens 16), abgelegt über die neue Nachforderung `SpurenAblegen`
+  (Marke 15, Antwort `Nachlieferung::Abgelegt`, Marke 15) und
+  `Relaisfrage::SpurenAblegen`. ⚑ Angenommen wird nur, was zum Knoten
+  gehört (`shardfuehrung::ablage_pruefen`: Mitglied des Pods, Position oder
+  Reserve, mit Einträgen, deren Zeugnisse die genannte Wurzel ergeben);
+  sonst Protokollzeile `spurablage_abgewiesen`. Eine Spuranfrage beantwortet
+  der Knoten aus der Ablage, deren Wurzel die des Bündels in der Kette ist
+  (`stichprobe_wurzeln`, CONSENSUS 0.61.0), mit Zeugnis, Beweis und Spur
+  (`Nachlieferung::Spur`, Marke 14). Der Erzeuger prüft die Lieferung mit
+  `myl_types::lieferung_pruefen` und schreibt `spur_geprueft` mit dem
+  Ergebnis (`traegt`, `ohne Wurzel` oder der Fehler). ⚠️ Nachgerechnet
+  wird noch nicht; dafür fehlt die Eingabe des Segments. ⚠️ Wer ablegt, ist
+  nicht unterschrieben: Ein Mitglied desselben Pods kann eine erfundene
+  Ablage danebenlegen, zählt beim Antworten aber nicht, weil nur die Wurzel
+  aus der Kette gilt. Probe `nur_ein_mitglied_legt_eine_stimmige_spur_ab`
+  mit Gegenproben (kein Mitglied, falsche Wurzel, ein Eintrag fehlt, leer),
+  Markenprobe erweitert.
+- ⚑ **Zwillingsgruppen und Anlaufregel** (Whitepaper 3.4 und 3.5.2,
+  Festlegung des Projektinhabers vom 2026-10-28). Die Kette vergütet nach
+  `myl_scheduler::zwillingsgruppen` (CONSENSUS 0.61.0). ⚑ Ein übriger Pod
+  steht in **Bereitschaft**: Sein Bündel wird weder vergütet noch
+  zurückgehalten (Festlegung des Projektinhabers: statt einer
+  Dreiergruppe; später Checker). ⚑ **Ein Pod allein** (gar kein Paar, also
+  ein Netz mit einem Pod) wird nicht mehr sofort vergütet: Seine Gutschrift wartet bis nach der Streitfrist
+  (`SPERRFRIST_EPOCHEN`) in `zurueckgehalten` und kommt dann in die
+  Ausschüttung jener Epoche (`zurueckhalten_und_freigeben`), und jedes
+  seiner Segmente wird gezogen, höchstens `VOLL_GEZOGEN_HOECHSTENS` = 64
+  (`voll_ziehen`). Vorher wurde er voll und sofort bezahlt, ohne Vergleich;
+  im Lauf saß der Fälscher einmal allein in einem Pod und wurde bezahlt.
+  ⚠️ Abweichung vom Whitepaper, nur für den Anlauf eines kleinen Netzes:
+  r = 1 mit voller Stufe 2. Bis zum Nachrechnen hält die Regel die Zahlung
+  zurück und verlangt die Spuren mit Beweis. Die Zeile `aufnahme` trägt
+  `zurueckgehalten`. Proben `zwillinge_werden_nur_einig_vergutet` (ein Pod
+  allein: zurück; einer in Bereitschaft, der trotzdem einreicht: weder Lohn
+  noch Rückhalt) und
+  `ein_pod_allein_wird_zurueckgehalten_und_voll_gezogen` (Gegenproben: eine
+  Epoche vor der Freigabe nichts, Nullen nicht gehalten, Deckel der
+  Ziehung).
+- ⚑ **Der Pod in Bereitschaft kommt nicht in die Zuteilung**
+  (`zuteilung_der_laufenden_epoche`): Seine Miner stehen bei `ohne_pod`.
+  So startet er keine Shards, wird von der Zeitprobe nicht gemessen (sonst
+  sperrte sie ihn als Verweigerer) und reicht nichts ein, an jeder Stelle
+  gleich. Die Paare der übrigen bleiben dieselben, weil die Paarbildung ihn
+  nie wählte. Probe `die_zuteilung_aendert_sich_waehrend_ihrer_epoche_nicht`
+  angepasst: achtzehn Miner ergeben zwei rechnende Pods und sechs in
+  Bereitschaft. `bezeugte_arbeit_erreicht_ein_konto` folgt der
+  Anlaufregel (ein Pod allein: zurückgehalten, voll gezogen).
+- 📌 **Fund 674: Nicht erreicht ist keine Weigerung.** Ein Knoten hält
+  höchstens 16 ausgehende Verbindungen (`myl_net::MAX_AUSGEHEND`); sind sie
+  belegt, scheitert das Wählen zu einem Pod-Mitglied, mit dem er noch nicht
+  verbunden ist („Failed to dial the requested peer“). Die Zeitprobe zählte
+  das seit Fund 660 wie eine Abweisung: Im ersten Lauf mit 29 Knoten (vier
+  Pods) bekamen fünf ehrliche Miner sieben Zeugnisse; mit 13 Knoten war
+  jeder mit jedem verbunden, also fiel es nie auf. Jetzt fragt die Messung
+  nach einem Wählfehler (`ist_waehlfehler`) in 4 bis 8 s neu, ohne zu
+  zählen (`messung_unerreicht`, Protokollzeile `zeitprobe_unerreicht`).
+  ⚠️ Restlücke: Wer sich für Messende unerreichbar macht, wird nicht
+  gemessen; sein Pod erreicht ihn dann aber auch nicht, und er wird nicht
+  vergütet. ⚑ **Abhilfe gebaut (N1):** `vorrang_pflegen` setzt je Epoche
+  den Vorrang in den Verbindungsgrenzen (NETWORKING 0.22.0) für die
+  Mitglieder des eigenen Pods, ein Torknoten mit Relaisleitung dazu für die
+  aller Pods (Protokollzeile `vorrang`). Ein Wählfehler zählt weiter nicht
+  als Weigerung; das bleibt, bis der Vorrang im Netz belegt ist.
+  Probe `nicht_erreicht_ist_keine_weigerung` (zehn Wählfehler: kein
+  Verdacht, die Messung bleibt; Gegenproben: Zeitüberschreitung und
+  geschlossene Verbindung sind keine Wählfehler, eine Abweisung in
+  derselben Lage endet im Verdacht; der Text von libp2p festgehalten).
+- Die Proben der Abweisung (`abweisung_tests`) räumen ihren Ordner unter
+  dem Zwischenordner nach dem Bestehen auf; bisher blieb je Lauf einer
+  liegen.
+- ⚠️ Zustand, Bündel und Podbild ändern ihr Format; eine Kette einer älteren
+  Fassung lässt sich nicht weiterführen.
+- `myl-node` 0.77.0. 420 Tests grün, Clippy sauber; mit den neuen Typen
+  geprüft: `myl-types` 335, `myl-scheduler` 132, `myl-ledger` 118,
+  `myl-consensus` 285, `myl-tokenomics` 243, `myl-net` 120, `myl-verifier`
+  122, `myl-governance` 96, `myl-pod` 166, `myl-gateway` 55, `myl-client`
+  208, `myl-testclient` 299, `myl-simulation` 6.
+
+### v0.76.0 (2026-10-28): Eine Verweigerung der Zeitprobe zählt; die Messplanung im Protokoll
+
+- 📌 **Fund 660 behoben: Wer jede Zeitprobe abwies, wurde nie gemessen.**
+  Ein `Nichts` oder eine gescheiterte Anfrage warf die Messung samt ihrer
+  beantworteten Proben weg, und bei der nächsten Aufnahme begann eine
+  neue. ⚑ Festlegung des Projektinhabers vom 2026-10-28: Eine Abweisung
+  durch einen Positionsinhaber zählt wie eine Überschreitung, mit
+  denselben zwei Fenstern und derselben Mehrheit; nach einer Abweisung
+  fragt der Messende mit Abstand erneut. Jetzt bleibt die Messung stehen,
+  fragt nach 2 bis 4 s, danach nach 4 bis 8 s mit neuer Saat erneut
+  (`frist::abstand_nach_abweisung`), und endet erst als Überschreitung,
+  wenn mindestens vier Abweisungen in Folge zusammen länger dauern als
+  dreimal so lange, wie alle Messenden des Pods je eine Probe brauchen
+  (`frist::nach_abweisung`, `frist::abweisungsdauer`). Ohne beantwortete
+  Probe zählt sie, als wäre die Probe in ihre Grenze gelaufen. Eine Antwort
+  setzt die Folge zurück.
+- ⚑ **Eine bestandene Probe beendet die Messung** (`frist::messung_fertig`):
+  Hält die kürzeste Probe schon die Frist, können weitere sie nur
+  verkürzen; das Urteil bleibt dasselbe, und der einzige Platz für
+  Zeitproben des Gemessenen wird früher frei.
+- **Warum diese Zahlen, simuliert statt geschätzt** (Probe
+  `ehrliches_gedraenge_ist_keine_verweigerung`): Ein Ehrlicher weist ab,
+  wenn sein Platz belegt ist, und zu Beginn des Fensters fragen alle
+  zugleich. Mit vier Abweisungen ohne Mindestdauer endeten bei fünf
+  Messenden rund 18 % der Runden mit einer falschen Überschreitung, bei
+  sieben über 80 %; mit der einfachen Dauer bis zu 80 % (5 bis 23
+  Messende); mit der dreifachen keine von 72 000 (4 bis 23 Messende,
+  Startstreuung 2 s und 30 s, Weg 50 bis 600 ms). Gegenproben in der Probe:
+  einfache Dauer und fünf Proben statt des frühen Endes werden rot; ein
+  Verweigerer erreicht bei jedem Messenden die Überschreitung. Probe
+  `eine_lange_verweigerung_ist_eine_ueberschreitung` mit Gegenproben (eine
+  Abweisung zu wenig, eine Mikrosekunde zu kurz), Probe
+  `eine_bestandene_probe_beendet_die_messung`.
+- 📌 **Fund 670 (neu, beim Bau): Eine Messung über den Epochenwechsel wurde
+  in der neuen Epoche bewertet**, mit deren Pod und Frist. Jetzt trägt
+  jede Messung ihre Epoche und verfällt beim Wechsel
+  (`fristmessung_verfallen`); mit gezählten Abweisungen wäre sonst eine
+  Abweisung, die nur der Wechsel verursachte, als Verweigerung gezählt
+  worden.
+- **Die Messplanung im Protokoll** (Diagnose zu den Funden 664 und 667):
+  `fristmessung_gestellt` (wer, Epoche, Höhe, Positionen, Zahl der
+  Messenden), `zeitprobe_abgewiesen` (wie, Zahl in Folge, seit wann),
+  `fristmessung_verloren`, `fristmessung_verfallen`; `fristmessung` trägt
+  dazu Epoche, Höhe, Zahl der Proben und Abweisungen und wie die Messung
+  endete (`beantwortet`, `grenze`, `verweigert`).
+- **Die Verdrahtung im Knoten** hat eigene Proben gegen einen gestarteten
+  Knoten mit Pod (`knoten::abweisung_tests`):
+  `eine_lange_verweigerung_wird_im_knoten_zum_verdacht` (vier in Folge
+  über die Dauer ergeben den Verdacht; zu kurz, eine zu wenig und ein
+  `Nichts` während des Wartens nicht) und
+  `eine_messung_aus_der_vorigen_epoche_verfaellt`. Gegenproben je Zeile:
+  ohne den Aufruf von `messung_abgewiesen`, ohne die Prüfung der Epoche und
+  ohne die Wartebedingung wird jeweils genau die passende Probe rot.
+- 📌 **Fund 672 (Knotenteil): Der Testverkehr leerte die Probekonten.**
+  Jeder Knoten verbrannte je Sekunde `1 000 + Zähler × 100` Kleinstbeträge,
+  aufsummiert rund 50 · T² nach T Sekunden; ein Probekonto mit 10 MYL war
+  nach rund 7,5 Minuten leer. Im kurzen Podlauf vom 2026-10-28 fehlten so
+  rund 90 der 120 MYL der Probekonten, und zusammen mit dem Lastgeber
+  (TESTCLIENT 0.56.0) fand der Probehahn kein Konto mehr: Der späte
+  Einsteiger konnte sich nicht anmelden (451 Mal `probehahn_leer`). Jetzt
+  verbrennt der Testverkehr 1; den Zustand bewegen Nummer und Gebühr. Auch
+  so trägt ein Probekonto bei einer Gebühr von rund 1 200 je Sekunde nur
+  rund 2,3 Stunden Testverkehr; danach scheitert er still, wie schon
+  vorher.
+- ⚑ **Der Credit-Preis folgt der Auslastung** (Whitepaper 5.4, Festlegung
+  des Projektinhabers vom 2026-10-28). Am Epochenwechsel
+  `P · exp(κ (u − 0,8))` mit κ = 1/6 (`CREDIT_PREIS_KAPPA`), aus derselben
+  Auslastung wie die Trainingsabgabe, in Feinauflösung
+  (`LedgerState::credit_preis_fein`, CONSENSUS 0.60.0); abgerechnet wird
+  gerundet zur geraden Zahl, mindestens 1 (`credit_preis_abgerechnet`).
+  Ohne Nachfrage fällt er je Epoche um ein Achtel, bei voller Auslastung
+  steigt er um rund 3,4 %. Vorher stand er für immer auf dem Genesis-Wert;
+  `update_price_mit_untergrenze` hatte keinen Aufrufer. Kritisch geprüft
+  vor dem Bau: ein ganzzahliger Preis bliebe unter rund 15 stehen (daher
+  Feinauflösung), null verweigerte jeden Burn (daher mindestens 1). ⚠️ Die
+  Auslastung ist bestätigte Arbeit durch Kapazität und nie über 1;
+  Nachfrage ohne Platz sieht der Preis nicht. Proben
+  `der_credit_preis_folgt_der_auslastung`,
+  `ein_kleiner_credit_preis_bleibt_beweglich` (Gegenprobe ganzzahlig: bleibt
+  bei 4), `der_credit_preis_rundet_zur_geraden_zahl`,
+  `der_epochenwechsel_schreibt_den_credit_preis_fort`; Gegenproben je Zeile
+  (Fortschreibung, Mindestwert, Runden) beißen.
+- `myl-node` 0.76.0. 416 Tests grün, Clippy sauber; mit dem neuen Ledger
+  geprüft: `myl-ledger` 118, `myl-consensus` 285, `myl-tokenomics` 243,
+  `myl-verifier` 122, `myl-governance` 96, `myl-pod` 165, `myl-client` 208,
+  `myl-testclient` 299, `myl-simulation` 6.
+
+### v0.75.0 (2026-10-28): Gebühren nach Prüfeinheiten, Validatorentopf, Zeitprobe mit Saat und Unterschrift
+
+Festlegungen des Projektinhabers vom 2026-10-28:
+
+- ⚑ **Gebühr = Grundpreis × Einheiten** (Bytes plus eine Prüfeinheit je
+  Unterschrift, CONSENSUS 0.59.0). Ziel des Grundpreises 500 Transaktionen
+  je Block (`GRUNDPREIS_ZIEL_EINHEITEN`, 600 000 Einheiten); der Erzeuger
+  baut höchstens das Doppelte in einen Block
+  (`BLOCK_EINHEITEN_HOECHSTENS`). Probe
+  `ein_block_traegt_hoechstens_das_doppelte_ziel`, Gegenprobe ohne Grenze rot.
+- ⚑ **Der Validatorentopf geht nach Stake mal Stimmen.** Die Kette zählt
+  beim Anwenden eines Prüfpunktzertifikats jede Unterschrift; am
+  Epochenwechsel wird der Topf an die Mitglieder des Stimmsatzes nach Stake
+  mal Zahl ihrer Unterschriften verteilt, an die Adresse ihres Schlüssels.
+  Ohne Stimmen oder ohne Stimmsatz bleibt er liegen, ebenso der Rest der
+  Teilung. Wer Stake hat, aber nicht unterschreibt, bekommt nichts. Probe
+  `der_topf_der_validatoren_geht_nach_stake_mal_stimmen` mit Gegenproben.
+- 📌 **Fund 669: Die Zeitprobe hatte keine frische Eingabe.** Der Abdruck
+  war für dieselbe Anfrage immer derselbe; ein Lügner hätte ihn einmal
+  gerechnet und danach sofort geschickt. Jetzt trägt jede Probe eine
+  frische Saat (`Nachforderung::ZeitprobeMitSaat`, angehängt,
+  `frist::frische_saat`), und die Antwort ist mit dem Minerschlüssel über
+  Saat, Positionen und Abdruck unterschrieben
+  (`Nachlieferung::ZeitprobeUnterschrieben`, angehängt). Der Messende zählt
+  nur eine Antwort, deren Unterschrift unter dem Schlüssel des Mitglieds in
+  der Kette trägt; eine ohne oder mit falscher bleibt liegen, die Probe
+  läuft in ihre Grenze. Ein falscher Abdruck ist damit ein unterschriebener
+  Beleg (Grundlage für die Prüfung durch Checker). Probe
+  `nur_die_unterschrift_ueber_die_eigene_saat_traegt`, Gegenproben je Teil
+  der Nachricht und mit fremdem Schlüssel.
+- Die Hinterlegung je Manifest ist als ruhend vermerkt (Fund 663): Sie
+  greift erst mit der Speicherrolle.
+- `myl-node` 0.75.0. 407 Tests grün, Clippy sauber.
+
+### v0.74.0 (2026-10-28): Schneller unter Last; die Relaisleitung sagt, was abgewiesen ist
+
+Aus dem Nachtlauf vom 2026-10-27 (Podlauf mit `--real`, Laststufen bis
+1 600/s): bis 200/s alles aufgenommen, darüber ein Einbruch. Gemessen danach
+an der Kette selbst:
+
+- 📌 **Fund 668: Die Aufnahme in den Mempool war quadratisch.** `aufnehmen`
+  zählte je neuer Transaktion den ganzen Mempool je Absender durch und
+  rechnete dabei für jeden Eintrag die Adresse neu (SHA-256): 27 µs je
+  Aufnahme bei 512 wartenden, 413 µs bei 4 096. Jetzt trägt jeder Eintrag
+  seinen Absender (`Wartend`): 2 µs bei 4 096.
+- ⚑ **Die Unterschriften eines Blocks als Stapel** (`pruefe_alle`, CONSENSUS
+  0.58.0): Anwenden eines Blocks mit 4 096 Transaktionen 362 ms statt
+  1 909 ms, für Erzeuger und Folger.
+- 📌 **Die Relaisleitung meldet die Abweisung des Mempools.** Bis hierher
+  antwortete sie einer Wallet „verbreitet“, auch wenn der Mempool des
+  Erzeugers die Transaktion abwies (Nummer verbraucht, Mempool voll, Deckel
+  je Absender); im Nachtlauf hielt das jede spätere Nummer eines Absenders
+  auf. Jetzt `Fehler("vom Mempool abgewiesen …")`, und sie geht nicht
+  hinaus. Probe in `TESTCLIENT` (`bezahlen`), Gegenprobe mit dem alten
+  Verhalten rot.
+- **Im Netz belegt** (kurzer Podlauf mit `--real`, Laststufen je 30 s,
+  Lastgeber mit Nachfüllen): 200/s und 400/s ganz aufgenommen, 800/s und
+  1 600/s je alles Gesendete (388/s und 369/s), kein Verlust; im Nachtlauf
+  davor 131/s bei 400 und ein Einbruch auf 5/s. Die Grenze liegt jetzt in
+  der Annahme über die Relaisleitung, die jede Unterschrift einzeln prüft.
+- `myl-node` 0.74.0. 404 Tests grün, Clippy sauber.
 
 ### v0.73.0 (2026-10-27): Gebühren und Prüfpunkte von außen sichtbar
 

@@ -180,6 +180,13 @@ impl Pipelinewerk {
     }
 
     /// Wie viele Shards die Pipeline hat.
+    /// **Der Inhalt des Bündels**, das dieser Pod gerade einreichen würde,
+    /// ohne Unterschriften (`Coordinator::build_poi_bundle`): zur Einsicht und
+    /// zum Vergleich zweier Zwillinge (Stufe 1).
+    pub fn buendelinhalt(&self) -> Result<myl_types::PoIBundle, String> {
+        self.koordinator.lock().map_err(|_| "Koordinator vergiftet".to_string())?.build_poi_bundle()
+    }
+
     pub fn shardzahl(&self) -> u32 {
         SHARDS as u32
     }

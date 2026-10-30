@@ -86,6 +86,10 @@ fn konfig(verzeichnis: &std::path::Path, name: &str, bootstrap: Vec<String>) -> 
         // Kein Testverkehr: Die Tests hier schicken gezielt, damit
         // sichtbar bleibt, welche Nachricht wessen ist.
         testverkehr_sekunden: None,
+        einsatz: None,
+        zustandslos: false,
+        baum_auf_platte: false,
+        zeugen_bereithalten: false,
         erzeugt_bloecke: false,
         blocktakt_ms: None,
         abzug: None,
@@ -703,6 +707,7 @@ async fn eine_inferenzantwort_beendet_die_blocknachforderung_nicht() {
     beta.ereignis_einspeisen(myl_net::NodeEvent::AntwortEingegangen {
         von: alpha_id,
         daten: bytes,
+        zweck: None,
     });
     assert_eq!(
         beta.letzte_inferenzantwort(),
@@ -723,6 +728,7 @@ async fn eine_inferenzantwort_beendet_die_blocknachforderung_nicht() {
     beta.ereignis_einspeisen(myl_net::NodeEvent::AntwortEingegangen {
         von: alpha_id,
         daten: lieferung,
+        zweck: None,
     });
     beta.aufnahme().await;
     assert!(

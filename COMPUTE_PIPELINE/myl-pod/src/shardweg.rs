@@ -784,9 +784,9 @@ impl Shardstelle {
         //   2026-10-22): an ihrer Marke erkannt, beschrieben in
         //   `myl_types::zeitprobe`, damit der Knoten sie stellen kann, ohne
         //   diese Kiste einzubinden.
-        if let Some((positionen, grenze)) = myl_types::zeitprobe::als_anfrage_mit_grenze(&roh) {
+        if let Some((positionen, grenze, saat)) = myl_types::zeitprobe::als_anfrage_voll(&roh) {
             let grenze = grenze.map(|ms| std::time::Duration::from_millis(u64::from(ms)));
-            let abdruck = self.shard.zeitprobe_bis(positionen as usize, grenze);
+            let abdruck = self.shard.zeitprobe_bis(positionen as usize, grenze, saat.as_ref());
             return senden(&mut strom, &myl_types::zeitprobe::antwort(abdruck));
         }
         let anfrage: Shardanfrage =

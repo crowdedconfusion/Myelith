@@ -83,6 +83,8 @@ impl Relais {
                             bis: (self.schichten * (i + 1) / 4) as u32,
                         })
                         .collect(),
+                    zwilling: None,
+                    reserve: Vec::new(),
                 }],
             }),
             Relaisfrage::Shard { an, anfrage } => {

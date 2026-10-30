@@ -1,7 +1,7 @@
 # testclient (`myl-testclient`)
 
-> **Version:** 0.55.0
-> **Datum:** 2026-10-27
+> **Version:** 0.66.4
+> **Datum:** 2026-10-29
 > **Status:** Phase 1 und **Phase 3 vollständig**, dazu Punkt 2.1
 > (`vergleich`), **2.2** (Backend-Vergleich innerhalb einer Maschine, seit
 > dem 2026-08-30) und 2.4 (`--repeat`); **Phase 4 vollständig** (4.3 die
@@ -543,6 +543,343 @@ COMPUTE_PIPELINE Phase 1: erstmals über einen aufrufbaren Befehl statt
 über einen Integrationstest.
 
 ## Changelog
+
+### v0.66.4 (2026-10-30): `podlauf.py`, Zeugen auf der Platte
+
+- Die Zeile zum Erzeuger nennt die Blöcke und Bytes der Zeugen auf der
+  Platte; misslang ein Ablegen, ist das ein Befund.
+
+### v0.66.3 (2026-10-30): `podlauf.py` sieht die Abzugsschleife
+
+- 📌 Im langen Lauf `nacht-bereit` sprang der zustandslose Miner eine
+  Stunde lang alle 30 s per leichtem Abzug und prüfte keinen Block, ohne
+  dass der Bericht es zeigte. Jetzt nennt er je zustandslosem Knoten die
+  Neuverankerungen, die Blöcke mit Zeugen danach und die Zeugengrösse
+  (Median, höchstens); folgte einer nach der letzten Neuverankerung keinem
+  Block mit Zeugen, ist das ein Befund.
+
+### v0.66.2 (2026-10-30): `podlauf.py`, Zeugen bei vollen Minern
+
+- Mit `--zustandslos` halten m01, m04 und m10 Zeugen bereit
+  (`--zeugen-bereithalten`). Verlangt ist, dass sie gestartet sind und kein
+  Zeuge eines vollen Miners beim zustandslosen fehlschlägt; der Bericht
+  nennt die direkt gelieferten tragenden Stücke und ihre Gegenstellen.
+- Der Speichervergleich des zustandslosen Miners nennt den anonymen
+  Speicher, nicht RSS: Im Kurzlauf waren von 783 MB RSS 751 MB das gemappte
+  Modell (er rechnete nach), anonym 50 MB gegen im Mittel 24 MB.
+
+### v0.66.1 (2026-10-30): `podlauf.py --baum-auf-platte`
+
+- Der Erzeuger und acht Miner lagern den Zustandsbaum aus; verlangt ist
+  dieselbe Wurzel wie bei allen anderen (die Schlussprüfung) und belegte
+  Seiten. Der Bericht nennt je Knoten die Knoten im Speicher und die
+  ausgelagerten Bytes, dazu die höchste Zahl vorgemerkter Auszahlungen.
+- `KnotenKonfig` hat das Feld `baum_auf_platte`.
+
+### v0.66.0 (2026-10-29): `podlauf.py --zustandslos`
+
+- **Ein zustandsloser Miner** (m08, ohne Sonderrolle) von Anfang an:
+  verlangt sind Blöcke mit Zeugen, eine Zusage und Lohn wie bei den anderen
+  (`auszahlung_guthaben` beziehungsweise `konto_guthaben`); der Bericht nennt
+  dazu Konten im Zustand und Speicher gegen die vollen Miner.
+- **Ein später zustandsloser Knoten ohne Miner-Rolle** (Phase
+  `zustandslos`; kurz nach zwei Prüfpunkten, lang in Epoche 22 des
+  Dauerteils): mit `--real` über einen leichten Abzug an einem Prüfpunkt,
+  verankert über ein Zertifikat gegen den Stimmsatz; verlangt sind die
+  Spitze und dieselbe Wurzel.
+- Der Erzeuger darf keinen Block ohne Zeugen bauen (`zeugenlos` aus
+  `groessen`).
+
+### v0.65.2 (2026-10-29): Das Feld `zustandslos`
+
+- `KnotenKonfig` hat das Feld `zustandslos` (NODE 0.92.0); die Testknoten
+  setzen es auf `false`.
+- 299 Tests; im vollen Lauf fielen `pod_ueber_knoten` und einmal
+  `netzlauf` unter Last aus, beide liefen allein grün (dreimal
+  beziehungsweise in der zweiten Runde).
+
+### v0.65.1 (2026-10-29): Gedeckelt heisst unter 90 %
+
+- **`podlauf.py`**: Eine Laststufe gilt erst als gedeckelt, wenn die
+  Ausstattung unter 90 % des Ziels liegt; in `durchsatz4` galten 99,8 % als
+  gedeckelt und verdeckten 97 verlorene Transaktionen.
+
+### v0.65.0 (2026-10-29): Der Lügner macht eine Gruppe unvollständig
+
+- **`podlauf.py`**: „kein Zwillingspaar war einig“ ist kein Befund, wenn
+  in jeder Epoche mit Fragen der Fälscher **oder der Lügner** auf Position
+  stand (der Pod des Lügners unterschreibt sein Bündel nicht). Mit 13
+  Minern gibt es ein Paar je Epoche; in `gezielt17` bis `gezielt23` war der
+  Befund jedes Mal diese Aufstellung.
+
+### v0.64.0 (2026-10-29): Der Lastgeber bündelt und misst den Nachlauf
+
+- ⚑ **`lastgeber` schickt gebündelt** (NODE 0.85.0): je Faden alle 50 ms
+  ein Stapel bis 512. Danach wartet er, bis alles Angenommene in Blöcken
+  steht (höchstens 60 s), und meldet `nachlauf_ms` und `verloren`
+  (angenommen, aber nie in einem Block).
+- **`podlauf.py`**: `verloren` über null ist ein Befund, ausser die Stufe
+  war mangels Guthaben gedeckelt (dann scheitern Transaktionen erst beim
+  Anwenden).
+- **Die Ausstattung wartet einmal auf den Wechsel**, wenn das Guthaben über
+  der Reserve nicht reicht: Er füllt die Probekonten auf (Fund 675). Im
+  ersten Durchsatzlauf waren die Stufen ab 2000/s gedeckelt und verloren
+  387 und 418 Transaktionen beim Anwenden; mit dem Warten keine.
+- **Gemessen am 2026-10-29** (14 Knoten auf einem Rechner, `durchsatz2`):
+  1000/s gehalten, 2000/s und 3000/s bei rund 1750/s, alles Angenommene in
+  Blöcken (zusammen rund 67 700), Nachlauf unter 0,1 s, höchstens 199
+  Transaktionen je Block (Grenze rund 1000); die CPU des Behälters bei 10
+  bis 11 von 15 Kernen.
+
+### v0.63.0 (2026-10-29): Einsatz im Podlauf, Rückbuchung im Bericht
+
+- **`podlauf.py`**: Jeder Miner startet mit `--einsatz` 0,5 MYL (NODE
+  0.84.0); die Zeile „Schiedsrunde“ nennt Rückbuchungen und wie viele
+  Miner Einsatz hinterlegt haben. Vor dem Ende wird auf die Rückbuchung an
+  den ehrlichen Zwilling gewartet, wenn ein Pod überführt ist.
+
+### v0.62.1 (2026-10-29): Ein eingereichtes Bündel genügt
+
+- 📌 `podlauf.py` nahm die letzte Meldung des Ortsdienstes mit „Bündel“ als
+  Ergebnis; mit Zwillingen war das die Fehlermeldung des Pods mit dem
+  Lügner, obwohl das andere Bündel eingereicht war (`gezielt20` brach so
+  ab). Jetzt zählt ein eingereichtes.
+
+### v0.62.0 (2026-10-29): Differenzen im Bericht
+
+- **`podlauf.py`**: Die Zeile „Pruefauftraege“ zählt gemeldete
+  Differenzen (NODE 0.83.0). Gewartet wird vor dem Ende auf den Abschluss
+  **jeder** nachgerechneten Ziehung (vorher nur auf den ersten; in
+  `gezielt18` fiel so ein Streitfall aus dem Bericht).
+
+### v0.61.0 (2026-10-29): Grössen und Selbstproben im Bericht
+
+- **`podlauf.py`**: „Groessen“ (beim ersten Miner, was sich von der ersten
+  zur letzten Epoche änderte) und „Selbstproben“ (wie viele, mit Warnung,
+  mit verlangsamter Zusage); NODE 0.82.0.
+
+### v0.60.0 (2026-10-29): Der Podlauf berichtet die Schiedsrunde
+
+- **`podlauf.py`, Zeile „Schiedsrunde“** (NODE 0.81.0): Stimmen, Urteile
+  nach Ausgang und Beschuldigtem, Buchung. Befund, wenn ein Ehrlicher
+  geschlachtet wurde oder eine Anfechtung verlor.
+- 📌 Abgeschlossen wird eine halbe Epoche nach der Ziehung; der erste Lauf
+  damit endete 20 s nach dem Aufdecken und vor dem Abschluss. Gewartet wird
+  jetzt **vor** dem Beenden der Knoten (im ersten Versuch stand das Warten
+  dahinter und meldete „k0 endete mit 0“): auf den Abschluss der Aufträge
+  und, bei einer Abweichung, auf die Entscheidung des Streitfalls.
+
+### v0.59.0 (2026-10-29): Der Podlauf zählt die Prüfaufträge
+
+- **`podlauf.py`, Zeile „Pruefauftraege“** (NODE 0.80.0): festgelegt,
+  aufgedeckt, abgeschlossen nach Ausgang, mit Abweichung. Befund, wenn
+  nachgerechnet wurde und kein Auftrag einig abschloss.
+
+### v0.58.0 (2026-10-29): Der Podlauf prüft das Nachrechnen
+
+- **`podlauf.py`, Bericht „Nachrechnen“** (NODE 0.79.0): Befund, wenn
+  Checker zugeteilt wurden und keiner nachgerechnet hat, bei Fehlern beim
+  Nachrechnen, bei abgewiesenen Verläufen und bei jeder Beschuldigung eines
+  ehrlichen Miners (der Fälscher darf beschuldigt werden). Ebenso, wenn gezogen
+  wurde und kein Checker zugeteilt ist: Der erste Lauf mit Nachrechnen hiess
+  so trotz null Zuteilungen bestanden.
+- 📌 **Fund 676: Die Übernahme durch die Reserve wurde mit `--paare` nicht
+  geprüft.** Jede Sitzung gehört einem Paar; im Nachtlauf vom 2026-10-29
+  fragte der Agent Pod 2 und 3, der Verweigerer stand in Pod 1, und es gab
+  nichts zu übernehmen (später im selben Lauf übernahm die Reserve
+  mehrfach). Jetzt fragen in der Epoche der Übernahme alle Sitzungen
+  zugleich.
+- 📌 **Fund 677, der Anteil des Prüfstands:** `zeilen()` las bei jedem
+  Aufruf jede Protokolldatei ganz, je Epoche rund 3 GB bei 30 Knoten, im
+  selben Behälter wie die gemessenen Shards; mit den Protokollen wuchs die
+  Last über die Nacht. Jetzt merkt es sich je Datei und Art, wie weit es
+  gelesen hat, und liest nur das Neue bis zur letzten ganzen Zeile (neu
+  begonnene und verschwundene Dateien eingeschlossen).
+
+### v0.57.1 (2026-10-28): Der Nachtlauf bricht am Einsteiger nicht mehr ab
+
+- 📌 **Fund 675** (NODE 0.78.0): Der Lastgeber hält je Probekonto nur noch
+  4 statt 6 MYL zurück, denn der Epochenwechsel füllt ein Konto unter der
+  Hälfte wieder auf; die Reserve muss nur bis dahin eine Zapfung des
+  Probehahns tragen.
+- **`podlauf.py`**: Eine Laststufe ohne Ausstattung ist ein Befund (sie
+  misst nichts), und ein Einsteiger, der nicht ankommt, ist mit `--real`
+  ein Befund statt eines Abbruchs, samt der Zahl leerer Zapfungen. So
+  behält ein Nachtlauf seinen Schlussbericht.
+
+### v0.57.0 (2026-10-28): Der Podlauf mit Zwillingen
+
+- **`podlauf.py --zwillinge`**: drei Miner mehr (m11 Nordamerika, m12
+  Asien, m13 Europa), also dreizehn und damit zwei Pods. 📌 Mit zwölf genau
+  fiel der zweite Pod weg, sobald einer gesperrt war (erster kurzer Lauf:
+  „0 Paare einig, 0 uneinig“, nur Pod 0), denn Zonen unter sechs Minern
+  teilen sich ein Sammelcluster, und die Tür fragte gerade in den
+  Sperrepochen des Verweigerers. Die Tür-Phase nennt mit `--zwillinge` die
+  Pods je Frage. Der Ortsdienst rechnet jeden
+  Auftrag über beide (NODE 0.77.0, COMPUTE_PIPELINE 0.54.0). Der Bericht
+  nennt einige und uneinige Paare und den letzten Credit-Preis aus der
+  Zeile `aufnahme` des Erzeugers; ein Befund, wenn kein Paar einig war (dann
+  hätte Stufe 1 nichts vergütet). Das ist zugleich der Beleg der
+  Verdrahtung im Podwerk.
+- **Übernahme im Lauf** (mit `--verweigerer`): Nach der Tür wartet der Lauf
+  auf eine Epoche, in der der Verweigerer auf Position steht, fragt dort
+  zweimal und verlangt, dass eine Reserve seine Position übernimmt
+  (`position_uebernommen`) und die zweite Frage beantwortet wird; ein
+  Befund sonst.
+- **Spuren im Bericht**: Antworten mit Spur (`spuranfrage_eingegangen` mit
+  `antwort = spur`) und die Ergebnisse des Erzeugers (`spur_geprueft`). Ein
+  Befund, wenn Anfragen ankamen und keine Lieferung trug, oder wenn eine
+  Lieferung mit einem Fehler zurückkam.
+- **`podlauf.py --faelscher`** (braucht `--zwillinge` und einen Shard mit
+  dem Merkmal `faelscher`, COMPUTE_PIPELINE 0.54.0): m07 rechnet falsch,
+  aber in sich stimmig. Der Bericht nennt je Epoche, in der er auf Position
+  stand und Arbeit war, den Zuwachs einiger und uneiniger Paare (am Wechsel
+  gezählt, also aus dem Stand am Ende der Folgeepoche). Befund, wenn keine
+  dieser Epochen uneinig war, oder wenn eine einig vergütet wurde. Die
+  Tür-Phase sucht dafür eine Epoche mit ihm auf Position, fragt dort und
+  wartet auf die Zählung am nächsten Wechsel; Befund, wenn diese Frage
+  nicht als Arbeit zählt. 📌 Ohne das hing die Prüfung am Zufall der
+  Zuteilung (erster gezielter Lauf: nur in der letzten Epoche auf
+  Position, gezählt erst nach dem Ende). Steht er in jeder Epoche einer
+  Frage auf Position, ist keine Auszahlung richtig; die Prüfung der
+  Auszahlung verlangt dann keine (📌 zweiter gezielter Lauf: Abbruch mit
+  „kein Miner bekam eine Auszahlung“, obwohl Stufe 1 richtig griff). Die
+  Kommentare zur Übernahme durch die Reserve sind nachgezogen (sie
+  übernimmt jetzt).
+- **`podlauf.py --nur <phasen>`**: nur diese Phasen (`tor`, `luegner`,
+  `stoerung`, `last`, `trennung`, `einsteiger`, `dauer`, mit Komma), für
+  kurze Läufe, die gezielt das Geänderte prüfen; ohne Angabe alle wie
+  bisher. Die Auswertung am Ende läuft immer; der Befund „kein Paar einig“
+  nur, wenn eine Phase mit Fragen lief. Eine unbekannte Phase bricht mit
+  einer Meldung ab.
+- **Die Anlaufregel im Bericht**: Die Zeile der Zwillinge nennt Gruppen
+  und die zurückgehaltenen Gutschriften. Ohne `--zwillinge` (ein Pod
+  allein) ist ein Befund, wenn nach Fragen nichts zurückgehalten ist. Die
+  Auszahlungsprüfung verlangt keine Zahlung, wenn keine Gruppe einig war
+  und der Fälscher in jeder Frage-Epoche saß oder ein Pod allein rechnete.
+- **`podlauf.py --paare`** (braucht `--zwillinge`): fünfzehn Miner mehr
+  (Europa 14, Nordamerika 7, Asien 7), also vier Pods und zwei
+  Zwillingspaare. Sechs weitere Sitzungen fragen in einer Epoche zugleich;
+  der Bericht nennt Antworten, Wanduhrzeit gegen die Summe der einzelnen
+  und welche Pods gerechnet haben. Befund, wenn eine Sitzung ohne Antwort
+  bleibt oder nicht beide Paare rechneten. Im Dauerteil (langer Lauf) fragen sie
+  alle fünf Epochen wieder zugleich (Budget je Sitzung 1 000 Credits); der
+  Bericht zählt Runden, Runden mit beiden Paaren und Antworten. Befund,
+  wenn weniger als drei Viertel der Fragen beantwortet wurden oder in
+  weniger als der Hälfte der Runden beide Paare rechneten.
+- `pod_ueber_knoten` folgt der Anlaufregel: ein Pod allein bekommt in der
+  Epoche nur die Probeprägung, die Positionen eine zurückgehaltene
+  Gutschrift, die Reserve keine.
+- **Zeugnisse gegen Ehrliche sind ein Befund** (vorher nur berichtet; 📌
+  so blieb Fund 674 im ersten Lauf mit vier Pods ohne Befund), dazu die
+  Zahl der nicht erreichten Zeitproben. **Die Prüfung des Fälschers fragt,
+  ob sein Pod gerechnet hat** (Zeile des Ortsdienstes je Pod und Epoche),
+  nicht nur, ob er auf Position stand: Mit mehreren Paaren rechnet nicht
+  jedes in jeder Epoche (📌 zweiter Lauf mit `--paare`: Befund „nicht
+  aufgefallen“, weil die Frage das andere Paar traf). Mit `--paare` fragt
+  in seiner Epoche jede Sitzung zugleich.
+- `gesamtlauf` baut das Bündel mit dem neuen Feld.
+- `myl-testclient` 0.57.0. 299 grün, Clippy sauber.
+
+### v0.56.0 (2026-10-28): Der Podlauf berichtet die Messplanung der Zeitprobe
+
+- `podlauf.py` berichtet am Ende (mit `--real`): wie viele Messungen je
+  Epoche gestellt wurden (kleinste, Median, grösste), wie sie endeten
+  (beantwortet, an der Grenze, verweigert), wie viele Abweisungen es gab
+  und wie viele Messungen verfielen oder verloren gingen; wer den Lügner in
+  welcher Epoche mit welchem Urteil gemessen hat und wie oft er abwies; wie
+  viele Zeugnisse gegen Ehrliche entstanden, davon nach Verweigerung. Das
+  ist die Diagnose zu den Funden 664 und 667 (reicht die Zeit einer Epoche
+  für eine Mehrheit von Zeugnissen) und die Gegenprobe zu Fund 660 im
+  Netz (ehrliches Gedränge ergibt keine Zeugnisse). Liest die
+  Protokollzeilen von NODE 0.76.0.
+- 📌 **Fund 671 behoben: Die Ausstattung des Lastgebers vor der zweiten
+  Stufe sandte 600 s lang nichts** (kurzer Podlauf vom 2026-10-28, Befund
+  „14 Absender nach 600 s noch ohne Ausstattung“; über die Relaisleitung
+  kam in dieser Zeit keine Transaktion an). Zwei Annahmen trugen nicht
+  mehr: Die Quellen waren die Probekonten 6 bis 11, „weil der Probehahn nur
+  0 bis 5 nimmt“; er nimmt aus allen zwölf, und der Testverkehr der Knoten
+  läuft über einige davon. Und ein Burn kostet seit den Gebühreneinheiten
+  (CONSENSUS 0.59.0) am Boden rund 1 200 statt rund 200 Kleinstbeträge,
+  die Ausstattung rechnete mit 250. Jetzt wählt `lastgeber` die Quellen je
+  Runde aus allen Probekonten nach Guthaben, rechnet Bedarf und Gebühr nach
+  Einheiten (`kosten_je_burn`), deckelt die Ausstattung auf drei Viertel
+  des Vorrats und meldet das als Berichtszeile, und schreibt je Runde den
+  Stand jeder Quelle samt der ersten Abweisung der Leitung auf die
+  Fehlerausgabe (`senden` liefert die Antwort statt eines Wahrheitswerts).
+  Nachgestellt gegen einen Erzeuger mit Relaisleitung und Testverkehr auf
+  dem Mac: dreimal ausgestattet, 200, 400 und 800 je Sekunde ganz
+  aufgenommen. ⚠️ Eine Stufe von 1 600 je Sekunde über 60 s kostet rund
+  115 MYL, die zwölf Probekonten tragen 120; lange Läufe fahren deshalb
+  kürzere Stufen.
+- 📌 **Fund 672 (Lastgeberteil): Die Deckelung räumte die Probekonten ab.**
+  Drei Viertel des jeweiligen Rests je Stufe liessen vor 400/s noch
+  20,8 MYL, vor 1 600/s noch 1,3; zuerst gingen die drei Konten, die der
+  Testverkehr der Knoten nicht leert, und danach fand der Probehahn keines
+  mehr (kurzer Podlauf vom 2026-10-28, der Einsteiger meldete sich nicht
+  an). Jetzt bleibt auf jedem Probekonto eine Reserve von 6 MYL
+  (`RESERVE_JE_KONTO`, zwei Zapfungen des Probehahns samt Polster),
+  ausgegeben wird nur, was darüber liegt; gedeckelt wird einmal je Stufe,
+  danach wird gemessen (ein Deckel, der je Runde neu aus dem schrumpfenden
+  Rest kam, senkte das Ziel immer weiter und brach nach 600 s ab).
+- **`podlauf.py --verweigerer`**: Ein Miner (m04) führt `/bin/false` als
+  Shard. Steht er auf Position, beantwortet sein Knoten jede Zeitprobe mit
+  `Nichts`; das muss nach einer langen Folge wie eine Überschreitung zählen
+  (NODE 0.76.0, Fund 660). Der Bericht nennt seine Positionen und Sperren
+  und die Zahl der Messungen, die als verweigert endeten; ein Befund, wenn
+  er nach einer gehaltenen Position nie gesperrt wird. Er zählt nicht zu
+  den Ehrlichen, und `in_epoche` verlangt dann drei statt vier laufende
+  Shards. Ein Angriffsschalter im Knoten ist dafür nicht nötig. Die
+  Diagnose führt ihn getrennt („Gegen den Verweigerer“: Messungen,
+  Zeugnisse, Epochen mit Zeugnis) und zählt ihn nicht mehr unter den
+  Zeugnissen gegen Ehrliche. Im kurzen Lauf vom 2026-10-28: Zeugnisse in
+  sieben von acht Positionsepochen, eine Mehrheit rechtzeitig nur einmal
+  (gesperrt für Epoche 14); die Zeit einer Epoche von 108 s reicht für zwei
+  Abweisungsfolgen selten.
+  Steht er auf Position, rechnet der Pod nicht, weil die Reserve noch nicht
+  übernimmt (offen); ein kurzer Lauf brach daran ab („die Tür antwortete
+  nicht“, der Verweigerer stand in den Epochen 1 und 2 auf Position). Jetzt
+  wartet die Phase der Tür in solchen Epochen bis zu sechs Epochen, und im
+  Dauerteil zählen Fragen in seinen Positionsepochen getrennt (eigene
+  Berichtszeile), nicht gegen die Hälfte, die die Tür beantworten muss.
+- `myl-testclient` 0.56.0. 299 grün, Clippy sauber.
+
+### v0.55.2 (2026-10-28): Proben nach Gebühreneinheiten
+
+- `gesamtlauf` rechnet die Gebühr wie die Kette nach Einheiten
+  (CONSENSUS 0.59.0).
+- `myl-testclient` 0.55.2. 299 grün, Clippy sauber.
+
+### v0.55.1 (2026-10-28): Nach dem Nachtlauf
+
+Der lange Podlauf mit `--tor --real` (225 Epochen, 4,4 h Dauerteil): 11
+Miner auf einer Wurzel bei Höhe 437 492; 210 von 219 Fragen über die Tür
+beantwortet, Median 9 s; 906 Prüfpunktzertifikate, vier Validatoren; alle
+Trennungen wie erwartet (Asien mit Prüfpunkten, Atlantik ohne Mehrheit
+ohne), aufgeholt in 7 bis 29 s; Einsteiger nach 135 s an der Spitze;
+Hinterlegung der abgelaufenen Sitzung nach der Nachfrist zurück; Stichprobe
+443 Anfragen angekommen; Kettendatei rund 0,54 MB je Epoche. Befunde: Fund
+664 und Sperren nach Trennungen (Fund 667).
+
+- 📌 **Fund 667 im Prüfkriterium:** Eine Fristsperre in der Epoche nach einer
+  Trennung ist erwartet. Wer die Mehrheit seines Pods über zwei Fenster
+  nicht erreicht, verpasst eine Epoche (ohne Einsatz zu verlieren); mit
+  108 s je Epoche deckt eine Trennung von 60 s beide Fenster. `podlauf.py`
+  vermerkt die Epochen der Trennungen und meldet solche Sperren im Bericht.
+- 📌 **Der Lastgeber holt Nummern neu**: bei einer Abweisung, und je Runde
+  einen Absender, der mehr als 48 vor dem Zustand liegt. Vorher zählte er
+  über eine verfallene Transaktion hinweg, und alle späteren des Absenders
+  hingen.
+- 📌 **Und er füllt vor jeder Stufe nach**, nach deren Bedarf (Burns je
+  Absender mal 250 Kleinstbeträge), Grundausstattung 0,1 MYL. Mit 0,05 MYL
+  ohne Nachfüllen waren die hundert Absender nach rund 29 000 Burns leer, in
+  der Nacht nach der Stufe 400/s; was danach kam, wartete ungedeckt und
+  verfiel. Beides zusammen war der Einbruch auf 5/s, nicht das Netz.
+- `podlauf.py --laststufen <raten> --lastdauer <s>`: Laststufen statt der
+  Vorgabe.
+- `tests/bezahlen.rs`: Eine gültig unterschriebene Transaktion mit
+  verbrauchter Nummer wird von der Relaisleitung abgewiesen (NODE 0.74.0).
+- 299 Tests grün, Clippy sauber.
 
 ### v0.55.0 (2026-10-27): Podlauf näher an echten Bedingungen; Lastgeber
 

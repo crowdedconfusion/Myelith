@@ -85,6 +85,62 @@ pub fn auftrag_der_epoche(zustand: &LedgerState, ich: &MinerId) -> Option<Sharda
     })
 }
 
+/// ⚑ **Darf `ich` die Position `position` des Pods `pod` übernehmen?**
+/// (Whitepaper 6.8, 2026-10-28): nur in der laufenden Epoche, nur als
+/// Mitglied der Reserve dieses Pods, nur eine Position, die es gibt, und
+/// nur, wenn die eigene Zusage so viele Ebenen hält. Liefert den Auftrag.
+pub fn uebernahme_pruefen(
+    zustand: &LedgerState,
+    ich: &MinerId,
+    epoche: u64,
+    pod: u32,
+    position: u32,
+) -> Result<Shardauftrag, String> {
+    if epoche != zustand.epoch.0 {
+        return Err(format!("Epoche {epoche}, laufend ist {}", zustand.epoch.0));
+    }
+    let zuteilung = crate::kette::Kette::zuteilung_der_laufenden_epoche(zustand);
+    let p = zuteilung.pods.iter().find(|p| p.pod_index == pod).ok_or("diesen Pod gibt es nicht")?;
+    if !p.reserve.iter().any(|r| r.miner_id == *ich) {
+        return Err("dieser Knoten ist nicht Reserve dieses Pods".into());
+    }
+    let grenzen = crate::kette::Kette::grenzen_des_pods(zustand, p).ok_or("Pod ohne Schnitt")?;
+    let (von, bis) = *grenzen.get(position as usize).ok_or("diese Position gibt es nicht")?;
+    let zusage = myl_ledger::transitions::modellzusage_der_epoche(zustand, ich, zustand.epoch).ok_or("keine Zusage")?;
+    if zusage.ebenen_hoechstens < bis - von {
+        return Err(format!("{} Ebenen zugesagt, die Position hat {}", zusage.ebenen_hoechstens, bis - von));
+    }
+    Ok(Shardauftrag { epoche, pod, position, positionen: p.shards.len() as u32, von, bis })
+}
+
+/// ⚑ **Ob eine Spurablage zu diesem Knoten gehört** (Stufe 2): Er ist
+/// Mitglied des Pods (Position oder Reserve), die Ablage trägt Einträge, und
+/// ihre Zeugnisse ergeben die Wurzel, die sie nennt. ⚠️ Wer abgelegt hat,
+/// prüft das nicht: Ein Mitglied desselben Pods kann eine erfundene Ablage
+/// neben die echte legen. Beim Antworten zählt aber nur die Ablage mit der
+/// Wurzel des Bündels aus der Kette.
+pub fn ablage_pruefen(
+    pod: &myl_scheduler::shard_assignment::Pod,
+    ich: &MinerId,
+    ablage: &myl_types::Spurablage,
+) -> Result<(), String> {
+    if !pod.shards.iter().map(|s| &s.miner).chain(pod.reserve.iter()).any(|m| m.miner_id == *ich) {
+        return Err("dieser Knoten ist nicht Mitglied dieses Pods".into());
+    }
+    if ablage.eintraege.is_empty() {
+        return Err("Ablage ohne Einträge".into());
+    }
+    // Die Tokens stehen je Segment daneben, oder gar nicht (Stufe 2).
+    if !ablage.eingaben.is_empty() && ablage.eingaben.len() != ablage.eintraege.len() {
+        return Err(format!("{} Eingaben zu {} Einträgen", ablage.eingaben.len(), ablage.eintraege.len()));
+    }
+    let zeugnisse: Vec<_> = ablage.eintraege.iter().map(|(z, _)| *z).collect();
+    if myl_types::segments_root(&zeugnisse).map_err(|e| format!("{e:?}"))? != ablage.segments_root {
+        return Err("die Zeugnisse ergeben die genannte Wurzel nicht".into());
+    }
+    Ok(())
+}
+
 /// Womit der Knoten einen Shard startet.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Shardstart {
@@ -133,6 +189,11 @@ struct Laufend {
 impl Shardfuehrung {
     pub fn neu(start: Shardstart) -> Self {
         Self { start, laufend: None }
+    }
+
+    /// Das Artefakt des Netzmodells, für den Checker (Stufe 2).
+    pub fn artefakte(&self) -> &std::path::Path {
+        &self.start.artefakte
     }
 
     /// Der laufende Auftrag, wenn einer läuft.
@@ -293,6 +354,83 @@ mod tests {
 
     /// ⚑ **Gleicher Bereich, gleicher Shard**, über die Epochengrenze; ein
     /// anderer Bereich ist ein anderer.
+    /// ⚑ **Eine Position übernimmt nur die Reserve ihres Pods** (Whitepaper
+    /// 6.8): in der laufenden Epoche, für eine Position, die es gibt; der
+    /// Auftrag hat deren Bereich.
+    #[test]
+    fn nur_die_reserve_uebernimmt_eine_position() {
+        use myl_consensus::block::BLOECKE_JE_EPOCHE;
+        let mut k = crate::kette::Kette::probestand();
+        for w in 0..6u8 {
+            k.aufnehmen(crate::kette::probeanmeldung(w));
+            k.aufnehmen(crate::kette::probezusage(w, myl_types::ids::EpochId(1), 1));
+        }
+        k.baue_block();
+        for _ in 0..(3 * BLOECKE_JE_EPOCHE) {
+            k.baue_block();
+        }
+        let z = k.zustand();
+        let e = z.epoch.0;
+        let zuteilung = crate::kette::Kette::zuteilung_der_laufenden_epoche(z);
+        let pod = &zuteilung.pods[0];
+        let reserve = pod.reserve[0].miner_id;
+        let inhaber = pod.shards[0].miner.miner_id;
+        let soll = auftrag_der_epoche(z, &pod.shards[2].miner.miner_id).expect("Position 2");
+        let a = uebernahme_pruefen(z, &reserve, e, pod.pod_index, 2).expect("die Reserve übernimmt");
+        assert_eq!((a.position, a.von, a.bis, a.positionen), (2, soll.von, soll.bis, soll.positionen));
+        // ⛔️ Gegenproben.
+        assert!(uebernahme_pruefen(z, &inhaber, e, pod.pod_index, 2).is_err(), "ein Inhaber ist keine Reserve");
+        assert!(uebernahme_pruefen(z, &reserve, e, pod.pod_index, 4).is_err(), "keine solche Position");
+        assert!(uebernahme_pruefen(z, &reserve, e + 1, pod.pod_index, 2).is_err(), "eine andere Epoche");
+        assert!(uebernahme_pruefen(z, &reserve, e, pod.pod_index + 7, 2).is_err(), "kein solcher Pod");
+    }
+
+    /// ⚑ Nur ein Mitglied nimmt eine Ablage an, und nur eine, deren
+    /// Zeugnisse ihre Wurzel ergeben.
+    #[test]
+    fn nur_ein_mitglied_legt_eine_stimmige_spur_ab() {
+        let mut k = crate::kette::Kette::probestand();
+        for w in 0..8u8 {
+            k.aufnehmen(crate::kette::probeanmeldung(w));
+            k.aufnehmen(crate::kette::probezusage(w, myl_types::ids::EpochId(1), 1));
+        }
+        k.baue_block();
+        for _ in 0..(3 * myl_consensus::block::BLOECKE_JE_EPOCHE) {
+            k.baue_block();
+        }
+        let z = k.zustand();
+        let zuteilung = crate::kette::Kette::zuteilung_der_laufenden_epoche(z);
+        let pod = &zuteilung.pods[0];
+        let zeugnisse: Vec<myl_types::Segmentzeugnis> = (0..3u8)
+            .map(|i| myl_types::Segmentzeugnis { id: myl_types::ids::SegmentId::new([i; 32]), spurwurzel: myl_types::ids::MerkleRoot::new([i + 9; 32]) })
+            .collect();
+        let ablage = myl_types::Spurablage {
+            epoche: z.epoch,
+            pod: myl_types::pod_kennung(z.epoch.0, pod.pod_index),
+            segments_root: myl_types::segments_root(&zeugnisse).expect("Wurzel"),
+            eintraege: zeugnisse.iter().map(|zg| (*zg, vec![myl_types::Hash::sha256(zg.id.as_bytes())])).collect(),
+            eingaben: Vec::new(),
+        };
+        for m in pod.shards.iter().map(|s| &s.miner).chain(pod.reserve.iter()) {
+            assert_eq!(ablage_pruefen(pod, &m.miner_id, &ablage), Ok(()), "jedes Mitglied, auch die Reserve");
+        }
+        // ⛔️ Gegenproben.
+        let schief = myl_types::Spurablage { eingaben: vec![vec![1, 0]], ..ablage.clone() };
+        assert!(ablage_pruefen(pod, &pod.shards[0].miner.miner_id, &schief).is_err(), "Eingaben passen nicht zu den Einträgen");
+        let fremd = MinerId::new([0xEE; 32]);
+        assert!(ablage_pruefen(pod, &fremd, &ablage).is_err(), "kein Mitglied");
+        let ich = pod.shards[0].miner.miner_id;
+        let mut falsch = ablage.clone();
+        falsch.segments_root = myl_types::ids::MerkleRoot::new([7; 32]);
+        assert!(ablage_pruefen(pod, &ich, &falsch).is_err(), "eine Wurzel, die die Zeugnisse nicht ergeben");
+        let mut kuerzer = ablage.clone();
+        kuerzer.eintraege.pop();
+        assert!(ablage_pruefen(pod, &ich, &kuerzer).is_err(), "ein Eintrag fehlt");
+        let mut leer = ablage;
+        leer.eintraege.clear();
+        assert!(ablage_pruefen(pod, &ich, &leer).is_err(), "ohne Einträge");
+    }
+
     #[test]
     fn gleicher_bereich_ist_derselbe_shard() {
         assert!(auftrag(3, 7, 14).gleicher_shard(&auftrag(4, 7, 14)));

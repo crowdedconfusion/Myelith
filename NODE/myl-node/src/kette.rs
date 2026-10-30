@@ -146,11 +146,30 @@ const OFFENE_ZUTEILUNGEN_HOECHSTENS: usize = 4;
 /// **Wie lange eine Transaktion im Mempool wartet**, in eigenen Höhen
 /// (Fund 627): lange genug, dass eine überholte Vorgängerin nachkommt,
 /// kurz genug, dass Unsinn mit erfundener Nummer nicht liegen bleibt.
-pub const WARTEN_HOECHSTENS_HOEHEN: u64 = 64;
+///
+/// 📌 **256 seit dem 2026-10-29** (Skalierung): Mit 64 verfielen unter
+/// Rückstau angenommene Transaktionen (bei 60 ms Takt nach knapp 4 s, im
+/// Durchsatzlauf 97 bei 3000/s), bevor der volle Mempool Gegendruck gab.
+/// Unsinn begrenzt die Platzzahl ([`MEMPOOL_HOECHSTENS`], [`Mempool`]).
+pub const WARTEN_HOECHSTENS_HOEHEN: u64 = 256;
 
 /// **Höchstens so viele Transaktionen warten** (Fund 627); was darüber
 /// kommt, wird nicht aufgenommen.
-pub const MEMPOOL_HOECHSTENS: usize = 4096;
+///
+/// ⚑ **16 384 seit dem 2026-10-29** (Skalierung): bei Blöcken mit rund 1000
+/// Transaktionen ein Puffer von gut einer Sekunde Spitzenlast. Ist er voll,
+/// verdrängt eine neue Transaktion die billigsten Enden ([`Mempool`]).
+pub const MEMPOOL_HOECHSTENS: usize = 16_384;
+
+/// ⚑ **Wie viel ein Erzeuger an Zeugen bereithält** (zustandslose
+/// Validierung, 2026-10-29), unterschrieben und in Stücken: Bei einer
+/// Million Konten und vollen Blöcken rund 1,7 MB je Block, also etwa 40
+/// Blöcke; ein zustandsloser Knoten, der weiter zurückfällt, setzt neu auf.
+pub const ZEUGEN_HOECHSTENS_BYTES: usize = 64 << 20;
+
+/// So viele Zeugen hält ein Erzeuger roh, bis er sie zerlegt.
+const ZEUGEN_ROH_GEHALTEN: usize = 8;
+
 
 /// ⚑ **So viele Bytes an Transaktionen trägt ein Block höchstens** (Fund 633):
 /// die Hälfte dessen, was Gossip an einem Block annimmt
@@ -178,10 +197,18 @@ pub const MEMPOOL_NEULINGE_HOECHSTENS: usize = 32;
 /// einzige Transaktion, die Anmeldung; danach ist er kein Neuling mehr.
 pub const BLOCK_NEULINGE_HOECHSTENS: usize = 16;
 
-/// ⚑ **Das Ziel des Grundpreises** (2026-10-27, Festlegung des
-/// Projektinhabers, G1): ein halber Block. Ist ein Block voller, steigt der
-/// Preis, ist er leerer, sinkt er, je Block um höchstens ein Achtel.
-pub const GRUNDPREIS_ZIEL_BYTES: u64 = BLOCK_TXS_HOECHSTENS_BYTES as u64 / 2;
+/// ⚑ **Das Ziel des Grundpreises in Gebühreneinheiten** (2026-10-28,
+/// Festlegung des Projektinhabers): rund 500 Transaktionen je Block (je
+/// Prüfeinheit plus rund 200 Bytes). Ist ein Block voller, steigt der Preis,
+/// ist er leerer, sinkt er, je Block um höchstens ein Achtel. Bis zum
+/// 2026-10-28 ein halber Block in Bytes, rund 3 000 Transaktionen, weit über
+/// dem, was ein Knoten prüft. ⚠️ Vorläufig bis zur Messung auf der
+/// kleinsten zugelassenen Maschine.
+pub const GRUNDPREIS_ZIEL_EINHEITEN: u64 = 500 * (myl_consensus::block::PRUEFEINHEIT + 200);
+
+/// Höchstens so viele Gebühreneinheiten nimmt der Erzeuger in einen Block:
+/// das Doppelte des Ziels, wie bei EIP-1559.
+pub const BLOCK_EINHEITEN_HOECHSTENS: u64 = 2 * GRUNDPREIS_ZIEL_EINHEITEN;
 
 /// Um höchstens den so vielten Teil wandert der Grundpreis je Block.
 pub const GRUNDPREIS_SCHRITT_TEILER: u64 = 8;
@@ -205,7 +232,7 @@ pub const HINTERLEGT_SITZUNG: u8 = 1;
 /// von eins für immer bei eins, weil ein Achtel davon null ist. Nie unter
 /// dem Boden.
 pub fn naechster_grundpreis(preis: u64, bytes: u64, boden: u64) -> u64 {
-    let ziel = GRUNDPREIS_ZIEL_BYTES as u128;
+    let ziel = GRUNDPREIS_ZIEL_EINHEITEN as u128;
     let p = preis as u128;
     let neu = if bytes as u128 > ziel {
         let schritt = p * (bytes as u128 - ziel) / ziel / GRUNDPREIS_SCHRITT_TEILER as u128;
@@ -216,7 +243,344 @@ pub fn naechster_grundpreis(preis: u64, bytes: u64, boden: u64) -> u64 {
     u64::try_from(neu).unwrap_or(u64::MAX).max(boden)
 }
 
+/// Eine wartende Transaktion im Mempool.
+///
+/// 📌 **Mit ihrem Absender, einmal berechnet** (Fund 668, 2026-10-28): Die
+/// Adresse ist ein SHA-256 über den Schlüssel. `aufnehmen` rechnete sie für
+/// jeden wartenden Eintrag neu, um je Absender zu zählen, also über eine
+/// Füllung quadratisch: gemessen 27 µs je Aufnahme bei 512 wartenden, 413 µs
+/// bei 4 096, so viel wie eine Prüfung der Unterschrift.
+struct Wartend {
+    /// Die eigene Höhe bei der Aufnahme.
+    seit: u64,
+    tx: Transaktion,
+    absender: Address,
+    /// Die kodierte Länge, einmal bei der Aufnahme.
+    bytes: usize,
+    /// Ob der Absender bei der Aufnahme ein Neuling war.
+    neuling: bool,
+}
+
+impl Wartend {
+    /// Der gebotene Preis je Gebühreneinheit, als Bruch (Zähler, Nenner).
+    fn preis(&self) -> (u128, u128) {
+        (u128::from(self.tx.max_gebuehr), u128::from((self.bytes as u64).saturating_add(myl_consensus::block::PRUEFEINHEIT)))
+    }
+
+    fn billiger_als(&self, andere: &Wartend) -> bool {
+        let ((a, an), (b, bn)) = (self.preis(), andere.preis());
+        a * bn < b * an
+    }
+}
+
+/// **Die schon geprüften Unterschriften** (Skalierung, 2026-10-29): je
+/// Kennung einer Transaktion, die dieser Knoten bei der Aufnahme geprüft
+/// hat; höchstens doppelt so viele wie der Mempool Plätze hat, die ältesten
+/// fallen zuerst.
+#[derive(Default)]
+struct Unterschriften {
+    menge: std::collections::HashSet<Hash>,
+    folge: std::collections::VecDeque<Hash>,
+}
+
+impl Unterschriften {
+    fn merken(&mut self, h: Hash) {
+        if self.menge.insert(h) {
+            self.folge.push_back(h);
+        }
+        while self.folge.len() > 2 * MEMPOOL_HOECHSTENS {
+            if let Some(alt) = self.folge.pop_front() {
+                self.menge.remove(&alt);
+            }
+        }
+    }
+
+    fn kennt(&self, h: &Hash) -> bool {
+        self.menge.contains(h)
+    }
+}
+
+/// ⚑ **Der Mempool** (Skalierung, 2026-10-29): die Wartenden in der Folge
+/// des Eingangs, dazu die Zähler je Absender und für Neulinge, damit die
+/// Aufnahme nicht jedes Mal über alle Wartenden zählt.
+///
+/// ⚑ **Verdrängt wird nach dem Preis, gewählt nach Eingang.** Ein Trinkgeld
+/// gibt es nicht (abgebucht wird Grundpreis mal Einheiten, `max_gebuehr` ist
+/// die Obergrenze); eine Reihenfolge nach Gebot belohnte also nur, wer
+/// `max_gebuehr` hochsetzt. Bei Andrang steigt der Grundpreis, und was ihn
+/// nicht mehr bezahlen kann, bietet am wenigsten: Ist der Mempool voll,
+/// fallen die billigsten Enden der Nummernketten (nie aus der Mitte, sonst
+/// entstünde eine Lücke), und nur solche, die weniger bieten als die neue.
+struct Mempool {
+    liste: Vec<Wartend>,
+    je_absender: std::collections::HashMap<Address, usize>,
+    neulinge: usize,
+    /// Die Zahl der Plätze, Vorgabe [`MEMPOOL_HOECHSTENS`].
+    plaetze: usize,
+}
+
+impl Default for Mempool {
+    fn default() -> Self {
+        Self { liste: Vec::new(), je_absender: Default::default(), neulinge: 0, plaetze: MEMPOOL_HOECHSTENS }
+    }
+}
+
+impl Mempool {
+    fn voll(&self) -> bool {
+        self.liste.len() >= self.plaetze
+    }
+
+    fn len(&self) -> usize {
+        self.liste.len()
+    }
+
+    fn je_absender(&self, a: &Address) -> usize {
+        self.je_absender.get(a).copied().unwrap_or(0)
+    }
+
+    /// Die Absender der wartenden Transaktionen.
+    fn absender(&self) -> impl Iterator<Item = Address> + '_ {
+        self.je_absender.keys().copied()
+    }
+
+    fn hinein(&mut self, w: Wartend) {
+        *self.je_absender.entry(w.absender).or_insert(0) += 1;
+        self.neulinge += usize::from(w.neuling);
+        self.liste.push(w);
+    }
+
+    fn alle_nehmen(&mut self) -> Vec<Wartend> {
+        self.je_absender.clear();
+        self.neulinge = 0;
+        std::mem::take(&mut self.liste)
+    }
+
+    fn behalten(&mut self, f: impl FnMut(&Wartend) -> bool) {
+        let liste = std::mem::take(&mut self.liste).into_iter().filter(f).collect::<Vec<_>>();
+        self.alle_nehmen();
+        for w in liste {
+            self.hinein(w);
+        }
+    }
+
+    /// Macht Platz für `neu`: höchstens ein Vierundsechzigstel der Plätze
+    /// auf einmal, je die billigsten Enden einer Nummernkette, die weniger
+    /// bieten als `neu`. `true`, wenn danach Platz ist.
+    fn verdraengen(&mut self, neu: &Wartend) -> bool {
+        let mut enden: std::collections::HashMap<Address, usize> = std::collections::HashMap::new();
+        for (i, w) in self.liste.iter().enumerate() {
+            let e = enden.entry(w.absender).or_insert(i);
+            if self.liste[*e].tx.nonce < w.tx.nonce {
+                *e = i;
+            }
+        }
+        let mut kandidaten: Vec<usize> = enden.into_values().filter(|i| self.liste[*i].billiger_als(neu)).collect();
+        kandidaten.sort_by(|a, b| {
+            let (x, y) = (&self.liste[*a], &self.liste[*b]);
+            if x.billiger_als(y) {
+                std::cmp::Ordering::Less
+            } else if y.billiger_als(x) {
+                std::cmp::Ordering::Greater
+            } else {
+                // Bei gleichem Preis fällt die jüngere.
+                y.seit.cmp(&x.seit)
+            }
+        });
+        kandidaten.truncate((self.plaetze / 64).max(1));
+        if kandidaten.is_empty() {
+            return false;
+        }
+        let raus: std::collections::HashSet<usize> = kandidaten.into_iter().collect();
+        let liste = std::mem::take(&mut self.liste);
+        self.alle_nehmen();
+        for (i, w) in liste.into_iter().enumerate() {
+            if !raus.contains(&i) {
+                self.hinein(w);
+            }
+        }
+        true
+    }
+}
+
 /// Ob `a` ein Neuling ist (siehe [`MEMPOOL_NEULINGE_HOECHSTENS`]).
+/// ⚑ **Anlaufregel** (Stufe 1, Festlegung des Projektinhabers vom
+/// 2026-10-28): Was fällig ist (Freigabe bis `alte_epoche`), kommt in die
+/// Zuschreibung dieser Epoche; was ein Pod allein rechnete, wartet bis
+/// `alte_epoche` plus Streitfrist (`SPERRFRIST_EPOCHEN`).
+fn zurueckhalten_und_freigeben(
+    zurueckgehalten: &mut Vec<(u64, myl_types::ids::MinerId, u64)>,
+    alte_epoche: u64,
+    je_miner: &mut std::collections::BTreeMap<myl_types::ids::MinerId, u64>,
+    zurueck: std::collections::BTreeMap<myl_types::ids::MinerId, u64>,
+) {
+    let (faellig, offen): (Vec<_>, Vec<_>) = std::mem::take(zurueckgehalten).into_iter().partition(|(ab, _, _)| *ab <= alte_epoche);
+    *zurueckgehalten = offen;
+    for (_, wer, vtfe) in faellig {
+        let e = je_miner.entry(wer).or_insert(0);
+        *e = e.saturating_add(vtfe);
+    }
+    let ab = alte_epoche.saturating_add(myl_ledger::einsatz::SPERRFRIST_EPOCHEN);
+    zurueckgehalten.extend(zurueck.into_iter().filter(|(_, v)| *v > 0).map(|(wer, v)| (ab, wer, v)));
+}
+
+/// ⚑ **Ein Pod, der allein rechnete, wird voll gezogen** (Anlaufregel):
+/// jedes Segment seines Bündels, höchstens
+/// [`Kette::VOLL_GEZOGEN_HOECHSTENS`], ohne Doppel zur Stichprobe.
+fn voll_ziehen(
+    stichprobe: &mut Vec<crate::stichprobe::Segmentstichprobe>,
+    voll: &[myl_types::ids::PodId],
+    anteile: &[(myl_types::ids::PodId, u32)],
+) {
+    for pod in voll {
+        let n = anteile.iter().find(|(p, _)| p == pod).map_or(0, |(_, n)| *n);
+        for segment in 0..n.min(Kette::VOLL_GEZOGEN_HOECHSTENS) {
+            let s = crate::stichprobe::Segmentstichprobe { pod: *pod, segment };
+            if !stichprobe.contains(&s) {
+                stichprobe.push(s);
+            }
+        }
+    }
+}
+
+/// Was [`Kette::zuschreibung_der_epoche`] liefert.
+struct Epochenzuschreibung {
+    /// Was in dieser Epoche ausgeschüttet wird.
+    zuschreibung: myl_tokenomics::Zuschreibung,
+    /// Was erst nach der Streitfrist gutgeschrieben wird (Anlaufregel).
+    zurueck: std::collections::BTreeMap<myl_types::ids::MinerId, u64>,
+    /// Die Pods, die allein rechneten: Jedes ihrer Segmente wird gezogen.
+    allein: Vec<myl_types::ids::PodId>,
+    /// Die gültig unterschriebenen Bündel (für die Stichprobe).
+    bezeugt: Vec<myl_types::PoIBundle>,
+    /// Zwillingsgruppen einig und uneinig.
+    einig: u64,
+    uneinig: u64,
+    /// Uneinige Paare mit beiden Bündeln.
+    verschieden: Vec<(myl_types::PoIBundle, myl_types::PoIBundle)>,
+    /// Je Pod eines uneinigen Paars: Pod, Zwilling und was seine Miner
+    /// verdient hätten (zurückgehalten bis zum Urteil).
+    vorbehalten: Vec<(myl_types::ids::PodId, myl_types::ids::PodId, std::collections::BTreeMap<myl_types::ids::MinerId, u64>)>,
+}
+
+/// Was [`nach_zwillingen`] liefert.
+#[derive(Debug, Default)]
+struct NachZwillingen {
+    /// Vergütet in dieser Epoche.
+    bezahlt: Vec<myl_tokenomics::Podabrechnung>,
+    /// Ein Pod, der allein rechnete (Anlaufregel): erst nach der
+    /// Streitfrist.
+    allein: Vec<(u32, myl_tokenomics::Podabrechnung)>,
+    /// Bündel von Pods in Bereitschaft (in keiner Gruppe): nicht vergütet.
+    bereitschaft: u64,
+    /// Gruppen einig und uneinig (oder unvollständig).
+    einig: u64,
+    uneinig: u64,
+    /// Gruppen, in denen beide Bündel da sind und verschieden: Für sie darf
+    /// ein Differenzbeweis gemeldet werden.
+    verschieden: Vec<(myl_types::PoIBundle, myl_types::PoIBundle)>,
+    /// Ihre Abrechnungen, je Paar halbiert wie bei einer einigen Gruppe:
+    /// zurückgehalten bis zum Urteil (Rückbuchung, Whitepaper 6.4).
+    vorbehalten: Vec<((myl_types::ids::PodId, myl_tokenomics::Podabrechnung), (myl_types::ids::PodId, myl_tokenomics::Podabrechnung))>,
+}
+
+/// **Die Abrechnung nach Zwillingsgruppen** (Stufe 1): aus den gültig
+/// unterschriebenen Bündeln je Pod-Index. Eine Gruppe (ein Paar) ist einig,
+/// wenn jeder ein Bündel hat und alle mit dem ersten einig sind; dann bekommt
+/// jeder seinen Anteil (Redundanz-Normierung, je Paar die Hälfte). Uneinig
+/// oder ein Bündel fehlt: keiner. Ohne jedes Bündel: nichts zu zählen. ⚑ Ein
+/// Pod allein (Gruppe aus einem, Anlaufregel vom 2026-10-28) kommt nach
+/// `allein`. Das Bündel eines Pods in keiner Gruppe (Bereitschaft) wird
+/// nicht vergütet, nur gezählt.
+fn nach_zwillingen(
+    mut gueltig: std::collections::BTreeMap<u32, (myl_types::PoIBundle, myl_tokenomics::Podabrechnung)>,
+    gruppen: &[Vec<u32>],
+) -> NachZwillingen {
+    let mut aus = NachZwillingen::default();
+    for gruppe in gruppen {
+        let mut da: Vec<(myl_types::PoIBundle, myl_tokenomics::Podabrechnung)> =
+            gruppe.iter().filter_map(|i| gueltig.remove(i)).collect();
+        if gruppe.len() == 1 {
+            if let (Some(&i), Some((_, r))) = (gruppe.first(), da.pop()) {
+                aus.allein.push((i, r));
+            }
+            continue;
+        }
+        if da.is_empty() {
+            continue;
+        }
+        let einig = da.len() == gruppe.len() && da.iter().all(|(b, _)| zwillinge_einig(&da[0].0, b));
+        if !einig {
+            aus.uneinig += 1;
+            if let [(a, ra), (b, rb)] = da.as_slice() {
+                aus.verschieden.push((a.clone(), b.clone()));
+                let halb = |r: &myl_tokenomics::Podabrechnung| {
+                    let mut r = r.clone();
+                    r.vtfe_pod /= 2;
+                    r
+                };
+                aus.vorbehalten.push(((a.pod, halb(ra)), (b.pod, halb(rb))));
+            }
+            continue;
+        }
+        let n = gruppe.len() as u64;
+        aus.bezahlt.extend(da.into_iter().map(|(_, mut r)| {
+            r.vtfe_pod /= n;
+            r
+        }));
+        aus.einig += 1;
+    }
+    aus.bereitschaft = gueltig.len() as u64;
+    aus
+}
+
+/// **Haben zwei Zwillinge dasselbe gerechnet?** Beide mit Ausgabenwurzel
+/// (nicht null), dieselbe Wurzel und dieselbe Zahl der Segmente (Stufe 1).
+pub fn zwillinge_einig(a: &myl_types::PoIBundle, b: &myl_types::PoIBundle) -> bool {
+    a.ausgabenwurzel.as_bytes() != &[0u8; 32] && a.ausgabenwurzel == b.ausgabenwurzel && a.segmente == b.segmente
+}
+
+/// **Die Dämpfung des Credit-Preises** κ, Festkomma mit 16 Nachkommabits:
+/// 1/6 (Festlegung des Projektinhabers vom 2026-10-28). Ohne Nachfrage fällt
+/// der Preis damit je Epoche um ein Achtel, wie der Grundpreis von EIP-1559
+/// je Block; bei voller Auslastung steigt er um rund 3,4 %, weil das Ziel
+/// des Whitepapers bei 0,8 liegt und nicht in der Mitte.
+pub const CREDIT_PREIS_KAPPA: i64 = (1 << 16) / 6;
+
+/// **Das Ziel der Auslastung** u* = 0,8 (Whitepaper 5.4), Festkomma mit 16
+/// Nachkommabits wie [`myl_types::auslastung::AUSLASTUNG_SKALA`].
+pub const CREDIT_PREIS_ZIEL: i64 = (myl_types::auslastung::AUSLASTUNG_SKALA * 4 + 2) / 5;
+
+/// **Der Credit-Preis der nächsten Epoche** aus dem jetzigen in
+/// Feinauflösung (32 Nachkommabits) und der Auslastung (16 Nachkommabits):
+/// `P · exp(κ (u − u*))`, unten begrenzt auf den Kleinstbetrag der
+/// Feinauflösung. Liefert den neuen Wert in Feinauflösung und den
+/// abgerechneten, gerundet zur nächsten geraden Zahl und mindestens 1 (ein
+/// Preis von null verweigert jeden Burn).
+///
+/// ⚠️ Die Auslastung ist bestätigte Arbeit durch Kapazität und damit nie
+/// über 1; Nachfrage, die keinen Platz fand, sieht der Preis nicht. Das
+/// Whitepaper spricht von nachgefragter Arbeit.
+pub fn credit_preis_naechster(fein: i64, auslastung: i64) -> (i64, u64) {
+    let neu = myl_tokenomics::update_price_mit_untergrenze(
+        fein,
+        CREDIT_PREIS_KAPPA,
+        auslastung,
+        CREDIT_PREIS_ZIEL,
+        myl_tokenomics::PREIS_UNTERGRENZE_VORGABE,
+    );
+    (neu, credit_preis_abgerechnet(neu))
+}
+
+/// Der abgerechnete Credit-Preis zu einem in Feinauflösung: gerundet zur
+/// nächsten geraden Zahl, mindestens 1.
+pub fn credit_preis_abgerechnet(fein: i64) -> u64 {
+    let ganz = fein >> 32;
+    let rest = fein & 0xFFFF_FFFF;
+    let halb = 1i64 << 31;
+    let gerundet = if rest > halb || (rest == halb && ganz & 1 == 1) { ganz + 1 } else { ganz };
+    gerundet.max(1) as u64
+}
+
 fn ist_neuling(z: &LedgerState, a: &Address) -> bool {
     let k = z.account(a);
     k.balance == 0 && k.staked == 0 && !z.miner.contains_key(&myl_types::ids::MinerId::new(*a.as_bytes()))
@@ -420,6 +784,9 @@ pub enum KettenFehler {
     /// 2026-09-06 **keinen Aufrufer**: eine geprüfte, abgehakte Prüfung,
     /// die nie lief.
     AnfechtungUnsinnig,
+    /// ⚑ **Ein zustandsloser Knoten bekam keinen Zeugen**, oder einen, der
+    /// nicht trägt (zustandslose Validierung, 2026-10-29).
+    ZeugeTraegtNicht(Option<myl_ledger::state::Zeugenfehler>),
 }
 
 impl std::fmt::Display for KettenFehler {
@@ -437,6 +804,8 @@ impl std::fmt::Display for KettenFehler {
                 "das Zertifikat des Prüfpunkts trägt nicht"
             ),
             Self::ErzeugerUnbelegt => write!(f, "der Erzeuger ist nicht belegt: keine tragende Unterschrift eines Berechtigten"),
+            Self::ZeugeTraegtNicht(None) => write!(f, "zustandslos und ohne Zeugen"),
+            Self::ZeugeTraegtNicht(Some(g)) => write!(f, "der Zeuge trägt nicht: {g:?}"),
             Self::ZustandWeichtAb { erwartet, errechnet } => write!(
                 f,
                 "Zustandswurzel weicht ab: Block sagt {}, errechnet {}",
@@ -524,8 +893,58 @@ pub struct Kette {
     /// `ohne_adresse`, noch vor Fund 656. Jetzt hält die Kette die Pods der
     /// Ziehung fest, bevor der Wechsel die Zuteilung ersetzt.
     pods_der_stichprobe: Vec<myl_scheduler::shard_assignment::Pod>,
+    /// ⚑ **Der Checker jeder Ziehung** (Stufe 2, W6b, 2026-10-29): je
+    /// gezogenem Segment Pod, Index und der zugeteilte Miner, siehe
+    /// [`pruefer_waehlen`]. Leer, wenn die abgelaufene Epoche niemanden ohne
+    /// Pod hatte.
+    pruefer_der_stichprobe: Vec<(myl_types::ids::PodId, u32, myl_types::ids::MinerId)>,
+    /// Abgeschlossene Prüfaufträge und entschiedene Streitfälle, bis der
+    /// Knoten sie abholt ([`Self::pruefausgaben_abholen`]).
+    pruefausgaben: Pruefausgaben,
+    /// ⚑ **Zustandslos** (zustandslose Validierung, 2026-10-29): Der Knoten
+    /// hält die grossen Sammlungen nicht (Konten, Sitzungen, Speicher,
+    /// Hinterlegungen) und übernimmt einen Block nur mit seinem Zeugen
+    /// ([`Self::uebernimm_mit_zeuge`]). Er erzeugt keine Blöcke und legt
+    /// keine Abzüge an.
+    zustandslos: bool,
+    /// Die Zeugen der zuletzt selbst erzeugten Blöcke, je mit dem
+    /// Blockhash, für zustandslose Knoten; zusammen höchstens
+    /// [`ZEUGEN_HOECHSTENS_BYTES`].
+    eigene_zeugen: std::collections::VecDeque<(Hash, u64, std::sync::Arc<Vec<u8>>)>,
+    /// Selbst erzeugte Blöcke ohne Zeugen (ein Zugriff über eine ganze
+    /// grosse Sammlung im Blockpfad). Null, sonst ein Fund.
+    zeugenlos: u64,
+    /// ⚑ **Ein voller Knoten hält Zeugen bereit** (2026-10-30): Er zeichnet
+    /// beim Übernehmen auf, wie ein Erzeuger, und unterschreibt die Stücke
+    /// mit diesem Schlüssel. 📌 Im Podlauf hielt nur der Erzeuger Zeugen;
+    /// als er endete, konnte ein zustandsloser Knoten, der 136 Blöcke
+    /// zurücklag, sie nie mehr prüfen.
+    zeugenschluessel: Option<crate::schluessel::Konsensschluessel>,
+    /// Die unterschriebenen Stücke der zuletzt verbreiteten Zeugen.
+    zeugenstuecke: std::collections::VecDeque<(Hash, std::sync::Arc<Vec<myl_consensus::zeuge::Zeugenstueck>>)>,
+    /// ⚑ **Dieselben Stücke auf der Platte, über drei Prüfpunktabstände**
+    /// ([`crate::zeugenablage`], 2026-10-30); `None` ohne Ordner.
+    zeugenablage: Option<crate::zeugenablage::Zeugenablage>,
+    /// Ablegen auf der Platte misslang so oft (null, sonst ein Fund).
+    zeugenablage_fehler: u64,
+    /// ⚑ **Beim zustandslosen Knoten seine eigenen Konten** (`None`: es gibt
+    /// es nicht), aus jedem geprüften Block fortgeschrieben. Der Knoten
+    /// braucht sie für die Nummern seiner Transaktionen (Bündel, Prüfung,
+    /// Schiedsstimmen), für Einsatz und Guthaben; ohne sie reichte er seine
+    /// Arbeit mit falschen Nummern ein und würde nicht entlohnt.
+    eigene_konten: std::collections::BTreeMap<Address, Option<myl_ledger::AccountState>>,
+    /// Eigene Konten, deren Stand der zustandslose Knoten nicht kennt (nach
+    /// einem leichten Abzug), bis ein Zeuge oder ein Kontobeweis ihn
+    /// bringt; bis dahin gelten sie als neu.
+    eigene_unbekannt: std::collections::BTreeSet<Address>,
+    /// Die zuletzt angewandten Prüfpunktzertifikate (für den Anker eines
+    /// leichten Abzugs).
+    zertifikate: std::collections::VecDeque<myl_consensus::pruefpunkt::Pruefpunktzertifikat>,
     /// Wartende Transaktionen, je mit der eigenen Höhe bei der Aufnahme.
-    mempool: Vec<(u64, Transaktion)>,
+    mempool: Mempool,
+    /// Die Kennungen der Transaktionen, deren Unterschrift dieser Knoten
+    /// schon geprüft hat ([`Self::aufnehmen_geprueft`]).
+    unterschriften: Unterschriften,
     /// Die Hashes der übernommenen Blöcke, damit Dubletten aus dem
     /// Gossip nicht zweimal angewandt werden.
     bekannt: std::collections::HashSet<Hash>,
@@ -704,7 +1123,20 @@ impl Kette {
             offene_zuteilungen: Vec::new(),
             letzte_stichprobe: None,
             pods_der_stichprobe: Vec::new(),
-            mempool: Vec::new(),
+            pruefer_der_stichprobe: Vec::new(),
+            pruefausgaben: Pruefausgaben::default(),
+            zustandslos: false,
+            eigene_zeugen: std::collections::VecDeque::new(),
+            zeugenlos: 0,
+            zeugenschluessel: None,
+            zeugenstuecke: std::collections::VecDeque::new(),
+            zeugenablage: None,
+            zeugenablage_fehler: 0,
+            eigene_konten: std::collections::BTreeMap::new(),
+            eigene_unbekannt: std::collections::BTreeSet::new(),
+            zertifikate: std::collections::VecDeque::new(),
+            mempool: Mempool::default(),
+            unterschriften: Unterschriften::default(),
             bekannt: std::collections::HashSet::new(),
             verlauf: std::collections::BTreeMap::new(),
             speicher: None,
@@ -1103,7 +1535,10 @@ impl Kette {
     /// eigenen Block ([`crate::abzug::Abzug::pruefen`]); hier wird nur
     /// eingesetzt.
     pub fn auf_abzug_setzen(&mut self, abzug: &crate::abzug::Abzug, zustand: LedgerState) -> Result<(), String> {
-        if self.hoehe != 0 {
+        // ⚑ Ein zustandsloser Knoten darf vorwärts neu aufsetzen
+        //   (Selbstheilung, 2026-10-29); er führt keine Kettendatei.
+        let neu_aufsetzen = self.zustandslos && abzug.hoehe() > self.hoehe;
+        if self.hoehe != 0 && !neu_aufsetzen {
             return Err(format!("die Kette steht schon auf Höhe {}", self.hoehe));
         }
         if self.speicher.as_ref().is_some_and(|s| s.bloecke() > 0) {
@@ -1123,6 +1558,7 @@ impl Kette {
         self.offene_zuteilungen.clear();
         self.letzte_stichprobe = None;
         self.pods_der_stichprobe.clear();
+        self.pruefer_der_stichprobe.clear();
         Ok(())
     }
 
@@ -1186,7 +1622,22 @@ impl Kette {
     /// Kette nicht an: Der Abzug ist eine Gefälligkeit an Neulinge, kein
     /// Teil des Konsenses.
     fn abzug_anlegen(&mut self, block: &Block) {
+        if self.zustandslos {
+            return;
+        }
         let hoehe = block.header.height;
+        // ⚑ **Ein leichter Abzug an jedem Prüfpunkt** (zustandslose
+        //   Validierung, 2026-10-29): klein (Register, Kopf, grosse Wurzel),
+        //   damit ein zustandsloser Neuling höchstens rund 150 Blöcke mit
+        //   Zeugen nachrechnet.
+        if myl_consensus::pruefpunkt::ist_pruefpunkt(hoehe) {
+            if let Some(leicht) = self.ablage.as_ref().map(|a| a.leicht()) {
+                let zustand = self.zustand.leicht_bytes();
+                if leicht.ablegen(&crate::abzug::Abzug { block: block.clone(), zustand }).is_err() {
+                    self.schreibfehler += 1;
+                }
+            }
+        }
         if !crate::abzug::ist_grenze(hoehe) {
             return;
         }
@@ -1307,8 +1758,17 @@ impl Kette {
 
     /// Die Zustandswurzel: der Wert, der zwischen den Knoten
     /// übereinstimmen muss.
+    ///
+    /// Diese Fassung rechnet alles neu (für Tests und seltene Prüfungen); im
+    /// Betrieb gilt [`Self::wurzel`].
     pub fn zustandswurzel(&self) -> Hash {
         self.zustand.commitment()
+    }
+
+    /// Die Zustandswurzel, fortgeschrieben über den Zustandsbaum (je Block
+    /// nur das Geänderte; gleich [`Self::zustandswurzel`]).
+    pub fn wurzel(&mut self) -> Hash {
+        self.zustand.wurzel()
     }
 
     /// **Hält den Mempool klein** (Fund 627): Was seine Nummer im Zustand
@@ -1322,10 +1782,10 @@ impl Kette {
     /// fielen dabei hinter den Erzeuger zurück. Was ein Block enthält, hat
     /// seine Nummer verbraucht, fällt hier also ebenso heraus.
     fn mempool_bereinigen(&mut self, hoehe: u64) {
-        let zustand = &self.zustand;
-        self.mempool.retain(|(seit, tx)| {
-            hoehe.saturating_sub(*seit) < WARTEN_HOECHSTENS_HOEHEN
-                && tx.nonce >= zustand.account(&tx.absender_adresse()).nonce
+        let boden: std::collections::HashMap<Address, u64> =
+            self.mempool.absender().map(|a| (a, self.nonce_boden(&a))).collect();
+        self.mempool.behalten(|w| {
+            hoehe.saturating_sub(w.seit) < WARTEN_HOECHSTENS_HOEHEN && w.tx.nonce >= boden.get(&w.absender).copied().unwrap_or(0)
         });
     }
 
@@ -1441,18 +1901,35 @@ impl Kette {
     /// Sie wächst nur, also gilt eine Transaktion unter der Nummer im
     /// Zustand auch später nie. Dazu die Grenzen aus Fund 633: insgesamt
     /// [`MEMPOOL_HOECHSTENS`], je Absender [`MEMPOOL_JE_ABSENDER`].
+    /// Wie [`Self::aufnehmen`], für eine geprüfte Transaktion: Ihre Kennung
+    /// kommt in den Speicher der geprüften Unterschriften, und der Block
+    /// prüft sie nicht noch einmal.
+    pub fn aufnehmen_geprueft(&mut self, g: myl_consensus::block::GepruefteTransaktion) -> bool {
+        let tx = g.inhalt().clone();
+        self.unterschriften.merken(tx.kennung());
+        self.aufnehmen(tx)
+    }
+
     pub fn aufnehmen(&mut self, tx: Transaktion) -> bool {
+        // ⚑ Ein zustandsloser Knoten führt keinen Mempool: Er erzeugt keine
+        //   Blöcke und kann fremde Nummern nicht prüfen.
+        if self.zustandslos {
+            return false;
+        }
         let absender = tx.absender_adresse();
-        if self.mempool.len() >= MEMPOOL_HOECHSTENS
-            || tx.nonce < self.zustand.account(&absender).nonce
-            || self.mempool.iter().filter(|(_, t)| t.absender_adresse() == absender).count() >= MEMPOOL_JE_ABSENDER
-            || (ist_neuling(&self.zustand, &absender)
-                && self.mempool.iter().filter(|(_, t)| ist_neuling(&self.zustand, &t.absender_adresse())).count()
-                    >= MEMPOOL_NEULINGE_HOECHSTENS)
+        let neuling = ist_neuling(&self.zustand, &absender);
+        if tx.nonce < self.nonce_boden(&absender)
+            || self.mempool.je_absender(&absender) >= MEMPOOL_JE_ABSENDER
+            || (neuling && self.mempool.neulinge >= MEMPOOL_NEULINGE_HOECHSTENS)
         {
             return false;
         }
-        self.mempool.push((self.hoehe, tx));
+        let bytes = borsh::to_vec(&tx).map_or(usize::MAX, |b| b.len());
+        let w = Wartend { seit: self.hoehe, tx, absender, bytes, neuling };
+        if self.mempool.voll() && !self.mempool.verdraengen(&w) {
+            return false;
+        }
+        self.mempool.hinein(w);
         true
     }
 
@@ -1521,9 +1998,10 @@ impl Kette {
     fn mitgliedschaft(
         pod: &myl_scheduler::shard_assignment::Pod,
         epoche: u64,
+        vertreter: &[(u32, myl_types::ids::MinerId)],
     ) -> Option<myl_consensus::poi::PodMembership> {
         let erste = pod.shards.first()?;
-        let mitglieder = Self::unterzeichner_des_buendels(pod);
+        let mitglieder = Self::unterzeichner_des_buendels(pod, vertreter)?;
         myl_consensus::poi::PodMembership::ohne_besitznachweis(
             EpochId(epoche),
             myl_types::pod_kennung(epoche, pod.pod_index),
@@ -1552,10 +2030,14 @@ impl Kette {
         let zuteilung = Self::zuteilung_der_laufenden_epoche(zustand);
         let pod = myl_scheduler::zonenzuteilung::pod_zu_kennung(&zuteilung, zustand.epoch.0, &buendel.pod)
             .ok_or("diesen Pod kennt die Zuteilung nicht")?;
-        let mitgliedschaft = Self::mitgliedschaft(pod, zustand.epoch.0).ok_or("Pod ohne Positionen")?;
+        let mitgliedschaft =
+            Self::mitgliedschaft(pod, zustand.epoch.0, &buendel.vertreter).ok_or("Pod ohne Positionen oder falsche Vertreter")?;
         myl_consensus::poi::verify_bundle_signature(buendel, &mitgliedschaft).map_err(|e| format!("Aggregat: {e:?}"))?;
         let erster = &pod.shards.first().ok_or("Pod ohne Positionen")?.miner;
-        Ok((erster.miner_id, erster.netzadresse))
+        // Vertritt jemand die erste Position, reicht er ein (6.8).
+        let vertreter = buendel.vertreter.iter().find(|(p, _)| *p == 0).and_then(|(_, m)| pod.reserve.iter().find(|r| r.miner_id == *m));
+        let einreicher = vertreter.unwrap_or(erster);
+        Ok((einreicher.miner_id, einreicher.netzadresse))
     }
 
     /// ⚑ **Wer ein PoI-Bündel unterschreibt: die Positionen, nicht die
@@ -1565,10 +2047,29 @@ impl Kette {
     /// Unterschrift den Anspruch gegen die eigenen Segmente. Ein echter Pod
     /// mit Reserve bekam so nie ein Bündel durch. Dieselbe Menge prüft das
     /// Einreichen und die Zuschreibung am Epochenwechsel.
+    ///
+    /// ⚑ **Mit Vertretern** (Whitepaper 6.8, Festlegung des Projektinhabers
+    /// vom 2026-10-28): Nennt das Bündel für eine Position ein Mitglied der
+    /// Reserve dieses Pods, unterschreibt es statt des Inhabers. `None`, wenn
+    /// ein Vertreter nicht zur Reserve gehört, eine Position nicht gibt oder
+    /// eine Position oder ein Vertreter doppelt steht: Ein solches Bündel
+    /// trägt nicht.
     fn unterzeichner_des_buendels(
         pod: &myl_scheduler::shard_assignment::Pod,
-    ) -> Vec<(myl_types::ids::MinerId, myl_types::bls::BlsPublicKey)> {
-        pod.shards.iter().map(|s| (s.miner.miner_id, s.miner.schluessel)).collect()
+        vertreter: &[(u32, myl_types::ids::MinerId)],
+    ) -> Option<Vec<(myl_types::ids::MinerId, myl_types::bls::BlsPublicKey)>> {
+        let mut liste: Vec<(myl_types::ids::MinerId, myl_types::bls::BlsPublicKey)> =
+            pod.shards.iter().map(|s| (s.miner.miner_id, s.miner.schluessel)).collect();
+        let mut positionen = std::collections::BTreeSet::new();
+        let mut wer = std::collections::BTreeSet::new();
+        for (position, miner) in vertreter {
+            let r = pod.reserve.iter().find(|r| r.miner_id == *miner)?;
+            if !positionen.insert(*position) || !wer.insert(*miner) {
+                return None;
+            }
+            *liste.get_mut(*position as usize)? = (r.miner_id, r.schluessel);
+        }
+        Some(liste)
     }
 
     /// Wie viele Shard-Positionen ein Pod dieser Probekette hat.
@@ -1793,17 +2294,49 @@ impl Kette {
         for konto in empfaenger {
             let _ = myl_ledger::transitions::praegen(zustand, &konto, betrag);
         }
+        // 📌 Fund 675 (2026-10-28, Nachtlauf mit 30 Knoten): Die Probekonten
+        //    sind der Vorrat des Probehahns, und nichts fuellte sie nach. Der
+        //    Testverkehr zahlt seine Gebuehren aus ihnen, rund einmal je
+        //    Sekunde und Knoten; mit 30 Knoten auf zwoelf Konten waren alle
+        //    nach etwa 40 Minuten leer, die Lastphase hatte nichts mehr zum
+        //    Ausstatten, und der spaete Einsteiger fand 452 mal einen leeren
+        //    Hahn. Jetzt fuellt der Epochenwechsel ein Konto unter der
+        //    Haelfte wieder auf [`PROBEGUTHABEN`] auf, wie ein Testnetz
+        //    seinen Hahn nachfuellt; mehr als zwoelf volle Konten je Epoche
+        //    entsteht so nie. Erst unter der Haelfte, damit kleine Abgaenge
+        //    (eine Hinterlegung, ein Burn) in der Rechnung bleiben und nicht
+        //    beim naechsten Wechsel verschwinden.
+        for n in 0..PROBEKONTEN {
+            let konto = probekonto(n);
+            let stand = zustand.account(&konto).balance;
+            if stand < PROBEGUTHABEN / 2 {
+                let _ = myl_ledger::transitions::praegen(zustand, &konto, PROBEGUTHABEN - stand);
+            }
+        }
     }
 
-    fn zuschreibung_der_epoche(
-        zustand: &LedgerState,
-    ) -> (myl_tokenomics::Zuschreibung, Vec<myl_types::PoIBundle>) {
+    /// Die Zuschreibung der Epoche aus den gültig unterschriebenen Bündeln,
+    /// dazu diese Bündel (für die Stichprobe) und wie viele Zwillingspaare
+    /// einig und uneinig waren.
+    ///
+    /// ⚑ **Stufe 1** (Whitepaper 3.4 und 5.3, Festlegung des Projektinhabers
+    /// vom 2026-10-28): Ein Pod wird nur vergütet, wenn er und sein Zwilling
+    /// ([`Self::zwillinge_der_laufenden_epoche`]) ein Bündel mit derselben
+    /// Ausgabenwurzel (nicht null) und derselben Segmentzahl eingereicht
+    /// haben, und dann jeder zur Hälfte (Redundanz-Normierung). Uneinig oder
+    /// ohne Bündel des Zwillings: keiner; das ist ein Fall für die
+    /// Stichprobe. ⚑ Ein übriger Pod steht in Bereitschaft und wird nicht
+    /// vergütet. ⚑ Gibt es gar kein Paar (ein Netz mit einem Pod), gilt die
+    /// Anlaufregel: zurückgehalten bis nach der Streitfrist, jedes Segment
+    /// gezogen.
+    fn zuschreibung_der_epoche(zustand: &LedgerState) -> Epochenzuschreibung {
         let verteilung = myl_tokenomics::vtfe::arbeitsverteilung_probe();
         let epoche = zustand.epoch.0;
         let zuteilung = Self::zuteilung_der_laufenden_epoche(zustand);
         let _ = &verteilung;
 
-        let mut abrechnungen = Vec::new();
+        let mut gueltig: std::collections::BTreeMap<u32, (myl_types::PoIBundle, myl_tokenomics::Podabrechnung)> =
+            std::collections::BTreeMap::new();
         let mut bezeugt: Vec<myl_types::PoIBundle> = Vec::new();
         for buendel in buendel_der_epoche(zustand) {
             let Some(pod) =
@@ -1816,7 +2349,7 @@ impl Kette {
             // **Zuteilung**, nie aus dem Bündel: Wer sie aus dem Bündel
             // nähme, ließe den Einreicher bestimmen, gegen welche
             // Schlüssel geprüft wird.
-            let Some(mitgliedschaft) = Self::mitgliedschaft(pod, epoche) else {
+            let Some(mitgliedschaft) = Self::mitgliedschaft(pod, epoche, &buendel.vertreter) else {
                 continue;
             };
             if myl_consensus::poi::verify_bundle_signature(&buendel, &mitgliedschaft).is_err() {
@@ -1835,23 +2368,49 @@ impl Kette {
             else {
                 continue;
             };
-            abrechnungen.push(myl_tokenomics::Podabrechnung {
+            // ⚑ Eine übernommene Position wird an den Vertreter vergütet, für
+            //   das ganze Bündel (6.8; die Zuschreibung je Segment kommt mit
+            //   den Unterschriften je Segment).
+            let abrechnung = myl_tokenomics::Podabrechnung {
                 positionen: pod
                     .shards
                     .iter()
-                    .map(|s| (s.miner.miner_id, s.shard_index))
+                    .enumerate()
+                    .map(|(i, s)| {
+                        let wer = buendel.vertreter.iter().find(|(p, _)| *p as usize == i).map(|(_, m)| *m);
+                        (wer.unwrap_or(s.miner.miner_id), s.shard_index)
+                    })
                     .collect(),
                 reserve: pod.reserve.iter().map(|m| m.miner_id).collect(),
                 vtfe_pod: buendel.vtfe_claimed,
                 verteilung: Some(eigene),
-            });
+            };
             bezeugt.push(buendel.clone());
+            gueltig.insert(pod.pod_index, (buendel, abrechnung));
         }
-        (
-            myl_tokenomics::zuschreiben_aus_abrechnung(&verteilung, &abrechnungen)
-                .unwrap_or_default(),
+        // ⚑ Stufe 1: nach Zwillingsgruppen.
+        let gruppen = Self::zwillinge_der_laufenden_epoche(zustand);
+        let n = nach_zwillingen(gueltig, &gruppen);
+        let allein: Vec<myl_tokenomics::Podabrechnung> = n.allein.iter().map(|(_, r)| r.clone()).collect();
+        Epochenzuschreibung {
+            zuschreibung: myl_tokenomics::zuschreiben_aus_abrechnung(&verteilung, &n.bezahlt).unwrap_or_default(),
+            zurueck: myl_tokenomics::zuschreiben_aus_abrechnung(&verteilung, &allein).unwrap_or_default().je_miner,
+            allein: n.allein.iter().map(|(i, _)| myl_types::pod_kennung(epoche, *i)).collect(),
             bezeugt,
-        )
+            einig: n.einig,
+            uneinig: n.uneinig,
+            verschieden: n.verschieden,
+            vorbehalten: n
+                .vorbehalten
+                .iter()
+                .flat_map(|((pa, ra), (pb, rb))| {
+                    let je = |r: &myl_tokenomics::Podabrechnung| {
+                        myl_tokenomics::zuschreiben_aus_abrechnung(&verteilung, std::slice::from_ref(r)).unwrap_or_default().je_miner
+                    };
+                    [(*pa, *pb, je(ra)), (*pb, *pa, je(rb))]
+                })
+                .collect(),
+        }
     }
 
     /// Setzt den Stimmsatz, gegen den Saatquellen und Erzeuger geprüft
@@ -2047,6 +2606,152 @@ impl Kette {
         self.letzte_stichprobe.as_ref().map_or(&[], |(_, s)| s.as_slice())
     }
 
+    /// Die Checker der letzten Ziehung: Pod, Index im Bündel, Miner.
+    pub fn pruefer_der_stichprobe(&self) -> &[(myl_types::ids::PodId, u32, myl_types::ids::MinerId)] {
+        &self.pruefer_der_stichprobe
+    }
+
+    /// ⚑ **Die Grössen der Kette** (Fund 677, 2026-10-29): Im Nachtlauf
+    /// wuchs jeder Knoten um rund 2,3 MB je Epoche, ohne dass klar war,
+    /// wodurch. Je Sammlung die Zahl der Einträge, dazu die Bytes des
+    /// Zustands, den jeder Block ganz hasht.
+    pub fn groessen(&self) -> Vec<(&'static str, u64)> {
+        let z = &self.zustand;
+        let n = |x: usize| x as u64;
+        vec![
+            ("zustand_bytes", borsh::to_vec(z).map_or(0, |b| b.len() as u64)),
+            ("konten", n(z.accounts.len())),
+            ("sitzungen", n(z.sitzungen.len())),
+            ("speicher", n(z.speicher.len())),
+            ("miner", n(z.miner.len())),
+            ("zusagen", n(z.zusagen.values().map(Vec::len).sum())),
+            ("buendel", n(z.buendel.len())),
+            ("doppelbelege", n(z.doppelbelege.len())),
+            ("hinterlegungen", n(z.hinterlegungen.len())),
+            ("trainingssegmente", n(z.trainingssegmente.len())),
+            ("zurueckgehalten", n(z.zurueckgehalten.len())),
+            ("stichproben_offen", n(z.stichproben_offen.len())),
+            ("pruefauftraege", n(z.pruefauftraege.len())),
+            ("streitfaelle", n(z.streitfaelle.len())),
+            ("verlauf", n(self.verlauf.len())),
+            ("bekannt", n(self.bekannt.len())),
+            ("mempool", n(self.mempool.len())),
+            ("offene_zuteilungen", n(self.offene_zuteilungen.len())),
+            ("teilgruppe", n(self.teilgruppe.len())),
+            ("auszahlungen_offen", n(z.auszahlungen_offen.anzahl())),
+            ("baum_im_speicher", z.baum_groessen().0),
+            ("baum_seiten_bytes", z.baum_groessen().1),
+            // Zustandslose Validierung (2026-10-29).
+            ("zustandslos", u64::from(self.zustandslos)),
+            ("zeugenlos", self.zeugenlos),
+            ("zeugenstuecke_bytes", self.zeugenstuecke.iter().map(|(_, s)| s.iter().map(|t| t.bytes.len() as u64).sum::<u64>()).sum()),
+            ("zeugen_platte_bytes", self.zeugenablage.as_ref().map_or(0, |a| a.bytes())),
+            ("zeugen_platte_bloecke", self.zeugenablage.as_ref().map_or(0, |a| a.anzahl() as u64)),
+            ("zeugen_platte_fehler", self.zeugenablage_fehler),
+            ("eigene_unbekannt", n(self.eigene_unbekannt.len())),
+        ]
+    }
+
+    /// Die seit dem letzten Abholen abgeschlossenen Prüfaufträge und
+    /// entschiedenen Streitfälle.
+    pub fn pruefausgaben_abholen(&mut self) -> Pruefausgaben {
+        std::mem::take(&mut self.pruefausgaben)
+    }
+
+    /// ⚑ **Ein Schiedsurteil buchen** (T6d, Whitepaper 6.6 und Kap. 5.5):
+    /// Rechnete der Pod falsch, verliert der Beschuldigte nach der Matrix
+    /// (Shard-Miner, falsches Ergebnis: 100 % des Einsatzes), der Anfechter
+    /// bekommt das Kopfgeld; war die Anfechtung falsch, verliert der
+    /// Anfechter seine Kaution. Verfallen heisst: nichts.
+    fn schiedsurteil_buchen(
+        zustand: &mut LedgerState,
+        urteil: &myl_ledger::pruefung::Schiedsurteil,
+    ) -> Result<(), String> {
+        use myl_ledger::pruefung::Schiedsausgang;
+        use myl_tokenomics::slashing::{Akteur, Grund};
+        let f = &urteil.fall;
+        // Der überführte Pod verliert seinen Vorbehalt, sein Zwilling bekommt
+        // seinen, gleich ob die Schlachtung trägt.
+        if urteil.ausgang == Schiedsausgang::PodFalsch {
+            myl_ledger::pruefung::vorbehalt_entscheiden(zustand, f.epoche, &f.pod);
+        }
+        let anfechter = Address::new(*f.anfechter.as_bytes());
+        let (outcome, akteur, grund) = match urteil.ausgang {
+            Schiedsausgang::Verfallen => return Ok(()),
+            Schiedsausgang::PodFalsch => {
+                (myl_ledger::transitions::VerdictOutcome::SlashMiner, Akteur::ShardMiner, Grund::FalschesErgebnis)
+            }
+            Schiedsausgang::AnfechtungFalsch => {
+                (myl_ledger::transitions::VerdictOutcome::SlashChecker, Akteur::Checker, Grund::MutwilligeAnfechtung)
+            }
+        };
+        let beschuldigt = match (urteil.ausgang, f.beschuldigt) {
+            (Schiedsausgang::PodFalsch, None) => return Err("ohne Beschuldigten".into()),
+            (_, b) => b.map(|m| Address::new(*m.as_bytes())).unwrap_or(anfechter),
+        };
+        let mut kennung = b"myelith-streitfall".to_vec();
+        kennung.extend_from_slice(&f.epoche.to_le_bytes());
+        kennung.extend_from_slice(f.pod.as_ref());
+        kennung.extend_from_slice(&f.segment.to_le_bytes());
+        let verdict = myl_ledger::transitions::Verdict {
+            segment_id: myl_types::ids::SegmentId::new(Hash::sha256(&kennung).0),
+            miner: beschuldigt,
+            checker: anfechter,
+            outcome,
+        };
+        myl_tokenomics::slashing::urteil_buchen_gestaffelt(zustand, &verdict, akteur, grund)
+            .map(|_| ())
+            .map_err(|e| format!("{e:?}"))
+    }
+
+    /// 📌 Fund 658: die Zuteilung der ablaufenden Epoche, wenn ein Block der
+    /// Epoche `epoch` sie beendet, berechnet vor dem Wechsel, der sie
+    /// ersetzt. Gezogen wird erst mit dem Zertifikat, also bleibt sie bis
+    /// dahin aufgehoben ([`Self::zuteilung_aufheben`]).
+    fn ablaufende_zuteilung(&self, epoch: u64) -> Option<(u64, myl_scheduler::shard_assignment::Zuteilung)> {
+        (epoch > self.zustand.epoch.0)
+            .then(|| (self.zustand.epoch.0, Self::zuteilung_der_laufenden_epoche(&self.zustand)))
+    }
+
+    fn zuteilung_aufheben(&mut self, ablaufend: Option<(u64, myl_scheduler::shard_assignment::Zuteilung)>) {
+        let Some(z) = ablaufend else {
+            return;
+        };
+        self.offene_zuteilungen.push(z);
+        while self.offene_zuteilungen.len() > OFFENE_ZUTEILUNGEN_HOECHSTENS {
+            self.offene_zuteilungen.remove(0);
+        }
+    }
+
+    /// **Eine Ziehung merken**, bei jedem Knoten, ob er den Block baut oder
+    /// empfängt: die gezogenen Segmente, ihre Pods und je Ziehung den
+    /// Checker aus den Minern ohne Pod der gezogenen Epoche
+    /// ([`pruefer_waehlen`]).
+    fn ziehung_merken(&mut self, gezogen: Option<(u64, Vec<crate::stichprobe::Segmentstichprobe>)>) {
+        let Some((e, proben)) = &gezogen else {
+            return;
+        };
+        let mut pods: Vec<myl_scheduler::shard_assignment::Pod> = Vec::new();
+        let mut pruefer = Vec::new();
+        if let Some(stelle) = self.offene_zuteilungen.iter().position(|(alt, _)| alt == e) {
+            let (_, z) = self.offene_zuteilungen.remove(stelle);
+            for s in proben {
+                if let Some(p) = myl_scheduler::zonenzuteilung::pod_zu_kennung(&z, *e, &s.pod) {
+                    if !pods.iter().any(|q| q.pod_index == p.pod_index) {
+                        pods.push(p.clone());
+                    }
+                }
+            }
+        }
+        // ⚑ Die Checker stehen im Zustand (2026-10-29): je Auftrag der Ziehung.
+        for a in self.zustand.pruefauftraege.iter().filter(|a| a.epoche == *e) {
+            pruefer.extend(a.pruefer.iter().map(|m| (a.pod, a.segment, *m)));
+        }
+        self.pods_der_stichprobe = pods;
+        self.pruefer_der_stichprobe = pruefer;
+        self.letzte_stichprobe = gezogen;
+    }
+
     /// Zu welcher Epoche die letzte Ziehung gehört, wenn es eine gibt.
     pub fn stichprobenepoche(&self) -> Option<u64> {
         self.letzte_stichprobe.as_ref().map(|(e, _)| *e)
@@ -2082,14 +2787,34 @@ impl Kette {
             return myl_scheduler::shard_assignment::Zuteilung { ohne_zusage: register, ..Default::default() };
         };
         let epoche = zustand.epoch;
-        myl_scheduler::zonenzuteilung::zuteilung_der_epoche_mit_zusagen(
+        let mut zuteilung = myl_scheduler::zonenzuteilung::zuteilung_der_epoche_mit_zusagen(
             &register,
             epoche.0,
             &zustand.epochensaat,
             Self::PROBE_SHARDS,
             &podmodell,
             &|m| myl_ledger::transitions::modellzusage_der_epoche(zustand, m, epoche),
-        )
+        );
+        // ⚑ **Ein Pod ohne Zwilling steht in Bereitschaft** (W6, Festlegung
+        //   des Projektinhabers vom 2026-10-28): Er kommt gar nicht erst in
+        //   die Zuteilung, seine Miner stehen bei `ohne_pod`. So startet er
+        //   keine Shards, wird nicht gemessen (sonst sperrte ihn die
+        //   Zeitprobe als Verweigerer) und reicht nichts ein, an jeder Stelle
+        //   gleich. Die Paare der übrigen bleiben dieselben: Die Paarbildung
+        //   wählte ihn nie.
+        let mit_schnitt: Vec<myl_scheduler::shard_assignment::Pod> =
+            zuteilung.pods.iter().filter(|p| Self::grenzen_des_pods(zustand, p).is_some()).cloned().collect();
+        let bereit = myl_scheduler::bereitschaft(&mit_schnitt, &myl_scheduler::zwillingsgruppen(&mit_schnitt));
+        if !bereit.is_empty() {
+            let (raus, bleiben): (Vec<_>, Vec<_>) =
+                std::mem::take(&mut zuteilung.pods).into_iter().partition(|p| bereit.contains(&p.pod_index));
+            zuteilung.pods = bleiben;
+            for p in raus {
+                zuteilung.ohne_pod.extend(p.shards.into_iter().map(|s| s.miner));
+                zuteilung.ohne_pod.extend(p.reserve);
+            }
+        }
+        zuteilung
     }
 
     /// **Die Grenzen eines Pods der laufenden Epoche**, aus den Zusagen
@@ -2243,6 +2968,20 @@ impl Kette {
         bestaetigt
     }
 
+    /// ⚑ **Die Zwillingsgruppen der laufenden Epoche** (Stufe 1, Whitepaper
+    /// 3.4; Festlegung des Projektinhabers vom 2026-10-28): aus den Pods, die
+    /// einen Schnitt haben, nach `myl_scheduler::zwillingsgruppen` (Paare;
+    /// ein übriger steht in Bereitschaft und ist schon aus der Zuteilung
+    /// genommen; allein nur ohne jedes Paar). Die Kette
+    /// vergütet nach ihnen, das Podbild der Relaisleitung nennt sie dem
+    /// Ortsdienst; eine Quelle für beide.
+    pub fn zwillinge_der_laufenden_epoche(zustand: &LedgerState) -> Vec<Vec<u32>> {
+        let zuteilung = Self::zuteilung_der_laufenden_epoche(zustand);
+        let mit_schnitt: Vec<myl_scheduler::shard_assignment::Pod> =
+            zuteilung.pods.iter().filter(|p| Self::grenzen_des_pods(zustand, p).is_some()).cloned().collect();
+        myl_scheduler::zwillingsgruppen(&mit_schnitt)
+    }
+
     /// Welche Pods der laufenden Epoche trainieren statt zu rechnen.
     ///
     /// # ⚑ Der Weg, und er war bis zum 2026-09-05 nicht da
@@ -2273,7 +3012,7 @@ impl Kette {
                 grundrate_bps: Self::TRAININGS_GRUNDRATE_BPS,
                 freianteil_bps: Self::TRAININGS_FREIANTEIL_BPS,
             },
-            &zustand.trainingsstand,
+            zustand.trainingsstand.als_map(),
             zustand.korpus.as_ref(),
             &zustand.epochensaat.0,
         )
@@ -2301,6 +3040,12 @@ impl Kette {
         kennung: &myl_types::ids::PodId,
     ) -> Option<myl_scheduler::shard_assignment::Pod> {
         if epoche != self.zustand.epoch.0 {
+            // 📌 Fund 680, Folge (2026-10-29): Die Spuren kommen seit dem
+            //    Einreichen danach, also oft nach dem Wechsel. Die Zuteilung
+            //    der abgelaufenen Epoche steht bis zur Ziehung aufgehoben.
+            if let Some((_, z)) = self.offene_zuteilungen.iter().find(|(e, _)| *e == epoche) {
+                return myl_scheduler::zonenzuteilung::pod_zu_kennung(z, epoche, kennung).cloned();
+            }
             // 📌 Fund 658: die Epoche der letzten Ziehung, aus den
             //    festgehaltenen Pods.
             if self.stichprobenepoche() != Some(epoche) {
@@ -2338,6 +3083,70 @@ impl Kette {
     /// wird auch diese Konstante überflüssig.
     pub const STICHPROBE_BP: u32 = myl_tokenomics::stichprobe_bp();
 
+    /// ⚑ **Die Fenster eines Prüfauftrags** (2026-10-29), je eine
+    /// Viertelepoche: so lange Festlegen ab der Ziehung, danach so lange
+    /// Aufdecken. Fest wie bei Arbitrum BoLD; wer früher fertig ist, deckt
+    /// früher auf, sobald alle festgelegt haben.
+    pub const PRUEF_FENSTER_BLOECKE: u64 = BLOECKE_JE_EPOCHE / 4;
+
+    /// ⚑ **Das Fenster einer Schiedsrunde** (T6d, 2026-10-29): eine Epoche
+    /// ab dem Abschluss des Auftrags, fest wie bei Arbitrum BoLD, gleich
+    /// wie viele stimmen. Das Nachrechnen einer Layer dauert Millisekunden;
+    /// das Fenster ist für das Netz, nicht für die Rechnung.
+    pub const SCHIED_FENSTER_BLOECKE: u64 = BLOECKE_JE_EPOCHE;
+
+    /// **Wer eine Ziehung der laufenden Epoche prüfen darf** (W6b, Frage 4
+    /// vom 2026-10-29), berechnet am Wechsel, solange der Zustand noch in
+    /// ihr steht: die Miner ohne Pod (darin stehen auch die des Pods in
+    /// Bereitschaft, siehe [`Self::zuteilung_der_laufenden_epoche`]) und je
+    /// Pod die Mitglieder der übrigen Zwillingsgruppen als Ersatz.
+    #[allow(clippy::type_complexity)]
+    fn pruefkandidaten(
+        zustand: &LedgerState,
+        epoche: u64,
+    ) -> (
+        Vec<myl_types::ids::MinerId>,
+        Vec<(myl_types::ids::PodId, Vec<myl_types::ids::MinerId>)>,
+        Vec<(myl_types::ids::PodId, Vec<(myl_types::ids::MinerId, u32, u32)>)>,
+    ) {
+        let z = Self::zuteilung_der_laufenden_epoche(zustand);
+        let kandidaten: Vec<myl_types::ids::MinerId> = z.ohne_pod.iter().map(|m| m.miner_id).collect();
+        let gruppen = myl_scheduler::zwillingsgruppen(&z.pods);
+        let gruppe_von = |i: u32| gruppen.iter().position(|g| g.contains(&i));
+        let ersatz = z
+            .pods
+            .iter()
+            .map(|p| {
+                let eigene = gruppe_von(p.pod_index);
+                let andere: Vec<myl_types::ids::MinerId> = z
+                    .pods
+                    .iter()
+                    .filter(|q| gruppe_von(q.pod_index) != eigene)
+                    .flat_map(|q| q.mitglieder().map(|m| m.miner_id))
+                    .collect();
+                (myl_types::pod_kennung(epoche, p.pod_index), andere)
+            })
+            .collect();
+        // Die Besetzung je Pod mit den Layerbereichen dieser Epoche: Daraus
+        // folgt im Streitfall, wen eine Abweichung trifft.
+        let besetzung = z
+            .pods
+            .iter()
+            .filter_map(|p| {
+                let grenzen = Self::grenzen_des_pods(zustand, p)?;
+                let b = p.shards.iter().zip(grenzen).map(|(s, (von, bis))| (s.miner.miner_id, von, bis)).collect();
+                Some((myl_types::pod_kennung(epoche, p.pod_index), b))
+            })
+            .collect();
+        (kandidaten, ersatz, besetzung)
+    }
+
+    /// ⚑ **Wie viele Segmente eines Pods, der allein rechnete, höchstens
+    /// gezogen werden** (Anlaufregel, 2026-10-28): jedes, aber nicht mehr als
+    /// diese, damit eine Ziehung die Knoten nicht mit Anfragen flutet. Ein
+    /// Pod einer Epoche trägt im Probebetrieb wenige Dutzend.
+    pub const VOLL_GEZOGEN_HOECHSTENS: u32 = 64;
+
     /// **Zieht die Stichproben, deren Epochenwechsel dieses Zertifikat
     /// bestätigt** (Punkt 45).
     ///
@@ -2374,7 +3183,21 @@ impl Kette {
         zustand.stichproben_offen = rest;
         for o in faellig {
             let saat = crate::stichprobe::saat_aus_zertifikat(&z.aggregat, &z.unterzeichner, o.epoche);
-            let stichprobe = crate::stichprobe::stichprobe_aus_anteilen(&o.anteile, &saat, Self::STICHPROBE_BP);
+            let mut stichprobe = crate::stichprobe::stichprobe_aus_anteilen(&o.anteile, &saat, Self::STICHPROBE_BP);
+            voll_ziehen(&mut stichprobe, &o.voll, &o.anteile);
+            // Die Wurzeln dazu, gegen die gelieferte Spuren geprüft werden.
+            zustand.stichprobe_wurzeln = o.wurzeln.clone();
+            // ⚑ **Die Prüfaufträge** (2026-10-29): je Ziehung zwei Checker
+            //   mit festen Fristen, aus den Kandidaten der gezogenen Epoche.
+            let hoehe = zustand.historie.anzahl();
+            let paare: Vec<(myl_types::ids::PodId, u32)> = stichprobe.iter().map(|s| (s.pod, s.segment)).collect();
+            myl_ledger::pruefung::auftraege_anlegen(
+                zustand,
+                &o,
+                &paare,
+                hoehe + Self::PRUEF_FENSTER_BLOECKE,
+                hoehe + 2 * Self::PRUEF_FENSTER_BLOECKE,
+            );
             *gezogen = Some((o.epoche, stichprobe));
         }
     }
@@ -2409,22 +3232,60 @@ impl Kette {
     /// gescheiterte Transaktion. Beide Seiten überspringen dasselbe,
     /// weil beide dieselbe Funktion durchlaufen; ein Abbruch hier
     /// hielte die Kette an, und zwar bei allen gleichzeitig.
-    fn epochenwechsel_abschliessen(zustand: &mut LedgerState, neue_epoche: u64, letzter_hash: &Hash) {
+    fn epochenwechsel_abschliessen(
+        zustand: &mut LedgerState,
+        neue_epoche: u64,
+        letzter_hash: &Hash,
+        stimmsatz: Option<&myl_consensus::validator::VotingSet>,
+    ) {
         if neue_epoche <= zustand.epoch.0 {
             return;
         }
         let alte_epoche = zustand.epoch.0;
-        let (zuschreibung, bezeugt) = Self::zuschreibung_der_epoche(zustand);
+        let Epochenzuschreibung { mut zuschreibung, zurueck, allein, bezeugt, einig, uneinig, verschieden, vorbehalten } =
+            Self::zuschreibung_der_epoche(zustand);
+        zustand.zwillinge_einig = zustand.zwillinge_einig.saturating_add(einig);
+        zustand.zwillinge_uneinig = zustand.zwillinge_uneinig.saturating_add(uneinig);
+        // ⚑ **Anlaufregel** (Stufe 1, Festlegung des Projektinhabers vom
+        //   2026-10-28): Was ein Pod allein rechnete, wird erst nach der
+        //   Streitfrist gutgeschrieben, dann in der Ausschüttung jener Epoche;
+        //   was fällig ist, kommt jetzt dazu.
+        zurueckhalten_und_freigeben(&mut zustand.zurueckgehalten, alte_epoche, &mut zuschreibung.je_miner, zurueck);
+        // ⚑ **Die Rückbuchung** (Whitepaper 6.4, 2026-10-29): Was frei wurde
+        //   (der Zwilling ist überführt), kommt in diese Ausschüttung; was
+        //   uneinig ist, wird zurückgehalten bis zum Urteil, höchstens die
+        //   Streitfrist.
+        for (m, v) in myl_ledger::pruefung::vorbehalte_faellig(zustand, alte_epoche) {
+            let e = zuschreibung.je_miner.entry(m).or_insert(0);
+            *e = e.saturating_add(v);
+        }
+        for (pod, zwilling, je) in vorbehalten {
+            zustand.vorbehalte.push(myl_ledger::pruefung::Vorbehalt {
+                epoche: alte_epoche,
+                pod,
+                zwilling,
+                je_miner: je.into_iter().collect(),
+                frei: false,
+                bis_epoche: alte_epoche.saturating_add(myl_ledger::einsatz::SPERRFRIST_EPOCHEN),
+            });
+        }
         // ⚑ **Die Trainingszuschreibung entsteht VOR der Ausschüttung**
         // und aus dem Zustand, den die abgelaufene Epoche hinterlassen
         // hat. Danach sind die Segmente weg.
         let trainingsplan = Self::trainingsplan_der_laufenden_epoche(zustand);
         let trainingszuschreibung =
             Self::trainingszuschreibung(zustand, &trainingsplan.paare, alte_epoche);
-        let ausschuettung = myl_tokenomics::ausschuettung::epochenausschuettung_mit_training(
+        // ⚑ **Der Checker-Pool** (Anhang B.3, 2026-10-29): nach dem geprüften
+        //   Volumen der Epoche; danach beginnt es von vorn.
+        let pruefvolumen = zustand.pruefvolumen.nehmen();
+        // ⚑ **Vorgemerkt** (verteilte Ausschüttung, 2026-10-30): gebucht wird
+        //   in diesem und den folgenden Blöcken, höchstens
+        //   `AUSZAHLUNGEN_JE_BLOCK` je Block (`anwenden`).
+        let ausschuettung = myl_tokenomics::ausschuettung::epochenausschuettung_vorgemerkt(
             zustand,
             &zuschreibung,
             &trainingszuschreibung,
+            &pruefvolumen,
             // ⚑ **Die Auslastung steuert die Trainingsabgabe**: bei
             // hoher Last führt das Netz ab, bei niedriger zahlt es aus.
             // Sie kommt aus demselben Plan, aus dem die Trainingspods
@@ -2454,34 +3315,65 @@ impl Kette {
         // 7.2): die Anteile der bezeugten Bündel, gezogen wird mit dem
         // Zertifikat des Prüfpunkts an diesem Wechsel
         // (`offene_stichproben_ziehen`).
+        let (pruefkandidaten, ersatz, besetzung) = Self::pruefkandidaten(zustand, alte_epoche);
         zustand.stichproben_offen.push(myl_ledger::state::OffeneStichprobe {
             epoche: alte_epoche,
             anteile: bezeugt.iter().map(|b| (b.pod, b.segmente)).collect(),
+            wurzeln: bezeugt.iter().map(|b| (b.pod, b.segments_root, b.segmente)).collect(),
+            voll: allein,
+            pruefkandidaten,
+            ersatz: ersatz.into_iter().filter(|(p, _)| bezeugt.iter().any(|b| b.pod == *p)).collect(),
+            besetzung: besetzung.iter().filter(|(p, _)| bezeugt.iter().any(|b| b.pod == *p)).cloned().collect(),
         });
+        // ⚑ **Uneinige Paare** (Whitepaper 6.4, Festlegung des
+        //   Projektinhabers vom 2026-10-29): bis eine Epoche nach dem Wechsel
+        //   darf ein Differenzbeweis gemeldet werden.
+        let hoehe = zustand.historie.anzahl();
+        for (a, b) in verschieden {
+            let nur = |p: &myl_types::ids::PodId| *p == a.pod || *p == b.pod;
+            let offen = zustand.stichproben_offen.last().cloned();
+            let Some(offen) = offen else {
+                continue;
+            };
+            zustand.uneinigkeiten.push(myl_ledger::pruefung::Uneinigkeit {
+                stichprobe: myl_ledger::state::OffeneStichprobe {
+                    epoche: alte_epoche,
+                    anteile: Vec::new(),
+                    wurzeln: offen.wurzeln.iter().filter(|(p, _, _)| nur(p)).cloned().collect(),
+                    voll: Vec::new(),
+                    pruefkandidaten: offen.pruefkandidaten.clone(),
+                    ersatz: offen.ersatz.iter().filter(|(p, _)| nur(p)).cloned().collect(),
+                    besetzung: offen.besetzung.iter().filter(|(p, _)| nur(p)).cloned().collect(),
+                },
+                ausgabenwurzeln: vec![(a.pod, a.ausgabenwurzel), (b.pod, b.ausgabenwurzel)],
+                gemeldet: Vec::new(),
+                bis_hoehe: hoehe + BLOECKE_JE_EPOCHE,
+            });
+        }
         // Gebuchte Doppelbelege fallen nach der Sperrfrist weg (CONSENSUS
         // 7.6); ältere Taten sind ohnehin nicht mehr schlachtbar.
         zustand
             .doppelbelege
             .retain(|_, gebucht| gebucht.saturating_add(myl_ledger::einsatz::SPERRFRIST_EPOCHEN) >= neue_epoche);
         Self::gebuehren_teilen(zustand);
+        Self::topf_auszahlen(zustand, stimmsatz);
+        // ⚑ **Der Credit-Preis folgt der Auslastung** (Whitepaper 5.4),
+        //   aus derselben Auslastung wie die Trainingsabgabe; er gilt ab der
+        //   neuen Epoche.
+        let (fein, ganz) = credit_preis_naechster(zustand.credit_preis_fein, trainingsplan.auslastung);
+        zustand.credit_preis_fein = fein;
+        zustand.credit_price = ganz;
         // ⚑ **Abgelaufene Sitzungen fallen weg, ihre Hinterlegung geht
         //   zurück** (2026-10-27, Fund 662). Vorher rief die Kette
         //   `sitzung_aufraeumen` nie, und jede Sitzung blieb für immer im
         //   Zustand.
-        if myl_ledger::transitions::sitzung_aufraeumen(zustand) > 0 {
-            let weg: Vec<[u8; 32]> = zustand
-                .hinterlegungen
-                .keys()
-                .filter(|(art, k)| {
-                    *art == HINTERLEGT_SITZUNG
-                        && !zustand.sitzungen.contains_key(&myl_types::ids::SitzungId::new(*k))
-                })
-                .map(|(_, k)| *k)
-                .collect();
-            for k in weg {
-                Self::zurueckgeben(zustand, HINTERLEGT_SITZUNG, k);
-            }
+        //   ⚑ Nur die weggefallenen (Skalierung, 2026-10-29); bis hierher
+        //   lief die Suche über alle Hinterlegungen.
+        for id in myl_ledger::transitions::sitzung_aufraeumen(zustand) {
+            Self::zurueckgeben(zustand, HINTERLEGT_SITZUNG, *id.as_bytes());
         }
+        // ⛔️ Gebuchte Doppelbelege nach der Sperrfrist (2026-10-30).
+        myl_ledger::transitions::doppelbelege_aufraeumen(zustand);
         // ⚑ **Und die Bündel der abgerechneten Epoche fallen weg.**
         // Ohne dies wüchse der Zustand unbegrenzt, und Entscheidung D7
         // wäre gebrochen; die Historie steht in den Blöcken.
@@ -2544,12 +3436,9 @@ impl Kette {
         {
             let plan = Self::trainingsplan_der_laufenden_epoche(zustand);
             let zuteilung = Self::zuteilung_der_laufenden_epoche(zustand);
-            myl_scheduler::trainingszuteilung::stand_fortschreiben(
-                &mut zustand.trainingsstand,
-                &zuteilung.pods,
-                &plan.pods,
-                alte_epoche,
-            );
+            zustand.trainingsstand.veraendern(|stand| {
+                myl_scheduler::trainingszuteilung::stand_fortschreiben(stand, &zuteilung.pods, &plan.pods, alte_epoche)
+            });
         }
         // ⚑ **Und die Saat rückt weiter** (Fund 143), siehe oben.
         zustand.epochensaat = zustand.epochensaat_naechste;
@@ -2578,6 +3467,9 @@ impl Kette {
     /// Anwenden hier steht: Erzeuger und Übernehmer müssen dieselbe
     /// Folge von Änderungen ausführen. Ein Abschluss, den nur der
     /// Erzeuger rechnet, wäre eine abweichende Zustandswurzel.
+    // Zwei Ausgaben neben dem Zustand (Ziehung, Abschlüsse) und fünf
+    // Eingaben; ein Bündel daraus hätte nur einen Namen mehr.
+    #[allow(clippy::too_many_arguments)]
     fn anwenden(
         zustand: &mut LedgerState,
         txs: &[Transaktion],
@@ -2585,18 +3477,46 @@ impl Kette {
         letzter_hash: &Hash,
         pruefpunkt: Option<&myl_consensus::pruefpunkt::Pruefpunktzertifikat>,
         gezogen: &mut Option<(u64, Vec<crate::stichprobe::Segmentstichprobe>)>,
+        stimmsatz: Option<&myl_consensus::validator::VotingSet>,
+        ausgaben: &mut Pruefausgaben,
+        schon_geprueft: &dyn Fn(&Transaktion) -> bool,
     ) -> Vec<bool> {
         // ⚑ **Die Historie zuerst** (Archivknoten, Stufe A2): der Hash des
         //   Vorgängers, also des Blocks, an den dieser anschliesst. Erzeuger
         //   und Übernehmer gehen beide hier durch und hängen dasselbe an.
         zustand.historie.anhaengen(letzter_hash);
-        Self::epochenwechsel_abschliessen(zustand, epoch, letzter_hash);
+        // ⚑ **Fällige Prüfaufträge abschliessen** (2026-10-29), vor dem
+        //   Epochenwechsel: Was in diesem Block einig endet, zählt noch in
+        //   die Auszahlung des Wechsels.
+        let hoehe = zustand.historie.anzahl();
+        myl_ledger::pruefung::uneinigkeiten_aufraeumen(zustand, hoehe);
+        ausgaben.abschluesse.extend(myl_ledger::pruefung::faellige_abschliessen(zustand, hoehe, Self::SCHIED_FENSTER_BLOECKE));
+        // ⚑ **Streitfälle entscheiden** (T6d, Whitepaper 6.6): mehr als zwei
+        //   Drittel des Stimmsatzes, sonst Verfall nach der Frist. Die
+        //   Schlachtung nach der Matrix: der Beschuldigte mit 100 % seines
+        //   Einsatzes, Kopfgeld an den Anfechter; oder die Kaution des
+        //   Anfechters.
+        if let Some(v) = stimmsatz {
+            for urteil in myl_ledger::pruefung::streitfaelle_entscheiden(zustand, hoehe, |m| v.weight(m), v.quorum_threshold()) {
+                let gebucht = Self::schiedsurteil_buchen(zustand, &urteil);
+                ausgaben.urteile.push((urteil, gebucht.err()));
+            }
+        }
+        Self::epochenwechsel_abschliessen(zustand, epoch, letzter_hash, stimmsatz);
+        // ⚑ Die vorgemerkten Auszahlungen, begrenzt je Block (nach dem
+        //   Wechsel, damit der Wechselblock selbst schon bucht; bei wenigen
+        //   Minern ist damit alles im selben Block bezahlt).
+        myl_ledger::transitions::auszahlungen_buchen(zustand, myl_ledger::transitions::AUSZAHLUNGEN_JE_BLOCK);
         // ⚑ **Das Zertifikat eines Prüfpunkts** (2026-10-27, CONSENSUS
         //   7.2): bestätigt bis zu seiner Höhe, und was auf einen
         //   bestätigten Wechsel wartete, wird jetzt gezogen. Geprüft ist es,
         //   bevor `anwenden` gerufen wird.
         if let Some(z) = pruefpunkt {
             zustand.pruefpunkt_bestaetigt = z.hoehe;
+            // Für den Topf der Validatoren (2026-10-28): wer unterschrieb.
+            for u in &z.unterzeichner {
+                *zustand.pruefpunkt_stimmen.entry(*u).or_default() += 1;
+            }
             Self::offene_stichproben_ziehen(zustand, z, gezogen);
         }
         // ⚑ **Die Ziehung der Archivkopien** (Stufe A5) am Grenzblock, nach
@@ -2622,12 +3542,18 @@ impl Kette {
         let mut zuteilung: Option<myl_scheduler::shard_assignment::Zuteilung> = None;
         // Je Transaktion, ob sie ihre Nummer verbraucht hat (Fund 627).
         let mut verbraucht = vec![false; txs.len()];
-        // Die Bytes der verbrauchten Transaktionen, für den Grundpreis (G1).
+        // Die Gebühreneinheiten der verbrauchten Transaktionen, für den
+        // Grundpreis (G1, seit 2026-10-28 Bytes plus Prüfeinheit).
         let mut bytes_im_block: u64 = 0;
         let gebuehren = crate::netz::Netz::des_zustands(zustand).gebuehren;
         // Nie unter dem Boden, auch nicht im ersten Block eines Zustands.
         zustand.grundpreis_je_byte = zustand.grundpreis_je_byte.max(gebuehren.boden_je_byte);
-        for (i, tx) in txs.iter().enumerate() {
+        // ⚑ **Alle Unterschriften des Blocks auf einmal** (2026-10-28): als
+        //   Stapel, und nur wenn der nicht trägt, einzeln; das Ergebnis je
+        //   Transaktion ist dasselbe wie mit `pruefe` (gemessen: rund 90 statt
+        //   470 µs je Unterschrift).
+        let mut vorgeprueft = myl_consensus::block::pruefe_alle_ausser(txs, &netz, schon_geprueft).into_iter();
+        for (i, _) in txs.iter().enumerate() {
             // ⚑ **Die Unterschrift wird hier geprüft und nicht erst bei
             // der Aufnahme in den Mempool** (2026-08-28, Fund 85). Ein
             // Block kommt über Gossip und sieht den Mempool nie; läge
@@ -2637,7 +3563,7 @@ impl Kette {
             //
             // **Erzeuger und Übernehmer überspringen dasselbe**, weil
             // beide dieselbe Funktion durchlaufen.
-            let Ok(geprueft) = tx.clone().pruefe(&netz) else {
+            let Some(geprueft) = vorgeprueft.next().flatten() else {
                 continue;
             };
             let absender = geprueft.inhalt().absender_adresse();
@@ -2645,7 +3571,7 @@ impl Kette {
             // ⚑ **Die Gebühr** (2026-10-27, G1): Grundpreis mal Bytes,
             //   höchstens `max_gebuehr`. Wer sie nicht decken kann oder
             //   weniger zugesagt hat, wartet, ohne seine Nummer zu verbrauchen.
-            let bytes = geprueft.inhalt().gebuehrenbytes();
+            let bytes = geprueft.inhalt().gebuehreneinheiten();
             let gebuehr = zustand.grundpreis_je_byte.saturating_mul(bytes);
             if gebuehr > geprueft.inhalt().max_gebuehr || zustand.account(&absender).balance < gebuehr {
                 continue;
@@ -2788,6 +3714,60 @@ impl Kette {
                     let _ = einsatz_kuendigen(zustand, &absender, *betrag);
                 }
                 // ⚑ **Ein Doppelbeleg** (2026-10-27, CONSENSUS 7.6).
+                // ⚑ **Festlegen und Aufdecken** (Stufe 2, 2026-10-29): Der
+                //   Absender ist die Kennung des Checkers; Auftrag, Fristen
+                //   und Festlegung prüft der Ledger.
+                Anweisung::PruefungFestlegen { festlegungen } if festlegungen.len() <= myl_consensus::block::PRUEFUNGEN_JE_TX => {
+                    let hoehe = zustand.historie.anzahl();
+                    for (epoche, pod, segment, festlegung) in festlegungen {
+                        let _ = myl_ledger::pruefung::festlegen(zustand, &absender, *epoche, pod, *segment, *festlegung, hoehe);
+                    }
+                }
+                Anweisung::PruefungAufdecken { aufdeckungen } if aufdeckungen.len() <= myl_consensus::block::PRUEFUNGEN_JE_TX => {
+                    let hoehe = zustand.historie.anzahl();
+                    for (epoche, pod, segment, befund, salz) in aufdeckungen {
+                        let _ = myl_ledger::pruefung::aufdecken(
+                            zustand,
+                            &absender,
+                            *epoche,
+                            pod,
+                            *segment,
+                            befund.clone(),
+                            salz,
+                            hoehe,
+                        );
+                    }
+                }
+                // Zu viele auf einmal: als Ganzes abgewiesen.
+                Anweisung::PruefungFestlegen { .. } | Anweisung::PruefungAufdecken { .. } => {}
+                Anweisung::DifferenzMelden { epoche, pod_a, pod_b, beweis } => {
+                    let hoehe = zustand.historie.anzahl();
+                    let _ = myl_ledger::pruefung::differenz_melden(
+                        zustand,
+                        *epoche,
+                        pod_a,
+                        pod_b,
+                        beweis,
+                        hoehe,
+                        hoehe + Self::PRUEF_FENSTER_BLOECKE,
+                        hoehe + 2 * Self::PRUEF_FENSTER_BLOECKE,
+                    );
+                }
+                Anweisung::SchiedsstimmeAbgeben { epoche, pod, segment, pod_falsch } => {
+                    let hoehe = zustand.historie.anzahl();
+                    let berechtigt =
+                        stimmsatz.is_some_and(|v| v.contains(&myl_types::ids::MinerId::new(*absender.as_bytes())));
+                    let _ = myl_ledger::pruefung::schiedsstimme(
+                        zustand,
+                        &absender,
+                        *epoche,
+                        pod,
+                        *segment,
+                        *pod_falsch,
+                        hoehe,
+                        berechtigt,
+                    );
+                }
                 Anweisung::DoppelbelegEinreichen { beleg } => {
                     let _ = Self::doppelbeleg_buchen(zustand, &absender, beleg);
                 }
@@ -2820,17 +3800,14 @@ impl Kette {
                     ) else {
                         continue;
                     };
-                    let Some(erster) = pod.shards.first() else {
+                    let Some(mitglieder) = Self::unterzeichner_des_buendels(pod, &buendel.vertreter) else {
                         continue;
                     };
-                    let mitglieder = Self::unterzeichner_des_buendels(pod);
-                    let _ = buendel_einreichen(
-                        zustand,
-                        &absender,
-                        buendel.clone(),
-                        &erster.miner.miner_id,
-                        &mitglieder,
-                    );
+                    // Einreichen darf die erste Position, oder wer sie vertritt.
+                    let Some((koordinator, _)) = mitglieder.first().copied() else {
+                        continue;
+                    };
+                    let _ = buendel_einreichen(zustand, &absender, buendel.clone(), &koordinator, &mitglieder);
                 }
                 Anweisung::TrainingssegmentEinreichen { pod: kennung, segment } => {
                     // ⚑ **Dieselbe Arbeitsteilung wie beim Bündel**
@@ -2910,21 +3887,16 @@ impl Kette {
                 // Übergang leitet aus ihm ab, **wen** es trifft. Der
                 // Blockerzeuger kann niemanden benennen, dessen
                 // Unterschrift er nicht hat.
-                Anweisung::SchuldspruchEinreichen {
-                    segment,
-                    beleg,
-                    beschuldigt,
-                    anzeigend,
-                } => {
-                    let _ = myl_ledger::transitions::schuldspruch_einreichen(
-                        zustand,
-                        *segment,
-                        beleg,
-                        beschuldigt,
-                        anzeigend,
-                        &Self::slashsatz(),
-                    );
-                }
+                // ⛔️ **Fund 679 (2026-10-29): Dieser Weg schlachtete ohne Beweis
+                //    der falschen Rechnung.** Sein Beleg ist die Unterschrift
+                //    des Beschuldigten, belegt also nur, wen es trifft; dass
+                //    falsch gerechnet wurde, setzte er voraus. Wer eine
+                //    solche Unterschrift hatte (jeder Mitrechner hat sie),
+                //    konnte einen Ehrlichen schlachten lassen. Geschlachtet
+                //    wird jetzt nur über eine entschiedene Schiedsrunde
+                //    (`SchiedsstimmeAbgeben`, `schiedsurteil_buchen`); die
+                //    Anweisung bleibt in der Kodierung und wirkt nicht.
+                Anweisung::SchuldspruchEinreichen { .. } => {}
                 Anweisung::SitzungWiderrufen { sitzung } => {
                     let _ = sitzung_widerrufen(zustand, sitzung, &absender);
                 }
@@ -2952,6 +3924,9 @@ impl Kette {
             }
         }
         zustand.grundpreis_je_byte = naechster_grundpreis(zustand.grundpreis_je_byte, bytes_im_block, gebuehren.boden_je_byte);
+        // ⚑ **Leere Konten fallen weg** (Skalierung, 2026-10-29), nur unter
+        //   den in diesem Block geänderten; bei Erzeuger und Folger gleich.
+        zustand.leere_konten_entfernen();
         verbraucht
     }
 
@@ -2966,6 +3941,41 @@ impl Kette {
         let t = zustand.account_mut(&myl_types::treasury::treasury_adresse());
         t.balance = t.balance.saturating_add(treasury);
         zustand.gebuehren_validatoren = zustand.gebuehren_validatoren.saturating_add(summe - treasury);
+    }
+
+    /// ⚑ **Der Topf der Validatoren wird ausgezahlt** (2026-10-28,
+    /// Festlegung des Projektinhabers): an die Mitglieder des Stimmsatzes,
+    /// gewichtet mit Stake mal Zahl ihrer Unterschriften in den
+    /// Prüfpunktzertifikaten der Epoche, an die Adresse ihres Schlüssels. Wer
+    /// nicht stimmt, bekommt nichts; der Rest der Teilung bleibt im Topf, und
+    /// ohne Stimmen bleibt der ganze Topf stehen. Bis das Stimmgewicht aus
+    /// Stake und Arbeit (Whitepaper 3.5.2) entschieden ist.
+    fn topf_auszahlen(zustand: &mut LedgerState, stimmsatz: Option<&myl_consensus::validator::VotingSet>) {
+        let stimmen = zustand.pruefpunkt_stimmen.nehmen();
+        let Some(satz) = stimmsatz else {
+            return;
+        };
+        let gewichte: Vec<(Address, u128)> = stimmen
+            .iter()
+            .filter_map(|(id, n)| {
+                let pk = satz.pubkey(id)?;
+                Some((Address::aus_schluessel(pk), satz.weight(id) as u128 * *n as u128))
+            })
+            .filter(|(_, g)| *g > 0)
+            .collect();
+        let summe: u128 = gewichte.iter().map(|(_, g)| g).sum();
+        if summe == 0 {
+            return;
+        }
+        let topf = zustand.gebuehren_validatoren as u128;
+        let mut gezahlt: u128 = 0;
+        for (an, g) in gewichte {
+            let anteil = topf * g / summe;
+            gezahlt += anteil;
+            let k = zustand.account_mut(&an);
+            k.balance = k.balance.saturating_add(anteil as u64);
+        }
+        zustand.gebuehren_validatoren -= gezahlt as u64;
     }
 
     /// Bucht `betrag` vom Konto `von` an die Treasury (G1: Aufschlag für
@@ -2994,6 +4004,195 @@ impl Kette {
         }
     }
 
+    /// ⚑ **Macht den Knoten zustandslos** (zustandslose Validierung,
+    /// 2026-10-29): Die grossen Sammlungen fallen weg, vom grossen Baum
+    /// bleibt die Wurzel. Ab hier übernimmt er Blöcke nur mit Zeugen.
+    /// `eigene`: die Konten, die der Knoten weiter kennen muss (Netz-,
+    /// Miner- und Auszahlungskonto).
+    pub fn zustandslos_machen(&mut self, eigene: &[Address]) {
+        self.eigene_konten = self.zustand.konten_still(eigene).into_iter().collect();
+        self.zustand = self.zustand.zustandslos();
+        self.zustandslos = true;
+    }
+
+    /// ⚑ **Ein Konto, wie der Knoten es kennt**: beim vollen aus dem
+    /// Zustand; beim zustandslosen die eigenen aus `eigene_konten`, jedes
+    /// andere als unbekannt (das leere Konto der laufenden Epoche).
+    pub fn konto(&self, adresse: &Address) -> myl_ledger::AccountState {
+        match self.eigene_konten.get(adresse) {
+            Some(Some(k)) if self.zustandslos && !self.eigene_unbekannt.contains(adresse) => k.clone(),
+            _ => self.zustand.account(adresse),
+        }
+    }
+
+    /// Die Nummer, unter der eine Transaktion von `adresse` nicht mehr
+    /// gilt; beim zustandslosen Knoten für fremde Konten unbekannt (null):
+    /// Das beurteilen die vollen Knoten.
+    fn nonce_boden(&self, adresse: &Address) -> u64 {
+        if self.zustandslos && !self.eigene_konten.contains_key(adresse) {
+            return 0;
+        }
+        self.konto(adresse).nonce
+    }
+
+    /// Ob der Knoten zustandslos ist.
+    pub fn ist_zustandslos(&self) -> bool {
+        self.zustandslos
+    }
+
+    /// Der bereitgehaltene Zeuge eines selbst erzeugten Blocks (Borsh).
+    pub fn eigener_zeuge(&self, hash: &Hash) -> Option<std::sync::Arc<Vec<u8>>> {
+        self.eigene_zeugen.iter().rev().find(|(h, _, _)| h == hash).map(|(_, _, z)| z.clone())
+    }
+
+    /// Selbst erzeugte Blöcke ohne Zeugen (siehe Feld).
+    pub fn zeugenlos(&self) -> u64 {
+        self.zeugenlos
+    }
+
+    /// ⚑ **Die unterschriebenen Stücke des Zeugen** eines selbst erzeugten
+    /// Blocks, für das Gossip und für Nachforderungen; einmal
+    /// unterschrieben und gehalten. `None` ohne Erzeugerschlüssel oder
+    /// ohne Zeugen.
+    pub fn zeugenstuecke(&mut self, hash: &Hash) -> Option<std::sync::Arc<Vec<myl_consensus::zeuge::Zeugenstueck>>> {
+        if let Some((_, s)) = self.zeugenstuecke.iter().find(|(h, _)| h == hash) {
+            return Some(s.clone());
+        }
+        let (_, hoehe, roh) = self.eigene_zeugen.iter().rev().find(|(h, _, _)| h == hash)?.clone();
+        let k = self.erzeugerschluessel.as_ref().or(self.zeugenschluessel.as_ref())?;
+        let stuecke = myl_consensus::zeuge::zerlegen(hoehe, *hash, &roh, k.oeffentlich(), |m| k.signiere(m).ok())?;
+        let stuecke = std::sync::Arc::new(stuecke);
+        self.zeugenstuecke.push_back((*hash, stuecke.clone()));
+        if let Some(a) = self.zeugenablage.as_mut() {
+            if a.ablegen(hoehe, *hash, &stuecke).is_err() {
+                self.zeugenablage_fehler += 1;
+            }
+        }
+        let mut summe: usize = self.zeugenstuecke.iter().map(|(_, s)| s.iter().map(|t| t.bytes.len()).sum::<usize>()).sum();
+        while summe > ZEUGEN_HOECHSTENS_BYTES && self.zeugenstuecke.len() > 1 {
+            if let Some((_, s)) = self.zeugenstuecke.pop_front() {
+                summe -= s.iter().map(|t| t.bytes.len()).sum::<usize>();
+            }
+        }
+        Some(stuecke)
+    }
+
+    /// Die schon unterschriebenen Stücke zu `hash`, ohne zu unterschreiben
+    /// (für Nachforderungen).
+    pub fn zeugenstuecke_gehalten(&self, hash: &Hash) -> Option<std::sync::Arc<Vec<myl_consensus::zeuge::Zeugenstueck>>> {
+        if let Some((_, s)) = self.zeugenstuecke.iter().find(|(h, _)| h == hash) {
+            return Some(s.clone());
+        }
+        // Älteres von der Platte, im Fenster ab dem Prüfpunkt.
+        self.zeugenablage.as_ref()?.lesen(hash).map(std::sync::Arc::new)
+    }
+
+    /// ⚑ **Die Zeugen auch auf der Platte halten** (2026-10-30), über
+    /// [`crate::zeugenablage::ZEUGEN_VORHALT_BLOECKE`]: für Erzeuger und
+    /// Zeugenhalter, damit ein zustandsloser Knoten nach einem leichten
+    /// Abzug am Prüfpunkt die Zeugen ab dort bekommt. Leert `ordner`.
+    pub fn zeugen_auf_platte_setzen(&mut self, ordner: std::path::PathBuf) -> std::io::Result<()> {
+        self.zeugenablage = Some(crate::zeugenablage::Zeugenablage::neu(ordner)?);
+        Ok(())
+    }
+
+    fn zertifikat_merken(&mut self, block: &Block) {
+        if let Some(z) = &block.header.pruefpunkt {
+            self.zertifikate.push_back(z.clone());
+            while self.zertifikate.len() > crate::abzug::LEICHTE_BEHALTEN {
+                self.zertifikate.pop_front();
+            }
+        }
+    }
+
+    /// ⚑ **Der Anker eines leichten Abzugs, den dieser Knoten liefern kann**:
+    /// das Zertifikat des jüngsten Prüfpunkts, zu dem ein leichter Abzug
+    /// abgelegt ist. Der Fragende prüft es gegen seinen Stimmsatz.
+    pub fn leichter_anker(&self) -> Option<myl_consensus::pruefpunkt::Pruefpunktzertifikat> {
+        let hoehen = self.ablage.as_ref()?.leicht().hoehen();
+        self.zertifikate.iter().rev().find(|z| hoehen.contains(&z.hoehe)).cloned()
+    }
+
+    /// ⚑ **Ein Anker aus einem Zertifikat**, wenn es gegen den eigenen
+    /// Stimmsatz trägt (mehr als zwei Drittel, Prüfpunkthöhe). Ohne Satz
+    /// keiner: Eine Gegenstelle kann sonst jeden Anker nennen.
+    pub fn anker_aus_zertifikat(&self, z: &myl_consensus::pruefpunkt::Pruefpunktzertifikat) -> Option<crate::abzug::Anker> {
+        let satz = self.stimmsatz.as_ref()?;
+        z.verify(satz).ok()?;
+        Some(crate::abzug::Anker { hoehe: z.hoehe, blockhash: z.block_hash })
+    }
+
+    /// Kontobeweise auf dem jetzigen Stand (Höhe dazu); nur ein voller Knoten.
+    pub fn kontobeweise(&mut self, adressen: &[Address]) -> Option<(u64, Vec<myl_ledger::state::Kontobeweis>)> {
+        if self.zustandslos {
+            return None;
+        }
+        Some((self.hoehe, self.zustand.kontobeweise(adressen)?))
+    }
+
+    /// Ob der Knoten den Stand dieses Kontos kennt (beim vollen immer).
+    pub fn konto_bekannt(&self, adresse: &Address) -> bool {
+        !self.eigene_unbekannt.contains(adresse)
+    }
+
+    /// Die eigenen Konten, die der zustandslose Knoten nicht kennt.
+    pub fn eigene_unbekannt(&self) -> Vec<Address> {
+        self.eigene_unbekannt.iter().copied().collect()
+    }
+
+    /// Nach einem leichten Abzug: Der Stand der eigenen Konten ist
+    /// unbekannt, bis ein Zeuge oder ein Kontobeweis ihn bringt.
+    pub fn eigene_vergessen(&mut self) {
+        self.eigene_unbekannt = self.eigene_konten.keys().copied().collect();
+    }
+
+    /// ⚑ **Setzt Kontobeweise ein**, wenn sie zur eigenen Höhe gehören und
+    /// gegen die eigene Wurzel des grossen Baums tragen; nur für eigene,
+    /// unbekannte Konten. Die Zahl der eingesetzten; `Err`, wenn die Höhe
+    /// nicht passt (`Ok(0)` heisst: getragen hat keiner).
+    pub fn kontobeweise_einsetzen(&mut self, hoehe: u64, beweise: &[myl_ledger::state::Kontobeweis]) -> Result<usize, u64> {
+        if hoehe != self.hoehe {
+            return Err(self.hoehe);
+        }
+        let mut n = 0;
+        for b in beweise {
+            if self.eigene_unbekannt.contains(&b.adresse) && self.zustand.kontobeweis_traegt(b) {
+                self.eigene_konten.insert(b.adresse, b.konto.clone());
+                self.eigene_unbekannt.remove(&b.adresse);
+                n += 1;
+            }
+        }
+        Ok(n)
+    }
+
+    /// ⚑ **Zeugen bereithalten** als voller Knoten: aufzeichnen beim
+    /// Übernehmen, unterschreiben mit `schluessel`.
+    pub fn zeugen_bereithalten_setzen(&mut self, schluessel: crate::schluessel::Konsensschluessel) {
+        self.zeugenschluessel = Some(schluessel);
+    }
+
+    /// ⚑ **Ob der Erzeuger eines Blocks belegt ist** (Unterschrift eines
+    /// Berechtigten), ohne ihn anzuwenden: für den zustandslosen Knoten,
+    /// bevor ein Block auf seinen Zeugen warten darf.
+    pub fn erzeuger_belegt(&self, block: &Block) -> bool {
+        self.erzeuger_traegt(block)
+    }
+
+    fn zeuge_bereithalten(&mut self, hash: Hash, hoehe: u64, zeuge: Vec<u8>) {
+        // Roh nur, bis der Knoten ihn zerlegt und unterschrieben hat
+        // (`zeugenstuecke`); bereitgehalten werden die Stücke.
+        while self.eigene_zeugen.len() >= ZEUGEN_ROH_GEHALTEN {
+            self.eigene_zeugen.pop_front();
+        }
+        self.eigene_zeugen.push_back((hash, hoehe, std::sync::Arc::new(zeuge)));
+        let mut summe: usize = self.eigene_zeugen.iter().map(|(_, _, z)| z.len()).sum();
+        while summe > ZEUGEN_HOECHSTENS_BYTES && self.eigene_zeugen.len() > 1 {
+            if let Some((_, _, z)) = self.eigene_zeugen.pop_front() {
+                summe -= z.len();
+            }
+        }
+    }
+
     /// Baut den nächsten Block aus dem Mempool und übernimmt ihn selbst.
     ///
     /// Der Erzeuger wendet **zuerst** an und schreibt die daraus
@@ -3008,22 +4207,29 @@ impl Kette {
         let mut spaeter = Vec::new();
         let mut bytes = 0usize;
         let mut neulinge = 0usize;
-        for (seit, tx) in std::mem::take(&mut self.mempool) {
-            let n = borsh::to_vec(&tx).map_or(usize::MAX, |b| b.len());
+        // ⚑ Höchstens das Doppelte des Ziels in Gebühreneinheiten (2026-10-28).
+        let mut einheiten = 0u64;
+        for w in self.mempool.alle_nehmen() {
+            let n = w.bytes;
             if n > BLOCK_TXS_HOECHSTENS_BYTES {
                 continue;
             }
+            let e = (n as u64).saturating_add(myl_consensus::block::PRUEFEINHEIT);
             // Neulinge nur bis zu ihrer Grenze je Block (Fund 635).
-            let neuling = ist_neuling(&self.zustand, &tx.absender_adresse());
-            if bytes + n <= BLOCK_TXS_HOECHSTENS_BYTES && !(neuling && neulinge >= BLOCK_NEULINGE_HOECHSTENS) {
+            let neuling = w.neuling && ist_neuling(&self.zustand, &w.absender);
+            if bytes + n <= BLOCK_TXS_HOECHSTENS_BYTES
+                && einheiten + e <= BLOCK_EINHEITEN_HOECHSTENS
+                && !(neuling && neulinge >= BLOCK_NEULINGE_HOECHSTENS)
+            {
                 bytes += n;
+                einheiten += e;
                 neulinge += usize::from(neuling);
-                wartend.push((seit, tx));
+                wartend.push(w);
             } else {
-                spaeter.push((seit, tx));
+                spaeter.push(w);
             }
         }
-        let txs: Vec<Transaktion> = wartend.iter().map(|(_, tx)| tx.clone()).collect();
+        let txs: Vec<Transaktion> = wartend.iter().map(|w| w.tx.clone()).collect();
         let hoehe = self.hoehe + 1;
         let epoch = epoche_fuer_hoehe(hoehe);
 
@@ -3033,16 +4239,15 @@ impl Kette {
         let zert = self.naechstes_pruefpunktzertifikat.take();
         let zert = zert.filter(|z| self.zertifikat_traegt(z, hoehe));
         let mut gezogen = None;
-        // 📌 Fund 658: die Zuteilung der ablaufenden Epoche, bevor der
-        //    Wechsel sie ersetzt. Gezogen wird erst mit dem Zertifikat, also
-        //    bleibt sie bis dahin aufgehoben.
-        if epoch > self.zustand.epoch.0 {
-            let alte = self.zustand.epoch.0;
-            self.offene_zuteilungen.push((alte, Self::zuteilung_der_laufenden_epoche(&self.zustand)));
-            while self.offene_zuteilungen.len() > OFFENE_ZUTEILUNGEN_HOECHSTENS {
-                self.offene_zuteilungen.remove(0);
-            }
-        }
+        let ablaufend = self.ablaufende_zuteilung(epoch);
+        self.zuteilung_aufheben(ablaufend);
+        let mut ausgaben = Pruefausgaben::default();
+        // ⚑ **Der Zeuge des Blocks** (zustandslose Validierung, 2026-10-29):
+        //   Aufgezeichnet wird, was das Anwenden an grossen Sammlungen
+        //   berührt; daraus der Zeuge, bevor die Wurzel ihn fortschreibt.
+        debug_assert!(!self.zustandslos, "ein zustandsloser Knoten erzeugt keine Blöcke");
+        self.zustand.aufzeichnen_beginnen();
+        let unterschriften = &self.unterschriften;
         let verbraucht = Self::anwenden(
             &mut self.zustand,
             &txs,
@@ -3050,24 +4255,13 @@ impl Kette {
             &self.letzter_hash,
             zert.as_ref(),
             &mut gezogen,
+            self.stimmsatz.as_ref(),
+            &mut ausgaben,
+            &|t: &Transaktion| unterschriften.kennt(&t.kennung()),
         );
-        if let Some((e, proben)) = &gezogen {
-            let mut pods: Vec<myl_scheduler::shard_assignment::Pod> = Vec::new();
-            if let Some(stelle) = self.offene_zuteilungen.iter().position(|(alt, _)| alt == e) {
-                let (_, z) = self.offene_zuteilungen.remove(stelle);
-                for s in proben {
-                    if let Some(p) = myl_scheduler::zonenzuteilung::pod_zu_kennung(&z, *e, &s.pod) {
-                        if !pods.iter().any(|q| q.pod_index == p.pod_index) {
-                            pods.push(p.clone());
-                        }
-                    }
-                }
-            }
-            self.pods_der_stichprobe = pods;
-        }
-        if gezogen.is_some() {
-            self.letzte_stichprobe = gezogen;
-        }
+        let zeuge = self.zustand.zeuge_nehmen().ok().and_then(|z| borsh::to_vec(&z).ok());
+        self.ziehung_merken(gezogen);
+        self.pruefausgaben.anhaengen(ausgaben);
         // ⚑ **In den Block kommt nur, was seine Nummer verbraucht hat**
         //   (Fund 627). Was an Unterschrift oder Nummer scheitert, hat den
         //   Zustand nicht angefasst; die Wurzel ist mit und ohne es dieselbe.
@@ -3076,14 +4270,16 @@ impl Kette {
         //   scheiterte dort und war verloren: Der Absender zählte weiter und
         //   hing für immer an der Lücke. Jetzt wartet sie, bis n da ist.
         let mut im_block = Vec::new();
-        for ((seit, tx), ok) in wartend.into_iter().zip(verbraucht) {
+        for (w, ok) in wartend.into_iter().zip(verbraucht) {
             if ok {
-                im_block.push(tx);
+                im_block.push(w.tx);
             } else {
-                self.mempool.push((seit, tx));
+                self.mempool.hinein(w);
             }
         }
-        self.mempool.extend(spaeter);
+        for w in spaeter {
+            self.mempool.hinein(w);
+        }
         self.mempool_bereinigen(hoehe);
 
         let mut block = Block::new(BlockHeader {
@@ -3091,7 +4287,7 @@ impl Kette {
             epoch,
             prev_block_hash: self.letzter_hash,
             timestamp_ms: crate::protokoll::jetzt_ms().max(0) as u64,
-            state_root: self.zustand.commitment(),
+            state_root: self.zustand.wurzel(),
             pruefpunkt: zert,
         });
         for tx in im_block {
@@ -3113,8 +4309,13 @@ impl Kette {
         self.hoehe = hoehe;
         self.letzter_hash = block.hash();
         self.bekannt.insert(self.letzter_hash);
+        match zeuge {
+            Some(z) => self.zeuge_bereithalten(self.letzter_hash, hoehe, z),
+            None => self.zeugenlos += 1,
+        }
         self.verlauf_aufnehmen(hoehe, &block);
         self.schreibe(&block);
+        self.zertifikat_merken(&block);
         self.abzug_anlegen(&block);
         block
     }
@@ -3125,6 +4326,25 @@ impl Kette {
     /// dann rechnen.** Ein Block, der nicht anschließt, darf den Zustand
     /// nicht anfassen, sonst hinterlässt ein verirrter Block eine Spur.
     pub fn uebernimm(&mut self, block: &Block) -> Result<(), KettenFehler> {
+        if self.zustandslos {
+            return Err(KettenFehler::ZeugeTraegtNicht(None));
+        }
+        self.uebernimm_innen(block, None)
+    }
+
+    /// ⚑ **Übernimmt einen Block mit seinem Zeugen** (zustandslose
+    /// Validierung, 2026-10-29): für einen zustandslosen Knoten. Der Zeuge
+    /// muss zur Wurzel vor dem Block passen, und das Anwenden darf nichts
+    /// ausserhalb von ihm berühren; sonst bleibt der Zustand, wie er war.
+    /// Ein voller Knoten braucht den Zeugen nicht und übergeht ihn.
+    pub fn uebernimm_mit_zeuge(&mut self, block: &Block, zeuge: &myl_ledger::state::Zeuge) -> Result<(), KettenFehler> {
+        if !self.zustandslos {
+            return self.uebernimm_innen(block, None);
+        }
+        self.uebernimm_innen(block, Some(zeuge))
+    }
+
+    fn uebernimm_innen(&mut self, block: &Block, zeuge: Option<&myl_ledger::state::Zeuge>) -> Result<(), KettenFehler> {
         let hash = block.hash();
         if self.bekannt.contains(&hash) {
             return Err(KettenFehler::SchonBekannt);
@@ -3184,30 +4404,82 @@ impl Kette {
             return Err(KettenFehler::AnfechtungUnsinnig);
         }
 
-        // Auf einer Kopie rechnen: Weicht das Ergebnis ab, bleibt der
-        // eigene Zustand unberührt. Ein Knoten, der einem abweichenden
-        // Block folgt, hätte den Befund verschluckt.
-        let mut versuch = self.zustand.clone();
+        // Weicht das Ergebnis ab, bleibt der eigene Zustand unberührt: Ein
+        // Knoten, der einem abweichenden Block folgt, hätte den Befund
+        // verschluckt. ⚑ **Gesichert statt kopiert** (Skalierung,
+        // 2026-10-29): Bis hierher wurde auf einer Kopie des ganzen Zustands
+        // gerechnet (bei einer Million Konten 30 ms je Block); jetzt auf dem
+        // Zustand selbst, und die Sammlungen spielen ihr Journal zurück, wenn
+        // die Wurzel nicht stimmt.
+        if let Some(z) = zeuge {
+            self.zustand.zeuge_einsetzen(z).map_err(|g| KettenFehler::ZeugeTraegtNicht(Some(g)))?;
+        }
+        // Ein voller Knoten, der Zeugen bereithält, zeichnet auf wie ein
+        // Erzeuger.
+        let bereithalten = zeuge.is_none() && !self.zustandslos && self.zeugenschluessel.is_some();
+        if bereithalten {
+            self.zustand.aufzeichnen_beginnen();
+        }
+        let sicherung = self.zustand.sichern();
+        let unterschriften = &self.unterschriften;
         let mut gezogen = None;
+        let ablaufend = self.ablaufende_zuteilung(block.header.epoch);
+        let mut ausgaben = Pruefausgaben::default();
         // ⚑ **Das Zertifikat kommt aus dem Block, nicht aus eigenem
         // Zustand.** Sonst zöge jeder Knoten eine andere Stichprobe.
         Self::anwenden(
-            &mut versuch,
+            &mut self.zustand,
             &block.txs,
             block.header.epoch,
             &self.letzter_hash,
             block.header.pruefpunkt.as_ref(),
             &mut gezogen,
+            self.stimmsatz.as_ref(),
+            &mut ausgaben,
+            &|t: &Transaktion| unterschriften.kennt(&t.kennung()),
         );
-        let errechnet = versuch.commitment();
-        if errechnet != block.header.state_root {
+        let eigener_zeuge = if bereithalten { self.zustand.zeuge_nehmen().ok().and_then(|z| borsh::to_vec(&z).ok()) } else { None };
+        let errechnet = self.zustand.wurzel();
+        // Beim Zustandslosen zählt auch, dass nichts ausserhalb des Zeugen
+        // berührt wurde; sonst hiesse die Wurzel nichts.
+        let eingehalten = zeuge.is_none() || self.zustand.zeuge_eingehalten();
+        if errechnet != block.header.state_root || !eingehalten {
+            self.zustand.zuruecksetzen(sicherung);
+            if zeuge.is_some() {
+                self.zustand.zeuge_abschliessen(false);
+            }
+            if !eingehalten {
+                return Err(KettenFehler::ZeugeTraegtNicht(Some(myl_ledger::state::Zeugenfehler::Unvollstaendig)));
+            }
             return Err(KettenFehler::ZustandWeichtAb {
                 erwartet: block.header.state_root,
                 errechnet,
             });
         }
-
-        self.zustand = versuch;
+        self.zustand.sicherung_verwerfen();
+        if let Some(z) = eigener_zeuge {
+            self.zeuge_bereithalten(hash, block.header.height, z);
+            // Gleich unterschrieben: Auf Nachfrage wird nur Gehaltenes
+            // geliefert.
+            let _ = self.zeugenstuecke(&hash);
+        }
+        if let Some(z) = zeuge {
+            // Die eigenen Konten, die der Block berührte, vor dem Leeren.
+            let beruehrt: Vec<Address> =
+                self.eigene_konten.keys().filter(|a| z.accounts.iter().any(|(k, _)| k == *a)).copied().collect();
+            self.eigene_konten.extend(self.zustand.konten_still(&beruehrt));
+            for a in &beruehrt {
+                self.eigene_unbekannt.remove(a);
+            }
+            self.zustand.zeuge_abschliessen(true);
+        }
+        // 📌 Bis 0.79.0 kannte nur der Erzeuger die Ziehung; der Empfang
+        //    warf sie weg, und kein zugeteilter Checker erfuhr von seiner
+        //    Ziehung (erster gezielter Lauf mit Nachrechnen, 2026-10-29:
+        //    vier Ziehungen, null zugeteilt).
+        self.zuteilung_aufheben(ablaufend);
+        self.ziehung_merken(gezogen);
+        self.pruefausgaben.anhaengen(ausgaben);
         if let Some(b) = self.baum.as_mut() {
             b.anhaengen(&self.letzter_hash);
         }
@@ -3231,6 +4503,7 @@ impl Kette {
         // Seit Fund 627 über die Nummern statt über die Bytes.
         self.mempool_bereinigen(block.header.height);
         self.schreibe(block);
+        self.zertifikat_merken(block);
         self.abzug_anlegen(block);
         self.erzeuger_lernen(block);
         Ok(())
@@ -3240,6 +4513,24 @@ impl Kette {
 impl Default for Kette {
     fn default() -> Self {
         Self::probestand()
+    }
+}
+
+
+/// Was das Anwenden eines Blocks neben dem Zustand an Prüfung ergab.
+#[derive(Debug, Default)]
+pub struct Pruefausgaben {
+    /// Die abgeschlossenen Prüfaufträge.
+    pub abschluesse: Vec<myl_ledger::pruefung::Pruefabschluss>,
+    /// Die entschiedenen Streitfälle, mit dem Fehler der Buchung, falls
+    /// sie scheiterte.
+    pub urteile: Vec<(myl_ledger::pruefung::Schiedsurteil, Option<String>)>,
+}
+
+impl Pruefausgaben {
+    fn anhaengen(&mut self, andere: Pruefausgaben) {
+        self.abschluesse.extend(andere.abschluesse);
+        self.urteile.extend(andere.urteile);
     }
 }
 
@@ -3291,7 +4582,7 @@ mod tests {
     /// Die Gebühr einer Transaktion, solange der Grundpreis am Boden der
     /// Probekette steht (G1); kleine Blöcke heben ihn nicht.
     fn gebuehr(tx: &Transaktion) -> u64 {
-        crate::netz::PROBEKETTE.gebuehren.boden_je_byte * tx.gebuehrenbytes()
+        crate::netz::PROBEKETTE.gebuehren.boden_je_byte * tx.gebuehreneinheiten()
     }
 
     /// ⚑ **Die Gegenprobe zu Fund 85: Eine Anweisung ohne gültige
@@ -4757,6 +6048,69 @@ mod tests {
         );
     }
 
+    /// ⚑ **Ein zustandsloser Folger rechnet mit Zeugen mit**
+    /// (zustandslose Validierung, 2026-10-29): Er hält keine Konten, nur
+    /// die Wurzel des grossen Baums, und übernimmt Blöcke mit dem Zeugen,
+    /// den der Erzeuger bereithält: Überweisungen an bestehende und neue
+    /// Konten, Burns, über die Epochengrenze. Dieselbe Wurzel, und der
+    /// Erzeuger fand jeden Block bezeugbar (kein Zugriff über eine ganze
+    /// grosse Sammlung, auch nicht am Epochenwechsel). Ohne Zeugen, oder
+    /// mit einem, dem ein berührtes Konto fehlt, wird abgewiesen, und
+    /// nichts bewegt sich.
+    #[test]
+    fn ein_zustandsloser_folger_rechnet_mit_zeugen_mit() {
+        use myl_consensus::block::BLOECKE_JE_EPOCHE;
+        let mut erzeuger = Kette::probestand();
+        let mut folger = Kette::probestand();
+        // Die eigenen Konten des Folgers: ein Absender, ein neuer
+        // Empfänger, eines, das kein Block berührt.
+        let eigene = [probekonto(3), probekonto(200), probekonto(6), probekonto(9)];
+        folger.zustandslos_machen(&eigene);
+        assert_eq!(folger.zustandswurzel(), erzeuger.zustandswurzel());
+        assert_eq!(folger.zustand().accounts.anzahl(), 0);
+        let zeuge_von = |k: &Kette, b: &Block| -> myl_ledger::state::Zeuge {
+            borsh::from_slice(&k.eigener_zeuge(&b.hash()).expect("bereitgehalten")).expect("lesbar")
+        };
+        erzeuger.aufnehmen(burn(1, 1_000));
+        erzeuger.aufnehmen(mit_grenze(3, 0, u64::MAX, Anweisung::Ueberweisung { nach: probekonto(200), betrag: 100 }));
+        erzeuger.aufnehmen(mit_grenze(4, 0, u64::MAX, Anweisung::Ueberweisung { nach: probekonto(5), betrag: 50 }));
+        let b = erzeuger.baue_block();
+        assert_eq!(b.txs.len(), 3);
+        assert!(matches!(folger.uebernimm(&b), Err(KettenFehler::ZeugeTraegtNicht(None))));
+        let z = zeuge_von(&erzeuger, &b);
+        let mut ohne = z.clone();
+        ohne.accounts.retain(|(a, _)| *a != probekonto(200));
+        let vorher = folger.zustandswurzel();
+        let f = folger.uebernimm_mit_zeuge(&b, &ohne).expect_err("unvollständig");
+        assert!(
+            matches!(f, KettenFehler::ZeugeTraegtNicht(Some(myl_ledger::state::Zeugenfehler::Unvollstaendig))),
+            "{f}"
+        );
+        assert_eq!(folger.zustandswurzel(), vorher, "nichts bewegt");
+        assert_eq!(folger.hoehe(), 0);
+        folger.uebernimm_mit_zeuge(&b, &z).expect("trägt");
+        assert_eq!(folger.zustandswurzel(), erzeuger.zustandswurzel());
+        for i in 0..BLOECKE_JE_EPOCHE {
+            if i % 300 == 0 {
+                erzeuger.aufnehmen(burn_nr(2, 10, i / 300));
+                erzeuger.aufnehmen(mit_grenze(6, i / 300, u64::MAX, Anweisung::Ueberweisung { nach: probekonto(201 + (i / 300) as u8), betrag: 7 }));
+            }
+            let b = erzeuger.baue_block();
+            folger.uebernimm_mit_zeuge(&b, &zeuge_von(&erzeuger, &b)).expect("trägt");
+        }
+        assert_eq!(erzeuger.zustand().epoch.0, 1, "über die Grenze");
+        assert_eq!(folger.zustandswurzel(), erzeuger.zustandswurzel());
+        assert_eq!(erzeuger.zeugenlos(), 0, "ein Block war nicht bezeugbar");
+        assert_eq!(folger.zustand().accounts.anzahl(), 0, "der Folger hält keine Konten");
+        assert!(erzeuger.zustand().accounts.anzahl() > 6);
+        // ⚑ Seine eigenen kennt er, Nummer und Guthaben wie der Erzeuger:
+        //    Damit reicht er seine Arbeit mit der richtigen Nummer ein.
+        for a in &eigene {
+            assert_eq!(folger.konto(a), erzeuger.zustand().account(a), "eigenes Konto {a:?}");
+        }
+        assert_eq!(folger.konto(&probekonto(6)).nonce, 6, "sechs Überweisungen");
+    }
+
     // --- Punkt 40, Glied 3a: Anmeldung über die Kette ---
 
     fn anmeldung(wer: u8, hardware: myl_types::miner::HardwareClass) -> Transaktion {
@@ -4953,15 +6307,236 @@ mod tests {
         let nachfrist = myl_ledger::state::SITZUNG_NACHFRIST;
         let z = k.zustand_mut();
         z.epoch = EpochId(nachfrist);
-        Kette::epochenwechsel_abschliessen(z, nachfrist + 1, &Hash([0; 32]));
+        Kette::epochenwechsel_abschliessen(z, nachfrist + 1, &Hash([0; 32]), None);
         assert!(k.zustand().sitzung(&id).is_some(), "vor dem Ende der Nachfrist aufgeräumt");
         assert_eq!(k.zustand().account(&probekonto(6)).balance, v0 - g - h);
 
         let z = k.zustand_mut();
         z.epoch = EpochId(nachfrist + 1);
-        Kette::epochenwechsel_abschliessen(z, nachfrist + 2, &Hash([0; 32]));
+        Kette::epochenwechsel_abschliessen(z, nachfrist + 2, &Hash([0; 32]), None);
         assert!(k.zustand().sitzung(&id).is_none(), "die abgelaufene Sitzung blieb");
         assert_eq!(k.zustand().account(&probekonto(6)).balance, v0 - g, "die Hinterlegung kam nicht zurück");
+    }
+
+    /// ⚑ **Die Reserve vertritt eine Position** (Whitepaper 6.8): Ihr
+    /// Schlüssel tritt an die Stelle des Inhabers; ein Fremder, eine Position
+    /// ausserhalb des Pods, eine doppelte Position und ein doppelter Vertreter
+    /// tragen nicht.
+    #[test]
+    fn die_reserve_vertritt_eine_position() {
+        let mut k = Kette::probestand();
+        for w in 0..6u8 {
+            k.aufnehmen(probeanmeldung(w));
+            k.aufnehmen(probezusage(w, EpochId(1), 1));
+        }
+        k.baue_block();
+        while k.zustand().epoch.0 < 3 {
+            k.baue_block();
+        }
+        let zuteilung = Kette::zuteilung_der_laufenden_epoche(k.zustand());
+        let pod = &zuteilung.pods[0];
+        assert_eq!((pod.shards.len(), pod.reserve.len()), (4, 2));
+        let inhaber = Kette::unterzeichner_des_buendels(pod, &[]).expect("ohne Vertreter");
+        let r0 = pod.reserve[0];
+        let r1 = pod.reserve[1];
+        let mit = Kette::unterzeichner_des_buendels(pod, &[(1, r0.miner_id)]).expect("ein Vertreter");
+        assert_eq!(mit[1], (r0.miner_id, r0.schluessel), "die Reserve unterschreibt für Position 1");
+        assert_eq!((mit[0], mit[2], mit[3]), (inhaber[0], inhaber[2], inhaber[3]), "die übrigen bleiben");
+        assert!(Kette::unterzeichner_des_buendels(pod, &[(1, r0.miner_id), (3, r1.miner_id)]).is_some());
+        // ⛔️ Gegenproben.
+        let fremd = pod.shards[2].miner.miner_id;
+        assert!(Kette::unterzeichner_des_buendels(pod, &[(1, fremd)]).is_none(), "keine Reserve");
+        assert!(Kette::unterzeichner_des_buendels(pod, &[(4, r0.miner_id)]).is_none(), "keine solche Position");
+        assert!(Kette::unterzeichner_des_buendels(pod, &[(1, r0.miner_id), (1, r1.miner_id)]).is_none(), "Position doppelt");
+        assert!(Kette::unterzeichner_des_buendels(pod, &[(1, r0.miner_id), (2, r0.miner_id)]).is_none(), "Vertreter doppelt");
+    }
+
+    /// ⚑ **Stufe 1: vergütet wird nur, was zwei Zwillinge gleich gerechnet
+    /// haben** (Whitepaper 3.4 und 5.3), dann jeder zur Hälfte; uneinig oder
+    /// ohne Bündel des Zwillings keiner; ein Pod allein kommt zurück
+    /// (Anlaufregel), einer in Bereitschaft bekommt nichts.
+    #[test]
+    fn zwillinge_werden_nur_einig_vergutet() {
+        let wurzel = |w: u8| myl_types::MerkleRoot::new([w; 32]);
+        let buendel = |pod: u8, w: u8, segmente: u32| myl_types::PoIBundle {
+            epoch: EpochId(3),
+            pod: myl_types::ids::PodId::new([pod; 32]),
+            segments_root: wurzel(pod),
+            vtfe_claimed: 1_200,
+            aggregate_sig: myl_types::bls::BlsSignature([0; 96]),
+            segmente,
+            ausgabenwurzel: wurzel(w),
+            vertreter: Vec::new(),
+        };
+        let abrechnung = |vtfe: u64| myl_tokenomics::Podabrechnung {
+            positionen: Vec::new(),
+            reserve: Vec::new(),
+            vtfe_pod: vtfe,
+            verteilung: None,
+        };
+        let gueltig = |liste: &[(u32, myl_types::PoIBundle)]| {
+            liste.iter().map(|(i, b)| (*i, (b.clone(), abrechnung(b.vtfe_claimed)))).collect::<std::collections::BTreeMap<_, _>>()
+        };
+        let vtfe = |n: &NachZwillingen| n.bezahlt.iter().map(|a| a.vtfe_pod).collect::<Vec<_>>();
+        let paar = [vec![0u32, 1]];
+        // Einig: beide zur Hälfte.
+        let n = nach_zwillingen(gueltig(&[(0, buendel(1, 9, 4)), (1, buendel(2, 9, 4))]), &paar);
+        assert_eq!((vtfe(&n), n.einig, n.uneinig), (vec![600, 600], 1, 0));
+        // ⛔️ Gegenproben: andere Wurzel, andere Segmentzahl, Wurzel null,
+        //    ein Bündel fehlt: keiner wird vergütet.
+        for (a, b) in [
+            (buendel(1, 9, 4), Some(buendel(2, 8, 4))),
+            (buendel(1, 9, 4), Some(buendel(2, 9, 5))),
+            (buendel(1, 0, 4), Some(buendel(2, 0, 4))),
+            (buendel(1, 9, 4), None),
+        ] {
+            let beide = b.is_some();
+            let mut liste = vec![(0, a)];
+            liste.extend(b.map(|b| (1, b)));
+            let n = nach_zwillingen(gueltig(&liste), &paar);
+            assert!(n.bezahlt.is_empty() && n.allein.is_empty(), "uneinig vergütet: {n:?}");
+            assert_eq!((n.einig, n.uneinig), (0, 1));
+            // ⚑ Mit beiden Bündeln ist die Gruppe verschieden (ein
+            //   Differenzbeweis darf kommen); mit einem fehlenden nicht.
+            assert_eq!(n.verschieden.len(), usize::from(beide));
+        }
+        // Keiner von beiden hat etwas: nichts zu zählen.
+        let n = nach_zwillingen(gueltig(&[]), &paar);
+        assert_eq!((n.einig, n.uneinig), (0, 0));
+        // ⚑ Ein Pod allein (Anlaufregel): nicht bezahlt, sondern zurück.
+        let n = nach_zwillingen(gueltig(&[(2, buendel(3, 0, 4))]), &[vec![2]]);
+        assert!(n.bezahlt.is_empty());
+        assert_eq!(n.allein.iter().map(|(i, r)| (*i, r.vtfe_pod)).collect::<Vec<_>>(), vec![(2, 1_200)]);
+        // ⛔️ Gegenprobe: Ein Pod in Bereitschaft (in keiner Gruppe), der
+        //    trotzdem einreicht, bekommt weder Lohn noch Rückhalt.
+        let n = nach_zwillingen(gueltig(&[(0, buendel(1, 9, 4)), (1, buendel(2, 9, 4)), (5, buendel(3, 9, 4))]), &paar);
+        assert_eq!((vtfe(&n), n.allein.len(), n.bereitschaft), (vec![600, 600], 0, 1));
+    }
+
+    /// ⚑ **Anlaufregel:** Was ein Pod allein rechnete, wartet die
+    /// Streitfrist ab und kommt dann in die Zuschreibung; seine Segmente
+    /// werden alle gezogen.
+    #[test]
+    fn ein_pod_allein_wird_zurueckgehalten_und_voll_gezogen() {
+        use myl_ledger::einsatz::SPERRFRIST_EPOCHEN;
+        let m = |b: u8| myl_types::ids::MinerId::new([b; 32]);
+        let mut gehalten = Vec::new();
+        let mut je = std::collections::BTreeMap::new();
+        zurueckhalten_und_freigeben(&mut gehalten, 5, &mut je, [(m(1), 300), (m(2), 0)].into_iter().collect());
+        assert!(je.is_empty(), "nicht sofort");
+        assert_eq!(gehalten, vec![(5 + SPERRFRIST_EPOCHEN, m(1), 300)], "ohne Nullen");
+        // ⛔️ Gegenprobe: eine Epoche vor der Freigabe noch nichts.
+        zurueckhalten_und_freigeben(&mut gehalten, 4 + SPERRFRIST_EPOCHEN, &mut je, Default::default());
+        assert!(je.is_empty() && gehalten.len() == 1);
+        // Fällig: zu dem, was der Miner in dieser Epoche ohnehin bekommt.
+        je.insert(m(1), 50);
+        zurueckhalten_und_freigeben(&mut gehalten, 5 + SPERRFRIST_EPOCHEN, &mut je, Default::default());
+        assert_eq!(je.get(&m(1)), Some(&350));
+        assert!(gehalten.is_empty());
+
+        let a = myl_types::ids::PodId::new([1; 32]);
+        let b = myl_types::ids::PodId::new([2; 32]);
+        let mut gezogen = vec![crate::stichprobe::Segmentstichprobe { pod: a, segment: 1 }];
+        voll_ziehen(&mut gezogen, &[a], &[(a, 3), (b, 5)]);
+        gezogen.sort();
+        assert_eq!(gezogen.iter().map(|s| (s.pod, s.segment)).collect::<Vec<_>>(), vec![(a, 0), (a, 1), (a, 2)], "alle, ohne Doppel, nur a");
+        let mut viel = Vec::new();
+        voll_ziehen(&mut viel, &[b], &[(b, 1_000)]);
+        assert_eq!(viel.len() as u32, Kette::VOLL_GEZOGEN_HOECHSTENS, "gedeckelt");
+    }
+
+    /// ⚑ **Der Credit-Preis folgt der Auslastung** (Whitepaper 5.4, κ = 1/6,
+    /// u* = 0,8): ohne Nachfrage ein Achtel weniger, bei voller Auslastung
+    /// rund 3,4 % mehr, am Ziel gleich; nie unter 1.
+    #[test]
+    fn der_credit_preis_folgt_der_auslastung() {
+        let voll = myl_types::auslastung::AUSLASTUNG_SKALA;
+        let p = 100i64 << 32;
+        let (_, ohne) = credit_preis_naechster(p, 0);
+        assert!((87..=88).contains(&ohne), "ohne Nachfrage: {ohne}");
+        let (_, hoch) = credit_preis_naechster(p, voll);
+        assert!((103..=104).contains(&hoch), "voll: {hoch}");
+        let (_, ziel) = credit_preis_naechster(p, CREDIT_PREIS_ZIEL);
+        assert!((99..=101).contains(&ziel), "am Ziel: {ziel}");
+        // Tausend Epochen ohne Nachfrage: unten begrenzt, abgerechnet 1.
+        let mut f = p;
+        for _ in 0..1_000 {
+            f = credit_preis_naechster(f, 0).0;
+        }
+        assert!(f >= myl_tokenomics::PREIS_UNTERGRENZE_VORGABE);
+        assert_eq!(credit_preis_naechster(f, 0).1, 1, "nie null");
+    }
+
+    /// Abgerechnet wird zur nächsten geraden Zahl gerundet, mindestens 1.
+    #[test]
+    fn der_credit_preis_rundet_zur_geraden_zahl() {
+        let halb = 1i64 << 31;
+        assert_eq!(credit_preis_abgerechnet((2 << 32) + halb), 2);
+        assert_eq!(credit_preis_abgerechnet((3 << 32) + halb), 4);
+        assert_eq!(credit_preis_abgerechnet((2 << 32) + halb + 1), 3);
+        assert_eq!(credit_preis_abgerechnet((2 << 32) + halb - 1), 2);
+        assert_eq!(credit_preis_abgerechnet(1), 1, "nie null");
+        assert_eq!(credit_preis_abgerechnet(0), 1);
+    }
+
+    /// 📌 **Ein kleiner Credit-Preis bleibt beweglich**: Mit Feinauflösung
+    /// steigt er von 4 über sechzig volle Epochen. ⛔️ Gegenprobe: ganzzahlig
+    /// fortgeschrieben bleibt er bei 4 stehen.
+    #[test]
+    fn ein_kleiner_credit_preis_bleibt_beweglich() {
+        let voll = myl_types::auslastung::AUSLASTUNG_SKALA;
+        let (mut fein, mut ganz) = (4i64 << 32, 4u64);
+        for _ in 0..60 {
+            (fein, ganz) = credit_preis_naechster(fein, voll);
+        }
+        assert!(ganz >= 20, "mit Feinauflösung: {ganz}");
+        let mut nur_ganz = 4u64;
+        for _ in 0..60 {
+            nur_ganz = credit_preis_naechster((nur_ganz as i64) << 32, voll).1;
+        }
+        assert_eq!(nur_ganz, 4, "ganzzahlig steht er");
+    }
+
+    /// Die Kette schreibt den Preis am Epochenwechsel fort: Ohne Nachfrage
+    /// liegt er danach unter dem Startwert, und beide Darstellungen passen.
+    #[test]
+    fn der_epochenwechsel_schreibt_den_credit_preis_fort() {
+        let mut k = Kette::probestand();
+        assert_eq!(k.zustand().credit_price, PROBE_CREDIT_PREIS);
+        while k.zustand().epoch.0 < 1 {
+            k.baue_block();
+        }
+        let z = k.zustand();
+        assert!(z.credit_price < PROBE_CREDIT_PREIS, "{}", z.credit_price);
+        assert_eq!(credit_preis_naechster(PROBE_CREDIT_PREIS as i64 * (1 << 32), 0).0, z.credit_preis_fein);
+    }
+
+    /// ⚑ **Ein Block trägt höchstens das Doppelte des Ziels in
+    /// Gebühreneinheiten**; der Rest eines vollen Mempools wartet.
+    #[test]
+    fn ein_block_traegt_hoechstens_das_doppelte_ziel() {
+        // ⚑ 2026-10-28: Prüfeinheiten. Vorher passten 4 096 Burns (rund
+        //   700 KiB) in einen Block, das Ziel lag bei rund 3 000.
+        let mut k = Kette::probestand();
+        let mut im_mempool = 0;
+        for q in 0..64u32 {
+            let sk = myl_types::bls::BlsSecretKey::key_gen(Hash::sha256(format!("einheiten-{q}").as_bytes()).as_bytes())
+                .expect("Schlüssel");
+            let a = Address::aus_schluessel(&sk.public_key().expect("pk"));
+            k.zustand_mut().account_mut(&a).balance = 1_000_000_000;
+            for n in 0..64u64 {
+                let tx = Transaktion::signiere(&Kette::startwert(), &sk, n, Anweisung::Burn { betrag: 1 }).expect("signieren");
+                im_mempool += usize::from(k.aufnehmen(tx));
+            }
+        }
+        // 64 mal 64 (seit dem 2026-10-29 fasst der Mempool mehr).
+        let alle = 64 * 64;
+        assert_eq!(im_mempool, alle);
+        let b = k.baue_block();
+        let einheiten: u64 = b.txs.iter().map(|t| t.gebuehreneinheiten()).sum();
+        assert!(einheiten <= BLOCK_EINHEITEN_HOECHSTENS, "{einheiten} Einheiten im Block");
+        assert!(b.txs.len() < alle / 2, "{} Transaktionen im Block", b.txs.len());
+        assert_eq!(k.wartend(), alle - b.txs.len(), "der Rest wartet");
     }
 
     /// ⚑ **Der Grundpreis wandert um höchstens ein Achtel**: am Ziel bleibt
@@ -4970,7 +6545,7 @@ mod tests {
     /// er nie.
     #[test]
     fn der_grundpreis_wandert_um_hoechstens_ein_achtel() {
-        let ziel = GRUNDPREIS_ZIEL_BYTES;
+        let ziel = GRUNDPREIS_ZIEL_EINHEITEN;
         assert_eq!(naechster_grundpreis(800, ziel, 1), 800);
         assert_eq!(naechster_grundpreis(800, 2 * ziel, 1), 900);
         assert_eq!(naechster_grundpreis(800, 0, 1), 700);
@@ -4978,6 +6553,49 @@ mod tests {
         assert_eq!(naechster_grundpreis(1, 0, 1), 1, "unter den Boden");
         assert_eq!(naechster_grundpreis(800, 0, 750), 750, "unter den Boden");
         assert_eq!(naechster_grundpreis(u64::MAX, 2 * ziel, 1), u64::MAX);
+    }
+
+    /// ⚑ **Der Topf der Validatoren geht nach Stake mal Stimmen** (2026-10-28):
+    /// A (Stake 1, zwei Unterschriften) und B (Stake 3, eine) teilen 2 zu 3;
+    /// C steht im Satz, stimmt nicht und bekommt nichts; ein Unterzeichner
+    /// ausserhalb des Satzes bekommt nichts. Gegenproben: ohne Stimmen und
+    /// ohne Satz bleibt der Topf stehen; die Zähler sind danach leer.
+    #[test]
+    fn der_topf_der_validatoren_geht_nach_stake_mal_stimmen() {
+        use myl_consensus::validator::{VotingMember, VotingSet};
+        let schluessel = |s: &str| {
+            myl_types::bls::BlsSecretKey::key_gen(Hash::sha256(s.as_bytes()).as_bytes())
+                .expect("Schlüssel")
+                .public_key()
+                .expect("pk")
+        };
+        let (a, b, c, d) = (schluessel("a"), schluessel("b"), schluessel("c"), schluessel("d"));
+        let id = |pk: &myl_types::bls::BlsPublicKey| myl_types::ids::MinerId::aus_schluessel(pk);
+        let satz = VotingSet::from_members(
+            [(a, 1u64), (b, 3), (c, 5)]
+                .into_iter()
+                .map(|(pk, weight)| (id(&pk), VotingMember { pubkey: pk, weight }))
+                .collect(),
+        );
+        let mut z = Kette::probestand().zustand().clone();
+        z.gebuehren_validatoren = 1_001;
+        z.pruefpunkt_stimmen.insert(id(&a), 2);
+        z.pruefpunkt_stimmen.insert(id(&b), 1);
+        z.pruefpunkt_stimmen.insert(id(&d), 7);
+        Kette::topf_auszahlen(&mut z, Some(&satz));
+        assert_eq!(z.account(&Address::aus_schluessel(&a)).balance, 400, "2 von 5");
+        assert_eq!(z.account(&Address::aus_schluessel(&b)).balance, 600, "3 von 5");
+        assert_eq!(z.account(&Address::aus_schluessel(&c)).balance, 0, "ohne Stimme");
+        assert_eq!(z.account(&Address::aus_schluessel(&d)).balance, 0, "nicht im Satz");
+        assert_eq!(z.gebuehren_validatoren, 1, "der Rest bleibt im Topf");
+        assert!(z.pruefpunkt_stimmen.is_empty());
+        // Gegenproben: ohne Stimmen, ohne Satz.
+        z.gebuehren_validatoren = 500;
+        Kette::topf_auszahlen(&mut z, Some(&satz));
+        assert_eq!(z.gebuehren_validatoren, 500, "ohne Stimmen ausgezahlt");
+        z.pruefpunkt_stimmen.insert(id(&a), 1);
+        Kette::topf_auszahlen(&mut z, None);
+        assert_eq!(z.gebuehren_validatoren, 500, "ohne Satz ausgezahlt");
     }
 
     /// ⚑ **Die Gebühren einer Epoche teilen sich drei zu zehn**: Treasury
@@ -5052,9 +6670,104 @@ mod tests {
             vtfe_claimed: vtfe,
             aggregate_sig: myl_types::bls::BlsSignature([0; 96]),
             segmente,
+            ausgabenwurzel: myl_types::MerkleRoot::new([0u8; 32]),
+            vertreter: Vec::new(),
         };
         buendel_unterschreiben(&mut b, pod);
         (k, b, koordinator, nonce[koordinator as usize])
+    }
+
+    /// ⚑ **Die Entlohnung rechnet auch der zustandslose Folger nach**
+    /// (zustandslose Validierung, 2026-10-29): sechs Miner melden sich an,
+    /// sagen zu, ein Pod reicht ein Bündel ein, zwei Epochenwechsel buchen
+    /// die Ausschüttung. Der Folger hält keine Konten und kommt mit den
+    /// Zeugen zur selben Wurzel; jeder Block war bezeugbar.
+    #[test]
+    fn die_entlohnung_rechnet_auch_der_zustandslose_folger_nach() {
+        use myl_types::miner::HardwareClass;
+        let mut k = Kette::probestand();
+        let mut folger = Kette::probestand();
+        let eigene: Vec<Address> = (0..6u8).map(probekonto).collect();
+        folger.zustandslos_machen(&eigene);
+        let weiter = |k: &mut Kette, folger: &mut Kette| {
+            let b = k.baue_block();
+            let z: myl_ledger::state::Zeuge = borsh::from_slice(&k.eigener_zeuge(&b.hash()).expect("bereitgehalten")).expect("lesbar");
+            folger.uebernimm_mit_zeuge(&b, &z).expect("trägt");
+        };
+        let mut nonce = [0u64; 6];
+        for w in 0..6u8 {
+            k.aufnehmen(anmeldung(w, HardwareClass::MediumGpu));
+            nonce[w as usize] += 1;
+            k.aufnehmen(probezusage(w, EpochId(1), nonce[w as usize]));
+            nonce[w as usize] += 1;
+            // Ohne Auszahlungskonto kein Anteil.
+            k.aufnehmen(
+                Transaktion::signiere(
+                    &Kette::startwert(),
+                    &probeschluessel(w),
+                    nonce[w as usize],
+                    Anweisung::AuszahlungskontoEintragen {
+                        kennung: myl_types::ids::MinerId::new(*probekonto(w).as_bytes()),
+                        konto: probekonto(w),
+                    },
+                )
+                .expect("signieren"),
+            );
+            nonce[w as usize] += 1;
+        }
+        weiter(&mut k, &mut folger);
+        while k.zustand().epoch.0 < 1 {
+            weiter(&mut k, &mut folger);
+        }
+        let zuteilung = Kette::zuteilung_der_laufenden_epoche(k.zustand());
+        let pod = &zuteilung.pods[0];
+        let koordinator = koordinator_von(pod);
+        let mut b = myl_types::PoIBundle {
+            epoch: k.zustand().epoch,
+            pod: myl_types::pod_kennung(k.zustand().epoch.0, pod.pod_index),
+            segments_root: myl_types::ids::MerkleRoot::new([7; 32]),
+            vtfe_claimed: 4_200,
+            aggregate_sig: myl_types::bls::BlsSignature([0; 96]),
+            segmente: 1,
+            ausgabenwurzel: myl_types::MerkleRoot::new([0u8; 32]),
+            vertreter: Vec::new(),
+        };
+        buendel_unterschreiben(&mut b, pod);
+        k.aufnehmen(einreichung(koordinator, nonce[koordinator as usize], b));
+        k.aufnehmen(burn_nr(7, 1_000_000, 0));
+        weiter(&mut k, &mut folger);
+        assert_eq!(k.zustand().buendel.anzahl(), 1, "das Bündel kam nicht an");
+        while k.zustand().epoch.0 < 2 {
+            weiter(&mut k, &mut folger);
+        }
+        // Ein Pod allein: gutgeschrieben erst nach der Streitfrist
+        // (Anlaufregel). Der Rückhalt steht im Kopf, den beide ganz halten;
+        // die Frist wird hier auf beiden Seiten gleich verkürzt.
+        let gehalten: u64 = k.zustand().zurueckgehalten.iter().map(|(_, _, v)| *v).sum();
+        assert!(gehalten > 0, "nichts zugeschrieben");
+        assert_eq!(folger.zustand().zurueckgehalten, k.zustand().zurueckgehalten);
+        for z in [k.zustand_mut(), folger.zustand_mut()] {
+            for e in z.zurueckgehalten.iter_mut() {
+                e.0 = 2;
+            }
+        }
+        // Geprägt wird gegen Verbranntes (Burn-and-Mint, kein Zuschuss):
+        // Ein Nutzer verbrennt in dieser Epoche.
+        k.aufnehmen(burn_nr(7, 1_000_000, 1));
+        let vorher: u128 = (0..6u8).map(|w| u128::from(k.zustand().account(&probekonto(w)).balance)).sum();
+        while k.zustand().epoch.0 < 3 {
+            weiter(&mut k, &mut folger);
+        }
+        assert!(k.zustand().zurueckgehalten.is_empty(), "nicht freigegeben");
+        let nachher: u128 = (0..6u8).map(|w| u128::from(k.zustand().account(&probekonto(w)).balance)).sum();
+        assert!(nachher > vorher, "keine Ausschüttung an die Miner: {vorher} → {nachher}");
+        // Der zustandslose Miner sieht seinen Lohn auf dem eigenen Konto.
+        for a in &eigene {
+            assert_eq!(folger.konto(a), k.zustand().account(a));
+        }
+        assert_eq!(folger.zustandswurzel(), k.zustandswurzel(), "die Ausschüttung weicht ab");
+        assert_eq!(k.zeugenlos(), 0, "ein Block war nicht bezeugbar");
+        assert_eq!(folger.zustand().accounts.anzahl(), 0);
     }
 
     /// Die Transaktion, die ein Bündel einreicht.
@@ -5363,6 +7076,29 @@ mod tests {
         myl_consensus::pruefpunkt::Pruefpunktzertifikat::aus_stimmen(&[stimme]).expect("Zertifikat")
     }
 
+    /// ⚑ **Ein Anker aus einem Zertifikat nur gegen den eigenen Stimmsatz**
+    /// (leichter Abzug, 2026-10-29): Ohne Satz keiner; mit Satz das echte
+    /// Zertifikat, nicht eines eines Fremden, nicht eines mit verändertem
+    /// Blockhash.
+    #[test]
+    fn ein_anker_kommt_nur_aus_einem_tragenden_zertifikat() {
+        use myl_consensus::pruefpunkt::BLOECKE_JE_PRUEFPUNKT;
+        let mut k = Kette::probestand();
+        for _ in 0..BLOECKE_JE_PRUEFPUNKT {
+            k.baue_block();
+        }
+        let z = pruefpunkt_von(&k, BLOECKE_JE_PRUEFPUNKT, PROBEERZEUGER);
+        let mut ohne = Kette::probestand();
+        ohne.stimmsatz = None;
+        assert!(ohne.anker_aus_zertifikat(&z).is_none(), "ohne Stimmsatz kein Anker");
+        let a = k.anker_aus_zertifikat(&z).expect("trägt gegen den eigenen Satz");
+        assert_eq!((a.hoehe, a.blockhash), (BLOECKE_JE_PRUEFPUNKT, k.hash_an(BLOECKE_JE_PRUEFPUNKT).unwrap()));
+        assert!(k.anker_aus_zertifikat(&pruefpunkt_von(&k, BLOECKE_JE_PRUEFPUNKT, "fremder")).is_none(), "ein Fremder");
+        let mut falsch = z.clone();
+        falsch.block_hash = Hash::sha256(b"anderer Block");
+        assert!(k.anker_aus_zertifikat(&falsch).is_none(), "anderer Blockhash");
+    }
+
     /// Baut `n` Blöcke auf `k` und übernimmt sie in `folger`.
     fn bauen_und_folgen(k: &mut Kette, folger: &mut Kette, n: usize) {
         for _ in 0..n {
@@ -5449,6 +7185,29 @@ mod tests {
         assert_eq!(zieh(&a).len(), erwartet);
         assert_ne!(zieh(&a), zieh(&b), "das Zertifikat muss die Ziehung ändern");
         assert_eq!(zieh(&a), zieh(&a.clone()), "dasselbe Zertifikat, dieselbe Ziehung");
+    }
+
+    /// ⚑ **Die Zeugen kommen auch von der Platte** (2026-10-30): Ist der
+    /// Speicher leer, liefert die Ablage dieselben unterschriebenen Stücke.
+    #[test]
+    fn zeugenstuecke_kommen_auch_von_der_platte() {
+        let mut erzeuger = Kette::probestand();
+        let ordner = std::env::temp_dir().join(format!("myl-kette-zeugen-{}", std::process::id()));
+        erzeuger.zeugen_auf_platte_setzen(ordner.clone()).expect("Ordner");
+        let mut gehalten = Vec::new();
+        for i in 0..5 {
+            erzeuger.aufnehmen(burn_nr(2, 10, i));
+            let b = erzeuger.baue_block();
+            let s = erzeuger.zeugenstuecke(&b.hash()).expect("unterschrieben");
+            gehalten.push((b.hash(), s));
+        }
+        erzeuger.zeugenstuecke.clear();
+        for (h, s) in &gehalten {
+            assert_eq!(erzeuger.zeugenstuecke_gehalten(h).as_deref(), Some(&**s), "von der Platte");
+        }
+        assert_eq!(erzeuger.zeugenablage_fehler, 0);
+        assert!(erzeuger.zeugenstuecke_gehalten(&Hash::sha256(b"fremd")).is_none());
+        std::fs::remove_dir_all(&ordner).ok();
     }
 
     /// Unterschreibt einen in einem Test veränderten Block neu, mit dem
@@ -5657,7 +7416,10 @@ mod tests {
         };
 
         let am_anfang = besetzung(&k);
-        assert_eq!(am_anfang.len(), 3, "achtzehn Miner ergeben drei Pods zu sechs");
+        // ⚑ Achtzehn Miner ergeben drei Pods zu sechs; der dritte hat keinen
+        //   Zwilling und steht in Bereitschaft (W6), seine sechs ohne Pod.
+        assert_eq!(am_anfang.len(), 2, "zwei Pods rechnen, einer steht in Bereitschaft");
+        assert_eq!(Kette::zuteilung_der_laufenden_epoche(k.zustand()).ohne_pod.len(), 6, "die sechs in Bereitschaft");
 
         // Zehn Blöcke weiter, mitten in derselben Epoche.
         for _ in 0..10 {
@@ -5745,6 +7507,12 @@ mod tests {
     /// jemand verbrennt, ein Bündel kommt in die Kette, und am
     /// Epochenwechsel wächst das Konto eines Pod-Mitglieds.
     ///
+    /// ⚑ **Seit dem 2026-10-28 mit der Anlaufregel** (W6): Sechs Miner sind
+    /// ein Pod allein, ohne Zwilling. Seine Gutschrift wartet bis nach der
+    /// Streitfrist (`zurueckgehalten`, die Freigabe prüft
+    /// `ein_pod_allein_wird_zurueckgehalten_und_voll_gezogen`), und jedes
+    /// Segment wird gezogen, gedeckelt.
+    ///
     /// **Das ist der Test, an dem der ganze Punkt hängt.** Jeder
     /// Zwischenschritt hat seine eigenen Tests; dieser prüft, dass sie
     /// zusammen etwas ergeben.
@@ -5758,6 +7526,9 @@ mod tests {
         // gerechnet und ist immer da. Das letzte Shard-Stück wiegt von
         // selbst schwerer, weil dort der LM-Kopf sitzt.
         let mut k = Kette::probestand();
+        // Ein Folger, der jeden Block nur empfängt: Er muss dieselbe
+        // Ziehung kennen wie der Erzeuger.
+        let mut folger = Kette::probestand();
 
         // Sechs Miner: vier Positionen plus zwei Reserve.
         let mut nonce = [0u64; 6];
@@ -5782,9 +7553,10 @@ mod tests {
         // Und Brennstoff für die Prägung.
         k.aufnehmen(burn_nr(0, 5_000_000, nonce[0]));
         nonce[0] += 1;
-        k.baue_block();
+        folger.uebernimm(&k.baue_block()).expect("der Folger nimmt den Block");
         for w in 0..6u8 {
             zusage_direkt(&mut k, myl_types::ids::MinerId::new(*probekonto(w).as_bytes()));
+            zusage_direkt(&mut folger, myl_types::ids::MinerId::new(*probekonto(w).as_bytes()));
         }
         assert_eq!(k.zustand().miner.len(), 6, "die Anmeldungen kamen nicht an");
         assert!(k.zustand().burn_epoche > 0, "es wurde nichts verbrannt");
@@ -5815,7 +7587,7 @@ mod tests {
             );
             nonce[w as usize] += 1;
         }
-        k.baue_block();
+        folger.uebernimm(&k.baue_block()).expect("der Folger nimmt den Block");
         for w in 0..6u8 {
             let kennung = myl_types::ids::MinerId::new(*probekonto(w).as_bytes());
             assert_eq!(
@@ -5842,6 +7614,8 @@ mod tests {
             // Tausend Segmente, damit die Ziehung ueberhaupt sichtbar ist
             // und die Ziehung ueberhaupt sichtbar ist.
             segmente: 1_000,
+            ausgabenwurzel: myl_types::MerkleRoot::new([0u8; 32]),
+            vertreter: Vec::new(),
         };
         buendel_unterschreiben(&mut b, &zuteilung.pods[0]);
         // ⚑ **Eingereicht wird vom Koordinator**, seit die Aufnahme
@@ -5857,7 +7631,7 @@ mod tests {
             )
             .expect("signieren"),
         );
-        k.baue_block();
+        folger.uebernimm(&k.baue_block()).expect("der Folger nimmt den Block");
         assert_eq!(k.zustand().buendel.len(), 1, "das Buendel kam nicht an");
 
         // Über die Epochengrenze.
@@ -5865,7 +7639,7 @@ mod tests {
             .map(|w| k.zustand().account(&kaltes_konto(w)).balance)
             .collect();
         for _ in 2..=BLOECKE_JE_EPOCHE {
-            k.baue_block();
+            folger.uebernimm(&k.baue_block()).expect("der Folger nimmt den Block");
         }
         assert_eq!(k.zustand().epoch.0, 1, "die Epoche wechselte nicht");
 
@@ -5877,9 +7651,16 @@ mod tests {
         //   Zertifikat keine Ziehung, und kein Rückfall auf den Blockhash.
         assert!(k.letzte_stichprobe().is_empty(), "gezogen ohne Zertifikat");
         assert_eq!(k.zustand().stichproben_offen.len(), 1);
+        // 📌 Fund 680, Folge: Zwischen Wechsel und Ziehung kommen die Spuren;
+        //    der Pod der abgelaufenen Epoche muss dann zu finden sein.
+        assert_eq!(
+            k.pod_der_kennung(0, &myl_types::pod_kennung(0, pod_index)).map(|p| p.pod_index),
+            Some(pod_index),
+            "der Pod der abgelaufenen Epoche vor der Ziehung"
+        );
         let z = pruefpunkt_von(&k, BLOECKE_JE_EPOCHE, PROBEERZEUGER);
         k.pruefpunkt_anbieten(z);
-        k.baue_block();
+        folger.uebernimm(&k.baue_block()).expect("der Folger nimmt den Block");
         assert!(k.zustand().stichproben_offen.is_empty(), "die Ziehung wartet noch");
         // ⚑ **Fund 114: Und die Stichprobe ist gezogen.**
         //
@@ -5894,12 +7675,17 @@ mod tests {
         // gruenen Test fuer mehr haelt, als er sagt.
         let kennung = myl_types::pod_kennung(0, pod_index);
         let stichprobe = k.letzte_stichprobe();
-        assert_eq!(
-            stichprobe.len(),
-            (1_000 * Kette::STICHPROBE_BP as usize).div_ceil(10_000),
-            "{} bp von 1000 Segmenten sind {}, gezogen wurden {}",
-            Kette::STICHPROBE_BP,
-            (1_000 * Kette::STICHPROBE_BP as usize).div_ceil(10_000),
+        // Die Rate zieht ihre 5 %, die Anlaufregel dazu jedes Segment bis
+        // zum Deckel; ohne Doppel.
+        let rate = (1_000 * Kette::STICHPROBE_BP as usize).div_ceil(10_000);
+        let deckel = Kette::VOLL_GEZOGEN_HOECHSTENS as usize;
+        assert!(
+            (0..Kette::VOLL_GEZOGEN_HOECHSTENS).all(|s| stichprobe.iter().any(|x| x.segment == s)),
+            "ein Pod allein: die ersten {deckel} Segmente alle gezogen"
+        );
+        assert!(
+            (deckel..=deckel + rate).contains(&stichprobe.len()),
+            "Rate {rate} und Deckel {deckel}, gezogen wurden {}",
             stichprobe.len()
         );
         assert!(
@@ -5914,6 +7700,11 @@ mod tests {
         assert!(stichprobe.iter().all(|x| k.pod_der_kennung(0, &x.pod).is_some()));
         // ⛔️ Eine andere Epoche als die der Ziehung findet nichts.
         assert!(k.pod_der_kennung(5, &kennung).is_none());
+        // 📌 Bis NODE 0.79.0 kannte nur der Erzeuger die Ziehung; ein
+        //    Checker erfuhr nie, dass er zugeteilt war.
+        assert_eq!(folger.letzte_stichprobe(), k.letzte_stichprobe(), "der Folger kennt die Ziehung nicht");
+        assert_eq!(folger.pruefer_der_stichprobe(), k.pruefer_der_stichprobe());
+        assert_eq!(folger.pod_der_kennung(0, &kennung).map(|p| p.pod_index), Some(pod_index));
 
         // ⚑ Die Probeprägung (2026-10-26) bekommt jedes eingetragene Konto
         //   obendrauf; geprüft wird, was die echte Ausschüttung zahlte.
@@ -5922,16 +7713,452 @@ mod tests {
             (0..6).all(|i| nachher[i] >= vorher[i] + probe),
             "ein Konto bekam die Probeprägung nicht: {vorher:?} -> {nachher:?}"
         );
+        // ⚑ Anlaufregel: in dieser Epoche nichts über die Probeprägung
+        //   hinaus, sondern zurückgehalten bis nach der Streitfrist, für
+        //   höchstens die vier Positionen.
         let gewachsen = (0..6).filter(|i| nachher[*i] > vorher[*i] + probe).count();
+        assert_eq!(gewachsen, 0, "ein Pod allein wurde sofort bezahlt: {vorher:?} -> {nachher:?}");
+        let gehalten = &k.zustand().zurueckgehalten;
+        assert!((1..=4).contains(&gehalten.len()), "zurückgehalten: {gehalten:?}");
         assert!(
-            gewachsen > 0,
-            "kein Auszahlungskonto ist gewachsen: {vorher:?} -> {nachher:?}"
-        );
-        assert!(
-            gewachsen <= 4,
-            "mehr als die vier Positionen bekamen etwas: {nachher:?}"
+            gehalten.iter().all(|(ab, _, v)| *ab == myl_ledger::einsatz::SPERRFRIST_EPOCHEN && *v > 0),
+            "Freigabe nach der Streitfrist der Epoche 0: {gehalten:?}"
         );
     }
+
+    /// ⚑ **Stufe 2 auf der Kette** (2026-10-29): Ein Miner ohne Pod wird
+    /// Checker jeder Ziehung, legt sich fest, deckt auf, der Auftrag schliesst
+    /// nach der Frist einig ab, und der Checker-Pool bezahlt ihn am nächsten
+    /// Wechsel nach seinem geprüften Volumen. Ein Folger, der jeden Block nur
+    /// empfängt, kommt auf dieselbe Wurzel.
+    #[test]
+    fn ein_checker_ohne_pod_legt_fest_deckt_auf_und_wird_bezahlt() {
+        use myl_consensus::block::BLOECKE_JE_EPOCHE;
+        use myl_types::miner::HardwareClass;
+        use myl_types::node_metadata::GeoRegion;
+
+        let mut k = Kette::probestand();
+        // Ein Folger, der jeden Block nur empfängt: Er muss dieselbe
+        // Ziehung kennen wie der Erzeuger.
+        let mut folger = Kette::probestand();
+
+        // Sieben Miner: ein Pod aus vier Positionen und zwei Reserve, einer ohne Pod.
+        let mut nonce = [0u64; 7];
+        for w in 0..7u8 {
+            k.aufnehmen(
+                Transaktion::signiere(
+                    &Kette::startwert(),
+                    &probeschluessel(w),
+                    nonce[w as usize],
+                    Anweisung::MinerAnmelden {
+                        hardware: HardwareClass::MediumGpu,
+                        zone: GeoRegion::Europe,
+                        netzadresse: myl_types::latency_attest::PeerIdBytes([0; 32]),
+                    },
+                )
+                .expect("signieren"),
+            );
+            nonce[w as usize] += 1;
+            k.aufnehmen(probezusage(w, EpochId(1), nonce[w as usize]));
+            nonce[w as usize] += 1;
+        }
+        // Und Brennstoff für die Prägung.
+        k.aufnehmen(burn_nr(0, 5_000_000, nonce[0]));
+        nonce[0] += 1;
+        folger.uebernimm(&k.baue_block()).expect("der Folger nimmt den Block");
+        for w in 0..7u8 {
+            zusage_direkt(&mut k, myl_types::ids::MinerId::new(*probekonto(w).as_bytes()));
+            zusage_direkt(&mut folger, myl_types::ids::MinerId::new(*probekonto(w).as_bytes()));
+        }
+        assert_eq!(k.zustand().miner.len(), 7, "die Anmeldungen kamen nicht an");
+        assert!(k.zustand().burn_epoche > 0, "es wurde nichts verbrannt");
+
+        // Auszahlungskonten eintragen, damit „ohne Eintrag kein Anteil"
+        // nicht greift. Die erste Eintragung darf der Miner selbst.
+        //
+        // ⚑ **Über die Kette und nicht über den Übergang** (Fund 167,
+        // 2026-09-03). Bis dahin rief dieser Test
+        // `auszahlungskonto_eintragen` direkt, und das war der einzige
+        // Weg, den es gab: Keine `Anweisung` trug ihn. Der Test war
+        // grün und belegte einen Ablauf, den auf einem echten Netz
+        // niemand gehen konnte. Jetzt geht er denselben Weg wie ein
+        // Miner.
+        for w in 0..7u8 {
+            let kennung = myl_types::ids::MinerId::new(*probekonto(w).as_bytes());
+            k.aufnehmen(
+                Transaktion::signiere(
+                    &Kette::startwert(),
+                    &probeschluessel(w),
+                    nonce[w as usize],
+                    Anweisung::AuszahlungskontoEintragen {
+                        kennung,
+                        konto: kaltes_konto(w),
+                    },
+                )
+                .expect("signieren"),
+            );
+            nonce[w as usize] += 1;
+        }
+        folger.uebernimm(&k.baue_block()).expect("der Folger nimmt den Block");
+        for w in 0..7u8 {
+            let kennung = myl_types::ids::MinerId::new(*probekonto(w).as_bytes());
+            assert_eq!(
+                k.zustand().auszahlung.get(&kennung),
+                Some(&kaltes_konto(w)),
+                "das Auszahlungskonto kam nicht ueber die Kette an"
+            );
+        }
+
+        // Die Zuteilung dieser Epoche nachrechnen und für ihren Pod ein
+        // Bündel einreichen.
+        // ⚑ Die Saat aus dem Zustand, nicht der letzte Hash (Fund 143): Nur
+        //   sie gilt die ganze Epoche, und nur gegen sie rechnet der
+        //   Abschluss nach.
+        let zuteilung = Kette::zuteilung_der_laufenden_epoche(k.zustand());
+        assert_eq!(zuteilung.pods.len(), 1, "es entstand kein Pod");
+        let pod_index = zuteilung.pods[0].pod_index;
+        let mut b = myl_types::PoIBundle {
+            epoch: k.zustand().epoch,
+            pod: myl_types::pod_kennung(k.zustand().epoch.0, pod_index),
+            segments_root: myl_types::ids::MerkleRoot::new([7; 32]),
+            vtfe_claimed: 1_000_000,
+            aggregate_sig: myl_types::bls::BlsSignature([0; 96]),
+            // Tausend Segmente, damit die Ziehung ueberhaupt sichtbar ist
+            // und die Ziehung ueberhaupt sichtbar ist.
+            segmente: 1_000,
+            ausgabenwurzel: myl_types::MerkleRoot::new([0u8; 32]),
+            vertreter: Vec::new(),
+        };
+        buendel_unterschreiben(&mut b, &zuteilung.pods[0]);
+        // ⚑ **Eingereicht wird vom Koordinator**, seit die Aufnahme
+        // ihn prüft (Fund 144). Vorher tat es Konto null, und das war
+        // nur deshalb richtig, weil niemand hinsah.
+        let koordinator = koordinator_von(&zuteilung.pods[0]);
+        k.aufnehmen(
+            Transaktion::signiere(
+                &Kette::startwert(),
+                &probeschluessel(koordinator),
+                nonce[koordinator as usize],
+                Anweisung::BuendelEinreichen { buendel: b },
+            )
+            .expect("signieren"),
+        );
+        folger.uebernimm(&k.baue_block()).expect("der Folger nimmt den Block");
+        assert_eq!(k.zustand().buendel.len(), 1, "das Buendel kam nicht an");
+
+        // Über die Epochengrenze.
+        for _ in 2..=BLOECKE_JE_EPOCHE {
+            folger.uebernimm(&k.baue_block()).expect("der Folger nimmt den Block");
+        }
+        assert_eq!(k.zustand().epoch.0, 1, "die Epoche wechselte nicht");
+        // ⚑ **Gezogen wird erst mit dem Zertifikat** (2026-10-27, CONSENSUS
+        //   7.2): Bis dahin hebt der Zustand die Anteile auf. ⛔️ Ohne
+        //   Zertifikat keine Ziehung, und kein Rückfall auf den Blockhash.
+        assert!(k.letzte_stichprobe().is_empty(), "gezogen ohne Zertifikat");
+        assert_eq!(k.zustand().stichproben_offen.len(), 1);
+        let z = pruefpunkt_von(&k, BLOECKE_JE_EPOCHE, PROBEERZEUGER);
+        k.pruefpunkt_anbieten(z);
+        folger.uebernimm(&k.baue_block()).expect("der Folger nimmt den Block");
+        assert!(k.zustand().stichproben_offen.is_empty(), "die Ziehung wartet noch");
+
+        // Der Miner ohne Pod ist der einzige Kandidat, also Checker jeder Ziehung.
+        let ohne = zuteilung.ohne_pod.iter().map(|m| m.miner_id).collect::<Vec<_>>();
+        assert_eq!(ohne.len(), 1, "ein Miner ohne Pod");
+        let w = (0..7u8).find(|w| myl_types::ids::MinerId::new(*probekonto(*w).as_bytes()) == ohne[0]).expect("Probekonto");
+        let auftraege = k.zustand().pruefauftraege.clone();
+        assert_eq!(auftraege.len(), k.letzte_stichprobe().len(), "je Ziehung ein Auftrag");
+        assert!(auftraege.iter().all(|a| a.pruefer == ohne), "der Checker ist der Miner ohne Pod");
+        assert_eq!(folger.pruefer_der_stichprobe(), k.pruefer_der_stichprobe());
+        assert_eq!(k.pruefer_der_stichprobe().len(), auftraege.len());
+
+        let befund = myl_ledger::pruefung::Pruefbefund {
+            logits: Hash::sha256(b"logits"),
+            abweichung: None,
+            positionen: 5,
+        };
+        let salz = [7u8; 32];
+        let senden = |k: &mut Kette, nonce: &mut [u64; 7], a: Anweisung| {
+            k.aufnehmen(
+                Transaktion::signiere(&Kette::startwert(), &probeschluessel(w), nonce[w as usize], a).expect("signieren"),
+            );
+            nonce[w as usize] += 1;
+        };
+        let festlegung = myl_ledger::pruefung::festlegung(&befund, &salz, &ohne[0]);
+        for teil in auftraege.chunks(myl_consensus::block::PRUEFUNGEN_JE_TX) {
+            let festlegungen = teil.iter().map(|a| (a.epoche, a.pod, a.segment, festlegung)).collect();
+            senden(&mut k, &mut nonce, Anweisung::PruefungFestlegen { festlegungen });
+        }
+        folger.uebernimm(&k.baue_block()).expect("der Folger nimmt den Block");
+        assert!(k.zustand().pruefauftraege.iter().all(|a| a.festlegungen.len() == 1), "festgelegt");
+        for teil in auftraege.chunks(myl_consensus::block::PRUEFUNGEN_JE_TX) {
+            let aufdeckungen = teil.iter().map(|a| (a.epoche, a.pod, a.segment, befund.clone(), salz)).collect();
+            senden(&mut k, &mut nonce, Anweisung::PruefungAufdecken { aufdeckungen });
+        }
+        folger.uebernimm(&k.baue_block()).expect("der Folger nimmt den Block");
+        assert!(k.zustand().pruefauftraege.iter().all(|a| a.aufdeckungen.len() == 1), "aufgedeckt");
+        // Über die zweite Frist: einig abgeschlossen, Volumen gutgeschrieben.
+        let frist = auftraege.iter().map(|a| a.frist_aufdecken).max().unwrap_or(0);
+        while k.zustand().historie.anzahl() <= frist {
+            folger.uebernimm(&k.baue_block()).expect("der Folger nimmt den Block");
+        }
+        assert!(k.zustand().pruefauftraege.is_empty(), "abgeschlossen");
+        let abgeschlossen = k.pruefausgaben_abholen().abschluesse;
+        assert_eq!(abgeschlossen.len(), auftraege.len());
+        assert!(abgeschlossen.iter().all(|a| a.ausgang == myl_ledger::pruefung::Pruefausgang::Einig));
+        assert_eq!(k.zustand().pruefvolumen.get(&ohne[0]), Some(&(5 * auftraege.len() as u64)));
+        // Am nächsten Wechsel zahlt der Checker-Pool, und das Volumen beginnt neu.
+        let vorher = k.zustand().account(&kaltes_konto(w)).balance;
+        let epoche = k.zustand().epoch.0;
+        while k.zustand().epoch.0 == epoche {
+            folger.uebernimm(&k.baue_block()).expect("der Folger nimmt den Block");
+        }
+        let probe = crate::netz::PROBEKETTE.probepraegung;
+        let nachher = k.zustand().account(&kaltes_konto(w)).balance;
+        assert!(nachher > vorher + probe, "der Checker-Pool zahlte nicht: {vorher} -> {nachher} (Probeprägung {probe})");
+        assert!(k.zustand().pruefvolumen.is_empty());
+        assert_eq!(folger.zustandswurzel(), k.zustandswurzel());
+        let _ = BLOECKE_JE_EPOCHE;
+    }
+
+    /// ⚑ **T6d auf der Kette** (2026-10-29): Der Checker deckt bei einer
+    /// Ziehung eine Abweichung an Position 0, Eintrag 1 auf (Ausgang der
+    /// Layer 0). Der Abschluss öffnet einen Streitfall gegen das Mitglied mit
+    /// Layer 0, ein Validator stimmt „Pod falsch“, und die Kette schlachtet
+    /// den Beschuldigten nach der Matrix (100 % des Einsatzes); der
+    /// Anfechter bekommt das Kopfgeld. Ein Folger kommt auf dieselbe Wurzel.
+    #[test]
+    fn ein_streitfall_schlachtet_den_beschuldigten_und_zahlt_dem_anfechter_kopfgeld() {
+        use myl_consensus::block::BLOECKE_JE_EPOCHE;
+        use myl_types::miner::HardwareClass;
+        use myl_types::node_metadata::GeoRegion;
+
+        let mut k = Kette::probestand();
+        // Ein Folger, der jeden Block nur empfängt: Er muss dieselbe
+        // Ziehung kennen wie der Erzeuger.
+        let mut folger = Kette::probestand();
+
+        // Sieben Miner: ein Pod aus vier Positionen und zwei Reserve, einer ohne Pod.
+        let mut nonce = [0u64; 7];
+        for w in 0..7u8 {
+            k.aufnehmen(
+                Transaktion::signiere(
+                    &Kette::startwert(),
+                    &probeschluessel(w),
+                    nonce[w as usize],
+                    Anweisung::MinerAnmelden {
+                        hardware: HardwareClass::MediumGpu,
+                        zone: GeoRegion::Europe,
+                        netzadresse: myl_types::latency_attest::PeerIdBytes([0; 32]),
+                    },
+                )
+                .expect("signieren"),
+            );
+            nonce[w as usize] += 1;
+            k.aufnehmen(probezusage(w, EpochId(1), nonce[w as usize]));
+            nonce[w as usize] += 1;
+        }
+        // Und Brennstoff für die Prägung.
+        k.aufnehmen(burn_nr(0, 5_000_000, nonce[0]));
+        nonce[0] += 1;
+        folger.uebernimm(&k.baue_block()).expect("der Folger nimmt den Block");
+        for w in 0..7u8 {
+            zusage_direkt(&mut k, myl_types::ids::MinerId::new(*probekonto(w).as_bytes()));
+            zusage_direkt(&mut folger, myl_types::ids::MinerId::new(*probekonto(w).as_bytes()));
+        }
+        assert_eq!(k.zustand().miner.len(), 7, "die Anmeldungen kamen nicht an");
+        assert!(k.zustand().burn_epoche > 0, "es wurde nichts verbrannt");
+
+        // Auszahlungskonten eintragen, damit „ohne Eintrag kein Anteil"
+        // nicht greift. Die erste Eintragung darf der Miner selbst.
+        //
+        // ⚑ **Über die Kette und nicht über den Übergang** (Fund 167,
+        // 2026-09-03). Bis dahin rief dieser Test
+        // `auszahlungskonto_eintragen` direkt, und das war der einzige
+        // Weg, den es gab: Keine `Anweisung` trug ihn. Der Test war
+        // grün und belegte einen Ablauf, den auf einem echten Netz
+        // niemand gehen konnte. Jetzt geht er denselben Weg wie ein
+        // Miner.
+        for w in 0..7u8 {
+            let kennung = myl_types::ids::MinerId::new(*probekonto(w).as_bytes());
+            k.aufnehmen(
+                Transaktion::signiere(
+                    &Kette::startwert(),
+                    &probeschluessel(w),
+                    nonce[w as usize],
+                    Anweisung::AuszahlungskontoEintragen {
+                        kennung,
+                        konto: kaltes_konto(w),
+                    },
+                )
+                .expect("signieren"),
+            );
+            nonce[w as usize] += 1;
+        }
+        // Jeder hinterlegt 2 MYL: Ohne Einsatz gäbe es nichts zu schlachten.
+        for w in 0..7u8 {
+            k.aufnehmen(
+                Transaktion::signiere(&Kette::startwert(), &probeschluessel(w), nonce[w as usize], Anweisung::EinsatzHinterlegen { betrag: 2_000_000 })
+                    .expect("signieren"),
+            );
+            nonce[w as usize] += 1;
+        }
+        folger.uebernimm(&k.baue_block()).expect("der Folger nimmt den Block");
+        for w in 0..7u8 {
+            let kennung = myl_types::ids::MinerId::new(*probekonto(w).as_bytes());
+            assert_eq!(
+                k.zustand().auszahlung.get(&kennung),
+                Some(&kaltes_konto(w)),
+                "das Auszahlungskonto kam nicht ueber die Kette an"
+            );
+        }
+
+        // Die Zuteilung dieser Epoche nachrechnen und für ihren Pod ein
+        // Bündel einreichen.
+        // ⚑ Die Saat aus dem Zustand, nicht der letzte Hash (Fund 143): Nur
+        //   sie gilt die ganze Epoche, und nur gegen sie rechnet der
+        //   Abschluss nach.
+        let zuteilung = Kette::zuteilung_der_laufenden_epoche(k.zustand());
+        assert_eq!(zuteilung.pods.len(), 1, "es entstand kein Pod");
+        let pod_index = zuteilung.pods[0].pod_index;
+        let mut b = myl_types::PoIBundle {
+            epoch: k.zustand().epoch,
+            pod: myl_types::pod_kennung(k.zustand().epoch.0, pod_index),
+            segments_root: myl_types::ids::MerkleRoot::new([7; 32]),
+            vtfe_claimed: 1_000_000,
+            aggregate_sig: myl_types::bls::BlsSignature([0; 96]),
+            // Tausend Segmente, damit die Ziehung ueberhaupt sichtbar ist
+            // und die Ziehung ueberhaupt sichtbar ist.
+            segmente: 1_000,
+            ausgabenwurzel: myl_types::MerkleRoot::new([0u8; 32]),
+            vertreter: Vec::new(),
+        };
+        buendel_unterschreiben(&mut b, &zuteilung.pods[0]);
+        // ⚑ **Eingereicht wird vom Koordinator**, seit die Aufnahme
+        // ihn prüft (Fund 144). Vorher tat es Konto null, und das war
+        // nur deshalb richtig, weil niemand hinsah.
+        let koordinator = koordinator_von(&zuteilung.pods[0]);
+        k.aufnehmen(
+            Transaktion::signiere(
+                &Kette::startwert(),
+                &probeschluessel(koordinator),
+                nonce[koordinator as usize],
+                Anweisung::BuendelEinreichen { buendel: b },
+            )
+            .expect("signieren"),
+        );
+        folger.uebernimm(&k.baue_block()).expect("der Folger nimmt den Block");
+        assert_eq!(k.zustand().buendel.len(), 1, "das Buendel kam nicht an");
+
+        // Über die Epochengrenze.
+        for _ in 2..=BLOECKE_JE_EPOCHE {
+            folger.uebernimm(&k.baue_block()).expect("der Folger nimmt den Block");
+        }
+        assert_eq!(k.zustand().epoch.0, 1, "die Epoche wechselte nicht");
+        // ⚑ **Gezogen wird erst mit dem Zertifikat** (2026-10-27, CONSENSUS
+        //   7.2): Bis dahin hebt der Zustand die Anteile auf. ⛔️ Ohne
+        //   Zertifikat keine Ziehung, und kein Rückfall auf den Blockhash.
+        assert!(k.letzte_stichprobe().is_empty(), "gezogen ohne Zertifikat");
+        assert_eq!(k.zustand().stichproben_offen.len(), 1);
+        let z = pruefpunkt_von(&k, BLOECKE_JE_EPOCHE, PROBEERZEUGER);
+        k.pruefpunkt_anbieten(z);
+        folger.uebernimm(&k.baue_block()).expect("der Folger nimmt den Block");
+        assert!(k.zustand().stichproben_offen.is_empty(), "die Ziehung wartet noch");
+
+        // Der Miner ohne Pod ist der einzige Kandidat, also Checker jeder Ziehung.
+        let ohne = zuteilung.ohne_pod.iter().map(|m| m.miner_id).collect::<Vec<_>>();
+        assert_eq!(ohne.len(), 1, "ein Miner ohne Pod");
+        let w = (0..7u8).find(|w| myl_types::ids::MinerId::new(*probekonto(*w).as_bytes()) == ohne[0]).expect("Probekonto");
+        let auftraege = k.zustand().pruefauftraege.clone();
+        assert_eq!(auftraege.len(), k.letzte_stichprobe().len(), "je Ziehung ein Auftrag");
+        assert!(auftraege.iter().all(|a| a.pruefer == ohne), "der Checker ist der Miner ohne Pod");
+        assert_eq!(folger.pruefer_der_stichprobe(), k.pruefer_der_stichprobe());
+        assert_eq!(k.pruefer_der_stichprobe().len(), auftraege.len());
+
+        let gleich = myl_ledger::pruefung::Pruefbefund { logits: Hash::sha256(b"logits"), abweichung: None, positionen: 3 };
+        let falsch = myl_ledger::pruefung::Pruefbefund { abweichung: Some((0, 1)), ..gleich.clone() };
+        let salz = [9u8; 32];
+        let befund_von = |i: usize| if i == 0 { falsch.clone() } else { gleich.clone() };
+        let senden = |k: &mut Kette, nonce: &mut [u64; 7], wer: u8, a: Anweisung| {
+            k.aufnehmen(
+                Transaktion::signiere(&Kette::startwert(), &probeschluessel(wer), nonce[wer as usize], a).expect("signieren"),
+            );
+            nonce[wer as usize] += 1;
+        };
+        for (t, teil) in auftraege.chunks(myl_consensus::block::PRUEFUNGEN_JE_TX).enumerate() {
+            let festlegungen = teil
+                .iter()
+                .enumerate()
+                .map(|(i, a)| {
+                    let b = befund_von(t * myl_consensus::block::PRUEFUNGEN_JE_TX + i);
+                    (a.epoche, a.pod, a.segment, myl_ledger::pruefung::festlegung(&b, &salz, &ohne[0]))
+                })
+                .collect();
+            senden(&mut k, &mut nonce, w, Anweisung::PruefungFestlegen { festlegungen });
+        }
+        folger.uebernimm(&k.baue_block()).expect("der Folger nimmt den Block");
+        for (t, teil) in auftraege.chunks(myl_consensus::block::PRUEFUNGEN_JE_TX).enumerate() {
+            let aufdeckungen = teil
+                .iter()
+                .enumerate()
+                .map(|(i, a)| (a.epoche, a.pod, a.segment, befund_von(t * myl_consensus::block::PRUEFUNGEN_JE_TX + i), salz))
+                .collect();
+            senden(&mut k, &mut nonce, w, Anweisung::PruefungAufdecken { aufdeckungen });
+        }
+        folger.uebernimm(&k.baue_block()).expect("der Folger nimmt den Block");
+        let frist = auftraege.iter().map(|a| a.frist_aufdecken).max().unwrap_or(0);
+        while k.zustand().historie.anzahl() <= frist {
+            folger.uebernimm(&k.baue_block()).expect("der Folger nimmt den Block");
+        }
+        // Der Streitfall: gegen das Mitglied mit Layer 0.
+        assert_eq!(k.zustand().streitfaelle.len(), 1, "ein Streitfall");
+        let fall = k.zustand().streitfaelle[0].clone();
+        assert_eq!((fall.position, fall.eintrag, fall.anfechter), (0, 1, ohne[0]));
+        let erster = auftraege[0].besetzung.iter().find(|(_, von, _)| *von == 0).map(|(m, _, _)| *m);
+        assert!(erster.is_some() && fall.beschuldigt == erster, "beschuldigt ist, wer Layer 0 rechnet");
+        let beschuldigt = Address::new(*fall.beschuldigt.unwrap_or(ohne[0]).as_bytes());
+        // Ein Validator, der weder Anfechter noch Beschuldigter ist, mit so
+        // viel Gewicht, dass seine Stimme allein mehr als zwei Drittel ist.
+        let v = (0..7u8)
+            .find(|i| {
+                let a = probekonto(*i);
+                a != beschuldigt && a != probekonto(w)
+            })
+            .expect("ein Dritter");
+        let mut mitglieder = std::collections::BTreeMap::new();
+        if let Some(alt) = k.stimmsatz() {
+            for (m, mitglied) in alt.members() {
+                mitglieder.insert(*m, myl_consensus::validator::VotingMember { pubkey: mitglied.pubkey, weight: 1 });
+            }
+        }
+        let vk = myl_types::ids::MinerId::new(*probekonto(v).as_bytes());
+        mitglieder.insert(
+            vk,
+            myl_consensus::validator::VotingMember { pubkey: probeschluessel(v).public_key().expect("Schlüssel"), weight: 100 },
+        );
+        let satz = myl_consensus::validator::VotingSet::from_members(mitglieder);
+        k.stimmsatz_setzen(satz.clone());
+        folger.stimmsatz_setzen(satz);
+        let vorher_einsatz = k.zustand().account(&beschuldigt).staked;
+        let vorher_anfechter = k.zustand().account(&probekonto(w)).balance;
+        assert!(vorher_einsatz > 0, "der Beschuldigte hat Einsatz");
+        // ⛔️ Wer nicht im Stimmsatz steht, zählt nicht.
+        let fremd = (0..7u8).find(|i| *i != v && *i != w).expect("ein Fremder");
+        senden(&mut k, &mut nonce, fremd, Anweisung::SchiedsstimmeAbgeben { epoche: fall.epoche, pod: fall.pod, segment: fall.segment, pod_falsch: false });
+        senden(&mut k, &mut nonce, v, Anweisung::SchiedsstimmeAbgeben { epoche: fall.epoche, pod: fall.pod, segment: fall.segment, pod_falsch: true });
+        folger.uebernimm(&k.baue_block()).expect("der Folger nimmt den Block");
+        assert_eq!(k.zustand().streitfaelle.first().map(|f| f.stimmen.len()), Some(1), "nur die berechtigte Stimme");
+        folger.uebernimm(&k.baue_block()).expect("der Folger nimmt den Block");
+        assert!(k.zustand().streitfaelle.is_empty(), "entschieden");
+        let urteile = k.pruefausgaben_abholen().urteile;
+        assert_eq!(urteile.len(), 1);
+        assert_eq!(urteile[0].0.ausgang, myl_ledger::pruefung::Schiedsausgang::PodFalsch);
+        assert_eq!(urteile[0].1, None, "gebucht");
+        assert_eq!(k.zustand().account(&beschuldigt).staked, 0, "100 % des Einsatzes");
+        let kopfgeld = k.zustand().account(&probekonto(w)).balance.saturating_sub(vorher_anfechter);
+        assert!(kopfgeld >= vorher_einsatz * 3 / 10 - 10_000, "Kopfgeld 30 %: {kopfgeld} von {vorher_einsatz}");
+        assert_eq!(folger.zustandswurzel(), k.zustandswurzel());
+    }
+
 
     /// ⚑ **Punkt 40, Glied 2: Ein Bündel ohne gültige Aggregatsignatur
     /// zahlt nichts aus.**
@@ -5997,6 +8224,8 @@ mod tests {
             vtfe_claimed: 1_000_000,
             aggregate_sig: myl_types::bls::BlsSignature([0; 96]),
             segmente: 1,
+            ausgabenwurzel: myl_types::MerkleRoot::new([0u8; 32]),
+            vertreter: Vec::new(),
         };
         // ⚑ **Eingereicht wird vom Koordinator**, seit die Aufnahme
         // ihn prüft (Fund 144). Vorher tat es Konto null, und das war
@@ -6108,6 +8337,8 @@ mod tests {
             vtfe_claimed: 1_000_000,
             aggregate_sig: myl_types::bls::BlsSignature([0; 96]),
             segmente: 1,
+            ausgabenwurzel: myl_types::MerkleRoot::new([0u8; 32]),
+            vertreter: Vec::new(),
         };
         // Eingereicht wird von einem angemeldeten Miner, damit der
         // Test nicht schon an der Anmeldung scheitert.
@@ -6221,6 +8452,23 @@ mod tests {
         Kette::probepraegung(&mut z, 1);
         let nach: Vec<u64> = (0..3u8).map(|w| z.account(&kaltes_konto(w)).balance).collect();
         assert_eq!(vor, nach, "das Testnetz prägte zur Probe");
+        z.account_mut(&probekonto(3)).balance = 5;
+        Kette::probepraegung(&mut z, 1);
+        assert_eq!(z.account(&probekonto(3)).balance, 5, "das Testnetz fuellte ein Probekonto auf");
+    }
+
+    /// 📌 **Fund 675: Der Epochenwechsel fuellt ein Probekonto unter der
+    /// Haelfte auf.** Ein Konto knapp darueber bleibt, wie es ist, und mehr
+    /// als das Startguthaben entsteht nicht.
+    #[test]
+    fn der_wechsel_fuellt_ein_leeres_probekonto_auf() {
+        let mut z = Kette::probestand().zustand().clone();
+        z.account_mut(&probekonto(1)).balance = 68;
+        z.account_mut(&probekonto(2)).balance = PROBEGUTHABEN / 2;
+        Kette::probepraegung(&mut z, 1);
+        assert_eq!(z.account(&probekonto(1)).balance, PROBEGUTHABEN, "das leere Konto blieb leer");
+        assert_eq!(z.account(&probekonto(2)).balance, PROBEGUTHABEN / 2, "das halbvolle Konto wurde aufgefuellt");
+        assert!((0..PROBEKONTEN).all(|n| z.account(&probekonto(n)).balance <= PROBEGUTHABEN));
     }
 
     /// ⚑ **Fund 167: das Auszahlungskonto hat einen Weg über die Kette,
@@ -6430,5 +8678,72 @@ mod speicherbindung {
         let _ = k.baue_block();
         assert_eq!(k.schreibfehler(), 0);
         assert_eq!(k.gespeicherte_bloecke(), None);
+    }
+}
+
+#[cfg(test)]
+mod mempool_tests {
+    use super::*;
+
+    fn wartend(wer: u8, nonce: u64, max_gebuehr: u64, seit: u64) -> Wartend {
+        let sk = probeschluessel(wer);
+        let mut tx = Transaktion::signiere(&Kette::startwert(), &sk, nonce, Anweisung::Burn { betrag: 1 }).expect("signieren");
+        tx.max_gebuehr = max_gebuehr;
+        let bytes = borsh::to_vec(&tx).map_or(usize::MAX, |b| b.len());
+        Wartend { seit, absender: tx.absender_adresse(), tx, bytes, neuling: false }
+    }
+
+    /// ⚑ **Verdrängt werden die billigsten Enden** (Skalierung, 2026-10-29):
+    /// Ein voller Mempool nimmt eine teurere Transaktion an und wirft dafür
+    /// das billigste Ende einer Nummernkette, nie eine aus der Mitte; eine
+    /// gleich billige oder billigere kommt nicht hinein. Die Zähler stimmen
+    /// danach.
+    #[test]
+    fn ein_voller_mempool_verdraengt_das_billigste_ende() {
+        let mut m = Mempool { plaetze: 4, ..Mempool::default() };
+        m.hinein(wartend(1, 0, 5_000, 1));
+        m.hinein(wartend(1, 1, 9_000, 1)); // Ende von 1, teuer
+        m.hinein(wartend(2, 0, 3_000, 1)); // billig, aber nicht das Ende von 2
+        m.hinein(wartend(2, 1, 4_000, 2)); // Ende von 2
+        assert!(m.voll());
+        assert!(!m.verdraengen(&wartend(3, 0, 4_000, 3)), "gleich billig verdrängt nicht");
+        assert!(m.verdraengen(&wartend(3, 0, 6_000, 3)));
+        assert_eq!(m.len(), 3);
+        assert!(m.liste.iter().any(|w| w.absender == probekonto(2) && w.tx.nonce == 0), "nie aus der Mitte");
+        assert!(!m.liste.iter().any(|w| w.absender == probekonto(2) && w.tx.nonce == 1), "das billigste Ende fiel");
+        assert_eq!((m.je_absender(&probekonto(1)), m.je_absender(&probekonto(2))), (2, 1));
+    }
+}
+
+#[cfg(test)]
+mod pruefer_tests {
+    use myl_types::ids::{MinerId, PodId};
+
+    /// ⚑ **W6b: Der Checker einer Ziehung** ist einer der Kandidaten, für
+    /// alle Knoten derselbe (gleich in welcher Folge sie die Kandidaten
+    /// kennen), und über viele Ziehungen bekommt jeder etwas. Ohne
+    /// Kandidaten gibt es keinen.
+    #[test]
+    fn der_pruefer_ist_ein_kandidat_und_fuer_alle_derselbe() {
+        let kandidaten: Vec<MinerId> = (1..=5u8).map(|i| MinerId::new([i; 32])).collect();
+        let mut verdreht = kandidaten.clone();
+        verdreht.reverse();
+        verdreht.push(kandidaten[0]);
+        let pod = PodId::new([7; 32]);
+        // Der erste der beiden Checker (`myl_ledger::pruefung`).
+        let waehle = |k: &[MinerId], e: u64, s: u32| myl_ledger::pruefung::pruefer_waehlen(k, e, &pod, s, 1).first().copied();
+        let mut gezaehlt = std::collections::BTreeMap::new();
+        for segment in 0..200u32 {
+            let m = waehle(&kandidaten, 3, segment).expect("ein Checker");
+            assert!(kandidaten.contains(&m));
+            assert_eq!(waehle(&verdreht, 3, segment), Some(m), "Folge und Dubletten ändern nichts");
+            *gezaehlt.entry(m).or_insert(0u32) += 1;
+        }
+        assert_eq!(gezaehlt.len(), 5, "jeder Kandidat kommt dran: {gezaehlt:?}");
+        assert!(gezaehlt.values().all(|n| *n >= 20), "grob gleich verteilt: {gezaehlt:?}");
+        // Eine andere Epoche wählt anders, und ohne Kandidaten niemand.
+        let anders = (0..50u32).filter(|s| waehle(&kandidaten, 4, *s) != waehle(&kandidaten, 3, *s)).count();
+        assert!(anders > 0);
+        assert_eq!(waehle(&[], 3, 0), None);
     }
 }
