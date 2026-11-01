@@ -1,6 +1,6 @@
 # NODE — der Myelith-Knoten
 
-> **Version:** 0.99.2
+> **Version:** 0.99.4
 > **Datum:** 2026-10-29
 > **Status:** Netzknoten lauffähig, Blockproduktion mit **Persistenz über
 > Neustarts**, BFT-Runden über das Netz mit Rundenwechsel, und seit dem
@@ -278,6 +278,38 @@ NODE/
 ```
 
 ## Changelog
+
+### v0.99.4 (2026-10-31): Das Komitee erreicht den Anfechter, der Lügner bleibt einer
+
+- ⛔️ **Vorrang für die Anfechter offener Streitfälle** (bei Validatoren,
+  höchstens 16, `vorrang_pflegen`). 📌 Nachtlauf `nacht-ablage`: Sieben
+  Streitfälle verfielen. Jedes Mal kam die Anfrage eines Validators nach dem
+  Beleg nie beim Anfechter an (sechs Versuche, die ausgehenden Plätze voll,
+  wie Fund 674); nach der halben Frist stimmte er nach der Regel „Beweislast
+  beim Anfechter“ gegen ihn, und zwei Drittel kamen nicht zustande. Der
+  Anfechter beantwortete jede Anfrage, die ihn erreichte (142 von 142). Der
+  Anteil der Pods bleibt je Epoche zwischengespeichert, der Anteil der
+  Schiedsrunde wird bei Änderung neu gesetzt.
+- ⚑ **`--selbstprobe-aus`, nur mit dem Merkmal `pruefnetz`**: für die Rolle
+  des Lügners im Prüfstand. 📌 Fund 664 war nicht das Messfenster: Mit der
+  Selbstprobe (0.82.0) sagte der Lügner nach seiner ersten Epoche von sich
+  aus ehrlich zu (914 statt 1 µs je Ebene) und war bei der zweiten Position
+  keiner mehr; gesperrt wurde er in allen Läufen bei der ersten. Kein
+  Angriffsweg: Ein echter Betrüger schaltet die Selbstprobe ohnehin ab. Im
+  Freigabebau gibt es den Schalter nicht.
+
+### v0.99.3 (2026-10-31): Der Checker nennt den Beschuldigten richtig
+
+📌 Nachtlauf `nacht-ablage` (2026-10-30, 5 h 10 min bis zum Ende; Z1 und
+Z2 belegt): 51 Abweichungen standen im Protokoll ohne Beschuldigten, und
+die Auswertung zählte sie als „beschuldigt Ehrliche“, obwohl jede
+Schiedsrunde dieser Pods den Fälscher verurteilte.
+
+- ⚑ **`stichprobe_nachgerechnet` nennt den Beschuldigten aus dem
+  Prüfauftrag**, nach der Regel der Schiedsrunde
+  (`myl_ledger::pruefung::beschuldigter`, CONSENSUS 0.76.1). Bis hierher
+  rechnete das Protokoll die Layer-Grenzen aus den Zusagen von jetzt und
+  fand für ältere Epochen keinen Pod. Nur ohne Auftrag noch der alte Weg.
 
 ### v0.99.2 (2026-10-30): Nur die Antwort auf die Zeitprobe zählt
 

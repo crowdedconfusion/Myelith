@@ -224,6 +224,12 @@ pub struct KnotenKonfig {
     /// liefert sie zustandslosen Knoten auf Nachfrage; so hängt ihre
     /// Prüfbarkeit nicht am Erzeuger allein.
     pub zeugen_bereithalten: bool,
+    /// ⚑ **Ohne Selbstprobe** (`--selbstprobe-aus`, nur mit dem Merkmal
+    /// `pruefnetz`, 2026-10-31): für die Rolle des Lügners im Prüfstand. 📌
+    /// Mit der Selbstprobe sagte er nach der ersten Epoche von sich aus
+    /// ehrlich zu und war ab dann kein Lügner mehr; ein echter Betrüger
+    /// schaltet sie ab.
+    pub selbstprobe_aus: bool,
     /// Ob dieser Knoten Blöcke **erzeugt**.
     ///
     /// **Genau einer im Netz**, sonst gabelt sich die Kette sofort:
@@ -411,6 +417,7 @@ impl Default for KnotenKonfig {
             zustandslos: false,
             baum_auf_platte: false,
             zeugen_bereithalten: false,
+            selbstprobe_aus: false,
             erzeugt_bloecke: false,
             blocktakt_ms: None,
             abzug: None,

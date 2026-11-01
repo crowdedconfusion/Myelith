@@ -299,6 +299,7 @@ pub fn anlaufstelle() -> bool {
         zustandslos: false,
         baum_auf_platte: false,
         zeugen_bereithalten: false,
+        selbstprobe_aus: false,
         // Die Anlaufstelle baut die Blöcke. **Genau einer im Netz**:
         // Zwei Erzeuger gabeln die Kette sofort, weil niemand
         // entscheidet, welcher Block gilt. Das täte eine
@@ -395,6 +396,7 @@ pub fn teilnehmer(name_vorgabe: &str) -> bool {
         zustandslos: false,
         baum_auf_platte: false,
         zeugen_bereithalten: false,
+        selbstprobe_aus: false,
         // Teilnehmer erzeugen nicht, sie schicken Transaktionen und
         // rechnen die Blöcke der Anlaufstelle nach.
         erzeugt_bloecke: false,

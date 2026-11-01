@@ -72,6 +72,7 @@ fn konfig(verzeichnis: &std::path::Path, name: &str, bootstrap: Vec<String>) -> 
         zustandslos: false,
         baum_auf_platte: false,
         zeugen_bereithalten: false,
+        selbstprobe_aus: false,
         erzeugt_bloecke: false,
         blocktakt_ms: None,
         abzug: None,

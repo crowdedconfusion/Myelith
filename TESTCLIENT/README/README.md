@@ -1,6 +1,6 @@
 # testclient (`myl-testclient`)
 
-> **Version:** 0.66.4
+> **Version:** 0.66.6
 > **Datum:** 2026-10-29
 > **Status:** Phase 1 und **Phase 3 vollständig**, dazu Punkt 2.1
 > (`vergleich`), **2.2** (Backend-Vergleich innerhalb einer Maschine, seit
@@ -543,6 +543,28 @@ COMPUTE_PIPELINE Phase 1: erstmals über einen aufrufbaren Befehl statt
 über einen Integrationstest.
 
 ## Changelog
+
+### v0.66.6 (2026-10-31): Der Lügner schaltet seine Selbstprobe ab
+
+- `podlauf.py` startet die Rolle `luegner` mit `--selbstprobe-aus` (NODE
+  0.99.4): Mit der Selbstprobe sagte er nach der ersten Epoche ehrlich zu,
+  und in beiden Nachtläufen gab es bei seiner zweiten Position nichts mehr zu
+  fangen.
+
+### v0.66.5 (2026-10-31): `podlauf.py`, vier Fehler der Auswertung
+
+Aus dem Nachtlauf `nacht-ablage` (2026-10-30): Vier der fünf Befunde waren
+Fehler der Auswertung, nicht des Netzes (der fünfte ist Fund 664).
+
+- **Paare:** Die erste Runde las den Ortsdienst nach festen 5 s; der
+  Asia-Pod rechnete 7 bis 11 s und stand noch nicht darin. Jetzt bis alle
+  vier Pods rechneten, höchstens 30 s.
+- **Ohne Namen ist nicht ehrlich:** Abweichungen ohne Beschuldigten zählen
+  nicht mehr als „beschuldigt Ehrliche“, sondern als eigener Befund.
+- **Zusage des zustandslosen Miners** und **gestartete Zeugenhalter:** Die
+  Startzeilen fallen in langen Läufen der Rotation der Protokolle zum Opfer.
+  Wer bezahlt wurde, hat zugesagt; Zeugen hält, wer Stücke im Speicher oder
+  auf der Platte hat.
 
 ### v0.66.4 (2026-10-30): `podlauf.py`, Zeugen auf der Platte
 

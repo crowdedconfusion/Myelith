@@ -475,6 +475,12 @@ def lauf(args: argparse.Namespace, ordner: pathlib.Path) -> None:
             aus += ["--baum-auf-platte"]
         if args.zustandslos and name in ZEUGEN_BEREIT:
             aus += ["--zeugen-bereithalten"]
+        # ⚑ Der Luegner bleibt ein Luegner (2026-10-31): 📌 Mit seiner
+        #   Selbstprobe sagte er nach der ersten Epoche ehrlich zu, und in
+        #   beiden Nachtlaeufen entkam er bei seiner zweiten Position, weil es
+        #   nichts mehr zu fangen gab. Ein echter Betrueger schaltet sie ab.
+        if name == "luegner":
+            aus += ["--selbstprobe-aus"]
         # Mit Torknoten tragen alle ein Auszahlungskonto ein; das von m00 ist
         # das Wallet des Zahlers.
         if args.tor:
@@ -661,10 +667,19 @@ def lauf(args: argparse.Namespace, ordner: pathlib.Path) -> None:
         with concurrent.futures.ThreadPoolExecutor(PAARSITZUNGEN) as ex:
             ergebnisse = list(ex.map(eine, range(PAARSITZUNGEN)))
         gesamt = time.monotonic() - beginn
-        time.sleep(5)
-        ort = (erzeuger.ordner / "ortsdienst.txt").read_text(errors="replace")
-        gerechnet = sorted({int(m.group(2)) for m in re.finditer(r"\[myl-pod\] Epoche (\d+), Pod (\d+):", ort)
-                            if int(m.group(1)) == e_p})
+        # 📌 Nicht nach festen 5 s (Nachtlauf `nacht-ablage`, 2026-10-30): Die
+        #    Antwort kommt vom schnelleren Zwilling, der Asia-Pod rechnete
+        #    7 bis 11 s und stand noch nicht im Protokoll; der Befund „nicht
+        #    beide Paare“ war falsch. Bis alle vier rechneten, hoechstens 30 s.
+        def gerechnet_bisher() -> list[int]:
+            ort = (erzeuger.ordner / "ortsdienst.txt").read_text(errors="replace")
+            return sorted({int(m.group(2)) for m in re.finditer(r"\[myl-pod\] Epoche (\d+), Pod (\d+):", ort)
+                           if int(m.group(1)) == e_p})
+        bis = time.monotonic() + 30
+        gerechnet = gerechnet_bisher()
+        while len(gerechnet) < 4 and time.monotonic() < bis:
+            time.sleep(2)
+            gerechnet = gerechnet_bisher()
         sek = sorted(s for _, s in ergebnisse)
         beantwortet = sum(ok for ok, _ in ergebnisse)
         zeile = (f"Paare (W7) in Epoche {e_p}: {beantwortet} von {PAARSITZUNGEN} Sitzungen zugleich "
@@ -1548,7 +1563,12 @@ def lauf(args: argparse.Namespace, ordner: pathlib.Path) -> None:
     ergebnisse = collections.Counter(str(z.get("ergebnis")) for z in nachgerechnet)
     abgewiesen = [z for k in miner for z in zeilen(k, "verlauf_abgewiesen")]
     name_von = {k.peer_id: k.name for k in alle if getattr(k, "peer_id", None)}
-    beschuldigt = collections.Counter(name_von.get(str(z.get("beschuldigt")), str(z.get("beschuldigt")))
+    # ⚑ Ohne Namen ist nicht ehrlich (2026-10-30): Im Nachtlauf `nacht-ablage`
+    #   standen 51 Abweichungen ohne Beschuldigten und zaehlten als „beschuldigt
+    #   Ehrliche“, obwohl jede Schiedsrunde den Faelscher verurteilte. Der
+    #   Knoten nennt ihn jetzt aus dem Pruefauftrag; fehlt er doch, ist das ein
+    #   eigener Befund.
+    beschuldigt = collections.Counter(name_von.get(str(z.get("beschuldigt")), str(z.get("beschuldigt"))) or "(ohne Namen)"
                                       for z in nachgerechnet if z.get("ergebnis") == "abweichung")
     dauer = sorted(int(z.get("dauer_ms", 0)) for z in nachgerechnet)
     zeile = (f"Nachrechnen: {sum(int(z.get('ziehungen', 0)) for z in zugeteilt)} Ziehungen zugeteilt, "
@@ -1601,7 +1621,11 @@ def lauf(args: argparse.Namespace, ordner: pathlib.Path) -> None:
             befunde.append(f"die Schiedsrunde schlachtete einen Ehrlichen: {wer} ({n} mal)")
         if ausgang == "anfechtungfalsch":
             befunde.append(f"eine Anfechtung verlor ({n} mal, Beschuldigter {wer}): ehrliche Checker irren nicht")
-    ehrlich_beschuldigt = {n: c for n, c in beschuldigt.items() if faelscher is None or n != faelscher.name}
+    ohne_namen = beschuldigt.get("(ohne Namen)", 0)
+    if ohne_namen:
+        befunde.append(f"Nachrechnen fand {ohne_namen} Abweichungen ohne Beschuldigten")
+    ehrlich_beschuldigt = {n: c for n, c in beschuldigt.items()
+                           if n != "(ohne Namen)" and (faelscher is None or n != faelscher.name)}
     if ehrlich_beschuldigt:
         befunde.append(f"Nachrechnen beschuldigt Ehrliche: {ehrlich_beschuldigt}")
     # ⚑ **Zustandslos** (2026-10-29): Folgt der zustandslose Miner mit Zeugen,
@@ -1630,7 +1654,10 @@ def lauf(args: argparse.Namespace, ordner: pathlib.Path) -> None:
             bericht.append(zeile)
             if mit_zeuge == 0:
                 befunde.append(f"der zustandslose Miner {zl.name} uebernahm keinen Block mit Zeugen")
-            if not zeilen(zl, "zusage_eingereicht"):
+            # 📌 Die Zeile steht nur am Start und faellt in langen Laeufen der
+            #    Rotation der Protokolle zum Opfer (Nachtlauf `nacht-ablage`):
+            #    Wer bezahlt wurde, hat zugesagt.
+            if not zeilen(zl, "zusage_eingereicht") and g1 <= g0:
                 befunde.append(f"der zustandslose Miner {zl.name} reichte keine Zusage ein")
             if g1 <= g0 and any(v > g0 for v in vergleich):
                 befunde.append(f"der zustandslose Miner {zl.name} wurde nicht bezahlt ({feld} {g0} -> {g1})")
@@ -1654,7 +1681,14 @@ def lauf(args: argparse.Namespace, ordner: pathlib.Path) -> None:
         # ⚑ Zeugen von vollen Minern (2026-10-30): gestartet, und was der
         #   zustandslose Miner direkt geliefert bekam.
         bereit = [k for k in miner if rolle[k.name][0] in ZEUGEN_BEREIT]
-        ohne = [rolle[k.name][0] for k in bereit if not zeilen(k, "zeugen_bereithalten")]
+        # 📌 Die Startzeile faellt in langen Laeufen der Rotation zum Opfer;
+        #    belegt ist es auch durch gehaltene Stuecke im Speicher oder auf der
+        #    Platte.
+        def haelt(k: Knoten) -> bool:
+            g = (zeilen(k, "groessen") or [{}])[-1]
+            return bool(zeilen(k, "zeugen_bereithalten")) or int(g.get("zeugenstuecke_bytes", 0)) > 0 \
+                or int(g.get("zeugen_platte_bloecke", 0)) > 0
+        ohne = [rolle[k.name][0] for k in bereit if not haelt(k)]
         if ohne:
             befunde.append(f"--zeugen-bereithalten nicht gestartet bei {', '.join(ohne)}")
         for zl in [k for k in miner if rolle[k.name][0] == ZUSTANDSLOSER_MINER]:

@@ -165,6 +165,22 @@ pub enum Pruefungsfehler {
     Differenz(myl_types::Differenzfehler),
 }
 
+/// ⚑ **Wen eine Abweichung an der Ausgabe der Layer `layer` trifft**: das
+/// Mitglied, dessen Bereich `[von, bis)` sie enthält; liegt sie hinter dem
+/// letzten Bereich (der Kopf), das Mitglied mit dem letzten. Eine Regel für
+/// Schiedsrunde und Protokoll (2026-10-30): 📌 Das Protokoll des Checkers
+/// rechnete die Grenzen aus den Zusagen von jetzt und fand für ältere
+/// Epochen keinen Pod; im Nachtlauf `nacht-ablage` standen so 51
+/// Abweichungen ohne Beschuldigten, obwohl die Schiedsrunde jedes Mal den
+/// Fälscher verurteilte.
+pub fn beschuldigter(besetzung: &Besetzung, layer: u32) -> Option<MinerId> {
+    besetzung
+        .iter()
+        .find(|(_, von, bis)| *von <= layer && layer < *bis)
+        .or_else(|| besetzung.iter().max_by_key(|(_, _, bis)| *bis).filter(|(_, _, bis)| layer >= *bis))
+        .map(|(m, _, _)| *m)
+}
+
 /// **Die Checker einer Ziehung** (W6b, Frage 1 und 4 vom 2026-10-29): aus
 /// den Kandidaten, geordnet nach `SHA-256("myelith-pruefer" ‖ Epoche ‖ Pod ‖
 /// Index ‖ Kennung)`, die ersten `anzahl`. Pod und Index sind schon die
@@ -479,12 +495,7 @@ pub fn faellige_abschliessen(state: &mut LedgerState, hoehe: u64, schied_fenster
         }
         if let Some((anfechter, (position, eintrag))) = abweichungen.iter().min_by_key(|(_, x)| *x).copied() {
             let layer = eintrag.saturating_sub(1);
-            let beschuldigt = auftrag
-                .besetzung
-                .iter()
-                .find(|(_, von, bis)| *von <= layer && layer < *bis)
-                .or_else(|| auftrag.besetzung.iter().max_by_key(|(_, _, bis)| *bis).filter(|(_, _, bis)| layer >= *bis))
-                .map(|(m, _, _)| *m);
+            let beschuldigt = beschuldigter(&auftrag.besetzung, layer);
             state.streitfaelle.push(Streitfall {
                 epoche: auftrag.epoche,
                 pod: auftrag.pod,
@@ -586,6 +597,18 @@ mod tests {
     }
     fn befund(abweichung: Option<(u32, u32)>) -> Pruefbefund {
         Pruefbefund { logits: Hash::sha256(b"logits"), abweichung, positionen: 7 }
+    }
+
+    /// Der Beschuldigte nach Layerbereich; hinter dem letzten Bereich das
+    /// Mitglied mit dem letzten (der Kopf); ohne Besetzung niemand.
+    #[test]
+    fn der_beschuldigte_folgt_dem_layerbereich() {
+        let b: Besetzung = vec![(m(1), 0, 10), (m(2), 10, 20), (m(3), 20, 28)];
+        assert_eq!(beschuldigter(&b, 0), Some(m(1)));
+        assert_eq!(beschuldigter(&b, 10), Some(m(2)));
+        assert_eq!(beschuldigter(&b, 27), Some(m(3)));
+        assert_eq!(beschuldigter(&b, 28), Some(m(3)), "der Kopf");
+        assert_eq!(beschuldigter(&Vec::new(), 3), None);
     }
 
     #[test]

@@ -2706,7 +2706,7 @@ dependencies = [
 
 [[package]]
 name = "myl-ledger"
-version = "0.45.0"
+version = "0.45.1"
 dependencies = [
  "borsh",
  "myl-types",
@@ -2759,7 +2759,7 @@ dependencies = [
 
 [[package]]
 name = "myl-node"
-version = "0.99.2"
+version = "0.99.4"
 dependencies = [
  "async-trait",
  "borsh",
@@ -2839,7 +2839,7 @@ dependencies = [
 
 [[package]]
 name = "myl-testclient"
-version = "0.66.4"
+version = "0.66.6"
 dependencies = [
  "borsh",
  "crossterm",

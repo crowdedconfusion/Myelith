@@ -185,6 +185,7 @@ fn konfig(ordner: &Path, name: &str, bootstrap: Vec<String>, miner: Option<&Roll
         zustandslos: false,
         baum_auf_platte: false,
         zeugen_bereithalten: false,
+        selbstprobe_aus: false,
         erzeugt_bloecke: miner.is_none(),
         blocktakt_ms: None,
         abzug: None,

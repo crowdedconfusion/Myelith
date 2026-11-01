@@ -59,6 +59,7 @@ fn konfig(ordner: &std::path::Path, name: &str, bootstrap: Vec<String>) -> Knote
         zustandslos: false,
         baum_auf_platte: false,
         zeugen_bereithalten: false,
+        selbstprobe_aus: false,
         erzeugt_bloecke: false,
         blocktakt_ms: None,
         abzug: None,

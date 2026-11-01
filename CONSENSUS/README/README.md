@@ -1,7 +1,7 @@
 # consensus (`myl-consensus` + `myl-ledger` + `myl-scheduler`)
 
-> **Version:** 0.76.0 (`myl-consensus` 0.47.0, `myl-scheduler` 0.19.0,
-> `myl-ledger` 0.45.0)
+> **Version:** 0.76.1 (`myl-consensus` 0.47.0, `myl-scheduler` 0.19.0,
+> `myl-ledger` 0.45.1)
 > **Datum:** 2026-10-29
 > **Status:** Design-Entscheidungen getroffen (malachite hinter
 > trait-Grenze mit Eigenbau-Fallback, Blockzeit 2 s, Komitee 21/7,
@@ -107,6 +107,15 @@ myl-consensus/tests/
 ```
 
 ## Changelog
+
+### v0.76.1 (2026-10-31): Eine Regel für den Beschuldigten (`myl-ledger` 0.45.1)
+
+- ⚑ **`pruefung::beschuldigter`**: wen eine Abweichung an einer Layer
+  trifft, aus der Besetzung der gezogenen Epoche (hinter dem letzten Bereich
+  das Mitglied mit dem letzten, der Kopf). Die Schiedsrunde nutzt sie wie
+  bisher, jetzt auch das Protokoll des Checkers (NODE 0.99.3): eine Regel an
+  einer Stelle.
+- Test `der_beschuldigte_folgt_dem_layerbereich`.
 
 ### v0.76.0 (2026-10-30): Durchsicht des Zustands auf unbegrenzte Einträge (`myl-ledger` 0.45.0)
 

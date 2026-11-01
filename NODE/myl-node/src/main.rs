@@ -470,6 +470,12 @@ fn lies_argumente() -> Result<Option<Argumente>, String> {
                 konfig.zeugen_bereithalten = true;
                 i += 1;
             }
+            // Nur im Prüfnetz: die Rolle des Lügners (siehe `KnotenKonfig`).
+            #[cfg(feature = "pruefnetz")]
+            "--selbstprobe-aus" => {
+                konfig.selbstprobe_aus = true;
+                i += 1;
+            }
             "--baum-auf-platte" => {
                 konfig.baum_auf_platte = true;
                 i += 1;

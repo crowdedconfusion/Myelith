@@ -144,6 +144,9 @@ const KONTOBEWEISE_ALLE: std::time::Duration = std::time::Duration::from_secs(2)
 /// 2026-10-30): Nur ein `Nichts` oder ein Fehlschlag mit diesem Zweck zählt
 /// als Abweisung der Probe.
 const ZWECK_ZEITPROBE: u64 = 1;
+/// So viele Anfechter offener Streitfälle bekommen bei einem Validator
+/// Vorrang in den Verbindungsgrenzen.
+const VORRANG_SCHIED_HOECHSTENS: usize = 16;
 /// Ab so vielen Neuverankerungen hintereinander ohne einen Block mit
 /// Zeugen meldet der zustandslose Knoten, dass er nur noch springt.
 const NUR_ABZUG_WARNUNG: u32 = 3;
@@ -207,6 +210,11 @@ pub struct Knoten {
     /// ⚑ Der zuletzt gesetzte Vorrang in den Verbindungsgrenzen (Fund 674):
     /// Epoche und Gegenstellen.
     vorrang: Option<(u64, Vec<libp2p::PeerId>)>,
+    /// Der Anteil der Pods am Vorrang, je Epoche einmal gerechnet, und der
+    /// zuletzt gesetzte Anteil der Schiedsrunde (Anfechter offener
+    /// Streitfälle, nur für Validatoren).
+    vorrang_pods: Vec<libp2p::PeerId>,
+    vorrang_schied: Vec<libp2p::PeerId>,
     /// Hält den Kanal offen, auch ohne Leitung.
     _relais_tx: mpsc::Sender<crate::relais::Relaisauftrag>,
     /// Weitergereichte Shardanfragen, die auf ihre Antwort warten: an wen,
@@ -1319,6 +1327,8 @@ impl Knoten {
             kontoanfragen: anfragen_rx,
             relaisauftraege,
             vorrang: None,
+            vorrang_pods: Vec::new(),
+            vorrang_schied: Vec::new(),
             _relais_tx: relais_tx,
             shardrelais: std::collections::HashMap::new(),
             relais_kennung: 0,
@@ -4579,32 +4589,65 @@ impl Knoten {
     fn vorrang_pflegen(&mut self) {
         let z = self.kette.zustand();
         let epoche = z.epoch.0;
-        if self.vorrang.as_ref().is_some_and(|(e, _)| *e == epoche) {
+        // ⚑ **Dazu für Validatoren die Anfechter offener Streitfälle**
+        //   (2026-10-31). 📌 Nachtlauf `nacht-ablage`: Sieben Streitfälle
+        //   verfielen. In jedem kam die Anfrage eines Validators nach dem
+        //   Beleg nie beim Anfechter an (sechs Versuche, die ausgehenden
+        //   Plätze voll); nach der halben Frist stimmte er nach der Regel
+        //   „Beweislast beim Anfechter“ gegen ihn, und zwei Drittel kamen
+        //   nicht zustande. Der Anfechter beantwortete jede Anfrage, die ihn
+        //   erreichte.
+        let ich = self.miner_ich();
+        let validator = ich.is_some_and(|i| self.kette.stimmsatz().is_some_and(|v| v.contains(&i)));
+        let mut schied: Vec<libp2p::PeerId> = Vec::new();
+        if validator {
+            for f in &z.streitfaelle {
+                if let Some(p) = z.miner.get(&f.anfechter).and_then(|r| myl_net::peer_id_aus_bytes(&r.netzadresse).ok()) {
+                    if p != self.peer_id && !schied.contains(&p) && schied.len() < VORRANG_SCHIED_HOECHSTENS {
+                        schied.push(p);
+                    }
+                }
+            }
+        }
+        let gleiche_epoche = self.vorrang.as_ref().is_some_and(|(e, _)| *e == epoche);
+        if gleiche_epoche && schied == self.vorrang_schied {
             return;
         }
-        let zuteilung = crate::kette::Kette::zuteilung_der_laufenden_epoche(z);
-        let ich = self.miner_ich();
-        let mein_pod = |p: &&myl_scheduler::shard_assignment::Pod| ich.is_some_and(|i| p.mitglieder().any(|m| m.miner_id == i));
-        let mut pods: Vec<&myl_scheduler::shard_assignment::Pod> = zuteilung.pods.iter().filter(mein_pod).collect();
-        // Mit Relaisleitung bedient er Pods für einen Ortsdienst (Torknoten).
-        if self.konfig.podrelais.is_some() {
-            pods.extend(zuteilung.pods.iter().filter(|p| !mein_pod(p)));
-        }
-        let mut peers: Vec<libp2p::PeerId> = Vec::new();
-        for m in pods.iter().flat_map(|p| p.mitglieder()) {
-            if ich == Some(m.miner_id) {
-                continue;
+        if !gleiche_epoche {
+            let zuteilung = crate::kette::Kette::zuteilung_der_laufenden_epoche(z);
+            let mein_pod = |p: &&myl_scheduler::shard_assignment::Pod| ich.is_some_and(|i| p.mitglieder().any(|m| m.miner_id == i));
+            let mut pods: Vec<&myl_scheduler::shard_assignment::Pod> = zuteilung.pods.iter().filter(mein_pod).collect();
+            // Mit Relaisleitung bedient er Pods für einen Ortsdienst (Torknoten).
+            if self.konfig.podrelais.is_some() {
+                pods.extend(zuteilung.pods.iter().filter(|p| !mein_pod(p)));
             }
-            if let Ok(p) = myl_net::peer_id_aus_bytes(&m.netzadresse) {
-                if p != self.peer_id && !peers.contains(&p) {
-                    peers.push(p);
+            let mut pod_peers: Vec<libp2p::PeerId> = Vec::new();
+            for m in pods.iter().flat_map(|p| p.mitglieder()) {
+                if ich == Some(m.miner_id) {
+                    continue;
                 }
+                if let Ok(p) = myl_net::peer_id_aus_bytes(&m.netzadresse) {
+                    if p != self.peer_id && !pod_peers.contains(&p) {
+                        pod_peers.push(p);
+                    }
+                }
+            }
+            self.vorrang_pods = pod_peers;
+        }
+        // Der eigene Pod zuerst, dann die Anfechter; gedeckelt in `myl-net`.
+        let mut peers = self.vorrang_pods.clone();
+        for p in &schied {
+            if !peers.contains(p) {
+                peers.push(*p);
             }
         }
         let anzahl = peers.len();
         if self.kommandos.send(NodeCommand::Vorrang { peers: peers.clone() }).is_ok() {
-            self.protokoll.schreibe(Eintrag::neu("vorrang").zahl("epoche", epoche as i64).zahl("peers", anzahl as i64));
+            self.protokoll.schreibe(
+                Eintrag::neu("vorrang").zahl("epoche", epoche as i64).zahl("peers", anzahl as i64).zahl("anfechter", schied.len() as i64),
+            );
             self.vorrang = Some((epoche, peers));
+            self.vorrang_schied = schied;
         }
     }
 
@@ -5128,6 +5171,9 @@ impl Knoten {
     /// In der zweiten Hälfte, weil die Mitglieder am Anfang messen und der
     /// Shard nur einen Platz für Zeitproben hat (Fund 609).
     fn selbstprobe_pflegen(&mut self, ich: &myl_types::ids::MinerId) {
+        if self.konfig.selbstprobe_aus {
+            return;
+        }
         while let Ok((epoche, je_token_us, frist_us)) = self.selbstproben.try_recv() {
             self.selbstprobe_auswerten(epoche, je_token_us, frist_us);
         }
@@ -5983,18 +6029,32 @@ impl Knoten {
             Ok(myl_verifier::Verlaufsergebnis::Abweichung { position, eintrag: stelle }) => {
                 // Eintrag j + 1 ist die Ausgabe der Layer j.
                 let layer = stelle.saturating_sub(1) as u32;
-                // ⚠️ Die Grenzen aus den Zusagen nach dem Stand von jetzt; für
-                //    den Schuldspruch (T6d) müssen es die der gezogenen Epoche
-                //    sein. Hier steht es nur im Protokoll.
-                let wer = self
-                    .kette
-                    .pod_der_kennung(g.epoche.0, &g.pod)
-                    .and_then(|pod| {
-                        let grenzen = crate::kette::Kette::grenzen_des_pods(self.kette.zustand(), &pod)?;
-                        let stelle = grenzen.iter().position(|(von, bis)| *von <= layer && layer < *bis)?;
-                        pod.shards.get(stelle).map(|s| {
-                            myl_net::peer_id_aus_bytes(&s.miner.netzadresse)
-                                .map_or_else(|_| hex::encode(&s.miner.miner_id.as_bytes()[..8]), |p| p.to_string())
+                // ⚑ Aus der Besetzung der gezogenen Epoche im Prüfauftrag,
+                //   nach derselben Regel wie die Schiedsrunde (2026-10-30). 📌
+                //   Hier standen die Grenzen aus den Zusagen von jetzt, und für
+                //   ältere Epochen fand sich kein Pod: 51 Abweichungen ohne
+                //   Beschuldigten im Nachtlauf `nacht-ablage`. Nur ohne
+                //   Auftrag (Ziehung ohne Checker) noch der alte Weg.
+                let zustand = self.kette.zustand();
+                let name = |m: &myl_types::MinerId| {
+                    zustand
+                        .miner
+                        .get(m)
+                        .and_then(|r| myl_net::peer_id_aus_bytes(&r.netzadresse).ok())
+                        .map_or_else(|| hex::encode(&m.as_bytes()[..8]), |p| p.to_string())
+                };
+                let aus_auftrag = zustand
+                    .pruefauftraege
+                    .iter()
+                    .find(|a| a.epoche == g.epoche.0 && a.pod == g.pod && a.segment == g.segment)
+                    .and_then(|a| myl_ledger::pruefung::beschuldigter(&a.besetzung, layer))
+                    .map(|m| name(&m));
+                let wer = aus_auftrag
+                    .or_else(|| {
+                        self.kette.pod_der_kennung(g.epoche.0, &g.pod).and_then(|pod| {
+                            let grenzen = crate::kette::Kette::grenzen_des_pods(zustand, &pod)?;
+                            let stelle = grenzen.iter().position(|(von, bis)| *von <= layer && layer < *bis)?;
+                            pod.shards.get(stelle).map(|s| name(&s.miner.miner_id))
                         })
                     })
                     .unwrap_or_default();

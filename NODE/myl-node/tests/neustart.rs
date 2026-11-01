@@ -339,6 +339,7 @@ async fn ein_neu_gestarteter_knoten_stimmt_mit_dem_durchlaufenden_ueberein() {
         zustandslos: false,
         baum_auf_platte: false,
         zeugen_bereithalten: false,
+        selbstprobe_aus: false,
         erzeugt_bloecke: erzeuger,
         blocktakt_ms: None,
         abzug: None,
