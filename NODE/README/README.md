@@ -1,6 +1,6 @@
 # NODE — der Myelith-Knoten
 
-> **Version:** 0.115.1
+> **Version:** 0.115.2
 > **Datum:** 2026-11-04
 > **Status:** Netzknoten lauffähig, Blockproduktion mit **Persistenz über
 > Neustarts**, BFT-Runden über das Netz mit Rundenwechsel, und seit dem
@@ -278,6 +278,17 @@ NODE/
 ```
 
 ## Changelog
+
+### v0.115.2 (2026-11-07): Das Stimmbuch unter Windows
+
+- ⛔️ **Unter Windows scheiterte jedes Speichern des Stimmbuchs** (CI zu
+  `88e7c3e`, `plattform-kerne` unter Windows rot): Zum Erzwingen auf die
+  Platte wurde die Datei nur lesend geöffnet, und unter Windows verlangt
+  das Schreibrecht. Weil vor jeder Stimme gespeichert wird und ohne
+  Speichern nicht gestimmt wird, hätte ein Knoten unter Windows nie
+  gestimmt.
+- ⚑ **`Stimmbuch::speichern` schreibt, erzwingt und schliesst über
+  denselben Griff**, dann wird umbenannt. Test `schreiben_und_lesen`.
 
 ### v0.115.1 (2026-11-07): Einen Anker ohne Abzug aufgeben
 

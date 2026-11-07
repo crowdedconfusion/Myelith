@@ -54,11 +54,20 @@ impl Stimmbuch {
 
     /// Schreibt das Stimmbuch: erst daneben, auf die Platte gezwungen, dann
     /// an seinen Platz, damit nie ein halbes liegt.
+    ///
+    /// 📌 **Gezwungen ueber den Griff, der schreibt** (2026-11-07, CI unter
+    /// Windows rot): Vorher wurde die Datei zum Erzwingen nur lesend
+    /// geoeffnet. Unter Windows verlangt das Erzwingen Schreibrecht
+    /// (`FlushFileBuffers`), also scheiterte jedes Speichern, und ein Knoten
+    /// unter Windows haette nie gestimmt.
     pub fn speichern(&self, pfad: &Path) -> std::io::Result<()> {
+        use std::io::Write;
         let neu = pfad.with_extension("stimmbuch.neu");
         let bytes = borsh::to_vec(self).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-        std::fs::write(&neu, bytes)?;
-        std::fs::File::open(&neu)?.sync_all()?;
+        let mut datei = std::fs::File::create(&neu)?;
+        datei.write_all(&bytes)?;
+        datei.sync_all()?;
+        drop(datei);
         std::fs::rename(&neu, pfad)
     }
 }
