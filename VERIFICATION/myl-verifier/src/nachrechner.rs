@@ -169,6 +169,16 @@ pub enum Verlaufsergebnis {
 /// Abweichung rechnet der Nachrechner mit seinen eigenen Werten weiter, die
 /// Logits sind also immer die ehrlichen.
 ///
+/// ⚑ **Dazu die Wahl** (T6, 2026-11-05): Ab der Prompt-Länge
+/// (`myl_types::prompt_laenge`, null heisst unbekannt) ist jede Position
+/// erzeugt; an jeder Position `p` mit `p + 1 ≥ prompt_laenge` muss das Token
+/// an `p + 1` der Argmax der Logits an `p` sein, wie der letzte Shard ihn
+/// wählt (`greedy_next`). Sonst `Abweichung { position: p, eintrag:
+/// num_layers + 1 }`, also hinter der letzten Layer: Beschuldigt wird das
+/// Mitglied mit dem Kopf. 📌 Bis hierher band die Spur Aktivierungen und
+/// Tokens, nicht die Wahl; ein Pod, der ein anderes Token nahm und danach
+/// ehrlich weiterrechnete, bestand das Nachrechnen.
+///
 /// Fehler: ein Token ausserhalb des Vokabulars (dann hat der Pod über etwas
 /// gerechnet, das kein Token ist; das gehört vor den Aufruf), ungleiche
 /// Längen von Tokens und Ketten, oder ein leerer Verlauf.
@@ -176,11 +186,18 @@ pub fn verlauf_nachrechnen(
     modell: &integer_llm_runtime::model::IntegerModel,
     tokens: &[u32],
     ketten: &[Vec<Hash>],
+    prompt_laenge: usize,
 ) -> Result<Verlaufspruefung, CheckError> {
-    match verlauf_als_prefill(modell, tokens, ketten)? {
+    match verlauf_als_prefill(modell, tokens, ketten, prompt_laenge)? {
         Some(p) => Ok(p),
-        None => verlauf_schrittweise(modell, tokens, ketten),
+        None => verlauf_schrittweise(modell, tokens, ketten, prompt_laenge),
     }
+}
+
+/// Ob an `position` gewählt wurde (das nächste Token erzeugt ist) und ein
+/// nächstes Token im Verlauf steht.
+fn gewaehlt(position: usize, laenge: usize, prompt_laenge: usize) -> bool {
+    prompt_laenge > 0 && position + 1 >= prompt_laenge && position + 1 < laenge
 }
 
 /// ⚑ **Der Verlauf als Prefill** (Frage 5 vom 2026-10-29, VeriLLM: Prüfung
@@ -196,6 +213,7 @@ pub fn verlauf_als_prefill(
     modell: &integer_llm_runtime::model::IntegerModel,
     tokens: &[u32],
     ketten: &[Vec<Hash>],
+    prompt_laenge: usize,
 ) -> Result<Option<Verlaufspruefung>, CheckError> {
     if tokens.is_empty() || tokens.len() != ketten.len() {
         return Err(CheckError::Verlauf { position: tokens.len().min(ketten.len()) });
@@ -221,6 +239,14 @@ pub fn verlauf_als_prefill(
                     .is_some_and(|h| *h.as_bytes() == myl_types::uebergang::activation_hash(z));
                 if !gleich && erste.is_none_or(|e| stelle < e) {
                     erste = Some(stelle);
+                }
+                // Die Wahl an einer erzeugten Position, aus der letzten Layer.
+                let position = start + b;
+                if ebene + 1 == modell.num_layers && gewaehlt(position, ids.len(), prompt_laenge) {
+                    let stelle = (position, modell.num_layers + 1);
+                    if modell.greedy_next(&modell.head_logits(z)) != ids[position + 1] && erste.is_none_or(|e| stelle < e) {
+                        erste = Some(stelle);
+                    }
                 }
             }
         };
@@ -251,6 +277,7 @@ pub fn verlauf_schrittweise(
     modell: &integer_llm_runtime::model::IntegerModel,
     tokens: &[u32],
     ketten: &[Vec<Hash>],
+    prompt_laenge: usize,
 ) -> Result<Verlaufspruefung, CheckError> {
     if tokens.is_empty() || tokens.len() != ketten.len() {
         return Err(CheckError::Verlauf { position: tokens.len().min(ketten.len()) });
@@ -277,6 +304,13 @@ pub fn verlauf_schrittweise(
         // Eine Kette mit mehr Einträgen als Layern behauptet Arbeit, die es
         // nicht gibt.
         if kette.len() != modell.num_layers + 1 && ergebnis == Verlaufsergebnis::Gleich {
+            ergebnis = Verlaufsergebnis::Abweichung { position, eintrag: modell.num_layers + 1 };
+        }
+        // Die Wahl an einer erzeugten Position (T6).
+        if gewaehlt(position, tokens.len(), prompt_laenge)
+            && ergebnis == Verlaufsergebnis::Gleich
+            && modell.greedy_next(&modell.head_logits(&hidden)) != tokens[position + 1] as usize
+        {
             ergebnis = Verlaufsergebnis::Abweichung { position, eintrag: modell.num_layers + 1 };
         }
     }
@@ -344,6 +378,13 @@ pub fn schiedsbeleg(
 /// **oder der Beleg trägt nicht**; beides fällt auf den Anfechter, der die
 /// Beweislast hat. Eine Kette mit falscher Länge (Eintrag hinter der
 /// letzten Layer) ist eine Behauptung ohne Arbeit, also falsch.
+///
+/// ⚑ **Hinter der letzten Layer auch die Wahl** (T6, 2026-11-05): Hat die
+/// Kette die richtige Länge und ist `position` gewählt (siehe
+/// [`verlauf_nachrechnen`]), trägt der Beleg die Ausgänge der letzten Layer
+/// bis `position`. Der an `position` muss der Hash sein, den der Pod selbst
+/// bezeugt hat; dann entscheidet der Argmax seiner Logits gegen das Token
+/// an `position + 1`. Gerechnet wird also mit dem eigenen Ausgang des Pods.
 pub fn schied_nachrechnen(
     modell: &integer_llm_runtime::model::IntegerModel,
     tokens: &[u32],
@@ -351,12 +392,24 @@ pub fn schied_nachrechnen(
     position: usize,
     eintrag: usize,
     beleg: &[Vec<i16>],
+    prompt_laenge: usize,
 ) -> Result<bool, CheckError> {
     if position >= tokens.len() || tokens.len() != ketten.len() || eintrag == 0 {
         return Err(CheckError::Verlauf { position });
     }
     if eintrag > modell.num_layers {
-        return Ok(ketten[position].len() != modell.num_layers + 1);
+        if ketten[position].len() != modell.num_layers + 1 {
+            return Ok(true);
+        }
+        if !gewaehlt(position, tokens.len(), prompt_laenge) || beleg.len() != position + 1 {
+            return Ok(false);
+        }
+        let ausgang = &beleg[position];
+        let bezeugt = ketten[position].get(modell.num_layers).is_some_and(|h| *h.as_bytes() == myl_types::uebergang::activation_hash(ausgang));
+        if !bezeugt {
+            return Ok(false);
+        }
+        return Ok(modell.greedy_next(&modell.head_logits(ausgang)) != tokens[position + 1] as usize);
     }
     let layer = eintrag - 1;
     let eingaenge: Vec<Vec<i16>> = if layer == 0 {

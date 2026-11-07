@@ -29,6 +29,12 @@
 //! höchstens [`VORAUS_BLOECKE`] Blöcke und [`VORAUS_BYTES`] Bytes. Ist er
 //! voll, weicht der Block, der am weitesten voraus liegt: Der nächste wird
 //! zuerst gebraucht.
+//!
+//! # ⚑ Wer ihn geschickt hat (2026-11-06)
+//!
+//! Je Block die Gegenstelle, von der er kam: Schliesst er an der naechsten
+//! Hoehe nicht an, ist er ein Zeichen fuer einen fremden Zweig, und die
+//! Zweigsuche fragt dort.
 
 use std::collections::BTreeMap;
 
@@ -48,7 +54,7 @@ pub const VORAUS_BYTES: usize = 32 * 1024 * 1024;
 /// Die aufgehobenen Blöcke, nach Höhe und Abdruck der Drahtform.
 #[derive(Debug, Default)]
 pub struct Vorausspeicher {
-    bloecke: BTreeMap<(u64, [u8; 32]), (Block, usize)>,
+    bloecke: BTreeMap<(u64, [u8; 32]), (Block, usize, libp2p::PeerId)>,
     bytes: usize,
 }
 
@@ -71,8 +77,9 @@ pub enum NichtAbgelegt {
 
 impl Vorausspeicher {
     /// Hebt `block` auf, wenn er über der nächsten erwarteten Höhe liegt.
-    /// `bytes` ist seine Drahtform, aus der der Abdruck kommt.
-    pub fn ablegen(&mut self, eigene_hoehe: u64, block: Block, bytes: &[u8]) -> Result<(), NichtAbgelegt> {
+    /// `bytes` ist seine Drahtform, aus der der Abdruck kommt; `von` die
+    /// Gegenstelle, von der er kam.
+    pub fn ablegen(&mut self, eigene_hoehe: u64, block: Block, bytes: &[u8], von: libp2p::PeerId) -> Result<(), NichtAbgelegt> {
         let h = block.header.height;
         if h <= eigene_hoehe.saturating_add(1) {
             return Err(NichtAbgelegt::NichtVoraus);
@@ -99,21 +106,22 @@ impl Vorausspeicher {
             if letzter.0 <= h {
                 return Err(NichtAbgelegt::Voll);
             }
-            if let Some((_, (_, n))) = self.bloecke.remove_entry(&letzter) {
+            if let Some((_, (_, n, _))) = self.bloecke.remove_entry(&letzter) {
                 self.bytes -= n;
             }
         }
         self.bytes += bytes.len();
-        self.bloecke.insert(schluessel, (block, bytes.len()));
+        self.bloecke.insert(schluessel, (block, bytes.len(), von));
         Ok(())
     }
 
-    /// Die Kandidaten für die Höhe nach `eigene_hoehe`, herausgenommen;
-    /// alles, was nicht mehr über der eigenen Höhe liegt, fällt dabei weg.
-    pub fn naechste(&mut self, eigene_hoehe: u64) -> Vec<Block> {
+    /// Die Kandidaten für die Höhe nach `eigene_hoehe`, herausgenommen, je
+    /// mit der Gegenstelle, von der sie kamen; alles, was nicht mehr über der
+    /// eigenen Höhe liegt, fällt dabei weg.
+    pub fn naechste(&mut self, eigene_hoehe: u64) -> Vec<(Block, libp2p::PeerId)> {
         let ueberholt: Vec<_> = self.bloecke.range(..=(eigene_hoehe, [0xff; 32])).map(|(k, _)| *k).collect();
         for k in ueberholt {
-            if let Some((_, n)) = self.bloecke.remove(&k) {
+            if let Some((_, n, _)) = self.bloecke.remove(&k) {
                 self.bytes -= n;
             }
         }
@@ -122,9 +130,9 @@ impl Vorausspeicher {
         schluessel
             .into_iter()
             .filter_map(|k| self.bloecke.remove(&k))
-            .map(|(b, n)| {
+            .map(|(b, n, von)| {
                 self.bytes -= n;
-                b
+                (b, von)
             })
             .collect()
     }
@@ -162,6 +170,7 @@ mod tests {
             timestamp_ms: 1_700_000_000_000 + h,
             state_root: Hash::sha256(&[marke]),
             pruefpunkt: None,
+            slot: 0,
         });
         let roh = borsh::to_vec(&b).expect("Drahtform");
         (b, roh)
@@ -169,7 +178,7 @@ mod tests {
 
     fn ablegen(s: &mut Vorausspeicher, eigen: u64, h: u64, marke: u8) -> Result<(), NichtAbgelegt> {
         let (b, roh) = block(h, marke);
-        s.ablegen(eigen, b, &roh)
+        s.ablegen(eigen, b, &roh, libp2p::PeerId::random())
     }
 
     /// Aufgehoben wird nur, was über der nächsten Höhe liegt, und nur
@@ -226,10 +235,10 @@ mod tests {
         let vorher = s.bytes();
         let fuenf = s.naechste(4);
         assert_eq!(fuenf.len(), 2, "beide Kandidaten der Höhe 5");
-        assert!(fuenf.iter().all(|b| b.header.height == 5));
+        assert!(fuenf.iter().all(|(b, _)| b.header.height == 5));
         assert_eq!(s.len(), 2, "3 und 4 überholt, 5 herausgenommen, 6 und 7 bleiben");
         assert!(s.bytes() < vorher);
-        let rest: usize = s.bloecke.values().map(|(_, n)| n).sum();
+        let rest: usize = s.bloecke.values().map(|(_, n, _)| n).sum();
         assert_eq!(s.bytes(), rest, "die Bytes stimmen mit dem Inhalt");
         assert!(s.naechste(7).is_empty());
         assert!(s.is_empty());

@@ -132,6 +132,16 @@ def melde(text: str) -> None:
 class Knoten:
     """Ein `myl-node` in seinem Namensraum."""
 
+    # Die Namen aller Knoten des Laufs, an jeden als `--teilnehmer`: Gegen
+    # sie prueft ein Knoten die Latenz-Atteste des Probeverkehrs (A10).
+    # Fehlen sie, verwirft er jedes Attest und schreibt es ins Protokoll;
+    # im Nachtlauf `nacht-rotation` war das ein Viertel davon.
+    teilnehmer: list[str] = []
+    # Der Takt des Probeverkehrs in Sekunden (`--testverkehr`). Die kleinen
+    # Netzlaeufe gleichen jede Probe zwischen allen Knoten ab und brauchen
+    # einen je Sekunde; der Podlauf setzt mehr (siehe dort).
+    testverkehr: int = 1
+
     def __init__(self, nummer: int, ordner: pathlib.Path, latenz_ms: int, verlust: float):
         self.nummer = nummer
         self.name = f"k{nummer}"
@@ -183,13 +193,19 @@ class Knoten:
             "--beobachtung", f"{self.ip}:{BEOBACHTUNG}",
             "--ohne-tuer",
             "--aufnahme", "2",
-            "--testverkehr", "1",
+            "--testverkehr", str(Knoten.testverkehr),
             "--lokale-suche",
         ]
         if bootstrap:
             befehl += ["--bootstrap", bootstrap]
+        # Seit dem Erzeugerplan ist der Takt die Laenge eines Slots, und
+        # jeder Knoten braucht dieselbe; sonst hielte er fremde Bloecke fuer
+        # kuenftig.
+        befehl += ["--blocktakt", str(blocktakt)]
+        for name in Knoten.teilnehmer:
+            befehl += ["--teilnehmer", name]
         if erzeuger:
-            befehl += ["--erzeuger", "--blocktakt", str(blocktakt)]
+            befehl += ["--erzeuger"]
         befehl += zusatz or []
         # Fuer einen Neustart im Dauerlauf: mit denselben Angaben.
         self.angaben = (programm, bootstrap, erzeuger, blocktakt, zusatz)
@@ -509,6 +525,7 @@ def lauf(args: argparse.Namespace, ordner: pathlib.Path) -> None:
         )
 
     alle = [Knoten(i, ordner, *stoerung(i, n + 2)) for i in range(n + 2)]
+    Knoten.teilnehmer = [k.name for k in alle]
     netz = alle[:n]
     neuling = alle[n]
     aus_abzug = alle[n + 1]

@@ -1,6 +1,6 @@
 # Sicherheitsaudit
 
-**Stand:** 2026-08-28, Tür und Wallet (A16 bis A24) und Quorumsschnitt (A25) am 2026-10-26, Stichprobe im Netz (A27) und Zeitprobe (A28 bis A31) am 2026-10-27, Saat und Unterschrift der Zeitprobe (A32) am 2026-10-28
+**Stand:** 2026-08-28, Tür und Wallet (A16 bis A24) und Quorumsschnitt (A25) am 2026-10-26, Stichprobe im Netz (A27) und Zeitprobe (A28 bis A31) am 2026-10-27, Saat und Unterschrift der Zeitprobe (A32) am 2026-10-28, der rotierende Erzeuger und die Prüfpunkte (A33 bis A40) am 2026-11-05, die Wahl des Tokens (A41) am selben Tag, die Kollusion beider Pods im Netz (A12) am 2026-11-06, die Lücke der Wechselbelege nach einer Ruhe der Finalität (A42) am 2026-11-07
 **Grundlage:** die Angreiferklassen aus Whitepaper Kap. 5.6 und 9.2, die
 Sicherheitsargumente aus Kap. 6.8 und Anhang B, sowie die Funde 41 bis 53
 dieses Projekts.
@@ -9,10 +9,25 @@ dieses Projekts.
 abgewehrt werden, welche gemessen offen sind und welche niemand geprüft
 hat. Es ist **kein externes Review** (K5, K9) und ersetzt keines.
 
-**Der wichtigste Satz vorweg:** Von den fünfzehn Angriffsklassen unten
-sind **zehn abgewehrt und belegt**, **drei offen mit gemessener Lücke**
-und **zwei ungeprüft**. Keine der Lücken ist neu entdeckt worden, ohne
-dass sie hier steht.
+**Der wichtigste Satz vorweg:** Von den zweiundvierzig Angriffsklassen
+unten (Stand 2026-11-07) sind **35 abgewehrt und belegt**, **sechs offen mit
+gemessener oder benannter Lücke** (A9, A10, A11, A12, A23, A42) und **eine
+ungeprüft** (A13, die Krypto-Primitiven ohne externes Review). Keine der
+Lücken ist neu entdeckt worden, ohne dass sie hier steht.
+
+⚑ **Nachtrag vom 2026-11-05: der rotierende Erzeuger, die Prüfpunkte und
+die Wege der Prüfung (A33 bis A40).** Seit die Kette einen Erzeuger je Slot
+zieht und Prüfpunkte nach Casper FFG endgültig macht, gibt es Gabeln, und
+mit ihnen neue Klassen. Gefunden in Netzläufen mit Prüfrollen
+(Zurückhalter, Doppelerzeuger, falsche Uhr, Verstummen) und beim Lesen,
+alle am selben oder am nächsten Tag geschlossen: eine Gabel, die nie
+erkannt wurde (A33), ein Doppelsigner, der zurückkam (A34), eine erfundene
+Höhe (A35), Spurablagen, die jede Gegenstelle verdrängen konnte (A36),
+und lange Sitzungen, deren Beleg nicht in eine Antwort passte (A37). Dazu
+belegt ohne Schaden für die Ehrlichen: zurückgehaltene Blöcke (A38), eine
+falsche Uhr (A39) und der Ausfall von mehr als einem Drittel (A40).
+Nachgezogen: A4 gilt jetzt für Prüfpunkte, A27, A29 bis A31 sind
+geschlossen.
 
 ⚑ **Nachtrag vom 2026-10-26: neun Klassen für Tür, Wallet und die lokalen
 Leitungen (A16 bis A24).** Diese Teile sind seit Oktober gebaut und standen
@@ -43,7 +58,7 @@ Kettenmigration.
 | A1 | Falsches Rechenergebnis | ✅ | Stufe 1 (Redundanz), Stufe 2 (Bisektion), Kontrollsegmente |
 | A2 | Rogue-Key auf Aggregatsignaturen | ✅ | Proof-of-Possession, Fund 27, `rogue_key.rs` |
 | A3 | Koordinator fälscht PoI-Bündel | ✅ | 7 Angriffe in `koordinator_byzantinisch.rs`, Fund 52 geschlossen |
-| A4 | Double-Signing im BFT | ✅ | Beweis mit BLS, 9 Angriffe auf das Polka-Zertifikat |
+| A4 | Double-Signing | ✅ | Prüfpunkte nach Casper FFG: doppelte und umschliessende Stimmen schlachtbar, jede Stimme nennt ihre Quelle; Erzeuger im selben Slot zweimal schlachtbar; Beweis mit BLS |
 | A5 | Manipulierte Aktivierungen im Pod | ✅ | Eingangs-Hash-Prüfung, Fund 41 geschlossen |
 | A6 | Self-Dealing in der Subventionsphase | ✅ | `s < c/(1−c)` gegen das untere Bandende, Fund 49 |
 | A7 | Verbrauchs-Stoß mit Ausstieg | ✅ | Burn-Cap je Adresse, gemessen |
@@ -51,7 +66,7 @@ Kettenmigration.
 | A9 | **Eclipse: Umzingelung eines Knotens** | ⚠️ | **Fund 53 geschlossen** (2026-08-24); Restbedingung: ehrlicher Bootstrap-Knoten |
 | A10 | **Latenzwerte fälschen** | ⚠️ | Signatur wird **geprüft** (2026-08-25); Schlüsselherkunft im Probelauf ableitbar |
 | A11 | **Kontrollsegmente erkennen** | ⚠️ | **Fund 58** geschlossen (Vorrat als Parameter mit Schranke), **Fund 72** als Nullergebnis mit Beweis; Prompt-Profil bleibt offen, das Messgerät dafür steht seit 2026-08-27 |
-| A12 | Kollusion beider Pods | ⚠️ | Schranke gemessen (β^2k trifft), Gegenmaßnahme unbelegt |
+| A12 | Kollusion beider Pods | ⚠️ | Schranke gemessen (β^2k trifft); Gegenmaßnahme im Netz belegt (2026-11-06: Paar einig, nur der Checker fand es); offen bleibt das Clusterbild |
 | A13 | Angriff auf die Krypto-Primitiven | ❓ | nie extern geprüft (K5) |
 | A14 | **Ein Gateway liest den Inhalt mit** | ✅ | Sitzungs-E2E seit `myl-net` v0.9.0, über echte Verbindungen gemessen; **Verkehrsdaten bleiben sichtbar**, und das Schema selbst fällt unter A13 |
 | A15 | **Zwei Blattfolgen, eine Merkle-Wurzel** | ✅ | **Fund 77** (2026-08-28), gemessen und am selben Tag behoben: die Wurzel bindet die Blattzahl (`myl-types` v0.6.0) |
@@ -65,12 +80,22 @@ Kettenmigration.
 | A23 | **Die Tür belegen** | ⚠️ | Lesefrist und Takt greifen; ein gültiger Kontrakt belegt sie bis zur Frist eines Auftrags |
 | A24 | **Auftrag über die Epochengrenze** | ✅ | **Fund 649** (2026-10-26) geschlossen: das Podwerk rechnet einmal über den Pod der neuen Epoche |
 | A26 | **Ein ehrlicher Miner wird gesperrt** | ✅ | **Fund 655** geschlossen: Anlaufzeit und zwei Fenster; im langen Lauf über 100 Epochen 210 Verdachtsfälle, kein ehrlicher Miner gemeldet |
-| A27 | **Die Stichprobe erreicht niemanden** | ⚠️ | **Fund 656** zur Hälfte: Seit NODE 0.66.0 gehen Spuranfragen als Nachforderung hinaus, seit NODE 0.67.0 finden sie ihren Pod auch nach dem Epochenwechsel (**Fund 658**: vorher endete jede Ziehung ohne Adresse). Im kurzen Podlauf kamen 18 von 18 an (`spuranfrage_eingegangen`). **Beantworten kann sie noch niemand**, denn die Segmentzeugnisse hält nur der Koordinator, und die Eingabe eines Segments hebt seit E10 niemand auf (Fund 118). Stufe 2 von A1 findet im Netz also weiter nicht statt |
+| A27 | **Die Stichprobe erreicht niemanden** | ✅ | **Geschlossen** (2026-10-28 und 2026-10-29): Die Mitglieder halten die Spuren, der Prüfer rechnet ab den Tokens nach, zwei Checker legen fest, bevor sie aufdecken, eine Schiedsrunde mit Komitee entscheidet, im Netz belegt. Stand vorher: | **Fund 656** zur Hälfte: Seit NODE 0.66.0 gehen Spuranfragen als Nachforderung hinaus, seit NODE 0.67.0 finden sie ihren Pod auch nach dem Epochenwechsel (**Fund 658**: vorher endete jede Ziehung ohne Adresse). Im kurzen Podlauf kamen 18 von 18 an (`spuranfrage_eingegangen`). **Beantworten kann sie noch niemand**, denn die Segmentzeugnisse hält nur der Koordinator, und die Eingabe eines Segments hebt seit E10 niemand auf (Fund 118). Stufe 2 von A1 findet im Netz also weiter nicht statt |
 | A28 | **Ein Lügner lässt jede Zeitprobe verwerfen** | ✅ | **Fund 646** geschlossen (NODE 0.68.0, Festlegung des Projektinhabers 2026-10-27): Es wird kein Ping mehr abgezogen; bestanden ist die kürzeste von fünf Proben ≤ k · Frist + Zugabe (2 s), und k richtet sich nach der Zusage (64 bis 2 048 Positionen). Eine Probe über ihrer Grenze gilt als Überschreitung, auch ohne Antwort. Probe mit Gegenproben in `frist.rs`; im Netzlauf gemeldet |
-| A29 | **Ein Mitglied verweigert jede Zeitprobe** | ❌ | **Fund 660** offen: Wer jede Probe sofort mit `Nichts` beantwortet (angeblich besetzt), wird nie gemessen. Abhilfe braucht eine Festlegung (verweigerte Proben zählen wie eine Überschreitung, ab einer Zahl je Epoche) |
-| A30 | **Ein Mitglied antwortet mit erfundenem Abdruck** | ❌ | **Fund 661** offen: Der Abdruck einer Zeitprobe wird nicht nachgerechnet; wer sofort mit einem beliebigen Abdruck antwortet, besteht jede Probe. Abhilfe braucht eine Festlegung (etwa Stichproben der Abdrücke durch Checker, die das Modell haben) |
-| A31 | **Ein Lügner, der nur kurz auf Position steht** | ⚠️ | **Fund 664** offen: Gemeldet wird erst mit Zeugnissen einer Mehrheit des Pods, und ein Zeugnis verlangt zwei Überschreitungen im Abstand eines Achtels der Epoche, ab einem Viertel. Mit 108 s je Epoche (Podlauf mit `--real`, kurze Wege) schafften das zwei von vier Messenden; der Lügner stand in vier Epochen auf Position und wurde nie gemeldet. Bei einer Stunde je Epoche trüge die Regel; die Erkennung hängt aber an der Wanduhrlänge der Epoche, und die steht nirgends als Bedingung. Zur Entscheidung |
+| A29 | **Ein Mitglied verweigert jede Zeitprobe** | ✅ | **Fund 660 geschlossen** (2026-10-28): Eine lange Folge von Abweisungen zählt wie eine Überschreitung. Stand vorher: Wer jede Probe sofort mit `Nichts` beantwortet (angeblich besetzt), wird nie gemessen. Abhilfe braucht eine Festlegung (verweigerte Proben zählen wie eine Überschreitung, ab einer Zahl je Epoche) |
+| A30 | **Ein Mitglied antwortet mit erfundenem Abdruck** | ✅ | **Fund 661 geschlossen** (2026-10-28, mit A32): frische Saat je Probe, Antwort unterschrieben. Stand vorher: Der Abdruck einer Zeitprobe wird nicht nachgerechnet; wer sofort mit einem beliebigen Abdruck antwortet, besteht jede Probe. Abhilfe braucht eine Festlegung (etwa Stichproben der Abdrücke durch Checker, die das Modell haben) |
+| A31 | **Ein Lügner, der nur kurz auf Position steht** | ✅ | **Fund 664 erklärt** (2026-10-31): Der Lügner der Probe sagte über seine Selbstprobe ehrlich zu; ohne sie im Nachtlauf bei jeder Position gesperrt. Stand vorher: Gemeldet wird erst mit Zeugnissen einer Mehrheit des Pods, und ein Zeugnis verlangt zwei Überschreitungen im Abstand eines Achtels der Epoche, ab einem Viertel. Mit 108 s je Epoche (Podlauf mit `--real`, kurze Wege) schafften das zwei von vier Messenden; der Lügner stand in vier Epochen auf Position und wurde nie gemeldet. Bei einer Stunde je Epoche trüge die Regel; die Erkennung hängt aber an der Wanduhrlänge der Epoche, und die steht nirgends als Bedingung. Zur Entscheidung |
 | A32 | **Ein Lügner, der den Abdruck der Zeitprobe vorrechnet** | ✅ | **Fund 669** (2026-10-28) geschlossen: Die Anfrage trug nur Positionen und Grenze, der Abdruck war für dieselbe Anfrage immer derselbe; einmal gerechnet, hätte ein Lügner ihn danach sofort geschickt. Jetzt trägt jede Probe eine frische Saat des Messenden (32 Byte), aus der der Shard die Eingabe bildet, und die Antwort ist mit dem Minerschlüssel über Saat, Positionen und Abdruck unterschrieben; gezählt wird nur eine tragende Unterschrift. Proben in `myl-types`, `myl-pod` (`grenzen_der_kette`) und `myl-node` (`frist`) mit Gegenproben |
+| A33 | **Eine Gabel wird nie erkannt** | ✅ | Gefunden im Nachtlauf mit Laststufen (2026-11-04): Gruppen von Minern bauten auf eigenen Zweigen weiter, bis zu 2 500 Blöcke hinter der Mehrheit, weil ein fremder Block an der nächsten Höhe als unbelegter Erzeuger galt statt als Gabel. Geschlossen in NODE 0.107.1; Gabeln über 700 Blöcke (tiefer als die Rückwege, auch nach einem Neustart) über Abzug und Nachrechnen seit 0.108.0, im Netz belegt. Sicherheit blieb: gerechtfertigt nur auf dem Zweig der Mehrheit. 📌 Nachtlauf vom 2026-11-06: Trug der Zweig der Mehrheit ein Zertifikat für einen Prüfpunkt über der Gabel, wies die Vorprüfung ihn ab (sie verglich mit dem eigenen Block an dieser Höhe), und vier Knoten blieben nach 900 s Trennung auf ihrem Zweig; geschlossen in NODE 0.113.2 (zertifizierter Block aus dem Zweig, Unterschrift gegen einen Satz, der vor der Gabel feststand; den Rest prüft das Nachrechnen), im Netz belegt mit 900 s Trennung: alle 13 der unterlegenen Seite wechselten um 829 bis 848 Blöcke. ⛔️ Wieder gefunden im Podlauf (2026-11-06): Ein Validator mit einer Gabel an Block 1 baute den ganzen Lauf allein, weil die Blöcke der Mehrheit im Vorausspeicher lagen und dort still wegfielen; geschlossen in NODE 0.114.0 (ein Kandidat, der an der nächsten Höhe nicht anschliesst, startet die Zweigsuche, auch nach dem eigenen Block; Genesis als Vorgänger von Block 1). Belegt im Test, im Netz nur das Ausbleiben (die Lage ist nicht nachzustellen) |
+| A34 | **Ein Doppelsigner kommt zurück** | ✅ | Gefunden mit einem Doppelerzeuger im Netzlauf (2026-11-05): Er baute nach dem Beleg drei Epochen weiter (der Satz steht zwei voraus fest), und eine Neuanmeldung hätte ihn ganz zurückgebracht. Geschlossen in NODE 0.108.1: Ein Ruhender wird nicht mehr gezogen, ein Doppelsigner ist unter seinem Schlüssel für immer getilgt (wie Ethereum und Cosmos) |
+| A35 | **Eine erfundene Höhe** (Fund 634) | ✅ | Mit Slots entscheidbar: Jeder Block verbraucht einen Slot, jeder Zweig zweigt über dem endgültigen Prüfpunkt ab; eine Höhe über `h_e + (Slot jetzt − s_e)` wird nicht gehört, auch mit gültiger Unterschrift (NODE 0.108.1) |
+| A36 | **Spurablagen verdrängen** | ✅ | Beim Lesen gefunden (2026-11-05): Jede Gegenstelle konnte stimmige, erfundene Ablagen schicken und die echte verdrängen; dann lieferte niemand den Verlauf. Geschlossen in NODE 0.110.0: nur von Mitgliedern des Pods (beglaubigte Gegenstelle), je Absender eine |
+| A37 | **Eine lange Sitzung entgeht der Prüfung** | ✅ | Beim Lesen gefunden (2026-11-05): Verlauf und Schiedsbeleg mussten in eine Antwort passen (rund tausend Positionen); sonst bekam der Prüfer nichts. Geschlossen in NODE 0.110.0: in Stücken mit Abdruck, je Fall und Gegenstelle, gedeckelt |
+| A38 | **Zurückgehaltene Blöcke** | ✅ | Belegt im Netzlauf (2026-11-05): ein Erzeuger hielt jeden Block 3 s zurück; er verlor seine eigenen, kein Ehrlicher einen endgültigen |
+| A39 | **Eine falsche Uhr** | ✅ | Belegt im Netzlauf: Uhr +3 s, seine Blöcke wurden als künftig abgewiesen, bis ihr Slot begann; die Kette blieb einig. Die Uhr wirkt nur in der Annahmeregel, der Zustand rechnet nie mit ihr |
+| A40 | **Mehr als ein Drittel fällt aus** | ✅ | Belegt im Netzlauf: 12 von 28 still, die Finalität ruhte und kehrte nach fünf Epochen von selbst zurück, ohne Abzug am Einsatz (die Stillen ruhen über ihre Punkte) |
+| A41 | **Ein Pod wählt das Token nicht** | ✅ | Beim Lesen gefunden (2026-11-05): Die Spur band Aktivierungen und Tokens, nicht die Wahl; ein Pod, der an einer erzeugten Position nicht den Argmax nahm und danach ehrlich weiterrechnete, entging dem Nachrechnen, und nur ein ehrlicher Zwilling fand ihn. Geschlossen in NODE 0.113.0 (VERIFICATION 0.28.0): Die Kennung trägt die Prompt-Länge, gesetzt vom Koordinator der Tür; ab ihr prüfen Checker und Komitee die Wahl, belegt mit dem echten Modell. ⚠️ Tür und Pod zusammen können die Länge zu gross angeben |
+| A42 | **Die Finalität ruht, und ein Knoten ohne Zustand kommt nie wieder hinein** | ⚠️ | Im Nachtlauf gefunden (2026-11-07): Ruht die Finalität zwei Epochen oder länger (ein Ausfall, oder mehr als ein Drittel des Einsatzes schweigt absichtlich), entsteht für sie kein Wechselbeleg, und der Satz danach ist nirgends gebunden. Ein zustandsloser Knoten und ein voller Einsteiger über ein Zertifikat nahmen danach keinen Anker mehr an, für immer. Geschlossen in NODE 0.115.0 durch eine Brücke: ein Zertifikat, das mehr als zwei Drittel des letzten bekannten Satzes tragen, alle Unterzeichner aus ihm, innerhalb der Vertrauensfrist; dieselbe Sicherheit wie ein Zertifikat dieses Satzes. Tests mit Gegenproben. ⛔️ Im Netz widerlegt für den Hauptfall (`kurz-verstummen`, 2026-11-07): Die Kette schliesst die Stillen während der Ruhe aus, der Satz schrumpft (28 auf 16 Mitglieder), und das erste Zertifikat danach tragen nur 57 % des Satzes vor der Lücke; die Brücke verlangt mehr als zwei Drittel. ⚑ Entschieden (2026-11-07): Eine niedrigere Schwelle wäre ein neuer Angriffsweg (eine Koalition mit mehr als einem Drittel unterschreibt auf einem eigenen Zweig, ohne doppelt zu stimmen); nach einer Ruhe mit Ausschluss ein Anker von außen wie bei Ethereum, noch nicht gebaut |
 | A25 | **Zwei Quoren ohne gemeinsamen Teilnehmer** | ✅ | **Fund 652** (2026-10-26) geschlossen: ein Gesamtgewicht über `u64` sättigte; Eigenschaftstest `quorumschnitt.rs` |
 
 ---
@@ -635,6 +660,19 @@ realistisches Clusterbild ist nicht geprüft.
 
 **Zudem:** A10 ist der Hebel, mit dem ein Angreifer β lokal selbst
 erhöht.
+
+⚑ **Die Gegenmaßnahme im Netz (2026-11-06, Podlauf `--kollusion`):** 17 von
+28 Minern fälschen gleich, aber nur an der ersten Position ihres Pods.
+Stehen an beiden Zwillingen eines Paares solche Fälscher vorn, rechnen beide
+gleich falsch, und das Paar ist einig: Stufe 1 sieht nichts. In zwei kurzen
+Läufen kam das je einmal vor, und jedes Mal fand das Nachrechnen ab den
+Tokens (T6) den Fälscher der ersten Position; die Schiedsrunde urteilte nur
+gegen Fälscher, kein Ehrlicher wurde beschuldigt. Die Ziehung hängt nicht an
+der Einigkeit der Zwillinge (`stichprobe_der_epoche` zieht aus allen
+Bündeln). 📌 Beim ersten Lauf gesehen: Der Fälscher des Prüfstands
+verschob einen Wert um eins, und das verschwand meist schon in der ersten
+Layer; der Pod rechnete dann ehrlich, „gleich“ war richtig. Seitdem um 64.
+**Offen bleibt** das realistische Clusterbild oben; darum ⚠️.
 
 ---
 

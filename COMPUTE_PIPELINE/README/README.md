@@ -1,6 +1,6 @@
 # compute-pipeline (`myl-pod`, `myl-dispatcher`)
 
-> **Version:** 0.57.0 (`myl-pod` 0.48.0, `myl-dispatcher` 0.11.2)
+> **Version:** 0.60.1 (`myl-pod` 0.51.1, `myl-dispatcher` 0.11.2)
 > **Datum:** 2026-10-29
 > **Status:** Phase 1 vollständig, Phase 2.1, **Phase 3 vollständig**
 > (3.1 bis 3.3) und Punkt 4.3. `shard_loop` mit Spur-Hashes und
@@ -106,6 +106,44 @@ COMPUTE_PIPELINE/
 ```
 
 ## Changelog
+
+### v0.60.1 (2026-11-06): Der Fälscher an der ersten Position (`myl-pod` 0.51.1)
+
+- ⚑ Nur mit dem Merkmal `faelscher` (Prüfstand): `MYL_SHARD_FAELSCHEN=erste`
+  fälscht nur, wenn der Shard die Einbettung rechnet. Zwei solche Fälscher an
+  der ersten Position zweier Zwillinge rechnen gleich falsch, die Zwillinge
+  sind einig, und nur das Nachrechnen ab den Tokens findet es (Kollusion im
+  Podlauf, `--kollusion`). `MYL_SHARD_FAELSCHEN=1` fälscht weiter an jedem
+  Eingang.
+- 📌 **Die Verschiebung ist jetzt 64 statt eins.** Mit dem 0,6B verschwand
+  eins bei 346 von 400 Tokens schon in der ersten Layer (Requantisierung);
+  der Pod rechnete dann ehrlich, und das Nachrechnen meldete zu Recht
+  „gleich“ (gesehen im Podlauf, Epoche mit vier Fälschern vorn und zwei
+  gleichen Ziehungen). Mit 64 verschwand sie bei keinem der 400.
+
+### v0.60.0 (2026-11-05): Die Kennung trägt die Prompt-Länge (`myl-pod` 0.51.0)
+
+- ⚑ **`coordinator::segment_id_from` schreibt die Prompt-Länge** in die
+  Bytes 16 bis 23 jeder Segmentkennung (SHARED_TYPES 0.67.0). Sie setzt der
+  Koordinator im Podwerk der Tür, nicht der letzte Shard, der das Token
+  wählt; der ganze Pod unterschreibt sie. Damit prüft der Prüfer ab ihr die
+  Wahl jedes erzeugten Tokens (VERIFICATION 0.28.0).
+- Test `ein_checker_rechnet_den_verlauf_ab_den_tokens_nach` um den
+  betrügenden Pod erweitert, mit dem echten Modell.
+
+### v0.59.0 (2026-11-05): Grosse Spurablagen in Stücken (`myl-pod` 0.50.0)
+
+- 📌 `podwerk::stueckweise_ablegen`: Passt eine Ablage nicht in eine
+  Nachricht, geht sie in Stücken an jedes Mitglied, Stück für Stück in
+  Folge. Bis hierher meldete das Podwerk „über der Grenze einer Nachricht,
+  nicht abgelegt“, und bei einigen Tausend Segmenten je Epoche lieferte
+  niemand den Verlauf für das Nachrechnen.
+
+### v0.58.0 (2026-11-05): Die Spuren gehen mit dem unterschriebenen Bündel (`myl-pod` 0.49.0)
+
+- Das Podwerk legt jede Spurablage mit dem unterschriebenen Bündel ab
+  (`Spurablage::buendel`, `myl-types` 0.65.0); die Knoten nehmen eine
+  Ablage aus dem Netz nur noch so.
 
 ### v0.57.0 (2026-10-29): Der Ortsdienst meldet Differenzen (`myl-pod` 0.48.0)
 

@@ -363,6 +363,62 @@ pub fn urteil_buchen_gestaffelt(
     Ok((wirkung, satz))
 }
 
+/// Faktor der Korrelationsstrafe (Vorbild Ethereum,
+/// `PROPORTIONAL_SLASHING_MULTIPLIER` seit Bellatrix): Wird gleichzeitig ein
+/// Drittel des Gewichts geschlachtet, verliert jeder alles.
+pub const KORRELATION_FAKTOR: u64 = 3;
+
+/// ⚑ **Die Korrelationsstrafe für Doppelsignaturen** (2026-11-03).
+///
+/// Je Schuldiger mit einer gebuchten Doppelsignatur in der Sperrfrist wird
+/// nachgeschlachtet, bis er insgesamt
+/// `masse · min(1, KORRELATION_FAKTOR · Σ masse / gesamtgewicht)` verloren
+/// hat; die Summe läuft über alle Schuldigen der Sperrfrist. Gerufen nach
+/// jeder Buchung, also wirkt eine spätere Meldung auch auf die früher
+/// Gemeldeten zurück; ihre Kündigungen sind dafür festgehalten
+/// ([`myl_ledger::transitions::kuendigungen_festhalten`]). Der Zuschlag wird
+/// **ganz verbrannt**: Das Kopfgeld aus Anhang B.3 gilt für den Grundsatz,
+/// sonst holte sich ein Angreifer über eine zweite Identität einen Teil
+/// seines Zuschlags zurück.
+///
+/// 📌 **Warum:** Mit dem Grundsatz allein (30 % beim ersten Mal) kostete ein
+/// Sicherheitsbruch durch ein Drittel des Gewichts, nach dem Kopfgeld an
+/// eine eigene zweite Identität, nur 21 % des Einsatzes. Ein einzelnes
+/// Versehen kostet weiter den Grundsatz; ein gemeinsamer Angriff alles. Das
+/// bleibt in der Spanne 30 bis 100 % aus Kap. 5.5.
+///
+/// Gibt zurück, was verbrannt wurde. Ohne Gewicht keine Strafe.
+pub fn korrelation_buchen(state: &mut LedgerState, gesamtgewicht: u64) -> u64 {
+    if gesamtgewicht == 0 {
+        return 0;
+    }
+    // Je Schuldiger: die Masse vor der ersten Buchung, was bisher genommen
+    // wurde, und der Eintrag, dem ein Zuschlag zugeschrieben wird.
+    type Eintrag = (Address, u8, u64);
+    let mut je: std::collections::BTreeMap<Address, (u64, u64, Eintrag)> = std::collections::BTreeMap::new();
+    for (k, b) in state.doppelbelege.iter() {
+        let e = je.entry(k.0).or_insert((0, 0, *k));
+        e.0 = e.0.max(b.masse);
+        e.1 = e.1.saturating_add(b.genommen);
+    }
+    let summe: u128 = je.values().map(|(m, _, _)| u128::from(*m)).sum();
+    let zaehler = (summe * u128::from(KORRELATION_FAKTOR)).min(u128::from(gesamtgewicht));
+    let mut verbrannt = 0u64;
+    for (wer, (masse, genommen, schluessel)) in je {
+        let ziel = (u128::from(masse) * zaehler / u128::from(gesamtgewicht)) as u64;
+        let fehlt = ziel.saturating_sub(genommen);
+        if fehlt == 0 {
+            continue;
+        }
+        let n = myl_ledger::transitions::einsatz_verbrennen(state, &wer, fehlt);
+        if let Some(b) = state.doppelbelege.get_mut(&schluessel) {
+            b.genommen = b.genommen.saturating_add(n);
+        }
+        verbrannt = verbrannt.saturating_add(n);
+    }
+    verbrannt
+}
+
 /// Warum eine gestaffelte Buchung nicht zustande kam.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SlashBuchungFehler {
@@ -641,6 +697,63 @@ mod tests {
         assert_eq!(p.slash_fraction_den, 1);
         assert_eq!(p.bounty_fraction_num, KOPFGELD_ZAEHLER);
         assert_eq!(p.bounty_fraction_den, KOPFGELD_NENNER);
+    }
+
+    /// ⚑ **Korrelation:** Allein kostet eine Doppelsignatur den Grundsatz;
+    /// schlachtet man gleichzeitig ein Drittel des Gewichts, verliert jeder
+    /// alles, auch der zuerst Gemeldete, und auch aus seiner Kündigung.
+    #[test]
+    fn gemeinsam_doppelt_signieren_kostet_alles() {
+        use myl_ledger::transitions::{einsatz_hinterlegen, kuendigungen_festhalten, Doppelbuchung};
+        let mut s = LedgerState::genesis(1);
+        let gesamt = 30_000;
+        let buchen = |s: &mut LedgerState, wer: u8| {
+            let a = adresse(wer);
+            s.account_mut(&a).balance = 10_000;
+            einsatz_hinterlegen(s, &a, 10_000).expect("Einsatz");
+            let masse = s.account(&a).staked;
+            let u = Verdict { miner: a, checker: adresse(99), ..urteil(true) };
+            let (w, _) = urteil_buchen_gestaffelt(s, &u, Akteur::Validator, Grund::DoubleSigningOderZensur).expect("Buchung");
+            s.doppelbelege.insert((a, 0, 5), Doppelbuchung { epoche: 0, masse, genommen: w.slashed });
+            kuendigungen_festhalten(s, &a, myl_ledger::einsatz::freigabe_epoche(0));
+            korrelation_buchen(s, gesamt)
+        };
+        // Ein Schuldiger mit einem Drittel des Gewichts: mal drei ist alles,
+        // also ein Zuschlag von 30 auf 100 %.
+        assert_eq!(buchen(&mut s, 10), 7_000);
+        assert_eq!(s.account(&adresse(10)).staked, 0);
+        // Gegenprobe: bei grossem Gesamtgewicht bleibt es beim Grundsatz.
+        let mut t = LedgerState::genesis(1);
+        let a = adresse(11);
+        t.account_mut(&a).balance = 10_000;
+        einsatz_hinterlegen(&mut t, &a, 10_000).expect("Einsatz");
+        let u = Verdict { miner: a, checker: adresse(99), ..urteil(true) };
+        let (w, _) = urteil_buchen_gestaffelt(&mut t, &u, Akteur::Validator, Grund::DoubleSigningOderZensur).expect("Buchung");
+        t.doppelbelege.insert((a, 0, 5), Doppelbuchung { epoche: 0, masse: 10_000, genommen: w.slashed });
+        assert_eq!(korrelation_buchen(&mut t, 1_000_000), 0, "3 % liegen unter dem Grundsatz");
+        assert_eq!(t.account(&a).staked, 7_000);
+        // Ein zweiter Schuldiger hebt den ersten nach (Rückwirkung): 20 000
+        // von 100 000 mal drei sind 60 %, also je 30 % mehr.
+        let b = adresse(12);
+        t.account_mut(&b).balance = 10_000;
+        einsatz_hinterlegen(&mut t, &b, 10_000).expect("Einsatz");
+        let u = Verdict { miner: b, checker: adresse(99), ..urteil(true) };
+        let (w, _) = urteil_buchen_gestaffelt(&mut t, &u, Akteur::Validator, Grund::DoubleSigningOderZensur).expect("Buchung");
+        t.doppelbelege.insert((b, 0, 5), Doppelbuchung { epoche: 0, masse: 10_000, genommen: w.slashed });
+        assert_eq!(korrelation_buchen(&mut t, 100_000), 2 * 3_000);
+        assert_eq!(t.account(&a).staked, 4_000);
+        assert_eq!(t.account(&b).staked, 4_000);
+    }
+
+    /// Festgehalten wird, was vor der Grenze frei würde; Späteres bleibt.
+    #[test]
+    fn kuendigungen_werden_festgehalten() {
+        use myl_ledger::transitions::kuendigungen_festhalten;
+        let mut s = LedgerState::genesis(1);
+        let a = adresse(20);
+        s.account_mut(&a).gekuendigt = [(5, 100), (9, 50), (300, 7)].into_iter().collect();
+        kuendigungen_festhalten(&mut s, &a, 200);
+        assert_eq!(s.account(&a).gekuendigt, [(200, 150), (300, 7)].into_iter().collect());
     }
 
     /// **Das Kopfgeld übersteigt nie den Slash**, für jede Zeile.

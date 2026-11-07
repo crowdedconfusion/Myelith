@@ -141,6 +141,28 @@ pub fn ablage_pruefen(
     Ok(())
 }
 
+/// ⛔️ **Ist die Ablage beglaubigt?** (T6, 2026-11-05): Sie trägt das
+/// unterschriebene Bündel ihrer Epoche, ihres Pods und ihrer Wurzel, und
+/// dessen Gesamtunterschrift trägt gegen die Unterzeichner, wie die Kette
+/// sie prüft (`unterzeichner`: Kennung und Schlüssel je Mitglied). Eine
+/// erfundene Ablage braucht so die Unterschriften des ganzen Pods.
+pub fn ablage_beglaubigt(
+    ablage: &myl_types::Spurablage,
+    unterzeichner: impl Fn(&[(u32, MinerId)]) -> Option<Vec<(MinerId, myl_types::bls::BlsPublicKey)>>,
+) -> Result<(), String> {
+    let b = ablage.buendel.as_ref().ok_or("ohne unterschriebenes Bündel")?;
+    if (b.epoch, b.pod, b.segments_root) != (ablage.epoche, ablage.pod, ablage.segments_root) {
+        return Err("das Bündel passt nicht zur Ablage".into());
+    }
+    let mitglieder = unterzeichner(&b.vertreter).ok_or("die Unterzeichner passen nicht zum Pod")?;
+    let schluessel: Vec<myl_types::bls::BlsPublicKey> = mitglieder.iter().map(|(_, k)| *k).collect();
+    let botschaft = myl_types::poi_botschaft::bundle_message(b);
+    if !myl_types::bls::fast_aggregate_verify(&schluessel, &botschaft, &b.aggregate_sig.as_aggregate()) {
+        return Err("die Unterschrift des Bündels trägt nicht".into());
+    }
+    Ok(())
+}
+
 /// Womit der Knoten einen Shard startet.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Shardstart {
@@ -385,6 +407,73 @@ mod tests {
         assert!(uebernahme_pruefen(z, &reserve, e, pod.pod_index + 7, 2).is_err(), "kein solcher Pod");
     }
 
+    /// ⛔️ **Eine Ablage aus dem Netz nur mit dem unterschriebenen Bündel**
+    /// (T6, 2026-11-05): mit den Unterschriften aller Mitglieder ja; ohne
+    /// Bündel, mit einem Bündel einer anderen Wurzel, mit einer Unterschrift
+    /// zu wenig und mit einer erfundenen nicht.
+    #[test]
+    fn eine_ablage_braucht_das_unterschriebene_buendel() {
+        let mut k = crate::kette::Kette::probestand();
+        for w in 0..8u8 {
+            k.aufnehmen(crate::kette::probeanmeldung(w));
+            k.aufnehmen(crate::kette::probezusage(w, myl_types::ids::EpochId(1), 1));
+        }
+        k.baue_block();
+        for _ in 0..(3 * myl_consensus::block::BLOECKE_JE_EPOCHE) {
+            k.baue_block();
+        }
+        let z = k.zustand();
+        let zuteilung = crate::kette::Kette::zuteilung_der_laufenden_epoche(z);
+        let pod = &zuteilung.pods[0];
+        let zeugnisse: Vec<myl_types::Segmentzeugnis> = (0..3u8)
+            .map(|i| myl_types::Segmentzeugnis { id: myl_types::ids::SegmentId::new([i; 32]), spurwurzel: myl_types::ids::MerkleRoot::new([i + 9; 32]) })
+            .collect();
+        let wurzel = myl_types::segments_root(&zeugnisse).expect("Wurzel");
+        let kennung = myl_types::pod_kennung(z.epoch.0, pod.pod_index);
+        let mut buendel = myl_types::PoIBundle {
+            epoch: z.epoch,
+            pod: kennung,
+            segments_root: wurzel,
+            vtfe_claimed: 3,
+            aggregate_sig: myl_types::bls::BlsSignature([0; 96]),
+            segmente: 3,
+            ausgabenwurzel: myl_types::ids::MerkleRoot::new([0; 32]),
+            vertreter: Vec::new(),
+        };
+        let unterzeichner = crate::kette::Kette::unterzeichner_des_buendels(pod, &[]).expect("Unterzeichner");
+        let schluessel_von = |m: &MinerId| {
+            (0..crate::kette::PROBEKONTEN).map(crate::kette::probeschluessel).find(|sk| sk.public_key().is_ok_and(|pk| MinerId::aus_schluessel(&pk) == *m))
+        };
+        let botschaft = myl_types::poi_botschaft::bundle_message(&buendel);
+        let unterschreiben = |wer: &[(MinerId, myl_types::bls::BlsPublicKey)]| {
+            let sigs: Vec<myl_types::bls::BlsSignature> =
+                wer.iter().map(|(m, _)| schluessel_von(m).expect("Probeschlüssel").sign(&botschaft).expect("unterschreiben")).collect();
+            myl_types::bls::BlsSignature(myl_types::bls::aggregate_signatures(&sigs).expect("Aggregat").0)
+        };
+        buendel.aggregate_sig = unterschreiben(&unterzeichner);
+        let ablage = myl_types::Spurablage {
+            epoche: z.epoch,
+            pod: kennung,
+            segments_root: wurzel,
+            eintraege: zeugnisse.iter().map(|zg| (*zg, vec![myl_types::Hash::sha256(zg.id.as_bytes())])).collect(),
+            eingaben: Vec::new(),
+            buendel: Some(Box::new(buendel.clone())),
+        };
+        let pruefen = |a: &myl_types::Spurablage| ablage_beglaubigt(a, |v| crate::kette::Kette::unterzeichner_des_buendels(pod, v));
+        assert_eq!(pruefen(&ablage), Ok(()));
+        // ⛔️ Gegenproben.
+        assert!(pruefen(&myl_types::Spurablage { buendel: None, ..ablage.clone() }).is_err(), "ohne Bündel");
+        let mut fremd = buendel.clone();
+        fremd.segments_root = myl_types::ids::MerkleRoot::new([7; 32]);
+        assert!(pruefen(&myl_types::Spurablage { buendel: Some(Box::new(fremd)), ..ablage.clone() }).is_err(), "ein Bündel einer anderen Wurzel");
+        let mut zu_wenig = buendel.clone();
+        zu_wenig.aggregate_sig = unterschreiben(&unterzeichner[1..]);
+        assert!(pruefen(&myl_types::Spurablage { buendel: Some(Box::new(zu_wenig)), ..ablage.clone() }).is_err(), "eine Unterschrift fehlt");
+        let mut erfunden = buendel;
+        erfunden.aggregate_sig = myl_types::bls::BlsSignature([1; 96]);
+        assert!(pruefen(&myl_types::Spurablage { buendel: Some(Box::new(erfunden)), ..ablage }).is_err(), "eine erfundene Unterschrift");
+    }
+
     /// ⚑ Nur ein Mitglied nimmt eine Ablage an, und nur eine, deren
     /// Zeugnisse ihre Wurzel ergeben.
     #[test]
@@ -410,6 +499,7 @@ mod tests {
             segments_root: myl_types::segments_root(&zeugnisse).expect("Wurzel"),
             eintraege: zeugnisse.iter().map(|zg| (*zg, vec![myl_types::Hash::sha256(zg.id.as_bytes())])).collect(),
             eingaben: Vec::new(),
+            buendel: None,
         };
         for m in pod.shards.iter().map(|s| &s.miner).chain(pod.reserve.iter()) {
             assert_eq!(ablage_pruefen(pod, &m.miner_id, &ablage), Ok(()), "jedes Mitglied, auch die Reserve");

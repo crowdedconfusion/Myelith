@@ -634,6 +634,37 @@ impl Kettenspeicher {
         Ok(gefunden.into_values().collect())
     }
 
+    /// ⚑ **Kürzt die Datei hinter dem Satz der Höhe `hoehe`** (Zurückrollen
+    /// bis zum endgültigen Prüfpunkt, 2026-11-04): Alle Sätze ab dem ersten,
+    /// dessen Höhe darüber liegt, fallen weg, damit ein Wiederanlauf den
+    /// neuen Zweig nachspielt und nicht den verlassenen. Gelesen wird ab der
+    /// letzten Stütze an oder unter `hoehe`. Gibt die Zahl der entfernten
+    /// Sätze zurück.
+    pub fn kuerzen_nach(&mut self, hoehe: u64) -> Result<u64, SpeicherFehler> {
+        let fehler = |e: std::io::Error, pfad: &Path| SpeicherFehler::Datei { pfad: pfad.to_path_buf(), grund: e.to_string() };
+        let i = self.stuetzen.partition_point(|&(h, _)| h <= hoehe);
+        let (mut ort, mut nummer) = if i == 0 { (KOPF_BYTES, 0) } else { (self.stuetzen[i - 1].1, (i as u64 - 1) * STUETZABSTAND) };
+        while ort < self.laenge {
+            let (block, naechster) = self.satz_und_naechster(ort)?;
+            if block.header.height > hoehe {
+                break;
+            }
+            ort = naechster;
+            nummer += 1;
+        }
+        if ort >= self.laenge {
+            return Ok(0);
+        }
+        let entfernt = self.geschrieben.saturating_sub(nummer);
+        self.datei.set_len(ort).map_err(|e| fehler(e, &self.pfad))?;
+        self.datei.seek(SeekFrom::End(0)).map_err(|e| fehler(e, &self.pfad))?;
+        self.datei.flush().map_err(|e| fehler(e, &self.pfad))?;
+        self.stuetzen.retain(|&(_, o)| o < ort);
+        self.laenge = ort;
+        self.geschrieben = nummer;
+        Ok(entfernt)
+    }
+
     /// Die Länge der Datei in Bytes.
     pub fn laenge(&self) -> u64 {
         self.laenge
@@ -800,6 +831,7 @@ mod tests {
             timestamp_ms: 1_700_000_000_000 + hoehe,
             state_root: Hash::sha256(b"zustand"),
             pruefpunkt: None,
+            slot: 0,
         });
         b.txs.push(
             Transaktion::signiere(
@@ -848,6 +880,44 @@ mod tests {
         for (i, b) in gelesen.iter().enumerate() {
             assert_eq!(*b, block(i as u64 + 1), "Block {i} kam verändert zurück");
         }
+        std::fs::remove_dir_all(&d).ok();
+    }
+
+    /// ⚑ **Kürzen und neu anhängen** (Zurückrollen, 2026-11-04): über eine
+    /// Stütze hinweg gekürzt, ein anderer Zweig angehängt; nach dem
+    /// Wiederöffnen stehen genau die Sätze bis zum Schnitt und der neue
+    /// Zweig da, Stützen und Zählung stimmen.
+    #[test]
+    fn kuerzen_und_einen_anderen_zweig_anhaengen() {
+        let d = tempdir("kuerzen");
+        let p = d.join("kette.log");
+        let anders = |h: u64| {
+            let mut b = block(h);
+            b.header.timestamp_ms += 1;
+            b
+        };
+        {
+            let (mut s, _) = Kettenspeicher::oeffnen(&p, startwert()).expect("öffnen");
+            for h in 1..=1100 {
+                s.anhaengen(&block(h)).expect("anhängen");
+            }
+            assert_eq!(s.kuerzen_nach(1100).expect("nichts"), 0, "nichts hinter der Spitze");
+            assert_eq!(s.kuerzen_nach(1000).expect("kürzen"), 100);
+            assert_eq!(s.bloecke(), 1000);
+            assert_eq!(s.stuetzen(), 1, "die Stütze bei Satz 1024 ist weg");
+            for h in 1001..=1050 {
+                s.anhaengen(&anders(h)).expect("anhängen");
+            }
+            assert_eq!(s.block_bei(1001).expect("lesen"), Some(anders(1001)));
+        }
+        let (mut s, w) = Kettenspeicher::oeffnen(&p, startwert()).expect("wieder öffnen");
+        assert_eq!((w.anzahl, w.abgeschnitten), (1050, 0));
+        assert_eq!(s.stuetzen(), 2);
+        let alle = s.alle_saetze().expect("lesen");
+        assert_eq!(alle.len(), 1050);
+        assert_eq!(alle[999], block(1000));
+        assert_eq!(alle[1000], anders(1001));
+        assert_eq!(alle[1049], anders(1050));
         std::fs::remove_dir_all(&d).ok();
     }
 

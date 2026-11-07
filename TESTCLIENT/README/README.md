@@ -1,7 +1,7 @@
 # testclient (`myl-testclient`)
 
-> **Version:** 0.66.6
-> **Datum:** 2026-10-29
+> **Version:** 0.68.7
+> **Datum:** 2026-11-04
 > **Status:** Phase 1 und **Phase 3 vollständig**, dazu Punkt 2.1
 > (`vergleich`), **2.2** (Backend-Vergleich innerhalb einer Maschine, seit
 > dem 2026-08-30) und 2.4 (`--repeat`); **Phase 4 vollständig** (4.3 die
@@ -543,6 +543,183 @@ COMPUTE_PIPELINE Phase 1: erstmals über einen aufrufbaren Befehl statt
 über einen Integrationstest.
 
 ## Changelog
+
+### v0.68.7 (2026-11-07): Das Verstummen zuletzt
+
+- ⚑ **`podlauf.py`: Das Verstummen läuft nach dem Dauerteil.** Während der
+  Ruhe schliesst die Kette die Stillen aus, und über diese Lücke trägt kein
+  Wechselbeleg; ein Knoten ohne Zustand steigt danach nur über einen Anker
+  von außen ein. Davor liefen im Nachtlauf der Einsteiger über ein
+  Zertifikat und der späte zustandslose Knoten nach dem Verstummen und
+  hätten aus demselben Grund scheitern müssen.
+- ⚑ **Der zustandslose Stille ist ein Befund, kein Abbruch:** Die vollen
+  Stillen müssen wie bisher in 900 s aufholen; holt der zustandslose in
+  300 s nicht auf, steht es im Befund, und der Rest des Laufs wird
+  ausgewertet.
+
+### v0.68.6 (2026-11-06): Die Kollusion beider Zwillinge
+
+- ⚑ `podlauf.py --kollusion` (braucht `--zwillinge`, nicht mit
+  `--faelscher`): Die 17 Miner ohne Sonderrolle fälschen gleich, aber nur an
+  der ersten Position ihres Pods (`MYL_SHARD_FAELSCHEN=erste`, COMPUTE_PIPELINE
+  0.60.1). Stehen an beiden Zwillingen eines Paares solche Fälscher vorn, ist
+  das Paar einig, und nur das Nachrechnen ab den Tokens findet es. Verlangt
+  sind Abweichungen nur gegen sie, Urteile nur gegen sie und mindestens eine
+  Abweichung in einer Epoche, in der jede Gruppe einig war.
+- Erster Lauf (`kurz-kollusion`, bestanden): In Epoche 2 war das Paar mit
+  zwei Fälschern vorn einig, und nur der Checker fand es, beide Ziehungen
+  gegen den Fälscher der ersten Position. 📌 In Epoche 4 standen vorn an
+  allen Pods Fälscher, und beide Ziehungen waren „gleich“: Die Verschiebung
+  um eins verschwand meist schon in der ersten Layer; jetzt 64
+  (COMPUTE_PIPELINE 0.60.1).
+
+### v0.68.5 (2026-11-05): Die Suche nach dem Lügner ab dem Beginn der Phase, die Prüfung der Wahl im Bericht
+
+- 📌 `podlauf.py`, Phase `luegner`: Das Fenster für seine Position zählt
+  ab dem Beginn der Phase (mindestens bis Epoche 16, sonst acht weitere).
+  Im Nachtlauf suchten Fälscher und Paare zuvor zufällig acht Epochen, die
+  Phase begann in Epoche 16 und sah nur sie; der Lauf brach nach 4,3 h ab,
+  obwohl der Lügner in Epoche 2 und 4 auf Position stand.
+- ⚑ Der Bericht des Nachrechnens zählt, wie oft die Wahl der Tokens geprüft
+  wurde (`prompt_laenge` aus NODE 0.113.1); ein Nachrechnen ohne sie ist
+  ein Befund.
+
+### v0.68.4 (2026-11-05): Die Stillen melden sich neu an
+
+- `--verstummen` zählt danach, wie viele der Stillen sich selbst neu
+  angemeldet haben (7.9); fehlt einer, ist das ein Befund.
+
+### v0.68.3 (2026-11-05): Der zustandslose nach einer Trennung
+
+- 📌 Nach einer Trennung müssen die vollen Miner aufholen; der
+  zustandslose bekommt die Frist noch einmal, und mit `--real` ist sein
+  Ausbleiben ein Befund statt eines Abbruchs (im kurzen Lauf mit 900 s
+  Trennung kostete der Abbruch die Phasen danach).
+
+### v0.68.2 (2026-11-05): Wie der volle Einsteiger einstieg, Zeugnisse, Probeverkehr
+
+- Die Zeile des Einsteigers in `podlauf.py` nennt den Weg: Anker über ein
+  Zertifikat (Höhe, Zahl der aufgenommenen Wechselbelege) oder ab Genesis.
+- 📌 **Zeugnisse gegen Ehrliche** sind ein Befund, wenn die Kette einen
+  Ehrlichen sperrt (`fristsperre`) oder wenn mindestens zwei Messende
+  denselben in derselben Epoche bezeugen; ein einzelnes Zeugnis steht im
+  Bericht. Im kurzen Konsenslauf kamen zwei einzelne vom zustandslosen
+  Miner, der bei Gabeln kurz eine andere Sicht auf die Pods hatte; ohne
+  Mehrheit sperrt die Kette niemanden.
+- 📌 Der Podlauf schickt den Probeverkehr alle fünf Sekunden statt jede
+  (`netzlauf_prozesse.Knoten.testverkehr`): Mit 29 Knoten war der Empfang
+  von PoI-Bündeln und Challenges je ein Viertel des Protokolls, und der
+  Podlauf wertet ihn nicht aus. Die kleinen Netzläufe bleiben bei einer
+  Sekunde.
+
+### v0.68.1 (2026-11-05): Der Neustart in der langen Trennung trifft einen vollen Miner
+
+- `--lange-trennung` startet einen vollen, ehrlichen Miner in Asien neu,
+  nicht den zustandslosen (der hat keine Rückwege) und keinen Rollenträger.
+
+### v0.68.0 (2026-11-05): Prüfrollen gegen den Konsens, Verstummen, Gabeln in der Auswertung
+
+- `podlauf.py --zurueckhalten <ms>`, `--doppelerzeuger`, `--uhr-versatz
+  <ms>` (Knoten mit dem Merkmal `konsensrollen`): je ein Miner mit der
+  Rolle. Mit dem Doppelerzeuger sind Doppelbelege verlangt, und nur gegen
+  ihn; mit einer Uhr über dem Spielraum der Annahmeregel Blöcke aus der
+  Zukunft. Bericht je Rolle.
+- `podlauf.py --lange-trennung <s>`: Nordamerika und Asien so lange
+  getrennt (beide Seiten mit der Hälfte der Slots, keine rechtfertigt), mit
+  einem Neustart in Asien mitten darin; die unterlegene Seite muss tiefer
+  zurück als die 600 Blöcke ihrer Rückwege.
+- `podlauf.py --verstummen`: gut vier Zehntel der Miner (keiner der
+  Validatoren von aussen) werden beendet; verlangt ist, dass die Finalität
+  von selbst zurückkehrt, danach holen die Stillen auf.
+- 📌 Die Auswertung der Zeugen beim zustandslosen Miner zählt Blöcke, die
+  nicht anschliessen, nicht mehr als Zeugen, die nicht trugen: Seit Zweige
+  entstehen, kommen solche von jedem Zweig (140 im kurzen Lauf, alle
+  „schließt nicht an“).
+
+### v0.67.1 (2026-11-04): Die Teilnehmer für die Latenz-Atteste
+
+- Jeder Knoten eines Netzlaufs bekommt die Namen aller Knoten als
+  `--teilnehmer` (`netzlauf_prozesse.Knoten.teilnehmer`, im Podlauf dazu
+  die zwei späteren Einsteiger). Ohne sie verwirft ein Knoten jedes
+  Latenz-Attest des Probeverkehrs mit Absicht und schreibt das ins
+  Protokoll; im langen Lauf war das ein Viertel davon, und die Prüfung der
+  Unterschrift (A10) lief nie.
+- `podlauf.py --phasen-ab <höhe>`: Last, Trennung und Einsteiger erst ab
+  dieser Höhe, damit ein kurzer Lauf sie trifft, wenn alle Miner erzeugen
+  (Laststufen mit vielen Erzeugern brachten im langen Lauf Gabelungen).
+
+### v0.67.0 (2026-11-04): Der Blocktakt ist die Slotlänge, für jeden Knoten
+
+- ⚑ **`--blocktakt` geht an jeden Knoten** (`netzlauf_prozesse.py`), nicht
+  nur an den Erzeuger: Seit dem Erzeugerplan ist er die Länge eines Slots,
+  und ein Knoten mit einer anderen hielte fremde Blöcke für künftig.
+- ⚑ **`podlauf.py`**: Vorgabe 500 ms wie das Probenetz; die Fristen rechnen
+  mit dem doppelten Slot je Block, denn der Slot eines zustandslosen oder
+  fehlenden Mitglieds bleibt leer.
+- ⚑ **Einig am gerechtfertigten Prüfpunkt**: Die Miner bauen weiter, wenn
+  der Erzeuger aus der Genesis steht, und die Höhe kommt nie zur Ruhe.
+  `podlauf.py` vergleicht am Ende den Block am höchsten gerechtfertigten
+  Prüfpunkt, den alle Miner kennen (aus `gerechtfertigt` und
+  `gerechtfertigt_block` der Aufnahme); er bindet über die Zustandswurzel
+  den ganzen Zustand bis dorthin. Zustandslose müssen der Spitze folgen.
+- **`probenetz.py`** ohne eigenen Takt: Ein Miner von aussen rechnet mit
+  der Slotlänge des Netzes.
+- `stack.rs` mit dem neuen Feld `slot` im Blockkopf.
+
+### v0.66.9 (2026-11-04): `podlauf.py` zählt die Saat und kennt den falschen Austeiler
+
+- ⚑ **Die Saat wird während des Laufs gesammelt**, je Knoten und Epoche
+  `β` und je Epoche der Saatschlüssel: Die Protokolle drehen sich, und am
+  Ende fehlten die frühen Epochen. Verlangt ist `β` je Epoche einig auf
+  allen Knoten; der Bericht nennt den Satz je Epoche (Sitze, Schwelle,
+  ausgeteilt, qualifiziert) und Epochen mit Schlüssel, aber ohne `β`.
+- ⚑ **`--falscher-austeiler`**: `m02` teilt bei der Saat einem fremden Sitz
+  einen falschen Wert aus (`MYL_SAAT_FALSCH=1`, Knoten mit dem Merkmal
+  `falscher_austeiler`); in ungeraden Epochen legt er auf die Beschwerde
+  hin nicht offen. Verlangt sind beide Wege: eine ungerade Epoche, in der
+  er herausfiel, eine gerade, in der er offenlegte und blieb.
+- ⚑ **Der zustandslose Einsteiger meldet seine Wechselbelege** (wie viele,
+  bis zu welcher Epoche, Ablehnungen mit Grund), und mit
+  `--einsteiger-ab <Höhe>` startet er im kurzen Lauf erst dort, damit sein
+  Anker in einer Epoche liegt, die der Satz aus dem Zustand trägt. Dann ist
+  ein leichter Abzug ohne Wechselbelege ein Befund.
+- ⚑ **Die Trennung zählt die Stimmenden, nicht vier Validatoren**: Seit der
+  Satz aus dem Zustand die Finalität trägt, stimmt, wer in der letzten
+  Epoche gestimmt hat. Verlangt sind Prüfpunkte, wenn mindestens drei
+  Viertel beim Erzeuger liegen, und keine, wenn es höchstens die Hälfte
+  ist. Der Bericht nennt, wie viele Knoten gestimmt und wie viele Stimmen
+  nachgetragen haben.
+
+### v0.66.8 (2026-11-03): Verloren je Nummer, Abschlüsse im erhaltenen Protokoll
+
+- 📌 **Der Lastgeber zählt Verlorenes je Nummer, nicht je Sendung.** Im
+  Nachtlauf `nacht-ablage` meldete die Stufe 1600/s 310 „verlorene“
+  Transaktionen, und der Nachlauf lief bis zur Frist. Über der Aufnahme der
+  Kette (rund 830 je Sekunde) setzt ein Absender seine Nummer auf den Zustand
+  zurück und schickt Nummern, die schon im Mempool liegen, ein zweites Mal;
+  jede zählte als gesendet, verbraucht wird jede Nummer nur einmal. Jetzt
+  fehlt, was ein Absender bis zu seiner höchsten angenommenen Nummer nicht
+  verbraucht hat. In den Block kommen ohnehin nur verbrauchte Transaktionen.
+  📌 Im Beleglauf `kurz-last` (Stufe 1600/s, mangels Guthaben gedeckelt)
+  blieben trotzdem 412 Nummern offen: Absender standen an einer Nummer, die
+  sie nicht mehr bezahlen konnten. Die zählen jetzt für sich
+  (`ohne_guthaben`), und damit ist jeder übrige Verlust ein Befund, auch in
+  einer gedeckelten Stufe.
+- 📌 **Der Abschluss der Prüfaufträge wird nur verlangt, wo das Protokoll
+  des Erzeugers ihn noch halten kann.** Neun Abschlüsse aus Epoche 40
+  fehlten, weil sein ältestes erhaltenes Protokoll erst danach begann; die
+  Miner hielten ihre Nachrechnung noch. Gegen die Daten des Laufs
+  nachgespielt: 130 Nachrechnungen, keine ohne Abschluss.
+- ⚑ **Ein verfallener Streitfall ist ein Befund.** Bisher stand er nur in der
+  Zeile der Schiedsrunde, und acht davon blieben ohne Befund.
+
+### v0.66.7 (2026-11-02): Die Tür-Phase wartet auf die letzte Frage-Epoche
+
+- 📌 `kurz-schied` (Takt 120, mit Fälscher) brach ab: „kein Miner bekam eine
+  Auszahlung“. Der Fälscher sass in den ersten Frage-Epochen; die letzte ohne
+  ihn wird erst am Wechsel danach gezählt und ausgezahlt, und die Prüfung sah
+  nur einmal nach 5 s nach. Jetzt sieht sie wiederholt nach, bis zum Wechsel
+  nach der letzten Frage-Epoche (höchstens zwei Epochen und eine Minute).
 
 ### v0.66.6 (2026-10-31): Der Lügner schaltet seine Selbstprobe ab
 

@@ -104,7 +104,15 @@ pub struct BlockHeader {
     pub epoch: u64,
     /// Vorheriger Block-Hash.
     pub prev_block_hash: Hash,
-    /// Zeitstempel (Unix-Millisekunden).
+    /// Zeitstempel (Unix-Millisekunden), **unverbindlich**.
+    ///
+    /// ⛔️ **Nie im Rechenpfad** (2026-11-03): Der Erzeuger setzt ihn frei,
+    /// und niemand prüft ihn. Eine Untergrenze (nie früher als der
+    /// Vorgänger) schützte nichts, denn jeder spätere Wert bliebe frei, und
+    /// eine Obergrenze hinge an der Uhr des Prüfenden, wäre also nicht
+    /// deterministisch. Zeit im Protokoll ist die Höhe; wer eine Frist
+    /// braucht, rechnet in Blöcken oder Epochen. Er bleibt für Menschen und
+    /// Werkzeuge, die einen Block lesen.
     pub timestamp_ms: u64,
     /// Commitment über den Ledger-Zustand **nach** Anwendung dieses
     /// Blocks (`myl_ledger::LedgerState::commitment()`).
@@ -133,6 +141,14 @@ pub struct BlockHeader {
     /// Feld, das erst gelesen werden musste, um zu wissen, ob es überhaupt
     /// ein Zertifikat war. Ein typisiertes Feld kennt diesen Fall nicht.
     pub pruefpunkt: Option<crate::pruefpunkt::Pruefpunktzertifikat>,
+    /// ⚑ **Der Slot des Blocks** (2026-11-04, Erzeugerplan): Wer
+    /// unterschreibt, muss für ihn gezogen sein
+    /// ([`crate::erzeugerplan::ziehen`]), und er liegt nach dem Slot des
+    /// Vorgängers. Ein Zeitabschnitt fester Länge je Netz ab der Unix-Zeit;
+    /// die Kette rechnet nie mit der Uhr, nur der Knoten prüft beim
+    /// Annehmen, dass der Slot begonnen hat. Angehängt, die
+    /// Feldreihenfolge ist Konsensvertrag.
+    pub slot: u64,
 }
 
 /// Trennzeichen für die Transaktionsunterschrift.
@@ -504,6 +520,66 @@ pub enum Anweisung {
         /// Anweisungen; die Kodierung ist dieselbe).
         beweis: Box<myl_types::Differenzbeweis>,
     },
+    /// ⚑ **Eine Prüfpunktstimme als Transaktion** (2026-11-03, 7.8): Ein
+    /// Mitglied des Stimmsatzes bezeugt den Prüfpunkt an `hoehe` mit dem
+    /// Hash, den die Kette dort hat; die Unterschrift der Transaktion ist
+    /// seine. Für Stimmen, die nicht im Zertifikat stehen: zu spät, vom
+    /// Erzeuger weggelassen, oder es kam keines zustande. Zählt für Teilnahme
+    /// und Topf, je Prüfpunkt einmal, in der laufenden und der vorigen
+    /// Epoche. Angehängt.
+    PruefpunktBezeugen {
+        /// Die Höhe des Prüfpunkts.
+        hoehe: u64,
+        /// Der Hash des Blocks an dieser Höhe.
+        block_hash: Hash,
+    },
+    /// ⚑ **Den Verschluesselungsschluessel eintragen** (2026-11-03): An ihn
+    /// gehen die Werte der verteilten Schluesselerzeugung fuer die Saat
+    /// (`myl_ledger::saat`). Er gilt fuer Runden, die danach angelegt werden;
+    /// eine laufende behaelt den festgehaltenen. Angehaengt.
+    SaatschluesselEintragen {
+        /// Der oeffentliche Schluessel (ristretto255).
+        schluessel: myl_types::anteilchiffre::Verschluesselungsschluessel,
+    },
+    /// ⚑ **Austeilen fuer die Saat der Epoche `epoche`** (2026-11-03), im
+    /// ersten Drittel der Epoche davor: Bindung, Kenntnisnachweis und je
+    /// Sitz eine Chiffre. Angehaengt.
+    SaatAusteilen {
+        /// Die Zielepoche.
+        epoche: u64,
+        /// Die Austeilung (in einer `Box`: Sie ist gross).
+        austeilung: Box<myl_ledger::saat::Austeilung>,
+    },
+    /// ⚑ **Beschwerde gegen eine Austeilung** (2026-11-03): Der Absender
+    /// findet fuer seinen Sitz `nummer` bei `austeiler` keinen passenden
+    /// Wert. Im zweiten Drittel. Angehaengt.
+    SaatBeschweren {
+        /// Die Zielepoche.
+        epoche: u64,
+        /// Gegen wen.
+        austeiler: myl_types::MinerId,
+        /// Der eigene Sitz.
+        nummer: u64,
+    },
+    /// ⚑ **Offenlegen auf eine Beschwerde** (2026-11-03): Der Austeiler legt
+    /// den Wert fuer Sitz `nummer` offen; nur ein passender kommt hinein.
+    /// Angehaengt.
+    SaatOffenlegen {
+        /// Die Zielepoche.
+        epoche: u64,
+        /// Der Sitz.
+        nummer: u64,
+        /// Der Wert, 32 Bytes, hoechstwertiges zuerst.
+        wert: [u8; 32],
+    },
+    /// ⚑ **Signaturanteile fuer `β` der Epoche `epoche`** (2026-11-03), je
+    /// Sitz des Absenders einer. Angehaengt.
+    SaatAnteile {
+        /// Die Epoche der Saat.
+        epoche: u64,
+        /// Sitznummer und Anteil.
+        teile: Vec<(u64, BlsSignature)>,
+    },
 }
 
 /// Die Bytes, über die der Absender unterschreibt.
@@ -626,8 +702,19 @@ impl Transaktion {
     /// ⚑ **Die Einheiten der Gebühr** (2026-10-28, Festlegung des
     /// Projektinhabers): Bytes plus [`PRUEFEINHEIT`] je Unterschrift, wie
     /// Gas bei Ethereum. Eine Transaktion trägt genau eine.
+    ///
+    /// ⚑ **Dazu je Prüfung, die die Anweisung selbst verlangt** (2026-11-03):
+    /// eine Austeilung je Bindungspunkt und den Kenntnisnachweis,
+    /// Signaturanteile je Anteil, eine Offenlegung einmal. Sonst wäre eine
+    /// Paarungsprüfung im Block zum Preis von Bytes zu haben.
     pub fn gebuehreneinheiten(&self) -> u64 {
-        self.gebuehrenbytes().saturating_add(PRUEFEINHEIT)
+        let pruefungen: u64 = match &self.anweisung {
+            Anweisung::SaatAusteilen { austeilung, .. } => austeilung.bindung.punkte.len() as u64 + 1,
+            Anweisung::SaatAnteile { teile, .. } => teile.len() as u64,
+            Anweisung::SaatOffenlegen { .. } => 1,
+            _ => 0,
+        };
+        self.gebuehrenbytes().saturating_add(PRUEFEINHEIT.saturating_mul(pruefungen.saturating_add(1)))
     }
 
     /// Prüft die Unterschrift gegen diese Kette.
@@ -946,6 +1033,7 @@ mod tests {
             timestamp_ms: 1_700_000_000_000,
             state_root: test_hash(99),
             pruefpunkt: None,
+            slot: 0,
         }
     }
 

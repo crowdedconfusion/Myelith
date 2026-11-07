@@ -401,6 +401,13 @@ CONSENSUS_PATH = [
     # gehen in den Zustand ein: Lose aus Hashes, Codierung ueber GF(2^8).
     ROOT / "SHARED_TYPES" / "myl-types" / "src" / "archivwahl.rs",
     ROOT / "SHARED_TYPES" / "myl-types" / "src" / "archivteile.rs",
+    # 2026-11-03: die Saat aus dem Stimmsatz. Skalarkoerper modulo r,
+    # Sitze aus Einsatz, Schwellen-BLS mit Feldman-Bindungen, die
+    # verschluesselten Anteile; alles ganzzahlig.
+    ROOT / "SHARED_TYPES" / "myl-types" / "src" / "skalar.rs",
+    ROOT / "SHARED_TYPES" / "myl-types" / "src" / "sitze.rs",
+    ROOT / "SHARED_TYPES" / "myl-types" / "src" / "schwelle.rs",
+    ROOT / "SHARED_TYPES" / "myl-types" / "src" / "anteilchiffre.rs",
     # 2026-08-31: Das Gegenstandsformat zog aus `myl-store` hierher,
     # damit der Ledger es lesen kann, ohne an der Store-Rolle zu haengen.
     # Es rechnet in Bytes, Teilzahlen und Bruechen aus kleinen ganzen
@@ -458,6 +465,11 @@ CONSENSUS_PATH = [
     # die Sammlungen hinter der Zustandswurzel.
     ROOT / "CONSENSUS" / "myl-ledger" / "src" / "pruefung.rs",
     ROOT / "CONSENSUS" / "myl-ledger" / "src" / "sammlung.rs",
+    # 2026-11-02: der Stimmsatz aus dem Zustand (7.8).
+    ROOT / "CONSENSUS" / "myl-ledger" / "src" / "stimmsatz.rs",
+    # 2026-11-03: die Saatrunden (Anlegen, Austeilen, Beschweren,
+    # Offenlegen, Abschliessen, Anteile).
+    ROOT / "CONSENSUS" / "myl-ledger" / "src" / "saat.rs",
     ROOT / "CONSENSUS" / "myl-scheduler" / "src" / "vrf_seed.rs",
     ROOT / "CONSENSUS" / "myl-scheduler" / "src" / "miner_filter.rs",
     ROOT / "CONSENSUS" / "myl-scheduler" / "src" / "shard_assignment.rs",
@@ -574,6 +586,13 @@ CONSENSUS_PATH = [
     ROOT / "NODE" / "myl-node" / "src" / "konfig.rs",
     ROOT / "NODE" / "myl-node" / "src" / "protokoll.rs",
     ROOT / "NODE" / "myl-node" / "src" / "validator.rs",
+    # 2026-11-04: Wann der Knoten fuer die Saat sendet, und wie ein
+    # Neuling dem Stimmsatz ueber Wechselbelege folgt.
+    ROOT / "NODE" / "myl-node" / "src" / "saatdienst.rs",
+    ROOT / "NODE" / "myl-node" / "src" / "wechsel.rs",
+    # 2026-11-04: Was ein Knoten unterschreiben darf (Stimmen und Slots).
+    ROOT / "NODE" / "myl-node" / "src" / "stimmbuch.rs",
+    ROOT / "NODE" / "myl-node" / "src" / "konsensrollen.rs",
     # GOVERNANCE, aufgenommen 2026-08-24 mit der ersten Zeile Code.
     # Die Registry hält die Parameter, die in Ledger-Zustandsübergänge
     # eingehen; ein Gleitkommawert hier wäre derselbe Konsensbruch wie

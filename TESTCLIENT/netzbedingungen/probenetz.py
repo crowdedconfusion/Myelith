@@ -44,7 +44,8 @@ PORT = 4100
 # Client fragt dort, ob ein Wallet schon Spuren auf der Kette hat.
 BEOBACHTUNG = 4180
 MITLAEUFER = 3
-BLOCKTAKT_MS = 100
+# Kein eigener Blocktakt: Seit dem Erzeugerplan ist er die Laenge eines
+# Slots, und ein Miner, der von aussen dazukommt, rechnet mit der des Netzes.
 
 
 def testkonto(name: str) -> str:
@@ -166,8 +167,7 @@ def innen(args: argparse.Namespace) -> int:
             time.sleep(0.2)
         raise SystemExit(f"{name} nannte keine Peer-Id")
 
-    erzeuger = ["--port", str(PORT), "--erzeuger", "--blocktakt", str(BLOCKTAKT_MS),
-                "--beobachtung", f"0.0.0.0:{BEOBACHTUNG}"]
+    erzeuger = ["--port", str(PORT), "--erzeuger", "--beobachtung", f"0.0.0.0:{BEOBACHTUNG}"]
     prozesse["k0"] = start("k0", erzeuger)
     innen_einstieg = f"/ip4/127.0.0.1/tcp/{PORT}/p2p/{peer_id('k0')}"
     mitlaeufer = {}

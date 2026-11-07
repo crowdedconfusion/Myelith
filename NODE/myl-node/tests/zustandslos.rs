@@ -82,6 +82,14 @@ fn konfig(verzeichnis: &std::path::Path, name: &str, bootstrap: Vec<String>) -> 
     }
 }
 
+/// ⚑ Derselbe Takt für jeden Knoten eines Tests (2026-11-04): Er ist die
+/// Länge eines Slots, und mit einer anderen hielte ein Folger die Blöcke des
+/// Erzeugers für künftig.
+fn mit_takt(mut k: KnotenKonfig, ms: u64) -> KnotenKonfig {
+    k.blocktakt_ms = Some(ms);
+    k
+}
+
 #[tokio::test]
 async fn ein_zustandsloser_knoten_folgt_mit_zeugen() {
     let verz = arbeitsverzeichnis("zustandslos");
@@ -92,10 +100,10 @@ async fn ein_zustandsloser_knoten_folgt_mit_zeugen() {
     k.testverkehr_sekunden = Some(1);
     let mut alpha = Knoten::starten(k, false).await.expect("Alpha startet");
     let adresse = alpha.warte_auf_adresse(Duration::from_secs(10)).await.expect("Adresse");
-    let mut b = konfig(&verz, "beta", vec![adresse.to_string()]);
+    let mut b = mit_takt(konfig(&verz, "beta", vec![adresse.to_string()]), 100);
     b.zustandslos = true;
     let mut beta = Knoten::starten(b, false).await.expect("Beta startet");
-    let mut gamma = Knoten::starten(konfig(&verz, "gamma", vec![adresse.to_string()]), false).await.expect("Gamma startet");
+    let mut gamma = Knoten::starten(mit_takt(konfig(&verz, "gamma", vec![adresse.to_string()]), 100), false).await.expect("Gamma startet");
     assert!(beta.kette().ist_zustandslos());
     assert!(beta.warte_auf_peers(1, Duration::from_secs(20)).await >= 1, "Beta hat Alpha nicht erreicht");
     gamma.warte_auf_peers(1, Duration::from_secs(20)).await;
@@ -149,7 +157,7 @@ async fn ein_zustandsloser_knoten_holt_mit_zeugen_auf() {
     let mut alpha = Knoten::starten(k, false).await.expect("Alpha startet");
     let adresse = alpha.warte_auf_adresse(Duration::from_secs(10)).await.expect("Adresse");
     // Der Erzeuger baut erst, wenn jemand zuhört: ein voller Knoten.
-    let mut gamma = Knoten::starten(konfig(&verz, "gamma", vec![adresse.to_string()]), false).await.expect("Gamma startet");
+    let mut gamma = Knoten::starten(mit_takt(konfig(&verz, "gamma", vec![adresse.to_string()]), 100), false).await.expect("Gamma startet");
     gamma.warte_auf_peers(1, Duration::from_secs(20)).await;
     let bis = tokio::time::Instant::now() + Duration::from_secs(30);
     while alpha.kette().hoehe() < 25 {
@@ -157,7 +165,7 @@ async fn ein_zustandsloser_knoten_holt_mit_zeugen_auf() {
         gamma.laufe_fuer(Duration::from_millis(50)).await;
         assert!(tokio::time::Instant::now() < bis, "Alpha baute nicht: {}", alpha.kette().hoehe());
     }
-    let mut b = konfig(&verz, "beta", vec![adresse.to_string()]);
+    let mut b = mit_takt(konfig(&verz, "beta", vec![adresse.to_string()]), 100);
     b.zustandslos = true;
     let mut beta = Knoten::starten(b, false).await.expect("Beta startet");
     assert!(beta.warte_auf_peers(1, Duration::from_secs(20)).await >= 1, "Beta hat Alpha nicht erreicht");
@@ -210,6 +218,7 @@ async fn ein_gefaelschter_block_loest_beim_zustandslosen_nichts_aus() {
         timestamp_ms: 1,
         state_root: myl_types::Hash::sha256(b"zustand"),
         pruefpunkt: None,
+        slot: 0,
     });
     let fremd = myl_types::bls::BlsSecretKey::key_gen(&[9u8; 32]).unwrap();
     block.unterschreiben(&fremd).unwrap();
@@ -244,7 +253,7 @@ async fn ein_zustandsloser_knoten_steigt_ueber_einen_leichten_abzug_ein() {
     k.kettendatei = Some(verz.join("alpha.kette"));
     let mut alpha = Knoten::starten(k, false).await.expect("Alpha startet");
     let adresse = alpha.warte_auf_adresse(Duration::from_secs(10)).await.expect("Adresse");
-    let mut gamma = Knoten::starten(konfig(&verz, "gamma", vec![adresse.to_string()]), false).await.expect("Gamma startet");
+    let mut gamma = Knoten::starten(mit_takt(konfig(&verz, "gamma", vec![adresse.to_string()]), 50), false).await.expect("Gamma startet");
     gamma.warte_auf_peers(1, Duration::from_secs(20)).await;
     let bis = tokio::time::Instant::now() + Duration::from_secs(60);
     while alpha.kette().hoehe() < 170 {
@@ -253,7 +262,7 @@ async fn ein_zustandsloser_knoten_steigt_ueber_einen_leichten_abzug_ein() {
         assert!(tokio::time::Instant::now() < bis, "Alpha baute nicht: {}", alpha.kette().hoehe());
     }
     let block150 = alpha.kette_mut().bloecke_von_bis(150, 150).pop().expect("Block 150");
-    let mut b = konfig(&verz, "beta", vec![adresse.to_string()]);
+    let mut b = mit_takt(konfig(&verz, "beta", vec![adresse.to_string()]), 50);
     b.zustandslos = true;
     b.kettendatei = Some(verz.join("beta.kette"));
     b.abzug = Some(myl_node::abzug::Anker { hoehe: 150, blockhash: block150.hash() });
@@ -329,9 +338,9 @@ async fn ein_zustandsloser_knoten_heilt_sich_ueber_einen_juengeren_anker() {
     k.kettendatei = Some(verz.join("alpha.kette"));
     let mut alpha = Knoten::starten(k, false).await.expect("Alpha startet");
     let adresse = alpha.warte_auf_adresse(Duration::from_secs(10)).await.expect("Adresse");
-    let g = konfig(&verz, "gamma", vec![adresse.to_string()]);
+    let g = mit_takt(konfig(&verz, "gamma", vec![adresse.to_string()]), 40);
     let mut gamma = Knoten::starten(g, false).await.expect("Gamma startet");
-    let mut b = konfig(&verz, "beta", vec![adresse.to_string()]);
+    let mut b = mit_takt(konfig(&verz, "beta", vec![adresse.to_string()]), 40);
     b.zustandslos = true;
     let mut beta = Knoten::starten(b, false).await.expect("Beta startet");
     beta.stillstand_hoechstens_setzen(Duration::from_secs(3));
@@ -398,8 +407,8 @@ async fn ein_erzeuger_mit_dem_baum_auf_der_platte() {
     k.baum_auf_platte = true;
     let mut alpha = Knoten::starten(k, false).await.expect("Alpha startet");
     let adresse = alpha.warte_auf_adresse(Duration::from_secs(10)).await.expect("Adresse");
-    let mut gamma = Knoten::starten(konfig(&verz, "gamma", vec![adresse.to_string()]), false).await.expect("Gamma startet");
-    let mut b = konfig(&verz, "beta", vec![adresse.to_string()]);
+    let mut gamma = Knoten::starten(mit_takt(konfig(&verz, "gamma", vec![adresse.to_string()]), 40), false).await.expect("Gamma startet");
+    let mut b = mit_takt(konfig(&verz, "beta", vec![adresse.to_string()]), 40);
     b.zustandslos = true;
     let mut beta = Knoten::starten(b, false).await.expect("Beta startet");
     gamma.warte_auf_peers(1, Duration::from_secs(20)).await;
@@ -442,7 +451,7 @@ async fn ein_voller_knoten_haelt_zeugen_bereit() {
     // als Miner einträgt.
     alpha.kette_mut().aufnehmen(myl_node::kette::probeanmeldung(1));
     let adresse = alpha.warte_auf_adresse(Duration::from_secs(10)).await.expect("Adresse");
-    let mut gamma = Knoten::starten(konfig(&verz, "gamma", vec![adresse.to_string()]), false).await.expect("Gamma startet");
+    let mut gamma = Knoten::starten(mit_takt(konfig(&verz, "gamma", vec![adresse.to_string()]), 40), false).await.expect("Gamma startet");
     let schluesselpfad = verz.join("gamma-zeugen.key");
     let ikm = myl_types::Hash::sha256(b"myelith-probekonto-1");
     let hex: String = ikm.as_bytes().iter().map(|b| format!("{b:02x}")).collect();
@@ -451,7 +460,7 @@ async fn ein_voller_knoten_haelt_zeugen_bereit() {
     assert_eq!(schluessel.oeffentlich(), myl_node::kette::probeschluessel(1).public_key().unwrap());
     gamma.kette_mut().zeugen_bereithalten_setzen(schluessel);
     let gamma_adresse = gamma.warte_auf_adresse(Duration::from_secs(10)).await.expect("Adresse");
-    let mut b = konfig(&verz, "beta", vec![adresse.to_string(), gamma_adresse.to_string()]);
+    let mut b = mit_takt(konfig(&verz, "beta", vec![adresse.to_string(), gamma_adresse.to_string()]), 40);
     b.zustandslos = true;
     let mut beta = Knoten::starten(b, false).await.expect("Beta startet");
     gamma.warte_auf_peers(1, Duration::from_secs(20)).await;
@@ -502,11 +511,11 @@ async fn ein_unbekannter_unterzeichner_liefert_keine_zeugen() {
     k.blocktakt_ms = Some(40);
     let mut alpha = Knoten::starten(k, false).await.expect("Alpha startet");
     let adresse = alpha.warte_auf_adresse(Duration::from_secs(10)).await.expect("Adresse");
-    let mut g = konfig(&verz, "gamma", vec![adresse.to_string()]);
+    let mut g = mit_takt(konfig(&verz, "gamma", vec![adresse.to_string()]), 40);
     g.zeugen_bereithalten = true;
     let mut gamma = Knoten::starten(g, false).await.expect("Gamma startet");
     let gamma_adresse = gamma.warte_auf_adresse(Duration::from_secs(10)).await.expect("Adresse");
-    let mut b = konfig(&verz, "beta", vec![adresse.to_string(), gamma_adresse.to_string()]);
+    let mut b = mit_takt(konfig(&verz, "beta", vec![adresse.to_string(), gamma_adresse.to_string()]), 40);
     b.zustandslos = true;
     let mut beta = Knoten::starten(b, false).await.expect("Beta startet");
     gamma.warte_auf_peers(1, Duration::from_secs(20)).await;
@@ -554,7 +563,7 @@ async fn ein_zurueckgefallener_holt_mit_zeugen_auf_waehrend_die_kette_laeuft() {
     k.blocktakt_ms = Some(40);
     let mut alpha = Knoten::starten(k, false).await.expect("Alpha startet");
     let adresse = alpha.warte_auf_adresse(Duration::from_secs(10)).await.expect("Adresse");
-    let mut b = konfig(&verz, "beta", vec![adresse.to_string()]);
+    let mut b = mit_takt(konfig(&verz, "beta", vec![adresse.to_string()]), 40);
     b.zustandslos = true;
     let mut beta = Knoten::starten(b, false).await.expect("Beta startet");
     beta.warte_auf_peers(1, Duration::from_secs(20)).await;

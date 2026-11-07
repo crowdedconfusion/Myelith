@@ -43,9 +43,9 @@ Test-MYL, kauft Credits, eroeffnet eine Sitzung mit Vollmacht fuer einen
 Agenten, und der fragt ueber die Tuer. Verlangt: Antworten, ein
 eingereichtes Buendel, verbreitete Abrechnungen und eine echte Auszahlung
 an Miner (ein Betrag, der kein Vielfaches der Probepraegung ist). Dazu
-`--pod-node <myl-pod-node> --myl <myl>` und ein langsamerer Takt, etwa
-`--blocktakt 60` (eine Epoche 108 s): Ueber Knoten mit Latenz kostet ein
-Token Sekunden, und eine Antwort muss in eine Epoche passen.
+`--pod-node <myl-pod-node> --myl <myl>` und ein Slot von mindestens 60 ms
+(eine Epoche 108 s): Ueber Knoten mit Latenz kostet ein Token Sekunden, und
+eine Antwort muss in eine Epoche passen.
 
 Mit `--real` naeher an echten Bedingungen (2026-10-27): Knoten in drei
 Zonen (Europa, Nordamerika, Asien) mit Rundlauf je Paar, Zugangsleitung,
@@ -88,6 +88,20 @@ Mit `--faelscher` (2026-10-28, braucht `--zwillinge` und einen Shard mit
 dem Merkmal `faelscher`) rechnet ein Miner falsch, aber in sich stimmig:
 Jede Epoche, in der er auf Position stand und sein Pod Arbeit hatte, muss
 als uneinig zaehlen, und kein einiges Paar darf dabei sein.
+
+Mit `--kollusion` (2026-11-06, braucht `--zwillinge`, nicht mit
+`--faelscher`) faelschen alle Miner ohne Sonderrolle gleich, aber nur an der
+ersten Position ihres Pods: Stehen an beiden Zwillingen eines Paares solche
+Faelscher vorn, rechnen beide gleich falsch, das Paar ist einig, und nur das
+Nachrechnen ab den Tokens findet es (A12). Verlangt sind Abweichungen nur
+gegen sie und mindestens eine in einer Epoche ohne uneinige Gruppe.
+
+Mit `--falscher-austeiler` (2026-11-04, braucht einen Knoten mit dem
+Merkmal `falscher_austeiler`) teilt ein Miner bei der Saat einem fremden
+Sitz einen falschen Wert aus; in ungeraden Epochen legt er auf die
+Beschwerde hin nicht offen. Verlangt sind beide Wege: eine ungerade Epoche,
+in der er herausfiel, eine gerade, in der er offenlegte und blieb, und `β`
+in jeder Epoche einig.
 
 Mit `--paare` (2026-10-28, braucht `--zwillinge`) fuenfzehn Miner mehr, also
 vier Pods und zwei Zwillingspaare: Der Ortsdienst lost jede Sitzung einem
@@ -233,10 +247,27 @@ EINSATZ = 500_000
 # 660), und die Kette sperrt ihn.
 VERWEIGERER = "m04"
 # Der Faelscher (`--faelscher`, 2026-10-28): ein Miner, dessen Shard auf
-# einer um eins verschobenen Eingabe rechnet (`MYL_SHARD_FAELSCHEN=1`, Shard
+# einer verschobenen Eingabe rechnet (`MYL_SHARD_FAELSCHEN=1`, Shard
 # mit dem Merkmal `faelscher`). Spur und Unterschrift stimmen; nur der
 # Zwilling sieht eine andere Ausgabe.
 FAELSCHER = "m07"
+# ⚑ Die Kollusion (`--kollusion`, 2026-11-06, A12): alle Miner ohne
+#   Sonderrolle, mit `MYL_SHARD_FAELSCHEN=erste` (Shard mit dem Merkmal
+#   `faelscher`). Gut sechs Zehntel aller Miner, damit ein Paar mit zwei
+#   Faelschern vorn in einem kurzen Lauf mehrmals vorkommt.
+KOLLUDIERER = {"m00", "m05"} | {f"m{i}" for i in range(14, 29)}
+# Der falsche Austeiler (`--falscher-austeiler`, 2026-11-04): ein Miner ohne
+# Sonderrolle, dessen Saatdienst falsch austeilt (`MYL_SAAT_FALSCH=1`, Knoten
+# mit dem Merkmal `falscher_austeiler`).
+FALSCHER_AUSTEILER = "m02"
+# ⚑ Die Pruefrollen gegen den Konsens (2026-11-05, CONSENSUS 7.7b bis 7.7d,
+#   Knoten mit dem Merkmal `konsensrollen`): ein Miner, der jeden eigenen
+#   Block zurueckhaelt (`MYL_ZURUECKHALTEN_MS`), einer, der im selben Slot
+#   zweimal baut (`MYL_DOPPELT_ERZEUGEN=1`), einer mit falscher Uhr
+#   (`MYL_UHR_VERSATZ_MS`).
+ZURUECKHALTER = "m11"
+DOPPELERZEUGER = "m12"
+FALSCHE_UHR = "m13"
 # ⚑ Zustandslos (`--zustandslos`, 2026-10-29): ein gewoehnlicher Miner ohne
 #   Sonderrolle haelt keine Konten (er rechnet, reicht ein und wird bezahlt),
 #   und ein spaeter Knoten ohne Miner-Rolle steigt ueber einen leichten Abzug
@@ -251,7 +282,7 @@ BAUM_AUF_PLATTE = {"m00", "m02", "m05", "m09", "m12", "m14", "m16", "m18"}
 # Die Phasen fuer `--nur` (2026-10-28): Ein kurzer Lauf prueft gezielt, was
 # sich geaendert hat; der lange faehrt alle. Die Auswertung am Ende laeuft
 # immer, sie liest nur.
-PHASEN = ("tor", "luegner", "stoerung", "last", "trennung", "einsteiger", "zustandslos", "dauer")
+PHASEN = ("tor", "luegner", "stoerung", "last", "trennung", "verstummen", "einsteiger", "zustandslos", "dauer")
 
 
 def rundlauf(a: str, b: str) -> int:
@@ -315,6 +346,18 @@ class Ortsknoten(Knoten):
               "handle", f"{20 + i}:", *self.regel(zone))
 
 
+def fruehestes(k: Knoten) -> int:
+    """Die Zeit der ersten Zeile im aeltesten erhaltenen Protokoll (ms);
+    davor hat die Rotation alles genommen."""
+    for datei in sorted(k.ordner.glob("*.jsonl")):
+        try:
+            with open(datei, encoding="utf-8", errors="replace") as f:
+                return int(json.loads(f.readline()).get("zeit_ms", 0))
+        except (OSError, ValueError):
+            continue
+    return 0
+
+
 # Je Datei und Art: wie weit gelesen, und was dabei gefunden wurde.
 _GELESEN: dict[tuple[str, str], tuple[int, list[dict]]] = {}
 
@@ -355,6 +398,57 @@ def zeilen(k: Knoten, art: str) -> list[dict]:
     return aus
 
 
+# ⚑ Die Saat, je Knoten und Epoche gesammelt (2026-11-04): Die Protokolle
+#   drehen sich, also wird waehrend des Laufs mitgeschrieben, nicht erst am
+#   Ende gelesen.
+SAAT_BETA: dict[tuple[str, int], str] = {}
+SAAT_SCHLUESSEL: dict[int, dict] = {}
+
+
+def saat_sammeln(alle: list) -> None:
+    for k in alle:
+        for z in zeilen(k, "saat_beta"):
+            SAAT_BETA[(k.name, int(z.get("epoche", -1)))] = str(z.get("saat"))
+        for z in zeilen(k, "saat_schluessel"):
+            SAAT_SCHLUESSEL.setdefault(int(z.get("epoche", -1)), z)
+
+
+def saat_auswerten(falscher: bool, bericht: list[str], befunde: list[str]) -> None:
+    """`β` einig je Epoche, der Satz ueber die Zeit, und mit dem falschen
+    Austeiler beide Wege."""
+    werte: dict[int, set[str]] = {}
+    knoten: dict[int, int] = {}
+    for (_, e), w in SAAT_BETA.items():
+        werte.setdefault(e, set()).add(w)
+        knoten[e] = knoten.get(e, 0) + 1
+    uneinig = sorted(e for e, w in werte.items() if len(w) > 1)
+    if uneinig:
+        befunde.append(f"Saat: β uneinig in Epochen {uneinig}")
+    mit_schluessel = sorted(SAAT_SCHLUESSEL)
+    ohne_beta = [e for e in mit_schluessel if e not in werte and e < max(mit_schluessel, default=0)]
+    if werte:
+        bericht.append(f"Saat: β in {len(werte)} Epochen ({min(werte)} bis {max(werte)}), je ein Wert, "
+                       f"von hoechstens {max(knoten.values())} Knoten; mit Schluessel, aber ohne β: {ohne_beta}")
+    satz = [(e, SAAT_SCHLUESSEL[e]) for e in mit_schluessel]
+    if satz:
+        bericht.append("Saat: Satz je Epoche (Sitze/Schwelle, ausgeteilt/qualifiziert) "
+                       + " ".join(f"{e}:{z.get('sitze')}/{z.get('schwelle')},{z.get('ausgeteilt')}/{z.get('qualifiziert')}"
+                                  for e, z in satz))
+    if not falscher:
+        return
+    neu = [(e, z) for e, z in satz if int(z.get("aus", -1)) == e and int(z.get("beschwerden", 0)) > 0]
+    raus = [e for e, z in neu if e % 2 == 1 and int(z.get("qualifiziert", 0)) < int(z.get("ausgeteilt", 0))]
+    offen = [e for e, z in neu if e % 2 == 0 and int(z.get("offenlegungen", 0)) > 0
+             and int(z.get("qualifiziert", 0)) == int(z.get("ausgeteilt", 0))]
+    falsch = [e for e, _ in neu if e not in raus and e not in offen]
+    bericht.append(f"Saat: falscher Austeiler, Beschwerden in Epochen {[e for e, _ in neu]}, "
+                   f"herausgefallen {raus}, offengelegt und geblieben {offen}")
+    if not raus or not offen:
+        befunde.append(f"--falscher-austeiler: nicht beide Wege gesehen (herausgefallen {raus}, offengelegt {offen})")
+    if falsch:
+        befunde.append(f"--falscher-austeiler: Ausgang passt nicht zur Epoche in {falsch}")
+
+
 def shard_pids(k: Knoten) -> list[int]:
     """Die Prozesse von `myl-shard` im Namensraum eines Knotens."""
     pids = []
@@ -372,7 +466,12 @@ def shard_pids(k: Knoten) -> list[int]:
 
 
 def lauf(args: argparse.Namespace, ordner: pathlib.Path) -> None:
-    takt = args.blocktakt
+    # ⚑ Seit dem Erzeugerplan ist `--blocktakt` die Laenge eines Slots, und
+    #   jeder Knoten bekommt sie. Je Slot baut der gezogene Erzeuger; der Slot
+    #   eines zustandslosen oder fehlenden Mitglieds bleibt leer. Die Fristen
+    #   rechnen deshalb mit dem doppelten Slot je Block.
+    slot = args.blocktakt
+    takt = 2 * slot
     liste = MINER + (ZWILLINGSMINER if args.zwillinge else []) + (PAARMINER if args.paare else [])
     gesamt = 1 + len(liste)
 
@@ -399,6 +498,13 @@ def lauf(args: argparse.Namespace, ordner: pathlib.Path) -> None:
         alle = [Knoten(i, ordner, *stoerung(i)) for i in range(gesamt)]
     erzeuger = alle[0]
     miner = alle[1:]
+    # Dazu die zwei, die spaeter einsteigen (der Einsteiger und der
+    # zustandslose); ihre Namen folgen der Nummer.
+    nl.Knoten.teilnehmer = [f"k{i}" for i in range(len(alle) + 2)]
+    # 📌 7.7e (2026-11-05): Mit 29 Knoten und einer Probe je Sekunde war der
+    #    Empfang von PoI-Buendeln und Challenges des Probeverkehrs je ein
+    #    Viertel des Protokolls; der Podlauf wertet ihn nicht aus.
+    nl.Knoten.testverkehr = 5
     rolle = {k.name: m for k, m in zip(miner, liste)}
     # ⚑ **Befunde sammeln statt abbrechen** (mit `--real`): Ein Lauf ueber
     #   Nacht soll alles zeigen, was er findet, nicht nur das erste.
@@ -423,6 +529,18 @@ def lauf(args: argparse.Namespace, ordner: pathlib.Path) -> None:
     faelscher = next((k for k in miner if args.faelscher and rolle[k.name][0] == FAELSCHER), None)
     if faelscher is not None:
         faelscher.umgebung["MYL_SHARD_FAELSCHEN"] = "1"
+    kolludierer = [k for k in miner if args.kollusion and rolle[k.name][0] in KOLLUDIERER]
+    for k in kolludierer:
+        k.umgebung["MYL_SHARD_FAELSCHEN"] = "erste"
+    for k in miner:
+        if args.falscher_austeiler and rolle[k.name][0] == FALSCHER_AUSTEILER:
+            k.umgebung["MYL_SAAT_FALSCH"] = "1"
+        if args.zurueckhalten and rolle[k.name][0] == ZURUECKHALTER:
+            k.umgebung["MYL_ZURUECKHALTEN_MS"] = str(args.zurueckhalten)
+        if args.doppelerzeuger and rolle[k.name][0] == DOPPELERZEUGER:
+            k.umgebung["MYL_DOPPELT_ERZEUGEN"] = "1"
+        if args.uhr_versatz and rolle[k.name][0] == FALSCHE_UHR:
+            k.umgebung["MYL_UHR_VERSATZ_MS"] = str(args.uhr_versatz)
     # Die Epoche der gezielten Frage mit dem Faelscher auf Position.
     faelscher_frage: dict[str, int] = {}
     # Die Epochen der Fragen ueber die Tuer.
@@ -508,7 +626,7 @@ def lauf(args: argparse.Namespace, ordner: pathlib.Path) -> None:
             f"{z}: " + " ".join(("k0" if k is erzeuger else rolle[k.name][0]) + f"({k.zugang_ms}ms,{k.mbit}M,{k.verlust}%)"
                                 for k in alle if k.zone == z) for z in ZONEN))
     namen = ", ".join(f"{k.name}={rolle[k.name][0]}" for k in miner)
-    melde(f"Erzeuger k0 und {len(miner)} Miner ({namen}), Takt {takt} ms")
+    melde(f"Erzeuger k0 und {len(miner)} Miner ({namen}), Slot {slot} ms")
 
     ortsdienst = None
     zusatz_erzeuger: list[str] = []
@@ -558,14 +676,14 @@ def lauf(args: argparse.Namespace, ordner: pathlib.Path) -> None:
         melde(f"Torknoten k0 mit Tuer {TUER} und Ortsdienst; Zahler {zahler_adresse[:16]}... ist Konto von m00")
     if args.baum_auf_platte:
         zusatz_erzeuger += ["--baum-auf-platte"]
-    erzeuger.starten(args.programm, None, True, takt, zusatz_erzeuger)
+    erzeuger.starten(args.programm, None, True, slot, zusatz_erzeuger)
     pid = erzeuger.warte_auf_peer_id(30)
     einstieg = f"/ip4/{erzeuger.ip}/tcp/{nl.PORT}/p2p/{pid}"
     for k in miner:
-        k.starten(args.programm, einstieg, False, takt, angaben(k))
+        k.starten(args.programm, einstieg, False, slot, angaben(k))
     for k in miner:
         k.warte_auf_peer_id(30)
-    erlaubt = max(40, 3000 // takt)
+    erlaubt = max(40, 3000 // slot)
 
     def holt_auf(k: Knoten) -> bool:
         h, e = k.hoehe(), erzeuger.hoehe()
@@ -879,18 +997,32 @@ def lauf(args: argparse.Namespace, ordner: pathlib.Path) -> None:
         if "eingereicht" not in (buendel() or ""):
             raise Befund(f"das Buendel kam nicht durch: {buendel()}")
         in_epoche(e_frage + 1 if epoche() <= e_frage else epoche())
+        def echte_auszahlungen() -> dict[str, int]:
+            aus: dict[str, int] = {}
+            for k in miner:
+                name = rolle[k.name][0]
+                # 📌 Das Konto von m00 ist der Zahler: Seit den Gebuehren ist
+                #    sein Guthaben ohnehin kein Vielfaches der Probepraegung
+                #    mehr, es zaehlte immer. Die anderen Miner tragen die
+                #    Pruefung.
+                if name == "m00":
+                    continue
+                stand_k = konto_abfragen(erzeuger, testkonto(name))
+                if stand_k and int(stand_k["guthaben"]) % PROBEPRAEGUNG != 0:
+                    aus[name] = int(stand_k["guthaben"])
+            return aus
+        # 📌 Bis zum Wechsel nach der letzten Frage-Epoche nachsehen, nicht
+        #    einmal nach 5 s (`kurz-schied`, 2026-10-31): Sass der Faelscher
+        #    in den ersten Frage-Epochen, zaehlt erst die letzte ohne ihn, und
+        #    ihre Auszahlung kommt am Wechsel danach; bei Takt 120 war das
+        #    nach dem einen Blick.
+        letzte_frage = max(frage_epochen, default=e_frage)
+        bis = time.monotonic() + 2 * EPOCHE * takt / 1000 + 60
         time.sleep(5)
-        echt = {}
-        for k in miner:
-            name = rolle[k.name][0]
-            # 📌 Das Konto von m00 ist der Zahler: Seit den Gebuehren ist sein
-            #    Guthaben ohnehin kein Vielfaches der Probepraegung mehr, es
-            #    zaehlte immer. Die anderen Miner tragen die Pruefung.
-            if name == "m00":
-                continue
-            stand_k = konto_abfragen(erzeuger, testkonto(name))
-            if stand_k and int(stand_k["guthaben"]) % PROBEPRAEGUNG != 0:
-                echt[name] = int(stand_k["guthaben"])
+        echt = echte_auszahlungen()
+        while not echt and epoche() <= letzte_frage + 1 and time.monotonic() < bis:
+            time.sleep(5)
+            echt = echte_auszahlungen()
         abrechnungen = sum(int(z.get("anzahl", 0)) for z in zeilen(erzeuger, "abrechnungen_verbreitet"))
         melde(f"Auszahlung fuer bezeugte Arbeit an {sorted(echt)}; Abrechnungen verbreitet: {abrechnungen}")
         # ⚑ Keine Auszahlung ist richtig, wenn keine Gruppe einig war und
@@ -925,8 +1057,12 @@ def lauf(args: argparse.Namespace, ordner: pathlib.Path) -> None:
         # 📌 Die tatsaechliche Epoche, nicht die Zaehlvariable: Lief schon eine
         #    spaetere (der Torteil braucht drei), kehrte `in_epoche` sofort zurueck,
         #    und die Meldung nannte Epoche 1, wo es Epoche 4 war (2026-10-27).
+        # 📌 Ab dem Beginn der Phase gezaehlt, nicht bis zur festen Epoche
+        #    (`nacht-konsens`, 2026-11-05): Suchten Faelscher und Paare zuvor
+        #    acht Epochen, begann die Phase erst in Epoche 16 und sah nur sie.
         e = 1
-        while e <= LUEGNER_BIS:
+        bis = max(LUEGNER_BIS, epoche() + LUEGNER_BIS // 2)
+        while e <= bis:
             in_epoche(e)
             e = epoche()
             if luegner.name in pods_melden(e):
@@ -934,7 +1070,7 @@ def lauf(args: argparse.Namespace, ordner: pathlib.Path) -> None:
                 break
             e += 1
         if luegner_epoche is None:
-            raise Befund(f"der Luegner bekam bis Epoche {LUEGNER_BIS} keine Position")
+            raise Befund(f"der Luegner bekam bis Epoche {bis} keine Position")
 
         # ---- 3. Rechnen ueber das Netz, 4. Meldung und Sperre -----------------
         # Die Sperre gilt fuer die Epoche nach der Meldung; verlangt ist die erste
@@ -1024,18 +1160,28 @@ def lauf(args: argparse.Namespace, ordner: pathlib.Path) -> None:
     def bestaetigt() -> int:
         return int(erzeuger.metriken().get("myelith_pruefpunkt_bestaetigt", -1))
 
-    def trennung(zonen: list[str], sekunden: int) -> None:
+    def trennung(zonen: list[str], sekunden: int, neustart: Knoten | None = None) -> None:
         """Trennt `zonen` vom Rest, heilt, und misst Aufholen und Pruefpunkte.
 
-        ⚑ Ein Pruefpunkt braucht drei von vier Stimmen. Liegt der Erzeuger
-        mit drei Validatoren auf einer Seite, muessen waehrend der Trennung
-        Pruefpunkte entstehen; mit zweien duerfen keine entstehen.
+        ⚑ Ein Pruefpunkt braucht mehr als zwei Drittel der Stimmen. Liegt
+        der Erzeuger mit mindestens drei Vierteln der Stimmenden auf einer
+        Seite, muessen waehrend der Trennung Pruefpunkte entstehen; mit
+        hoechstens der Haelfte duerfen keine entstehen.
+
+        ⚑ Seit der Satz aus dem Zustand die Finalitaet traegt (2026-11-04),
+        stimmt, wer in der letzten Epoche gestimmt hat (gleicher Einsatz je
+        Miner); davor der Erzeuger und die Validatoren von aussen.
         """
         trennungen.add(epoche())
         seite = [k for k in alle if k.zone in zonen]
         drueben = [k for k in alle if k.zone not in zonen]
         mit_erzeuger = seite if erzeuger in seite else drueben
-        stimmen = sum(1 for k in mit_erzeuger if k is erzeuger or rolle.get(k.name, ("",))[0] in VALIDATOREN)
+        jetzt = erzeuger.hoehe()
+        stimmende = [k for k in alle if any(int(z.get("hoehe", 0)) + EPOCHE >= jetzt for z in zeilen(k, "pruefpunkt_gestimmt")[-3:])]
+        if not stimmende:
+            stimmende = [k for k in alle if k is erzeuger or rolle.get(k.name, ("",))[0] in VALIDATOREN]
+        gesamt = len(stimmende)
+        stimmen = sum(1 for k in stimmende if k in mit_erzeuger)
         b0 = bestaetigt()
         for k in seite:
             for z in ZONEN:
@@ -1044,22 +1190,43 @@ def lauf(args: argparse.Namespace, ordner: pathlib.Path) -> None:
         for k in drueben:
             for z in zonen:
                 k.zone_trennen(z, True)
-        time.sleep(sekunden)
+        if neustart is None:
+            time.sleep(sekunden)
+        else:
+            # Ein Neustart mitten in der Trennung: Danach hat der Knoten
+            # keine Rueckwege mehr (CONSENSUS 7.7a).
+            time.sleep(sekunden // 2)
+            neustart.neu_starten()
+            melde(f"{neustart.name} mitten in der Trennung neu gestartet")
+            time.sleep(sekunden - sekunden // 2)
         trennungen.add(epoche())
         b1 = bestaetigt()
         for k in alle:
             for z in list(k.getrennt):
                 k.zone_trennen(z, False)
-        aufholen = warte(lambda: all(holt_auf(k) for k in miner), 600, f"alle holen nach der Trennung von {zonen} auf", alle)
+        # 📌 `kurz-einstieg` (2026-11-05): Nach 900 s Trennung holte der
+        #    zustandslose Miner mit Zeugen langsamer nach, als die Kette wuchs,
+        #    und der Abbruch kostete die Phasen danach. Die vollen muessen
+        #    aufholen; der zustandslose bekommt die Frist noch einmal, und mit
+        #    `--real` ist sein Ausbleiben ein Befund, kein Abbruch.
+        voll = [k for k in miner if rolle[k.name][0] != ZUSTANDSLOSER_MINER]
+        aufholen = warte(lambda: all(holt_auf(k) for k in voll), 600, f"alle vollen holen nach der Trennung von {zonen} auf", alle)
+        ohne_zustand = [k for k in miner if rolle[k.name][0] == ZUSTANDSLOSER_MINER]
+        try:
+            warte(lambda: all(holt_auf(k) for k in ohne_zustand), 600, f"der zustandslose holt nach der Trennung von {zonen} auf", alle)
+        except Befund as b:
+            if not args.real:
+                raise
+            befunde.append(str(b)[:300])
         weiter = warte(lambda: bestaetigt() > max(b1, b0), 600, "der naechste Pruefpunkt nach der Trennung", alle)
-        zeile = (f"Trennung {'+'.join(zonen)} fuer {sekunden} s ({stimmen} von 4 Stimmen beim Erzeuger): "
+        zeile = (f"Trennung {'+'.join(zonen)} fuer {sekunden} s ({stimmen} von {gesamt} Stimmen beim Erzeuger): "
                  f"bestaetigt {b0} -> {b1} waehrend, aufgeholt in {aufholen:.0f} s, naechster Pruefpunkt nach {weiter:.0f} s")
         melde(zeile)
         bericht.append(zeile)
-        if stimmen >= 3 and b1 <= b0:
-            befunde.append(f"waehrend der Trennung von {zonen} kein Pruefpunkt, obwohl {stimmen} Stimmen beim Erzeuger")
+        if 4 * stimmen >= 3 * gesamt and b1 <= b0:
+            befunde.append(f"waehrend der Trennung von {zonen} kein Pruefpunkt, obwohl {stimmen} von {gesamt} Stimmen beim Erzeuger")
         # Ein Pruefpunkt, der schon fast stand, darf noch durchgehen.
-        if stimmen < 3 and b1 > b0 + 150:
+        if 2 * stimmen <= gesamt and b1 > b0 + 150:
             befunde.append(f"Pruefpunkt ohne Mehrheit waehrend der Trennung von {zonen}: {b0} -> {b1}")
 
     def einsteiger() -> None:
@@ -1072,7 +1239,7 @@ def lauf(args: argparse.Namespace, ordner: pathlib.Path) -> None:
             j.ziel_eintragen(k)
             k.ziel_eintragen(j)
         rolle[k.name] = EINSTEIGER
-        k.starten(args.programm, einstieg, False, takt, angaben(k))
+        k.starten(args.programm, einstieg, False, slot, angaben(k))
         k.warte_auf_peer_id(30)
         alle.append(k)
         miner.append(k)
@@ -1089,7 +1256,12 @@ def lauf(args: argparse.Namespace, ordner: pathlib.Path) -> None:
                 raise
             befunde.append(f"Einsteiger {name}: {str(b)[:300]}, Probehahn leer {len(zeilen(k, 'probehahn_leer'))} mal")
             return
-        zeile = (f"Einsteiger {name} (Asien) bei Hoehe {h0}: an der Spitze nach {oben:.0f} s, angemeldet und "
+        # ⚑ Z7 (2026-11-05): Auch der volle Einsteiger sucht seinen Anker ueber
+        #   ein Zertifikat und die Wechselbelege, statt ab Genesis zu rechnen.
+        anker = zeilen(k, "voller_anker")
+        weg = (f"Anker ueber ein Zertifikat bei {anker[0].get('hoehe')}, Wechselbelege {len(zeilen(k, 'wechselbelege_aufgenommen'))}"
+               if anker else "kein Anker, ab Genesis")
+        zeile = (f"Einsteiger {name} (Asien) bei Hoehe {h0}: {weg}; an der Spitze nach {oben:.0f} s, angemeldet und "
                  f"zugesagt nach weiteren {dabei:.0f} s, Probehahn {len(zeilen(k, 'probehahn'))} mal")
         melde(zeile)
         bericht.append(zeile)
@@ -1109,7 +1281,7 @@ def lauf(args: argparse.Namespace, ordner: pathlib.Path) -> None:
                 j.ziel_eintragen(k)
                 k.ziel_eintragen(j)
         extra = ["--zustandslos"] + (["--stimmsatz", str(ordner / "stimmsatz.txt")] if args.real else [])
-        k.starten(args.programm, einstieg, False, takt, extra)
+        k.starten(args.programm, einstieg, False, slot, extra)
         k.warte_auf_peer_id(30)
         alle.append(k)
         zustandslose.append(k)
@@ -1122,12 +1294,26 @@ def lauf(args: argparse.Namespace, ordner: pathlib.Path) -> None:
             befunde.append(f"zustandsloser Einsteiger {k.name}: {str(b)[:300]}")
             return
         leicht = zeilen(k, "abzug_uebernommen")
+        # ⚑ Wechselbelege (2026-11-04): Liegt der Anker in einer Epoche, die
+        #   der Satz aus dem Zustand traegt, folgt der Einsteiger ihm von
+        #   Genesis an ueber die Belege seiner Gegenstellen.
+        belege = zeilen(k, "wechselbelege_aufgenommen")
+        # Ein Anker mit unbekannter Epoche, waehrend schon einer auf Belege
+        # wartet, wird nur zurueckgestellt; abgelehnt ist er nicht.
+        abgelehnt = zeilen(k, "wechselbelege_abgelehnt") + [
+            z for z in zeilen(k, "leichter_anker_abgelehnt") if not str(z.get("grund", "")).startswith("Unbekannt")]
         zeile = (f"Zustandsloser Einsteiger {k.name} bei Hoehe {h0}: an der Spitze nach {oben:.0f} s, "
-                 + (f"leichter Abzug bei {leicht[0].get('hoehe')} ({leicht[0].get('bytes')} Bytes)" if leicht else "ab Genesis"))
+                 + (f"leichter Abzug bei {leicht[0].get('hoehe')} ({leicht[0].get('bytes')} Bytes)" if leicht else "ab Genesis")
+                 + f"; Wechselbelege {sum(int(z.get('neu', 0)) for z in belege)} in {len(belege)} Lieferungen"
+                 + (f" bis Epoche {belege[-1].get('bis')}" if belege else "")
+                 + (f", abgelehnt {len(abgelehnt)}: {abgelehnt[0].get('grund')}" if abgelehnt else ""))
         melde(zeile)
         bericht.append(zeile)
         if args.real and not leicht:
             befunde.append(f"zustandsloser Einsteiger {k.name}: kein leichter Abzug, obwohl ein Stimmsatz gilt")
+        if args.einsteiger_ab and leicht and not belege:
+            befunde.append(f"zustandsloser Einsteiger {k.name}: Anker in Epoche {int(leicht[0].get('hoehe', 0)) // EPOCHE} "
+                           "ohne Wechselbelege")
 
     def last() -> None:
         """Burns in Stufen ueber die Relaisleitung des Torknotens: Wie viel
@@ -1157,7 +1343,10 @@ def lauf(args: argparse.Namespace, ordner: pathlib.Path) -> None:
                 #   scheitern Transaktionen erst beim Anwenden.
                 if z.startswith("[last] stufe="):
                     felder = dict(f.split("=", 1) for f in z.split()[1:] if "=" in f)
-                    if int(felder.get("verloren", 0)) and not gedeckelt:
+                    # Seit TESTCLIENT 0.66.8 zaehlt der Lastgeber Absender ohne
+                    # Guthaben fuer sich (`ohne_guthaben`); dann ist jeder
+                    # Verlust ein Befund, auch in einer gedeckelten Stufe.
+                    if int(felder.get("verloren", 0)) and ("ohne_guthaben" in felder or not gedeckelt):
                         befunde.append(f"angenommen, aber nicht in einem Block: {z}")
                     gedeckelt = False
         if r.returncode != 0:
@@ -1167,6 +1356,69 @@ def lauf(args: argparse.Namespace, ordner: pathlib.Path) -> None:
         melde(zeile)
         bericht.append(zeile)
 
+    def verstummen() -> None:
+        """⚑ **Mehr als ein Drittel verstummt** (2026-11-05, vor CONSENSUS
+        7.9): Gut vier Zehntel der Miner (keiner der Validatoren von aussen)
+        werden beendet. Die Finalitaet ruht; die Stillen sammeln Punkte und
+        ruhen, der Satz aus dem Zustand schrumpft auf die Stimmenden, und die
+        Finalitaet muss von selbst zurueckkehren, ohne dass jemand Einsatz
+        verliert. Danach kommen die Stillen wieder und holen auf.
+
+        Frist: Auf der Probekette ruht ein Mitglied nach zwei verfehlten
+        Epochen; geurteilt wird eine Epoche spaeter, und der Satz gilt zwei
+        Epochen voraus. Also rund sechs Epochen, dazu zwei Reserve.
+        """
+        kandidaten = [k for k in miner if rolle[k.name][0] not in VALIDATOREN and k not in zustandslose]
+        still = kandidaten[::2][: (len(miner) * 42 + 99) // 100]
+        lebend = [k for k in miner if k not in still and k not in zustandslose]
+        zeuge = lebend[0]
+        def endgueltig() -> int:
+            return int(zeuge.metriken().get("myelith_pruefpunkt_bestaetigt", -1))
+        e0, b0 = epoche(), endgueltig()
+        for k in still:
+            k.beenden(hart=True)
+        melde(f"Verstummt in Epoche {e0}: {', '.join(k.name for k in still)} ({len(still)} von {len(miner)}); endgueltig bis {b0}")
+        # Erst ruht die Finalitaet (zwei Pruefpunkte ohne Fortschritt) ...
+        warte(lambda: zeuge.hoehe() >= b0 + 3 * 150, 600, "drei Pruefpunkte nach dem Verstummen", lebend)
+        b1 = endgueltig()
+        if b1 > b0 + 150:
+            befunde.append(f"nach dem Verstummen von {len(still)} von {len(miner)} weiter endgueltig ({b0} -> {b1}): weniger als ein Drittel?")
+        # ... dann kehrt sie zurueck.
+        frist = 8 * EPOCHE * slot * 2 / 1000 + 600
+        dauer = warte(lambda: endgueltig() > b1 + 150, frist, "die Finalitaet kehrt zurueck", lebend)
+        e1 = epoche()
+        zeile = (f"Verstummen: {len(still)} von {len(miner)} Minern still ab Epoche {e0}, Finalitaet ruhte bei {b1}, "
+                 f"zurueck nach {dauer:.0f} s in Epoche {e1} ({e1 - e0} Epochen)")
+        melde(zeile)
+        bericht.append(zeile)
+        for k in still:
+            k.starten(*k.angaben)
+            k.warte_auf_peer_id(30)
+        voll = [k for k in still if rolle[k.name][0] != ZUSTANDSLOSER_MINER]
+        warte(lambda: all(holt_auf(k) for k in voll), 900, "die Stillen holen auf", alle)
+        # ⚠️ Der zustandslose Stille braucht nach einer Ruhe mit Ausschluss
+        #   einen Anker von aussen (2026-11-07); bis dahin ein Befund, kein
+        #   Abbruch, damit der Rest des Laufs ausgewertet wird.
+        ohne = [k for k in still if k not in voll]
+        if ohne:
+            try:
+                warte(lambda: all(holt_auf(k) for k in ohne), 300, "der zustandslose Stille holt auf", alle)
+            except Befund as b:
+                befunde.append(f"{b} (erwartet ohne Anker von aussen: kein Wechselbeleg traegt ueber die Ruhe)")
+        # ⚑ 7.9 (2026-11-05): Wer ruht, meldet sich selbst neu an; die Kette
+        #   laesst ihn nach der Wartezeit wieder in den Satz.
+        def neu_angemeldet() -> int:
+            return sum(1 for k in still if len(zeilen(k, "miner_anmeldung")) >= 2)
+        try:
+            warte(lambda: neu_angemeldet() == len(still), 600, "die Stillen melden sich neu an", alle)
+        except Befund:
+            pass
+        zeile = f"Nach dem Verstummen neu angemeldet: {neu_angemeldet()} von {len(still)}"
+        melde(zeile)
+        bericht.append(zeile)
+        if neu_angemeldet() < len(still):
+            befunde.append(zeile)
+
     def platz() -> tuple[int, int]:
         """Kettendatei des Erzeugers und Protokolle eines Miners, in Bytes."""
         kette = sum(f.stat().st_size for f in erzeuger.ordner.glob("kette.dat*") if f.is_file())
@@ -1175,16 +1427,32 @@ def lauf(args: argparse.Namespace, ordner: pathlib.Path) -> None:
 
     platz_anfang = (epoche(), *platz())
     if args.real:
+        # Die Phasen erst, wenn alle Miner erzeugen (der Satz aus dem Zustand
+        # gilt ab Epoche 3); mit `--kurz` kaemen Last und Trennung sonst,
+        # solange nur die vier von aussen bauen.
+        if args.phasen_ab:
+            ab = args.phasen_ab
+            warte(lambda: erzeuger.hoehe() >= ab, 3600 + ab // 2, f"Hoehe {ab} fuer die Phasen", alle)
         if args.tor and args.lastgeber and phase("last"):
             last()
         if phase("trennung"):
             trennung(["Asia"], 60)
             trennung(["NorthAmerica", "Asia"], 60)
+        if args.lange_trennung and phase("trennung"):
+            # ⚑ Tiefer als die Rueckwege (600 Bloecke, 7.7a): Beide Seiten
+            #   haben die Haelfte der Slots, keine rechtfertigt, und die
+            #   unterlegene muss mehr als 600 Bloecke zurueck.
+            # Ein voller Miner: Der zustandslose hat keine Rueckwege.
+            asien = next((k for k in miner if k.zone == "Asia" and k not in zustandslose
+                          and rolle[k.name][0] not in (ZUSTANDSLOSER_MINER, ZURUECKHALTER, DOPPELERZEUGER, FALSCHE_UHR)), None)
+            trennung(["NorthAmerica", "Asia"], args.lange_trennung, neustart=asien)
         if args.kurz and phase("einsteiger"):
             einsteiger()
         if args.kurz and args.zustandslos and phase("zustandslos"):
-            # Der leichte Abzug braucht einen Pruefpunkt mit Zertifikat.
-            warte(lambda: erzeuger.hoehe() >= 400, 3600, "zwei Pruefpunkte fuer den leichten Abzug", alle)
+            # Der leichte Abzug braucht einen Pruefpunkt mit Zertifikat; mit
+            # `--einsteiger-ab` erst ab dieser Hoehe (Wechselbelege, 2026-11-04).
+            ab = max(400, args.einsteiger_ab or 0)
+            warte(lambda: erzeuger.hoehe() >= ab, 3600 + ab // 5, f"Hoehe {ab} fuer den leichten Abzug", alle)
             zustandsloser_einsteiger()
 
     # ---- Dauer: Epoche um Epoche, mit Stoerungen ---------------------------
@@ -1262,6 +1530,7 @@ def lauf(args: argparse.Namespace, ordner: pathlib.Path) -> None:
             speicher = " ".join(f"{k.name}={max(0, k.speicher()[0]) // 1024}M" for k in miner)
             speicher_ablegen(e)
             messungen = sum(len(zeilen(k, "fristmessung")) for k in ehrlich)
+            saat_sammeln(alle)
             melde(f"Epoche {e}: {len(stand())} Shards, {messungen} Zeitproben bisher; {speicher}"
                   + (f"; Stoerer {stoerer.zaehler()}" if stoerer else ""))
             # Die Abstuerze am Anfang der Epoche, die Frage danach: Ein Absturz
@@ -1306,6 +1575,12 @@ def lauf(args: argparse.Namespace, ordner: pathlib.Path) -> None:
             befunde.append(f"meist rechnete nur ein Paar: {zeile}")
     if stoerer:
         stoerer.beenden()
+    # ⚑ **Das Verstummen zuletzt** (2026-11-07): Waehrend der Ruhe schliesst
+    #   die Kette die Stillen aus, und ueber diese Luecke traegt kein
+    #   Wechselbeleg; ein Knoten ohne Zustand steigt danach nur ueber einen
+    #   Anker von aussen ein. Die Einsteiger im Dauerteil laufen davor.
+    if args.real and args.verstummen and phase("verstummen"):
+        verstummen()
 
     # ---- Die Messplanung der Zeitprobe ---------------------------------------
     def zeitproben_diagnose() -> None:
@@ -1336,8 +1611,9 @@ def lauf(args: argparse.Namespace, ordner: pathlib.Path) -> None:
             bericht.append(f"Gegen den Verweigerer: {len(gegen)} Messungen, "
                            f"{sum(1 for z in gegen if urteil(z) == 'Zeugnis')} Zeugnisse, "
                            f"Epochen mit Zeugnis {sorted({int(z.get('epoche', -1)) for z in gegen if urteil(z) == 'Zeugnis'})}")
-        gegen_ehrliche = [z for _, z in fertig if z.get("mitglied") not in (kennung, verweigerer_kennung)
-                          and urteil(z) == "Zeugnis"]
+        gegen_ehrliche_mit = [(k, z) for k, z in fertig if z.get("mitglied") not in (kennung, verweigerer_kennung)
+                              and urteil(z) == "Zeugnis"]
+        gegen_ehrliche = [z for _, z in gegen_ehrliche_mit]
         bericht.append(f"Zeugnisse gegen Ehrliche: {len(gegen_ehrliche)}, davon nach Verweigerung "
                        f"{sum(1 for z in gegen_ehrliche if z.get('ende') == 'verweigert')}")
         # 📌 Fund 674: Ein Waehlfehler zaehlte wie eine Weigerung, und mit 29
@@ -1345,9 +1621,23 @@ def lauf(args: argparse.Namespace, ordner: pathlib.Path) -> None:
         #    Befund. Jetzt ist es einer, und die nicht erreichten stehen dabei.
         unerreicht = sum(len(zeilen(k, "zeitprobe_unerreicht")) for k in ehrlich)
         bericht.append(f"Zeitproben nicht erreicht (Waehlfehler, nicht gezaehlt): {unerreicht}")
-        if gegen_ehrliche:
-            befunde.append(f"Zeugnisse gegen Ehrliche: {len(gegen_ehrliche)} "
-                           f"({sorted({str(z.get('mitglied'))[:12] for z in gegen_ehrliche})})")
+        # 📌 `kurz-konsens` (2026-11-05): Ein einzelnes Zeugnis sperrt niemanden
+        #    (die Kette braucht eine Mehrheit des Pods, und sie nimmt es nur
+        #    von einem Mitglied nach ihrem eigenen Zustand). Dort kamen zwei
+        #    vom zustandslosen Miner, der bei Gabeln kurz eine andere Sicht auf
+        #    die Pods hatte. Ein Befund ist darum: eine verbuchte Sperre gegen
+        #    einen Ehrlichen, oder Zeugnisse von mindestens zwei Messenden
+        #    gegen denselben in derselben Epoche; ein einzelnes steht im Bericht.
+        je_ziel: dict[tuple, set] = collections.defaultdict(set)
+        for k, z in gegen_ehrliche_mit:
+            je_ziel[(z.get("mitglied"), z.get("epoche"))].add(k.name)
+        mehrfach = sorted(f"{str(m)[:12]}@e{e}" for (m, e), wer in je_ziel.items() if len(wer) >= 2)
+        gesperrt = sorted(k.name for k in ehrlich if zeilen(k, "fristsperre"))
+        if mehrfach or gesperrt:
+            befunde.append(f"Zeugnisse gegen Ehrliche: {len(gegen_ehrliche)}, von mehreren {mehrfach}, gesperrt {gesperrt}")
+        elif gegen_ehrliche:
+            bericht.append(f"einzelne Zeugnisse gegen Ehrliche (ohne Folge): "
+                           f"{sorted({(str(z.get('mitglied'))[:12], k.name) for k, z in gegen_ehrliche_mit})}")
         positionen = sorted({int(z.get("epoche", -1)) for z in zeilen(luegner, "shard_gestartet")})
         if kennung is None:
             bericht.append(f"Gegen den Luegner: keine beendete Messung (Positionen in Epochen {positionen})")
@@ -1396,12 +1686,15 @@ def lauf(args: argparse.Namespace, ordner: pathlib.Path) -> None:
     # ⚑ Der Faelscher (`--faelscher`): je Epoche der Zuwachs der Zaehler.
     #   Gezaehlt wird am Wechsel, also traegt der Stand am Ende von e+1 das
     #   Ergebnis von e.
-    if faelscher is not None:
+    def zwillinge_je_epoche() -> dict[int, tuple[int, int]]:
         stand: dict[int, tuple[int, int]] = {}
         for z in zeilen(erzeuger, "aufnahme"):
             if "zwillinge_einig" in z:
                 stand[int(z.get("hoehe", 0)) // EPOCHE] = (int(z["zwillinge_einig"]), int(z["zwillinge_uneinig"]))
-        je_epoche = {e: (stand[e + 1][0] - stand[e][0], stand[e + 1][1] - stand[e][1]) for e in stand if e + 1 in stand}
+        return {e: (stand[e + 1][0] - stand[e][0], stand[e + 1][1] - stand[e][1]) for e in stand if e + 1 in stand}
+
+    if faelscher is not None:
+        je_epoche = zwillinge_je_epoche()
         auf_position = sorted({int(z.get("epoche", -1)) for z in zeilen(faelscher, "shard_gestartet")})
         # ⚑ Mit Arbeit heisst: sein Pod hat gerechnet (W7, mehrere Paare).
         mit_arbeit = {e: je_epoche[e] for e in auf_position if e in je_epoche and faelscher_hat_gerechnet(e)}
@@ -1463,8 +1756,15 @@ def lauf(args: argparse.Namespace, ordner: pathlib.Path) -> None:
     #    Auftrags und auf die Entscheidung jedes Streitfalls.
     # Je nachgerechneter Ziehung ein Abschluss (📌 `gezielt18`: Gewartet
     # wurde nur auf den ersten, und der Streitfall der zweiten fiel heraus).
+    # 📌 Nur, was das Protokoll des Erzeugers noch halten kann (Nachtlauf
+    #    `nacht-ablage`, 2026-11-03): Neun Abschluesse aus Epoche 40 fehlten,
+    #    weil sein aeltestes erhaltenes Protokoll erst danach begann; die
+    #    Miner hielten ihre Nachrechnung noch. Der Abschluss folgt der
+    #    Nachrechnung, also zaehlt sie erst ab dem Beginn seines Protokolls.
+    seit = fruehestes(erzeuger)
     nachgerechnete = {(z.get("epoche"), z.get("pod"), z.get("segment"))
-                      for k in miner for z in zeilen(k, "stichprobe_nachgerechnet") if z.get("ergebnis") != "fehler"}
+                      for k in miner for z in zeilen(k, "stichprobe_nachgerechnet")
+                      if z.get("ergebnis") != "fehler" and int(z.get("zeit_ms", 0)) >= seit}
     if nachgerechnete and sum(int(z.get("ziehungen", 0)) for k in miner for z in zeilen(k, "pruefung_aufgedeckt")):
         def alle_abgeschlossen() -> bool:
             fertig = {(z.get("epoche"), z.get("pod"), z.get("segment")) for z in zeilen(erzeuger, "pruefung_abgeschlossen")}
@@ -1489,23 +1789,38 @@ def lauf(args: argparse.Namespace, ordner: pathlib.Path) -> None:
         ortsdienst.terminate()
     erzeuger.beenden()
 
-    def ruhig_und_einig() -> bool:
-        hoehen = [k.hoehe() for k in miner]
-        return len(set(hoehen)) == 1 and hoehen[0] > 0
+    # ⚑ **Einig am gerechtfertigten Pruefpunkt** (seit dem Erzeugerplan,
+    #   NODE 0.107.0): Die Miner bauen weiter, wenn k0 steht, und die Hoehe
+    #   kommt nie zur Ruhe. Verglichen wird der Block am hoechsten
+    #   gerechtfertigten Pruefpunkt, den alle Miner kennen; er bindet ueber
+    #   die Zustandswurzel den ganzen Zustand bis dorthin. Verlangt ist
+    #   mindestens der Pruefpunkt, den der erste Miner beim Anhalten von k0
+    #   kannte.
+    def je_pruefpunkt(k: Knoten) -> dict[int, str]:
+        paare: dict[int, str] = {}
+        for z in zeilen(k, "aufnahme"):
+            if "gerechtfertigt" in z:
+                paare[int(z["gerechtfertigt"])] = str(z.get("gerechtfertigt_block"))
+        return paare
 
-    ende = time.monotonic() + 180
-    while True:
-        warte(ruhig_und_einig, max(1, ende - time.monotonic()), "alle Miner auf einer Hoehe", miner)
-        hoehe = miner[0].hoehe()
-        time.sleep(5)
-        if ruhig_und_einig() and miner[0].hoehe() == hoehe:
-            break
-        if time.monotonic() > ende:
-            raise Befund("die Hoehen kamen nicht zur Ruhe")
-    # Die zustandslosen Einsteiger muessen dieselbe Hoehe erreichen.
+    def gemeinsam() -> tuple[int, dict[str, str]]:
+        alle_paare = [je_pruefpunkt(k) for k in miner]
+        hoehen = set.intersection(*(set(p) for p in alle_paare)) - {0}
+        if not hoehen:
+            return 0, {}
+        h = max(hoehen)
+        return h, {k.name: p[h] for k, p in zip(miner, alle_paare)}
+
+    verlangt = max(je_pruefpunkt(miner[0]) or {0: ""})
+    warte(lambda: gemeinsam()[0] >= verlangt, 180, f"einen gemeinsamen Pruefpunkt ab {verlangt}", miner)
+    pruefpunkt, wurzeln = gemeinsam()
+    if len(set(wurzeln.values())) != 1:
+        raise Befund(f"die Ketten laufen auseinander am Pruefpunkt {pruefpunkt}: {wurzeln}")
+    hoehe = max(k.hoehe() for k in miner)
+    # Die zustandslosen Einsteiger muessen der Spitze folgen.
     for k in zustandslose:
         try:
-            warte(lambda: k.hoehe() == hoehe, 120, f"{k.name} (zustandslos) auf Hoehe {hoehe}", [k])
+            warte(lambda: k.hoehe() >= min(m.hoehe() for m in miner) - erlaubt, 120, f"{k.name} (zustandslos) an der Spitze", [k])
         except Befund as b:
             befunde.append(str(b)[:300])
     # Der Speicher vor dem Beenden (danach gibt es keinen Prozess mehr).
@@ -1517,26 +1832,66 @@ def lauf(args: argparse.Namespace, ordner: pathlib.Path) -> None:
     anon_am_ende = {n: b.get("anon", 0) for n, b in speicherbilder.items()}
     for k in miner + zustandslose:
         k.beenden()
-    wurzeln = {}
-    for k in miner + [z for z in zustandslose if z.hoehe() == hoehe]:
-        a = [z for z in zeilen(k, "aufnahme") if z.get("hoehe") == hoehe]
-        if not a:
-            raise Befund(f"{k.name}: keine Aufnahme bei Hoehe {hoehe}")
-        wurzeln[k.name] = a[-1]["zustandswurzel"]
-    if len(set(wurzeln.values())) != 1:
-        raise Befund(f"die Ketten laufen auseinander: {wurzeln}")
     zaehlung = {art: sum(len(zeilen(k, art)) for k in miner) for art in (
         "shard_gestartet", "shard_beendet", "fristmessung", "fristmeldung",
         "dateien_holen", "stille_nachfrage", "spuranfrage_eingegangen",
     )}
     melde("Zaehlung: " + ", ".join(f"{a}={n}" for a, n in zaehlung.items()))
+    # ⚑ **Der rotierende Erzeuger** (NODE 0.107.0): wer gebaut hat, wie oft
+    #   und wie tief Zweige gewechselt wurden (die Gabelungstiefe), Bloecke
+    #   aus der Zukunft, und ob jemand doppelt unterschrieb.
+    erzeugt = {k.name: len(zeilen(k, "block_erzeugt")) for k in [erzeuger] + miner}
+    wechsel = [z for k in miner for z in zeilen(k, "zweig_gewechselt")]
+    tiefen = collections.Counter(int(z.get("zurueck", 0)) for z in wechsel)
+    aufgegeben = collections.Counter(str(z.get("grund"))[:30] for k in miner for z in zeilen(k, "zweig_aufgegeben"))
+    zukunft = sum(1 for k in miner for z in zeilen(k, "block_abgelehnt") if z.get("ablehnungsart") == "aus-der-zukunft")
+    doppelt = collections.Counter(str(z.get("belegart")) for k in [erzeuger] + miner for z in zeilen(k, "doppelbeleg_erkannt"))
+    bauten = sum(1 for n in erzeugt.values() if n)
+    zeile = (f"Erzeuger: {bauten} von {len(erzeugt)} Knoten bauten, je Knoten hoechstens {max(erzeugt.values(), default=0)}; "
+             f"Zweigwechsel {len(wechsel)}, zurueckgenommen je Wechsel {dict(sorted(tiefen.items()))}; "
+             f"Zweigsuche aufgegeben {dict(aufgegeben)}; aus der Zukunft {zukunft}; Doppelbelege {dict(doppelt)}")
+    melde(zeile)
+    bericht.append(zeile)
+    if bauten < 2:
+        befunde.append(f"der Erzeuger rotiert nicht: {erzeugt}")
+    # ⚑ Die Pruefrollen (7.7b bis 7.7d): Mit dem Doppelerzeuger sind
+    #   Doppelbelege verlangt, und nur gegen ihn; mit einer Uhr ueber dem
+    #   Spielraum der Annahmeregel Bloecke aus der Zukunft.
+    doppler = next((k for k in miner if rolle[k.name][0] == DOPPELERZEUGER), None)
+    if args.doppelerzeuger and doppler is not None:
+        schuldige = {str(z.get("schuldiger")) for k in [erzeuger] + miner for z in zeilen(k, "doppelbeleg_erkannt")}
+        gebaut = len(zeilen(doppler, "doppelt_erzeugt"))
+        zeile = f"Doppelerzeuger {doppler.name}: {gebaut} zweite Bloecke, Belege gegen {sorted(schuldige)}"
+        melde(zeile)
+        bericht.append(zeile)
+        if gebaut and not doppelt:
+            befunde.append(f"Doppelerzeuger {doppler.name} baute {gebaut} zweite Bloecke, kein Beleg")
+        if len(schuldige) > 1:
+            befunde.append(f"Doppelbelege gegen mehr als den Doppelerzeuger: {sorted(schuldige)}")
+    elif doppelt:
+        befunde.append(f"Doppelbelege unter ehrlichen Knoten: {dict(doppelt)}")
+    zurueck = next((k for k in miner if rolle[k.name][0] == ZURUECKHALTER), None)
+    if args.zurueckhalten and zurueck is not None:
+        zeile = (f"Zurueckhalter {zurueck.name}: {len(zeilen(zurueck, 'block_zurueckgehalten'))} zurueckgehalten, "
+                 f"{len(zeilen(zurueck, 'block_freigegeben'))} freigegeben, {len(zeilen(zurueck, 'zweig_gewechselt'))} eigene Zweigwechsel")
+        melde(zeile)
+        bericht.append(zeile)
+    uhr = next((k for k in miner if rolle[k.name][0] == FALSCHE_UHR), None)
+    if args.uhr_versatz and uhr is not None:
+        zeile = f"Falsche Uhr {uhr.name} ({args.uhr_versatz:+d} ms): {erzeugt.get(uhr.name, 0)} Bloecke gebaut, aus der Zukunft bei allen {zukunft}"
+        melde(zeile)
+        bericht.append(zeile)
+        if args.uhr_versatz > 1000 and erzeugt.get(uhr.name, 0) and not zukunft:
+            befunde.append(f"Uhr {args.uhr_versatz:+d} ms ueber dem Spielraum, aber kein Block aus der Zukunft abgelehnt")
     # Die Prüfpunkte: Der Erzeuger stimmt und baut das Zertifikat, die Kette
     # trägt es im nächsten Block (CONSENSUS 7.2).
     zertifikate = zeilen(erzeuger, "pruefpunkt_zertifikat")
     melde(f"Pruefpunkte: {len(zeilen(erzeuger, 'pruefpunkt_gestimmt'))} gestimmt, {len(zertifikate)} Zertifikate, "
           f"zuletzt bis Hoehe {max((int(z.get('hoehe', 0)) for z in zertifikate), default=0)}")
     # Die Stichprobe zieht der Erzeuger; angekommen ist sie bei den Minern.
-    gezogen = zeilen(erzeuger, "stichprobe_gefragt")
+    # ⚑ Seit dem Erzeugerplan fragt, wer nach der Ziehung einen Block baut,
+    #   nicht nur k0; gezaehlt wird bei allen.
+    gezogen = [z for k in [erzeuger] + miner for z in zeilen(k, "stichprobe_gefragt")]
     melde(f"Stichprobe: {len(gezogen)} Ziehungen, {sum(int(z.get('anfragen', 0)) for z in gezogen)} Anfragen, "
           f"{sum(int(z.get('ohne_adresse', 0)) for z in gezogen)} ohne Adresse; "
           f"angekommen {zaehlung['spuranfrage_eingegangen']}; mit Checker "
@@ -1545,7 +1900,7 @@ def lauf(args: argparse.Namespace, ordner: pathlib.Path) -> None:
     #   seiner Ablage mit Spur und Beweis; der Erzeuger prueft gegen die Wurzel
     #   des Buendels aus der Kette.
     mit_spur = sum(1 for k in miner for z in zeilen(k, "spuranfrage_eingegangen") if z.get("antwort") == "spur")
-    geprueft = collections.Counter(str(z.get("ergebnis")) for z in zeilen(erzeuger, "spur_geprueft"))
+    geprueft = collections.Counter(str(z.get("ergebnis")) for k in [erzeuger] + miner for z in zeilen(k, "spur_geprueft"))
     zeile = f"Spuren: {mit_spur} Antworten mit Spur, beim Erzeuger geprueft {dict(geprueft)}"
     melde(zeile)
     bericht.append(zeile)
@@ -1575,6 +1930,7 @@ def lauf(args: argparse.Namespace, ordner: pathlib.Path) -> None:
              f"{len(nachgerechnet)} nachgerechnet {dict(ergebnisse)}, beschuldigt {dict(beschuldigt)}, "
              f"Verlauf abgewiesen {len(abgewiesen)}, Positionen hoechstens "
              f"{max((int(z.get('positionen', 0)) for z in nachgerechnet), default=0)}, "
+             f"mit Pruefung der Wahl {sum(1 for z in nachgerechnet if int(z.get('prompt_laenge', 0)) > 0)}, "
              f"Dauer Median {dauer[len(dauer) // 2] if dauer else 0} ms")
     melde(zeile)
     bericht.append(zeile)
@@ -1586,6 +1942,11 @@ def lauf(args: argparse.Namespace, ordner: pathlib.Path) -> None:
         befunde.append(f"gezogen, aber kein Checker zugeteilt: {zeile}")
     if zugeteilt and not nachgerechnet:
         befunde.append(f"zugeteilt, aber nichts nachgerechnet: {zeile}")
+    # ⚑ Die Pruefung der Wahl (T6, NODE 0.113.1): Jede Kennung traegt die
+    #   Prompt-Laenge; ein Nachrechnen ohne sie hat die Wahl nicht geprueft.
+    ohne_wahl = [z for z in nachgerechnet if int(z.get("prompt_laenge", 0)) == 0 and z.get("ergebnis") != "fehler"]
+    if ohne_wahl:
+        befunde.append(f"nachgerechnet ohne Pruefung der Wahl: {len(ohne_wahl)} von {len(nachgerechnet)}")
     if ergebnisse.get("fehler"):
         gruende = collections.Counter(str(z.get("grund"))[:80] for z in nachgerechnet if z.get("ergebnis") == "fehler")
         befunde.append(f"Nachrechnen scheiterte: {dict(gruende)}")
@@ -1616,18 +1977,46 @@ def lauf(args: argparse.Namespace, ordner: pathlib.Path) -> None:
              f"Einsatz hinterlegt {sum(len(zeilen(k, 'einsatz_hinterlegt')) for k in miner)} von {len(miner)}")
     melde(zeile)
     bericht.append(zeile)
+    falsch_rechnende = {k.name for k in kolludierer} | ({faelscher.name} if faelscher else set())
     for (ausgang, wer), n in gegen.items():
-        if ausgang == "podfalsch" and (faelscher is None or wer != faelscher.name):
+        if ausgang == "podfalsch" and wer not in falsch_rechnende:
             befunde.append(f"die Schiedsrunde schlachtete einen Ehrlichen: {wer} ({n} mal)")
         if ausgang == "anfechtungfalsch":
             befunde.append(f"eine Anfechtung verlor ({n} mal, Beschuldigter {wer}): ehrliche Checker irren nicht")
+        # 📌 Nachtlauf `nacht-ablage` (2026-11-03): Acht Streitfaelle verfielen,
+        #    und kein Befund sagte es; jeder hatte einen Validator als Anfechter.
+        if ausgang == "verfallen":
+            befunde.append(f"ein Streitfall verfiel ({n} mal, Beschuldigter {wer}): zwei Drittel kamen nicht zustande")
     ohne_namen = beschuldigt.get("(ohne Namen)", 0)
     if ohne_namen:
         befunde.append(f"Nachrechnen fand {ohne_namen} Abweichungen ohne Beschuldigten")
     ehrlich_beschuldigt = {n: c for n, c in beschuldigt.items()
-                           if n != "(ohne Namen)" and (faelscher is None or n != faelscher.name)}
+                           if n != "(ohne Namen)" and n not in falsch_rechnende}
     if ehrlich_beschuldigt:
         befunde.append(f"Nachrechnen beschuldigt Ehrliche: {ehrlich_beschuldigt}")
+    # ⚑ Die Kollusion (`--kollusion`, A12): Abweichungen gegen die
+    #   Kolludierer, und davon die in Epochen ohne uneinige Gruppe. Dort war
+    #   jede Gruppe mit Buendeln einig, also auch die des gezogenen Pods: Die
+    #   Zwillinge sahen nichts, gefunden hat nur der Checker.
+    if kolludierer:
+        je_epoche = zwillinge_je_epoche()
+        namen = {k.name for k in kolludierer}
+        gegen_sie = [z for z in nachgerechnet if z.get("ergebnis") == "abweichung"
+                     and name_von.get(str(z.get("beschuldigt"))) in namen]
+        bei_einigen = [z for z in gegen_sie
+                       if je_epoche.get(int(z.get("epoche", -1)), (0, 1))[1] == 0
+                       and je_epoche.get(int(z.get("epoche", -1)), (0, 1))[0] > 0]
+        zeile = (f"Kollusion ({len(kolludierer)} Miner faelschen an der ersten Position): "
+                 f"Abweichungen gegen sie {len(gegen_sie)}, davon in Epochen ohne uneinige Gruppe {len(bei_einigen)} "
+                 f"(Epochen {sorted({int(z.get('epoche', -1)) for z in bei_einigen})}, beschuldigt "
+                 f"{dict(collections.Counter(rolle[name_von[str(z.get('beschuldigt'))]][0] for z in bei_einigen))}); "
+                 f"Gruppen je Epoche (einig, uneinig) {je_epoche}")
+        melde(zeile)
+        bericht.append(zeile)
+        if not gegen_sie:
+            befunde.append(f"die Checker fanden die Kollusion nie: {zeile}")
+        elif not bei_einigen:
+            befunde.append(f"keine Abweichung in einer Epoche, in der jede Gruppe einig war (A12 nicht gezeigt): {zeile}")
     # ⚑ **Zustandslos** (2026-10-29): Folgt der zustandslose Miner mit Zeugen,
     #   reicht er seine Arbeit ein, wird er bezahlt, und was belegt er?
     if args.zustandslos:
@@ -1693,7 +2082,11 @@ def lauf(args: argparse.Namespace, ordner: pathlib.Path) -> None:
             befunde.append(f"--zeugen-bereithalten nicht gestartet bei {', '.join(ohne)}")
         for zl in [k for k in miner if rolle[k.name][0] == ZUSTANDSLOSER_MINER]:
             geliefert = zeilen(zl, "zeugenstuecke_nachgeliefert")
-            gesperrt = [z for z in zeilen(zl, "block_abgelehnt") if z.get("zeuge_vom_erzeuger") is False]
+            # 📌 `kurz-gabel` (2026-11-05): Seit Zweige entstehen, kommen auch
+            #    Bloecke, die nicht anschliessen; sie sagen nichts ueber den
+            #    Zeugen. Gezaehlt wird nur, was anschloss und nicht trug.
+            gesperrt = [z for z in zeilen(zl, "block_abgelehnt")
+                        if z.get("zeuge_vom_erzeuger") is False and not str(z.get("grund", "")).startswith("schließt nicht an")]
             zeile = (f"Zeugen bereit bei {len(bereit) - len(ohne)} vollen Minern; {zl.name} bekam "
                      f"{sum(int(z.get('tragend', 0)) for z in geliefert)} tragende Stuecke direkt, "
                      f"von {len({z.get('von') for z in geliefert if int(z.get('tragend', 0)) > 0})} Gegenstellen; "
@@ -1744,13 +2137,15 @@ def lauf(args: argparse.Namespace, ordner: pathlib.Path) -> None:
         zeile = f"Groessen {miner[0].name} Epoche {a.get('epoche')} -> {b.get('epoche')}: {gewachsen}"
         melde(zeile)
         bericht.append(zeile)
+    saat_sammeln(alle)
+    saat_auswerten(args.falscher_austeiler, bericht, befunde)
     selbst = [z for k in miner for z in zeilen(k, "selbstprobe")]
     if selbst:
         zeile = (f"Selbstproben: {len(selbst)}, mit Warnung {sum(1 for z in selbst if z.get('warnung'))}, "
                  f"Zusage verlangsamt {sum(1 for z in selbst if z.get('ebenenzeit_us_neu'))}")
         melde(zeile)
         bericht.append(zeile)
-    melde(f"Ende: {len(wurzeln)} Miner bei Hoehe {hoehe}, eine Wurzel {next(iter(wurzeln.values()))}")
+    melde(f"Ende: {len(wurzeln)} Miner bis Hoehe {hoehe}, einig am Pruefpunkt {pruefpunkt} mit Block {next(iter(wurzeln.values()))}")
     if args.real:
         # Wer hat gestimmt, und was hat der Lauf belegt.
         stimmen = {"k0": len(zeilen(erzeuger, "pruefpunkt_gestimmt"))}
@@ -1758,6 +2153,14 @@ def lauf(args: argparse.Namespace, ordner: pathlib.Path) -> None:
             if rolle[k.name][0] in VALIDATOREN:
                 stimmen[rolle[k.name][0]] = len(zeilen(k, "pruefpunkt_gestimmt"))
         melde("Stimmen je Validator: " + ", ".join(f"{n}={s}" for n, s in stimmen.items()))
+        # ⚑ Seit der Satz aus dem Zustand die Finalitaet traegt: wie viele
+        #   Knoten ueberhaupt gestimmt haben, und wie viele nachtrugen.
+        gestimmt = {k.name: len(zeilen(k, "pruefpunkt_gestimmt")) for k in alle}
+        nachgetragen = sum(len(zeilen(k, "pruefpunkt_nachgetragen")) for k in alle)
+        zeile = (f"Pruefpunktstimmen: {sum(1 for n in gestimmt.values() if n)} Knoten haben gestimmt "
+                 f"(je Knoten hoechstens {max(gestimmt.values(), default=0)}), nachgetragen {nachgetragen}")
+        melde(zeile)
+        bericht.append(zeile)
         # Der Erzeuger ist beendet; die Epoche folgt aus der Hoehe der Miner.
         e1 = hoehe // EPOCHE
         kette, protokoll = platz()
@@ -1783,7 +2186,7 @@ def main() -> int:
     p.add_argument("--artefakte", type=pathlib.Path, required=True, help="das Probeartefakt")
     p.add_argument("--kurz", action="store_true", help="die Mechanik in rund zehn Minuten")
     p.add_argument("--epochen", type=int, default=100, help="so viele Epochen Dauer mit Stoerungen")
-    p.add_argument("--blocktakt", type=int, default=25)
+    p.add_argument("--blocktakt", type=int, default=500, help="Millisekunden je Slot, fuer jeden Knoten (Vorgabe: wie das Probenetz)")
     p.add_argument("--latenz-min", type=int, default=50)
     p.add_argument("--latenz-max", type=int, default=200)
     p.add_argument("--verlust-min", type=float, default=1.0)
@@ -1807,6 +2210,24 @@ def main() -> int:
                    help="fuenfzehn Miner mehr, also vier Pods und zwei Zwillingspaare; sechs Sitzungen fragen zugleich (W7)")
     p.add_argument("--faelscher", action="store_true",
                    help=f"{FAELSCHER} rechnet falsch, aber stimmig (Shard mit dem Merkmal faelscher, braucht --zwillinge)")
+    p.add_argument("--kollusion", action="store_true",
+                   help="die Miner ohne Sonderrolle faelschen gleich an der ersten Position (Shard mit dem Merkmal faelscher, braucht --zwillinge)")
+    p.add_argument("--lange-trennung", type=int,
+                   help="dazu Nordamerika und Asien so viele Sekunden getrennt, mit einem Neustart in Asien (Gabeln ueber 600 Bloecke)")
+    p.add_argument("--verstummen", action="store_true",
+                   help="gut vier Zehntel der Miner verstummen; verlangt: die Finalitaet kehrt ohne Abzug zurueck (vor 7.9)")
+    p.add_argument("--zurueckhalten", type=int,
+                   help=f"{ZURUECKHALTER} haelt jeden eigenen Block so viele Millisekunden zurueck (Merkmal konsensrollen)")
+    p.add_argument("--doppelerzeuger", action="store_true",
+                   help=f"{DOPPELERZEUGER} baut im selben Slot zweimal; verlangt sind Belege gegen ihn (Merkmal konsensrollen)")
+    p.add_argument("--uhr-versatz", type=int,
+                   help=f"die Uhr von {FALSCHE_UHR} geht so viele Millisekunden vor, negativ nach (Merkmal konsensrollen)")
+    p.add_argument("--phasen-ab", type=int,
+                   help="mit --real: Last, Trennung und Einsteiger erst ab dieser Hoehe (etwa 5600: alle Miner erzeugen)")
+    p.add_argument("--einsteiger-ab", type=int,
+                   help="mit --kurz --zustandslos: der zustandslose Einsteiger erst ab dieser Hoehe (Wechselbelege)")
+    p.add_argument("--falscher-austeiler", action="store_true",
+                   help=f"{FALSCHER_AUSTEILER} teilt bei der Saat falsch aus (Knoten mit dem Merkmal falscher_austeiler)")
     p.add_argument("--baum-auf-platte", action="store_true",
                    help="Erzeuger und einige Miner lagern den Zustandsbaum auf die Platte aus")
     p.add_argument("--zustandslos", action="store_true",
@@ -1821,6 +2242,8 @@ def main() -> int:
         p.error("--paare braucht --zwillinge")
     if args.faelscher and not args.zwillinge:
         p.error("--faelscher braucht --zwillinge: nur ein Zwilling sieht die falsche Ausgabe")
+    if args.kollusion and (not args.zwillinge or args.faelscher):
+        p.error("--kollusion braucht --zwillinge und geht nicht mit --faelscher (beide setzen den Shard)")
     args.programm = args.programm.resolve()
     args.shard = args.shard.resolve()
     args.artefakte = args.artefakte.resolve()

@@ -484,11 +484,41 @@ pub struct LedgerState {
 
     /// ⚑ **Bis zu welchem Prüfpunkt die Kette bestätigt ist** (2026-10-27,
     /// Festlegung des Projektinhabers: Prüfpunkte alle 150 Blöcke): die Höhe
-    /// des jüngsten Prüfpunkts, dessen Zertifikat ein Block getragen hat,
-    /// null vor dem ersten. **Im Zustand und nicht in der Kette**, damit
+    /// des jüngsten **endgültigen** Prüfpunkts, null vor dem ersten. Seit
+    /// 2026-11-04 (Casper FFG) wird ein Prüfpunkt endgültig, wenn ein Block
+    /// das Zertifikat des nächsten trägt und es ihn als Quelle nennt; bis
+    /// dahin war es der Prüfpunkt des jüngsten getragenen Zertifikats. **Im Zustand und nicht in der Kette**, damit
     /// jeder Knoten, auch einer, der aus einem Abzug begann, dasselbe
     /// nächste Zertifikat annimmt.
     pub pruefpunkt_bestaetigt: u64,
+
+    /// ⚑ **Die Hashes der Prüfpunkte** der laufenden und der vorigen Epoche
+    /// (2026-11-03): gegen sie prüft die Kette eine Stimme, die als
+    /// Transaktion kommt. Höchstens 24 Einträge.
+    pub pruefpunkt_hashes: Vec<(u64, Hash)>,
+
+    /// ⚑ **Der jüngste gerechtfertigte Prüfpunkt** (2026-11-04, Casper FFG):
+    /// Höhe und Block des jüngsten Zertifikats, das ein Block getragen hat,
+    /// null und null für Genesis.
+    pub pruefpunkt_gerechtfertigt: (u64, Hash),
+
+    /// ⚑ **Die Quelle je Prüfpunkt** (2026-11-04): je Prüfpunkt der laufenden
+    /// und der vorigen Epoche der gerechtfertigte, als der Block nach ihm
+    /// angewandt wurde (Ziel, Höhe der Quelle, ihr Block). Jede Stimme für
+    /// das Ziel nennt genau diese Quelle; so ist sie für alle dieselbe,
+    /// gleich wann gestimmt wird.
+    pub pruefpunkt_quellen: Vec<(u64, u64, Hash)>,
+
+    /// ⚑ **Die Saat des Erzeugerplans der laufenden Epoche** (2026-11-04,
+    /// Ebb-and-Flow): gesetzt am Wechsel nach `e` aus `β_{e−1}`, wenn es
+    /// gesetzt ist; sonst gilt die vorige weiter. Null bis zum ersten `β`.
+    /// ⛔️ Kein Rückfall auf eine mahlbare Quelle: Wer `β` verhindert,
+    /// behält nur den alten Plan.
+    pub erzeugersaat: Hash,
+
+    /// ⚑ **Der Slot des letzten Blocks** (2026-11-04, Erzeugerplan): Der
+    /// nächste muss in einem späteren liegen. Null für Genesis.
+    pub letzter_slot: u64,
 
     /// ⚑ **Ziehungen, die auf ihr Zertifikat warten** (2026-10-27): je
     /// abgelaufene Epoche die Anteile ihrer bezeugten Bündel. Gezogen wird,
@@ -500,11 +530,12 @@ pub struct LedgerState {
     pub stichproben_offen: Vec<OffeneStichprobe>,
 
     /// ⚑ **Gebuchte Doppelbelege** (2026-10-27, CONSENSUS 7.6): je
-    /// (Schuldiger, Art, Höhe) die Epoche der Buchung, damit derselbe
-    /// Widerspruch nur einmal schlachtet. **Begrenzt**: nach der Sperrfrist
+    /// (Schuldiger, Art, Höhe) die Buchung, damit derselbe Widerspruch nur
+    /// einmal schlachtet und die Korrelationsstrafe weiss, wie viel
+    /// gleichzeitig geschlachtet wurde. **Begrenzt**: nach der Sperrfrist
     /// fällt ein Eintrag weg, und ein älterer Widerspruch ist ohnehin nicht
     /// mehr schlachtbar.
-    pub doppelbelege: crate::sammlung::Sammlung<(Address, u8, u64), u64>,
+    pub doppelbelege: crate::sammlung::Sammlung<(Address, u8, u64), crate::transitions::Doppelbuchung>,
 
     /// ⚑ **Der Grundpreis je Byte** (2026-10-27, Festlegung des
     /// Projektinhabers, G1): wandert je Block um höchstens ein Achtel um das
@@ -604,6 +635,35 @@ pub struct LedgerState {
     /// so berührt der Wechselblock keinen Zeugen; bei sehr vielen Minern
     /// wäre er sonst für zustandslose Knoten zu gross geworden.
     pub auszahlungen_offen: crate::sammlung::Sammlung<Address, u64>,
+    /// ⚑ **Die Stimmsätze der kommenden Epochen** (CONSENSUS 7.8,
+    /// 2026-11-02), je Epoche Kennung, Schlüssel und Gewicht, nach Kennung
+    /// geordnet; bestimmt am Ende von Epoche e für e+2
+    /// ([`crate::stimmsatz`]). Im kleinen Baum: Jeder Knoten, auch ein
+    /// zustandsloser, kennt denselben Satz.
+    pub stimmsaetze: crate::sammlung::Sammlung<u64, crate::stimmsatz::Satz>,
+    /// ⚑ **Der Einsatz je Konto, gespiegelt in den kleinen Baum** (7.8,
+    /// 2026-11-02): nachgeführt beim Hinterlegen, Kündigen und Schlachten,
+    /// den einzigen drei Stellen, an denen sich `staked` ändert. Daraus
+    /// liest der Stimmsatz; ohne Spiegel trüge der Wechselblock die Konten
+    /// aller Miner im Zeugen.
+    pub einsaetze: crate::sammlung::Sammlung<Address, u64>,
+    /// ⚑ **Die Mitwirkung je Miner** (7.8, 2026-11-03): abgeklungene
+    /// bezeugte Arbeit und die letzte Epoche mit einer Stimme in einem
+    /// Prüfpunktzertifikat (oder des Eintritts in den Satz). Daraus prüft
+    /// der Stimmsatz die Arbeitsschwelle (Entscheidung A3) und die
+    /// Inaktivität ([`crate::stimmsatz`]).
+    pub mitwirkung: crate::sammlung::Sammlung<MinerId, crate::stimmsatz::Mitwirkung>,
+    /// ⚑ **Der Verschluesselungsschluessel je Miner** (2026-11-03): an ihn
+    /// gehen die Werte der verteilten Schluesselerzeugung ([`crate::saat`]).
+    /// Ein eigener Schluessel, nicht der Signaturschluessel.
+    pub verschluesselung: crate::sammlung::Sammlung<MinerId, myl_types::anteilchiffre::Verschluesselungsschluessel>,
+    /// ⚑ **Die Saatrunden je Zielepoche** (2026-11-03): Mitglieder, Sitze,
+    /// Beschwerden, Offenlegungen, danach Schluessel, Anteile und `β`
+    /// ([`crate::saat`]).
+    pub saatrunden: crate::sammlung::Sammlung<u64, crate::saat::Saatrunde>,
+    /// ⚑ **Die Austeilungen je (Zielepoche, Austeiler)** (2026-11-03), so lange,
+    /// wie ihre Runde gilt: Daraus bildet jeder Knoten seinen Anteil.
+    pub austeilungen: crate::sammlung::Sammlung<(u64, MinerId), crate::saat::Austeilung>,
 
     /// ⚑ **Der Zustandsbaum der Sammlungen** (Skalierung, 2026-10-29), nicht
     /// kodiert: aus den Sammlungen gebaut und je Block mit dem Geänderten
@@ -754,6 +814,15 @@ impl Eq for Baumcache {}
 /// Sammlungen führen ein Journal.
 pub struct Sicherung(Box<LedgerState>);
 
+/// ⚑ **Was ein angewandter Block braucht, um zurückgenommen zu werden**
+/// (2026-11-04): die Kopie des Kopfs aus [`Sicherung`] und je Sammlung das
+/// Journal. Klein gegen den Zustand: Der Kopf hält von der Historie nur die
+/// Gipfel, und ein Journal nur, was der Block berührte.
+pub struct Rueckweg {
+    kopf: Box<LedgerState>,
+    journale: Box<Journale>,
+}
+
 /// Eine Ziehung, die auf das Zertifikat ihres Epochenwechsels wartet.
 #[derive(Debug, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
 pub struct OffeneStichprobe {
@@ -816,6 +885,11 @@ impl LedgerState {
             historie: myl_types::historie::Historie::default(),
             archiv: crate::archiv::Archivstand::default(),
             pruefpunkt_bestaetigt: 0,
+            pruefpunkt_hashes: Vec::new(),
+            pruefpunkt_gerechtfertigt: (0, Hash::from_bytes([0u8; 32])),
+            pruefpunkt_quellen: Vec::new(),
+            erzeugersaat: Hash::from_bytes([0u8; 32]),
+            letzter_slot: 0,
             stichproben_offen: Vec::new(),
             doppelbelege: Default::default(),
             grundpreis_je_byte: 0,
@@ -837,6 +911,12 @@ impl LedgerState {
             sitzungsablauf: Default::default(),
             sitzungsablauf_bis: 0,
             auszahlungen_offen: Default::default(),
+            stimmsaetze: Default::default(),
+            einsaetze: Default::default(),
+            mitwirkung: Default::default(),
+            verschluesselung: Default::default(),
+            saatrunden: Default::default(),
+            austeilungen: Default::default(),
             baum: Baumcache::default(),
         }
     }
@@ -891,6 +971,16 @@ impl LedgerState {
     /// `fenster = 0` ergibt null: kein Fenster, keine Vorgeschichte.
     /// Ein Fenster, das über die Epoche 0 hinausreicht, wird bei 0
     /// abgeschnitten statt umzulaufen.
+    /// ⚑ **Den Einsatz eines Kontos im kleinen Baum nachführen** (7.8): an
+    /// den drei Stellen, an denen sich `staked` ändert; null fällt heraus.
+    pub fn einsatz_spiegeln(&mut self, addr: &Address, staked: u64) {
+        if staked == 0 {
+            self.einsaetze.remove(addr);
+        } else {
+            self.einsaetze.insert(*addr, staked);
+        }
+    }
+
     pub fn verstoesse_im_fenster(&self, addr: &Address, fenster: u64) -> u64 {
         if fenster == 0 {
             return 0;
@@ -1006,7 +1096,7 @@ impl LedgerState {
 
     /// Die Einträge der kleinen und der grossen Sammlungen.
     fn eintraege_der_sammlungen(&self) -> (usize, usize) {
-        let klein = self.trainingssegmente.anzahl() + self.trainingsstand.anzahl() + self.auszahlung.anzahl() + self.miner.anzahl() + self.zusagen.anzahl() + self.fristsperren.anzahl() + self.buendel.anzahl() + self.doppelbelege.anzahl() + self.pruefpunkt_stimmen.anzahl() + self.pruefvolumen.anzahl() + self.auszahlungen_offen.anzahl();
+        let klein = self.trainingssegmente.anzahl() + self.trainingsstand.anzahl() + self.auszahlung.anzahl() + self.miner.anzahl() + self.zusagen.anzahl() + self.fristsperren.anzahl() + self.buendel.anzahl() + self.doppelbelege.anzahl() + self.pruefpunkt_stimmen.anzahl() + self.pruefvolumen.anzahl() + self.auszahlungen_offen.anzahl() + self.stimmsaetze.anzahl() + self.einsaetze.anzahl() + self.mitwirkung.anzahl() + self.verschluesselung.anzahl() + self.saatrunden.anzahl() + self.austeilungen.anzahl();
         let gross = self.accounts.anzahl() + self.sitzungen.anzahl() + self.speicher.anzahl() + self.hinterlegungen.anzahl() + self.sitzungsablauf.anzahl();
         (klein, gross)
     }
@@ -1166,6 +1256,12 @@ impl LedgerState {
         z.pruefpunkt_stimmen.geaenderte_nehmen();
         z.pruefvolumen.geaenderte_nehmen();
         z.auszahlungen_offen.geaenderte_nehmen();
+        z.stimmsaetze.geaenderte_nehmen();
+        z.einsaetze.geaenderte_nehmen();
+        z.mitwirkung.geaenderte_nehmen();
+        z.verschluesselung.geaenderte_nehmen();
+        z.saatrunden.geaenderte_nehmen();
+        z.austeilungen.geaenderte_nehmen();
         Some(z)
     }
 
@@ -1246,6 +1342,12 @@ impl LedgerState {
         leicht.pruefpunkt_stimmen = self.pruefpunkt_stimmen.clone();
         leicht.pruefvolumen = self.pruefvolumen.clone();
         leicht.auszahlungen_offen = self.auszahlungen_offen.clone();
+        leicht.stimmsaetze = self.stimmsaetze.clone();
+        leicht.einsaetze = self.einsaetze.clone();
+        leicht.mitwirkung = self.mitwirkung.clone();
+        leicht.verschluesselung = self.verschluesselung.clone();
+        leicht.saatrunden = self.saatrunden.clone();
+        leicht.austeilungen = self.austeilungen.clone();
         // Nach `wurzel` ist nichts mehr gemerkt; der kleine Baum steht.
         leicht.baum = Baumcache { klein: baum.klein.clone(), gross: Grossbaum::Wurzel(baum.grosswurzel_fest()), gebaut: true, verletzt: false, vorwurzel: [0; 32], ablage: None };
         self.baum = baum;
@@ -1272,6 +1374,11 @@ impl LedgerState {
             historie,
             archiv,
             pruefpunkt_bestaetigt,
+            pruefpunkt_hashes,
+            pruefpunkt_gerechtfertigt,
+            pruefpunkt_quellen,
+            erzeugersaat,
+            letzter_slot,
             stichproben_offen,
             grundpreis_je_byte,
             gebuehren_epoche,
@@ -1303,6 +1410,12 @@ impl LedgerState {
             pruefvolumen: _,
             sitzungsablauf: _,
             auszahlungen_offen: _,
+            stimmsaetze: _,
+            einsaetze: _,
+            mitwirkung: _,
+            verschluesselung: _,
+            saatrunden: _,
+            austeilungen: _,
             baum: _
         } = self;
         let mut aus = Vec::new();
@@ -1321,6 +1434,11 @@ impl LedgerState {
         historie.serialize(&mut aus).expect("in einen Vec");
         archiv.serialize(&mut aus).expect("in einen Vec");
         pruefpunkt_bestaetigt.serialize(&mut aus).expect("in einen Vec");
+        pruefpunkt_hashes.serialize(&mut aus).expect("in einen Vec");
+        pruefpunkt_gerechtfertigt.serialize(&mut aus).expect("in einen Vec");
+        pruefpunkt_quellen.serialize(&mut aus).expect("in einen Vec");
+        erzeugersaat.serialize(&mut aus).expect("in einen Vec");
+        letzter_slot.serialize(&mut aus).expect("in einen Vec");
         stichproben_offen.serialize(&mut aus).expect("in einen Vec");
         grundpreis_je_byte.serialize(&mut aus).expect("in einen Vec");
         gebuehren_epoche.serialize(&mut aus).expect("in einen Vec");
@@ -1356,6 +1474,12 @@ impl LedgerState {
         einspeisen(baum, 13, &self.pruefvolumen);
         einspeisen(baum, 14, &self.sitzungsablauf);
         einspeisen(baum, 15, &self.auszahlungen_offen);
+        einspeisen(baum, 16, &self.stimmsaetze);
+        einspeisen(baum, 17, &self.einsaetze);
+        einspeisen(baum, 18, &self.mitwirkung);
+        einspeisen(baum, 19, &self.verschluesselung);
+        einspeisen(baum, 20, &self.saatrunden);
+        einspeisen(baum, 21, &self.austeilungen);
     }
 
     fn geaenderte_einspeisen(&mut self, baum: &mut Baeume<'_>) {
@@ -1377,6 +1501,12 @@ impl LedgerState {
             pruefvolumen: self.pruefvolumen.geaenderte_nehmen(),
             sitzungsablauf: self.sitzungsablauf.geaenderte_nehmen(),
             auszahlungen_offen: self.auszahlungen_offen.geaenderte_nehmen(),
+            stimmsaetze: self.stimmsaetze.geaenderte_nehmen(),
+            einsaetze: self.einsaetze.geaenderte_nehmen(),
+            mitwirkung: self.mitwirkung.geaenderte_nehmen(),
+            verschluesselung: self.verschluesselung.geaenderte_nehmen(),
+            saatrunden: self.saatrunden.geaenderte_nehmen(),
+            austeilungen: self.austeilungen.geaenderte_nehmen(),
         };
         g.einspeisen(self, baum);
     }
@@ -1419,6 +1549,12 @@ impl LedgerState {
         self.pruefvolumen.journal_beginnen();
         self.sitzungsablauf.journal_beginnen();
         self.auszahlungen_offen.journal_beginnen();
+        self.stimmsaetze.journal_beginnen();
+        self.einsaetze.journal_beginnen();
+        self.mitwirkung.journal_beginnen();
+        self.verschluesselung.journal_beginnen();
+        self.saatrunden.journal_beginnen();
+        self.austeilungen.journal_beginnen();
         Sicherung(Box::new(rest))
     }
 
@@ -1440,6 +1576,12 @@ impl LedgerState {
         self.pruefvolumen.journal_abschliessen();
         self.sitzungsablauf.journal_abschliessen();
         self.auszahlungen_offen.journal_abschliessen();
+        self.stimmsaetze.journal_abschliessen();
+        self.einsaetze.journal_abschliessen();
+        self.mitwirkung.journal_abschliessen();
+        self.verschluesselung.journal_abschliessen();
+        self.saatrunden.journal_abschliessen();
+        self.austeilungen.journal_abschliessen();
     }
 
     /// Der Block gilt nicht: zurück auf die Sicherung.
@@ -1460,9 +1602,82 @@ impl LedgerState {
         self.pruefvolumen.journal_zurueckspielen();
         self.sitzungsablauf.journal_zurueckspielen();
         self.auszahlungen_offen.journal_zurueckspielen();
+        self.stimmsaetze.journal_zurueckspielen();
+        self.einsaetze.journal_zurueckspielen();
+        self.mitwirkung.journal_zurueckspielen();
+        self.verschluesselung.journal_zurueckspielen();
+        self.saatrunden.journal_zurueckspielen();
+        self.austeilungen.journal_zurueckspielen();
         let s = self.sammlungen_nehmen();
         let baum = std::mem::take(&mut self.baum);
         *self = *sicherung.0;
+        self.sammlungen_legen(s);
+        self.baum = baum;
+    }
+
+    /// ⚑ **Der Block gilt, und er soll sich zurücknehmen lassen**
+    /// (Zurückrollen bis zum endgültigen Prüfpunkt, 2026-11-04): wie
+    /// [`Self::sicherung_verwerfen`], aber die Journale und die Kopie des
+    /// Kopfs bleiben als [`Rueckweg`].
+    pub fn sicherung_behalten(&mut self, sicherung: Sicherung) -> Rueckweg {
+        let journale = Journale {
+            accounts: self.accounts.journal_nehmen(),
+            sitzungen: self.sitzungen.journal_nehmen(),
+            speicher: self.speicher.journal_nehmen(),
+            trainingssegmente: self.trainingssegmente.journal_nehmen(),
+            trainingsstand: self.trainingsstand.journal_nehmen(),
+            auszahlung: self.auszahlung.journal_nehmen(),
+            miner: self.miner.journal_nehmen(),
+            zusagen: self.zusagen.journal_nehmen(),
+            fristsperren: self.fristsperren.journal_nehmen(),
+            buendel: self.buendel.journal_nehmen(),
+            doppelbelege: self.doppelbelege.journal_nehmen(),
+            pruefpunkt_stimmen: self.pruefpunkt_stimmen.journal_nehmen(),
+            hinterlegungen: self.hinterlegungen.journal_nehmen(),
+            pruefvolumen: self.pruefvolumen.journal_nehmen(),
+            sitzungsablauf: self.sitzungsablauf.journal_nehmen(),
+            auszahlungen_offen: self.auszahlungen_offen.journal_nehmen(),
+            stimmsaetze: self.stimmsaetze.journal_nehmen(),
+            einsaetze: self.einsaetze.journal_nehmen(),
+            mitwirkung: self.mitwirkung.journal_nehmen(),
+            verschluesselung: self.verschluesselung.journal_nehmen(),
+            saatrunden: self.saatrunden.journal_nehmen(),
+            austeilungen: self.austeilungen.journal_nehmen(),
+        };
+        Rueckweg { kopf: sicherung.0, journale: Box::new(journale) }
+    }
+
+    /// ⚑ **Nimmt einen angewandten Block zurück**: die Sammlungen über ihr
+    /// Journal, der Rest aus der Kopie des Kopfs. Bei mehreren Blöcken der
+    /// jüngste zuerst; danach steht der Zustand wie vor dem Block, und alles
+    /// Berührte gilt als geändert (der Baum folgt).
+    pub fn zuruecknehmen(&mut self, rueckweg: Rueckweg) {
+        let j = *rueckweg.journale;
+        self.accounts.rueckweg_gehen(j.accounts);
+        self.sitzungen.rueckweg_gehen(j.sitzungen);
+        self.speicher.rueckweg_gehen(j.speicher);
+        self.trainingssegmente.rueckweg_gehen(j.trainingssegmente);
+        self.trainingsstand.rueckweg_gehen(j.trainingsstand);
+        self.auszahlung.rueckweg_gehen(j.auszahlung);
+        self.miner.rueckweg_gehen(j.miner);
+        self.zusagen.rueckweg_gehen(j.zusagen);
+        self.fristsperren.rueckweg_gehen(j.fristsperren);
+        self.buendel.rueckweg_gehen(j.buendel);
+        self.doppelbelege.rueckweg_gehen(j.doppelbelege);
+        self.pruefpunkt_stimmen.rueckweg_gehen(j.pruefpunkt_stimmen);
+        self.hinterlegungen.rueckweg_gehen(j.hinterlegungen);
+        self.pruefvolumen.rueckweg_gehen(j.pruefvolumen);
+        self.sitzungsablauf.rueckweg_gehen(j.sitzungsablauf);
+        self.auszahlungen_offen.rueckweg_gehen(j.auszahlungen_offen);
+        self.stimmsaetze.rueckweg_gehen(j.stimmsaetze);
+        self.einsaetze.rueckweg_gehen(j.einsaetze);
+        self.mitwirkung.rueckweg_gehen(j.mitwirkung);
+        self.verschluesselung.rueckweg_gehen(j.verschluesselung);
+        self.saatrunden.rueckweg_gehen(j.saatrunden);
+        self.austeilungen.rueckweg_gehen(j.austeilungen);
+        let s = self.sammlungen_nehmen();
+        let baum = std::mem::take(&mut self.baum);
+        *self = *rueckweg.kopf;
         self.sammlungen_legen(s);
         self.baum = baum;
     }
@@ -1485,6 +1700,12 @@ impl LedgerState {
             pruefvolumen: std::mem::take(&mut self.pruefvolumen),
             sitzungsablauf: std::mem::take(&mut self.sitzungsablauf),
             auszahlungen_offen: std::mem::take(&mut self.auszahlungen_offen),
+            stimmsaetze: std::mem::take(&mut self.stimmsaetze),
+            einsaetze: std::mem::take(&mut self.einsaetze),
+            mitwirkung: std::mem::take(&mut self.mitwirkung),
+            verschluesselung: std::mem::take(&mut self.verschluesselung),
+            saatrunden: std::mem::take(&mut self.saatrunden),
+            austeilungen: std::mem::take(&mut self.austeilungen),
         }
     }
 
@@ -1505,7 +1726,43 @@ impl LedgerState {
         self.pruefvolumen = s.pruefvolumen;
         self.sitzungsablauf = s.sitzungsablauf;
         self.auszahlungen_offen = s.auszahlungen_offen;
+        self.stimmsaetze = s.stimmsaetze;
+        self.einsaetze = s.einsaetze;
+        self.mitwirkung = s.mitwirkung;
+        self.verschluesselung = s.verschluesselung;
+        self.saatrunden = s.saatrunden;
+        self.austeilungen = s.austeilungen;
     }
+}
+
+/// Je zuerst berührtem Schlüssel der Wert davor.
+type Journal<K, V> = Vec<(K, Option<V>)>;
+
+/// ⚑ Je Sammlung das Journal eines angewandten Blocks (Zurückrollen,
+/// 2026-11-04): je zuerst berührtem Schlüssel der Wert davor.
+struct Journale {
+    accounts: Journal<Address, AccountState>,
+    sitzungen: Journal<SitzungId, Sitzung>,
+    speicher: Journal<MerkleRoot, Manifest>,
+    trainingssegmente: Journal<PodId, myl_types::trainingssegment::Trainingssegment>,
+    trainingsstand: Journal<MinerId, u64>,
+    auszahlung: Journal<MinerId, Address>,
+    miner: Journal<MinerId, MinerRegistration>,
+    zusagen: Journal<MinerId, Vec<myl_types::zusage::Kapazitaetszusage>>,
+    fristsperren: Journal<MinerId, EpochId>,
+    buendel: Journal<PodId, PoIBundle>,
+    doppelbelege: Journal<(Address, u8, u64), crate::transitions::Doppelbuchung>,
+    pruefpunkt_stimmen: Journal<MinerId, u64>,
+    hinterlegungen: Journal<(u8, [u8; 32]), (Address, u64)>,
+    pruefvolumen: Journal<MinerId, u64>,
+    sitzungsablauf: Journal<u64, Vec<SitzungId>>,
+    auszahlungen_offen: Journal<Address, u64>,
+    stimmsaetze: Journal<u64, crate::stimmsatz::Satz>,
+    einsaetze: Journal<Address, u64>,
+    mitwirkung: Journal<MinerId, crate::stimmsatz::Mitwirkung>,
+    verschluesselung: Journal<MinerId, myl_types::anteilchiffre::Verschluesselungsschluessel>,
+    saatrunden: Journal<u64, crate::saat::Saatrunde>,
+    austeilungen: Journal<(u64, MinerId), crate::saat::Austeilung>,
 }
 
 /// Die Sammlungen, für einen Augenblick aus dem Zustand genommen.
@@ -1520,12 +1777,18 @@ struct SammlungenAllein {
     zusagen: crate::sammlung::Sammlung<MinerId, Vec<myl_types::zusage::Kapazitaetszusage>>,
     fristsperren: crate::sammlung::Sammlung<MinerId, EpochId>,
     buendel: crate::sammlung::Sammlung<PodId, PoIBundle>,
-    doppelbelege: crate::sammlung::Sammlung<(Address, u8, u64), u64>,
+    doppelbelege: crate::sammlung::Sammlung<(Address, u8, u64), crate::transitions::Doppelbuchung>,
     pruefpunkt_stimmen: crate::sammlung::Sammlung<MinerId, u64>,
     hinterlegungen: crate::sammlung::Sammlung<(u8, [u8; 32]), (Address, u64)>,
     pruefvolumen: crate::sammlung::Sammlung<MinerId, u64>,
     sitzungsablauf: crate::sammlung::Sammlung<u64, Vec<SitzungId>>,
     auszahlungen_offen: crate::sammlung::Sammlung<Address, u64>,
+    stimmsaetze: crate::sammlung::Sammlung<u64, crate::stimmsatz::Satz>,
+    einsaetze: crate::sammlung::Sammlung<Address, u64>,
+    mitwirkung: crate::sammlung::Sammlung<MinerId, crate::stimmsatz::Mitwirkung>,
+    verschluesselung: crate::sammlung::Sammlung<MinerId, myl_types::anteilchiffre::Verschluesselungsschluessel>,
+    saatrunden: crate::sammlung::Sammlung<u64, crate::saat::Saatrunde>,
+    austeilungen: crate::sammlung::Sammlung<(u64, MinerId), crate::saat::Austeilung>,
 }
 
 impl Baumcache {
@@ -1639,6 +1902,12 @@ struct Geaendert {
     pruefvolumen: std::collections::BTreeSet<MinerId>,
     sitzungsablauf: std::collections::BTreeSet<u64>,
     auszahlungen_offen: std::collections::BTreeSet<Address>,
+    stimmsaetze: std::collections::BTreeSet<u64>,
+    einsaetze: std::collections::BTreeSet<Address>,
+    mitwirkung: std::collections::BTreeSet<MinerId>,
+    verschluesselung: std::collections::BTreeSet<MinerId>,
+    saatrunden: std::collections::BTreeSet<u64>,
+    austeilungen: std::collections::BTreeSet<(u64, MinerId)>,
 }
 
 impl Geaendert {
@@ -1659,6 +1928,12 @@ impl Geaendert {
         nachfuehren(baum, 13, &z.pruefvolumen, self.pruefvolumen);
         nachfuehren(baum, 14, &z.sitzungsablauf, self.sitzungsablauf);
         nachfuehren(baum, 15, &z.auszahlungen_offen, self.auszahlungen_offen);
+        nachfuehren(baum, 16, &z.stimmsaetze, self.stimmsaetze);
+        nachfuehren(baum, 17, &z.einsaetze, self.einsaetze);
+        nachfuehren(baum, 18, &z.mitwirkung, self.mitwirkung);
+        nachfuehren(baum, 19, &z.verschluesselung, self.verschluesselung);
+        nachfuehren(baum, 20, &z.saatrunden, self.saatrunden);
+        nachfuehren(baum, 21, &z.austeilungen, self.austeilungen);
     }
 }
 
@@ -1916,6 +2191,45 @@ mod tests {
         s.sicherung_verwerfen();
         drop(sicherung);
         assert_eq!(s.account(&adresse(1)).balance, 7);
+        assert_eq!(s.wurzel(), s.commitment());
+    }
+
+    /// ⚑ **Mehrere Blöcke zurücknehmen** (2026-11-04): Zwei angewandte Blöcke,
+    /// je mit Rückweg, und rückwärts zurückgenommen ist der Zustand nach dem
+    /// ersten wie nach dem ersten, nach dem zweiten wie vor beiden, in
+    /// Inhalt und Wurzel; auch ein Schlüssel, den beide Blöcke berühren.
+    #[test]
+    fn rueckwege_nehmen_mehrere_bloecke_zurueck() {
+        let mut s = LedgerState::genesis(100);
+        for i in 0..20u8 {
+            s.account_mut(&adresse(i)).balance = u64::from(i);
+        }
+        let vor_beiden = s.clone();
+        let w0 = s.wurzel();
+        let sicherung = s.sichern();
+        s.account_mut(&adresse(1)).balance = 999;
+        s.account_mut(&adresse(200)).balance = 5;
+        s.accounts.remove(&adresse(3));
+        s.pruefvolumen.insert(MinerId::new([7; 32]), 3);
+        s.epoch = EpochId(9);
+        let w1 = s.wurzel();
+        let rueck1 = s.sicherung_behalten(sicherung);
+        let nach_erstem = s.clone();
+        let sicherung = s.sichern();
+        s.account_mut(&adresse(1)).balance = 1000;
+        s.account_mut(&adresse(200)).balance = 6;
+        s.account_mut(&adresse(3)).balance = 33;
+        s.pruefvolumen.remove(&MinerId::new([7; 32]));
+        s.pruefpunkt_gerechtfertigt.0 = 150;
+        let w2 = s.wurzel();
+        let rueck2 = s.sicherung_behalten(sicherung);
+        assert!(w0 != w1 && w1 != w2);
+        s.zuruecknehmen(rueck2);
+        assert_eq!(s, nach_erstem);
+        assert_eq!(s.wurzel(), w1);
+        s.zuruecknehmen(rueck1);
+        assert_eq!(s, vor_beiden);
+        assert_eq!(s.wurzel(), w0);
         assert_eq!(s.wurzel(), s.commitment());
     }
 

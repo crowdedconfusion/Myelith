@@ -1,7 +1,7 @@
 # NODE — der Myelith-Knoten
 
-> **Version:** 0.99.4
-> **Datum:** 2026-10-29
+> **Version:** 0.115.1
+> **Datum:** 2026-11-04
 > **Status:** Netzknoten lauffähig, Blockproduktion mit **Persistenz über
 > Neustarts**, BFT-Runden über das Netz mit Rundenwechsel, und seit dem
 > 1. September **schließt der Knoten die Epoche selbst ab**.
@@ -278,6 +278,514 @@ NODE/
 ```
 
 ## Changelog
+
+### v0.115.1 (2026-11-07): Einen Anker ohne Abzug aufgeben
+
+- ⛔️ **Der zustandslose Miner blieb eine Viertelstunde bei Höhe 0**
+  (Podlauf `kurz-verstummen`): Nach seinem Neustart nahm er einen alten
+  Anker (8 850), dessen leichten Abzug keine Gegenstelle mehr hielt, und
+  fragte reihum ohne Ende (321 Mal `abzug_nichts`). Solange ein Abzug
+  geholt wird, wartet auch die Selbstheilung.
+- ⚑ **`Knoten::abzug_nichts`: Hatte ihn keine Gegenstelle, wird der Anker
+  aufgegeben** (`abzug_aufgegeben`), neu gesucht, und derselbe zählt nicht
+  mehr (höchstens 64 gemerkt). Test `einen_anker_ohne_abzug_gibt_er_auf`.
+- ⚠️ **Die Brücke aus 0.115.0 trägt den gemessenen Fall nicht:** Im selben
+  Lauf schloss die Kette während der Ruhe die Stillen aus, der Satz
+  schrumpfte von 28 auf 16 Mitglieder, und das erste Zertifikat danach
+  trugen 57 % des Satzes vor der Lücke. So kehrt die Finalität nach dem
+  Ausfall von mehr als einem Drittel zurück, also ist das der Hauptfall,
+  nicht der Rand. ⚑ Die Schwelle bleibt bei zwei Dritteln: Mit einem
+  Drittel könnte eine Koalition dieser Grösse auf einem eigenen Zweig
+  unterschreiben, ohne je doppelt zu stimmen (auf der Kette schweigt sie
+  und wird ausgeschlossen), und der Knoten ohne Zustand nähme ihren höheren
+  Anker. CometBFT schlachtet solche Unterschriften („lunatic“), Ethereum
+  verlangt nach langer Abwesenheit einen Prüfpunkt von außen; wir folgen
+  Ethereum. Der Anker von außen für den Knoten ohne Zustand ist der
+  nächste Schritt.
+
+### v0.115.0 (2026-11-07): Die Brücke über eine Lücke der Wechselbelege
+
+- ⛔️ **Nach fünf Epochen ohne Finalität nahm ein zustandsloser Knoten nie
+  wieder einen Anker an** (Podlauf `nacht-konsens`, Verstummen von zwölf
+  der 28 Miner): Für die Epochen 11 bis 14 entstand kein Zertifikat, also
+  kein Wechselbeleg, und der Satz von Epoche 15 war nirgends gebunden. Der
+  zustandslose Miner gehörte zu den Stillen; nach seinem Neustart lehnte er
+  jeden Anker und jeden Beleg mit `Unbekannt(15)` ab (262 und 425 Mal). Der
+  Weg ab Genesis endete bei Block 16 525, weil die Zeugen nur ein Fenster
+  hinter der Spitze gehalten werden. Dasselbe hätte jeden vollen Einsteiger
+  über ein Zertifikat getroffen, für immer nach jeder solchen Ruhe.
+- ⚑ **Die Brücke** (`wechsel::Folge::zertifikat_traegt`): Ein Zertifikat
+  einer unbekannten Epoche trägt, wenn es gegen den jüngsten bekannten
+  Satz aus dem Zustand davor mit mehr als zwei Dritteln trägt, alle
+  Unterzeichner aus ihm und höchstens die Vertrauensfrist (112 Epochen)
+  später. Ein falsches bräuchte so viel wie jedes Zertifikat dieses Satzes,
+  und für eine zweite Unterschrift haftet er bis zum Ende der Sperrfrist.
+  Kein neues Format, keine neue Regel der Kette.
+- ⚑ **Der volle Knoten ersetzt einen Beleg, der nicht über die Lücke trägt**
+  (`Kette::beleg_merken`), durch einen späteren derselben Epoche, der es
+  tut; einen tragenden ersetzt keiner. Beim Laden gilt der spätere.
+- 📌 **Verworfen nach Prüfung:** die Schlüssel neuer Mitglieder von der
+  Gegenstelle nehmen (ein Aggregat mit einem Rogue-Key ginge durch), eine
+  Vertrauensstufe von einem Drittel wie im Lichtclient von CometBFT
+  (schwächer als ein Zertifikat), eine Brücke vom Satz von außen (die
+  Startmitglieder haften nach dem Wechsel für nichts), eine Regel „kein
+  Zuwachs ohne Bindung“ in der Kette (sie entscheidet rückblickend, und
+  die Ruhe kann gleich danach beginnen).
+- ⚠️ **Offen:** Fällt mehr als ein Drittel des Satzes vor der Lücke für
+  immer aus, oder unterschreiben in jedem Zertifikat danach neue Mitglieder
+  mit, trägt keine Brücke; dann bleibt nur ein Anker von außen.
+- Tests: `eine_luecke_wird_ueberbrueckt` (mit Gegenproben: zu wenig
+  Gewicht, ein Unterzeichner außerhalb, jenseits der Vertrauensfrist, vom
+  Satz von außen, ein Widerspruch über die Brücke) und
+  `nach_einer_luecke_ersetzt_ein_tragender_beleg` (auch nach dem Neustart,
+  Gegenprobe beim zustandslosen Knoten); beide scheitern ohne die Brücke.
+
+### v0.114.0 (2026-11-06): Der fremde Zweig im Vorausspeicher, die Gabel an Block 1
+
+- ⛔️ **Ein Validator baute den ganzen Lauf (1¾ Stunden) allein auf einem eigenen Zweig**
+  (Podlauf `kurz-faelscher`): Er startete eine Sekunde zu spät, hatte Block
+  2 der Mehrheit schon, Block 1 noch nicht, und baute in seinem Slot Block 1
+  selbst auf Genesis, danach in jedem eigenen Slot weiter (ein Viertel der
+  Slots). Die Blöcke der Mehrheit kamen über Gossip weit voraus an und
+  lagen im Vorausspeicher; das Nachholen übersprang genau diese Höhen, beim
+  Einspielen fielen sie still weg, und ein fremder Zweig galt nur für
+  einen frischen Block an der nächsten Höhe. Weil er nur selbst baute und
+  nichts übernahm, lief das Einspielen ohnehin nie. Nach 23 Minuten war der
+  Speicher voll, die Zweigsuche fand die Gabel an Block 1 nicht
+  (`PasstNirgends`, 361 Mal), und der Lauf endete mit einem Knoten bei Höhe
+  3 072 von 10 255.
+- ⚑ **`voraus_einspielen`: Schliesst ein Kandidat an der nächsten Höhe
+  nicht an, beginnt die Zweigsuche** bei der Gegenstelle, die ihn schickte
+  (`Vorausspeicher` führt sie je Block). Eingespielt wird jetzt **auch nach
+  dem eigenen Block**. Kein neuer Weg für einen Angreifer: Einen fremden
+  Block an der nächsten Höhe zu schicken, löste die Suche schon über Gossip
+  aus, mit derselben Sperre nach einem Zweig, der nicht trägt.
+- ⚑ **`Kette::eigener_hash(0)` ist der Startwert** einer Kette ab Genesis,
+  der Vorgänger von Block 1. Ohne Rückwege hiess eine Gabel an Block 1
+  `PasstNirgends`, jetzt ist sie wie jede andere unter den Rückwegen zu
+  tief (`ZuTief`). 📌 Ein Neuaufbau ab Genesis fehlt weiter; mit dem
+  Einspielen oben wird die Gabel nach wenigen Blöcken erkannt, und dann
+  tragen die Rückwege.
+- Verworfen: nicht bauen, solange höhere Blöcke bekannt sind. Ein Angreifer
+  könnte Höhen unter der Schranke der Slots behaupten und ehrliche Erzeuger
+  so anhalten.
+- Tests `eine_gabel_an_block_eins` (Kette, flach gewechselt, ohne Rückwege
+  `ZuTief` statt `PasstNirgends`) und
+  `ein_fremder_zweig_im_vorausspeicher_startet_die_suche` (Knoten), beide
+  mit Gegenprobe gegen den alten Stand.
+
+### v0.113.2 (2026-11-06): Der tiefe Zweigwechsel mit einem Zertifikat über der Gabel
+
+- ⛔️ **Vier Knoten blieben nach einer langen Trennung auf ihrem Zweig**
+  (Nachtlauf, 900 s Nordamerika und Asien): Die Vorprüfung vor dem
+  Neuaufbau (7.7a) nahm `Kette::pruefpunkt_traegt`, verglich also den
+  zertifizierten Block mit dem **eigenen** an dieser Höhe. Trug der Zweig
+  der Mehrheit ein Zertifikat für einen Prüfpunkt über der Gabel, trug es
+  nie (`TraegtNicht(21498, PruefpunktTraegtNicht)`, 20 Mal); wer vor dem
+  ersten solchen Zertifikat wechselte, kam durch.
+- ⚑ **`Kette::pruefpunkt_traegt_im_zweig`**: der zertifizierte Block aus
+  dem Zweig (über der Gabel) oder der eigene (darunter), und mehr als zwei
+  Drittel des Satzes, aber nur gegen einen Satz, der vor der Gabel
+  feststand (Epoche der Gabel und die nächste); einen späteren bestimmt
+  jeder Zweig selbst. Quelle, Bindung und Reihenfolge prüft wie bisher das
+  Nachrechnen mit dem vollen Zustand. Fälschen braucht weiter die
+  Unterschriften von mehr als zwei Dritteln.
+- Test `eine_gabel_tiefer_als_die_rueckwege` mit einem Zertifikat über der
+  Gabel (mit der alten Vorprüfung scheitert er wie im Lauf) und drei
+  Gegenproben der Vorprüfung.
+
+### v0.113.1 (2026-11-05): Die Prompt-Länge im Protokoll
+
+- `stichprobe_nachgerechnet` trägt `prompt_laenge`: Ab ihr hat der Checker
+  die Wahl der Tokens geprüft, null heisst ungeprüft. 📌 Im Netzlauf mit
+  0.113.0 liess sich sonst nicht zeigen, dass die Prüfung lief.
+
+### v0.113.0 (2026-11-05): Das Nachrechnen prüft die Wahl des Tokens
+
+- ⚑ **Nachrechnen und Komitee mit der Prompt-Länge** aus der Kennung des
+  ersten Segments (`myl_types::prompt_laenge`; `verlauf_pruefen` sichert,
+  dass alle Segmente dieselbe nennen): Ein Pod, der an einer erzeugten
+  Position nicht den Argmax nimmt, wird gefunden, auch wenn sein Zwilling
+  mitspielt (VERIFICATION 0.28.0). Beschuldigt wird das Mitglied mit dem
+  Kopf.
+- ⚠️ Gefälscht werden kann die Länge nur von Tür und Pod zusammen; der
+  Beleg des Nutzers trägt sie nicht.
+
+### v0.112.0 (2026-11-05): Spurablagen in Stücken
+
+- ⚑ **`Nachforderung::SpurenAblegenTeil`** (angehängt) und
+  `Knoten::ablage_stueck`: Eine Ablage, die nicht in eine Nachricht passt,
+  kommt in Stücken; der Knoten reicht die Stücke seines Podwerks über das
+  Netz an das Mitglied weiter, das Mitglied setzt sie wie Verlauf und
+  Schiedsbeleg zusammen (`nachschub::Belegstuecke`, je Absender und
+  Abdruck, höchstens acht zugleich, die älteste fällt) und legt die ganze
+  danach ab wie eine in einem Stück, also aus dem Netz nur mit dem
+  unterschriebenen Bündel.
+
+### v0.111.0 (2026-11-05): Spurablagen mit dem unterschriebenen Bündel, nach dem Ruhen wieder anmelden
+
+- ⛔️ **Eine Spurablage aus dem Netz nur mit dem unterschriebenen Bündel**
+  (`shardfuehrung::ablage_beglaubigt`): Ablegen darf jeder, auch der
+  Torknoten, dessen Podwerk koordiniert, aber nur mit dem Bündel, dessen
+  Gesamtunterschrift gegen die Mitglieder des Pods trägt (wie bei der
+  Kette); ohne Prüfung nur vom eigenen Podwerk. Ersetzt die Regel aus
+  0.110.0 („nur von Mitgliedern“): 📌 Sie traf den Torknoten, und im
+  kurzen Netzlauf kam keine Spur mehr an. Test
+  `eine_ablage_braucht_das_unterschriebene_buendel` mit Gegenproben (ohne
+  Bündel, andere Wurzel, eine Unterschrift zu wenig, erfundene).
+
+- 📌 **Ein ruhender Miner meldet sich selbst neu an**
+  (`Knoten::nach_dem_ruhen_anmelden`, CONSENSUS 7.9): Bis hierher meldete
+  sich ein Knoten nur an, solange er gar nicht eingetragen war; ein
+  ehrlicher Validator, der eine Weile offline war, blieb für immer aus dem
+  Satz. Die Kette lässt ihn erst nach der Wartezeit seiner Ruhen wieder
+  hinein (`myl-ledger` 0.56.0); ein Getilgter bleibt draussen.
+
+### v0.110.0 (2026-11-05): Schiedsbeleg und Verlauf in Stücken, Spurablagen nur von Mitgliedern
+
+- ⚑ **Schiedsbeleg und Verlauf in Stücken** (`Nachforderung::SchiedsbelegTeil`,
+  `Nachforderung::VerlaufTeil`, angehängt; `nachschub::Belegstuecke`): Beide
+  wachsen mit der Länge der Sitzung, und ab rund tausend Positionen
+  passten sie nicht mehr in eine Antwort. Dann antworteten Anfechter und
+  Mitglieder mit nichts, der Prüfer konnte eine lange Sitzung nicht
+  nachrechnen, und das Komitee bekam keinen Beleg: ein Schlupfloch für
+  einen Pod, der in langen Sitzungen fälscht. Jetzt Stücke bis 3 MiB mit
+  dem Abdruck des Ganzen, lückenlos, ganz höchstens 64 MiB; der Verlauf je
+  Fall und Gegenstelle (sonst mischte ein unehrliches Mitglied seine
+  Stücke unter die eines ehrlichen), höchstens acht zugleich, die älteste
+  fällt; am Ende muss der Abdruck stimmen. Test `ein_beleg_in_stuecken`.
+- ⛔️ **Spurablagen nur von Mitgliedern des Pods** (`Knoten::spur_ablegen`):
+  📌 Bis hierher prüfte eine Ablage nur sich selbst. Jede Gegenstelle im
+  Netz konnte stimmige, erfundene Ablagen schicken und mit sechzehn davon
+  die echte verdrängen; dann lieferte niemand mehr den Verlauf. Jetzt nur
+  von einem Mitglied des Pods (die Gegenstelle der Verbindung, durch
+  libp2p beglaubigt, gegen die eingetragene Netzadresse) oder vom eigenen
+  Podwerk, je Absender, Epoche und Pod eine, und bei voller Ablage fällt
+  die älteste Epoche zuerst (`SPURABLAGEN_HOECHSTENS` 32).
+
+### v0.109.0 (2026-11-05): Der volle Einsteiger über ein Zertifikat
+
+- ⚑ **Ein voller Einsteiger sucht seinen Anker wie der zustandslose**
+  (`Knoten::anker_suche_pflegen`, `Nachforderung::VollerAnker`,
+  `Kette::voller_anker`): ein Zertifikat, das eine Epochengrenze mit
+  vollem Abzug endgültig macht, geprüft über die Wechselbelege ab Genesis;
+  dann der volle Abzug dort. Die Gegenstelle nimmt es aus ihren jüngsten
+  Zertifikaten oder aus den Abschlüssen ihrer Wechselbelege. Damit braucht
+  das Netz keine Anker im Programm mehr (`Netz::abzuege`); einer gilt nur
+  noch, wenn keine Gegenstelle einen liefert, sonst folgt der Knoten ab
+  Genesis. Der Anker des Betreibers (`--abzug`) geht weiter vor. Test:
+  `der_anker_fuer_einen_vollen_einsteiger`.
+- Die Suche fragt höchstens einmal je Sekunde und endet früh, wenn genug
+  Gegenstellen „keiner“ antworten, statt zehn Sekunden zu warten.
+
+### v0.108.1 (2026-11-05): Wer ruht, wird nicht gezogen; die Schranke der Höhe
+
+- 📌 **Wer ruht, wird nicht gezogen** (`Kette::erzeugersatz_von`): Der Satz
+  einer Epoche steht zwei Epochen voraus fest, und im Netzlauf mit einem
+  Doppelerzeuger baute der Geschlachtete noch drei Epochen weiter. Für die
+  Ziehung fällt ein Ruhender jetzt sofort heraus (wie in Ethereum kein
+  geschlachteter Validator vorschlagen darf); für die Finalität bleibt der
+  Satz fest. Die Mitwirkung liegt im kleinen Baum, also ziehen auch
+  zustandslose Knoten gleich.
+- ⚑ **Fund 634 entscheidbar** (`Kette::hoehen_schranke`): Jeder Block
+  verbraucht mindestens einen Slot, und jeder Zweig zweigt über dem
+  endgültigen Prüfpunkt ab. Mit Höhe `h` und Slot `s` eines eigenen Blocks
+  dort ist jede ehrliche Höhe höchstens `h + (Slot jetzt − s)`.
+  `fordere_nach` hört und fordert keine Höhe darüber (`hoehe_erfunden` im
+  Protokoll), auch nicht mit einer gültigen Unterschrift.
+- Folgt `myl-ledger` 0.55.0 (`Mitwirkung::getilgt`).
+
+### v0.108.0 (2026-11-05): Gabeln tiefer als die Rückwege, Prüfrollen gegen den Konsens, eine niedrigere Nummer geht vor
+
+- ⚑ **Gabeln tiefer als die Rückwege** (`Kette::zweig_boden`,
+  `Kette::neu_aufsetzen_bei`): Liegt der Gabelpunkt unter den 600 Blöcken
+  der Rückwege (bei 500 ms fünf Minuten Trennung) oder hat ein Neustart sie
+  gelöscht, baut die Kette den Stand am Gabelpunkt aus ihrem jüngsten
+  vollen Abzug darunter neu auf und rechnet die eigenen Blöcke bis dorthin
+  aus der Kettendatei nach, wie beim Wiederanlauf (Vorbild: Lighthouse und
+  Teku, Zustände an Wiederherstellungspunkten). Kein neues Dateiformat.
+  ⛔️ Nie unter den endgültigen Prüfpunkt; vor dem Neuaufbau müssen
+  Erzeuger und Zertifikate des fremden Zweigs tragen, und der Abzug muss
+  der eigene Block an seiner Höhe sein. Trägt der fremde Zweig nicht, zurück
+  auf den eigenen, aus dem Abzug, wenn die Rückwege nicht mehr reichen.
+  Test: `eine_gabel_tiefer_als_die_rueckwege`. 📌 Dafür liest
+  `Kette::eigener_hash` den eigenen Block unter dem Fenster aus der
+  Kettendatei; sonst fand die Kette den Gabelpunkt nie (`PasstNirgends`).
+- **Die Ablage hält den jüngsten Abzug unter dem endgültigen Prüfpunkt**
+  (`Ablage::ablegen_und_halten`), auch wenn die Finalität länger als zwei
+  Epochen ruht.
+- **Zweigsuche bis zum endgültigen Prüfpunkt**, gedeckelt auf 256 MiB, und
+  sie holt nur, bis der fremde Zweig über die eigene Höhe reicht. Eine
+  Gegenstelle, deren Zweig nicht trug, wird zehn Minuten nicht gefragt.
+  Der eigene gerechtfertigte Prüfpunkt zählt in der Vorauswahl auch, wenn
+  die Rückwege nicht bis zu ihm reichen.
+- ⚑ **Prüfrollen gegen den Konsens** (Merkmal `konsensrollen`, nie im
+  ausgelieferten Programm, Modul `konsensrollen`): `MYL_ZURUECKHALTEN_MS`
+  hält jeden eigenen Block zurück, `MYL_DOPPELT_ERZEUGEN=1` baut im selben
+  Slot zweimal, `MYL_UHR_VERSATZ_MS` verstellt die Uhr für Slots und
+  Annahmeregel (`Knoten::wanduhr_ms`).
+- 📌 **Eine niedrigere Nummer geht vor** (`Mempool::ende_tauschen`): Ist das
+  Kontingent eines Absenders (64) voll, verdrängt eine frühere Nummer seine
+  höchste. Nach einem Zweigwechsel kommen die Transaktionen des verlassenen
+  Zweigs zurück; wurden sie abgewiesen, klaffte eine Lücke, die späteren
+  verfielen, und im kurzen Netzlauf mit Laststufen kamen 320 angenommene
+  Transaktionen in keinen Block. Test: `eine_niedrigere_nummer_geht_vor`.
+- **`Netz::stimmsatz_inaktiv_epochen`**: auf der Probekette zwei Epochen
+  bis zum Ruhen, sonst 24 (`stimmsatz::Regeln::ausschluss_punkte`).
+
+### v0.107.1 (2026-11-04): Eine Gabel an der nächsten Höhe wird erkannt, Anker reihum
+
+- 📌 **Ein fremder Block an der nächsten Höhe passt nicht an, er ist nicht
+  unbelegt.** `Kette::erzeuger_traegt` prüfte Slot und Ziehung für jeden
+  Block an der nächsten Höhe, auch wenn er nicht an die eigene Spitze
+  anschloss. Ein fremder Zweig liegt aber womöglich früher in der Zeit,
+  sein Slot also unter dem eigenen letzten; dann hiess der Block
+  `ErzeugerUnbelegt` statt `PasstNichtAn`, und die Zweigsuche begann nie.
+  Im langen Netzlauf mit Laststufen bauten so nach der Stufe 1600/s
+  mehrere kleine Gruppen von Minern auf eigenen Zweigen weiter, bis zu
+  über 2 000 Blöcke hinter der Mehrheit (die Sicherheit hielt: gerechtfertigt
+  wurde nur auf dem Zweig der Mehrheit). Jetzt gilt der Plan nur für einen
+  Block auf der eigenen Spitze. Test: `ein_fremder_zweig_passt_nicht_an`.
+- 📌 **Der zustandslose Knoten fragt reihum nach einem Anker**
+  (`anker_reihum`), nicht immer die ersten vier Gegenstellen. Sassen die
+  auf einem Zweig der Minderheit, lagen ihre Anker unter der eigenen Höhe,
+  und die Selbstheilung fand in 54 Versuchen keinen. Dieselbe Lehre wie
+  bei den Zeugennachfragen (v0.98.1).
+
+### v0.107.0 (2026-11-04): Rotierender Erzeuger, Wahl des Zweigs, Stimmbuch
+
+Jeder volle Miner erzeugt in den Slots, für die der Plan ihn zieht; die
+Kette folgt dem Zweig mit dem höheren gerechtfertigten Prüfpunkt, dann dem
+längeren. Vorbild ist Ebb-and-Flow (Neu, Tas, Tse): eine verfügbare Kette,
+deren Präfix die Prüfpunkte aller endgültig machen.
+
+- ⚑ **Der Erzeuger eines Blocks ist der für seinen Slot Gezogene**
+  (`Kette::erzeuger_fuer`), aus dem Satz der Epoche aus dem Zustand
+  (`Kette::erzeugersatz_von`), auch wenn er die Finalität nicht trägt; ohne
+  Satz der von aussen. Der Slot liegt nach dem des Vorgängers. Für einen
+  Block, der nicht anschliesst (beim Nachholen), genügt ein Mitglied; geholt
+  wird Block für Block mit dem vollen Plan.
+- ⚑ **Die Saat des Plans** setzt der Wechsel nach `e` aus `β` der Vorepoche
+  (`Kette::erzeugersaat_fuer`); fehlt es, gilt die alte weiter. Kein
+  Rückfall auf eine mahlbare Quelle.
+- ⚑ **`Kette::zweig_folgen`**: höherer gerechtfertigter Prüfpunkt, dann
+  grössere Höhe; bei Gleichstand bleibt die Kette. Erst aus den Köpfen, dann
+  zurückrollen und Block für Block nachrechnen; trägt einer nicht oder ist
+  das Ergebnis nicht besser, zurück auf den eigenen Zweig. ⛔️ Nie unter den
+  Boden der Rückwege.
+- ⚑ **Die Zweigsuche im Knoten**: Ein Block, der an oder unter der nächsten
+  eigenen Höhe nicht anschliesst, und eine Gegenstelle mit mehr Höhe oder
+  einem höheren Zertifikat: Geholt wird ab 16 Blöcken darunter, dann doppelt
+  so tief, nie unter den Boden; weiter, solange der fremde Zweig noch nichts
+  verspricht und die Gegenstelle mehr hat.
+- ⚑ **Die Uhr nur in der Annahmeregel**: Ein Block aus einem Slot, der nach
+  der eigenen Uhr mehr als eine Sekunde in der Zukunft beginnt, wird nicht
+  angenommen, im Gossip, beim Nachholen und beim zustandslosen Knoten.
+- ⚑ **Jeder volle Miner erzeugt** mit seinem Konsensschlüssel, am Beginn
+  jedes Slots, für den er gezogen ist, nie zweimal im selben; eigene
+  Transaktionen nimmt er selbst auf, seine Zeugen liegen auf der Platte, und
+  die Erzeugerliste der Zeugenstücke umfasst jeden, der in der laufenden
+  oder nächsten Epoche gezogen werden kann. Auch der Erzeuger aus der
+  Genesis fragt bei Stille nach.
+- ⚑ **Das Stimmbuch** neben der Kettendatei (`stimmbuch`): die letzte eigene
+  Prüfpunktstimme und der letzte eigene Slot. Eine neue Stimme nur mit
+  höherem Ziel und keiner niedrigeren Quelle (Casper FFG; dann widerspricht
+  sie keiner früheren), dieselbe noch einmal ja; geschrieben, bevor die
+  Unterschrift das Haus verlässt.
+- ⚑ **Die Slotlänge je Netz** (`Netz::slot_ms`): Probekette 500 ms,
+  Testnetz 1 s. `--blocktakt` ist die Slotlänge, gilt für jeden Knoten und
+  muss bei allen gleich sein; die Befehlszeile setzt ohne Angabe die des
+  Netzes. Proben über die Bibliothek ohne Takt bauen nur auf Zuruf
+  (`Knoten::erzeuge_block`, im ersten eigenen Slot nach dem des Kopfs).
+- Die Aufnahme schreibt den gerechtfertigten Prüfpunkt mit seinem Block
+  (`gerechtfertigt`, `gerechtfertigt_block`): Mit rotierenden Erzeugern
+  kommt die Höhe nie zur Ruhe, und ein Lauf vergleicht die Knoten dort.
+- Tests: nur der für den Slot Gezogene kommt durch, ein früherer Slot nicht,
+  ein Block weiter vorn mit einem Mitglied; die Wahl des Zweigs (länger,
+  kürzer, gleich lang, ein Block, der nicht trägt, der höhere Prüfpunkt vor
+  der Länge, der Boden); das Stimmbuch; ein Knoten folgt über das Netz dem
+  längeren Zweig.
+
+### v0.106.0 (2026-11-04): Zurückrollen bis zum endgültigen Prüfpunkt
+
+Vorbereitung auf einen rotierenden Erzeuger, bei dem eine Kette den Zweig
+wechseln können muss. Noch wechselt kein Knoten von sich aus; das kommt mit
+der Wahl des Zweigs.
+
+- ⚑ **`Kette::zurueckrollen_bis(ziel)`**: Je angewandtem Block über dem
+  endgültigen Prüfpunkt hebt die Kette einen Rückweg auf (Zustand über
+  `myl_ledger`, dazu Vorgänger, Block und, an Epochengrenzen und
+  Ziehungen, was sie neben dem Zustand ableitet), auch für eigene Blöcke,
+  höchstens `RUECKWEG_HOECHSTENS` (vier Prüfpunkte). Zurückgenommen werden
+  Zustand, Höhe, letzter Hash, `bekannt`, `verlauf`, offene Zuteilungen und
+  die letzte Ziehung, dann Kettendatei (`Kettenspeicher::kuerzen_nach`),
+  Abzüge über dem Ziel (`Ablage::entfernen_ueber`), Historienbaum,
+  Zertifikate und Zeugen; die Transaktionen der zurückgenommenen Blöcke
+  gehen in den Mempool zurück.
+- ⛔️ **Nie unter `Kette::rueckweg_boden`**: den endgültigen Prüfpunkt, die
+  Basis, und nur so weit, wie Rückwege da sind (nach einem Neustart
+  keine). Ein zustandsloser Knoten rollt nicht zurück; er hält die
+  Sammlungen nur teilweise und verankert neu.
+- 📌 Ein Ziel genau am endgültigen Prüfpunkt nimmt auch den Block zurück,
+  der dessen Zertifikat trug; der Zustand nennt dann einen älteren
+  endgültigen Prüfpunkt, der Boden bleibt trotzdem, weil die Rückwege
+  darunter fehlen.
+- Tests: drei Blöcke zurück und einem neuen Zweig folgen (Wurzel, Mempool),
+  Boden am endgültigen Prüfpunkt; zurück über eine Epochengrenze;
+  Kettendatei gekürzt über eine Stütze, und ein Neustart spielt den neuen
+  Zweig nach.
+
+### v0.105.0 (2026-11-04): Gerechtfertigt und endgültig, Quelle je Stimme
+
+- ⚑ **Abgestimmt wird mit der Quelle aus dem Zustand** (Casper FFG): Beim
+  Anwenden eines Prüfpunktblocks vermerkt die Kette den dann
+  gerechtfertigten Prüfpunkt (`Kette::quelle_an`); jede Stimme für diesen
+  Prüfpunkt nennt ihn, gezählt werden nur Stimmen mit ihm, und ein
+  Zertifikat trägt nur mit ihm. So stimmen alle auf einem Zweig gleich,
+  auch wenn das vorige Zertifikat erst später in einen Block kommt, und
+  eine wiederholte Stimme ist dieselbe.
+- ⚑ **Ein Zertifikat rechtfertigt, endgültig macht erst das nächste**:
+  Über einem gerechtfertigten Prüfpunkt wird nicht mehr gestimmt
+  (`Kette::gerechtfertigt_bis`); `bestaetigt_bis` ist der jüngste
+  endgültige und folgt einen Prüfpunkt später. Die Größenzeile führt
+  `pruefpunkt_gerechtfertigt` neben `pruefpunkt_bestaetigt`.
+- ⚑ **Umschließende Stimmen werden gemeldet**: Eine eingehende Stimme wird
+  gegen alle aufgehobenen Stimmen desselben Wählers geprüft, nicht nur
+  gegen die derselben Höhe.
+- ⚑ **Wechselbelege und Anker nur endgültig**: Ein Wechselbeleg trägt das
+  abschließende Zertifikat mit (`Wechselbeleg::abschluss`), und der Anker
+  eines leichten Abzugs ist die Quelle eines Zertifikats, das sie
+  endgültig macht (`Folge::endgueltig_durch`, sonst
+  `Folgefehler::Offen`). Ein nur gerechtfertigter Prüfpunkt kann auf einem
+  Zweig liegen, den die Kette später verlässt. Belege im alten Format liest
+  die Ablage nicht mehr.
+- Tests: Rechtfertigung bei 150, Endgültigkeit erst mit dem Zertifikat von
+  300, eine andere als die vermerkte Quelle trägt nicht; Anker erst aus
+  einem abschließenden Zertifikat; Wechselbelege ohne passenden Abschluss
+  (kein direkter Nachfolger, anderer Block, zu wenig Gewicht) brechen ab.
+
+### v0.104.0 (2026-11-04): Der Satz aus dem Zustand trägt die Finalität, Wechselbelege, falscher Austeiler
+
+- ⚑ **Rollentrennung (7.8 Schritt 2):** Über Prüfpunkte, Stimmen als
+  Transaktion, Streitfälle und den Topf der Validatoren entscheidet der
+  Satz, der die Finalität der Epoche trägt
+  (`Kette::finalitaetssatz_von`): in der Startphase der Satz von außen,
+  danach nur der Satz aus dem Zustand, und nur, wenn er tragfähig ist; nie
+  zurück, nie für eine Epoche vor der Vorepoche. Die Blöcke unterschreibt
+  weiter ein Mitglied des Satzes von außen. Jeder Knoten stimmt, wenn er im
+  Satz der Epoche des Prüfpunkts steht, und trägt fehlende Stimmen je
+  Epoche nach. 📌 Im langen Netzlauf `nacht-saat` stimmten nur die
+  Mitglieder des Satzes von außen, und der Satz aus dem Zustand schrumpfte
+  auf sie (acht auf drei), mit ihm der Kreis der Saat.
+- ⚑ **Wechselbelege (7.3, 7.4, `wechsel.rs`):** Die Stimme unterschreibt die
+  Bindung an die Sätze der beiden folgenden Epochen. Jeder Knoten hebt je
+  Epoche einen Beleg auf (Zertifikat und die beiden Sätze, neben der
+  Kettendatei in `wechselbelege.dat`) und liefert ab einer Epoche auf
+  Nachfrage (`Nachforderung::Wechselbelege`). Ein zustandsloser Einsteiger
+  prüft seinen Anker gegen die Folge ab Genesis; fehlt ihm eine Epoche,
+  holt er die Belege der Gegenstelle, die den Anker nannte, und prüft
+  erneut. Das ersetzt den Satz der Genesis als einzige Prüfung eines
+  Ankers.
+- ⚑ **Merkmal `falscher_austeiler`** (nie im ausgelieferten Programm): Mit
+  `MYL_SAAT_FALSCH=1` verschlüsselt der Saatdienst dem ersten fremden Sitz
+  einen um eins verschobenen Wert und legt in ungeraden Epochen nicht
+  offen. Das Protokoll `saat_schluessel` nennt dazu ausgeteilt,
+  Beschwerden und Offenlegungen.
+- Tests: wer die Finalität trägt (Startphase, Wechsel, nicht tragfähig,
+  zu alt, kein Rückfall); die Folge der Wechselbelege samt Gegenproben und
+  Ablage; fehlt `β`, wartet die Stichprobe auf das nächste; der falsche
+  Austeiler des Prüfbaus in ungerader und gerader Epoche.
+
+### v0.103.0 (2026-11-03): Die Saat aus dem Stimmsatz
+
+- ⛔️ **Die Kette zieht nicht mehr mit dem Zertifikat**, sobald es für die
+  Epoche nach der gezogenen einen Saatschlüssel gibt: Gezogen wird mit dem
+  ersten `β` danach. Die Epochensaat kommt dann aus `β` der laufenden
+  Epoche; fehlt es, bleibt sie, und die Zuteilung wiederholt sich. ⛔️ Kein
+  Rückfall auf Blockhash oder Zertifikat, sonst lohnte es, `β` zu
+  verhindern. Nur in der Startphase ohne Schlüssel gilt der alte Weg.
+- ⚑ **Der Saatdienst** (`saatdienst`): leitet aus dem Zustand ab, was zu
+  senden ist (Schlüssel eintragen, austeilen, prüfen und beschweren,
+  offenlegen, Anteile), und wiederholt Verlorenes nach 300 Blöcken. Seine
+  Anteile prüft er vor dem Senden selbst; ⛔️ signiert wird nie vor der
+  Epoche, denn ihr Schlüssel entsteht erst im Wechselblock.
+- ⚑ **`saatgeheimnis`**: die eigene BLS-Signatur über eine feste Botschaft,
+  gehasht; eindeutig, also nach jedem Neustart dasselbe, und der geheime
+  Teil verlässt den Schlüsseltyp nicht.
+- ⚑ **Ein eigener Mindesteinsatz für den Stimmsatz, nur auf der
+  Probekette** (ein halbes MYL, `Netz::stimmsatz_mindesteinsatz`): Mit dem
+  abgeleiteten (1 250 MYL) entstand in keinem Netzlauf ein Satz aus dem
+  Zustand, also auch keine Saat. Jedes andere Netz rechnet `S_min`; eine
+  Probe hält das fest.
+- Protokoll: `saat` (Vorgang, Epoche), `saat_schluessel` (Quelle,
+  Qualifizierte, Schwelle, Sitze), `saat_beta`. 📌 Zuerst hiess ein Feld
+  `art`; das trägt jede Zeile schon, und der Schutz aus Fund 64 brach den
+  Test ab.
+
+### v0.102.1 (2026-11-03): Nachtragen mit dem Hash aus dem Zustand
+
+- 📌 **Der kurze Netzlauf fand es:** In 22 von 54 Zertifikaten fehlte ein
+  Mitglied, nachgetragen hatte keiner. `stimmen_nachtragen` nahm den Hash
+  aus dem Verlauf der Kette, der nur 256 Blöcke hält; nachgetragen wird erst
+  300 Blöcke später. Jetzt aus `pruefpunkt_hashes` im Zustand, gegen die die
+  Kette die Stimme ohnehin prüft.
+
+### v0.102.0 (2026-11-03): Stimmen als Transaktion, Korrelationsstrafe
+
+- ⛔️ **`PruefpunktBezeugen` in `anwenden`**: Mitglied des Satzes von
+  aussen oder des Satzes aus dem Zustand, Hash wie in `pruefpunkt_hashes`;
+  zählt für Topf und Teilnahme. Die Unterzeichner eines Zertifikats werden
+  ebenso je Prüfpunkt vermerkt. Der Zustand führt die Prüfpunkthashes beim
+  Anhängen der Historie.
+- ⚑ **Der Knoten trägt seine Stimmen nach** (`stimmen_nachtragen`): Steht
+  seine Stimme über einen Prüfpunkt der laufenden oder der vorigen Epoche
+  zwei Prüfpunkte später nicht im Zustand, geht sie als Transaktion, je
+  Prüfpunkt einmal, höchstens zwei je Aufruf. Auch für Prüfpunkte, über die
+  er nicht gestimmt hat, weil das Zertifikat vor ihm da war. Nicht der
+  Erzeuger: Er stimmt mit einem anderen Schlüssel und legt seine Stimme
+  selbst ins Zertifikat.
+- ⛔️ **`doppelbeleg_buchen`** führt die Buchung für die Korrelation, hält
+  die Kündigungen des Schuldigen fest, ruft
+  `myl_tokenomics::slashing::korrelation_buchen` mit dem Gewicht in Einsatz
+  und lässt ihn im Satz aus dem Zustand ruhen. Die Unterschriften der Epoche
+  gehen nicht mehr an `fortschreiben`.
+- Neuer Test `eine_stimme_als_transaktion_zaehlt_einmal`; der Test der
+  Doppelsignatur prüft die Korrelation samt festgehaltener Kündigung.
+
+### v0.101.0 (2026-11-03): Die Regeln des Stimmsatzes
+
+- ⚑ `Kette::satzregeln` (CONSENSUS 0.78.0): Mindesteinsatz,
+  **Arbeitsschwelle ein Viertel** des nach Einsatz gewichteten Medians,
+  Mindestgewicht vier Mindesteinsätze (für ein Hauptnetz vor Genesis
+  festzulegen). Der Epochenwechsel gibt dem Stimmsatz die bezeugte Arbeit je
+  Miner und die Unterschriften in den Prüfpunktzertifikaten mit, bevor der
+  Topf der Validatoren sie leert. Der Satz wirkt weiter noch nicht.
+
+### v0.100.1 (2026-11-03): Der Validator als Anfechter nimmt seinen eigenen Beleg
+
+- ⛔️ **Ist ein Validator selbst der Anfechter, rechnet er mit seinem eigenen
+  Beleg nach** (`schied_pflegen`), statt ihn über das Netz bei sich selbst
+  anzufragen. 📌 Nachtlauf `nacht-ablage` vom 2026-11-02: Acht Streitfälle
+  gegen den Fälscher verfielen, und **in allen acht war der Anfechter ein
+  Validator** (k2, k7, k10). Genau dieser fragte sechsmal sich selbst
+  („Failed to dial the requested peer“), stimmte nach der halben Frist nach
+  der Regel „Beweislast beim Anfechter“ gegen die eigene Anfechtung, und mit
+  zwei von vier Stimmen kamen zwei Drittel nicht zustande. Alle 40 übrigen
+  Streitfälle endeten `podfalsch`. Seine Stimme im eigenen Fall gibt ihm
+  nichts, was er nicht schon hat: Ein unehrlicher Validator kann in jedem
+  Fall so stimmen. ⚠️ Möglicherweise war das schon die Ursache der sieben
+  verfallenen Fälle vor v0.99.4; nachprüfen lässt es sich nicht mehr, die
+  Protokolle jenes Laufs sind überschrieben. Der Vorrang bleibt richtig.
+
+### v0.100.0 (2026-11-02): Der Stimmsatz der übernächsten Epoche
+
+- ⚑ Der Epochenwechsel schreibt den Stimmsatz für die übernächste Epoche
+  fort (`myl_ledger::stimmsatz::fortschreiben`, CONSENSUS 0.77.0), mit dem
+  Mindesteinsatz der Kette. `groessen` trägt `stimmsatz_kuenftig` und
+  `stimmsatz_gewicht`. Er wirkt noch nicht: Heute muss jeder Block von einem
+  Mitglied des Satzes unterschrieben sein, und der Erzeuger ist kein
+  eingetragener Miner mit Einsatz; ein Umschalten ohne Regel für ihn hielte
+  die Kette an (Schritt 2, mit 7.7).
 
 ### v0.99.4 (2026-10-31): Das Komitee erreicht den Anfechter, der Lügner bleibt einer
 

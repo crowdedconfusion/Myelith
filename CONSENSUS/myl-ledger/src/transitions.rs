@@ -449,6 +449,8 @@ pub fn apply_verdict(
             "die Masse war vorher gross genug, also muss alles genommen worden sein"
         );
     }
+    let jetzt = state.account(&guilty).staked;
+    state.einsatz_spiegeln(&guilty, jetzt);
     state.account_mut(&innocent).balance = innocent_balance + bounty;
     // **Der Vermerk gehört hierher und nirgendwo sonst.** Ein Urteil,
     // das gebucht wird, ohne gezählt zu werden, macht die Staffelung zu
@@ -988,6 +990,9 @@ pub fn miner_anmelden(
             netzadresse,
         },
     );
+    // Wer wegen Inaktivitaet ruht, kommt mit der Neuanmeldung wieder in
+    // Frage (7.8, Vorbild Cosmos „unjail“), unter der Wechselgrenze.
+    crate::stimmsatz::wieder_bereit(state, miner);
     Ok(())
 }
 
@@ -1448,6 +1453,8 @@ pub fn einsatz_hinterlegen(
     let k = state.account_mut(wer);
     k.balance -= betrag;
     k.staked += betrag;
+    let jetzt = k.staked;
+    state.einsatz_spiegeln(wer, jetzt);
     Ok(())
 }
 
@@ -1495,6 +1502,8 @@ pub fn einsatz_kuendigen(
     let k = state.account_mut(wer);
     k.staked -= betrag;
     *k.gekuendigt.entry(frei_ab).or_insert(0) += betrag;
+    let jetzt = k.staked;
+    state.einsatz_spiegeln(wer, jetzt);
     Ok(frei_ab)
 }
 
@@ -1706,7 +1715,45 @@ pub const SITZUNGEN_JE_AUFRAEUMEN: usize = 10_000;
 /// Epochenwechsel, nie beim Lesen.
 pub fn doppelbelege_aufraeumen(state: &mut LedgerState) {
     let jetzt = state.epoch.0;
-    state.doppelbelege.retain(|_, gebucht| gebucht.saturating_add(crate::einsatz::SPERRFRIST_EPOCHEN) >= jetzt);
+    state.doppelbelege.retain(|_, b| b.epoche.saturating_add(crate::einsatz::SPERRFRIST_EPOCHEN) >= jetzt);
+}
+
+/// ⚑ **Eine gebuchte Doppelsignatur** (2026-11-03): die Epoche der Buchung,
+/// die Schlachtmasse davor und was bisher für sie genommen wurde. Daraus
+/// rechnet die Korrelationsstrafe nach.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
+pub struct Doppelbuchung {
+    /// Die Epoche der Buchung.
+    pub epoche: u64,
+    /// Was vor der Buchung haftete, hinterlegt und gekündigt.
+    pub masse: u64,
+    /// Was für diesen Widerspruch genommen wurde, Grundsatz und Zuschlag.
+    pub genommen: u64,
+}
+
+/// **Nimmt bis zu `betrag` aus der Schlachtmasse von `konto` und
+/// verbrennt es** (Zuschlag der Korrelationsstrafe, ohne Kopfgeld). Gibt
+/// zurück, was genommen wurde.
+pub fn einsatz_verbrennen(state: &mut LedgerState, konto: &Address, betrag: u64) -> u64 {
+    let k = state.account_mut(konto);
+    let genommen = crate::einsatz::nimm_aus_der_masse(&mut k.staked, &mut k.gekuendigt, betrag);
+    let jetzt = k.staked;
+    state.einsatz_spiegeln(konto, jetzt);
+    genommen
+}
+
+/// **Hält die Kündigungen von `konto` bis mindestens `bis` fest**: Wer
+/// geschlachtet wurde, haftet für eine spätere Korrelationsstrafe; sonst
+/// holte er seinen Einsatz ab, bevor die Mittäter gemeldet sind (Vorbild
+/// Ethereum, die Sperre geschlachteter Validatoren).
+pub fn kuendigungen_festhalten(state: &mut LedgerState, konto: &Address, bis: u64) {
+    let k = state.account_mut(konto);
+    let frueher: u64 = k.gekuendigt.range(..bis).map(|(_, b)| *b).fold(0u64, |s, b| s.saturating_add(b));
+    if frueher > 0 {
+        k.gekuendigt.retain(|e, _| *e >= bis);
+        let e = k.gekuendigt.entry(bis).or_insert(0);
+        *e = e.saturating_add(frueher);
+    }
 }
 
 /// Wie [`sitzung_aufraeumen`] mit einer anderen Grenze (für Tests).
@@ -2114,8 +2161,8 @@ mod tests {
     fn doppelbelege_fallen_nach_der_sperrfrist() {
         let mut state = LedgerState::genesis(1);
         let a = Address::new([3u8; 32]);
-        state.doppelbelege.insert((a, 0, 10), 1);
-        state.doppelbelege.insert((a, 0, 11), 5);
+        state.doppelbelege.insert((a, 0, 10), Doppelbuchung { epoche: 1, ..Default::default() });
+        state.doppelbelege.insert((a, 0, 11), Doppelbuchung { epoche: 5, ..Default::default() });
         state.epoch = EpochId(1 + crate::einsatz::SPERRFRIST_EPOCHEN);
         doppelbelege_aufraeumen(&mut state);
         assert_eq!(state.doppelbelege.len(), 2, "genau an der Grenze bleibt er");

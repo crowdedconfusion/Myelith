@@ -56,18 +56,23 @@ pub mod dateidienst;
 pub mod drossel;
 pub mod gehoert;
 pub mod stimmsatzdatei;
+pub mod stimmbuch;
 pub mod kette;
 pub mod knoten;
 pub mod konformitaetstor;
 pub mod frist;
 pub mod konfig;
 pub mod konsens;
+#[cfg(feature = "konsensrollen")]
+pub mod konsensrollen;
 pub mod nachschub;
 pub mod netz;
 pub mod ortsklient;
 pub mod rechenweg;
 pub mod probe;
 pub mod protokoll;
+pub mod saatdienst;
+pub mod wechsel;
 pub mod schluessel;
 /// Die Relaisleitung zu einem Koordinator.
 pub mod relais;

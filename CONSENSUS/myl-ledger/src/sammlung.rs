@@ -380,6 +380,14 @@ impl<K: Ord + Clone, V: Clone> Sammlung<K, V> {
         self.beruehrt.clear();
     }
 
+    /// ⚑ **Schliesst das Journal ab und gibt es heraus** (Zurückrollen,
+    /// 2026-11-04): Die Änderungen bleiben, und wer das Journal aufhebt,
+    /// kann sie später mit [`Self::rueckweg_gehen`] zurücknehmen.
+    pub fn journal_nehmen(&mut self) -> Vec<(K, Option<V>)> {
+        self.beruehrt.clear();
+        self.journal.take().unwrap_or_default()
+    }
+
     /// Spielt das Journal zurück: Jeder berührte Schlüssel bekommt seinen
     /// alten Wert (und gilt als geändert, damit der Baum ihm folgt).
     pub fn journal_zurueckspielen(&mut self) {
@@ -387,6 +395,12 @@ impl<K: Ord + Clone, V: Clone> Sammlung<K, V> {
             return;
         };
         self.beruehrt.clear();
+        self.rueckweg_gehen(j);
+    }
+
+    /// Nimmt ein aufgehobenes Journal zurück ([`Self::journal_nehmen`]); bei
+    /// mehreren Blöcken das jüngste zuerst.
+    pub fn rueckweg_gehen(&mut self, j: Vec<(K, Option<V>)>) {
         for (k, alt) in j.into_iter().rev() {
             self.geaendert.insert(k.clone());
             match alt {

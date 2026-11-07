@@ -154,6 +154,26 @@ const NUR_ABZUG_WARNUNG: u32 = 3;
 const ZEUGEN_GESPERRT: usize = 64;
 /// Ab wann ein fehlender Zeuge nachgefragt wird.
 const ZEUGE_NACHFRAGEN_NACH: std::time::Duration = std::time::Duration::from_secs(1);
+/// ⚑ **Spielraum für Uhren** (2026-11-04, Erzeugerplan): So weit darf der
+/// Slot eines Blocks nach der eigenen Uhr in der Zukunft beginnen. NTP hält
+/// Uhren auf Millisekunden; eine Sekunde lässt auch einer schlecht
+/// gestellten Platz und erlaubt einem Angreifer höchstens zwei Slots
+/// Vorlauf.
+const UHR_SPIELRAUM_MS: u64 = 1_000;
+/// Wie weit unter den fremden Block die Suche nach dem Gabelpunkt zuerst
+/// schaut; reicht das nicht, schaut sie doppelt so weit.
+const ZWEIG_BLICK: u64 = 16;
+/// So lange darf eine Zweigsuche auf ihre Antwort warten.
+const ZWEIG_WARTEN: std::time::Duration = std::time::Duration::from_secs(10);
+/// ⚑ So viel darf eine Zweigsuche halten (7.7a, 2026-11-05): Seit sie bis
+/// zum endgültigen Prüfpunkt sucht, gibt es keine feste Tiefe mehr, und ein
+/// Block hat bis zu 2 MiB.
+const ZWEIG_BYTES_HOECHSTENS: usize = 256 * 1024 * 1024;
+/// ⚑ So lange fragt ein Knoten eine Gegenstelle nicht nach einem Zweig,
+/// deren Zweig nicht trug (7.7a): Ein Neuaufbau aus dem Abzug kostet ein
+/// Nachrechnen, und wer einen falschen Zweig anbietet, soll das nicht
+/// wiederholt auslösen können.
+const ZWEIG_SPERRE: std::time::Duration = std::time::Duration::from_secs(600);
 
 /// Höchstens `n` Gegenstellen ab `ab`, reihum, und wo die nächste Runde
 /// beginnt. Nach `ceil(len / n)` Runden war jede einmal dabei.
@@ -170,12 +190,20 @@ fn reihum(gegenstellen: &[libp2p::PeerId], ab: usize, n: usize) -> (Vec<libp2p::
 /// Führt die Erzeugerliste des Netzfadens aus dem Stimmsatz der Kette nach.
 /// Ohne Stimmsatz (eine Kette, die ihren Erzeuger erst lernt) bleibt sie,
 /// wie sie ist; siehe `Knoten::zustandslos_block`.
+///
+/// ⚑ Seit 2026-11-04 (Erzeugerplan) dazu jeder, der in der laufenden oder
+/// der nächsten Epoche gezogen werden kann: Jeder Erzeuger schickt die
+/// Zeugenstücke seines Blocks.
 fn erzeugerliste_aus(kette: &crate::kette::Kette, liste: &crate::validator::Erzeugerliste) {
     let Some(satz) = kette.stimmsatz() else {
         return;
     };
-    let neu: std::collections::BTreeMap<myl_types::MinerId, myl_types::bls::BlsPublicKey> =
+    let e = myl_consensus::block::epoche_fuer_hoehe(kette.hoehe() + 1);
+    let mut neu: std::collections::BTreeMap<myl_types::MinerId, myl_types::bls::BlsPublicKey> =
         satz.members().map(|(id, m)| (*id, m.pubkey)).collect();
+    for s in [kette.erzeugersatz(e), kette.erzeugersatz(e + 1)].into_iter().flatten() {
+        neu.extend(s.members().map(|(id, m)| (*id, m.pubkey)));
+    }
     if liste.read().is_ok_and(|l| *l == neu) {
         return;
     }
@@ -475,6 +503,23 @@ pub struct Knoten {
     schiedsbelege: std::collections::BTreeMap<(u64, myl_types::ids::PodId, u32), Schiedsbeleg>,
     /// Als Validator: je Streitfall, seit wann der Beleg angefragt ist.
     schied_angefragt: std::collections::BTreeMap<(u64, myl_types::ids::PodId, u32), std::time::Instant>,
+    /// ⚑ **Schiedsbelege in Stücken** (T6, 2026-11-05): je Fall Abdruck,
+    /// Grösse und die bisher gekommenen Bytes, höchstens
+    /// [`SCHIEDSTEILE_ZUGLEICH`] Fälle zugleich.
+    schied_teile: std::collections::BTreeMap<(u64, myl_types::ids::PodId, u32), crate::nachschub::Belegstuecke>,
+    /// Der zuletzt in Stücken ausgelieferte eigene Beleg, als Bytes mit
+    /// Abdruck, damit nicht jedes Stück den ganzen neu serialisiert.
+    schied_ausgabe: Option<(Fall, Arc<Vec<u8>>)>,
+    /// ⚑ **Verläufe in Stücken** (T6, 2026-11-05): je Fall und Gegenstelle,
+    /// denn jedes Mitglied der Besetzung antwortet; höchstens
+    /// [`VERLAUFTEILE_ZUGLEICH`] zugleich.
+    verlauf_teile: std::collections::HashMap<(Fall, libp2p::PeerId), (std::time::Instant, crate::nachschub::Belegstuecke)>,
+    /// Der zuletzt in Stücken ausgelieferte Verlauf, als Bytes.
+    verlauf_ausgabe: Option<(Fall, Arc<Vec<u8>>)>,
+    /// ⚑ **Spurablagen in Stücken** (T6, 2026-11-05), je Absender (`None`:
+    /// das eigene Podwerk) und Abdruck; höchstens [`VERLAUFTEILE_ZUGLEICH`],
+    /// die älteste fällt.
+    ablage_teile: std::collections::HashMap<(Option<libp2p::PeerId>, myl_types::Hash), (std::time::Instant, crate::nachschub::Belegstuecke)>,
     /// ⚑ **Zustandslos** (zustandslose Validierung, 2026-10-29): die Schlüssel
     /// der Blockerzeuger, gegen die der Netzfaden Zeugenstücke prüft.
     erzeugerliste: crate::validator::Erzeugerliste,
@@ -510,6 +555,19 @@ pub struct Knoten {
     /// Zeitüberschreitungen, und der zustandslose Knoten kam nur über
     /// leichte Abzüge weiter.
     zeugen_reihum: usize,
+    /// Wo die nächste Runde der Ankersuche beginnt, reihum wie
+    /// `zeugen_reihum`. 📌 Nachtlauf `nacht-rotation` (2026-11-04): Die
+    /// ersten vier Gegenstellen sassen nach der Laststufe auf Zweigen der
+    /// Minderheit, ihre Anker lagen unter der eigenen Höhe, und der
+    /// zustandslose Knoten fand in 54 Versuchen keinen.
+    anker_reihum: usize,
+    /// Wann zuletzt nach einem Anker gefragt wurde: höchstens einmal je
+    /// Sekunde, denn die Suche läuft in der Hauptschleife.
+    anker_gefragt: Option<std::time::Instant>,
+    /// Wie viele Gegenstellen in dieser Suche „keiner“ antworteten; ab
+    /// [`ZEUGEN_GEGENSTELLEN`] (oder allen, wenn es weniger sind) endet sie
+    /// früh, statt [`ANKER_SUCHEN_HOECHSTENS`] zu warten.
+    anker_keine: usize,
     /// ⚑ **Neuverankerungen ohne einen Block mit Zeugen dazwischen**
     /// (2026-10-30). Ab [`NUR_ABZUG_WARNUNG`] meldet der Knoten, dass er
     /// nur noch springt und nichts prüft. 📌 Im langen Podlauf ging das eine
@@ -522,6 +580,12 @@ pub struct Knoten {
     /// Der höchste geprüfte Anker dieser Suche, und seit wann es einen gibt:
     /// Gesammelt wird [`ANKER_SAMMELN`] lang, genommen der jüngste.
     anker_kandidat: Option<(crate::abzug::Anker, std::time::Instant)>,
+    /// ⚑ Anker, deren Abzug keine Gegenstelle lieferte (2026-11-07): Sie
+    /// zaehlen bei der naechsten Suche nicht mehr.
+    anker_verworfen: std::collections::BTreeSet<u64>,
+    /// ⚑ Ein Anker, dessen Epoche die eigene Folge noch nicht kennt (7.4):
+    /// Er wartet auf die Wechselbelege der Gegenstelle, die ihn nannte.
+    anker_wartend: Option<(libp2p::PeerId, myl_consensus::pruefpunkt::Pruefpunktzertifikat)>,
     /// Zustandslos: die Höhe und seit wann sie steht (für die Selbstheilung).
     stillstand: (u64, std::time::Instant),
     /// Zustandslos: der höchste Block mit belegtem Erzeuger, der ankam.
@@ -565,9 +629,10 @@ pub struct Knoten {
     /// ⚑ **Eine übernommene Position** (Whitepaper 6.8): Als Reserve rechnet
     /// dieser Knoten sie bis zum Ende ihrer Epoche.
     uebernahme: Option<crate::shardfuehrung::Shardauftrag>,
-    /// ⚑ **Abgelegte Spuren** für die Stichprobe (Stufe 2), höchstens
-    /// [`SPURABLAGEN_HOECHSTENS`], die älteste fällt.
-    spurablagen: Vec<myl_types::Spurablage>,
+    /// ⚑ **Abgelegte Spuren** für die Stichprobe (Stufe 2), je mit ihrem
+    /// Absender (`None`: das eigene Podwerk über die Ortsleitung); höchstens
+    /// [`SPURABLAGEN_HOECHSTENS`], zuerst fällt die älteste Epoche.
+    spurablagen: Vec<(Option<libp2p::PeerId>, myl_types::Spurablage)>,
     /// Die Zeugnisse über Fristen (6.8).
     fristsammlung: crate::frist::Fristsammlung,
     /// Laufende Messungen je Gegenüber.
@@ -589,6 +654,14 @@ pub struct Knoten {
     /// er die Stimme zuletzt verbreitet hat (sie wird wiederholt, bis der
     /// Prüfpunkt bestätigt ist).
     pruefpunkt_gestimmt: (u64, Option<std::time::Instant>),
+    /// Die eigenen Prüfpunktstimmen: Höhe, Hash und ob sie schon als
+    /// Transaktion nachgetragen ist (7.8, 2026-11-03).
+    pruefpunkt_eigene: std::collections::BTreeMap<u64, (myl_types::hash::Hash, bool)>,
+    /// ⚑ **Der Saatdienst** (2026-11-03): Austeilen, Beschweren, Offenlegen
+    /// und Anteile fuer die Saat aus dem Stimmsatz; nur mit Netzschluessel.
+    saatdienst: Option<crate::saatdienst::Saatdienst>,
+    /// Bis zu welcher Epoche Schluessel und `β` protokolliert sind.
+    saat_gemeldet: (u64, u64),
     /// Welche Doppelbelege dieser Knoten schon gemeldet hat (CONSENSUS 7.6).
     doppelbelege_gemeldet: std::collections::BTreeSet<(myl_types::ids::Address, u8, u64)>,
     /// Das Holen fehlender Dateien für die nächste Epoche (P11).
@@ -602,6 +675,21 @@ pub struct Knoten {
     /// Wann der nächste Block des Blocktakts fällig ist, ebenso über die
     /// Aufrufe hinweg.
     naechster_block: Option<tokio::time::Instant>,
+    /// ⚑ **Was dieser Knoten zuletzt unterschrieben hat** (2026-11-04):
+    /// nie zwei Blöcke im selben Slot, nie eine Stimme, die einer früheren
+    /// widerspricht, auch nicht nach einem Zweigwechsel oder Neustart.
+    stimmbuch: crate::stimmbuch::Stimmbuch,
+    /// Wo es liegt; ohne Kettendatei nur im Speicher.
+    stimmbuchdatei: Option<std::path::PathBuf>,
+    /// ⚑ Die laufende Suche nach einem fremden Zweig (2026-11-04, 7.7
+    /// Schritt 4).
+    zweigsuche: Option<Zweigsuche>,
+    /// Gegenstellen, deren Zweig nicht trug, und seit wann
+    /// ([`ZWEIG_SPERRE`]).
+    zweig_gesperrt: std::collections::HashMap<libp2p::PeerId, std::time::Instant>,
+    /// Prüfrollen gegen den Konsens (nur mit `konsensrollen`).
+    #[cfg(feature = "konsensrollen")]
+    rollen: crate::konsensrollen::Rollen,
     /// Die Höhe beim vorigen Testverkehr; mit Blocktakt ist die Probe der
     /// Blockkette, dass die Höhe seither gewachsen ist.
     hoehe_beim_testverkehr: u64,
@@ -693,6 +781,26 @@ enum Weckruf {
     /// Ein geprüfter Stapel von der Relaisleitung, mit der Antwort.
     RelaisGeprueft(RelaisGeprueft),
     Frist,
+}
+
+/// ⚑ **Eine Suche nach einem fremden Zweig** (2026-11-04, 7.7 Schritt 4):
+/// Ein Block schloss nicht an, und die Gegenstelle hat einen längeren Zweig
+/// oder einen höheren gerechtfertigten Prüfpunkt. Geholt wird ab `ab`, bis
+/// die Blöcke an die eigene Kette anschliessen; dann entscheidet
+/// [`crate::kette::Kette::zweig_folgen`].
+#[derive(Debug)]
+struct Zweigsuche {
+    bei: libp2p::PeerId,
+    ab: u64,
+    /// Bis wohin der Zweig der Gegenstelle reicht, soweit bekannt.
+    ziel: u64,
+    /// Was schon geholt ist, lückenlos ab `ab`.
+    bloecke: Vec<myl_consensus::block::Block>,
+    /// Wie viele Bytes die geholten Blöcke haben (höchstens
+    /// [`ZWEIG_BYTES_HOECHSTENS`]).
+    bytes: usize,
+    /// Seit wann die Anfrage läuft; `None`, solange sie noch nicht ging.
+    angefragt: Option<std::time::Instant>,
 }
 
 /// Eine laufende Nachforderung: bei wem, welcher Bereich, seit wann.
@@ -1118,13 +1226,16 @@ impl Knoten {
         //   mit dem Anker des Betreibers: Die Anker des Netzes liegen an
         //   alten Epochengrenzen, und so weit hält niemand Zeugen bereit.
         //   Ohne ihn sucht er einen über ein Prüfpunktzertifikat.
+        // ⚑ **Z7 (2026-11-05): Auch der volle Einsteiger sucht seinen Anker
+        //   über ein Zertifikat**, geprüft über die Wechselbelege ab Genesis,
+        //   wie der zustandslose. Ein Anker des Netzes gilt nur noch, wenn
+        //   keine Gegenstelle einen liefert ([`Self::anker_suche_pflegen`]).
         let abzug_holen = match (kette.hoehe() == 0, konfig.zustandslos) {
-            (true, false) => konfig.abzug.or_else(|| konfig.netz.juengster_anker()).map(AbzugHolen::neu),
+            (true, false) => konfig.abzug.map(AbzugHolen::neu),
             (true, true) => konfig.abzug.map(|a| AbzugHolen::neu_als(a, crate::abzug::Art::Leicht)),
             _ => None,
         };
-        let anker_suchen =
-            (konfig.zustandslos && abzug_holen.is_none() && kette.hoehe() == 0 && kette.stimmsatz().is_some()).then(std::time::Instant::now);
+        let anker_suchen = (abzug_holen.is_none() && kette.hoehe() == 0 && kette.stimmsatz().is_some()).then(std::time::Instant::now);
         let hintergrund = match (&basisblock, kette.ablage()) {
             (Some(b), Some(a))
                 if konfig.hintergrundpruefung
@@ -1150,6 +1261,17 @@ impl Knoten {
                 ))
             }
         };
+        let saatdienst = netzschluessel
+            .as_ref()
+            .and_then(|k| k.saatgeheimnis().ok())
+            .and_then(crate::saatdienst::Saatdienst::neu);
+        #[cfg(feature = "falscher_austeiler")]
+        let saatdienst = saatdienst.map(|mut d| {
+            if std::env::var("MYL_SAAT_FALSCH").is_ok_and(|w| w == "1") {
+                d.falsch_austeilen();
+            }
+            d
+        });
         // ⚠️ Nur lesen, nie anlegen: Ein neu erzeugter Schlüssel wäre nie
         //    eingetragen und könnte nichts wechseln.
         let kontowechsel = match konfig.kontowechseldatei.as_ref() {
@@ -1204,6 +1326,15 @@ impl Knoten {
                 kette.erzeugerschluessel_setzen(k);
             }
         }
+        // ⚑ **Jeder volle Miner erzeugt in seinen Slots** (2026-11-04, 7.7
+        //   Schritt 5): mit dem Schlüssel, unter dem er im Satz steht; ob er
+        //   gezogen ist, entscheidet der Plan je Slot. Ein zustandsloser
+        //   Knoten erzeugt nicht, sein Slot bleibt leer.
+        if !konfig.erzeugt_bloecke && !konfig.zustandslos {
+            if let Some(k) = netzschluessel.clone() {
+                kette.erzeugerschluessel_setzen(k);
+            }
+        }
         let abruf = archiv_abruf(&kette);
         let shardfuehrung = match (&konfig.shard, &konfig.konsensschluesseldatei) {
             (Some(sk), Some(pfad)) if !sk.programm.as_os_str().is_empty() => {
@@ -1251,7 +1382,7 @@ impl Knoten {
         // ⚑ Die Zeugen auf der Platte (2026-10-30): wer sie erzeugt, als
         //   Erzeuger oder als Zeugenhalter; neben der Kettendatei, sonst im
         //   Protokollverzeichnis.
-        if !konfig.zustandslos && (konfig.erzeugt_bloecke || konfig.zeugen_bereithalten) {
+        if !konfig.zustandslos && (konfig.erzeugt_bloecke || konfig.zeugen_bereithalten || netzschluessel.is_some()) {
             let ordner = match &konfig.kettendatei {
                 Some(k) => k.with_extension("zeugen"),
                 None => konfig.protokollverzeichnis.join(format!("{}.zeugen", konfig.name)),
@@ -1275,6 +1406,14 @@ impl Knoten {
             protokoll.schreibe(Eintrag::neu("baum_auf_platte").text("pfad", pfad.display().to_string()));
         }
         erzeugerliste_aus(&kette, &erzeugerliste);
+        // ⚑ **Das Stimmbuch** neben der Kettendatei (2026-11-04): was dieser
+        //   Knoten zuletzt unterschrieben hat, über den Neustart hinweg.
+        let stimmbuchdatei = konfig.kettendatei.as_ref().map(|k| k.with_extension("stimmbuch"));
+        let stimmbuch = match &stimmbuchdatei {
+            Some(p) => crate::stimmbuch::Stimmbuch::laden(p)
+                .map_err(|e| KnotenFehler::Kette(format!("Stimmbuch unter {}: {e}", p.display())))?,
+            None => crate::stimmbuch::Stimmbuch::default(),
+        };
         protokoll.schreibe(
             Eintrag::neu("netz")
                 .text("netz", konfig.netz.name)
@@ -1300,11 +1439,20 @@ impl Knoten {
             fristverdacht: std::collections::BTreeMap::new(),
             pruefpunktstimmen: std::collections::BTreeMap::new(),
             pruefpunkt_gestimmt: (0, None),
+            pruefpunkt_eigene: Default::default(),
+            saatdienst,
+            saat_gemeldet: (0, 0),
             doppelbelege_gemeldet: std::collections::BTreeSet::new(),
             nachholen: None,
             ausstehend: Vec::new(),
             naechste_aufnahme: None,
             naechster_block: None,
+            stimmbuch,
+            stimmbuchdatei,
+            zweigsuche: None,
+            zweig_gesperrt: std::collections::HashMap::new(),
+            #[cfg(feature = "konsensrollen")]
+            rollen: crate::konsensrollen::Rollen::aus_umgebung(),
             hoehe_beim_testverkehr: 0,
             voraus: Default::default(),
             testverkehr_nonce: (0, 0),
@@ -1361,6 +1509,11 @@ impl Knoten {
             festzulegen: Vec::new(),
             schiedsbelege: std::collections::BTreeMap::new(),
             schied_angefragt: std::collections::BTreeMap::new(),
+            schied_teile: std::collections::BTreeMap::new(),
+            schied_ausgabe: None,
+            verlauf_teile: std::collections::HashMap::new(),
+            verlauf_ausgabe: None,
+            ablage_teile: std::collections::HashMap::new(),
             erzeugerliste,
             zeugenpruefer,
             zeugensammler: myl_consensus::zeuge::Zeugensammler::neu(ZEUGEN_SAMMLER_BYTES),
@@ -1371,9 +1524,14 @@ impl Knoten {
             zeugen_angefragt: std::collections::BTreeMap::new(),
             zeugen_quellen: std::collections::VecDeque::new(),
             zeugen_reihum: 0,
+            anker_reihum: 0,
+            anker_gefragt: None,
+            anker_keine: 0,
             nur_abzug: 0,
             anker_suchen,
             anker_kandidat: None,
+            anker_verworfen: Default::default(),
+            anker_wartend: None,
             stillstand: (0, std::time::Instant::now()),
             hoechster_belegter: 0,
             stillstand_hoechstens: STILLSTAND_HOECHSTENS,
@@ -1858,8 +2016,9 @@ impl Knoten {
         let sendetakt = self.konfig.testverkehr_sekunden.map(|s| Duration::from_secs(s.max(1)));
         let mut naechster_versand = sendetakt.map(|t| tokio::time::Instant::now() + t);
         let blocktakt = self.blocktakt();
-        if let Some(t) = blocktakt {
-            self.naechster_block.get_or_insert_with(|| tokio::time::Instant::now() + t);
+        if blocktakt.is_some() {
+            let bis = self.bis_zum_naechsten_slot();
+            self.naechster_block.get_or_insert_with(|| tokio::time::Instant::now() + bis);
         }
         loop {
             let jetzt = tokio::time::Instant::now();
@@ -1878,17 +2037,21 @@ impl Knoten {
                     naechster_versand = Some(jetzt + t);
                 }
             }
-            // ⚑ Fällig ab dem geplanten Zeitpunkt, nicht ab jetzt: Ein Block,
-            //   der sich verspätet, verschiebt nicht alle folgenden.
-            //   Hinkt der Erzeuger weiter als einen Takt hinterher, setzt er
-            //   neu auf, statt die verpassten Blöcke nachzuschiessen.
-            if let (Some(faellig), Some(t)) = (self.naechster_block, blocktakt) {
+            // ⚑ **Je Slot nach der Uhr** (2026-11-04, Erzeugerplan): am Beginn
+            //   jedes Slots bauen, wenn der Plan diesen Knoten zieht; danach
+            //   auf den Beginn des nächsten. Ein verpasster Slot wird nicht
+            //   nachgeholt, er bleibt leer.
+            if let (Some(faellig), Some(_)) = (self.naechster_block, blocktakt) {
                 if jetzt >= faellig {
                     self.block_wenn_jemand_hoert().await;
-                    let naechster = faellig + t;
-                    self.naechster_block = Some(if naechster <= jetzt { jetzt + t } else { naechster });
+                    self.naechster_block = Some(tokio::time::Instant::now() + self.bis_zum_naechsten_slot());
                 }
             }
+            self.zweig_pflegen();
+            if !self.kette.ist_zustandslos() {
+                self.anker_suche_pflegen();
+            }
+            self.zurueckgehaltene_freigeben().await;
             // Der BFT-Takt. Prüft selbst, ob die Frist verfallen ist,
             // und wechselt gegebenenfalls die Runde.
             self.konsens_takt().await;
@@ -2121,9 +2284,109 @@ impl Knoten {
         rueckgrat && ok2
     }
 
-    /// Der Blocktakt, wenn dieser Knoten erzeugt und einen hat.
+    /// ⚑ **Ob dieser Knoten erzeugen kann** (2026-11-04, 7.7 Schritt 5):
+    /// voll und mit einem Schlüssel für Blöcke. In welchen Slots, sagt der
+    /// Plan.
+    fn erzeugt(&self) -> bool {
+        !self.kette.ist_zustandslos() && self.kette.erzeugerschluessel().is_some()
+    }
+
+    /// ⚑ **Der Takt, in dem dieser Knoten nach der Uhr erzeugt**: die Länge
+    /// eines Slots, wenn er erzeugen kann und einen Takt hat. Von der
+    /// Befehlszeile hat er immer einen; Proben über die Bibliothek ohne Takt
+    /// bauen nur auf Zuruf ([`Self::erzeuge_block`]) in den Slots nach dem
+    /// des Kopfs, und die liegen nie in der Zukunft.
     fn blocktakt(&self) -> Option<Duration> {
-        self.konfig.blocktakt_ms.filter(|_| self.konfig.erzeugt_bloecke).map(Duration::from_millis)
+        self.konfig.blocktakt_ms.filter(|_| self.erzeugt()).map(|_| Duration::from_millis(self.konfig.slot_ms()))
+    }
+
+    /// Schreibt das Stimmbuch, wenn es eine Datei hat; `false`, wenn das
+    /// misslang (vermerkt).
+    fn stimmbuch_schreiben(&mut self) -> bool {
+        let Some(pfad) = self.stimmbuchdatei.as_ref() else {
+            return true;
+        };
+        match self.stimmbuch.speichern(pfad) {
+            Ok(()) => true,
+            Err(e) => {
+                self.protokoll.schreibe(Eintrag::neu("stimmbuch_fehler").text("grund", e.to_string()));
+                false
+            }
+        }
+    }
+
+    /// Die eigene Uhr für Slots und Annahmeregel, in Millisekunden seit der
+    /// Unix-Zeit; im Prüfnetz mit dem Versatz der Rolle (7.7d).
+    fn wanduhr_ms(&self) -> u64 {
+        let jetzt = crate::protokoll::jetzt_ms();
+        #[cfg(feature = "konsensrollen")]
+        let jetzt = jetzt.saturating_add(self.rollen.uhr_versatz_ms);
+        jetzt.max(0) as u64
+    }
+
+    /// Wie lange bis zum Beginn des nächsten Slots, nach der Uhr.
+    fn bis_zum_naechsten_slot(&self) -> Duration {
+        let slot_ms = self.konfig.slot_ms();
+        let jetzt = self.wanduhr_ms();
+        let naechster = myl_consensus::erzeugerplan::slotbeginn(myl_consensus::erzeugerplan::slot_bei(jetzt, slot_ms) + 1, slot_ms);
+        Duration::from_millis(naechster.saturating_sub(jetzt).max(1))
+    }
+
+    /// ⚑ **Ein Block aus einem Slot, der nach der eigenen Uhr noch nicht
+    /// begonnen hat** (2026-11-04, Erzeugerplan), mit
+    /// [`UHR_SPIELRAUM_MS`] Spielraum für Uhren, die nicht genau gehen. Er
+    /// ist nicht ungültig, nur zu früh; ohne diese Regel baute ein Mitglied
+    /// in allen künftigen Slots, für die es gezogen ist, sofort einen Zweig
+    /// und überholte die ehrliche Kette. Die Kette selbst rechnet nie mit
+    /// der Uhr.
+    fn aus_der_zukunft(&self, block: &myl_consensus::block::Block) -> bool {
+        let jetzt = self.wanduhr_ms();
+        myl_consensus::erzeugerplan::slotbeginn(block.header.slot, self.konfig.slot_ms()) > jetzt.saturating_add(UHR_SPIELRAUM_MS)
+    }
+
+    /// Hält einen eigenen Block zurück, wenn die Rolle das will (7.7b);
+    /// sonst kommt er zum Verbreiten zurück.
+    fn zurueckhalten(&mut self, daten: Vec<u8>) -> Option<Vec<u8>> {
+        #[cfg(feature = "konsensrollen")]
+        if !self.rollen.zurueckhalten.is_zero() {
+            let wann = std::time::Instant::now() + self.rollen.zurueckhalten;
+            self.rollen.zurueckgehalten.push_back((wann, daten));
+            self.protokoll.schreibe(Eintrag::neu("block_zurueckgehalten").zahl("hoehe", self.kette.hoehe() as i64));
+            return None;
+        }
+        Some(daten)
+    }
+
+    /// Verbreitet die zurückgehaltenen Blöcke, deren Zeit gekommen ist.
+    async fn zurueckgehaltene_freigeben(&mut self) {
+        #[cfg(feature = "konsensrollen")]
+        for daten in self.rollen.faellige() {
+            let ok = self.veroeffentliche(GossipTopic::Blocks, daten).await;
+            self.protokoll.schreibe(Eintrag::neu("block_freigegeben").wahr("verbreitet", ok));
+        }
+    }
+
+    /// Baut im selben Slot einen zweiten Block, wenn die Rolle das will
+    /// (7.7c): derselbe Block mit anderem Zeitstempel, neu unterschrieben.
+    async fn doppelt_erzeugen(&mut self, _block: &myl_consensus::block::Block) {
+        #[cfg(feature = "konsensrollen")]
+        if self.rollen.doppelt {
+            let mut zweiter = _block.clone();
+            zweiter.header.timestamp_ms = zweiter.header.timestamp_ms.wrapping_add(1);
+            let Some(k) = self.kette.erzeugerschluessel().cloned() else {
+                return;
+            };
+            let Ok(signatur) = k.signiere(&zweiter.erzeugernachricht()) else {
+                return;
+            };
+            zweiter.unterschrift = Some(myl_consensus::block::Erzeugerunterschrift { schluessel: k.oeffentlich(), signatur });
+            if let Ok(daten) = borsh::to_vec(&zweiter) {
+                let ok = self.veroeffentliche(GossipTopic::Blocks, daten).await;
+                self.protokoll.schreibe(
+                    Eintrag::neu("doppelt_erzeugt").zahl("hoehe", zweiter.header.height as i64).zahl("slot", zweiter.header.slot as i64).wahr("verbreitet", ok),
+                );
+            }
+        }
     }
 
     /// Baut einen Block, sobald jemand zuhört; `None` heißt, es hört noch
@@ -2160,7 +2423,23 @@ impl Knoten {
             );
             return None;
         }
-        Some(self.erzeuge_block().await)
+        self.im_slot_erzeugen().await
+    }
+
+    /// ⚑ **Baut im laufenden Slot, wenn der Plan diesen Knoten zieht**
+    /// (2026-11-04, Erzeugerplan); `None`, wenn nicht. Nie zweimal im
+    /// selben Slot (schlachtbar) und nie in einem, der nicht nach dem des
+    /// Kopfs liegt.
+    async fn im_slot_erzeugen(&mut self) -> Option<bool> {
+        if !self.erzeugt() {
+            return None;
+        }
+        let jetzt = self.wanduhr_ms();
+        let slot = myl_consensus::erzeugerplan::slot_bei(jetzt, self.konfig.slot_ms());
+        if slot <= self.stimmbuch.slot || self.kette.eigener_slot(slot, slot) != Some(slot) {
+            return None;
+        }
+        Some(self.erzeuge_block_im(Some(slot)).await)
     }
 
     /// Führt eine Nachrichtenprobe aus: echtes Objekt bauen,
@@ -2228,10 +2507,19 @@ impl Knoten {
 
     /// Baut den nächsten Block und verbreitet ihn.
     ///
-    /// Nur der Erzeuger tut das. Er übernimmt den Block **selbst
-    /// zuerst**, das steckt in [`Kette::baue_block`]: Der Zustand wird
-    /// angewandt, bevor die Wurzel in den Block geschrieben wird.
+    /// Der Erzeuger übernimmt den Block **selbst zuerst**, das steckt in
+    /// [`Kette::baue_block`]: Der Zustand wird angewandt, bevor die Wurzel
+    /// in den Block geschrieben wird.
+    ///
+    /// ⚑ **Für Proben, ohne Uhr** (seit 2026-11-04): im ersten eigenen Slot
+    /// nach dem des Kopfs. Im Betrieb baut der Knoten im Slot seiner Uhr
+    /// ([`Self::im_slot_erzeugen`]).
     pub async fn erzeuge_block(&mut self) -> bool {
+        self.erzeuge_block_im(None).await
+    }
+
+    /// Baut im Slot `slot`, ohne ihn im ersten eigenen nach dem des Kopfs.
+    async fn erzeuge_block_im(&mut self, slot: Option<u64>) -> bool {
         if self.kette.ist_zustandslos() {
             return false;
         }
@@ -2240,13 +2528,23 @@ impl Knoten {
         //   `pruefpunkt_pflegen`). Bis zum 2026-10-27 stand hier die
         //   Saatquelle aus dem Commitzertifikat der BFT-Runde.
         let wartend = self.kette.wartend();
-        let block = self.kette.baue_block();
+        let block = match slot {
+            Some(s) => self.kette.baue_block_im_slot(s),
+            None => self.kette.baue_block(),
+        };
+        // ⛔️ Ins Stimmbuch, bevor der Block das Haus verlässt.
+        self.stimmbuch.slot = self.stimmbuch.slot.max(block.header.slot);
+        self.stimmbuch_schreiben();
         let daten = match borsh::to_vec(&block) {
             Ok(d) => d,
             Err(_) => return false,
         };
         let bytes = daten.len();
-        let ok = self.veroeffentliche(GossipTopic::Blocks, daten).await;
+        let ok = match self.zurueckhalten(daten) {
+            Some(daten) => self.veroeffentliche(GossipTopic::Blocks, daten).await,
+            None => true,
+        };
+        self.doppelt_erzeugen(&block).await;
         // ⚑ **Dann der Zeuge, in unterschriebenen Stücken**, für die
         //   zustandslosen Knoten; ohne Abonnenten geht er nirgends hin.
         let hash = self.kette.letzter_hash();
@@ -2269,6 +2567,10 @@ impl Knoten {
                 .text("block", kurz(&self.kette.letzter_hash()))
                 .wahr("verbreitet", ok),
         );
+        // ⚑ Auch nach dem eigenen Block (2026-11-06): Wer nur selbst baut,
+        //   uebernimmt nichts Fremdes, und ohne diesen Aufruf saehe er einen
+        //   fremden Zweig im Vorausspeicher nie (siehe `voraus_einspielen`).
+        self.voraus_einspielen();
         self.stichprobe_verschicken().await;
         // Ein Erzeuger, der allein den Stimmsatz trägt, bestätigt seinen
         // Prüfpunkt sofort, und der nächste Block trägt das Zertifikat.
@@ -2280,21 +2582,28 @@ impl Knoten {
     /// Projektinhabers: Prüfpunktstimmen statt Runden).
     ///
     /// 1. **Abstimmen** über den jüngsten Prüfpunkt, den die Kette hat und
-    ///    der noch nicht bestätigt ist, wenn der eigene Schlüssel im
+    ///    der noch nicht gerechtfertigt ist, wenn der eigene Schlüssel im
     ///    Stimmsatz steht; die Stimme wird alle zehn Sekunden wiederholt,
-    ///    bis der Prüfpunkt bestätigt ist, damit eine verlorene Nachricht
-    ///    die Endgültigkeit nicht aufhält.
+    ///    bis der Prüfpunkt gerechtfertigt ist, damit eine verlorene
+    ///    Nachricht die Endgültigkeit nicht aufhält. ⚑ Mit der Quelle, die
+    ///    der Zustand für ihn vermerkt hat (2026-11-04, Casper FFG); so ist
+    ///    die Wiederholung dieselbe Stimme, und keine eigene Stimme
+    ///    umschliesst eine frühere, solange die Kette keinen Zweig wechselt.
     /// 2. **Sammeln:** Je Höhe zählen die Stimmen für den **eigenen** Block
     ///    an dieser Höhe; ab mehr als zwei Dritteln des Gewichts baut der
     ///    Knoten das Zertifikat und bietet es der Kette an. Nur der Erzeuger
     ///    legt es in einen Block, aber jeder hat es.
     async fn pruefpunkt_pflegen(&mut self) {
+        use myl_consensus::block::epoche_fuer_hoehe;
         use myl_consensus::pruefpunkt::{BLOECKE_JE_PRUEFPUNKT, Pruefpunktstimme, Pruefpunktzertifikat, pruefpunktnachricht};
-        let Some(satz) = self.kette.stimmsatz().cloned() else {
+        let bestaetigt = self.kette.gerechtfertigt_bis();
+        let juengster = self.kette.hoehe() / BLOECKE_JE_PRUEFPUNKT * BLOECKE_JE_PRUEFPUNKT;
+        // ⚑ Es stimmt, wer die Finalitaet der Epoche des Pruefpunkts traegt
+        //   (7.8 Schritt 2, 2026-11-04), nicht mehr der Satz von aussen.
+        let Some(satz) = self.kette.finalitaetssatz(epoche_fuer_hoehe(juengster)) else {
+            self.pruefpunktstimmen.retain(|h, _| *h > bestaetigt);
             return;
         };
-        let bestaetigt = self.kette.bestaetigt_bis();
-        let juengster = self.kette.hoehe() / BLOECKE_JE_PRUEFPUNKT * BLOECKE_JE_PRUEFPUNKT;
         let schluessel = if self.konfig.erzeugt_bloecke {
             self.kette.erzeugerschluessel().cloned()
         } else {
@@ -2306,10 +2615,23 @@ impl Knoten {
             (_, None) => false,
         };
         if juengster > bestaetigt && faellig {
-            if let (Some(k), Some(block_hash)) = (schluessel, self.kette.hash_an(juengster)) {
+            if let (Some(k), Some(block_hash), Some(quelle)) = (schluessel, self.kette.hash_an(juengster), self.kette.quelle_an(juengster)) {
                 if satz.pubkey(&k.kennung()) == Some(&k.oeffentlich()) {
-                    if let Ok(signatur) = k.signiere(&pruefpunktnachricht(juengster, &block_hash)) {
-                        let stimme = Pruefpunktstimme { hoehe: juengster, block_hash, waehler: k.kennung(), signatur };
+                    // ⚑ Mit der Bindung an die kommenden Saetze (7.3).
+                    let bindung = myl_ledger::stimmsatz::bindung(self.kette.zustand(), epoche_fuer_hoehe(juengster));
+                    // ⛔️ Nur, was keiner eigenen früheren Stimme widerspricht
+                    //    (Stimmbuch, 2026-11-04), und erst ins Buch, dann
+                    //    unterschrieben.
+                    let darf = self.stimmbuch.darf_stimmen(juengster, &block_hash, &bindung, &quelle);
+                    let vorher = self.stimmbuch.stimme;
+                    self.stimmbuch.stimme = Some((juengster, block_hash, bindung, quelle));
+                    let gebucht = darf && (vorher == self.stimmbuch.stimme || self.stimmbuch_schreiben());
+                    if !gebucht {
+                        self.stimmbuch.stimme = vorher;
+                    }
+                    if let Some(signatur) = gebucht.then(|| k.signiere(&pruefpunktnachricht(juengster, &block_hash, &bindung, &quelle)).ok()).flatten() {
+                        let stimme = Pruefpunktstimme { hoehe: juengster, block_hash, bindung, quelle, waehler: k.kennung(), signatur };
+                        self.pruefpunkt_eigene.entry(juengster).or_insert((block_hash, false));
                         self.pruefpunktstimmen.entry(juengster).or_default().insert(stimme.waehler, stimme.clone());
                         let wiederholt = self.pruefpunkt_gestimmt.0 == juengster;
                         self.pruefpunkt_gestimmt = (juengster, Some(std::time::Instant::now()));
@@ -2324,12 +2646,29 @@ impl Knoten {
             }
         }
         self.pruefpunktstimmen.retain(|h, _| *h > bestaetigt);
+        self.stimmen_nachtragen();
         let mut fertig = None;
         for (h, stimmen) in &self.pruefpunktstimmen {
             let Some(eigener) = self.kette.hash_an(*h) else {
                 continue;
             };
-            let passende: Vec<Pruefpunktstimme> = stimmen.values().filter(|s| s.block_hash == eigener).cloned().collect();
+            let satz = if epoche_fuer_hoehe(*h) == epoche_fuer_hoehe(juengster) {
+                satz.clone()
+            } else {
+                match self.kette.finalitaetssatz(epoche_fuer_hoehe(*h)) {
+                    Some(s) => s,
+                    None => continue,
+                }
+            };
+            let Some(quelle) = self.kette.quelle_an(*h) else {
+                continue;
+            };
+            let bindung = myl_ledger::stimmsatz::bindung(self.kette.zustand(), epoche_fuer_hoehe(*h));
+            let passende: Vec<Pruefpunktstimme> = stimmen
+                .values()
+                .filter(|s| s.block_hash == eigener && s.bindung == bindung && s.quelle == quelle)
+                .cloned()
+                .collect();
             let gewicht = passende.iter().fold(0u64, |a, s| a.saturating_add(satz.weight(&s.waehler)));
             if gewicht >= satz.quorum_threshold() {
                 if let Ok(z) = Pruefpunktzertifikat::aus_stimmen(&passende) {
@@ -2351,13 +2690,136 @@ impl Knoten {
         }
     }
 
-    /// Eine Prüfpunktstimme aus dem Netz: aufheben, wenn sie trägt und über
-    /// dem bestätigten Stand liegt; gezählt wird in `pruefpunkt_pflegen`.
-    fn pruefpunktstimme_aufnehmen(&mut self, stimme: myl_consensus::pruefpunkt::Pruefpunktstimme) {
-        if stimme.hoehe <= self.kette.bestaetigt_bis() {
+    /// ⚑ **Eigene Stimmen nachtragen** (7.8, 2026-11-03): Steht die eigene
+    /// Stimme über einen Prüfpunkt der laufenden oder der vorigen Epoche zwei
+    /// Prüfpunkte später noch nicht im Zustand (zu spät für das Zertifikat,
+    /// weggelassen, es kam keines, oder der Knoten hat den Prüfpunkt erst
+    /// nach dem Zertifikat gesehen und darum nicht gestimmt), geht sie als
+    /// Transaktion, je Prüfpunkt einmal und je Aufruf höchstens
+    /// [`NACHTRAEGE_JE_AUFRUF`], gegen die Grenze je Absender im Mempool.
+    /// Nicht beim Erzeuger: Er legt seine Stimme selbst ins Zertifikat und
+    /// stimmt mit einem anderen Schlüssel, als er Transaktionen
+    /// unterschreibt.
+    fn stimmen_nachtragen(&mut self) {
+        use myl_consensus::block::{epoche_fuer_hoehe, BLOECKE_JE_EPOCHE};
+        use myl_consensus::pruefpunkt::BLOECKE_JE_PRUEFPUNKT;
+        let jetzt = self.kette.hoehe();
+        let epoche = epoche_fuer_hoehe(jetzt);
+        self.pruefpunkt_eigene.retain(|h, _| epoche_fuer_hoehe(*h).saturating_add(1) >= epoche);
+        if self.konfig.erzeugt_bloecke {
             return;
         }
-        if !self.kette.stimmsatz().is_some_and(|satz| stimme.traegt(satz)) {
+        let Some((ich, pk)) = self.netzschluessel.as_ref().map(|k| (k.kennung(), k.oeffentlich())) else {
+            return;
+        };
+        // Je Epoche: ob dieser Knoten dort die Finalitaet mittraegt.
+        let traegt = |e: u64| self.kette.finalitaetssatz(e).is_some_and(|s| s.pubkey(&ich) == Some(&pk));
+        let traegt_vorige = traegt(epoche.saturating_sub(1));
+        let traegt_laufende = traegt(epoche);
+        if !traegt_vorige && !traegt_laufende {
+            return;
+        }
+        let mut gesendet = 0;
+        let ab = epoche.saturating_sub(1) * BLOECKE_JE_EPOCHE;
+        let mut hoehe = ab.div_ceil(BLOECKE_JE_PRUEFPUNKT).max(1) * BLOECKE_JE_PRUEFPUNKT;
+        while hoehe + 2 * BLOECKE_JE_PRUEFPUNKT <= jetzt && gesendet < NACHTRAEGE_JE_AUFRUF {
+            let h = hoehe;
+            hoehe += BLOECKE_JE_PRUEFPUNKT;
+            if self.pruefpunkt_eigene.get(&h).is_some_and(|(_, schon)| *schon) {
+                continue;
+            }
+            if !(if epoche_fuer_hoehe(h) == epoche { traegt_laufende } else { traegt_vorige }) {
+                continue;
+            }
+            // 📌 Aus dem Zustand, nicht aus dem Verlauf der Kette: Der hält
+            //   nur 256 Blöcke, und nachgetragen wird erst 300 Blöcke später.
+            //   Gegen diese Hashes prüft die Kette die Stimme ohnehin.
+            let Some(block_hash) = self.kette.zustand().pruefpunkt_hashes.iter().find(|(x, _)| *x == h).map(|(_, b)| *b) else {
+                continue;
+            };
+            self.pruefpunkt_eigene.insert(h, (block_hash, true));
+            let platz = h % BLOECKE_JE_EPOCHE / BLOECKE_JE_PRUEFPUNKT;
+            if myl_ledger::stimmsatz::stimme_vermerkt(self.kette.zustand(), &ich, epoche_fuer_hoehe(h), platz) {
+                continue;
+            }
+            if let Some(tx) = self.netz_tx(myl_consensus::block::Anweisung::PruefpunktBezeugen { hoehe: h, block_hash }) {
+                self.ausstehend.push(tx);
+                gesendet += 1;
+                self.protokoll.schreibe(Eintrag::neu("pruefpunkt_nachgetragen").zahl("hoehe", h as i64));
+            }
+        }
+    }
+
+    /// ⚑ **Die Saat pflegen** (2026-11-03): was der Saatdienst aus dem
+    /// Zustand ableitet, als eigene Transaktionen in die Warteschlange.
+    fn saat_pflegen(&mut self) {
+        // ⚑ Protokolliert wird auf jedem Knoten, damit ein Lauf zaehlen kann:
+        //   je Epoche der Schluessel (neu oder weiter) und `β`.
+        let jetzt = self.kette.zustand().epoch.0;
+        let z = self.kette.zustand();
+        if let Some(s) = myl_ledger::saat::schluessel_der_epoche(z, jetzt) {
+            if jetzt > self.saat_gemeldet.0 {
+                self.saat_gemeldet.0 = jetzt;
+                // Die Runde, aus der der Schluessel stammt: wer austeilte,
+                // wer sich beschwerte, was offengelegt wurde. Ausgeteilt
+                // weniger qualifiziert ist, wer herausfiel.
+                let runde = z.saatrunden.get(&s.aus_epoche);
+                let ausgeteilt = z.austeilungen.keys().filter(|(e, _)| *e == s.aus_epoche).count();
+                self.protokoll.schreibe(
+                    Eintrag::neu("saat_schluessel")
+                        .zahl("epoche", jetzt as i64)
+                        .zahl("aus", s.aus_epoche as i64)
+                        .zahl("ausgeteilt", ausgeteilt as i64)
+                        .zahl("qualifiziert", s.qualifiziert.len() as i64)
+                        .zahl("beschwerden", runde.map_or(0, |r| r.beschwerden.len()) as i64)
+                        .zahl("offenlegungen", runde.map_or(0, |r| r.offenlegungen.len()) as i64)
+                        .zahl("schwelle", s.schwelle as i64)
+                        .zahl("sitze", s.oeffentliche_anteile.len() as i64),
+                );
+            }
+        }
+        for e in [jetzt.saturating_sub(1), jetzt] {
+            if let Some(beta) = myl_ledger::saat::beta_der_epoche(self.kette.zustand(), e) {
+                if e > self.saat_gemeldet.1 || self.saat_gemeldet.1 == 0 {
+                    self.saat_gemeldet.1 = e.max(1);
+                    let saat = myl_types::schwelle::saat_aus_signatur(&beta);
+                    self.protokoll.schreibe(Eintrag::neu("saat_beta").zahl("epoche", e as i64).text("saat", hex::encode(&saat[..8])));
+                }
+            }
+        }
+        let Some(ich) = self.netzschluessel.as_ref().map(|k| k.kennung()) else {
+            return;
+        };
+        let netz = *self.kette.netzwert().as_bytes();
+        let hoehe = self.kette.hoehe() + 1;
+        let Some(dienst) = self.saatdienst.as_mut() else {
+            return;
+        };
+        let handlungen = dienst.handlungen(self.kette.zustand(), &netz, &ich, hoehe);
+        for a in handlungen {
+            let (art, epoche) = match &a {
+                myl_consensus::block::Anweisung::SaatschluesselEintragen { .. } => ("eintragen", 0),
+                myl_consensus::block::Anweisung::SaatAusteilen { epoche, .. } => ("austeilen", *epoche),
+                myl_consensus::block::Anweisung::SaatBeschweren { epoche, .. } => ("beschweren", *epoche),
+                myl_consensus::block::Anweisung::SaatOffenlegen { epoche, .. } => ("offenlegen", *epoche),
+                myl_consensus::block::Anweisung::SaatAnteile { epoche, .. } => ("anteile", *epoche),
+                _ => ("?", 0),
+            };
+            if let Some(tx) = self.netz_tx(a) {
+                self.ausstehend.push(tx);
+                self.protokoll.schreibe(Eintrag::neu("saat").text("vorgang", art).zahl("epoche", epoche as i64));
+            }
+        }
+    }
+
+    /// Eine Prüfpunktstimme aus dem Netz: aufheben, wenn sie trägt und über
+    /// dem gerechtfertigten Stand liegt; gezählt wird in `pruefpunkt_pflegen`.
+    fn pruefpunktstimme_aufnehmen(&mut self, stimme: myl_consensus::pruefpunkt::Pruefpunktstimme) {
+        if stimme.hoehe <= self.kette.gerechtfertigt_bis() {
+            return;
+        }
+        let satz = self.kette.finalitaetssatz(myl_consensus::block::epoche_fuer_hoehe(stimme.hoehe));
+        if !satz.as_ref().is_some_and(|satz| stimme.traegt(satz)) {
             self.protokoll.schreibe(
                 Eintrag::neu("pruefpunktstimme_abgelehnt")
                     .zahl("hoehe", stimme.hoehe as i64)
@@ -2369,11 +2831,18 @@ impl Knoten {
         if stimme.hoehe > self.kette.hoehe() + 4 * myl_consensus::pruefpunkt::BLOECKE_JE_PRUEFPUNKT {
             return;
         }
-        // ⚑ Zwei Stimmen eines Wählers für dieselbe Höhe und verschiedene
-        //   Blöcke sind ein Doppelbeleg (CONSENSUS 7.6).
-        let alte = self.pruefpunktstimmen.get(&stimme.hoehe).and_then(|m| m.get(&stimme.waehler)).cloned();
-        if let Some(alt) = alte.filter(|a| a.block_hash != stimme.block_hash) {
-            if let Some(schluessel) = self.kette.stimmsatz().and_then(|s| s.pubkey(&stimme.waehler)).copied() {
+        // ⚑ Zwei Stimmen eines Wählers, die sich widersprechen, sind ein
+        //   Doppelbeleg (CONSENSUS 7.6): dieselbe Höhe mit anderem Inhalt,
+        //   oder seit 2026-11-04 eine, die eine aufgehobene umschliesst
+        //   oder von ihr umschlossen wird (Casper FFG).
+        let alte = self
+            .pruefpunktstimmen
+            .values()
+            .filter_map(|m| m.get(&stimme.waehler))
+            .find(|a| myl_consensus::pruefpunkt::widersprechen(a, &stimme))
+            .cloned();
+        if let Some(alt) = alte {
+            if let Some(schluessel) = satz.as_ref().and_then(|s| s.pubkey(&stimme.waehler)).copied() {
                 self.doppelbeleg_melden(myl_consensus::double_signing::Doppelbeleg::Pruefpunkt {
                     erste: Box::new(alt),
                     zweite: Box::new(stimme),
@@ -2744,11 +3213,17 @@ impl Knoten {
         self.groessen_protokollieren();
         self.netzarbeit().await;
         self.pruefpunkt_pflegen().await;
+        self.saat_pflegen();
         let z = self.zustand().await;
         let mut eintrag = Eintrag::neu("aufnahme")
             .zahl("peers", z.peers as i64)
             .zahl("hoehe", self.kette.hoehe() as i64)
             .text("zustandswurzel", kurz(&self.kette.wurzel()))
+            // ⚑ Der gerechtfertigte Prüfpunkt mit seinem Block (2026-11-04):
+            //   Mit rotierenden Erzeugern kommt die Höhe nie zur Ruhe; ein
+            //   Lauf vergleicht die Knoten an ihm.
+            .zahl("gerechtfertigt", self.kette.zustand().pruefpunkt_gerechtfertigt.0 as i64)
+            .text("gerechtfertigt_block", kurz(&self.kette.zustand().pruefpunkt_gerechtfertigt.1))
             .zahl("wartend", self.kette.wartend() as i64)
             .zahl("voraus", self.voraus.len() as i64)
             .zahl("schlecht_bewertet", z.schlecht_bewertet as i64)
@@ -2834,6 +3309,7 @@ impl Knoten {
             .zahl("grundpreis_je_byte", grundpreis.min(i64::MAX as u64) as i64)
             .zahl("gebuehren_validatoren", gebuehren_validatoren.min(i64::MAX as u64) as i64)
             .zahl("pruefpunkt_bestaetigt", bestaetigt.min(i64::MAX as u64) as i64)
+            .zahl("pruefpunkt_gerechtfertigt", self.kette.gerechtfertigt_bis().min(i64::MAX as u64) as i64)
             .zahl("credit_preis", credit_preis.min(i64::MAX as u64) as i64)
             .zahl("zwillinge_einig", einig.min(i64::MAX as u64) as i64)
             .zahl("zwillinge_uneinig", uneinig.min(i64::MAX as u64) as i64)
@@ -2916,6 +3392,13 @@ impl Knoten {
     ///
     /// Tut nichts, wenn nichts fehlt oder bereits eine Anfrage läuft.
     fn fordere_nach(&mut self, von: libp2p::PeerId, fremde_hoehe: u64) {
+        // ⚑ Fund 634 (2026-11-05): Eine Höhe über der Schranke der Slots
+        //   gibt es nicht; sie wird weder gehört noch nachgefordert.
+        let slot_jetzt = myl_consensus::erzeugerplan::slot_bei(self.wanduhr_ms().saturating_add(UHR_SPIELRAUM_MS), self.konfig.slot_ms());
+        if fremde_hoehe > self.kette.hoehen_schranke(slot_jetzt) {
+            self.protokoll.schreibe(Eintrag::neu("hoehe_erfunden").text("von", von.to_string()).zahl("hoehe", fremde_hoehe.min(i64::MAX as u64) as i64));
+            return;
+        }
         self.gehoert.hoeren(&von, fremde_hoehe, std::time::Instant::now());
         self.hoechste_gehoerte = self.gehoert.hoechste();
         self.nachfordern(Some(von), fremde_hoehe.min(self.hoechste_gehoerte));
@@ -2983,6 +3466,7 @@ impl Knoten {
                     || k.abzug_bei(p)
                     || k.abruf_bei(p)
                     || k.teilabruf_bei(p)
+                    || k.zweig_bei(p)
             };
             let peer = match erster.take().filter(|p| !belegt(p, self)) {
                 Some(p) => p,
@@ -3028,8 +3512,9 @@ impl Knoten {
             self.zuletzt_gewachsen = (hoehe, std::time::Instant::now());
             return;
         }
-        if self.konfig.erzeugt_bloecke
-            || self.zuletzt_gewachsen.1.elapsed() < STILLE_NACHFRAGE
+        // ⚑ Seit 2026-11-04 auch der Erzeuger aus der Genesis: Er ist nicht
+        //   mehr der einzige, der Blöcke baut.
+        if self.zuletzt_gewachsen.1.elapsed() < STILLE_NACHFRAGE
             || !self.nachforderungen.is_empty()
         {
             return;
@@ -3054,21 +3539,45 @@ impl Knoten {
     ///
     /// Je Höhe gilt der erste Kandidat, der die Prüfung besteht; die übrigen
     /// derselben Höhe fallen weg, ebenso jeder, der nicht trägt.
+    ///
+    /// ⚑ **Ein Kandidat, der an der naechsten Hoehe nicht anschliesst, ist ein
+    /// fremder Zweig** (2026-11-06) und startet die Zweigsuche bei dem, der
+    /// ihn schickte. 📌 Gefunden im Podlauf `kurz-faelscher`: Ein Validator
+    /// baute nach einem spaeten Start Block 1 selbst auf Genesis und danach in
+    /// jedem eigenen Slot weiter. Die Blöcke der Mehrheit kamen über Gossip
+    /// weit voraus an und lagen hier; das Nachholen uebersprang ihre Hoehen,
+    /// beim Einspielen fielen sie still weg, und ein fremder Zweig galt nur
+    /// fuer einen frischen Block an der naechsten Hoehe. 23 Minuten und 687
+    /// eigene Bloecke spaeter war der Speicher voll, und erst dann fragte er.
     fn voraus_einspielen(&mut self) -> usize {
         let mut eingespielt = 0;
+        let mut fremd = None;
         loop {
             let kandidaten = self.voraus.naechste(self.kette.hoehe());
             let mut weiter = false;
-            for b in kandidaten {
-                if !weiter && self.kette.uebernimm(&b).is_ok() {
-                    eingespielt += 1;
-                    weiter = true;
+            for (b, von) in kandidaten {
+                if weiter {
+                    continue;
+                }
+                match self.kette.uebernimm(&b) {
+                    Ok(()) => {
+                        eingespielt += 1;
+                        weiter = true;
+                    }
+                    Err(crate::kette::KettenFehler::PasstNichtAn { .. }) => fremd = Some((von, b)),
+                    Err(_) => {}
                 }
             }
             if !weiter {
-                return eingespielt;
+                break;
             }
         }
+        // Nur, wenn an seiner Hoehe nichts anschloss: sonst ist er schon
+        // ueberholt, und `zweig_gesehen` liesse ihn ohnehin fallen.
+        if let Some((von, b)) = fremd.filter(|(_, b)| b.header.height == self.kette.hoehe() + 1) {
+            self.zweig_gesehen(von, &b);
+        }
+        eingespielt
     }
 
     /// Verarbeitet eine empfangene Nachricht: Blöcke in die Kette,
@@ -3107,6 +3616,17 @@ impl Knoten {
                         );
                         return;
                     }
+                }
+                // ⚑ Erst wenn sein Slot begonnen hat (2026-11-04).
+                if self.aus_der_zukunft(&block) {
+                    self.protokoll.schreibe(
+                        Eintrag::neu("block_abgelehnt")
+                            .zahl("eigene_hoehe", self.kette.hoehe() as i64)
+                            .zahl("fremde_hoehe", block.header.height as i64)
+                            .text("ablehnungsart", "aus-der-zukunft")
+                            .zahl("slot", block.header.slot as i64),
+                    );
+                    return;
                 }
                 match self.kette.uebernimm(&block) {
                     Ok(()) => {
@@ -3187,8 +3707,13 @@ impl Knoten {
                             //    aufgehoben; die Nachlieferung schliesst die
                             //    Lücke bis zu ihm, und er folgt ohne eigenen
                             //    Hin- und Rückweg.
-                            let _ = self.voraus.ablegen(self.kette.hoehe(), block.clone(), &m.data);
+                            let _ = self.voraus.ablegen(self.kette.hoehe(), block.clone(), &m.data, m.von);
                             self.fordere_nach(m.von, block.header.height);
+                            // ⚑ An oder unter der nächsten eigenen Höhe ist es
+                            //   ein fremder Zweig (2026-11-04).
+                            if block.header.height <= self.kette.hoehe() + 1 {
+                                self.zweig_gesehen(m.von, &block);
+                            }
                         }
                         // ⚑ **Nur ein Block, der vorn nicht anschliesst, sagt
                         //   etwas über die Höhe** (Fund 634), und nur er wird
@@ -3630,6 +4155,7 @@ impl Knoten {
                             .spurablagen
                             .iter()
                             .rev()
+                            .map(|(_, ab)| ab)
                             .filter(|ab| wurzel.is_none_or(|w| ab.segments_root == w))
                             .find_map(|ab| ab.antwort(&a));
                         self.protokoll.schreibe(
@@ -3662,6 +4188,7 @@ impl Knoten {
                     }
                     // ⚑ Leichter Abzug: Anker, Stücke, Kontobeweise (2026-10-29).
                     Some(Nachforderung::LeichterAnker) => Some((Nachlieferung::LeichterAnker(self.kette.leichter_anker().map(Box::new)), 0)),
+                    Some(Nachforderung::VollerAnker) => Some((Nachlieferung::VollerAnker(self.kette.voller_anker().map(Box::new)), 0)),
                     Some(Nachforderung::LeichterAbzug { hoehe, ab }) => {
                         let stueck = self.kette.ablage().and_then(|a| a.leicht().stueck_lesen(hoehe, ab).ok().flatten());
                         Some((
@@ -3669,6 +4196,12 @@ impl Knoten {
                             0,
                         ))
                     }
+                    // ⚑ Wechselbelege (7.4): so viele, wie in eine Antwort
+                    //   passen, mit Rand fuer die Kodierung; leer, nie `Nichts`.
+                    Some(Nachforderung::Wechselbelege { ab }) => Some((
+                        Nachlieferung::Wechselbelege(self.kette.wechselbelege_ab(ab, myl_types::protocol::MAX_ANFRAGE_BYTES / 2)),
+                        0,
+                    )),
                     Some(Nachforderung::Kontobeweise(adressen)) => {
                         let adressen: Vec<_> = adressen.into_iter().take(crate::nachschub::KONTOBEWEISE_JE_ANFRAGE).collect();
                         // Ohne Beweise eine leere Lieferung, nie `Nichts`.
@@ -3702,6 +4235,8 @@ impl Knoten {
                         // `Nachlieferung::LeichterAnker`).
                         Some((Nachlieferung::Zeugenstuecke(stuecke), 0))
                     }
+                    // ⚑ T6, 2026-11-05: ein Stück des eigenen Schiedsbelegs.
+                    Some(Nachforderung::SchiedsbelegTeil { anfrage, ab }) => Some((self.schiedsbeleg_stueck(anfrage, ab), 0)),
                     // ⚑ T6d: der eigene Schiedsbeleg, wenn es ihn gibt.
                     Some(Nachforderung::Schiedsbeleg(a)) => {
                         let antwort = self
@@ -3717,6 +4252,7 @@ impl Knoten {
                         );
                         Some((antwort.unwrap_or(Nachlieferung::Nichts), 0))
                     }
+                    Some(Nachforderung::VerlaufTeil { anfrage, ab }) => Some((self.verlauf_stueck(anfrage, ab), 0)),
                     Some(Nachforderung::Verlauf(a)) => {
                         let wurzel = self
                             .kette
@@ -3729,6 +4265,7 @@ impl Knoten {
                             .spurablagen
                             .iter()
                             .rev()
+                            .map(|(_, ab)| ab)
                             .filter(|ab| wurzel.is_none_or(|w| ab.segments_root == w))
                             .find_map(|ab| ab.verlauf(&a));
                         let antwort = verlauf
@@ -3744,8 +4281,16 @@ impl Knoten {
                         );
                         Some((antwort.unwrap_or(Nachlieferung::Nichts), 0))
                     }
+                    Some(Nachforderung::SpurenAblegenTeil { kennung, gesamt, abdruck, ab, daten }) => {
+                        let fehler = self.ablage_stueck(Some(von), gesamt, abdruck, ab, &daten).err();
+                        if let Some(f) = &fehler {
+                            self.protokoll
+                                .schreibe(Eintrag::neu("spurablage_abgewiesen").text("von", von.to_string()).text("grund", f.clone()));
+                        }
+                        Some((Nachlieferung::Abgelegt { kennung, fehler }, 0))
+                    }
                     Some(Nachforderung::SpurenAblegen { kennung, ablage }) => {
-                        let fehler = self.spur_ablegen(ablage).err();
+                        let fehler = self.spur_ablegen(Some(von), ablage).err();
                         if let Some(f) = &fehler {
                             self.protokoll
                                 .schreibe(Eintrag::neu("spurablage_abgewiesen").text("von", von.to_string()).text("grund", f.clone()));
@@ -3791,6 +4336,10 @@ impl Knoten {
                     Some(Nachlieferung::Bloecke(b)) if self.hintergrund_bei(&von) && self.fuer_den_hintergrund(&b) => {
                         return self.hintergrund_bloecke(von, b)
                     }
+                    // ⚑ Die Zweigsuche (2026-11-04) fragt eine Gegenstelle
+                    //   nur, wenn kein Nachholen bei ihr läuft.
+                    Some(Nachlieferung::Bloecke(b)) if self.zweig_bei(&von) => return self.zweig_geliefert(von, b),
+                    Some(Nachlieferung::Nichts) if self.zweig_bei(&von) => return self.zweig_aufgeben("nichts"),
                     Some(Nachlieferung::Shard { kennung, antwort, fehler }) => {
                         return self.shard_antwort(von, kennung, antwort, fehler)
                     }
@@ -3802,15 +4351,23 @@ impl Knoten {
                     Some(Nachlieferung::Spur(antwort)) => return self.spur_erhalten(von, antwort),
                     Some(Nachlieferung::Verlauf(antworten)) => return self.verlauf_erhalten(von, antworten),
                     Some(Nachlieferung::Schiedsbeleg { verlauf, eingaenge }) => return self.schiedsbeleg_erhalten(verlauf, eingaenge),
+                    Some(Nachlieferung::SchiedsbelegTeil { anfrage, gesamt, abdruck, ab, daten }) => {
+                        return self.schiedsbeleg_teil(von, anfrage, gesamt, abdruck, ab, daten)
+                    }
+                    Some(Nachlieferung::VerlaufTeil { anfrage, gesamt, abdruck, ab, daten }) => {
+                        return self.verlauf_teil(von, anfrage, gesamt, abdruck, ab, daten)
+                    }
                     // ⚑ Ein nachgefordertes Zeugenstück kommt nicht durch den
                     //   Netzfaden: dieselbe Prüfung hier.
-                    Some(Nachlieferung::LeichterAnker(z)) => {
-                        if let Some(z) = z {
-                            self.leichter_anker_erhalten(von, *z);
+                    Some(Nachlieferung::LeichterAnker(z)) | Some(Nachlieferung::VollerAnker(z)) => {
+                        match z {
+                            Some(z) => self.leichter_anker_erhalten(von, *z),
+                            None => self.anker_keine += usize::from(self.anker_suchen.is_some()),
                         }
                         return;
                     }
                     Some(Nachlieferung::Kontobeweise { hoehe, beweise }) => return self.kontobeweise_erhalten(hoehe, beweise),
+                    Some(Nachlieferung::Wechselbelege(belege)) => return self.wechselbelege_erhalten(von, belege),
                     Some(Nachlieferung::Zeugenstuecke(stuecke)) => {
                         if stuecke.is_empty() {
                             return;
@@ -3883,6 +4440,7 @@ impl Knoten {
                     _ => {}
                 }
                 let vorher = self.kette.hoehe();
+                let mut gabel: Option<myl_consensus::block::Block> = None;
                 let mut angenommen = 0usize;
                 let mut abgelehnt = 0usize;
                 let mut vorausgelegt = 0usize;
@@ -3937,12 +4495,22 @@ impl Knoten {
                             gewartet += usize::from(neu && self.wartet_auf_zeugen.contains_key(&h));
                             continue;
                         }
+                        if self.aus_der_zukunft(&b) {
+                            abgelehnt += 1;
+                            continue;
+                        }
                         match self.kette.uebernimm(&b) {
                             Ok(()) => angenommen += 1,
                             Err(crate::kette::KettenFehler::PasstNichtAn { .. }) if b.header.height > self.kette.hoehe() + 1 => {
                                 if let Ok(roh) = borsh::to_vec(&b) {
-                                    vorausgelegt += usize::from(self.voraus.ablegen(self.kette.hoehe(), b, &roh).is_ok());
+                                    vorausgelegt += usize::from(self.voraus.ablegen(self.kette.hoehe(), b, &roh, von).is_ok());
                                 }
+                            }
+                            // ⚑ Ein fremder Zweig (2026-11-04): Die Gegenstelle
+                            //   hat an dieser Höhe einen anderen Block.
+                            Err(crate::kette::KettenFehler::PasstNichtAn { .. }) => {
+                                abgelehnt += 1;
+                                gabel.get_or_insert(b);
                             }
                             Err(_) => abgelehnt += 1,
                         }
@@ -3962,6 +4530,9 @@ impl Knoten {
                     }
                 }
                 self.nachforderungen.retain(|n| n.an != von);
+                if let Some(b) = gabel {
+                    self.zweig_gesehen(von, &b);
+                }
                 // Zustandslos: die Zeugen der eben gelieferten Blöcke gleich.
                 self.zeugen_pflegen();
                 let aus_dem_voraus = self.voraus_einspielen();
@@ -4004,6 +4575,9 @@ impl Knoten {
                 Eintrag::neu("netzarbeit_gescheitert").text("an", an.to_string()).text("grund", grund)
             }
             NodeEvent::AnfrageGescheitert { an, grund, .. } => {
+                if self.zweig_bei(&an) {
+                    self.zweig_aufgeben("gescheitert");
+                }
                 self.nachforderungen.retain(|n| n.an != an);
                 self.weiter_nachfordern(None);
                 Eintrag::neu("nachschub_gescheitert")
@@ -4189,7 +4763,7 @@ impl Knoten {
     fn zustandslos_block(&mut self, block: myl_consensus::block::Block, von: libp2p::PeerId) {
         let hoehe = block.header.height;
         let eigene = self.kette.hoehe();
-        if hoehe <= eigene || self.wartet_auf_zeugen.contains_key(&hoehe) {
+        if hoehe <= eigene || self.wartet_auf_zeugen.contains_key(&hoehe) || self.aus_der_zukunft(&block) {
             return;
         }
         // ⛔️ **Zuerst der Erzeuger**, wie im vollen Pfad: Ein Block ohne
@@ -4452,26 +5026,11 @@ impl Knoten {
                 );
             }
             self.anker_suchen = Some(std::time::Instant::now());
+            self.anker_keine = 0;
             self.anker_kandidat = None;
             self.stillstand = (hoehe, std::time::Instant::now());
         }
-        if let Some(seit) = self.anker_suchen {
-            if let Some((anker, _)) = self.anker_kandidat.filter(|(_, ab)| ab.elapsed() >= ANKER_SAMMELN) {
-                self.anker_suchen = None;
-                self.anker_kandidat = None;
-                self.protokoll.schreibe(Eintrag::neu("leichter_anker").zahl("hoehe", anker.hoehe as i64));
-                self.abzug_holen = Some(AbzugHolen::neu_als(anker, crate::abzug::Art::Leicht));
-                self.abzug_anfragen();
-            } else if seit.elapsed() > ANKER_SUCHEN_HOECHSTENS && self.anker_kandidat.is_none() {
-                self.anker_suchen = None;
-                self.protokoll.schreibe(Eintrag::neu("leichter_anker_keiner"));
-                self.weiter_nachfordern(None);
-            } else if let Some(daten) = Nachforderung::LeichterAnker.als_bytes() {
-                for p in self.gegenstellen.iter().take(ZEUGEN_GEGENSTELLEN) {
-                    let _ = self.kommandos.send(NodeCommand::Anfrage { an: *p, daten: daten.clone() });
-                }
-            }
-        }
+        self.anker_suche_pflegen();
         let unbekannt = self.kette.eigene_unbekannt();
         if unbekannt.is_empty() || self.abzug_holen.is_some() || self.kette.hoehe() == 0 {
             return;
@@ -4488,6 +5047,50 @@ impl Knoten {
         }
     }
 
+    /// ⚑ **Die Suche nach einem Anker** (2026-10-29, für den vollen
+    /// Einsteiger seit Z7, 2026-11-05): reihum bei den Gegenstellen fragen,
+    /// den jüngsten geprüften Kandidaten nach [`ANKER_SAMMELN`] nehmen und
+    /// seinen Abzug holen, leicht oder voll. Kommt in
+    /// [`ANKER_SUCHEN_HOECHSTENS`] keiner, folgt der zustandslose Knoten ab
+    /// Genesis; der volle nimmt den jüngsten Anker des Netzes, wenn es einen
+    /// führt, sonst ebenfalls ab Genesis.
+    fn anker_suche_pflegen(&mut self) {
+        let Some(seit) = self.anker_suchen else {
+            return;
+        };
+        let leicht = self.kette.ist_zustandslos();
+        let art = if leicht { crate::abzug::Art::Leicht } else { crate::abzug::Art::Voll };
+        let name = if leicht { "leichter_anker" } else { "voller_anker" };
+        if let Some((anker, _)) = self.anker_kandidat.filter(|(_, ab)| ab.elapsed() >= ANKER_SAMMELN) {
+            self.anker_suchen = None;
+            self.anker_kandidat = None;
+            self.protokoll.schreibe(Eintrag::neu(name).zahl("hoehe", anker.hoehe as i64));
+            self.abzug_holen = Some(AbzugHolen::neu_als(anker, art));
+            self.abzug_anfragen();
+        } else if self.anker_kandidat.is_none()
+            && (seit.elapsed() > ANKER_SUCHEN_HOECHSTENS || self.anker_keine >= ZEUGEN_GEGENSTELLEN.min(self.gegenstellen.len()).max(1))
+        {
+            self.anker_suchen = None;
+            self.anker_keine = 0;
+            self.protokoll.schreibe(Eintrag::neu(&format!("{name}_keiner")));
+            match self.konfig.netz.juengster_anker().filter(|_| !leicht && self.kette.hoehe() == 0) {
+                Some(anker) => {
+                    self.abzug_holen = Some(AbzugHolen::neu(anker));
+                    self.abzug_anfragen();
+                }
+                None => self.weiter_nachfordern(None),
+            }
+        } else if self.anker_gefragt.is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(1)) {
+        } else if let Some(daten) = (if leicht { Nachforderung::LeichterAnker } else { Nachforderung::VollerAnker }).als_bytes() {
+            self.anker_gefragt = Some(std::time::Instant::now());
+            let (an, weiter) = reihum(&self.gegenstellen, self.anker_reihum, ZEUGEN_GEGENSTELLEN);
+            self.anker_reihum = weiter;
+            for p in an {
+                let _ = self.kommandos.send(NodeCommand::Anfrage { an: p, daten: daten.clone() });
+            }
+        }
+    }
+
     /// Ein Zertifikat als Anker: nur, wenn es gegen den eigenen Stimmsatz
     /// trägt und der Knoten noch einen sucht.
     /// Gesammelt wird ([`ANKER_SAMMELN`]), genommen der jüngste; einer
@@ -4497,14 +5100,71 @@ impl Knoten {
         if self.anker_suchen.is_none() || self.abzug_holen.is_some() || z.hoehe <= self.kette.hoehe() {
             return;
         }
-        let Some(anker) = self.kette.anker_aus_zertifikat(&z) else {
-            self.protokoll.schreibe(Eintrag::neu("leichter_anker_abgelehnt").text("von", von.to_string()).zahl("hoehe", z.hoehe as i64));
-            return;
+        let anker = match self.kette.anker_aus_zertifikat(&z) {
+            Ok(a) if self.anker_verworfen.contains(&a.hoehe) => return,
+            // ⚑ Ein voller Einsteiger braucht einen vollen Abzug, und den
+            //   gibt es nur an Epochengrenzen (Z7).
+            Ok(a) if !self.kette.ist_zustandslos() && !crate::abzug::ist_grenze(a.hoehe) => return,
+            Ok(a) => a,
+            // ⚑ Die Epoche ist noch unbekannt (7.4): erst die Wechselbelege
+            //   dieser Gegenstelle, dann noch einmal.
+            Err(crate::wechsel::Folgefehler::Unbekannt(_)) if self.anker_wartend.is_none() => {
+                let ab = self.kette.wechselbelege_bis();
+                if let Some(daten) = (Nachforderung::Wechselbelege { ab }).als_bytes() {
+                    let _ = self.kommandos.send(NodeCommand::Anfrage { an: von, daten });
+                    self.protokoll.schreibe(
+                        Eintrag::neu("wechselbelege_angefragt").text("an", von.to_string()).zahl("ab", ab as i64).zahl("hoehe", z.hoehe as i64),
+                    );
+                }
+                self.anker_wartend = Some((von, z));
+                return;
+            }
+            Err(f) => {
+                self.protokoll.schreibe(
+                    Eintrag::neu("leichter_anker_abgelehnt")
+                        .text("von", von.to_string())
+                        .zahl("hoehe", z.hoehe as i64)
+                        .text("grund", format!("{f:?}")),
+                );
+                return;
+            }
         };
         match &mut self.anker_kandidat {
             Some((a, _)) if a.hoehe >= anker.hoehe => {}
             Some((a, _)) => *a = anker,
             None => self.anker_kandidat = Some((anker, std::time::Instant::now())),
+        }
+    }
+
+    /// ⚑ **Wechselbelege einer Gegenstelle** (7.4): aufnehmen, was die Folge
+    /// ab Genesis traegt, und einen wartenden Anker dieser Gegenstelle noch
+    /// einmal pruefen. Ein Beleg, der nicht traegt, bricht ab; was davor
+    /// trug, bleibt.
+    fn wechselbelege_erhalten(&mut self, von: libp2p::PeerId, belege: Vec<crate::wechsel::Wechselbeleg>) {
+        let n = belege.len();
+        match self.kette.wechselbelege_aufnehmen(&belege) {
+            Ok(neu) => self.protokoll.schreibe(
+                Eintrag::neu("wechselbelege_aufgenommen")
+                    .text("von", von.to_string())
+                    .zahl("geliefert", n as i64)
+                    .zahl("neu", neu as i64)
+                    .zahl("bis", self.kette.wechselbelege_bis() as i64),
+            ),
+            Err(f) => self.protokoll.schreibe(
+                Eintrag::neu("wechselbelege_abgelehnt").text("von", von.to_string()).zahl("geliefert", n as i64).text("grund", format!("{f:?}")),
+            ),
+        }
+        if let Some((p, z)) = self.anker_wartend.take() {
+            if p == von {
+                // Fehlt noch etwas, fragt der naechste Aufruf weiter, ab dem
+                // neuen Stand.
+                let neu = n > 0;
+                if neu {
+                    self.leichter_anker_erhalten(von, z);
+                }
+            } else {
+                self.anker_wartend = Some((p, z));
+            }
         }
     }
 
@@ -4598,7 +5258,7 @@ impl Knoten {
         //   nicht zustande. Der Anfechter beantwortete jede Anfrage, die ihn
         //   erreichte.
         let ich = self.miner_ich();
-        let validator = ich.is_some_and(|i| self.kette.stimmsatz().is_some_and(|v| v.contains(&i)));
+        let validator = ich.is_some_and(|i| self.kette.finalitaetssatz(epoche).is_some_and(|v| v.contains(&i)));
         let mut schied: Vec<libp2p::PeerId> = Vec::new();
         if validator {
             for f in &z.streitfaelle {
@@ -4745,7 +5405,7 @@ impl Knoten {
         let Ok(daten) = borsh::to_vec(g.inhalt()) else {
             return false;
         };
-        if self.konfig.erzeugt_bloecke && !self.kette.aufnehmen_geprueft(g) {
+        if self.erzeugt() && !self.kette.aufnehmen_geprueft(g) {
             return false;
         }
         let _ = self.kommandos.send(NodeCommand::Publish { topic: GossipTopic::Transactions, data: daten, result: None });
@@ -4756,9 +5416,9 @@ impl Knoten {
         let Ok(daten) = borsh::to_vec(&tx) else {
             return false;
         };
-        // ⚑ Der Erzeuger hört sein eigenes Gossip nicht; er nimmt die
-        //   Transaktion selbst auf.
-        if self.konfig.erzeugt_bloecke && !self.kette.aufnehmen(tx) {
+        // ⚑ Wer erzeugt, hört sein eigenes Gossip nicht; er nimmt die
+        //   Transaktion selbst auf (seit 2026-11-04 jeder volle Miner).
+        if self.erzeugt() && !self.kette.aufnehmen(tx) {
             return false;
         }
         let _ = self.kommandos.send(NodeCommand::Publish { topic: GossipTopic::Transactions, data: daten, result: None });
@@ -4987,6 +5647,19 @@ impl Knoten {
         false
     }
 
+    /// ⚑ **Nach dem Ruhen wieder anmelden** (7.9, 2026-11-05): Ruht dieser
+    /// Miner wegen Inaktivität (nicht getilgt), meldet er sich neu an; die
+    /// Kette lässt ihn erst nach der Wartezeit seiner Ruhen wieder in den
+    /// Satz (`myl_ledger::stimmsatz::wartezeit`). 📌 Bis hierher meldete sich
+    /// ein Knoten nur an, solange er gar nicht eingetragen war: Ein ehrlicher
+    /// Validator, der eine Weile offline war, blieb für immer draussen.
+    fn nach_dem_ruhen_anmelden(&mut self, ich: &myl_types::ids::MinerId) {
+        let ruht = self.kette.zustand().mitwirkung.get(ich).is_some_and(|w| w.ruht && !w.getilgt);
+        if ruht {
+            self.anmeldung_senden(ich);
+        }
+    }
+
     /// Meldet diesen Knoten als Miner an, sobald sein Konto Hinterlegung und
     /// Gebühr deckt (G1); bis dahin dreht er den Probehahn auf, wo es einen
     /// gibt.
@@ -5114,6 +5787,7 @@ impl Knoten {
             self.anmeldung_senden(ich);
             return;
         }
+        self.nach_dem_ruhen_anmelden(ich);
         let neueste = self.kette.zustand().zusagen.get(ich).and_then(|l| l.last()).and_then(|z| z.modell(&soll.abdruck).copied());
         if neueste == Some(soll) || self.schon_gesendet("zusage") {
             return;
@@ -5152,7 +5826,7 @@ impl Knoten {
         }
         let eigene = [
             ("spurablagen", self.spurablagen.len()),
-            ("spurablagen_eintraege", self.spurablagen.iter().map(|a| a.eintraege.len()).sum()),
+            ("spurablagen_eintraege", self.spurablagen.iter().map(|(_, a)| a.eintraege.len()).sum()),
             ("messungen", self.messungen.len()),
             ("schiedsbelege", self.schiedsbelege.len()),
             ("festgelegt", self.festgelegt.len()),
@@ -5364,7 +6038,7 @@ impl Knoten {
                     return;
                 };
                 if peer == self.peer_id {
-                    let _ = rueck.send(match self.spur_ablegen(ablage) {
+                    let _ = rueck.send(match self.spur_ablegen(None, ablage) {
                         Ok(()) => Relaisantwort::Erledigt("abgelegt".into()),
                         Err(f) => Relaisantwort::Fehler(f),
                     });
@@ -5378,6 +6052,27 @@ impl Knoten {
                 };
                 self.shardrelais.insert(kennung, (peer, rueck, std::time::Instant::now()));
                 let _ = self.kommandos.send(NodeCommand::Anfrage { an: peer, daten });
+            }
+            Relaisfrage::SpurenAblegenTeil { an, gesamt, abdruck, ab, daten } => {
+                let Ok(peer) = myl_net::peer_id_aus_bytes(&an) else {
+                    let _ = rueck.send(Relaisantwort::Fehler("keine gültige Netzadresse".into()));
+                    return;
+                };
+                if peer == self.peer_id {
+                    let _ = rueck.send(match self.ablage_stueck(None, gesamt, abdruck, ab, &daten) {
+                        Ok(()) => Relaisantwort::Erledigt("abgelegt".into()),
+                        Err(f) => Relaisantwort::Fehler(f),
+                    });
+                    return;
+                }
+                let kennung = self.relais_kennung;
+                self.relais_kennung = self.relais_kennung.wrapping_add(1);
+                let Some(bytes) = (Nachforderung::SpurenAblegenTeil { kennung, gesamt, abdruck, ab, daten }).als_bytes() else {
+                    let _ = rueck.send(Relaisantwort::Fehler("Stück nicht serialisierbar".into()));
+                    return;
+                };
+                self.shardrelais.insert(kennung, (peer, rueck, std::time::Instant::now()));
+                let _ = self.kommandos.send(NodeCommand::Anfrage { an: peer, daten: bytes });
             }
             // ⚑ **Eine Übernahme durch die Reserve** (6.8): an deren Knoten.
             // ⚑ **Ein Differenzbeweis vom Ortsdienst** (2026-10-29): an die
@@ -5530,18 +6225,77 @@ impl Knoten {
         }
     }
 
-    /// Hebt eine Spurablage auf; eine für dasselbe Bündel ersetzt die alte.
-    /// ⚑ Nur eine, die zu diesem Knoten gehört
-    /// ([`crate::shardfuehrung::ablage_pruefen`]): Sonst könnte jeder im
-    /// Netz die echten Ablagen mit erfundenen verdrängen.
-    fn spur_ablegen(&mut self, ablage: myl_types::Spurablage) -> Result<(), String> {
+    /// ⚑ **Ein Stück einer Spurablage** (T6, 2026-11-05): nach den Regeln
+    /// von [`crate::nachschub::Belegstuecke`] anhängen; nach dem letzten die
+    /// ganze Ablage wie eine in einem Stück behandeln ([`Self::spur_ablegen`],
+    /// also aus dem Netz nur mit dem unterschriebenen Bündel). Ein Stück, das
+    /// nicht passt, verwirft den Zwischenstand.
+    fn ablage_stueck(&mut self, von: Option<libp2p::PeerId>, gesamt: u32, abdruck: myl_types::Hash, ab: u32, daten: &[u8]) -> Result<(), String> {
+        use crate::nachschub::{Belegstuecke, Stueckfolge};
+        let schluessel = (von, abdruck);
+        if !self.ablage_teile.contains_key(&schluessel) {
+            let neu = Belegstuecke::neu(abdruck, gesamt).ok_or("die Grösse der Ablage passt nicht")?;
+            if self.ablage_teile.len() >= VERLAUFTEILE_ZUGLEICH {
+                if let Some(alt) = self.ablage_teile.iter().min_by_key(|(_, (t, _))| *t).map(|(k, _)| *k) {
+                    self.ablage_teile.remove(&alt);
+                }
+            }
+            self.ablage_teile.insert(schluessel, (std::time::Instant::now(), neu));
+        }
+        let folge = match self.ablage_teile.get_mut(&schluessel) {
+            Some((_, b)) => b.anhaengen(&abdruck, gesamt, ab, daten),
+            None => return Err("kein Zwischenstand".into()),
+        };
+        match folge {
+            Stueckfolge::Weiter(_) => Ok(()),
+            Stueckfolge::Fertig(bytes) => {
+                self.ablage_teile.remove(&schluessel);
+                let ablage = borsh::from_slice::<myl_types::Spurablage>(&bytes).map_err(|e| format!("die Ablage ist unlesbar: {e}"))?;
+                self.spur_ablegen(von, ablage)
+            }
+            Stueckfolge::Verworfen => {
+                self.ablage_teile.remove(&schluessel);
+                Err("das Stück passt nicht".into())
+            }
+        }
+    }
+
+    /// Hebt eine Spurablage auf. ⚑ Nur eine, die zu diesem Knoten gehört
+    /// ([`crate::shardfuehrung::ablage_pruefen`]), und ⛔️ seit 2026-11-05
+    /// (T6) aus dem Netz nur mit dem **unterschriebenen Bündel**, dessen
+    /// Gesamtunterschrift gegen die Mitglieder des Pods trägt; ohne Prüfung
+    /// nur vom eigenen Podwerk über die Ortsleitung (`None`). Je Bündel eine;
+    /// ist die Grenze erreicht, fällt die älteste Epoche zuerst.
+    ///
+    /// 📌 Bis hierher prüfte die Ablage nur sich selbst: Jede Gegenstelle im
+    /// Netz konnte stimmige, aber erfundene Ablagen schicken und mit
+    /// sechzehn davon die echte verdrängen; dann lieferte niemand mehr den
+    /// Verlauf, und ein gezogenes Segment entging dem Nachrechnen. 📌 Der
+    /// erste Versuch liess nur Mitglieder des Pods ablegen; das traf den
+    /// Torknoten, dessen Podwerk koordiniert und kein Mitglied ist
+    /// (`kurz-pruefung`: keine Spur kam an).
+    fn spur_ablegen(&mut self, von: Option<libp2p::PeerId>, ablage: myl_types::Spurablage) -> Result<(), String> {
         let ich = self.miner_ich().ok_or("kein Miner")?;
         let pod = self.kette.pod_der_kennung(ablage.epoche.0, &ablage.pod).ok_or("diesen Pod kennt die Zuteilung nicht")?;
         crate::shardfuehrung::ablage_pruefen(&pod, &ich, &ablage)?;
-        self.spurablagen.retain(|a| !(a.epoche == ablage.epoche && a.pod == ablage.pod && a.segments_root == ablage.segments_root));
-        self.spurablagen.push(ablage);
+        // ⛔️ Aus dem Netz nur mit dem unterschriebenen Bündel, dessen
+        //   Gesamtunterschrift gegen die Mitglieder des Pods trägt, wie bei
+        //   der Kette. Ablegen darf so jeder (auch der Torknoten, dessen
+        //   Podwerk koordiniert), aber nur ein echtes Bündel; ein Pod
+        //   unterschreibt je Epoche eines.
+        if von.is_some() {
+            crate::shardfuehrung::ablage_beglaubigt(&ablage, |v| crate::kette::Kette::unterzeichner_des_buendels(&pod, v))?;
+        }
+        self.spurablagen.retain(|(_, a)| !(a.epoche == ablage.epoche && a.pod == ablage.pod && a.segments_root == ablage.segments_root));
+        self.spurablagen.push((von, ablage));
         while self.spurablagen.len() > SPURABLAGEN_HOECHSTENS {
-            self.spurablagen.remove(0);
+            let aelteste = self.spurablagen.iter().enumerate().min_by_key(|(i, (_, a))| (a.epoche.0, *i)).map(|(i, _)| i);
+            match aelteste {
+                Some(i) => {
+                    self.spurablagen.remove(i);
+                }
+                None => break,
+            }
         }
         Ok(())
     }
@@ -5610,7 +6364,7 @@ impl Knoten {
             let anfrage = myl_types::Spuranfrage { epoche: myl_types::ids::EpochId(a.epoche), pod: a.pod, segment: a.segment };
             for (m, _, _) in &a.besetzung {
                 let an = self.kette.zustand().miner.get(m).and_then(|r| myl_net::peer_id_aus_bytes(&r.netzadresse).ok());
-                let (Some(an), Some(daten)) = (an, Nachforderung::Verlauf(anfrage).als_bytes()) else {
+                let (Some(an), Some(daten)) = (an, (Nachforderung::VerlaufTeil { anfrage, ab: 0 }).als_bytes()) else {
                     ohne_adresse += 1;
                     continue;
                 };
@@ -5682,6 +6436,9 @@ impl Knoten {
             self.nachgerechnet.pop_first();
         }
         let ketten: Vec<Vec<myl_types::Hash>> = antworten.iter().map(|a| a.spur.clone()).collect();
+        // Die Prompt-Länge aus der Kennung (T6); `verlauf_pruefen` hat sie
+        // für alle Segmente gleich verlangt.
+        let laenge = antworten.first().map_or(0, |a| myl_types::prompt_laenge(&a.zeugnis.id) as usize);
         let modell = Arc::clone(&self.pruefmodell);
         let kanal = self.nachrechnungskanal.clone();
         let verlauf = antworten;
@@ -5695,7 +6452,7 @@ impl Knoten {
                 g.clone()
             };
             let ergebnis = match &geladen {
-                Some(m) => myl_verifier::verlauf_nachrechnen(m, &tokens, &ketten).map_err(|e| e.to_string()),
+                Some(m) => myl_verifier::verlauf_nachrechnen(m, &tokens, &ketten, laenge).map_err(|e| e.to_string()),
                 None => Err(format!("Modell unter {} nicht geladen", artefakte.display())),
             };
             // ⚑ **Bei einer Abweichung gleich den Schiedsbeleg** (T6d): die
@@ -5712,6 +6469,7 @@ impl Knoten {
             let _ = kanal.send(Nachrechnung {
                 gezogen,
                 positionen: tokens.len(),
+                prompt_laenge: laenge,
                 ergebnis,
                 dauer_ms: beginn.elapsed().as_millis().min(i64::MAX as u128) as i64,
                 beleg,
@@ -5882,7 +6640,8 @@ impl Knoten {
         let Some(ich) = self.miner_ich() else {
             return;
         };
-        if !self.kette.stimmsatz().is_some_and(|v| v.contains(&ich)) {
+        // ⚑ Wer die Finalitaet der laufenden Epoche traegt (7.8 Schritt 2).
+        if !self.kette.finalitaetssatz(self.kette.zustand().epoch.0).is_some_and(|v| v.contains(&ich)) {
             return;
         }
         let hoehe = self.kette.zustand().historie.anzahl();
@@ -5900,6 +6659,21 @@ impl Knoten {
             if !neu {
                 continue;
             }
+            // ⚑ **Ist er selbst der Anfechter, liegt der Beleg bei ihm**
+            //   (2026-11-03). 📌 Nachtlauf `nacht-ablage`: Alle acht
+            //   verfallenen Streitfälle hatten einen Validator als Anfechter.
+            //   Er fragte sich selbst über das Netz (das Wählen zu sich selbst
+            //   scheitert), stimmte nach der halben Frist gegen die eigene
+            //   Anfechtung, und zwei Drittel kamen nicht zustande. Seine Stimme
+            //   im eigenen Fall gibt ihm nichts, was er nicht schon hat: Ein
+            //   unehrlicher Validator kann in jedem Fall so stimmen.
+            if f.anfechter == ich {
+                if let Some((verlauf, eingaenge)) = self.schiedsbelege.get(&schluessel).cloned() {
+                    self.schied_angefragt.insert(schluessel, std::time::Instant::now());
+                    self.schiedsbeleg_erhalten(verlauf, eingaenge);
+                }
+                continue;
+            }
             let anfrage = myl_types::Spuranfrage { epoche: myl_types::ids::EpochId(f.epoche), pod: f.pod, segment: f.segment };
             let an = self
                 .kette
@@ -5907,7 +6681,7 @@ impl Knoten {
                 .miner
                 .get(&f.anfechter)
                 .and_then(|r| myl_net::peer_id_aus_bytes(&r.netzadresse).ok());
-            if let (Some(an), Some(daten)) = (an, Nachforderung::Schiedsbeleg(anfrage).als_bytes()) {
+            if let (Some(an), Some(daten)) = (an, (Nachforderung::SchiedsbelegTeil { anfrage, ab: 0 }).als_bytes()) {
                 let _ = self.kommandos.send(NodeCommand::Anfrage { an, daten });
                 self.schied_angefragt.insert(schluessel, std::time::Instant::now());
                 self.protokoll.schreibe(
@@ -5917,6 +6691,172 @@ impl Knoten {
         }
         while self.schied_angefragt.len() > 256 {
             self.schied_angefragt.pop_first();
+        }
+    }
+
+    /// Der eigene Verlauf zu einer Spuranfrage, aus der Ablage, deren Wurzel
+    /// die des Bündels in der Kette ist (wie [`Nachforderung::Verlauf`]).
+    fn eigener_verlauf(&self, a: &myl_types::Spuranfrage) -> Option<Vec<myl_types::Spurantwort>> {
+        let wurzel = self.kette.zustand().stichprobe_wurzeln.iter().find(|(p, _, _)| *p == a.pod).map(|(_, w, _)| *w);
+        self.spurablagen.iter().rev().map(|(_, ab)| ab).filter(|ab| wurzel.is_none_or(|w| ab.segments_root == w)).find_map(|ab| ab.verlauf(a))
+    }
+
+    /// ⚑ **Ein Stück des eigenen Verlaufs** (T6, 2026-11-05), wie beim
+    /// Schiedsbeleg ([`Self::schiedsbeleg_stueck`]).
+    fn verlauf_stueck(&mut self, anfrage: myl_types::Spuranfrage, ab: u32) -> Nachlieferung {
+        let schluessel = (anfrage.epoche.0, anfrage.pod, anfrage.segment);
+        if self.verlauf_ausgabe.as_ref().is_none_or(|(k, _)| *k != schluessel) {
+            self.verlauf_ausgabe = self
+                .eigener_verlauf(&anfrage)
+                .and_then(|v| borsh::to_vec(&v).ok())
+                .filter(|b| b.len() <= crate::nachschub::SCHIEDSBELEG_HOECHSTENS_BYTES)
+                .map(|b| (schluessel, Arc::new(b)));
+        }
+        let (gesamt, abdruck, daten) = match self.verlauf_ausgabe.as_ref().filter(|(k, _)| *k == schluessel) {
+            Some((_, bytes)) => crate::nachschub::belegstueck(bytes, ab),
+            None => (0, myl_types::Hash::sha256(&[]), Vec::new()),
+        };
+        if ab == 0 {
+            self.protokoll.schreibe(
+                Eintrag::neu("verlaufanfrage_eingegangen")
+                    .zahl("epoche", anfrage.epoche.0 as i64)
+                    .text("pod", anfrage.pod.to_hex())
+                    .zahl("segment", i64::from(anfrage.segment))
+                    .zahl("gesamt", i64::from(gesamt))
+                    .text("antwort", if gesamt > 0 { "verlauf" } else { "nichts" }),
+            );
+        }
+        Nachlieferung::VerlaufTeil { anfrage, gesamt, abdruck, ab, daten }
+    }
+
+    /// ⚑ **Ein Stück eines angefragten Verlaufs** (T6, 2026-11-05): wie beim
+    /// Schiedsbeleg, je Fall und Gegenstelle; vollständig weiter wie ein
+    /// ganzer Verlauf ([`Self::verlauf_erhalten`], der jeden Fall einmal
+    /// nachrechnet).
+    fn verlauf_teil(
+        &mut self,
+        von: libp2p::PeerId,
+        anfrage: myl_types::Spuranfrage,
+        gesamt: u32,
+        abdruck: myl_types::Hash,
+        ab: u32,
+        daten: Vec<u8>,
+    ) {
+        use crate::nachschub::{Belegstuecke, Stueckfolge};
+        let fall = (anfrage.epoche.0, anfrage.pod, anfrage.segment);
+        if !self.verlauf_gefragt.contains(&fall) || self.nachgerechnet.contains(&fall) {
+            self.verlauf_teile.remove(&(fall, von));
+            return;
+        }
+        let schluessel = (fall, von);
+        if !self.verlauf_teile.contains_key(&schluessel) {
+            let Some(neu) = Belegstuecke::neu(abdruck, gesamt) else {
+                return;
+            };
+            // ⛔️ Kein Platz: Die älteste fällt. Sonst belegte ein
+            //   Mitglied, das nie fertig wird, alle Plätze, und der Prüfer
+            //   bekäme keinen Verlauf mehr.
+            if self.verlauf_teile.len() >= VERLAUFTEILE_ZUGLEICH {
+                if let Some(alt) = self.verlauf_teile.iter().min_by_key(|(_, (t, _))| *t).map(|(k, _)| *k) {
+                    self.verlauf_teile.remove(&alt);
+                }
+            }
+            self.verlauf_teile.insert(schluessel, (std::time::Instant::now(), neu));
+        }
+        let folge = match self.verlauf_teile.get_mut(&schluessel) {
+            Some((_, b)) => b.anhaengen(&abdruck, gesamt, ab, &daten),
+            None => return,
+        };
+        match folge {
+            Stueckfolge::Weiter(bisher) => {
+                if let Some(d) = (Nachforderung::VerlaufTeil { anfrage, ab: bisher }).als_bytes() {
+                    let _ = self.kommandos.send(NodeCommand::Anfrage { an: von, daten: d });
+                }
+            }
+            Stueckfolge::Fertig(bytes) => {
+                self.verlauf_teile.remove(&schluessel);
+                if let Ok(antworten) = borsh::from_slice::<Vec<myl_types::Spurantwort>>(&bytes) {
+                    self.verlauf_erhalten(von, antworten);
+                }
+            }
+            Stueckfolge::Verworfen => {
+                self.verlauf_teile.remove(&schluessel);
+            }
+        }
+    }
+
+    /// ⚑ **Ein Stück des eigenen Schiedsbelegs** (T6, 2026-11-05): Grösse und
+    /// Abdruck des ganzen, die Bytes ab `ab`; ohne Beleg leer.
+    fn schiedsbeleg_stueck(&mut self, anfrage: myl_types::Spuranfrage, ab: u32) -> Nachlieferung {
+        let schluessel = (anfrage.epoche.0, anfrage.pod, anfrage.segment);
+        if self.schied_ausgabe.as_ref().is_none_or(|(k, _)| *k != schluessel) {
+            self.schied_ausgabe = self
+                .schiedsbelege
+                .get(&schluessel)
+                .and_then(|b| borsh::to_vec(b).ok())
+                .filter(|b| b.len() <= crate::nachschub::SCHIEDSBELEG_HOECHSTENS_BYTES)
+                .map(|b| (schluessel, Arc::new(b)));
+        }
+        let (gesamt, abdruck, daten) = match self.schied_ausgabe.as_ref().filter(|(k, _)| *k == schluessel) {
+            Some((_, bytes)) => crate::nachschub::belegstueck(bytes, ab),
+            None => (0, myl_types::Hash::sha256(&[]), Vec::new()),
+        };
+        self.protokoll.schreibe(
+            Eintrag::neu("schiedsbeleg_stueck").zahl("segment", i64::from(anfrage.segment)).zahl("ab", i64::from(ab)).zahl("gesamt", i64::from(gesamt)),
+        );
+        Nachlieferung::SchiedsbelegTeil { anfrage, gesamt, abdruck, ab, daten }
+    }
+
+    /// ⚑ **Ein Stück eines angefragten Schiedsbelegs** (T6, 2026-11-05):
+    /// nach den Regeln von [`crate::nachschub::Belegstuecke`] anhängen, das
+    /// nächste anfragen, und den vollständigen Beleg wie einen ganzen
+    /// behandeln. Nur für angefragte, noch nicht gestimmte Fälle, höchstens
+    /// [`SCHIEDSTEILE_ZUGLEICH`] zugleich.
+    fn schiedsbeleg_teil(
+        &mut self,
+        von: libp2p::PeerId,
+        anfrage: myl_types::Spuranfrage,
+        gesamt: u32,
+        abdruck: myl_types::Hash,
+        ab: u32,
+        daten: Vec<u8>,
+    ) {
+        use crate::nachschub::{Belegstuecke, Stueckfolge};
+        let schluessel = (anfrage.epoche.0, anfrage.pod, anfrage.segment);
+        if !self.schied_angefragt.contains_key(&schluessel) || self.schied_gestimmt.contains(&schluessel) {
+            return;
+        }
+        if !self.schied_teile.contains_key(&schluessel) {
+            let Some(neu) = Belegstuecke::neu(abdruck, gesamt) else {
+                self.protokoll.schreibe(Eintrag::neu("schiedsbeleg_nichts").zahl("segment", i64::from(anfrage.segment)).zahl("gesamt", i64::from(gesamt)));
+                return;
+            };
+            while self.schied_teile.len() >= SCHIEDSTEILE_ZUGLEICH {
+                self.schied_teile.pop_first();
+            }
+            self.schied_teile.insert(schluessel, neu);
+        }
+        let folge = match self.schied_teile.get_mut(&schluessel) {
+            Some(b) => b.anhaengen(&abdruck, gesamt, ab, &daten),
+            None => return,
+        };
+        match folge {
+            Stueckfolge::Weiter(bisher) => {
+                if let Some(d) = (Nachforderung::SchiedsbelegTeil { anfrage, ab: bisher }).als_bytes() {
+                    let _ = self.kommandos.send(NodeCommand::Anfrage { an: von, daten: d });
+                }
+            }
+            Stueckfolge::Fertig(bytes) => {
+                self.schied_teile.remove(&schluessel);
+                match borsh::from_slice::<Schiedsbeleg>(&bytes) {
+                    Ok((verlauf, eingaenge)) => self.schiedsbeleg_erhalten(verlauf, eingaenge),
+                    Err(_) => self.protokoll.schreibe(Eintrag::neu("schiedsbeleg_traegt_nicht").zahl("segment", i64::from(anfrage.segment))),
+                }
+            }
+            Stueckfolge::Verworfen => {
+                self.schied_teile.remove(&schluessel);
+                self.protokoll.schreibe(Eintrag::neu("schiedsbeleg_stueck_verworfen").zahl("segment", i64::from(anfrage.segment)).zahl("ab", i64::from(ab)));
+            }
         }
     }
 
@@ -5952,6 +6892,7 @@ impl Knoten {
             return;
         };
         let ketten: Vec<Vec<myl_types::Hash>> = verlauf.iter().map(|a| a.spur.clone()).collect();
+        let laenge = verlauf.first().map_or(0, |a| myl_types::prompt_laenge(&a.zeugnis.id) as usize);
         let modell = Arc::clone(&self.pruefmodell);
         let kanal = self.schiedskanal.clone();
         self.schied_gestimmt.insert(schluessel);
@@ -5971,6 +6912,7 @@ impl Knoten {
                     fall.position as usize,
                     fall.eintrag as usize,
                     &eingaenge,
+                    laenge,
                 )
                 .map_err(|e| e.to_string()),
                 None => Err(format!("Modell unter {} nicht geladen", artefakte.display())),
@@ -6014,6 +6956,7 @@ impl Knoten {
             .text("pod", g.pod.to_hex())
             .zahl("segment", i64::from(g.segment))
             .zahl("positionen", n.positionen as i64)
+            .zahl("prompt_laenge", n.prompt_laenge as i64)
             .zahl("dauer_ms", n.dauer_ms);
         if let Ok(p) = &n.ergebnis {
             self.festlegen(g, n.positionen, p);
@@ -6809,8 +7752,9 @@ fn ist_waehlfehler(grund: &str) -> bool {
 
 /// ⚑ **So viele Spurablagen hält ein Knoten** (Stufe 2, 2026-10-28): je
 /// Bündel eine, über wenige Epochen; die Ziehung kommt eine Epoche nach dem
-/// Bündel. Gedeckelt, weil jeder eine Ablage schicken kann.
-pub const SPURABLAGEN_HOECHSTENS: usize = 16;
+/// Bündel. Seit 2026-11-05 nur mit dem unterschriebenen Bündel, je Bündel
+/// eine, und die älteste Epoche fällt zuerst.
+pub const SPURABLAGEN_HOECHSTENS: usize = 32;
 
 /// Was in den Orten fuer das Netz liegt, ueber alle zusammen.
 #[derive(Debug, Clone, Copy, Default)]
@@ -6906,6 +7850,9 @@ const LEER_SPERRE: Duration = Duration::from_secs(30);
 /// bevor der Knoten von sich aus fragt (Fund 618). Zehn Blockzeiten im
 /// Betrieb; im Leerlauf eine Anfrage je zehn Sekunden an eine Gegenstelle.
 const STILLE_NACHFRAGE: Duration = Duration::from_secs(10);
+
+/// Höchstens so viele nachgetragene Prüfpunktstimmen je Aufruf (7.8).
+const NACHTRAEGE_JE_AUFRUF: usize = 2;
 
 /// So viele Höhen darf die eigene Nummer im Zustand stillstehen, während
 /// eigene Transaktionen ausstehen, bevor eine als verloren gilt (Fund 627).
@@ -7067,6 +8014,9 @@ fn naechste_gegenstelle(
 
 /// Wie lange auf ein Stück oder eine Lieferung gewartet wird.
 const ABZUG_FRIST: Duration = Duration::from_secs(10);
+
+/// So viele aufgegebene Anker merkt sich ein Knoten.
+const ANKER_VERWORFEN_HOECHSTENS: usize = 64;
 
 /// Wie viele Lieferungen der Hintergrundprüfung laufen.
 fn h_laufend(h: &Option<Hintergrund>) -> usize {
@@ -7230,6 +8180,149 @@ impl Knoten {
         self.hintergrund.as_ref().is_some_and(|h| h.laufend.iter().any(|n| n.an == *von))
     }
 
+    /// Ob bei dieser Gegenstelle gerade eine Zweigsuche fragt.
+    fn zweig_bei(&self, von: &libp2p::PeerId) -> bool {
+        self.zweigsuche.as_ref().is_some_and(|z| z.bei == *von && z.angefragt.is_some())
+    }
+
+    /// ⚑ **Ein Block, der nicht anschliesst, an oder unter der nächsten
+    /// eigenen Höhe** (2026-11-04, 7.7 Schritt 4): ein fremder Zweig. Gesucht
+    /// wird nur, wenn er mehr verspricht (höher als die eigene Kette, oder
+    /// mit einem Zertifikat über dem eigenen gerechtfertigten Prüfpunkt),
+    /// eine Suche zugleich, und nie von einem zustandslosen Knoten.
+    fn zweig_gesehen(&mut self, von: libp2p::PeerId, block: &myl_consensus::block::Block) {
+        if self.kette.ist_zustandslos() || self.zweigsuche.is_some() {
+            return;
+        }
+        if self.zweig_gesperrt.get(&von).is_some_and(|t| t.elapsed() < ZWEIG_SPERRE) {
+            return;
+        }
+        let eigene = self.kette.hoehe();
+        let hoeher = block.header.height > eigene;
+        let gerechtfertigt = block.header.pruefpunkt.as_ref().is_some_and(|z| z.hoehe > self.kette.gerechtfertigt_bis());
+        if !hoeher && !gerechtfertigt {
+            return;
+        }
+        let boden = self.kette.zweig_boden();
+        let ab = block.header.height.min(eigene + 1).saturating_sub(ZWEIG_BLICK).max(boden + 1);
+        self.protokoll.schreibe(
+            Eintrag::neu("zweig_gesehen")
+                .text("bei", von.to_string())
+                .zahl("hoehe", block.header.height as i64)
+                .zahl("eigene_hoehe", eigene as i64)
+                .zahl("ab", ab as i64),
+        );
+        self.zweigsuche = Some(Zweigsuche { bei: von, ab, ziel: block.header.height, bloecke: Vec::new(), bytes: 0, angefragt: None });
+        self.zweig_pflegen();
+    }
+
+    /// Schickt die nächste Anfrage der Zweigsuche, sobald die Gegenstelle
+    /// frei ist, und gibt eine auf, die zu lange auf Antwort wartet.
+    fn zweig_pflegen(&mut self) {
+        let Some(z) = self.zweigsuche.as_ref() else {
+            return;
+        };
+        if let Some(t) = z.angefragt {
+            if t.elapsed() > ZWEIG_WARTEN {
+                self.zweig_aufgeben("zeit");
+            }
+            return;
+        }
+        let bei = z.bei;
+        if self.nachforderungen.iter().any(|n| n.an == bei) || self.hintergrund_bei(&bei) || self.abzug_bei(&bei) || self.abruf_bei(&bei) {
+            return;
+        }
+        let ab = z.ab + z.bloecke.len() as u64;
+        let bis = ab + crate::nachschub::MAX_BLOECKE_JE_LIEFERUNG - 1;
+        if !self.anfrage_senden(bei, &Nachforderung::Bloecke { ab, bis }) {
+            return self.zweig_aufgeben("nicht-gesendet");
+        }
+        if let Some(z) = self.zweigsuche.as_mut() {
+            z.angefragt = Some(std::time::Instant::now());
+        }
+    }
+
+    /// Beendet die Zweigsuche, mit Grund im Protokoll.
+    fn zweig_aufgeben(&mut self, grund: &str) {
+        if let Some(z) = self.zweigsuche.take() {
+            self.protokoll.schreibe(
+                Eintrag::neu("zweig_aufgegeben").text("bei", z.bei.to_string()).text("grund", grund).zahl("ab", z.ab as i64),
+            );
+        }
+    }
+
+    /// ⚑ **Eine Lieferung der Zweigsuche** (2026-11-04, 7.7 Schritt 4):
+    /// lückenlos anhängen, dann die Kette wählen lassen. Schliesst der Zweig
+    /// nirgends an, wird doppelt so tief gesucht, nie unter den Boden der
+    /// Rückwege; verspricht er noch nichts und hat die Gegenstelle mehr,
+    /// wird weiter geholt.
+    fn zweig_geliefert(&mut self, von: libp2p::PeerId, bloecke: Vec<myl_consensus::block::Block>) {
+        let Some(mut z) = self.zweigsuche.take() else {
+            return;
+        };
+        let angefragt = crate::nachschub::MAX_BLOECKE_JE_LIEFERUNG as usize;
+        let geliefert = bloecke.len();
+        for b in bloecke {
+            if b.header.height != z.ab + z.bloecke.len() as u64 || self.aus_der_zukunft(&b) {
+                break;
+            }
+            z.ziel = z.ziel.max(b.header.height);
+            z.bytes += borsh::object_length(&b).unwrap_or(usize::MAX / 2);
+            z.bloecke.push(b);
+        }
+        let mehr = geliefert >= angefragt;
+        let letzte = z.ab + z.bloecke.len() as u64;
+        let eintrag = |art: &str| {
+            Eintrag::neu(art).text("bei", von.to_string()).zahl("ab", z.ab as i64).zahl("bloecke", z.bloecke.len() as i64).zahl("ziel", z.ziel as i64)
+        };
+        match self.kette.zweig_folgen(&z.bloecke) {
+            Ok(crate::kette::Zweigwahl::Gewechselt { gabel, zurueck, neu }) => {
+                self.protokoll.schreibe(
+                    eintrag("zweig_gewechselt")
+                        .zahl("gabel", gabel as i64)
+                        .zahl("zurueck", zurueck as i64)
+                        .zahl("neu", neu as i64)
+                        .zahl("hoehe", self.kette.hoehe() as i64),
+                );
+                self.voraus_einspielen();
+                self.weiter_nachfordern(Some(von));
+            }
+            // Weiter holen, solange der fremde Zweig noch nicht über die
+            // eigene Höhe reicht (dann entscheidet schon ein Teil von ihm),
+            // und nie über die Bytegrenze.
+            Ok(crate::kette::Zweigwahl::Geblieben)
+                if mehr && letzte <= self.kette.hoehe() + 2 * ZWEIG_BLICK && z.bytes < ZWEIG_BYTES_HOECHSTENS =>
+            {
+                z.angefragt = None;
+                self.zweigsuche = Some(z);
+            }
+            Ok(crate::kette::Zweigwahl::Geblieben) => self.protokoll.schreibe(eintrag("zweig_geblieben").zahl("hoehe", self.kette.hoehe() as i64)),
+            Err(crate::kette::Zweigfehler::PasstNirgends) if z.ab > self.kette.zweig_boden() + 1 => {
+                let tiefe = (self.kette.hoehe() + 1).saturating_sub(z.ab).max(ZWEIG_BLICK);
+                z.ab = z.ab.saturating_sub(tiefe).max(self.kette.zweig_boden() + 1);
+                z.bloecke.clear();
+                z.bytes = 0;
+                z.angefragt = None;
+                self.zweigsuche = Some(z);
+            }
+            // Alles schon eigenes: Weiter oben trennen sich die Zweige.
+            Err(crate::kette::Zweigfehler::Leer) if mehr => {
+                z.ab = letzte;
+                z.bloecke.clear();
+                z.bytes = 0;
+                z.angefragt = None;
+                self.zweigsuche = Some(z);
+            }
+            Err(f) => {
+                if matches!(f, crate::kette::Zweigfehler::TraegtNicht(..)) {
+                    self.zweig_gesperrt.retain(|_, t| t.elapsed() < ZWEIG_SPERRE);
+                    self.zweig_gesperrt.insert(von, std::time::Instant::now());
+                }
+                self.protokoll.schreibe(eintrag("zweig_aufgegeben").text("grund", format!("{f:?}")))
+            }
+        }
+    }
+
     /// Eine Lieferung gehört der Hintergrundprüfung, wenn sie unter deren
     /// Ziel beginnt; das gewöhnliche Nachholen fragt nie unter der Basis.
     fn fuer_den_hintergrund(&self, bloecke: &[myl_consensus::block::Block]) -> bool {
@@ -7312,6 +8405,24 @@ impl Knoten {
             h.gesperrt.insert(von);
             let hoehe = h.z.anker().hoehe;
             self.protokoll.schreibe(Eintrag::neu("abzug_nichts").text("von", von.to_string()).zahl("hoehe", hoehe as i64));
+            // ⚑ **Hat ihn keine** (2026-11-07): den Anker aufgeben und neu
+            //   suchen. 📌 Im Podlauf `kurz-verstummen` nahm der zustandslose
+            //   Miner nach seinem Neustart einen alten Anker, dessen Abzug
+            //   niemand mehr hielt, und fragte eine Viertelstunde lang
+            //   reihum (321 Mal); die Selbstheilung wartet, solange ein Abzug
+            //   geholt wird, und er blieb bei Hoehe 0.
+            if !self.gegenstellen.is_empty() && self.gegenstellen.iter().all(|p| h.gesperrt.contains(p)) {
+                self.abzug_holen = None;
+                self.anker_verworfen.insert(hoehe);
+                while self.anker_verworfen.len() > ANKER_VERWORFEN_HOECHSTENS {
+                    self.anker_verworfen.pop_first();
+                }
+                self.anker_suchen = Some(std::time::Instant::now());
+                self.anker_keine = 0;
+                self.anker_kandidat = None;
+                self.protokoll.schreibe(Eintrag::neu("abzug_aufgegeben").zahl("hoehe", hoehe as i64));
+                return;
+            }
         }
         self.abzug_anfragen();
     }
@@ -7434,7 +8545,7 @@ impl Knoten {
                 // Ein späterer Bereich vor einem früheren: aufheben.
                 Err(crate::kette::KettenFehler::PasstNichtAn { .. }) if b.header.height > h.kette.hoehe() + 1 => {
                     if let Ok(roh) = borsh::to_vec(&b) {
-                        let _ = h.voraus.ablegen(h.kette.hoehe(), b, &roh);
+                        let _ = h.voraus.ablegen(h.kette.hoehe(), b, &roh, von);
                     }
                 }
                 Err(e) => {
@@ -7449,7 +8560,7 @@ impl Knoten {
         loop {
             let kandidaten = h.voraus.naechste(h.kette.hoehe());
             let mut weiter = false;
-            for b in kandidaten {
+            for (b, _) in kandidaten {
                 if !weiter && h.kette.uebernimm(&b).is_ok() {
                     weiter = true;
                 }
@@ -7808,6 +8919,9 @@ pub struct Nachrechnung {
     gezogen: myl_types::Spuranfrage,
     /// Wie viele Positionen nachgerechnet wurden.
     positionen: usize,
+    /// Die Prompt-Länge aus der Kennung; ab ihr ist die Wahl geprüft
+    /// (null: nicht geprüft).
+    prompt_laenge: usize,
     /// Das Ergebnis samt Logits, oder warum es keines gibt.
     ergebnis: Result<myl_verifier::Verlaufspruefung, String>,
     /// Wie lange es dauerte, samt Laden des Modells.
@@ -7842,6 +8956,16 @@ impl Default for TxZaehler {
 /// Ein Schiedsbeleg: der nachgerechnete Verlauf und die Eingänge der
 /// strittigen Layer bis zur strittigen Position (T6d).
 type Schiedsbeleg = (Vec<myl_types::Spurantwort>, Vec<Vec<i16>>);
+
+/// Ein Prüffall: Epoche, Pod und Segment im Bündel.
+type Fall = (u64, myl_types::ids::PodId, u32);
+
+/// So viele Schiedsbelege setzt ein Knoten zugleich aus Stücken zusammen.
+const SCHIEDSTEILE_ZUGLEICH: usize = 4;
+
+/// So viele Verläufe (je Fall und Gegenstelle) setzt ein Knoten zugleich
+/// aus Stücken zusammen; ist keiner frei, fällt der älteste.
+const VERLAUFTEILE_ZUGLEICH: usize = 8;
 
 /// Was ein Validator im Komitee nachgerechnet hat (T6d).
 pub struct Schiedsrechnung {
@@ -8030,5 +9154,93 @@ mod abweisung_tests {
         m.epoche = e;
         k.messung_auswerten(m, "beantwortet");
         assert!(k.fristverdacht.contains_key(&(e, mitglied)));        aufraeumen("verfall");
+    }
+}
+
+#[cfg(test)]
+mod vorausspeicher_tests {
+    use super::*;
+    use crate::kette::Kette;
+
+    fn ordner(marke: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("myl-voraus-{marke}-{}", std::process::id()))
+    }
+
+    /// 📌 **Ein Erzeuger, der nur selbst baut, sieht den fremden Zweig im
+    /// Vorausspeicher** (Podlauf `kurz-faelscher`, 2026-11-06): Die Blöcke
+    /// eines anderen Zweigs liegen dort, weil sie weit voraus ankamen; das
+    /// Nachholen überspringt ihre Höhen. Nach dem eigenen Block schliesst der
+    /// fremde an der nächsten Höhe nicht an, und die Zweigsuche beginnt bei
+    /// dem, der ihn schickte. Bis dahin baute ein Validator so 23 Minuten
+    /// allein auf einer Gabel an Block 1.
+    #[tokio::test]
+    async fn ein_fremder_zweig_im_vorausspeicher_startet_die_suche() {
+        let d = ordner("zweig");
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).expect("Ordner");
+        let konfig = KnotenKonfig {
+            name: "voraus".to_string(),
+            schluesseldatei: d.join("knoten.key"),
+            protokollverzeichnis: d.clone(),
+            horchadressen: vec!["/ip4/127.0.0.1/tcp/0".to_string()],
+            kettendatei: None,
+            beobachtung: None,
+            tuer: None,
+            ..KnotenKonfig::default()
+        };
+        let mut k = Knoten::starten(konfig, false).await.expect("Knoten");
+        let mut eigen = Kette::probestand();
+        let s = eigen.letzter_slot();
+        eigen.baue_block_im_slot(s + 7);
+        k.kette = eigen;
+        let mut fremd = Kette::probestand();
+        for i in 1..5 {
+            fremd.baue_block_im_slot(s + i);
+        }
+        let von = libp2p::PeerId::random();
+        for b in fremd.bloecke_von_bis(3, 4) {
+            let roh = borsh::to_vec(&b).expect("Drahtform");
+            assert_eq!(k.voraus.ablegen(k.kette.hoehe(), b, &roh, von), Ok(()));
+        }
+        assert!(k.zweigsuche.is_none());
+        // Ohne Nachbarn geht er nirgends hin; gebaut ist er trotzdem.
+        let _ = k.erzeuge_block().await;
+        assert_eq!(k.kette.hoehe(), 2, "der eigene Block 2");
+        assert!(k.zweigsuche.as_ref().is_some_and(|z| z.bei == von), "die Suche fragt, wer den fremden Block schickte");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// 📌 **Einen Anker, dessen Abzug keiner hat, gibt der Knoten auf**
+    /// (Podlauf `kurz-verstummen`, 2026-11-07): Er fragte sonst reihum ohne
+    /// Ende und blieb bei Hoehe 0. Erst wenn jede Gegenstelle nichts hatte;
+    /// danach sucht er neu, und derselbe Anker zaehlt nicht mehr.
+    #[tokio::test]
+    async fn einen_anker_ohne_abzug_gibt_er_auf() {
+        let d = ordner("anker");
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).expect("Ordner");
+        let konfig = KnotenKonfig {
+            name: "anker".to_string(),
+            schluesseldatei: d.join("knoten.key"),
+            protokollverzeichnis: d.clone(),
+            horchadressen: vec!["/ip4/127.0.0.1/tcp/0".to_string()],
+            kettendatei: None,
+            beobachtung: None,
+            tuer: None,
+            ..KnotenKonfig::default()
+        };
+        let mut k = Knoten::starten(konfig, false).await.expect("Knoten");
+        let (a, b) = (libp2p::PeerId::random(), libp2p::PeerId::random());
+        k.gegenstellen = vec![a, b];
+        let anker = crate::abzug::Anker { hoehe: 8850, blockhash: myl_types::Hash::from_bytes([7u8; 32]) };
+        k.abzug_holen = Some(AbzugHolen::neu_als(anker, crate::abzug::Art::Leicht));
+        k.abzug_nichts(a);
+        assert!(k.abzug_holen.is_some(), "die andere Gegenstelle kann ihn noch haben");
+        assert!(k.anker_suchen.is_none());
+        k.abzug_nichts(b);
+        assert!(k.abzug_holen.is_none(), "keine hatte ihn");
+        assert!(k.anker_suchen.is_some(), "er sucht neu");
+        assert!(k.anker_verworfen.contains(&8850));
+        let _ = std::fs::remove_dir_all(&d);
     }
 }

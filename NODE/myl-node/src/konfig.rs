@@ -251,8 +251,15 @@ pub struct KnotenKonfig {
     /// Epoche. Mit diesem Takt baut der Erzeuger so schnell, wie der Lauf
     /// es verlangt, und der Testverkehr schickt daneben nur noch Proben.
     ///
-    /// **Nur mit `erzeugt_bloecke`** (`KonfigFehler::BlocktaktOhneErzeuger`)
-    /// und nie null: Ein Takt von null baute in einer Schleife ohne Pause.
+    /// ⚑ **Seit dem 2026-11-04 die Länge eines Slots** (Erzeugerplan): Ohne
+    /// Angabe gilt die des Netzes (`Netz::slot_ms`), und der Knoten erzeugt
+    /// nur auf Zuruf (Proben über die Bibliothek; die Befehlszeile setzt
+    /// immer einen Takt). Jeder Knoten erzeugt in
+    /// den Slots, für die er gezogen ist, nicht mehr nur der eine Erzeuger;
+    /// darum gilt der Takt für jeden Knoten, und ⚠️ alle Knoten eines
+    /// Laufs müssen denselben nennen, sonst halten sie die Blöcke der
+    /// anderen für künftig. Nie null: Ein Takt von null baute in einer
+    /// Schleife ohne Pause.
     pub blocktakt_ms: Option<u64>,
     /// ⚑ **Der Anker für den Zustandsabzug vom Betreiber** (`--abzug`,
     /// 2026-10-22). Vor dem Anker im Quelltext des Netzes. Gilt nur für
@@ -322,8 +329,6 @@ pub enum KonfigFehler {
     OrtsleitungOhneAusweis,
     /// `--ortsausweis` ohne `--ortsleitung`.
     AusweisOhneOrtsleitung,
-    /// Ein Blocktakt bei einem Knoten, der keine Blöcke erzeugt.
-    BlocktaktOhneErzeuger,
     /// Ein Blocktakt von null Millisekunden.
     BlocktaktNull,
 }
@@ -347,10 +352,6 @@ impl std::fmt::Display for KonfigFehler {
             Self::AusweisOhneOrtsleitung => write!(
                 f,
                 "--ortsausweis ohne --ortsleitung: ein Schluessel ohne Tuer"
-            ),
-            Self::BlocktaktOhneErzeuger => write!(
-                f,
-                "--blocktakt ohne --erzeuger: wer keine Bloecke baut, hat keinen Takt dafuer"
             ),
             Self::BlocktaktNull => write!(f, "--blocktakt 0: der Erzeuger baute ohne Pause"),
         }
@@ -464,10 +465,8 @@ impl KnotenKonfig {
             (None, Some(_)) => return Err(KonfigFehler::AusweisOhneOrtsleitung),
             _ => {}
         }
-        match self.blocktakt_ms {
-            Some(_) if !self.erzeugt_bloecke => return Err(KonfigFehler::BlocktaktOhneErzeuger),
-            Some(0) => return Err(KonfigFehler::BlocktaktNull),
-            _ => {}
+        if self.blocktakt_ms == Some(0) {
+            return Err(KonfigFehler::BlocktaktNull);
         }
         Ok(())
     }
@@ -494,6 +493,12 @@ impl KnotenKonfig {
             }
         }
         liste
+    }
+
+    /// ⚑ **Die Länge eines Slots** (2026-11-04): `--blocktakt`, sonst die
+    /// des Netzes.
+    pub fn slot_ms(&self) -> u64 {
+        self.blocktakt_ms.unwrap_or(self.netz.slot_ms).max(1)
     }
 
     /// Die Netzkonfiguration für `myl-net`.
@@ -603,11 +608,14 @@ mod tests {
         assert!(matches!(k.pruefe(), Err(KonfigFehler::Bootstrap(_))));
     }
 
-    /// Ein Blocktakt gehört zum Erzeuger und ist nie null.
+    /// Ein Blocktakt ist nie null; seit dem 2026-11-04 ist er die Länge
+    /// eines Slots und gilt für jeden Knoten, ohne Angabe die des Netzes.
     #[test]
-    fn der_blocktakt_gehoert_zum_erzeuger() {
+    fn der_blocktakt_ist_nie_null() {
         let ohne = KnotenKonfig { blocktakt_ms: Some(20), ..Default::default() };
-        assert!(matches!(ohne.pruefe(), Err(KonfigFehler::BlocktaktOhneErzeuger)));
+        ohne.pruefe().expect("auch ohne --erzeuger");
+        assert_eq!(ohne.slot_ms(), 20);
+        assert_eq!(KnotenKonfig::default().slot_ms(), KnotenKonfig::default().netz.slot_ms);
         let null = KnotenKonfig { blocktakt_ms: Some(0), erzeugt_bloecke: true, ..Default::default() };
         assert!(matches!(null.pruefe(), Err(KonfigFehler::BlocktaktNull)));
         let gut = KnotenKonfig { blocktakt_ms: Some(20), erzeugt_bloecke: true, ..Default::default() };

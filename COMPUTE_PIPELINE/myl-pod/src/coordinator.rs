@@ -167,10 +167,18 @@ impl CompletedSegment {
 /// Mit einem Segment je Position entfällt die Positionsachse, statt
 /// nachgerüstet zu werden: Spur und Archiv tragen dieselbe Achse wie die
 /// Bisektion, nämlich die Layer.
-fn segment_id_from(session_id: u64, position: u64) -> SegmentId {
+///
+/// ⚑ **Dazu die Prompt-Länge** in den Bytes 16 bis 23 (T6, 2026-11-05,
+/// `myl_types::prompt_laenge`): Ab ihr ist jede Position erzeugt, und der
+/// Prüfer prüft dort, ob das Token der Argmax war. So gebunden wie die
+/// Kennung selbst: Hier setzt sie der Koordinator, nicht der letzte Shard,
+/// der das Token wählt, und der ganze Pod unterschreibt sie; ein Zwilling,
+/// der denselben Auftrag rechnet, kommt auf dieselben Kennungen.
+fn segment_id_from(session_id: u64, position: u64, prompt_laenge: u64) -> SegmentId {
     let mut bytes = [0u8; 32];
     bytes[..8].copy_from_slice(&session_id.to_le_bytes());
     bytes[8..16].copy_from_slice(&position.to_le_bytes());
+    bytes[16..24].copy_from_slice(&prompt_laenge.to_le_bytes());
     SegmentId::new(bytes)
 }
 
@@ -298,12 +306,12 @@ impl Coordinator {
                     let packed = wire::pack_tokens(&[*tok]);
                     let flags = if i + 1 == prompt_tokens.len() { FLAG_SAMPLE } else { 0 };
                     eingaenge.push(crate::trace::activation_hash(&packed));
-                    msgs.push(PodMessage::token_input(segment_id_from(session_id, i as u64), session_id, i as u64, packed, flags));
+                    msgs.push(PodMessage::token_input(segment_id_from(session_id, i as u64, prompt_tokens.len() as u64), session_id, i as u64, packed, flags));
                 }
                 let ergebnisse = self.pump_stapel(&msgs)?;
                 for (k, (out_trace, out_sigs, token_opt, feedback_opt)) in ergebnisse.into_iter().enumerate() {
                     let i = i0 + k;
-                    self.segment_abschliessen(segment_id_from(session_id, i as u64), i as u64, out_trace, out_sigs, eingaenge[k], msgs[k].payload.clone());
+                    self.segment_abschliessen(segment_id_from(session_id, i as u64, prompt_tokens.len() as u64), i as u64, out_trace, out_sigs, eingaenge[k], msgs[k].payload.clone());
                     if let Some(t) = token_opt {
                         generated.push(t);
                     }
@@ -319,7 +327,7 @@ impl Coordinator {
             let is_last = i + 1 == prompt_tokens.len();
             let packed = wire::pack_tokens(&[*tok]);
             let flags = if is_last { FLAG_SAMPLE } else { 0 };
-            let segment_id = segment_id_from(session_id, i as u64);
+            let segment_id = segment_id_from(session_id, i as u64, prompt_tokens.len() as u64);
             // Das Commitment auf die Eingabe, bevor sie verschickt wird
             // (Fund 102): die Nutzlast dieser Nachricht.
             let eingang = crate::trace::activation_hash(&packed);
@@ -344,7 +352,7 @@ impl Coordinator {
             };
             // Die Feedback-Nachricht trägt die Segment-Id ihres Erzeugers.
             // Mit einem Segment je Position gehört sie auf die neue.
-            let segment_id = segment_id_from(session_id, msg.position);
+            let segment_id = segment_id_from(session_id, msg.position, prompt_tokens.len() as u64);
             msg.segment_id = segment_id;
             let position = msg.position;
             let eingang = crate::trace::activation_hash(&msg.payload);

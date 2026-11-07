@@ -465,6 +465,7 @@ fn stufe_block() -> Stufe {
         timestamp_ms: 1_700_000_000_000,
         state_root: Hash::sha256(b"state"),
         pruefpunkt: None,
+        slot: 0,
     };
     let mut block = Block::new(meta);
     // ⚑ **Unterschrieben, seit es Unterschriften gibt** (2026-08-28).

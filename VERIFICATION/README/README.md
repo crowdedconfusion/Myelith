@@ -1,6 +1,6 @@
 # verification (`myl-verifier`)
 
-> **Version:** 0.27.0
+> **Version:** 0.28.0
 > **Datum:** 2026-10-29
 > **Status:** 🎉 **Phasen 1, 2 und 3 abgeschlossen** (Punkte 1.1–1.3,
 > 2.1–2.5, 3.1–3.6), Phase 4 zu drei Vierteln (4.1, 4.2 und 4.4 ✅,
@@ -145,6 +145,30 @@ gegen zwei eingebaute Fehler geeicht worden (Grenzverschiebung um eins,
 umgedrehter Vergleich); beide fliegen auf.
 
 ## Changelog
+
+### v0.28.0 (2026-11-05): Der Prüfer prüft die Wahl des Tokens
+
+- ⛔️ **Die Spur band Aktivierungen und Tokens, nicht die Wahl.** Ein Pod,
+  der an einer erzeugten Position nicht den Argmax nahm und danach ehrlich
+  weiterrechnete, hatte eine stimmige Spur; das Nachrechnen fand nichts,
+  nur ein ehrlicher Zwilling. Jetzt prüfen `verlauf_nachrechnen`,
+  `verlauf_als_prefill` und `verlauf_schrittweise` an jeder erzeugten
+  Position (ab der Prompt-Länge, bis zur vorletzten) `greedy_next` über
+  die Logits des Kopfes gegen das Token der nächsten Position; eine falsche
+  Wahl ist die Abweichung `(position, num_layers + 1)`, beschuldigt wird
+  also das Mitglied mit dem Kopf.
+- **`schied_nachrechnen` mit der Prompt-Länge**: Das Komitee urteilt über
+  den Eintrag hinter der letzten Layer am Beleg der letzten Layer, ohne
+  das ganze Modell neu zu rechnen. Eine Position im Prompt ist keine Wahl
+  und trägt nie.
+- ⚠️ Neuer Parameter `prompt_laenge` an allen vier Wegen; null schaltet die
+  Prüfung ab (alte Bündel ohne Länge).
+- Test mit dem echten Modell in `myl-pod`
+  (`ein_checker_rechnet_den_verlauf_ab_den_tokens_nach`): Ein Pod, der an
+  der ersten erzeugten Position ein anderes Token nimmt und danach ehrlich
+  rechnet, wird ohne die Länge nicht gefunden, mit ihr an Position 3 hinter
+  der letzten Layer, im Prefill wie schrittweise, und das Komitee urteilt
+  gegen ihn; gegen den ehrlichen nicht.
 
 ### v0.27.0 (2026-10-29): Nachrechnen als Prefill
 

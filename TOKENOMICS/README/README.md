@@ -1,7 +1,7 @@
 # tokenomics (`myl-tokenomics`)
 
-> **Version:** 0.25.0
-> **Datum:** 2026-10-30
+> **Version:** 0.26.0
+> **Datum:** 2026-11-03
 > **Status:** Design-Entscheidungen getroffen (Fixed-Point bestätigt,
 > vTFE-Skalierung 10⁻⁶, MYL-Kleinstbeträge 10⁶, EMA-Fenster 30 Epochen
 > α=2/31); 🎉 **Phasen 1 bis 5 abgeschlossen** (Auslastungsboden und
@@ -97,6 +97,28 @@ volle Gutschrift bekommen. Eine Funktion, die immer null liefert,
 verletzt keine Obergrenze.
 
 ## Changelog
+
+### v0.26.0 (2026-11-03): Die Korrelationsstrafe
+
+- ⛔️ **`korrelation_buchen`** (Vorbild Ethereum, Faktor 3 seit Bellatrix):
+  Jeder Schuldige einer Doppelsignatur in der Sperrfrist verliert insgesamt
+  `masse · min(1, 3 · Σ masse / Gesamtgewicht)`, mindestens aber den
+  gestaffelten Grundsatz; jede neue Buchung wirkt auf die früheren zurück.
+  Ein einzelnes Versehen kostet weiter 30 %, ein gemeinsamer Angriff mit
+  einem Drittel alles. 📌 Vorher kostete ein Sicherheitsbruch durch ein
+  Drittel nach dem Kopfgeld an eine eigene zweite Identität nur 21 %.
+- ⚑ **Das Kopfgeld bleibt** (Anhang B.3, b = 30 %), aber nur auf dem
+  Grundsatz; der Zuschlag wird ganz verbrannt. Geprüft und verworfen: ein
+  Kopfgeld von 1/512 nach Ethereum. Es wäre vom Papier abgewichen und hätte
+  mit dem verbrannten Zuschlag nichts mehr geschlossen.
+- ⚑ **Bleibt in Kap. 5.5:** Die Spanne „30 bis 100 %“ für Validatoren ist
+  unverändert; die Strafe wächst in ihr mit dem gleichzeitig geschlachteten
+  Anteil.
+- ⛔️ Das Gesamtgewicht zählt in Einsatz (Gewicht des Stimmsatzes aus dem
+  Zustand), 📌 nie das eines Satzes von aussen: Dessen Gewichte können
+  anders zählen (eine lernende Kette wiegt jedes Mitglied mit 1), und dann
+  kostete schon ein einzelnes Versehen alles.
+- Zwei neue Tests.
 
 ### v0.25.0 (2026-10-30): Die Ausschüttung vorgemerkt
 

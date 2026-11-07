@@ -163,6 +163,10 @@ impl std::fmt::Debug for Konsensschluessel {
     }
 }
 
+/// Die Botschaft hinter [`Konsensschluessel::saatgeheimnis`]; ein eigenes
+/// Praefix, das keine andere signierte Botschaft traegt.
+const SAATGEHEIMNIS_BOTSCHAFT: &[u8] = b"myl-saatgeheimnis-v1: nie veroeffentlichen";
+
 impl Konsensschluessel {
     fn aus_ikm(ikm: &[u8], herkunft: Herkunft) -> Result<Self, SchluesselFehler> {
         let geheim = BlsSecretKey::key_gen(ikm).map_err(|_| SchluesselFehler::Bls("key_gen"))?;
@@ -313,6 +317,18 @@ impl Konsensschluessel {
     ) -> Result<myl_types::fristmeldung::Fristzeugnis, SchluesselFehler> {
         myl_types::fristmeldung::Fristzeugnis::neu(&self.geheim, self.kennung(), epoche, pod, gemeldeter, gemessen_us)
             .map_err(|_| SchluesselFehler::Bls("fristzeugnis"))
+    }
+
+    /// ⚑ **Das Geheimnis fuer die Saat** (2026-11-03): die eigene Signatur
+    /// ueber eine feste Botschaft, gehasht. BLS ist eindeutig, also kommt
+    /// nach jedem Neustart dasselbe heraus, und bilden kann es nur, wer den
+    /// Schluessel haelt. Die Botschaft wird nirgends sonst signiert, und die
+    /// Signatur verlaesst diese Funktion nicht; der geheime Teil bleibt, wo
+    /// er ist. Daraus leitet `crate::saatdienst` Polynom und
+    /// Entschluesselungsschluessel ab.
+    pub fn saatgeheimnis(&self) -> Result<[u8; 32], SchluesselFehler> {
+        let sig = self.geheim.sign(SAATGEHEIMNIS_BOTSCHAFT).map_err(|_| SchluesselFehler::Bls("saatgeheimnis"))?;
+        Ok(*Hash::sha256(&sig.0).as_bytes())
     }
 
     /// Die Konto-Adresse zu diesem Schlüssel.

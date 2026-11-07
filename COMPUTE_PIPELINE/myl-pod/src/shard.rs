@@ -144,22 +144,39 @@ fn sperre<'a, T>(m: &'a Mutex<T>, was: &str) -> Result<std::sync::MutexGuard<'a,
 
 /// ⚑ **Der Fälscher des Prüfstands** (Merkmal `faelscher`, 2026-10-28): Mit
 /// `MYL_SHARD_FAELSCHEN=1` rechnet der Shard auf einer Eingabe, deren erster
-/// Wert um eins verschoben ist. Spur und Unterschrift folgen der falschen
+/// Wert verschoben ist. Spur und Unterschrift folgen der falschen
 /// Rechnung, der Nachfolger nimmt sie also an; nur ein zweiter Pod, der
 /// dasselbe Segment ehrlich rechnet, sieht eine andere Ausgabe. Ohne das
 /// Merkmal tut diese Funktion nichts.
+///
+/// ⚑ **Die Kollusion** (2026-11-06): Mit `MYL_SHARD_FAELSCHEN=erste`
+/// faelscht der Shard nur, wenn er die Einbettung rechnet (`erster`). Zwei
+/// solche Faelscher an der ersten Position zweier Zwillinge rechnen dann
+/// gleich falsch, denn die Grenzen dahinter aendern an der Rechnung nichts;
+/// die Zwillinge sind einig, und nur das Nachrechnen ab den Tokens findet es.
+///
+/// 📌 **Um 64, nicht um eins** (2026-11-06): Mit dem 0,6B verschwand eine
+/// Verschiebung um eins bei 346 von 400 Tokens schon in der ersten Layer
+/// (Requantisierung), an Position 0 wie spaeter; der Pod rechnete dann
+/// ehrlich, und das Nachrechnen meldete zu Recht „gleich“. Um 64 verschwand
+/// sie bei keinem.
 #[cfg(feature = "faelscher")]
-fn faelschen(hidden: &mut [i16]) {
-    static AN: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    if *AN.get_or_init(|| std::env::var("MYL_SHARD_FAELSCHEN").is_ok_and(|w| w == "1")) {
-        if let Some(erster) = hidden.first_mut() {
-            *erster = erster.wrapping_add(1);
+fn faelschen(hidden: &mut [i16], erster: bool) {
+    static ART: std::sync::OnceLock<u8> = std::sync::OnceLock::new();
+    let art = *ART.get_or_init(|| match std::env::var("MYL_SHARD_FAELSCHEN").as_deref() {
+        Ok("1") => 1,
+        Ok("erste") => 2,
+        _ => 0,
+    });
+    if art == 1 || (art == 2 && erster) {
+        if let Some(wert) = hidden.first_mut() {
+            *wert = wert.wrapping_add(64);
         }
     }
 }
 
 #[cfg(not(feature = "faelscher"))]
-fn faelschen(_: &mut [i16]) {}
+fn faelschen(_: &mut [i16], _: bool) {}
 
 /// Höchstens so viele Positionen rechnet eine Zeitprobe (gegen eine
 /// Probe, die einen Shard minutenlang belegt).
@@ -582,7 +599,7 @@ impl ShardNode {
 
             let mut cache = self.position_pruefen(session_id, pos, self.take_cache(session_id)?)?;
             let mut hidden = self.model.embed_token(token);
-            faelschen(&mut hidden);
+            faelschen(&mut hidden, true);
             let mut trace = msg.trace.clone();
             let out =
                 self.layer_fuer_layer(hidden, pos, &mut cache, &msg.segment_id, &mut trace);
@@ -636,7 +653,7 @@ impl ShardNode {
         // der Sender gehasht hat, und die Spur bindet wieder die
         // ausgelieferte Arbeit.
         let mut hidden = msg.payload.clone();
-        faelschen(&mut hidden);
+        faelschen(&mut hidden, false);
 
         let mut cache = self.position_pruefen(session_id, pos, self.take_cache(session_id)?)?;
         let mut trace = msg.trace.clone();

@@ -296,6 +296,100 @@ pub enum Nachforderung {
     /// auf dem Stand des Gefragten; die Antwort ist
     /// [`Nachlieferung::Kontobeweise`]. Angehängt.
     Kontobeweise(Vec<myl_types::ids::Address>),
+    /// ⚑ **Wechselbelege ab einer Epoche** (7.4, 2026-11-04): Damit prueft
+    /// ein Knoten ohne Zustand einen Anker, dessen Epoche er noch nicht
+    /// kennt. Die Antwort ist [`Nachlieferung::Wechselbelege`]. Angehängt.
+    Wechselbelege { ab: u64 },
+    /// ⚑ **Der jüngste verankerte volle Abzug** (Z7, 2026-11-05): wie
+    /// [`Self::LeichterAnker`], für einen vollen Einsteiger. Die Antwort ist
+    /// [`Nachlieferung::VollerAnker`] mit dem Zertifikat, das eine
+    /// Epochengrenze mit vollem Abzug endgültig macht. Angehängt.
+    VollerAnker,
+    /// ⚑ **Ein Stück des Schiedsbelegs ab Byte `ab`** (T6, 2026-11-05):
+    /// Ein Beleg wächst mit der Länge der Sitzung und passte ab rund
+    /// tausend Positionen nicht mehr in eine Antwort; dann antwortete der
+    /// Anfechter mit nichts, und das Komitee bekam keinen Beleg. Die Antwort
+    /// ist [`Nachlieferung::SchiedsbelegTeil`]. Angehängt.
+    SchiedsbelegTeil { anfrage: myl_types::Spuranfrage, ab: u32 },
+    /// ⚑ **Ein Stück des Verlaufs ab Byte `ab`** (T6, 2026-11-05): wie
+    /// [`Self::Verlauf`], in Stücken; derselbe Grund wie beim Schiedsbeleg
+    /// (eine lange Sitzung passte nicht in eine Antwort, und der Prüfer
+    /// bekam nichts zum Nachrechnen). Die Antwort ist
+    /// [`Nachlieferung::VerlaufTeil`]. Angehängt.
+    VerlaufTeil { anfrage: myl_types::Spuranfrage, ab: u32 },
+    /// ⚑ **Ein Stück einer Spurablage** (T6, 2026-11-05), wie
+    /// [`Self::SpurenAblegen`], wenn die ganze nicht in eine Anfrage passt:
+    /// Grösse und Abdruck der ganzen Ablage, die Bytes ab `ab`. Die Antwort
+    /// ist [`Nachlieferung::Abgelegt`], nach dem letzten Stück mit dem
+    /// Ergebnis des Ablegens. Angehängt.
+    SpurenAblegenTeil { kennung: u64, gesamt: u32, abdruck: myl_types::Hash, ab: u32, daten: Vec<u8> },
+}
+
+/// So gross ist ein Stück des Schiedsbelegs höchstens, unter der Grenze einer
+/// Antwort mit Platz für den Rahmen.
+pub const SCHIEDSBELEG_STUECK_BYTES: usize = 3 * 1024 * 1024;
+
+/// So gross darf ein ganzer Schiedsbeleg höchstens werden: Das Komitee hält
+/// ihn bis zum letzten Stück im Speicher, und ein Anfechter darf es nicht
+/// mit einer erfundenen Grösse belegen.
+pub const SCHIEDSBELEG_HOECHSTENS_BYTES: usize = 64 * 1024 * 1024;
+
+/// Ein Stück aus den Bytes eines Belegs: Grösse, Abdruck und die Bytes ab
+/// `ab`, höchstens [`SCHIEDSBELEG_STUECK_BYTES`].
+pub fn belegstueck(bytes: &[u8], ab: u32) -> (u32, myl_types::Hash, Vec<u8>) {
+    let von = (ab as usize).min(bytes.len());
+    let bis = (von + SCHIEDSBELEG_STUECK_BYTES).min(bytes.len());
+    (bytes.len() as u32, myl_types::Hash::sha256(bytes), bytes[von..bis].to_vec())
+}
+
+/// Was nach einem Stück folgt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Stueckfolge {
+    /// Das nächste ab dieser Stelle anfragen.
+    Weiter(u32),
+    /// Vollständig, und der Abdruck stimmt.
+    Fertig(Vec<u8>),
+    /// Passt nicht (Grösse, Abdruck, Lücke, zu gross); verwerfen.
+    Verworfen,
+}
+
+/// ⚑ **Ein Beleg, der in Stücken kommt** (T6, 2026-11-05): lückenlos, alle
+/// Stücke mit demselben Abdruck und derselben Grösse wie das erste, keines
+/// über [`SCHIEDSBELEG_STUECK_BYTES`], das Ganze höchstens
+/// [`SCHIEDSBELEG_HOECHSTENS_BYTES`]; am Ende muss der Abdruck stimmen.
+#[derive(Debug, Clone)]
+pub struct Belegstuecke {
+    abdruck: myl_types::Hash,
+    gesamt: u32,
+    bytes: Vec<u8>,
+}
+
+impl Belegstuecke {
+    /// Beginnt mit dem Abdruck und der Grösse des ersten Stücks.
+    pub fn neu(abdruck: myl_types::Hash, gesamt: u32) -> Option<Self> {
+        (gesamt > 0 && gesamt as usize <= SCHIEDSBELEG_HOECHSTENS_BYTES).then(|| Self { abdruck, gesamt, bytes: Vec::new() })
+    }
+
+    /// Hängt ein Stück an.
+    pub fn anhaengen(&mut self, abdruck: &myl_types::Hash, gesamt: u32, ab: u32, daten: &[u8]) -> Stueckfolge {
+        let passt = *abdruck == self.abdruck
+            && gesamt == self.gesamt
+            && ab as usize == self.bytes.len()
+            && !daten.is_empty()
+            && daten.len() <= SCHIEDSBELEG_STUECK_BYTES
+            && self.bytes.len() + daten.len() <= gesamt as usize;
+        if !passt {
+            return Stueckfolge::Verworfen;
+        }
+        self.bytes.extend_from_slice(daten);
+        if self.bytes.len() < gesamt as usize {
+            return Stueckfolge::Weiter(self.bytes.len() as u32);
+        }
+        if myl_types::Hash::sha256(&self.bytes) != self.abdruck {
+            return Stueckfolge::Verworfen;
+        }
+        Stueckfolge::Fertig(std::mem::take(&mut self.bytes))
+    }
 }
 
 /// Höchstens so viele Adressen nennt eine [`Nachforderung::Kontobeweise`].
@@ -451,6 +545,19 @@ pub enum Nachlieferung {
     /// Die Antwort auf [`Nachforderung::Kontobeweise`]: die Höhe, auf der sie
     /// gelten, und die Beweise. Angehängt.
     Kontobeweise { hoehe: u64, beweise: Vec<myl_ledger::state::Kontobeweis> },
+    /// Die Antwort auf [`Nachforderung::Wechselbelege`]: aufsteigend, so
+    /// viele, wie in eine Antwort passen; leer, wenn keine. Angehängt.
+    Wechselbelege(Vec<crate::wechsel::Wechselbeleg>),
+    /// Die Antwort auf [`Nachforderung::VollerAnker`] (`None`: keiner).
+    /// Angehängt.
+    VollerAnker(Option<Box<myl_consensus::pruefpunkt::Pruefpunktzertifikat>>),
+    /// Die Antwort auf [`Nachforderung::SchiedsbelegTeil`]: wofür, die
+    /// Grösse und der Abdruck des ganzen Belegs (Borsh von Verlauf und
+    /// Eingängen) und die Bytes ab `ab`; leer, wenn es keinen gibt. Angehängt.
+    SchiedsbelegTeil { anfrage: myl_types::Spuranfrage, gesamt: u32, abdruck: myl_types::Hash, ab: u32, daten: Vec<u8> },
+    /// Die Antwort auf [`Nachforderung::VerlaufTeil`], wie beim Schiedsbeleg
+    /// (Borsh der Antworten). Angehängt.
+    VerlaufTeil { anfrage: myl_types::Spuranfrage, gesamt: u32, abdruck: myl_types::Hash, ab: u32, daten: Vec<u8> },
 }
 
 /// ⚑ **Der nächste Bereich beim Nachholen von mehreren Quellen** (2026-10-22).
@@ -675,6 +782,7 @@ mod tests {
                 segments_root: myl_types::ids::MerkleRoot::new([3; 32]),
                 eintraege: Vec::new(),
                 eingaben: Vec::new(),
+                buendel: None,
             },
         };
         assert_eq!(ab.als_bytes().unwrap()[0], 15);
@@ -748,4 +856,36 @@ mod tests {
         assert_eq!(naechster_bereich(200, &[], nichts, 200), None, "nichts fehlt");
     }
 
+
+    /// ⚑ **Ein Beleg in Stücken** (T6, 2026-11-05): über drei Stücke
+    /// vollständig und gleich; eine Lücke, ein anderer Abdruck, ein
+    /// erfundener Abdruck am Ende und eine Grösse über der Grenze nicht.
+    #[test]
+    fn ein_beleg_in_stuecken() {
+        let bytes: Vec<u8> = (0..(2 * SCHIEDSBELEG_STUECK_BYTES + 17)).map(|i| (i % 251) as u8).collect();
+        let (gesamt, abdruck, erstes) = belegstueck(&bytes, 0);
+        let mut b = Belegstuecke::neu(abdruck, gesamt).expect("Grösse");
+        let mut ab = 0u32;
+        let mut stueck = erstes;
+        let fertig = loop {
+            match b.anhaengen(&abdruck, gesamt, ab, &stueck) {
+                Stueckfolge::Weiter(n) => {
+                    ab = n;
+                    stueck = belegstueck(&bytes, ab).2;
+                }
+                Stueckfolge::Fertig(v) => break v,
+                Stueckfolge::Verworfen => panic!("verworfen"),
+            }
+        };
+        assert_eq!(fertig, bytes);
+        let mut l = Belegstuecke::neu(abdruck, gesamt).expect("Grösse");
+        assert_eq!(l.anhaengen(&abdruck, gesamt, 5, &bytes[5..10]), Stueckfolge::Verworfen, "eine Lücke");
+        let anders = myl_types::Hash::sha256(b"anders");
+        let mut a = Belegstuecke::neu(abdruck, gesamt).expect("Grösse");
+        assert_eq!(a.anhaengen(&anders, gesamt, 0, &bytes[..10]), Stueckfolge::Verworfen, "ein anderer Abdruck");
+        let mut f = Belegstuecke::neu(anders, 4).expect("Grösse");
+        assert_eq!(f.anhaengen(&anders, 4, 0, &[1, 2, 3, 4]), Stueckfolge::Verworfen, "der Abdruck stimmt am Ende nicht");
+        assert!(Belegstuecke::neu(abdruck, (SCHIEDSBELEG_HOECHSTENS_BYTES + 1) as u32).is_none(), "zu gross");
+        assert!(Belegstuecke::neu(abdruck, 0).is_none(), "leer");
+    }
 }

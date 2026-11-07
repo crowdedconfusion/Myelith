@@ -265,11 +265,13 @@ fn stufe(l: &Leitung, absender: &[(BlsSecretKey, Address)], rate: u64, dauer: Du
         //   Leitung, nicht das Netz.
         faeden.push(std::thread::spawn(move || {
             let mut naechste: Vec<u64> = meine.iter().map(|(_, _, n)| *n).collect();
+            // Je Absender die Nummer nach der höchsten angenommenen.
+            let mut ziele = naechste.clone();
             let mut k = 0usize;
             let mut soll = Instant::now();
             let mut stapel: Vec<(usize, Transaktion)> = Vec::new();
             let mut zuletzt = Instant::now();
-            let abschicken = |stapel: &mut Vec<(usize, Transaktion)>, naechste: &mut Vec<u64>| {
+            let abschicken = |stapel: &mut Vec<(usize, Transaktion)>, naechste: &mut Vec<u64>, ziele: &mut Vec<u64>| {
                 if stapel.is_empty() {
                     return;
                 }
@@ -278,6 +280,13 @@ fn stufe(l: &Leitung, absender: &[(BlsSecretKey, Address)], rate: u64, dauer: Du
                     Ok(a) => {
                         gesendet.fetch_add(a as u64, Ordering::Relaxed);
                         abgewiesen.fetch_add((txs.len() - a.min(txs.len())) as u64, Ordering::Relaxed);
+                        // Welche eines halb angenommenen Stapels es waren,
+                        // sagt die Antwort nicht; gezählt wird nur ein ganzer.
+                        if a >= txs.len() {
+                            for (i, tx) in stapel.iter() {
+                                ziele[*i] = ziele[*i].max(tx.nonce + 1);
+                            }
+                        }
                         if a < txs.len() {
                             // 📌 Die Nummern neu aus dem Zustand, wie eine
                             //    Wallet, für jeden Absender im Stapel.
@@ -314,7 +323,7 @@ fn stufe(l: &Leitung, absender: &[(BlsSecretKey, Address)], rate: u64, dauer: Du
                     stapel.push((i, tx));
                 }
                 if stapel.len() >= myl_types::relais::TRANSAKTIONEN_JE_FRAGE || zuletzt.elapsed() >= STAPEL_TAKT {
-                    abschicken(&mut stapel, &mut naechste);
+                    abschicken(&mut stapel, &mut naechste, &mut ziele);
                     zuletzt = Instant::now();
                 }
                 soll += takt;
@@ -322,7 +331,8 @@ fn stufe(l: &Leitung, absender: &[(BlsSecretKey, Address)], rate: u64, dauer: Du
                     std::thread::sleep(warten);
                 }
             }
-            abschicken(&mut stapel, &mut naechste);
+            abschicken(&mut stapel, &mut naechste, &mut ziele);
+            meine.iter().map(|(_, a, _)| *a).zip(ziele).collect::<Vec<(Address, u64)>>()
         }));
     }
     // Der Grundpreis während der Stufe, einmal je halbe Sekunde.
@@ -332,35 +342,63 @@ fn stufe(l: &Leitung, absender: &[(BlsSecretKey, Address)], rate: u64, dauer: Du
         }
         std::thread::sleep(Duration::from_millis(500));
     }
+    let mut ziele: Vec<(Address, u64)> = Vec::new();
     for f in faeden {
-        let _ = f.join();
+        if let Ok(z) = f.join() {
+            ziele.extend(z);
+        }
     }
     // ⚑ **Nachlauf bis alles in Blöcken steht** (2026-10-29): gemessen,
     //   wie lange das dauert, höchstens 60 s; was danach fehlt, ging
     //   verloren (angenommen, aber nie in einem Block).
+    // ⚑ **Verloren je Nummer, nicht je Sendung** (2026-11-03). 📌 Nachtlauf
+    //   `nacht-ablage`, Stufe 1600/s: 310 „verloren“, und der Nachlauf lief
+    //   bis zur Frist. Über der Aufnahme der Kette setzt ein Absender seine
+    //   Nummer auf den Zustand zurück (`VORAUS_HOECHSTENS`) und schickt
+    //   Nummern, die schon im Mempool liegen, ein zweites Mal; jede zählte
+    //   als gesendet, verbraucht wird jede Nummer nur einmal. Jetzt fehlt,
+    //   was ein Absender bis zu seiner höchsten angenommenen Nummer nicht
+    //   verbraucht hat.
     let angenommen = gesendet.load(Ordering::Relaxed);
     let nachlauf = Instant::now();
     let mut aufgenommen;
+    let mut verloren;
+    let mut ohne_guthaben;
     loop {
         aufgenommen = 0u64;
         for ((_, a), n) in absender.iter().zip(&vorher) {
             aufgenommen += l.stand(a)?.nonce.saturating_sub(*n);
         }
-        if aufgenommen >= angenommen || nachlauf.elapsed() > Duration::from_secs(60) {
+        verloren = 0u64;
+        ohne_guthaben = 0u64;
+        for (a, ziel) in &ziele {
+            let s = l.stand(a)?;
+            let fehlt = ziel.saturating_sub(s.nonce);
+            // 📌 `kurz-last` (2026-11-03): In einer gedeckelten Stufe bleibt
+            //    ein Absender an der Nummer stehen, die er nicht mehr bezahlen
+            //    kann; das ist kein Verlust der Kette, aber auch keine Aufnahme.
+            if s.guthaben < kosten_je_burn(s.grundpreis_je_byte) {
+                ohne_guthaben += fehlt;
+            } else {
+                verloren += fehlt;
+            }
+        }
+        if verloren + ohne_guthaben == 0 || nachlauf.elapsed() > Duration::from_secs(60) {
             break;
         }
         std::thread::sleep(Duration::from_secs(1));
     }
     let sekunden = dauer.as_secs().max(1);
     println!(
-        "[last] stufe={rate}/s gesendet={} abgewiesen={} aufgenommen={} je_sekunde={} grundpreis_max={} nachlauf_ms={} verloren={}",
+        "[last] stufe={rate}/s gesendet={} abgewiesen={} aufgenommen={} je_sekunde={} grundpreis_max={} nachlauf_ms={} verloren={} ohne_guthaben={}",
         angenommen,
         abgewiesen.load(Ordering::Relaxed),
         aufgenommen,
         aufgenommen / sekunden,
         preis_max.load(Ordering::Relaxed),
         nachlauf.elapsed().as_millis(),
-        angenommen.saturating_sub(aufgenommen)
+        verloren,
+        ohne_guthaben
     );
     Ok(())
 }

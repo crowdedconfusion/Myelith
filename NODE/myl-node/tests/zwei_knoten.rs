@@ -227,6 +227,7 @@ async fn ein_echter_block_kommt_an_unsinn_nicht() {
         timestamp_ms: 1_700_000_000_000,
         state_root: Hash::sha256(b"zustand"),
         pruefpunkt: None,
+        slot: 0,
     });
     let gueltig = borsh::to_vec(&block).expect("Serialisierung");
 
@@ -758,9 +759,11 @@ async fn der_blocktakt_baut_im_eigenen_takt() {
     k.blocktakt_ms = Some(20);
     let mut alpha = Knoten::starten(k, false).await.expect("Alpha startet");
     let adresse = alpha.warte_auf_adresse(Duration::from_secs(10)).await.expect("Adresse");
-    let mut beta = Knoten::starten(konfig(&verz, "beta", vec![adresse.to_string()]), false)
-        .await
-        .expect("Beta startet");
+    // ⚑ Seit dem Erzeugerplan (2026-11-04) die Länge eines Slots, für jeden
+    //   Knoten dieselbe.
+    let mut b = konfig(&verz, "beta", vec![adresse.to_string()]);
+    b.blocktakt_ms = Some(20);
+    let mut beta = Knoten::starten(b, false).await.expect("Beta startet");
     assert_eq!(beta.warte_auf_peers(1, Duration::from_secs(20)).await, 1, "Beta hat Alpha nicht erreicht");
     alpha.laufe_fuer(Duration::from_millis(200)).await;
     assert_eq!(alpha.peers().await, 1, "Alpha sah die Verbindung nicht");

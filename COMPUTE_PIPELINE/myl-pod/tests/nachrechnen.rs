@@ -229,6 +229,7 @@ fn ein_checker_rechnet_den_verlauf_ab_den_tokens_nach() {
         segments_root: wurzel,
         eintraege,
         eingaben: segmente.iter().map(|c| c.eingabe.clone()).collect(),
+        buendel: None,
     };
     let n = segmente.len() as u32;
 
@@ -246,14 +247,14 @@ fn ein_checker_rechnet_den_verlauf_ab_den_tokens_nach() {
     assert!(tokens.len() > 4, "die vier Prompt-Tokens und mindestens ein erzeugtes: {}", tokens.len());
     assert_eq!(&tokens[..4], &[9_707, 11, 1_879, 374], "die Tokens sind die des Prompts");
     let ketten: Vec<Vec<Hash>> = verlauf.iter().map(|a| a.spur.clone()).collect();
-    let ehrlich = verlauf_nachrechnen(&modell, &tokens, &ketten).expect("nachgerechnet");
+    let ehrlich = verlauf_nachrechnen(&modell, &tokens, &ketten, 0).expect("nachgerechnet");
     assert_eq!(ehrlich.ergebnis, Verlaufsergebnis::Gleich, "ein ehrlicher Pod");
 
     // ⛔️ Gegenproben: eine gefälschte Layer an Position 2 wird dort gefunden;
     //    ein anderes Token an Position 1 dort, an der ersten Layer.
     let mut gefaelscht = ketten.clone();
     gefaelscht[2][6] = Hash::sha256(b"gefaelscht");
-    let falsch = verlauf_nachrechnen(&modell, &tokens, &gefaelscht).expect("nachgerechnet");
+    let falsch = verlauf_nachrechnen(&modell, &tokens, &gefaelscht, 0).expect("nachgerechnet");
     assert_eq!(falsch.ergebnis, Verlaufsergebnis::Abweichung { position: 2, eintrag: 6 });
     // ⚑ Die Logits sind die eigenen: Eine gefälschte Spur ändert sie nicht,
     //   denn der Checker rechnet mit seinen Werten weiter.
@@ -266,28 +267,72 @@ fn ein_checker_rechnet_den_verlauf_ab_den_tokens_nach() {
     //   und fällt auf den Anfechter.
     let beleg = myl_verifier::schiedsbeleg(&modell, &tokens, 2, 5).expect("Beleg");
     assert_eq!(beleg.len(), 3);
-    assert_eq!(myl_verifier::schied_nachrechnen(&modell, &tokens, &gefaelscht, 2, 6, &beleg), Ok(true), "der Pod rechnete falsch");
-    assert_eq!(myl_verifier::schied_nachrechnen(&modell, &tokens, &ketten, 2, 6, &beleg), Ok(false), "der Pod rechnete richtig");
+    assert_eq!(myl_verifier::schied_nachrechnen(&modell, &tokens, &gefaelscht, 2, 6, &beleg, 0), Ok(true), "der Pod rechnete falsch");
+    assert_eq!(myl_verifier::schied_nachrechnen(&modell, &tokens, &ketten, 2, 6, &beleg, 0), Ok(false), "der Pod rechnete richtig");
     let mut schief = beleg.clone();
     schief[1][0] = schief[1][0].wrapping_add(1);
-    assert_eq!(myl_verifier::schied_nachrechnen(&modell, &tokens, &gefaelscht, 2, 6, &schief), Ok(false), "der Beleg trägt nicht");
+    assert_eq!(myl_verifier::schied_nachrechnen(&modell, &tokens, &gefaelscht, 2, 6, &schief, 0), Ok(false), "der Beleg trägt nicht");
     // An der ersten Layer braucht es keinen Beleg: Die Eingänge sind die
     // Einbettungen der Tokens.
     let mut erste = ketten.clone();
     erste[1][1] = Hash::sha256(b"gefaelscht");
     assert_eq!(myl_verifier::schiedsbeleg(&modell, &tokens, 1, 0), Ok(Vec::new()));
-    assert_eq!(myl_verifier::schied_nachrechnen(&modell, &tokens, &erste, 1, 1, &[]), Ok(true));
-    assert_eq!(myl_verifier::schied_nachrechnen(&modell, &tokens, &ketten, 1, 1, &[]), Ok(false));
+    assert_eq!(myl_verifier::schied_nachrechnen(&modell, &tokens, &erste, 1, 1, &[], 0), Ok(true));
+    assert_eq!(myl_verifier::schied_nachrechnen(&modell, &tokens, &ketten, 1, 1, &[], 0), Ok(false));
     let mut anders = tokens.clone();
     anders[1] = 12;
-    let anderes = verlauf_nachrechnen(&modell, &anders, &ketten).expect("nachgerechnet");
+    let anderes = verlauf_nachrechnen(&modell, &anders, &ketten, 0).expect("nachgerechnet");
     assert_eq!(anderes.ergebnis, Verlaufsergebnis::Abweichung { position: 1, eintrag: 1 });
     assert_ne!(anderes.logits, ehrlich.logits, "andere Tokens, andere Logits");
     // Ein Token hinter dem Vokabular ist kein Befund gegen den Pod, sondern
     // ein unbrauchbarer Verlauf.
     let mut hinter = tokens.clone();
     hinter[0] = modell.vocab_size as u32;
-    assert!(verlauf_nachrechnen(&modell, &hinter, &ketten).is_err());
+    assert!(verlauf_nachrechnen(&modell, &hinter, &ketten, 0).is_err());
+
+    // ⚑ **Die Wahl** (T6, 2026-11-05): Die Kennung trägt die Prompt-Länge,
+    //   ab ihr ist jede Position erzeugt. Der ehrliche Pod nahm überall den
+    //   Argmax. ⛔️ Ein Pod, der an der ersten erzeugten Position ein anderes
+    //   Token nimmt und danach ehrlich weiterrechnet, hat eine stimmige Spur;
+    //   ohne die Länge fände ihn niemand, mit ihr das Nachrechnen und das
+    //   Komitee, an Position 3 hinter der letzten Layer (der Kopf).
+    let laenge = myl_types::prompt_laenge(&verlauf[0].zeugnis.id) as usize;
+    assert_eq!(laenge, 4, "die vier Prompt-Tokens");
+    assert_eq!(verlauf_nachrechnen(&modell, &tokens, &ketten, laenge).expect("nachgerechnet").ergebnis, Verlaufsergebnis::Gleich);
+    let kopf = modell.num_layers + 1;
+    let mut gewaehlt = tokens.clone();
+    gewaehlt[4] = (tokens[4] + 1) % modell.vocab_size as u32;
+    let ketten_gewaehlt = ehrliche_ketten(&modell, &gewaehlt);
+    let ohne_laenge = verlauf_nachrechnen(&modell, &gewaehlt, &ketten_gewaehlt, 0).expect("nachgerechnet");
+    assert_eq!(ohne_laenge.ergebnis, Verlaufsergebnis::Gleich, "die Spur allein bindet die Wahl nicht");
+    let mit_laenge = verlauf_nachrechnen(&modell, &gewaehlt, &ketten_gewaehlt, laenge).expect("nachgerechnet");
+    assert_eq!(mit_laenge.ergebnis, Verlaufsergebnis::Abweichung { position: 3, eintrag: kopf });
+    let schritt = myl_verifier::verlauf_schrittweise(&modell, &gewaehlt, &ketten_gewaehlt, laenge).expect("gerechnet");
+    assert_eq!(schritt.ergebnis, mit_laenge.ergebnis, "Prefill und schrittweise gleich");
+    let beleg_kopf = myl_verifier::schiedsbeleg(&modell, &gewaehlt, 3, modell.num_layers).expect("Beleg");
+    assert_eq!(myl_verifier::schied_nachrechnen(&modell, &gewaehlt, &ketten_gewaehlt, 3, kopf, &beleg_kopf, laenge), Ok(true), "der Pod wählte falsch");
+    let beleg_ehrlich = myl_verifier::schiedsbeleg(&modell, &tokens, 3, modell.num_layers).expect("Beleg");
+    assert_eq!(myl_verifier::schied_nachrechnen(&modell, &tokens, &ketten, 3, kopf, &beleg_ehrlich, laenge), Ok(false), "der Pod wählte richtig");
+    assert_eq!(myl_verifier::schied_nachrechnen(&modell, &gewaehlt, &ketten_gewaehlt, 2, kopf, &beleg_kopf[..3], laenge), Ok(false), "Position 2 ist Prompt, keine Wahl");
+}
+
+/// Die Ketten `[Eingang] ++ Spur` eines Pods, der über `tokens` ehrlich
+/// rechnet, Position für Position mit gemeinsamem KV-Speicher wie ein Shard.
+fn ehrliche_ketten(modell: &integer_llm_runtime::model::IntegerModel, tokens: &[u32]) -> Vec<Vec<Hash>> {
+    let mut cache = KVCache::new(modell.num_layers, modell.num_kv_heads);
+    tokens
+        .iter()
+        .enumerate()
+        .map(|(q, t)| {
+            let mut kette = vec![Hash(myl_types::uebergang::activation_hash(&myl_pod::wire::pack_tokens(&[*t])))];
+            let mut h = modell.embed_token(*t as usize);
+            for l in 0..modell.num_layers {
+                h = modell.run_layers(h, q, &mut cache, l, l + 1);
+                kette.push(Hash(myl_types::uebergang::activation_hash(&h)));
+            }
+            kette
+        })
+        .collect()
 }
 
 /// ⚑ **Die Konformitätsprobe für den Prefill** (Frage 5 vom 2026-10-29):
@@ -320,10 +365,10 @@ fn der_prefill_ist_bitgleich_zum_schrittweisen_rechnen() {
         ketten.push(kette);
     }
     let beginn = std::time::Instant::now();
-    let prefill = verlauf_als_prefill(&modell, &tokens, &ketten).expect("gerechnet").expect("das Modell kann Prefill");
+    let prefill = verlauf_als_prefill(&modell, &tokens, &ketten, 0).expect("gerechnet").expect("das Modell kann Prefill");
     let dauer_prefill = beginn.elapsed();
     let beginn = std::time::Instant::now();
-    let schritt = verlauf_schrittweise(&modell, &tokens, &ketten).expect("gerechnet");
+    let schritt = verlauf_schrittweise(&modell, &tokens, &ketten, 0).expect("gerechnet");
     let dauer_schritt = beginn.elapsed();
     assert_eq!(prefill.ergebnis, Verlaufsergebnis::Gleich, "der Prefill trifft jede Layer jeder Position");
     assert_eq!(schritt.ergebnis, Verlaufsergebnis::Gleich);
@@ -334,8 +379,8 @@ fn der_prefill_ist_bitgleich_zum_schrittweisen_rechnen() {
     let mut gefaelscht = ketten.clone();
     gefaelscht[n - 3][9] = Hash::sha256(b"gefaelscht");
     gefaelscht[n - 2][2] = Hash::sha256(b"spaeter");
-    let a = verlauf_als_prefill(&modell, &tokens, &gefaelscht).expect("gerechnet").expect("Prefill");
-    let b = verlauf_schrittweise(&modell, &tokens, &gefaelscht).expect("gerechnet");
+    let a = verlauf_als_prefill(&modell, &tokens, &gefaelscht, 0).expect("gerechnet").expect("Prefill");
+    let b = verlauf_schrittweise(&modell, &tokens, &gefaelscht, 0).expect("gerechnet");
     assert_eq!(a.ergebnis, Verlaufsergebnis::Abweichung { position: n - 3, eintrag: 9 });
     assert_eq!(a, b);
 }

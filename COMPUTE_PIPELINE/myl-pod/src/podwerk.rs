@@ -237,10 +237,19 @@ fn spuren_ablegen(relais: SocketAddr, ausweis: &Ausweis, s: &Podstand, buendel: 
         // Die Tokens dazu, in derselben Folge: Damit rechnet ein Checker ab
         // den Tokens nach (Stufe 2).
         eingaben: s.koordinator.completed_segments().iter().map(|c| c.eingabe.clone()).collect(),
+        // ⛔️ Das unterschriebene Bündel dazu: Die Mitglieder nehmen eine
+        //   Ablage aus dem Netz nur mit ihm (T6, 2026-11-05).
+        buendel: Some(Box::new(buendel.clone())),
     };
-    let groesse = borsh::to_vec(&ablage).map_or(usize::MAX, |b| b.len());
-    if groesse + 1_024 > myl_types::relais::MAX_RELAIS_BYTES {
-        eprintln!("[myl-pod] Spuren der Epoche {}: {groesse} Bytes, über der Grenze einer Nachricht, nicht abgelegt", s.epoche);
+    let Ok(bytes) = borsh::to_vec(&ablage) else {
+        eprintln!("[myl-pod] Spuren der Epoche {}: nicht serialisierbar", s.epoche);
+        return;
+    };
+    // ⚑ **Grösser als eine Nachricht: in Stücken** (T6, 2026-11-05). 📌 Bis
+    //   hierher wurde eine solche Ablage gar nicht abgelegt, und bei einigen
+    //   Tausend Segmenten je Epoche lieferte niemand den Verlauf.
+    if bytes.len() + 1_024 > myl_types::relais::MAX_RELAIS_BYTES {
+        stueckweise_ablegen(relais, ausweis, s, &bytes);
         return;
     }
     std::thread::scope(|faeden| {
@@ -249,6 +258,31 @@ fn spuren_ablegen(relais: SocketAddr, ausweis: &Ausweis, s: &Podstand, buendel: 
             faeden.spawn(move || match myl_types::relais::fragen(relais, ausweis, &frage, Duration::from_secs(10)) {
                 Ok(Relaisantwort::Erledigt(_)) => {}
                 andere => eprintln!("[myl-pod] Spuren der Epoche {} nicht abgelegt: {andere:?}", s.epoche),
+            });
+        }
+    });
+}
+
+/// Legt eine Ablage in Stücken bei jedem Mitglied ab, je Mitglied Stück für
+/// Stück in Folge (das Mitglied setzt lückenlos zusammen); ein Fehler bricht
+/// bei diesem Mitglied ab, die anderen bekommen ihre trotzdem.
+fn stueckweise_ablegen(relais: SocketAddr, ausweis: &Ausweis, s: &Podstand, bytes: &[u8]) {
+    let gesamt = bytes.len() as u32;
+    let abdruck = Hash::sha256(bytes);
+    std::thread::scope(|faeden| {
+        for an in &s.adressen {
+            faeden.spawn(move || {
+                for (i, daten) in bytes.chunks(myl_types::relais::ABLAGE_STUECK_BYTES).enumerate() {
+                    let ab = (i * myl_types::relais::ABLAGE_STUECK_BYTES) as u32;
+                    let frage = Relaisfrage::SpurenAblegenTeil { an: *an, gesamt, abdruck, ab, daten: daten.to_vec() };
+                    match myl_types::relais::fragen(relais, ausweis, &frage, Duration::from_secs(30)) {
+                        Ok(Relaisantwort::Erledigt(_)) => {}
+                        andere => {
+                            eprintln!("[myl-pod] Spuren der Epoche {} ab Byte {ab} nicht abgelegt: {andere:?}", s.epoche);
+                            return;
+                        }
+                    }
+                }
             });
         }
     });

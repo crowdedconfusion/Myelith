@@ -1,6 +1,6 @@
 # integer-llm
 
-> **Version:** 0.147.1 (θ_v 0.22.0; kernels 0.89.0, runtime 0.105.0, pipeline 0.15.4)
+> **Version:** 0.147.6 (θ_v 0.22.0; kernels 0.89.0, runtime 0.105.0, pipeline 0.15.4)
 > **Datum:** 2026-10-29
 > **Status:** ⚠️ **Das Akzeptanzkriterium ruht auf einer zu kleinen
 > Stichprobe.** Gemessen wurde bisher ueber **4 Sequenzen, 435
@@ -648,6 +648,31 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
   volle Paritätstests nur auf GPU-Runnern (nightly oder PR-basiert)
 
 ## Changelog
+
+### v0.147.6 (2026-11-05): Das Gleitkomma-Audit kennt die Prüfrollen
+
+- `NODE/myl-node/src/konsensrollen.rs` in der Liste: Die Rollen setzen
+  Uhr und Zeitpunkt des Verbreitens im Prüfnetz.
+
+### v0.147.5 (2026-11-04): Das Gleitkomma-Audit kennt das Stimmbuch
+
+- `NODE/myl-node/src/stimmbuch.rs` in der Liste: Es entscheidet, welche
+  Prüfpunktstimme und welcher Slot ein Knoten unterschreiben darf.
+
+### v0.147.4 (2026-11-04): Das Gleitkomma-Audit kennt Saatdienst und Wechselbelege
+
+- `CONSENSUS_PATH` nennt `myl-node/src/saatdienst.rs` (am 2026-11-03
+  vergessen) und `wechsel.rs`. Null Treffer.
+
+### v0.147.3 (2026-11-03): Das Gleitkomma-Audit kennt die Saat
+
+- `CONSENSUS_PATH` nennt `myl-types/src/skalar.rs`, `sitze.rs`,
+  `schwelle.rs`, `anteilchiffre.rs` und `myl-ledger/src/saat.rs`. Null
+  Treffer.
+
+### v0.147.2 (2026-11-02): Das Gleitkomma-Audit kennt den Stimmsatz
+
+- `CONSENSUS_PATH` nennt `myl-ledger/src/stimmsatz.rs`. Null Treffer.
 
 ### v0.147.1 (2026-10-30): Das Gleitkomma-Audit kennt die neuen Konsensdateien
 

@@ -198,14 +198,15 @@ myl-node — ein Myelith-Netzknoten
                          Hex von Hand abschreibt: Jeder Betreiber ruft das
                          einmal auf, schickt die Zeile, und jemand setzt
                          die Datei daraus zusammen.
-  --erzeuger             dieser Knoten baut die Blöcke. GENAU EINER im Netz:
-                         zwei Erzeuger gabeln die Kette sofort, weil niemand
-                         entscheidet, welcher Block gilt (das täte BFT).
-                         Die übrigen schicken Transaktionen und rechnen nach.
-  --blocktakt <ms>       mit --erzeuger: alle so viele Millisekunden ein
-                         Block, unabhängig vom Testverkehr (Vorgabe: im
-                         Takt des Testverkehrs). Für Läufe, die Epochen
-                         in Minuten brauchen. NUR FÜR TESTNETZE.
+  --erzeuger             dieser Knoten steht mit seinem Konsensschlüssel im
+                         Stimmsatz von aussen (Genesis) und erzeugt, solange
+                         der Satz aus dem Zustand noch nicht trägt. Danach
+                         erzeugt jeder volle Miner in den Slots, für die er
+                         gezogen ist.
+  --blocktakt <ms>       die Länge eines Slots (Vorgabe: die des Netzes).
+                         ALLE Knoten eines Laufs müssen denselben Wert
+                         nennen, sonst halten sie fremde Blöcke für
+                         künftig. NUR FÜR TESTNETZE.
   --lokale-suche         Knoten im lokalen Netz suchen (mDNS), auch wenn
                          das Netz es nicht vorgibt. Braucht eine
                          Horchadresse auf den Schnittstellen, nicht nur
@@ -575,6 +576,10 @@ fn lies_argumente() -> Result<Option<Argumente>, String> {
     if lokale_suche && !konfig.netz.lokale_suche {
         konfig.netz = Box::leak(Box::new(myl_node::netz::Netz { lokale_suche: true, ..*konfig.netz }));
     }
+    // ⚑ Ein Knoten von der Befehlszeile erzeugt in seinen Slots nach der Uhr
+    //   (2026-11-04), ohne Angabe mit der Slotlaenge des Netzes. Nur Proben
+    //   ueber die Bibliothek bauen ohne Takt auf Zuruf.
+    konfig.blocktakt_ms.get_or_insert(konfig.netz.slot_ms);
     // Der eigene Name gehört immer dazu: Ein Knoten, der seine eigenen
     // Atteste nicht anerkennt, wäre schwer zu erklären.
     if !konfig.teilnehmer.is_empty() && !konfig.teilnehmer.contains(&konfig.name) {

@@ -143,6 +143,38 @@ pub fn vertrauen_traegt(bestaetigt_epoche: u64, netz_epoche: u64) -> bool {
 /// die Ziehung ohnehin verloren wäre.
 const OFFENE_ZUTEILUNGEN_HOECHSTENS: usize = 4;
 
+/// ⚑ **Wie viele Blöcke sich höchstens zurücknehmen lassen** (Zurückrollen
+/// bis zum endgültigen Prüfpunkt, 2026-11-04): vier Prüfpunkte. Gewöhnlich
+/// liegt der endgültige zwei Prüfpunkte zurück; ruht die Endgültigkeit
+/// länger, fallen die ältesten Rückwege weg, und tiefer wird nicht
+/// gewechselt, statt dass der Speicher wächst.
+pub const RUECKWEG_HOECHSTENS: usize = 4 * myl_consensus::pruefpunkt::BLOECKE_JE_PRUEFPUNKT as usize;
+
+/// Wie viele Slots [`Kette::baue_block`] nach dem eigenen sucht.
+pub const SLOTS_GESUCHT: u64 = 4_096;
+
+/// ⚑ Was ein angewandter Block braucht, um zurückgenommen zu werden.
+struct Rueckspur {
+    hoehe: u64,
+    /// Der Hash des Vorgängers.
+    davor: Hash,
+    /// Der Block selbst: seine Transaktionen gehen zurück in den Mempool.
+    block: Block,
+    weg: myl_ledger::state::Rueckweg,
+    /// Was die Kette neben dem Zustand aus ihm ableitete (Zuteilungen,
+    /// Ziehung), vor dem Block; nur, wenn er daran etwas änderte.
+    neben: Option<Nebenstand>,
+}
+
+/// Was die Kette an einer Epochengrenze oder Ziehung neben dem Zustand
+/// fortschreibt.
+struct Nebenstand {
+    offene_zuteilungen: Vec<(u64, myl_scheduler::shard_assignment::Zuteilung)>,
+    letzte_stichprobe: Option<(u64, Vec<crate::stichprobe::Segmentstichprobe>)>,
+    pods_der_stichprobe: Vec<myl_scheduler::shard_assignment::Pod>,
+    pruefer_der_stichprobe: Vec<(myl_types::ids::PodId, u32, myl_types::ids::MinerId)>,
+}
+
 /// **Wie lange eine Transaktion im Mempool wartet**, in eigenen Höhen
 /// (Fund 627): lange genug, dass eine überholte Vorgängerin nachkommt,
 /// kurz genug, dass Unsinn mit erfundener Nummer nicht liegen bleibt.
@@ -361,6 +393,33 @@ impl Mempool {
         for w in liste {
             self.hinein(w);
         }
+    }
+
+    /// Macht Platz für eine Transaktion von `absender` mit `nonce`, wenn
+    /// dessen Kontingent voll ist: Seine höchste Nummer fällt, wenn sie über
+    /// `nonce` liegt und `nonce` noch nicht wartet. `true`, wenn Platz ist.
+    fn ende_tauschen(&mut self, absender: &Address, nonce: u64) -> bool {
+        let mut ende: Option<usize> = None;
+        for (i, w) in self.liste.iter().enumerate() {
+            if w.absender != *absender {
+                continue;
+            }
+            if w.tx.nonce == nonce {
+                return false;
+            }
+            if ende.is_none_or(|e| self.liste[e].tx.nonce < w.tx.nonce) {
+                ende = Some(i);
+            }
+        }
+        let Some(i) = ende.filter(|&i| self.liste[i].tx.nonce > nonce) else {
+            return false;
+        };
+        let w = self.liste.remove(i);
+        if let Some(n) = self.je_absender.get_mut(&w.absender) {
+            *n = n.saturating_sub(1);
+        }
+        self.neulinge -= usize::from(w.neuling);
+        true
     }
 
     /// Macht Platz für `neu`: höchstens ein Vierundsechzigstel der Plätze
@@ -714,6 +773,36 @@ pub fn schluessel_fuer(name: &str) -> myl_types::bls::BlsSecretKey {
     probeschluessel(h.as_bytes()[0])
 }
 
+/// Was die Wahl des Zweigs ergab ([`Kette::zweig_folgen`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Zweigwahl {
+    /// Die Kette blieb auf ihrem Zweig.
+    Geblieben,
+    /// Die Kette folgt jetzt dem fremden Zweig: ab dem Gabelpunkt `gabel`,
+    /// `zurueck` eigene Blöcke zurückgenommen, `neu` fremde übernommen
+    /// (ohne Gabelung, `zurueck` null: verlängert).
+    Gewechselt { gabel: u64, zurueck: usize, neu: usize },
+}
+
+/// Warum ein fremder Zweig nicht in Frage kam.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Zweigfehler {
+    /// Nichts Neues: Alle Blöcke sind schon eigene.
+    Leer,
+    /// Zwischen zwei Blöcken fehlt einer (an dieser Höhe).
+    Luecke(u64),
+    /// Der erste neue Block schliesst an keinen eigenen an.
+    PasstNirgends,
+    /// Der Gabelpunkt liegt unter dem Boden der Rückwege (dem endgültigen
+    /// Prüfpunkt oder tiefer, als die Kette zurück kann).
+    ZuTief(u64),
+    /// Ein zustandsloser Knoten wählt nicht, er verankert neu.
+    Zustandslos,
+    /// Ein Block des fremden Zweigs trug nicht; die Kette ist zurück auf
+    /// dem eigenen.
+    TraegtNicht(u64, KettenFehler),
+}
+
 /// Was beim Übernehmen eines Blocks schiefgehen kann.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum KettenFehler {
@@ -940,6 +1029,14 @@ pub struct Kette {
     /// Die zuletzt angewandten Prüfpunktzertifikate (für den Anker eines
     /// leichten Abzugs).
     zertifikate: std::collections::VecDeque<myl_consensus::pruefpunkt::Pruefpunktzertifikat>,
+    /// ⚑ Die Wechselbelege (7.3, 7.4), je Epoche einer: aus eigenen Blöcken
+    /// oder von Gegenstellen geprüft ([`crate::wechsel`]).
+    wechselbelege: std::collections::BTreeMap<u64, crate::wechsel::Wechselbeleg>,
+    /// ⚑ Epochen, deren gemerkter Beleg die eigene Folge nicht traegt (nach
+    /// einer Luecke); ein spaeterer derselben Epoche darf ihn ersetzen.
+    belege_ohne_folge: std::collections::BTreeSet<u64>,
+    /// Wo sie neben der Kettendatei liegen.
+    belegablage: Option<crate::wechsel::Belegablage>,
     /// Wartende Transaktionen, je mit der eigenen Höhe bei der Aufnahme.
     mempool: Mempool,
     /// Die Kennungen der Transaktionen, deren Unterschrift dieser Knoten
@@ -1021,6 +1118,13 @@ pub struct Kette {
     /// Splitter fragen dieselben, aber nicht alle zugleich dieselbe
     /// (Fund 632).
     teilgruppe: std::collections::VecDeque<(u64, Vec<Vec<u8>>)>,
+    /// ⚑ **Je Block über dem endgültigen Prüfpunkt sein Rückweg**
+    /// (Zurückrollen, 2026-11-04), höchstens [`RUECKWEG_HOECHSTENS`]; nur
+    /// bei einem vollen Knoten, und nur im Speicher.
+    rueckwege: std::collections::VecDeque<Rueckspur>,
+    /// Höhe und Slot eines eigenen Blocks an oder unter dem endgültigen
+    /// Prüfpunkt, für die Schranke der Höhe ([`Self::hoehen_schranke`]).
+    schranke: Option<(u64, u64)>,
 }
 
 /// ⚑ **Dieselbe Bindung wie in `myl_pod::pipelinewerk`** (seit
@@ -1067,9 +1171,57 @@ impl Kette {
         k
     }
 
-    /// Der Stimmsatz dieser Kette, sobald sie einen hat.
+    /// Der Stimmsatz von aussen (Genesis oder Stimmsatzdatei), sobald die
+    /// Kette einen hat. ⚑ Seit 7.8 Schritt 2 (2026-11-04) traegt er die
+    /// Erzeugung und die Startphase; die Finalitaet traegt
+    /// [`Self::finalitaetssatz`].
     pub fn stimmsatz(&self) -> Option<&myl_consensus::validator::VotingSet> {
         self.stimmsatz.as_ref()
+    }
+
+    /// Der Satz, der die Finalitaet der Epoche `epoche` traegt, nach dem
+    /// eigenen Zustand ([`Self::finalitaetssatz_von`]).
+    pub fn finalitaetssatz(&self, epoche: u64) -> Option<myl_consensus::validator::VotingSet> {
+        Self::finalitaetssatz_von(&self.zustand, self.stimmsatz.as_ref(), epoche)
+    }
+
+    /// ⚑ **Wer die Finalitaet einer Epoche traegt** (7.8 Schritt 2,
+    /// 2026-11-04): Ueber die Pruefpunkte, ihre Streitfaelle und den Topf der
+    /// Validatoren entscheidet der Satz aus dem Zustand, alle mit genug
+    /// Einsatz und Arbeit; die Bloecke unterschreibt weiter ein Mitglied des
+    /// Satzes von aussen. 📌 Im Nachtlauf vom 2026-11-03 stimmten nur die
+    /// Mitglieder des Satzes von aussen, und der Satz aus dem Zustand
+    /// schrumpfte auf sie: Wer nicht stimmen darf, faellt wegen
+    /// Inaktivitaet heraus.
+    ///
+    /// 1. **Startphase:** Liegt jeder gefuehrte Satz nach `epoche` (auch
+    ///    wenn noch keiner gefuehrt wird), gilt der Satz von aussen.
+    /// 2. **Danach nur der Satz der Epoche**, und nur, wenn er tragfaehig
+    ///    ist ([`myl_ledger::stimmsatz::tragfaehig`]); sonst ruht die
+    ///    Finalitaet. ⛔️ Nie zurueck auf den Satz von aussen.
+    /// 3. **Nicht aelter als die Vorepoche:** Aeltere Saetze sind
+    ///    vergessen, und ein Rueckfall auf den Satz von aussen waere
+    ///    dort ein Weg, alte Schluessel wieder sprechen zu lassen.
+    pub fn finalitaetssatz_von(
+        zustand: &LedgerState,
+        von_aussen: Option<&myl_consensus::validator::VotingSet>,
+        epoche: u64,
+    ) -> Option<myl_consensus::validator::VotingSet> {
+        if epoche.saturating_add(1) < zustand.epoch.0 {
+            return None;
+        }
+        if let Some(satz) = myl_ledger::stimmsatz::satz_der_epoche(zustand, epoche) {
+            if !myl_ledger::stimmsatz::tragfaehig(satz, Self::satzregeln(zustand).mindestgewicht) {
+                return None;
+            }
+            return Some(myl_consensus::validator::VotingSet::from_members(
+                satz.iter().map(|(m, k, w)| (*m, myl_consensus::validator::VotingMember { pubkey: *k, weight: *w })).collect(),
+            ));
+        }
+        if zustand.stimmsaetze.keys().all(|e| *e > epoche) {
+            return von_aussen.cloned();
+        }
+        None
     }
 
     /// **Eine frische Kette im gegebenen Netz** (2026-10-22): wie
@@ -1135,6 +1287,9 @@ impl Kette {
             eigene_konten: std::collections::BTreeMap::new(),
             eigene_unbekannt: std::collections::BTreeSet::new(),
             zertifikate: std::collections::VecDeque::new(),
+            wechselbelege: std::collections::BTreeMap::new(),
+            belege_ohne_folge: std::collections::BTreeSet::new(),
+            belegablage: None,
             mempool: Mempool::default(),
             unterschriften: Unterschriften::default(),
             bekannt: std::collections::HashSet::new(),
@@ -1151,6 +1306,8 @@ impl Kette {
             baum: Some(Default::default()),
             teilcache: None,
             teilgruppe: std::collections::VecDeque::new(),
+            rueckwege: std::collections::VecDeque::new(),
+            schranke: None,
         }
     }
 
@@ -1507,6 +1664,13 @@ impl Kette {
 
     /// Die Ablage der Abzüge; ab jetzt entsteht an jeder Epochengrenze einer.
     pub fn ablage_setzen(&mut self, ablage: crate::abzug::Ablage) {
+        // ⚑ Die Wechselbelege daneben, mit dem, was schon dort liegt; ein
+        //   spaeterer derselben Epoche hat einen ersetzt ([`Self::beleg_merken`]).
+        let belege = crate::wechsel::Belegablage::in_ordner(ablage.ordner());
+        for b in belege.lesen() {
+            self.wechselbelege.insert(b.epoche(), b);
+        }
+        self.belegablage = Some(belege);
         self.ablage = Some(ablage);
     }
 
@@ -1649,7 +1813,7 @@ impl Kette {
             return;
         };
         let abzug = crate::abzug::Abzug { block: block.clone(), zustand };
-        match ablage.ablegen(&abzug) {
+        match ablage.ablegen_und_halten(&abzug, self.zustand.pruefpunkt_bestaetigt) {
             Ok(()) => self.letzter_abzug = Some((hoehe, block.hash())),
             Err(_) => self.schreibfehler += 1,
         }
@@ -1713,7 +1877,7 @@ impl Kette {
             Ok(()) => {
                 self.basis = neue_basis;
                 self.baum = None;
-                let _ = ablage.raeumen();
+                let _ = ablage.raeumen(self.zustand.pruefpunkt_bestaetigt);
                 self.verdichtet = Some((neue_basis, vorher, speicher.laenge()));
             }
             Err(_) => self.schreibfehler += 1,
@@ -1918,10 +2082,17 @@ impl Kette {
         }
         let absender = tx.absender_adresse();
         let neuling = ist_neuling(&self.zustand, &absender);
-        if tx.nonce < self.nonce_boden(&absender)
-            || self.mempool.je_absender(&absender) >= MEMPOOL_JE_ABSENDER
-            || (neuling && self.mempool.neulinge >= MEMPOOL_NEULINGE_HOECHSTENS)
-        {
+        if tx.nonce < self.nonce_boden(&absender) || (neuling && self.mempool.neulinge >= MEMPOOL_NEULINGE_HOECHSTENS) {
+            return false;
+        }
+        // 📌 **Eine niedrigere Nummer geht vor** (`kurz-gabel`, 2026-11-05):
+        //   Nach einem Zweigwechsel kommen die Transaktionen des verlassenen
+        //   Zweigs zurück, und unter Last liegen vom selben Absender schon
+        //   64 spätere. Wurde die frühere abgewiesen, klaffte eine Lücke, die
+        //   späteren verfielen nach `WARTEN_HOECHSTENS_HOEHEN`, und 320
+        //   angenommene Transaktionen kamen in keinen Block. Jetzt fällt dafür
+        //   das Ende seiner Nummernkette, nie die Mitte.
+        if self.mempool.je_absender(&absender) >= MEMPOOL_JE_ABSENDER && !self.mempool.ende_tauschen(&absender, tx.nonce) {
             return false;
         }
         let bytes = borsh::to_vec(&tx).map_or(usize::MAX, |b| b.len());
@@ -2054,7 +2225,7 @@ impl Kette {
     /// ein Vertreter nicht zur Reserve gehört, eine Position nicht gibt oder
     /// eine Position oder ein Vertreter doppelt steht: Ein solches Bündel
     /// trägt nicht.
-    fn unterzeichner_des_buendels(
+    pub(crate) fn unterzeichner_des_buendels(
         pod: &myl_scheduler::shard_assignment::Pod,
         vertreter: &[(u32, myl_types::ids::MinerId)],
     ) -> Option<Vec<(myl_types::ids::MinerId, myl_types::bls::BlsPublicKey)>> {
@@ -2173,6 +2344,28 @@ impl Kette {
             })
             .collect();
         myl_consensus::validator::VotingSet::from_members(mitglieder)
+    }
+
+    /// **Die Regeln des Stimmsatzes** (7.8, 2026-11-03), wie der
+    /// Mindesteinsatz Parameter der Kette.
+    ///
+    /// ⚑ **Arbeitsschwelle ein Viertel** des nach Einsatz gewichteten
+    /// Medians: Seit bezeugte Arbeit die Miner erreicht, wirkt sie
+    /// (Entscheidung A3 hob sie bis dahin nicht an). ⚑ **Mindestgewicht vier
+    /// Mindesteinsätze**, der kleinste tragfähige Satz; für ein Hauptnetz vor
+    /// Genesis festzulegen.
+    pub fn satzregeln(zustand: &LedgerState) -> myl_ledger::stimmsatz::Regeln {
+        // ⚑ Auf der Probekette ein eigener, niedriger Wert (2026-11-03,
+        //   [`crate::netz::Netz::stimmsatz_mindesteinsatz`]); sonst `S_min`.
+        let netz = crate::netz::Netz::des_zustands(zustand);
+        let mindesteinsatz = netz.stimmsatz_mindesteinsatz.unwrap_or_else(Self::mindesteinsatz);
+        let inaktiv = netz.stimmsatz_inaktiv_epochen.unwrap_or(myl_ledger::stimmsatz::INAKTIV_EPOCHEN);
+        myl_ledger::stimmsatz::Regeln {
+            mindesteinsatz,
+            arbeit_anteil: (1, 4),
+            mindestgewicht: mindesteinsatz.saturating_mul(myl_ledger::stimmsatz::MINDESTMITGLIEDER as u64),
+            ausschluss_punkte: myl_ledger::stimmsatz::STRAFPUNKTE.saturating_mul(inaktiv),
+        }
     }
 
     /// Der Mindesteinsatz, ab dem jemand mitstimmt.
@@ -2436,14 +2629,127 @@ impl Kette {
     /// Hat die Kette noch keinen Satz, gilt das nur auf einer Probekette und
     /// nur bis Block 1: Wer ihn trägt, wird das einzige Mitglied
     /// ([`Self::erzeuger_lernen`]).
+    ///
+    /// ⚑ **Seit dem 2026-11-04 (Erzeugerplan, 7.7 Schritt 3) genau der für
+    /// den Slot gezogene** ([`Self::erzeuger_fuer`]), aus dem Satz der
+    /// Epoche ([`Self::erzeugersatz_von`]), in einem Slot nach dem des
+    /// Vorgängers. Für einen Block, der nicht
+    /// anschliesst (ein Nachzügler sieht ihn, bevor er die Lücke holt),
+    /// fehlt die Saat womöglich noch; er muss nur von einem Mitglied des
+    /// Satzes seiner Epoche kommen, oder, ist der nicht bestimmbar, der
+    /// laufenden. Geholt und übernommen wird dann Block für Block, jeder mit
+    /// dem vollen Plan.
     fn erzeuger_traegt(&self, block: &Block) -> bool {
         let (Ok(Some(kennung)), Some(u)) = (block.erzeuger(), &block.unterschrift) else {
             return false;
         };
-        match &self.stimmsatz {
-            Some(satz) => satz.pubkey(&kennung) == Some(&u.schluessel),
-            None => self.lernt_erzeuger,
+        let hoehe = block.header.height;
+        let e = epoche_fuer_hoehe(hoehe);
+        let satz = self.erzeugersatz(e).or_else(|| self.erzeugersatz(self.zustand.epoch.0));
+        let Some(satz) = satz else {
+            return self.stimmsatz.is_none() && self.lernt_erzeuger;
+        };
+        if satz.pubkey(&kennung) != Some(&u.schluessel) {
+            return false;
         }
+        // 📌 Der Plan gilt nur für einen Block auf der eigenen Spitze: Ein
+        //   fremder Zweig ist womöglich früher in der Zeit, sein Slot also
+        //   unter dem eigenen letzten; das ist kein falscher Erzeuger, sondern
+        //   eine Gabel, und die muss als `PasstNichtAn` zur Zweigsuche
+        //   (Nachtlauf `nacht-rotation`, 2026-11-04).
+        hoehe != self.hoehe + 1
+            || block.header.prev_block_hash != self.letzter_hash
+            || (block.header.slot > self.zustand.letzter_slot && self.erzeuger_fuer(hoehe, block.header.slot) == Some(kennung))
+    }
+
+    /// ⚑ **Aus wem der Erzeuger einer Epoche gezogen wird** (2026-11-04):
+    /// der Satz aus dem Zustand, auch wenn er die Finalität nicht trägt (die
+    /// verfügbare Kette lebt weiter, wenn die Finalität ruht); gibt es für
+    /// die Epoche keinen oder ist er leer, der Satz von aussen.
+    /// 📌 Anders als bei der Finalität ist der Rückfall nach aussen hier
+    /// kein Weg zu zwei Geschichten: Was ein Erzeuger baut, wird erst über
+    /// die Prüfpunkte endgültig.
+    pub fn erzeugersatz_von(
+        zustand: &LedgerState,
+        von_aussen: Option<&myl_consensus::validator::VotingSet>,
+        epoche: u64,
+    ) -> Option<myl_consensus::validator::VotingSet> {
+        // 📌 **Wer ruht, wird nicht gezogen** (`kurz-konsens`, 2026-11-05):
+        //   Der Satz der Epoche steht zwei Epochen voraus fest, und ein
+        //   geschlachteter Doppelerzeuger baute bis dahin weiter. Für die
+        //   Finalität bleibt der Satz fest (dort hängt die Sicherheit an ihm),
+        //   für die Ziehung nicht: Ein Ruhender fällt sofort heraus, wie in
+        //   Ethereum kein geschlachteter Validator vorschlagen darf.
+        let wach = |m: &myl_types::MinerId| !zustand.mitwirkung.get(m).is_some_and(|w| w.ruht);
+        match myl_ledger::stimmsatz::satz_der_epoche(zustand, epoche) {
+            Some(satz) if satz.iter().any(|(m, _, _)| wach(m)) => Some(myl_consensus::validator::VotingSet::from_members(
+                satz.iter()
+                    .filter(|(m, _, _)| wach(m))
+                    .map(|(m, k, w)| (*m, myl_consensus::validator::VotingMember { pubkey: *k, weight: *w }))
+                    .collect(),
+            )),
+            _ => von_aussen.cloned(),
+        }
+    }
+
+    /// Der Satz, aus dem die Erzeuger der Epoche `epoche` gezogen werden.
+    pub fn erzeugersatz(&self, epoche: u64) -> Option<myl_consensus::validator::VotingSet> {
+        Self::erzeugersatz_von(&self.zustand, self.stimmsatz.as_ref(), epoche)
+    }
+
+    /// ⚑ **Die Saat des Plans für die Epoche `epoche`** aus dem Zustand nach
+    /// dem letzten Block: für die laufende die gesetzte, für die nächste die,
+    /// die ihr Wechsel setzen wird (`β` der laufenden, sonst die alte
+    /// weiter). Weiter voraus keine.
+    pub fn erzeugersaat_fuer(zustand: &LedgerState, epoche: u64) -> Option<Hash> {
+        let jetzt = zustand.epoch.0;
+        if epoche == jetzt {
+            return Some(zustand.erzeugersaat);
+        }
+        if epoche != jetzt.saturating_add(1) {
+            return None;
+        }
+        Some(
+            myl_ledger::saat::beta_der_epoche(zustand, jetzt)
+                .map(|b| myl_consensus::erzeugerplan::saat_aus_beta(&myl_types::schwelle::saat_aus_signatur(&b)))
+                .unwrap_or(zustand.erzeugersaat),
+        )
+    }
+
+    /// ⚑ **Wer einen Block an `hoehe` im Slot `slot` erzeugen darf**; die
+    /// Saat und der Satz kommen aus der Epoche der Höhe. Nur für die Höhe
+    /// direkt über dem Kopf und die danach in derselben Epoche verlässlich,
+    /// denn die Saat der übernächsten Epoche steht noch nicht.
+    pub fn erzeuger_fuer(&self, hoehe: u64, slot: u64) -> Option<myl_types::ids::MinerId> {
+        let e = epoche_fuer_hoehe(hoehe);
+        let saat = Self::erzeugersaat_fuer(&self.zustand, e)?;
+        myl_consensus::erzeugerplan::ziehen(&saat, slot, &self.erzeugersatz(e)?)
+    }
+
+    /// Der Slot des letzten Blocks.
+    pub fn letzter_slot(&self) -> u64 {
+        self.zustand.letzter_slot
+    }
+
+    /// ⚑ **Der erste Slot in `ab..=bis` nach dem des Kopfs, in dem dieser
+    /// Knoten den nächsten Block erzeugen darf**, mit seinem
+    /// Erzeugerschlüssel; `None`, wenn in keinem oder ohne Schlüssel.
+    pub fn eigener_slot(&self, ab: u64, bis: u64) -> Option<u64> {
+        let k = self.erzeugerschluessel.as_ref()?;
+        let e = epoche_fuer_hoehe(self.hoehe + 1);
+        // Eine Probekette ohne Satz lernt ihren Erzeuger aus dem ersten Block
+        // (`erzeuger_traegt`): Bis dahin ist jeder Slot frei.
+        if self.stimmsatz.is_none() && self.lernt_erzeuger && self.erzeugersatz(e).is_none() {
+            let ab = ab.max(self.zustand.letzter_slot.saturating_add(1));
+            return (ab <= bis).then_some(ab);
+        }
+        let satz = self.erzeugersatz(e)?;
+        if satz.pubkey(&k.kennung()) != Some(&k.oeffentlich()) {
+            return None;
+        }
+        let saat = Self::erzeugersaat_fuer(&self.zustand, e)?;
+        let ab = ab.max(self.zustand.letzter_slot.saturating_add(1));
+        myl_consensus::erzeugerplan::naechster_slot(&saat, ab, bis, &satz, &k.kennung())
     }
 
     /// **Der Stimmsatz aus dem ersten Block** einer Probekette ohne
@@ -2483,16 +2789,19 @@ impl Kette {
     /// **Trägt dieses Zertifikat in einem Block der Höhe `hoehe`?**
     /// (2026-10-27, CONSENSUS 7.2)
     ///
-    /// 1. **Ein Prüfpunkt nach dem zuletzt bestätigten** und vor diesem
+    /// 1. **Ein Prüfpunkt nach dem zuletzt gerechtfertigten** und vor diesem
     ///    Block. Ein älteres Zertifikat sagte nichts Neues, und eine Lücke
     ///    ist erlaubt: Die Endgültigkeit eines späteren Prüfpunkts deckt
     ///    die früheren mit.
     /// 2. **Der eigene Block an dieser Höhe.** Ein Zertifikat für einen
     ///    anderen Zweig ist keines für diese Kette.
-    /// 3. **Mehr als zwei Drittel des Stimmsatzes** über die
+    /// 3. ⚑ **Die Quelle, die der Zustand für diesen Prüfpunkt vermerkt
+    ///    hat** (2026-11-04, Casper FFG). Sie war gerechtfertigt, als der
+    ///    Block des Ziels angewandt wurde.
+    /// 4. **Mehr als zwei Drittel des Stimmsatzes** über die
     ///    Prüfpunktbotschaft. Ohne Satz trägt keines.
     fn zertifikat_traegt(&self, z: &myl_consensus::pruefpunkt::Pruefpunktzertifikat, hoehe: u64) -> bool {
-        self.stimmsatz.as_ref().is_some_and(|satz| self.zertifikat_traegt_gegen(z, hoehe, satz))
+        self.finalitaetssatz(epoche_fuer_hoehe(z.hoehe)).is_some_and(|satz| self.zertifikat_traegt_gegen(z, hoehe, &satz))
     }
 
     fn zertifikat_traegt_gegen(
@@ -2501,10 +2810,80 @@ impl Kette {
         hoehe: u64,
         satz: &myl_consensus::validator::VotingSet,
     ) -> bool {
-        z.hoehe > self.zustand.pruefpunkt_bestaetigt
+        z.hoehe > self.zustand.pruefpunkt_gerechtfertigt.0
             && z.hoehe < hoehe
             && self.hash_an(z.hoehe) == Some(z.block_hash)
+            && self.quelle_an(z.hoehe) == Some(z.quelle)
+            && z.bindung == myl_ledger::stimmsatz::bindung(&self.zustand, epoche_fuer_hoehe(z.hoehe))
             && z.verify(satz).is_ok()
+    }
+
+    /// ⚑ **Die Quelle, die jede Stimme für den Prüfpunkt `hoehe` nennt**
+    /// (2026-11-04), aus dem Zustand; nur für die laufende und die vorige
+    /// Epoche.
+    pub fn quelle_an(&self, hoehe: u64) -> Option<myl_consensus::pruefpunkt::Quelle> {
+        self.zustand
+            .pruefpunkt_quellen
+            .iter()
+            .find(|(h, _, _)| *h == hoehe)
+            .map(|(_, q, x)| myl_consensus::pruefpunkt::Quelle { hoehe: *q, block_hash: *x })
+    }
+
+    /// Epoche und Platz eines Prüfpunkts in ihr.
+    fn pruefpunkt_platz(hoehe: u64) -> (u64, u64) {
+        (epoche_fuer_hoehe(hoehe), hoehe % BLOECKE_JE_EPOCHE / myl_consensus::pruefpunkt::BLOECKE_JE_PRUEFPUNKT)
+    }
+
+    /// ⚑ **Eine Stimme als Transaktion** (2026-11-03, 7.8): Ein Mitglied des
+    /// Stimmsatzes bezeugt den Prüfpunkt `hoehe` mit dem Hash, den diese
+    /// Kette dort hat; die Unterschrift der Transaktion ist die seine. Zählt
+    /// für die Teilnahme und den Topf wie eine Unterschrift im Zertifikat,
+    /// je Prüfpunkt einmal, und nur in der laufenden und der vorigen Epoche.
+    /// 📌 Ohne sie gäbe es beim Ausfall von mehr als einem Drittel keinen
+    /// Beleg für irgendwen, und der Erzeuger entschiede allein, wessen
+    /// Unterschrift im Zertifikat steht. Gibt zurück, ob sie zählte.
+    /// Das Drittel der laufenden Epoche, in dem `hoehe` liegt, fuer die
+    /// Saatrunde der naechsten.
+    fn saatphase(hoehe: u64) -> myl_ledger::saat::Phase {
+        myl_ledger::saat::phase(hoehe % BLOECKE_JE_EPOCHE, BLOECKE_JE_EPOCHE)
+    }
+
+    /// **`β_e` ist gesetzt** (2026-11-03): Ist es das der laufenden Epoche,
+    /// kommt daraus die Saat der naechsten Zuteilung; und jede offene
+    /// Stichprobe einer frueheren Epoche wird jetzt gezogen.
+    fn beta_verwenden(
+        zustand: &mut LedgerState,
+        e: u64,
+        beta: &myl_types::bls::BlsSignature,
+        jetzt: u64,
+        gezogen: &mut Option<(u64, Vec<crate::stichprobe::Segmentstichprobe>)>,
+    ) {
+        if e == jetzt {
+            zustand.epochensaat_naechste = myl_ledger::saat::epochensaat_aus(beta);
+        }
+        Self::stichproben_mit_beta_ziehen(zustand, e, beta, gezogen);
+    }
+
+    fn pruefpunkt_bezeugen(
+        zustand: &mut LedgerState,
+        absender: &Address,
+        hoehe: u64,
+        block_hash: &Hash,
+        epoch: u64,
+        stimmsatz: Option<&myl_consensus::validator::VotingSet>,
+    ) -> bool {
+        let wer = myl_types::ids::MinerId::new(*absender.as_bytes());
+        let (e, platz) = Self::pruefpunkt_platz(hoehe);
+        // ⚑ Nur wer die Finalitaet dieser Epoche traegt (7.8 Schritt 2).
+        let im_satz = Self::finalitaetssatz_von(zustand, stimmsatz, e).is_some_and(|v| v.contains(&wer));
+        if !im_satz || !zustand.pruefpunkt_hashes.iter().any(|(h, x)| *h == hoehe && x == block_hash) {
+            return false;
+        }
+        if !myl_ledger::stimmsatz::stimme_vermerken(zustand, &wer, e, platz, epoch) {
+            return false;
+        }
+        *zustand.pruefpunkt_stimmen.entry(wer).or_default() += 1;
+        true
     }
 
     /// **Bucht einen Doppelbeleg** (2026-10-27, CONSENSUS 7.6).
@@ -2520,6 +2899,13 @@ impl Kette {
     ///    Melder; wer sich selbst meldet, wird abgewiesen
     ///    (`myl_ledger::apply_verdict`). Ohne Einsatz gibt es nichts zu
     ///    schlachten, und der Beleg bleibt ohne Folge.
+    /// 5. ⚑ **Korrelation** (2026-11-03): Danach wird jeder Schuldige der
+    ///    Sperrfrist nachgeschlachtet, bis er `min(1, 3 · Anteil)` verloren
+    ///    hat, Anteil am Gewicht des Stimmsatzes aus dem Zustand, in Einsatz
+    ///    ([`myl_tokenomics::slashing::korrelation_buchen`],
+    ///    [`myl_ledger::stimmsatz::gesamtgewicht`]); seine
+    ///    Kündigungen bleiben dafür bis zum Ende der Sperrfrist fest, und
+    ///    er fällt aus dem Stimmsatz des Zustands, bis er sich neu anmeldet.
     fn doppelbeleg_buchen(
         zustand: &mut LedgerState,
         melder: &Address,
@@ -2541,7 +2927,9 @@ impl Kette {
             checker: *melder,
             outcome: myl_ledger::transitions::VerdictOutcome::SlashMiner,
         };
-        myl_tokenomics::slashing::urteil_buchen_gestaffelt(
+        let konto = zustand.account(&schuldig);
+        let masse = myl_ledger::einsatz::schlachtbar(konto.staked, &konto.gekuendigt);
+        let (wirkung, _) = myl_tokenomics::slashing::urteil_buchen_gestaffelt(
             zustand,
             &urteil,
             myl_tokenomics::slashing::Akteur::Validator,
@@ -2549,7 +2937,13 @@ impl Kette {
         )
         .map_err(|e| format!("{e:?}"))?;
         let epoche = zustand.epoch.0;
-        zustand.doppelbelege.insert(schluessel, epoche);
+        zustand
+            .doppelbelege
+            .insert(schluessel, myl_ledger::transitions::Doppelbuchung { epoche, masse, genommen: wirkung.slashed });
+        myl_ledger::transitions::kuendigungen_festhalten(zustand, &schuldig, myl_ledger::einsatz::freigabe_epoche(epoche));
+        let gesamt = myl_ledger::stimmsatz::gesamtgewicht(zustand, epoche);
+        myl_tokenomics::slashing::korrelation_buchen(zustand, gesamt);
+        myl_ledger::stimmsatz::ausschliessen(zustand, &myl_types::ids::MinerId::new(*schuldig.as_bytes()));
         Ok(())
     }
 
@@ -2563,9 +2957,48 @@ impl Kette {
             return true;
         };
         match &self.stimmsatz {
-            Some(satz) => self.zertifikat_traegt_gegen(z, block.header.height, satz),
+            Some(_) => self.zertifikat_traegt(z, block.header.height),
             None => self.satz_aus_block(block).is_some_and(|satz| self.zertifikat_traegt_gegen(z, block.header.height, &satz)),
         }
+    }
+
+    /// ⚑ **Das Zertifikat eines fremden Zweigs vor dem Neuaufbau** (7.7a,
+    /// 2026-11-06): was ohne den Zustand des Zweigs geht. Der zertifizierte
+    /// Block ist der des Zweigs (über der Gabel) oder der eigene (darunter),
+    /// und mehr als zwei Drittel des Satzes haben unterschrieben. Quelle,
+    /// Bindung und Reihenfolge hängen am Zustand des Zweigs; sie prüft das
+    /// Nachrechnen mit [`Self::pruefpunkt_traegt`].
+    ///
+    /// 📌 Nachtlauf `nacht-konsens` (2026-11-06): Die Vorprüfung nahm
+    /// `pruefpunkt_traegt`, also den **eigenen** Block an der Höhe des
+    /// Prüfpunkts. Lag er über der Gabel, trug kein Zertifikat der Mehrheit,
+    /// und vier Knoten blieben nach 900 s Trennung auf ihrem Zweig.
+    ///
+    /// ⚑ Geprüft wird nur gegen einen Satz, der vor der Gabel feststand (die
+    /// Epoche der Gabel und die nächste, [`myl_ledger::stimmsatz::VORLAUF_EPOCHEN`]);
+    /// einen späteren bestimmt jeder Zweig selbst, er bleibt dem Nachrechnen.
+    fn pruefpunkt_traegt_im_zweig(&mut self, block: &Block, gabel: u64, zweig: &[Block]) -> bool {
+        let Some(z) = &block.header.pruefpunkt else {
+            return true;
+        };
+        if z.hoehe >= block.header.height {
+            return false;
+        }
+        let zertifiziert = if z.hoehe > gabel {
+            zweig.iter().find(|b| b.header.height == z.hoehe).map(|b| b.hash())
+        } else {
+            self.eigener_hash(z.hoehe)
+        };
+        if zertifiziert != Some(z.block_hash) {
+            return false;
+        }
+        let epoche = epoche_fuer_hoehe(z.hoehe);
+        // Fest vor der Gabel: Satz e steht VORLAUF_EPOCHEN vorher, also bis
+        // zur Epoche nach der Gabel.
+        if epoche + 1 > epoche_fuer_hoehe(gabel) + myl_ledger::stimmsatz::VORLAUF_EPOCHEN {
+            return true;
+        }
+        self.finalitaetssatz(epoche).is_some_and(|satz| z.verify(&satz).is_ok())
     }
 
     /// **Bietet ein Zertifikat für den nächsten erzeugten Block an.**
@@ -2573,7 +3006,7 @@ impl Kette {
     /// ⚑ **Nur der Erzeuger legt es in einen Block; alle anderen lesen es
     /// daraus.** Behalten wird das höchste, denn es deckt die früheren mit.
     pub fn pruefpunkt_anbieten(&mut self, z: myl_consensus::pruefpunkt::Pruefpunktzertifikat) {
-        if z.hoehe <= self.zustand.pruefpunkt_bestaetigt {
+        if z.hoehe <= self.zustand.pruefpunkt_gerechtfertigt.0 {
             return;
         }
         if self.naechstes_pruefpunktzertifikat.as_ref().is_none_or(|alt| z.hoehe > alt.hoehe) {
@@ -2581,9 +3014,15 @@ impl Kette {
         }
     }
 
-    /// Bis zu welcher Höhe die Kette bestätigt ist.
+    /// Bis zu welcher Höhe die Kette bestätigt, also endgültig ist.
     pub fn bestaetigt_bis(&self) -> u64 {
         self.zustand.pruefpunkt_bestaetigt
+    }
+
+    /// Der jüngste gerechtfertigte Prüfpunkt (ein Zertifikat, noch nicht
+    /// endgültig); über ihm wird gestimmt.
+    pub fn gerechtfertigt_bis(&self) -> u64 {
+        self.zustand.pruefpunkt_gerechtfertigt.0
     }
 
     /// Die Höhe des angebotenen, noch nicht eingetragenen Zertifikats.
@@ -2648,6 +3087,8 @@ impl Kette {
             ("zeugen_platte_bytes", self.zeugenablage.as_ref().map_or(0, |a| a.bytes())),
             ("zeugen_platte_bloecke", self.zeugenablage.as_ref().map_or(0, |a| a.anzahl() as u64)),
             ("zeugen_platte_fehler", self.zeugenablage_fehler),
+            ("stimmsatz_kuenftig", z.stimmsaetze.iter().next_back().map_or(0, |(_, s)| s.len() as u64)),
+            ("stimmsatz_gewicht", z.stimmsaetze.iter().next_back().map_or(0, |(_, s)| myl_ledger::stimmsatz::gewicht(s))),
             ("eigene_unbekannt", n(self.eigene_unbekannt.len())),
         ]
     }
@@ -3177,12 +3618,46 @@ impl Kette {
         z: &myl_consensus::pruefpunkt::Pruefpunktzertifikat,
         gezogen: &mut Option<(u64, Vec<crate::stichprobe::Segmentstichprobe>)>,
     ) {
+        // ⛔️ **Nur in der Startphase** (2026-11-03): Gibt es fuer die Epoche
+        //   nach der gezogenen einen Saatschluessel, wartet die Ziehung auf
+        //   `β` ([`Self::stichproben_mit_beta_ziehen`]). Das Zertifikat waehlt
+        //   sein Zusammensteller; ein Rueckfall darauf machte es lohnend, `β`
+        //   zu verhindern.
         let (faellig, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut zustand.stichproben_offen)
             .into_iter()
-            .partition(|o| (o.epoche + 1).saturating_mul(BLOECKE_JE_EPOCHE) <= z.hoehe);
+            .partition(|o| {
+                (o.epoche + 1).saturating_mul(BLOECKE_JE_EPOCHE) <= z.hoehe
+                    && myl_ledger::saat::schluessel_der_epoche(zustand, o.epoche + 1).is_none()
+            });
         zustand.stichproben_offen = rest;
+        Self::stichproben_ziehen(zustand, faellig, |e| crate::stichprobe::saat_aus_zertifikat(&z.aggregat, &z.unterzeichner, e), gezogen);
+    }
+
+    /// **Mit `β_e` ziehen** (2026-11-03): jede offene Stichprobe einer
+    /// Epoche vor `e`. `β_e` entsteht erst in `e`, also nachdem ihre Bündel
+    /// feststanden, und jede Menge von Anteilen ergibt dieselbe.
+    fn stichproben_mit_beta_ziehen(
+        zustand: &mut LedgerState,
+        e: u64,
+        beta: &myl_types::bls::BlsSignature,
+        gezogen: &mut Option<(u64, Vec<crate::stichprobe::Segmentstichprobe>)>,
+    ) {
+        let (faellig, rest): (Vec<_>, Vec<_>) =
+            std::mem::take(&mut zustand.stichproben_offen).into_iter().partition(|o| o.epoche < e);
+        zustand.stichproben_offen = rest;
+        let quelle = myl_types::schwelle::saat_aus_signatur(beta);
+        Self::stichproben_ziehen(zustand, faellig, |o| crate::stichprobe::stichprobensaat(&quelle, o), gezogen);
+    }
+
+    /// Zieht die faelligen Stichproben mit der Saat je Epoche.
+    fn stichproben_ziehen(
+        zustand: &mut LedgerState,
+        faellig: Vec<myl_ledger::state::OffeneStichprobe>,
+        saat_fuer: impl Fn(u64) -> [u8; 32],
+        gezogen: &mut Option<(u64, Vec<crate::stichprobe::Segmentstichprobe>)>,
+    ) {
         for o in faellig {
-            let saat = crate::stichprobe::saat_aus_zertifikat(&z.aggregat, &z.unterzeichner, o.epoche);
+            let saat = saat_fuer(o.epoche);
             let mut stichprobe = crate::stichprobe::stichprobe_aus_anteilen(&o.anteile, &saat, Self::STICHPROBE_BP);
             voll_ziehen(&mut stichprobe, &o.voll, &o.anteile);
             // Die Wurzeln dazu, gegen die gelieferte Spuren geprüft werden.
@@ -3240,6 +3715,12 @@ impl Kette {
     ) {
         if neue_epoche <= zustand.epoch.0 {
             return;
+        }
+        // ⚑ **Die Saat des Erzeugerplans** (2026-11-04), vor allem anderen:
+        //   aus demselben Zustand, gegen den der Erzeuger dieses Blocks
+        //   schon geprueft ist.
+        if let Some(saat) = Self::erzeugersaat_fuer(zustand, neue_epoche) {
+            zustand.erzeugersaat = saat;
         }
         let alte_epoche = zustand.epoch.0;
         let Epochenzuschreibung { mut zuschreibung, zurueck, allein, bezeugt, einig, uneinig, verschieden, vorbehalten } =
@@ -3354,9 +3835,12 @@ impl Kette {
         // 7.6); ältere Taten sind ohnehin nicht mehr schlachtbar.
         zustand
             .doppelbelege
-            .retain(|_, gebucht| gebucht.saturating_add(myl_ledger::einsatz::SPERRFRIST_EPOCHEN) >= neue_epoche);
+            .retain(|_, b| b.epoche.saturating_add(myl_ledger::einsatz::SPERRFRIST_EPOCHEN) >= neue_epoche);
         Self::gebuehren_teilen(zustand);
-        Self::topf_auszahlen(zustand, stimmsatz);
+        // ⚑ Der Topf an die, die die Finalitaet der abgelaufenen Epoche
+        //   trugen (7.8 Schritt 2, 2026-11-04).
+        let traeger = Self::finalitaetssatz_von(zustand, stimmsatz, alte_epoche);
+        Self::topf_auszahlen(zustand, traeger.as_ref());
         // ⚑ **Der Credit-Preis folgt der Auslastung** (Whitepaper 5.4),
         //   aus derselben Auslastung wie die Trainingsabgabe; er gilt ab der
         //   neuen Epoche.
@@ -3374,6 +3858,18 @@ impl Kette {
         }
         // ⛔️ Gebuchte Doppelbelege nach der Sperrfrist (2026-10-30).
         myl_ledger::transitions::doppelbelege_aufraeumen(zustand);
+        // ⚑ Der Stimmsatz der übernächsten Epoche aus dem Zustand (7.8,
+        //   2026-11-02); bestimmt und geführt, wirkt noch nicht (Schritt 2
+        //   mit einer Regel für den Erzeuger).
+        myl_ledger::stimmsatz::fortschreiben(zustand, neue_epoche, &Self::satzregeln(zustand), &zuschreibung.je_miner);
+        // ⚑ **Die Saat** (2026-11-03): die Runde dieser Epoche abschliessen
+        //   (ohne neuen Schluessel gilt der alte weiter), die der naechsten
+        //   anlegen (ihr Satz steht seit dem vorigen Wechsel), Altes raeumen.
+        //   Schluessel von Minern, die abgemeldet sind, fallen weg.
+        myl_ledger::saat::abschliessen(zustand, neue_epoche);
+        myl_ledger::saat::runde_anlegen(zustand, neue_epoche + 1);
+        myl_ledger::saat::aufraeumen(zustand, neue_epoche);
+        zustand.verschluesselung.retain(|m, _| zustand.miner.contains_key(m));
         // ⚑ **Und die Bündel der abgerechneten Epoche fallen weg.**
         // Ohne dies wüchse der Zustand unbegrenzt, und Entscheidung D7
         // wäre gebrochen; die Historie steht in den Blöcken.
@@ -3442,7 +3938,14 @@ impl Kette {
         }
         // ⚑ **Und die Saat rückt weiter** (Fund 143), siehe oben.
         zustand.epochensaat = zustand.epochensaat_naechste;
-        zustand.epochensaat_naechste = *letzter_hash;
+        // ⛔️ **Mit einem Saatschluessel nicht mehr aus dem Blockhash**
+        //   (2026-11-03): Die naechste kommt aus `β` dieser Epoche, sobald es
+        //   steht ([`Self::beta_verwenden`]). Kommt es nicht, bleibt sie die
+        //   jetzige, und die Zuteilung wiederholt sich; ein Rueckfall auf den
+        //   Hash machte es lohnend, `β` zu verhindern.
+        if myl_ledger::saat::schluessel_der_epoche(zustand, neue_epoche).is_none() {
+            zustand.epochensaat_naechste = *letzter_hash;
+        }
     }
 
 
@@ -3485,6 +3988,15 @@ impl Kette {
         //   Vorgängers, also des Blocks, an den dieser anschliesst. Erzeuger
         //   und Übernehmer gehen beide hier durch und hängen dasselbe an.
         zustand.historie.anhaengen(letzter_hash);
+        // ⚑ **Der Hash eines Prüfpunkts** (2026-11-03), wenn der Vorgänger
+        //   einer ist: gegen ihn prüft die Kette Stimmen als Transaktion.
+        //   Die laufende und die vorige Epoche.
+        let vorgaenger = zustand.historie.anzahl() - 1;
+        if myl_consensus::pruefpunkt::ist_pruefpunkt(vorgaenger) {
+            zustand.pruefpunkt_hashes.push((vorgaenger, *letzter_hash));
+        }
+        zustand.pruefpunkt_hashes.retain(|(h, _)| epoche_fuer_hoehe(*h).saturating_add(1) >= epoch);
+        zustand.pruefpunkt_quellen.retain(|(h, _, _)| epoche_fuer_hoehe(*h).saturating_add(1) >= epoch);
         // ⚑ **Fällige Prüfaufträge abschliessen** (2026-10-29), vor dem
         //   Epochenwechsel: Was in diesem Block einig endet, zählt noch in
         //   die Auszahlung des Wechsels.
@@ -3496,7 +4008,9 @@ impl Kette {
         //   Schlachtung nach der Matrix: der Beschuldigte mit 100 % seines
         //   Einsatzes, Kopfgeld an den Anfechter; oder die Kaution des
         //   Anfechters.
-        if let Some(v) = stimmsatz {
+        // ⚑ Seit 7.8 Schritt 2 (2026-11-04) entscheidet der Satz, der die
+        //   Finalitaet der laufenden Epoche traegt.
+        if let Some(v) = Self::finalitaetssatz_von(zustand, stimmsatz, zustand.epoch.0) {
             for urteil in myl_ledger::pruefung::streitfaelle_entscheiden(zustand, hoehe, |m| v.weight(m), v.quorum_threshold()) {
                 let gebucht = Self::schiedsurteil_buchen(zustand, &urteil);
                 ausgaben.urteile.push((urteil, gebucht.err()));
@@ -3511,13 +4025,33 @@ impl Kette {
         //   7.2): bestätigt bis zu seiner Höhe, und was auf einen
         //   bestätigten Wechsel wartete, wird jetzt gezogen. Geprüft ist es,
         //   bevor `anwenden` gerufen wird.
+        //   ⚑ Seit 2026-11-04 (Casper FFG, 7.7 Schritt 1) rechtfertigt das
+        //   Zertifikat sein Ziel; endgueltig wird seine Quelle, wenn das
+        //   Ziel ihr direkter Nachfolger ist. Dass die Quelle die vermerkte
+        //   ist, hat `zertifikat_traegt_gegen` geprueft.
         if let Some(z) = pruefpunkt {
-            zustand.pruefpunkt_bestaetigt = z.hoehe;
+            zustand.pruefpunkt_gerechtfertigt = (z.hoehe, z.block_hash);
+            if z.schliesst_ab() && z.quelle.hoehe > zustand.pruefpunkt_bestaetigt {
+                zustand.pruefpunkt_bestaetigt = z.quelle.hoehe;
+            }
             // Für den Topf der Validatoren (2026-10-28): wer unterschrieb.
+            //   ⚑ Und je Unterzeichner die Stimme für die Teilnahme (7.8,
+            //   2026-11-03); eine als Transaktion nachgetragene zählt nicht
+            //   noch einmal.
+            let (e, platz) = Self::pruefpunkt_platz(z.hoehe);
             for u in &z.unterzeichner {
                 *zustand.pruefpunkt_stimmen.entry(*u).or_default() += 1;
+                myl_ledger::stimmsatz::stimme_vermerken(zustand, u, e, platz, epoch);
             }
             Self::offene_stichproben_ziehen(zustand, z, gezogen);
+        }
+        // ⚑ **Die Quelle dieses Blocks, wenn er ein Pruefpunkt ist**
+        //   (2026-11-04): der gerechtfertigte nach dem Zertifikat, das er
+        //   selbst traegt. Jede Stimme fuer ihn nennt sie.
+        let diese_hoehe = zustand.historie.anzahl();
+        if myl_consensus::pruefpunkt::ist_pruefpunkt(diese_hoehe) {
+            let (q, x) = zustand.pruefpunkt_gerechtfertigt;
+            zustand.pruefpunkt_quellen.push((diese_hoehe, q, x));
         }
         // ⚑ **Die Ziehung der Archivkopien** (Stufe A5) am Grenzblock, nach
         //   dem Abschluss der letzten Epoche der alten Periode und vor den
@@ -3755,8 +4289,8 @@ impl Kette {
                 }
                 Anweisung::SchiedsstimmeAbgeben { epoche, pod, segment, pod_falsch } => {
                     let hoehe = zustand.historie.anzahl();
-                    let berechtigt =
-                        stimmsatz.is_some_and(|v| v.contains(&myl_types::ids::MinerId::new(*absender.as_bytes())));
+                    let berechtigt = Self::finalitaetssatz_von(zustand, stimmsatz, zustand.epoch.0)
+                        .is_some_and(|v| v.contains(&myl_types::ids::MinerId::new(*absender.as_bytes())));
                     let _ = myl_ledger::pruefung::schiedsstimme(
                         zustand,
                         &absender,
@@ -3773,6 +4307,44 @@ impl Kette {
                 }
                 Anweisung::EinsatzAbholen => {
                     let _ = einsatz_abholen(zustand, &absender);
+                }
+                Anweisung::PruefpunktBezeugen { hoehe, block_hash } => {
+                    Self::pruefpunkt_bezeugen(zustand, &absender, *hoehe, block_hash, epoch, stimmsatz);
+                }
+                // ⚑ **Die Saat** (2026-11-03): Austeilen, Beschweren und
+                //   Offenlegen nur fuer die Runde der naechsten Epoche, im
+                //   Drittel der laufenden; Anteile fuer `β` der laufenden oder
+                //   der vorigen ([`myl_ledger::saat`]).
+                Anweisung::SaatschluesselEintragen { schluessel } => {
+                    let wer = myl_types::ids::MinerId::new(*absender.as_bytes());
+                    if zustand.miner.contains_key(&wer) && schluessel.pruefen() {
+                        zustand.verschluesselung.insert(wer, *schluessel);
+                    }
+                }
+                Anweisung::SaatAusteilen { epoche: e, austeilung } => {
+                    let wer = myl_types::ids::MinerId::new(*absender.as_bytes());
+                    if *e == epoch + 1 {
+                        let p = Self::saatphase(hoehe);
+                        let _ = myl_ledger::saat::austeilung_aufnehmen(zustand, netz.as_bytes(), *e, &wer, (**austeilung).clone(), p);
+                    }
+                }
+                Anweisung::SaatBeschweren { epoche: e, austeiler, nummer } => {
+                    let wer = myl_types::ids::MinerId::new(*absender.as_bytes());
+                    if *e == epoch + 1 {
+                        let _ = myl_ledger::saat::beschwerde_aufnehmen(zustand, *e, &wer, austeiler, *nummer, Self::saatphase(hoehe));
+                    }
+                }
+                Anweisung::SaatOffenlegen { epoche: e, nummer, wert } => {
+                    let wer = myl_types::ids::MinerId::new(*absender.as_bytes());
+                    if *e == epoch + 1 {
+                        let _ = myl_ledger::saat::offenlegung_aufnehmen(zustand, *e, &wer, *nummer, *wert, Self::saatphase(hoehe));
+                    }
+                }
+                Anweisung::SaatAnteile { epoche: e, teile } => {
+                    let wer = myl_types::ids::MinerId::new(*absender.as_bytes());
+                    if let Ok(Some(beta)) = myl_ledger::saat::anteile_aufnehmen(zustand, *e, &wer, teile, epoch) {
+                        Self::beta_verwenden(zustand, *e, &beta, epoch, gezogen);
+                    }
                 }
                 Anweisung::BuendelEinreichen { buendel } => {
                     // ⚑ **Die Besetzung wird hier nachgeschlagen und
@@ -4099,27 +4671,191 @@ impl Kette {
     fn zertifikat_merken(&mut self, block: &Block) {
         if let Some(z) = &block.header.pruefpunkt {
             self.zertifikate.push_back(z.clone());
-            while self.zertifikate.len() > crate::abzug::LEICHTE_BEHALTEN {
+            // ⚑ Einer mehr als die leichten Abzuege: Der Anker des aeltesten
+            //   ist das Zertifikat danach.
+            while self.zertifikate.len() > crate::abzug::LEICHTE_BEHALTEN + 1 {
                 self.zertifikate.pop_front();
             }
+            if z.schliesst_ab() {
+                let quelle = z.quelle;
+                let vorher = self.zertifikate.iter().find(|v| v.hoehe == quelle.hoehe && v.block_hash == quelle.block_hash).cloned();
+                if let Some(v) = vorher {
+                    self.beleg_merken(v, z.clone());
+                }
+            }
+            self.schranke_nachfuehren();
         }
     }
 
-    /// ⚑ **Der Anker eines leichten Abzugs, den dieser Knoten liefern kann**:
-    /// das Zertifikat des jüngsten Prüfpunkts, zu dem ein leichter Abzug
-    /// abgelegt ist. Der Fragende prüft es gegen seinen Stimmsatz.
-    pub fn leichter_anker(&self) -> Option<myl_consensus::pruefpunkt::Pruefpunktzertifikat> {
-        let hoehen = self.ablage.as_ref()?.leicht().hoehen();
-        self.zertifikate.iter().rev().find(|z| hoehen.contains(&z.hoehe)).cloned()
+    /// Rückt die Schranke an den endgültigen Prüfpunkt nach, wenn sein Block
+    /// in den Rückwegen oder im Fenster liegt; sonst bleibt die ältere, und
+    /// die gilt weiter (nur weniger eng).
+    fn schranke_nachfuehren(&mut self) {
+        let e = self.zustand.pruefpunkt_bestaetigt;
+        if e == 0 || self.schranke.is_some_and(|(h, _)| h >= e) {
+            return;
+        }
+        let slot = self.rueckwege.iter().find(|r| r.hoehe == e).map(|r| r.block.header.slot).or_else(|| self.verlauf.get(&e).map(|b| b.header.slot));
+        if let Some(s) = slot {
+            self.schranke = Some((e, s));
+        }
     }
 
-    /// ⚑ **Ein Anker aus einem Zertifikat**, wenn es gegen den eigenen
-    /// Stimmsatz trägt (mehr als zwei Drittel, Prüfpunkthöhe). Ohne Satz
-    /// keiner: Eine Gegenstelle kann sonst jeden Anker nennen.
-    pub fn anker_aus_zertifikat(&self, z: &myl_consensus::pruefpunkt::Pruefpunktzertifikat) -> Option<crate::abzug::Anker> {
-        let satz = self.stimmsatz.as_ref()?;
-        z.verify(satz).ok()?;
-        Some(crate::abzug::Anker { hoehe: z.hoehe, blockhash: z.block_hash })
+    /// ⚑ **Die höchste Höhe, die es im Slot `slot_jetzt` geben kann**
+    /// (Fund 634, 2026-11-05): Jeder Block verbraucht mindestens einen
+    /// Slot, und jeder Zweig, dem die Kette folgen darf, zweigt über dem
+    /// endgültigen Prüfpunkt ab. Mit Höhe `h` und Slot `s` eines eigenen
+    /// Blocks an oder unter ihm ist also jede ehrliche Höhe höchstens
+    /// `h + (slot_jetzt − s)`. Eine Behauptung darüber ist nachweislich
+    /// erfunden, auch mit einer gültigen Unterschrift. Ohne endgültigen
+    /// Prüfpunkt keine Schranke.
+    pub fn hoehen_schranke(&self, slot_jetzt: u64) -> u64 {
+        self.schranke.map_or(u64::MAX, |(h, s)| h.saturating_add(slot_jetzt.saturating_sub(s)))
+    }
+
+    /// ⚑ **Der Wechselbeleg einer Epoche** (7.3, 2026-11-04): das erste
+    /// endgueltige Zertifikat der Epoche, die beiden Saetze, die es bindet,
+    /// aus dem eigenen Zustand, und das Zertifikat, das es abschliesst. Die
+    /// Saetze stehen dort noch: Der Abschluss kommt spaetestens in der
+    /// Epoche danach an, und der Zustand haelt die Saetze ab der Vorepoche.
+    ///
+    /// ⚑ **Nach einer Luecke** (2026-11-07): Traegt der Beleg die eigene
+    /// Folge nicht (die Bruecke verlangt alle Unterzeichner aus dem Satz vor
+    /// der Luecke, [`crate::wechsel`]), ersetzt ihn ein spaeterer derselben
+    /// Epoche, der sie traegt. Sonst bekaeme ein zustandsloser Knoten keinen,
+    /// obwohl es einen gaebe. Ohne Satz von aussen oder mit einer Folge, die
+    /// schon vorher abbricht, bleibt es beim ersten.
+    fn beleg_merken(
+        &mut self,
+        z: myl_consensus::pruefpunkt::Pruefpunktzertifikat,
+        abschluss: myl_consensus::pruefpunkt::Pruefpunktzertifikat,
+    ) {
+        let e = epoche_fuer_hoehe(z.hoehe);
+        let gemerkt = self.wechselbelege.contains_key(&e);
+        if gemerkt && !self.belege_ohne_folge.contains(&e) {
+            return;
+        }
+        let naechster = myl_ledger::stimmsatz::satz_der_epoche(&self.zustand, e + 1).cloned();
+        let uebernaechster = myl_ledger::stimmsatz::satz_der_epoche(&self.zustand, e + 2).cloned();
+        if myl_ledger::stimmsatz::bindung_aus(naechster.as_ref(), uebernaechster.as_ref()) != z.bindung {
+            return;
+        }
+        let beleg = crate::wechsel::Wechselbeleg { zertifikat: z, naechster, uebernaechster, abschluss };
+        let traegt = self.folge().is_none_or(|mut f| f.aufnehmen(&beleg).is_ok());
+        if gemerkt && !traegt {
+            return;
+        }
+        // Nur die laufende Epoche und die davor koennen noch einen bekommen.
+        self.belege_ohne_folge.retain(|x| x + 1 >= e);
+        if traegt {
+            self.belege_ohne_folge.remove(&e);
+        } else {
+            self.belege_ohne_folge.insert(e);
+        }
+        if let Some(a) = &self.belegablage {
+            let _ = a.anhaengen(&beleg);
+        }
+        self.wechselbelege.insert(e, beleg);
+    }
+
+    /// Die Wechselbelege ab Epoche `ab`, aufsteigend, zusammen hoechstens
+    /// `bytes` gross (mindestens einer, wenn es einen gibt).
+    pub fn wechselbelege_ab(&self, ab: u64, bytes: usize) -> Vec<crate::wechsel::Wechselbeleg> {
+        let mut aus = Vec::new();
+        let mut summe = 0usize;
+        for b in self.wechselbelege.range(ab..).map(|(_, b)| b) {
+            let n = borsh::to_vec(b).map_or(usize::MAX, |v| v.len());
+            if !aus.is_empty() && summe.saturating_add(n) > bytes {
+                break;
+            }
+            summe = summe.saturating_add(n);
+            aus.push(b.clone());
+        }
+        aus
+    }
+
+    /// Die erste Epoche ohne Wechselbeleg nach dem letzten vorhandenen.
+    pub fn wechselbelege_bis(&self) -> u64 {
+        self.wechselbelege.keys().next_back().map_or(0, |e| e + 1)
+    }
+
+    /// ⚑ **Die Folge der Saetze ab Genesis** (7.4) aus dem Satz von aussen
+    /// und den eigenen Belegen; ohne Satz von aussen keine.
+    fn folge(&self) -> Option<crate::wechsel::Folge> {
+        let mut f = crate::wechsel::Folge::ab_genesis(self.stimmsatz.clone()?, Self::satzregeln(&self.zustand).mindestgewicht);
+        for b in self.wechselbelege.values() {
+            if f.aufnehmen(b).is_err() {
+                break;
+            }
+        }
+        Some(f)
+    }
+
+    /// **Wechselbelege einer Gegenstelle aufnehmen** (7.4): nur, was die
+    /// Folge ab Genesis traegt. Gibt zurueck, wie viele neu sind.
+    pub fn wechselbelege_aufnehmen(&mut self, belege: &[crate::wechsel::Wechselbeleg]) -> Result<usize, crate::wechsel::Folgefehler> {
+        let Some(mut f) = self.folge() else {
+            return Err(crate::wechsel::Folgefehler::Unbekannt(0));
+        };
+        let mut sortiert: Vec<&crate::wechsel::Wechselbeleg> = belege.iter().collect();
+        sortiert.sort_by_key(|b| b.zertifikat.hoehe);
+        let mut neu = 0usize;
+        for b in sortiert {
+            f.aufnehmen(b)?;
+            if !self.wechselbelege.contains_key(&b.epoche()) {
+                if let Some(a) = &self.belegablage {
+                    let _ = a.anhaengen(b);
+                }
+                self.wechselbelege.insert(b.epoche(), b.clone());
+                neu += 1;
+            }
+        }
+        Ok(neu)
+    }
+
+    /// ⚑ **Der Anker eines leichten Abzugs, den dieser Knoten liefern kann**:
+    /// das Zertifikat, das den jüngsten Prüfpunkt mit leichtem Abzug
+    /// endgültig macht (seit 2026-11-04 das des nächsten Prüfpunkts, das ihn
+    /// als Quelle nennt). Der Fragende prüft es gegen seinen Stimmsatz.
+    pub fn leichter_anker(&self) -> Option<myl_consensus::pruefpunkt::Pruefpunktzertifikat> {
+        let hoehen = self.ablage.as_ref()?.leicht().hoehen();
+        self.zertifikate.iter().rev().find(|z| z.schliesst_ab() && hoehen.contains(&z.quelle.hoehe)).cloned()
+    }
+
+    /// ⚑ **Der Anker für einen vollen Einsteiger** (Z7, 2026-11-05): ein
+    /// Zertifikat, das eine Epochengrenze endgültig macht, an der ein eigener
+    /// voller Abzug liegt; aus den jüngsten Zertifikaten, sonst aus den
+    /// Abschlüssen der Wechselbelege (je Epoche einer, so lange gehalten wie
+    /// die Belege). Der Einsteiger prüft es über die Folge der Wechselbelege
+    /// ab Genesis wie der zustandslose; ein Anker von aussen ist dann nicht
+    /// mehr nötig.
+    pub fn voller_anker(&self) -> Option<myl_consensus::pruefpunkt::Pruefpunktzertifikat> {
+        let hoehen = self.ablage.as_ref()?.hoehen();
+        let traegt = |z: &&myl_consensus::pruefpunkt::Pruefpunktzertifikat| {
+            z.schliesst_ab() && crate::abzug::ist_grenze(z.quelle.hoehe) && hoehen.contains(&z.quelle.hoehe)
+        };
+        self.zertifikate
+            .iter()
+            .rev()
+            .find(traegt)
+            .or_else(|| self.wechselbelege.values().rev().map(|b| &b.abschluss).find(traegt))
+            .cloned()
+    }
+
+    /// ⚑ **Ein Anker aus einem Zertifikat**, wenn es gegen den Satz seiner
+    /// Epoche trägt (mehr als zwei Drittel, Prüfpunkthöhe) und seine Quelle
+    /// endgültig macht; der Anker ist die Quelle. Den Satz liefert
+    /// die Folge der Wechselbelege ab Genesis (7.4, 2026-11-04); fehlen
+    /// Belege, sagt der Fehler, ab welcher Epoche ([`crate::wechsel::Folgefehler::Unbekannt`]).
+    /// Ohne Satz von aussen keiner: Eine Gegenstelle kann sonst jeden Anker
+    /// nennen.
+    pub fn anker_aus_zertifikat(
+        &self,
+        z: &myl_consensus::pruefpunkt::Pruefpunktzertifikat,
+    ) -> Result<crate::abzug::Anker, crate::wechsel::Folgefehler> {
+        let f = self.folge().ok_or(crate::wechsel::Folgefehler::Unbekannt(0))?;
+        let q = f.endgueltig_durch(z)?;
+        Ok(crate::abzug::Anker { hoehe: q.hoehe, blockhash: q.block_hash })
     }
 
     /// Kontobeweise auf dem jetzigen Stand (Höhe dazu); nur ein voller Knoten.
@@ -4198,7 +4934,21 @@ impl Kette {
     /// Der Erzeuger wendet **zuerst** an und schreibt die daraus
     /// entstandene Zustandswurzel in den Block. Die Empfänger rechnen
     /// dasselbe und vergleichen.
+    ///
+    /// Im ersten Slot nach dem des Kopfs, in dem der eigene Schlüssel
+    /// gezogen ist (bis [`SLOTS_GESUCHT`] weiter), sonst im nächsten; für
+    /// Proben ohne Uhr. Der Knoten baut im Slot seiner Uhr
+    /// ([`Self::baue_block_im_slot`]).
     pub fn baue_block(&mut self) -> Block {
+        let naechster = self.zustand.letzter_slot.saturating_add(1);
+        let slot = self.eigener_slot(naechster, naechster.saturating_add(SLOTS_GESUCHT)).unwrap_or(naechster);
+        self.baue_block_im_slot(slot)
+    }
+
+    /// Baut den nächsten Block im Slot `slot` (2026-11-04, Erzeugerplan);
+    /// trägt nur, wenn der eigene Schlüssel dafür gezogen ist und der Slot
+    /// nach dem des Kopfs liegt.
+    pub fn baue_block_im_slot(&mut self, slot: u64) -> Block {
         // ⚑ **Nur so viel, wie in einen Block passt** (Fund 633), in der
         //   Folge des Mempools. Was gerade nicht mehr passt, bleibt
         //   unangewandt liegen; was allein schon grösser ist als ein Block,
@@ -4240,6 +4990,7 @@ impl Kette {
         let zert = zert.filter(|z| self.zertifikat_traegt(z, hoehe));
         let mut gezogen = None;
         let ablaufend = self.ablaufende_zuteilung(epoch);
+        let mut neben = ablaufend.is_some().then(|| self.nebenstand());
         self.zuteilung_aufheben(ablaufend);
         let mut ausgaben = Pruefausgaben::default();
         // ⚑ **Der Zeuge des Blocks** (zustandslose Validierung, 2026-10-29):
@@ -4247,6 +4998,9 @@ impl Kette {
         //   berührt; daraus der Zeuge, bevor die Wurzel ihn fortschreibt.
         debug_assert!(!self.zustandslos, "ein zustandsloser Knoten erzeugt keine Blöcke");
         self.zustand.aufzeichnen_beginnen();
+        // ⚑ Auch ein eigener Block lässt sich zurücknehmen (2026-11-04).
+        let sicherung = self.zustand.sichern();
+        let davor = self.letzter_hash;
         let unterschriften = &self.unterschriften;
         let verbraucht = Self::anwenden(
             &mut self.zustand,
@@ -4259,7 +5013,11 @@ impl Kette {
             &mut ausgaben,
             &|t: &Transaktion| unterschriften.kennt(&t.kennung()),
         );
+        self.zustand.letzter_slot = slot;
         let zeuge = self.zustand.zeuge_nehmen().ok().and_then(|z| borsh::to_vec(&z).ok());
+        if neben.is_none() && gezogen.is_some() {
+            neben = Some(self.nebenstand());
+        }
         self.ziehung_merken(gezogen);
         self.pruefausgaben.anhaengen(ausgaben);
         // ⚑ **In den Block kommt nur, was seine Nummer verbraucht hat**
@@ -4289,6 +5047,7 @@ impl Kette {
             timestamp_ms: crate::protokoll::jetzt_ms().max(0) as u64,
             state_root: self.zustand.wurzel(),
             pruefpunkt: zert,
+            slot,
         });
         for tx in im_block {
             block.add_transaction(tx);
@@ -4302,6 +5061,8 @@ impl Kette {
             }
         }
         self.erzeuger_lernen(&block);
+        let weg = self.zustand.sicherung_behalten(sicherung);
+        self.rueckweg_merken(Rueckspur { hoehe, davor, block: block.clone(), weg, neben });
 
         if let Some(b) = self.baum.as_mut() {
             b.anhaengen(&self.letzter_hash);
@@ -4318,6 +5079,390 @@ impl Kette {
         self.zertifikat_merken(&block);
         self.abzug_anlegen(&block);
         block
+    }
+
+    /// Was die Kette neben dem Zustand fortschreibt, als Kopie.
+    fn nebenstand(&self) -> Nebenstand {
+        Nebenstand {
+            offene_zuteilungen: self.offene_zuteilungen.clone(),
+            letzte_stichprobe: self.letzte_stichprobe.clone(),
+            pods_der_stichprobe: self.pods_der_stichprobe.clone(),
+            pruefer_der_stichprobe: self.pruefer_der_stichprobe.clone(),
+        }
+    }
+
+    /// Hebt den Rückweg eines Blocks auf und wirft weg, was unter dem
+    /// endgültigen Prüfpunkt liegt oder über [`RUECKWEG_HOECHSTENS`] geht.
+    fn rueckweg_merken(&mut self, spur: Rueckspur) {
+        self.rueckwege.push_back(spur);
+        let endgueltig = self.zustand.pruefpunkt_bestaetigt;
+        while self.rueckwege.front().is_some_and(|r| r.hoehe <= endgueltig) || self.rueckwege.len() > RUECKWEG_HOECHSTENS {
+            self.rueckwege.pop_front();
+        }
+    }
+
+    /// ⚑ **Bis wohin diese Kette zurück kann**: nie unter den endgültigen
+    /// Prüfpunkt, nie unter ihre Basis, und nur so weit, wie sie Rückwege
+    /// hat (nach einem Neustart keine).
+    pub fn rueckweg_boden(&self) -> u64 {
+        let aeltester = self.rueckwege.front().map_or(self.hoehe, |r| r.hoehe - 1);
+        aeltester.max(self.zustand.pruefpunkt_bestaetigt).max(self.basis)
+    }
+
+    /// ⚑ **Bis wohin die Wahl des Zweigs zurück darf** (CONSENSUS 7.7a,
+    /// 2026-11-05): nie unter den endgültigen Prüfpunkt und nie unter die
+    /// Basis. Reichen die Rückwege nicht so weit (eine Trennung über ihre
+    /// 600 Blöcke, ein Neustart), baut die Kette den Stand am Gabelpunkt aus
+    /// dem eigenen Abzug neu auf ([`Self::neu_aufsetzen_bei`]); ohne
+    /// Kettendatei und Ablage, und zustandslos, bleibt es beim Boden der
+    /// Rückwege.
+    pub fn zweig_boden(&self) -> u64 {
+        if self.zustandslos || self.speicher.is_none() || self.ablage.is_none() {
+            return self.rueckweg_boden();
+        }
+        self.zustand.pruefpunkt_bestaetigt.max(self.basis).min(self.rueckweg_boden())
+    }
+
+    /// Die eigenen Blöcke `ab` bis `bis` aus dem Fenster oder der
+    /// Kettendatei, lückenlos, sonst keine.
+    fn eigene_bloecke(&mut self, ab: u64, bis: u64) -> Option<Vec<Block>> {
+        let mut bloecke = Vec::new();
+        let mut naechste = ab;
+        while naechste <= bis {
+            let stueck = match self.verlauf.get(&naechste) {
+                Some(b) => vec![b.clone()],
+                None => self.speicher.as_mut()?.bloecke_ab(naechste, bis.min(naechste + 511)).ok()?,
+            };
+            if stueck.is_empty() {
+                return None;
+            }
+            for b in stueck {
+                if b.header.height != naechste {
+                    return None;
+                }
+                naechste += 1;
+                bloecke.push(b);
+            }
+        }
+        Some(bloecke)
+    }
+
+    /// ⚑ **Baut den Stand an `gabel` aus dem eigenen Abzug neu auf**
+    /// (CONSENSUS 7.7a, 2026-11-05), wenn die Rückwege nicht so tief reichen:
+    /// der jüngste eigene volle Abzug an oder unter `gabel`, dann die eigenen
+    /// Blöcke bis `gabel` aus der Kettendatei nachgerechnet, wie beim
+    /// Wiederanlauf (Vorbild: Lighthouse und Teku, Zustände an
+    /// Wiederherstellungspunkten, dazwischen nachspielen). Was über `gabel`
+    /// lag, fällt aus Datei und Ablagen, seine Transaktionen gehen in den
+    /// Mempool zurück. Gibt die Zahl der verlassenen Blöcke zurück.
+    ///
+    /// ⛔️ Nie unter [`Self::zweig_boden`] (`Err` mit ihm, nichts geändert).
+    /// Kein neues Dateiformat im Konsenspfad: Abzug und Kettendatei sind
+    /// dieselben, aus denen jeder Neustart lebt.
+    fn neu_aufsetzen_bei(&mut self, gabel: u64) -> Result<usize, u64> {
+        let boden = self.zweig_boden();
+        if gabel < boden || gabel >= self.hoehe {
+            return Err(boden);
+        }
+        let ablage = self.ablage.as_ref().ok_or(boden)?;
+        let a = ablage.hoehen().into_iter().rev().find(|&h| h <= gabel && h >= self.basis).ok_or(boden)?;
+        let (abzug, zustand) = ablage.lesen(a).map_err(|_| boden)?;
+        let hoehe = self.hoehe;
+        // ⛔️ Der Abzug muss der eigene Block an seiner Höhe sein, geprüft
+        //   bevor etwas geändert wird; seine Zustandswurzel hat
+        //   `Ablage::lesen` schon gegen den Block gehalten.
+        let eigener = if a == self.basis { None } else { self.eigene_bloecke(a, a).and_then(|mut v| v.pop()) };
+        if a != self.basis && eigener.map(|b| b.hash()) != Some(abzug.block.hash()) {
+            return Err(boden);
+        }
+        let nachrechnen = self.eigene_bloecke(a + 1, gabel).ok_or(boden)?;
+        let verlassen = self.eigene_bloecke(gabel + 1, hoehe).ok_or(boden)?;
+        // Ab hier wird geändert. Datei und Ablagen zuerst: Was über `gabel`
+        // lag, gehört zum verlassenen Zweig.
+        if let Some(s) = self.speicher.as_mut() {
+            if s.kuerzen_nach(gabel).is_err() {
+                self.schreibfehler += 1;
+            }
+        }
+        if let Some(a) = &self.ablage {
+            if a.entfernen_ueber(gabel).is_err() || a.leicht().entfernen_ueber(gabel).is_err() {
+                self.schreibfehler += 1;
+            }
+        }
+        if self.baum.as_mut().is_some_and(|b| !b.kuerzen(gabel)) {
+            self.baum = None;
+        }
+        // Nachgerechnet wird ohne Datei, Ablage und Baum, wie beim
+        // Wiederanlauf: Die Blöcke stehen schon dort.
+        let speicher = self.speicher.take();
+        let ablage = self.ablage.take();
+        let baum = self.baum.take();
+        let hash = abzug.block.hash();
+        self.hoehe = a;
+        self.letzter_hash = hash;
+        self.zustand = zustand;
+        // Was über dem Abzug gerechtfertigt wurde, bringt das Nachrechnen
+        // wieder, einmal.
+        let gerechtfertigt = self.zustand.pruefpunkt_gerechtfertigt.0;
+        self.zertifikate.retain(|z| z.hoehe <= gerechtfertigt);
+        self.verlauf.clear();
+        self.bekannt.clear();
+        self.bekannt.insert(hash);
+        self.verlauf_aufnehmen(a, &abzug.block);
+        self.rueckwege.clear();
+        self.offene_zuteilungen.clear();
+        self.letzte_stichprobe = None;
+        self.pods_der_stichprobe.clear();
+        self.pruefer_der_stichprobe.clear();
+        self.teilcache = None;
+        self.teilgruppe.clear();
+        let mut fehler = None;
+        for b in &nachrechnen {
+            if let Err(f) = self.uebernimm(b) {
+                fehler = Some(f);
+                break;
+            }
+        }
+        self.speicher = speicher;
+        self.ablage = ablage;
+        self.baum = baum;
+        let gerechtfertigt = self.zustand.pruefpunkt_gerechtfertigt.0;
+        self.zertifikate.retain(|z| z.hoehe <= gerechtfertigt);
+        self.eigene_zeugen.retain(|(_, h, _)| *h <= gabel);
+        if self.letzter_abzug.is_some_and(|(h, _)| h > gabel) {
+            self.letzter_abzug = None;
+        }
+        // 📌 Die eigenen Blöcke trugen schon einmal; tragen sie jetzt nicht,
+        //   stimmt der Abzug nicht zur Datei, und das ist ein Befund.
+        if fehler.is_some() || self.hoehe != gabel {
+            self.schreibfehler += 1;
+        }
+        let n = verlassen.len();
+        for b in verlassen {
+            for tx in b.txs {
+                self.aufnehmen(tx);
+            }
+        }
+        Ok(n)
+    }
+
+    /// ⚑ **Rollt die Kette auf die Höhe `ziel` zurück** (CONSENSUS 7.7
+    /// Schritt 2, 2026-11-04), damit sie einem anderen Zweig folgen kann.
+    /// ⛔️ Nie unter [`Self::rueckweg_boden`], also nie unter den
+    /// endgültigen Prüfpunkt (`Err` mit dem Boden, nichts geändert); ein
+    /// zustandsloser Knoten gar nicht (er verankert neu).
+    ///
+    /// Zurückgenommen werden, jüngster Block zuerst: der Zustand über die
+    /// Rückwege, Höhe und letzter Hash, `bekannt` und `verlauf`, was die
+    /// Kette an Epochengrenzen ableitete; dann die Kettendatei, Abzüge,
+    /// Historienbaum, Zertifikate und Zeugen über dem Ziel. Die
+    /// Transaktionen der zurückgenommenen Blöcke gehen in den Mempool
+    /// zurück, ältester Block zuerst. Gibt die Zahl der Blöcke zurück.
+    pub fn zurueckrollen_bis(&mut self, ziel: u64) -> Result<usize, u64> {
+        if self.zustandslos {
+            return Err(self.hoehe);
+        }
+        let boden = self.rueckweg_boden();
+        if ziel < boden {
+            return Err(boden);
+        }
+        if ziel >= self.hoehe {
+            return Ok(0);
+        }
+        let mut zurueck: Vec<Block> = Vec::new();
+        while self.rueckwege.back().is_some_and(|r| r.hoehe > ziel) {
+            let Some(r) = self.rueckwege.pop_back() else {
+                break;
+            };
+            self.zustand.zuruecknehmen(r.weg);
+            if let Some(n) = r.neben {
+                self.offene_zuteilungen = n.offene_zuteilungen;
+                self.letzte_stichprobe = n.letzte_stichprobe;
+                self.pods_der_stichprobe = n.pods_der_stichprobe;
+                self.pruefer_der_stichprobe = n.pruefer_der_stichprobe;
+            }
+            self.bekannt.remove(&r.block.hash());
+            self.verlauf.remove(&r.hoehe);
+            self.hoehe = r.hoehe - 1;
+            self.letzter_hash = r.davor;
+            zurueck.push(r.block);
+        }
+        // 📌 Der Historienbaum kann nur bis in die zuletzt vollendete Gruppe
+        //   zurück; tiefer verliert die Kette ihn, wie nach einem Abzug.
+        if self.baum.as_mut().is_some_and(|b| !b.kuerzen(self.hoehe)) {
+            self.baum = None;
+        }
+        if let Some(s) = self.speicher.as_mut() {
+            if s.kuerzen_nach(self.hoehe).is_err() {
+                self.schreibfehler += 1;
+            }
+        }
+        if let Some(a) = &self.ablage {
+            if a.entfernen_ueber(self.hoehe).is_err() || a.leicht().entfernen_ueber(self.hoehe).is_err() {
+                self.schreibfehler += 1;
+            }
+        }
+        if self.letzter_abzug.is_some_and(|(h, _)| h > self.hoehe) {
+            self.letzter_abzug = None;
+        }
+        // Angewandt wurden die Zertifikate in steigender Höhe; bis zum Ziel
+        // also genau die bis zum jetzt gerechtfertigten.
+        let gerechtfertigt = self.zustand.pruefpunkt_gerechtfertigt.0;
+        self.zertifikate.retain(|z| z.hoehe <= gerechtfertigt);
+        let hoehe = self.hoehe;
+        self.eigene_zeugen.retain(|(_, h, _)| *h <= hoehe);
+        self.teilcache = None;
+        self.teilgruppe.clear();
+        let n = zurueck.len();
+        for b in zurueck.into_iter().rev() {
+            for tx in b.txs {
+                self.aufnehmen(tx);
+            }
+        }
+        Ok(n)
+    }
+
+    /// Der Hash des eigenen Blocks an `hoehe`: aus den Rückwegen, die tiefer
+    /// reichen als der Verlauf, dann aus dem Verlauf, und 📌 seit 7.7a
+    /// (2026-11-05) aus der Kettendatei, bis zum Boden der Zweigwahl. Ohne
+    /// sie fand eine Gabel unter den Rückwegen ihren Gabelpunkt nie
+    /// (`PasstNirgends`).
+    ///
+    /// ⚑ An Hoehe 0 einer Kette ab Genesis der Startwert (2026-11-06): Er ist
+    /// der Vorgaenger von Block 1, steht aber in keinem Rueckweg und in keiner
+    /// Datei, und eine Gabel an Block 1 hiess sonst `PasstNirgends`.
+    fn eigener_hash(&mut self, hoehe: u64) -> Option<Hash> {
+        if hoehe == self.hoehe {
+            return Some(self.letzter_hash);
+        }
+        if hoehe == 0 && self.basis == 0 {
+            return Some(self.netzwert());
+        }
+        if hoehe > self.hoehe {
+            return None;
+        }
+        if let Some(h) = self.rueckwege.iter().find(|r| r.hoehe == hoehe + 1).map(|r| r.davor).or_else(|| self.hash_an(hoehe)) {
+            return Some(h);
+        }
+        if hoehe < self.zweig_boden() {
+            return None;
+        }
+        self.speicher.as_mut()?.block_bei(hoehe).ok().flatten().map(|b| b.hash())
+    }
+
+    /// Der höchste Prüfpunkt, für den ein Block über `gabel` auf dem
+    /// eigenen Zweig ein Zertifikat trägt; null, wenn keiner.
+    ///
+    /// Liegt der eigene gerechtfertigte selbst über `gabel`, steht sein
+    /// Zertifikat auf dem eigenen Zweig, auch wenn die Rückwege nicht so
+    /// tief reichen (7.7a).
+    fn gerechtfertigt_ueber(&self, gabel: u64) -> u64 {
+        let rueckwege = self.rueckwege.iter().filter(|r| r.hoehe > gabel).filter_map(|r| r.block.header.pruefpunkt.as_ref()).map(|z| z.hoehe).max().unwrap_or(0);
+        let gerechtfertigt = self.zustand.pruefpunkt_gerechtfertigt.0;
+        if gerechtfertigt > gabel {
+            rueckwege.max(gerechtfertigt)
+        } else {
+            rueckwege
+        }
+    }
+
+    /// ⚑ **Die Wahl des Zweigs** (CONSENSUS 7.7 Schritt 4, 2026-11-04,
+    /// Ebb-and-Flow): Folgt die Kette den Blöcken `bloecke` (aufsteigend,
+    /// lückenlos, der erste schliesst an einen eigenen an, schon eigene am
+    /// Anfang werden übersprungen)?
+    ///
+    /// 1. **Der höhere gerechtfertigte Prüfpunkt gewinnt**, dann **die
+    ///    grössere Höhe**; bei Gleichstand bleibt die Kette, wo sie ist (wie
+    ///    in Ouroboros Praos: ein Wechsel nur für einen echten Vorsprung).
+    ///    Der gerechtfertigte Prüfpunkt geht vor, weil über ihn mehr als
+    ///    zwei Drittel abgestimmt haben; ein längerer Zweig ohne ihn kann
+    ///    nie endgültig werden (Casper FFG, Gasper).
+    /// 2. ⛔️ **Nie unter [`Self::zweig_boden`]**, also nie unter den
+    ///    endgültigen Prüfpunkt. Reichen die Rückwege nicht bis zum
+    ///    Gabelpunkt, baut die Kette den Stand dort aus dem eigenen Abzug
+    ///    neu auf ([`Self::neu_aufsetzen_bei`], 7.7a), nachdem Erzeuger und
+    ///    Zertifikate des fremden Zweigs geprüft sind.
+    /// 3. **Erst aus den Köpfen, dann gerechnet:** Verspricht der fremde Zweig
+    ///    nach seinen Zertifikaten und seiner Höhe nichts Besseres, bleibt
+    ///    alles unberührt. Sonst rollt die Kette zum Gabelpunkt zurück und
+    ///    übernimmt Block für Block mit allen Prüfungen. Trägt einer nicht,
+    ///    oder ist das Ergebnis doch nicht besser, kehrt sie auf den eigenen
+    ///    Zweig zurück.
+    pub fn zweig_folgen(&mut self, bloecke: &[Block]) -> Result<Zweigwahl, Zweigfehler> {
+        if self.zustandslos {
+            return Err(Zweigfehler::Zustandslos);
+        }
+        let erster = bloecke.iter().position(|b| self.eigener_hash(b.header.height) != Some(b.hash())).ok_or(Zweigfehler::Leer)?;
+        let bloecke = &bloecke[erster..];
+        for paar in bloecke.windows(2) {
+            if paar[1].header.height != paar[0].header.height + 1 || paar[1].header.prev_block_hash != paar[0].hash() {
+                return Err(Zweigfehler::Luecke(paar[1].header.height));
+            }
+        }
+        let anfang = &bloecke[0];
+        let gabel = anfang.header.height.checked_sub(1).ok_or(Zweigfehler::PasstNirgends)?;
+        if gabel > self.hoehe || self.eigener_hash(gabel) != Some(anfang.header.prev_block_hash) {
+            return Err(Zweigfehler::PasstNirgends);
+        }
+        // ⚑ Tiefer als die Rückwege (7.7a): neu aufsetzen aus dem Abzug,
+        //   nie unter den endgültigen Prüfpunkt.
+        let tief = gabel < self.rueckweg_boden();
+        if tief && gabel < self.zweig_boden() {
+            return Err(Zweigfehler::ZuTief(self.zweig_boden()));
+        }
+        let spitze = bloecke[bloecke.len() - 1].header.height;
+        if gabel < self.hoehe {
+            let fremd = bloecke.iter().filter_map(|b| b.header.pruefpunkt.as_ref()).map(|z| z.hoehe).max().unwrap_or(0);
+            if (fremd, spitze) <= (self.gerechtfertigt_ueber(gabel), self.hoehe) {
+                return Ok(Zweigwahl::Geblieben);
+            }
+        }
+        // ⛔️ **Vor einem Neuaufbau, was ohne Zustand geht** (7.7a): Er
+        //   kostet ein Nachrechnen bis zu einer Epoche; also nur für einen
+        //   Zweig, dessen Erzeuger und Zertifikate tragen. Einen solchen zu
+        //   fälschen braucht Einsatz.
+        if tief {
+            for b in bloecke {
+                if !self.erzeuger_traegt(b) {
+                    return Err(Zweigfehler::TraegtNicht(b.header.height, KettenFehler::ErzeugerUnbelegt));
+                }
+                if !self.pruefpunkt_traegt_im_zweig(b, gabel, bloecke) {
+                    return Err(Zweigfehler::TraegtNicht(b.header.height, KettenFehler::PruefpunktTraegtNicht));
+                }
+            }
+        }
+        let vorher = (self.zustand.pruefpunkt_gerechtfertigt.0, self.hoehe);
+        let eigene: Vec<Block> = if tief {
+            let hoehe = self.hoehe;
+            self.eigene_bloecke(gabel + 1, hoehe).ok_or(Zweigfehler::ZuTief(self.rueckweg_boden()))?
+        } else {
+            self.rueckwege.iter().filter(|r| r.hoehe > gabel).map(|r| r.block.clone()).collect()
+        };
+        let zurueck = if tief { self.neu_aufsetzen_bei(gabel) } else { self.zurueckrollen_bis(gabel) }.map_err(Zweigfehler::ZuTief)?;
+        let mut traegt_nicht = None;
+        for b in bloecke {
+            if let Err(f) = self.uebernimm(b) {
+                traegt_nicht = Some((b.header.height, f));
+                break;
+            }
+        }
+        let nachher = (self.zustand.pruefpunkt_gerechtfertigt.0, self.hoehe);
+        if traegt_nicht.is_none() && nachher > vorher {
+            return Ok(Zweigwahl::Gewechselt { gabel, zurueck, neu: bloecke.len() });
+        }
+        // Zurück auf den eigenen Zweig; seine Blöcke trugen schon einmal.
+        // Reichen die Rückwege nach einem langen fremden Stück nicht mehr bis
+        // `gabel`, noch einmal aus dem Abzug.
+        if self.zurueckrollen_bis(gabel).is_err() {
+            let _ = self.neu_aufsetzen_bei(gabel);
+        }
+        for b in &eigene {
+            let _ = self.uebernimm(b);
+        }
+        match traegt_nicht {
+            Some((hoehe, f)) => Err(Zweigfehler::TraegtNicht(hoehe, f)),
+            None => Ok(Zweigwahl::Geblieben),
+        }
     }
 
     /// Übernimmt einen fremden Block und rechnet nach.
@@ -4421,6 +5566,7 @@ impl Kette {
             self.zustand.aufzeichnen_beginnen();
         }
         let sicherung = self.zustand.sichern();
+        let davor = self.letzter_hash;
         let unterschriften = &self.unterschriften;
         let mut gezogen = None;
         let ablaufend = self.ablaufende_zuteilung(block.header.epoch);
@@ -4438,6 +5584,7 @@ impl Kette {
             &mut ausgaben,
             &|t: &Transaktion| unterschriften.kennt(&t.kennung()),
         );
+        self.zustand.letzter_slot = block.header.slot;
         let eigener_zeuge = if bereithalten { self.zustand.zeuge_nehmen().ok().and_then(|z| borsh::to_vec(&z).ok()) } else { None };
         let errechnet = self.zustand.wurzel();
         // Beim Zustandslosen zählt auch, dass nichts ausserhalb des Zeugen
@@ -4456,7 +5603,15 @@ impl Kette {
                 errechnet,
             });
         }
-        self.zustand.sicherung_verwerfen();
+        // ⚑ Ein voller Knoten hebt den Rückweg auf (Zurückrollen,
+        //   2026-11-04); ein zustandsloser hält die Sammlungen nur teilweise
+        //   und verankert stattdessen neu.
+        let weg = if self.zustandslos {
+            self.zustand.sicherung_verwerfen();
+            None
+        } else {
+            Some(self.zustand.sicherung_behalten(sicherung))
+        };
         if let Some(z) = eigener_zeuge {
             self.zeuge_bereithalten(hash, block.header.height, z);
             // Gleich unterschrieben: Auf Nachfrage wird nur Gehaltenes
@@ -4477,9 +5632,13 @@ impl Kette {
         //    warf sie weg, und kein zugeteilter Checker erfuhr von seiner
         //    Ziehung (erster gezielter Lauf mit Nachrechnen, 2026-10-29:
         //    vier Ziehungen, null zugeteilt).
+        let neben = (ablaufend.is_some() || gezogen.is_some()).then(|| self.nebenstand());
         self.zuteilung_aufheben(ablaufend);
         self.ziehung_merken(gezogen);
         self.pruefausgaben.anhaengen(ausgaben);
+        if let Some(weg) = weg {
+            self.rueckweg_merken(Rueckspur { hoehe: block.header.height, davor, block: block.clone(), weg, neben });
+        }
         if let Some(b) = self.baum.as_mut() {
             b.anhaengen(&self.letzter_hash);
         }
@@ -5098,6 +6257,253 @@ mod tests {
         std::fs::remove_dir_all(&d).ok();
     }
 
+    /// ⚑ **Zurück über eine Epochengrenze** (2026-11-04): Was die Kette dort
+    /// neben dem Zustand ableitet (offene Zuteilungen), steht nach dem
+    /// Zurückrollen wie vorher, und dieselben Blöcke noch einmal ergeben
+    /// dieselbe Wurzel. Nur so viele Rückwege wie erlaubt.
+    #[test]
+    fn zurueck_ueber_eine_epochengrenze() {
+        let mut k = Kette::probestand();
+        let mut folger = Kette::probestand();
+        bauen_und_folgen(&mut k, &mut folger, (BLOECKE_JE_EPOCHE - 3) as usize);
+        let zuteilungen = folger.offene_zuteilungen.len();
+        bauen_und_folgen(&mut k, &mut folger, 8);
+        assert_eq!(folger.offene_zuteilungen.len(), zuteilungen + 1, "die Grenze hob eine Zuteilung auf");
+        let wurzel = folger.wurzel();
+        assert_eq!(folger.rueckwege.len(), RUECKWEG_HOECHSTENS);
+        assert_eq!(folger.zurueckrollen_bis(BLOECKE_JE_EPOCHE - 3), Ok(8));
+        assert_eq!(folger.offene_zuteilungen.len(), zuteilungen);
+        assert_eq!(folger.zustand().epoch.0, epoche_fuer_hoehe(BLOECKE_JE_EPOCHE - 3));
+        for h in BLOECKE_JE_EPOCHE - 2..=BLOECKE_JE_EPOCHE + 5 {
+            folger.uebernimm(k.block_an(h).expect("im Fenster")).expect("derselbe Block noch einmal");
+        }
+        assert_eq!(folger.wurzel(), wurzel);
+        assert_eq!(folger.offene_zuteilungen.len(), zuteilungen + 1);
+    }
+
+    /// ⚑ **Nach dem Zurückrollen spielt ein Neustart den neuen Zweig nach**
+    /// (2026-11-04): Die Kettendatei ist hinter dem Ziel gekürzt, der neue
+    /// Zweig angehängt, und eine frische Kette, die die Datei nachspielt,
+    /// steht bei derselben Höhe und Wurzel.
+    #[test]
+    fn nach_dem_zurueckrollen_spielt_ein_neustart_den_neuen_zweig() {
+        let d = std::env::temp_dir().join(format!("myelith-zweig-{}-{}", std::process::id(), crate::protokoll::jetzt_ms()));
+        std::fs::create_dir_all(&d).expect("Verzeichnis");
+        let p = d.join("kette.log");
+        let mut k = Kette::probestand();
+        let (speicher, _) = crate::speicher::Kettenspeicher::oeffnen(&p, Kette::startwert()).expect("öffnen");
+        k.speicher_setzen(speicher);
+        for i in 1..=20u64 {
+            k.aufnehmen(burn((i % 8) as u8, 100 + i));
+            let _ = k.baue_block();
+        }
+        assert_eq!(k.zurueckrollen_bis(15), Ok(5));
+        for i in 16..=18u64 {
+            k.aufnehmen(burn((i % 8) as u8, 7_000 + i));
+            let _ = k.baue_block();
+        }
+        assert_eq!(k.schreibfehler(), 0);
+        let (mut wieder, w) = crate::speicher::Kettenspeicher::oeffnen(&p, Kette::startwert()).expect("wieder öffnen");
+        assert_eq!(w.anzahl, 18, "die Sätze des verlassenen Zweigs sind weg");
+        let mut neu = Kette::probestand();
+        for b in wieder.alle_saetze().expect("lesen") {
+            neu.uebernimm(&b).expect("der neue Zweig schliesst an");
+        }
+        assert_eq!((neu.hoehe(), neu.letzter_hash()), (k.hoehe(), k.letzter_hash()));
+        assert_eq!(neu.wurzel(), k.wurzel());
+        std::fs::remove_dir_all(&d).ok();
+    }
+
+    /// ⚑ **Eine Gabel tiefer als die Rückwege** (CONSENSUS 7.7a,
+    /// 2026-11-05): Die Kette baut den Stand am Gabelpunkt aus ihrem Abzug
+    /// an der Epochengrenze neu auf und folgt dem längeren Zweig; die
+    /// Kettendatei trägt danach genau ihn. Nach einem Neustart (keine
+    /// Rückwege) ebenso. Ein Zweig, dessen Erzeuger nicht trägt, löst keinen
+    /// Neuaufbau aus.
+    #[test]
+    fn eine_gabel_tiefer_als_die_rueckwege() {
+        let d = std::env::temp_dir().join(format!("myelith-tief-{}-{}", std::process::id(), crate::protokoll::jetzt_ms()));
+        std::fs::create_dir_all(&d).expect("Verzeichnis");
+        let mit_datei = |name: &str| {
+            let p = d.join(name);
+            let mut k = Kette::probestand();
+            let (speicher, _) = crate::speicher::Kettenspeicher::oeffnen(&p, Kette::startwert()).expect("öffnen");
+            k.speicher_setzen(speicher);
+            k.ablage_setzen(crate::abzug::Ablage::neben(&p, Kette::startwert()));
+            (k, p)
+        };
+        let (mut a, p) = mit_datei("a.log");
+        let (mut b, _) = mit_datei("b.log");
+        let gabel = BLOECKE_JE_EPOCHE + 50;
+        bauen_und_folgen(&mut a, &mut b, gabel as usize);
+        assert!(a.ablage().is_some_and(|x| x.hoehen().contains(&BLOECKE_JE_EPOCHE)), "der Abzug an der Grenze");
+        let tiefe = RUECKWEG_HOECHSTENS as u64 + 50;
+        for _ in 0..tiefe {
+            a.baue_block();
+        }
+        assert!(b.aufnehmen(burn(3, 3_000)));
+        // 📌 Mit dem Zertifikat eines Prüfpunkts über der Gabel, wie im
+        //    Nachtlauf vom 2026-11-06: Es zeigt auf einen Block des fremden
+        //    Zweigs, nicht auf den eigenen an derselben Höhe.
+        let pp = myl_consensus::pruefpunkt::BLOECKE_JE_PRUEFPUNKT;
+        let ueber = (gabel / pp + 1) * pp;
+        for _ in 0..tiefe + 50 {
+            if b.hoehe() == ueber + 1 {
+                let z = pruefpunkt_von(&b, ueber, PROBEERZEUGER);
+                b.pruefpunkt_anbieten(z);
+            }
+            b.baue_block();
+        }
+        assert!(b.gerechtfertigt_bis() >= ueber, "der fremde Zweig trägt sein Zertifikat");
+        assert!(a.rueckweg_boden() > gabel, "tiefer als die Rückwege");
+        assert_eq!(a.zweig_boden(), 0);
+        // Der längere Zweig, in Stücken, wie die Zweigsuche ihn holt.
+        let mut fremd = Vec::new();
+        let mut ab = gabel + 1;
+        while ab <= b.hoehe() {
+            let stueck = b.bloecke_von_bis(ab, b.hoehe());
+            assert!(!stueck.is_empty());
+            ab += stueck.len() as u64;
+            fremd.extend(stueck);
+        }
+        assert!(fremd.iter().any(|x| x.header.pruefpunkt.as_ref().is_some_and(|z| z.hoehe == ueber)));
+        let ihrer = fremd.iter().find(|x| x.header.height == ueber).map(|x| x.hash());
+        assert!(ihrer.is_some() && a.eigener_hash(ueber).is_some());
+        assert_ne!(a.eigener_hash(ueber), ihrer, "der eigene Block an der Höhe des Prüfpunkts ist ein anderer");
+        // Die Vorprüfung selbst: Der zertifizierte Block ist der des Zweigs;
+        // ⛔️ fehlt er im Zweig, oder läge er unter der Gabel (dann zählt der
+        //    eigene, ein anderer), trägt das Zertifikat nicht.
+        let mit = fremd.iter().find(|x| x.header.pruefpunkt.as_ref().is_some_and(|z| z.hoehe == ueber)).expect("mit Zertifikat").clone();
+        assert!(a.pruefpunkt_traegt_im_zweig(&mit, gabel, &fremd));
+        let ohne: Vec<Block> = fremd.iter().filter(|x| x.header.height != ueber).cloned().collect();
+        assert!(!a.pruefpunkt_traegt_im_zweig(&mit, gabel, &ohne), "der zertifizierte Block fehlt im Zweig");
+        assert!(!a.pruefpunkt_traegt_im_zweig(&mit, ueber, &fremd), "unter der Gabel zählt der eigene Block");
+        assert!(!a.pruefpunkt_traegt(&mit), "die volle Prüfung gegen die eigene Kette trägt hier nicht");
+        // ⛔️ Ein Zweig, dessen Erzeuger nicht trägt: kein Neuaufbau.
+        let mut falsch = fremd.clone();
+        falsch[5].unterschrift = None;
+        let vorher = (a.hoehe(), a.letzter_hash());
+        let ergebnis = a.zweig_folgen(&falsch);
+        assert!(matches!(ergebnis, Err(Zweigfehler::TraegtNicht(_, KettenFehler::ErzeugerUnbelegt))), "{ergebnis:?}");
+        assert_eq!((a.hoehe(), a.letzter_hash()), vorher);
+        assert_eq!(a.zweig_folgen(&fremd), Ok(Zweigwahl::Gewechselt { gabel, zurueck: tiefe as usize, neu: (tiefe + 50) as usize }));
+        assert_eq!((a.hoehe(), a.letzter_hash(), a.wurzel()), (b.hoehe(), b.letzter_hash(), b.wurzel()));
+        assert_eq!(a.zustandswurzel(), b.wurzel(), "auch neu gerechnet");
+        assert_eq!(a.schreibfehler(), 0);
+        let (mut wieder, _) = crate::speicher::Kettenspeicher::oeffnen(&p, Kette::startwert()).expect("wieder öffnen");
+        let mut neu = Kette::probestand();
+        for x in wieder.alle_saetze().expect("lesen") {
+            neu.uebernimm(&x).expect("die Datei trägt den neuen Zweig");
+        }
+        assert_eq!(neu.letzter_hash(), b.letzter_hash());
+
+        // Nach einem Neustart: keine Rückwege, und doch derselbe Weg.
+        let (mut c, _) = mit_datei("c.log");
+        let mut e = Kette::probestand();
+        bauen_und_folgen(&mut c, &mut e, gabel as usize);
+        for _ in 0..20 {
+            c.baue_block();
+        }
+        c.rueckwege.clear();
+        assert!(e.aufnehmen(burn(4, 4_000)));
+        for _ in 0..30 {
+            e.baue_block();
+        }
+        assert_eq!(c.zweig_folgen(&e.bloecke_von_bis(gabel + 1, gabel + 30)), Ok(Zweigwahl::Gewechselt { gabel, zurueck: 20, neu: 30 }));
+        assert_eq!(c.wurzel(), e.wurzel());
+        std::fs::remove_dir_all(&d).ok();
+    }
+
+    /// ⚑ **Nach einer Lücke** (2026-11-07): Ein gemerkter Beleg, der die
+    /// eigene Folge nicht trägt (ein Unterzeichner außerhalb des Satzes vor
+    /// der Lücke), wird durch einen späteren derselben Epoche ersetzt, der
+    /// sie trägt, auch nach einem Neustart; ein tragender nie.
+    #[test]
+    fn nach_einer_luecke_ersetzt_ein_tragender_beleg() {
+        use crate::wechsel::probe::{beleg, satz_mit};
+        let d = std::env::temp_dir().join(format!("myelith-luecke-{}-{}", std::process::id(), crate::protokoll::jetzt_ms()));
+        std::fs::create_dir_all(&d).expect("Verzeichnis");
+        let p = d.join("k.log");
+        let mut k = Kette::probestand();
+        k.ablage_setzen(crate::abzug::Ablage::neben(&p, Kette::startwert()));
+        let w = Kette::satzregeln(k.zustand()).mindestgewicht.max(1);
+        let a = satz_mit(1, w);
+        k.stimmsatz_setzen(crate::wechsel::als_stimmsatz(&satz_mit(100, w)));
+        for b in [
+            beleg(1, &[100, 101, 102], None, Some(a.clone())),
+            beleg(2, &[100, 101, 102], Some(a.clone()), Some(a.clone())),
+            beleg(3, &[1, 2, 3], Some(a.clone()), Some(a.clone())),
+        ] {
+            k.wechselbelege.insert(b.epoche(), b);
+        }
+        // Epoche 9 nach der Lücke: zuerst eines mit einem Fremden.
+        let fremd = beleg(9, &[1, 2, 3, 11], None, None);
+        k.beleg_merken(fremd.zertifikat.clone(), fremd.abschluss.clone());
+        assert_eq!(k.wechselbelege.get(&9), Some(&fremd), "der erste wird gemerkt");
+        let gut = beleg(9, &[1, 2, 3], None, None);
+        k.beleg_merken(gut.zertifikat.clone(), gut.abschluss.clone());
+        assert_eq!(k.wechselbelege.get(&9), Some(&gut), "ersetzt durch einen, der trägt");
+        let noch = beleg(9, &[1, 2, 4], None, None);
+        k.beleg_merken(noch.zertifikat, noch.abschluss);
+        assert_eq!(k.wechselbelege.get(&9), Some(&gut), "einen tragenden ersetzt keiner");
+        // Nach einem Neustart gilt der spätere aus der Ablage.
+        let mut neu = Kette::probestand();
+        neu.ablage_setzen(crate::abzug::Ablage::neben(&p, Kette::startwert()));
+        assert_eq!(neu.wechselbelege.get(&9), Some(&gut));
+        // ⛔️ Gegenprobe: Ein zustandsloser Knoten nimmt den ersten nicht, den zweiten schon.
+        let mut leicht = Kette::probestand();
+        leicht.stimmsatz_setzen(crate::wechsel::als_stimmsatz(&satz_mit(100, w)));
+        let bis_drei: Vec<_> = k.wechselbelege.values().filter(|b| b.epoche() < 9).cloned().collect();
+        assert_eq!(leicht.wechselbelege_aufnehmen(&bis_drei), Ok(3), "bis zur Lücke");
+        assert_eq!(leicht.wechselbelege_aufnehmen(&[fremd]), Err(crate::wechsel::Folgefehler::Unbekannt(9)));
+        assert_eq!(leicht.wechselbelege_aufnehmen(&[gut]), Ok(1));
+        std::fs::remove_dir_all(&d).ok();
+    }
+
+    /// ⚑ **Der Anker für einen vollen Einsteiger** (Z7, 2026-11-05): ein
+    /// Zertifikat, das eine Epochengrenze mit vollem Abzug endgültig macht;
+    /// eines, das nur einen gewöhnlichen Prüfpunkt endgültig macht, und eine
+    /// Kette ohne Ablage liefern keinen.
+    #[test]
+    fn der_anker_fuer_einen_vollen_einsteiger() {
+        let d = std::env::temp_dir().join(format!("myelith-voll-{}-{}", std::process::id(), crate::protokoll::jetzt_ms()));
+        std::fs::create_dir_all(&d).expect("Verzeichnis");
+        let p = d.join("k.log");
+        let mut k = Kette::probestand();
+        let (speicher, _) = crate::speicher::Kettenspeicher::oeffnen(&p, Kette::startwert()).expect("öffnen");
+        k.speicher_setzen(speicher);
+        k.ablage_setzen(crate::abzug::Ablage::neben(&p, Kette::startwert()));
+        let grenze = BLOECKE_JE_EPOCHE;
+        let pp = myl_consensus::pruefpunkt::BLOECKE_JE_PRUEFPUNKT;
+        for _ in 0..grenze - pp {
+            k.baue_block();
+        }
+        // Erst ein gewöhnlicher Prüfpunkt, endgültig durch die Grenze.
+        let z1 = pruefpunkt_von(&k, grenze - pp, PROBEERZEUGER);
+        k.pruefpunkt_anbieten(z1);
+        for _ in 0..pp {
+            k.baue_block();
+        }
+        let z2 = pruefpunkt_von(&k, grenze, PROBEERZEUGER);
+        k.pruefpunkt_anbieten(z2);
+        for _ in 0..pp {
+            k.baue_block();
+        }
+        assert_eq!(k.bestaetigt_bis(), grenze - pp);
+        assert!(k.voller_anker().is_none(), "endgültig ist nur ein gewöhnlicher Prüfpunkt");
+        // Dann die Grenze selbst.
+        let z3 = pruefpunkt_von(&k, grenze + pp, PROBEERZEUGER);
+        k.pruefpunkt_anbieten(z3);
+        for _ in 0..5 {
+            k.baue_block();
+        }
+        assert_eq!(k.bestaetigt_bis(), grenze);
+        let anker = k.voller_anker().expect("ein Anker an der Grenze");
+        assert_eq!((anker.hoehe, anker.quelle.hoehe), (grenze + pp, grenze));
+        assert!(Kette::probestand().voller_anker().is_none(), "ohne Ablage keiner");
+        std::fs::remove_dir_all(&d).ok();
+    }
+
     /// ⚑ **Ohne Kettendatei bleibt nur das Fenster**, und das ist die
     /// bewusst in Kauf genommene Folge von `--ohne-kette`.
     ///
@@ -5468,6 +6874,25 @@ mod tests {
         let angenommen = (0..200u64).filter(|&i| k.aufnehmen(burn_nr(8, 1, i))).count();
         assert_eq!(angenommen, MEMPOOL_JE_ABSENDER);
         assert!(k.aufnehmen(burn(3, 900)));
+    }
+
+    /// 📌 **Eine niedrigere Nummer geht vor** (`kurz-gabel`, 2026-11-05):
+    /// Ist das Kontingent eines Absenders voll, verdrängt eine frühere Nummer
+    /// seine höchste (nach einem Zweigwechsel kommt sie aus dem verlassenen
+    /// Block zurück); eine spätere, eine schon wartende und eine
+    /// verbrauchte nicht. Das Kontingent bleibt voll, nie darüber.
+    #[test]
+    fn eine_niedrigere_nummer_geht_vor() {
+        let mut k = Kette::probestand();
+        let n = MEMPOOL_JE_ABSENDER as u64;
+        assert_eq!((1..=n).filter(|&i| k.aufnehmen(burn_nr(3, 1, i))).count(), MEMPOOL_JE_ABSENDER);
+        assert!(!k.aufnehmen(burn_nr(3, 1, n + 1)), "eine spätere nicht");
+        assert!(!k.aufnehmen(burn_nr(3, 1, 5)), "eine schon wartende nicht");
+        assert!(k.aufnehmen(burn_nr(3, 1, 0)), "die fehlende frühere");
+        assert_eq!(k.wartend(), MEMPOOL_JE_ABSENDER);
+        let b = k.baue_block();
+        assert_eq!(b.txs.first().map(|t| t.nonce), Some(0), "lückenlos ab null");
+        assert!(b.txs.iter().all(|t| t.nonce < n), "die höchste ist gegangen");
     }
 
     /// Rohe Gossip-Bytes werden gelesen, Unsinn nicht.
@@ -7067,19 +8492,32 @@ mod tests {
     /// unterschrieben vom Probeerzeuger, dem einzigen Mitglied einer
     /// Probekette.
     fn pruefpunkt_von(k: &Kette, hoehe: u64, wer: &str) -> myl_consensus::pruefpunkt::Pruefpunktzertifikat {
+        pruefpunkt_mit(k, hoehe, wer, k.quelle_an(hoehe).expect("die Quelle ist vermerkt"))
+    }
+
+    /// Wie [`pruefpunkt_von`], mit einer beliebigen Quelle.
+    fn pruefpunkt_mit(
+        k: &Kette,
+        hoehe: u64,
+        wer: &str,
+        quelle: myl_consensus::pruefpunkt::Quelle,
+    ) -> myl_consensus::pruefpunkt::Pruefpunktzertifikat {
         let schluessel = crate::schluessel::Konsensschluessel::probe(wer).expect("Schlüssel");
         let block_hash = k.hash_an(hoehe).expect("der Block liegt im Fenster");
+        let bindung = myl_ledger::stimmsatz::bindung(k.zustand(), epoche_fuer_hoehe(hoehe));
         let signatur = schluessel
-            .signiere(&myl_consensus::pruefpunkt::pruefpunktnachricht(hoehe, &block_hash))
+            .signiere(&myl_consensus::pruefpunkt::pruefpunktnachricht(hoehe, &block_hash, &bindung, &quelle))
             .expect("unterschreiben");
-        let stimme = myl_consensus::pruefpunkt::Pruefpunktstimme { hoehe, block_hash, waehler: schluessel.kennung(), signatur };
+        let stimme =
+            myl_consensus::pruefpunkt::Pruefpunktstimme { hoehe, block_hash, bindung, quelle, waehler: schluessel.kennung(), signatur };
         myl_consensus::pruefpunkt::Pruefpunktzertifikat::aus_stimmen(&[stimme]).expect("Zertifikat")
     }
 
     /// ⚑ **Ein Anker aus einem Zertifikat nur gegen den eigenen Stimmsatz**
     /// (leichter Abzug, 2026-10-29): Ohne Satz keiner; mit Satz das echte
     /// Zertifikat, nicht eines eines Fremden, nicht eines mit verändertem
-    /// Blockhash.
+    /// Blockhash. ⚑ Seit 2026-11-04 ist der Anker die Quelle eines
+    /// Zertifikats, das sie endgültig macht; eines von Genesis aus ist keiner.
     #[test]
     fn ein_anker_kommt_nur_aus_einem_tragenden_zertifikat() {
         use myl_consensus::pruefpunkt::BLOECKE_JE_PRUEFPUNKT;
@@ -7087,16 +8525,23 @@ mod tests {
         for _ in 0..BLOECKE_JE_PRUEFPUNKT {
             k.baue_block();
         }
-        let z = pruefpunkt_von(&k, BLOECKE_JE_PRUEFPUNKT, PROBEERZEUGER);
+        let erstes = pruefpunkt_von(&k, BLOECKE_JE_PRUEFPUNKT, PROBEERZEUGER);
+        assert_eq!(k.anker_aus_zertifikat(&erstes).err(), Some(crate::wechsel::Folgefehler::Offen(0)), "nur gerechtfertigt");
+        k.pruefpunkt_anbieten(erstes);
+        for _ in 0..BLOECKE_JE_PRUEFPUNKT {
+            k.baue_block();
+        }
+        let z = pruefpunkt_von(&k, 2 * BLOECKE_JE_PRUEFPUNKT, PROBEERZEUGER);
+        assert_eq!(z.quelle.hoehe, BLOECKE_JE_PRUEFPUNKT, "die Quelle ist der gerechtfertigte");
         let mut ohne = Kette::probestand();
         ohne.stimmsatz = None;
-        assert!(ohne.anker_aus_zertifikat(&z).is_none(), "ohne Stimmsatz kein Anker");
+        assert!(ohne.anker_aus_zertifikat(&z).is_err(), "ohne Stimmsatz kein Anker");
         let a = k.anker_aus_zertifikat(&z).expect("trägt gegen den eigenen Satz");
         assert_eq!((a.hoehe, a.blockhash), (BLOECKE_JE_PRUEFPUNKT, k.hash_an(BLOECKE_JE_PRUEFPUNKT).unwrap()));
-        assert!(k.anker_aus_zertifikat(&pruefpunkt_von(&k, BLOECKE_JE_PRUEFPUNKT, "fremder")).is_none(), "ein Fremder");
+        assert!(k.anker_aus_zertifikat(&pruefpunkt_von(&k, 2 * BLOECKE_JE_PRUEFPUNKT, "fremder")).is_err(), "ein Fremder");
         let mut falsch = z.clone();
-        falsch.block_hash = Hash::sha256(b"anderer Block");
-        assert!(k.anker_aus_zertifikat(&falsch).is_none(), "anderer Blockhash");
+        falsch.quelle.block_hash = Hash::sha256(b"anderer Block");
+        assert!(k.anker_aus_zertifikat(&falsch).is_err(), "anderer Blockhash der Quelle");
     }
 
     /// Baut `n` Blöcke auf `k` und übernimmt sie in `folger`.
@@ -7122,7 +8567,27 @@ mod tests {
         let mit = k.baue_block();
         assert_eq!(mit.header.pruefpunkt.as_ref(), Some(&z), "der Erzeuger legte das Zertifikat nicht in den Block");
         folger.uebernimm(&mit).expect("ein Block mit tragendem Zertifikat");
+        // ⚑ Seit 2026-11-04 (Casper FFG) gerechtfertigt, noch nicht
+        //   endgültig; das macht erst das Zertifikat von 300 mit 150 als
+        //   Quelle.
+        assert_eq!((k.gerechtfertigt_bis(), folger.gerechtfertigt_bis()), (150, 150));
+        assert_eq!((k.bestaetigt_bis(), folger.bestaetigt_bis()), (0, 0));
+        bauen_und_folgen(&mut k, &mut folger, 149);
+        // ⛔️ Eine andere als die vermerkte Quelle trägt nicht, auch richtig
+        //   unterschrieben.
+        let genesis = pruefpunkt_mit(&k, 300, PROBEERZEUGER, myl_consensus::pruefpunkt::Quelle::GENESIS);
+        let ohne = k.baue_block();
+        let mut falsch = ohne.clone();
+        falsch.header.pruefpunkt = Some(genesis);
+        neu_unterschreiben(&mut falsch);
+        assert_eq!(folger.uebernimm(&falsch), Err(KettenFehler::PruefpunktTraegtNicht), "andere Quelle");
+        folger.uebernimm(&ohne).expect("derselbe Block ohne Zertifikat");
+        let z300 = pruefpunkt_von(&k, 300, PROBEERZEUGER);
+        assert_eq!(z300.quelle.hoehe, 150);
+        k.pruefpunkt_anbieten(z300);
+        folger.uebernimm(&k.baue_block()).expect("ein Block mit tragendem Zertifikat");
         assert_eq!((k.bestaetigt_bis(), folger.bestaetigt_bis()), (150, 150));
+        assert_eq!(folger.gerechtfertigt_bis(), 300);
 
         // ⛔️ Dasselbe Zertifikat noch einmal: nichts Neues, abgelehnt.
         let mut nochmal = k.baue_block();
@@ -7164,6 +8629,203 @@ mod tests {
         assert_eq!(pruefe(&schief), Err(KettenFehler::PruefpunktTraegtNicht), "keine Prüfpunkthöhe");
     }
 
+    /// ⚑ **Zurückrollen und einem anderen Zweig folgen** (CONSENSUS 7.7
+    /// Schritt 2, 2026-11-04): Drei Blöcke zurück stehen Höhe, letzter Hash
+    /// und Wurzel wie vorher, und die Transaktion wartet wieder; danach
+    /// folgt der Folger einem neu gebauten Zweig bis zur selben Wurzel wie
+    /// der Erzeuger. ⛔️ Nie unter den endgültigen Prüfpunkt, und ohne
+    /// Rückweg (nach einem Neustart) nicht unter die eigene Höhe.
+    #[test]
+    fn zurueckrollen_und_einem_anderen_zweig_folgen() {
+        let mut k = Kette::probestand();
+        let mut folger = Kette::probestand();
+        bauen_und_folgen(&mut k, &mut folger, 10);
+        let (hash10, wurzel10) = (folger.letzter_hash(), folger.wurzel());
+        assert!(k.aufnehmen(burn(1, 1_000)));
+        bauen_und_folgen(&mut k, &mut folger, 3);
+        assert_eq!(folger.wartend(), 0);
+        assert_ne!(folger.wurzel(), wurzel10);
+        assert_eq!(folger.zurueckrollen_bis(10), Ok(3));
+        assert_eq!((folger.hoehe(), folger.letzter_hash()), (10, hash10));
+        assert_eq!(folger.wurzel(), wurzel10);
+        assert_eq!(folger.zustandswurzel(), wurzel10, "auch neu gerechnet");
+        assert_eq!(folger.wartend(), 1, "die Transaktion wartet wieder");
+        assert!(folger.block_an(11).is_none());
+        assert_eq!(k.zurueckrollen_bis(10), Ok(3));
+        bauen_und_folgen(&mut k, &mut folger, 4);
+        assert_eq!(folger.hoehe(), 14);
+        assert_eq!(folger.wurzel(), k.wurzel());
+        assert_eq!(folger.wartend(), 0, "der neue Zweig trägt sie");
+
+        // ⛔️ Der Boden: 150 endgültig durch das Zertifikat von 300.
+        bauen_und_folgen(&mut k, &mut folger, 136);
+        let z150 = pruefpunkt_von(&k, 150, PROBEERZEUGER);
+        k.pruefpunkt_anbieten(z150);
+        bauen_und_folgen(&mut k, &mut folger, 150);
+        let z300 = pruefpunkt_von(&k, 300, PROBEERZEUGER);
+        k.pruefpunkt_anbieten(z300);
+        bauen_und_folgen(&mut k, &mut folger, 5);
+        assert_eq!(folger.bestaetigt_bis(), 150);
+        assert_eq!(folger.rueckweg_boden(), 150);
+        // Fund 634: die Schranke der Höhe ab dem endgültigen Block.
+        let s150 = folger.bloecke_von_bis(150, 150)[0].header.slot;
+        assert_eq!(folger.hoehen_schranke(s150 + 10), 160);
+        assert_eq!(Kette::probestand().hoehen_schranke(u64::MAX), u64::MAX, "ohne Endgültigkeit keine");
+        assert_eq!(folger.zurueckrollen_bis(149), Err(150), "nie unter den endgültigen");
+        assert_eq!(folger.hoehe(), 305, "nichts geändert");
+        // Bis an ihn heran geht es. Der Zustand steht dann wie nach Block
+        // 150, vor dem Block, der dessen Zertifikat trug; der Boden bleibt
+        // trotzdem 150, weil die Rückwege darunter weg sind.
+        assert_eq!(folger.zurueckrollen_bis(150), Ok(155));
+        assert_eq!((folger.gerechtfertigt_bis(), folger.bestaetigt_bis()), (0, 0));
+        assert_eq!(folger.rueckweg_boden(), 150, "die Rückwege darunter sind weg");
+        assert_eq!(folger.zurueckrollen_bis(149), Err(150));
+        let (mut erz, mut neu) = (Kette::probestand(), Kette::probestand());
+        assert_eq!(neu.zurueckrollen_bis(0), Ok(0));
+        bauen_und_folgen(&mut erz, &mut neu, 2);
+        neu.rueckwege.clear();
+        assert_eq!(neu.zurueckrollen_bis(1), Err(2), "ohne Rückweg nicht");
+    }
+
+    /// ⚑ **Die Wahl des Zweigs** (CONSENSUS 7.7 Schritt 4, 2026-11-04):
+    /// Der längere Zweig gewinnt, ein kürzerer oder gleich langer nicht; der
+    /// höhere gerechtfertigte Prüfpunkt geht vor der Länge; ein Zweig, dessen
+    /// Block nicht trägt, lässt die Kette, wie sie war; und unter den Boden
+    /// geht es nie.
+    #[test]
+    fn die_wahl_des_zweigs() {
+        let mut a = Kette::probestand();
+        let mut b = Kette::probestand();
+        bauen_und_folgen(&mut a, &mut b, 148);
+        assert!(a.aufnehmen(burn(1, 1_000)));
+        a.baue_block();
+        a.baue_block();
+        assert!(b.aufnehmen(burn(2, 2_000)));
+        for _ in 0..3 {
+            b.baue_block();
+        }
+        let zweig_a = a.bloecke_von_bis(149, 150);
+        let alles_b = b.bloecke_von_bis(140, 151);
+        // Kürzer: Die Kette bleibt, unberührt.
+        let vorher = (b.hoehe(), b.letzter_hash(), b.wurzel());
+        assert_eq!(b.zweig_folgen(&zweig_a), Ok(Zweigwahl::Geblieben));
+        assert_eq!((b.hoehe(), b.letzter_hash(), b.wurzel()), vorher);
+        // Länger: gewechselt, der gemeinsame Anfang übersprungen.
+        assert_eq!(a.zweig_folgen(&alles_b), Ok(Zweigwahl::Gewechselt { gabel: 148, zurueck: 2, neu: 3 }));
+        assert_eq!((a.hoehe(), a.letzter_hash(), a.wurzel()), vorher);
+        assert_eq!(a.zustandswurzel(), b.wurzel(), "auch neu gerechnet");
+        assert_eq!(a.zweig_folgen(&alles_b), Err(Zweigfehler::Leer));
+        // Gleich lang: Die Kette bleibt.
+        let mut c = Kette::probestand();
+        for x in a.bloecke_von_bis(1, 148) {
+            c.uebernimm(&x).expect("der gemeinsame Anfang");
+        }
+        assert!(c.aufnehmen(burn(3, 3_000)));
+        for _ in 0..3 {
+            c.baue_block();
+        }
+        let zweig_c = c.bloecke_von_bis(149, 151);
+        assert_eq!(a.zweig_folgen(&zweig_c), Ok(Zweigwahl::Geblieben));
+        assert_eq!(a.letzter_hash(), vorher.1);
+        // ⛔️ Ein längerer Zweig, dessen letzter Block nicht trägt: zurück
+        // auf den eigenen, mit Befund.
+        c.baue_block();
+        let mut falsch = c.bloecke_von_bis(149, 152);
+        falsch[3].txs.push(burn(4, 1));
+        assert!(matches!(a.zweig_folgen(&falsch), Err(Zweigfehler::TraegtNicht(152, KettenFehler::ErzeugerUnbelegt))));
+        assert_eq!((a.hoehe(), a.letzter_hash(), a.wurzel()), vorher);
+        assert_eq!(a.zustandswurzel(), vorher.2);
+        assert_eq!(a.zweig_folgen(&falsch[1..]), Err(Zweigfehler::PasstNirgends));
+
+        // ⚑ Der höhere gerechtfertigte Prüfpunkt vor der Länge: Ein Zweig
+        // mit dem Zertifikat von 150 schlägt einen um zwei Blöcke längeren
+        // ohne.
+        let mut d = Kette::probestand();
+        let mut e = Kette::probestand();
+        bauen_und_folgen(&mut d, &mut e, 150);
+        let z150 = pruefpunkt_von(&d, 150, PROBEERZEUGER);
+        d.pruefpunkt_anbieten(z150);
+        d.baue_block();
+        assert_eq!(d.gerechtfertigt_bis(), 150);
+        for _ in 0..3 {
+            e.baue_block();
+        }
+        let mit_zertifikat = d.bloecke_von_bis(151, 151);
+        let laenger = e.bloecke_von_bis(151, 153);
+        assert_eq!(d.zweig_folgen(&laenger), Ok(Zweigwahl::Geblieben));
+        assert_eq!(e.zweig_folgen(&mit_zertifikat), Ok(Zweigwahl::Gewechselt { gabel: 150, zurueck: 3, neu: 1 }));
+        assert_eq!((e.hoehe(), e.gerechtfertigt_bis(), e.wurzel()), (151, 150, d.wurzel()));
+        // ⛔️ Unter den Boden nie: ohne Rückwege (nach einem Neustart) steht
+        // er an der eigenen Höhe.
+        e.rueckwege.clear();
+        assert_eq!(e.zweig_folgen(&laenger), Err(Zweigfehler::ZuTief(151)));
+        assert_eq!(e.hoehe(), 151);
+    }
+
+    /// 📌 **Ein fremder Block an der nächsten Höhe passt nicht an, er ist
+    /// nicht unbelegt** (Nachtlauf `nacht-rotation`, 2026-11-04): Der eigene
+    /// Zweig ist weiter in der Zeit als der fremde, also liegt der Slot des
+    /// fremden Blocks unter dem eigenen letzten. Der Plan gilt nur für einen
+    /// Block, der an die eigene Spitze anschliesst; sonst meldete die Kette
+    /// `ErzeugerUnbelegt`, der Knoten erkannte die Gabel nie und baute mit
+    /// wenigen anderen auf einem Zweig der Minderheit weiter.
+    #[test]
+    fn ein_fremder_zweig_passt_nicht_an() {
+        let mut a = Kette::probestand();
+        let mut b = Kette::probestand();
+        bauen_und_folgen(&mut a, &mut b, 10);
+        let s = a.letzter_slot();
+        a.baue_block_im_slot(s + 1);
+        a.baue_block_im_slot(s + 100);
+        for i in 2..5 {
+            b.baue_block_im_slot(s + i);
+        }
+        let fremd = b.bloecke_von_bis(13, 13).remove(0);
+        assert!(matches!(a.uebernimm(&fremd), Err(KettenFehler::PasstNichtAn { .. })));
+        assert_eq!(a.zweig_folgen(&b.bloecke_von_bis(11, 13)), Ok(Zweigwahl::Gewechselt { gabel: 10, zurueck: 2, neu: 3 }));
+        assert_eq!(a.wurzel(), b.wurzel());
+        // Ein Block, der anschliesst, braucht weiter einen Slot nach dem des
+        // Kopfs.
+        let (mut c, mut d) = (Kette::probestand(), Kette::probestand());
+        for x in b.bloecke_von_bis(1, 12) {
+            c.uebernimm(&x).expect("der gemeinsame Anfang");
+            d.uebernimm(&x).expect("der gemeinsame Anfang");
+        }
+        let frueh = c.baue_block_im_slot(s + 50);
+        d.zustand.letzter_slot = s + 60;
+        assert!(matches!(d.uebernimm(&frueh), Err(KettenFehler::ErzeugerUnbelegt)), "Slot nicht nach dem des Kopfs");
+    }
+
+    /// 📌 **Eine Gabel an Block 1** (Podlauf `kurz-faelscher`, 2026-11-06):
+    /// Ein Validator baute nach einem späten Start Block 1 selbst. Der
+    /// gemeinsame Vorgänger ist Genesis; flach trägt der Rückweg von Block 1
+    /// ihn, ohne Rückwege hiess es `PasstNirgends`, obwohl der Startwert
+    /// feststeht. Jetzt ist es der Boden der Rückwege, wie bei jeder anderen
+    /// Gabel unter ihnen.
+    #[test]
+    fn eine_gabel_an_block_eins() {
+        let mut a = Kette::probestand();
+        let mut b = Kette::probestand();
+        assert!(a.aufnehmen(burn(3, 3_000)));
+        for _ in 0..3 {
+            a.baue_block();
+        }
+        for _ in 0..5 {
+            b.baue_block();
+        }
+        assert_ne!(a.bloecke_von_bis(1, 1)[0].hash(), b.bloecke_von_bis(1, 1)[0].hash(), "verschieden ab Block 1");
+        let zweig = b.bloecke_von_bis(1, 5);
+        let mut ohne = Kette::probestand();
+        assert!(ohne.aufnehmen(burn(3, 3_000)));
+        for _ in 0..3 {
+            ohne.baue_block();
+        }
+        assert_eq!(a.zweig_folgen(&zweig), Ok(Zweigwahl::Gewechselt { gabel: 0, zurueck: 3, neu: 5 }));
+        assert_eq!(a.wurzel(), b.wurzel());
+        ohne.rueckwege.clear();
+        assert_eq!(ohne.zweig_folgen(&zweig), Err(Zweigfehler::ZuTief(3)), "ohne Rückwege der Boden, nicht PasstNirgends");
+    }
+
     /// ⚑ **Die Saat kommt aus dem Zertifikat** (2026-10-27): Zwei
     /// Zertifikate mit verschiedenen Unterzeichnern ziehen verschieden, ein
     /// und dasselbe zieht gleich, und jeder Knoten liest es aus dem Block.
@@ -7185,6 +8847,95 @@ mod tests {
         assert_eq!(zieh(&a).len(), erwartet);
         assert_ne!(zieh(&a), zieh(&b), "das Zertifikat muss die Ziehung ändern");
         assert_eq!(zieh(&a), zieh(&a.clone()), "dasselbe Zertifikat, dieselbe Ziehung");
+    }
+
+    /// ⚑ **Wer die Finalitaet traegt** (7.8 Schritt 2, 2026-11-04): in der
+    /// Startphase der Satz von aussen, danach nur der Satz der Epoche aus dem
+    /// Zustand; nie zurueck, nie fuer eine Epoche vor der Vorepoche, und ein
+    /// nicht tragfaehiger Satz laesst die Finalitaet ruhen.
+    #[test]
+    fn die_finalitaet_traegt_der_satz_aus_dem_zustand() {
+        let pk = |b: u8| myl_types::bls::BlsSecretKey::key_gen(&[b; 32]).unwrap().public_key().unwrap();
+        let id = |b: u8| myl_types::ids::MinerId::new([b; 32]);
+        let mut aussen = std::collections::BTreeMap::new();
+        aussen.insert(id(99), myl_consensus::validator::VotingMember { pubkey: pk(99), weight: 1 });
+        let aussen = myl_consensus::validator::VotingSet::from_members(aussen);
+        let mut z = LedgerState::genesis(1);
+        z.epoch.0 = 5;
+        assert!(Kette::finalitaetssatz_von(&z, Some(&aussen), 5).is_some_and(|s| s.contains(&id(99))), "Startphase");
+        let w = crate::netz::PROBEKETTE.stimmsatz_mindesteinsatz.unwrap_or(1);
+        let satz: myl_ledger::stimmsatz::Satz = (1..=4).map(|b| (id(b), pk(b), w)).collect();
+        z.stimmsaetze.insert(7, satz.clone());
+        assert!(Kette::finalitaetssatz_von(&z, Some(&aussen), 6).is_some_and(|s| s.contains(&id(99))), "vor dem ersten Satz");
+        let s7 = Kette::finalitaetssatz_von(&z, Some(&aussen), 7).expect("Satz aus dem Zustand");
+        assert!(s7.contains(&id(1)) && !s7.contains(&id(99)));
+        z.epoch.0 = 8;
+        z.stimmsaetze.insert(8, satz[..3].to_vec());
+        assert!(Kette::finalitaetssatz_von(&z, Some(&aussen), 8).is_none(), "drei tragen nicht, und nie zurueck nach aussen");
+        assert!(Kette::finalitaetssatz_von(&z, Some(&aussen), 7).is_some(), "die Vorepoche gilt");
+        z.epoch.0 = 9;
+        assert!(Kette::finalitaetssatz_von(&z, Some(&aussen), 7).is_none(), "aelter als die Vorepoche");
+        assert!(Kette::finalitaetssatz_von(&z, Some(&aussen), 6).is_none(), "auch kein Rueckfall nach aussen");
+    }
+
+    /// ⛔️ **Fehlt `β`, wartet die Stichprobe** (2026-11-04): Mit einem
+    /// Saatschluessel zieht das Zertifikat nicht mehr. Kommt `β` der Epoche
+    /// nie zustande (zu viele Mitglieder fallen aus), zieht `β` der
+    /// naechsten alles Offene; einen Rueckfall gibt es nicht.
+    #[test]
+    fn ohne_beta_wartet_die_stichprobe_auf_das_naechste() {
+        use myl_ledger::saat::{Saatrunde, Saatschluessel};
+        let mut k = Kette::probestand();
+        for _ in 0..150 {
+            k.baue_block();
+        }
+        let mut z = pruefpunkt_von(&k, 150, PROBEERZEUGER);
+        z.hoehe = BLOECKE_JE_EPOCHE;
+        let sk = myl_types::bls::BlsSecretKey::key_gen(&[9; 32]).expect("Schluessel");
+        let pk = sk.public_key().expect("oeffentlich");
+        let schluessel = Saatschluessel {
+            aus_epoche: 1,
+            gruppe: pk,
+            schwelle: 1,
+            oeffentliche_anteile: vec![pk],
+            inhaber: Vec::new(),
+            qualifiziert: Vec::new(),
+        };
+        let mut zustand = LedgerState::genesis(1);
+        for e in [1u64, 2] {
+            zustand.saatrunden.insert(
+                e,
+                Saatrunde {
+                    mitglieder: Vec::new(),
+                    gesamtgewicht: 0,
+                    schwelle: 1,
+                    gesamt_sitze: 0,
+                    beschwerden: Vec::new(),
+                    offenlegungen: Vec::new(),
+                    schluessel: Some(schluessel.clone()),
+                    anteile: Vec::new(),
+                    beta: None,
+                },
+            );
+        }
+        zustand.stichproben_offen = vec![myl_ledger::state::OffeneStichprobe {
+            epoche: 0,
+            anteile: vec![(myl_types::ids::PodId::new([5; 32]), 1_000)],
+            wurzeln: Vec::new(),
+            voll: Vec::new(),
+            pruefkandidaten: Vec::new(),
+            ersatz: Vec::new(),
+            besetzung: Vec::new(),
+        }];
+        let mut gezogen = None;
+        Kette::offene_stichproben_ziehen(&mut zustand, &z, &mut gezogen);
+        assert!(gezogen.is_none(), "das Zertifikat zieht nicht, wo ein Schluessel steht");
+        assert_eq!(zustand.stichproben_offen.len(), 1);
+        // `β_1` kam nie; `β_2` zieht die Stichprobe der Epoche 0.
+        let beta = sk.sign(&myl_types::schwelle::saatbotschaft(2)).expect("signieren");
+        Kette::beta_verwenden(&mut zustand, 2, &beta, 2, &mut gezogen);
+        assert_eq!(gezogen.as_ref().map(|(e, _)| *e), Some(0));
+        assert!(zustand.stichproben_offen.is_empty());
     }
 
     /// ⚑ **Die Zeugen kommen auch von der Platte** (2026-10-30): Ist der
@@ -7285,6 +9036,78 @@ mod tests {
         assert_eq!(Kette::im_netz(&crate::netz::TESTNETZ_INT4).uebernimm(&testblock), Err(KettenFehler::ErzeugerUnbelegt));
     }
 
+    /// ⚑ **Nur der für den Slot Gezogene** (Erzeugerplan, 2026-11-04): Drei
+    /// Mitglieder bauen, wer im nächsten Slot gezogen ist; ein anderes
+    /// Mitglied im selben Slot kommt nicht durch, ein Slot, der nicht nach
+    /// dem des Vorgängers liegt, auch nicht, und ein Block weiter vorn (zum
+    /// Nachholen) braucht nur ein Mitglied. Jedes kommt mal dran.
+    #[test]
+    fn nur_der_gezogene_erzeuger_kommt_durch() {
+        use myl_consensus::validator::{VotingMember, VotingSet};
+        let schluessel: Vec<_> =
+            ["erste", "zweite", "dritte"].iter().map(|n| crate::schluessel::Konsensschluessel::probe(n).expect("Schlüssel")).collect();
+        let mut m = std::collections::BTreeMap::new();
+        for k in &schluessel {
+            m.insert(k.kennung(), VotingMember { pubkey: k.oeffentlich(), weight: 1 });
+        }
+        let satz = VotingSet::from_members(m);
+        let kette = || {
+            let mut k = Kette::probestand();
+            k.stimmsatz_setzen(satz.clone());
+            k
+        };
+        let nachgebaut = |bis: &mut Kette, wer: &crate::schluessel::Konsensschluessel| {
+            let mut k = kette();
+            for b in bis.bloecke_von_bis(1, bis.hoehe()) {
+                k.uebernimm(&b).expect("die Kette bis hier");
+            }
+            k.erzeugerschluessel_setzen(wer.clone());
+            k
+        };
+        let mut erzeuger = kette();
+        let mut folger = kette();
+        let mut je = std::collections::BTreeMap::new();
+        for _ in 0..24 {
+            let hoehe = erzeuger.hoehe() + 1;
+            let slot = erzeuger.letzter_slot() + 1;
+            let gezogen = erzeuger.erzeuger_fuer(hoehe, slot).expect("gezogen");
+            *je.entry(gezogen).or_insert(0) += 1;
+            // ⛔️ Ein anderes Mitglied im selben Slot: abgewiesen.
+            let anderer = schluessel.iter().find(|k| k.kennung() != gezogen).expect("ein anderer");
+            let falsch = nachgebaut(&mut erzeuger, anderer).baue_block_im_slot(slot);
+            assert_eq!(folger.uebernimm(&falsch), Err(KettenFehler::ErzeugerUnbelegt));
+            // Der Gezogene: angenommen.
+            let k = schluessel.iter().find(|k| k.kennung() == gezogen).expect("gezogen");
+            erzeuger.erzeugerschluessel_setzen(k.clone());
+            assert_eq!(erzeuger.eigener_slot(0, slot + 100), Some(slot));
+            let block = erzeuger.baue_block();
+            assert_eq!(block.header.slot, slot);
+            folger.uebernimm(&block).expect("der Gezogene wurde abgewiesen");
+        }
+        assert_eq!(je.len(), 3, "nicht jeder kam dran: {je:?}");
+        // ⛔️ Ein Slot, der nicht nach dem des Vorgängers liegt, auch vom
+        // dort Gezogenen nicht.
+        let alt = folger.letzter_slot();
+        let wer = schluessel.iter().find(|k| Some(k.kennung()) == erzeuger.erzeuger_fuer(erzeuger.hoehe() + 1, alt)).expect("gezogen");
+        let zurueck = nachgebaut(&mut erzeuger, wer).baue_block_im_slot(alt);
+        assert_eq!(folger.uebernimm(&zurueck), Err(KettenFehler::ErzeugerUnbelegt));
+        // Ein Mitglied, das im nächsten Slot nicht gezogen ist, baut in
+        // seinem nächsten und kommt damit durch: Leere Slots sind erlaubt.
+        let naechster = erzeuger.letzter_slot() + 1;
+        let gezogen = erzeuger.erzeuger_fuer(erzeuger.hoehe() + 1, naechster).expect("gezogen");
+        let spaeter = schluessel.iter().find(|k| k.kennung() != gezogen).expect("ein anderer");
+        erzeuger.erzeugerschluessel_setzen(spaeter.clone());
+        let s = erzeuger.eigener_slot(0, naechster + SLOTS_GESUCHT).expect("irgendwann dran");
+        assert!(s > naechster);
+        let block = erzeuger.baue_block();
+        assert_eq!(block.header.slot, s);
+        // Ein Block weiter vorn: nur ein Mitglied verlangt (das Nachholen).
+        let voraus = erzeuger.baue_block();
+        assert_eq!(folger.uebernimm(&voraus), Err(KettenFehler::PasstNichtAn { erwartet: folger.letzter_hash(), bekommen: block.hash() }));
+        folger.uebernimm(&block).expect("ein späterer Slot wurde abgewiesen");
+        folger.uebernimm(&voraus).expect("der Block danach");
+    }
+
     /// ⚑ **Ein Erzeuger, der doppelt unterschreibt, wird geschlachtet**
     /// (CONSENSUS 7.6): 30 % seines Einsatzes beim ersten Mal, das Kopfgeld
     /// an den Melder. Gegenproben: derselbe Widerspruch noch einmal, ein
@@ -7301,6 +9124,7 @@ mod tests {
                 timestamp_ms: zeit,
                 state_root: Hash::sha256(b"wurzel"),
                 pruefpunkt: None,
+                slot: 0,
             });
             b.unterschreiben(&probeschluessel(wer)).expect("unterschreiben");
             Belegblock::aus_block(&b).expect("unterschrieben")
@@ -7311,6 +9135,10 @@ mod tests {
         let mut z = Kette::probestand().zustand().clone();
         z.account_mut(&taeter).balance = 10_000;
         einsatz_hinterlegen(&mut z, &taeter, 10_000).expect("Einsatz");
+        // Ein Grosser daneben: allein bleibt es beim Grundsatz (3 % mal drei).
+        let gross = probekonto(4);
+        z.account_mut(&gross).balance = 1_000_000;
+        einsatz_hinterlegen(&mut z, &gross, 1_000_000).expect("Einsatz");
         let vorher_melder = z.account(&melder).balance;
 
         Kette::doppelbeleg_buchen(&mut z, &melder, &beleg(1)).expect("ein tragender Beleg");
@@ -7331,6 +9159,70 @@ mod tests {
         z2.epoch = EpochId(myl_ledger::einsatz::SPERRFRIST_EPOCHEN + 1);
         assert!(Kette::doppelbeleg_buchen(&mut z2, &melder, &beleg(1)).is_err());
         assert_eq!(z2.account(&taeter).staked, 10_000);
+        // ⚑ Korrelation: Hält der Täter allen Einsatz, verliert er alles,
+        //   auch was er gekündigt hat; die Kündigung bleibt fest.
+        let mut z3 = Kette::probestand().zustand().clone();
+        z3.account_mut(&taeter).balance = 10_000;
+        einsatz_hinterlegen(&mut z3, &taeter, 10_000).expect("Einsatz");
+        myl_ledger::transitions::einsatz_kuendigen(&mut z3, &taeter, 4_000).expect("Kündigung");
+        Kette::doppelbeleg_buchen(&mut z3, &melder, &beleg(1)).expect("ein tragender Beleg");
+        assert_eq!(myl_ledger::einsatz::schlachtbar(z3.account(&taeter).staked, &z3.account(&taeter).gekuendigt), 0);
+    }
+
+    /// ⚑ **Eine Prüfpunktstimme als Transaktion** (7.8, 2026-11-03): zählt
+    /// mit dem Hash, den die Kette an der Höhe hat, je Prüfpunkt einmal.
+    /// Gegenproben: dieselbe Stimme noch einmal, ein falscher Hash, wer
+    /// nicht im Stimmsatz steht, eine Höhe ohne Prüfpunkt.
+    #[test]
+    fn eine_stimme_als_transaktion_zaehlt_einmal() {
+        use myl_consensus::pruefpunkt::BLOECKE_JE_PRUEFPUNKT;
+        let mut k = Kette::probestand();
+        let mut folger = Kette::probestand();
+        for i in 1..=3u8 {
+            k.aufnehmen(probeanmeldung(i));
+        }
+        // Der erste Block lehrt beide den Erzeuger als Satz.
+        folger.uebernimm(&k.baue_block()).expect("der Folger nimmt den Block");
+        let mut mitglieder = std::collections::BTreeMap::new();
+        if let Some(alt) = k.stimmsatz() {
+            for (m, mitglied) in alt.members() {
+                mitglieder.insert(*m, mitglied.clone());
+            }
+        }
+        for i in 1..=2u8 {
+            let pk = probeschluessel(i).public_key().expect("Schlüssel");
+            mitglieder.insert(myl_types::ids::MinerId::aus_schluessel(&pk), myl_consensus::validator::VotingMember { pubkey: pk, weight: 1 });
+        }
+        assert!(!mitglieder.is_empty(), "der Erzeuger steht im Satz");
+        let satz = myl_consensus::validator::VotingSet::from_members(mitglieder);
+        k.stimmsatz_setzen(satz.clone());
+        folger.stimmsatz_setzen(satz);
+        while k.hoehe() <= BLOECKE_JE_PRUEFPUNKT + 1 {
+            folger.uebernimm(&k.baue_block()).expect("der Folger nimmt den Block");
+        }
+        let h = BLOECKE_JE_PRUEFPUNKT;
+        let x = k.hash_an(h).expect("Hash an der Höhe");
+        assert!(k.zustand().pruefpunkt_hashes.contains(&(h, x)), "der Zustand kennt den Hash des Prüfpunkts");
+        let id = |i: u8| myl_types::ids::MinerId::new(*probekonto(i).as_bytes());
+        let senden = |k: &mut Kette, wer: u8, nonce: u64, hoehe: u64, block_hash: Hash| {
+            k.aufnehmen(
+                Transaktion::signiere(&Kette::startwert(), &probeschluessel(wer), nonce, Anweisung::PruefpunktBezeugen { hoehe, block_hash })
+                    .expect("signieren"),
+            );
+        };
+        senden(&mut k, 1, 1, h, x);
+        senden(&mut k, 1, 2, h, x);
+        senden(&mut k, 2, 1, h, Hash::sha256(b"anderer Zweig"));
+        senden(&mut k, 2, 2, h + 1, x);
+        senden(&mut k, 3, 1, h, x);
+        folger.uebernimm(&k.baue_block()).expect("der Folger nimmt den Block");
+        let z = k.zustand();
+        assert!(myl_ledger::stimmsatz::stimme_vermerkt(z, &id(1), 0, 1));
+        assert_eq!(z.pruefpunkt_stimmen.get(&id(1)).copied(), Some(1), "einmal, nicht zweimal");
+        assert!(!myl_ledger::stimmsatz::stimme_vermerkt(z, &id(2), 0, 1), "falscher Hash oder keine Prüfpunkthöhe");
+        assert!(z.pruefpunkt_stimmen.get(&id(2)).is_none());
+        assert!(z.pruefpunkt_stimmen.get(&id(3)).is_none(), "nicht im Stimmsatz");
+        assert_eq!(folger.zustandswurzel(), k.zustandswurzel());
     }
 
     /// ⚑ **Die Vertrauensfrist** (CONSENSUS 7.5): bis 112 Epochen über dem

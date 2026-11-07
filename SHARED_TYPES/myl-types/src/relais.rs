@@ -108,7 +108,29 @@ pub enum Relaisfrage {
         /// Je Transaktion ihr Borsh.
         txs: Vec<Vec<u8>>,
     },
+    /// ⚑ **Ein Stück einer Spurablage für dieses Mitglied** (T6,
+    /// 2026-11-05): Die Ablage einer Epoche wächst mit ihren Segmenten und
+    /// passte ab einigen Tausend nicht mehr in eine Nachricht; dann wurde sie
+    /// gar nicht abgelegt, und niemand lieferte den Verlauf. Grösse und
+    /// Abdruck (SHA-256) der ganzen Ablage in Borsh, die Bytes ab `ab`,
+    /// höchstens [`ABLAGE_STUECK_BYTES`]. Angehängt.
+    SpurenAblegenTeil {
+        /// Die Netzadresse des Mitglieds.
+        an: PeerIdBytes,
+        /// Die Grösse der ganzen Ablage in Bytes.
+        gesamt: u32,
+        /// Ihr Abdruck.
+        abdruck: crate::Hash,
+        /// Ab welchem Byte.
+        ab: u32,
+        /// Die Bytes.
+        daten: Vec<u8>,
+    },
 }
+
+/// So gross ist ein Stück einer Spurablage höchstens, unter der Grenze
+/// einer Nachricht mit Platz für den Rahmen.
+pub const ABLAGE_STUECK_BYTES: usize = 3 * 1024 * 1024;
 
 /// Höchstens so viele Transaktionen trägt [`Relaisfrage::Transaktionen`].
 pub const TRANSAKTIONEN_JE_FRAGE: usize = 512;

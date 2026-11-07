@@ -1,8 +1,8 @@
 # consensus (`myl-consensus` + `myl-ledger` + `myl-scheduler`)
 
-> **Version:** 0.76.1 (`myl-consensus` 0.47.0, `myl-scheduler` 0.19.0,
-> `myl-ledger` 0.45.1)
-> **Datum:** 2026-10-29
+> **Version:** 0.86.0 (`myl-consensus` 0.52.0, `myl-scheduler` 0.19.1,
+> `myl-ledger` 0.56.0)
+> **Datum:** 2026-11-05
 > **Status:** Design-Entscheidungen getroffen (malachite hinter
 > trait-Grenze mit Eigenbau-Fallback, Blockzeit 2 s, Komitee 21/7,
 > Streitfrist 7 Tage, Reed-Solomon k=8/m=4);
@@ -107,6 +107,283 @@ myl-consensus/tests/
 ```
 
 ## Changelog
+
+### v0.86.0 (2026-11-05): Nach dem Ruhen eine wachsende Wartezeit (`myl-ledger` 0.56.0)
+
+- ⚑ **`stimmsatz::wartezeit`** (CONSENSUS 7.9): Wer wegen Inaktivität ruht
+  und sich neu anmeldet, ist erst nach einer Wartezeit wieder Kandidat:
+  nach der ersten Ruhe eine Epoche, dann zwei, vier und so fort,
+  höchstens die Sperrfrist (`Mitwirkung::ruhepausen`, `wieder_ab`). Ohne
+  sie konnte mehr als ein Drittel die Finalität blockieren, ruhen, sich
+  neu anmelden und wieder blockieren. Kein Abzug am Einsatz: Im Netzlauf
+  kehrte die Finalität nach einem Ausfall von 12 der 28 Miner über das
+  Ruhen von selbst zurück. Test `die_wartezeit_waechst`.
+
+### v0.85.1 (2026-11-05): Wer doppelt unterschreibt, kommt nie zurück (`myl-ledger` 0.55.0)
+
+- ⛔️ **`stimmsatz::Mitwirkung::getilgt`**: Nach einem Doppelbeleg
+  (`stimmsatz::ausschliessen`) ruht ein Miner für immer; `wieder_bereit`
+  (die Neuanmeldung) hebt das nicht auf. 📌 Gefunden im Netzlauf mit einem
+  Doppelerzeuger: Bis hierher brachte eine Neuanmeldung auch einen
+  Doppelsigner zurück. Vorbild Ethereum und Cosmos
+  („tombstoned“).
+
+### v0.85.0 (2026-11-05): Die Frist bis zum Ruhen als Regel, die Saat der Pod-Bildung (`myl-ledger` 0.54.0, `myl-scheduler` 0.19.1)
+
+- ⚑ **`stimmsatz::Regeln::ausschluss_punkte`**: Ab so vielen Punkten ruht
+  ein Mitglied, bisher fest `AUSSCHLUSS_PUNKTE` (96, also 24 verfehlte
+  Epochen). Der Knoten setzt den Wert je Netz; nur die Probekette kürzt ihn,
+  damit ein Lauf messen kann, ob die Finalität nach einem Ausfall von mehr
+  als einem Drittel ohne Abzug am Einsatz von selbst zurückkehrt.
+- **Zonenzuteilung:** Die Saat heisst jetzt so (`epochensaat` statt
+  `vorheriger_blockhash`), und der Modulkopf sagt, woher sie kommt: seit
+  dem 2026-11-03 aus `β`, nur in der Startphase vor der ersten verteilten
+  Schlüsselerzeugung aus dem letzten Blockhash. Die offene Frage, welche
+  Saat die Pod-Bildung bestimmt (VRF oder Blockhash), ist damit
+  entschieden. `vrf_seed` sagt, dass der Knoten nur noch `seed_alpha`
+  daraus nimmt.
+
+### v0.84.0 (2026-11-04): Der Erzeugerplan nach Slots (`myl-consensus` 0.52.0, `myl-ledger` 0.53.0)
+
+Der Erzeuger rotiert: Je Slot ist aus der Saat der Epoche ein Mitglied
+gezogen, gewichtet nach Einsatz. Seit die Prüfpunkte aller die Sicherheit
+tragen, muss der Erzeuger die Kette nur lebendig halten; ein fester
+Erzeuger konnte allein zensieren und hielt die Kette an, wenn er ausfiel.
+
+- ⚑ **`erzeugerplan`**: `ziehen(saat, slot, satz)` zieht aus
+  `H(MYELITH_ERZEUGERPLAN_v1 ‖ saat ‖ slot)` ein Mitglied in der Ordnung
+  der Kennungen, nach Gewicht, rein ganzzahlig; `saat_aus_beta` mit eigener
+  Domäne, `naechster_slot`, `slot_bei`, `slotbeginn`. Gezogen wird je Slot,
+  nicht je Höhe: Sonst wählte ein Erzeuger durch Bauen oder Auslassen, wer
+  nach ihm dran ist.
+- ⚑ **Slots nach der Uhr, nicht Versuche je Höhe.** Ein Versuch ohne Zeit
+  liesse jedes Mitglied sofort beliebig viele gültige Blöcke bauen (es
+  sucht je Höhe den Versuch, in dem es gezogen ist), und ein längerer Zweig
+  überholte die ehrliche Kette und spulte die Epochen vor. Ein Slot ist ein
+  Zeitabschnitt ab der Unix-Zeit; ein Zweig wächst höchstens um einen
+  Block je Slot seiner Erzeuger (Ouroboros Praos, BABE, Gasper). Die Kette
+  rechnet weiter nie mit der Uhr.
+- ⚑ **`BlockHeader::slot`**, angehängt.
+- ⚑ **Doppelt erzeugt heisst: derselbe Slot.** `Doppelbeleg::Erzeuger`
+  verlangt dieselbe Höhe und denselben Slot. Nach einem Zweigwechsel baut
+  ein ehrlicher Erzeuger an derselben Höhe womöglich noch einmal, aber nie
+  im selben Slot.
+- ⚑ **`LedgerState::erzeugersaat`** (die Saat des Plans der laufenden
+  Epoche, gesetzt am Wechsel aus `β` der Vorepoche, sonst die alte weiter)
+  und **`LedgerState::letzter_slot`**, beide im Kopf und in der Wurzel.
+- Tests: gezogen nach Gewicht über 6 000 Slots, Slot und Saat ziehen neu,
+  ein Mitglied ohne Gewicht nie; der Beleg nur im selben Slot.
+
+### v0.83.0 (2026-11-04): Rückwege für das Zurückrollen (`myl-ledger` 0.52.0)
+
+- ⚑ **Ein angewandter Block lässt sich zurücknehmen**:
+  `LedgerState::sicherung_behalten` schliesst wie `sicherung_verwerfen` ab,
+  hebt aber die Kopie des Kopfs und je Sammlung das Journal (alter Wert je
+  zuerst berührtem Schlüssel) als `Rueckweg` auf;
+  `LedgerState::zuruecknehmen` spielt ihn zurück, bei mehreren Blöcken der
+  jüngste zuerst. Danach stehen Inhalt und Wurzel wie vor dem Block, und
+  alles Berührte gilt als geändert (der Baum folgt). Klein gegen den
+  Zustand: Der Kopf hält von der Historie nur die Gipfel, ein Journal nur,
+  was der Block berührte.
+- `Sammlung::journal_nehmen` und `Sammlung::rueckweg_gehen` dafür.
+- Test: zwei Blöcke, auch mit einem Schlüssel, den beide berühren,
+  rückwärts zurückgenommen, in Inhalt und Wurzel wie davor.
+
+### v0.82.0 (2026-11-04): Die Quelle jeder Prüfpunktstimme, Rechtfertigung und Endgültigkeit (`myl-consensus` 0.51.0, `myl-ledger` 0.51.0)
+
+Vorbereitung auf einen rotierenden Erzeuger: Sobald Zweige möglich sind,
+reicht eine Stimme, die nur Höhe und Block nennt, nicht mehr für haftbare
+Endgültigkeit. Wer an 150 für einen Zweig und an 300 für einen anderen,
+vor 150 abzweigenden stimmt, hinterließe keinen Beleg. Vorbild ist Casper
+FFG.
+
+- ⚑ **Jede Stimme nennt ihre Quelle** (`pruefpunkt::Quelle`, Feld `quelle`
+  in `Pruefpunktstimme` und `Pruefpunktzertifikat`, Trennzeichen
+  `MYELITH_PRUEFPUNKT_v3`): den jüngsten gerechtfertigten Prüfpunkt, Genesis
+  als Höhe null mit Hash null. Die Quelle liegt vor dem Ziel und ist
+  Genesis oder ein Prüfpunkt; Stimmen mit verschiedenen Quellen ergeben
+  kein Zertifikat.
+- ⚑ **Rechtfertigen und endgültig machen sind zwei Stufen**: Ein
+  Zertifikat rechtfertigt sein Ziel; endgültig wird seine Quelle, wenn das
+  Ziel der direkt folgende Prüfpunkt ist
+  (`Pruefpunktzertifikat::schliesst_ab`). 📌 Mit nur einer Stufe könnte ein
+  ehrlicher Knoten, der ein Zertifikat nicht gesehen hat, auf einen
+  längeren Zweig wechseln und dort mit derselben Quelle stimmen, und zwei
+  Geschichten wären endgültig, ohne dass jemand eine Regel brach. Preis:
+  ein Prüfpunkt Verzug bis zur Endgültigkeit, keine Nachricht mehr.
+- ⚑ **Widersprüche** (`pruefpunkt::widersprechen`): zwei Stimmen desselben
+  Wählers für dieselbe Höhe mit anderem Block, anderer Bindung oder anderer
+  Quelle, oder eine Stimme, die eine andere umschließt (`q1 < q2 < z2 <
+  z1`). Beide sind ein `Doppelbeleg::Pruefpunkt`; die Art im Vermerk ist 1
+  für dieselbe Höhe und 2 für das Umschließen, die Höhe beim Umschließen das
+  spätere Ziel.
+- **Zustand** (`myl-ledger`): `pruefpunkt_gerechtfertigt` (Höhe und Block
+  des jüngsten getragenen Zertifikats) und `pruefpunkt_quellen` (je
+  Prüfpunkt der laufenden und der vorigen Epoche die Quelle, die beim
+  Anwenden seines Blocks gerechtfertigt war; jede Stimme für ihn nennt genau
+  sie). `pruefpunkt_bestaetigt` ist jetzt der jüngste endgültige Prüfpunkt.
+  Beide Felder gehen in die Zustandswurzel.
+- Tests: Quelle unterschrieben und in der Form geprüft, Abschluss nur über
+  den direkten Nachfolger, beide Widersprüche und was keiner ist, Beleg
+  über eine umschließende Stimme und über eine andere Quelle.
+
+### v0.81.0 (2026-11-04): Die Bindung an die kommenden Sätze (`myl-consensus` 0.50.0, `myl-ledger` 0.50.0)
+
+Im langen Netzlauf vom 2026-11-03 schrumpfte der Stimmsatz aus dem Zustand
+von acht auf drei Mitglieder: Abstimmen durften nur die Mitglieder des
+Satzes von außen, alle anderen fielen wegen Inaktivität heraus. Ab jetzt
+trägt der Satz aus dem Zustand die Finalität (im Knoten), und dafür muss
+ein Neuling ihm folgen können, ohne den Zustand zu haben.
+
+- ⚑ **Jede Prüfpunktstimme unterschreibt eine Bindung** (`bindung` in
+  `Pruefpunktstimme` und `Pruefpunktzertifikat`, Trennzeichen
+  `MYELITH_PRUEFPUNKT_v2`): den Hash der Sätze für `e + 1` und `e + 2`, wie
+  der Zustand sie nach dem Block führt (`myl_ledger::stimmsatz::bindung`).
+  Ein Zertifikat des Satzes von `e` bestätigt damit, wer danach trägt.
+  Stimmen mit verschiedenen Bindungen ergeben kein Zertifikat.
+- ⚑ **Ein Widerspruch in der Bindung ist ein Doppelbeleg**: zwei Stimmen
+  derselben Höhe für denselben Block mit verschiedenen Bindungen. Sonst
+  könnten zwei Zertifikate zwei verschiedene kommende Sätze bestätigen.
+- 📌 **Nicht im Blockkopf:** Der Blockhash deckt alle Transaktionen; ein
+  Beleg über ein Kopffeld hätte den ganzen Block tragen müssen. Die
+  Bindung in der Stimme macht einen Beleg zu Zertifikat und zwei Sätzen,
+  einige KB je Epoche.
+- Tests: Die Bindung ist unterschrieben, eine andere trägt nicht, Stimmen
+  verschiedener Bindungen ergeben kein Zertifikat, ein Doppelbeleg über
+  die Bindung trägt.
+
+### v0.80.0 (2026-11-03): Die Saat aus dem Stimmsatz (`myl-consensus` 0.49.0, `myl-ledger` 0.49.0)
+
+Entscheidung des Projektinhabers nach scharfer Prüfung. Die Saat der
+Stichprobe kam aus einem Prüfpunktzertifikat (die Unterzeichnermenge wählt,
+wer es zusammenstellt), die Epochensaat aus dem letzten Blockhash (den
+wählt sein Erzeuger). Bei 2 % Stichprobe kommen 300 gefälschte Segmente
+mit einer festen Saat zu 0,23 % durch, mit 2¹⁰ probierten zu 91 %.
+
+- ⚑ **`myl_ledger::saat`**: je Zielepoche `e` eine Runde aus dem Satz von
+  `e`, angelegt am Wechsel nach `e − 1`; Sitze nur für Mitglieder mit
+  eingetragenem Verschlüsselungsschlüssel. In `e − 1` nach Dritteln:
+  Austeilen, Beschweren, Offenlegen, je bei der Aufnahme geprüft.
+  Abschluss am Wechsel nach `e`: qualifiziert, wer ausgeteilt und jede
+  Beschwerde beantwortet hat; ⛔️ mehr als ein Drittel des Gewichts, sonst
+  gilt der alte Schlüssel weiter. Anteile in `e` und `e + 1`, ab der Schwelle
+  steht `β_e`.
+- Drei neue Register im kleinen Baum: `verschluesselung` (19),
+  `saatrunden` (20), `austeilungen` (21).
+- **Fünf Anweisungen, angehängt**: `SaatschluesselEintragen`,
+  `SaatAusteilen`, `SaatBeschweren`, `SaatOffenlegen`, `SaatAnteile`.
+- ⚑ **Die Gebühr zählt die Prüfungen mit**: je Bindungspunkt und
+  Kenntnisnachweis, je Anteil, je Offenlegung eine Prüfeinheit; sonst wäre
+  eine Paarungsprüfung zum Preis von Bytes zu haben.
+- 8 neue Ledger-Tests (eine Runde bis `β`, Fenster, Schweigen auf eine
+  Beschwerde, beantwortete Beschwerde, Rückfall auf den alten Schlüssel,
+  falsche Anteile, Mitglieder ohne Schlüssel, Phasen).
+
+### v0.79.0 (2026-11-03): Stimmen als Transaktion, Teilnahme nach Punkten, Korrelationsstrafe (`myl-consensus` 0.48.0, `myl-ledger` 0.48.0)
+
+Nach einer Angriffsprüfung auf Wunsch des Projektinhabers („alles umsetzen,
+was einer kritischen Prüfung und dem Ausschluss besserer Alternativen
+standhält“).
+
+- ⛔️ **Eine Prüfpunktstimme als Transaktion** (`Anweisung::PruefpunktBezeugen`,
+  angehängt): Ein Mitglied des Stimmsatzes bezeugt einen Prüfpunkt mit dem
+  Hash, den die Kette dort hat; die Unterschrift der Transaktion ist seine.
+  Gezählt wie eine Unterschrift im Zertifikat, je Prüfpunkt einmal, in der
+  laufenden und der vorigen Epoche. 📌 Ohne sie gibt es beim Ausfall von
+  mehr als einem Drittel kein Zertifikat und damit für niemanden einen
+  Beleg; die Inaktivitätsregel hätte dann den ganzen Satz hinausgeworfen.
+  Zugleich entscheidet der Erzeuger nicht mehr allein, wessen Unterschrift
+  zählt (Topfanteil, Teilnahme). Vorbild Ethereum: Attestierungen werden
+  einzeln verbucht. Der Hash bindet die Stimme an den Zweig, sonst nähme
+  ein Mitglied an zwei Zweigen zugleich teil.
+- ⚑ **Teilnahme nach Punkten** (Vorbild Ethereum Altair): Erfüllt ist eine
+  Epoche, wer mindestens halb so viele Prüfpunkte gestimmt hat wie das
+  beste Mitglied; sonst 4 Punkte, sonst einer zurück; ab 96 ruht er bis zur
+  Neuanmeldung, die die Punkte löscht. Geurteilt wird über die vorvorige
+  Epoche (eine Epoche Nachfrist); ohne jede Stimme im Satz gar nicht.
+  📌 Vorher hielt eine Stimme je 23 Epochen ein Mitglied im Satz. Neu im
+  Ledger: `stimme_vermerken`, `stimme_vermerkt`, `ausschliessen`,
+  `gesamtgewicht`; `Mitwirkung` führt `punkte` und je Prüfpunkt ein Bit statt
+  der letzten aktiven Epoche; `fortschreiben` nimmt keine Unterschriften mehr.
+  ⚠️ Ein Abzug am Einsatz für Inaktivität wartet auf den wechselnden
+  Erzeuger: Ein fester könnte Stimmtransaktionen zensieren.
+- ⛔️ **Doppelsignaturen, Buchführung für die Korrelation:** `doppelbelege`
+  führt je Widerspruch `Doppelbuchung` (Epoche, Schlachtmasse davor,
+  genommen); neu `einsatz_verbrennen` und `kuendigungen_festhalten` (wer
+  geschlachtet wurde, haftet mit seiner Kündigung bis zum Ende der
+  Sperrfrist für eine spätere Korrelationsstrafe).
+- Die Hashes der Prüfpunkte der laufenden und der vorigen Epoche stehen im
+  Zustand (`pruefpunkt_hashes`, höchstens 24).
+- ⛔️ **`timestamp_ms` ist unverbindlich** und gehört nie in den Rechenpfad.
+  📌 Geprüft und verworfen: eine Untergrenze am Vorgänger schützte nichts
+  (jeder spätere Wert bliebe frei), eine Obergrenze hinge an der Uhr des
+  Prüfenden.
+- Drei neue Tests im Ledger, darunter gegen das Selten-Stimmen und gegen den
+  Ausschluss des ganzen Satzes ohne jede Stimme.
+
+### v0.78.0 (2026-11-03): Wechselgrenze, Arbeitsschwelle, Startphase, Inaktivität (`myl-ledger` 0.47.0)
+
+7.8, nach einer Angriffsprüfung des Projektinhabers („sind alle relevanten
+Angriffsvektoren geschlossen?“) und seiner Entscheidung für die Empfehlungen.
+
+- ⛔️ **Wechselgrenze ein Vierundsechzigstel** des alten Gewichts je
+  Epoche statt eines Drittels, mindestens ein Mindesteinsatz. 📌 Ein Drittel
+  ist nur die Obergrenze, unter der ein Lichtclient einen Wechsel prüfen
+  kann: Bei einer Stunde je Epoche hielte ein Angreifer mit gut doppeltem
+  ehrlichem Einsatz nach 2 Stunden mehr als ein Drittel, nach 4 Stunden mehr
+  als zwei Drittel. Jetzt rund 27 und 71 Stunden. Die Untergrenze ist klein
+  gewählt, sonst wäre ein kleines Netz schnell übernommen.
+- ⛔️ **Startphase**: Bis das Ziel erstmals tragfähig ist (`tragfaehig`:
+  mindestens vier Mitglieder, keines mit einem Drittel, das Mindestgewicht)
+  wird kein Satz geführt; dann gilt es ganz, wie eine Genesis, und es geht
+  nie zurück. 📌 Mit der Grenze ab dem ersten, winzigen Satz hätten früh
+  eingetragene Scheinidentitäten den Satz lange beherrscht.
+- ⚑ **Arbeitsschwelle** (Entscheidung A3, jetzt im Satz): Die abgeklungene
+  bezeugte Arbeit muss einen Bruchteil des **nach Einsatz gewichteten**
+  Medians der Kandidaten erreichen. 📌 Ein Median über Köpfe liesse sich
+  mit Scheinidentitäten ohne Arbeit auf null drücken. Abklingen um ein
+  Vierundzwanzigstel je Epoche.
+- ⚑ **Inaktivität** (Vorbild Cosmos): Wer 24 Epochen in keinem
+  Prüfpunktzertifikat unterschrieben hat, fällt aus dem nächsten Satz und
+  ruht bis zur Neuanmeldung; gezählt ab seinem Eintritt. Ohne diese Regel
+  stünde die Finalität für immer, sobald ein Drittel ausfällt. ⚠️ Eine
+  Strafe wie Ethereums Inaktivitätsabzug fehlt.
+- Neues Register 18 `mitwirkung` (abgeklungene Arbeit, letzte Unterschrift,
+  ruhend) im kleinen Baum; `fortschreiben` nimmt die Regeln, die Arbeit und
+  die Unterschriften der Epoche und behält den Satz der Vorepoche (ein
+  Zertifikat des letzten Prüfpunkts einer Epoche kommt erst in der nächsten
+  an). `MinerAnmelden` hebt das Ruhen auf. Fünf Tests.
+- ⚠️ **Vor dem Umschalten (Schritt 2) offen:** eine Nachfrist für
+  Nachzügler im Zertifikat (sonst stünden die Langsamsten nie darin und
+  fielen als inaktiv heraus), Rollentrennung Erzeuger und Finalität,
+  Wechselbelege für Neulinge (7.3 und 7.4) und die Haftung über Höhen (eine
+  Stimme bindet die Kette der Prüfpunkte).
+
+### v0.77.0 (2026-11-02): Der Stimmsatz aus dem Zustand, Schritt 1 (`myl-ledger` 0.46.0)
+
+7.8, entschieden mit dem Projektinhaber nach kritischer Prüfung.
+
+- ⚑ **`stimmsatz`** (neues Modul): Über die Prüfpunkte stimmen **alle**
+  eingetragenen Miner mit mindestens dem Mindesteinsatz, Gewicht der
+  Einsatz (A3). Vorbild Casper FFG; geprüft gegen die 21 mit dem meisten
+  Einsatz (feste Elite) und eine Auslosung nach Einsatz (bei 21 Sitzen und
+  20 % Angreifer in 4 von 100 Epochen gebrochen, sicher erst bei rund 512
+  Sitzen und mit Restrisiko). Für sehr viele Validatoren ändert sich nur der
+  Transport der Stimmen (Aggregationsstufen), nicht die Regel.
+- ⚑ **Vorlauf zwei Epochen**: Der Satz für `e + 2` wird am Ende von `e`
+  bestimmt (Vorbild CometBFT).
+- ⚑ **Wechselgrenze**: Zuwächse zusammen höchstens ein Drittel des alten
+  Gewichts je Wechsel, darüber alle anteilig gekürzt (keine Reihenfolge, die
+  Grosse bevorzugt); Abgänge sofort.
+- **Zwei neue Register im kleinen Baum:** 16 `stimmsaetze` (die Sätze der
+  kommenden Epochen), 17 `einsaetze` (der Einsatz je Konto, gespiegelt beim
+  Hinterlegen, Kündigen und Schlachten). So berührt der Wechselblock keinen
+  Zeugen, auch bei sehr vielen Minern.
+- ⚠️ Neue Zustandswurzel: Konsensänderung, nur zusammen mit allen Knoten.
+- **Schritt 1:** bestimmt und geführt, wirkt noch nicht; das Umschalten
+  braucht eine Regel für den Erzeuger (7.7).
+- Tests `der_wechsel_ist_begrenzt_und_anteilig`,
+  `fortschreiben_legt_den_satz_fuer_uebernaechste_epoche_ab`.
 
 ### v0.76.1 (2026-10-31): Eine Regel für den Beschuldigten (`myl-ledger` 0.45.1)
 

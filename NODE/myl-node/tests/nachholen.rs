@@ -138,3 +138,40 @@ async fn ohne_gossip_fragt_ein_knoten_bei_stille_selbst_nach() {
     assert!(protokoll.contains("\"art\":\"stille_nachfrage\""), "nicht über die Nachfrage bei Stille");
     let _ = std::fs::remove_dir_all(&o);
 }
+
+/// ⚑ **Einem längeren Zweig folgen** (2026-11-04, CONSENSUS 7.7 Schritt 4):
+/// Alpha und Beta bauen getrennt, Alpha fünf Blöcke, Beta drei eigene.
+/// Verbunden hört Beta einen Block, der nicht anschliesst, sucht den
+/// Gabelpunkt, rollt zurück und folgt Alphas Zweig bis zur selben Wurzel;
+/// Alpha bleibt auf seinem.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ein_knoten_folgt_dem_laengeren_zweig() {
+    let o = ordner("zweig");
+    let mut alpha = Knoten::starten(KnotenKonfig { erzeugt_bloecke: true, ..konfig(&o, "alpha", vec![]) }, false)
+        .await
+        .expect("Alpha");
+    for _ in 0..5 {
+        alpha.erzeuge_block().await;
+    }
+    let a = alpha.warte_auf_adresse(Duration::from_secs(5)).await.expect("Adresse");
+    let einstieg = format!("{}/p2p/{}", a, alpha.peer_id());
+    let mut beta = Knoten::starten(KnotenKonfig { erzeugt_bloecke: true, ..konfig(&o, "beta", vec![einstieg]) }, false)
+        .await
+        .expect("Beta");
+    for _ in 0..3 {
+        beta.erzeuge_block().await;
+    }
+    assert_ne!(beta.kette().hash_an(1), alpha.kette().hash_an(1), "zwei Zweige ab Genesis");
+    assert!(
+        treiben(&mut [&mut alpha, &mut beta], Duration::from_secs(60), |k| k[1].kette().letzter_hash() == k[0].kette().letzter_hash()).await,
+        "Beta folgte nicht: {} gegen {}",
+        beta.kette().hoehe(),
+        alpha.kette().hoehe()
+    );
+    assert_eq!(beta.kette().zustandswurzel(), alpha.kette().zustandswurzel());
+    let protokoll = std::fs::read_to_string(beta.protokollpfad()).unwrap_or_default();
+    assert!(protokoll.contains("\"art\":\"zweig_gewechselt\""), "nicht über die Wahl des Zweigs");
+    let a_protokoll = std::fs::read_to_string(alpha.protokollpfad()).unwrap_or_default();
+    assert!(!a_protokoll.contains("\"art\":\"zweig_gewechselt\""), "Alpha wechselte auf den kürzeren");
+    let _ = std::fs::remove_dir_all(&o);
+}

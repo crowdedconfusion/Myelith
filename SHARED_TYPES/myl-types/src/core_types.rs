@@ -317,7 +317,7 @@ mod tests {
             .collect();
         let zeugnisse: Vec<Segmentzeugnis> = eintraege.iter().map(|(z, _)| *z).collect();
         let wurzel = segments_root(&zeugnisse).expect("Wurzel");
-        let ablage = Spurablage { epoche: EpochId(4), pod: PodId::new([1; 32]), segments_root: wurzel, eintraege, eingaben: Vec::new() };
+        let ablage = Spurablage { epoche: EpochId(4), pod: PodId::new([1; 32]), segments_root: wurzel, eintraege, eingaben: Vec::new(), buendel: None };
         let frage = |segment: u32| Spuranfrage { epoche: EpochId(4), pod: PodId::new([1; 32]), segment };
         for s in 0..5 {
             let a = ablage.antwort(&frage(s)).expect("Antwort");
@@ -338,6 +338,19 @@ mod tests {
         assert!(ablage.antwort(&Spuranfrage { pod: PodId::new([2; 32]), ..frage(1) }).is_none());
         assert!(ablage.antwort(&frage(5)).is_none());
         assert!(Spurablage { segments_root: MerkleRoot::new([9; 32]), ..ablage.clone() }.antwort(&frage(1)).is_none());
+    }
+
+    /// ⚑ Die Prompt-Länge steht in den Bytes 16 bis 23 der Kennung; ohne
+    /// sie null (T6, 2026-11-05).
+    #[test]
+    fn die_prompt_laenge_steht_in_der_kennung() {
+        let mut b = [0u8; 32];
+        b[..8].copy_from_slice(&7u64.to_le_bytes());
+        b[8..16].copy_from_slice(&3u64.to_le_bytes());
+        assert_eq!(prompt_laenge(&SegmentId::new(b)), 0);
+        b[16..24].copy_from_slice(&12u64.to_le_bytes());
+        let id = SegmentId::new(b);
+        assert_eq!((sitzung_und_position(&id), prompt_laenge(&id)), ((7, 3), 12));
     }
 
     /// ⚑ **Stufe 2, der Verlauf:** Eine Ablage mit zwei Sitzungen liefert zu
@@ -367,7 +380,7 @@ mod tests {
         }
         let zeugnisse: Vec<Segmentzeugnis> = eintraege.iter().map(|(z, _)| *z).collect();
         let wurzel = segments_root(&zeugnisse).expect("Wurzel");
-        let ablage = Spurablage { epoche: EpochId(4), pod: PodId::new([1; 32]), segments_root: wurzel, eintraege, eingaben };
+        let ablage = Spurablage { epoche: EpochId(4), pod: PodId::new([1; 32]), segments_root: wurzel, eintraege, eingaben, buendel: None };
         let frage = |segment: u32| Spuranfrage { epoche: EpochId(4), pod: PodId::new([1; 32]), segment };
 
         // Gezogen: Sitzung 7, Position 2 (Index 4).
@@ -811,6 +824,13 @@ pub struct Spurablage {
     /// die der Einträge macht die Ablage für den Verlauf unbrauchbar, sie
     /// wird nicht still gekürzt.
     pub eingaben: Vec<Vec<i16>>,
+    /// ⛔️ **Das unterschriebene Bündel, dessen Wurzel die Ablage trägt**
+    /// (T6, 2026-11-05). Der Empfänger prüft seine Gesamtunterschrift gegen
+    /// die Mitglieder des Pods wie die Kette; ohne sie nimmt er eine Ablage
+    /// nur vom eigenen Podwerk. 📌 Bis hierher prüfte eine Ablage nur sich
+    /// selbst, und jede Gegenstelle konnte mit stimmigen, erfundenen die
+    /// echte verdrängen. Angehängt.
+    pub buendel: Option<Box<PoIBundle>>,
 }
 
 /// Sitzung und Position aus einer Segmentkennung: die ersten acht Bytes
@@ -861,6 +881,25 @@ pub enum Verlauffehler {
     /// Die Eingabe fehlt, ist kein Token, oder ihr Hash ist nicht der erste
     /// Eintrag der Spur.
     Eingabe { stelle: usize },
+    /// Ein Segment nennt eine andere Prompt-Länge als das erste
+    /// ([`prompt_laenge`]). Angehängt.
+    Promptlaenge { stelle: usize },
+}
+
+/// ⚑ **Die Prompt-Länge aus einer Segmentkennung** (T6, 2026-11-05): die
+/// Bytes 16 bis 23 (Little Endian), die der Koordinator für jedes Segment
+/// einer Sitzung gleich setzt; null heisst unbekannt. Ab ihr ist jede
+/// Position erzeugt, und der Prüfer prüft dort, ob das Token der Argmax
+/// war. Gebunden ist sie wie die Kennung: Der Koordinator der Tür setzt
+/// sie, nicht der Shard, der das Token wählt, und der ganze Pod
+/// unterschreibt sie im Zeugnis unter der Wurzel. ⚠️ Eine Tür, die mit dem
+/// Pod zusammenarbeitet, kann sie zu gross angeben; der Beleg des Nutzers
+/// trägt sie nicht.
+pub fn prompt_laenge(id: &SegmentId) -> u64 {
+    let b = id.as_ref();
+    let mut l = [0u8; 8];
+    l.copy_from_slice(&b[16..24]);
+    u64::from_le_bytes(l)
 }
 
 /// ⚑ **Taugt der Verlauf zum Nachrechnen?** (Stufe 2, 2026-10-29) Jede
@@ -881,6 +920,7 @@ pub fn verlauf_pruefen(
 ) -> Result<Vec<u32>, Verlauffehler> {
     let erste = antworten.first().ok_or(Verlauffehler::Leer)?;
     let (sitzung, _) = sitzung_und_position(&erste.zeugnis.id);
+    let laenge = prompt_laenge(&erste.zeugnis.id);
     let mut tokens = Vec::with_capacity(antworten.len());
     for (stelle, a) in antworten.iter().enumerate() {
         lieferung_pruefen(a, segments_root, segmente_im_buendel)
@@ -888,6 +928,9 @@ pub fn verlauf_pruefen(
         let (s, p) = sitzung_und_position(&a.zeugnis.id);
         if s != sitzung {
             return Err(Verlauffehler::FremdeSitzung { stelle });
+        }
+        if prompt_laenge(&a.zeugnis.id) != laenge {
+            return Err(Verlauffehler::Promptlaenge { stelle });
         }
         if p != stelle as u64 {
             return Err(Verlauffehler::Luecke { stelle, position: p });

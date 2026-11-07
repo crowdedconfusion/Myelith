@@ -83,6 +83,27 @@ pub struct Netz {
     /// Hinterlegung zahlen kann. ⛔️ **Aus in jedem Netz, dessen MYL etwas
     /// gelten sollen**: Dort gibt es keine Probekonten.
     pub probehahn: bool,
+    /// ⚑ **Ein eigener Mindesteinsatz fuer den Stimmsatz** (2026-11-03), nur
+    /// auf der Probekette: Der abgeleitete (`S_min = g/p²`, 1 250 MYL) ist
+    /// mit der Probepraegung von zehn MYL je Epoche in keinem Lauf zu
+    /// erreichen; ohne Stimmsatz aus dem Zustand gaebe es dort auch keine
+    /// Saat aus dem Satz, und ein Lauf bewiese nichts darueber. ⛔️ **`None`
+    /// in jedem anderen Netz**: Dort gilt der abgeleitete Wert. Die Probe
+    /// `nur_die_probekette_senkt_den_mindesteinsatz` haelt das fest.
+    pub stimmsatz_mindesteinsatz: Option<u64>,
+    /// ⚑ **Nach wie vielen verfehlten Epochen ein Mitglied ruht**
+    /// (2026-11-05), nur auf der Probekette kürzer: Mit
+    /// [`myl_ledger::stimmsatz::INAKTIV_EPOCHEN`] (24) dauerte die Messung,
+    /// ob die Finalität nach einem Ausfall von mehr als einem Drittel von
+    /// selbst zurückkehrt, bei 500 ms je Slot über sechs Stunden. ⛔️ `None`
+    /// in jedem anderen Netz.
+    pub stimmsatz_inaktiv_epochen: Option<u64>,
+    /// ⚑ **Die Länge eines Slots in Millisekunden** (2026-11-04,
+    /// Erzeugerplan, Festlegung des Projektinhabers: je Netz). Je Slot ist
+    /// ein Erzeuger gezogen; ein Block muss den nächsten erreichen, bevor
+    /// dessen Slot beginnt, sonst gabelt die Kette. Alle Knoten eines Netzes
+    /// rechnen mit derselben Länge, sonst hielten sie Blöcke für künftig.
+    pub slot_ms: u64,
 }
 
 /// ⚑ **Die Zahlen der Gebühren** (Festlegung des Projektinhabers vom
@@ -201,6 +222,13 @@ pub const PROBEKETTE: Netz = Netz {
     lernt_erzeuger: true,
     gebuehren: GEBUEHREN_VORLAEUFIG,
     probehahn: true,
+    // Ein halbes MYL: der Einsatz, den die Miner im Netzlauf hinterlegen.
+    stimmsatz_mindesteinsatz: Some(myl_tokenomics::UNITS_PER_MYL / 2),
+    // Zwei Epochen: Ein Ausfall kehrt in einem Lauf von zwei Stunden zurück.
+    stimmsatz_inaktiv_epochen: Some(2),
+    // Eine halbe Sekunde: kurz genug für viele Epochen in einem Lauf, lang
+    // genug für die Laufzeiten im Netzlauf.
+    slot_ms: 500,
 };
 
 /// Der Startwert des Testnetzes. Wie bei der Probekette sagt der Text,
@@ -242,6 +270,10 @@ pub const TESTNETZ_INT4: Netz = Netz {
     gebuehren: GEBUEHREN_VORLAEUFIG,
     // Ein Testnetz: Seine Probekonten sind Spielgeld wie auf der Probekette.
     probehahn: true,
+    stimmsatz_mindesteinsatz: None,
+    stimmsatz_inaktiv_epochen: None,
+    // Eine Sekunde, wie die Blockzeit im Whitepaper (1 bis 2 s).
+    slot_ms: 1_000,
 };
 
 /// Alle Netze, die dieser Knoten kennt.
@@ -275,6 +307,22 @@ mod tests {
                 assert!(n.probepraegung > 0, "die Probekette prägt nichts zur Probe");
             } else {
                 assert_eq!(n.probepraegung, 0, "{} prägt Spielgeld", n.name);
+            }
+        }
+    }
+
+    /// ⛔️ Einen gesenkten Mindesteinsatz fuer den Stimmsatz und eine kurze
+    /// Frist bis zum Ruhen gibt es nur auf der Probekette; jedes andere Netz
+    /// rechnet den Einsatz aus `S_min` und ruht nach 24 Epochen.
+    #[test]
+    fn nur_die_probekette_senkt_den_mindesteinsatz() {
+        for n in NETZE {
+            if n.name == PROBEKETTE.name {
+                assert!(n.stimmsatz_mindesteinsatz.is_some());
+                assert!(n.stimmsatz_inaktiv_epochen.is_some());
+            } else {
+                assert_eq!(n.stimmsatz_mindesteinsatz, None, "{} senkt den Mindesteinsatz", n.name);
+                assert_eq!(n.stimmsatz_inaktiv_epochen, None, "{} verkürzt die Frist bis zum Ruhen", n.name);
             }
         }
     }

@@ -1,6 +1,6 @@
 [package]
 name = "myl-node"
-version = "0.99.4"
+version = "0.115.1"
 edition = "2021"
 # ⚑ 1.88 und nicht 1.85 wie die uebrigen Crates, und der Grund liegt
 # nicht im eigenen Code: Ueber libp2p haengt hier die `icu_*`-Kette
@@ -87,6 +87,15 @@ libp2p = { version = "0.57", features = ["tokio"] }
 # Modell wie die Shards der Probe, also mit demselben Merkmal. Nie im
 # ausgelieferten Programm.
 pruefnetz = ["integer-llm-runtime/pruefnetz"]
+# ⚑ Ein Austeiler, der falsch austeilt (`MYL_SAAT_FALSCH=1`), damit ein
+# Netzlauf Beschwerde, Offenlegung und Ausschluss zaehlen kann. Nie im
+# ausgelieferten Programm.
+falscher_austeiler = []
+# ⚑ Pruefrollen gegen den Konsens (CONSENSUS 7.7b bis 7.7d): ein Erzeuger,
+# der seine Bloecke zurueckhaelt (`MYL_ZURUECKHALTEN_MS`), einer, der im
+# selben Slot zweimal baut (`MYL_DOPPELT_ERZEUGEN=1`), eine falsche Uhr
+# (`MYL_UHR_VERSATZ_MS`). Nie im ausgelieferten Programm.
+konsensrollen = []
 
 [lib]
 name = "myl_node"

@@ -1,5 +1,12 @@
 //! VRF-Seed-Ableitung aus finalisiertem Block (Anhang A.2, Schritt 1).
 //!
+//! ⚑ **Der Knoten zieht nicht mehr hieraus** (seit 2026-11-03): Die Saat
+//! jeder Epoche ist `β`, eine Schwellen-BLS-Signatur des Stimmsatzes
+//! (`myl_ledger::saat`); ein VRF des Erzeugers wäre mahlbar, weil er seine
+//! eigene Ausgabe kennt. Im Pfad bleibt nur [`seed_alpha`], die kanonische
+//! Bytefolge aus Saat und Epoche; der VRF-Teil dient noch der Probe im
+//! Testclient.
+//!
 //! Der Epochenseed ist die Grundlage aller nachfolgenden Scheduler-Schritte.
 //! Er wird aus dem finalisierten Block der Vorepoche abgeleitet und ist
 //! deterministisch: gleicher Block → gleicher Seed.

@@ -1,7 +1,7 @@
 # shared-types (`myl-types`)
 
-> **Version:** 0.62.1
-> **Datum:** 2026-10-29
+> **Version:** 0.67.0
+> **Datum:** 2026-11-03
 > **Status:** 🎉 **Phase 2 abgeschlossen** (Punkte 1.1–1.7, 2.1–2.3):
 > Hash, Merkle-Baum, VRF (bit-exakt gegen RFC-9381-Vektoren), BLS12-381
 > mit Aggregation **und Proof-of-Possession**, **Erasure-Codierung über
@@ -49,6 +49,72 @@ SHARED_TYPES/
 ```
 
 ## Changelog
+
+### v0.67.0 (2026-11-05): Die Prompt-Länge in der Segmentkennung
+
+- ⚑ **`prompt_laenge(id)`**: die Bytes 16 bis 23 einer Segmentkennung, die
+  der Koordinator für jedes Segment einer Sitzung gleich setzt; null heisst
+  unbekannt. Ab ihr ist jede Position erzeugt, und der Prüfer prüft dort
+  die Wahl des Tokens.
+- **`Verlauffehler::Promptlaenge`** (angehängt): `verlauf_pruefen` weist
+  einen Verlauf ab, dessen Segmente verschiedene Längen nennen. Test
+  `die_prompt_laenge_steht_in_der_kennung`.
+
+### v0.66.0 (2026-11-05): Die Spurablage in Stücken über die Ortsleitung
+
+- **`Relaisfrage::SpurenAblegenTeil`** (angehängt) und
+  `relais::ABLAGE_STUECK_BYTES`: Eine Ablage, die nicht in eine Nachricht
+  passt, geht in Stücken mit Grösse und Abdruck der ganzen. Bis hierher
+  wurde sie gar nicht abgelegt.
+
+### v0.65.0 (2026-11-05): Die Spurablage trägt ihr unterschriebenes Bündel
+
+- ⛔️ **`Spurablage::buendel`** (angehängt): das unterschriebene Bündel,
+  dessen Wurzel die Ablage trägt. Der Empfänger prüft seine
+  Gesamtunterschrift gegen die Mitglieder des Pods; ohne sie konnte jede
+  Gegenstelle mit stimmigen, erfundenen Ablagen die echte verdrängen.
+
+### v0.64.0 (2026-11-04): Der Historienbaum lässt sich kürzen
+
+- ⚑ **`Historienbaum::kuerzen(n)`** für das Zurückrollen eines Knotens bis
+  zum endgültigen Prüfpunkt: Die oberen Knoten bleiben, soweit sie
+  vollendete Gruppen unter `n` decken, die Blätter der angefangenen Gruppe
+  kommen aus ihr oder aus der zuletzt vollendeten, die der Baum dafür jetzt
+  behält (`vorige`, eine Gruppe Blatt-Hashes). Tiefer zurück und über die
+  eigene Länge hinaus geht es nicht (`false`, nichts geändert).
+- Test: Gekürzt auf jede Länge bis eine Gruppe zurück gleicht der Baum
+  einem, der nur so weit angehängt hat, in Historie und Beweisen, und weiter
+  angehängt wieder dem langen.
+
+### v0.63.0 (2026-11-03): Schwellen-BLS für eine Saat, die keiner mahlen kann
+
+Entscheidung des Projektinhabers nach scharfer Prüfung: Die Saat der Epoche
+wird eine Schwellensignatur des Stimmsatzes. Hier steht die Kryptographie,
+ohne `unsafe` und ohne neue Abhängigkeit.
+
+- ⚑ **`skalar`**: der Skalarkörper von BLS12-381 in Montgomery-Form, in
+  konstanter Zeit (Maske statt Verzweigung, Inverses über den festen
+  Exponenten `r − 2`). `blst` hat diese Rechnung nur hinter `unsafe`. 📌
+  Geprüft gegen `blst` über den Gruppenhomomorphismus (`pk(a + b)`,
+  `pk(a · b)`), die Konstanten aus ihrer Definition nachgerechnet.
+- ⚑ **`sitze`**: Einsatz ganzzahlig auf Sitze (Vorlage Swiper), immer
+  abgerundet, also gewinnt ein Angreifer durch Runden nichts. Zusagen,
+  erschöpfend über alle Teilmengen geprüft: unter der Hälfte des Einsatzes
+  nie die Schwelle, ab zwei Dritteln immer.
+- ⚑ **`schwelle`**: Polynom (deterministisch aus Geheimnis und Kontext),
+  Feldman-Bindungen, Lagrange, Zusammensetzen der Signatur. Das Ergebnis
+  besteht das gewöhnliche `verify` gegen den Gruppenschlüssel, und jede
+  Teilmenge über der Schwelle ergibt dieselben Bytes. ⛔️ **Kenntnisnachweis
+  Pflicht**: Ohne ihn hebt ein Austeiler, der die ehrlichen Bindungen zuerst
+  sieht, deren Summe auf und kennt den Gruppenschlüssel; zensiert ein fester
+  Erzeuger dann die Beschwerden, kennt er jede künftige Saat. Der Angriff
+  steht als Test.
+- ⚑ **`anteilchiffre`**: gehashtes ElGamal über ristretto255 für die Werte
+  je Sitz. 📌 Nicht über G1 wie zuerst geplant: Entschlüsseln heisst, einen
+  geheimen Skalar mit einem fremden Punkt zu multiplizieren, und das bietet
+  `blst` nur hinter `unsafe` oder über die Mehrfachskalierung, die nicht in
+  konstanter Zeit läuft. `curve25519-dalek` liegt schon im Lager.
+- 23 neue Tests; die Mehrfachskalierung bekommt nur öffentliche Zahlen.
 
 ### v0.62.1 (2026-10-30): Die Seitenablage baut unter Windows
 

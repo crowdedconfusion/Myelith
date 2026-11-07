@@ -19,27 +19,28 @@
 //! # ⚑ Abgeleitet und nicht gespeichert
 //!
 //! Die Zuteilung ist eine **reine Funktion** aus Register, Epoche und
-//! Blockhash. Sie in den Zustand zu schreiben wäre eine zweite Quelle
+//! Saat. Sie in den Zustand zu schreiben wäre eine zweite Quelle
 //! für dieselbe Aussage, und zwei Quellen laufen auseinander; dieselbe
 //! Lehre wie bei Fund 34. Wer sie braucht, rechnet sie aus.
 //!
-//! # ⚑ Der Seed, und was an ihm schwach ist
+//! # ⚑ Die Saat, und woher sie kommt
 //!
-//! Er folgt aus [`crate::vrf_seed::seed_alpha`], also aus Blockhash und
-//! Epoche mit eigenem Trennstring. **Damit kann der Erzeuger des letzten
-//! Blocks einer Epoche den Seed mahlen**: Er sieht für jeden möglichen
-//! Block die entstehende Zuteilung und wählt die ihm liebste.
+//! Gemischt wird mit [`crate::vrf_seed::seed_alpha`] aus der übergebenen
+//! Saat und der Epoche, mit eigenem Trennstring.
 //!
-//! **Ein VRF-Seed behebt das nicht**, auch wenn es so aussieht: Der
-//! Erzeuger hält den Schlüssel, kennt also seine eigene Ausgabe und kann
-//! ebenso wählen. Was der VRF bringt, ist Unvorhersehbarkeit **für alle
-//! anderen** und Nachprüfbarkeit, nicht Mahlfestigkeit.
+//! ⚑ **Seit dem 2026-11-03 ist die Saat `β`** der Vorepoche: eine
+//! Schwellen-BLS-Signatur des Stimmsatzes über die Epochennummer, also
+//! eindeutig, und keiner wählt sie (der Knoten setzt sie im Zustand,
+//! `myl_ledger::saat::epochensaat_aus`). Nur in der Startphase vor der
+//! ersten verteilten Schlüsselerzeugung ist es der letzte Blockhash der
+//! Epoche, und den kann der Erzeuger des letzten Blocks mahlen: Er sieht
+//! für jeden möglichen Block die entstehende Zuteilung und wählt die ihm
+//! liebste. Ein VRF des Erzeugers behöbe das nicht (er kennt seine eigene
+//! Ausgabe); `β` behebt es, und einen Rückfall auf den Blockhash gibt es
+//! danach nicht.
 //!
-//! ⚑ **Wogegen es hilft, steht schon im Entwurf:** Der
-//! Registrierungsschluss bei `e-2` friert die **Menge** der Teilnehmer
-//! zwei Epochen im Voraus ein. Ein Mahlender kann umschichten, wer wo
-//! landet, aber nicht, **wer überhaupt dabei ist**. Das begrenzt den
-//! Angriff, hebt ihn nicht auf, und das gehört so gesagt.
+//! Dazu friert der Registrierungsschluss bei `e-2` die **Menge** der
+//! Teilnehmer zwei Epochen im Voraus ein.
 
 use std::collections::BTreeMap;
 
@@ -155,14 +156,14 @@ pub fn zonen_cluster(
     cluster
 }
 
-/// Der Seed einer Epoche, aus Blockhash und Epoche.
+/// Der Seed einer Epoche, aus der Saat des Zustands und der Epoche.
 ///
 /// Benutzt denselben Trennstring und dieselbe kanonische Bytefolge wie
-/// der VRF-Seed ([`seed_alpha`]), damit es **eine** Kodierung gibt und
-/// nicht zwei. Der Wechsel auf den VRF-Seed ändert dann, woher `beta`
-/// kommt, nicht, worüber gerechnet wird.
-pub fn epochenseed(vorheriger_blockhash: &Hash, epoche: u64) -> [u8; 32] {
-    Hash::sha256(&seed_alpha(vorheriger_blockhash, epoche)).0
+/// [`seed_alpha`], damit es **eine** Kodierung gibt und nicht zwei. Die
+/// Saat ist seit dem 2026-11-03 aus `β` (siehe Modulkopf); woher sie
+/// kommt, ändert nicht, worüber gerechnet wird.
+pub fn epochenseed(epochensaat: &Hash, epoche: u64) -> [u8; 32] {
+    Hash::sha256(&seed_alpha(epochensaat, epoche)).0
 }
 
 /// Die Zuteilung einer Epoche aus einer fertigen Saat.
@@ -181,9 +182,9 @@ pub fn epochenseed(vorheriger_blockhash: &Hash, epoche: u64) -> [u8; 32] {
 ///
 /// **Zwei Herleitungen derselben Konsensgröße laufen auseinander**,
 /// dieselbe Lehre wie bei Fund 34. Die Regel steht deshalb nur noch
-/// hier, und `plane_epoche` ruft sie. **Was die beiden Wege
-/// unterscheidet, ist jetzt die Saat und sonst nichts**, und das ist die
-/// offene Entscheidung, nicht ein zweiter Algorithmus.
+/// hier. `plane_epoche` gibt es nicht mehr, und die Frage, welche Saat
+/// die Pod-Bildung bestimmt (Punkt 43), ist mit `β` entschieden: eindeutig
+/// und für niemanden vorher bekannt, beides zugleich.
 pub fn zuteilung_aus_saat(
     register: &[MinerRegistration],
     epoche: u64,
@@ -196,8 +197,8 @@ pub fn zuteilung_aus_saat(
     assign_pods(&cluster, shards_je_pod, saat)
 }
 
-/// Die Zuteilung einer Epoche, abgeleitet aus dem Register, mit der Saat
-/// aus dem Blockhash. Das ist der Weg, den die Kette geht.
+/// Die Zuteilung einer Epoche, abgeleitet aus dem Register und der Saat
+/// der Epoche.
 ///
 /// **Alle Hardware-Klassen sind zugelassen**, solange es keine Regel
 /// gibt, die eine ausschließt. Eine leere Liste zugelassener Klassen
@@ -205,13 +206,13 @@ pub fn zuteilung_aus_saat(
 pub fn zuteilung_der_epoche(
     register: &[MinerRegistration],
     epoche: u64,
-    vorheriger_blockhash: &Hash,
+    epochensaat: &Hash,
     shards_je_pod: u32,
 ) -> Zuteilung {
     zuteilung_aus_saat(
         register,
         epoche,
-        &epochenseed(vorheriger_blockhash, epoche),
+        &epochenseed(epochensaat, epoche),
         shards_je_pod,
         &HardwareClass::all(),
     )
@@ -235,12 +236,12 @@ pub fn zuteilung_der_epoche(
 pub fn zuteilung_der_epoche_mit_zusagen(
     register: &[MinerRegistration],
     epoche: u64,
-    vorheriger_blockhash: &Hash,
+    epochensaat: &Hash,
     shards_je_pod: u32,
     podmodell: &myl_types::podmodell::Podmodell,
     zusage: &dyn Fn(&MinerId) -> Option<myl_types::zusage::Modellzusage>,
 ) -> Zuteilung {
-    let saat = epochenseed(vorheriger_blockhash, epoche);
+    let saat = epochenseed(epochensaat, epoche);
     let geeignet = filter_miners(register, epoche, &HardwareClass::all());
     let (mit, ohne): (Vec<MinerRegistration>, Vec<MinerRegistration>) =
         geeignet.into_iter().partition(|m| zusage(&m.miner_id).is_some());

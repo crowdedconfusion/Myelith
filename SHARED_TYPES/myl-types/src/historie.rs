@@ -211,6 +211,10 @@ pub struct Historienbaum {
     obere: Vec<Vec<Hash>>,
     /// Die Blätter der angefangenen Gruppe.
     rest: Vec<Hash>,
+    /// ⚑ Die Blätter der zuletzt vollendeten Gruppe (Zurückrollen,
+    /// 2026-11-04): damit [`Self::kuerzen`] auch über eine Gruppengrenze
+    /// zurück kann.
+    vorige: Vec<Hash>,
 }
 
 impl Default for Historienbaum {
@@ -223,7 +227,7 @@ impl Historienbaum {
     /// Ein leerer Baum, der ab `stufe` Knoten hält. Für Proben mit kleinen
     /// Gruppen; im Betrieb [`GRUPPENSTUFE`].
     pub fn mit_stufe(stufe: u32) -> Self {
-        Self { historie: Historie::default(), stufe, obere: Vec::new(), rest: Vec::new() }
+        Self { historie: Historie::default(), stufe, obere: Vec::new(), rest: Vec::new(), vorige: Vec::new() }
     }
 
     /// Hängt einen Blockhash an.
@@ -235,6 +239,7 @@ impl Historienbaum {
         }
         let gruppe = std::mem::take(&mut self.rest);
         let mut h = stufen(&gruppe).pop().expect("nicht leer")[0];
+        self.vorige = gruppe;
         let mut j = 0usize;
         loop {
             if self.obere.len() == j {
@@ -248,6 +253,52 @@ impl Historienbaum {
             h = knoten(&self.obere[j][n - 2], &self.obere[j][n - 1]);
             j += 1;
         }
+    }
+
+    /// ⚑ **Auf `n` Blätter kürzen** (Zurückrollen, 2026-11-04): Die oberen
+    /// Knoten bleiben, soweit sie vollendete Gruppen unter `n` decken; die
+    /// Blätter der angefangenen Gruppe kommen aus ihr oder aus der zuletzt
+    /// vollendeten. Tiefer zurück als bis in diese geht es nicht (`false`,
+    /// nichts geändert); ebenso nicht über die eigene Länge hinaus.
+    pub fn kuerzen(&mut self, n: u64) -> bool {
+        let anzahl = self.historie.anzahl;
+        if n >= anzahl {
+            return n == anzahl;
+        }
+        let groesse = 1u64 << self.stufe;
+        let (volle_neu, volle_alt) = (n / groesse, anzahl / groesse);
+        let teil = (n % groesse) as usize;
+        let rest = if volle_neu == volle_alt {
+            self.rest[..teil].to_vec()
+        } else if volle_neu + 1 == volle_alt && self.vorige.len() as u64 == groesse {
+            self.vorige[..teil].to_vec()
+        } else {
+            return false;
+        };
+        for (j, ebene) in self.obere.iter_mut().enumerate() {
+            ebene.truncate(usize::try_from(volle_neu >> j).unwrap_or(usize::MAX));
+        }
+        while self.obere.last().is_some_and(Vec::is_empty) {
+            self.obere.pop();
+        }
+        if volle_neu != volle_alt {
+            self.vorige.clear();
+        }
+        self.rest = rest;
+        // Die Gipfel der neuen Länge, aus dem gekürzten Baum.
+        self.historie.anzahl = n;
+        let mut gipfel = Vec::with_capacity(n.count_ones() as usize);
+        let mut anfang = 0u64;
+        let mut zwischen = Vec::new();
+        for h in (0..64u32).rev() {
+            if n & (1u64 << h) != 0 {
+                let k = self.knoten_bei(h, anfang >> h, &mut |_| None, &mut zwischen).expect("ein Gipfel der gekürzten Länge");
+                gipfel.push(k);
+                anfang += 1u64 << h;
+            }
+        }
+        self.historie.gipfel = gipfel;
+        true
     }
 
     /// Die Historie, wie sie im Zustand steht.
@@ -340,6 +391,51 @@ mod tests {
 
     fn bloecke(n: u64) -> Vec<Hash> {
         (0..n).map(|i| Hash::sha256(&i.to_le_bytes())).collect()
+    }
+
+    /// ⚑ **Kürzen ist Anhängen rückwärts** (2026-11-04): Gekürzt auf jede
+    /// Länge bis eine Gruppe zurück gleicht der Baum einem, der nur so weit
+    /// angehängt hat, in Historie und Beweisen; und weiter angehängt wieder
+    /// dem langen. Tiefer zurück und über die Länge hinaus geht es nicht.
+    #[test]
+    fn kuerzen_ist_anhaengen_rueckwaerts() {
+        let b = bloecke(70);
+        let gruppe = |n: u64| {
+            let b = &b;
+            move |g: u64| ((g + 1) * 8 <= n).then(|| b[(g * 8) as usize..((g + 1) * 8) as usize].iter().map(blatt).collect::<Vec<_>>())
+        };
+        let lang = |n: usize| {
+            let mut t = Historienbaum::mit_stufe(3);
+            for x in &b[..n] {
+                t.anhaengen(x);
+            }
+            t
+        };
+        for von in [20usize, 24, 31, 70] {
+            for auf in (von.saturating_sub(16))..=von {
+                let mut t = lang(von);
+                let erwartet = lang(auf);
+                let geht = t.kuerzen(auf as u64);
+                // Bis in die zuletzt vollendete Gruppe zurück.
+                let erlaubt = auf / 8 + 1 >= von / 8;
+                assert_eq!(geht, erlaubt, "von {von} auf {auf}");
+                if !geht {
+                    assert_eq!(t.historie(), lang(von).historie(), "nichts geändert");
+                    continue;
+                }
+                assert_eq!(t.historie(), erwartet.historie(), "von {von} auf {auf}");
+                for i in 0..auf as u64 {
+                    assert_eq!(t.beweis(i, gruppe(auf as u64)), erwartet.beweis(i, gruppe(auf as u64)), "von {von} auf {auf}, Stelle {i}");
+                }
+                for x in &b[auf..von] {
+                    t.anhaengen(x);
+                }
+                assert_eq!(t.historie(), lang(von).historie(), "wieder angehängt");
+            }
+        }
+        let mut t = lang(10);
+        assert!(!t.kuerzen(11), "über die Länge hinaus");
+        assert!(t.kuerzen(10), "auf die eigene Länge");
     }
 
     #[test]

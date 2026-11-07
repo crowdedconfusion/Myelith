@@ -295,6 +295,12 @@ impl Ablage {
         Self { ordner, startwert, art: Art::Voll }
     }
 
+    /// Der Ordner der Ablage; daneben liegen die Wechselbelege
+    /// ([`crate::wechsel::Belegablage`]).
+    pub fn ordner(&self) -> &Path {
+        &self.ordner
+    }
+
     /// Dieselbe Ablage für die leichten Abzüge (im selben Ordner).
     pub fn leicht(&self) -> Self {
         Self { art: Art::Leicht, ..self.clone() }
@@ -306,12 +312,31 @@ impl Ablage {
 
     /// Legt einen Abzug ab und räumt nach der Behaltensregel auf.
     pub fn ablegen(&self, abzug: &Abzug) -> std::io::Result<()> {
+        self.ablegen_und_halten(abzug, 0)
+    }
+
+    /// ⚑ **Legt einen Abzug ab und hält dazu den jüngsten an oder unter
+    /// `halten`** (CONSENSUS 7.7a, 2026-11-05): `halten` ist der endgültige
+    /// Prüfpunkt. Ein Zweig kann nur über ihm abzweigen, und die Kette
+    /// baut den Stand am Gabelpunkt aus dem jüngsten Abzug darunter neu auf
+    /// (`Kette::neu_aufsetzen_bei`). Ruht die Finalität länger als zwei
+    /// Epochen, gäbe es sonst keinen mehr unter ihm.
+    pub fn ablegen_und_halten(&self, abzug: &Abzug, halten: u64) -> std::io::Result<()> {
         std::fs::create_dir_all(&self.ordner)?;
         let ziel = self.pfad(abzug.hoehe());
         let zwischen = ziel.with_extension("teil");
         std::fs::write(&zwischen, abzug.als_datei_als(&self.startwert, self.art))?;
         std::fs::rename(&zwischen, &ziel)?;
-        self.aufraeumen()
+        self.aufraeumen_und_halten(halten)
+    }
+
+    /// ⚑ **Entfernt die Abzüge über `hoehe`** (Zurückrollen, 2026-11-04):
+    /// Sie gehören zu einem verlassenen Zweig.
+    pub fn entfernen_ueber(&self, hoehe: u64) -> std::io::Result<()> {
+        for h in self.hoehen().into_iter().filter(|h| *h > hoehe) {
+            std::fs::remove_file(self.pfad(h))?;
+        }
+        Ok(())
     }
 
     /// Die Höhen aller abgelegten Abzüge, aufsteigend.
@@ -412,7 +437,7 @@ impl Ablage {
                 _ => {}
             }
         }
-        self.aufraeumen()
+        self.aufraeumen_und_halten(0)
     }
 
     /// Ob die Hintergrundprüfung die Basis bestätigt hat.
@@ -428,9 +453,9 @@ impl Ablage {
     }
 
     /// Räumt nach der Behaltensregel auf; nach einer Verdichtung von
-    /// außen gerufen.
-    pub fn raeumen(&self) -> std::io::Result<()> {
-        self.aufraeumen()
+    /// außen gerufen, mit `halten` wie bei [`Self::ablegen_und_halten`].
+    pub fn raeumen(&self, halten: u64) -> std::io::Result<()> {
+        self.aufraeumen_und_halten(halten)
     }
 
     /// Behält die zwei jüngsten, die Basis und jeden auf Dauer, der nicht
@@ -439,7 +464,10 @@ impl Ablage {
     /// ⚑ **Ein Langzeitabzug vor der Basis fällt weg** (2026-10-23): Nach
     /// einer Verdichtung fehlen die Blöcke zwischen ihm und der Basis, und
     /// ein Neuling, der bei ihm begänne, käme nicht weiter.
-    fn aufraeumen(&self) -> std::io::Result<()> {
+    ///
+    /// Dazu der jüngste an oder unter `halten` (siehe
+    /// [`Self::ablegen_und_halten`]); null hält keinen.
+    fn aufraeumen_und_halten(&self, halten: u64) -> std::io::Result<()> {
         let hoehen = self.hoehen();
         // Leichte: die jüngsten, sonst nichts (sie entstehen an jedem
         // Prüfpunkt und sind nur für Zustandslose da, die neu einsteigen).
@@ -450,10 +478,11 @@ impl Ablage {
             return Ok(());
         }
         let juengste: Vec<u64> = hoehen.iter().rev().take(2).copied().collect();
+        let gehalten = hoehen.iter().rev().find(|&&h| h <= halten).copied().filter(|_| halten > 0);
         let basis = self.basis();
         for h in hoehen {
             let dauerhaft = ist_langzeit(h) && basis.is_none_or(|b| h >= b);
-            if !juengste.contains(&h) && !dauerhaft && Some(h) != basis {
+            if !juengste.contains(&h) && !dauerhaft && Some(h) != basis && Some(h) != gehalten {
                 std::fs::remove_file(self.pfad(h))?;
             }
         }

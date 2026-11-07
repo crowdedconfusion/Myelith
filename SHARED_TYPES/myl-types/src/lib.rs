@@ -65,6 +65,10 @@ pub mod erasure;
 pub mod historie;
 pub mod archivwahl;
 pub mod archivteile;
+pub mod skalar;
+pub mod sitze;
+pub mod schwelle;
+pub mod anteilchiffre;
 
 pub use erasure::{
     ErasureCoder, ErasureError, Fragment, DEFAULT_K, DEFAULT_M, GF_POLY,
@@ -77,7 +81,7 @@ pub use bls::{
 pub use challenge::{Challenge, ChallengeStructureError, DST_CHALLENGE};
 pub use core_types::{
     ausgabenwurzel, differenz_pruefen, differenzseite, segments_root, Differenzbeweis, Differenzfehler, Differenzseite, spurwurzel, Ausgabenzeugnis, InferenceCredit, PoIBundle, Segment, Segmentzeugnis,
-    Spuranfrage, Spurantwort, lieferung_pruefen, Lieferfehler, Spurablage, sitzung_und_position, token_aus_eingabe,
+    Spuranfrage, Spurantwort, lieferung_pruefen, Lieferfehler, prompt_laenge, Spurablage, sitzung_und_position, token_aus_eingabe,
     eingabe_aus_bytes, verlauf_pruefen, Verlauffehler,
 };
 pub use hash::Hash;
