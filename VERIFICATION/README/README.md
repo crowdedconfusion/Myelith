@@ -1,7 +1,7 @@
 # verification (`myl-verifier`)
 
-> **Version:** 0.28.0
-> **Datum:** 2026-10-29
+> **Version:** 0.29.0
+> **Datum:** 2026-11-08
 > **Status:** 🎉 **Phasen 1, 2 und 3 abgeschlossen** (Punkte 1.1–1.3,
 > 2.1–2.5, 3.1–3.6), Phase 4 zu drei Vierteln (4.1, 4.2 und 4.4 ✅,
 > 4.3 ✅ seit 2026-08-24): Redundanzvergleich (Stufe 1),
@@ -145,6 +145,15 @@ gegen zwei eingebaute Fehler geeicht worden (Grenzverschiebung um eins,
 umgedrehter Vergleich); beide fliegen auf.
 
 ## Changelog
+
+### v0.29.0 (2026-11-08): Der Beleg des Angeklagten in falscher Länge
+
+⛔️ **Sicherheitsaudit A50.** Der Beleg der Schiedsrunde kommt vom Angeklagten.
+Die Hashes binden ihn an die Festlegung des Pods, aber ein Pod, der betrügen
+will, legt sich auf einen Vektor beliebiger Länge fest. Ein solcher lief in das
+Modell, die Aufgabe des Prüfers starb an der Panik, und niemand aus dem Komitee
+stimmte: Der Betrüger entging dem Urteil. Bezeugt und in falscher Länge gilt
+jetzt als überführt, im Rumpf wie am Kopf.
 
 ### v0.28.0 (2026-11-05): Der Prüfer prüft die Wahl des Tokens
 

@@ -1,7 +1,7 @@
 # integer-llm
 
-> **Version:** 0.147.6 (θ_v 0.22.0; kernels 0.89.0, runtime 0.105.0, pipeline 0.15.4)
-> **Datum:** 2026-10-29
+> **Version:** 0.148.0 (θ_v 0.22.0; kernels 0.90.0, runtime 0.105.0, pipeline 0.15.4)
+> **Datum:** 2026-11-08
 > **Status:** ⚠️ **Das Akzeptanzkriterium ruht auf einer zu kleinen
 > Stichprobe.** Gemessen wurde bisher ueber **4 Sequenzen, 435
 > Positionen**; eine Messung ueber **32 Sequenzen, 3558 Positionen**
@@ -648,6 +648,30 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
   volle Paritätstests nur auf GPU-Runnern (nightly oder PR-basiert)
 
 ## Changelog
+
+### v0.148.0 (2026-11-08): AVX2 für `dot_i8_i16` (Fund A19)
+
+- ⚑ **`dot_avx2`** für x86_64 mit `cpu-simd`, zur Laufzeit erkannt, sonst
+  skalar. `laeuft_vektorisiert` sagt, was auf dieser Maschine gilt; danach
+  meldet sich der Rechenweg, ein x86_64 ohne AVX2 nennt sich nicht `cpu-simd`.
+  aarch64 ist unberührt.
+- Vorprobe im x86_64-Container unter Rosetta, wo `is_x86_feature_detected!`
+  AVX2 meldet: Paritätsproben, `allaussagen`, Konformität `cpu-simd` 55/55.
+  Zwei eingebaute Fehler (zu spätes Leeren, falsches Vorzeichen) fielen auf.
+  ⚠️ Rosetta übersetzt nach ARM; der Beleg auf echtem x86_64 steht aus.
+
+### v0.147.8 (2026-11-08): Der Konformitätslauf unter `sh`
+
+- `conformance/run.sh` startet sich unter bash neu, wenn es mit `sh` gerufen
+  wird. Auf Debian und Ubuntu ist `sh` die dash und kennt `pipefail` nicht;
+  `karten-pruefen.sh` ruft es so.
+
+### v0.147.7 (2026-11-08): Zwei Skripte
+
+- `build_artifacts.sh` fragt im Terminal, bevor es ein vorhandenes Artefakt
+  überschreibt. Ohne Terminal (Bezug im Klienten) wie bisher.
+- `tests/diag/boden_messen.sh` startet Python ungepuffert (Fund 408): Das
+  versprochene Mitlesen sieht die Zwischenstände.
 
 ### v0.147.6 (2026-11-05): Das Gleitkomma-Audit kennt die Prüfrollen
 

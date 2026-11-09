@@ -40,6 +40,13 @@ myl-node — ein Myelith-Netzknoten
   --zustandslos          Ohne Konten, Sitzungen, Manifeste und Hinterlegungen:
                          Blöcke nur mit Zeugen, keine Blockerzeugung, keine
                          fremden Transaktionen.
+  --anker <hoehe>:<block>:<bindung>:<slot>
+                         Anker von aussen: Hoehe, Block und Bindung (Hex) des
+                         Zertifikats eines Wechselbelegs und der Slot seines
+                         Blocks, vertraut wie Genesis. Noetig, sobald das Netz
+                         aelter als die Vertrauensfrist ist; darf selbst nicht
+                         aelter sein. Ein voller Knoten nennt ihn unter /anker
+                         und in der Zeile `wechselbeleg`.
   --einsatz <betrag>     Als Miner so viel Einsatz hinterlegen, in
                          Kleinstbeträgen (Vorgabe: keinen).
   --testverkehr <sek>    Takt des Testverkehrs (Vorgabe: keiner). Mit
@@ -485,6 +492,10 @@ fn lies_argumente() -> Result<Option<Argumente>, String> {
                 konfig.zustandslos = true;
                 i += 1;
             }
+            "--anker" => {
+                konfig.anker_von_aussen = Some(myl_node::wechsel::AnkerVonAussen::aus_text(&wert(i)?).map_err(|e| format!("--anker: {e}"))?);
+                i += 2;
+            }
             "--einsatz" => {
                 konfig.einsatz = Some(wert(i)?.parse().map_err(|_| "--einsatz erwartet eine Zahl".to_string())?);
                 i += 2;
@@ -896,73 +907,42 @@ async fn main() {
                 let konsens_fuer_tuer = konsens;
                 tokio::spawn(async move {
                     let tuer = myl_gateway::Tuer::aus_lauscher(lauscher);
-                    let mut annahme = myl_gateway::annahme::Annahme::neu(1, start);
-                    let mut stelle =
-                        myl_gateway::zugang::Zugangsstelle::neu(abschrift.clone());
-                    let mut weg = weg;
-                    loop {
-                        // 📌 **Erst annehmen, dann lesen** (Fund 647):
-                        // Die Tuer wartet beliebig lange; Epoche,
-                        // Schluessel und Uhr gelten fuer den Augenblick,
-                        // in dem die Anfrage da ist, nicht fuer den
-                        // Beginn des Wartens.
-                        let Ok(verbindung) = tuer.annehmen().await else {
-                            continue;
+                    let annahme = myl_gateway::annahme::Annahme::neu(1, start);
+                    let stelle = myl_gateway::zugang::Zugangsstelle::neu(abschrift.clone());
+                    let Some(weg) = weg else {
+                        myl_node::tuer::ohne_rechenweg_bedienen(tuer, annahme, stelle, abschrift).await;
+                        return;
+                    };
+                    // ⚑ **Der Epochenwechsel, bevor eine Anfrage bedient
+                    // wird.** `Sitzungen` gilt fuer genau eine Epoche; ohne
+                    // diesen Schritt versiegelte der Knoten nach der ersten
+                    // Epochengrenze fuer eine Epoche, die der Shard nicht
+                    // mehr fuehrt, und keine Anfrage kaeme mehr durch.
+                    let fuer_wechsel = abschrift.clone();
+                    let vor_jeder_anfrage = move |w: &myl_node::rechenweg::Ortsweg| {
+                        let Some(k) = konsens_fuer_tuer.as_ref() else {
+                            return;
                         };
-                        // ⚑ **Der Epochenwechsel, bevor die Anfrage
-                        // bedient wird.** `Sitzungen` gilt fuer genau
-                        // eine Epoche; ohne diesen Schritt versiegelte
-                        // der Knoten nach der ersten Epochengrenze fuer
-                        // eine Epoche, die der Shard nicht mehr fuehrt,
-                        // und keine Anfrage kaeme mehr durch.
-                        if let (Some(w), Some(k)) =
-                            (weg.as_mut(), konsens_fuer_tuer.as_ref())
-                        {
-                            let jetzt = abschrift.epoche();
-                            if jetzt != w.epoche() {
-                                let s = myl_siegel::Epochenschluessel::ziehe(jetzt);
-                                match k.epochenankuendigung(&s) {
-                                    Ok(bytes) => {
-                                        w.epoche_wechseln(jetzt, s, bytes);
-                                        eprintln!(
-                                            "myl-node: Sitzungsschluessel auf Epoche {} gewechselt",
-                                            jetzt.0
-                                        );
-                                    }
-                                    Err(e) => eprintln!(
-                                        "myl-node: Epochenankuendigung gescheitert ({e:?}); der Shard-Weg bleibt auf Epoche {}",
-                                        w.epoche().0
-                                    ),
-                                }
-                            }
+                        let jetzt = fuer_wechsel.epoche();
+                        if jetzt == w.epoche() {
+                            return;
                         }
-                        // Ein Verbindungsfehler ist kein Grund, die
-                        // Tuer zu schliessen: Meist ist es eine
-                        // Gegenstelle, die aufgelegt hat.
-                        match weg.as_ref() {
-                            Some(w) => {
-                                let _ = myl_node::tuer::eine_v1_anfrage(
-                                    &tuer,
-                                    verbindung,
-                                    &mut annahme,
-                                    &mut stelle,
-                                    &abschrift,
-                                    w,
-                                )
-                                .await;
+                        let s = myl_siegel::Epochenschluessel::ziehe(jetzt);
+                        match k.epochenankuendigung(&s) {
+                            Ok(bytes) => {
+                                w.epoche_wechseln(jetzt, s, bytes);
+                                eprintln!(
+                                    "myl-node: Sitzungsschluessel auf Epoche {} gewechselt",
+                                    jetzt.0
+                                );
                             }
-                            None => {
-                                let _ = myl_node::tuer::eine_anfrage(
-                                    &tuer,
-                                    verbindung,
-                                    &mut annahme,
-                                    &mut stelle,
-                                    &abschrift,
-                                )
-                                .await;
-                            }
+                            Err(e) => eprintln!(
+                                "myl-node: Epochenankuendigung gescheitert ({e:?}); der Shard-Weg bleibt auf Epoche {}",
+                                w.epoche().0
+                            ),
                         }
-                    }
+                    };
+                    myl_node::tuer::v1_bedienen(tuer, annahme, stelle, abschrift, std::sync::Arc::new(weg), vor_jeder_anfrage).await;
                 });
             }
             Err(e) => eprintln!("myl-node: Tuer nicht geoeffnet ({adresse}): {e}"),

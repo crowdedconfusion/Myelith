@@ -181,6 +181,16 @@ pub fn topic_from_hash(hash: &TopicHash) -> Option<GossipTopic> {
         .find(|t| t.topic().hash() == *hash)
 }
 
+/// ⚑ **Ob das Urteil über dieses Topic vom Knoten kommt** (Sicherheitsaudit
+/// A47). Die Netzschicht sieht nur, ob eine Nachricht lesbar ist; eine
+/// Unterschrift zu prüfen ist hier zu teuer. Bis hierher ging darum jede
+/// lesbare Transaktion und jeder lesbare Block weiter, auch unterschriftslos,
+/// und jeder Knoten des Netzes zahlte dafür: eine Flut mit Verstärkung, und
+/// eine Gegenstelle, die sie schickte, blieb unbewertet.
+pub fn urteil_folgt_spaeter(hash: &TopicHash) -> bool {
+    matches!(topic_from_hash(hash), Some(GossipTopic::Blocks | GossipTopic::Transactions))
+}
+
 /// Größenlimit des Topics (Bytes).
 pub fn max_payload_bytes(topic: GossipTopic) -> usize {
     match topic {
@@ -394,6 +404,16 @@ pub fn report_with(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Nur, was der Knoten wirklich beurteilt, wird gehalten: Bliebe ein
+    /// anderes Topic ohne Urteil, ginge es nie weiter.
+    #[test]
+    fn nur_bloecke_und_transaktionen_warten_auf_ein_urteil() {
+        for t in GossipTopic::all() {
+            let erwartet = matches!(t, GossipTopic::Blocks | GossipTopic::Transactions);
+            assert_eq!(urteil_folgt_spaeter(&t.topic().hash()), erwartet, "{t:?}");
+        }
+    }
 
     /// Segment-Ids zu Zeugnissen, mit einer aus der Id abgeleiteten
     /// Spurwurzel.

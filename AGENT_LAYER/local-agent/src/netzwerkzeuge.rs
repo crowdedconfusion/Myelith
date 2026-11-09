@@ -912,7 +912,13 @@ fn ist_oeffentlich(ip: std::net::IpAddr) -> bool {
                 || v6.is_unique_local()
                 || v6.is_unicast_link_local()
                 || (s[0] == 0x2001 && s[1] == 0x0db8)
-                || (s[0] == 0x0064 && s[1] == 0xff9b))
+                || (s[0] == 0x0064 && s[1] == 0xff9b)
+                // ⚑ Tragen eine IPv4-Adresse oder sind veraltet und intern:
+                //   6to4, Teredo, IPv4-kompatibel, standortlokal.
+                || s[0] == 0x2002
+                || (s[0] == 0x2001 && s[1] == 0)
+                || s[..6].iter().all(|t| *t == 0)
+                || (s[0] & 0xffc0) == 0xfec0)
         }
     }
 }
@@ -943,7 +949,8 @@ fn ein_abruf(
         .arg(FRIST_S.to_string())
         .arg("--max-filesize")
         .arg(HOECHSTMENGE.to_string())
-        .arg("--compressed")
+        // ⛔️ Kein `--compressed`: Die Mengengrenze gilt dem, was ankommt, und
+        //    20 MB gepackte Nullen ergäben Gigabyte auf der Platte.
         .arg("-A")
         .arg(KENNUNG)
         .arg("-H")
@@ -1836,7 +1843,7 @@ mod proben {
         let nein = [
             "127.0.0.1", "10.0.0.5", "172.16.5.4", "192.168.1.1", "169.254.169.254", "100.64.0.1",
             "0.0.0.0", "224.0.0.1", "255.255.255.255", "192.0.0.8", "198.18.0.1", "240.0.0.1",
-            "::1", "::", "fe80::1", "fd00::1", "ff02::1", "::ffff:192.168.1.1", "64:ff9b::a00:1", "2001:db8::1",
+            "::1", "::", "fe80::1", "fd00::1", "ff02::1", "::ffff:192.168.1.1", "64:ff9b::a00:1", "2002:7f00:1::1", "2001:0:7f00:1::1", "::7f00:1", "fec0::1", "2001:db8::1",
         ];
         for a in ja {
             assert!(ist_oeffentlich(a.parse().expect("Adresse")), "{a} gilt nicht als oeffentlich");

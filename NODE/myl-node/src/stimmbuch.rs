@@ -9,8 +9,8 @@
 //! Blöcke gesehen. Stimmte er nach einem Zweigwechsel noch einmal für einen
 //! Prüfpunkt, für den er schon gestimmt hat, oder baute er im selben Slot
 //! noch einmal, wäre das ein Doppelbeleg gegen ihn
-//! (`myl_consensus::double_signing::Doppelbeleg`). Die Regel ist die von
-//! Casper FFG: **Jede neue Stimme hat ein höheres Ziel und keine niedrigere
+//! (`myl_consensus::double_signing::Doppelbeleg`). Die Regel:
+//! **Jede neue Stimme hat ein höheres Ziel und keine niedrigere
 //! Quelle als die vorige**; dann widerspricht sie keiner früheren, weder
 //! doppelt noch umschliessend. Eine Wiederholung derselben Stimme bleibt
 //! erlaubt. Für Blöcke: **jeder Slot höchstens einmal**.

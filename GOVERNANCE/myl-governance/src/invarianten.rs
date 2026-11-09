@@ -44,8 +44,8 @@
 //! [`self_dealing`] nimmt gar kein `c` mehr entgegen, und damit hat die
 //! Zwei-Schritte-Lücke keinen ersten Schritt mehr. Die Schranke gilt
 //! jetzt auch dann, wenn die realen Kosten am unteren Rand des
-//! beobachteten Bereichs liegen; die Start-Subvention `s = 0,5` liegt mit
-//! dem Dreifachen Abstand darunter.
+//! beobachteten Bereichs liegen; die Start-Subvention `s = 1` liegt
+//! darunter.
 //!
 //! **`Parameter::Kostenanteil` bleibt in der Registry**, aber ohne
 //! Wirkung auf diese Prüfung. Das ist genau das Muster, an dem sich das

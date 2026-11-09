@@ -336,7 +336,7 @@ case "$befehl" in
     echo "Eingerichtet: $name als $rolle, P2P-Port $port."
     echo "Weiter mit: golem-knoten starten   (und golem-knoten an, damit er beim Start mitkommt)"
     [ "$rolle" = relais ] && echo "⚠️ Ein Relais braucht eine oeffentliche Adresse (--oeffentlich) und eine Weiterleitung von Port $port im Router."
-    [ "$erzeuger" = ja ] && echo "⚠️ Erzeuger: GENAU EIN Knoten im Netz baut die Bloecke. Zwei gabeln die Kette."
+    [ "$erzeuger" = ja ] && echo "⚠️ Erzeuger: nur mit dem Konsensschluessel aus dem Stimmsatz der Genesis. Solange der Satz aus dem Zustand noch nicht traegt, baut dieser Knoten; danach baut jeder volle Miner in den Slots, fuer die er gezogen ist."
     [ "$konformitaet" = aus ] && echo "⚠️ Ohne Konformitaetspruefung: nur fuer einen Probelauf."
     exit 0
     ;;

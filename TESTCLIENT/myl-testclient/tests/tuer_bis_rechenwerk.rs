@@ -215,14 +215,14 @@ async fn ein_harness_erreicht_durch_alle_schichten_ein_rechenwerk() {
     .als_bearer();
     let tuer = Tuer::binden(0).await.expect("binden");
     let port = tuer.port().expect("port");
-    let mut annahme = Annahme::neu(41, EpochId(5));
-    let mut stelle = Zugangsstelle::neu(EineQuelle(k));
+    let annahme = std::sync::Mutex::new(Annahme::neu(41, EpochId(5)));
+    let stelle = std::sync::Mutex::new(Zugangsstelle::neu(EineQuelle(k)));
 
     let koerper = r#"{"model":"myelith-qwen","messages":[{"role":"user","content":"hauptstadt von frankreich?"}],"max_tokens":16}"#;
     let bytes = post_bearer(WEG_CHAT, &token, koerper.as_bytes());
 
     let dienst = async {
-        tuer.bedienen_v1(&mut annahme, &mut stelle, &weg, EpochId(5), 1_700_000_000_000)
+        tuer.bedienen_v1(&annahme, &stelle, &myl_gateway::tuer::Besetzung::default(), &weg, EpochId(5), 1_700_000_000_000)
             .await
             .expect("bedienen");
     };
@@ -361,13 +361,13 @@ async fn eine_gerechnete_anfrage_bucht_credits_ab() {
     let bearer = token.als_bearer();
     let tuer = Tuer::binden(0).await.expect("binden");
     let port = tuer.port().expect("port");
-    let mut annahme = Annahme::neu(41, EpochId(5));
-    let mut stelle = Zugangsstelle::neu(EineQuelle(k));
+    let annahme = std::sync::Mutex::new(Annahme::neu(41, EpochId(5)));
+    let stelle = std::sync::Mutex::new(Zugangsstelle::neu(EineQuelle(k)));
 
     let koerper = r#"{"messages":[{"role":"user","content":"x"}],"max_tokens":16}"#;
     let bytes = post_bearer(WEG_CHAT, &bearer, koerper.as_bytes());
     let dienst = async {
-        tuer.bedienen_v1(&mut annahme, &mut stelle, &weg, EpochId(5), 1_000)
+        tuer.bedienen_v1(&annahme, &stelle, &myl_gateway::tuer::Besetzung::default(), &weg, EpochId(5), 1_000)
             .await
             .expect("bedienen");
     };
@@ -492,12 +492,12 @@ async fn v1_gegen(k: Sitzungskontrakt, zustand: Sitzungszustand, max_tokens: u32
     .als_bearer();
     let tuer = Tuer::binden(0).await.expect("binden");
     let port = tuer.port().expect("port");
-    let mut annahme = Annahme::neu(43, EpochId(5));
-    let mut stelle = Zugangsstelle::neu(MitStand(k, zustand));
+    let annahme = std::sync::Mutex::new(Annahme::neu(43, EpochId(5)));
+    let stelle = std::sync::Mutex::new(Zugangsstelle::neu(MitStand(k, zustand)));
     let koerper = format!(r#"{{"messages":[{{"role":"user","content":"x"}}],"max_tokens":{max_tokens}}}"#);
     let bytes = post_bearer(WEG_CHAT, &bearer, koerper.as_bytes());
     let dienst = async {
-        tuer.bedienen_v1(&mut annahme, &mut stelle, &weg, EpochId(5), 1_000).await.expect("bedienen");
+        tuer.bedienen_v1(&annahme, &stelle, &myl_gateway::tuer::Besetzung::default(), &weg, EpochId(5), 1_000).await.expect("bedienen");
     };
     let klient = tokio::task::spawn_blocking(move || {
         let mut strom = TcpStream::connect(("127.0.0.1", port)).expect("verbinden");

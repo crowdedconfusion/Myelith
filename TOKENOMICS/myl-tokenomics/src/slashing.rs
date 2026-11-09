@@ -363,8 +363,7 @@ pub fn urteil_buchen_gestaffelt(
     Ok((wirkung, satz))
 }
 
-/// Faktor der Korrelationsstrafe (Vorbild Ethereum,
-/// `PROPORTIONAL_SLASHING_MULTIPLIER` seit Bellatrix): Wird gleichzeitig ein
+/// Faktor der Korrelationsstrafe: Wird gleichzeitig ein
 /// Drittel des Gewichts geschlachtet, verliert jeder alles.
 pub const KORRELATION_FAKTOR: u64 = 3;
 

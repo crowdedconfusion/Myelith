@@ -25,14 +25,22 @@
 //! ⛔️ **Ein natives Modul ist keine Sicherheitsgrenze.** Es ist ein
 //! Programm mit den Rechten des Nutzers. Deshalb startet ein natives Modul
 //! nur mit einem Schluessel, der in der Vertrauensliste ausdruecklich als
-//! nativ markiert ist; alle anderen laufen abgeschottet.
+//! nativ markiert ist; alle anderen laufen abgeschottet (Merkmal `wasm`).
 
+#[cfg(feature = "wirt")]
+pub mod ablage;
+#[cfg(feature = "wirt")]
 pub mod beschreibung;
 pub mod filter;
+#[cfg(feature = "wirt")]
 pub mod fund;
 pub mod gast;
 pub mod nachricht;
+#[cfg(feature = "wirt")]
 pub mod signatur;
+#[cfg(feature = "wasm")]
+pub mod wasm;
+#[cfg(feature = "wirt")]
 pub mod wirt;
 
 /// **Die Fassung des Protokolls.** Konsole und Modul nennen sie beim

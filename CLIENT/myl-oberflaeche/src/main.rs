@@ -4281,7 +4281,7 @@ async fn wallet_lage() -> Result<Walletlage, String> {
             guthaben: lauf.as_ref().filter(|(n, _, _)| *n == w.name).map(|(_, g, _)| mining::myl_text(*g)),
             gewaehlt: Some(&w.name) == gewaehlt.as_ref(),
             eingetragen: Some(&w.name) == eingetragen.as_ref(),
-            adresse: w.adresse_hex(),
+            adresse: w.adresse_text(),
             name: w.name,
         })
         .collect();
@@ -4343,7 +4343,7 @@ async fn wallet_bestaetigen(notiert: bool, wort_a: String, wort_b: String) -> Re
         return Err("Die Wörter stimmen nicht; es wurde nichts angelegt. Neu beginnen.".into());
     }
     let w = myl_client::wallet::speichern(&name, &e)?;
-    Ok(format!("{} angelegt: {}", w.name, w.adresse_hex()))
+    Ok(format!("{} angelegt: {}", w.name, w.adresse_text()))
 }
 
 #[tauri::command]

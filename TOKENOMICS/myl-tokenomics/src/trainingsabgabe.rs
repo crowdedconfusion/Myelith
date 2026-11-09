@@ -20,16 +20,12 @@
 //! übrig hat. Genau dann ist Training auch am billigsten, denn die
 //! Pods stünden sonst still.
 //!
-//! Zwei erprobte Vorbilder tragen die Form:
+//! Die Richtung ist antizyklisch: aufbauen, wenn es gut läuft, auflösen,
+//! wenn nicht. Die Form ist eine protokollgesetzte Abgabe, die an der
+//! Auslastung hängt und nicht an einer Verhandlung.
 //!
-//! | Vorbild | Was dort geschieht | Was hier davon gilt |
-//! |---|---|---|
-//! | Basel III, antizyklischer Kapitalpuffer | Banken legen im Aufschwung zurück und lösen im Abschwung auf | Die Richtung: aufbauen, wenn es gut läuft |
-//! | EIP-1559, Basisgebühr | Eine protokollgesetzte Gebühr steigt über einem Auslastungsziel | Die Form: die Abgabe hängt an der Auslastung, nicht an einer Verhandlung |
-//!
-//! ⚑ **Der Unterschied zu EIP-1559 ist der Verbleib.** Dort wird die
-//! Basisgebühr **verbrannt**; hier fliesst sie in einen Fonds und kommt
-//! als Trainingsvergütung zu denselben Minern zurück. Verbrennen wäre
+//! ⚑ **Die Abgabe wird nicht verbrannt.** Sie fliesst in einen Fonds und
+//! kommt als Trainingsvergütung zu denselben Minern zurück. Verbrennen wäre
 //! hier falsch: Es nähme dem Netz genau das Geld, mit dem es sein Modell
 //! verbessert.
 //!

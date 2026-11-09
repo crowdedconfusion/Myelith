@@ -15,7 +15,7 @@
 //! gezogen ist), und der längere Zweig überholte die ehrliche Kette und
 //! spulte die Epochen vor. Ein Slot ist ein Zeitabschnitt (Slot 0 beginnt
 //! mit der Unix-Zeit); ein Zweig wächst höchstens um einen Block je Slot
-//! seiner Erzeuger, wie in Ouroboros Praos, BABE und Gasper.
+//! seiner Erzeuger.
 //!
 //! **Die Uhr bleibt aus dem Zustand:** Die Kette prüft nur, dass der Slot
 //! nach dem des Vorgängers liegt und der Unterzeichner für ihn gezogen ist.

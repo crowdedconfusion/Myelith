@@ -47,6 +47,19 @@ fi
 
 echo "[build_artifacts] Interpreter: ${PY}"
 
+# ⚑ **Im Terminal wird gefragt, bevor ein Messobjekt ueberschrieben wird.**
+#   Der Lauf rechnet eine Stunde; Skripte ohne Terminal (Bezug im Klienten)
+#   haben das Modell ausdruecklich bestellt und werden nicht aufgehalten.
+ZIEL="${INTEGER_LLM_ARTIFACTS_DIR:-artifacts}/${INTEGER_LLM_MODEL:-}"
+if [ -t 0 ] && [ -n "${INTEGER_LLM_MODEL:-}" ] && [ -f "${ZIEL}/model_config.json" ]; then
+    printf '[build_artifacts] %s liegt schon da und wird ueberschrieben. Weiter? [j/N] ' "${ZIEL}"
+    read -r ANTWORT
+    case "${ANTWORT}" in
+        j|J) ;;
+        *) echo "[build_artifacts] Nichts geaendert."; exit 1 ;;
+    esac
+fi
+
 # ⚑ **Der WikiText-2-Testsplit gehoert zur Kalibrierung** (Fund 553): Die
 #   Aktivierungsskalen entstehen aus ihm, und im Repositorium liegt er
 #   nicht. Fehlt er, wird er geholt und gegen seine Pruefsumme geprueft;

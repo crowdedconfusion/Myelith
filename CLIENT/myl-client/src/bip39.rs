@@ -9,8 +9,8 @@
 //!   MIT, SHA-256 `2f5eed53…dbda`; die Probe haelt den Abdruck fest).
 //! - **Seed**: PBKDF2-HMAC-SHA512 ueber die Woerter mit dem Salz
 //!   `mnemonic` und 2048 Runden, 64 Bytes, wie BIP-39 es festlegt.
-//! - **Schluessel**: Aus dem Seed leitet `BlsSecretKey::key_gen` (IETF
-//!   KeyGen) den Hauptschluessel nach EIP-2333 ab; das steht in
+//! - **Schluessel**: Aus dem Seed leitet `BlsSecretKey::aus_ausgangsmaterial` (IETF
+//!   KeyGen) den Schluessel nach EIP-2333 und EIP-2334 ab; das steht in
 //!   `crate::wallet`.
 //!
 //! ⚑ **HMAC und PBKDF2 sind hier selbst geschrieben**, auf `sha2`, das der

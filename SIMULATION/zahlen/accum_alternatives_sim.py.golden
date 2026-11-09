@@ -1,0 +1,61 @@
+==============================================================================
+ZENTRALISIERUNGSFREIE ALTERNATIVE ZUR fp32-PFLICHT
+==============================================================================
+[1] Rauschpegel je Shard (relative Abweichung)
+    Variante                                            s_hw    vs. fp16
+    --------------------------------------------------------------------
+    A  fp16/bf16-Akkumulation (kein Malus)          2.32e-02          1x
+    B  fp32-Akkumulation (Consumer: -50 %)          2.83e-06       8192x
+    C  Zwei-Stufen (fp16-Block + fp32-Summe)        9.26e-03          2x
+
+    Variante C ist 2x genauer als fp16 und 3277x ungenauer als fp32.
+    Das Modell faellt damit in beiden Richtungen ungenauer aus als die
+    Literaturangaben (~10x besser als fp16, ~100x schlechter als fp32).
+
+[2] Heterogenitaet: Spannweite der Rauschpegel ueber alle Anbieter
+    A  fp16 ueberall           Spannweite   1.14x   sigma 0.07
+    C  Zwei-Stufen ueberall    Spannweite   1.00x   sigma 0.00
+    ==> Entscheidend ist nicht der absolute Pegel, sondern dass ALLE
+        Knoten dasselbe Verfahren nutzen. Variante C ist auf jeder
+        Hardware ohne Durchsatzmalus implementierbar — die Homogenitaet
+        entsteht durch die Vorschrift, nicht durch das Format.
+
+[3] Variante D: Quantisiertes Commitment auf Basis von C
+    Pipeline-Rauschen (k=8) bei Variante C: 2.62e-02
+      Rasterweite =  10x Rauschen -> 2.62e-01   Kollisionsrate ehrlicher Knoten: 1.1e-01
+      Rasterweite =  30x Rauschen -> 7.86e-01   Kollisionsrate ehrlicher Knoten: 3.7e-02
+      Rasterweite = 100x Rauschen -> 2.62e+00   Kollisionsrate ehrlicher Knoten: 1.1e-02
+    ==> Ein Raster deutlich oberhalb des Rauschens laesst ehrliche
+        Knoten identische Commitments erzeugen: der Vergleich wird
+        wieder EXAKT (Hash-Gleichheit), ohne Determinismuszwang.
+
+[4] Trennbarkeit realer Angriffe
+    Bezugsgroesse: Rasterweite D = 7.86e-01 (30x Pipeline-Rauschen)
+    Angriff                            rel. Abw.   Verhaeltnis   Bewertung
+    ----------------------------------------------------------------------------
+    Layer uebersprungen                    3e-01            0x   NICHT erkannt
+    Falsche Gewichte                       2e-01            0x   NICHT erkannt
+    fp8 statt bf16 (heimlich)              6e-02            0x   NICHT erkannt
+    int8-Quantisierung                     3e-02            0x   NICHT erkannt
+    Aktivierungs-Pruning 10 %              5e-03            0x   NICHT erkannt
+    Feinste Lenkung (~Raster)              8e-01            1x   per Definition unterhalb — s. [5]
+
+[5] Maximaler unentdeckter Eingriff unter Variante D
+    Er entspricht der halben Rasterweite: 3.9e-01 relativ.
+    Zum Vergleich: bf16-Rundung allein betraegt 3.9e-03,
+    d. h. der Versteckraum liegt rund 101x ueber dem, was das
+    Uebertragungsformat ohnehin an Information verwirft.
+
+==============================================================================
+BEWERTUNG
+  + Variante C vermeidet den Consumer-Malus vollstaendig, senkt das
+    Rauschen gegenueber reinem fp16 im Modell aber nur um das Zweifache.
+  + Variante D stellt darauf aufbauend EXAKTE Commitment-Gleichheit her:
+    kein globales TAU noetig, kein Toleranzband, kein Kalibrierungsrisiko.
+  - Alle Angriffe aus [4] bleiben unter der Rasterweite von 30x
+    Pipeline-Rauschen und werden vom Commitment NICHT erkannt.
+  - Der Versteckraum ist die halbe Rasterweite und liegt rund zwei
+    Groessenordnungen ueber der bf16-Rundung.
+  ! ZU MESSEN (M0): tatsaechliche Rauschpegel des Zwei-Stufen-Kernels
+    auf realer Hardware und die Kollisionsrate an den Rastergrenzen.
+==============================================================================

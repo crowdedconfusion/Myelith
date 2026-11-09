@@ -1,0 +1,70 @@
+speicherentgelt_sim: der Satz, hergeleitet statt gesetzt
+
+(1) Reale Kosten unter den Annahmen im Kopf:
+    eine Byte-Epoche:      8.154e-16
+    eine Rechenoperation:  2.274e-19
+
+(2) ⚑ Das Verhaeltnis, und das ist der Vorschlag:
+    **1 Byte-Epoche == 3,586 Recheneinheiten**
+    Wer eine MYL verbrennt und dafuer N Recheneinheiten bekommt,
+    bekommt fuer dieselbe MYL N/3,586 Byte-Epochen.
+
+    ⚑ Und das ist die eigentliche Aussage: **Speicher ist teuer,
+      gemessen in Recheneinheiten.** Ein Beschleuniger liefert rund
+      1e18 Operationen je Stunde; ein Byte liegt eine Stunde lang da.
+      Deshalb ist Fund 106 kein Rundungsfehler.
+
+(3) Empfindlichkeit gegen die Annahmen:
+    Platte halb so teuer              2,432  (0.68-fach)
+    Platte doppelt so teuer           5,896  (1.64-fach)
+    Karte halb so teuer               6,357  (1.77-fach)
+    Karte doppelt so schnell          7,173  (2.00-fach)
+    Strom dreifach                    3,554  (0.99-fach)
+    ⚑ Ueber alle Faelle: Faktor 2.9 zwischen groesstem und kleinstem.
+
+(4) ⚑ Warum ein Verhaeltnis und kein fester Satz:
+    Der Credit-Preis folgt P_{e+1} = P_e · exp(kappa·(u−u*)).
+    Nach 10 Epochen mit +10 %/10 Epochen: Rechenpreis 1.10-fach.
+    Nach 50 Epochen mit +10 %/10 Epochen: Rechenpreis 1.61-fach.
+    Ein fester Speichersatz waere dann um denselben Faktor
+    subventioniert, **ohne dass jemand etwas entschieden haette**.
+    Ein Verhaeltnis kann nicht auseinanderlaufen.
+
+(5) ⚑ Gegenprobe gegen den Markt: was die Wolke nimmt
+    eigene Hardware, mit Wirt:     0.60 je TB-Monat
+    eigene Hardware, nackte Platte:   0.41 je TB-Monat
+    Objektspeicher am Markt (Stand 2026-09), je TB-Monat:
+      Backblaze B2               6.95   Faktor  11.7
+      Wasabi                     7.99   Faktor  13.4
+      Azure Blob Hot            18.00   Faktor  30.2
+      Google Cloud Standard     20.00   Faktor  33.6
+      AWS S3 Standard           23.00   Faktor  38.6
+
+    ⚑ **Die Wolke ist nicht die Grundlage, und der Abstand ist
+      kein Fehler.** Ein Anbieter verkauft eine Leistung: Redundanz,
+      Rechenzentrum, Bandbreite, Personal, Verfuegbarkeitszusage,
+      Marge. Myelith kauft davon nichts. **Die Redundanz rechnet das
+      Protokoll ohnehin getrennt** (`Manifest::redundanz`), sie
+      steckt also nicht im Satz, sondern in der Bytezahl.
+
+      Der Vergleich taugt trotzdem, und zwar als Schranke: Ein Satz
+      **ueber** dem billigsten Marktangebot waere widerlegt, denn
+      dann waere Zukaufen billiger als Selbsthalten.
+
+(6) ⚑ Der entschiedene Satz, gegen den Code gehalten
+    SPEICHERSATZ_VORGABE   =   9000  (entschieden 2026-09-02, Punkt B4)
+    SPEICHER_KOSTENBODEN   =   3000  (Kosten eines effizienten Halters)
+    hier gerechnete Kosten =   3586  (zwoelf Platten je Wirt)
+    Satz 9000 ergibt 1.49 je TB-Monat; Storj zahlt 1,50
+
+    ⚑ **Die Zahl steht im Code, nicht hier.** Diese Datei rechnet
+      die Grundlage; welcher Satz daraus gewaehlt wurde, ist eine
+      Entscheidung und steht in `myl_tokenomics::speicherentgelt`.
+      Zwei Zahlen fuer dieselbe Aussage liefen auseinander.
+
+(7) Was hier NICHT entschieden wird:
+    Die zweite Zahl aus Punkt 25, die **Aufnahmeschwelle fuer
+    Netzwerkwissen**. Sie braucht Abrufzaehlung und damit Verkehr;
+    ⚑ eine Schwelle ohne gemessene Abrufe waere geraten.
+
+speicherentgelt_sim: alle Behauptungen bestanden.

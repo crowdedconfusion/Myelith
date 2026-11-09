@@ -17,7 +17,9 @@
 //! Schloss im Netz. **Wer öffentlich hören will, braucht Stufe 2 und
 //! nicht ein anderes Argument.**
 
+use std::collections::HashSet;
 use std::io;
+use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -40,6 +42,44 @@ impl Kontraktquelle for LeereQuelle {
     fn nachschlagen(&self, _: SitzungId) -> Option<(Sitzungskontrakt, Sitzungszustand)> {
         None
     }
+}
+
+/// ⚑ **Welche Sitzungen gerade rechnen** (Sicherheitsaudit A23). Der Deckel
+/// der Tuer zaehlt Verbindungen; dieser sorgt dafuer, dass ein einzelner
+/// Kontrakt nicht alle Plaetze nimmt und dass zwei Anfragen nicht dieselbe
+/// Budgetpruefung bestehen, von denen die Kette dann eine abweist.
+#[derive(Debug, Default)]
+pub struct Besetzung(Mutex<HashSet<SitzungId>>);
+
+/// Haelt eine Sitzung besetzt; gibt sie beim Fallenlassen frei, auch wenn
+/// die Verbindung abbricht.
+#[derive(Debug)]
+pub struct Besetzt<'a> {
+    besetzung: &'a Besetzung,
+    sitzung: SitzungId,
+}
+
+impl Besetzung {
+    /// Belegt die Sitzung, oder `None`, wenn sie schon rechnet.
+    pub fn belegen(&self, sitzung: SitzungId) -> Option<Besetzt<'_>> {
+        // 📌 Zwei Schritte und `then`: `then_some` baute den Griff schon bei
+        // einer besetzten Sitzung, und sein `Drop` wartete auf die Sperre, die
+        // derselbe Ausdruck noch hielt. Die Probe hing daran.
+        let frei = gesperrt(&self.0).insert(sitzung);
+        frei.then(|| Besetzt { besetzung: self, sitzung })
+    }
+}
+
+impl Drop for Besetzt<'_> {
+    fn drop(&mut self) {
+        gesperrt(&self.besetzung.0).remove(&self.sitzung);
+    }
+}
+
+/// Sperrt auch nach einer Panik in einer anderen Verbindung: Was hier liegt,
+/// sind Zaehler und Mengen, und die Tuer soll weiter bedienen.
+fn gesperrt<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 /// Der Weg, unter dem Anfragen angenommen werden.
@@ -230,16 +270,27 @@ impl Tuer {
     }
 
     /// Beantwortet eine angenommene Verbindung an der `/v1`-Tür.
-    pub async fn v1_beantworten<Q: Kontraktquelle, R: crate::oai::Rechenweg>(
+    ///
+    /// ⚑ Annahme und Zugang geteilt (A23): Mehrere Verbindungen laufen
+    /// zugleich, gesperrt wird nur fuer die Buchung, nie ueber die Inferenz.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn v1_beantworten<Q: Kontraktquelle, R: crate::oai::Rechenweg + ?Sized>(
         &self,
         v: Verbindung,
-        annahme: &mut Annahme,
-        zugang: &mut Zugangsstelle<Q>,
+        annahme: &Mutex<Annahme>,
+        zugang: &Mutex<Zugangsstelle<Q>>,
+        besetzung: &Besetzung,
         weg: &R,
         jetzt: EpochId,
         jetzt_ms: u64,
     ) -> io::Result<()> {
-        Self::eine_v1_verbindung(v.0, self.lesefrist, annahme, zugang, weg, jetzt, jetzt_ms).await
+        Self::eine_v1_verbindung(v.0, self.lesefrist, annahme, zugang, besetzung, weg, jetzt, jetzt_ms).await
+    }
+
+    /// ⚑ **Die Antwort, wenn alle Plaetze besetzt sind** (A23): vor dem
+    /// Lesen, also ohne Arbeit und fuer jede Verbindung gleich.
+    pub async fn voll(mut v: Verbindung) -> io::Result<()> {
+        Self::v1_fehler(&mut v.0, 503, "die Tuer ist voll").await
     }
 
     async fn eine_verbindung<Q: Kontraktquelle>(
@@ -348,23 +399,26 @@ impl Tuer {
     ///
     /// ⚠️ Epoche und Uhr stehen fest, bevor die Tür wartet; siehe
     /// [`Tuer::annehmen`] (Fund 647).
-    pub async fn bedienen_v1<Q: Kontraktquelle, R: crate::oai::Rechenweg>(
+    pub async fn bedienen_v1<Q: Kontraktquelle, R: crate::oai::Rechenweg + ?Sized>(
         &self,
-        annahme: &mut Annahme,
-        zugang: &mut Zugangsstelle<Q>,
+        annahme: &Mutex<Annahme>,
+        zugang: &Mutex<Zugangsstelle<Q>>,
+        besetzung: &Besetzung,
         weg: &R,
         jetzt: EpochId,
         jetzt_ms: u64,
     ) -> io::Result<()> {
         let v = self.annehmen().await?;
-        self.v1_beantworten(v, annahme, zugang, weg, jetzt, jetzt_ms).await
+        self.v1_beantworten(v, annahme, zugang, besetzung, weg, jetzt, jetzt_ms).await
     }
 
-    async fn eine_v1_verbindung<Q: Kontraktquelle, R: crate::oai::Rechenweg>(
+    #[allow(clippy::too_many_arguments)]
+    async fn eine_v1_verbindung<Q: Kontraktquelle, R: crate::oai::Rechenweg + ?Sized>(
         mut strom: TcpStream,
         frist: Duration,
-        annahme: &mut Annahme,
-        zugang: &mut Zugangsstelle<Q>,
+        annahme: &Mutex<Annahme>,
+        zugang: &Mutex<Zugangsstelle<Q>>,
+        besetzung: &Besetzung,
         weg: &R,
         jetzt: EpochId,
         jetzt_ms: u64,
@@ -412,10 +466,8 @@ impl Tuer {
             credits: 0,
             modell: myl_types::hash::Hash::sha256(&rumpf),
         };
-        if !zugang
-            .durchlassen_mit_vollmacht(&vollmacht, &rahmen, jetzt_ms)
-            .erlaubt()
-        {
+        let durchgelassen = gesperrt(zugang).durchlassen_mit_vollmacht(&vollmacht, &rahmen, jetzt_ms).erlaubt();
+        if !durchgelassen {
             return Self::v1_abgewiesen(&mut strom).await;
         }
 
@@ -439,13 +491,18 @@ impl Tuer {
             }
         };
 
+        // ⚑ **Je Sitzung eine Anfrage zugleich** (A23), vor der Annahme: Eine
+        // abgewiesene bekommt keine Sitzungsnummer.
+        let Some(_besetzt) = besetzung.belegen(sitzung_id) else {
+            return Self::v1_fehler(&mut strom, 429, "diese Sitzung rechnet schon").await;
+        };
+
         // ⚑ **Erst annehmen, dann rechnen.** Der Beleg entsteht aus dem
         // Prompt und bindet ihn; wer erst rechnet, hat Arbeit ohne
         // Bindung und kann sie hinterher niemandem zuordnen.
         let prompt = anfrage.prompt();
-        let beleg = match annahme
-            .annehmen_mit(prompt.as_bytes(), Some(crate::zugang::Ausweisweg::Vollmacht))
-        {
+        let angenommen = gesperrt(annahme).annehmen_mit(prompt.as_bytes(), Some(crate::zugang::Ausweisweg::Vollmacht));
+        let beleg = match angenommen {
             Ok(b) => b,
             Err(e) => return Self::v1_fehler(&mut strom, 400, &format!("{e:?}")).await,
         };
@@ -474,7 +531,8 @@ impl Tuer {
         // 📌 **Und der Kontrakt, mit demselben Höchstbetrag** (Fund 651):
         // Einzellimit und Restbudget prüft sonst erst die Kette, nach dem
         // Rechnen, und dann ist die Arbeit verschenkt.
-        if !zugang.deckt_der_kontrakt(&vollmacht, &hoechstens) {
+        let gedeckt = gesperrt(zugang).deckt_der_kontrakt(&vollmacht, &hoechstens);
+        if !gedeckt {
             return Self::v1_fehler(&mut strom, 402, "der Kontrakt deckt diesen Auftrag nicht").await;
         }
 

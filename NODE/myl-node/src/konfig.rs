@@ -213,8 +213,14 @@ pub struct KnotenKonfig {
     /// keine Blöcke und nimmt keine fremden Transaktionen an. Nur seine
     /// eigenen Konten führt er mit.
     pub zustandslos: bool,
+    /// ⚑ **Der Anker von aussen** (`--anker <hoehe>:<block>:<bindung>`,
+    /// CONSENSUS 7.4a, 2026-11-07): Hoehe, Block und Bindung des Zertifikats
+    /// eines Wechselbelegs, vom Betreiber genannt und vertraut wie Genesis. Nach
+    /// einer Ruhe der Finalitaet, in der die Kette Stille ausschloss, kommt
+    /// ein Knoten ohne Zustand nur so wieder hinein.
+    pub anker_von_aussen: Option<crate::wechsel::AnkerVonAussen>,
     /// ⚑ **Den grossen Zustandsbaum auf die Platte auslagern**
-    /// (`--baum-auf-platte`, 2026-10-30, nach dem Vorbild von NOMT): Die
+    /// (`--baum-auf-platte`, 2026-10-30): Die
     /// Seiten liegen neben der Kettendatei (sonst im Protokollverzeichnis);
     /// im Speicher bleibt der obere Baum. Ein Zwischenspeicher: Der Knoten
     /// baut ihn beim Start neu.
@@ -416,6 +422,7 @@ impl Default for KnotenKonfig {
             testverkehr_sekunden: None,
             einsatz: None,
             zustandslos: false,
+            anker_von_aussen: None,
             baum_auf_platte: false,
             zeugen_bereithalten: false,
             selbstprobe_aus: false,

@@ -6,8 +6,8 @@
 //! Knoten daraus machen.
 //!
 //! - `MYL_ZURUECKHALTEN_MS=<ms>`: Jeder eigene Block geht erst so viel
-//!   später hinaus (ein später Block; Vorbild der private Angriff auf
-//!   Ketten nach der Länge und die verspäteten Blöcke bei Gasper).
+//!   später hinaus (ein später Block; der private Angriff auf Ketten
+//!   nach der Länge).
 //!   Erwartet: Ein ehrlicher Knoten wechselt nur für einen echt längeren
 //!   oder höher gerechtfertigten Zweig, nie unter den endgültigen
 //!   Prüfpunkt.

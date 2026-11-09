@@ -1,0 +1,92 @@
+============================================================================
+TRAINING UND TOKENOMICS: VERTRAEGT SICH DAS?
+============================================================================
+
+[1] Wirkung auf die Netto-Inflation
+    Variante                                 Netto-Inflation       Delta
+    --------------------------------------------------------------------
+    Referenz: nur Inferenz                           11.81%           -
+    Training aus Treasury (3 %)                      11.81%     +0.00%
+    Training aus Zusatzpraegung (10 %)               23.00%    +11.18%
+    Training aus Gebuehrenaufschlag (5 %)            11.76%     -0.05%
+
+    ==> Nur die Zusatzpraegung verschiebt die Inflation spuerbar.
+        Treasury und Gebuehrenaufschlag lassen den Kreislauf unberuehrt:
+        Ersteres verteilt vorhandene Praegung um, Letzteres erhoeht den
+        Burn im gleichen Mass wie die Ausgabe.
+
+[2] Reichen die 3 % Treasury?
+       Trainingsanteil    gedeckt aus Treasury    Restbedarf
+    ----------------------------------------------------------
+                   2%                     2%  vollstaendig
+                   3%                     3%  vollstaendig
+                   5%                     3%      2% offen
+                  10%                     3%      7% offen
+
+    ==> Die Treasury deckt Trainingsanteile bis 3 % der Praegung.
+        Die in Kap. 7.1 genannten 5-10 % beziehen sich auf die freie
+        KAPAZITAET, nicht auf die Praegung: Bei einer Netzauslastung von
+        70 % entsprechen 10 % freier Kapazitaet nur 3 % der Gesamtleistung.
+        Die Groessen sind also vertraeglich, aber die Doppelbedeutung
+        von 'Anteil' gehoert im Text klargestellt.
+
+[3] Lohnt es sich, von Inferenz auf Training auszuweichen?
+    Miner waehlen die hoehere Verguetung je Rechenstunde.
+
+      Verguetungsverhaeltnis               Verhalten der Miner
+    ----------------------------------------------------------
+                        0.5xTraining nur bei freier Kapazitaet ✅
+                        1.0xindifferent, Zuteilung entscheidet
+                        1.5x       Inferenz wird verdraengt ⚠️
+
+    ==> Die Trainingsverguetung MUSS unter der Inferenzverguetung je
+        Rechenstunde liegen, sonst verdraengt Training die Inferenz und
+        damit die Einnahmequelle des Netzwerks. Empfehlung: hoechstens
+        70 % der Inferenzverguetung, festgelegt per Governance.
+
+[4] Traegt sich Training langfristig selbst?
+    Besseres Modell -> mehr Nachfrage -> mehr Burn -> mehr Praegung.
+
+        Qualitaetseffekt    Burn nach 2000 Epochen    ggue. Referenz
+    ----------------------------------------------------------------
+           keine Wirkung               41,280,213            +0.0%
+         schwach (+15 %)               45,088,795            +9.2%
+        deutlich (+40 %)               52,428,529           +27.0%
+
+    ==> Sobald Training die Modellqualitaet messbar verbessert, finanziert
+        es sich ueber die gestiegene Nachfrage selbst. Der Kreislauf
+        bleibt geschlossen, nur mit einer zusaetzlichen Rueckkopplung.
+        Voraussetzung ist, dass die Qualitaetsverbesserung tatsaechlich
+        eintritt: Sie ist die eigentliche Rechtfertigung der Ausgabe.
+
+[5] Gelten die Sicherheitsbedingungen auch fuer Training?
+    Anhang B.1 leitet S_min = g/p^2 aus dem Gewinn g je betrogenem
+    Segment und der Stichprobenrate p her. Fuer Training gilt dieselbe
+    Struktur, mit zwei Unterschieden:
+
+      - g ist kleiner, da die Trainingsverguetung niedriger liegt (Punkt 3).
+        Der erforderliche Stake sinkt entsprechend.
+      - Der Schaden ist jedoch groesser: Ein durchgerutschtes Inferenz-Segment
+        betrifft eine Antwort, ein durchgerutschter Gradient das Modell und
+        damit alle kuenftigen Antworten.
+
+    Daraus folgt: Fuer Trainingssegmente ist die Stichprobenrate p HOEHER
+    anzusetzen als fuer Inferenz, nicht der Stake. Eine hoehere Prueframe
+    kostet Kapazitaet, keine Kapitalbindung, und wirkt unmittelbar.
+
+============================================================================
+ERGEBNIS: DREI ANPASSUNGEN AN KAPITEL 5
+
+  1. Die Trainingsverguetung je Rechenstunde muss unter der Inferenz-
+     verguetung liegen (Empfehlung: hoechstens 70 %), sonst verdraengt
+     Training die Einnahmequelle des Netzwerks.
+  2. Finanzierung aus Treasury und optionalem Gebuehrenaufschlag, NICHT
+     aus Zusatzpraegung: Nur so bleibt die Netto-Inflation unveraendert.
+  3. Fuer Trainingssegmente gilt eine hoehere Stichprobenrate als fuer
+     Inferenz, da der Schaden eines unentdeckten Fehlers groesser ist.
+
+  Der Burn-and-Mint-Kreislauf selbst bleibt unveraendert gueltig. Training
+  fuegt ihm eine Rueckkopplung hinzu: Bessere Modellqualitaet erhoeht die
+  Nachfrage und damit den Burn, aus dem sich die Praegung speist.
+
+============================================================================

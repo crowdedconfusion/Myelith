@@ -641,6 +641,22 @@ pub fn burn_spielraum(geglaetteter_burn: u64, bereits_verbrannt: u64) -> u64 {
     deckel.saturating_sub(bereits_verbrannt)
 }
 
+/// ⚑ **Ob diese Adresse den Betrag jetzt verbrennen darf** (W4, Whitepaper
+/// 5.6): Der Deckel gilt nur, solange `subvention` läuft; ohne sie ist
+/// `M_e ≤ B̄_e`, und Self-Dealing verliert ohnehin.
+///
+/// ⚠️ Der Deckel gilt je Adresse und lässt sich auf mehrere Adressen
+/// verteilen. Er bremst den einzelnen Stoß; die Sicherheit bleibt bei der
+/// Arbeitsbindung der Prägung (Anhang B.4).
+pub fn burn_im_deckel(
+    state: &myl_ledger::LedgerState,
+    addr: &myl_types::ids::Address,
+    betrag: u64,
+    subvention: bool,
+) -> bool {
+    !subvention || betrag <= burn_spielraum(state.burn_ema, state.account(addr).verbrannt_in(state.epoch.0))
+}
+
 /// Volumen, ab dem der Burn-Deckel greift, in Kleinstbeträgen.
 ///
 /// 1000 MYL geglätteter Burn je Epoche. Darunter ist das Netz so klein,

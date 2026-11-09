@@ -18,7 +18,7 @@
 //!
 //! 1. **Geheimhaltung:** Wer weniger als die Haelfte des Einsatzes haelt,
 //!    haelt weniger als `schwelle` Sitze, kann die Saat also nicht allein
-//!    bilden. Die Schwelle ist `⌈S/2⌉`, wie bei Aptos.
+//!    bilden. Die Schwelle ist `⌈S/2⌉`.
 //! 2. **Lebendigkeit:** Wer mindestens zwei Drittel des Einsatzes haelt,
 //!    haelt mindestens `schwelle` Sitze. Sein Rest hat hoechstens ein
 //!    Drittel des Einsatzes, also hoechstens `⌊S/3⌋` Sitze; gesucht wird

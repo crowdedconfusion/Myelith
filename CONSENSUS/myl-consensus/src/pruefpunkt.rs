@@ -3,13 +3,12 @@
 //!
 //! # ⚑ Was hier steht und warum so
 //!
-//! Das Ziel ist das Whitepaper (Kap. 3.5.2: BFT je Block, HotStuff-Familie,
+//! Das Ziel ist das Whitepaper (Kap. 3.5.2: BFT je Block,
 //! der Erzeuger rotiert per VRF). Stufe 1 sind Prüfpunkte: Der Block an jeder
 //! Höhe `150 · n` wird vom Stimmsatz bestätigt, und das Zertifikat geht in
 //! einen späteren Block ([`crate::block::BlockHeader::pruefpunkt`]).
 //!
-//! **Keine Runden, kein Leader** (Festlegung vom selben Tag, nach Casper FFG
-//! und GRANDPA): Der Block eines Prüfpunkts steht schon fest, es gibt nichts
+//! **Keine Runden, kein Leader** (Festlegung vom selben Tag): Der Block eines Prüfpunkts steht schon fest, es gibt nichts
 //! vorzuschlagen. Jedes Mitglied unterschreibt (Höhe, Blockhash) des Blocks,
 //! den es an dieser Höhe hat ([`Pruefpunktstimme`]); sobald mehr als zwei
 //! Drittel des Gewichts beisammen sind, kann jeder daraus ein
@@ -27,13 +26,12 @@
 //! den Hash der Stimmsaetze der beiden folgenden Epochen, wie der Zustand sie
 //! nach dem Block fuehrt. Ein Zertifikat des Satzes von `e` bestaetigt damit,
 //! wer in `e + 1` und `e + 2` traegt. Wer neu einsteigt, folgt so dem Satz
-//! von Genesis an, ein Zertifikat je Epoche, ohne einen Block zu holen
-//! (Vorbild: der Warp-Sync von GRANDPA). 📌 Im Blockkopf haette die Bindung
+//! von Genesis an, ein Zertifikat je Epoche, ohne einen Block zu holen.
+//! 📌 Im Blockkopf haette die Bindung
 //! nichts genuetzt: Der Blockhash deckt alle Transaktionen, und ein Beleg
 //! haette den ganzen Block tragen muessen.
 //!
-//! ⚑ **Die Quelle jeder Stimme** (7.7 Schritt 1, 2026-11-04, nach Casper
-//! FFG): Jede Stimme nennt neben ihrem Ziel (Hoehe und Block) ihre
+//! ⚑ **Die Quelle jeder Stimme** (7.7 Schritt 1, 2026-11-04): Jede Stimme nennt neben ihrem Ziel (Hoehe und Block) ihre
 //! [`Quelle`], den juengsten gerechtfertigten Pruefpunkt, wie der Zustand
 //! ihn am Zielblock vermerkt hat. Ein Zertifikat **rechtfertigt** sein Ziel;
 //! **endgueltig** wird ein Pruefpunkt erst, wenn ein Zertifikat des
@@ -113,7 +111,7 @@ pub fn pruefpunktnachricht(hoehe: u64, block_hash: &Hash, bindung: &Hash, quelle
     b
 }
 
-/// ⚑ **Widersprechen sich zwei Stimmen desselben Waehlers?** (Casper FFG)
+/// ⚑ **Widersprechen sich zwei Stimmen desselben Waehlers?**
 /// 1. **Dasselbe Ziel, verschiedene Stimmen:** anderer Block, andere
 ///    Bindung oder andere Quelle.
 /// 2. **Eine umschliesst die andere:** `q1 < q2` und `z2 < z1`.
@@ -251,7 +249,7 @@ impl Pruefpunktzertifikat {
 
     /// ⚑ **Macht dieses Zertifikat seine Quelle endgueltig?** Genau dann,
     /// wenn das Ziel der naechste Pruefpunkt nach der Quelle ist (die
-    /// Verbindung zum direkten Nachfolger in Casper FFG). Dass die Quelle
+    /// Verbindung zum direkten Nachfolger). Dass die Quelle
     /// gerechtfertigt ist, prueft, wer das Zertifikat anwendet.
     pub fn schliesst_ab(&self) -> bool {
         self.quelle.hoehe.checked_add(BLOECKE_JE_PRUEFPUNKT) == Some(self.hoehe)
@@ -388,7 +386,7 @@ mod tests {
         assert_eq!(unpassend.verify(&satz()), Err(RoundError::InconsistentCertificate));
     }
 
-    /// ⚑ Die beiden Widersprueche von Casper FFG, und was keiner ist.
+    /// ⚑ Die beiden Widersprueche, und was keiner ist.
     #[test]
     fn doppelt_und_umschliessend_widersprechen() {
         let a = Hash::sha256(b"a");

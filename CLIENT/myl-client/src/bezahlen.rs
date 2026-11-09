@@ -1,7 +1,7 @@
 //! **Bezahlen aus dem Wallet** (2026-10-26): Credits kaufen, einen
 //! Sitzungskontrakt für einen Agenten eröffnen, ihn widerrufen.
 //!
-//! # ⚑ Die Rollen (nach Ethereum, NEAR und ERC-7715)
+//! # ⚑ Die Rollen
 //!
 //! - Das **Wallet** ist Inhaber: Es unterschreibt Burn, Eröffnen und
 //!   Widerruf mit seinem eigenen Schlüssel.
@@ -75,8 +75,8 @@ pub fn senden(leitung: &Knotenleitung, w: &Wallet, anweisung: Anweisung) -> Resu
 
 /// ⚑ **So viel mehr als die Gebühr von jetzt sagt das Wallet zu** (G1):
 /// das Doppelte. Der Grundpreis steigt je vollem Block um höchstens ein
-/// Achtel; das Doppelte trägt über rund sechs volle Blöcke in Folge, wie
-/// bei Wallets nach EIP-1559 üblich. Abgebucht wird nur die Gebühr des
+/// Achtel; das Doppelte trägt über rund sechs volle Blöcke in Folge.
+/// Abgebucht wird nur die Gebühr des
 /// Blocks, nicht die Zusage.
 pub const GEBUEHR_SPIELRAUM: u64 = 2;
 

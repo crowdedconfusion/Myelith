@@ -1,0 +1,52 @@
+==============================================================================
+RANGSTABILITAET VON TOP-K-COMMITMENTS  —  Myelith v0.2, Kap. 6.3 / M0
+==============================================================================
+Modell: dim=8192, Top-k=128, 0.2 % Ausreisser-Dimensionen (Gain 60x)
+Metrik: Jaccard-Distanz der Top-k-Mengen (0 = identisch, 1 = disjunkt)
+
+[1] Zwei EHRLICHE Knoten — wie stark weicht die Top-k-Menge ab?
+    Akkumulationsvariante                          Jaccard-Distanz
+    ----------------------------------------------------------------
+    fp16 (kein Malus, Consumer-freundlich)                 0.14935
+    Zwei-Stufen (fp16-Block + fp32-Summe)                  0.06277
+    fp32 (Consumer-Malus, verworfen)                       0.00000
+
+    ==> Selbst bei fp16-Rauschen (2.3e-02)
+        bleibt die Top-k-Menge nahezu unveraendert: 0.14935.
+        Die Rangfolge ist robust, weil Ausreisser-Dimensionen um
+        Groessenordnungen herausragen — Prozent-Rauschen kippt sie nicht.
+
+[2] EHRLICH vs. MANIPULIERT (jeweils bei fp16-Rauschen, kein fp32)
+    Manipulation                         Jaccard   vs. ehrlich   Bewertung
+    --------------------------------------------------------------------------
+    Layer uebersprungen                  0.88536            6x   grenzwertig
+    Falsche Gewichte                     0.76863            5x   grenzwertig
+    fp8 heimlich                         0.14935            1x   NICHT erkannt
+    int8-Quantisierung                   0.52345            4x   grenzwertig
+    Pruning kleinster 10 %               0.14935            1x   NICHT erkannt
+    Gezielte Lenkung (1 %, 20 Dim.)      0.14877            1x   NICHT erkannt
+
+[3] Existiert eine Schwelle ohne fp32-Pflicht?
+    KEINE Trennung moeglich.
+
+[4] Sensitivitaet: Wie haengt das Ergebnis von den Ausreissern ab?
+     Ausreisser-Anteil    Gain     ehrlich    Layer-Skip    Trennung
+    ------------------------------------------------------------------
+                  0.2%      60     0.14935       0.88536          6x
+                  0.2%      20     0.15003       0.89419          6x
+                  1.0%      20     0.09338       0.63986          7x
+                  2.0%       8     0.04245       0.55652         13x
+      keine Ausreisser       1     0.16173       0.94437          6x
+    ==> Die Trennschaerfe haengt direkt an der Ausgepraegtheit der
+        Ausreisser. Ohne sie bricht das Verfahren ein — die Messung
+        der realen Aktivierungsstruktur ist daher M0-Pflicht.
+
+==============================================================================
+BEWERTUNG
+  Das Verifikationskriterium ist die RANGSTABILITAET, nicht der
+  Wertabstand. Damit entfaellt die fp32-Akkumulationspflicht und mit
+  ihr der Consumer-Malus — die Dezentralisierung bleibt gewahrt.
+  Feinste Lenkungsangriffe bleiben unterhalb der Schwelle; fuer sie
+  sind weiterhin Kontrollsegmente (Kap. 6.10) und Vorzeichenstatistik
+  (Kap. 6.9) zustaendig.
+==============================================================================

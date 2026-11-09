@@ -4,7 +4,7 @@
 //! Mindesteinsatz erreicht und der die Arbeitsschwelle hält; Gewicht ist der
 //! Einsatz (Entscheidung A3, „Arbeit qualifiziert, Stake wiegt“). Über die
 //! Prüfpunkte stimmen damit **alle** mit genügend Einsatz und Arbeit ab,
-//! nicht ein ausgelostes oder reichstes Komitee. Vorbild ist Casper FFG: Die
+//! nicht ein ausgelostes oder reichstes Komitee: Die
 //! Sicherheit hängt an einem Drittel des gesamten Einsatzes. 📌 Kritisch
 //! geprüft gegen die Alternativen: Die 21 mit dem meisten Einsatz wären eine
 //! feste Elite; eine Auslosung nach Einsatz bricht mit 21 Sitzen bei 20 %
@@ -12,7 +12,7 @@
 //! mit einem Restrisiko.
 //!
 //! ⚑ **Ab wann:** Der Satz für Epoche `e + VORLAUF_EPOCHEN` wird am Ende von
-//! Epoche `e` bestimmt (Vorbild CometBFT, Anwendung zwei Höhen später):
+//! Epoche `e` bestimmt:
 //! Jeder kennt ihn eine ganze Epoche im Voraus.
 //!
 //! ⚑ **Die Startphase** (2026-11-03): Bis das Ziel erstmals tragfähig ist
@@ -45,8 +45,7 @@
 //! gewichtet muss jede von ihnen einen Mindesteinsatz binden, und Aufteilen
 //! ändert nichts.
 //!
-//! ⚑ **Inaktivität** (2026-11-03, Vorbild Ethereum Altair für die Punkte,
-//! Cosmos für das Ruhen): Je Prüfpunkt wird vermerkt, wer seine Stimme
+//! ⚑ **Inaktivität** (2026-11-03): Je Prüfpunkt wird vermerkt, wer seine Stimme
 //! abgegeben hat, aus dem Zertifikat **oder** aus einer eigenen Transaktion
 //! ([`stimme_vermerken`]). Eine Epoche gilt als erfüllt, wer mindestens halb
 //! so viele Prüfpunkte gestimmt hat wie das beste Mitglied; sonst gibt es
@@ -59,11 +58,11 @@
 //! einmal unterschrieben hatte: Eine Stimme je 23 Epochen hielt ihn im Satz.
 //! 📌 Und es zählten nur die Zertifikate. Fällt mehr als ein Drittel aus,
 //! gibt es keines, also für niemanden einen Beleg; die Regel hätte dann alle
-//! hinausgeworfen. Deshalb die Stimme als Transaktion, wie Ethereum
-//! Attestierungen einzeln verbucht; sie schützt zugleich davor, dass der
+//! hinausgeworfen. Deshalb die Stimme als Transaktion, einzeln
+//! verbucht; sie schützt zugleich davor, dass der
 //! Erzeuger Unterschriften aus dem Zertifikat weglässt. Ohne jede Stimme im
-//! ganzen Satz wird nicht geurteilt. ⚠️ Ein Abzug am Einsatz wie Ethereums
-//! Inaktivitätsabzug wartet auf den wechselnden Erzeuger: Ein fester könnte
+//! ganzen Satz wird nicht geurteilt. ⚠️ Ein Abzug am Einsatz wegen
+//! Inaktivität wartet auf den wechselnden Erzeuger: Ein fester könnte
 //! Stimmtransaktionen zensieren und Ehrliche verbrennen lassen; der
 //! Ausschluss ist umkehrbar, ein Abzug nicht.
 //!
@@ -135,9 +134,8 @@ pub struct Mitwirkung {
     /// Wegen Inaktivität ausgeschlossen, bis er sich neu anmeldet.
     pub ruht: bool,
     /// ⛔️ **Für immer ausgeschlossen** (2026-11-05), nach einem gebuchten
-    /// Doppelbeleg: Eine Neuanmeldung hebt das nicht auf. Vorbild Ethereum
-    /// (ein geschlachteter Validator kommt nie zurück) und Cosmos
-    /// („tombstoned“). 📌 Bis hierher hob jede Neuanmeldung auch das Ruhen
+    /// Doppelbeleg: Eine Neuanmeldung hebt das nicht auf:
+    /// Ein geschlachteter Validator kommt nie zurück. 📌 Bis hierher hob jede Neuanmeldung auch das Ruhen
     /// eines Doppelsigners auf; er stand eine Epoche später wieder im Satz.
     pub getilgt: bool,
     /// Wie oft das Mitglied schon wegen Inaktivität geruht hat.
@@ -146,8 +144,8 @@ pub struct Mitwirkung {
     /// Kandidat** (CONSENSUS 7.9, 2026-11-05): nach der n-ten Ruhe
     /// 2^(n−1) Epochen, höchstens die Sperrfrist ([`wartezeit`]). Ohne sie
     /// konnte mehr als ein Drittel die Finalität blockieren, ruhen, sich
-    /// neu anmelden und wieder blockieren; ein Abzug am Einsatz wie
-    /// Ethereums Inaktivitätsabzug ist damit nicht nötig (die Finalität
+    /// neu anmelden und wieder blockieren; ein Abzug am Einsatz wegen
+    /// Inaktivität ist damit nicht nötig (die Finalität
     /// kehrt über das Ruhen zurück, gemessen), und ein Netzausfall kostet
     /// keinen Einsatz.
     pub wieder_ab: u64,

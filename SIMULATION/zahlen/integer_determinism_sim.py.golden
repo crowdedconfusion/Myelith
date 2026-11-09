@@ -1,0 +1,61 @@
+============================================================================
+INTEGER-DETERMINISMUS — Verifikation der These fuer Myelith Kap. 6.2
+============================================================================
+
+[1] Liefern verschiedene Reduktionsreihenfolgen identische Ergebnisse?
+    Getestet: sequentiell, Baum, Split-K(8), zufaellige Reihenfolge
+
+    INTEGER    : 200/200 identisch   ✅ IMMER GLEICH
+    GLEITKOMMA : 9/200 identisch   ⚠️ ABWEICHUNGEN  (96% der Faelle divergent)
+    ==> Die Assoziativitaet der Ganzzahladdition traegt: Reihenfolge
+        ist irrelevant. Genau das entfaellt bei Gleitkomma.
+
+[2] Ueberlaufreserve des Akkumulators
+    Groesster Betrag eines int8-Produkts: 127*127 = 16129
+    int16 Akkumulator: bis            2 Terme  (benoetigt: 8,192)  ZU KLEIN ❌
+    int32 Akkumulator: bis      133,144 Terme  (benoetigt: 8,192)  AUSREICHEND ✅
+    int64 Akkumulator: bis 571,850,209,985,416 Terme  (benoetigt: 8,192)  AUSREICHEND ✅
+    Empirisch groesste Summe ueber 8192 Terme: 1,309,836
+    ==> int32 bietet Reserve um Faktor 1,639.
+        Ueberlauf ist bei realistischen Dimensionen kein Thema; das
+        Verhalten (Saettigung vs. Wrap) ist dennoch zu spezifizieren.
+
+[3] Integer-Approximationen nichtlinearer Funktionen
+    Integer-Softmax unter 3 Summationsreihenfolgen: 100/100 identisch ✅
+    ==> Auch die nichtlinearen Operationen bleiben deterministisch,
+        solange sie ganzzahlig approximiert werden (I-BERT/I-LLM).
+
+[4] Dynamische Quantisierung (datenabhaengige Skalierungsfaktoren)
+    Skalierungsfaktor unabhaengig von der Elementreihenfolge: 200/200 ✅
+    ==> max() und Ganzzahldivision sind reihenfolgeunabhaengig.
+        Dynamische Quantisierung bleibt deterministisch.
+
+[5] Division bei negativen Zahlen
+        Fall   Floor  Trunkiert   Shift
+        -7/2      -4         -3      -4
+        -1/2      -1          0      -1
+        -9/4      -3         -2      -3
+         7/2       3          3       3
+        -8/2      -4         -4      -4
+    In 3 von 5 Faellen weichen die Verfahren ab.
+    Shift = Floor in 100,000/100,000 Zufallsfaellen
+    ==> Festlegung auf den arithmetischen Rechtsshift: mit endlich
+        vielen Testvektoren pruefbar, ohne Kosten beim Durchsatz.
+
+[6] Was bleibt zu spezifizieren (Restrisiken)
+    • Ueberlaufverhalten           Saettigung oder Wrap-around protokollweit festlegen
+    • Division/Rechtsshift         Rundung bei negativen Zahlen ist sprach- und hardwareabhaengig (Trunkierung vs. Floor)
+    • Nichtlineare Approximation   Polynomkoeffizienten und Shift-Weiten muessen Teil von theta_v sein
+    • Reduktionsbreite             Akkumulatorbreite (int32) verbindlich vorschreiben
+    • Modellqualitaet              W8A8 gut belegt; W4A4 nur fuer einzelne Modelle validiert (I-LLM 2024)
+
+============================================================================
+FAZIT
+  Die These traegt in allen geprueften Punkten: Ganzzahlige Ausfuehrung
+  ist unter beliebiger Parallelisierung bitidentisch, auch fuer Softmax
+  und dynamische Quantisierung. Determinismus wird damit von einer
+  teuren Auflage zu einer Eigenschaft der Arithmetik selbst.
+  Zu spezifizieren bleiben Ueberlauf, Divisionsrundung und die
+  Koeffizienten der nichtlinearen Approximationen — alles Groessen,
+  die in theta_v gehoeren und keine Hardware-Anforderung darstellen.
+============================================================================

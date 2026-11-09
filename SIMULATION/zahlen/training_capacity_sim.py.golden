@@ -1,0 +1,120 @@
+============================================================================
+TRAININGSKAPAZITAET, DATENPROVENIENZ UND OEKONOMIE
+============================================================================
+
+[1] Reicht die Grundlast fuer sinnvolles Training?
+    Modell: 24B dense, 6*N FLOPs/Token, Redundanz r=2
+
+    Szenario         Miner   Rate       Token/Tag  Tage fuer 1B
+    --------------------------------------------------------------
+    Startphase         500    5%      48,750,000          20.5
+    Startphase         500   10%      97,500,000          10.3
+    Wachstum         5,000    5%     506,250,000           2.0
+    Wachstum         5,000   10%   1,012,500,000           1.0
+    Reifephase      50,000    5%   4,500,000,000           0.2
+    Reifephase      50,000   10%   9,000,000,000           0.1
+
+    Vergleichsgroessen: Ein Feintuning-Lauf umfasst typischerweise
+    1-10 Mrd. Token, ein vollstaendiges Vortraining 1-15 Bio. Token.
+    ==> Feintuning ist ab der Wachstumsphase in Tagen erreichbar.
+        Vortraining aus dem Netz heraus ist NICHT realistisch:
+        dafuer waeren Groessenordnungen mehr Kapazitaet noetig.
+        Das Netz kann ein Basismodell also fortschreiben, nicht erzeugen.
+
+[2] Kosten der Datenprovenienz
+    Korpus: 1,000,000,000 Dokumente -> Merkle-Tiefe 30
+    Beweisgroesse je Segment: 960 Byte
+    Nutzdaten je Segment (4096 Token): 8,192 Byte
+    Overhead je Einzelbeweis: 11.72%
+    Pruefaufwand: 30 Hash-Operationen, also mikrosekunden.
+
+    Einzelbeweise sind damit NICHT vernachlaessigbar: Bandbreite ist
+    der Engpass des WAN-Betriebs (Kap. 10). Abhilfe schafft ein
+    gemeinsamer Beweis fuer einen ganzen Batch benachbarter Segmente
+    (Merkle-Multiproof): Gemeinsame Pfadanteile werden nur einmal
+    uebertragen.
+
+       Batch   Beweis gesamt     Nutzdaten   Overhead
+    -------------------------------------------------
+           1            960B        8,192B    11.72%
+          16            832B      131,072B     0.63%
+          64            768B      524,288B     0.15%
+         256            704B    2,097,152B     0.03%
+        1024            640B    8,388,608B     0.01%
+
+    ==> Bei zusammenhaengender Zuweisung liegt der Overhead schon ab
+        16 Segmenten unter einem Prozent.
+        Da Trainings-Segmente ohnehin gebuendelt zugewiesen werden,
+        ist das die natuerliche Betriebsform. Der eigentliche Aufwand
+        liegt nicht im Beweis, sondern in der Kuratierung des Korpus.
+
+[3] Restrisiko: Auswahl statt Faelschung
+    Ein Angreifer kann keine Daten erfinden (Merkle-Beweis fehlt),
+    aber aus dem Korpus gezielt auswaehlen. Wirkung?
+
+     Angreiferanteil     ohne Zulosung    mit VRF-Zulosung
+    --------------------------------------------------------
+                 5%             5.0%               0.3%
+                20%            20.0%               1.0%
+                40%            40.0%               2.0%
+
+    ==> Entscheidend ist, dass die DATENAUSWAHL ebenfalls per VRF
+        erfolgt, nicht durch den Miner. Dann bleibt nur die Option,
+        zugewiesene Segmente abzulehnen, was Verguetung kostet und
+        ueber die Ablehnungsquote sichtbar wird.
+
+[4] Wer bezahlt das Training?
+    Training erzeugt keine Inferenzgebuehren, also keinen Burn.
+    Drei Finanzierungswege im Vergleich:
+
+    Aus der Praegung (Anteil am Block-Reward)         500 MYL/Epoche
+    Aus der Treasury (3 % lt. Kap. 5.3)               300 MYL/Epoche
+    Aufschlag auf Inferenzgebuehren                   500 MYL/Epoche
+
+    Bewertung:
+      - Praegungsanteil: erhoeht die Inflation, verwaessert Halter,
+        aber bindet Training an die Netzgroesse. Gefahr: Training
+        wuerde auch dann verguetet, wenn es keinen Nutzen bringt.
+      - Treasury: bereits vorhanden, aber begrenzt und governance-
+        gebunden. Passt zur Rolle des Modells als Allmende.
+      - Gebuehrenaufschlag: Nutzer zahlen fuer kuenftige Qualitaet.
+        Sauberste Zuordnung von Kosten und Nutzen, aber verteuert
+        Inferenz und schwaecht die Wettbewerbsposition.
+    ==> Empfehlung: Treasury als Grundfinanzierung, ergaenzt um einen
+        kleinen, per Governance abschaltbaren Gebuehrenaufschlag.
+        Kein Praegungsanteil, da er Training unabhaengig vom Nutzen
+        belohnt und damit dieselbe Fehlanreizstruktur schafft wie
+        eine Verguetung nach Rechenzeit statt nach Ergebnis.
+
+[5] Verifikation des Trainings
+    Gradienten sind assoziativ berechenbar und damit bitgleich
+    vergleichbar (integer_training_sim.py, Abschnitt 4).
+    Es gilt dieselbe Stufenstruktur wie bei Inferenz:
+      Stufe 1: r=2 Pods rechnen denselben Gradienten -> Hash-Vergleich
+      Stufe 2: Stichprobe durch Checker
+      Stufe 3: Bisektion im Streitfall
+    Zusaetzlich noetig, weil Berechnung allein nicht genuegt:
+      - Merkle-Beweis der Datenherkunft (Abschnitt 2)
+      - VRF-gesteuerte Datenzuweisung (Abschnitt 3)
+      - Shadow-Phase vor Uebernahme neuer Gewichte (Kap. 9.2)
+
+============================================================================
+BEWERTUNG
+
+  + Feintuning aus der Restkapazitaet ist ab mittlerer Netzgroesse in Tagen
+    moeglich. Die vorgeschlagene Grundlast von 5-10 % ist tragfaehig.
+  + Provenienzpruefung kostet unter 1 % Overhead und ist vernachlaessigbar.
+  + Die Verifikation der Berechnung uebertraegt sich unveraendert vom
+    Vorwaerts- auf den Rueckwaertspass.
+
+  - Vortraining eines eigenen Basismodells ist aus der Restkapazitaet NICHT
+    erreichbar. Das Netz kann ein bestehendes Open-Weight-Modell fortschreiben,
+    aber keines von Grund auf erzeugen.
+  - Auswahl-Poisoning bleibt moeglich, wenn die Datenzuweisung nicht ebenfalls
+    per VRF erfolgt. Dies ist eine zwingende Entwurfsauflage.
+  - Die Finanzierung erzeugt in jeder Variante Fehlanreize. Verguetung nach
+    Rechenzeit belohnt Training unabhaengig vom Ergebnis; eine ergebnis-
+    abhaengige Verguetung waere subjektiv und damit angreifbar.
+    Dies ist die schwaechste Stelle des Entwurfs.
+
+============================================================================

@@ -1,7 +1,7 @@
 # client (Nutzer-Client inkl. Wallet)
 
-> **Version:** 0.182.0 (`myl-client` 0.118.0, `myl-oberflaeche` 0.86.1, `myl-console` 0.69.2, `myl-senses` 0.13.6, `myl-module` 0.5.2)
-> **Datum:** 2026-10-28
+> **Version:** 0.187.0 (`myl-client` 0.123.0, `myl-oberflaeche` 0.87.0, `myl-console` 0.70.0, `myl-senses` 0.13.6, `myl-module` 0.6.0)
+> **Datum:** 2026-11-09
 > **Status:** ✅ **Der lokale Betrieb läuft und ist ausgeliefert.** Ein
 > Gesprächsfenster mit Modellwahl, Agentenschleife und
 > Einstellungsseite; aus einem frischen Klon lassen sich darüber
@@ -182,6 +182,98 @@ Mensch je bedient hat, an den Bedürfnissen vorbei entworfen wird.
 
 ## Changelog
 
+### v0.187.0 (2026-11-09): Wallets als Keystore (`myl-client` 0.123.0)
+
+- ⚑ **Keystore nach EIP-2335** (`keystore`): scrypt mit N = 2¹⁸, AES-128-CTR,
+  SHA-256; gelesen wird auch PBKDF2. Beide Prüfvektoren der Norm gehen auf, das
+  Passwort wird wie dort vorbereitet (NFKD, ohne Steuerzeichen), und die Parameter
+  einer fremden Datei sind gedeckelt, damit sie scrypt nicht Terabyte anfordern lässt.
+- **`myl wallet neu` und `wiederherstellen` fragen nach einem Passwort** (leer:
+  unverschlüsselt wie bisher, für Spielgeld), `myl wallet verschluesseln <name>`
+  stellt ein vorhandenes um. Im Keystore liegt nur der Schlüssel des Kontos, nicht
+  der Seed; die Sicherung bleibt die Wortliste. Unterschreiben fragt nach dem
+  Passwort, ohne Echo.
+- Beim Wechsel des Auszahlungskontos geht ein entsperrter Schlüssel über eine
+  Röhre an den Knoten (`--kontowechsel -`), nie als Datei.
+- ⚠️ Konsole und Fenster legen Wallets weiter ohne Passwort an, und der
+  Schlüsselbund des Systems fehlt noch.
+
+### v0.186.0 (2026-11-09): Module von Dritten laufen abgeschottet (`myl-module` 0.6.0, `myl-client` 0.122.0, `myl-console` 0.70.0, `myl-oberflaeche` 0.87.0)
+
+- ⚑ **`"laufzeit": {"art": "wasm"}` läuft jetzt**, in Konsole und Fenster, mit
+  denselben Nachrichten wie ein natives Modul, aber im Prozess der Konsole und
+  ohne eigenes Dateisystem oder Netz. Die Laufzeit ist ein Interpreter ohne
+  erzeugten Maschinencode (Fassung fest eingetragen, 20 Archive mehr im Vorrat).
+- **Was das Modul bekommt:** `http` nur zu Rechnern, die seine Beschreibung nennt
+  **und** der Mensch mit `/module genehmigen <modul>` freigegeben hat (keine
+  Weiterleitung, keine privaten Adressen, feste Adresse je Anfrage, 60 je Minute,
+  8 MiB Antwort), `datei_lesen` und `datei_schreiben` nur im eigenen Datenordner
+  (16 MiB je Datei, 256 MiB insgesamt, keine Verknüpfungen), `geheimnis` nur die
+  eigenen. Ablegen: `myl-module geheimnis <ablage> <modul> <name>` von stdin.
+- **Grenzen:** 16 MiB Modul, 64 MiB Speicher, Treibstoff je Ereignis (rund eine
+  Sekunde Rechnung), 1 000 Nachrichten und 16 MiB Ausgabe je Ereignis. Zeiger des
+  Moduls sind fremde Werte; was außerhalb liegt, beendet nur das Modul.
+- ⛔️ **Kein Agentenlauf und keine Werkzeugkiste für abgeschottete Module:** Beide
+  starten gewöhnliche Programme, das hieße die Abschottung selbst zu öffnen.
+- Vorlage und Prüfgast: `myl-module/beispiele/wasm-gast`. Tests gegen feindliche
+  Gäste; sieben Gegenproben (je eine Grenze ausgebaut) fallen auf.
+- ⚠️ Nicht abgewehrt: Seitenkanäle über die Zeit und Fehler in der Laufzeit
+  selbst; die Signatur bleibt davor. Im Fenster gibt es noch keine Genehmigung,
+  sie geht über die Konsole.
+
+### v0.185.3 (2026-11-09): Das Update einmal echt durchgespielt
+
+- ⚑ **`/update` belegt:** In einer Wegwerfkopie mit eigenem `origin` und eigenem
+  Home, unter Linux aus der laufenden Konsole (holen, bauen, das laufende Programm
+  ersetzen, in die neue Fassung starten) und unter macOS über
+  `installieren-macos.sh --aktualisieren` samt `Myelith.app`. Ein eigener Commit
+  oder eine offene Änderung an einer betroffenen Datei stoppt das Update, und
+  Programme wie Arbeit bleiben unverändert.
+- 📌 Dabei gefunden: `buendeln-macos.sh` baute als einzige Stelle ohne `--locked`
+  und schrieb seine Fehlermeldung auf die Ausgabe, die der Installateur verwirft;
+  er brach dann ohne ein Wort ab. Jetzt `--locked`, derselbe Netzschalter wie der
+  Installateur, Fehler auf `stderr`. Beide Skripte beachten wie unter Linux
+  `CARGO_TARGET_DIR`.
+
+### v0.185.2 (2026-11-09): Die Warnfarbe bleibt grau
+
+- `--warn` im hellen Thema war mit `#5f6368` knapp außerhalb der Graustufenregel
+  (Spanne 9 über 8), und die Probe schlug an. Jetzt `#606366`, im Kontrast gleich.
+
+### v0.185.1 (2026-11-08): Warnfarbe im hellen Thema
+
+- `--warn` hat Leser bekommen und deshalb jetzt einen eigenen Wert im hellen
+  Thema; das dunkle Grau trug dort zu wenig Kontrast.
+
+### v0.185.0 (2026-11-08): Verlauf je Wallet
+
+- ⚑ **7.4:** `myl wallet verlauf NAME` blättert durch die gehaltenen Blöcke des
+  erreichbaren Knotens. Eine Auskunft wie `/konto`, kein Beweis.
+
+### v0.184.0 (2026-11-08): „Mining starten“ rechnet mit
+
+- ⚑ **6.27:** Mit gewähltem Wallet und vorhandenem Artefakt startet der Knoten
+  seinen Shard aus der Kette (`--shard-programm`, `--artefakte`,
+  `--modellzusage <ebenen>:2000`). Die erste Zusage ist bescheiden, die
+  Selbstprobe des Knotens hebt sie. Fehlt etwas, startet er ohne Shard, und
+  `myl mining` nennt den Grund.
+- ⚑ **Das Netz ist wählbar:** `myl mining netz [probe|test-int4]` oder
+  `MYL_NETZ`; je Netz sein Modell. ⚠️ Die Probekette rechnet ihr Probemodell
+  nur mit Testbauten des Shards; ein ausgelieferter Shard lädt allein
+  freigegebene Modelle.
+- Echter Start auf dem Mac in einem abgeschirmten Heimatordner: Der Knoten
+  nimmt die Angaben an, das Beenden hinterlässt keinen Prozess. Ein Pod aus
+  mehreren Klienten ist damit nicht gefahren.
+
+### v0.183.0 (2026-11-08): Adressen mit Prüfsumme, Konten aus dem Pfad
+
+- ⚑ Die Wallet zeigt und liest Adressen als `tmyl1…` (`Wallet::adresse_text`,
+  `myl wallet ueberweisen`). Eine Adresse eines anderen Netzes und ein
+  Tippfehler werden abgewiesen. Für `--konto` bleibt die Rohform.
+- ⚑ Wörter geben jetzt das erste Konto nach EIP-2334 statt des
+  Hauptschlüssels. ⚠️ Bestehende Testwallets aus Wörtern bekommen eine andere
+  Adresse.
+
 ### v0.182.0 (2026-10-28): Die Gebühr nach Einheiten (`myl-client` 0.118.0)
 
 - `bezahlen::gebuehr` rechnet mit `gebuehreneinheiten`: Bytes plus eine
@@ -191,7 +283,7 @@ Mensch je bedient hat, an den Bedürfnissen vorbei entworfen wird.
 ### v0.181.0 (2026-10-27): Gebühren in der Wallet (`myl-client` 0.117.0)
 
 - ⚑ Jede Transaktion der Wallet sagt das Doppelte der Gebühr von jetzt zu
-  (`bezahlen::GEBUEHR_SPIELRAUM`, wie bei Wallets nach EIP-1559); abgebucht
+  (`bezahlen::GEBUEHR_SPIELRAUM`); abgebucht
   wird nur die Gebühr des Blocks. `bezahlen::gebuehr` rechnet sie aus dem
   Grundpreis der Kontoauskunft.
 - Die Vorschau einer Überweisung nennt Gebühr, Zusage und, an ein neues

@@ -233,6 +233,8 @@ pub struct Knoten {
     ereignisse: mpsc::UnboundedReceiver<NodeEvent>,
     /// Kontoanfragen vom Beobachtungsendpunkt (`/konto/<hex>`).
     kontoanfragen: mpsc::Receiver<crate::beobachtung::Kontoanfrage>,
+    /// Wann zuletzt eine Seite des Verlaufs geliefert wurde.
+    verlauf_zuletzt: Option<std::time::Instant>,
     /// Fragen von der Relaisleitung.
     relaisauftraege: mpsc::Receiver<crate::relais::Relaisauftrag>,
     /// ⚑ Der zuletzt gesetzte Vorrang in den Verbindungsgrenzen (Fund 674):
@@ -243,6 +245,8 @@ pub struct Knoten {
     /// Streitfälle, nur für Validatoren).
     vorrang_pods: Vec<libp2p::PeerId>,
     vorrang_schied: Vec<libp2p::PeerId>,
+    /// Die Befragten der letzten eigenen Stichprobe (Fund 681).
+    vorrang_stichprobe: Vec<libp2p::PeerId>,
     /// Hält den Kanal offen, auch ohne Leitung.
     _relais_tx: mpsc::Sender<crate::relais::Relaisauftrag>,
     /// Weitergereichte Shardanfragen, die auf ihre Antwort warten: an wen,
@@ -604,7 +608,9 @@ pub struct Knoten {
     /// Die Zähler der Transaktionen der laufenden Sekunde.
     tx_zaehler: TxZaehler,
     /// Transaktionen aus dem Gossip, die auf die Stapelprüfung warten.
-    tx_puffer: Vec<myl_consensus::block::Transaktion>,
+    tx_puffer: Vec<(myl_consensus::block::Transaktion, Option<myl_net::Pruefmarke>)>,
+    /// ⚑ Wie viele Stapel zugleich geprüft werden (A47).
+    tx_plaetze: Plaetze,
     tx_puffer_seit: std::time::Instant,
     tx_geprueft: tokio::sync::mpsc::UnboundedReceiver<Vec<myl_consensus::block::GepruefteTransaktion>>,
     tx_geprueft_kanal: tokio::sync::mpsc::UnboundedSender<Vec<myl_consensus::block::GepruefteTransaktion>>,
@@ -629,6 +635,8 @@ pub struct Knoten {
     /// ⚑ **Eine übernommene Position** (Whitepaper 6.8): Als Reserve rechnet
     /// dieser Knoten sie bis zum Ende ihrer Epoche.
     uebernahme: Option<crate::shardfuehrung::Shardauftrag>,
+    uebernahme_zuletzt: Option<std::time::Instant>,
+    uebernahme_von_miner: bool,
     /// ⚑ **Abgelegte Spuren** für die Stichprobe (Stufe 2), je mit ihrem
     /// Absender (`None`: das eigene Podwerk über die Ortsleitung); höchstens
     /// [`SPURABLAGEN_HOECHSTENS`], zuerst fällt die älteste Epoche.
@@ -708,6 +716,9 @@ pub struct Knoten {
     teilabruf: Option<Teilabruf>,
     /// Der zuletzt im Protokoll gemeldete eigene Abzug.
     abzug_gemeldet: Option<u64>,
+    /// Der zuletzt gemeldete eigene Wechselbeleg (Epoche, Hoehe seines
+    /// Zertifikats).
+    beleg_gemeldet: Option<(u64, u64)>,
     /// ⚑ Ein Grund, aus dem dieser Knoten von sich aus anhält (eine
     /// widerlegte Basis). Die Wache kennt nur Signale von aussen.
     angehalten: Option<&'static str>,
@@ -934,6 +945,9 @@ impl Knoten {
         protokoll: &mut Betriebsprotokoll,
     ) -> Result<(Kette, Option<myl_consensus::block::Block>), KnotenFehler> {
         let mut kette = Kette::im_netz(konfig.netz);
+        if let Some(a) = konfig.anker_von_aussen {
+            kette.anker_von_aussen_setzen(a.hoehe, a.block, a.bindung);
+        }
         // ⚑ **Der Stimmsatz ab Genesis** (2026-10-27): aus der
         //   Stimmsatzdatei, für jeden Knoten, nicht nur für die, die
         //   mitstimmen. Ohne Datei lernt nur eine Probekette ihn aus Block 1;
@@ -944,6 +958,7 @@ impl Knoten {
                 let datei = crate::stimmsatzdatei::Stimmsatzdatei::aus_text(&text)
                     .map_err(|e| KnotenFehler::Kette(format!("{}: {e}", pfad.display())))?;
                 kette.stimmsatz_setzen(datei.stimmberechtigte());
+                kette.netzstart_setzen(datei.start_ms);
             }
             None if !konfig.netz.lernt_erzeuger => {
                 return Err(KnotenFehler::Kette(format!(
@@ -1235,6 +1250,13 @@ impl Knoten {
             (true, true) => konfig.abzug.map(|a| AbzugHolen::neu_als(a, crate::abzug::Art::Leicht)),
             _ => None,
         };
+        // ⚑ **Ohne eigenen Stand: traegt der Punkt, an dem er beginnt?** (A43.)
+        //   Vor dem Netz, mit einer klaren Meldung. `--abzug` nennt einen
+        //   Stand von aussen und wird von Genesis aus nachgeprueft.
+        if konfig.stimmsatzdatei_pfad.is_some() && kette.hoehe() == 0 && abzug_holen.is_none() {
+            crate::wechsel::einstieg_pruefen(kette.netzstart_ms(), konfig.anker_von_aussen.as_ref(), crate::protokoll::jetzt_ms().max(0) as u64, konfig.slot_ms())
+                .map_err(|e| KnotenFehler::Kette(e.to_string()))?;
+        }
         let anker_suchen = (abzug_holen.is_none() && kette.hoehe() == 0 && kette.stimmsatz().is_some()).then(std::time::Instant::now);
         let hintergrund = match (&basisblock, kette.ablage()) {
             (Some(b), Some(a))
@@ -1275,6 +1297,12 @@ impl Knoten {
         // ⚠️ Nur lesen, nie anlegen: Ein neu erzeugter Schlüssel wäre nie
         //    eingetragen und könnte nichts wechseln.
         let kontowechsel = match konfig.kontowechseldatei.as_ref() {
+            // ⚑ `-`: Der Klient reicht einen entsperrten Keystore ueber die
+            //   Roehre herein, damit der Schluessel nie als Datei liegt.
+            Some(pfad) if pfad.as_os_str() == "-" => Some(
+                crate::schluessel::Konsensschluessel::aus_eingabe(&mut std::io::stdin().lock())
+                    .map_err(|e| KnotenFehler::Ortsleitung(format!("--kontowechsel -: {e:?}")))?,
+            ),
             Some(pfad) if pfad.exists() => Some(
                 crate::schluessel::Konsensschluessel::aus_datei(pfad)
                     .map_err(|e| KnotenFehler::Ortsleitung(format!("{}: {e:?}", pfad.display())))?,
@@ -1432,6 +1460,8 @@ impl Knoten {
             netz_gesendet: std::collections::BTreeMap::new(),
             shardfuehrung,
             uebernahme: None,
+            uebernahme_zuletzt: None,
+            uebernahme_von_miner: false,
             spurablagen: Vec::new(),
             fristsammlung: crate::frist::Fristsammlung::default(),
             messungen: std::collections::BTreeMap::new(),
@@ -1461,6 +1491,7 @@ impl Knoten {
             abruf,
             teilabruf: None,
             abzug_gemeldet: None,
+            beleg_gemeldet: None,
             angehalten: None,
             gegenstellen: Vec::new(),
             nachfrage_reihum: 0,
@@ -1473,10 +1504,12 @@ impl Knoten {
             stichprobe_gefragt: None,
             ereignisse: ev_rx,
             kontoanfragen: anfragen_rx,
+            verlauf_zuletzt: None,
             relaisauftraege,
             vorrang: None,
             vorrang_pods: Vec::new(),
             vorrang_schied: Vec::new(),
+            vorrang_stichprobe: Vec::new(),
             _relais_tx: relais_tx,
             shardrelais: std::collections::HashMap::new(),
             relais_kennung: 0,
@@ -1543,6 +1576,7 @@ impl Knoten {
             groessen_epoche: None,
             tx_zaehler: TxZaehler::default(),
             tx_puffer: Vec::new(),
+            tx_plaetze: Plaetze::neu(TX_PRUEFUNGEN_ZUGLEICH),
             tx_puffer_seit: std::time::Instant::now(),
             tx_geprueft: tx_geprueft_rx,
             tx_geprueft_kanal: tx_geprueft_tx,
@@ -1834,6 +1868,34 @@ impl Knoten {
         raus
     }
 
+    /// ⚑ **Eine Übernahme, höchstens alle [`UEBERNAHME_PAUSE`]** (Sicherheitsaudit
+    /// A49): Der Auftrag ist gegen die Kette geprüft. Ohne Pause konnte jede
+    /// Gegenstelle eine Reserve immer neu auf eine andere Position schicken,
+    /// und sie lud jedes Mal einen Shard.
+    ///
+    /// ⚑ **Der Absender zählt:** Ein Koordinator ist nach Whitepaper 3.3 ein
+    /// Miner. Wer nicht als Miner eingetragen ist (`von_miner` falsch), darf
+    /// nur alle [`UEBERNAHME_PAUSE_FREMD`], und ein Miner verdrängt seinen
+    /// Auftrag sofort. Sonst hielte eine beliebige Gegenstelle die Reserve
+    /// mit einem Auftrag je Minute auf der falschen Position und das
+    /// Einspringen liefe ins Leere. ⚠️ Ein eingetragener Miner kann das noch;
+    /// ihn kostet es den Mindesteinsatz je Kennung.
+    fn uebernahme_setzen(&mut self, auftrag: crate::shardfuehrung::Shardauftrag, von_miner: bool, jetzt: std::time::Instant) -> Result<(), String> {
+        if self.uebernahme.as_ref().is_some_and(|a| *a == auftrag) {
+            self.uebernahme_von_miner |= von_miner;
+            return Ok(());
+        }
+        let verdraengt_fremdes = von_miner && self.uebernahme.is_some() && !self.uebernahme_von_miner;
+        let pause = if von_miner { UEBERNAHME_PAUSE } else { UEBERNAHME_PAUSE_FREMD };
+        if !verdraengt_fremdes && self.uebernahme_zuletzt.is_some_and(|t| jetzt.duration_since(t) < pause) {
+            return Err("gerade erst übernommen".to_string());
+        }
+        self.uebernahme = Some(auftrag);
+        self.uebernahme_von_miner = von_miner;
+        self.uebernahme_zuletzt = Some(jetzt);
+        Ok(())
+    }
+
     /// Die eigene Kette, für Tests und Diagnose.
     /// Die Kette zum Ändern, **nur für Tests und den Betreiber**.
     ///
@@ -2097,8 +2159,18 @@ impl Knoten {
                     self.leere_konsensausgang().await;
                 }
                 Weckruf::Ereignis(None) => return,
-                Weckruf::Konto((adresse, rueck)) => {
+                Weckruf::Konto(crate::beobachtung::Kontoanfrage::Auskunft(adresse, rueck)) => {
                     let _ = rueck.send(self.kontoauskunft(&adresse));
+                }
+                Weckruf::Konto(crate::beobachtung::Kontoanfrage::Verlauf(adresse, bis, rueck)) => {
+                    // ⚑ Eine Seite je Takt: Der Verlauf liest Blöcke in der
+                    //   Schleife des Knotens (Muster des Audits vom
+                    //   2026-11-08: Deckel vor der teuren Arbeit).
+                    let jetzt = std::time::Instant::now();
+                    if self.verlauf_zuletzt.is_none_or(|t| jetzt.duration_since(t) >= VERLAUF_PAUSE) {
+                        self.verlauf_zuletzt = Some(jetzt);
+                        let _ = rueck.send(self.kette.verlauf_seite(&adresse, bis, VERLAUF_FRIST));
+                    }
                 }
                 Weckruf::Relais((frage, rueck)) => self.relais_bedienen(frage, rueck),
                 Weckruf::Geprueft(g) => self.geprueft_aufnehmen(g),
@@ -2586,7 +2658,7 @@ impl Knoten {
     ///    Stimmsatz steht; die Stimme wird alle zehn Sekunden wiederholt,
     ///    bis der Prüfpunkt gerechtfertigt ist, damit eine verlorene
     ///    Nachricht die Endgültigkeit nicht aufhält. ⚑ Mit der Quelle, die
-    ///    der Zustand für ihn vermerkt hat (2026-11-04, Casper FFG); so ist
+    ///    der Zustand für ihn vermerkt hat (2026-11-04); so ist
     ///    die Wiederholung dieselbe Stimme, und keine eigene Stimme
     ///    umschliesst eine frühere, solange die Kette keinen Zweig wechselt.
     /// 2. **Sammeln:** Je Höhe zählen die Stimmen für den **eigenen** Block
@@ -2818,6 +2890,11 @@ impl Knoten {
         if stimme.hoehe <= self.kette.gerechtfertigt_bis() {
             return;
         }
+        // Höchstens ein paar Höhen voraus aufheben, gegen eine Flut; ⚑ vor der
+        // Unterschrift, der Deckel gehört vor die teure Arbeit (A48).
+        if stimme.hoehe > self.kette.hoehe() + 4 * myl_consensus::pruefpunkt::BLOECKE_JE_PRUEFPUNKT {
+            return;
+        }
         let satz = self.kette.finalitaetssatz(myl_consensus::block::epoche_fuer_hoehe(stimme.hoehe));
         if !satz.as_ref().is_some_and(|satz| stimme.traegt(satz)) {
             self.protokoll.schreibe(
@@ -2827,14 +2904,10 @@ impl Knoten {
             );
             return;
         }
-        // Höchstens ein paar Höhen voraus aufheben, gegen eine Flut.
-        if stimme.hoehe > self.kette.hoehe() + 4 * myl_consensus::pruefpunkt::BLOECKE_JE_PRUEFPUNKT {
-            return;
-        }
         // ⚑ Zwei Stimmen eines Wählers, die sich widersprechen, sind ein
         //   Doppelbeleg (CONSENSUS 7.6): dieselbe Höhe mit anderem Inhalt,
         //   oder seit 2026-11-04 eine, die eine aufgehobene umschliesst
-        //   oder von ihr umschlossen wird (Casper FFG).
+        //   oder von ihr umschlossen wird.
         let alte = self
             .pruefpunktstimmen
             .values()
@@ -2937,6 +3010,13 @@ impl Knoten {
         let (fragen, ohne_adresse) = crate::stichprobe::anfragen_fuer(&gezogen, epoche_, |k| {
             self.kette.pod_der_kennung(epoche_, k)
         });
+        // ⚑ **Erst der Vorrang, dann die Fragen** (Fund 681). 📌 Lauf `t5`:
+        //   747 von 6 605 Anfragen scheiterten beim Waehlen, 498 an vollen
+        //   ausgehenden Plaetzen, 249 weil der Fragende selbst im Pod sass.
+        //   Bei 29 Knoten fing das die Zahl der Befragten auf; in einem grossen
+        //   Netz ist fast kein Mitglied schon verbunden.
+        self.vorrang_stichprobe = crate::stichprobe::ziele_der_fragen(&fragen, &self.peer_id);
+        let _ = self.vorrang_senden();
         let mut gefragt = 0usize;
         for (adresse, anfrage) in fragen {
             // 📌 Fund 656: `anfrage` ist schon die Nachforderung.
@@ -2946,6 +3026,9 @@ impl Knoten {
             let Ok(an) = myl_net::peer_id_aus_bytes(&adresse) else {
                 continue;
             };
+            if an == self.peer_id {
+                continue;
+            }
             if self
                 .kommandos
                 .send(NodeCommand::Anfrage { an, daten })
@@ -3208,6 +3291,7 @@ impl Knoten {
         self.shardrelais.retain(|_, (_, _, seit)| seit.elapsed() <= crate::relais::FRIST);
         self.abzug_arbeit();
         self.eigenen_abzug_melden();
+        self.wechselbeleg_melden();
         self.vorrang_pflegen();
         self.nachrechnung_pflegen();
         self.groessen_protokollieren();
@@ -3335,6 +3419,7 @@ impl Knoten {
         // Zwei getrennte Erhebungen liefen auseinander, und dann sagte
         // das Protokoll etwas anderes als der Endpunkt.
         self.beobachtungsstelle.setzen(crate::beobachtung::Beobachtungsstand {
+            anker: self.kette.anker_zum_weitergeben().map(|a| a.als_text()),
             stand_ms: crate::protokoll::jetzt_ms().max(0) as u64,
             hoehe: self.kette.hoehe(),
             hoechste_gehoerte: self.hoechste_gehoerte,
@@ -3593,29 +3678,34 @@ impl Knoten {
                 if !rest.is_empty() {
                     return;
                 }
-                if self.kette.ist_zustandslos() {
-                    return self.zustandslos_block(block, m.von);
-                }
-                // ⚑ **Die Vertrauensfrist** (2026-10-27, CONSENSUS 7.5):
-                //   Liegt das Netz mehr als `VERTRAUENSFRIST_EPOCHEN` über
-                //   dem zuletzt bestätigten Prüfpunkt dieses Knotens, könnte
-                //   ihm jeder eine zweite Geschichte vorlegen, unterschrieben
-                //   mit Schlüsseln, die nicht mehr haften. Der Knoten hält an
-                //   und braucht einen jüngeren Anker. Nicht auf der
-                //   Probekette, die ihren Satz ohnehin aus Block 1 lernt.
+                // ⚑ **Weiter geht nur ein Block mit belegtem Erzeuger** (A47),
+                //   und das, bevor er gerechnet wird, damit er das Netz nicht
+                //   um die Rechenzeit später erreicht. Unbelegt heisst nicht
+                //   falsch: Ein Knoten im Rückstand kennt den Satz noch nicht.
+                self.urteilen(m.pruefmarke.clone(), self.urteil_ueber_block(&block));
+                // ⚑ **Die Vertrauensfrist** (2026-10-27, CONSENSUS 7.5): Liegt
+                //   der zuletzt bestaetigte Pruefpunkt dieses Knotens nach der
+                //   Uhr mehr als `VERTRAUENSFRIST_EPOCHEN` zurueck, koennte ihm
+                //   jeder eine zweite Geschichte vorlegen, unterschrieben mit
+                //   Schluesseln, die nicht mehr haften. Der Knoten haelt an und
+                //   braucht einen juengeren Anker. Auch ohne Zustand (A43).
+                //   Nicht auf der Probekette, die ihren Satz aus Block 1 lernt.
                 if !self.konfig.netz.lernt_erzeuger && self.angehalten.is_none() {
-                    let eigene = myl_consensus::block::epoche_fuer_hoehe(self.kette.bestaetigt_bis());
-                    if !crate::kette::vertrauen_traegt(eigene, block.header.epoch) {
+                    let slot_jetzt = myl_consensus::erzeugerplan::slot_bei(crate::protokoll::jetzt_ms().max(0) as u64, self.konfig.slot_ms());
+                    if !self.kette.vertrauen_traegt_jetzt(slot_jetzt) {
                         self.protokoll.schreibe(
                             Eintrag::neu("vertrauensfrist_ueberschritten")
-                                .zahl("bestaetigt_epoche", eigene as i64)
-                                .zahl("netz_epoche", block.header.epoch as i64),
+                                .zahl("bestaetigt_bis", self.kette.bestaetigt_bis() as i64)
+                                .zahl("hoehen_schranke", self.kette.hoehen_schranke(slot_jetzt) as i64),
                         );
                         self.angehalten = Some(
-                            "Vertrauensfrist überschritten: der letzte bestätigte Prüfpunkt ist zu alt, ein jüngerer Anker ist nötig (--abzug)",
+                            "Vertrauensfrist überschritten: der letzte bestätigte Prüfpunkt ist zu alt, ein jüngerer Anker ist nötig (--anker oder --abzug)",
                         );
                         return;
                     }
+                }
+                if self.kette.ist_zustandslos() {
+                    return self.zustandslos_block(block, m.von);
                 }
                 // ⚑ Erst wenn sein Slot begonnen hat (2026-11-04).
                 if self.aus_der_zukunft(&block) {
@@ -3772,16 +3862,46 @@ impl Knoten {
             //   Knoten sie kurz und prüft sie als Stapel in einer
             //   Rechenaufgabe ([`Self::tx_puffer_pflegen`]).
             GossipTopic::Transactions => match borsh::from_slice::<myl_consensus::block::Transaktion>(&m.data) {
-                Ok(tx) => self.tx_puffer.push(tx),
+                Ok(tx) => self.tx_annehmen(tx, m.pruefmarke.clone()),
                 Err(_) => self.tx_zaehler.abgewiesen += 1,
             },
             _ => {}
         }
     }
 
+    /// Ob ein Block aus dem Gossip weitergereicht wird.
+    fn urteil_ueber_block(&self, block: &myl_consensus::block::Block) -> myl_net::Urteil {
+        if self.kette.erzeuger_belegt(block) {
+            myl_net::Urteil::Annehmen
+        } else {
+            myl_net::Urteil::Ignorieren
+        }
+    }
+
+    /// ⚑ **Eine Transaktion aus dem Gossip kommt in den Puffer**, solange
+    /// Platz ist (A47). Bis hierher wuchs er ungedeckelt.
+    fn tx_annehmen(&mut self, tx: myl_consensus::block::Transaktion, marke: Option<myl_net::Pruefmarke>) {
+        if self.tx_puffer.len() >= TX_PUFFER_HOECHSTENS {
+            self.tx_zaehler.abgewiesen += 1;
+            self.urteilen(marke, myl_net::Urteil::Ignorieren);
+            return;
+        }
+        self.tx_puffer.push((tx, marke));
+    }
+
+    /// Sagt der Netzschicht, was mit einer gehaltenen Nachricht geschieht.
+    fn urteilen(&self, marke: Option<myl_net::Pruefmarke>, urteil: myl_net::Urteil) {
+        if let Some(marke) = marke {
+            let _ = self.kommandos.send(NodeCommand::Urteil { marke, urteil });
+        }
+    }
+
     /// **Den Puffer der Transaktionen prüfen**: alle 20 ms oder ab 256
     /// gesammelten als Stapel in einer Rechenaufgabe (`pruefe_alle`); was
-    /// zurückkommt, geht in den Mempool.
+    /// zurückkommt, geht in den Mempool. ⚑ Höchstens
+    /// [`TX_PRUEFUNGEN_ZUGLEICH`] Stapel zugleich, und erst das Ergebnis
+    /// entscheidet, ob eine Transaktion weitergereicht wird (A47): Eine
+    /// falsche Unterschrift bleibt hier und zählt gegen ihren Absender.
     fn tx_puffer_pflegen(&mut self) {
         if self.tx_puffer.is_empty() || (self.tx_puffer.len() < 256 && self.tx_puffer_seit.elapsed() < Duration::from_millis(20)) {
             if self.tx_puffer.is_empty() {
@@ -3789,14 +3909,26 @@ impl Knoten {
             }
             return;
         }
-        let stapel = std::mem::take(&mut self.tx_puffer);
+        let Some(platz) = self.tx_plaetze.nehmen() else {
+            return;
+        };
+        let n = self.tx_puffer.len().min(TX_STAPEL_HOECHSTENS);
+        let (stapel, marken): (Vec<_>, Vec<_>) = self.tx_puffer.drain(..n).unzip();
         self.tx_puffer_seit = std::time::Instant::now();
         let netz = self.kette.netzwert();
         let kanal = self.tx_geprueft_kanal.clone();
+        let kommandos = self.kommandos.clone();
         tokio::task::spawn_blocking(move || {
-            let gut: Vec<myl_consensus::block::GepruefteTransaktion> =
-                myl_consensus::block::pruefe_alle(&stapel, &netz).into_iter().flatten().collect();
+            let ergebnisse = myl_consensus::block::pruefe_alle(&stapel, &netz);
+            for (marke, ergebnis) in marken.into_iter().zip(&ergebnisse) {
+                if let Some(marke) = marke {
+                    let urteil = if ergebnis.is_some() { myl_net::Urteil::Annehmen } else { myl_net::Urteil::Verwerfen };
+                    let _ = kommandos.send(NodeCommand::Urteil { marke, urteil });
+                }
+            }
+            let gut: Vec<myl_consensus::block::GepruefteTransaktion> = ergebnisse.into_iter().flatten().collect();
             let _ = kanal.send(gut);
+            drop(platz);
         });
     }
 
@@ -3919,8 +4051,31 @@ impl Knoten {
                     Some(Nachforderung::Bloecke { .. } | Nachforderung::Zeugenstuecke(_) | Nachforderung::Kontobeweise(_)) => {
                         Some(crate::drossel::Art::Bloecke)
                     }
-                    Some(Nachforderung::LeichterAbzug { .. }) => Some(crate::drossel::Art::Archiv),
+                    Some(Nachforderung::LeichterAbzug { .. } | Nachforderung::Abzug { .. }) => Some(crate::drossel::Art::Archiv),
                     Some(Nachforderung::Archiv { .. } | Nachforderung::Teil { .. }) => Some(crate::drossel::Art::Archiv),
+                    // ⚑ **Alles, was Arbeit kostet** (Sicherheitsaudit A48):
+                    //   Bis hierher ging nur das Nachholen durch die Drossel.
+                    //   Eine Anfrage von wenigen Bytes konnte zwei MiB Belege
+                    //   serialisieren, 64 MiB Verlauf aufbauen, die Zuteilung
+                    //   einer Epoche neu rechnen oder eine Unterschrift
+                    //   prüfen lassen, in der Ereignisschleife und so oft sie
+                    //   wollte. Billig bleiben der Anker, Ping und was einen
+                    //   eigenen Deckel hat (Inferenz, Zeitprobe, Shard).
+                    Some(
+                        Nachforderung::Wechselbelege { .. }
+                        | Nachforderung::Datei { .. }
+                        | Nachforderung::Spur(_)
+                        | Nachforderung::Verlauf(_)
+                        | Nachforderung::VerlaufTeil { .. }
+                        | Nachforderung::Schiedsbeleg(_)
+                        | Nachforderung::SchiedsbelegTeil { .. }
+                        | Nachforderung::SpurenAblegen { .. }
+                        | Nachforderung::SpurenAblegenTeil { .. }
+                        | Nachforderung::Buendel { .. }
+                        | Nachforderung::PositionUebernehmen { .. }
+                        | Nachforderung::Fristzeugnis { .. }
+                        | Nachforderung::Differenz { .. },
+                    ) => Some(crate::drossel::Art::Beleg),
                     _ => None,
                 };
                 let gedrosselt = art.is_some_and(|a| !self.drossel.erlaubt(a, &von, std::time::Instant::now()));
@@ -4081,15 +4236,16 @@ impl Knoten {
                         let ergebnis = self.miner_ich().ok_or_else(|| "kein Miner".to_string()).and_then(|ich| {
                             crate::shardfuehrung::uebernahme_pruefen(self.kette.zustand(), &ich, epoche, pod, position)
                         });
-                        let fehler = match ergebnis {
-                            Ok(auftrag) => {
+                        let bytes = von.to_bytes();
+                        let von_miner = ergebnis.is_ok() && self.kette.zustand().miner.iter().any(|(_, r)| r.netzadresse.0.as_slice() == bytes.as_slice());
+                        let fehler = match ergebnis.and_then(|a| self.uebernahme_setzen(a, von_miner, std::time::Instant::now()).map(|_| ())) {
+                            Ok(()) => {
                                 self.protokoll.schreibe(
                                     Eintrag::neu("position_uebernommen")
                                         .zahl("epoche", epoche as i64)
                                         .zahl("pod", i64::from(pod))
                                         .zahl("position", i64::from(position)),
                                 );
-                                self.uebernahme = Some(auftrag);
                                 None
                             }
                             Err(f) => Some(f),
@@ -4623,6 +4779,11 @@ impl Knoten {
             }
             NodeEvent::Getrennt { peer, grund } => {
                 self.gegenstellen.retain(|p| *p != peer);
+                // ⚑ Kennungen kosten nichts: Was je Gegenstelle gemerkt wird,
+                //   geht mit ihr, sonst wächst es mit jeder neuen (A48).
+                self.latenz_je_peer.remove(&peer);
+                self.leer_geantwortet.remove(&peer);
+                self.zweig_gesperrt.remove(&peer);
                 self.gehoert.getrennt(&peer);
                 self.hoechste_gehoerte = self.gehoert.hoechste();
                 Eintrag::neu("getrennt").text("gegenstelle", peer.to_string()).text("grund", grund)
@@ -5070,6 +5231,19 @@ impl Knoten {
         } else if self.anker_kandidat.is_none()
             && (seit.elapsed() > ANKER_SUCHEN_HOECHSTENS || self.anker_keine >= ZEUGEN_GEGENSTELLEN.min(self.gegenstellen.len()).max(1))
         {
+            // ⛔️ **Kein Rueckfall auf Genesis, wenn der nicht mehr traegt**
+            //   (A43): mit einem Anker von aussen nie, sonst liesse eine
+            //   Gegenstelle ihn durch Schweigen aus; ohne ihn nur, solange das
+            //   Netz jung genug ist. Dann wird weiter gesucht.
+            let ab_genesis_traegt = self.konfig.anker_von_aussen.is_none()
+                && (self.konfig.netz.lernt_erzeuger
+                    || crate::wechsel::einstieg_pruefen(self.kette.netzstart_ms(), None, crate::protokoll::jetzt_ms().max(0) as u64, self.konfig.slot_ms()).is_ok());
+            if !ab_genesis_traegt {
+                self.anker_suchen = Some(std::time::Instant::now());
+                self.anker_keine = 0;
+                self.protokoll.schreibe(Eintrag::neu("anker_weiter_gesucht"));
+                return;
+            }
             self.anker_suchen = None;
             self.anker_keine = 0;
             self.protokoll.schreibe(Eintrag::neu(&format!("{name}_keiner")));
@@ -5294,21 +5468,26 @@ impl Knoten {
             }
             self.vorrang_pods = pod_peers;
         }
-        // Der eigene Pod zuerst, dann die Anfechter; gedeckelt in `myl-net`.
+        self.vorrang_schied = schied;
+        if let Some(peers) = self.vorrang_senden() {
+            self.protokoll.schreibe(
+                Eintrag::neu("vorrang").zahl("epoche", epoche as i64).zahl("peers", peers.len() as i64).zahl("anfechter", self.vorrang_schied.len() as i64),
+            );
+            self.vorrang = Some((epoche, peers));
+        }
+    }
+
+    /// Schickt den ganzen Vorrang: der eigene Pod zuerst, dann die Anfechter,
+    /// dann die zuletzt Befragten einer Stichprobe; gedeckelt in `myl-net`.
+    /// `None`, wenn die Netzschleife nicht mehr laeuft.
+    fn vorrang_senden(&mut self) -> Option<Vec<libp2p::PeerId>> {
         let mut peers = self.vorrang_pods.clone();
-        for p in &schied {
+        for p in self.vorrang_schied.iter().chain(&self.vorrang_stichprobe) {
             if !peers.contains(p) {
                 peers.push(*p);
             }
         }
-        let anzahl = peers.len();
-        if self.kommandos.send(NodeCommand::Vorrang { peers: peers.clone() }).is_ok() {
-            self.protokoll.schreibe(
-                Eintrag::neu("vorrang").zahl("epoche", epoche as i64).zahl("peers", anzahl as i64).zahl("anfechter", schied.len() as i64),
-            );
-            self.vorrang = Some((epoche, peers));
-            self.vorrang_schied = schied;
-        }
+        self.kommandos.send(NodeCommand::Vorrang { peers: peers.clone() }).is_ok().then_some(peers)
     }
 
     /// Je Aufnahme: Zusage pflegen, Shard abgleichen, messen, holen.
@@ -6235,8 +6414,12 @@ impl Knoten {
         let schluessel = (von, abdruck);
         if !self.ablage_teile.contains_key(&schluessel) {
             let neu = Belegstuecke::neu(abdruck, gesamt).ok_or("die Grösse der Ablage passt nicht")?;
+            // ⚑ **Weichen muss, was am wenigsten angekommen ist** (A48), nicht
+            //   das Älteste: Das Älteste ist die ehrliche Ablage, die gerade
+            //   Stück für Stück kommt, und ein Angreifer verdrängte sie mit
+            //   einem einzigen Byte unter neuem Abdruck.
             if self.ablage_teile.len() >= VERLAUFTEILE_ZUGLEICH {
-                if let Some(alt) = self.ablage_teile.iter().min_by_key(|(_, (t, _))| *t).map(|(k, _)| *k) {
+                if let Some(alt) = self.ablage_teile.iter().min_by_key(|(_, (t, b))| (b.stand(), *t)).map(|(k, _)| *k) {
                     self.ablage_teile.remove(&alt);
                 }
             }
@@ -6251,6 +6434,7 @@ impl Knoten {
             Stueckfolge::Fertig(bytes) => {
                 self.ablage_teile.remove(&schluessel);
                 let ablage = borsh::from_slice::<myl_types::Spurablage>(&bytes).map_err(|e| format!("die Ablage ist unlesbar: {e}"))?;
+                self.protokoll.schreibe(Eintrag::neu("spurablage_aus_stuecken").wahr("aus_dem_netz", von.is_some()).zahl("bytes", bytes.len() as i64));
                 self.spur_ablegen(von, ablage)
             }
             Stueckfolge::Verworfen => {
@@ -8602,6 +8786,21 @@ impl Knoten {
         }
     }
 
+    /// ⚑ **Meldet einen neuen eigenen Wechselbeleg** (CONSENSUS 7.4a): Aus
+    /// dem Feld `anker` dieser Zeile entsteht ein Anker von aussen
+    /// (`--anker`), mit vollem Blockhash.
+    fn wechselbeleg_melden(&mut self) {
+        let Some(anker) = self.kette.anker_zum_weitergeben() else {
+            return;
+        };
+        let epoche = myl_consensus::block::epoche_fuer_hoehe(anker.hoehe);
+        if self.beleg_gemeldet == Some((epoche, anker.hoehe)) {
+            return;
+        }
+        self.beleg_gemeldet = Some((epoche, anker.hoehe));
+        self.protokoll.schreibe(Eintrag::neu("wechselbeleg").zahl("epoche", epoche as i64).text("anker", anker.als_text()));
+    }
+
     /// Meldet einen neu angelegten eigenen Abzug, mit vollem Blockhash: Aus
     /// dieser Zeile entsteht ein Anker.
     fn eigenen_abzug_melden(&mut self) {
@@ -8963,6 +9162,24 @@ type Fall = (u64, myl_types::ids::PodId, u32);
 /// So viele Schiedsbelege setzt ein Knoten zugleich aus Stücken zusammen.
 const SCHIEDSTEILE_ZUGLEICH: usize = 4;
 
+/// ⚑ Der Puffer der Transaktionen aus dem Gossip (A47): so viele warten
+/// höchstens auf ihre Prüfung; ...
+const TX_PUFFER_HOECHSTENS: usize = 8_192;
+/// ... so viele gehen in einen Stapel ...
+const TX_STAPEL_HOECHSTENS: usize = 1_024;
+/// ... und so viele Stapel werden zugleich geprüft. Ohne Grenze startete eine
+/// Flut Rechenaufgaben bis zur Obergrenze der Laufzeit (512 Fäden).
+const TX_PRUEFUNGEN_ZUGLEICH: usize = 4;
+
+/// So lange bleibt eine Übernahme mindestens bestehen ([`Knoten::uebernahme_setzen`]).
+const UEBERNAHME_PAUSE: Duration = Duration::from_secs(60);
+/// Höchstens eine Seite des Verlaufs je so viel Zeit.
+const VERLAUF_PAUSE: std::time::Duration = std::time::Duration::from_millis(100);
+/// So lange liest eine Seite höchstens Blöcke, in der Schleife des Knotens.
+const VERLAUF_FRIST: std::time::Duration = std::time::Duration::from_millis(25);
+/// Dasselbe für einen Absender, der nicht als Miner eingetragen ist.
+const UEBERNAHME_PAUSE_FREMD: Duration = Duration::from_secs(600);
+
 /// So viele Verläufe (je Fall und Gegenstelle) setzt ein Knoten zugleich
 /// aus Stücken zusammen; ist keiner frei, fällt der älteste.
 const VERLAUFTEILE_ZUGLEICH: usize = 8;
@@ -9241,6 +9458,304 @@ mod vorausspeicher_tests {
         assert!(k.abzug_holen.is_none(), "keine hatte ihn");
         assert!(k.anker_suchen.is_some(), "er sucht neu");
         assert!(k.anker_verworfen.contains(&8850));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// Eine Stimmsatzdatei mit vier Probeschluesseln.
+    fn stimmsatz_in(d: &std::path::Path, start: Option<u64>) -> std::path::PathBuf {
+        let mut text = String::from("netz probe\n");
+        if let Some(s) = start {
+            text.push_str(&format!("start {s}\n"));
+        }
+        for name in ["a", "b", "c", "d"] {
+            text.push_str(&crate::schluessel::Konsensschluessel::probe(name).expect("Schluessel").genesiszeile(100).expect("Zeile"));
+            text.push('\n');
+        }
+        let p = d.join("stimmsatz.txt");
+        std::fs::write(&p, text).expect("schreiben");
+        p
+    }
+
+    fn einsteiger(d: &std::path::Path, start: Option<u64>, netz: &'static crate::netz::Netz) -> KnotenKonfig {
+        KnotenKonfig {
+            name: "einsteiger".to_string(),
+            netz,
+            schluesseldatei: d.join("knoten.key"),
+            protokollverzeichnis: d.to_path_buf(),
+            horchadressen: vec!["/ip4/127.0.0.1/tcp/0".to_string()],
+            kettendatei: None,
+            beobachtung: None,
+            tuer: None,
+            stimmsatzdatei_pfad: Some(stimmsatz_in(d, start)),
+            ..KnotenKonfig::default()
+        }
+    }
+
+    fn einstiegsordner(marke: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("myl-einstieg-{marke}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).expect("Ordner");
+        d
+    }
+
+    /// ⚑ **Ohne eigenen Stand: nur ab einem Punkt, der noch traegt** (A43).
+    /// Gegenprobe: ohne `einstieg_pruefen` startet der Knoten in allen Faellen.
+    #[tokio::test]
+    async fn ein_knoten_ohne_stand_steigt_nur_ab_einem_jungen_punkt_ein() {
+        let d = einstiegsordner("punkt");
+        let jetzt = crate::protokoll::jetzt_ms().max(0) as u64;
+        let netz = &crate::netz::PROBEKETTE;
+        let fehler = |e: Result<Knoten, KnotenFehler>| e.err().map(|f| format!("{f:?}"));
+        let alt = fehler(Knoten::starten(einsteiger(&d, Some(0), netz), false).await).expect("ein altes Netz ohne Anker");
+        assert!(alt.contains("Vertrauensfrist"), "{alt}");
+        let ohne = fehler(Knoten::starten(einsteiger(&d, None, netz), false).await).expect("keine Startzeit, kein Anker");
+        assert!(ohne.contains("Startzeit"), "{ohne}");
+        assert!(Knoten::starten(einsteiger(&d, Some(jetzt), netz), false).await.is_ok(), "ein junges Netz");
+        let slot = jetzt / KnotenKonfig::default().slot_ms();
+        let frisch = crate::wechsel::AnkerVonAussen { hoehe: 150, block: myl_types::Hash::from_bytes([1; 32]), bindung: myl_types::Hash::from_bytes([2; 32]), slot };
+        let mut k = einsteiger(&d, Some(0), netz);
+        k.anker_von_aussen = Some(frisch);
+        assert!(Knoten::starten(k, false).await.is_ok(), "ein altes Netz mit frischem Anker");
+        let mut k = einsteiger(&d, Some(0), netz);
+        k.anker_von_aussen = Some(crate::wechsel::AnkerVonAussen { slot: 0, ..frisch });
+        let zu_alt = fehler(Knoten::starten(k, false).await).expect("ein alter Anker");
+        assert!(zu_alt.contains("--anker ist aelter"), "{zu_alt}");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// ⛔️ **Schweigen laesst den Anker nicht aus** (A43): Findet die Suche
+    /// keinen Kandidaten, geht ein Knoten mit `--anker` nicht ab Genesis
+    /// weiter, sondern sucht weiter. Ohne Anker in einem jungen Netz schon.
+    #[tokio::test]
+    async fn schweigen_laesst_den_anker_nicht_aus() {
+        let d = einstiegsordner("schweigen");
+        let jetzt = crate::protokoll::jetzt_ms().max(0) as u64;
+        let netz = &crate::netz::PROBEKETTE;
+        let mut konfig = einsteiger(&d, Some(jetzt), netz);
+        konfig.anker_von_aussen = Some(crate::wechsel::AnkerVonAussen { hoehe: 150, block: myl_types::Hash::from_bytes([1; 32]), bindung: myl_types::Hash::from_bytes([2; 32]), slot: jetzt / KnotenKonfig::default().slot_ms() });
+        let mut mit = Knoten::starten(konfig, false).await.expect("Knoten");
+        assert!(mit.anker_suchen.is_some());
+        mit.anker_keine = 1;
+        mit.anker_suche_pflegen();
+        assert!(mit.anker_suchen.is_some(), "er sucht weiter");
+        assert_eq!(mit.anker_keine, 0);
+        let mut ohne = Knoten::starten(einsteiger(&d, Some(jetzt), netz), false).await.expect("Knoten");
+        ohne.anker_keine = 1;
+        ohne.anker_suche_pflegen();
+        assert!(ohne.anker_suchen.is_none(), "ab Genesis, solange das Netz jung ist");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// ⛔️ **Ein Block mit erfundener Epoche haelt niemanden an** (A46). Bis
+    /// 0.117.0 kam die Epoche aus dem noch ungeprueften Kopf, und eine einzige
+    /// Nachricht beendete jeden vollen Knoten ausserhalb der Probekette.
+    /// Gegenprobe: mit `block.header.epoch` im Vergleich haelt er an.
+    #[tokio::test]
+    async fn ein_block_mit_erfundener_epoche_haelt_niemanden_an() {
+        let d = einstiegsordner("epoche");
+        let jetzt = crate::protokoll::jetzt_ms().max(0) as u64;
+        let mut k = Knoten::starten(einsteiger(&d, Some(jetzt), &crate::netz::TESTNETZ_INT4), false).await.expect("Knoten");
+        let mut block = Kette::probestand().baue_block();
+        block.header.epoch = 1_000_000;
+        let daten = borsh::to_vec(&block).expect("kodieren");
+        k.verarbeite(&myl_net::InboundMessage { topic: GossipTopic::Blocks, data: daten, von: libp2p::PeerId::random(), pruefmarke: None });
+        assert_eq!(k.angehalten(), None);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// ⚑ **Der Puffer ist gedeckelt, und zugleich laufen nur wenige Stapel**
+    /// (A47). Gegenproben: ohne die Grenze in `tx_annehmen` wächst der Puffer,
+    /// ohne den Platz in `tx_puffer_pflegen` leert er sich trotz belegter
+    /// Plätze.
+    #[tokio::test]
+    async fn eine_flut_von_transaktionen_bleibt_gedeckelt() {
+        let d = einstiegsordner("flut");
+        let konfig = KnotenKonfig {
+            name: "flut".to_string(),
+            schluesseldatei: d.join("knoten.key"),
+            protokollverzeichnis: d.clone(),
+            horchadressen: vec!["/ip4/127.0.0.1/tcp/0".to_string()],
+            kettendatei: None,
+            beobachtung: None,
+            tuer: None,
+            ..KnotenKonfig::default()
+        };
+        let mut k = Knoten::starten(konfig, false).await.expect("Knoten");
+        let tx = myl_consensus::block::Transaktion {
+            absender: myl_types::bls::BlsPublicKey([0; myl_types::bls::BLS_PK_LEN]),
+            nonce: 0,
+            max_gebuehr: 0,
+            anweisung: myl_consensus::block::Anweisung::Burn { betrag: 1 },
+            signatur: myl_types::bls::BlsSignature([0; myl_types::bls::BLS_SIG_LEN]),
+        };
+        for _ in 0..TX_PUFFER_HOECHSTENS + 10 {
+            k.tx_annehmen(tx.clone(), None);
+        }
+        assert_eq!(k.tx_puffer.len(), TX_PUFFER_HOECHSTENS);
+        let belegt: Vec<_> = (0..TX_PRUEFUNGEN_ZUGLEICH).map(|_| k.tx_plaetze.nehmen().expect("Platz")).collect();
+        k.tx_puffer_pflegen();
+        assert_eq!(k.tx_puffer.len(), TX_PUFFER_HOECHSTENS, "alle Plätze belegt, kein neuer Stapel");
+        drop(belegt);
+        k.tx_puffer_pflegen();
+        assert_eq!(k.tx_puffer.len(), TX_PUFFER_HOECHSTENS - TX_STAPEL_HOECHSTENS, "ein Stapel je Runde");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// ⚑ **Eine Reserve lässt sich nicht hin und her schicken** (A49).
+    /// Gegenprobe: ohne die Pause gilt der zweite Auftrag.
+    #[tokio::test]
+    async fn eine_uebernahme_haelt_ihre_pause() {
+        let d = einstiegsordner("uebernahme");
+        let konfig = KnotenKonfig {
+            name: "uebernahme".to_string(),
+            schluesseldatei: d.join("knoten.key"),
+            protokollverzeichnis: d.clone(),
+            horchadressen: vec!["/ip4/127.0.0.1/tcp/0".to_string()],
+            kettendatei: None,
+            beobachtung: None,
+            tuer: None,
+            ..KnotenKonfig::default()
+        };
+        let mut k = Knoten::starten(konfig, false).await.expect("Knoten");
+        let a = crate::shardfuehrung::Shardauftrag { epoche: 1, pod: 0, position: 0, positionen: 2, von: 0, bis: 4 };
+        let b = crate::shardfuehrung::Shardauftrag { position: 1, ..a.clone() };
+        let t = std::time::Instant::now();
+        assert_eq!(k.uebernahme_setzen(a.clone(), true, t), Ok(()));
+        assert_eq!(k.uebernahme_setzen(a.clone(), true, t + Duration::from_secs(1)), Ok(()), "derselbe Auftrag noch einmal");
+        assert!(k.uebernahme_setzen(b.clone(), true, t + Duration::from_secs(1)).is_err());
+        assert_eq!(k.uebernahme, Some(a.clone()), "der erste bleibt");
+        assert_eq!(k.uebernahme_setzen(b.clone(), true, t + UEBERNAHME_PAUSE), Ok(()));
+        assert_eq!(k.uebernahme, Some(b.clone()));
+
+        // A49, der Absender: Ein Fremder wartet länger und kann einen Miner nicht verdrängen.
+        let t2 = t + UEBERNAHME_PAUSE * 2;
+        assert!(k.uebernahme_setzen(a.clone(), false, t2).is_err(), "Fremder in der Pause eines Miners");
+        assert_eq!(k.uebernahme, Some(b.clone()));
+        let t3 = t + UEBERNAHME_PAUSE + UEBERNAHME_PAUSE_FREMD;
+        assert_eq!(k.uebernahme_setzen(a.clone(), false, t3), Ok(()), "nach seiner langen Pause");
+        // Ein Miner verdrängt den Auftrag eines Fremden sofort und blockiert dann selbst.
+        assert_eq!(k.uebernahme_setzen(b.clone(), true, t3 + Duration::from_secs(1)), Ok(()));
+        assert_eq!(k.uebernahme, Some(b.clone()));
+        assert!(k.uebernahme_setzen(a.clone(), true, t3 + Duration::from_secs(2)).is_err());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    fn einfacher_knoten(marke: &str) -> (std::path::PathBuf, KnotenKonfig) {
+        let d = einstiegsordner(marke);
+        let konfig = KnotenKonfig {
+            name: marke.to_string(),
+            schluesseldatei: d.join("knoten.key"),
+            protokollverzeichnis: d.clone(),
+            horchadressen: vec!["/ip4/127.0.0.1/tcp/0".to_string()],
+            kettendatei: None,
+            beobachtung: None,
+            tuer: None,
+            ..KnotenKonfig::default()
+        };
+        (d, konfig)
+    }
+
+    /// ⚑ **Jede teure Anfrage geht durch die Drossel** (A48): Eine Flut von
+    /// einer Gegenstelle wird ab der Fassung des Eimers abgewiesen, je Art
+    /// der Anfrage. Gegenprobe: eine Art aus der Liste in `vermerke` nehmen,
+    /// dann läuft ihre Flut ungedrosselt durch.
+    #[tokio::test]
+    async fn jede_teure_anfrage_geht_durch_die_drossel() {
+        use crate::nachschub::Nachforderung as N;
+        use myl_types::ids::{EpochId, PodId};
+        let (d, konfig) = einfacher_knoten("drossel");
+        let mut k = Knoten::starten(konfig, false).await.expect("Knoten");
+        let frage = myl_types::Spuranfrage { epoche: EpochId(0), pod: PodId::new([1; 32]), segment: 0 };
+        let arten = [
+            N::Wechselbelege { ab: 0 },
+            N::Abzug { hoehe: 1, ab: 0 },
+            N::Datei { name: "x".to_string(), ab: 0, laenge: 1 },
+            N::Spur(frage),
+            N::Verlauf(frage),
+            N::VerlaufTeil { anfrage: frage, ab: 0 },
+            N::Schiedsbeleg(frage),
+            N::SchiedsbelegTeil { anfrage: frage, ab: 0 },
+        ];
+        for art in arten {
+            let daten = art.als_bytes().expect("kodieren");
+            let von = libp2p::PeerId::random();
+            let vorher = k.gedrosselt;
+            for marke in 0..64 {
+                k.vermerke(NodeEvent::AnfrageEingegangen { von, daten: daten.clone(), marke });
+            }
+            assert!(k.gedrosselt > vorher, "ungedrosselt: {art:?}");
+        }
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// ⚑ **Was je Gegenstelle gemerkt wird, geht mit ihr** (A48). Gegenprobe:
+    /// ohne die Zeilen in `Getrennt` bleibt es stehen.
+    #[tokio::test]
+    async fn eine_getrennte_gegenstelle_hinterlaesst_nichts() {
+        let (d, konfig) = einfacher_knoten("getrennt");
+        let mut k = Knoten::starten(konfig, false).await.expect("Knoten");
+        let peer = libp2p::PeerId::random();
+        k.latenz_je_peer.insert(peer, 5);
+        k.leer_geantwortet.insert(peer, (1, std::time::Instant::now()));
+        k.zweig_gesperrt.insert(peer, std::time::Instant::now());
+        k.vermerke(NodeEvent::Getrennt { peer, grund: "probe".to_string() });
+        assert!(!k.latenz_je_peer.contains_key(&peer));
+        assert!(!k.leer_geantwortet.contains_key(&peer));
+        assert!(!k.zweig_gesperrt.contains_key(&peer));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// ⚑ **Der Deckel einer Stimme steht vor ihrer Prüfung** (A48): Eine zu
+    /// weit vorausliegende kostet nichts. Gegenprobe: mit dem Deckel hinter
+    /// `traegt` schreibt sie ihre Ablehnung ins Protokoll.
+    #[tokio::test]
+    async fn eine_stimme_zu_weit_voraus_kostet_nichts() {
+        let (d, konfig) = einfacher_knoten("stimme");
+        let mut k = Knoten::starten(konfig, false).await.expect("Knoten");
+        let stimme = myl_consensus::pruefpunkt::Pruefpunktstimme {
+            hoehe: 4 * myl_consensus::pruefpunkt::BLOECKE_JE_PRUEFPUNKT + 1,
+            block_hash: myl_types::Hash::from_bytes([1; 32]),
+            bindung: myl_types::Hash::from_bytes([2; 32]),
+            quelle: myl_consensus::pruefpunkt::Quelle::GENESIS,
+            waehler: myl_types::ids::MinerId::new([3; 32]),
+            signatur: myl_types::bls::BlsSignature([0; myl_types::bls::BLS_SIG_LEN]),
+        };
+        let vorher = k.protokoll.geschrieben();
+        k.pruefpunktstimme_aufnehmen(stimme);
+        assert_eq!(k.protokoll.geschrieben(), vorher);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// ⚑ **Ein Block ohne belegten Erzeuger geht nicht weiter** (A47), ein
+    /// belegter schon. Gegenprobe: `Annehmen` in beiden Zweigen.
+    #[tokio::test]
+    async fn nur_ein_belegter_block_wird_weitergereicht() {
+        let d = einstiegsordner("urteil");
+        let jetzt = crate::protokoll::jetzt_ms().max(0) as u64;
+        let testnetz = Knoten::starten(einsteiger(&d, Some(jetzt), &crate::netz::TESTNETZ_INT4), false).await.expect("Knoten");
+        let fremd = Kette::probestand().baue_block();
+        assert_eq!(testnetz.urteil_ueber_block(&fremd), myl_net::Urteil::Ignorieren);
+        let (d2, konfig) = einfacher_knoten("urteil2");
+        let probe = Knoten::starten(konfig, false).await.expect("Knoten");
+        assert_eq!(probe.urteil_ueber_block(&fremd), myl_net::Urteil::Annehmen, "die Probekette lernt ihren Erzeuger");
+        let _ = std::fs::remove_dir_all(&d);
+        let _ = std::fs::remove_dir_all(&d2);
+    }
+
+    /// ⚑ **Eine halbfertige Ablage verdrängt nur, was weniger Bytes hat**
+    /// (A48). Gegenprobe: nach Alter statt nach Stand fällt die grosse.
+    #[tokio::test]
+    async fn eine_halbfertige_ablage_wird_nicht_von_einem_byte_verdraengt() {
+        let (d, konfig) = einfacher_knoten("ablage");
+        let mut k = Knoten::starten(konfig, false).await.expect("Knoten");
+        let gross = myl_types::Hash::from_bytes([1; 32]);
+        let peer = libp2p::PeerId::random();
+        assert!(k.ablage_stueck(Some(peer), 1_000, gross, 0, &[7; 500]).is_ok());
+        for i in 2..VERLAUFTEILE_ZUGLEICH as u8 + 2 {
+            let _ = k.ablage_stueck(Some(libp2p::PeerId::random()), 1_000, myl_types::Hash::from_bytes([i; 32]), 0, &[7; 1]);
+        }
+        assert!(k.ablage_teile.contains_key(&(Some(peer), gross)), "die grosse ist noch da");
+        assert!(k.ablage_teile.len() <= VERLAUFTEILE_ZUGLEICH);
         let _ = std::fs::remove_dir_all(&d);
     }
 }

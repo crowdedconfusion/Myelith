@@ -166,6 +166,41 @@ impl BlsSecretKey {
         Ok(Self(sk.serialize()))
     }
 
+    /// ⚑ **Schlüssel eines Kontos aus einem Seed** (EIP-2333 und EIP-2334,
+    /// 2026-11-08): Pfad `m/12381/<coin>/<konto>/0`. Ein Satz Wörter gibt
+    /// mehrere Konten, und der Hauptschlüssel signiert nie.
+    pub fn aus_seed_und_pfad(seed: &[u8], coin: u32, konto: u32) -> Result<Self, BlsError> {
+        let mut sk = SecretKey::derive_master_eip2333(seed).map_err(|_| BlsError::KeyGenFailed)?;
+        for index in [12381, coin, konto, 0] {
+            sk = sk.derive_child_eip2333(index);
+        }
+        Ok(Self(sk.serialize()))
+    }
+
+    /// ⚑ **Aus dem Ausgangsmaterial einer Schlüsseldatei:** 64 Bytes sind ein
+    /// Seed, und daraus entsteht das erste Konto; alles andere (32 Bytes,
+    /// Konsensschlüssel und ältere Wallets) geht wie bisher über [`Self::key_gen`].
+    pub fn aus_ausgangsmaterial(material: &[u8]) -> Result<Self, BlsError> {
+        if material.len() == 64 {
+            Self::aus_seed_und_pfad(material, crate::adresstext::COIN_NUMMER, 0)
+        } else {
+            Self::key_gen(material)
+        }
+    }
+
+    /// ⚑ **Die 32 Bytes des Schlüssels, nur für einen Keystore nach EIP-2335.**
+    /// Sie verlassen den Prozess nie im Klartext; wer sie außerhalb einer
+    /// Verschlüsselung braucht, unterschreibt stattdessen.
+    pub fn geheime_bytes(&self) -> [u8; 32] {
+        self.0
+    }
+
+    /// Der Rückweg aus einem Keystore; ein ungültiger Wert wird abgewiesen.
+    pub fn aus_geheimen_bytes(bytes: [u8; 32]) -> Result<Self, BlsError> {
+        SecretKey::from_bytes(&bytes).map_err(|_| BlsError::InvalidSecretKey)?;
+        Ok(Self(bytes))
+    }
+
     /// Der zugehörige öffentliche Schlüssel.
     pub fn public_key(&self) -> Result<BlsPublicKey, BlsError> {
         let sk = SecretKey::from_bytes(&self.0).map_err(|_| BlsError::InvalidSecretKey)?;
@@ -407,6 +442,53 @@ mod tests {
         let b = BlsSecretKey::key_gen(&[0x22u8; 32]).expect("KeyGen");
         let c = BlsSecretKey::key_gen(&[0x33u8; 32]).expect("KeyGen");
         (a, b, c)
+    }
+
+    /// Testfall 0 aus EIP-2333 (Zahlen in Dezimal, dort angegeben).
+    #[test]
+    fn die_kindableitung_folgt_eip_2333() {
+        let seed: Vec<u8> = (0.."c55257c360c07c72029aebc1b53c05ed0362ada38ead3e3e9efa3708e53495531f09a6987599d18264c1e1c92f2cf141630c7a3c4ab7c81b2f001698e7463b04".len() / 2)
+            .map(|i| u8::from_str_radix(&"c55257c360c07c72029aebc1b53c05ed0362ada38ead3e3e9efa3708e53495531f09a6987599d18264c1e1c92f2cf141630c7a3c4ab7c81b2f001698e7463b04"[i * 2..i * 2 + 2], 16).expect("Hex"))
+            .collect();
+        let dezimal = |sk: &SecretKey| -> String {
+            let mut z = vec![0u8];
+            for b in sk.serialize() {
+                let mut uebertrag = u32::from(b);
+                for d in z.iter_mut().rev() {
+                    let w = u32::from(*d) * 256 + uebertrag;
+                    *d = (w % 10) as u8;
+                    uebertrag = w / 10;
+                }
+                while uebertrag > 0 {
+                    z.insert(0, (uebertrag % 10) as u8);
+                    uebertrag /= 10;
+                }
+            }
+            z.iter().map(|d| char::from(b'0' + d)).collect::<String>().trim_start_matches('0').to_string()
+        };
+        let master = SecretKey::derive_master_eip2333(&seed).expect("Hauptschlüssel");
+        assert_eq!(dezimal(&master), "6083874454709270928345386274498605044986640685124978867557563392430687146096");
+        assert_eq!(dezimal(&master.derive_child_eip2333(0)), "20397789859736650942317412262472558107875392172444076792671091975210932703118");
+    }
+
+    /// ⚑ Zwei Konten, zwei Schlüssel, und keiner ist der Hauptschlüssel.
+    #[test]
+    fn verschiedene_konten_geben_verschiedene_schluessel() {
+        let seed = [0x42u8; 64];
+        let a = BlsSecretKey::aus_seed_und_pfad(&seed, crate::adresstext::COIN_NUMMER, 0).expect("a");
+        let b = BlsSecretKey::aus_seed_und_pfad(&seed, crate::adresstext::COIN_NUMMER, 1).expect("b");
+        let haupt = BlsSecretKey(SecretKey::derive_master_eip2333(&seed).expect("h").serialize());
+        assert_ne!(a.public_key().expect("pk"), b.public_key().expect("pk"));
+        assert_ne!(a.public_key().expect("pk"), haupt.public_key().expect("pk"));
+        assert_eq!(
+            BlsSecretKey::aus_ausgangsmaterial(&seed).expect("m").public_key().expect("pk"),
+            a.public_key().expect("pk")
+        );
+        assert_eq!(
+            BlsSecretKey::aus_ausgangsmaterial(&[0x42u8; 32]).expect("alt").public_key().expect("pk"),
+            BlsSecretKey::key_gen(&[0x42u8; 32]).expect("k").public_key().expect("pk"),
+            "32 Bytes bleiben wie bisher"
+        );
     }
 
     #[test]

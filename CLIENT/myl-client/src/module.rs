@@ -30,6 +30,7 @@ pub const NUTZERMODULE: &str = "module";
 const VERTRAUEN: &str = "vertrauen.json";
 const VERSIONEN: &str = "modulversionen.json";
 const SPEICHER: &str = "modulspeicher";
+const ABLAGE: &str = "modulablage";
 
 /// **Unter diesem Namen bekommt ein Werkzeug des Moduls die gepruefte
 /// Kopie seines Programms**, statt das Programm im Modulordner zu starten.
@@ -53,6 +54,11 @@ pub fn versionspfad() -> PathBuf {
 /// Wohin die gepruefen Programme kopiert werden.
 pub fn speicherpfad() -> PathBuf {
     einstellungsordner().join(SPEICHER)
+}
+
+/// Daten, Geheimnisse und Genehmigungen abgeschotteter Module.
+pub fn ablagepfad() -> PathBuf {
+    einstellungsordner().join(ABLAGE)
 }
 
 /// Die Orte, an denen Module liegen: `MODULES/` an der Wurzel, dann
@@ -528,12 +534,28 @@ pub fn liste(w: &Modulwirt) -> Vec<String> {
                     myl_module::beschreibung::Laufzeit::Nativ { .. } => "nativ, ohne Abschottung",
                     myl_module::beschreibung::Laufzeit::Wasm { .. } => "abgeschottet",
                 };
+                let genehmigt = myl_module::ablage::genehmigt(&ablagepfad(), &b.name);
+                let offen: Vec<&str> = b.befugnisse.http.iter().filter(|h| !genehmigt.contains(h)).map(String::as_str).collect();
+                if !offen.is_empty() && matches!(b.laufzeit, myl_module::beschreibung::Laufzeit::Wasm { .. }) {
+                    aus.push(format!("  {} möchte ins Netz: {}; /module genehmigen {}", b.name, offen.join(", "), b.name));
+                }
                 aus.push(format!("✓ {} {} ({art}), signiert von {}, {zustand}: {}", b.befehle[0].name, b.version, myl_module::filter::eine_zeile(&g.signiert_von), myl_module::filter::eine_zeile(&b.was)));
             }
             Err(f2) => aus.push(format!("✗ {}: {}", f.ordner.display(), myl_module::filter::eine_zeile(f2))),
         }
     }
     aus
+}
+
+/// **Die Rechner, die ein geprueftes Modul erreichen moechte.** `None`, wenn
+/// es kein gepruefes Modul dieses Namens gibt.
+pub fn gewuenschte_rechner(w: &Modulwirt, name: &str) -> Option<Vec<String>> {
+    w.gefunden.iter().find_map(|f| f.ergebnis.as_ref().ok().filter(|g| g.beschreibung.name == name).map(|g| g.beschreibung.befugnisse.http.clone()))
+}
+
+/// Haelt fest, dass der Mensch diese Rechner genehmigt hat.
+pub fn rechner_genehmigen(name: &str, rechner: &[String]) -> Result<(), String> {
+    myl_module::ablage::genehmigen(&ablagepfad(), name, rechner)
 }
 
 /// **Installiert ein Modul** aus einem Ordner in den Ordner der

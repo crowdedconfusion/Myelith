@@ -316,6 +316,32 @@ fn ein_checker_rechnet_den_verlauf_ab_den_tokens_nach() {
     assert_eq!(myl_verifier::schied_nachrechnen(&modell, &gewaehlt, &ketten_gewaehlt, 2, kopf, &beleg_kopf[..3], laenge), Ok(false), "Position 2 ist Prompt, keine Wahl");
 }
 
+/// ⛔️ **Bezeugt und in falscher Länge ist überführt** (Sicherheitsaudit A50):
+/// Der Beleg kommt vom Angeklagten, und der kann sich auf einen Vektor
+/// beliebiger Länge festlegen. Gegenprobe: ohne die Längenprüfung in
+/// `schied_nachrechnen` stirbt die Aufgabe an der Panik, und niemand stimmt.
+#[test]
+fn ein_bezeugter_vektor_falscher_laenge_ueberfuehrt_den_pod() {
+    let dir = artifacts_dir();
+    if !artefakte::vorhanden(&dir) {
+        return;
+    }
+    let modell = load_model(&dir).expect("Modell-Ladung");
+    let schichten = modell.num_layers;
+    let tokens = [9_707u32, 11, 1_879];
+    let beleg: Vec<Vec<i16>> = vec![vec![1; 3], vec![2; 3]];
+    let bezeugt = |v: &[i16]| Hash(myl_types::uebergang::activation_hash(v));
+    let mut ketten = vec![vec![Hash::sha256(b"leer"); schichten + 1]; tokens.len()];
+    for (kette, v) in ketten.iter_mut().zip(&beleg) {
+        kette[1] = bezeugt(v);
+        kette[schichten] = bezeugt(v);
+    }
+    // Eine Layer in der Mitte: Die Eingänge sind der Beleg.
+    assert_eq!(myl_verifier::schied_nachrechnen(&modell, &tokens, &ketten, 1, 2, &beleg, 0), Ok(true));
+    // Der Kopf: Der Ausgang der letzten Layer ist der Beleg.
+    assert_eq!(myl_verifier::schied_nachrechnen(&modell, &tokens, &ketten, 1, schichten + 1, &beleg, 1), Ok(true));
+}
+
 /// Die Ketten `[Eingang] ++ Spur` eines Pods, der über `tokens` ehrlich
 /// rechnet, Position für Position mit gemeinsamem KV-Speicher wie ein Shard.
 fn ehrliche_ketten(modell: &integer_llm_runtime::model::IntegerModel, tokens: &[u32]) -> Vec<Vec<Hash>> {

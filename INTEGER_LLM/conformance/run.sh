@@ -33,6 +33,13 @@
 #
 # Exit 0 = alle Vektoren bestanden, Exit 1 = mindestens einer fehlgeschlagen.
 
+# ⚑ **Auch mit `sh` aufgerufen läuft es unter bash.** Auf Debian und Ubuntu ist
+#   `sh` die dash und kennt `pipefail` nicht; auf dem Mac fiel das nie auf
+#   (`karten-pruefen.sh` ruft dieses Skript mit `sh`).
+if [ -z "${BASH_VERSION:-}" ]; then
+    exec bash "$0" "$@"
+fi
+
 set -euo pipefail
 
 BACKEND="${1:-reference}"

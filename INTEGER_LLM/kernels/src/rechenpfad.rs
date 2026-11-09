@@ -91,7 +91,7 @@
 /// nicht.
 pub fn mit_rechenpfad() -> Vec<&'static str> {
     let mut vorhanden = vec!["reference"];
-    if crate::dot::VEKTORISIERT {
+    if crate::dot::laeuft_vektorisiert() {
         vorhanden.push("cpu-simd");
     }
     if crate::ressourcen::metal::verfuegbar() {
@@ -241,7 +241,7 @@ mod tests {
     fn cpu_simd_gilt_nur_wo_dot_vektorisiert() {
         assert_eq!(
             rechnet("cpu-simd"),
-            crate::dot::VEKTORISIERT,
+            crate::dot::laeuft_vektorisiert(),
             "cpu-simd wird anders gemeldet, als dot.rs es auswählt"
         );
     }

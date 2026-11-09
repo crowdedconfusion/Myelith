@@ -82,7 +82,7 @@ pub struct Ortsweg {
     /// `probeschluessel(sha256(name)[0])`, also einer von acht öffentlich
     /// ableitbaren, und eine damit unterschriebene Ankündigung fälschte
     /// jeder, der den Knotennamen kennt.
-    ankuendigung: Option<Vec<u8>>,
+    ankuendigung: Mutex<Option<Vec<u8>>>,
     /// Für welche Epoche die Ankündigung schon angenommen wurde.
     ///
     /// ⚑ **Träge und wiederholbar.** Startet der Shard neu, weist er die
@@ -142,7 +142,7 @@ impl Ortsweg {
             shard: Mutex::new(None),
             modellname: modellname.to_string(),
             pipeline: Mutex::new(None),
-            ankuendigung: None,
+            ankuendigung: Mutex::new(None),
             angekuendigt: Mutex::new(None),
             abrechnung: None,
             abrechnungsnummer: std::sync::atomic::AtomicU64::new(1),
@@ -160,8 +160,10 @@ impl Ortsweg {
     /// für **dieselbe** Epoche wie dieser Weg. Sie hier zu bauen hiesse,
     /// den Identitätsschlüssel bis hierher zu reichen; er bleibt, wo er
     /// gelesen wurde.
-    pub fn mit_ankuendigung(mut self, bytes: Vec<u8>) -> Self {
-        self.ankuendigung = Some(bytes);
+    pub fn mit_ankuendigung(self, bytes: Vec<u8>) -> Self {
+        if let Ok(mut g) = self.ankuendigung.lock() {
+            *g = Some(bytes);
+        }
         self
     }
 
@@ -182,7 +184,11 @@ impl Ortsweg {
     /// Die Reihenfolge im Ablauf ist deshalb: erst ankündigen (der
     /// Shard zieht nach), dann die Gegenstelle neu erfragen. Genau so
     /// steht es in `rechne`.
-    pub fn epoche_wechseln(&mut self, neue: EpochId, schluessel: Epochenschluessel, ankuendigung: Vec<u8>) {
+    ///
+    /// ⚑ **Mit `&self`** (A23): Die Tuer bedient mehrere Anfragen zugleich.
+    /// Eine laufende ist schon beim Shard; nur eine, die gerade versiegelt,
+    /// kann an der Grenze scheitern und bekommt wie jede andere 502.
+    pub fn epoche_wechseln(&self, neue: EpochId, schluessel: Epochenschluessel, ankuendigung: Vec<u8>) {
         if let Ok(mut s) = self.sitzungen.lock() {
             *s = Sitzungen::neu(self.ich, schluessel);
         }
@@ -192,14 +198,16 @@ impl Ortsweg {
         if let Ok(mut g) = self.angekuendigt.lock() {
             *g = None;
         }
-        self.ankuendigung = Some(ankuendigung);
+        if let Ok(mut g) = self.ankuendigung.lock() {
+            *g = Some(ankuendigung);
+        }
         self.epoche
             .store(neue.0, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Ob dieser Weg sich ankündigen kann.
     pub fn kann_ankuendigen(&self) -> bool {
-        self.ankuendigung.is_some()
+        self.ankuendigung.lock().is_ok_and(|g| g.is_some())
     }
 
     /// Sagt dem Shard, wer hier redet, falls das noch nicht gilt.
@@ -208,7 +216,7 @@ impl Ortsweg {
     /// diese Epoche. Ohne Ankündigung `true`, denn dann ist die
     /// Gegenstelle anderweitig bekannt (im echten Pod aus der Kette).
     async fn sicherstellen_angekuendigt(&self) -> bool {
-        let Some(bytes) = self.ankuendigung.as_ref() else {
+        let Some(bytes) = self.ankuendigung.lock().ok().and_then(|g| g.clone()) else {
             return true;
         };
         if let Ok(g) = self.angekuendigt.lock() {
@@ -218,7 +226,7 @@ impl Ortsweg {
         }
         let angenommen = matches!(
             self.anschluss
-                .frage(&Ortsfrage::Ankuendigung(bytes.clone()))
+                .frage(&Ortsfrage::Ankuendigung(bytes))
                 .await,
             Some(Ortsantwort::Angenommen)
         );

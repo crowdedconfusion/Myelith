@@ -1,4 +1,4 @@
-0.7.0
+0.8.0
 
 # Myelith: die aktuelle Fassung und was sie ändert
 
@@ -12,29 +12,26 @@ Darunter steht ein einziger Abschnitt: was sich mit der aktuellen Fassung
 ändert. Er wird mit jeder neuen Fassung ersetzt, ältere Fassungen stehen
 hier nicht. Das Programm zeigt ihn vor dem Update.
 
-## 0.7.0 (2026-11-07)
+## 0.8.0 (2026-11-09)
 
-⚠️ **Neue Regeln für Konsens und Finalität.** Eine Kette aus einer älteren
+⚠️ **Neue Regeln für Prägung und Preise.** Eine Kette aus einer älteren
 Fassung lässt sich nicht weiterführen; ein Knoten beginnt sie neu.
 
-- **Über die Finalität stimmen alle Miner mit genügend Einsatz und
-  bezeugter Arbeit ab**, nicht mehr ein fester Kreis. Zwei Drittel des
-  Einsatzes machen einen Prüfpunkt endgültig. Der Kreis folgt dem Zustand
-  der Kette und ändert sich je Epoche nur wenig.
-- **Blöcke erzeugen die Miner reihum.** Gabeln löst jeder Knoten selbst
-  auf, nie über einen endgültigen Prüfpunkt hinweg; wer eine Weile auf
-  einem anderen Zweig war, wechselt von selbst auf den richtigen.
-- **Wer doppelt abstimmt, verliert Einsatz**, und zwar umso mehr, je mehr
-  andere zur selben Zeit dasselbe tun.
-- **Wer lange nicht abstimmt, ruht**, bis er sich neu anmeldet; sein
-  Einsatz bleibt. Fallen viele zugleich aus, kehrt die Finalität danach von
-  selbst zurück.
-- **Die Zufallssaat jeder Epoche kann niemand mehr beeinflussen:** Sie
-  entsteht gemeinsam aus einer Schwellensignatur der Miner.
-- **Ein neuer oder lange abwesender Knoten steigt über ein Zertifikat
-  ein** und holt dort einen Abzug des Zustands, statt alles ab Beginn
-  nachzurechnen. ⚠️ Ruhte die Finalität so lange, dass Miner ausgeschlossen
-  wurden, braucht ein Knoten ohne eigenen Zustand einen Anker von außen.
-- **Prüfer kontrollieren auch, welches Wort ein Pod gewählt hat.** Wer
-  eine Antwort verfälscht und danach ehrlich weiterrechnet, wird gefunden.
-
+- **Adressen tragen jetzt eine Prüfsumme** (`tmyl1…` im Testnetz), ein
+  Tippfehler fällt also auf. Aus zwölf Wörtern entstehen Konten über einen
+  festen Pfad, und jedes Wallet zeigt seinen Verlauf.
+- **Wallets lassen sich mit einem Passwort schützen.** `myl wallet neu` fragt
+  danach, `myl wallet verschluesseln <name>` stellt ein vorhandenes um; danach
+  liegt der Schlüssel nur noch verschlüsselt auf der Platte. Ein Passwort lässt
+  sich nicht wiederherstellen, die Sicherung bleiben die zwölf Wörter.
+- **„Mining starten“ rechnet mit**: Mit gewähltem Wallet und Modell meldet sich
+  der Knoten als Miner an und startet seinen Teil des Modells selbst.
+- **Module von Dritten laufen abgeschottet.** Ein Modul als WebAssembly hat von
+  sich aus weder Dateien noch Netz. Rechner, die es erreichen möchte, gibst du mit
+  `/module genehmigen <modul>` frei.
+- **Die Tür bedient mehrere Anfragen zugleich**, und parallele Anfragen gehen
+  nicht mehr verloren, wenn eine die andere überholt.
+- **Prägung und Preise folgen der Nachfrage:** Die Anlaufsubvention läuft nach
+  festem Plan aus, und der Burn ist je Epoche gedeckelt.
+- **Ein Knoten kann über einen Anker von außen einsteigen** und prüft ihn selbst;
+  ein zu alter Anker wird abgewiesen.

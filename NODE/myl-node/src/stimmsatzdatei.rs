@@ -111,6 +111,14 @@ pub struct Stimmsatzdatei {
     /// [`Stimmsatzdatei::aus_text`] her, damit die Reihenfolge in der Datei
     /// keinen Einfluss auf den Hash hat.
     pub validatoren: Vec<Stimmberechtigter>,
+    /// ⚑ **Wann das Netz begann**, in Millisekunden seit der Epoche
+    /// (Sicherheitsaudit A43). Vertraut wie der Satz selbst: Aus ihr und der
+    /// Uhr folgt, wie viele Epochen es hoechstens gibt, und damit, ob ein
+    /// Einstieg ab Genesis noch traegt ([`crate::wechsel::einstieg_pruefen`]).
+    /// ⚠️ Aus Block 1 abgeleitet waere sie schwaecher: Ein einzelner Schluessel
+    /// des Startsatzes kann einen anderen Block 1 unterschreiben. Ohne Angabe
+    /// kommt ein Knoten ohne eigenen Stand nur mit einem Anker hinein.
+    pub start_ms: Option<u64>,
 }
 
 /// Was beim Lesen einer Stimmsatzdatei schiefgehen kann.
@@ -132,6 +140,8 @@ pub enum Stimmsatzfehler {
     },
     /// Der Stake ist keine Zahl oder null.
     UnbrauchbarerStake { zeile: usize },
+    /// Die Startzeit ist keine Zahl.
+    UnbrauchbarerStart { zeile: usize },
     /// Kein Netzname angegeben.
     OhneNetznamen,
     /// Keine Validatoren angegeben.
@@ -176,6 +186,9 @@ impl std::fmt::Display for Stimmsatzfehler {
             ),
             Self::UnbrauchbarerStake { zeile } => {
                 write!(f, "Zeile {zeile}: Stake ist keine Zahl größer als null")
+            }
+            Self::UnbrauchbarerStart { zeile } => {
+                write!(f, "Zeile {zeile}: die Startzeit ist keine Zahl (Millisekunden seit der Epoche)")
             }
             Self::OhneNetznamen => write!(f, "Die Datei nennt keinen Netznamen"),
             Self::OhneValidatoren => write!(f, "Die Datei nennt keinen Validator"),
@@ -244,6 +257,7 @@ impl Stimmsatzdatei {
     ///
     /// ```text
     /// netz       <name>
+    /// start      <millisekunden seit der epoche>
     /// validator  <pubkey-hex>  <pop-hex>  <stake>
     /// ```
     ///
@@ -253,6 +267,7 @@ impl Stimmsatzdatei {
     /// Prüft anschließend [`Stimmsatzdatei::pruefe`].
     pub fn aus_text(text: &str) -> Result<Self, Stimmsatzfehler> {
         let mut netz: Option<String> = None;
+        let mut start_ms: Option<u64> = None;
         let mut validatoren = Vec::new();
 
         for (nr, rohzeile) in text.lines().enumerate() {
@@ -263,6 +278,16 @@ impl Stimmsatzdatei {
                 [] => {}
                 ["netz", name] => netz = Some((*name).to_string()),
                 ["netz", ..] => {
+                    return Err(Stimmsatzfehler::FalscheFeldzahl {
+                        zeile,
+                        erwartet: 2,
+                        bekommen: felder.len(),
+                    })
+                }
+                ["start", ms] => {
+                    start_ms = Some(ms.parse().map_err(|_| Stimmsatzfehler::UnbrauchbarerStart { zeile })?);
+                }
+                ["start", ..] => {
                     return Err(Stimmsatzfehler::FalscheFeldzahl {
                         zeile,
                         erwartet: 2,
@@ -306,7 +331,7 @@ impl Stimmsatzdatei {
         // in welcher Zeile jemand seinen Validator eingetragen hat.
         validatoren.sort_by_key(|v| v.kennung());
 
-        let g = Self { netz, validatoren };
+        let g = Self { netz, validatoren, start_ms };
         g.pruefe()?;
         Ok(g)
     }
@@ -316,6 +341,9 @@ impl Stimmsatzdatei {
         let mut s = String::new();
         s.push_str("# Myelith-Stimmsatzdatei. Die Kennung wird aus dem Schlüssel abgeleitet.\n");
         s.push_str(&format!("netz {}\n", self.netz));
+        if let Some(ms) = self.start_ms {
+            s.push_str(&format!("start {ms}\n"));
+        }
         for v in &self.validatoren {
             s.push_str(&format!(
                 "validator {} {} {}\n",
@@ -538,6 +566,23 @@ mod tests {
             ));
         }
         s
+    }
+
+    /// ⚑ **Die Startzeit steht in der Datei und im Hash** (A43): Zwei Netze,
+    /// die verschieden begannen, sind zwei Netze.
+    #[test]
+    fn die_startzeit_liest_und_schreibt_sich_und_geht_in_den_hash() {
+        let ohne = probenetz();
+        assert_eq!(ohne.start_ms, None);
+        let text = ohne.als_text().replacen("validator", "start 1794000000000\nvalidator", 1);
+        let mit = Stimmsatzdatei::aus_text(&text).expect("lesbar");
+        assert_eq!(mit.start_ms, Some(1_794_000_000_000));
+        assert_ne!(mit.hash(), ohne.hash());
+        assert_eq!(Stimmsatzdatei::aus_text(&mit.als_text()).expect("wieder lesbar"), mit);
+        assert_eq!(
+            Stimmsatzdatei::aus_text(&ohne.als_text().replacen("validator", "start bald\nvalidator", 1)),
+            Err(Stimmsatzfehler::UnbrauchbarerStart { zeile: 3 })
+        );
     }
 
     fn probenetz() -> Stimmsatzdatei {

@@ -1577,7 +1577,7 @@ const BEFEHLE: [Befehl; 27] = [
     Befehl {
         art: Befehlsart::Module,
         namen: &["/module"],
-        was: "zeigt die Module; /module install <ordner> installiert eines (nur signiert, sonst abgelehnt); /module <modul> … ist ein Befehl des Moduls, etwa /module trading status",
+        was: "zeigt die Module; /module genehmigen <modul> gibt Rechner frei; /module install <ordner> installiert eines (nur signiert, sonst abgelehnt); /module <modul> … ist ein Befehl des Moduls, etwa /module trading status",
     },
     // ⚑ **Mining** (Auftrag des Projektinhabers, 2026-10-17): dieselbe
     //   Freigabe wie der Reiter „Knoten" im Fenster.
@@ -3108,6 +3108,7 @@ struct Startwerte {
     breite: u16,
     hoehe: u16,
     speicher: std::path::PathBuf,
+    ablage: std::path::PathBuf,
 }
 
 impl Startwerte {
@@ -3120,6 +3121,7 @@ impl Startwerte {
             breite,
             hoehe,
             speicher: crate::module::speicherpfad(),
+            ablage: crate::module::ablagepfad(),
         }
     }
 
@@ -3131,6 +3133,7 @@ impl Startwerte {
             breite: self.breite,
             hoehe: self.hoehe,
             speicher: &self.speicher,
+            ablage: &self.ablage,
             wecker: Some(crate::eingabe::wecken),
             // ⚑ Die Konsole hat kein Sichtfeld; das sagt sie im Handschlag.
             ansicht: false,
@@ -3473,8 +3476,33 @@ fn module_befehl(stand: &mut Stand, rest: &str) {
                 }
             }
         }
+        // ⛔️ **Die Beschreibung nennt, der Mensch genehmigt**: Ohne diese
+        //    Frage erreicht ein abgeschottetes Modul keinen einzigen Rechner.
+        Some("genehmigen") => {
+            let Some(name) = w.next() else {
+                println!("  /module genehmigen <modul>");
+                println!();
+                return;
+            };
+            match crate::module::gewuenschte_rechner(&stand.module, name) {
+                None => println!("{}", rollen.warnung.faerben(&format!("  ✗ kein geprüftes Modul: {name}"), farbig)),
+                Some(r) if r.is_empty() => println!("  {name} möchte keinen Rechner erreichen."),
+                Some(r) => {
+                    println!("  {name} möchte diese Rechner erreichen:");
+                    for h in &r {
+                        println!("    {}", myl_module::filter::eine_zeile(h));
+                    }
+                    if crate::janein::fragen("Genehmigen?", None, None).ja() {
+                        match crate::module::rechner_genehmigen(name, &r) {
+                            Ok(()) => println!("  ✓ genehmigt; gilt beim nächsten Start des Moduls."),
+                            Err(f) => println!("{}", rollen.warnung.faerben(&format!("  ✗ {f}"), farbig)),
+                        }
+                    }
+                }
+            }
+        }
         Some(_) => println!(
-            "  /module zeigt die Module; /module install <ordner> installiert eines; /module <modul> … ist ein Befehl eines gepruefen Moduls (/help nennt sie)."
+            "  /module zeigt die Module; /module install <ordner> installiert eines; /module genehmigen <modul> gibt ihm seine Rechner frei; /module <modul> … ist ein Befehl eines gepruefen Moduls (/help nennt sie)."
         ),
     }
     println!();

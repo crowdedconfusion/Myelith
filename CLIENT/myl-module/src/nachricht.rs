@@ -211,6 +211,29 @@ pub struct Auswahlpunkt {
     pub hinweis: String,
 }
 
+/// **Eine Anfrage eines abgeschotteten Moduls ins Netz.** Erreichbar sind nur
+/// Rechner, die seine Beschreibung nennt und der Mensch genehmigt hat.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Httpanfrage {
+    pub url: String,
+    /// `GET`, wenn nichts dasteht.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub methode: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub kopf: Vec<(String, String)>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub koerper: Option<String>,
+}
+
+/// Die Antwort darauf; Bytes, die kein UTF-8 sind, kommen ersetzt an.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Httpantwort {
+    pub status: u16,
+    pub koerper: String,
+}
+
 /// **Eine Nachricht als Zeile**, ohne Zeilenumbruch darin (JSON maskiert
 /// jeden Umbruch in Zeichenketten).
 pub fn zeile<T: Serialize>(n: &T) -> String {

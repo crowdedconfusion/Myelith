@@ -189,7 +189,7 @@ impl Belegblock {
 /// - **Prüfpunkt:** zwei Prüfpunktstimmen desselben Wählers, die sich
 ///   widersprechen ([`crate::pruefpunkt::widersprechen`]): dieselbe Höhe mit
 ///   anderem Block, anderer Bindung oder anderer Quelle, oder eine Stimme,
-///   die die andere umschliesst (seit 2026-11-04, Casper FFG). Zwei
+///   die die andere umschliesst (seit 2026-11-04). Zwei
 ///   endgültige Pruefpunkte auf zwei Zweigen brauchen ein Drittel solcher
 ///   Stimmen; dieser Beleg macht sie teuer.
 #[derive(Debug, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]

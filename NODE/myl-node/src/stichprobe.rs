@@ -291,6 +291,24 @@ pub fn anfragen_fuer(
     (aus, ohne_adresse)
 }
 
+/// Wen eine Stichprobe waehlen muss: jede Gegenstelle einmal und ohne den
+/// Fragenden selbst, der im gezogenen Pod sitzen kann und sich nicht waehlen
+/// kann (Fund 681). Unlesbare Adressen fallen weg; die Reihenfolge bleibt.
+pub fn ziele_der_fragen(
+    fragen: &[(myl_types::latency_attest::PeerIdBytes, crate::nachschub::Nachforderung)],
+    ich: &libp2p::PeerId,
+) -> Vec<libp2p::PeerId> {
+    let mut ziele = Vec::new();
+    for (adresse, _) in fragen {
+        if let Ok(p) = myl_net::peer_id_aus_bytes(adresse) {
+            if p != *ich && !ziele.contains(&p) {
+                ziele.push(p);
+            }
+        }
+    }
+    ziele
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -556,6 +574,28 @@ mod tests {
             let bytes = n.als_bytes().expect("Borsh");
             assert_eq!(crate::nachschub::Nachforderung::aus_bytes(&bytes).as_ref(), Some(n));
         }
+    }
+
+    /// 📌 Fund 681: Vorrang bekommt jede Gegenstelle einmal, der Fragende nie.
+    #[test]
+    fn die_ziele_nennen_jeden_einmal_und_nie_den_fragenden() {
+        use myl_types::latency_attest::PeerIdBytes;
+        let schluessel = |b: u8| {
+            let mut s = [b; 32];
+            libp2p::identity::ed25519::SecretKey::try_from_bytes(&mut s)
+                .map(|g| libp2p::identity::ed25519::Keypair::from(g).public())
+                .expect("Schluessel")
+        };
+        let adresse = |b: u8| PeerIdBytes(schluessel(b).to_bytes());
+        let peer = |b: u8| myl_net::peer_id_aus_bytes(&adresse(b)).expect("Adresse");
+        let frage = crate::nachschub::Nachforderung::Spur(myl_types::Spuranfrage {
+            epoche: EpochId(3),
+            pod: PodId::new([7; 32]),
+            segment: 0,
+        });
+        let fragen: Vec<_> = [1u8, 2, 1, 3, 2].iter().map(|&b| (adresse(b), frage.clone())).collect();
+        assert_eq!(ziele_der_fragen(&fragen, &peer(2)), vec![peer(1), peer(3)]);
+        assert_eq!(ziele_der_fragen(&fragen, &peer(9)), vec![peer(1), peer(2), peer(3)]);
     }
 
     /// ⚑ **Ein Pod ohne Adresse wird gezaehlt, nicht uebergangen.**

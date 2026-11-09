@@ -264,7 +264,10 @@ done
 IFS=$ALTES_IFS
 
 echo "── Myelith.app buendeln"
-sh CLIENT/myl-oberflaeche/buendeln-macos.sh >/dev/null
+CARGO_NETZ="$CARGO_NETZ" sh CLIENT/myl-oberflaeche/buendeln-macos.sh >/dev/null
+
+# ⚑ **Dort, wohin gebaut wurde**, wie im Skript fuer Linux.
+BAUORDNER="${CARGO_TARGET_DIR:-$WURZEL/SYSTEM/full-build}"
 
 # ── Legen ───────────────────────────────────────────────────────────
 #
@@ -296,13 +299,13 @@ for zeile in $PROGRAMME; do
   # dieselbe Datei aus `SYSTEM/full-build` lief. Fuer `Myelith.app` stand das
   # `rm -rf` schon darunter; fuer die Programme fehlte es.
   $SUDO rm -f "$BIN/$2"
-  $SUDO cp "$WURZEL/SYSTEM/full-build/release/$2" "$BIN/$2"
+  $SUDO cp "$BAUORDNER/release/$2" "$BIN/$2"
   IFS='
 '
 done
 IFS=$ALTES_IFS
 $SUDO rm -rf "$APPS/Myelith.app"
-$SUDO cp -R "$WURZEL/SYSTEM/full-build/Myelith.app" "$APPS/Myelith.app"
+$SUDO cp -R "$BAUORDNER/Myelith.app" "$APPS/Myelith.app"
 
 echo "── fertig"
 # 📌 **Auch hier stand die Liste von Hand** und nannte drei, waehrend

@@ -85,7 +85,7 @@ impl Seite {
         match r {
             Reihe::Wallet(i) => {
                 let w = &self.wallets[i];
-                let a = w.adresse_hex();
+                let a = w.adresse_text();
                 let mut teile = vec![format!("{}…{}", &a[..8], &a[a.len() - 6..])];
                 if let Some((_, g, _)) = self.mining.as_ref().filter(|(n, _, _)| *n == w.name) {
                     teile.push(format!("{} MYL", mining::myl_text(*g)));
@@ -109,7 +109,7 @@ impl Seite {
         match r {
             Reihe::Wallet(i) => format!(
                 "Adresse {}. ⏎ wählt es aus; beim nächsten Start des Minings bekommt es die Erträge.",
-                self.wallets[i].adresse_hex()
+                self.wallets[i].adresse_text()
             ),
             Reihe::Neu => "Legt ein Testwallet an (Name: Buchstaben, Ziffern, - und _). Zuerst wird im Netz gesucht, dann zeigt die Seite zwölf Wörter nach BIP-39 zum Notieren, fragt, ob sie notiert sind, und zwei davon ab. Erst dann ist es angelegt; das erste wird gleich ausgewählt.".into(),
             Reihe::Wiederherstellen => "Stellt ein Wallet aus seinen zwölf Wörtern wieder her und sucht es im Netz. Dasselbe Wallet zweimal auf dieser Maschine gibt es nicht.".into(),
@@ -183,7 +183,7 @@ pub fn fahren(t: Toene) {
                         Some(name) => match neu_anlegen(&name, t) {
                             Ok(w) => {
                                 angelegt = Some(w.name.clone());
-                                format!("{} angelegt: {}", w.name, w.adresse_hex())
+                                format!("{} angelegt: {}", w.name, w.adresse_text())
                             }
                             Err(f) => f,
                         },

@@ -700,8 +700,8 @@ impl Transaktion {
     }
 
     /// ⚑ **Die Einheiten der Gebühr** (2026-10-28, Festlegung des
-    /// Projektinhabers): Bytes plus [`PRUEFEINHEIT`] je Unterschrift, wie
-    /// Gas bei Ethereum. Eine Transaktion trägt genau eine.
+    /// Projektinhabers): Bytes plus [`PRUEFEINHEIT`] je Unterschrift.
+    /// Eine Transaktion trägt genau eine.
     ///
     /// ⚑ **Dazu je Prüfung, die die Anweisung selbst verlangt** (2026-11-03):
     /// eine Austeilung je Bindungspunkt und den Kenntnisnachweis,

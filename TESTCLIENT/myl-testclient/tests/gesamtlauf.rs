@@ -456,14 +456,14 @@ async fn alle_kompartimente_verzahnt() {
     // ---- 8. GATEWAY: der Aufruf eines Harness -------------------------
     let tuer = Tuer::binden(0).await.expect("binden");
     let port = tuer.port().expect("port");
-    let mut annahme = Annahme::neu(41, EpochId(0));
-    let mut stelle = Zugangsstelle::neu(EineQuelle(kontrakt.clone()));
+    let annahme = std::sync::Mutex::new(Annahme::neu(41, EpochId(0)));
+    let stelle = std::sync::Mutex::new(Zugangsstelle::neu(EineQuelle(kontrakt.clone())));
     let koerper = format!(
         r#"{{"model":"sparrow-0.6b-int8","messages":[{{"role":"user","content":"{FRAGE}"}}],"max_tokens":8,"temperature":0.7}}"#
     );
 
     let dienst = async {
-        tuer.bedienen_v1(&mut annahme, &mut stelle, &weg, EpochId(0), 1_700_000_000_000)
+        tuer.bedienen_v1(&annahme, &stelle, &myl_gateway::tuer::Besetzung::default(), &weg, EpochId(0), 1_700_000_000_000)
             .await
             .expect("bedienen");
     };
@@ -528,7 +528,7 @@ async fn alle_kompartimente_verzahnt() {
     // Pods rechnen dieselbe Anfrage und ihre Spuren müssen gleich sein;
     // wären sie es nicht, wäre `compare_commitments` ein Zufallsgenerator.
     let dienst = async {
-        tuer.bedienen_v1(&mut annahme, &mut stelle, &weg, EpochId(0), 1_700_000_000_000)
+        tuer.bedienen_v1(&annahme, &stelle, &myl_gateway::tuer::Besetzung::default(), &weg, EpochId(0), 1_700_000_000_000)
             .await
             .expect("bedienen");
     };

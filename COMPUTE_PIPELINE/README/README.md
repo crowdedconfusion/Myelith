@@ -1,7 +1,7 @@
 # compute-pipeline (`myl-pod`, `myl-dispatcher`)
 
-> **Version:** 0.60.1 (`myl-pod` 0.51.1, `myl-dispatcher` 0.11.2)
-> **Datum:** 2026-10-29
+> **Version:** 0.60.5 (`myl-pod` 0.51.5, `myl-dispatcher` 0.11.2)
+> **Datum:** 2026-11-09
 > **Status:** Phase 1 vollständig, Phase 2.1, **Phase 3 vollständig**
 > (3.1 bis 3.3) und Punkt 4.3. `shard_loop` mit Spur-Hashes und
 > Manipulationserkennung, `coordinator_loop` mit Micro-Batching,
@@ -106,6 +106,29 @@ COMPUTE_PIPELINE/
 ```
 
 ## Changelog
+
+### v0.60.5 (2026-11-09): Abweisungen nennen ihren Grund (`myl-pod` 0.51.5)
+
+- Der Shard schreibt jetzt in sein eigenes Protokoll, warum er einen Auftrag
+  abwies. Nach außen bleibt es dieselbe Ablehnung ohne Grund. Zuvor war eine
+  abgewiesene Sitzung im Netzlauf nicht zuzuordnen (Fund 682).
+
+### v0.60.4 (2026-11-08): Der Shard wird ausgeliefert
+
+- `myl-shard` steht unter `ausliefern`: Die Installation legt ihn neben den
+  Knoten, damit „Mining starten“ ihn findet.
+
+### v0.60.3 (2026-11-08): Die Ablage in Stücken im Prüfstand (`myl-pod` 0.51.3)
+
+- Mit dem Merkmal `faelscher` setzt `MYL_ABLAGE_STUECK=<bytes>` die Grösse der
+  Stücke und erzwingt den Weg in Stücken. Im ausgelieferten Programm ändert
+  sich nichts. Mit dem kleinen Modell wird eine Ablage sonst nie grösser als
+  eine Nachricht, und dieser Weg lief im Netz nie.
+
+### v0.60.2 (2026-11-08): Probe für den Beleg in falscher Länge (`myl-pod` 0.51.2)
+
+Neue Probe `ein_bezeugter_vektor_falscher_laenge_ueberfuehrt_den_pod` gegen
+`myl_verifier::schied_nachrechnen` mit dem echten Modell (Sicherheitsaudit A50).
 
 ### v0.60.1 (2026-11-06): Der Fälscher an der ersten Position (`myl-pod` 0.51.1)
 

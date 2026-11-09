@@ -248,7 +248,7 @@ fn spuren_ablegen(relais: SocketAddr, ausweis: &Ausweis, s: &Podstand, buendel: 
     // ⚑ **Grösser als eine Nachricht: in Stücken** (T6, 2026-11-05). 📌 Bis
     //   hierher wurde eine solche Ablage gar nicht abgelegt, und bei einigen
     //   Tausend Segmenten je Epoche lieferte niemand den Verlauf.
-    if bytes.len() + 1_024 > myl_types::relais::MAX_RELAIS_BYTES {
+    if bytes.len() + 1_024 > myl_types::relais::MAX_RELAIS_BYTES || stueckgroesse_im_pruefstand().is_some() {
         stueckweise_ablegen(relais, ausweis, s, &bytes);
         return;
     }
@@ -263,6 +263,21 @@ fn spuren_ablegen(relais: SocketAddr, ausweis: &Ausweis, s: &Podstand, buendel: 
     });
 }
 
+/// ⚑ **Nur im Prüfstand** (Merkmal `faelscher`, `MYL_ABLAGE_STUECK=<bytes>`):
+/// Mit einem kleinen Modell wird eine Ablage nie grösser als eine Nachricht,
+/// und der Weg in Stücken liefe im Netz nie. Im ausgelieferten Programm immer
+/// `None`.
+fn stueckgroesse_im_pruefstand() -> Option<usize> {
+    #[cfg(feature = "faelscher")]
+    {
+        std::env::var("MYL_ABLAGE_STUECK").ok().and_then(|t| t.parse().ok()).filter(|n| *n > 0)
+    }
+    #[cfg(not(feature = "faelscher"))]
+    {
+        None
+    }
+}
+
 /// Legt eine Ablage in Stücken bei jedem Mitglied ab, je Mitglied Stück für
 /// Stück in Folge (das Mitglied setzt lückenlos zusammen); ein Fehler bricht
 /// bei diesem Mitglied ab, die anderen bekommen ihre trotzdem.
@@ -272,8 +287,9 @@ fn stueckweise_ablegen(relais: SocketAddr, ausweis: &Ausweis, s: &Podstand, byte
     std::thread::scope(|faeden| {
         for an in &s.adressen {
             faeden.spawn(move || {
-                for (i, daten) in bytes.chunks(myl_types::relais::ABLAGE_STUECK_BYTES).enumerate() {
-                    let ab = (i * myl_types::relais::ABLAGE_STUECK_BYTES) as u32;
+                let stueck = stueckgroesse_im_pruefstand().unwrap_or(myl_types::relais::ABLAGE_STUECK_BYTES);
+                for (i, daten) in bytes.chunks(stueck).enumerate() {
+                    let ab = (i * stueck) as u32;
                     let frage = Relaisfrage::SpurenAblegenTeil { an: *an, gesamt, abdruck, ab, daten: daten.to_vec() };
                     match myl_types::relais::fragen(relais, ausweis, &frage, Duration::from_secs(30)) {
                         Ok(Relaisantwort::Erledigt(_)) => {}

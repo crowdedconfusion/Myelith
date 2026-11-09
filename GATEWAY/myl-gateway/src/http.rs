@@ -265,7 +265,9 @@ pub fn antwort(status: u16, typ: &str, rumpf: &[u8]) -> Vec<u8> {
         408 => "Request Timeout",
         411 => "Length Required",
         413 => "Payload Too Large",
+        429 => "Too Many Requests",
         431 => "Request Header Fields Too Large",
+        503 => "Service Unavailable",
         _ => "Error",
     };
     let mut aus = format!(

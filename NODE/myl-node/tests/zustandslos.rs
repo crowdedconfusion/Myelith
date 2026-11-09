@@ -70,6 +70,7 @@ fn konfig(verzeichnis: &std::path::Path, name: &str, bootstrap: Vec<String>) -> 
         testverkehr_sekunden: None,
         einsatz: None,
         zustandslos: false,
+        anker_von_aussen: None,
         baum_auf_platte: false,
         zeugen_bereithalten: false,
         selbstprobe_aus: false,
@@ -226,7 +227,7 @@ async fn ein_gefaelschter_block_loest_beim_zustandslosen_nichts_aus() {
     beta.ereignis_einspeisen(myl_net::NodeEvent::Message(myl_net::InboundMessage {
         topic: myl_net::GossipTopic::Blocks,
         data: borsh::to_vec(&block).unwrap(),
-        von,
+        von, pruefmarke: None
     }));
     beta.laufe_fuer(Duration::from_millis(300)).await;
     let protokoll = std::fs::read_to_string(beta.protokollpfad()).expect("Protokoll");

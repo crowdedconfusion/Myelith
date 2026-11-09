@@ -370,6 +370,11 @@ impl Belegstuecke {
         (gesamt > 0 && gesamt as usize <= SCHIEDSBELEG_HOECHSTENS_BYTES).then(|| Self { abdruck, gesamt, bytes: Vec::new() })
     }
 
+    /// Wie viele Bytes schon da sind.
+    pub fn stand(&self) -> usize {
+        self.bytes.len()
+    }
+
     /// Hängt ein Stück an.
     pub fn anhaengen(&mut self, abdruck: &myl_types::Hash, gesamt: u32, ab: u32, daten: &[u8]) -> Stueckfolge {
         let passt = *abdruck == self.abdruck

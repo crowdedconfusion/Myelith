@@ -1885,7 +1885,7 @@ P_{e+1} = P_e · exp( κ · (u_e − u*) )
 mit Auslastung `u_e`, Auslastungsziel `u* = 0,8` und Dämpfungskonstante
 κ. Bei Überlast steigt der Preis → Nachfrage sinkt, Mining wird
 attraktiver → Kapazität wächst. Preissignale statt zentralem
-Kapazitätsmanagement (EIP-1559-analog).
+Kapazitätsmanagement.
 
 **Die exp-Funktion ist auch hier ganzzahlig** — aus demselben Grund wie
 im Modell: Konsens-Determinismus. Die Stützstellen sind **eingefroren**

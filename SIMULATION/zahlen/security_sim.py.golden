@@ -1,0 +1,113 @@
+security_sim — Stichprobenrate gegen Betrugsrate (Anhang B.1, Kap. 6.8)
+  p = 0.02, gamma = 0.02, g = 0.5 MYL
+  S_min = g/p^2 = 1250 MYL  (2500 Segment-Rewards)
+
+(1) Ein Segment: erwartete Strafe 25.0 gegen Gewinn 0.5 MYL — haelt.
+(2) Fenster 1/p = 50 Segmente: Gewinn 25.0 gegen erwartete Strafe 794.8 MYL — haelt mit Faktor 31.8.
+(3) Naeherung P_d ~= n*p ergibt bei n = 50: 1.000, exakt sind es 0.636.
+    Ab n = 50 ueberschreitet die Naeherung die 1 und ist keine Wahrscheinlichkeit mehr.
+(4) Sie traegt bis 2499 betrogene Segmente je Ausstieg (50-faches Fenster).
+    Bei 2500 Segmenten kippt sie: Gewinn 1250 gegen Strafe 1250 MYL.
+    ⚑ Das ist kein Fehler der Schranke, sondern ihr Geltungsbereich:
+      Wer in einer Epoche mehr Segmente betruegen kann als das, braucht
+      Stake nach Kapazitaet und nicht nach Segment.
+
+(5) Beitrag von Stufe 1 (Redundanzvergleich) je Angreiferanteil:
+    alpha = 0.05: Ueberlebensrate 0.0024, Stufe 1 senkt sie um Faktor  400.0
+    alpha = 0.10: Ueberlebensrate 0.0096, Stufe 1 senkt sie um Faktor  100.0
+    alpha = 0.25: Ueberlebensrate 0.0600, Stufe 1 senkt sie um Faktor   16.0
+    alpha = 0.50: Ueberlebensrate 0.2401, Stufe 1 senkt sie um Faktor    4.0
+    alpha = 0.90: Ueberlebensrate 0.7779, Stufe 1 senkt sie um Faktor    1.2
+    ⚑ Bei alpha = 0,90 bleibt fast nichts uebrig: Wer fast alle Pods haelt,
+      vergleicht sich mit sich selbst. Die Annahme des Anhangs, Stufe 1
+      wegzulassen, ist genau dort die richtige und nicht bloss die sichere.
+
+(6) Kap. 6.8 gegen Ziehung bei alpha = 0.25: Formel 0.06002, gezogen 0.06014 (200000 Ziehungen, 0.2% Abweichung).
+    Die multiplikative Rechnung des Papiers haelt.
+
+(7) A1 vom 2026-09-02: Kontrollsegmente entfallen, gamma geht in p.
+    Ausgangslage: p = 0.02, gamma = 0.02.
+    Naiv zusammengelegt: p' = p + gamma - p*gamma = 0.0396.
+    ⚑ Der naive Wert ist zu klein, und zwar um die Checker in der
+      Hand des Angreifers. Ein Kontrollsegment wird gegen eine
+      hinterlegte Antwort geprueft, eine Stichprobe von einem Checker.
+      Checkeranteil c = 0.00: p' = 0.0396  (+-0.0 % gegenueber naiv)
+      Checkeranteil c = 0.10: p' = 0.0418  (+5.6 % gegenueber naiv)
+      Checkeranteil c = 0.25: p' = 0.0463  (+16.8 % gegenueber naiv)
+      Checkeranteil c = 0.33: p' = 0.0495  (+24.9 % gegenueber naiv)
+    Gleichwertigkeit geprueft: ueber vier Checkeranteile und drei
+    Angreiferanteile ergibt die zusammengelegte Rate dieselbe
+    Ueberlebenswahrscheinlichkeit wie die drei Stufen zusammen.
+
+    Rechenkosten bei c = 0,25 (p' = 0.0463):
+      Checker rechnen 2.31-mal so viel nach wie bisher
+      (2.00 % des Verkehrs vorher, 4.63 % nachher).
+      Pods werden um gamma = 2.0 % entlastet, denn
+      Kontrollsegmente waren zusaetzliche Arbeit ohne Nutzer.
+      Netto ueber das ganze Netz: +0.63 Prozentpunkte.
+      ⚑ Unter einem Prozentpunkt: Die Arbeit wandert von den Pods
+        zu den Checkern, sie waechst nicht nennenswert.
+
+(8) Welche Rate die Registry danach fuehren muss.
+    Bei c = 1/3, der byzantinischen Schranke des Protokolls: p' = 0.0496.
+    Gewaehlt wird 5.00%, also **aufgerundet**.
+    Reserve gegenueber der Anforderung: 0.8 %.
+    ⚑ Aufgerundet und nicht gerundet: Die Richtung ist die sichere,
+      und eine glatte Zahl in einem Governance-Parameter ist leichter
+      zu pruefen als 496/10000.
+    Der naive Wert 0.0396 haette 20.2 % zu wenig geprueft.
+
+(9) Ab wann schlaegt Streuung die Zonendiversitaet?
+    `redundancy.rs` fuehrt diese Abwaegung seit dem 2026-08-26 als
+    **benannt und nicht gesetzt**. Hier steht sie gerechnet.
+
+    Die Bedingung kauft Ausfallsicherheit und bezahlt mit Streuung:
+    Weniger Paare heisst, dass ein Paarhalter einen groesseren Anteil
+    der Segmente sieht und nachrechnen kann.
+
+    Pods je Zone            divers / alle   Anteil je Paarhalter
+    zwei Zonen, 3 Pods                2 / 3       50.00% statt  33.33%
+    zwei Zonen, 6 Pods                9 / 15      11.11% statt   6.67%
+    eine grosse, eine kleine Zone    16 / 45       6.25% statt   2.22%
+    eine dominante Zone               9 / 45      11.11% statt   2.22%
+    drei gleiche Zonen               75 / 105      1.33% statt   0.95%
+    zwanzig zu eins                  20 / 210      5.00% statt   0.48%
+    zwei grosse Zonen              2500 / 4950     0.04% statt   0.02%
+
+    Bei einer dominanten Zone (9 zu 1) verengt die Bedingung um Faktor 5.0.
+    Bei gleich besetzten Zonen (5 zu 5) nur um Faktor 1.80.
+    Der Abstand ist damit Faktor 2.8.
+
+    ⚑ **Die Groesse, an der es haengt, ist die Zahl der Zonen**, und
+      nicht der Anteil der groessten. Bei k gleich besetzten Zonen
+      betraegt die Verengung `(km-1)/((k-1)m)`, also rund `k/(k-1)`:
+       2 Zonen zu je 20 Pods: Faktor 1.950  (exakt 1.950, Grenzwert k/(k-1) = 2.000)
+       3 Zonen zu je 20 Pods: Faktor 1.475  (exakt 1.475, Grenzwert k/(k-1) = 1.500)
+       4 Zonen zu je 20 Pods: Faktor 1.317  (exakt 1.317, Grenzwert k/(k-1) = 1.333)
+       5 Zonen zu je 20 Pods: Faktor 1.238  (exakt 1.238, Grenzwert k/(k-1) = 1.250)
+      10 Zonen zu je 20 Pods: Faktor 1.106  (exakt 1.106, Grenzwert k/(k-1) = 1.111)
+
+    Und die Ungleichverteilung kommt **oben drauf**, in beide
+    Richtungen vom gleichmaessigen Schnitt aus:
+      100 Pods, groesste Zone 50 %: Faktor 1.98
+      100 Pods, groesste Zone 60 %: Faktor 2.06
+      100 Pods, groesste Zone 70 %: Faktor 2.36
+      100 Pods, groesste Zone 80 %: Faktor 3.09
+      100 Pods, groesste Zone 90 %: Faktor 5.50
+
+    ⚑ **Zwei falsche Behauptungen hat dieser Abschnitt selbst
+      gefangen**, beide beim ersten Lauf: Der Abstand zwischen
+      dominanter und gleicher Zone ist Faktor 2,8 und nicht ueber 4,
+      und die Verengung liegt bei 30 Prozent groesster Zone nicht
+      unter zwei, sondern bei 2,36. **Bei zwei Zonen ist der
+      guenstigste Fall der halbe Schnitt, und er kostet bereits
+      Faktor zwei.** Wer ihn unterbieten will, braucht eine dritte
+      Zone und keine gleichmaessigere Verteilung auf zwei.
+
+    **Was die Rechnung nicht beantwortet:** ob Ausfallsicherheit den
+    Preis wert ist. Das haengt daran, wie wahrscheinlich ein
+    regionaler Ausfall ist, und dafuer gibt es keine Messung. Die
+    Abwaegung bleibt deshalb eine Bedingung an die Verteilung und
+    keine Schwelle in Segmenten, nur jetzt mit Zahlen dahinter.
+
+security_sim: alle Behauptungen bestanden.

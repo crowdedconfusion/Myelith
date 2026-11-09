@@ -169,7 +169,7 @@ const SAATGEHEIMNIS_BOTSCHAFT: &[u8] = b"myl-saatgeheimnis-v1: nie veroeffentlic
 
 impl Konsensschluessel {
     fn aus_ikm(ikm: &[u8], herkunft: Herkunft) -> Result<Self, SchluesselFehler> {
-        let geheim = BlsSecretKey::key_gen(ikm).map_err(|_| SchluesselFehler::Bls("key_gen"))?;
+        let geheim = BlsSecretKey::aus_ausgangsmaterial(ikm).map_err(|_| SchluesselFehler::Bls("key_gen"))?;
         let oeffentlich = geheim
             .public_key()
             .map_err(|_| SchluesselFehler::Bls("public_key"))?;
@@ -178,6 +178,20 @@ impl Konsensschluessel {
             oeffentlich,
             herkunft,
         })
+    }
+
+    /// **Liest einen Schlüssel als Hex aus einer Röhre**: die 32 Bytes eines
+    /// entsperrten Keystores, eine Zeile.
+    pub fn aus_eingabe(ein: &mut impl std::io::BufRead) -> Result<Self, SchluesselFehler> {
+        let kein = || SchluesselFehler::KeinSchluessel { pfad: "-".into() };
+        let mut zeile = zeroize::Zeroizing::new(String::new());
+        ein.read_line(&mut zeile).map_err(|_| kein())?;
+        let wort = zeile.trim();
+        let b: Vec<u8> = (0..wort.len() / 2).map_while(|i| u8::from_str_radix(wort.get(i * 2..i * 2 + 2)?, 16).ok()).collect();
+        let bytes: [u8; 32] = if wort.len() == 64 { b.try_into().map_err(|_| kein())? } else { return Err(kein()) };
+        let geheim = BlsSecretKey::aus_geheimen_bytes(bytes).map_err(|_| SchluesselFehler::Bls("aus_geheimen_bytes"))?;
+        let oeffentlich = geheim.public_key().map_err(|_| SchluesselFehler::Bls("public_key"))?;
+        Ok(Self { geheim, oeffentlich, herkunft: Herkunft::Datei })
     }
 
     /// Liest den Schlüssel aus einer Datei, oder legt sie an.
@@ -397,8 +411,8 @@ impl Konsensschluessel {
 
 /// Das Ausgangsmaterial aus Hex: 32 Bytes, wie dieser Knoten sie anlegt,
 /// oder 64 Bytes, ein Seed nach BIP-39 aus einem Testwallet des Clients
-/// (2026-10-26). Aus beidem leitet [`BlsSecretKey::key_gen`] den Schlüssel
-/// ab; mit dem Seed ist das der Hauptschlüssel nach EIP-2333.
+/// (2026-10-26). Aus beidem leitet [`BlsSecretKey::aus_ausgangsmaterial`] den
+/// Schlüssel ab; mit dem Seed ist das das erste Konto nach EIP-2334.
 fn hex_ikm(wort: &str) -> Option<Vec<u8>> {
     if wort.len() != IKM_BYTES * 2 && wort.len() != IKM_BYTES * 4 {
         return None;
@@ -617,8 +631,21 @@ mod tests {
     }
     use super::*;
 
+    /// ⚑ **Aus der Röhre des Klienten**: derselbe Schlüssel wie aus den Bytes,
+    /// und alles andere wird abgewiesen.
+    #[test]
+    fn ein_schluessel_kommt_ueber_die_roehre() {
+        let k = BlsSecretKey::key_gen(&[9u8; 32]).unwrap();
+        let hex: String = k.geheime_bytes().iter().map(|b| format!("{b:02x}")).collect();
+        let g = Konsensschluessel::aus_eingabe(&mut format!("{hex}\n").as_bytes()).unwrap();
+        assert_eq!(g.oeffentlich(), k.public_key().unwrap());
+        for falsch in ["", "zz\n", "00\n", &"f".repeat(64)] {
+            assert!(Konsensschluessel::aus_eingabe(&mut falsch.as_bytes()).is_err(), "{falsch}");
+        }
+    }
+
     /// ⚑ **Ein Seed aus 64 Bytes** (BIP-39, Testwallet des Clients) gibt
-    /// denselben Schlüssel wie `key_gen` über diesen Seed; 32 Bytes bleiben
+    /// denselben Schlüssel wie das Wallet; 32 Bytes bleiben
     /// wie bisher, jede andere Länge ist keiner.
     #[test]
     fn ein_seed_aus_64_bytes_ist_ein_schluessel() {
@@ -629,7 +656,7 @@ mod tests {
         let pfad = verz.join("wallet.key");
         myl_types::geheimdatei::schreiben(&pfad, format!("{DATEIKOPF}\n{text}\n").as_bytes()).expect("schreiben");
         let k = Konsensschluessel::aus_datei(&pfad).expect("lesen");
-        let erwartet = BlsSecretKey::key_gen(&seed).expect("key_gen").public_key().expect("pk");
+        let erwartet = BlsSecretKey::aus_ausgangsmaterial(&seed).expect("Seed").public_key().expect("pk");
         assert_eq!(k.adresse(), myl_types::ids::Address::aus_schluessel(&erwartet));
         assert!(hex_ikm(&"ab".repeat(48)).is_none(), "48 Bytes wurden angenommen");
         let _ = std::fs::remove_dir_all(&verz);

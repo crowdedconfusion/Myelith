@@ -55,9 +55,15 @@ pub const RELAISAUSWEIS: &str = "relais.ausweis";
 const STARTFRIST: Duration = Duration::from_secs(30);
 /// Der Takt der Zustandsaufnahme des Knotens, in Sekunden.
 const AUFNAHME_SEKUNDEN: &str = "10";
-/// ⚑ **Die Ehrlichkeit steht als Konstante da**, damit sie verschwindet,
-/// sobald ein Shard angeschlossen wird, und nicht vergessen in einem Text.
-pub const SHARD_ANGESCHLOSSEN: bool = false;
+/// ⚑ **Die Netze und ihre Modelle** (Name wie `--netz` des Knotens, Artefakt
+/// wie im Katalog). Ein Test in TESTCLIENT hält sie gegen die Netze des
+/// Knotens. ⚠️ Die Probekette rechnet ihr Probemodell nur mit Testbauten des
+/// Shards; ein ausgelieferter Shard lädt allein freigegebene Modelle.
+pub const NETZE: [(&str, &str); 2] = [("probe", "sparrow-0.6b-int8"), ("test-int4", "raven-35b-a3b-int4")];
+/// ⚑ **Die erste Zusage je Ebene und Token, in Mikrosekunden**, bewusst
+/// bescheiden: Die Selbstprobe des Knotens hebt sie, wenn die Maschine
+/// langsamer ist; zu viel Versprochenes kostete dagegen Fristen.
+const EBENENZEIT_ANFANG_US: u64 = 2_000;
 
 /// Wo `speicherorte.toml` liegt: neben den Einstellungen, oder wo
 /// `MYL_SPEICHERORTE` hinzeigt.
@@ -400,6 +406,9 @@ pub struct Zustand {
     pub rechenwerke: usize,
     pub volumen_bytes: u64,
     pub pfad: PathBuf,
+    /// Warum dieser Knoten nicht rechnet, oder `None`, wenn sein Shard läuft.
+    #[serde(default)]
+    pub ohne_shard: Option<String>,
 }
 
 /// ⚑ **Was das Netz auf diesem Rechner rechnet** (Stufe 4, P8, 2026-10-22):
@@ -465,10 +474,15 @@ pub fn zustand() -> Option<Zustand> {
 /// nicht als Zombie stehen bleibt.
 static EIGENER: std::sync::Mutex<Option<std::process::Child>> = std::sync::Mutex::new(None);
 
-/// Wo `myl-node` liegt: neben diesem Programm, im Bauordner des
-/// Repositoriums, im Installationsordner oder im `PATH`.
+/// Wo `myl-node` liegt.
 pub fn knotenprogramm() -> Option<PathBuf> {
-    let name = if cfg!(windows) { "myl-node.exe" } else { "myl-node" };
+    programm_finden("myl-node")
+}
+
+/// Wo ein Programm des Netzes liegt: neben diesem Programm, im Bauordner des
+/// Repositoriums, im Installationsordner oder im `PATH`.
+fn programm_finden(name: &str) -> Option<PathBuf> {
+    let name = if cfg!(windows) { format!("{name}.exe") } else { name.to_string() };
     let mut orte: Vec<PathBuf> = Vec::new();
     if let Some(d) = std::env::current_exe().ok().and_then(|p| p.parent().map(Path::to_path_buf)) {
         orte.push(d);
@@ -482,7 +496,36 @@ pub fn knotenprogramm() -> Option<PathBuf> {
     if let Some(pfad) = std::env::var_os("PATH") {
         orte.extend(std::env::split_paths(&pfad));
     }
-    orte.into_iter().map(|o| o.join(name)).find(|p| p.is_file())
+    orte.into_iter().map(|o| o.join(&name)).find(|p| p.is_file())
+}
+
+/// Womit der Knoten seinen Shard startet (CLIENT 6.27).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Shardstart {
+    pub programm: PathBuf,
+    pub artefakte: PathBuf,
+    /// `--modellzusage`: `<ebenen>:<us>`.
+    pub zusage: String,
+}
+
+/// Die Ebenen eines Artefakts, aus `model_config.json`.
+fn ebenen_des_modells(artefakt: &Path) -> Option<u64> {
+    let t = std::fs::read_to_string(artefakt.join("model_config.json")).ok()?;
+    serde_json::from_str::<serde_json::Value>(&t).ok()?.get("num_layers")?.as_u64().filter(|n| *n > 0)
+}
+
+/// **Was der Knoten für einen eigenen Shard braucht**, oder der Grund, warum
+/// es fehlt: Programm und Artefakt. Fehlt etwas, startet der Knoten trotzdem,
+/// nur rechnet er nicht, und die Zusammenfassung sagt warum.
+pub fn shardstart(programm: Option<PathBuf>, orte: &[PathBuf], modell: &str) -> Result<Shardstart, String> {
+    let programm = programm.ok_or("myl-shard nicht gefunden")?;
+    let artefakte = orte
+        .iter()
+        .map(|o| o.join(modell))
+        .find(|p| ebenen_des_modells(p).is_some())
+        .ok_or_else(|| format!("Artefakt {modell} nicht vorhanden"))?;
+    let ebenen = ebenen_des_modells(&artefakte).ok_or("Artefakt nicht lesbar")?;
+    Ok(Shardstart { programm, artefakte, zusage: format!("{ebenen}:{EBENENZEIT_ANFANG_US}") })
 }
 
 /// **Startet den Knoten** mit der Freigabe.
@@ -527,8 +570,10 @@ pub fn starten(f: &Freigabe, von: &str) -> Result<Zustand, String> {
     let log2 = log.try_clone().map_err(|e| e.to_string())?;
     let einstieg = einstieg();
     let wallet = crate::wallet::gewaehlt();
+    let (netzname, modell) = gewaehltes_netz();
     let mut c = std::process::Command::new(&programm);
-    c.arg("--name").arg(KNOTENNAME).arg("--port").arg("0");
+    let mut wechselschluessel: Option<zeroize::Zeroizing<String>> = None;
+    c.arg("--name").arg(KNOTENNAME).arg("--port").arg("0").arg("--netz").arg(netzname);
     // ⚑ Mit Einstieg tritt der Knoten bei; ohne ist er sein eigener Erzeuger
     //   und baut erst, wenn jemand zuhoert.
     match &einstieg {
@@ -541,8 +586,29 @@ pub fn starten(f: &Freigabe, von: &str) -> Result<Zustand, String> {
     if let Some(w) = &wallet {
         c.arg("--konsensschluessel").arg(daten.join("konsens.key")).arg("--konto").arg(w.adresse_hex());
         if let Some(alt) = crate::wallet::eingetragen().filter(|a| a.name != w.name) {
-            c.arg("--kontowechsel").arg(alt.schluesselpfad());
+            // ⚑ Ein Keystore wandert nicht als Datei: Offen geht der Schluessel
+            //   ueber eine Roehre zum Knoten. Gesperrt bleibt das alte Konto
+            //   eingetragen, und der Knoten sagt das.
+            if crate::wallet::ist_verschluesselt(&alt.name) {
+                wechselschluessel = crate::wallet::geheimhex_entsperrt(&alt.name);
+                if wechselschluessel.is_some() {
+                    c.arg("--kontowechsel").arg("-");
+                }
+            } else {
+                c.arg("--kontowechsel").arg(alt.schluesselpfad());
+            }
         }
+    }
+    // ⚑ Mit Wallet und Artefakt rechnet der Knoten mit: Er meldet sich als
+    //   Miner an und startet seinen Shard aus der Kette (CLIENT 6.27).
+    let shard = if wallet.is_some() {
+        let suchorte = crate::modelle::suchorte_aus(Path::new(""), &orte, myl_local_agent::ort::wurzel().as_deref());
+        shardstart(programm_finden("myl-shard"), &suchorte, modell)
+    } else {
+        Err("kein Wallet gewählt".to_string())
+    };
+    if let Ok(s) = &shard {
+        c.arg("--modellzusage").arg(&s.zusage).arg("--shard-programm").arg(&s.programm).arg("--artefakte").arg(&s.artefakte);
     }
     c.arg("--podrelais").arg(&relais).arg("--podrelaisausweis").arg(daten.join(RELAISAUSWEIS));
     c.arg("--kette").arg(knotenordner.join("kette.dat"))
@@ -555,7 +621,7 @@ pub fn starten(f: &Freigabe, von: &str) -> Result<Zustand, String> {
         .arg("--aufnahme").arg(AUFNAHME_SEKUNDEN)
         .arg("--ohne-tuer")
         .arg("--still")
-        .stdin(std::process::Stdio::null())
+        .stdin(if wechselschluessel.is_some() { std::process::Stdio::piped() } else { std::process::Stdio::null() })
         .stdout(log)
         .stderr(log2);
     if let Some(w) = myl_local_agent::ort::wurzel() {
@@ -573,6 +639,10 @@ pub fn starten(f: &Freigabe, von: &str) -> Result<Zustand, String> {
         c.process_group(0);
     }
     let mut kind = c.spawn().map_err(|e| format!("{}: {e}", programm.display()))?;
+    if let (Some(geheim), Some(mut ein)) = (wechselschluessel.take(), kind.stdin.take()) {
+        use std::io::Write;
+        ein.write_all(format!("{}\n", geheim.as_str()).as_bytes()).map_err(|e| format!("Roehre zum Knoten: {e}"))?;
+    }
     let bis = std::time::Instant::now() + STARTFRIST;
     loop {
         if let Ok(Some(status)) = kind.try_wait() {
@@ -603,6 +673,7 @@ pub fn starten(f: &Freigabe, von: &str) -> Result<Zustand, String> {
         rechenwerke: f.rechenwerke.len(),
         volumen_bytes: zusage.volumen_bytes(),
         pfad: f.pfad(),
+        ohne_shard: shard.err(),
     };
     if let Ok(mut g) = EIGENER.lock() {
         *g = Some(kind);
@@ -623,6 +694,28 @@ fn einstieg_angabe() -> Option<String> {
     std::env::var("MYL_PROBENETZ").ok().filter(|v| !v.trim().is_empty()).or_else(|| {
         crate::Einstellungen::lesen(&crate::Einstellungen::vorgabepfad()).ok().and_then(|e| e.mining.einstieg)
     })
+}
+
+/// **Das gewählte Netz** samt Modell: `MYL_NETZ`, sonst `mining.netz`, sonst
+/// die Probekette. Ein unbekannter Name gilt als Probekette.
+pub fn gewaehltes_netz() -> (&'static str, &'static str) {
+    let name = std::env::var("MYL_NETZ").ok().filter(|v| !v.trim().is_empty()).or_else(|| {
+        crate::Einstellungen::lesen(&crate::Einstellungen::vorgabepfad()).ok().and_then(|e| e.mining.netz)
+    });
+    NETZE.iter().copied().find(|(n, _)| Some(*n) == name.as_deref().map(str::trim)).unwrap_or(NETZE[0])
+}
+
+/// **Setzt das Netz** (`mining.netz`); eine Stelle für Konsole, Fenster und
+/// `myl`.
+pub fn netz_setzen(name: &str) -> Result<(), String> {
+    if !NETZE.iter().any(|(n, _)| *n == name) {
+        let bekannt: Vec<&str> = NETZE.iter().map(|(n, _)| *n).collect();
+        return Err(format!("„{name}“ ist kein Netz (bekannt: {}).", bekannt.join(", ")));
+    }
+    let ep = Einstellungen::vorgabepfad();
+    let mut e = Einstellungen::lesen(&ep).unwrap_or_default();
+    e.mining.netz = Some(name.to_string());
+    e.schreiben(&ep)
 }
 
 /// **Wo sich ein Knoten befragen laesst** (`/konto/…`, 2026-10-26): der
@@ -798,7 +891,10 @@ pub fn zusammenfassung(z: &Zustand, s: &Stand, jetzt_ms: u64) -> Vec<String> {
         1 => "1 Rechenwerk".to_string(),
         n => format!("{n} Rechenwerke"),
     };
-    let anfragen = if SHARD_ANGESCHLOSSEN { "" } else { " (kein Shard angeschlossen)" };
+    let anfragen = match &z.ohne_shard {
+        Some(g) => format!(" (kein Shard: {g})"),
+        None => String::new(),
+    };
     let mut zeilen = vec![
         format!("⛏ Mining seit {seit}, {wo}"),
         format!(
@@ -1026,6 +1122,25 @@ mod tests {
         assert_eq!((s.hoehe, s.shards, s.abgelehnt, s.guthaben, s.peers), (12, 2, 3, 1_500_000, 0));
     }
 
+    /// ⚑ 6.27: Mit Programm und Artefakt bekommt der Knoten seinen Shard,
+    /// und die Zusage kommt aus den Ebenen des Modells; sonst der Grund.
+    #[test]
+    fn der_shardstart_nimmt_artefakt_und_ebenen() {
+        let w = std::env::temp_dir().join(format!("myl-shardstart-{}", std::process::id()));
+        let leer = w.join("leer");
+        let ort = w.join("voll");
+        std::fs::create_dir_all(&leer).expect("Ordner");
+        let modell = NETZE[0].1;
+        std::fs::create_dir_all(ort.join(modell)).expect("Ordner");
+        std::fs::write(ort.join(modell).join("model_config.json"), r#"{"num_layers":28}"#).expect("Datei");
+        let p = PathBuf::from("/bin/myl-shard");
+        let s = shardstart(Some(p.clone()), &[leer.clone(), ort.clone()], modell).expect("Shard");
+        assert_eq!((s.programm.clone(), s.artefakte, s.zusage), (p.clone(), ort.join(modell), format!("28:{EBENENZEIT_ANFANG_US}")));
+        assert!(shardstart(None, std::slice::from_ref(&ort), modell).expect_err("kein Programm").contains("myl-shard"), "Gegenprobe: ohne Programm");
+        assert!(shardstart(Some(p), &[leer], modell).expect_err("kein Artefakt").contains(modell), "Gegenprobe: ohne Artefakt");
+        let _ = std::fs::remove_dir_all(&w);
+    }
+
     #[test]
     fn die_zusammenfassung_nennt_jede_zahl_und_den_probelauf() {
         let z = Zustand {
@@ -1043,6 +1158,7 @@ mod tests {
             rechenwerke: 1,
             volumen_bytes: 200 * myl_store::orte::GIB,
             pfad: "/Volumes/Platte/Myelith".into(),
+            ohne_shard: None,
         };
         let s = Stand { gegenstaende: 3, shards: 2, belegt_bytes: 3 << 29, bearbeitet: 4, abgelehnt: 5, guthaben: 3_500_000, hoehe: 9, ..Default::default() };
         let t = zusammenfassung(&z, &s, 65 * 60_000).join("\n");
@@ -1073,6 +1189,7 @@ mod tests {
             rechenwerke: 0,
             volumen_bytes: myl_store::orte::GIB,
             pfad: "/Volumes/Platte/Myelith".into(),
+            ohne_shard: None,
         };
         let text = zusammenfassung(&z, &s, 0).join("\n");
         for teil in ["im Probenetz", "gemint: 20 MYL", "Wallet haupt: 30 MYL"] {

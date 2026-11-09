@@ -80,5 +80,5 @@ echo "Mitlesen:   tail -f \"$PROTOKOLL\""
 echo
 
 cd "$WURZEL/INTEGER_LLM"
-INTEGER_LLM_MODEL="$MODELL" nohup "$PYTHON" "$SKRIPT" >"$PROTOKOLL" 2>&1 &
+INTEGER_LLM_MODEL="$MODELL" nohup "$PYTHON" -u "$SKRIPT" >"$PROTOKOLL" 2>&1 &
 echo "Gestartet als Prozess $!."

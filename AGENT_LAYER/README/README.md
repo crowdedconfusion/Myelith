@@ -1,7 +1,7 @@
 # agent-layer
 
-> **Version:** 0.55.1 (`myl-agent` 0.7.2, `myl-local-agent` 0.46.1)
-> **Datum:** 2026-10-23
+> **Version:** 0.56.0 (`myl-agent` 0.7.2, `myl-local-agent` 0.46.2)
+> **Datum:** 2026-11-09
 > **Status:** Manifeste, Herkunftsstufe, Registratur, der
 > **Session-Kontrakt** mit Durchsetzung im Ledger, der **Plan** und seit
 > v0.7.0 die **Segmentkette**. 52 Tests. ⚑ **Was jetzt fehlt, ist keine
@@ -68,6 +68,34 @@ umbenannt, weil er in jedem `use` steht.
 - `src/kette.rs` — dass er es auch so getan hat, und wann er aufhört.
 
 ## Changelog
+
+### v0.56.0 (2026-11-09): Book2Skill
+
+- ⚑ **`werkzeuge/book2skill.py`:** aus einem Werk wird in zwei Stufen ein kurzer
+  Skill, der Volltext bleibt daneben. Stufe 1 wandelt PDF, EPUB, DOCX, ODT, FB2, HTML,
+  RTF, Markdown oder Text nach Markdown samt Grafiken: bei PDF mit Überschriften aus
+  Gliederung oder Schriftgröße, ohne Kopf- und Fußzeilen, mit aufgelösten Trennungen.
+  Stufe 2 verdichtet hierarchisch über `myl fragen` (Stücke, Kapitel, Werk), bricht
+  sauber ab und setzt fort; ohne Modell ein Auszug der tragenden Sätze.
+- ⛔️ **Belegprobe je Aussage:** Alle Zahlen und drei Fünftel der Wörter müssen in
+  höchstens drei aufeinanderfolgenden Sätzen des Originals stehen. Am 4B gemessen: Ohne
+  diese Enge bestanden Aussagen, die Zahlen aus einem anderen Zusammenhang holten.
+- ⛔️ **Ein Werk ist fremder Text:** Jede Datei beginnt mit der Marke, an der der Agent
+  Fremdes erkennt, auch der Skill. `--vertraut` lässt sie beim Skill weg und ist die
+  Aussage eines Menschen, dass er ihn gelesen hat.
+- Gleiche Eingabe und gleiches Modell geben gleiche Bytes. Nur die Standardbibliothek;
+  PDF braucht `pypdf` (BSD), Grafiken daraus zum Teil Pillow.
+- ⚠️ Gescannte PDFs ohne Text und MOBI gehen nicht; Tabellen im PDF kommen als Text. Index
+  nach Design 4 und Ausgabe an STORAGE stehen aus.
+
+### v0.55.2 (2026-11-08): Der Abruf ins eigene Netz, zwei Lücken (`myl-local-agent` 0.46.2)
+
+- ⛔️ **Vier IPv6-Bereiche galten als öffentlich:** 6to4 (`2002::/16`) und
+  Teredo (`2001::/32`) tragen eine IPv4-Adresse, also auch `127.0.0.1`,
+  dazu IPv4-kompatible Adressen (`::/96`) und das veraltete standortlokale
+  `fec0::/10`. Beim Audit gelesen; Probe `nur_oeffentliche_adressen_sind_oeffentlich`.
+- ⛔️ **Kein `--compressed` mehr.** Die Grenze von 20 MB galt dem, was ankam;
+  gepackte Nullen hätten beim Auspacken Gigabyte auf die Platte geschrieben.
 
 ### v0.55.1 (2026-10-26): Proben räumen ihre Ordner auf (Fund 638; `myl-local-agent` 0.46.1)
 

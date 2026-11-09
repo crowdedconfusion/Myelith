@@ -9,9 +9,10 @@
 //! ⚑ **Ausgefuehrt wird eine eigene Kopie der gepruefen Bytes**, im
 //! Zwischenspeicher unter ihrem Hash, nur fuer den Besitzer lesbar. Wer die
 //! Datei im Modulordner nach der Pruefung tauscht, tauscht nicht, was
-//! laeuft.
+//! laeuft. Ein abgeschottetes Modul laeuft in diesem Prozess
+//! ([`crate::wasm`]), aus denselben gepruefen Bytes im Speicher.
 
-use crate::beschreibung::Befugnisse;
+use crate::beschreibung::{Befugnisse, Laufzeit};
 use crate::nachricht::{self, AnModul, Teil, VomModul};
 use crate::signatur::Geprueft;
 use std::io::{BufRead, Write};
@@ -59,10 +60,17 @@ pub struct Lauf {
     /// Die gepruefte Kopie des Programms im Zwischenspeicher, die laeuft.
     pub programm: PathBuf,
     pub befugnisse: Befugnisse,
-    kind: std::process::Child,
+    art: Art,
     an: mpsc::Sender<String>,
     von: mpsc::Receiver<Ereignis>,
     pruefer: Pruefer,
+}
+
+/// Wie ein Modul laeuft.
+enum Art {
+    Prozess(std::process::Child),
+    #[cfg(feature = "wasm")]
+    Abgeschottet(crate::wasm::Griff),
 }
 
 /// **Prueft jede Nachricht eines Moduls gegen seine Befugnisse** und
@@ -258,6 +266,8 @@ pub struct Start<'a> {
     pub hoehe: u16,
     /// Wohin die gepruefen Programme kopiert werden.
     pub speicher: &'a Path,
+    /// Daten, Geheimnisse und Genehmigungen abgeschotteter Module.
+    pub ablage: &'a Path,
     /// Wird gerufen, sobald eine Nachricht des Moduls ankommt (aus dem
     /// Lesefaden), etwa um die Eingabezeile zu wecken.
     pub wecker: Option<fn()>,
@@ -266,9 +276,28 @@ pub struct Start<'a> {
 }
 
 impl Lauf {
-    /// **Startet ein geprueftes natives Modul** und wartet auf den
-    /// Handschlag. Arbeitsverzeichnis ist der Modulordner.
+    /// **Startet ein geprueftes Modul** und wartet auf den Handschlag.
     pub fn starten(g: &Geprueft, s: &Start) -> Result<Lauf, String> {
+        let (an, an_ein) = mpsc::channel::<String>();
+        let (von_aus, von) = mpsc::channel::<Ereignis>();
+        let (art, programm) = match &g.beschreibung.laufzeit {
+            Laufzeit::Nativ { .. } => {
+                let (kind, programm) = Self::prozess(g, s, an_ein, von_aus)?;
+                (Art::Prozess(kind), programm)
+            }
+            #[cfg(feature = "wasm")]
+            Laufzeit::Wasm { datei } => {
+                (Art::Abgeschottet(crate::wasm::starten(g, s.ablage, s.wecker, an_ein, von_aus)?), g.ordner.join(datei))
+            }
+            #[cfg(not(feature = "wasm"))]
+            Laufzeit::Wasm { .. } => return Err(format!("{}: dieses Programm ist ohne WebAssembly gebaut", g.beschreibung.name)),
+        };
+        Self::handschlag(g, s, art, programm, an, von)
+    }
+
+    /// Das Programm eines nativen Moduls samt seinen Faeden. Arbeitsverzeichnis
+    /// ist der Modulordner.
+    fn prozess(g: &Geprueft, s: &Start, an_ein: mpsc::Receiver<String>, von_aus: mpsc::Sender<Ereignis>) -> Result<(std::process::Child, PathBuf), String> {
         let programm = ablegen(g, s.speicher)?;
         let mut kind = std::process::Command::new(&programm)
             .current_dir(&g.ordner)
@@ -278,8 +307,6 @@ impl Lauf {
             .stderr(std::process::Stdio::piped())
             .spawn()
             .map_err(|f| format!("{}: {f}", g.beschreibung.name))?;
-        let (an, an_ein) = mpsc::channel::<String>();
-        let (von_aus, von) = mpsc::channel::<Ereignis>();
         let mut ein = kind.stdin.take().ok_or("keine Eingabe")?;
         std::thread::spawn(move || {
             for z in an_ein {
@@ -326,7 +353,11 @@ impl Lauf {
                 }
             });
         }
-        let mut lauf = Lauf { name: g.beschreibung.name.clone(), programm: programm.clone(), befugnisse: g.beschreibung.befugnisse.clone(), kind, an, von, pruefer: Pruefer::neu(g.beschreibung.befugnisse.clone()) };
+        Ok((kind, programm))
+    }
+
+    fn handschlag(g: &Geprueft, s: &Start, art: Art, programm: PathBuf, an: mpsc::Sender<String>, von: mpsc::Receiver<Ereignis>) -> Result<Lauf, String> {
+        let mut lauf = Lauf { name: g.beschreibung.name.clone(), programm, befugnisse: g.beschreibung.befugnisse.clone(), art, an, von, pruefer: Pruefer::neu(g.beschreibung.befugnisse.clone()) };
         lauf.senden(&AnModul::Hallo { protokoll: crate::PROTOKOLL, konsole: s.konsole.into(), sprache: s.sprache.into(), modell: s.modell.clone(), breite: s.breite, hoehe: s.hoehe, ansicht: s.ansicht });
         let bis = Instant::now() + HANDSCHLAG_FRIST;
         loop {
@@ -339,7 +370,10 @@ impl Lauf {
                     }
                     return Ok(lauf);
                 }
-                Ok(Ereignis::Beendet(w)) => return Err(format!("{}: beendet vor dem Handschlag ({w})", g.beschreibung.name)),
+                Ok(Ereignis::Beendet(w)) => {
+                    lauf.abbrechen();
+                    return Err(format!("{}: beendet vor dem Handschlag ({w})", g.beschreibung.name));
+                }
                 Ok(_) => continue,
                 Err(_) => {
                     lauf.beenden();
@@ -386,9 +420,25 @@ impl Lauf {
         aus
     }
 
-    /// Ob der Prozess noch laeuft.
+    /// Ob das Modul noch laeuft.
     pub fn laeuft(&mut self) -> bool {
-        matches!(self.kind.try_wait(), Ok(None))
+        match &mut self.art {
+            Art::Prozess(k) => matches!(k.try_wait(), Ok(None)),
+            #[cfg(feature = "wasm")]
+            Art::Abgeschottet(g) => g.laeuft(),
+        }
+    }
+
+    /// Hart beenden, soweit das geht.
+    fn abbrechen(&mut self) {
+        match &mut self.art {
+            Art::Prozess(k) => {
+                let _ = k.kill();
+                let _ = k.wait();
+            }
+            #[cfg(feature = "wasm")]
+            Art::Abgeschottet(g) => g.abbrechen(),
+        }
     }
 
     /// **Beendet das Modul**: erst `Ende`, nach einer Sekunde hart.
@@ -401,8 +451,7 @@ impl Lauf {
             }
             std::thread::sleep(Duration::from_millis(20));
         }
-        let _ = self.kind.kill();
-        let _ = self.kind.wait();
+        self.abbrechen();
     }
 }
 
@@ -509,7 +558,7 @@ mod tests {
     fn falscher_handschlag() {
         let (o, g) = skriptmodul("name", "#!/bin/sh\nread z\necho '{\"art\":\"hallo\",\"protokoll\":1,\"name\":\"anderes\",\"version\":\"0.1.0\"}'\nsleep 5\n");
         let speicher = o.join("speicher");
-        let r = Lauf::starten(&g, &Start { konsole: "probe", sprache: "de", modell: None, breite: 80, hoehe: 24, speicher: &speicher, wecker: None, ansicht: false });
+        let r = Lauf::starten(&g, &Start { konsole: "probe", sprache: "de", modell: None, breite: 80, hoehe: 24, speicher: &speicher, ablage: &speicher, wecker: None, ansicht: false });
         assert!(r.as_ref().err().is_some_and(|f| f.contains("Handschlag passt nicht")), "{:?}", r.err());
         let _ = std::fs::remove_dir_all(&o);
     }
@@ -526,7 +575,7 @@ mod tests {
         // Nach der Pruefung im Ordner getauscht: laeuft trotzdem die gepruefte Kopie.
         std::fs::write(o.join("bin/beispiel"), "#!/bin/sh\nexit 9\n").unwrap();
         let speicher = o.join("speicher");
-        let mut lauf = Lauf::starten(&g, &Start { konsole: "probe", sprache: "de", modell: None, breite: 80, hoehe: 24, speicher: &speicher, wecker: None, ansicht: false }).unwrap();
+        let mut lauf = Lauf::starten(&g, &Start { konsole: "probe", sprache: "de", modell: None, breite: 80, hoehe: 24, speicher: &speicher, ablage: &speicher, wecker: None, ansicht: false }).unwrap();
         let bis = Instant::now() + Duration::from_secs(5);
         let mut alles = Vec::new();
         while Instant::now() < bis && !alles.iter().any(|e| matches!(e, Ereignis::Beendet(_))) {

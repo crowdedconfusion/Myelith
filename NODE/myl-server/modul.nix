@@ -133,10 +133,11 @@ in
       type = lib.types.bool;
       default = false;
       description = ''
-        Erzeugt dieser Knoten Bloecke (--erzeuger)? ⚠️ **Das tut in der
-        ueblichen Aufstellung genau einer**, die Anlaufstelle, und nicht
-        jeder stimmberechtigte Knoten. Wer es ohne Absprache einschaltet,
-        laesst zwei Knoten dieselbe Runde eroeffnen.
+        Steht dieser Knoten mit seinem Konsensschluessel im Stimmsatz von
+        aussen und erzeugt, solange der Satz aus dem Zustand noch nicht
+        traegt (--erzeuger)? ⚠️ **Nur fuer Knoten aus dem Stimmsatz der
+        Genesis**; danach erzeugt jeder volle Miner in den Slots, fuer die
+        er gezogen ist, auch ohne diese Einstellung.
       '';
     };
 

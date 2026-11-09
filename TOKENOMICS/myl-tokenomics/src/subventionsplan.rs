@@ -58,6 +58,33 @@ pub struct Planabschnitt {
     pub nenner: u64,
 }
 
+/// ⚑ **Der Anlaufplan der Kette** (W4, Whitepaper 5.2 und 5.7): Epochen zu
+/// einer Stunde, 8 760 je Jahr. Ein Vierteljahr `s = 1`, bis zum halben Jahr
+/// `3/4`, bis zum ersten Jahr `1/2`, im zweiten `1/4`, danach null.
+///
+/// Fest im Programm und damit auf beiden Seiten gleich, bis die Registry an
+/// die Kette gebunden ist. Die Festlegung vom 2026-08-25 verlangt den
+/// Verlauf; die Zahlen sind ein Vorschlag, und [`Subventionsplan::neu`] hält
+/// sie unter der Self-Dealing-Schranke (Test unten).
+pub const ANLAUFPLAN: [Planabschnitt; 5] = [
+    Planabschnitt { ab_epoche: 0, zaehler: 1, nenner: 1 },
+    Planabschnitt { ab_epoche: 2_190, zaehler: 3, nenner: 4 },
+    Planabschnitt { ab_epoche: 4_380, zaehler: 1, nenner: 2 },
+    Planabschnitt { ab_epoche: 8_760, zaehler: 1, nenner: 4 },
+    Planabschnitt { ab_epoche: 17_520, zaehler: 0, nenner: 1 },
+];
+
+/// Die Subventionsrate des Anlaufplans in dieser Epoche, als Bruch.
+pub fn anlaufrate(epoche: u64) -> (u64, u64) {
+    let mut rate = (ANLAUFPLAN[0].zaehler, ANLAUFPLAN[0].nenner);
+    for a in &ANLAUFPLAN {
+        if a.ab_epoche <= epoche {
+            rate = (a.zaehler, a.nenner);
+        }
+    }
+    rate
+}
+
 /// Warum ein Plan nicht angenommen wird.
 ///
 /// ⚑ **Abgelehnt und nicht gewarnt.** Ein Plan, der die
@@ -282,6 +309,25 @@ mod tests {
             zaehler: z,
             nenner: n,
         }
+    }
+
+    /// ⚑ Der Anlaufplan der Kette besteht die Prüfung, und die Rate der
+    /// Kette ist die des geprüften Plans; dazu der Erstjahresanteil, den die
+    /// Festlegung vom 2026-08-25 sichtbar haben will.
+    #[test]
+    fn der_anlaufplan_ist_gueltig_und_faellt_auf_null() {
+        let plan = Subventionsplan::neu(ANLAUFPLAN.to_vec()).expect("der Anlaufplan muss gelten");
+        for e in [0, 1, 2_189, 2_190, 4_379, 4_380, 8_759, 8_760, 17_519, 17_520, u64::MAX] {
+            assert_eq!(anlaufrate(e), plan.rate(e), "Epoche {e}");
+        }
+        assert_eq!(anlaufrate(0), (1, 1));
+        assert_eq!(anlaufrate(17_520).0, 0, "die Subvention endet");
+        let basis = basis_halbierung_je_jahr(1_000_000, 8_760, 5);
+        let mit = plan.erstjahresanteil(&basis, 8_760);
+        let ohne = Subventionsplan::neu(vec![abschnitt(0, 0, 1)]).expect("Plan").erstjahresanteil(&basis, 8_760);
+        assert_eq!(ohne.bps / 100, 51, "ohne Subvention, gleiche Basisreihe");
+        assert!(mit.bps > ohne.bps, "die Kurve soll den Erstjahresanteil heben: {} gegen {}", mit.bps, ohne.bps);
+        assert_eq!(mit.bps / 100, 61, "Erstjahresanteil des Plans in Prozent");
     }
 
     /// Ein fallender Plan wird angenommen, und die Rate folgt der Epoche.

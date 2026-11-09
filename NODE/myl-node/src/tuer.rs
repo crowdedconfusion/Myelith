@@ -162,32 +162,83 @@ fn jetzt_ms() -> u64 {
         .unwrap_or(0)
 }
 
-/// Bedient **eine** Anfrage an der `/v1`-Tür, mit Rechenweg dahinter.
+/// ⚑ **Wie viele Anfragen die `/v1`-Tuer zugleich bedient** (Sicherheitsaudit
+/// A23): so viele, wie die Ortsleitung des Shards zugleich annimmt. Darueber
+/// bekommt die Verbindung sofort 503, statt in einer Schlange zu warten.
+pub const TUER_ZUGLEICH: usize = 32;
+
+/// Die Pause nach einem Fehler beim Annehmen (etwa keine freien Griffe mehr):
+/// Ohne sie drehte die Schleife leer und nahme dem Knoten die Rechenzeit.
+const NACH_ANNAHMEFEHLER: std::time::Duration = std::time::Duration::from_millis(100);
+
+/// Bedient die Tuer ohne Rechenweg, eine Verbindung nach der anderen. Hier
+/// wird nur gelesen und festgeschrieben, die Lesefrist begrenzt jede.
+pub async fn ohne_rechenweg_bedienen(
+    tuer: myl_gateway::Tuer,
+    mut annahme: myl_gateway::annahme::Annahme,
+    mut stelle: myl_gateway::zugang::Zugangsstelle<Kontraktabschrift>,
+    abschrift: Kontraktabschrift,
+) {
+    loop {
+        // 📌 **Erst annehmen, dann lesen** (Fund 647): Die Tuer wartet
+        // beliebig lange; Epoche und Uhr gelten fuer den Augenblick, in dem
+        // die Anfrage da ist.
+        let Ok(verbindung) = tuer.annehmen().await else {
+            tokio::time::sleep(NACH_ANNAHMEFEHLER).await;
+            continue;
+        };
+        let _ = eine_anfrage(&tuer, verbindung, &mut annahme, &mut stelle, &abschrift).await;
+    }
+}
+
+/// ⚑ **Bedient die `/v1`-Tuer, mehrere Anfragen zugleich** (A23, Fund 165 fuer
+/// den Rechenweg). Bis 0.117.0 lief eine Verbindung nach der anderen, und ein
+/// einziger gueltiger Kontrakt belegte die Tuer bis zur Frist eines Auftrags.
 ///
-/// # ⚑ Der Unterschied zu [`eine_anfrage`] ist der ganze Punkt (Fund 165)
-///
-/// Beide prüfen den Kontrakt aus der Kette und beide nehmen die Epoche
-/// aus derselben Abschrift. **Nur führt diese hier irgendwohin:** Sie
-/// gibt den Auftrag an einen [`myl_gateway::oai::Rechenweg`], also an
-/// den Shard-Prozess, und bucht danach ab.
-///
-/// Bis zum 2026-09-03 hatte `bedienen_v1` **null** Produktionsaufrufer:
-/// `main.rs` bediente `/inferenz` und baute keinen Weg. Die Kisten
-/// trugen alle vier Gateway-Stufen, das Binary rief sie nicht.
-///
-/// Wie [`eine_anfrage`]: Die Verbindung ist schon angenommen (Fund 647).
-pub async fn eine_v1_anfrage<R: myl_gateway::oai::Rechenweg>(
-    tuer: &myl_gateway::Tuer,
-    verbindung: myl_gateway::Verbindung,
-    annahme: &mut myl_gateway::annahme::Annahme,
-    stelle: &mut myl_gateway::zugang::Zugangsstelle<Kontraktabschrift>,
-    abschrift: &Kontraktabschrift,
-    weg: &R,
-) -> std::io::Result<()> {
-    let epoche = abschrift.epoche();
-    annahme.epoche_setzen(epoche);
-    tuer.v1_beantworten(verbindung, annahme, stelle, weg, epoche, jetzt_ms())
-        .await
+/// Der Deckel steht **vor** dem Lesen: Ohne freien Platz antwortet die Tuer
+/// sofort, fuer alle gleich. Annahme und Zugang werden nur fuer die Buchung
+/// gesperrt, nie ueber die Inferenz. Je Sitzung rechnet hoechstens eine Anfrage
+/// ([`myl_gateway::tuer::Besetzung`]): Sonst naehme ein Kontrakt alle Plaetze,
+/// und zwei Anfragen bestuenden dieselbe Budgetpruefung, von denen die Kette
+/// dann eine abweist.
+pub async fn v1_bedienen<R, V>(
+    tuer: myl_gateway::Tuer,
+    annahme: myl_gateway::annahme::Annahme,
+    stelle: myl_gateway::zugang::Zugangsstelle<Kontraktabschrift>,
+    abschrift: Kontraktabschrift,
+    weg: std::sync::Arc<R>,
+    vor_jeder_anfrage: V,
+) where
+    R: myl_gateway::oai::Rechenweg + 'static,
+    V: Fn(&R),
+{
+    let tuer = std::sync::Arc::new(tuer);
+    let annahme = std::sync::Arc::new(std::sync::Mutex::new(annahme));
+    let stelle = std::sync::Arc::new(std::sync::Mutex::new(stelle));
+    let besetzung = std::sync::Arc::new(myl_gateway::tuer::Besetzung::default());
+    let plaetze = std::sync::Arc::new(tokio::sync::Semaphore::new(TUER_ZUGLEICH));
+    loop {
+        let Ok(verbindung) = tuer.annehmen().await else {
+            tokio::time::sleep(NACH_ANNAHMEFEHLER).await;
+            continue;
+        };
+        let Ok(platz) = plaetze.clone().try_acquire_owned() else {
+            let _ = myl_gateway::Tuer::voll(verbindung).await;
+            continue;
+        };
+        vor_jeder_anfrage(&weg);
+        let epoche = abschrift.epoche();
+        if let Ok(mut a) = annahme.lock() {
+            a.epoche_setzen(epoche);
+        }
+        let (tuer, annahme, stelle, besetzung, weg) = (tuer.clone(), annahme.clone(), stelle.clone(), besetzung.clone(), weg.clone());
+        tokio::spawn(async move {
+            // Ein Verbindungsfehler ist kein Grund, die Tuer zu schliessen:
+            // Meist ist es eine Gegenstelle, die aufgelegt hat.
+            let _ = tuer.v1_beantworten(verbindung, &annahme, &stelle, &besetzung, weg.as_ref(), epoche, jetzt_ms()).await;
+            drop(platz);
+        });
+    }
 }
 
 impl myl_gateway::zugang::Kontraktquelle for Kontraktabschrift {
@@ -437,5 +488,119 @@ mod tests {
         assert_eq!(TUER_PORT, 4160);
         assert_ne!(TUER_PORT, 4150, "der Netzport");
         assert_ne!(TUER_PORT, 4151, "der Beobachtungsport");
+    }
+
+    /// Ein Rechenweg, der bei „warten“ haengt, bis die Probe ihn weiterlaesst.
+    struct Prueweg {
+        begonnen: tokio::sync::Notify,
+        weiter: tokio::sync::Notify,
+    }
+
+    #[async_trait::async_trait]
+    impl myl_gateway::oai::Rechenweg for Prueweg {
+        async fn rechne(&self, a: myl_gateway::oai::Rechenauftrag<'_>) -> Option<myl_gateway::oai::Rechenergebnis> {
+            if a.prompt.contains("warten") {
+                self.begonnen.notify_one();
+                self.weiter.notified().await;
+            }
+            Some(myl_gateway::oai::Rechenergebnis { text: "ok".to_string(), prompt_token: 1, neue_token: 1, segment: "ab".to_string() })
+        }
+        async fn modell(&self) -> Option<myl_gateway::oai::Modellstand> {
+            Some(myl_gateway::oai::Modellstand { name: "m".to_string(), pipeline: "beef".to_string() })
+        }
+    }
+
+    /// Eine Abschrift mit einem bezahlbaren Kontrakt je Agent, und je Agent
+    /// eine Vollmacht.
+    fn zwei_kontrakte() -> (Kontraktabschrift, Vec<String>) {
+        use myl_types::vollmacht::{Vollmacht, Vorbehalt};
+        let mut zustand = myl_ledger::LedgerState::genesis(1);
+        let mut tokens = Vec::new();
+        for n in [21u8, 22] {
+            let sk = myl_types::bls::BlsSecretKey::key_gen(&[n; 32]).expect("Schluessel");
+            let mut k = kontrakt(n);
+            k.agent = Address::aus_schluessel(&sk.public_key().expect("pk"));
+            k.credits = Grenzen { budget: 10_000, einzellimit: 1_000, schwelle: u64::MAX, zeugenleiter: Vec::new() };
+            let id = k.adresse();
+            zustand.sitzungen.insert(id, myl_ledger::state::Sitzung { kontrakt: k, zustand: Sitzungszustand::neu() });
+            tokens.push(Vollmacht::ausstellen(&sk, vec![Vorbehalt::NurSitzung(id), Vorbehalt::GueltigBis(EpochId(9))], [4u8; 32]).expect("ausstellen").als_bearer());
+        }
+        let a = Kontraktabschrift::neu();
+        a.setzen(&zustand);
+        (a, tokens)
+    }
+
+    async fn frage_v1(port: u16, token: &str, wort: &str) -> Vec<u8> {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let rumpf = format!(r#"{{"model":"m","messages":[{{"role":"user","content":"{wort}"}}],"max_tokens":4}}"#);
+        let kopf = format!(
+            "POST {} HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer {token}\r\nContent-Length: {}\r\n\r\n",
+            myl_gateway::oai::WEG_CHAT,
+            rumpf.len()
+        );
+        let mut s = tokio::net::TcpStream::connect(("127.0.0.1", port)).await.expect("verbinden");
+        s.write_all(kopf.as_bytes()).await.expect("Kopf");
+        s.write_all(rumpf.as_bytes()).await.expect("Rumpf");
+        let mut aus = Vec::new();
+        tokio::time::timeout(std::time::Duration::from_secs(10), s.read_to_end(&mut aus))
+            .await
+            .expect("die Tuer antwortet nicht in der Frist")
+            .expect("lesen");
+        aus
+    }
+
+    async fn tuer_starten(a: Kontraktabschrift, weg: std::sync::Arc<Prueweg>) -> u16 {
+        let lauscher = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("binden");
+        let port = lauscher.local_addr().expect("adresse").port();
+        let tuer = myl_gateway::Tuer::aus_lauscher(lauscher);
+        let annahme = myl_gateway::annahme::Annahme::neu(1, EpochId(0));
+        let stelle = myl_gateway::zugang::Zugangsstelle::neu(a.clone());
+        tokio::spawn(v1_bedienen(tuer, annahme, stelle, a, weg, |_| {}));
+        port
+    }
+
+    /// ⚑ **Eine lange Anfrage haelt die Tuer nicht auf** (A23): Waehrend der
+    /// Kontrakt des einen rechnet, bekommt der andere seine Antwort.
+    /// Gegenprobe: wer in [`v1_bedienen`] das `spawn` durch ein `await`
+    /// ersetzt, laesst die zweite Frage in die Frist laufen.
+    #[tokio::test]
+    async fn eine_lange_anfrage_haelt_die_tuer_nicht_auf() {
+        let (a, tokens) = zwei_kontrakte();
+        let weg = std::sync::Arc::new(Prueweg { begonnen: tokio::sync::Notify::new(), weiter: tokio::sync::Notify::new() });
+        let port = tuer_starten(a, weg.clone()).await;
+        let lang = {
+            let t = tokens[0].clone();
+            tokio::spawn(async move { frage_v1(port, &t, "warten").await })
+        };
+        weg.begonnen.notified().await;
+        let kurz = frage_v1(port, &tokens[1], "sofort").await;
+        assert!(kurz.starts_with(b"HTTP/1.1 200"), "{}", String::from_utf8_lossy(&kurz));
+        weg.weiter.notify_one();
+        let lang = lang.await.expect("Klient");
+        assert!(lang.starts_with(b"HTTP/1.1 200"), "{}", String::from_utf8_lossy(&lang));
+    }
+
+    /// ⚑ **Der Deckel steht vor dem Lesen** (A23): Sind alle Plaetze von
+    /// schweigenden Verbindungen besetzt, bekommt die naechste sofort 503,
+    /// ohne etwas gesendet zu haben. Gegenprobe: ohne `try_acquire_owned`
+    /// wartet sie bis zur Lesefrist und bekommt 408.
+    #[tokio::test]
+    async fn eine_volle_tuer_sagt_es_sofort() {
+        use tokio::io::AsyncReadExt;
+        let (a, _) = zwei_kontrakte();
+        let weg = std::sync::Arc::new(Prueweg { begonnen: tokio::sync::Notify::new(), weiter: tokio::sync::Notify::new() });
+        let port = tuer_starten(a, weg).await;
+        let mut schweiger = Vec::new();
+        for _ in 0..TUER_ZUGLEICH {
+            schweiger.push(tokio::net::TcpStream::connect(("127.0.0.1", port)).await.expect("verbinden"));
+        }
+        let mut s = tokio::net::TcpStream::connect(("127.0.0.1", port)).await.expect("verbinden");
+        let mut aus = Vec::new();
+        tokio::time::timeout(std::time::Duration::from_secs(5), s.read_to_end(&mut aus))
+            .await
+            .expect("keine Antwort, also kein Deckel vor dem Lesen")
+            .expect("lesen");
+        assert!(aus.starts_with(b"HTTP/1.1 503"), "{}", String::from_utf8_lossy(&aus));
+        drop(schweiger);
     }
 }

@@ -1016,6 +1016,14 @@ fn nonce(zaehler: u64) -> Nonce {
 /// zuerst heraus.
 const ANGEBOTE_HOECHSTENS: usize = 4;
 
+/// ⚑ **So weit darf ein Zaehler hinter dem hoechsten angenommenen liegen**
+/// (Fund 682): ein Gleitfenster gegen Wiedereinspielung wie in RFC 4303,
+/// Abschnitt 3.4.3. Streng steigend war zu eng: Die Tuer versiegelt nacheinander
+/// und schickt jede Anfrage ueber eine eigene Verbindung, und wer die Vorgaengerin
+/// ueberholte, liess sie als Wiedereinspielung scheitern. Gesehen wird je Zaehler
+/// einzeln, und vermerkt wird erst, wenn der Tag stimmt.
+pub const EMPFANGSFENSTER: u64 = 64;
+
 /// Ein Kanal zwischen zwei Endpunkten, für eine Epoche und einen Pod.
 ///
 /// Hält zwei Schlüssel (einer je Richtung), den eigenen Sendezähler und
@@ -1066,6 +1074,9 @@ pub struct Kanal {
     eigene_kapsel: Kapsel,
     sende_zaehler: u64,
     empfangen_bis: Option<u64>,
+    /// Welche Zaehler unter [`Self::empfangen_bis`] schon angenommen sind:
+    /// Bit `i` steht fuer `empfangen_bis - i`.
+    empfangen_fenster: u64,
 }
 
 impl fmt::Debug for Kanal {
@@ -1145,6 +1156,7 @@ impl Kanal {
             },
             sende_zaehler: 0,
             empfangen_bis: None,
+            empfangen_fenster: 0,
         })
     }
 
@@ -1226,6 +1238,32 @@ impl Kanal {
         self.empfangen_bis
     }
 
+    /// Der hoechste Stand, gegen den `zaehler` eine Wiedereinspielung ist,
+    /// oder `None`, wenn er frisch ist.
+    fn schon_gesehen(&self, zaehler: u64) -> Option<u64> {
+        let bis = self.empfangen_bis?;
+        if zaehler > bis {
+            return None;
+        }
+        let abstand = bis - zaehler;
+        (abstand >= EMPFANGSFENSTER || (self.empfangen_fenster >> abstand) & 1 == 1).then_some(bis)
+    }
+
+    /// Vermerkt einen angenommenen Zaehler im Fenster.
+    fn zaehler_vermerken(&mut self, zaehler: u64) {
+        match self.empfangen_bis {
+            Some(bis) if zaehler <= bis => self.empfangen_fenster |= 1 << (bis - zaehler),
+            Some(bis) if zaehler - bis < EMPFANGSFENSTER => {
+                self.empfangen_fenster = (self.empfangen_fenster << (zaehler - bis)) | 1;
+                self.empfangen_bis = Some(zaehler);
+            }
+            _ => {
+                self.empfangen_fenster = 1;
+                self.empfangen_bis = Some(zaehler);
+            }
+        }
+    }
+
     /// Versiegelt einen Klartext.
     pub fn versiegle(&mut self, klartext: &[u8]) -> Result<Versiegelt, SitzungsFehler> {
         if klartext.len() > MAX_KLARTEXT_BYTES {
@@ -1281,7 +1319,7 @@ impl Kanal {
         if kopf.pod != self.pod || kopf.von != self.gegenstelle || kopf.an != self.ich {
             return Err(SitzungsFehler::KopfPasstNicht);
         }
-        let wiederholt = self.empfangen_bis.filter(|bis| kopf.zaehler <= *bis);
+        let wiederholt = self.schon_gesehen(kopf.zaehler);
 
         // ⚑ **Die Bereitschaft wird zuletzt geprüft, und die Reihenfolge
         // ist Absicht.** Eine Nachricht aus der falschen Epoche oder dem
@@ -1309,7 +1347,8 @@ impl Kanal {
         // Erst der bestätigte Schlüssel, und nur mit frischem Zähler.
         if let (Some(schluessel), None) = (&self.empfange_schluessel, wiederholt) {
             if let Some(klartext) = entsiegeln(schluessel) {
-                self.empfangen_bis = Some(kopf.zaehler);
+                let zaehler = kopf.zaehler;
+                self.zaehler_vermerken(zaehler);
                 return Ok(klartext);
             }
         }
@@ -1325,6 +1364,7 @@ impl Kanal {
                 }
                 self.empfange_schluessel = Some(schluessel);
                 self.empfangen_bis = Some(kopf.zaehler);
+                self.empfangen_fenster = 1;
                 return Ok(klartext);
             }
         }
@@ -2122,6 +2162,47 @@ mod tests {
             b.oeffne(&versiegelt),
             Err(SitzungsFehler::Wiedereinspielung { .. })
         ));
+    }
+
+    /// 📌 Fund 682: Die Tuer versiegelt nacheinander und schickt jede Anfrage
+    /// ueber eine eigene Verbindung; die spaetere kann zuerst ankommen.
+    #[test]
+    fn eine_ueberholte_nachricht_geht_einmal_auf() {
+        let (mut a, mut b) = paar(1);
+        let m: Vec<_> = (0..3).map(|_| a.versiegle(b"frage").expect("versiegeln")).collect();
+        assert!(b.oeffne(&m[1]).is_ok());
+        assert!(b.oeffne(&m[0]).is_ok(), "die ueberholte Nachricht wurde abgewiesen");
+        assert!(b.oeffne(&m[2]).is_ok());
+        for n in &m {
+            assert!(matches!(b.oeffne(n), Err(SitzungsFehler::Wiedereinspielung { .. })));
+        }
+    }
+
+    /// Hinter dem Fenster gilt wieder: abgewiesen, gleich ob schon gesehen.
+    #[test]
+    fn hinter_dem_fenster_wird_abgewiesen() {
+        let (mut a, mut b) = paar(1);
+        let m: Vec<_> = (0..=EMPFANGSFENSTER).map(|_| a.versiegle(b"frage").expect("versiegeln")).collect();
+        assert!(b.oeffne(&m[EMPFANGSFENSTER as usize]).is_ok());
+        assert!(matches!(b.oeffne(&m[0]), Err(SitzungsFehler::Wiedereinspielung { .. })));
+        assert!(b.oeffne(&m[1]).is_ok(), "das aelteste Feld im Fenster gilt noch");
+    }
+
+    /// Ein Sprung ueber das Fenster hinaus vergisst das Alte, und ein falscher
+    /// Tag im Fenster belegt keinen Platz.
+    #[test]
+    fn das_fenster_vermerkt_nur_was_aufging() {
+        let (mut a, mut b) = paar(1);
+        let m: Vec<_> = (0..200).map(|_| a.versiegle(b"frage").expect("versiegeln")).collect();
+        assert!(b.oeffne(&m[1]).is_ok());
+        let mut falsch = m[0].clone();
+        falsch.geheimtext[0] ^= 1;
+        assert!(matches!(b.oeffne(&falsch), Err(SitzungsFehler::TagStimmtNicht)));
+        assert!(b.oeffne(&m[0]).is_ok(), "die Faelschung hat den Platz belegt");
+        assert!(b.oeffne(&m[199]).is_ok());
+        assert!(matches!(b.oeffne(&m[1]), Err(SitzungsFehler::Wiedereinspielung { .. })));
+        assert!(b.oeffne(&m[198]).is_ok());
+        assert!(matches!(b.oeffne(&m[199]), Err(SitzungsFehler::Wiedereinspielung { .. })));
     }
 
     #[test]

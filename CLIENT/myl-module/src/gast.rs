@@ -107,6 +107,139 @@ pub fn nativ_fahren<M: Modul>(mut m: M) {
     }
 }
 
+/// **Eine Runde eines abgeschotteten Moduls**: das Gegenstueck zu einer Zeile
+/// in [`nativ_fahren`]. Gerufen aus [`wasm_modul!`](crate::wasm_modul).
+pub fn wasm_runde<M: Modul>(m: &mut M, zeile: &str, schreibe: impl Fn(&str)) {
+    let e: AnModul = match nachricht::lesen(zeile) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    let mut a = Ausgang::default();
+    if let AnModul::Hallo { .. } = &e {
+        let (name, version) = m.name();
+        a.senden(VomModul::Hallo { protokoll: crate::PROTOKOLL, name: name.to_string(), version: version.to_string() });
+    }
+    m.ereignis(e, &mut a);
+    for n in &a.nachrichten {
+        schreibe(&nachricht::zeile(n));
+    }
+}
+
+/// **Was ein abgeschottetes Modul beim Wirt erreicht.** Unter jedem anderen
+/// Ziel gibt es diese Funktionen nicht; ein Modul fuer beide Laufzeiten
+/// trennt sie selbst.
+#[cfg(target_arch = "wasm32")]
+pub mod wirt_ruf {
+    use crate::nachricht::{self, Httpanfrage, Httpantwort};
+
+    #[link(wasm_import_module = "myl")]
+    extern "C" {
+        pub fn ausgabe(p: *const u8, n: usize);
+        fn protokoll(p: *const u8, n: usize);
+        fn http(p: *const u8, n: usize) -> i64;
+        fn datei_lesen(p: *const u8, n: usize) -> i64;
+        fn datei_schreiben(p: *const u8, n: usize, q: *const u8, m: usize) -> i64;
+        fn geheimnis(p: *const u8, n: usize) -> i64;
+        fn ergebnis(p: *mut u8, n: usize);
+        fn jetzt_ms() -> i64;
+    }
+
+    /// Eine Antwort des Wirts: `n >= 0` sind Bytes, sonst `-1 - n` Bytes Fehlertext.
+    fn abholen(n: i64) -> Result<Vec<u8>, String> {
+        let laenge = if n >= 0 { n } else { -1 - n } as usize;
+        let mut v = vec![0u8; laenge];
+        // SAFETY: Der Puffer ist `laenge` Bytes gross und gehoert uns.
+        unsafe { ergebnis(v.as_mut_ptr(), laenge) };
+        if n >= 0 {
+            Ok(v)
+        } else {
+            Err(String::from_utf8_lossy(&v).into_owned())
+        }
+    }
+
+    /// Eine Zeile ins Protokoll der Konsole.
+    pub fn protokollieren(text: &str) {
+        // SAFETY: Zeiger und Laenge stammen aus einem gueltigen `&str`.
+        unsafe { protokoll(text.as_ptr(), text.len()) }
+    }
+
+    /// Fragt einen genehmigten Rechner.
+    pub fn http_anfrage(a: &Httpanfrage) -> Result<Httpantwort, String> {
+        let z = nachricht::zeile(a);
+        // SAFETY: wie oben.
+        let n = unsafe { http(z.as_ptr(), z.len()) };
+        let b = abholen(n)?;
+        serde_json::from_slice(&b).map_err(|f| f.to_string())
+    }
+
+    /// Liest eine Datei aus dem eigenen Datenordner.
+    pub fn datei_holen(name: &str) -> Result<Vec<u8>, String> {
+        // SAFETY: wie oben.
+        abholen(unsafe { datei_lesen(name.as_ptr(), name.len()) })
+    }
+
+    /// Schreibt eine Datei in den eigenen Datenordner.
+    pub fn datei_ablegen(name: &str, daten: &[u8]) -> Result<(), String> {
+        // SAFETY: wie oben.
+        abholen(unsafe { datei_schreiben(name.as_ptr(), name.len(), daten.as_ptr(), daten.len()) }).map(|_| ())
+    }
+
+    /// Ein eigenes Geheimnis; andere Module erreichen es nicht.
+    pub fn geheimnis_holen(name: &str) -> Result<String, String> {
+        // SAFETY: wie oben.
+        let b = abholen(unsafe { geheimnis(name.as_ptr(), name.len()) })?;
+        String::from_utf8(b).map_err(|f| f.to_string())
+    }
+
+    /// Die Uhr in Millisekunden.
+    pub fn jetzt() -> i64 {
+        // SAFETY: ohne Argumente.
+        unsafe { jetzt_ms() }
+    }
+}
+
+/// **Macht aus einem [`Modul`] ein abgeschottetes Modul**: die beiden Exporte,
+/// die der Wirt ruft. Das Modul entsteht beim ersten Ereignis.
+///
+/// ```ignore
+/// myl_module::wasm_modul!(MeinModul, MeinModul::default());
+/// ```
+#[cfg(target_arch = "wasm32")]
+#[macro_export]
+macro_rules! wasm_modul {
+    ($typ:ty, $neu:expr) => {
+        std::thread_local! {
+            static MODUL: std::cell::RefCell<Option<$typ>> = const { std::cell::RefCell::new(None) };
+        }
+
+        /// Reserviert Platz fuer eine Zeile; der Wirt schreibt dort hinein.
+        #[no_mangle]
+        pub extern "C" fn myl_speicher(n: usize) -> *mut u8 {
+            let mut v = std::mem::ManuallyDrop::new(Vec::<u8>::with_capacity(n));
+            v.as_mut_ptr()
+        }
+
+        /// Eine Zeile des Wirts; der Platz stammt aus `myl_speicher`.
+        ///
+        /// # Safety
+        /// Der Wirt ruft das genau einmal je `myl_speicher`, mit derselben Laenge.
+        #[no_mangle]
+        pub unsafe extern "C" fn myl_ereignis(p: *mut u8, n: usize) {
+            // SAFETY: Siehe oben; der Wirt hat `n` Bytes geschrieben.
+            let bytes = unsafe { Vec::from_raw_parts(p, n, n) };
+            let Ok(zeile) = String::from_utf8(bytes) else { return };
+            MODUL.with(|m| {
+                let mut m = m.borrow_mut();
+                let m = m.get_or_insert_with(|| $neu);
+                $crate::gast::wasm_runde(m, &zeile, |z| {
+                    // SAFETY: Zeiger und Laenge stammen aus einem gueltigen `&str`.
+                    unsafe { $crate::gast::wirt_ruf::ausgabe(z.as_ptr(), z.len()) }
+                });
+            });
+        }
+    };
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

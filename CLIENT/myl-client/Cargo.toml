@@ -1,6 +1,6 @@
 [package]
 name = "myl-client"
-version = "0.118.0"
+version = "0.123.0"
 edition = "2021"
 rust-version = "1.99"
 description = "Der Nutzer-Client: eine Frage an ein lokales Modell, die Agentenschleife mit Einhaengegrenze, die Einstellungen."
@@ -48,6 +48,14 @@ myl-store = { path = "../../STORAGE/myl-store" }
 # Zufall fuer neue Testwallets (`wallet`); dieselbe Fassung wie im Knoten,
 # schon im Vorrat.
 getrandom = "0.3"
+# Keystore nach EIP-2335 (`keystore`), entschieden 2026-10-27. Die Fassungen
+# der Generation, zu der `sha2` 0.10 gehoert: keine zweite Fassung von `digest`.
+scrypt = { version = "=0.11.0", default-features = false }
+pbkdf2 = { version = "=0.12.2", default-features = false, features = ["hmac"] }
+aes = "0.8"
+ctr = "0.9"
+zeroize = "1"
+unicode-normalization = "=0.1.25"
 # SHA-256 und SHA-512 fuer BIP-39 (`bip39`); dieselbe Fassung wie in
 # `myl-types`, schon im Vorrat.
 sha2 = "0.10"

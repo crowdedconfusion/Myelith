@@ -95,6 +95,9 @@ pub const TYP_METRIKEN: &str = "text/plain; version=0.0.4; charset=utf-8";
 /// nur diese.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Beobachtungsstand {
+    /// ⚑ **Der Anker, den dieser Knoten nennen kann** (A43), in der Form von
+    /// `--anker`; `None`, solange er keinen hat.
+    pub anker: Option<String>,
     /// Wann dieser Stand entstand, in Millisekunden seit der Epoche.
     pub stand_ms: u64,
     pub hoehe: u64,
@@ -216,12 +219,78 @@ impl Kontoauskunft {
     }
 }
 
-/// Eine Kontoanfrage an die Schleife des Knotens: Adresse und Rückweg.
-pub type Kontoanfrage = (myl_types::ids::Address, tokio::sync::oneshot::Sender<Kontoauskunft>);
+/// Ein Eintrag des Verlaufs (`/verlauf/<hex>`): eine Anweisung im Block.
+///
+/// ⚠️ Im Block heisst nicht gelungen: Eine Anweisung ohne Deckung steht dort
+/// auch. Gutschriften aus der Prägung sind keine Anweisungen und fehlen hier.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Verlaufseintrag {
+    pub hoehe: u64,
+    /// `burn`, `ueberweisung`, `sitzung` oder `anderes`.
+    pub art: &'static str,
+    /// Ob das Konto Absender ist; sonst ist es Empfänger.
+    pub ausgehend: bool,
+    /// Die Gegenseite einer Überweisung.
+    pub gegen: Option<myl_types::ids::Address>,
+    pub betrag: u64,
+}
+
+/// Eine Seite des Verlaufs, neueste zuerst. `weiter_bei` ist die Höhe, ab der
+/// die nächste Seite weiter zurückgeht.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Verlaufsseite {
+    pub eintraege: Vec<Verlaufseintrag>,
+    pub weiter_bei: Option<u64>,
+}
+
+impl Verlaufsseite {
+    /// Als JSON, ohne Fremdkiste.
+    pub fn als_json(&self) -> String {
+        let zeilen: Vec<String> = self
+            .eintraege
+            .iter()
+            .map(|e| {
+                let gegen = e.gegen.map(|a| a.as_bytes().iter().map(|b| format!("{b:02x}")).collect::<String>()).unwrap_or_default();
+                format!(
+                    "{{\"hoehe\":{},\"art\":\"{}\",\"ausgehend\":{},\"gegen\":\"{gegen}\",\"betrag\":{}}}",
+                    e.hoehe, e.art, e.ausgehend, e.betrag
+                )
+            })
+            .collect();
+        let weiter = self.weiter_bei.map_or("null".to_string(), |h| h.to_string());
+        format!("{{\"weiter_bei\":{weiter},\"eintraege\":[{}]}}\n", zeilen.join(","))
+    }
+}
+
+/// Eine Anfrage an die Schleife des Knotens samt Rückweg.
+#[derive(Debug)]
+pub enum Kontoanfrage {
+    /// Was die Kette über eine Adresse weiß.
+    Auskunft(myl_types::ids::Address, tokio::sync::oneshot::Sender<Kontoauskunft>),
+    /// Eine Seite des Verlaufs, zurück ab der Höhe (`None`: ab dem Kopf).
+    Verlauf(myl_types::ids::Address, Option<u64>, tokio::sync::oneshot::Sender<Verlaufsseite>),
+}
 
 /// Die Adresse aus `/konto/<64 hex>`, sonst `None`.
 pub fn adresse_aus_weg(weg: &str) -> Option<myl_types::ids::Address> {
-    let hex = weg.strip_prefix("/konto/")?;
+    adresse_aus_hex(weg.strip_prefix("/konto/")?)
+}
+
+/// `/verlauf/<64 hex>[?bis=<hoehe>]`: Adresse und Höhe, sonst `None`.
+pub fn verlauf_aus_weg(weg: &str) -> Option<(myl_types::ids::Address, Option<u64>)> {
+    let (hex, abfrage) = match weg.strip_prefix("/verlauf/")?.split_once('?') {
+        Some((h, a)) => (h, Some(a)),
+        None => (weg.strip_prefix("/verlauf/")?, None),
+    };
+    let bis = match abfrage {
+        None => None,
+        Some(a) => Some(a.strip_prefix("bis=")?.parse().ok()?),
+    };
+    Some((adresse_aus_hex(hex)?, bis))
+}
+
+/// 64 Hexzeichen als Adresse.
+fn adresse_aus_hex(hex: &str) -> Option<myl_types::ids::Address> {
     if hex.len() != 64 {
         return None;
     }
@@ -261,7 +330,16 @@ impl Beobachtungsstelle {
     pub async fn konto(&self, adresse: myl_types::ids::Address) -> Option<Kontoauskunft> {
         let tx = self.anfragen.as_ref()?;
         let (rueck, antwort) = tokio::sync::oneshot::channel();
-        tx.send((adresse, rueck)).await.ok()?;
+        tx.send(Kontoanfrage::Auskunft(adresse, rueck)).await.ok()?;
+        tokio::time::timeout(std::time::Duration::from_secs(2), antwort).await.ok()?.ok()
+    }
+
+    /// Fragt den Knoten nach einer Seite des Verlaufs; `None`, wenn er nicht
+    /// antwortet oder gerade eben eine geliefert hat.
+    pub async fn verlauf(&self, adresse: myl_types::ids::Address, bis: Option<u64>) -> Option<Verlaufsseite> {
+        let tx = self.anfragen.as_ref()?;
+        let (rueck, antwort) = tokio::sync::oneshot::channel();
+        tx.send(Kontoanfrage::Verlauf(adresse, bis, rueck)).await.ok()?;
         tokio::time::timeout(std::time::Duration::from_secs(2), antwort).await.ok()?.ok()
     }
 
@@ -495,6 +573,12 @@ pub fn bedienen(weg: Option<&str>, stand: &Beobachtungsstand, jetzt_ms: u64) -> 
         // Leben heisst: Dieser Prozess antwortet. Mehr kann eine
         // Antwort ueber sich selbst nicht aussagen.
         Some("/gesundheit") => antwort(200, "text/plain; charset=utf-8", "lebt\n"),
+        // ⚑ Die Bezugsquelle eines Ankers von aussen (A43). Nur eine Auskunft:
+        //   Wer ihn nimmt, vergleicht ihn bei mehreren unabhaengigen Knoten.
+        Some("/anker") => match &stand.anker {
+            Some(a) => antwort(200, "text/plain; charset=utf-8", &format!("{a}\n")),
+            None => antwort(404, "text/plain; charset=utf-8", "noch kein Anker\n"),
+        },
         Some("/bereit") => {
             if stand.bereit() {
                 antwort(200, "text/plain; charset=utf-8", "bereit\n")
@@ -543,15 +627,22 @@ pub async fn laufen(lauscher: TcpListener, stelle: Beobachtungsstelle) {
                 }
             }
             let weg = weg_aus_anfrage(&puffer);
-            let aus = match weg.as_deref().filter(|w| w.starts_with("/konto/")) {
-                Some(w) => match adresse_aus_weg(w) {
+            let aus = match weg.as_deref() {
+                Some(w) if w.starts_with("/konto/") => match adresse_aus_weg(w) {
                     None => antwort(404, "text/plain; charset=utf-8", "erwartet /konto/<64 hex>\n"),
                     Some(a) => match stelle.konto(a).await {
                         Some(k) => antwort(200, "application/json", &k.als_json()),
                         None => antwort(503, "text/plain; charset=utf-8", "der Knoten antwortet nicht\n"),
                     },
                 },
-                None => bedienen(weg.as_deref(), &stelle.holen(), crate::protokoll::jetzt_ms().max(0) as u64),
+                Some(w) if w.starts_with("/verlauf/") => match verlauf_aus_weg(w) {
+                    None => antwort(404, "text/plain; charset=utf-8", "erwartet /verlauf/<64 hex>[?bis=<hoehe>]\n"),
+                    Some((a, bis)) => match stelle.verlauf(a, bis).await {
+                        Some(s) => antwort(200, "application/json", &s.als_json()),
+                        None => antwort(503, "text/plain; charset=utf-8", "der Knoten antwortet nicht oder drosselt\n"),
+                    },
+                },
+                _ => bedienen(weg.as_deref(), &stelle.holen(), crate::protokoll::jetzt_ms().max(0) as u64),
             };
             let _ = strom.write_all(&aus).await;
             let _ = strom.shutdown().await;
@@ -562,6 +653,29 @@ pub async fn laufen(lauscher: TcpListener, stelle: Beobachtungsstelle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn der_weg_des_verlaufs_wird_streng_gelesen() {
+        let h = "0f".repeat(32);
+        let a = myl_types::ids::Address::new([0x0f; 32]);
+        assert_eq!(verlauf_aus_weg(&format!("/verlauf/{h}")), Some((a, None)));
+        assert_eq!(verlauf_aus_weg(&format!("/verlauf/{h}?bis=17")), Some((a, Some(17))));
+        for w in ["/verlauf/".to_string(), "/verlauf/0f".to_string(), format!("/verlauf/{h}?bis=x"), format!("/verlauf/{h}?ab=1"), format!("/konto/{h}")] {
+            assert_eq!(verlauf_aus_weg(&w), None, "{w}");
+        }
+    }
+
+    #[test]
+    fn die_verlaufsseite_ist_gueltiges_json() {
+        let s = Verlaufsseite {
+            eintraege: vec![Verlaufseintrag { hoehe: 3, art: "ueberweisung", ausgehend: true, gegen: Some(myl_types::ids::Address::new([1; 32])), betrag: 5 }],
+            weiter_bei: Some(2),
+        };
+        let j = s.als_json();
+        assert!(j.starts_with("{\"weiter_bei\":2,\"eintraege\":[{\"hoehe\":3,\"art\":\"ueberweisung\",\"ausgehend\":true,"), "{j}");
+        assert!(j.contains(&"01".repeat(32)));
+        assert!(Verlaufsseite::default().als_json().contains("\"weiter_bei\":null"));
+    }
 
     #[test]
     fn die_adresse_kommt_nur_aus_einem_ganzen_weg() {
@@ -603,6 +717,18 @@ mod tests {
             latenz_max_us: 9_000,
             ..Default::default()
         }
+    }
+
+    /// ⚑ Die Bezugsquelle des Ankers: mit Anker die Form von `--anker`,
+    /// ohne ihn kein 200, das ein Skript fuer einen Anker halten koennte.
+    #[test]
+    fn der_anker_steht_unter_seinem_weg() {
+        let ohne = bedienen(Some("/anker"), &stand(), 1_000);
+        assert!(ohne.starts_with(b"HTTP/1.1 404"), "{}", String::from_utf8_lossy(&ohne));
+        let mit = Beobachtungsstand { anker: Some("150:aa:bb:7".to_string()), ..stand() };
+        let a = bedienen(Some("/anker"), &mit, 1_000);
+        assert!(a.starts_with(b"HTTP/1.1 200"));
+        assert!(a.ends_with(b"150:aa:bb:7\n"), "{}", String::from_utf8_lossy(&a));
     }
 
     #[test]

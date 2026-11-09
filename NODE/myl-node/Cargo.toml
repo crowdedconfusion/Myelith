@@ -1,6 +1,6 @@
 [package]
 name = "myl-node"
-version = "0.115.2"
+version = "0.122.0"
 edition = "2021"
 # ⚑ 1.88 und nicht 1.85 wie die uebrigen Crates, und der Grund liegt
 # nicht im eigenen Code: Ueber libp2p haengt hier die `icu_*`-Kette
@@ -28,6 +28,7 @@ publish = false
 ausliefern = "myl-node"
 
 [dependencies]
+zeroize = "1"
 borsh = { version = "1.6", features = ["derive"] }
 getrandom = "0.3"
 myl-net = { path = "../../NETWORKING/myl-net" }

@@ -116,6 +116,7 @@ struct Startwerte {
     sprache: &'static str,
     modell: Option<String>,
     speicher: std::path::PathBuf,
+    ablage: std::path::PathBuf,
 }
 
 /// Ob ein Modell geladen ist. ⚠️ Ohne zu warten: Haelt ein Lauf das
@@ -136,6 +137,7 @@ impl Startwerte {
             sprache: if deutsch { "de" } else { "en" },
             modell: e.as_ref().filter(|_| geladen).and_then(|e| modellkennung(&e.modell.artefakt)),
             speicher: myl_client::module::speicherpfad(),
+            ablage: myl_client::module::ablagepfad(),
         }
     }
 
@@ -147,6 +149,7 @@ impl Startwerte {
             breite: BREITE,
             hoehe: HOEHE,
             speicher: &self.speicher,
+            ablage: &self.ablage,
             wecker: Some(wecken),
             ansicht: true,
         }

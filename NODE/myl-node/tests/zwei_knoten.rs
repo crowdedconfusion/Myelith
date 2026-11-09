@@ -88,6 +88,7 @@ fn konfig(verzeichnis: &std::path::Path, name: &str, bootstrap: Vec<String>) -> 
         testverkehr_sekunden: None,
         einsatz: None,
         zustandslos: false,
+        anker_von_aussen: None,
         baum_auf_platte: false,
         zeugen_bereithalten: false,
         selbstprobe_aus: false,
@@ -694,7 +695,7 @@ async fn eine_inferenzantwort_beendet_die_blocknachforderung_nicht() {
     beta.ereignis_einspeisen(myl_net::NodeEvent::Message(myl_net::InboundMessage {
         topic: myl_net::GossipTopic::Blocks,
         data: roh,
-        von: alpha_id,
+        von: alpha_id, pruefmarke: None
     }));
     beta.aufnahme().await;
     assert!(
@@ -820,7 +821,7 @@ async fn ein_zweiter_block_derselben_hoehe_wird_als_doppelbeleg_erkannt() {
         beta.ereignis_einspeisen(myl_net::NodeEvent::Message(myl_net::InboundMessage {
             topic: myl_net::GossipTopic::Blocks,
             data: roh,
-            von,
+            von, pruefmarke: None
         }));
     }
     beta.aufnahme().await;

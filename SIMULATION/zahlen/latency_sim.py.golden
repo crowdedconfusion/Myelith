@@ -1,0 +1,39 @@
+latency_sim — was die Zonen-Clusterung kostet und einbringt
+  k = 8, Pod-Groesse = 10, 7 Zonen
+
+(1) Miner ohne Pod, mit und ohne Sammelcluster (Fund 112):
+    gleichverteilt     100 Miner: ohne   30 uebrig (30.0%), mit   30 (30.0%)
+    gleichverteilt    1000 Miner: ohne   20 uebrig ( 2.0%), mit   20 ( 2.0%)
+    maessig schief     100 Miner: ohne   20 uebrig (20.0%), mit   10 (10.0%)
+    maessig schief    1000 Miner: ohne    0 uebrig ( 0.0%), mit    0 ( 0.0%)
+    stark schief       100 Miner: ohne   20 uebrig (20.0%), mit   20 (20.0%)
+    stark schief      1000 Miner: ohne    0 uebrig ( 0.0%), mit    0 ( 0.0%)
+    ⚑ Der Schaden ist nicht der Ausschluss, sondern der Anreiz: Wer allein
+      in seiner Zone steht, verdient nichts, solange er die Wahrheit sagt.
+
+(2) Streuung: wie viel Arbeit ein einzelnes Redundanzpaar nachrechnet
+    gleichverteilt      100 Miner:   7 Pods,    21 diverse von    21 Paaren; je Paar  4.76% statt  4.76%
+    gleichverteilt     1000 Miner:  98 Pods,  4116 diverse von  4753 Paaren; je Paar  0.02% statt  0.02%
+    gleichverteilt    10000 Miner: 995 Pods, 424296 diverse von 494515 Paaren; je Paar  0.00% statt  0.00%
+    maessig schief      100 Miner:   9 Pods,    21 diverse von    36 Paaren; je Paar  4.76% statt  2.78%
+    maessig schief     1000 Miner: 100 Pods,  3758 diverse von  4950 Paaren; je Paar  0.03% statt  0.02%
+    maessig schief    10000 Miner: 1000 Pods, 375800 diverse von 499500 Paaren; je Paar  0.00% statt  0.00%
+    stark schief        100 Miner:   8 Pods,    19 diverse von    28 Paaren; je Paar  5.26% statt  3.57%
+    stark schief       1000 Miner: 100 Pods,  3245 diverse von  4950 Paaren; je Paar  0.03% statt  0.02%
+    stark schief      10000 Miner: 1000 Pods, 324500 diverse von 499500 Paaren; je Paar  0.00% statt  0.00%
+    ⚑ Die Bedingung verengt die Auswahl, aber sie verengt sie **wenig**:
+      Schon bei hundert Minern gibt es zweistellig viele diverse Paare.
+      Der schlechteste hier gemessene Fall traegt 5.3% je Paar.
+
+(3) Vorteil eines Luegners durch die Diversitaetsbedingung:
+    gleichverteilt   Faktor 1.15 (seine Chance auf ein Paar gegenueber gleichverteilter Ziehung)
+    maessig schief   Faktor 1.32 (seine Chance auf ein Paar gegenueber gleichverteilter Ziehung)
+    stark schief     Faktor 1.53 (seine Chance auf ein Paar gegenueber gleichverteilter Ziehung)
+    ⚑ Kipppunkt: Erst wenn 71 Prozent aller Miner in **einer** Zone
+      sitzen, steigt der Vorteil ueber Faktor 2 (dort 2.30).
+      In den gerechneten Verteilungen sind es hoechstens 1.53.
+      Die Bedingung zahlt dem Luegner etwas, aber wenig; sie taugt als
+      Ausfallschutz und traegt keine Sicherheit. So steht sie in
+      `redundancy.rs`, und jetzt steht auch die Zahl dazu.
+
+latency_sim: alle Behauptungen bestanden.

@@ -174,6 +174,10 @@ rsync -a --delete \
   --exclude MODELS --exclude INTEGER_LLM/artifacts --exclude INTEGER_LLM/calibrate/.venv \
   --exclude README --exclude MODULES \
   /repo/ /bau/quelle/
+# ⚑ Vom Modellordner nur der Katalog: Er ist in die Laufzeit eingebaut
+#   (`netzfreigabe.rs`), die Gewichte gehoeren nicht in die Quelle.
+mkdir -p /bau/quelle/MODELS/llm
+cp /repo/MODELS/llm/KATALOG.json /bau/quelle/MODELS/llm/KATALOG.json
 mkdir -p /bau/cargo-home
 cat > /bau/cargo-home/config.toml <<KONFIG
 [source.crates-io]

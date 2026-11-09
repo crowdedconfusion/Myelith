@@ -1756,7 +1756,7 @@ dependencies = [
 
 [[package]]
 name = "integer-llm-kernels"
-version = "0.89.0"
+version = "0.90.0"
 dependencies = [
  "itertools 0.13.0",
  "objc2",
@@ -2645,9 +2645,11 @@ dependencies = [
 
 [[package]]
 name = "myl-client"
-version = "0.118.0"
+version = "0.123.0"
 dependencies = [
+ "aes",
  "borsh",
+ "ctr",
  "getrandom 0.3.4",
  "integer-llm-runtime",
  "libc",
@@ -2658,9 +2660,13 @@ dependencies = [
  "myl-senses",
  "myl-store",
  "myl-types",
+ "pbkdf2",
+ "scrypt",
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "unicode-normalization",
+ "zeroize",
 ]
 
 [[package]]
@@ -2684,7 +2690,7 @@ dependencies = [
 
 [[package]]
 name = "myl-gateway"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "async-trait",
  "borsh",
@@ -2696,7 +2702,7 @@ dependencies = [
 
 [[package]]
 name = "myl-governance"
-version = "0.15.2"
+version = "0.15.3"
 dependencies = [
  "myl-consensus",
  "myl-tokenomics",
@@ -2706,7 +2712,7 @@ dependencies = [
 
 [[package]]
 name = "myl-ledger"
-version = "0.56.0"
+version = "0.57.0"
 dependencies = [
  "borsh",
  "myl-types",
@@ -2715,7 +2721,7 @@ dependencies = [
 
 [[package]]
 name = "myl-local-agent"
-version = "0.46.1"
+version = "0.46.2"
 dependencies = [
  "libc",
  "myl-agent",
@@ -2728,7 +2734,7 @@ dependencies = [
 
 [[package]]
 name = "myl-module"
-version = "0.5.2"
+version = "0.6.0"
 dependencies = [
  "ed25519-dalek 2.2.0",
  "getrandom 0.2.17",
@@ -2740,7 +2746,7 @@ dependencies = [
 
 [[package]]
 name = "myl-net"
-version = "0.24.0"
+version = "0.25.1"
 dependencies = [
  "borsh",
  "chacha20poly1305",
@@ -2759,7 +2765,7 @@ dependencies = [
 
 [[package]]
 name = "myl-node"
-version = "0.115.2"
+version = "0.122.0"
 dependencies = [
  "async-trait",
  "borsh",
@@ -2780,11 +2786,12 @@ dependencies = [
  "myl-verifier",
  "sha2 0.10.9",
  "tokio",
+ "zeroize",
 ]
 
 [[package]]
 name = "myl-pod"
-version = "0.51.1"
+version = "0.51.5"
 dependencies = [
  "borsh",
  "getrandom 0.2.17",
@@ -2799,7 +2806,7 @@ dependencies = [
 
 [[package]]
 name = "myl-scheduler"
-version = "0.19.1"
+version = "0.19.2"
 dependencies = [
  "borsh",
  "myl-train",
@@ -2813,7 +2820,7 @@ version = "0.13.6"
 
 [[package]]
 name = "myl-siegel"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "borsh",
  "chacha20poly1305",
@@ -2839,7 +2846,7 @@ dependencies = [
 
 [[package]]
 name = "myl-testclient"
-version = "0.68.7"
+version = "0.68.14"
 dependencies = [
  "borsh",
  "crossterm",
@@ -2868,7 +2875,7 @@ dependencies = [
 
 [[package]]
 name = "myl-tokenomics"
-version = "0.26.0"
+version = "0.27.0"
 dependencies = [
  "borsh",
  "myl-ledger",
@@ -2884,7 +2891,7 @@ dependencies = [
 
 [[package]]
 name = "myl-types"
-version = "0.67.0"
+version = "0.68.1"
 dependencies = [
  "blst",
  "borsh",
@@ -2896,7 +2903,7 @@ dependencies = [
 
 [[package]]
 name = "myl-verifier"
-version = "0.28.0"
+version = "0.29.0"
 dependencies = [
  "borsh",
  "integer-llm-kernels",
@@ -3164,6 +3171,16 @@ name = "pastey"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2ee67f1008b1ba2321834326597b8e186293b049a023cdef258527550b9935b4"
+
+[[package]]
+name = "pbkdf2"
+version = "0.12.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f8ed6a7761f76e3b9f92dfb0a60a6a6477c61024b775147ff0973a02653abaf2"
+dependencies = [
+ "digest 0.10.7",
+ "hmac 0.12.1",
+]
 
 [[package]]
 name = "pem"
@@ -3749,6 +3766,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 
 [[package]]
+name = "salsa20"
+version = "0.10.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "97a22f5af31f73a954c10289c93e8a50cc23d971e80ee446f1f6f7137a088213"
+dependencies = [
+ "cipher",
+]
+
+[[package]]
 name = "same-file"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3762,6 +3788,17 @@ name = "scopeguard"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
+
+[[package]]
+name = "scrypt"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0516a385866c09368f0b5bcd1caff3366aace790fcd46e2bb032697bb172fd1f"
+dependencies = [
+ "pbkdf2",
+ "salsa20",
+ "sha2 0.10.9",
+]
 
 [[package]]
 name = "semver"
@@ -4405,6 +4442,15 @@ name = "unicode-ident"
 version = "1.0.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75"
+
+[[package]]
+name = "unicode-normalization"
+version = "0.1.25"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5fd4f6878c9cb28d874b009da9e8d183b5abc80117c40bbd187a1fde336be6e8"
+dependencies = [
+ "tinyvec",
+]
 
 [[package]]
 name = "unicode-normalization-alignments"

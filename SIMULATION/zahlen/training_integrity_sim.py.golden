@@ -1,0 +1,104 @@
+==============================================================================
+VERBLEIBENDE EINWAENDE GEGEN VERTEILTES TRAINING
+==============================================================================
+
+[1] Gradientenaggregation bei ungleicher Pod-Geschwindigkeit
+    Pods liefern Gradienten auf unterschiedlich altem Modellstand.
+
+       max. Verzoegerung    Restfehler nach 3000 Schritten      Status
+    --------------------------------------------------------------------
+                       0                            0.0130 konvergiert
+                       2                            0.0014 konvergiert
+                       5                            0.0012 konvergiert
+                      10                            0.0075 konvergiert
+                      25                            0.0076 konvergiert
+                      50                            0.0036 konvergiert
+
+    ==> Auf dieser konvexen Zielfunktion konvergiert das Verfahren
+        auch bei starker Verzoegerung. EINSCHRAENKUNG: Das Modell ist
+        quadratisch und damit erheblich gutmuetiger als die reale
+        Verlustlandschaft eines Sprachmodells. Die Aussage lautet
+        daher nur: Verzoegerung ist kein prinzipielles Hindernis.
+        Ob die praktischen Grenzen enger liegen, muss M3 messen.
+        Entwurfskonsequenz unabhaengig davon: Gradienten tragen den
+        Modellstand, auf dem sie berechnet wurden; zu alte Beitraege
+        werden verworfen (Governance-Parameter).
+
+[2] Byzantinische Gradienten trotz korrekter Berechnung
+    Ein Angreifer rechnet bitgleich korrekt, waehlt aber Daten oder
+    Reihenfolge so, dass der Gradient schaedlich wirkt.
+
+     Angreiferanteil    Mittelwert      Median    getrimmt
+    ------------------------------------------------------
+                 0%         0.000       0.024       0.013
+                 5%         0.760       0.029       0.021
+                10%         1.900       0.048       0.048
+                20%         3.801       0.097       0.124
+                33%         6.081       0.187       3.913
+
+    ==> Der Mittelwert ist gegen einzelne extreme Beitraege wehrlos:
+        Schon 5 % Angreifer verschieben ihn deutlich. Median und
+        getrimmter Mittelwert bleiben bis etwa 20 % stabil.
+        Bei 33 % versagt die 20-Prozent-Trimmung erwartungsgemaess,
+        der Median haelt weiterhin. Konsequenz: Die Aggregation MUSS
+        robust erfolgen, und zwar per MEDIAN, nicht per Trimmung, da
+        dessen Bruchpunkt bei 50 % liegt und damit mit der ohnehin
+        angenommenen byzantinischen Schranke zusammenfaellt.
+        Median benoetigt nur Vergleiche und bleibt damit deterministisch
+        und im Verifikationsmodell nachpruefbar.
+
+[3] Manipulationsresistenz der Uebernahme-Benchmarks
+    Die Shadow-Phase (Kap. 9.2) entscheidet ueber die Uebernahme neuer
+    Gewichte. Kann auf den Benchmark hin optimiert werden?
+
+    Benchmark oeffentlich bekannt                  scheinbarer Gewinn ohne echten Fortschritt: 35%
+    Hold-out per VRF nach Trainingsende gezogen    scheinbarer Gewinn ohne echten Fortschritt: 0%
+
+    Wahrscheinlichkeit, ein VRF-gezogenes Hold-out vorab zu erraten:
+      100 Items aus 10,000: Trefferwahrscheinlichkeit je Item 1.0%
+      500 Items aus 10,000: Trefferwahrscheinlichkeit je Item 5.0%
+      1000 Items aus 10,000: Trefferwahrscheinlichkeit je Item 10.0%
+    ==> Das Hold-out-Set muss NACH Abschluss des Trainings per VRF aus
+        dem Korpus gezogen und erst dann offengelegt werden. Nur so ist
+        Optimierung auf den Test ausgeschlossen. Die Ziehung ist
+        oeffentlich nachvollziehbar, das Ergebnis nicht vorhersagbar.
+
+[4] Katastrophales Vergessen bei fortlaufendem Training
+    Simuliert: Faehigkeit auf altem Wissen bei einseitigem Nachtraining.
+
+       Anteil Wiederholungsdaten    Restleistung alt    Zugewinn neu
+    ----------------------------------------------------------------
+                             0%                 40%            100%
+                             5%                 60%             96%
+                            15%                 82%             88%
+                            30%                 95%             76%
+                            50%                 99%             60%
+
+    ==> Ohne Wiederholungsanteil verliert das Modell rund 60 % der
+        alten Faehigkeit. Bereits 15 % Wiederholung halten den Verlust
+        unter 20 %. Konsequenz: Ein fester Anteil der Trainingsdaten
+        muss aus dem Bestandskorpus stammen, ebenfalls VRF-gezogen.
+        Zusaetzlich sind Regressionstests Teil der Shadow-Phase:
+        Ein Update, das bestehende Faehigkeiten verschlechtert, wird
+        abgelehnt, auch wenn es neue verbessert.
+
+==============================================================================
+ERGEBNIS: VIER ZWINGENDE ENTWURFSAUFLAGEN
+
+  1. Gradienten tragen den Modellstand, auf dem sie berechnet wurden.
+     Zu alte Beitraege werden verworfen (Governance-Parameter).
+  2. Aggregation erfolgt robust (Median oder getrimmter Mittelwert),
+     nicht als einfacher Mittelwert. Beides ist deterministisch und
+     damit im Verifikationsmodell nachpruefbar.
+  3. Das Hold-out-Set der Shadow-Phase wird per VRF erst NACH Abschluss
+     des Trainings gezogen und offengelegt.
+  4. Ein fester Anteil der Trainingsdaten stammt aus dem Bestandskorpus
+     (Wiederholung), und Regressionstests sind Teil der Uebernahme.
+
+  Mit diesen vier Auflagen ist kein Einwand offen, der das Verfahren
+  grundsaetzlich in Frage stellt. Die verbleibenden Unsicherheiten sind
+  empirischer Natur: die Kombination von ganzzahligem Training mit
+  Model Growth, das Verhalten progressiver Expansion unter offenen
+  Netzbedingungen und die Frage der Trainingsfinanzierung.
+
+==============================================================================

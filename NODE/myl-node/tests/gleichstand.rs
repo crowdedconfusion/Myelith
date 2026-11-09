@@ -99,3 +99,17 @@ fn eine_ankuendigung_wird_gegen_die_stimmsatz_kennung_geprueft() {
         .pruefe(aus_dem_pod_pfad, myl_types::ids::EpochId(9))
         .is_err());
 }
+
+/// ⚑ **Die Blockzeit des Testnetzes, gegen die Governance.** Sperrfrist,
+/// Streitfrist und Vertrauensfrist stehen in Epochen und meinen Stunden; das
+/// stimmt nur, solange `slot_ms` mal `BLOECKE_JE_EPOCHE` die Epochenlaenge
+/// der Vorgabe ergibt. Die Probekette laeuft mit Absicht schneller.
+#[test]
+fn die_blockzeit_des_testnetzes_folgt_der_governance() {
+    use myl_governance::{Parameter, ParameterRegistry};
+    let reg = ParameterRegistry::vorgabe();
+    let zahl = |p| reg.wert(p).als_ganzzahl().expect("Ganzzahl");
+    let netz = myl_node::netz::TESTNETZ_INT4;
+    assert_eq!(netz.slot_ms, zahl(Parameter::Blockzeit));
+    assert_eq!(netz.slot_ms * myl_consensus::block::BLOECKE_JE_EPOCHE, zahl(Parameter::Epochenlaenge) * 1_000);
+}

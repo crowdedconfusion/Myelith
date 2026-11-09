@@ -1,8 +1,8 @@
 # consensus (`myl-consensus` + `myl-ledger` + `myl-scheduler`)
 
-> **Version:** 0.86.0 (`myl-consensus` 0.52.0, `myl-scheduler` 0.19.1,
-> `myl-ledger` 0.56.0)
-> **Datum:** 2026-11-05
+> **Version:** 0.87.0 (`myl-consensus` 0.52.0, `myl-scheduler` 0.19.2,
+> `myl-ledger` 0.57.0)
+> **Datum:** 2026-11-08
 > **Status:** Design-Entscheidungen getroffen (malachite hinter
 > trait-Grenze mit Eigenbau-Fallback, Blockzeit 2 s, Komitee 21/7,
 > Streitfrist 7 Tage, Reed-Solomon k=8/m=4);
@@ -108,6 +108,35 @@ myl-consensus/tests/
 
 ## Changelog
 
+### v0.87.0 (2026-11-08): Was ein Konto verbrannt hat (`myl-ledger` 0.57.0)
+
+- ⚑ `AccountState::burn_stand` (angehängt, ändert die Kontobytes und damit die
+  Zustandswurzel), `verbrannt_in`, `burn_vermerken`: je Konto nur der letzte
+  Stand, von der nächsten Epoche überschrieben, also ohne Aufräumen und für
+  Zeugen geeignet.
+
+### v0.86.2 (2026-11-08): Kommentare
+
+- Kommentare und Changelog nennen keine fremden Projekte mehr. Kein Code.
+
+### v0.86.1 (2026-11-08): Der Zonenhebel über die Zwillinge, gemessen (`myl-scheduler` 0.19.2)
+
+- ⚑ **Neuer Test `zonenzuteilung::tests::der_zonenhebel_ueber_die_zwillinge`**
+  gegen die echte Zuteilung und `redundancy::zwillingspaare`: 60 ehrliche
+  Miner in drei Zonen, ein Angreifer mit 24 Kennungen, 300 Epochen. Ein
+  Zwillingspaar ganz beim Angreifer (alle Positionen beider Pods):
+  gleichmässig verteilt nie, mit dem Zonenhebel (die Hälfte in einer
+  leeren Zone) in 11 Epochen (3,7 %). Beide Zwillinge an der ersten
+  Position beim Angreifer, genug für eine Kollusion an dieser Position:
+  ohne Hebel in 133, mit in 173. Gegen eine Kollusion an einer Position
+  schützt der Vergleich der Zwillinge also nie; die Abwehr ist die
+  Stichprobe mit Nachrechnen und Schlachten.
+- 📌 **Die naheliegende Abhilfe ist gemessen schlechter:** Paaren in einer
+  Reihenfolge aus der Saat ergab schlimmstenfalls 100 bis 151 ganze Paare
+  in 300 Epochen, weil sich dann die ganz eigenen Pods des Angreifers
+  miteinander paaren. Die Paarung vorwärts nach Pod-Index bleibt.
+  Keine Änderung am Verfahren.
+
 ### v0.86.0 (2026-11-05): Nach dem Ruhen eine wachsende Wartezeit (`myl-ledger` 0.56.0)
 
 - ⚑ **`stimmsatz::wartezeit`** (CONSENSUS 7.9): Wer wegen Inaktivität ruht
@@ -125,8 +154,7 @@ myl-consensus/tests/
   (`stimmsatz::ausschliessen`) ruht ein Miner für immer; `wieder_bereit`
   (die Neuanmeldung) hebt das nicht auf. 📌 Gefunden im Netzlauf mit einem
   Doppelerzeuger: Bis hierher brachte eine Neuanmeldung auch einen
-  Doppelsigner zurück. Vorbild Ethereum und Cosmos
-  („tombstoned“).
+  Doppelsigner zurück.
 
 ### v0.85.0 (2026-11-05): Die Frist bis zum Ruhen als Regel, die Saat der Pod-Bildung (`myl-ledger` 0.54.0, `myl-scheduler` 0.19.1)
 
@@ -161,7 +189,7 @@ Erzeuger konnte allein zensieren und hielt die Kette an, wenn er ausfiel.
   sucht je Höhe den Versuch, in dem es gezogen ist), und ein längerer Zweig
   überholte die ehrliche Kette und spulte die Epochen vor. Ein Slot ist ein
   Zeitabschnitt ab der Unix-Zeit; ein Zweig wächst höchstens um einen
-  Block je Slot seiner Erzeuger (Ouroboros Praos, BABE, Gasper). Die Kette
+  Block je Slot seiner Erzeuger. Die Kette
   rechnet weiter nie mit der Uhr.
 - ⚑ **`BlockHeader::slot`**, angehängt.
 - ⚑ **Doppelt erzeugt heisst: derselbe Slot.** `Doppelbeleg::Erzeuger`
@@ -194,8 +222,7 @@ Erzeuger konnte allein zensieren und hielt die Kette an, wenn er ausfiel.
 Vorbereitung auf einen rotierenden Erzeuger: Sobald Zweige möglich sind,
 reicht eine Stimme, die nur Höhe und Block nennt, nicht mehr für haftbare
 Endgültigkeit. Wer an 150 für einen Zweig und an 300 für einen anderen,
-vor 150 abzweigenden stimmt, hinterließe keinen Beleg. Vorbild ist Casper
-FFG.
+vor 150 abzweigenden stimmt, hinterließe keinen Beleg.
 
 - ⚑ **Jede Stimme nennt ihre Quelle** (`pruefpunkt::Quelle`, Feld `quelle`
   in `Pruefpunktstimme` und `Pruefpunktzertifikat`, Trennzeichen
@@ -293,10 +320,10 @@ standhält“).
   mehr als einem Drittel kein Zertifikat und damit für niemanden einen
   Beleg; die Inaktivitätsregel hätte dann den ganzen Satz hinausgeworfen.
   Zugleich entscheidet der Erzeuger nicht mehr allein, wessen Unterschrift
-  zählt (Topfanteil, Teilnahme). Vorbild Ethereum: Attestierungen werden
+  zählt (Topfanteil, Teilnahme): Stimmen werden
   einzeln verbucht. Der Hash bindet die Stimme an den Zweig, sonst nähme
   ein Mitglied an zwei Zweigen zugleich teil.
-- ⚑ **Teilnahme nach Punkten** (Vorbild Ethereum Altair): Erfüllt ist eine
+- ⚑ **Teilnahme nach Punkten**: Erfüllt ist eine
   Epoche, wer mindestens halb so viele Prüfpunkte gestimmt hat wie das
   beste Mitglied; sonst 4 Punkte, sonst einer zurück; ab 96 ruht er bis zur
   Neuanmeldung, die die Punkte löscht. Geurteilt wird über die vorvorige
@@ -343,11 +370,11 @@ Angriffsvektoren geschlossen?“) und seiner Entscheidung für die Empfehlungen.
   Medians der Kandidaten erreichen. 📌 Ein Median über Köpfe liesse sich
   mit Scheinidentitäten ohne Arbeit auf null drücken. Abklingen um ein
   Vierundzwanzigstel je Epoche.
-- ⚑ **Inaktivität** (Vorbild Cosmos): Wer 24 Epochen in keinem
+- ⚑ **Inaktivität**: Wer 24 Epochen in keinem
   Prüfpunktzertifikat unterschrieben hat, fällt aus dem nächsten Satz und
   ruht bis zur Neuanmeldung; gezählt ab seinem Eintritt. Ohne diese Regel
   stünde die Finalität für immer, sobald ein Drittel ausfällt. ⚠️ Eine
-  Strafe wie Ethereums Inaktivitätsabzug fehlt.
+  Strafe am Einsatz wegen Inaktivität fehlt.
 - Neues Register 18 `mitwirkung` (abgeklungene Arbeit, letzte Unterschrift,
   ruhend) im kleinen Baum; `fortschreiben` nimmt die Regeln, die Arbeit und
   die Unterschriften der Epoche und behält den Satz der Vorepoche (ein
@@ -365,13 +392,13 @@ Angriffsvektoren geschlossen?“) und seiner Entscheidung für die Empfehlungen.
 
 - ⚑ **`stimmsatz`** (neues Modul): Über die Prüfpunkte stimmen **alle**
   eingetragenen Miner mit mindestens dem Mindesteinsatz, Gewicht der
-  Einsatz (A3). Vorbild Casper FFG; geprüft gegen die 21 mit dem meisten
+  Einsatz (A3); geprüft gegen die 21 mit dem meisten
   Einsatz (feste Elite) und eine Auslosung nach Einsatz (bei 21 Sitzen und
   20 % Angreifer in 4 von 100 Epochen gebrochen, sicher erst bei rund 512
   Sitzen und mit Restrisiko). Für sehr viele Validatoren ändert sich nur der
   Transport der Stimmen (Aggregationsstufen), nicht die Regel.
 - ⚑ **Vorlauf zwei Epochen**: Der Satz für `e + 2` wird am Ende von `e`
-  bestimmt (Vorbild CometBFT).
+  bestimmt.
 - ⚑ **Wechselgrenze**: Zuwächse zusammen höchstens ein Drittel des alten
   Gewichts je Wechsel, darüber alle anteilig gekürzt (keine Reihenfolge, die
   Grosse bevorzugt); Abgänge sofort.
@@ -802,7 +829,7 @@ Köpfe haben.
   erst als Stapel (`myl_types::bls::verify_batch`); trägt er, gelten alle
   als geprüft, sonst jede einzeln mit genau dem Ergebnis von `pruefe`. Das
   Ergebnis ist dasselbe wie einzeln, bis auf eine Fehlerwahrscheinlichkeit
-  von 2⁻⁶⁴ je Stapel (das Verfahren der Konsensclients von Ethereum). Ein
+  von 2⁻⁶⁴ je Stapel. Ein
   Block mit falschen Unterschriften kostet so viel wie bisher.
 - Anlass: Ein Block mit 4 096 Transaktionen brauchte beim Anwenden 1 909 ms,
   fast nur für die Unterschriften; mit `pruefe_alle` 362 ms (NODE 0.74.0).
@@ -863,10 +890,10 @@ Köpfe haben.
 ### v0.55.0 (2026-10-27): Prüfpunkte, Stufe 1 der Endgültigkeit (`myl-consensus` 0.37.0, `myl-ledger` 0.27.0)
 
 - ⚑ **Festlegungen des Projektinhabers vom 2026-10-27:** Ziel ist das
-  Whitepaper (Kap. 3.5.2: BFT je Block, HotStuff-Familie, Erzeuger rotiert
+  Whitepaper (Kap. 3.5.2: BFT je Block, Erzeuger rotiert
   per VRF). **Stufe 1 sind Prüfpunkte** alle 150 Blöcke
   (`pruefpunkt::BLOECKE_JE_PRUEFPUNKT`, teilt die Epoche), und zwar über
-  **Prüfpunktstimmen statt Runden** (nach Casper FFG und GRANDPA): Jedes
+  **Prüfpunktstimmen statt Runden**: Jedes
   Mitglied unterschreibt (Höhe, Blockhash) des Blocks, den es hat
   (`Pruefpunktstimme`, eigenes Trennzeichen `MYELITH_PRUEFPUNKT_v1`); ab mehr
   als zwei Dritteln des Gewichts entsteht ein `Pruefpunktzertifikat`.

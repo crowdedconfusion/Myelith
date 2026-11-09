@@ -71,7 +71,8 @@ pub use boden::{
     Bodenbedarf, Deckel, Reichweite, AUSLASTUNGSBODEN,
 };
 pub use subventionsplan::{
-    basis_halbierung_je_jahr, Erstjahresanteil, Planabschnitt, Planfehler, Subventionsplan,
+    anlaufrate, basis_halbierung_je_jahr, Erstjahresanteil, Planabschnitt, Planfehler,
+    Subventionsplan, ANLAUFPLAN,
 };
 pub use ausschuettung::{
     epochenausschuettung, Ausgelassen, Ausschuettung, Ausschuettungsfehler, Auslassungsgrund,
@@ -92,7 +93,7 @@ pub use sicherheit::{
     stake_genuegt, SicherheitsFehler, KOSTENANTEIL_UNTEN_NENNER, KOSTENANTEIL_UNTEN_ZAEHLER,
 };
 pub use sicherheit::{stichprobe_bp, STICHPROBE_NENNER, STICHPROBE_ZAEHLER};
-pub use sicherheit::{burn_spielraum, BURN_DECKEL_AB, BURN_DECKEL_NENNER, BURN_DECKEL_ZAEHLER};
+pub use sicherheit::{burn_im_deckel, burn_spielraum, BURN_DECKEL_AB, BURN_DECKEL_NENNER, BURN_DECKEL_ZAEHLER};
 pub use slashing::{
     matrix as slashing_matrix, satz as slashing_satz, satz_aus_ledger, satz_gestaffelt,
     urteil_buchen_gestaffelt, Akteur, Grund, SlashBuchungFehler, Slashsatz,

@@ -272,8 +272,13 @@ pub const TESTNETZ_INT4: Netz = Netz {
     probehahn: true,
     stimmsatz_mindesteinsatz: None,
     stimmsatz_inaktiv_epochen: None,
-    // Eine Sekunde, wie die Blockzeit im Whitepaper (1 bis 2 s).
-    slot_ms: 1_000,
+    // ⚑ Zwei Sekunden, die Blockzeit der Governance-Vorgabe (`Blockzeit`,
+    //   Whitepaper 3.5.2: 1 bis 2 s). 1 800 Bloecke sind damit die Stunde, auf
+    //   der Sperrfrist, Streitfrist und Vertrauensfrist stehen; die Probe
+    //   `die_blockzeit_des_testnetzes_folgt_der_governance` haelt das fest.
+    //   📌 Hier stand bis 0.117.0 eine Sekunde: Sieben Tage Sperrfrist waren
+    //   dann 3,5 Tage und die Vertrauensfrist 2,3 Tage.
+    slot_ms: 2_000,
 };
 
 /// Alle Netze, die dieser Knoten kennt.

@@ -1,0 +1,44 @@
+==========================================================================
+1. Anteil ganz besetzter Pods, nach Verfahren
+==========================================================================
+ Anteil Kennungen |  gemischt (Formel) |  gemischt (Lauf) |  geschnitten
+--------------------------------------------------------------------------
+             0.05 |          1.563e-08 |        0.000e+00 |        0.050
+             0.10 |          1.000e-06 |        0.000e+00 |        0.100
+             0.20 |          6.400e-05 |        5.000e-05 |        0.200
+             0.33 |          1.291e-03 |        1.275e-03 |        0.330
+             0.50 |          1.562e-02 |        1.560e-02 |        0.500
+
+==========================================================================
+2. Anteil der Segmente, die von zwei Pods desselben Angreifers
+   gegengerechnet werden (Stufe 1 sieht dort nichts)
+==========================================================================
+ Anteil Kennungen |       gemischt |    geschnitten |       Faktor
+--------------------------------------------------------------------------
+             0.05 |      2.441e-16 |      2.020e-03 |    8.275e+12
+             0.10 |      1.000e-12 |      9.091e-03 |    9.091e+09
+             0.20 |      4.096e-09 |      3.838e-02 |    9.371e+06
+             0.33 |      1.668e-06 |      1.067e-01 |    6.395e+04
+
+==========================================================================
+3. Und ohne Zonentrick: Schluesselerzeugungen fuer einen Pod
+==========================================================================
+ Ehrliche Miner |   Erzeugungen |  Sekunden bei 50 us
+--------------------------------------------------------------------------
+            100 |           179 |               0.009
+           1000 |          1169 |               0.058
+          10000 |          7346 |               0.367
+         100000 |         59991 |               3.000
+
+ERGEBNIS
+--------------------------------------------------------------------------
+Die Besetzung folgt heute der Registerreihenfolge innerhalb einer
+erklaerten Zone. Beides waehlt der Angreifer: die Zone frei, die
+Kennung durch Rechnen. Ein Mischen mit der Epochensaat macht aus
+seinem Anteil f einen Anteil f^6 der ganz besetzten Pods.
+
+⚑ Das Mischen allein genuegt nicht: Eine Zone, in der nur der
+   Angreifer steht, bleibt auch gemischt ganz seine. Die Zone
+   selbst ist die zweite Haelfte der Frage.
+
+PASSED: alle Zusicherungen halten

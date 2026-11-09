@@ -15,8 +15,9 @@
 # es ein Entwicklerzertifikat.
 set -eu
 cd "$(dirname "$0")/../.."
-BINAER=SYSTEM/full-build/release/myl-oberflaeche
-ZIEL=${1:-SYSTEM/full-build/Myelith.app}
+BAUORDNER=${CARGO_TARGET_DIR:-SYSTEM/full-build}
+BINAER=$BAUORDNER/release/myl-oberflaeche
+ZIEL=${1:-$BAUORDNER/Myelith.app}
 
 # 📌 **Die Fassung wird gelesen, nicht hingeschrieben.** Bis zum
 # 2026-09-10 stand hier `0.4.0` als fester Text, waehrend die Kiste bei
@@ -28,7 +29,7 @@ ZIEL=${1:-SYSTEM/full-build/Myelith.app}
 # ⚑ Gegenprobe dazu ist `das_buendelskript_liest_die_fassung`: Sie
 # faellt, sobald hier wieder eine Zahl steht statt der Ableitung.
 FASSUNG=$(grep -m1 '^version' CLIENT/myl-oberflaeche/Cargo.toml | cut -d'"' -f2)
-[ -n "$FASSUNG" ] || { echo "Keine Fassung in CLIENT/myl-oberflaeche/Cargo.toml."; exit 1; }
+[ -n "$FASSUNG" ] || { echo "Keine Fassung in CLIENT/myl-oberflaeche/Cargo.toml." >&2; exit 1; }
 
 # 📌 **Erst bauen, dann buendeln, und zwar hier drin.**
 #
@@ -46,8 +47,9 @@ FASSUNG=$(grep -m1 '^version' CLIENT/myl-oberflaeche/Cargo.toml | cut -d'"' -f2)
 # ⚑ Ein Bauschritt an dieser Stelle kostet ein paar Sekunden, wenn
 # nichts zu tun ist, und nimmt dafuer die Frage weg, welcher von zwei
 # Staenden gerade laeuft.
-cargo build --release --quiet --manifest-path CLIENT/myl-oberflaeche/Cargo.toml
-[ -f "$BINAER" ] || { echo "Der Bau hat kein $BINAER hinterlassen."; exit 1; }
+# shellcheck disable=SC2086
+cargo build --release --quiet --locked ${CARGO_NETZ:-} --manifest-path CLIENT/myl-oberflaeche/Cargo.toml
+[ -f "$BINAER" ] || { echo "Der Bau hat kein $BINAER hinterlassen." >&2; exit 1; }
 
 rm -rf "$ZIEL"
 mkdir -p "$ZIEL/Contents/MacOS" "$ZIEL/Contents/Resources"

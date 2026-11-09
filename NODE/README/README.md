@@ -1,7 +1,7 @@
 # NODE — der Myelith-Knoten
 
-> **Version:** 0.115.2
-> **Datum:** 2026-11-04
+> **Version:** 0.122.0
+> **Datum:** 2026-11-09
 > **Status:** Netzknoten lauffähig, Blockproduktion mit **Persistenz über
 > Neustarts**, BFT-Runden über das Netz mit Rundenwechsel, und seit dem
 > 1. September **schließt der Knoten die Epoche selbst ab**.
@@ -279,6 +279,217 @@ NODE/
 
 ## Changelog
 
+### v0.122.0 (2026-11-09): Der Kontowechsel aus einem Keystore
+
+- `--kontowechsel -` liest den Schlüssel des bisherigen Kontos als eine Zeile Hex
+  von der Standardeingabe. So reicht der Klient einen entsperrten Keystore herein,
+  ohne dass der Schlüssel als Datei liegt.
+
+### v0.121.1 (2026-11-09): Die Stichprobe erreicht die Befragten
+
+- 📌 **Fund 681:** Im Lauf über 14 Epochen mit allen Rollen scheiterten 747 von
+  6 605 Stichprobenanfragen beim Wählen: 498 an vollen ausgehenden Plätzen, 249,
+  weil der Fragende im gezogenen Pod saß und sich selbst wählte. Bei 29 Knoten
+  fing die Zahl der Befragten das auf; in einem großen Netz ist fast kein
+  Mitglied schon verbunden. Die Befragten bekommen jetzt Vorrang in den
+  Verbindungsgrenzen, bevor gefragt wird, und niemand fragt sich selbst.
+- Der Kommentar zum Protokolldeckel nennt die gemessene Menge: rund 1,8 KB je
+  Block, also 128 MiB für rund 40 Stunden bei 2 s Blockzeit (stand: vier Tage).
+
+### v0.121.0 (2026-11-08): Der Verlauf einer Adresse
+
+- ⚑ **`/verlauf/<64 hex>[?bis=<hoehe>]`** am Beobachtungsendpunkt: Überweisungen,
+  Burns und Sitzungen aus den gehaltenen Blöcken, neueste zuerst, seitenweise.
+  Gedeckelt vor der Arbeit: höchstens 200 Einträge, 25 ms Lesezeit und eine
+  Seite je 100 ms, weil es in der Schleife des Knotens liest. ⚠️ Im Block
+  heißt nicht gelungen, und Prägungen sind keine Anweisungen.
+
+### v0.120.0 (2026-11-08): Subvention, Burn-Deckel, Preis aus Nachfrage
+
+- ⚑ **Prägung nach dem Anlaufplan** (Whitepaper 5.2 und 5.7): auf jeder Kette
+  gleich, auch der Probekette.
+- ⚑ **Burn-Deckel je Adresse** in `anwenden` (W4, Whitepaper 5.6); darüber
+  scheitert die Anweisung, die Gebühr bleibt.
+- ⚑ **Der Credit-Preis sieht die Nachfrage** (Whitepaper 5.4): gekaufte Credits
+  der Epoche durch Kapazität, wenn das mehr ist als die bestätigte Arbeit.
+  Höchstens Auslastung 2 zählt, das begrenzt den Sprung je Epoche auf rund
+  22 Prozent.
+- ⚠️ Die Kontobytes sind neu; alte Abzüge sind nicht mehr lesbar.
+
+### v0.119.0 (2026-11-08): Die Übernahme einer Position kennt ihren Absender
+
+- ⚑ **A49:** Ein Auftrag `PositionUebernehmen` ist weiter gegen die Kette
+  geprüft; neu zählt, wer ihn schickt. Ein Absender, der nicht als Miner
+  eingetragen ist, darf nur alle 600 s statt alle 60 s, und ein Miner
+  verdrängt seinen Auftrag sofort. Bis hierher genügte einer beliebigen
+  Gegenstelle ein Auftrag je Minute, um eine Reserve auf der falschen
+  Position festzuhalten; das Einspringen lief dann ins Leere. Passt zu
+  Whitepaper 3.3 (ein Koordinator ist ein Miner). ⚠️ Ein Koordinator ohne
+  Miner-Eintrag bekommt die Reserve nur noch zu den längeren Zeiten; ein
+  eingetragener Miner kann eine Reserve weiter stören und zahlt dafür den
+  Mindesteinsatz je Kennung.
+- Probe `eine_uebernahme_haelt_ihre_pause` erweitert; zwei Gegenproben bissen
+  (Verdrängung aus, lange Pause aus).
+- ⚑ Eine Schlüsseldatei mit 64 Bytes ist das erste Konto nach EIP-2334
+  (`BlsSecretKey::aus_ausgangsmaterial`), wie im Wallet.
+- Kommentare und Changelog nennen keine fremden Projekte mehr.
+
+### v0.118.0 (2026-11-08): Großes Sicherheitsaudit, die Eingänge des Knotens
+
+Jeder Weg, den eine Gegenstelle auslösen kann, mit dem Blick eines Angreifers;
+die Klassen stehen in `SIMULATION/Sicherheitsaudit.md`.
+
+- ⛔️ **A47:** Blöcke gehen erst nach dem Beleg des Erzeugers weiter, vor dem
+  Rechnen (`urteil_ueber_block`), Transaktionen erst nach der Prüfung ihrer
+  Unterschrift; eine falsche zählt gegen den Absender. Der Puffer aus dem Gossip
+  ist gedeckelt (`TX_PUFFER_HOECHSTENS`), Stapel höchstens 1 024, höchstens vier
+  Prüfungen zugleich (`tx_plaetze`). Bis hierher wuchs der Puffer ungedeckelt,
+  und eine Flut startete Rechenaufgaben bis zur Grenze der Laufzeit.
+- ⛔️ **A48, Drossel für alles, was Arbeit kostet:** `Art::Beleg` für Wechselbelege,
+  Dateien, Spuren, Verläufe, Schiedsbelege, Ablagen, Bündel, Übernahmen,
+  Fristzeugnisse und Differenzen, `Abzug` unter `Art::Archiv`. Bis hierher konnte
+  eine Anfrage von wenigen Bytes unbegrenzt oft zwei MiB Belege serialisieren oder
+  einen Verlauf von 64 MiB aufbauen. Dazu: Der Deckel einer Prüfpunktstimme steht
+  vor ihrer Unterschrift; was je Gegenstelle gemerkt wird, geht mit ihr; eine
+  halbfertige Ablage verdrängt nur, was weniger Bytes hat, nicht mehr das Älteste
+  (eine einzige Nachricht verdrängte sonst die ehrliche).
+- ⚑ **A49:** Eine Reserve wechselt die Position höchstens alle 60 s
+  (`uebernahme_setzen`). ⚠️ Wer den Auftrag schickt, bleibt ungebunden.
+- Gemessen: Die Zuteilung einer Epoche kostet bei 5 000 Minern 2 ms, bei 20 000
+  7 ms; kein Grund für einen Zwischenspeicher.
+
+### v0.117.0 (2026-11-08): Ein vertrauter Punkt altert; die Tür bedient mehrere zugleich
+
+**Die Frage war:** Halten die Empfehlungen aus dem Sicherheitsaudit? Geprüft
+an den Spezifikationen anderer Netze und am eigenen Code; gebaut, was stand.
+
+- ⛔️ **A46, eine erfundene Epoche hielt einen Knoten an.** Die Vertrauensfrist
+  las `block.header.epoch` aus einem noch ungeprüften Gossip-Block, und ihr
+  Anhalten ist endgültig: Eine einzige Nachricht beendete jeden vollen Knoten
+  außerhalb der Probekette. Die Netzläufe fahren auf der Probekette, die von
+  der Regel ausgenommen ist, und konnten es nicht zeigen. Jetzt
+  `Kette::vertrauen_traegt_jetzt` aus der eigenen Höhenschranke und der Uhr,
+  ohne fremde Angabe, und vor dem Weg des Knotens ohne Zustand, der vorher an
+  der Frist vorbeiging.
+- ⚑ **A43, Genesis und Anker tragen nur die Vertrauensfrist**
+  (`wechsel::einstieg_pruefen`). Ein Knoten ohne eigenen Stand steigt ab
+  Genesis nur ein, solange das Netz nach der Uhr jünger als die Frist sein
+  kann; sonst hält er vor dem Netzstart mit einer klaren Meldung an und
+  verlangt `--anker`. Die Stimmsatzdatei trägt dafür die Zeile `start`
+  (Millisekunden seit der Epoche, im Hash). ⚠️ `--anker` trägt jetzt vier
+  Felder, `<hoehe>:<block>:<bindung>:<slot>`: Ohne den Slot summierten sich
+  die ausgefallenen Slots der ganzen Kette auf das Alter eines frischen
+  Ankers. `--abzug` bleibt ohne Altersgrenze beim Start, er wird von Genesis
+  aus nachgeprüft.
+- ⛔️ **Zwei Wege am Anker vorbei, geschlossen:** `Kette::folge` fiel auf
+  Genesis zurück, solange der Beleg des Ankers fehlte, und eine Suche ohne
+  Antwort ging ab Genesis weiter (`anker_suche_pflegen`). Mit einem Anker
+  gibt es jetzt keinen Weg ab Genesis, es wird weiter gesucht
+  (`anker_weiter_gesucht`), gefragt wird ab der Epoche des Ankers.
+- **Die Bezugsquelle:** Volle Knoten nennen ihren Anker unter `GET /anker`
+  auf dem Beobachtungsport und wie bisher in der Zeile `wechselbeleg`, jetzt
+  mit Slot. Ein Anker im ausgelieferten Programm taugt nicht, er veraltete
+  innerhalb der Frist.
+- ⚑ **A44, das Wachstum der Belege:** Belege älter als die Sperrfrist
+  (`WECHSELBELEGE_BEHALTEN`, 168 Epochen) fallen, in der Ablage alle 64
+  gefallenen (`Belegablage::neu_schreiben`, atomar). Die eigene Folge beginnt
+  beim ältesten eigenen Beleg, der eines Ankers bleibt. ⚠️ Die Größe eines
+  einzelnen Belegs (ab rund 8 700 Stimmberechtigten zu groß für eine halbe
+  Antwort) bleibt offen.
+- ⚑ **Die Blockzeit des Testnetzes ist 2 s**, die Vorgabe der Governance
+  (Whitepaper: 1 bis 2 s). Mit 1 s waren die sieben Tage der Sperrfrist 3,5
+  Tage und die Vertrauensfrist 2,3 Tage; die erwogene Verdoppelung der Frist
+  hätte gegen die Bindung an die Streitfrist verstoßen. Neue Probe
+  `die_blockzeit_des_testnetzes_folgt_der_governance`.
+- ⚑ **A23, die Tür bedient mehrere zugleich** (`tuer::v1_bedienen`, bis zu
+  `TUER_ZUGLEICH` = 32, GATEWAY 0.11.0): Deckel vor dem Lesen (503), je
+  Sitzung eine Rechnung (429), `Ortsweg::epoche_wechseln` mit `&self`. Nach
+  einem Fehler beim Annehmen eine Pause statt einer leeren Schleife.
+  `tuer::eine_v1_anfrage` entfällt, sie hatte danach keinen Aufrufer.
+- **Proben mit Gegenproben** je Zeile: Alter auf die Millisekunde, Anker ohne
+  Beleg, Schweigen, erfundene Epoche, Kürzen samt Neustart, lange Anfrage
+  neben kurzer, volle Tür.
+
+### v0.116.3 (2026-11-08): Der Anker von außen nennt auch die Bindung
+
+- ⛔️ **Mit Höhe und Block allein war der Anker von außen fälschbar**
+  (gefunden beim Sicherheitsaudit vor dem Testnetz, nie ausgeliefert): Die
+  Unterschriften des Ankers prüft niemand, und gerade sie verbinden die
+  Bindung, also die Sätze der beiden nächsten Epochen, mit dem Block. Eine
+  Gegenstelle konnte einen Beleg mit dem richtigen Block und eigenen
+  Sätzen samt passender Bindung liefern; der Knoten hätte ihn genommen und
+  von da an einem Stimmsatz des Angreifers geglaubt.
+- ⚑ **`--anker <hoehe>:<block>:<bindung>`**: Der Anker legt das Zertifikat
+  mit Höhe, Block und Bindung fest (`Kette::anker_von_aussen_setzen`); die
+  Zeile `wechselbeleg` nennt alle drei. Der Abschluss des Ankers bleibt
+  ungeprüft, nennt aber nur den Anker als Quelle und geht in keine Folge
+  ein. Test `ein_anker_von_aussen_traegt_ueber_die_ruhe` mit der
+  Gegenprobe des gefälschten Belegs; mit dem alten Vergleich nimmt der
+  Knoten ihn (`Ok(1)`), jetzt nicht.
+- Im Netz belegt (Podlauf `kurz-anker`, dritter Lauf): Anker dreiteilig aus
+  der Zeile `wechselbeleg`, der zustandslose Knoten nahm den leichten
+  Abzug am Anker, alle zehn einig am Prüfpunkt.
+
+### v0.116.2 (2026-11-08): Die Folge der Belege nur nach einer Lücke neu aufbauen
+
+- ⛔️ **Seit 0.115.0 baute jeder volle Knoten bei jedem neuen Wechselbeleg
+  die ganze Folge ab Genesis neu auf** (`Kette::beleg_merken`, um zu
+  prüfen, ob der Beleg über eine Lücke trägt). Der Aufbau prüft alle
+  Belege, zwei BLS-Aggregate je Epoche; nach einem Jahr stündlicher
+  Epochen rund 17 500 und Sekunden in der Schleife des Knotens, jede
+  Epoche. Gefunden beim Sicherheitsaudit vor dem Testnetz.
+- ⚑ **Nur nach einer Lücke** (die Belege beider Vorepochen fehlen) wird die
+  Folge aufgebaut; sonst bindet ein Vorgänger den Satz, und der Beleg wird
+  gemerkt wie vor 0.115.0. Die Tests der Belege (23) unverändert grün,
+  der Fall nach der Lücke weiter in
+  `nach_einer_luecke_ersetzt_ein_tragender_beleg`.
+
+### v0.116.1 (2026-11-08): Die Zertifikate des Ankers selbst
+
+- ⛔️ **Im Podlauf `kurz-anker` kam der Knoten nicht über den Anker
+  hinein**, sondern ab Genesis (nach 259 s an der Spitze, das trägt nur ohne
+  Laststufe): Er nahm den Beleg des Ankers (Epoche 8), aber gleich nach
+  der Ruhe boten alle Gegenstellen nur Zertifikate aus dieser Epoche an,
+  und deren Satz bindet der Beleg nicht (er bindet 9 und 10). Jedes wurde
+  mit `Unbekannt(8)` abgelehnt, darunter genau der Abschluss des Ankers.
+- ⚑ **Die beiden Zertifikate des Ankers tragen ohne Satz**
+  (`wechsel::Folge::zertifikat_traegt`): sein Zertifikat und sein
+  Abschluss, vertraut wie der Anker selbst; jedes andere Zertifikat seiner
+  Epoche bleibt unbekannt. Damit wird der Anker gleich nach der Ruhe zum
+  Einstieg (leichter Abzug an seiner Höhe). Tests erweitert, beide
+  scheitern ohne die Regel.
+- ⚑ **Im Netz belegt** (Podlauf `kurz-anker`, zweiter Lauf): 4 von 10
+  Minern samt dem zustandslosen still ab Epoche 3, Finalität zurück in
+  Epoche 8 (die Kette hatte die Stillen ausgeschlossen); der zustandslose
+  nahm 7 s nach dem Neustart mit `--anker` den Abzug am Anker (Höhe
+  14 400) und war nach 18 s an der Spitze; alle zehn einig am Prüfpunkt
+  14 550, alle Stillen neu angemeldet.
+
+### v0.116.0 (2026-11-07): Der Anker von außen (CONSENSUS 7.4a)
+
+- ⚑ **Nach einer Ruhe der Finalität mit Ausschluss kommt ein Knoten ohne
+  Zustand über einen Anker von außen hinein** (`--anker <hoehe>:<block>`): Höhe und Block des
+  Zertifikats eines Wechselbelegs, vom Betreiber genannt und vertraut wie
+  Genesis. Die Folge der Belege beginnt dann bei diesem Beleg
+  (`wechsel::Folge::ab_beleg`); was davor liegt, zählt nicht. Geprüft wird
+  nur, dass er in sich stimmt (Sätze zur Bindung, Abschluss zum
+  Zertifikat), nicht seine Unterschriften: genau die kann nach einem
+  Ausschluss niemand mehr prüfen. Danach geht es gewöhnlich weiter, auch
+  nach einem Neustart (`Kette::folge`, `Kette::wechselbelege_aufnehmen`).
+- ⚑ **Woher der Anker kommt:** Jeder volle Knoten meldet seinen jüngsten
+  Wechselbeleg in der Zeile `wechselbeleg` mit dem Feld `anker`, fertig
+  für `--anker`. Volle Knoten halten die Belege aller Epochen, ein Anker
+  taugt also die ganze Vertrauensfrist, nicht nur so lange wie ein leichter
+  Abzug.
+- ⚠️ **Schwache Subjektivität:** Wer einen falschen Anker übernimmt, folgt
+  einer falschen Geschichte; der Anker muss aus einer Quelle kommen, der man
+  so traut wie der Stimmsatzdatei.
+- Tests: `ab_einem_anker_von_aussen` (mit Gegenproben: falsche Bindung,
+  fremder Abschluss, der alte Satz spricht danach nicht) und
+  `ein_anker_von_aussen_traegt_ueber_die_ruhe` (ohne Anker und mit einem
+  Anker auf einen anderen Block nicht; nach dem Neustart wieder ab dem
+  Anker).
+
 ### v0.115.2 (2026-11-07): Das Stimmbuch unter Windows
 
 - ⛔️ **Unter Windows scheiterte jedes Speichern des Stimmbuchs** (CI zu
@@ -309,9 +520,8 @@ NODE/
   Drittel könnte eine Koalition dieser Grösse auf einem eigenen Zweig
   unterschreiben, ohne je doppelt zu stimmen (auf der Kette schweigt sie
   und wird ausgeschlossen), und der Knoten ohne Zustand nähme ihren höheren
-  Anker. CometBFT schlachtet solche Unterschriften („lunatic“), Ethereum
-  verlangt nach langer Abwesenheit einen Prüfpunkt von außen; wir folgen
-  Ethereum. Der Anker von außen für den Knoten ohne Zustand ist der
+  Anker. Solche Unterschriften zu schlachten fehlt; nach langer Abwesenheit
+  gilt deshalb ein Prüfpunkt von außen. Der Anker von außen für den Knoten ohne Zustand ist der
   nächste Schritt.
 
 ### v0.115.0 (2026-11-07): Die Brücke über eine Lücke der Wechselbelege
@@ -337,7 +547,7 @@ NODE/
   tut; einen tragenden ersetzt keiner. Beim Laden gilt der spätere.
 - 📌 **Verworfen nach Prüfung:** die Schlüssel neuer Mitglieder von der
   Gegenstelle nehmen (ein Aggregat mit einem Rogue-Key ginge durch), eine
-  Vertrauensstufe von einem Drittel wie im Lichtclient von CometBFT
+  Vertrauensstufe von einem Drittel
   (schwächer als ein Zertifikat), eine Brücke vom Satz von außen (die
   Startmitglieder haften nach dem Wechsel für nichts), eine Regel „kein
   Zuwachs ohne Bindung“ in der Kette (sie entscheidet rückblickend, und
@@ -494,8 +704,7 @@ NODE/
 - 📌 **Wer ruht, wird nicht gezogen** (`Kette::erzeugersatz_von`): Der Satz
   einer Epoche steht zwei Epochen voraus fest, und im Netzlauf mit einem
   Doppelerzeuger baute der Geschlachtete noch drei Epochen weiter. Für die
-  Ziehung fällt ein Ruhender jetzt sofort heraus (wie in Ethereum kein
-  geschlachteter Validator vorschlagen darf); für die Finalität bleibt der
+  Ziehung fällt ein Ruhender jetzt sofort heraus; für die Finalität bleibt der
   Satz fest. Die Mitwirkung liegt im kleinen Baum, also ziehen auch
   zustandslose Knoten gleich.
 - ⚑ **Fund 634 entscheidbar** (`Kette::hoehen_schranke`): Jeder Block
@@ -513,8 +722,8 @@ NODE/
   der Rückwege (bei 500 ms fünf Minuten Trennung) oder hat ein Neustart sie
   gelöscht, baut die Kette den Stand am Gabelpunkt aus ihrem jüngsten
   vollen Abzug darunter neu auf und rechnet die eigenen Blöcke bis dorthin
-  aus der Kettendatei nach, wie beim Wiederanlauf (Vorbild: Lighthouse und
-  Teku, Zustände an Wiederherstellungspunkten). Kein neues Dateiformat.
+  aus der Kettendatei nach, wie beim Wiederanlauf (Zustände an
+  Wiederherstellungspunkten). Kein neues Dateiformat.
   ⛔️ Nie unter den endgültigen Prüfpunkt; vor dem Neuaufbau müssen
   Erzeuger und Zertifikate des fremden Zweigs tragen, und der Abzug muss
   der eigene Block an seiner Höhe sein. Trägt der fremde Zweig nicht, zurück
@@ -600,7 +809,7 @@ deren Präfix die Prüfpunkte aller endgültig machen.
   Genesis fragt bei Stille nach.
 - ⚑ **Das Stimmbuch** neben der Kettendatei (`stimmbuch`): die letzte eigene
   Prüfpunktstimme und der letzte eigene Slot. Eine neue Stimme nur mit
-  höherem Ziel und keiner niedrigeren Quelle (Casper FFG; dann widerspricht
+  höherem Ziel und keiner niedrigeren Quelle (dann widerspricht
   sie keiner früheren), dieselbe noch einmal ja; geschrieben, bevor die
   Unterschrift das Haus verlässt.
 - ⚑ **Die Slotlänge je Netz** (`Netz::slot_ms`): Probekette 500 ms,
@@ -648,7 +857,7 @@ der Wahl des Zweigs.
 
 ### v0.105.0 (2026-11-04): Gerechtfertigt und endgültig, Quelle je Stimme
 
-- ⚑ **Abgestimmt wird mit der Quelle aus dem Zustand** (Casper FFG): Beim
+- ⚑ **Abgestimmt wird mit der Quelle aus dem Zustand**: Beim
   Anwenden eines Prüfpunktblocks vermerkt die Kette den dann
   gerechtfertigten Prüfpunkt (`Kette::quelle_an`); jede Stimme für diesen
   Prüfpunkt nennt ihn, gezählt werden nur Stimmen mit ihm, und ein
@@ -991,8 +1200,7 @@ Punkt 1 der Festlegung vom 2026-10-29 (SHARED_TYPES 0.62.0, CONSENSUS
 
 ### v0.96.0 (2026-10-30): Die Ausschüttung in Partitionen
 
-Punkt 2 der Festlegung vom 2026-10-29 (nach Solanas SIMD-0118, geprüft
-gegen Cosmos F1 und Bittensor [3]).
+Punkt 2 der Festlegung vom 2026-10-29.
 
 - ⚑ **Der Epochenwechsel merkt die Ausschüttung vor**
   (`epochenausschuettung_vorgemerkt`, TOKENOMICS 0.25.0), und **jeder Block
@@ -1010,8 +1218,7 @@ gegen Cosmos F1 und Bittensor [3]).
 
 Festlegung des Projektinhabers vom 2026-10-29: die drei offenen Punkte der
 Skalierung umsetzen, nach Recherche und kritischer Prüfung. Dies ist Punkt 3
-(nach dem Vorbild der Checkpoint-Synchronisation von Ethereum: einsteigen am
-jüngsten bestätigten Punkt, abgeglichen mit mehreren Quellen).
+(einsteigen am jüngsten bestätigten Punkt, abgeglichen mit mehreren Quellen).
 
 - ⚑ **Der jüngste Anker**: Ein zustandsloser Knoten sammelt Zertifikate
   `ANKER_SAMMELN` (2 s) lang von mehreren Gegenstellen und nimmt das höchste,

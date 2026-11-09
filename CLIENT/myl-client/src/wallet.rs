@@ -15,7 +15,7 @@
 //!
 //! 1. [`entwerfen`] wuerfelt 128 Bit und zeigt sie als **zwoelf Woerter nach
 //!    BIP-39** (`crate::bip39`); [`aus_woertern`] stellt aus ihnen wieder her.
-//!    Seed nach BIP-39, Schluessel nach EIP-2333: dieselben Woerter geben
+//!    Seed nach BIP-39, Schluessel nach EIP-2333 und EIP-2334: dieselben Woerter geben
 //!    immer dasselbe Wallet.
 //! 2. [`im_netz_suchen`] fragt einen Knoten, ob die Adresse auf der Kette
 //!    schon Spuren hat, damit nichts doppelt angelegt wird; auf dieser
@@ -26,11 +26,13 @@
 //!
 //! # ⚠️ Spielgeld, und warum das hier noch reicht
 //!
-//! Die Schluessel liegen **unverschluesselt** mit Rechten `0600` neben den
-//! Einstellungen. Fuer MYL der Probekette genuegt das. Vor echten MYL fehlen
-//! eine verschluesselte Ablage (Keystore nach EIP-2335, dazu der
-//! Schluesselbund des Systems), ein kaltes Auszahlungskonto ohne Schluessel
-//! auf dieser Maschine und eine pruefbare Auskunft gegen die Zustandswurzel.
+//! Ohne Passwort liegt der Schluessel **unverschluesselt** mit Rechten `0600`
+//! neben den Einstellungen; mit Passwort als Keystore nach EIP-2335
+//! ([`crate::keystore`]), und dann liegt nur noch der Schluessel des Kontos
+//! dort, nicht der Seed. Fuer MYL der Probekette genuegt beides. Vor echten
+//! MYL fehlen der Schluesselbund des Systems, ein kaltes Auszahlungskonto ohne
+//! Schluessel auf dieser Maschine und eine pruefbare Auskunft gegen die
+//! Zustandswurzel.
 //!
 //! # ⚑ Dasselbe Dateiformat wie der Knoten
 //!
@@ -41,6 +43,7 @@
 
 use std::path::PathBuf;
 
+use myl_types::adresstext;
 use myl_types::bls::BlsSecretKey;
 /// Die Adresse eines Wallets; herausgereicht, damit Oberflaechen ohne eigene
 /// Abhaengigkeit auf `myl-types` mit ihr umgehen koennen.
@@ -68,9 +71,19 @@ impl Wallet {
         hex(self.adresse.as_bytes())
     }
 
-    /// Wo der Schluessel liegt.
+    /// ⚑ Die Adresse, wie ein Mensch sie sieht: mit Prüfsumme und Präfix.
+    pub fn adresse_text(&self) -> String {
+        adresstext::als_text(&self.adresse, adresstext::PRAEFIX_TESTNETZ)
+    }
+
+    /// Wo der Schluessel liegt, unverschluesselt oder als Keystore.
     pub fn schluesselpfad(&self) -> PathBuf {
-        ordner().join(format!("{}.key", self.name))
+        let k = keystorepfad(&self.name);
+        if k.exists() {
+            k
+        } else {
+            ordner().join(format!("{}.key", self.name))
+        }
     }
 }
 
@@ -191,6 +204,59 @@ pub fn im_netz_suchen(adresse: &Address) -> Netzbefund {
     }
 }
 
+/// Eine Zeile des Verlaufs (`myl wallet verlauf`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Verlaufszeile {
+    pub hoehe: u64,
+    pub art: String,
+    pub ausgehend: bool,
+    /// Die Gegenseite einer Überweisung, als Hex.
+    pub gegen: String,
+    pub betrag: u64,
+}
+
+/// Höchstens so viele Seiten holt `myl wallet verlauf`.
+pub const VERLAUF_SEITEN: usize = 20;
+
+/// **Der Verlauf einer Adresse** aus den gehaltenen Blöcken des erreichbaren
+/// Knotens, neueste zuerst. ⚠️ Eine Auskunft wie `/konto`, und im Block heisst
+/// nicht gelungen.
+pub fn verlauf(adresse: &Address) -> Result<Vec<Verlaufszeile>, String> {
+    let ort = crate::mining::abfrageort().ok_or("kein Knoten erreichbar (Mining läuft nicht, und der Einstieg nennt keinen Abfrageort).")?;
+    let basis = format!("/verlauf/{}", hex(adresse.as_bytes()));
+    let mut zeilen = Vec::new();
+    let mut bis: Option<u64> = None;
+    for _ in 0..VERLAUF_SEITEN {
+        let weg = bis.map_or(basis.clone(), |h| format!("{basis}?bis={h}"));
+        let (mut seite, weiter) = verlauf_aus(&crate::mining::holen(&ort, &weg)?)?;
+        zeilen.append(&mut seite);
+        match weiter {
+            Some(h) => bis = Some(h),
+            None => break,
+        }
+        // Der Knoten liefert höchstens eine Seite je Takt.
+        std::thread::sleep(std::time::Duration::from_millis(150));
+    }
+    Ok(zeilen)
+}
+
+/// Eine Seite aus der Antwort von `/verlauf/…`.
+fn verlauf_aus(text: &str) -> Result<(Vec<Verlaufszeile>, Option<u64>), String> {
+    let v: serde_json::Value = serde_json::from_str(text).map_err(|e| format!("unverständliche Antwort: {e}"))?;
+    let eintraege = v.get("eintraege").and_then(|e| e.as_array()).ok_or("unverständliche Antwort: keine Einträge")?;
+    let zeilen = eintraege
+        .iter()
+        .map(|e| Verlaufszeile {
+            hoehe: e["hoehe"].as_u64().unwrap_or(0),
+            art: e["art"].as_str().unwrap_or("").to_string(),
+            ausgehend: e["ausgehend"].as_bool().unwrap_or(false),
+            gegen: e["gegen"].as_str().unwrap_or("").to_string(),
+            betrag: e["betrag"].as_u64().unwrap_or(0),
+        })
+        .collect();
+    Ok((zeilen, v["weiter_bei"].as_u64()))
+}
+
 /// Der Befund aus der Antwort von `/konto/…`.
 fn befund_aus(text: &str, ort: &str) -> Netzbefund {
     let zahl = |name: &str| -> Option<u64> {
@@ -210,6 +276,21 @@ fn befund_aus(text: &str, ort: &str) -> Netzbefund {
         nonce: zahl("nonce").unwrap_or(0),
         miner: wahr("miner"),
         auszahlung_fuer: zahl("auszahlung_fuer").unwrap_or(0),
+    }
+}
+
+#[cfg(test)]
+mod verlauf_tests {
+    use super::*;
+
+    #[test]
+    fn eine_seite_des_verlaufs_wird_gelesen() {
+        let t = r#"{"weiter_bei":7,"eintraege":[{"hoehe":9,"art":"burn","ausgehend":true,"gegen":"","betrag":5}]}"#;
+        let (z, w) = verlauf_aus(t).expect("lesbar");
+        assert_eq!(w, Some(7));
+        assert_eq!(z, vec![Verlaufszeile { hoehe: 9, art: "burn".into(), ausgehend: true, gegen: String::new(), betrag: 5 }]);
+        assert_eq!(verlauf_aus(r#"{"weiter_bei":null,"eintraege":[]}"#).expect("leer").1, None);
+        assert!(verlauf_aus("kein json").is_err(), "Gegenprobe: Unsinn");
     }
 }
 
@@ -241,6 +322,11 @@ pub fn name_pruefen(name: &str) -> Result<(), String> {
 /// ⛔️ **Dasselbe Wallet nicht zweimal**: Liegt seine Adresse hier schon
 /// unter einem anderen Namen, wird nichts angelegt.
 pub fn speichern(name: &str, entwurf: &Entwurf) -> Result<Wallet, String> {
+    speichern_mit(name, entwurf, None)
+}
+
+/// [`speichern`], mit Passwort als Keystore.
+pub fn speichern_mit(name: &str, entwurf: &Entwurf, passwort: Option<&str>) -> Result<Wallet, String> {
     name_pruefen(name)?;
     if let Some(da) = liste().into_iter().find(|w| w.adresse == entwurf.adresse) {
         return Err(format!("Dieses Wallet gibt es hier schon: „{}“.", da.name));
@@ -248,12 +334,19 @@ pub fn speichern(name: &str, entwurf: &Entwurf) -> Result<Wallet, String> {
     let d = ordner();
     std::fs::create_dir_all(&d).map_err(|e| format!("{}: {e}", d.display()))?;
     let pfad = d.join(format!("{name}.key"));
-    if pfad.exists() {
+    if pfad.exists() || keystorepfad(name).exists() {
         return Err(format!("Ein Wallet „{name}“ gibt es schon."));
     }
-    let text = format!("{DATEIKOPF}\n{}\n", hex(&entwurf.seed));
-    // ⚑ `0600` ab dem Anlegen, wie im Knoten (Fund 607).
-    myl_types::geheimdatei::schreiben(&pfad, text.as_bytes()).map_err(|e| format!("{}: {e}", pfad.display()))?;
+    match passwort {
+        // ⚑ Nie ueber eine Klartextdatei: Was einmal auf der Platte lag, ist
+        //   mit dem Loeschen nicht sicher weg.
+        Some(p) => keystore_schreiben(name, &BlsSecretKey::aus_ausgangsmaterial(&entwurf.seed).map_err(|_| "Schlüssel nicht ableitbar".to_string())?, p)?,
+        None => {
+            let text = format!("{DATEIKOPF}\n{}\n", hex(&entwurf.seed));
+            // ⚑ `0600` ab dem Anlegen, wie im Knoten (Fund 607).
+            myl_types::geheimdatei::schreiben(&pfad, text.as_bytes()).map_err(|e| format!("{}: {e}", pfad.display()))?;
+        }
+    }
     let w = Wallet { name: name.to_string(), adresse: entwurf.adresse };
     if gewaehlt().is_none() {
         waehlen(name)?;
@@ -269,17 +362,24 @@ pub fn liste() -> Vec<Wallet> {
         .flatten()
         .filter_map(|e| {
             let p = e.path();
-            let name = p.file_name()?.to_str()?.strip_suffix(".key")?.to_string();
+            let datei = p.file_name()?.to_str()?;
+            let name = datei.strip_suffix(".key").or_else(|| datei.strip_suffix(KEYSTORE_ENDUNG))?.to_string();
             laden(&name).ok()
         })
         .collect();
     v.sort_by(|a, b| a.name.cmp(&b.name));
+    v.dedup_by(|a, b| a.name == b.name);
     v
 }
 
 /// Liest ein Wallet.
 pub fn laden(name: &str) -> Result<Wallet, String> {
     name_pruefen(name)?;
+    if let Some(k) = keystore_lesen(name)? {
+        let b: [u8; myl_types::bls::BLS_PK_LEN] =
+            ikm_aus_beliebigem_hex(&k.pubkey).and_then(|v| v.try_into().ok()).ok_or("Keystore: kein öffentlicher Schlüssel")?;
+        return Ok(Wallet { name: name.to_string(), adresse: Address::aus_schluessel(&myl_types::bls::BlsPublicKey(b)) });
+    }
     let pfad = ordner().join(format!("{name}.key"));
     let text = std::fs::read_to_string(&pfad).map_err(|e| format!("{}: {e}", pfad.display()))?;
     let wort = text
@@ -321,6 +421,11 @@ pub fn eingetragen_setzen(name: &str) -> Result<(), String> {
 /// verlaesst diese Kiste nur als Unterschrift (`crate::bezahlen`).
 pub(crate) fn geheimschluessel(name: &str) -> Result<BlsSecretKey, String> {
     name_pruefen(name)?;
+    if keystorepfad(name).exists() {
+        let offen = OFFEN.lock().map_err(|_| "Sperre vergiftet".to_string())?;
+        let s = offen.get(name).ok_or_else(|| format!("{GESPERRT}: {name}"))?;
+        return BlsSecretKey::aus_geheimen_bytes(**s).map_err(|_| "Schlüssel ungültig".to_string());
+    }
     let pfad = ordner().join(format!("{name}.key"));
     let text = std::fs::read_to_string(&pfad).map_err(|e| format!("{}: {e}", pfad.display()))?;
     let wort = text
@@ -329,13 +434,96 @@ pub(crate) fn geheimschluessel(name: &str) -> Result<BlsSecretKey, String> {
         .find(|l| !l.is_empty())
         .unwrap_or("");
     let ikm = ikm_aus_hex(wort).ok_or_else(|| format!("{}: kein Schlüssel", pfad.display()))?;
-    BlsSecretKey::key_gen(&ikm).map_err(|_| "Schlüssel nicht ableitbar".to_string())
+    BlsSecretKey::aus_ausgangsmaterial(&ikm).map_err(|_| "Schlüssel nicht ableitbar".to_string())
 }
 
-/// ⚑ Mit dem Seed ist das der Hauptschluessel nach EIP-2333 (IETF KeyGen
-/// ueber den Seed).
+/// Die Endung eines Keystores neben den `.key`-Dateien.
+const KEYSTORE_ENDUNG: &str = ".keystore.json";
+
+/// Was ein Aufruf meldet, solange das Wallet nicht entsperrt ist.
+pub const GESPERRT: &str = "Das Wallet ist verschlüsselt und gesperrt";
+
+/// ⚑ **Nur fuer die Lebensdauer dieses Prozesses**, und beim Beenden genullt.
+static OFFEN: std::sync::Mutex<std::collections::BTreeMap<String, zeroize::Zeroizing<[u8; 32]>>> =
+    std::sync::Mutex::new(std::collections::BTreeMap::new());
+
+fn keystorepfad(name: &str) -> PathBuf {
+    ordner().join(format!("{name}{KEYSTORE_ENDUNG}"))
+}
+
+fn keystore_lesen(name: &str) -> Result<Option<crate::keystore::Keystore>, String> {
+    let p = keystorepfad(name);
+    match std::fs::read(&p) {
+        Ok(b) => serde_json::from_slice(&b).map(Some).map_err(|e| format!("{}: {e}", p.display())),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(format!("{}: {e}", p.display())),
+    }
+}
+
+fn keystore_schreiben(name: &str, geheim: &BlsSecretKey, passwort: &str) -> Result<(), String> {
+    let oeffentlich = geheim.public_key().map_err(|_| "öffentlicher Teil nicht ableitbar".to_string())?;
+    let pfad_text = format!("m/12381/{}/0/0", adresstext::COIN_NUMMER);
+    let k = crate::keystore::verschluesseln(&geheim.geheime_bytes(), &oeffentlich.0, &pfad_text, "Myelith-Wallet", passwort)?;
+    // ⛔️ Erst lesen, dann gilt es: Ein Keystore, der sich nicht oeffnen laesst,
+    //    waere ein verlorener Schluessel.
+    if *crate::keystore::entschluesseln(&k, passwort)? != geheim.geheime_bytes() {
+        return Err("Der Keystore lässt sich nicht wieder öffnen.".into());
+    }
+    let p = keystorepfad(name);
+    let text = serde_json::to_vec_pretty(&k).map_err(|e| e.to_string())?;
+    myl_types::geheimdatei::schreiben(&p, &text).map_err(|e| format!("{}: {e}", p.display()))?;
+    Ok(())
+}
+
+/// Ob dieses Wallet als Keystore liegt.
+pub fn ist_verschluesselt(name: &str) -> bool {
+    keystorepfad(name).exists()
+}
+
+/// Ob ein verschluesseltes Wallet in diesem Prozess offen ist.
+pub fn ist_entsperrt(name: &str) -> bool {
+    OFFEN.lock().is_ok_and(|o| o.contains_key(name))
+}
+
+/// **Oeffnet einen Keystore fuer diesen Prozess.**
+pub fn entsperren(name: &str, passwort: &str) -> Result<(), String> {
+    let k = keystore_lesen(name)?.ok_or_else(|| format!("„{name}“ ist nicht verschlüsselt."))?;
+    let klar = crate::keystore::entschluesseln(&k, passwort)?;
+    OFFEN.lock().map_err(|_| "Sperre vergiftet".to_string())?.insert(name.to_string(), klar);
+    Ok(())
+}
+
+/// Der Schluessel eines entsperrten Wallets als Hex, fuer den Knoten ueber
+/// eine Roehre (`--kontowechsel -`). `None`, wenn es gesperrt ist.
+pub fn geheimhex_entsperrt(name: &str) -> Option<zeroize::Zeroizing<String>> {
+    let o = OFFEN.lock().ok()?;
+    o.get(name).map(|s| zeroize::Zeroizing::new(hex(s.as_ref())))
+}
+
+/// **Verschluesselt ein vorhandenes Wallet** und entfernt die Klartextdatei.
+///
+/// ⚠️ **Auf einer SSD oder in einer Sicherung kann die alte Datei
+/// wiederherstellbar bleiben.** Wer das ausschliessen will, legt das Wallet
+/// neu an und zieht um; die Meldung des Klienten sagt das.
+pub fn verschluesseln(name: &str, passwort: &str) -> Result<(), String> {
+    name_pruefen(name)?;
+    if ist_verschluesselt(name) {
+        return Err(format!("„{name}“ ist schon verschlüsselt."));
+    }
+    let geheim = geheimschluessel(name)?;
+    keystore_schreiben(name, &geheim, passwort)?;
+    let klar = ordner().join(format!("{name}.key"));
+    // Einmal ueberschreiben kostet nichts, auch wenn es nichts garantiert.
+    if let Ok(m) = std::fs::metadata(&klar) {
+        let _ = std::fs::write(&klar, vec![0u8; m.len() as usize]);
+    }
+    std::fs::remove_file(&klar).map_err(|e| format!("{}: {e}", klar.display()))
+}
+
+/// ⚑ Mit dem Seed ist das das erste Konto nach EIP-2334
+/// (`m/12381/<coin>/0/0`), nicht mehr der Hauptschluessel.
 fn adresse_aus_ikm(ikm: &[u8]) -> Result<Address, String> {
-    let geheim = BlsSecretKey::key_gen(ikm).map_err(|_| "Schlüssel nicht ableitbar".to_string())?;
+    let geheim = BlsSecretKey::aus_ausgangsmaterial(ikm).map_err(|_| "Schlüssel nicht ableitbar".to_string())?;
     let oeffentlich = geheim.public_key().map_err(|_| "öffentlicher Teil nicht ableitbar".to_string())?;
     Ok(Address::aus_schluessel(&oeffentlich))
 }
@@ -343,6 +531,13 @@ fn adresse_aus_ikm(ikm: &[u8]) -> Result<Address, String> {
 /// 32 Bytes (aeltere Wallets) oder 64 Bytes (Seed).
 fn ikm_aus_hex(wort: &str) -> Option<Vec<u8>> {
     if wort.len() != 64 && wort.len() != 128 {
+        return None;
+    }
+    (0..wort.len() / 2).map(|i| u8::from_str_radix(wort.get(i * 2..i * 2 + 2)?, 16).ok()).collect()
+}
+
+fn ikm_aus_beliebigem_hex(wort: &str) -> Option<Vec<u8>> {
+    if !wort.len().is_multiple_of(2) {
         return None;
     }
     (0..wort.len() / 2).map(|i| u8::from_str_radix(wort.get(i * 2..i * 2 + 2)?, 16).ok()).collect()
@@ -406,8 +601,8 @@ mod proben {
         });
     }
 
-    /// ⚑ Die Adresse folgt aus dem Seed nach BIP-39 ueber `key_gen`
-    /// (EIP-2333, Hauptschluessel), und die Datei traegt den Seed.
+    /// ⚑ Die Adresse folgt aus dem Seed nach BIP-39 ueber den Pfad nach
+    /// EIP-2334, und die Datei traegt den Seed.
     #[test]
     fn die_datei_traegt_den_seed_im_format_des_knotens() {
         mit_ordner(|| {
@@ -424,6 +619,49 @@ mod proben {
 
     /// ⛔️ **Ohne die richtigen Woerter keine Bestaetigung**, und gefragt
     /// werden zwei verschiedene Stellen.
+    /// ⚑ **Dasselbe Wallet, verschluesselt**: gleiche Adresse, gleiche
+    /// Unterschrift, kein Klartext mehr auf der Platte, gesperrt bis zum Passwort.
+    #[test]
+    fn ein_verschluesseltes_wallet_unterschreibt_erst_nach_dem_passwort() {
+        mit_ordner(|| {
+            let e = aus_woertern(WOERTER).unwrap();
+            let w = speichern("klar", &e).unwrap();
+            let vorher = geheimschluessel("klar").unwrap().geheime_bytes();
+            verschluesseln("klar", "ein gutes Passwort").unwrap();
+            assert!(!ordner().join("klar.key").exists(), "die Klartextdatei ist weg");
+            let text = std::fs::read_to_string(ordner().join("klar.keystore.json")).unwrap();
+            assert!(!text.contains(&hex(&vorher)), "der Schluessel steht nicht im Klartext");
+            assert!(!text.contains(&hex(&e.seed)));
+            assert_eq!(laden("klar").unwrap().adresse, w.adresse, "die Adresse kommt ohne Passwort");
+            assert_eq!(liste().len(), 1);
+            assert!(geheimschluessel("klar").err().unwrap().contains(GESPERRT));
+            assert_eq!(entsperren("klar", "falsch").unwrap_err(), crate::keystore::FALSCHES_PASSWORT);
+            assert!(!ist_entsperrt("klar"));
+            entsperren("klar", "ein gutes Passwort").unwrap();
+            assert_eq!(geheimschluessel("klar").unwrap().geheime_bytes(), vorher);
+            assert_eq!(geheimhex_entsperrt("klar").unwrap().as_str(), hex(&vorher));
+            assert!(verschluesseln("klar", "noch ein Passwort").unwrap_err().contains("schon"));
+        });
+    }
+
+    /// ⛔️ **Mit Passwort entsteht nie eine Klartextdatei.**
+    #[test]
+    fn mit_passwort_gibt_es_keine_klartextdatei() {
+        mit_ordner(|| {
+            let e = aus_woertern(WOERTER).unwrap();
+            let w = speichern_mit("sicher", &e, Some("ein gutes Passwort")).unwrap();
+            assert!(!ordner().join("sicher.key").exists());
+            assert!(ist_verschluesselt("sicher"));
+            assert_eq!(gewaehlt().unwrap().name, "sicher");
+            assert_eq!(laden("sicher").unwrap().adresse, w.adresse);
+            assert!(speichern("sicher", &aus_woertern(WOERTER).unwrap()).is_err());
+            let k = keystore_lesen("sicher").unwrap().unwrap();
+            assert_eq!(k.path, format!("m/12381/{}/0/0", adresstext::COIN_NUMMER));
+            assert!(speichern_mit("kurz", &entwerfen().unwrap(), Some("kurz")).unwrap_err().contains("mindestens"));
+            assert!(!ordner().join("kurz.key").exists() && !ist_verschluesselt("kurz"));
+        });
+    }
+
     #[test]
     fn bestaetigt_nur_mit_den_richtigen_woertern() {
         let e = aus_woertern(WOERTER).expect("Woerter");

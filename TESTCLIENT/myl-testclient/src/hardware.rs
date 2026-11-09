@@ -308,10 +308,13 @@ pub fn selected_backend() -> String {
     if integer_llm_kernels::ressourcen::metal::verfuegbar() && integer_llm_kernels::ressourcen::metal::schwelle() > 0 {
         teile.push("metal");
     }
-    // Der einzige vektorisierte Pfad, den es gibt. Kommt AVX2 dazu,
-    // gehört hier eine Fallunterscheidung nach `target_arch` hin, und
-    // dann trägt sie auch etwas aus.
-    teile.push(if integer_llm_kernels::dot::VEKTORISIERT { "cpu-simd/neon" } else { "reference" });
+    teile.push(if !integer_llm_kernels::dot::laeuft_vektorisiert() {
+        "reference"
+    } else if cfg!(target_arch = "x86_64") {
+        "cpu-simd/avx2"
+    } else {
+        "cpu-simd/neon"
+    });
     teile.join("+")
 }
 
@@ -710,8 +713,8 @@ mod tests {
     /// „Referenz gegen cpu-simd" sähe bestanden aus, obwohl beide Seiten
     /// denselben Code gerechnet haben.
     ///
-    /// Der Test greift heute auf x86_64 und auf jedem Ziel ohne NEON.
-    /// Sobald der AVX2-Pfad steht, greift er dort nicht mehr, und das ist
+    /// Der Test greift auf jedem Ziel ohne NEON und ohne AVX2-Pfad.
+    /// Auf x86_64 greift er seit dem AVX2-Pfad nicht mehr, und das ist
     /// richtig so.
     #[test]
     fn cpu_simd_ohne_vektorpfad_wird_abgelehnt() {

@@ -550,6 +550,14 @@ pub fn burn_to_credits(
     Ok(minted)
 }
 
+/// Vermerkt einen Burn für den Deckel je Adresse (Whitepaper 5.6).
+pub fn burn_vermerken(state: &mut LedgerState, addr: &Address, syn: u64) {
+    let epoche = state.epoch.0;
+    let account = state.account_mut(addr);
+    let bisher = account.verbrannt_in(epoche);
+    account.burn_stand = Some((epoche, bisher.saturating_add(syn)));
+}
+
 /// `credit_spend(session, vtfe) → Session-Budget abbuchen` (Anhang A.5).
 ///
 /// Bucht `vtfe` Einheiten vom Credit-Guthaben des Kontos ab.
@@ -991,7 +999,7 @@ pub fn miner_anmelden(
         },
     );
     // Wer wegen Inaktivitaet ruht, kommt mit der Neuanmeldung wieder in
-    // Frage (7.8, Vorbild Cosmos „unjail“), unter der Wechselgrenze.
+    // Frage (7.8), unter der Wechselgrenze.
     crate::stimmsatz::wieder_bereit(state, miner);
     Ok(())
 }
@@ -1591,8 +1599,7 @@ pub fn praegen(
 }
 
 /// ⚑ **Höchstens so viele vorgemerkte Auszahlungen bucht ein Block**
-/// (verteilte Ausschüttung, 2026-10-30; dieselbe Partitionsgrösse wie
-/// Solanas SIMD-0118). Ein Block berührt damit höchstens so viele Konten aus
+/// (verteilte Ausschüttung, 2026-10-30). Ein Block berührt damit höchstens so viele Konten aus
 /// Ausschüttungen, und sein Zeuge bleibt begrenzt; eine Million Miner sind
 /// nach rund 245 Blöcken bezahlt.
 pub const AUSZAHLUNGEN_JE_BLOCK: usize = 4096;
@@ -1744,8 +1751,7 @@ pub fn einsatz_verbrennen(state: &mut LedgerState, konto: &Address, betrag: u64)
 
 /// **Hält die Kündigungen von `konto` bis mindestens `bis` fest**: Wer
 /// geschlachtet wurde, haftet für eine spätere Korrelationsstrafe; sonst
-/// holte er seinen Einsatz ab, bevor die Mittäter gemeldet sind (Vorbild
-/// Ethereum, die Sperre geschlachteter Validatoren).
+/// holte er seinen Einsatz ab, bevor die Mittäter gemeldet sind.
 pub fn kuendigungen_festhalten(state: &mut LedgerState, konto: &Address, bis: u64) {
     let k = state.account_mut(konto);
     let frueher: u64 = k.gekuendigt.range(..bis).map(|(_, b)| *b).fold(0u64, |s, b| s.saturating_add(b));

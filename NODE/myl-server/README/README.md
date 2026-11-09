@@ -1,7 +1,7 @@
 # myl-server
 
-> **Version:** 0.2.0
-> **Datum:** 2026-09-16
+> **Version:** 0.2.1
+> **Datum:** 2026-11-08
 > **Status:** ⚠️ **Ungeprüft auf NixOS.** Modul, Beispielkonfiguration
 > **und der Bauweg** stehen: Die Flake gibt `packages.myl-node` und
 > `nixosModules.myl-server` heraus, das Modul ist damit kein Umschlag
@@ -40,6 +40,10 @@ Stelle in `modul.nix` und in der `Router-Anleitung.md`. Wer an diesen
 Dateien arbeitet, liest dort die Begründung.
 
 ## Changelog
+
+### v0.2.1 – 2026-11-08 (der Hinweis zum Erzeuger)
+
+- **Fund 672:** Die Beschreibung von `erzeuger` behauptete, in der üblichen Aufstellung erzeuge genau einer. Seit den rotierenden Erzeugern trägt der Schalter nur den Anlauf aus dem Stimmsatz der Genesis; danach erzeugt jeder volle Miner in den Slots, für die er gezogen ist. Nur Text.
 
 ### v0.2.0 – 2026-09-16 (der Bauweg steht, und der Dienst hält für den Dauerbetrieb)
 

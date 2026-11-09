@@ -92,15 +92,16 @@ def main():
     for batch in (1, 16, 64, 256, 1024):
         # Zusammenhaengender Batch: Die Segmente bilden einen Teilbaum der
         # Tiefe log2(batch). Uebertragen werden der Pfad von dessen Wurzel zur
-        # Korpuswurzel plus die Geschwisterknoten innerhalb des Teilbaums.
+        # Korpuswurzel. Wer alle Blaetter des Teilbaums hat, rechnet dessen
+        # Wurzel selbst aus und braucht darin keinen Geschwisterknoten (B.6.4).
         sub = int(math.log2(batch)) if batch > 1 else 0
-        nodes = (proof_depth - sub) + max(0, batch - 1)
+        nodes = proof_depth - sub
         total_proof = nodes * 32
         total_payload = batch * payload
         print(f"    {batch:>8}{total_proof:>15,}B{total_payload:>13,}B"
               f"{total_proof/total_payload:>10.2%}")
-    print("\n    ==> Bei zusammenhaengender Zuweisung faellt der Overhead ab etwa")
-    print("        256 Segmenten unter ein halbes Prozent.")
+    print("\n    ==> Bei zusammenhaengender Zuweisung liegt der Overhead schon ab")
+    print("        16 Segmenten unter einem Prozent.")
     print("        Da Trainings-Segmente ohnehin gebuendelt zugewiesen werden,")
     print("        ist das die natuerliche Betriebsform. Der eigentliche Aufwand")
     print("        liegt nicht im Beweis, sondern in der Kuratierung des Korpus.")

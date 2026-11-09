@@ -57,6 +57,7 @@ fn konfig(ordner: &std::path::Path, name: &str, bootstrap: Vec<String>) -> Knote
         testverkehr_sekunden: None,
         einsatz: None,
         zustandslos: false,
+        anker_von_aussen: None,
         baum_auf_platte: false,
         zeugen_bereithalten: false,
         selbstprobe_aus: false,

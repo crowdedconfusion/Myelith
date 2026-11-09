@@ -1,7 +1,7 @@
 # gateway (`myl-gateway`)
 
-> **Version:** 0.10.0
-> **Datum:** 2026-10-26
+> **Version:** 0.11.0
+> **Datum:** 2026-11-08
 > **Status:** Stufe 1 steht: die Tür auf `localhost` und der Beleg. Sie
 > nimmt entgegen und schreibt fest; **an einen Pod gibt sie noch nichts**.
 
@@ -83,6 +83,17 @@ Sitzungen nicht denselben Wert bekommt und eine Bindung nicht
 übertragbar ist.
 
 ## Changelog
+
+### v0.11.0 (2026-11-08): Mehrere Anfragen zugleich
+
+⚑ **Sicherheitsaudit A23.** `Tuer::v1_beantworten` und `bedienen_v1` nehmen
+Annahme und Zugang geteilt (`Mutex`) und sperren nur für die Buchung, nie über
+die Inferenz. `tuer::Besetzung` lässt je Sitzung eine Anfrage rechnen; die
+zweite bekommt 429 und keine Sitzungsnummer. `Tuer::voll` antwortet 503, ohne
+zu lesen. Die Statuszeile kennt 429 und 503. 📌 `bool::then_some` baute den
+Griff auch bei besetzter Sitzung, und sein `Drop` wartete auf die Sperre, die
+derselbe Ausdruck noch hielt; die neue Probe hing daran. Probe
+`eine_sitzung_rechnet_nur_einmal_zugleich` mit Gegenprobe.
 
 ### v0.10.0 (2026-10-26): Der Kontrakt deckt den Höchstbetrag, bevor gerechnet wird (Fund 651)
 

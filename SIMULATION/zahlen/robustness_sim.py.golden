@@ -1,0 +1,42 @@
+==========================================================================
+ROBUSTHEIT DER TAU-ANFORDERUNG  —  Myelith v0.2, Anhang B.5 / M0
+==========================================================================
+Referenz (Idealannahmen A1+A2): unabhaengig, normalverteilt, homogen
+
+  [Referenz]  erforderliche Trennung SEP >= 5x
+
+[1] Korrelierte Fehlerfortpflanzung (Annahme A1 verletzt)
+    rho = Kopplung aufeinanderfolgender Shard-Beitraege
+    rho     erforderliches SEP     Verschiebung
+    --------------------------------------------------
+     0.0                  5x     Referenz
+     0.3                  5x     unveraendert
+     0.6                  8x     1.6x strenger
+     0.9                 12x     2.4x strenger
+
+[2] Schwere Verteilungsraender (Annahme A2 verletzt)
+    Student-t(3) statt Normal — Modell fuer Aktivierungs-Ausreisser
+      normal: SEP >= 5x
+       heavy: SEP >= 20x
+
+[3] Heterogene Hardware (unterschiedliche Rauschpegel je Knoten)
+    sigma = Streuung der log-Rauschskala ueber Knoten
+    sigma=0.0: SEP >= 5x
+    sigma=0.3: SEP >= 8x
+    sigma=0.6: SEP >= 20x
+
+[4] Ausreisser-Knoten (Anteil mit 3-fachem Rauschen)
+    Anteil=  0%: SEP >= 5x
+    Anteil=  2%: SEP >= 12x
+    Anteil= 10%: SEP >= 12x
+
+[5] Kombinierter Ungunstfall (alle Abweichungen gleichzeitig)
+    rho=0.6, heavy tails, hetero=0.3, 2 % Ausreisser: SEP >= 35x
+
+==========================================================================
+LESART DES ERGEBNISSES
+  Entscheidend ist nicht der Absolutwert, sondern der FAKTOR zwischen
+  Referenz und Ungunstfall. Er sagt, wie viel Sicherheitsreserve die
+  in M0 gemessene Trennung ueber die 5x hinaus haben muss, damit das
+  Modell auch bei verletzten Annahmen traegt.
+==========================================================================

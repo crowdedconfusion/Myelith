@@ -54,6 +54,10 @@
 //! gibt, ist „aus" die ehrliche Einstellung. Vermerkt als offener Punkt
 //! offen (Punkt 4.4, Lasttest bei Zielnetzgröße).
 //!
+//! ⚑ **Je Topic bewertet wird nur, was nachweislich falsch war**
+//! (Sicherheitsaudit A47): eine verworfene Nachricht. Das trifft keine
+//! langsamen Knoten, und ehrliche reichen nur Geprüftes weiter.
+//!
 //! ## ⚑ Fund 54: Eine strengere Schwelle war schlechter, nicht besser
 //!
 //! Der erste Entwurf setzte [`IP_KOLOKATION_SCHWELLE`] auf 4, mit der
@@ -122,10 +126,31 @@ fn kolokation_ausnahmen() -> std::collections::HashSet<IpAddr> {
 }
 
 /// Die Bewertungsparameter des Protokolls.
+/// ⚑ **Je Topic zählt nur, was nachweislich falsch war** (Sicherheitsaudit
+/// A47). Ohne Einträge je Topic bewertet gossipsub verworfene Nachrichten gar
+/// nicht, und eine Gegenstelle konnte unbegrenzt Falsches schicken. Alle
+/// Bewertungen der Zustellung bleiben aus (siehe den Modulkopf); ehrliche
+/// Knoten reichen nur Geprüftes weiter, treffen kann das also nur einen
+/// Absender. Vier verworfene Nachrichten kurz hintereinander erreichen die
+/// Grauliste (quadratisch, `4² × 5 = 80`).
+fn nur_falsches_zaehlt() -> libp2p::gossipsub::TopicScoreParams {
+    libp2p::gossipsub::TopicScoreParams {
+        topic_weight: 1.0,
+        time_in_mesh_weight: 0.0,
+        first_message_deliveries_weight: 0.0,
+        mesh_message_deliveries_weight: 0.0,
+        mesh_failure_penalty_weight: 0.0,
+        invalid_message_deliveries_weight: -5.0,
+        invalid_message_deliveries_decay: 0.9,
+        ..Default::default()
+    }
+}
+
 pub fn standard_parameter() -> PeerScoreParams {
     PeerScoreParams {
         ip_colocation_factor_threshold: f64::from(IP_KOLOKATION_SCHWELLE),
         ip_colocation_factor_whitelist: kolokation_ausnahmen(),
+        topics: crate::gossip::GossipTopic::all().into_iter().map(|t| (t.topic().hash(), nur_falsches_zaehlt())).collect(),
         ..Default::default()
     }
 }
@@ -239,6 +264,25 @@ mod tests {
         standard_schwellen().validate().expect("Schwellen");
     }
 
+    /// ⚑ Jedes Topic bewertet Falsches, und keines die Zustellung, bis sie
+    /// gegen echten Verkehr eingestellt werden kann (siehe die Modul-Doku):
+    /// Eine Zustellungsbewertung bestrafte ehrliche, weit entfernte Knoten.
+    #[test]
+    fn falsches_zaehlt_und_die_zustellung_nicht() {
+        let p = standard_parameter();
+        assert_eq!(p.topics.len(), crate::gossip::GossipTopic::all().len());
+        for t in p.topics.values() {
+            assert!(t.invalid_message_deliveries_weight < 0.0);
+            assert_eq!(t.mesh_message_deliveries_weight, 0.0);
+            assert_eq!(t.first_message_deliveries_weight, 0.0);
+            assert_eq!(t.time_in_mesh_weight, 0.0);
+            assert_eq!(t.mesh_failure_penalty_weight, 0.0);
+        }
+        let s = standard_schwellen();
+        let n = 4.0_f64;
+        assert!(n * n * nur_falsches_zaehlt().invalid_message_deliveries_weight <= s.graylist_threshold);
+    }
+
     #[test]
     fn die_kolokationsstrafe_ist_scharf() {
         // Gewicht 0 hieße: Die Schwelle steht da und wirkt nicht.
@@ -247,16 +291,6 @@ mod tests {
         assert!(p.behaviour_penalty_weight < 0.0);
     }
 
-    #[test]
-    fn die_zustellungsbewertung_ist_bewusst_leer() {
-        // Hält die Doku-Aussage fest: Wer Topic-Parameter ergänzt, soll
-        // hier vorbeikommen und die Begründung im Modulkopf nachziehen.
-        assert!(
-            standard_parameter().topics.is_empty(),
-            "Topic-Zustellungsbewertung ist aus, bis sie gegen echten \
-             Verkehr eingestellt werden kann (siehe Modul-Doku)"
-        );
-    }
 
     #[test]
     fn die_schwellen_stehen_in_der_erwarteten_ordnung() {

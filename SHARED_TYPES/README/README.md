@@ -1,7 +1,7 @@
 # shared-types (`myl-types`)
 
-> **Version:** 0.67.0
-> **Datum:** 2026-11-03
+> **Version:** 0.68.1
+> **Datum:** 2026-11-09
 > **Status:** 🎉 **Phase 2 abgeschlossen** (Punkte 1.1–1.7, 2.1–2.3):
 > Hash, Merkle-Baum, VRF (bit-exakt gegen RFC-9381-Vektoren), BLS12-381
 > mit Aggregation **und Proof-of-Possession**, **Erasure-Codierung über
@@ -49,6 +49,25 @@ SHARED_TYPES/
 ```
 
 ## Changelog
+
+### v0.68.1 (2026-11-09): Die Bytes eines Schlüssels für den Keystore
+
+- `BlsSecretKey::geheime_bytes` und `aus_geheimen_bytes`, nur für einen Keystore
+  nach EIP-2335; der Rückweg weist ungültige Werte ab.
+
+### v0.68.0 (2026-11-08): Adressen als Text, und der Pfad zum Konto
+
+- ⚑ **`adresstext`** (neu): bech32m nach BIP-350 mit einem Präfix je Netz,
+  `myl1…` im Hauptnetz und `tmyl1…` in jedem Testnetz. Gespeichert und
+  signiert wird weiter die Bytefolge. Eine Adresse eines anderen Netzes ist
+  ein eigener Fehler und geht nie durch; 64 Hexzeichen gehen weiter.
+- ⚑ **`BlsSecretKey::aus_seed_und_pfad`** (EIP-2333 und EIP-2334):
+  `m/12381/778976/<konto>/0`. **`aus_ausgangsmaterial`** nimmt 64 Bytes als
+  Seed und 32 Bytes wie bisher. ⚠️ Adressen aus Wörtern sind damit neu: Die
+  Spielgeld-Wallets der Probekette bekommen andere Adressen.
+- Proben: die Vektoren aus BIP-350 und Testfall 0 aus EIP-2333, jeder einzelne
+  Tippfehler je Stelle und Zeichen, ein anderes Netz, Füllbits.
+- Kommentare nennen keine fremden Projekte mehr.
 
 ### v0.67.0 (2026-11-05): Die Prompt-Länge in der Segmentkennung
 
@@ -131,8 +150,7 @@ ohne `unsafe` und ohne neue Abhängigkeit.
 
 ### v0.62.0 (2026-10-30): Der Zustandsbaum auf der Platte
 
-Punkt 1 der Festlegung vom 2026-10-29 (nach dem Vorbild von NOMT, geprüft
-gegen QMDB; eigene Umsetzung).
+Punkt 1 der Festlegung vom 2026-10-29.
 
 - ⚑ **`Zustandsbaum::mit_ablage`**: Teilbäume unterhalb einer Tiefe, die mit
   der Zahl der Einträge wächst (rund 128 Einträge je Seite), liegen als
@@ -209,8 +227,7 @@ gegen QMDB; eigene Umsetzung).
 ### v0.59.0 (2026-10-29): Der Zustandsbaum
 
 - ⚑ **`zustandsbaum::Zustandsbaum`** (Skalierung, Festlegung des
-  Projektinhabers vom 2026-10-29; Vorbild Jellyfish Merkle Tree und
-  EIP-7864, eigene Umsetzung): ein binärer, dünn besetzter Merkle-Baum über
+  Projektinhabers vom 2026-10-29): ein binärer, dünn besetzter Merkle-Baum über
   256-Bit-Schlüssel. Ein Teilbaum mit genau einem Eintrag ist dieser
   Eintrag; die Wurzel hängt nur an der Menge, nicht an der Folge der
   Änderungen. Zweige merken ihren Hash und rechnen erst bei

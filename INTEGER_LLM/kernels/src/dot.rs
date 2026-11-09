@@ -35,16 +35,15 @@
 //! Der Paritätstest existiert trotzdem — eine Herleitung ersetzt keine
 //! Messung, sie macht sie nur erwartbar.
 //!
-//! ## Warum kein AVX2 in diesem Patch
+//! ## AVX2 (2026-11-08, Fund A19)
 //!
-//! Bewusste Auslassung. Diese Maschine ist aarch64; eine
-//! AVX2-Implementierung ließe sich hier übersetzen, aber **nicht
-//! ausführen und nicht auf Parität prüfen**. Unverifizierte Numerik in
-//! einen Konsenspfad zu geben, ist die eine Sache, die dieses Projekt
-//! sich nicht leisten kann — ein Miner mit abweichendem Kernel wird
-//! beim Redundanzvergleich geslasht, ohne etwas falsch gemacht zu haben.
-//! Der AVX2-Pfad ist als eigener Punkt vermerkt und gehört auf
-//! echte x86_64-Hardware (Kritikpunkt K1, Fund A19).
+//! Lange bewusst ausgelassen, weil sich auf aarch64 nichts ausführen ließ.
+//! ⚑ **Unter Rosetta in einem x86_64-Container läuft AVX2 tatsächlich**
+//! (`is_x86_feature_detected!("avx2")` ist dort wahr; Paritätsproben und
+//! Konformität liefen so). ⚠️ Das ist eine Vorprobe: Rosetta übersetzt nach
+//! ARM. Der Beleg auf echtem x86_64 bleibt der Lauf auf der Mietmaschine,
+//! denn ein Miner mit abweichendem Kernel wird beim Redundanzvergleich
+//! geslasht, ohne etwas falsch gemacht zu haben.
 //!
 //! ## Fund 34 (2026-08-22): Diese Auslassung war zweimal beschrieben
 //!
@@ -94,6 +93,11 @@
 #[cfg(all(feature = "cpu-simd", target_arch = "aarch64"))]
 mod gewaehlt {
     pub const VEKTORISIERT: bool = true;
+
+    #[inline]
+    pub fn laeuft() -> bool {
+        true
+    }
 
     // NEON ist auf aarch64 Teil der Basis-Architektur, keine
     // Laufzeit-Erkennung nötig.
@@ -153,9 +157,60 @@ mod gewaehlt {
     }
 }
 
-#[cfg(not(all(feature = "cpu-simd", target_arch = "aarch64")))]
+/// ⚑ **x86_64 mit `cpu-simd`**: AVX2 zur Laufzeit erkannt, sonst skalar
+/// ([`laeuft_vektorisiert`] sagt, was auf dieser Maschine gilt).
+#[cfg(all(feature = "cpu-simd", target_arch = "x86_64"))]
+mod gewaehlt {
+    pub const VEKTORISIERT: bool = true;
+
+    #[inline]
+    pub fn laeuft() -> bool {
+        std::is_x86_feature_detected!("avx2")
+    }
+
+    #[inline]
+    pub fn dot(w: &[i8], x: &[i16]) -> i64 {
+        if laeuft() {
+            // SAFETY: AVX2 ist eben erkannt worden.
+            unsafe { super::avx2::dot_avx2(w, x) }
+        } else {
+            super::dot_scalar(w, x)
+        }
+    }
+
+    /// Einen ternaeren Vektorkern gibt es hier nicht.
+    #[inline]
+    pub fn ternaer(muster: &[u8], betraege: &[i16], x: &[i16], _hoch: &[i8], _tief: &[u8], _summen: &[i64]) -> i64 {
+        crate::ternaer::zeile_skalar(muster, betraege, x)
+    }
+    #[inline]
+    pub fn ternaer_viele(_muster: &[u8], _betraege: &[i16], _e: &[crate::ternaer::Eingabe<'_>], _aus: &mut [i64]) -> bool {
+        false
+    }
+
+    /// ⚑ Die SSE2-Fassung, die ohne Zerlegung der Eingabe auskommt
+    /// ([`crate::vierbit::sse2`]); dieselbe Zahl.
+    #[inline]
+    pub fn vierbit(codes: &[u8], gitter: &[u8], x: &[i16], _hoch: &[i8], _tief: &[u8], _summen: &[i64]) -> i64 {
+        // SAFETY: Die Laengen hat `super::vierbit_zeile` geprueft: je
+        // Gruppe 64 Codebytes, zwei Gitterbytes und 128 Werte von `x`.
+        unsafe { crate::vierbit::sse2::zeile(codes, gitter, x) }
+    }
+
+    #[inline]
+    pub fn vierbit_viele(_codes: &[u8], _gitter: &[u8], _e: &[crate::ternaer::Eingabe<'_>], _aus: &mut [i64]) -> bool {
+        false
+    }
+}
+
+#[cfg(not(all(feature = "cpu-simd", any(target_arch = "aarch64", target_arch = "x86_64"))))]
 mod gewaehlt {
     pub const VEKTORISIERT: bool = false;
+
+    #[inline]
+    pub fn laeuft() -> bool {
+        false
+    }
 
     #[inline]
     pub fn dot(w: &[i8], x: &[i16]) -> i64 {
@@ -172,17 +227,8 @@ mod gewaehlt {
         false
     }
 
-    /// ⚑ **Auf x86_64 mit `cpu-simd` die SSE2-Fassung**, die ohne Zerlegung
-    /// der Eingabe auskommt ([`crate::vierbit::sse2`]); dieselbe Zahl. Mit
-    /// [`super::skalar_erzwingen`] rechnet auch hier die skalare.
     #[inline]
     pub fn vierbit(codes: &[u8], gitter: &[u8], x: &[i16], _hoch: &[i8], _tief: &[u8], _summen: &[i64]) -> i64 {
-        #[cfg(all(feature = "cpu-simd", target_arch = "x86_64"))]
-        if !super::SKALAR_ERZWUNGEN.load(super::Ordering::Relaxed) {
-            // SAFETY: Die Laengen hat `super::vierbit_zeile` geprueft: je
-            // Gruppe 64 Codebytes, zwei Gitterbytes und 128 Werte von `x`.
-            return unsafe { crate::vierbit::sse2::zeile(codes, gitter, x) };
-        }
         crate::vierbit::zeile_skalar(codes, gitter, x)
     }
 
@@ -200,6 +246,14 @@ mod gewaehlt {
 /// statt die Bedingung zu wiederholen. Wer einen AVX2-Pfad hinzufügt,
 /// ändert den `cfg` an `mod gewaehlt` und ist damit überall fertig.
 pub use gewaehlt::VEKTORISIERT;
+
+/// Rechnet die vektorisierte Fassung auf **dieser Maschine**? Auf x86_64
+/// hängt das an AVX2; [`VEKTORISIERT`] sagt nur, dass sie übersetzt ist.
+/// ⚑ Wer meldet, was gerechnet wird, fragt hier: Ein x86_64 ohne AVX2 rechnet
+/// skalar und darf nicht unter dem Namen `cpu-simd` laufen (Fund 34).
+pub fn laeuft_vektorisiert() -> bool {
+    gewaehlt::laeuft()
+}
 
 /// Skalarprodukt zweier gleich langer Folgen: `Σ w[i] · x[i]`.
 ///
@@ -409,6 +463,58 @@ pub fn dot_scalar(w: &[i8], x: &[i16]) -> i64 {
         acc += (*a as i64) * (*b as i64);
     }
     acc
+}
+
+#[cfg(all(feature = "cpu-simd", target_arch = "x86_64"))]
+mod avx2 {
+    use std::arch::x86_64::*;
+
+    /// Sechzehn Produkte je Durchlauf: `w` auf i16 verbreitert,
+    /// `vpmaddwd` bildet je zwei Produkte als i32.
+    ///
+    /// **Exaktheit:** Ein Paar ist höchstens `2 · 128 · 32768 ≈ 8,4 Mio`;
+    /// `vpmaddwd` läuft nur bei `-32768 · -32768` zweimal über, und `w`
+    /// kommt verbreitert aus i8. Die i32-Lanes werden alle
+    /// `BLOECKE_JE_LEERUNG` Durchläufe nach i64 geleert: 128 · 8,4 Mio
+    /// ≈ 1,07e9, unter `i32::MAX`.
+    ///
+    /// **Sicherheit:** Gelesen wird nur innerhalb von `w[..n]` und `x[..n]`;
+    /// ein Sechzehnerblock beginnt nur, wenn er ganz hineinpasst.
+    ///
+    /// # Safety
+    /// Der Prozessor muss AVX2 können.
+    #[target_feature(enable = "avx2")]
+    pub unsafe fn dot_avx2(w: &[i8], x: &[i16]) -> i64 {
+        const BLOECKE_JE_LEERUNG: usize = 128;
+        let n = w.len().min(x.len());
+        let mut gesamt: i64 = 0;
+        let mut i = 0usize;
+        while i + 16 <= n {
+            let mut summe = _mm256_setzero_si256();
+            let mut bloecke = 0usize;
+            while i + 16 <= n && bloecke < BLOECKE_JE_LEERUNG {
+                let breit = _mm256_cvtepi8_epi16(_mm_loadu_si128(w.as_ptr().add(i).cast()));
+                let werte = _mm256_loadu_si256(x.as_ptr().add(i).cast());
+                summe = _mm256_add_epi32(summe, _mm256_madd_epi16(breit, werte));
+                i += 16;
+                bloecke += 1;
+            }
+            gesamt += summe_i32(summe);
+        }
+        while i < n {
+            gesamt += (*w.get_unchecked(i) as i64) * (*x.get_unchecked(i) as i64);
+            i += 1;
+        }
+        gesamt
+    }
+
+    /// Die acht i32-Lanes verlustfrei nach i64 summiert.
+    #[target_feature(enable = "avx2")]
+    unsafe fn summe_i32(v: __m256i) -> i64 {
+        let mut lanes = [0i32; 8];
+        _mm256_storeu_si256(lanes.as_mut_ptr().cast(), v);
+        lanes.iter().map(|&l| l as i64).sum()
+    }
 }
 
 #[cfg(all(feature = "cpu-simd", target_arch = "aarch64"))]
@@ -663,6 +769,28 @@ mod tests {
                     seed
                 );
             }
+        }
+    }
+
+    /// ⚑ **Der ungünstigste Fall über die Leerung hinaus**: Alle Paare am
+    /// Rand mit gleichem Vorzeichen, länger als `128 · 16` Elemente; ein
+    /// zu spätes Leeren der i32-Lanes liefe hier über.
+    #[test]
+    fn der_rand_ueberlebt_jede_leerung() {
+        for n in [2047usize, 2048, 2049, 4096, 8192, 65536] {
+            for (a, b) in [(i8::MIN, i16::MIN), (i8::MIN, i16::MAX), (i8::MAX, i16::MIN), (i8::MAX, i16::MAX)] {
+                let (w, x) = (vec![a; n], vec![b; n]);
+                assert_eq!(dot_i8_i16(&w, &x), dot_scalar(&w, &x), "n={n} a={a} b={b}");
+            }
+        }
+    }
+
+    /// Wer meldet, fragt die Maschine; bei NEON und AVX2 stimmt beides.
+    #[test]
+    fn die_maschine_und_die_uebersetzung_passen() {
+        assert!(!laeuft_vektorisiert() || VEKTORISIERT, "es läuft etwas, das nicht übersetzt ist");
+        if cfg!(all(feature = "cpu-simd", target_arch = "aarch64")) {
+            assert!(laeuft_vektorisiert());
         }
     }
 

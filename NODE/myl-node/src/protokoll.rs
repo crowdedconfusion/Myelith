@@ -68,7 +68,8 @@ use std::fs::{File, OpenOptions};
 pub const DATEI_HOECHSTENS: u64 = 16 * 1024 * 1024;
 
 /// Groesster Platz aller Protokolldateien eines Knotens, als Vorgabe.
-/// Bei 2 s Blockzeit sind das rund vier Tage.
+/// Gemessen mit 28 Minern und allen Rollen: rund 1,8 KB je Block, also bei
+/// 2 s Blockzeit rund 40 Stunden, bei 1 s rund 20.
 pub const GESAMT_HOECHSTENS: u64 = 128 * 1024 * 1024;
 use std::io::Write;
 use std::path::{Path, PathBuf};

@@ -1,7 +1,7 @@
 # governance (`myl-governance`)
 
-> **Version:** 0.15.2
-> **Datum:** 2026-10-22
+> **Version:** 0.15.3
+> **Datum:** 2026-11-08
 > **Status:** **Phasen 1 und 2 abgeschlossen** (1.1–1.4, 2.1–2.3),
 > Phase 3 zur Hälfte (3.1 und 3.4 ✅). Parameter-Registry mit
 > Änderbarkeits-Rang, technische Durchsetzung des Verfassungsrangs,
@@ -134,6 +134,11 @@ richtige Fassung vorhanden und lief nicht.
 Er hat sich beim ersten Lauf bezahlt gemacht, siehe Fund 50.
 
 ## Changelog
+
+### v0.15.3 (2026-11-08): Start-Subvention
+
+- Die Vorgabe der Subventionsrate ist die Rate zum Start des Anlaufplans der
+  Kette (`s = 1`); eine Probe im Knoten hält beide zusammen.
 
 ### v0.15.2 (2026-10-22): Eine Werkzeugkette für alle Kisten
 

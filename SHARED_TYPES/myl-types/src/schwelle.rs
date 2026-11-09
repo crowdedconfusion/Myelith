@@ -14,9 +14,8 @@
 //! eindeutig: **Jede** Menge von `schwelle` gueltigen Anteilen ergibt
 //! dieselbe Signatur, wer sie zusammenstellt, waehlt also nichts. Geprueft
 //! wird sie wie jede BLS-Signatur ([`crate::bls::BlsPublicKey::verify`]).
-//! Stand der Praxis: drand seit 2019, Aptos seit 2024.
 //!
-//! **Der Ablauf, wie drand:** Jeder Austeiler waehlt ein geheimes Polynom
+//! **Der Ablauf:** Jeder Austeiler waehlt ein geheimes Polynom
 //! vom Grad `schwelle − 1`, veroeffentlicht Feldman-Bindungen an dessen
 //! Koeffizienten ([`Bindung`]) und schickt jedem Sitz seinen Wert
 //! verschluesselt ([`crate::anteilchiffre`]). Wer einen falschen Wert

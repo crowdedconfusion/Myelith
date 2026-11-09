@@ -1,6 +1,6 @@
 [package]
 name = "myl-module"
-version = "0.5.2"
+version = "0.6.0"
 edition = "2021"
 rust-version = "1.99"
 description = "Module der Konsole: Protokoll, Beschreibung, Signatur und Wirt"
@@ -20,16 +20,33 @@ publish = false
 [[bin]]
 name = "myl-module"
 path = "src/bin/myl-module.rs"
+required-features = ["wirt"]
+
+# ⚑ **`wirt` ist die Seite der Konsole, `wasm` ihre Abschottung.** Ein Gast
+# unter WebAssembly baut ohne beide (`default-features = false`): Er braucht
+# nur die Nachrichten, und `getrandom` baut dort gar nicht. `wasm` waehlen nur
+# Konsole und Fenster; ein natives Modul bekommt keine Laufzeit mitgeliefert.
+[features]
+default = ["wirt"]
+wirt = ["dep:sha2", "dep:hex", "dep:ed25519-dalek", "dep:getrandom"]
+wasm = ["wirt", "dep:wasmi"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-sha2 = "0.10"
-hex = "0.4"
-ed25519-dalek = "2"
-getrandom = "0.2"
+sha2 = { version = "0.10", optional = true }
+hex = { version = "0.4", optional = true }
+ed25519-dalek = { version = "2", optional = true }
+getrandom = { version = "0.2", optional = true }
+# ⚑ **Genau diese Fassung** (2026-11-09): die 2.x hat einen neu geschriebenen
+# Kern, und hier laeuft fremder Code. Eine neue Fassung ist eine Entscheidung,
+# kein `cargo update`.
+wasmi = { version = "=1.1.0", optional = true, default-features = false, features = ["std"] }
 
 [dev-dependencies]
+wat = "1"
+# ⚑ Damit ein schlichtes `cargo test` auch die Abschottung prueft.
+myl-module = { path = ".", features = ["wasm"] }
 
 # ⛔️ **Geprueft wird mit `cargo test`, nie mit `--release`.** Dieses
 # Profil optimiert trotzdem, haelt aber `debug-assertions` und

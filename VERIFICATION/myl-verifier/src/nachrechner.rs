@@ -409,6 +409,11 @@ pub fn schied_nachrechnen(
         if !bezeugt {
             return Ok(false);
         }
+        // ⛔️ Bezeugt und in falscher Länge: Der Pod hat sich auf etwas
+        //   festgelegt, das kein Ausgang sein kann (A50).
+        if ausgang.len() != modell.hidden_size {
+            return Ok(true);
+        }
         return Ok(modell.greedy_next(&modell.head_logits(ausgang)) != tokens[position + 1] as usize);
     }
     let layer = eintrag - 1;
@@ -430,6 +435,15 @@ pub fn schied_nachrechnen(
         });
         if !traegt {
             return Ok(false);
+        }
+        // ⛔️ **Der Beleg kommt vom Angeklagten** (A50): Die Hashes binden ihn
+        //   an die Festlegung des Pods, aber ein Pod, der betrügen will, legt
+        //   sich auf einen Vektor beliebiger Länge fest. Bis hierher lief der
+        //   dann in das Modell, die Aufgabe des Prüfers starb an der Panik,
+        //   und niemand stimmte; der Betrüger entging dem Urteil. Bezeugt und
+        //   in falscher Länge ist er überführt.
+        if beleg.iter().any(|v| v.len() != modell.hidden_size) {
+            return Ok(true);
         }
         beleg.to_vec()
     };

@@ -1,0 +1,82 @@
+==============================================================================
+RAUSCHMODELL AUS SPEZIFIKATIONSDATEN  —  Myelith v0.2, Kap. 6.5 / B.5 / M0
+==============================================================================
+Modellrechnung nach Standard-Fehleranalyse der Gleitkomma-Summation,
+NICHT gemessen. Grundlage: Akkumulationsformat, Tile-Groesse, Split-K.
+
+[1] Rauschpegel s_hw bei PROTOKOLLKONFORMER fp32-Akkumulation (Kap. 6.5)
+    Hardware                                 rel. Abweichung/Shard
+    --------------------------------------------------------------
+    NVIDIA Datacenter (Hopper-Klasse)                     3.02e-06
+    NVIDIA Consumer (Ada-Klasse)                          2.83e-06
+    AMD CDNA (MI-Klasse)                                  3.02e-06
+    AMD RDNA (Consumer)                                   2.83e-06
+    Apple Silicon (M-Klasse)                              2.64e-06
+    CPU AVX-512 (Referenzpfad)                            2.64e-06
+
+    Spannweite ueber alle Anbieter: 1.14x
+    ==> Heterogenitaet sigma (log-Streuung): 0.07
+    ==> Bei fp32-Akkumulation sind die Anbieter numerisch NAHEZU GLEICH.
+        Die Unterschiede stammen nur aus Tile-/Split-K-Geometrie.
+
+[2] Rauschpegel OHNE Protokollvorschrift (jeder Anbieter nutzt seinen
+    schnellsten spezifikationskonformen Pfad)
+    Hardware                                Akkum.   rel. Abweichung
+    ----------------------------------------------------------------
+    NVIDIA Datacenter (Hopper-Klasse)         fp32          3.02e-06
+    NVIDIA Consumer (Ada-Klasse)              tf32          2.32e-02
+    AMD CDNA (MI-Klasse)                      fp32          3.02e-06
+    AMD RDNA (Consumer)                       fp16          2.32e-02
+    Apple Silicon (M-Klasse)                  fp16          2.16e-02
+    CPU AVX-512 (Referenzpfad)                fp32          2.64e-06
+
+    Spannweite: 8777x   (gegenueber 1.14x mit fp32-Pflicht)
+    ==> Ohne die Vorschrift aus Kap. 6.5 driften die Rauschpegel um
+        mehr als drei Groessenordnungen auseinander. Ein globales TAU
+        waere dann nicht mehr definierbar — der langsamste ehrliche
+        Knoten wuerde staendig ueber der Schwelle des schnellsten liegen.
+
+[3] Folge fuer die Trennungsanforderung
+    Heterogenitaet geht nach robustness_sim.py als sigma in die
+    SEP-Anforderung ein (sigma=0.0 -> 5x, 0.3 -> 8x, 0.6 -> 20x).
+      mit fp32-Pflicht : sigma=0.07  ->  SEP 5x
+      ohne Vorschrift  : sigma=4.54  ->  SEP >35x
+
+[4] Trennbarkeit realer Angriffe (Verhaeltnis zum konformen Rauschen)
+    Referenz-Rauschen (fp32-konform, Mittel): 2.83e-06
+    Angriff                              rel. Abw.   Verhaeltnis   Bewertung
+    ----------------------------------------------------------------------------
+    Layer uebersprungen                      3e-01       106108x   sicher trennbar (auch im Ungunstfall)
+    Falsche Gewichte / Modell                2e-01        70739x   sicher trennbar (auch im Ungunstfall)
+    fp8 statt bf16 (heimlich)                6e-02        21222x   sicher trennbar (auch im Ungunstfall)
+    int8-Quantisierung                       3e-02        10611x   sicher trennbar (auch im Ungunstfall)
+    Aktivierungs-Pruning 10 %                5e-03         1768x   sicher trennbar (auch im Ungunstfall)
+[5] Schadensraum des Lenkungsangriffs (Kap. 6.11)
+    Dieser Angreifer waehlt seine Verzerrung definitionsgemaess knapp
+    UNTER TAU — er hat also keine feste Groesse, sondern skaliert mit
+    dem Rauschen. Entscheidend ist daher der ABSOLUTWERT von TAU:
+      fp32-Akkumulation (Protokollpflicht)     TAU ~ 4.0e-05 relativ
+      bf16-Akkumulation (ohne Vorschrift)      TAU ~ 2.6e+00 relativ
+    ==> Mit fp32-Pflicht liegt die maximal unentdeckte Verzerrung im
+        Bereich 1e-5 relativ. Ob eine Stoerung dieser Groessenordnung
+        die Token-Auswahl ueberhaupt kippen kann, ist eine offene
+        Messfrage (M0) — die Quantisierung der Logits (Kap. 6.8) setzt
+        hier eine zusaetzliche Schranke, da Aenderungen unterhalb der
+        Rasterweite die Auswahl per Konstruktion nicht veraendern.
+
+==============================================================================
+SCHLUSSFOLGERUNGEN
+  1. Die fp32-Akkumulationspflicht (Kap. 6.5) ist nicht kosmetisch:
+     Sie reduziert die Hardware-Heterogenitaet von >3 Groessenordnungen
+     auf einen Faktor < 2 und macht ein globales TAU ueberhaupt erst
+     definierbar (Kap. 6.7).
+  2. Unter dieser Vorschrift liegen alle arbeitssparenden Angriffe
+     mehrere Groessenordnungen ueber dem Rauschen — die Anforderung
+     aus B.5 ist mit erheblicher Reserve erfuellt.
+  3. Feine Eingriffe ohne Ersparnismotiv bleiben unterhalb der
+     Trennschwelle. Fuer sie greifen Kontrollsegmente (Kap. 6.10)
+     und die Vorzeichenstatistik (Kap. 6.9), nicht der Abstandsvergleich.
+  4. ZU MESSEN IN M0: die tatsaechliche Verteilungsform in den extremen
+     Quantilen (dominanter Faktor nach robustness_sim.py) sowie die
+     Frage, ob reale Kernels die angenommene Baum-Reduktion einhalten.
+==============================================================================

@@ -1,7 +1,7 @@
 # testclient (`myl-testclient`)
 
-> **Version:** 0.68.7
-> **Datum:** 2026-11-04
+> **Version:** 0.68.14
+> **Datum:** 2026-11-09
 > **Status:** Phase 1 und **Phase 3 vollständig**, dazu Punkt 2.1
 > (`vergleich`), **2.2** (Backend-Vergleich innerhalb einer Maschine, seit
 > dem 2026-08-30) und 2.4 (`--repeat`); **Phase 4 vollständig** (4.3 die
@@ -543,6 +543,51 @@ COMPUTE_PIPELINE Phase 1: erstmals über einen aufrufbaren Befehl statt
 über einen Integrationstest.
 
 ## Changelog
+
+### v0.68.14 (2026-11-09): Warum eine Paarsitzung leer blieb
+
+- `podlauf.py` meldet bei einer Paarsitzung ohne Antwort Rückgabewert und
+  Fehlerausgabe des Klienten; bisher ging beides verloren.
+
+### v0.68.13 (2026-11-08): Der gemeldete Rechenweg
+
+- `selected_backend` nennt `cpu-simd/avx2` oder `cpu-simd/neon` nach dem, was
+  auf dieser Maschine rechnet, und `reference` auf einem x86_64 ohne AVX2.
+
+### v0.68.12 (2026-11-08): Die Netze des Klienten
+
+- Probe `netze`: Name und Artefakt je Netz stimmen zwischen Klient und Knoten.
+
+### v0.68.11 (2026-11-08): `podlauf.py --ablage-stuecke`
+
+- Jede Spurablage geht in Stücken von 2 KiB über das Netz; der Bericht zählt,
+  wie viele Mitglieder sie zusammengesetzt haben, und ohne eine ist es ein Befund.
+- Das Wallet nennt nun Text und Rohform; der Lauf nimmt die Rohform.
+
+### v0.68.10 (2026-11-08): Die Startzeit im Stimmsatz
+
+`podlauf.py` schreibt die Zeile `start` in die Stimmsatzdatei; ohne sie kommt
+ein Knoten ohne eigenen Stand seit NODE 0.117.0 nur mit einem Anker hinein. Das
+Feld `anker` der Zeile `wechselbeleg` wird unverändert an `--anker` gereicht
+und trägt jetzt auch den Slot. Neu `--einsteiger-mit-anker`: Der zustandslose
+Einsteiger bekommt `--anker` aus der Zeile `wechselbeleg` des Erzeugers; ein
+Befund, wenn er Belege von vor dem Anker anfragt.
+
+### v0.68.9 (2026-11-08): Der Weg zählt, nicht nur das Ziel
+
+- ⚑ **`podlauf.py`, Verstummen:** Der zustandslose Stille muss nach dem
+  Neustart einen Abzug übernehmen (Zeile `abzug_uebernommen`), sonst ist es
+  ein Befund. 📌 Im ersten `kurz-anker` war er an der Spitze, aber ab
+  Genesis; ohne Laststufe gelingt das auch ohne Anker.
+
+### v0.68.8 (2026-11-07): Der Anker von außen im Verstummen
+
+- ⚑ **`podlauf.py`, Verstummen:** Nach der Rückkehr der Finalität nimmt der
+  Prüfstand den Anker aus der Zeile `wechselbeleg` eines vollen Knotens
+  (eine Epoche nach der Ruhe) und startet den zustandslosen Stillen mit
+  `--anker`. Er muss danach in 300 s an der Spitze sein, sonst ein Befund;
+  die Dauer steht im Bericht. Vorher war sein Ausbleiben ein erwarteter
+  Befund (NODE 0.116.0).
 
 ### v0.68.7 (2026-11-07): Das Verstummen zuletzt
 

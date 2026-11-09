@@ -174,11 +174,7 @@
   --akzent: #000000;
   --gut: #2a2d30;
   --schlecht: #000000;
-  /* ⚠️ **`--warn` steht hier absichtlich nicht.** Es ist in `:root`
-     definiert und wird von **keiner** Regel gelesen; es hier ein zweites
-     Mal hinzuschreiben hiesse, etwas Ungelesenes an zwei Orten zu
-     pflegen. Sein mittleres Grau traegt ohnehin auf beiden Gruenden.
-     Wer ihm einen Leser gibt, gibt ihm hier auch einen Wert. */
+  --warn: #606366;
 
   --vorhang: rgb(var(--unter) / .38);
   --warnungsgrund: rgb(255 255 255 / .94);

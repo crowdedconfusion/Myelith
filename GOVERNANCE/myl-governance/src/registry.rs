@@ -592,8 +592,9 @@ impl ParameterRegistry {
                 nenner: myl_tokenomics::STICHPROBE_NENNER,
             },
         );
-        // Kap. 5.7 / Anhang B.4: Start-Subvention s = 0,5.
-        werte.insert(Subventionsrate, Wert::Bruch { zaehler: 1, nenner: 2 });
+        // Die Rate zum Start des Anlaufplans (`myl_tokenomics::ANLAUFPLAN`);
+        // ein Test im Knoten hält beide zusammen.
+        werte.insert(Subventionsrate, Wert::Bruch { zaehler: 1, nenner: 1 });
         // Leer bis zum Genesis-Manifest (GOVERNANCE 3.4).
         werte.insert(KernelWhitelist, Wert::Hashmenge(BTreeSet::new()));
         // Kap. 5.4: Auslastungsziel 0,7.

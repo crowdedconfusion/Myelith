@@ -1,7 +1,7 @@
 # networking (`myl-net`, `myl-siegel`)
 
-> **Version:** 0.24.0
-> **Datum:** 2026-10-28
+> **Version:** 0.25.1
+> **Datum:** 2026-11-09
 > **Status:** **Phase 1 und 2 abgeschlossen** (1.1–1.6, 2.1–2.3),
 > **Phase 3 umgesetzt** (3.1–3.4, Abschluss unter Reviewvorbehalt), dazu Punkt 4.2 (Fuzzing der Wire-Protocol-Parser), Punkt 4.3
 > (Verbindungsgrenzen und Peer-Diversität) und seit dem 26. August
@@ -109,6 +109,32 @@ NETWORKING/
 ```
 
 ## Changelog
+
+### v0.25.1 (2026-11-09): Überholte Nachrichten gehen auf (`myl-net` 0.25.1, `myl-siegel` 0.3.2)
+
+- 📌 **Fund 682:** Ein Kanal nahm nur streng steigende Zähler an. Die Tür
+  versiegelt aber nacheinander und schickt jede Anfrage über eine eigene
+  Verbindung; überholte eine die andere, scheiterte die frühere als
+  Wiedereinspielung, und die Sitzung bekam keine Antwort. Jetzt gilt ein
+  Gleitfenster von 64 Zählern (`EMPFANGSFENSTER`, nach RFC 4303): Jeder Zähler
+  geht genau einmal auf, vermerkt wird erst nach dem Tag, hinter dem Fenster wird
+  abgewiesen. Gegenprobe mit Fenster 1: alle drei neuen Tests fallen.
+- `myl-net` 0.25.1 (ohne Änderung, Komponentenstand), `myl-siegel` 0.3.2.
+
+### v0.25.0 (2026-11-08): Weiter geht nur Geprüftes, und Falsches zählt (`myl-net` 0.25.0)
+
+⛔️ **Sicherheitsaudit A47.** Die Netzschicht reichte jeden lesbaren Block und
+jede lesbare Transaktion sofort weiter, auch ohne gültige Unterschrift: eine
+Flut mit Verstärkung über das ganze Netz, und die Gegenstelle blieb unbewertet,
+denn ohne Einträge je Topic zählt gossipsub verworfene Nachrichten nicht.
+
+- `validation::urteil_folgt_spaeter`: Blöcke und Transaktionen werden gehalten,
+  bis der Knoten mit `NodeCommand::Urteil` entscheidet (`Pruefmarke` in
+  `InboundMessage`, `Urteil::{Annehmen, Ignorieren, Verwerfen}`).
+- `scoring::standard_parameter` trägt je Topic eine Bewertung nur für verworfene
+  Nachrichten (P4, Gewicht -5, quadratisch: vier kurz hintereinander erreichen
+  die Grauliste). Die Bewertung der Zustellung bleibt aus. Die Probe, die leere
+  Topics verlangte, prüft jetzt die Gewichte.
 
 ### v0.24.0 (2026-10-30): Anfragen mit Zweck (`myl-net` 0.24.0)
 

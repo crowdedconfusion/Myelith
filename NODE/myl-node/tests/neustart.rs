@@ -337,6 +337,7 @@ async fn ein_neu_gestarteter_knoten_stimmt_mit_dem_durchlaufenden_ueberein() {
         testverkehr_sekunden: None,
         einsatz: None,
         zustandslos: false,
+        anker_von_aussen: None,
         baum_auf_platte: false,
         zeugen_bereithalten: false,
         selbstprobe_aus: false,

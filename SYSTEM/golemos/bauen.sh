@@ -23,11 +23,11 @@ ARCH=x86_64
 # ⚠️ **Die Fassung ist gesetzt und wird nicht "die neueste".** Ein Bau,
 # der sich seine Grundlage selbst aussucht, ist beim naechsten Mal ein
 # anderer Bau.
-BUILDROOT_FASSUNG=2026.02.3
+BUILDROOT_FASSUNG=2026.08.1
 # ⛔️ **Die Pruefsumme steht hier, nicht nur in der Ausgabe.** Ein Bau,
 # der sich seine Grundlage aus dem Netz holt und nicht nachsieht, baut
 # irgendetwas.
-BUILDROOT_SUMME=65528a544f1e07c2f5ec487beca483bd380a6af8351a45f3649a19a0e8b63de2
+BUILDROOT_SUMME=38a6c152490096018720a9ade379ee1e571c9bf5f93a3657a166566945a98b0d
 
 while [ $# -gt 0 ]; do
   case "$1" in

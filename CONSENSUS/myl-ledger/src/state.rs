@@ -135,9 +135,26 @@ pub struct AccountState {
     /// verschiedene Vorgeschichten führen, schlachten verschieden hoch
     /// und kommen zu verschiedenen Zuständen.
     pub verstoesse: Vec<Verstoss>,
+    /// ⚑ **Was dieses Konto zuletzt verbrannt hat** (Epoche, Menge), für den
+    /// Burn-Deckel je Adresse (Whitepaper 5.6). Nur in der Subventionsphase
+    /// geführt; ein Eintrag je Konto, von der nächsten Epoche überschrieben,
+    /// also ohne Aufräumen und ohne Lauf über die ganze Sammlung, den ein
+    /// Zeuge nicht belegen könnte.
+    ///
+    /// **Angehängt und nicht eingefügt:** Die Feldreihenfolge ist
+    /// Konsensvertrag.
+    pub burn_stand: Option<(u64, u64)>,
 }
 
 impl AccountState {
+    /// Was dieses Konto in der genannten Epoche schon verbrannt hat.
+    pub fn verbrannt_in(&self, epoche: u64) -> u64 {
+        match self.burn_stand {
+            Some((e, menge)) if e == epoche => menge,
+            _ => 0,
+        }
+    }
+
     /// Leeres Konto.
     pub fn empty() -> Self {
         Self {
@@ -147,6 +164,7 @@ impl AccountState {
             gekuendigt: BTreeMap::new(),
             credits: Vec::new(),
             verstoesse: Vec::new(),
+            burn_stand: None,
         }
     }
 
@@ -485,7 +503,7 @@ pub struct LedgerState {
     /// ⚑ **Bis zu welchem Prüfpunkt die Kette bestätigt ist** (2026-10-27,
     /// Festlegung des Projektinhabers: Prüfpunkte alle 150 Blöcke): die Höhe
     /// des jüngsten **endgültigen** Prüfpunkts, null vor dem ersten. Seit
-    /// 2026-11-04 (Casper FFG) wird ein Prüfpunkt endgültig, wenn ein Block
+    /// 2026-11-04 wird ein Prüfpunkt endgültig, wenn ein Block
     /// das Zertifikat des nächsten trägt und es ihn als Quelle nennt; bis
     /// dahin war es der Prüfpunkt des jüngsten getragenen Zertifikats. **Im Zustand und nicht in der Kette**, damit
     /// jeder Knoten, auch einer, der aus einem Abzug begann, dasselbe
@@ -497,7 +515,7 @@ pub struct LedgerState {
     /// Transaktion kommt. Höchstens 24 Einträge.
     pub pruefpunkt_hashes: Vec<(u64, Hash)>,
 
-    /// ⚑ **Der jüngste gerechtfertigte Prüfpunkt** (2026-11-04, Casper FFG):
+    /// ⚑ **Der jüngste gerechtfertigte Prüfpunkt** (2026-11-04):
     /// Höhe und Block des jüngsten Zertifikats, das ein Block getragen hat,
     /// null und null für Genesis.
     pub pruefpunkt_gerechtfertigt: (u64, Hash),
@@ -626,8 +644,7 @@ pub struct LedgerState {
     /// Bis zu welcher Epoche die Fächer abgearbeitet sind.
     pub sitzungsablauf_bis: u64,
 
-    /// ⚑ **Vorgemerkte Auszahlungen** (verteilte Ausschüttung, 2026-10-30,
-    /// nach dem Vorbild von Solanas „Partitioned Epoch Rewards“, SIMD-0118):
+    /// ⚑ **Vorgemerkte Auszahlungen** (verteilte Ausschüttung, 2026-10-30):
     /// je Konto, was ihm aus Ausschüttungen zusteht und noch nicht gebucht
     /// ist. Die Ausschüttung am Epochenwechsel merkt nur vor; jeder Block
     /// bucht höchstens `AUSZAHLUNGEN_JE_BLOCK` davon, nach Adresse. ⚑ **Im
@@ -1293,8 +1310,7 @@ impl LedgerState {
         b.beweis.pruefen(&w, &baumschluessel(0, &b.adresse), b.konto.as_ref().map(werthash).as_ref())
     }
 
-    /// ⚑ **Lagert den grossen Baum auf die Platte aus** (2026-10-30, nach dem
-    /// Vorbild von NOMT): unter `pfad`, als Zwischenspeicher (siehe
+    /// ⚑ **Lagert den grossen Baum auf die Platte aus** (2026-10-30): unter `pfad`, als Zwischenspeicher (siehe
     /// `myl_types::zustandsbaum`). Dieselbe Wurzel; im Speicher bleibt der
     /// obere Baum. Der nächste Aufruf von [`Self::wurzel`] baut neu.
     pub fn baum_auslagern(&mut self, pfad: &std::path::Path) -> std::io::Result<()> {

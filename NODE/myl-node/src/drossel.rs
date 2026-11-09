@@ -39,6 +39,9 @@ pub enum Art {
     Bloecke,
     /// Geschichte mit Beweis und Teile für Splitter.
     Archiv,
+    /// ⚑ Alles andere, was Arbeit kostet (Sicherheitsaudit A48): Belege,
+    /// Spuren, Verläufe, Dateien, Bündel, Zeugnisse.
+    Beleg,
 }
 
 /// Fassungsvermögen und Nachwuchs eines Eimers, in ganzen Marken.
@@ -58,6 +61,9 @@ pub fn masse(art: Art) -> (Masse, Masse) {
     match art {
         Art::Bloecke => (Masse { fassung: 32, je_sekunde: 32 }, Masse { fassung: 128, je_sekunde: 128 }),
         Art::Archiv => (Masse { fassung: 8, je_sekunde: 8 }, Masse { fassung: 32, je_sekunde: 32 }),
+        // ⚑ Ein Pod stellt einem Mitglied wenige solche Anfragen je Epoche;
+        //   ein Stück eines Belegs oder einer Datei je Antwort, nacheinander.
+        Art::Beleg => (Masse { fassung: 16, je_sekunde: 16 }, Masse { fassung: 128, je_sekunde: 128 }),
     }
 }
 

@@ -1,0 +1,22 @@
+[package]
+name = "wasm-gast"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.99"
+description = "Das kleinste abgeschottete Modul: Vorlage und Pruefgast"
+license = "LicenseRef-PolyForm-Shield-1.0.0"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+myl-module = { path = "../..", default-features = false }
+
+[profile.release]
+opt-level = "s"
+lto = true
+panic = "abort"
+strip = true
+
+[workspace]

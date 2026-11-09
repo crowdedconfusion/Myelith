@@ -592,8 +592,8 @@ async fn ein_harness_bekommt_eine_openai_antwort() {
     let token = bearer_fuer(7, s_id);
     let tuer = Tuer::binden(0).await.expect("binden");
     let port = tuer.port().expect("port");
-    let mut annahme = Annahme::neu(41, EpochId(5));
-    let mut stelle = Zugangsstelle::neu(EineQuelle(k));
+    let annahme = std::sync::Mutex::new(Annahme::neu(41, EpochId(5)));
+    let stelle = std::sync::Mutex::new(Zugangsstelle::neu(EineQuelle(k)));
     let werk = Spiegelwerk {
         gesehen: std::sync::Mutex::new(Vec::new()),
     };
@@ -602,7 +602,7 @@ async fn ein_harness_bekommt_eine_openai_antwort() {
     let bytes = post_bearer(WEG_CHAT, &token, koerper.as_bytes());
 
     let dienst = async {
-        tuer.bedienen_v1(&mut annahme, &mut stelle, &werk, EpochId(5), 1_700_000_000_000)
+        tuer.bedienen_v1(&annahme, &stelle, &myl_gateway::tuer::Besetzung::default(), &werk, EpochId(5), 1_700_000_000_000)
             .await
             .expect("bedienen");
     };
@@ -630,13 +630,13 @@ async fn die_modellliste_verlangt_einen_ausweis() {
     let s_id = k.adresse();
     let tuer = Tuer::binden(0).await.expect("binden");
     let port = tuer.port().expect("port");
-    let mut annahme = Annahme::neu(1, EpochId(5));
-    let mut stelle = Zugangsstelle::neu(EineQuelle(k));
+    let annahme = std::sync::Mutex::new(Annahme::neu(1, EpochId(5)));
+    let stelle = std::sync::Mutex::new(Zugangsstelle::neu(EineQuelle(k)));
     let werk = Totwerk;
 
     let ohne = format!("GET {WEG_MODELLE} HTTP/1.1\r\nHost: localhost\r\n\r\n").into_bytes();
     let dienst = async {
-        tuer.bedienen_v1(&mut annahme, &mut stelle, &werk, EpochId(5), 1_000)
+        tuer.bedienen_v1(&annahme, &stelle, &myl_gateway::tuer::Besetzung::default(), &werk, EpochId(5), 1_000)
             .await
             .expect("bedienen");
     };
@@ -647,7 +647,7 @@ async fn die_modellliste_verlangt_einen_ausweis() {
     let token = bearer_fuer(7, s_id);
     let mit = get_bearer(WEG_MODELLE, &token);
     let dienst = async {
-        tuer.bedienen_v1(&mut annahme, &mut stelle, &werk, EpochId(5), 1_000)
+        tuer.bedienen_v1(&annahme, &stelle, &myl_gateway::tuer::Besetzung::default(), &werk, EpochId(5), 1_000)
             .await
             .expect("bedienen");
     };
@@ -667,13 +667,13 @@ async fn ohne_pod_kommt_502_in_der_erwarteten_huelle() {
     let token = bearer_fuer(7, s_id);
     let tuer = Tuer::binden(0).await.expect("binden");
     let port = tuer.port().expect("port");
-    let mut annahme = Annahme::neu(1, EpochId(5));
-    let mut stelle = Zugangsstelle::neu(EineQuelle(k));
+    let annahme = std::sync::Mutex::new(Annahme::neu(1, EpochId(5)));
+    let stelle = std::sync::Mutex::new(Zugangsstelle::neu(EineQuelle(k)));
 
     let koerper = r#"{"messages":[{"role":"user","content":"x"}]}"#;
     let bytes = post_bearer(WEG_CHAT, &token, koerper.as_bytes());
     let dienst = async {
-        tuer.bedienen_v1(&mut annahme, &mut stelle, &Totwerk, EpochId(5), 1_000)
+        tuer.bedienen_v1(&annahme, &stelle, &myl_gateway::tuer::Besetzung::default(), &Totwerk, EpochId(5), 1_000)
             .await
             .expect("bedienen");
     };
@@ -694,8 +694,8 @@ async fn ein_strom_wird_an_der_tuer_abgelehnt() {
     let token = bearer_fuer(7, s_id);
     let tuer = Tuer::binden(0).await.expect("binden");
     let port = tuer.port().expect("port");
-    let mut annahme = Annahme::neu(1, EpochId(5));
-    let mut stelle = Zugangsstelle::neu(EineQuelle(k));
+    let annahme = std::sync::Mutex::new(Annahme::neu(1, EpochId(5)));
+    let stelle = std::sync::Mutex::new(Zugangsstelle::neu(EineQuelle(k)));
     let werk = Spiegelwerk {
         gesehen: std::sync::Mutex::new(Vec::new()),
     };
@@ -703,7 +703,7 @@ async fn ein_strom_wird_an_der_tuer_abgelehnt() {
     let koerper = r#"{"messages":[{"role":"user","content":"x"}],"stream":true}"#;
     let bytes = post_bearer(WEG_CHAT, &token, koerper.as_bytes());
     let dienst = async {
-        tuer.bedienen_v1(&mut annahme, &mut stelle, &werk, EpochId(5), 1_000)
+        tuer.bedienen_v1(&annahme, &stelle, &myl_gateway::tuer::Besetzung::default(), &werk, EpochId(5), 1_000)
             .await
             .expect("bedienen");
     };
@@ -743,4 +743,64 @@ async fn eine_schweigende_verbindung_sperrt_die_tuer_nicht() {
         .expect("der Schweiger bekam keine Antwort")
         .expect("lesen");
     assert!(aus.starts_with(b"HTTP/1.1 408"), "{}", String::from_utf8_lossy(&aus));
+}
+
+/// Ein Rechenweg, der wartet, bis die Probe ihn weiterlaesst.
+struct Wartewerk {
+    begonnen: tokio::sync::Notify,
+    weiter: tokio::sync::Notify,
+}
+
+#[async_trait::async_trait]
+impl Rechenweg for Wartewerk {
+    async fn rechne(&self, _: Rechenauftrag<'_>) -> Option<Rechenergebnis> {
+        self.begonnen.notify_one();
+        self.weiter.notified().await;
+        Some(Rechenergebnis { text: "fertig".to_string(), prompt_token: 1, neue_token: 1, segment: "ab".to_string() })
+    }
+    async fn modell(&self) -> Option<Modellstand> {
+        Some(Modellstand { name: "m".to_string(), pipeline: "beef".to_string() })
+    }
+}
+
+/// ⚑ **Je Sitzung rechnet eine Anfrage zugleich** (A23): Die zweite bekommt
+/// 429 und keine Sitzungsnummer, und nach dem Ende der ersten ist die Sitzung
+/// wieder frei. Gegenprobe: ohne `belegen` antwortet die zweite nicht mit 429.
+#[tokio::test]
+async fn eine_sitzung_rechnet_nur_einmal_zugleich() {
+    use myl_gateway::tuer::Besetzung;
+    let k = kontrakt(7);
+    let token = bearer_fuer(7, k.adresse());
+    let tuer = Tuer::binden(0).await.expect("binden");
+    let port = tuer.port().expect("port");
+    let annahme = std::sync::Mutex::new(Annahme::neu(1, EpochId(5)));
+    let stelle = std::sync::Mutex::new(Zugangsstelle::neu(EineQuelle(k)));
+    let besetzung = Besetzung::default();
+    let werk = Wartewerk { begonnen: tokio::sync::Notify::new(), weiter: tokio::sync::Notify::new() };
+    let koerper = r#"{"model":"m","messages":[{"role":"user","content":"frage"}],"max_tokens":4}"#;
+    let bytes = post_bearer(WEG_CHAT, &token, koerper.as_bytes());
+
+    let klient = async {
+        tokio::join!(frage(port, &bytes), async {
+            tokio::time::timeout(std::time::Duration::from_secs(5), werk.begonnen.notified())
+                .await
+                .expect("die erste Anfrage kam nie beim Rechenweg an");
+            let zweite = frage(port, &bytes).await;
+            werk.weiter.notify_one();
+            zweite
+        })
+    };
+    let dienst = || tuer.bedienen_v1(&annahme, &stelle, &besetzung, &werk, EpochId(5), 1_000);
+    let ((erste, zweite), a, b) = tokio::join!(klient, dienst(), dienst());
+    a.expect("bedienen");
+    b.expect("bedienen");
+    assert_eq!(status_von(&zweite), 429, "{}", String::from_utf8_lossy(&zweite));
+    assert_eq!(status_von(&erste), 200, "{}", String::from_utf8_lossy(&erste));
+    assert!(String::from_utf8_lossy(rumpf_von(&erste)).contains(r#""myelith_sitzung":1"#));
+
+    werk.weiter.notify_one();
+    let (dritte, c) = tokio::join!(frage(port, &bytes), dienst());
+    c.expect("bedienen");
+    assert_eq!(status_von(&dritte), 200, "die Sitzung blieb nach dem Ende besetzt");
+    assert!(String::from_utf8_lossy(rumpf_von(&dritte)).contains(r#""myelith_sitzung":2"#), "die abgewiesene bekam eine Nummer");
 }

@@ -408,6 +408,7 @@ CONSENSUS_PATH = [
     ROOT / "SHARED_TYPES" / "myl-types" / "src" / "sitze.rs",
     ROOT / "SHARED_TYPES" / "myl-types" / "src" / "schwelle.rs",
     ROOT / "SHARED_TYPES" / "myl-types" / "src" / "anteilchiffre.rs",
+    ROOT / "SHARED_TYPES" / "myl-types" / "src" / "adresstext.rs",
     # 2026-08-31: Das Gegenstandsformat zog aus `myl-store` hierher,
     # damit der Ledger es lesen kann, ohne an der Store-Rolle zu haengen.
     # Es rechnet in Bytes, Teilzahlen und Bruechen aus kleinen ganzen

@@ -19,7 +19,7 @@ use myl_module::nachricht::{Stil, Teil};
 // ⚑ **Orte, Pruefung und die Verwaltung der laufenden Module stehen in
 //   `myl_client::module`** (2026-10-12), eine Stelle fuer Konsole und
 //   Fenster. Hier bleibt, was nur die Konsole kann: zeichnen.
-pub use myl_client::module::{einstellungsordner, installieren, liste, protokoll, speicherpfad, vertrauenspfad, Modulwirt};
+pub use myl_client::module::{ablagepfad, einstellungsordner, gewuenschte_rechner, installieren, liste, protokoll, rechner_genehmigen, speicherpfad, vertrauenspfad, Modulwirt};
 
 /// **Der Wirt der Konsole.** ⚑ Ein Modul darf keinen Befehl der Konsole
 /// belegen: Seine Befehle stehen unter `/module` (`/module trading …`), und

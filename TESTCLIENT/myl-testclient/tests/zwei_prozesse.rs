@@ -394,12 +394,12 @@ impl Aufbau {
         );
         let bytes = post_bearer(WEG_CHAT, &self.bearer, koerper.as_bytes());
         let port = self.port;
-        let mut annahme = Annahme::neu(41, EpochId(0));
-        let mut stelle = Zugangsstelle::neu(EineQuelle(self.kontrakt.clone()));
+        let annahme = std::sync::Mutex::new(Annahme::neu(41, EpochId(0)));
+        let stelle = std::sync::Mutex::new(Zugangsstelle::neu(EineQuelle(self.kontrakt.clone())));
         let dienst = async {
             let _ = self
                 .tuer
-                .bedienen_v1(&mut annahme, &mut stelle, &self.weg, EpochId(0), 1_700_000_000_000)
+                .bedienen_v1(&annahme, &stelle, &myl_gateway::tuer::Besetzung::default(), &self.weg, EpochId(0), 1_700_000_000_000)
                 .await;
         };
         let klient = tokio::task::spawn_blocking(move || {

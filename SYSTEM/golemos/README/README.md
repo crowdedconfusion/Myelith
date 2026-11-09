@@ -1,7 +1,7 @@
 # golemos (die Linux-Distribution, die nur Myelith bedient)
 
-> **Version:** 0.3.3 (`golem-einrichten` 0.3.3)
-> **Datum:** 2026-10-22
+> **Version:** 0.4.0 (`golem-einrichten` 0.3.3)
+> **Datum:** 2026-11-09
 > **Status:** Startet vom Stick und von Platte, findet einen
 > Myelith-Ordner auf dem Stick oder einem zweiten Laufwerk und
 > installiert sich mit einem Assistenten auf eine ganze Platte. Belegt
@@ -101,6 +101,23 @@ sie tut, soll sich in ihrem eigenen Quelltext lesen lassen.
 ---
 
 ## Changelog
+
+### v0.4.0 (2026-11-09): Buildroot 2026.08.1
+
+- Basis auf Buildroot 2026.08.1 (Kern 7.1.13, GCC 15.3, glibc 2.44): OpenSSL 3.6.5
+  statt 3.6.2 und expat 2.9.0 statt 2.8.1, wegen der offenen CVEs. Die Reihe 2026.02
+  hat keine neuere Fassung bekommen. ⚠️ Das ist keine Langzeitreihe; die nächste
+  Fassung ist eine eigene Entscheidung.
+- Beide Architekturen gebaut (rund 22 min je Bau) und unter QEMU gestartet:
+  Anmeldung, Netz, `myl-node`, `myelith`, Herunterfahren. Noch nicht erneuert:
+  `abbild/fertig` und die Schichten für das Fenster.
+- 📌 `schicht-bauen.sh` baut wieder: Die Quelle für das Fenster schloss `MODELS` ganz
+  aus, und die Laufzeit bindet inzwischen den Katalog daraus ein.
+
+### v0.3.4 (2026-11-08): Die Anleitung kennt Knoten und Fenster
+
+- `ANLEITUNG.md` und `ANLEITUNG.en.md`: Abschnitte „Den Rechner als Knoten betreiben“ und „Das Fenster dazuholen“. Beide sagen, was noch fehlt: ein öffentliches Netz und eine Schicht zum Herunterladen. Der Knoten braucht den Myelith-Ordner wegen der Selbstprüfung, aber kein Modell.
+- **Fund 672:** Der Hinweis von `golem-knoten einrichten --erzeuger ja` behauptete, genau ein Knoten im Netz baue die Blöcke. Das stimmt seit den rotierenden Erzeugern nicht mehr; er nennt jetzt den Stimmsatz der Genesis. Nur Text, die Abbilder ändern sich dadurch erst beim nächsten Bau.
 
 ### v0.3.3 (2026-10-26): Die Proben räumen ab (Fund 653; `golem-einrichten` 0.3.3)
 

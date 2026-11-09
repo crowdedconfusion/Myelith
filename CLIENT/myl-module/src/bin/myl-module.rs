@@ -4,6 +4,7 @@
 //! myl-module schluessel <datei>              erzeugt ein Schluesselpaar; geheim in <datei>, oeffentlich auf stdout
 //! myl-module signieren <ordner> <schluessel> traegt die Pruefsummen ein und signiert
 //! myl-module pruefen <ordner> <vertrauen.json>  prueft wie die Konsole
+//! myl-module geheimnis <ablage> <modul> <name>  legt ein Geheimnis ab (von stdin)
 //! ```
 //!
 //! ⛔️ Der geheime Schluessel gehoert nicht ins Repositorium und nicht in
@@ -20,12 +21,26 @@ fn main() {
         ["schluessel", datei] => schluessel(Path::new(datei)),
         ["signieren", ordner, schluessel] => signieren(Path::new(ordner), Path::new(schluessel)),
         ["pruefen", ordner, vertrauen] => pruefen(Path::new(ordner), Path::new(vertrauen)),
-        _ => Err("myl-module schluessel <datei> | signieren <ordner> <schluessel> | pruefen <ordner> <vertrauen.json>".to_string()),
+        ["geheimnis", ablage, modul, name] => geheimnis(Path::new(ablage), modul, name),
+        _ => Err("myl-module schluessel <datei> | signieren <ordner> <schluessel> | pruefen <ordner> <vertrauen.json> | geheimnis <ablage> <modul> <name>".to_string()),
     };
     if let Err(f) = ergebnis {
         eprintln!("FEHLER: {f}");
         std::process::exit(2);
     }
+}
+
+/// Liest das Geheimnis von der Standardeingabe, damit es nicht in der
+/// Prozessliste steht; ein Zeilenende am Schluss gehoert nicht dazu.
+fn geheimnis(ablage: &Path, modul: &str, name: &str) -> Result<(), String> {
+    let mut wert = Vec::new();
+    std::io::Read::read_to_end(&mut std::io::stdin(), &mut wert).map_err(|f| f.to_string())?;
+    while matches!(wert.last(), Some(b'\n' | b'\r')) {
+        wert.pop();
+    }
+    myl_module::ablage::geheimnis_setzen(ablage, modul, name, &wert)?;
+    println!("abgelegt: {modul}/{name}");
+    Ok(())
 }
 
 fn schluessel(datei: &Path) -> Result<(), String> {

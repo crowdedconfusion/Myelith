@@ -136,6 +136,9 @@ jobs:
       # Gleitkomma im Rechenpfad, Skalen, theta_v gegen die Vektoren (Fund
       # 358), das Testprofil (wer die CI mit `--release` beschleunigt,
       # schaltet die Ueberlaufpruefung ab) und die Streitlast-Tabelle.
+      - name: Book2Skill
+        run: python3 AGENT_LAYER/werkzeuge/test_book2skill.py
+
       - name: Audit der Zahlensemantik
         working-directory: INTEGER_LLM
         run: |
@@ -568,28 +571,18 @@ jobs:
           if [ "$GITHUB_EVENT_NAME" = "schedule" ]; then
             echo "langsame=ja" >> "$GITHUB_OUTPUT"
           elif git diff --name-only "$VORHER" HEAD 2>/dev/null \
-               | grep -q 'README/Whitepaper/simulations/'; then
+               | grep -qE 'README/Whitepaper/simulations/|SIMULATION/zahlen/'; then
             echo "langsame=ja" >> "$GITHUB_OUTPUT"
           else
             echo "langsame=nein" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Alle Simulationen ausfuehren
-        working-directory: README/Whitepaper/simulations
+      - name: Alle Simulationen gegen ihre Zahlen
         env:
           LANGSAME: ${{ steps.diff.outputs.langsame }}
         run: |
-          set -e
-          LANGSAM="topk_stability_sim.py robustness_sim.py"
-          for f in *.py; do
-            case " ${LANGSAM} " in
-              *" ${f} "*)
-                if [ "${LANGSAME}" != "ja" ]; then
-                  echo "  UEBERSPRUNGEN (langsam, unveraendert): ${f}"
-                  continue
-                fi
-                ;;
-            esac
-            python3 "$f" >/dev/null
-            echo "  OK: ${f}"
-          done
+          if [ "${LANGSAME}" = "ja" ]; then
+            python3 SIMULATION/zahlen/zahlenprobe.py
+          else
+            python3 SIMULATION/zahlen/zahlenprobe.py --ohne-langsame
+          fi

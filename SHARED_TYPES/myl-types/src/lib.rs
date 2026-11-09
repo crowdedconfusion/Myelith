@@ -23,6 +23,7 @@
 #![deny(unsafe_code)]
 
 pub mod zustandsbaum;
+pub mod adresstext;
 pub mod auslastung;
 pub mod korpusanker;
 pub mod lernrate;

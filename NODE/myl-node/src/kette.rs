@@ -239,7 +239,7 @@ pub const BLOCK_NEULINGE_HOECHSTENS: usize = 16;
 pub const GRUNDPREIS_ZIEL_EINHEITEN: u64 = 500 * (myl_consensus::block::PRUEFEINHEIT + 200);
 
 /// Höchstens so viele Gebühreneinheiten nimmt der Erzeuger in einen Block:
-/// das Doppelte des Ziels, wie bei EIP-1559.
+/// das Doppelte des Ziels.
 pub const BLOCK_EINHEITEN_HOECHSTENS: u64 = 2 * GRUNDPREIS_ZIEL_EINHEITEN;
 
 /// Um höchstens den so vielten Teil wandert der Grundpreis je Block.
@@ -259,7 +259,7 @@ pub const HINTERLEGT_SITZUNG: u8 = 1;
 /// Der Grundpreis des nächsten Blocks aus dem jetzigen und den Bytes, die
 /// dieser Block an Gebühren gezählt hat.
 ///
-/// Wie EIP-1559: `preis · (bytes − ziel) / ziel / 8`. ⚑ **Mindestens eins
+/// `preis · (bytes − ziel) / ziel / 8`. ⚑ **Mindestens eins
 /// nach oben**, wenn der Block über dem Ziel lag; sonst bliebe ein Preis
 /// von eins für immer bei eins, weil ein Achtel davon null ist. Nie unter
 /// dem Boden.
@@ -600,8 +600,8 @@ pub fn zwillinge_einig(a: &myl_types::PoIBundle, b: &myl_types::PoIBundle) -> bo
 
 /// **Die Dämpfung des Credit-Preises** κ, Festkomma mit 16 Nachkommabits:
 /// 1/6 (Festlegung des Projektinhabers vom 2026-10-28). Ohne Nachfrage fällt
-/// der Preis damit je Epoche um ein Achtel, wie der Grundpreis von EIP-1559
-/// je Block; bei voller Auslastung steigt er um rund 3,4 %, weil das Ziel
+/// der Preis damit je Epoche um ein Achtel;
+/// bei voller Auslastung steigt er um rund 3,4 %, weil das Ziel
 /// des Whitepapers bei 0,8 liegt und nicht in der Mitte.
 pub const CREDIT_PREIS_KAPPA: i64 = (1 << 16) / 6;
 
@@ -616,9 +616,6 @@ pub const CREDIT_PREIS_ZIEL: i64 = (myl_types::auslastung::AUSLASTUNG_SKALA * 4 
 /// abgerechneten, gerundet zur nächsten geraden Zahl und mindestens 1 (ein
 /// Preis von null verweigert jeden Burn).
 ///
-/// ⚠️ Die Auslastung ist bestätigte Arbeit durch Kapazität und damit nie
-/// über 1; Nachfrage, die keinen Platz fand, sieht der Preis nicht. Das
-/// Whitepaper spricht von nachgefragter Arbeit.
 pub fn credit_preis_naechster(fein: i64, auslastung: i64) -> (i64, u64) {
     let neu = myl_tokenomics::update_price_mit_untergrenze(
         fein,
@@ -629,6 +626,25 @@ pub fn credit_preis_naechster(fein: i64, auslastung: i64) -> (i64, u64) {
     );
     (neu, credit_preis_abgerechnet(neu))
 }
+
+/// Höchstens diese Auslastung zählt für den Preis: Sie begrenzt den Sprung
+/// je Epoche auf rund 22 Prozent, wie der Blockdeckel bei einem Grundpreis.
+pub const CREDIT_PREIS_AUSLASTUNG_HOECHSTENS: i64 = 2 * myl_types::auslastung::AUSLASTUNG_SKALA;
+
+/// ⚑ **Die Auslastung, der der Preis folgt** (Whitepaper 5.4: nachgefragte
+/// vTFE durch Kapazität). Bestätigte Arbeit allein ist nie über 1 und sieht
+/// keine Nachfrage, die keinen Platz fand; die in dieser Epoche gekauften
+/// Credits sehen sie, und sie sind verbrannt, also nicht umsonst vorzutäuschen.
+pub fn preis_auslastung(bestaetigt: i64, nachgefragt_vtfe: u64, kapazitaet: u64) -> i64 {
+    bestaetigt
+        .max(myl_types::auslastung::auslastung(nachgefragt_vtfe, kapazitaet))
+        .min(CREDIT_PREIS_AUSLASTUNG_HOECHSTENS)
+}
+
+/// Höchstens so viele Einträge auf einer Seite des Verlaufs.
+pub const VERLAUF_JE_SEITE: usize = 200;
+/// So viele Blöcke liest eine Seite auf einmal.
+const VERLAUF_BLOECKE_JE_SCHUB: u64 = 64;
 
 /// Der abgerechnete Credit-Preis zu einem in Feinauflösung: gerundet zur
 /// nächsten geraden Zahl, mindestens 1.
@@ -1035,8 +1051,19 @@ pub struct Kette {
     /// ⚑ Epochen, deren gemerkter Beleg die eigene Folge nicht traegt (nach
     /// einer Luecke); ein spaeterer derselben Epoche darf ihn ersetzen.
     belege_ohne_folge: std::collections::BTreeSet<u64>,
+    /// ⚑ Der Anker von aussen (7.4a): Hoehe, Block und Bindung des
+    /// Zertifikats eines Belegs, vertraut wie Genesis
+    /// ([`crate::wechsel::Folge::ab_beleg`]).
+    anker_von_aussen: Option<(u64, Hash, Hash)>,
     /// Wo sie neben der Kettendatei liegen.
     belegablage: Option<crate::wechsel::Belegablage>,
+    /// ⚑ Ab welcher Epoche die eigene Folge beginnt, wenn aeltere Belege
+    /// gekuerzt sind (A44). Was hier liegt, hat dieser Knoten selbst geprueft.
+    belege_ab: Option<u64>,
+    /// Wie viele Belege seit dem letzten Neuschreiben der Ablage fielen.
+    belege_gefallen: u64,
+    /// Wann das Netz begann, aus der Stimmsatzdatei (A43).
+    netzstart_ms: Option<u64>,
     /// Wartende Transaktionen, je mit der eigenen Höhe bei der Aufnahme.
     mempool: Mempool,
     /// Die Kennungen der Transaktionen, deren Unterschrift dieser Knoten
@@ -1289,7 +1316,11 @@ impl Kette {
             zertifikate: std::collections::VecDeque::new(),
             wechselbelege: std::collections::BTreeMap::new(),
             belege_ohne_folge: std::collections::BTreeSet::new(),
+            anker_von_aussen: None,
             belegablage: None,
+            belege_ab: None,
+            belege_gefallen: 0,
+            netzstart_ms: None,
             mempool: Mempool::default(),
             unterschriften: Unterschriften::default(),
             bekannt: std::collections::HashSet::new(),
@@ -1671,6 +1702,10 @@ impl Kette {
             self.wechselbelege.insert(b.epoche(), b);
         }
         self.belegablage = Some(belege);
+        self.belege_ab = self.wechselbelege.keys().next().copied().filter(|e| *e > 0);
+        if let Some(e) = self.wechselbelege.keys().next_back().copied() {
+            self.belege_kuerzen(e);
+        }
         self.ablage = Some(ablage);
     }
 
@@ -2113,23 +2148,20 @@ impl Kette {
         }
     }
 
-    /// Die Prägeparameter dieser Testkette.
+    /// Die Prägeparameter einer Epoche.
     ///
-    /// ⚑ **Fest und nicht aus Governance**, solange die Kette eine
-    /// Probekette ist. Ein Parameter, der sich ändern kann, gehört an
-    /// eine Stelle, an der beide Seiten dieselbe Änderung sehen; die
-    /// Registry ist noch nicht an die Kette gebunden. Bis dahin ist ein
-    /// fester Wert ehrlicher als ein beweglicher, den nur einer kennt.
+    /// ⚑ **Fest und nicht aus Governance**: Ein Parameter, der sich ändern
+    /// kann, gehört an eine Stelle, an der beide Seiten dieselbe Änderung
+    /// sehen; die Registry ist noch nicht an die Kette gebunden. Bis dahin
+    /// ist ein fester Plan ehrlicher als ein beweglicher Wert, den nur einer
+    /// kennt.
     ///
-    /// Subventionsrate null: Die Anlaufkurve ist ein
-    /// Governance-Gegenstand (`myl_tokenomics::Subventionsplan`) und
-    /// gehört nicht als Zahl in eine Testkette.
-    fn praegeparameter() -> myl_tokenomics::MintParams {
-        myl_tokenomics::MintParams {
-            subsidy_num: 0,
-            subsidy_den: 1,
-            m_max: u64::MAX,
-        }
+    /// Die Subventionsrate folgt dem Anlaufplan
+    /// ([`myl_tokenomics::ANLAUFPLAN`], Whitepaper 5.2 und 5.7), auf jeder
+    /// Kette gleich: eine Probekette mit anderen Regeln belegte nichts.
+    fn praegeparameter(epoche: u64) -> myl_tokenomics::MintParams {
+        let (subsidy_num, subsidy_den) = myl_tokenomics::anlaufrate(epoche);
+        myl_tokenomics::MintParams { subsidy_num, subsidy_den, m_max: u64::MAX }
     }
 
     // ⚑ **`arbeitsverteilung_setzen` ist am 2026-09-03 entfernt worden**
@@ -2678,8 +2710,7 @@ impl Kette {
         //   Der Satz der Epoche steht zwei Epochen voraus fest, und ein
         //   geschlachteter Doppelerzeuger baute bis dahin weiter. Für die
         //   Finalität bleibt der Satz fest (dort hängt die Sicherheit an ihm),
-        //   für die Ziehung nicht: Ein Ruhender fällt sofort heraus, wie in
-        //   Ethereum kein geschlachteter Validator vorschlagen darf.
+        //   für die Ziehung nicht: Ein Ruhender fällt sofort heraus.
         let wach = |m: &myl_types::MinerId| !zustand.mitwirkung.get(m).is_some_and(|w| w.ruht);
         match myl_ledger::stimmsatz::satz_der_epoche(zustand, epoche) {
             Some(satz) if satz.iter().any(|(m, _, _)| wach(m)) => Some(myl_consensus::validator::VotingSet::from_members(
@@ -2796,7 +2827,7 @@ impl Kette {
     /// 2. **Der eigene Block an dieser Höhe.** Ein Zertifikat für einen
     ///    anderen Zweig ist keines für diese Kette.
     /// 3. ⚑ **Die Quelle, die der Zustand für diesen Prüfpunkt vermerkt
-    ///    hat** (2026-11-04, Casper FFG). Sie war gerechtfertigt, als der
+    ///    hat** (2026-11-04). Sie war gerechtfertigt, als der
     ///    Block des Ziels angewandt wurde.
     /// 4. **Mehr als zwei Drittel des Stimmsatzes** über die
     ///    Prüfpunktbotschaft. Ohne Satz trägt keines.
@@ -3723,6 +3754,9 @@ impl Kette {
             zustand.erzeugersaat = saat;
         }
         let alte_epoche = zustand.epoch.0;
+        // Vor der Ausschüttung, die den Zähler leert: gekauft zum Preis
+        // dieser Epoche.
+        let nachgefragt = zustand.burn_epoche / zustand.credit_price.max(1);
         let Epochenzuschreibung { mut zuschreibung, zurueck, allein, bezeugt, einig, uneinig, verschieden, vorbehalten } =
             Self::zuschreibung_der_epoche(zustand);
         zustand.zwillinge_einig = zustand.zwillinge_einig.saturating_add(einig);
@@ -3772,7 +3806,7 @@ impl Kette {
             // Sie kommt aus demselben Plan, aus dem die Trainingspods
             // kommen; eine zweite Rechnung wäre eine zweite Wahrheit.
             trainingsplan.auslastung,
-            &Self::praegeparameter(),
+            &Self::praegeparameter(alte_epoche),
         );
         // ⚑ **Die Archivpflicht der abgelaufenen Epoche** (Stufe A5):
         //   Gutschrift aus dem, was die Treasury eben bekam, verfehlte
@@ -3844,7 +3878,8 @@ impl Kette {
         // ⚑ **Der Credit-Preis folgt der Auslastung** (Whitepaper 5.4),
         //   aus derselben Auslastung wie die Trainingsabgabe; er gilt ab der
         //   neuen Epoche.
-        let (fein, ganz) = credit_preis_naechster(zustand.credit_preis_fein, trainingsplan.auslastung);
+        let auslastung = preis_auslastung(trainingsplan.auslastung, nachgefragt, trainingsplan.kapazitaet);
+        let (fein, ganz) = credit_preis_naechster(zustand.credit_preis_fein, auslastung);
         zustand.credit_preis_fein = fein;
         zustand.credit_price = ganz;
         // ⚑ **Abgelaufene Sitzungen fallen weg, ihre Hinterlegung geht
@@ -4025,7 +4060,7 @@ impl Kette {
         //   7.2): bestätigt bis zu seiner Höhe, und was auf einen
         //   bestätigten Wechsel wartete, wird jetzt gezogen. Geprüft ist es,
         //   bevor `anwenden` gerufen wird.
-        //   ⚑ Seit 2026-11-04 (Casper FFG, 7.7 Schritt 1) rechtfertigt das
+        //   ⚑ Seit 2026-11-04 (7.7 Schritt 1) rechtfertigt das
         //   Zertifikat sein Ziel; endgueltig wird seine Quelle, wenn das
         //   Ziel ihr direkter Nachfolger ist. Dass die Quelle die vermerkte
         //   ist, hat `zertifikat_traegt_gegen` geprueft.
@@ -4132,7 +4167,15 @@ impl Kette {
                 Anweisung::Burn { betrag } => {
                     // Verfall eine Epoche später: eine Festlegung dieser
                     // Testkette, damit beide Seiten dieselbe rechnen.
-                    let _ = burn_to_credits(zustand, &absender, *betrag, EpochId(epoch + 1));
+                    // ⚑ W4: In der Subventionsphase mit Deckel je Adresse
+                    //   (Whitepaper 5.6); darüber scheitert die Anweisung.
+                    let subvention = myl_tokenomics::anlaufrate(zustand.epoch.0).0 > 0;
+                    if myl_tokenomics::burn_im_deckel(zustand, &absender, *betrag, subvention)
+                        && burn_to_credits(zustand, &absender, *betrag, EpochId(epoch + 1)).is_ok()
+                        && subvention
+                    {
+                        myl_ledger::transitions::burn_vermerken(zustand, &absender, *betrag);
+                    }
                 }
                 // ⚑ G1: An ein neues Konto zahlt der Absender einmal den
                 //   Aufschlag an die Treasury; ein Konto bleibt für immer.
@@ -4713,6 +4756,18 @@ impl Kette {
         self.schranke.map_or(u64::MAX, |(h, s)| h.saturating_add(slot_jetzt.saturating_sub(s)))
     }
 
+    /// ⚑ **Traegt der eigene endgueltige Pruefpunkt noch?** (Vertrauensfrist,
+    /// 2026-10-27, CONSENSUS 7.5.) Die Epoche des Netzes kommt aus der eigenen
+    /// Schranke und der Uhr, ⛔️ **nie aus einem empfangenen Block** (A46): Der
+    /// waere an dieser Stelle noch ungeprueft, und eine erfundene Epoche hielte
+    /// den Knoten an. Ohne endgueltigen Pruefpunkt gibt es nichts zu pruefen.
+    pub fn vertrauen_traegt_jetzt(&self, slot_jetzt: u64) -> bool {
+        match self.schranke {
+            None => true,
+            Some(_) => vertrauen_traegt(epoche_fuer_hoehe(self.bestaetigt_bis()), epoche_fuer_hoehe(self.hoehen_schranke(slot_jetzt))),
+        }
+    }
+
     /// ⚑ **Der Wechselbeleg einer Epoche** (7.3, 2026-11-04): das erste
     /// endgueltige Zertifikat der Epoche, die beiden Saetze, die es bindet,
     /// aus dem eigenen Zustand, und das Zertifikat, das es abschliesst. Die
@@ -4741,7 +4796,14 @@ impl Kette {
             return;
         }
         let beleg = crate::wechsel::Wechselbeleg { zertifikat: z, naechster, uebernaechster, abschluss };
-        let traegt = self.folge().is_none_or(|mut f| f.aufnehmen(&beleg).is_ok());
+        // ⚑ Nur nach einer Luecke (Belege fuer beide Vorepochen fehlen) kann
+        //   ein Beleg die eigene Folge nicht tragen; nur dann wird sie neu
+        //   aufgebaut. 📌 Bis 0.116.1 geschah das bei jedem Beleg auf jedem
+        //   vollen Knoten (Sicherheitsaudit 2026-11-08): Der Aufbau prueft
+        //   alle Belege ab Genesis, zwei Aggregate je Epoche, nach einem Jahr
+        //   stuendlicher Epochen rund 17 500 und Sekunden in der Schleife.
+        let nach_luecke = !self.wechselbelege.contains_key(&e.saturating_sub(1)) && !self.wechselbelege.contains_key(&e.saturating_sub(2));
+        let traegt = !nach_luecke || self.folge().is_none_or(|mut f| f.aufnehmen(&beleg).is_ok());
         if gemerkt && !traegt {
             return;
         }
@@ -4756,6 +4818,32 @@ impl Kette {
             let _ = a.anhaengen(&beleg);
         }
         self.wechselbelege.insert(e, beleg);
+        self.belege_kuerzen(e);
+    }
+
+    /// ⚑ **Laesst Belege fallen, die niemand mehr braucht** (A44): aelter als
+    /// [`crate::wechsel::WECHSELBELEGE_BEHALTEN`] Epochen. Der Beleg des
+    /// Ankers von aussen bleibt, die eigene Folge beginnt bei ihm. Die Ablage
+    /// wird nur alle 64 gefallenen neu geschrieben.
+    fn belege_kuerzen(&mut self, jetzt: u64) {
+        let grenze = jetzt.saturating_sub(crate::wechsel::WECHSELBELEGE_BEHALTEN);
+        let anker = self.wechselbelege.values().find(|b| self.ist_anker_von_aussen(b)).map(|b| b.epoche());
+        let alt: Vec<u64> = self.wechselbelege.range(..grenze).map(|(e, _)| *e).filter(|e| Some(*e) != anker).collect();
+        if alt.is_empty() {
+            return;
+        }
+        for e in &alt {
+            self.wechselbelege.remove(e);
+        }
+        self.belege_ab = self.wechselbelege.keys().find(|e| Some(**e) != anker).copied();
+        self.belege_gefallen += alt.len() as u64;
+        if self.belege_gefallen >= 64 {
+            if let Some(a) = &self.belegablage {
+                if a.neu_schreiben(self.wechselbelege.values()).is_ok() {
+                    self.belege_gefallen = 0;
+                }
+            }
+        }
     }
 
     /// Die Wechselbelege ab Epoche `ab`, aufsteigend, zusammen hoechstens
@@ -4776,14 +4864,35 @@ impl Kette {
 
     /// Die erste Epoche ohne Wechselbeleg nach dem letzten vorhandenen.
     pub fn wechselbelege_bis(&self) -> u64 {
+        // Mit einem Anker von aussen, dessen Beleg noch fehlt, zaehlt nichts
+        // davor; nur ab ihm hat eine Gegenstelle die Belege noch sicher.
+        if let Some((h, _, _)) = self.anker_von_aussen {
+            if !self.wechselbelege.values().any(|b| self.ist_anker_von_aussen(b)) {
+                return epoche_fuer_hoehe(h);
+            }
+        }
         self.wechselbelege.keys().next_back().map_or(0, |e| e + 1)
     }
 
     /// ⚑ **Die Folge der Saetze ab Genesis** (7.4) aus dem Satz von aussen
-    /// und den eigenen Belegen; ohne Satz von aussen keine.
+    /// und den eigenen Belegen; ohne Satz von aussen keine. ⚑ Liegt der Beleg
+    /// des Ankers von aussen vor (7.4a), beginnt sie bei ihm. ⛔️ **Fehlt er
+    /// noch, gibt es keine Folge** (A43): Der Rueckfall auf Genesis liesse
+    /// eine Gegenstelle am Anker vorbei eine zweite Geschichte vorlegen.
+    /// Sind aeltere Belege gekuerzt, beginnt sie beim aeltesten eigenen.
     fn folge(&self) -> Option<crate::wechsel::Folge> {
-        let mut f = crate::wechsel::Folge::ab_genesis(self.stimmsatz.clone()?, Self::satzregeln(&self.zustand).mindestgewicht);
-        for b in self.wechselbelege.values() {
+        let von_aussen = self.stimmsatz.clone()?;
+        let mindest = Self::satzregeln(&self.zustand).mindestgewicht;
+        let anker = self.wechselbelege.values().find(|b| self.ist_anker_von_aussen(b));
+        if self.anker_von_aussen.is_some() && anker.is_none() {
+            return None;
+        }
+        let beginn = anker.or_else(|| self.belege_ab.and_then(|e| self.wechselbelege.get(&e)));
+        let (mut f, ab) = match beginn.and_then(|b| crate::wechsel::Folge::ab_beleg(von_aussen.clone(), mindest, b).ok().map(|f| (f, b.epoche() + 1))) {
+            Some(x) => x,
+            None => (crate::wechsel::Folge::ab_genesis(von_aussen, mindest), 0),
+        };
+        for b in self.wechselbelege.range(ab..).map(|(_, b)| b) {
             if f.aufnehmen(b).is_err() {
                 break;
             }
@@ -4791,15 +4900,82 @@ impl Kette {
         Some(f)
     }
 
+    /// ⚑ **Setzt den Anker von aussen** (CONSENSUS 7.4a, `--anker`): Hoehe,
+    /// Block und Bindung des Zertifikats eines Wechselbelegs.
+    ///
+    /// ⛔️ **Die Bindung gehoert dazu** (Sicherheitsaudit 2026-11-08): Die
+    /// Unterschriften des Ankers prueft niemand, und gerade sie verbinden die
+    /// Bindung (die Saetze der beiden naechsten Epochen) mit dem Block. Mit
+    /// Hoehe und Block allein konnte eine Gegenstelle einen Beleg mit
+    /// richtigem Block und eigenen Saetzen liefern, und der Knoten haette von
+    /// da an einem Satz des Angreifers geglaubt.
+    pub fn anker_von_aussen_setzen(&mut self, hoehe: u64, block: Hash, bindung: Hash) {
+        self.anker_von_aussen = Some((hoehe, block, bindung));
+    }
+
+    fn ist_anker_von_aussen(&self, b: &crate::wechsel::Wechselbeleg) -> bool {
+        self.anker_von_aussen == Some((b.zertifikat.hoehe, b.zertifikat.block_hash, b.zertifikat.bindung))
+    }
+
+    /// Der juengste eigene Wechselbeleg: Epoche und das, was ein Betreiber
+    /// als Anker von aussen nennt (Hoehe, Block und Bindung seines
+    /// Zertifikats).
+    pub fn juengster_wechselbeleg(&self) -> Option<(u64, u64, Hash, Hash)> {
+        self.wechselbelege.iter().next_back().map(|(e, b)| (*e, b.zertifikat.hoehe, b.zertifikat.block_hash, b.zertifikat.bindung))
+    }
+
+    /// ⚑ **Der Anker, den dieser Knoten anderen nennen kann** (7.4a, A43):
+    /// sein juengster Wechselbeleg samt Slot des Blocks. Ohne den Block im
+    /// eigenen Fenster keiner; der Slot gehoert dazu, sonst liesse sich das
+    /// Alter des Ankers nicht pruefen.
+    pub fn anker_zum_weitergeben(&self) -> Option<crate::wechsel::AnkerVonAussen> {
+        let (_, hoehe, block, bindung) = self.juengster_wechselbeleg()?;
+        let b = self.block_an(hoehe).filter(|b| b.hash() == block)?;
+        Some(crate::wechsel::AnkerVonAussen { hoehe, block, bindung, slot: b.header.slot })
+    }
+
+    /// Wann das Netz begann (A43); aus der Stimmsatzdatei.
+    pub fn netzstart_setzen(&mut self, ms: Option<u64>) {
+        self.netzstart_ms = ms;
+    }
+
+    /// Wann das Netz begann, falls die Stimmsatzdatei es nennt.
+    pub fn netzstart_ms(&self) -> Option<u64> {
+        self.netzstart_ms
+    }
+
     /// **Wechselbelege einer Gegenstelle aufnehmen** (7.4): nur, was die
     /// Folge ab Genesis traegt. Gibt zurueck, wie viele neu sind.
     pub fn wechselbelege_aufnehmen(&mut self, belege: &[crate::wechsel::Wechselbeleg]) -> Result<usize, crate::wechsel::Folgefehler> {
-        let Some(mut f) = self.folge() else {
+        if self.stimmsatz.is_none() {
             return Err(crate::wechsel::Folgefehler::Unbekannt(0));
-        };
+        }
+        let mut folge = self.folge();
         let mut sortiert: Vec<&crate::wechsel::Wechselbeleg> = belege.iter().collect();
         sortiert.sort_by_key(|b| b.zertifikat.hoehe);
         let mut neu = 0usize;
+        // ⚑ Mit einem Anker von aussen (7.4a) zaehlt nichts vor seinem Beleg;
+        //   liegt er bei, beginnt die Folge bei ihm.
+        let gemerkt = self.wechselbelege.values().find(|b| self.ist_anker_von_aussen(b)).map(|b| b.epoche());
+        if let Some(i) = sortiert.iter().position(|b| self.ist_anker_von_aussen(b)) {
+            let b = sortiert[i];
+            if gemerkt != Some(b.epoche()) {
+                let von_aussen = self.stimmsatz.clone().ok_or(crate::wechsel::Folgefehler::Unbekannt(0))?;
+                folge = Some(crate::wechsel::Folge::ab_beleg(von_aussen, Self::satzregeln(&self.zustand).mindestgewicht, b)?);
+                if let Some(a) = &self.belegablage {
+                    let _ = a.anhaengen(b);
+                }
+                self.wechselbelege.insert(b.epoche(), b.clone());
+                neu += 1;
+            }
+            sortiert.drain(..=i);
+        } else if let Some(e) = gemerkt {
+            sortiert.retain(|b| b.epoche() > e);
+        }
+        // ⛔️ Ein gesetzter Anker ohne seinen Beleg: nichts aufnehmen (A43).
+        let Some(mut f) = folge else {
+            return Err(crate::wechsel::Folgefehler::Unbekannt(self.anker_von_aussen.map_or(0, |(h, _, _)| epoche_fuer_hoehe(h))));
+        };
         for b in sortiert {
             f.aufnehmen(b)?;
             if !self.wechselbelege.contains_key(&b.epoche()) {
@@ -4856,6 +5032,47 @@ impl Kette {
         let f = self.folge().ok_or(crate::wechsel::Folgefehler::Unbekannt(0))?;
         let q = f.endgueltig_durch(z)?;
         Ok(crate::abzug::Anker { hoehe: q.hoehe, blockhash: q.block_hash })
+    }
+
+    /// ⚑ **Eine Seite des Verlaufs einer Adresse** (CLIENT 7.4): aus den
+    /// gehaltenen Blöcken, neueste zuerst, höchstens
+    /// [`VERLAUF_JE_SEITE`] Einträge und höchstens `frist` Lesezeit. Nur was
+    /// ein Block trägt; was vor der Verdichtung lag, kennt dieser Knoten
+    /// nicht mehr.
+    pub fn verlauf_seite(&mut self, adresse: &Address, bis: Option<u64>, frist: std::time::Duration) -> crate::beobachtung::Verlaufsseite {
+        use crate::beobachtung::{Verlaufseintrag, Verlaufsseite};
+        let start = std::time::Instant::now();
+        let mut hoehe = bis.map_or(self.hoehe, |b| b.min(self.hoehe));
+        let mut seite = Verlaufsseite::default();
+        while hoehe > 0 {
+            let ab = hoehe.saturating_sub(VERLAUF_BLOECKE_JE_SCHUB - 1).max(1);
+            let bloecke = self.bloecke_von_bis(ab, hoehe);
+            if bloecke.is_empty() {
+                return seite;
+            }
+            for b in bloecke.iter().rev() {
+                for tx in b.txs.iter().rev() {
+                    let ausgehend = tx.absender_adresse() == *adresse;
+                    let (art, gegen, betrag) = match &tx.anweisung {
+                        Anweisung::Burn { betrag } => ("burn", None, *betrag),
+                        Anweisung::Ueberweisung { nach, betrag } => ("ueberweisung", Some(*nach), *betrag),
+                        Anweisung::SitzungEroeffnen { .. } | Anweisung::SitzungWiderrufen { .. } | Anweisung::SitzungAusgeben { .. } => ("sitzung", None, 0),
+                        _ => ("anderes", None, 0),
+                    };
+                    let eingehend = !ausgehend && gegen == Some(*adresse);
+                    if ausgehend || eingehend {
+                        let gegen = if ausgehend { gegen } else { Some(tx.absender_adresse()) };
+                        seite.eintraege.push(Verlaufseintrag { hoehe: b.header.height, art, ausgehend, gegen, betrag });
+                    }
+                }
+            }
+            hoehe = ab - 1;
+            if hoehe > 0 && (seite.eintraege.len() >= VERLAUF_JE_SEITE || start.elapsed() >= frist) {
+                seite.weiter_bei = Some(hoehe);
+                return seite;
+            }
+        }
+        seite
     }
 
     /// Kontobeweise auf dem jetzigen Stand (Höhe dazu); nur ein voller Knoten.
@@ -5151,8 +5368,8 @@ impl Kette {
     /// (CONSENSUS 7.7a, 2026-11-05), wenn die Rückwege nicht so tief reichen:
     /// der jüngste eigene volle Abzug an oder unter `gabel`, dann die eigenen
     /// Blöcke bis `gabel` aus der Kettendatei nachgerechnet, wie beim
-    /// Wiederanlauf (Vorbild: Lighthouse und Teku, Zustände an
-    /// Wiederherstellungspunkten, dazwischen nachspielen). Was über `gabel`
+    /// Wiederanlauf (Zustände an Wiederherstellungspunkten, dazwischen
+    /// nachspielen). Was über `gabel`
     /// lag, fällt aus Datei und Ablagen, seine Transaktionen gehen in den
     /// Mempool zurück. Gibt die Zahl der verlassenen Blöcke zurück.
     ///
@@ -5372,11 +5589,11 @@ impl Kette {
     /// Anfang werden übersprungen)?
     ///
     /// 1. **Der höhere gerechtfertigte Prüfpunkt gewinnt**, dann **die
-    ///    grössere Höhe**; bei Gleichstand bleibt die Kette, wo sie ist (wie
-    ///    in Ouroboros Praos: ein Wechsel nur für einen echten Vorsprung).
+    ///    grössere Höhe**; bei Gleichstand bleibt die Kette, wo sie ist (ein
+    ///    Wechsel nur für einen echten Vorsprung).
     ///    Der gerechtfertigte Prüfpunkt geht vor, weil über ihn mehr als
     ///    zwei Drittel abgestimmt haben; ein längerer Zweig ohne ihn kann
-    ///    nie endgültig werden (Casper FFG, Gasper).
+    ///    nie endgültig werden.
     /// 2. ⛔️ **Nie unter [`Self::zweig_boden`]**, also nie unter den
     ///    endgültigen Prüfpunkt. Reichen die Rückwege nicht bis zum
     ///    Gabelpunkt, baut die Kette den Stand dort aus dem eigenen Abzug
@@ -5742,6 +5959,47 @@ mod tests {
     /// Probekette steht (G1); kleine Blöcke heben ihn nicht.
     fn gebuehr(tx: &Transaktion) -> u64 {
         crate::netz::PROBEKETTE.gebuehren.boden_je_byte * tx.gebuehreneinheiten()
+    }
+
+    /// ⚑ **Der Verlauf** trifft Absender und Empfänger, neueste zuerst, und
+    /// eine Seite setzt dort fort, wo die vorige endete.
+    #[test]
+    fn der_verlauf_nennt_ein_und_ausgang_und_blaettert() {
+        let mut k = Kette::probestand();
+        let von = probekonto(0);
+        let nach = probekonto(1);
+        let fern = probekonto(2);
+        for n in 0..3u64 {
+            k.aufnehmen(Transaktion::signiere(&Kette::startwert(), &probeschluessel(0), n, Anweisung::Ueberweisung { nach, betrag: 10 + n }).expect("signieren"));
+            k.baue_block();
+        }
+        k.aufnehmen(burn_nr(0, 5, 3));
+        k.baue_block();
+
+        let lang = std::time::Duration::from_secs(5);
+        let seite = k.verlauf_seite(&von, None, lang);
+        let arten: Vec<(&str, u64, bool)> = seite.eintraege.iter().map(|e| (e.art, e.betrag, e.ausgehend)).collect();
+        assert_eq!(arten, vec![("burn", 5, true), ("ueberweisung", 12, true), ("ueberweisung", 11, true), ("ueberweisung", 10, true)], "neueste zuerst");
+        assert_eq!(seite.eintraege[1].gegen, Some(nach));
+        assert_eq!(seite.weiter_bei, None, "alles auf einer Seite");
+
+        let empfaenger = k.verlauf_seite(&nach, None, lang);
+        assert_eq!(empfaenger.eintraege.len(), 3, "Eingänge");
+        assert!(empfaenger.eintraege.iter().all(|e| !e.ausgehend && e.gegen == Some(von)), "Gegenseite ist der Absender");
+        assert!(k.verlauf_seite(&fern, None, lang).eintraege.is_empty(), "Gegenprobe: unbeteiligt");
+
+        // Blättern: Ab einer Höhe nur noch, was darunter liegt.
+        let hoehe_zweite = seite.eintraege[2].hoehe;
+        let rest = k.verlauf_seite(&von, Some(hoehe_zweite), lang);
+        assert_eq!(rest.eintraege.first().map(|e| e.betrag), Some(11));
+        assert_eq!(rest.eintraege.len(), 2);
+
+        // Ohne Lesezeit endet die Seite nach dem ersten Schub mit einem Weiter.
+        for _ in 0..VERLAUF_BLOECKE_JE_SCHUB {
+            k.baue_block();
+        }
+        let knapp = k.verlauf_seite(&von, None, std::time::Duration::ZERO);
+        assert!(knapp.weiter_bei.is_some(), "die Frist muss greifen");
     }
 
     /// ⚑ **Die Gegenprobe zu Fund 85: Eine Anweisung ohne gültige
@@ -6411,6 +6669,143 @@ mod tests {
         }
         assert_eq!(c.zweig_folgen(&e.bloecke_von_bis(gabel + 1, gabel + 30)), Ok(Zweigwahl::Gewechselt { gabel, zurueck: 20, neu: 30 }));
         assert_eq!(c.wurzel(), e.wurzel());
+        std::fs::remove_dir_all(&d).ok();
+    }
+
+    /// ⛔️ **Ein gesetzter Anker laesst keinen Weg ab Genesis offen** (A43):
+    /// Fehlt sein Beleg noch, nimmt der Knoten nichts davor an, und er fragt
+    /// erst ab der Epoche des Ankers. Gegenprobe: ohne die Pruefung in
+    /// `folge` kommen die Belege davor durch.
+    #[test]
+    fn ein_gesetzter_anker_laesst_keinen_weg_ab_genesis_offen() {
+        use crate::wechsel::probe::{beleg, satz_mit};
+        use crate::wechsel::Folgefehler;
+        let w = Kette::satzregeln(Kette::probestand().zustand()).mindestgewicht.max(1);
+        let (a, b) = (satz_mit(1, w), satz_mit(11, w));
+        let aussen = crate::wechsel::als_stimmsatz(&satz_mit(100, w));
+        let davor = [beleg(1, &[100, 101, 102], None, Some(a.clone())), beleg(2, &[100, 101, 102], Some(a.clone()), Some(a.clone()))];
+        let anker = beleg(9, &[11, 12, 13], Some(b.clone()), Some(b.clone()));
+        let mut k = Kette::probestand();
+        k.stimmsatz_setzen(aussen);
+        k.anker_von_aussen_setzen(anker.zertifikat.hoehe, anker.zertifikat.block_hash, anker.zertifikat.bindung);
+        assert_eq!(k.wechselbelege_bis(), 9, "gefragt wird ab dem Anker");
+        assert_eq!(k.wechselbelege_aufnehmen(&davor), Err(Folgefehler::Unbekannt(9)));
+        assert_eq!(k.wechselbelege_bis(), 9, "nichts davon liegt");
+        assert!(k.anker_aus_zertifikat(&davor[1].abschluss).is_err(), "kein Anker aus einer Folge ab Genesis");
+        let alle: Vec<_> = davor.iter().cloned().chain([anker]).collect();
+        assert_eq!(k.wechselbelege_aufnehmen(&alle), Ok(1), "der Anker, was davor lag, zaehlt nicht");
+    }
+
+    /// ⚑ **Alte Belege fallen, die Folge beginnt beim aeltesten eigenen**
+    /// (A44), auch nach einem Neustart; der Beleg des Ankers bleibt.
+    /// Gegenprobe: ohne `belege_ab` beginnt die Folge bei Genesis und traegt
+    /// keinen jungen Beleg mehr.
+    #[test]
+    fn alte_belege_fallen_und_die_folge_beginnt_beim_aeltesten() {
+        use crate::wechsel::probe::{beleg, satz_mit};
+        let w = Kette::satzregeln(Kette::probestand().zustand()).mindestgewicht.max(1);
+        let a = satz_mit(1, w);
+        let aussen = crate::wechsel::als_stimmsatz(&satz_mit(100, w));
+        let d = std::env::temp_dir().join(format!("myelith-belege-{}-{}", std::process::id(), crate::protokoll::jetzt_ms()));
+        let ablage = crate::abzug::Ablage::neben(&d.join("k.log"), Kette::startwert());
+        std::fs::create_dir_all(ablage.ordner()).expect("Verzeichnis");
+        let datei = crate::wechsel::Belegablage::in_ordner(ablage.ordner());
+        let belege: Vec<_> = (3..=240).map(|e| beleg(e, &[1, 2, 3], Some(a.clone()), Some(a.clone()))).collect();
+        let mut k = Kette::probestand();
+        k.stimmsatz_setzen(aussen.clone());
+        k.belegablage = Some(datei.clone());
+        for b in &belege {
+            datei.anhaengen(b).expect("anhaengen");
+            k.wechselbelege.insert(b.epoche(), b.clone());
+        }
+        let anker = &belege[0];
+        k.anker_von_aussen_setzen(anker.zertifikat.hoehe, anker.zertifikat.block_hash, anker.zertifikat.bindung);
+        k.belege_kuerzen(240);
+        let grenze = 240 - crate::wechsel::WECHSELBELEGE_BEHALTEN;
+        let erwartet = 1 + (240 - grenze + 1) as usize;
+        assert_eq!(k.wechselbelege.len(), erwartet, "der Anker und die letzten");
+        assert_eq!(k.belege_ab, Some(grenze));
+        assert_eq!(datei.lesen().len(), erwartet, "die Ablage ist neu geschrieben");
+        assert!(k.wechselbelege.contains_key(&anker.epoche()), "der Beleg des Ankers bleibt");
+        let letzter = belege.last().expect("Beleg").clone();
+        // Neustart ohne Anker: Die Folge beginnt beim aeltesten eigenen.
+        let mut neu = Kette::probestand();
+        neu.stimmsatz_setzen(aussen);
+        neu.ablage_setzen(ablage);
+        assert_eq!(neu.belege_ab, Some(grenze), "gekuerzt schon beim Laden");
+        assert!(neu.anker_aus_zertifikat(&letzter.abschluss).is_ok(), "die Folge traegt ohne die alten Belege");
+        std::fs::remove_dir_all(&d).ok();
+    }
+
+    /// ⚑ **Der Anker von aussen** (CONSENSUS 7.4a, 2026-11-07): Nach einer
+    /// Ruhe mit Ausschluss traegt der Beleg danach weder gewoehnlich noch
+    /// ueber die Bruecke (ein neuer Satz, den der alte nicht mit zwei
+    /// Dritteln traegt). Ein zustandsloser Knoten nimmt ihn dann nur, wenn
+    /// er der Anker von aussen ist; danach geht es gewoehnlich weiter, auch
+    /// nach einem Neustart. ⛔️ Gegenprobe: ohne Anker, und mit einem Anker,
+    /// der auf einen anderen Block zeigt, nicht.
+    #[test]
+    fn ein_anker_von_aussen_traegt_ueber_die_ruhe() {
+        use crate::wechsel::probe::{beleg, satz_mit};
+        let d = std::env::temp_dir().join(format!("myelith-anker-{}-{}", std::process::id(), crate::protokoll::jetzt_ms()));
+        std::fs::create_dir_all(&d).expect("Verzeichnis");
+        let p = d.join("k.log");
+        let w = Kette::satzregeln(Kette::probestand().zustand()).mindestgewicht.max(1);
+        let (a, b) = (satz_mit(1, w), satz_mit(11, w));
+        let aussen = crate::wechsel::als_stimmsatz(&satz_mit(100, w));
+        let vorher = [
+            beleg(1, &[100, 101, 102], None, Some(a.clone())),
+            beleg(2, &[100, 101, 102], Some(a.clone()), Some(a.clone())),
+            beleg(3, &[1, 2, 3], Some(a.clone()), Some(a.clone())),
+        ];
+        let nach_der_ruhe = beleg(9, &[11, 12, 13], Some(b.clone()), Some(b.clone()));
+        let danach = beleg(10, &[11, 12, 14], Some(b.clone()), Some(b.clone()));
+        let alle: Vec<_> = vorher.iter().cloned().chain([nach_der_ruhe.clone(), danach.clone()]).collect();
+        // ⛔️ Ohne Anker: bis zur Ruhe, dann nicht weiter.
+        let mut ohne = Kette::probestand();
+        ohne.stimmsatz_setzen(aussen.clone());
+        assert_eq!(ohne.wechselbelege_aufnehmen(&alle), Err(crate::wechsel::Folgefehler::Unbekannt(9)));
+        assert_eq!(ohne.wechselbelege_bis(), 4);
+        // ⛔️ Ein Beleg mit dem Block des Ankers, aber eigener Bindung und
+        //   eigenen Saetzen (die Unterschriften prueft beim Anker niemand),
+        //   traegt nicht: Der Anker nennt auch die Bindung.
+        let mut gefaelscht = nach_der_ruhe.clone();
+        gefaelscht.naechster = Some(satz_mit(50, w));
+        gefaelscht.uebernaechster = Some(satz_mit(50, w));
+        gefaelscht.zertifikat.bindung = myl_ledger::stimmsatz::bindung_aus(gefaelscht.naechster.as_ref(), gefaelscht.uebernaechster.as_ref());
+        let mut betrogen = Kette::probestand();
+        betrogen.stimmsatz_setzen(aussen.clone());
+        betrogen.anker_von_aussen_setzen(nach_der_ruhe.zertifikat.hoehe, nach_der_ruhe.zertifikat.block_hash, nach_der_ruhe.zertifikat.bindung);
+        let mit_faelschung: Vec<_> = vorher.iter().cloned().chain([gefaelscht]).collect();
+        assert_eq!(betrogen.wechselbelege_aufnehmen(&mit_faelschung), Err(crate::wechsel::Folgefehler::Unbekannt(9)));
+        assert_eq!(betrogen.wechselbelege_bis(), 9, "die Fälschung liegt nicht, gefragt wird weiter ab dem Anker");
+        // ⛔️ Ein Anker auf einen anderen Block hilft nicht.
+        let mut fremd = Kette::probestand();
+        fremd.stimmsatz_setzen(aussen.clone());
+        fremd.anker_von_aussen_setzen(nach_der_ruhe.zertifikat.hoehe, Hash::sha256(b"anderer Block"), nach_der_ruhe.zertifikat.bindung);
+        assert_eq!(fremd.wechselbelege_aufnehmen(&alle), Err(crate::wechsel::Folgefehler::Unbekannt(9)));
+        // Mit dem Anker: der Beleg nach der Ruhe und der danach.
+        let mut k = Kette::probestand();
+        k.ablage_setzen(crate::abzug::Ablage::neben(&p, Kette::startwert()));
+        k.stimmsatz_setzen(aussen.clone());
+        k.anker_von_aussen_setzen(nach_der_ruhe.zertifikat.hoehe, nach_der_ruhe.zertifikat.block_hash, nach_der_ruhe.zertifikat.bindung);
+        assert_eq!(k.wechselbelege_aufnehmen(&alle), Ok(2), "der Anker und der Beleg danach");
+        assert_eq!(k.wechselbelege_bis(), 11);
+        assert_eq!(k.juengster_wechselbeleg(), Some((10, danach.zertifikat.hoehe, danach.zertifikat.block_hash, danach.zertifikat.bindung)));
+        let spaeter = beleg(12, &[11, 12, 13], None, None);
+        assert!(k.anker_aus_zertifikat(&spaeter.abschluss).is_ok(), "ein Anker aus einem Zertifikat danach");
+        assert_eq!(
+            k.anker_aus_zertifikat(&nach_der_ruhe.abschluss).map(|a| a.hoehe),
+            Ok(nach_der_ruhe.zertifikat.hoehe),
+            "gleich nach der Ruhe: der Abschluss des Ankers selbst"
+        );
+        // Nach einem Neustart beginnt die Folge wieder beim Anker.
+        let mut neu = Kette::probestand();
+        neu.ablage_setzen(crate::abzug::Ablage::neben(&p, Kette::startwert()));
+        neu.stimmsatz_setzen(aussen);
+        neu.anker_von_aussen_setzen(nach_der_ruhe.zertifikat.hoehe, nach_der_ruhe.zertifikat.block_hash, nach_der_ruhe.zertifikat.bindung);
+        assert!(neu.anker_aus_zertifikat(&spaeter.abschluss).is_ok());
+        assert_eq!(neu.wechselbelege_aufnehmen(&[danach]), Ok(0), "schon bekannt");
         std::fs::remove_dir_all(&d).ok();
     }
 
@@ -7421,6 +7816,125 @@ mod tests {
             auf_treasury,
             "es wuchs mehr als der Treasury-Anteil"
         );
+    }
+
+    /// ⚑ **W4: Der Burn-Deckel je Adresse wirkt, aber erst ab dem
+    /// Mindestvolumen.** Über ihm scheitert der Burn, die nächste Epoche
+    /// beginnt neu, und ohne Subvention gilt er nicht.
+    #[test]
+    fn der_burn_deckel_gilt_je_adresse_und_epoche() {
+        use myl_tokenomics::{burn_im_deckel, burn_spielraum, BURN_DECKEL_AB};
+        let a = Address::new([7; 32]);
+        let mut z = LedgerState::genesis(PROBE_CREDIT_PREIS);
+        z.account_mut(&a).balance = 1_000 * BURN_DECKEL_AB;
+
+        // Unter dem Mindestvolumen kein Deckel.
+        assert!(burn_im_deckel(&z, &a, 900 * BURN_DECKEL_AB, true));
+
+        z.burn_ema = 20 * BURN_DECKEL_AB;
+        let deckel = burn_spielraum(z.burn_ema, 0);
+        assert_eq!(deckel, BURN_DECKEL_AB);
+        assert!(burn_im_deckel(&z, &a, deckel, true), "genau der Deckel geht");
+        assert!(!burn_im_deckel(&z, &a, deckel + 1, true), "Gegenprobe: einer darüber nicht");
+        assert!(burn_im_deckel(&z, &a, deckel + 1, false), "ohne Subvention kein Deckel");
+
+        myl_ledger::transitions::burn_vermerken(&mut z, &a, deckel);
+        assert!(!burn_im_deckel(&z, &a, 1, true), "die Epoche ist ausgeschöpft");
+        assert!(burn_im_deckel(&z, &Address::new([8; 32]), deckel, true), "eine andere Adresse hat ihren eigenen");
+        z.epoch = EpochId(1);
+        assert!(burn_im_deckel(&z, &a, deckel, true), "die nächste Epoche beginnt neu");
+    }
+
+    /// ⚑ **W4 in der Kette**: Ein Burn über dem Deckel verbrennt nichts,
+    /// und beide Seiten rechnen dasselbe (der Deckel steht in `anwenden`).
+    #[test]
+    fn ein_burn_ueber_dem_deckel_verbrennt_nichts() {
+        use myl_tokenomics::BURN_DECKEL_AB;
+        let mut k = Kette::probestand();
+        k.zustand.burn_ema = 20 * BURN_DECKEL_AB;
+        // Sonst scheiterte der Burn schon an der Deckung und bewiese nichts.
+        k.zustand.account_mut(&probekonto(0)).balance = 10 * BURN_DECKEL_AB;
+        k.aufnehmen(burn_nr(0, BURN_DECKEL_AB + 1, 0));
+        k.baue_block();
+        assert_eq!(k.zustand().burn_epoche, 0, "über dem Deckel darf nichts verbrannt sein");
+        // Gegenprobe: Genau der Deckel geht, und danach nichts mehr.
+        k.aufnehmen(burn_nr(0, BURN_DECKEL_AB, 1));
+        k.baue_block();
+        assert_eq!(k.zustand().burn_epoche, BURN_DECKEL_AB, "der Deckel selbst muss gehen");
+        k.aufnehmen(burn_nr(0, 1, 2));
+        k.baue_block();
+        assert_eq!(k.zustand().burn_epoche, BURN_DECKEL_AB, "die Epoche ist ausgeschöpft");
+    }
+
+    /// ⚑ **Der Preis sieht die Nachfrage über die Epochengrenze**: Wer
+    /// Credits weit über der Kapazität kauft, hebt ihn; dieselbe Kette ohne
+    /// die Käufe senkt ihn.
+    #[test]
+    fn die_gekauften_credits_heben_den_preis() {
+        use myl_types::miner::HardwareClass;
+        use myl_types::node_metadata::GeoRegion;
+        let lauf = |kaufen: bool| {
+            let mut k = Kette::probestand();
+            for w in 0..12u8 {
+                k.aufnehmen(
+                    Transaktion::signiere(
+                        &Kette::startwert(),
+                        &probeschluessel(w),
+                        0,
+                        Anweisung::MinerAnmelden {
+                            hardware: HardwareClass::MediumGpu,
+                            zone: GeoRegion::Europe,
+                            netzadresse: myl_types::latency_attest::PeerIdBytes([0; 32]),
+                        },
+                    )
+                    .expect("signieren"),
+                );
+                k.aufnehmen(probezusage(w, EpochId(1), 1));
+            }
+            k.baue_block();
+            while k.zustand().epoch.0 < 3 {
+                k.baue_block();
+            }
+            let kapazitaet = Kette::trainingsplan_der_laufenden_epoche(k.zustand()).kapazitaet;
+            assert!(kapazitaet > 0, "kein Pod, die Probe waere leer");
+            if kaufen {
+                let menge = kapazitaet.saturating_mul(k.zustand().credit_price);
+                k.zustand.account_mut(&probekonto(0)).balance = menge.saturating_mul(2);
+                k.aufnehmen(burn_nr(0, menge, 2));
+            }
+            k.baue_block();
+            let vor = k.zustand().credit_preis_fein;
+            while k.zustand().epoch.0 < 4 {
+                k.baue_block();
+            }
+            (vor, k.zustand().credit_preis_fein)
+        };
+        let (vor, mit) = lauf(true);
+        assert!(mit > vor, "volle Nachfrage muss den Preis heben: {vor} zu {mit}");
+        let (vor, ohne) = lauf(false);
+        assert!(ohne < vor, "Gegenprobe: ohne Käufe faellt er: {vor} zu {ohne}");
+    }
+
+    /// ⚑ **Whitepaper 5.4: Der Preis sieht die Nachfrage**, auch die, die
+    /// keinen Platz fand, und springt je Epoche nur begrenzt.
+    #[test]
+    fn der_preis_folgt_der_nachfrage_mit_deckel() {
+        let skala = myl_types::auslastung::AUSLASTUNG_SKALA;
+        let halb = skala / 2;
+        assert_eq!(preis_auslastung(halb, 0, 1_000), halb, "ohne Käufe die bestätigte Arbeit");
+        assert_eq!(preis_auslastung(halb, 900, 1_000), 900 * skala / 1_000, "Käufe über der Arbeit zählen");
+        assert_eq!(preis_auslastung(halb, 100, 1_000), halb, "Gegenprobe: Käufe darunter nicht");
+        assert_eq!(preis_auslastung(0, 1_500, 1_000), skala + halb, "Übernachfrage über 1");
+        assert_eq!(preis_auslastung(0, u64::MAX, 3_600_000_000), CREDIT_PREIS_AUSLASTUNG_HOECHSTENS, "der Sprung ist begrenzt");
+        assert_eq!(preis_auslastung(halb, 900, 0), halb, "ohne Kapazität nur die bestätigte Arbeit");
+    }
+
+    /// Die Kette prägt in der Anlaufphase über dem geglätteten Burn.
+    #[test]
+    fn in_der_anlaufphase_wird_mehr_gepraegt_als_verbrannt() {
+        assert_eq!(Kette::praegeparameter(0).subsidy_num, Kette::praegeparameter(0).subsidy_den, "s = 1 zum Start");
+        assert_eq!(myl_tokenomics::mint_amount(1_000, &Kette::praegeparameter(0)), 2_000);
+        assert_eq!(myl_tokenomics::mint_amount(1_000, &Kette::praegeparameter(17_520)), 1_000, "danach neutral");
     }
 
     /// Innerhalb einer Epoche wird nicht abgeschlossen.
@@ -8567,7 +9081,7 @@ mod tests {
         let mit = k.baue_block();
         assert_eq!(mit.header.pruefpunkt.as_ref(), Some(&z), "der Erzeuger legte das Zertifikat nicht in den Block");
         folger.uebernimm(&mit).expect("ein Block mit tragendem Zertifikat");
-        // ⚑ Seit 2026-11-04 (Casper FFG) gerechtfertigt, noch nicht
+        // ⚑ Seit 2026-11-04 gerechtfertigt, noch nicht
         //   endgültig; das macht erst das Zertifikat von 300 mit 150 als
         //   Quelle.
         assert_eq!((k.gerechtfertigt_bis(), folger.gerechtfertigt_bis()), (150, 150));
@@ -8670,6 +9184,11 @@ mod tests {
         // Fund 634: die Schranke der Höhe ab dem endgültigen Block.
         let s150 = folger.bloecke_von_bis(150, 150)[0].header.slot;
         assert_eq!(folger.hoehen_schranke(s150 + 10), 160);
+        // ⚑ Die Vertrauensfrist misst dieselbe Schranke, ohne fremde Angabe (A46).
+        let e = BLOECKE_JE_EPOCHE;
+        assert!(folger.vertrauen_traegt_jetzt(s150 + 112 * e), "112 Epochen tragen");
+        assert!(!folger.vertrauen_traegt_jetzt(s150 + 113 * e), "eine zu viel");
+        assert!(Kette::probestand().vertrauen_traegt_jetzt(u64::MAX), "ohne endgültigen Prüfpunkt nichts zu prüfen");
         assert_eq!(Kette::probestand().hoehen_schranke(u64::MAX), u64::MAX, "ohne Endgültigkeit keine");
         assert_eq!(folger.zurueckrollen_bis(149), Err(150), "nie unter den endgültigen");
         assert_eq!(folger.hoehe(), 305, "nichts geändert");

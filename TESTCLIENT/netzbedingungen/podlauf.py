@@ -642,7 +642,7 @@ def lauf(args: argparse.Namespace, ordner: pathlib.Path) -> None:
         # ⚑ Der Stimmsatz aus den Zeilen der Validatoren, wie ein Betreiber
         #   sie mit `--stimmsatzzeile` erzeugt; jeder Knoten liest dieselbe
         #   Datei, Nichtmitglieder hoeren zu.
-        zeilen_satz = ["netz probe"]
+        zeilen_satz = ["netz probe", f"start {int(time.time() * 1000)}"]
         for k in [erzeuger] + [m for m in miner if rolle[m.name][0] in VALIDATOREN]:
             k.ordner.mkdir(parents=True, exist_ok=True)
             r = subprocess.run([str(args.programm), "--name", k.name, "--stimmsatzzeile", str(STAKE),
@@ -667,6 +667,7 @@ def lauf(args: argparse.Namespace, ordner: pathlib.Path) -> None:
              "--ortsleitung", ORT, "--ausweis", str(erzeuger.ordner / "ort"), "--pod", POD_HEX,
              "--knotenschluessel", str(schluessel), "--pipeline", PIPELINE_HEX, "--epoche", "0", "--deckel", "16",
              "--podrelais", RELAIS, "--podrelaisausweis", str(erzeuger.ordner / "relais.ausweis")],
+            env=dict(os.environ, **({"MYL_ABLAGE_STUECK": "2048"} if args.ablage_stuecke else {})),
             stdout=open(erzeuger.ordner / "ortsdienst.txt", "a"), stderr=subprocess.STDOUT)
         warte(lambda: "Shard-Dienst auf" in (erzeuger.ordner / "ortsdienst.txt").read_text(errors="replace"),
               60, "der Ortsdienst oeffnet", alle)
@@ -780,7 +781,10 @@ def lauf(args: argparse.Namespace, ordner: pathlib.Path) -> None:
         def eine(i: int) -> tuple[bool, float]:
             beginn = time.monotonic()
             a = myl("frage", "--tuer", TUER, "--agent", f"paar{i}", "--token", "4", "Hallo")
-            return a.returncode == 0 and bool(a.stdout.strip()), time.monotonic() - beginn
+            ok = a.returncode == 0 and bool(a.stdout.strip())
+            if not ok:
+                melde(f"Paare: Sitzung paar{i} ohne Antwort (Rueckgabe {a.returncode}): {a.stderr.strip()[-300:]}")
+            return ok, time.monotonic() - beginn
         beginn = time.monotonic()
         with concurrent.futures.ThreadPoolExecutor(PAARSITZUNGEN) as ex:
             ergebnisse = list(ex.map(eine, range(PAARSITZUNGEN)))
@@ -1281,6 +1285,16 @@ def lauf(args: argparse.Namespace, ordner: pathlib.Path) -> None:
                 j.ziel_eintragen(k)
                 k.ziel_eintragen(j)
         extra = ["--zustandslos"] + (["--stimmsatz", str(ordner / "stimmsatz.txt")] if args.real else [])
+        # ⚑ Mit `--einsteiger-mit-anker` (A43): der Weg eines Einsteigers in
+        #   ein altes Netz, der Anker aus der Zeile `wechselbeleg` des Erzeugers.
+        anker = ""
+        if args.einsteiger_mit_anker:
+            def anker_da() -> bool:
+                return bool(zeilen(erzeuger, "wechselbeleg"))
+            warte(anker_da, 1800, "ein Wechselbeleg beim Erzeuger", alle)
+            anker = str(zeilen(erzeuger, "wechselbeleg")[-1]["anker"])
+            extra += ["--anker", anker]
+            melde(f"Anker von aussen fuer {k.name}: {anker[:24]}...")
         k.starten(args.programm, einstieg, False, slot, extra)
         k.warte_auf_peer_id(30)
         alle.append(k)
@@ -1311,6 +1325,12 @@ def lauf(args: argparse.Namespace, ordner: pathlib.Path) -> None:
         bericht.append(zeile)
         if args.real and not leicht:
             befunde.append(f"zustandsloser Einsteiger {k.name}: kein leichter Abzug, obwohl ein Stimmsatz gilt")
+        if anker:
+            anker_epoche = int(anker.split(":")[0]) // EPOCHE
+            frueher = [z for z in zeilen(k, "wechselbelege_angefragt") if int(z.get("ab", 0)) < anker_epoche]
+            if frueher:
+                befunde.append(f"zustandsloser Einsteiger {k.name}: fragte Belege vor dem Anker ab Epoche {frueher[0].get('ab')}")
+            bericht.append(f"Einsteiger {k.name} mit Anker in Epoche {anker_epoche}: Belege vor dem Anker nicht gefragt ({len(frueher)})")
         if args.einsteiger_ab and leicht and not belege:
             befunde.append(f"zustandsloser Einsteiger {k.name}: Anker in Epoche {int(leicht[0].get('hoehe', 0)) // EPOCHE} "
                            "ohne Wechselbelege")
@@ -1391,20 +1411,52 @@ def lauf(args: argparse.Namespace, ordner: pathlib.Path) -> None:
                  f"zurueck nach {dauer:.0f} s in Epoche {e1} ({e1 - e0} Epochen)")
         melde(zeile)
         bericht.append(zeile)
-        for k in still:
-            k.starten(*k.angaben)
-            k.warte_auf_peer_id(30)
         voll = [k for k in still if rolle[k.name][0] != ZUSTANDSLOSER_MINER]
-        warte(lambda: all(holt_auf(k) for k in voll), 900, "die Stillen holen auf", alle)
-        # ⚠️ Der zustandslose Stille braucht nach einer Ruhe mit Ausschluss
-        #   einen Anker von aussen (2026-11-07); bis dahin ein Befund, kein
-        #   Abbruch, damit der Rest des Laufs ausgewertet wird.
         ohne = [k for k in still if k not in voll]
+        # ⚑ **Der Anker von aussen** (CONSENSUS 7.4a, 2026-11-07): Ueber eine
+        #   Ruhe mit Ausschluss traegt kein Wechselbeleg; der zustandslose
+        #   Stille kommt nur mit einem Anker hinein, den ein Betreiber nennt.
+        #   Der Pruefstand nimmt ihn aus der Zeile `wechselbeleg` eines vollen
+        #   Knotens, aus einer Epoche nach der Rueckkehr der Finalitaet.
+        anker: list[str] = []
+        def anker_da() -> bool:
+            neu = [z for z in zeilen(zeuge, "wechselbeleg") if int(z.get("epoche", -1)) >= e1]
+            if neu:
+                anker[:] = [str(neu[-1]["anker"])]
+            return bool(neu)
+        if ohne:
+            warte(anker_da, 900, "ein Wechselbeleg nach der Ruhe als Anker von aussen", lebend)
+            zeile = f"Anker von aussen fuer {', '.join(k.name for k in ohne)}: {anker[0][:24]}..."
+            melde(zeile)
+            bericht.append(zeile)
+        # 📌 Gezaehlt wird der Weg, nicht nur das Ziel (`kurz-anker`,
+        #   2026-11-07): Ab Genesis kommt ein zustandsloser Knoten ohne
+        #   Laststufe auch an die Spitze; erst ein uebernommener Abzug nach
+        #   dem Neustart zeigt, dass der Anker trug.
+        abzuege_vorher = {k.name: len(zeilen(k, "abzug_uebernommen")) for k in ohne}
+        for k in still:
+            programm, bootstrap, erzeuger_, takt, zusatz = k.angaben
+            if k in ohne:
+                zusatz = [*(zusatz or []), "--anker", anker[0]]
+            k.starten(programm, bootstrap, erzeuger_, takt, zusatz)
+            k.warte_auf_peer_id(30)
+        warte(lambda: all(holt_auf(k) for k in voll), 900, "die Stillen holen auf", alle)
         if ohne:
             try:
-                warte(lambda: all(holt_auf(k) for k in ohne), 300, "der zustandslose Stille holt auf", alle)
+                dauer = warte(lambda: all(holt_auf(k) for k in ohne), 300, "der zustandslose Stille holt mit dem Anker auf", alle)
+                zeile = f"Der zustandslose Stille mit dem Anker an der Spitze nach {dauer:.0f} s"
+                melde(zeile)
+                bericht.append(zeile)
+                for k in ohne:
+                    neu = zeilen(k, "abzug_uebernommen")[abzuege_vorher[k.name]:]
+                    if neu:
+                        zeile = f"{k.name} nahm nach dem Neustart einen Abzug bei Hoehe {neu[0].get('hoehe')}"
+                        melde(zeile)
+                        bericht.append(zeile)
+                    else:
+                        befunde.append(f"{k.name} kam nicht ueber den Anker hinein (kein Abzug nach dem Neustart, also ab Genesis)")
             except Befund as b:
-                befunde.append(f"{b} (erwartet ohne Anker von aussen: kein Wechselbeleg traegt ueber die Ruhe)")
+                befunde.append(str(b))
         # ⚑ 7.9 (2026-11-05): Wer ruht, meldet sich selbst neu an; die Kette
         #   laesst ihn nach der Wartezeit wieder in den Satz.
         def neu_angemeldet() -> int:
@@ -1906,6 +1958,13 @@ def lauf(args: argparse.Namespace, ordner: pathlib.Path) -> None:
     bericht.append(zeile)
     if zaehlung["spuranfrage_eingegangen"] and geprueft.get("traegt", 0) == 0:
         befunde.append(f"keine gelieferte Spur trug: {zeile}")
+    if args.ablage_stuecke:
+        netz = sum(1 for k in miner for z in zeilen(k, "spurablage_aus_stuecken") if z.get("aus_dem_netz"))
+        zeile = f"Ablage in Stuecken: {netz} Ablagen ueber das Netz zusammengesetzt"
+        melde(zeile)
+        bericht.append(zeile)
+        if not netz:
+            befunde.append("--ablage-stuecke: keine Ablage kam in Stuecken ueber das Netz")
     falsch = {e: n for e, n in geprueft.items() if e not in ("traegt", "ohne Wurzel")}
     if falsch:
         befunde.append(f"gelieferte Spuren trugen nicht: {falsch}")
@@ -2208,6 +2267,8 @@ def main() -> int:
                    help=f"nur diese Phasen, mit Komma ({','.join(PHASEN)}); ohne Angabe alle. Fuer kurze, gezielte Laeufe")
     p.add_argument("--paare", action="store_true",
                    help="fuenfzehn Miner mehr, also vier Pods und zwei Zwillingspaare; sechs Sitzungen fragen zugleich (W7)")
+    p.add_argument("--ablage-stuecke", action="store_true",
+                   help="legt jede Spurablage in Stuecken von 2 KiB ab, damit der Weg ueber das Netz laeuft")
     p.add_argument("--faelscher", action="store_true",
                    help=f"{FAELSCHER} rechnet falsch, aber stimmig (Shard mit dem Merkmal faelscher, braucht --zwillinge)")
     p.add_argument("--kollusion", action="store_true",
@@ -2226,6 +2287,8 @@ def main() -> int:
                    help="mit --real: Last, Trennung und Einsteiger erst ab dieser Hoehe (etwa 5600: alle Miner erzeugen)")
     p.add_argument("--einsteiger-ab", type=int,
                    help="mit --kurz --zustandslos: der zustandslose Einsteiger erst ab dieser Hoehe (Wechselbelege)")
+    p.add_argument("--einsteiger-mit-anker", action="store_true",
+                   help="der zustandslose Einsteiger bekommt --anker aus einem Wechselbeleg des Erzeugers")
     p.add_argument("--falscher-austeiler", action="store_true",
                    help=f"{FALSCHER_AUSTEILER} teilt bei der Saat falsch aus (Knoten mit dem Merkmal falscher_austeiler)")
     p.add_argument("--baum-auf-platte", action="store_true",

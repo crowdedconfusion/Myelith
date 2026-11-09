@@ -1075,8 +1075,7 @@ certificate** (*proof of lock change*): a collection of votes
 demonstrating the quorum.
 
 Without locking, a network with rotating leaders could finalise two
-different blocks in different rounds — a safety break. The mechanism
-comes from Tendermint.
+different blocks in different rounds: a safety break.
 
 **Hardening:** a polka certificate's voter list must be sorted **strictly
 ascending**. Otherwise an attacker could enter the same validator
@@ -1101,11 +1100,6 @@ message from a foreign round, precisely the ones proving that it is the
 one out of step. Without a proof that holds outside the rounds it would
 never come back. The usual rule, jumping to a **higher** round, does not
 help it: it is ahead, not behind.
-
-The same idea appears elsewhere under other names: in Tendermint the
-committed block carries its commit signatures and is adopted through
-block sync, in QBFT the commit seals sit in the block header, in HotStuff
-the proof is called a quorum certificate.
 
 **Hardening:** the same strict ordering of signers as for the polka
 certificate, plus a distinct prefix in the signing message. Without it a
@@ -1810,7 +1804,7 @@ P_{e+1} = P_e · exp( κ · (u_e − u*) )
 with utilisation `u_e`, utilisation target `u* = 0.8` and damping constant
 κ. Under overload the price rises → demand falls, mining becomes more
 attractive → capacity grows. Price signals instead of central capacity
-management (analogous to EIP-1559).
+management.
 
 **The exp function is integer here too** — for the same reason as in the
 model: consensus determinism. The support points are **frozen** and shipped

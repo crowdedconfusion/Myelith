@@ -43,6 +43,13 @@ use crate::validation::{self, AcceptAllValidator, Ablehnungsgrund, PayloadValida
 /// Kommando an einen laufenden Node.
 #[derive(Debug)]
 pub enum NodeCommand {
+    /// ⚑ **Das Urteil über eine gehaltene Nachricht** (Sicherheitsaudit
+    /// A47): Blöcke und Transaktionen gehen erst weiter, wenn der Knoten sie
+    /// geprüft hat. Siehe [`crate::validation::urteil_folgt_spaeter`].
+    Urteil {
+        marke: Pruefmarke,
+        urteil: Urteil,
+    },
     /// Roh-Nachricht (Borsh-Bytes) auf einem Topic publizieren. Über
     /// `result` wird zurückgemeldet, ob Gossipsub die Nachricht
     /// angenommen hat (`true`) — `false` heißt z. B. „noch kein Mesh".
@@ -174,6 +181,25 @@ pub struct Netzzustand {
     pub offene_anfragen: usize,
 }
 
+/// Worauf sich das Urteil über eine gehaltene Nachricht bezieht.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Pruefmarke {
+    pub id: gossipsub::MessageId,
+    pub von: libp2p::PeerId,
+}
+
+/// Was mit einer gehaltenen Nachricht geschieht.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Urteil {
+    /// Geprüft, weiterreichen.
+    Annehmen,
+    /// Nicht weiterreichen, ohne Strafe: Der Knoten kann es nicht beurteilen
+    /// oder hatte keinen Platz.
+    Ignorieren,
+    /// Nachweislich falsch: nicht weiterreichen und die Gegenstelle bewerten.
+    Verwerfen,
+}
+
 /// Eine validierte, eingehende Gossip-Nachricht.
 #[derive(Debug, Clone)]
 pub struct InboundMessage {
@@ -193,6 +219,9 @@ pub struct InboundMessage {
     /// ist der, von dem der Hinweis kam. Ohne dieses Feld war eine
     /// Nachforderung nicht adressierbar.
     pub von: libp2p::PeerId,
+    /// ⚑ Gesetzt, wenn die Nachricht gehalten wird, bis der Knoten mit
+    /// [`NodeCommand::Urteil`] entschieden hat.
+    pub pruefmarke: Option<Pruefmarke>,
 }
 
 /// Ereignisse eines laufenden Nodes.
@@ -483,6 +512,14 @@ pub async fn run_node_mit(
                         let id = swarm.behaviour_mut().anfrage.send_request(&an, daten);
                         zweck_je_anfrage.insert(id, zweck);
                     }
+                    NodeCommand::Urteil { marke, urteil } => {
+                        let wirkung = match urteil {
+                            Urteil::Annehmen => gossipsub::MessageAcceptance::Accept,
+                            Urteil::Ignorieren => gossipsub::MessageAcceptance::Ignore,
+                            Urteil::Verwerfen => gossipsub::MessageAcceptance::Reject,
+                        };
+                        let _ = swarm.behaviour_mut().gossipsub.report_message_validation_result(&marke.id, &marke.von, wirkung);
+                    }
                     NodeCommand::Antwort { marke, daten } => {
                         if let Some(kanal) = offene_anfragen.remove(&marke) {
                             let _ = swarm
@@ -656,20 +693,27 @@ pub async fn run_node_mit(
                             &message.data,
                             validator.as_ref(),
                         );
-                        let _ = validation::report_with(
-                            &mut swarm,
-                            &message_id,
-                            &propagation_source,
-                            &message.topic,
-                            &message.data,
-                            validator.as_ref(),
-                        );
+                        // ⚑ Gehalten, wenn der Knoten noch prüft (A47);
+                        //   sonst wie bisher sofort entschieden.
+                        let gehalten = urteil.is_ok() && validation::urteil_folgt_spaeter(&message.topic);
+                        if !gehalten {
+                            let _ = validation::report_with(
+                                &mut swarm,
+                                &message_id,
+                                &propagation_source,
+                                &message.topic,
+                                &message.data,
+                                validator.as_ref(),
+                            );
+                        }
+                        let pruefmarke = gehalten.then(|| Pruefmarke { id: message_id.clone(), von: propagation_source });
                         match urteil {
                             Ok(topic) => {
                                 let _ = events.send(NodeEvent::Message(InboundMessage {
                                     topic,
                                     data: message.data,
                                     von: propagation_source,
+                                    pruefmarke,
                                 }));
                             }
                             Err(grund) => {

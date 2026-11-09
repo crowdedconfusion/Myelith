@@ -1,7 +1,7 @@
 # tokenomics (`myl-tokenomics`)
 
-> **Version:** 0.26.0
-> **Datum:** 2026-11-03
+> **Version:** 0.27.0
+> **Datum:** 2026-11-08
 > **Status:** Design-Entscheidungen getroffen (Fixed-Point bestätigt,
 > vTFE-Skalierung 10⁻⁶, MYL-Kleinstbeträge 10⁶, EMA-Fenster 30 Epochen
 > α=2/31); 🎉 **Phasen 1 bis 5 abgeschlossen** (Auslastungsboden und
@@ -98,9 +98,25 @@ verletzt keine Obergrenze.
 
 ## Changelog
 
+### v0.27.0 (2026-11-08): Anlaufplan und Burn-Deckel in der Kette
+
+- ⚑ **`ANLAUFPLAN`, `anlaufrate`:** Die Subventionsrate läuft als Plan: ein
+  Vierteljahr `s = 1`, bis zum halben Jahr `3/4`, bis zum ersten Jahr `1/2`, im
+  zweiten `1/4`, danach null. Die Zahlen sind ein Vorschlag. Auf einer
+  halbierenden Basisreihe entfallen damit 61 statt 51 Prozent auf das erste
+  Jahr, wie von der Festlegung vom 2026-08-25 gewollt.
+- ⚑ **`burn_im_deckel`** (Whitepaper 5.6): ein Zwanzigstel des geglätteten
+  Burns je Adresse und Epoche, nur in der Subventionsphase und erst ab
+  `BURN_DECKEL_AB`. ⚠️ Auf mehrere Adressen verteilbar; die Sicherheit bleibt
+  die Arbeitsbindung der Prägung.
+
+### v0.26.1 (2026-11-08): Kommentare
+
+- Kommentare und Changelog nennen keine fremden Projekte mehr. Kein Code.
+
 ### v0.26.0 (2026-11-03): Die Korrelationsstrafe
 
-- ⛔️ **`korrelation_buchen`** (Vorbild Ethereum, Faktor 3 seit Bellatrix):
+- ⛔️ **`korrelation_buchen`** (Faktor 3):
   Jeder Schuldige einer Doppelsignatur in der Sperrfrist verliert insgesamt
   `masse · min(1, 3 · Σ masse / Gesamtgewicht)`, mindestens aber den
   gestaffelten Grundsatz; jede neue Buchung wirkt auf die früheren zurück.
@@ -109,7 +125,7 @@ verletzt keine Obergrenze.
   Drittel nach dem Kopfgeld an eine eigene zweite Identität nur 21 %.
 - ⚑ **Das Kopfgeld bleibt** (Anhang B.3, b = 30 %), aber nur auf dem
   Grundsatz; der Zuschlag wird ganz verbrannt. Geprüft und verworfen: ein
-  Kopfgeld von 1/512 nach Ethereum. Es wäre vom Papier abgewichen und hätte
+  Kopfgeld von 1/512. Es wäre vom Papier abgewichen und hätte
   mit dem verbrannten Zuschlag nichts mehr geschlossen.
 - ⚑ **Bleibt in Kap. 5.5:** Die Spanne „30 bis 100 %“ für Validatoren ist
   unverändert; die Strafe wächst in ihr mit dem gleichzeitig geschlachteten
@@ -122,15 +138,14 @@ verletzt keine Obergrenze.
 
 ### v0.25.0 (2026-10-30): Die Ausschüttung vorgemerkt
 
-- ⚑ **`epochenausschuettung_vorgemerkt`** (verteilte Ausschüttung, nach dem
-  Vorbild von Solanas „Partitioned Epoch Rewards“, SIMD-0118): dieselben
+- ⚑ **`epochenausschuettung_vorgemerkt`** (verteilte Ausschüttung): dieselben
   Beträge, Klassen und derselbe Abschluss wie
   `epochenausschuettung_mit_pruefern`, aber jeder Anteil kommt in
   `LedgerState::auszahlungen_offen` und wird in den folgenden Blöcken
   begrenzt gebucht. Kein Konto wird dabei berührt (ausser der Treasury,
   wenn aus ihrem Bestand gezahlt wird); die Überlaufprüfung je Konto
   entfällt, denn sie läse jedes Konto, und gebucht wird gekappt. ⚑ Abwägung
-  gegen Cosmos F1 (Abruf durch den Miner): F1 macht den Wechsel O(1),
+  gegen einen Abruf durch den Miner: Der macht den Wechsel O(1),
   verlangt aber, dass jeder abholt, und je Miner einen offenen Posten; die
   Partitionen behalten Bedeutung und Bedienung und begrenzen trotzdem je
   Block. Die Bibliothek und die Simulation buchen weiter sofort.
@@ -243,13 +258,10 @@ die Treasury geht. Das Netz spart, wenn es reich ist, und investiert,
 wenn Kapazität übrig ist. Genau dann ist Training auch am billigsten,
 denn die Pods stünden sonst still.
 
-| Vorbild | Was dort geschieht | Was hier davon gilt |
-|---|---|---|
-| Basel III, antizyklischer Kapitalpuffer | im Aufschwung aufbauen, im Abschwung auflösen | die Richtung |
-| EIP-1559, Basisgebühr | eine protokollgesetzte Gebühr steigt über einem Auslastungsziel | die Form |
+Die Richtung ist antizyklisch, die Form eine protokollgesetzte Abgabe, die
+an der Auslastung hängt.
 
-⚑ **Der Unterschied zu EIP-1559 ist der Verbleib.** Dort wird die
-Basisgebühr **verbrannt**; hier fliesst sie in einen Fonds und kommt als
+⚑ **Die Abgabe wird nicht verbrannt.** Sie fliesst in einen Fonds und kommt als
 Trainingsvergütung zu denselben Minern zurück. Verbrennen nähme dem Netz
 genau das Geld, mit dem es sein Modell verbessert.
 

@@ -242,7 +242,7 @@ pub fn epochenausschuettung_mit_pruefern(
 }
 
 /// ⚑ **Dasselbe, aber vorgemerkt statt gebucht** (verteilte Ausschüttung,
-/// 2026-10-30, nach Solanas SIMD-0118): Jeder Anteil kommt in
+/// 2026-10-30): Jeder Anteil kommt in
 /// `LedgerState::auszahlungen_offen` und wird in den folgenden Blöcken
 /// begrenzt gebucht (`myl_ledger::transitions::auszahlungen_buchen`).
 /// Beträge, Klassen und Abschluss sind dieselben; nur kein Konto wird hier

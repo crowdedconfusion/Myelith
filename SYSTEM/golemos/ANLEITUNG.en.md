@@ -175,8 +175,9 @@ the folder `arbeit` on the stick), the knowledge folders and, with a
 network cable, web search. Everything you set up and produce stays on
 the stick. Your computer's disk is not touched.
 
-**What does not work:** the window with the mouse, speech output and
-vision. Those need Myelith on your normal system. GolemOS does not
+**What does not work:** speech output and vision. Those need Myelith on
+your normal system. The window with the mouse can be
+[added](#add-the-window). GolemOS does not
 support Wi-Fi yet.
 
 You can keep using GolemOS this way; installing is not required.
@@ -226,6 +227,69 @@ for it.
 The stick GolemOS is running from and every disk that is not removable
 are refused. The new stick is a fresh GolemOS; afterwards drag your
 Myelith folder onto it as in step 4.
+
+---
+
+## Run this computer as a node
+
+A node follows the chain and helps the network. For that the computer needs a
+**network cable** and has to stay on. Your Myelith folder has to be on the
+stick (step 4), because the node takes its self-check from it. It does not
+need a model.
+
+⚠️ **There is no public network yet.** You need the address of a node that is
+already running (a bootstrap address); you get it from whoever runs the
+network.
+
+In the assistant choose **6** ("To the console"), then type, with your address:
+
+```
+golem-knoten einrichten --name my-node --bootstrap ADDRESS
+golem-knoten starten
+golem-knoten status
+```
+
+`golem-knoten an` starts the node at every boot from now on, `golem-knoten aus`
+undoes that. `golem-knoten protokoll` shows what it is doing, `golem-knoten
+stoppen` ends it. After five crashes within five minutes it stops by itself
+instead of retrying forever.
+
+**Good to know:** Only port 4001 is open to the outside. Its settings and its
+identity are kept on the system, not on the readable part **Golem** of the
+stick. ⚠️ A new installation deletes both, and the node then gets a new
+identity.
+
+If you see `golem-knoten: not found`, your image is older than version 0.3.0.
+Write a newer image to the stick.
+
+---
+
+## Add the window
+
+The base system is deliberately small and has only the console. The
+full-screen Myelith window is an additional file, the **layer** (around
+100 MB). It changes nothing in the system, and if you no longer want it, you
+delete it.
+
+⚠️ **There is no ready-made layer to download yet.** If you have one, put
+`oberflaeche-x86_64.sqfs` and next to it `oberflaeche-x86_64.sqfs.sha256` on a
+drive (on ARM computers it is called `oberflaeche-aarch64.sqfs`). You can build
+one yourself with `SYSTEM/golemos/schicht-bauen.sh`; that needs Docker and
+several hours.
+
+At the console, with the path to your file:
+
+```
+golem-schicht holen /PATH/oberflaeche-x86_64.sqfs
+golem-schicht starten
+```
+
+Nothing is taken over without a matching checksum. `golem-schicht stoppen`
+returns to the console, `golem-schicht an` starts the window at every boot,
+`golem-schicht entfernen` deletes the layer again.
+
+The window is drawn by the processor, not the graphics card, so it can take up
+to a minute until it is complete.
 
 ---
 

@@ -189,6 +189,7 @@ impl Entsiegelndes {
     }
 
     fn abweisen(&self, grund: Abweisungsgrund, sitzung: u64) -> Inferenzantwort {
+        eprintln!("[myl-pod] abgewiesen: Sitzung {sitzung}: {grund:?}");
         if let Ok(mut g) = self.letzter_grund.lock() {
             *g = Some(grund);
         }

@@ -311,6 +311,9 @@ pub struct Miningeinstellung {
     /// der Einstieg spaeter aus dem Netz selbst.
     #[serde(default)]
     pub einstieg: Option<String>,
+    /// In welchem Netz der Knoten läuft (`--netz`); leer heisst Probekette.
+    #[serde(default)]
+    pub netz: Option<String>,
 }
 
 impl Einstellungen {

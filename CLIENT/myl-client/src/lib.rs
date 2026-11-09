@@ -91,6 +91,7 @@ pub mod schutzfilter;
 /// Wiederherstellungswoerter nach BIP-39 (seit 2026-10-26).
 pub mod bip39;
 /// Testwallets: Konten, deren Schluessel der Client haelt (seit 2026-10-26).
+pub mod keystore;
 pub mod wallet;
 /// Bezahlen aus dem Wallet: Credits, Sitzungen, Vollmachten (seit 2026-10-26).
 pub mod bezahlen;

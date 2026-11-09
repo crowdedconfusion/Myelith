@@ -1,0 +1,107 @@
+==============================================================================
+GEKOPPELTES WACHSTUM VON NETZ UND MODELL
+==============================================================================
+
+[1] Was kostet ein Wachstumsschritt gegenueber Vortraining?
+    Annahme: Nach der Expansion ist ein Nachtraining noetig, um die
+    neuen Parameter nutzbar zu machen. Die Literatur berichtet
+    Ersparnisse von 40-69 %; konservativ wird hier mit 50 % gerechnet,
+    zusaetzlich zur Ersparnis durch das erhaltene Vorwissen.
+
+    Schritt                Parameter   Token Vortraining    Token Wachstum   Faktor
+    -------------------------------------------------------------------------------
+    Basis (extern)              24B               480B                 -        -
+    Schritt 1                   32B               640B             200B     3.2x
+    Schritt 2                   48B               960B             320B     3.0x
+    Schritt 3                   70B             1,400B             460B     3.0x
+    Schritt 4                  100B             2,000B             650B     3.1x
+
+    ==> Ein Wachstumsschritt kostet ein Vielfaches weniger als ein
+        Vortraining derselben Groesse, weil das Vorwissen erhalten bleibt.
+
+[2] Wie lange dauert ein Wachstumsschritt im Netz?
+    Netzgroesse       Rate    Schritt 1    Schritt 2    Schritt 3    Schritt 4
+    --------------------------------------------------------------------------
+    500 Miner         10%       2,735d       6,564d      >10000d      >10000d
+    5.000 Miner       10%         263d         632d       1,325d       2,675d
+    50.000 Miner      10%          30d          71d         149d         301d
+
+    ==> Ehrliche Einordnung der Zahlen:
+        - 500 Miner: Wachstum praktisch ausgeschlossen (Schritt 1 ueber
+          sieben Jahre). Die Startphase kann nur feintunen.
+        - 5.000 Miner: Schritt 1 in etwa neun Monaten, spaetere Schritte
+          in Jahren. Wachstum ist moeglich, aber langsam.
+        - 50.000 Miner: Schritt 1 in einem Monat, Schritt 4 in zehn.
+        Wachstum ist also kein kontinuierlicher Prozess, sondern ein
+        seltenes Ereignis im Jahresmassstab, das an eine erhebliche
+        Netzgroesse gebunden ist.
+
+[3] Tiefenerweiterung und Shard-Struktur
+    Tiefenwachstum fuegt Layer hinzu. In der Pipeline bedeutet das
+    zusaetzliche Shards, also Plaetze fuer weitere Miner.
+
+        Modell   Layer   Shards (10 L/Shard)  Miner je Pod
+    --------------------------------------------------------
+          24B      48                     5             7
+          32B      55                     6             8
+          48B      68                     7             9
+          70B      82                     8            10
+         100B      98                    10            12
+
+    ==> Netz- und Modellwachstum sind strukturell gekoppelt: Mehr
+        Miner ermoeglichen mehr Shards, mehr Shards tragen mehr Layer.
+        Zugleich steigt die Kollusionsschranke beta^(2k) mit k (Anhang B.2),
+        Wachstum verbessert also auch die Sicherheit.
+
+[4] Ist der Wachstumsschritt selbst verifizierbar?
+    Funktionserhaltende Expansion (Net2Net, bert2BERT) ist eine
+    DETERMINISTISCHE Transformation der Gewichtsmatrix: Neuronen werden
+    aufgespalten, neue Layer als Identitaet oder Kopie initialisiert.
+    Daraus folgt:
+      - Die Transformation laesst sich bitgleich nachrechnen und per
+        Hash-Vergleich verifizieren, wie jede andere Berechnung (Kap. 6).
+      - Die neue Modellversion theta_v+1 ergibt sich reproduzierbar aus
+        theta_v und dem Wachstumsoperator; beide werden on-chain verankert.
+      - Unmittelbar nach der Expansion ist das Verhalten identisch zum
+        Vorgaenger. Ein Wachstumsschritt kann daher ohne Qualitaetsrisiko
+        aktiviert werden; die Verbesserung entsteht erst durch das
+        anschliessende Nachtraining.
+
+[5] Wachstumskurve ueber zehn Jahre (Reifephase, 10 % Grundlast)
+      Jahr   Parameter   kumulierte Tage
+    ------------------------------------
+         0        24B                 0
+       0.1        34B                34
+       0.3        47B                99
+       0.6        66B               229
+       1.3        92B               482
+       2.7       129B               977
+       5.3       181B             1,949
+
+    ==> Eine Verdopplung der Modellgroesse ist im Jahresmassstab
+        erreichbar, sofern die Netzkapazitaet mitwaechst.
+
+==============================================================================
+BEWERTUNG
+
+  + Model Growth eroeffnet den Weg zwischen Feintuning und Vortraining:
+    Das Netz kann sein Modell schrittweise vergroessern, ohne je ein
+    vollstaendiges Vortraining leisten zu muessen.
+  + Funktionserhaltende Expansion ist deterministisch und damit im
+    bestehenden Verifikationsmodell nachpruefbar.
+  + Tiefenwachstum erzeugt neue Shards und damit Plaetze fuer neue Miner:
+    Netz- und Modellwachstum sind strukturell gekoppelt, und die
+    Kollusionsschranke verbessert sich mit.
+
+  ! Die Literaturbelege stammen aus dem Vortrainings-Kontext mit
+    zentralisierter Kontrolle ueber Daten und Zeitplan. Ob progressive
+    Expansion unter den Bedingungen eines offenen Netzes (heterogene
+    Kapazitaet, unterbrochene Laeufe, VRF-zugewiesene Daten) ebenso
+    funktioniert, ist unbelegt.
+  ! Model Growth ist bislang nicht mit ganzzahligem Training kombiniert
+    worden. Beide Verfahren sind einzeln belegt, ihre Kombination nicht.
+  ! Der Wachstumszeitpunkt wird zur Governance-Entscheidung: Wer zu frueh
+    waechst, verschlechtert die Qualitaet je Parameter; wer zu spaet waechst,
+    verschenkt Kapazitaet.
+
+==============================================================================

@@ -87,7 +87,7 @@ pub use sitzung::{
     MAX_KLARTEXT_BYTES, SCHLUESSEL_LEN, SITZUNG_KENNUNG, TAG_LEN,
 };
 pub use runtime::{
-    run_node, run_node_mit, InboundMessage, Netzzustand, NodeCommand, NodeEvent,
+    run_node, run_node_mit, InboundMessage, Netzzustand, NodeCommand, NodeEvent, Pruefmarke, Urteil,
 };
 pub use validation::{
     beurteile, report, report_with, Ablehnungsgrund, topic_from_hash, validate_payload, AcceptAllValidator,

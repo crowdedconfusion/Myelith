@@ -187,6 +187,29 @@ Ordner `module/` neben den Einstellungen und prüft die Kopie.
   Deshalb startet ein natives Modul nur mit einem Schlüssel, der in der
   Vertrauensliste ausdrücklich als `nativ` markiert ist. **Installieren
   heißt vertrauen.**
-- Module, die abgeschottet laufen (WebAssembly, ohne eigenes Dateisystem
-  und ohne eigenes Netz), folgen; die Beschreibung kennt sie schon
-  (`"laufzeit": {"art": "wasm", "datei": "…"}`).
+- Ein abgeschottetes Modul (`"laufzeit": {"art": "wasm", "datei": "…"}`) läuft
+  als WebAssembly in der Konsole, ohne eigenes Dateisystem und ohne eigenes
+  Netz; Module von Dritten nur so. Abschnitt „Abgeschottete Module“.
+
+## Abgeschottete Module
+
+Ein abgeschottetes Modul spricht dieselben Nachrichten wie ein natives und
+erreicht die Welt nur über Funktionen der Konsole:
+
+| Funktion | Grenze |
+|---|---|
+| `http` | nur Rechner, die `befugnisse.http` nennt **und** der Mensch mit `/module genehmigen <modul>` freigegeben hat; nur https (ohne Verschlüsselung nur auf diesem Rechner), keine Weiterleitung, keine privaten Adressen, 60 Anfragen je Minute, 8 MiB Antwort |
+| `datei_lesen`, `datei_schreiben` | nur der eigene Datenordner, 16 MiB je Datei, 256 MiB zusammen |
+| `geheimnis` | nur die eigenen, nur lesend; abgelegt mit `myl-module geheimnis <ablage> <modul> <name>` (der Wert kommt von der Standardeingabe) |
+
+Je Ereignis gibt es Treibstoff für rund eine Sekunde Rechnung, dazu 64 MiB
+Speicher und 1 000 Nachrichten; wer darüber geht, wird beendet, die Konsole
+läuft weiter. Ein Agentenlauf und eine Werkzeugkiste sind abgeschottet nicht
+möglich, denn beide starten gewöhnliche Programme.
+
+Bauen: Rust mit dem Ziel `wasm32-unknown-unknown`, `myl-module` mit
+`default-features = false`, und `myl_module::wasm_modul!(Typ, Wert)` statt
+`nativ_fahren`. Die Vorlage liegt in `CLIENT/myl-module/beispiele/wasm-gast`.
+
+⚠️ Nicht abgewehrt werden Seitenkanäle über die Zeit und Fehler in der Laufzeit
+selbst; die Signatur bleibt deshalb Pflicht.

@@ -1,0 +1,91 @@
+==========================================================================
+GANZZAHLIGES TRAINING IN DER POD-ARCHITEKTUR
+==========================================================================
+
+[1] Wie tief traegt ganzzahliges Backpropagation?
+    Gewichte int8, Akkumulator int32, Schichtbreite 512
+
+    Schicht              max |delta|    Bits   Status
+    --------------------------------------------------------
+    0                            122       7   ok
+    1                        605,856      20   ok
+    2                  2,553,884,992      32   UEBERLAUF
+    3             10,775,692,080,816      44   UEBERLAUF
+    4         28,146,107,715,091,392      55   UEBERLAUF
+    5         150,356,507,414,018,228,224      68   UEBERLAUF
+    6         225,234,048,106,199,320,100,864      78   UEBERLAUF
+
+    ==> Ueberlauf ab Schicht 2 (rueckwaerts vom Ausgang).
+        Groessenordnung wie in der Literatur (PocketNN nennt Schicht 4;
+        die Abweichung folgt aus der hier gewaehlten Schichtbreite).
+        OHNE Gegenmassnahme ist ein Sprachmodell so nicht trainierbar.
+
+[1b] Mit Block-Skalierung pro Schicht (Verfahren aus NITI)
+    Schicht          max |delta|    Bits
+    ----------------------------------------
+    0                        122       7
+    5                     16,692      15
+    10                    19,019      15
+    20                    27,576      15
+    30                    17,311      15
+    40                    17,161      15
+
+    ==> Ueberlauf ueber 40 Schichten: KEINER ✅
+        Der gemeinsame Skalierungsexponent haelt den Fehlervektor
+        dauerhaft im Wertebereich. Da er aus dem Betragsmaximum folgt
+        und per Rechtsshift angewandt wird, bleibt die Operation
+        reihenfolgeunabhaengig und exakt reproduzierbar (vgl. Kap. 6.2).
+
+[2] Lokale Verlustbloecke (Local Error Signals)
+    Gradienten werden auf einen Block begrenzt und nicht weitergereicht.
+
+    Blockgroesse               max |delta|   Status
+    ----------------------------------------------------
+    2                        2,553,884,992   UEBERLAUF
+    3                   10,775,692,080,816   UEBERLAUF
+    4               28,146,107,715,091,392   UEBERLAUF
+    5               150,356,507,414,018,228,224   UEBERLAUF
+    6               225,234,048,106,199,320,100,864   UEBERLAUF
+    8               2,299,591,080,713,925,520,780,626,493,440   UEBERLAUF
+
+    ==> OHNE Skalierung: zulaessige Blocktiefe bei int32 nur 0 Schichten.
+        MIT Skalierung entfaellt die Tiefenbegrenzung (siehe [1b]);
+        lokale Bloecke bleiben dennoch nuetzlich, weil sie den
+        Rueckwaertspass auf den Shard begrenzen und damit WAN-Verkehr sparen.
+
+[3] Passung zur Myelith-Pipeline
+    k=  8 Shards -> 10.0 Schichten je Shard   zu tief fuer einen Block
+    k= 16 Shards ->  5.0 Schichten je Shard   zu tief fuer einen Block
+    k= 20 Shards ->  4.0 Schichten je Shard   zu tief fuer einen Block
+    k= 40 Shards ->  2.0 Schichten je Shard   zu tief fuer einen Block
+    ==> Bei k=8 (Standard) umfasst ein Shard 10 Schichten und muesste
+        intern in 11 Verlustbloecke unterteilt werden.
+        Die Blockgrenzen liegen INNERHALB eines Shards, nicht zwischen
+        Shards: Es entsteht also kein zusaetzlicher Netzverkehr.
+
+[4] Bleiben Gradienten reihenfolgeunabhaengig?
+    Gradient (Aktivierung x Fehler, summiert) unter 3 Reihenfolgen:
+    200/200 identisch ✅
+    ==> Die Gradientenberechnung ist ebenso assoziativ wie der
+        Vorwaertspass. Redundante Verifikation per Hash-Vergleich
+        funktioniert fuer Training genauso wie fuer Inferenz.
+
+==========================================================================
+BEWERTUNG
+
+  + Ganzzahliges Training ist belegt (NITI, NITRO-D), aber nur mit
+    begrenzter Gradiententiefe.
+  + Lokale Verlustbloecke loesen das Overflow-Problem und passen
+    strukturell zur Shard-Aufteilung: Gradienten verlassen den Shard nicht,
+    es entsteht kein zusaetzlicher WAN-Verkehr fuer einen Rueckwaertspass.
+  + Die Gradientenberechnung ist assoziativ und damit bitgleich
+    verifizierbar, das Verifikationsmodell aus Kap. 6 traegt unveraendert.
+
+  ! Alle Belege stammen von CNNs auf MNIST, CIFAR10 und ImageNet.
+    Fuer Transformer und Sprachmodelle in der Zielgroessenordnung liegt
+    KEIN Nachweis vor. Local Error Signals erreichen zudem laut NITRO-D
+    eine schlechtere Loesung als globales Backprop.
+  ! Ungeloest bleibt die Datenfrage: Verifizierbare Berechnung sagt nichts
+    ueber die Legitimitaet der Trainingsdaten (Data Poisoning).
+
+==========================================================================

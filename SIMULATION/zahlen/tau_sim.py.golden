@@ -1,0 +1,72 @@
+========================================================================
+TAU-Trennschaerfe-Analyse  —  Myelith v0.2, Kap. 6 / M0
+========================================================================
+Modell: k=8 Shards, ehrliches Rauschen ~ HalfNormal(s_hw),
+        Manipulation ~ HalfNormal(SEP * s_hw), Akkumulation ueber sqrt(k).
+
+[1] Existiert ein zulaessiger TAU-Korridor?
+    Kriterium: Falsch-Positiv <= 1e-4 (ehrliche Miner nie slashen),
+               Falsch-Negativ <= 1 % (Rest faengt Redundanz + Stichprobe).
+
+    SEP   TAU-Korridor (in Einheiten von sqrt(k)*s_hw)      Bewertung
+    ----------------------------------------------------------------
+      2x   —  kein zulaessiges TAU  —                    NICHT TRAGFAEHIG
+      3x   —  kein zulaessiges TAU  —                    NICHT TRAGFAEHIG
+      5x   [2.00 .. 2.26]  Breite 0.26          knapp
+      8x   [2.00 .. 3.62]  Breite 1.62          komfortabel
+     12x   [2.00 .. 5.44]  Breite 3.44          komfortabel
+     20x   [2.00 .. 9.07]  Breite 7.07          komfortabel
+
+    ==> Mindest-Trennung fuer Tragfaehigkeit: SEP >= 5x
+    ==> ZIELGROESSE FUER M0: Manipulationen muessen mindestens das
+        5-fache des Hardware-Rauschens erzeugen.
+
+[2] Einfluss der Shard-Anzahl k (Akkumulation des Rauschens)
+      k    zulaessiges TAU-Fenster bei SEP=5x        Bewertung
+    ------------------------------------------------------------
+      4    kein Fenster                              KRITISCH
+      8    [2.00 .. 2.26] * sqrt(k)*s_hw        eng
+     16    [1.70 .. 3.01] * sqrt(k)*s_hw        ok
+     32    [1.49 .. 3.57] * sqrt(k)*s_hw        ok
+    ==> BEFUND: Groesseres k VERBESSERT die Trennschaerfe. Der relative
+        Streuungsanteil der Chi-Verteilung faellt mit 1/sqrt(2k), das
+        zulaessige TAU-Fenster waechst also mit der Pipeline-Laenge.
+        Bei k=4 existiert bei SEP=5x KEIN zulaessiges TAU.
+        Damit wirkt k in dieselbe Richtung wie die Kollusionsschranke
+        (Kap. 4.1): klein-k ist nicht nur sicherheits-, sondern auch
+        verifikationsseitig teuer.
+
+[3] Wie viel Manipulation passt unbemerkt unter TAU?
+    Bei TAU = 2.00*sqrt(k)*s_hw liegt die maximale unentdeckte
+    Abweichung je Segment in derselben Groessenordnung wie das
+    Hardware-Rauschen selbst (per Konstruktion von TAU).
+    ==> Einzelschaden ist damit nach oben beschraenkt. Kritisch ist
+        allein die WIEDERHOLUNG in dieselbe Richtung — siehe [4].
+
+[4] Entlarvung gerichteter Drift (Kap. 6.9)
+    Angreifer verzerrt einen Anteil seiner Segmente stets gleichsinnig.
+    Geprueft wird die Vorzeichensymmetrie der Checker-Stichproben.
+
+    Drift-Anteil   Audits bis p < 0.001   entspricht Segmenten (p=2%)
+    --------------------------------------------------------------
+           50%                   80                    4,000
+           20%                  420                   21,000
+           10%                 2180                  109,000
+            5%                 3260                  163,000
+
+    ==> Selbst schwache Drift (5 %) wird nach wenigen tausend Audits
+        signifikant. Die adaptive Erhoehung der Stichprobenrate greift,
+        lange bevor sich kleine Verzerrungen zu echtem Schaden summieren.
+
+========================================================================
+FAZIT (fuer Whitepaper Kap. 10, Punkt 1 und 2):
+  - Das Verifikationsmodell ist tragfaehig, SOFERN Manipulationen
+    mindestens das 5-fache Hardware-Rauschen erzeugen.
+  - Diese Trennung ist in M0 empirisch zu belegen. Sie ist die eine
+    Messgroesse, an der Kapitel 6 steht oder faellt.
+  - Pipeline-Laenge k wirkt GUENSTIG auf die Trennschaerfe: das
+    TAU-Fenster waechst mit k. Zusammen mit der Kollusionsschranke
+    beta^(2k) spricht das gegen kleine k — entgegen der Latenzintuition.
+  - Gerichtete Drift wird durch die Vorzeichenstatistik zuverlaessig
+    erfasst; sie schliesst die Restluecke unterhalb von TAU.
+========================================================================

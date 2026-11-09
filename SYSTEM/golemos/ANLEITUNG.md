@@ -179,8 +179,9 @@ mit Netzwerkkabel, die Suche im Internet. Alles, was du einstellst und
 erarbeitest, bleibt auf dem Stick gespeichert. Die Platte deines
 Rechners wird dabei nicht angefasst.
 
-**Was nicht geht:** das Fenster mit der Maus, die Sprachausgabe und das
-Sehen. Dafür braucht es Myelith auf deinem normalen System. WLAN kennt
+**Was nicht geht:** die Sprachausgabe und das Sehen. Dafür braucht es
+Myelith auf deinem normalen System. Das Fenster mit der Maus lässt sich
+[dazuholen](#das-fenster-dazuholen). WLAN kennt
 GolemOS noch nicht.
 
 Du kannst GolemOS auf diese Weise dauerhaft benutzen; eine Installation
@@ -236,6 +237,69 @@ Der Stick, von dem GolemOS gerade läuft, und jede Platte, die kein
 Wechseldatenträger ist, werden abgelehnt. Der neue Stick ist ein
 frisches GolemOS; deinen Myelith-Ordner ziehst du danach wie in
 Schritt 4 darauf.
+
+---
+
+## Den Rechner als Knoten betreiben
+
+Ein Knoten hält die Kette mit und hilft dem Netz. Dafür braucht der Rechner
+ein **Netzwerkkabel** und muss durchlaufen dürfen. Dein Myelith-Ordner muss
+auf dem Stick liegen (Schritt 4), weil der Knoten daraus seine Selbstprüfung
+holt. Ein Modell braucht er nicht.
+
+⚠️ **Ein öffentliches Netz gibt es noch nicht.** Du brauchst die Adresse eines
+Knotens, der schon läuft (Bootstrap-Adresse); die bekommst du von dem, der
+das Netz betreibt.
+
+Wähle im Assistenten **6** („Zur Konsole“) und tippe dann, mit deiner Adresse:
+
+```
+golem-knoten einrichten --name mein-knoten --bootstrap ADRESSE
+golem-knoten starten
+golem-knoten status
+```
+
+Mit `golem-knoten an` startet der Knoten künftig bei jedem Hochfahren mit,
+`golem-knoten aus` nimmt das zurück. `golem-knoten protokoll` zeigt, was er
+gerade tut, `golem-knoten stoppen` beendet ihn. Nach fünf Abstürzen in fünf
+Minuten hält er von selbst an, statt es endlos weiter zu versuchen.
+
+**Was du dazu wissen solltest:** Nach außen ist nur der Port 4001 offen.
+Seine Einstellungen und seine Identität liegen auf dem System und nicht auf
+dem lesbaren Teil **Golem** des Sticks. ⚠️ Eine neue Installation löscht
+beides, der Knoten bekommt dann eine neue Identität.
+
+Steht dort `golem-knoten: not found`, ist dein Abbild älter als Fassung
+0.3.0. Dann ein neueres Abbild auf den Stick schreiben.
+
+---
+
+## Das Fenster dazuholen
+
+Das Grundsystem ist bewusst klein und hat nur die Konsole. Das
+Myelith-Fenster im Vollbild ist eine zusätzliche Datei, die **Schicht**
+(rund 100 MB). Sie ändert nichts am System, und wer sie nicht mehr will,
+löscht sie.
+
+⚠️ **Eine fertige Schicht zum Herunterladen gibt es noch nicht.** Wer eine
+hat, legt `oberflaeche-x86_64.sqfs` und daneben `oberflaeche-x86_64.sqfs.sha256`
+auf ein Laufwerk (auf ARM-Rechnern heißt sie `oberflaeche-aarch64.sqfs`). Selbst
+bauen lässt sie sich mit `SYSTEM/golemos/schicht-bauen.sh`; das braucht Docker
+und mehrere Stunden.
+
+An der Konsole, mit dem Pfad zu deiner Datei:
+
+```
+golem-schicht holen /PFAD/oberflaeche-x86_64.sqfs
+golem-schicht starten
+```
+
+Ohne passende Prüfsumme wird nichts übernommen. `golem-schicht stoppen` führt
+zurück zur Konsole, `golem-schicht an` startet das Fenster bei jedem
+Hochfahren, `golem-schicht entfernen` löscht die Schicht wieder.
+
+Das Fenster wird vom Prozessor gezeichnet, nicht von der Grafikkarte; bis es
+vollständig da ist, kann es deshalb bis zu einer Minute dauern.
 
 ---
 

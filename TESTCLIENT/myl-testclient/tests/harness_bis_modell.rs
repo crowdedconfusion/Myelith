@@ -267,12 +267,12 @@ async fn ein_nutzeraufruf_erreicht_das_geshardete_modell() {
     .als_bearer();
     let tuer = Tuer::binden(0).await.expect("binden");
     let port = tuer.port().expect("port");
-    let mut annahme = Annahme::neu(41, EpochId(5));
-    let mut stelle = Zugangsstelle::neu(EineQuelle(k));
+    let annahme = std::sync::Mutex::new(Annahme::neu(41, EpochId(5)));
+    let stelle = std::sync::Mutex::new(Zugangsstelle::neu(EineQuelle(k)));
 
     // --- 1. Was ein Harness zuerst tut: die Modelle abfragen ---------
     let dienst = async {
-        tuer.bedienen_v1(&mut annahme, &mut stelle, &weg, EpochId(5), 1_700_000_000_000)
+        tuer.bedienen_v1(&annahme, &stelle, &myl_gateway::tuer::Besetzung::default(), &weg, EpochId(5), 1_700_000_000_000)
             .await
             .expect("bedienen");
     };
@@ -294,7 +294,7 @@ async fn ein_nutzeraufruf_erreicht_das_geshardete_modell() {
         r#"{{"model":"sparrow-0.6b-int8","messages":[{{"role":"user","content":"{frage}"}}],"max_tokens":8,"temperature":0.7}}"#
     );
     let dienst = async {
-        tuer.bedienen_v1(&mut annahme, &mut stelle, &weg, EpochId(5), 1_700_000_000_000)
+        tuer.bedienen_v1(&annahme, &stelle, &myl_gateway::tuer::Besetzung::default(), &weg, EpochId(5), 1_700_000_000_000)
             .await
             .expect("bedienen");
     };
@@ -352,7 +352,7 @@ async fn ein_nutzeraufruf_erreicht_das_geshardete_modell() {
     // das ist die Behauptung „ein gewoehnlicher OpenAI-Klient erreicht
     // diese Tuer", und sie liesse sich mit geteilten Typen nicht pruefen.
     let dienst2 = async {
-        tuer.bedienen_v1(&mut annahme, &mut stelle, &weg, EpochId(5), 1_700_000_000_000)
+        tuer.bedienen_v1(&annahme, &stelle, &myl_gateway::tuer::Besetzung::default(), &weg, EpochId(5), 1_700_000_000_000)
             .await
             .expect("bedienen (Harness)");
     };
@@ -400,7 +400,7 @@ async fn ein_nutzeraufruf_erreicht_das_geshardete_modell() {
     );
     let ergebnis = myl_local_agent::werkzeug::Werkzeugergebnis::nachricht("zeit", "12:00");
     let dienst3 = async {
-        tuer.bedienen_v1(&mut annahme, &mut stelle, &weg, EpochId(5), 1_700_000_000_000)
+        tuer.bedienen_v1(&annahme, &stelle, &myl_gateway::tuer::Besetzung::default(), &weg, EpochId(5), 1_700_000_000_000)
             .await
             .expect("bedienen (Werkzeuge)");
     };
@@ -531,10 +531,11 @@ async fn ein_nutzeraufruf_erreicht_das_geshardete_modell() {
         // Wie viele Aufrufe kommen, weiss nur die Schleife. Also fragt
         // der Test nicht danach, sondern hoert auf, wenn sie fertig ist.
         tokio::pin!(agent);
+        let besetzung = myl_gateway::tuer::Besetzung::default();
         let aus4 = loop {
             tokio::select! {
                 r = &mut agent => break r,
-                _ = tuer.bedienen_v1(&mut annahme, &mut stelle, &weg, EpochId(5), 1_700_000_000_000) => {}
+                _ = tuer.bedienen_v1(&annahme, &stelle, &besetzung, &weg, EpochId(5), 1_700_000_000_000) => {}
             }
         };
         let e = aus4.expect("Agentenfaden");

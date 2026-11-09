@@ -24,6 +24,14 @@ fn ganzzahl(reg: &ParameterRegistry, p: Parameter) -> u64 {
     }
 }
 
+/// ⚑ Die Registry nennt die Rate, mit der der Anlaufplan der Kette beginnt.
+#[test]
+fn die_startsubvention_stimmt_mit_der_registry_ueberein() {
+    let reg = ParameterRegistry::vorgabe();
+    let (zaehler, nenner) = myl_tokenomics::anlaufrate(0);
+    assert_eq!(reg.wert(Parameter::Subventionsrate), &Wert::Bruch { zaehler, nenner }, "die Start-Subvention weicht ab");
+}
+
 /// Die drei Zahlen der Trainingszuteilung stimmen überein.
 #[test]
 fn die_trainingsparameter_stimmen_mit_der_registry_ueberein() {

@@ -189,8 +189,31 @@ def main():
     print("    ==> max() und Ganzzahldivision sind reihenfolgeunabhaengig.")
     print("        Dynamische Quantisierung bleibt deterministisch.")
 
-    # ── 5. Verbleibende Risiken ─────────────────────────────────────────────
-    print("\n[5] Was bleibt zu spezifizieren (Restrisiken)")
+    # ── 5. Division bei negativen Zahlen (B.5.4) ────────────────────────────
+    print("\n[5] Division bei negativen Zahlen")
+    print(f"    {'Fall':>8}{'Floor':>8}{'Trunkiert':>11}{'Shift':>8}")
+    faelle = [(-7, 2), (-1, 2), (-9, 4), (7, 2), (-8, 2)]
+    abweichend = 0
+    for a, d in faelle:
+        abgerundet = a // d
+        trunkiert = -(-a // d) if a < 0 else a // d
+        geschoben = a >> (d.bit_length() - 1)
+        abweichend += len({abgerundet, trunkiert, geschoben}) > 1
+        print(f"    {f'{a}/{d}':>8}{abgerundet:>8}{trunkiert:>11}{geschoben:>8}")
+    print(f"    In {abweichend} von {len(faelle)} Faellen weichen die Verfahren ab.")
+    rng_div = random.Random(SEED)
+    FAELLE = 100_000
+    gleich = 0
+    for _ in range(FAELLE):
+        a = rng_div.randint(-2**31, 2**31 - 1)
+        s = rng_div.randint(1, 16)
+        gleich += (a >> s) == (a // (1 << s))
+    print(f"    Shift = Floor in {gleich:,}/{FAELLE:,} Zufallsfaellen")
+    print("    ==> Festlegung auf den arithmetischen Rechtsshift: mit endlich")
+    print("        vielen Testvektoren pruefbar, ohne Kosten beim Durchsatz.")
+
+    # ── 6. Verbleibende Risiken ─────────────────────────────────────────────
+    print("\n[6] Was bleibt zu spezifizieren (Restrisiken)")
     risks = [
         ("Ueberlaufverhalten", "Saettigung oder Wrap-around protokollweit festlegen"),
         ("Division/Rechtsshift", "Rundung bei negativen Zahlen ist sprach- und "

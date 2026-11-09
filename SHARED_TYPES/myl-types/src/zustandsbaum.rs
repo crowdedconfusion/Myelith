@@ -14,8 +14,7 @@
 //!
 //! # ⚑ Die Gestalt
 //!
-//! Nach dem Vorbild des Jellyfish Merkle Tree (Aptos) und von EIP-7864
-//! (binär, ein Schlüsselraum), eigene Umsetzung:
+//! Binär, ein Schlüsselraum:
 //!
 //! - Ein leerer Teilbaum hasht zu [`LEER`] (32 Null-Bytes).
 //! - **Ein Teilbaum mit genau einem Eintrag ist dieser Eintrag**:
@@ -36,8 +35,7 @@
 //!
 //! # ⚑ Ausgelagert auf die Platte (2026-10-30)
 //!
-//! Nach dem Vorbild von NOMT (Thrum: ein binärer Merkle-Baum in Seiten auf
-//! der SSD), eigene Umsetzung: Ein voller Knoten kann den Baum
+//! Ein binärer Merkle-Baum in Seiten auf der SSD: Ein voller Knoten kann den Baum
 //! **auslagern** ([`Zustandsbaum::mit_ablage`]). Teilbäume unterhalb einer
 //! Tiefe, die mit der Zahl der Einträge wächst (rund 128 Einträge je
 //! Seite), liegen dann als Seiten in einer Datei; im Speicher steht nur der

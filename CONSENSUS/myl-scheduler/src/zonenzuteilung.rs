@@ -338,6 +338,62 @@ mod tests {
         }
     }
 
+    /// ⚑ **Der Zonenhebel, gemessen über die Zwillinge** (Fund 108,
+    /// Sicherheitsaudit A12, 2026-11-08): Sechzig ehrliche Miner in drei
+    /// Zonen, ein Angreifer mit vierundzwanzig Kennungen (gut ein Viertel),
+    /// je zur Hälfte in zwei Zonen, über alle Wahlen der Zonen; dagegen
+    /// derselbe Angreifer gleichmässig in den drei vollen Zonen. Gezählt
+    /// wird je Epoche, ob in einem Zwillingspaar (a) beide Pods an allen
+    /// Positionen ihm gehören (Stufe 1 sieht nichts, egal wo er fälscht)
+    /// oder (b) beide an der ersten Position (genug für die Kollusion aus
+    /// dem Podlauf `kurz-kollusion`). 📌 Gemessen (300 Epochen): (a) ohne
+    /// Hebel nie, mit ihm in 11 (3,7 %, zwei Zonen Europa und Afrika: ein
+    /// eigener Pod in der leeren Zone wird bevorzugter Zwilling eines ganz
+    /// eigenen in der vollen); (b) ohne Hebel in 133, mit in 173. Gegen (b)
+    /// schützt Stufe 1 nie; die Abwehr ist die Stichprobe mit Nachrechnen
+    /// und Schlachten. Der Hebel macht aus (b) öfter (a).
+    #[test]
+    fn der_zonenhebel_ueber_die_zwillinge() {
+        let zonen = [GeoRegion::Europe, GeoRegion::NorthAmerica, GeoRegion::Asia];
+        let ehrlich: Vec<MinerRegistration> = (0..60u8).map(|b| miner(b + 1, zonen[(b % 3) as usize], 0)).collect();
+        let ist_angreifer = |m: &MinerId| m.as_bytes()[0] >= 100;
+        let epochen = 300u64;
+        let zaehle = |angreifer: &[MinerRegistration]| -> (usize, usize) {
+            let register: Vec<MinerRegistration> = ehrlich.iter().chain(angreifer).copied().collect();
+            let mut ganz = 0;
+            let mut vorn = 0;
+            for e in 0..epochen {
+                let z = zuteilung_der_epoche(&register, e, &Hash::sha256(&e.to_le_bytes()), 4);
+                let pod = |i: u32| z.pods.iter().find(|p| p.pod_index == i);
+                let paare = crate::redundancy::zwillingspaare(&z.pods);
+                let alle = |i: u32| pod(i).is_some_and(|p| p.shards.iter().all(|s| ist_angreifer(&s.miner.miner_id)));
+                let erste = |i: u32| pod(i).and_then(|p| p.shards.first()).is_some_and(|s| ist_angreifer(&s.miner.miner_id));
+                ganz += usize::from(paare.iter().any(|&(a, b)| alle(a) && alle(b)));
+                vorn += usize::from(paare.iter().any(|&(a, b)| erste(a) && erste(b)));
+            }
+            (ganz, vorn)
+        };
+        let verteilt: Vec<MinerRegistration> = (0..24u8).map(|b| miner(100 + b, zonen[(b % 3) as usize], 0)).collect();
+        let ohne = zaehle(&verteilt);
+        let mut mit = ((0usize, 0usize), String::new());
+        for z1 in GeoRegion::all() {
+            for z2 in GeoRegion::all() {
+                let angreifer: Vec<MinerRegistration> = (0..24u8).map(|b| miner(100 + b, if b < 12 { z1 } else { z2 }, 0)).collect();
+                let n = zaehle(&angreifer);
+                if n.0 > mit.0 .0 || (n.0 == mit.0 .0 && n.1 > mit.0 .1) {
+                    mit = (n, format!("{z1:?} und {z2:?}"));
+                }
+            }
+        }
+        eprintln!(
+            "Zonenhebel in {epochen} Epochen: ganze Paare ohne Hebel {}, mit {} ({}); erste Position ohne Hebel {}, mit {}",
+            ohne.0, mit.0 .0, mit.1, ohne.1, mit.0 .1
+        );
+        assert_eq!(ohne.0, 0, "gleichmässig verteilt kein ganzes Paar");
+        assert!(mit.0 .0 > 0 && mit.0 .0 * 10 < epochen as usize, "der Hebel wirkt, aber selten: {}", mit.0 .0);
+        assert!(ohne.1 * 10 > epochen as usize, "die erste Position ist auch ohne Hebel häufig: {}", ohne.1);
+    }
+
     /// ⚑ **Kein Pod ohne Zusage, und nur machbare Pods** (6.7, 2026-10-22).
     ///
     /// Achtzehn Miner, zwei davon ohne Zusage, sechs mit so wenig Platz,
