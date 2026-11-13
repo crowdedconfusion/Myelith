@@ -315,6 +315,26 @@ fn splitter_halten_teile_aus_denen_die_geschichte_zurueckkommt() {
     let a = k.zustand().archiv.clone();
     assert_eq!((a.kopien.len(), a.splitter.len()), (7, 5));
     assert_eq!((a.teil_ab, a.teil_bis), (0, PERIODE / 1024));
+    // ⚑ Die Gruppenwurzeln in Scheiben: ohne Frist je Aufruf genau eine
+    //   Gruppe, erst nach der letzten fertig, und dieselben wie am Stück.
+    let anzahl_gruppen = a.teil_bis - a.teil_ab;
+    assert!(anzahl_gruppen >= 2 && !k.gruppenwurzeln_bereit());
+    for i in 1..anzahl_gruppen {
+        assert!(!k.gruppenwurzeln_vorarbeiten(std::time::Duration::ZERO), "nach {i} Scheiben schon fertig");
+    }
+    assert!(k.gruppenwurzeln_vorarbeiten(std::time::Duration::ZERO), "nach allen Scheiben nicht fertig");
+    assert!(k.gruppenwurzeln_bereit());
+    let am_stueck: Vec<_> = (a.teil_ab..a.teil_bis)
+        .map(|g| {
+            let teile = myl_types::archivteile::kodieren(&k.gruppenbloecke(g).expect("Blöcke"));
+            myl_types::archivteile::gruppenwurzel(&teile).expect("Wurzel")
+        })
+        .collect();
+    let erwartet = myl_types::archivteile::teilwurzel(&am_stueck).expect("Teilwurzel");
+    match k.teilwurzel_anweisung(&a.kopien[0]) {
+        Some(myl_consensus::block::Anweisung::ArchivTeilwurzel { wurzel }) => assert_eq!(wurzel, erwartet, "Scheiben weichen ab"),
+        anders => panic!("keine Teilwurzel: {anders:?}"),
+    }
     // Die Kopien nennen die Teilwurzel.
     for b in 1..=myl_node::kette::PROBEKONTEN {
         let id = kennung(b);

@@ -654,14 +654,14 @@ mod tests {
 
         let skala = myl_types::auslastung::AUSLASTUNG_SKALA;
         let leer = bestand_nach(0);
-        let ziel = bestand_nach(skala * 7 / 10);
+        let ziel = bestand_nach(skala * 8 / 10);
         let voll = bestand_nach(skala);
         assert!(ziel > leer, "am Ziel wird nicht mehr abgefuehrt als im Leerlauf");
         assert!(voll > ziel, "bei voller Auslastung wird nicht mehr abgefuehrt");
-        // ⚑ Rund das Achtfache: 3 Prozent ohne Abgabe gegen 33 Prozent
-        // mit voller Abgabe.
+        // ⚑ Rund das Siebenfache: 3 Prozent ohne Abgabe gegen 21 Prozent
+        // mit voller Abgabe (bis Fund 668 das Zehnfache, bei u* = 0,7).
         let faktor = voll / leer.max(1);
-        assert!((8..=12).contains(&faktor), "der Faktor ist {faktor} statt rund zehn");
+        assert!((6..=8).contains(&faktor), "der Faktor ist {faktor} statt rund sieben");
     }
 
     /// ⚑ **Der Checker-Pool zahlt nach geprüftem Volumen** (Anhang B.3,

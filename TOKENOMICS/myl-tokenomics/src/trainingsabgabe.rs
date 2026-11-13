@@ -33,8 +33,10 @@
 //!
 //! Die Abgabe ist `λ(u) = λ_max · u`, ein Anteil der Prägung, der von den
 //! Shard-Minern in die Treasury geht. `λ_max` folgt aus **einer**
-//! Bedingung: Am Auslastungsziel `u* = 0,7` soll die Abgabe das Training
-//! genau tragen.
+//! Bedingung: Am Auslastungsziel `u* = 0,8` soll die Abgabe das Training
+//! genau tragen. 📌 Bis zum 2026-11-10 stand hier 0,7 (Fund 668): Die
+//! Preisbildung im Knoten und Kap. 5.4 sagen 0,8, und am Gleichgewicht der
+//! Preisbildung legte die Abgabe dann dauerhaft zurück, statt aufzugehen.
 //!
 //! Mit `m ∝ u` (die Prägung folgt dem Burn, der Burn der Nachfrage),
 //! Shard-Anteil `S = 0,78` und Trainingsanteil
@@ -46,25 +48,27 @@
 //! Abgabezufluss   = u·λ(u)·m₀ = u²·λ_max·m₀
 //!
 //! Bedingung:  u*²·λ_max = t(u*)·(S − u*·λ_max)
-//!             0,49·λ_max = 0,26·(0,78 − 0,7·λ_max)
-//!             λ_max = 0,30179
+//!             0,64·λ_max = 0,18·(0,78 − 0,8·λ_max)
+//!             λ_max = 0,17908
 //! ```
 //!
 //! | u | λ(u) | Shard-Miner | Zufluss | Kosten | Saldo |
 //! |---|---|---|---|---|---|
-//! | 1,0 | 30,17 % | 47,83 % | 0,302 | 0,010 | **+0,292** |
-//! | 0,8 | 24,1 % | 53,9 % | 0,193 | 0,097 | +0,096 |
-//! | **0,7** | **21,1 %** | **56,9 %** | **0,148** | **0,148** | **0,000** |
-//! | 0,5 | 15,1 % | 62,9 % | 0,075 | 0,264 | −0,189 |
-//! | 0,1 | 3,0 % | 75,0 % | 0,003 | 0,555 | **−0,552** |
+//! | 1,0 | 17,90 % | 60,10 % | 0,179 | 0,012 | **+0,167** |
+//! | 0,9 | 16,1 % | 61,9 % | 0,145 | 0,062 | +0,083 |
+//! | **0,8** | **14,3 %** | **63,7 %** | **0,115** | **0,115** | **0,000** |
+//! | 0,5 | 9,0 % | 69,0 % | 0,045 | 0,290 | −0,245 |
+//! | 0,1 | 1,8 % | 76,2 % | 0,002 | 0,564 | **−0,562** |
 //!
-//! ⚑ **Rund zwei volle Epochen tragen eine leere**: 0,292 gegen 0,552.
+//! ⚑ **Rund dreieinhalb volle Epochen tragen eine leere**: 0,167 gegen
+//! 0,562. Bei 0,7 waren es zwei; der Preis dafür war ein dauerhafter
+//! Überschuss genau dort, wo die Preisbildung das Netz hält.
 //!
 //! # ⚑ Was die Miner davon haben, und es ist nichts Schlechtes
 //!
 //! Die Abgabe ist **kein Verlust**, sondern eine Umschichtung zwischen
-//! zwei Arbeitsarten derselben Leute. Am Ziel bekommen sie 56,9 Prozent
-//! für Inferenz und 14,8 Prozent für Training; über einen Zyklus ist das
+//! zwei Arbeitsarten derselben Leute. Am Ziel bekommen sie 63,7 Prozent
+//! für Inferenz und 11,5 Prozent für Training; über einen Zyklus ist das
 //! dasselbe Geld für mehr Arbeit, und die Arbeit verbessert das Modell,
 //! von dem ihre künftige Vergütung lebt.
 //!
@@ -91,7 +95,7 @@ use crate::distribute::SHARES_TOTAL_BPS;
 /// **Gerechnet und nicht gesetzt**, siehe [`abgabe_max_bps`]: Am
 /// Auslastungsziel trägt die Abgabe das Training genau. Der Wert hier
 /// ist der bei den Vorgabeparametern; ein Test hält ihn dagegen.
-pub const ABGABE_MAX_BPS: u64 = 3_017;
+pub const ABGABE_MAX_BPS: u64 = 1_790;
 
 /// Der Höchstsatz aus seinen Eingaben.
 ///
@@ -187,10 +191,10 @@ mod tests {
     /// Die Tabelle aus dem Modulkopf, Zeile für Zeile.
     #[test]
     fn die_abgabe_folgt_der_auslastung() {
-        assert_eq!(abgabe_bps(SKALA, ABGABE_MAX_BPS), 3_017, "voll ausgelastet");
-        assert_eq!(abgabe_bps(SKALA * 8 / 10, ABGABE_MAX_BPS), 2_413, "80 Prozent");
-        assert_eq!(abgabe_bps(SKALA * 7 / 10, ABGABE_MAX_BPS), 2_111, "am Ziel");
-        assert_eq!(abgabe_bps(SKALA / 2, ABGABE_MAX_BPS), 1_508, "die Haelfte");
+        assert_eq!(abgabe_bps(SKALA, ABGABE_MAX_BPS), 1_790, "voll ausgelastet");
+        assert_eq!(abgabe_bps(SKALA * 8 / 10, ABGABE_MAX_BPS), 1_431, "am Ziel");
+        assert_eq!(abgabe_bps(SKALA * 7 / 10, ABGABE_MAX_BPS), 1_252, "70 Prozent");
+        assert_eq!(abgabe_bps(SKALA / 2, ABGABE_MAX_BPS), 895, "die Haelfte");
         assert_eq!(abgabe_bps(0, ABGABE_MAX_BPS), 0, "leerlaufend: keine Abgabe");
     }
 
@@ -220,13 +224,13 @@ mod tests {
     /// Ohne diesen Test wäre die Herleitung im Modulkopf eine Erzählung.
     #[test]
     fn am_auslastungsziel_traegt_die_abgabe_das_training() {
-        // u* = 0,7; Trainingsanteil t(u*) = 0,02 + 0,8·0,3 = 0,26.
-        let u = SKALA * 7 / 10;
+        // u* = 0,8; Trainingsanteil t(u*) = 0,02 + 0,8·0,2 = 0,18.
+        let u = SKALA * 8 / 10;
         let lam = abgabe_bps(u, ABGABE_MAX_BPS) as f64 / 10_000.0;
         let shard = shard_anteil_bps(abgabe_bps(u, ABGABE_MAX_BPS)) as f64 / 10_000.0;
-        let t = 0.02 + 0.80 * 0.30;
+        let t = 0.02 + 0.80 * 0.20;
         // Zufluss (in Vielfachen von m0): u·λ. Kosten: t·(S − λ).
-        let zufluss = 0.70 * lam;
+        let zufluss = 0.80 * lam;
         let kosten = t * shard;
         assert!(
             (zufluss - kosten).abs() < 0.002,
@@ -245,32 +249,32 @@ mod tests {
             let t = 0.02 + 0.80 * (1.0 - u_anteil);
             u_anteil * lam - t * shard
         };
-        assert!(saldo(1.0) > 0.28, "bei voller Auslastung wird zu wenig zurueckgelegt");
-        assert!(saldo(0.8) > 0.0, "ueber dem Ziel muss angespart werden");
+        assert!(saldo(1.0) > 0.16, "bei voller Auslastung wird zu wenig zurueckgelegt");
+        assert!(saldo(0.9) > 0.0, "ueber dem Ziel muss angespart werden");
         assert!(saldo(0.5) < 0.0, "unter dem Ziel muss gezehrt werden");
         assert!(saldo(0.1) < -0.5, "bei leerem Netz zehrt es kraeftig");
-        // ⚑ Rund zwei volle Epochen tragen eine leere.
+        // ⚑ Rund dreieinhalb volle Epochen tragen eine leere.
         let verhaeltnis = -saldo(0.1) / saldo(1.0);
         assert!(
-            (1.5..2.5).contains(&verhaeltnis),
-            "das Verhaeltnis ist {verhaeltnis:.2} statt rund zwei"
+            (3.0..4.0).contains(&verhaeltnis),
+            "das Verhaeltnis ist {verhaeltnis:.2} statt rund dreieinhalb"
         );
     }
 
     /// ⚑ **Die Konstante ist die Formel bei den Vorgabeparametern.**
     #[test]
     fn die_konstante_folgt_aus_der_formel() {
-        let gerechnet = abgabe_max_bps(7, 10, 7_800, 200, 8_000).expect("rechenbar");
+        let gerechnet = abgabe_max_bps(8, 10, 7_800, 200, 8_000).expect("rechenbar");
         assert_eq!(gerechnet, ABGABE_MAX_BPS, "die Konstante ist veraltet");
     }
 
     /// Die Formel reagiert richtungsrichtig auf ihre Eingaben.
     #[test]
     fn die_formel_reagiert_richtungsrichtig() {
-        let grund = abgabe_max_bps(7, 10, 7_800, 200, 8_000).expect("rechenbar");
+        let grund = abgabe_max_bps(8, 10, 7_800, 200, 8_000).expect("rechenbar");
         // Mehr Training verlangt mehr Abgabe.
-        assert!(abgabe_max_bps(7, 10, 7_800, 200, 9_000).expect("r") > grund);
-        assert!(abgabe_max_bps(7, 10, 7_800, 400, 8_000).expect("r") > grund);
+        assert!(abgabe_max_bps(8, 10, 7_800, 200, 9_000).expect("r") > grund);
+        assert!(abgabe_max_bps(8, 10, 7_800, 400, 8_000).expect("r") > grund);
         // Ein höheres Auslastungsziel senkt sie: dann bleibt weniger
         // freie Kapazität, also weniger Training.
         assert!(abgabe_max_bps(9, 10, 7_800, 200, 8_000).expect("r") < grund);

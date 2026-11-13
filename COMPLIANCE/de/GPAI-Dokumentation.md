@@ -15,9 +15,9 @@ allgemeinem Verwendungszweck (Kapitel Transparenz).
 | Anbieter | Joschka Benjamin Hänsler, Privatperson, Deutschland, nicht kommerziell |
 | Kontakt | über die Issues des Repositoriums |
 | Rolle | **Anbieter** der Myelith-Artefakte im Sinne von Art. 3 Nr. 3 und Art. 53. Die Artefakte sind Bearbeitungen fremder Grundmodelle; Myelith trainiert sie selbst nach und behandelt sich deshalb für die eigenen Bearbeitungen als Anbieter mit allen Pflichten nach Art. 53. Die Pflichten der Anbieter der Grundmodelle bleiben davon unberührt. |
-| Modelle | `sparrow-0.6b-int8`, `pigeon-4b-int8`, `jay-8b-int8`, `magpie-30b-a3b-int8`, `raven-35b-a3b-int8` |
+| Modelle | `sparrow-0.6b-int8`, `parrot-2b-int8`, `pigeon-4b-int8`, `jay-8b-int8`, `magpie-30b-a3b-int8`, `raven-35b-a3b-int8` |
 | Fassung der Ausführungsspezifikation | θ_v 0.22.0 |
-| Grundmodelle | Qwen3-0.6B, Qwen3-4B, Qwen3-8B, Qwen3-30B-A3B, Qwen3.6-35B-A3B (Alibaba Cloud), je Apache 2.0; Revision und Prüfung stehen in [`MODELS/llm/KATALOG.json`](../../MODELS/llm/KATALOG.json) |
+| Grundmodelle | Qwen3-0.6B, Qwen3-4B, Qwen3-8B, Qwen3-30B-A3B, Qwen3.6-35B-A3B (Alibaba Cloud), Index-Translate-2B (IndexTeam), je Apache 2.0; Revision und Prüfung stehen in [`MODELS/llm/KATALOG.json`](../../MODELS/llm/KATALOG.json) |
 | Lizenz | Artefakte und Code: PolyForm Shield License 1.0.0; Grundgewichte: Apache 2.0 (siehe [NOTICES](../NOTICES.md)) |
 | Systemisches Risiko | nein; die Schwelle von Art. 51 Abs. 2 (10²⁵ Gleitkommaoperationen) wird durch die eigene Bearbeitung um viele Größenordnungen unterschritten |
 
@@ -35,6 +35,7 @@ Rechenarbeit im Myelith-Netz.
 |---|---|---|---|---|---|---|---|
 | sparrow-0.6b-int8 | dicht | 28 | 1024 | 16/8 | keine | 151 936 | 0,9 GB |
 | pigeon-4b-int8 | dicht | 36 | 2560 | 32/8 | keine | 151 936 | 4,5 GB |
+| parrot-2b-int8 | hybrid dicht | 24 | 2048 | 8/2 | keine | 248 320 | 2,7 GB |
 | jay-8b-int8 | dicht | 36 | 4096 | 32/8 | keine | 151 936 | 8,8 GB |
 | magpie-30b-a3b-int8 | Expertengemisch | 48 | 2048 | 32/4 | 128 (8) | 151 936 | 29 GB |
 | raven-35b-a3b-int8 | Expertengemisch, hybrid mit rekurrenten Zustandsebenen | 40 | 2048 | 16/2 | 256 (8) | 248 320 | 33 GB |

@@ -1,7 +1,7 @@
 # NODE — der Myelith-Knoten
 
-> **Version:** 0.122.0
-> **Datum:** 2026-11-09
+> **Version:** 0.124.0
+> **Datum:** 2026-11-12
 > **Status:** Netzknoten lauffähig, Blockproduktion mit **Persistenz über
 > Neustarts**, BFT-Runden über das Netz mit Rundenwechsel, und seit dem
 > 1. September **schließt der Knoten die Epoche selbst ab**.
@@ -278,6 +278,75 @@ NODE/
 ```
 
 ## Changelog
+
+### v0.124.0 (2026-11-12): Epoche und Rolle am Beobachtungspunkt
+
+- Neu unter `/metriken`: `myelith_kette_epoche` (laufende Epoche der eigenen
+  Kette), `myelith_rolle_miner` (eins, wenn die Kette diesen Knoten als
+  Miner führt) und `myelith_rolle_validator` (eins, wenn er im
+  Finalitätssatz der laufenden Epoche steht). Erhoben in derselben
+  Zustandsaufnahme wie die übrigen Zahlen; nur Auskunft, Kette und
+  Konsens unberührt. Der Client zeigt sie (CLIENT 2.2).
+- Probe `epoche_und_rolle_stehen_im_text`; `myl-node` 510 grün, Clippy mit
+  und ohne `konsensrollen` sauber. Am Probenetz: gleich nach dem Start
+  Rolle null, nach der Anmeldung Miner eins.
+
+### v0.123.1 (2026-11-12): Prüfrolle Höhenlügner, Fund 634 im Netz belegt
+
+- **Neue Prüfrolle `MYL_HOEHE_UEBERTREIBEN=<blöcke>`** (nur mit dem Merkmal
+  `konsensrollen`, nie im ausgelieferten Programm): Nach jedem eigenen Block
+  verbreitet der Knoten eine neu unterschriebene Kopie, die so viele Blöcke
+  weiter vorn steht, mit passender Epoche und unbekanntem Vorgänger;
+  Protokollzeile `hoehe_uebertrieben`.
+- **Belegt im Netz** (zehn Miner, Takt 60 ms, Trennungen ab Höhe 5600):
+  Mit +200, innerhalb der bekannten Epoche, verbreitete der Lügner 279
+  erfundene Höhen; **alle zehn Ehrlichen erkannten sie** (416 Zeilen
+  `hoehe_erfunden`, 414 mit ihm als Absender, zwei mit Weiterleitern, ohne
+  Folge), forderten nichts nach und endeten einig am Prüfpunkt 6900. Mit
+  +100 000 scheiterten alle 48 erfundenen Blöcke schon als
+  `erzeuger-unbelegt` (für Epoche 58 kennt niemand einen Erzeugerplan) und
+  kamen nie bis zur Schranke; keine einzige Fehlmeldung.
+- Clippy mit und ohne `konsensrollen` sauber.
+
+### v0.123.0 (2026-11-12): Die Gruppenwurzeln des Archivs in Scheiben
+
+- **Die Gruppenwurzeln eines Archivabschnitts entstehen in Scheiben**
+  (`Kette::gruppenwurzeln_vorarbeiten`, `gruppenwurzeln_bereit`): Kopien
+  und Halter, bei denen Splitter ihre Teile holen, rechnen je Aufnahme
+  höchstens 20 ms weiter, mindestens eine Gruppe. Die Teilwurzel nennt
+  eine Kopie, sobald alle fertig sind; eine Teilanfrage vorher rechnet
+  eine Scheibe und antwortet mit nichts. Das Ergebnis gleicht der Rechnung
+  am Stück; der Konsens ist unberührt.
+- ⚑ **Gemessen, bevor gebaut wurde:** Eine Periode hat 112 Gruppen zu 1024
+  Blöcken; Kodieren und Wurzel kosten 5 ms je Gruppe bei 300 Byte je
+  Block, 16 ms bei 2 KB, 122 ms bei 20 KB (Release). Am Stück standen also
+  0,6 bis 14 s im Ereignisweg, einmal je Periode, ohne dass der Knoten
+  Blöcke annahm. ⚑ Scheiben statt eines eigenen Fadens: Der bräuchte einen
+  zweiten Lesegriff auf die Kettendatei oder alle Blöcke des Abschnitts im
+  Speicher (bei 2 KB je Block rund 230 MB).
+- Probe in `splitter_halten_teile_aus_denen_die_geschichte_zurueckkommt`:
+  ohne Frist genau eine Gruppe je Aufruf, fertig erst nach der letzten,
+  dieselbe Teilwurzel wie am Stück. Gegenprobe: Prüft die Scheibe die
+  Frist vor der ersten Gruppe, kommt sie nie voran, und die Probe wird
+  rot. Alle 509 Proben grün, Clippy sauber.
+
+### v0.122.1 (2026-11-11): Die Kettendatei liest gepuffert
+
+- **Der Lesegriff von `Kettenspeicher` ist gepuffert und springt nur, wenn
+  der gewünschte Satz nicht der nächste ist.** Ungepuffert kostete jeder
+  Satz drei `read` und ein `lseek`. Nach `kuerzen_nach` und nach jedem
+  Lesefehler springt der nächste Zugriff immer und verwirft dabei den
+  Puffer, denn hinter einem Schnitt stehen neue Bytes. Verdichten und
+  Vorne-Einfügen öffnen den Speicher ohnehin neu.
+- ⚑ **Gemessen, bevor gebaut wurde.** Die Annahme war, die Belege des
+  Archivknotens kosteten Zeit, weil sie Blöcke zerlegen und neu
+  serialisieren. Abgetastet in `eine_kopie_laedt_ihre_geschichte_mit_beweisen`
+  (184 s): rund 40 Prozent Prüfung der Erzeugerunterschriften beim
+  Nachladen, 18 Prozent Bau der Blöcke, 15 Prozent Belege, und davon die
+  Hälfte in den Lesezugriffen, ein Drittel in der Prüfsumme je Satz;
+  borsh kaum. Die Rohbytes zu hashen hätte fast nichts gespart. Nach dem
+  Umbau 171 s.
+- Proben: 509 grün, Clippy sauber.
 
 ### v0.122.0 (2026-11-09): Der Kontowechsel aus einem Keystore
 

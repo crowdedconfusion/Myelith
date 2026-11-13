@@ -955,7 +955,7 @@ pub fn hinweis_fuer_auftrag(wurzel: &Path, auftrag: &str, deutsch: bool) -> Opti
 }
 
 /// **Nur die Worte des Nutzers**: ein Auftrag ohne das, was der Lauf
-/// angehaengt hat, also Skillhinweis, Datumszeile und Erinnerungsblock
+/// angehaengt hat, also Skillhinweis, Buchhinweis, Datumszeile und Erinnerungsblock
 /// ([`hinweis_fuer_auftrag`]).
 ///
 /// 📌 **Bis zum 2026-10-13 nur ohne den Erinnerungsblock**, und der echte
@@ -971,6 +971,8 @@ pub fn nur_nutzerworte(text: &str) -> &str {
         crate::uhr::HEUTE_EN,
         crate::skills::SKILLHINWEIS_DE,
         crate::skills::SKILLHINWEIS_EN,
+        crate::bibliothek::BUCHHINWEIS_DE,
+        crate::bibliothek::BUCHHINWEIS_EN,
     ];
     let ende = marken.iter().filter_map(|m| text.find(m)).min().unwrap_or(text.len());
     &text[..ende]
@@ -1275,6 +1277,9 @@ mod proben {
         let mit_allem = format!("Wie heiße ich?{}{block}", crate::uhr::heute_zeile(true));
         assert_eq!(nur_nutzerworte(&mit_allem), "Wie heiße ich?", "die Datumszeile ist kein Wort des Nutzers");
         assert_eq!(nur_nutzerworte(&format!("Mach es{}x", crate::skills::SKILLHINWEIS_EN)), "Mach es");
+        for marke in [crate::bibliothek::BUCHHINWEIS_DE, crate::bibliothek::BUCHHINWEIS_EN] {
+            assert_eq!(nur_nutzerworte(&format!("Mach es{marke}x")), "Mach es");
+        }
     }
 
     /// ⚑ **Was der Nutzer festlegte, kommt auch ohne gemeinsames Wort mit**,

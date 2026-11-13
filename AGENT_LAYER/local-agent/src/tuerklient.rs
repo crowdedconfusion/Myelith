@@ -460,6 +460,13 @@ impl Tuerklient {
 
     /// Liest eine HTTP/1.1-Antwort: Statuszeile, Köpfe, dann genau so
     /// viele Rumpfbytes, wie `Content-Length` sagt.
+    ///
+    /// ⛔️ **Mit Obergrenzen** (2026-11-13): Köpfe bis [`KOPF_HOECHSTENS`],
+    /// der Rumpf bis [`RUMPF_HOECHSTENS`]. 📌 Vorher sammelte der Klient,
+    /// solange etwas kam: Eine Gegenstelle ohne Leerzeile oder mit endlosem
+    /// Rumpf liess den Speicher wachsen, und die Suche nach der Leerzeile
+    /// lief jedes Mal über alles. Mit dem Schalter „Netz“ ist die
+    /// Gegenstelle ein fremder Knoten.
     fn lesen(&self, strom: &mut TcpStream) -> Result<(u16, Vec<u8>), Tuerfehler> {
         let mut roh: Vec<u8> = Vec::new();
         let mut puffer = [0u8; 4096];
@@ -467,6 +474,9 @@ impl Tuerklient {
         let kopfende = loop {
             if let Some(i) = finde_leerzeile(&roh) {
                 break i;
+            }
+            if roh.len() > KOPF_HOECHSTENS {
+                return Err(Tuerfehler::KeinHttp);
             }
             match strom.read(&mut puffer) {
                 Ok(0) => return Err(Tuerfehler::KeinHttp),
@@ -482,6 +492,10 @@ impl Tuerklient {
         let kopf = String::from_utf8_lossy(&roh[..kopfende]).into_owned();
         let status = statuszeile(&kopf).ok_or(Tuerfehler::KeinHttp)?;
         let laenge = inhaltslaenge(&kopf);
+        let zu_gross = || Tuerfehler::Unlesbar { rumpf: format!("die Antwort ist groesser als {} MiB", RUMPF_HOECHSTENS >> 20) };
+        if laenge.is_some_and(|n| n > RUMPF_HOECHSTENS) {
+            return Err(zu_gross());
+        }
 
         let mut rumpf = roh[kopfende + 4..].to_vec();
         // ⚑ **Mit Längenangabe genau so viele Bytes, ohne sie bis zum
@@ -512,7 +526,12 @@ impl Tuerklient {
                     }
                     return Ok((status, rumpf));
                 }
-                Ok(n) => rumpf.extend_from_slice(&puffer[..n]),
+                Ok(n) => {
+                    rumpf.extend_from_slice(&puffer[..n]);
+                    if rumpf.len() > RUMPF_HOECHSTENS {
+                        return Err(zu_gross());
+                    }
+                }
                 Err(e) if ist_frist(&e) => {
                     return Err(Tuerfehler::Zeitueberschreitung {
                         frist_ms: self.frist.as_millis() as u64,
@@ -523,6 +542,12 @@ impl Tuerklient {
         }
     }
 }
+
+/// So lang dürfen die Köpfe einer Antwort höchstens sein.
+pub const KOPF_HOECHSTENS: usize = 64 << 10;
+/// So groß darf der Rumpf einer Antwort höchstens sein. Eine Chatantwort
+/// ist JSON mit dem Text eines Laufs, weit darunter.
+pub const RUMPF_HOECHSTENS: usize = 64 << 20;
 
 /// 64 Hexzeichen zu 32 Bytes, oder nichts.
 ///

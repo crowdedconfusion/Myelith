@@ -417,7 +417,7 @@ pub struct Oertlichesmodell {
     /// ⚑ Ein Agentenlauf schickt in jedem Schritt alle Nachrichten davor
     /// noch einmal; gerechnet wird nur, was dahinter neu ist. Hinter einem
     /// Schloss, weil [`Modellweg::chat`] `&self` nimmt.
-    fortsetzung: std::sync::Mutex<Fortsetzung>,
+    fortsetzung: std::sync::Arc<std::sync::Mutex<Fortsetzung>>,
     /// **Name und `top_k` eines Gemischs**, dessen Wahl nach jeder Antwort
     /// ins Profil dieser Maschine geht; `None` bei einem dichten Modell.
     profil: Option<(String, u32)>,
@@ -466,6 +466,44 @@ fn speicherwache(art: myl_senses::Art, bytes: u64) -> Result<(), String> {
     // Der Zuschlag aus dem Eichbuch, falls `myl eichen` diesen Sinn gemessen hat.
     let zuschlag = crate::hardware::eichbuch().zuschlag_fremd(name, bytes);
     myl_dispatcher::local::register::wache_mit(name, vorrang, bytes, zuschlag)
+}
+
+/// **Macht einem Buch Platz, ohne das Modell zu entladen.** Die Gewichte sind
+/// eingeblendet und gehen von selbst, sobald Speicher fehlt; festgehalten ist nur
+/// der Kontextspeicher. Geleert wird er nur, wenn es nicht reicht.
+struct Buchgastgeber {
+    artefakt: String,
+    fortsetzung: std::sync::Weak<std::sync::Mutex<Fortsetzung>>,
+}
+
+impl myl_local_agent::buchwerkzeug::Gastgeber for Buchgastgeber {
+    fn artefakt(&self) -> Option<String> {
+        self.fortsetzung.upgrade().map(|_| self.artefakt.clone())
+    }
+
+    fn platz(&self, bytes: u64) -> bool {
+        let frei = myl_dispatcher::local::erhebung::speicher_frei_jetzt;
+        if platz_reicht(frei(), bytes) {
+            return true;
+        }
+        // ⚑ `try_lock`: Rechnet das Modell gerade, gibt es nichts freizugeben.
+        if let Some(f) = self.fortsetzung.upgrade() {
+            if let Ok(mut g) = f.try_lock() {
+                g.leeren();
+            }
+        }
+        platz_reicht(frei(), bytes)
+    }
+}
+
+/// Nicht messbar heisst: keine Ablehnung, wie beim Dispatcher.
+fn platz_reicht(frei: Option<u64>, bytes: u64) -> bool {
+    frei.is_none_or(|f| f >= bytes)
+}
+
+/// Die Speicherwache fuer ein Programm, das Sinne ohne eigenes Modell benutzt.
+pub fn sehen_passt(bytes: u64) -> Result<(), String> {
+    speicherwache(myl_senses::Art::Bild, bytes)
 }
 
 impl Oertlichesmodell {
@@ -673,7 +711,14 @@ impl Oertlichesmodell {
             halt,
             beobachter: None,
             zaehler: std::sync::Arc::new(Tokenzaehler::default()),
-            fortsetzung: std::sync::Mutex::new(fortsetzung),
+            fortsetzung: {
+                let griff = std::sync::Arc::new(std::sync::Mutex::new(fortsetzung));
+                myl_local_agent::buchwerkzeug::gastgeber_setzen(std::sync::Arc::new(Buchgastgeber {
+                    artefakt: verzeichnis.to_string(),
+                    fortsetzung: std::sync::Arc::downgrade(&griff),
+                }));
+                griff
+            },
             modell: Arc::new(modell),
             profil,
         };

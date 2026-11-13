@@ -1,6 +1,6 @@
 [package]
 name = "myl-client"
-version = "0.123.0"
+version = "0.132.2"
 edition = "2021"
 rust-version = "1.99"
 description = "Der Nutzer-Client: eine Frage an ein lokales Modell, die Agentenschleife mit Einhaengegrenze, die Einstellungen."
@@ -38,6 +38,9 @@ ausliefern = "myl"
 [dependencies]
 myl-local-agent = { path = "../../AGENT_LAYER/local-agent" }
 myl-senses = { path = "../myl-senses" }
+# Gescannte Buecher lesen, nur fuer das Programm `myl`. Konsole, Fenster und Testclient
+# schalten es ab (`default-features = false`), damit sie die 35 MB Modelle nicht tragen.
+myl-scan = { path = "../myl-scan", optional = true }
 # ⚑ Fuer das Finden, Pruefen und den Zusatz eines gewaehlten Moduls, eine
 #   Stelle fuer Konsole und Fenster (2026-10-12). Die Kiste bringt keine
 #   neue Fremdkiste mit: Ihre Abhaengigkeiten baut die Konsole schon.
@@ -109,6 +112,8 @@ tempfile = "3"
 integer-llm-runtime = { path = "../../INTEGER_LLM/runtime", features = ["pruefnetz"] }
 
 [features]
+default = ["scan"]
+scan = ["dep:myl-scan"]
 cuda = ["integer-llm-runtime/cuda"]
 rocm = ["integer-llm-runtime/rocm"]
 

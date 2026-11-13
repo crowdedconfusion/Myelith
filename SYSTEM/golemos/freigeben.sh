@@ -40,6 +40,20 @@ ZIEL="$HIER/abbild/fertig/golemos-$ARCH.img.xz"
   exit 1
 }
 
+# ⛔️ **Kein Abbild ohne Lizenzauskunft und Quellen.** Das Abbild enthaelt
+#    Teile unter der GPL; wer es weitergibt, gibt die Quellen mit.
+#    `auskunft.sh` legt beides neben das Abbild, und es muss juenger sein
+#    als das Abbild, sonst gehoert es zu einem anderen Bau.
+LIZENZEN="$HIER/aus/$ARCH/lizenzen-$ARCH.tar.xz"
+QUELLEN="$HIER/aus/$ARCH/quellen-$ARCH.tar"
+for f in "$LIZENZEN" "$QUELLEN"; do
+  if [ ! -f "$f" ] || [ "$QUELLE" -nt "$f" ]; then
+    echo "⛔️ Zu diesem Abbild fehlt die Lizenzauskunft ($(basename "$f"))." >&2
+    echo "   sh SYSTEM/golemos/auskunft.sh --arch $ARCH" >&2
+    exit 4
+  fi
+done
+
 # ⚠️ **Nachsehen, ob sich ueberhaupt etwas geaendert hat.** Ein
 #    Freigeben, das denselben Inhalt noch einmal ablegt, kostet 31 MB
 #    Geschichte fuer nichts.
@@ -64,6 +78,10 @@ fi
 echo "── Packen, das dauert einen Moment"
 mkdir -p "$(dirname "$ZIEL")"
 xz -9 -c "$QUELLE" > "$ZIEL"
+# Die kleine Auskunft (Verzeichnis und Lizenztexte) kommt mit ins
+# Repositorium; die Quellen sind zu gross dafuer und gehen als Anhang an
+# dieselbe Freigabe.
+cp "$LIZENZEN" "$(dirname "$ZIEL")/"
 
 ( cd "$(dirname "$ZIEL")" && \
   if command -v shasum >/dev/null 2>&1; then
@@ -81,6 +99,10 @@ cat <<ENDE
 
 ⚠️  Jetzt gehoert HERKUNFT.md nachgezogen: Datum, Fassungen, und
     warum dieser Stand freigegeben wurde.
+
+⛔️  Und die Quellen gehoeren als Anhang an dieselbe Freigabe, samt
+    Pruefsumme, bevor jemand das Abbild bekommt:
+    $QUELLEN
 
     Grund dieses Standes: $GRUND
 ENDE

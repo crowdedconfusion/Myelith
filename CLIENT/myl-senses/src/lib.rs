@@ -48,14 +48,24 @@
 pub mod anhang;
 pub mod aufnahme;
 pub mod blick;
+pub mod eigensprecher;
+pub mod flac;
 pub mod hoeren;
 pub mod kennzeichnung;
 pub mod laufwerk;
+pub mod mikrofon;
 pub mod ort;
 pub mod prozess;
 pub mod schrift;
 pub mod sehen;
+pub mod spektrum;
 pub mod sprechen;
+pub mod ton;
+pub mod sprecher;
+pub mod stimmabdruck;
+pub mod textzerleger;
+pub mod tonzerleger;
+pub mod whisper;
 
 pub use anhang::{Anhang, Art};
 pub use laufwerk::{Aufnahmezeug, Hoerzeug, Mangel, Sehen, Sehzeug, Sinne, Sprechzeug, Stufe};

@@ -79,7 +79,10 @@ fn jeder_parameter_hat_einen_wert() {
     // Die Trainingszuteilung braucht eine Pod-Kapazitaet und zwei Raten.
     // Alle drei waeren als Konstanten nach dem Genesis unbeweglich, und
     // die Pod-Kapazitaet haengt am Modell, wechselt also planmaessig.
-    assert_eq!(Parameter::alle().len(), 35);
+    //
+    // ⚑ **Vierunddreissig seit dem 2026-11-10:** `Kostenanteil` ist heraus,
+    // eine Beobachtung ueber die Welt und keine Protokollgroesse (Fund 49).
+    assert_eq!(Parameter::alle().len(), 34);
 }
 
 // ---------------------------------------------------------------------
@@ -300,42 +303,19 @@ fn ein_vorschlag_ueber_der_self_dealing_grenze_wird_abgelehnt() {
 /// Ergebnis nicht. Seine Doku sagte: „Schlägt dieser Test eines Tages
 /// fehl, hat jemand die Lücke geschlossen." Genau das ist passiert.
 ///
-/// Jetzt hält er die Gegenrichtung fest, und das ist der wichtigere Teil:
-/// **`Parameter::Kostenanteil` steht weiter in der Registry, hat aber
-/// keine Wirkung mehr auf die Prüfung.** Ein Parameter ohne Wirkung ist
-/// das Muster, an dem sich das Projekt dreimal verbrannt hat (A7,
-/// Fund 25, Fund 44). Deshalb steht die Wirkungslosigkeit hier als Test
-/// und nicht nur als Satz: Wer die Prüfung wieder an `c` koppelt, bricht
-/// ihn.
+/// Danach hielt er fest, dass `Parameter::Kostenanteil` keine Wirkung
+/// mehr auf die Prüfung hatte. 📌 **Am 2026-11-10 ist der Parameter
+/// entfernt** (ein Wert ohne Wirkung ist das Muster von A7, Fund 25 und
+/// Fund 44), und es bleibt, worauf es ankommt: Die Grenze für `s` liegt
+/// fest bei 1,5, dem unteren Ende des Bandes, und keine Registry kann sie
+/// verschieben.
 #[test]
-fn kein_kostenanteil_bewegt_die_self_dealing_grenze() {
+fn die_self_dealing_grenze_liegt_fest_am_unteren_ende_des_bandes() {
     let basis = ParameterRegistry::vorgabe();
-
-    // s = 2 ist unzulässig (Grenze 1,5) — und bleibt es für jedes c.
-    for cz in 1..=8u64 {
-        let nach_c = match pruefe_vorschlag(
-            &basis,
-            &vorschlag(Parameter::Kostenanteil, bruch(cz, 10)),
-        ) {
-            Ok(r) => r,
-            Err(_) => continue, // c außerhalb der Plausibilitätsgrenze
-        };
-        for (sz, sn, soll_gelten) in [(149u64, 100u64, true), (150, 100, false), (2, 1, false), (3, 1, false)] {
-            let ergebnis = pruefe_vorschlag(&nach_c, &vorschlag(Parameter::Subventionsrate, bruch(sz, sn)));
-            assert_eq!(
-                ergebnis.is_ok(),
-                soll_gelten,
-                "c = {cz}/10 hat das Urteil über s = {sz}/{sn} verändert"
-            );
-        }
+    for (sz, sn, soll_gelten) in [(149u64, 100u64, true), (150, 100, false), (2, 1, false), (3, 1, false)] {
+        let ergebnis = pruefe_vorschlag(&basis, &vorschlag(Parameter::Subventionsrate, bruch(sz, sn)));
+        assert_eq!(ergebnis.is_ok(), soll_gelten, "s = {sz}/{sn}");
     }
-
-    // Die Plausibilitätsgrenze für c gilt weiterhin, sie schützt jetzt
-    // aber nichts mehr, sondern hält den Wert nur in seinem Band.
-    assert!(matches!(
-        pruefe_vorschlag(&basis, &vorschlag(Parameter::Kostenanteil, bruch(9, 10))),
-        Err(VorschlagFehler::Invariante(_))
-    ));
 }
 
 /// **Fund 47 an seinem Platz:** α > 1 kommt gar nicht erst durch.
@@ -370,7 +350,6 @@ fn die_strukturellen_schranken_greifen() {
             bruch(10_000, 10_000),
             Invariante::TrainingsverguetungUnterInferenz,
         ),
-        (Parameter::Kostenanteil, bruch(0, 10), Invariante::KostenanteilPlausibel),
     ];
     for (p, w, erwartet) in faelle {
         match pruefe_vorschlag(&reg, &vorschlag(p, w.clone())) {

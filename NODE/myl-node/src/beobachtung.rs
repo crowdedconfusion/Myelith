@@ -101,6 +101,12 @@ pub struct Beobachtungsstand {
     /// Wann dieser Stand entstand, in Millisekunden seit der Epoche.
     pub stand_ms: u64,
     pub hoehe: u64,
+    /// Die laufende Epoche der eigenen Kette (CLIENT 2.2).
+    pub epoche: u64,
+    /// Eins, wenn die Kette diesen Knoten als Miner fuehrt.
+    pub rolle_miner: u64,
+    /// Eins, wenn er im Finalitaetssatz der laufenden Epoche steht.
+    pub rolle_validator: u64,
     /// Die höchste Höhe, von der dieser Knoten gehört hat.
     pub hoechste_gehoerte: u64,
     pub peers: u64,
@@ -524,6 +530,9 @@ pub fn als_prometheus(stand: &Beobachtungsstand, jetzt_ms: u64) -> String {
     // hat, und was es ihm eingebracht hat. Dieselben Zahlen wie in der
     // Zustandsaufnahme des Protokolls.
     for (name, hilfe, art, wert) in [
+        ("myelith_kette_epoche", "Laufende Epoche der eigenen Kette.", "gauge", stand.epoche),
+        ("myelith_rolle_miner", "Eins, wenn die Kette diesen Knoten als Miner fuehrt.", "gauge", stand.rolle_miner),
+        ("myelith_rolle_validator", "Eins, wenn er im Finalitaetssatz der laufenden Epoche steht.", "gauge", stand.rolle_validator),
         ("myelith_speicher_orte", "Speicherorte fuer das Netz.", "gauge", stand.speicher_orte),
         ("myelith_speicher_gegenstaende", "Gegenstaende in den Orten fuer das Netz.", "gauge", stand.speicher_gegenstaende),
         ("myelith_speicher_shards", "Davon Shard-Gewichte.", "gauge", stand.speicher_shards),
@@ -782,6 +791,18 @@ mod tests {
         s.nachforderung_laeuft = false;
         let t = als_prometheus(&s, 1_500);
         assert!(t.contains("\nmyelith_nachforderung_laeuft 0\n"), "{t}");
+    }
+
+    /// Epoche und Rolle stehen im Text (CLIENT 2.2), die Rolle als Eins
+    /// oder Null.
+    #[test]
+    fn epoche_und_rolle_stehen_im_text() {
+        let s = Beobachtungsstand { epoche: 7, rolle_miner: 1, rolle_validator: 0, ..stand() };
+        let t = als_prometheus(&s, 1_500);
+        assert!(t.contains("\nmyelith_kette_epoche 7\n"), "{t}");
+        assert!(t.contains("\nmyelith_rolle_miner 1\n"), "{t}");
+        assert!(t.contains("\nmyelith_rolle_validator 0\n"), "{t}");
+        assert!(t.contains("# TYPE myelith_rolle_validator gauge"), "{t}");
     }
 
     #[test]

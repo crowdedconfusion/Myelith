@@ -107,6 +107,13 @@ pub enum RebuildAnlass {
     /// Ein Standby ist für einen ausgefallenen Miner eingerückt.
     Ausfall,
     /// Die Epoche hat gewechselt und der Pod eine neue Zusammensetzung.
+    ///
+    /// ⚑ **Gebaut ist dieser Anlass im Podwerk, nicht hier**
+    /// (`crate::podwerk`, Fund 649): Endet die Epoche in einem Auftrag,
+    /// rechnet der Pod der neuen Epoche ihn aus den Token neu, und das ist
+    /// der Neuaufbau. Bis 2026-11-11 stand hier zusaetzlich
+    /// `PodBesetzung::epochenwechsel` mit Auftraegen je gewechselter
+    /// Position; den Weg rief niemand, und er wurde entfernt.
     Epochenwechsel,
 }
 
@@ -454,41 +461,6 @@ impl PodBesetzung {
         ))
     }
 
-    /// Übergang in eine neue Epoche mit neuer Zusammensetzung (Punkt 3.3).
-    ///
-    /// Die neue Besetzung kommt aus der VRF-Zuteilung des Schedulers.
-    /// **Zurückgegeben werden die Rebuild-Aufträge derjenigen Positionen,
-    /// deren Miner sich geändert hat** — und nur derjenigen: Wer bleibt,
-    /// behält seinen Cache, und ein Rebuild für ihn wäre Kap. 4.2
-    /// zuwider.
-    pub fn epochenwechsel(
-        &mut self,
-        neue_epoche: EpochId,
-        neue_miner: &[MinerId],
-        aktuelle_position: u64,
-        layer_grenzen: &[(u64, u64)],
-    ) -> Result<Vec<(usize, RebuildAuftrag)>, BesetzungFehler> {
-        let k = self.belegung.len();
-        let neu = Self::neu(k, neue_miner, neue_epoche)?;
-        let mut auftraege = Vec::new();
-        for pos in 0..k {
-            if self.belegung[pos] != neu.belegung[pos] {
-                let (ls, le) = layer_grenzen.get(pos).copied().unwrap_or((0, 0));
-                auftraege.push((
-                    pos,
-                    RebuildAuftrag {
-                        bis_position: aktuelle_position,
-                        layer_start: ls,
-                        layer_end: le,
-                        anlass: RebuildAnlass::Epochenwechsel,
-                    },
-                ));
-            }
-        }
-        *self = neu;
-        Ok(auftraege)
-    }
-
     /// Zahl der Positionen ohne Miner.
     pub fn ausgefallene(&self) -> usize {
         self.belegung.iter().filter(|b| b.is_none()).count()
@@ -647,45 +619,6 @@ mod tests {
             PodBesetzung::neu(0, &miner_liste(6), EpochId(1)),
             Err(BesetzungFehler::KeineShards)
         ));
-    }
-
-    /// **Der Epochenwechsel baut nur nach, was sich geändert hat.**
-    ///
-    /// Kap. 4.2: „nur bei Ausfall oder Epochenwechsel ausgelöst". Wer
-    /// bleibt, behält seinen Cache; ein Rebuild für ihn wäre ein
-    /// Aufschlag ohne Anlass.
-    #[test]
-    fn der_epochenwechsel_baut_nur_nach_was_sich_aendert() {
-        let mut pod = PodBesetzung::neu(4, &miner_liste(6), EpochId(1)).unwrap();
-        let grenzen = [(0u64, 6u64), (6, 12), (12, 18), (18, 24)];
-
-        // Neue Epoche, zwei Positionen wechseln (0 und 3).
-        let neu = vec![miner(11), miner(2), miner(3), miner(12), miner(7), miner(8)];
-        let auftraege = pod
-            .epochenwechsel(EpochId(2), &neu, 250, &grenzen)
-            .expect("gültige Besetzung");
-
-        let positionen: Vec<usize> = auftraege.iter().map(|(p, _)| *p).collect();
-        assert_eq!(positionen, vec![0, 3], "nur die gewechselten Positionen");
-        for (pos, a) in &auftraege {
-            assert_eq!(a.anlass, RebuildAnlass::Epochenwechsel);
-            assert_eq!(a.bis_position, 250);
-            assert_eq!((a.layer_start, a.layer_end), grenzen[*pos]);
-        }
-        assert_eq!(pod.epoche(), EpochId(2));
-        assert_eq!(pod.reserve_uebrig(), RESERVE_PLAETZE, "neue Epoche, neue Reserve");
-        assert!(pod.fahrbar());
-    }
-
-    /// Wechselt niemand, gibt es keinen Rebuild.
-    #[test]
-    fn ohne_wechsel_kein_rebuild() {
-        let mut pod = PodBesetzung::neu(4, &miner_liste(6), EpochId(1)).unwrap();
-        let grenzen = [(0u64, 6u64), (6, 12), (12, 18), (18, 24)];
-        let auftraege = pod
-            .epochenwechsel(EpochId(2), &miner_liste(6), 100, &grenzen)
-            .unwrap();
-        assert!(auftraege.is_empty(), "gleiche Besetzung, kein Rebuild");
     }
 
     /// **Die Kosten des Rebuilds sind `O(Position)`**, und das ist der

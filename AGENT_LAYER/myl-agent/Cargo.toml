@@ -1,6 +1,6 @@
 [package]
 name = "myl-agent"
-version = "0.7.2"
+version = "0.10.0"
 edition = "2021"
 rust-version = "1.99"
 description = "Agent Layer für Myelith (Whitepaper Kap. 8): Skill- und Werkzeug-Manifeste mit Herkunftsstufe, damit einem Segment anzusehen ist, ob es nachrechenbar oder nur bezeugt ist."

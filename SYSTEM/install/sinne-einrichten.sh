@@ -5,8 +5,15 @@
 # Projektinhabers, 2026-09-17): Ein frischer Klon soll alles dabeihaben,
 # **ausser den Modellgewichten**. Dieses Skript ist genau dieses „alles":
 # Es holt die Programme ueber den Paketverwalter des Systems, legt die
-# Gewichte an die Stellen, an denen der Client sie sucht, und richtet
-# CosyVoice samt eigener Python-Umgebung ein.
+# Gewichte an die Stellen, an denen der Client sie sucht, darunter
+# whisper fuer das Hoeren und Qwen3-TTS fuer das Sprechen im eigenen
+# Rechenweg.
+#
+# ⚑ **CosyVoice wird seit CLIENT 0.219.0 nicht mehr eingerichtet**
+# (Festlegung des Projektinhabers, 2026-11-11): Die Modellkarte nennt neben
+# Apache 2.0 „nur fuer akademische Zwecke“, und es brauchte Python und
+# PyTorch. Eine fruehere Installation bleibt liegen, der Client benutzt sie
+# nicht mehr; `--pruefen` sagt, wo sie liegt.
 #
 # ⚑ **Wohin die Gewichte gehen, hat sich am 2026-09-21 geaendert**
 # (Festlegung des Projektinhabers): in den Klon unter `MODELS/audio` und
@@ -15,13 +22,13 @@
 # regelt `MODELS/.gitignore`.
 #
 # ⚠️ **In der Sinnesheimat bleiben zwei Dinge, und zwar mit Grund:** der
-# `bin`-Ordner mit dem Sprechlaeufer (erzeugt, muss beschreibbar sein)
-# und eine abgelegte Stimmprobe (gehoert dem Nutzer). Gewichte sind
+# `bin`-Ordner fuer eigene Skripte (muss beschreibbar sein) und eine
+# abgelegte Stimmprobe (gehoert dem Nutzer). Gewichte sind
 # geladen, und nur die haben einen Rubrikordner verdient.
 #
 # ⛔️ **Die Binaerdateien selbst gehoeren nicht ins Repositorium.**
 # llama.cpp, whisper.cpp und ffmpeg sind je System verschieden und
-# zusammen einige hundert Megabyte; torch ist allein rund 2,5 GB. Das
+# zusammen einige hundert Megabyte. Das
 # waere derselbe Ballast, der beim Vorrat der Fremdquellen bewusst
 # abgelehnt wurde. **Der Bau des Repositoriums braucht nichts davon**:
 # Er laeuft ohne Netz, und die Sinne sind eine Zutat, keine Bedingung.
@@ -35,9 +42,9 @@ set -u
 # ⚠️ **`../..` und nicht `..`** (Fund 620): Dieses Skript liegt unter
 # `SYSTEM/install/`, zwei Ebenen unter der Wurzel. Beim Umzug aus
 # `INSTALL/` blieb hier `..` stehen; danach suchte und legte es die Gewichte
-# unter `SYSTEM/MODELS` ab, und das Kopieren des Laeufers scheiterte.
+# unter `SYSTEM/MODELS` ab.
 HIER=$(cd "$(dirname "$0")/../.." && pwd)
-if [ ! -f "$HIER/CLIENT/myl-senses/laeufer/sprechen-cosyvoice.py" ]; then
+if [ ! -f "$HIER/CLIENT/myl-senses/Cargo.toml" ]; then
   echo "Die Wurzel des Repositoriums ist nicht $HIER."
   exit 1
 fi
@@ -51,8 +58,7 @@ else
   AUDIO="$HIER/MODELS/audio"
   VISION="$HIER/MODELS/vision"
 fi
-COSY="${MYL_COSYVOICE:-$AUDIO/CosyVoice}"
-LAEUFER_QUELLE="$HIER/CLIENT/myl-senses/laeufer/sprechen-cosyvoice.py"
+SPRECHER="$AUDIO/qwen3-tts-0.6b-base"
 
 mit_sprechen=1
 nur_pruefen=0
@@ -68,18 +74,6 @@ sagen() { printf '\n== %s ==\n' "$1"; }
 da() { command -v "$1" >/dev/null 2>&1; }
 summe() {
   if da sha256sum; then sha256sum "$1" | cut -d' ' -f1; else shasum -a 256 "$1" | cut -d' ' -f1; fi
-}
-
-# ⚑ Die Umgebung von CosyVoice kommt aus dieser Liste, mit Fassung und
-# Pruefsumme je Paket. Ihr Abdruck liegt nach dem Einrichten in der
-# Umgebung; weicht er ab, ist die Umgebung von einem anderen Stand.
-LISTE="$HIER/SYSTEM/install/sprechen-fest.txt"
-STANDMARKE="$COSY/.venv/myelith-stand"
-umgebung_stand() {
-  if [ ! -x "$COSY/.venv/bin/python" ]; then echo fehlt
-  elif [ "$(cat "$STANDMARKE" 2>/dev/null)" = "$(summe "$LISTE")" ]; then echo da
-  else echo "veraltet (wird beim Einrichten ersetzt)"
-  fi
 }
 
 pruefen() {
@@ -103,10 +97,25 @@ pruefen() {
       printf '  %-24s %s\n' "$d" "fehlt ($ort)"
     fi
   done
-  printf '  %-24s %s\n' "CosyVoice" "$([ -d "$COSY/cosyvoice" ] && echo "$COSY" || echo fehlt)"
-  printf '  %-24s %s\n' "seine Umgebung" "$(umgebung_stand)"
-  printf '  %-24s %s\n' "seine Gewichte" "$([ -s "$COSY/pretrained_models/Fun-CosyVoice3-0.5B/llm.pt" ] && echo da || echo fehlt)"
-  printf '  %-24s %s\n' "Laeufer" "$([ -f "$HEIMAT/bin/sprechen-cosyvoice.py" ] && echo da || echo fehlt)"
+  for g in whisper-large-v3-turbo whisper-small whisper-base; do
+    if [ -s "$AUDIO/$g/model.safetensors" ]; then
+      printf '  %-24s %s\n' "$g" "$(du -h "$AUDIO/$g/model.safetensors" | cut -f1)"
+    fi
+  done
+  for d in model.safetensors speech_tokenizer/model.safetensors; do
+    if [ -s "$SPRECHER/$d" ]; then
+      printf '  %-24s %s\n' "Qwen3-TTS $d" "$(du -h "$SPRECHER/$d" | cut -f1)"
+    else
+      printf '  %-24s %s\n' "Qwen3-TTS $d" "fehlt ($SPRECHER)"
+    fi
+  done
+  # ⚑ Eine fruehere CosyVoice-Installation wird nur genannt, nicht
+  #   geloescht: Sie kann mehrere Gigabyte belegen, gehoert aber dem Nutzer.
+  for alt in "$AUDIO/CosyVoice" "$HEIMAT/cosyvoice" "$HEIMAT/bin/sprechen-cosyvoice.py"; do
+    if [ -e "$alt" ]; then
+      printf '  %-24s %s\n' "nicht mehr benutzt" "$alt (darf weg)"
+    fi
+  done
   sagen "Blick auf Bildschirm und Kamera"
   echo "  Beide sind AUS, solange sie nicht ausdruecklich scharf gestellt sind:"
   echo "    MYL_BLICK_BILDSCHIRM=1   der Agent darf den Bildschirm aufnehmen"
@@ -120,21 +129,15 @@ pruefen() {
   fi
   echo "  Nimmt ffmpeg die falsche Quelle: MYL_SCHIRMFORMAT/MYL_SCHIRMGERAET,"
   echo "  MYL_KAMERAFORMAT/MYL_KAMERAGERAET."
-  # ⚑ Der Verweis wird nur gebraucht, wenn CosyVoice ausserhalb der
-  # Rubrik liegt; sonst findet der Client es dort von selbst.
-  case "$COSY" in
-    "$AUDIO"/*) printf '  %-24s %s\n' "CosyVoice in der Rubrik" "ja, kein Verweis noetig" ;;
-    *) printf '  %-24s %s\n' "Verweis auf CosyVoice" "$([ -e "$HEIMAT/cosyvoice" ] && echo da || echo fehlt)" ;;
-  esac
 }
 
 if [ "$nur_pruefen" = 1 ]; then pruefen; exit 0; fi
 
-echo "Das holt rund 6 GB Gewichte fuer Sehen und Hoeren"
-[ "$mit_sprechen" = 1 ] && echo "und noch einmal rund 8 GB fuer Sprechen (CosyVoice 3 samt torch)."
+echo "Das holt rund 6 GB Gewichte fuer Sehen und Hoeren, dazu 1,6 GB (large-v3-turbo) oder 1 GB (small) fuer das eigene Hoeren"
+[ "$mit_sprechen" = 1 ] && echo "und noch einmal rund 2,5 GB fuer Sprechen (Qwen3-TTS)."
 echo "Sehen nach:    $VISION"
 echo "Hoeren nach:   $AUDIO"
-echo "Sprechen nach: $COSY"
+echo "Sprechen nach: $SPRECHER"
 echo "Betrieb in:    $HEIMAT (bin und Stimmprobe)"
 
 # ---------------------------------------------------------------- Programme
@@ -157,8 +160,8 @@ mkdir -p "$HEIMAT/bin" "$AUDIO" "$VISION" || exit 1
 #
 # ⛔️ **Jede Datei hat einen festen Stand und eine Pruefsumme** (Fund 604,
 # 2026-10-23). Bis dahin kam alles vom wandernden Zweig `main` und ohne
-# Pruefung, darunter die Pickle-Dateien von CosyVoice (`llm.pt`, `flow.pt`,
-# `hift.pt`), die torch beim Laden auspackt. Wer das fremde Repositorium
+# Pruefung, darunter damals die Pickle-Dateien von CosyVoice (`llm.pt`,
+# `flow.pt`, `hift.pt`), die torch beim Laden auspackt. Wer das fremde Repositorium
 # uebernimmt oder eine Datei darin austauscht, haette damit Code auf jedem
 # Rechner ausgefuehrt, der dieses Skript danach laufen laesst. Jetzt steht
 # in jeder Adresse ein Commit, und eine Datei, deren Summe nicht stimmt,
@@ -229,124 +232,77 @@ hol "$VISION" sehen-genau.gguf "$Q/Qwen3VL-4B-Instruct-Q4_K_M.gguf" \
 hol "$VISION" sehen-genau-mmproj.gguf "$Q/mmproj-Qwen3VL-4B-Instruct-Q8_0.gguf" \
   30ba2c7dd3127a4561b6cba9d13d0f711c91bdb38742e2f56d73c8cb596bd06d || echo "(bleibt bei der schnellen Sprosse)"
 
+# ---------------------------------------------------------------- Hoeren, eigener Weg
+# ⚑ **Die Originale von whisper fuer den eigenen Hoerweg** (CLIENT 8.2,
+# `MYL_HOEREN=eigen`): je Groesse die fuenf Dateien, die `myl_senses::whisper`
+# liest, jede mit Revision und Pruefsumme. Abgeglichen am 2026-11-12 mit der
+# Dateiliste von Hugging Face zu genau diesen Revisionen.
+#
+# Welche Groesse, folgt der Regel des Clients (`whisper::groesse_waehlen`):
+# large-v3-turbo mit Grafikeinheit oder ab 12 Kernen, sonst small. Auf macOS
+# rechnet Metal, also large-v3-turbo. Eine andere Wahl: MYL_HOERGROESSE auf
+# whisper-large-v3-turbo, whisper-small oder whisper-base.
+# ⚠️ Ohne Grafikeinheit erkennt dieses Skript eine Karte unter Linux nicht;
+# wer eine hat und weniger als 12 Kerne, setzt MYL_HOERGROESSE.
+kerne=$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)
+if [ -n "${MYL_HOERGROESSE:-}" ]; then
+  groessen="$MYL_HOERGROESSE"
+elif [ "$(uname -s)" = Darwin ] || [ "$kerne" -ge 12 ]; then
+  groessen="whisper-large-v3-turbo"
+else
+  groessen="whisper-small"
+fi
+for g in $groessen; do
+  case "$g" in
+    whisper-large-v3-turbo) rev=41f01f3fe87f28c78e2fbf8b568835947dd65ed9 ;;
+    whisper-small) rev=973afd24965f72e36ca33b3055d56a652f456b4d ;;
+    whisper-base) rev=e37978b90ca9030d5170a5c07aadb050351a65bb ;;
+    *) echo "unbekannte Groesse: $g"; exit 2 ;;
+  esac
+  sagen "Hoeren im eigenen Rechenweg ($g)"
+  mkdir -p "$AUDIO/$g" || exit 1
+  grep "^$g " <<'GEWICHTE' | while read -r _ f soll; do
+whisper-large-v3-turbo config.json c5b526b3e3cd64cd8940dabb45e8ba726629e22d8ed389c29b552f9140daf04a
+whisper-large-v3-turbo generation_config.json cce11bfe3aaa6ae9e072ea2637caaec8795e68d9b67e655a5af16ee509681a4c
+whisper-large-v3-turbo vocab.json e2aa043ef015641d363d8288e7c241c85e36a5c761fb303598e0710233344387
+whisper-large-v3-turbo added_tokens.json 3c51f66c4c21f9e126970078f11ae77a78c74aee8df606ee9daba86e467108e0
+whisper-large-v3-turbo model.safetensors 542566a422ae4f3fd23f1ba11add198fca01bbf82e66e6a2857b3f608b1eb9d1
+whisper-small config.json e6a2b489da1b5aed65a8eb8d1e7466fa867ad5643a8bc138ba708bd56b2875c4
+whisper-small generation_config.json 71565b8ef50d0bf7a1193ed4bbed195b94e70c18894d81bba2f1233dcec3ab53
+whisper-small vocab.json 8f680bba319e01a653d2e8a5dbc17a9157179e0576e6ce74ce0c06356c6e24f9
+whisper-small added_tokens.json 9715fd2243b6f06a5858b5e32950d2853f73dd5bc201aafcf76f5082a2d8acd1
+whisper-small model.safetensors 1d7734884874f1a1513ed9aa760a4f8e97aaa02fd6d93a3a85d27b2ae9ca596b
+whisper-base config.json a153c53883a6799b6f056b4a8d1a515c9926d03994682ba88a7616618d7da0c1
+whisper-base generation_config.json 444b3f636d2fff89dd9ecf549e2a085b61f7ff0fa0246d4628bac6a3b8cc9ba4
+whisper-base vocab.json 8f680bba319e01a653d2e8a5dbc17a9157179e0576e6ce74ce0c06356c6e24f9
+whisper-base added_tokens.json 9715fd2243b6f06a5858b5e32950d2853f73dd5bc201aafcf76f5082a2d8acd1
+whisper-base model.safetensors 07cadb9f25677c8d50df603e66a98fbd842cce45047139baeb16e6219a1e807b
+GEWICHTE
+    hol "$AUDIO/$g" "$f" "https://huggingface.co/openai/$g/resolve/$rev/$f" "$soll" || exit 1
+  done || exit 1
+done
+
 if [ "$mit_sprechen" = 0 ]; then pruefen; exit 0; fi
 
 # ---------------------------------------------------------------- Sprechen
-sagen "CosyVoice"
-# ⚑ Ein fester Commit (Fund 604): der Stand, mit dem der Sprechlaeufer
-# erprobt ist. Er legt auch das Untermodul Matcha-TTS fest.
-COSY_STAND=074ca6dc9e80a2f424f1f74b48bdd7d3fea531cc
-if [ ! -d "$COSY/cosyvoice" ]; then
-  { git init -q "$COSY" \
-    && git -C "$COSY" remote add origin https://github.com/FunAudioLLM/CosyVoice.git \
-    && git -C "$COSY" fetch -q --depth 1 origin "$COSY_STAND" \
-    && git -C "$COSY" checkout -q FETCH_HEAD \
-    && git -C "$COSY" submodule update -q --init --recursive --depth 1; } || exit 1
-else
-  echo "liegt schon: $COSY"
-fi
-if [ "$(git -C "$COSY" rev-parse HEAD 2>/dev/null)" != "$COSY_STAND" ]; then
-  echo "⚠️ $COSY steht nicht auf $COSY_STAND. Erprobt ist nur dieser Stand."
-fi
-
-sagen "Seine Python-Umgebung"
-# ⛔️ **Python 3.11 aufwaerts.** macOS bringt 3.9 mit, und CosyVoice laeuft
-# damit nicht; die feste Liste ist fuer 3.11 und neuer aufgeloest, erprobt
-# mit 3.11.
-python_neu=""
-for p in python3.11 python3.12 python3.13 python3; do
-  if da "$p" && "$p" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3,11) else 1)'; then
-    python_neu=$(command -v "$p"); break
-  fi
-done
-if [ -z "$python_neu" ]; then
-  echo "Es fehlt ein Python 3.11 oder neuer."
-  da brew && echo "  brew install python@3.11"
-  exit 1
-fi
-
-# ⚑ **Nicht die `requirements.txt` von CosyVoice** (Fund 604): Die bringt
-# Server und Training mit und hing am 2026-10-23 an 248 bekannten Luecken.
-# `sprechen-fest.txt` nennt nur, was der Laeufer braucht, je Paket mit
-# Fassung und Pruefsumme fuer alle Plattformen; `--require-hashes` laesst
-# kein Paket herein, dessen Summe nicht dort steht. Wie sie entsteht, steht
-# in `sprechen.in`.
-#
-# ⚑ **Eine Umgebung von einem anderen Stand wird ersetzt, nicht
-# nachgebessert.** pip installiert nur hinzu; Pakete der alten Liste
-# (gradio, fastapi, ...) blieben liegen. Die alte wird beiseitegelegt und
-# bei einem Abbruch zurueckgelegt. ⚠️ Gebaut wird am endgueltigen Ort und
-# nicht daneben: Eine venv traegt ihren Pfad in den Startskripten und
-# laesst sich nicht verschieben.
-case "$(umgebung_stand)" in
-  da) echo "liegt schon, auf dem Stand der Liste" ;;
-  *)
-    if [ -d "$COSY/.venv" ]; then
-      rm -rf "$COSY/.venv.alt" && mv "$COSY/.venv" "$COSY/.venv.alt" || exit 1
-    fi
-    if "$python_neu" -m venv "$COSY/.venv" \
-      && "$COSY/.venv/bin/python" -m pip install --require-hashes -r "$LISTE" \
-      && summe "$LISTE" > "$STANDMARKE"; then
-      rm -rf "$COSY/.venv.alt"
-    else
-      rm -rf "$COSY/.venv"
-      [ -d "$COSY/.venv.alt" ] && mv "$COSY/.venv.alt" "$COSY/.venv"
-      echo "Die Umgebung liess sich nicht bauen; die vorige liegt wieder an ihrem Platz."
-      exit 1
-    fi
-    ;;
-esac
-P="$COSY/.venv/bin/python"
-echo "benutzt: $("$P" -V)"
-
-sagen "Seine Gewichte"
-# ⛔️ **CosyVoice 3 und nicht 2, und das ist der Unterschied zwischen
-# brauchbarem und unbrauchbarem Deutsch.** Die 2.0-Gewichte decken
-# Chinesisch und Englisch ab; eine deutsche Stimmprobe ergibt damit
-# Laute, die wie Deutsch klingen und keines sind. Gemessen am
-# 2026-09-17: whisper las aus dem Ergebnis „dies Go! Ist die Örsteck ist
-# proschein" statt „dies ist die erste gesprochene Antwort".
-Z="$COSY/pretrained_models/Fun-CosyVoice3-0.5B"
-R=https://huggingface.co/FunAudioLLM/Fun-CosyVoice3-0.5B-2512/resolve/29e01c4e8d000f4bcd70751be16fa94bf3d85a18
-mkdir -p "$Z/CosyVoice-BlankEN" || exit 1
+sagen "Sprechen (Qwen3-TTS-12Hz-0.6B-Base)"
+# ⚑ **Apache 2.0, ohne Zusatz**, und gerechnet im Programm, ohne Python.
+# Geholt wird nur, was der eigene Weg liest: Sprecher und Tonzerleger je
+# mit `config.json`, dazu Wortschatz und Verschmelzungen des Textzerlegers.
+# Die Pruefsummen der beiden Gewichte stehen auch in
+# `MODELS/audio/LIZENZEN.json`.
+T=https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-Base/resolve/5d83992436eae1d760afd27aff78a71d676296fc
+mkdir -p "$SPRECHER/speech_tokenizer" || exit 1
 while read -r f soll; do
-  hol "$Z" "$f" "$R/$f" "$soll" || exit 1
+  hol "$SPRECHER" "$f" "$T/$f" "$soll" || exit 1
 done <<'GEWICHTE'
-config.json 44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a
-configuration.json c502b6328c67638b401df8dd05de89e9e8d1cff9cd0ada10dfbdbe13556c20de
-cosyvoice3.yaml f5a6b2c6f05139d0f18861a1fe506f751e787026b77c05f7e8fef9f8a4405965
-campplus.onnx a6ac6a63997761ae2997373e2ee1c47040854b4b759ea41ec48e4e42df0f4d73
-speech_tokenizer_v3.onnx 23236a74175dbdda47afc66dbadd5bcb41303c467a57c261cb8539ad9db9208d
-flow.decoder.estimator.fp32.onnx 9b51b9533a55937762b262bf2cf9c6220ce40760f76d6532cb16a6a6d84059a8
-llm.pt 69f43bd545131c30e98947fb360ea8b4dc9916d8e83dded7757c7ea4f5a24970
-flow.pt a6fab32a7825e5b0bc855ddd948f8db9370b0a786fbc249caa4595e95b608e4b
-hift.pt b279d7641eb97ae55b3b540cfba4f953c26492a2df758328a89a4d007ab87a65
-CosyVoice-BlankEN/config.json 168aa1bd401abc3bc262ba15ba4e499627a8b4e006e9d050b47c22de20660185
-CosyVoice-BlankEN/generation_config.json e558847a8b4402616f1273797b015104dc266fe4b520056fca88823ba8f8ebe6
-CosyVoice-BlankEN/merges.txt ac8ff86a72bee70828fbc1119bc4398c6f3a9a6e490d7b0dbe917be025478bd0
-CosyVoice-BlankEN/vocab.json ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910
-CosyVoice-BlankEN/tokenizer_config.json 482bd979881423375ca5414e4e0d94cd7c5349dbb17fffd46b4d36d71e62a1bc
-CosyVoice-BlankEN/model.safetensors 130282af0dfa9fe5840737cc49a0d339d06075f83c5a315c3372c9a0740d0b96
+config.json 2e714c787c8edb98b05432685cddb634add2de4d4e645f653d68251ef72ba011
+vocab.json ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910
+merges.txt 599bab54075088774b1733fde865d5bd747cbcc7a547c5bc12610e874e26f5e3
+model.safetensors 180b3b10eb1c9f1b4db7806d5475bae3071c0243c299d49926bab1da3b6946f6
+speech_tokenizer/config.json ee65bb901c876664ab8707c487157aa1a6ee57c65969b28fb5ec9dc211e68167
+speech_tokenizer/model.safetensors 836b7b357f5ea43e889936a3709af68dfe3751881acefe4ecf0dbd30ba571258
 GEWICHTE
-# ⚑ `spk2info.pt` (eingebaute Stimmen) wird nicht mehr geholt. Im festen
-# Stand gibt es sie nicht, und vorher kam sie als einzige Pickle-Datei
-# ohne jede Pruefung vom wandernden Zweig. Gesprochen wird mit Stimmprobe.
-
-sagen "Verdrahten"
-# ⚑ **Ein Verweis statt einer Umgebungsvariablen.** Ein aus dem Finder
-# gestartetes `Myelith.app` erbt keine Shell-Umgebung; ein Ordner an der
-# erwarteten Stelle wird dagegen immer gefunden.
-#
-# ⚑ **Und genau deshalb entfaellt er, wenn CosyVoice in der Rubrik
-# liegt:** Dort sucht der Client ohnehin, und ein Verweis aus der Heimat
-# in den Klon waere ein zweiter Weg zur selben Sache, der beim naechsten
-# Umzug des Klons ins Leere zeigt.
-case "$COSY" in
-  "$AUDIO"/*) echo "CosyVoice liegt in der Rubrik, kein Verweis noetig." ;;
-  *) ln -sfn "$COSY" "$HEIMAT/cosyvoice" ;;
-esac
-cp "$LAEUFER_QUELLE" "$HEIMAT/bin/" && chmod +x "$HEIMAT/bin/sprechen-cosyvoice.py"
-echo "Laeufer: $HEIMAT/bin/sprechen-cosyvoice.py"
 
 pruefen
 echo

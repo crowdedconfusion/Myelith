@@ -55,6 +55,12 @@ rm -rf "$ZIEL"
 mkdir -p "$ZIEL/Contents/MacOS" "$ZIEL/Contents/Resources"
 cp "$BINAER" "$ZIEL/Contents/MacOS/Myelith"
 
+# ⚑ `myl` gehoert dazu: Das Fenster liest damit Buecher, und aus einem Doppelklick
+# heraus ist der Suchpfad des Terminals nicht da.
+# shellcheck disable=SC2086
+cargo build --release --quiet --locked ${CARGO_NETZ:-} --manifest-path CLIENT/myl-client/Cargo.toml --bin myl
+cp "$BAUORDNER/release/myl" "$ZIEL/Contents/MacOS/myl"
+
 # 📌 **Hier wurde das Symbol bis zum 2026-09-09 ein zweites Mal
 # erzeugt**, mit `sips` und `iconutil`, aus demselben PNG wie der
 # Buendler von Tauri. Zwei Ableitungen desselben Bildes an zwei Stellen
@@ -63,6 +69,9 @@ cp "$BINAER" "$ZIEL/Contents/MacOS/Myelith"
 # Symbol liefern. Es gibt jetzt genau eine Ableitung, und ihr Ergebnis
 # liegt fertig im Symbolverzeichnis; hier wird nur kopiert.
 cp CLIENT/myl-oberflaeche/icons/icon.icns "$ZIEL/Contents/Resources/Myelith.icns"
+# ⚑ Wer das Programm weitergibt, gibt die Lizenzen mit; sie gehoeren ins Buendel.
+mkdir -p "$ZIEL/Contents/Resources/lizenzen"
+cp LICENSE.md COMPLIANCE/NOTICES.md COMPLIANCE/DRITTLIZENZEN.txt "$ZIEL/Contents/Resources/lizenzen/"
 
 # ⚑ **Unquotiertes Dokument**, damit ${FASSUNG} eingesetzt wird. Wer
 # hier ein literales Dollarzeichen braucht, schreibt es als `\$`.

@@ -217,7 +217,7 @@
       "auftrag": "Schreibe mir mit, was in der Aufnahme ton.wav gesagt wird.",
       "dateien": {},
       "kopien": {
-        "ton.wav": "MODELS/audio/CosyVoice/asset/zero_shot_prompt.wav"
+        "ton.wav": "CLIENT/myl-senses/tests/daten/qwen3tts-stimmprobe.wav"
       },
       "antwort_enthaelt": [],
       "werkzeug_erwartet": "transcribe_audio"

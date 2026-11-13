@@ -1,7 +1,7 @@
 # golemos (die Linux-Distribution, die nur Myelith bedient)
 
-> **Version:** 0.4.0 (`golem-einrichten` 0.3.3)
-> **Datum:** 2026-11-09
+> **Version:** 0.5.1 (`golem-einrichten` 0.3.3)
+> **Datum:** 2026-11-12
 > **Status:** Startet vom Stick und von Platte, findet einen
 > Myelith-Ordner auf dem Stick oder einem zweiten Laufwerk und
 > installiert sich mit einem Assistenten auf eine ganze Platte. Belegt
@@ -101,6 +101,62 @@ sie tut, soll sich in ihrem eigenen Quelltext lesen lassen.
 ---
 
 ## Changelog
+
+### v0.5.1 (2026-11-12): Lizenzpflichten der Sinne festgehalten
+
+- `README.md` nennt, was ffmpeg (LGPL ohne `--enable-gpl` und
+  `--enable-nonfree`) und piper (GPL 3.0 seit `piper1-gpl`, dazu
+  espeak-ng) beim Mitbündeln verlangen, und schlägt Stufe 3 ohne piper vor:
+  Gesprochen wird über den eigenen Weg. Nichts am Abbild geändert.
+
+### v0.5.0 (2026-11-11): Lizenzauskunft und Quellen zu jedem Abbild
+
+- 📌 **Fund 686 behoben:** Die Abbilder enthalten Teile unter der GPL
+  (Kern, BusyBox, GRUB, Werkzeuge), und weder Skripte noch Doku nannten
+  eine Lizenzauskunft oder die Quellen. Neu `auskunft.sh`: sammelt mit
+  `make legal-info` ohne Netz für Basis und Schicht das Verzeichnis der
+  Pakete, ihre Lizenztexte und ihre Quellen, dazu das Quellarchiv von
+  Buildroot, das Buildroot selbst nicht beilegt. Ergebnis
+  `aus/<arch>/lizenzen-<arch>.tar.xz` (klein, kommt neben das Abbild) und
+  `aus/<arch>/quellen-<arch>.tar` (rund 0,7 GB, Anhang derselben Freigabe).
+- `freigeben.sh` verweigert ein Abbild, zu dem die Auskunft fehlt oder
+  älter ist als das Abbild (Gegenprobe: Rückgabe 4, nichts angefasst), und
+  legt die kleine Auskunft neben das freigegebene Abbild.
+- 📌 **Fund 700 behoben:** Die Basis lieferte `myl`, `myelith` und
+  `myl-node` ohne `LICENSE.md`, `NOTICES.md` und `DRITTLIZENZEN.txt` aus;
+  nur die Schicht trug sie. `bauen.sh` legt sie nach
+  `/usr/share/doc/myelith/` und prüft nach dem Bau, dass sie im Abbild
+  liegen.
+- `ANLEITUNG.md`, `ANLEITUNG.en.md` und `README.md` sagen, wo Lizenzen und
+  Quellen liegen. ⚠️ Buildroot nennt seine Auskunft selbst keine fertige
+  Lieferung; die Lizenzangaben der Pakete sind nicht einzeln geprüft.
+  Keine Rechtsberatung.
+
+### v0.4.2 (2026-11-10): Der zweite Bau braucht kein Netz
+
+- 📌 **Fund 699:** Das README sagte, die Programme für GolemOS bauten aus
+  dem Vorrat ohne Netz. Sie taten es nicht: Der Programmschritt holte bei
+  jedem Lauf `rust`, `cargo` und `build-base` über `apk add`, und ohne Netz
+  brach er dort ab (gemessen: `apk` Rückgabe 3).
+- Die Werkzeuge stehen jetzt in einem eigenen Abbild je Architektur
+  (`Containerfile.programme`, `golemos-programmbauer-<arch>`), das einmal
+  mit Netz entsteht und den Übersetzer bis zum Löschen festhält (Rust
+  1.99.1, GCC 15.2.0). `bauen.sh` fährt den Programmschritt mit
+  `--network none`.
+- Nachgesehen: Die Quellen von Buildroot liegen nach dem ersten Bau
+  vollständig im Volumen. `make source` ohne Netz gelingt für Basis und
+  Schicht beider Architekturen; mit leerem Quellenlager scheitert es.
+- Beide Architekturen damit neu gebaut (aarch64 knapp 4 min, x86_64
+  7 min, je Rückgabe 0, kein Download im Protokoll) und unter QEMU mit
+  `golemos.probe` gestartet: Kern 7.1.13, `myelith`, `myl`, `myl-node`
+  vorhanden, `curl` mit OpenSSL 3.6.5. Die Prüfsummen der Schichten sind
+  unverändert. ⚠️ Der Schritt für Buildroot hat weiter Netz: Er braucht
+  es nicht, solange die Konfiguration keine neuen Pakete bringt, aber er
+  ist nicht abgeriegelt.
+
+### v0.4.1 (2026-11-10): Lizenztexte in der Schicht
+
+- Die Schicht legt `LICENSE.md`, `NOTICES.md` und `DRITTLIZENZEN.txt` mit ins Abbild.
 
 ### v0.4.0 (2026-11-09): Buildroot 2026.08.1
 

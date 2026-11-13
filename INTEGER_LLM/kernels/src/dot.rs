@@ -275,6 +275,20 @@ pub fn dot_i8_i16(w: &[i8], x: &[i16]) -> i64 {
     gewaehlt::dot(w, x)
 }
 
+/// **int8 mal int8**, exakt in `i64` (W8A8, [`crate::linear::linear_w8a8_pc_stapel`]).
+///
+/// Je 4096 Elemente in `i32` gesammelt (`4096 · 128 · 128 = 2²⁶`, exakt),
+/// dann in `i64`; die Reihenfolge aendert die Zahl nicht, denn ganze Zahlen
+/// summieren sich assoziativ. Verarbeitet werden `min(w.len(), x.len())`
+/// Elemente, wie bei [`dot_i8_i16`].
+#[inline]
+pub fn dot_i8_i8(w: &[i8], x: &[i8]) -> i64 {
+    w.chunks(4096)
+        .zip(x.chunks(4096))
+        .map(|(a, b)| i64::from(a.iter().zip(b).map(|(p, q)| i32::from(*p) * i32::from(*q)).sum::<i32>()))
+        .sum()
+}
+
 /// Eine Zeile einer ternaeren Matrix mal `x`, siehe [`crate::ternaer`].
 ///
 /// ⚑ **Dieselbe Weiche wie [`dot_i8_i16`]**: vektorisiert, wo

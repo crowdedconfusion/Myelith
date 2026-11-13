@@ -17,6 +17,7 @@
 | Komponente | Lizenz | Nutzung |
 |---|---|---|
 | Qwen3, alle vier eingesetzten Größen (siehe unten) | Apache 2.0 | Modellgewichte |
+| Index-Translate-2B (auf Qwen3.5), nur als Übersetzer `parrot-2b-int8` | Apache 2.0 laut Modellkarte und Projektlizenz; im Modellordner fehlt eine eigene Lizenzdatei | Modellgewichte |
 | Hugging Face Transformers | Apache 2.0 | Offline-Kalibrierung |
 | Safetensors | Apache 2.0 | Gewicht-Export |
 | Eigener Code | PolyForm Shield License 1.0.0 | Integer-Inferenzsystem |

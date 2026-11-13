@@ -104,6 +104,18 @@ impl std::fmt::Debug for Entwurf {
     }
 }
 
+/// ⛔️ **Ein verworfener Entwurf hinterlaesst keine Woerter im Speicher**
+/// (CLIENT 7.14): Seed und Woerter werden beim Fallenlassen ueberschrieben.
+impl Drop for Entwurf {
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        self.seed.zeroize();
+        for w in &mut self.woerter {
+            w.zeroize();
+        }
+    }
+}
+
 impl Entwurf {
     /// Die zwoelf Woerter, zum Notieren.
     pub fn woerter(&self) -> &[String] {
@@ -136,18 +148,18 @@ impl Entwurf {
 
 /// **Wuerfelt ein neues Wallet**: 128 Bit Zufall, zwoelf Woerter.
 pub fn entwerfen() -> Result<Entwurf, String> {
-    let mut e = [0u8; bip39::ENTROPIE_BYTES];
-    getrandom::fill(&mut e).map_err(|f| format!("keine Zufallszahlen: {f}"))?;
-    let woerter = bip39::woerter(&e).join(" ");
+    let mut e = zeroize::Zeroizing::new([0u8; bip39::ENTROPIE_BYTES]);
+    getrandom::fill(&mut e[..]).map_err(|f| format!("keine Zufallszahlen: {f}"))?;
+    let woerter = zeroize::Zeroizing::new(bip39::woerter(&e).join(" "));
     aus_woertern(&woerter)
 }
 
 /// **Stellt ein Wallet aus zwoelf Woertern her**, mit Pruefung von Liste
 /// und Pruefsumme.
 pub fn aus_woertern(text: &str) -> Result<Entwurf, String> {
-    let e = bip39::entropie(text)?;
+    let e = zeroize::Zeroizing::new(bip39::entropie(text)?);
     let woerter: Vec<String> = bip39::woerter(&e).iter().map(|w| w.to_string()).collect();
-    let seed = bip39::seed(&woerter.join(" "), "");
+    let seed = bip39::seed(&zeroize::Zeroizing::new(woerter.join(" ")), "");
     let adresse = adresse_aus_ikm(&seed)?;
     Ok(Entwurf { woerter, seed, adresse })
 }
@@ -215,6 +227,34 @@ pub struct Verlaufszeile {
     pub betrag: u64,
 }
 
+/// **Was unter jedem Verlauf steht**, in `myl`, Konsole und Fenster gleich.
+pub const VERLAUF_GRENZE: &str =
+    "Aus den gehaltenen Blöcken des Knotens. Im Block heißt nicht gelungen; Prägungen stehen hier nicht.";
+
+impl Verlaufszeile {
+    /// **Die Zeile, wie `myl`, Konsole und Fenster sie zeigen**: Höhe, Art,
+    /// Betrag und die Gegenseite als Adresstext.
+    pub fn text(&self) -> String {
+        use myl_types::adresstext::{aus_text, als_text, PRAEFIX_TESTNETZ};
+        let gegen = aus_text(&self.gegen, PRAEFIX_TESTNETZ).map_or(String::new(), |a| {
+            format!(" {} {}", if self.ausgehend { "an" } else { "von" }, als_text(&a, PRAEFIX_TESTNETZ))
+        });
+        let betrag = if self.betrag > 0 { format!(" {} MYL", crate::mining::myl_text(self.betrag)) } else { String::new() };
+        format!("Höhe {:>8}  {:<13}{betrag}{gegen}", self.hoehe, self.art)
+    }
+}
+
+/// **Wie viele Transaktionen ein Konto gesendet hat**, aus seiner Nonce.
+///
+/// ⚑ Ein Konto, das in Epoche `e` entsteht, beginnt bei `e · 2³²` (der
+/// Nonce-Boden der Kette, gegen Wiederholung nach einem geleerten Konto);
+/// jede Transaktion zaehlt eins hoch. 📌 In der Probe am Probenetz vom
+/// 2026-11-12 stand fuer ein unbenutztes Konto „Nonce 4294967296“: richtig,
+/// aber fuer niemanden lesbar. Gezeigt wird deshalb, was ueber dem Boden liegt.
+pub fn gesendet(nonce: u64) -> u64 {
+    nonce & 0xffff_ffff
+}
+
 /// Höchstens so viele Seiten holt `myl wallet verlauf`.
 pub const VERLAUF_SEITEN: usize = 20;
 
@@ -228,7 +268,7 @@ pub fn verlauf(adresse: &Address) -> Result<Vec<Verlaufszeile>, String> {
     let mut bis: Option<u64> = None;
     for _ in 0..VERLAUF_SEITEN {
         let weg = bis.map_or(basis.clone(), |h| format!("{basis}?bis={h}"));
-        let (mut seite, weiter) = verlauf_aus(&crate::mining::holen(&ort, &weg)?)?;
+        let (mut seite, weiter) = verlauf_aus(&seite_holen(&weg, |w| crate::mining::holen(&ort, w))?)?;
         zeilen.append(&mut seite);
         match weiter {
             Some(h) => bis = Some(h),
@@ -238,6 +278,31 @@ pub fn verlauf(adresse: &Address) -> Result<Vec<Verlaufszeile>, String> {
         std::thread::sleep(std::time::Duration::from_millis(150));
     }
     Ok(zeilen)
+}
+
+/// So oft fragt der Client nach einer gedrosselten Seite, je
+/// [`VERLAUF_WARTEN_MS`] auseinander.
+const VERLAUF_VERSUCHE: usize = 5;
+const VERLAUF_WARTEN_MS: u64 = 150;
+
+/// **Eine Seite, auch wenn der Knoten gerade drosselt.** Er liefert hoechstens
+/// eine Seite je 100 ms, an alle Fragenden zusammen, und antwortet sonst mit
+/// 503. 📌 Gefunden am 2026-11-12 in der Probe von Ende zu Ende: Der Verlauf
+/// eines zweiten Wallets direkt nach dem ersten endete mit der nackten Zeile
+/// `HTTP/1.1 503 Service Unavailable`. Dasselbe trifft Konsole und Fenster am
+/// selben Knoten.
+fn seite_holen(weg: &str, holen: impl Fn(&str) -> Result<String, String>) -> Result<String, String> {
+    let mut letzter = String::new();
+    for versuch in 0..VERLAUF_VERSUCHE {
+        if versuch > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(VERLAUF_WARTEN_MS));
+        }
+        match holen(weg) {
+            Err(f) if f.starts_with("HTTP/1.1 503") => letzter = f,
+            sonst => return sonst,
+        }
+    }
+    Err(format!("der Knoten drosselt oder antwortet nicht ({letzter}); bitte gleich noch einmal"))
 }
 
 /// Eine Seite aus der Antwort von `/verlauf/…`.
@@ -284,6 +349,38 @@ mod verlauf_tests {
     use super::*;
 
     #[test]
+    fn gesendet_zaehlt_ueber_dem_boden() {
+        assert_eq!(gesendet(0), 0);
+        assert_eq!(gesendet(4_294_967_296), 0, "Epoche 1, nichts gesendet");
+        assert_eq!(gesendet(3 * (1 << 32) + 5), 5);
+    }
+
+    /// ⛔️ Eine gedrosselte Seite wird nachgefragt; bleibt der Knoten dabei,
+    /// steht ein Satz da und keine nackte Statuszeile. Ein anderer Fehler
+    /// wird nicht wiederholt.
+    #[test]
+    fn eine_gedrosselte_seite_wird_nachgefragt() {
+        let zaehler = std::cell::Cell::new(0);
+        let zweimal_gedrosselt = |_: &str| {
+            zaehler.set(zaehler.get() + 1);
+            if zaehler.get() <= 2 { Err("HTTP/1.1 503 Service Unavailable".to_string()) } else { Ok("seite".to_string()) }
+        };
+        assert_eq!(seite_holen("/verlauf/x", zweimal_gedrosselt), Ok("seite".to_string()));
+        assert_eq!(zaehler.get(), 3);
+
+        let f = seite_holen("/verlauf/x", |_| Err("HTTP/1.1 503 Service Unavailable".to_string())).expect_err("bleibt gedrosselt");
+        assert!(f.starts_with("der Knoten drosselt"), "{f}");
+
+        zaehler.set(0);
+        let anders = |_: &str| {
+            zaehler.set(zaehler.get() + 1);
+            Err::<String, String>("HTTP/1.1 404 Not Found".to_string())
+        };
+        assert!(seite_holen("/verlauf/x", anders).is_err());
+        assert_eq!(zaehler.get(), 1, "ein anderer Fehler wird nicht wiederholt");
+    }
+
+    #[test]
     fn eine_seite_des_verlaufs_wird_gelesen() {
         let t = r#"{"weiter_bei":7,"eintraege":[{"hoehe":9,"art":"burn","ausgehend":true,"gegen":"","betrag":5}]}"#;
         let (z, w) = verlauf_aus(t).expect("lesbar");
@@ -291,6 +388,24 @@ mod verlauf_tests {
         assert_eq!(z, vec![Verlaufszeile { hoehe: 9, art: "burn".into(), ausgehend: true, gegen: String::new(), betrag: 5 }]);
         assert_eq!(verlauf_aus(r#"{"weiter_bei":null,"eintraege":[]}"#).expect("leer").1, None);
         assert!(verlauf_aus("kein json").is_err(), "Gegenprobe: Unsinn");
+    }
+
+    /// ⚑ **Eine Zeile nennt Richtung und Gegenseite**, und ohne Betrag und
+    /// Gegenseite steht keines von beiden da.
+    #[test]
+    fn die_zeile_nennt_richtung_und_gegenseite() {
+        use myl_types::adresstext::{als_text, PRAEFIX_TESTNETZ};
+        let gegen = myl_types::ids::Address::new([3; 32]);
+        let hex: String = gegen.as_bytes().iter().map(|b| format!("{b:02x}")).collect();
+        let mut z = Verlaufszeile { hoehe: 12, art: "ueberweisung".into(), ausgehend: true, gegen: hex, betrag: 2_000_000 };
+        let an = z.text();
+        assert!(an.starts_with("Höhe       12  ueberweisung "), "{an}");
+        assert!(an.contains(&format!("{} MYL", crate::mining::myl_text(2_000_000))), "{an}");
+        assert!(an.ends_with(&format!(" an {}", als_text(&gegen, PRAEFIX_TESTNETZ))), "{an}");
+        z.ausgehend = false;
+        assert!(z.text().contains(" von "), "eingehend");
+        let leer = Verlaufszeile { hoehe: 1, art: "sitzung".into(), ausgehend: true, gegen: String::new(), betrag: 0 };
+        assert!(!leer.text().contains("MYL") && !leer.text().contains(" an "), "{}", leer.text());
     }
 }
 
@@ -342,7 +457,7 @@ pub fn speichern_mit(name: &str, entwurf: &Entwurf, passwort: Option<&str>) -> R
         //   mit dem Loeschen nicht sicher weg.
         Some(p) => keystore_schreiben(name, &BlsSecretKey::aus_ausgangsmaterial(&entwurf.seed).map_err(|_| "Schlüssel nicht ableitbar".to_string())?, p)?,
         None => {
-            let text = format!("{DATEIKOPF}\n{}\n", hex(&entwurf.seed));
+            let text = zeroize::Zeroizing::new(format!("{DATEIKOPF}\n{}\n", hex(&entwurf.seed)));
             // ⚑ `0600` ab dem Anlegen, wie im Knoten (Fund 607).
             myl_types::geheimdatei::schreiben(&pfad, text.as_bytes()).map_err(|e| format!("{}: {e}", pfad.display()))?;
         }
@@ -489,6 +604,18 @@ pub fn ist_entsperrt(name: &str) -> bool {
 pub fn entsperren(name: &str, passwort: &str) -> Result<(), String> {
     let k = keystore_lesen(name)?.ok_or_else(|| format!("„{name}“ ist nicht verschlüsselt."))?;
     let klar = crate::keystore::entschluesseln(&k, passwort)?;
+    // ⛔️ **Der Schluessel muss zum oeffentlichen Teil passen** (CLIENT 7.15,
+    //    gefunden mit der Verstuemmelungsprobe des Keystores): Die Pruefsumme
+    //    nach EIP-2335 deckt den IV nicht. Ein veraenderter IV oeffnet den
+    //    Keystore ohne Fehler und ergibt ein anderes Geheimnis; die Norm
+    //    verweist dafuer auf das Feld `pubkey`. Ohne Passwort laesst sich das
+    //    falsche Geheimnis nicht kennen, also auch kein passendes `pubkey`.
+    let oeffentlich = BlsSecretKey::aus_geheimen_bytes(*klar)
+        .and_then(|s| s.public_key())
+        .map_err(|_| "Der Keystore ist beschädigt: kein gültiger Schlüssel.".to_string())?;
+    if hex(&oeffentlich.0) != k.pubkey.to_ascii_lowercase() {
+        return Err("Der Keystore ist beschädigt: Der Schlüssel passt nicht zum öffentlichen Teil.".into());
+    }
     OFFEN.lock().map_err(|_| "Sperre vergiftet".to_string())?.insert(name.to_string(), klar);
     Ok(())
 }
@@ -641,6 +768,30 @@ mod proben {
             assert_eq!(geheimschluessel("klar").unwrap().geheime_bytes(), vorher);
             assert_eq!(geheimhex_entsperrt("klar").unwrap().as_str(), hex(&vorher));
             assert!(verschluesseln("klar", "noch ein Passwort").unwrap_err().contains("schon"));
+        });
+    }
+
+    /// ⛔️ **Ein veraenderter IV wird beim Entsperren erkannt** (CLIENT 7.15):
+    /// Der Keystore oeffnet sich, aber das Geheimnis passt nicht zum
+    /// oeffentlichen Teil. Gegenprobe: derselbe Keystore unveraendert
+    /// entsperrt.
+    #[test]
+    fn ein_veraenderter_iv_wird_beim_entsperren_erkannt() {
+        mit_ordner(|| {
+            let e = aus_woertern(WOERTER).unwrap();
+            speichern_mit("iv", &e, Some("ein gutes Passwort")).unwrap();
+            let pfad = ordner().join("iv.keystore.json");
+            let echt = std::fs::read_to_string(&pfad).unwrap();
+            let mut k: crate::keystore::Keystore = serde_json::from_str(&echt).unwrap();
+            let erstes = if k.crypto.cipher.params.iv.starts_with('0') { "1" } else { "0" };
+            k.crypto.cipher.params.iv.replace_range(0..1, erstes);
+            std::fs::write(&pfad, serde_json::to_vec_pretty(&k).unwrap()).unwrap();
+            assert!(crate::keystore::entschluesseln(&k, "ein gutes Passwort").is_ok(), "die Norm prueft den IV nicht");
+            assert!(entsperren("iv", "ein gutes Passwort").unwrap_err().contains("beschädigt"));
+            assert!(!ist_entsperrt("iv"));
+            std::fs::write(&pfad, &echt).unwrap();
+            entsperren("iv", "ein gutes Passwort").unwrap();
+            assert!(ist_entsperrt("iv"));
         });
     }
 

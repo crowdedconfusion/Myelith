@@ -1,0 +1,16 @@
+# Die Bauumgebung fuer unsere Programme in GolemOS: Alpine, also musl nativ.
+#
+# ⚑ **Einmal mit Netz, danach ohne.** Die Werkzeuge kamen frueher bei
+# jedem Bau ueber `apk add` aus dem Netz; ohne Netz brach der Bau dort ab,
+# obwohl alle Kisten aus dem Vorrat kommen. Jetzt stehen sie in diesem
+# Abbild, und `bauen.sh` faehrt den Programmschritt mit `--network none`.
+#
+# ⚠️ **Das Abbild haelt eine Fassung fest.** `alpine:edge` rollt, das
+# Abbild nicht: Bis es geloescht wird, baut jeder Lauf mit demselben
+# Uebersetzer. Erneuern mit `docker image rm golemos-programmbauer-<arch>`;
+# der naechste Bau legt es neu an.
+#
+# Gebaut ohne Kontext (`docker build - < Containerfile.programme`): Es
+# braucht keine Datei aus dem Ordner.
+FROM alpine:edge
+RUN apk add --no-cache rust cargo build-base

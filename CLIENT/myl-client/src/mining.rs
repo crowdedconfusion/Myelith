@@ -825,6 +825,11 @@ pub struct Stand {
     pub auszahlung_guthaben: u64,
     /// Ob die Kette das Wallet schon als Auszahlungskonto fuehrt.
     pub auszahlung_eingetragen: bool,
+    /// Die laufende Epoche; `None` bei einem Knoten, der sie nicht meldet.
+    pub epoche: Option<u64>,
+    /// Die Rolle, wie die Kette sie fuehrt (Miner, Validator); `None` bei
+    /// einem Knoten, der sie nicht meldet, damit dort nichts Falsches steht.
+    pub rolle: Option<(bool, bool)>,
 }
 
 /// Liest die Zahlen aus dem Prometheus-Text.
@@ -847,6 +852,9 @@ pub fn stand_aus(text: &str) -> Stand {
             "myelith_konto_guthaben" => s.guthaben = w,
             "myelith_auszahlung_guthaben" => s.auszahlung_guthaben = w,
             "myelith_auszahlung_eingetragen" => s.auszahlung_eingetragen = w == 1,
+            "myelith_kette_epoche" => s.epoche = Some(w),
+            "myelith_rolle_miner" => s.rolle = Some((w == 1, s.rolle.is_some_and(|r| r.1))),
+            "myelith_rolle_validator" => s.rolle = Some((s.rolle.is_some_and(|r| r.0), w == 1)),
             _ => {}
         }
     }
@@ -910,8 +918,23 @@ pub fn zusammenfassung(z: &Zustand, s: &Stand, jetzt_ms: u64) -> Vec<String> {
             groesse_text(s.belegt_bytes)
         ),
         format!("  Anfragen: {} bearbeitet, {} abgelehnt{anfragen}", s.bearbeitet, s.abgelehnt),
-        format!("  gemint: {} MYL (Spielgeld) · Kette Höhe {}, {} Gegenstellen", myl_text(gemint), s.hoehe, s.peers),
+        format!(
+            "  gemint: {} MYL (Spielgeld) · Kette Höhe {}{}, {} Gegenstellen",
+            myl_text(gemint),
+            s.hoehe,
+            s.epoche.map(|e| format!(", Epoche {e}")).unwrap_or_default(),
+            s.peers
+        ),
     ];
+    // ⚑ **Die Rolle steht nur da, wenn der Knoten sie meldet** (CLIENT 2.2):
+    //   Ein aelterer Knoten meldet sie nicht, und „nicht angemeldet“ waere
+    //   dann eine Behauptung.
+    match s.rolle {
+        Some((true, true)) => zeilen.push("  Rolle: Miner und Validator dieser Epoche".to_string()),
+        Some((true, false)) => zeilen.push("  Rolle: Miner (nicht im Validatorsatz dieser Epoche)".to_string()),
+        Some((false, _)) => zeilen.push("  Rolle: noch nicht als Miner angemeldet".to_string()),
+        None => {}
+    }
     match &z.wallet {
         Some(name) if s.auszahlung_eingetragen => zeilen.push(format!(
             "  Wallet {name}: {} MYL (Testwallet)",
@@ -970,10 +993,19 @@ fn letzte_zeilen(p: &Path, n: usize) -> String {
     z[z.len().saturating_sub(n)..].join("\n")
 }
 
+/// So gross darf eine Antwort des Knotens hoechstens sein; Metriken, ein
+/// Konto und eine Seite des Verlaufs liegen weit darunter.
+pub(crate) const ANTWORT_HOECHSTENS: usize = 16 << 20;
+
 /// **Ein GET an den Endpunkt des Knotens**, mit kurzer Frist.
 ///
 /// ⚑ **Von Hand und ohne Rahmenwerk**, wie der Endpunkt selbst: ein GET
 /// ohne Rumpf auf der Rueckschleife.
+///
+/// ⛔️ **Hoechstens [`ANTWORT_HOECHSTENS`]** (2026-11-13). 📌 Vorher las
+/// `read_to_string` alles bis zum Auflegen; das Wallet fragt auch einen
+/// Knoten auf einer anderen Maschine, und eine Gegenstelle ohne Ende liess
+/// den Speicher wachsen.
 pub(crate) fn holen(adresse: &str, weg: &str) -> Result<String, String> {
     let a: std::net::SocketAddr = adresse.parse().map_err(|_| format!("keine Adresse: {adresse}"))?;
     let mut s = std::net::TcpStream::connect_timeout(&a, Duration::from_millis(500)).map_err(|e| e.to_string())?;
@@ -981,7 +1013,10 @@ pub(crate) fn holen(adresse: &str, weg: &str) -> Result<String, String> {
     s.write_all(format!("GET {weg} HTTP/1.1\r\nHost: {adresse}\r\nConnection: close\r\n\r\n").as_bytes())
         .map_err(|e| e.to_string())?;
     let mut roh = String::new();
-    s.read_to_string(&mut roh).map_err(|e| e.to_string())?;
+    (&mut s).take(ANTWORT_HOECHSTENS as u64 + 1).read_to_string(&mut roh).map_err(|e| e.to_string())?;
+    if roh.len() > ANTWORT_HOECHSTENS {
+        return Err(format!("die Antwort des Knotens ist groesser als {} MiB", ANTWORT_HOECHSTENS >> 20));
+    }
     let (kopf, rumpf) = roh.split_once("\r\n\r\n").unwrap_or((&roh, ""));
     if !kopf.starts_with("HTTP/1.1 200") {
         return Err(kopf.lines().next().unwrap_or("keine Antwort").to_string());
@@ -1200,6 +1235,39 @@ mod tests {
         assert!(zusammenfassung(&z, &s, 0).join("\n").contains("wartet auf die Kette"));
     }
 
+    /// ⛔️ Epoche und Rolle stehen nur da, wenn der Knoten sie meldet
+    /// (CLIENT 2.2); ein aelterer Knoten bekommt keine Behauptung.
+    #[test]
+    fn epoche_und_rolle_nur_wenn_gemeldet() {
+        let z = Zustand {
+            pid: 1,
+            beobachtung: String::new(),
+            gestartet_ms: 0,
+            von: "Konsole".into(),
+            von_pid: 1,
+            guthaben_beim_start: Some(0),
+            wallet: None,
+            auszahlung_beim_start: None,
+            einstieg: Some("x".into()),
+            relais: None,
+            kerne: 1,
+            rechenwerke: 0,
+            volumen_bytes: myl_store::orte::GIB,
+            pfad: "/p".into(),
+            ohne_shard: None,
+        };
+        let neu = stand_aus("myelith_kette_hoehe 9\nmyelith_kette_epoche 3\nmyelith_rolle_miner 1\nmyelith_rolle_validator 1\n");
+        assert_eq!((neu.epoche, neu.rolle), (Some(3), Some((true, true))));
+        let t = zusammenfassung(&z, &neu, 0).join("\n");
+        assert!(t.contains("Höhe 9, Epoche 3,") && t.contains("Rolle: Miner und Validator"), "{t}");
+        let miner = stand_aus("myelith_rolle_validator 0\nmyelith_rolle_miner 1\n");
+        assert!(zusammenfassung(&z, &miner, 0).join("\n").contains("Rolle: Miner (nicht im Validatorsatz"));
+        let fremd = stand_aus("myelith_rolle_miner 0\nmyelith_rolle_validator 0\n");
+        assert!(zusammenfassung(&z, &fremd, 0).join("\n").contains("noch nicht als Miner angemeldet"));
+        let alt = zusammenfassung(&z, &stand_aus("myelith_kette_hoehe 9\n"), 0).join("\n");
+        assert!(!alt.contains("Epoche") && !alt.contains("Rolle"), "{alt}");
+    }
+
     #[test]
     fn myl_und_groessen_ganzzahlig() {
         assert_eq!(myl_text(0), "0");
@@ -1211,6 +1279,38 @@ mod tests {
     }
 
     /// ⚑ **Dieselbe Einheit wie die Wirtschaft**, gelesen aus ihrer Quelle.
+    /// ⛔️ **Eine Gegenstelle ohne Ende fuellt nicht den Speicher**: Nach
+    /// 16 MiB ist Schluss, mit einem Satz; eine gewoehnliche Antwort kommt
+    /// an. Die Gegenstelle haelt danach offen, ohne Grenze liefe `holen` in
+    /// die Frist und meldete etwas anderes.
+    #[test]
+    fn eine_gegenstelle_ohne_ende_fuellt_nicht_den_speicher() {
+        let stummel = |antwort: &'static [u8], nachschub: usize| {
+            let h = std::net::TcpListener::bind("127.0.0.1:0").expect("binden");
+            let ort = h.local_addr().expect("Adresse").to_string();
+            std::thread::spawn(move || {
+                let (mut s, _) = h.accept().expect("annehmen");
+                let mut anfrage = [0u8; 1024];
+                let _ = s.read(&mut anfrage);
+                let _ = s.write_all(antwort);
+                let fuelle = vec![b'x'; 1 << 16];
+                let mut geschickt = 0;
+                while geschickt < nachschub && s.write_all(&fuelle).is_ok() {
+                    geschickt += fuelle.len();
+                }
+                if nachschub > 0 {
+                    std::thread::sleep(Duration::from_secs(4));
+                }
+            });
+            ort
+        };
+        let ort = stummel(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok", 0);
+        assert_eq!(holen(&ort, "/gesundheit").as_deref(), Ok("ok"));
+        let ort = stummel(b"HTTP/1.1 200 OK\r\n\r\n", 2 * ANTWORT_HOECHSTENS);
+        let f = holen(&ort, "/metriken").expect_err("zu viel");
+        assert!(f.contains("groesser"), "{f}");
+    }
+
     #[test]
     fn die_einheit_ist_die_der_wirtschaft() {
         let quelle = include_str!("../../../TOKENOMICS/myl-tokenomics/src/lib.rs");

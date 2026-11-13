@@ -1,20 +1,33 @@
 [package]
 name = "myl-senses"
-version = "0.13.6"
+version = "0.45.1"
 edition = "2021"
 rust-version = "1.99"
 description = "Sinne des Clients: Dateien annehmen und einordnen, Bilder beschreiben und Ton mitschreiben lassen, ueber eigene kleine Modelle."
 license = "LicenseRef-PolyForm-Shield-1.0.0"
 publish = false
 
-# ⚑ **Eine Kiste ohne Abhaengigkeiten, und das ist Absicht.**
+# ⚑ **Eine Abhaengigkeit, und sie ist die eigene Rechenschicht.**
 #
-# Sie startet fremde Programme und liest deren Ausgabe; mehr braucht sie
-# nicht. Wer hier eine Bibliothek fuer Bilder oder Ton hereinholt, hat
-# die Entscheidung umgedreht, um die es geht: **Das Rechnen tut ein
-# eigenes kleines Modell ausserhalb**, nicht diese Kiste.
-
+# Bis 0.19.0 stand die Kiste ohne Abhaengigkeit: Sie startete fremde
+# Programme und las deren Ausgabe. Seit die Sinne selbst rechnen (CLIENT
+# Phase 8), rechnen sie ueber **dieselben Kerne wie das Sprachmodell**:
+# Gewichte int8, Aktivierungen int16, gebuendelt auf der GPU, wo eine da
+# ist. Keine Fremdkiste kommt dazu; alles, was die Kernkiste mitbringt,
+# baut der Client ohnehin.
 [dependencies]
+integer-llm-kernels = { path = "../../INTEGER_LLM/kernels", features = ["cpu-simd"] }
+# Die signierten Herkunftsangaben nach C2PA (`kennzeichnung::c2pa`): Hash,
+# Signatur und der Zufall fuer den Schluessel je Datei. Dieselben Fassungen
+# wie in `myl-module`.
+sha2 = "0.10"
+ed25519-dalek = "2"
+getrandom = "0.2"
+
+# Die gebuendelten Matrizen auf der GPU von Apple-Silizium; die Kernkiste
+# prueft sie beim ersten Gebrauch gegen die CPU.
+[target.'cfg(target_os = "macos")'.dependencies]
+integer-llm-kernels = { path = "../../INTEGER_LLM/kernels", features = ["cpu-simd", "metal"] }
 
 [dev-dependencies]
 tempfile = "3"

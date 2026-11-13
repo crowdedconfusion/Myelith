@@ -165,3 +165,17 @@ path = "fuzz_targets/vollmacht.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "adresstext"
+path = "fuzz_targets/adresstext.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "adresstext_mit_summe"
+path = "fuzz_targets/adresstext_mit_summe.rs"
+test = false
+doc = false
+bench = false

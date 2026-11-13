@@ -462,6 +462,8 @@ jobs:
       # nicht neu schreibt, faellt hier auf (Fund 557).
       - name: "COMPLIANCE: NOTICES entspricht den Quellen"
         run: python3 COMPLIANCE/werkzeuge/notices.py --pruefe
+      - name: "COMPLIANCE: DRITTLIZENZEN entspricht den Quellen"
+        run: python3 COMPLIANCE/werkzeuge/lizenztexte.py --pruefe
 
   # ── Fuzzing der Drahtformate, nur im Zeitplan und von Hand ──────────
   #

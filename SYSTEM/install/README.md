@@ -189,7 +189,11 @@ bringen eigene Sperrdateien mit. Was nur sie brauchen, sammelt `sammeln`
 nach `SYSTEM/crates-vorrat-lokal/`, das git ignoriert; `pruefen` hält beide
 Vorräte gegen ihre Sperrdateien, `auspacken` legt beide ins Lager. Damit
 baut auch eine Kopie des ganzen Arbeitsbaums diese Kisten ohne Netz, und
-der versionierte Vorrat enthält nur, was ein Klon braucht.
+der versionierte Vorrat enthält nur, was ein Klon braucht. Dasselbe gilt
+für die Fuzz-Kisten (`*/fuzz/`): Sie sind Werkzeug, und ihre Archive
+(`libfuzzer-sys` bringt libFuzzer aus LLVM als C++-Quelltext mit) liegen
+im lokalen Vorrat. Fehlen sie, etwa in einem frischen Klon, nennt `pruefen`
+sie nur; liegen sie da, prüft es sie wie alle anderen.
 
 ```sh
 python3 SYSTEM/install/vorrat.py pruefen    # jedes Archiv gegen die SHA-256 in den Sperrdateien
@@ -374,48 +378,32 @@ myl sinne <datei>                                     # eine Datei hindurchschic
 | | woher | wohin |
 |---|---|---|
 | ffmpeg, llama.cpp, whisper.cpp | Paketverwalter des Systems | `/opt/homebrew/bin` und ähnliche |
-| Hörmodell (0,6 GB) | whisper.cpp auf Hugging Face | `~/.myelith/sinne/hoeren.bin` |
+| Hörmodell (0,6 GB) | whisper.cpp auf Hugging Face | `MODELS/audio/hoeren.bin` |
+| Hören im eigenen Rechenweg (1,6 GB oder 1 GB) | whisper large-v3-turbo (macOS oder ab 12 Kernen), sonst small; Originale von OpenAI, `MYL_HOERGROESSE` wählt anders | `MODELS/audio/whisper-<größe>` |
 | Sehmodell schnell (1,7 GB) | SmolVLM2-2.2B-Instruct | `sehen.gguf`, `sehen-mmproj.gguf` |
 | Sehmodell genau (2,9 GB) | Qwen3-VL-4B-Instruct | `sehen-genau.gguf`, `sehen-genau-mmproj.gguf` |
-| Sprechen (4,5 GB) | Fun-CosyVoice3-0.5B mit eigener Python-Umgebung | `~/CosyVoice`, verlinkt nach `~/.myelith/sinne/cosyvoice` |
+| Sprechen (2,5 GB) | Qwen3-TTS-12Hz-0.6B-Base, im eigenen Rechenweg ohne Python | `MODELS/audio/qwen3-tts-0.6b-base` |
 
 ⛔️ **Programme und Gewichte liegen bewusst nicht im Repositorium**: je
 System verschieden, zusammen einige Gigabyte. Der Klon bringt nur das
-Verbindungsstück mit (dieses Skript, den Läufer für CosyVoice, die Namen,
-unter denen der Client sucht). **Deshalb braucht dieser eine Schritt
+Verbindungsstück mit (dieses Skript mit festem Stand und Prüfsumme je
+Datei, die Namen, unter denen der Client sucht). **Deshalb braucht dieser eine Schritt
 Netz.**
 
 <details>
-<summary>📌 Fünf Stolpersteine, alle beim Einrichten gefunden</summary>
+<summary>📌 Stolpersteine, beim Einrichten gefunden</summary>
 
 - **Ein aus dem Finder gestartetes `Myelith.app` erbt einen PATH ohne
   `/opt/homebrew/bin`.** Ein mit `brew` installiertes llama.cpp wäre im
   Terminal da und im Fenster nicht. Der Client sucht deshalb zusätzlich an
   den üblichen Orten.
-- **CosyVoice braucht seine eigene Python-Umgebung.** Der erste Python im
-  PATH ist unter macOS 3.9 ohne torch. Der Client nimmt den Interpreter aus
-  der `.venv` neben der CosyVoice-Installation.
-- **Die Umgebung kommt aus `sprechen-fest.txt`, nicht aus der
-  `requirements.txt` von CosyVoice.** Die brachte Server und Training mit
-  (gradio, fastapi, tensorboard, deepspeed) und hing am 2026-10-23 an 248
-  bekannten Lücken, darunter torch 2.3.1, das fremde Gewichte beim Laden
-  ausführen lässt. Die eigene Liste nennt je Paket Fassung und Prüfsumme
-  für alle Plattformen und wird mit `--require-hashes` installiert. Wie sie
-  entsteht und welche Ausnahmen sie trägt, steht in `sprechen.in`. Eine
-  Umgebung von einem anderen Stand wird ersetzt, nicht nachgebessert.
-- **Mit transformers 5 braucht der Läufer zwei Anpassungen**, beide in
-  `sprechen-cosyvoice.py` begründet: Qwen2 wird in float32 geladen, und die
-  Schritte des Sprachmodells laufen ohne die zu kurze Maske, die CosyVoice
-  mitgibt. ⚠️ Fehlt die zweite, endet der Lauf ohne Fehler und spricht
-  einen anderen Satz.
-- **pyworld braucht zur Laufzeit `pkg_resources`**, das setuptools 81
-  entfernt hat; die Liste hält setuptools deshalb darunter.
-
-⛔️ **Deutsch kann erst CosyVoice 3.** Die 2.0-Gewichte decken Chinesisch
-und Englisch ab; eine deutsche Stimmprobe ergab Laute, die wie Deutsch
-klingen und keines sind (gemessen am 2026-09-17: vorgegeben „dies ist die
-erste gesprochene Antwort“, gehört „dies Go! Ist die Örsteck ist
-proschein“).
+- **CosyVoice wird seit CLIENT 0.219.0 nicht mehr eingerichtet.** Die
+  Modellkarte nennt neben Apache 2.0 „nur für akademische Zwecke“; dazu
+  brauchte es eine eigene Python-Umgebung mit torch und eine feste
+  Paketliste, weil die `requirements.txt` des Projekts am 2026-10-23 an
+  248 bekannten Lücken hing. Gesprochen wird jetzt mit Qwen3-TTS im
+  eigenen Rechenweg. Eine frühere Installation bleibt liegen; `--pruefen`
+  nennt sie, löschen kann sie der Nutzer selbst.
 
 </details>
 

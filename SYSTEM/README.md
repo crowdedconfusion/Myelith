@@ -11,7 +11,7 @@ keine Komponente, nichts mit einer eigenen Fassung: die Unterlage.
 |---|---|---|
 | `full-build/` | wohin alle 28 Crates bauen, gemeinsam statt je Crate einmal | nein, erzeugt |
 | `crates-vorrat/` | 759 `.crate`-Archive, alles, was die 28 Crates zum Bauen brauchen | **ja**, 117 MB |
-| `crates-vorrat-lokal/` | die Archive, die nur eigene, nicht versionierte Kisten brauchen (Module) | nein, ignoriert; gehört in eine Sicherheitskopie |
+| `crates-vorrat-lokal/` | die Archive, die nur eigene, nicht versionierte Kisten (Module) und die Fuzz-Kisten brauchen | nein, ignoriert; gehört in eine Sicherheitskopie |
 | `crates-lager/` | dieselben Archive ausgepackt, dazu die Cargo-Konfiguration | nein, erzeugt |
 | `golemos/` | die Linux-Distribution, die nur Myelith bedient, mit Einrichtungsassistent (die 26. Kiste) und freigegebenen Abbildern | **ja**, seit 2026-09-25; draußen bleiben `aus/` und `bau/` |
 | `install/` | die Einrichtungsskripte für macOS, Linux (auch NixOS) und Windows, dazu Sinne, Vorrat, die Sicherheitskopie (`sicherung.py`) und die Prüfung der Grafikkarten einer (Miet-)Maschine (`karten-pruefen.sh`) | ja |

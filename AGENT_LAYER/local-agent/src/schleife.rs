@@ -268,6 +268,12 @@ pub const KREIS_HINWEIS_AB: usize = 3;
 pub const KREIS_ENDE_AB: usize = 5;
 
 /// **Der Satz, den die Schleife anhaengt, wenn sich ein Schritt wiederholt.**
+///
+/// 📌 **Eine schaerfere letzte Warnung ist gemessen und verworfen.** Verlangt
+/// ein Auftrag ausdruecklich mehr gleiche Schritte, als die Erkennung zulaesst,
+/// endet der Lauf am echten Modell an derselben Stelle, ob der letzte Hinweis
+/// das Ende ankuendigt oder nicht: Der Auftrag wiegt schwerer als ein Satz im
+/// Werkzeugergebnis. Der Hinweis bleibt deshalb bei einem Wortlaut.
 pub fn kreishinweis(wiederholt: usize, form: crate::werkzeug::Ansageform) -> String {
     match form {
         crate::werkzeug::Ansageform::Deutsch => format!(

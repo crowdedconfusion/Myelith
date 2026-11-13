@@ -56,16 +56,6 @@ pub const RUBRIK_AUDIO: &str = "audio";
 /// Die Rubrik fuer Sehen.
 pub const RUBRIK_VISION: &str = "vision";
 
-/// Die Namen, unter denen ein ausgepacktes CosyVoice zu finden ist.
-///
-/// ⛔️ **Zwei Schreibweisen, und das ist kein Schoenheitsfehler.** Wer
-/// das Projekt klont, bekommt `CosyVoice`; in der Sinnesheimat lag
-/// bisher ein `cosyvoice`. **macOS und Windows unterscheiden die beiden
-/// nicht, Linux tut es**, und eine Suche mit nur einer Schreibweise
-/// faellt genau auf dem System auf, auf dem niemand sie geschrieben hat
-/// (dieselbe Klasse wie Fund 392).
-pub const COSYVOICE_NAMEN: [&str; 2] = ["CosyVoice", "cosyvoice"];
-
 /// Die Dateinamen, unter denen die Gewichte in der Heimat erwartet werden.
 pub const SEHMODELL: &str = "sehen.gguf";
 /// Siehe [`SEHMODELL`]. Der Projektor bildet Bildmarken auf den Sprachraum ab.
@@ -88,37 +78,62 @@ pub const SEHPROGRAMME: [&str; 4] = ["llama-mtmd-cli", "mtmd-cli", "llama-llava-
 pub const HOERPROGRAMME: [&str; 3] = ["whisper-cli", "whisper-cpp", "whisper"];
 /// Siehe [`SEHPROGRAMME`], fuer piper.
 pub const SPRECHPROGRAMME: [&str; 2] = ["piper", "piper-tts"];
-/// Die Namen, unter denen ein Python zu finden ist.
-pub const PYTHONPROGRAMME: [&str; 2] = ["python3", "python"];
-/// Wo CosyVoice ausgepackt liegt. ⚑ **Ohne Vorgabe im Repositorium**
-/// (Festlegung des Projektinhabers, 2026-09-17): Python und die
-/// Gewichte bringt der Nutzer mit, sie gehoeren nicht hierher.
-pub const COSYVOICE_UMGEBUNG: &str = "MYL_COSYVOICE";
-/// Der Laeufer, den diese Kiste selbst mitbringt und bei Bedarf in die
-/// Heimat schreibt. Siehe `sprechen::laeufer_einrichten`.
-pub const COSYVOICE_LAEUFER: &str = "sprechen-cosyvoice.py";
+/// **Welcher Weg vorn steht**: `eigen` (Qwen3-TTS im eigenen Rechenweg
+/// vor piper) oder `fremd` (der eigene Weg gar nicht, also ein Skript oder
+/// piper); ohne die Variable gilt [`EIGEN_ALS_VORGABE`].
+pub const SPRECHEN_UMGEBUNG: &str = "MYL_SPRECHEN";
+
+/// ⚑ **Ob der eigene Weg ohne Variable vorn steht: ja, seit der Abnahme
+/// gegen CosyVoice am 2026-11-11**, das bis dahin die Vorgabe war und seit
+/// CLIENT 0.219.0 entfernt ist (fuenf Saetze mit der Stimmprobe des
+/// Projektinhabers): Wortfehler gleich (0,141), erster Ton 1,08 statt
+/// 1,58 s, eine Antwort aus fuenf Saetzen ohne Luecke, Laden 1,2 statt 7
+/// bis 9 s; Aehnlichkeit beide gekennzeichnet 0,755 bis 0,763 gegen 0,831
+/// bis 0,847 (CAM++, der Abdruck von CosyVoice selbst), derselbe Abstand
+/// wie unter Python ohne Kennzeichnung (0,79 bis 0,80 gegen 0,86), den der
+/// Projektinhaber bei der Wahl von Qwen3-TTS angenommen hat. Dazu die
+/// Lizenz und kein Python.
+pub const EIGEN_ALS_VORGABE: bool = true;
+
+/// Ob der eigene Weg genommen wird, nach dem Wert von [`SPRECHEN_UMGEBUNG`].
+pub fn eigen_vorne(wert: Option<&str>) -> bool {
+    match wert.map(str::trim) {
+        Some("eigen") => true,
+        Some("fremd") => false,
+        _ => EIGEN_ALS_VORGABE,
+    }
+}
 /// Der Text der Stimmprobe, von whisper mitgeschrieben.
 ///
-/// ⚑ **CosyVoice braucht ihn fuer `inference_zero_shot`.** Fehlt er,
-/// bleibt `inference_cross_lingual`, das ohne auskommt und etwas
-/// schlechter trifft.
+/// ⚑ **Der eigene Weg klont damit mit Mitschrift** (Codes und Text der
+/// Probe vor dem Satz). Fehlt er, spricht er nur mit dem Abdruck der
+/// Stimme und trifft sie etwas schlechter.
 pub const STIMMPROBE_TEXT: &str = "stimme.txt";
 /// Die Stimme fuer piper, ein ONNX-Modell.
 pub const SPRECHMODELL: &str = "sprechen.onnx";
 /// **Das eigene Sprechskript**, im `bin` der Heimat: Es bekommt eine
 /// Textdatei und ein Ziel-WAV und sonst nichts. Die Tuer fuer jedes
-/// Sprechprogramm, das nicht piper ist (etwa CosyVoice).
+/// Sprechprogramm, das nicht piper ist und je Satz neu startet. Wer ein
+/// Modell einmal laden will, nimmt [`DAUERSKRIPT`].
 pub const SPRECHSKRIPT: &str = "sprechen";
 /// **Die Stimmprobe**: eine Aufnahme, die als Stimme dienen soll.
 ///
 /// ⛔️ **Nicht jedes Sprechprogramm kann damit etwas anfangen.** piper
-/// nimmt fertige Stimmen und kennt keine Referenzaufnahme; klonen
-/// koennen CosyVoice, XTTS-v2 und F5-TTS, und die laufen ueber das
-/// Skript ([`SPRECHSKRIPT`]). Liegt hier eine Probe und spricht trotzdem
+/// nimmt fertige Stimmen und kennt keine Referenzaufnahme; klonen kann
+/// der eigene Weg (Qwen3-TTS), fremde Klonmodelle laufen ueber ein Skript
+/// ([`SPRECHSKRIPT`], [`DAUERSKRIPT`]). Liegt hier eine Probe und spricht trotzdem
 /// piper, **sagt der Client das**, statt die Datei stillschweigend
 /// liegen zu lassen: Sonst waere die Einstellung ein Schalter ohne
 /// Wirkung, und das faellt erst dem auf, der genau hinhoert.
 pub const STIMMPROBE: &str = "stimme.wav";
+
+/// **Das eigene Sprechskript, das stehen bleibt**, im `bin` der Heimat:
+/// gestartet mit `--dauer` (und der Stimmprobe, falls eine liegt), meldet
+/// `bereit` und spricht dann je Zeile einen Satz (das Gespraech steht bei
+/// [`crate::sprechen::Dauersprecher`]). Fuer fremde Modelle, die einmal
+/// laden und dann viele Saetze sprechen sollen; den Text der Probe
+/// bekommt es in `MYL_STIMMTEXT`.
+pub const DAUERSKRIPT: &str = "sprechen-dauer";
 
 /// **Das eigene Aufnahmeskript**, im `bin` der Heimat: Es bekommt **ein**
 /// Ziel-WAV und nimmt auf, **bis seine Standardeingabe schliesst**.
@@ -366,26 +381,30 @@ pub struct Kamerazeug {
 
 /// **Wie gesprochen wird.**
 ///
-/// # ⚑ Drei Wege, und die Reihenfolge ist eine Entscheidung
+/// # ⚑ Die Reihenfolge ist eine Entscheidung
 ///
-/// 1. **Ein eigenes Skript** gewinnt immer: Wer es hinlegt, hat gewaehlt.
-/// 2. **CosyVoice**, die Vorgabe seit dem 2026-09-17 (Festlegung des
-///    Projektinhabers). Es klingt am besten und **kann eine Stimme
-///    nachbilden**; dafuer braucht es Python und Gewichte, die der
-///    Nutzer mitbringt.
+/// 1. **Ein eigenes Skript** gewinnt immer, erst das je Satz, dann das
+///    stehende: Wer es hinlegt, hat gewaehlt.
+/// 2. **Qwen3-TTS im eigenen Rechenweg**, die Vorgabe seit dem 2026-11-11
+///    (Festlegung des Projektinhabers fuer Qwen3-TTS, Abnahme gegen
+///    CosyVoice bestanden, siehe [`EIGEN_ALS_VORGABE`]); klont, ohne Python.
 /// 3. **piper** als Rueckfall: eine Binaerdatei, sofort da, aber es
 ///    nimmt nur fertige Stimmen.
+///
+/// ⚑ **CosyVoice ist seit CLIENT 0.219.0 kein Weg mehr** (Festlegung des
+/// Projektinhabers, 2026-11-11): Die Modellkarte nennt neben Apache 2.0
+/// „nur fuer akademische Zwecke“, dazu Python und PyTorch als Laufzeit.
 #[derive(Debug, Clone)]
 pub enum Sprechweg {
     /// `<Heimat>/bin/sprechen`, mit dem festen Interface aus dem
     /// Modulkopf von `sprechen`.
     Skript(PathBuf),
-    /// Python, der mitgelieferte Laeufer und CosyVoice.
-    CosyVoice {
-        python: PathBuf,
-        laeufer: PathBuf,
-        wurzel: PathBuf,
-    },
+    /// **Qwen3-TTS im eigenen Rechenweg** ([`crate::eigensprecher`]), im
+    /// Prozess und ohne Python; `ordner` haelt die Gewichte.
+    Eigen { ordner: PathBuf },
+    /// `<Heimat>/bin/sprechen-dauer`, ein Skript, das stehen bleibt
+    /// ([`DAUERSKRIPT`]).
+    Dauerskript(PathBuf),
     /// piper mit einer fertigen Stimme.
     Piper { programm: PathBuf, stimme: PathBuf },
 }
@@ -409,19 +428,19 @@ impl Sprechzeug {
         !matches!(self.weg, Sprechweg::Piper { .. })
     }
 
-    /// ⚑ **Ob der Weg ein Dauerlaeufer sein sollte.** CosyVoice laedt je
-    /// Aufruf ein halbes Milliardenmodell; **satzweise zu sprechen waere
-    /// damit langsamer als gar nicht zu streamen**, wenn jeder Satz
-    /// einen neuen Prozess braeuchte.
+    /// ⚑ **Ob der Weg ein Dauerlaeufer sein sollte.** Ein Sprechmodell
+    /// laedt Gewichte in der Groessenordnung eines Gigabytes; **satzweise
+    /// zu sprechen waere damit langsamer als gar nicht zu streamen**, wenn
+    /// jeder Satz neu laden muesste.
     pub fn dauerhaft(&self) -> bool {
-        matches!(self.weg, Sprechweg::CosyVoice { .. })
+        matches!(self.weg, Sprechweg::Dauerskript(_) | Sprechweg::Eigen { .. })
     }
 
     /// Wie der Weg heisst, fuer Meldungen.
     pub fn name(&self) -> String {
         match &self.weg {
-            Sprechweg::Skript(p) => p.display().to_string(),
-            Sprechweg::CosyVoice { .. } => "CosyVoice".into(),
+            Sprechweg::Skript(p) | Sprechweg::Dauerskript(p) => p.display().to_string(),
+            Sprechweg::Eigen { .. } => "Qwen3-TTS (eigen)".into(),
             Sprechweg::Piper { .. } => "piper".into(),
         }
     }
@@ -534,26 +553,27 @@ impl Sinne {
         let z = self.sprechen.as_ref().ok()?;
         let probe = z.probe.as_ref()?;
         if z.kann_klonen() {
-            // ⚠️ **Ein zweiter Fall, der still danebengeht:** CosyVoice
-            // trifft die Stimme deutlich besser, wenn der Text der Probe
+            // ⚠️ **Ein zweiter Fall, der still danebengeht:** Der eigene
+            // Weg trifft die Stimme besser, wenn der Text der Probe
             // dabeisteht. Fehlt er, laeuft es trotzdem, nur schlechter.
-            if matches!(z.weg, Sprechweg::CosyVoice { .. }) && z.probentext.is_none() {
+            if matches!(z.weg, Sprechweg::Eigen { .. }) && z.probentext.is_none() {
                 return Some(format!(
-                    "Zur Stimmprobe fehlt ihr Text ({}). CosyVoice trifft die Stimme damit \
-                     besser; ohne ihn wird der sprachuebergreifende Weg genommen. Ein \
+                    "Zur Stimmprobe fehlt ihr Text ({}). {} trifft die Stimme damit \
+                     besser; ohne ihn klingt nur der Abdruck der Stimme mit. Ein \
                      Hoermodell schreibt ihn beim Ablegen von selbst mit.",
-                    heimat().join(STIMMPROBE_TEXT).display()
+                    heimat().join(STIMMPROBE_TEXT).display(),
+                    z.name()
                 ));
             }
             return None;
         }
         Some(format!(
             "Es liegt eine Stimmprobe ({}), aber {} kann keine Stimme nachbilden und \
-             ignoriert sie. Klonen kann CosyVoice, und dafuer muss {} auf eine \
-             Installation zeigen.",
+             ignoriert sie. Klonen kann Qwen3-TTS, dafuer muessen seine Gewichte in \
+             einem Ordner {} liegen (SYSTEM/install/sinne-einrichten.sh holt sie).",
             probe.display(),
             z.name(),
-            COSYVOICE_UMGEBUNG
+            crate::eigensprecher::ORDNER
         ))
     }
 
@@ -689,14 +709,14 @@ fn hoerzeug(
         fehlt.push(("Programm".into(), format!("{} aus whisper.cpp", HOERPROGRAMME[0])));
     }
     if modell.is_none() {
-        fehlt.push(("Modell".into(), erster_ort(gewichte, HOERMODELL).display().to_string()));
+        fehlt.push(("Modell".into(), audio_ort(gewichte, HOERMODELL).display().to_string()));
     }
     Err(Mangel {
         sinn: "Hoermodell",
         fehlt,
         anleitung: vec![
             format!("whisper.cpp installieren ({})", einbauhinweis("whisper-cpp", "whisper-cpp")),
-            format!("Den Ordner anlegen: {}", erster_ort(gewichte, "").display()),
+            format!("Den Ordner anlegen: {}", audio_ort(gewichte, "").display()),
             format!(
                 "Ein ggml-Modell dorthin legen, benannt {HOERMODELL}. Klein und brauchbar sind \
                  zum Beispiel ggml-small.bin oder ggml-large-v3-turbo-q5_0.bin."
@@ -908,47 +928,21 @@ fn sprechzeug(
     if eigen.sprecher.is_none() && ausfuehrbar(&skript) {
         return fertig(Sprechweg::Skript(skript));
     }
+    let dauerskript = heimat.join("bin").join(DAUERSKRIPT);
+    if eigen.sprecher.is_none() && ausfuehrbar(&dauerskript) {
+        return fertig(Sprechweg::Dauerskript(dauerskript));
+    }
 
-    // 2. CosyVoice: Python, der mitgelieferte Laeufer, die Wurzel.
-    // ⚑ **Erst die Variable, dann die Gewichtsorte, dann die Heimat**,
-    // also dieselbe Reihenfolge wie bei jeder anderen Gewichtsdatei.
-    // CosyVoice ist ein Verzeichnis und keine Datei, sucht sich aber
-    // sonst genauso.
-    let wurzel = std::env::var_os(COSYVOICE_UMGEBUNG)
-        .filter(|w| !w.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| {
-            gewichte
-                .iter()
-                .chain(std::iter::once(&heimat.to_path_buf()))
-                .flat_map(|o| COSYVOICE_NAMEN.iter().map(move |n| o.join(n)))
-                .find(|v| v.is_dir())
-        });
-    // ⛔️ **Der Python neben der Installation gewinnt**, und das ist die
-    // ganze Pointe.
-    //
-    // CosyVoice braucht torch, torchaudio und ein Dutzend weitere
-    // Kisten; die liegen in **seiner** Umgebung und nicht im
-    // System-Python. Waehlte man den ersten Python im PATH, faende man
-    // unter macOS `/usr/bin/python3` (3.9, ohne alles) und bekaeme einen
-    // Importfehler statt einer Stimme. 📌 **Aufgefallen beim
-    // tatsaechlichen Einrichten**, nicht beim Schreiben.
-    let python = wurzel
-        .as_ref()
-        .and_then(|w| {
-            [w.join(".venv/bin/python3"), w.join(".venv/bin/python"), w.join("venv/bin/python3")]
-                .into_iter()
-                .find(|p| ausfuehrbar(p))
-        })
-        .or_else(|| programm_suchen(&PYTHONPROGRAMME, None, heimat, pfad));
-    let laeufer = heimat.join("bin").join(COSYVOICE_LAEUFER);
-    if let (Some(wurzel), Some(python)) = (&wurzel, &python) {
-        if wurzel.is_dir() && laeufer.is_file() {
-            return fertig(Sprechweg::CosyVoice {
-                python: python.clone(),
-                laeufer,
-                wurzel: wurzel.clone(),
-            });
+    // 2. Qwen3-TTS im eigenen Rechenweg, wenn gewaehlt (siehe
+    //    [`eigen_vorne`]) und die Gewichte an einem Gewichtsort liegen.
+    let qwen = gewichte
+        .iter()
+        .chain(std::iter::once(&heimat.to_path_buf()))
+        .map(|o| o.join(crate::eigensprecher::ORDNER))
+        .find(|o| o.join("model.safetensors").is_file() && o.join("speech_tokenizer/model.safetensors").is_file());
+    if let Some(ordner) = &qwen {
+        if eigen.sprecher.is_none() && eigen_vorne(std::env::var(SPRECHEN_UMGEBUNG).ok().as_deref()) {
+            return fertig(Sprechweg::Eigen { ordner: ordner.clone() });
         }
     }
 
@@ -959,44 +953,45 @@ fn sprechzeug(
         return fertig(Sprechweg::Piper { programm: programm.clone(), stimme: stimme.clone() });
     }
 
+    // 4. Der eigene Weg als letzter Rueckfall, auch ohne Wahl: Wer die
+    //    Gewichte hat und sonst nichts, soll sprechen koennen. Nur
+    //    `MYL_SPRECHEN=fremd` schliesst ihn aus.
+    if let Some(ordner) = &qwen {
+        if eigen.sprecher.is_none() && std::env::var(SPRECHEN_UMGEBUNG).map_or(true, |w| w.trim() != "fremd") {
+            return fertig(Sprechweg::Eigen { ordner: ordner.clone() });
+        }
+    }
+
     let mut fehlt = Vec::new();
-    if wurzel.is_none() {
-        fehlt.push((
-            "CosyVoice".into(),
-            format!(
-                "{COSYVOICE_UMGEBUNG} oder {}",
-                erster_ort(gewichte, COSYVOICE_NAMEN[0]).display()
-            ),
-        ));
-    }
-    if python.is_none() {
-        fehlt.push(("Python".into(), "eine .venv neben CosyVoice, sonst python3".into()));
-    }
-    if !laeufer.is_file() {
-        fehlt.push(("Laeufer".into(), laeufer.display().to_string()));
+    if qwen.is_none() {
+        fehlt.push(("Qwen3-TTS".into(), audio_ort(gewichte, crate::eigensprecher::ORDNER).display().to_string()));
     }
     if programm.is_none() {
         fehlt.push(("piper (Rueckfall)".into(), SPRECHPROGRAMME[0].into()));
     }
+    // ⚑ Liegen die Gewichte und sind nur abgewaehlt, ist Holen der
+    //   falsche Rat.
+    let eigener_weg = match &qwen {
+        Some(ordner) => format!(
+            "Qwen3-TTS liegt in {}, ist aber mit {SPRECHEN_UMGEBUNG}=fremd ausgeschlossen; ohne die Variable spricht es.",
+            ordner.display()
+        ),
+        None => format!(
+            "Die Gewichte von Qwen3-TTS holen: sh SYSTEM/install/sinne-einrichten.sh legt sie nach {}.",
+            audio_ort(gewichte, crate::eigensprecher::ORDNER).display()
+        ),
+    };
     Err(Mangel {
         sinn: "Sprechmodell",
         fehlt,
         anleitung: vec![
-            format!(
-                "CosyVoice holen und auspacken, dann {COSYVOICE_UMGEBUNG} darauf zeigen lassen. \
-                 Python bringt der Nutzer mit; es gehoert nicht ins Repositorium."
-            ),
-            format!(
-                "Den Laeufer anlegen lassen: er wird nach {} geschrieben und ist danach \
-                 frei zu aendern.",
-                laeufer.display()
-            ),
+            eigener_weg,
             format!(
                 "Wer es einfacher will, nimmt piper: {} und eine Stimme als {} in {}. \
                  ⚠️ piper kann allerdings keine Stimme nachbilden.",
                 einbauhinweis("piper", "piper-tts"),
                 SPRECHMODELL,
-                erster_ort(gewichte, "").display()
+                audio_ort(gewichte, "").display()
             ),
         ],
     })
@@ -1098,6 +1093,17 @@ fn erster_ort(orte: &[PathBuf], name: &str) -> PathBuf {
     match orte.first() {
         Some(o) => o.join(name),
         None => PathBuf::from(name),
+    }
+}
+
+/// **Wohin eine Datei fuer Hoeren oder Sprechen gehoert**: in die Rubrik
+/// `audio`, falls es sie unter den Orten gibt, sonst an den ersten.
+/// 📌 Bis CLIENT 0.219.0 nannten beide Meldungen den ersten Ort, und der
+/// ist im Klon `MODELS/vision`.
+fn audio_ort(orte: &[PathBuf], name: &str) -> PathBuf {
+    match orte.iter().find(|o| o.file_name().is_some_and(|n| n == RUBRIK_AUDIO)) {
+        Some(o) => o.join(name),
+        None => erster_ort(orte, name),
     }
 }
 
@@ -1335,6 +1341,45 @@ mod proben {
         assert_eq!(sehen.fuer(Stufe::Schnell).modell, d.path().join(SEHMODELL_GENAU));
     }
 
+    /// ⚑ **Der eigene Weg nach seiner Variable**: `eigen` vorn, `fremd`
+    /// nie, sonst die Vorgabe.
+    #[test]
+    fn die_variable_waehlt_den_eigenen_weg() {
+        assert!(eigen_vorne(Some("eigen")));
+        assert!(eigen_vorne(Some(" eigen ")));
+        assert!(!eigen_vorne(Some("fremd")));
+        assert_eq!(eigen_vorne(None), EIGEN_ALS_VORGABE);
+        assert_eq!(eigen_vorne(Some("irgendwas")), EIGEN_ALS_VORGABE, "Unlesbares gilt als nicht gesetzt");
+    }
+
+    /// ⚑ **Qwen3-TTS wird gefunden, wenn seine Gewichte liegen**: ohne
+    /// anderen Weg als Rueckfall, neben piper nach der Vorgabe; das eigene
+    /// Skript gewinnt weiter. Gegenprobe: ohne Rueckweg kein eigener Weg.
+    #[test]
+    fn der_eigene_sprechweg_wird_gefunden() {
+        let d = tempfile::tempdir().expect("Verzeichnis");
+        let ordner = d.path().join(crate::eigensprecher::ORDNER);
+        std::fs::create_dir_all(ordner.join("speech_tokenizer")).expect("Ordner");
+        std::fs::write(ordner.join("model.safetensors"), "x").expect("Gewichte");
+        let s = Sinne::finden_in(d.path(), &Eigene::default(), &[]);
+        assert!(s.sprechen.is_err(), "ohne Rueckweg kein eigener Weg");
+        std::fs::write(ordner.join("speech_tokenizer/model.safetensors"), "x").expect("Rueckweg");
+        let s = Sinne::finden_in(d.path(), &Eigene::default(), &[]);
+        let z = s.sprechen.as_ref().expect("bereit");
+        assert!(matches!(&z.weg, Sprechweg::Eigen { ordner: o } if *o == ordner), "{:?}", z.weg);
+        assert!(z.kann_klonen() && z.dauerhaft());
+        // Neben piper entscheidet die Vorgabe.
+        stellen(d.path(), SPRECHPROGRAMME[0]);
+        std::fs::write(d.path().join(SPRECHMODELL), "x").expect("Stimme");
+        let s = Sinne::finden_in(d.path(), &Eigene::default(), &[]);
+        let z = s.sprechen.as_ref().expect("bereit");
+        assert_eq!(matches!(z.weg, Sprechweg::Eigen { .. }), EIGEN_ALS_VORGABE, "{:?}", z.weg);
+        // Das eigene Skript gewinnt.
+        stellen(d.path(), SPRECHSKRIPT);
+        let s = Sinne::finden_in(d.path(), &Eigene::default(), &[]);
+        assert!(matches!(s.sprechen.as_ref().expect("bereit").weg, Sprechweg::Skript(_)));
+    }
+
     /// ⚑ **Zwei Wege zum Sprechen, und das eigene Skript gewinnt.**
     ///
     /// ⛔️ Diese Probe beisst, wenn die Reihenfolge umgedreht wird: Wer
@@ -1354,25 +1399,52 @@ mod proben {
         assert!(!z.dauerhaft(), "piper braucht keinen Dauerlaeufer");
         assert!(s.kann_sprechen());
 
-        // Mit eigenem Skript: es gewinnt.
+        // Mit stehendem Skript: es gewinnt vor piper und laeuft dauerhaft.
+        stellen(d.path(), DAUERSKRIPT);
+        let s = Sinne::finden_in(d.path(), &Eigene::default(), &[]);
+        let z = s.sprechen.as_ref().expect("bereit");
+        assert!(matches!(&z.weg, Sprechweg::Dauerskript(p) if p.ends_with(DAUERSKRIPT)), "{:?}", z.weg);
+        assert!(z.kann_klonen() && z.dauerhaft());
+
+        // Mit eigenem Skript je Satz: es gewinnt vor allem.
         stellen(d.path(), SPRECHSKRIPT);
         let s = Sinne::finden_in(d.path(), &Eigene::default(), &[]);
         let z = s.sprechen.as_ref().expect("bereit");
         assert!(matches!(&z.weg, Sprechweg::Skript(p) if p.ends_with(SPRECHSKRIPT)), "{:?}", z.weg);
-        assert!(z.kann_klonen());
+        assert!(z.kann_klonen() && !z.dauerhaft());
     }
 
     /// ⛔️ **Ohne Sprechmodell sagt der Mangel beide Wege.** Wer nur den
-    /// einen genannt bekaeme, suchte nach dem falschen.
+    /// einen genannt bekaeme, suchte nach dem falschen. Gegenprobe:
+    /// CosyVoice wird nicht mehr empfohlen.
     #[test]
     fn ohne_sprechmodell_stehen_beide_wege_da() {
         let d = tempfile::tempdir().expect("Verzeichnis");
         let s = Sinne::finden_in(d.path(), &Eigene::default(), &[]);
         assert!(!s.kann_sprechen());
         let t = s.sprechen.as_ref().expect_err("nichts da").bericht();
-        assert!(t.contains("CosyVoice"), "die Vorgabe fehlt: {t}");
+        assert!(t.contains("Qwen3-TTS"), "die Vorgabe fehlt: {t}");
+        assert!(t.contains(crate::eigensprecher::ORDNER), "wo die Gewichte hingehoeren, fehlt: {t}");
+        assert!(t.contains("sinne-einrichten.sh"), "wie sie hinkommen, fehlt: {t}");
         assert!(t.contains("piper"), "der Rueckfall fehlt: {t}");
-        assert!(t.contains(COSYVOICE_UMGEBUNG), "wo CosyVoice liegt, fehlt: {t}");
+        assert!(!t.to_lowercase().contains("cosyvoice"), "{t}");
+    }
+
+    /// ⚑ **Hoeren und Sprechen nennen die Rubrik `audio`**, nicht den ersten
+    /// Ort (im Klon `vision`). Gegenprobe: Ohne Rubriken bleibt es der erste.
+    #[test]
+    fn hoeren_und_sprechen_zeigen_nach_audio() {
+        let klon = tempfile::tempdir().expect("Verzeichnis");
+        let heimat = tempfile::tempdir().expect("Verzeichnis");
+        let orte = gewichtsorte_aus(None, Some(klon.path()), heimat.path());
+        let audio = klon.path().join(MODELLE_ORDNER).join(RUBRIK_AUDIO);
+        let s = Sinne::finden_mit(heimat.path(), &orte, &Eigene::default(), &[]);
+        let sprechen = s.sprechen.as_ref().expect_err("nichts da").bericht();
+        assert!(sprechen.contains(&audio.join(crate::eigensprecher::ORDNER).display().to_string()), "{sprechen}");
+        assert!(!sprechen.contains(RUBRIK_VISION), "{sprechen}");
+        let hoeren = s.hoeren.as_ref().expect_err("nichts da").bericht();
+        assert!(hoeren.contains(&audio.join(HOERMODELL).display().to_string()), "{hoeren}");
+        assert_eq!(audio_ort(&[heimat.path().to_path_buf()], "x"), heimat.path().join("x"));
     }
 
     /// ⚑ **`PATH` kommt vor dem `bin` der Heimat.**

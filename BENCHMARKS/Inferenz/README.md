@@ -37,6 +37,7 @@ BENCHMARKS/Inferenz/
 ├── paket_perplexitaet.py   # Gleitkomma-Referenz eines gedrehten, gepackten Pakets
 ├── belegungssimulation.py  # Expertenwahl gegen Belegungen des Speichers nachgespielt
 ├── ballon.py               # belegt N GiB, um eine kleinere Maschine nachzustellen
+├── kreuzhardware.py        # hält Konformitätsläufe je Plattform fest (results/kreuzhardware.*)
 ├── belegung/               # Lern- und Prüftext der Belegungssimulation
 ├── datasets/               # WikiText-2-Cache (nicht versioniert)
 └── results/                # Messergebnisse (versioniert)

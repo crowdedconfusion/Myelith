@@ -221,6 +221,8 @@ fn umziehen_einmal(orte: &[std::path::PathBuf]) {
 
 /// Wo im Repositorium die Artefakte liegen.
 pub const ARTEFAKTORDNER: &str = "INTEGER_LLM/artifacts";
+/// Der Ordner des Uebersetzungsmodells fuer Buecher.
+pub const UEBERSETZER_ORDNER: &str = "parrot-2b-int8";
 
 /// [`suchorte`] ohne Datei und Umgebung, damit es sich pruefen laesst.
 ///
@@ -610,7 +612,10 @@ const LUFT_DICHT: u64 = 6 << 30;
 /// ⚠️ Eine Faustregel aus den Messungen dieser Maschine, keine Zusage fuer
 /// jede; wer ein Modell eingestellt hat, behaelt es (`modell_vorladen`).
 pub fn empfehlung_fuer(kandidaten: &[Kandidat], speicher: u64) -> Option<Empfehlung> {
-    let passt = |k: &&Kandidat| {
+    // ⚑ Ein Uebersetzungsmodell fuehrt kein Gespraech, auch wenn sonst nichts hier passt.
+    let kandidaten: Vec<&Kandidat> =
+        kandidaten.iter().filter(|k| std::path::Path::new(&k.pfad).file_name().is_none_or(|n| n != UEBERSETZER_ORDNER)).collect();
+    let passt = |k: &&&Kandidat| {
         if k.gemisch {
             k.groesse <= speicher / 2 * 3
         } else {
@@ -703,6 +708,14 @@ fn ordnergroesse(p: &std::path::Path) -> u64 {
 #[cfg(test)]
 mod empfehlung_proben {
     use super::*;
+
+    #[test]
+    fn das_uebersetzungsmodell_wird_nie_empfohlen() {
+        let u = k(UEBERSETZER_ORDNER, 3, false, None);
+        assert!(empfehlung_fuer(std::slice::from_ref(&u), 64 << 30).is_none(), "auch wenn sonst nichts da ist");
+        let e = empfehlung_fuer(&[u, k("pigeon-4b-int8", 40, false, Some(4.0))], 8 << 30).expect("Empfehlung");
+        assert_eq!(e.pfad, "pigeon-4b-int8", "wenn nichts passt, das kleinste Gespraechsmodell");
+    }
 
     fn k(name: &str, gb: u64, gemisch: bool, reihung: Option<f64>) -> Kandidat {
         Kandidat { pfad: name.into(), name: name.into(), groesse: gb << 30, gemisch, reihung }

@@ -1,0 +1,40 @@
+# Fuzz-Ziele fuer die Web-Recherche des Agenten: die Leser fuer Seiten aus
+# dem Netz. Eigenes Crate, weil `libfuzzer-sys` eine Nightly-Werkzeugkette
+# braucht; seine Archive liegen im lokalen Vorrat.
+#
+# ⚑ Die Ziele stehen in `../tests/fuzzziele/mod.rs` und werden per
+# `include!` eingebunden, wie in `SHARED_TYPES/myl-types/fuzz`.
+#
+# Aufruf (Nightly noetig), mit grossen Seiten und Zeitgrenze, damit auch
+# quadratische Laufzeit auffaellt:
+#   cargo +nightly fuzz run html -- -max_total_time=600 -max_len=200000 -timeout=2
+
+[package]
+name = "myl-local-agent-fuzz"
+version = "0.0.0"
+edition = "2021"
+publish = false
+license = "LicenseRef-PolyForm-Shield-1.0.0"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.myl-local-agent]
+path = ".."
+
+[profile.release]
+debug = 1
+overflow-checks = true
+
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "html"
+path = "fuzz_targets/html.rs"
+test = false
+doc = false
+bench = false

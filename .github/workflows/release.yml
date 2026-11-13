@@ -224,6 +224,8 @@ jobs:
              "ausgabe/myl-node-${{ matrix.ziel }}${{ matrix.endung }}"
           cp "CLIENT/myl-client/target/${{ matrix.ziel }}/release/myl${{ matrix.endung }}" \
              "ausgabe/myl-${{ matrix.ziel }}${{ matrix.endung }}"
+          # Die Lizenzen reisen mit jedem ausgelieferten Programm.
+          cp LICENSE.md COMPLIANCE/NOTICES.md COMPLIANCE/DRITTLIZENZEN.txt ausgabe/
           # Ein Ziel, das sich nicht selbst pruefen konnte, wird als
           # solches ausgeliefert und nicht stillschweigend gleichgestellt.
           if [ "${{ matrix.eigen }}" != "true" ]; then

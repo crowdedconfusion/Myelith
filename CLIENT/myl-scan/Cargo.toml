@@ -1,0 +1,30 @@
+[package]
+name = "myl-scan"
+version = "0.4.0"
+edition = "2021"
+rust-version = "1.99"
+description = "Gescannte Buecher lesen: Seitenaufbau, Text und Abbildungen, ohne Netz und ohne Fremdprogramm"
+license = "LicenseRef-PolyForm-Shield-1.0.0"
+publish = false
+
+# ⚑ **Eine eigene Kiste, damit der Rechenpfad sie nie sieht.** Hier wird mit
+# Gleitkomma gerechnet, das Ergebnis geht in Markdown und nie in den Konsens.
+#
+# ⚑ **Die Modelle liegen im Baum und im Programm** (Ausnahme des Projektinhabers
+# von der Regel, dass Gewichte draussen bleiben, 2026-11-09): 35 MB, damit die
+# Erkennung aus einem kalten Klon ohne Netz baubar ist und ein installiertes
+# `myl` nichts mehr laden muss. Herkunft und Lizenz: `modelle/HERKUNFT.md`.
+
+[dependencies]
+tract-onnx = "=0.23.10"
+hayro = "=0.9.0"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+serde_json = "1"
+
+[profile.test]
+opt-level = 2
+debug-assertions = true
+overflow-checks = true
+
+[profile.release]
+opt-level = 3

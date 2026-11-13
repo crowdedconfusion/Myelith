@@ -416,6 +416,10 @@ fn osc11_fragen() -> Option<(u8, u8, u8)> {
 /// **Ob Farbe ausgegeben wird**: nur an einem Terminal, und nicht, wenn
 /// `NO_COLOR` gesetzt ist.
 ///
+/// Fremder Text ohne Steuerzeichen, dieselbe Regel wie in `myl`
+/// ([`myl_client::terminal::steuerfrei`]).
+pub use myl_client::terminal::steuerfrei;
+
 /// ⚑ `NO_COLOR` ist die uebliche Absprache fuer „keine Farbe, egal
 /// welches Programm". Wer sie setzt, meint es fuer alle Programme.
 pub fn farbig() -> bool {
@@ -460,6 +464,23 @@ pub fn puls(seit: std::time::Duration) -> u32 {
 
 #[cfg(test)]
 mod tests {
+
+    /// ⛔️ Ein OSC- oder CSI-Befehl aus fremdem Text erreicht das Terminal
+    /// nicht; Zeilenumbruch, Tabulator, Umlaute und Bildzeichen bleiben.
+    #[test]
+    fn fremder_text_kommt_ohne_steuerzeichen() {
+        let titel = format!("a{}]0;gekapert{}b", char::from(0x1b), char::from(7));
+        assert_eq!(steuerfrei(&titel), "a\u{241b}]0;gekapert\u{2407}b");
+        let zwischenablage = format!("{}]52;c;Ym9lc2U={}\\", char::from(0x1b), char::from(0x1b));
+        assert!(!steuerfrei(&zwischenablage).contains(char::from(0x1b)));
+        assert_eq!(steuerfrei("Zeile\n\tmit Tab, äöü ␛"), "Zeile\n\tmit Tab, äöü ␛");
+        assert!(matches!(steuerfrei("ganz normal"), std::borrow::Cow::Borrowed(_)));
+        assert_eq!(steuerfrei("\r\u{7f}\u{9b}"), "\u{240d}\u{2421}\u{fffd}");
+        let r = rollen(myl_client::einstellungen::Konsolendesign::default());
+        assert!(!crate::antwort::setzen(&titel, &r, true).contains("]0;gekapert\u{7}"));
+        assert!(!crate::antwort::setzen(&titel, &r, false).contains(char::from(0x1b)));
+    }
+
     use super::*;
 
     /// **Standard setzt keinen eigenen Akzent.**

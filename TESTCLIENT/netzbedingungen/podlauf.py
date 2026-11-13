@@ -268,6 +268,11 @@ FALSCHER_AUSTEILER = "m02"
 ZURUECKHALTER = "m11"
 DOPPELERZEUGER = "m12"
 FALSCHE_UHR = "m13"
+# ⚑ Der Hoehenluegner (`--hoehe-uebertreiben`, 2026-11-12, Fund 634): ein
+#   Miner ohne Sonderrolle, der nach jedem eigenen Block eine unterschriebene
+#   Kopie mit erfundener Hoehe verbreitet (`MYL_HOEHE_UEBERTREIBEN`, Merkmal
+#   `konsensrollen`). Verlangt: Die Ehrlichen melden `hoehe_erfunden`.
+HOEHENLUEGNER = "m05"
 # ⚑ Zustandslos (`--zustandslos`, 2026-10-29): ein gewoehnlicher Miner ohne
 #   Sonderrolle haelt keine Konten (er rechnet, reicht ein und wird bezahlt),
 #   und ein spaeter Knoten ohne Miner-Rolle steigt ueber einen leichten Abzug
@@ -541,6 +546,8 @@ def lauf(args: argparse.Namespace, ordner: pathlib.Path) -> None:
             k.umgebung["MYL_DOPPELT_ERZEUGEN"] = "1"
         if args.uhr_versatz and rolle[k.name][0] == FALSCHE_UHR:
             k.umgebung["MYL_UHR_VERSATZ_MS"] = str(args.uhr_versatz)
+        if args.hoehe_uebertreiben and rolle[k.name][0] == HOEHENLUEGNER:
+            k.umgebung["MYL_HOEHE_UEBERTREIBEN"] = str(args.hoehe_uebertreiben)
     # Die Epoche der gezielten Frage mit dem Faelscher auf Position.
     faelscher_frage: dict[str, int] = {}
     # Die Epochen der Fragen ueber die Tuer.
@@ -1935,6 +1942,21 @@ def lauf(args: argparse.Namespace, ordner: pathlib.Path) -> None:
         bericht.append(zeile)
         if args.uhr_versatz > 1000 and erzeugt.get(uhr.name, 0) and not zukunft:
             befunde.append(f"Uhr {args.uhr_versatz:+d} ms ueber dem Spielraum, aber kein Block aus der Zukunft abgelehnt")
+    # ⚑ Fund 634: Der Hoehenluegner behauptet erfundene Hoehen; wer einen
+    #   endgueltigen Pruefpunkt hat, meldet `hoehe_erfunden` und fordert
+    #   nichts nach. Gezaehlt bei allen ausser ihm.
+    luegner634 = next((k for k in miner if rolle[k.name][0] == HOEHENLUEGNER), None)
+    if args.hoehe_uebertreiben and luegner634 is not None:
+        behauptet = zeilen(luegner634, "hoehe_uebertrieben")
+        erkannt = {k.name: len(zeilen(k, "hoehe_erfunden")) for k in [erzeuger] + miner if k is not luegner634}
+        zeile = (f"Hoehenluegner {luegner634.name} (+{args.hoehe_uebertreiben}): {len(behauptet)} erfundene Hoehen verbreitet, "
+                 f"erkannt bei {sum(1 for n in erkannt.values() if n)} von {len(erkannt)} Knoten, zusammen {sum(erkannt.values())}")
+        melde(zeile)
+        bericht.append(zeile)
+        if behauptet and not any(erkannt.values()):
+            befunde.append(f"Hoehenluegner {luegner634.name} verbreitete {len(behauptet)} erfundene Hoehen, keiner erkannte eine")
+        if not behauptet:
+            befunde.append(f"Hoehenluegner {luegner634.name} hat keinen Block gebaut, die Probe sagt nichts")
     # Die Prüfpunkte: Der Erzeuger stimmt und baut das Zertifikat, die Kette
     # trägt es im nächsten Block (CONSENSUS 7.2).
     zertifikate = zeilen(erzeuger, "pruefpunkt_zertifikat")
@@ -2283,6 +2305,8 @@ def main() -> int:
                    help=f"{DOPPELERZEUGER} baut im selben Slot zweimal; verlangt sind Belege gegen ihn (Merkmal konsensrollen)")
     p.add_argument("--uhr-versatz", type=int,
                    help=f"die Uhr von {FALSCHE_UHR} geht so viele Millisekunden vor, negativ nach (Merkmal konsensrollen)")
+    p.add_argument("--hoehe-uebertreiben", type=int,
+                   help=f"{HOEHENLUEGNER} behauptet nach jedem eigenen Block eine um so viel hoehere Hoehe (Merkmal konsensrollen, Fund 634)")
     p.add_argument("--phasen-ab", type=int,
                    help="mit --real: Last, Trennung und Einsteiger erst ab dieser Hoehe (etwa 5600: alle Miner erzeugen)")
     p.add_argument("--einsteiger-ab", type=int,

@@ -37,7 +37,7 @@ Argument kann eine zweite Kommandozeile einschleusen.
 | **Sehen** | Bild zu Text | llama.cpp (`llama-mtmd-cli`) | `sehen.gguf`, `sehen-mmproj.gguf` |
 | | | | wahlfrei: `sehen-genau.gguf`, `sehen-genau-mmproj.gguf` |
 | **Hören** | Ton zu Text | whisper.cpp (`whisper-cli`) | `hoeren.bin` |
-| **Sprechen** | Text zu Ton | **Fun-CosyVoice3-0.5B** (Rückfall: piper) | `stimme.wav`, sonst `sprechen.onnx` |
+| **Sprechen** | Text zu Ton | **Qwen3-TTS-12Hz-0.6B-Base im eigenen Rechenweg** (Rückfall: piper) | `stimme.wav` und `stimme.txt`, sonst `sprechen.onnx` |
 | **Aufnehmen** | Mikrofon zu Ton | ffmpeg | kein Modell |
 
 Heimat ist `~/.myelith/sinne`, umzustellen über `MYL_SINNE`. Ein
@@ -57,8 +57,9 @@ dorthin.
 ⚑ **Die zweite Sprosse hat sich sofort bezahlt gemacht**: dasselbe Bild,
 dieselbe Frage, und das 3B liest, was das 2,2B überliest.
 
-📌 **CosyVoice war damals langsamer als Echtzeit** (RTF 1,40) und ist es
-seit dem 2026-09-25 nicht mehr; siehe unten.
+📌 **CosyVoice war damals langsamer als Echtzeit** (RTF 1,40) und war es
+seit dem 2026-09-25 nicht mehr; seit dem 2026-11-11 ist es durch den
+eigenen Weg ersetzt und entfernt, siehe unten.
 
 ### ⛔️ Jede erzeugte Sprache ist gekennzeichnet (seit dem 2026-09-25)
 
@@ -89,9 +90,11 @@ Hintergrund, das alte nannte das Projekt ein „Unternehmen"; 4,7 statt
 2,9 s samt Laden. Das Einrichtungsskript ersetzt eine alte Datei, die es
 an ihrer Größe erkennt, und lässt eine eigene stehen.
 
-### Sprechen, gemessen am 2026-09-25
+### Sprechen, gemessen am 2026-09-25 (mit CosyVoice, inzwischen entfernt)
 
-Ein Satz von 62 Zeichen, gemessen vom Eingang beim Läufer bis zum
+Die Zahlen zum Gespräch neben dem Hauptmodell (Vorrang, Lücken) gelten
+für den Vorleser und bleiben lehrreich; die Stufen darunter betreffen
+CosyVoice. Ein Satz von 62 Zeichen, gemessen vom Eingang beim Läufer bis zum
 ersten hörbaren Stück, ohne ein Hauptmodell daneben:
 
 | Stand | erster Ton | RTF |
@@ -158,67 +161,56 @@ kleine Modell eine Entscheidung, die es schlecht trifft:
 ⚑ **Wer nur eines hinlegt, bekommt es für beides.** Eine Stufe, die
 mangels Gewichten leer ausginge, wäre eine Falle.
 
-### ⚑ CosyVoice ist die Vorgabe (Festlegung des Projektinhabers)
+### ⚑ Qwen3-TTS im eigenen Rechenweg ist die Vorgabe (seit dem 2026-11-11)
 
-Es klingt am besten und **kann eine Stimme nachbilden**, und genau das
-war der Auftrag: eine hochgeladene Aufnahme soll die Stimme sein. Dafür
-braucht es Python und Gewichte.
+Qwen3-TTS-12Hz-0.6B-Base (Apache 2.0, ohne Zusatz) rechnet im Programm,
+ohne Python: Textzerleger, Sprecher in int8, Code-Vorhersage,
+Stimmabdruck und Tonzerleger in Rust. Es **klont aus der Stimmprobe**,
+mit ihrem mitgeschriebenen Text (`stimme.txt`) etwas genauer. Abgenommen
+gegen CosyVoice auf derselben Maschine, fünf Sätze mit derselben
+Stimmprobe: Wortfehler gleich (0,141), erster Ton 1,08 statt 1,58 s, eine
+Antwort aus fünf Sätzen ohne Lücke, Laden 1,2 statt 7 bis 9 s;
+Ähnlichkeit (CAM++) 0,76 statt 0,84, im Blindvergleich 3 zu 2 für den
+eigenen Weg.
 
-⚑ **Beides bringt der Nutzer mit, und nichts davon kommt ins
-Repositorium.** Das ist die Bedingung, unter der die Entscheidung steht:
-„davon ausgehen, dass die meisten Python bereits haben und dies nicht ins
-Repo muss". Der Läufer, der CosyVoice bedient, ist dagegen eine
-Textdatei von wenigen Kilobyte; er steckt im Programm und wird bei
-Bedarf nach `<Heimat>/bin/sprechen-cosyvoice.py` geschrieben.
-⛔️ **Ein angepasster Läufer wird nie überschrieben.** Ersetzt wird nur
-einer, der Byte für Byte einer früher ausgelieferten Fassung gleicht,
-erkannt an seinem Fingerabdruck (FNV-1a, 64 Bit); sonst bliebe jeder,
-der ihn einmal bekommen hat, für immer auf dem alten Stand.
+⚑ **CosyVoice ist seit CLIENT 0.219.0 entfernt** (Festlegung des
+Projektinhabers, 2026-11-11). Die Modellkarte nennt neben Apache 2.0 „nur
+für akademische Zwecke“, dazu kamen Python und PyTorch als Laufzeit und
+ein eigener Läufer. **piper bleibt Rückfall**, eine Binärdatei ohne
+Laufzeit, die sofort geht und dafür nur fertige Stimmen kennt.
 
-⚠️ **Was das kostet, gehört dazugesagt:** Wer kein Python und keine
-Gewichte hat, kann nicht sprechen lassen. Deshalb bleibt **piper als
-Rückfall** stehen, eine Binärdatei ohne Laufzeit, die sofort geht und
-dafür nur fertige Stimmen kennt.
-
-Die drei Wege, in dieser Reihenfolge:
+Die Wege, in dieser Reihenfolge:
 
 | Weg | klont | braucht |
 |---|---|---|
-| eigenes Skript `bin/sprechen` | ja | was immer es selbst will |
-| **CosyVoice** | ja | Python, Gewichte, `MYL_COSYVOICE` |
+| eigenes Skript `bin/sprechen`, je Satz | ja | was immer es selbst will |
+| eigenes Skript `bin/sprechen-dauer`, stehend | ja | dasselbe |
+| **Qwen3-TTS (eigen)** | ja | die Gewichte unter `qwen3-tts-0.6b-base` |
 | piper | **nein** | eine Binärdatei und eine Stimme |
 
-### ⛔️ Deutsch kann erst CosyVoice 3
+`MYL_SPRECHEN=fremd` lässt den eigenen Weg aus, `eigen` stellt ihn vor
+piper (das ist ohnehin die Vorgabe).
 
-Die 2.0-Gewichte decken Chinesisch und Englisch ab. Eine deutsche
-Stimmprobe ergibt damit Laute, die wie Deutsch klingen und keines sind.
-⚑ **Gemessen, indem whisper vorgelesen bekam, was CosyVoice gesagt
-hatte:** Vorlage „dies ist die erste gesprochene Antwort", gehört „dies
-Go! Ist die Örsteck ist proschein". Der Läufer nimmt deshalb
-`Fun-CosyVoice3-0.5B`, sobald es im Modellordner liegt, und erkennt es
-an seiner `cosyvoice3.yaml` statt am Ordnernamen.
+### ⚑ Ein Sprechskript, das stehen bleibt
 
-### ⛔️ CosyVoice braucht einen Dauerläufer
-
-Es lädt je Aufruf ein halbes Milliardenmodell samt Vocoder. **Satzweise
-zu sprechen wäre damit langsamer als gar nicht zu streamen**, wenn jeder
-Satz einen neuen Prozess bräuchte. Also bleibt der Läufer stehen und
-spricht Satz für Satz:
+Ein fremdes Modell, das je Aufruf Gewichte lädt, wäre satzweise
+langsamer als gar nicht gestreamt. Dafür gibt es `bin/sprechen-dauer`:
+gestartet mit `--dauer` (und der Stimmprobe, falls eine liegt; ihr Text
+steht in `MYL_STIMMTEXT`), danach Satz für Satz:
 
 | Richtung | Zeile |
 |---|---|
-| vom Läufer, einmal beim Start | `bereit` |
-| an den Läufer, je Satz | `<textdatei>` Tabulator `<zielwav>` |
-| vom Läufer, je hörbarem Stück (Fassung 2) | `stueck` Tabulator `<teilwav>` |
-| vom Läufer, je Satz | `ok` oder `fehler: …` |
+| vom Skript, einmal beim Start | `bereit` |
+| an das Skript, je Satz | `<textdatei>` Tabulator `<zielwav>` |
+| vom Skript, je hörbarem Stück (wahlfrei) | `stueck` Tabulator `<teilwav>` |
+| vom Skript, je Satz | `ok` oder `fehler: …` |
 
-⚑ **Die Stücke sind der Unterschied zwischen zwei und neun Sekunden.**
-Ein Läufer der Fassung 2 meldet jedes Stück, sobald es fertig ist, und
-der Client spielt es sofort; das ganze Satz-WAV liegt am Ende trotzdem
-da. Ein Läufer der Fassung 1 meldet nur `ok`, und dann klingt der Satz
-als Ganzes, wie früher.
+⚑ **Die Stücke sind der Unterschied zwischen zwei und neun Sekunden**:
+Der Client spielt jedes, sobald es gemeldet ist; das ganze Satz-WAV liegt
+am Ende trotzdem da. Wer keine Stücke meldet, klingt satzweise. **Jedes
+Stück und jeder Satz wird gekennzeichnet**, bevor es klingt.
 
-⚑ **Das Schließen der Eingabe beendet ihn**, wie bei der Aufnahme. Und
+⚑ **Das Schließen der Eingabe beendet es**, wie bei der Aufnahme. Und
 das Warten auf `bereit` ist Teil der Sache: Wer nicht wartet, schickt
 den ersten Satz in ein Programm, das noch lädt.
 
@@ -230,13 +222,11 @@ mkdir -p ~/.myelith/sinne
 
 brew install llama.cpp      # Sehen; NixOS: nix-shell -p llama-cpp
 brew install whisper-cpp    # Hören
-brew install ffmpeg         # Aufnehmen, und für Ton, der kein WAV ist
+brew install ffmpeg         # Aufnehmen, und für Ogg, Opus, WebM (WAV und FLAC liest Myelith selbst, m4a und MP3 macOS)
 
-# Sprechen: CosyVoice holen, seine Umgebung nach seiner eigenen
-# Anleitung einrichten, dann darauf zeigen lassen:
-export MYL_COSYVOICE=~/CosyVoice
-# Der Läufer wird auf Knopfdruck angelegt (Einstellungsseite) oder mit
-# myl_senses::sprechen::laeufer_einrichten.
+# Sprechen: die Gewichte von Qwen3-TTS holt das Einrichtungsskript
+# (fester Stand, Prüfsummen) nach MODELS/audio/qwen3-tts-0.6b-base:
+sh SYSTEM/install/sinne-einrichten.sh
 
 brew install piper          # nur als Rückfall, kann keine Stimme klonen
 ```

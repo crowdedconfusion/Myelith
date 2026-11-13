@@ -33,10 +33,12 @@ Fremddateien.
 Lokale Kisten, die git ignoriert (eigene Module unter `MODULES/`), tragen
 eigene Sperrdateien. Was nur sie brauchen, liegt **nicht** im versionierten
 Vorrat, denn kein Klon braucht es, sondern in `SYSTEM/crates-vorrat-lokal/`,
-das git ebenfalls ignoriert. Damit baut eine Kopie des ganzen Arbeitsbaums
-auch diese Kisten ohne Netz, und der versionierte Vorrat bleibt genau das,
-was die versionierten Sperrdateien verlangen. `auspacken` legt beide in
-dasselbe Lager.
+das git ebenfalls ignoriert. Dorthin gehören auch die Archive, die nur die
+Fuzz-Kisten brauchen: Werkzeug, mit dem kein Klon baut; fehlen sie, ist das
+kein Fehler, liegen sie da, werden sie geprueft. Damit baut eine
+Kopie des ganzen Arbeitsbaums auch diese Kisten ohne Netz, und der
+versionierte Vorrat bleibt genau das, was die versionierten Sperrdateien
+der Programme verlangen. `auspacken` legt beide in dasselbe Lager.
 
 Aufrufe:
 
@@ -70,10 +72,21 @@ AUSGEPACKT = WURZEL / "SYSTEM" / "crates-lager" / "vendor"
 QUELLE = "https://static.crates.io/crates/{name}/{name}-{version}.crate"
 
 # ⛔️ **Nicht jede Sperrdatei im Baum gehoert zu Myelith.** Unter
-# `INSPIRATION` liegen fremde Repositorien, und die Fuzz-Kisten sind
-# Werkzeug und kein Programm. **Ein Vorrat, der sie mitnimmt, waere
-# groesser und nicht vollstaendiger.**
-AUSGENOMMEN = ("INSPIRATION", "/fuzz/", "SYSTEM/full-build", "/.venv/", "/vendor/")
+# `INSPIRATION` liegen fremde Repositorien. **Ein Vorrat, der sie mitnimmt,
+# waere groesser und nicht vollstaendiger.**
+AUSGENOMMEN = ("INSPIRATION", "SYSTEM/full-build", "/.venv/", "/vendor/")
+
+# ⚑ **Die Fuzz-Kisten sind Werkzeug und kein Programm**: Kein Klon braucht
+# sie zum Bauen, und `libfuzzer-sys` bringt libFuzzer aus LLVM als
+# C++-Quelltext mit. Ihre Archive gehoeren deshalb in den lokalen Vorrat,
+# wie die der ignorierten Kisten. 📌 Bis zum 2026-11-12 waren sie ganz
+# ausgenommen; ein Archiv, das jemand von Hand in den lokalen Vorrat legte,
+# haette `auspacken` dann ungeprueft ins Lager gebracht.
+NUR_LOKAL = ("/fuzz/",)
+
+
+def _nur_lokal(p: pathlib.Path) -> bool:
+    return any(a in p.as_posix() for a in NUR_LOKAL)
 
 
 def von_git_ignoriert(pfade: list[pathlib.Path]) -> set[pathlib.Path]:
@@ -119,17 +132,17 @@ def _kandidaten() -> list[pathlib.Path]:
 def sperrdateien() -> list[pathlib.Path]:
     kandidaten = _kandidaten()
     ignoriert = von_git_ignoriert(kandidaten)
-    return sorted(p for p in kandidaten if p not in ignoriert)
+    return sorted(p for p in kandidaten if p not in ignoriert and not _nur_lokal(p))
 
 
 def sperrdateien_lokal() -> list[pathlib.Path]:
-    """Die Sperrdateien der lokalen Kisten, die git ignoriert.
+    """Die Sperrdateien der lokalen Kisten, die git ignoriert, und der Fuzz-Kisten.
 
-    Ohne git ist diese Liste leer, und jede Sperrdatei zaehlt zu
+    Ohne git fehlen hier die ignorierten, und sie zaehlen zu
     `sperrdateien()`; `pruefen` sieht dann in beiden Vorraeten nach.
     """
     kandidaten = _kandidaten()
-    return sorted(von_git_ignoriert(kandidaten))
+    return sorted(von_git_ignoriert(kandidaten) | {p for p in kandidaten if _nur_lokal(p)})
 
 
 def pakete(locks: list[pathlib.Path] | None = None) -> dict[tuple[str, str], str]:
@@ -233,18 +246,30 @@ def pruefen() -> int:
     rc = _pruefen_gegen(alle, ARCHIVE, "versioniert")
     if lokal:
         nur_lokal = {k: s for k, s in pakete(lokal).items() if k not in alle}
-        rc |= _pruefen_gegen(nur_lokal, ARCHIVE_LOKAL, "lokal")
+        # ⚑ **Was nur die Fuzz-Kisten brauchen, darf fehlen**: Ein frischer
+        # Klon hat keinen lokalen Vorrat, und wer nicht fuzzt, braucht ihn
+        # nicht. Liegt ein solches Archiv aber da, wird es geprueft wie jedes
+        # andere, denn `auspacken` legt es ins Lager. 📌 Gefunden in der
+        # Generalprobe vom 2026-11-12: Ohne diese Unterscheidung war `pruefen`
+        # in jedem frischen Klon rot.
+        sonst = {k for k in pakete([p for p in lokal if not _nur_lokal(p)])}
+        wahlfrei = {f"{n}-{v}.crate" for (n, v) in nur_lokal if (n, v) not in sonst}
+        rc |= _pruefen_gegen(nur_lokal, ARCHIVE_LOKAL, "lokal", wahlfrei)
     return rc
 
 
-def _pruefen_gegen(alle: dict[tuple[str, str], str], ablage: pathlib.Path, art: str) -> int:
+def _pruefen_gegen(
+    alle: dict[tuple[str, str], str], ablage: pathlib.Path, art: str, wahlfrei: set[str] = frozenset()
+) -> int:
     erwartet = {f"{n}-{v}.crate": s for (n, v), s in alle.items()}
     da = _archive(ablage)
-    if ablage == ARCHIVE and not sperrdateien_lokal():
+    if ablage == ARCHIVE and not von_git_ignoriert(_kandidaten()):
         # Ohne git (eine Kopie ohne `.git`) kennt niemand die lokalen
         # Sperrdateien als lokal; ihre Archive stehen im lokalen Vorrat.
         da = {**_archive(ARCHIVE_LOKAL), **da}
     fehlt = sorted(set(erwartet) - set(da))
+    nur_zum_fuzzen = [n for n in fehlt if n in wahlfrei]
+    fehlt = [n for n in fehlt if n not in wahlfrei]
     zuviel = sorted(set(da) - set(erwartet))
     falsch = [
         n
@@ -254,6 +279,8 @@ def _pruefen_gegen(alle: dict[tuple[str, str], str], ablage: pathlib.Path, art: 
     print(f"[vorrat] {art}: erwartet {len(erwartet)}, vorhanden {len(da)}")
     if fehlt:
         print(f"   fehlen: {len(fehlt)}  {fehlt[:3]}")
+    if nur_zum_fuzzen:
+        print(f"   fehlen, nur zum Fuzzen gebraucht (kein Fehler): {len(nur_zum_fuzzen)}  {nur_zum_fuzzen[:3]}")
     if falsch:
         print(f"   falsche Pruefsumme: {len(falsch)}  {falsch[:3]}")
     # ⚠️ Ueberzaehlige sind kein Fehler, sondern Ballast: Sie stammen von

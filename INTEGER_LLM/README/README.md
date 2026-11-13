@@ -1,7 +1,7 @@
 # integer-llm
 
-> **Version:** 0.148.0 (θ_v 0.22.0; kernels 0.90.0, runtime 0.105.0, pipeline 0.15.4)
-> **Datum:** 2026-11-08
+> **Version:** 0.150.0 (θ_v 0.22.0; kernels 0.91.0, runtime 0.105.1, pipeline 0.15.4)
+> **Datum:** 2026-11-11
 > **Status:** ⚠️ **Das Akzeptanzkriterium ruht auf einer zu kleinen
 > Stichprobe.** Gemessen wurde bisher ueber **4 Sequenzen, 435
 > Positionen**; eine Messung ueber **32 Sequenzen, 3558 Positionen**
@@ -648,6 +648,74 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
   volle Paritätstests nur auf GPU-Runnern (nightly oder PR-basiert)
 
 ## Changelog
+
+### v0.150.0 (2026-11-11): W8A8 für die Sinne (kernels 0.91.0)
+
+- **Neu: `linear::linear_w8a8_pc_stapel`**, Gewichte und Aktivierungen in
+  int8, eine Ausgangsskala je Kanal, exakt in `i64`. Auf Metal ein
+  einziges `matmul2d` je Bündel mit dem vorhandenen Shader `produkt` und
+  einem neuen `nachlauf_a8` (nur Umskalieren und Klemmen), ohne die
+  Zerlegung der Aktivierungen in zwei Stellen, die W8A16 braucht; auf der
+  CPU `dot::dot_i8_i8` (je 4096 Elemente in `i32`, exakt). Auf den
+  Steckkarten rechnet vorerst die CPU.
+- ⚑ **Für die Sinne, nicht für den Rechenpfad des Sprachmodells.** Auftrag
+  des Projektinhabers vom 2026-11-11 für whisper (CLIENT 8.2); das
+  Sprachmodell nimmt den Weg nicht, seine Konformität bleibt 55/55 auf
+  `reference`, `cpu-simd` und `metal`.
+- **Geprüft:** GPU gegen CPU bitgleich (`w8a8_rechnet_wie_die_cpu`, Formen
+  über alle Kachelränder), die CPU gegen die Formel samt Gegenprobe über
+  W8A16 mit denselben Werten (`w8a8_auf_der_cpu_ist_die_formel`), und ein
+  Fall in der Selbstprüfung jedes Prozesses (Ränder beider Seiten, alle
+  Fälle der Umskalierung, der kleine Fall zweimal für die
+  wiederverwendeten Puffer). 421 Proben mit `metal`, 405 ohne, Clippy
+  sauber, kein Gleitkomma im Rechenpfad.
+- kernels 0.91.0.
+
+### v0.149.4 (2026-11-11): Metal behält die Puffer der int8-Bündel (kernels 0.90.1)
+
+- **`Kontext::rechnen_viele` nimmt Eingaben, Teilprodukte, Abstände und
+  Ausgaben aus dem Vorrat** des Kontexts, wie es der ternäre und der
+  Vier-Bit-Weg schon taten, statt sie je Aufruf frisch anzulegen. Jede
+  Seite eines frischen Puffers kostete beim ersten Zugriff der CPU einen
+  Seitenfehler; abgetastet am Encoder von whisper lag ein Viertel der
+  Kernzeit allein im Lesen der Ausgabe. Jeder der vier wird vor dem Rechnen
+  ganz beschrieben, ein alter Inhalt bleibt nie stehen. ⚠️ Die Puffer
+  bleiben in der Größe des größten Aufrufs im Prozess liegen.
+- 📌 **Erst gegengeprüft, dann gebaut:** Die Vermutung war das zeilenweise
+  Zusammensetzen des Ergebnisses als `Vec<Vec<i16>>`; ein Gegenversuch
+  zeigte, dass das für 194 Aufrufe nur 0,03 bis 0,06 s kostet.
+- **Keine Zahl ändert sich:** Konformität 55/55 auf `reference`,
+  `cpu-simd` und `metal` (Grafikeinheit erzwungen), 420 Proben mit
+  `metal` grün, Clippy sauber. Gemessen an whisper (CLIENT, Hörprobe mit
+  16 Aufnahmen, Release): im Mittel 3,80 auf 2,92 s je Aufnahme.
+- kernels 0.90.1.
+
+### v0.149.3 (2026-11-11): Zwei große Proben springen nicht mehr still ab (Fund 696)
+
+- 📌 **Fund 696 behoben:** `zwei_shards_ueber_gemischebenen_rechnen_wie_einer`
+  und `nur_gewaehlte_experten_werden_gehalten` in `tests/shardtraining.rs`
+  kehrten bei fehlendem Artefakt zurück und galten als bestanden, die
+  zweite ohne jede Meldung. Beide verlangen das Artefakt jetzt mit
+  `assert!`, wie `training_moe.rs`. Gegenprobe mit erfundenem Pfad: beide
+  rot; mit dem 30B-Artefakt beide grün (38 s).
+- Nur Proben; der Rechenpfad ist unverändert.
+- `integer-llm-runtime` 0.105.1.
+
+### v0.149.2 (2026-11-10): Skalenpaket für Parrot
+
+`scale_packs/parrot-2b-int8`, 33 MB, mit `test_skalenpaket_reproduzierbar` belegt (422 Skalen, keine Abweichung). Die Tabellen gleichen denen des 35B, Git legt sie einmal ab.
+
+### v0.149.1 (2026-11-10): Modellkarte zu Apache-2.0 §4(a) berichtigt (Fund 684)
+
+Dort stand, eine Kopie der Lizenz liege jedem Artefakt bei; in keinem Artefaktordner lag eine. Artefakte entstehen beim Nutzer und werden nicht verteilt, die Karte sagt das jetzt und nennt, wo der Lizenztext liegt. `MODELS/llm/Index-Translate-2B/LICENSE` ergänzt.
+
+### v0.149.0 (2026-11-10): Parrot, das Übersetzungsmodell
+
+Name und Aufnahme vom Projektinhaber. `parrot-2b-int8` (Index-Translate-2B, Apache-2.0) in `model_configs.py`, `MODELS/llm/KATALOG.json` mit fester Revision, Status `erprobt`, nicht im Netz und in keiner Reihung. Über den Weg jeder Installation gebaut (`fetch_model.sh`, `build_artifacts.sh`): Das Gewichtsmanifest ist Byte für Byte dasselbe wie beim ersten Bau. Keine Perplexität gemessen.
+
+### v0.148.1 (2026-11-10): Das Bauskript liest eine leere `mlp_only_layers`
+
+- `konfigabgleich`: Das Feld gilt bei dichten Modellen als gelesen; `erzeuge_qwen3_5` lehnt eine belegte Liste ab, statt still falsch zu bauen. `test_bauarten.py` hält beides fest, die Gegenprobe (Ablehnung entfernt) wird rot. Anlass: Index-Translate-2B.
 
 ### v0.148.0 (2026-11-08): AVX2 für `dot_i8_i16` (Fund A19)
 

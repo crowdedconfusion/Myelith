@@ -16,7 +16,7 @@ allgemeine Angaben, Datenquellen, Datenverarbeitung.
 | Modalitäten der Trainingsdaten | Text |
 | Umfang der eigenen Trainingsdaten | rund 127 000 Wörter (synthetisch), dazu 241 000 Wörter nur zur Kalibrierung |
 | Zeitraum der Datenerhebung | 2026-08 bis 2026-09 |
-| Grundmodelle | Qwen3-Reihe und Qwen3.6-35B-A3B (Alibaba Cloud); ihre Trainingsdaten beschreibt ihr Anbieter |
+| Grundmodelle | Qwen3-Reihe und Qwen3.6-35B-A3B (Alibaba Cloud), für den Übersetzer `parrot-2b-int8` Index-Translate-2B (IndexTeam); ihre Trainingsdaten beschreiben ihre Anbieter |
 
 ⚑ **Zwei Ebenen, und diese Zusammenfassung betrifft die zweite.** Die
 Grundmodelle wurden von ihrem Anbieter mit einem sehr großen,

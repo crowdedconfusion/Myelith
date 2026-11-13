@@ -170,4 +170,56 @@ mod tests {
         assert!(entropie("legal winner").is_err());
         assert_eq!(entropie(&gut.to_uppercase()).expect("gross"), [0x7f; 16]);
     }
+
+    /// ⚑ **Jede Verstuemmelung scheitert sauber oder ist kanonisch** (CLIENT
+    /// 7.15, Parser der Woerter): 4 000 Abwandlungen der Normvektoren aus
+    /// einem festen Generator (Tausch, Ersatz durch ein Listenwort, Loeschen,
+    /// Verdoppeln, Grossschreibung, Leerraum, fremde Zeichen). Keine darf
+    /// abstuerzen; was angenommen wird, ergibt genau die eingegebenen Woerter
+    /// in Kleinschreibung, eine zweite Schreibweise fuer dieselbe Entropie
+    /// gibt es also nicht. Gegenprobe: Einige Abwandlungen gehen durch (ein
+    /// Ersatzwort trifft die Pruefsumme in rund einem von sechzehn Faellen),
+    /// sonst saehe die Probe die Annahme nie.
+    #[test]
+    fn jede_verstuemmelung_scheitert_sauber_oder_ist_kanonisch() {
+        let liste = liste();
+        let mut x = 0x9e37_79b9_7f4a_7c15u64;
+        let mut zufall = |n: usize| {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            (x % n as u64) as usize
+        };
+        let grundlagen: Vec<Vec<String>> =
+            [[0x00u8; 16], [0x7f; 16], [0x80; 16], [0xff; 16]].iter().map(|e| woerter(e).iter().map(|w| w.to_string()).collect()).collect();
+        let mut angenommen = 0;
+        for _ in 0..4_000 {
+            let mut w = grundlagen[zufall(grundlagen.len())].clone();
+            for _ in 0..1 + zufall(3) {
+                let i = zufall(w.len().max(1));
+                match zufall(7) {
+                    0 if w.len() > 1 => { let j = zufall(w.len()); w.swap(i, j); }
+                    1 if !w.is_empty() => w[i] = liste[zufall(liste.len())].to_string(),
+                    2 if !w.is_empty() => { w.remove(i); }
+                    3 if !w.is_empty() => { let d = w[i].clone(); w.insert(i, d); }
+                    4 if !w.is_empty() => w[i] = w[i].to_uppercase(),
+                    5 if !w.is_empty() => {
+                        // Nur an Zeichengrenzen: Ein eingefuegtes `ä` hat zwei Bytes.
+                        let stellen: Vec<usize> = w[i].char_indices().map(|(b, _)| b).chain([w[i].len()]).collect();
+                        let an = stellen[zufall(stellen.len())];
+                        let zeichen = ['ä', '-', '1', ' ', '\t'][zufall(5)];
+                        w[i].insert(an, zeichen);
+                    }
+                    _ => {}
+                }
+            }
+            let text = w.join(if zufall(4) == 0 { "  \n " } else { " " });
+            if let Ok(e) = entropie(&text) {
+                angenommen += 1;
+                let eingegeben: Vec<String> = text.split_whitespace().map(str::to_lowercase).collect();
+                assert_eq!(woerter(&e).join(" "), eingegeben.join(" "), "angenommen, aber nicht kanonisch: {text:?}");
+            }
+        }
+        assert!(angenommen > 0, "keine Abwandlung ging durch; die Probe prueft die Annahme nie");
+    }
 }

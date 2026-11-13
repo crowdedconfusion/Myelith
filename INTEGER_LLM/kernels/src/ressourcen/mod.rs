@@ -107,6 +107,27 @@ pub fn stapel(
     None
 }
 
+/// **W8A8 auf einem Rechenwerk**, oder `None`: Dann rechnet die CPU
+/// dieselbe Zahl. ⚠️ Bisher nur Metal; auf den Steckkarten rechnet die CPU.
+#[cfg_attr(not(all(feature = "metal", target_os = "macos")), allow(unused_variables))]
+pub fn stapel_a8(
+    xs: &[&[i8]],
+    w: &[i8],
+    in_features: usize,
+    w_shifts: &[u8],
+    act_frac_bits: u8,
+    ziel: &(dyn Fn(usize) -> u8 + Sync),
+) -> Option<Vec<Vec<i16>>> {
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    {
+        metal::stapel_a8(xs, w, in_features, w_shifts, act_frac_bits, ziel)
+    }
+    #[cfg(not(all(feature = "metal", target_os = "macos")))]
+    {
+        None
+    }
+}
+
 /// **Viele Stapel auf einem Rechenwerk**, oder `None`: Dann rechnet die
 /// CPU dieselbe Zahl.
 #[cfg_attr(

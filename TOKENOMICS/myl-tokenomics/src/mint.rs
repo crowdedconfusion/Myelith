@@ -81,6 +81,18 @@ mod tests {
     #[test]
     fn praeegung_exakt_ohne_subvention() {
         assert_eq!(mint_amount(1_000, &params(0, 1, u64::MAX)), 1_000);
+        // Erschöpfend für kleine Beträge und jeden Nenner bis 64, dazu die
+        // Ränder des Zahlbereichs: Ohne Subvention ist die Prägung der Burn.
+        for den in 1..=64u64 {
+            for b in 0..=20_000u64 {
+                assert_eq!(mint_amount(b, &params(0, den, u64::MAX)), b, "Burn {b}, Nenner {den}");
+            }
+        }
+        for b in [u64::MAX, u64::MAX - 1, u64::MAX / 2, 1 << 63, (1 << 32) + 1] {
+            for den in [1, 2, 3, 1_000_000, u64::MAX] {
+                assert_eq!(mint_amount(b, &params(0, den, u64::MAX)), b, "Burn {b}, Nenner {den}");
+            }
+        }
     }
 
     #[test]

@@ -14,6 +14,12 @@
 //! - `MYL_DOPPELT_ERZEUGEN=1`: Nach jedem eigenen Block ein zweiter im
 //!   selben Slot, mit anderem Zeitstempel, neu unterschrieben. Erwartet:
 //!   Doppelbeleg, Schlachtung, Ausschluss aus dem Satz.
+//! - `MYL_HOEHE_UEBERTREIBEN=<bloecke>`: Nach jedem eigenen Block eine
+//!   unterschriebene Kopie, die so viele Blöcke weiter vorn zu stehen
+//!   behauptet, mit einem Vorgänger, den niemand kennt (Fund 634).
+//!   Erwartet: Wer einen endgültigen Prüfpunkt hat, meldet
+//!   `hoehe_erfunden` und fordert nichts nach; niemand hängt an der
+//!   erfundenen Höhe.
 //! - `MYL_UHR_VERSATZ_MS=<ms>`, auch negativ: die eigene Uhr für Slots und
 //!   die Annahmeregel. Erwartet: bis zum Spielraum der Annahmeregel
 //!   (eine Sekunde) nichts; darüber bleiben die eigenen Slots leer, weil
@@ -32,6 +38,8 @@ pub struct Rollen {
     pub zurueckhalten: Duration,
     /// Baut im selben Slot einen zweiten Block.
     pub doppelt: bool,
+    /// Behauptet nach jedem eigenen Block eine um so viel höhere Höhe.
+    pub hoehe_uebertreiben: u64,
     /// Zurückgehaltene Blöcke: wann sie hinausgehen, und ihre Bytes.
     pub zurueckgehalten: VecDeque<(Instant, Vec<u8>)>,
 }
@@ -45,13 +53,14 @@ impl Rollen {
             uhr_versatz_ms: zahl("MYL_UHR_VERSATZ_MS"),
             zurueckhalten: Duration::from_millis(zahl("MYL_ZURUECKHALTEN_MS").max(0) as u64),
             doppelt: zahl("MYL_DOPPELT_ERZEUGEN") == 1,
+            hoehe_uebertreiben: zahl("MYL_HOEHE_UEBERTREIBEN").max(0) as u64,
             zurueckgehalten: VecDeque::new(),
         }
     }
 
     /// Ob überhaupt eine Rolle gilt (für das Startprotokoll).
     pub fn aktiv(&self) -> bool {
-        self.uhr_versatz_ms != 0 || !self.zurueckhalten.is_zero() || self.doppelt
+        self.uhr_versatz_ms != 0 || !self.zurueckhalten.is_zero() || self.doppelt || self.hoehe_uebertreiben > 0
     }
 
     /// Die zurückgehaltenen Blöcke, deren Zeit gekommen ist.

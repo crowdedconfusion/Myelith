@@ -257,6 +257,7 @@ Kommt eine Zeile, ist der Rest Handwerk.
 | 3 | konfigurieren **und nachzählen** |
 | 4 | bauen |
 | 5 | Kern und Dateisystem nach `aus/` |
+| 6 | `auskunft.sh`: Lizenzauskunft und Quellen nach `aus/`, ohne Netz |
 
 ⚑ **Statisch gegen musl, obwohl das System glibc trägt.** Dann hängen
 unsere Programme an gar nichts: kein Versionsabgleich mit dem frisch
@@ -272,6 +273,17 @@ gegen die erzeugte `.config` und bricht ab, wenn eine fehlt.
 ⚑ **Schweigen sieht aus wie Erfolg**, und das ist in diesem Projekt
 schon teuer genug gewesen.
 
+⛔️ **Schritt 6 gehört vor jede Freigabe.** Das Abbild enthält Teile unter
+der GPL (Kern, BusyBox, GRUB, Werkzeuge), und wer es weitergibt, gibt die
+Quellen mit. `auskunft.sh` sammelt mit `make legal-info` ohne Netz das
+Verzeichnis der Pakete, ihre Lizenztexte und ihre Quellen (Basis und
+Schicht, dazu Buildroot selbst, das seine eigenen Quellen nicht beilegt).
+`freigeben.sh` verweigert ein Abbild, zu dem diese Auskunft fehlt oder
+älter ist als das Abbild; die kleine Auskunft kommt neben das Abbild, die
+Quellen (rund 0,7 GB je Architektur) gehen als Anhang an dieselbe
+Freigabe. ⚠️ Buildroot nennt seine Auskunft selbst keine fertige
+Lieferung: Die Lizenzangaben der Pakete sind nicht vollständig geprüft.
+
 ---
 
 ## ⚠️ Was noch offen ist, ehrlich benannt
@@ -281,14 +293,36 @@ schon teuer genug gewesen.
 | **Volumenplatz** | rund 13 GB je Architektur, zusammen 27 GB. Kein Problem, aber es überrascht sonst |
 | **Installateur** | ✅ `golem-einrichten`: Assistent bei der ersten Anmeldung, Installation auf eine ganze Platte, Myelith-Ordner auf dem Stick statt Mitnahme. Belegt am 2026-09-25 unter QEMU mit UEFI (aarch64), noch nicht auf echter Hardware |
 | **Mitnahme** | ✅ `mitnahme.sh` sammelt Werkzeugkisten, Wissensmappen, Artefakte und die Einstellungen mit Pfaden unter `/daten`; belegt am 2026-09-25 mit dem 0,6B-Artefakt |
-| **Ohne Netz** | Die Programme für GolemOS bauen aus dem Vorrat ohne Netz. **Das Grundsystem nicht:** Buildroot lädt seine Quellen beim ersten Bau herunter (Kern, BusyBox, `curl`, GRUB). Sie bleiben im Volumen liegen; ob ein zweiter Bau dann ohne Netz durchläuft, ist nicht nachgesehen |
+| **Ohne Netz** | Der erste Bau braucht Netz: die beiden Bauumgebungen (`Containerfile`, `Containerfile.programme`), Buildroot selbst und seine Quellen (Kern, BusyBox, `curl`, GRUB). Danach nicht mehr: Die Programme bauen aus dem Vorrat in einem Behälter ohne Netz, und die Quellen liegen im Volumen (rund 1,7 GB je Architektur). Nachgesehen am 2026-11-10: `make source` ohne Netz gelingt für Basis und Schicht beider Architekturen, mit leerem Quellenlager scheitert es. Eine geänderte Konfiguration mit neuen Paketen braucht wieder Netz |
 | **A/B-Umschaltung** | die Partitionen sind da, das Umschalten noch nicht |
 | **Kernmodule** | 84 MB Treiber für Hardware, die nie da sein wird. Braucht eine eigene Kernkonfiguration und damit eine benannte Zielmaschine |
-| **`alpine:edge`** | rollendes Ziel, gehört festgenagelt, sobald eine veröffentlichte Fassung Rust 1.88 trägt. 3.22 hat 1.87 |
+| **`alpine:edge`** | rollendes Ziel; das Abbild `golemos-programmbauer-<arch>` hält eine Fassung fest, bis es gelöscht wird (am 2026-11-10 Rust 1.99.1, GCC 15.2.0). Festnageln, sobald eine veröffentlichte Alpine-Fassung die Rust-Fassung der Kisten trägt |
 | **Bootloader** | kommt mit Stufe 2, zusammen mit GRUB 2 und einem Plattenabbild |
 | **Kernkonfiguration** | die Vorgabe der Architektur. Für eine bestimmte Zielmaschine gehört eine eigene her |
 | **Macs mit Apple-Chip** | vorgemerkt über Asahi Linux (Wunsch des Projektinhabers, 2026-09-26). Der Asahi-Installer kann nur eine UEFI-Umgebung einrichten (rund 3 GB, dazu hält er 38 GB für macOS frei), die danach jeden USB-Stick mit `EFI/BOOT/BOOTAA64.EFI` startet; das aarch64-Abbild trägt `bootaa64.efi` dort bereits. **Es fehlt:** ein Kern aus dem Asahi-Baum mit Apples Treibern und der Firmware, die der Installer aus macOS zieht, also ein drittes Abbild. **Es hält auf:** Asahi unterstützt M1 bis M3, M4 und M5 noch nicht, und die Maschine hier ist ein M5; getestet werden könnte es nur auf fremder Hardware. Die Alternative ohne Asahi wäre eine virtuelle Maschine über Apples Virtualization-Framework, auf jedem Apple-Chip |
-| **Die Sinne** | Stufe 3. `ffmpeg` allein ist grösser als das ganze Grundsystem |
+| **Die Sinne** | Stufe 3. `ffmpeg` allein ist grösser als das ganze Grundsystem. Die Lizenzpflichten beim Mitbündeln stehen im nächsten Abschnitt |
+
+### ⚑ Die Sinne im Abbild: was die Lizenzen verlangen (festgehalten 2026-11-12)
+
+Myelith ruft ffmpeg und ein fremdes Sprechprogramm als **eigene Programme**
+auf, gebunden wird nichts. Die eigene Lizenz berührt das nicht. Wer sie
+aber ins Abbild legt, gibt sie weiter, und dann gilt ihre Lizenz für diese
+Weitergabe.
+
+| Teil | Lizenz | Was die Weitergabe verlangt | Weg |
+|---|---|---|---|
+| **ffmpeg** | LGPL 2.1 oder später, **solange ohne `--enable-gpl` und `--enable-nonfree` gebaut**; mit `--enable-gpl` wird das ganze Programm GPL, mit `--enable-nonfree` darf es gar nicht weitergegeben werden | Lizenztext, Hinweise, die Quellen am selben Ort wie das Abbild | als Buildroot-Paket ohne `BR2_PACKAGE_FFMPEG_GPL` und `BR2_PACKAGE_FFMPEG_NONFREE`; dann sammelt `auskunft.sh` Quellen und Lizenztext wie bei jedem anderen Paket. Nur die Leser und Geräte, die der Client braucht (AAC, MP3, Opus, Vorbis, FLAC; ALSA, V4L2), das hält es klein |
+| **piper** | GPL 3.0 seit dem Umzug nach `OHF-Voice/piper1-gpl`; das frühere MIT-Repositorium ist seit 2025-10-06 archiviert. Es bringt espeak-ng mit (GPL 3.0 oder später) | Quellen oder ein schriftliches Angebot, Lizenztext; bei einem Gerät für Verbraucher auch die Angaben, wie man eine geänderte Fassung installiert (GPL 3.0 §6). GolemOS sperrt nichts, das ist also erfüllt | **kein** Buildroot-Paket: Es bräuchte ein eigenes, sonst erfasst `legal-info` es nicht. ⚠️ Die Stimmen haben je eine eigene Lizenz, manche nur für nicht kommerzielle Nutzung; jede einzeln prüfen |
+
+⚑ **Vorschlag:** Stufe 3 ohne piper. Gesprochen wird im Abbild über den
+eigenen Weg (Qwen3-TTS, Apache 2.0, Gewichte vom Einrichtungsskript
+nachgeladen, nicht im Abbild). piper erst, wenn schwache Hardware es
+braucht, dann als eigenes Buildroot-Paket und nur mit Stimmen unter freier
+Lizenz. Für Formate und Aufnahme braucht der Client ffmpeg immer weniger
+(ein WAV wandelt er selbst, die Aufnahme hat eine eigene Anbindung je
+System); jedes Format, das er selbst liest, macht ffmpeg im Abbild kleiner.
+Keine Rechtsberatung: Geprüft sind die Angaben der Projekte selbst
+(ffmpeg.org/legal.html, Repositorium `piper1-gpl`).
 
 ---
 

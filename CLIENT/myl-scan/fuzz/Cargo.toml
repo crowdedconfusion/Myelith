@@ -1,0 +1,39 @@
+# Fuzz-Ziel fuer gescannte Buecher: PDF oeffnen, Seiten zaehlen, die erste
+# Seite rendern. Eigenes Crate, weil `libfuzzer-sys` eine
+# Nightly-Werkzeugkette braucht; seine Archive liegen im lokalen Vorrat.
+#
+# ⚑ Das Ziel steht in `../tests/fuzzziele/mod.rs` und wird per `include!`
+# eingebunden, wie in `SHARED_TYPES/myl-types/fuzz`.
+#
+# Aufruf (Nightly noetig):
+#   cargo +nightly fuzz run pdf -- -max_total_time=600 -timeout=10
+
+[package]
+name = "myl-scan-fuzz"
+version = "0.0.0"
+edition = "2021"
+publish = false
+license = "LicenseRef-PolyForm-Shield-1.0.0"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.myl-scan]
+path = ".."
+
+[profile.release]
+debug = 1
+overflow-checks = true
+
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "pdf"
+path = "fuzz_targets/pdf.rs"
+test = false
+doc = false
+bench = false

@@ -265,25 +265,54 @@ mod adresstests {
         assert_ne!(a, b);
     }
 
-    /// ⚑ **Jede Folge von 32 Bytes ergibt eine `PeerId`, und das ist
-    /// kein Versehen der Bibliothek.**
+    /// ⚑ **Nur ein gueltiger Punkt ergibt eine `PeerId`; die Haelfte aller
+    /// Folgen von 32 Bytes ist keiner.**
     ///
-    /// 📌 Hier stand zuerst die umgekehrte Behauptung: Unsinn solle einen
-    /// Fehler ergeben. Der Test fiel um, und **er hatte unrecht, nicht
-    /// der Code**. Ein Ed25519-Punkt wird erst beim Rechnen geprüft,
-    /// nicht beim Einlesen.
+    /// 📌 **Fund 701** (2026-11-11): Hier stand zuerst „Unsinn soll einen
+    /// Fehler ergeben“, der Test fiel an einer Folge um, und danach stand
+    /// hier das Gegenteil: „Jede Folge von 32 Bytes ergibt eine `PeerId`,
+    /// ein Ed25519-Punkt wird erst beim Rechnen geprueft.“ Beides war an
+    /// einem Beispiel geprueft. Ueber einen Generator: Das Einlesen
+    /// dekomprimiert den Punkt, und rund die Haelfte aller Folgen hat
+    /// keinen (5 006 von 10 003). `[1; 32]` gehoert zufaellig zur anderen
+    /// Haelfte.
     ///
-    /// **Für die Registrierung heißt das:** Eine falsche Netzadresse ist
-    /// beim Eintragen **nicht** erkennbar. Das passt zur Entscheidung zu
-    /// Punkt 46 und macht sie schärfer: Die Adresse ist eine Angabe, und
-    /// **das einzige Signal ist die ausbleibende Antwort**. Wer eine
-    /// Prüfung beim Eintragen erwartet, verlässt sich auf etwas, das es
-    /// nicht gibt.
+    /// **Fuer die Registrierung heisst das:** Eine Netzadresse, die kein
+    /// Punkt ist, waere beim Eintragen erkennbar; eine falsche, die einer
+    /// ist, bleibt es nicht (Punkt 46: das Signal ist die ausbleibende
+    /// Antwort). Der Knoten faengt den Fehler an jeder Stelle ab
+    /// (`.ok()`, `let … else`); hart (`expect`) ruft ihn nur der Testcode.
     #[test]
-    fn jede_bytefolge_ergibt_eine_peer_id() {
-        let irgendwas = myl_types::latency_attest::PeerIdBytes([1; 32]);
-        let p = peer_id_aus_bytes(&irgendwas).expect("32 Bytes genuegen");
-        // Und sie ist eine andere als die eines echten Knotens.
-        assert_ne!(p, NodeIdentity::generate().peer_id());
+    fn nur_ein_gueltiger_punkt_ergibt_eine_peer_id() {
+        let mut s: u64 = 0x9E37_79B9_7F4A_7C15;
+        let mut folgen: Vec<[u8; 32]> = vec![[0; 32], [0xFF; 32], [1; 32]];
+        for _ in 0..10_000 {
+            let mut b = [0u8; 32];
+            for x in b.iter_mut() {
+                s ^= s << 13;
+                s ^= s >> 7;
+                s ^= s << 17;
+                *x = (s >> 24) as u8;
+            }
+            folgen.push(b);
+        }
+        let abgewiesen = folgen
+            .iter()
+            .filter(|b| peer_id_aus_bytes(&myl_types::latency_attest::PeerIdBytes(**b)).is_err())
+            .count();
+        assert!(
+            (4_000..6_000).contains(&abgewiesen),
+            "{abgewiesen} von {} Folgen abgewiesen, erwartet rund die Haelfte",
+            folgen.len()
+        );
+        // Die Gegenrichtung, ebenfalls ueber viele: Die Adresse eines echten
+        // Knotens ergibt immer dessen `PeerId`.
+        for _ in 0..200 {
+            let id = NodeIdentity::generate();
+            let a = netzadresse(&id).expect("Ed25519");
+            assert_eq!(peer_id_aus_bytes(&a).expect("ein echter Schluessel"), id.peer_id());
+        }
+        let irgendwas = peer_id_aus_bytes(&myl_types::latency_attest::PeerIdBytes([1; 32])).expect("ein Punkt");
+        assert_ne!(irgendwas, NodeIdentity::generate().peer_id());
     }
 }

@@ -83,6 +83,8 @@ pub mod einstellungen;
 pub mod hardware;
 pub mod kennzeichnung;
 pub mod markdown;
+/// Fremder Text ohne Steuerzeichen, fuer Konsole und `myl`.
+pub mod terminal;
 pub mod mining;
 pub mod module;
 pub mod oertlich;

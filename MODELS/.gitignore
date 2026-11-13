@@ -19,8 +19,10 @@
 # erfuehre er die Bedingungen erst NACHDEM er sie geholt hat. Die Regel
 # ist: Wer im KATALOG.json steht, bringt seine Lizenzdatei mit.
 #
-# ⚠️ Die Rubriken audio/ und vision/ halten heute nur eine Marke, damit
-# der Ordner in einem frischen Klon entsteht. Git kann kein leeres
+# ⚑ Die Rubriken audio/ und vision/ halten eine Marke, damit der Ordner in
+# einem frischen Klon entsteht, und seit dem 2026-11-11 ihre LIZENZEN.json
+# samt Lizenztexten: Die Gewichte kommen als einzelne Dateien und werden
+# umbenannt, also steht die Angabe je Datei dort. Git kann kein leeres
 # Verzeichnis versionieren, und ein Ordner, der erst beim Einrichten
 # entsteht, ist kein Ablageort, sondern eine Nebenwirkung.
 /*
@@ -40,6 +42,10 @@
 
 /audio/*
 !/audio/.gitkeep
+!/audio/LIZENZEN.json
+!/audio/LIZENZ-*.txt
 
 /vision/*
 !/vision/.gitkeep
+!/vision/LIZENZEN.json
+!/vision/LIZENZ-*.txt

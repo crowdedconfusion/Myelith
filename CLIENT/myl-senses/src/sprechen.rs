@@ -1,30 +1,27 @@
 //! **Eine Antwort horbar machen**, ueber ein eigenes kleines
 //! Sprachmodell.
 //!
-//! # ⚑ CosyVoice ist die Vorgabe (Festlegung des Projektinhabers, 2026-09-17)
+//! # ⚑ Qwen3-TTS im eigenen Rechenweg ist die Vorgabe (seit 2026-11-11)
 //!
-//! Es klingt am besten und **kann eine Stimme nachbilden**, und genau
-//! das war der Auftrag: eine hochgeladene Aufnahme soll die Stimme sein.
-//! Dafuer braucht es Python und Gewichte.
+//! Festlegung des Projektinhabers fuer Qwen3-TTS (Apache 2.0, ohne Python)
+//! und Abnahme gegen CosyVoice auf derselben Maschine bestanden: gleiche
+//! Wortfehler, frueherer erster Ton, keine Luecken, schneller geladen
+//! ([`crate::laufwerk::EIGEN_ALS_VORGABE`], [`crate::eigensprecher`]). Es
+//! klont aus der Stimmprobe, mit ihrem Text auch mit Mitschrift.
 //!
-//! ⚑ **Beides bringt der Nutzer mit, und nichts davon kommt ins
-//! Repositorium.** Das ist die Bedingung, unter der die Entscheidung
-//! steht: „davon ausgehen, dass die meisten Python bereits haben und
-//! dies nicht ins Repo muss". Der Laeufer, der CosyVoice bedient, ist
-//! dagegen eine Textdatei von wenigen Kilobyte; er steckt im Programm
-//! und wird bei Bedarf in die Heimat geschrieben.
+//! ⚑ **CosyVoice ist seit CLIENT 0.219.0 entfernt** (Festlegung des
+//! Projektinhabers, 2026-11-11: Lizenzvorbehalt der Modellkarte, Python und
+//! PyTorch). **piper bleibt Rueckfall**, eine Binaerdatei ohne Laufzeit,
+//! nur mit fertigen Stimmen; fremde Klonmodelle gehen ueber ein eigenes
+//! Skript.
 //!
-//! ⚠️ **Was das kostet, gehoert dazugesagt:** Wer kein Python und keine
-//! Gewichte hat, kann nicht sprechen lassen. Deshalb bleibt **piper als
-//! Rueckfall** stehen, eine Binaerdatei ohne Laufzeit, die sofort geht
-//! und dafuer nur fertige Stimmen kennt.
-//!
-//! # Die drei Wege, in dieser Reihenfolge
+//! # Die Wege, in dieser Reihenfolge
 //!
 //! | Weg | klont | braucht |
 //! |---|---|---|
-//! | eigenes Skript `<Heimat>/bin/sprechen` | ja | was immer es selbst will |
-//! | **CosyVoice** | ja | Python, Gewichte, `MYL_COSYVOICE` |
+//! | eigenes Skript `<Heimat>/bin/sprechen`, je Satz | ja | was immer es selbst will |
+//! | eigenes Skript `<Heimat>/bin/sprechen-dauer`, stehend | ja | dasselbe |
+//! | **Qwen3-TTS (eigen)** | ja | die Gewichte unter `qwen3-tts-0.6b-base` |
 //! | piper | **nein** | eine Binaerdatei und eine Stimme |
 //!
 //! ⚑ **Das eigene Skript gewinnt immer**, denn wer es hinlegt, hat
@@ -83,6 +80,18 @@ pub fn sagen(zeug: &Sprechzeug, text: &str) -> Result<PathBuf, String> {
 }
 
 fn ruf(zeug: &Sprechzeug, quelle: &Path, ziel: &Path) -> Result<(), String> {
+    // Der eigene Weg rechnet im Prozess: einmal laden, einen Satz sprechen.
+    if let Sprechweg::Eigen { ordner } = &zeug.weg {
+        let e = crate::eigensprecher::Eigensprecher::laden(ordner, zeug.probe.as_deref(), zeug.probentext.as_deref())?;
+        return eigen_satz(&e, quelle, ziel);
+    }
+    // ⚑ **Ein stehendes Skript spricht auch einen einzelnen Satz ueber sein
+    //   Gespraech** (`--dauer`): Dokumentiert ist nur dieses, ein zweiter
+    //   Aufruf mit Pfaden waere eine Schnittstelle, die niemand kennt.
+    //   Gekennzeichnet ist danach schon; `sagen` erkennt das.
+    if let Sprechweg::Dauerskript(_) = &zeug.weg {
+        return Dauersprecher::starten(zeug)?.satz(quelle, ziel);
+    }
     let mut befehl = befehl_fuer(zeug);
     match &zeug.weg {
         // piper nimmt den Text von der Standardeingabe.
@@ -101,7 +110,7 @@ fn ruf(zeug: &Sprechzeug, quelle: &Path, ziel: &Path) -> Result<(), String> {
         }
         // Skript und Laeufer bekommen Pfade: Text, Ziel, und die
         // Stimmprobe als **dritten**, falls eine liegt.
-        Sprechweg::Skript(_) | Sprechweg::CosyVoice { .. } => {
+        Sprechweg::Skript(_) | Sprechweg::Dauerskript(_) | Sprechweg::Eigen { .. } => {
             befehl.arg(quelle).arg(ziel);
             if let Some(probe) = &zeug.probe {
                 befehl.arg(probe);
@@ -111,6 +120,64 @@ fn ruf(zeug: &Sprechzeug, quelle: &Path, ziel: &Path) -> Result<(), String> {
     let a = crate::prozess::laufen(&mut befehl, crate::FRIST_SPRECHEN_S, 4096)
         .map_err(|f| format!("das Sprechmodell {}: {f}", zeug.name()))?;
     urteil(&a, zeug)
+}
+
+/// **Ein Satz ueber den eigenen Weg**: Text aus `quelle`, Ton nach `ziel`
+/// (16 Bit, 24 kHz). Gekennzeichnet wird beim Aufrufer.
+fn eigen_satz(e: &crate::eigensprecher::Eigensprecher, quelle: &Path, ziel: &Path) -> Result<(), String> {
+    let text = std::fs::read_to_string(quelle).map_err(|f| format!("{}: {f}", quelle.display()))?;
+    let g = e.satz(&text)?;
+    std::fs::write(ziel, crate::ton::schreiben(&g.ton)).map_err(|f| format!("{}: {f}", ziel.display()))
+}
+
+/// **Ein Satz ueber den eigenen Weg, gestroemt**: Ein Faden waehlt und
+/// wandelt, hier wird jedes Stueck abgelegt, gekennzeichnet und
+/// weitergereicht, waehrend der Faden schon am naechsten rechnet. Der ganze
+/// Satz liegt danach gekennzeichnet in `ziel`.
+///
+/// ⛔️ Wie bei jedem Laeufer: Was nicht gekennzeichnet werden kann, klingt
+/// nicht (Art. 50 Abs. 2 KI-Verordnung).
+fn eigen_stueckweise(
+    e: &crate::eigensprecher::Eigensprecher,
+    quelle: &Path,
+    ziel: &Path,
+    stueck: &mut dyn FnMut(&Path),
+) -> Result<usize, String> {
+    let text = std::fs::read_to_string(quelle).map_err(|f| format!("{}: {f}", quelle.display()))?;
+    let (sender, empfang) = std::sync::mpsc::channel::<Vec<f32>>();
+    let mut stuecke = 0usize;
+    let mut nicht_gekennzeichnet: Option<String> = None;
+    let ergebnis = std::thread::scope(|bereich| {
+        let faden = bereich.spawn(move || e.satz_stueckweise(&text, &mut |ton| {
+            let _ = sender.send(ton);
+        }));
+        for proben in empfang {
+            let teil = crate::zwischenname("myl-sprechen-stueck", "wav");
+            let ton = crate::ton::Ton { rate: crate::tonzerleger::RATE, proben };
+            let abgelegt = std::fs::write(&teil, crate::ton::schreiben(&ton)).map_err(|f| format!("{}: {f}", teil.display()));
+            match abgelegt.and_then(|()| crate::kennzeichnung::synthetisch_kennzeichnen(&teil, crate::kennzeichnung::Modalitaet::Sprache)) {
+                Ok(()) => {
+                    stueck(&teil);
+                    stuecke += 1;
+                }
+                Err(f) => {
+                    let _ = std::fs::remove_file(&teil);
+                    nicht_gekennzeichnet.get_or_insert(f);
+                }
+            }
+        }
+        faden.join().unwrap_or_else(|_| Err("der Sprechfaden ist abgestuerzt".into()))
+    });
+    let g = ergebnis?;
+    std::fs::write(ziel, crate::ton::schreiben(&g.ton)).map_err(|f| format!("{}: {f}", ziel.display()))?;
+    if let Err(f) = crate::kennzeichnung::synthetisch_kennzeichnen(ziel, crate::kennzeichnung::Modalitaet::Sprache) {
+        let _ = std::fs::remove_file(ziel);
+        nicht_gekennzeichnet.get_or_insert(f);
+    }
+    match nicht_gekennzeichnet {
+        Some(f) => Err(format!("nicht gekennzeichnet, deshalb nicht gespielt: {f}")),
+        None => Ok(stuecke),
+    }
 }
 
 fn urteil(a: &crate::prozess::Ausgang, zeug: &Sprechzeug) -> Result<(), String> {
@@ -134,18 +201,19 @@ fn urteil(a: &crate::prozess::Ausgang, zeug: &Sprechzeug) -> Result<(), String> 
 fn befehl_fuer(zeug: &Sprechzeug) -> std::process::Command {
     match &zeug.weg {
         Sprechweg::Skript(p) => std::process::Command::new(p),
+        // ⚠️ Kein Programm: [`ruf`] und [`Dauersprecher::starten_mit`]
+        // nehmen den eigenen Weg vorher ab.
+        Sprechweg::Eigen { .. } => unreachable!("der eigene Weg startet kein Programm"),
         Sprechweg::Piper { programm, stimme } => {
             let mut b = std::process::Command::new(programm);
             b.arg("--model").arg(stimme);
             b
         }
-        Sprechweg::CosyVoice { python, laeufer, wurzel } => {
-            let mut b = std::process::Command::new(python);
-            b.arg(laeufer);
-            // ⚑ **Die Wurzel und der Probentext gehen ueber die
-            // Umgebung**, nicht als Argumente: Sie gelten fuer den
-            // ganzen Lauf, die Pfade wechseln je Satz.
-            b.env(crate::laufwerk::COSYVOICE_UMGEBUNG, wurzel);
+        Sprechweg::Dauerskript(p) => {
+            let mut b = std::process::Command::new(p);
+            // ⚑ **Der Probentext geht ueber die Umgebung**, nicht als
+            // Argument: Er gilt fuer den ganzen Lauf, die Pfade wechseln
+            // je Satz.
             if let Some(t) = &zeug.probentext {
                 b.env("MYL_STIMMTEXT", t);
             }
@@ -156,12 +224,13 @@ fn befehl_fuer(zeug: &Sprechzeug) -> std::process::Command {
 
 /// **Ein Sprechprogramm, das stehen bleibt.**
 ///
-/// # ⛔️ Warum das bei CosyVoice kein Luxus ist
+/// # ⛔️ Warum das kein Luxus ist
 ///
-/// CosyVoice laedt je Aufruf ein halbes Milliardenmodell samt Vocoder.
-/// **Satzweise zu sprechen waere damit langsamer als gar nicht zu
-/// streamen**, wenn jeder Satz einen neuen Prozess braeuchte: Der
-/// Ladevorgang stuende dann vor jedem Satz statt einmal.
+/// Ein Sprechmodell laedt je Start ein halbes Milliardenmodell samt
+/// Tonzerleger. **Satzweise zu sprechen waere damit langsamer als gar nicht
+/// zu streamen**, wenn jeder Satz neu starten muesste: Der Ladevorgang
+/// stuende dann vor jedem Satz statt einmal. Als Prozess laeuft das ueber
+/// ein stehendes Skript ([`crate::laufwerk::DAUERSKRIPT`]).
 ///
 /// # Das Gespraech mit dem Laeufer
 ///
@@ -173,11 +242,16 @@ fn befehl_fuer(zeug: &Sprechzeug) -> std::process::Command {
 /// | vom Laeufer, je Satz | `ok` oder `fehler: ...` |
 ///
 /// ⚑ **Das Schliessen der Eingabe beendet ihn**, wie bei der Aufnahme.
+///
+/// ⚑ **Der eigene Weg ist ein Dauersprecher ohne Prozess**
+/// ([`crate::eigensprecher`]): Er haelt die Gewichte im Programm statt in
+/// einem Laeufer, und jeder Satz geht denselben Weg bis zur Kennzeichnung.
 #[derive(Debug)]
 pub struct Dauersprecher {
-    kind: std::process::Child,
+    kind: Option<std::process::Child>,
     eingabe: Option<std::process::ChildStdin>,
     ausgabe: Option<std::io::BufReader<std::process::ChildStdout>>,
+    eigen: Option<Box<crate::eigensprecher::Eigensprecher>>,
     name: String,
 }
 
@@ -199,11 +273,9 @@ impl Dauersprecher {
     /// niemand mehr.
     pub fn starten_mit(zeug: &Sprechzeug, frist_s: u64) -> Result<Self, String> {
         use std::io::BufRead;
-        // ⚑ **Ein mitgebrachter Laeufer einer frueheren Fassung wird hier
-        // ersetzt**, und nur einer, der unveraendert ist. Siehe
-        // [`laeufer_auffrischen`]; scheitert es, spricht der alte.
-        if let Sprechweg::CosyVoice { laeufer, .. } = &zeug.weg {
-            let _ = laeufer_auffrischen(laeufer);
+        if let Sprechweg::Eigen { ordner } = &zeug.weg {
+            let e = crate::eigensprecher::Eigensprecher::laden(ordner, zeug.probe.as_deref(), zeug.probentext.as_deref())?;
+            return Ok(Self { kind: None, eingabe: None, ausgabe: None, eigen: Some(Box::new(e)), name: zeug.name() });
         }
         let mut befehl = befehl_fuer(zeug);
         befehl.arg("--dauer");
@@ -281,7 +353,8 @@ impl Dauersprecher {
         Ok(Self {
             eingabe: kind.stdin.take(),
             ausgabe: Some(ausgabe),
-            kind,
+            kind: Some(kind),
+            eigen: None,
             name: zeug.name(),
         })
     }
@@ -318,6 +391,9 @@ impl Dauersprecher {
         stueck: &mut dyn FnMut(&Path),
     ) -> Result<usize, String> {
         use std::io::{BufRead, Write};
+        if let Some(e) = &self.eigen {
+            return eigen_stueckweise(e, quelle, ziel, stueck);
+        }
         let ein = self.eingabe.as_mut().ok_or("der Laeufer ist schon zu")?;
         writeln!(ein, "{}\t{}", quelle.display(), ziel.display())
             .and_then(|()| ein.flush())
@@ -378,14 +454,15 @@ impl Drop for Dauersprecher {
         // Erst die Eingabe schliessen, damit er sauber aufhoert.
         self.eingabe = None;
         self.ausgabe = None;
+        let Some(kind) = self.kind.as_mut() else { return };
         let frist = std::time::Duration::from_secs(5);
         let anfang = std::time::Instant::now();
         loop {
-            match self.kind.try_wait() {
+            match kind.try_wait() {
                 Ok(Some(_)) | Err(_) => break,
                 Ok(None) if anfang.elapsed() >= frist => {
-                    let _ = self.kind.kill();
-                    let _ = self.kind.wait();
+                    let _ = kind.kill();
+                    let _ = kind.wait();
                     break;
                 }
                 Ok(None) => std::thread::sleep(std::time::Duration::from_millis(20)),
@@ -394,84 +471,12 @@ impl Drop for Dauersprecher {
     }
 }
 
-/// **Der Laeufer, den diese Kiste mitbringt**, als Text im Programm.
-///
-/// ⚑ **Eingebacken und nicht nachgeschlagen.** Ein Pfad zum
-/// Quellverzeichnis waere fuer ein installiertes Programm falsch, und
-/// eine Suche danach waere eine zweite, schlechtere Ortsbestimmung.
-const COSYVOICE_QUELLE: &str = include_str!("../laeufer/sprechen-cosyvoice.py");
-
-/// **Schreibt den Laeufer in die Heimat, falls er dort fehlt.**
-///
-/// ⛔️ **Er wird nie ueberschrieben.** Wer ihn angepasst hat, hat ihn
-/// angepasst; eine Aktualisierung, die stillschweigend fremde Arbeit
-/// wegwirft, ist ein Datenverlust mit gutem Gewissen. Zurueck kommt der
-/// Pfad und ob geschrieben wurde.
-pub fn laeufer_einrichten() -> Result<(PathBuf, bool), String> {
-    let bin = crate::laufwerk::heimat().join("bin");
-    std::fs::create_dir_all(&bin).map_err(|f| format!("{}: {f}", bin.display()))?;
-    let ziel = bin.join(crate::laufwerk::COSYVOICE_LAEUFER);
-    if ziel.is_file() {
-        return Ok((ziel, false));
-    }
-    std::fs::write(&ziel, COSYVOICE_QUELLE).map_err(|f| format!("{}: {f}", ziel.display()))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&ziel, std::fs::Permissions::from_mode(0o755));
-    }
-    Ok((ziel, true))
-}
-
-/// **Die Fingerabdruecke frueher mitgebrachter Laeufer**, FNV-1a ueber
-/// die Bytes der Datei.
-///
-/// ⚑ **Ersetzt wird nur, was hier steht.** Ein Laeufer, der genau so
-/// aussieht, wie ihn eine fruehere Fassung dieses Programms hingelegt
-/// hat, ist unberuehrt und darf der neuen Fassung weichen. Einer, der
-/// anders aussieht, hat jemand angepasst, und der bleibt.
-///
-/// | Fassung | aus | Fingerabdruck |
-/// |---|---|---|
-/// | 1 | 2026-09-17 bis 2026-09-24 | `d42148f974c93f02` |
-/// | 2 | 2026-09-25 bis 2026-10-22 | `0615a427195a045a` |
-///
-/// ⚑ **Fassung 3 muss Fassung 2 ersetzen.** Wer die Sprechumgebung neu
-/// einrichtet, bekommt transformers 5, und damit spricht Fassung 2 ohne
-/// jede Fehlermeldung einen falschen Satz (siehe `schritt_ohne_maske` im
-/// Laeufer). Fassung 3 laeuft dagegen auch mit der alten Umgebung.
-const FRUEHERE_LAEUFER: &[u64] = &[0xd421_48f9_74c9_3f02, 0x0615_a427_195a_045a];
-
 /// FNV-1a mit 64 Bit, genug, um eine Datei wiederzuerkennen; keine
 /// Pruefsumme gegen Absicht, nur gegen Verwechslung.
-fn fingerabdruck(bytes: &[u8]) -> u64 {
+pub(crate) fn fingerabdruck(bytes: &[u8]) -> u64 {
     bytes.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, &b| {
         (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
     })
-}
-
-/// **Ersetzt einen unveraenderten Laeufer einer frueheren Fassung**
-/// durch den mitgebrachten. `true`, wenn ersetzt wurde.
-///
-/// ⛔️ **Das Versprechen von [`laeufer_einrichten`] gilt weiter**: Wer
-/// ihn angepasst hat, behaelt ihn. Ersetzt wird nur, was Byte fuer Byte
-/// einer Fassung gleicht, die dieses Programm selbst hingelegt hat.
-/// 📌 Ohne diese Stelle haette kein bestehender Einrichter je die
-/// Fassung 2 bekommen: Die Datei wird sonst nie ueberschrieben.
-pub fn laeufer_auffrischen(pfad: &Path) -> Result<bool, String> {
-    auffrischen_mit(pfad, FRUEHERE_LAEUFER)
-}
-
-/// Dasselbe mit gesagten Fingerabdruecken, die Naht fuer die Probe.
-fn auffrischen_mit(pfad: &Path, bekannte: &[u64]) -> Result<bool, String> {
-    let Ok(alt) = std::fs::read(pfad) else {
-        return Ok(false);
-    };
-    if alt == COSYVOICE_QUELLE.as_bytes() || !bekannte.contains(&fingerabdruck(&alt)) {
-        return Ok(false);
-    }
-    std::fs::write(pfad, COSYVOICE_QUELLE).map_err(|f| format!("{}: {f}", pfad.display()))?;
-    Ok(true)
 }
 
 /// **Die Saetze zum Ueberbruecken**, je Sprache eine kleine Auswahl.
@@ -499,19 +504,14 @@ pub fn ueberbrueckungen(sprache: &str) -> &'static [&'static str] {
 
 /// **Wo ein vorbereiteter Satz zum Ueberbruecken liegt.**
 ///
-/// ⚑ **Der Name haengt an allem, was den Klang bestimmt**: am Laeufer,
-/// an der Stimmprobe samt Text, an der CosyVoice-Wurzel und am Satz. Wer
+/// ⚑ **Der Name haengt an allem, was den Klang bestimmt**: am Skript
+/// oder an den Gewichten, an der Stimmprobe samt Text und am Satz. Wer
 /// die Stimme wechselt, bekommt neue Saetze statt der alten Stimme.
 pub fn ueberbrueckungsort(zeug: &Sprechzeug, satz: &str) -> PathBuf {
     let mut kennung = Vec::new();
     match &zeug.weg {
-        Sprechweg::CosyVoice {
-            laeufer, wurzel, ..
-        } => {
-            kennung.extend(std::fs::read(laeufer).unwrap_or_default());
-            kennung.extend(wurzel.to_string_lossy().as_bytes());
-        }
-        Sprechweg::Skript(p) => kennung.extend(std::fs::read(p).unwrap_or_default()),
+        Sprechweg::Skript(p) | Sprechweg::Dauerskript(p) => kennung.extend(std::fs::read(p).unwrap_or_default()),
+        Sprechweg::Eigen { ordner } => kennung.extend(ordner.to_string_lossy().as_bytes()),
         Sprechweg::Piper { stimme, .. } => kennung.extend(stimme.to_string_lossy().as_bytes()),
     }
     if let Some(p) = &zeug.probe {
@@ -521,6 +521,9 @@ pub fn ueberbrueckungsort(zeug: &Sprechzeug, satz: &str) -> PathBuf {
         kennung.extend(std::fs::read(t).unwrap_or_default());
     }
     kennung.extend(satz.as_bytes());
+    // ⚑ Die Fassung der Kennzeichnung gehoert zum Klang: Mit geformtem
+    //   Wasserzeichen und beruhigten Pausen entstehen die Saetze neu.
+    kennung.extend(format!("kennzeichnung {} {} {}", crate::kennzeichnung::LPC_GAMMA, crate::kennzeichnung::TEILER, crate::kennzeichnung::RUHE_AB).as_bytes());
     ablage(zeug)
         .join(UEBERBRUECKUNGSORDNER)
         .join(format!("{:016x}.wav", fingerabdruck(&kennung)))
@@ -528,17 +531,16 @@ pub fn ueberbrueckungsort(zeug: &Sprechzeug, satz: &str) -> PathBuf {
 
 /// **Die Heimat, aus der dieses Sprechzeug stammt.**
 ///
-/// ⚑ Abgeleitet aus dem Laeufer (`<Heimat>/bin/<laeufer>`) und nicht aus
+/// ⚑ Abgeleitet aus dem Skript (`<Heimat>/bin/<skript>`) und nicht aus
 /// der Umgebung: Wer die Sinne in einer anderen Heimat gefunden hat,
 /// etwa eine Probe in einem eigenen Verzeichnis, legt auch dort ab, statt
 /// in die echte Heimat des Nutzers zu schreiben.
 fn ablage(zeug: &Sprechzeug) -> PathBuf {
-    let laeufer = match &zeug.weg {
-        Sprechweg::CosyVoice { laeufer, .. } => Some(laeufer.as_path()),
-        Sprechweg::Skript(p) => Some(p.as_path()),
-        Sprechweg::Piper { .. } => None,
+    let skript = match &zeug.weg {
+        Sprechweg::Skript(p) | Sprechweg::Dauerskript(p) => Some(p.as_path()),
+        Sprechweg::Eigen { .. } | Sprechweg::Piper { .. } => None,
     };
-    laeufer
+    skript
         .and_then(Path::parent)
         .filter(|bin| bin.file_name().is_some_and(|n| n == "bin"))
         .and_then(Path::parent)
@@ -662,9 +664,10 @@ pub const PROBE_SCHNITT_AB_MS: u64 = 3_500;
 /// Bis wo eine Stimmprobe hoechstens reicht, in Millisekunden. Laenger
 /// wird sie an der leisesten Stelle davor geschnitten.
 ///
-/// ⚑ **Die Probe ist bei jedem Satz fester Aufwand.** CosyVoice rechnet
-/// ihre Token und Merkmale jedesmal mit, und das erste hoerbare Stueck
-/// wartet auf sie. Gemessen am 2026-09-25 mit sechs Flussschritten:
+/// ⚑ **Die Probe ist bei jedem Satz fester Aufwand.** Ein klonendes
+/// Sprechmodell rechnet ihre Token jedesmal mit (der eigene Weg setzt ihre
+/// Codes vor jeden Satz), und das erste hoerbare Stueck wartet auf sie.
+/// Gemessen am 2026-09-25 mit CosyVoice und sechs Flussschritten:
 /// 7,1 s Probe brauchten je Satz rund 0,5 s mehr als 4,4 s, und die
 /// Stimme traf dabei kaum anders (Aehnlichkeit 0,859 bis 0,888 gegen
 /// 0,854 bis 0,870; zurueckgehoert verstand whisper beide ganz).
@@ -674,7 +677,7 @@ pub const PROBE_SCHNITT_BIS_MS: u64 = 5_500;
 /// als [`PROBE_SCHNITT_BIS_MS`] ist. `true`, wenn geschnitten wurde.
 ///
 /// ⚑ **An der leisesten Stelle und nicht an einer festen Zeit.** Ein
-/// Schnitt mitten im Wort liesse CosyVoice eine halbe Silbe als Ende der
+/// Schnitt mitten im Wort liesse das Sprechmodell eine halbe Silbe als Ende der
 /// Stimme lernen, und der mitgeschriebene Text passte nicht mehr. Gesucht
 /// wird der Abschnitt von 20 ms mit der kleinsten Summe der Betraege
 /// zwischen [`PROBE_SCHNITT_AB_MS`] und [`PROBE_SCHNITT_BIS_MS`], und
@@ -727,42 +730,20 @@ pub fn probe_kuerzen(wav: &Path) -> Result<bool, String> {
 }
 
 /// **Rate und Datenbereich eines WAV mit 16 Bit und einem Kanal**, aus
-/// seinen Bloecken gelesen. ⚠️ ffmpeg schreibt gern einen `LIST`-Block
-/// vor die Daten; wer 44 Bytes Kopf annimmt, liest ihn als Ton.
+/// seinen Bloecken gelesen ([`crate::ton::kopf`]). ⚠️ ffmpeg schreibt gern
+/// einen `LIST`-Block vor die Daten; wer 44 Bytes Kopf annimmt, liest ihn
+/// als Ton.
 fn wav_pcm16_mono(b: &[u8]) -> Option<(u32, std::ops::Range<usize>)> {
-    if b.len() < 12 || &b[0..4] != b"RIFF" || &b[8..12] != b"WAVE" {
-        return None;
-    }
-    let wort = |o: usize| u32::from_le_bytes([b[o], b[o + 1], b[o + 2], b[o + 3]]);
-    let halb = |o: usize| u16::from_le_bytes([b[o], b[o + 1]]);
-    let (mut o, mut rate) = (12usize, None);
-    while o + 8 <= b.len() {
-        let groesse = wort(o + 4) as usize;
-        let inhalt = o + 8;
-        match &b[o..o + 4] {
-            b"fmt " if inhalt + 16 <= b.len() => {
-                if halb(inhalt) != 1 || halb(inhalt + 2) != 1 || halb(inhalt + 14) != 16 {
-                    return None;
-                }
-                rate = Some(wort(inhalt + 4));
-            }
-            b"data" => {
-                let ende = (inhalt + groesse).min(b.len());
-                return Some((rate?, inhalt..inhalt + (ende - inhalt) / 2 * 2));
-            }
-            _ => {}
-        }
-        o = inhalt + groesse + (groesse & 1);
-    }
-    None
+    let k = crate::ton::kopf(b).ok()?;
+    (k.art == crate::ton::Probenart::Ganzzahl(16) && k.kanaele == 1).then_some((k.rate, k.daten))
 }
 
 /// **Legt eine Stimmprobe ab**, damit ein klonfaehiges Sprechprogramm
 /// sie benutzen kann.
 ///
 /// ⚑ **Ein fester Platz, wie bei allen Gewichten**
-/// (`<Heimat>/stimme.wav`). Die Datei wird auf 16 kHz und einen Kanal
-/// gebracht, falls noetig; das ist das Format, das die Klonverfahren
+/// (`<Heimat>/stimme.wav`). Die Datei wird auf 24 kHz und einen Kanal
+/// gebracht, ein WAV ohne fremdes Programm, jedes andere Format mit ffmpeg; das ist das Format, das die Klonverfahren
 /// ohne Nachfragen annehmen.
 ///
 /// ⚠️ **Ob das eingestellte Sprechprogramm sie verwerten kann, sagt
@@ -793,10 +774,10 @@ pub fn probe_setzen(quelle: &Path) -> Result<PathBuf, String> {
     std::fs::create_dir_all(&heimat).map_err(|f| format!("{}: {f}", heimat.display()))?;
     let ziel = heimat.join(crate::laufwerk::STIMMPROBE);
 
-    // ⚑ **24 kHz, ein Kanal, und das ist kein Zufall**: CosyVoice liest
-    // die Probe zweimal, bei 16 kHz fuer die Sprecherkennung und bei
-    // 24 kHz fuer die Merkmale. Wer sie auf 16 kHz ablegt, wirft weg, was
-    // das Sprechmodell fuer die zweite Lesung braucht, und das hoert man.
+    // ⚑ **24 kHz, ein Kanal, und das ist kein Zufall**: Der eigene Weg
+    // liest die Probe fuer Abdruck und Tonzerleger bei 24 kHz. Wer sie auf
+    // 16 kHz ablegt, wirft weg, was das Sprechmodell braucht, und das hoert
+    // man.
     // Ein WAV, das schon so vorliegt, wird trotzdem umgewandelt: Die
     // Abtastrate steht im Kopf, und ihr zu glauben, ohne sie zu lesen,
     // waere geraten.
@@ -809,15 +790,15 @@ pub fn probe_setzen(quelle: &Path) -> Result<PathBuf, String> {
             .into());
     }
     // ⚑ **Erst kuerzen, dann mitschreiben**: Der Text muss zu dem passen,
-    // was CosyVoice hoert. Geht das Kuerzen schief, bleibt die Probe lang,
+    // was das Sprechmodell hoert. Geht das Kuerzen schief, bleibt die Probe lang,
     // und das kostet Zeit und nichts sonst.
     let _ = probe_kuerzen(&gewandelt);
-    // ⚑ **Den Text gleich mitschreiben.** CosyVoice trifft die Stimme
-    // mit `inference_zero_shot` deutlich besser, und dafuer braucht es
-    // den gesprochenen Text der Probe. Wir haben ein Hoermodell; ihn
+    // ⚑ **Den Text gleich mitschreiben.** Der eigene Weg trifft die
+    // Stimme mit Mitschrift besser, und dafuer braucht es den gesprochenen
+    // Text der Probe. Wir haben ein Hoermodell; ihn
     // spaeter von Hand nachzutragen waere eine Aufgabe, die niemand
     // erledigt. ⚠️ Geht es nicht, ist das kein Fehler: Dann bleibt der
-    // sprachuebergreifende Weg.
+    // Abdruck allein.
     let textziel = heimat.join(crate::laufwerk::STIMMPROBE_TEXT);
     let _ = std::fs::remove_file(&textziel);
     if let Ok(h) = crate::Sinne::finden().hoeren.as_ref() {
@@ -954,7 +935,7 @@ fn ist_abkuerzung(lauf: &str) -> bool {
 ///
 /// ⛔️ **Markdown gehoert nicht in die Stimme.** Gesehen am 2026-09-25:
 /// „Eine **Synapse** ist der **Verbindungspunkt**" ging mit den Sternen
-/// an CosyVoice. Das kostet Token und im schlechten Fall eine
+/// an das Sprechmodell (damals CosyVoice). Das kostet Token und im schlechten Fall eine
 /// gesprochene Silbe oder einen verstolperten Rhythmus. Hier gehen
 /// Hervorhebungen, Code-Striche, Ueberschriftszeichen, Aufzaehlungs-
 /// zeichen am Zeilenanfang und Tabellenstriche weg; ein Verweis behaelt
@@ -1037,7 +1018,8 @@ pub type Abspieler = Box<dyn Fn(&std::path::Path) -> Result<(), String> + Send>;
 ///
 /// # ⛔️ Warum das kein Luxus ist, sondern der Unterschied
 ///
-/// CosyVoice laedt rund achtzehn Sekunden. Ein Vorleser je Antwort
+/// Ein Sprechmodell laedt Sekunden (CosyVoice damals rund achtzehn, der
+/// eigene Weg 1,2). Ein Vorleser je Antwort
 /// startet **je Antwort** einen neuen Laeufer, und damit stehen diese
 /// achtzehn Sekunden **vor jeder Antwort**. Gemeldet vom
 /// Projektinhaber am 2026-09-18: „im Live Modus braucht das Modell sehr
@@ -1421,20 +1403,13 @@ impl Drop for Vorleser {
 /// sonst die volle Sprechfrist **je Satz**; bei satzweisem Vorlesen ist
 /// das ein stehendes Fenster. `None`, wenn der Kopf nichts hergibt, und
 /// dann gilt die Vorgabe.
+///
+/// 📌 Hier stand ein fester Kopf von 44 Bytes; mit einem `LIST`-Block vor
+/// den Daten waere die Dauer um dessen Groesse falsch gewesen. Jetzt aus
+/// den Bloecken ([`crate::ton::kopf`]).
 fn wav_dauer_s(wav: &Path) -> Option<u64> {
-    use std::io::Read;
-    let mut kopf = [0u8; 44];
-    std::fs::File::open(wav).ok()?.read_exact(&mut kopf).ok()?;
-    if &kopf[0..4] != b"RIFF" || &kopf[8..12] != b"WAVE" {
-        return None;
-    }
-    // Bytes je Sekunde stehen im Formatblock an Stelle 28.
-    let je_sekunde = u32::from_le_bytes([kopf[28], kopf[29], kopf[30], kopf[31]]) as u64;
-    if je_sekunde == 0 {
-        return None;
-    }
-    let bytes = std::fs::metadata(wav).ok()?.len().saturating_sub(44);
-    Some(bytes / je_sekunde)
+    let k = crate::ton::kopf(&std::fs::read(wav).ok()?).ok()?;
+    (k.rate > 0).then(|| k.dauer_ms() / 1000)
 }
 
 /// **Spielt eine Tondatei ab**, mit dem Abspieler des Systems.
@@ -1688,60 +1663,5 @@ mod proben {
         assert_eq!(fingerabdruck(b""), 0xcbf2_9ce4_8422_2325);
         assert_eq!(fingerabdruck(b"a"), 0xaf63_dc4c_8601_ec8c);
         assert_eq!(fingerabdruck(b"foobar"), 0x8594_4171_f739_67e8);
-    }
-
-    /// ⚑ **Jede fruehere Fassung des Laeufers steht in der Liste.** Wer
-    /// `FASSUNG` im Laeufer hebt und den Fingerabdruck der vorigen nicht
-    /// eintraegt, laesst jeden bestehenden Einrichter auf ihr sitzen; bei
-    /// Fassung 2 hiesse das seit transformers 5 einen falschen Satz ohne
-    /// Fehlermeldung. Und der mitgebrachte selbst steht nicht darin.
-    #[test]
-    fn jede_fruehere_fassung_des_laeufers_ist_ersetzbar() {
-        let fassung: usize = COSYVOICE_QUELLE
-            .lines()
-            .find_map(|z| z.strip_prefix("FASSUNG = "))
-            .and_then(|z| z.trim().parse().ok())
-            .expect("FASSUNG im Laeufer");
-        assert_eq!(
-            FRUEHERE_LAEUFER.len(),
-            fassung - 1,
-            "Laeufer der Fassung {fassung}, aber {} fruehere Fingerabdruecke",
-            FRUEHERE_LAEUFER.len()
-        );
-        assert!(!FRUEHERE_LAEUFER.contains(&fingerabdruck(COSYVOICE_QUELLE.as_bytes())));
-    }
-
-    /// ⚑ **Ersetzt wird nur ein unveraenderter Laeufer einer frueheren
-    /// Fassung**; ein angepasster und ein fremder bleiben stehen.
-    #[test]
-    fn nur_ein_unveraenderter_alter_laeufer_wird_ersetzt() {
-        let d = tempfile::tempdir().expect("Verzeichnis");
-        let pfad = d.path().join("laeufer.py");
-        let alt = b"# eine fruehere Fassung\n";
-        let bekannt = [fingerabdruck(alt)];
-
-        std::fs::write(&pfad, alt).expect("schreiben");
-        assert!(
-            auffrischen_mit(&pfad, &bekannt).expect("frisch"),
-            "die alte Fassung blieb"
-        );
-        assert_eq!(
-            std::fs::read_to_string(&pfad).expect("lesen"),
-            COSYVOICE_QUELLE
-        );
-        assert!(
-            !auffrischen_mit(&pfad, &bekannt).expect("frisch"),
-            "die neue wurde erneut geschrieben"
-        );
-
-        let angepasst = b"# eine fruehere Fassung, von Hand geaendert\n";
-        std::fs::write(&pfad, angepasst).expect("schreiben");
-        assert!(
-            !auffrischen_mit(&pfad, &bekannt).expect("frisch"),
-            "eine Anpassung wurde ueberschrieben"
-        );
-        assert_eq!(std::fs::read(&pfad).expect("lesen"), angepasst);
-
-        assert!(!auffrischen_mit(&d.path().join("fehlt.py"), &bekannt).expect("frisch"));
     }
 }

@@ -1,6 +1,6 @@
 # Intended Use Policy and Excluded Uses
 
-**As of:** 2026-09-28 · **Deutsch:** [Zweckbestimmung.md](../de/Zweckbestimmung.md)
+**As of:** 2026-11-11 · **Deutsch:** [Zweckbestimmung.md](../de/Zweckbestimmung.md)
 
 This policy defines what Myelith was built for and what it must not be
 used for. It forms part of the terms of use within the meaning of
@@ -87,8 +87,10 @@ system (Art. 25 AI Act).
   user's own voice or that of a person who has explicitly consented. A
   cloned voice must not be passed off as a genuine recording of a
   person.
-- **Removing the marking of synthetic content** in order to pass it off
-  as genuine.
+- **Intentionally removing, altering or obscuring the marking of
+  synthetic content**: the metadata, the signed provenance manifest
+  (C2PA) and the watermark in the signal, for whatever purpose, and
+  all the more so in order to pass it off as genuine.
 - Everything listed in the project's exclusion catalogue
   ([`../ethics/Ausschluss.json`](../ethics/Ausschluss.json)).
 
@@ -99,7 +101,8 @@ system (Art. 25 AI Act).
 | Notice at start-up, to be actively acknowledged | Nobody uses Myelith without knowing that it is an AI and what it is not meant for |
 | Permanent AI disclosure in the interface | In the window, the empty input field reads "An AI answers here."; in the console, "AI" stands in the footer; every answer is recognisable as AI-generated |
 | Request filter | Requests clearly aimed at a prohibited practice are refused with a reference to this policy |
-| Marking of the synthetic voice | Metadata and a watermark in every generated audio file |
+| Marking of the synthetic voice | In every generated audio file: metadata, a signed provenance manifest following C2PA, and a watermark in the signal that follows the voice and is barely audible |
+| Public detection | Anyone can check an audio file free of charge: `myl kennzeichen <file.wav>` ships with every client, the method is open source, and any C2PA tool reads the manifest |
 | Confirmation before actions | By default, the agent's writes, network access and commands are presented for approval before they run |
 | Emergency stop | In the window, it is closing the window: this ends any running agent action, including a command already started. In the console, the emergency stop (Ctrl-C or Esc) aborts it |
 | No identification of persons when seeing | The vision model is instructed not to identify persons and not to attribute emotions or sensitive characteristics |

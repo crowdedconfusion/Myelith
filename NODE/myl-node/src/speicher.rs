@@ -279,7 +279,18 @@ pub struct Kettenspeicher {
     datei: File,
     /// Der Griff zum Lesen. Springt frei umher und stört das Anhängen
     /// deshalb nicht (siehe Modulkopf).
-    leser: File,
+    ///
+    /// ⚑ **Gepuffert, und gesprungen wird nur, wenn es sein muss**
+    /// (2026-11-11): Ungepuffert kostete jeder Satz drei `read` und ein
+    /// `lseek`, gemessen die Hälfte der Zeit von `bloecke_ab` in der Probe
+    /// mit Archivbelegen. Ein Sprung verwirft den Puffer; deshalb springt
+    /// [`Self::satz_und_naechster`] nur, wenn der Satz nicht der nächste
+    /// ist, und nach dem Kürzen immer (siehe [`Self::leser_ort`]).
+    leser: BufReader<File>,
+    /// Wo der Lesegriff steht; [`NIRGENDS`] erzwingt den nächsten Sprung.
+    /// ⚠️ Nach [`Self::kuerzen_nach`] stehen hinter dem Schnitt neue Bytes,
+    /// und ein Puffer mit den alten wäre falsch.
+    leser_ort: u64,
     /// Höhe und Ort jedes [`STUETZABSTAND`]-ten Satzes, in
     /// Dateireihenfolge (siehe Modulkopf).
     stuetzen: Vec<(u64, u64)>,
@@ -289,6 +300,9 @@ pub struct Kettenspeicher {
     laenge: u64,
     geschrieben: u64,
 }
+
+/// Kein gültiger Ort: Der nächste Lesezugriff springt.
+const NIRGENDS: u64 = u64::MAX;
 
 /// Prüfsumme eines Satzes: die ersten vier Bytes von SHA-256.
 ///
@@ -340,13 +354,14 @@ impl Kettenspeicher {
             datei.write_all(&FASSUNG.to_le_bytes()).map_err(fehler)?;
             datei.write_all(startwert.as_bytes()).map_err(fehler)?;
             datei.flush().map_err(fehler)?;
-            let leser = File::open(pfad).map_err(fehler)?;
+            let leser = BufReader::new(File::open(pfad).map_err(fehler)?);
             return Ok((
                 Self {
                     pfad: pfad.to_path_buf(),
                     startwert,
                     datei,
                     leser,
+                    leser_ort: NIRGENDS,
                     stuetzen: Vec::new(),
                     kleinste: None,
                     laenge: KOPF_BYTES,
@@ -446,7 +461,7 @@ impl Kettenspeicher {
         datei.seek(SeekFrom::End(0)).map_err(fehler)?;
         // Erst **nach** dem Kürzen öffnen: Ein Lesegriff auf die
         // ungekürzte Datei wäre gleich wieder falsch.
-        let lesegriff = File::open(pfad).map_err(fehler)?;
+        let lesegriff = BufReader::new(File::open(pfad).map_err(fehler)?);
 
         let anzahl = nummer;
         Ok((
@@ -455,6 +470,7 @@ impl Kettenspeicher {
                 startwert,
                 datei,
                 leser: lesegriff,
+                leser_ort: NIRGENDS,
                 stuetzen,
                 kleinste,
                 laenge: gueltig_bis,
@@ -518,13 +534,24 @@ impl Kettenspeicher {
     /// Geht über den **Lesegriff**, verschiebt die Schreibstelle also
     /// nicht (siehe Modulkopf).
     fn satz_und_naechster(&mut self, ort: u64) -> Result<(Block, u64), SpeicherFehler> {
+        let ergebnis = self.satz_lesen(ort);
+        self.leser_ort = match &ergebnis {
+            Ok((_, naechster)) => *naechster,
+            Err(_) => NIRGENDS,
+        };
+        ergebnis
+    }
+
+    fn satz_lesen(&mut self, ort: u64) -> Result<(Block, u64), SpeicherFehler> {
         let unlesbar = || SpeicherFehler::SatzNichtLesbar {
             pfad: self.pfad.clone(),
             ort,
         };
-        self.leser
-            .seek(SeekFrom::Start(ort))
-            .map_err(|_| unlesbar())?;
+        if self.leser_ort != ort {
+            self.leser
+                .seek(SeekFrom::Start(ort))
+                .map_err(|_| unlesbar())?;
+        }
         let mut laengenkopf = [0u8; 4];
         self.leser
             .read_exact(&mut laengenkopf)
@@ -662,6 +689,7 @@ impl Kettenspeicher {
         self.stuetzen.retain(|&(_, o)| o < ort);
         self.laenge = ort;
         self.geschrieben = nummer;
+        self.leser_ort = NIRGENDS;
         Ok(entfernt)
     }
 

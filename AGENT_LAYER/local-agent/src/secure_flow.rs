@@ -146,6 +146,8 @@ pub struct Vertrag {
 
 /// Wo im Arbeitsordner die Anhaenge liegen.
 const ANHANGORDNER: &str = ".AGENT/anhaenge";
+/// Die gelesenen Buecher: Wer dort liest, liest fremden Text.
+pub const LITERATURORDNER: &str = "literature";
 
 impl Vertrag {
     const fn neu(liefert: Label, ziel: Ziel, braucht_vertrauen: bool, anhang_ist_fremd: bool) -> Self {
@@ -200,6 +202,14 @@ impl Vertrag {
     /// Schrift im Bild oder ein gesprochener Satz waeren so ungeprueft als
     /// Wort des Nutzers durchgegangen.
     pub const SINN: Vertrag = Vertrag::neu(Label::neu(Leser::Privat, Vertrauen::Vertraut), Ziel::Lokal, false, true);
+    /// Ein Buch zum Skill: bleibt im Arbeitsordner, und angestossen wird ein
+    /// Programm, also nach Fremdem nur mit Freigabe.
+    ///
+    /// 📌 **`liefert` steht auf vertraut, und das Ergebnis nennt sich selbst fremd**
+    /// ([`FREMD_MARKEN`]). Die Pruefung rechnet den Beitrag vor dem Aufruf ein; mit
+    /// `Fremd` hier und `braucht_vertrauen` sperrte sich das Werkzeug immer selbst.
+    /// Gefunden im ersten Lauf mit dem 4B.
+    pub const BUCH: Vertrag = Vertrag::neu(Label::neu(Leser::Privat, Vertrauen::Vertraut), Ziel::Lokal, true, false);
     /// Was eine Oberflaeche dazugibt (Notizen des Loops und Aehnliches):
     /// privat, oertlich, kompiliert.
     pub const ZUSATZ: Vertrag = Vertrag::neu(Label::neu(Leser::Privat, Vertrauen::Vertraut), Ziel::Lokal, false, false);
@@ -211,7 +221,9 @@ impl Vertrag {
 
     /// Was **dieser** Aufruf beitraegt: ein Anhang ist fremd.
     pub fn liefert_fuer(&self, argumente: &serde_json::Value) -> Label {
-        if self.anhang_ist_fremd && texte_der_argumente(argumente).iter().any(|t| t.contains(ANHANGORDNER)) {
+        if self.anhang_ist_fremd
+            && texte_der_argumente(argumente).iter().any(|t| t.contains(ANHANGORDNER) || ist_literatur(t))
+        {
             return self.liefert.und(Label::neu(Leser::Privat, Vertrauen::Fremd));
         }
         self.liefert
@@ -239,6 +251,12 @@ impl Vertrag {
 /// Zeichenfolge wie jede andere, und ein Werkzeug, das sie setzt, setzt
 /// sie als Erstes.
 pub const FREMD_MARKEN: [&str; 2] = ["[Herkunft fremd:", "[Untrusted origin:"];
+
+/// Ob ein Pfad im Ordner der gelesenen Buecher liegt.
+pub fn ist_literatur(pfad: &str) -> bool {
+    let p = pfadschluessel(pfad);
+    p == LITERATURORDNER || p.starts_with(&format!("{LITERATURORDNER}/")) || p.contains(&format!("/{LITERATURORDNER}/"))
+}
 
 /// Ob ein Ergebnis sich selbst fremd nennt, siehe [`FREMD_MARKEN`].
 pub fn nennt_sich_fremd(text: &str) -> bool {
@@ -1320,6 +1338,29 @@ mod proben {
     }
 
     /// ⚑ **Ein Anhang ist fremd**, eine eigene Datei nicht.
+    /// 📌 Das Buchwerkzeug laeuft in einem sauberen Gespraech, sein Ergebnis macht
+    /// das Gespraech fremd, und danach braucht ein zweiter Lauf die Freigabe.
+    #[test]
+    fn das_buchwerkzeug_sperrt_sich_nicht_selbst() {
+        let f = Fluss::neu();
+        let args = serde_json::json!({"pfad": "buch.pdf"});
+        assert!(matches!(f.pruefen(&Vertrag::BUCH, &args), Pruefung::Frei));
+        f.aufnehmen("book_to_skill", &Vertrag::BUCH, &args, format!("{}\nSkill angelegt", fremdmarke("book_to_skill")));
+        assert_eq!(f.label().vertrauen, Vertrauen::Fremd);
+        assert!(!matches!(f.pruefen(&Vertrag::BUCH, &args), Pruefung::Frei));
+    }
+
+    #[test]
+    fn ein_gelesenes_buch_ist_fremd() {
+        for ja in ["literature/a/seiten/1.md", "./literature/a/buch.md", "x/literature/a.md"] {
+            assert!(ist_literatur(ja), "{ja}");
+            assert_eq!(Vertrag::EIGENES_LESEN.liefert_fuer(&serde_json::json!({"pfad": ja})).vertrauen, Vertrauen::Fremd, "{ja}");
+        }
+        for nein in ["literatur/a.md", "notizen/literature.md", "myliterature/a.md"] {
+            assert!(!ist_literatur(nein), "{nein}");
+        }
+    }
+
     #[test]
     fn ein_anhang_ist_fremd() {
         let anhang = serde_json::json!({"pfad": ".AGENT/anhaenge/rechnung.md"});

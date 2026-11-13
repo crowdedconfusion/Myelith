@@ -14,9 +14,9 @@ Practice (transparency chapter). The German version is authoritative.
 | Provider | Joschka Benjamin Hänsler, private individual, Germany, non-commercial |
 | Contact | via the repository's issues |
 | Role | **Provider** of the Myelith artefacts within the meaning of Art. 3(3) and Art. 53. The artefacts are modifications of third-party base models; Myelith fine-tunes them itself and therefore treats itself as a provider with all obligations under Art. 53 for its own modifications. The obligations of the base model providers remain unaffected. |
-| Models | `sparrow-0.6b-int8`, `pigeon-4b-int8`, `jay-8b-int8`, `magpie-30b-a3b-int8`, `raven-35b-a3b-int8` |
+| Models | `sparrow-0.6b-int8`, `parrot-2b-int8`, `pigeon-4b-int8`, `jay-8b-int8`, `magpie-30b-a3b-int8`, `raven-35b-a3b-int8` |
 | Version of the execution specification | θ_v 0.22.0 |
-| Base models | Qwen3-0.6B, Qwen3-4B, Qwen3-8B, Qwen3-30B-A3B, Qwen3.6-35B-A3B (Alibaba Cloud), each Apache 2.0; revision and review in [`MODELS/llm/KATALOG.json`](../../MODELS/llm/KATALOG.json) |
+| Base models | Qwen3-0.6B, Qwen3-4B, Qwen3-8B, Qwen3-30B-A3B, Qwen3.6-35B-A3B (Alibaba Cloud), Index-Translate-2B (IndexTeam), each Apache 2.0; revision and review in [`MODELS/llm/KATALOG.json`](../../MODELS/llm/KATALOG.json) |
 | Licence | artefacts and code: PolyForm Shield License 1.0.0; base weights: Apache 2.0 (see [NOTICES](../NOTICES.md)) |
 | Systemic risk | no; the own modification stays many orders of magnitude below the threshold of Art. 51(2) (10²⁵ floating-point operations) |
 
@@ -34,6 +34,7 @@ network.
 |---|---|---|---|---|---|---|---|
 | sparrow-0.6b-int8 | dense | 28 | 1024 | 16/8 | none | 151,936 | 0.9 GB |
 | pigeon-4b-int8 | dense | 36 | 2560 | 32/8 | none | 151,936 | 4.5 GB |
+| parrot-2b-int8 | hybrid dense | 24 | 2048 | 8/2 | none | 248,320 | 2.7 GB |
 | jay-8b-int8 | dense | 36 | 4096 | 32/8 | none | 151,936 | 8.8 GB |
 | magpie-30b-a3b-int8 | mixture of experts | 48 | 2048 | 32/4 | 128 (8) | 151,936 | 29 GB |
 | raven-35b-a3b-int8 | mixture of experts, hybrid with recurrent state layers | 40 | 2048 | 16/2 | 256 (8) | 248,320 | 33 GB |

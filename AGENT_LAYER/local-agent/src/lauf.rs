@@ -247,12 +247,28 @@ fn mit_skillhinweis(ruestung: &Ruestung, auftrag: &str) -> String {
     }
 }
 
+/// **Dass es gelesene Buecher gibt und womit man darin sucht**, wenn die
+/// Ruestung `search_files` hat (siehe `bibliothek::hinweis`).
+fn buchhinweis(ruestung: &Ruestung) -> Option<String> {
+    let suchen = crate::werkzeuge::Dateiwerkzeug::Suchen.name(ruestung.form);
+    let hat_suchen = ruestung.kasten.angebot(suchen).is_some_and(|a| !crate::abgeschaltet::ist_platzhalter(a));
+    let wurzel = ruestung.einhaengung.as_ref().filter(|_| hat_suchen)?.wurzel();
+    let deutsch = matches!(ruestung.form, crate::werkzeug::Ansageform::Deutsch);
+    crate::bibliothek::hinweis(wurzel, suchen, deutsch)
+}
+
 /// **Der Auftrag, wie das Modell ihn bekommt**: mit den passenden Skills
-/// (siehe [`mit_skillhinweis`]) und dem heutigen Datum
+/// (siehe [`mit_skillhinweis`]), den gelesenen Buechern
+/// (siehe [`buchhinweis`]) und dem heutigen Datum
 /// (`crate::uhr::heute_zeile`).
 fn mit_kontext(ruestung: &Ruestung, auftrag: &str) -> String {
     let deutsch = matches!(ruestung.form, crate::werkzeug::Ansageform::Deutsch);
-    let mut s = format!("{}{}", mit_skillhinweis(ruestung, auftrag), crate::uhr::heute_zeile(deutsch));
+    let mut s = format!(
+        "{}{}{}",
+        mit_skillhinweis(ruestung, auftrag),
+        buchhinweis(ruestung).unwrap_or_default(),
+        crate::uhr::heute_zeile(deutsch)
+    );
     // ⚑ **Die Erinnerungen des Ordners zuletzt** (`crate::gedaechtnis`),
     //   damit der Schlaf sie beim naechsten Lesen an ihrer Marke
     //   abschneiden kann und nicht fuer eine Aussage des Nutzers haelt.

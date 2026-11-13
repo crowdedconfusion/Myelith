@@ -41,5 +41,16 @@ mod tests {
         assert_eq!(mindestzeichner(3), 2);
         assert_eq!(mindestzeichner(2), 2, "eins übrig reicht nie");
         assert_eq!(mindestzeichner(0), 2);
+        // Erschöpfend bis 100 000 Mitglieder: nie unter zwei, immer mehr als
+        // die Hälfte der Übrigen, und einer weniger wäre es nicht mehr.
+        for n in 0..=100_000usize {
+            let m = mindestzeichner(n);
+            let uebrig = n.saturating_sub(1);
+            assert!(m >= MINDESTENS_ZEICHNER, "{n} Mitglieder: {m}");
+            assert!(2 * m > uebrig, "{n} Mitglieder: {m} ist keine Mehrheit von {uebrig}");
+            if m > MINDESTENS_ZEICHNER {
+                assert!(2 * (m - 1) <= uebrig, "{n} Mitglieder: {m} ist mehr als nötig");
+            }
+        }
     }
 }

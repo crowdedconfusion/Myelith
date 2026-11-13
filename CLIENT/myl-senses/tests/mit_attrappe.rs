@@ -179,8 +179,8 @@ fn die_stufe_entscheidet_welches_modell_laeuft() {
     assert_ne!(sehen.fuer(Stufe::Schnell).modell, sehen.fuer(Stufe::Genau).modell);
 }
 
-/// ⚑ **Sprechen ueber das eigene Skript**, den Weg, den CosyVoice und
-/// jedes andere Sprechprogramm nehmen: zwei Pfade, sonst nichts.
+/// ⚑ **Sprechen ueber das eigene Skript**, den Weg, den jedes fremde
+/// Sprechprogramm nimmt: zwei Pfade, sonst nichts.
 #[test]
 fn das_eigene_sprechskript_bekommt_text_und_ziel() {
     let d = tempfile::tempdir().expect("Verzeichnis");
@@ -412,7 +412,8 @@ fn eine_probe_die_piper_ignoriert_wird_gesagt() {
     assert!(!z.kann_klonen(), "piper kann nicht klonen");
     assert!(z.probe.is_some(), "die Probe wurde nicht gefunden");
     let hinweis = sinne.stimmhinweis().expect("es gibt etwas zu sagen");
-    assert!(hinweis.contains("CosyVoice"), "{hinweis}");
+    assert!(hinweis.contains("Qwen3-TTS"), "{hinweis}");
+    assert!(!hinweis.contains("CosyVoice"), "{hinweis}");
     assert!(hinweis.contains("ignoriert"), "{hinweis}");
 }
 
@@ -459,8 +460,9 @@ fn das_sprechskript_bekommt_die_probe_als_dritten_pfad() {
 /// eine Zeile hin und `ok` zurueck, und das Schliessen der Eingabe
 /// beendet ihn.
 ///
-/// ⛔️ **Ohne ihn waere satzweises Sprechen mit CosyVoice langsamer als
-/// gar keines**, weil je Satz ein halbes Milliardenmodell neu laedt.
+/// ⛔️ **Ohne ihn waere satzweises Sprechen mit einem fremden Modell
+/// langsamer als gar keines**, weil je Satz ein halbes Milliardenmodell neu
+/// laedt.
 /// Diese Probe stellt den Laeufer und prueft **das Protokoll**.
 #[test]
 fn der_dauerlaeufer_spricht_satz_fuer_satz() {
@@ -558,13 +560,6 @@ fn ein_schweigender_laeufer_laeuft_in_die_frist() {
     assert!(anfang.elapsed().as_secs() < 8, "die Frist hat nicht gegriffen");
 }
 
-/// **Ein CosyVoice-foermiger Aufbau mit gestelltem Python.**
-///
-/// ⚑ **Der geteilte Laeufer gilt nur fuer CosyVoice** (`dauerhaft`), und
-/// eine Probe, die statt dessen ein Skript nimmt, prueft den falschen
-/// Weg. Also wird hier nachgestellt, was der Client wirklich findet:
-/// ein `cosyvoice`-Ordner, der Laeufer daneben, und ein „Python", das
-/// beides entgegennimmt.
 /// Ein gestellter Laeufer der Fassung 2: meldet je Satz zwei Stuecke
 /// (`<ziel>.0.wav`, `<ziel>.1.wav`, je eine Haelfte des Textes), dann
 /// den ganzen Satz in `<ziel>` und `ok`. Den Text des ganzen Satzes
@@ -606,11 +601,13 @@ fn der_vorrang_wartet_auf_den_ersten_ton() {
     let heimat = d.path().join("sinne");
     let bin = heimat.join("bin");
     std::fs::create_dir_all(&bin).expect("bin");
-    let langsam = bin.join("langsam");
+    // ⚑ Als stehendes Skript, denn nur ein Dauerlaeufer hat einen Vorrang.
+    let langsam = bin.join(myl_senses::laufwerk::DAUERSKRIPT);
     std::fs::write(
         &langsam,
         format!(
             "#!/bin/sh\n\
+             if [ \"$1\" != \"--dauer\" ]; then exit 0; fi\n\
              echo bereit\n\
              while IFS=\"$(printf '\\t')\" read -r quelle ziel; do\n\
              sleep 0.3\n\
@@ -622,24 +619,10 @@ fn der_vorrang_wartet_auf_den_ersten_ton() {
         ),
     )
     .expect("Laeufer");
-    std::fs::create_dir_all(heimat.join("cosyvoice")).expect("cosyvoice");
-    std::fs::write(bin.join(myl_senses::laufwerk::COSYVOICE_LAEUFER), "# Attrappe\n")
-        .expect("Laeufer");
-    let python = bin.join("python3");
-    std::fs::write(
-        &python,
-        format!(
-            "#!/bin/sh\nshift\nif [ \"$1\" != \"--dauer\" ]; then exit 0; fi\nexec {} \"$@\"\n",
-            langsam.display()
-        ),
-    )
-    .expect("Python");
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        for p in [&langsam, &python] {
-            std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o755)).expect("Rechte");
-        }
+        std::fs::set_permissions(&langsam, std::fs::Permissions::from_mode(0o755)).expect("Rechte");
     }
     let sinne = Sinne::finden_in(&heimat, &Eigene::default(), &[]);
     let zeug = sinne.sprechen.as_ref().expect("bereit").clone();
@@ -721,36 +704,9 @@ fn der_vorleser_spielt_die_stuecke_sobald_sie_kommen() {
     let heimat = d.path().join("sinne");
     let bin = heimat.join("bin");
     std::fs::create_dir_all(&bin).expect("bin");
-    // ⚑ Als CosyVoice-Weg, denn nur der laeuft dauerhaft: Das gestellte
-    //   Python bekommt den Laeufer als erstes Argument und reicht die
-    //   uebrigen an den Stromlaeufer weiter. Er heisst nicht `sprechen`,
-    //   sonst gewaenne er als eigenes Skript.
-    let strom = stromlaeufer(&bin, "strom", false);
-    std::fs::create_dir_all(heimat.join("cosyvoice")).expect("cosyvoice");
-    std::fs::write(
-        bin.join(myl_senses::laufwerk::COSYVOICE_LAEUFER),
-        "# Attrappe\n",
-    )
-    .expect("Laeufer");
-    let python = bin.join("python3");
-    // ⚠️ Nur mit `--dauer` weiterreichen: Das gestellte Python liegt in
-    //   `bin` und wird damit auch fuer andere Proben gefunden (etwa ob
-    //   eine PDF-Kiste da ist); die liefen sonst in den Laeufer und
-    //   warteten dort ewig auf Eingabe. So blieb diese Probe beim ersten
-    //   Lauf haengen.
-    std::fs::write(
-        &python,
-        format!(
-            "#!/bin/sh\nshift\nif [ \"$1\" != \"--dauer\" ]; then exit 0; fi\nexec {} \"$@\"\n",
-            strom.display()
-        ),
-    )
-    .expect("Python");
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&python, std::fs::Permissions::from_mode(0o755)).expect("Rechte");
-    }
+    // ⚑ Als stehendes Skript, denn nur ein Dauerlaeufer meldet Stuecke.
+    //   Es heisst nicht `sprechen`, sonst gewaenne es als Skript je Satz.
+    stromlaeufer(&bin, myl_senses::laufwerk::DAUERSKRIPT, false);
     let sinne = Sinne::finden_in(&heimat, &Eigene::default(), &[]);
     let zeug = sinne.sprechen.as_ref().expect("bereit").clone();
     assert!(
@@ -803,7 +759,7 @@ fn das_nachdenken_wird_mit_einem_vorbereiteten_satz_ueberbrueckt() {
     let d = tempfile::tempdir().expect("Verzeichnis");
     let heimat = d.path().join("sinne");
     let zaehler = d.path().join("starts");
-    let sinne = cosy_attrappe(&heimat, &zaehler);
+    let sinne = dauer_attrappe(&heimat, &zaehler);
     let zeug = sinne.sprechen.as_ref().expect("bereit").clone();
     let geteilt: myl_senses::sprechen::Geteilter = Default::default();
     let gespielt = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
@@ -914,21 +870,17 @@ fn das_nachdenken_wird_mit_einem_vorbereiteten_satz_ueberbrueckt() {
     );
 }
 
-fn cosy_attrappe(heimat: &Path, zaehler: &Path) -> Sinne {
+/// **Ein stehendes Skript, das seine Starts zaehlt.** Ein Satz fuer die
+/// Ablage bekommt keinen Text daneben: Er zieht um, und der Text bliebe im
+/// Zwischenordner liegen.
+fn dauer_attrappe(heimat: &Path, zaehler: &Path) -> Sinne {
     let bin = heimat.join("bin");
     std::fs::create_dir_all(&bin).expect("bin");
-    std::fs::create_dir_all(heimat.join("cosyvoice")).expect("cosyvoice");
-    std::fs::write(bin.join(myl_senses::laufwerk::COSYVOICE_LAEUFER), "# Attrappe\n")
-        .expect("Laeufer");
-    // Das gestellte Python bekommt den Laeufer als erstes Argument und
-    // danach die Argumente des Clients. Ein Satz fuer die Ablage bekommt
-    // keinen Text daneben: Er zieht um, und der Text bliebe im
-    // Zwischenordner liegen.
-    let python = bin.join("python3");
+    let skript = bin.join(myl_senses::laufwerk::DAUERSKRIPT);
     std::fs::write(
-        &python,
+        &skript,
         format!(
-            "#!/bin/sh\nshift\n\
+            "#!/bin/sh\n\
              if [ \"$1\" != \"--dauer\" ]; then exit 0; fi\n\
              echo start >> {}\n\
              echo bereit\n\
@@ -938,11 +890,11 @@ fn cosy_attrappe(heimat: &Path, zaehler: &Path) -> Sinne {
             zaehler.display()
         ),
     )
-    .expect("Python");
+    .expect("Skript");
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&python, std::fs::Permissions::from_mode(0o755)).expect("Rechte");
+        std::fs::set_permissions(&skript, std::fs::Permissions::from_mode(0o755)).expect("Rechte");
     }
     Sinne::finden_in(heimat, &Eigene::default(), &[])
 }
@@ -951,16 +903,16 @@ fn cosy_attrappe(heimat: &Path, zaehler: &Path) -> Sinne {
 ///
 /// 📌 Gemeldet vom Projektinhaber am 2026-09-18: „im Live Modus braucht
 /// das Modell sehr lange nach der Textgenerierung um zu antworten."
-/// CosyVoice laedt rund achtzehn Sekunden; ein Vorleser je Antwort legt
+/// CosyVoice lud damals rund achtzehn Sekunden; ein Vorleser je Antwort legt
 /// diese Zeit **vor jede** Antwort. Diese Probe zaehlt die Starts.
 #[test]
 fn ein_geteilter_laeufer_startet_nur_einmal() {
     let d = tempfile::tempdir().expect("Verzeichnis");
     let heimat = d.path().join("sinne");
     let zaehler = d.path().join("starts");
-    let sinne = cosy_attrappe(&heimat, &zaehler);
+    let sinne = dauer_attrappe(&heimat, &zaehler);
     let zeug = sinne.sprechen.as_ref().expect("bereit").clone();
-    assert!(zeug.dauerhaft(), "der Aufbau ist kein CosyVoice: {:?}", zeug.weg);
+    assert!(zeug.dauerhaft(), "der Aufbau ist kein stehendes Skript: {:?}", zeug.weg);
     let geteilt: myl_senses::sprechen::Geteilter = Default::default();
 
     for i in 0..3 {
@@ -1005,7 +957,7 @@ fn vorwaermen_startet_hoechstens_einen() {
     let d = tempfile::tempdir().expect("Verzeichnis");
     let heimat = d.path().join("sinne");
     let zaehler = d.path().join("starts");
-    let sinne = cosy_attrappe(&heimat, &zaehler);
+    let sinne = dauer_attrappe(&heimat, &zaehler);
     let zeug = sinne.sprechen.as_ref().expect("bereit").clone();
     let geteilt: myl_senses::sprechen::Geteilter = Default::default();
 
@@ -1143,7 +1095,7 @@ fn nur_gekennzeichneter_ton_klingt() {
 fn ein_alter_satz_aus_der_ablage_wird_vor_dem_spielen_gekennzeichnet() {
     let d = tempfile::tempdir().expect("Verzeichnis");
     let heimat = d.path().join("sinne");
-    let sinne = cosy_attrappe(&heimat, &d.path().join("starts"));
+    let sinne = dauer_attrappe(&heimat, &d.path().join("starts"));
     let zeug = sinne.sprechen.as_ref().expect("bereit").clone();
     let geteilt: myl_senses::sprechen::Geteilter = Default::default();
     myl_senses::sprechen::ueberbrueckungen_vorbereiten(&zeug, &geteilt, "de").expect("vorbereitet");
@@ -1186,4 +1138,24 @@ fn ein_alter_satz_aus_der_ablage_wird_vor_dem_spielen_gekennzeichnet() {
     v.ueberbruecken("de");
     assert!(v.abschliessen().is_empty());
     assert_eq!(*gespielt.lock().unwrap(), [true], "der Satz aus der Ablage klang ungekennzeichnet");
+}
+
+/// ⚑ **Ein stehendes Skript spricht auch einen einzelnen Satz**, und zwar
+/// ueber das dokumentierte Gespraech (`--dauer`, `bereit`, eine Zeile, `ok`).
+/// Das Skript hier kennt nur dieses; ohne `--dauer` endet es sofort, ohne
+/// Ton. Gegenprobe: Es wird nur einmal gestartet, und der Ton ist
+/// gekennzeichnet.
+#[test]
+fn ein_stehendes_skript_spricht_auch_einen_einzelnen_satz() {
+    let d = tempfile::tempdir().expect("Verzeichnis");
+    let heimat = d.path().join("sinne");
+    let zaehler = d.path().join("starts");
+    let sinne = dauer_attrappe(&heimat, &zaehler);
+    let zeug = sinne.sprechen.as_ref().expect("bereit").clone();
+    assert!(zeug.dauerhaft());
+    let wav = myl_senses::sprechen::sagen(&zeug, "Ein einzelner Satz.").expect("gesprochen");
+    assert_eq!(gesprochen(&wav), "Ein einzelner Satz.");
+    assert!(myl_senses::kennzeichnung::pruefen(&wav).expect("WAV").metadaten, "nicht gekennzeichnet");
+    assert_eq!(std::fs::read_to_string(&zaehler).unwrap_or_default().lines().count(), 1);
+    std::fs::remove_file(&wav).expect("weg");
 }

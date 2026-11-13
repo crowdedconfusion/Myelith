@@ -1,6 +1,6 @@
 [package]
 name = "myl-testclient"
-version = "0.68.14"
+version = "0.69.5"
 edition = "2021"
 # ⚑ 1.88 und nicht 1.85 wie die uebrigen Crates, und der Grund liegt
 # nicht im eigenen Code: Ueber libp2p haengt hier die `icu_*`-Kette
@@ -153,7 +153,7 @@ myl-local-agent = { path = "../../AGENT_LAYER/local-agent" }
 # ⚑ **Das Wallet bezahlt über einen echten Knoten** (2026-10-26): Credits,
 # Sitzung, Vollmacht und Widerruf aus `myl_client::bezahlen` gegen eine
 # Kette. Nur hier sind Client und Knoten zugleich sichtbar.
-myl-client = { path = "../../CLIENT/myl-client" }
+myl-client = { path = "../../CLIENT/myl-client", default-features = false }
 
 # Ueberlaufpruefung im Freigabebau, nur fuer die Protokollkisten
 # (Festlegung des Projektinhabers, 2026-10-26). `--release` schaltet sie

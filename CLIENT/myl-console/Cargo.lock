@@ -662,7 +662,7 @@ dependencies = [
 
 [[package]]
 name = "integer-llm-kernels"
-version = "0.90.0"
+version = "0.91.0"
 dependencies = [
  "itertools 0.13.0",
  "objc2",
@@ -675,7 +675,7 @@ dependencies = [
 
 [[package]]
 name = "integer-llm-runtime"
-version = "0.105.0"
+version = "0.105.1"
 dependencies = [
  "integer-llm-kernels",
  "libc",
@@ -833,7 +833,7 @@ dependencies = [
 
 [[package]]
 name = "myl-agent"
-version = "0.7.2"
+version = "0.10.0"
 dependencies = [
  "borsh",
  "myl-types",
@@ -841,7 +841,7 @@ dependencies = [
 
 [[package]]
 name = "myl-client"
-version = "0.123.0"
+version = "0.132.2"
 dependencies = [
  "aes",
  "borsh",
@@ -877,7 +877,7 @@ dependencies = [
 
 [[package]]
 name = "myl-console"
-version = "0.70.0"
+version = "0.72.1"
 dependencies = [
  "crossterm",
  "libc",
@@ -908,7 +908,7 @@ dependencies = [
 
 [[package]]
 name = "myl-local-agent"
-version = "0.46.2"
+version = "0.50.0"
 dependencies = [
  "libc",
  "myl-agent",
@@ -921,7 +921,7 @@ dependencies = [
 
 [[package]]
 name = "myl-module"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "ed25519-dalek",
  "getrandom 0.2.17",
@@ -934,7 +934,13 @@ dependencies = [
 
 [[package]]
 name = "myl-senses"
-version = "0.13.6"
+version = "0.45.1"
+dependencies = [
+ "ed25519-dalek",
+ "getrandom 0.2.17",
+ "integer-llm-kernels",
+ "sha2",
+]
 
 [[package]]
 name = "myl-store"
@@ -949,7 +955,7 @@ dependencies = [
 
 [[package]]
 name = "myl-types"
-version = "0.68.1"
+version = "0.68.4"
 dependencies = [
  "blst",
  "borsh",

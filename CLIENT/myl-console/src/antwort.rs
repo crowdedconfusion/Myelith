@@ -30,6 +30,7 @@ use crate::design::Rollen;
 
 /// Setzt eine Antwort; ohne `farbig` kommt sie unveraendert zurueck.
 pub fn setzen(text: &str, r: &Rollen, farbig: bool) -> String {
+    let text = &*crate::design::steuerfrei(text);
     if !farbig {
         return text.to_string();
     }

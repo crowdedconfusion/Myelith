@@ -1,0 +1,54 @@
+# Fuzz-Ziele fuer die Sinne (CLIENT 8.1): die Leser fuer FLAC und WAV und die
+# Pruefung der Kennzeichen. Eigenes Crate, weil
+# `libfuzzer-sys` eine Nightly-Werkzeugkette braucht; seine Archive liegen im
+# lokalen Vorrat.
+#
+# ⚑ Die Ziele stehen in `../tests/fuzzziele/mod.rs` und werden per
+# `include!` eingebunden, wie in `SHARED_TYPES/myl-types/fuzz`.
+#
+# Aufruf (Nightly noetig):
+#   cargo +nightly fuzz run flac -- -max_total_time=600
+
+[package]
+name = "myl-senses-fuzz"
+version = "0.0.0"
+edition = "2021"
+publish = false
+license = "LicenseRef-PolyForm-Shield-1.0.0"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.myl-senses]
+path = ".."
+
+[profile.release]
+debug = 1
+overflow-checks = true
+
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "wav"
+path = "fuzz_targets/wav.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "flac"
+path = "fuzz_targets/flac.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "kennzeichen"
+path = "fuzz_targets/kennzeichen.rs"
+test = false
+doc = false
+bench = false

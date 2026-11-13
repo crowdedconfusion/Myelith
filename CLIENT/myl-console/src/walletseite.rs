@@ -12,6 +12,9 @@
 //! im Netz suchen, dann die zwoelf Woerter nach BIP-39 auf eigenem Schirm,
 //! dann „notiert?" und zwei abgefragte Woerter; erst dann wird gespeichert.
 //!
+//! ⚑ **`v` zeigt den Verlauf** des Wallets unter dem Zeiger, dieselben
+//! Zeilen wie `myl wallet verlauf` (`Verlaufszeile::text`).
+//!
 //! Das ausgewaehlte Wallet bekommt beim Mining die Ertraege; auf der
 //! Probekette sind das Spielgeld, je Epoche 10 MYL zur Probe.
 
@@ -27,7 +30,7 @@ use crate::design::Toene;
 use crate::miningseite::{kuerzen, umbrechen};
 
 /// Die Zeile ganz unten.
-pub const KUERZEL: &str = "  ↑↓ wählen · ⏎ auswählen oder eingeben · Esc schließen";
+pub const KUERZEL: &str = "  ↑↓ wählen · ⏎ auswählen oder eingeben · v Verlauf · Esc schließen";
 
 /// Eine Zeile der Seite.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -108,7 +111,7 @@ impl Seite {
     fn hinweis(&self, r: Reihe) -> String {
         match r {
             Reihe::Wallet(i) => format!(
-                "Adresse {}. ⏎ wählt es aus; beim nächsten Start des Minings bekommt es die Erträge.",
+                "Adresse {}. ⏎ wählt es aus; beim nächsten Start des Minings bekommt es die Erträge. v zeigt seinen Verlauf.",
                 self.wallets[i].adresse_text()
             ),
             Reihe::Neu => "Legt ein Testwallet an (Name: Buchstaben, Ziffern, - und _). Zuerst wird im Netz gesucht, dann zeigt die Seite zwölf Wörter nach BIP-39 zum Notieren, fragt, ob sie notiert sind, und zwei davon ab. Erst dann ist es angelegt; das erste wird gleich ausgewählt.".into(),
@@ -168,6 +171,10 @@ pub fn fahren(t: Toene) {
             KeyCode::Char('c') if strg => break,
             KeyCode::Up => hier = hier.saturating_sub(1),
             KeyCode::Down => hier = (hier + 1).min(liste.len() - 1),
+            KeyCode::Char('v') => {
+                let Reihe::Wallet(i) = r else { continue };
+                verlauf_zeigen(&s.wallets[i], t);
+            }
             KeyCode::Enter => {
                 let mut angelegt: Option<String> = None;
                 let meldung = match r {
@@ -264,6 +271,54 @@ fn wiederherstellen(name: &str, t: Toene) -> Result<(wallet::Wallet, wallet::Net
     let e = wallet::aus_woertern(&text)?;
     let befund = wallet::im_netz_suchen(&e.adresse);
     Ok((wallet::speichern(name, &e)?, befund))
+}
+
+/// **Der Verlauf eines Wallets auf eigenem Schirm**, bis eine Taste kommt.
+fn verlauf_zeigen(w: &wallet::Wallet, t: Toene) {
+    let breite = (crate::banner::fensterbreite() as usize).clamp(40, 110);
+    let hoehe = crossterm::terminal::size().map_or(24, |(_, h)| h as usize);
+    let mut aus = std::io::stdout();
+    let zeile = |aus: &mut std::io::Stdout, text: &str, farbe| {
+        let _ = crossterm::queue!(aus, SetForegroundColor(farbe), Print(kuerzen(text, breite)), ResetColor, Print("\r\n"));
+    };
+    let _ = crossterm::queue!(aus, crossterm::cursor::Hide, Print("\x1b[H\x1b[J"));
+    zeile(&mut aus, &format!("  Wallet {} · Verlauf, neueste zuerst", w.name), t.akzent);
+    zeile(&mut aus, "", t.beiwerk);
+    zeile(&mut aus, "  Wird beim Knoten geholt …", t.beiwerk);
+    let _ = aus.flush();
+    let ergebnis = wallet::verlauf(&w.adresse);
+    let _ = crossterm::queue!(aus, Print("\x1b[H\x1b[J"));
+    zeile(&mut aus, &format!("  Wallet {} · Verlauf, neueste zuerst", w.name), t.akzent);
+    zeile(&mut aus, "", t.beiwerk);
+    for z in verlauf_zeilen(&w.name, &ergebnis, hoehe.saturating_sub(8).max(3)) {
+        zeile(&mut aus, &format!("  {z}"), t.beiwerk);
+    }
+    zeile(&mut aus, "", t.beiwerk);
+    zeile(&mut aus, "  Eine Taste schließt.", t.kante);
+    let _ = aus.flush();
+    loop {
+        if let Ok(Event::Key(k)) = event::read() {
+            if k.kind == KeyEventKind::Press {
+                break;
+            }
+        }
+    }
+}
+
+/// **Die Zeilen des Verlaufsschirms**: hoechstens `platz` Eintraege, dann
+/// wie viele fehlen und wo alle stehen, zuletzt die Grenze der Auskunft.
+fn verlauf_zeilen(name: &str, ergebnis: &Result<Vec<wallet::Verlaufszeile>, String>, platz: usize) -> Vec<String> {
+    let zeilen = match ergebnis {
+        Err(f) => return vec![f.clone()],
+        Ok(z) if z.is_empty() => return vec!["Keine Einträge.".into(), wallet::VERLAUF_GRENZE.into()],
+        Ok(z) => z,
+    };
+    let mut aus: Vec<String> = zeilen.iter().take(platz).map(wallet::Verlaufszeile::text).collect();
+    if zeilen.len() > platz {
+        aus.push(format!("… und {} weitere; alle mit myl wallet verlauf {name}.", zeilen.len() - platz));
+    }
+    aus.push(format!("{} Einträge. {}", zeilen.len(), wallet::VERLAUF_GRENZE));
+    aus
 }
 
 /// Die zwoelf Woerter auf eigenem Schirm, in zwei Spalten.
@@ -391,6 +446,23 @@ mod tests {
         assert!(s.stand()[0].contains("wartet auf die Kette"));
         s.gewaehlt = Some("w1".into());
         assert!(s.stand()[0].contains("w1 gilt ab dem nächsten Start"));
+    }
+
+    /// ⚑ **Der Verlauf passt auf den Schirm** und sagt, was fehlt; ein
+    /// Fehler des Knotens steht allein da, ein leerer Verlauf sagt es.
+    #[test]
+    fn der_verlauf_passt_auf_den_schirm() {
+        let z = |h| wallet::Verlaufszeile { hoehe: h, art: "burn".into(), ausgehend: true, gegen: String::new(), betrag: 1 };
+        let viele: Result<Vec<_>, String> = Ok((0..10).rev().map(z).collect());
+        let aus = verlauf_zeilen("w0", &viele, 4);
+        assert_eq!(aus.len(), 6, "{aus:?}");
+        assert!(aus[0].starts_with("Höhe        9"), "{aus:?}");
+        assert!(aus[4].contains("6 weitere") && aus[4].contains("myl wallet verlauf w0"), "{aus:?}");
+        assert!(aus[5].starts_with("10 Einträge.") && aus[5].contains("Prägungen"), "{aus:?}");
+        // Gegenprobe: Es passt alles, also kein Hinweis auf weitere.
+        assert_eq!(verlauf_zeilen("w0", &viele, 10).len(), 11);
+        assert_eq!(verlauf_zeilen("w0", &Err("kein Knoten".into()), 4), ["kein Knoten"]);
+        assert_eq!(verlauf_zeilen("w0", &Ok(Vec::new()), 4)[0], "Keine Einträge.");
     }
 
     /// ⛔️ **Kein Schluessel und kein Prozess an der Kiste vorbei**: Die Seite

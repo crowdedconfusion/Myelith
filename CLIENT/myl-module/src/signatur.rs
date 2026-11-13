@@ -396,6 +396,23 @@ mod tests {
         let p = probe("aenderung");
         std::fs::write(p.ordner.join("anleitung.md"), b"Kern, veraendert").unwrap();
         assert!(pruefe(&p).unwrap_err().contains("veraendert"));
+        // Jedes Byte jeder signierten Datei, je einmal gekippt: Jede
+        // Aenderung faellt auf, und das Zurueckkippen heilt sie. `daten/` ist
+        // mit Absicht nicht signiert (siehe die Probe darueber).
+        std::fs::write(p.ordner.join("anleitung.md"), b"Kern").unwrap();
+        assert!(pruefe(&p).is_ok(), "der Ausgangsstand gilt");
+        for datei in ["anleitung.md", "bin/beispiel", crate::BESCHREIBUNG] {
+            let pfad = p.ordner.join(datei);
+            let echt = std::fs::read(&pfad).unwrap();
+            for i in 0..echt.len() {
+                let mut b = echt.clone();
+                b[i] ^= 0x01;
+                std::fs::write(&pfad, &b).unwrap();
+                assert!(pruefe(&p).is_err(), "{datei}, Byte {i}: unbemerkt");
+            }
+            std::fs::write(&pfad, &echt).unwrap();
+        }
+        assert!(pruefe(&p).is_ok(), "zurueck auf dem Ausgangsstand");
     }
 
     #[test]

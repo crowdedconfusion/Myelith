@@ -174,6 +174,10 @@ const ZWEIG_BYTES_HOECHSTENS: usize = 256 * 1024 * 1024;
 /// Nachrechnen, und wer einen falschen Zweig anbietet, soll das nicht
 /// wiederholt auslösen können.
 const ZWEIG_SPERRE: std::time::Duration = std::time::Duration::from_secs(600);
+/// Wie lange eine Aufnahme oder Teilanfrage hoechstens an den Gruppenwurzeln
+/// des Archivabschnitts weiterrechnet (Scheiben statt eines Stillstands je
+/// Periode, siehe [`crate::kette::Kette::gruppenwurzeln_vorarbeiten`]).
+const GRUPPENWURZELN_JE_AUFNAHME: std::time::Duration = std::time::Duration::from_millis(20);
 
 /// Höchstens `n` Gegenstellen ab `ab`, reihum, und wo die nächste Runde
 /// beginnt. Nach `ceil(len / n)` Runden war jede einmal dabei.
@@ -2461,6 +2465,34 @@ impl Knoten {
         }
     }
 
+    /// Behauptet nach dem eigenen Block eine erfundene Höhe, wenn die Rolle
+    /// das will (Fund 634): dieselbe Kopie, so viele Blöcke weiter, mit
+    /// passender Epoche und einem unbekannten Vorgänger, neu unterschrieben.
+    /// Für die Ehrlichen „passt sie nicht an“, und nur die Schranke der Höhe
+    /// hält sie davon ab, ihr nachzufordern.
+    async fn hoehe_uebertreiben(&mut self, _block: &myl_consensus::block::Block) {
+        #[cfg(feature = "konsensrollen")]
+        if self.rollen.hoehe_uebertreiben > 0 {
+            let mut erfunden = _block.clone();
+            erfunden.header.height = erfunden.header.height.saturating_add(self.rollen.hoehe_uebertreiben);
+            erfunden.header.epoch = myl_consensus::block::epoche_fuer_hoehe(erfunden.header.height);
+            erfunden.header.prev_block_hash = myl_types::Hash::from_bytes([0x63; 32]);
+            let Some(k) = self.kette.erzeugerschluessel().cloned() else {
+                return;
+            };
+            let Ok(signatur) = k.signiere(&erfunden.erzeugernachricht()) else {
+                return;
+            };
+            erfunden.unterschrift = Some(myl_consensus::block::Erzeugerunterschrift { schluessel: k.oeffentlich(), signatur });
+            if let Ok(daten) = borsh::to_vec(&erfunden) {
+                let ok = self.veroeffentliche(GossipTopic::Blocks, daten).await;
+                self.protokoll.schreibe(
+                    Eintrag::neu("hoehe_uebertrieben").zahl("hoehe", erfunden.header.height as i64).zahl("echt", _block.header.height as i64).wahr("verbreitet", ok),
+                );
+            }
+        }
+    }
+
     /// Baut einen Block, sobald jemand zuhört; `None` heißt, es hört noch
     /// niemand zu, und es wurde nichts gebaut.
     async fn block_wenn_jemand_hoert(&mut self) -> Option<bool> {
@@ -2617,6 +2649,7 @@ impl Knoten {
             None => true,
         };
         self.doppelt_erzeugen(&block).await;
+        self.hoehe_uebertreiben(&block).await;
         // ⚑ **Dann der Zeuge, in unterschriebenen Stücken**, für die
         //   zustandslosen Knoten; ohne Abonnenten geht er nirgends hin.
         let hash = self.kette.letzter_hash();
@@ -3418,10 +3451,21 @@ impl Knoten {
         // Erhebung wie der Protokolleintrag, im selben Augenblick.
         // Zwei getrennte Erhebungen liefen auseinander, und dann sagte
         // das Protokoll etwas anderes als der Endpunkt.
+        // Die eigene Rolle, wie die Kette sie fuehrt (CLIENT 2.2).
+        let (epoche, rolle_miner, rolle_validator) = {
+            let ich = self.miner_ich();
+            let e = self.kette.zustand().epoch.0;
+            let miner = ich.is_some_and(|i| self.kette.zustand().miner.contains_key(&i));
+            let validator = ich.is_some_and(|i| self.kette.finalitaetssatz(e).is_some_and(|v| v.contains(&i)));
+            (e, u64::from(miner), u64::from(validator))
+        };
         self.beobachtungsstelle.setzen(crate::beobachtung::Beobachtungsstand {
             anker: self.kette.anker_zum_weitergeben().map(|a| a.als_text()),
             stand_ms: crate::protokoll::jetzt_ms().max(0) as u64,
             hoehe: self.kette.hoehe(),
+            epoche,
+            rolle_miner,
+            rolle_validator,
             hoechste_gehoerte: self.hoechste_gehoerte,
             peers: z.peers as u64,
             wartend: self.kette.wartend() as u64,
@@ -4272,11 +4316,19 @@ impl Knoten {
                         None => Some((Nachlieferung::Nichts, 0)),
                     },
                     // ⚑ **Ein Teil für einen Splitter** (Stufe A7): nur gegen
-                    //   die geltende Teilwurzel des laufenden Abschnitts.
-                    Some(Nachforderung::Teil { grenze, stelle, teil }) => match self.kette.teilstueck(grenze, stelle, teil) {
-                        Some((stueck, beweis)) => Some((Nachlieferung::Teil { grenze, stueck, beweis }, 0)),
-                        None => Some((Nachlieferung::Nichts, 0)),
-                    },
+                    //   die geltende Teilwurzel des laufenden Abschnitts, und
+                    //   erst, wenn die Gruppenwurzeln fertig sind; bis dahin
+                    //   rechnet jede Anfrage eine Scheibe weiter.
+                    Some(Nachforderung::Teil { grenze, stelle, teil }) => {
+                        if self.kette.gruppenwurzeln_vorarbeiten(GRUPPENWURZELN_JE_AUFNAHME) {
+                            match self.kette.teilstueck(grenze, stelle, teil) {
+                                Some((stueck, beweis)) => Some((Nachlieferung::Teil { grenze, stueck, beweis }, 0)),
+                                None => Some((Nachlieferung::Nichts, 0)),
+                            }
+                        } else {
+                            Some((Nachlieferung::Nichts, 0))
+                        }
+                    }
                     // ⚑ **Ein Stück einer Datei des Netzmodells** (P11): nur,
                     //   was das eigene Manifest nennt.
                     Some(Nachforderung::Datei { name, ab, laenge }) => {
@@ -5511,6 +5563,7 @@ impl Knoten {
         self.einsatz_pflegen(&ich);
         self.auszahlung_pflegen(&ich);
         self.archiv_belegen(&ich);
+        self.gruppenwurzeln_vorarbeiten(&ich);
         self.teilwurzel_nennen(&ich);
         self.teil_belegen(&ich);
         self.teile_holen(&ich);
@@ -5629,11 +5682,26 @@ impl Knoten {
         }
     }
 
+    /// ⚑ **Die Gruppenwurzeln in Scheiben** (Archivknoten): Kopien und
+    /// Halter, bei denen Splitter ihre Teile holen, rechnen sie je Aufnahme
+    /// höchstens [`GRUPPENWURZELN_JE_AUFNAHME`] weiter, statt einmal je
+    /// Periode den Ereignisweg für Sekunden anzuhalten.
+    fn gruppenwurzeln_vorarbeiten(&mut self, ich: &myl_types::ids::MinerId) {
+        let a = &self.kette.zustand().archiv;
+        if a.teil_ab == a.teil_bis || !(a.ist_kopie(ich) || a.halter.contains(ich)) || self.kette.gruppenwurzeln_bereit() {
+            return;
+        }
+        self.kette.gruppenwurzeln_vorarbeiten(GRUPPENWURZELN_JE_AUFNAHME);
+    }
+
     /// ⚑ **Die Teilwurzel nennen** (Stufe A7): einmal je Abschnitt, als
-    /// Kopie mit Geschichte.
+    /// Kopie mit Geschichte, sobald die Gruppenwurzeln fertig sind.
     fn teilwurzel_nennen(&mut self, ich: &myl_types::ids::MinerId) {
         let a = &self.kette.zustand().archiv;
         if !a.ist_kopie(ich) || a.teilwurzel.is_some() || a.teilstimmen.contains_key(ich) {
+            return;
+        }
+        if !self.kette.gruppenwurzeln_bereit() {
             return;
         }
         if self.schon_gesendet("teilwurzel") {

@@ -258,11 +258,23 @@ mod tests {
         let k = probe("ein gutes Passwort");
         assert_eq!(*entschluesseln(&k, "ein gutes Passwort").unwrap(), [7; 32]);
         assert_eq!(entschluesseln(&k, "ein anderes Passwort").unwrap_err(), FALSCHES_PASSWORT);
-        let mut b = k.clone();
-        let mut m = b.crypto.cipher.message.into_bytes();
-        m[0] = if m[0] == b'0' { b'1' } else { b'0' };
-        b.crypto.cipher.message = String::from_utf8(m).unwrap();
-        assert_eq!(entschluesseln(&b, "ein gutes Passwort").unwrap_err(), FALSCHES_PASSWORT, "ein gekipptes Bit");
+        // Jede Stelle des Geheimtexts und der Pruefsumme, nicht nur die
+        // erste: Eine geaenderte Ziffer an irgendeiner Stelle faellt auf.
+        let kippen = |text: &str, i: usize| -> String {
+            let mut m = text.as_bytes().to_vec();
+            m[i] = if m[i] == b'0' { b'1' } else { b'0' };
+            String::from_utf8(m).unwrap()
+        };
+        for i in 0..k.crypto.cipher.message.len() {
+            let mut b = k.clone();
+            b.crypto.cipher.message = kippen(&k.crypto.cipher.message, i);
+            assert_eq!(entschluesseln(&b, "ein gutes Passwort").unwrap_err(), FALSCHES_PASSWORT, "Geheimtext, Stelle {i}");
+        }
+        for i in 0..k.crypto.checksum.message.len() {
+            let mut b = k.clone();
+            b.crypto.checksum.message = kippen(&k.crypto.checksum.message, i);
+            assert_eq!(entschluesseln(&b, "ein gutes Passwort").unwrap_err(), FALSCHES_PASSWORT, "Pruefsumme, Stelle {i}");
+        }
         let a = probe("ein gutes Passwort");
         assert_ne!(k.crypto.kdf.params, a.crypto.kdf.params, "das Salz ist neu");
         assert_ne!(k.crypto.cipher.params, a.crypto.cipher.params, "der IV ist neu");
@@ -317,5 +329,63 @@ mod tests {
     #[test]
     fn ein_kurzes_passwort_wird_abgewiesen() {
         assert!(verschluesseln(&[7; 32], &[1; 48], "m", "", "kurz").unwrap_err().contains("mindestens"));
+    }
+    /// ⚑ **Ein verstuemmelter Keystore scheitert sauber** (CLIENT 7.15, Parser
+    /// des Keystores): 1 500 Abwandlungen eines klein gerechneten Keystores
+    /// aus einem festen Generator, gekippte Zeichen, abgeschnittene Texte und
+    /// Grenzwerte in jedem KDF-Parameter. Keine darf abstuerzen oder
+    /// unbegrenzt rechnen; oeffnet sich eine, dann mit genau dem Geheimnis,
+    /// das darin steckt, ausser der IV ist veraendert: Den deckt die Pruefsumme
+    /// der Norm nicht, dann kommt ein anderes Geheimnis heraus, und erst der
+    /// Vergleich mit `pubkey` beim Entsperren faengt es (`wallet::entsperren`,
+    /// gefunden mit dieser Probe). Gegenprobe: Ein Teil laesst sich lesen und wird erst
+    /// beim Oeffnen abgewiesen, sonst prueft die Probe nur `serde_json`.
+    #[test]
+    fn ein_verstuemmelter_keystore_scheitert_sauber() {
+        let original = probe("ein gutes Passwort");
+        let gut = serde_json::to_string(&original).expect("Text");
+        let mut x = 0x2545_f491_4f6c_dd1du64;
+        let mut zufall = |n: usize| {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            (x % n as u64) as usize
+        };
+        let grenzwerte = ["0", "1", "3", "32", "4294967296", "18446744073709551615", "-1", "1e9", "\"16\"", "null"];
+        let felder = ["\"n\":", "\"r\":", "\"p\":", "\"dklen\":", "\"c\":", "\"version\":"];
+        let (mut gelesen, mut abgewiesen) = (0, 0);
+        for runde in 0..1_500 {
+            let mut t = gut.clone();
+            match runde % 3 {
+                0 => {
+                    let mut b = t.into_bytes();
+                    let i = zufall(b.len());
+                    b[i] = b"0123456789abcdef\"{}[],:xz "[zufall(26)];
+                    t = String::from_utf8_lossy(&b).into_owned();
+                }
+                1 => {
+                    let ende = zufall(t.len());
+                    t.truncate(ende);
+                }
+                _ => {
+                    let feld = felder[zufall(felder.len())];
+                    if let Some(ab) = t.find(feld) {
+                        let ab = ab + feld.len();
+                        let bis = ab + t[ab..].find([',', '}']).unwrap_or(0);
+                        t.replace_range(ab..bis, grenzwerte[zufall(grenzwerte.len())]);
+                    }
+                }
+            }
+            let Ok(k) = serde_json::from_str::<Keystore>(&t) else { continue };
+            gelesen += 1;
+            match entschluesseln(&k, "ein gutes Passwort") {
+                Ok(geheim) if k.crypto.cipher.params.iv != original.crypto.cipher.params.iv => {
+                    let _ = geheim;
+                }
+                Ok(geheim) => assert_eq!(*geheim, [7; 32], "ein anderes Geheimnis aus {t}"),
+                Err(_) => abgewiesen += 1,
+            }
+        }
+        assert!(gelesen > 0 && abgewiesen > 0, "gelesen {gelesen}, abgewiesen {abgewiesen}");
     }
 }

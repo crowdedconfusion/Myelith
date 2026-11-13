@@ -93,6 +93,24 @@ kernel void nachlauf(device int32_t *c         [[buffer(0)]],
     aus[b * zeilen + z] = int16_t(clamp(y, int64_t(-32768), int64_t(32767)));
 }
 
+// W8A8: Die Eingaben kommen schon in int8, `produkt` rechnet je Eingabe
+// eine Zeile von C, ohne Zerlegung und ohne Zeilensummen. Hier wird nur
+// umskaliert und geklemmt, wie in `nachlauf`.
+kernel void nachlauf_a8(device int32_t *c         [[buffer(0)]],
+                        device int8_t  *abstaende [[buffer(1)]],
+                        device int16_t *aus       [[buffer(2)]],
+                        constant Nachlaufform &f  [[buffer(3)]],
+                        uint2 ort [[thread_position_in_grid]]) {
+    int64_t z = int64_t(ort.x);
+    int64_t b = int64_t(ort.y);
+    int64_t zeilen = int64_t(f.zeilen);
+    if (z >= zeilen || b >= int64_t(f.stapel)) {
+        return;
+    }
+    int64_t y = umskalieren(int64_t(c[b * zeilen + z]), int(abstaende[z]));
+    aus[b * zeilen + z] = int16_t(clamp(y, int64_t(-32768), int64_t(32767)));
+}
+
 // ---------------------------------------------------------------------------
 // Ternaere Gewichte im Buendel: 2-Bit-Codes und ein Betrag je 128 Eingaenge.
 //

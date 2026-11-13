@@ -52,6 +52,9 @@ myl: lokaler Betrieb von Myelith
   myl skills [neu NAME]           Skills: wo sie liegen, was da ist; neu legt einen aus der Vorlage an
   myl anhaenge [--aufraeumen]     Angehaengte Dateien: was liegt, und weg damit
   myl sinne [datei|--sprich TEXT] Sehen, Hoeren, Sprechen: was geht, und eine Probe
+  myl bild <datei> [--frage TEXT] [--genau]   Ein Bild in Worte fassen
+  myl buch <datei> [--ziel ORDNER] [--modell ARTEFAKT]   Aus einem Werk wird ein Skill
+  myl scan --auftrag <datei>      Gescannte Seiten und Abbildungen lesen (fuer myl buch)
   myl plan [artefakt]             Wie der Dispatcher diese Maschine belegen wuerde: Agent, Sehen, Hoeren
   myl eichen [artefakt]           Misst, was Agent, Sehen und Hoeren hier wirklich belegen (fuer den Plan)
   myl kennzeichen <datei.wav>     Prueft, ob eine Tondatei als KI-erzeugt gekennzeichnet ist
@@ -191,6 +194,9 @@ fn myl_hauptteil(args: &[String]) -> i32 {
         Some("skills") => skills(&args[2..]),
         Some("anhaenge") => anhaenge(&args[2..]),
         Some("sinne") => sinne(&args[2..]),
+        Some("bild") => bild(&args[2..]),
+        Some("scan") => scan(&args[2..]),
+        Some("buch") => buch(&args[2..]),
         Some("plan") => plan_befehl(&args[2..]),
         Some("eichen") => eichen_befehl(&args[2..]),
         Some("kennzeichen") => kennzeichen(&args[2..]),
@@ -260,7 +266,7 @@ fn frage_ueber_die_tuer(args: &[String], i: usize, e: &Einstellungen) -> i32 {
     let anfang = std::time::Instant::now();
     match klient.chat("myelith", &[Nachricht::nutzer(text)], Some(token)) {
         Ok(a) => {
-            println!("{}", a.text);
+            println!("{}", myl_client::terminal::fuer_ausgabe(&a.text));
             eprintln!(
                 "[myl] über die Tür: {} Token hinein, {} heraus, {:.1} s, Beleg {}{}",
                 a.prompt_token,
@@ -623,11 +629,9 @@ fn wallet(args: &[String]) -> i32 {
         Some("verlauf") => wallet::laden(name).and_then(|w| {
             let zeilen = wallet::verlauf(&w.adresse)?;
             for z in &zeilen {
-                let gegen = myl_types::adresstext::aus_text(&z.gegen, myl_types::adresstext::PRAEFIX_TESTNETZ)
-                    .map_or(String::new(), |a| format!(" {} {}", if z.ausgehend { "an" } else { "von" }, myl_types::adresstext::als_text(&a, myl_types::adresstext::PRAEFIX_TESTNETZ)));
-                println!("Höhe {:>8}  {:<13}{}{}", z.hoehe, z.art, if z.betrag > 0 { format!(" {} MYL", mining::myl_text(z.betrag)) } else { String::new() }, gegen);
+                println!("{}", z.text());
             }
-            println!("{} Einträge aus den gehaltenen Blöcken des Knotens. Im Block heißt nicht gelungen; Prägungen stehen hier nicht.", zeilen.len());
+            println!("{} Einträge. {}", zeilen.len(), wallet::VERLAUF_GRENZE);
             Ok(())
         }),
         Some("waehle") => wallet::waehlen(name).map(|w| {
@@ -663,7 +667,7 @@ fn wallet(args: &[String]) -> i32 {
             w.adresse_text()
         );
         if let Some(k) = stand_von(&w) {
-            zeile.push_str(&format!("  {} MYL, {} Credits, Nonce {}", mining::myl_text(k.guthaben), k.credits, k.nonce));
+            zeile.push_str(&format!("  {} MYL, {} Credits, {} gesendet", mining::myl_text(k.guthaben), k.credits, wallet::gesendet(k.nonce)));
         }
         if Some(&w.name) == eingetragen.as_ref() {
             zeile.push_str("  (Auszahlungskonto)");
@@ -1005,10 +1009,10 @@ fn ohne_wert(f: &myl_client::einstellungen::Feld) -> String {
 
 /// **`myl kennzeichen`: traegt eine Tondatei die KI-Kennzeichnung?**
 ///
-/// ⚑ Beide Marken einzeln (Art. 50 Abs. 2 KI-Verordnung): die Metadaten
-/// und das Wasserzeichen im Signal. Rueckgabe null, wenn eine von beiden
-/// gefunden ist; eins, wenn keine; zwei bei einem Fehler. So kann ein
-/// Skript es abfragen.
+/// ⚑ Alle Marken einzeln (Art. 50 Abs. 2 KI-Verordnung): die Metadaten, das
+/// signierte Manifest nach C2PA und das Wasserzeichen im Signal. Rueckgabe
+/// null, wenn eine davon gefunden ist; eins, wenn keine; zwei bei einem
+/// Fehler. So kann ein Skript es abfragen.
 fn kennzeichen(args: &[String]) -> i32 {
     let Some(datei) = args.first() else {
         eprintln!("myl kennzeichen braucht eine Datei");
@@ -1017,6 +1021,14 @@ fn kennzeichen(args: &[String]) -> i32 {
     match myl_senses::kennzeichnung::pruefen(std::path::Path::new(datei)) {
         Ok(b) => {
             println!("Metadaten (IPTC trainedAlgorithmicMedia): {}", if b.metadaten { "ja" } else { "nein" });
+            let c2pa_gueltig = b.herkunft == myl_senses::kennzeichnung::Herkunft::Gueltig;
+            match &b.herkunft {
+                myl_senses::kennzeichnung::Herkunft::Fehlt => println!("Signierte Herkunft (C2PA): nein"),
+                myl_senses::kennzeichnung::Herkunft::Gueltig => {
+                    println!("Signierte Herkunft (C2PA): ja, KI-erzeugt, Ton und Angaben unveraendert (Signierer nicht auf der C2PA-Vertrauensliste)")
+                }
+                myl_senses::kennzeichnung::Herkunft::Ungueltig(f) => println!("Signierte Herkunft (C2PA): ungueltig, {f}"),
+            }
             let hundertstel = |x: i64| format!("{}{},{:02}", if x < 0 { "-" } else { "" }, x.abs() / 100, x.abs() % 100);
             println!(
                 "Wasserzeichen: {} (Korrelation {} am Anfang, {} gesucht, in Standardabweichungen)",
@@ -1024,7 +1036,7 @@ fn kennzeichen(args: &[String]) -> i32 {
                 hundertstel(b.am_anfang),
                 hundertstel(b.gesucht)
             );
-            if b.metadaten || b.wasserzeichen() { 0 } else { 1 }
+            if b.metadaten || c2pa_gueltig || b.wasserzeichen() { 0 } else { 1 }
         }
         Err(f) => {
             eprintln!("myl kennzeichen: {f}");
@@ -1328,6 +1340,216 @@ fn probeton() -> Vec<u8> {
     b.extend_from_slice(&daten.to_le_bytes());
     b.resize(44 + daten as usize, 0);
     b
+}
+
+/// Das Werkzeug liegt im Programm, damit eine Installation ohne Klon es auch hat.
+const BOOK2SKILL: &str = include_str!("../../../../AGENT_LAYER/werkzeuge/book2skill.py");
+
+/// Ein Python ab 3.9, in der Reihenfolge der Systeme.
+fn python_finden() -> Option<&'static str> {
+    ["python3", "python", "py"].into_iter().find(|p| {
+        std::process::Command::new(p).arg("-c").arg("import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)").output().is_ok_and(|a| a.status.success())
+    })
+}
+
+/// **`myl buch`: aus einem Werk wird ein Skill**, nach `.AGENT/skills` des
+/// Arbeitsordners oder, ohne Arbeitsordner, zu den eigenen Skills.
+fn buch(args: &[String]) -> i32 {
+    let Some(datei) = args.first().filter(|a| !a.starts_with("--")) else {
+        eprintln!("myl buch <datei> [--ziel ORDNER] [--literatur ORDNER] [--modell ARTEFAKT | --ohne-modell] [--schrift NAME] [--sprache de|en | --ohne-uebersetzung] [--uebersetzer ARTEFAKT] [--scan-immer] [--keine-bilder]");
+        return 2;
+    };
+    let e = match Einstellungen::lesen(&Einstellungen::vorgabepfad()) {
+        Ok(e) => e,
+        Err(m) => {
+            eprintln!("myl buch: {m}");
+            return 1;
+        }
+    };
+    let Some(python) = python_finden() else {
+        eprintln!("myl buch: es braucht Python ab 3.9, gefunden wurde keines");
+        return 4;
+    };
+    let mut rest: Vec<String> = args[1..].to_vec();
+    // Ohne Arbeitsordner gilt der, in dem das Programm gerufen wurde.
+    let wurzel = e.agent.wurzel.as_ref().map(std::path::PathBuf::from).or_else(|| std::env::current_dir().ok()).unwrap_or_default();
+    let ziel = match rest.iter().position(|a| a == "--ziel") {
+        Some(i) if i + 1 < rest.len() => {
+            let z = rest.remove(i + 1);
+            rest.remove(i);
+            std::path::PathBuf::from(z)
+        }
+        Some(_) => {
+            eprintln!("myl buch: --ziel braucht einen Ordner");
+            return 2;
+        }
+        None => wurzel.join(myl_local_agent::buchwerkzeug::SKILLORDNER),
+    };
+    if !rest.iter().any(|a| a == "--literatur") {
+        rest.extend(["--literatur".to_string(), wurzel.join(myl_local_agent::buchwerkzeug::LITERATUR).display().to_string()]);
+    }
+    // ⚑ Das eingestellte Modell verdichtet, ausser es wurde ein anderes oder keines verlangt.
+    match rest.iter().position(|a| a == "--ohne-modell") {
+        Some(i) => {
+            rest.remove(i);
+        }
+        None if !rest.iter().any(|a| a == "--modell") => {
+            if let (Some(a), _) = artefakt_und_rest(&[], &e) {
+                rest.extend(["--modell".to_string(), a]);
+            }
+        }
+        None => {}
+    }
+    // ⚑ Uebersetzen kann ein eigenes kleines Modell, wenn es hier liegt; es ist rund dreimal so schnell.
+    if !rest.iter().any(|a| a == "--uebersetzer" || a == "--ohne-uebersetzung") {
+        let ordner = myl_client::modelle::UEBERSETZER_ORDNER;
+        match myl_client::modelle::kandidaten(&e).into_iter().find(|k| std::path::Path::new(&k.pfad).file_name().is_some_and(|n| n == ordner)) {
+            Some(k) => rest.extend(["--uebersetzer".to_string(), k.pfad]),
+            None => eprintln!("[myl buch] Das Übersetzungsmodell {ordner} liegt hier nicht; es lässt sich in der Modellwahl holen. Bis dahin übersetzt das eingestellte Modell, langsamer."),
+        }
+    }
+    // ⚑ Das Werk liegt danach auch in der Sprache des Nutzers vor, und der Skill entsteht daraus.
+    if !rest.iter().any(|a| a == "--sprache" || a == "--ohne-uebersetzung") {
+        rest.extend(["--sprache".to_string(), e.oberflaeche.sprache.kennung().to_string()]);
+    }
+    let skript = myl_senses::laufwerk::heimat().join("bin").join("book2skill.py");
+    let schreiben = || -> std::io::Result<()> {
+        if let Some(o) = skript.parent() {
+            std::fs::create_dir_all(o)?;
+        }
+        std::fs::create_dir_all(&ziel)?;
+        std::fs::write(&skript, BOOK2SKILL)
+    };
+    if let Err(f) = schreiben() {
+        eprintln!("myl buch: {f}");
+        return 1;
+    }
+    let Ok(selbst) = std::env::current_exe() else {
+        eprintln!("myl buch: das eigene Programm ist nicht zu finden");
+        return 1;
+    };
+    if let Some(k) = e.kapazitaet.kerne {
+        rest.extend(["--kerne".to_string(), k.to_string()]);
+    }
+    let status = std::process::Command::new(python)
+        .arg(&skript)
+        .arg(datei)
+        .arg(&ziel)
+        .arg("--myl")
+        .arg(&selbst)
+        .args(&rest)
+        .env("PYTHONUTF8", "1")
+        .env("PYTHONDONTWRITEBYTECODE", "1")
+        .status();
+    match status {
+        Ok(s) => s.code().unwrap_or(1),
+        Err(f) => {
+            eprintln!("myl buch: {f}");
+            1
+        }
+    }
+}
+
+/// **Gescannte Seiten und Abbildungen lesen**, der Auftrag kommt von `book2skill`.
+#[cfg(feature = "scan")]
+fn scan(args: &[String]) -> i32 {
+    if let Some(pdf) = wert(args, "--seitenzahl") {
+        return match std::fs::read(&pdf).map_err(|f| f.to_string()).and_then(myl_scan::seitenzahl) {
+            Ok(n) => {
+                println!("{n}");
+                0
+            }
+            Err(m) => {
+                eprintln!("myl scan: {m}");
+                1
+            }
+        };
+    }
+    let Some(auftrag) = wert(args, "--auftrag") else {
+        eprintln!("myl scan --auftrag <datei> | --seitenzahl <pdf>");
+        return 2;
+    };
+    match myl_scan::ausfuehren(std::path::Path::new(&auftrag)) {
+        Ok(myl_scan::Ende::Fertig) => 0,
+        // ⚑ **3 heisst: eine Seite hing** und liegt als unlesbar im
+        //   Arbeitsordner. Der Faden, der sie rendert, laesst sich nicht
+        //   anhalten; erst das Ende des Prozesses (`main` ruft `exit`) stoppt
+        //   ihn. `book2skill` ruft dann neu auf und setzt nach ihr fort.
+        Ok(myl_scan::Ende::Haengt(n)) => {
+            eprintln!("myl scan: Seite {n} rendert laenger als erlaubt, als unlesbar abgelegt; ein neuer Aufruf setzt fort");
+            3
+        }
+        Err(m) => {
+            eprintln!("myl scan: {m}");
+            1
+        }
+    }
+}
+
+#[cfg(not(feature = "scan"))]
+fn scan(_args: &[String]) -> i32 {
+    eprintln!("myl scan: dieses Programm ist ohne die Erkennung gebaut");
+    5
+}
+
+/// **Ein Bild in Worte fassen**, derselbe Weg wie im Chat und im Werkzeug.
+///
+/// ⚑ `--genau` nimmt nur das genaue Sehmodell und endet sonst mit 4, damit ein
+/// Skript nicht still bei dem kleinen landet, das Grafiken nicht lesen kann.
+fn bild(args: &[String]) -> i32 {
+    let frage = wert(args, "--frage");
+    let genau = args.iter().any(|a| a == "--genau");
+    let Some(datei) = args
+        .iter()
+        .enumerate()
+        .find(|(i, a)| !a.starts_with("--") && !(*i > 0 && args[*i - 1] == "--frage"))
+        .map(|(_, a)| a)
+    else {
+        eprintln!("myl bild: es fehlt die Datei");
+        return 2;
+    };
+    let frage = frage.unwrap_or_else(|| myl_senses::sehen::VORGABEFRAGE.to_string());
+    let e = match Einstellungen::lesen(&Einstellungen::vorgabepfad()) {
+        Ok(e) => e,
+        Err(m) => {
+            eprintln!("myl bild: {m}");
+            return 1;
+        }
+    };
+    if let Some(satz) = myl_client::schutzfilter::abweisen(&frage, e.oberflaeche.sprache, "myl-bild") {
+        eprintln!("{satz}");
+        return 3;
+    }
+    let s = myl_senses::Sinne::finden();
+    let sehen = match s.sehen.as_ref() {
+        Ok(z) => z,
+        Err(m) => {
+            eprintln!("myl bild: {}", m.bericht());
+            return 4;
+        }
+    };
+    if genau && sehen.genau.is_none() {
+        eprintln!("myl bild: kein genaues Sehmodell gefunden");
+        return 4;
+    }
+    let stufe = if genau { myl_senses::Stufe::Genau } else { myl_senses::Stufe::Schnell };
+    let zeug = sehen.fuer(stufe);
+    // ⚑ Dieselbe Pruefung wie im Agenten: Passt das Sehmodell gerade nicht, bleibt es aus.
+    let gewichte = [&zeug.modell, &zeug.projektor].iter().map(|p| std::fs::metadata(p).map_or(0, |m| m.len())).sum();
+    if let Err(m) = myl_client::oertlich::sehen_passt(gewichte) {
+        eprintln!("{m}");
+        return 4;
+    }
+    match myl_senses::sehen::beschreiben(zeug, std::path::Path::new(datei), &frage) {
+        Ok(t) => {
+            println!("{t}");
+            0
+        }
+        Err(m) => {
+            eprintln!("myl bild: {m}");
+            1
+        }
+    }
 }
 
 fn sinne(args: &[String]) -> i32 {
@@ -1725,7 +1947,7 @@ fn verlauf(args: &[String]) -> i32 {
         };
         return match verlauf::zeilen(pfad, zahlen[0], zahlen[1]) {
             Ok(t) => {
-                print!("{t}");
+                print!("{}", myl_client::terminal::fuer_ausgabe(&t));
                 0
             }
             Err(f) => {
@@ -2218,7 +2440,7 @@ fn frage(args: &[String]) -> i32 {
     };
     match m.chat("lokal", &[Nachricht::system(grundsaetze), Nachricht::nutzer(text)], Some(m.grenze as u32)) {
         Ok(a) => {
-            println!("{}", a.text);
+            println!("{}", myl_client::terminal::fuer_ausgabe(&a.text));
             saat_nennen(if m.waehlt_gierig() { None } else { m.letzte_saat() });
             // ⚑ Die Zahlen auf den Fehlerkanal, damit die Antwort
             // weiterverarbeitbar bleibt.
@@ -2277,6 +2499,17 @@ fn offene_fragen(eingabe: &str, erledigt: &std::collections::HashSet<String>) ->
 ///
 /// ⛔️ Dieselben Grundsaetze und derselbe Schutzfilter wie bei `frage`, je
 /// Frage. Eine abgewiesene Frage bekommt eine Zeile mit `fehler`.
+/// 📌 Ein Uebersetzungsmodell kennt keine Rolle: Mit den Grundsaetzen schrieb es
+/// Ueberlegungen oder Saetze ueber Myelith statt der Uebersetzung.
+fn fragen_nachrichten(grundsaetze: Option<&str>, vorspann: &str, text: &str) -> Vec<Nachricht> {
+    let mut n: Vec<Nachricht> = grundsaetze.map(|g| Nachricht::system(g.to_string())).into_iter().collect();
+    if !vorspann.trim().is_empty() {
+        n.push(Nachricht::nutzer(vorspann.to_string()));
+    }
+    n.push(Nachricht::nutzer(text.to_string()));
+    n
+}
+
 fn fragen(args: &[String]) -> i32 {
     use std::io::Write;
     let e = match Einstellungen::lesen(&Einstellungen::vorgabepfad()) {
@@ -2333,18 +2566,14 @@ fn fragen(args: &[String]) -> i32 {
             return 1;
         }
     };
+    let ohne_grundsaetze = args.iter().any(|a| a == "--ohne-grundsaetze");
     let beginn = std::time::Instant::now();
     for (i, (id, vorspann, text)) in offen.iter().enumerate() {
         let anfang = std::time::Instant::now();
         let zeile = match myl_client::schutzfilter::abweisen(text, e.oberflaeche.sprache, "myl-fragen") {
             Some(satz) => myl_client::serde_json::json!({"id": id, "fehler": satz}),
             None => match m.chat("lokal", &{
-                let mut n = vec![Nachricht::system(grundsaetze.clone())];
-                if !vorspann.trim().is_empty() {
-                    n.push(Nachricht::nutzer(vorspann.clone()));
-                }
-                n.push(Nachricht::nutzer(text.clone()));
-                n
+                fragen_nachrichten((!ohne_grundsaetze).then_some(grundsaetze.as_str()), vorspann, text)
             }, Some(m.grenze as u32)) {
                 Ok(a) => myl_client::serde_json::json!({"id": id, "antwort": a.text, "prompt_token": a.prompt_token, "antwort_token": a.antwort_token, "millisekunden": anfang.elapsed().as_millis() as u64}),
                 Err(f) => myl_client::serde_json::json!({"id": id, "fehler": f.to_string()}),
@@ -2628,7 +2857,7 @@ fn sitzung(args: &[String]) -> i32 {
 fn zeigen(nachrichten: &[myl_local_agent::tuerklient::Nachricht], roh: bool) {
     if roh {
         for n in nachrichten {
-            println!("[{}] {}", n.role, n.content);
+            println!("[{}] {}", n.role, myl_client::terminal::fuer_ausgabe(&n.content));
         }
         return;
     }
@@ -2649,22 +2878,22 @@ fn zeigen(nachrichten: &[myl_local_agent::tuerklient::Nachricht], roh: bool) {
                     // wegzulassen zeigte nur, DASS etwas gerufen wurde.
                     let dazwischen = myl_local_agent::lauf::ohne_aufrufe(&n.content);
                     if !dazwischen.is_empty() {
-                        println!("  {dazwischen}");
+                        println!("  {}", myl_client::terminal::fuer_ausgabe(&dazwischen));
                     }
                     for r in &rufe {
                         match r {
-                            Ok(v) => println!("  → {} {}", v.name, myl_local_agent::lauf::kurzform(&v.arguments)),
-                            Err(u) => println!("  → unlesbarer Aufruf: {}", u.roh),
+                            Ok(v) => println!("  → {} {}", v.name, myl_client::terminal::fuer_ausgabe(&myl_local_agent::lauf::kurzform(&v.arguments))),
+                            Err(u) => println!("  → unlesbarer Aufruf: {}", myl_client::terminal::fuer_ausgabe(&u.roh)),
                         }
                     }
                 }
             }
-            "tool" => println!("  ← {}", myl_local_agent::lauf::eine_zeile(&n.content, 100)),
+            "tool" => println!("  ← {}", myl_client::terminal::fuer_ausgabe(&myl_local_agent::lauf::eine_zeile(&n.content, 100))),
             _ => {}
         }
     }
     match letzte {
-        Some(t) if !t.is_empty() => println!("{t}"),
+        Some(t) if !t.is_empty() => println!("{}", myl_client::terminal::fuer_ausgabe(t)),
         // ⚑ **Kein stilles Nichts.** Ein Lauf ohne Schlussantwort ist
         // ein Befund: Das Modell ist in Werkzeugaufrufen steckengeblieben
         // oder an der Schrittgrenze gelandet.
@@ -3162,6 +3391,14 @@ mod fragen_tests {
     use super::*;
 
     #[test]
+    fn fragen_laesst_die_grundsaetze_auf_wunsch_weg() {
+        let mit = fragen_nachrichten(Some("Regeln"), "", "Text");
+        assert_eq!(mit.iter().map(|n| n.role.as_str()).collect::<Vec<_>>(), ["system", "user"]);
+        let ohne = fragen_nachrichten(None, "Vorspann", "Text");
+        assert_eq!(ohne.iter().map(|n| n.role.as_str()).collect::<Vec<_>>(), ["user", "user"]);
+    }
+
+    #[test]
     fn fragen_setzt_fort_und_meldet_unlesbares() {
         let eingabe = "{\"id\": \"a\", \"text\": \"Eins\"}\n\n{\"id\": \"b\", \"text\": \"Zwei\"}\n";
         let erledigt = beantwortet("{\"id\": \"a\", \"antwort\": \"x\"}\nkaputt\n");
@@ -3367,7 +3604,7 @@ fn schleife(args: &[String]) -> i32 {
         match ev {
             Ereignis::Beginnt { kennung, ziel, runde } => eprintln!("\n[myl] {kennung}, Runde {runde}: {ziel}"),
             Ereignis::Geendet { vorhaben, bericht, pruefung, saat } => {
-                println!("{}", bericht.trim());
+                println!("{}", myl_client::terminal::fuer_ausgabe(bericht.trim()));
                 saat_nennen(saat);
                 if let Some(p) = pruefung {
                     eprintln!("[myl] Prüfung: Fortschritt {}, erreicht {}. {}", ja_nein(p.fortschritt), ja_nein(p.erreicht), p.grund);

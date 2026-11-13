@@ -342,3 +342,9 @@ in Arbeit.
   arbeitest; das verlangt die KI-Verordnung der EU.
 - **Selbstprobe:** Im Startmenü startet **GolemOS Selbstprobe** das
   System, prüft, ob Myelith antwortet, und schaltet wieder ab.
+- **Lizenzen und Quellen:** GolemOS besteht zum großen Teil aus freier
+  Software, darunter Teile unter der GPL. Die Lizenztexte von Myelith
+  liegen im System unter `/usr/share/doc/myelith/`. Zu jedem
+  freigegebenen Abbild gehört ein Verzeichnis aller Pakete mit ihren
+  Lizenzen (`lizenzen-<arch>.tar.xz`, neben dem Abbild) und ein Archiv
+  mit ihren Quellen, das derselben Freigabe beiliegt.

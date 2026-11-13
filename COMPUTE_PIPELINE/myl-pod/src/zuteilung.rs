@@ -8,10 +8,12 @@
 //! überführte: Die Schnittstelle stand auf beiden Seiten, die
 //! Verdrahtung dazwischen fehlte.
 //!
-//! [`epochenwechsel_aus_zuteilung`] speist eine fertige Zuteilung in
-//! eine laufende Besetzung. **Gerechnet wird sie nicht hier**, sondern
-//! einmal in `myl_scheduler::zuteilung_der_epoche`; warum, steht in der
-//! Notiz weiter unten.
+//! [`ist_besetzbar`] und [`besetzungsreihenfolge`] uebersetzen eine
+//! fertige Zuteilung in die Reihenfolge einer Besetzung. **Gerechnet wird
+//! sie nicht hier**, sondern einmal in `myl_scheduler::zuteilung_der_epoche`;
+//! warum, steht in der Notiz weiter unten. Den Epochenwechsel selbst
+//! fuehrt der Knoten aus der Kette (`myl_node::shardfuehrung`), einen
+//! Auftrag ueber die Grenze rechnet das Podwerk neu (Fund 649).
 //!
 //! # ⚑ Was beim Zusammenstecken auffiel (Entscheidung D3)
 //!
@@ -26,7 +28,7 @@
 //! Reserve, und ein Cluster liefert so viele vollständige Pods, wie
 //! hineinpassen. Dieses Modul ist seither eine **Übersetzung** und keine
 //! Brücke über einen Widerspruch: Die Reihenfolge, die
-//! [`PodBesetzung::neu`] erwartet, ist genau
+//! [`crate::standby::PodBesetzung::neu`] erwartet, ist genau
 //! `myl_scheduler::Pod::mitglieder`.
 //!
 //! # ⚑ Die Zuteilung wird hier nicht mehr gerechnet (Punkt 43)
@@ -43,7 +45,7 @@
 use myl_scheduler::shard_assignment::{Pod, Zuteilung};
 use myl_types::ids::{EpochId, MinerId};
 
-use crate::standby::{BesetzungFehler, PodBesetzung, RebuildAuftrag};
+use crate::standby::BesetzungFehler;
 
 /// Was beim Planen oder Übersetzen einer Zuteilung schiefgehen kann.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -122,7 +124,7 @@ impl From<BesetzungFehler> for ZuteilungFehler {
 // eigener Punkt und keine Sache dieses Moduls.
 
 /// Die Mitglieder eines Pods in der Reihenfolge, die
-/// [`PodBesetzung::neu`] erwartet: erst die Positionen, dann die
+/// [`crate::standby::PodBesetzung::neu`] erwartet: erst die Positionen, dann die
 /// Reserve.
 ///
 /// Seit der Entscheidung D3 ist das genau `Pod::mitglieder`; die
@@ -215,30 +217,10 @@ pub fn netzreserve_aus_zuteilung_gestaffelt(
     )
 }
 
-/// Führt den Epochenwechsel aus einer Scheduler-Zuteilung aus.
-///
-/// Gibt die Rebuild-Aufträge der gewechselten Positionen zurück.
-pub fn epochenwechsel_aus_zuteilung(
-    besetzung: &mut PodBesetzung,
-    pods: &[Pod],
-    pod_index: u32,
-    neue_epoche: EpochId,
-    aktuelle_position: u64,
-    layer_grenzen: &[(u64, u64)],
-) -> Result<Vec<(usize, RebuildAuftrag)>, ZuteilungFehler> {
-    let pod = pod_aus_zuteilung(pods, pod_index)?;
-    let reihenfolge = ist_besetzbar(pod, besetzung.positionen())?;
-    Ok(besetzung.epochenwechsel(
-        neue_epoche,
-        &reihenfolge,
-        aktuelle_position,
-        layer_grenzen,
-    )?)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::standby::PodBesetzung;
     use myl_scheduler::miner_filter::{HardwareClass, MinerRegistration};
     use myl_scheduler::zonenzuteilung::zuteilung_der_epoche;
     use myl_scheduler::shard_assignment::{assign_shards, pod_groesse, RESERVE_JE_POD};
@@ -329,83 +311,6 @@ mod tests {
                 vorhanden: 1
             }
         );
-    }
-
-    // ── Der Epochenwechsel ──────────────────────────────────────────
-
-    #[test]
-    fn ein_epochenwechsel_aus_der_zuteilung_liefert_die_auftraege() {
-        let alt = pod(4, 6, 0, 7);
-        let mut besetzung =
-            PodBesetzung::neu(4, &besetzungsreihenfolge(&alt), EpochId(5)).expect("Besetzung");
-
-        // Andere Epoche, anderer Seed, andere Zuteilung.
-        let neu = pod(4, 6, 0, 9);
-        let grenzen = [(0u64, 7u64), (7, 14), (14, 21), (21, 28)];
-        let auftraege = epochenwechsel_aus_zuteilung(
-            &mut besetzung,
-            std::slice::from_ref(&neu),
-            0,
-            EpochId(6),
-            42,
-            &grenzen,
-        )
-        .expect("Wechsel");
-
-        for (pos, auftrag) in &auftraege {
-            assert_eq!(
-                (auftrag.layer_start, auftrag.layer_end),
-                grenzen[*pos],
-                "Position {pos} bekam fremde Layergrenzen"
-            );
-            assert_eq!(auftrag.bis_position, 42);
-        }
-        assert_eq!(besetzung.epoche(), EpochId(6));
-    }
-
-    #[test]
-    fn eine_unveraenderte_zuteilung_erzeugt_keine_auftraege() {
-        // Ein Rebuild ist teuer, und einer ohne Anlass ist verschenkte
-        // Rechenzeit.
-        let p = pod(4, 6, 0, 7);
-        let mut besetzung =
-            PodBesetzung::neu(4, &besetzungsreihenfolge(&p), EpochId(5)).expect("Besetzung");
-        let grenzen = [(0u64, 7u64), (7, 14), (14, 21), (21, 28)];
-        let auftraege = epochenwechsel_aus_zuteilung(
-            &mut besetzung,
-            std::slice::from_ref(&p),
-            0,
-            EpochId(6),
-            42,
-            &grenzen,
-        )
-        .expect("Wechsel");
-        assert!(auftraege.is_empty(), "{} Aufträge ohne Anlass", auftraege.len());
-    }
-
-    #[test]
-    fn ein_wechsel_auf_eine_falsche_zuteilung_scheitert_ohne_schaden() {
-        // ⚑ Der wichtige Teil ist „ohne Schaden": Ein Pod, der beim
-        // gescheiterten Wechsel seine Besetzung verliert, ist schlimmer
-        // dran als vorher.
-        let gut = pod(4, 6, 0, 7);
-        let mut besetzung =
-            PodBesetzung::neu(4, &besetzungsreihenfolge(&gut), EpochId(5)).expect("Besetzung");
-        let vorher = besetzung.belegung().to_vec();
-
-        let falsch = pod(3, 5, 0, 9);
-        let grenzen = [(0u64, 7u64), (7, 14), (14, 21), (21, 28)];
-        assert!(epochenwechsel_aus_zuteilung(
-            &mut besetzung,
-            std::slice::from_ref(&falsch),
-            0,
-            EpochId(6),
-            42,
-            &grenzen,
-        )
-        .is_err());
-        assert_eq!(besetzung.belegung(), &vorher[..], "die Besetzung wurde beschädigt");
-        assert_eq!(besetzung.epoche(), EpochId(5), "die Epoche sprang trotzdem");
     }
 
     // ── Der volle Bogen: von der Kette zum Pod ──────────────────────

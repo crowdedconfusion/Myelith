@@ -1,12 +1,13 @@
 # compliance
 
-> **Version:** 0.6.6
-> **Datum:** 2026-10-26
+> **Version:** 0.9.2
+> **Datum:** 2026-11-12
 > **Status:** Die Pflichten aus der KI-Verordnung sind dokumentiert und,
 > soweit technisch, umgesetzt; die Einordnung Artikel für Artikel steht in
 > der [Selbsteinschätzung](../de/Selbsteinschaetzung.md). Offen: ein
-> C2PA-Manifest, die maschinenlesbare Kennzeichnung geschriebener Texte,
-> die Lizenz der Schrift der Wortmarke und eine anwaltliche Prüfung.
+> Signierer auf der C2PA-Vertrauensliste, die maschinenlesbare
+> Kennzeichnung geschriebener Texte, die Lizenz der Schrift der Wortmarke
+> und eine anwaltliche Prüfung.
 
 Alles, was Myelith gegenüber dem Recht zusagt und nachweist. Die
 öffentliche Einstiegsseite ist [`../README.md`](../README.md); hier steht,
@@ -38,6 +39,72 @@ Schutzfilter (`CLIENT/myl-client/src/schutzfilter.rs`), Notaus
 (`AGENT_LAYER/local-agent/src/notaus.rs`).
 
 ## Changelog
+
+### v0.9.2 (2026-11-12): die Originale von whisper im Katalog
+
+- Der eigene Hörweg (`MYL_HOEREN=eigen`) liest die Originalgewichte von
+  whisper large-v3-turbo (MIT), small und base (je Apache 2.0). Sie stehen
+  jetzt in `fremdkomponenten.json`, geprüft am 2026-11-12 über die
+  Hugging-Face-API; je Größe sind die fünf gelesenen Dateien gegen die
+  Dateiliste der Revision abgeglichen. Das Einrichtungsskript holt sie mit
+  Revision und Prüfsumme. `NOTICES.md` neu erzeugt.
+
+### v0.9.1 (2026-11-11): CosyVoice aus dem Katalog, Qwen3-TTS darin
+
+- Mit dem Entfernen von CosyVoice aus dem Client (CLIENT 0.219.0) fallen
+  die Einträge des Sprechmodells und seines Quelltexts aus
+  `fremdkomponenten.json` und `MODELS/audio/LIZENZEN.json`. Neu im Katalog:
+  Qwen3-TTS-12Hz-0.6B-Base (Apache 2.0 ohne Zusatz, vom
+  Einrichtungsskript geholt, geprüft am 2026-11-11 an Modellkarte und
+  Repositorium). `NOTICES.md` neu erzeugt.
+- Damit ist der Lizenzvorbehalt der Modellkarte von CosyVoice 3 („nur für
+  akademische Zwecke“) für die Auslieferung gegenstandslos: Es wird weder
+  ausgeliefert noch empfohlen.
+
+### v0.9.0 (2026-11-11): Synthetische Stimme in zwei Schichten, Entfernen untersagt
+
+- **Selbsteinschätzung, Art. 50 Abs. 2** (de und en): die Stimme in den
+  zwei Schichten des Verhaltenskodex der Kommission vom 2026-06-10,
+  signierte Metadaten (C2PA 2.2, Ed25519, je Datei ein frischer Schlüssel)
+  und ein Wasserzeichen, das der Stimme folgt; öffentliche, kostenlose
+  Erkennung mit `myl kennzeichen`; Herkunftsangaben erhalten nicht
+  einschlägig, weil Myelith keine fremden Medien verändert. ⚠️ Der Signierer
+  steht nicht auf der C2PA-Vertrauensliste; das ist jetzt der offene Punkt 1
+  statt des Manifests.
+- **Zweckbestimmung, Abschnitt 2.3** (de und en): Untersagt ist jetzt
+  jedes absichtliche Entfernen, Verändern oder Unkenntlichmachen der
+  Kennzeichnung (Metadaten, Manifest, Wasserzeichen), nicht nur das
+  Entfernen, um Inhalte als echt auszugeben, wie der Kodex es verlangt.
+  Abschnitt 3: Kennzeichnung der Stimme beschrieben, öffentliche Erkennung
+  als eigene Maßnahme.
+
+### v0.8.0 (2026-11-11): Die Lizenzprobe prüft auch die Sinne
+
+- Die Gewichte für Hören, Sprechen und Sehen kommen als einzelne Dateien
+  und werden umbenannt; ihre Lizenzangabe steht jetzt je Rubrik in
+  `MODELS/audio/LIZENZEN.json` und `MODELS/vision/LIZENZEN.json` (Quelle,
+  Revision, Lizenz), die Lizenztexte versioniert daneben. Am Original
+  nachgesehen: whisper large-v3-turbo MIT, SmolVLM2-2.2B, Qwen3-VL-4B und
+  Fun-CosyVoice3-0.5B Apache 2.0.
+- `lizenzprobe.py` prüft beide Rubriken: jede liegende Datei steht im
+  Katalog, jeder Eintrag hat seine Lizenzdatei, deren Text ist die
+  genannte Lizenz und trägt keine Sperre. Gegenproben: eine fremde Datei
+  und eine falsch genannte Lizenz, beide rot. Der Abschlusssatz nennt
+  `audio` und `vision` jetzt als geprüft.
+- ⚠️ Die Modellkarte von CosyVoice 3 nennt neben Apache 2.0 einen
+  Haftungsausschluss („nur für akademische Zwecke“). Er ist keine
+  Lizenzbedingung, gehört aber vor einer Auslieferung geklärt; die Probe
+  nennt ihn als Hinweis.
+
+### v0.7.1 (2026-11-10): Arabisches Zeilennetz statt PP-OCR
+
+- Das eingebaute Lesemodell für arabische Schrift stammt jetzt aus tessdata_fast (Apache-2.0); `NOTICES.md` und `DRITTLIZENZEN.txt` neu erzeugt.
+
+### v0.7.0 (2026-11-10): Die Lizenztexte reisen mit jeder Auslieferung (Fund 685)
+
+- **`DRITTLIZENZEN.txt`** (`werkzeuge/lizenztexte.py`, von der CI geprüft): die Lizenztexte aller Rust-Kisten aus dem Vorrat, die Änderungsvermerke der eingebauten Modelle nach Apache-2.0 §4(b), Pakete ohne eigene Datei mit Autoren und Standardwortlaut.
+- **In jedem Bündel:** Fenster, macOS-Skript, CLI-Freigaben und GolemOS-Schicht tragen `LICENSE.md`, `NOTICES.md` und die Texte. Der Bau des Fensters bricht ab, wenn eine fehlt.
+- **Die Schrift der Wortmarke ist heraus.** Eine Lizenz, die das Weitergeben erlaubt, ließ sich nicht belegen.
 
 ### v0.6.6 (2026-10-26): BIP-39-Wortliste unter den Daten
 

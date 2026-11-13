@@ -94,6 +94,17 @@ struct Vorrat {
     summen: Option<Puffer>,
     /// Die Summen der Eingaben je Gruppe, nur fuer vier Bit.
     xsummen: Option<Puffer>,
+    /// ⚑ **Die vier Puffer der int8-Buendel** (2026-11-11). Bis dahin legte
+    /// [`Kontext::rechnen_viele`] sie je Aufruf frisch an, und jede ihrer
+    /// Seiten kostete beim ersten Zugriff der CPU einen Seitenfehler:
+    /// abgetastet beim Encoder von whisper ein Viertel der Kernzeit allein
+    /// im Lesen der Ausgabe. Jeder der vier wird vor dem Rechnen ganz
+    /// beschrieben (Eingaben und Abstaende von der CPU, Teilprodukte und
+    /// Ausgaben vom Shader), ein alter Inhalt bleibt also nie stehen.
+    eingaben: Option<Puffer>,
+    teile: Option<Puffer>,
+    abstaende: Option<Puffer>,
+    ausgaben: Option<Puffer>,
 }
 
 // SAFETY: Ein `MTLBuffer` darf von jedem Faden benutzt werden; nicht
@@ -121,6 +132,7 @@ struct Kontext {
     schlange: Retained<ProtocolObject<dyn MTLCommandQueue>>,
     produkt: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
     nachlauf: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    nachlauf_a8: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
     entpacken: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
     gruppenprodukt: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
     nachlauf_breit: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
@@ -193,6 +205,28 @@ pub(super) fn bereit() -> Result<(), Ohne> {
 #[cfg(test)]
 pub(super) fn direkt(xs: &[&[i16]], w: &[i8], in_features: usize, abstaende: &[i8]) -> Option<Result<Vec<Vec<i16>>, String>> {
     kontext().map(|k| k.rechnen(xs, w, in_features, abstaende))
+}
+
+/// [`stapel_a8`] ohne Zaehler, fuer die Pruefungen.
+#[cfg(test)]
+pub(super) fn direkt_a8(xs: &[&[i8]], w: &[i8], in_features: usize, abstaende: &[i8]) -> Option<Result<Vec<Vec<i16>>, String>> {
+    kontext().map(|k| k.rechnen_a8(xs, w, in_features, abstaende))
+}
+
+/// **W8A8 auf der GPU** (siehe [`Kontext::rechnen_a8`]), oder `None`: Dann
+/// rechnet die CPU dieselbe Zahl.
+pub(super) fn stapel_a8(xs: &[&[i8]], w: &[i8], in_features: usize, abstaende: &[i8]) -> Option<Vec<Vec<i16>>> {
+    let k = kontext()?;
+    match k.rechnen_a8(xs, w, in_features, abstaende) {
+        Ok(aus) => {
+            super::GERECHNET.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            Some(aus)
+        }
+        Err(grund) => {
+            eprintln!("⚠️ Metal: {grund}; dieses W8A8-Buendel rechnet die CPU");
+            None
+        }
+    }
 }
 
 pub(super) fn grund() -> Option<String> {
@@ -295,6 +329,7 @@ impl Kontext {
         };
         let produkt = pipeline("produkt")?;
         let nachlauf = pipeline("nachlauf")?;
+        let nachlauf_a8 = pipeline("nachlauf_a8")?;
         let entpacken = pipeline("entpacken")?;
         let gruppenprodukt = pipeline("gruppenprodukt")?;
         let nachlauf_breit = pipeline("nachlauf_breit")?;
@@ -307,6 +342,7 @@ impl Kontext {
             schlange,
             produkt,
             nachlauf,
+            nachlauf_a8,
             entpacken,
             gruppenprodukt,
             nachlauf_breit,
@@ -711,6 +747,83 @@ impl Kontext {
         Ok(aus.pop().unwrap_or_default())
     }
 
+    /// **W8A8**: Eingaben schon in int8, also eine Zeile von X je Eingabe und
+    /// ein einziges `matmul2d`, ohne die Zerlegung in zwei Stellen und ohne
+    /// die Zeile der Zeilensummen; danach nur Umskalieren und Klemmen
+    /// (`nachlauf_a8`). Die Puffer kommen aus demselben Vorrat wie bei
+    /// [`Self::rechnen_viele`].
+    ///
+    /// ⚑ **int32 genuegt je Produkt** wie dort: `|w|, |x| ≤ 128`, also
+    /// `|W·x| ≤ spalten · 16 384`, unter `2³¹` bis zur
+    /// `HOECHSTE_SPALTENZAHL`.
+    fn rechnen_a8(&self, xs: &[&[i8]], w: &[i8], spalten: usize, abstaende: &[i8]) -> Result<Vec<Vec<i16>>, String> {
+        let (zeilen, stapel) = (abstaende.len(), xs.len());
+        if zeilen == 0 || stapel == 0 {
+            return Ok(vec![Vec::new(); stapel]);
+        }
+        let zu_gross = |n: usize| n > i32::MAX as usize;
+        if zu_gross(stapel * spalten) || zu_gross(stapel * zeilen * 4) || zu_gross(zeilen * spalten) {
+            return Err(format!("{zeilen} x {spalten} bei {stapel} Eingaben sprengt die Indizes des Shaders"));
+        }
+        if xs.iter().any(|x| x.len() != spalten) || w.len() != zeilen * spalten {
+            return Err("Eingaben oder Gewichte passen nicht zur Form".into());
+        }
+        let mut vorrat = self.sperre.lock().unwrap_or_else(|e| e.into_inner());
+        let (gew, versatz) = self.gewichtspuffer(w)?;
+        let x = self.arbeitspuffer(&mut vorrat.eingaben, stapel * spalten)?;
+        let c = self.arbeitspuffer(&mut vorrat.teile, stapel * zeilen * 4)?;
+        let abst = self.arbeitspuffer(&mut vorrat.abstaende, zeilen)?;
+        let aus = self.arbeitspuffer(&mut vorrat.ausgaben, stapel * zeilen * 2)?;
+        // SAFETY: Die Puffer gehoeren fuer die Dauer der Sperre nur diesem
+        // Aufruf und sind gross genug; die GPU rechnet erst nach `commit`.
+        unsafe {
+            let ziel = std::slice::from_raw_parts_mut(x.contents().as_ptr() as *mut i8, stapel * spalten);
+            for (b, eingabe) in xs.iter().enumerate() {
+                ziel[b * spalten..(b + 1) * spalten].copy_from_slice(eingabe);
+            }
+            std::ptr::copy_nonoverlapping(abstaende.as_ptr(), abst.contents().as_ptr() as *mut i8, zeilen);
+        }
+        let puffer = self.schlange.commandBuffer().ok_or("kein Befehlspuffer")?;
+        let kodierer = puffer.computeCommandEncoder().ok_or("kein Kodierer")?;
+        let breite = self.produkt.threadExecutionWidth() * SIMD_GRUPPEN;
+        kodierer.setComputePipelineState(&self.produkt);
+        let form = Produktform { zeilen: zeilen as i32, spalten: spalten as i32, eingaben: stapel as i32 };
+        // SAFETY: Die Indizes entsprechen den `[[buffer(n)]]` des Shaders,
+        // die Versaetze liegen in den Puffern, `setBytes` kopiert die Form.
+        unsafe {
+            kodierer.setBuffer_offset_atIndex(Some(&gew), versatz, 0);
+            kodierer.setBuffer_offset_atIndex(Some(&x), 0, 1);
+            kodierer.setBuffer_offset_atIndex(Some(&c), 0, 2);
+            kodierer.setBytes_length_atIndex(NonNull::from(&form).cast(), std::mem::size_of::<Produktform>(), 3);
+        }
+        kodierer.dispatchThreadgroups_threadsPerThreadgroup(
+            MTLSize { width: zeilen.div_ceil(KACHEL_ZEILEN), height: stapel.div_ceil(KACHEL_EINGABEN), depth: 1 },
+            MTLSize { width: breite, height: 1, depth: 1 },
+        );
+        kodierer.setComputePipelineState(&self.nachlauf_a8);
+        let nform = Nachlaufform { zeilen: zeilen as i32, stapel: stapel as i32 };
+        // SAFETY: wie oben.
+        unsafe {
+            kodierer.setBuffer_offset_atIndex(Some(&c), 0, 0);
+            kodierer.setBuffer_offset_atIndex(Some(&abst), 0, 1);
+            kodierer.setBuffer_offset_atIndex(Some(&aus), 0, 2);
+            kodierer.setBytes_length_atIndex(NonNull::from(&nform).cast(), std::mem::size_of::<Nachlaufform>(), 3);
+        }
+        kodierer.dispatchThreads_threadsPerThreadgroup(
+            MTLSize { width: zeilen, height: stapel, depth: 1 },
+            MTLSize { width: 32.min(zeilen), height: 8.min(stapel), depth: 1 },
+        );
+        kodierer.endEncoding();
+        puffer.commit();
+        puffer.waitUntilCompleted();
+        if let Some(fehler) = puffer.error() {
+            return Err(format!("Befehlspuffer gescheitert: {}", fehler.localizedDescription()));
+        }
+        // SAFETY: Der Befehlspuffer ist fertig; `aus` haelt `stapel * zeilen` int16.
+        let werte = unsafe { std::slice::from_raw_parts(aus.contents().as_ptr() as *const i16, stapel * zeilen) };
+        Ok(werte.chunks_exact(zeilen).map(|z| z.to_vec()).collect())
+    }
+
     /// **Viele Stapel in einem Befehlspuffer.**
     ///
     /// ⚑ **Warum** (2026-09-14): Ein Befehlspuffer kostet 0,2 bis 0,3 ms fest,
@@ -748,14 +861,14 @@ impl Kontext {
         }
         let leer = |job: &Job<'_>| job.abstaende.is_empty() || job.xs.is_empty();
 
-        let _allein = self.sperre.lock().unwrap_or_else(|e| e.into_inner());
+        let mut vorrat = self.sperre.lock().unwrap_or_else(|e| e.into_inner());
 
         let gewichte: Vec<(Puffer, usize)> =
             jobs.iter().map(|j| self.gewichtspuffer(j.w)).collect::<Result<_, _>>()?;
-        let x = self.neuer_puffer(gx)?;
-        let c = self.neuer_puffer(gc)?;
-        let abst = self.neuer_puffer(ga)?;
-        let aus = self.neuer_puffer(go)?;
+        let x = self.arbeitspuffer(&mut vorrat.eingaben, gx)?;
+        let c = self.arbeitspuffer(&mut vorrat.teile, gc)?;
+        let abst = self.arbeitspuffer(&mut vorrat.abstaende, ga)?;
+        let aus = self.arbeitspuffer(&mut vorrat.ausgaben, go)?;
 
         // SAFETY: Alle Puffer sind frisch und gehoeren nur diesem Aufruf; jeder
         // Auftrag schreibt nur in seinen Abschnitt `lage.x .. lage.x + (2b+1)
@@ -938,6 +1051,33 @@ impl Kontext {
                     "{}: {zeilen} x {spalten} bei {stapel} Eingaben weicht ab, zuerst Eingabe {b}, Zeile {z}: GPU {} gegen CPU {}",
                     fall.name, gpu[b][z], cpu[b][z]
                 ));
+            }
+        }
+
+        // ⚑ **W8A8 gegen die CPU**: die Raender beider Seiten (-128, 127),
+        // Kachelraender, alle Faelle der Umskalierung; der kleine Fall laeuft
+        // zweimal, damit auch die wiederverwendeten Puffer geprueft sind.
+        for (nummer, &(zeilen, spalten, stapel)) in
+            [(67usize, 9_728usize, 17usize), (130, 1_003, 33), (3, 5, 2), (3, 5, 2)].iter().enumerate()
+        {
+            let w: Vec<i8> = (0..zeilen * spalten)
+                .map(|i| if nummer == 0 { if (i / spalten) % 2 == 0 { -128 } else { 127 } } else { zufall() as i8 })
+                .collect();
+            let eingaben: Vec<Vec<i8>> = (0..stapel)
+                .map(|b| (0..spalten).map(|_| if nummer == 0 { if b % 2 == 0 { -128 } else { 127 } } else { zufall() as i8 }).collect())
+                .collect();
+            let xs: Vec<&[i8]> = eingaben.iter().map(|e| e.as_slice()).collect();
+            let w_shifts: Vec<u8> = (0..zeilen).map(|z| [9u8, 3, 0, 0][z % 4]).collect();
+            let ziele: Vec<u8> = (0..zeilen).map(|z| [0u8, 0, 11, 12][z % 4]).collect();
+            let act = 11u8;
+            let abstaende: Vec<i8> = (0..zeilen).map(|z| (w_shifts[z] + act) as i8 - ziele[z] as i8).collect();
+            let gpu = self.rechnen_a8(&xs, &w, spalten, &abstaende)?;
+            let cpu = crate::linear::linear_w8a8_pc_stapel_cpu(&xs, &w, spalten, &w_shifts, act, &ziele);
+            if gpu != cpu {
+                return Err(format!("W8A8: {zeilen} x {spalten} bei {stapel} Eingaben weicht ab"));
+            }
+            if nummer == 1 && gpu.iter().flatten().all(|v| *v == 0 || v.unsigned_abs() >= 32_767) {
+                return Err("W8A8: die Selbstpruefung rechnet nur Nullen oder Saettigung".into());
             }
         }
 

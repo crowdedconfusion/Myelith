@@ -1,7 +1,7 @@
 # testclient (`myl-testclient`)
 
-> **Version:** 0.68.14
-> **Datum:** 2026-11-09
+> **Version:** 0.69.5
+> **Datum:** 2026-11-12
 > **Status:** Phase 1 und **Phase 3 vollständig**, dazu Punkt 2.1
 > (`vergleich`), **2.2** (Backend-Vergleich innerhalb einer Maschine, seit
 > dem 2026-08-30) und 2.4 (`--repeat`); **Phase 4 vollständig** (4.3 die
@@ -543,6 +543,135 @@ COMPUTE_PIPELINE Phase 1: erstmals über einen aufrufbaren Befehl statt
 über einen Integrationstest.
 
 ## Changelog
+
+### v0.69.5 (2026-11-12): Das Probenetz baut seinen Knoten selbst
+
+- `probenetz.py bauen` baut `myl-node` für Linux im Behälter ohne Netz aus
+  dem Vorrat nach `/ziel/probenetz/release/myl-node`, und das ist jetzt der
+  Ort, den `starten` ohne `--programm` nimmt. 📌 Vorher stand dort ein Bau
+  vom Oktober (`/ziel/n0620`), den es im Volume nicht mehr gab; der
+  Behälter endete still, und mit `--rm` waren seine Protokolle weg.
+  `starten` prüft jetzt vorher, ob der Knoten da ist, und nennt sonst
+  `bauen`. Geprüft: fehlend (der Satz erscheint), gebaut (40 s), gestartet,
+  Stand, gestoppt.
+
+### v0.69.4 (2026-11-12): Die Protokolle der CI-Stufen bleiben unter `TMPDIR`
+
+- 📌 **`mktemp -d` ohne Vorlage übergeht `TMPDIR` unter macOS** und legt im
+  Temp-Ordner des Systems an. `kisten.sh` nahm es für die Protokolle von
+  `artefakte`, `auf_zuruf` und `konformitaet`; drei lokale Runden hatten
+  dort Protokolle hinterlassen. Jetzt `zwischenordner`, mit Vorlage unter
+  `${TMPDIR:-/tmp}`. Geprüft mit der Stufe `konformitaet` (24 Vektoren,
+  vier Abdrücke, Protokoll unter `TMPDIR`, kein neuer Ordner im
+  Temp-Ordner des Systems).
+
+### v0.69.3 (2026-11-12): Der Podlauf kennt den Höhenlügner
+
+- `podlauf.py --hoehe-uebertreiben <blöcke>`: m05 behauptet nach jedem
+  eigenen Block eine erfundene Höhe (`MYL_HOEHE_UEBERTREIBEN`, Knoten mit
+  `konsensrollen`). Die Auswertung zählt seine Behauptungen und die Zeilen
+  `hoehe_erfunden` bei allen anderen; ein Befund, wenn er behauptet und
+  niemand erkennt, oder wenn er nie gebaut hat.
+- Erster Lauf (zehn Miner, `--kurz --blocktakt 60 --phasen-ab 5600 --nur
+  trennung --hoehe-uebertreiben 200`, 13 Minuten): `Hoehenluegner k6
+  (+200): 279 erfundene Hoehen verbreitet, erkannt bei 10 von 10 Knoten`,
+  `Fertig: bestanden`.
+
+### v0.69.2 (2026-11-11): Ergebnisse über Hardware bleiben
+
+- **`BENCHMARKS/Inferenz/kreuzhardware.py`** hält je Konformitätslauf
+  Fassung, Vektorsatz (SHA-256 über alle Vektordateien), Plattform, Art
+  (nativ oder emuliert), Rechenweg und Ergebnis in
+  `results/kreuzhardware.jsonl` fest und erzeugt daraus
+  `results/kreuzhardware.md`. Bestätigt ist ein Vektorsatz, sobald er auf
+  zwei Architekturen voll besteht; steht eine nur emuliert da, sagt das
+  Urteil es dazu.
+- Aufgenommen: macOS aarch64 (`reference`, `cpu-simd`, `metal`), Linux
+  aarch64 im Behälter und Linux x86_64 im Behälter unter Rosetta (je
+  `reference` und `cpu-simd`, x86_64 mit AVX2), alle 55/55, Behälter ohne
+  Netz auf dem Stand des Tages. Urteil: bestätigt über aarch64 und x86_64,
+  x86_64 nur emuliert. ⚠️ Echte x86_64-Hardware bleibt offen.
+- Gegenproben in einem Zwischenordner: zwei Ergebniszeilen in einer
+  Ausgabe abgewiesen, 54/55 als nicht voll markiert, eine Architektur
+  allein nicht bestätigt.
+- `myl-testclient` 0.69.2.
+
+### v0.69.1 (2026-11-11): `kisten.sh artefakte` fährt, was sonst nur von Hand lief
+
+- Nach den vier Kisten der Gruppe `artefakt` fährt `artefakte` jetzt den
+  vollen Konformitätslauf je Rechenweg (`reference`, `cpu-simd`, unter
+  macOS `metal`; verlangt wird das volle Ergebnis, etwa 55/55, ein Weg ohne
+  eigenen Pfad auf der Maschine meldet `entfaellt`) und die Mehrknoten- und
+  die Chaosprobe der Pipeline (`INTEGER_LLM/tests/integration` und
+  `tests/chaos`, mit dem Auslieferungsbau, den die Probendatei verlangt).
+  Vorher liefen diese nur von Hand.
+- Gefahren: 4 Kisten ohne Absprung, Konformität dreimal 55/55 (Metal mit
+  280 Bündelungen auf der GPU), Mehrknoten bitgleich, Chaos bestanden;
+  Rückgabe 0 in rund 15 Minuten. Gegenprobe der Auswertung: ein Ergebnis
+  54/55 gilt nicht als voll.
+- `myl-testclient` 0.69.1.
+
+### v0.69.0 (2026-11-10): Ein Pod aus Klienten
+
+- **Neue Probe `tests/pod_aus_klienten.rs`:** Dreizehn Miner entstehen
+  so, wie ein Mensch sie startet, je ein abgeschirmter Klient mit eigenem
+  Wallet über `myl wallet wiederherstellen`, `myl wallet waehle` und
+  `myl mining start`. Die Probe baut keinen ihrer Knoten selbst; nur der
+  Einstieg läuft in ihrem Prozess, damit sie die Kette lesen kann.
+- **Der lange Lauf** (gut eine halbe Stunde, die Probekette läuft nach der
+  Uhr): Die Kette bildet zwei Pods mit je vier Positionen und zwei
+  Reserven, ein Klient bleibt ohne Pod, und die beiden Pods sind
+  Zwillinge. Jede Position hält genau einen Shard und führt die Netzlast,
+  die die Kette ihr zuteilt. Je Pod rechnet ein Koordinator über die
+  Relaisleitung eines Klienten; beide Ergebnisse gleichen Token für Token
+  dem, was dieselben Grenzen im Prozess rechnen. Die Bündel gehen über
+  dieselbe Leitung in die Kette, ein Klient kauft mit
+  `myl wallet credits` Credits aus seinem Wallet, und am Epochenwechsel
+  wächst das Wallet jeder Position um mehr als die Probeprägung. `myl
+  mining` zeigt dem Klienten den Stand, den die Kette führt.
+- **Gegenproben im Lauf:** Reserve und Klient ohne Pod halten keinen
+  Shard, führen keine Netzlast und bekommen genau die Probeprägung; ein
+  Bündel mit erhöhtem Anspruch scheitert am Aggregat; keine Fristsperre,
+  nichts zurückgehalten; nach `myl mining stop` lebt kein Prozess mehr.
+- **Der kurze Lauf** aus derselben Datei (unter einer Minute) fährt
+  davor: Dieselben dreizehn Klienten starten, melden sich an und hören
+  wieder auf. Sein Name steht im Alphabet vor dem langen, damit er zuerst
+  fährt, wenn die ganze Datei läuft.
+- Gemessen: kurzer Lauf 46,6 s; langer Lauf 1 807 s, Zuwachs der acht
+  Positionen 10,053122 bis 10,085605 MYL bei 10 MYL Probeprägung, die
+  fünf übrigen genau 10 MYL.
+- 📌 **Fund 698, an der Probe:** Ihr erster langer Lauf war rot an zwei
+  eigenen Annahmen. Die Kette teilt schon in der Epoche nach der
+  Anmeldung zu, nicht eine später. Und ein Shard, dessen Bereich und
+  Rolle über den Epochenwechsel gleich bleiben, läuft weiter, ohne dass
+  der Knoten einen Start vermerkt; die Probe zählte den Vermerk. Sie
+  wartet jetzt auf die erste Epoche mit Pods und misst an dem, was läuft.
+  ⚠️ Das Rechnen über einen Shard, der aus der Epoche davor in einen
+  anderen Pod mitgeht, fährt sie damit nicht.
+- **`.github/ci/kisten.sh lange`:** Proben mit `#[ignore]`, die an der Uhr
+  hängen statt am Speicher, stehen in `lange_proben` und fahren nur auf
+  Zuruf. Die Wache nimmt eine Datei mit `#[ignore]` an, wenn sie in einer
+  der beiden Listen steht; Gegenprobe ohne Eintrag: rot.
+- `myl-testclient` 0.69.0.
+
+### v0.68.15 (2026-11-10): Die Frist des Angleichens gilt dem Stillstand (Fund 697)
+
+- 📌 **Fund 697:** Der Netzlauf (`tests/netzlauf.rs`) wurde rot mit „zu
+  Beginn von Epoche 2 holten die Knoten nicht auf“, ein Knoten bei 3 585
+  von 3 668. Die Protokolle des Laufs zeigen keinen hängenden Knoten: Er
+  übernahm bis zuletzt Block um Block. Der Erzeuger baut die 3 600 Blöcke
+  bis Epoche 2 in rund 30 s, die fünfzehn Knoten laufen reihum je 25 ms
+  und holten in diesem Lauf nach 61 bis 125 s auf; die feste Frist stand
+  bei 120 s. Die Probe mass damit ihre eigene Taktung.
+- Jetzt läuft die Frist neu an, solange der hinterste Knoten wächst
+  (`Stillstandsfrist`); steht er die ganze Frist, ist es ein Befund wie
+  zuvor (die Klasse von Fund 618), und beim Fünffachen ist in jedem Fall
+  Schluss. Drei Proben der Fristlogik; Gegenproben mit fester Frist, ohne
+  Obergrenze und mit immer neu anlaufender Frist: jede rot.
+- Der Netzlauf danach sechsmal nacheinander: sechs von sechs grün (320 bis
+  500 s). ⚠️ Das belegt nicht, wie oft die alte Frist gerissen wäre; an
+  diesem Tag war es einer von zwei Läufen.
+- `myl-testclient` 0.68.15.
 
 ### v0.68.14 (2026-11-09): Warum eine Paarsitzung leer blieb
 

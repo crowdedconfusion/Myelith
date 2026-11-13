@@ -65,6 +65,11 @@ fn python(inhalt: &str) -> Urteil {
         std::process::id(),
         ZAEHLER.fetch_add(1, Ordering::Relaxed)
     ));
+    python_ueber(&datei, inhalt)
+}
+
+/// Wie [`python`], ueber die Zwischendatei `datei`, die es noch nicht geben darf.
+fn python_ueber(datei: &Path, inhalt: &str) -> Urteil {
     // 📌 **Fund 617 (2026-10-23): exklusiv angelegt.** Hier stand
     //    `fs::write`, und der Name ist vorhersagbar. Unter einem gemeinsamen
     //    `/tmp` haette ein anderer Nutzer dort einen Verweis auf eine Datei
@@ -75,7 +80,7 @@ fn python(inhalt: &str) -> Urteil {
     let angelegt = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
-        .open(&datei)
+        .open(datei)
         .and_then(|mut f| std::io::Write::write_all(&mut f, inhalt.as_bytes()));
     if angelegt.is_err() {
         return Urteil::Offen;
@@ -84,13 +89,13 @@ fn python(inhalt: &str) -> Urteil {
         try:\n    compile(open(sys.argv[1], encoding='utf-8').read(), 'datei', 'exec')\n\
         except SyntaxError as e:\n    print(f'{e.msg} (Zeile {e.lineno})')\n    sys.exit(3)\n";
     let mut befehl = std::process::Command::new("python3");
-    befehl.arg("-c").arg(PRUEFER).arg(&datei);
+    befehl.arg("-c").arg(PRUEFER).arg(datei);
     let urteil = match myl_senses::prozess::laufen(&mut befehl, 10, 2000) {
         Ok(a) if a.gut() => Urteil::Gut,
         Ok(a) if a.kode == Some(3) => Urteil::Fehler(format!("Python: {}", a.aus.trim())),
         _ => Urteil::Offen,
     };
-    let _ = std::fs::remove_file(&datei);
+    let _ = std::fs::remove_file(datei);
     urteil
 }
 
@@ -100,28 +105,26 @@ mod proben {
 
     /// ⚑ **Ein Verweis unter dem Namen der Zwischendatei wird nicht
     /// beschrieben** (Fund 617): Die Datei, auf die er zeigt, bleibt, wie
-    /// sie war.
+    /// sie war, und das Urteil ist offen.
+    ///
+    /// 📌 **Fund 690 (2026-11-10): Diese Probe belegte die naechsten 64
+    /// Namen des gemeinsamen Zaehlers mit Verweisen** und raeumte vorher weg,
+    /// was dort lag. Die Proben laufen nebeneinander: Wer in dem Augenblick
+    /// Python pruefte, bekam `Offen` statt eines Urteils, und
+    /// `die_wache_erkennt_python_und_json` fiel einmal von fuenf Laeufen.
+    /// Jetzt hat die Probe ihren eigenen Namen.
     #[cfg(unix)]
     #[test]
     fn ein_verweis_unter_dem_namen_wird_nicht_beschrieben() {
-        use std::sync::atomic::Ordering;
-        let opfer = std::env::temp_dir().join(format!("myl-syntaxwache-opfer-{}", std::process::id()));
+        let eigen = |art: &str| std::env::temp_dir().join(format!("myl-syntaxwache-{art}-{}", std::process::id()));
+        let (opfer, verweis) = (eigen("opfer"), eigen("verweis"));
         std::fs::write(&opfer, "unberuehrt").expect("anlegen");
-        // Die naechsten Namen der Wache vorweg als Verweise belegen.
-        let n = ZAEHLER.load(Ordering::Relaxed);
-        let mut verweise = Vec::new();
-        for k in n..n + 64 {
-            let v = std::env::temp_dir().join(format!("myl-syntaxwache-{}-{k}.py", std::process::id()));
-            let _ = std::fs::remove_file(&v);
-            if std::os::unix::fs::symlink(&opfer, &v).is_ok() {
-                verweise.push(v);
-            }
-        }
-        let _ = pruefen(Path::new("a.py"), "eingeschleust = 1\n");
+        let _ = std::fs::remove_file(&verweis);
+        std::os::unix::fs::symlink(&opfer, &verweis).expect("Verweis");
+        assert_eq!(python_ueber(&verweis, "eingeschleust = 1\n"), Urteil::Offen);
         assert_eq!(std::fs::read_to_string(&opfer).expect("lesen"), "unberuehrt");
-        for v in verweise {
-            let _ = std::fs::remove_file(v);
-        }
+        assert!(verweis.symlink_metadata().is_ok(), "was schon dort lag, raeumt die Wache nicht weg");
+        let _ = std::fs::remove_file(&verweis);
         let _ = std::fs::remove_file(&opfer);
     }
 

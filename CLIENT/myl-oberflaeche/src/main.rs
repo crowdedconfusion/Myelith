@@ -1475,8 +1475,9 @@ struct Halter {
     aufnahme: std::sync::Arc<Mutex<Option<myl_senses::aufnahme::Aufnahme>>>,
     /// ⛔️ **Das Sprechmodell bleibt geladen, ueber Antworten hinweg.**
     ///
-    /// CosyVoice braucht rund achtzehn Sekunden zum Laden. Ein Vorleser
-    /// je Antwort legt diese Zeit **vor jede** Antwort; gemeldet vom
+    /// Ein Sprechmodell braucht Sekunden zum Laden (CosyVoice damals rund
+    /// achtzehn). Ein Vorleser je Antwort legt diese Zeit **vor jede**
+    /// Antwort; gemeldet vom
     /// Projektinhaber am 2026-09-18 („braucht sehr lange nach der
     /// Textgenerierung um zu antworten"). Hier lebt er so lange wie das
     /// Fenster, und die Ladezeit faellt genau einmal an.
@@ -3122,19 +3123,6 @@ async fn stimme_vorwaermen(halter: tauri::State<'_, Halter>) -> Result<(), Strin
     Ok(())
 }
 
-/// **Schreibt den CosyVoice-Laeufer in die Heimat**, falls er fehlt.
-///
-/// ⛔️ **Nie ueberschrieben.** Wer ihn angepasst hat, hat ihn angepasst.
-#[tauri::command]
-fn sinne_einrichten() -> Result<String, String> {
-    let (pfad, geschrieben) = myl_senses::sprechen::laeufer_einrichten()?;
-    Ok(if geschrieben {
-        format!("Angelegt: {}", pfad.display())
-    } else {
-        format!("Liegt schon: {}", pfad.display())
-    })
-}
-
 /// Die ersten Bytes einer Datei, fuer die Artbestimmung.
 fn lies_anfang(p: &std::path::Path) -> Vec<u8> {
     use std::io::Read;
@@ -3281,6 +3269,47 @@ async fn skill_waehlen(app: tauri::AppHandle, titel: String) -> Result<Option<Sk
         satz: seite.satz,
         bytes: seite.bytes,
     }))
+}
+
+/// Der Dialog fuer „Buch lesen“: nur, was das Werkzeug versteht.
+#[tauri::command]
+async fn buch_waehlen(app: tauri::AppHandle, titel: String) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let endungen = ["pdf", "epub", "docx", "odt", "fb2", "html", "htm", "xhtml", "rtf", "md", "markdown", "txt"];
+    let Some(gewaehlt) = app.dialog().file().set_title(titel).add_filter("Buch", &endungen).blocking_pick_file() else {
+        return Ok(None);
+    };
+    Ok(Some(gewaehlt.simplified().into_path().map_err(|f| f.to_string())?.display().to_string()))
+}
+
+/// Laeuft ein Buch, wartet das naechste nicht in der zweiten Reihe.
+static BUCH_LAEUFT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// **Liest ein Buch und legt es als Skill ab**, im Arbeitsordner oder, ohne ihn, bei
+/// den eigenen Skills. Der Fortschritt kommt als `buch-zeile`.
+///
+/// ⛔️ **Kein Plaettchen danach**: Der Inhalt eines Buchs ist fremd und gehoert nicht
+/// in die Nachricht des Menschen. Der Agent findet ihn mit der Skillsuche, gekennzeichnet.
+#[tauri::command]
+async fn buch_lesen(fenster: tauri::AppHandle, datei: String, wurzel: Option<String>) -> Result<String, String> {
+    use std::sync::atomic::Ordering::SeqCst;
+    if BUCH_LAEUFT.swap(true, SeqCst) {
+        return Err("Es wird schon ein Buch gelesen.".into());
+    }
+    let e = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad()).ok();
+    let Some(ort) = wurzel.filter(|w| !w.trim().is_empty()).or_else(|| e.and_then(|e| e.agent.wurzel)) else {
+        BUCH_LAEUFT.store(false, SeqCst);
+        return Err("Wähle zuerst einen Arbeitsordner: Dort entsteht der Ordner literature.".into());
+    };
+    let erg = tauri::async_runtime::spawn_blocking(move || {
+        myl_local_agent::buchwerkzeug::lesen_mit_zeilen(std::path::Path::new(&datei), std::path::Path::new(&ort), |z| {
+            let _ = fenster.emit("buch-zeile", z.to_string());
+        })
+    })
+    .await
+    .map_err(|f| f.to_string());
+    BUCH_LAEUFT.store(false, SeqCst);
+    erg?
 }
 
 /// **Der Auftrag, den das Modell bekommt, wenn Skills anliegen**: die
@@ -3618,6 +3647,7 @@ fn main() {
             wallet_verwerfen,
             wallet_wiederherstellen,
             wallet_waehlen,
+            wallet_verlauf,
             einstieg_setzen,
             rechenwerke_auffrischen,
             mining_stand,
@@ -3633,10 +3663,11 @@ fn main() {
             sprechtaste_ende,
             stimme_setzen,
             stimme_entfernen,
-            sinne_einrichten,
             stimme_vorwaermen,
             datei_waehlen,
             skill_waehlen,
+            buch_waehlen,
+            buch_lesen,
             skill_auftrag,
             aktualisierung,
             aktualisieren,
@@ -4313,10 +4344,19 @@ struct Walletentwurf {
     abfrage: (usize, usize),
 }
 
+/// ⛔️ **Solange die Woerter offen sind, ist das Fenster vor Aufnahmen
+/// geschuetzt** (CLIENT 7.14): unter macOS `NSWindow.sharingType = none`,
+/// unter Windows `WDA_EXCLUDEFROMCAPTURE`; Bildschirmfotos und Freigaben
+/// zeigen dann eine leere Flaeche. Unter Linux gibt es das nicht, dort bleibt
+/// es beim Hinweis. Ein Fehler hier haelt nichts auf.
+fn woerterschutz(fenster: &tauri::WebviewWindow, an: bool) {
+    let _ = fenster.set_content_protected(an);
+}
+
 /// **Erster Schritt**: Name pruefen, wuerfeln, im Netz suchen. Hat die
 /// Adresse schon Spuren, wird nichts entworfen.
 #[tauri::command]
-async fn wallet_entwurf(name: String) -> Result<Walletentwurf, String> {
+async fn wallet_entwurf(fenster: tauri::WebviewWindow, name: String) -> Result<Walletentwurf, String> {
     use myl_client::wallet;
     let name = name.trim().to_string();
     wallet::name_pruefen(&name)?;
@@ -4326,6 +4366,7 @@ async fn wallet_entwurf(name: String) -> Result<Walletentwurf, String> {
         return Err(format!("{} Es wird nichts angelegt.", befund.satz()));
     }
     let abfrage = e.abfrage();
+    woerterschutz(&fenster, true);
     let antwort = Walletentwurf { woerter: e.woerter().to_vec(), befund: befund.satz(), abfrage };
     *ENTWURF.lock().map_err(|_| "Entwurf gesperrt")? = Some((name, e, abfrage));
     Ok(antwort)
@@ -4334,7 +4375,8 @@ async fn wallet_entwurf(name: String) -> Result<Walletentwurf, String> {
 /// **Zweiter Schritt**: „notiert" und die zwei Woerter; erst dann wird
 /// gespeichert. Stimmt etwas nicht, ist der Entwurf verworfen.
 #[tauri::command]
-async fn wallet_bestaetigen(notiert: bool, wort_a: String, wort_b: String) -> Result<String, String> {
+async fn wallet_bestaetigen(fenster: tauri::WebviewWindow, notiert: bool, wort_a: String, wort_b: String) -> Result<String, String> {
+    woerterschutz(&fenster, false);
     let (name, e, (a, b)) = ENTWURF.lock().map_err(|_| "Entwurf gesperrt")?.take().ok_or("Kein Entwurf; neu beginnen.")?;
     if !notiert {
         return Err("Ohne Bestätigung, dass die Wörter notiert sind, wird nichts angelegt.".into());
@@ -4347,7 +4389,8 @@ async fn wallet_bestaetigen(notiert: bool, wort_a: String, wort_b: String) -> Re
 }
 
 #[tauri::command]
-async fn wallet_verwerfen() {
+async fn wallet_verwerfen(fenster: tauri::WebviewWindow) {
+    woerterschutz(&fenster, false);
     if let Ok(mut g) = ENTWURF.lock() {
         *g = None;
     }
@@ -4368,6 +4411,18 @@ async fn wallet_wiederherstellen(name: String, woerter: String) -> Result<String
 #[tauri::command]
 async fn wallet_waehlen(name: String) -> Result<(), String> {
     myl_client::wallet::waehlen(&name).map(|_| ())
+}
+
+/// **Der Verlauf eines Wallets** (CLIENT 7.4): dieselben Zeilen wie
+/// `myl wallet verlauf`, neueste zuerst, und zuletzt die Grenze der Auskunft.
+#[tauri::command]
+async fn wallet_verlauf(name: String) -> Result<Vec<String>, String> {
+    use myl_client::wallet;
+    let w = wallet::laden(&name)?;
+    let zeilen = wallet::verlauf(&w.adresse)?;
+    let mut aus: Vec<String> = zeilen.iter().map(wallet::Verlaufszeile::text).collect();
+    aus.push(format!("{} Einträge. {}", zeilen.len(), wallet::VERLAUF_GRENZE));
+    Ok(aus)
 }
 
 /// Setzt den Einstieg; leer heisst eigener Probelauf.

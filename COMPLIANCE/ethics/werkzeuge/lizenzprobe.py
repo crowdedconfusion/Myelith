@@ -42,21 +42,19 @@ License) kam das erste private Modell in den Katalog, und diese Prüfung,
 die keine privaten Modelle kannte, machte die CI zu `81a3fb0` rot. Die
 sieben Proben der Kurzanleitung fahren sie nicht.
 
-## ⛔️ Was sie heute gar nicht ansieht
+## ⚑ Sehen, Hören und Sprechen (seit 2026-11-11)
 
-Sie prüft **nur die Quellmodelle** des Sprachmodell-Pfads, also
-`MODELS/llm`. Die Gewichte für Sehen, Hören und Sprechen liegen seit dem
-2026-09-21 daneben, unter `MODELS/audio` und `MODELS/vision`, und **sie
-bringen keine Lizenzdatei mit**: Sie kommen als einzelne Gewichtsdatei
-und werden beim Ablegen umbenannt, also gibt es kein Verzeichnis, in dem
-eine Lizenz liegen könnte.
+Die Gewichte unter `MODELS/audio` und `MODELS/vision` kommen als einzelne
+Dateien und werden beim Ablegen umbenannt; ein Verzeichnis für eine
+Lizenzdatei gibt es nicht. Ihre Angabe steht deshalb je Rubrik in
+`LIZENZEN.json` (Quelle, Revision, Lizenz, Lizenzdatei), die Lizenztexte
+liegen versioniert daneben. Geprüft wird: Jede Datei, die in der Rubrik
+liegt, steht im Katalog; jeder Eintrag hat seine Lizenzdatei; deren Text
+ist die genannte Lizenz und trägt keine Sperre. Ein `hinweis` im Eintrag
+wird genannt, aber nicht als Fehler gewertet.
 
-⚑ **Das ist eine benannte Lücke und kein Versehen.** Die Kriterien aus
-Kap. 10.1 gelten für sie genauso, denn auch sie werden von Fremden in
-aller Welt geladen. Solange kein Ort für ihre Lizenzangabe entschieden
-ist, sagt diese Prüfung über sie nichts, und **ein Lauf, der über zwei
-von drei Rubriken schweigt, darf nicht wie ein bestandener aussehen.**
-Deshalb nennt der Abschlusssatz ausdrücklich, was geprüft wurde.
+📌 Bis dahin war das eine benannte Lücke: Der Abschlusssatz sagte, dass
+`audio` und `vision` nicht geprüft sind.
 """
 
 from __future__ import annotations
@@ -116,6 +114,53 @@ def beurteile(text: str) -> tuple[str | None, list[str]]:
     return art, sperren
 
 
+SINNE = [REPO / "MODELS" / "audio", REPO / "MODELS" / "vision"]
+# Was in einer Rubrik der Sinne liegen darf, ohne ein Gewicht zu sein.
+KEIN_GEWICHT = re.compile(r"^(\.gitkeep|LIZENZEN\.json|LIZENZ-.*\.txt|\.DS_Store)$")
+
+
+def sinne_pruefen() -> int:
+    """Die Rubriken der Sinne gegen ihre `LIZENZEN.json`; gibt die Zahl
+    der Fehler zurueck."""
+    fehler = 0
+    for rubrik in SINNE:
+        name = rubrik.name
+        katalog_datei = rubrik / "LIZENZEN.json"
+        if not katalog_datei.is_file():
+            print(f"[lizenz] FEHLT: MODELS/{name}/LIZENZEN.json")
+            fehler += 1
+            continue
+        katalog = {k: v for k, v in json.loads(katalog_datei.read_text(encoding="utf-8")).items() if not k.startswith("_")}
+        # Jede liegende Datei steht im Katalog; Ordner (etwa Qwen3-TTS) ueber
+        # ihren Eintrag mit Unterpfad.
+        for f in sorted(rubrik.iterdir()):
+            if KEIN_GEWICHT.match(f.name):
+                continue
+            if f.is_file() and f.name not in katalog:
+                print(f"[lizenz] FEHLT: MODELS/{name}/{f.name} liegt da und steht nicht in LIZENZEN.json")
+                fehler += 1
+        for datei, e in katalog.items():
+            text_datei = rubrik / e.get("lizenzdatei", "")
+            if not e.get("lizenzdatei") or not text_datei.is_file():
+                print(f"[lizenz] FEHLT: {name}/{datei} hat keine Lizenzdatei")
+                fehler += 1
+                continue
+            art, sperren = beurteile(text_datei.read_text(encoding="utf-8", errors="replace"))
+            if art is None or art != e.get("lizenz"):
+                print(f"[lizenz] UNBEKANNT: {name}/{datei} nennt {e.get('lizenz')}, der Text ist {art or 'weder Apache 2.0 noch MIT'}")
+                fehler += 1
+                continue
+            if sperren:
+                print(f"[lizenz] UNBRAUCHBAR: {name}/{datei} ist {art}, aber: {', '.join(sperren)}")
+                fehler += 1
+                continue
+            da = "liegt da" if (rubrik / datei).exists() else "nicht geladen"
+            print(f"[lizenz] ok      {name}/{datei}: {art} ({da})")
+            if e.get("hinweis"):
+                print(f"[lizenz] ⚠️ Hinweis {name}/{datei}: {e['hinweis']}")
+    return fehler
+
+
 def main() -> int:
     print("[lizenz] Lizenz-Prüfliste Basismodell (Kap. 10.1)")
     if not MODELLE.is_dir():
@@ -159,14 +204,16 @@ def main() -> int:
             continue
         print(f"[lizenz] ok      {name}: {art}")
 
+    fehler += sinne_pruefen()
     if fehler:
         print(f"[lizenz] FEHLGESCHLAGEN: {fehler} Modell(e) erfüllen Kap. 10.1 nicht")
         return 1
-    # ⚑ **Der Satz nennt den Umfang.** Ein blankes „alle Modelle" waere
-    # hier falsch: Sehen, Hoeren und Sprechen sind nicht dabei.
+    # ⚑ **Der Satz nennt den Umfang.** Private Modelle sind gelesen, aber
+    # nicht an Kap. 10.1 gemessen.
     print(
         "[lizenz] PASSED: alle lokal vorliegenden Quellmodelle des Netzes unter "
-        "MODELS/llm erfüllen Kap. 10.1 (private Modelle, audio und vision sind nicht geprüft)"
+        "MODELS/llm und die Gewichte der Sinne unter MODELS/audio und MODELS/vision "
+        "erfüllen Kap. 10.1 (private Modelle nicht geprüft)"
     )
     return 0
 

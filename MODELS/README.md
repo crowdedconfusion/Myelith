@@ -19,9 +19,12 @@ dieses README, `llm/KATALOG.json`, das daraus erzeugte `llm/README.md`
 und die **Lizenzdatei** jedes empfohlenen Quellmodells. Die Regeln dazu
 stehen in `.gitignore` daneben, je mit ihrem Grund.
 
-⚠️ **`audio/` und `vision/` halten heute nur eine Marke.** Git kann kein
-leeres Verzeichnis versionieren, und ein Ordner, der erst beim Einrichten
-entsteht, ist kein Ablageort, sondern eine Nebenwirkung.
+⚑ **`audio/` und `vision/` halten eine Marke und ihre `LIZENZEN.json`.**
+Die Gewichte kommen als einzelne Dateien und werden beim Ablegen
+umbenannt, also steht ihre Lizenz je Datei im Katalog der Rubrik, mit
+Quelle und Revision; die Lizenztexte liegen versioniert daneben
+(`LIZENZ-*.txt`). Die Lizenzprobe prüft beides. Die Marke bleibt, weil Git
+kein leeres Verzeichnis versionieren kann.
 
 ## Wie die Gewichte hereinkommen
 

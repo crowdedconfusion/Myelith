@@ -53,6 +53,11 @@
 <!-- ⚑ **Die Modulwahl in der Seitenleiste**, unter der Werkzeugkiste
      (Wunsch des Projektinhabers, 2026-10-12). Gefuellt beim Oeffnen. -->
 <div id="modulmenue" class="menuefeld" role="menu" hidden></div>
+<!-- ⚑ Der Knopf an der Eingabe oeffnet die Wahl: einen Skill lernen oder ein Buch lesen. -->
+<div id="skillmenue" class="menuefeld" role="menu" hidden>
+  <button type="button" id="skill_lernen" class="menueeintrag blank" role="menuitem" data-t="menue.skill_lernen">Skill lernen</button>
+  <button type="button" id="buch_lesen" class="menueeintrag blank" role="menuitem" data-t="menue.buch_lesen">Buch lesen</button>
+</div>
 
 <!-- ⚑ **Die Befehle des gewaehlten Moduls**, geoeffnet vom Pfeil rechts im
      Feld der Modulwahl (Wunsch des Projektinhabers, 2026-10-12). -->
@@ -579,8 +584,8 @@
                  Anhang an der Eingabe, bis abgeschickt wird. Das Modell
                  sagt dann zuerst in einem Satz, was es gelernt hat, und
                  bearbeitet danach den Auftrag, falls einer dabeisteht. -->
-            <button type="button" id="skill" class="rundknopf skill" aria-label="Skill lernen"
-                    data-t-marke="knopf.skill" title="Skill lernen">
+            <button type="button" id="skill" class="rundknopf skill" aria-label="Skill lernen oder Buch lesen"
+                    aria-haspopup="menu" data-t-marke="knopf.skillwahl" title="Skill lernen oder Buch lesen">
               <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
                 <path d="M10 2.5a5 5 0 00-3 9c.6.5 1 1.2 1 2v.5h4v-.5c0-.8.4-1.5 1-2a5 5 0 00-3-9z"/>
                 <path d="M8.2 16.5h3.6M9 18.5h2"/>
@@ -985,7 +990,6 @@
           </label>
           <button id="stimme-waehlen" data-t="sinne.stimmewaehlen" disabled>Stimme hochladen</button>
           <button id="stimme-weg" data-t="sinne.stimmeweg" hidden>Stimme entfernen</button>
-          <button id="sinne-einrichten" data-t="sinne.einrichten">Läufer anlegen</button>
           <span id="stimmname" class="stimmname"></span>
         </div>
         <!-- ⚑ Steht nur da, wenn etwas zu sagen ist: dass eine Probe

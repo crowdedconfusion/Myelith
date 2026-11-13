@@ -285,3 +285,51 @@ fn eine_antwort_die_kein_http_ist_wird_als_solche_gemeldet() {
         .expect_err("SSH ist keine Chatantwort");
     assert!(matches!(fehler, Tuerfehler::KeinHttp), "{fehler:?}");
 }
+
+/// Ein Stummel, der auf die Anfrage hin `antwort` schreibt, dann bis zu
+/// `nachschub` Bytes Fülle hinterherschickt, solange der Klient liest, und
+/// danach die Verbindung offen hält. Ohne Grenze liefe der Klient also in
+/// seine Frist, statt am Auflegen zu enden.
+fn stummel_roh(antwort: Vec<u8>, nachschub: usize) -> u16 {
+    let horcher = TcpListener::bind("127.0.0.1:0").expect("binden");
+    let port = horcher.local_addr().expect("Adresse").port();
+    thread::spawn(move || {
+        let (mut strom, _) = horcher.accept().expect("annehmen");
+        let _ = anfrage_lesen(&mut strom);
+        if strom.write_all(&antwort).is_err() {
+            return;
+        }
+        let fuelle = vec![b'x'; 1 << 16];
+        let mut geschickt = 0;
+        while geschickt < nachschub && strom.write_all(&fuelle).is_ok() {
+            geschickt += fuelle.len();
+        }
+        thread::sleep(Duration::from_secs(4));
+    });
+    port
+}
+
+/// ⛔️ **Eine Gegenstelle, die nicht aufhört, füllt nicht den Speicher.**
+/// Köpfe ohne Leerzeile enden nach 64 KiB als „kein HTTP“, ein
+/// angekündigter Rumpf über 64 MiB sofort, ein Rumpf ohne Längenangabe,
+/// sobald er die Grenze überschreitet. 📌 Vorher sammelte der Klient alles,
+/// was kam.
+#[test]
+fn eine_gegenstelle_ohne_ende_fuellt_nicht_den_speicher() {
+    use myl_local_agent::tuerklient::{KOPF_HOECHSTENS, RUMPF_HOECHSTENS};
+    let frage = |port| {
+        Tuerklient::neu("127.0.0.1", port, "v")
+            .mit_frist(Duration::from_secs(1))
+            .chat("m", &[Nachricht::nutzer("x")], None)
+            .expect_err("zu viel ist kein Erfolg")
+    };
+
+    let kopf = frage(stummel_roh(b"HTTP/1.1 200 OK\r\nX-Endlos: ".to_vec(), 4 * KOPF_HOECHSTENS));
+    assert!(matches!(kopf, Tuerfehler::KeinHttp), "{kopf:?}");
+
+    let angekuendigt = frage(stummel_roh(format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", RUMPF_HOECHSTENS + 1).into_bytes(), 0));
+    assert!(matches!(&angekuendigt, Tuerfehler::Unlesbar { rumpf } if rumpf.contains("groesser")), "{angekuendigt:?}");
+
+    let endlos = frage(stummel_roh(b"HTTP/1.1 200 OK\r\n\r\n".to_vec(), 2 * RUMPF_HOECHSTENS));
+    assert!(matches!(&endlos, Tuerfehler::Unlesbar { rumpf } if rumpf.contains("groesser")), "{endlos:?}");
+}

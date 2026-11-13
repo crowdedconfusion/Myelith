@@ -14,7 +14,9 @@
 
 #![deny(unsafe_code)]
 
+pub mod abruf;
 pub mod beobachtung;
+pub mod gedaechtnis;
 pub mod kette;
 pub mod manifest;
 pub mod plan;
@@ -25,7 +27,11 @@ pub use manifest::{
     Herkunft, ManifestFehler, Skillmanifest, Teil, Werkzeugart, Werkzeugmanifest,
     DST_SKILLMANIFEST, DST_WERKZEUGMANIFEST,
 };
+pub use abruf::{abrufen, woerter, Abruf, Treffer, MIN_WORTLAENGE};
 pub use beobachtung::{beobachte, Attestierung, Beobachtung, BeobachtungsFehler, GepruefteAttestierung, DST_ATTESTIERUNG};
+pub use gedaechtnis::{
+    pruefe_abruf, pruefe_herkunft, Eintrag, Gedaechtnis, Herkunftsfehler, DST_GEDAECHTNISEINTRAG,
+};
 pub use kette::{
     anker, ende, erster_unterschied, kettenwert, plan_passt, pruefe_kette, Ende, Kettenbefund,
     Kettenfehler, Kettenglied, DST_KETTENANKER, DST_KETTENGLIED,

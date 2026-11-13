@@ -17,8 +17,9 @@ Aufruf (aus der Wurzel des Klons):
     python3 TESTCLIENT/netzbedingungen/probenetz.py stand --ordner <ordner>
     python3 TESTCLIENT/netzbedingungen/probenetz.py stoppen
 
-Vorher einmal das Linux-Programm in das Volume `myl-netem-ziel` bauen (siehe
-`--programm`); das Bild `myelith-netem` bringt die Werkzeugkette mit.
+Vorher einmal das Linux-Programm in das Volume `myl-netem-ziel` bauen, ohne
+Netz aus dem Vorrat (`python3 TESTCLIENT/netzbedingungen/probenetz.py bauen`);
+das Bild `myelith-netem` bringt die Werkzeugkette mit.
 
 ⚠️ Nur ein Pruefgeraet: Kette, Schluessel und Guthaben sind Spielgeld auf
 der Probekette und gelten nirgends sonst.
@@ -38,7 +39,11 @@ WURZEL = pathlib.Path(__file__).resolve().parents[2]
 BEHAELTER = "myl-probenetz"
 BILD = "myelith-netem"
 VOLUME = "myl-netem-ziel"
-PROGRAMM = "/ziel/n0620/release/myl-node"
+# ⚑ Ein fester Ort, den `bauen` fuellt. 📌 Bis zum 2026-11-12 stand hier ein
+# Bau vom Oktober (`/ziel/n0620`), den es im Volume nicht mehr gab; der
+# Behaelter endete dann still, und mit `--rm` waren seine Protokolle weg.
+ZIELORDNER = "/ziel/probenetz"
+PROGRAMM = f"{ZIELORDNER}/release/myl-node"
 PORT = 4100
 # Der Beobachtungsendpunkt des Erzeugers, fuer `/konto/<adresse>`: Der
 # Client fragt dort, ob ein Wallet schon Spuren auf der Kette hat.
@@ -62,6 +67,10 @@ def starten(args: argparse.Namespace) -> int:
         print(f"{BEHAELTER} laeuft schon; Einstieg in {ordner / 'einstieg.txt'}")
         return 0
     (ordner / "einstieg.txt").unlink(missing_ok=True)
+    da = subprocess.run(["docker", "run", "--rm", "-v", f"{VOLUME}:/ziel:ro", BILD, "test", "-x", args.programm], capture_output=True)
+    if da.returncode != 0:
+        print(f"{args.programm} fehlt im Volume {VOLUME}. Zuerst: python3 TESTCLIENT/netzbedingungen/probenetz.py bauen", file=sys.stderr)
+        return 1
     befehl = [
         "docker", "run", "-d", "--rm", "--name", BEHAELTER,
         "-e", "PYTHONDONTWRITEBYTECODE=1",
@@ -88,6 +97,22 @@ def starten(args: argparse.Namespace) -> int:
         time.sleep(1)
     print("kein Einstieg nach 60 s", file=sys.stderr)
     return 1
+
+
+def bauen(_: argparse.Namespace) -> int:
+    """Baut `myl-node` fuer Linux nach `PROGRAMM`, im Behaelter ohne Netz."""
+    befehl = [
+        "docker", "run", "--rm", "--network", "none",
+        "-v", f"{WURZEL}:/repo:ro", "-v", f"{VOLUME}:/ziel",
+        "-e", "RUSTUP_TOOLCHAIN=stable", "-e", f"CARGO_TARGET_DIR={ZIELORDNER}", "-e", "CARGO_NET_OFFLINE=true",
+        "-e", "CARGO_HOME=/repo/SYSTEM/crates-lager/cargo-home",
+        "-w", "/repo/NODE/myl-node", BILD,
+        "cargo", "build", "--release", "--locked", "--offline",
+    ]
+    r = subprocess.run(befehl)
+    if r.returncode == 0:
+        print(f"gebaut: {PROGRAMM}")
+    return r.returncode
 
 
 def laeuft() -> bool:
@@ -217,6 +242,8 @@ def main() -> int:
     s.add_argument("--abfrage", type=int, default=BEOBACHTUNG, help="der Port des Beobachtungsendpunkts auf dem Mac")
     s.add_argument("--programm", default=PROGRAMM, help="myl-node fuer Linux, im Volume")
     s.set_defaults(tun=starten)
+    s = unter.add_parser("bauen")
+    s.set_defaults(tun=bauen)
     s = unter.add_parser("stand")
     s.add_argument("--ordner", type=pathlib.Path, required=True)
     s.set_defaults(tun=stand)

@@ -27,9 +27,9 @@
 //! keine Herleitung und keine Entscheidung, sondern nur einen
 //! Vorschlag.
 //!
-//! ⚑ **Sie prüft keine Wirtschaftlichkeit.** Ob 0,7 der richtige
-//! Kostenanteil ist, sagt keine Datei; sie sagt nur, dass es ein
-//! Entwurf ist und niemand ihn beschlossen hat.
+//! ⚑ **Sie prüft keine Wirtschaftlichkeit.** Ob die erhöhte
+//! Trainingsstichprobe die richtige ist, sagt keine Datei; sie sagt nur,
+//! dass es ein Entwurf ist und niemand ihn beschlossen hat.
 
 use myl_governance::registry::{Parameter, ParameterRegistry, Wert};
 use myl_tokenomics::UNITS_PER_MYL;
@@ -70,7 +70,7 @@ fn herkunft(p: Parameter) -> (Herkunft, &'static str) {
         // --- entschieden, mit Fundstelle ---
         Stichprobenrate => (Entschieden, "A1 vom 2026-09-02: gamma/(1-c) + p*(1-gamma), aufgerundet"),
         Subventionsrate => (Entschieden, "Kap. 5.7 und Anhang B.4: s = 0,5"),
-        Auslastungsziel => (Entschieden, "Kap. 5.4: u* = 0,7"),
+        Auslastungsziel => (Entschieden, "Kap. 5.4: u* = 0,8"),
         PreisSensitivitaet => (Entschieden, "Kap. 5.4: kappa = 0,1"),
         TrainingsverguetungsAnteil => (Entschieden, "Kap. 5.6: hoechstens 70 Prozent"),
         // ⚑ **Gerechnet, nicht entschieden.** Sie folgt aus der
@@ -120,7 +120,6 @@ fn herkunft(p: Parameter) -> (Herkunft, &'static str) {
         GeglaetteterBurn => (Startwert, "noch kein Burn beobachtet"),
         KernelWhitelist => (Startwert, "leer bis zum Genesis-Manifest, GOVERNANCE 3.4"),
         // --- Entwuerfe: hier liegt die Arbeit ---
-        Kostenanteil => (Entwurf, "Anhang B.4 nennt empirisch 0,6 bis 0,8; 0,7 ist gegriffen"),
         TrainingsStichprobenrate => (Entwurf, "Kap. 5.5 nennt eine erhoehte Rate, nicht welche"),
         PraegeObergrenze => (Entwurf, "Anhang B.8.3 laesst sie offen; u64::MAX heisst kein Deckel"),
         PreisUntergrenze => (Entwurf, "ein Kleinstbetrag, damit sie nicht null ist"),
@@ -146,7 +145,7 @@ fn jeder_parameter_nennt_seine_herkunft() {
             "{p:?} nennt keine Quelle",
         );
     }
-    assert_eq!(Parameter::alle().len(), 35, "die Zahl der Parameter hat sich geaendert");
+    assert_eq!(Parameter::alle().len(), 34, "die Zahl der Parameter hat sich geaendert");
 }
 
 /// ⚑ **Was gerechnet ist, muss die Rechnung sein** (Fund 146).
@@ -208,7 +207,7 @@ fn was_gerechnet_ist_stimmt_mit_seiner_rechnung() {
                     .expect("rechenbar"),
                     "TrainingsAbgabeMax folgt nicht aus der Bilanz am Auslastungsziel"
                 );
-                assert_eq!(lam, 3_017, "bei u* = 0,7 und 8000 bp Freianteil");
+                assert_eq!(lam, 1_790, "bei u* = 0,8 und 8000 bp Freianteil");
             }
             andere => panic!("{andere:?} ist als gerechnet gefuehrt, wird hier aber nicht gerechnet"),
         }
@@ -223,8 +222,8 @@ fn was_gerechnet_ist_stimmt_mit_seiner_rechnung() {
 /// **das gehoert gesehen und nicht gefunden**.
 ///
 /// ⚑ **Die Zahl ist eine Sperrklinke, keine Zusicherung ueber die
-/// Werte.** Ob 0,7 der richtige Kostenanteil ist, sagt dieser Test
-/// nicht; er sagt, dass es noch ein Entwurf ist.
+/// Werte.** Ob ein Entwurf der richtige Wert ist, sagt dieser Test
+/// nicht; er sagt, dass es noch einer ist.
 #[test]
 fn die_entwuerfe_sind_gezaehlt_und_werden_nicht_mehr() {
     let entwuerfe: Vec<Parameter> = Parameter::alle()
@@ -248,9 +247,11 @@ fn die_entwuerfe_sind_gezaehlt_und_werden_nicht_mehr() {
     //
     // **Beide haben einen benannten Weg heraus.** Ein Entwurf ohne
     // solchen Weg gehoerte nicht hinzugefuegt.
+    // ⚑ **Am 2026-11-10 von neun auf acht gesenkt:** `Kostenanteil` ist
+    // aus der Registry heraus (keine Protokollgroesse, Fund 49).
     assert!(
-        entwuerfe.len() <= 9,
-        "es sind {} Entwuerfe statt hoechstens neun: {entwuerfe:?}",
+        entwuerfe.len() <= 8,
+        "es sind {} Entwuerfe statt hoechstens acht: {entwuerfe:?}",
         entwuerfe.len()
     );
     // Und die Gegenprobe zur Sperrklinke: Sie ist nur etwas wert,

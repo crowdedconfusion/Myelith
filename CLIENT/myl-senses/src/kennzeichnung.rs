@@ -23,11 +23,12 @@
 //!    RIFF-INFO-Kommentar. Maschinenlesbar und genormt, aber weg, sobald
 //!    jemand die Datei neu kodiert.
 //! 2. **Wasserzeichen im Signal**: eine feste Pseudozufallsfolge aus plus
-//!    und minus eins, alle [`PERIODE`] Proben wiederholt, mit einem
-//!    Vierundsechzigstel der oertlichen Lautstaerke dazugegeben (rund
-//!    36 dB darunter). Erkannt wird es durch Korrelation; es uebersteht
-//!    Kopieren, Pegelaenderungen, Abschneiden am Anfang und MP3 mit
-//!    128 kbit/s.
+//!    und minus eins, alle [`PERIODE`] Proben wiederholt, je Fenster von
+//!    20 ms durch die Huellkurve der Stimme geformt ([`LPC_GAMMA`]) und mit
+//!    einem Vierundsechzigstel der oertlichen Lautstaerke dazugegeben, so
+//!    dass es unter der Stimme bleibt. Erkannt wird es durch Korrelation
+//!    nach der umgekehrten Vorhersage; es uebersteht Kopieren,
+//!    Pegelaenderungen, Abschneiden am Anfang und MP3 mit 128 kbit/s.
 //!
 //! ⚠️ **Die Folge ist oeffentlich**, denn der Quelltext ist es. Wer sie
 //! kennt, kann sie abziehen. Das Wasserzeichen erschwert das versehentliche
@@ -38,6 +39,9 @@
 //! Gleitkommazahl entsteht.
 
 use std::path::Path;
+
+mod c2pa;
+pub use c2pa::Herkunft;
 
 /// Was fuer ein Inhalt gekennzeichnet wird.
 ///
@@ -56,16 +60,64 @@ pub const PERIODE: usize = 4096;
 /// Die Saat der Folge: `MYELITH` und ein Nullbyte.
 pub const SAAT: u64 = 0x4D59_454C_4954_4800;
 
-/// Das Verhaeltnis von Lautstaerke zu Wasserzeichen: ein Vierundsechzigstel,
-/// rund 36 dB darunter.
+/// Das Verhaeltnis von Lautstaerke zu Wasserzeichen: ein Achtzigstel, rund
+/// 38 dB darunter, und das Wasserzeichen folgt der Stimme ([`LPC_GAMMA`]).
 ///
-/// ⚑ **Gemessen an echter Sprache** (2026-09-25, 14 Saetze aus dem
-/// Sprechmodell, 1,7 bis 5,6 s): ohne Kennzeichnung hoechstens 2,5
-/// Standardabweichungen; gekennzeichnet mindestens 11,9, vorne
-/// abgeschnitten und halb so laut mindestens 11,8, nach MP3 mit 128 kbit/s
-/// mindestens 10,3. Ein Zweiunddreissigstel (30 dB) gab rund das Doppelte
-/// und ist lauter; der Abstand zur Schwelle reicht auch so.
-pub const TEILER: i64 = 64;
+/// ⚑ **Ein Achtzigstel statt eines Vierundsechzigstels** (Wunsch des
+/// Projektinhabers: „etwas leiser bitte aber weiterhin gut auslesbar“, nach
+/// einem Hoertest, in dem er die rohe Fassung fuenfmal von fuenf vorzog): das
+/// leiseste, bei dem Saetze abgeschnitten und nach MP3 das Anderthalbfache der
+/// Schwelle halten (10,0 und 10,1); hoerbar unter 20 dB 0,39 statt 0,86
+/// Prozent, fuenftes Perzentil in jedem Band mindestens 21,4 dB. Stuecke am
+/// Anfang 6,3. ⚠️ Ein Stueck, das vorne abgeschnitten wird, liegt mit 5,5
+/// unter der gesuchten Schwelle; abgelegt wird der ganze Satz.
+///
+/// ⚑ **Gemessen an echter Sprache** (2026-11-11, 15 Saetze aus Qwen3-TTS mit
+/// geklonter Stimme, 2,6 bis 4,6 s, dazu je das erste Stueck von 0,96 s),
+/// je Sprachfenster von 20 ms und Band: in 0,86 Prozent der Fenster und
+/// Baender liegt das Wasserzeichen weniger als 20 dB unter der Stimme und
+/// ist zugleich ueber 2 Stufen laut; das fuenfte Perzentil des Abstands ist
+/// in jedem Band mindestens 19,6 dB. Erkannt ([`BEGRENZEN`]) ohne
+/// Kennzeichnung hoechstens 4,0 Standardabweichungen (gesucht);
+/// gekennzeichnet Saetze 13,5, vorne abgeschnitten und halb so laut 12,4,
+/// nach MP3 mit 128 kbit/s 12,3; Stuecke 7,9, 7,1 und 7,0. (Mit einem
+/// Vierundsechzigstel; zum jetzigen Teiler siehe oben.)
+///
+/// 📌 Der Weg dahin, unter demselben Mass gemessen: weiss mit einem
+/// Vierundsechzigstel (bis 2026-11-11) in 46 Prozent hoerbar unter 20 dB,
+/// ueber 8 kHz im fuenften Perzentil 6 dB **ueber** der Stimme
+/// (Projektinhaber: „Rauschen und Artefakte im Hintergrund“); fest
+/// binomisch geformt mit einem Zweiunddreissigstel (ein paar Stunden am
+/// 2026-11-11) 34 Prozent, 2 bis 4 kHz nur 6,8 dB. Ein Mittel ueber ganze
+/// Dateien hatte die feste Formung gut aussehen lassen.
+pub const TEILER: i64 = 80;
+
+/// **Wie eng das Wasserzeichen der Stimme folgt**, in Tausendsteln: Je
+/// Fenster wird die Folge durch `1/A(z/γ)` der Stimme gefiltert, die
+/// Rauschformung der CELP-Sprachcodecs, die das Rauschen unter die
+/// Formanten legt. ⚑ 0,97 mit einem Rauschboden der Vorhersage von 2⁻¹⁶
+/// ([`LPC_BODEN`]); 0,92 mit 2⁻⁹ bildete die steil fallenden Hoehen von
+/// Qwen3-TTS nicht ab (8 bis 12 kHz im fuenften Perzentil 5,8 dB).
+///
+/// ⚠️ **CAM++ misst jedes Wasserzeichen**, auch ein unhoerbares (weiss mit
+/// einem Hundertachtundzwanzigstel kostete 0,021 Aehnlichkeit): In den
+/// Pausen nahezu digitaler Stille aendern schon zwei Stufen dessen
+/// logarithmische Baender. Fuer die Hoerbarkeit zaehlen die Abstaende je
+/// Fenster und Band.
+pub const LPC_GAMMA: i64 = 970;
+
+/// Der Rauschboden der Vorhersage: `2^-LPC_BODEN` der Energie.
+pub const LPC_BODEN: u32 = 16;
+
+/// **Die Erkennung begrenzt den Rest** je Fenster auf das Zweifache seines
+/// Medianbetrags, bevor sie ihn auf gleiche Lautstaerke bringt und faltet.
+/// ⚑ Nach der umgekehrten Vorhersage bleiben Stimmbandimpulse und Spruenge
+/// als grosse Spitzen, die das Wasserzeichen ueberdecken: ein Saegezahn von
+/// 0,2 s kam ohne Begrenzung auf 2,6 Standardabweichungen, mit 9,7; die
+/// Stuecke echter Sprache von 6,4 auf 7,9 (abgeschnitten 7,1, nach MP3 7,0),
+/// ohne Wasserzeichen hoechstens 4,0. Das Drei- und Fuenffache halfen
+/// weniger.
+pub const BEGRENZEN: i64 = 2;
 
 /// Ab welchem Wert die Korrelation als erkannt gilt, in Hundertsteln der
 /// Standardabweichung, wenn die Datei am Anfang beginnt.
@@ -102,9 +154,66 @@ fn sprache_kennzeichnen(pfad: &Path) -> Result<(), String> {
         return Ok(());
     }
     let mut proben = wav.proben;
+    // ⚑ Erst die Pausen beruhigen, dann einpraegen: Das Wasserzeichen
+    //   richtet sich nach der Lautstaerke, die bleibt.
+    pausen_beruhigen(&mut proben, wav.kanaele as usize, wav.rate);
     einpraegen(&mut proben, wav.kanaele as usize);
-    std::fs::write(pfad, schreiben(wav.rate, wav.kanaele, &proben))
-        .map_err(|f| format!("{}: {f}", pfad.display()))
+    // ⚑ Zuletzt signiert (C2PA), damit der Hash den fertigen Ton abdeckt.
+    let signiert = c2pa::signieren(schreiben(wav.rate, wav.kanaele, &proben))?;
+    std::fs::write(pfad, signiert).map_err(|f| format!("{}: {f}", pfad.display()))
+}
+
+/// Ab dieser Lautstaerke (RMS in Stufen von 32767, rund −42 dBFS) bleibt ein
+/// Fenster, wie es ist.
+pub const RUHE_AB: i64 = 260;
+
+/// **Beruhigt die Pausen**: ein sanfter Abwaertsexpander gegen Rauschen und
+/// Artefakte des Sprechmodells in leisen Stellen.
+///
+/// ⚑ Je 10 ms die Lautstaerke, davon das Lauteste aus ±20 ms (damit leise
+/// Anlaute und Wortenden nicht beschnitten werden). Darunter wird im
+/// Verhaeltnis 1:3 abgesenkt, hoechstens um 12 dB (−4 dB bei −44 dBFS,
+/// −12 dB ab −48 dBFS); geoeffnet wird sofort, geschlossen ueber 120 ms, und
+/// zwischen den Fenstern gleitet die Verstaerkung. Ganzzahlig, in 1024steln.
+/// 📌 Anlass: In den Pausen lag das Rauschen je nach Satz zwischen −77 und
+/// −44 dBFS; die Stimmprobe selbst lag bei −75 (2026-11-11).
+fn pausen_beruhigen(proben: &mut [i16], kanaele: usize, rate: u32) {
+    let kanaele = kanaele.max(1);
+    let fenster = (rate as usize / 100).max(1);
+    let rahmen = proben.len() / kanaele;
+    let n = rahmen.div_ceil(fenster);
+    if n == 0 {
+        return;
+    }
+    let pegel: Vec<i64> = (0..n)
+        .map(|i| {
+            let (von, bis) = (i * fenster * kanaele, ((i + 1) * fenster * kanaele).min(proben.len()));
+            let summe: u128 = proben[von..bis].iter().map(|&x| (x as i128 * x as i128) as u128).sum();
+            wurzel(summe / ((bis - von) as u128).max(1)) as i64
+        })
+        .collect();
+    let mut ziel = Vec::with_capacity(n);
+    for i in 0..n {
+        let e = pegel[i.saturating_sub(2)..(i + 3).min(n)].iter().copied().max().unwrap_or(0);
+        ziel.push(if e >= RUHE_AB { 1024 } else { (1024 * e * e / (RUHE_AB * RUHE_AB)).max(256) });
+    }
+    let mut g = vec![0i64; n];
+    for i in 0..n {
+        let vorher = if i == 0 { ziel[0] } else { g[i - 1] };
+        g[i] = if ziel[i] >= vorher { ziel[i] } else { ziel[i].max(vorher - 64) };
+    }
+    for r in 0..rahmen {
+        let (i, j) = (r / fenster, (r % fenster) as i64);
+        let vorher = if i == 0 { g[0] } else { g[i - 1] };
+        let v = vorher + (g[i] - vorher) * j / fenster as i64;
+        if v >= 1024 {
+            continue;
+        }
+        for k in 0..kanaele {
+            let x = &mut proben[r * kanaele + k];
+            *x = ((*x as i64 * v) / 1024) as i16;
+        }
+    }
 }
 
 /// Was eine Pruefung ueber eine Datei sagt.
@@ -116,6 +225,8 @@ pub struct Befund {
     pub am_anfang: i64,
     /// Die groesste Korrelation ueber alle Verschiebungen, ebenso.
     pub gesucht: i64,
+    /// Das signierte Manifest nach C2PA.
+    pub herkunft: Herkunft,
 }
 
 impl Befund {
@@ -128,13 +239,40 @@ impl Befund {
 /// **Prueft eine Tondatei** auf beide Marken.
 pub fn pruefen(pfad: &Path) -> Result<Befund, String> {
     let roh = std::fs::read(pfad).map_err(|f| format!("{}: {f}", pfad.display()))?;
-    let wav = Wav::lesen(&roh).map_err(|f| format!("{}: {f}", pfad.display()))?;
+    pruefen_daten(&roh).map_err(|f| format!("{}: {f}", pfad.display()))
+}
+
+/// [`pruefen`] auf den Bytes einer Datei; ⚑ fremde Eingabe, also endet
+/// jede mit einem Befund oder einem Fehler.
+pub fn pruefen_daten(roh: &[u8]) -> Result<Befund, String> {
+    let wav = Wav::lesen(roh)?;
     let (am_anfang, gesucht) = korrelation(&wav.proben, wav.kanaele as usize);
     Ok(Befund {
         metadaten: wav.xmp.as_deref().is_some_and(|x| x.contains(QUELLENTYP)),
         am_anfang,
         gesucht,
+        herkunft: c2pa::pruefen(roh),
     })
+}
+
+/// Nur das signierte Manifest nach C2PA, ohne Wasserzeichen und Metadaten.
+pub fn herkunft(roh: &[u8]) -> Herkunft {
+    c2pa::pruefen(roh)
+}
+
+/// **Die Folge, geformt**: zyklisch gefaltet mit den Binomialzahlen der
+/// Ordnung `ordnung` (`1 2 1`, `1 4 6 4 1`, ...), ein Tiefpass ohne
+/// Gleitkomma. Ordnung null ist die weisse Folge. Dazu der Teiler, der die
+/// Energie wieder auf die der weissen bringt, in 256steln: `√(Σ b²) · 256`.
+fn folge_geformt(ordnung: usize) -> (Vec<i64>, i64) {
+    let c = folge();
+    let mut b = vec![1i64];
+    for _ in 0..ordnung {
+        b = (0..=b.len()).map(|j| b.get(j).copied().unwrap_or(0) + if j > 0 { b[j - 1] } else { 0 }).collect();
+    }
+    let g = (0..PERIODE).map(|k| b.iter().enumerate().map(|(j, bj)| bj * c[(k + PERIODE - j % PERIODE) % PERIODE]).sum()).collect();
+    let quadrate: u128 = b.iter().map(|x| (x * x) as u128).sum();
+    (g, wurzel(quadrate * 65_536) as i64)
 }
 
 /// Die Folge aus plus und minus eins, aus einem Xorshift mit fester Saat.
@@ -169,7 +307,15 @@ const FENSTER: usize = 480;
 
 /// Praegt die Folge ein, mit einer Staerke nach der Lautstaerke je Fenster.
 fn einpraegen(proben: &mut [i16], kanaele: usize) {
-    let c = folge();
+    einpraegen_lpc_mit(proben, kanaele, TEILER, (LPC_GAMMA << LPC_Q) / 1000, LPC_BODEN, 0);
+}
+
+/// Die Folge mit fester binomischer Formung und gesagtem Teiler einpraegen;
+/// Ordnung null ist das weisse Wasserzeichen bis 2026-11-11. Nur noch fuer
+/// die Proben (alte Dateien nachstellen, Messung).
+#[cfg(test)]
+fn einpraegen_mit(proben: &mut [i16], kanaele: usize, ordnung: usize, teiler: i64) {
+    let (c, norm) = folge_geformt(ordnung);
     let kanaele = kanaele.max(1);
     let rahmen = proben.len() / kanaele;
     let mut anfang = 0;
@@ -186,9 +332,11 @@ fn einpraegen(proben: &mut [i16], kanaele: usize) {
         let rms = wurzel(summe / anzahl.max(1)) as i64;
         // ⚑ Mindestens zwei Stufen: In der Stille bliebe sonst nichts,
         //   und zwei Stufen von 32767 hoert niemand.
-        let staerke = (rms / TEILER).max(2);
+        let staerke = (rms / teiler).max(2);
         for r in anfang..ende {
-            let chip = c[r % PERIODE] * staerke;
+            // Gerundet: `g · staerke / norm`, `norm` in 256steln.
+            let z = c[r % PERIODE] * staerke * 256;
+            let chip = (z + z.signum() * norm / 2) / norm;
             for k in 0..kanaele {
                 let i = r * kanaele + k;
                 proben[i] = (proben[i] as i64 + chip).clamp(i16::MIN as i64, i16::MAX as i64) as i16;
@@ -196,6 +344,175 @@ fn einpraegen(proben: &mut [i16], kanaele: usize) {
         }
         anfang = ende;
     }
+}
+
+/// Ordnung der linearen Vorhersage fuer das Wasserzeichen, das der Stimme folgt.
+const LPC_ORDNUNG: usize = 16;
+/// Nachkommabits der Vorhersagekoeffizienten.
+const LPC_Q: u32 = 30;
+/// Wie viele Proben vor dem Fenster die Vorhersage mitsieht.
+const LPC_VORLAUF: usize = 240;
+
+/// **Die lineare Vorhersage eines Abschnitts**, ganzzahlig nach
+/// Levinson-Durbin: `a[1..=p]` in `Q30`, sodass `e[n] = x[n] + Σ a[j]·x[n−j]`
+/// der Vorhersagefehler ist. Mit einem Rauschboden von `2^-boden` der
+/// Energie (stabil auch in Stille), und abgebrochen, sobald ein
+/// Reflexionskoeffizient den Betrag 0,999 erreicht.
+fn lpc_mit(x: &[i64], boden: u32) -> [i64; LPC_ORDNUNG] {
+    let p = LPC_ORDNUNG;
+    let mut r = [0i128; LPC_ORDNUNG + 1];
+    for (k, rk) in r.iter_mut().enumerate() {
+        *rk = (k..x.len()).map(|n| x[n] as i128 * x[n - k] as i128).sum();
+    }
+    let mut aus = [0i64; LPC_ORDNUNG];
+    if r[0] <= 0 {
+        return aus;
+    }
+    r[0] += (r[0] >> boden).max(1);
+    let eins = 1i128 << LPC_Q;
+    let mut a = vec![0i128; p + 1];
+    a[0] = eins;
+    let mut fehler = r[0];
+    for i in 1..=p {
+        let acc: i128 = (0..i).map(|j| a[j] * r[i - j]).sum();
+        let k = -acc / fehler.max(1);
+        if k.abs() >= eins * 999 / 1000 {
+            break;
+        }
+        let alt = a.clone();
+        for j in 1..i {
+            a[j] = alt[j] + ((k * alt[i - j]) >> LPC_Q);
+        }
+        a[i] = k;
+        fehler = (fehler * (eins * eins - k * k)) >> (2 * LPC_Q);
+        if fehler <= 0 {
+            break;
+        }
+    }
+    for j in 1..=p {
+        aus[j - 1] = a[j] as i64;
+    }
+    aus
+}
+
+/// `a[j] · γʲ`, `γ` in `Q30`: die Hüllkurve etwas weiter, wie die
+/// Rauschformung der CELP-Sprachcodecs `1/A(z/γ)`.
+fn bandbreite(a: &[i64; LPC_ORDNUNG], gamma: i64) -> [i64; LPC_ORDNUNG] {
+    let mut aus = [0i64; LPC_ORDNUNG];
+    let mut g = gamma as i128;
+    for j in 0..LPC_ORDNUNG {
+        aus[j] = ((a[j] as i128 * g) >> LPC_Q) as i64;
+        g = (g * gamma as i128) >> LPC_Q;
+    }
+    aus
+}
+
+/// Die Proben gemittelt ueber die Kanaele.
+fn einkanalig(proben: &[i16], kanaele: usize) -> Vec<i64> {
+    let k = kanaele.max(1);
+    proben.chunks(k).map(|r| r.iter().map(|&x| x as i64).sum::<i64>() / k as i64).collect()
+}
+
+/// **Praegt das Wasserzeichen ein, das der Stimme folgt**: je Fenster die
+/// Folge durch `1/A(z/γ)` der Stimme in diesem Fenster (der Zustand des
+/// Filters laeuft ueber die Fenster weiter), auf `max(RMS/teiler, 2)`
+/// gebracht, die Verstaerkung zwischen den Fenstern gleitend.
+/// **Praegt das Wasserzeichen ein, das der Stimme folgt**, mit Rauschboden der Vorhersage und einem binomischen
+/// Tiefpass der Ordnung `vorfilter` auf der Folge davor.
+fn einpraegen_lpc_mit(proben: &mut [i16], kanaele: usize, teiler: i64, gamma: i64, boden: u32, vorfilter: usize) {
+    let (c, norm) = folge_geformt(vorfilter);
+    let k = kanaele.max(1);
+    let x = einkanalig(proben, k);
+    let rahmen = x.len();
+    let mut zustand = [0i64; LPC_ORDNUNG];
+    let mut einheit = vec![0i64; rahmen];
+    let mut verstaerkung = Vec::new();
+    let mut anfang = 0;
+    while anfang < rahmen {
+        let ende = (anfang + FENSTER).min(rahmen);
+        let ag = bandbreite(&lpc_mit(&x[anfang.saturating_sub(LPC_VORLAUF)..ende], boden), gamma);
+        for r in anfang..ende {
+            let rueck: i128 = ag.iter().zip(&zustand).map(|(&a, &w)| a as i128 * w as i128).sum();
+            let w = ((c[r % PERIODE] << 20) / norm) - (rueck >> LPC_Q) as i64;
+            zustand.copy_within(0..LPC_ORDNUNG - 1, 1);
+            zustand[0] = w;
+            einheit[r] = w;
+        }
+        let quadrat = |v: &[i64]| wurzel(v.iter().map(|&a| (a as i128 * a as i128) as u128).sum::<u128>() / (v.len() as u128).max(1)) as i64;
+        let ziel = (quadrat(&x[anfang..ende]) / teiler).max(2);
+        // In 2^16steln: aus einer Einheitsfolge mit RMS `quadrat(einheit)` wird eine mit RMS `ziel`.
+        verstaerkung.push(((ziel as i128) << 16) / quadrat(&einheit[anfang..ende]).max(1) as i128);
+        anfang = ende;
+    }
+    for r in 0..rahmen {
+        let (i, j) = (r / FENSTER, (r % FENSTER) as i128);
+        let vorher = if i == 0 { verstaerkung[0] } else { verstaerkung[i - 1] };
+        let v = vorher + (verstaerkung[i] - vorher) * j / FENSTER as i128;
+        let z = einheit[r] as i128 * v;
+        let beitrag = ((z + z.signum() * (1 << 15)) >> 16) as i64;
+        for ch in 0..k {
+            let p = &mut proben[r * k + ch];
+            *p = (*p as i64 + beitrag).clamp(i16::MIN as i64, i16::MAX as i64) as i16;
+        }
+    }
+}
+
+/// [`korrelation`] fuer das Wasserzeichen, das der Stimme folgt: je Fenster
+/// die Vorhersage des empfangenen Signals, damit vorab gefiltert
+/// (`A(z/γ)`, mit `gamma` gleich `1 << 30` das volle `A(z)`), dann gefaltet
+/// und mit der Folge verglichen.
+/// Die Korrelation nach der umgekehrten Vorhersage, mit Rauschboden der Vorhersage und Vorfilter der Folge.
+#[cfg(test)]
+fn korrelation_lpc_mit(proben: &[i16], kanaele: usize, gamma: i64, boden: u32, vorfilter: usize) -> (i64, i64) {
+    korrelation_lpc_voll(proben, kanaele, gamma, boden, vorfilter, false)
+}
+
+/// [`korrelation_lpc_mit`], mit `normieren` je Fenster der Rest auf gleiche
+/// Lautstaerke gebracht, bevor gefaltet wird.
+#[cfg(test)]
+fn korrelation_lpc_voll(proben: &[i16], kanaele: usize, gamma: i64, boden: u32, vorfilter: usize, normieren: bool) -> (i64, i64) {
+    korrelation_lpc_robust(proben, kanaele, gamma, boden, vorfilter, normieren, 0)
+}
+
+/// [`korrelation_lpc_voll`], mit `begrenzen > 0` der Rest je Fenster auf das
+/// `begrenzen`-fache seines Medianbetrags begrenzt.
+fn korrelation_lpc_robust(proben: &[i16], kanaele: usize, gamma: i64, boden: u32, vorfilter: usize, normieren: bool, begrenzen: i64) -> (i64, i64) {
+    let (c, _) = folge_geformt(vorfilter);
+    let x = einkanalig(proben, kanaele);
+    let mut gefaltet = vec![0i64; PERIODE];
+    let mut anfang = 0;
+    while anfang < x.len() {
+        let ende = (anfang + FENSTER).min(x.len());
+        let ag = bandbreite(&lpc_mit(&x[anfang.saturating_sub(LPC_VORLAUF)..ende], boden), gamma);
+        let rest: Vec<i64> = (anfang..ende)
+            .map(|n| {
+                let vor: i128 = (0..LPC_ORDNUNG).filter(|&j| n > j).map(|j| ag[j] as i128 * x[n - j - 1] as i128).sum();
+                x[n] + (vor >> LPC_Q) as i64
+            })
+            .collect();
+        // Impulse im Rest (Stimmbandimpulse, Spruenge) auf ein Vielfaches
+        // der mittleren absoluten Abweichung begrenzt, dann je Fenster auf
+        // gleiche Lautstaerke gebracht.
+        let mut betraege: Vec<i64> = rest.iter().map(|e| e.abs()).collect();
+        betraege.sort_unstable();
+        let grenze = if begrenzen > 0 { (betraege[betraege.len() / 2] * begrenzen).max(1) } else { i64::MAX };
+        let rest: Vec<i64> = rest.into_iter().map(|e| e.clamp(-grenze, grenze)).collect();
+        let teiler = if normieren { wurzel(rest.iter().map(|&e| (e as i128 * e as i128) as u128).sum::<u128>() / rest.len() as u128).max(1) as i64 } else { 1024 };
+        for (n, e) in (anfang..ende).zip(rest) {
+            gefaltet[n % PERIODE] += e * 1024 / teiler;
+        }
+        anfang = ende;
+    }
+    // Ohne Wasserzeichen hat die Summe die Varianz `Σ f(k)² c(k)²`.
+    let energie: u128 = gefaltet.iter().zip(&c).map(|(&f, &w)| (f as i128 * f as i128 * (w * w) as i128) as u128).sum();
+    let norm = wurzel(energie).max(1) as i128;
+    let bei = |s: usize| -> i64 {
+        let summe: i128 = (0..PERIODE).map(|k| gefaltet[(k + s) % PERIODE] as i128 * c[k] as i128).sum();
+        (summe * 100 / norm) as i64
+    };
+    let am_anfang = bei(0);
+    let gesucht = (0..PERIODE).map(bei).max().unwrap_or(0);
+    (am_anfang, gesucht)
 }
 
 /// (am Anfang, gesucht), beide in Hundertsteln der Standardabweichung.
@@ -211,8 +528,19 @@ fn einpraegen(proben: &mut [i16], kanaele: usize) {
 /// genau die; das Wasserzeichen ist weiss und bleibt. 📌 Ohne diesen Schritt
 /// reichten zwei Sekunden nicht, um eine vorne abgeschnittene Datei zu
 /// erkennen (4,25 statt der noetigen 6,5 Standardabweichungen).
+///
+/// ⚑ **Der Stimme folgend und weiss**: Dateien, die vor dem 2026-11-11
+/// gekennzeichnet wurden, tragen die weisse Folge und bleiben erkannt. Je Wert das
+/// groessere; zwei Folgen statt einer verdoppeln hoechstens die Rate
+/// falscher Funde, unter den Schwellen weiter selten.
 fn korrelation(proben: &[i16], kanaele: usize) -> (i64, i64) {
-    let c = folge();
+    let (a, b) = (korrelation_lpc_robust(proben, kanaele, 1 << LPC_Q, LPC_BODEN, 0, true, BEGRENZEN), korrelation_mit(proben, kanaele, 0));
+    (a.0.max(b.0), a.1.max(b.1))
+}
+
+/// [`korrelation`] gegen die Folge der gesagten Formung.
+fn korrelation_mit(proben: &[i16], kanaele: usize, ordnung: usize) -> (i64, i64) {
+    let (c, _) = folge_geformt(ordnung);
     let e: Vec<i64> = (0..PERIODE).map(|k| c[k] - c[(k + PERIODE - 1) % PERIODE]).collect();
     let kanaele = kanaele.max(1);
     let mut gefaltet = vec![0i64; PERIODE];
@@ -439,9 +767,9 @@ mod proben {
         }
     }
 
-    /// ⚑ **Die Stoerung bleibt klein**: rund 30 dB unter dem Signal, also
-    /// weniger als ein Tausendstel seiner Energie, und in der Stille zwei
-    /// Stufen.
+    /// ⚑ **Die Stoerung bleibt klein**: im Ganzen rund 38 dB unter dem
+    /// Signal (ein Achtzigstel), und keine Probe weicht weiter ab als
+    /// ein Vielfaches der Fensterstaerke.
     #[test]
     fn die_stoerung_bleibt_klein() {
         let roh = signal(5, 2);
@@ -451,8 +779,44 @@ mod proben {
         let energie = |v: &[i64]| v.iter().map(|x| (x * x) as u128).sum::<u128>();
         let s: Vec<i64> = roh.iter().map(|&x| x as i64).collect();
         let d: Vec<i64> = roh.iter().zip(&neu).map(|(&a, &b)| b as i64 - a as i64).collect();
-        assert!(energie(&d) * 900 < energie(&s), "Stoerung zu gross");
-        assert!(d.iter().all(|x| x.abs() <= 2 + 9000 / TEILER), "Ausreisser in der Stoerung");
+        assert!(energie(&d) * 2_000 < energie(&s), "Stoerung zu gross");
+        let grenze = (2 + 9000 / TEILER) * 2107 / 1000 + 1;
+        assert!(d.iter().all(|x| x.abs() <= grenze), "Ausreisser in der Stoerung");
+    }
+
+    /// ⚑ **Das Wasserzeichen folgt der Stimme**: Unter einem Signal, das
+    /// fast nur tiefe Toene traegt, liegt ueber 4 kHz weniger als ein
+    /// Hundertstel seiner Energie (weiss die Haelfte), und es bleibt in jedem
+    /// Fenster unter dem Signal. Gegenprobe: die weisse Folge in derselben
+    /// Rechnung.
+    #[test]
+    fn das_wasserzeichen_folgt_der_stimme() {
+        // Dreieck um 300 Hz mit wechselnder Lautstaerke, ganzzahlig.
+        let roh: Vec<i16> = (0..1 << 15).map(|i| { let p = (i % 80) as i64; let d = if p < 40 { p - 20 } else { 60 - p }; (d * (300 + (i / 4000 % 4) as i64 * 400)) as i16 }).collect();
+        let anteil = |weiss: bool| -> (f64, bool) {
+            let mut x = roh.clone();
+            if weiss { einpraegen_mit(&mut x, 1, 0, TEILER) } else { einpraegen(&mut x, 1) }
+            let d: Vec<i64> = x.iter().zip(&roh).map(|(&a, &b)| a as i64 - b as i64).collect();
+            let k: Vec<crate::spektrum::Komplex> = d.iter().map(|&v| crate::spektrum::Komplex { re: v as f64, im: 0.0 }).collect();
+            let s = crate::spektrum::fft(&k);
+            let e = |von: usize, bis: usize| (von..bis).map(|i| s[i].re * s[i].re + s[i].im * s[i].im).sum::<f64>();
+            let n = x.len();
+            let unter = d.chunks(FENSTER).zip(roh.chunks(FENSTER)).all(|(w, r)| w.iter().map(|v| v * v).sum::<i64>() * 100 < r.iter().map(|&v| v as i64 * v as i64).sum::<i64>());
+            (e(n / 6, n / 2) / e(1, n / 2), unter)
+        };
+        let (geformt, unter) = anteil(false);
+        assert!(geformt < 0.01, "ueber 4 kHz: {geformt}");
+        assert!(unter, "ein Fenster mit dem Wasserzeichen nicht 20 dB unter dem Signal");
+        assert!(anteil(true).0 > 0.4, "die weisse Folge waere auch frei: die Rechnung saehe nichts");
+    }
+
+    /// ⚑ **Weiss gekennzeichnete Dateien (bis 2026-11-11) bleiben erkannt.**
+    #[test]
+    fn die_weisse_folge_wird_weiter_erkannt() {
+        let mut x = signal(41, 2);
+        einpraegen_mit(&mut x, 1, 0, 64);
+        let (am_anfang, _) = korrelation(&x, 1);
+        assert!(am_anfang >= SCHWELLE_ANFANG, "weiss nicht mehr erkannt: {am_anfang}");
     }
 
     /// ⚑ **Zweimal kennzeichnen aendert nichts mehr**, und Gleitkomma wird
@@ -495,5 +859,146 @@ mod proben {
         assert!(pruefen(&p).unwrap().wasserzeichen());
         synthetisch_kennzeichnen(&p, Modalitaet::Sprache).unwrap();
         assert_eq!(std::fs::read(&p).unwrap(), einmal, "zweimal gekennzeichnet");
+    }
+
+    /// **Messung, welcher Filter die Stimme veraendert**, nicht im Lauf der
+    /// Proben: `MYL_KENNZ_FILTER` zeigt auf einen Ordner ungekennzeichneter
+    /// WAVs; daneben entstehen `-nur-pausen`, `-nur-geformt`, `-weiss` und
+    /// `-beides` mit denselben Dateien.
+    #[test]
+    #[ignore = "Messung: braucht MYL_KENNZ_FILTER"]
+    fn filter_einzeln_ablegen() {
+        let Ok(ordner) = std::env::var("MYL_KENNZ_FILTER") else { return };
+        let ordner = std::path::PathBuf::from(ordner);
+        let varianten: Vec<(String, bool, Option<usize>, i64)> = match std::env::var("MYL_KENNZ_VARIANTEN") {
+            // `ordnung:teiler,...`, je ohne Pausenfilter.
+            Ok(v) => v.split(',').filter_map(|t| t.split_once(':')).map(|(o, t)| (format!("o{o}-t{t}"), false, o.parse().ok(), t.parse().unwrap_or(64))).collect(),
+            // `Some(usize::MAX)`: das Wasserzeichen des Pflichtwegs.
+            Err(_) => vec![("nur-pausen".into(), true, None, 0), ("nur-wasserzeichen".into(), false, Some(usize::MAX), 0), ("weiss".into(), false, Some(0), 64), ("beides".into(), true, Some(usize::MAX), 0)],
+        };
+        for (name, pausen, ordnung, teiler) in varianten {
+            let ziel = ordner.with_file_name(format!("{}-{name}", ordner.file_name().unwrap().to_string_lossy()));
+            std::fs::create_dir_all(&ziel).unwrap();
+            for e in std::fs::read_dir(&ordner).unwrap() {
+                let p = e.unwrap().path();
+                let wav = Wav::lesen(&std::fs::read(&p).unwrap()).unwrap();
+                let mut x = wav.proben;
+                if pausen {
+                    pausen_beruhigen(&mut x, 1, wav.rate);
+                }
+                match ordnung {
+                    Some(usize::MAX) => einpraegen(&mut x, 1),
+                    Some(o) => einpraegen_mit(&mut x, 1, o, teiler),
+                    None => {}
+                }
+                std::fs::write(ziel.join(p.file_name().unwrap()), schreiben(wav.rate, 1, &x)).unwrap();
+            }
+        }
+    }
+
+    /// **Messung aller Wasserzeichen unter einem Mass**, nicht im Lauf der
+    /// Proben (`MYL_KENNZ_MESSEN`, Varianten in `MYL_KENNZ_ALLE` als
+    /// `art:teiler:gamma:boden:vorfilter`, `art` `weiss`, `binom` oder `lpc`).
+    /// Erkennung wie [`messen_geformt`]; je Sprachfenster (20 ms, ueber
+    /// −45 dBFS) und Band der Abstand Sprache zu Wasserzeichen als fuenftes
+    /// Perzentil, dazu der Anteil der Fenster und Baender, in denen das
+    /// Wasserzeichen weniger als 20 dB unter der Sprache **und** hoerbar laut
+    /// liegt (Effektivwert im Band ueber 2 Stufen).
+    #[test]
+    #[ignore = "Messung: braucht MYL_KENNZ_MESSEN und ffmpeg"]
+    fn messen_alle() {
+        let Ok(ordner) = std::env::var("MYL_KENNZ_MESSEN") else { return };
+        let mut dateien: Vec<_> = std::fs::read_dir(&ordner).unwrap().filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.extension().is_some_and(|e| e == "wav")).collect();
+        dateien.sort();
+        let roh: Vec<Vec<i16>> = dateien.iter().map(|p| Wav::lesen(&std::fs::read(p).unwrap()).unwrap().proben).collect();
+        let d = tempfile::tempdir().unwrap();
+        let mp3 = |x: &[i16]| -> Vec<i16> {
+            let (w, m, z) = (d.path().join("a.wav"), d.path().join("a.mp3"), d.path().join("b.wav"));
+            std::fs::write(&w, schreiben(24_000, 1, x)).unwrap();
+            for args in [vec![w.as_os_str(), "-b:a".as_ref(), "128k".as_ref(), m.as_os_str()], vec![m.as_os_str(), "-ar".as_ref(), "24000".as_ref(), "-ac".as_ref(), "1".as_ref(), z.as_os_str()]] {
+                assert!(std::process::Command::new("ffmpeg").args(["-loglevel", "error", "-y", "-i"]).args(args).status().unwrap().success());
+            }
+            Wav::lesen(&std::fs::read(&z).unwrap()).unwrap().proben
+        };
+        // Energie je Band eines Fensters (FFT 512) und die Zahl der Stellen je Band.
+        let grenzen = [0.0, 2_000.0, 4_000.0, 8_000.0, 12_000.0];
+        let baender = |x: &[i64]| -> [(f64, f64); 4] {
+            let mut k: Vec<crate::spektrum::Komplex> = x.iter().map(|&v| crate::spektrum::Komplex { re: v as f64, im: 0.0 }).collect();
+            k.resize(512, crate::spektrum::Komplex { re: 0.0, im: 0.0 });
+            let s = crate::spektrum::fft(&k);
+            let mut aus = [(0.0, 0.0); 4];
+            for (b, w) in grenzen.windows(2).enumerate() {
+                let idx: Vec<usize> = (0..256).filter(|&i| { let f = i as f64 * 24_000.0 / 512.0; f >= w[0] && f < w[1] }).collect();
+                aus[b] = (idx.iter().map(|&i| s[i].re * s[i].re + s[i].im * s[i].im).sum::<f64>().max(1e-6), idx.len() as f64);
+            }
+            aus
+        };
+        let alle = std::env::var("MYL_KENNZ_ALLE").unwrap_or("weiss:64:0:0:0,binom:32:0:0:6,lpc:32:920:9:0".into());
+        for v in alle.split(',') {
+            let t: Vec<&str> = v.split(':').collect();
+            let (art, teiler, gamma, boden, vorfilter) = (t[0], t[1].parse::<i64>().unwrap(), (t[2].parse::<i64>().unwrap() << 30) / 1000, t[3].parse::<u32>().unwrap(), t[4].parse::<usize>().unwrap());
+            let praegen = |m: &mut Vec<i16>| match art {
+                "weiss" => einpraegen_mit(m, 1, 0, teiler),
+                "binom" => einpraegen_mit(m, 1, vorfilter, teiler),
+                _ => einpraegen_lpc_mit(m, 1, teiler, gamma, boden, vorfilter),
+            };
+            let erkennen = |m: &[i16]| match art {
+                "weiss" => korrelation_mit(m, 1, 0),
+                "binom" => korrelation_mit(m, 1, vorfilter),
+                "lpcn" => korrelation_lpc_voll(m, 1, 1 << 30, boden, vorfilter, true),
+                b if b.starts_with("lpcb") => korrelation_lpc_robust(m, 1, 1 << 30, boden, vorfilter, true, b[4..].parse().unwrap_or(3)),
+                _ => korrelation_lpc_mit(m, 1, 1 << 30, boden, vorfilter),
+            };
+            let mut schlecht = [i64::MAX; 6];
+            let mut abstand: Vec<Vec<f64>> = vec![Vec::new(); 4];
+            let (mut verstoss, mut gezaehlt) = (0usize, 0usize);
+            let mut ohne = 0i64;
+            for x in &roh {
+                ohne = ohne.max(erkennen(x).1);
+                for (teil, stueck) in [(&x[..], false), (&x[..x.len().min(23_040)], true)] {
+                    let mut m = teil.to_vec();
+                    praegen(&mut m);
+                    let o = if stueck { 3 } else { 0 };
+                    schlecht[o] = schlecht[o].min(erkennen(&m).0);
+                    let verst: Vec<i16> = m[1234.min(m.len())..].iter().map(|v| v / 2).collect();
+                    schlecht[o + 1] = schlecht[o + 1].min(erkennen(&verst).1);
+                    schlecht[o + 2] = schlecht[o + 2].min(erkennen(&mp3(&m)).1);
+                    if stueck {
+                        continue;
+                    }
+                    for (f, (a, b)) in teil.chunks(FENSTER).zip(m.chunks(FENSTER)).enumerate() {
+                        let sp: Vec<i64> = a.iter().map(|&v| v as i64).collect();
+                        if f == 0 || wurzel(sp.iter().map(|&v| (v * v) as u128).sum::<u128>() / sp.len() as u128) < 184 {
+                            continue;
+                        }
+                        let wz: Vec<i64> = b.iter().zip(a).map(|(&p, &q)| p as i64 - q as i64).collect();
+                        let (bs, bw) = (baender(&sp), baender(&wz));
+                        for i in 0..4 {
+                            let db = 10.0 * (bs[i].0 / bw[i].0).log10();
+                            abstand[i].push(db);
+                            // Effektivwert des Wasserzeichens im Band, in Stufen (Parseval, 512 Stellen, 480 Proben).
+                            let rms = (2.0 * bw[i].0 / (512.0 * 480.0)).sqrt();
+                            gezaehlt += 1;
+                            if db < 20.0 && rms > 2.0 {
+                                verstoss += 1;
+                            }
+                        }
+                    }
+                }
+            }
+            let mut zeile = format!(
+                "[alle] {v}: ohne {:.1}; Satz {:.1} / {:.1} / {:.1}; Stueck {:.1} / {:.1} / {:.1}; hoerbar unter 20 dB {:.2} %",
+                ohne as f64 / 100.0,
+                schlecht[0] as f64 / 100.0, schlecht[1] as f64 / 100.0, schlecht[2] as f64 / 100.0,
+                schlecht[3] as f64 / 100.0, schlecht[4] as f64 / 100.0, schlecht[5] as f64 / 100.0,
+                100.0 * verstoss as f64 / gezaehlt.max(1) as f64
+            );
+            for (i, band) in ["0-2", "2-4", "4-8", "8-12"].iter().enumerate() {
+                let w = &mut abstand[i];
+                w.sort_by(|a, b| a.total_cmp(b));
+                zeile += &format!("; {band} P5 {:.1}", w[w.len() / 20]);
+            }
+            eprintln!("{zeile}");
+        }
     }
 }

@@ -1,6 +1,6 @@
 # Zweckbestimmung und ausgeschlossene Verwendungen
 
-**Stand:** 2026-09-28 · **English:** [Intended-Use-Policy.md](../en/Intended-Use-Policy.md)
+**Stand:** 2026-11-11 · **English:** [Intended-Use-Policy.md](../en/Intended-Use-Policy.md)
 
 Diese Zweckbestimmung legt fest, wofür Myelith entwickelt wurde und
 wofür es nicht verwendet werden darf. Sie ist Teil der Nutzungsbedingungen
@@ -90,8 +90,10 @@ eines Hochrisiko-KI-Systems (Art. 25 KI-Verordnung).
   für die eigene Stimme des Nutzers gedacht oder für die einer Person,
   die ausdrücklich eingewilligt hat. Eine nachgebildete Stimme darf nicht
   als echte Aufnahme einer Person ausgegeben werden.
-- **Die Kennzeichnung synthetischer Inhalte entfernen**, um sie als echt
-  auszugeben.
+- **Die Kennzeichnung synthetischer Inhalte absichtlich entfernen,
+  verändern oder unkenntlich machen**: die Metadaten, das signierte
+  Herkunftsmanifest (C2PA) und das Wasserzeichen im Signal, gleich zu
+  welchem Zweck, und erst recht, um Inhalte als echt auszugeben.
 - Alles, was der Ausschlusskatalog des Projekts nennt
   ([`../ethics/Ausschluss.json`](../ethics/Ausschluss.json)).
 
@@ -102,7 +104,8 @@ eines Hochrisiko-KI-Systems (Art. 25 KI-Verordnung).
 | Hinweis beim Start, aktiv zu bestätigen | Niemand nutzt Myelith, ohne zu wissen, dass es eine KI ist und wofür sie nicht gedacht ist |
 | Dauerhafte Kennzeichnung als KI in der Oberfläche | Im Fenster steht im leeren Eingabefeld „Hier antwortet eine KI.“, in der Konsole „KI“ in der Fußzeile; jede Antwort ist als KI-erzeugt erkennbar |
 | Schutzfilter für Anfragen | Anfragen, die erkennbar auf eine verbotene Praxis zielen, werden mit Verweis auf diese Zweckbestimmung abgelehnt |
-| Kennzeichnung der synthetischen Stimme | Metadaten und Wasserzeichen in jeder erzeugten Tondatei |
+| Kennzeichnung der synthetischen Stimme | In jeder erzeugten Tondatei: Metadaten, ein signiertes Herkunftsmanifest nach C2PA und ein Wasserzeichen im Signal, das der Stimme folgt und kaum hörbar ist |
+| Öffentliche Erkennung | Jeder kann eine Tondatei kostenlos prüfen: `myl kennzeichen <datei.wav>` liegt jedem Client bei, das Verfahren ist offener Quelltext, und das Manifest liest jedes Werkzeug für C2PA |
 | Bestätigung vor Handlungen | Schreiben, Netzzugriffe und Befehle des Agenten werden in der Vorgabe vorgelegt, bevor sie ausgeführt werden |
 | Notschalter | Im Fenster ist es das Schließen des Fensters: Es beendet jede laufende Handlung des Agenten, auch einen schon gestarteten Befehl. In der Konsole bricht der Notaus (Strg-C oder Esc) sie ab |
 | Kein Personenbezug im Sehen | Das Sehmodell wird angewiesen, Personen nicht zu identifizieren und keine Gefühle oder sensiblen Merkmale zuzuschreiben |

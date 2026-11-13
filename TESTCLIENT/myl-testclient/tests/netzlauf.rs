@@ -205,10 +205,47 @@ async fn runde(knoten: &mut [Knoten], bloecke: usize) {
     }
 }
 
-/// Bis alle Knoten auf derselben Höhe stehen (oder die Frist abläuft).
+/// ⚑ **Die Frist des Angleichens gilt dem Stillstand, nicht der Dauer**
+/// (2026-11-10). Jeder der fünfzehn Knoten läuft je Runde 25 ms, der
+/// Erzeuger baut davor bis zu 200 Blöcke: Im Testbau holt ein Knoten so
+/// rund 20 bis 40 Blöcke je Sekunde auf, und für die 3 600 Blöcke bis
+/// Epoche 2 brauchten die Knoten eines Laufs 61 bis 125 s. An einer festen
+/// Frist von 120 s wurde der Lauf rot, während der letzte Knoten noch
+/// Block um Block übernahm. Jetzt läuft die Frist neu an, solange der
+/// hinterste Knoten wächst; steht er die ganze Frist, ist es ein Befund
+/// wie zuvor. Die Obergrenze (das Fünffache) fängt den Knoten, der nur
+/// noch kriecht.
+struct Stillstandsfrist {
+    frist: Duration,
+    ende: std::time::Instant,
+    schluss: std::time::Instant,
+    hinten: u64,
+}
+
+impl Stillstandsfrist {
+    fn neu(jetzt: std::time::Instant, frist: Duration, hinten: u64) -> Self {
+        Stillstandsfrist { frist, ende: jetzt + frist, schluss: jetzt + frist * 5, hinten }
+    }
+
+    /// Nimmt die Höhe des hintersten Knotens und sagt, ob noch gewartet wird.
+    fn weiter(&mut self, jetzt: std::time::Instant, hinten: u64) -> bool {
+        if hinten > self.hinten {
+            self.hinten = hinten;
+            self.ende = jetzt + self.frist;
+        }
+        jetzt < self.ende && jetzt < self.schluss
+    }
+}
+
+fn hinterster(knoten: &[Knoten]) -> u64 {
+    knoten.iter().map(|k| k.kette().hoehe()).min().unwrap_or(0)
+}
+
+/// Bis alle Knoten auf derselben Höhe stehen, oder bis der hinterste die
+/// Frist lang nicht mehr wächst ([`Stillstandsfrist`]).
 async fn angleichen(knoten: &mut [Knoten], frist: Duration) -> bool {
-    let ende = tokio::time::Instant::now() + frist;
-    while tokio::time::Instant::now() < ende {
+    let mut wache = Stillstandsfrist::neu(std::time::Instant::now(), frist, hinterster(knoten));
+    while wache.weiter(std::time::Instant::now(), hinterster(knoten)) {
         let h = knoten[0].kette().hoehe();
         if knoten.iter().all(|k| k.kette().hoehe() == h) {
             return true;
@@ -216,6 +253,45 @@ async fn angleichen(knoten: &mut [Knoten], frist: Duration) -> bool {
         runde(knoten, 0).await;
     }
     false
+}
+
+#[test]
+fn die_frist_laeuft_neu_an_solange_der_hinterste_waechst() {
+    let t0 = std::time::Instant::now();
+    let s = Duration::from_secs;
+    let mut w = Stillstandsfrist::neu(t0, s(120), 100);
+    // Kurz vor dem Ende ein Block mehr: Die Frist beginnt neu.
+    assert!(w.weiter(t0 + s(119), 101));
+    assert!(w.weiter(t0 + s(238), 101), "die Frist lief nicht neu an");
+    // ⛔️ Gegenprobe: Steht der hinterste die ganze Frist, ist Schluss.
+    assert!(!w.weiter(t0 + s(239), 101), "ein stehender Knoten hielt die Frist offen");
+}
+
+#[test]
+fn ein_stehender_knoten_beendet_das_warten_nach_der_frist() {
+    let t0 = std::time::Instant::now();
+    let s = Duration::from_secs;
+    let mut w = Stillstandsfrist::neu(t0, s(120), 100);
+    assert!(w.weiter(t0 + s(119), 100));
+    assert!(!w.weiter(t0 + s(120), 100));
+    // Eine kleinere Höhe verlängert nichts.
+    let mut w = Stillstandsfrist::neu(t0, s(120), 100);
+    assert!(!w.weiter(t0 + s(120), 40));
+}
+
+#[test]
+fn ein_kriechender_knoten_haelt_die_frist_nicht_ewig_offen() {
+    let t0 = std::time::Instant::now();
+    let s = Duration::from_secs;
+    let mut w = Stillstandsfrist::neu(t0, s(120), 0);
+    // Alle 100 s ein Block: Jede einzelne Frist hält, die Obergrenze nicht.
+    let mut hielt = 0;
+    for i in 1..=10u64 {
+        if w.weiter(t0 + s(100 * i), i) {
+            hielt += 1;
+        }
+    }
+    assert_eq!(hielt, 5, "die Obergrenze liegt beim Fünffachen der Frist");
 }
 
 /// Die Höhen aller Knoten, für die Meldung eines gescheiterten Angleichens

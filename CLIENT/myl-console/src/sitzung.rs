@@ -1289,6 +1289,11 @@ fn schleife(stand: &mut Stand) -> i32 {
                 wallet_zeigen(stand);
                 continue;
             }
+            Some(Befehlsart::Buch) => {
+                let pfad = befehl_und_rest(&text).map(|(_, r)| r).unwrap_or("").to_string();
+                buch_befehl(stand, &pfad);
+                continue;
+            }
             Some(Befehlsart::Update) => {
                 if aktualisieren() {
                     NEUSTART.store(true, std::sync::atomic::Ordering::SeqCst);
@@ -1405,6 +1410,8 @@ const HILFE_BEFEHL: &str = "/help";
 /// Was ein Befehl bewirkt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Befehlsart {
+    /// Aus einem Buch wird ein Skill; nimmt einen Pfad.
+    Buch,
     /// Eine Datei anhaengen; nimmt einen Pfad.
     Datei,
     /// Einen Skill lernen; nimmt einen Namen oder Pfad und einen Auftrag.
@@ -1470,7 +1477,7 @@ struct Befehl {
 /// nennt irgendwann einen Befehl, den es nicht gibt, oder verschweigt
 /// einen, den es gibt, **und beides sieht erst der, der es
 /// ausprobiert.**
-const BEFEHLE: [Befehl; 27] = [
+const BEFEHLE: [Befehl; 28] = [
     Befehl {
         art: Befehlsart::Modell,
         namen: &["/model", "/modell"],
@@ -1597,6 +1604,11 @@ const BEFEHLE: [Befehl; 27] = [
         art: Befehlsart::Wallet,
         namen: &["/wallet"],
         was: "Testwallets: anlegen, auswaehlen (das ausgewaehlte bekommt beim Mining die Ertraege), Einstieg ins Netz",
+    },
+    Befehl {
+        art: Befehlsart::Buch,
+        namen: &["/book", "/buch"],
+        was: "macht aus einem Buch (PDF, auch gescannt, EPUB, DOCX und mehr) einen Skill im Arbeitsordner",
     },
     // ⚑ **Das Update** (Auftrag des Projektinhabers, 2026-10-17): dieselbe
     //   Pruefung wie im Fenster, das sie beim Start von selbst faehrt.
@@ -3445,6 +3457,20 @@ fn modus_verlassen(stand: &mut Stand, name: &str) {
     frei_bis_auf_das_logo(stand.design);
     if let Some(sch) = stand.schirm {
         sch.einrichten();
+    }
+}
+
+/// **`/book`**: dasselbe wie das Werkzeug des Agenten, nur vom Menschen angestossen.
+fn buch_befehl(stand: &Stand, rest: &str) {
+    let pfad = rest.trim().trim_matches(['"', '\'']);
+    if pfad.is_empty() {
+        println!("  /book <datei>");
+        return;
+    }
+    println!("  Das kann bei einem dicken Buch viele Minuten dauern.");
+    match myl_local_agent::buchwerkzeug::von_hand(&stand.ordner.join(pfad), &stand.ordner) {
+        Ok(()) => println!("  Fertig. Der Agent findet den Skill mit search_skill."),
+        Err(f) => println!("  {f}"),
     }
 }
 

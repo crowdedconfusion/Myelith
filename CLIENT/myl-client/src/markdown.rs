@@ -258,6 +258,9 @@ pub fn zeile_zerlegen(z: &str) -> Vec<Teil> {
     let zeichen: Vec<char> = z.chars().collect();
     let mut puffer = String::new();
     let mut i = 0;
+    // 📌 Je Marke der letzte Suchausgang (2026-11-12): Ohne ihn suchte jedes
+    //    `[` ohne `]` bis zum Zeilenende, und 30 000 davon brauchten 0,7 s.
+    let mut merk = Merker::default();
 
     let schieben = |aus: &mut Vec<Teil>, puffer: &mut String| {
         if !puffer.is_empty() {
@@ -268,7 +271,7 @@ pub fn zeile_zerlegen(z: &str) -> Vec<Teil> {
     while i < zeichen.len() {
         // Code im Text: alles bis zum naechsten Akzent, unzerlegt.
         if zeichen[i] == '`' {
-            if let Some(e) = finden(&zeichen, i + 1, "`") {
+            if let Some(e) = merk.finden(&zeichen, i + 1, "`") {
                 schieben(&mut aus, &mut puffer);
                 aus.push(Teil::Code { text: zeichen[i + 1..e].iter().collect() });
                 i = e + 1;
@@ -277,7 +280,7 @@ pub fn zeile_zerlegen(z: &str) -> Vec<Teil> {
         }
         // Fett vor kursiv, sonst frisst der eine Stern den zweiten.
         if zeichen[i] == '*' && zeichen.get(i + 1) == Some(&'*') {
-            if let Some(e) = finden(&zeichen, i + 2, "**") {
+            if let Some(e) = merk.finden(&zeichen, i + 2, "**") {
                 schieben(&mut aus, &mut puffer);
                 aus.push(Teil::Fett { text: zeichen[i + 2..e].iter().collect() });
                 i = e + 2;
@@ -285,8 +288,8 @@ pub fn zeile_zerlegen(z: &str) -> Vec<Teil> {
             }
         }
         if zeichen[i] == '*' || zeichen[i] == '_' {
-            let marke = zeichen[i].to_string();
-            if let Some(e) = finden(&zeichen, i + 1, &marke) {
+            let marke = if zeichen[i] == '*' { "*" } else { "_" };
+            if let Some(e) = merk.finden(&zeichen, i + 1, marke) {
                 // ⚑ Ein Unterstrich mitten im Wort ist keiner: `a_b_c`
                 // ist ein Bezeichner und keine Auszeichnung.
                 let leer_davor = i == 0 || zeichen[i - 1].is_whitespace();
@@ -300,9 +303,9 @@ pub fn zeile_zerlegen(z: &str) -> Vec<Teil> {
         }
         // Verweis: `[Text](Ziel)`
         if zeichen[i] == '[' {
-            if let Some(e) = finden(&zeichen, i + 1, "]") {
+            if let Some(e) = merk.finden(&zeichen, i + 1, "]") {
                 if zeichen.get(e + 1) == Some(&'(') {
-                    if let Some(z2) = finden(&zeichen, e + 2, ")") {
+                    if let Some(z2) = merk.finden(&zeichen, e + 2, ")") {
                         schieben(&mut aus, &mut puffer);
                         aus.push(Teil::Verweis {
                             text: zeichen[i + 1..e].iter().collect(),
@@ -321,6 +324,29 @@ pub fn zeile_zerlegen(z: &str) -> Vec<Teil> {
     aus
 }
 
+/// Merkt sich je Marke den letzten Suchausgang ab `von`: Fand die Suche
+/// nichts, findet sie ab spaeter auch nichts; fand sie `e`, gilt `e` fuer
+/// jeden Anfang bis `e`. Damit bleibt eine Zeile linear, gleich wie viele
+/// Marken ohne Gegenstueck sie traegt.
+#[derive(Default)]
+struct Merker {
+    letzte: Vec<(&'static str, usize, Option<usize>)>,
+}
+
+impl Merker {
+    fn finden(&mut self, zeichen: &[char], von: usize, marke: &'static str) -> Option<usize> {
+        if let Some(&(_, ab, ergebnis)) = self.letzte.iter().find(|(m, _, _)| *m == marke) {
+            if von >= ab && ergebnis.is_none_or(|e| von <= e) {
+                return ergebnis;
+            }
+        }
+        let ergebnis = finden(zeichen, von, marke);
+        self.letzte.retain(|(m, _, _)| *m != marke);
+        self.letzte.push((marke, von, ergebnis));
+        ergebnis
+    }
+}
+
 /// Sucht `marke` ab `von`; gibt den Anfang zurueck.
 fn finden(zeichen: &[char], von: usize, marke: &str) -> Option<usize> {
     let m: Vec<char> = marke.chars().collect();
@@ -331,6 +357,106 @@ fn finden(zeichen: &[char], von: usize, marke: &str) -> Option<usize> {
 #[cfg(test)]
 mod proben {
     use super::*;
+
+    /// Die Abschrift ohne Merker, wie vor dem 2026-11-12: Beide muessen auf
+    /// jeder Zeile dasselbe ergeben.
+    fn zeile_zerlegen_ohne_merker(z: &str) -> Vec<Teil> {
+        let mut aus: Vec<Teil> = Vec::new();
+        let zeichen: Vec<char> = z.chars().collect();
+        let mut puffer = String::new();
+        let mut i = 0;
+
+        let schieben = |aus: &mut Vec<Teil>, puffer: &mut String| {
+            if !puffer.is_empty() {
+                aus.push(Teil::Text { text: std::mem::take(puffer) });
+            }
+        };
+
+        while i < zeichen.len() {
+            // Code im Text: alles bis zum naechsten Akzent, unzerlegt.
+            if zeichen[i] == '`' {
+                if let Some(e) = finden(&zeichen, i + 1, "`") {
+                    schieben(&mut aus, &mut puffer);
+                    aus.push(Teil::Code { text: zeichen[i + 1..e].iter().collect() });
+                    i = e + 1;
+                    continue;
+                }
+            }
+            // Fett vor kursiv, sonst frisst der eine Stern den zweiten.
+            if zeichen[i] == '*' && zeichen.get(i + 1) == Some(&'*') {
+                if let Some(e) = finden(&zeichen, i + 2, "**") {
+                    schieben(&mut aus, &mut puffer);
+                    aus.push(Teil::Fett { text: zeichen[i + 2..e].iter().collect() });
+                    i = e + 2;
+                    continue;
+                }
+            }
+            if zeichen[i] == '*' || zeichen[i] == '_' {
+                let marke = if zeichen[i] == '*' { "*" } else { "_" };
+                if let Some(e) = finden(&zeichen, i + 1, marke) {
+                    // ⚑ Ein Unterstrich mitten im Wort ist keiner: `a_b_c`
+                    // ist ein Bezeichner und keine Auszeichnung.
+                    let leer_davor = i == 0 || zeichen[i - 1].is_whitespace();
+                    if leer_davor && e > i + 1 {
+                        schieben(&mut aus, &mut puffer);
+                        aus.push(Teil::Kursiv { text: zeichen[i + 1..e].iter().collect() });
+                        i = e + 1;
+                        continue;
+                    }
+                }
+            }
+            // Verweis: `[Text](Ziel)`
+            if zeichen[i] == '[' {
+                if let Some(e) = finden(&zeichen, i + 1, "]") {
+                    if zeichen.get(e + 1) == Some(&'(') {
+                        if let Some(z2) = finden(&zeichen, e + 2, ")") {
+                            schieben(&mut aus, &mut puffer);
+                            aus.push(Teil::Verweis {
+                                text: zeichen[i + 1..e].iter().collect(),
+                                ziel: zeichen[e + 2..z2].iter().collect(),
+                            });
+                            i = z2 + 1;
+                            continue;
+                        }
+                    }
+                }
+            }
+            puffer.push(zeichen[i]);
+            i += 1;
+        }
+        schieben(&mut aus, &mut puffer);
+        aus
+    }
+
+    #[test]
+    fn der_merker_aendert_kein_ergebnis() {
+        let alphabet = ['[', ']', '(', ')', '*', '_', '`', 'a', ' '];
+        let mut x = 0x2545_f491_4f6c_dd1du64;
+        for _ in 0..20_000 {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            let n = (x % 40) as usize;
+            let mut zeile = String::new();
+            for k in 0..n {
+                zeile.push(alphabet[((x >> (k % 50)) as usize + k * 7) % alphabet.len()]);
+            }
+            assert_eq!(zeile_zerlegen(&zeile), zeile_zerlegen_ohne_merker(&zeile), "{zeile:?}");
+        }
+    }
+
+    /// ⛔️ **Eine lange Zeile ohne Gegenstueck kostet keine quadratische
+    /// Zeit**: 30 000 `[` (etwa die laengste Antwort des Modells) und
+    /// dasselbe mit einem `]` ganz am Ende.
+    #[test]
+    fn eine_lange_zeile_ohne_gegenstueck_kostet_lineare_zeit() {
+        for z in ["[".repeat(30_000), format!("{}]", "[a ".repeat(10_000)), format!("`{}", "a".repeat(30_000))] {
+            let t = std::time::Instant::now();
+            let teile = zeile_zerlegen(&z);
+            assert!(!teile.is_empty());
+            assert!(t.elapsed() < std::time::Duration::from_millis(500), "{:?} fuer {} Zeichen", t.elapsed(), z.len());
+        }
+    }
 
     fn text(t: &str) -> Teil {
         Teil::Text { text: t.into() }

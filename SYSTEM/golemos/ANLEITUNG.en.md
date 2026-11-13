@@ -331,3 +331,9 @@ so far; M4 and M5 are in progress.
   as required by the EU AI Act.
 - **Self-test:** in the boot menu, **GolemOS Selbstprobe** starts the
   system, checks whether Myelith answers and switches off again.
+- **Licences and sources:** GolemOS consists largely of free software,
+  some of it under the GPL. Myelith's licence texts are in the system
+  under `/usr/share/doc/myelith/`. Every released image comes with a list
+  of all packages and their licences (`lizenzen-<arch>.tar.xz`, next to
+  the image) and an archive of their sources, attached to the same
+  release.

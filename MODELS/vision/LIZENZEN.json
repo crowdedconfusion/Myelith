@@ -1,0 +1,32 @@
+{
+  "_zweck": "Lizenz je Gewicht dieser Rubrik. Die Gewichte kommen als einzelne Dateien und werden beim Ablegen umbenannt; deshalb steht die Angabe hier und nicht neben ihnen. Geprueft von COMPLIANCE/ethics/werkzeuge/lizenzprobe.py.",
+  "sehen.gguf": {
+    "modell": "SmolVLM2-2.2B-Instruct, GGUF",
+    "quelle": "https://huggingface.co/ggml-org/SmolVLM2-2.2B-Instruct-GGUF",
+    "revision": "1bc3c9f74ceafd4c8d4411cc9cf188bba3798f91",
+    "original": "https://huggingface.co/HuggingFaceTB/SmolVLM2-2.2B-Instruct",
+    "lizenz": "Apache 2.0",
+    "lizenzdatei": "LIZENZ-apache-2.0.txt"
+  },
+  "sehen-mmproj.gguf": {
+    "modell": "SmolVLM2-2.2B-Instruct, Projektor",
+    "quelle": "https://huggingface.co/ggml-org/SmolVLM2-2.2B-Instruct-GGUF",
+    "revision": "1bc3c9f74ceafd4c8d4411cc9cf188bba3798f91",
+    "lizenz": "Apache 2.0",
+    "lizenzdatei": "LIZENZ-apache-2.0.txt"
+  },
+  "sehen-genau.gguf": {
+    "modell": "Qwen3-VL-4B-Instruct, GGUF Q4_K_M",
+    "quelle": "https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct-GGUF",
+    "revision": "1cd86afb9a95c410a6038ab3b40d8b578c892266",
+    "lizenz": "Apache 2.0",
+    "lizenzdatei": "LIZENZ-apache-2.0.txt"
+  },
+  "sehen-genau-mmproj.gguf": {
+    "modell": "Qwen3-VL-4B-Instruct, Projektor Q8_0",
+    "quelle": "https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct-GGUF",
+    "revision": "1cd86afb9a95c410a6038ab3b40d8b578c892266",
+    "lizenz": "Apache 2.0",
+    "lizenzdatei": "LIZENZ-apache-2.0.txt"
+  }
+}

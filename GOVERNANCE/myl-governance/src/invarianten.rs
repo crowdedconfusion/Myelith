@@ -47,15 +47,13 @@
 //! beobachteten Bereichs liegen; die Start-Subvention `s = 1` liegt
 //! darunter.
 //!
-//! **`Parameter::Kostenanteil` bleibt in der Registry**, aber ohne
-//! Wirkung auf diese Prüfung. Das ist genau das Muster, an dem sich das
-//! Projekt schon dreimal verbrannt hat (A7, Fund 25, Fund 44: vorhanden,
-//! getestet, nie benutzt), deshalb steht die Wirkungslosigkeit hier nicht
-//! nur als Satz, sondern als **Test**:
-//! `tests/akzeptanz.rs::kein_kostenanteil_bewegt_die_self_dealing_grenze`
-//! ändert `c` über das ganze Band und verlangt, dass sich das Urteil über
-//! `s` nicht bewegt. Wer die Prüfung eines Tages wieder an `c` koppelt,
-//! bricht diesen Test.
+//! 📌 **`Parameter::Kostenanteil` stand danach wirkungslos in der
+//! Registry**, das Muster, an dem sich das Projekt schon dreimal verbrannt
+//! hat (A7, Fund 25, Fund 44: vorhanden, getestet, nie benutzt). Am
+//! 2026-11-10 entfernt, mit der Invariante, die nur ihn im Band hielt:
+//! `c` ist eine Beobachtung über die Welt, keine Protokollgröße, und Kap.
+//! 10.3 zählt es nicht zu den abstimmbaren. Die Grenze steht als Konstante
+//! in `myl_tokenomics::sicherheit` (`KOSTENANTEIL_UNTEN_*`).
 
 use myl_tokenomics::sicherheit::{
     self_dealing_grenze, self_dealing_sicher_konservativ, s_min, KOSTENANTEIL_UNTEN_NENNER,
@@ -116,14 +114,6 @@ pub enum Invariante {
     /// **Strukturell:** Das Komitee trägt mindestens einen byzantinischen
     /// Knoten, also `n ≥ 4` (BFT verlangt `n ≥ 3f+1`, `f ≥ 1`).
     KomiteeGrossGenug,
-    /// **Strukturell, Anhang B.4:** `0 < c ≤ 0,8`.
-    ///
-    /// Ohne obere Schranke wäre `c/(1−c)` beliebig groß und die
-    /// Self-Dealing-Grenze wertlos; `c ≥ 1` macht sie undefiniert. Die
-    /// 0,8 sind das obere Ende des im Papier genannten Bandes. Siehe
-    /// Fund 49 in der Modul-Dokumentation: Das begrenzt den Schaden,
-    /// schließt die Lücke aber nicht.
-    KostenanteilPlausibel,
     /// **Strukturell:** Mindestens ein Shard.
     ShardzahlMindestensEins,
     /// **Belegt, Kap. 5.7 und Anhang B.8.3:** `M_max ≥ B̄_e`.
@@ -200,7 +190,6 @@ impl Invariante {
             Self::EmaGlaettungInEinheitsintervall => "strukturell, Fund 47",
             Self::RedundanzMindestensZwei => "Kap. 4.4",
             Self::KomiteeGrossGenug => "strukturell, BFT n >= 3f+1",
-            Self::KostenanteilPlausibel => "Anhang B.4",
             Self::ShardzahlMindestensEins => "strukturell",
             Self::PraegedeckelNichtBindend => "Kap. 5.7, Anhang B.8.3",
             Self::TrainingsrateNichtUnterInferenzrate => "Kap. 5.5",
@@ -300,21 +289,6 @@ fn strukturelle_pruefungen(reg: &ParameterRegistry) -> Result<(), InvariantenBru
         });
     }
 
-    let (cz, cn) = reg
-        .wert(Parameter::Kostenanteil)
-        .als_bruch()
-        .expect("c ist ein Bruch");
-    // 0 < c <= 0,8, also 5·cz <= 4·cn und cz > 0.
-    if cz == 0 || (cz as u128) * 5 > (cn as u128) * 4 {
-        return Err(InvariantenBruch {
-            invariante: Invariante::KostenanteilPlausibel,
-            parameter: Parameter::Kostenanteil,
-            begruendung: format!(
-                "c = {}/{} liegt nicht in (0; 0,8]; Anhang B.4 nennt empirisch 0,6 bis 0,8",
-                cz, cn
-            ),
-        });
-    }
 
     let r = reg
         .wert(Parameter::Redundanzfaktor)

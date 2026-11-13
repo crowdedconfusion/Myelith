@@ -97,6 +97,8 @@ pub mod ort;
 pub mod ruestung;
 pub mod schale;
 pub mod schlaf;
+pub mod bibliothek;
+pub mod buchwerkzeug;
 pub mod sinneswerkzeuge;
 pub mod skills;
 pub mod syntaxwache;

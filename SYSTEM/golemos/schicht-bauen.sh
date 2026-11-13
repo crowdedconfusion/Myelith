@@ -218,6 +218,8 @@ env \
   cargo build --release --offline --locked --target "$RZIEL" --no-default-features \
     --manifest-path /bau/quelle/CLIENT/myl-oberflaeche/Cargo.toml
 install -m 0755 "/bau/fenster-ziel/$RZIEL/release/myl-oberflaeche" /bau/schicht-overlay/usr/bin/myelith-fenster
+install -d /bau/schicht-overlay/usr/share/doc/myelith
+install -m 0644 /bau/quelle/LICENSE.md /bau/quelle/COMPLIANCE/NOTICES.md /bau/quelle/COMPLIANCE/DRITTLIZENZEN.txt /bau/schicht-overlay/usr/share/doc/myelith/
 
 # ── 4. Noch einmal zusammensetzen, jetzt mit dem Fenster ─────────────
 make -C "$BR" O="$O" BR2_JLEVEL="$FAEDEN" >/dev/null

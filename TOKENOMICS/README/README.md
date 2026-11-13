@@ -1,7 +1,7 @@
 # tokenomics (`myl-tokenomics`)
 
-> **Version:** 0.27.0
-> **Datum:** 2026-11-08
+> **Version:** 0.28.1
+> **Datum:** 2026-11-11
 > **Status:** Design-Entscheidungen getroffen (Fixed-Point bestätigt,
 > vTFE-Skalierung 10⁻⁶, MYL-Kleinstbeträge 10⁶, EMA-Fenster 30 Epochen
 > α=2/31); 🎉 **Phasen 1 bis 5 abgeschlossen** (Auslastungsboden und
@@ -97,6 +97,35 @@ volle Gutschrift bekommen. Eine Funktion, die immer null liefert,
 verletzt keine Obergrenze.
 
 ## Changelog
+
+### v0.28.1 (2026-11-11): Prägung ohne Subvention erschöpfend
+
+- `praeegung_exakt_ohne_subvention` prüft jeden Burn bis 20 000 bei jedem
+  Nenner bis 64 und die Ränder des Zahlbereichs (bis `u64::MAX`, Nenner
+  bis `u64::MAX`). Vorher ein Beispiel.
+- `myl-tokenomics` 0.28.1.
+
+### v0.28.0 (2026-11-11): Die Trainingsabgabe geht bei 0,8 auf (Fund 668)
+
+- 📌 **Fund 668 behoben:** Die Trainingsabgabe war aus der Bilanz bei
+  einem Auslastungsziel von 0,7 gerechnet; Kap. 5.4 und die Preisbildung
+  im Knoten (`CREDIT_PREIS_ZIEL`) sagen 0,8. Weil die Preisbildung das Netz
+  bei 0,8 hält, legte die Abgabe dort dauerhaft zurück (Saldo +0,096 je
+  Einheit), statt aufzugehen.
+- `trainingsabgabe::ABGABE_MAX_BPS` 3 017 auf **1 790** (λ_max = 0,179,
+  aus `abgabe_max_bps(8, 10, 7 800, 200, 8 000)`). Am Ziel 63,7 Prozent für
+  Inferenz und 11,5 für Training statt 56,9 und 14,8; bei voller
+  Auslastung behalten die Shard-Miner 60,1 statt 47,8 Prozent.
+- ⚠️ **Die Folge, benannt:** Der Puffer wächst langsamer. Rund dreieinhalb
+  volle Epochen tragen eine leere (vorher zwei). Die Proben halten Tabelle,
+  Bilanz am Ziel, Ansparen darüber und Zehren darunter mit den neuen
+  Werten; der Faktor der Treasury zwischen leer und voll fällt von rund
+  zehn auf rund sieben.
+- Läuft im Konsenspfad (`ausschuettung`); belegt durch die Proben dieser
+  Kiste, die Gegenprobe in GOVERNANCE (Registry allein auf 0,7: rot) und
+  die Prüfrunde des Knotens.
+- Whitepaper: stellt Übereinstimmung mit 5.4 her (`target` = 0,8).
+- `myl-tokenomics` 0.28.0.
 
 ### v0.27.0 (2026-11-08): Anlaufplan und Burn-Deckel in der Kette
 

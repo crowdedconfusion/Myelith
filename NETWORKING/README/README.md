@@ -1,7 +1,7 @@
 # networking (`myl-net`, `myl-siegel`)
 
-> **Version:** 0.25.1
-> **Datum:** 2026-11-09
+> **Version:** 0.25.2
+> **Datum:** 2026-11-11
 > **Status:** **Phase 1 und 2 abgeschlossen** (1.1–1.6, 2.1–2.3),
 > **Phase 3 umgesetzt** (3.1–3.4, Abschluss unter Reviewvorbehalt), dazu Punkt 4.2 (Fuzzing der Wire-Protocol-Parser), Punkt 4.3
 > (Verbindungsgrenzen und Peer-Diversität) und seit dem 26. August
@@ -109,6 +109,21 @@ NETWORKING/
 ```
 
 ## Changelog
+
+### v0.25.2 (2026-11-11): Nicht jede Bytefolge ist eine Peer-ID (Fund 701, `myl-net` 0.25.2)
+
+- 📌 **Fund 701:** Die Probe `jede_bytefolge_ergibt_eine_peer_id` und ihr
+  Kommentar behaupteten, jede Folge von 32 Bytes ergebe eine `PeerId`, ein
+  Ed25519-Punkt werde erst beim Rechnen geprüft. Geprüft war das an einer
+  Folge (`[1; 32]`). Über einen Generator: Das Einlesen dekomprimiert den
+  Punkt, und 5 006 von 10 003 Folgen werden abgewiesen. Die Probe heißt
+  jetzt `nur_ein_gueltiger_punkt_ergibt_eine_peer_id`, verlangt rund die
+  Hälfte Abweisungen und prüft die Gegenrichtung an 200 echten Schlüsseln.
+- **Folge für den Knoten:** keine. Jeder Aufrufer außerhalb der Proben
+  fängt den Fehler ab (`.ok()`, `let … else`). **Folge für die
+  Registrierung:** Eine Netzadresse, die kein Punkt ist, wäre beim
+  Eintragen erkennbar; heute nimmt die Kette sie an.
+- `myl-net` 0.25.2.
 
 ### v0.25.1 (2026-11-09): Überholte Nachrichten gehen auf (`myl-net` 0.25.1, `myl-siegel` 0.3.2)
 

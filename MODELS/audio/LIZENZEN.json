@@ -1,0 +1,53 @@
+{
+  "_zweck": "Lizenz je Gewicht dieser Rubrik. Die Gewichte kommen als einzelne Dateien und werden beim Ablegen umbenannt; deshalb steht die Angabe hier und nicht neben ihnen. Geprueft von COMPLIANCE/ethics/werkzeuge/lizenzprobe.py.",
+  "hoeren.bin": {
+    "modell": "whisper large-v3-turbo, ggml q5_0",
+    "quelle": "https://huggingface.co/ggerganov/whisper.cpp",
+    "revision": "5359861c739e955e79d9a303bcbc70fb988958b1",
+    "original": "https://huggingface.co/openai/whisper-large-v3-turbo",
+    "lizenz": "MIT",
+    "lizenzdatei": "LIZENZ-whisper.txt"
+  },
+  "whisper-large-v3-turbo": {
+    "modell": "whisper large-v3-turbo, Originalgewichte (Safetensors), Referenz fuer den eigenen Hoerweg (CLIENT 8.2)",
+    "quelle": "https://huggingface.co/openai/whisper-large-v3-turbo",
+    "revision": "41f01f3fe87f28c78e2fbf8b568835947dd65ed9",
+    "sha256_model_safetensors": "542566a422ae4f3fd23f1ba11add198fca01bbf82e66e6a2857b3f608b1eb9d1",
+    "lizenz": "MIT",
+    "lizenzdatei": "LIZENZ-whisper.txt"
+  },
+  "whisper-tiny": {
+    "modell": "whisper tiny, Originalgewichte (Safetensors, F32), Vorgabe fuer schwache Hardware im eigenen Hoerweg (CLIENT 8.2)",
+    "quelle": "https://huggingface.co/openai/whisper-tiny",
+    "revision": "169d4a4341b33bc18d8881c4b69c2e104e1cc0af",
+    "sha256_model_safetensors": "7ebd0e69e78190ffe1438491fa05cc1f5c1aa3a4c4db3bc1723adbb551ea2395",
+    "lizenz": "Apache 2.0",
+    "lizenzdatei": "LIZENZ-apache-2.0.txt"
+  },
+  "whisper-base": {
+    "modell": "whisper base, Originalgewichte (Safetensors, F32), Vorgabe fuer schwache Hardware im eigenen Hoerweg (CLIENT 8.2)",
+    "quelle": "https://huggingface.co/openai/whisper-base",
+    "revision": "e37978b90ca9030d5170a5c07aadb050351a65bb",
+    "sha256_model_safetensors": "07cadb9f25677c8d50df603e66a98fbd842cce45047139baeb16e6219a1e807b",
+    "lizenz": "Apache 2.0",
+    "lizenzdatei": "LIZENZ-apache-2.0.txt"
+  },
+  "whisper-small": {
+    "modell": "whisper small, Originalgewichte (Safetensors, F32), Vorgabe fuer schwache Hardware im eigenen Hoerweg (CLIENT 8.2)",
+    "quelle": "https://huggingface.co/openai/whisper-small",
+    "revision": "973afd24965f72e36ca33b3055d56a652f456b4d",
+    "sha256_model_safetensors": "1d7734884874f1a1513ed9aa760a4f8e97aaa02fd6d93a3a85d27b2ae9ca596b",
+    "lizenz": "Apache 2.0",
+    "lizenzdatei": "LIZENZ-apache-2.0.txt"
+  },
+  "qwen3-tts-0.6b-base": {
+    "modell": "Qwen3-TTS-12Hz-0.6B-Base mit Tonzerleger (speech_tokenizer), Originalgewichte; Sprechen im eigenen Rechenweg (CLIENT 8.4, 8.5)",
+    "quelle": "https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-Base",
+    "revision": "5d83992436eae1d760afd27aff78a71d676296fc",
+    "sha256_model_safetensors": "180b3b10eb1c9f1b4db7806d5475bae3071c0243c299d49926bab1da3b6946f6",
+    "sha256_speech_tokenizer_safetensors": "836b7b357f5ea43e889936a3709af68dfe3751881acefe4ecf0dbd30ba571258",
+    "lizenz": "Apache 2.0",
+    "lizenzdatei": "LIZENZ-apache-2.0.txt",
+    "hinweis": "Trainingsdaten nur als ueber 5 Millionen Stunden Sprache in 10 Sprachen benannt (Stand 2026-11-11)."
+  }
+}

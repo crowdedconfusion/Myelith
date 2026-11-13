@@ -2,14 +2,14 @@
   "_hinweis": "Fremdkomponenten, die nicht aus einem Paketverwalter kommen.\n\n⚑ Gepflegt, nicht erzeugt. Daraus und aus zwei Quellen, die es schon\ngibt, erzeugt `COMPLIANCE/werkzeuge/notices.py` die Datei\n`COMPLIANCE/NOTICES.md`:\n\n  - Rust-Kisten:      `cargo metadata` in jeder Kiste (offline,\n                      aus `SYSTEM/crates-vorrat`)\n  - Sprachmodelle:    `MODELS/llm/KATALOG.json` (Lizenz der Gewichte und\n                      des Artefakts steht dort, und nur dort)\n  - alles andere:     diese Datei\n\n⚑ Jeder Eintrag nennt, WIE er zum Nutzer kommt (`weg`): `mitgeliefert`\nheisst, er liegt im Repositorium oder in einem Freigabebuendel;\n`nachgeladen` heisst, ein Einrichtungsskript holt ihn auf den Rechner\ndes Nutzers; `vorausgesetzt` heisst, der Nutzer bringt ihn mit. Die\nPflichten einer Lizenz haengen genau daran.\n\n⚑ `geprueft` sagt, wogegen und wann. Eine Lizenzangabe ohne Pruefdatum\nist eine Behauptung. Geprueft wurde die Angabe des Anbieters (Modell-\nkarte, LICENSE-Datei), keine eigene Rechtspruefung.",
   "modell": [
     {
-      "name": "Fun-CosyVoice3-0.5B-2512",
-      "zweck": "Sprechen (Text zu Sprache, Stimmnachbildung)",
-      "anbieter": "FunAudioLLM (Tongyi Lab)",
-      "quelle": "https://huggingface.co/FunAudioLLM/Fun-CosyVoice3-0.5B-2512",
+      "name": "Qwen3-TTS-12Hz-0.6B-Base",
+      "zweck": "Sprechen (Text zu Sprache, Stimmnachbildung), im eigenen Rechenweg ohne Python",
+      "anbieter": "Alibaba (Qwen)",
+      "quelle": "https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-Base",
       "lizenz": "Apache-2.0",
       "weg": "nachgeladen",
-      "geprueft": "2026-09-25, Hugging-Face-API (license=apache-2.0)",
-      "hinweis": "Erzeugt synthetische Sprache; die Ausgabe wird als KI-erzeugt gekennzeichnet."
+      "geprueft": "2026-11-11, Modellkarte und Repositorium (license: apache-2.0, ohne Zusatz)",
+      "hinweis": "Erzeugt synthetische Sprache; die Ausgabe wird als KI-erzeugt gekennzeichnet (Wasserzeichen und signiertes C2PA-Manifest). Trainingsdaten nur als ueber 5 Millionen Stunden Sprache benannt."
     },
     {
       "name": "Whisper large-v3-turbo (ggml, q5_0)",
@@ -19,6 +19,33 @@
       "lizenz": "MIT",
       "weg": "nachgeladen",
       "geprueft": "2026-09-25, Hugging-Face-API (openai/whisper-large-v3-turbo: license=mit; ggerganov/whisper.cpp: license=mit)"
+    },
+    {
+      "name": "Whisper large-v3-turbo (Originalgewichte, Safetensors)",
+      "zweck": "Hoeren im eigenen Rechenweg (Sprache zu Text, `MYL_HOEREN=eigen`)",
+      "anbieter": "OpenAI",
+      "quelle": "https://huggingface.co/openai/whisper-large-v3-turbo",
+      "lizenz": "MIT",
+      "weg": "nachgeladen",
+      "geprueft": "2026-11-12, Hugging-Face-API (openai/whisper-large-v3-turbo: license=mit); fuenf Dateien gegen die Dateiliste der Revision abgeglichen"
+    },
+    {
+      "name": "Whisper small (Originalgewichte, Safetensors)",
+      "zweck": "Hoeren im eigenen Rechenweg (Sprache zu Text, `MYL_HOEREN=eigen`)",
+      "anbieter": "OpenAI",
+      "quelle": "https://huggingface.co/openai/whisper-small",
+      "lizenz": "Apache-2.0",
+      "weg": "nachgeladen",
+      "geprueft": "2026-11-12, Hugging-Face-API (openai/whisper-small: license=apache-2.0); fuenf Dateien gegen die Dateiliste der Revision abgeglichen"
+    },
+    {
+      "name": "Whisper base (Originalgewichte, Safetensors)",
+      "zweck": "Hoeren im eigenen Rechenweg (Sprache zu Text, `MYL_HOEREN=eigen`)",
+      "anbieter": "OpenAI",
+      "quelle": "https://huggingface.co/openai/whisper-base",
+      "lizenz": "Apache-2.0",
+      "weg": "nachgeladen",
+      "geprueft": "2026-11-12, Hugging-Face-API (openai/whisper-base: license=apache-2.0); fuenf Dateien gegen die Dateiliste der Revision abgeglichen"
     },
     {
       "name": "SmolVLM2-2.2B-Instruct (GGUF, Q4_K_M)",
@@ -38,6 +65,186 @@
       "weg": "nachgeladen",
       "geprueft": "2026-09-25, Hugging-Face-API (Qwen/Qwen3-VL-4B-Instruct und Qwen/Qwen3-VL-4B-Instruct-GGUF: license=apache-2.0)",
       "hinweis": "Seit 2026-09-25 statt Qwen2.5-VL-3B-Instruct, dessen Original unter der Qwen Research License steht (Fund 468). Das Einrichtungsskript ersetzt eine alte Datei."
+    },
+    {
+      "name": "PP-OCRv5 mobile det, ONNX",
+      "zweck": "Gescannte Seiten: Textzeilen finden (eingebaut in `myl`)",
+      "anbieter": "PaddlePaddle",
+      "quelle": "https://huggingface.co/PaddlePaddle/PP-OCRv5_mobile_det",
+      "lizenz": "Apache-2.0",
+      "weg": "mitgeliefert",
+      "geprueft": "2026-11-09, Modellkarte der Quelle (license=apache-2.0)",
+      "hinweis": "ONNX-Fassung aus dem Paket rapidocr 3.10.0."
+    },
+    {
+      "name": "PP-DocLayout-S, ONNX",
+      "zweck": "Gescannte Seiten: Seitenaufbau (eingebaut in `myl`)",
+      "anbieter": "PaddlePaddle",
+      "quelle": "https://huggingface.co/stefanj0/PP-DocLayout-S-ONNX",
+      "lizenz": "Apache-2.0",
+      "weg": "mitgeliefert",
+      "geprueft": "2026-11-09, Modellkarte der Quelle (license=apache-2.0)",
+      "hinweis": "ONNX-Ausfuhr eines Dritten, Stand 7e851b9e."
+    },
+    {
+      "name": "PP-OCRv5 mobile rec, latein, ONNX",
+      "zweck": "Gescannte Seiten: latein lesen (eingebaut in `myl`)",
+      "anbieter": "PaddlePaddle",
+      "quelle": "https://huggingface.co/PaddlePaddle/latin_PP-OCRv5_mobile_rec",
+      "lizenz": "Apache-2.0",
+      "weg": "mitgeliefert",
+      "geprueft": "2026-11-09, Modellkarte der Quelle (license=apache-2.0)",
+      "hinweis": "ONNX-Fassung aus dem Paket rapidocr 3.10.0."
+    },
+    {
+      "name": "PP-OCRv5 mobile rec, kyrillisch, ONNX",
+      "zweck": "Gescannte Seiten: kyrillisch lesen (eingebaut in `myl`)",
+      "anbieter": "PaddlePaddle",
+      "quelle": "https://huggingface.co/PaddlePaddle/cyrillic_PP-OCRv5_mobile_rec",
+      "lizenz": "Apache-2.0",
+      "weg": "mitgeliefert",
+      "geprueft": "2026-11-09, Modellkarte der Quelle (license=apache-2.0)",
+      "hinweis": "ONNX-Fassung aus dem Paket rapidocr 3.10.0."
+    },
+    {
+      "name": "PP-OCRv5 mobile rec, griechisch, ONNX",
+      "zweck": "Gescannte Seiten: griechisch lesen (eingebaut in `myl`)",
+      "anbieter": "PaddlePaddle",
+      "quelle": "https://huggingface.co/PaddlePaddle/el_PP-OCRv5_mobile_rec",
+      "lizenz": "Apache-2.0",
+      "weg": "mitgeliefert",
+      "geprueft": "2026-11-09, Modellkarte der Quelle (license=apache-2.0)",
+      "hinweis": "ONNX-Fassung aus dem Paket rapidocr 3.10.0."
+    },
+    {
+      "name": "PP-OCRv5 mobile rec, devanagari, ONNX",
+      "zweck": "Gescannte Seiten: devanagari lesen (eingebaut in `myl`)",
+      "anbieter": "PaddlePaddle",
+      "quelle": "https://huggingface.co/PaddlePaddle/devanagari_PP-OCRv5_mobile_rec",
+      "lizenz": "Apache-2.0",
+      "weg": "mitgeliefert",
+      "geprueft": "2026-11-09, Modellkarte der Quelle (license=apache-2.0)",
+      "hinweis": "ONNX-Fassung aus dem Paket rapidocr 3.10.0."
+    },
+    {
+      "name": "PP-OCRv5 mobile rec, thai, ONNX",
+      "zweck": "Gescannte Seiten: thai lesen (eingebaut in `myl`)",
+      "anbieter": "PaddlePaddle",
+      "quelle": "https://huggingface.co/PaddlePaddle/th_PP-OCRv5_mobile_rec",
+      "lizenz": "Apache-2.0",
+      "weg": "mitgeliefert",
+      "geprueft": "2026-11-09, Modellkarte der Quelle (license=apache-2.0)",
+      "hinweis": "ONNX-Fassung aus dem Paket rapidocr 3.10.0."
+    },
+    {
+      "name": "PP-OCRv5 mobile rec, tamil, ONNX",
+      "zweck": "Gescannte Seiten: tamil lesen (eingebaut in `myl`)",
+      "anbieter": "PaddlePaddle",
+      "quelle": "https://huggingface.co/PaddlePaddle/ta_PP-OCRv5_mobile_rec",
+      "lizenz": "Apache-2.0",
+      "weg": "mitgeliefert",
+      "geprueft": "2026-11-09, Modellkarte der Quelle (license=apache-2.0)",
+      "hinweis": "ONNX-Fassung aus dem Paket rapidocr 3.10.0."
+    },
+    {
+      "name": "PP-OCRv5 mobile rec, telugu, ONNX",
+      "zweck": "Gescannte Seiten: telugu lesen (eingebaut in `myl`)",
+      "anbieter": "PaddlePaddle",
+      "quelle": "https://huggingface.co/PaddlePaddle/te_PP-OCRv5_mobile_rec",
+      "lizenz": "Apache-2.0",
+      "weg": "mitgeliefert",
+      "geprueft": "2026-11-09, Modellkarte der Quelle (license=apache-2.0)",
+      "hinweis": "ONNX-Fassung aus dem Paket rapidocr 3.10.0."
+    },
+    {
+      "name": "PP-OCRv5 mobile rec, chinesisch, ONNX",
+      "zweck": "Gescannte Seiten: chinesisch lesen (eingebaut in `myl`)",
+      "anbieter": "PaddlePaddle",
+      "quelle": "https://huggingface.co/PaddlePaddle/PP-OCRv5_mobile_rec",
+      "lizenz": "Apache-2.0",
+      "weg": "mitgeliefert",
+      "geprueft": "2026-11-09, Modellkarte der Quelle (license=apache-2.0)",
+      "hinweis": "ONNX-Fassung aus dem Paket rapidocr 3.10.0."
+    },
+    {
+      "name": "PP-OCRv5 mobile rec, koreanisch, ONNX",
+      "zweck": "Gescannte Seiten: koreanisch lesen (eingebaut in `myl`)",
+      "anbieter": "PaddlePaddle",
+      "quelle": "https://huggingface.co/PaddlePaddle/korean_PP-OCRv5_mobile_rec",
+      "lizenz": "Apache-2.0",
+      "weg": "mitgeliefert",
+      "geprueft": "2026-11-09, Modellkarte der Quelle (license=apache-2.0)",
+      "hinweis": "ONNX-Fassung aus dem Paket rapidocr 3.10.0."
+    },
+    {
+      "name": "Zeilennetz fraktur",
+      "zweck": "Gescannte Seiten: Fraktur und alte Antiqua lesen (eingebaut in `myl`)",
+      "anbieter": "Stefan Weil, UB Mannheim",
+      "quelle": "https://zenodo.org/records/10125246",
+      "lizenz": "CC0-1.0",
+      "weg": "mitgeliefert",
+      "geprueft": "2026-11-09, Zenodo-API (cc-zero)",
+      "hinweis": "Nur Netz, Codes und Zeichensatz, ohne Woerterbuecher. Trainiert u. a. mit GT4HistOCR (CC-BY)."
+    },
+    {
+      "name": "Zeilennetz altgriechisch",
+      "zweck": "Gescannte Seiten: Altgriechisch (polytonisch) lesen (eingebaut in `myl`)",
+      "anbieter": "Tesseract OCR (Google)",
+      "quelle": "https://github.com/tesseract-ocr/tessdata_fast",
+      "lizenz": "Apache-2.0",
+      "weg": "mitgeliefert",
+      "geprueft": "2026-11-09, Lizenzdatei des Repositoriums (Apache-2.0)",
+      "hinweis": "Nur Netz, Codes und Zeichensatz, ohne Woerterbuecher."
+    },
+    {
+      "name": "Zeilennetz hebraeisch",
+      "zweck": "Gescannte Seiten: Hebräisch lesen (eingebaut in `myl`)",
+      "anbieter": "Tesseract OCR (Google)",
+      "quelle": "https://github.com/tesseract-ocr/tessdata_fast",
+      "lizenz": "Apache-2.0",
+      "weg": "mitgeliefert",
+      "geprueft": "2026-11-09, Lizenzdatei des Repositoriums (Apache-2.0)",
+      "hinweis": "Nur Netz, Codes und Zeichensatz, ohne Woerterbuecher."
+    },
+    {
+      "name": "Zeilennetz bengalisch",
+      "zweck": "Gescannte Seiten: Bengalisch lesen (eingebaut in `myl`)",
+      "anbieter": "Tesseract OCR (Google)",
+      "quelle": "https://github.com/tesseract-ocr/tessdata_fast",
+      "lizenz": "Apache-2.0",
+      "weg": "mitgeliefert",
+      "geprueft": "2026-11-09, Lizenzdatei des Repositoriums (Apache-2.0)",
+      "hinweis": "Nur Netz, Codes und Zeichensatz, ohne Woerterbuecher."
+    },
+    {
+      "name": "Zeilennetz tibetisch",
+      "zweck": "Gescannte Seiten: Tibetisch lesen (eingebaut in `myl`)",
+      "anbieter": "Tesseract OCR (Google)",
+      "quelle": "https://github.com/tesseract-ocr/tessdata_fast",
+      "lizenz": "Apache-2.0",
+      "weg": "mitgeliefert",
+      "geprueft": "2026-11-09, Lizenzdatei des Repositoriums (Apache-2.0)",
+      "hinweis": "Nur Netz, Codes und Zeichensatz, ohne Woerterbuecher."
+    },
+    {
+      "name": "Zeilennetz arabisch",
+      "zweck": "Gescannte Seiten: Arabisch, Persisch und Urdu lesen (eingebaut in `myl`)",
+      "anbieter": "Tesseract OCR (Google)",
+      "quelle": "https://github.com/tesseract-ocr/tessdata_fast",
+      "lizenz": "Apache-2.0",
+      "weg": "mitgeliefert",
+      "geprueft": "2026-11-10, Lizenzdatei des Repositoriums (Apache-2.0)",
+      "hinweis": "Nur Netz, Codes und Zeichensatz, ohne Woerterbuecher."
+    },
+    {
+      "name": "Zeilennetz syrisch",
+      "zweck": "Gescannte Seiten: Syrisch lesen (eingebaut in `myl`)",
+      "anbieter": "Tesseract OCR (Google)",
+      "quelle": "https://github.com/tesseract-ocr/tessdata_fast",
+      "lizenz": "Apache-2.0",
+      "weg": "mitgeliefert",
+      "geprueft": "2026-11-09, Lizenzdatei des Repositoriums (Apache-2.0)",
+      "hinweis": "Nur Netz, Codes und Zeichensatz, ohne Woerterbuecher."
     }
   ],
   "programm": [
@@ -56,14 +263,6 @@
       "weg": "vorausgesetzt"
     },
     {
-      "name": "CosyVoice (Quelltext des Sprechmodells)",
-      "zweck": "fuehrt das Sprechmodell aus",
-      "quelle": "https://github.com/FunAudioLLM/CosyVoice",
-      "lizenz": "Apache-2.0",
-      "weg": "nachgeladen",
-      "hinweis": "Bringt eigene Python-Abhaengigkeiten mit (seine requirements.txt); sie werden in einer eigenen Umgebung eingerichtet und nicht mitgeliefert."
-    },
-    {
       "name": "FFmpeg",
       "zweck": "wandelt Tonaufnahmen um",
       "quelle": "https://ffmpeg.org",
@@ -79,7 +278,7 @@
     },
     {
       "name": "Python",
-      "zweck": "Laufzeit fuer Kalibrierung und Sprechmodell",
+      "zweck": "Laufzeit fuer Kalibrierung und Pruefwerkzeuge",
       "quelle": "https://www.python.org",
       "lizenz": "PSF-2.0",
       "weg": "vorausgesetzt"
@@ -156,13 +355,6 @@
       "urheber": "Projektinhaber",
       "lizenz": "PolyForm-Shield-1.0.0 (wie das Repositorium)",
       "weg": "mitgeliefert"
-    },
-    {
-      "name": "Schrift der Wortmarke (eingebetteter Ausschnitt, nur die Buchstaben von MYELITH)",
-      "urheber": "Adam Nerland, Insanitype Font Design (2001)",
-      "lizenz": "ungeklaert",
-      "weg": "mitgeliefert",
-      "hinweis": "⚠️ Die Schrift traegt kein Lizenzfeld. Ist sie nur zur privaten Nutzung frei, gehoert der Ausschnitt aus dem Stilblatt heraus. Entscheidung des Projektinhabers offen."
     }
   ],
   "daten": [

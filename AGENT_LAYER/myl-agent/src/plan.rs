@@ -177,7 +177,10 @@ impl std::fmt::Display for Planfehler {
 impl std::error::Error for Planfehler {}
 
 /// Ob ein Wert aus der Außenwelt stammt.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+///
+/// Kodierbar, weil ein Gedächtniseintrag sie trägt
+/// ([`crate::gedaechtnis::Eintrag::truebung`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, borsh::BorshSerialize, borsh::BorshDeserialize)]
 pub enum Truebung {
     /// Aus dem Auftrag oder aus nachrechenbaren Werkzeugen.
     Rein,

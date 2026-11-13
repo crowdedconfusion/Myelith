@@ -162,6 +162,8 @@ def erzeuge_qwen3_5(roh: dict, variant: str, verified: str, hf: str) -> dict:
     rope = t.get("rope_parameters") or t.get("rope_scaling") or {}
     if rope.get("rope_type", "default") != "default":
         raise ValueError(f"RoPE-Art {rope.get('rope_type')} wird von diesem Erzeuger nicht abgebildet")
+    if t.get("mlp_only_layers"):
+        raise ValueError("mlp_only_layers ist belegt: dieser Erzeuger kennt nur eine Bauart je Ebene")
     anteil = rope.get("partial_rotary_factor", t.get("partial_rotary_factor", 1.0))
     cfg = _gemeinsam(t, "qwen3_5-hybrid", variant, verified, hf)
     cfg.update({

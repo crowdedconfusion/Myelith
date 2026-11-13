@@ -81,6 +81,24 @@ def main() -> int:
             if not feldabgleich(erzeugt, falsch)["abweichend"]:
                 print("[bauarten] ⛔️ Gegenprobe: eine falsche Ebenenzahl fiel nicht auf")
                 fehler += 1
+    # Eine leere Ausnahmeliste traegt, eine belegte bricht ab, statt still falsch zu bauen.
+    dichter = REPO / "MODELS" / "llm" / "Qwen3.8-27B" / "config.json"
+    if dichter.is_file():
+        roh = json.loads(dichter.read_text(encoding="utf-8"))
+        roh["text_config"]["mlp_only_layers"] = []
+        e = MODEL_CONFIGS["crow-27b-int8"]
+        erzeugt = erkennen(roh).erzeuger(roh, e["variant"], e["verified"], e["hf_model_id"])
+        if feldabgleich(erzeugt, flach(roh))["ungelesen"]:
+            print("[bauarten] ⛔️ eine leere mlp_only_layers gilt als ungelesen")
+            fehler += 1
+        roh["text_config"]["mlp_only_layers"] = [3]
+        try:
+            erkennen(roh).erzeuger(roh, e["variant"], e["verified"], e["hf_model_id"])
+        except ValueError:
+            pass
+        else:
+            print("[bauarten] ⛔️ eine belegte mlp_only_layers fiel nicht auf")
+            fehler += 1
     if geprueft == 0:
         print("[bauarten] ⛔️ kein einziges Modell geprueft")
         return 1

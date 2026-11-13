@@ -23,6 +23,13 @@
 //! sich darauf, und ein eigenes Skript kann es auch. Erst wenn das nach
 //! [`STOPPFRIST_S`] nicht gewirkt hat, wird erschlagen, und dann sagt
 //! das Ergebnis es.
+//!
+//! # ⚑ Ohne ffmpeg, auf Zuruf (CLIENT 8.1)
+//!
+//! Mit `MYL_AUFNAHME=eigen` nimmt [`crate::mikrofon`] auf, ohne fremdes
+//! Programm, und die Datei schreibt [`crate::ton::schreiben`]. Die Vorgabe
+//! bleibt ffmpeg, bis die eigene Anbindung ihre Abnahme besteht; danach
+//! wird ffmpeg der Rueckfall.
 
 use std::path::PathBuf;
 
@@ -67,6 +74,8 @@ pub const HOECHSTDAUER_S: u64 = 300;
 #[derive(Debug)]
 pub struct Aufnahme {
     kind: Option<std::process::Child>,
+    /// Der eigene Weg ([`crate::mikrofon`]): ein Faden sammelt die Stuecke.
+    eigen: Option<Eigen>,
     ziel: PathBuf,
     /// Was das Aufnahmeprogramm an Meldungen hinterlassen hat.
     ///
@@ -86,10 +95,44 @@ pub struct Aufnahme {
     pegel: Option<std::sync::mpsc::Receiver<f32>>,
 }
 
+/// Der Faden des eigenen Wegs und sein Halt.
+#[derive(Debug)]
+struct Eigen {
+    halt: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    faden: std::thread::JoinHandle<Vec<i16>>,
+}
+
+/// Der eigene Weg: sammelt Stuecke, meldet den Ausschlag, haelt nach
+/// [`HOECHSTDAUER_S`] von selbst an.
+fn eigen_starten(ziel: PathBuf) -> Result<Aufnahme, String> {
+    use std::sync::atomic::Ordering;
+    let m = crate::mikrofon::oeffnen()?;
+    let halt = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let (sender, pegel) = std::sync::mpsc::channel();
+    let h = std::sync::Arc::clone(&halt);
+    let faden = std::thread::spawn(move || {
+        let mut alle = Vec::new();
+        let hoechst = HOECHSTDAUER_S as usize * crate::mikrofon::RATE as usize;
+        while !h.load(Ordering::Acquire) && alle.len() < hoechst {
+            if let Ok(s) = m.stuecke().recv_timeout(std::time::Duration::from_millis(200)) {
+                let _ = sender.send(crate::mikrofon::pegel(&s));
+                alle.extend(s);
+            }
+        }
+        alle.extend(m.anhalten());
+        alle.truncate(hoechst);
+        alle
+    });
+    Ok(Aufnahme { kind: None, eigen: Some(Eigen { halt, faden }), ziel, pegel: Some(pegel), meldungen: None })
+}
+
 /// **Faengt an aufzunehmen.** Die Datei entsteht erst beim Beenden
 /// vollstaendig.
 pub fn starten(zeug: &Aufnahmezeug) -> Result<Aufnahme, String> {
     let ziel = crate::zwischenname("myl-aufnahme", "wav");
+    if std::env::var("MYL_AUFNAHME").is_ok_and(|v| v == "eigen") {
+        return eigen_starten(ziel);
+    }
     let mut befehl = std::process::Command::new(&zeug.programm);
     match &zeug.quelle {
         // ffmpeg: Format und Geraet, dann 16 kHz und ein Kanal, so wie
@@ -170,7 +213,7 @@ pub fn starten(zeug: &Aufnahmezeug) -> Result<Aufnahme, String> {
         });
         empfang
     });
-    Ok(Aufnahme { kind: Some(kind), ziel, pegel, meldungen })
+    Ok(Aufnahme { kind: Some(kind), eigen: None, ziel, pegel, meldungen })
 }
 
 impl Aufnahme {
@@ -192,6 +235,20 @@ impl Aufnahme {
     ///
     /// ⚠️ **Der Aufrufer raeumt sie weg**, wenn er sie mitgeschrieben hat.
     pub fn beenden(mut self) -> Result<PathBuf, String> {
+        if let Some(e) = self.eigen.take() {
+            e.halt.store(true, std::sync::atomic::Ordering::Release);
+            let proben = e.faden.join().map_err(|_| "der Aufnahmefaden ist abgestuerzt".to_string())?;
+            if proben.is_empty() {
+                return Err("die Aufnahme ist leer geblieben; ist das Mikrofon freigegeben?".into());
+            }
+            let ton = crate::ton::Ton {
+                rate: crate::mikrofon::RATE,
+                proben: proben.iter().map(|p| f32::from(*p) / 32_768.0).collect(),
+            };
+            std::fs::write(&self.ziel, crate::ton::schreiben(&ton))
+                .map_err(|f| format!("{}: {f}", self.ziel.display()))?;
+            return Ok(self.ziel.clone());
+        }
         let mut kind = self.kind.take().ok_or("die Aufnahme lief nicht")?;
 
         // ⚑ Erst das Schliessen, dann das Warten. Ein `q` dazu, weil
@@ -262,6 +319,10 @@ impl Aufnahme {
 
 impl Drop for Aufnahme {
     fn drop(&mut self) {
+        if let Some(e) = self.eigen.take() {
+            e.halt.store(true, std::sync::atomic::Ordering::Release);
+            let _ = e.faden.join();
+        }
         if let Some(mut kind) = self.kind.take() {
             let _ = kind.kill();
             let _ = kind.wait();

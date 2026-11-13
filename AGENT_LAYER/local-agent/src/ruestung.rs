@@ -540,6 +540,19 @@ fn ruesten_zugeschnitten(
                 }
             }
 
+            // ⚑ **Ein Buch zum Skill**, wenn `myl` da ist und geschrieben werden darf.
+            if zuschnitt == Zuschnitt::Arbeitsordner {
+                if let Some((angebot, mut ausfuehrung)) = crate::buchwerkzeug::angebot(&ein, form) {
+                    if let Some(f) = nachfrage.clone() {
+                        ausfuehrung = Box::new(Nachfragend { inner: ausfuehrung, fragen: f });
+                    }
+                    let name = angebot.name.clone();
+                    kasten
+                        .einhaengen(angebot, notausfest(bewacht(ausfuehrung, crate::secure_flow::Vertrag::BUCH, &fluss, fragt)))
+                        .map_err(|f| format!("Buchwerkzeug {name} haengt nicht: {f:?}"))?;
+                }
+            }
+
             // ⚑ **Sehen und Hoeren**, wenn auf diesem Rechner etwas da
             // ist, das hinsehen kann (2026-09-17). Sie sind kompiliert
             // und halten die Einhaengegrenze ein, brauchen also **keine**

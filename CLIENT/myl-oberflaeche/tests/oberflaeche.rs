@@ -639,6 +639,25 @@ fn das_rauschen_gehoert_zur_abbestellbaren_bewegung() {
     }
 }
 
+/// ⚑ Wer das Programm weitergibt, muss die Lizenzen mitgeben.
+#[test]
+fn die_buendel_tragen_die_lizenzen() {
+    let wurzel = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let konf = std::fs::read_to_string(wurzel.join("tauri.conf.json")).expect("tauri.conf.json");
+    let skript = std::fs::read_to_string(wurzel.join("buendeln-macos.sh")).expect("buendeln-macos.sh");
+    for datei in ["LICENSE.md", "COMPLIANCE/NOTICES.md", "COMPLIANCE/DRITTLIZENZEN.txt"] {
+        assert!(wurzel.join("../..").join(datei).is_file(), "{datei} fehlt");
+        assert!(konf.contains(&format!("../../{datei}")), "{datei} fehlt im Fensterbuendel");
+        assert!(skript.contains(datei), "{datei} fehlt im Mac-Buendel");
+    }
+}
+
+/// ⚑ Eine Schrift ohne belegte Lizenz darf nicht mit dem Programm reisen.
+#[test]
+fn keine_schrift_wird_mitgeliefert() {
+    assert!(!lies("stil.css").contains("data:font"), "eingebettete Schrift");
+}
+
 /// 📌 **Die eingebettete Schrift braucht `font-src … data:` in der
 /// CSP.** Ohne das greift `default-src 'self'`, und ein `data:`-URI
 /// ist nicht `self`: Die Wortmarke faellt in der echten App auf die
@@ -3873,11 +3892,17 @@ fn der_skillknopf_steht_neben_dem_anhang_und_ist_verdrahtet() {
     assert!(anhang < skill, "der Skillknopf steht vor dem Anhang statt rechts daneben");
     // Zwischen beiden steht kein weiterer Knopf.
     assert_eq!(seite[anhang..skill].matches("<button").count(), 1, "zwischen Anhang und Skill steht ein Knopf");
-    assert!(seite[skill..].contains("data-t-marke=\"knopf.skill\""));
+    assert!(seite[skill..].contains("data-t-marke=\"knopf.skillwahl\""));
+    // ⚑ Der Knopf oeffnet die Wahl: Skill lernen oder Buch lesen.
+    assert!(html.contains("id=\"skillmenue\"") && html.contains("id=\"skill_lernen\"") && html.contains("id=\"buch_lesen\""));
 
     let js = lies("app.js");
     assert_eq!(js.matches("\"knopf.skill\":").count(), 2, "die Beschriftung fehlt in einer Sprache");
-    for aufruf in ["invoke(\"skill_waehlen\"", "invoke(\"skill_auftrag\""] {
+    assert!(js.contains("liste_oeffnen(skillmenue, skillknopf, skillknopf)"), "der Knopf oeffnet die Wahl nicht");
+    for marke in ["\"menue.skill_lernen\":", "\"menue.buch_lesen\":", "\"buch.fertig\":", "\"knopf.skillwahl\":"] {
+        assert_eq!(js.matches(marke).count(), 2, "{marke} fehlt in einer Sprache");
+    }
+    for aufruf in ["invoke(\"skill_waehlen\"", "invoke(\"skill_auftrag\"", "invoke(\"buch_waehlen\"", "invoke(\"buch_lesen\""] {
         assert!(js.contains(aufruf), "das Skript ruft {aufruf} nicht");
     }
     // ⚑ Ein Skill allein ist auch ein Auftrag: Die Sperre gegen leere
@@ -3885,8 +3910,12 @@ fn der_skillknopf_steht_neben_dem_anhang_und_ist_verdrahtet() {
     assert!(js.contains("if (!text && anhaenge_offen.length === 0) return;"));
 
     let rs = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/main.rs")).expect("main.rs");
+    // ⛔️ Der Inhalt eines Buchs darf nicht als Plaettchen in die Nachricht des Menschen.
+    let lesen = &js[js.find("async function buch_lesen()").expect("buch_lesen fehlt")..];
+    let lesen = &lesen[..lesen.find("\n}\n").expect("buch_lesen endet nicht")];
+    assert!(!lesen.contains("anhaenge_offen"), "ein Buch haengt sich an die Nachricht");
     let liste = &rs[rs.find("generate_handler![").expect("die Befehlsliste fehlt")..];
-    for befehl in ["skill_waehlen,", "skill_auftrag,"] {
+    for befehl in ["skill_waehlen,", "skill_auftrag,", "buch_waehlen,", "buch_lesen,"] {
         assert!(liste.contains(befehl), "{befehl} ist nicht angemeldet");
     }
 }
@@ -3998,4 +4027,41 @@ fn die_einstellungen_zaehlen_nicht_die_platte() {
     assert!(rumpf.contains("belegung_stand()"));
     let vor = rs.find("    belegung_stand();\n    tauri::Builder::default()").is_some();
     assert!(vor, "die Zaehlung beginnt nicht beim Start");
+}
+
+/// ⛔️ **Die zwoelf Woerter sind im Fenster geschuetzt** (CLIENT 7.14): Das
+/// Fenster ist vor Aufnahmen geschuetzt, bevor die Woerter hinausgehen, und
+/// wieder frei bei Bestaetigen und Verwerfen; Kopieren und Markieren sind
+/// gesperrt, nach zwei Minuten ohne Eingabe ist der Entwurf verworfen, und
+/// danach steht kein Wort mehr in den Feldern.
+#[test]
+fn die_zwoelf_woerter_sind_geschuetzt() {
+    let rust = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/main.rs")).expect("main.rs");
+    let rumpf = |name: &str| {
+        let ab = rust.find(&format!("async fn {name}(")).unwrap_or_else(|| panic!("{name} fehlt"));
+        let bis = rust[ab..].find("\n}\n").map_or(rust.len(), |i| ab + i);
+        rust[ab..bis].to_string()
+    };
+    let entwurf = rumpf("wallet_entwurf");
+    let schutz = entwurf.find("woerterschutz(&fenster, true)").expect("kein Schutz beim Entwurf");
+    assert!(schutz < entwurf.find("Walletentwurf {").expect("Antwort"), "die Woerter gehen vor dem Schutz hinaus");
+    for name in ["wallet_bestaetigen", "wallet_verwerfen"] {
+        assert!(rumpf(name).contains("woerterschutz(&fenster, false)"), "{name} gibt das Fenster nicht frei");
+    }
+    let js = lies("app.js");
+    for art in ["\"copy\"", "\"cut\"", "\"dragstart\"", "\"contextmenu\""] {
+        assert!(js.contains(art), "{art} ist im Entwurf nicht gesperrt");
+    }
+    assert!(js.contains("const ENTWURF_RUHE_MS = 120000;"), "keine Sperre nach Untaetigkeit");
+    let leeren = &js[js.find("function entwurf_leeren()").expect("entwurf_leeren")..];
+    let leeren = &leeren[..leeren.find("\n}").unwrap()];
+    for feld in ["entwurf-woerter", "entwurf-a", "entwurf-b"] {
+        assert!(leeren.contains(feld), "{feld} bleibt stehen");
+    }
+    for weg in ["async function wallet_entwurf_bestaetigen", "async function wallet_entwurf_abbrechen"] {
+        let ab = js.find(weg).expect(weg);
+        let teil = &js[ab..ab + js[ab..].find("\n}").unwrap()];
+        assert!(teil.contains("entwurf_leeren()") && teil.contains("entwurf_wache_aus()"), "{weg}");
+    }
+    assert!(lies("stil.css").contains("#entwurf-woerter { user-select: none;"), "die Woerter lassen sich markieren");
 }

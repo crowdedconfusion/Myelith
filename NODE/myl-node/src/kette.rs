@@ -1139,7 +1139,9 @@ pub struct Kette {
     /// ihr der Anfang, dann `None`.
     baum: Option<myl_types::historie::Historienbaum>,
     /// Die Gruppenwurzeln des laufenden Abschnitts (Grenze, Wurzeln), einmal
-    /// gerechnet, für die Teilwurzel und die Pfade der Teile.
+    /// gerechnet, für die Teilwurzel und die Pfade der Teile. Solange es
+    /// weniger sind als Gruppen im Abschnitt, ist die Rechnung unterwegs
+    /// ([`Kette::gruppenwurzeln_vorarbeiten`]).
     teilcache: Option<(u64, Vec<Hash>)>,
     /// Die zuletzt codierten Gruppen, höchstens [`TEILGRUPPEN_BEHALTEN`]:
     /// Splitter fragen dieselben, aber nicht alle zugleich dieselbe
@@ -1529,22 +1531,65 @@ impl Kette {
     }
 
     /// **Die Gruppenwurzeln des laufenden Abschnitts**, einmal je Grenze
-    /// gerechnet; `None`, wenn dieser Kette Blöcke fehlen.
+    /// gerechnet, am Stück oder fertig aus den Scheiben; `None`, wenn dieser
+    /// Kette Blöcke fehlen.
     fn gruppenwurzeln(&mut self) -> Option<Vec<Hash>> {
+        self.gruppenwurzeln_bis(None)
+    }
+
+    /// ⚑ **Rechnet an den Gruppenwurzeln weiter, in Scheiben** (Archivknoten):
+    /// höchstens `frist` lang, mindestens eine Gruppe; `true`, wenn alle
+    /// Gruppen des Abschnitts gerechnet sind. Das Ergebnis gleicht der
+    /// Rechnung am Stück.
+    ///
+    /// 📌 **Am Stück stand die Rechnung im Ereignisweg**, einmal je Periode
+    /// (112 Gruppen zu 1024 Blöcken): gemessen 5 ms je Gruppe bei 300 Byte
+    /// je Block, 16 ms bei 2 KB, 122 ms bei 20 KB, also 0,6 bis 14 s, in
+    /// denen der Knoten keinen Block annimmt. Ein eigener Faden bräuchte
+    /// einen zweiten Lesegriff auf die Kettendatei; Scheiben je Aufnahme
+    /// brauchen nichts davon und kommen in rund einer Minute durch.
+    pub fn gruppenwurzeln_vorarbeiten(&mut self, frist: std::time::Duration) -> bool {
+        self.gruppenwurzeln_bis(Some(frist)).is_some()
+    }
+
+    /// Ob die Gruppenwurzeln des laufenden Abschnitts fertig gerechnet sind.
+    pub fn gruppenwurzeln_bereit(&self) -> bool {
         let a = &self.zustand.archiv;
-        let (grenze, ab, bis) = (a.grenze, a.teil_ab, a.teil_bis);
-        if let Some((g, w)) = &self.teilcache {
-            if *g == grenze {
-                return Some(w.clone());
+        matches!(&self.teilcache, Some((g, w)) if *g == a.grenze && w.len() as u64 == a.teil_bis.saturating_sub(a.teil_ab))
+    }
+
+    /// Die Rechnung hinter beiden: ohne Frist bis zum Ende, mit Frist eine
+    /// Scheibe. `Some` nur, wenn alle Gruppen gerechnet sind.
+    fn gruppenwurzeln_bis(&mut self, frist: Option<std::time::Duration>) -> Option<Vec<Hash>> {
+        let a = &self.zustand.archiv;
+        let (grenze, anzahl) = (a.grenze, a.teil_bis.saturating_sub(a.teil_ab));
+        let ab = a.teil_ab;
+        let mut wurzeln = match self.teilcache.take() {
+            Some((g, w)) if g == grenze => w,
+            _ => Vec::with_capacity(anzahl as usize),
+        };
+        let start = std::time::Instant::now();
+        while (wurzeln.len() as u64) < anzahl {
+            let g = ab + wurzeln.len() as u64;
+            let wurzel = self
+                .gruppenbloecke(g)
+                .and_then(|b| myl_types::archivteile::gruppenwurzel(&myl_types::archivteile::kodieren(&b)));
+            let Some(wurzel) = wurzel else {
+                self.teilcache = Some((grenze, wurzeln));
+                return None;
+            };
+            wurzeln.push(wurzel);
+            if frist.is_some_and(|f| start.elapsed() >= f) {
+                break;
             }
         }
-        let mut wurzeln = Vec::with_capacity((bis - ab) as usize);
-        for g in ab..bis {
-            let teile = myl_types::archivteile::kodieren(&self.gruppenbloecke(g)?);
-            wurzeln.push(myl_types::archivteile::gruppenwurzel(&teile)?);
+        let fertig = wurzeln.len() as u64 == anzahl;
+        self.teilcache = Some((grenze, wurzeln));
+        if fertig {
+            self.teilcache.as_ref().map(|(_, w)| w.clone())
+        } else {
+            None
         }
-        self.teilcache = Some((grenze, wurzeln.clone()));
-        Some(wurzeln)
     }
 
     /// **Die Teilwurzel, die eine Kopie nennt** (Stufe A7): `None`, wenn

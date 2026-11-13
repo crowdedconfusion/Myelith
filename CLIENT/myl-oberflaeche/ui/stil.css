@@ -929,9 +929,10 @@ header > .kopfrechts { right: var(--kopf-polster); }
 
    ⚑ **Zuerst die installierte, dann die eingebettete.** `local()` nimmt
    sie vom System, wo sie liegt; wo nicht, traegt der eingebettete
-   Ausschnitt. Beides zusammen, weil beide Faelle vorkommen: Auf der
-   Maschine des Projektinhabers ist sie installiert, auf dem Rechner
-   eines Teilnehmers, der ein Freigabe-Binary laedt, nicht.
+   Ausschnitt. 📌 **Der Ausschnitt ist seit dem 2026-11-10 heraus:** Eine
+   Lizenz, die das Weitergeben erlaubt, liess sich nicht belegen. Es
+   bleibt `local()`: Wo die Schrift installiert ist, erscheint sie, sonst
+   die Systemgrotesk.
 
    ⚑ **Nur die sieben Buchstaben von „Myelith".** Die ganze Schrift ist
    22 KB, der Ausschnitt 1,6 KB. Mehr wird nirgends gebraucht, und was
@@ -959,8 +960,7 @@ header > .kopfrechts { right: var(--kopf-polster); }
   font-display: block;
   src:
     local("Infinite Justice"),
-    local("InfiniteJustice"),
-    url(data:font/woff;base64,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) format("woff");
+    local("InfiniteJustice");
 }
 
 /* --- Die Marke ------------------------------------------------------
@@ -1186,6 +1186,7 @@ header > .kopfrechts { right: var(--kopf-polster); }
   stroke-linejoin: round;
 }
 .rundknopf:hover:not(:disabled) { color: var(--text); }
+.rundknopf.skill.arbeitet svg { opacity: .45; }
 
 /* 📌 Hier standen die Regeln des Ortsschalters „Lokal | Netz". Er ist
    am 2026-09-09 entfallen; die Wahl liegt jetzt in der Modellwahl
@@ -3447,8 +3448,20 @@ body.ablegen .eingabefeld {
 .walletmarke { font-size: .75rem; color: var(--leise); border: 1px solid var(--kante); border-radius: 999px; padding: 0 .5rem; }
 .walletguthaben { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 .walletadresse { font-size: 11.5px; color: var(--leise); word-break: break-all; }
+.walletknoepfe { display: flex; gap: .5rem; flex-wrap: wrap; }
+.walletverlauf {
+  margin: 0;
+  max-height: 14rem;
+  overflow: auto;
+  font-size: 11.5px;
+  color: var(--leise);
+  white-space: pre;
+  align-self: stretch;
+}
 .walletentwurf { margin: 0 0 1.2rem; padding: .8rem 1rem; border: 1px solid var(--text); border-radius: var(--rund-klein); }
 .walletentwurf h3 { margin-top: 0; }
+/* ⛔️ Die zwoelf Woerter lassen sich nicht markieren (CLIENT 7.14). */
+#entwurf-woerter { user-select: none; -webkit-user-select: none; }
 .entwurfwoerter {
   columns: 2;
   margin: .4rem 0 .8rem;

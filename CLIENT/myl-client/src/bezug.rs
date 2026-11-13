@@ -473,6 +473,19 @@ pub fn baubar(wurzel: &Path) -> Vec<Bauplan> {
 mod proben {
     use super::*;
 
+    /// ⚑ Der echte Katalog: Das Uebersetzungsmodell laesst sich wie jedes Projektmodell holen.
+    #[test]
+    fn parrot_laesst_sich_holen_und_bauen() {
+        let w = std::env::temp_dir().join(format!("myl-bezug-parrot-{}", std::process::id()));
+        std::fs::create_dir_all(w.join("MODELS/llm")).unwrap();
+        std::fs::copy(concat!(env!("CARGO_MANIFEST_DIR"), "/../../MODELS/llm/KATALOG.json"), w.join("MODELS/llm/KATALOG.json")).unwrap();
+        let p = Bauplan::fuer(&w, "parrot-2b-int8").expect("Plan");
+        assert!(p.schritte.iter().any(|s| matches!(s, Schritt::Holen { repo, .. } if repo == "IndexTeam/Index-Translate-2B")), "{:?}", p.schritte);
+        assert!(p.schritte.iter().any(|s| matches!(s, Schritt::Int8 { schluessel, .. } if schluessel == "parrot-2b-int8")), "{:?}", p.schritte);
+        assert!(baubar(&w).iter().any(|b| b.schluessel == "parrot-2b-int8"), "fehlt in der Liste");
+        let _ = std::fs::remove_dir_all(&w);
+    }
+
     /// Ein Scheinklon mit Katalog, ohne Gewichte und Artefakte.
     fn klon(name: &str) -> PathBuf {
         let w = std::env::temp_dir().join(format!("myl-bezug-{name}-{}", std::process::id()));

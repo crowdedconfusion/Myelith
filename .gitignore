@@ -113,3 +113,6 @@ SYSTEM/golemos/overlay/usr/bin/
 # alles mitschreibt, auch Dateiinhalte und Antworten des Modells. Nichts
 # davon gehoert ins Repositorium (Festlegung des Projektinhabers, 2026-10-12).
 SYSTEM/logs/
+
+# Gelesene Buecher: fremde Werke, je Buch Markdown und Grafiken.
+literature/

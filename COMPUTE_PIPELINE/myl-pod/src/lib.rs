@@ -62,7 +62,7 @@ pub use trace::{
 };
 pub use wire::{PodMessage, MAGIC, FLAG_ABORT, FLAG_FEEDBACK, FLAG_SAMPLE, FLAG_TOKEN_INPUT};
 pub use zuteilung::{
-    besetzungsreihenfolge, epochenwechsel_aus_zuteilung, ist_besetzbar, 
+    besetzungsreihenfolge, ist_besetzbar, 
     pod_aus_zuteilung, ZuteilungFehler,
 };
 pub use micro_batch::{

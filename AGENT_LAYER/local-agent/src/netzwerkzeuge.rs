@@ -1147,7 +1147,10 @@ fn entitaeten(text: &str) -> String {
     while let Some(i) = rest.find('&') {
         aus.push_str(&rest[..i]);
         let nach = &rest[i..];
-        let ende = nach.find(';').filter(|e| *e <= 10);
+        // 📌 Gesucht wird nur in den naechsten elf Bytes (2026-11-12): `find`
+        //    lief bis zum naechsten `;` der ganzen Seite und verwarf erst
+        //    danach; eine Seite aus einer Million `&` brauchte so 12 s.
+        let ende = nach.bytes().take(11).position(|b| b == b';');
         let Some(e) = ende else {
             aus.push('&');
             rest = &nach[1..];
@@ -1403,6 +1406,19 @@ pub fn adressen_aus(text: &str) -> BTreeSet<String> {
 
 #[cfg(test)]
 mod proben {
+
+    /// ⛔️ **Viele `&` ohne `;` kosten lineare Zeit**, nicht quadratische:
+    /// Eine Seite aus einer Million `&` war vorher eine Haengepartie.
+    #[test]
+    fn viele_kaufmannsund_kosten_keine_quadratische_zeit() {
+        let seite = "&".repeat(1_000_000);
+        let t = std::time::Instant::now();
+        let aus = text_aus_html(&seite);
+        let dauer = t.elapsed();
+        assert_eq!(aus.len(), 1_000_000);
+        assert!(dauer < std::time::Duration::from_secs(5), "{dauer:?}");
+    }
+
     use super::*;
 
     #[test]

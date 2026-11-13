@@ -505,7 +505,10 @@ impl Anzeige {
         self.merken(Zeitzeile { art: Art::Hinweis, kurz: Some(z.clone()), voll: z }, Some("ausgeblendet".to_string()));
     }
 
-    fn merken(&self, zeile: Zeitzeile, was: Option<String>) {
+    fn merken(&self, mut zeile: Zeitzeile, was: Option<String>) {
+        // Argumente und Ergebnisse von Werkzeugen sind fremder Text.
+        zeile.voll = crate::design::steuerfrei(&zeile.voll).into_owned();
+        zeile.kurz = zeile.kurz.map(|k| crate::design::steuerfrei(&k).into_owned());
         if !self.am_schirm {
             // Ohne Schirm gibt es keinen Faden, der sie drucken
             // koennte, und keine Zeile, die sie ueberschreibt.
@@ -1569,8 +1572,8 @@ impl Stromgriff {
         }
         let Ok(mut l) = self.lage.lock() else { return };
         match s {
-            myl_local_agent::textstrom::Stueck::Denken(t) => l.strom.push((true, t)),
-            myl_local_agent::textstrom::Stueck::Text(t) => l.strom.push((false, t)),
+            myl_local_agent::textstrom::Stueck::Denken(t) => l.strom.push((true, crate::design::steuerfrei(&t).into_owned())),
+            myl_local_agent::textstrom::Stueck::Text(t) => l.strom.push((false, crate::design::steuerfrei(&t).into_owned())),
         }
     }
 }

@@ -93,6 +93,86 @@ where
     true
 }
 
+/// **Adresstext** (CLIENT 7.15): Ein Text, den `aus_text` annimmt, ist bis
+/// auf Grossschreibung und Leerraum die kanonische Form `als_text`; gemischte
+/// Schreibung nimmt er nie an (BIP-350), und die kanonische Form liest sich
+/// zur selben Adresse zurueck. 64 Hexzeichen sind die erlaubte zweite Form.
+///
+/// ⚑ Dieselbe Frage wie bei `kanonisch`, nur fuer Text: Zwei Texte fuer eine
+/// Adresse waeren zwei Kennungen fuer denselben Empfaenger (etwa ueber nicht
+/// genullte Fuellbits, nachgesehen in `zu_acht`).
+#[allow(dead_code)]
+pub fn adresstext(daten: &[u8]) -> bool {
+    use myl_types::adresstext::{als_text, aus_text, PRAEFIX_TESTNETZ};
+    let Ok(text) = std::str::from_utf8(daten) else {
+        return false;
+    };
+    let Ok(adresse) = aus_text(text, PRAEFIX_TESTNETZ) else {
+        return false;
+    };
+    let kanonisch = als_text(&adresse, PRAEFIX_TESTNETZ);
+    assert_eq!(aus_text(&kanonisch, PRAEFIX_TESTNETZ).ok(), Some(adresse), "die kanonische Form liest sich anders");
+    let t = text.trim();
+    if !(t.len() == 64 && t.bytes().all(|b| b.is_ascii_hexdigit())) {
+        assert!(
+            !(t.bytes().any(|b| b.is_ascii_lowercase()) && t.bytes().any(|b| b.is_ascii_uppercase())),
+            "gemischte Schreibung angenommen: {t:?}"
+        );
+        assert_eq!(t.to_ascii_lowercase(), kanonisch, "zwei Texte, eine Adresse: {t:?}");
+    }
+    true
+}
+
+/// **Adresstext mit angerechneter Pruefsumme** (CLIENT 7.15): dieselbe Aussage
+/// wie `adresstext`, nur baut das Ziel den Text selbst. Das erste Byte waehlt
+/// Praefix (Bit 0) und Grossschreibung (Bit 1), jedes weitere ist eine
+/// Fuenfergruppe; die bech32m-Summe rechnet das Ziel an.
+///
+/// 📌 Gemessen am 2026-11-12: Mit einem eingebauten Fehler in `zu_acht` (Fuellbits
+/// nicht geprueft) fand `adresstext` ohne Saat in 60 s und 5,6 Millionen Laeufen
+/// nichts, denn ein zufaelliger Text hat fast nie eine gueltige Summe, und jede
+/// Mutation einer gueltigen Saat zerstoert sie wieder. Hinter der Summe sucht nur
+/// dieses Ziel.
+///
+/// ⚑ Die Summe ist hier eigens nach BIP-173/BIP-350 geschrieben und nicht aus
+/// `adresstext.rs` geliehen: Stimmen beide nicht ueberein, liest `aus_text` den
+/// Text als Tippfehler, und das Ziel prueft nichts mehr; der Regressionslauf
+/// zaehlt deshalb mit, wie viele Eingaben sich lesen liessen.
+#[allow(dead_code)]
+pub fn adresstext_mit_summe(daten: &[u8]) -> bool {
+    const ZEICHEN: &[u8; 32] = b"qpzry9x8gf2tvdw0s3jn54khce6mua7l";
+    const GEN: [u32; 5] = [0x3b6a_57b2, 0x2650_8e6d, 0x1ea1_19fa, 0x3d42_33dd, 0x2a14_62b3];
+    let Some((&art, rest)) = daten.split_first() else {
+        return false;
+    };
+    let praefix: &[u8] = if art & 1 == 0 { b"tmyl" } else { b"myl" };
+    let fuenfer: Vec<u8> = rest.iter().take(90).map(|b| b & 31).collect();
+    let mut werte: Vec<u8> = praefix.iter().map(|b| b >> 5).collect();
+    werte.push(0);
+    werte.extend(praefix.iter().map(|b| b & 31));
+    werte.extend_from_slice(&fuenfer);
+    werte.extend_from_slice(&[0; 6]);
+    let mut chk: u32 = 1;
+    for v in werte {
+        let oben = chk >> 25;
+        chk = ((chk & 0x01ff_ffff) << 5) ^ u32::from(v);
+        for (i, g) in GEN.iter().enumerate() {
+            if (oben >> i) & 1 == 1 {
+                chk ^= g;
+            }
+        }
+    }
+    let summe = chk ^ 0x2bc8_30a3;
+    let mut text: Vec<u8> = praefix.to_vec();
+    text.push(b'1');
+    text.extend(fuenfer.iter().map(|f| ZEICHEN[usize::from(*f)]));
+    text.extend((0..6).map(|i| ZEICHEN[((summe >> (5 * (5 - i))) & 31) as usize]));
+    if art & 2 != 0 {
+        text.make_ascii_uppercase();
+    }
+    adresstext(&text)
+}
+
 /// Ein Ziel je Typ, der über das Netz oder über die Platte kommt.
 ///
 /// Die Namen sind zugleich die Namen der Korpusverzeichnisse unter
@@ -135,6 +215,9 @@ pub const ZIELE: &[(&str, Ziel)] = &[
     ("relaisfrage", |d| kanonisch::<myl_types::relais::Relaisfrage>(d)),
     ("relaisantwort", |d| kanonisch::<myl_types::relais::Relaisantwort>(d)),
     ("vollmacht", |d| kanonisch::<myl_types::vollmacht::Vollmacht>(d)),
+    // 2026-11-12, CLIENT 7.15: der Adresstext, den Wallet und Konsole lesen.
+    ("adresstext", adresstext),
+    ("adresstext_mit_summe", adresstext_mit_summe),
 ];
 
 /// Sucht ein Ziel nach Namen.

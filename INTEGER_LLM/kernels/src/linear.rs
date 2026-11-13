@@ -631,6 +631,41 @@ mod stapeltests {
 mod tests {
     use super::*;
 
+    /// **W8A8 auf der CPU ist die Formel**, nachgerechnet ohne die Weiche
+    /// und ohne Faeden, auch an den Raendern beider Seiten (-128, 127).
+    #[test]
+    fn w8a8_auf_der_cpu_ist_die_formel() {
+        let (zeilen, spalten, stapel) = (37usize, 4_100usize, 5usize);
+        let mut s = 0x1234_5678u64;
+        let mut zufall = move || {
+            s ^= s << 13;
+            s ^= s >> 7;
+            s ^= s << 17;
+            s
+        };
+        let w: Vec<i8> = (0..zeilen * spalten).map(|i| if i % 11 == 0 { -128 } else { zufall() as i8 }).collect();
+        let eingaben: Vec<Vec<i8>> = (0..stapel)
+            .map(|b| (0..spalten).map(|i| if b == 0 { -128 } else if i % 7 == 0 { 127 } else { zufall() as i8 }).collect())
+            .collect();
+        let xs: Vec<&[i8]> = eingaben.iter().map(|e| e.as_slice()).collect();
+        let w_shifts: Vec<u8> = (0..zeilen).map(|z| (z % 9) as u8).collect();
+        let ziele: Vec<u8> = (0..zeilen).map(|z| (z % 13) as u8).collect();
+        let act = 7u8;
+        let aus = linear_w8a8_pc_stapel_cpu(&xs, &w, spalten, &w_shifts, act, &ziele);
+        for (b, x) in eingaben.iter().enumerate() {
+            for z in 0..zeilen {
+                let acc: i64 = (0..spalten).map(|i| i64::from(w[z * spalten + i]) * i64::from(x[i])).sum();
+                let erwartet = clamp_i16_from_i64(rescale_i64(acc, w_shifts[z] + act, ziele[z]));
+                assert_eq!(aus[b][z], erwartet, "Eingabe {b}, Zeile {z}");
+            }
+        }
+        // Gegenprobe: dieselbe Rechnung mit int16-Eingaben (W8A16) liefert
+        // fuer dieselben Werte dieselbe Zahl.
+        let breit: Vec<Vec<i16>> = eingaben.iter().map(|e| e.iter().map(|v| i16::from(*v)).collect()).collect();
+        let xs16: Vec<&[i16]> = breit.iter().map(|e| e.as_slice()).collect();
+        assert_eq!(linear_w8a16_pc_stapel(&xs16, &w, spalten, &w_shifts, act, &ziele), aus);
+    }
+
     #[test]
     fn test_linear_w8a16_identity() {
         // x = [1.0, -1.0] bei frac 6 = [64, -64]; Identitaets-Matrix mit
@@ -1045,6 +1080,61 @@ pub fn linear_matrix_stapel(
         let _ = z;
         out_frac_bits
     }, act_frac_bits)
+}
+
+/// **W8A8 fuer viele Eingaben**: Gewichte und Aktivierungen in int8, eine
+/// Ausgangsskala je Kanal.
+///
+/// `out[b][z] = clamp(rescale(sum_i W[z][i] * x_b[i], w_shifts[z] +
+/// act_frac_bits, out_frac_bits[z]))`, exakt in `i64`, auf der GPU wie auf
+/// der CPU dieselbe Zahl (`w8a8_rechnet_wie_die_cpu`, Selbstpruefung).
+///
+/// ⚑ **Fuer wen.** Fuer die Sinne (whisper, CLIENT 8.2): ein `matmul2d`
+/// je Bündel statt zwei, denn W8A16 zerlegt jede Aktivierung in zwei int8.
+/// Der Preis ist die Aufloesung der Eingabe (8 statt 16 Bit), also ein
+/// Weg fuer Rechnungen, die das tragen; der Rechenpfad des Sprachmodells
+/// nimmt ihn nicht.
+pub fn linear_w8a8_pc_stapel(
+    xs: &[&[i8]],
+    W: &[i8],
+    in_features: usize,
+    w_shifts: &[u8],
+    act_frac_bits: u8,
+    out_frac_bits: &[u8],
+) -> Vec<Vec<i16>> {
+    Gewichtsmatrix::Int8(W).form_pruefen("linear_w8a8_pc_stapel", in_features, w_shifts.len());
+    assert_eq!(out_frac_bits.len(), w_shifts.len(), "linear_w8a8_pc_stapel: eine Ausgangsskala je Kanal");
+    if xs.is_empty() {
+        return Vec::new();
+    }
+    if let Some(aus) = crate::ressourcen::stapel_a8(xs, W, in_features, w_shifts, act_frac_bits, &|z| out_frac_bits[z]) {
+        return aus;
+    }
+    linear_w8a8_pc_stapel_cpu(xs, W, in_features, w_shifts, act_frac_bits, out_frac_bits)
+}
+
+/// Wie [`linear_w8a8_pc_stapel`], **immer auf der CPU**: fuer die
+/// Selbstpruefung der GPU und als Rueckfall.
+pub fn linear_w8a8_pc_stapel_cpu(
+    xs: &[&[i8]],
+    W: &[i8],
+    in_features: usize,
+    w_shifts: &[u8],
+    act_frac_bits: u8,
+    out_frac_bits: &[u8],
+) -> Vec<Vec<i16>> {
+    let (zeilen, b) = (w_shifts.len(), xs.len());
+    if b == 0 {
+        return Vec::new();
+    }
+    let flach = crate::fadenpool::rechnen_breit(zeilen, b, stapelfaeden(zeilen, in_features, b), |z, ziel| {
+        let zeile = &W[z * in_features..(z + 1) * in_features];
+        for (wert, x) in ziel.iter_mut().zip(xs) {
+            let acc = crate::dot::dot_i8_i8(zeile, x);
+            *wert = clamp_i16_from_i64(rescale_i64(acc, w_shifts[z] + act_frac_bits, out_frac_bits[z]));
+        }
+    });
+    (0..b).map(|i| (0..zeilen).map(|z| flach[z * b + i]).collect()).collect()
 }
 
 /// Wie [`linear_w8a16_stapel`], mit einer Ausgangsskala je Kanal.

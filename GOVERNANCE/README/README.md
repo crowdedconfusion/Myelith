@@ -1,7 +1,7 @@
 # governance (`myl-governance`)
 
-> **Version:** 0.15.3
-> **Datum:** 2026-11-08
+> **Version:** 0.17.0
+> **Datum:** 2026-11-11
 > **Status:** **Phasen 1 und 2 abgeschlossen** (1.1–1.4, 2.1–2.3),
 > Phase 3 zur Hälfte (3.1 und 3.4 ✅). Parameter-Registry mit
 > Änderbarkeits-Rang, technische Durchsetzung des Verfassungsrangs,
@@ -134,6 +134,37 @@ richtige Fassung vorhanden und lief nicht.
 Er hat sich beim ersten Lauf bezahlt gemacht, siehe Fund 50.
 
 ## Changelog
+
+### v0.17.0 (2026-11-11): Auslastungsziel 0,8
+
+- `Auslastungsziel` 0,7 auf 0,8 (Kap. 5.4, Fund 668; die alte Zeile nannte
+  dieselbe Quelle mit dem falschen Wert), `TrainingsAbgabeMax` daraus neu
+  gerechnet: 1 790 statt 3 017 Basispunkte. Die Herkunftsprobe rechnet nach
+  (Gegenprobe mit 0,7 allein in der Registry: rot).
+- `myl-governance` 0.17.0, `myl-tokenomics` 0.28.0.
+
+### v0.16.0 (2026-11-11): `c` ist keine Protokollgröße
+
+- ⚑ **`Parameter::Kostenanteil` entfernt**, samt der Invariante
+  `KostenanteilPlausibel`, die nur ihn im Band hielt. Seit Fund 49 prüft
+  die Self-Dealing-Grenze `s` gegen das untere Ende des Bandes (c = 0,6,
+  also s < 1,5) und nahm den Wert nicht mehr; er stand wirkungslos in der
+  Registry, das Muster von A7, Fund 25 und Fund 44. `c` ist eine
+  Beobachtung über die Welt, Kap. 10.3 zählt es nicht zu den abstimmbaren
+  Größen, und Anhang B.4 nennt die Ungleichung eine Invariante. Die
+  Grenze bleibt als Konstante in `myl_tokenomics::sicherheit`.
+- Die Probe `kein_kostenanteil_bewegt_die_self_dealing_grenze` heißt jetzt
+  `die_self_dealing_grenze_liegt_fest_am_unteren_ende_des_bandes` und
+  prüft dieselben Grenzfälle (1,49 zulässig, 1,5, 2 und 3 nicht). 34
+  Parameter statt 35; die Sperrklinke der Entwürfe fällt von neun auf
+  acht.
+- `M_max` bleibt änderbar und darf nie binden (A2). ⚠️ Neu benannt: Die
+  Invariante vergleicht nur beim Vorschlag mit dem geglätteten Burn;
+  wächst die Nachfrage danach, bindet ein fester Deckel doch. Wer die
+  Registry an die Kette bindet, lässt die Prägung einen erreichten Deckel
+  melden, statt still zu kappen.
+- Whitepaper: Übereinstimmung mit 10.3 und B.4.
+- `myl-governance` 0.16.0.
 
 ### v0.15.3 (2026-11-08): Start-Subvention
 

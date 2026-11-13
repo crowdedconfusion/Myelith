@@ -1,10 +1,11 @@
 # agent-layer
 
-> **Version:** 0.56.0 (`myl-agent` 0.7.2, `myl-local-agent` 0.46.2)
-> **Datum:** 2026-11-09
+> **Version:** 0.66.0 (`myl-agent` 0.10.0, `myl-local-agent` 0.50.0, `book2skill` 0.7.0)
+> **Datum:** 2026-11-13
 > **Status:** Manifeste, Herkunftsstufe, Registratur, der
 > **Session-Kontrakt** mit Durchsetzung im Ledger, der **Plan** und seit
-> v0.7.0 die **Segmentkette**. 52 Tests. ⚑ **Was jetzt fehlt, ist keine
+> v0.7.0 die **Segmentkette**, seit v0.8.0 die Herkunft im
+> **Gedächtnis**. 59 Tests. ⚑ **Was jetzt fehlt, ist keine
 > Zusicherung mehr, sondern eine Laufzeit:** Nichts führt einen Plan
 > aus.
 
@@ -66,8 +67,254 @@ umbenannt, weil er in jedem `use` steht.
   benutzbar ist.
 - `src/plan.rs` — was ein Agent tun wird, festgelegt bevor er anfängt.
 - `src/kette.rs` — dass er es auch so getan hat, und wann er aufhört.
+- `src/gedaechtnis.rs`: was in den dauerhaften Speicher darf, nämlich nur,
+  was die Ausgabe eines Schritts einer geltenden Kette ist.
 
 ## Changelog
+
+### v0.66.0 (2026-11-13): Der Türklient liest eine Antwort nur bis zu einer Grenze (`myl-local-agent` 0.50.0)
+
+- 📌 **Befund:** `Tuerklient::lesen` sammelte Köpfe und Rumpf, solange
+  etwas kam. Mit dem Schalter „Netz“ ist die Gegenstelle ein fremder
+  Knoten; eine, die nie eine Leerzeile schickt oder einen endlosen Rumpf,
+  ließ den Speicher wachsen, und die Suche nach der Leerzeile lief jedes
+  Mal über alles. Jetzt Köpfe bis `KOPF_HOECHSTENS` (64 KiB, sonst „kein
+  HTTP“), Rumpf bis `RUMPF_HOECHSTENS` (64 MiB, angekündigt oder
+  gelesen, sonst „unlesbar“ mit Grund).
+- Probe `eine_gegenstelle_ohne_ende_fuellt_nicht_den_speicher` in
+  `tests/tuerklient.rs` (drei Fälle, der Stummel hält danach offen, der
+  Klient hat 1 s Frist); Gegenprobe mit abgeschalteten Prüfungen: Frist
+  statt „kein HTTP“, rot.
+
+### v0.65.0 (2026-11-13): Eine hängende Seite hält das Buch nicht fest (`book2skill` 0.7.0)
+
+- `myl scan` endet mit 3, wenn eine Seite länger rendert als erlaubt, und
+  legt sie als unlesbar ab. Book2Skill ruft dann für die übrigen Seiten neu
+  auf, schreibt „[Seite nicht lesbar]“ an ihre Stelle und führt sie im
+  Manifest unter `scan.seiten_unlesbar`; `seiten_erkannt` zählt sie nicht
+  mit. Meldet `myl scan` 3, ohne eine Seite abzulegen, bricht Book2Skill ab
+  statt ohne Ende neu zu rufen. `myl scan --seitenzahl` hat eine Frist von
+  300 s.
+- Probe `scan_haengt` (Fortsetzung, Text, Manifest, Schutz gegen endloses
+  Neurufen); Gegenprobe, die den Rückgabewert übergeht, rot; grün unter
+  Python 3.9 und 3.12. Von Ende zu Ende mit dem echten `myl` und einem
+  Scan in altgriechischer Schrift: erster Aufruf 3, zweiter liefert Seite 2
+  und 3, im Buch einmal „[Seite nicht lesbar]“, im Manifest
+  `seiten_unlesbar: [1]`, `seiten_erkannt: 2`.
+
+### v0.64.5 (2026-11-12): Ein verstümmeltes Werk endet sauber (`book2skill` 0.6.3)
+
+- Neue Probe `verstuemmelt_endet_sauber`: 1 200 Abwandlungen von EPUB,
+  DOCX, ODT, FB2, RTF und HTML (Inhalt der Archive verändert, Teile
+  entfernt, Zeichen eingefügt, gekürzt) werden gelesen oder mit `Fehler`
+  abgewiesen, nie mit einer anderen Ausnahme. Vorher erkundet mit 30 000
+  Abwandlungen.
+- 📌 **Befund dabei:** Ein Buchstabe außerhalb von ASCII nach `\` (etwa
+  `\ß`) galt im RTF als Steuerwort, das Muster passte nicht, und
+  `None.group` brach mit `AttributeError` ab. Steuerwörter bestehen nur aus
+  ASCII-Buchstaben; jetzt ist es ein Steuersymbol und fällt weg.
+  Gegenprobe ohne die Prüfung rot; grün unter Python 3.9 und 3.12.
+
+### v0.64.4 (2026-11-12): Emoji in RTF brechen Book2Skill nicht mehr ab (`book2skill` 0.6.2)
+
+- 📌 **Befund:** RTF schreibt Zeichen außerhalb der BMP als zwei
+  UTF-16-Hälften (`\uN`); `rtf_nach_text` setzte sie einzeln ein, und das
+  Schreiben als UTF-8 scheiterte (`UnicodeEncodeError`), ein Buch mit einem
+  Emoji brach ab. Eine Unsinnszahl wie `\u9999999` brach mit `ValueError`
+  ab. Jetzt werden zwei Hälften ein Zeichen; was allein steht oder außerhalb
+  von Unicode liegt, wird U+FFFD.
+- Probe `rtf_unicode` (unter Python 3.9 und 3.12 grün; Gegenprobe mit dem
+  alten Einsetzen rot).
+
+### v0.64.3 (2026-11-12): Eigene XML-Entitäten werden überall abgewiesen (`book2skill` 0.6.1)
+
+- 📌 **Befund:** `xml_lesen` (EPUB, DOCX, ODT, FB2) wies `<!ENTITY` nur in
+  den ersten 64 KB ab. Ein Kommentar von 70 KB davor oder UTF-16 umging das,
+  und das expat des Systems (2.2.8 bei Python 3.9 unter macOS) schützt nicht
+  selbst: Neun Ebenen wurden ein Gigabyte Text, ein präpariertes Buch hätte
+  den Speicher gesprengt. Jetzt läuft expat vorab mit einem
+  `EntityDeclHandler`, der bei der ersten Deklaration abbricht, bevor etwas
+  expandiert wird, gleich an welcher Stelle und in welcher Kodierung.
+- Probe `xml_ohne_entitaeten` (direkt, hinter 70 KB Kommentar, UTF-16; dazu
+  gewöhnliches XML mit `&amp;` und `&lt;`), grün unter Python 3.9 und 3.12;
+  Gegenprobe mit der alten Prüfung rot. Andere Python-Werkzeuge lesen kein XML.
+
+### v0.64.2 (2026-11-12): Ein Fuzzer für die Leser der Web-Recherche (`myl-local-agent` 0.49.2)
+
+- Neu `local-agent/fuzz/` mit dem Ziel `html` (Rumpf in
+  `tests/fuzzziele/mod.rs`, stabiler Lauf `tests/fuzzkorpus.rs`): Jede
+  Seite geht ohne Panik durch `text_aus_html`, `treffer_aus`,
+  `verweise_aus` und `adressen_aus`, der Text wird nicht länger als die
+  Seite, Treffer und Verweise halten ihre Obergrenzen. Ungültiges UTF-8
+  wird verlustbehaftet gelesen, wie eine Seite aus dem Netz.
+- Lauf 600 s mit Seiten bis 200 KB und 2 s Zeitgrenze je Seite: 4,1
+  Millionen ohne Fund. 📌 Die quadratische Suche aus 0.64.1 fand er wieder
+  eingebaut in 180 s nicht: Sie braucht eine gezielt gebaute Seite, dafür
+  steht die eigene Probe. Drei Saaten (Trefferseite, Artikel, Kaputtes).
+
+### v0.64.1 (2026-11-12): Eine Seite voller `&` hält die Web-Recherche nicht mehr fest (`myl-local-agent` 0.49.1)
+
+- 📌 **Befund:** `entitaeten` in `netzwerkzeuge` suchte für jedes `&` das
+  nächste `;` auf der ganzen Seite und verwarf erst danach, was weiter als
+  zehn Zeichen entfernt lag. Eine Seite aus einer Million `&` brauchte 12 s,
+  bei der erlaubten Seitengröße von 16 MB wäre es fast eine Stunde gewesen.
+  Jetzt wird nur in den nächsten elf Bytes gesucht; das Ergebnis ist
+  dasselbe.
+- Probe `viele_kaufmannsund_kosten_keine_quadratische_zeit` (vorher 12 s,
+  rot; jetzt unter einer Sekunde). `myl-local-agent` 503 grün, Clippy
+  sauber.
+
+### v0.64.0 (2026-11-12): Der Hash jedes erzeugten Markdowns steht im Manifest (`book2skill` 0.6.0)
+
+- `manifest.json` nennt jetzt neben dem Hash der Quelle `sha256_markdown`
+  (je erzeugter Markdown-Datei im Buchordner) und `sha256_skill`, damit eine
+  spätere Verankerung auf genau diese Bytes zeigen kann. Die Probe prüft jede
+  Summe gegen die Datei; gleiche Eingabe gibt weiter gleiche Bytes, also
+  auch dasselbe Manifest. Gegenprobe (nur `seiten/` gehasht): rot.
+- Damit sind 0.3 (PDF, EPUB, Office nach Markdown, mit eigenen Lesern statt
+  Docling, byteweise wiederholbar) und 0.4 belegt.
+
+### v0.63.0 (2026-11-11): Der Abruf aus dem Gedächtnis (`myl-agent` 0.10.0)
+
+- **Neues Modul `abruf`:** `abrufen(gedaechtnis, text, anfrage, anzahl)`,
+  lexikalisch und in ganzen Zahlen. Wörter sind Bytefolgen zwischen
+  ASCII-Trennern, Bytes ab `0x80` gehören zum Wort, nur ASCII wird klein
+  geschrieben (eine Unicode-Faltung hinge an der Werkzeugkette), Wörter
+  unter zwei Bytes zählen nicht. Wertung: verschiedene Wörter der Anfrage
+  im Eintrag; Rangfolge (Wertung fallend, Stelle steigend) über alle
+  Einträge, ohne Näherungsindex.
+- **Der Text muss zum Commitment passen:** Der Speicher hält nur das
+  Ausgabe-Commitment (SHA-256), der Aufrufer liefert den Text; ein Text,
+  der nicht passt oder fehlt, wird nicht gewertet und steht in
+  `ohne_text`.
+- 📌 **Fund 695 ganz geschlossen:** Ein Abruf ist getrübt, sobald einer
+  seiner Treffer es ist. Kritisch geprüft, ob ein getrübter Eintrag, der
+  nicht zurückkommt, das Ergebnis lenken kann: Die Auswahl ist die Spitze
+  einer festen Rangfolge, ein Eintrag darunter ändert sie nicht.
+- Vier Proben (Rangfolge, Erbe der Trübung samt Gegenfall unter der
+  Spitze und geerbter Trübung, passender Text, feste Zerlegung); zwei
+  Gegenproben rot (Erbregel aus, Textprüfung aus). 64 Proben grün, Clippy
+  sauber.
+- ⚠️ Noch nicht als Werkzeug in der Registratur und nicht im Plan; Sprachen
+  ohne Wortzwischenraum zerfallen nicht in Wörter.
+- `myl-agent` 0.10.0.
+
+### v0.62.0 (2026-11-11): Der Gedächtniseintrag trägt seine Trübung (`myl-agent` 0.9.0)
+
+- 📌 **Fund 695 geschlossen, im Format:** Ein deterministisches
+  Abrufwerkzeug galt in einem späteren Plan als rein, auch wenn der
+  Eintrag aus einem Schritt kam, der die Welt befragt; der Abruf hat den
+  Plan des Eintrags nicht zur Hand. Der Eintrag trägt jetzt das Feld
+  `truebung`, die Aufnahme (`pruefe_herkunft`, `Gedaechtnis::nimm`, beide
+  neu mit der Registratur) verlangt, dass es dem Wert gleicht, den sein
+  Plan an dieser Stelle ergibt, und die Wurzel bindet es. Neuer Fehler
+  `TruebungStimmtNicht`.
+- ⚠️ Die zweite Hälfte gehört zum Abruf, der noch nicht gebaut ist: Ein
+  Schritt, der Einträge zurückgibt, ist getrübt, sobald einer von ihnen es
+  ist. Der Modulkopf nennt die Regel.
+- Neue Probe `die_truebung_im_eintrag_wird_bei_der_aufnahme_geprueft`:
+  ein getrübter Eintrag mit dem Feld auf rein, ein reiner mit dem Feld
+  auf getrübt, beide abgewiesen; der echte kommt hinein, und ein
+  nachträglich geändertes Feld besteht den Abruf gegen die Wurzel nicht.
+  Gegenprobe ohne die Prüfung des Feldes: rot.
+- `Truebung` ist jetzt kodierbar (Borsh). Das Format ändert sich, ehe es
+  ausgeliefert ist; später wäre es eine neue Formatfassung.
+- `myl-agent` 0.9.0.
+
+### v0.61.0 (2026-11-10): Das Gedächtnis nimmt nur auf, was sich auf einen Schritt zurückführen lässt (`myl-agent` 0.8.0)
+
+- **Neues Modul `gedaechtnis`**, die Herkunftshälfte von Whitepaper Kap. 8.4: Ein Eintrag nennt Session, Plan, Stelle und Kettenglied. `pruefe_herkunft` rechnet gegen die Segmentkette nach, dass er die Ausgabe genau dieses Schritts ist.
+- **Der Speicher trägt Commitments, keine Inhalte**, wie der verankerte Korpus aus Kap. 7.3. Über alle Einträge steht eine Merkle-Wurzel; `pruefe_abruf` weist nach, dass ein Eintrag an seiner Stelle dazugehört. Hinein führt ein einziger Weg, und der prüft; der Typ lässt sich nicht aus Bytes lesen.
+- **Trübung überlebt den Speicher:** Sie wird nicht gespeichert, sondern aus dem Plan abgeleitet, auf den der Eintrag zeigt.
+- ⚠️ **Nicht gebaut:** der Abruf (er muss deterministisch sein, und wie, ist nicht entschieden) und der Betrieb als eigene Arbeitsklasse im Netz. Ob die Segmente einer Kette verifiziert sind, sagt weiterhin VERIFICATION und nicht dieses Modul.
+- ⚠️ **Zwei Grenzen, beide im Modul benannt:** Aus einer Session, die vor dem Ende ihres Plans abbricht, lässt sich kein Eintrag belegen, weil der Kettenwert nur über eine vollständige Kette definiert ist. Und ein deterministisches Abrufwerkzeug gälte in einem späteren Plan als rein, auch wenn sein Eintrag getrübt hineinging; die Ableitung macht das prüfbar, sie schließt es nicht.
+- Belege: 7 neue Tests (59 gesamt), Clippy grün. Vier Gegenproben, jede rot: Glied nicht verglichen, Kette nicht geprüft, Trübung ohne Planvergleich, Abruf ohne Stelle.
+
+### v0.60.1 (2026-11-10): Loop-Erkennung am echten Modell gemessen, die Schwellen bleiben
+
+- **Hinweis ab dem dritten, Ende beim fünften gleichen Schritt: bestätigt.** Am 8B, zehn Auftragsarten, die zum Wiederholen einladen oder es verlangen, drei Saaten: Der Hinweis fiel in 9 von 30 Läufen. In 6 davon kam danach sofort die Antwort (warten auf etwas, das nie kommt; drei verlangte gleiche Lesungen).
+- **Kein Fehlalarm:** In den übrigen sieben Auftragsarten fiel der Hinweis nie. Eine zweite gleiche Wiederholung kam in gewöhnlichen Läufen vor und endete gut; eine Schwelle von zwei wäre zu früh.
+- **Verlangt der Auftrag sechs gleiche Lesungen, endet der Lauf beim fünften Schritt ohne Antwort**, in 3 von 3 Saaten. Das Ende ist benannt (`Kreislauf`). ⚠️ Eine schärfere letzte Warnung („beim nächsten Mal endet der Lauf“) änderte daran in 3 von 3 Saaten nichts und ist verworfen; der Hinweis bleibt bei einem Wortlaut.
+- **Was die Erkennung mit Absicht nicht sieht:** Eine Suche nach etwas, das im Buch fehlt, lief am 8B bis zu neunmal mit abgewandelten Mustern (bis 164 s) und endete von selbst richtig. Kein Schritt war gleich.
+- Am 30B, dieselben zehn Auftragsarten, zwei Saaten: 20 von 20 Läufen ohne Wiederholung. Es setzt drei verlangte Lesungen als drei Aufrufe in einem Schritt ab.
+- ⚠️ Am 30B dabei gesehen, kein Schleifenthema: Fehlt das zu ersetzende Wort in der Datei, ersetzte es in 2 von 2 Läufen ein anderes und meldete Erfolg (das 8B meldete in 3 von 3 richtig, dass das Wort fehlt). Und es kündigte sechs Lesungen an und endete ohne eine einzige (2 von 2).
+- Geändert ist nur ein Kommentar; `myl-local-agent` bleibt bei 0.49.0.
+
+### v0.60.0 (2026-11-10): Der Agent weiß von gelesenen Büchern und findet die Stelle (`myl-local-agent` 0.49.0)
+
+- **Fester Buchhinweis hinter dem Auftrag**, sobald `literature/` ein Buch enthält: wie viele es sind, womit man darin sucht, und dass `seiten/<n>.md` die Seite n ist. Er ist für jeden Auftrag derselbe und trägt kein Zeichen aus einem Buch.
+- **`search_files` zählt Wörter, wenn der Wortlaut fehlt:** Es zeigt die Zeilen mit den meisten Wörtern des Musters; eine Zahl im Muster muss in der Zeile stehen.
+- **Eine Zahl als Muster sucht die ganze Zahl.** `30` trifft weder `1307` noch eine Prüfsumme. Teilfunde kommen nur, wenn es die ganze Zahl nirgends gibt.
+- **Im Buch zählt der Buchtext.** Der Seitenkopf, `buch.md` und das Manifest sind keine Treffer; eine Seite ist nur dann ein Namenstreffer, wenn das Muster sie beim ganzen Namen nennt.
+- Gemessen am 8B, 16 Fragen zu einem 40-seitigen Buch, drei Saaten: 48 von 48 richtig, vorher 23 von 48. Kein Lauf mehr ohne Werkzeugaufruf (vorher 11), Median 23 s. ⚠️ Die Fehler dieser 16 Fragen haben die Änderungen gelenkt; das unabhängige Maß ist die Haltemenge: 16 andere Fragen, zwei Saaten, 31 von 32 richtig, Median 21 s. Der eine Fehler ist ein Lesefehler des Modells, die Suche zeigte die richtige Zeile zuerst.
+- Gegenprobe mit 9 gewöhnlichen Aufträgen: mit und ohne Bibliothek je 8 von 9, kein Gang ins Buch, kein Buchtext im Gespräch.
+- Verworfen: ein Hinweis, der die Worte des Auftrags gegen die Bücher hält und ein Suchmuster vorschlägt. Bei 57 von 68 gewöhnlichen Aufträgen schlug er an.
+- 🐛 Ein Namenstreffer aus einem Buchordner kam ohne Herkunftsmarke zurück, obwohl der Ordner nach dem Titel heißt.
+- 🐛 Zwei Proben der Syntaxwache teilten sich einen Dateinamen; liefen sie gleichzeitig, fiel eine davon rot aus.
+
+### v0.59.1 (2026-11-10): Nachschlagen in gelesenen Büchern (`myl-local-agent` 0.48.1, `book2skill` 0.5.1)
+
+- 🐛 `read_file` gibt Binärdateien nicht mehr als Text zurück. Ein gescanntes PDF brachte 64 KB Zeichensalat in den Verlauf, und die Antwort lief in die Zeitgrenze.
+- `learn_skill` sagt bei einem Buch-Skill zuletzt, dass es nur eine Zusammenfassung ist und wie man nachschlägt. `book_to_skill` verweist bei einem erfundenen Pfad auf die gelesenen Bücher.
+- Gemessen an 16 Fragen zu einem 40-seitigen Buch: 8B von 4 auf 8 richtig, 35B von 14 auf 16.
+- 🐛 Book2Skill: Mehrere Sätze gelten nicht mehr als Titel. Die Satzauswahl ohne Modell verwarf jede Schrift ohne Großbuchstaben.
+
+### v0.59.0 (2026-11-10): Book2Skill übersetzt mit einem eigenen kleinen Modell und einer Weiche nach Sprache (`book2skill` 0.5.0)
+
+- **`--uebersetzer ARTEFAKT`:** Das kleine Übersetzungsmodell macht die Arbeit; was ihm misslingt, bekommt das große Modell. Ohne großes Modell übersetzt es trotzdem.
+- **Weiche nach Sprache** (`uebersetzungsweg`, an echten Scans belegt): Latein, Altgriechisch, Sanskrit und übriges Devanagari ohne Hindi, Assamesisch, Thai, Tamil, Telugu und Tibetisch gehen an das große Modell. Syrisch wird nicht übersetzt, weil kein gemessenes Modell den Sinn trifft; das Manifest sagt es.
+- 🐛 Erfundene Marken wie `<assistant>` am Anfang einer Antwort fallen weg; Überlegungen statt einer Übersetzung gelten als misslungen.
+
+### v0.58.0 (2026-11-09): Book2Skill übersetzt das Werk (`book2skill` 0.4.0, `myl-local-agent` 0.48.0)
+
+- **Das Werk liegt auch in der Sprache des Nutzers vor.** Ist es nicht schon in dieser
+  Sprache, übersetzt das Modell Seite für Seite nach `uebersetzung/<sprache>/` und der
+  Skill entsteht aus der Übersetzung. Sein Verweis nennt die übersetzte Seite und das
+  Original. Eine Seite, die misslingt (leer, Schleife, Wiederholung des Originals), bleibt im
+  Original und ist gekennzeichnet; die Zahl steht im Manifest.
+- 🐛 **Ein abgebrochener Lauf setzt jetzt wirklich fort.** Der fertige Teil des Buchs
+  galt bisher als „gibt es schon“; erst Skill und Manifest machen ein Buch nun fertig.
+- **Eine leere Skillsuche weist auf gelesene Bücher hin.** Ein 8B fragte bei wörtlichen
+  Stellen immer wieder `search_skill` und gab auf.
+- ⚠️ **Grenze:** Die Übersetzung wächst mit den Seiten und nicht mit den Kapiteln. Ohne
+  Modell bleibt der Skill in der Sprache des Werks, das Manifest sagt es.
+
+### v0.57.1 (2026-11-09): Book2Skill sucht den Titel auf acht Seiten
+
+- 🐛 `book2skill` 0.3.1 sucht den Titel nun auf den ersten acht Seiten statt auf drei,
+  denn alte Bücher beginnen mit Vorsatzblättern und Stempeln. Satzzeichen am Rand des
+  Titels fallen weg.
+
+### v0.57.0 (2026-11-09): Book2Skill liest Scans und wertet Abbildungen aus
+
+- ⚑ **Gescannte PDFs:** Seiten ohne Textebene liest `myl scan` (CLIENT, `myl-scan`):
+  Seitenaufbau, Lesereihenfolge über Spalten, Tabellen, Abbildungen als Ausschnitt, Kopf-
+  und Fußzeilen bleiben draußen. Keine Abhängigkeit außer `myl`, kein Netz, auf allen
+  Systemen derselbe Weg.
+  Sechzehn Schriften samt Fraktur, Altgriechisch, Hebräisch und senkrechtem Satz; die
+  Schrift eines Werks wird erkannt oder mit `--schrift` genannt.
+- ⚑ **Rechenaufwand:** rund eine Sekunde je Seite auf der CPU, und nur für Seiten, die es
+  brauchen: Seiten mit Textebene bleiben beim schnellen Weg. Abbrüche setzen seitenweise
+  fort. Ein Sehmodell sieht nie ganze Seiten an, sondern nur die Abbildungen.
+- ⚑ **Abbildungen:** Jede bekommt ihren maschinell erkannten Text und, wenn `myl bild
+  --genau` ein genaues Sehmodell findet, eine Beschreibung; beides steht als ungeprüft
+  gekennzeichnet im Markdown. Vektorgrafiken in Text-PDFs werden gefunden, weil Seiten
+  mit viel Linienwerk zur Erkennung der Abbildungen gehen. Obergrenze mit
+  `--bilder-hoechstens`, abschalten mit `--keine-bilder`.
+- ⚑ **Der Agent kann es selbst** (`myl-local-agent` 0.47.0): `book_to_skill` macht aus einem
+  Buch im Arbeitsordner einen Skill unter `.AGENT/skills`, mit Rückfrage und, nach Fremdem
+  im Gespräch, nur mit Freigabe. Verdichtet wird ohne Modell, damit kein zweites neben dem
+  des Agenten lädt; `myl buch --modell` verdichtet mit einem.
+- ⛔️ **Ein Buch-Skill ist überall fremd** (Fund 683): Die Marke im Skill zählt in jedem
+  Skillordner. Vorher kamen Titel und Stichworte eines Buchs als vertrauter Hinweis in jeden
+  passenden Auftrag.
+- ⚑ **Bibliothek und Belege:** Gelesene Werke liegen unter `literature/Titel - Autor - ISBN oder DOI/`
+  als Markdown je Seite samt Grafiken, das Original nie; `.AGENT/skills/<name>/` hält nur den
+  kurzen Skill. Jeder Punkt nennt seine Seite als `[12]`, `read_file` holt den Wortlaut und
+  `search_files` findet, was nicht im Skill steht, wie beim verdichteten Gespräch. Alles daraus gilt
+  als fremd. Titel, Autor und ISBN oder DOI kommen aus den Metadaten oder von den ersten Seiten.
+- ⚠️ **Eine Beschreibung ist keine Abschrift.** Das Sehmodell verliest Beschriftungen
+  und kann Pfeile falsch deuten; darum die Kennzeichnung und der erkannte Text daneben.
 
 ### v0.56.0 (2026-11-09): Book2Skill
 

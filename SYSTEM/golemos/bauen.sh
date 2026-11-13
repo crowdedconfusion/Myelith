@@ -142,15 +142,25 @@ mkdir -p "$HIER/overlay/usr/bin"
 # wurde die Umgebung gewechselt und nicht der Vertrag.
 #
 # ⚠️ **`alpine:edge` ist ein rollendes Ziel und gehoert festgenagelt**,
-# sobald eine veroeffentlichte Fassung Rust 1.88 oder neuer traegt. 3.22
-# hat 1.87 und ist damit zu alt.
-echo "── Programme bauen (Alpine, musl nativ)"
-docker run --rm -t --platform "$PLATTFORM" -v "$WURZEL:$WURZEL" -w "$WURZEL" \
+# sobald eine veroeffentlichte Fassung die Rust-Fassung der Kisten traegt.
+#
+# ⚑ **Die Werkzeuge stehen in einem eigenen Abbild, und der Schritt laeuft
+# ohne Netz.** 📌 Hier stand `apk add` in jedem Lauf: Ohne Netz brach der
+# Bau ab, obwohl jede Kiste aus dem Vorrat kommt, und das README sagte das
+# Gegenteil. Das Abbild entsteht einmal mit Netz (`Containerfile.programme`)
+# und haelt den Uebersetzer bis zum Loeschen fest. Je Architektur eines,
+# denn ein Name fuer zwei Plattformen ueberschriebe das andere.
+PROGRAMMBAUER="golemos-programmbauer-$ARCH"
+if ! docker image inspect "$PROGRAMMBAUER" >/dev/null 2>&1; then
+  echo "── Bauumgebung fuer die Programme erstellen ($PLATTFORM, einmal mit Netz)"
+  docker build -q --platform "$PLATTFORM" -t "$PROGRAMMBAUER" - < "$HIER/Containerfile.programme" >/dev/null
+fi
+echo "── Programme bauen (Alpine, musl nativ, ohne Netz)"
+docker run --rm -t --network none --platform "$PLATTFORM" -v "$WURZEL:$WURZEL" -w "$WURZEL" \
   -e CARGO_HOME="$WURZEL/SYSTEM/crates-lager/cargo-home" \
   -e CARGO_TARGET_DIR="$HIER/bau/programme-$ARCH" \
-  alpine:edge sh -c '
+  "$PROGRAMMBAUER" sh -c '
     set -eu
-    apk add --no-cache -q rust cargo build-base
     # ⛔️ **Das Ziel muss ausdruecklich dastehen.** Ohne es gilt
     #    `RUSTFLAGS` auch fuer die Prozeduralmakros, und die muessen
     #    dynamische Bibliotheken sein, damit rustc sie laden kann. Ein
@@ -213,6 +223,9 @@ docker run --rm -i \
   -v "$HIER/konfigurationen:/eingabe/konfigurationen:ro" \
   -v "$HIER/overlay:/eingabe/overlay:ro" \
   -v "$HIER/abbild:/eingabe/abbild:ro" \
+  -v "$WURZEL/LICENSE.md:/eingabe/lizenz/LICENSE.md:ro" \
+  -v "$WURZEL/COMPLIANCE/NOTICES.md:/eingabe/lizenz/NOTICES.md:ro" \
+  -v "$WURZEL/COMPLIANCE/DRITTLIZENZEN.txt:/eingabe/lizenz/DRITTLIZENZEN.txt:ro" \
   -e ARCH="$ARCH" \
   -e FASSUNG="$BUILDROOT_FASSUNG" \
   -e SUMME="$BUILDROOT_SUMME" \
@@ -236,6 +249,13 @@ fi
 #   beim Zusammensetzen an, und ein schreibgeschuetzter Bindpfad waere
 #   dort eine Ueberraschung.
 rm -rf /bau/overlay && cp -a /eingabe/overlay /bau/overlay
+# ⛔️ **Die Lizenztexte unserer Programme gehoeren ins Abbild.** 📌 Fund 700:
+#    Die Basis lieferte `myl`, `myelith` und `myl-node` aus (mit den
+#    eingebauten Lesemodellen unter Apache-2.0 und den Rust-Kisten), aber
+#    ohne `LICENSE.md`, `NOTICES.md` und `DRITTLIZENZEN.txt`; nur die
+#    Schicht trug sie. Dieselbe Klasse wie Fund 685 bei den Buendeln.
+install -d /bau/overlay/usr/share/doc/myelith
+install -m 0644 /eingabe/lizenz/LICENSE.md /eingabe/lizenz/NOTICES.md /eingabe/lizenz/DRITTLIZENZEN.txt /bau/overlay/usr/share/doc/myelith/
 KONF="/eingabe/konfigurationen/golemos_${ARCH}_defconfig"
 sed "s|^BR2_ROOTFS_OVERLAY=.*|BR2_ROOTFS_OVERLAY=\"/bau/overlay\"|" "$KONF" > /tmp/konf
 make -C "$BR" defconfig BR2_DEFCONFIG=/tmp/konf >/dev/null
@@ -373,8 +393,11 @@ if [ ! -x "$BR/output/target/usr/bin/setpriv" ] || [ -L "$BR/output/target/usr/b
   echo "   ⛔️ /usr/bin/setpriv aus util-linux fehlt; golem-knoten startet den Knoten sonst nicht" >&2
   fehlt=$((fehlt + 1))
 fi
+for d in LICENSE.md NOTICES.md DRITTLIZENZEN.txt; do
+  [ -s "$BR/output/target/usr/share/doc/myelith/$d" ] || { echo "   ⛔️ /usr/share/doc/myelith/$d fehlt im Abbild (Fund 700)" >&2; fehlt=$((fehlt + 1)); }
+done
 [ "$fehlt" -eq 0 ] || { echo "$fehlt Programme fehlen" >&2; exit 7; }
-echo "   alle da"
+echo "   alle da, mit den Lizenztexten"
 
 # ⛔️ **Und das Kernstueck fuer die Anzeige muss im Kern angekommen sein.**
 #    Ein Fragment, das der Kern verwirft (etwa weil eine Abhaengigkeit

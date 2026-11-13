@@ -1,6 +1,6 @@
 # Self-Assessment under the AI Act
 
-**Last reviewed:** 2026-09-28 · **Deutsch:** [Selbsteinschaetzung.md](../de/Selbsteinschaetzung.md)
+**Last reviewed:** 2026-11-11 · **Deutsch:** [Selbsteinschaetzung.md](../de/Selbsteinschaetzung.md)
 
 > ⚠️ **Self-assessment, not legal advice.** The provider prepared this
 > overview based on their own best understanding of Regulation (EU)
@@ -34,7 +34,7 @@ Status: ✅ implemented · 🟡 partially implemented · ➖ not applicable
 | Art. 16 to 22 | Obligations for high-risk systems, authorised representatives | ➖ | Not applicable. Art. 22 concerns providers established in third countries; the provider is in Germany |
 | Art. 25 | Responsibilities along the value chain | ✅ | [Intended use policy](Intended-Use-Policy.md) section 2.2: whoever changes the intended purpose takes on provider obligations |
 | Art. 50(1) | Disclosure of AI interaction | ✅ | Notice at **every** start, to be actively acknowledged (window and console), a line on standard error for `myl`; permanent disclosure in the empty input field of the window ("An AI answers here.") and "AI" in the console footer; every answer in the window carries "AI-generated" (`CLIENT/myl-client/src/kennzeichnung.rs`) |
-| Art. 50(2) | Marking of synthetic content | 🟡 | **Speech ✅**: every generated audio file carries metadata (XMP with the IPTC source type `trainedAlgorithmicMedia`, RIFF INFO) and a watermark in the signal before it is played or stored; anything that cannot be marked is not played (`CLIENT/myl-senses/src/kennzeichnung.rs`); verifiable with `myl kennzeichen <file>`. **Text 🟡**: marked in the interface, not yet machine-readable in files the agent writes. **Image, video ➖**: not generated. **C2PA signature**: not yet implemented |
+| Art. 50(2) | Marking of synthetic content | 🟡 | **Speech ✅**, in the two layers of the Commission's Code of Practice (2026-06-10): before it is played or stored, every generated audio file carries **signed metadata** (a C2PA 2.2 manifest with the action `c2pa.created`, the IPTC source type `trainedAlgorithmicMedia` and a hash over the audio, signed with Ed25519, a fresh key per file; plus XMP and RIFF INFO) and a **watermark in the signal** that follows the voice (linear prediction per 20 ms) and is robust against cutting, level changes and MP3; anything that cannot be marked is not played (`CLIENT/myl-senses/src/kennzeichnung.rs`). Public, free detection with `myl kennzeichen <file>`; removal is prohibited ([Intended Use Policy](Intended-Use-Policy.md) section 2.3). ⚠️ The signer is not on the C2PA trust list: the signature shows that audio and claims are unchanged, not who signed. **Text 🟡**: marked in the interface, not yet machine-readable in files the agent writes. **Image, video ➖**: not generated. **Preserving provenance ➖**: Myelith does not alter third-party media, it generates new content |
 | Art. 50(3) | Emotion recognition, biometric categorisation | ➖ | Not offered and excluded (Art. 5) |
 | Art. 50(4) | Deep fakes | ✅ | Duty of deployers; supported by marking every generated voice and by consent when a voice sample is uploaded (checked in the window and in the command) |
 | Art. 51, 52, 55 | GPAI with systemic risk | ➖ | Below the threshold |
@@ -52,7 +52,7 @@ Status: ✅ implemented · 🟡 partially implemented · ➖ not applicable
 
 ## Open items
 
-1. **C2PA manifest** for generated audio files (requires a signing certificate).
+1. **Trusted C2PA signer**: a certificate from a CA on the C2PA trust list (for example through the conformance programme), so that validators recognise Myelith as the signer.
 2. **Machine-readable marking of texts** the agent writes to files.
 3. **Licence of the wordmark typeface**: clarify, or remove the embedded subset.
 4. **Review by a lawyer** of this assessment.

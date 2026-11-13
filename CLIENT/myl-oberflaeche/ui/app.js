@@ -155,6 +155,12 @@ const TEXTE = {
     "knopf.senden": "Senden",
     "knopf.anhang": "Datei anhängen",
     "knopf.skill": "Skill lernen",
+    "knopf.skillwahl": "Skill lernen oder Buch lesen",
+    "menue.skill_lernen": "Skill lernen",
+    "menue.buch_lesen": "Buch lesen",
+    "buch.beginnt": (n) => `${n} wird gelesen. Das kann bei einem dicken Buch viele Minuten dauern.`,
+    "buch.fertig": (n) => `Das Buch ist als Skill ${n} abgelegt. Der Agent findet ihn, wenn du danach fragst.`,
+    "buch.fehler": (f) => `Das Buch ließ sich nicht lesen: ${f}`,
     "skill.art": "Skill",
     "lauf.laeuftschon": "Es läuft noch ein Auftrag; einen Augenblick.",
     "loop.knopf": "Loop an oder aus",
@@ -254,7 +260,6 @@ const TEXTE = {
     "sinne.stimmewaehlen": "Stimme hochladen",
     "sinne.einwilligung": "Die Aufnahme ist meine eigene Stimme, oder die Person hat eingewilligt.",
     "sinne.stimmeweg": "Stimme entfernen",
-    "sinne.einrichten": "Läufer anlegen",
     "sinne.hoert": "🎙 Aufnahme läuft, zum Beenden loslassen",
     "sinne.schreibtmit": "Wird mitgeschrieben …",
     "sinne.keinestimme": "keine eigene Stimme",
@@ -323,10 +328,14 @@ const TEXTE = {
     "wallet.entwurf.wort": (n) => `Wort ${n}`,
     "wallet.entwurf.bestaetigen": "Bestätigen",
     "wallet.entwurf.abbrechen": "Abbrechen",
+    "wallet.entwurf.ruhe": "Zwei Minuten ohne Eingabe: Der Entwurf ist verworfen, es wurde nichts angelegt.",
     "wallet.einstieg": "Einstieg ins Netz",
     "wallet.einstieg.platz": "Multiadresse oder Datei (einstieg.txt des Probenetzes)",
     "wallet.einstieg.setzen": "Setzen",
     "wallet.waehlen": "Auswählen",
+    "wallet.verlauf": "Verlauf",
+    "wallet.verlauf_zu": "Verlauf schließen",
+    "wallet.verlauf_laedt": "Wird beim Knoten geholt …",
     "wallet.gewaehlt": "ausgewählt",
     "wallet.eingetragen": "Auszahlungskonto",
     "wallet.leer": "Noch kein Wallet. Leg oben eines an.",
@@ -535,6 +544,12 @@ const TEXTE = {
     "knopf.senden": "Send",
     "knopf.anhang": "Attach a file",
     "knopf.skill": "Learn a skill",
+    "knopf.skillwahl": "Learn a skill or read a book",
+    "menue.skill_lernen": "Learn a skill",
+    "menue.buch_lesen": "Read a book",
+    "buch.beginnt": (n) => `Reading ${n}. A thick book can take many minutes.`,
+    "buch.fertig": (n) => `The book is stored as the skill ${n}. The agent finds it when you ask about it.`,
+    "buch.fehler": (f) => `The book could not be read: ${f}`,
     "skill.art": "Skill",
     "lauf.laeuftschon": "A run is still going; one moment.",
     "loop.knopf": "Loop on or off",
@@ -634,7 +649,6 @@ const TEXTE = {
     "sinne.stimmewaehlen": "Upload a voice",
     "sinne.einwilligung": "The recording is my own voice, or the person has consented.",
     "sinne.stimmeweg": "Remove the voice",
-    "sinne.einrichten": "Create the runner",
     "sinne.hoert": "🎙 Recording, release to stop",
     "sinne.schreibtmit": "Transcribing …",
     "sinne.keinestimme": "no custom voice",
@@ -703,10 +717,14 @@ const TEXTE = {
     "wallet.entwurf.wort": (n) => `Word ${n}`,
     "wallet.entwurf.bestaetigen": "Confirm",
     "wallet.entwurf.abbrechen": "Cancel",
+    "wallet.entwurf.ruhe": "Two minutes without input: the draft was discarded, nothing was created.",
     "wallet.einstieg": "Network entry",
     "wallet.einstieg.platz": "Multiaddress or file (einstieg.txt of the probe network)",
     "wallet.einstieg.setzen": "Set",
     "wallet.waehlen": "Select",
+    "wallet.verlauf": "History",
+    "wallet.verlauf_zu": "Close history",
+    "wallet.verlauf_laedt": "Fetching from the node …",
     "wallet.gewaehlt": "selected",
     "wallet.eingetragen": "payout account",
     "wallet.leer": "No wallet yet. Create one above.",
@@ -3081,6 +3099,10 @@ function wallet_umschalten() {
   }
 }
 
+/// Die aufgeklappten Verlaeufe je Wallet, damit sie ein Neuzeichnen
+/// ueberstehen.
+const walletverlauf_offen = {};
+
 async function wallet_laden() {
   let l;
   try {
@@ -3140,6 +3162,8 @@ function wallet_zeichnen(l) {
     adresse.className = "walletadresse";
     adresse.textContent = w.adresse;
     reihe.append(kopf, adresse);
+    const knoepfe = document.createElement("div");
+    knoepfe.className = "walletknoepfe";
     if (!w.gewaehlt) {
       const knopf = document.createElement("button");
       knopf.type = "button";
@@ -3153,8 +3177,36 @@ function wallet_zeichnen(l) {
         }
         wallet_laden();
       });
-      reihe.append(knopf);
+      knoepfe.append(knopf);
     }
+    // ⚑ Der Verlauf klappt unter der Reihe auf und bleibt offen, wenn die
+    //   Liste neu gezeichnet wird; dieselben Zeilen wie `myl wallet verlauf`.
+    const verlauf = document.createElement("pre");
+    verlauf.className = "walletverlauf";
+    verlauf.hidden = !(w.name in walletverlauf_offen);
+    verlauf.textContent = walletverlauf_offen[w.name] || "";
+    const vk = document.createElement("button");
+    vk.type = "button";
+    vk.textContent = t(verlauf.hidden ? "wallet.verlauf" : "wallet.verlauf_zu");
+    vk.addEventListener("click", async () => {
+      if (!verlauf.hidden) {
+        delete walletverlauf_offen[w.name];
+        verlauf.hidden = true;
+        vk.textContent = t("wallet.verlauf");
+        return;
+      }
+      verlauf.hidden = false;
+      vk.textContent = t("wallet.verlauf_zu");
+      verlauf.textContent = t("wallet.verlauf_laedt");
+      try {
+        walletverlauf_offen[w.name] = (await invoke("wallet_verlauf", { name: w.name })).join("\n");
+      } catch (f) {
+        walletverlauf_offen[w.name] = String(f);
+      }
+      verlauf.textContent = walletverlauf_offen[w.name];
+    });
+    knoepfe.append(vk);
+    reihe.append(knoepfe, verlauf);
     liste.append(reihe);
   }
   const ein = $("wallet-einstieg");
@@ -3192,6 +3244,7 @@ async function wallet_anlegen(ereignis) {
   $("entwurf-schritt1").hidden = false;
   $("entwurf-schritt2").hidden = true;
   $("walletentwurf").hidden = false;
+  entwurf_wache_an();
 }
 
 /// Zweiter Schritt: Die Woerter verschwinden, zwei werden abgefragt.
@@ -3205,6 +3258,7 @@ function wallet_entwurf_weiter() {
 
 async function wallet_entwurf_bestaetigen(ereignis) {
   ereignis.preventDefault();
+  entwurf_wache_aus();
   try {
     $("walletmeldung").textContent = await invoke("wallet_bestaetigen", {
       notiert: $("entwurf-notiert").checked,
@@ -3215,16 +3269,53 @@ async function wallet_entwurf_bestaetigen(ereignis) {
   } catch (f) {
     $("walletmeldung").textContent = String(f);
   }
-  $("walletentwurf").hidden = true;
+  entwurf_leeren();
   wallet_laden();
 }
 
 async function wallet_entwurf_abbrechen() {
+  entwurf_wache_aus();
   try {
     await invoke("wallet_verwerfen");
   } catch (_) {}
+  entwurf_leeren();
+}
+
+/// ⛔️ **Was von den Woertern im Fenster steht, geht weg**: die Liste und die
+/// zwei abgefragten Woerter (CLIENT 7.14).
+function entwurf_leeren() {
   $("entwurf-woerter").replaceChildren();
+  $("entwurf-a").value = "";
+  $("entwurf-b").value = "";
   $("walletentwurf").hidden = true;
+}
+
+/// ⚑ **Sperre nach Untaetigkeit** (CLIENT 7.14): Wer die Woerter offen
+/// liegen laesst, bekommt sie nach zwei Minuten ohne Eingabe verworfen; der
+/// Entwurf ist dann weg und nichts ist angelegt.
+const ENTWURF_RUHE_MS = 120000;
+let entwurf_uhr = null;
+function entwurf_wache_an() {
+  entwurf_wache_aus();
+  entwurf_uhr = setTimeout(async () => {
+    await wallet_entwurf_abbrechen();
+    $("walletmeldung").textContent = t("wallet.entwurf.ruhe");
+  }, ENTWURF_RUHE_MS);
+}
+function entwurf_wache_aus() {
+  if (entwurf_uhr !== null) clearTimeout(entwurf_uhr);
+  entwurf_uhr = null;
+}
+// Jede Eingabe im Entwurf haelt ihn offen.
+for (const art of ["keydown", "pointerdown", "input"]) {
+  $("walletentwurf").addEventListener(art, () => {
+    if (entwurf_uhr !== null) entwurf_wache_an();
+  });
+}
+// ⛔️ Die Woerter nie in die Zwischenablage: Kopieren, Ausschneiden, Ziehen und
+//    das Kontextmenue sind im Entwurf gesperrt.
+for (const art of ["copy", "cut", "dragstart", "contextmenu"]) {
+  $("walletentwurf").addEventListener(art, (e) => e.preventDefault());
 }
 
 async function wallet_wiederherstellen(ereignis) {
@@ -5303,23 +5394,6 @@ async function sinne_verdrahten() {
       sinne_zeigen(await invoke("stimme_entfernen"));
     });
   }
-  const einrichten = $("sinne-einrichten");
-  if (einrichten) {
-    einrichten.addEventListener("click", async () => {
-      try {
-        const satz = await invoke("sinne_einrichten");
-        const mangel = $("sinnesmangel");
-        if (mangel) {
-          mangel.textContent = satz;
-          mangel.hidden = false;
-        }
-        await stand_holen();
-      } catch (f) {
-        melden_als_fehler(f);
-      }
-    });
-  }
-
   await stand_holen();
 }
 
@@ -5351,6 +5425,36 @@ function sinne_zeigen(stand) {
   }
 }
 
+/// **Ein Buch lesen**: Die Wahl, dann arbeitet `myl buch`; der Knopf zeigt, dass es
+/// laeuft, und sein Hinweis die letzte Zeile des Fortschritts.
+async function buch_lesen() {
+  const knopf = $("skill");
+  let datei;
+  try {
+    datei = await invoke("buch_waehlen", { titel: t("menue.buch_lesen") });
+  } catch (f) {
+    melden(t("buch.fehler", String(f)));
+    return;
+  }
+  if (!datei) return;
+  const name = datei.split(/[\\/]/).pop();
+  const titel_vorher = knopf.title;
+  melden(t("buch.beginnt", name));
+  knopf.classList.add("arbeitet");
+  const ab = await horchen("buch-zeile", (e) => { knopf.title = String(e.payload); });
+  try {
+    const skill = await invoke("buch_lesen", { datei, wurzel: prozesspfad() });
+    melden(t("buch.fertig", skill));
+  } catch (f) {
+    melden(t("buch.fehler", String(f)));
+  } finally {
+    ab();
+    knopf.classList.remove("arbeitet");
+    knopf.title = titel_vorher;
+  }
+}
+
+
 /// **Ein Skill haengt an der Eingabe wie ein Anhang**, bis abgeschickt
 /// wird; derselbe Skill nur einmal.
 ///
@@ -5381,7 +5485,14 @@ function anhang_verdrahten() {
     });
   }
   const skillknopf = $("skill");
-  if (skillknopf) skillknopf.addEventListener("click", skill_hinzufuegen);
+  const skillmenue = $("skillmenue");
+  if (skillknopf && skillmenue) {
+    skillknopf.addEventListener("click", () => {
+      if (skillmenue.hidden) liste_oeffnen(skillmenue, skillknopf, skillknopf);
+    });
+    $("skill_lernen").addEventListener("click", skill_hinzufuegen);
+    $("buch_lesen").addEventListener("click", buch_lesen);
+  }
   // ⚑ **Ablegen geht ueber das Fensterereignis und nicht ueber HTML5.**
   // Im Webview traegt ein abgelegtes `File` keinen Pfad; Tauri meldet
   // dagegen die echten Pfade. **Ein Anhang ohne Pfad waere ein Anhang,

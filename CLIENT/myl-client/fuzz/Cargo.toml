@@ -1,0 +1,59 @@
+# Fuzz-Ziele fuer das Wallet (CLIENT 7.15): Woerter nach BIP-39 und Keystore
+# nach EIP-2335. Eigenes Crate, weil `libfuzzer-sys` eine Nightly-Werkzeugkette
+# braucht; seine Archive liegen im lokalen Vorrat.
+#
+# ⚑ Die Ziele stehen in `../tests/fuzzziele/mod.rs` und werden per
+# `include!` eingebunden, wie in `SHARED_TYPES/myl-types/fuzz`.
+#
+# Aufruf (Nightly noetig):
+#   cargo +nightly fuzz run woerter -- -max_total_time=600
+#   cargo +nightly fuzz run keystore -- -max_total_time=600 -dict=keystore.dict -use_value_profile=1
+#
+# 📌 Gemessen am 2026-11-12: Ein eingebautes `unwrap` auf die Laenge des IV
+# fand `keystore` ohne Woerterbuch in 60 s nicht (320 000 Laeufe), mit
+# `keystore.dict` und Wertprofil nach 115 000. Bytes mutieren JSON schlecht.
+
+[package]
+name = "myl-client-fuzz"
+version = "0.0.0"
+edition = "2021"
+publish = false
+license = "LicenseRef-PolyForm-Shield-1.0.0"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+serde_json = "1.0"
+
+[dependencies.myl-client]
+path = ".."
+
+[profile.release]
+debug = 1
+overflow-checks = true
+
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "woerter"
+path = "fuzz_targets/woerter.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "markdown"
+path = "fuzz_targets/markdown.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "keystore"
+path = "fuzz_targets/keystore.rs"
+test = false
+doc = false
+bench = false

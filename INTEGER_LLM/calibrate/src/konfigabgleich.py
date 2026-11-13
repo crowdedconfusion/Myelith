@@ -32,6 +32,10 @@ NICHT_GEBRAUCHT = {
     # die des ARTEFAKTS.** Der Kopf ist ausgeschlossen (Fund 416), also
     # 1 gegen 0, und das ist Absicht statt Abweichung.
     "mtp_num_hidden_layers",
+    # Leer ist es gleichgueltig: Ein dichtes Modell hat keine Gemische, von
+    # denen einzelne Ebenen ausgenommen waeren. Belegt lehnt es
+    # `erzeuge_qwen3_5` ab; das Gemisch fuehrt das Feld im Eintrag.
+    "mlp_only_layers",
     # ⚑ Nachgesehen am 2026-09-21: Bei allen fuenf Modellen ist
     # `sliding_window` None und `use_sliding_window` False, also gibt es
     # kein Fenster; `max_window_layers` zaehlt dann nichts.

@@ -1,6 +1,6 @@
 # Selbsteinschätzung nach der KI-Verordnung
 
-**Stand der Überprüfung:** 2026-09-28 · **English:** [Self-Assessment.md](../en/Self-Assessment.md)
+**Stand der Überprüfung:** 2026-11-11 · **English:** [Self-Assessment.md](../en/Self-Assessment.md)
 
 > ⚠️ **Selbsteinschätzung, keine Rechtsberatung.** Diese Übersicht hat
 > der Anbieter selbst erstellt, nach bestem Verständnis der Verordnung
@@ -33,7 +33,7 @@ Status: ✅ umgesetzt · 🟡 teilweise umgesetzt · ➖ nicht anwendbar
 | Art. 16 bis 22 | Pflichten bei Hochrisiko-Systemen, Bevollmächtigte | ➖ | Nicht anwendbar. Art. 22 betrifft Anbieter aus Drittländern; der Anbieter sitzt in Deutschland |
 | Art. 25 | Verantwortung entlang der Wertschöpfungskette | ✅ | [Zweckbestimmung](Zweckbestimmung.md) Abschnitt 2.2: Wer die Zweckbestimmung ändert, übernimmt Anbieterpflichten |
 | Art. 50 Abs. 1 | Hinweis auf KI | ✅ | Hinweis bei **jedem** Start, aktiv zu bestätigen (Fenster und Konsole), Zeile auf der Fehlerausgabe bei `myl`; dauerhafte Kennzeichnung im leeren Eingabefeld des Fensters („Hier antwortet eine KI.“) und „KI“ in der Fußzeile der Konsole; jede Antwort im Fenster trägt „KI-generiert" (`CLIENT/myl-client/src/kennzeichnung.rs`) |
-| Art. 50 Abs. 2 | Kennzeichnung synthetischer Inhalte | 🟡 | **Sprache ✅**: jede erzeugte Tondatei trägt Metadaten (XMP mit IPTC-Quellentyp `trainedAlgorithmicMedia`, RIFF-INFO) und ein Wasserzeichen im Signal, bevor sie abgespielt oder abgelegt wird; was sich nicht kennzeichnen lässt, wird nicht gespielt (`CLIENT/myl-senses/src/kennzeichnung.rs`); prüfbar mit `myl kennzeichen <datei>`. **Text 🟡**: in der Oberfläche gekennzeichnet, in Dateien, die der Agent schreibt, noch nicht maschinenlesbar. **Bild, Video ➖**: werden nicht erzeugt. **C2PA-Signatur**: noch nicht umgesetzt |
+| Art. 50 Abs. 2 | Kennzeichnung synthetischer Inhalte | 🟡 | **Sprache ✅**, in den zwei Schichten des Verhaltenskodex der Kommission (2026-06-10): jede erzeugte Tondatei trägt, bevor sie abgespielt oder abgelegt wird, **signierte Metadaten** (ein Manifest nach C2PA 2.2 mit der Aktion `c2pa.created`, dem IPTC-Quellentyp `trainedAlgorithmicMedia` und einem Hash über den Ton, signiert mit Ed25519, je Datei ein frischer Schlüssel; dazu XMP und RIFF-INFO) und ein **Wasserzeichen im Signal**, das der Stimme folgt (lineare Vorhersage je 20 ms) und robust gegen Abschneiden, Lautstärke und MP3 ist; was sich nicht kennzeichnen lässt, wird nicht gespielt (`CLIENT/myl-senses/src/kennzeichnung.rs`). Öffentliche, kostenlose Erkennung mit `myl kennzeichen <datei>`; Entfernen untersagt ([Zweckbestimmung](Zweckbestimmung.md) Abschnitt 2.3). ⚠️ Der Signierer steht nicht auf der C2PA-Vertrauensliste: Die Signatur zeigt, dass Ton und Angaben unverändert sind, nicht wer signierte. **Text 🟡**: in der Oberfläche gekennzeichnet, in Dateien, die der Agent schreibt, noch nicht maschinenlesbar. **Bild, Video ➖**: werden nicht erzeugt. **Herkunftsangaben erhalten ➖**: Myelith verändert keine fremden Medien, sondern erzeugt neue |
 | Art. 50 Abs. 3 | Emotionserkennung, biometrische Kategorisierung | ➖ | Wird nicht angeboten und ist ausgeschlossen (Art. 5) |
 | Art. 50 Abs. 4 | Deepfakes | ✅ | Pflicht der Betreiber; unterstützt durch die Kennzeichnung jeder erzeugten Stimme und die Einwilligung beim Hochladen einer Stimmprobe (im Fenster und im Befehl geprüft) |
 | Art. 51, 52, 55 | GPAI mit systemischem Risiko | ➖ | Unter der Schwelle |
@@ -51,7 +51,7 @@ Status: ✅ umgesetzt · 🟡 teilweise umgesetzt · ➖ nicht anwendbar
 
 ## Offene Punkte
 
-1. **C2PA-Manifest** für erzeugte Tondateien (braucht ein Signaturzertifikat).
+1. **Vertrauenswürdiger Signierer für C2PA**: ein Zertifikat einer CA auf der C2PA-Vertrauensliste (etwa über das Konformitätsprogramm), damit Prüfprogramme Myelith als Signierer erkennen.
 2. **Maschinenlesbare Kennzeichnung von Texten**, die der Agent in Dateien schreibt.
 3. **Lizenz der Schrift der Wortmarke** klären oder den Ausschnitt entfernen.
 4. **Anwaltliche Prüfung** dieser Einschätzung.

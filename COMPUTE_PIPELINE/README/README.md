@@ -1,7 +1,7 @@
 # compute-pipeline (`myl-pod`, `myl-dispatcher`)
 
-> **Version:** 0.60.5 (`myl-pod` 0.51.5, `myl-dispatcher` 0.11.2)
-> **Datum:** 2026-11-09
+> **Version:** 0.61.0 (`myl-pod` 0.52.0, `myl-dispatcher` 0.11.2)
+> **Datum:** 2026-11-11
 > **Status:** Phase 1 vollständig, Phase 2.1, **Phase 3 vollständig**
 > (3.1 bis 3.3) und Punkt 4.3. `shard_loop` mit Spur-Hashes und
 > Manipulationserkennung, `coordinator_loop` mit Micro-Batching,
@@ -106,6 +106,26 @@ COMPUTE_PIPELINE/
 ```
 
 ## Changelog
+
+### v0.61.0 (2026-11-11): Der Epochenwechsel hat einen Weg, nicht zwei (`myl-pod` 0.52.0)
+
+- **Entfernt: `PodBesetzung::epochenwechsel` und
+  `epochenwechsel_aus_zuteilung`** samt ihren fünf Proben. Sie gaben
+  Rebuild-Aufträge je gewechselter Position aus, und niemand rief sie: Den
+  Epochenwechsel führt der Knoten aus der Kette (`myl_node::shardfuehrung`,
+  ein Shard mit gleichem Bereich und gleicher Rolle läuft weiter und
+  behält seinen Cache), und einen Auftrag über die Grenze rechnet das
+  Podwerk im Pod der neuen Epoche aus den Token neu (Fund 649, Probe
+  `podwerk_epochenwechsel`). Zwei Wege für dieselbe Sache laufen
+  auseinander, ohne dass es jemand sieht.
+- ⚑ **Abgleich mit dem Whitepaper** (Kap. 4.2: „Pod-Wechsel erfordern
+  Cache-Rebuild und werden nur bei Ausfall oder Epochenwechsel
+  ausgelöst“): keine Abweichung. Der Neuaufbau beim Epochenwechsel ist das
+  Neurechnen im Podwerk; `RebuildAnlass` behält beide Anlässe und nennt,
+  wo der zweite gebaut ist. Die übrige `PodBesetzung` (Ausfall, Beschluss,
+  Netzreserve) bleibt für die Ersatzsuche 3.4 bis 3.6.
+- Proben: 165 grün, Clippy sauber.
+- `myl-pod` 0.52.0.
 
 ### v0.60.5 (2026-11-09): Abweisungen nennen ihren Grund (`myl-pod` 0.51.5)
 

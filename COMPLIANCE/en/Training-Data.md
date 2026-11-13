@@ -16,7 +16,7 @@ version is authoritative.
 | Modalities of the training data | text |
 | Size of own training data | about 127,000 words (synthetic), plus 241,000 words used for calibration only |
 | Period of data collection | 2026-08 to 2026-09 |
-| Base models | Qwen3 series and Qwen3.6-35B-A3B (Alibaba Cloud); their training data is described by their provider |
+| Base models | Qwen3 series and Qwen3.6-35B-A3B (Alibaba Cloud), and for the translator `parrot-2b-int8` Index-Translate-2B (IndexTeam); their training data is described by their providers |
 
 ⚑ **Two levels, and this summary concerns the second.** The base models
 were pre-trained by their provider on a very large multilingual corpus;

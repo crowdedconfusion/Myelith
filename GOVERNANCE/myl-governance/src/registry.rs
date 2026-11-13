@@ -39,7 +39,8 @@
 //! wirkt damit nicht als Knappheitsgarantie, sondern als
 //! Kapazitätsbremse." Der einzige Deckel, den das Protokoll kennt, ist
 //! `M_max` je Epoche, und der steht in dieser Komponente als
-//! **änderbarer** Parameter.
+//! **änderbarer** Parameter, der nie binden darf (A2, siehe
+//! [`Parameter::PraegeObergrenze`]).
 //!
 //! Es gibt also drei mögliche Lesarten, und keine ist im Papier belegt:
 //! (a) „Gesamtangebot" meint `M_max`, dann widerspricht Kap. 10.3 dem
@@ -52,8 +53,9 @@
 //! [`Parameter::GesamtangebotFestgelegtDurchBurnAndMint`], der aussagt:
 //! Es gibt keine andere Quelle von MYL als die Prägung gegen
 //! verifizierte Arbeit. Das ist die einzige Lesart, die etwas
-//! Durchsetzbares ergibt. **Die Entscheidung gehört dem Projektinhaber**
-//! ist festgelegt; ändert sie sich, ändert sich diese Zeile.
+//! Durchsetzbares ergibt. **Festgelegt am 2026-11-10** (Lesart (b),
+//! im Auftrag des Projektinhabers); ändert sie sich, ändert sich diese
+//! Zeile.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -169,6 +171,15 @@ pub enum Parameter {
     /// (Kap. 5.6, Entwurf: 70 %).
     TrainingsverguetungsAnteil,
     /// Präge-Obergrenze `M_max` je Epoche (Kap. 5.2, Anhang B.8.3).
+    ///
+    ///
+    /// ⚑ **Änderbar, aber nie bindend** (A2 vom 2026-08-24, am 2026-11-10
+    /// bestätigt): eine Notbremse gegen einen Fehler in der EMA oder einen
+    /// Angriff auf die Verbrauchsmessung, kein Gesamtangebot (Kap. 5.7).
+    /// ⚠️ **Die Invariante vergleicht nur beim Vorschlag** mit dem
+    /// geglätteten Burn. Wächst die Nachfrage danach, bindet ein fester
+    /// Deckel doch. Wer die Registry an die Kette bindet (Master W5), lässt
+    /// die Prägung einen erreichten Deckel melden, statt still zu kappen.
     PraegeObergrenze,
     /// Glättungsfaktor `α` der Burn-EMA (Kap. 5.2, Entwurf: 2/31).
     ///
@@ -276,7 +287,7 @@ pub enum Parameter {
     /// ⚑ **Gerechnet und nicht gesetzt.** Sie folgt aus einer Bedingung:
     /// Am Auslastungsziel soll die Abgabe das Training genau tragen.
     /// Mit Shard-Anteil 78 Prozent, Trainingsanteil `0,02 + 0,8·(1−u)`
-    /// und `u* = 0,7` ergibt das 3018 Basispunkte, siehe
+    /// und `u* = 0,8` ergibt das 1790 Basispunkte, siehe
     /// `myl_tokenomics::trainingsabgabe`.
     ///
     /// ⚑ **Die Abgabe ist kein Verlust für die Miner**, sondern eine
@@ -384,13 +395,13 @@ pub enum Parameter {
     /// Geschäft, und ein Checker, der einen Miner zum Betrug verleiten
     /// kann, verdiente daran.
     Kopfgeldanteil,
-    /// Realkostenanteil `c` am Reward (Anhang B.4, empirisch 0,6–0,8).
-    ///
-    /// **Mit Vorbehalt aufgenommen**, siehe
-    /// [`crate::invarianten::Invariante::SelfDealing`]: `c` ist keine
-    /// Protokollgröße, sondern eine Beobachtung über die Welt, und es
-    /// bestimmt die Obergrenze von `s`.
-    Kostenanteil,
+    // 📌 Hier stand `Kostenanteil` (Realkostenanteil `c`, Anhang B.4). Seit
+    // Fund 49 prüft die Self-Dealing-Grenze `s` gegen das untere Ende des
+    // Bandes (`myl_tokenomics::sicherheit::KOSTENANTEIL_UNTEN_*`) und
+    // nahm den Wert nicht mehr; er stand wirkungslos hier, das Muster von
+    // A7, Fund 25 und Fund 44. `c` ist eine Beobachtung über die Welt und
+    // keine Protokollgröße, und Kap. 10.3 zählt es nicht zu den
+    // abstimmbaren. Am 2026-11-10 entfernt.
 
     // ---- Verfassungsrang, Kap. 10.3 wörtlich ----
     /// Es gibt keine andere Quelle von MYL als die Prägung gegen
@@ -418,7 +429,7 @@ impl Parameter {
     /// kanonischen Hash** über die Registry, und jede Prüfung läuft
     /// über diese Liste statt über die Kartenreihenfolge. Käme eines
     /// der drei hinzu, wäre das Einschieben eine Protokolländerung.
-    pub fn alle() -> [Parameter; 35] {
+    pub fn alle() -> [Parameter; 34] {
         use Parameter::*;
         [
             Stichprobenrate,
@@ -451,7 +462,6 @@ impl Parameter {
             Speichersatz,
             Betrugsgewinn,
             Kopfgeldanteil,
-            Kostenanteil,
             GesamtangebotFestgelegtDurchBurnAndMint,
             BurnAndMintPrinzip,
             DeterminismusPflicht,
@@ -510,7 +520,6 @@ impl Parameter {
             Speichersatz => "Speichersatz je Byte-Epoche",
             Betrugsgewinn => "Betrugsgewinn g",
             Kopfgeldanteil => "Kopfgeldanteil b",
-            Kostenanteil => "Realkostenanteil c",
             GesamtangebotFestgelegtDurchBurnAndMint => "Gesamtangebot (Burn-and-Mint)",
             BurnAndMintPrinzip => "Burn-and-Mint-Prinzip",
             DeterminismusPflicht => "Determinismus-Pflicht der Runtime",
@@ -597,8 +606,10 @@ impl ParameterRegistry {
         werte.insert(Subventionsrate, Wert::Bruch { zaehler: 1, nenner: 1 });
         // Leer bis zum Genesis-Manifest (GOVERNANCE 3.4).
         werte.insert(KernelWhitelist, Wert::Hashmenge(BTreeSet::new()));
-        // Kap. 5.4: Auslastungsziel 0,7.
-        werte.insert(Auslastungsziel, Wert::Bruch { zaehler: 7, nenner: 10 });
+        // Kap. 5.4: Auslastungsziel 0,8. 📌 Bis zum 2026-11-10 stand hier
+        // 0,7 mit derselben Quellenangabe (Fund 668); das Papier und die
+        // Preisbildung im Knoten (`CREDIT_PREIS_ZIEL`) sagen 0,8.
+        werte.insert(Auslastungsziel, Wert::Bruch { zaehler: 8, nenner: 10 });
         // Design-Entscheidung 2026-08-13: 7 Tage.
         werte.insert(Streitfrist, Wert::Ganzzahl(7 * 24 * 60 * 60));
         // Kap. 5.4: kappa = 0,1.
@@ -670,8 +681,8 @@ impl ParameterRegistry {
         // Prozent der freien Kapazität sind Luft, kein Rundungsrest.
         werte.insert(TrainingsFreianteil, Wert::Ganzzahl(8_000));
         // ⚑ **Aus der Bilanzbedingung gerechnet** (2026-09-06): Am
-        // Auslastungsziel u* = 0,7 trägt die Abgabe das Training genau.
-        werte.insert(TrainingsAbgabeMax, Wert::Ganzzahl(3_017));
+        // Auslastungsziel u* = 0,8 trägt die Abgabe das Training genau.
+        werte.insert(TrainingsAbgabeMax, Wert::Ganzzahl(1_790));
         // myl-consensus: Arbeitsschwelle als Bruchteil des Netzmedians,
         // Startwert null (Entscheidung 2026-09-02).
         werte.insert(
@@ -739,8 +750,6 @@ impl ParameterRegistry {
                 nenner: myl_tokenomics::slashing::KOPFGELD_NENNER,
             },
         );
-        // Anhang B.4: c empirisch 0,6 bis 0,8; Entwurf 0,7.
-        werte.insert(Kostenanteil, Wert::Bruch { zaehler: 7, nenner: 10 });
         // Kap. 10.3, Verfassungsrang.
         werte.insert(GesamtangebotFestgelegtDurchBurnAndMint, Wert::Schalter(true));
         werte.insert(BurnAndMintPrinzip, Wert::Schalter(true));

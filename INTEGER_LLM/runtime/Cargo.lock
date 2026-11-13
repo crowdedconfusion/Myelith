@@ -343,7 +343,7 @@ dependencies = [
 
 [[package]]
 name = "integer-llm-kernels"
-version = "0.90.0"
+version = "0.91.0"
 dependencies = [
  "itertools 0.13.0",
  "objc2",
@@ -356,7 +356,7 @@ dependencies = [
 
 [[package]]
 name = "integer-llm-runtime"
-version = "0.105.0"
+version = "0.105.1"
 dependencies = [
  "integer-llm-kernels",
  "libc",

@@ -332,6 +332,34 @@ pub(crate) fn abstaende_fuer(w_shifts: &[u8], act_frac_bits: u8, ziel: &dyn Fn(u
         .collect()
 }
 
+/// **W8A8 auf der GPU**, wenn es sich lohnt und eine da ist (dieselbe
+/// Schwelle wie [`stapel`]); `None` heisst, die CPU rechnet dieselbe Zahl
+/// ([`crate::linear::linear_w8a8_pc_stapel`]).
+pub fn stapel_a8(
+    xs: &[&[i8]],
+    w: &[i8],
+    in_features: usize,
+    w_shifts: &[u8],
+    act_frac_bits: u8,
+    ziel: &dyn Fn(usize) -> u8,
+) -> Option<Vec<Vec<i16>>> {
+    let ab = schwelle();
+    if ab == 0 || xs.len() < ab || in_features == 0 || in_features > HOECHSTE_SPALTENZAHL {
+        return None;
+    }
+    rechnen_a8(xs, w, in_features, &abstaende_fuer(w_shifts, act_frac_bits, ziel))
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+fn rechnen_a8(xs: &[&[i8]], w: &[i8], in_features: usize, abstaende: &[i8]) -> Option<Vec<Vec<i16>>> {
+    geraet::stapel_a8(xs, w, in_features, abstaende)
+}
+
+#[cfg(not(all(feature = "metal", target_os = "macos")))]
+fn rechnen_a8(_: &[&[i8]], _: &[i8], _: usize, _: &[i8]) -> Option<Vec<Vec<i16>>> {
+    None
+}
+
 #[cfg(all(feature = "metal", target_os = "macos"))]
 fn rechnen(xs: &[&[i16]], w: &[i8], in_features: usize, abstaende: &[i8]) -> Option<Vec<Vec<i16>>> {
     geraet::stapel(xs, w, in_features, abstaende)
@@ -599,6 +627,33 @@ mod tests {
                 .expect("verfuegbar, also ein Kontext")
                 .expect("die GPU hat gerechnet");
             let cpu = crate::linear::linear_w8a16_pc_stapel_cpu(&xs, &w, spalten, &w_shifts, act, &ziele);
+            assert_eq!(gpu, cpu, "{zeilen} x {spalten} bei {stapel} Eingaben");
+        }
+    }
+
+    /// **W8A8 rechnet auf der GPU Bit fuer Bit wie auf der CPU**, ueber
+    /// Formen, die das Kachelmass an jeder Kante verfehlen, und ueber den
+    /// vollen Wertebereich beider Seiten.
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    #[test]
+    fn w8a8_rechnet_wie_die_cpu() {
+        if !gpu_bereit() {
+            return;
+        }
+        let mut zufall = xorshift(0xa8a8);
+        let formen = [(1usize, 1usize, 1usize), (1, 7, 3), (63, 64, 15), (65, 33, 17), (129, 250, 40), (2560, 1280, 300)];
+        for (zeilen, spalten, stapel) in formen {
+            let w: Vec<i8> = (0..zeilen * spalten).map(|_| zufall() as i8).collect();
+            let eingaben: Vec<Vec<i8>> = (0..stapel).map(|_| (0..spalten).map(|_| zufall() as i8).collect()).collect();
+            let xs: Vec<&[i8]> = eingaben.iter().map(|e| e.as_slice()).collect();
+            let w_shifts: Vec<u8> = (0..zeilen).map(|_| (zufall() % 8) as u8).collect();
+            let ziele: Vec<u8> = (0..zeilen).map(|_| (zufall() % 24) as u8).collect();
+            let act = 9u8;
+            let abstaende: Vec<i8> = (0..zeilen).map(|z| (w_shifts[z] + act) as i8 - ziele[z] as i8).collect();
+            let gpu = geraet::direkt_a8(&xs, &w, spalten, &abstaende)
+                .expect("verfuegbar, also ein Kontext")
+                .expect("die GPU hat gerechnet");
+            let cpu = crate::linear::linear_w8a8_pc_stapel_cpu(&xs, &w, spalten, &w_shifts, act, &ziele);
             assert_eq!(gpu, cpu, "{zeilen} x {spalten} bei {stapel} Eingaben");
         }
     }

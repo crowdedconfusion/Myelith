@@ -214,7 +214,10 @@ Ganzes** unter eigene Bedingungen zu stellen, solange die Bedingungen
 für das zugrundeliegende Werk eingehalten bleiben. Für diese Artefakte
 heisst das:
 
-- **§4(a):** Eine Kopie der Apache-2.0 liegt dem Artefakt bei.
+- **§4(a):** Ein Artefakt entsteht auf dem Rechner seines Nutzers aus den
+  dort geholten Gewichten; das Projekt verteilt keines. Wer eines
+  weitergibt, gibt die Apache-2.0 mit. Ihr Text liegt je Grundmodell unter
+  `MODELS/llm/<Grundmodell>/LICENSE`.
 - **§4(b):** Die geänderten Dateien sind als geändert gekennzeichnet.
 - **§4(d):** Greift nicht, die Basisrepositorien enthalten keine
   `NOTICE`-Datei (geprüft am 2026-08-23).

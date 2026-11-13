@@ -243,10 +243,10 @@ fn moe_artefakte() -> std::path::PathBuf {
 #[ignore = "laedt 29 GB Artefakte; mit --ignored ausfuehren"]
 fn zwei_shards_ueber_gemischebenen_rechnen_wie_einer() {
     let dir = moe_artefakte();
-    if !dir.exists() {
-        eprintln!("Artefakt fehlt, uebersprungen: {}", dir.display());
-        return;
-    }
+    // 📌 Fund 696: Hier stand eine stille Rueckkehr. Eine Probe mit
+    // `#[ignore]` faehrt nur, wer sie mit Artefakt verlangt; fehlt es,
+    // ist das ein Fehler und kein Bestehen (wie in `training_moe.rs`).
+    assert!(dir.exists(), "Das MoE-Artefakt fehlt: {dir:?}");
     let m = load_model(&dir).expect("Modell laedt");
     let bis = m.num_layers;
     let von = bis - 4;
@@ -307,9 +307,8 @@ fn zwei_shards_ueber_gemischebenen_rechnen_wie_einer() {
 #[ignore = "laedt 29 GB Artefakte; mit --ignored ausfuehren"]
 fn nur_gewaehlte_experten_werden_gehalten() {
     let dir = moe_artefakte();
-    if !dir.exists() {
-        return;
-    }
+    // 📌 Fund 696: Hier kehrte die Probe ohne jede Meldung zurueck.
+    assert!(dir.exists(), "Das MoE-Artefakt fehlt: {dir:?}");
     let m = load_model(&dir).expect("Modell laedt");
     let von = m.num_layers - 1;
     let hidden = strom_vor(&m, von);

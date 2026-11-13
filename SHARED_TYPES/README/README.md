@@ -1,7 +1,7 @@
 # shared-types (`myl-types`)
 
-> **Version:** 0.68.1
-> **Datum:** 2026-11-09
+> **Version:** 0.68.4
+> **Datum:** 2026-11-12
 > **Status:** 🎉 **Phase 2 abgeschlossen** (Punkte 1.1–1.7, 2.1–2.3):
 > Hash, Merkle-Baum, VRF (bit-exakt gegen RFC-9381-Vektoren), BLS12-381
 > mit Aggregation **und Proof-of-Possession**, **Erasure-Codierung über
@@ -49,6 +49,56 @@ SHARED_TYPES/
 ```
 
 ## Changelog
+
+### v0.68.4 (2026-11-12): Der Fuzzer läuft, ein Ziel hinter der Prüfsumme, Korpus für jedes Ziel
+
+- **`cargo fuzz` läuft jetzt hier**, ohne Netz: `libfuzzer-sys` und
+  `arbitrary` liegen im lokalen Vorrat (die Fuzz-Sperrdateien zählen dort
+  hin und werden geprüft wie alle anderen). Runde über alle 20 Ziele je
+  600 s, 38 bis 808 Millionen Eingaben je Ziel, **kein Fund**.
+- 📌 **Neues Ziel `adresstext_mit_summe`:** Mit einem eingebauten Fehler in
+  `zu_acht` (Füllbits nicht geprüft) fand `adresstext` ohne Saat in 60 s
+  nichts, denn ein zufälliger Text hat fast nie eine gültige bech32m-Summe,
+  und jede Mutation einer gültigen Saat zerstört sie wieder. Das neue Ziel
+  baut den Text aus den Bytes und rechnet die Summe selbst an, eigens nach
+  BIP-173/350 geschrieben und damit zugleich eine Kreuzprobe gegen
+  `adresstext.rs`; es fand denselben Fehler nach 28 000 Läufen. Sechs
+  Saaten.
+- **Jedes Ziel hat jetzt einen Korpus:** Für `credit`, `inferenzantwort`,
+  `inferenzauftrag`, `knoten_metadaten` und `segment` lag keiner (der
+  Regressionslauf meldete sie als „ohne Korpus“, und libFuzzer brach beim
+  fehlenden Verzeichnis ab). Aus den Arbeitskorpora der Runde verdichtet
+  (`-merge=1`) und nach `korpuskappen.py` auf höchstens 25 je Ziel gekappt,
+  zusammen rund 28 KB. Der Regressionslauf sieht 257 Eingaben, 63 lesen
+  sich vollständig (vorher 178 und 43).
+
+### v0.68.3 (2026-11-12): Ein Fuzz-Ziel für den Adresstext
+
+- **Neues Ziel `adresstext`** (CLIENT 7.15), in `tests/fuzzziele/mod.rs`
+  für Fuzzer und stabilen Regressionslauf zugleich: Was `aus_text`
+  annimmt, ist bis auf Großschreibung und Leerraum die kanonische Form
+  von `als_text` und liest sich zur selben Adresse zurück; gemischte
+  Schreibung wird nie angenommen (BIP-350). 64 Hexzeichen bleiben die
+  erlaubte zweite Form. Startkorpus mit gültigem, großem, gemischtem und
+  hexadezimalem Text, anderem Netz, falscher Prüfsumme und einem Text
+  mit gesetzten Füllbits und gültiger Prüfsumme.
+- Nachgesehen, nicht geändert: `zu_acht` verlangt genullte Füllbits.
+  Gegenprobe: Ohne diese Bedingung wird der Regressionslauf an zwei
+  Stellen rot (Korpus und Mutationsrunde).
+- ⚠️ Der Fuzzer selbst (`cargo +nightly fuzz run adresstext`) braucht
+  `libfuzzer-sys`, das nicht im Vorrat liegt; gelaufen ist der stabile
+  Teil. Die Sperrdatei des Fuzz-Pakets nennt jetzt die geltende Fassung.
+- **EIP-2333 vollständig:** Zu Testfall 0 kommen die Fälle 1 bis 3 der
+  Norm (kurze Saaten, Großbuchstaben im Hex, der höchste Index
+  2³² − 1, Index 42), Hauptschlüssel und Kind je in Dezimal wie dort.
+- Proben: 379 grün, Clippy sauber.
+
+### v0.68.2 (2026-11-11): Die Mindestzeichner erschöpfend geprüft
+
+- `mehrheit_der_uebrigen_und_nie_weniger_als_zwei` prüft jetzt jede
+  Mitgliederzahl bis 100 000: nie unter zwei, immer mehr als die Hälfte
+  der Übrigen, und einer weniger wäre es nicht mehr. Vorher vier Beispiele.
+- `myl-types` 0.68.2.
 
 ### v0.68.1 (2026-11-09): Die Bytes eines Schlüssels für den Keystore
 
