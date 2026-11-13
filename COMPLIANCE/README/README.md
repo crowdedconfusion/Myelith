@@ -1,7 +1,7 @@
 # compliance
 
-> **Version:** 0.9.2
-> **Datum:** 2026-11-12
+> **Version:** 0.9.3
+> **Datum:** 2026-11-13
 > **Status:** Die Pflichten aus der KI-Verordnung sind dokumentiert und,
 > soweit technisch, umgesetzt; die Einordnung Artikel für Artikel steht in
 > der [Selbsteinschätzung](../de/Selbsteinschaetzung.md). Offen: ein
@@ -39,6 +39,13 @@ Schutzfilter (`CLIENT/myl-client/src/schutzfilter.rs`), Notaus
 (`AGENT_LAYER/local-agent/src/notaus.rs`).
 
 ## Changelog
+
+### v0.9.3 (2026-11-13): Lizenztexte von `zeroize`
+
+- `zeroize` 1.9.1 liegt seit dem 2026-11-12 im versionierten Vorrat, weil
+  ein frischer Klon es zum Bauen braucht; seine Texte (Apache 2.0 und MIT)
+  fehlten in `DRITTLIZENZEN.txt`, und die CI meldete
+  `lizenztexte.py --pruefe` rot. Neu erzeugt, sonst unverändert.
 
 ### v0.9.2 (2026-11-12): die Originale von whisper im Katalog
 

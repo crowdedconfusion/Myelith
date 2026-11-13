@@ -5421,6 +5421,7 @@ tinyvec 1.13.3 (LICENSE-APACHE.md)
 tokenizers 0.21.4 (LICENSE)
 utf8_iter 1.0.4 (LICENSE-APACHE)
 zeroize 1.9.0 (LICENSE-APACHE)
+zeroize 1.9.1 (LICENSE-APACHE)
 zeroize_derive 1.5.0 (LICENSE-APACHE)
 zune-core 0.5.3 (LICENSE-APACHE)
 zune-jpeg 0.5.15 (LICENSE-APACHE)
@@ -13522,6 +13523,7 @@ SOFTWARE.
 Text 189, gilt für:
 keccak 0.2.2 (LICENSE-MIT)
 zeroize 1.9.0 (LICENSE-MIT)
+zeroize 1.9.1 (LICENSE-MIT)
 ========================================================================
 
 Copyright (c) 2018-2026 The RustCrypto Project Developers

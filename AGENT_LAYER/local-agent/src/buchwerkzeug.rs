@@ -281,10 +281,14 @@ mod tests {
         let args = |c: std::process::Command| c.get_args().map(|a| a.to_string_lossy().into_owned()).collect::<Vec<_>>();
         let (m, d, z) = (Path::new("myl"), Path::new("/b.pdf"), Path::new("/z"));
         gastgeber_setzen(std::sync::Arc::new(G(true)));
-        let kopf = ["buch", "/b.pdf", "--ziel", "/z/.AGENT/skills", "--literatur", "/z/literature"];
-        assert_eq!(args(buchbefehl(m, d, z)), [&kopf[..], &["--modell", "/modelle/a"]].concat());
+        // ⚠️ Die Ordner mit `join` wie im Befehl: Unter Windows steht dort ein
+        //   Backslash (`/z\.AGENT/skills`), und das ist ein gueltiger Pfad.
+        let (ziel, literatur) = (z.join(SKILLORDNER), z.join(LITERATUR));
+        let kopf = ["buch", "/b.pdf", "--ziel", &ziel.to_string_lossy(), "--literatur", &literatur.to_string_lossy()].map(str::to_string);
+        let mit = |rest: &[&str]| [&kopf[..], &rest.iter().map(|s| s.to_string()).collect::<Vec<_>>()].concat();
+        assert_eq!(args(buchbefehl(m, d, z)), mit(&["--modell", "/modelle/a"]));
         gastgeber_setzen(std::sync::Arc::new(G(false)));
-        assert_eq!(args(buchbefehl(m, d, z)), [&kopf[..], &["--ohne-modell"]].concat());
+        assert_eq!(args(buchbefehl(m, d, z)), mit(&["--ohne-modell"]));
     }
 
     #[test]

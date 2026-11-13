@@ -1,6 +1,6 @@
 # agent-layer
 
-> **Version:** 0.66.0 (`myl-agent` 0.10.0, `myl-local-agent` 0.50.0, `book2skill` 0.7.0)
+> **Version:** 0.66.1 (`myl-agent` 0.10.0, `myl-local-agent` 0.50.1, `book2skill` 0.7.0)
 > **Datum:** 2026-11-13
 > **Status:** Manifeste, Herkunftsstufe, Registratur, der
 > **Session-Kontrakt** mit Durchsetzung im Ledger, der **Plan** und seit
@@ -71,6 +71,15 @@ umbenannt, weil er in jedem `use` steht.
   was die Ausgabe eines Schritts einer geltenden Kette ist.
 
 ## Changelog
+
+### v0.66.1 (2026-11-13): Die Probe des Buchwerkzeugs gilt auch unter Windows (`myl-local-agent` 0.50.1)
+
+- `das_modell_verdichtet_nur_wenn_der_speicher_reicht` verglich die Ordner
+  des Befehls mit fest eingeschriebenem `/`; der Befehl setzt sie mit
+  `Path::join` zusammen, unter Windows also `/z\.AGENT/skills`, ein
+  gültiger Pfad. Die CI unter Windows fiel daran, zum ersten Mal seit es
+  die Probe gibt. Jetzt baut die Probe die Erwartung ebenso; der Befehl ist
+  unverändert. Gegenprobe mit falschem Literaturordner rot, 505 grün.
 
 ### v0.66.0 (2026-11-13): Der Türklient liest eine Antwort nur bis zu einer Grenze (`myl-local-agent` 0.50.0)
 
