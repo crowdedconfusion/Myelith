@@ -108,6 +108,11 @@ SYSTEM/werkzeug-vorrat/
 SYSTEM/golemos/aus/
 SYSTEM/golemos/bau/
 SYSTEM/golemos/overlay/usr/bin/
+# ⛔️ Die Quellarchive (je rund 0,7 GB) gehen als Anhang an eine Freigabe auf
+#    GitHub, nicht ins Repositorium: Eine Datei darf hoechstens 100 MiB
+#    haben, und jede Freigabe liesse jeden Klon fuer immer wachsen. Versioniert
+#    ist nur der Hinweis daneben (`Quellarchiv/README.md`).
+SYSTEM/golemos/Quellarchiv/*/
 
 # Laufprotokolle, samt Debug-Log (`/debug on`, Einstellung debug.log), der
 # alles mitschreibt, auch Dateiinhalte und Antworten des Modells. Nichts

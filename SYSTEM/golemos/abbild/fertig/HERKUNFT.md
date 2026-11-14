@@ -52,8 +52,9 @@ Fassung, die Konfiguration und das Datum.
 
 ⛔️ **Die Quellen gehören an dieselbe Freigabe** (`quellen-<arch>.tar`,
 je rund 0,7 GB, aus `auskunft.sh`): Das Abbild enthält Teile unter der
-GPL. Zu groß fürs Repositorium, deshalb als Anhang einer Freigabe auf
-GitHub.
+GPL. Zu groß fürs Repositorium, deshalb als Anhang der Freigabe
+[GolemOS v0.6.1](https://github.com/crowdedconfusion/Myelith/releases/tag/golemos-v0.6.1);
+was dort liegt und wie man es prüft, steht in `SYSTEM/golemos/Quellarchiv/README.md`.
 
 | | |
 |---|---|

@@ -1,6 +1,6 @@
 # golemos (die Linux-Distribution, die nur Myelith bedient)
 
-> **Version:** 0.6.1 (`golem-einrichten` 0.5.0)
+> **Version:** 0.6.2 (`golem-einrichten` 0.5.0)
 > **Datum:** 2026-11-14
 > **Status:** Startet vom Stick und von Platte, findet einen
 > Myelith-Ordner auf dem Stick oder einem zweiten Laufwerk und
@@ -123,6 +123,15 @@ sie tut, soll sich in ihrem eigenen Quelltext lesen lassen.
 ---
 
 ## Changelog
+
+### v0.6.2 (2026-11-14): Wo die Quellen liegen
+
+- **Neu `Quellarchiv/README.md`**: Die Quellen zu den freigegebenen
+  Abbildern (`quellen-<arch>.tar`, je rund 0,7 GB) und die Lizenzauskunft
+  liegen als Anhang der Freigabe `golemos-v0.6.1` auf GitHub; die Datei nennt
+  den Ort, die Dateien und wie man sie prüft. Die Archive selbst nimmt
+  `.gitignore` aus (`Quellarchiv/*/`), denn eine Datei darf im Repositorium
+  höchstens 100 MiB haben. `HERKUNFT.md` verweist darauf.
 
 ### v0.6.1 (2026-11-14): Abbilder unter 100 MiB, exFAT, Lizenztexte im Abbild (`golem-einrichten` 0.5.0)
 
