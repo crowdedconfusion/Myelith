@@ -1,7 +1,7 @@
 # client (Nutzer-Client inkl. Wallet)
 
-> **Version:** 0.234.0 (`myl-client` 0.133.0, `myl-oberflaeche` 0.92.0, `myl-console` 0.72.1, `myl-senses` 0.47.0, `myl-module` 0.6.2, `myl-scan` 0.4.0)
-> **Datum:** 2026-11-13
+> **Version:** 0.235.0 (`myl-client` 0.133.0, `myl-oberflaeche` 0.92.0, `myl-console` 0.72.1, `myl-senses` 0.47.0, `myl-module` 0.6.2, `myl-scan` 0.4.0)
+> **Datum:** 2026-11-14
 > **Status:** ✅ **Der lokale Betrieb läuft und ist ausgeliefert.** Ein
 > Gesprächsfenster mit Modellwahl, Agentenschleife und
 > Einstellungsseite; aus einem frischen Klon lassen sich darüber
@@ -182,6 +182,36 @@ Modell überhaupt etwas taugt, und weil eine Schnittstelle, die kein
 Mensch je bedient hat, an den Bedürfnissen vorbei entworfen wird.
 
 ## Changelog
+
+### v0.235.0 (2026-11-14): Die Sicherheitskopie entsteht lokal, ersetzt die alte und nimmt die Schlüsselablage mit
+
+- ⚑ **Erst lokal, dann auf den Datenträger** (`SYSTEM/install/sicherung.py`):
+  Die Kopie entsteht ganz in einem lokalen Zwischenordner (Temp-Ordner oder
+  `--zwischen`), wird als `.halb` auf den Datenträger geschrieben, dort
+  ohne Zwischenspeicher des Systems zurückgelesen und gegen die lokale
+  SHA-256 gehalten, erst dann umbenannt; danach gehen die älteren Kopien
+  desselben Formats und Reste abgebrochener Läufe. Reicht der Platz nicht
+  für alte und neue, geht die alte **zuerst**, solange die neue geprüft
+  lokal liegt; reicht er auch dann nicht, bleibt alles, wie es war. Die
+  lokale Kopie wird danach entfernt (`--lokal-behalten`), `SICHERUNG.md`
+  liegt auch neben dem Archiv. Bisher brauchte das Ziel Platz für die neue
+  neben der alten, und eine bestehende Kopie desselben Tages brach ab.
+- ⚑ **Die Schlüsselablage kommt mit:** der Ordner `Secure` neben dem
+  Repositorium (verschlüsseltes Abbild mit den geheimen Schlüsseln), in der
+  Kopie als eigener Ordner `Secure/` mit eigener `PRUEFSUMMEN.sha256`;
+  `--ohne-secure` lässt ihn weg. ⛔️ Ist ein Abbild daraus eingehängt
+  (`hdiutil info`), bricht die Kopie ab und nennt `hdiutil detach`: Eine
+  Kopie während des Betriebs kann Bänder verschiedener Stände tragen.
+- **Die GolemOS-Quellen kommen einmal mit:** aus
+  `SYSTEM/golemos/Quellarchiv/<arch>/`, wo sie seit GolemOS 0.7.1 allein
+  liegen (vorher zusätzlich als Klon neben `aus/`, 1,48 GB doppelt in der
+  Kopie); der Selbsttest bindet, dass sie hinein kommen.
+- **Selbsttest erweitert:** Auswahl der Ablage (Finder-Reste draussen),
+  Erkennung des Eingehängtseins samt Gegenprobe, Prüfsummen der Ablage in
+  tar und zip, Übertragen mit Platz, bei knappem Platz (die alte geht
+  zuerst, belegt mit einer misslingenden Kopie), ohne Platz (nichts
+  verändert) und mit falscher Prüfsumme (die alte bleibt). Gegenproben je
+  Zeile: acht entfernte Prüfzeilen, jede macht ihn rot.
 
 ### v0.234.0 (2026-11-13): Geschriebene Texte tragen ein unsichtbares Kennzeichen (`myl-senses` 0.47.0, `myl-client` 0.133.0)
 

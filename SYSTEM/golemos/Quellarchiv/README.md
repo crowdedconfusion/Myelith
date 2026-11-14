@@ -32,5 +32,6 @@ Repositorium selbst: `SYSTEM/golemos/bauen.sh` mit den Konfigurationen unter
 
 ⚠️ **Die Archive selbst liegen nicht im Repositorium.** Eine Datei darf dort
 höchstens 100 MiB haben, und jede Freigabe liesse jeden Klon für immer
-wachsen. Wer GolemOS selbst baut, findet sie danach in den Unterordnern
-`x86_64/` und `aarch64/` hier.
+wachsen. `auskunft.sh` legt sie samt Lizenzauskunft und Prüfsummen in die
+Unterordner `x86_64/` und `aarch64/` hier (ignoriert); von dort werden sie
+hochgeladen, und `freigeben.sh` liest sie dort.

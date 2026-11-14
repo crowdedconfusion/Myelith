@@ -1,6 +1,6 @@
 # golemos (die Linux-Distribution, die nur Myelith bedient)
 
-> **Version:** 0.7.0 (`golem-einrichten` 0.5.0)
+> **Version:** 0.7.1 (`golem-einrichten` 0.5.0)
 > **Datum:** 2026-11-14
 > **Status:** Startet vom Stick und von Platte, findet einen
 > Myelith-Ordner auf dem Stick oder einem zweiten Laufwerk und
@@ -124,6 +124,22 @@ sie tut, soll sich in ihrem eigenen Quelltext lesen lassen.
 ---
 
 ## Changelog
+
+### v0.7.1 (2026-11-14): Die Quellen liegen an einer Stelle
+
+- **`auskunft.sh` schreibt Quellarchiv und Lizenzauskunft samt Prüfsummen
+  direkt nach `Quellarchiv/<arch>/`**, dem Ort, von dem sie hochgeladen
+  werden; `freigeben.sh` liest sie dort. Bisher entstanden sie unter
+  `aus/<arch>/` und wurden zum Hochladen als Klon daneben gelegt, und jede
+  Sicherheitskopie trug sie doppelt (1,48 GB). Die Abbilder, der Kern und
+  das Aktualisierungspaket bleiben unter `aus/<arch>/`. Die heutigen
+  Archive sind einmal umgezogen (vorher bytegleich mit den Klonen geprüft).
+- `Quellarchiv/README.md` sagt jetzt, dass sie dort liegen; der alte Satz
+  behauptete es schon, stimmte aber nur für die von Hand gelegten Klone.
+- Geprüft: `sh -n` beider Skripte; `freigeben.sh` findet die Auskunft am
+  neuen Ort („bitgleich, nichts zu tun“ je Architektur), ohne sie bricht es
+  mit 4 ab. `auskunft.sh` selbst nicht neu gefahren (braucht das
+  Bauvolumen und erzeugte die Archive mit neuen Zeitstempeln).
 
 ### v0.7.0 (2026-11-14): Secure Boot mit eigenem Schlüssel Golem-Emet
 

@@ -285,9 +285,24 @@ vorab holen:
 
 ```sh
 python3 SYSTEM/install/sicherung.py --liste          # was hinein käme, mit Grössen
-python3 SYSTEM/install/sicherung.py <zielordner>     # myelith-sicherung-JJJJ-MM-TT.tar.gz
+python3 SYSTEM/install/sicherung.py <zielordner>     # myelith-sicherung-JJJJ-MM-TT.tar.gz, ersetzt die alte
 python3 SYSTEM/install/sicherung.py <zielordner> --zip
 ```
+
+⚑ **Erst lokal, dann auf den Datenträger.** Die Kopie entsteht ganz in einem
+lokalen Zwischenordner (der Temp-Ordner, oder `--zwischen <ordner>`), wird
+dann auf den Datenträger übertragen, dort gegen ihre Prüfsumme gehalten,
+und ersetzt erst danach die alte Kopie desselben Formats. Reicht der Platz
+dort nicht für beide, geht die alte zuerst; die neue liegt in diesem
+Augenblick vollständig lokal. Reicht er auch dann nicht, bleibt alles, wie
+es war. Danach wird die lokale Kopie entfernt (`--lokal-behalten` nicht),
+und `SICHERUNG.md` liegt auch neben dem Archiv.
+
+⚑ **Die Schlüsselablage kommt mit**: ein Ordner `Secure` neben dem
+Repositorium, als eigener Ordner `Secure/` in der Kopie mit eigenen
+Prüfsummen (`--ohne-secure` lässt ihn weg). Ist ein Abbild daraus
+eingehängt, bricht die Kopie ab und nennt den Befehl zum Aushängen; eine
+Kopie mittendrin könnte sich danach nicht mehr öffnen lassen.
 
 Hinein kommt **alles, was im Arbeitsbaum liegt**, auch was git nicht kennt,
 samt Verlauf und Werkzeugvorrat, dazu die Artefakte `sparrow-0.6b-int8` und

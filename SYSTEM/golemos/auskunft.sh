@@ -3,7 +3,8 @@
 #
 #   sh SYSTEM/golemos/auskunft.sh [--arch x86_64|aarch64]
 #
-# Ergebnis unter SYSTEM/golemos/aus/<arch>/:
+# Ergebnis unter SYSTEM/golemos/Quellarchiv/<arch>/ (dem Ort, von dem sie
+# hochgeladen werden; die Abbilder bleiben unter aus/<arch>/):
 #   lizenzen-<arch>.tar.xz   Verzeichnis der Pakete mit Fassung und Lizenz,
 #                            die Lizenztexte, die Konfiguration (klein,
 #                            gehoert neben jedes freigegebene Abbild)
@@ -45,7 +46,7 @@ case "$ARCH" in
 esac
 
 HIER=$(cd "$(dirname "$0")" && pwd)
-AUS="$HIER/aus/$ARCH"
+ABLAGE="$HIER/Quellarchiv/$ARCH"
 VOLUMEN="golemos-bau-$ARCH"
 # Dieselbe Fassung wie in `bauen.sh`; ein anderer Baum waere ein anderes
 # Abbild.
@@ -56,11 +57,11 @@ docker volume inspect "$VOLUMEN" >/dev/null 2>&1 || {
   echo "Kein Bauvolumen $VOLUMEN. Erst bauen:  sh SYSTEM/golemos/bauen.sh --arch $ARCH" >&2
   exit 1
 }
-mkdir -p "$AUS"
+mkdir -p "$ABLAGE"
 
 echo "── Lizenzauskunft fuer $ARCH (Buildroot $FASSUNG, ohne Netz)"
 docker run --rm -i --network none \
-  -v "$VOLUMEN:/bau" -v "$AUS:/aus" \
+  -v "$VOLUMEN:/bau" -v "$ABLAGE:/ablage" \
   -e FASSUNG="$FASSUNG" -e ARCH="$ARCH" \
   golemos-baumeister sh -s <<'IMBEHAELTER'
 set -eu
@@ -113,16 +114,16 @@ klein=""
 for teil in $teile; do klein="$klein $teil/manifest.csv $teil/licenses $teil/README"; done
 [ -f basis/buildroot.config ] && klein="$klein basis/buildroot.config"
 # shellcheck disable=SC2086
-tar -cJf "/aus/lizenzen-$ARCH.tar.xz" $klein
+tar -cJf "/ablage/lizenzen-$ARCH.tar.xz" $klein
 grosse=""
 for teil in $teile; do grosse="$grosse $teil/quellen"; done
 # shellcheck disable=SC2086
-tar -cf "/aus/quellen-$ARCH.tar" $grosse "buildroot-$FASSUNG.tar"
+tar -cf "/ablage/quellen-$ARCH.tar" $grosse "buildroot-$FASSUNG.tar"
 cd / && rm -rf "$ARBEIT"
 IMBEHAELTER
 
-( cd "$AUS" && for f in "lizenzen-$ARCH.tar.xz" "quellen-$ARCH.tar"; do
+( cd "$ABLAGE" && for f in "lizenzen-$ARCH.tar.xz" "quellen-$ARCH.tar"; do
     if command -v shasum >/dev/null 2>&1; then shasum -a 256 "$f" > "$f.sha256"; else sha256sum "$f" > "$f.sha256"; fi
   done )
 echo "── Fertig"
-ls -lh "$AUS/lizenzen-$ARCH.tar.xz" "$AUS/quellen-$ARCH.tar" | awk '{print "   "$9"  "$5}'
+ls -lh "$ABLAGE/lizenzen-$ARCH.tar.xz" "$ABLAGE/quellen-$ARCH.tar" | awk '{print "   "$9"  "$5}'

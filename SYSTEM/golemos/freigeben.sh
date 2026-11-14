@@ -44,8 +44,9 @@ ZIEL="$HIER/abbild/fertig/golemos-$ARCH.img.xz"
 #    Teile unter der GPL; wer es weitergibt, gibt die Quellen mit.
 #    `auskunft.sh` legt beides neben das Abbild, und es muss juenger sein
 #    als das Abbild, sonst gehoert es zu einem anderen Bau.
-LIZENZEN="$HIER/aus/$ARCH/lizenzen-$ARCH.tar.xz"
-QUELLEN="$HIER/aus/$ARCH/quellen-$ARCH.tar"
+# Beide liegen dort, von wo sie hochgeladen werden (`auskunft.sh`).
+LIZENZEN="$HIER/Quellarchiv/$ARCH/lizenzen-$ARCH.tar.xz"
+QUELLEN="$HIER/Quellarchiv/$ARCH/quellen-$ARCH.tar"
 for f in "$LIZENZEN" "$QUELLEN"; do
   if [ ! -f "$f" ] || [ "$QUELLE" -nt "$f" ]; then
     echo "⛔️ Zu diesem Abbild fehlt die Lizenzauskunft ($(basename "$f"))." >&2
