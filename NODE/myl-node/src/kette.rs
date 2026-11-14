@@ -3602,13 +3602,12 @@ impl Kette {
 
     /// ⚑ **Die Fenster eines Prüfauftrags** (2026-10-29), je eine
     /// Viertelepoche: so lange Festlegen ab der Ziehung, danach so lange
-    /// Aufdecken. Fest wie bei Arbitrum BoLD; wer früher fertig ist, deckt
+    /// Aufdecken. Fest, gleich wer wann einreicht; wer früher fertig ist, deckt
     /// früher auf, sobald alle festgelegt haben.
     pub const PRUEF_FENSTER_BLOECKE: u64 = BLOECKE_JE_EPOCHE / 4;
 
     /// ⚑ **Das Fenster einer Schiedsrunde** (T6d, 2026-10-29): eine Epoche
-    /// ab dem Abschluss des Auftrags, fest wie bei Arbitrum BoLD, gleich
-    /// wie viele stimmen. Das Nachrechnen einer Layer dauert Millisekunden;
+    /// ab dem Abschluss des Auftrags, fest, gleich wie viele stimmen. Das Nachrechnen einer Layer dauert Millisekunden;
     /// das Fenster ist für das Netz, nicht für die Rechnung.
     pub const SCHIED_FENSTER_BLOECKE: u64 = BLOECKE_JE_EPOCHE;
 

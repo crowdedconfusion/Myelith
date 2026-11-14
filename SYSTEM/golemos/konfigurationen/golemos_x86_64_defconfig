@@ -24,6 +24,9 @@ BR2_LINUX_KERNEL_NEEDS_HOST_LIBELF=y
 BR2_LINUX_KERNEL_USE_ARCH_DEFAULT_CONFIG=y
 # ⚑ Die Anzeige fuer die Oberflaechen-Schicht, fest eingebaut (siehe dort).
 BR2_LINUX_KERNEL_CONFIG_FRAGMENT_FILES="/eingabe/konfigurationen/kern-anzeige.fragment"
+# ⚑ `sign-file` des Kerns signiert die Module und braucht libcrypto auf dem
+#   Bauwirt (CONFIG_MODULE_SIG im Fragment, GolemOS 0.7.0).
+BR2_LINUX_KERNEL_NEEDS_HOST_OPENSSL=y
 
 # ⛔️ **Kein `BR2_LINUX_KERNEL_INSTALL_TARGET`.** 📌 Es legte den Kern ein
 #    zweites Mal ins Dateisystem, 40 MB von 152. Beim Start ueber

@@ -75,23 +75,56 @@ einer Taste direkt nach dem Einschalten öffnest:
 3. Im Menü den USB-Stick wählen (oft „UEFI: …" mit dem Namen des
    Sticks).
 
-### ⚠️ Wenn der Stick nicht startet: Secure Boot
+### Secure Boot: beim ersten Start einmal den Schlüssel eintragen
 
-Viele Rechner starten nur Systeme mit einer Signatur von Microsoft.
-GolemOS hat keine. Dann musst du **Secure Boot ausschalten**:
+Viele Rechner starten nur Software, die Microsoft signiert hat (Secure
+Boot). GolemOS startet über ein von Microsoft signiertes Startprogramm
+(`shim`) und bringt dazu seinen eigenen Schlüssel **Golem-Emet** mit. Den
+trägst du **einmal je Rechner** ein:
+
+1. Beim ersten Start meldet ein Kasten **„Verification failed: (0x1A)
+   Security Violation“**. Das ist richtig so: Der Rechner kennt Golem-Emet
+   noch nicht. Drücke **Enter** auf „OK“.
+2. Es erscheint ein blauer Bildschirm, **„Shim UEFI key management“**.
+   Drücke innerhalb von zehn Sekunden **eine Taste**.
+3. Wähle mit den Pfeiltasten **„Enroll key from disk“** und drücke Enter.
+4. Wähle den Datenträger (meist gibt es nur einen), dann den Ordner
+   **`EFI/`** und darin **`GOLEM-EMET.cer`**.
+5. Wähle **„View key 0“** und vergleiche: Unter **[Subject]** muss
+   **`CN=Golem-Emet`** stehen und unter **[Fingerprint]**
+   **`5D 0B E9 E3 64 B9 BF 8B B4 F5 37 D6 B6 C7 9C 0C C0 D2 F8 B9`**.
+   ⛔️ **Steht dort etwas anderes, brich ab** und trage nichts ein.
+6. Mit einer Taste zurück, dann **„Continue“**, bei „Enroll the key(s)?“
+   **„Yes“**, zum Schluss **„Reboot“**.
+
+Danach startet GolemOS auf diesem Rechner mit Secure Boot, ohne weitere
+Frage; auch eine Installation auf eine Platte desselben Rechners.
+
+#### Wenn das nicht geht: Secure Boot ausschalten
+
+Manche Rechner lassen keine eigenen Schlüssel zu oder sperren das
+Startprogramm von Microsoft. Dann **Secure Boot ausschalten**:
 
 1. Beim Einschalten die Taste für die Einstellungen drücken, meist
-   **F2** oder **Entf** (Del).
+   **F2**, **Entf** (Del), **F10**, **F12** oder **Esc**. Unter Windows
+   geht es auch ohne Taste: Einstellungen → System → Wiederherstellung →
+   Erweiterter Start → Jetzt neu starten → Problembehandlung → Erweiterte
+   Optionen → **UEFI-Firmwareeinstellungen**.
 2. Unter „Security" oder „Boot" den Eintrag **Secure Boot** suchen und
    auf **Disabled** stellen.
 3. Speichern (meist F10) und neu starten.
 
+⛔️ **Vorher den BitLocker-Schlüssel bereitlegen.** Auf vielen Rechnern mit
+Windows ist die Platte mit BitLocker verschlüsselt. Nach dem Umschalten von
+Secure Boot fragt Windows beim nächsten Start nach dem
+**Wiederherstellungsschlüssel**; ohne ihn kommst du nicht mehr an deine
+Daten. Er steht meist in deinem Microsoft-Konto
+(<https://aka.ms/myrecoverykey>). Schaltest du Secure Boot danach wieder
+ein, startet Windows wieder wie gewohnt.
+
 Auf Macs mit Intel-Prozessor und T2-Chip: im Wiederherstellungsmodus
 (⌘R beim Start) das „Startsicherheitsdienstprogramm" öffnen, **Keine
 Sicherheit** und **Starten von externen Medien erlauben** wählen.
-
-Dein Windows oder macOS startet danach ganz normal weiter; Secure Boot
-lässt sich jederzeit wieder einschalten.
 
 ---
 
@@ -346,7 +379,8 @@ vollständig da ist, kann es deshalb bis zu einer Minute dauern.
 | Was passiert | Was hilft |
 |---|---|
 | Der Rechner startet einfach Windows oder macOS | Startmenü nicht erwischt: gleich nach dem Einschalten mehrmals die Taste drücken (Schritt 2) |
-| Der Stick erscheint im Startmenü nicht, oder es kommt „Security Violation" | Secure Boot ausschalten (Schritt 2) |
+| Beim ersten Start kommt „Verification failed: (0x1A) Security Violation" | Golem-Emet einmal eintragen (Schritt 2, Secure Boot) |
+| Der Stick erscheint im Startmenü nicht, oder auch nach dem Eintragen kommt „Security Violation" | Secure Boot ausschalten (Schritt 2) |
 | „kein Klon gefunden" | Der Ordner liegt zu tief oder `INTEGER_LLM/scripts/build_artifacts.sh` fehlt darin. Im Assistenten **5** sucht noch einmal |
 | „UNVOLLSTAENDIG" | Es wurde nur ein Teil des Ordners kopiert. Den ganzen Myelith-Ordner kopieren (Schritt 4) |
 | Das Kopieren auf den Stick bricht ab | Meist an einem Ordner `.venv` oder an `SYSTEM/full-build`; diese weglassen (Schritt 4) |
@@ -387,4 +421,4 @@ in Arbeit.
   übrigen Pakete unter `/usr/share/licenses/`, mit einem Verzeichnis in
   `manifest.csv`. Zu jedem freigegebenen Abbild gehört außerdem dieses
   Verzeichnis (`lizenzen-<arch>.tar.xz`, neben dem Abbild) und ein Archiv
-  mit den Quellen, das derselben Freigabe beiliegt.
+  mit den Quellen, das der Freigabe `golemos-quellen` auf GitHub beiliegt.

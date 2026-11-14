@@ -14,7 +14,7 @@ startfähigen Datenträger erzeugen können.
 ⚑ **Die Grössenordnung trägt die Entscheidung**, nicht die Art der
 Sache. Projektregel 7 hält Gewichte und fremde Laufzeiten aus dem
 Repositorium heraus, und sie zielt auf das, was **riesig** ist: Die
-Gewichte wiegen 77 bis 165 GB. Dies hier sind **70 und 79 MB** je
+Gewichte wiegen 77 bis 165 GB. Dies hier sind **71 und 81 MB** je
 Architektur, jede Datei unter der Grenze von 100 MiB. Wer beides in dieselbe Kategorie steckt, hat
 die Regel gelesen und nicht verstanden.
 
@@ -34,26 +34,26 @@ Fassung, die Konfiguration und das Datum.
 
 ## Dieser Stand
 
-**Grund der Freigabe: GolemOS v0.6.1.** Gegenüber v0.2.0 vom 2026-09-25:
+**Grund der Freigabe: GolemOS v0.7.0, Secure Boot.** Gegenüber v0.6.1
+vom selben Tag:
 
-- **A/B-Umschaltung** (`golem-aktualisieren`): ein neues System auf die
-  zweite Seite, beim nächsten Start einmal zur Probe, bestätigt am Ende
-  eines gesunden Starts, sonst zurück; ein Kern je Seite.
-- **Seite B kommt leer** und wird beim ersten Start aus A gefüllt
-  (`S00seiteb`), damit das Abbild die Wurzel nicht zweimal trägt.
-- **Datenteil exFAT** statt FAT32; ein FAT32-Datenteil eines früheren
-  Stands bleibt, was er ist.
-- **Lizenztexte aller Pakete im Abbild** (`/usr/share/licenses/`, dazu
-  `/usr/share/golemos/LIZENZEN.txt`); das Verzeichnis liegt außerdem als
-  `lizenzen-<arch>.tar.xz` daneben.
-- Entschlackt: Programme ohne Symbole, Kernmodule gepackt, echtes `xz`
-  und `kmod`. Dazu aus den Ständen dazwischen: Knoten als Dienst
-  (`golem-knoten`), udev und seatd für die Oberflächen-Schicht.
+- **Startet mit eingeschaltetem Secure Boot.** Die Firmware startet
+  `shim` 16.1 aus Debian 13, unverändert und von Microsoft unter der
+  UEFI CA 2011 und 2023 signiert; shim startet GRUB, GRUB den Kern, beide
+  mit dem eigenen Schlüssel **Golem-Emet** signiert. Ein Rechner trägt
+  Golem-Emet beim ersten Start einmal über den MokManager ein; das
+  Zertifikat liegt als `EFI/GOLEM-EMET.cer` auf der Bootpartition.
+  Fingerabdruck SHA-1 `5D:0B:E9:E3:64:B9:BF:8B:B4:F5:37:D6:B6:C7:9C:0C:C0:D2:F8:B9`.
+- **GRUB mit SBAT** (`grub,5`, `grub.golemos,1`).
+- **Der Kern lädt nur signierte Module** und läuft immer unter Lockdown
+  „integrity“, auch ohne Secure Boot.
+- Wer Secure Boot ausgeschaltet lässt, merkt keinen Unterschied.
 
-⛔️ **Die Quellen gehören an dieselbe Freigabe** (`quellen-<arch>.tar`,
+⛔️ **Die Quellen gehören dazu** (`quellen-<arch>.tar`,
 je rund 0,7 GB, aus `auskunft.sh`): Das Abbild enthält Teile unter der
 GPL. Zu groß fürs Repositorium, deshalb als Anhang der Freigabe
-[GolemOS v0.6.1](https://github.com/crowdedconfusion/Myelith/releases/tag/golemos-v0.6.1);
+[GolemOS: Quellen](https://github.com/crowdedconfusion/Myelith/releases/tag/golemos-quellen);
+dieselben Archive wie zu v0.6.1, denn kein Paket hat sich geändert;
 was dort liegt und wie man es prüft, steht in `SYSTEM/golemos/Quellarchiv/README.md`.
 
 | | |
@@ -62,44 +62,51 @@ was dort liegt und wie man es prüft, steht in `SYSTEM/golemos/Quellarchiv/READM
 | Buildroot | 2026.08.1 |
 | Kern | Linux 7.1.13 |
 | GRUB | 2.14 |
+| shim | 16.1 aus Debian 13 (`shim-signed` 1.51~1+deb13u1), MokManager aus `shim-helpers-*-signed` |
 | Programme | `myelith`, `myl`, `myl-node` und `golem-einrichten` 0.5.0, statisch gegen musl (Alpine, Rust 1.99.1), ohne Symbole |
 
 | Architektur | Nenngröße | belegt | gepackt |
 |---|---|---|---|
-| `x86_64` | 1040 MB | 210 MB | **70,3 MB** |
-| `aarch64` | 1040 MB | 271 MB | **79,3 MB** |
+| `x86_64` | 1040 MB | 212 MB | **70,8 MB** |
+| `aarch64` | 1040 MB | 290 MB | **80,9 MB** |
 
 ### Was belegt ist, und wodurch
 
 Genau diese beiden Abbilder, vor dem Packen (entpackt bitgleich, gegen
 die SHA-256 geprüft), unter QEMU 11.1.3 mit UEFI (edk2), ohne Netz,
-bedient über die serielle Leitung, je Architektur 17 Starts:
+bedient über die serielle Leitung. Mit Secure Boot: die Firmware von
+Debian mit den Schlüsseln von Microsoft, je Architektur 15 Starts; ohne
+Secure Boot je 17 Starts.
 
 | | x86_64 | aarch64 |
 |---|---|---|
-| erster Start: Wurzel vor jedem Dienst kurz schreibgeschützt, B gefüllt, beide Seiten mit demselben Stand; beim zweiten Start kein zweites Füllen | ✓ | ✓ |
-| Datenteil exFAT, eine Datei überlebt den nächsten Start | ✓ | ✓ |
-| ein FAT32-Datenteil wie aus einem früheren Stand bleibt FAT32 samt Inhalt | ✓ | ✓ |
-| echtes `xz`, `modprobe` von kmod, ein gepacktes Modul geladen | ✓ | ✓ |
-| einspielen, Probe bestätigt, Probe abgebrochen und zurück, kaputte Seite und zurück, `status` warnt | ✓ | ✓ |
-| Installation verweigert bei verschiedenen Ständen, danach installiert (Datenteil exFAT), die Platte startet allein | ✓ | ✓ |
-| Lizenzseite, Verzeichnis und Lizenztexte von Kern, GRUB, BusyBox im Abbild | ✓ (Prüfung im Bau) | ✓ (Prüfung im Bau) |
-| „Paris" mit `myl frage`, Modell von einer zweiten Platte | nicht geprüft | ✓ |
+| mit Secure Boot: ein unsigniertes Abbild wird abgewiesen | nicht geprüft | ✓ |
+| mit Secure Boot: shim weist GRUB zunächst ab, Golem-Emet über den MokManager eingetragen (Fingerabdruck geprüft), danach GRUB und Kern, `SecureBoot`=1 im System | ✓ | ✓ |
+| mit Secure Boot: einspielen, Probe bestätigt, Probe abgebrochen und zurück, kaputte Seite und zurück | ✓ | ✓ |
+| mit Secure Boot: Installation, die installierte Platte startet allein | ✓ | ✓ |
+| ohne Secure Boot: erster Start mit kurz schreibgeschützter Wurzel, B gefüllt, beide Seiten mit demselben Stand; beim zweiten Start kein zweites Füllen | ✓ | ✓ |
+| ohne Secure Boot: Datenteil exFAT, eine Datei überlebt den nächsten Start; ein FAT32-Datenteil eines früheren Stands bleibt FAT32 samt Inhalt | ✓ | ✓ |
+| ohne Secure Boot: echtes `xz`, `modprobe` von kmod, ein gepacktes (signiertes) Modul geladen | ✓ | ✓ |
+| ohne Secure Boot: A/B-Kette und Installer-Kette wie oben | ✓ | ✓ |
+| Lizenzseite, Verzeichnis und Lizenztexte von Kern, GRUB, BusyBox und shim im Abbild | ✓ (Prüfung im Bau) | ✓ (Prüfung im Bau) |
+| „Paris" mit `myl frage`, Modell von einer zweiten Platte | nicht geprüft | zuletzt mit v0.6.1 |
 | Myelith-Ordner auf dem Stick, Konsole ohne Installation, `spread.sh` | zuletzt mit v0.2.0 | zuletzt mit v0.2.0 |
-| Datenteil unter macOS und Windows | nicht geprüft (exFAT ist neu) | nicht geprüft |
+| Datenteil unter macOS und Windows | nicht geprüft | nicht geprüft |
 
 ⚠️ **Geprüft in QEMU, nicht auf echter Hardware.** Ein Abbild, das
 unter Emulation startet, startet meistens auch auf Blech; aber
 „meistens" ist kein Beleg, und der Kern trägt die Treibervorgabe seiner
-Architektur, nicht die einer bestimmten Maschine.
+Architektur, nicht die einer bestimmten Maschine. Für Secure Boot gilt
+das doppelt: Manche Firmware verlangt mehr, als die nachgebildete prüft.
 
 **Enthält:** Kern, glibc, BusyBox, `curl` mit OpenSSL, util-linux,
 eudev, seatd, `kmod`, `xz`, `dosfstools`, `exfatprogs`, `kbd`, GRUB 2.14,
-und darauf `myelith`, `myl`, `myl-node` und `golem-einrichten`.
+shim und MokManager, und darauf `myelith`, `myl`, `myl-node` und
+`golem-einrichten`.
 
 **Enthält nicht:** Modelle, Gewichte, den Myelith-Ordner, die
-Oberflächen-Schicht. Der Ordner kommt nach dem ersten Start auf
-**Golem**.
+Oberflächen-Schicht, den geheimen Teil von Golem-Emet. Der Ordner kommt
+nach dem ersten Start auf **Golem**.
 
 ## Nachbauen
 

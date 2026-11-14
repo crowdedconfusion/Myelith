@@ -44,3 +44,21 @@ CONFIG_MODULE_COMPRESS_ALL=y
 #    jedes fremde Laufwerk mit exFAT, wie es externe Platten ab Werk tragen.
 #    Fest und nicht als Modul, weil `S05daten` vor `udevd` laeuft.
 CONFIG_EXFAT_FS=y
+
+# ⛔️ **Secure Boot traegt nur bis zum Kern, wenn der Kern dicht ist**
+#    (GolemOS 0.7.0). Signiert sind shim, GRUB und der Kern; laedt der Kern
+#    danach jedes Modul und laesst sich zur Laufzeit umschreiben, hat die
+#    Kette nichts gekostet und nichts geschuetzt.
+#    ⚑ Module nur mit Unterschrift: Der Bau erzeugt einen eigenen
+#    Modulschluessel, signiert jedes Modul vor dem Packen und legt den
+#    oeffentlichen Teil in den Kern; der private Teil bleibt im Baubaum.
+#    ⚑ Lockdown „integrity" immer, auch ohne Secure Boot: kein
+#    `/dev/mem`, kein Nachladen eines fremden Kerns, keine Ruhezustaende,
+#    die ein veraendertes Abbild zurueckbraechten.
+CONFIG_MODULE_SIG=y
+CONFIG_MODULE_SIG_FORCE=y
+CONFIG_MODULE_SIG_ALL=y
+CONFIG_MODULE_SIG_SHA256=y
+CONFIG_SECURITY_LOCKDOWN_LSM=y
+CONFIG_SECURITY_LOCKDOWN_LSM_EARLY=y
+CONFIG_LOCK_DOWN_KERNEL_FORCE_INTEGRITY=y

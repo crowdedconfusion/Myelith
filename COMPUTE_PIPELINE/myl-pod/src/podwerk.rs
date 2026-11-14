@@ -407,7 +407,7 @@ fn mitglied_bereit(relais: SocketAddr, ausweis: &Ausweis, adressen: &[PeerIdByte
 }
 
 /// ⚑ **Die Besetzung des Pods, mit Ersatz aus der Reserve** (Whitepaper 6.8,
-/// Festlegung des Projektinhabers vom 2026-10-28, wie Petals: der Weg ersetzt
+/// Festlegung des Projektinhabers vom 2026-10-28: der Weg ersetzt
 /// sofort). Meldet ein Mitglied seinen Bereich nicht, bittet das Podwerk über
 /// die Relaisleitung das nächste Reservemitglied, die Position zu übernehmen;
 /// dessen Knoten prüft das gegen die Kette und startet den Shard. Meldet die

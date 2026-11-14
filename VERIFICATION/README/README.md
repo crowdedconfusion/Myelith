@@ -1,7 +1,7 @@
 # verification (`myl-verifier`)
 
-> **Version:** 0.29.0
-> **Datum:** 2026-11-08
+> **Version:** 0.29.1
+> **Datum:** 2026-11-14
 > **Status:** 🎉 **Phasen 1, 2 und 3 abgeschlossen** (Punkte 1.1–1.3,
 > 2.1–2.5, 3.1–3.6), Phase 4 zu drei Vierteln (4.1, 4.2 und 4.4 ✅,
 > 4.3 ✅ seit 2026-08-24): Redundanzvergleich (Stufe 1),
@@ -145,6 +145,10 @@ gegen zwei eingebaute Fehler geeicht worden (Grenzverschiebung um eins,
 umgedrehter Vergleich); beide fliegen auf.
 
 ## Changelog
+
+### v0.29.1 (2026-11-14): Ohne fremde Projekte als Begründung
+
+- Die Begründung, warum die Kontrollsegmente entfielen (`lib.rs` und dieses README), stützte sich auf fremde Projekte; sie steht jetzt für sich: Nicht der Auftraggeber wählt, sondern ein BFT-Zufallsverfahren. Kein Verhalten geändert.
 
 ### v0.29.0 (2026-11-08): Der Beleg des Angeklagten in falscher Länge
 
@@ -403,10 +407,8 @@ Tests in `tests/simulation.rs`.
 ⚑ **Der Grund ist kein Mangel an ihnen, sondern einer an der Rolle, die
 sie voraussetzten.** Kap. 6.7 legt die Einschleusung den Gateways zu,
 und das trägt nicht: Ein Gateway hat nichts zu verlieren, ein
-selbstbetriebenes speist gar nichts ein. **Truebit** schließt den
-Auftraggeber aus demselben Grund ausdrücklich vom Wissen aus,
-**Proof of Sampling** ersetzt ihn durch ein BFT-Zufallsverfahren, und
-Myelith hat dieses Verfahren seit Punkt 44 im Block.
+selbstbetriebenes speist gar nichts ein. Deshalb wählt nicht der
+Auftraggeber, sondern ein BFT-Zufallsverfahren, und Myelith hat dieses Verfahren seit Punkt 44 im Block.
 
 ⚑ **Und beim Nebeneinanderlegen stand der Mechanismus zweimal da.**
 Kontrollsegmente und Stufe 2 haben dieselbe Form, denselben Zweck und

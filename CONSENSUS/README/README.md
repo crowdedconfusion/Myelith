@@ -1,8 +1,8 @@
 # consensus (`myl-consensus` + `myl-ledger` + `myl-scheduler`)
 
-> **Version:** 0.87.0 (`myl-consensus` 0.52.0, `myl-scheduler` 0.19.2,
-> `myl-ledger` 0.57.0)
-> **Datum:** 2026-11-08
+> **Version:** 0.87.1 (`myl-consensus` 0.52.0, `myl-scheduler` 0.19.2,
+> `myl-ledger` 0.57.1)
+> **Datum:** 2026-11-14
 > **Status:** Design-Entscheidungen getroffen (malachite hinter
 > trait-Grenze mit Eigenbau-Fallback, Blockzeit 2 s, Komitee 21/7,
 > Streitfrist 7 Tage, Reed-Solomon k=8/m=4);
@@ -107,6 +107,10 @@ myl-consensus/tests/
 ```
 
 ## Changelog
+
+### v0.87.1 (2026-11-14): Ohne fremde Projekte als Vorbild (`myl-ledger` 0.57.1)
+
+- Die festen Fristen eines Prüfauftrags (`pruefung.rs`, Modulkopf und Feld `frist`) und zwei Einträge dieses Changelogs (Wurzel v3, Schiedsrunde) nannten fremde Projekte als Vorbild; die Aussage steht jetzt für sich. Kein Verhalten geändert.
 
 ### v0.87.0 (2026-11-08): Was ein Konto verbrannt hat (`myl-ledger` 0.57.0)
 
@@ -570,8 +574,7 @@ Köpfe haben.
 ### v0.68.0 (2026-10-29): Zustandslos prüfen, leere Konten fallen weg (`myl-ledger` 0.38.0)
 
 - ⚑ **Zwei Bäume, Wurzel v3** (zustandslose Validierung, Festlegung des
-  Projektinhabers vom 2026-10-29, nach dem Vorbild von NEAR, eigene
-  Umsetzung): `SHA-256("myelith-zustand-v3" ‖ SHA-256(Kopf) ‖ kleine Wurzel
+  Projektinhabers vom 2026-10-29): `SHA-256("myelith-zustand-v3" ‖ SHA-256(Kopf) ‖ kleine Wurzel
   ‖ grosse Wurzel)`. Der **grosse** Baum trägt, was mit den Teilnehmern
   wächst (`GROSSE_SAMMLUNGEN`: Konten, Sitzungen, Speicher,
   Hinterlegungen, Ablauffächer); der **kleine** die Register, die mit den
@@ -717,7 +720,7 @@ Köpfe haben.
   Stimmsatz steht, sagt die Kette) und **`streitfaelle_entscheiden`**:
   mehr als zwei Drittel des Gewichts für eine Seite entscheiden
   (`PodFalsch`, `AnfechtungFalsch`), ohne Mehrheit bis zur Frist verfällt
-  der Fall. Das feste Fenster folgt Arbitrum BoLD.
+  der Fall. Das Fenster ist fest, gleich wer wann einreicht.
 - **`Anweisung::SchiedsstimmeAbgeben`** (angehängt).
 - Neu im Zustand (angehängt): `streitfaelle`; `Besetzung` als Typname.
 - Tests: `das_komitee_entscheidet_mit_mehr_als_zwei_dritteln_oder_der_fall_verfaellt`,

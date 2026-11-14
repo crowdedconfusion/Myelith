@@ -1,7 +1,7 @@
 # compute-pipeline (`myl-pod`, `myl-dispatcher`)
 
-> **Version:** 0.61.0 (`myl-pod` 0.52.0, `myl-dispatcher` 0.11.2)
-> **Datum:** 2026-11-11
+> **Version:** 0.61.1 (`myl-pod` 0.52.1, `myl-dispatcher` 0.11.2)
+> **Datum:** 2026-11-14
 > **Status:** Phase 1 vollständig, Phase 2.1, **Phase 3 vollständig**
 > (3.1 bis 3.3) und Punkt 4.3. `shard_loop` mit Spur-Hashes und
 > Manipulationserkennung, `coordinator_loop` mit Micro-Batching,
@@ -106,6 +106,10 @@ COMPUTE_PIPELINE/
 ```
 
 ## Changelog
+
+### v0.61.1 (2026-11-14): Ohne fremdes Projekt als Vorbild (`myl-pod` 0.52.1)
+
+- Der Kommentar zur Besetzung des Pods mit Ersatz aus der Reserve (`podwerk.rs`) nannte ein fremdes Projekt als Vorbild; die Begründung steht jetzt für sich. Kein Verhalten geändert.
 
 ### v0.61.0 (2026-11-11): Der Epochenwechsel hat einen Weg, nicht zwei (`myl-pod` 0.52.0)
 

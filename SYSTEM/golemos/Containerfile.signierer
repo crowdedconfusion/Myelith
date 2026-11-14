@@ -1,0 +1,14 @@
+# Das Signierwerkzeug fuer Secure Boot, auf der Bauumgebung von GolemOS.
+#
+#   docker build -t golemos-signierer - < SYSTEM/golemos/Containerfile.signierer
+#
+# ⚑ **Ein eigenes Bild, nicht der Baumeister selbst.** Wer den Baumeister neu
+# baut, bekommt neue Fassungen aller Werkzeuge darin; hier kommt nur
+# `sbsigntool` dazu (`sbsign`, `sbverify`). Einmal mit Netz gebaut, signiert
+# es danach ohne Netz, wie die anderen Bauumgebungen.
+FROM golemos-baumeister
+USER root
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends sbsigntool \
+ && rm -rf /var/lib/apt/lists/*
+USER baumeister

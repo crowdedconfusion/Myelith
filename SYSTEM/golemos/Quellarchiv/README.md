@@ -4,8 +4,15 @@ Die Abbilder unter `abbild/fertig/` enthalten Software unter der GPL, darunter
 den Kern Linux, BusyBox und GRUB. Wer sie bekommt, bekommt hier auch die
 Quellen genau dieser Fassungen.
 
-**Wo:** als Anhang der Freigabe **GolemOS v0.6.1** auf GitHub,
-<https://github.com/crowdedconfusion/Myelith/releases/tag/golemos-v0.6.1>.
+**Wo:** als Anhang der Freigabe **GolemOS: Quellen** auf GitHub,
+<https://github.com/crowdedconfusion/Myelith/releases/tag/golemos-quellen>.
+
+Die Freigabe trägt bewusst keine Fassung: Mehrere Abbilder teilen sich
+dieselben Quellen, solange kein Paket sich ändert, und ihre Beschreibung
+nennt, zu welchen Fassungen von GolemOS die Archive gehören (heute v0.6.1
+und v0.7.0). Ändert sich ein Paket, kommen die neuen Archive mit eigenem
+Namen dazu; die alten bleiben, solange ein Abbild aus der Geschichte des
+Repositoriums sie braucht.
 
 | Datei | Inhalt |
 |---|---|

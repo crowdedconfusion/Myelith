@@ -1,7 +1,7 @@
 # Protokollsimulation und Sicherheitsaudit
 
-> **Version:** `myl-simulation` 0.2.0
-> **Datum:** 2026-11-14 (Zeitmessung für den Skalarkörper)
+> **Version:** `myl-simulation` 0.2.1
+> **Datum:** 2026-11-14
 > **Status:** Ein Szenario läuft (Segmentweg über alle Schichten) mit
 > Abdeckungsbericht. `latency_sim.py` und `security_sim.py` laufen seit
 > dem 2026-09-01 und **behaupten**, statt nur zu drucken.
@@ -45,6 +45,10 @@ Aufschaukeln über Layer in B.5.6, und B.8 seit dem Entfernen von
 `genesis_supply_sim.py`.
 
 ## Changelog
+
+### 0.2.1 (2026-11-14): Sicherheitsaudit ohne fremde Projekte als Vorbild
+
+- A34 im Sicherheitsaudit nannte fremde Netze als Vorbild für das endgültige Tilgen eines Doppelsigners; die Aussage steht jetzt für sich. Am Werkzeug nichts geändert.
 
 ### 0.2.0 (2026-11-14): Eine Zeitmessung für den Skalarkörper
 

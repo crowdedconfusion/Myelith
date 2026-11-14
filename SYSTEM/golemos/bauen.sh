@@ -204,6 +204,22 @@ echo "   alle vier statisch gebunden"
 # ── 2 bis 4. Buildroot holen, konfigurieren, bauen ──────────────────
 #
 # Alles in EINEM Behaelterlauf, damit der Baubaum im Volumen bleibt.
+# ⚑ **Gebaut wird im Signierbild** (GolemOS 0.7.0): der Baumeister mit
+#   `sbsigntool`, einmal mit Netz erstellt (`Containerfile.signierer`).
+#   ⛔️ **Den geheimen Teil von Golem-Emet haengt nur ein, wer ihn hat**, und
+#   nur ueber `GOLEM_SCHLUESSEL` (der Ordner mit `golem-emet.key`, nur lesbar
+#   eingehaengt). Ohne ihn entsteht ein unsigniertes Abbild, das nur mit
+#   ausgeschaltetem Secure Boot startet; `nach-dem-abbild.sh` sagt das laut.
+SIGNIERER=golemos-signierer
+if ! docker image inspect "$SIGNIERER" >/dev/null 2>&1; then
+  echo "── Signierbild erstellen (einmal mit Netz)"
+  docker build -q -t "$SIGNIERER" - < "$HIER/Containerfile.signierer" >/dev/null
+fi
+if [ -n "${GOLEM_SCHLUESSEL:-}" ] && [ ! -f "$GOLEM_SCHLUESSEL/golem-emet.key" ]; then
+  echo "⛔️ GOLEM_SCHLUESSEL=$GOLEM_SCHLUESSEL: dort liegt kein golem-emet.key (Laufwerk eingehaengt?)" >&2
+  exit 9
+fi
+
 echo "── Buildroot $BUILDROOT_FASSUNG im Volumen $VOLUMEN"
 docker volume create "$VOLUMEN" >/dev/null
 # ⛔️ **Ein frisches Volumen gehoert root, der Bau laeuft aber nicht als
@@ -229,7 +245,8 @@ docker run --rm -i \
   -e ARCH="$ARCH" \
   -e FASSUNG="$BUILDROOT_FASSUNG" \
   -e SUMME="$BUILDROOT_SUMME" \
-  golemos-baumeister sh -s <<'IMBEHAELTER'
+  ${GOLEM_SCHLUESSEL:+-v "$GOLEM_SCHLUESSEL:/schluessel:ro"} \
+  "$SIGNIERER" sh -s <<'IMBEHAELTER'
 set -eu
 BR="/bau/buildroot-$FASSUNG"
 
@@ -400,6 +417,9 @@ make -C "$BR" legal-info >/dev/null
 install -d /bau/overlay/usr/share/licenses
 cp -a "$BR/output/legal-info/licenses/." /bau/overlay/usr/share/licenses/
 cp "$BR/output/legal-info/manifest.csv" /bau/overlay/usr/share/licenses/
+# ⚑ shim liegt nicht in Buildroot (unveraendert von Debian, `abbild/shim/`),
+#   also kennt `legal-info` es nicht; sein Hinweis kommt von Hand dazu.
+install -D -m 0644 /eingabe/abbild/shim/COPYRIGHT-shim /bau/overlay/usr/share/licenses/shim-16.1/COPYRIGHT
 
 echo "── Bauen mit $(nproc) Faeden"
 make -C "$BR" -j"$(nproc)"
@@ -466,10 +486,32 @@ done
 #   es soll.
 [ -s "$BR/output/target/usr/share/licenses/manifest.csv" ] && [ -s "$BR/output/target/usr/share/golemos/LIZENZEN.txt" ] \
   || { echo "   ⛔️ Verzeichnis der Pakete oder LIZENZEN.txt fehlt im Abbild" >&2; fehlt=$((fehlt + 1)); }
-for p in linux grub2 busybox; do
+for p in linux grub2 busybox shim; do
   ls -d "$BR/output/target/usr/share/licenses/$p-"[0-9]* >/dev/null 2>&1 \
     || { echo "   ⛔️ Lizenztext von $p fehlt unter /usr/share/licenses" >&2; fehlt=$((fehlt + 1)); }
 done
+# ⛔️ **Jedes Modul traegt seine Unterschrift** (CONFIG_MODULE_SIG_FORCE):
+#    Ein Kern, der nur signierte Module laedt, haette sonst keine Treiber.
+#    Die Unterschrift steht am Ende des entpackten Moduls.
+for m in $(find "$BR"/output/target/lib/modules -name '*.ko.xz' 2>/dev/null | head -5); do
+  xz -dc "$m" | tail -c 28 | grep -q "Module signature appended" \
+    || { echo "   ⛔️ $m ist nicht signiert" >&2; fehlt=$((fehlt + 1)); }
+done
+# ⛔️ **Mit Schluessel: die ganze Kette signiert.** shim von Microsoft, GRUB
+#    und Kern von Golem-Emet; ohne Schluessel GRUB direkt unter dem Startnamen.
+EFI="$BR/output/images/efi-part/EFI"
+ZERT=/eingabe/abbild/shim/GOLEM-EMET.crt
+case "$ARCH" in x86_64) A=x64; GROSS=X64; K=bzImage ;; *) A=aa64; GROSS=AA64; K=Image ;; esac
+if [ -f /schluessel/golem-emet.key ]; then
+  sbverify --list "$EFI/BOOT/BOOT$GROSS.EFI" 2>/dev/null | grep -q "Microsoft UEFI CA 2023" \
+    || { echo "   ⛔️ BOOT$GROSS.EFI ist nicht das shim von Microsoft" >&2; fehlt=$((fehlt + 1)); }
+  for f in "$EFI/BOOT/grub$A.efi" "$BR/output/images/$K"; do
+    sbverify --cert "$ZERT" "$f" >/dev/null 2>&1 \
+      || { echo "   ⛔️ $f ist nicht mit Golem-Emet signiert" >&2; fehlt=$((fehlt + 1)); }
+  done
+  [ -s "$EFI/BOOT/mm$A.efi" ] && [ -s "$EFI/GOLEM-EMET.cer" ] \
+    || { echo "   ⛔️ MokManager oder GOLEM-EMET.cer fehlt auf der Bootpartition" >&2; fehlt=$((fehlt + 1)); }
+fi
 # ⛔️ **Gepackte Module brauchen die echten Werkzeuge** (GolemOS 0.6.1).
 #    Die BusyBox-Fassungen liegen unter denselben Namen und wuerden die
 #    Suche oben bestehen; `modprobe` liest dann kein `.ko.xz`, und `xz`

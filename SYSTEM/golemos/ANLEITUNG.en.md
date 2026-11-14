@@ -77,22 +77,53 @@ after switching on:
 2. Switch it on and immediately press the key several times.
 3. Choose the USB stick in the menu (often "UEFI: …" with its name).
 
-### ⚠️ If the stick does not start: Secure Boot
+### Secure Boot: enrol the key once on the first start
 
-Many computers only start systems signed by Microsoft. GolemOS is not
-signed, so you need to **turn off Secure Boot**:
+Many computers only start software that Microsoft has signed (Secure
+Boot). GolemOS starts through a boot program signed by Microsoft (`shim`)
+and brings its own key **Golem-Emet**. You enrol it **once per computer**:
 
-1. While switching on, press the key for the settings, usually **F2**
-   or **Del**.
+1. On the first start a box reports **"Verification failed: (0x1A)
+   Security Violation"**. That is expected: the computer does not know
+   Golem-Emet yet. Press **Enter** on "OK".
+2. A blue screen appears, **"Shim UEFI key management"**. Press **any
+   key** within ten seconds.
+3. Use the arrow keys to choose **"Enroll key from disk"** and press
+   Enter.
+4. Choose the drive (usually there is only one), then the folder
+   **`EFI/`** and in it **`GOLEM-EMET.cer`**.
+5. Choose **"View key 0"** and compare: under **[Subject]** it must say
+   **`CN=Golem-Emet`**, and under **[Fingerprint]**
+   **`5D 0B E9 E3 64 B9 BF 8B B4 F5 37 D6 B6 C7 9C 0C C0 D2 F8 B9`**.
+   ⛔️ **If it says anything else, stop** and enrol nothing.
+6. Press a key to go back, then **"Continue"**, at "Enroll the key(s)?"
+   **"Yes"**, and finally **"Reboot"**.
+
+From then on GolemOS starts on this computer with Secure Boot, without
+asking again; so does an installation on a disk of the same computer.
+
+#### If that does not work: turn off Secure Boot
+
+Some computers do not allow own keys or block Microsoft's boot program.
+Then **turn off Secure Boot**:
+
+1. While switching on, press the key for the settings, usually **F2**,
+   **Del**, **F10**, **F12** or **Esc**. On Windows it also works without
+   the key: Settings → System → Recovery → Advanced startup → Restart now
+   → Troubleshoot → Advanced options → **UEFI Firmware Settings**.
 2. Under "Security" or "Boot", set **Secure Boot** to **Disabled**.
 3. Save (usually F10) and restart.
+
+⛔️ **Have your BitLocker key at hand first.** On many Windows computers
+the disk is encrypted with BitLocker. After Secure Boot is switched,
+Windows asks for the **recovery key** on its next start; without it you
+cannot reach your data. It is usually stored in your Microsoft account
+(<https://aka.ms/myrecoverykey>). Once you turn Secure Boot back on,
+Windows starts as usual again.
 
 On Intel Macs with a T2 chip: in recovery mode (⌘R at startup) open
 "Startup Security Utility" and choose **No Security** and **Allow
 booting from external media**.
-
-Windows or macOS keep starting normally afterwards; you can turn Secure
-Boot back on at any time.
 
 ---
 
@@ -334,7 +365,8 @@ to a minute until it is complete.
 | What happens | What helps |
 |---|---|
 | The computer just starts Windows or macOS | The boot menu was missed: press the key several times right after switching on (step 2) |
-| The stick is missing from the boot menu, or "Security Violation" appears | Turn off Secure Boot (step 2) |
+| On the first start "Verification failed: (0x1A) Security Violation" appears | Enrol Golem-Emet once (step 2, Secure Boot) |
+| The stick is missing from the boot menu, or "Security Violation" still appears after enrolling | Turn off Secure Boot (step 2) |
 | "kein Klon gefunden" (no folder found) | The folder is too deep or lacks `INTEGER_LLM/scripts/build_artifacts.sh`. Choose **5** in the assistant to search again |
 | "UNVOLLSTAENDIG" (incomplete) | Only part of the folder was copied. Copy the whole Myelith folder (step 4) |
 | Copying onto the stick stops | Usually at a `.venv` folder or at `SYSTEM/full-build`; leave those out (step 4) |
@@ -373,4 +405,4 @@ so far; M4 and M5 are in progress.
   under `/usr/share/doc/myelith/`, those of all other packages under
   `/usr/share/licenses/`, with a list in `manifest.csv`. Every released
   image also comes with that list (`lizenzen-<arch>.tar.xz`, next to the
-  image) and an archive of the sources, attached to the same release.
+  image) and an archive of the sources, attached to the GitHub release `golemos-quellen`.

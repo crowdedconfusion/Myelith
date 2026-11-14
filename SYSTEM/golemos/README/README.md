@@ -1,6 +1,6 @@
 # golemos (die Linux-Distribution, die nur Myelith bedient)
 
-> **Version:** 0.6.2 (`golem-einrichten` 0.5.0)
+> **Version:** 0.7.0 (`golem-einrichten` 0.5.0)
 > **Datum:** 2026-11-14
 > **Status:** Startet vom Stick und von Platte, findet einen
 > Myelith-Ordner auf dem Stick oder einem zweiten Laufwerk und
@@ -9,8 +9,9 @@
 > 0.3.0 betreibt es einen **Myelith-Knoten** als Dienst (`golem-knoten`,
 > unter QEMU belegt) und nimmt eine **Oberflächen-Schicht** dazu
 > (`golem-schicht`, das Myelith-Fenster im Vollbild). Seit 0.6.0 mit
-> A/B-Umschaltung. Offen: ein Lauf auf echter Hardware, Secure Boot,
-> eine eigene Kernkonfiguration.
+> A/B-Umschaltung, seit 0.7.0 mit Secure Boot über den eigenen
+> Schlüssel Golem-Emet. Offen: ein Lauf auf echter Hardware, eine eigene
+> Kernkonfiguration.
 
 Wie GolemOS gebaut wird und warum es so aussieht, steht in
 [`../README.md`](../README.md). Hier stehen der Weg für Menschen und der
@@ -75,7 +76,7 @@ betreibt.
 Zwei Wurzeln (`golem-wurzelA`, `golem-wurzelB`), jede mit ihrem eigenen
 Kern auf der Bootpartition (`Image-A`/`Image-B` bzw. `bzImage-…`). Eine
 Aktualisierung schreibt auf die ruhende Seite und startet sie **einmal zur
-Probe**, wie RAUC, Mender oder ChromeOS es tun:
+Probe**; erst ein gesunder Start macht sie zur festen Seite:
 
 | Wer | Was |
 |---|---|
@@ -123,6 +124,63 @@ sie tut, soll sich in ihrem eigenen Quelltext lesen lassen.
 ---
 
 ## Changelog
+
+### v0.7.0 (2026-11-14): Secure Boot mit eigenem Schlüssel Golem-Emet
+
+- ⚑ **GolemOS startet mit Secure Boot** (Entscheidung des Projektinhabers:
+  Weg B). Die Firmware startet `shim` aus Debian 13 (16.1, unverändert,
+  von Microsoft doppelt signiert unter der UEFI CA 2011 und 2023,
+  `abbild/shim/` samt Herkunft und Lizenz BSD-2-Clause); shim startet GRUB,
+  GRUB den Kern, beide mit dem eigenen Schlüssel **Golem-Emet** signiert.
+  Ein Rechner trägt Golem-Emet beim ersten Start einmal über den MokManager
+  ein (`EFI/GOLEM-EMET.cer` auf der Bootpartition); danach startet der Stick
+  und jede Installation darauf ohne Frage.
+- **GRUB mit SBAT:** `nach-dem-abbild.sh` erzeugt GRUB mit denselben
+  Modulen neu und mit `--sbat` (`grub,5`, `grub.golemos,1`); die
+  Sperrliste von shim verlangt `grub,5`.
+- **Der Kern ist dicht:** Module nur mit Unterschrift
+  (`CONFIG_MODULE_SIG_FORCE`, eigener Modulschlüssel je Bau) und Lockdown
+  „integrity" immer, auch ohne Secure Boot.
+- **Signiert wird nur mit dem Schlüssel:** `bauen.sh` baut im neuen Bild
+  `golemos-signierer` (`Containerfile.signierer`, `sbsigntool`) und hängt
+  den geheimen Teil nur über `GOLEM_SCHLUESSEL` und nur lesbar ein; er muss
+  zum öffentlichen Teil `abbild/shim/GOLEM-EMET.crt` passen. Ohne ihn
+  entsteht ein unsigniertes Abbild wie bisher, mit lauter Warnung. Die
+  Nachzählung prüft Modulsignaturen und die ganze Kette.
+- 📌 **Zwei Zertifikate verworfen, bevor eines trug.** Das erste trug die
+  Verwendung für Kernmodule (`1.3.6.1.4.1.2312.16.1.2`); shim lehnt solche
+  Zertifikate für Startdateien ab (`verify_eku`), obwohl `sbverify` und
+  OpenSSL 3 und 4 die Signatur annehmen. Gefunden mit `SHIM_VERBOSE` unter
+  QEMU: Der Hash von shim und der unserer Signatur stimmten, die Prüfung
+  des Zertifikats scheiterte. Das gültige ist eine CA mit keyCertSign und
+  nur Code-Signing; Fingerabdruck SHA-1
+  `5D:0B:E9:E3:64:B9:BF:8B:B4:F5:37:D6:B6:C7:9C:0C:C0:D2:F8:B9`.
+- **Anleitung:** Golem-Emet in sechs Schritten eintragen, mit Name und
+  Fingerabdruck zum Vergleich; als Ausweg Secure Boot ausschalten, mit dem
+  Weg über Windows und der Warnung zu BitLocker.
+- **Belegt unter QEMU mit erzwungenem Secure Boot** (Firmware von Debian
+  mit den Microsoft-Schlüsseln): Gegenprobe, ein unsigniertes Abbild wird
+  abgewiesen („Access Denied“). Auf x86_64 und aarch64 je: Eintragen,
+  Start mit `SecureBoot`=1, A/B-Kette (einspielen, Probe B bestätigt,
+  Abbruch und kaputte Seite fallen zurück) und Installer-Kette (die
+  installierte Platte startet allein) grün. Ohne Secure Boot startet
+  GolemOS unter Lockdown wie bisher; erster Start, A/B- und Installer-Kette
+  der signierten Abbilder ohne Secure Boot auf beiden Architekturen grün.
+- **Freigegeben** nach `abbild/fertig/`: `golemos-x86_64.img.xz` (70,8 MB)
+  und `golemos-aarch64.img.xz` (80,9 MB), entpackt bitgleich mit den
+  geprüften Abbildern; `HERKUNFT.md` mit Stand, Belegen und Fingerabdruck.
+  Die Quellen sind dieselben wie zu v0.6.1 (gleiche Pakete und
+  Fassungen); sie liegen an einer Freigabe ohne Fassung im Namen,
+  `golemos-quellen` (`Quellarchiv/README.md`), die alle Abbilder mit
+  diesen Quellen teilen.
+- **`freigeben.sh` erkennt gleiche Quellen:** Ist die neue Lizenzauskunft
+  inhaltlich gleich der abgelegten (Dateien und Inhalt; das tar
+  unterscheidet sich schon durch Zeitstempel), bleibt die alte liegen, und
+  das Skript sagt, dass die Quellen an `golemos-quellen` weiter gelten.
+  Sonst verlangt es neue Archive mit eigenem Namen neben den alten.
+- **Berichtigt:** Der Abschnitt zur Aktualisierung und der Eintrag zu
+  v0.6.0 nannten fremde Projekte als Vorbild; die Aussage steht jetzt für
+  sich.
 
 ### v0.6.2 (2026-11-14): Wo die Quellen liegen
 
@@ -201,7 +259,7 @@ sie tut, soll sich in ihrem eigenen Quelltext lesen lassen.
   `bestaetigen`): schreibt ein Paket auf die ruhende Seite und startet sie
   beim nächsten Mal **einmal zur Probe**. `S95aktualisierung` bestätigt sie
   am Ende eines gesunden Starts; kommt sie nicht hoch, nimmt der nächste
-  Start wieder die alte. Vorbild RAUC, Mender, ChromeOS.
+  Start wieder die alte.
 - `grub.cfg` liest `grubenv` (`load_env`), leert eine anstehende Probe vor
   dem Start (`save_env`) und startet je Seite **ihren eigenen Kern**
   (`Image-A`/`-B`, `bzImage-A`/`-B`; Bootpartition 160 MB statt 64). GRUB

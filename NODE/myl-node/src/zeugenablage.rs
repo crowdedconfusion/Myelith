@@ -12,10 +12,9 @@
 //! lang alle 30 s per leichtem Abzug und prüfte keinen Block.
 //!
 //! ⚑ **Ein Fenster nach Höhe, nicht nach Bytes**: [`ZEUGEN_VORHALT_BLOECKE`],
-//! drei Prüfpunktabstände. Vorbild NEAR hält Zeugen nur für die Spitze und
-//! setzt beim Rückstand auf State Sync; unser Gegenstück, der leichte
-//! Abzug, verankert am Prüfpunkt und braucht deshalb das Fenster bis zur
-//! Spitze. [`ZEUGEN_PLATTE_HOECHSTENS_BYTES`] bleibt als Notbremse.
+//! drei Prüfpunktabstände. Zeugen nur für die Spitze hiessen beim
+//! Rückstand den ganzen Zustand holen; der leichte Abzug verankert am
+//! Prüfpunkt und braucht deshalb das Fenster bis zur Spitze. [`ZEUGEN_PLATTE_HOECHSTENS_BYTES`] bleibt als Notbremse.
 //!
 //! ⚑ **Ein Zwischenspeicher**: Beim Start wird der Ordner geleert, eine
 //! Datei je Block, ohne Schreibprotokoll. Was hier liegt, prüft der

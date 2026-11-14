@@ -113,6 +113,9 @@ SYSTEM/golemos/overlay/usr/bin/
 #    haben, und jede Freigabe liesse jeden Klon fuer immer wachsen. Versioniert
 #    ist nur der Hinweis daneben (`Quellarchiv/README.md`).
 SYSTEM/golemos/Quellarchiv/*/
+# ⛔️ Der geheime Teil von Golem-Emet liegt im verschluesselten Laufwerk und nie
+#    hier; diese Zeile faengt ihn, falls er doch in den Baum geriete.
+golem-emet.key
 
 # Laufprotokolle, samt Debug-Log (`/debug on`, Einstellung debug.log), der
 # alles mitschreibt, auch Dateiinhalte und Antworten des Modells. Nichts

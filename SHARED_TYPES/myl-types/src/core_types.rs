@@ -210,8 +210,8 @@ pub struct Differenzseite {
 }
 
 /// ⚑ **Der Differenzbeweis zweier Zwillinge**: dasselbe Segment, zwei
-/// verschiedene Ausgaben. Er verortet die Abweichung, wie Verde und
-/// Arbitrum BoLD einen Streit auf eine Stelle eingrenzen; gezogen wird dann
+/// verschiedene Ausgaben. Er verortet die Abweichung und grenzt den
+/// Streit auf eine Stelle ein; gezogen wird dann
 /// genau dieses Segment, in beiden Pods. Niemand muss dem glauben, der ihn
 /// meldet: Jede Seite trägt sich selbst gegen die Wurzeln der Bündel.
 #[derive(Debug, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]

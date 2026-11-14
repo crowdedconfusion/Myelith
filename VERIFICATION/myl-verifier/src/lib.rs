@@ -33,8 +33,7 @@ pub mod bisection;
 //
 // Kap. 6.7 legt die Einschleusung den Gateways zu. **Ein Gateway hat
 // nichts zu verlieren, und ein selbstbetriebenes speist gar nichts
-// ein.** Truebit schliesst den Auftraggeber aus demselben Grund
-// ausdruecklich vom Wissen aus, Proof of Sampling ersetzt ihn durch ein
+// ein.** Deshalb waehlt nicht der Auftraggeber, sondern ein
 // BFT-Zufallsverfahren. Myelith hat dieses Zufallsverfahren seit Punkt
 // 44 im Block, selbstbeschreibend und geprueft.
 //

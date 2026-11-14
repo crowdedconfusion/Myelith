@@ -95,9 +95,21 @@ if [ "$GROESSE" -ge 104857600 ]; then
 fi
 mv "$ZIEL.neu" "$ZIEL"
 # Die kleine Auskunft (Verzeichnis und Lizenztexte) kommt mit ins
-# Repositorium; die Quellen sind zu gross dafuer und gehen als Anhang an
-# dieselbe Freigabe.
-cp "$LIZENZEN" "$(dirname "$ZIEL")/"
+# Repositorium; die Quellen sind zu gross dafuer und liegen an der
+# Freigabe `golemos-quellen` (ohne Fassung im Namen, Quellarchiv/README.md).
+# ⚑ Ist die neue Auskunft inhaltlich gleich der abgelegten (dieselben
+#   Dateien mit demselben Inhalt; das tar selbst unterscheidet sich schon
+#   durch Zeitstempel), bleibt die alte liegen: Dann gelten die Quellen an
+#   der Freigabe weiter, und die Geschichte waechst nicht um ein Archiv,
+#   das nichts Neues sagt.
+inhalt() { tar -tJf "$1" | LC_ALL=C sort | shasum -a 256; tar -xOJf "$1" | shasum -a 256; }
+ALT_AUSKUNFT="$(dirname "$ZIEL")/$(basename "$LIZENZEN")"
+if [ -f "$ALT_AUSKUNFT" ] && [ "$(inhalt "$ALT_AUSKUNFT")" = "$(inhalt "$LIZENZEN")" ]; then
+  QUELLEN_NEU=0
+else
+  cp "$LIZENZEN" "$(dirname "$ZIEL")/"
+  QUELLEN_NEU=1
+fi
 
 ( cd "$(dirname "$ZIEL")" && \
   if command -v shasum >/dev/null 2>&1; then
@@ -116,9 +128,23 @@ cat <<ENDE
 ⚠️  Jetzt gehoert HERKUNFT.md nachgezogen: Datum, Fassungen, und
     warum dieser Stand freigegeben wurde.
 
-⛔️  Und die Quellen gehoeren als Anhang an dieselbe Freigabe, samt
-    Pruefsumme, bevor jemand das Abbild bekommt:
-    $QUELLEN
-
     Grund dieses Standes: $GRUND
 ENDE
+if [ "$QUELLEN_NEU" -eq 0 ]; then
+  cat <<ENDE
+
+── Die Lizenzauskunft ist inhaltlich gleich der abgelegten: dieselben
+   Pakete in denselben Fassungen. Die Quellen an der Freigabe
+   golemos-quellen gelten weiter; dort nur die Beschreibung um diese
+   Fassung ergaenzen.
+ENDE
+else
+  cat <<ENDE
+
+⛔️  Die Pakete haben sich geaendert. Die Quellen gehoeren als Anhang an
+    die Freigabe golemos-quellen, mit eigenem Namen neben die alten (die
+    bleiben, solange ein Abbild aus der Geschichte sie braucht), samt
+    Pruefsumme, bevor jemand das Abbild bekommt:
+    $QUELLEN
+ENDE
+fi

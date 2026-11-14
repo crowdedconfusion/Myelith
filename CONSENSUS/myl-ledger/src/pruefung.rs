@@ -21,7 +21,7 @@
 //!
 //! # ⚑ Die Fristen sind fest
 //!
-//! Wie bei Arbitrum BoLD hängt das Fenster nicht daran, wer wann etwas
+//! Das Fenster hängt nicht daran, wer wann etwas
 //! einreicht: Festlegen bis `frist_festlegen`, Aufdecken danach bis
 //! `frist_aufdecken`, beides Blockhöhen, beim Anlegen gesetzt. Aufgedeckt
 //! werden darf schon früher, sobald alle Checker festgelegt haben; vorher
@@ -99,7 +99,7 @@ pub struct Streitfall {
     pub beschuldigt: Option<MinerId>,
     pub wurzel: MerkleRoot,
     pub segmente: u32,
-    /// Letzte Höhe für Stimmen: das feste Fenster (Arbitrum BoLD).
+    /// Letzte Höhe für Stimmen: das feste Fenster.
     pub frist: u64,
     /// Je Validator seine Stimme: `true` heisst, der Pod rechnete falsch.
     pub stimmen: Vec<(MinerId, bool)>,

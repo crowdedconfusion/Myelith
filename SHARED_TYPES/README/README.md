@@ -1,7 +1,7 @@
 # shared-types (`myl-types`)
 
-> **Version:** 0.68.4
-> **Datum:** 2026-11-12
+> **Version:** 0.68.5
+> **Datum:** 2026-11-14
 > **Status:** 🎉 **Phase 2 abgeschlossen** (Punkte 1.1–1.7, 2.1–2.3):
 > Hash, Merkle-Baum, VRF (bit-exakt gegen RFC-9381-Vektoren), BLS12-381
 > mit Aggregation **und Proof-of-Possession**, **Erasure-Codierung über
@@ -49,6 +49,10 @@ SHARED_TYPES/
 ```
 
 ## Changelog
+
+### v0.68.5 (2026-11-14): Ohne fremde Projekte als Vorbild
+
+- Der Differenzbeweis (`core_types.rs`, dazu sein Eintrag in diesem Changelog) nannte fremde Projekte als Vorbild; die Aussage steht jetzt für sich. Kein Verhalten geändert.
 
 ### v0.68.4 (2026-11-12): Der Fuzzer läuft, ein Ziel hinter der Prüfsumme, Korpus für jedes Ziel
 
@@ -305,8 +309,8 @@ Punkt 1 der Festlegung vom 2026-10-29.
   `differenzseite` baut eine Seite aus den Blättern eines Bündels,
   `differenz_pruefen` prüft beide gegen die Wurzeln und liefert die Stelle
   in jedem Bündel. Gleiche Blätter sind keine Differenz. Der Beweis
-  verortet die Abweichung, wie Verde und Arbitrum BoLD einen Streit
-  eingrenzen; wer ihn meldet, muss niemand glauben.
+  verortet die Abweichung und grenzt den Streit auf eine Stelle ein;
+  wer ihn meldet, muss niemand glauben.
 - `Relaisfrage::DifferenzMelden` (angehängt).
 - Test `ein_differenzbeweis_verortet_die_abweichung`; 337 Tests grün.
 

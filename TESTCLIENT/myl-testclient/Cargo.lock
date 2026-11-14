@@ -2712,7 +2712,7 @@ dependencies = [
 
 [[package]]
 name = "myl-ledger"
-version = "0.57.0"
+version = "0.57.1"
 dependencies = [
  "borsh",
  "myl-types",
@@ -2765,7 +2765,7 @@ dependencies = [
 
 [[package]]
 name = "myl-node"
-version = "0.124.0"
+version = "0.124.1"
 dependencies = [
  "async-trait",
  "borsh",
@@ -2791,7 +2791,7 @@ dependencies = [
 
 [[package]]
 name = "myl-pod"
-version = "0.52.0"
+version = "0.52.1"
 dependencies = [
  "borsh",
  "getrandom 0.2.17",
@@ -2898,7 +2898,7 @@ dependencies = [
 
 [[package]]
 name = "myl-types"
-version = "0.68.4"
+version = "0.68.5"
 dependencies = [
  "blst",
  "borsh",
@@ -2910,7 +2910,7 @@ dependencies = [
 
 [[package]]
 name = "myl-verifier"
-version = "0.29.0"
+version = "0.29.1"
 dependencies = [
  "borsh",
  "integer-llm-kernels",

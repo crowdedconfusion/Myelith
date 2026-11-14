@@ -1,7 +1,7 @@
 # NODE — der Myelith-Knoten
 
-> **Version:** 0.124.0
-> **Datum:** 2026-11-12
+> **Version:** 0.124.1
+> **Datum:** 2026-11-14
 > **Status:** Netzknoten lauffähig, Blockproduktion mit **Persistenz über
 > Neustarts**, BFT-Runden über das Netz mit Rundenwechsel, und seit dem
 > 1. September **schließt der Knoten die Epoche selbst ab**.
@@ -278,6 +278,10 @@ NODE/
 ```
 
 ## Changelog
+
+### v0.124.1 (2026-11-14): Ohne fremde Projekte als Vorbild
+
+- Die Fenster eines Prüfauftrags und einer Schiedsrunde (`kette.rs`), das Fenster der Zeugenablage (`zeugenablage.rs`) und drei Einträge dieses Changelogs (Zeugenablage, `--zustandslos`, Reserve) nannten fremde Projekte als Vorbild; die Begründung steht jetzt für sich. Kein Verhalten geändert.
 
 ### v0.124.0 (2026-11-12): Epoche und Rolle am Beobachtungspunkt
 
@@ -1170,10 +1174,10 @@ zustandslosen Knotens nicht.
   Prüfpunktabstände (450 Blöcke), nicht nach Bytes; 4 GiB als Notbremse.
   Ein Zwischenspeicher: beim Start geleert, ohne Schreibprotokoll. Eine
   Nachfrage liest erst den Speicher, dann die Platte.
-- **Vorbild NEAR**, geprüft: Dort halten Validatoren Zeugen nur für die
-  Spitze und holen beim Rückstand den Zustand (State Sync). Unser leichter
-  Abzug ist das Gegenstück, verankert aber am Prüfpunkt; deshalb das
-  Fenster bis zur Spitze. Unter echter Last (ein voller Block bei einer
+- **Warum das Fenster bis zur Spitze reicht:** Hielte ein Knoten Zeugen
+  nur für die Spitze, müsste er beim Rückstand den ganzen Zustand holen.
+  Der leichte Abzug verankert am Prüfpunkt; deshalb das Fenster bis zur
+  Spitze. Unter echter Last (ein voller Block bei einer
   Million Konten bringt Zeugen im MB-Bereich) fassten 64 MiB im Speicher
   nur einige Dutzend Blöcke.
 - Keine neue Angriffsfläche: Die Dateinamen entstehen allein aus Höhe und
@@ -1398,8 +1402,8 @@ Skalierung umsetzen, nach Recherche und kritischer Prüfung. Dies ist Punkt 3
 
 ### v0.92.0 (2026-10-29): Die Rolle `--zustandslos` und die Zeugen im Netz
 
-- ⚑ **`--zustandslos`** (Festlegung des Projektinhabers vom 2026-10-29:
-  Rollen nach NEAR): Der Knoten lädt seine Kette wie jeder, wird dann
+- ⚑ **`--zustandslos`** (Festlegung des Projektinhabers vom
+  2026-10-29): Der Knoten lädt seine Kette wie jeder, wird dann
   zustandslos (die eigenen Konten bleiben: Netz-, Konto-, Miner- und
   Auszahlungskonto), übernimmt Blöcke nur mit Zeugen, erzeugt keine Blöcke
   (mit `--erzeuger` zusammen startet er nicht), führt keinen Mempool und
@@ -1774,7 +1778,7 @@ Skalierung umsetzen, nach Recherche und kritischer Prüfung. Dies ist Punkt 3
   Wurzel, andere Segmentzahl, Wurzel null, ein Bündel fehlt: keiner;
   keiner hat etwas: nichts gezählt; ohne Zwilling: voll).
 - ⚑ **Die Reserve übernimmt eine ausgefallene Position** (Whitepaper 6.8,
-  Festlegung des Projektinhabers vom 2026-10-28, wie Petals: der Weg ersetzt
+  Festlegung des Projektinhabers vom 2026-10-28: der Weg ersetzt
   sofort). Neue Nachforderung `PositionUebernehmen` (Marke 14) mit Antwort
   `Nachlieferung::Uebernahme` (Marke 13), über die Relaisleitung
   (`Relaisfrage::Uebernahme`) an das Reservemitglied. Es prüft gegen die

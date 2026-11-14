@@ -9,7 +9,7 @@
 #                            gehoert neben jedes freigegebene Abbild)
 #   quellen-<arch>.tar       die Quellen aller Pakete im Abbild und in der
 #                            Schicht, dazu Buildroot selbst (gross, gehoert
-#                            als Anhang an dieselbe Freigabe)
+#                            als Anhang an die Freigabe golemos-quellen)
 #
 # ⚑ **Warum es das gibt:** Das Abbild enthaelt Teile unter der GPL (Kern,
 # BusyBox, Werkzeuge aus Buildroot). Wer es weitergibt, gibt die Quellen
