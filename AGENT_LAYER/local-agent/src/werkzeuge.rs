@@ -1898,6 +1898,7 @@ impl Werkzeugausfuehrung for Suchen {
                     continue;
                 }
                 let Ok(text) = std::str::from_utf8(&inhalt) else { continue };
+                let text = myl_senses::kennzeichnung::ohne_textkennzeichen(text);
                 let zeilen: Vec<&str> = text.lines().collect();
                 for (nr, zeile) in zeilen.iter().enumerate() {
                     let klein = zeile.trim().to_lowercase();
@@ -2104,8 +2105,7 @@ impl Werkzeugausfuehrung for Dateiaendern {
         let roh = zeichenkette(a, "pfad")?;
         let aenderungen = aenderungsliste(a)?;
         let p = self.0.aufloesen(&roh, true)?;
-        let inhalt = std::fs::read_to_string(&p)
-            .map_err(|e| Werkzeugfehler { grund: format!("{roh}: {e}") })?;
+        let inhalt = ohne_kennzeichen(std::fs::read_to_string(&p).map_err(|e| Werkzeugfehler { grund: format!("{roh}: {e}") })?);
 
         // ⚑ **Erst der Trockenlauf, dann das Schreiben.**
         //
@@ -2211,10 +2211,11 @@ impl Werkzeugausfuehrung for Dateiaendern {
                 });
             }
         }
-        std::fs::write(&p, &stand)
+        let (geschrieben, marke) = zum_schreiben(&p, &stand);
+        std::fs::write(&p, &geschrieben)
             .map_err(|e| Werkzeugfehler { grund: format!("{roh}: {e}") })?;
         Ok(format!(
-            "{}: {}{bleibt}. So steht es jetzt:\n{}",
+            "{}: {}{bleibt}{marke}. So steht es jetzt:\n{}",
             self.0.kurz(&p),
             match aenderungen.len() {
                 1 => "eine Stelle ersetzt".to_string(),
@@ -2433,8 +2434,7 @@ impl Werkzeugausfuehrung for UeberallErsetzen {
                 return Err(Werkzeugfehler { grund: "`pfade` enthaelt etwas, das kein Pfad ist".into() });
             };
             let pfad = self.0.aufloesen(roh, true)?;
-            let inhalt = std::fs::read_to_string(&pfad)
-                .map_err(|e| Werkzeugfehler { grund: format!("{roh}: {e}") })?;
+            let inhalt = ohne_kennzeichen(std::fs::read_to_string(&pfad).map_err(|e| Werkzeugfehler { grund: format!("{roh}: {e}") })?);
             let stellen: Vec<usize> = inhalt.match_indices(alt.as_str()).map(|(i, _)| i).collect();
             if stellen.is_empty() {
                 unveraendert.push(roh.to_string());
@@ -2474,9 +2474,10 @@ impl Werkzeugausfuehrung for UeberallErsetzen {
         }
         let mut aus = Vec::new();
         for g in &geplant {
-            std::fs::write(&g.pfad, &g.stand).map_err(|e| Werkzeugfehler { grund: format!("{}: {e}", g.roh) })?;
+            let (geschrieben, marke) = zum_schreiben(&g.pfad, &g.stand);
+            std::fs::write(&g.pfad, &geschrieben).map_err(|e| Werkzeugfehler { grund: format!("{}: {e}", g.roh) })?;
             aus.push(format!(
-                "{}: {} {} ersetzt. So steht es jetzt:\n{}",
+                "{}: {} {} ersetzt{marke}. So steht es jetzt:\n{}",
                 g.roh,
                 g.stellen,
                 if g.stellen == 1 { "Stelle" } else { "Stellen" },
@@ -2609,6 +2610,7 @@ impl Werkzeugausfuehrung for Dateilesen {
             bis -= 1;
         }
         let text = String::from_utf8_lossy(&inhalt[..bis]);
+        let text = myl_senses::kennzeichnung::ohne_textkennzeichen(&text);
         if bis < ganz {
             Ok(format!(
                 "{text}\n\n[gekuerzt: {bis} von {ganz} Bytes gezeigt]"
@@ -2617,6 +2619,29 @@ impl Werkzeugausfuehrung for Dateilesen {
             Ok(text.into_owned())
         }
     }
+}
+
+/// **Der Text einer Datei ohne Kennzeichen**, so, wie das Modell ihn sehen
+/// und aendern soll: Sonst laese es tausende unsichtbare Zeichen, und eine
+/// Aenderung am Ende traefe die Huelle.
+fn ohne_kennzeichen(text: String) -> String {
+    match myl_senses::kennzeichnung::ohne_textkennzeichen(&text) {
+        std::borrow::Cow::Borrowed(_) => text,
+        std::borrow::Cow::Owned(o) => o,
+    }
+}
+
+/// **Was in die Datei geht**, und der Zusatz fuer die Antwort: ein
+/// Dokument (Markdown, Text, ab rund 200 Token) mit neuem Kennzeichen nach
+/// C2PA, wenn `agent.text_kennzeichnen` gilt; sonst ohne, auch ohne ein
+/// altes, denn nach einer Aenderung passte es nicht mehr.
+fn zum_schreiben(p: &std::path::Path, text: &str) -> (String, &'static str) {
+    if crate::ruestung::text_kennzeichnen() && myl_senses::kennzeichnung::text_kennzeichnen_soll(p, text) {
+        if let Ok(mit) = myl_senses::kennzeichnung::text_kennzeichnen(text) {
+            return (mit, ", als KI-erzeugt gekennzeichnet (C2PA)");
+        }
+    }
+    (myl_senses::kennzeichnung::ohne_textkennzeichen(text).into_owned(), "")
 }
 
 /// Schreibt eine Datei innerhalb der Einhaengung.
@@ -2657,7 +2682,8 @@ impl Werkzeugausfuehrung for Dateischreiben {
         if let Some(eltern) = p.parent() {
             std::fs::create_dir_all(eltern).map_err(|e| Werkzeugfehler { grund: format!("{roh}: {e}") })?;
         }
-        std::fs::write(&p, inhalt.as_bytes())
+        let (geschrieben, marke) = zum_schreiben(&p, &inhalt);
+        std::fs::write(&p, geschrieben.as_bytes())
             .map_err(|e| Werkzeugfehler { grund: format!("{roh}: {e}") })?;
         // ⚑ Eine neue Datei darf unfertig sein; gesagt wird es trotzdem.
         let warnung = match crate::syntaxwache::pruefen(&p, &inhalt) {
@@ -2665,7 +2691,7 @@ impl Werkzeugausfuehrung for Dateischreiben {
             _ => String::new(),
         };
         Ok(format!(
-            "{} {}, {} Bytes{warnung}",
+            "{} {}, {} Bytes{marke}{warnung}",
             if gab_es { "ueberschrieben" } else { "angelegt" },
             self.0.kurz(&p),
             inhalt.len()

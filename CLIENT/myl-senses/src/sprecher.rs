@@ -23,7 +23,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use crate::tonzerleger::CODES;
-use crate::whisper::{alle_kerne, json, kopf_lesen, linear_ganz, linear_genau, skalar, tensor_lesen, zeile_lesen, Eintrag, Ganzmatrix, Json, Tensor};
+use crate::whisper::{alle_kerne, masszahl, json, kopf_lesen, linear_ganz, linear_genau, skalar, tensor_lesen, zeile_lesen, Eintrag, Ganzmatrix, Json, Tensor};
 
 /// Die Masse eines Decoders (Sprecher oder Code-Vorhersage).
 #[derive(Debug, Clone)]
@@ -103,10 +103,10 @@ impl Sprecher {
         let decoder = |c: &BTreeMap<String, Json>, praefix: &str| -> Result<Decoder, String> {
             Ok(Decoder {
                 praefix: praefix.into(),
-                ebenen: zahl(c, "num_hidden_layers")? as usize,
-                koepfe: zahl(c, "num_attention_heads")? as usize,
-                kv_koepfe: zahl(c, "num_key_value_heads")? as usize,
-                kopfbreite: zahl(c, "head_dim")? as usize,
+                ebenen: masszahl(zahl(c, "num_hidden_layers")?)?,
+                koepfe: masszahl(zahl(c, "num_attention_heads")?)?,
+                kv_koepfe: masszahl(zahl(c, "num_key_value_heads")?)?,
+                kopfbreite: masszahl(zahl(c, "head_dim")?)?,
                 rope_basis: zahl(c, "rope_theta")?,
                 eps: zahl(c, "rms_norm_eps")? as f32,
             })
@@ -128,9 +128,9 @@ impl Sprecher {
             tts_bos: id(&o, "tts_bos_token_id")?,
             tts_eos: id(&o, "tts_eos_token_id")?,
             tts_pad: id(&o, "tts_pad_token_id")?,
-            woerter: zahl(t, "vocab_size")? as usize,
+            woerter: masszahl(zahl(t, "vocab_size")?)?,
         };
-        if zahl(t, "num_code_groups")? as usize != CODES {
+        if masszahl(zahl(t, "num_code_groups")?)? != CODES {
             return Err("dieser Weg rechnet 16 Codes je Bild".into());
         }
         let mut eintraege = kopf_lesen(datei, |n| n.strip_prefix("talker.").map(str::to_string))?;

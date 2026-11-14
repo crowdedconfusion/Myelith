@@ -333,3 +333,30 @@ fn eine_gegenstelle_ohne_ende_fuellt_nicht_den_speicher() {
     let endlos = frage(stummel_roh(b"HTTP/1.1 200 OK\r\n\r\n".to_vec(), 2 * RUMPF_HOECHSTENS));
     assert!(matches!(&endlos, Tuerfehler::Unlesbar { rumpf } if rumpf.contains("groesser")), "{endlos:?}");
 }
+
+/// ⛔️ **Eine Gegenstelle, die tröpfelt, hält den Klienten nicht länger als
+/// seine Frist.** Sie schickt alle 300 ms ein Byte des Kopfes; die Frist von
+/// 1 s gilt für die ganze Antwort. 📌 Vorher galt sie je Lesen, und so ein
+/// Rinnsal hielt den Klienten beliebig lange.
+#[test]
+fn eine_tropfende_gegenstelle_haelt_nicht_laenger_als_die_frist() {
+    let horcher = TcpListener::bind("127.0.0.1:0").expect("binden");
+    let port = horcher.local_addr().expect("Adresse").port();
+    thread::spawn(move || {
+        let (mut strom, _) = horcher.accept().expect("annehmen");
+        let _ = anfrage_lesen(&mut strom);
+        for b in b"HTTP/1.1 200 OK\r\nX-Langsam: ".iter().cycle().take(40) {
+            if strom.write_all(&[*b]).is_err() {
+                return;
+            }
+            thread::sleep(Duration::from_millis(300));
+        }
+    });
+    let start = std::time::Instant::now();
+    let f = Tuerklient::neu("127.0.0.1", port, "v")
+        .mit_frist(Duration::from_secs(1))
+        .chat("m", &[Nachricht::nutzer("x")], None)
+        .expect_err("ein Rinnsal ist keine Antwort");
+    assert!(matches!(f, Tuerfehler::Zeitueberschreitung { .. }), "{f:?}");
+    assert!(start.elapsed() < Duration::from_secs(3), "{:?}", start.elapsed());
+}

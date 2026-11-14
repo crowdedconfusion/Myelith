@@ -14,15 +14,18 @@ startfähigen Datenträger erzeugen können.
 ⚑ **Die Grössenordnung trägt die Entscheidung**, nicht die Art der
 Sache. Projektregel 7 hält Gewichte und fremde Laufzeiten aus dem
 Repositorium heraus, und sie zielt auf das, was **riesig** ist: Die
-Gewichte wiegen 77 bis 165 GB. Dies hier sind **31 MB**, weniger als
-ein Drittel von `vorrat/`. Wer beides in dieselbe Kategorie steckt, hat
+Gewichte wiegen 77 bis 165 GB. Dies hier sind **70 und 79 MB** je
+Architektur, jede Datei unter der Grenze von 100 MiB. Wer beides in dieselbe Kategorie steckt, hat
 die Regel gelesen und nicht verstanden.
 
 ## Was das kostet, ausgesprochen
 
-⚠️ **Die Geschichte wächst bei jedem Neubau um 31 MB und schrumpft
-nie.** Zwölf Neubauten im Jahr sind 370 MB, die für immer in jedem Klon
-liegen. ⚑ **Daraus folgt eine Regel:** Ein neues Abbild kommt nur bei
+⚠️ **Die Geschichte wächst bei jedem Neubau um rund 150 MB (beide
+Architekturen) und schrumpft nie.** Im September waren es 90 MB; die
+A/B-Umschaltung, ein Kern je Seite und gewachsene Programme haben das
+Abbild größer gemacht. Zwölf Neubauten im Jahr wären 1,8 GB, die für
+immer in jedem Klon liegen. ⛔️ **`freigeben.sh` verweigert ein gepacktes
+Abbild ab 100 MiB**, darüber nimmt GitHub keine Datei an. ⚑ **Daraus folgt eine Regel:** Ein neues Abbild kommt nur bei
 einem **benannten Stand** herein, nicht nach jedem Bau.
 
 ⚠️ **Niemand kann einen Blob durch Lesen prüfen.** Dagegen hilft die
@@ -31,73 +34,71 @@ Fassung, die Konfiguration und das Datum.
 
 ## Dieser Stand
 
-**Grund der Freigabe: GolemOS v0.2.0.** Beim ersten Anmelden fragt der
-Einrichtungsassistent nach Sprache und Tastatur, bietet an, Myelith
-ohne Installation zu benutzen, GolemOS auf eine ganze Platte zu
-installieren oder selbst einen weiteren Stick zu schreiben. Der
-Datenteil des Sticks heißt **Golem** und trägt nach dem ersten Start
-eine zweisprachige `README.txt`. Der Myelith-Ordner kommt als Ganzes
-auf den Stick und bei jeder Installation mit.
+**Grund der Freigabe: GolemOS v0.6.1.** Gegenüber v0.2.0 vom 2026-09-25:
 
-Aus dem Stand davor (v0.1.0, derselbe Tag) weiter enthalten: die
-Datenpartition als „Microsoft Basic Data", damit macOS und Windows sie
-sehen (Fund 476); die serielle Konsole je Architektur (Fund 477); Wurzel
-und Daten über Partitionskennungen, die jeder Bau würfelt (Fund 479).
+- **A/B-Umschaltung** (`golem-aktualisieren`): ein neues System auf die
+  zweite Seite, beim nächsten Start einmal zur Probe, bestätigt am Ende
+  eines gesunden Starts, sonst zurück; ein Kern je Seite.
+- **Seite B kommt leer** und wird beim ersten Start aus A gefüllt
+  (`S00seiteb`), damit das Abbild die Wurzel nicht zweimal trägt.
+- **Datenteil exFAT** statt FAT32; ein FAT32-Datenteil eines früheren
+  Stands bleibt, was er ist.
+- **Lizenztexte aller Pakete im Abbild** (`/usr/share/licenses/`, dazu
+  `/usr/share/golemos/LIZENZEN.txt`); das Verzeichnis liegt außerdem als
+  `lizenzen-<arch>.tar.xz` daneben.
+- Entschlackt: Programme ohne Symbole, Kernmodule gepackt, echtes `xz`
+  und `kmod`. Dazu aus den Ständen dazwischen: Knoten als Dienst
+  (`golem-knoten`), udev und seatd für die Oberflächen-Schicht.
 
-📌 **Ein früherer Stand behauptete hier „`GOLEM-DATEN` an einem fremden
-Rechner sichtbar ✓".** Belegt war das mit `mtools` unter Linux, nicht an
-einem Rechner mit macOS oder Windows, und genau dort galt es nicht
-(Fund 476). Ein Häkchen gilt für das, womit geprüft wurde.
+⛔️ **Die Quellen gehören an dieselbe Freigabe** (`quellen-<arch>.tar`,
+je rund 0,7 GB, aus `auskunft.sh`): Das Abbild enthält Teile unter der
+GPL. Zu groß fürs Repositorium, deshalb als Anhang einer Freigabe auf
+GitHub.
 
 | | |
 |---|---|
-| Gebaut am | 2026-09-25 |
-| Buildroot | 2026.02.3 |
-| Kern | Linux 6.19.14 |
-| Programme | `myelith`, `myl` und `golem-einrichten` 0.2.0, statisch gegen musl (Alpine, Rust 1.98.1); `kbd` für die Tastaturbelegungen |
+| Gebaut am | 2026-11-14 |
+| Buildroot | 2026.08.1 |
+| Kern | Linux 7.1.13 |
+| GRUB | 2.14 |
+| Programme | `myelith`, `myl`, `myl-node` und `golem-einrichten` 0.5.0, statisch gegen musl (Alpine, Rust 1.99.1), ohne Symbole |
 
-| Architektur | Nenngrösse | belegt | gepackt |
+| Architektur | Nenngröße | belegt | gepackt |
 |---|---|---|---|
-| `x86_64` | 896 MB | 215 MB | **34,6 MB** |
-| `aarch64` | 896 MB | 400 MB | **55,6 MB** |
-
-⚑ **Warum aarch64 grösser ist:** Der ARM-Kern liegt **roh** vor
-(`Image`, 39 MB), der x86-Kern **komprimiert** (`bzImage`, 14 MB).
-Dieselbe Konfiguration, dieselben Programme.
+| `x86_64` | 1040 MB | 210 MB | **70,3 MB** |
+| `aarch64` | 1040 MB | 271 MB | **79,3 MB** |
 
 ### Was belegt ist, und wodurch
 
-Genau diese beiden Abbilder, vor dem Packen, unter QEMU mit
-UEFI-Firmware (OVMF für x86_64, AAVMF für aarch64), ohne Netz, bedient
-nur über die serielle Konsole. Stick und Zielplatte je 4 GB; auf den
-Stick kam der ganze Myelith-Ordner (2365 versionierte Dateien, `.git`,
-das 0,6B-Modell):
+Genau diese beiden Abbilder, vor dem Packen (entpackt bitgleich, gegen
+die SHA-256 geprüft), unter QEMU 11.1.3 mit UEFI (edk2), ohne Netz,
+bedient über die serielle Leitung, je Architektur 17 Starts:
 
 | | x86_64 | aarch64 |
 |---|---|---|
-| erster Start: Sprache, Tastatur (`loadkeys`), Datenpartition gedehnt, Anleitung, Abschalten | ✓ | ✓ |
-| `README.txt` und der Name `Golem` auf der Datenpartition | ✓ | ✓ |
-| Myelith ohne Installation: Konsole startet, antwortet, zurück ins Menü | ✓ | ✓ |
-| Ordner vollständig erkannt, Modell eingestellt, „Paris" mit `myl frage` | ✓ | ✓ |
-| Installation über den Assistenten, der Ordner kommt mit | ✓ | ✓ |
-| weiterer Stick vom Stick aus mit `spread.sh`; der laufende Stick wird abgelehnt | ✓ | ✓ |
-| nur die Platte: eigene Kennungen, „Paris" | ✓ | ✓ |
-| Platte, der Stick steckt noch: alles von der Platte | ✓ | ✓ |
-| Stick, die Platte wird zuerst gefunden: alles vom Stick | ✓ | ✓ |
-| Datenpartition unter macOS eingehängt | ✓ (am Typ, Fund 476) | ✓ (am Typ) |
-| Datenpartition unter Windows | nicht geprüft | nicht geprüft |
+| erster Start: Wurzel vor jedem Dienst kurz schreibgeschützt, B gefüllt, beide Seiten mit demselben Stand; beim zweiten Start kein zweites Füllen | ✓ | ✓ |
+| Datenteil exFAT, eine Datei überlebt den nächsten Start | ✓ | ✓ |
+| ein FAT32-Datenteil wie aus einem früheren Stand bleibt FAT32 samt Inhalt | ✓ | ✓ |
+| echtes `xz`, `modprobe` von kmod, ein gepacktes Modul geladen | ✓ | ✓ |
+| einspielen, Probe bestätigt, Probe abgebrochen und zurück, kaputte Seite und zurück, `status` warnt | ✓ | ✓ |
+| Installation verweigert bei verschiedenen Ständen, danach installiert (Datenteil exFAT), die Platte startet allein | ✓ | ✓ |
+| Lizenzseite, Verzeichnis und Lizenztexte von Kern, GRUB, BusyBox im Abbild | ✓ (Prüfung im Bau) | ✓ (Prüfung im Bau) |
+| „Paris" mit `myl frage`, Modell von einer zweiten Platte | nicht geprüft | ✓ |
+| Myelith-Ordner auf dem Stick, Konsole ohne Installation, `spread.sh` | zuletzt mit v0.2.0 | zuletzt mit v0.2.0 |
+| Datenteil unter macOS und Windows | nicht geprüft (exFAT ist neu) | nicht geprüft |
 
 ⚠️ **Geprüft in QEMU, nicht auf echter Hardware.** Ein Abbild, das
 unter Emulation startet, startet meistens auch auf Blech; aber
 „meistens" ist kein Beleg, und der Kern trägt die Treibervorgabe seiner
 Architektur, nicht die einer bestimmten Maschine.
 
-**Enthält:** Kern, glibc, BusyBox, `curl` mit OpenSSL, `sfdisk`,
-`mkfs.vfat`, `kbd`, GRUB 2.12, und darauf `myelith`, `myl` und
-`golem-einrichten`.
+**Enthält:** Kern, glibc, BusyBox, `curl` mit OpenSSL, util-linux,
+eudev, seatd, `kmod`, `xz`, `dosfstools`, `exfatprogs`, `kbd`, GRUB 2.14,
+und darauf `myelith`, `myl`, `myl-node` und `golem-einrichten`.
 
-**Enthält nicht:** Modelle, Gewichte, den Myelith-Ordner. Der kommt nach
-dem ersten Start auf **Golem**.
+**Enthält nicht:** Modelle, Gewichte, den Myelith-Ordner, die
+Oberflächen-Schicht. Der Ordner kommt nach dem ersten Start auf
+**Golem**.
 
 ## Nachbauen
 

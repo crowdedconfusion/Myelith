@@ -21,7 +21,7 @@ first time.
 | | |
 |---|---|
 | **A USB stick** | at least 4 GB for the smallest model, 16 GB or more is better. ⚠️ Everything on it will be erased |
-| **A computer to run GolemOS on** | almost any PC or laptop with an Intel or AMD processor, including Macs with an Intel processor. For Macs with Apple chips see [below](#macs-with-apple-chips) |
+| **A computer to run GolemOS on** | almost any PC or laptop with an Intel or AMD processor, including Macs with an Intel processor; Intel from Core 2 (2006), AMD from 2011 (Bulldozer). Older processors without the SSSE3 instruction set cannot run the node. For Macs with Apple chips see [below](#macs-with-apple-chips) |
 | **Your Myelith folder** | the folder that holds your models (`INTEGER_LLM/artifacts/`) |
 | **A second computer** | to write the stick and copy the folder onto it. It can be the same one |
 | **A network cable** | only if Myelith should search the web. GolemOS does not support Wi-Fi yet |
@@ -100,13 +100,17 @@ Boot back on at any time.
 
 1. A menu with **GolemOS (A)** appears and starts by itself after five
    seconds.
-2. After a few seconds you see `golemos login:`. Type **root** and
+2. Only on the very first start you see **"Seite B einrichten,
+   einmalig"** in between: GolemOS makes a second copy of itself to fall
+   back on if an update fails. Depending on the stick this takes up to a
+   minute. Do not switch off.
+3. After a few seconds you see `golemos login:`. Type **root** and
    press Enter. There is no password.
-3. The **assistant** first asks for the **language** (1 Deutsch,
+4. The **assistant** first asks for the **language** (1 Deutsch,
    2 English) and then for your **keyboard** (1 German, 2 Swiss, 3 US
    English …). Enter takes the default. The stick remembers both; you
    can change them later with item **7**.
-4. It then shows what it found and marks the sensible next step with
+5. It then shows what it found and marks the sensible next step with
    `<- recommended`.
 
 ⚠️ **Until you choose the keyboard, it uses the US layout**; you only
@@ -147,7 +151,7 @@ about six tenths of the memory:
 
 > The folder may also be on a **second stick or an external disk**, at
 > most two folders deep. GolemOS searches all drives at startup. The
-> file system has to be FAT32 or ext4; GolemOS cannot read exFAT or NTFS
+> file system has to be FAT32, exFAT or ext4; GolemOS cannot read NTFS
 > yet.
 
 ---
@@ -208,6 +212,38 @@ it. Back up anything you want to keep first.
 
 The stick stays a complete GolemOS; keep using it or take it to a
 second computer.
+
+⚠️ **After an update the assistant installs only once both sides are the
+same again** (see below). It then tells you why.
+
+---
+
+## Update GolemOS
+
+GolemOS has two sides, A and B, each a complete system. An update always
+writes to the side that is **not** running and starts it once as a trial.
+If it comes up, it counts. If it does not, the computer starts the old
+side again by itself next time. Your data stays untouched either way.
+
+1. Put the package `golemos-<arch>.aktualisierung` and the file next to
+   it (`….aktualisierung.sha256`) on a stick or on the data partition.
+2. Log in as `root` and apply it, for example:
+   `golem-aktualisieren einspielen /daten/golemos-x86_64.aktualisierung`
+3. Restart (`reboot`). Nothing else to do; the confirmation happens by
+   itself at the end of a healthy start.
+
+`golem-aktualisieren status` shows which side is running, which one
+counts and whether a trial is pending. If it reports that the trial of a
+side did not come up, the old system is running again; do not apply the
+package again without knowing why.
+
+⚠️ **After every update, successful or not, the two sides carry
+different states.** To install GolemOS from this stick onto a disk, apply
+the package of the running system a second time and restart; then both
+are the same.
+
+⚠️ The checksum only shows that the package arrived intact, not who
+built it. Apply only packages whose origin you know.
 
 ---
 
@@ -332,8 +368,9 @@ so far; M4 and M5 are in progress.
 - **Self-test:** in the boot menu, **GolemOS Selbstprobe** starts the
   system, checks whether Myelith answers and switches off again.
 - **Licences and sources:** GolemOS consists largely of free software,
-  some of it under the GPL. Myelith's licence texts are in the system
-  under `/usr/share/doc/myelith/`. Every released image comes with a list
-  of all packages and their licences (`lizenzen-<arch>.tar.xz`, next to
-  the image) and an archive of their sources, attached to the same
-  release.
+  some of it under the GPL. `/usr/share/golemos/LIZENZEN.txt` says which
+  part is under which licence. Myelith's licence texts are in the system
+  under `/usr/share/doc/myelith/`, those of all other packages under
+  `/usr/share/licenses/`, with a list in `manifest.csv`. Every released
+  image also comes with that list (`lizenzen-<arch>.tar.xz`, next to the
+  image) and an archive of the sources, attached to the same release.

@@ -1,6 +1,6 @@
 # client (Nutzer-Client inkl. Wallet)
 
-> **Version:** 0.232.2 (`myl-client` 0.132.2, `myl-oberflaeche` 0.92.0, `myl-console` 0.72.1, `myl-senses` 0.45.1, `myl-module` 0.6.1, `myl-scan` 0.4.0)
+> **Version:** 0.234.0 (`myl-client` 0.133.0, `myl-oberflaeche` 0.92.0, `myl-console` 0.72.1, `myl-senses` 0.47.0, `myl-module` 0.6.2, `myl-scan` 0.4.0)
 > **Datum:** 2026-11-13
 > **Status:** ✅ **Der lokale Betrieb läuft und ist ausgeliefert.** Ein
 > Gesprächsfenster mit Modellwahl, Agentenschleife und
@@ -182,6 +182,69 @@ Modell überhaupt etwas taugt, und weil eine Schnittstelle, die kein
 Mensch je bedient hat, an den Bedürfnissen vorbei entworfen wird.
 
 ## Changelog
+
+### v0.234.0 (2026-11-13): Geschriebene Texte tragen ein unsichtbares Kennzeichen (`myl-senses` 0.47.0, `myl-client` 0.133.0)
+
+- ⚑ **Festlegung des Projektinhabers:** Text wird nur mit signierten
+  Metadaten gekennzeichnet, und nur so, dass der Nutzer nichts davon
+  sieht; abschaltbar. Gebaut nach **C2PA 2.4, Anhang A.8**: Am Ende des
+  Texts steht U+FEFF, dann je Byte ein Variantenzeichen (U+FE00 ff., U+E0100
+  ff.) für `C2PATXT\0`, Fassung 1, die Länge und die Ablage. Darin dasselbe
+  Manifest wie beim Ton (Aktion `c2pa.created` mit
+  `trainedAlgorithmicMedia`, Ed25519, je Text ein frischer Schlüssel),
+  gebunden an den Hash über den Text in NFC und UTF-8 ohne die Hülle.
+  Ausgenommen ist die Hülle samt U+FEFF. Die Norm lässt die Bytefolge der
+  Länge und die Zugehörigkeit von U+FEFF offen; beides wie in den
+  Referenzumsetzungen (`c2pa-text`, `c2pa-unstructured-text`): Länge groß
+  zuerst, U+FEFF ausgenommen. Fremde Hüllen mit Füllung dahinter lesen sich
+  (Prüffall der Rust-Referenz); geprüft wird nach den Lagen im gespeicherten
+  Text, erst ausschneiden, dann NFC.
+- `kennzeichnung::text_kennzeichnen`, `text_herkunft`,
+  `ohne_textkennzeichen`, `text_kennzeichnen_soll` (Markdown und Text ab
+  800 Zeichen, rund 200 Token; nie Quelltext). Fehler nach Norm:
+  `manifest.text.corruptedWrapper`, `manifest.text.multipleWrappers`.
+  Neue Abhängigkeit `unicode-normalization` 0.1.25, dieselbe, die
+  `myl-client` schon nimmt.
+- **`myl kennzeichen <datei>`** prüft auch Text: „ja, KI-erzeugt, Text
+  unverändert“, „ungültig, …“ oder „nein“. Von Ende zu Ende geprüft, auch mit
+  einem geänderten Buchstaben und ohne Hülle. ⚠️ Die vorhandene
+  `c2patool`-Fassung (0.27.23) kennt Text noch nicht.
+- Neue Einstellung `agent.text_kennzeichnen` („Geschriebene Texte
+  kennzeichnen“), voreingestellt an.
+- Proben mit Gegenproben (signiert gültig, Änderung, verstümmelt, doppelt,
+  NFD, Prüffall der Referenz); die Hülle eines Texts von 1 280 Bytes hat
+  5,8 KB.
+
+### v0.233.0 (2026-11-13): Die Aufnahme folgt dem Eingang des Systems, und Reste aus der Härtung (`myl-senses` 0.46.0, `myl-client` 0.132.3, `myl-module` 0.6.2)
+
+- 📌 **Befund aus der Mikrofonabnahme:** Die Aufnahme über ffmpeg nahm
+  unter macOS fest `avfoundation :0`, also das erste Gerät der Liste und
+  nicht den Eingang aus den Systemeinstellungen. Mit einem virtuellen Gerät
+  an erster Stelle (BlackHole) kam nur Stille an, und whisper.cpp schrieb
+  daraus „you“. Jetzt `:default`, wie beim eigenen Weg. Probe
+  `die_tonquelle_ist_der_eingang_des_systems`, Gegenprobe mit `:0` rot.
+- **Ohne Freigabe zur Bildschirmaufnahme** steht der Grund jetzt vorn, mit
+  dem Ort der Einstellung und dem Hinweis, ihn so weiterzugeben
+  (`blick::FREIGABE_FEHLT`). Vorher bekam der Agent nur Rückgabewert und
+  Meldung von `screencapture`, und das Modell machte daraus eine Liste von
+  Vermutungen. Probe mit Gegenprobe.
+- **Größen aus `config.json`** der Sinne (whisper, Sprecher, Tonzerleger in
+  beiden Richtungen) gehen durch `whisper::masszahl`: ganz, größer null,
+  höchstens 2²⁴. Vorher wurde `1e30` zu `usize::MAX`, und Produkte liefen
+  über, bevor die Formen der Tensoren geprüft wurden. Probe mit
+  präpariertem Kopf, Gegenprobe rot; fünf Proben mit echten Gewichten grün.
+- Der JSON-Leser der Sinne setzt UTF-16-Paare aus `\u`-Folgen zu einem
+  Zeichen zusammen; einzelne Hälften bleiben U+FFFD.
+- **Gesamtfrist:** `mining::holen` (Metriken, Konto, Verlauf) hat 2 s für
+  die ganze Antwort statt je Lesen; ein Knoten, der alle 300 ms ein Byte
+  schickt, hielt das Wallet vorher beliebig lange. Probe, Gegenprobe rot
+  (12 s).
+- **Proben räumen auf:** Die Zwischendateien der whisper-Proben bekommen je
+  Aufruf einen eigenen Ordner, der mit ihnen verschwindet (vorher teilten
+  sich zwei Proben `config.json` an derselben Stelle, und cargo lässt Proben
+  nebeneinander laufen); die Ordner der WebAssembly-Proben ebenso.
+  Gegenprobe: ohne das Löschen 13 liegengebliebene Ordner.
+- `myl-senses` 153, `myl-module` 41 grün, Clippy sauber.
 
 ### v0.232.2 (2026-11-13): Eine Antwort des Knotens hat eine Obergrenze (`myl-client` 0.132.2)
 

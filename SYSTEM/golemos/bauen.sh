@@ -313,6 +313,18 @@ if [ -f "$BR/.golemos-konf" ] && ! cmp -s "$BR/.golemos-konf" /tmp/konf; then
     paket=""
     case "$name" in
       BR2_LINUX_KERNEL*) paket=linux ;;
+      # 📌 Sonst baute eine neue Modulliste fuer GRUB (A/B, 2026-11-13) nichts neu.
+      BR2_TARGET_GRUB2*) paket=grub2 ;;
+      # 📌 Ein Paket des Bauwirts hat keinen eigenen Paketordner
+      #    (`host-kmod` liegt in `package/kmod`), die Suche unten faende
+      #    keines, und `depmod` bliebe ohne xz (GolemOS 0.6.1).
+      BR2_PACKAGE_HOST_*)
+        rest=$(echo "${name#BR2_PACKAGE_HOST_}" | tr 'A-Z_' 'a-z-')
+        while [ -n "$rest" ]; do
+          [ -d "$BR/package/$rest" ] && { paket=host-$rest; break; }
+          case "$rest" in *-*) rest=${rest%-*} ;; *) rest="" ;; esac
+        done
+        ;;
       BR2_PACKAGE_*)
         rest=$(echo "${name#BR2_PACKAGE_}" | tr 'A-Z_' 'a-z-')
         while [ -n "$rest" ]; do
@@ -322,7 +334,7 @@ if [ -f "$BR/.golemos-konf" ] && ! cmp -s "$BR/.golemos-konf" /tmp/konf; then
         ;;
     esac
     # Ein Paket, das erst jetzt dazukommt, hat noch keinen Bauordner und
-    # wird ohnehin gebaut.
+    # wird ohnehin gebaut; wer es nutzt, steht im Block danach.
     if [ -n "$paket" ] && ls -d "$BR/output/build/$paket"-* >/dev/null 2>&1; then
       echo "   $name geaendert: $paket neu konfigurieren"
       echo "$paket" >> /tmp/neu-konfigurieren
@@ -330,11 +342,64 @@ if [ -f "$BR/.golemos-konf" ] && ! cmp -s "$BR/.golemos-konf" /tmp/konf; then
   done
 fi
 cp /tmp/konf "$BR/.golemos-konf"
+
+# ⛔️ **Ein geaendertes Kernfragment baut den Kern neu.** Die Konfiguration
+#    nennt nur seinen Pfad, und der bleibt gleich; ohne diesen Vergleich
+#    hielte erst die Nachzaehlung nach dem Bau an, mit dem alten Kern.
+#    ⚑ Fehlt die gemerkte Fassung, gilt es als geaendert: In einem
+#    frischen Baum kostet das nichts, in einem alten weiss niemand, mit
+#    welchem Fragment sein Kern gebaut ist.
+FRAGMENT=/eingabe/konfigurationen/kern-anzeige.fragment
+if ! cmp -s "$BR/.golemos-fragment" "$FRAGMENT" 2>/dev/null; then
+  echo "   das Kernfragment hat sich geaendert: linux neu konfigurieren"
+  echo linux >> /tmp/neu-konfigurieren
+fi
+cp "$FRAGMENT" "$BR/.golemos-fragment"
+
+# ⛔️ **Ein Paket, das erst jetzt dazukommt, wird ohnehin gebaut; wer es
+#    nutzt, wenn es da ist, aber nicht.** 📌 So blieb util-linux auf aarch64
+#    ohne udev, als eudev dazukam, und versteckte den Fehler in `S05daten`.
+#    ⚑ Verglichen wird die **aufgeloeste** `.config`, nicht die
+#    Grundkonfiguration: eudev kam ueber
+#    `BR2_ROOTFS_DEVICE_CREATION_DYNAMIC_EUDEV`, eine Paketoption fuer eudev
+#    stand dort nie. Wer es nutzt, nennt Buildroot selbst
+#    (`<paket>-show-recursive-rdepends`, am Baum vom 2026-11-13 fuer eudev:
+#    busybox, dosfstools, libudev, udev, util-linux); verworfen wird davon,
+#    was schon gebaut ist. Beim ersten Bau nach dieser Zeile fehlt der
+#    Vergleich, dann wird nur gemerkt.
+if [ -f "$BR/.golemos-voll" ]; then
+  for name in $(sed -n 's/^\(BR2_PACKAGE_[A-Z0-9_]*\)=y$/\1/p' "$BR/.config" | sort -u); do
+    grep -q "^$name=y$" "$BR/.golemos-voll" && continue
+    paket=$(echo "${name#BR2_PACKAGE_}" | tr 'A-Z_' 'a-z-')
+    [ -d "$BR/package/$paket" ] || continue
+    ls -d "$BR/output/build/$paket"-* >/dev/null 2>&1 && continue
+    for nutzer in $(make -s -C "$BR" "$paket-show-recursive-rdepends" 2>/dev/null); do
+      if ls -d "$BR/output/build/$nutzer"-* >/dev/null 2>&1; then
+        echo "   $paket kommt dazu: $nutzer neu bauen"
+        echo "$nutzer" >> /tmp/neu-konfigurieren
+      fi
+    done
+  done
+fi
+cp "$BR/.config" "$BR/.golemos-voll"
 if [ -s /tmp/neu-konfigurieren ]; then
   for paket in $(sort -u /tmp/neu-konfigurieren); do
     make -C "$BR" "$paket-dirclean" >/dev/null
   done
 fi
+
+# ⛔️ **Die Lizenztexte der fremden Pakete gehoeren ins Abbild selbst.**
+#    `auskunft.sh` legt sie neben ein freigegebenes Abbild, aber ein Stick,
+#    den GolemOS selbst schreibt oder den jemand weitergibt, traegt nur,
+#    was im Abbild steht, und darin liegen Teile unter der GPL.
+#    ⚑ `legal-info` braucht die Konfiguration und die ausgepackten
+#    Quellen, nicht den Bau; es laeuft also davor und gibt sein
+#    Verzeichnis ueber das Overlay mit.
+echo "── Lizenztexte der Pakete ins Abbild"
+make -C "$BR" legal-info >/dev/null
+install -d /bau/overlay/usr/share/licenses
+cp -a "$BR/output/legal-info/licenses/." /bau/overlay/usr/share/licenses/
+cp "$BR/output/legal-info/manifest.csv" /bau/overlay/usr/share/licenses/
 
 echo "── Bauen mit $(nproc) Faeden"
 make -C "$BR" -j"$(nproc)"
@@ -369,7 +434,7 @@ fehlt=0
 # ⚑ `setsid` braucht `golem-knoten`, sonst stuerbe sein Waechter mit der
 #   Anmeldung. `setpriv` steht weiter unten mit vollem Pfad.
 # ⚑ `udevd` und `seatd` braucht `golem-schicht` fuer die Oberflaeche.
-for w in sfdisk partx mkfs.vfat fatlabel blkid lsblk mount umount poweroff sync xz sha256sum loadkeys setsid udevd seatd; do
+for w in sfdisk partx mkfs.vfat mkfs.exfat fatlabel blkid lsblk mount umount poweroff sync xz sha256sum loadkeys setsid udevd seatd; do
   if ! find "$BR/output/target" -name "$w" 2>/dev/null | grep -q .; then
     echo "   ⛔️ $w fehlt im Abbild; S05daten, golem-einrichten oder spread.sh scheitert daran" >&2
     fehlt=$((fehlt + 1))
@@ -396,6 +461,43 @@ fi
 for d in LICENSE.md NOTICES.md DRITTLIZENZEN.txt; do
   [ -s "$BR/output/target/usr/share/doc/myelith/$d" ] || { echo "   ⛔️ /usr/share/doc/myelith/$d fehlt im Abbild (Fund 700)" >&2; fehlt=$((fehlt + 1)); }
 done
+# ⚑ Je ein Ordner fuer Kern, GRUB und BusyBox, die drei groessten Teile
+#   unter der GPL; fehlt einer, hat `legal-info` nicht gesammelt, was
+#   es soll.
+[ -s "$BR/output/target/usr/share/licenses/manifest.csv" ] && [ -s "$BR/output/target/usr/share/golemos/LIZENZEN.txt" ] \
+  || { echo "   ⛔️ Verzeichnis der Pakete oder LIZENZEN.txt fehlt im Abbild" >&2; fehlt=$((fehlt + 1)); }
+for p in linux grub2 busybox; do
+  ls -d "$BR/output/target/usr/share/licenses/$p-"[0-9]* >/dev/null 2>&1 \
+    || { echo "   ⛔️ Lizenztext von $p fehlt unter /usr/share/licenses" >&2; fehlt=$((fehlt + 1)); }
+done
+# ⛔️ **Gepackte Module brauchen die echten Werkzeuge** (GolemOS 0.6.1).
+#    Die BusyBox-Fassungen liegen unter denselben Namen und wuerden die
+#    Suche oben bestehen; `modprobe` liest dann kein `.ko.xz`, und `xz`
+#    entpackt kein Abbild mit grossem Woerterbuch.
+case "$(readlink "$BR/output/target/sbin/modprobe" 2>/dev/null)" in
+  *kmod) ;;
+  *) echo "   ⛔️ /sbin/modprobe ist nicht das von kmod" >&2; fehlt=$((fehlt + 1)) ;;
+esac
+if [ ! -x "$BR/output/target/usr/bin/xz" ] || [ -L "$BR/output/target/usr/bin/xz" ]; then
+  echo "   ⛔️ /usr/bin/xz aus xz-utils fehlt" >&2; fehlt=$((fehlt + 1))
+fi
+MODULE=$(ls -d "$BR"/output/target/lib/modules/[0-9]* 2>/dev/null | head -1)
+if [ -n "$MODULE" ]; then
+  if find "$MODULE" -name '*.ko' | grep -q .; then
+    echo "   ⛔️ ungepackte Module unter $MODULE" >&2; fehlt=$((fehlt + 1))
+  fi
+  # 📌 Ein `depmod` ohne xz schreibt die Liste der Abhaengigkeiten, liest
+  #    aber kein Modul: Die Aliase fehlen, und udev laedt nichts nach.
+  if find "$MODULE" -name '*.ko.xz' | grep -q . && ! grep -q '^alias ' "$MODULE/modules.alias" 2>/dev/null; then
+    echo "   ⛔️ modules.alias ohne Aliase; depmod hat die Module nicht gelesen" >&2; fehlt=$((fehlt + 1))
+  fi
+fi
+READELF=$(ls "$BR"/output/host/bin/*-linux-*-readelf 2>/dev/null | head -1)
+for p in myelith myl myl-node golem-einrichten; do
+  if [ -z "$READELF" ] || "$READELF" -S "$BR/output/target/usr/bin/$p" | grep -q '\.symtab'; then
+    echo "   ⛔️ $p traegt noch seine Symbole (nach-dem-bauen.sh)" >&2; fehlt=$((fehlt + 1))
+  fi
+done
 [ "$fehlt" -eq 0 ] || { echo "$fehlt Programme fehlen" >&2; exit 7; }
 echo "   alle da, mit den Lizenztexten"
 
@@ -414,6 +516,17 @@ mkdir -p /bau/aus
 for f in bzImage Image rootfs.cpio.gz golemos.img; do
   [ -f "$BR/output/images/$f" ] && cp "$BR/output/images/$f" /bau/aus/
 done
+# ⚑ **Das Aktualisierungspaket** fuer `golem-aktualisieren einspielen`: die
+#   Wurzel (gepackt) und ihr Kern, daneben die Pruefsumme wie bei den
+#   Schichten.
+KERNDATEI=$(ls "$BR"/output/images/bzImage "$BR"/output/images/Image 2>/dev/null | head -1)
+rm -rf /tmp/paket && mkdir -p /tmp/paket
+gzip -c "$BR/output/images/rootfs.ext2" > /tmp/paket/wurzel.ext2.gz
+cp "$KERNDATEI" /tmp/paket/kern
+# Derselbe Stand, den `nach-dem-abbild.sh` beiden Seiten ins `grubenv` legt.
+sha256sum "$BR/output/images/rootfs.ext2" | cut -c1-16 > /tmp/paket/stand
+tar -cf "/bau/aus/golemos-$ARCH.aktualisierung" -C /tmp/paket stand wurzel.ext2.gz kern
+( cd /bau/aus && sha256sum "golemos-$ARCH.aktualisierung" > "golemos-$ARCH.aktualisierung.sha256" )
 ls -l /bau/aus
 IMBEHAELTER
 
@@ -436,7 +549,11 @@ ls -lh "$AUS" | tail -n +2 | awk '{print "   "$9"  "$5}'
 # gibt, in einem Verzeichnis ohne die Architektur. Er wird jetzt aus
 # `$ARCH` gebildet, damit er zu dem passt, was gerade gebaut wurde.
 case "$ARCH" in
-  x86_64)  QEMU="qemu-system-x86_64"; KERN=bzImage; KONSOLE=ttyS0 ;;
+  # ⚠️ **Mit einer CPU, die SSSE3 kann.** Die Vorgabe von QEMU (`qemu64`)
+  #    kann es nicht, und `myl-node` brach dort mit „invalid opcode“ in
+  #    der SHA-256 von blst ab (2026-11-13); mit `-cpu Nehalem` (x86-64-v2,
+  #    ohne AVX) lief die Knotenprobe durch.
+  x86_64)  QEMU="qemu-system-x86_64 -cpu Nehalem"; KERN=bzImage; KONSOLE=ttyS0 ;;
   aarch64) QEMU="qemu-system-aarch64 -M virt -cpu cortex-a57"; KERN=Image; KONSOLE=ttyAMA0 ;;
 esac
 cat <<START

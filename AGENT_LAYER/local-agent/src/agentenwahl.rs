@@ -166,6 +166,16 @@ pub struct Agenteneinstellung {
     /// allem, was eigene Werkzeuge gelesen haben (`Tor::gesehen`).
     #[serde(default)]
     pub web_recherche: bool,
+    /// **Ob Dokumente, die der Agent schreibt, ein Kennzeichen tragen**:
+    /// Markdown und Text ab rund 200 Token, signiert nach C2PA 2.4, Anhang
+    /// A.8, fuer den Nutzer unsichtbar (`myl_senses::kennzeichnung`).
+    ///
+    /// ⚑ **An** (Festlegung des Projektinhabers, 2026-11-13: lieber gar
+    /// keine Kennzeichnung, aber nur unsichtbar und abschaltbar), solange die
+    /// Pflicht aus Art. 50 Abs. 2 KI-Verordnung fuer Myelith nicht anwaltlich
+    /// verneint ist.
+    #[serde(default = "an")]
+    pub text_kennzeichnen: bool,
     /// **Die Saat des Zielkreises** für die Web-Werkzeuge: was der Mensch
     /// für diesen Lauf geschrieben hat, im Loop das Ziel des Tasks. Wird
     /// je Lauf gesetzt und nie gespeichert.
@@ -197,6 +207,7 @@ impl Default for Agenteneinstellung {
             blick_bildschirm: false,
             blick_kamera: false,
             web_recherche: false,
+            text_kennzeichnen: true,
             netzsaat: None,
             modul: None,
             modulkiste: None,
@@ -566,15 +577,17 @@ pub const TITEL_KISTENORDNER: (&str, &str) = ("Lokale Werkzeugkiste", "Local too
 pub const TITEL_BLICK_BILDSCHIRM: (&str, &str) = ("Bildschirm ansehen dürfen", "May look at the screen");
 pub const TITEL_BLICK_KAMERA: (&str, &str) = ("Kamera ansehen dürfen", "May look through the camera");
 pub const TITEL_WEB_RECHERCHE: (&str, &str) = ("Im Web recherchieren dürfen", "May research on the web");
+pub const TITEL_TEXT_KENNZEICHNEN: (&str, &str) = ("Geschriebene Texte kennzeichnen", "Mark written texts");
 
 /// Die Felder, die [`feldtitel`] kennt.
-pub const BETITELTE_FELDER: [&str; 6] = [
+pub const BETITELTE_FELDER: [&str; 7] = [
     "agent.wurzel",
     "agent.schreiben",
     "agent.kistenordner",
     "agent.blick_bildschirm",
     "agent.blick_kamera",
     "agent.web_recherche",
+    "agent.text_kennzeichnen",
 ];
 
 /// Die Beschriftung eines Agentenfeldes, oder `None` fuer ein anderes.
@@ -586,6 +599,7 @@ pub fn feldtitel(name: &str) -> Option<(&'static str, &'static str)> {
         "agent.blick_bildschirm" => Some(TITEL_BLICK_BILDSCHIRM),
         "agent.blick_kamera" => Some(TITEL_BLICK_KAMERA),
         "agent.web_recherche" => Some(TITEL_WEB_RECHERCHE),
+        "agent.text_kennzeichnen" => Some(TITEL_TEXT_KENNZEICHNEN),
         _ => None,
     }
 }

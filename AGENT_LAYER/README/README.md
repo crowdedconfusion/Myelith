@@ -1,6 +1,6 @@
 # agent-layer
 
-> **Version:** 0.66.1 (`myl-agent` 0.10.0, `myl-local-agent` 0.50.1, `book2skill` 0.7.0)
+> **Version:** 0.67.0 (`myl-agent` 0.10.0, `myl-local-agent` 0.51.0, `book2skill` 0.7.0)
 > **Datum:** 2026-11-13
 > **Status:** Manifeste, Herkunftsstufe, Registratur, der
 > **Session-Kontrakt** mit Durchsetzung im Ledger, der **Plan** und seit
@@ -71,6 +71,32 @@ umbenannt, weil er in jedem `use` steht.
   was die Ausgabe eines Schritts einer geltenden Kette ist.
 
 ## Changelog
+
+### v0.67.0 (2026-11-13): Dokumente, die der Agent schreibt, sind gekennzeichnet (`myl-local-agent` 0.51.0)
+
+- `write_file`, `edit_file` und Ersetzen in mehreren Dateien versehen
+  Markdown und Text ab rund 200 Token mit einem Kennzeichen nach C2PA 2.4,
+  Anhang A.8 (`myl_senses::kennzeichnung`); die Antwort sagt es dazu. Ein
+  altes Kennzeichen wird vor einer Änderung abgenommen und danach neu
+  gesetzt, damit genau eines zum neuen Text passt; fällt der Text unter die
+  Grenze oder ist das Kennzeichnen aus, bleibt die Datei ohne.
+- `read_file` und die Suche zeigen dem Modell den Text ohne Kennzeichen:
+  Sonst sähe es tausende unsichtbare Zeichen, und eine Änderung am Ende
+  träfe die Hülle.
+- Neues Feld `Agenteneinstellung::text_kennzeichnen` (voreingestellt an,
+  auch für Ablagen von vorher), gesetzt beim Rüsten
+  (`ruestung::text_kennzeichnen_setzen`).
+- Probe `tests/textkennzeichen.rs` durch die echten Werkzeuge (schreiben,
+  lesen, ändern, Quelltext, kurzer Text, abgeschaltet); Gegenprobe ohne
+  Kennzeichnen rot.
+
+### v0.66.2 (2026-11-13): Die Frist des Türklienten gilt für die ganze Antwort (`myl-local-agent` 0.50.2)
+
+- `Tuerklient::lesen` setzte die Frist je Lesen; eine Gegenstelle, die alle
+  300 ms ein Byte schickte, hielt den Klienten beliebig lange. Jetzt muss
+  die ganze Antwort innerhalb der Frist ankommen (`lesen_bis`). Probe
+  `eine_tropfende_gegenstelle_haelt_nicht_laenger_als_die_frist` (1 s
+  Frist), Gegenprobe ohne Gesamtfrist rot nach 12 s.
 
 ### v0.66.1 (2026-11-13): Die Probe des Buchwerkzeugs gilt auch unter Windows (`myl-local-agent` 0.50.1)
 

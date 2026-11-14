@@ -206,6 +206,10 @@ pub fn programme_aus_wmctrl(text: &str) -> Vec<String> {
     programme_aus_zeilen(&klassen)
 }
 
+/// Was der Nutzer tun muss, wenn macOS die Bildschirmaufnahme verweigert;
+/// so, dass ein Modell es weitergibt statt zu raten.
+pub const FREIGABE_FEHLT: &str = "Grund: macOS hat die Freigabe zur Bildschirmaufnahme nicht erteilt. Abhilfe fuer den Nutzer: Systemeinstellungen, Datenschutz & Sicherheit, Bildschirm- & Systemaudioaufnahme; dort das Programm einschalten, aus dem Myelith laeuft (Myelith selbst, oder das Terminal, wenn Myelith dort gestartet wurde), es ganz beenden und neu starten. Gib das dem Nutzer genau so weiter.";
+
 /// ⛔️ **Geprueft wird der Rueckgabewert UND die Datei.**
 ///
 /// Die Zusage dieser Funktion lautet „danach liegt ein Bild da", und
@@ -230,8 +234,13 @@ fn lauf_und_pruefen(
     let a = crate::prozess::laufen(befehl, FRIST_BLICK_S, crate::AUSGABEGRENZE)
         .map_err(|f| format!("{was} liess sich nicht aufnehmen ({programm}): {f}"))?;
     if !a.gut() {
+        // 📌 Ohne Freigabe nannte die Antwort nur Rueckgabewert und
+        //   Meldung, und das Modell machte daraus eine Liste von
+        //   Vermutungen (Vollbild, Sicherheit), statt den Grund zu sagen
+        //   (2026-11-13). Der Grund steht deshalb vorn, in Worten.
+        let freigabe = if a.fehler.contains("could not create image") { format!("{FREIGABE_FEHLT}\n") } else { String::new() };
         return Err(format!(
-            "{was} liess sich nicht aufnehmen, {programm} ist {}. Die letzten Zeilen:\n{}",
+            "{freigabe}{was} liess sich nicht aufnehmen, {programm} ist {}. Die letzten Zeilen:\n{}",
             a.kopf(),
             crate::schwanz(&a.fehler, 10)
         ));
@@ -323,6 +332,19 @@ mod proben {
             assert!(!n.is_empty());
             assert!(n.iter().all(|x| !x.trim().is_empty() && !x.contains('\n')), "{n:?}");
         }
+    }
+
+    /// ⚑ **Fehlt die Freigabe, steht der Grund vorn**, in Worten und mit
+    /// dem Ort der Einstellung; eine andere Meldung bekommt ihn nicht.
+    #[test]
+    fn ohne_freigabe_steht_der_grund_vorn() {
+        let ziel = crate::zwischenname("blickprobe", "png");
+        let mut b = crate::prozess::probeskript("echo 'could not create image from display' >&2; exit 1", "echo could not create image from display 1>&2 & exit /b 1");
+        let f = lauf_und_pruefen(&mut b, &ziel, "screencapture", "Der Bildschirm").expect_err("ohne Freigabe kein Bild");
+        assert!(f.starts_with(FREIGABE_FEHLT) && f.contains("could not create image"), "{f}");
+        let mut b = crate::prozess::probeskript("echo kaputt >&2; exit 1", "echo kaputt 1>&2 & exit /b 1");
+        let f = lauf_und_pruefen(&mut b, &ziel, "screencapture", "Der Bildschirm").expect_err("Fehler");
+        assert!(!f.contains("Freigabe"), "{f}");
     }
 
     /// ⚠️ **Eine Datei ohne Inhalt ist kein Bild.** Der Rueckgabewert

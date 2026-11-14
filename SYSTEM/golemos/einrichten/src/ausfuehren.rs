@@ -19,6 +19,7 @@ use crate::platten::{NAME_DATEN, NAME_WURZEL_A, NAME_WURZEL_B};
 /// Wo die Partitionen der Zielplatte waehrend der Installation haengen.
 const EINHANG_EFI: &str = "/run/golemos/ziel-efi";
 const EINHANG_DATEN: &str = "/run/golemos/ziel-daten";
+const EINHANG_QUELLE_EFI: &str = "/run/golemos/quelle-efi";
 
 /// Der Name, unter dem die Datenpartition an jedem Rechner erscheint.
 ///
@@ -46,6 +47,23 @@ pub fn installieren(
     aus: &mut dyn Write,
 ) -> io::Result<()> {
     let ziel = format!("/dev/{}", plan.ziel);
+    // ⛔️ **Nicht mitten in einer Aktualisierung.** Die ruhende Seite waere
+    //    dann die eben eingespielte, ungepruefte, oder eine, deren Probe
+    //    nicht hochkam; genau sie kaeme auf beide Seiten der Platte.
+    if Path::new(crate::start::DATEN).join(ERWARTET).exists() {
+        return Err(io::Error::other(
+            "eine Aktualisierung ist nicht bestaetigt (golem-aktualisieren status); erst neu starten oder bestaetigen",
+        ));
+    }
+
+    // ⛔️ **Und nur, wenn beide Seiten der Quelle denselben Stand tragen**;
+    //    nach einer Probe, ob gelungen oder nicht, ist die ruhende eine andere.
+    let stand = {
+        let q = plan.teile[0].quelle.as_deref().ok_or_else(|| io::Error::other("keine Bootpartition der Quelle"))?;
+        let efi = Eingehaengt::neu(q, EINHANG_QUELLE_EFI, "vfat", "ro")?;
+        let umg = fs::read_to_string(efi.ort.join("EFI/BOOT/grubenv")).unwrap_or_default();
+        grub::gemeinsamer_stand(&umg).map_err(io::Error::other)?
+    };
 
     schritt(aus, &format!("Partitionstabelle auf {ziel} schreiben"))?;
     mit_eingabe(
@@ -67,12 +85,14 @@ pub fn installieren(
     }
 
     let daten = &teile[3];
-    schritt(aus, &format!("Datenpartition {} anlegen (FAT32)", daten.pfad()))?;
-    befehl("mkfs.vfat", &["-F", "32", "-n", DATEN_NAME, &daten.pfad()])?;
+    // ⚑ **exFAT** (GolemOS 0.6.1): Windows und macOS lesen und schreiben es
+    //   von Haus aus, und eine Datei darf groesser als 4 GB sein.
+    schritt(aus, &format!("Datenpartition {} anlegen (exFAT)", daten.pfad()))?;
+    befehl("mkfs.exfat", &["-L", DATEN_NAME, &daten.pfad()])?;
 
     schritt(aus, "Start auf diese Platte festnageln (PARTUUID)")?;
     {
-        let efi = Eingehaengt::neu(&teile[0].pfad(), EINHANG_EFI)?;
+        let efi = Eingehaengt::neu(&teile[0].pfad(), EINHANG_EFI, "vfat", "rw")?;
         let cfg = efi.ort.join("EFI/BOOT/grub.cfg");
         let alt = fs::read_to_string(&cfg)?;
         let platte = grub::Kennungen {
@@ -82,10 +102,11 @@ pub fn installieren(
         };
         let neu = grub::festnageln(&alt, &plan.alt, &platte).map_err(io::Error::other)?;
         fs::write(&cfg, neu)?;
+        seiten_angleichen(&efi.ort, plan.seite, stand.as_deref())?;
     }
 
     {
-        let d = Eingehaengt::neu(&daten.pfad(), EINHANG_DATEN)?;
+        let d = Eingehaengt::neu(&daten.pfad(), EINHANG_DATEN, "exfat", "rw")?;
         fs::write(d.ort.join(GEDEHNT), "")?;
         if let Some(von) = daten_von {
             let gesamt = crate::klon::belegung(von);
@@ -278,6 +299,43 @@ fn baum_kopieren(von: &Path, nach: &Path, fort: &mut Fortschritt, aus: &mut dyn 
     Ok(())
 }
 
+/// Die Marke von `golem-aktualisieren`, unter der Datenpartition: Eine
+/// eingespielte Seite wartet auf ihre Bestaetigung.
+const ERWARTET: &str = "golemos/aktualisierung.erwartet";
+
+/// Die Kerne, die GolemOS je Seite auf die Bootpartition legt.
+const KERNE: [&str; 2] = ["bzImage", "Image"];
+
+/// Beide Seiten der Platte tragen die Wurzel der Quellseite `seite`; hier
+/// bekommen sie auch deren Kern, und `grubenv` setzt A als geltend, beide
+/// mit dem `stand` der Quelle.
+///
+/// ⛔️ **Ohne das passten nach einer Aktualisierung Wurzel und Kern nicht
+/// mehr zusammen**: Kopiert wird die Bootpartition, wie sie ist, mit dem
+/// Kern jeder Seite, die Wurzel aber nur von einer.
+///
+/// ⚠️ Aeltere Sticks haben einen Kern fuer beide und kein `grubenv`; dann
+/// gibt es nichts anzugleichen.
+fn seiten_angleichen(efi: &Path, seite: char, stand: Option<&str>) -> io::Result<()> {
+    let andere = if seite == 'A' { 'B' } else { 'A' };
+    for k in KERNE {
+        let von = efi.join(format!("{k}-{seite}"));
+        if von.exists() {
+            let neu = efi.join(format!("{k}-{andere}.neu"));
+            fs::copy(&von, &neu)?;
+            fs::rename(&neu, efi.join(format!("{k}-{andere}")))?;
+        }
+    }
+    let umg = efi.join("EFI/BOOT/grubenv");
+    if let (true, Some(stand)) = (umg.exists(), stand) {
+        // An Ort und Stelle wie `golem-aktualisieren`, ohne zu kuerzen.
+        let mut f = OpenOptions::new().write(true).open(&umg)?;
+        f.write_all(&grub::umgebung('A', stand))?;
+        f.sync_all()?;
+    }
+    Ok(())
+}
+
 /// Eine eingehaengte Partition, die beim Verlassen wieder ausgehaengt wird,
 /// auch wenn dazwischen ein Fehler auftrat.
 struct Eingehaengt {
@@ -285,9 +343,15 @@ struct Eingehaengt {
 }
 
 impl Eingehaengt {
-    fn neu(geraet: &str, ort: &str) -> io::Result<Self> {
+    /// ⚠️ `flush` kennt nur `vfat`; `exfat` lehnt die Option ab.
+    fn neu(geraet: &str, ort: &str, typ: &str, art: &str) -> io::Result<Self> {
         fs::create_dir_all(ort)?;
-        befehl("mount", &["-t", "vfat", "-o", "rw,flush", geraet, ort])?;
+        let optionen = match (typ, art) {
+            (_, "ro") => "ro",
+            ("vfat", _) => "rw,flush",
+            _ => "rw",
+        };
+        befehl("mount", &["-t", typ, "-o", optionen, geraet, ort])?;
         Ok(Eingehaengt { ort: PathBuf::from(ort) })
     }
 }
@@ -302,6 +366,32 @@ impl Drop for Eingehaengt {
 mod proben {
     use super::*;
     use crate::klon::proben::ordner;
+
+    /// ⚑ Von B kopiert: Beide Seiten bekommen den Kern von B, und A gilt.
+    #[test]
+    fn die_seiten_bekommen_den_kern_ihrer_wurzel() {
+        let o = ordner("angleichen");
+        fs::create_dir_all(o.join("EFI/BOOT")).unwrap();
+        fs::write(o.join("Image-A"), "alt").unwrap();
+        fs::write(o.join("Image-B"), "neu").unwrap();
+        fs::write(o.join("EFI/BOOT/grubenv"), grub::umgebung('B', "neu")).unwrap();
+        seiten_angleichen(&o, 'B', Some("neu")).unwrap();
+        assert_eq!(fs::read_to_string(o.join("Image-A")).unwrap(), "neu");
+        assert_eq!(fs::read_to_string(o.join("Image-B")).unwrap(), "neu");
+        assert!(!o.join("Image-A.neu").exists());
+        assert_eq!(fs::read(o.join("EFI/BOOT/grubenv")).unwrap(), grub::umgebung('A', "neu"));
+    }
+
+    /// Ein aelterer Stick ohne Kerne je Seite und ohne `grubenv` bleibt,
+    /// wie er ist.
+    #[test]
+    fn ein_aelterer_stick_bleibt_wie_er_ist() {
+        let o = ordner("angleichen-alt");
+        fs::write(o.join("Image"), "einer").unwrap();
+        seiten_angleichen(&o, 'A', None).unwrap();
+        assert_eq!(fs::read_to_string(o.join("Image")).unwrap(), "einer");
+        assert!(!o.join("EFI").exists() && !o.join("Image-B").exists());
+    }
 
     /// ⛔️ **Die Bindung an das Startskript.** Formatiert der Assistent
     /// unter einem anderen Namen als `S05daten`, heisst die Partition

@@ -27,6 +27,7 @@ fn der_agent_sucht_im_web_und_verraet_nichts_gelesenes() {
     let mit = Agenteneinstellung {
         wurzel: Some(d.path().display().to_string()),
         web_recherche: true,
+        text_kennzeichnen: true,
         netzsaat: Some("Recherchiere, wie man eine Lagerverwaltung absichert.".into()),
         modul: None,
         modulkiste: None,

@@ -260,6 +260,48 @@ pub fn herkunft(roh: &[u8]) -> Herkunft {
     c2pa::pruefen(roh)
 }
 
+// ---------------------------------------------------------------- Text
+
+/// Ab so vielen Zeichen wird ein Dokument gekennzeichnet: rund 200 Token
+/// (der Kodex vom 2026-06-10 nimmt sehr kurzen Text aus), bei rund vier
+/// Zeichen je Token in Deutsch und Englisch.
+pub const TEXT_AB_ZEICHEN: usize = 800;
+
+/// **Soll ein Dokument, das der Agent schreibt, gekennzeichnet werden?**
+/// Nur Markdown und Text, nie Quelltext oder Konfiguration (Leitlinien,
+/// Rn. 68), und nur ab [`TEXT_AB_ZEICHEN`].
+pub fn text_kennzeichnen_soll(pfad: &Path, text: &str) -> bool {
+    let endung = pfad.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase);
+    matches!(endung.as_deref(), Some("md" | "markdown" | "txt" | "text")) && ohne_textkennzeichen(text).chars().count() >= TEXT_AB_ZEICHEN
+}
+
+/// **Kennzeichnet einen erzeugten Text** mit einem signierten Manifest nach
+/// C2PA 2.4, Anhang A.8: unsichtbare Variantenzeichen am Ende, der Text
+/// davor in NFC. Eine Huelle, die schon dasteht, wird ersetzt; so bleibt es
+/// nach einer Aenderung bei genau einer, die zum neuen Text passt.
+///
+/// ⚑ Festlegung des Projektinhabers (2026-11-13): nur signierte Metadaten
+/// und nur, was der Nutzer nicht sieht; abschaltbar mit
+/// `agent.text_kennzeichnen`.
+pub fn text_kennzeichnen(text: &str) -> Result<String, String> {
+    c2pa::text_signieren(&c2pa::text_ohne_huelle(text))
+}
+
+/// Das Manifest eines Texts nach Anhang A.8.
+pub fn text_herkunft(text: &str) -> Herkunft {
+    c2pa::text_pruefen(text)
+}
+
+/// **Der Text ohne Kennzeichen**, fuer alles, was ihn liest: Sonst saehe ein
+/// Modell, das das Dokument wieder oeffnet, tausende unsichtbare Zeichen.
+pub fn ohne_textkennzeichen(text: &str) -> std::borrow::Cow<'_, str> {
+    if text.contains('\u{FEFF}') {
+        std::borrow::Cow::Owned(c2pa::text_ohne_huelle(text))
+    } else {
+        std::borrow::Cow::Borrowed(text)
+    }
+}
+
 /// **Die Folge, geformt**: zyklisch gefaltet mit den Binomialzahlen der
 /// Ordnung `ordnung` (`1 2 1`, `1 4 6 4 1`, ...), ein Tiefpass ohne
 /// Gleitkomma. Ordnung null ist die weisse Folge. Dazu der Teiler, der die

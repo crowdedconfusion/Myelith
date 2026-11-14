@@ -644,11 +644,34 @@ mod tests {
     use crate::wirt::{Lauf, Start};
     use std::time::Duration;
 
-    fn ordner(n: &str) -> PathBuf {
+    /// Ein Ordner fuer eine Probe, der mit ihr verschwindet. ⚠️ Bis zum
+    /// 2026-11-13 blieb jeder liegen, je Lauf und Prozess einer mehr.
+    struct Ordner(PathBuf);
+
+    impl std::ops::Deref for Ordner {
+        type Target = PathBuf;
+        fn deref(&self) -> &PathBuf {
+            &self.0
+        }
+    }
+
+    impl AsRef<std::path::Path> for Ordner {
+        fn as_ref(&self) -> &std::path::Path {
+            &self.0
+        }
+    }
+
+    impl Drop for Ordner {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn ordner(n: &str) -> Ordner {
         let d = std::env::temp_dir().join(format!("myl-wasm-{n}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).expect("Ordner");
-        d
+        Ordner(d)
     }
 
     fn beschreibung(befugnisse: &str) -> Beschreibung {

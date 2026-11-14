@@ -1,0 +1,282 @@
+#!/bin/sh
+# golem-aktualisieren: GolemOS auf die andere Seite schreiben, einmal zur Probe
+# starten, und bestaetigen, was gesund hochkam.
+#
+#   golem-aktualisieren status              welche Seite laeuft, welche gilt, ob eine Probe aussteht
+#   golem-aktualisieren einspielen PAKET    das Paket pruefen (daneben PAKET.sha256), auf die
+#                                           inaktive Seite schreiben, beim naechsten Start einmal
+#                                           versuchen
+#   golem-aktualisieren bestaetigen         die laufende Seite gilt ab jetzt
+#   golem-aktualisieren bestaetigen --wenn-erwartet
+#                                           nur, wenn eine Aktualisierung genau diese Seite erwartet
+#                                           (so ruft es `S95aktualisierung` am Ende des Starts)
+#   golem-aktualisieren fuellen             eine leere Seite B einmal aus A fuellen
+#                                           (so ruft es `S00seiteb` beim ersten Start)
+#
+# ⚑ **Zwei Seiten, und die neue wird einmal zur Probe gestartet.** GRUB liest
+# beim Start `grubenv` auf der Bootpartition: `golem_seite` ist die Seite, die
+# gilt, `golem_probe` eine, die genau einmal versucht wird. GRUB leert
+# `golem_probe`, bevor er sie startet; kommt sie nicht hoch, nimmt der naechste
+# Start wieder `golem_seite`. Kommt sie hoch, bestaetigt `S95aktualisierung`
+# sie. ⛔️ **Eine misslungene Aktualisierung kostet so einen Neustart und nicht
+# das System**, und die laufende Seite wird nie beschrieben.
+#
+# ⚑ **Jede Seite hat ihren eigenen Kern** (`bzImage-A`, `bzImage-B` bzw.
+# `Image-A`, `Image-B`): Ein Rueckfall auf die alte Seite laeuft mit dem alten
+# Kern.
+#
+# ⚑ **Jede Seite traegt ihren Stand** (`golem_stand_A`, `golem_stand_B`: die
+# ersten 16 Zeichen der SHA-256 ihrer Wurzel, aus der Datei `stand` im Paket).
+# Die Installation (`golem-einrichten`) kopiert die ruhende Seite und
+# verlangt deshalb, dass beide denselben Stand tragen; nach einer
+# misslungenen Probe ist die ruhende kaputt.
+#
+# ⚠️ Die Pruefsumme belegt, dass das Paket heil ankam, nicht wer es gebaut hat;
+# eine Signatur fehlt wie bei den Schichten (`golem-schicht`).
+set -eu
+
+BOOT=${GOLEM_BOOT:-/run/golemos/boot}
+UMG="$BOOT/EFI/BOOT/grubenv"
+ERWARTET=${GOLEM_ERWARTET:-/daten/golemos/aktualisierung.erwartet}
+case "$(uname -m)" in
+  x86_64) KERN=bzImage ;;
+  *) KERN=Image ;;
+esac
+
+fehler() {
+  echo "golem-aktualisieren: $*" >&2
+  exit 1
+}
+
+pruefsumme_stimmt() { # pruefsumme_stimmt DATEI SUMMENDATEI
+  soll=$(cut -d' ' -f1 < "$2")
+  case "$soll" in
+    "" | *[!0-9a-f]*) return 1 ;;
+  esac
+  [ "${#soll}" -eq 64 ] || return 1
+  [ "$soll" = "$(sha256sum "$1" | cut -d' ' -f1)" ]
+}
+
+# ── Die Seiten ──────────────────────────────────────────────────────
+#
+# ⚑ **Aus den Namen der Partitionen, wie der Kern sie zeigt** (`PARTNAME` in
+#   `/sys/class/block/*/uevent`), nicht aus festen Geraetenamen: Die Wurzel
+#   ist `/dev/vda2` unter QEMU, `/dev/sda2` vom Stick und `/dev/nvme0n1p2`
+#   auf einer Platte.
+sys_wurzel() {
+  mm=$(awk '$5 == "/" {print $3; exit}' /proc/self/mountinfo)
+  readlink -f "/sys/dev/block/$mm"
+}
+
+# 📌 **Der Kern allein reicht nicht** (gemessen am 2026-11-13 unter QEMU):
+#    Nach dem ersten Start, an dem `S05daten` die Daten dehnt (`partx -u`),
+#    fehlte `PARTNAME` an jeder Partition ausser der eingehaengten Wurzel,
+#    und `einspielen` fand die Seite B nicht. Dann liest `sfdisk` den Namen
+#    aus der Partitionstabelle selbst.
+partname() {
+  n=$(sed -n 's/^PARTNAME=//p' "$1/uevent" 2>/dev/null)
+  if [ -z "$n" ] && [ -f "$1/partition" ]; then
+    n=$(sfdisk --part-label "/dev/$(basename "$(dirname "$1")")" "$(cat "$1/partition")" 2>/dev/null)
+  fi
+  echo "$n"
+}
+
+# geschwister NAME: das Geraet der Partition NAME auf der Platte der Wurzel
+geschwister() {
+  for t in "$(dirname "$(sys_wurzel)")"/*; do
+    [ -f "$t/partition" ] || continue
+    if [ "$(partname "$t")" = "$1" ]; then
+      echo "/dev/${t##*/}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+laufend() {
+  case "$(partname "$(sys_wurzel)")" in
+    golem-wurzelA) echo A ;;
+    golem-wurzelB) echo B ;;
+    *) echo "?" ;;
+  esac
+}
+
+andere() {
+  if [ "$1" = A ]; then echo B; else echo A; fi
+}
+
+# ── Die Bootpartition und `grubenv` ─────────────────────────────────
+boot_einhaengen() {
+  grep -q " $BOOT " /proc/mounts && return 0
+  # 📌 Eigener Name: Hier stand `teil` wie in `einspielen`, und sobald die
+  #    Bootpartition vor dem Schreiben eingehaengt wurde, schrieb `dd` die
+  #    Wurzel auf sie (gemessen am 2026-11-13 unter QEMU).
+  bootteil=$(geschwister boot) || fehler "keine Bootpartition auf der Platte der Wurzel"
+  mkdir -p "$BOOT"
+  mount -t vfat -o rw,flush "$bootteil" "$BOOT"
+}
+
+boot_aushaengen() {
+  sync
+  umount "$BOOT" 2>/dev/null || true
+}
+
+umg_lesen() { # umg_lesen NAME
+  sed -n "s/^$1=//p" "$UMG" 2>/dev/null | head -n 1
+}
+
+# ⛔️ **An Ort und Stelle, genau 1024 Bytes.** GRUB schreibt `grubenv` beim
+#    Start in die Bloecke, in denen die Datei liegt; eine neu angelegte Datei
+#    an anderer Stelle saehe er erst, wenn er sie neu gefunden hat. Darum
+#    `dd conv=notrunc` und nie ein Umbenennen.
+umg_schreiben() { # umg_schreiben SEITE PROBE STAND_A STAND_B
+  [ -f "$UMG" ] || fehler "$UMG fehlt; ohne sie startet GRUB immer die Seite A"
+  kopf=$(printf '# GRUB Environment Block\ngolem_seite=%s\ngolem_probe=%s\ngolem_stand_A=%s\ngolem_stand_B=%s\n' "$1" "$2" "$3" "$4")
+  n=$(( ${#kopf} + 1 ))
+  { printf '%s\n' "$kopf"; head -c $((1024 - n)) /dev/zero | tr '\000' '#'; } | dd of="$UMG" bs=1024 count=1 conv=notrunc 2>/dev/null
+  sync
+}
+
+# ── Befehle ─────────────────────────────────────────────────────────
+status() {
+  jetzt=$(laufend)
+  boot_einhaengen
+  seite=$(umg_lesen golem_seite)
+  probe=$(umg_lesen golem_probe)
+  stand_a=$(umg_lesen golem_stand_A)
+  stand_b=$(umg_lesen golem_stand_B)
+  boot_aushaengen
+  echo "laufend:   ${jetzt}"
+  echo "gilt:      ${seite:-A}"
+  echo "Stand:     A ${stand_a:-?}, B ${stand_b:-?}"
+  [ "$stand_b" = leer ] && echo "⚠️  Seite B ist noch leer; der naechste Start fuellt sie aus A"
+  [ -n "$probe" ] && echo "Probe:     $probe beim naechsten Start"
+  if [ -f "$ERWARTET" ]; then
+    e=$(cat "$ERWARTET")
+    if [ "$e" != "$jetzt" ] && [ -z "$probe" ]; then
+      echo "⚠️  die Probe der Seite $e kam nicht hoch; es laeuft wieder $jetzt"
+    fi
+  fi
+}
+
+einspielen() {
+  paket=${1:-}
+  [ -n "$paket" ] && [ -f "$paket" ] || fehler "kein Paket: ${paket:-?}"
+  [ -f "$paket.sha256" ] || fehler "neben dem Paket fehlt $paket.sha256"
+  pruefsumme_stimmt "$paket" "$paket.sha256" || fehler "die Pruefsumme stimmt nicht; nichts geschrieben"
+  neu=$(tar -xOf "$paket" stand 2>/dev/null | head -n 1)
+  case "$neu" in
+    "" | *[!0-9a-z]*) fehler "das Paket nennt keinen Stand; nichts geschrieben" ;;
+  esac
+  jetzt=$(laufend)
+  [ "$jetzt" != "?" ] || fehler "die laufende Seite ist unbekannt (Wurzel ohne den Namen golem-wurzelA oder -B)"
+  ziel=$(andere "$jetzt")
+  teil=$(geschwister "golem-wurzel$ziel") || fehler "keine Partition golem-wurzel$ziel"
+  if grep -q "^$teil " /proc/mounts; then
+    fehler "$teil ist eingehaengt"
+  fi
+  echo "── Seite $ziel ($teil) beschreiben, es laeuft $jetzt"
+  boot_einhaengen
+  seite=$(umg_lesen golem_seite)
+  stand_a=$(umg_lesen golem_stand_A)
+  stand_b=$(umg_lesen golem_stand_B)
+  # ⛔️ **Zuerst gilt die Zielseite als unfertig** (Stand `-`, keine Probe):
+  #    Bricht das Schreiben ab, nennt `grubenv` sonst ihren alten Stand fuer
+  #    eine halb beschriebene Wurzel, und die Installation hielte beide
+  #    Seiten fuer gleich.
+  if [ "$ziel" = A ]; then stand_a=-; else stand_b=-; fi
+  umg_schreiben "${seite:-$jetzt}" "" "$stand_a" "$stand_b"
+  # ⛔️ **Unmittelbar vor dem Schreiben noch einmal nachsehen**, was dort liegt.
+  [ "$(partname "$(readlink -f "/sys/class/block/${teil##*/}")")" = "golem-wurzel$ziel" ] || fehler "$teil ist nicht golem-wurzel$ziel; nichts geschrieben"
+  tar -xOf "$paket" wurzel.ext2.gz | gunzip -c | dd of="$teil" bs=1M 2>/dev/null || fehler "die Wurzel liess sich nicht schreiben; die Seite $ziel ist unbrauchbar, $jetzt bleibt"
+  tar -xOf "$paket" kern > "$BOOT/$KERN-$ziel.neu" || fehler "der Kern fehlt im Paket"
+  mv "$BOOT/$KERN-$ziel.neu" "$BOOT/$KERN-$ziel"
+  if [ "$ziel" = A ]; then stand_a=$neu; else stand_b=$neu; fi
+  umg_schreiben "${seite:-$jetzt}" "$ziel" "$stand_a" "$stand_b"
+  boot_aushaengen
+  # ⛔️ **Ohne diese Marke bestaetigt `S95aktualisierung` nie**, und jeder
+  #    Start nach der Probe naehme wieder die alte Seite. Ihr Ordner fehlt
+  #    nach dem ersten Start noch; angelegt wird er, sobald die Daten da sind.
+  daten=${ERWARTET%/*}
+  if [ -d "${daten%/*}" ]; then
+    mkdir -p "$daten"
+    echo "$ziel" > "$ERWARTET"
+  else
+    echo "⚠️  ohne Datenpartition: die Probe muss von Hand bestaetigt werden (golem-aktualisieren bestaetigen)"
+  fi
+  echo "── fertig: Seite $ziel wird beim naechsten Start einmal versucht; kommt sie hoch, gilt sie"
+}
+
+# ⚑ **Die Seite B kommt leer aus dem Abbild** (Stand `leer`, GolemOS 0.6.1) und
+#   wird beim ersten Start von A gefuellt. 📌 Mit zwei belegten Seiten lag jede
+#   Wurzel zweimal im Abbild, gepackt 119 und 140 MiB, ueber der Grenze von
+#   100 MiB je Datei; ein groesseres Woerterbuch haette Rufus ausgeschlossen.
+#   Gebraucht wird B vor der ersten Aktualisierung nur von der Installation,
+#   die die ruhende Seite kopiert; eine Aktualisierung schreibt B ohnehin neu.
+# ⛔️ **Kopiert wird nur eine schreibgeschuetzte Wurzel.** `S00seiteb` ruft
+#   das vor jedem Dienst; die Wurzel wird dafuer kurz schreibgeschuetzt
+#   eingehaengt. Laesst sie sich nicht schuetzen, bleibt B leer, und der
+#   naechste Start versucht es wieder. Der Stand wird erst nach dem Kopieren
+#   gesetzt; ein abgebrochenes Kopieren hinterlaesst also wieder `leer`.
+fuellen() {
+  jetzt=$(laufend)
+  [ "$jetzt" = A ] || return 0
+  boot_einhaengen
+  stand_a=$(umg_lesen golem_stand_A)
+  stand_b=$(umg_lesen golem_stand_B)
+  if [ "$stand_b" != leer ]; then
+    boot_aushaengen
+    return 0
+  fi
+  case "$stand_a" in
+    "" | - | leer) boot_aushaengen; fehler "Seite A traegt keinen Stand ($stand_a); B bleibt leer" ;;
+  esac
+  quelle="/dev/$(basename "$(sys_wurzel)")"
+  teil=$(geschwister golem-wurzelB) || { boot_aushaengen; fehler "keine Partition golem-wurzelB"; }
+  grep -q "^$teil " /proc/mounts && { boot_aushaengen; fehler "$teil ist eingehaengt"; }
+  [ "$(partname "$(readlink -f "/sys/class/block/${teil##*/}")")" = golem-wurzelB ] \
+    || { boot_aushaengen; fehler "$teil ist nicht golem-wurzelB; nichts geschrieben"; }
+  if ! mount -o remount,ro / 2>/dev/null; then
+    boot_aushaengen
+    echo "⚠️  die Wurzel liess sich nicht schreibschuetzen; Seite B bleibt leer bis zum naechsten Start"
+    return 0
+  fi
+  echo "── Seite B einrichten, einmalig (bis zu einer Minute)"
+  if dd if="$quelle" of="$teil" bs=1M conv=fsync 2>/dev/null; then
+    ok=ja
+  else
+    ok=nein
+  fi
+  mount -o remount,rw / || fehler "die Wurzel liess sich nicht wieder beschreibbar einhaengen"
+  if [ "$ok" = ja ]; then
+    umg_schreiben "$(umg_lesen golem_seite)" "$(umg_lesen golem_probe)" "$stand_a" "$stand_a"
+    echo "── Seite B traegt jetzt den Stand $stand_a"
+  else
+    echo "⚠️  Seite B liess sich nicht schreiben; sie bleibt leer"
+  fi
+  boot_aushaengen
+}
+
+bestaetigen() {
+  jetzt=$(laufend)
+  [ "$jetzt" != "?" ] || fehler "die laufende Seite ist unbekannt"
+  if [ "${1:-}" = --wenn-erwartet ]; then
+    [ -f "$ERWARTET" ] && [ "$(cat "$ERWARTET")" = "$jetzt" ] || return 0
+  fi
+  boot_einhaengen
+  umg_schreiben "$jetzt" "" "$(umg_lesen golem_stand_A)" "$(umg_lesen golem_stand_B)"
+  boot_aushaengen
+  rm -f "$ERWARTET"
+  echo "Seite $jetzt gilt"
+}
+
+case "${1:-}" in
+  status) status ;;
+  einspielen) shift; einspielen "${1:-}" ;;
+  bestaetigen) shift; bestaetigen "${1:-}" ;;
+  fuellen) fuellen ;;
+  *)
+    sed -n '3,14p' "$0" | sed 's/^# \{0,1\}//'
+    exit 2
+    ;;
+esac

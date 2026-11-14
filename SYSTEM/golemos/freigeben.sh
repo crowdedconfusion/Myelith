@@ -77,7 +77,23 @@ fi
 
 echo "── Packen, das dauert einen Moment"
 mkdir -p "$(dirname "$ZIEL")"
-xz -9 -c "$QUELLE" > "$ZIEL"
+# ⚠️ **Das Woerterbuch bleibt bei den 64 MiB von `-9`.** Rufus entpackt
+#    kein groesseres (`xz_dec_init(XZ_DYNALLOC, 1 << 26)`), und das `xz`
+#    von BusyBox auch nicht; ein groesseres packte dichter und schlosse
+#    Windows-Nutzer aus.
+xz -9 -c "$QUELLE" > "$ZIEL.neu"
+# ⛔️ **Und es muss ins Repositorium passen.** 📌 2026-11-13: Mit der
+#    A/B-Umschaltung lag jede Wurzel zweimal im Abbild, gepackt 128 und
+#    144 MB; der Push waere abgelehnt worden, und das alte Abbild war
+#    schon ueberschrieben. Deshalb erst neben das alte, dann pruefen.
+GROESSE=$(wc -c < "$ZIEL.neu" | tr -d ' ')
+if [ "$GROESSE" -ge 104857600 ]; then
+  rm -f "$ZIEL.neu"
+  echo "⛔️ Gepackt $GROESSE Bytes, ueber der Grenze von 100 MiB je Datei." >&2
+  echo "   Der abgelegte Stand bleibt, wie er war." >&2
+  exit 5
+fi
+mv "$ZIEL.neu" "$ZIEL"
 # Die kleine Auskunft (Verzeichnis und Lizenztexte) kommt mit ins
 # Repositorium; die Quellen sind zu gross dafuer und gehen als Anhang an
 # dieselbe Freigabe.

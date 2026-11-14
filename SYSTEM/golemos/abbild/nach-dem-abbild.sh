@@ -29,12 +29,26 @@ mkdir -p "$BINARIES_DIR/efi-part/EFI/BOOT"
 UUID_A=$(cat /proc/sys/kernel/random/uuid)
 UUID_B=$(cat /proc/sys/kernel/random/uuid)
 UUID_D=$(cat /proc/sys/kernel/random/uuid)
+WURZEL_GROESSE=$(wc -c < "$BINARIES_DIR/rootfs.ext2" | tr -d ' ')
 ersetzen() {
-  sed -e "s/KERNNAME/$KERN/g" -e "s/SERIELL/$SERIELL/g" \
+  sed -e "s/KERNNAME/$KERN/g" -e "s/SERIELL/$SERIELL/g" -e "s/WURZEL_GROESSE/$WURZEL_GROESSE/g" \
       -e "s/WURZEL_A_UUID/$UUID_A/g" -e "s/WURZEL_B_UUID/$UUID_B/g" -e "s/DATEN_UUID/$UUID_D/g" "$1"
 }
 ersetzen "$VORLAGEN/grub.cfg" \
   > "$BINARIES_DIR/efi-part/EFI/BOOT/grub.cfg"
+
+# ⚑ **`grubenv` liegt von Anfang an da**, genau 1024 Bytes: GRUB schreibt
+#   beim Start nur in eine Datei, die es schon gibt, und `golem-aktualisieren`
+#   ebenso an Ort und Stelle. Am Anfang gilt A, und keine Probe steht an.
+#   A traegt als Stand die ersten 16 Zeichen der SHA-256 seiner Wurzel, wie
+#   `bauen.sh` ihn ins Paket legt. ⚑ **B traegt `leer`** (GolemOS 0.6.1): Das
+#   Abbild liefert B ohne Inhalt aus, und der erste Start fuellt es aus A
+#   (`S00seiteb`, siehe `golem-aktualisieren fuellen`).
+UMG="$BINARIES_DIR/efi-part/EFI/BOOT/grubenv"
+STAND=$(sha256sum "$BINARIES_DIR/rootfs.ext2" | cut -c1-16)
+printf '# GRUB Environment Block\ngolem_seite=A\ngolem_probe=\ngolem_stand_A=%s\ngolem_stand_B=%s\n' "$STAND" leer > "$UMG"
+head -c $((1024 - $(wc -c < "$UMG"))) /dev/zero | tr '\000' '#' >> "$UMG"
+[ "$(wc -c < "$UMG")" -eq 1024 ] || { echo "nach-dem-abbild: grubenv nicht 1024 Bytes" >&2; exit 1; }
 ersetzen "$VORLAGEN/genimage.cfg" \
   > "$BINARIES_DIR/genimage-golemos.cfg"
 

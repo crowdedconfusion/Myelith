@@ -1,0 +1,17 @@
+#!/bin/sh
+# Fuellt beim ersten Start die leere Seite B aus der laufenden Seite A.
+#
+# ⚑ **S00, also vor jedem Dienst.** Kopiert wird eine schreibgeschuetzte
+# Wurzel, und das geht nur, solange noch niemand auf ihr schreibt: vor
+# `syslogd` (S01) und vor `S05daten`. Alles Weitere steht bei `fuellen` in
+# `golem-aktualisieren`; nach dem ersten Start tut dieses Skript nichts mehr.
+
+case "$1" in
+  start)
+    # Ein Fehler hier haelt den Start nicht auf; B bleibt dann leer, und
+    # der naechste Start versucht es wieder.
+    /usr/sbin/golem-aktualisieren fuellen || true
+    ;;
+  stop|restart|reload) ;;
+  *) echo "Aufruf: $0 {start|stop|restart}" >&2; exit 1 ;;
+esac

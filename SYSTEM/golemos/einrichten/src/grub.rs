@@ -23,6 +23,48 @@ use crate::platten::{NAME_WURZEL_A, NAME_WURZEL_B};
 /// Der Schalter auf der Kernzeile, den `S05daten` liest.
 pub const DATEN_SCHALTER: &str = "golemos.daten=PARTUUID=";
 
+/// Die Laenge von `grubenv`, die GRUB verlangt.
+pub const UMGEBUNG_LAENGE: usize = 1024;
+
+/// `grubenv` mit `seite` als geltender Seite, ohne Probe und mit `stand` auf
+/// beiden Seiten, gefuellt wie `nach-dem-abbild.sh` und
+/// `golem-aktualisieren` sie fuellen.
+pub fn umgebung(seite: char, stand: &str) -> Vec<u8> {
+    let mut u = format!(
+        "# GRUB Environment Block\ngolem_seite={seite}\ngolem_probe=\ngolem_stand_A={stand}\ngolem_stand_B={stand}\n"
+    )
+    .into_bytes();
+    u.resize(UMGEBUNG_LAENGE, b'#');
+    u
+}
+
+/// Der Stand, den beide Seiten laut `grubenv` tragen; `None` bei einem
+/// aelteren Stick, der keinen nennt.
+///
+/// ⛔️ **Tragen die Seiten verschiedene Staende, ist das ein Fehler.**
+/// Kopiert wird die ruhende Seite, und nach einer misslungenen Probe ist sie
+/// kaputt, nach einer gelungenen die alte; `-` heisst, ihr Schreiben brach
+/// ab (`golem-aktualisieren`).
+pub fn gemeinsamer_stand(umg: &str) -> Result<Option<String>, String> {
+    let wert = |name: &str| {
+        umg.lines().find_map(|z| z.strip_prefix(name).and_then(|r| r.strip_prefix('='))).map(str::to_string)
+    };
+    match (wert("golem_stand_A"), wert("golem_stand_B")) {
+        (None, None) => Ok(None),
+        // ⚑ Ein frischer Stick traegt B als `leer`, bis sein erster Start es
+        //   aus A gefuellt hat (`golem-aktualisieren fuellen`).
+        (_, Some(b)) if b == "leer" => Err(
+            "die Seite B ist noch leer; GolemOS fuellt sie beim Start. Einmal neu starten und dann installieren".into(),
+        ),
+        (Some(a), Some(b)) if a == b && !a.is_empty() && a != "-" && a != "leer" => Ok(Some(a)),
+        (a, b) => Err(format!(
+            "die beiden Seiten tragen verschiedene Staende (A {}, B {}); erst das Paket der laufenden Seite noch einmal einspielen (golem-aktualisieren)",
+            a.as_deref().unwrap_or("?"),
+            b.as_deref().unwrap_or("?")
+        )),
+    }
+}
+
 /// Die Kennungen einer Platte: beide Wurzeln und die Daten.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Kennungen {
@@ -69,10 +111,16 @@ pub fn festnageln(cfg: &str, alt: &Kennungen, neu: &Kennungen) -> Result<String,
         if !woerter.iter().any(|w| w.starts_with(DATEN_SCHALTER)) {
             woerter.push(format!("{DATEN_SCHALTER}{}", neu.daten));
         }
-        if woerter.contains(&ziel_a) {
+        // ⚑ **Jede Seite startet ihren eigenen Kern** (`…-A`, `…-B`);
+        //    aeltere Sticks haben einen fuer beide und kein Suffix.
+        let kern = woerter.iter().map(|w| w.trim()).find(|w| !w.is_empty() && *w != "linux").unwrap_or("");
+        let kern_seite = kern.strip_suffix("-A").map(|_| 'A').or_else(|| kern.strip_suffix("-B").map(|_| 'B'));
+        let seite = if woerter.contains(&ziel_a) {
             zu_a += 1;
+            'A'
         } else if woerter.contains(&ziel_b) {
             zu_b += 1;
+            'B'
         } else {
             return Err(format!(
                 "eine Kernzeile nennt keine der Wurzeln der Quelle ({}, {}): {}",
@@ -80,6 +128,9 @@ pub fn festnageln(cfg: &str, alt: &Kennungen, neu: &Kennungen) -> Result<String,
                 alt.b,
                 zeile.trim()
             ));
+        };
+        if kern_seite.is_some_and(|k| k != seite) {
+            return Err(format!("eine Kernzeile startet die Wurzel {seite} mit dem Kern der anderen Seite: {}", zeile.trim()));
         }
         aus.push_str(&woerter.join(" "));
         aus.push('\n');
@@ -128,6 +179,70 @@ mod proben {
         assert!(z[0].contains("root=PARTUUID=platte-a"));
         assert!(z[1].contains("root=PARTUUID=platte-b"));
         assert!(z[2].contains("root=PARTUUID=platte-a") && z[2].contains("golemos.probe"));
+        assert!(z[0].contains("linux /Image-A "), "{}", z[0]);
+        assert!(z[1].contains("linux /Image-B "), "{}", z[1]);
+        assert!(z[2].contains("linux /Image-A "), "{}", z[2]);
+    }
+
+    /// ⛔️ Ein Rueckfall auf A mit dem Kern von B waere keiner.
+    #[test]
+    fn eine_seite_mit_dem_kern_der_anderen_ist_ein_fehler() {
+        let cfg = "linux /Image-A root=PARTUUID=a rootwait\n\
+                   linux /Image-A root=PARTUUID=b rootwait\n";
+        let f = festnageln(cfg, &k("a", "b", "d"), &k("pa", "pb", "pd")).unwrap_err();
+        assert!(f.contains("Kern der anderen Seite"), "{f}");
+    }
+
+    /// Die Umgebung hat die Form, die `nach-dem-abbild.sh` und
+    /// `golem-aktualisieren` schreiben, und die Laenge, die GRUB verlangt.
+    #[test]
+    fn die_umgebung_gleicht_der_des_abbilds() {
+        let u = umgebung('A', "0123abcd");
+        assert_eq!(u.len(), UMGEBUNG_LAENGE);
+        let lies = |p: &str| std::fs::read_to_string(format!("{}/../{p}", env!("CARGO_MANIFEST_DIR"))).unwrap();
+        let form = r"# GRUB Environment Block\ngolem_seite=%s\ngolem_probe=%s\ngolem_stand_A=%s\ngolem_stand_B=%s\n";
+        assert!(lies("overlay/usr/sbin/golem-aktualisieren").contains(form), "golem-aktualisieren");
+        assert!(lies("abbild/nach-dem-abbild.sh").contains(&form.replacen("%s", "A", 1).replacen("%s", "", 1)), "nach-dem-abbild.sh");
+        let kopf = b"# GRUB Environment Block\ngolem_seite=A\ngolem_probe=\ngolem_stand_A=0123abcd\ngolem_stand_B=0123abcd\n";
+        assert!(u.starts_with(kopf));
+        assert!(u[kopf.len()..].iter().all(|&b| b == b'#'));
+        assert!(umgebung('B', "x").starts_with(b"# GRUB Environment Block\ngolem_seite=B\n"));
+    }
+
+    #[test]
+    fn gleiche_staende_gelten() {
+        let u = String::from_utf8(umgebung('B', "0123abcd")).unwrap();
+        assert_eq!(gemeinsamer_stand(&u), Ok(Some("0123abcd".into())));
+        // Ein aelterer Stick nennt keinen Stand.
+        assert_eq!(gemeinsamer_stand("# GRUB Environment Block\ngolem_seite=A\n"), Ok(None));
+        assert_eq!(gemeinsamer_stand(""), Ok(None));
+    }
+
+    /// ⛔️ Verschiedene Staende, ein abgebrochenes Schreiben (`-`) und eine
+    /// fehlende Seite halten die Installation auf.
+    #[test]
+    fn verschiedene_staende_halten_auf() {
+        for umg in [
+            "golem_stand_A=aaaa\ngolem_stand_B=bbbb\n",
+            "golem_stand_A=-\ngolem_stand_B=-\n",
+            "golem_stand_A=aaaa\n",
+            "golem_stand_A=\ngolem_stand_B=\n",
+        ] {
+            let f = gemeinsamer_stand(umg).unwrap_err();
+            assert!(f.contains("verschiedene Staende"), "{umg}: {f}");
+        }
+    }
+
+    /// ⛔️ Eine noch leere Seite B haelt die Installation auf, mit eigenem
+    /// Grund; sonst kopierte sie eine Partition ohne Inhalt auf die Platte.
+    #[test]
+    fn eine_leere_seite_b_haelt_auf() {
+        for umg in ["golem_stand_A=aaaa\ngolem_stand_B=leer\n", "golem_stand_A=leer\ngolem_stand_B=leer\n"] {
+            let f = gemeinsamer_stand(umg).unwrap_err();
+            assert!(f.contains("noch leer"), "{umg}: {f}");
+        }
+        // Und ein `leer` auf A allein gilt auch nicht als gemeinsamer Stand.
+        assert!(gemeinsamer_stand("golem_stand_A=leer\ngolem_stand_B=aaaa\n").is_err());
     }
 
     /// Die Vorlage selbst: Jede Kernzeile nennt eine Kennung und die

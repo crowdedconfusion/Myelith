@@ -128,6 +128,22 @@ pub type Nachfrage = std::sync::Arc<dyn Fn(&str, &serde_json::Value) -> bool + S
 /// liefen auseinander.
 static OHNE_MENSCH: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// **Ob Dokumente, die der Agent schreibt, ein Kennzeichen bekommen**
+/// ([`Agenteneinstellung::text_kennzeichnen`]), gesetzt beim Ruesten. ⚑ Eine
+/// Stelle fuer alle Dateiwerkzeuge, wie [`OHNE_MENSCH`], damit ihre Gestalt
+/// bleibt; an, bis das Ruesten etwas anderes sagt.
+static TEXT_KENNZEICHNEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// Siehe [`TEXT_KENNZEICHNEN`].
+pub fn text_kennzeichnen() -> bool {
+    TEXT_KENNZEICHNEN.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// Siehe [`TEXT_KENNZEICHNEN`].
+pub fn text_kennzeichnen_setzen(an: bool) {
+    TEXT_KENNZEICHNEN.store(an, std::sync::atomic::Ordering::SeqCst);
+}
+
 /// Gilt gerade, dass kein Mensch freigibt? Siehe [`OHNE_MENSCH`].
 pub fn ohne_mensch() -> bool {
     OHNE_MENSCH.load(std::sync::atomic::Ordering::SeqCst)
@@ -401,6 +417,7 @@ fn ruesten_zugeschnitten(
     nachfrage: Option<Nachfrage>,
     zuschnitt: Zuschnitt,
 ) -> Result<Ruestung, String> {
+    text_kennzeichnen_setzen(agent.text_kennzeichnen);
     let mut kasten = Werkzeugkasten::neu();
     let budget = crate::werkzeuge::verlaufsbudget();
     let fluss = std::sync::Arc::new(crate::secure_flow::Fluss::neu());

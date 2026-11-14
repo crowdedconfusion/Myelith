@@ -227,8 +227,8 @@ fn anleitung(s: Sprache, aus: &mut dyn Write) -> io::Result<()> {
              \x20      INTEGER_LLM/scripts/build_artifacts.sh\n\
              \x20    Weglassen darfst du nur, was ein frischer Klon gar nicht hat:\n\
              \x20    SYSTEM/full-build, SYSTEM/crates-lager, die Rohgewichte unter MODELS\n\
-             \x20    und Ordner namens .venv (die enthalten Verknuepfungen, die FAT32\n\
-             \x20    nicht speichern kann).\n\
+             \x20    und Ordner namens .venv (die enthalten Verknuepfungen, die der\n\
+             \x20    Stick nicht speichern kann).\n\
              \x20 4. Den Stick auswerfen und wieder von ihm starten.\n\
              \n\
              GolemOS findet den Ordner beim Start, auch auf einem zweiten Laufwerk,\n\
@@ -244,7 +244,7 @@ fn anleitung(s: Sprache, aus: &mut dyn Write) -> io::Result<()> {
              \x20      INTEGER_LLM/scripts/build_artifacts.sh\n\
              \x20    You may leave out only what a fresh clone does not contain:\n\
              \x20    SYSTEM/full-build, SYSTEM/crates-lager, the raw weights under MODELS\n\
-             \x20    and folders named .venv (they contain links FAT32 cannot store).\n\
+             \x20    and folders named .venv (they contain links the stick cannot store).\n\
              \x20 4. Eject the stick and start from it again.\n\
              \n\
              GolemOS finds the folder at startup, also on a second drive, and picks\n\

@@ -1,16 +1,16 @@
 # golemos (die Linux-Distribution, die nur Myelith bedient)
 
-> **Version:** 0.5.1 (`golem-einrichten` 0.3.3)
-> **Datum:** 2026-11-12
+> **Version:** 0.6.1 (`golem-einrichten` 0.5.0)
+> **Datum:** 2026-11-14
 > **Status:** Startet vom Stick und von Platte, findet einen
 > Myelith-Ordner auf dem Stick oder einem zweiten Laufwerk und
 > installiert sich mit einem Assistenten auf eine ganze Platte. Belegt
 > unter QEMU mit UEFI auf x86_64 und aarch64, von Anfang bis Ende. Seit
 > 0.3.0 betreibt es einen **Myelith-Knoten** als Dienst (`golem-knoten`,
 > unter QEMU belegt) und nimmt eine **Oberflächen-Schicht** dazu
-> (`golem-schicht`, das Myelith-Fenster im Vollbild). Offen: ein Lauf
-> auf echter Hardware, die A/B-Umschaltung, eine eigene
-> Kernkonfiguration.
+> (`golem-schicht`, das Myelith-Fenster im Vollbild). Seit 0.6.0 mit
+> A/B-Umschaltung. Offen: ein Lauf auf echter Hardware, Secure Boot,
+> eine eigene Kernkonfiguration.
 
 Wie GolemOS gebaut wird und warum es so aussieht, steht in
 [`../README.md`](../README.md). Hier stehen der Weg für Menschen und der
@@ -70,6 +70,28 @@ Wurzel und nicht auf der für jeden lesbaren FAT-Datenpartition.
 Routing und Abstimmungen bestimmt die Kette; `golem-knoten` richtet ein und
 betreibt.
 
+## Die Aktualisierung (`golem-aktualisieren`)
+
+Zwei Wurzeln (`golem-wurzelA`, `golem-wurzelB`), jede mit ihrem eigenen
+Kern auf der Bootpartition (`Image-A`/`Image-B` bzw. `bzImage-…`). Eine
+Aktualisierung schreibt auf die ruhende Seite und startet sie **einmal zur
+Probe**, wie RAUC, Mender oder ChromeOS es tun:
+
+| Wer | Was |
+|---|---|
+| `golem-aktualisieren einspielen PAKET` | prüft `PAKET.sha256`, setzt die Zielseite in `grubenv` auf „unfertig“, schreibt Wurzel und Kern, setzt `golem_probe` und ihren Stand |
+| GRUB (`grub.cfg`) | liest `grubenv`; steht eine Probe an, leert er sie (`save_env`) und startet sie, sonst `golem_seite` |
+| `S95aktualisierung` | am Ende eines gesunden Starts: `bestaetigen --wenn-erwartet` macht die Probeseite zu `golem_seite` |
+| `golem-einrichten installieren` | kopiert die ruhende Seite und verlangt deshalb, dass beide Seiten denselben Stand tragen |
+
+Das Paket `aus/<arch>/golemos-<arch>.aktualisierung` legt `bauen.sh` an
+(tar mit `stand`, `wurzel.ext2.gz`, `kern`, daneben `.sha256`). Der Stand
+sind die ersten 16 Zeichen der SHA-256 der Wurzel, derselbe, den
+`nach-dem-abbild.sh` beiden Seiten des Abbilds ins `grubenv` legt.
+
+⚠️ Die Prüfsumme belegt, dass ein Paket heil ankam, nicht wer es gebaut
+hat; eine Signatur fehlt wie bei den Schichten.
+
 ## Die Oberfläche (`golem-schicht`)
 
 Das Myelith-Fenster im Vollbild (cage, GTK3, WebKitGTK), als **Schicht**:
@@ -101,6 +123,137 @@ sie tut, soll sich in ihrem eigenen Quelltext lesen lassen.
 ---
 
 ## Changelog
+
+### v0.6.1 (2026-11-14): Abbilder unter 100 MiB, exFAT, Lizenztexte im Abbild (`golem-einrichten` 0.5.0)
+
+- ⛔️ **Die Freigabe von 0.6.0 scheiterte an der Größe:** gepackt 128 MB
+  (x86_64) und 144 MB (aarch64), über der Grenze von 100 MiB je Datei im
+  Repositorium. Zwei Ursachen: Mit der A/B-Umschaltung lag jede Wurzel
+  zweimal im Abbild, und die Myelith-Programme lagen mit allen Symbolen
+  darin (Buildroot bereinigt seine eigenen Programme und legt das Overlay
+  erst danach ein). `freigeben.sh` packt jetzt neben das alte Abbild und
+  verweigert ab 100 MiB, statt es zu überschreiben.
+- ⚑ **Seite B kommt leer aus dem Abbild** (Stand `leer`) und wird beim
+  ersten Start aus A gefüllt: `S00seiteb` ruft `golem-aktualisieren
+  fuellen`, vor jedem Dienst, mit kurz schreibgeschützter Wurzel. Ein
+  abgebrochenes Kopieren hinterlässt wieder `leer`, der nächste Start
+  versucht es erneut. `golem-einrichten` verweigert die Installation von
+  einem Stick mit leerer Seite B mit eigenem Grund. ⛔️ Ein größeres
+  Wörterbuch für `xz` hätte die doppelte Wurzel auch erkannt (gemessen
+  71 MB), aber Rufus und das `xz` von BusyBox entpacken höchstens 64 MiB,
+  und balenaEtcher erlaubt 20 % des Arbeitsspeichers.
+- **Entschlackt bei gleichem Funktionsumfang:** die Programme bereinigt
+  (`nach-dem-bauen.sh`, `--strip-unneeded`), die Kernmodule als `.ko.xz`
+  (aarch64 84 MB auf 24 MB je Wurzel), dazu das echte `xz` und `kmod` mit
+  seinen Werkzeugen statt der BusyBox-Fassungen, die weder gepackte Module
+  laden noch große Wörterbücher entpacken; `depmod` auf dem Bauwirt mit xz.
+  📌 `bauen.sh` baut jetzt auch Pakete des Bauwirts (`host-kmod`) und ein
+  geändertes Kernfragment neu; beides wäre sonst wortlos alt geblieben.
+- ⚑ **Der Datenteil ist exFAT** (Kern `CONFIG_EXFAT_FS`, `exfatprogs`),
+  vorher FAT32: an jedem Rechner les- und beschreibbar, ohne Grenze von
+  4 GB je Datei; GolemOS liest jetzt auch fremde Laufwerke mit exFAT.
+  ⛔️ Ein FAT32-Datenteil aus einem früheren Stand bleibt FAT32:
+  `S05daten` liest die Art vorher und versucht ohne Angabe beide, denn
+  ein Datenteil, der sich nicht einhängen lässt, wird neu formatiert.
+  ⚠️ `exfat` kennt `flush` nicht; Geschriebenes wartet dort bis zu 30 s.
+- **Freigegeben nach `abbild/fertig`:** gepackt 70,3 MB (x86_64) und
+  79,3 MB (aarch64), statt 128 und 144 MB. Belegt unter QEMU mit UEFI, je
+  Architektur 17 Starts: erster Start füllt B bei schreibgeschützter
+  Wurzel und nur einmal; exFAT-Datenteil; ein FAT32-Datenteil eines
+  früheren Stands bleibt samt Inhalt; `xz` und `kmod` echt, ein gepacktes
+  Modul lädt; die A/B-Kette und die Installer-Kette wie in 0.6.0. Auf
+  aarch64 dazu „Paris" mit `myl frage` aus den bereinigten Programmen.
+  📌 Der Prüfstand verlor auf x86_64 gelegentlich QEMU mitten im
+  GRUB-Menü; Ursache ein SIGHUP an den Prozess am Pseudoterminal, nicht
+  GolemOS. Nicht geprüft: echte Hardware, der exFAT-Datenteil unter macOS
+  und Windows.
+- ⛔️ **Die Lizenztexte der fremden Pakete lagen nur neben dem Abbild,
+  nicht darin.** Ein Stick, den GolemOS selbst schreibt oder den jemand
+  weitergibt, trug Kern, GRUB und BusyBox unter der GPL ohne ihren
+  Lizenztext. `bauen.sh` sammelt jetzt vor dem Bau mit `make legal-info`
+  das Verzeichnis aller Pakete und ihre Lizenztexte und legt beides nach
+  `/usr/share/licenses/` (`manifest.csv`, ein Ordner je Paket); die
+  Nachzählung nach dem Bau verlangt das Verzeichnis und die Ordner von
+  Kern, GRUB und BusyBox.
+- **Neu `/usr/share/golemos/LIZENZEN.txt`**, zweisprachig: GolemOS ist eine
+  Zusammenstellung; die Teile des Myelith-Projekts stehen unter PolyForm
+  Shield 1.0.0, die fremden unter ihren eigenen Lizenzen, die PolyForm
+  nicht einschränkt; wo die Quellen liegen und was die GPL von einem
+  verlangt, der GolemOS weitergibt. `README.txt` auf dem Stick und beide
+  Anleitungen verweisen darauf.
+- ⚠️ **Die Oberflächen-Schicht trägt die Lizenztexte ihrer Pakete noch
+  nicht in sich**, nur `lizenzen-<arch>.tar.xz` neben dem Abbild nennt sie.
+- In der Liste des Offenen ersetzt **Secure Boot** die Zeile zum
+  Bootloader, die seit dem Start von Platte mit GRUB überholt war.
+
+### v0.6.0 (2026-11-13): Die A/B-Umschaltung (`golem-einrichten` 0.4.0)
+
+- **Neu `golem-aktualisieren`** (`status`, `einspielen PAKET`,
+  `bestaetigen`): schreibt ein Paket auf die ruhende Seite und startet sie
+  beim nächsten Mal **einmal zur Probe**. `S95aktualisierung` bestätigt sie
+  am Ende eines gesunden Starts; kommt sie nicht hoch, nimmt der nächste
+  Start wieder die alte. Vorbild RAUC, Mender, ChromeOS.
+- `grub.cfg` liest `grubenv` (`load_env`), leert eine anstehende Probe vor
+  dem Start (`save_env`) und startet je Seite **ihren eigenen Kern**
+  (`Image-A`/`-B`, `bzImage-A`/`-B`; Bootpartition 160 MB statt 64). GRUB
+  bekommt dafür `loadenv` und `test`; `bauen.sh` baut GRUB neu, wenn sich
+  seine Optionen ändern.
+- `bauen.sh` legt das Paket `golemos-<arch>.aktualisierung` samt `.sha256`
+  an (Stand, gepackte Wurzel, Kern). Jede Seite trägt in `grubenv` ihren
+  **Stand** (die ersten 16 Zeichen der SHA-256 ihrer Wurzel); vor dem
+  Schreiben gilt die Zielseite als unfertig.
+- `golem-einrichten` 0.4.0: kopiert die ruhende Wurzel auf beide Seiten
+  der Platte und jetzt auch **ihren Kern**, setzt `grubenv` zurück und
+  verweigert die Installation, solange die beiden Seiten der Quelle
+  verschiedene Stände tragen oder eine Aktualisierung unbestätigt ist.
+  `festnageln` prüft, dass jede Seite ihren eigenen Kern startet.
+- 📌 **Drei Befunde aus dem Prüfstand**, alle vor der Freigabe behoben:
+  Nach dem ersten Start fehlte `PARTNAME` an jeder Partition außer der
+  Wurzel (`partx -u` in `S05daten`); die Namen liest jetzt notfalls
+  `sfdisk`. Der Ordner der Erwartungsmarke fehlte beim ersten Start, und
+  keine Probe wäre je bestätigt worden. ⛔️ Und ein eigener Fehler beim
+  Umstellen: Eine geteilte Variable ließ `dd` die Wurzel auf die
+  **Bootpartition** schreiben; jetzt prüft das Skript unmittelbar vor dem
+  Schreiben den Namen des Ziels.
+- **Belegt unter QEMU mit UEFI (edk2), je Architektur zwei Ketten:**
+  einspielen, Probe B bestätigt, B bleibt; eine Probe ohne Bestätigung
+  (nach dem Kernstart abgebrochen) fällt auf B zurück; eine kaputte Wurzel
+  (der Kern hält an der Wurzel an) fällt auf B zurück, `status` warnt.
+  Bei verschiedenen Ständen verweigert die Installation mit Grund; nach
+  erneutem Einspielen installiert sie, und die installierte Platte startet
+  allein mit demselben Stand. aarch64 und x86_64 grün; auf x86_64 dazu acht Probestarts hintereinander,
+  abwechselnd A und B, jeder ohne Neustart der Firmware bis zum Kern. Noch nicht auf
+  echter Hardware. ⚠️ Pakete tragen eine Prüfsumme, keine Signatur.
+
+### v0.5.3 (2026-11-13): Knotenprobe auf x86_64, und die Untergrenze des Prozessors
+
+- **Knotenprobe auf x86_64** unter QEMU (`golemos.probe golemos.knotenprobe`,
+  Abbild vom 2026-11-11, emuliert): mit `-cpu Nehalem` (x86-64-v2 mit
+  SSSE3, ohne AVX) `KNOTEN_OK`: P2P-Port nach 1 s auf `0.0.0.0:4001`, Konto
+  900, Beobachtung und Tür nur auf `127.0.0.1`, `stoppen` beendet ihn.
+- 📌 **Befund:** Mit der Vorgabe-CPU von QEMU (`qemu64`, ohne SSSE3) brach
+  `myl-node` fünfmal mit „invalid opcode“ ab (Rückgabe 132), am Befehl
+  `pshufb` in der SHA-256 von blst. Echte Prozessoren haben SSSE3 seit Intel
+  Core 2 (2006) und AMD Bulldozer (2011); die Anleitung nennt das jetzt, und
+  die Startzeile am Ende von `bauen.sh` nimmt für x86_64 `-cpu Nehalem`.
+
+### v0.5.2 (2026-11-13): Kommt ein Paket dazu, baut `bauen.sh` seine Nutzer neu
+
+- 📌 **Befund vom Oktober:** Als eudev dazukam, blieb util-linux auf aarch64
+  ohne udev gebaut und versteckte einen Fehler in `S05daten`. Buildroot
+  merkt sich je Paket nur „gebaut“, und das Skript verwarf bisher nur
+  Pakete, deren eigene Option sich änderte. eudev kam aber über
+  `BR2_ROOTFS_DEVICE_CREATION_DYNAMIC_EUDEV` herein, eine Paketoption stand
+  in der Grundkonfiguration nie.
+- Jetzt vergleicht `bauen.sh` die **aufgelöste** `.config` mit der des
+  letzten Baus (`.golemos-voll` im Bauvolumen). Für jedes neu
+  eingeschaltete Paket fragt es Buildroot nach seinen Nutzern
+  (`<paket>-show-recursive-rdepends`) und verwirft die, die schon gebaut
+  sind. Beim ersten Bau nach dieser Fassung wird nur gemerkt.
+- Am echten Baum durchgespielt, ohne zu bauen (alte `.config` ohne eudev):
+  busybox, dosfstools und util-linux würden neu gebaut, ohne den Block
+  keines. Syntax unter sh und dash geprüft. ⚠️ Ein ganzer Bau damit steht
+  aus (beim nächsten benannten Stand).
 
 ### v0.5.1 (2026-11-12): Lizenzpflichten der Sinne festgehalten
 

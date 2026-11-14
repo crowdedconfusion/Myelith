@@ -17,7 +17,7 @@ einer halben Stunde.
 | | |
 |---|---|
 | **Einen USB-Stick** | mindestens 4 GB für das kleinste Modell, besser 16 GB oder mehr. ⚠️ Alles, was darauf liegt, wird gelöscht |
-| **Einen Rechner, von dem GolemOS starten soll** | fast jeder PC oder Laptop mit Intel- oder AMD-Prozessor, auch ein Mac mit Intel-Prozessor. Zu Macs mit Apple-Chip siehe [unten](#macs-mit-apple-chip) |
+| **Einen Rechner, von dem GolemOS starten soll** | fast jeder PC oder Laptop mit Intel- oder AMD-Prozessor, auch ein Mac mit Intel-Prozessor; Intel ab Core 2 (2006), AMD ab 2011 (Bulldozer). Ältere Prozessoren ohne den Befehlssatz SSSE3 starten den Knoten nicht. Zu Macs mit Apple-Chip siehe [unten](#macs-mit-apple-chip) |
 | **Deinen Myelith-Ordner** | den Ordner, in dem deine Modelle liegen (`INTEGER_LLM/artifacts/`) |
 | **Einen zweiten Rechner** | um den Stick zu beschreiben und den Ordner daraufzuziehen. Es kann derselbe sein |
 | **Ein Netzwerkkabel** | nur, wenn Myelith im Internet suchen soll. WLAN kennt GolemOS noch nicht |
@@ -99,13 +99,17 @@ lässt sich jederzeit wieder einschalten.
 
 1. Ein Menü mit **GolemOS (A)** erscheint und startet nach fünf
    Sekunden von selbst.
-2. Nach einigen Sekunden steht da `golemos login:`. Tippe **root** und
+2. Nur beim allerersten Start steht dazwischen **„Seite B einrichten,
+   einmalig"**: GolemOS legt sich eine zweite Kopie an, auf die es bei
+   einer misslungenen Aktualisierung zurückfällt. Das dauert je nach
+   Stick bis zu einer Minute. Nicht ausschalten.
+3. Nach einigen Sekunden steht da `golemos login:`. Tippe **root** und
    drücke Enter. Ein Passwort gibt es nicht.
-3. Der **Assistent** fragt zuerst nach der **Sprache** (1 Deutsch,
+4. Der **Assistent** fragt zuerst nach der **Sprache** (1 Deutsch,
    2 English) und dann nach deiner **Tastatur** (1 Deutsch, 2 Schweiz,
    3 US-Englisch …). Enter nimmt die Vorgabe. Beides merkt sich der
    Stick; ändern kannst du es später mit Punkt **7**.
-4. Dann zeigt er, was er gefunden hat, und markiert den nächsten
+5. Dann zeigt er, was er gefunden hat, und markiert den nächsten
    sinnvollen Schritt mit `<- empfohlen`.
 
 ⚠️ **Bis du die Tastatur gewählt hast, ist sie amerikanisch belegt**;
@@ -149,8 +153,8 @@ sechs Zehntel des Arbeitsspeichers passt:
 
 > Der Ordner darf auch auf einem **zweiten Stick oder einer externen
 > Platte** liegen, höchstens zwei Ordner tief. GolemOS sucht beim Start
-> auf allen Laufwerken. Das Dateisystem muss FAT32 oder ext4 sein; exFAT
-> und NTFS kann GolemOS noch nicht lesen.
+> auf allen Laufwerken. Das Dateisystem muss FAT32, exFAT oder ext4
+> sein; NTFS kann GolemOS noch nicht lesen.
 
 ---
 
@@ -216,6 +220,40 @@ auch einem Windows. Sichere vorher, was du behalten willst.
 
 Der Stick bleibt ein vollwertiges GolemOS; du kannst ihn weiter
 benutzen oder für einen zweiten Rechner nehmen.
+
+⚠️ **Nach einer Aktualisierung installiert der Assistent erst, wenn beide
+Seiten wieder gleich sind** (siehe unten). Er nennt dann den Grund.
+
+---
+
+## GolemOS aktualisieren
+
+GolemOS hat zwei Seiten, A und B, mit je einem vollständigen System. Eine
+Aktualisierung schreibt immer auf die Seite, die gerade **nicht** läuft,
+und startet sie einmal zur Probe. Kommt sie hoch, gilt sie. Kommt sie
+nicht hoch, startet der Rechner beim nächsten Mal von selbst wieder die
+alte Seite. Deine Daten bleiben in beiden Fällen unberührt.
+
+1. Das Paket `golemos-<arch>.aktualisierung` und die Datei daneben
+   (`….aktualisierung.sha256`) auf einen Stick oder auf die
+   Datenpartition legen.
+2. Als `root` anmelden und einspielen, etwa:
+   `golem-aktualisieren einspielen /daten/golemos-x86_64.aktualisierung`
+3. Neu starten (`reboot`). Mehr ist nicht zu tun; bestätigt wird von
+   selbst am Ende eines gesunden Starts.
+
+`golem-aktualisieren status` zeigt, welche Seite läuft, welche gilt und
+ob eine Probe ansteht. Meldet es „die Probe der Seite … kam nicht hoch",
+läuft wieder das alte System; spiel das Paket dann nicht noch einmal
+ein, ohne den Grund zu kennen.
+
+⚠️ **Nach jeder Aktualisierung, ob gelungen oder nicht, tragen die
+beiden Seiten verschiedene Stände.** Wer GolemOS von diesem Stick auf eine
+Platte installieren will, spielt das Paket des laufenden Systems ein
+zweites Mal ein und startet neu; dann sind beide gleich.
+
+⚠️ Die Prüfsumme belegt nur, dass das Paket heil angekommen ist, nicht
+wer es gebaut hat. Spiel nur Pakete ein, deren Herkunft du kennst.
 
 ---
 
@@ -343,8 +381,10 @@ in Arbeit.
 - **Selbstprobe:** Im Startmenü startet **GolemOS Selbstprobe** das
   System, prüft, ob Myelith antwortet, und schaltet wieder ab.
 - **Lizenzen und Quellen:** GolemOS besteht zum großen Teil aus freier
-  Software, darunter Teile unter der GPL. Die Lizenztexte von Myelith
-  liegen im System unter `/usr/share/doc/myelith/`. Zu jedem
-  freigegebenen Abbild gehört ein Verzeichnis aller Pakete mit ihren
-  Lizenzen (`lizenzen-<arch>.tar.xz`, neben dem Abbild) und ein Archiv
-  mit ihren Quellen, das derselben Freigabe beiliegt.
+  Software, darunter Teile unter der GPL. Welcher Teil unter welcher
+  Lizenz steht, sagt `/usr/share/golemos/LIZENZEN.txt`. Die Lizenztexte
+  von Myelith liegen im System unter `/usr/share/doc/myelith/`, die aller
+  übrigen Pakete unter `/usr/share/licenses/`, mit einem Verzeichnis in
+  `manifest.csv`. Zu jedem freigegebenen Abbild gehört außerdem dieses
+  Verzeichnis (`lizenzen-<arch>.tar.xz`, neben dem Abbild) und ein Archiv
+  mit den Quellen, das derselben Freigabe beiliegt.

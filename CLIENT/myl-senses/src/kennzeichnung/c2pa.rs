@@ -499,15 +499,7 @@ pub(crate) fn signieren(wav: Vec<u8>) -> Result<Vec<u8>, String> {
     if bloecke(&wav).iter().any(|(id, _, _)| id == b"C2PA") {
         return Err("C2PA: die Datei traegt schon ein Manifest".into());
     }
-    let mut seriennummer = zufall::<16>()?;
-    seriennummer[0] = (seriennummer[0] & 0x7F) | 0x01;
-    let schluessel = ed25519_dalek::SigningKey::from_bytes(&zufall::<32>()?);
-    let p = Bauplan {
-        zertifikat: zertifikat(&schluessel, &seriennummer),
-        schluessel,
-        manifest: format!("urn:c2pa:{}", uuid4(zufall::<16>()?)),
-        instanz: format!("xmp:iid:{}", uuid4(zufall::<16>()?)),
-    };
+    let p = neuer_bauplan()?;
     let start = wav.len() as u64;
     // Die Laenge des Blocks steht selbst im Manifest und waechst als
     // CBOR-Zahl mit ihrem Wert; und das Manifest soll gerade lang sein
@@ -534,6 +526,157 @@ pub(crate) fn signieren(wav: Vec<u8>) -> Result<Vec<u8>, String> {
         return Err("C2PA: das Manifest aenderte beim zweiten Durchgang seine Groesse".into());
     }
     Ok(mit_block(&wav, &fertig))
+}
+
+/// Ein frischer Schluessel samt Zertifikat und Namen, je Datei.
+fn neuer_bauplan() -> Result<Bauplan, String> {
+    let mut seriennummer = zufall::<16>()?;
+    seriennummer[0] = (seriennummer[0] & 0x7F) | 0x01;
+    let schluessel = ed25519_dalek::SigningKey::from_bytes(&zufall::<32>()?);
+    Ok(Bauplan {
+        zertifikat: zertifikat(&schluessel, &seriennummer),
+        schluessel,
+        manifest: format!("urn:c2pa:{}", uuid4(zufall::<16>()?)),
+        instanz: format!("xmp:iid:{}", uuid4(zufall::<16>()?)),
+    })
+}
+
+// ---------------------------------------------------------------- Text (C2PA 2.4, Anhang A.8)
+
+/// Kennung der Huelle (A.8.2.2).
+const TEXT_MAGIE: &[u8; 8] = b"C2PATXT\0";
+/// Vor der Huelle steht ein Nullbreiten-Leerzeichen (A.8.4.1).
+const TEXT_ANFANG: char = '\u{FEFF}';
+
+/// Ein Byte als Variantenzeichen (A.8.3.1): 0 bis 15 nach U+FE00 ff., der
+/// Rest nach U+E0100 ff. Beide sind unsichtbar.
+fn als_zeichen(b: u8) -> char {
+    let z = if b < 16 { 0xFE00 + u32::from(b) } else { 0xE0100 + u32::from(b) - 16 };
+    char::from_u32(z).expect("ein Variantenzeichen")
+}
+
+fn als_byte(c: char) -> Option<u8> {
+    match c as u32 {
+        z @ 0xFE00..=0xFE0F => Some((z - 0xFE00) as u8),
+        z @ 0xE0100..=0xE01EF => Some((z - 0xE0100 + 16) as u8),
+        _ => None,
+    }
+}
+
+/// **Die Huelle um eine Ablage**: U+FEFF, dann je Byte ein Variantenzeichen
+/// fuer Kennung, Fassung 1, Laenge und die Ablage (A.8.2.2). ⚑ Die Laenge
+/// steht gross zuerst, wie in ISO-BMFF; die Norm nennt die Bytefolge nicht.
+fn text_huelle(ablage: &[u8]) -> String {
+    let mut roh = TEXT_MAGIE.to_vec();
+    roh.push(1);
+    roh.extend((ablage.len() as u32).to_be_bytes());
+    roh.extend(ablage);
+    std::iter::once(TEXT_ANFANG).chain(roh.into_iter().map(als_zeichen)).collect()
+}
+
+/// Ein Fund im Text: Lage und Laenge der Huelle in Bytes (ab U+FEFF) und die
+/// Ablage darin, oder warum sie unlesbar ist.
+type Huelle = (usize, usize, Result<Vec<u8>, String>);
+
+/// **Jede Huelle im Text.** Ein U+FEFF ohne die Kennung dahinter ist ein
+/// gewoehnliches Zeichen (etwa eine Bytefolgemarke) und keine Huelle.
+pub(crate) fn text_huellen(text: &str) -> Vec<Huelle> {
+    let mut aus = Vec::new();
+    let mut i = 0;
+    while let Some(rel) = text[i..].find(TEXT_ANFANG) {
+        let ab = i + rel;
+        let mut ende = ab + TEXT_ANFANG.len_utf8();
+        let mut bytes = Vec::new();
+        for c in text[ende..].chars() {
+            let Some(b) = als_byte(c) else { break };
+            bytes.push(b);
+            ende += c.len_utf8();
+        }
+        if bytes.len() < TEXT_MAGIE.len() || &bytes[..TEXT_MAGIE.len()] != TEXT_MAGIE {
+            i = ab + TEXT_ANFANG.len_utf8();
+            continue;
+        }
+        // ⚑ Was hinter der Ablage steht, ist Fuellung und zaehlt zur Huelle:
+        //   Die Referenzumsetzungen (Python `c2pa-text`, Rust
+        //   `c2pa-unstructured-text`) fuellen auf eine Zielgroesse auf.
+        let ablage = match bytes.get(8..13) {
+            Some([1, a, b, c, d]) if bytes.len() >= 13 + u32::from_be_bytes([*a, *b, *c, *d]) as usize => {
+                Ok(bytes[13..13 + u32::from_be_bytes([*a, *b, *c, *d]) as usize].to_vec())
+            }
+            Some([1, a, b, c, d]) => Err(format!(
+                "C2PA: manifest.text.corruptedWrapper (Laenge {} angesagt, {} da)",
+                u32::from_be_bytes([*a, *b, *c, *d]),
+                bytes.len() - 13
+            )),
+            _ => Err("C2PA: manifest.text.corruptedWrapper (Fassung oder Kopf)".into()),
+        };
+        aus.push((ab, ende - ab, ablage));
+        i = ende;
+    }
+    aus
+}
+
+/// Der Text ohne jede Huelle.
+pub(crate) fn text_ohne_huelle(text: &str) -> String {
+    let mut aus = String::with_capacity(text.len());
+    let mut bis = 0;
+    for (ab, n, _) in text_huellen(text) {
+        aus.push_str(&text[bis..ab]);
+        bis = ab + n;
+    }
+    aus.push_str(&text[bis..]);
+    aus
+}
+
+/// **Signiert einen Text nach Anhang A.8**: NFC, dann die Huelle am Ende.
+/// Gebunden ist der Hash ueber den Text in NFC und UTF-8 ohne die Huelle;
+/// ausgenommen ist die Huelle samt U+FEFF, also genau das, was dazukam
+/// (⚑ die Norm sagt nicht, ob U+FEFF dazugehoert). Die Laenge der Huelle
+/// steht im Manifest und aendert dessen Groesse; gerechnet wird, bis sie
+/// sich bestaetigt, und `pad` dient als Stellschraube.
+pub(crate) fn text_signieren(text: &str) -> Result<String, String> {
+    use unicode_normalization::UnicodeNormalization;
+    if !text_huellen(text).is_empty() {
+        return Err("C2PA: der Text traegt schon ein Manifest".into());
+    }
+    let nfc: String = text.nfc().collect();
+    let p = neuer_bauplan()?;
+    let start = nfc.len() as u64;
+    let hash = Sha256::digest(nfc.as_bytes()).to_vec();
+    for fuellung in 0..64 {
+        let mut laenge = 0u64;
+        for _ in 0..8 {
+            let huelle = text_huelle(&manifest(&p, &hash, start, laenge, fuellung));
+            if huelle.len() as u64 == laenge {
+                return Ok(nfc + &huelle);
+            }
+            laenge = huelle.len() as u64;
+        }
+    }
+    Err("C2PA: die Laenge der Huelle fand keinen festen Wert".into())
+}
+
+/// **Prueft das Manifest eines Texts** (15.12.1.3.1): genau eine Huelle,
+/// ihre Lage im Text, wie er gespeichert ist, dann der Hash ueber den Rest
+/// in NFC und UTF-8. ⚑ Erst ausschneiden, dann normalisieren, wie die
+/// Referenz in Rust; sonst laege ein fremder Text, der nicht in NFC
+/// gespeichert ist, mit seinen Lagen daneben.
+pub(crate) fn text_pruefen(text: &str) -> Herkunft {
+    use unicode_normalization::UnicodeNormalization;
+    let rest = |s: usize, l: usize| -> Vec<u8> {
+        let ohne = [text.as_bytes().get(..s).unwrap_or_default(), text.as_bytes().get(s.saturating_add(l)..).unwrap_or_default()].concat();
+        let nfc: String = String::from_utf8_lossy(&ohne).nfc().collect();
+        Sha256::digest(nfc.as_bytes()).to_vec()
+    };
+    match text_huellen(text).as_slice() {
+        [] => Herkunft::Fehlt,
+        [(_, _, Err(f))] => Herkunft::Ungueltig(f.clone()),
+        [(ab, n, Ok(ablage))] => match ablage_pruefen(ablage, (*ab, *n), text.len(), rest, "der Text") {
+            Ok(()) => Herkunft::Gueltig,
+            Err(f) => Herkunft::Ungueltig(f),
+        },
+        _ => Herkunft::Ungueltig("C2PA: manifest.text.multipleWrappers".into()),
+    }
 }
 
 /// Die Bloecke einer RIFF-Datei: (Kennung, Lage des Inhalts, Laenge).
@@ -572,9 +715,16 @@ pub(crate) fn pruefen(datei: &[u8]) -> Herkunft {
 }
 
 fn pruefen_mit_grund(datei: &[u8]) -> Result<Option<()>, String> {
-    use ed25519_dalek::Verifier;
     let Some(&(_, ab, n)) = bloecke(datei).iter().find(|(id, _, _)| id == b"C2PA") else { return Ok(None) };
-    let ablage = &datei[ab..ab + n];
+    ablage_pruefen(&datei[ab..ab + n], (ab - 8, n + 8), datei.len(), |s, l| hash_ohne(datei, s, l), "der Ton").map(Some)
+}
+
+/// **Prueft eine Ablage gegen die Datei**, in der sie steckt: Signatur,
+/// Bezuege, KI-Aktion und den Hash ueber die Datei ohne den Bereich
+/// `ausnahme` (Lage, Laenge), wie `hash_ohne` ihn rechnet. Fuer den Ton ist
+/// der Bereich der Block samt Kopf, fuer Text die Huelle nach Anhang A.8.
+fn ablage_pruefen(ablage: &[u8], ausnahme: (usize, usize), groesse: usize, hash_ohne: impl Fn(usize, usize) -> Vec<u8>, was: &str) -> Result<(), String> {
+    use ed25519_dalek::Verifier;
     let (_, store) = kaesten(ablage)?.into_iter().next().ok_or("C2PA: leere Ablage")?;
     let (name, inhalte) = zerlegen(store)?;
     if name != "c2pa" {
@@ -640,11 +790,11 @@ fn pruefen_mit_grund(datei: &[u8]) -> Result<Option<()>, String> {
     let (Some(Cbor::Zahl(s)), Some(Cbor::Zahl(l))) = (aus.first().and_then(|a| a.feld("start")), aus.first().and_then(|a| a.feld("length"))) else { return Err("C2PA: Ausnahme falsch geformt".into()) };
     // ⚑ Wie `c2pa-rs`: Die Ausnahme ist genau der Block mit Kopf, nicht mehr
     //   und nicht weniger (auch kein Fuellbyte).
-    if (*s as usize, *l as usize) != (ab - 8, n + 8) {
-        return Err(format!("C2PA: die Ausnahme ({s}, {l}) ist nicht der Block ({}, {})", ab - 8, n + 8));
+    if (*s as usize, *l as usize) != ausnahme {
+        return Err(format!("C2PA: die Ausnahme ({s}, {l}) ist nicht der Block ({}, {})", ausnahme.0, ausnahme.1));
     }
-    if (*s + *l) as usize > datei.len() || hash_ohne(datei, *s as usize, *l as usize) != *soll {
-        return Err("C2PA: der Ton passt nicht zum Manifest".into());
+    if s.checked_add(*l).is_none_or(|e| e as usize > groesse) || hash_ohne(*s as usize, *l as usize) != *soll {
+        return Err(format!("C2PA: {was} passt nicht zum Manifest"));
     }
     // KI-erzeugt laut Aktion.
     let (_, aktionen) = behauptungen.get("c2pa.actions.v2").ok_or("C2PA: keine Aktionen")?;
@@ -652,7 +802,7 @@ fn pruefen_mit_grund(datei: &[u8]) -> Result<Option<()>, String> {
     if !ki {
         return Err("C2PA: keine Aktion `c2pa.created` mit KI-Quellentyp".into());
     }
-    Ok(Some(()))
+    Ok(())
 }
 
 #[cfg(test)]
@@ -686,6 +836,76 @@ mod proben {
         assert!(matches!(pruefen(&t), Herkunft::Ungueltig(f) if f.contains("Signatur")), "Anspruch geaendert");
         // Zweimal signiert wird abgelehnt.
         assert!(signieren(s.clone()).is_err());
+    }
+
+    fn text(n: usize) -> String {
+        "Myelith schreibt einen Bericht über Bäume, Wurzeln und Rinde. ".repeat(n)
+    }
+
+    /// ⚑ **Signierter Text ist gueltig, sichtbar unveraendert, und jede
+    /// Aenderung faellt auf**: Die Huelle besteht nur aus U+FEFF und
+    /// Variantenzeichen, ohne sie bleibt genau der Text; ein geaendertes
+    /// Zeichen davor macht den Hash falsch, eine verstuemmelte Huelle ist
+    /// `corruptedWrapper`, zwei Huellen `multipleWrappers`. Ohne Huelle
+    /// `Fehlt`, und eine Bytefolgemarke am Anfang ist keine.
+    #[test]
+    fn signierter_text_ist_gueltig_und_aenderungen_fallen_auf() {
+        let roh = text(20);
+        assert_eq!(text_pruefen(&roh), Herkunft::Fehlt);
+        assert_eq!(text_pruefen(&format!("\u{FEFF}{roh}")), Herkunft::Fehlt, "Bytefolgemarke");
+        let s = text_signieren(&roh).expect("signiert");
+        assert_eq!(text_pruefen(&s), Herkunft::Gueltig);
+        let zusatz = &s[roh.len()..];
+        assert!(zusatz.starts_with('\u{FEFF}') && zusatz.chars().skip(1).all(|c| als_byte(c).is_some()), "nur unsichtbare Zeichen");
+        assert_eq!(text_ohne_huelle(&s), roh);
+        let geaendert = s.replacen("Rinde", "Rindi", 1);
+        assert!(matches!(text_pruefen(&geaendert), Herkunft::Ungueltig(f) if f.contains("Text passt nicht")), "Text geaendert");
+        let gekuerzt: String = s.chars().take(s.chars().count() - 3).collect();
+        assert!(matches!(text_pruefen(&gekuerzt), Herkunft::Ungueltig(f) if f.contains("corruptedWrapper")));
+        let doppelt = format!("{s}{}", &s[roh.len()..]);
+        assert!(matches!(text_pruefen(&doppelt), Herkunft::Ungueltig(f) if f.contains("multipleWrappers")));
+        assert!(text_signieren(&s).is_err(), "zweimal signiert");
+    }
+
+    /// ⚑ **Eine Huelle der Referenz liest sich**: Prueffall der Rust-Umsetzung
+    /// (`known_vector_matches_the_published_test_file`), Nutzlast
+    /// `c2pa-manifest-01` mit der Fuellung `00 10 10`. Und ein fremder Text,
+    /// der vor der Huelle in NFD steht, prueft mit seinen gespeicherten Lagen.
+    #[test]
+    fn eine_huelle_der_referenz_liest_sich() {
+        let mut roh = TEXT_MAGIE.to_vec();
+        roh.push(1);
+        roh.extend(16u32.to_be_bytes());
+        roh.extend(b"c2pa-manifest-01");
+        roh.extend([0x00, 0x10, 0x10]);
+        let huelle: String = std::iter::once(TEXT_ANFANG).chain(roh.into_iter().map(als_zeichen)).collect();
+        assert_eq!(huelle.len(), 125, "Zielgroesse der Referenz");
+        let gruss = format!("Hallo{huelle}");
+        assert_eq!(text_huellen(&gruss).as_slice(), [(5, 125, Ok(b"c2pa-manifest-01".to_vec()))]);
+        assert_eq!(text_ohne_huelle(&gruss), "Hallo");
+
+        use unicode_normalization::UnicodeNormalization;
+        let s = text_signieren(&text(20)).expect("signiert");
+        let fremd = format!("{}{}", text(20).nfd().collect::<String>(), &s[text(20).len()..]);
+        assert!(fremd.len() > s.len(), "der Text davor ist laenger");
+        // Die Lagen im Manifest zeigen auf den NFC-Text; in diesem fremden
+        // Text liegt die Huelle woanders, also ist er nicht gueltig. Das zeigt,
+        // dass nach gespeicherten Lagen geprueft wird.
+        assert!(matches!(text_pruefen(&fremd), Herkunft::Ungueltig(f) if f.contains("Ausnahme")), "{:?}", text_pruefen(&fremd));
+    }
+
+    /// ⚑ **NFC vor dem Hash** (A.8.7.2): Ein Text in NFD wird als NFC
+    /// signiert und bleibt gueltig, auch wenn ein Pruefer ihn erst
+    /// normalisiert. Die Huelle uebersteht NFC.
+    #[test]
+    fn signiert_wird_der_text_in_nfc() {
+        use unicode_normalization::UnicodeNormalization;
+        let nfd: String = text(20).nfd().collect();
+        let s = text_signieren(&nfd).expect("signiert");
+        assert!(s.starts_with(&text(20)), "als NFC abgelegt");
+        assert_eq!(text_pruefen(&s), Herkunft::Gueltig);
+        let wieder: String = s.nfc().collect();
+        assert_eq!(wieder, s, "die Huelle uebersteht NFC");
     }
 
     /// ⛔️ **Ein praepariertes Manifest wird abgelehnt, nicht abgestuerzt**:

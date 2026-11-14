@@ -61,6 +61,7 @@ fn ruesten(web: bool, schreiben: bool) -> Rundgang {
             wurzel_des_repositoriums().join("AGENT_LAYER/local-toolkits/Advanced").display().to_string(),
         ),
         web_recherche: web,
+        text_kennzeichnen: true,
         ..Agenteneinstellung::default()
     };
     let wahl = Arc::new(Mutex::new(myl_local_agent::vorhaben::Rundenwahl::default()));

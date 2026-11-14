@@ -58,7 +58,7 @@ impl Masse {
         let roh = std::fs::read(datei).map_err(|f| format!("{}: {f}", datei.display()))?;
         let Json::Objekt(o) = json(&roh, &mut 0)? else { return Err("config.json ist kein Objekt".into()) };
         let zahl = |k: &str| match o.get(k) {
-            Some(Json::Zahl(z)) if *z >= 1.0 => Ok(*z as usize),
+            Some(Json::Zahl(z)) => masszahl(*z),
             _ => Err(format!("config.json: {k} fehlt")),
         };
         let m = Self {
@@ -122,6 +122,19 @@ pub(crate) enum Json {
     Liste(Vec<Json>),
     Objekt(BTreeMap<String, Json>),
     Sonst,
+}
+
+/// ⛔️ **Eine Groesse aus `config.json`**: ganz, groesser null, hoechstens
+/// 2^24 (das groesste Woerterbuch hier hat 151 936 Eintraege). 📌 Vorher
+/// wurde jede Zahl mit `as usize` uebernommen; `1e30` wurde `usize::MAX`,
+/// und `koepfe * KOPFBREITE` oder ein Puffer der Groesse liefen ueber,
+/// bevor die Formen der Tensoren je geprueft wurden (2026-11-13).
+pub(crate) fn masszahl(z: f64) -> Result<usize, String> {
+    if z >= 1.0 && z.fract() == 0.0 && z <= f64::from(1u32 << 24) {
+        Ok(z as usize)
+    } else {
+        Err(format!("config.json: {z} ist keine plausible Groesse"))
+    }
 }
 
 /// So tief darf JSON hier verschachtelt sein. Echte Dateien (Safetensors-Kopf,
@@ -201,11 +214,24 @@ fn json_in(b: &[u8], i: &mut usize, tiefe: usize) -> Result<Json, String> {
                     *i += 1;
                     match b.get(*i) {
                         Some(b'u') => {
-                            let hex = b.get(*i + 1..*i + 5).ok_or("\\u endet zu frueh")?;
-                            let z = u32::from_str_radix(std::str::from_utf8(hex).map_err(|_| "\\u")?, 16).map_err(|_| "\\u")?;
+                            let hex = |ab: usize| -> Option<u32> { u32::from_str_radix(std::str::from_utf8(b.get(ab..ab + 4)?).ok()?, 16).ok() };
+                            let z = hex(*i + 1).ok_or("\\u")?;
+                            *i += 5;
+                            // ⚑ Ein Zeichen ausserhalb der Grundebene steht als Paar
+                            //   `\ud83d\ude00` (Python schreibt so mit
+                            //   `ensure_ascii`); einzeln ergaebe jede Haelfte U+FFFD.
+                            let z = match (z, b.get(*i..*i + 2)) {
+                                (0xD800..=0xDBFF, Some(b"\\u")) => match hex(*i + 2) {
+                                    Some(tief @ 0xDC00..=0xDFFF) => {
+                                        *i += 6;
+                                        0x10000 + ((z - 0xD800) << 10) + (tief - 0xDC00)
+                                    }
+                                    _ => z,
+                                },
+                                _ => z,
+                            };
                             let mut puffer = [0u8; 4];
                             s.extend_from_slice(char::from_u32(z).unwrap_or('\u{FFFD}').encode_utf8(&mut puffer).as_bytes());
-                            *i += 5;
                             continue;
                         }
                         Some(b'n') => s.push(b'\n'),
@@ -1550,6 +1576,31 @@ impl Woerterbuch {
 #[cfg(test)]
 mod proben {
 
+    /// ⛔️ **Eine Groesse aus `config.json` ist plausibel oder ein Fehler**:
+    /// `1e30`, null, negativ und gebrochen werden abgewiesen, ein
+    /// praeparierter Kopf von whisper ebenso; das groesste echte Woerterbuch
+    /// geht durch.
+    #[test]
+    fn eine_unplausible_groesse_wird_abgewiesen() {
+        for z in [1e30, 0.0, -1.0, 1.5, f64::NAN, f64::INFINITY, f64::from(1u32 << 24) + 1.0] {
+            assert!(masszahl(z).is_err(), "{z}");
+        }
+        assert_eq!(masszahl(151_936.0), Ok(151_936));
+        let echt = r#"{"d_model": 1280, "encoder_attention_heads": 20, "decoder_attention_heads": 20, "encoder_layers": 32, "decoder_layers": 4, "num_mel_bins": 128, "max_source_positions": 1500, "max_target_positions": 448}"#;
+        assert!(Masse::laden(&zwischendatei("config.json", echt.as_bytes())).is_ok(), "die Masse von large-v3-turbo");
+        let falsch = echt.replace("\"encoder_attention_heads\": 20", "\"encoder_attention_heads\": 1e30");
+        assert!(matches!(Masse::laden(&zwischendatei("config.json", falsch.as_bytes())), Err(f) if f.contains("plausible")));
+    }
+
+    /// Ein Paar aus UTF-16-Haelften ergibt ein Zeichen; eine einzelne Haelfte
+    /// bleibt U+FFFD, auch eine hohe ohne tiefe dahinter.
+    #[test]
+    fn ein_surrogatpaar_ergibt_ein_zeichen() {
+        let roh = br#"{"a": "\ud83d\ude00 x \ud83d y \ude00 z \ud83d\u0041"}"#;
+        let Json::Objekt(o) = json(roh, &mut 0).expect("lesbar") else { panic!("kein Objekt") };
+        assert_eq!(o.get("a"), Some(&Json::Text("\u{1F600} x \u{FFFD} y \u{FFFD} z \u{FFFD}A".into())));
+    }
+
     /// Tief verschachtelt endet es mit einem Fehler, nicht mit einem
     /// gesprengten Stapel.
     #[test]
@@ -1624,12 +1675,37 @@ mod proben {
         assert!(gesprochen(&ton(0.3, 0.3)) && !gesprochen(&ton(0.28, 0.3)));
     }
 
-    fn zwischendatei(name: &str, inhalt: &[u8]) -> std::path::PathBuf {
-        let d = std::env::temp_dir().join(format!("whisper-{}-{name}", std::process::id()));
-        std::fs::create_dir_all(&d).expect("Ordner");
-        let f = d.join(name);
-        std::fs::write(&f, inhalt).expect("schreiben");
-        f
+    /// Eine Datei in einem eigenen Ordner, der mit ihr verschwindet.
+    struct Zwischen {
+        ordner: std::path::PathBuf,
+        datei: std::path::PathBuf,
+    }
+
+    impl std::ops::Deref for Zwischen {
+        type Target = std::path::Path;
+        fn deref(&self) -> &std::path::Path {
+            &self.datei
+        }
+    }
+
+    impl Drop for Zwischen {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.ordner);
+        }
+    }
+
+    /// ⚠️ **Ein Ordner je Aufruf**, nicht je Dateiname (2026-11-13): Zwei
+    /// Proben schrieben `config.json` an dieselbe Stelle, und cargo laesst
+    /// Proben nebeneinander laufen. Dazu blieben die Ordner nach jedem Lauf
+    /// liegen.
+    fn zwischendatei(name: &str, inhalt: &[u8]) -> Zwischen {
+        static LAUF: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = LAUF.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let ordner = std::env::temp_dir().join(format!("whisper-{}-{n}", std::process::id()));
+        std::fs::create_dir_all(&ordner).expect("Ordner");
+        let datei = ordner.join(name);
+        std::fs::write(&datei, inhalt).expect("schreiben");
+        Zwischen { ordner, datei }
     }
 
     #[test]

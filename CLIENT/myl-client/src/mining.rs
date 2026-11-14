@@ -996,6 +996,8 @@ fn letzte_zeilen(p: &Path, n: usize) -> String {
 /// So gross darf eine Antwort des Knotens hoechstens sein; Metriken, ein
 /// Konto und eine Seite des Verlaufs liegen weit darunter.
 pub(crate) const ANTWORT_HOECHSTENS: usize = 16 << 20;
+/// So lange darf eine ganze Antwort des Knotens dauern.
+const ANTWORTFRIST: Duration = Duration::from_secs(2);
 
 /// **Ein GET an den Endpunkt des Knotens**, mit kurzer Frist.
 ///
@@ -1009,14 +1011,32 @@ pub(crate) const ANTWORT_HOECHSTENS: usize = 16 << 20;
 pub(crate) fn holen(adresse: &str, weg: &str) -> Result<String, String> {
     let a: std::net::SocketAddr = adresse.parse().map_err(|_| format!("keine Adresse: {adresse}"))?;
     let mut s = std::net::TcpStream::connect_timeout(&a, Duration::from_millis(500)).map_err(|e| e.to_string())?;
-    let _ = s.set_read_timeout(Some(Duration::from_secs(2)));
     s.write_all(format!("GET {weg} HTTP/1.1\r\nHost: {adresse}\r\nConnection: close\r\n\r\n").as_bytes())
         .map_err(|e| e.to_string())?;
-    let mut roh = String::new();
-    (&mut s).take(ANTWORT_HOECHSTENS as u64 + 1).read_to_string(&mut roh).map_err(|e| e.to_string())?;
-    if roh.len() > ANTWORT_HOECHSTENS {
-        return Err(format!("die Antwort des Knotens ist groesser als {} MiB", ANTWORT_HOECHSTENS >> 20));
+    // ⚑ **Die Frist gilt fuer die ganze Antwort** (2026-11-13), nicht je
+    //   Lesen: Ein Knoten, der alle paar Sekunden ein Byte schickt, hielt
+    //   das Wallet sonst beliebig lange fest.
+    let ende = std::time::Instant::now() + ANTWORTFRIST;
+    let (mut roh, mut puffer) = (Vec::new(), [0u8; 8192]);
+    loop {
+        let rest = ende.saturating_duration_since(std::time::Instant::now());
+        if rest.is_zero() {
+            return Err(format!("der Knoten antwortet nicht in {} s", ANTWORTFRIST.as_secs()));
+        }
+        s.set_read_timeout(Some(rest)).map_err(|e| e.to_string())?;
+        match s.read(&mut puffer) {
+            Ok(0) => break,
+            Ok(n) => roh.extend_from_slice(&puffer[..n]),
+            Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => {
+                return Err(format!("der Knoten antwortet nicht in {} s", ANTWORTFRIST.as_secs()))
+            }
+            Err(e) => return Err(e.to_string()),
+        }
+        if roh.len() > ANTWORT_HOECHSTENS {
+            return Err(format!("die Antwort des Knotens ist groesser als {} MiB", ANTWORT_HOECHSTENS >> 20));
+        }
     }
+    let roh = String::from_utf8(roh).map_err(|_| "die Antwort des Knotens ist kein UTF-8".to_string())?;
     let (kopf, rumpf) = roh.split_once("\r\n\r\n").unwrap_or((&roh, ""));
     if !kopf.starts_with("HTTP/1.1 200") {
         return Err(kopf.lines().next().unwrap_or("keine Antwort").to_string());
@@ -1309,6 +1329,29 @@ mod tests {
         let ort = stummel(b"HTTP/1.1 200 OK\r\n\r\n", 2 * ANTWORT_HOECHSTENS);
         let f = holen(&ort, "/metriken").expect_err("zu viel");
         assert!(f.contains("groesser"), "{f}");
+    }
+
+    /// ⛔️ **Ein Knoten, der tröpfelt, hält nicht länger als die Frist**:
+    /// alle 300 ms ein Byte, die 2 s gelten für die ganze Antwort.
+    #[test]
+    fn ein_tropfender_knoten_haelt_nicht_laenger_als_die_frist() {
+        let h = std::net::TcpListener::bind("127.0.0.1:0").expect("binden");
+        let ort = h.local_addr().expect("Adresse").to_string();
+        std::thread::spawn(move || {
+            let (mut s, _) = h.accept().expect("annehmen");
+            let mut anfrage = [0u8; 1024];
+            let _ = s.read(&mut anfrage);
+            for b in b"HTTP/1.1 200 OK\r\n".iter().cycle().take(40) {
+                if s.write_all(&[*b]).is_err() {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(300));
+            }
+        });
+        let start = std::time::Instant::now();
+        let f = holen(&ort, "/metriken").expect_err("ein Rinnsal ist keine Antwort");
+        assert!(f.contains("antwortet nicht"), "{f}");
+        assert!(start.elapsed() < Duration::from_secs(4), "{:?}", start.elapsed());
     }
 
     #[test]

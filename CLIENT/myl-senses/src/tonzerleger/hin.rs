@@ -22,7 +22,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use super::{aufmerksamkeit, drehen, layernorm, Signal, CODES, FALTSTUECK};
-use crate::whisper::{alle_kerne, gelu, json, kopf_lesen, linear_genau, tensor_lesen, Json, Tensor};
+use crate::whisper::{alle_kerne, masszahl, gelu, json, kopf_lesen, linear_genau, tensor_lesen, Json, Tensor};
 
 /// Die Masse aus `encoder_config` in `config.json`.
 #[derive(Debug, Clone)]
@@ -55,26 +55,26 @@ impl Hinweg {
             _ => Err(format!("encoder_config: {k} fehlt")),
         };
         let mut schritte = match e.get("upsampling_ratios") {
-            Some(Json::Liste(l)) => l.iter().filter_map(|j| if let Json::Zahl(z) = j { Some(*z as usize) } else { None }).collect::<Vec<_>>(),
+            Some(Json::Liste(l)) => l.iter().map(|j| if let Json::Zahl(z) = j { masszahl(*z) } else { Err("keine Zahl in der Liste".into()) }).collect::<Result<Vec<_>, String>>()?,
             _ => return Err("encoder_config: upsampling_ratios fehlt".into()),
         };
         schritte.reverse();
         let m = Masse {
-            koepfe: zahl("num_attention_heads")? as usize,
-            kopfbreite: zahl("head_dim")? as usize,
+            koepfe: masszahl(zahl("num_attention_heads")?)?,
+            kopfbreite: masszahl(zahl("head_dim")?)?,
             rope_basis: zahl("rope_theta")?,
             eps: zahl("norm_eps")?,
             schritte,
-            semantisch: zahl("num_semantic_quantizers")? as usize,
+            semantisch: masszahl(zahl("num_semantic_quantizers")?)?,
         };
         let gueltig = match o.get("encoder_valid_num_quantizers") {
-            Some(Json::Zahl(z)) => *z as usize,
+            Some(Json::Zahl(z)) => masszahl(*z)?,
             _ => return Err("config.json: encoder_valid_num_quantizers fehlt".into()),
         };
-        if zahl("num_key_value_heads")? as usize != m.koepfe
+        if masszahl(zahl("num_key_value_heads")?)? != m.koepfe
             || gueltig != CODES
-            || zahl("num_residual_layers")? as usize != 1
-            || zahl("compress")? as usize != 2
+            || masszahl(zahl("num_residual_layers")?)? != 1
+            || masszahl(zahl("compress")?)? != 2
         {
             return Err("dieser Weg rechnet einen Restblock je Stufe, ohne Abkuerzung, und 16 Codes".into());
         }

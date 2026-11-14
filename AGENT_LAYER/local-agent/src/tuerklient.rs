@@ -468,6 +468,10 @@ impl Tuerklient {
     /// lief jedes Mal über alles. Mit dem Schalter „Netz“ ist die
     /// Gegenstelle ein fremder Knoten.
     fn lesen(&self, strom: &mut TcpStream) -> Result<(u16, Vec<u8>), Tuerfehler> {
+        // ⚑ **Die Frist gilt fuer die ganze Antwort** (2026-11-13), nicht je
+        //   Lesen: Vorher hielt eine Gegenstelle, die alle paar Sekunden ein
+        //   Byte schickte, den Klienten beliebig lange.
+        let ende = std::time::Instant::now() + self.frist;
         let mut roh: Vec<u8> = Vec::new();
         let mut puffer = [0u8; 4096];
         // Erst bis zum Ende der Köpfe.
@@ -478,7 +482,7 @@ impl Tuerklient {
             if roh.len() > KOPF_HOECHSTENS {
                 return Err(Tuerfehler::KeinHttp);
             }
-            match strom.read(&mut puffer) {
+            match lesen_bis(strom, &mut puffer, ende) {
                 Ok(0) => return Err(Tuerfehler::KeinHttp),
                 Ok(n) => roh.extend_from_slice(&puffer[..n]),
                 Err(e) if ist_frist(&e) => {
@@ -508,7 +512,7 @@ impl Tuerklient {
                     return Ok((status, rumpf));
                 }
             }
-            match strom.read(&mut puffer) {
+            match lesen_bis(strom, &mut puffer, ende) {
                 Ok(0) => {
                     if let Some(n) = laenge {
                         if rumpf.len() < n {
@@ -548,6 +552,17 @@ pub const KOPF_HOECHSTENS: usize = 64 << 10;
 /// So groß darf der Rumpf einer Antwort höchstens sein. Eine Chatantwort
 /// ist JSON mit dem Text eines Laufs, weit darunter.
 pub const RUMPF_HOECHSTENS: usize = 64 << 20;
+
+/// Liest höchstens bis `ende`; danach meldet es eine Zeitüberschreitung,
+/// so wie es eine abgelaufene Lesefrist täte.
+fn lesen_bis(strom: &mut TcpStream, puffer: &mut [u8], ende: std::time::Instant) -> std::io::Result<usize> {
+    let rest = ende.saturating_duration_since(std::time::Instant::now());
+    if rest.is_zero() {
+        return Err(std::io::ErrorKind::TimedOut.into());
+    }
+    strom.set_read_timeout(Some(rest))?;
+    strom.read(puffer)
+}
 
 /// 64 Hexzeichen zu 32 Bytes, oder nichts.
 ///

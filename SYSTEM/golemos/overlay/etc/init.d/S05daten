@@ -14,13 +14,21 @@
 # Stick am Rechner des Nutzers in voller Groesse, und er kopiert seine
 # Gewichte einfach hinein.
 #
-# # ⚠️ Warum FAT und nicht ext4
+# # ⚠️ Warum exFAT und nicht ext4
 #
 # Weil jeder Rechner daraufschreiben kann. ext4 kann macOS nicht und
 # Windows auch nicht, und dann waere „kopier deine Gewichte hinein" ein
-# Satz, der ein Entwicklerwerkzeug voraussetzt. ⚠️ **Der Preis ist ein
-# fehlendes Journal**, gemildert durch `-o flush`: Geschriebenes geht
-# sofort auf den Datentraeger statt im Zwischenspeicher zu warten.
+# Satz, der ein Entwicklerwerkzeug voraussetzt. ⚑ **exFAT seit GolemOS
+# 0.6.1**, vorher FAT32: Windows und macOS lesen und schreiben es von Haus
+# aus, und eine Datei darf groesser als 4 GB sein. ⚠️ **Der Preis ist ein
+# fehlendes Journal.** Bei FAT32 milderte `-o flush` das; `exfat` kennt die
+# Option nicht, Geschriebenes wartet dort bis zu 30 s im Zwischenspeicher.
+#
+# ⛔️ **Ein FAT32-Datenteil bleibt FAT32.** Sticks und Platten aus frueheren
+# Staenden tragen ihn mit Gewichten und Einstellungen darauf; liesse er sich
+# nach einer Aktualisierung nicht mehr einhaengen, formatierte dieses Skript
+# ihn unten neu. Deshalb wird die Art vorher gelesen (`blkid`) und mit ihr
+# eingehaengt.
 
 MARKE=golem-daten
 EINHANG=/daten
@@ -29,6 +37,19 @@ EINHANG=/daten
 #   steht in `golem-einrichten` (`DATEN_NAME`); eine Probe dort haelt
 #   beide gleich.
 NAME=Golem
+
+# einhaengen GERAET: mit der Art, die darauf liegt; ohne Dateisystem scheitert es
+# ⛔️ Nennt `blkid` keine Art, werden beide versucht: Scheitern hiesse unten
+#    Formatieren, und das darf nur eine Partition treffen, die sich mit
+#    keiner einhaengen laesst.
+einhaengen() {
+  case "$(blkid -s TYPE -o value "$1" 2>/dev/null)" in
+    vfat) mount -t vfat -o rw,flush,umask=0000 "$1" "$EINHANG" 2>/dev/null ;;
+    exfat) mount -t exfat -o rw,umask=0000 "$1" "$EINHANG" 2>/dev/null ;;
+    *) mount -t vfat -o rw,flush,umask=0000 "$1" "$EINHANG" 2>/dev/null \
+         || mount -t exfat -o rw,umask=0000 "$1" "$EINHANG" 2>/dev/null ;;
+  esac
+}
 
 start() {
   printf "Datenpartition: "
@@ -112,7 +133,7 @@ start() {
   #   ausgehaengt, gedehnt, formatiert und neu eingehaengt.
   GEDEHNT=nein
   mkdir -p "$EINHANG"
-  if mount -t vfat -o rw,flush,umask=0000 "$TEIL" "$EINHANG" 2>/dev/null; then
+  if einhaengen "$TEIL"; then
     [ -e "$EINHANG/.gedehnt" ] && GEDEHNT=ja
     umount "$EINHANG" 2>/dev/null || true
   fi
@@ -143,7 +164,7 @@ start() {
     # ⛔️ **Neu formatieren statt zu vergroessern.** Die Partition ist
     #    beim ersten Start leer, also ist das Formatieren verlustfrei
     #    und braucht kein `fatresize`, das Buildroot nicht mitbringt.
-    mkfs.vfat -F 32 -n "$NAME" "$TEIL" >/dev/null 2>&1 || true
+    mkfs.exfat -L "$NAME" "$TEIL" >/dev/null 2>&1 || true
 
     # ⛔️ **Und nachsehen, ob es wirklich gewachsen ist.**
     #    Ohne diese Zeilen meldet das Skript „eingehaengt" und hat
@@ -160,13 +181,13 @@ start() {
   # ⚑ **Aeltere Sticks heissen noch GOLEM-DATEN** und bekommen hier den
   #   neuen Namen. `fatlabel` aendert nur den Namen, keinen Inhalt, und
   #   muss vor dem Einhaengen laufen.
-  if [ "$(blkid -s LABEL -o value "$TEIL" 2>/dev/null)" = "GOLEM-DATEN" ]; then
+  if [ "$(blkid -s TYPE -o value "$TEIL" 2>/dev/null)" = vfat ] && [ "$(blkid -s LABEL -o value "$TEIL" 2>/dev/null)" = "GOLEM-DATEN" ]; then
     fatlabel "$TEIL" "$NAME" >/dev/null 2>&1 && printf "umbenannt in %s … " "$NAME"
   fi
 
   mkdir -p "$EINHANG"
-  # ⚑ `flush`: siehe oben, das fehlende Journal.
-  if mount -t vfat -o rw,flush,umask=0000 "$TEIL" "$EINHANG" 2>/dev/null; then
+  # ⚑ `flush` bei FAT32: siehe oben, das fehlende Journal.
+  if einhaengen "$TEIL"; then
     touch "$EINHANG/.gedehnt" 2>/dev/null || true
     # ⚠️ `myelith/skills` und nicht `skills`: Der Client sucht die
     #    Wissensmappen unter der Konfiguration, und die liegt hier

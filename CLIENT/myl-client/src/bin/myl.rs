@@ -1018,6 +1018,29 @@ fn kennzeichen(args: &[String]) -> i32 {
         eprintln!("myl kennzeichen braucht eine Datei");
         return 2;
     };
+    // ⚑ **Text nach C2PA 2.4, Anhang A.8** (2026-11-13): Was kein WAV ist und
+    //   sich als UTF-8 liest, wird als Text geprueft.
+    if let Ok(roh) = std::fs::read(datei) {
+        if !roh.starts_with(b"RIFF") {
+            if let Ok(text) = std::str::from_utf8(&roh) {
+                use myl_senses::kennzeichnung::Herkunft;
+                return match myl_senses::kennzeichnung::text_herkunft(text) {
+                    Herkunft::Gueltig => {
+                        println!("Signierte Herkunft (C2PA, Text): ja, KI-erzeugt, Text unveraendert (Signierer nicht auf der C2PA-Vertrauensliste)");
+                        0
+                    }
+                    Herkunft::Fehlt => {
+                        println!("Signierte Herkunft (C2PA, Text): nein");
+                        1
+                    }
+                    Herkunft::Ungueltig(f) => {
+                        println!("Signierte Herkunft (C2PA, Text): ungueltig, {f}");
+                        1
+                    }
+                };
+            }
+        }
+    }
     match myl_senses::kennzeichnung::pruefen(std::path::Path::new(datei)) {
         Ok(b) => {
             println!("Metadaten (IPTC trainedAlgorithmicMedia): {}", if b.metadaten { "ja" } else { "nein" });
@@ -3210,6 +3233,7 @@ mod schalter {
                 blick_bildschirm: false,
                 blick_kamera: false,
                 web_recherche: false,
+                text_kennzeichnen: true,
                 netzsaat: None,
                 modul: None,
                 modulkiste: None,

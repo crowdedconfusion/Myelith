@@ -31,3 +31,16 @@ CONFIG_INPUT_EVDEV=y
 CONFIG_BLK_DEV_LOOP=y
 CONFIG_SQUASHFS=y
 CONFIG_SQUASHFS_ZLIB=y
+
+# ⚑ **Die Module gepackt (GolemOS 0.6.1).** Die Vorgabe fuer aarch64 baut
+#    Treiber fuer jedes ARM-Geraet, 84 MB in jeder Wurzel; als `.ko.xz`
+#    bleibt jeder davon da. xz und nicht zstd, weil `kmod` und `depmod`
+#    hier mit liblzma gebaut sind (siehe die Konfigurationen).
+CONFIG_MODULE_COMPRESS=y
+CONFIG_MODULE_COMPRESS_XZ=y
+CONFIG_MODULE_COMPRESS_ALL=y
+
+# ⚑ **exFAT fest eingebaut (GolemOS 0.6.1)**: der Datenteil des Sticks und
+#    jedes fremde Laufwerk mit exFAT, wie es externe Platten ab Werk tragen.
+#    Fest und nicht als Modul, weil `S05daten` vor `udevd` laeuft.
+CONFIG_EXFAT_FS=y

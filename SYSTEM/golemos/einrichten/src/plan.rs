@@ -46,6 +46,9 @@ pub struct Plan {
     pub daten_platz: u64,
     /// Die Kennungen der Quelle, auf die die kopierte `grub.cfg` zeigt.
     pub alt: Kennungen,
+    /// Die Seite der Quelle (`A` oder `B`), deren Wurzel auf beide Seiten
+    /// des Ziels kommt; ihr Kern kommt mit (`ausfuehren`).
+    pub seite: char,
 }
 
 /// Entwirft die Installation von `q` auf `ziel`.
@@ -71,9 +74,9 @@ pub fn entwerfen(q: &Quelle, ziel: &Geraet, alle: &[Geraet]) -> Result<Plan, Str
     //    beschreibbar; eine Kopie davon koennte mitten in einem
     //    Schreibvorgang entstehen. Die andere traegt dasselbe Abbild und
     //    ist in Ruhe. Beide Zielpartitionen bekommen diese eine Quelle.
-    let wurzel = [&q.wurzel_b, &q.wurzel_a]
+    let (seite, wurzel) = [('B', &q.wurzel_b), ('A', &q.wurzel_a)]
         .into_iter()
-        .find(|w| w.einhaengung.is_empty())
+        .find(|(_, w)| w.einhaengung.is_empty())
         .ok_or("beide Wurzelpartitionen sind eingehaengt; so startet GolemOS nie")?;
 
     let teile = vec![
@@ -111,6 +114,7 @@ pub fn entwerfen(q: &Quelle, ziel: &Geraet, alle: &[Geraet]) -> Result<Plan, Str
             // welche dort stand; es gibt nur eine Datenpartition.
             daten: String::new(),
         },
+        seite,
     })
 }
 
@@ -157,7 +161,7 @@ impl Plan {
                 .unwrap_or_else(|| format!("{}, {}", sp.t("Rest", "rest"), gb(self.daten_platz)));
             let inhalt = match &t.quelle {
                 Some(q) => format!("{} {q}", sp.t("Kopie von", "copy of")),
-                None => sp.t("neu, FAT32", "new, FAT32").into(),
+                None => sp.t("neu, exFAT", "new, exFAT").into(),
             };
             s.push_str(&format!("  {}  {:<14} {:>16}   {}\n", i + 1, t.name, groesse, inhalt));
         }
@@ -203,8 +207,10 @@ mod proben {
         let p = entwerfen(&q, &g[5], &g).unwrap();
         assert_eq!(p.teile[1].quelle.as_deref(), Some("/dev/vda2"));
         assert_eq!(p.teile[2].quelle.as_deref(), Some("/dev/vda2"));
+        assert_eq!(p.seite, 'A');
         // Ohne laufende Wurzel (Selbstprobe) nimmt er B.
         assert_eq!(plan().teile[1].quelle.as_deref(), Some("/dev/vda3"));
+        assert_eq!(plan().seite, 'B');
     }
 
     /// ⛔️ Der getippte Name der Startplatte scheitert im Plan selbst.
@@ -236,6 +242,6 @@ mod proben {
         let b = plan().beschreiben();
         assert!(b.contains("/dev/vdb (4,3 GB)"), "{b}");
         assert!(b.contains("Kopie von /dev/vda1"), "{b}");
-        assert!(b.contains("neu, FAT32"), "{b}");
+        assert!(b.contains("neu, exFAT"), "{b}");
     }
 }

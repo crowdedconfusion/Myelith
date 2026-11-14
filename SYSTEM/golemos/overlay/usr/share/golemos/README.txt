@@ -43,12 +43,14 @@ WELCHES MODELL PASST
 HINWEISE
 
   - Der Myelith-Ordner kann auch auf einem zweiten Stick oder einer
-    externen Platte liegen (FAT32 oder ext4); GolemOS sucht beim Start
+    externen Platte liegen (FAT32, exFAT oder ext4); GolemOS sucht beim Start
     auf allen Laufwerken.
   - Beim ersten Start fragt der Assistent nach Sprache und Tastatur;
     aendern laesst sich beides spaeter mit Punkt 7.
   - Die ganze Anleitung steht im Myelith-Ordner unter
     SYSTEM/golemos/ANLEITUNG.md.
+  - Lizenzen und Quellen: im laufenden GolemOS unter
+    /usr/share/golemos/LIZENZEN.txt.
   - Diese Datei darfst du loeschen; sie kommt nicht wieder.
 
 
@@ -94,9 +96,11 @@ WHICH MODEL FITS
 NOTES
 
   - The Myelith folder may also be on a second stick or an external
-    disk (FAT32 or ext4); GolemOS searches all drives at startup.
+    disk (FAT32, exFAT or ext4); GolemOS searches all drives at startup.
   - On the first start the assistant asks for language and keyboard;
     item 7 changes both later.
   - The full guide is in the Myelith folder under
     SYSTEM/golemos/ANLEITUNG.en.md.
+  - Licences and sources: in the running GolemOS under
+    /usr/share/golemos/LIZENZEN.txt.
   - You may delete this file; it will not come back.

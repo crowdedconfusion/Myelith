@@ -1,0 +1,19 @@
+#!/bin/sh
+# ⚑ **Eine Aktualisierung, die bis hierher kam, gilt** (`golem-aktualisieren`).
+#
+# Nach den Daten (`S05daten`), dem Knoten (`S50knoten`) und der Oberflaeche
+# (`S70oberflaeche`): Wer so weit startet, ist gesund genug, um die Seite zu
+# behalten. Bestaetigt wird nur, wenn eine Aktualisierung genau diese Seite
+# erwartet; eine von Hand im Menue gewaehlte bleibt eine Wahl fuer diesen Start.
+#
+# ⚠️ **Ein Fehler hier haelt den Start nicht auf.** Bleibt die Probe
+#    unbestaetigt, nimmt der naechste Start wieder die alte Seite.
+
+case "$1" in
+  start)
+    /usr/sbin/golem-aktualisieren bestaetigen --wenn-erwartet || echo "golem-aktualisieren: bestaetigen gescheitert, siehe golem-aktualisieren status"
+    ;;
+  stop) ;;
+  restart|reload) "$0" start ;;
+  *) echo "Aufruf: $0 {start|stop|restart}" >&2; exit 1 ;;
+esac

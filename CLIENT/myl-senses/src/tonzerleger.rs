@@ -29,7 +29,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use crate::whisper::{alle_kerne, gelu, je_kern, json, kopf_lesen, linear_a8, linear_genau, tensor_lesen, Ganzmatrix, Json, Tensor, GEBUENDELT_AB};
+use crate::whisper::{alle_kerne, masszahl, gelu, je_kern, json, kopf_lesen, linear_a8, linear_genau, tensor_lesen, Ganzmatrix, Json, Tensor, GEBUENDELT_AB};
 
 mod hin;
 mod strom;
@@ -93,19 +93,19 @@ impl Tonzerleger {
             _ => Err(format!("decoder_config: {k} fehlt")),
         };
         let liste = |k: &str| match d.get(k) {
-            Some(Json::Liste(l)) => Ok(l.iter().filter_map(|j| if let Json::Zahl(z) = j { Some(*z as usize) } else { None }).collect::<Vec<_>>()),
+            Some(Json::Liste(l)) => Ok(l.iter().map(|j| if let Json::Zahl(z) = j { masszahl(*z) } else { Err("keine Zahl in der Liste".into()) }).collect::<Result<Vec<_>, String>>()?),
             _ => Err(format!("decoder_config: {k} fehlt")),
         };
         let m = Masse {
-            koepfe: zahl("num_attention_heads")? as usize,
-            kopfbreite: zahl("head_dim")? as usize,
-            fenster: zahl("sliding_window")? as usize,
+            koepfe: masszahl(zahl("num_attention_heads")?)?,
+            kopfbreite: masszahl(zahl("head_dim")?)?,
+            fenster: masszahl(zahl("sliding_window")?)?,
             rope_basis: zahl("rope_theta")?,
             rms_eps: zahl("rms_norm_eps")? as f32,
             hochtasten: liste("upsample_rates")?,
             vorab: liste("upsampling_ratios")?,
         };
-        if zahl("num_key_value_heads")? as usize != m.koepfe || zahl("num_quantizers")? as usize != CODES {
+        if masszahl(zahl("num_key_value_heads")?)? != m.koepfe || masszahl(zahl("num_quantizers")?)? != CODES {
             return Err("dieser Weg rechnet so viele Schluesselkoepfe wie Koepfe und 16 Codes".into());
         }
         let eintraege = kopf_lesen(datei, |n| n.strip_prefix("decoder.").map(str::to_string))?;

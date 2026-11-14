@@ -226,7 +226,7 @@ pub struct Eigene {
     pub sprechmodell: Option<PathBuf>,
     pub aufnehmer: Option<PathBuf>,
     /// Woher ffmpeg den Ton nimmt: Format und Geraet, etwa
-    /// `("avfoundation", ":0")`. Ohne Angabe die Vorgabe dieses Systems.
+    /// `("avfoundation", ":1")`. Ohne Angabe die Vorgabe dieses Systems.
     pub tonquelle: Option<(String, String)>,
     /// Das Programm, das ein Einzelbild aufnimmt.
     pub blicker: Option<PathBuf>,
@@ -731,9 +731,15 @@ fn hoerzeug(
 /// der heisst auf jeder Maschine anders; die Vorgabe trifft den haeufigen
 /// Fall und sonst hilft `MYL_TONGERAET`. Auf macOS und Linux gibt es
 /// einen echten Vorgabenamen.
+///
+/// 📌 **Unter macOS stand hier `:0`** (bis 2026-11-13), also das erste Geraet
+/// der Liste und nicht der Eingang aus den Systemeinstellungen. Mit einem
+/// virtuellen Geraet an erster Stelle (BlackHole) nahm die Aufnahme nur
+/// Stille auf, und whisper.cpp schrieb daraus „you“. `default` ist der
+/// Eingang, den das System gewaehlt hat, wie beim eigenen Weg.
 pub fn tonquelle_vorgabe() -> (String, String) {
     if cfg!(target_os = "macos") {
-        ("avfoundation".into(), ":0".into())
+        ("avfoundation".into(), ":default".into())
     } else if cfg!(target_os = "windows") {
         ("dshow".into(), "audio=Microphone".into())
     } else {
@@ -1448,6 +1454,20 @@ mod proben {
     }
 
     /// ⚑ **`PATH` kommt vor dem `bin` der Heimat.**
+    /// ⚑ **Die Aufnahme folgt dem Eingang des Systems**, nicht einer
+    /// Nummer in der Geraeteliste: unter macOS `default` (vorher `:0`, mit
+    /// BlackHole an erster Stelle nur Stille), unter Linux `default`.
+    #[test]
+    fn die_tonquelle_ist_der_eingang_des_systems() {
+        let (format, geraet) = tonquelle_vorgabe();
+        if cfg!(target_os = "macos") {
+            assert_eq!((format.as_str(), geraet.as_str()), ("avfoundation", ":default"));
+        } else if cfg!(target_os = "linux") {
+            assert_eq!(geraet, "default");
+        }
+        assert!(!geraet.trim_start_matches(':').chars().all(|c| c.is_ascii_digit()), "feste Nummer: {geraet}");
+    }
+
     #[test]
     fn der_pfad_schlaegt_die_heimat() {
         let d = tempfile::tempdir().expect("Verzeichnis");

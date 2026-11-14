@@ -1,6 +1,6 @@
 [package]
 name = "myl-senses"
-version = "0.45.1"
+version = "0.47.0"
 edition = "2021"
 rust-version = "1.99"
 description = "Sinne des Clients: Dateien annehmen und einordnen, Bilder beschreiben und Ton mitschreiben lassen, ueber eigene kleine Modelle."
@@ -22,6 +22,9 @@ integer-llm-kernels = { path = "../../INTEGER_LLM/kernels", features = ["cpu-sim
 # wie in `myl-module`.
 sha2 = "0.10"
 ed25519-dalek = "2"
+# NFC fuer die Kennzeichnung von Text nach C2PA 2.4, Anhang A.8.7.2; dieselbe
+# Kiste und Fassung, die `myl-client` fuer BIP-39 schon nimmt.
+unicode-normalization = "=0.1.25"
 getrandom = "0.2"
 
 # Die gebuendelten Matrizen auf der GPU von Apple-Silizium; die Kernkiste

@@ -1,6 +1,6 @@
 # compliance
 
-> **Version:** 0.9.3
+> **Version:** 0.10.0
 > **Datum:** 2026-11-13
 > **Status:** Die Pflichten aus der KI-Verordnung sind dokumentiert und,
 > soweit technisch, umgesetzt; die Einordnung Artikel für Artikel steht in
@@ -39,6 +39,14 @@ Schutzfilter (`CLIENT/myl-client/src/schutzfilter.rs`), Notaus
 (`AGENT_LAYER/local-agent/src/notaus.rs`).
 
 ## Changelog
+
+### v0.10.0 (2026-11-13): Geschriebene Texte tragen signierte Metadaten
+
+- Art. 50 Abs. 2, Text: Markdown- und Textdateien, die der Agent schreibt,
+  tragen ab rund 200 Token ein Manifest nach C2PA 2.4, Anhang A.8
+  (unsichtbare Variantenzeichen am Ende, signiert wie beim Ton); in der
+  Selbsteinschätzung (de, en) nachgetragen. Weiter 🟡: kein Wasserzeichen
+  beim Ziehen, und die Frage nach dem Anbieter bleibt offen.
 
 ### v0.9.3 (2026-11-13): Lizenztexte von `zeroize`
 

@@ -1,0 +1,84 @@
+GOLEMOS: LIZENZEN UND QUELLEN
+=============================
+
+(English below.)
+
+GolemOS ist eine Zusammenstellung: die Programme des Myelith-Projekts
+und freie Software anderer, die auf einem Datentraeger beieinander
+liegen. Jeder Teil behaelt seine eigene Lizenz.
+
+DIE TEILE DES MYELITH-PROJEKTS
+
+  Die Programme myelith, myl, myl-node, golem-einrichten,
+  golem-aktualisieren, golem-schicht und golem-knoten, die Startskripte
+  S05daten, S06myelith, S50knoten, S70oberflaeche, S95aktualisierung
+  und S99probe sowie die Bauanleitung von GolemOS stehen unter der
+  PolyForm Shield License 1.0.0:
+    /usr/share/doc/myelith/LICENSE.md
+  Was an fremden Bibliotheken in diesen Programmen steckt, steht
+  daneben in NOTICES.md und DRITTLIZENZEN.txt.
+
+DIE FREMDEN TEILE
+
+  Der Kern Linux, GRUB, BusyBox, glibc, util-linux, eudev und die
+  uebrigen Pakete stehen unter ihren eigenen Lizenzen, viele davon
+  unter der GPL. Die PolyForm-Lizenz gilt fuer sie nicht und schraenkt
+  keines der Rechte ein, die ihre Lizenzen dir geben.
+
+  Verzeichnis aller Pakete mit Fassung und Lizenz:
+    /usr/share/licenses/manifest.csv
+  Die Lizenztexte liegen daneben, ein Ordner je Paket.
+
+  Linux ist eine eingetragene Marke von Linus Torvalds.
+
+DIE QUELLEN
+
+  Zu jedem freigegebenen Stand gehoert ein Archiv mit den Quellen
+  aller fremden Pakete (quellen-<arch>.tar). Es liegt an derselben
+  Freigabe wie das Abbild, zusammen mit lizenzen-<arch>.tar.xz.
+
+  Wer GolemOS weitergibt, muss nach der GPL selbst dafuer sorgen, dass
+  die Empfaenger die Quellen bekommen koennen; am einfachsten, indem er
+  das Quellarchiv mitgibt.
+
+
+GOLEMOS: LICENCES AND SOURCES
+=============================
+
+GolemOS is an aggregate: the programs of the Myelith project and free
+software by others, placed together on one medium. Each part keeps its
+own licence.
+
+THE PARTS OF THE MYELITH PROJECT
+
+  The programs myelith, myl, myl-node, golem-einrichten,
+  golem-aktualisieren, golem-schicht and golem-knoten, the start
+  scripts S05daten, S06myelith, S50knoten, S70oberflaeche,
+  S95aktualisierung and S99probe, and the GolemOS build recipe are
+  licensed under the PolyForm Shield License 1.0.0:
+    /usr/share/doc/myelith/LICENSE.md
+  The third-party libraries inside these programs are listed next to
+  it in NOTICES.md and DRITTLIZENZEN.txt.
+
+THE THIRD-PARTY PARTS
+
+  The Linux kernel, GRUB, BusyBox, glibc, util-linux, eudev and the
+  other packages are under their own licences, many of them under the
+  GPL. The PolyForm licence does not apply to them and does not limit
+  any of the rights their licences give you.
+
+  List of all packages with version and licence:
+    /usr/share/licenses/manifest.csv
+  The licence texts are next to it, one folder per package.
+
+  Linux is a registered trademark of Linus Torvalds.
+
+THE SOURCES
+
+  Every released version comes with an archive of the sources of all
+  third-party packages (quellen-<arch>.tar). It is attached to the
+  same release as the image, together with lizenzen-<arch>.tar.xz.
+
+  Whoever passes GolemOS on must, under the GPL, make sure the
+  recipients can get the sources; the simplest way is to pass the
+  source archive along.

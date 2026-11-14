@@ -1042,7 +1042,7 @@ impl Schriftgroesse {
 /// ⚑ **Die Diagnose steht zuletzt** (Wunsch des Projektinhabers,
 /// 2026-10-17): Den Debug-Log schaltet man selten, und wer ihn sucht,
 /// sucht ihn ganz unten.
-pub const FELDER: [Feld; 33] = [
+pub const FELDER: [Feld; 34] = [
     // ⚑ **Sie steht zuerst** (Festlegung des Projektinhabers,
     // 2026-09-10). Sie beschriftet alles, was darunter kommt: Wer die
     // Seite in einer Sprache oeffnet, die er nicht liest, findet hier
@@ -1240,6 +1240,16 @@ pub const FELDER: [Feld; 33] = [
         (
             "Erlaubt dem Agenten, den Bildschirm aufzunehmen und das Bild von einem kleinen Modell ansehen zu lassen, wenn er danach gefragt wird. Ohne dieses Häkchen gibt es das Werkzeug gar nicht. Jede Aufnahme bleibt im Arbeitsordner unter .AGENT/blicke/ liegen. Auf macOS braucht es zusätzlich die Freigabe unter Datenschutz, Bildschirmaufnahme.",
             "Lets the agent capture the screen and have a small model look at it, when asked to. Without this box the tool does not exist at all. Every capture is kept in the working folder under .AGENT/blicke/. On macOS this also needs the Screen Recording permission.",
+        ),
+    ),
+    feld(
+        "agent.text_kennzeichnen",
+        Feldart::Schalter,
+        ("Agent", "Agent"),
+        myl_local_agent::agentenwahl::TITEL_TEXT_KENNZEICHNEN,
+        (
+            "Versieht Markdown- und Textdateien, die der Agent schreibt, mit einem signierten Kennzeichen nach C2PA: Sie sind KI-erzeugt. Das Kennzeichen steht unsichtbar am Ende der Datei; `myl kennzeichen <datei>` zeigt es. Quelltext und kurze Texte bleiben unberührt.",
+            "Adds a signed C2PA mark to Markdown and text files the agent writes: they are AI-generated. The mark sits invisibly at the end of the file; `myl kennzeichen <file>` shows it. Source code and short texts are left alone.",
         ),
     ),
     feld(
@@ -1582,6 +1592,7 @@ impl Einstellungen {
             "agent.blick_bildschirm" => Feldwert::Schalter(self.agent.blick_bildschirm),
             "agent.web_recherche" => Feldwert::Schalter(self.agent.web_recherche),
             "agent.blick_kamera" => Feldwert::Schalter(self.agent.blick_kamera),
+            "agent.text_kennzeichnen" => Feldwert::Schalter(self.agent.text_kennzeichnen),
             "agent.schreiben" => Feldwert::Schalter(self.agent.schreiben),
             "agent.modus" => Feldwert::Text(self.agent.modus.kennung().to_string()),
             "kap.kerne" => self.kapazitaet.kerne.map_or(Feldwert::Leer, |v| Feldwert::Zahl(v as u64)),
@@ -1706,6 +1717,7 @@ impl Einstellungen {
             "agent.blick_bildschirm" => self.agent.blick_bildschirm = ja(wert),
             "agent.web_recherche" => self.agent.web_recherche = ja(wert),
             "agent.blick_kamera" => self.agent.blick_kamera = ja(wert),
+            "agent.text_kennzeichnen" => self.agent.text_kennzeichnen = ja(wert),
             "agent.schreiben" => self.agent.schreiben = ja(wert),
             "agent.modus" => self.agent.modus = Agentenmodus::aus(wert)?,
             "kap.kerne" => self.kapazitaet.kerne = opt(wert).map(|v| v as usize),

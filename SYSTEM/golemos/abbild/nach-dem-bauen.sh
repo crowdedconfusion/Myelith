@@ -20,6 +20,20 @@ set -e
 #   liefe auch ohne Oberflaeche.
 rm -f "$TARGET_DIR/etc/init.d/S70seatd"
 
+# ⚑ **Unsere Programme bereinigen.** Buildroot entfernt die Symbole aus
+#   seinen eigenen Programmen und legt das Overlay erst danach ein; die
+#   Myelith-Programme lagen deshalb mit allen Symbolen im Abbild
+#   (2026-11-13: `myl` 87 MB, bereinigt 70 MB, zusammen 30 MB je Wurzel).
+#   Am Code aendert das nichts; einem Absturzbericht fehlen dann die
+#   Funktionsnamen. ⚠️ Nur `--strip-unneeded`, anders als Buildroot ohne
+#   `--remove-section=.note`: Die Notizen tragen auch die
+#   Eigenschaftsmarken des Programms, und die sollen bleiben.
+STRIP=$(ls "$HOST_DIR"/bin/*-linux-*-strip 2>/dev/null | head -1)
+[ -n "$STRIP" ] || { echo "⛔️ kein strip unter $HOST_DIR/bin" >&2; exit 1; }
+for p in myelith myl myl-node golem-einrichten; do
+  "$STRIP" --strip-unneeded "$TARGET_DIR/usr/bin/$p"
+done
+
 INITTAB="$TARGET_DIR/etc/inittab"
 [ -f "$INITTAB" ] || exit 0
 

@@ -103,13 +103,16 @@ schreibbar.** `golemos.img`: 896 MB Nenngrösse, **98 MB belegt**.
 |---|---|---|
 | 1 | (vfat, EFI) | GRUB und der Kern |
 | 2 | `golem-wurzelA` | GolemOS |
-| 3 | `golem-wurzelB` | dasselbe, von Anfang an belegt |
-| 4 | `golem-daten` | wird beim Einrichten gedehnt |
+| 3 | `golem-wurzelB` | im Abbild leer, beim ersten Start aus A gefüllt |
+| 4 | `golem-daten` | wird beim ersten Start gedehnt und mit exFAT formatiert |
 
-⚑ **`wurzelB` trägt von Anfang an eine Kopie.** Ein Rückfallweg, den es
-erst nach der ersten Aktualisierung gibt, fehlt genau beim ersten Mal,
-und das erste Mal ist der wahrscheinlichste Zeitpunkt für einen
-Fehlschlag.
+⚑ **`wurzelB` kommt leer aus dem Abbild** (seit 0.6.1). Belegt lag jede
+Wurzel zweimal darin, gepackt über der Grenze von 100 MiB je Datei im
+Repositorium. Vor der ersten Aktualisierung braucht B nur die
+Installation, die die ruhende Seite kopiert; deshalb füllt `S00seiteb`
+sie beim ersten Start aus A, solange die Wurzel noch schreibgeschützt
+ist. Den Rückfallweg einer Aktualisierung trägt ohnehin A: Sie schreibt
+B neu, und A bleibt, wie es war.
 
 ### 📌 Zwei fremde Fehler, die wie eigene aussahen
 
@@ -294,10 +297,10 @@ Lieferung: Die Lizenzangaben der Pakete sind nicht vollständig geprüft.
 | **Installateur** | ✅ `golem-einrichten`: Assistent bei der ersten Anmeldung, Installation auf eine ganze Platte, Myelith-Ordner auf dem Stick statt Mitnahme. Belegt am 2026-09-25 unter QEMU mit UEFI (aarch64), noch nicht auf echter Hardware |
 | **Mitnahme** | ✅ `mitnahme.sh` sammelt Werkzeugkisten, Wissensmappen, Artefakte und die Einstellungen mit Pfaden unter `/daten`; belegt am 2026-09-25 mit dem 0,6B-Artefakt |
 | **Ohne Netz** | Der erste Bau braucht Netz: die beiden Bauumgebungen (`Containerfile`, `Containerfile.programme`), Buildroot selbst und seine Quellen (Kern, BusyBox, `curl`, GRUB). Danach nicht mehr: Die Programme bauen aus dem Vorrat in einem Behälter ohne Netz, und die Quellen liegen im Volumen (rund 1,7 GB je Architektur). Nachgesehen am 2026-11-10: `make source` ohne Netz gelingt für Basis und Schicht beider Architekturen, mit leerem Quellenlager scheitert es. Eine geänderte Konfiguration mit neuen Paketen braucht wieder Netz |
-| **A/B-Umschaltung** | die Partitionen sind da, das Umschalten noch nicht |
+| **A/B-Umschaltung** | ✅ `golem-aktualisieren`: die neue Seite einmal zur Probe, bestätigt am Ende eines gesunden Starts, sonst zurück zur alten; ein Kern je Seite. Belegt am 2026-11-13 unter QEMU mit UEFI (aarch64 und x86_64), noch nicht auf echter Hardware. ⚠️ Pakete tragen eine Prüfsumme, keine Signatur |
 | **Kernmodule** | 84 MB Treiber für Hardware, die nie da sein wird. Braucht eine eigene Kernkonfiguration und damit eine benannte Zielmaschine |
 | **`alpine:edge`** | rollendes Ziel; das Abbild `golemos-programmbauer-<arch>` hält eine Fassung fest, bis es gelöscht wird (am 2026-11-10 Rust 1.99.1, GCC 15.2.0). Festnageln, sobald eine veröffentlichte Alpine-Fassung die Rust-Fassung der Kisten trägt |
-| **Bootloader** | kommt mit Stufe 2, zusammen mit GRUB 2 und einem Plattenabbild |
+| **Secure Boot** | GolemOS ist nicht signiert; wer es starten will, schaltet Secure Boot aus. Zwei Wege, beide offen: ein fremdes, von Microsoft signiertes `shim` mit einem eigenen Schlüssel, den jeder Rechner einmal eintragen muss (MOK), oder ein eigenes `shim` über die öffentliche Prüfung (`rhboot/shim-review`), seit dem 2026-06-27 nur noch mit der Microsoft UEFI CA 2023 signiert. Beide brauchen einen signierten Kern, und der schützt nur, wenn er auch nur signierte Module lädt |
 | **Kernkonfiguration** | die Vorgabe der Architektur. Für eine bestimmte Zielmaschine gehört eine eigene her |
 | **Macs mit Apple-Chip** | vorgemerkt über Asahi Linux (Wunsch des Projektinhabers, 2026-09-26). Der Asahi-Installer kann nur eine UEFI-Umgebung einrichten (rund 3 GB, dazu hält er 38 GB für macOS frei), die danach jeden USB-Stick mit `EFI/BOOT/BOOTAA64.EFI` startet; das aarch64-Abbild trägt `bootaa64.efi` dort bereits. **Es fehlt:** ein Kern aus dem Asahi-Baum mit Apples Treibern und der Firmware, die der Installer aus macOS zieht, also ein drittes Abbild. **Es hält auf:** Asahi unterstützt M1 bis M3, M4 und M5 noch nicht, und die Maschine hier ist ein M5; getestet werden könnte es nur auf fremder Hardware. Die Alternative ohne Asahi wäre eine virtuelle Maschine über Apples Virtualization-Framework, auf jedem Apple-Chip |
 | **Die Sinne** | Stufe 3. `ffmpeg` allein ist grösser als das ganze Grundsystem. Die Lizenzpflichten beim Mitbündeln stehen im nächsten Abschnitt |
@@ -336,4 +339,5 @@ die alte. **Eine unterbrochene Aktualisierung kann das System nicht
 zerlegen**, und das kann kein Paketverwalter zusagen. Der Preis sind
 zwei Abbilder statt einem, also 100 MB statt 50.
 
-Das kommt mit Stufe 2.
+Umgesetzt mit `golem-aktualisieren` (2026-11-13), beschrieben in
+[`README/README.md`](README/README.md).
