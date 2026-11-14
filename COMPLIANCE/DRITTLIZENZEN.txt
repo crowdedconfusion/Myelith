@@ -861,8 +861,6 @@ quote 1.0.47 (LICENSE-MIT)
 ref-cast 1.0.27 (LICENSE-MIT)
 ref-cast-impl 1.0.27 (LICENSE-MIT)
 rustc-hash 2.1.3 (LICENSE-MIT)
-rustix 1.1.4 (LICENSE-MIT)
-rustix 1.1.5 (LICENSE-MIT)
 rustix 1.1.6 (LICENSE-MIT)
 rustversion 1.0.23 (LICENSE-MIT)
 semver 1.0.28 (LICENSE-MIT)
@@ -1430,8 +1428,6 @@ regex-automata 0.4.18 (LICENSE-APACHE)
 regex-syntax 0.8.11 (LICENSE-APACHE)
 rustc_version 0.4.1 (LICENSE-APACHE)
 rusticata-macros 4.1.0 (LICENSE-APACHE)
-rustix 1.1.4 (LICENSE-APACHE)
-rustix 1.1.5 (LICENSE-APACHE)
 rustix 1.1.6 (LICENSE-APACHE)
 rustls 0.23.46 (LICENSE-APACHE)
 scopeguard 1.2.0 (LICENSE-APACHE)
@@ -5409,7 +5405,7 @@ peniko 0.6.1 (LICENSE-APACHE)
 polycool 0.4.0 (LICENSE-APACHE)
 quinn 0.11.11 (LICENSE-APACHE)
 quinn-proto 0.11.19 (LICENSE-APACHE)
-quinn-udp 0.5.15 (LICENSE-APACHE)
+quinn-udp 0.5.16 (LICENSE-APACHE)
 serialize-to-javascript 0.1.2 (LICENSE-APACHE)
 serialize-to-javascript-impl 0.1.2 (LICENSE-APACHE)
 siphasher 1.0.4 (LICENSE-APACHE)
@@ -14036,8 +14032,6 @@ at your option.
 ========================================================================
 Text 199, gilt für:
 linux-raw-sys 0.12.1 (LICENSE-Apache-2.0_WITH_LLVM-exception)
-rustix 1.1.4 (LICENSE-Apache-2.0_WITH_LLVM-exception)
-rustix 1.1.5 (LICENSE-Apache-2.0_WITH_LLVM-exception)
 rustix 1.1.6 (LICENSE-Apache-2.0_WITH_LLVM-exception)
 target-lexicon 0.12.16 (LICENSE)
 wasi 0.11.1+wasi-snapshot-preview1 (LICENSE-Apache-2.0_WITH_LLVM-exception)
@@ -17779,7 +17773,7 @@ THE SOFTWARE.
 Text 261, gilt für:
 quinn 0.11.11 (LICENSE-MIT)
 quinn-proto 0.11.19 (LICENSE-MIT)
-quinn-udp 0.5.15 (LICENSE-MIT)
+quinn-udp 0.5.16 (LICENSE-MIT)
 ========================================================================
 
 Copyright (c) 2018 The quinn Developers
@@ -19519,8 +19513,6 @@ SOFTWARE.
 
 ========================================================================
 Text 285, gilt für:
-rustix 1.1.4 (COPYRIGHT)
-rustix 1.1.5 (COPYRIGHT)
 rustix 1.1.6 (COPYRIGHT)
 ========================================================================
 

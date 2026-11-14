@@ -131,10 +131,10 @@ The artefacts are integer-converted derivative works of the base weights.
 
 ## 5. Rust-Kisten / Rust crates
 
-911 Pakete aus 30 Kisten, offline aus `SYSTEM/crates-vorrat`. In die
+909 Pakete aus 30 Kisten, offline aus `SYSTEM/crates-vorrat`. In die
 Freigabebündel gehen nur die, die das jeweilige Programm zieht.
 
-911 packages from 30 crates, offline from `SYSTEM/crates-vorrat`.
+909 packages from 30 crates, offline from `SYSTEM/crates-vorrat`.
 Release bundles contain only those the respective program pulls in.
 
 | Lizenz / licence | Pakete / packages |
@@ -145,8 +145,8 @@ Release bundles contain only those the respective program pulls in.
 | MIT/Apache-2.0 | 43 |
 | Unicode-3.0 | 35 |
 | Zlib OR Apache-2.0 OR MIT | 21 |
-| Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | 12 |
 | Apache-2.0 | 11 |
+| Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | 10 |
 | Unlicense OR MIT | 10 |
 | BSD-3-Clause | 9 |
 | BSD-2-Clause OR Apache-2.0 OR MIT | 6 |
@@ -721,7 +721,7 @@ Release bundles contain only those the respective program pulls in.
 | `quick-xml` | 0.42.0 | MIT | https://github.com/tafia/quick-xml |
 | `quinn` | 0.11.11 | MIT OR Apache-2.0 | https://github.com/quinn-rs/quinn |
 | `quinn-proto` | 0.11.19 | MIT OR Apache-2.0 | https://github.com/quinn-rs/quinn |
-| `quinn-udp` | 0.5.15 | MIT OR Apache-2.0 | https://github.com/quinn-rs/quinn |
+| `quinn-udp` | 0.5.16 | MIT OR Apache-2.0 | https://github.com/quinn-rs/quinn |
 | `quote` | 1.0.47 | MIT OR Apache-2.0 | https://github.com/dtolnay/quote |
 | `r-efi` | 5.3.0 | MIT OR Apache-2.0 OR LGPL-2.1-or-later | https://github.com/r-efi/r-efi |
 | `r-efi` | 6.0.0 | MIT OR Apache-2.0 OR LGPL-2.1-or-later | https://github.com/r-efi/r-efi |
@@ -760,8 +760,6 @@ Release bundles contain only those the respective program pulls in.
 | `rustc_version` | 0.4.1 | MIT OR Apache-2.0 | https://github.com/djc/rustc-version-rs |
 | `rustfft` | 6.4.1 | MIT OR Apache-2.0 | https://github.com/ejmahler/RustFFT |
 | `rusticata-macros` | 4.1.0 | MIT/Apache-2.0 | https://github.com/rusticata/rusticata-macros.git |
-| `rustix` | 1.1.4 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | https://github.com/bytecodealliance/rustix |
-| `rustix` | 1.1.5 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | https://github.com/bytecodealliance/rustix |
 | `rustix` | 1.1.6 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | https://github.com/bytecodealliance/rustix |
 | `rustls` | 0.23.46 | Apache-2.0 OR ISC OR MIT | https://github.com/rustls/rustls |
 | `rustls-pki-types` | 1.15.1 | MIT OR Apache-2.0 | https://github.com/rustls/pki-types |

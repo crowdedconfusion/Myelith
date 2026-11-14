@@ -1,7 +1,7 @@
 # compliance
 
-> **Version:** 0.10.0
-> **Datum:** 2026-11-13
+> **Version:** 0.10.1
+> **Datum:** 2026-11-14
 > **Status:** Die Pflichten aus der KI-Verordnung sind dokumentiert und,
 > soweit technisch, umgesetzt; die Einordnung Artikel für Artikel steht in
 > der [Selbsteinschätzung](../de/Selbsteinschaetzung.md). Offen: ein
@@ -39,6 +39,18 @@ Schutzfilter (`CLIENT/myl-client/src/schutzfilter.rs`), Notaus
 (`AGENT_LAYER/local-agent/src/notaus.rs`).
 
 ## Changelog
+
+### v0.10.1 (2026-11-14): `rustix` 1.1.6 und `quinn-udp` 0.5.16 in der Lizenzliste
+
+- `rustix` 1.1.4 und 1.1.5 sind als unsound gemeldet (RUSTSEC-2026-0486,
+  Funktionen für erweiterte Attribute; behoben ab 1.1.6), und die
+  Abhängigkeitsprüfung der CI wurde rot. Alle Sperrdateien tragen jetzt
+  1.1.6.
+- `quinn-udp` 0.5.15 liest auf manchen Plattformen, darunter Apple, nach
+  einem abgeschnittenen Datagramm in einer Schleife weiter
+  (RUSTSEC-2026-0538, behoben ab 0.5.16); auf 0.5.16 gehoben in `myl-net`,
+  `myl-node` und `myl-testclient`, das Archiv liegt im Vorrat.
+- `NOTICES.md` und `DRITTLIZENZEN.txt` neu erzeugt, sonst unverändert.
 
 ### v0.10.0 (2026-11-13): Geschriebene Texte tragen signierte Metadaten
 

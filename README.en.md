@@ -72,7 +72,7 @@ a running node and a client.**
 | **Runs locally** | A window and a console for macOS, Windows and Linux: model inference and an agent with tools and skills are ready |
 | **The network runs** | Nodes find each other over QUIC, work behind home routers, build blocks, let latecomers catch up |
 | **State converges** | Three processes, thirteen blocks, **identical state roots at every height** |
-| **Security** | 15 attack classes reviewed: **10 defended, 4 with a named residual condition** |
+| **Security** | 50 attack classes reviewed: **46 defended, 3 with a named residual condition**, one awaits the external review |
 | **Cost** | **1.9× a centralized provider at 7B**, and nearly all of that is redundancy |
 
 ---
@@ -144,14 +144,14 @@ The short version here:
 | Component | What it delivers |
 |---|---|
 | [INTEGER_LLM](INTEGER_LLM/README/README.md) | **The core thesis, measured.** Integer inference at **+1.14 % at 7B** (bar: ≤ 5 %), only 0.3 points above what the quantisation scheme allows at all; for the **30B Mixture-of-Experts model** (128 experts per layer) no measurable gap, and a **hybrid 35B model** also runs through in integers. Throughput **+419 % at 7B**, faster than bf16. Plus the training side: backward pass, bit-identical across two runs, saturation guard, expert growth. The [scale pack](INTEGER_LLM/scale_packs/README.md) makes artefact builds bit-identical, 1.8 MB instead of 8.8 GB, 40 s instead of 20 min |
-| [NODE](NODE/README/README.md) | **The binary that runs the protocol.** Peers over TCP and QUIC, relays behind routers, chained blocks from a mempool, catch-up in milliseconds, signature checks, block height and epoch separated, an analysable operating log. Demonstrated on five independent processes committing the same block and surviving leader failure |
+| [NODE](NODE/README/README.md) | **The binary that runs the protocol.** Peers over TCP and QUIC, relays behind routers, joining on the local network without configuration, chained blocks from a size-capped mempool, catch-up from several sources or from a state snapshot, restart in seconds, archive nodes for the full history, rate limits on expensive requests, an analysable operating log. Demonstrated on separate processes under 50 to 200 ms latency and up to 5 % loss that agree on one root and survive outage, crash and total failure |
 | [NETWORKING](NETWORKING/README/README.md) | **L0 stands.** Gossip, Kademlia, latency topology, NAT traversal with AutoNAT, relays, DCUtR, QUIC. Connection limits with **separate budgets** against Sybil floods. Point-to-point channel with opaque payload: the network layer does not know what a block is. Sessions end-to-end encrypted, key exchange **hybrid** from X25519 and ML-KEM-768: recordings stay safe against later breaking |
 | [STORAGE](STORAGE/README/README.md) | **Where the weights come from.** The Store role: holds artefacts and shard weights, proves their availability and is paid for it. Object format, proof of availability and storage fee are in place; whether an object is replicated or erasure-coded is deliberately left open until real retrieval traffic measures the latency |
-| [CONSENSUS](CONSENSUS/README/README.md) | **Largely complete.** Signed, stake-weighted BFT with VRF committee selection, double-signing proof and round change, so safety **and** liveness, verified on 21 validators. Plus PoI bundles, epoch close, Reed-Solomon, session contracts in state. An instruction without a signature has no effect. The algorithm change becomes a switch, not a migration |
-| [VERIFICATION](VERIFICATION/README/README.md) | **Three stages against fraud.** Redundancy comparison, bisection in O(log L), control segments against the one-off intervention, reserve and observation window as parameters. The paper's security arguments are **measured against the implementation**: collusion bound to three digits, independence within 0.01 %. The instrument for indistinguishability stands ready and awaits real traffic |
+| [CONSENSUS](CONSENSUS/README/README.md) | **Largely complete.** Rotating producers with fork choice, finality over checkpoints carried by everyone with stake, and a double-signing proof after which a key is retired for good. Each epoch's seed is a threshold signature of the validator set that nobody can steer alone; a change of the validator set carries its proof. Plus PoI bundles, epoch closing, Reed-Solomon and session contracts in state; an unsigned instruction has no effect. Demonstrated under latency and loss, including forks, silent validators and an outage of more than a third |
+| [VERIFICATION](VERIFICATION/README/README.md) | **Three stages against fraud.** Redundancy comparison of two pods, a sample of real work that a checker recomputes from the tokens, including the choice of every token, and an arbitration round with a committee; two checkers commit before they reveal. Demonstrated on the network: a liar is caught even when its twin lies too. The paper's security arguments are **measured against the implementation**: collusion bound to three digits, independence within 0.01 % |
 | [TOKENOMICS](TOKENOMICS/README/README.md) | **Largely built, and integer throughout.** Minting, distribution, credit pricing, stake by capacity, graduated slashing over a violation history, bootstrap, genesis, burn cap per address. "No presale" is not checked but **enforced by how the function works**: it accepts proofs of work and nothing else. Every number in the paper stands as a test |
 | [COMPUTE_PIPELINE](COMPUTE_PIPELINE/README/README.md) | **Pods compute bit-identically.** 1 to 24 shards yield the same digest over logits and tokens as a single node, Mixture-of-Experts models included. Failover with standby takeover and bit-identical KV cache rebuild, only possible in integers at all. Which miner gets which shard is decided by the scheduler, not by an assumption |
-| [SHARED_TYPES](SHARED_TYPES/README/README.md) | **The foundation.** VRF, BLS with proof-of-possession, Merkle, erasure coding over GF(2⁸), verified across **all 495** subsets of 8 from 12. The Merkle root also commits to the leaf count, otherwise two different leaf sequences could share one root. The [threat model for all seven signature uses](SHARED_TYPES/README/Signatur-Bedrohungsmodell.md) is written up |
+| [SHARED_TYPES](SHARED_TYPES/README/README.md) | **The foundation.** VRF, BLS with proof-of-possession, threshold BLS with distributed key generation, addresses with a checksum, Merkle, erasure coding over GF(2⁸), verified across **all 495** subsets of 8 from 12. Every primitive with a standard computes against its test vectors. The Merkle root binds the leaf count, otherwise two different leaf sequences could carry the same root. What each signature use protects against is [written down](SHARED_TYPES/README/Signatur-Bedrohungsmodell.md) |
 | [TESTCLIENT](TESTCLIENT/README/README.md) | **One program, one menu, three questions.** Does your machine compute what ours does, does it hold the conformance vectors, and do several machines find each other over the internet? The comparison **refuses** a positive verdict when all logs come from the same machine: a tool that confirms itself is no tool |
 | [GOVERNANCE](GOVERNANCE/README/README.md) | **Parameters in one place, with rank.** 33 parameters with provenance and rank; the constitutional rank from Chap. 10.3 is enforced **technically**. Nine conditions are checked **on the proposal**, not after the vote. Plus voting with quorum, majority and window, a model manifest, and the switch for the algorithm change: one-way, one step |
 | [TRAINING](TRAINING/README/README.md) | **Integer training holds, and that is measured.** **+0.67 %** against floating point, with stochastic rounding, **entirely without floating-point state**. Growth exactly function-preserving, 0.00e+00. For Mixture-of-Experts models likewise, with load balancing without randomness |
@@ -159,25 +159,24 @@ The short version here:
 | [COMPLIANCE](COMPLIANCE/README.md) | **What the law requires, and commitments that rule things out.** AI Act self-assessment, intended use policy, GPAI documentation, training data, copyright and `NOTICES`, in German and English; below it [`ethics`](COMPLIANCE/ethics/README/README.md) with the manifesto, the exclusion catalogue and the licence review per model variant, and the fixed system prompt with the assistant's rules of conduct |
 | [AGENT_LAYER](AGENT_LAYER/README/README.md) | ⚑ **A contract is not a program, it is a blast radius.** Budget, recipients and deadline are fixed and checked by consensus; nobody can change them, because a different contract has a different address. Alongside it the agent loop that runs locally, announcing and executing the model's tools |
 | [GATEWAY](GATEWAY/README/README.md) | **The way into the network.** Accepts requests and records what came in; the session contract is the access key |
-| [CLIENT](CLIENT/README/README.md) | **The component people actually touch.** A chat window and a console for macOS, Windows and Linux: choose and load a model, ask, attach files, and let an agent work with tools, skills and loop, all on your own machine. The network half (wallet, node state, session limits) is waiting for a reachable network |
+| [CLIENT](CLIENT/README/README.md) | **Myelith on your own computer.** A chat window and a console for macOS, Windows and Linux: choose and load a model, ask, attach files, and let an agent work with tools, skills and a loop. It listens, sees and speaks with its own voice, reads scanned books in sixteen scripts, and marks generated speech and written text as AI-generated. Plus a wallet and a keystore to the Ethereum standard. The network half (node state, runs, session limits) waits for a reachable network |
+| [MODULES](MODULES/README.md) | **Extensions for console and window.** Own commands, an own mode and agent runs with their own toolbox; third-party modules run sandboxed as WebAssembly |
+| [SYSTEM](SYSTEM/README.md) | **What a computer needs to run Myelith.** Installation for macOS, Linux, Windows and NixOS, and the store of every crate from which a fresh clone builds offline |
 
 ## Security status
 
 A [security audit](SIMULATION/Sicherheitsaudit.md) takes up the attack
-classes from Whitepaper Chap. 5.6 and 9.2, fifteen by now. **Since 25 August not a
-single one is marked open (an external audit follows after the remaining
-tests and troubleshooting):**
+classes from Whitepaper Chap. 5.6 and 9.2 and every class that network runs
+and passes through the code have found since, fifty by now: among them the
+**wrong computation result**, **collusion of both pods**,
+**double-signing**, the **eclipse of a node** and the **long-range attack**
+on joining. **None of them is unprotected:**
 
 | Status | Count |
 |---|---|
-| defended and evidenced | **10** |
-| closed, with a named residual condition | **4** |
-| never externally reviewed | 1 |
-
-The four residual conditions share one shape. The mechanism is in place
-and measured; the last prerequisite depends on validator registration at
-genesis. Since early September, coverage-guided fuzzing of the wire
-formats and a dependency check in CI run alongside.
+| defended and evidenced | **46** |
+| defended, with a named residual condition | **3** |
+| checked internally, the external review is pending | 1 |
 
 ## What comes next
 

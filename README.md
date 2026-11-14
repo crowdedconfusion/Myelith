@@ -68,7 +68,7 @@ ein laufender Node und ein Client** geworden.
 | **Läuft lokal** | Fenster und Konsole für macOS, Windows und Linux: Modell-Inferenz und ein Agent mit Werkzeugen und Skills sind ready |
 | **Netz läuft** | Knoten finden einander über QUIC, arbeiten hinter Heimroutern, bauen Blöcke, holen Nachzügler auf |
 | **Zustand konvergiert** | Drei Prozesse, dreizehn Blöcke, **identische Zustandswurzeln auf jeder Höhe** |
-| **Sicherheit** | 15 Angriffsklassen geprüft: **10 abgewehrt, 4 mit benannter Restbedingung** |
+| **Sicherheit** | 50 Angriffsklassen geprüft: **46 abgewehrt, 3 mit benannter Restbedingung**, eine wartet auf das externe Review |
 | **Kosten** | **1,9× gegenüber einem zentralen Anbieter bei 7B**, und davon ist fast alles Redundanz |
 
 ---
@@ -143,14 +143,14 @@ Design-Entscheidungen und Tests. Die Kurzfassung hier:
 | Komponente | Was sie leistet |
 |---|---|
 | [INTEGER_LLM](INTEGER_LLM/README/README.md) | **Die Kernthese, gemessen.** Ganzzahl-Inferenz zu **+1,14 % bei 7B** (Kriterium ≤ 5 %), nur 0,3 Punkte über dem, was das Quantisierungsschema überhaupt zulässt; beim **Mixture-of-Experts-Modell mit 30B** (128 Experten je Layer) kein messbarer Abstand, und ein **hybrides Modell mit 35B** läuft ebenfalls ganzzahlig durch. Durchsatz **+419 % bei 7B**, damit schneller als bf16. Dazu die Trainingsseite: Rückwärtspass, bitgleich über zwei Läufe, Sättigungsschutz, Expertenwachstum. Das [Skalenpaket](INTEGER_LLM/scale_packs/README.md) macht den Artefaktbau bitgleich, 1,8 MB statt 8,8 GB, 40 s statt 20 min |
-| [NODE](NODE/README/README.md) | **Das Binary, das das Protokoll ausführt.** Peers über TCP und QUIC, Relais hinter Routern, verkettete Blöcke aus dem Mempool, Aufholen in Millisekunden, Signaturprüfung, Blockhöhe und Epoche getrennt, auswertbares Betriebsprotokoll. Belegt an fünf eigenständigen Prozessen, die denselben Block commiten und den Ausfall des Leaders überstehen |
+| [NODE](NODE/README/README.md) | **Das Binary, das das Protokoll ausführt.** Peers über TCP und QUIC, Relais hinter Routern, Einstieg im lokalen Netz ohne Angabe, verkettete Blöcke aus dem Mempool mit Grössengrenze, Nachholen von mehreren Quellen oder ab einem Zustandsabzug, Wiederanlauf in Sekunden, Archivknoten für die ganze Geschichte, Drossel für teure Anfragen, auswertbares Betriebsprotokoll. Belegt an getrennten Prozessen unter 50 bis 200 ms Laufzeit und bis 5 % Verlust, die sich auf eine Wurzel einigen und Ausfall, Absturz und Totalausfall überstehen |
 | [NETWORKING](NETWORKING/README/README.md) | **L0 steht.** Gossip, Kademlia, Latenztopologie, NAT-Überwindung mit AutoNAT, Relais, DCUtR, QUIC. Verbindungsgrenzen mit **getrennten Budgets** gegen Sybil-Fluten. Punkt-zu-Punkt-Kanal mit undurchsichtiger Nutzlast: Die Netzschicht weiß nicht, was ein Block ist. Sitzungen Ende zu Ende verschlüsselt, Schlüsselaustausch **hybrid** aus X25519 und ML-KEM-768: Mitschnitte bleiben auch gegen späteres Brechen geschützt |
 | [STORAGE](STORAGE/README/README.md) | **Woher die Gewichte kommen.** Die Netzwerkrolle Store: hält Artefakte und Shard-Gewichte vor, weist ihre Verfügbarkeit nach und wird dafür entgolten. Gegenstandsformat, Verfügbarkeitsnachweis und Speicherentgelt stehen; ob ein Gegenstand vervielfältigt oder erasure-kodiert wird, bleibt bewusst offen, bis echter Abrufverkehr die Latenz misst |
-| [CONSENSUS](CONSENSUS/README/README.md) | **Weitestgehend abgeschlossen.** Signiertes, stimmgewichtetes BFT mit VRF-Komiteewahl, Double-Signing-Beweis und Rundenwechsel, also Safety **und** Liveness, an 21 Validatoren geprüft. Dazu PoI-Bündel, Epochenabschluss, Reed-Solomon, Session-Kontrakte im Zustand. Eine Anweisung ohne Unterschrift wirkt nicht. Der Verfahrenswechsel wird ein Schalter, keine Migration |
-| [VERIFICATION](VERIFICATION/README/README.md) | **Drei Stufen gegen Betrug.** Redundanzvergleich, Bisektion in O(log L), Kontrollsegmente gegen den einmaligen Eingriff, Vorrat und Beobachtungsfenster als Parameter. Die Sicherheitsargumente des Papiers sind **an der Implementierung gemessen**: Kollusionsschranke auf drei Stellen, Unabhängigkeit mit 0,01 % Abweichung. Das Messgerät für die Ununterscheidbarkeit steht bereit und wartet auf echten Verkehr |
+| [CONSENSUS](CONSENSUS/README/README.md) | **Weitestgehend abgeschlossen.** Rotierende Erzeuger mit Zweigwahl, Endgültigkeit über Prüfpunkte, getragen von allen mit Einsatz, und ein Double-Signing-Beweis, nach dem ein Schlüssel für immer getilgt ist. Die Saat jeder Epoche ist eine Schwellensignatur des Stimmsatzes, die niemand allein lenken kann; ein Wechsel des Stimmsatzes trägt seinen Beleg. Dazu PoI-Bündel, Epochenabschluss, Reed-Solomon und Session-Kontrakte im Zustand; eine Anweisung ohne Unterschrift wirkt nicht. Belegt unter Laufzeit und Verlust, auch mit Gabeln, verstummten Validatoren und einem Ausfall von mehr als einem Drittel |
+| [VERIFICATION](VERIFICATION/README/README.md) | **Drei Stufen gegen Betrug.** Redundanzvergleich zweier Pods, eine Stichprobe aus echter Arbeit, die ein Checker ab den Tokens nachrechnet, samt der Wahl jedes Tokens, und eine Schiedsrunde mit Komitee; zwei Checker legen sich fest, bevor sie aufdecken. Im Netz belegt, ein Lügner fällt auch dann auf, wenn sein Zwilling mitlügt. Die Sicherheitsargumente des Papiers sind **an der Implementierung gemessen**: Kollusionsschranke auf drei Stellen, Unabhängigkeit mit 0,01 % Abweichung |
 | [TOKENOMICS](TOKENOMICS/README/README.md) | **Weitgehend gebaut, und durchweg ganzzahlig.** Prägung, Verteilung, Credit-Preisbildung, Stake nach Kapazität, gestaffeltes Slashing über eine Verstoßhistorie, Anlaufphase, Genesis, Burn-Deckel je Adresse. „Kein Vorverkauf" wird nicht geprüft, sondern **durch die Arbeitsweise der Funktion durchgesetzt**: Sie nimmt Arbeitsnachweise und sonst nichts. Jede Zahl des Papiers steht als Test |
 | [COMPUTE_PIPELINE](COMPUTE_PIPELINE/README/README.md) | **Pods rechnen bitgleich.** 1 bis 24 Shards liefern denselben Digest über Logits und Token wie der Einzelknoten, Mixture-of-Experts-Modelle eingeschlossen. Ausfallsicherung mit Standby-Übernahme und bitgleichem KV-Cache-Rebuild, was nur ganzzahlig möglich ist. Welcher Miner welchen Shard bekommt, entscheidet der Scheduler und nicht eine Annahme |
-| [SHARED_TYPES](SHARED_TYPES/README/README.md) | **Das Fundament.** VRF, BLS mit Proof-of-Possession, Merkle, Erasure-Codierung über GF(2⁸), geprüft über **alle 495** Teilmengen von 8 aus 12. Die Merkle-Wurzel bindet die Blattzahl mit, sonst könnten zwei verschiedene Blattfolgen dieselbe Wurzel tragen. Das [Bedrohungsmodell aller sieben Signaturverwendungen](SHARED_TYPES/README/Signatur-Bedrohungsmodell.md) liegt schriftlich vor |
+| [SHARED_TYPES](SHARED_TYPES/README/README.md) | **Das Fundament.** VRF, BLS mit Proof-of-Possession, Schwellen-BLS mit verteilter Schlüsselerzeugung, Adressen mit Prüfsumme, Merkle, Erasure-Codierung über GF(2⁸), geprüft über **alle 495** Teilmengen von 8 aus 12. Jede Primitive mit Standard rechnet gegen dessen Prüfvektoren. Die Merkle-Wurzel bindet die Blattzahl mit, sonst könnten zwei verschiedene Blattfolgen dieselbe Wurzel tragen. Wogegen jede Signaturverwendung schützt, ist [schriftlich festgehalten](SHARED_TYPES/README/Signatur-Bedrohungsmodell.md) |
 | [TESTCLIENT](TESTCLIENT/README/README.md) | **Ein Programm, ein Menü, drei Fragen.** Rechnet dein Rechner dasselbe wie unserer, hält er die Konformitätsvektoren, und finden mehrere Rechner einander über das Internet? Der Vergleich **verweigert** ein positives Urteil, wenn alle Protokolle von derselben Maschine stammen: Ein Werkzeug, das sich selbst bestätigt, ist keins |
 | [GOVERNANCE](GOVERNANCE/README/README.md) | **Parameter an einem Ort, mit Rang.** 33 Parameter mit Fundstelle und Rang; der Verfassungsrang aus Kap. 10.3 wird **technisch** durchgesetzt. Neun Bedingungen werden **am Vorschlag** geprüft, nicht nach der Abstimmung. Dazu Abstimmung mit Quorum, Mehrheit und Fenster, Modellmanifest, und der Schalter für den Verfahrenswechsel: einbahnig, ein Schritt |
 | [TRAINING](TRAINING/README/README.md) | **Ganzzahliges Training trägt, und das ist gemessen.** **+0,67 %** gegenüber Gleitkomma, mit stochastischem Runden, **ganz ohne Gleitkommazustand**. Wachstum exakt funktionserhaltend, 0,00e+00. Für Mixture-of-Experts-Modelle ebenso, mit Lastausgleich ohne Zufall |
@@ -158,25 +158,24 @@ Design-Entscheidungen und Tests. Die Kurzfassung hier:
 | [COMPLIANCE](COMPLIANCE/README.md) | **Was das Recht verlangt, und Zusagen, die etwas ausschließen.** Selbsteinschätzung nach der KI-Verordnung, Zweckbestimmung, GPAI-Dokumentation, Trainingsdaten, Urheberrecht und `NOTICES`, deutsch und englisch; darunter [`ethics`](COMPLIANCE/ethics/README/README.md) mit Manifest, Ausschlusskatalog und Lizenzprüfung je Modellvariante, und der fest vorgegebene Systemprompt mit den Verhaltensregeln des Assistenten |
 | [AGENT_LAYER](AGENT_LAYER/README/README.md) | ⚑ **Der Kontrakt ist kein Programm, sondern ein Sprengradius.** Budget, Empfänger und Frist stehen fest und werden vom Konsens geprüft; ändern kann sie niemand, denn ein anderer Kontrakt hat eine andere Adresse. Daneben die Agentenschleife, die lokal läuft und die Werkzeuge des Modells ansagt und ausführt |
 | [GATEWAY](GATEWAY/README/README.md) | **Der Zugang zum Netz.** Nimmt Anfragen entgegen und schreibt fest, was hereinkam; der Sitzungskontrakt ist der Zugangsschlüssel |
-| [CLIENT](CLIENT/README/README.md) | **Die Komponente, mit der Menschen zu tun haben.** Ein Gesprächsfenster und eine Konsole für macOS, Windows und Linux: Modell wählen und laden, fragen, Dateien anhängen, einen Agenten mit Werkzeugen, Skills und Loop arbeiten lassen, alles auf dem eigenen Rechner. Die Netzhälfte (Wallet, Knotenzustand, Session-Grenzen) wartet auf ein erreichbares Netz |
+| [CLIENT](CLIENT/README/README.md) | **Myelith auf dem eigenen Rechner.** Ein Gesprächsfenster und eine Konsole für macOS, Windows und Linux: Modell wählen und laden, fragen, Dateien anhängen, einen Agenten mit Werkzeugen, Skills und Loop arbeiten lassen. Er hört, sieht und spricht mit eigener Stimme, liest gescannte Bücher in sechzehn Schriften und kennzeichnet erzeugte Sprache und geschriebene Texte als KI-erzeugt. Dazu ein Wallet und ein Keystore nach Ethereum-Norm. Die Netzhälfte (Knotenzustand, Läufe, Session-Grenzen) wartet auf ein erreichbares Netz |
+| [MODULES](MODULES/README.md) | **Erweiterungen für Konsole und Fenster.** Eigene Befehle, ein eigener Modus und Agentenläufe mit eigener Werkzeugkiste; Module von Dritten laufen als WebAssembly abgeschottet |
+| [SYSTEM](SYSTEM/README.md) | **Was der Rechner braucht, damit Myelith läuft.** Installation für macOS, Linux, Windows und NixOS und der Vorrat aller Kisten, aus dem ein frischer Klon ohne Netz baut |
 
 ## Sicherheitsstand
 
 Ein [Sicherheitsaudit](SIMULATION/Sicherheitsaudit.md) nimmt die
-Angriffsklassen aus Whitepaper Kap. 5.6 und 9.2 auf, inzwischen fünfzehn. **Seit dem
-25. August steht dort kein einziges „offen" mehr (Externes Audit folgt nach den letzten Tests und Troubleshootings):**
+Angriffsklassen aus Whitepaper Kap. 5.6 und 9.2 auf und alle, die Netzläufe
+und Durchgänge durch den Code seither gefunden haben, inzwischen fünfzig:
+darunter das **falsche Rechenergebnis**, die **Kollusion beider Pods**, das
+**Double-Signing**, die **Umzingelung eines Knotens** und der
+**Langstreckenangriff** auf den Einstieg. **Ungeschützt ist keine davon:**
 
 | Stand | Zahl |
 |---|---|
-| abgewehrt und belegt | **10** |
-| geschlossen, mit benannter Restbedingung | **4** |
-| nie extern geprüft | 1 |
-
-Die vier Restbedingungen haben dieselbe Form.
-Der Mechanismus steht und ist gemessen, die letzte Voraussetzung hängt
-an der Validator-Registrierung zu Genesis. Seit Anfang September laufen
-dazu deckungsgeführtes Fuzzing der Drahtformate und eine
-Abhängigkeitsprüfung in der CI.
+| abgewehrt und belegt | **46** |
+| abgewehrt, mit benannter Restbedingung | **3** |
+| intern geprüft, das externe Review steht aus | 1 |
 
 ## Was als Nächstes kommt
 

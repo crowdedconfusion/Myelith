@@ -1,7 +1,7 @@
 # Protokollsimulation und Sicherheitsaudit
 
-> **Version:** `myl-simulation` 0.1.5
-> **Datum:** 2026-11-08 (Zahlenprobe für die Programme aus Anhang B)
+> **Version:** `myl-simulation` 0.2.0
+> **Datum:** 2026-11-14 (Zeitmessung für den Skalarkörper)
 > **Status:** Ein Szenario läuft (Segmentweg über alle Schichten) mit
 > Abdeckungsbericht. `latency_sim.py` und `security_sim.py` laufen seit
 > dem 2026-09-01 und **behaupten**, statt nur zu drucken.
@@ -45,6 +45,23 @@ Aufschaukeln über Layer in B.5.6, und B.8 seit dem Entfernen von
 `genesis_supply_sim.py`.
 
 ## Changelog
+
+### 0.2.0 (2026-11-14): Eine Zeitmessung für den Skalarkörper
+
+- **Neu `examples/zeitprobe.rs`**: prüft nach dem Verfahren dudect
+  (Reparaz, Balasch, Verbauwhede 2017), ob die Rechnungen des Skalarkörpers
+  aus `myl-types` mit geheimen Zahlen in konstanter Zeit laufen. Fester
+  gegen zufälligen Wert in zufälliger Reihenfolge, Welch-t über alle Proben
+  und die schnellsten Anteile; dazu eine Kontrolle zufällig gegen zufällig
+  und eine Gegenprobe, die absichtlich verzweigt und auffallen muss. Auf
+  aarch64 wahlweise mit Data Independent Timing.
+- **Ergebnis auf einem Apple M5 Pro** (acht Läufe zu 200 000 Proben): Die
+  Inversion, 255 Quadrate und Multiplikationen über dem Geheimnis, zeigt nie
+  einen Unterschied (|t| bis 2,5), die Kontrolle bleibt unauffällig, die
+  Gegenprobe fällt jedes Mal auf. ⚠️ Die kurzen Einzelrechnungen ergaben
+  kein stabiles Bild (|t| zwischen 2 und 55, abhängig von der Anordnung);
+  nicht als Abhängigkeit belegt, nicht ausgeschlossen. Festgehalten im
+  Sicherheitsaudit unter A13.
 
 ### 0.1.5 (2026-11-08)
 

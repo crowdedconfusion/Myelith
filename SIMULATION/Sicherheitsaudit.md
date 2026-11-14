@@ -67,7 +67,7 @@ Kettenmigration.
 | A10 | **Latenzwerte fälschen** | ✅ | Signatur wird **geprüft** (2026-08-25). ⚑ Neu eingeordnet (2026-11-08): Seit dem 2026-09-01 bilden Zonen aus der Registrierung die Pods, nicht gemessene Latenzen; ein Attest geht nur noch als Probe durchs Gossip und wirkt auf nichts im Konsens. Die ableitbaren Schlüssel des Probelaufs betreffen nur diesen Probeverkehr. Was bleibt, ist die selbst erklärte Zone, und die steht unter A12 |
 | A11 | **Kontrollsegmente erkennen** | ✅ | **Gegenstandslos** (2026-11-08 festgehalten): Die Kontrollsegmente sind seit dem 2026-09-02 entfallen, die Stichprobe zieht echte Arbeit, und die ist von echter Arbeit nicht zu unterscheiden. Die Messung unten bleibt als Geschichte der Klasse stehen |
 | A12 | Kollusion beider Pods | ⚠️ | Schranke gemessen (β^2k trifft); Gegenmaßnahme im Netz belegt (2026-11-06: Paar einig, nur der Checker fand es). ⚑ Clusterbild gemessen (2026-11-08, Test `der_zonenhebel_ueber_die_zwillinge`): Mit gut einem Viertel der Kennungen, die Hälfte in einer leeren Zone erklärt, gehört ein ganzes Zwillingspaar in 3,7 % der Epochen dem Angreifer, gleichmässig verteilt nie; beide Zwillinge an der ersten Position (genug für eine Kollusion dort) in 44 % ohne und 58 % mit dem Hebel. Gegen Kollusion an einer Position schützt Stufe 1 also nie, die Abwehr ist die Stichprobe mit Nachrechnen. Paaren nach der Saat wäre gemessen schlechter (bis 50 %) |
-| A13 | Angriff auf die Krypto-Primitiven | ❓ | nie extern geprüft (K5). ⚠️ Seit 2026-11-03 dazu selbst geschriebene Schwellenkryptographie für die Saat (Feldarithmetik mit konstanter Zeit, Polynome mit Feldman-Bindungen und Kenntnisnachweis, ElGamal über ristretto255, rund 1 350 Zeilen), gegen `blst` über den Homomorphismus und mit Angriffstests geprüft; das macht das externe Review vordringlich |
+| A13 | Angriff auf die Krypto-Primitiven | ❓ | nie extern geprüft (K5). Intern: jede selbst umgesetzte Primitive gegen die Prüfvektoren ihres Standards, der Skalarkörper gegen `blst` und seit 2026-11-14 mit einer Zeitmessung (Inversion unauffällig, die kurzen Einzelrechnungen ohne stabiles Bild, siehe unten). ⚠️ Seit 2026-11-03 dazu selbst geschriebene Schwellenkryptographie für die Saat (Feldarithmetik mit konstanter Zeit, Polynome mit Feldman-Bindungen und Kenntnisnachweis, ElGamal über ristretto255, rund 1 350 Zeilen), gegen `blst` über den Homomorphismus und mit Angriffstests geprüft; das macht das externe Review vordringlich |
 | A14 | **Ein Gateway liest den Inhalt mit** | ✅ | Sitzungs-E2E seit `myl-net` v0.9.0, über echte Verbindungen gemessen; **Verkehrsdaten bleiben sichtbar**, und das Schema selbst fällt unter A13 |
 | A15 | **Zwei Blattfolgen, eine Merkle-Wurzel** | ✅ | **Fund 77** (2026-08-28), gemessen und am selben Tag behoben: die Wurzel bindet die Blattzahl (`myl-types` v0.6.0) |
 | A16 | Tür ohne gültige Vollmacht | ✅ | Unterschrift, Vorbehalte und Kontrakt vor jedem Zerlegen; jede Ablehnung sieht gleich aus |
@@ -703,6 +703,29 @@ aggregierbares Post-Quantum-Verfahren ist nicht standardisiert.
 **Die Reihenfolge ist begründet:** Eine 2040 gebrochene Signatur ist
 wertlos, der Block ist längst final. Ein 2026 aufgezeichneter Prompt,
 2040 entschlüsselt, ist es nicht.
+
+⚑ **Was intern geprüft ist (Stand 2026-11-14):** Jede Primitive, die wir
+selbst umsetzen oder in eigener Form verwenden, rechnet gegen die
+Prüfvektoren ihres Standards: die VRF gegen RFC 9381, die Ableitung der
+Schlüssel gegen EIP-2333, der Keystore gegen beide Testkeystores aus
+EIP-2335 (scrypt und PBKDF2), die zwölf Wörter gegen die Vektoren von
+BIP-39 (Passphrase `TREZOR`), HMAC-SHA512 gegen RFC 4231, die Adressen
+gegen BIP-350. Der eigene Skalarkörper der Schwellenkryptographie rechnet
+gegen `blst` über den Gruppenhomomorphismus. Für Feldman-Bindungen und die
+Verschlüsselung der Anteile gibt es keinen Standard mit Vektoren; sie sind
+mit Angriffstests geprüft.
+
+📌 **Neu: eine Zeitmessung für den Skalarkörper**
+(`SIMULATION/myl-simulation/examples/zeitprobe.rs`, Verfahren dudect nach
+Reparaz, Balasch, Verbauwhede 2017, mit Gegenprobe und einer Kontrolle
+zufällig gegen zufällig). Auf einem Apple M5 Pro in acht Läufen zu je
+200 000 Proben: Die Inversion, 255 Quadrate und Multiplikationen über dem
+Geheimnis, zeigt nie einen Unterschied (|t| bis 2,5); die Kontrolle bleibt
+unauffällig, die Gegenprobe fällt jedes Mal auf. ⚠️ **Die einzelnen kurzen
+Rechnungen ergaben kein stabiles Bild** (|t| zwischen 2 und 55, ohne
+Richtung, abhängig von der Anordnung der Messung). Das ist nicht als
+Abhängigkeit der Rechnung belegt, aber auch nicht ausgeschlossen; es gehört
+zu den Fragen an das externe Review.
 
 Dass `myl-types` gegen die RFC-9381-Testvektoren stimmt, ist geprüft.
 Dass die **Verwendung** trägt, war bis zum 2026-08-23
